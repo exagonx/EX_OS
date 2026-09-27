@@ -26,6 +26,12 @@
  * only rewrites the catalogue on request. Before, there were two states
  * (reading, building) and an archive that was not one until «Finisci».
  *
+ * ! AND SINCE 27 SEPTEMBER 2026 THERE IS NO TAR EITHER (@ARCHIVI-TAR): .tar,
+ * .tar.gz and .tgz go to lib/extar, the library of /bin/tar. The a_*()
+ * functions below choose between the two by the archive's name (or, for a
+ * name that says nothing, by trying): the rest of the program does not know
+ * which one it is showing.
+ *
  * ! THE LIST IS A TABLE THIS PROGRAM DRAWS, not the toolkit's «lista»: that
  * control has fixed-pitch rows of 63 characters with columns made of spaces,
  * and what was asked — columns to click for sorting, borders to drag, a name
@@ -33,19 +39,23 @@
  * purpose, the house rule for a piece with one user: the day the file
  * manager wants the same, it moves into lib/exwin with both users to test.
  *
- * ! THE OPTIONS LIVE IN /exwin/config/archivi.cfg, the directory of the
- * configurations of ExWin programs (decided with the request; SVILUPPO.md).
+ * ! THE OPTIONS ARE THE USER'S, SO THEY LIVE IN THE PROFILE (27 September
+ * 2026): $HOME/.exwin/config/archivi.cfg — /root/... for root,
+ * /home/<utente>/... for a user. The rule (SVILUPPO.md): a person's choices
+ * in the profile; a system program that starts before login in /boot or
+ * /cfg. They were in /exwin/config for one day, shared by everybody.
  * ============================================================================= */
 
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
 #include "exzip.h"
+#include "extar.h"
 #include "exinfo.h"
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `archivi -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.004"
+#define VERSIONE_APP "0.006"
 EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define FIN_W       680
@@ -80,12 +90,140 @@ EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define ID_SCORRI     30
 
-#define CONFIG_DIR    "/exwin/config"
-#define CONFIG_FILE   "/exwin/config/archivi.cfg"
+/* The profile's configuration: $HOME as login sets it; without login (the
+ * live CD) HOME is «/», and root's profile is then /root. `crea` makes the
+ * directories on the way. The same rule as pm (@PM-SFONDO). */
+static const char *config_file(int crea)
+{
+    static char f[200];
+    const char *casa = getenv("HOME");
+    char        d[200];
+
+    if (!casa || !casa[0] || strcmp(casa, "/") == 0)
+        casa = (getuid() == 0) ? "/root" : "";
+    if (crea) {
+        if (casa[0]) mkdir(casa, 0700);
+        snprintf(d, sizeof(d), "%s/.exwin", casa);        mkdir(d, 0755);
+        snprintf(d, sizeof(d), "%s/.exwin/config", casa); mkdir(d, 0755);
+    }
+    snprintf(f, sizeof(f), "%s/.exwin/config/archivi.cfg", casa);
+    return f;
+}
 
 static ExFinestra g_f, g_scorri, g_stato, g_menu;
 
-static ExZip *g_z;                  /* the archive on screen, open for reading */
+/* =============================================================================
+ * ZIP OR TAR: the one place that knows (@ARCHIVI-TAR)
+ *
+ * An Arch is an ExZip or an ExTar, and g_tar says which — for the archive on
+ * screen and for the one being written, which is always the same file. A tar
+ * entry is shown as a zip one: «Compresso» is its size (a tar.gz compresses
+ * the whole stream, not each file) and «Metodo» says tar or tar.gz.
+ *
+ * ! ADDING TO A TAR REWRITES IT WHOLE (extar.h): a gzip cannot be reopened at
+ * the end like a zip catalogue. For a big archive every addition costs as
+ * much as the archive, and the Istruzioni say so.
+ * ============================================================================= */
+typedef void Arch;
+
+#define MET_TAR    100
+#define MET_TARGZ  101
+
+static int g_tar = 0, g_tar_gz = 0;
+
+static Arch *a_apri(const char *perc)
+{
+    Arch *a;
+
+    if (ex_tar_nome(perc, &g_tar_gz)) {
+        g_tar = 1;
+        return ex_tar_apri(perc);
+    }
+    g_tar = 0;
+    if ((a = ex_zip_apri(perc)) != 0) return a;
+
+    /* A name that says nothing (archivio.bak): the bytes decide. */
+    if ((a = ex_tar_apri(perc)) != 0) {
+        unsigned char m[2] = { 0, 0 };
+        int fd = open(perc, O_RDONLY, 0);
+
+        if (fd >= 0) { read(fd, m, 2); close(fd); }
+        g_tar = 1;
+        g_tar_gz = m[0] == 0x1f && m[1] == 0x8b;
+    }
+    return a;
+}
+
+static const char *a_errore(void) { return g_tar ? ex_tar_errore() : ex_zip_errore(); }
+
+static unsigned int a_quante(Arch *a)
+{
+    return g_tar ? ex_tar_quante((ExTar *)a) : ex_zip_quante((ExZip *)a);
+}
+
+static int a_voce(Arch *a, unsigned int i, ExZipVoce *v)
+{
+    ExTarVoce t;
+
+    if (!g_tar) return ex_zip_voce((ExZip *)a, i, v);
+    if (!ex_tar_voce((ExTar *)a, i, &t)) return 0;
+    memset(v, 0, sizeof(*v));
+    snprintf(v->nome, sizeof(v->nome), "%s", t.nome);
+    v->dim = v->dim_c = t.dim;
+    v->metodo = g_tar_gz ? MET_TARGZ : MET_TAR;
+    v->anno = t.anno; v->mese = t.mese; v->giorno = t.giorno;
+    v->ore = t.ore; v->minuti = t.minuti;
+    v->directory = t.directory;
+    return 1;
+}
+
+static int a_estrai(Arch *a, unsigned int i, const char *dove)
+{
+    return g_tar ? ex_tar_estrai((ExTar *)a, i, dove) : ex_zip_estrai((ExZip *)a, i, dove);
+}
+
+static void a_chiudi(Arch *a)
+{
+    if (g_tar) ex_tar_chiudi((ExTar *)a); else ex_zip_chiudi((ExZip *)a);
+}
+
+/* A new archive: the name decides, and from here on g_tar is its kind. */
+static Arch *a_crea(const char *perc)
+{
+    g_tar = ex_tar_nome(perc, &g_tar_gz);
+    return g_tar ? (Arch *)ex_tar_crea(perc, g_tar_gz) : (Arch *)ex_zip_crea(perc);
+}
+
+static Arch *a_riapri(const char *perc)
+{
+    return g_tar ? (Arch *)ex_tar_riapri(perc) : (Arch *)ex_zip_riapri(perc);
+}
+
+static int a_aggiungi(Arch *a, const char *file, const char *nome)
+{
+    return g_tar ? ex_tar_aggiungi((ExTar *)a, file, nome)
+                 : ex_zip_aggiungi((ExZip *)a, file, nome);
+}
+
+static int a_aggiungi_albero(Arch *a, const char *dir, const char *nome, int *saltati)
+{
+    return g_tar ? ex_tar_aggiungi_albero((ExTar *)a, dir, nome, saltati)
+                 : ex_zip_aggiungi_albero((ExZip *)a, dir, nome, saltati);
+}
+
+static int a_finisci(Arch *a)
+{
+    return g_tar ? ex_tar_finisci((ExTar *)a) : ex_zip_finisci((ExZip *)a);
+}
+
+/* 0 none .. 3 best. A gzip always compresses: «none» is the fast one there. */
+static void a_livello(unsigned int l)
+{
+    ex_zip_livello(l);
+    ex_tar_livello(l ? l : 1);
+}
+
+static Arch *g_z;                  /* the archive on screen, open for reading */
 static char   g_perc[PERC_MAX] = "";
 static char   g_avviso[160] = "";
 static char   g_dove[PERC_MAX] = "";   /* where the last extraction went */
@@ -208,11 +346,11 @@ static void righe_carica(void)
     righe_libera();
     if (!g_z) return;
 
-    n = ex_zip_quante(g_z);
+    n = a_quante(g_z);
     if (n == 0) return;
 
     for (i = 0; i < n; i++)
-        if (ex_zip_voce(g_z, i, &v)) pool += strlen(v.nome) + 2;
+        if (a_voce(g_z, i, &v)) pool += strlen(v.nome) + 2;
 
     g_r = (Riga *)malloc(n * sizeof(Riga));
     g_pool = (char *)malloc(pool + 1);
@@ -228,7 +366,7 @@ static void righe_carica(void)
         unsigned int l;
         char        *barra;
 
-        if (!ex_zip_voce(g_z, i, &v)) continue;
+        if (!a_voce(g_z, i, &v)) continue;
 
         l = (unsigned int)strlen(v.nome);
         memcpy(p, v.nome, l + 1);
@@ -329,8 +467,10 @@ static void tabella_disegna(void)
                 scrivi_in(x, ry, w, t, 0, fg);
                 break;
             case C_MET:
-                scrivi_in(x, ry, w, r->dir ? "-" : r->metodo == EXZIP_DEFLATE ? "deflate" : "store",
-                          0, fg);
+                scrivi_in(x, ry, w, r->dir ? "-" :
+                          r->metodo == MET_TARGZ ? "tar.gz" :
+                          r->metodo == MET_TAR ? "tar" :
+                          r->metodo == EXZIP_DEFLATE ? "deflate" : "store", 0, fg);
                 break;
             }
         }
@@ -427,7 +567,7 @@ static void opzioni_leggi(void)
     char buf[512], *riga, *dopo;
     int  fd, n;
 
-    fd = open(CONFIG_FILE, O_RDONLY, 0);
+    fd = open(config_file(0), O_RDONLY, 0);
     if (fd < 0) return;
     n = (int)read(fd, buf, sizeof(buf) - 1);
     close(fd);
@@ -463,11 +603,7 @@ static int opzioni_scrivi(void)
     char t[256];
     int  fd, n;
 
-    if (mkdir(CONFIG_DIR, 0755) != 0) {
-        struct stat st;
-        if (stat(CONFIG_DIR, &st) != 0 || !S_ISDIR(st.st_mode)) return 0;
-    }
-    fd = open(CONFIG_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd = open(config_file(1), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return 0;
     n = snprintf(t, sizeof(t),
                  "# Archivi: le opzioni. Le riscrive il programma (menu Opzioni).\n"
@@ -480,10 +616,12 @@ static int opzioni_scrivi(void)
 
 static void opzioni_salva(void)
 {
-    if (opzioni_scrivi()) { snprintf(g_avviso, sizeof(g_avviso), "opzioni salvate in %s", CONFIG_FILE); return; }
-    ex_dlg_avviso("Opzioni non salvate",
-                  "Non riesco a scrivere " CONFIG_FILE " (il sistema e' in sola "
-                  "lettura?). La scelta vale fino alla chiusura di Archivi.");
+    char m[300];
+
+    if (opzioni_scrivi()) { snprintf(g_avviso, sizeof(g_avviso), "opzioni salvate in %s", config_file(0)); return; }
+    snprintf(m, sizeof(m), "Non riesco a scrivere %s (il sistema e' in sola "
+             "lettura?). La scelta vale fino alla chiusura di Archivi.", config_file(0));
+    ex_dlg_avviso("Opzioni non salvate", m);
 }
 
 /* The compression dialog: four radios, «Salva» and «Annulla». */
@@ -537,7 +675,7 @@ static void compressione_scegli(void)
 
     if (g_liv_fatto == 1) {
         for (l = 0; l < 4; l++) if (ex_acceso(g_liv_r[l])) g_livello = l;
-        ex_zip_livello(g_livello);
+        a_livello(g_livello);
         opzioni_salva();
     }
     ex_distruggi(f);
@@ -577,7 +715,7 @@ static void estensione_scegli(void)
  * --------------------------------------------------------------------------- */
 static void chiudi_archivio(void)
 {
-    if (g_z) { ex_zip_chiudi(g_z); g_z = 0; }
+    if (g_z) { a_chiudi(g_z); g_z = 0; }
     g_perc[0] = '\0';
     righe_libera();
     scorri_aggiorna();
@@ -590,13 +728,13 @@ static void chiudi_archivio(void)
  * after it was rebuilt: the sorting and the chosen row stay. */
 static int apri_(const char *perc, int ricarica)
 {
-    ExZip *z = ex_zip_apri(perc);
+    Arch *z = a_apri(perc);
 
     if (!z) {
-        ex_dlg_avviso("Non si apre", ex_zip_errore());
+        ex_dlg_avviso("Non si apre", a_errore());
         return 0;
     }
-    if (g_z) ex_zip_chiudi(g_z);
+    if (g_z) a_chiudi(g_z);
     g_z = z;
     if (perc != g_perc) {
         strncpy(g_perc, perc, PERC_MAX - 1);
@@ -633,7 +771,7 @@ static const char *nome_corto(const char *p)
 static void nuovo(void)
 {
     char   p[PERC_MAX];
-    ExZip *z;
+    Arch *z;
     const char *base, *punto;
 
     /* ! THE DIALOG STARTS FROM THE DIRECTORY, NOT FROM A NAME: what is typed
@@ -649,13 +787,13 @@ static void nuovo(void)
     punto = strrchr(base, '.');
     if (!punto && strlen(p) + strlen(g_ext) < sizeof(p)) strcat(p, g_ext);
 
-    z = ex_zip_crea(p);
-    if (!z || !ex_zip_finisci(z)) {
-        ex_dlg_avviso("Non si crea", ex_zip_errore());
-        if (z) ex_zip_chiudi(z);
+    z = a_crea(p);
+    if (!z || !a_finisci(z)) {
+        ex_dlg_avviso("Non si crea", a_errore());
+        if (z) a_chiudi(z);
         return;
     }
-    ex_zip_chiudi(z);
+    a_chiudi(z);
 
     if (apri_(p, 0))
         strcpy(g_avviso, "archivio creato: aggiungi file o cartelle dal menu Comandi");
@@ -665,13 +803,13 @@ static void nuovo(void)
 /* =============================================================================
  * ADDING = REOPEN, ADD, BUILD, SHOW
  *
- * ! THE CATALOGUE IS WRITTEN EVEN WHEN THE ADDING FAILED. ex_zip_riapri()
+ * ! THE CATALOGUE IS WRITTEN EVEN WHEN THE ADDING FAILED. a_riapri()
  * writes new entries over the old catalogue: giving up there would lose every
  * old entry. What failed is left out of the new catalogue, and said.
  * ============================================================================= */
-static ExZip *riapri_per_aggiungere(void)
+static Arch *riapri_per_aggiungere(void)
 {
-    ExZip *z;
+    Arch *z;
 
     if (!g_z) {
         ex_dlg_avviso("Nessun archivio",
@@ -679,13 +817,13 @@ static ExZip *riapri_per_aggiungere(void)
                       "aggiungi.");
         return 0;
     }
-    ex_zip_chiudi(g_z);
+    a_chiudi(g_z);
     g_z = 0;
 
-    ex_zip_livello(g_livello);
-    z = ex_zip_riapri(g_perc);
+    a_livello(g_livello);
+    z = a_riapri(g_perc);
     if (!z) {
-        const char *e = ex_zip_errore();
+        const char *e = a_errore();
         ex_dlg_avviso("Non ci posso aggiungere",
                       e && e[0] ? e : "La libreria degli archivi di questo sistema "
                                       "e' di prima del 26 settembre 2026 e non sa "
@@ -696,12 +834,12 @@ static ExZip *riapri_per_aggiungere(void)
     return z;
 }
 
-static int costruisci_e_mostra(ExZip *z)
+static int costruisci_e_mostra(Arch *z)
 {
-    int ok = ex_zip_finisci(z);
+    int ok = a_finisci(z);
 
-    if (!ok) ex_dlg_avviso("L'archivio non si costruisce", ex_zip_errore());
-    ex_zip_chiudi(z);
+    if (!ok) ex_dlg_avviso("L'archivio non si costruisce", a_errore());
+    a_chiudi(z);
     apri_(g_perc, 1);
     return ok;
 }
@@ -709,7 +847,7 @@ static int costruisci_e_mostra(ExZip *z)
 static void aggiungi(void)
 {
     char   p[PERC_MAX];
-    ExZip *z;
+    Arch *z;
     int    ok;
 
     strcpy(p, "/");
@@ -717,8 +855,8 @@ static void aggiungi(void)
     if (!ex_dlg_apri(p, sizeof(p))) return;
     if (!(z = riapri_per_aggiungere())) return;
 
-    ok = ex_zip_aggiungi(z, p, nome_corto(p));
-    if (!ok) ex_dlg_avviso("Non l'ho aggiunto", ex_zip_errore());
+    ok = a_aggiungi(z, p, nome_corto(p));
+    if (!ok) ex_dlg_avviso("Non l'ho aggiunto", a_errore());
     if (costruisci_e_mostra(z) && ok)
         snprintf(g_avviso, sizeof(g_avviso), "aggiunto %s: archivio costruito", nome_corto(p));
     stato();
@@ -748,14 +886,14 @@ static void aggiungi_cartella(void)
     }
     if (!(z = riapri_per_aggiungere())) return;
 
-    n = ex_zip_aggiungi_albero(z, nome, nome_corto(nome), &saltati);
+    n = a_aggiungi_albero(z, nome, nome_corto(nome), &saltati);
     if (n == -2) ex_dlg_avviso("Non l'ho aggiunta",
                                "La libreria degli archivi e' di prima del 23 "
                                "settembre 2026 e non sa le cartelle.");
-    else if (n < 0) ex_dlg_avviso("Non l'ho aggiunta", ex_zip_errore());
+    else if (n < 0) ex_dlg_avviso("Non l'ho aggiunta", a_errore());
     else if (saltati) {
         char t[256];
-        snprintf(t, sizeof(t), "Aggiunti %d file; %s", n, ex_zip_errore());
+        snprintf(t, sizeof(t), "Aggiunti %d file; %s", n, a_errore());
         ex_dlg_avviso("Aggiunta a meta'", t);
     }
     if (costruisci_e_mostra(z) && n >= 0)
@@ -768,7 +906,7 @@ static void aggiungi_cartella(void)
  * every addition; asked by hand, it also proves the archive reopens. */
 static void costruisci(void)
 {
-    ExZip *z;
+    Arch *z;
 
     if (!g_z) { strcpy(g_avviso, "nessun archivio da costruire"); stato(); return; }
     if (!(z = riapri_per_aggiungere())) return;
@@ -844,7 +982,7 @@ static int estrai_una(unsigned int i, char *perche, unsigned int max)
     ExZipVoce v;
     char      perc[PERC_MAX];
 
-    if (!ex_zip_voce(g_z, i, &v)) return 0;
+    if (!a_voce(g_z, i, &v)) return 0;
 
     if (nome_pericoloso(v.nome)) {
         snprintf(perche, max, "%s: esce dalla cartella scelta", v.nome);
@@ -858,8 +996,8 @@ static int estrai_una(unsigned int i, char *perche, unsigned int max)
 
     cartelle_per(perc);
 
-    if (!ex_zip_estrai(g_z, i, perc)) {
-        snprintf(perche, max, "%s: %s", v.nome, ex_zip_errore());
+    if (!a_estrai(g_z, i, perc)) {
+        snprintf(perche, max, "%s: %s", v.nome, a_errore());
         return 0;
     }
     return 1;
@@ -891,7 +1029,7 @@ static void estrai_tutto(void)
     if (!g_z) { strcpy(g_avviso, "apri prima un archivio"); stato(); return; }
     if (!chiedi_dove()) return;
 
-    n = ex_zip_quante(g_z);
+    n = a_quante(g_z);
     primo[0] = '\0';
 
     for (i = 0; i < n; i++) {
@@ -921,16 +1059,18 @@ static void estrai_tutto(void)
 static void istruzioni(void)
 {
     ex_dlg_avviso("Istruzioni",
-        "File, Apri... mostra cosa c'e' dentro un archivio. Un clic\n"
+        "File, Apri... mostra cosa c'e' dentro un archivio: .zip,\n"
+        ".tar, .tar.gz o .tgz. Un clic\n"
         "sull'intestazione di una colonna ordina per quella (un altro\n"
         "clic rovescia); il bordo fra due intestazioni si trascina.\n\n"
         "Comandi, Estrai tutto in... sceglie (o crea) la cartella;\n"
         "Invio o doppio clic estraggono la riga scelta.\n\n"
         "File, Nuovo... crea un archivio vuoto; Comandi, Aggiungi\n"
         "file... o Aggiungi cartella... lo riempiono, e l'archivio si\n"
-        "costruisce da solo a ogni aggiunta.\n\n"
+        "costruisce da solo a ogni aggiunta. Un tar si riscrive\n"
+        "intero a ogni aggiunta: su uno grande ci vuole tempo.\n\n"
         "Opzioni: la compressione e l'estensione dei nuovi archivi,\n"
-        "salvate in " CONFIG_FILE ".");
+        "salvate nel profilo: $HOME/.exwin/config/archivi.cfg.");
 }
 
 static void informazioni(void)
@@ -938,8 +1078,9 @@ static void informazioni(void)
     char t[512];
 
     exinfo_testo(t, sizeof(t), "Archivi", VERSIONE_APP,
-                 "Apre e crea archivi ZIP. Il formato lo sa exzip.so, "
-                 "la stessa libreria che usa il comando `zip`.");
+                 "Apre e crea archivi ZIP, TAR e TAR.GZ. I formati li "
+                 "sanno exzip.so e extar, le stesse librerie dei comandi "
+                 "`zip` e `tar`.");
     ex_dlg_avviso("Informazioni su", t);
 }
 
@@ -948,7 +1089,7 @@ static void informazioni(void)
  * --------------------------------------------------------------------------- */
 static void esci(void)
 {
-    if (g_z) ex_zip_chiudi(g_z);
+    if (g_z) a_chiudi(g_z);
     ex_esci(0);
 }
 
@@ -1097,7 +1238,7 @@ int main(int argc, char **argv)
     ExMsg m;
 
     opzioni_leggi();
-    ex_zip_livello(g_livello);
+    a_livello(g_livello);
 
     g_f = ex_crea("finestra", "Archivi",
                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
@@ -1145,6 +1286,6 @@ int main(int argc, char **argv)
 
     while (ex_prendi_msg(&m)) ex_smista(&m);
 
-    if (g_z) ex_zip_chiudi(g_z);
+    if (g_z) a_chiudi(g_z);
     return 0;
 }

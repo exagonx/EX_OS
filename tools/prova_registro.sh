@@ -61,7 +61,9 @@ if not xs:
 x0, x1, y1 = min(xs), max(xs), max(ys)
 print("  [OK]  la finestra c'e': barra del titolo da x=%d a x=%d" % (x0, x1))
 # Il testo: pixel scuri nelle prime righe dell'area, sotto la barra.
-n = sum(1 for y in range(y1 + 6, y1 + 60) for x in range(x0 + 6, x1 - 6)
+# ! LONTANO DAI BORDI: il riquadro dell'area e' scuro, e contato come testo
+# faceva dire «c'e' il registro» anche a una finestra vuota (27 settembre).
+n = sum(1 for y in range(y1 + 10, y1 + 60) for x in range(x0 + 16, x1 - 30)
         if max(px[(y * w + x) * 3:(y * w + x) * 3 + 3]) < 80)
 print("        pixel di testo nelle prime righe: %d" % n)
 if n > 200:

@@ -706,13 +706,35 @@ archivi ZIP
   zip -l a.zip                     elenca quello che c'e' dentro
   zip -x a.zip /disk/fuori         estrae tutto li' dentro
 
-Comprime in «store», cioe' senza comprimere: un archivio cosi' lo aprono
-tutti. In lettura capisce anche «deflate», che e' il metodo di quasi tutti
-gli archivi veri. Un nome che esce dalla destinazione — «../../boot/...» —
-non viene estratto, e lo dice.
+Comprime in "deflate", come tutti; un file che compresso crescerebbe entra
+com'e' ("store"). Un nome che esce dalla destinazione - "../../boot/..." -
+non viene estratto, e lo dice. In grafica c'e' Archivi.
 
 Sta sul CD e sui sistemi installati, non sul dischetto: gli serve la
 libreria /exwin/lib/exzip.so.
+
+[tar gzip gunzip]
+archivi .tar, .tar.gz e .gz
+
+  tar czf a.tgz cartella           crea (z = compresso con gzip)
+  tar tf a.tgz                     elenca
+  tar xf a.tgz -C /disk/fuori      estrae (il gzip lo riconosce da se')
+  gzip file / gunzip file.gz
+
+Sta sul CD e sui sistemi installati. In grafica li apre e li crea anche
+Archivi: il formato e' lo stesso codice (lib/extar).
+
+[runbas]
+esegue un programma QBASIC
+
+  runbas prog.bas                  lo esegue
+  gfedit prog.bas                  e dentro l'editor F5 lo esegue
+
+  INPUT "Nome"; n$                 chiede, con "? " dopo la domanda
+  LINE INPUT "Frase: "; f$         la riga intera, virgole comprese
+  GET "Premi un tasto: "; k$       un tasto solo, senza Invio
+
+Sta sul CD e sui sistemi installati.
 
 [nettest tcptest]
 prove dello stack di rete

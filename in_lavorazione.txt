@@ -99,6 +99,18 @@ e non cambia mai. I rimandi si scrivono con quella, non col numero di riga.
     che si scrive da oggi; il resto si legge ancora benissimo.
 
 
+! 0b. SORGENTI E STRUMENTI RESTANO IN QUESTA DIRECTORY, ANCHE SE GIT LI
+  IGNORA (27 settembre 2026, detto da chi ci lavora). La toolchain incrociata
+  e le costruzioni di terzi stanno in cross_build/, non nella home: la cartella
+  del progetto viaggia fra le macchine, la home no. Il Makefile (`dentro`) e
+  gli script (tools/toolchain.sh) guardano prima li'. Vedi SVILUPPO.md.
+
+! 0c. DUE PROFILI SULLO STESSO ALBERO SI PARLANO IN scambio.txt (27 settembre
+  2026). Prima di modificare un file lo si cerca li': se l'altro profilo l'ha
+  preso (PRENDO) e non l'ha lasciato, non si tocca — si scrive CHIEDO e si
+  aspetta il suo VIA LIBERA. Si scrive solo in coda. Il file e' ignorato da
+  git; le regole complete sono in testa al file stesso.
+
 ! 1. IL TEMPO SI SPENDE, IL CONTESTO NO. Questa macchina e' dedicata al 100% a
   questo lavoro: la sua CPU non serve a nient'altro e non costa niente. La
   risorsa scarsa e' il CONTESTO — quel che entra ed esce dalla finestra di
@@ -214,24 +226,30 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @RUST-0          un programma no_std che gira, compilato da Linux
   1  @TASTI-SISTEMA   ! Ctrl+Alt+Canc FATTO (grafica e testo); resta CTRL+C
   1  @GRAFICA-MODALE  FATTO: riavvio e spegnimento con la grafica accesa
-  1  @FILEMGR-OPS     fatto e provato in QEMU: restano Rinomina e l'avanzamento
+  1  @FILEMGR-OPS     FATTO anche Rinomina (F2), provato: resta l'avanzamento
   1  @GFEDIT-SEL      FATTO e provato sul ferro: resta da guardare il toolkit
-  1  @NETUPDATE-PATH  gli strumenti si installano dove il PATH non guarda
-  1  @RUNBAS          eseguire un .bas: il comando runbas, e F5 dentro gfedit
+  1  @NETUPDATE-PATH  FATTO: /boot/percorsi.txt; la shell provata, netupdate da provare installato
+  1  @RUNBAS          FATTO e provato (4/4): anche i prompt di INPUT, LINE INPUT, GET; resta l'interprete severo
   1  @FBC-110         il CD ha FreeBASIC 1.07; l'1.10 toglie l'avviso del linker
   1  @FILEMGR-MKDIR   FATTO e provato, pulsante «Crea» compreso: da provare sul ferro
   1  @EXIDE-SFOGLIA   FATTO e provato: resta da provarlo su una macchina VERA
   1  @ZIP             FATTO tutto e provato, deflate compreso: resta l'aggiunta
   1  @TAR-GZ          FATTO e provato in QEMU, e nell'ISO: resta il ferro
   1  @FLOPPY-PIENO    un "Disk full" sul floppy visto una volta: causa non trovata
-  1  @NETUPD-GIRA     la barra che gira mentre scarica: ferma = qualcosa non va
-  1  @EDIT-CERCA      cerca e sostituisci mancano nell'editor di ExWin
+  1  @NETUPD-GIRA     SCRITTO (0.023): da vedere girare su un sistema installato
+  1  @EDIT-CERCA      FATTO e provato in QEMU (2 su 2): Cerca, F3, Shift+F3, Sostituisci
+  1  @ARCHIVI-TAR     FATTO e provato: lib/extar, Archivi apre e crea .tar/.tar.gz
+  1  @CALCTOR         FATTO e provato (8/8): la calcolatrice, tre modalita', e il toolkit nuovo
+  1  @PM-SFONDO       FATTO tutto, disposizione compresa (angolo centro allarga ripeti)
+  1  @PM-DESKTOP      FATTO e provato in QEMU (5/5 con PM-UNITA): icone non spostabili
+  1  @PM-UNITA        FATTO e provato: si accorge da solo dei mount (ogni 2 s)
+  3  @RISPARMIO-ENERGIA hlt c'e' gia'; PowerNow!, ACPI, schermo e disco a riposo: futuro
   1  @AVVIO-LOGIN     FATTO e provato in QEMU: resta la macchina vera
   1  @ICONE           FATTE: toolkit, menu, exide e file manager. Mancano i disegni
   1  @EXIDE-ICONE     FATTO tutto e provato: mancano solo i disegni delle icone
   1  @PAINT           ! un Paint Brush per ExWin: BMP, JPG, GIF, PNG, TIFF
-  1  @EXWIN-LOG       la finestra c'e' (una schermata); resta l'anello di N righe
-  1  @ICONE-APP       i disegni _64/_128 ci sono e il menu li usa: mancano quattro
+  1  @EXWIN-LOG       FATTO l'anello (32 KB, ora e pid); resta la pipe per i figli di pm
+  1  @ICONE-APP       i disegni _64/_128 ci sono; archivi aggiunta il 27 settembre (dal PNG)
   1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
   1  @EXBROWSER-CERT  FATTO: catena, CA aggiunte, AES-GCM, P-256, TLS 1.2
   1  @EDIT-RTF        la modalita' RTF dell'editor: prima il modello del documento
@@ -243,7 +261,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @EXBROWSER-DOWNLOAD FATTO e provato: la finestra Download, nel toolkit
   1  @ARCHIVI-VISTA   FATTO e provato in QEMU: tutti e otto i punti
   1  @EXBROWSER-1024  FATTO e provato in QEMU: resta cosa ha visto sul ferro per gcc
-  1  @EXIDE-NOMI      radio rotondo, «checkbox», «casella testo»
+  1  @EXIDE-NOMI      FATTO: nomi nel pannello (fotografati) e nel manuale, radio rotondo
+  1  @EXBROWSER-HTML5 ! Wikipedia impaginata male, «Cerca» non va, scroll delle select, HTML5, CSS
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -1891,6 +1910,16 @@ QUEL CHE MANCA, IN ORDINE:
 ! @NETUPD-GIRA UNA BARRA CHE GIRA MENTRE SCARICA. (chiesto il 22 settembre
   2026)
 
+  SCRITTO IL 27 SETTEMBRE 2026 (netupdate 0.023): gira() in posa_verso, un
+  passo ogni 16 KB ARRIVATI — non a orologio — con «\r» e il carattere, due
+  byte per passo e nessun a capo; gira_fine() la cancella quando lo
+  scaricamento finisce. Con -auto (g_zitto) tace.
+  ! NON E' PROVATO IN QUEMU, e il perche' e' scritto: dal CD /boot e' in sola
+    lettura, e netupdate.cnf ha un percorso fisso. Farlo cambiare da una
+    variabile d'ambiente e' stato scartato: netupdate gira anche da root, e
+    una variabile che sposta il server e' una porta per aggiornamenti falsi.
+    Si vede alla prossima `netupdate -install` su un sistema installato.
+
   Chiesto: che netupdate, mentre scarica, faccia girare | / - \ davanti alla
   riga. Chi guarda vede che le cose procedono; se la barra si ferma, qualcosa
   non sta andando.
@@ -2689,6 +2718,22 @@ QUEL CHE MANCA, IN ORDINE:
 
 ! @NETUPDATE-PATH GLI STRUMENTI FINISCONO DOVE IL PATH NON GUARDA.
   (chiesto il 21 settembre 2026)
+
+  FATTO IL 27 SETTEMBRE 2026, la prima strada qui sotto:
+    - /boot/percorsi.txt, una directory per riga. La shell (sh 0.003) le
+      aggiunge IN CODA al PATH all'avvio, se esistono e se non ci sono
+      gia' (in coda: un programma installato non nasconde un comando di
+      sistema). Provato dal floppy: «/boot», «/non/esiste», «/bin» ->
+      PATH=...:/cdrom/bin:/boot, niente doppioni, niente fantasmi;
+    - netupdate, dopo un -install riuscito e dopo -permessi, ci AGGIUNGE
+      /exos/bin, /exos/i386-exos/bin e /exwin/bin se esistono e mancano.
+      Mai riscritto. Da provare su un sistema installato.
+  ! IL kernel.cfg DEL FLOPPY HA GIA' /exos/bin E /cdrom/exos/bin NEL PATH:
+    avviato cosi' gcc si trovava gia'. Il file serve dove kernel.cfg e' di
+    prima, e per le directory di pacchetti che arriveranno.
+  ! LA SHELL E' SUL DISCHETTO E NON SI COLLEGA ALLA LIBC: il codice nuovo usa
+    sh_open e compagni, e «una directory che si apre esiste» al posto di
+    stat().
 
   Riferito da chi lo usa: installati gcc, cpp e fbc con netupdate, i comandi
   non si trovano. Bisogna sapere il percorso e scriverlo a mano ogni volta.
@@ -3529,10 +3574,11 @@ sono arrivate, non quello in cui vanno fatte.
         l'Invio vuol dire il pulsante che ha il fuoco, e il fuoco va al «no».
 
   RESTA:
-    - ! RINOMINA. Spostare nella stessa directory con un altro nome gia' e' una
-      rinomina, ma passa da un dialogo di salvataggio: per cambiare due lettere
-      e' la strada lunga. Una voce «Rinomina» che chieda il solo nome e'
-      mezz'ora, ed e' l'unica delle quattro operazioni che manca.
+    - RINOMINA: FATTA IL 27 SETTEMBRE 2026 (filemgr 0.007). Comandi >
+      Rinomina, o F2 con il fuoco sull'elenco: chiede il solo nome, col
+      vecchio gia' scritto. Agisce sulla riga del cursore, non sui segnati (un
+      nome nuovo e' di una cosa sola); rifiuta un «/» (per quello c'e' Sposta)
+      e un nome che esiste gia'. Provata: tools/prova_filemgr.sh, parte 4.
     - ! NON SI VEDE A CHE PUNTO E'. Su una directory grossa la finestra resta
       ferma: il ciclo dei messaggi e' dentro la ricorsione. Per farlo serve uno
       stato del lavoro in corso, e quello si' che e' un lavoro grosso.
@@ -3679,10 +3725,24 @@ sono arrivate, non quello in cui vanno fatte.
   ! NON E' MODALE, anche se la richiesta lo diceva: su EX-OS un modale blocca
     tutte le finestre del PROCESSO, e la barra delle applicazioni e' di pm.
 
-  RESTA: il registro e' UNA SCHERMATA (le celle della console, 48 righe al
-  massimo): quel che scorre via si perde. L'anello di N righe con l'ora e il
-  pid — il gestore qui sopra — e' il passo dopo, e con lui la pipe al posto
-  della console per i figli di pm.
+  L'ANELLO C'E', DAL 27 SETTEMBRE 2026 (kernel 0.220, pm 0.010): tutto cio'
+  che si scrive sulla console della grafica si copia anche in un anello di
+  32 KB nel kernel (vga.c, reg_metti), circa quattrocento righe, ognuna con
+  «hh:mm:ss  pid» davanti; le sequenze ESC si buttano. SYS_CONSOLE_REGISTRO
+  (215), console_registro() nella libc, stesse regole di SYS_CONSOLE_TESTO.
+  La finestra lo legge, e su un kernel vecchio torna alla schermata.
+  ! LE RIGHE SCRITTE PRIMA DI console_grafica(1) STANNO SULLO SCHERMO, NON
+    NELL'ANELLO: wserver stampa «servizio attivo» e solo dopo prende la
+    console. Al momento della presa il kernel ci copia le celle, dopo una
+    riga «--- la grafica si accende ---» (vga_registro_semina). Visto con la
+    prima prova: finestra vuota.
+  ! E LA PROVA LO DICEVA PIENO: contava come testo il bordo scuro dell'area.
+    Adesso guarda lontano dai bordi (tools/prova_registro.sh).
+  ! L'ORA E' QUELLA DELL'OROLOGIO CMOS: se e' in UTC, e la barra mostra
+    l'ora locale, le due non coincidono.
+  RESTA: la pipe al posto della console per i figli di pm (non serve piu' a
+  non perdere righe, servirebbe a separarle per programma); nessuna prova
+  ancora di un registro piu' lungo di una schermata.
 
   (Com'era prima:) il testo c'e' gia', nelle celle della
   console della grafica, ma nessuno lo puo' leggere. Serve un modo di
@@ -4021,6 +4081,33 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
 ! @EDIT-CERCA CERCA E SOSTITUISCI NELL'EDITOR DI ExWin. (chiesto il 22
   settembre 2026)
 
+  FATTO E PROVATO IL 27 SETTEMBRE 2026, mattina: tools/prova_edit_cerca.sh,
+  2 su 2 («Tutte» su due righe; «Una» e poi F3, la terza intatta). La prova
+  aveva ragione a fallire, per tre motivi veri e non per se' stessa:
+    - «Una» sostituiva tutta la riga: il segnale «solo quella» era c = -2, e
+      c < 0 voleva dire «tutte»;
+    - ex_area_cursore() conta DA UNO (serve alla riga di stato), mentre
+      ex_area_vai() ed ex_area_seleziona() contano da zero: ogni ricerca
+      partiva una riga sotto. Scritto in exwin.h;
+    - nel toolkit Shift+Tab andava AVANTI come Tab, e il pulsante col fuoco
+      non si distingueva dagli altri. Adesso Shift+Tab torna indietro
+      (fuoco_indietro) e il pulsante col fuoco ha un riquadro blu dentro.
+  (Quel che segue e' com'era la sera del 26.)
+    - exwin/bin/edit/edit.c 0.003: Modifica > Cerca (Ctrl+F), Trova
+      successivo (F3), Trova precedente (Shift+F3), Sostituisci (Ctrl+H) con
+      Tutte / Una / Annulla; dopo «Una», F3 sostituisce la successiva;
+    - lib/exwin: ex_area_seleziona() (nuova, facoltativa nello stub) e
+      MENU_VOCI_MAX da 12 a 16 (il menu Modifica ne ha 13);
+    - tools/prova_edit_cerca.sh: FALLISCE, ma per la PROVA: sceglie i
+      pulsanti con Shift+Tab, e le fotografie (26 sera) mostrano che dopo
+      Shift+Tab il dialogo non cambia a vista — il fuoco sui pulsanti non si
+      vede. Col primo caso («Tutte», due Shift+Tab) il file resta com'era;
+      col secondo («Una», uno Shift+Tab) le «a» diventano TUTTE «b». Quindi
+      un Shift+Tab porta su «Tutte» e due su qualcosa che non sostituisce:
+      il giro del fuoco non e' quello che la prova crede. DOMANI: capire
+      l'ordine del Tab nel dialogo di ex_dlg_scegli (e se Shift+Tab arriva
+      come tale da QEMU), poi correggere la prova — o scegliere col mouse.
+
   Chiesto, e sono due comandi che condividono quasi tutto:
     - «Cerca»: una modale che chiede la stringa, e poi si va alla successiva e
       alla precedente restando nella stessa ricerca;
@@ -4078,6 +4165,12 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
     8. le opzioni si salvano in /exwin/config/archivi.cfg, e /exwin/config e'
        la directory delle configurazioni di TUTTI i programmi di ExWin.
 
+  ! 27 SETTEMBRE 2026: IL PUNTO 8 E' CAMBIATO, e l'ha deciso chi l'aveva
+    chiesto. Le opzioni di Archivi sono scelte di una persona, quindi stanno
+    nel suo PROFILO: $HOME/.exwin/config/archivi.cfg (archivi 0.005, provato
+    con HOME su un disco). La regola intera e' in SVILUPPO.md: scelte
+    dell'utente nel profilo, programmi di sistema che partono prima del login
+    in /boot o /cfg. Quel che segue e' com'era il 26.
   ! IL PUNTO 8 CAMBIA UNA REGOLA DELLA CASA, e l'ha deciso chi l'ha chiesto.
     SVILUPPO.md diceva «i dati di un programma stanno in $HOME/.app/<nome>/»;
     per le CONFIGURAZIONI dei programmi di ExWin adesso il posto e'
@@ -4119,6 +4212,211 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
 
 ! @EXIDE-NOMI I CONTROLLI DI exide: FORMA E NOMI. (chiesto il 26 settembre
   2026, a comodo)
+
+  FATTO IL 26 SETTEMBRE 2026, sera (exide 0.017): il radio del toolkit era
+  gia' rotondo — era l'ANTEPRIMA sulla maschera di exide a disegnarlo
+  quadrato come la spunta; nel pannello «Checkbox» e «Casella testo», e i
+  controlli nuovi si chiamano Checkbox1, CasellaTesto1. I progetti salvano
+  la classe, quindi i vecchi si aprono uguali. Manuale (exide.html)
+  aggiornato. Fotografato il 27 settembre: nel pannello «Casella testo» e
+  «Checkbox».
+
+! @ARCHIVI-TAR «Archivi» APRE E CREA ANCHE I .tar.gz. (chiesto il 27 settembre
+  2026, a voce)
+
+  La riga di comando c'e' gia': /bin/tar, gzip e gunzip dal 25 settembre
+  (@TAR-GZ). Per la finestra, il codice di tar va spostato da bin/tar/tar.c
+  in una libreria, come si e' fatto per lo zip con lib/exzip: la finestra e
+  il comando devono chiamare le stesse funzioni, o un giorno non saranno
+  d'accordo su cosa sia un tar. Poi Archivi sceglie dal nome (.zip; .tar,
+  .tar.gz, .tgz) e mostra la stessa tabella.
+
+  ! L'AGGIUNTA A UN .tar.gz NON E' COME QUELLA DELLO ZIP: un gzip non si
+    riapre in coda, si riscrive intero. Per archivi grandi va detto, o
+    ogni file aggiunto costa quanto l'archivio.
+
+  FATTO IL 27 SETTEMBRE 2026 (archivi 0.006, tar 0.003). Il formato e' in
+  lib/extar (extar.h, extar.c), con la forma di exzip: apri/quante/voce/
+  estrai, crea/riapri/aggiungi/finisci. ! NON E' UNA .so, e di proposito:
+  /bin/tar e' statico per stare sul dischetto; il sorgente e' uno, le copie
+  compilate due (con inflate.c e deflate.c). Archivi sceglie dal nome (.zip;
+  .tar, .tar.gz, .tgz) o, se il nome non dice niente, provando; la colonna
+  Metodo dice tar o tar.gz. Aggiungere RISCRIVE l'archivio accanto
+  (EXTARTMP.TMP, 8.3 per FAT) e lo mette al posto del vecchio solo quando e'
+  intero: lo dicono le Istruzioni. I messaggi di tar sono ora in italiano,
+  come quelli di zip e di ls (prova_tar.sh aggiornata). Scritta anche la
+  data vera nelle intestazioni (prima era zero).
+  Provato: tools/prova_tar.sh 11 su 11; tools/prova_archivi.sh 7 su 7, con
+  le nuove parti 6 (un .tar.gz di Python estratto dalla finestra) e 7 (uno
+  fatto dalla finestra con due aggiunte, letto da tarfile).
+
+! @CALCTOR LA CALCOLATRICE DI ExWin. (chiesta e fatta il 27 settembre 2026)
+
+  /exwin/bin/calctor (0.001), con le icone calctor_64/_128 gia' disegnate.
+  Menu File (Nuovo = azzera la cronologia, Salva = la scrive in .txt, Esci),
+  Opzioni (Modalita, una tendina LATERALE), Info (Informazioni su, Istruzioni:
+  tutt'e due modali). Sotto il menu i tre radio Normale / Scientifica /
+  Programmatore; sotto, il display a quattro righe (tre di cronologia e quella
+  del calcolo); la casella Cronologia apre una finestra a parte, spostabile,
+  col rotolo intero come una calcolatrice da ufficio con la stampante.
+  Programmatore: interi a 32 bit, BIN / OTT / DEC / ESA in un riquadro loro;
+  cambiando base il numero (e l'espressione in corso) si converte, e le cifre
+  che nella base non esistono si SPENGONO.
+  Deciso: si scrive un'ESPRESSIONE con le precedenze (2+3*4 = 14) e le
+  parentesi; le funzioni agiscono subito sul numero; il % dopo + o - e' quello
+  da ufficio (200 + 10 % = 220). Le scelte stanno nel profilo,
+  $HOME/.exwin/config/calctor.cfg.
+
+  NEL TOOLKIT, perche' mancava (chiesto: «aggiungi al toolkit le novita'»):
+    - le TENDINE LATERALI dei menu: ex_menu_voce(mb, "Opzioni/Modalita", ...);
+    - ex_abilita() ed EX_SPENTO: un controllo grigio che non si preme;
+    - ex_versione(): la versione di exwin.so, contata da oggi (0.003);
+    - OGGETTI_MAX da 64 a 192: con 64 i controlli oltre il sessantaquattresimo
+      NON NASCEVANO, in silenzio — anche quelli dei dialoghi aperti dopo;
+    - aprendo una tendina l'applicazione riceve EXM_DISEGNA: prima il suo
+      disegno (il display) spariva sotto il menu;
+    - exdlg: ex_dlg_testo(), un testo lungo che scorre in una finestra modale
+      (l'avviso si ferma a dodici righe);
+    - exinfo: «Informazioni su» dice anche il sito, la RAM libera del sistema
+      e la versione di ExWin — per TUTTI i programmi;
+    - lib/exmat: le funzioni di math.h con l'x87 (era bin/runbas/runbas_mat.c,
+      completata: asin, acos, atan2, log10, log2, ceil, fmod, iperboliche).
+  Provato: tools/prova_calctor.sh 8 su 8 (il verdetto e' il file salvato); a
+  vista la tendina laterale, la base ESA, la cronologia, i due dialoghi.
+  ! La Makefile non metteva calctor fra le dipendenze dell'ISO: un calctor
+    rifatto restava fuori dal CD. Aggiunto a EXWIN_OUT.
+  RESTA: la finestra della cronologia nasce a destra dello schermo, non
+  attaccata alla calcolatrice (il toolkit non dice dove sta una finestra); e
+  mentre un dialogo e' aperto il display resta bianco sotto (torna alla
+  chiusura).
+
+! @PM-SFONDO LO SFONDO DELLA SCRIVANIA SI SCEGLIE DALLE IMPOSTAZIONI.
+  (chiesto il 27 settembre 2026)
+
+  FATTO IL 27 SETTEMBRE 2026 (pm 0.007): Impostazioni > Sfondo, «Scegli...» e
+  «Nessuno». Vale subito (la scrivania si ridisegna) e si salva NEL PROFILO:
+  $HOME/.exwin/config/pm.cfg — /root/... per root, /home/<utente>/... per un
+  utente (chiesto: una scrivania per persona). Senza login HOME e' «/», e
+  allora per root vale /root. All'avvio si rilegge, e `pm -s` vince.
+  Provato con HOME=/disk/casa: il file si scrive li', e al riavvio della
+  scrivania lo sfondo torna da solo. Un'immagine
+  che non si legge non si tiene: torna quella di prima, e lo dice. Provato
+  dal CD: l'immagine c'e', e arriva l'avviso che pm.cfg non si scrive.
+  FATTO ANCHE LA DISPOSIZIONE (27 settembre 2026, pm 0.009): quattro pulsanti
+  in Impostazioni, Angolo / Centro / Allarga / Ripeti, salvati in pm.cfg come
+  «disposizione = centro». Nel toolkit c'e' ex_immagine_disponi() (exwin.h),
+  che compone il riquadro in memoria e lo posa una volta. Provato in QEMU con
+  pm.cfg scritto sul disco di prova: centro, piastrelle e stirata giuste.
+  ! Allarga STIRA senza badare alle proporzioni, e l'ingrandimento e' «il piu'
+    vicino» (a quadretti su un'immagine piccola): per una foto va bene.
+  RESTA: le icone della scrivania si fondono sul colore di fondo, non
+  sull'immagine: su uno sfondo vivace hanno un quadrato blu attorno. Serve
+  leggere i pixel sotto (o che il server sappia fondere l'alfa).
+  (Com'era:) oggi lo sfondo si da' solo sulla riga di comando (pm -s FILE). Chiesto: nelle
+  Impostazioni del program manager, la scelta dell'immagine. Si salva in
+  /exwin/config/pm.cfg (la regola delle configurazioni di ExWin, @ARCHIVI-VISTA)
+  e vale dal prossimo avvio — e subito, ridisegnando la scrivania.
+
+! @PM-DESKTOP LA CARTELLA «desktop» DEL PROFILO, SULLA SCRIVANIA.
+  (chiesto il 27 settembre 2026)
+
+  Chiesto: il contenuto di $HOME/desktop — /home/<utente>/desktop, per root
+  /root/desktop — mostrato sulla scrivania: file e collegamenti ad
+  applicazioni, ognuno con la sua icona; doppio clic apre.
+  ! DA DECIDERE PRIMA DI SCRIVERE: che cos'e' un «collegamento» su EX-OS (non
+    ci sono link simbolici su FAT): un file piccolo, per esempio .lnk di testo
+    con «percorso = /exwin/bin/edit»; e dove la scrivania mette le icone
+    (griglia a colonne, da sinistra, come Windows) e se si possono spostare.
+  ! LA SCRIVANIA E' GIA' UNA FINESTRA DI pm (EX_SFONDO): le icone vanno
+    disegnate li' sopra l'immagine, e il clic va gia' a pm.
+
+  FATTO IL 27 SETTEMBRE 2026 (pm 0.008), insieme a @PM-UNITA. Deciso:
+    - $HOME/desktop (senza login /root/desktop), creata se manca. I file
+      che cominciano col punto non si mostrano;
+    - un COLLEGAMENTO e' un file .lnk di testo, righe «chiave = valore»:
+      «percorso = /exwin/bin/edit» (obbligatoria), «nome = Editor» (la
+      didascalia), «icona = FILE.ico» (se manca, quella del programma in
+      applicazioni.txt);
+    - le icone stanno in COLONNE DA SINISTRA, dall'alto, celle di 76 pixel;
+      le unita' in una colonna A DESTRA. Non si spostano (per ora);
+    - un clic seleziona, il doppio clic apre: .lnk -> il programma; una
+      cartella -> il file manager dentro; un file dall'estensione: testo
+      (txt md cfg c h bas sh log) -> editor, zip gz tgz tar -> Archivi,
+      html e immagini -> EXBrowser, il resto -> il file manager.
+  Provato: tools/prova_desktop.sh (5 su 5).
+  RESTA: spostare le icone col trascinamento (e ricordare dove, in pm.cfg);
+  un menu col tasto destro (Apri, Elimina, Nuovo collegamento).
+
+! @PM-UNITA LE UNITA' INSERITE SI VEDONO SULLA SCRIVANIA. (chiesto il 27
+  settembre 2026)
+
+  Chiesto: pm avvia da se' un servizio che si accorge di CD, chiavette USB,
+  memorie esterne, floppy e altre unita' montate; ognuna compare sulla
+  scrivania, e il doppio clic apre il file manager DENTRO quella unita'.
+  ! C'E' GIA' MEZZO LAVORO: bin/automount guarda i dispositivi e monta le
+    chiavette in /USB (@USB-DISCO). Quel che manca e' che dica a qualcuno cosa
+    ha montato — un messaggio a pm, o un elenco che pm rilegge — e il file
+    manager che si apre su un percorso dato (filemgr PERCORSO).
+
+  FATTO IL 27 SETTEMBRE 2026 (pm 0.008): nessun servizio in piu'. pm rilegge
+  mountinfo() ogni DESK_GIRO (2 s) e ne fa una firma; se cambia, ridisegna.
+  Cosi' vale per QUALUNQUE mount — automount, mount a mano, il CD — senza che
+  chi monta debba sapere di pm. Si mostra tutto tranne «/»; il tipo viene dal
+  dispositivo (cd/atapi -> CD, fd -> floppy, usb -> chiavetta, il resto
+  disco). Il doppio clic apre «filemgr PUNTO-DI-MOUNT». Provato: /disk montato
+  a ExWin acceso compare da solo (tools/prova_desktop.sh, parte 1).
+  RESTA: «Espelli» / smonta dal tasto destro.
+
+@RISPARMIO-ENERGIA IL RISPARMIO ENERGETICO (chiesto il 27 settembre 2026, per
+  il futuro se costa molto — e costa)
+
+  CHE COSA C'E' GIA': quando non c'e' niente da fare lo scheduler esegue hlt
+  (kernel/sched/sched.c), e la CPU dorme fino al prossimo interrupt. E' il
+  grosso del risparmio di un sistema fermo, e non costa niente.
+  CHE COSA MANCA, dal meno al piu' caro:
+    - lo schermo a riposo: spegnere il segnale (DPMS, via VBE) dopo N minuti
+      senza tasti ne' mouse — poco lavoro, il risparmio piu' visibile su un
+      portatile;
+    - il disco a riposo: il comando ATA STANDBY dopo N minuti — poco;
+    - la frequenza della CPU: PowerNow! sull'AMD dell'Acer (i registri MSR
+      del K8) — medio, ed e' specifico di quella CPU;
+    - ACPI (stati C profondi, coperchio, batteria): serve un interprete AML,
+      cioe' migliaia di righe. E' il pezzo caro, e il motivo per cui questo
+      compito sta nel futuro.
+
+! @EXBROWSER-SELECT LE <select> NON MOSTRAVANO LE OPZIONI. (segnalato il 27
+  settembre 2026, urgente) — FATTO LO STESSO GIORNO (exbrowser 0.007).
+
+  La causa: le opzioni di tutte le scelte stanno in un elenco comune
+  (g_opz, OPZ_MAX) che NON si azzerava fra un'impaginazione e l'altra — era
+  scritto nel codice come «perdita conosciuta». Ogni reimpaginare (immagini
+  arrivate, script aggiunti dopo, iframe) le riaccodava, e dopo qualche giro
+  l'elenco era pieno: le scelte restavano con ZERO opzioni e la tendina non
+  si apriva. Adesso si azzera in est_azzera(), accanto ai controlli; la riga
+  scelta dall'utente si tiene lo stesso (e' una posizione nella SUA scelta).
+  In piu': le <option> dentro un <optgroup> si leggono (prima no), e
+  OPZ_MAX e' 256. Provato in QEMU: una scelta dopo una da 200 voci si apre
+  con le sue, e una con due <optgroup> mostra tutte e tre le opzioni.
+  RESTA: una scelta con piu' di 256 opzioni in tutta la pagina si tronca.
+
+! @EXBROWSER-HTML5 EXBrowser: WIKIPEDIA, «CERCA», LO SCORRIMENTO, HTML5 E CSS.
+  (chiesto il 26 settembre 2026, sera, a voce, urgente)
+
+  Chiesto:
+    1. Wikipedia non si impagina correttamente;
+    2. la ricerca non si fa: il pulsante «Cerca» non funziona;
+    3. manca lo scorrimento nelle <select> e «in molte funzioni html»;
+    4. alcuni siti vogliono HTML5, e insieme il CSS avanzato.
+
+  ! PRIMA SI MISURA, come dice diario_browser.txt. Per il 2: QUALE «Cerca» —
+    la casella della barra (motore duckduckgo, provato il 26 in QEMU fino
+    alla pagina di Wikipedia) o un pulsante DENTRO una pagina (un <form>
+    con <button> o <input type=submit>)? Per l'1: una pagina precisa e una
+    fotografia. Il 3 e' anche del toolkit: la tendina di una <select> e' un
+    elenco senza barra. Il 4 e' il lavoro piu' grande, e si spezza sito per
+    sito: quale elemento HTML5 manca (section, nav, details, dialog...) e
+    quale proprieta' CSS (flex, grid, var(), calc(), @media — vedi anche
+    @NAV-UNITA e @NAV-BORDER, che ne sono gia' un pezzo).
 
   Chiesto:
     - il pulsante RADIO dev'essere ROTONDO;
@@ -4391,6 +4689,25 @@ FreeBASIC di terzi che sta sul CD degli strumenti.
 
 ! @RUNBAS ESEGUIRE UN .bas: IL COMANDO runbas, E F5 DENTRO gfedit.
 
+  FATTO IL 27 SETTEMBRE 2026 (tools/prova_runbas.sh, 3 su 3):
+    - bin/runbas: l'interprete gfbasic compilato DENTRO, niente .so; i
+      mutex finti in bin/runbas/include/pthread.h (un filo solo) e le otto
+      funzioni di math.h che la libc non ha, con l'x87 (runbas_mat.c:
+      provate sull'host contro la libm di Linux, scarto 9e-16) — la libm
+      vera sta nella toolchain incrociata, che questa macchina non ha;
+    - strtok_r in lib/libc (mancava: il compilatore la supponeva int);
+    - gfedit 0.002: F5 e Opzioni > Esegui (.bas) salvano, rimettono la
+      console in cotto, lanciano runbas, aspettano Invio e riprendono lo
+      schermo. Se runbas non c'e' lo dice, e l'editor resta un editor.
+  VISTO STRADA FACENDO, APERTO:
+    - gfbasic e' PERMISSIVO: una stringa non chiusa, una funzione che non
+      esiste, «x = = 3» passano muti, 1/0 da' 0. Solo un GOTO senza
+      etichetta si dice. Un QBASIC vero li direbbe: e' un lavoro
+      dell'interprete, non di runbas;
+    - davanti ai numeri positivi non mette lo spazio che mette il QBASIC
+      («somma55», non «somma 55»);
+    - la shell di EX-OS non conosce $? (lo stampa com'e').
+
   Chiesto:
     - `runbas mioprog.bas` — un comando che esegue un sorgente scritto per
       quella libreria;
@@ -4417,6 +4734,20 @@ FreeBASIC di terzi che sta sul CD degli strumenti.
   ! OGGI gfbasic/ NON E' ANCORA IN GIT (tre file, 76 KB, non tracciati). Chi
     riprende questo compito guardi prima se ci sono ancora: una directory non
     tracciata la porta via un `git clean -xdf` senza chiedere niente.
+
+  I PROMPT (segnalato e fatto il 27 settembre 2026, runbas 0.002): INPUT,
+  LINE INPUT e GET non mostravano la domanda. Il prompt si scriveva in stdout
+  SENZA a capo e senza fflush, e restava nel buffer mentre il programma
+  aspettava la risposta. Adesso ogni lettura fa prima fflush (anche un
+  PRINT "...";  messo prima si vede). LINE INPUT e GET non c'erano:
+    - INPUT come QBASIC: «"x"; a» da' «x? », «"x", a» niente punto di
+      domanda, senza prompt «? »; piu' variabili separate da virgole;
+    - LINE INPUT ["prompt";] v$ : la riga intera, virgole comprese;
+    - GET ["prompt";] v : UN tasto senza Invio (il GET dei BASIC classici:
+      quello di QBASIC e' per i file). ! Il TTY di EX-OS consegna solo righe
+      e tty_raw() riguarda l'uscita: il tasto si chiede al DRIVER della
+      tastiera via IPC, come fa gfedit (bin/runbas/runbas_tasto.c).
+  Provato: tools/prova_runbas.sh, parte 4.
 
 ! @FBC-110 IL CD HA IL FreeBASIC 1.07, E IL LINKER SI LAMENTA A OGNI
   COMPILAZIONE.

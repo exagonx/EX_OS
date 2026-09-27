@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/make-exos/prepara-make.sh
 # EX-OS — Extensible Operating System
@@ -77,8 +78,8 @@ set -e
 
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
 SORGENTI="${1:-$RADICE/make}"
-USCITA="${2:-$HOME/exos-native/build-make}"
-PREFISSO="${PREFISSO:-$HOME/exos-cross}"
+USCITA="${2:-$TC/exos-native/build-make}"
+PREFISSO="${PREFISSO:-$TC/exos-cross}"
 
 if [ ! -f "$SORGENTI/job.c" ] || [ ! -f "$SORGENTI/configure" ]; then
     echo "prepara-make: '$SORGENTI' non e' un albero di GNU make" >&2

@@ -31,8 +31,8 @@ uno script che riesegue tutto.
 ## Come si rifà
 
 ```bash
-tools/make-exos/prepara-make.sh              # -> ~/exos-native/build-make/make
-PATH=$HOME/exos-cross/bin:$PATH make iso     # -> /exos/bin/make e /bin/make sul CD
+tools/make-exos/prepara-make.sh              # -> cross_build/exos-native/build-make/make
+PATH=cross_build/exos-cross/bin:$PATH make iso     # -> /exos/bin/make e /bin/make sul CD
 ```
 
 Serve il cross `i386-exos-gcc` (`tools/gcc-exos/prepara-cross.sh`). I sorgenti

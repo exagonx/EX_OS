@@ -861,6 +861,68 @@ static const char *const ENV_INHERITED[][2] = {
 #define ENV_INHERITED_COUNT (sizeof(ENV_INHERITED)/sizeof(ENV_INHERITED[0]))
 
 /* =============================================================================
+ * /boot/percorsi.txt — WHERE THE INSTALLED PROGRAMS ARE (@NETUPDATE-PATH)
+ *
+ * One directory per line; each one that exists and is not in PATH yet goes
+ * at the END of it. netupdate appends its own directories here when it
+ * installs (/exos/bin for gcc, cpp and fbc...), and anyone can add one by
+ * hand.
+ *
+ * ! THE LIST OF WHERE PROGRAMS GO BELONGS TO WHOEVER PUTS THEM THERE. A PATH
+ * written inside the shell is right until a package brings a new directory;
+ * with the file, the shell no longer has to know. At the end, so /bin wins:
+ * a program installed later cannot hide a system command with its name.
+ * ============================================================================= */
+/* Is `dir` one of the ':'-separated entries of `path`? */
+static int percorso_ce(const char *path, const char *dir, uint32_t l)
+{
+    const char *p = path;
+
+    while (*p) {
+        const char *fine = p;
+        while (*fine && *fine != ':') fine++;
+        if ((uint32_t)(fine - p) == l && sh_strncmp(p, dir, l) == 0) return 1;
+        p = *fine ? fine + 1 : fine;
+    }
+    return 0;
+}
+
+/* ! THE SHELL DOES NOT LINK THE LIBC (it is on the floppy, with its own
+ * helpers): sh_open, sh_read and friends, and «a directory that opens
+ * exists» in place of stat(). */
+static void percorsi_aggiungi(void)
+{
+    char buf[512], path[ENV_LEN], *riga, *dopo;
+    const char *p;
+    int  fd, n;
+
+    fd = sh_open("/boot/percorsi.txt", 0);
+    if (fd < 0) return;
+    n = sh_read(fd, buf, sizeof(buf) - 1);
+    sh_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    p = env_get("PATH");
+    sh_strcpy(path, p ? p : "", sizeof(path));
+
+    for (riga = buf; riga && *riga; riga = dopo) {
+        uint32_t l;
+
+        for (dopo = riga; *dopo && *dopo != '\n'; dopo++) { }
+        if (*dopo) *dopo++ = '\0';
+        l = sh_strlen(riga);
+        while (l && (riga[l - 1] == '\r' || riga[l - 1] == ' ')) riga[--l] = '\0';
+        if (riga[0] != '/' || sh_opendir(riga) == 0) continue;
+        if (percorso_ce(path, riga, l)) continue;           /* already there */
+        if (sh_strlen(path) + l + 2 >= sizeof(path)) break;
+        sh_strcat(path, ":", sizeof(path));
+        sh_strcat(path, riga, sizeof(path));
+    }
+    env_set("PATH", path);
+}
+
+/* =============================================================================
  * env_init — popola l'ambiente della shell
  *
  * Fino a luglio 2026 questa funzione ri-hardcodava le stesse coppie
@@ -889,6 +951,8 @@ static void env_init(void)
      * eseguendo, e il kernel dichiara il percorso in [boot] shell= per
      * un altro scopo (chi lanciare), non come variabile d'ambiente. */
     env_set("SHELL", "/bin/sh");
+
+    percorsi_aggiungi();
 }
 
 /* =============================================================================
@@ -1030,7 +1094,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.002"
+#define SH_VERSIONE  "0.003"
 
 #define MAX_LINE    512
 

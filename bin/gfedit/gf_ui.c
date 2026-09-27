@@ -71,6 +71,8 @@ static const GfVoce voci_opzioni[] = {
     { "Autosalvataggio...",       "",  gf_az_autosave   },
     { "Evidenziazione sintattica","",  gf_az_developing },
     { "Linguaggio...",            "",  gf_az_lingua     },
+    { "-",                        "",  0                },
+    { "Esegui (.bas)",            "F5", gf_az_esegui    },
 };
 
 static const GfVoce voci_aiuto[] = {

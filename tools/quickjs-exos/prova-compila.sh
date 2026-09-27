@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/quickjs-exos/prova-compila.sh
 # EX-OS — Extensible Operating System
@@ -32,7 +33,7 @@ FUORI="${EXOS_QJS_OUT:-/tmp/exos-quickjs}"
 # ! LA libm E' openlibm COSTRUITA PER IL BERSAGLIO, non quella dell'host: e'
 # la stessa che usano i programmi compilati dentro EX-OS. Vedi
 # tools/openlibm-exos/ e il commento in testa a lib/include/math.h.
-LIBM="${EXOS_LIBM:-$HOME/exos-cross/i386-exos/lib/libm.a}"
+LIBM="${EXOS_LIBM:-$TC/exos-cross/i386-exos/lib/libm.a}"
 
 # ! E libgcc SERVE PER QUATTRO NOMI SOLI: __divdi3, __moddi3, __udivdi3,
 # __umoddi3, cioe' la divisione a 64 bit che l'i386 non ha in hardware. I
@@ -41,7 +42,7 @@ LIBM="${EXOS_LIBM:-$HOME/exos-cross/i386-exos/lib/libm.a}"
 # davvero e ovunque. Sono routine di puri interi, senza sistema operativo
 # sotto, e la GCC Runtime Library Exception le lascia linkare anche a un
 # programma non-GPLv3.
-LIBGCC="${EXOS_LIBGCC:-$(ls -d "$HOME"/exos-cross/lib/gcc/i386-exos/*/libgcc.a 2>/dev/null | head -1)}"
+LIBGCC="${EXOS_LIBGCC:-$(ls -d "$TC"/exos-cross/lib/gcc/i386-exos/*/libgcc.a 2>/dev/null | head -1)}"
 
 if [ ! -f "$QJS/quickjs.c" ]; then
     echo "prova-compila: '$QJS' non e' un albero di QuickJS." >&2

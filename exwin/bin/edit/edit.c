@@ -33,7 +33,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `edit -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("edit", VERSIONE_APP);
 
 #define FIN_W       640
@@ -61,6 +61,10 @@ EX_VERSIONE("edit", VERSIONE_APP);
 #define ID_CANCELLA   13
 #define ID_SELTUTTO   14
 #define ID_ANNULLA    15
+#define ID_CERCA      16
+#define ID_AVANTI     17
+#define ID_INDIETRO   18
+#define ID_SOSTITUISCI 19
 
 #define ID_ISTRUZIONI 20
 #define ID_INFO       21
@@ -296,7 +300,9 @@ static void istruzioni(void)
                   "F10 apre i menu, le frecce li girano, Invio sceglie.  "
                   "Shift piu' le frecce sceglie il testo; Ctrl+S salva, "
                   "Ctrl+Q esce.  Gli appunti sono di tutta la scrivania: "
-                  "si copia qui e si incolla in un altro editor.");
+                  "si copia qui e si incolla in un altro editor.  "
+                  "Ctrl+F cerca, F3 la successiva, Shift+F3 la precedente; "
+                  "Ctrl+H sostituisce.");
 }
 
 /* =============================================================================
@@ -448,6 +454,197 @@ static void informazioni(void)
     ex_dlg_avviso("Informazioni su", t);
 }
 
+/* =============================================================================
+ * FIND AND REPLACE (@EDIT-CERCA, 26 September 2026)
+ *
+ * ! THE DECISIONS ARE gfedit'S, taken once already (bin/gfedit/gf_edit.c):
+ * the next occurrence is the first STRICTLY after the cursor, or F3 would stay
+ * on the same one; past the end the search starts again from the top and
+ * says so; what was found stays selected, so a typed word replaces it. The
+ * two editors answer the same way, which is the reason to copy decisions and
+ * not code (the text lives in a different structure here).
+ *
+ * ! THE STATE SURVIVES THE DIALOG: the searched text, the replacement, and
+ * «replacing one at a time». After «Una», F3 replaces the next one too, as
+ * asked; a new Ctrl+F ends that mode.
+ *
+ * Case-sensitive, like gfedit. A line that would grow past the area's 200
+ * columns is cut by the toolkit, like any other writing.
+ * ============================================================================= */
+#define AGO_MAX 80
+static char g_ago[AGO_MAX] = "";
+static char g_nuovo[AGO_MAX] = "";
+static int  g_sost_una = 0;             /* F3 replaces, after «Una» */
+
+/* ! THE CURSOR FROM ZERO. ex_area_cursore() counts from ONE — it feeds the
+ * status line, «riga 1/1 col 1» — while ex_area_vai() and
+ * ex_area_seleziona() count from zero. Mixing them sent every search one
+ * line down: «Una» replaced nothing (tools/prova_edit_cerca.sh, 27 Sept). */
+static void cursore0(unsigned int *r, unsigned int *c)
+{
+    ex_area_cursore(g_area, r, c);
+    if (*r) (*r)--;
+    if (*c) (*c)--;
+}
+
+/* The first occurrence at or after (r, c); 1 if found. */
+static int trova_da(unsigned int r, unsigned int c, unsigned int *fr, unsigned int *fc)
+{
+    unsigned int n = ex_area_righe(g_area), k;
+
+    for (k = r; k < n; k++) {
+        const char *riga = ex_area_riga(g_area, k);
+        const char *p;
+
+        if (!riga) continue;
+        if (k == r && c > strlen(riga)) continue;
+        p = strstr(riga + (k == r ? c : 0), g_ago);
+        if (p) { *fr = k; *fc = (unsigned int)(p - riga); return 1; }
+    }
+    return 0;
+}
+
+static int avanti(void)
+{
+    unsigned int r, c, fr, fc;
+
+    if (!g_ago[0]) return 0;
+    cursore0(&r, &c);
+    if (!trova_da(r, c, &fr, &fc)) {
+        if (!trova_da(0, 0, &fr, &fc)) {
+            snprintf(g_avviso, sizeof(g_avviso), "'%s' non c'e'", g_ago);
+            return 0;
+        }
+        strcpy(g_avviso, "ricerca ripresa dall'inizio");
+    }
+    ex_area_seleziona(g_area, fr, fc, fc + (unsigned int)strlen(g_ago));
+    return 1;
+}
+
+static int indietro(void)
+{
+    unsigned int r, c, k, l = (unsigned int)strlen(g_ago);
+    int          giro;
+
+    if (!g_ago[0]) return 0;
+    cursore0(&r, &c);
+
+    /* The last occurrence that ENDS before the selection starts: the cursor
+     * is at the end of what was found, so «before» is c - l on its line. */
+    for (giro = 0; giro < 2; giro++) {
+        unsigned int n = ex_area_righe(g_area);
+        unsigned int da = giro ? n : r + 1;
+
+        for (k = da; k-- > 0; ) {
+            const char *riga = ex_area_riga(g_area, k), *p, *ultima = 0;
+
+            if (!riga) continue;
+            for (p = strstr(riga, g_ago); p; p = strstr(p + 1, g_ago)) {
+                unsigned int col = (unsigned int)(p - riga);
+                if (!giro && k == r && col + l >= c) break;
+                ultima = p;
+            }
+            if (ultima) {
+                unsigned int col = (unsigned int)(ultima - riga);
+                if (giro) strcpy(g_avviso, "ricerca ripresa dalla fine");
+                ex_area_seleziona(g_area, k, col, col + l);
+                return 1;
+            }
+        }
+    }
+    snprintf(g_avviso, sizeof(g_avviso), "'%s' non c'e'", g_ago);
+    return 0;
+}
+
+/* Replaces, in one line, the occurrence at column c (or every one, when
+ * c < 0). Returns how many. */
+static int sostituisci_in(unsigned int r, int c)
+{
+    const char  *riga = ex_area_riga(g_area, r);
+    char         nuova[512];
+    unsigned int l = (unsigned int)strlen(g_ago), n = 0, i = 0;
+    int          fatte = 0, tutte = c < 0;
+
+    if (!riga) return 0;
+    while (riga[i] && n + 1 < sizeof(nuova)) {
+        /* ! «ONLY THAT ONE» IS ITS OWN FLAG. It was c = -2 after the first
+         * replacement — and c < 0 means «every one», so «Una» replaced the
+         * whole line. Seen in tools/prova_edit_cerca.sh, 27 September 2026. */
+        if (strncmp(riga + i, g_ago, l) == 0 &&
+            (tutte || (fatte == 0 && (unsigned int)c == i))) {
+            unsigned int k;
+            for (k = 0; g_nuovo[k] && n + 1 < sizeof(nuova); k++) nuova[n++] = g_nuovo[k];
+            i += l;
+            fatte++;
+            continue;
+        }
+        nuova[n++] = riga[i++];
+    }
+    nuova[n] = '\0';
+    if (fatte) ex_area_riga_metti(g_area, r, nuova);
+    return fatte;
+}
+
+static void cerca(void)
+{
+    if (!ex_dlg_chiedi("Cerca", "Testo da cercare:", "Cerca", g_ago, AGO_MAX)) return;
+    g_sost_una = 0;
+    avanti();
+}
+
+/* The occurrence under the selection, replaced; then the next one found. */
+static void sostituisci_una(void)
+{
+    unsigned int r, c, l = (unsigned int)strlen(g_ago);
+    const char  *riga;
+
+    cursore0(&r, &c);
+    riga = ex_area_riga(g_area, r);
+    if (!riga || c < l || strncmp(riga + c - l, g_ago, l) != 0) {
+        if (!avanti()) return;          /* nothing selected yet: find it */
+        cursore0(&r, &c);
+    }
+    annulla_segna();
+    sostituisci_in(r, (int)(c - l));
+    ex_area_vai(g_area, r, c - l + (unsigned int)strlen(g_nuovo));
+    if (avanti()) strcpy(g_avviso, "sostituita; F3 sostituisce la prossima");
+    else          strcpy(g_avviso, "sostituita l'ultima");
+}
+
+static void sostituisci(void)
+{
+    static const char *const voci[3] = { "Tutte", "Una", "Annulla" };
+    unsigned int n, k, quante = 0;
+    char         t[200];
+    int          r;
+
+    if (!ex_dlg_chiedi("Sostituisci", "Testo da cercare:", "Avanti", g_ago, AGO_MAX)) return;
+    if (!g_ago[0]) return;
+    if (!ex_dlg_chiedi("Sostituisci", "Sostituire con:", "Avanti", g_nuovo, AGO_MAX)) return;
+
+    n = ex_area_righe(g_area);
+    for (k = 0; k < n; k++) {
+        const char *riga = ex_area_riga(g_area, k), *p;
+        if (!riga) continue;
+        for (p = strstr(riga, g_ago); p; p = strstr(p + strlen(g_ago), g_ago)) quante++;
+    }
+    if (quante == 0) { snprintf(g_avviso, sizeof(g_avviso), "'%s' non c'e'", g_ago); return; }
+
+    snprintf(t, sizeof(t), "Trovate %u occorrenze di '%s'.", quante, g_ago);
+    r = ex_dlg_scegli("Sostituisci", t, voci, 3);
+
+    if (r == 0) {
+        unsigned int fatte = 0;
+        annulla_segna();
+        for (k = 0; k < n; k++) fatte += (unsigned int)sostituisci_in(k, -1);
+        g_sost_una = 0;
+        snprintf(g_avviso, sizeof(g_avviso), "sostituite %u occorrenze", fatte);
+    } else if (r == 1) {
+        g_sost_una = 1;
+        sostituisci_una();
+    }
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     unsigned int c;
@@ -508,6 +705,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             break;
         }
         if (wp == ID_SELTUTTO)  { ex_area_seleziona_tutto(g_area); break; }
+        if (wp == ID_CERCA)      { cerca();       break; }
+        if (wp == ID_AVANTI)     { if (g_sost_una) sostituisci_una(); else avanti(); break; }
+        if (wp == ID_INDIETRO)   { indietro();    break; }
+        if (wp == ID_SOSTITUISCI) { sostituisci(); break; }
 
         if (wp == ID_BARRA)      { ex_area_mostra_da(g_area, (unsigned int)lp); break; }
         if (wp == ID_ISTRUZIONI) { istruzioni();  break; }
@@ -540,6 +741,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             }
             if (c == 'a' || c == 'A') { ex_area_seleziona_tutto(g_area); break; }
             if (c == 'q' || c == 'Q') { esci_se_si_puo();      break; }
+            if (c == 'f' || c == 'F') { cerca();               break; }
+            if (c == 'h' || c == 'H') { sostituisci();         break; }
+        }
+        /* F3 and Shift+F3: the next and the previous. After «Una», F3 also
+         * replaces — see sostituisci(). */
+        if (c == KBD_K_F(3)) {
+            if (wp & KBD_MOD_SHIFT) indietro();
+            else if (g_sost_una)    sostituisci_una();
+            else                    avanti();
+            break;
         }
         return ex_procedura_base(f, msg, wp, lp);
 
@@ -629,6 +840,11 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Modifica", "-",              0);
     ex_menu_voce(g_menu, "Modifica", "Cancella\tCanc",  ID_CANCELLA);
     ex_menu_voce(g_menu, "Modifica", "Seleziona tutto\tCtrl+A", ID_SELTUTTO);
+    ex_menu_voce(g_menu, "Modifica", "-",               0);
+    ex_menu_voce(g_menu, "Modifica", "Cerca...\tCtrl+F", ID_CERCA);
+    ex_menu_voce(g_menu, "Modifica", "Trova successivo\tF3", ID_AVANTI);
+    ex_menu_voce(g_menu, "Modifica", "Trova precedente\tShift+F3", ID_INDIETRO);
+    ex_menu_voce(g_menu, "Modifica", "Sostituisci...\tCtrl+H", ID_SOSTITUISCI);
 
     ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);

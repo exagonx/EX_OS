@@ -100,6 +100,13 @@ uint32_t vga_visible_console(void);
  * SYS_CONSOLE_TESTO. */
 uint32_t vga_console_testo(uint32_t n, char *out, uint32_t max);
 
+/* The log ring of the graphics console: the last REG_DIM bytes written to
+ * it (32 KB), each line stamped «hh:mm:ss   pid  », oldest first, starting
+ * on a whole line. At most max bytes, no '\0'. See SYS_CONSOLE_REGISTRO. */
+uint32_t vga_console_registro(char *out, uint32_t max);
+/* At the claim of the graphics console: its screen goes into the ring. */
+void     vga_registro_semina(uint32_t n);
+
 /* Dice dov'e' il framebuffer e che forma ha. Tutti zero = modo testo.
  * Serve a SYS_VIDEO_INFO, cioe' al server grafico in ring 3. */
 /* =============================================================================

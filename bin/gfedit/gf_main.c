@@ -24,7 +24,7 @@
 #include "gfedit.h"
 
 /* +0.001 a ogni modifica: `gfedit -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("gfedit", "0.001");
+EX_VERSIONE("gfedit", "0.002");
 
 /* =============================================================================
  * L'oggetto vive in BSS, non nello heap.

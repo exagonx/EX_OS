@@ -100,7 +100,7 @@ timeout 500 python3 tools/qemu_drive.py \
     "echo CONFRONTO-FINITO@3" > "$D/2-giro.log" 2>&1
 
 if grep -aq "CONFRONTO-FINITO" "$D/2-giro.log" && grep -aq "vuota" "$D/2-giro.log" && \
-   ! grep -aqi "differ\|non riesco\|cannot\|bad header\|corrupt" "$D/2-giro.log"; then
+   ! grep -aqi "differ\|non riesco\|non si \|rovinat\|non torna\|a meta" "$D/2-giro.log"; then
     ok "il giro completo: tar e tar.gz tornano identici, cartella vuota compresa"
 else
     no "il giro completo (vedi $D/2-giro.log)"
@@ -225,12 +225,12 @@ timeout 400 python3 tools/qemu_drive.py \
     "$GUNZIP /disk/rotto.gz@8" \
     > "$D/6-difese.log" 2>&1
 
-if grep -aq "skipped unsafe name" "$D/6-difese.log" && grep -aq "buono.txt" "$D/6-difese.log"; then
+if grep -aq "nome pericoloso saltato" "$D/6-difese.log" && grep -aq "buono.txt" "$D/6-difese.log"; then
     ok "il nome che scappa e' rifiutato, il resto si estrae lo stesso"
 else
     no "il nome fuori dalla destinazione non e' stato fermato"
 fi
-if grep -aq "CRC32 mismatch" "$D/6-difese.log"; then
+if grep -aq "CRC32 non torna" "$D/6-difese.log"; then
     ok "il byte guastato e' riconosciuto invece che estratto"
 else
     no "un .gz rovinato e' passato senza un lamento"

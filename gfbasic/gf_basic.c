@@ -8,7 +8,9 @@
  *   - DIM var AS INTEGER|DOUBLE|STRING [ (n) ]        (scalari e array 1D)
  *   - assegnazione: var = expr / arr(i) = expr
  *   - PRINT expr[; expr ...][;]                        (';' finale = niente newline)
- *   - INPUT ["prompt";] var
+ *   - INPUT ["prompt"{;|,}] var[, var...]    (';' o niente: "? "; ',': niente)
+ *   - LINE INPUT ["prompt";] var$             (la riga intera, virgole comprese)
+ *   - GET ["prompt";] var                     (UN tasto, senza Invio)
  *   - IF expr THEN stmt [ELSE stmt]                     (forma su riga singola)
  *   - IF expr THEN / [ELSE] / END IF                    (forma a blocco, no ELSEIF)
  *   - FOR var = a TO b [STEP s] ... NEXT [var]
@@ -38,6 +40,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+/* GET legge un tasto solo, senza Invio. Su EX-OS lo chiede al driver della
+ * tastiera (bin/runbas/runbas_tasto.c; runbas compila con -DGFB_EXOS);
+ * altrove si spegne la modalita' canonica con termios. */
+#ifdef GFB_EXOS
+int gfb_tasto_crudo(void);
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
 #include <math.h>
 #include <pthread.h>
 #include <time.h>
@@ -1075,33 +1087,135 @@ static void handle_print(GF_BASIC *obj, const char *args){
 }
 
 /* ==================================================================== */
-/* INPUT (semplice, da stdin)                                           */
+/* INPUT, LINE INPUT e GET, da stdin                                           */
 /* ==================================================================== */
-static void handle_input(GF_BASIC *obj, const char *args){
-    char buf[256];
-    const char *p = args;
-    while (*p == ' ') p++;
-    if (*p == '"') {
-        p++;
-        const char *start = p;
-        while (*p && *p != '"') p++;
-        fwrite(start, 1, (size_t)(p-start), stdout);
-        printf("? ");
-        if (*p == '"') p++;
-        while (*p == ' ' || *p == ',' || *p == ';') p++;
-    }
-    char name[64]; int i=0;
-    while (is_ident_char(*p) && i<63) name[i++]=*p++;
-    name[i]=0;
-    if (!fgets(buf, sizeof buf, stdin)) buf[0]=0;
-    buf[strcspn(buf, "\n")] = 0;
+/* ! IL PROMPT SI SPINGE FUORI PRIMA DI LEGGERE (27 settembre 2026). stdout e'
+ * bufferizzato e il prompt non finisce con un a capo: senza fflush restava nel
+ * buffer, e il programma aspettava una risposta senza aver fatto la domanda.
+ * Vale anche per un PRINT "...";  messo prima dell'INPUT. */
+static void leggi_riga(char *buf, size_t n)
+{
+    fflush(stdout);
+    if (!fgets(buf, (int)n, stdin)) buf[0] = 0;
+    buf[strcspn(buf, "\r\n")] = 0;
+}
+
+static void assegna_testo(GF_BASIC *obj, const char *name, const char *val)
+{
     GfbVar *v = var_find(obj, name);
     if (!v) v = var_auto(obj, name);
-    if (v) {
-        if (v->type == GFB_STR) { free(v->s); v->s = xstrdup(buf); }
-        else if (v->type == GFB_INT) v->i = atol(buf);
-        else v->d = atof(buf);
+    if (!v) return;
+    if (v->type == GFB_STR) { free(v->s); v->s = xstrdup(val); }
+    else if (v->type == GFB_INT) v->i = atol(val);
+    else v->d = atof(val);
+}
+
+/* Il prompt facoltativo: "testo" seguito da ; o , . Lo stampa e rende dove
+ * comincia l'elenco delle variabili; *virgola dice se dopo c'era la virgola. */
+static const char *prompt_scrivi(const char *p, int *c_era, int *virgola)
+{
+    *c_era = 0; *virgola = 0;
+    while (*p == ' ') p++;
+    if (*p != '"') return p;
+    p++;
+    {
+        const char *start = p;
+        while (*p && *p != '"') p++;
+        fwrite(start, 1, (size_t)(p - start), stdout);
     }
+    if (*p == '"') p++;
+    while (*p == ' ') p++;
+    if (*p == ',') *virgola = 1;
+    if (*p == ',' || *p == ';') p++;
+    while (*p == ' ') p++;
+    *c_era = 1;
+    return p;
+}
+
+static const char *nome_leggi(const char *p, char *name, int max)
+{
+    int i = 0;
+    while (*p == ' ') p++;
+    while (is_ident_char(*p) && i < max - 1) name[i++] = *p++;
+    name[i] = 0;
+    while (*p == ' ') p++;
+    return p;
+}
+
+/* INPUT: come in QBASIC, "? " dopo il prompt se c'era il punto e virgola o
+ * se il prompt non c'era; con la virgola niente punto di domanda. Piu'
+ * variabili si separano con la virgola, e cosi' la risposta. */
+static void handle_input(GF_BASIC *obj, const char *args){
+    char buf[256], name[64];
+    int  c_era, virgola;
+    const char *p = prompt_scrivi(args, &c_era, &virgola);
+    char *campo = buf;
+
+    if (!c_era || !virgola) fputs("? ", stdout);
+    leggi_riga(buf, sizeof buf);
+    while (*p) {
+        char *fine;
+        p = nome_leggi(p, name, sizeof name);
+        if (!name[0]) break;
+        fine = campo ? strchr(campo, ',') : NULL;
+        if (fine) *fine = 0;
+        assegna_testo(obj, name, campo ? str_trim(campo) : "");
+        campo = fine ? fine + 1 : NULL;
+        if (*p == ',') p++; else break;
+    }
+}
+
+/* LINE INPUT: la riga com'e', virgole comprese, e nessun punto di domanda. */
+static void handle_line_input(GF_BASIC *obj, const char *args){
+    char buf[512], name[64];
+    int  c_era, virgola;
+    const char *p = prompt_scrivi(args, &c_era, &virgola);
+
+    nome_leggi(p, name, sizeof name);
+    leggi_riga(buf, sizeof buf);
+    if (name[0]) assegna_testo(obj, name, buf);
+}
+
+/* GET: un tasto solo, senza Invio. In una variabile stringa il carattere, in
+ * una numerica il suo codice. Il terminale torna com'era subito dopo. */
+/* ! getchar, NON read(0): un INPUT prima puo' aver gia' portato nel buffer
+ * di stdin quel che segue la sua riga, e read lo scavalcherebbe. */
+static int tasto_crudo(void)
+{
+    int c;
+#ifdef GFB_EXOS
+    fflush(stdout);
+    c = gfb_tasto_crudo();
+#else
+    struct termios vecchio, nuovo;
+    int ok = tcgetattr(0, &vecchio) == 0;
+    if (ok) { nuovo = vecchio; nuovo.c_lflag &= ~(tcflag_t)(ICANON | ECHO); tcsetattr(0, TCSANOW, &nuovo); }
+    c = getchar();
+    if (ok) tcsetattr(0, TCSANOW, &vecchio);
+#endif
+    return c == EOF ? 0 : c;
+}
+
+static void handle_get(GF_BASIC *obj, const char *args){
+    char name[64], s[2];
+    int  c_era, virgola, c;
+    const char *p = prompt_scrivi(args, &c_era, &virgola);
+    GfbVar *v;
+
+    nome_leggi(p, name, sizeof name);
+    fflush(stdout);
+    c = tasto_crudo();
+    if (c >= 32 && c < 127) putchar(c);     /* si vede cosa si e' premuto */
+    if (c > 255) c = 0;                     /* frecce e tasti funzione: non un carattere */
+    putchar('\n');
+    if (!name[0]) return;
+    v = var_find(obj, name);
+    if (!v) v = var_auto(obj, name);
+    if (!v) return;
+    s[0] = (char)c; s[1] = 0;
+    if (v->type == GFB_STR) { free(v->s); v->s = xstrdup(s); }
+    else if (v->type == GFB_INT) v->i = c;
+    else v->d = c;
 }
 
 /* ==================================================================== */
@@ -1145,10 +1259,18 @@ int gf_basic_run(GF_BASIC *obj){
             handle_print(obj, rest);
             pc++; continue;
         }
+        if (str_ieq_n(up, "LINE INPUT", 10)) {
+            handle_line_input(obj, t + 10);
+            pc++; continue;
+        }
         if (str_ieq_n(up, "INPUT", 5)) {
             const char *rest = t + 5;
             while (*rest == ' ') rest++;
             handle_input(obj, rest);
+            pc++; continue;
+        }
+        if (str_ieq_n(up, "GET ", 4)) {
+            handle_get(obj, t + 4);
             pc++; continue;
         }
 

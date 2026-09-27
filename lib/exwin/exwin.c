@@ -23,7 +23,10 @@
 
 extern const unsigned char font8x16[256 * 16];
 
-#define OGGETTI_MAX     64
+/* 192 dal 27 settembre 2026: Calctor ha 85 controlli fra pulsanti, radio e
+ * finestra della cronologia, e con 64 gli ultimi venti non nascevano — senza
+ * un errore, solo un blocco di pulsanti che non c'era. */
+#define OGGETTI_MAX     192
 /* ! 1024 SINCE 24 SEPTEMBER 2026, and 64 before: a text box held 63
  * characters, and the browser's address bar could not hold a real address.
  * 64 objects times 1 KB is 64 KB; the window server gets titles cut to its
@@ -453,7 +456,9 @@ static Appunti *appunti(void)
  * ============================================================================= */
 #define MENU_MAX         2      /* quante finestre possono avere un menu */
 #define MENU_TITOLI_MAX  6
-#define MENU_VOCI_MAX    12
+/* 16 since 26 September 2026: the editor's «Modifica» reached 13 with find
+ * and replace, and the thirteenth would have been dropped in silence. */
+#define MENU_VOCI_MAX    16
 #define MENU_TESTO_MAX   28
 #define MENU_RIGA_H      16
 #define MENU_BARRA_H     20
@@ -461,7 +466,17 @@ static Appunti *appunti(void)
 typedef struct {
     char         testo[MENU_TESTO_MAX];
     unsigned int id;                    /* 0 = separatore */
+    int          sub;                   /* >= 0: apre la tendina laterale sub */
 } MenuVoce;
+
+/* ! LE TENDINE LATERALI (27 settembre 2026, per Calctor): una voce che ne
+ * apre un'altra di fianco. Si scrivono col titolo «Opzioni/Modalita»: la voce
+ * «Modalita» nasce in «Opzioni», e quel che si aggiunge li' va nella tendina
+ * laterale. Un livello solo — una tendina dentro una tendina dentro una
+ * tendina e' un menu che nessuno ritrova. L'id della voce che apre e' questo:
+ * non arriva mai all'applicazione. */
+#define MENU_SUB_MAX     4
+#define MENU_ID_SUB      0xFFFFFFFFu
 
 typedef struct {
     char         nome[MENU_TESTO_MAX];
@@ -477,6 +492,10 @@ typedef struct {
     MenuTitolo   titolo[MENU_TITOLI_MAX];
     int          aperto;                /* quale tendina, -1 = nessuna */
     int          sotto;                 /* quale voce evidenziata, -1 = nessuna */
+    unsigned int nsub;
+    MenuTitolo   sub[MENU_SUB_MAX];     /* le tendine laterali */
+    int          sub_aperta;            /* quale, -1 = nessuna */
+    int          sub_sotto;             /* la voce evidenziata dentro */
 } Menu;
 
 static Menu g_menu[MENU_MAX];
@@ -811,6 +830,7 @@ static void origine(Oggetto *o, int *ox, int *oy)
  * --------------------------------------------------------------------------- */
 static int accetta_fuoco(const Oggetto *o)
 {
+    if (o->stile & EX_SPENTO) return 0;         /* ex_abilita(c, 0) */
     return o->classe == CL_TESTO || o->classe == CL_PULSANTE ||
            o->classe == CL_TERMINALE || o->classe == CL_LISTA ||
            o->classe == CL_AREA || o->classe == CL_SPUNTA ||
@@ -1054,6 +1074,30 @@ static void fuoco_avanti(ExFinestra f)
         if (partenza >= 0) { fuoco_metti(f, (ExFinestra)(i + 1)); return; }
     }
     if (primo >= 0) fuoco_metti(f, (ExFinestra)(primo + 1));
+}
+
+/* Shift+Tab: the one before, wrapping to the last (27 September 2026). Both
+ * keys went FORWARD until then, which nobody expects — and the test of the
+ * editor's «Sostituisci» picked a button it did not mean. */
+static void fuoco_indietro(ExFinestra f)
+{
+    Oggetto *r = radice(f);
+    ExFinestra dentro = fuoco_mdi_di(f);
+    int i, prima = -1, ultimo = -1, trovato = 0;
+
+    if (!r) return;
+
+    for (i = 0; i < OGGETTI_MAX; i++) {
+        if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
+        if (radice((ExFinestra)(i + 1)) != r) continue;
+        if (!accetta_fuoco(&g_ogg[i])) continue;
+        if (mdi_di((ExFinestra)(i + 1)) != dentro) continue;
+        if ((ExFinestra)(i + 1) == r->fuoco) trovato = 1;
+        else if (!trovato) prima = i;
+        ultimo = i;
+    }
+    if (trovato && prima >= 0) fuoco_metti(f, (ExFinestra)(prima + 1));
+    else if (ultimo >= 0)      fuoco_metti(f, (ExFinestra)(ultimo + 1));
 }
 
 /* =============================================================================
@@ -2465,6 +2509,69 @@ static int menu_tendina_dove(Menu *M, int *tx, int *ty, int *tw, int *th)
     return 1;
 }
 
+/* La tendina laterale aperta: di fianco alla voce che l'ha aperta, a destra
+ * della tendina — o a sinistra, se a destra non c'e' posto nella finestra. */
+static int menu_sub_dove(Menu *M, int *sx, int *sy, int *sw, int *sh)
+{
+    int tx, ty, tw, th;
+    MenuTitolo *T;
+    Oggetto *r;
+    unsigned int i;
+
+    if (M->sub_aperta < 0 || !menu_tendina_dove(M, &tx, &ty, &tw, &th)) return 0;
+    T = &M->titolo[M->aperto];
+    for (i = 0; i < T->n; i++)
+        if (T->voce[i].sub == M->sub_aperta) break;
+    if (i == T->n) return 0;
+
+    *sw = menu_tendina_w(&M->sub[M->sub_aperta]);
+    *sh = menu_tendina_h(&M->sub[M->sub_aperta]);
+    *sx = tx + tw - 2;
+    *sy = ty + (int)i * MENU_RIGA_H;
+    r = radice(M->ogg);
+    if (r && *sx + *sw > r->w) *sx = tx - *sw + 2;
+    if (*sx < 0) *sx = 0;
+    if (r && *sy + *sh > r->h) *sy = r->h - *sh;
+    return 1;
+}
+
+/* Le voci di una tendina, principale o laterale: lo stesso disegno. */
+static void menu_voci_disegna(ExFinestra f, const MenuTitolo *T, int tx, int ty,
+                              int tw, int evidenziata)
+{
+    unsigned int i;
+
+    for (i = 0; i < T->n; i++) {
+        int ry = ty + 3 + (int)i * MENU_RIGA_H;
+        const char *t   = T->voce[i].testo;
+        const char *tab = strchr(t, '\t');
+        char sinistra[MENU_TESTO_MAX];
+        unsigned int colore = EX_NERO;
+
+        if (T->voce[i].id == 0) {
+            ex_riempi(f, tx + 4, ry + MENU_RIGA_H / 2 - 1, tw - 8, 1, EX_OMBRA);
+            ex_riempi(f, tx + 4, ry + MENU_RIGA_H / 2,     tw - 8, 1, EX_LUCE);
+            continue;
+        }
+        if ((int)i == evidenziata) {
+            ex_riempi(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, EX_BLU);
+            colore = EX_BIANCO;
+        }
+        if (tab) {
+            unsigned int l = (unsigned int)(tab - t);
+
+            if (l >= sizeof(sinistra)) l = sizeof(sinistra) - 1;
+            memcpy(sinistra, t, l);
+            sinistra[l] = '\0';
+            ex_scrivi(f, tx + 8, ry, sinistra, colore);
+            ex_scrivi(f, tx + tw - 8 - larg(tab + 1), ry, tab + 1, colore);
+        } else {
+            ex_scrivi(f, tx + 8, ry, t, colore);
+        }
+        if (T->voce[i].sub >= 0) ex_scrivi(f, tx + tw - 8 - larg(">"), ry, ">", colore);
+    }
+}
+
 /* ! SI DISEGNA DOPO TUTTI GLI ALTRI, e non insieme alla barra: una tendina
  * aperta COPRE i controlli sotto di se', e i figli si disegnano in ordine di
  * creazione — il menu si crea per primo, quindi finirebbe sotto. */
@@ -2479,43 +2586,21 @@ static void menu_sopra(ExFinestra f)
 
     T = &M->titolo[M->aperto];
 
+    /* Un separatore e' un solco, non una voce: non si sceglie e non si
+     * evidenzia (menu_voci_disegna). */
     ex_riempi(f, tx, ty, tw, th, EX_GRIGIO);
     ex_rilievo(f, tx, ty, tw, th);
+    menu_voci_disegna(f, T, tx, ty, tw, M->sotto);
 
-    for (i = 0; i < T->n; i++) {
-        int ry = ty + 3 + (int)i * MENU_RIGA_H;
-        const char *t   = T->voce[i].testo;
-        const char *tab = strchr(t, '\t');
-        char sinistra[MENU_TESTO_MAX];
-        unsigned int colore = EX_NERO;
-
-        /* Un separatore e' un solco, non una voce: non si sceglie e non si
-         * evidenzia. */
-        if (T->voce[i].id == 0) {
-            ex_riempi(f, tx + 4, ry + MENU_RIGA_H / 2 - 1, tw - 8, 1, EX_OMBRA);
-            ex_riempi(f, tx + 4, ry + MENU_RIGA_H / 2,     tw - 8, 1, EX_LUCE);
-            continue;
-        }
-
-        if ((int)i == M->sotto) {
-            ex_riempi(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, EX_BLU);
-            colore = EX_BIANCO;
-        }
-
-        if (tab) {
-            unsigned int l = (unsigned int)(tab - t);
-
-            if (l >= sizeof(sinistra)) l = sizeof(sinistra) - 1;
-            memcpy(sinistra, t, l);
-            sinistra[l] = '\0';
-            ex_scrivi(f, tx + 8, ry, sinistra, colore);
-            ex_scrivi(f, tx + tw - 8 - larg(tab + 1), ry,
-                      tab + 1, colore);
-        } else {
-            ex_scrivi(f, tx + 8, ry, t, colore);
-        }
+    if (menu_sub_dove(M, &tx, &ty, &tw, &th)) {
+        ex_riempi(f, tx, ty, tw, th, EX_GRIGIO);
+        ex_rilievo(f, tx, ty, tw, th);
+        menu_voci_disegna(f, &M->sub[M->sub_aperta], tx, ty, tw, M->sub_sotto);
     }
+    (void)i;
 }
+
+static int menu_voce_vicina(const MenuTitolo *T, int da, int passo);
 
 /* Rende 1 se il clic era roba del menu — e allora NON deve arrivare ai
  * controlli sotto. `cmd` esce diverso da zero solo se si e' scelta una voce. */
@@ -2542,13 +2627,30 @@ static int menu_clic(ExFinestra f, int x, int y, unsigned int *cmd)
                 x <  bx + M->titolo[i].x + M->titolo[i].w) {
                 M->aperto = (M->aperto == (int)i) ? -1 : (int)i;
                 M->sotto  = -1;
+                M->sub_aperta = -1;
                 return 1;
             }
         M->aperto = -1;             /* uno spazio vuoto della barra chiude */
         return 1;
     }
 
-    /* 2. dentro la tendina aperta: si sceglie */
+    /* 2. dentro la tendina laterale aperta: si sceglie da li' */
+    {
+        int tx, ty, tw, th;
+
+        if (menu_sub_dove(M, &tx, &ty, &tw, &th) &&
+            x >= tx && x < tx + tw && y >= ty && y < ty + th) {
+            int r = (y - ty - 3) / MENU_RIGA_H;
+            MenuTitolo *S = &M->sub[M->sub_aperta];
+
+            if (r >= 0 && r < (int)S->n && S->voce[r].id != 0)
+                *cmd = S->voce[r].id;
+            M->aperto = -1; M->sotto = -1; M->sub_aperta = -1;
+            return 1;
+        }
+    }
+
+    /* 3. dentro la tendina aperta: si sceglie, o si apre la laterale */
     {
         int tx, ty, tw, th;
 
@@ -2557,10 +2659,17 @@ static int menu_clic(ExFinestra f, int x, int y, unsigned int *cmd)
             int r = (y - ty - 3) / MENU_RIGA_H;
             MenuTitolo *T = &M->titolo[M->aperto];
 
+            if (r >= 0 && r < (int)T->n && T->voce[r].sub >= 0) {
+                M->sotto      = r;
+                M->sub_aperta = T->voce[r].sub;
+                M->sub_sotto  = menu_voce_vicina(&M->sub[M->sub_aperta], 0, 1);
+                return 1;
+            }
             if (r >= 0 && r < (int)T->n && T->voce[r].id != 0)
                 *cmd = T->voce[r].id;
             M->aperto = -1;
             M->sotto  = -1;
+            M->sub_aperta = -1;
             return 1;
         }
     }
@@ -2572,6 +2681,7 @@ static int menu_clic(ExFinestra f, int x, int y, unsigned int *cmd)
     if (M->aperto >= 0) {
         M->aperto = -1;
         M->sotto  = -1;
+        M->sub_aperta = -1;
         return 1;
     }
     return 0;
@@ -2609,6 +2719,49 @@ static int menu_tasto(ExFinestra f, unsigned int k, unsigned int *cmd)
         if (c != KBD_K_F(10)) return 0;
         M->aperto = 0;
         M->sotto  = menu_voce_vicina(&M->titolo[0], 0, 1);
+        M->sub_aperta = -1;
+        return 1;
+    }
+
+    /* Nella tendina laterale: su e giu' dentro, Invio sceglie, sinistra o Esc
+     * tornano alla tendina da cui si era venuti. */
+    if (M->sub_aperta >= 0) {
+        MenuTitolo *S = &M->sub[M->sub_aperta];
+
+        switch (c) {
+        case 27:
+        case KBD_K_LEFT:
+            M->sub_aperta = -1;
+            return 1;
+        case KBD_K_RIGHT:           /* come su Windows: al titolo dopo */
+            M->sub_aperta = -1;
+            M->aperto = (M->aperto + 1 >= (int)M->n) ? 0 : M->aperto + 1;
+            M->sotto  = menu_voce_vicina(&M->titolo[M->aperto], 0, 1);
+            return 1;
+        case KBD_K_UP:
+            M->sub_sotto = menu_voce_vicina(S, M->sub_sotto - 1, -1);
+            return 1;
+        case KBD_K_DOWN:
+            M->sub_sotto = menu_voce_vicina(S, M->sub_sotto + 1, 1);
+            return 1;
+        case '\n':
+        case '\r':
+            if (M->sub_sotto >= 0 && M->sub_sotto < (int)S->n)
+                *cmd = S->voce[M->sub_sotto].id;
+            M->aperto = -1; M->sotto = -1; M->sub_aperta = -1;
+            return 1;
+        default:
+            M->aperto = -1; M->sotto = -1; M->sub_aperta = -1;
+            return 1;
+        }
+    }
+
+    /* Destra o Invio su una voce che apre una tendina laterale: la apre. */
+    if ((c == KBD_K_RIGHT || c == '\n' || c == '\r') && M->sotto >= 0 &&
+        M->sotto < (int)M->titolo[M->aperto].n &&
+        M->titolo[M->aperto].voce[M->sotto].sub >= 0) {
+        M->sub_aperta = M->titolo[M->aperto].voce[M->sotto].sub;
+        M->sub_sotto  = menu_voce_vicina(&M->sub[M->sub_aperta], 0, 1);
         return 1;
     }
 
@@ -3069,7 +3222,19 @@ static void disegna_oggetto(Oggetto *o)
             tx = x + dx + ((int)o->w - larg(o->titolo)) / 2;
         }
 
-        ex_scrivi(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo, EX_NERO);
+        ex_scrivi(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo,
+                  (o->stile & EX_SPENTO) ? EX_GRIGIO_SC : EX_NERO);
+
+        /* ! THE FOCUS IS SHOWN (27 September 2026). A button with the focus
+         * looked like any other, so nobody could see which one Enter would
+         * press — in a dialog whose default is «Annulla» by contract, that
+         * is the one thing to see. The same blue frame the radio puts around
+         * its caption. */
+        {
+            Oggetto *rd = radice(o->padre);
+            if (rd && rd->fuoco == (ExFinestra)(o - g_ogg + 1) && o->w > 10 && o->h > 10)
+                ex_riquadro_disegna(o->padre, x + 4, y + 4, o->w - 8, o->h - 8, EX_BLU);
+        }
         break;
     }
 
@@ -3443,7 +3608,7 @@ static void disegna_oggetto(Oggetto *o)
         }
 
         ex_scrivi(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
-                  EX_NERO);
+                  (o->stile & EX_SPENTO) ? EX_GRIGIO_SC : EX_NERO);
         if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
             ex_riquadro_disegna(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
                                 larg(o->titolo) + 4, 18, EX_BLU);
@@ -3462,7 +3627,7 @@ static void disegna_oggetto(Oggetto *o)
         if (o->valore) disco(o->padre, cx, cy, 2, EX_NERO);
 
         ex_scrivi(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
-                  EX_NERO);
+                  (o->stile & EX_SPENTO) ? EX_GRIGIO_SC : EX_NERO);
         if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
             ex_riquadro_disegna(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
                                 larg(o->titolo) + 4, 18, EX_BLU);
@@ -4165,6 +4330,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         M->ogg    = (ExFinestra)(i + 1);
         M->aperto = -1;
         M->sotto  = -1;
+        M->sub_aperta = -1;
         M->usato  = 1;
         return (ExFinestra)(i + 1);
     }
@@ -4739,6 +4905,7 @@ static ExFinestra controllo_in(ExFinestra padre, int x, int y)
         int ox, oy;
 
         if (!o->usato || o->padre == 0 || !(o->stile & EX_VISIBILE)) continue;
+        if (o->stile & EX_SPENTO) continue;     /* spento: il clic non e' suo */
         if (radice((ExFinestra)(i + 1)) != ogg(padre)) continue;
         if (o->classe == CL_RIQUADRO || o->classe == CL_SEPARATORE ||
             o->classe == CL_ETICHETTA || o->classe == CL_INTESTAZIONE) continue;
@@ -5203,7 +5370,8 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
             r->fuoco = 0;           /* the application takes it from here */
             return 0;
         }
-        fuoco_avanti(f);
+        if (k & KBD_MOD_SHIFT) fuoco_indietro(f);
+        else                   fuoco_avanti(f);
         return 1;
     }
 
@@ -5696,7 +5864,11 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                 if (menu_tasto(f, e.tasto, &cmd)) {
                     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-                    if (cmd == 0) continue;
+                    /* ! L'APPLICAZIONE SI RIDISEGNA ANCHE LEI (27 settembre
+                     * 2026): la base rifa' solo i controlli, e il display di
+                     * Calctor spariva a ogni tendina aperta. Stessa regola
+                     * della casella di testo, qui sotto. */
+                    if (cmd == 0) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
                     m->msg = EXM_COMANDO;
                     m->wp  = cmd;
                     return 1;
@@ -5915,7 +6087,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                 if (menu_clic(f, (int)e.x, (int)e.y, &cmd)) {
                     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-                    if (cmd == 0) continue;
+                    if (cmd == 0) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
                     m->msg = EXM_COMANDO;
                     m->wp  = cmd;
                     return 1;
@@ -5932,7 +6104,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                 if (combo_clic(f, (int)e.x, (int)e.y, &cid, &scelto, &quale)) {
                     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-                    if (!scelto) continue;
+                    if (!scelto) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
                     m->finestra = destinatario(quale);
                     m->msg = EXM_COMANDO;
                     m->wp  = cid;
@@ -6468,6 +6640,19 @@ void ex_accendi(ExFinestra c, int acceso)
     o->valore = 0;
 }
 
+void ex_abilita(ExFinestra c, int si)
+{
+    Oggetto *o = ogg(c);
+    Oggetto *r;
+
+    if (!o || !o->padre) return;
+    if (si) { o->stile &= ~(unsigned int)EX_SPENTO; return; }
+    o->stile |= EX_SPENTO;
+    o->premuto = 0;
+    r = radice(c);
+    if (r && r->fuoco == c) fuoco_avanti(c);
+}
+
 /* =============================================================================
  * LA BARRA DI SCORRIMENTO — l'API. Il modello sta accanto a scorri_geo().
  * ============================================================================= */
@@ -6561,6 +6746,14 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
     return V->testo[i];
 }
 
+/* La versione della libreria: vedi ex_versione() in exwin.h. +0.001 a ogni
+ * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
+ * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
+ * dell'applicazione quando si apre una tendina. */
+#define EXWIN_VERSIONE "0.003"
+
+const char *ex_versione(void) { return EXWIN_VERSIONE; }
+
 /* =============================================================================
  * IL MENU — l'API. Il perche' sta accanto a #define MENU_MAX.
  * ============================================================================= */
@@ -6591,6 +6784,58 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
 
     if (!M || !titolo || !titolo[0]) return 0;
 
+    /* «Opzioni/Modalita»: la voce Modalita in Opzioni, e la sua tendina
+     * laterale e' dove va la voce di questa chiamata. */
+    {
+        const char *barra = strchr(titolo, '/');
+
+        if (barra && barra > titolo && barra[1]) {
+            char         su[MENU_TESTO_MAX];
+            unsigned int l = (unsigned int)(barra - titolo), k;
+            MenuTitolo  *P;
+            int          s = -1;
+
+            if (l >= sizeof(su)) l = sizeof(su) - 1;
+            memcpy(su, titolo, l);
+            su[l] = '\0';
+            if (!ex_menu_voce(menu, su, 0, 0)) return 0;     /* il titolo */
+            for (i = 0; i < M->n; i++)
+                if (strcmp(M->titolo[i].nome, su) == 0) break;
+            P = &M->titolo[i];
+            for (k = 0; k < P->n; k++)
+                if (P->voce[k].sub >= 0 &&
+                    strcmp(P->voce[k].testo, barra + 1) == 0) { s = P->voce[k].sub; break; }
+            if (s < 0) {
+                if (P->n >= MENU_VOCI_MAX || M->nsub >= MENU_SUB_MAX) return 0;
+                s = (int)M->nsub++;
+                memset(&M->sub[s], 0, sizeof(M->sub[s]));
+                strncpy(M->sub[s].nome, barra + 1, MENU_TESTO_MAX - 1);
+                strncpy(P->voce[P->n].testo, barra + 1, MENU_TESTO_MAX - 1);
+                P->voce[P->n].testo[MENU_TESTO_MAX - 1] = '\0';
+                P->voce[P->n].id  = MENU_ID_SUB;
+                P->voce[P->n].sub = s;
+                P->n++;
+            }
+            T = &M->sub[s];
+            if (!voce || !voce[0]) return 1;
+            if (T->n >= MENU_VOCI_MAX) return 0;
+            if (voce[0] == '-' && voce[1] == '\0') {
+                T->voce[T->n].testo[0] = '\0';
+                T->voce[T->n].id = 0;
+                T->voce[T->n].sub = -1;
+                T->n++;
+                return 1;
+            }
+            if (id == 0) return 0;
+            strncpy(T->voce[T->n].testo, voce, MENU_TESTO_MAX - 1);
+            T->voce[T->n].testo[MENU_TESTO_MAX - 1] = '\0';
+            T->voce[T->n].id  = id;
+            T->voce[T->n].sub = -1;
+            T->n++;
+            return 1;
+        }
+    }
+
     for (i = 0; i < M->n; i++)
         if (strcmp(M->titolo[i].nome, titolo) == 0) { T = &M->titolo[i]; break; }
 
@@ -6615,6 +6860,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
     if (voce[0] == '-' && voce[1] == '\0') {
         T->voce[T->n].testo[0] = '\0';
         T->voce[T->n].id = 0;
+        T->voce[T->n].sub = -1;
         T->n++;
         return 1;
     }
@@ -6624,6 +6870,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
     strncpy(T->voce[T->n].testo, voce, MENU_TESTO_MAX - 1);
     T->voce[T->n].testo[MENU_TESTO_MAX - 1] = '\0';
     T->voce[T->n].id = id;
+    T->voce[T->n].sub = -1;
     T->n++;
     return 1;
 }
@@ -6798,6 +7045,24 @@ void ex_area_mostra_da(ExFinestra f, unsigned int riga)
     if (!A) return;
     massimo = (A->n > A->righe) ? A->n - A->righe : 0;
     A->top = (riga > massimo) ? massimo : riga;
+}
+
+void ex_area_seleziona(ExFinestra f, unsigned int riga, unsigned int da,
+                       unsigned int a)
+{
+    Area *A = area_da_h(f);
+    unsigned int l;
+
+    if (!A || A->n == 0 || riga >= A->n) return;
+    ex_area_vai(f, riga, da);           /* the view, centred; selection off */
+    l = area_lung(A, riga);
+    if (a > l) a = l;
+    if (da > a) da = a;
+    A->sel = 1;
+    A->ay  = riga;
+    A->ax  = da;
+    A->cy  = riga;
+    A->cx  = a;
 }
 
 void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
@@ -7275,6 +7540,77 @@ static int icona_decodifica(const unsigned char *d, unsigned int n,
     *w = bm.larghezza;
     *h = bm.altezza;
     libera(&bm);
+    return 1;
+}
+
+/* ex_immagine_disponi: il perche' sta in exwin.h. */
+int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
+                        int w, int h, int modo, unsigned int sfondo)
+{
+    unsigned char *d;
+    unsigned int   cap = 256u * 1024u;
+    unsigned int  *px = 0, *out, iw = 0, ih = 0;
+    int            fd, n, i, j, ox = 0, oy = 0;
+
+    if (!percorso || w <= 0 || h <= 0) return 0;
+    if (modo == EX_IMM_ANGOLO) {
+        ex_riempi(f, x, y, w, h, sfondo);
+        return ex_immagine(f, percorso, x, y);
+    }
+
+    fd = open(percorso, O_RDONLY);
+    if (fd < 0) return 0;
+    d = (unsigned char *)malloc(cap);
+    if (!d) { close(fd); return 0; }
+    n = (int)read(fd, d, cap);
+    close(fd);
+    if (n <= 0 || !icona_decodifica(d, (unsigned int)n, &px, &iw, &ih) ||
+        iw == 0 || ih == 0) {
+        free(d);
+        if (px) free(px);
+        return 0;
+    }
+    free(d);
+
+    out = (unsigned int *)malloc((unsigned int)w * (unsigned int)h *
+                                 sizeof(unsigned int));
+    if (!out) { free(px); return 0; }
+
+    /* Il centro: di quanto l'immagine sta a destra e in basso dell'angolo
+     * del riquadro. Negativo quando e' piu' grande: si prende il suo mezzo. */
+    if (modo == EX_IMM_CENTRO) {
+        ox = (w - (int)iw) / 2;
+        oy = (h - (int)ih) / 2;
+    }
+
+    for (j = 0; j < h; j++) {
+        for (i = 0; i < w; i++) {
+            int sx, sy;
+
+            if (modo == EX_IMM_ALLARGA) {
+                sx = (int)((unsigned int)i * iw / (unsigned int)w);
+                sy = (int)((unsigned int)j * ih / (unsigned int)h);
+            } else if (modo == EX_IMM_RIPETI) {
+                sx = i % (int)iw;
+                sy = j % (int)ih;
+            } else {
+                sx = i - ox;
+                sy = j - oy;
+                if (sx < 0 || sy < 0 || sx >= (int)iw || sy >= (int)ih) {
+                    out[j * w + i] = sfondo;
+                    continue;
+                }
+            }
+            /* ! OPACA, COME IN ex_immagine: i lettori di PNG e JPG lasciano
+             * l'alfa a zero ("alfa ignorata" in eximg/png.c), e fonderla
+             * darebbe uno sfondo tinta unita al posto della foto. */
+            out[j * w + i] = px[(unsigned int)sy * iw + (unsigned int)sx] & 0xFFFFFF;
+        }
+    }
+
+    ex_pixmap(f, x, y, w, h, out, (unsigned int)w);
+    free(out);
+    free(px);
     return 1;
 }
 

@@ -396,6 +396,7 @@ typedef struct { unsigned int bit; } fd_set;
 #define SYS_CONSOLE_SETFG  232
 #define SYS_CONSOLE_GRAFICA 255
 #define SYS_CONSOLE_TESTO  214
+#define SYS_CONSOLE_REGISTRO 215
 #define SYS_IOCTL         54
 #define SYS_DUP           41
 #define SYS_DUP2          63
@@ -6613,6 +6614,12 @@ int console_testo(char *buf, unsigned int max)
     return (int)_syscall2(SYS_CONSOLE_TESTO, (uint32_t)buf, (uint32_t)max);
 }
 
+/* The log ring of the graphics console (@EXWIN-LOG): see libc.h. */
+int console_registro(char *buf, unsigned int max)
+{
+    return (int)_syscall2(SYS_CONSOLE_REGISTRO, (uint32_t)buf, (uint32_t)max);
+}
+
 int ipc_register(const char *name)
 {
     return (int)_syscall1(SYS_IPC_REGISTER, (uint32_t)name);
@@ -7723,6 +7730,28 @@ char *strtok(char *s, const char *sep)
     s += strcspn(s, sep);
     if (*s != '\0') { *s = '\0'; strtok_stato = s + 1; }
     else            { strtok_stato = NULL; }
+
+    return inizio;
+}
+
+/* strtok with the state in the caller's hands (POSIX), for code that splits
+ * two strings at once or runs in threads. Added on 27 September 2026 for the
+ * BASIC interpreter (@RUNBAS): without it the compiler assumed an int, and
+ * a pointer cut to an int is a crash waiting for the right address. */
+char *strtok_r(char *s, const char *sep, char **stato)
+{
+    char *inizio;
+
+    if (s == NULL) s = *stato;
+    if (s == NULL) return NULL;
+
+    s += strspn(s, sep);
+    if (*s == '\0') { *stato = NULL; return NULL; }
+
+    inizio = s;
+    s += strcspn(s, sep);
+    if (*s != '\0') { *s = '\0'; *stato = s + 1; }
+    else            { *stato = NULL; }
 
     return inizio;
 }

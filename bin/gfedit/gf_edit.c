@@ -299,6 +299,7 @@ void gf_tasto(GfEdit *self, unsigned key)
             return;
         }
         if (base == KBD_K_F(10)) { gf_menu(self, 0); return; }
+        if (base == KBD_K_F(5))  { gf_az_esegui(self); return; }
         return;
     }
 
@@ -572,6 +573,73 @@ void gf_az_salva(GfEdit *self)
         gf_fmt(m, sizeof(m), "Salvataggio fallito (errore %d)", -r);
         gf_msg(self, m);
     }
+}
+
+/* =============================================================================
+ * F5 — RUN THE PROGRAM (@RUNBAS, 27 September 2026)
+ *
+ * As QBASIC did: the program's output has a screen of its own, and a key
+ * brings the editor back.
+ *
+ * ! runbas IS LAUNCHED, NOT LINKED: the editor must keep working where the
+ * interpreter is not installed, and a missing program is a message where a
+ * missing library would be an editor that does not start. And the program
+ * dies on its own, without taking the editor with it.
+ *
+ * ! THE SCREEN CHANGES OWNER TWICE, and both times cleanly: gf_term_fine()
+ * puts the console back to cooked mode and clears it (the program reads
+ * INPUT line by line, echo included), gf_term_init() takes it back in raw
+ * mode and asks for a full repaint.
+ * ============================================================================= */
+static const char *runbas_dove(void)
+{
+    static const char *const posti[] = { "/bin/runbas", "/cdrom/bin/runbas" };
+    struct stat st;
+    unsigned int i;
+
+    for (i = 0; i < sizeof(posti) / sizeof(posti[0]); i++)
+        if (stat(posti[i], &st) == 0) return posti[i];
+    return 0;
+}
+
+void gf_az_esegui(GfEdit *self)
+{
+    GfTab      *t = gf_corrente(self);
+    const char *rb = runbas_dove();
+    char       *av[3];
+    char        riga[16];
+    int         pid, stato = 0;
+
+    if (!rb) {
+        gf_msg(self, "runbas non c'e': F5 esegue i .bas con runbas "
+                     "(netupdate lo installa)");
+        return;
+    }
+
+    /* The program runs from the disk, so what is on screen goes there
+     * first — or F5 would run the version before the last change. */
+    if (!t->has_path || t->modified) gf_az_salva(self);
+    if (!t->has_path || t->modified) {
+        gf_msg(self, "Esegui: prima va salvato");
+        return;
+    }
+
+    gf_term_fine();
+    printf("--- runbas %s ---\n\n", t->filepath);
+
+    av[0] = (char *)rb;
+    av[1] = t->filepath;
+    av[2] = 0;
+    pid = spawn_ex(rb, av, environ, 0, 0);
+    if (pid < 0) printf("runbas non parte (errore %d)\n", pid);
+    else         waitpid(pid, &stato, 0);
+
+    printf("\n--- finito%s. Invio per tornare all'editor ---",
+           (pid >= 0 && stato != 0) ? " con un errore" : "");
+    (void)read(0, riga, sizeof(riga));
+
+    gf_term_init();
+    gf_msg(self, pid >= 0 ? "programma eseguito" : "runbas non parte");
 }
 
 void gf_az_salva_come(GfEdit *self)

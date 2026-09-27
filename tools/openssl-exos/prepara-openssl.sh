@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/openssl-exos/prepara-openssl.sh
 # EX-OS — Extensible Operating System
@@ -64,8 +65,8 @@
 set -e
 
 SORGENTI="${SORGENTI:-$PWD/openssl}"
-BUILD="${BUILD:-$HOME/openssl-build-exos}"
-PREFISSO="${PREFISSO:-$HOME/exos-cross}"
+BUILD="${BUILD:-$TC/openssl-build-exos}"
+PREFISSO="${PREFISSO:-$TC/exos-cross}"
 
 if [ ! -f "$SORGENTI/Configure" ]; then
     echo "Sorgenti OpenSSL non trovati in $SORGENTI" >&2
@@ -76,7 +77,7 @@ fi
 
 if ! command -v i386-exos-gcc >/dev/null 2>&1; then
     echo "i386-exos-gcc non e' nel PATH." >&2
-    echo "    export PATH=\"\$HOME/exos-cross/bin:\$PATH\"" >&2
+    echo "    export PATH=\"\$TC/exos-cross/bin:\$PATH\"" >&2
     exit 1
 fi
 

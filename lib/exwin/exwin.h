@@ -172,6 +172,11 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * server. Chi mette questo bit deve gestire EXM_MISURA. */
 #define EX_RIDIM        0x0080
 #define EX_FIGLIO       0x0100  /* e' un controllo dentro un'altra finestra */
+/* ! SPENTO (27 settembre 2026, per Calctor): il controllo c'e', si vede
+ * grigio, e non si preme ne' prende il fuoco. Si mette alla creazione o con
+ * ex_abilita(). Nasconderlo (ex_mostra) direbbe «non esiste»; spento dice
+ * «esiste, ma adesso no» — le cifre 2..9 di una calcolatrice in binario. */
+#define EX_SPENTO       0x0200
 
 /* --- I colori, in ARGB --------------------------------------------------- */
 #define EX_NERO         0x00000000
@@ -621,6 +626,34 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y);
 
 /* -----------------------------------------------------------------------------
+ * UN'IMMAGINE DENTRO UN RIQUADRO (27 settembre 2026, per lo sfondo di pm)
+ *
+ * Riempie il riquadro x,y,w,h con l'immagine disposta secondo `modo`:
+ *
+ *     EX_IMM_ANGOLO   com'e', nell'angolo in alto a sinistra (= ex_immagine)
+ *     EX_IMM_CENTRO   com'e', al centro; se e' piu' grande si vede il mezzo
+ *     EX_IMM_ALLARGA  stirata a coprire tutto il riquadro, senza badare alle
+ *                     proporzioni (come «Estendi» di Windows)
+ *     EX_IMM_RIPETI   ripetuta a piastrelle dall'angolo
+ *
+ * Dove l'immagine non arriva resta `sfondo`. L'immagine e' OPACA, come in
+ * ex_immagine: l'alfa non si fonde. Si legge con gli stessi lettori delle
+ * icone (BMP qui, il resto in eximg.so). Rende 1 se l'ha disegnata, 0 se non
+ * la sa leggere.
+ *
+ * ! IL RIQUADRO SI COMPONE IN MEMORIA E SI POSA UNA VOLTA: per 800x600 sono
+ * 1,9 MB presi e resi dentro la chiamata. Pezzo per pezzo, una piastrella da
+ * 16 pixel su uno schermo intero sarebbero duemila ex_pixmap.
+ * --------------------------------------------------------------------------- */
+#define EX_IMM_ANGOLO   0
+#define EX_IMM_CENTRO   1
+#define EX_IMM_ALLARGA  2
+#define EX_IMM_RIPETI   3
+
+int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
+                        int w, int h, int modo, unsigned int sfondo);
+
+/* -----------------------------------------------------------------------------
  * LE ICONE — un'immagine che si tiene, e si ridisegna a qualunque misura
  *
  * ! UN'ICONA NON E' UN'IMMAGINE DISEGNATA UNA VOLTA, ed e' per questo che ha
@@ -744,6 +777,10 @@ void       ex_mdi_attiva(ExFinestra figlio);
  * --------------------------------------------------------------------------- */
 int  ex_acceso(ExFinestra c);
 void ex_accendi(ExFinestra c, int acceso);
+
+/* Accende (1) o spegne (0) un controllo: vedi EX_SPENTO. Uno spento che aveva
+ * il fuoco lo passa al successivo. Il ridisegno lo chiede chi chiama. */
+void ex_abilita(ExFinestra c, int si);
 
 /* -----------------------------------------------------------------------------
  * La barra di scorrimento
@@ -908,6 +945,9 @@ unsigned int ex_area_righe(ExFinestra area);
 const char  *ex_area_riga(ExFinestra area, unsigned int i);
 int          ex_area_modificato(ExFinestra area);
 void         ex_area_pulita(ExFinestra area);
+/* ! COUNTS FROM ONE (riga 1, col 1): it was written for a status line.
+ * ex_area_vai() and ex_area_seleziona() count from ZERO — subtract one
+ * before passing a position from here to them. */
 void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *col);
 
 /* ! IL CURSORE SI PORTA, e non solo si legge. E' quel che serve a una colonna
@@ -935,6 +975,13 @@ void         ex_area_mostra_da(ExFinestra area, unsigned int riga);
  * colori da questa riga in giu' come ogni altra modifica. */
 void         ex_area_riga_metti(ExFinestra area, unsigned int riga,
                                 const char *testo);
+
+/* Selects columns [da, a) of one line, cursor at the end, and brings it into
+ * view as ex_area_vai() does: what «find» needs to show what it found — and
+ * then a typed character replaces it, as with any selection (26 September
+ * 2026, @EDIT-CERCA). */
+void         ex_area_seleziona(ExFinestra area, unsigned int riga,
+                               unsigned int da, unsigned int a);
 
 /* -----------------------------------------------------------------------------
  * La selezione e gli appunti
@@ -995,11 +1042,28 @@ int          ex_area_cancella(ExFinestra area);
  * Coi tasti: F10 apre, le frecce girano fra titoli e voci, Invio sceglie, Esc
  * chiude — e qualunque altro tasto chiude, invece di sparire nel nulla.
  *
- * Rende 0 se non c'e' piu' posto (6 titoli per finestra, 12 voci per titolo).
+ * ! LE TENDINE LATERALI (27 settembre 2026): un titolo con la barra,
+ *
+ *     ex_menu_voce(mb, "Opzioni/Modalita", "Normale",     ID_NORMALE);
+ *     ex_menu_voce(mb, "Opzioni/Modalita", "Scientifica", ID_SCIENT);
+ *
+ * mette in «Opzioni» la voce «Modalita >», che apre di fianco una tendina con
+ * Normale e Scientifica. Si apre col clic o con destra/Invio, sinistra o Esc
+ * la richiudono. Un livello solo, quattro tendine laterali per finestra. Su un
+ * exwin.so di prima «Opzioni/Modalita» diventa un titolo in barra: le voci ci
+ * sono lo stesso, piu' scomode.
+ *
+ * Rende 0 se non c'e' piu' posto (6 titoli per finestra, 16 voci per titolo).
  * --------------------------------------------------------------------------- */
 ExFinestra ex_menu(ExFinestra finestra);
 int        ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
                         unsigned int id);
+
+/* La versione di ExWin — di questo exwin.so, quello che gira, non quello con
+ * cui il programma e' stato compilato. +0.001 a ogni modifica della libreria,
+ * come ogni programma (EXWIN_VERSIONE in exwin.c). Contata dal 27 settembre
+ * 2026: prima la libreria non ne aveva una. «Informazioni su» la mostra. */
+const char *ex_versione(void);
 
 /* Quanto e' grande lo schermo. 0 se si e' in modo testo. */
 void ex_schermo(unsigned int *larghezza, unsigned int *altezza);

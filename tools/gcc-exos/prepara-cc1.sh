@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/gcc-exos/prepara-cc1.sh
 # EX-OS — Extensible Operating System
@@ -98,7 +99,7 @@
 
 set -e
 
-BUILD="${1:-$HOME/gcc-build-canadian}"
+BUILD="${1:-$TC/gcc-build-canadian}"
 SORGENTI="${2:-$(cd "$(dirname "$0")/../.." && pwd)/gcc}"
 # ! I LINGUAGGI SONO UN ARGOMENTO, e il default sono DUE: `c,c++`.
 # Con il solo `c` si ottiene cc1 e basta, cioe' un sistema che compila C e
@@ -106,7 +107,7 @@ SORGENTI="${2:-$(cd "$(dirname "$0")/../.." && pwd)/gcc}"
 # .cpp dentro EX-OS e scopre che cc1plus non esiste. La libstdc++ per il
 # bersaglio c'e' gia' nel sysroot: manca solo il compilatore che la usi.
 LINGUE="${3:-c,c++}"
-PREFISSO="$HOME/exos-cross"
+PREFISSO="$TC/exos-cross"
 SYSROOT="$PREFISSO/i386-exos"
 
 if [ ! -f "$SORGENTI/gcc/config.gcc" ]; then

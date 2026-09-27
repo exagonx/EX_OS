@@ -34,7 +34,11 @@ RADICE = sys.argv[1] if len(sys.argv) > 1 else "."
 SALTA = ("gcc/", "coreutils/", "rust/", "FreeBASIC", "openssl/", "quickjs/",
          "nasm/", "make/", "sed/", "grep/", "awk/", "liberation-fonts/",
          "freebasic/", "3p_app_source/", "drv_prop/", "build/", "dist/",
-         "tools/locali/estranei/")
+         "tools/locali/estranei/",
+         # Exilla: i sorgenti di Firefox (27 settembre 2026). Con loro
+         # dentro `make all` si fermava su 60 stringhe che su uno schermo
+         # di EX-OS non passeranno mai.
+         "firefox-main/", "gnu/", "gfbasic/")
 
 def spoglia(testo):
     """Toglie commenti e caratteri, lascia le stringhe al loro posto."""

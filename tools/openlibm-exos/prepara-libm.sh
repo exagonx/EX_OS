@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/openlibm-exos/prepara-libm.sh
 # EX-OS — Extensible Operating System
@@ -67,12 +68,12 @@ set -e
 
 QUI=$(cd "$(dirname "$0")" && pwd)
 
-PREFISSO="${1:-$HOME/exos-cross}"
+PREFISSO="${1:-$TC/exos-cross}"
 SORGENTI="$2"
 SYSROOT="$PREFISSO/i386-exos"
 
 if [ -z "$SORGENTI" ]; then
-    SORGENTI=$(ls -d "$HOME"/exos-native/openlibm-*/ 2>/dev/null | head -1)
+    SORGENTI=$(ls -d "$TC"/exos-native/openlibm-*/ 2>/dev/null | head -1)
 fi
 
 if [ -z "$SORGENTI" ] || [ ! -f "$SORGENTI/Make.inc" ]; then

@@ -164,6 +164,14 @@ static const char *const g_nomi[] = {
     "ex_finestra_attiva",
     "ex_finestra_riduci",
     "ex_chiudi_le_altre",
+    "ex_area_seleziona",
+
+    /* Added on 27 September 2026: the desktop image (@PM-SFONDO). */
+    "ex_immagine_disponi",
+
+    /* Added on 27 September 2026: side menus, and the version (Calctor). */
+    "ex_versione",
+    "ex_abilita",
 
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
@@ -277,6 +285,12 @@ static void *const g_indirizzi[] = {
     (void *)ex_finestra_attiva,
     (void *)ex_finestra_riduci,
     (void *)ex_chiudi_le_altre,
+    (void *)ex_area_seleziona,
+
+    (void *)ex_immagine_disponi,
+
+    (void *)ex_versione,
+    (void *)ex_abilita,
 
     (void *)__libc_ponti_avvia
 };

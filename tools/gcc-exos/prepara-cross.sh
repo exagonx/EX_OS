@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/gcc-exos/prepara-cross.sh
 # EX-OS — Extensible Operating System
@@ -63,7 +64,7 @@
 
 set -e
 
-PREFISSO="${1:-$HOME/exos-cross}"
+PREFISSO="${1:-$TC/exos-cross}"
 
 if [ ! -f lib/libc.c ]; then
     echo "prepara-cross: va lanciato dalla radice del progetto EX-OS" >&2

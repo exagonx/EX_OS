@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.022");
+EX_VERSIONE("netupdate", "0.023");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -1747,6 +1747,40 @@ typedef struct {
     int          tradito;   /* 1 = si e' chiesto un pezzo e arriva tutto      */
 } Posa;
 
+/* =============================================================================
+ * THE TURNING BAR (@NETUPD-GIRA, 27 September 2026)
+ *
+ * | / - \ at the start of the line while the bytes arrive: the only way to
+ * tell «slow» from «stuck» during a download that says nothing for minutes.
+ *
+ * ! IT TURNS WHERE THE BYTES ARRIVE, one step every GIRA_OGNI of them, and
+ * not by the clock: a bar moved by time would turn with the network dead —
+ * lying exactly when someone is looking at it.
+ *
+ * ! TWO BYTES PER STEP, «\r» and the character, and never a newline: on a
+ * serial line or in a telnet session a percentage rewritten at every packet
+ * would bury the log. 38 MB are about 2400 steps.
+ * ============================================================================= */
+#define GIRA_OGNI  16384L
+static int  g_gira_passo = 0;
+static long g_gira_ultimo = -1;         /* the last GIRA_OGNI block shown */
+
+static void gira(long byte)
+{
+    static const char ruota[4] = { '|', '/', '-', '\\' };
+
+    if (g_zitto || byte / GIRA_OGNI == g_gira_ultimo) return;
+    g_gira_ultimo = byte / GIRA_OGNI;
+    printf("\r%c", ruota[g_gira_passo++ & 3]);
+}
+
+/* The bar goes away when the download ends, so the next line starts clean. */
+static void gira_fine(void)
+{
+    if (g_gira_ultimo >= 0 && !g_zitto) printf("\r \r");
+    g_gira_ultimo = -1;
+}
+
 static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
 {
     Posa *q = (Posa *)dato;
@@ -1777,6 +1811,7 @@ static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
     }
     sha256_dai(&q->sha, d, n);
     q->byte += (long)n;
+    gira(q->byte);
     return 1;
 }
 
@@ -1888,6 +1923,7 @@ static int scarica_su_file(Config *c, const char *coda, const char *temp,
          * file. (Il punto di ripartenza invece se lo consuma exhttp_prendi:
          * vale per una chiamata sola, vedi exhttp_da.) */
         exhttp_verso(0, 0);
+        gira_fine();
         close(q.fd);
 
         /* Il server ha ignorato il Range e ha mandato tutto: quel che c'era
@@ -2086,6 +2122,54 @@ static void permessi_dir(const char *dir, int solo_so,
         }
     }
     closedir(d);
+}
+
+/* =============================================================================
+ * /boot/percorsi.txt — TELLING THE SHELL WHERE THE PROGRAMS WENT
+ * (@NETUPDATE-PATH, 27 September 2026)
+ *
+ * gcc, cpp and fbc land in /exos/bin, which the shell's PATH did not know:
+ * installed, they could not be found. The shell reads /boot/percorsi.txt at
+ * start; this appends to it the program directories that exist and are not
+ * listed yet.
+ *
+ * ! IT APPENDS, IT NEVER REWRITES: a configuration file on a machine already
+ * in use holds what its owner put there (the same rule as hwconfig). A line
+ * already present is not added twice.
+ * ============================================================================= */
+static void percorsi_segna(void)
+{
+    static const char *const DOVE[] = { "/exos/bin", "/exos/i386-exos/bin",
+                                        "/exwin/bin", NULL };
+    char  buf[1024];
+    int   fd, n = 0, i;
+    struct stat st;
+
+    fd = open("/boot/percorsi.txt", O_RDONLY, 0);
+    if (fd >= 0) { n = (int)read(fd, buf, sizeof(buf) - 1); close(fd); }
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+
+    for (i = 0; DOVE[i]; i++) {
+        char riga[64];
+        int  l;
+
+        if (stat(DOVE[i], &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        l = snprintf(riga, sizeof(riga), "%s\n", DOVE[i]);
+        {
+            char cerca[66];
+            snprintf(cerca, sizeof(cerca), "\n%s\n", DOVE[i]);
+            if (strncmp(buf, riga, (size_t)l) == 0 || strstr(buf, cerca)) continue;
+        }
+        fd = open("/boot/percorsi.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd < 0) return;                     /* read-only: nothing to say */
+        if (n > 0 && buf[n - 1] != '\n') (void)write(fd, "\n", 1);
+        (void)write(fd, riga, (unsigned int)l);
+        close(fd);
+        if (!g_zitto)
+            printf("  %s aggiunta ai percorsi (vale dalla prossima console)\n", DOVE[i]);
+        if (n + l < (int)sizeof(buf) - 1) { memcpy(buf + n, riga, (size_t)l + 1); n += l; }
+    }
 }
 
 static int comando_permessi(void)
@@ -3565,7 +3649,11 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-auto") == 0) return comando_auto();
 
     if (strcmp(argv[1], "-permessi") == 0)
-        return comando_permessi();
+        {
+            int rc = comando_permessi();
+            percorsi_segna();
+            return rc;
+        }
 
     if (strncmp(argv[1], "-install:", 9) == 0) {
         const char *coda = argv[1] + 9;
@@ -3576,7 +3664,11 @@ int main(int argc, char **argv)
         if (strcmp(coda, "list") == 0)
             return comando_install_list(argc > 2 ? argv[2] : "");
         if (coda[0] == '\0') { uso(); return 1; }
-        return comando_install(coda);
+        {
+            int rc = comando_install(coda);
+            if (rc == 0) percorsi_segna();
+            return rc;
+        }
     }
 
     if (strncmp(argv[1], "-remove:", 8) == 0) {

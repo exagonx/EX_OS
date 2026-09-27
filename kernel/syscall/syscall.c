@@ -194,6 +194,7 @@ void syscall_init(void)
     syscall_table[SYS_CONSOLE_WRITE]  = sys_console_write;
     syscall_table[SYS_CONSOLE_INFO]   = sys_console_info;
     syscall_table[SYS_CONSOLE_TESTO]  = sys_console_testo;
+    syscall_table[SYS_CONSOLE_REGISTRO] = sys_console_registro;
     syscall_table[SYS_CONSOLE_SETFG]  = sys_console_setfg;
     syscall_table[SYS_CONSOLE_GRAFICA] = sys_console_grafica;
 

@@ -72,6 +72,13 @@ int ex_dlg_percorso(const char *titolo, const char *etichetta, const char *ok,
  * di stato — che chi guarda un'altra finestra non legge. */
 int ex_dlg_avviso(const char *titolo, const char *testo);
 
+/* Un testo LUNGO — istruzioni, una licenza — in una finestra modale dove
+ * scorre: l'avviso qui sopra si ferma a dodici righe. '\n' va a capo, le righe
+ * lunghe vanno a capo da sole sulle parole. Invio, Esc o «Chiudi» chiudono.
+ * Rende sempre 1. Su un exdlg.so di prima del 27 settembre 2026 diventa un
+ * ex_dlg_avviso, cioe' il testo si taglia. */
+int ex_dlg_testo(const char *titolo, const char *testo);
+
 /* Una domanda con due pulsanti: rende 1 per «si'», 0 per «no».
  *
  * ! LA RISPOSTA PREDEFINITA E' «NO», E NON E' UNA CORTESIA. Chiudere la

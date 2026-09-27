@@ -2877,7 +2877,7 @@ make distclean    # Remove build/ and dist/
 ```
 
 `make iso` includes native `as` and `ld` if it finds them in
-`$(BINUTILS_NATIVI)` (default `~/exos-native/build-nativi`); if they are not
+`$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); if they are not
 there it says so and builds the CD anyway. How to build them:
 `tools/binutils-exos/leggimi.md`.
 

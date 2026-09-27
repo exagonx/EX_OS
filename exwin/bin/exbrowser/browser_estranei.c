@@ -144,16 +144,30 @@ static int est_modulo_di(int v)
  * nello stesso istante: e' il motivo per cui il cliente ha un «si ricomincia»
  * invece di ripulirsi per conto suo.
  *
- * ! E g_opz_n NON SI AZZERA, come non si azzerava prima. Le opzioni dei
- * <select> si accodano a ogni giro finche' OPZ_MAX non e' pieno, e allora
- * l'elenco di una scelta resta quello del giro buono. E' una perdita
- * conosciuta, non un dimenticanza di oggi: toccarla adesso vorrebbe dire
- * cambiare due cose insieme e non sapere piu' quale ha mosso i pixel.
+ * ! E DAL 27 SETTEMBRE 2026 SI AZZERA ANCHE g_opz_n, e prima no: le opzioni
+ * dei <select> si accodavano a ogni giro, e al terzo o quarto reimpaginare
+ * (un'immagine arrivata, uno script aggiunto dopo, un iframe) OPZ_MAX era
+ * pieno e le scelte restavano SENZA opzioni — la tendina non si apriva
+ * nemmeno. Segnalato come «exbrowser non mostra il contenuto delle select».
+ * La riga scelta dall'utente non ne soffre: si tiene come posizione dentro
+ * la SUA scelta (opz_ora), non come indice in g_opz.
  * ============================================================================= */
 static void est_azzera(void)
 {
     g_ctrl_n = 0;
     g_mod_n  = 0;
+    g_opz_n  = 0;
+}
+
+/* Una <option> in piu' nella scelta c. */
+static void opz_aggiungi(Ctrl *c, int f2)
+{
+    if (g_opz_n >= OPZ_MAX) return;
+    testo_dentro(f2, g_opz[g_opz_n], CTRL_VAL_MAX);
+    if (html_attr(&g_doc, f2, "selected"))
+        c->opz_ora = (short)(g_opz_n - c->opz_primo);
+    g_opz_n++;
+    c->opz_n++;
 }
 
 /* =============================================================================
@@ -319,14 +333,21 @@ static int est_misura(int v, VistaPezzo *p)
                 for (f2 = g_doc.nodi[v].primo_figlio; f2 >= 0;
                      f2 = g_doc.nodi[f2].prossimo) {
                     if (g_doc.nodi[f2].tipo != HTML_ELEMENTO) continue;
-                    if (!uguale(html_nome(&g_doc, f2), "option")) continue;
-                    if (g_opz_n >= OPZ_MAX) break;
+                    if (uguale(html_nome(&g_doc, f2), "option")) {
+                        opz_aggiungi(c, f2);
+                    } else if (uguale(html_nome(&g_doc, f2), "optgroup")) {
+                        /* ! LE OPZIONI DENTRO UN <optgroup> SONO OPZIONI
+                         * (27 settembre 2026): prima si guardavano solo i
+                         * figli diretti, e una scelta raggruppata — frequente
+                         * sui siti veri — restava vuota. */
+                        int f3;
 
-                    testo_dentro(f2, g_opz[g_opz_n], CTRL_VAL_MAX);
-                    if (html_attr(&g_doc, f2, "selected"))
-                        c->opz_ora = (short)(g_opz_n - c->opz_primo);
-                    g_opz_n++;
-                    c->opz_n++;
+                        for (f3 = g_doc.nodi[f2].primo_figlio; f3 >= 0;
+                             f3 = g_doc.nodi[f3].prossimo)
+                            if (g_doc.nodi[f3].tipo == HTML_ELEMENTO &&
+                                uguale(html_nome(&g_doc, f3), "option"))
+                                opz_aggiungi(c, f3);
+                    }
                 }
 
                 if (c->opz_n > 0) {

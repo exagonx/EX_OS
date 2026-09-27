@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.016"
+#define VERSIONE_APP "0.017"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -155,8 +155,12 @@ typedef struct {
 static const Strumento g_strum[] = {
     { "pulsante",     "Pulsante",     "Pulsante",  90, 26, { "Clic", "SulMouse", 0 } },
     { "etichetta",    "Etichetta",    "Etichetta", 90, 16, { "SulMouse", "Clic", 0 } },
-    { "testo",        "Casella",      "Casella",  140, 22, { "Cambiato", "Invio", 0 } },
-    { "spunta",       "Spunta",       "Spunta",   140, 20, { "Cambiato", 0, 0 } },
+    /* ! «Casella testo» and «Checkbox» since 26 September 2026 (@EXIDE-NOMI):
+     * the names in the panel and of NEW controls. Projects keep the class
+     * («testo», «spunta») and the names they already have, so an old project
+     * opens as before. */
+    { "testo",        "Casella testo", "CasellaTesto", 140, 22, { "Cambiato", "Invio", 0 } },
+    { "spunta",       "Checkbox",     "Checkbox", 140, 20, { "Cambiato", 0, 0 } },
     { "radio",        "Radio",        "Radio",    140, 20, { "Cambiato", 0, 0 } },
     { "riquadro",     "Riquadro",     "Riquadro", 160, 90, { 0, 0, 0 } },
     { "separatore",   "Separatore",   "Riga",     160,  2, { 0, 0, 0 } },
@@ -505,6 +509,19 @@ static int icona_ctrl(const Ctrl *c)
     return 1;
 }
 
+/* A filled disc, one row at a time: the toolkit's own disco() is not
+ * exported, and a radio needs nothing more. */
+static void cerchio(int cx, int cy, int r, unsigned int col)
+{
+    int dy;
+
+    for (dy = -r; dy <= r; dy++) {
+        int dx = 0;
+        while ((dx + 1) * (dx + 1) + dy * dy <= r * r) dx++;
+        ex_riempi(g_f, cx - dx, cy + dy, 2 * dx + 1, 1, col);
+    }
+}
+
 static void disegna_controllo(const Ctrl *c, int ox, int oy)
 {
     int x = ox + c->x, y = oy + c->y;
@@ -560,9 +577,17 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
             ex_riempi(g_f, x + c->w - 19, y + 2, 17, c->h - 4, EX_GRIGIO);
             ex_rilievo(g_f, x + c->w - 19, y + 2, 17, c->h - 4);
         }
-    } else if (strcmp(cl, "spunta") == 0 || strcmp(cl, "radio") == 0) {
+    } else if (strcmp(cl, "spunta") == 0) {
         ex_riempi(g_f, x, y + (c->h - 13) / 2, 13, 13, EX_BIANCO);
         ex_incavo(g_f, x, y + (c->h - 13) / 2, 13, 13);
+        ex_scrivi(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_NERO);
+    } else if (strcmp(cl, "radio") == 0) {
+        /* ! ROUND, as the toolkit draws it (@EXIDE-NOMI): the designer drew
+         * the radio as a square, the same as the checkbox, so the two could
+         * not be told apart on the form — and in the program they are not the
+         * same thing. A dark disc, and a white one inside. */
+        cerchio(x + 6, y + c->h / 2, 6, EX_GRIGIO_SC);
+        cerchio(x + 6, y + c->h / 2, 5, EX_BIANCO);
         ex_scrivi(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_NERO);
     } else if (strcmp(cl, "riquadro") == 0) {
         ex_incavo(g_f, x, y + 8, c->w, c->h - 8);

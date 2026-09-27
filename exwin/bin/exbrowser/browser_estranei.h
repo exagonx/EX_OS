@@ -61,7 +61,7 @@
 #define CTRL_AREA       5       /* textarea                             */
 #define CTRL_NASCOSTO   6       /* input type=hidden: si manda, non si vede */
 #define CTRL_NOME_MAX   40
-#define OPZ_MAX     128
+#define OPZ_MAX     256     /* 128 fino al 27 settembre 2026: un elenco di lingue ne ha di piu' */
 #define MODULI_MAX      16
 #define AZIONE_MAX      EXHTTP_URL_MAX
 typedef struct {

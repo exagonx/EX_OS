@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/gcclibs-exos/prepara-gcclibs.sh
 # EX-OS — Extensible Operating System
@@ -72,8 +73,8 @@
 
 set -e
 
-PREFISSO="${1:-$HOME/exos-cross}"
-SORGENTI="${2:-$HOME/exos-native}"
+PREFISSO="${1:-$TC/exos-cross}"
+SORGENTI="${2:-$TC/exos-native}"
 SYSROOT="$PREFISSO/i386-exos"
 
 if [ ! -x "$PREFISSO/bin/i386-exos-gcc" ]; then

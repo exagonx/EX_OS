@@ -18,7 +18,7 @@ wget http://deb.debian.org/debian/pool/main/b/binutils/binutils_2.44.orig.tar.xz
 tar xf binutils_2.44.orig.tar.xz
 
 # 2. costruzione e installazione
-tools/binutils-exos/prepara-binutils.sh ~/exos-cross binutils-2.44
+tools/binutils-exos/prepara-binutils.sh cross_build/exos-cross binutils-2.44
 ```
 
 Provato con **binutils 2.44**.
@@ -63,7 +63,7 @@ compilava **su** Linux **per** EX-OS. Tre cose cambiano:
 **dentro** EX-OS.
 
 ```bash
-cd ~/exos-native/build-nativi
+cd cross_build/exos-native/build-nativi
 CC="i386-exos-gcc -std=gnu17" ../binutils-2.44/configure \
     --build=x86_64-pc-linux-gnu --host=i386-exos --target=i386-exos \
     --prefix=/usr --disable-nls --disable-werror \

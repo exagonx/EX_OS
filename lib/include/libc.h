@@ -170,6 +170,7 @@ int     mbtowc(wchar_t *dst, const char *src, size_t n);
 int     wctomb(char *dst, wchar_t c);
 char   *strdup(const char *s);
 char   *strtok(char *s, const char *sep);
+char   *strtok_r(char *s, const char *sep, char **stato);
 size_t  strspn(const char *s, const char *accetta);
 size_t  strcspn(const char *s, const char *rifiuta);
 void   *memchr(const void *s, int c, size_t n);
@@ -1062,6 +1063,12 @@ int console_grafica(int azione);
  * negative error when the graphics belongs to another user. The window that
  * shows it is «Registro di sistema» (@EXWIN-LOG, 26 September 2026). */
 int console_testo(char *buf, unsigned int max);
+
+/* The same log as a RING: the last 32 KB written to the graphics console,
+ * not just what is on its screen, each line starting «hh:mm:ss   pid  ».
+ * Same returns as console_testo; on a kernel older than 0.220 a negative
+ * error (ENOSYS), and then console_testo is what there is. */
+int console_registro(char *buf, unsigned int max);
 int console_write(unsigned int n, const void *buf, unsigned int len);
 
 /* =============================================================================

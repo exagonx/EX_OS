@@ -1106,6 +1106,7 @@ int32_t sys_console_grafica(InterruptFrame *frame)
     if (azione == 1) {
         g_console_grafica     = (int32_t)proc->console;
         g_console_grafica_pid = proc->pid;
+        vga_registro_semina(proc->console);   /* @EXWIN-LOG: the lines before */
         return g_console_grafica;
     }
     if (azione == 2) {
@@ -1142,6 +1143,25 @@ int32_t sys_console_testo(InterruptFrame *frame)
     if (proc->uid != 0 && proc->uid != chi->uid) return ERR(EPERM);
 
     return (int32_t)vga_console_testo((uint32_t)g_console_grafica, buf, max);
+}
+
+/* SYS_CONSOLE_REGISTRO (215): the log ring, with the same rules as above. */
+int32_t sys_console_registro(InterruptFrame *frame)
+{
+    char     *buf  = (char *)frame->ebx;
+    uint32_t  max  = frame->ecx;
+    Process  *proc = proc_get_current();
+    Process  *chi;
+
+    if (max == 0) return 0;
+    if (!syscall_verify_ptr(buf, max)) return ERR(EFAULT);
+
+    if (g_console_grafica < 0 || g_console_grafica_pid == 0) return -1;
+    chi = proc_get_by_pid(g_console_grafica_pid);
+    if (chi == NULL || chi->state == PROC_ZOMBIE) return -1;
+    if (proc->uid != 0 && proc->uid != chi->uid) return ERR(EPERM);
+
+    return (int32_t)vga_console_registro(buf, max);
 }
 
 /* Riferimento al pool PCB globale (definito in sched.c) */

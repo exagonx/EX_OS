@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.005"
+#define VERSIONE_APP "0.010"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -64,6 +64,9 @@ EX_VERSIONE("pm", VERSIONE_APP);
 /* Le quattro risoluzioni: gli stessi nomi che accetta /dev/svga.drv, e
  * nello stesso ordine della tabella dentro Stage 2. */
 #define ID_RIS      100     /* ..103: uno per modo */
+#define ID_SFONDO_SCEGLI 110
+#define ID_SFONDO_NIENTE 111
+#define ID_SFONDO_MODO   112     /* ..115: angolo, centro, allarga, ripeti */
 
 /* La finestra che gestisce l'elenco. */
 #define ID_G_LISTA  1
@@ -655,10 +658,15 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
  * kept: at the bottom it follows the new lines, higher up it stays where it
  * was. Refilling every second regardless would throw the reader back to the
  * top while reading.
+ *
+ * ! SINCE 27 SEPTEMBER IT IS THE RING, not the screen: console_registro()
+ * gives the last 32 KB written, each line with its time and pid, so what
+ * scrolled off is still here. On an older kernel (no syscall 215) the window
+ * falls back to the screen, console_testo(), as before.
  * ============================================================================= */
 #define REG_W       640
 #define REG_H       360
-#define REG_BUF     8192        /* 128 columns x 48 rows, with the newlines */
+#define REG_BUF     32769       /* the kernel's ring (32 KB), and the '\0' */
 
 static ExFinestra   g_reg = 0, g_reg_area = 0;
 static unsigned int g_reg_firma = 0;
@@ -675,12 +683,17 @@ static unsigned int firma(const char *p, int n)
 static void registro_leggi(int forza)
 {
     static char  buf[REG_BUF];
-    int          n = console_testo(buf, REG_BUF - 1);
+    static int   anello = 1;
+    int          n = anello ? console_registro(buf, REG_BUF - 1) : -2;
     unsigned int f, vis = 0, prima, righe;
     int          in_fondo;
     char        *riga, *dopo;
 
     if (!g_reg_area) return;
+    if (n < -1) {                 /* not «no graphics»: no ring, or no right */
+        int t = console_testo(buf, REG_BUF - 1);
+        if (t >= 0) { anello = 0; n = t; }
+    }
     if (n < 0) n = sprintf(buf, "Il registro non si legge: %s\n",
                            n == -1 ? "la grafica non e' accesa"
                                    : "la scrivania e' di un altro utente");
@@ -1157,13 +1170,33 @@ static void menu_apri(void)
  * che sembra non aver fatto niente e' peggio di una che non c'e'.
  * ========================================================================== */
 static ExFinestra g_impost = 0;
+static ExFinestra g_impost_sfondo = 0;  /* the label with the current image */
+
+/* Defined with the desktop, further down (@PM-SFONDO). */
+static void sfondo_scegli(void);
+static void sfondo_niente(void);
+static void sfondo_etichetta(void);
+static void sfondo_modo(int modo);
+
+/* How the image sits on the desktop: the word in pm.cfg, and the button. The
+ * order is the toolkit's, EX_IMM_ANGOLO..EX_IMM_RIPETI. */
+static const char *const DISPOSIZIONI[4]   = { "angolo", "centro", "allarga", "ripeti" };
+static const char *const DISPOSIZIONI_T[4] = { "Angolo", "Centro", "Allarga", "Ripeti" };
+static int g_sfondo_modo = EX_IMM_ANGOLO;
 
 static const char *const MODI[4] = { "testo", "640x480", "800x600", "1024x768" };
 
 static long impost_proc(ExFinestra f, unsigned int msg,
                         unsigned int wp, long lp)
 {
-    if (msg == EXM_CHIUDI) { ex_distruggi(f); g_impost = 0; return 0; }
+    if (msg == EXM_CHIUDI) { ex_distruggi(f); g_impost = g_impost_sfondo = 0; return 0; }
+
+    if (msg == EXM_COMANDO && wp == ID_SFONDO_SCEGLI) { sfondo_scegli(); return 0; }
+    if (msg == EXM_COMANDO && wp == ID_SFONDO_NIENTE) { sfondo_niente(); return 0; }
+    if (msg == EXM_COMANDO && wp >= ID_SFONDO_MODO && wp < ID_SFONDO_MODO + 4) {
+        sfondo_modo((int)(wp - ID_SFONDO_MODO));
+        return 0;
+    }
 
     if (msg == EXM_COMANDO && wp >= ID_RIS && wp < ID_RIS + 4) {
         const char *modo = MODI[wp - ID_RIS];
@@ -1221,7 +1254,7 @@ static void impostazioni_apri(void)
 
     g_impost = ex_crea("finestra", "Impostazioni",
                        EX_TITOLO | EX_BORDO | EX_CHIUDI,
-                       EX_AUTO, EX_AUTO, 300, 200, 0, 0, impost_proc);
+                       EX_AUTO, EX_AUTO, 300, 316, 0, 0, impost_proc);
     if (!g_impost) return;
 
     ex_schermo(&sw, &sh);
@@ -1238,6 +1271,19 @@ static void impostazioni_apri(void)
 
     ex_crea("etichetta", "\"testo\" spegne la grafica all'avvio.", EX_FIGLIO,
             12, 132, 276, 18, g_impost, 0, 0);
+
+    /* The desktop image (@PM-SFONDO): applied at once, kept for next time. */
+    ex_crea("separatore", "", EX_FIGLIO, 12, 160, 276, 2, g_impost, 0, 0);
+    g_impost_sfondo = ex_crea("etichetta", "", EX_FIGLIO, 12, 172, 276, 18,
+                              g_impost, 0, 0);
+    sfondo_etichetta();
+    ex_crea("pulsante", "Scegli...", EX_FIGLIO, 12, 200, 132, 28,
+            g_impost, ID_SFONDO_SCEGLI, 0);
+    ex_crea("pulsante", "Nessuno", EX_FIGLIO, 152, 200, 132, 28,
+            g_impost, ID_SFONDO_NIENTE, 0);
+    for (i = 0; i < 4; i++)
+        ex_crea("pulsante", DISPOSIZIONI_T[i], EX_FIGLIO, 12 + i * 70, 236, 64, 28,
+                g_impost, (unsigned int)(ID_SFONDO_MODO + i), 0);
 
     ex_procedura_base(g_impost, EXM_DISEGNA, 0, 0);
 }
@@ -1605,14 +1651,404 @@ static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 static ExFinestra  g_scr = 0;
 static const char *g_sfondo = 0;
 
+static void desk_disegna(void);      /* the icons: see @PM-DESKTOP below */
+
 static int scrivania_disegna(void)
 {
+    int ok = 1;
+
     if (!g_scr) return 1;
 
     ex_riempi(g_scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_SCRIVANIA);
-    if (g_sfondo && !ex_immagine(g_scr, g_sfondo, 0, 0)) return 0;
-    return 1;
+    if (g_sfondo &&
+        !ex_immagine_disponi(g_scr, g_sfondo, 0, 0, (int)g_sw,
+                             (int)g_sh - BARRA_H, g_sfondo_modo, EX_SCRIVANIA))
+        ok = 0;
+    desk_disegna();
+    return ok;
 }
+
+/* =============================================================================
+ * THE DESKTOP'S ICONS (@PM-DESKTOP and @PM-UNITA, 27 September 2026)
+ *
+ * On the left, in columns from the top: what is in the profile's «desktop»
+ * directory — $HOME/desktop, /root/desktop for root — files, directories and
+ * links to programs. On the right, one column: the mounted drives (CD, USB
+ * sticks, floppies, disks). Click selects; double click opens:
+ *
+ *     a drive or a directory   the file manager, INSIDE it
+ *     a link (.lnk)            the program it names
+ *     a file                   by its extension: the editor, Archivi, the
+ *                              browser; anything else, the file manager on
+ *                              the desktop directory
+ *
+ * ! A LINK IS A SMALL TEXT FILE, «nome.lnk»: EX-OS has no symbolic links on
+ * FAT, and a text file anyone can write by hand is the simplest thing that
+ * works everywhere:
+ *
+ *     percorso = /exwin/bin/edit        (required)
+ *     nome     = Editor                 (optional: the caption)
+ *     icona    = /exwin/icon/...ico     (optional: otherwise the program's
+ *                                        own, from applicazioni.txt)
+ *
+ * ! THE DRIVES ARE READ FROM THE KERNEL'S MOUNT TABLE (mountinfo), and the
+ * list is looked at again every DESK_GIRO ms: a CD put in, a stick mounted
+ * by automount (started by /boot/avvio.sh) appear on their own. Nothing is
+ * redrawn when nothing changed — a signature of names says so.
+ *
+ * ! WHERE THERE IS NO ICON FILE, A PICTOGRAM IS DRAWN: /exwin/icon/tipi/ is
+ * still empty, and a desktop cannot show nothing. The day the drawings exist
+ * (cartella.ico, file.ico...), they win.
+ * ============================================================================= */
+#define DESK_MAX    48
+#define DESK_CELLA  76          /* one icon with its caption */
+#define DESK_ICONA  32
+#define DESK_GIRO   2000
+
+enum { DV_CARTELLA, DV_FILE, DV_LNK, DV_CD, DV_FLOPPY, DV_USB, DV_DISCO };
+
+typedef struct {
+    char    nome[40];           /* the caption */
+    char    perc[160];          /* what it is: file, directory, mount point */
+    char    apri[160];          /* for a link: the program */
+    int     tipo;               /* DV_* */
+    ExIcona ic;                 /* 0 = draw the pictogram */
+    int     x, y;
+} VoceDesk;
+
+static VoceDesk     g_dv[DESK_MAX];
+static int          g_dv_n = 0;
+static int          g_dv_sel = -1;
+static unsigned int g_dv_firma = 0;
+static char         g_desk_dir[160];
+
+static void desk_dir_trova(void)
+{
+    const char *casa = getenv("HOME");
+
+    if (!casa || !casa[0] || strcmp(casa, "/") == 0)
+        casa = (getuid() == 0) ? "/root" : "";
+    snprintf(g_desk_dir, sizeof(g_desk_dir), "%s/desktop", casa);
+    /* Made if missing, so there is a place to put things: on a read-only
+     * system it simply fails, and the desktop shows the drives only. */
+    if (casa[0]) mkdir(casa, 0700);
+    mkdir(g_desk_dir, 0755);
+}
+
+static unsigned int desk_firma_agg(unsigned int h, const char *s)
+{
+    while (*s) h = (h ^ (unsigned char)*s++) * 16777619u;
+    return (h ^ '|') * 16777619u;
+}
+
+/* The program's icon from applicazioni.txt, matching the path. */
+static ExIcona desk_icona_app(const char *prog)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_app_n; i++)
+        if (strcmp(g_app[i].percorso, prog) == 0) return icona_di(&g_app[i]);
+    return 0;
+}
+
+static void desk_lnk_leggi(VoceDesk *v)
+{
+    char buf[512], *riga, *dopo;
+    int  fd = open(v->perc, O_RDONLY, 0), n;
+
+    v->apri[0] = '\0';
+    if (fd < 0) return;
+    n = (int)read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    for (riga = buf; riga && *riga; riga = dopo) {
+        char *ug, *val, *e;
+
+        dopo = strchr(riga, '\n');
+        if (dopo) *dopo++ = '\0';
+        ug = strchr(riga, '=');
+        if (!ug || riga[0] == '#') continue;
+        *ug = '\0';
+        val = ug + 1;
+        while (*val == ' ' || *val == '\t') val++;
+        e = val + strlen(val);
+        while (e > val && (e[-1] == ' ' || e[-1] == '\r')) *--e = '\0';
+        e = riga + strlen(riga);
+        while (e > riga && e[-1] == ' ') *--e = '\0';
+
+        if (strcmp(riga, "percorso") == 0) {
+            strncpy(v->apri, val, sizeof(v->apri) - 1);
+            v->apri[sizeof(v->apri) - 1] = '\0';
+        } else if (strcmp(riga, "nome") == 0 && val[0]) {
+            strncpy(v->nome, val, sizeof(v->nome) - 1);
+            v->nome[sizeof(v->nome) - 1] = '\0';
+        } else if (strcmp(riga, "icona") == 0 && val[0]) {
+            v->ic = ex_icona_apri(val);
+        }
+    }
+    if (!v->ic && v->apri[0]) v->ic = desk_icona_app(v->apri);
+}
+
+static int desk_tipo_unita(const MountInfo *m)
+{
+    const char *d = m->dev, *p = m->punto;
+
+    if (strstr(d, "cd") || strstr(d, "atapi") || strstr(p, "cdrom")) return DV_CD;
+    if (d[0] == 'f' && d[1] == 'd') return DV_FLOPPY;
+    if (strstr(d, "usb") || strstr(p, "USB") || strstr(p, "usb")) return DV_USB;
+    return DV_DISCO;
+}
+
+/* Reads drives and the desktop directory; returns the signature. With
+ * `tieni` the entries are kept, otherwise only the signature is computed. */
+static unsigned int desk_leggi(int tieni)
+{
+    MountInfo    mi[8];
+    unsigned int h = 2166136261u, start = 0;
+    int          n, i, k = 0;
+    DIR         *d;
+
+    if (tieni) g_dv_n = 0;
+
+    /* The drives: everything mounted except the root. */
+    while ((n = mountinfo(mi, 8, start)) > 0) {
+        for (i = 0; i < n; i++) {
+            const char *nome;
+
+            if (strcmp(mi[i].punto, "/") == 0) continue;
+            h = desk_firma_agg(h, mi[i].punto);
+            if (!tieni || g_dv_n >= DESK_MAX) continue;
+            nome = strrchr(mi[i].punto, '/');
+            nome = (nome && nome[1]) ? nome + 1 : mi[i].punto;
+            memset(&g_dv[g_dv_n], 0, sizeof(VoceDesk));
+            strncpy(g_dv[g_dv_n].nome, nome, sizeof(g_dv[0].nome) - 1);
+            strncpy(g_dv[g_dv_n].perc, mi[i].punto, sizeof(g_dv[0].perc) - 1);
+            g_dv[g_dv_n].tipo = desk_tipo_unita(&mi[i]);
+            g_dv_n++;
+            k++;
+        }
+        start += (unsigned int)n;
+        if (n < 8) break;
+    }
+
+    /* The profile's desktop directory. */
+    d = opendir(g_desk_dir);
+    if (d) {
+        struct dirent *e;
+
+        while ((e = readdir(d)) != 0) {
+            VoceDesk *v;
+            size_t    l;
+
+            if (e->d_name[0] == '.') continue;          /* . .. and hidden */
+            h = desk_firma_agg(h, e->d_name);
+            if (!tieni || g_dv_n >= DESK_MAX) continue;
+            v = &g_dv[g_dv_n];
+            memset(v, 0, sizeof(*v));
+            strncpy(v->nome, e->d_name, sizeof(v->nome) - 1);
+            snprintf(v->perc, sizeof(v->perc), "%s/%s", g_desk_dir, e->d_name);
+            l = strlen(v->nome);
+            if (e->d_type == DT_DIR) {
+                v->tipo = DV_CARTELLA;
+            } else if (l > 4 && strcmp(v->nome + l - 4, ".lnk") == 0) {
+                v->tipo = DV_LNK;
+                v->nome[l - 4] = '\0';                  /* the caption */
+                desk_lnk_leggi(v);
+            } else {
+                v->tipo = DV_FILE;
+            }
+            g_dv_n++;
+        }
+        closedir(d);
+    }
+    (void)k;
+    return h;
+}
+
+/* Drives on the right, one column; desktop entries on the left, columns
+ * filled from the top. */
+static void desk_disponi(void)
+{
+    int alto = (int)g_sh - BARRA_H, ya = 8, xs = 8, ys = 8, i;
+
+    for (i = 0; i < g_dv_n; i++) {
+        VoceDesk *v = &g_dv[i];
+
+        if (v->tipo >= DV_CD) {
+            v->x = (int)g_sw - DESK_CELLA - 8;
+            v->y = ya;
+            ya += DESK_CELLA;
+        } else {
+            if (ys + DESK_CELLA > alto) { ys = 8; xs += DESK_CELLA; }
+            v->x = xs;
+            v->y = ys;
+            ys += DESK_CELLA;
+        }
+    }
+}
+
+static void desk_cerchio(int cx, int cy, int r, unsigned int c)
+{
+    int dy;
+
+    for (dy = -r; dy <= r; dy++) {
+        int dx = 0;
+        while ((dx + 1) * (dx + 1) + dy * dy <= r * r) dx++;
+        ex_riempi(g_scr, cx - dx, cy + dy, 2 * dx + 1, 1, c);
+    }
+}
+
+/* The pictograms, 32x32, for what has no icon file. */
+static void desk_pittogramma(int tipo, int x, int y)
+{
+    switch (tipo) {
+    case DV_CARTELLA:
+        ex_riempi(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
+        ex_riempi(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
+        ex_rilievo(g_scr, x + 2, y + 9, 28, 19);
+        break;
+    case DV_LNK:
+    case DV_FILE:
+        ex_riempi(g_scr, x + 6, y + 2, 20, 28, EX_BIANCO);
+        ex_riquadro_disegna(g_scr, x + 6, y + 2, 20, 28, EX_NERO);
+        ex_riempi(g_scr, x + 9, y + 9, 14, 1, 0x00808080);
+        ex_riempi(g_scr, x + 9, y + 13, 14, 1, 0x00808080);
+        ex_riempi(g_scr, x + 9, y + 17, 10, 1, 0x00808080);
+        if (tipo == DV_LNK) {                   /* the little arrow box */
+            ex_riempi(g_scr, x + 4, y + 20, 10, 10, EX_BIANCO);
+            ex_riquadro_disegna(g_scr, x + 4, y + 20, 10, 10, EX_NERO);
+            ex_riempi(g_scr, x + 7, y + 23, 5, 2, EX_BLU);
+            ex_riempi(g_scr, x + 10, y + 23, 2, 5, EX_BLU);
+        }
+        break;
+    case DV_CD:
+        desk_cerchio(x + 16, y + 16, 14, 0x00C0C0C8);
+        desk_cerchio(x + 16, y + 16, 12, 0x00E0E0F0);
+        desk_cerchio(x + 16, y + 16, 4, 0x00606060);
+        desk_cerchio(x + 16, y + 16, 2, EX_SCRIVANIA);
+        break;
+    case DV_FLOPPY:
+        ex_riempi(g_scr, x + 3, y + 3, 26, 26, 0x00303050);
+        ex_riempi(g_scr, x + 9, y + 3, 14, 9, 0x00B0B0B0);
+        ex_riempi(g_scr, x + 7, y + 17, 18, 12, EX_BIANCO);
+        break;
+    case DV_USB:
+        ex_riempi(g_scr, x + 10, y + 2, 12, 8, 0x00B0B0B0);
+        ex_riempi(g_scr, x + 8, y + 10, 16, 20, 0x00303030);
+        ex_riempi(g_scr, x + 14, y + 14, 4, 4, 0x0040C040);
+        break;
+    default:                                    /* DV_DISCO */
+        ex_riempi(g_scr, x + 1, y + 8, 30, 18, 0x00909090);
+        ex_rilievo(g_scr, x + 1, y + 8, 30, 18);
+        ex_riempi(g_scr, x + 24, y + 20, 4, 3, 0x0040C040);
+        break;
+    }
+}
+
+static void desk_disegna(void)
+{
+    int i;
+
+    for (i = 0; i < g_dv_n; i++) {
+        VoceDesk *v = &g_dv[i];
+        int       ix = v->x + (DESK_CELLA - DESK_ICONA) / 2, iy = v->y + 4;
+        char      t[12];
+        int       l, tx;
+
+        if (v->ic) ex_icona_disegna(g_scr, v->ic, ix, iy, DESK_ICONA, EX_SCRIVANIA);
+        else       desk_pittogramma(v->tipo, ix, iy);
+
+        /* The caption, cut to nine characters with «~», white on a dark
+         * shadow so it reads on any image; blue when selected. */
+        strncpy(t, v->nome, 9);
+        t[9] = '\0';
+        if (strlen(v->nome) > 9) t[8] = '~';
+        l = (int)strlen(t);
+        tx = v->x + (DESK_CELLA - l * 8) / 2;
+        if (i == g_dv_sel) ex_riempi(g_scr, tx - 2, iy + DESK_ICONA + 2, l * 8 + 4, 18, EX_BLU);
+        else               ex_scrivi(g_scr, tx + 1, iy + DESK_ICONA + 4, t, EX_NERO);
+        ex_scrivi(g_scr, tx, iy + DESK_ICONA + 3, t, EX_BIANCO);
+    }
+}
+
+static int desk_sotto(int x, int y)
+{
+    int i;
+
+    for (i = 0; i < g_dv_n; i++)
+        if (x >= g_dv[i].x && x < g_dv[i].x + DESK_CELLA &&
+            y >= g_dv[i].y && y < g_dv[i].y + DESK_CELLA) return i;
+    return -1;
+}
+
+/* Starts a program of ExWin with one argument; from the CD the programs live
+ * under /cdrom, as the menu's do. */
+static void desk_lancia(const char *prog, const char *arg)
+{
+    char  p[200];
+    char *av[3];
+    struct stat st;
+
+    strncpy(p, prog, sizeof(p) - 1);
+    p[sizeof(p) - 1] = '\0';
+    if (stat(p, &st) != 0 && strncmp(prog, "/exwin/", 7) == 0)
+        snprintf(p, sizeof(p), "/cdrom%s", prog);
+    av[0] = p;
+    av[1] = (char *)arg;
+    av[2] = 0;
+    if (spawn_ex(av[0], av, environ, 0, 0) < 0) {
+        char m[260];
+        snprintf(m, sizeof(m), "Non riesco ad avviare %s.", prog);
+        ex_dlg_avviso("Scrivania", m);
+    }
+}
+
+static void desk_apri(int i)
+{
+    VoceDesk   *v = &g_dv[i];
+    const char *e;
+
+    switch (v->tipo) {
+    case DV_LNK:
+        if (v->apri[0]) desk_lancia(v->apri, 0);
+        else ex_dlg_avviso("Scrivania", "Il collegamento non dice che cosa "
+                           "aprire: manca la riga \"percorso = ...\".");
+        return;
+    case DV_FILE:
+        e = strrchr(v->perc, '.');
+        e = e ? e + 1 : "";
+        if (!strcmp(e, "txt") || !strcmp(e, "md") || !strcmp(e, "cfg") ||
+            !strcmp(e, "c") || !strcmp(e, "h") || !strcmp(e, "bas") ||
+            !strcmp(e, "sh") || !strcmp(e, "log"))
+            desk_lancia("/exwin/bin/edit", v->perc);
+        else if (!strcmp(e, "zip") || !strcmp(e, "gz") || !strcmp(e, "tgz") ||
+                 !strcmp(e, "tar"))
+            desk_lancia("/exwin/bin/archivi", v->perc);
+        else if (!strcmp(e, "html") || !strcmp(e, "htm") || !strcmp(e, "png") ||
+                 !strcmp(e, "jpg") || !strcmp(e, "gif") || !strcmp(e, "bmp"))
+            desk_lancia("/exwin/bin/exbrowser", v->perc);
+        else
+            desk_lancia("/exwin/bin/filemgr", g_desk_dir);
+        return;
+    default:                    /* a directory or a drive: the file manager */
+        desk_lancia("/exwin/bin/filemgr", v->perc);
+        return;
+    }
+}
+
+/* Every DESK_GIRO ms: anything new? Read again and redraw only then. */
+static void desk_controlla(int forza)
+{
+    unsigned int f = desk_leggi(0);
+
+    if (!forza && f == g_dv_firma) return;
+    g_dv_firma = desk_leggi(1);
+    if (g_dv_sel >= g_dv_n) g_dv_sel = -1;
+    desk_disponi();
+    if (g_scr) { scrivania_disegna(); ex_aggiorna(g_scr); }
+}
+
 
 static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
@@ -1621,7 +2057,179 @@ static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * sarebbe giusta nella memoria del processo e grigia sullo schermo — che
      * e' esattamente il difetto di prima, con una causa in piu' da cercare. */
     if (msg == EXM_DISEGNA) { scrivania_disegna(); ex_aggiorna(f); return 0; }
+
+    /* The icons (@PM-DESKTOP, @PM-UNITA): a click selects, a double click
+     * opens, and the clock looks for new drives and files. */
+    if (msg == EXM_TEMPO) { desk_controlla(0); return 0; }
+    if (msg == EXM_MOUSE_GIU || msg == EXM_DOPPIOCLIC) {
+        int i = desk_sotto(EX_X(lp), EX_Y(lp));
+
+        if (i != g_dv_sel) {
+            g_dv_sel = i;
+            scrivania_disegna();
+            ex_aggiorna(f);
+        }
+        if (msg == EXM_DOPPIOCLIC && i >= 0) desk_apri(i);
+        return 0;
+    }
     return ex_procedura_base(f, msg, wp, lp);
+}
+
+/* =============================================================================
+ * THE DESKTOP IMAGE, CHOSEN FROM THE SETTINGS (@PM-SFONDO, 27 September 2026)
+ *
+ * Saved in the PROFILE of whoever is logged in — $HOME/.exwin/config/pm.cfg,
+ * so /root/.exwin/config/pm.cfg for root and /home/<utente>/.exwin/config/
+ * pm.cfg for a user (asked on 27 September 2026: one desktop per person, not
+ * one per machine). Read at start unless `pm -s FILE` says otherwise.
+ * Applied at once: the desktop is repainted.
+ *
+ * ! AN IMAGE THAT DOES NOT LOAD IS NOT KEPT: the desktop goes back to the one
+ * before and says so. Saved anyway, the next start would open on a grey
+ * desktop and nobody would know why.
+ * ============================================================================= */
+static char g_sfondo_buf[160];
+
+/* The profile: $HOME, as login sets it. Without login (the live CD) HOME is
+ * «/», and then root's profile is /root. Fills `dir` with .../.exwin/config
+ * and `cfg` with the file; `crea` makes the directories on the way. */
+static void profilo_cfg(char *dir, char *cfg, unsigned int max, int crea)
+{
+    const char *casa = getenv("HOME");
+    char        t[160];
+
+    if (!casa || !casa[0] || strcmp(casa, "/") == 0)
+        casa = (getuid() == 0) ? "/root" : "/";
+    if (crea) {
+        mkdir(casa, 0700);
+        snprintf(t, sizeof(t), "%s/.exwin", strcmp(casa, "/") ? casa : "");
+        mkdir(t, 0755);
+    }
+    snprintf(dir, max, "%s/.exwin/config", strcmp(casa, "/") ? casa : "");
+    if (crea) mkdir(dir, 0755);
+    snprintf(cfg, max, "%s/pm.cfg", dir);
+}
+
+static void sfondo_leggi_cfg(void)
+{
+    char buf[256], *p, *e, dir[160], cfg[160];
+    int  fd, n;
+
+    profilo_cfg(dir, cfg, sizeof(cfg), 0);
+    fd = open(cfg, O_RDONLY, 0);
+
+    if (fd < 0) return;
+    n = (int)read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    if ((p = strstr(buf, "disposizione")) && (p = strchr(p, '='))) {
+        int k;
+        for (p++; *p == ' ' || *p == '\t'; p++) ;
+        for (k = 0; k < 4; k++)
+            if (!strncmp(p, DISPOSIZIONI[k], strlen(DISPOSIZIONI[k])))
+                g_sfondo_modo = k;
+    }
+    p = strstr(buf, "sfondo");
+    if (!p || !(p = strchr(p, '='))) return;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    e = p;
+    while (*e && *e != '\n' && *e != '\r') e++;
+    while (e > p && e[-1] == ' ') e--;
+    if (e == p || (size_t)(e - p) >= sizeof(g_sfondo_buf)) return;
+    memcpy(g_sfondo_buf, p, (size_t)(e - p));
+    g_sfondo_buf[e - p] = '\0';
+    g_sfondo = g_sfondo_buf;
+}
+
+static int sfondo_salva(void)
+{
+    char t[220], dir[160], cfg[160];
+    int  fd, n;
+    struct stat st;
+
+    profilo_cfg(dir, cfg, sizeof(cfg), 1);
+    if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode)) return 0;
+    fd = open(cfg, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return 0;
+    n = snprintf(t, sizeof(t), "# pm: la scrivania. Lo riscrive Impostazioni.\n"
+                               "sfondo = %s\ndisposizione = %s\n",
+                 g_sfondo ? g_sfondo : "", DISPOSIZIONI[g_sfondo_modo]);
+    if (write(fd, t, (unsigned int)n) != n) { close(fd); return 0; }
+    close(fd);
+    return 1;
+}
+
+static void sfondo_etichetta(void)
+{
+    char t[200];
+
+    if (!g_impost_sfondo) return;
+    snprintf(t, sizeof(t), "Sfondo (%s): %s", DISPOSIZIONI[g_sfondo_modo],
+             g_sfondo ? g_sfondo : "(nessuno)");
+    ex_testo_metti(g_impost_sfondo, t);
+    ex_procedura_base(g_impost, EXM_DISEGNA, 0, 0);
+}
+
+static void sfondo_applica(const char *nuovo)
+{
+    const char *prima = g_sfondo;
+    static char vecchio[160];
+
+    if (prima) { strncpy(vecchio, prima, sizeof(vecchio) - 1); vecchio[sizeof(vecchio) - 1] = '\0'; }
+    if (nuovo) {
+        strncpy(g_sfondo_buf, nuovo, sizeof(g_sfondo_buf) - 1);
+        g_sfondo_buf[sizeof(g_sfondo_buf) - 1] = '\0';
+        g_sfondo = g_sfondo_buf;
+    } else {
+        g_sfondo = 0;
+    }
+
+    if (!scrivania_disegna()) {
+        char m[240];
+        snprintf(m, sizeof(m), "%s non si legge come immagine: resta lo "
+                               "sfondo di prima.", nuovo);
+        ex_dlg_avviso("Sfondo", m);
+        if (prima) { strcpy(g_sfondo_buf, vecchio); g_sfondo = g_sfondo_buf; }
+        else       g_sfondo = 0;
+        scrivania_disegna();
+    }
+    ex_aggiorna(g_scr);
+    sfondo_etichetta();
+
+    if (!sfondo_salva()) {
+        char dir[160], cfg[160], m[300];
+        profilo_cfg(dir, cfg, sizeof(cfg), 0);
+        snprintf(m, sizeof(m), "Lo sfondo vale adesso, ma non riesco a scrivere "
+                 "%s (sistema in sola lettura?): al prossimo avvio torna quello "
+                 "di prima.", cfg);
+        ex_dlg_avviso("Sfondo", m);
+    }
+}
+
+static void sfondo_scegli(void)
+{
+    char p[160];
+
+    strncpy(p, g_sfondo ? g_sfondo : "/", sizeof(p) - 1);
+    p[sizeof(p) - 1] = '\0';
+    if (!ex_dlg_apri(p, sizeof(p))) return;
+    sfondo_applica(p);
+}
+
+static void sfondo_niente(void) { sfondo_applica(0); }
+
+/* Angolo, Centro, Allarga, Ripeti: the same image, laid out again. */
+static void sfondo_modo(int modo)
+{
+    g_sfondo_modo = modo;
+    scrivania_disegna();
+    ex_aggiorna(g_scr);
+    sfondo_etichetta();
+    if (!sfondo_salva())
+        ex_dlg_avviso("Sfondo", "La disposizione vale adesso, ma pm.cfg non si "
+                      "scrive (sistema in sola lettura?).");
 }
 
 int main(int argc, char **argv)
@@ -1682,10 +2290,15 @@ int main(int argc, char **argv)
         }
         g_scr = scr;
         g_sfondo = sfondo;
+        if (!g_sfondo) sfondo_leggi_cfg();     /* -s wins over the saved one */
+        desk_dir_trova();
+        desk_controlla(1);
+        ex_sveglia(scr, DESK_GIRO);
 
         if (!scrivania_disegna()) {
             char msg[160];
-            sprintf(msg, "pm: %s: formato non riconosciuto", sfondo);
+            snprintf(msg, sizeof(msg), "pm: %s: formato non riconosciuto",
+                     g_sfondo ? g_sfondo : "?");
             log_seriale(msg);
         }
         ex_aggiorna(scr);

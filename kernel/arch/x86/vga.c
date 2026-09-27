@@ -43,6 +43,8 @@
 #include "pmm.h"
 #include "paging.h"
 #include "vga.h"
+#include "rtc.h"      /* the log ring stamps each line with the time */
+#include "sched.h"    /* ... and with the pid of who wrote it */
 
 /* =============================================================================
  * Costanti VGA
@@ -142,6 +144,126 @@ uint32_t vga_console_testo(uint32_t n, char *out, uint32_t max)
         fine = w;
     }
     return fine;
+}
+
+/* =============================================================================
+ * THE LOG RING (@EXWIN-LOG, 27 September 2026)
+ *
+ * The cells above are ONE SCREEN: what scrolls off is lost. So everything
+ * written to the graphics console is also copied here, into a ring of
+ * REG_DIM bytes — about four hundred lines of eighty columns — and every
+ * line starts with the time and the pid of whoever began it:
+ *
+ *     18:55:02    41  wserver: 800x600, 32 bit
+ *
+ * ! THE CEILING IS DECLARED AND FIXED: 32 KB of kernel memory, taken at
+ * build time, whatever happens. A log that grows with what programs print
+ * would give any program a way to eat the kernel's memory.
+ *
+ * ! ESCAPE SEQUENCES ARE DROPPED: colours and cursor moves mean something to
+ * a screen, and in a list they would be garbage. \r and \b too.
+ * ============================================================================= */
+#define REG_DIM 32768
+
+static char     g_reg[REG_DIM];
+static uint32_t g_reg_scritti = 0;  /* bytes ever written; the end is % REG_DIM */
+static uint8_t  g_reg_capo    = 1;  /* the next character starts a line */
+static uint8_t  g_reg_esc     = 0;  /* 1 after ESC, 2 inside ESC [ ... */
+
+static void reg_byte(char ch)
+{
+    g_reg[g_reg_scritti % REG_DIM] = ch;
+    g_reg_scritti++;
+}
+
+static void reg_numero(uint32_t v, int cifre, char riempi)
+{
+    char t[10];
+    int  i;
+
+    for (i = cifre - 1; i >= 0; i--) {
+        t[i] = (i == cifre - 1 || v) ? (char)('0' + v % 10) : riempi;
+        v /= 10;
+    }
+    for (i = 0; i < cifre; i++) reg_byte(t[i]);
+}
+
+static void reg_metti(char ch)
+{
+    if (g_reg_esc == 1) { g_reg_esc = (ch == '[') ? 2 : 0; return; }
+    if (g_reg_esc == 2) { if (ch >= '@' && ch <= '~') g_reg_esc = 0; return; }
+    if (ch == 27) { g_reg_esc = 1; return; }
+    if (ch == '\r' || ch == '\b' || ch == 0 || ch == 7) return;
+
+    if (g_reg_capo && ch != '\n') {
+        RtcTime  t;
+        Process *p = proc_get_current();
+
+        if (rtc_read(&t) != 0) t.ora = t.minuto = t.secondo = 0;
+        reg_numero(t.ora, 2, '0');    reg_byte(':');
+        reg_numero(t.minuto, 2, '0'); reg_byte(':');
+        reg_numero(t.secondo, 2, '0');
+        reg_numero(p ? p->pid : 0, 6, ' ');
+        reg_byte(' '); reg_byte(' ');
+        g_reg_capo = 0;
+    }
+    reg_byte(ch);
+    if (ch == '\n') g_reg_capo = 1;
+}
+
+/* ! WHAT WAS WRITTEN BEFORE THE CLAIM IS ON THE SCREEN, NOT IN THE RING:
+ * wserver prints its first lines («servizio attivo»...) and only then calls
+ * console_grafica(1). So at the claim the console's cells go into the ring,
+ * after a line that marks where a graphics session starts. Called by
+ * sys_console_grafica. */
+void vga_registro_semina(uint32_t n)
+{
+    const Console *c;
+    const char    *s = "--- la grafica si accende ---\n";
+    uint32_t       r, k, ultima = 0;
+
+    if (n >= VGA_N_CONSOLE) return;
+    c = &g_console[n];
+    if (!g_reg_capo) reg_metti('\n');
+    while (*s) reg_metti(*s++);
+
+    for (r = 0; r < g_righe; r++)
+        for (k = 0; k < g_cols; k++) {
+            char ch = (char)(c->cella[r * g_cols + k] & 0xFF);
+            if (ch != ' ' && ch != 0) { ultima = r + 1; break; }
+        }
+    for (r = 0; r < ultima; r++) {
+        uint32_t lun = g_cols;
+
+        while (lun > 0) {
+            char ch = (char)(c->cella[r * g_cols + lun - 1] & 0xFF);
+            if (ch != ' ' && ch != 0) break;
+            lun--;
+        }
+        for (k = 0; k < lun; k++) {
+            char ch = (char)(c->cella[r * g_cols + k] & 0xFF);
+            reg_metti(ch ? ch : ' ');
+        }
+        reg_metti('\n');
+    }
+}
+
+uint32_t vga_console_registro(char *out, uint32_t max)
+{
+    uint32_t n = g_reg_scritti < REG_DIM ? g_reg_scritti : REG_DIM;
+    uint32_t da, i = 0, w = 0;
+
+    if (n > max) n = max;
+    da = g_reg_scritti - n;
+
+    /* Cut at the front (the ring went round, or `max` is small): start on
+     * a whole line, not in the middle of one. */
+    if (da > 0) {
+        while (i < n && g_reg[(da + i) % REG_DIM] != '\n') i++;
+        if (i < n) i++;
+    }
+    for (; i < n; i++) out[w++] = g_reg[(da + i) % REG_DIM];
+    return w;
 }
 static volatile uint16_t *vga_buf = VGA_BASE;
 
@@ -1001,6 +1123,7 @@ void vga_putchar_su(uint32_t n, char c)
     Console *cs = cons(n);
 
     if (cs == SISTEMA) serial_putchar(c);
+    if ((int32_t)n == console_grafica_attuale()) reg_metti(c);
     putchar_su(cs, c);
 }
 

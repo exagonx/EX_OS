@@ -87,6 +87,57 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
     <td>l'ora, ed e' l'esempio piu' corto di applicazione grafica</td></tr>
 </table>
 
+<h2>La scrivania: icone, unita', sfondo e registro</h2>
+
+<p>
+A sinistra ci sono i file della cartella <code>desktop</code> del profilo:
+<code>/home/<i>utente</i>/desktop</code>, o <code>/root/desktop</code> per
+root (e senza login). Se non c'e', la crea il gestore. A destra, una per una,
+le <b>unita' montate</b>: il CD, le chiavette, i floppy, i dischi. Compaiono e
+spariscono da sole, entro due secondi dal <code>mount</code>, chiunque l'abbia
+fatto.
+</p>
+
+<p>
+Un clic sceglie, un <b>doppio clic apre</b>: una cartella o un'unita' nel file
+manager, gia' dentro; un file di testo (<code>.txt .md .cfg .c .h .bas .sh
+.log</code>) nell'editor; un archivio (<code>.zip .tar .gz .tgz</code>) in
+Archivi; una pagina o un'immagine in EXBrowser.
+</p>
+
+<h3>Un collegamento e' un file di testo</h3>
+
+<pre>    # editor.lnk, dentro desktop/
+    percorso = /exwin/bin/edit
+    nome     = Editor
+    icona    = /exwin/icon/baseapp/edit_64.ico</pre>
+
+<p>
+Solo <code>percorso</code> e' obbligatorio. Senza <code>nome</code> la
+didascalia e' il nome del file; senza <code>icona</code> si usa quella che il
+programma ha in <code>applicazioni.txt</code>.
+</p>
+
+<h3>Lo sfondo</h3>
+
+<p>
+Dal menu di avvio, <b>Impostazioni</b>: <b>Scegli...</b> prende un'immagine
+(BMP, PNG, JPG, GIF), <b>Nessuno</b> la toglie. I quattro pulsanti sotto
+dicono come si dispone: <b>Angolo</b> (com'e', in alto a sinistra),
+<b>Centro</b>, <b>Allarga</b> (stirata a coprire tutto lo schermo) e
+<b>Ripeti</b> (a piastrelle). La scelta vale subito e si salva nel profilo, in
+<code>$HOME/.exwin/config/pm.cfg</code>: ogni utente ha la sua scrivania.
+</p>
+
+<h3>Il registro di sistema</h3>
+
+<p>
+Quel che i programmi della scrivania stampano non finisce sullo schermo ma nel
+<b>registro</b>: menu di avvio, <b>Registro di sistema</b>. Tiene gli ultimi
+32 KB &mdash; circa quattrocento righe &mdash; e ogni riga comincia con l'ora
+e il numero del processo che l'ha scritta.
+</p>
+
 <h2>I tasti che valgono dappertutto</h2>
 
 <table border="1">

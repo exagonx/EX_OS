@@ -329,7 +329,14 @@
  * ! SOLO QUELLA CONSOLE, E SOLO ALLO STESSO UTENTE di chi la tiene (o a root):
  * il registro della scrivania di un altro non e' di chi chiede.
  */
-#define EXOS_VERSION    "0.219"
+/* 0.219 -> 0.220: L'ANELLO DEL REGISTRO (@EXWIN-LOG, 27 settembre 2026).
+ *
+ * Tutto cio' che si scrive sulla console della grafica si copia anche in un
+ * anello di 32 KB (vga.c, reg_metti), ogni riga con l'ora e il pid di chi
+ * l'ha cominciata; SYS_CONSOLE_REGISTRO (215) lo rende. Prima il registro era
+ * una schermata sola, e cio' che scorreva via si perdeva.
+ */
+#define EXOS_VERSION    "0.220"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

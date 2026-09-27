@@ -26,6 +26,91 @@ manca» apre quello.
 
 ---
 
+# 27 settembre 2026 — cerca e sostituisci, la scrivania, e tre verita' sul toolkit
+
+**@EDIT-CERCA e' fatto e provato** (2 su 2). La prova falliva, e aveva
+ragione tre volte: «Una» sostituiva la riga intera (un segnale -2 che valeva
+«tutte»); `ex_area_cursore()` conta da uno mentre `ex_area_vai()` conta da
+zero, e ogni ricerca partiva una riga sotto — trovato con due righe sulla
+seriale dopo un'ora di ipotesi; e nel toolkit **Shift+Tab andava avanti come
+Tab**, con il pulsante col fuoco uguale agli altri. Adesso Shift+Tab torna
+indietro e il fuoco di un pulsante e' un riquadro blu.
+
+! Una prova fallita per «monitor non raggiungibile» subito dopo `make
+iso-exos` non vuol dire niente: a macchina scarica e' passata. QEMU a volte
+impiega piu' dei dieci secondi del pilota quando la CPU e' ancora occupata.
+
+## La scrivania mostra la cartella del profilo, e le unita'
+
+**@PM-DESKTOP e @PM-UNITA sono fatti e provati** (`tools/prova_desktop.sh`, 5
+su 5). A sinistra `$HOME/desktop`, a destra ogni unita' montata tranne «/».
+Un collegamento e' un `.lnk` di testo (`percorso = ...`, `nome = ...`). Per
+le unita' **non serve un servizio**: pm rilegge `mountinfo()` ogni 2 secondi e
+ridisegna solo se la firma cambia, cosi' vale per ogni mount, anche a mano.
+! Nella prova il doppio clic va in UN `mon:` solo: in quattro argomenti i
+clic arrivano a tre quarti di secondo e non sono piu' un doppio (lo diceva
+gia' `prova_doppioclic.sh`, e ci sono cascato lo stesso). E il disco di prova
+si attacca con `EXOS_QEMU_EXTRA`, non con `EXOS_IMG` (che e' il floppy).
+Le preferenze di un programma stanno nel profilo,
+`$HOME/.exwin/config/<prog>.cfg` (pm, archivi); quelle di un programma di
+sistema che parte prima del login in /boot o /cfg.
+
+## Il registro e' un anello, e lo sfondo si centra
+
+**@EXWIN-LOG**: il registro non e' piu' una schermata ma un anello di 32 KB
+nel kernel (0.220, syscall 215), con l'ora e il pid su ogni riga. La prima
+prova ha mostrato una finestra vuota — wserver scrive le sue righe PRIMA di
+prendere la console — e `prova_registro.sh` la dava per buona, perche'
+contava il bordo come testo. Sistemate tutte e due. **@PM-SFONDO**: Angolo,
+Centro, Allarga, Ripeti, con `ex_immagine_disponi()` nel toolkit.
+
+## Calctor, e un toolkit che non faceva nascere il sessantacinquesimo controllo
+
+**@CALCTOR** e' fatta: tre modalita', display a quattro righe, cronologia in
+una finestra sua. Strada facendo il toolkit ha preso le tendine laterali,
+`ex_abilita()`, `ex_versione()` e `ex_dlg_testo()`. ! La scoperta: **oltre 64
+controlli per programma `ex_crea` rendeva 0 in silenzio** — il blocco del
+programmatore non c'era, e nemmeno i controlli del dialogo «Salva», per cui
+il file non si scriveva. Adesso sono 192. E `make iso-exos` non sapeva di
+calctor: un binario rifatto restava fuori dal CD, e la prova provava quello
+vecchio.
+
+## Archivi apre i tar, e Rinomina nel file manager
+
+**@ARCHIVI-TAR**: il tar sta in `lib/extar`, compilato dentro sia `/bin/tar`
+sia Archivi (non una .so: tar deve restare statico per il dischetto).
+Aggiungere a un tar lo riscrive intero, accanto, e lo scambia solo a lavoro
+finito. **@FILEMGR-OPS**: Rinomina (F2). Tutte le prove passano.
+
+## runbas, e F5 in gfedit
+
+`runbas mioprog.bas` esegue un programma QBASIC con l'interprete di
+`gfbasic/`, compilato dentro: gfedit lo LANCIA con F5, non lo collega, cosi'
+resta un editor dove runbas non c'e'. Le funzioni di math.h che la libc non
+ha (SIN, EXP, ^...) sono le istruzioni dell'x87, provate sull'host contro la
+libm di Linux. ! Strada facendo: `strtok_r` mancava alla libc; gfbasic non
+dice gli errori di sintassi; la shell non conosce `$?`. Tutto scritto in
+`@RUNBAS`.
+
+## I percorsi, e `make all` che si fermava
+
+**/boot/percorsi.txt** (@NETUPDATE-PATH): la shell aggiunge in coda al PATH le
+directory che ci trova, netupdate ci scrive in coda le sue. ! **`make all`
+si fermava su due controlli, da giorni**: `verifica-ascii` scansionava anche
+`firefox-main/` (sessanta stringhe di terzi) e due stringhe nostre con le
+virgolette « », e `verifica-versioni` voleva `EX_VERSIONE` in `tar`. `make
+iso-exos` non li chiama, ed e' per questo che nessuno se n'era accorto.
+
+# DA DOVE RIPRENDERE — 27 settembre 2026, mattina
+
+  1. ~~@EDIT-CERCA~~ fatto, vedi sopra.
+  2. **@EXBROWSER-HTML5**, chiesto la sera del 26: Wikipedia, «Cerca», lo
+     scorrimento delle <select>, HTML5 e CSS. Prima si misura.
+  3. Poi i piccoli rimasti: @NETUPD-GIRA, @RUNBAS, @NETUPDATE-PATH, @FBC-110,
+     e @ARCHIVI-TAR (chiesto il 27).
+  4. Il commit: `messaggio-commit.txt` e' pronto per quel che e' venuto dopo
+     8ed9287 (exide, cerca e sostituisci, il limite dei menu).
+
 # 26 settembre 2026 — ridurre a icona, e la barra dei programmi aperti
 
 ## CHE COSA E' SUCCESSO, IN UNA RIGA PER COSA

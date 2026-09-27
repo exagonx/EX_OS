@@ -113,6 +113,16 @@ ARGS=("mount hd0p1 /disk@6" "exwin@18" "key:alt-f1@3"
 
 timeout 400 python3 tools/qemu_drive.py "${ARGS[@]}" > "$D/3-cancella.log" 2>&1
 
+echo "=== 4. F2 rinomina alfa.txt in omega.txt (27 settembre 2026) ==="
+ARGS=("mount hd0p1 /disk@6" "exwin@18" "key:alt-f1@3"
+      "/exwin/bin/filemgr /disk/prova &@8" "key:alt-f5@3"
+      "key:tab@1" "key:down@1" "key:f2@3")
+for i in $(seq 1 40); do ARGS+=("key:backspace@0"); done
+ARGS+=("omega.txt@4" "foto:$D/4-rinominato.ppm@2"
+       "key:alt-f1@2" "ls /disk/prova@5")
+
+timeout 400 python3 tools/qemu_drive.py "${ARGS[@]}" > "$D/4-rinomina.log" 2>&1
+
 # --- Il verdetto -------------------------------------------------------------
 echo ""
 esito=0
@@ -132,6 +142,13 @@ if grep -q "vuota" "$D/3-cancella.log"; then
 else
     echo "  [NO]  la cancellazione: in /disk/dest c'e' ancora roba"
     echo "        (guarda $D/3-domanda.ppm: che pulsante ha il fuoco?)"
+    esito=1
+fi
+
+if grep -q "<FILE>.*omega.txt" "$D/4-rinomina.log" && ! grep -q "<FILE>.*alfa.txt" "$D/4-rinomina.log"; then
+    echo "  [OK]  la rinomina: alfa.txt ora si chiama omega.txt"
+else
+    echo "  [NO]  la rinomina: vedi $D/4-rinomina.log e $D/4-rinominato.ppm"
     esito=1
 fi
 

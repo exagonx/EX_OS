@@ -170,9 +170,9 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi
+PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi calctor
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -336,6 +336,22 @@ SHELL_LD    := bin/sh/shell.ld
 # architettura: era la CONVENZIONE su dove sta il canarino. Le due cose si
 # somigliano solo perche' capitano nello stesso momento — ed e' proprio per
 # questo che conviene guardare l'indirizzo prima della teoria.
+# =============================================================================
+# TOOLCHAIN E COSTRUZIONI DI TERZI STANNO DENTRO QUESTO ALBERO (27 set 2026)
+#
+# ! LA REGOLA: sorgenti e strumenti restano in questa directory, anche quando
+# git li ignora. Fino a oggi la toolchain incrociata (~/exos-cross), i binutils
+# e i make nativi (~/exos-native), OpenSSL, FreeBASIC e GCC costruiti stavano
+# nella HOME: la cartella del progetto si copia fra le macchine, la home no, e
+# su un PC nuovo mancavano senza che niente lo dicesse fino al primo errore.
+#
+# Il posto e' cross_build/ (ignorata da git). `dentro` sceglie lui se c'e',
+# altrimenti il vecchio posto nella home: una macchina che non ha ancora
+# spostato le sue cartelle continua a compilare. Vedi SVILUPPO.md, sezione 1.
+# =============================================================================
+TOOLCHAIN_DIR := $(CURDIR)/cross_build
+dentro = $(if $(wildcard $(TOOLCHAIN_DIR)/$(1)/.),$(TOOLCHAIN_DIR)/$(1),$(HOME)/$(1))
+
 CFLAGS_USER := -m32 $(CPU_BASE) -ffreestanding -fno-builtin \
                -fstack-protector-strong -mstack-protector-guard=global \
                -fno-pic -fno-pie -Wall -O2 -std=c11 -nostdlib \
@@ -1722,8 +1738,8 @@ QJS_CFLAGS    := $(CFLAGS_USER) -Os -nostdinc -D__EXOS__ \
                  -I $(shell $(CC) -m32 -print-file-name=include) \
                  -I lib/include -I $(QUICKJS_DIR)
 
-EXQJS_LIBM    ?= $(HOME)/exos-cross/i386-exos/lib/libm.a
-EXQJS_LIBGCC  ?= $(firstword $(wildcard $(HOME)/exos-cross/lib/gcc/i386-exos/*/libgcc.a))
+EXQJS_LIBM    ?= $(call dentro,exos-cross)/i386-exos/lib/libm.a
+EXQJS_LIBGCC  ?= $(firstword $(wildcard $(call dentro,exos-cross)/lib/gcc/i386-exos/*/libgcc.a))
 
 $(EXQJS_SO): $(EXQJS_SRC) $(EXJS_HDR) $(EXJS_ESPORTA) $(EXQJS_LD) \
              $(EXLIB_HDR) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
@@ -1927,16 +1943,17 @@ TAR_BIN := $(BUILD_BIN_CD)/tar
 TAR_LD  := bin/tar/tar.ld
 
 $(TAR_BIN): $(TAR_SRC) $(TAR_LD) lib/eximg/inflate.c lib/eximg/inflate.h \
-            lib/exzip/deflate.c lib/exzip/deflate.h \
+            lib/exzip/deflate.c lib/exzip/deflate.h lib/extar/extar.c lib/extar/extar.h \
             $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/tar ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -I lib/exzip -c $(TAR_SRC) -o $(BUILD_OBJ)/tar_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/extar -c $(TAR_SRC) -o $(BUILD_OBJ)/tar_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -I lib/exzip -I lib/extar -c lib/extar/extar.c -o $(BUILD_OBJ)/tar_extar.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c lib/eximg/inflate.c -o $(BUILD_OBJ)/tar_inflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c lib/exzip/deflate.c -o $(BUILD_OBJ)/tar_deflate.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/tar_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TAR_LD) \
-	    $(BUILD_OBJ)/tar_start.o $(BUILD_OBJ)/tar_main.o $(BUILD_OBJ)/tar_inflate.o \
+	    $(BUILD_OBJ)/tar_start.o $(BUILD_OBJ)/tar_main.o $(BUILD_OBJ)/tar_extar.o $(BUILD_OBJ)/tar_inflate.o \
 	    $(BUILD_OBJ)/tar_deflate.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] tar compilato: $@"
 
@@ -1951,6 +1968,36 @@ $(GZIP_BIN) $(GUNZIP_BIN): $(TAR_BIN)
 
 .PHONY: tar_prog
 tar_prog: dirs $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN)
+
+# --- /bin/runbas: esegue un programma QBASIC (@RUNBAS) ------------------------
+#
+# L'interprete e' gfbasic/gf_basic.c, compilato dentro: niente libreria
+# condivisa, e cosi' gfedit resta un editor anche dove runbas non c'e'.
+# bin/runbas/include porta i quattro mutex finti (un filo solo) e
+# lib/exmat/exmat.c le funzioni di math.h che la libc non ha, con l'x87 —
+# senza la libm della toolchain incrociata, che non tutte le macchine hanno.
+RUNBAS_SRC := bin/runbas/runbas.c
+RUNBAS_BIN := $(BUILD_BIN_CD)/runbas
+RUNBAS_LD  := bin/runbas/runbas.ld
+
+$(RUNBAS_BIN): $(RUNBAS_SRC) $(RUNBAS_LD) lib/exmat/exmat.c bin/runbas/runbas_tasto.c \
+               bin/runbas/include/pthread.h gfbasic/gf_basic.c gfbasic/gf_basic.h \
+               $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/runbas ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I gfbasic -c $(RUNBAS_SRC) -o $(BUILD_OBJ)/runbas_main.o
+	$(CC) $(CFLAGS_USER) -Wno-misleading-indentation -DGFB_EXOS -I bin/runbas/include -I lib/include -I gfbasic \
+	    -c gfbasic/gf_basic.c -o $(BUILD_OBJ)/runbas_gfb.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c bin/runbas/runbas_tasto.c -o $(BUILD_OBJ)/runbas_tasto.o
+	$(CC) $(CFLAGS_USER) -I lib/include -c lib/exmat/exmat.c -o $(BUILD_OBJ)/runbas_mat.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/runbas_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RUNBAS_LD) \
+	    $(BUILD_OBJ)/runbas_start.o $(BUILD_OBJ)/runbas_main.o $(BUILD_OBJ)/runbas_gfb.o \
+	    $(BUILD_OBJ)/runbas_mat.o $(BUILD_OBJ)/runbas_tasto.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] runbas compilato: $@"
+
+.PHONY: runbas_prog
+runbas_prog: dirs $(RUNBAS_BIN)
 
 # --- /exwin/lib/exzip.so: il formato ZIP, e nient'altro ----------------------
 #
@@ -2375,6 +2422,9 @@ filemgr: dirs $(FILEMGR_BIN)
 # ex_dlg_percorso, che porta dentro «Nuova cartella») ed exzip per gli archivi.
 # Sono tre librerie condivise e nessuna copia: e' tutto il punto del
 # meccanismo.
+# ! E UNA COPIA SI', DAL 27 SETTEMBRE 2026: lib/extar (tar e tar.gz) con
+# inflate.c e deflate.c, compilati dentro come in /bin/tar — che deve restare
+# statico per stare sul dischetto. Vedi lib/extar/extar.h (@ARCHIVI-TAR).
 ARCHIVI_SRC := exwin/bin/archivi/archivi.c
 ARCHIVI_BIN := $(BUILD_EXWIN_BIN)/archivi
 ARCHIVI_LD  := exwin/bin/archivi/archivi.ld
@@ -2382,10 +2432,14 @@ ARCHIVI_LD  := exwin/bin/archivi/archivi.ld
 $(ARCHIVI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(ARCHIVI_SRC) $(ARCHIVI_LD) \
              $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
              $(EXDLG_STUB) $(EXDLG_HDR) $(EXZIP_STUB) $(EXZIP_HDR) $(EXZIP_SO) \
+             lib/extar/extar.c lib/extar/extar.h lib/eximg/inflate.c lib/exzip/deflate.c \
              $(WIN_PROTO) $(FONT_SRC) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/archivi ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exzip -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(ARCHIVI_SRC) -o $(BUILD_OBJ)/archivi_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exzip -I lib/extar -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(ARCHIVI_SRC) -o $(BUILD_OBJ)/archivi_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -I lib/exzip -I lib/extar -c lib/extar/extar.c -o $(BUILD_OBJ)/archivi_extar.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c lib/eximg/inflate.c -o $(BUILD_OBJ)/archivi_inflate.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c lib/exzip/deflate.c -o $(BUILD_OBJ)/archivi_deflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/archivi_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/archivi_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/archivi_exdlg.o
@@ -2395,11 +2449,40 @@ $(ARCHIVI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(ARCHIVI_SRC) $(ARCHIVI_LD) \
 	    $(BUILD_OBJ)/archivi_start.o $(BUILD_OBJ)/archivi_main.o \
 	    $(BUILD_OBJ)/archivi_exwin.o $(BUILD_OBJ)/archivi_exdlg.o \
 	    $(BUILD_OBJ)/archivi_exzip.o $(BUILD_OBJ)/archivi_info.o \
+	    $(BUILD_OBJ)/archivi_extar.o $(BUILD_OBJ)/archivi_inflate.o $(BUILD_OBJ)/archivi_deflate.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] archivi compilato: $@"
 
 .PHONY: archivi
 archivi: dirs $(ARCHIVI_BIN)
+
+# --- /exwin/bin/calctor: la calcolatrice (@CALCTOR, 27 settembre 2026) -----
+#
+# Due stub (exwin, exdlg) e due pezzi compilati dentro: exinfo e lib/exmat,
+# le funzioni di math.h con l'x87 — la libc non ha sin ne' log.
+CALCTOR_SRC := exwin/bin/calctor/calctor.c
+CALCTOR_BIN := $(BUILD_EXWIN_BIN)/calctor
+CALCTOR_LD  := exwin/bin/calctor/calctor.ld
+
+$(CALCTOR_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(CALCTOR_SRC) $(CALCTOR_LD) lib/exmat/exmat.c \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/calctor ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(CALCTOR_SRC) -o $(BUILD_OBJ)/calctor_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -c lib/exmat/exmat.c -o $(BUILD_OBJ)/calctor_mat.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/calctor_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/calctor_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/calctor_info.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/calctor_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CALCTOR_LD) \
+	    $(BUILD_OBJ)/calctor_start.o $(BUILD_OBJ)/calctor_main.o $(BUILD_OBJ)/calctor_mat.o \
+	    $(BUILD_OBJ)/calctor_exwin.o $(BUILD_OBJ)/calctor_exdlg.o $(BUILD_OBJ)/calctor_info.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] calctor compilato: $@"
+
+.PHONY: calctor
+calctor: dirs $(CALCTOR_BIN)
 
 EDIT_SRC := exwin/bin/edit/edit.c
 EDIT_BIN := $(BUILD_EXWIN_BIN)/edit
@@ -2638,7 +2721,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
-             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) \
+             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) \
              $(EXTTF_SO) \
@@ -5133,10 +5216,10 @@ ISO_IMG     := $(DIST_DIR)/exos-tools.iso
 # repository di proposito: sono binari di 7 MB costruiti da sorgenti di
 # terzi. Si sovrascrive dalla riga di comando se sta altrove:
 #     make iso BINUTILS_NATIVI=~/altro/build
-BINUTILS_NATIVI ?= $(HOME)/exos-native/build-nativi
+BINUTILS_NATIVI ?= $(call dentro,exos-native)/build-nativi
 # Il sysroot del bersaglio, dove tools/gcclibs-exos/prepara-gcclibs.sh
 # installa GMP, MPFR e MPC. Se ci sono, il CD porta anche /bin/provamp.
-CROSS_SYSROOT   ?= $(HOME)/exos-cross/i386-exos
+CROSS_SYSROOT   ?= $(call dentro,exos-cross)/i386-exos
 
 # Dove il canadian cross ha lasciato cc1, xgcc e cpp. Si preferisce
 # l'albero costruito con --enable-checking=release; se non c'e' si ripiega
@@ -5145,7 +5228,7 @@ CROSS_SYSROOT   ?= $(HOME)/exos-cross/i386-exos
 # e' esattamente cio' che conta su una macchina piccola.
 # Dove sta la cross toolchain i386-exos. Si puo' sovrascrivere da riga
 # di comando: make iso EXOS_CROSS=/altro/percorso
-EXOS_CROSS ?= $(HOME)/exos-cross
+EXOS_CROSS ?= $(call dentro,exos-cross)
 
 # ! IL CROSS SE LO METTE NEL PATH IL MAKEFILE, non chi lancia make.
 #
@@ -5161,11 +5244,11 @@ EXOS_CROSS ?= $(HOME)/exos-cross
 export PATH := $(EXOS_CROSS)/bin:$(PATH)
 
 # Dove prepara-openssl.sh ha lasciato libcrypto.a.
-OPENSSL_BUILD ?= $(HOME)/openssl-build-exos
+OPENSSL_BUILD ?= $(call dentro,openssl-build-exos)
 # GNU make per EX-OS: lo costruisce tools/make-exos/prepara-make.sh
-MAKE_NATIVO   ?= $(HOME)/exos-native/build-make
+MAKE_NATIVO   ?= $(call dentro,exos-native)/build-make
 # NASM per EX-OS: lo costruisce tools/nasm-exos/prepara-nasm.sh
-NASM_NATIVO   ?= $(HOME)/exos-native/build-nasm
+NASM_NATIVO   ?= $(call dentro,exos-native)/build-nasm
 
 # =============================================================================
 # FreeBASIC — UNA VERSIONE SOLA, DICHIARATA IN UN POSTO SOLO
@@ -5202,7 +5285,7 @@ FB_SORGENTI   ?= $(patsubst %/.,%,$(firstword \
 
 # La costruzione incrociata da cui vengono fbc, libfb.a e fbrt0.o.
 # La produce tools/freebasic-exos/prepara-fb.sh.
-FB_NATIVO     ?= $(HOME)/fb-build-110
+FB_NATIVO     ?= $(call dentro,fb-build-110)
 
 # Le due versioni LETTE, non dichiarate: una dal binario, una dall'albero.
 # Se non combaciano la costruzione si ferma.
@@ -5263,8 +5346,8 @@ FB_SORGENTI_NUOVI ?= $(firstword $(filter-out $(FB_SORGENTI)/., \
 # quella con il solo C. Serve mentre la prima si costruisce — sono ore a
 # -j1 — cosi' il CD continua a portare un compilatore funzionante invece
 # di restare senza.
-GCC_NATIVO_REL  ?= $(HOME)/gcc-build-cpp/gcc
-GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-rel/gcc
+GCC_NATIVO_REL  ?= $(call dentro,gcc-build-cpp)/gcc
+GCC_NATIVO_CHK  ?= $(call dentro,gcc-build-rel)/gcc
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
 ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 
@@ -5435,7 +5518,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	@# che non c'entrano niente con il sorgente che si stava compilando.
 	@set -e; \
 	R=""; \
-	for d in $(EXOS_CROSS) $(HOME)/exos-cross; do \
+	for d in $(EXOS_CROSS) $(TOOLCHAIN_DIR)/exos-cross $(HOME)/exos-cross; do \
 	    [ -f "$$d/i386-exos/lib/crt0.o" ] && R="$$d" && break; \
 	done; \
 	if [ -n "$$R" ]; then \
@@ -6783,7 +6866,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) \
-                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN) $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN)
+                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN) $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN) $(RUNBAS_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE

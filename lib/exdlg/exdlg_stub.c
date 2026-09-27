@@ -53,6 +53,7 @@ static struct {
     void (*sc_ferma_tutti)(void);
     void (*sc_finestra)(void);
     void (*sc_alla_fine)(ExScaricoFine, void *);
+    int  (*testo)(const char *, const char *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -102,6 +103,7 @@ static void assicura(void)
     P.sc_ferma_tutti = (void (*)(void))exlib_simbolo(t, "ex_scarichi_ferma_tutti");
     P.sc_finestra    = (void (*)(void))exlib_simbolo(t, "ex_scarichi_finestra");
     P.sc_alla_fine   = (void (*)(ExScaricoFine, void *))exlib_simbolo(t, "ex_scarichi_alla_fine");
+    P.testo          = (int (*)(const char *, const char *))exlib_simbolo(t, "ex_dlg_testo");
 
     P.pronto = 1;
 }
@@ -170,4 +172,12 @@ int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
 {
     assicura();
     return P.chiedi(titolo, domanda, ok, valore, max);
+}
+
+/* Over an exdlg.so from before 27 September 2026: an ordinary warning. */
+int ex_dlg_testo(const char *titolo, const char *testo)
+{
+    assicura();
+    if (P.testo) return P.testo(titolo, testo);
+    return P.avviso(titolo, testo);
 }

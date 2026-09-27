@@ -51,8 +51,8 @@ COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
   &mdash;
   <a href="#pulsante">Pulsante</a>,
   <a href="#etichetta">Etichetta</a>,
-  <a href="#casella">Casella</a>,
-  <a href="#spunta">Spunta</a>,
+  <a href="#casella">Casella testo</a>,
+  <a href="#spunta">Checkbox</a>,
   <a href="#radio">Radio</a>,
   <a href="#riquadro">Riquadro</a>,
   <a href="#separatore">Separatore</a>,
@@ -83,9 +83,9 @@ COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
 <div class="nota">
 <p>
 <b>Gli esempi valgono per piu' di uno strumento.</b> Lo scambio fra due
-caselle e' un esempio di <a href="#casella">Casella</a> tanto quanto di
+caselle e' un esempio di <a href="#casella">Casella testo</a> tanto quanto di
 <a href="#pulsante">Pulsante</a>; l'uscita con la conferma vale per
-<a href="#spunta">Spunta</a>, Pulsante e per come si esce. Percio' stanno
+<a href="#spunta">Checkbox</a>, Pulsante e per come si esce. Percio' stanno
 tutti insieme <a href="#esempi">in fondo</a>, e ogni strumento ci rimanda.
 </p>
 </div>
@@ -194,7 +194,7 @@ Applica. Senza nessun controllo scelto &mdash; un clic sul vuoto della maschera
         handler. Solo lettere, cifre e <code>_</code>: il resto viene
         sostituito, perche' e' un nome di funzione C</td></tr>
 <tr><td><code>testo</code></td>
-    <td>quel che ci si legge dentro (o accanto, per Spunta e Radio). Lo cambia
+    <td>quel che ci si legge dentro (o accanto, per Checkbox e Radio). Lo cambia
         anche <code>ex_testo_metti()</code> a programma acceso</td></tr>
 <tr><td><code>x</code>, <code>y</code></td>
     <td>l'angolo in alto a sinistra, dentro la finestra</td></tr>
@@ -259,7 +259,7 @@ Esempio: <a href="#es-spunta">uscire con la conferma</a>, dove l'etichetta
 spiega perche' non e' successo niente.
 </p>
 
-<h3 id="casella">Casella</h3>
+<h3 id="casella">Casella testo</h3>
 <p>
 Una riga di testo modificabile. <b>Eventi:</b> Cambiato (a ogni tasto), Invio.
 <code>ex_testo_prendi</code> per leggerla, <code>ex_testo_metti</code> per
@@ -269,7 +269,7 @@ testo</a>.
 Esempio: <a href="#es-scambio">scambiare due caselle</a>.
 </p>
 
-<h3 id="spunta">Spunta</h3>
+<h3 id="spunta">Checkbox</h3>
 <p>
 Accesa o spenta, indipendente dalle altre. <b>Eventi:</b> Cambiato.
 <code>ex_acceso(h)</code> rende 1 o 0, <code>ex_accendi(h, 1)</code> la accende.
@@ -281,7 +281,7 @@ Esempio: <a href="#es-spunta">uscire solo se la spunta e' accesa</a>.
 Una scelta fra fratelli: accenderne uno spegne gli altri <b>che hanno lo stesso
 padre</b>. Per due gruppi separati si mettono dentro due
 <a href="#riquadro">Riquadro</a> diversi. <b>Eventi:</b> Cambiato.
-Stesse funzioni della <a href="#spunta">Spunta</a>.
+Stesse funzioni della <a href="#spunta">Checkbox</a>.
 </p>
 
 <h3 id="riquadro">Riquadro</h3>
@@ -545,22 +545,22 @@ NUOVO, quindi non ricostruisce niente che non sia mai esistito.
 
 <h3 id="es-scambio">Due caselle che si scambiano il testo</h3>
 <p>
-Vale per <a href="#casella">Casella</a> e per <a href="#pulsante">Pulsante</a>.
-Metti sulla maschera due Casella e un Pulsante, chiama le caselle Casella1 e
-Casella2, doppio clic sul pulsante e dentro <code>Pulsante1_Clic()</code>:
+Vale per <a href="#casella">Casella testo</a> e per <a href="#pulsante">Pulsante</a>.
+Metti sulla maschera due Casella testo e un Pulsante, chiama le caselle CasellaTesto1 e
+CasellaTesto2, doppio clic sul pulsante e dentro <code>Pulsante1_Clic()</code>:
 </p>
 <pre>    char t[64];
 
-    strncpy(t, ex_testo_prendi(h_Casella1), sizeof(t) - 1);
+    strncpy(t, ex_testo_prendi(h_CasellaTesto1), sizeof(t) - 1);
     t[sizeof(t) - 1] = 0;
-    ex_testo_metti(h_Casella1, ex_testo_prendi(h_Casella2));
-    ex_testo_metti(h_Casella2, t);
+    ex_testo_metti(h_CasellaTesto1, ex_testo_prendi(h_CasellaTesto2));
+    ex_testo_metti(h_CasellaTesto2, t);
     ex_procedura_base(g_form, EXM_DISEGNA, 0, 0);</pre>
 <div class="nota">
 <p>
 <b>La copia in <code>t</code> serve davvero.</b> <code>ex_testo_prendi</code>
 rende un puntatore AL TESTO DEL CONTROLLO, non una copia: scrivendo prima
-dentro Casella1 si perderebbe quel che si voleva leggere, e le due caselle
+dentro CasellaTesto1 si perderebbe quel che si voleva leggere, e le due caselle
 finirebbero uguali invece che scambiate.
 </p>
 <p>
@@ -589,15 +589,15 @@ come si fa:
 Cosi' passa dalla stessa strada del pulsante di chiusura: distrugge la finestra
 E rimette a zero gli handle dei suoi controlli. Scrivere a mano
 <code>ex_distruggi()</code> funzionerebbe a meta' &mdash; la finestra sparirebbe
-e <code>h_Casella1</code> continuerebbe a puntare a un controllo che non c'e'
+e <code>h_CasellaTesto1</code> continuerebbe a puntare a un controllo che non c'e'
 piu'.
 </p>
 
 <h3 id="es-spunta">Si esce solo se la spunta e' accesa</h3>
 <p>
-Vale per tre strumenti insieme: la <a href="#spunta">Spunta</a> che si legge,
+Vale per tre strumenti insieme: la <a href="#spunta">Checkbox</a> che si legge,
 il <a href="#pulsante">Pulsante</a> che decide e l'<a href="#etichetta">Etichetta</a>
-che spiega perche' non e' successo niente. Metti una Spunta (chiamala Conferma,
+che spiega perche' non e' successo niente. Metti una Checkbox (chiamala Conferma,
 testo &laquo;sono sicuro&raquo;), un'Etichetta (chiamala Avviso, testo vuoto) e
 un Pulsante (chiamalo Esci). Dentro <code>Esci_Clic()</code>:
 </p>

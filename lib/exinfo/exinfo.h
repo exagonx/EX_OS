@@ -30,6 +30,7 @@ extern "C" {
 
 #define EXINFO_AUTORE   "Graziano Falcone"
 #define EXINFO_EMAIL    "exagonx@hotmail.com"
+#define EXINFO_WEB      "exagonx.altervista.org"
 
 /* La memoria del processo in byte, divisa nelle tre parti che si sanno
  * misurare. Un puntatore nullo si puo' passare: quel pezzo non si riporta. */

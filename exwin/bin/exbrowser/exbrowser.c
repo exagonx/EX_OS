@@ -1837,7 +1837,7 @@ static int imp_scrivi(void)
              "javascript = %s\n"
              "motore     = %s\n"
              "ricerca    = %s\n"
-             "# il motore «personale»: {searchTerms} dove vanno le parole\n"
+             "# il motore \"personale\": {searchTerms} dove vanno le parole\n"
              "ricerca_url = %s\n"
              "immagini   = %s\n"
              "cache      = %s\n",

@@ -146,7 +146,7 @@ e rigenerare il bootstrap — `bersaglio-exos.py` e
 
 ```bash
 # i sorgenti: pacchetto source-bootstrap da freebasic.net, in ./FreeBASIC-*/
-tools/freebasic-exos/prepara-fb.sh            # -> ~/fb-build-exos
+tools/freebasic-exos/prepara-fb.sh            # -> cross_build/fb-build-exos
 make iso                                      # -> /exos/bin/fbc sul CD
 ```
 

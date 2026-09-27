@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/freebasic-exos/prepara-fb.sh
 # EX-OS — Extensible Operating System
@@ -64,8 +65,8 @@ set -e
 
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
 ALBERO="${1:-$RADICE/FreeBASIC-1.07.3-source-bootstrap}"
-USCITA="${2:-$HOME/fb-build-exos}"
-PREFISSO="${PREFISSO:-$HOME/exos-cross}"
+USCITA="${2:-$TC/fb-build-exos}"
+PREFISSO="${PREFISSO:-$TC/exos-cross}"
 SYSROOT="$PREFISSO/i386-exos"
 
 if [ ! -f "$ALBERO/src/rtlib/fb_config.h" ]; then

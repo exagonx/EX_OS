@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/./toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/ricostruisci-bersaglio.sh
 # EX-OS — Extensible Operating System
@@ -63,11 +64,11 @@
 set -e
 
 RADICE=$(cd "$(dirname "$0")/.." && pwd)
-PREFISSO="${PREFISSO:-$HOME/exos-cross}"
+PREFISSO="${PREFISSO:-$TC/exos-cross}"
 SYSROOT="$PREFISSO/i386-exos"
-NATIVI="${NATIVI:-$HOME/exos-native}"
-BUILD_CC1="${BUILD_CC1:-$HOME/gcc-build-rel}"
-BUILD_CXX="${BUILD_CXX:-$HOME/gcc-build-cxx}"
+NATIVI="${NATIVI:-$TC/exos-native}"
+BUILD_CC1="${BUILD_CC1:-$TC/gcc-build-rel}"
+BUILD_CXX="${BUILD_CXX:-$TC/gcc-build-cxx}"
 IMPRONTA="$SYSROOT/.abi-libc"
 
 cd "$RADICE"
@@ -357,7 +358,7 @@ if vuoi openssl; then
     # non un descrittore. Con due BIO di memoria il facchinaggio lo fa il
     # programma, ed e' la strada documentata — vedi tools/iso/prova-tls.c, che
     # fa un handshake vero sopra lo stack IPC di EX-OS.
-    ( cd "$HOME/openssl-build-exos" && make -j2 libcrypto.a libssl.a )
+    ( cd "$TC/openssl-build-exos" && make -j2 libcrypto.a libssl.a )
 fi
 
 # --- Il CD, con dentro tutto quanto sopra ------------------------------------

@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/nasm-exos/prepara-nasm.sh
 # EX-OS — Extensible Operating System
@@ -68,8 +69,8 @@ set -e
 
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
 SORGENTI="${1:-$RADICE/nasm}"
-USCITA="${2:-$HOME/exos-native/build-nasm}"
-PREFISSO="${PREFISSO:-$HOME/exos-cross}"
+USCITA="${2:-$TC/exos-native/build-nasm}"
+PREFISSO="${PREFISSO:-$TC/exos-cross}"
 
 if [ ! -f "$SORGENTI/configure.ac" ] || [ ! -d "$SORGENTI/asm" ]; then
     echo "prepara-nasm: '$SORGENTI' non e' un albero di NASM" >&2

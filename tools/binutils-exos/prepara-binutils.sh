@@ -1,4 +1,5 @@
 #!/bin/sh
+. "$(dirname "$0")/../toolchain.sh"    # TC: dove sta la toolchain (regola del 27 settembre 2026)
 # =============================================================================
 # tools/binutils-exos/prepara-binutils.sh
 # EX-OS — Extensible Operating System
@@ -51,7 +52,7 @@
 
 set -e
 
-PREFISSO="${1:-$HOME/exos-cross}"
+PREFISSO="${1:-$TC/exos-cross}"
 SORGENTI="$2"
 
 # --- 1. trova i sorgenti ------------------------------------------------------

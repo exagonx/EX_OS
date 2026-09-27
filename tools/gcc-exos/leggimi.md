@@ -29,13 +29,13 @@ sudo apt install flex bison gperf texinfo m4 \
 python3 tools/gcc-exos/applica.py gcc
 
 # 3. binutils e ambiente del bersaglio
-tools/gcc-exos/prepara-cross.sh              # default: ~/exos-cross
+tools/gcc-exos/prepara-cross.sh              # default: cross_build/exos-cross
 
 # 4. il compilatore — NON in /tmp, vedi sotto
-mkdir -p ~/gcc-build && cd ~/gcc-build
-PATH=$HOME/exos-cross/bin:$PATH \
+mkdir -p cross_build/gcc-build && cd cross_build/gcc-build
+PATH=cross_build/exos-cross/bin:$PATH \
   /percorso/di/gcc/configure \
-    --target=i386-exos --prefix=$HOME/exos-cross \
+    --target=i386-exos --prefix=cross_build/exos-cross \
     --enable-languages=c --without-headers --with-newlib \
     --disable-nls --disable-shared --disable-threads \
     --disable-libssp --disable-libgomp --disable-libquadmath \
@@ -72,8 +72,8 @@ Se ci si è già cascati, la build **non** va rifatta da zero: i Makefile
 generati non contengono riferimenti assoluti alla propria directory, quindi
 
 ```bash
-cp -a /tmp/gcc-build ~/gcc-build && rm -rf /tmp/gcc-build
-cd ~/gcc-build && make -j$(nproc) all-gcc
+cp -a /tmp/gcc-build cross_build/gcc-build && rm -rf /tmp/gcc-build
+cd cross_build/gcc-build && make -j$(nproc) all-gcc
 ```
 
 riprende dai link mancanti e non ricompila niente.

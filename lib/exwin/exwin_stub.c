@@ -156,6 +156,10 @@ static struct {
     void         (*finestra_attiva)(unsigned int);
     void         (*finestra_riduci)(unsigned int);
     void         (*chiudi_altre)(void);
+    void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
+    int          (*imm_disponi)(ExFinestra, const char *, int, int, int, int, int, unsigned int);
+    const char  *(*versione)(void);
+    void         (*abilita)(ExFinestra, int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -330,6 +334,12 @@ static void assicura(void)
                         exlib_simbolo(t, "ex_finestra_riduci");
     P.chiudi_altre    = (void (*)(void))
                         exlib_simbolo(t, "ex_chiudi_le_altre");
+    P.area_seleziona  = (void (*)(ExFinestra, unsigned int, unsigned int, unsigned int))
+                        exlib_simbolo(t, "ex_area_seleziona");
+    P.imm_disponi     = (int (*)(ExFinestra, const char *, int, int, int, int, int, unsigned int))
+                        exlib_simbolo(t, "ex_immagine_disponi");
+    P.versione        = (const char *(*)(void)) exlib_simbolo(t, "ex_versione");
+    P.abilita         = (void (*)(ExFinestra, int)) exlib_simbolo(t, "ex_abilita");
 
     P.pronto = 1;
 }
@@ -547,6 +557,38 @@ void         ex_finestra_riduci(unsigned int id)
 
 void         ex_chiudi_le_altre(void)
 { assicura(); if (P.chiudi_altre) P.chiudi_altre(); }
+
+/* Over an older exwin.so: the cursor goes there, without the selection. */
+void         ex_area_seleziona(ExFinestra a, unsigned int riga, unsigned int da,
+                               unsigned int fino)
+{
+    assicura();
+    if (P.area_seleziona) P.area_seleziona(a, riga, da, fino);
+    else                  ex_area_vai(a, riga, fino);
+}
+
+/* Over an exwin.so from before 27 September 2026 there is no version. */
+const char  *ex_versione(void)
+{
+    assicura();
+    return P.versione ? P.versione() : "(di prima delle versioni)";
+}
+
+/* Over an older exwin.so the control simply stays usable. */
+void         ex_abilita(ExFinestra c, int si)
+{
+    assicura();
+    if (P.abilita) P.abilita(c, si);
+}
+
+/* Over an older exwin.so: the image as it is, in the corner. */
+int          ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
+                                 int w, int h, int modo, unsigned int sfondo)
+{
+    assicura();
+    if (P.imm_disponi) return P.imm_disponi(f, percorso, x, y, w, h, modo, sfondo);
+    return P.immagine(f, percorso, x, y);
+}
 
 void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
 {

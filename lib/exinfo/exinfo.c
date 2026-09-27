@@ -15,6 +15,11 @@
 #include "libc.h"
 #include "exinfo.h"
 
+/* The version of the exwin.so that is running (lib/exwin, 27 September 2026).
+ * WEAK: a program with exinfo and without the toolkit still links, and just
+ * does not say it. */
+const char *ex_versione(void) __attribute__((weak));
+
 /* I due estremi dell'immagine caricata. `_start` e' il punto d'ingresso, cioe'
  * l'inizio di .text; `_bss_end` lo pone il linker script alla fine di .bss.
  * Li dichiarano tutti i linker script dei programmi. */
@@ -102,12 +107,29 @@ void exinfo_testo(char *out, unsigned int max, const char *nome,
      * ! E SOLO ASCII. Il font della console non ha i trattini lunghi ne' le
      * virgolette basse: al loro posto compaiono tre caratteri di spazzatura in
      * mezzo a una frase, e si e' visto proprio qui. */
-    snprintf(out, max,
-             "%s %s\n\n%s\n\n%s  -  %s\n\n"
-             "Memoria: %u KB  (programma %u, heap %u, pila %u)",
-             nome ? nome : "",
-             versione ? versione : "",
-             descrizione ? descrizione : "",
-             EXINFO_AUTORE, EXINFO_EMAIL,
-             kb(img + hp + pl), kb(img), kb(hp), kb(pl));
+    /* ! DAL 27 SETTEMBRE 2026 anche il sito, la RAM libera del SISTEMA e la
+     * versione di ExWin (chiesti per Calctor, e messi qui per tutti): sono
+     * tre righe, e le dodici bastano ancora. */
+    {
+        MemInfo     mi;
+        const char *exwin = ex_versione ? ex_versione() : 0;
+        char        ram[64];
+
+        if (meminfo(&mi) == 0)
+            snprintf(ram, sizeof(ram), "RAM libera: %u KB su %u KB",
+                     mi.free_kb, mi.total_kb);
+        else
+            strcpy(ram, "RAM libera: non si sa");
+
+        snprintf(out, max,
+                 "%s %s\n\n%s\n\n%s  -  %s\nWeb: %s\n\n"
+                 "ExWin %s  -  %s\n"
+                 "Memoria del programma: %u KB  (programma %u, heap %u, pila %u)",
+                 nome ? nome : "",
+                 versione ? versione : "",
+                 descrizione ? descrizione : "",
+                 EXINFO_AUTORE, EXINFO_EMAIL, EXINFO_WEB,
+                 exwin ? exwin : "(di prima delle versioni)", ram,
+                 kb(img + hp + pl), kb(img), kb(hp), kb(pl));
+    }
 }

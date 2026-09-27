@@ -5,6 +5,13 @@ Questa guida dice **come si prepara una macchina** per lavorare su EX-OS e
 indica. Si tiene aggiornata a ogni novita' che cambia il modo di preparare,
 compilare, provare o pubblicare.
 
+> **La regola dei posti: sorgenti e strumenti restano in questa directory,
+> anche quando git li ignora.** La toolchain incrociata, i binutils e i make
+> nativi, OpenSSL, FreeBASIC e GCC costruiti stanno in `cross_build/`, non nella
+> home: la cartella del progetto viaggia fra le macchine, la home no
+> (27 settembre 2026). Il Makefile (funzione `dentro`) e gli script
+> (`tools/toolchain.sh`) guardano prima li'.
+>
 > **La regola del progetto: una novita' non e' finita finche' non e' scritta.**
 > Il codice nuovo porta il suo commento; la giornata va nel diario; un porting
 > ha il suo `tools/<nome>/leggimi.md`; e se cambia cio' che serve sulla macchina,
@@ -37,6 +44,22 @@ e' nostro. Gli alberi di terzi vanno riscaricati, ognuno come dice il suo
 | `exagonx/` | configurazione del server di aggiornamento (contiene una password) | solo nella copia speculare: `exagonx/LEGGIMI.md` |
 | `tools/locali/` | attrezzi di lavoro di questa macchina (mappa dei sorgenti, confronto di istantanee, script di taglio) | solo nella copia speculare: `tools/locali/leggimi.md` |
 | `dist/*.iso`, gran parte di `dist/` | i prodotti della compilazione | si rifanno con `make` |
+| `cross_build/` | la toolchain incrociata (`exos-cross`), `exos-native`, `openssl-build-exos`, `fb-build-110`, `gcc-build-*` | si costruiscono con `tools/*/prepara-*.sh`, che scrivono li'; su una macchina di prima, si spostano: vedi sotto |
+
+### Spostare la toolchain dalla home (macchine di prima del 27 settembre)
+
+    cd <progetto>
+    mkdir -p toolchain
+    mv ~/exos-cross ~/exos-native ~/openssl-build-exos ~/fb-build-110 \
+       ~/gcc-build-* cross_build/          # quelle che ci sono
+    ln -s "$PWD/cross_build/exos-cross" ~/exos-cross   # vedi sotto
+
+! **IL LINK NELLA HOME E' PRUDENZA, NON OBBLIGO.** GCC e binutils si
+ritrovano da soli rispetto a dove stanno, ma una toolchain configurata con un
+`--with-sysroot` assoluto ricorda il percorso di quando e' nata; il link
+tiene vivo quel percorso finche' la toolchain non si ricostruisce qui. Il
+Makefile e gli script guardano prima `cross_build/`, poi la home: finche' le
+cartelle non si spostano, tutto funziona come prima.
 
 `.gitignore` spiega, sezione per sezione, il perche' di ogni esclusione.
 
@@ -71,7 +94,7 @@ Pacchetti dell'host (quelli che il Makefile e gli script di prova chiamano):
 Il cross-compilatore storico `i686-elf` si installa con
 `tools/install_crosscompiler.sh` (vedi README, «Prerequisiti»). Per i
 programmi C++ e per il GCC che gira dentro EX-OS c'e' la toolchain
-`i386-exos` (`CROSS_SYSROOT`, predefinito `~/exos-cross/i386-exos`): come si
+`i386-exos` (`CROSS_SYSROOT`, predefinito `cross_build/exos-cross/i386-exos`): come si
 costruisce e' in `tools/gcc-exos/leggimi.md`; `as`, `ld` e `nasm` nativi in
 `tools/binutils-exos/` e `tools/nasm-exos/`.
 
@@ -170,9 +193,21 @@ cosa prova e cosa gli serve. Il sito di prova del browser e' in
 - Stringhe a schermo in **ASCII**: la console e' code page 437; gli accenti
   stanno nei commenti.
 - I dati di un programma stanno in `$HOME/.app/<programma>/`, mai in un
-  percorso fisso. Le **configurazioni dei programmi di ExWin** stanno invece
-  in `/exwin/config/<programma>.cfg` (deciso il 26 settembre 2026, vedi
-  `@ARCHIVI-VISTA`).
+  percorso fisso.
+- **Dove sta la configurazione di un programma** (27 settembre 2026, detto da
+  chi ci lavora). Ogni programma ha il suo file, e il posto dipende da chi
+  sceglie:
+    - **scelte e personalizzazioni di una persona** → nel suo profilo,
+      `$HOME/.exwin/config/<programma>.cfg` (`/root/...` per root,
+      `/home/<utente>/...` per un utente). Cosi' fanno `pm` (lo sfondo) e
+      `archivi` (compressione, estensione);
+    - **programmi di sistema che partono da soli prima del login** → `/boot`
+      oppure `/cfg`, secondo il programma e l'ambiente in cui gira (quel che
+      serve all'avvio sta dove l'avvio lo legge).
+  Senza login `HOME` vale `/`: allora per root il profilo e' `/root`.
+- **Due profili sullo stesso albero** (due sessioni, o una persona e una
+  sessione) si coordinano in `scambio.txt`, ignorato da git: PRENDO, LASCIO,
+  CHIEDO, VIA LIBERA. Le regole stanno in testa al file.
 - Un percorso che scriverebbe sopra un file esistente si chiede prima.
 - Un file grande si spezza cosi': prima la mappa fatta da uno script, poi il
   file nuovo con i legami scritti, e solo dopo, eventualmente, la libreria.

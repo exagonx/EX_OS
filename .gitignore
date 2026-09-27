@@ -111,6 +111,11 @@
 # =============================================================================
 /messaggio-commit.txt
 
+# scambio.txt: chi lavora su che cosa quando due profili (due sessioni, o una
+# persona e una sessione) toccano lo stesso albero. Un foglio di lavoro, non
+# storia: le regole sono in testa al file (27 settembre 2026).
+/scambio.txt
+
 # continua.sh riprende una sessione di Claude Code per il suo ID: la sessione
 # vive in ~/.claude/ di UNA macchina, e fuori da li' lo script non serve.
 /continua.sh
@@ -483,3 +488,14 @@ __pycache__/
 # ! ANCORATO ALLA RADICE, come tutti gli altri.
 # =============================================================================
 /firefox-main/
+
+# =============================================================================
+# cross_build/ — la toolchain incrociata e le costruzioni di terzi (27 set 2026)
+#
+# exos-cross, exos-native (binutils, make, nasm, sorgenti gcc), openssl-build-
+# exos, fb-build-110, gcc-build-*: prima stavano nella HOME e non viaggiavano
+# con la cartella del progetto. La REGOLA: sorgenti e strumenti restano in
+# questa directory, anche se git li ignora (SVILUPPO.md, sezione 1). Sono
+# centinaia di MB costruiti da sorgenti di terzi: in git non ci vanno.
+# =============================================================================
+/cross_build/

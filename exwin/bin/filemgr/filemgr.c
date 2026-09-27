@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.006"
+#define VERSIONE_APP "0.007"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -179,6 +179,7 @@ EX_VERSIONE("filemgr", VERSIONE_APP);
 #define ID_SEGNA_TUTTI  25
 #define ID_SEGNA_NIENTE 26
 #define ID_NUOVA_DIR    27
+#define ID_RINOMINA     28
 
 #define ID_ISTRUZIONI 30
 #define ID_INFO       31
@@ -1508,6 +1509,78 @@ static void comando_nuova_dir(void)
 }
 
 /* =============================================================================
+ * Rename (@FILEMGR-OPS, 27 September 2026)
+ *
+ * Moving within the same directory already renamed, but through a «save as»
+ * dialog: the long way to change two letters. This asks for the name alone,
+ * with the old one already in the box.
+ *
+ * ! THE ROW WITH THE CURSOR, NOT THE MARKED ONES: a new name belongs to one
+ * thing. And a «/» in the name is refused — that is a move, and Sposta is
+ * there for it.
+ * ============================================================================= */
+static void comando_rinomina(void)
+{
+    unsigned int s = ex_lista_scelta(g_elenco);
+    char  da[PERC_MAX], a[PERC_MAX], dir[PERC_MAX], domanda[PERC_MAX + 32];
+    char  nome[DIRENT_NAME_MAX];
+    char *u;
+    int   e_dir;
+    unsigned int i;
+
+    if (s >= g_voci || !voce_percorso(s, da, sizeof(da))) {
+        strcpy(g_avviso, "scegli prima una riga a destra");
+        return;
+    }
+    e_dir = g_dir_flag[s];
+    strncpy(nome, base(da), sizeof(nome) - 1);
+    nome[sizeof(nome) - 1] = '\0';
+
+    sprintf(domanda, "Il nome nuovo di %s:", nome);
+    if (!ex_dlg_chiedi("Rinomina", domanda, "Rinomina", nome, sizeof(nome)) ||
+        !nome[0] || strcmp(nome, base(da)) == 0) {
+        strcpy(g_avviso, "nome lasciato com'era");
+        return;
+    }
+    if (strchr(nome, '/')) {
+        strcpy(g_avviso, "un nome non contiene \"/\": per spostare c'e' Sposta");
+        return;
+    }
+
+    strncpy(dir, da, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    u = strrchr(dir, '/');
+    if (u == dir) dir[1] = '\0'; else if (u) *u = '\0';
+    unisci(a, sizeof(a), dir, nome);
+
+    if (access(a, 0) == 0) {
+        sprintf(g_avviso, "%s esiste gia': non l'ho toccato", nome);
+        return;
+    }
+    if (rename(da, a) != 0) {
+        sprintf(g_avviso, "non rinominato: %s", strerror(errno));
+        return;
+    }
+    sprintf(g_avviso, "%s ora si chiama %s", base(da), nome);
+
+    /* A directory is also in the tree: its parent node is read again. */
+    if (e_dir)
+        for (i = 0; i < g_nodi; i++) {
+            char p[PERC_MAX];
+
+            percorso_nodo((int)i, p, sizeof(p));
+            if (strcmp(p, dir) == 0 && g_nodo[i].aperto) {
+                albero_chiudi((int)i);
+                albero_espandi((int)i);
+                albero_mostra();
+                break;
+            }
+        }
+    if (g_da_ricerca) strcpy(g_nome[s], a);   /* the hit keeps its full path */
+    else              leggi(g_dir);
+}
+
+/* =============================================================================
  * I segni
  * ============================================================================= */
 static void segna_toggle(void)
@@ -1724,7 +1797,8 @@ static void istruzioni(void)
                   "(Ctrl+C), Sposta (Ctrl+X) e Cancella (Canc) agiscono su "
                   "tutte le righe segnate, e se non ce n'e' nessuna sulla "
                   "riga dov'e' il cursore.  Vale per i file e per le cartelle "
-                  "intere.  Con piu' di una voce la destinazione dev'essere "
+                  "intere.  Rinomina (F2) chiede il nome nuovo della riga "
+                  "dov'e' il cursore.  Con piu' di una voce la destinazione dev'essere "
                   "una directory che esiste.  Prima di sostituire e prima di "
                   "cancellare si viene avvisati, con quanti file e quanti "
                   "byte.  Cerca guarda sotto la directory corrente.  "
@@ -1799,6 +1873,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SEGNA_TUTTI)  { segna_tutti(1);  break; }
         if (wp == ID_SEGNA_NIENTE) { segna_tutti(0);  break; }
         if (wp == ID_NUOVA_DIR)    { comando_nuova_dir(); break; }
+        if (wp == ID_RINOMINA)     { comando_rinomina();  break; }
 
         if (wp == ID_ORD_NOME) { ordina_per(ORD_NOME); break; }
         if (wp == ID_ORD_TIPO) { ordina_per(ORD_TIPO); break; }
@@ -1832,6 +1907,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             if (c == ' ')       { segna_toggle();    break; }
             if (c == KBD_K_DEL) { comando_cancella(); break; }
+            if (c == KBD_K_F(2)) { comando_rinomina(); break; }
         }
         return ex_procedura_base(f, msg, wp, lp);
 
@@ -1881,6 +1957,7 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Comandi", "Copia\tCtrl+C",    ID_COPIA);
     ex_menu_voce(g_menu, "Comandi", "Sposta\tCtrl+X",   ID_SPOSTA);
     ex_menu_voce(g_menu, "Comandi", "Cancella\tCanc",   ID_CANCELLA);
+    ex_menu_voce(g_menu, "Comandi", "Rinomina\tF2",     ID_RINOMINA);
     ex_menu_voce(g_menu, "Comandi", "-",                0);
     ex_menu_voce(g_menu, "Comandi", "Segna\tSpazio",    ID_SEGNA);
     ex_menu_voce(g_menu, "Comandi", "Segna tutto",      ID_SEGNA_TUTTI);

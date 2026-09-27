@@ -2918,7 +2918,7 @@ make distclean    # Rimuove build/ e dist/
 ```
 
 `make iso` include `as` e `ld` nativi se li trova in
-`$(BINUTILS_NATIVI)` (default `~/exos-native/build-nativi`); se non ci
+`$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); se non ci
 sono lo dice e fa il CD lo stesso. Come costruirli:
 `tools/binutils-exos/leggimi.md`.
 

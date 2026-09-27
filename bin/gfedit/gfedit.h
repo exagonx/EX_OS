@@ -455,6 +455,7 @@ void gf_tab_precedente(GfEdit *self);
 void gf_az_nuovo(GfEdit *self);
 void gf_az_apri(GfEdit *self);
 void gf_az_salva(GfEdit *self);
+void gf_az_esegui(GfEdit *self);        /* F5: runbas on the file (@RUNBAS) */
 void gf_az_salva_come(GfEdit *self);
 void gf_az_chiudi(GfEdit *self);
 void gf_az_esci(GfEdit *self);

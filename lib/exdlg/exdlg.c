@@ -628,6 +628,90 @@ int ex_dlg_avviso(const char *titolo, const char *testo)
 }
 
 /* -----------------------------------------------------------------------------
+ * UN TESTO LUNGO, DA LEGGERE (27 settembre 2026, per le Istruzioni di Calctor)
+ *
+ * ! L'AVVISO SI FERMA A DODICI RIGHE, E DEVE: e' una frase da leggere e
+ * chiudere. Delle istruzioni sono una pagina, e tagliarle a dodici righe
+ * vorrebbe dire istruzioni a meta' — che e' peggio di nessuna. Qui il testo
+ * scorre in una lista (le frecce, Pag su e Pag giu'), e le righe lunghe vanno
+ * a capo sulle parole. Invio, Esc o «Chiudi» chiudono.
+ * --------------------------------------------------------------------------- */
+#define TESTO_W     540
+#define TESTO_H     380
+#define TESTO_COL   62          /* una riga di lista ne tiene 63 */
+
+static int g_tx_fatto;
+
+static long tx_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_CHIUDI) { g_tx_fatto = 1; return 0; }
+    if (msg == EXM_COMANDO) {
+        if (wp == 1 || (wp == 2 && EX_APRIRE(lp))) g_tx_fatto = 1;
+        return 0;
+    }
+    if (msg == EXM_TASTO) {
+        unsigned int c = wp & 0xFFFF;
+
+        if (c == '\n' || c == '\r' || c == 27) { g_tx_fatto = 1; return 0; }
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+int ex_dlg_testo(const char *titolo, const char *testo)
+{
+    ExFinestra   f, l;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    const char  *p = testo ? testo : "";
+    char         riga[TESTO_COL + 1];
+
+    ex_schermo(&sw, &sh);
+    g_tx_fatto = 0;
+    f = ex_crea("finestra", titolo ? titolo : "Testo",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+                (int)sw > TESTO_W ? (int)(sw - TESTO_W) / 2 : 0,
+                (int)sh > TESTO_H ? (int)(sh - TESTO_H) / 2 : 0,
+                TESTO_W, TESTO_H, 0, 0, tx_proc);
+    if (f == 0) return 1;
+
+    l = ex_crea("lista", "", EX_FIGLIO, 8, 8, TESTO_W - 16, TESTO_H - 56, f, 2, 0);
+    ex_crea("pulsante", "Chiudi", EX_FIGLIO,
+            (TESTO_W - 90) / 2, TESTO_H - 38, 90, 26, f, 1, 0);
+
+    /* Riga per riga; le lunghe si spezzano sull'ultimo spazio che ci sta. */
+    while (*p) {
+        const char *fine = strchr(p, '\n');
+        unsigned int n = fine ? (unsigned int)(fine - p) : (unsigned int)strlen(p);
+
+        do {
+            unsigned int k = n;
+
+            if (k > TESTO_COL) {
+                k = TESTO_COL;
+                while (k > 0 && p[k] != ' ') k--;
+                if (k == 0) k = TESTO_COL;
+            }
+            memcpy(riga, p, k);
+            riga[k] = '\0';
+            ex_lista_aggiungi(l, riga);
+            p += k;
+            n -= k;
+            while (n > 0 && *p == ' ') { p++; n--; }
+        } while (n > 0);
+        if (!fine) break;
+        p = fine + 1;
+    }
+    ex_lista_scegli(l, 0);
+    ex_fuoco(l);
+
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(f);
+    while (!g_tx_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    ex_distruggi(f);
+    return 1;
+}
+
+/* -----------------------------------------------------------------------------
  * La domanda: due pulsanti, e la risposta prudente
  * --------------------------------------------------------------------------- */
 #define ID_SI   1

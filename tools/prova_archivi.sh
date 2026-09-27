@@ -9,7 +9,10 @@
 #      file tornati sono IDENTICI agli originali;
 #   3. «Nuovo...», due «Aggiungi file...», «Finisci» — e l'archivio che ne esce
 #      lo verifica `unzip -t` di Info-ZIP QUI FUORI, che e' l'unico giudice che
-#      non ha scritto il formato.
+#      non ha scritto il formato;
+#   6. e 7. (27 settembre 2026, @ARCHIVI-TAR) lo stesso per un .tar.gz: uno
+#      fatto qui fuori si estrae dalla finestra, uno fatto dalla finestra lo
+#      giudica tarfile di Python.
 #
 # ! SI PILOTA DALLA TASTIERA, E I MENU SI CONTANO. F10 apre il primo menu, la
 # freccia destra passa al successivo, la freccia giu' scende di una voce e
@@ -253,6 +256,79 @@ FINEPY
     else
         echo "  [NO]  il clic su «Byte» non ha riordinato (vedi $D/5-dopo.ppm)"; esito=1
     fi
+fi
+
+# --- 6. Un .tar.gz fatto QUI FUORI, aperto ed estratto dalla finestra -------
+#
+# @ARCHIVI-TAR (27 settembre 2026): Archivi apre anche i tar, con lib/extar.
+# L'archivio lo fa tarfile di Python, con una sottocartella; i file estratti
+# si riportano fuori con debugfs e si confrontano coi loro originali.
+echo "=== 6. un .tar.gz dell'host: aperto ed estratto dalla finestra ==="
+python3 - "$D" <<'PYEOF'
+import sys, tarfile, os
+d = sys.argv[1]
+os.makedirs(d + "/h/sotto", exist_ok=True)
+open(d + "/h/uno.txt", "wb").write(b"primo file del tar\n" * 50)
+open(d + "/h/sotto/due.bin", "wb").write(bytes(range(256)) * 40)
+with tarfile.open(d + "/h.tar.gz", "w:gz") as t:
+    t.add(d + "/h/uno.txt", "uno.txt")
+    t.add(d + "/h/sotto", "sotto")
+PYEOF
+"$DEBUGFS" -w -R "write $D/h.tar.gz h.tar.gz" "$OFF" > /dev/null 2>&1
+{
+    avvia "/exwin/bin/archivi /disk/h.tar.gz "
+    echo "foto:$D/6-aperto.ppm@2"
+    echo "key:f10@2"; echo "key:right@1"; echo "key:down@1"; echo "key:ret@3"
+    echo "/disk/fuori_t@5"
+    echo "foto:$D/6-estratto.ppm@2"
+    echo "key:alt-f1@2"; echo "sync@2"
+} > "$D/args.txt"
+mapfile -t A < "$D/args.txt"
+timeout 500 python3 tools/qemu_drive.py "${A[@]}" > "$D/6-tar.log" 2>&1
+rm -f "$D/6-uno.txt" "$D/6-due.bin"
+"$DEBUGFS" -R "dump /fuori_t/uno.txt $D/6-uno.txt" "$OFF" > /dev/null 2>&1
+"$DEBUGFS" -R "dump /fuori_t/sotto/due.bin $D/6-due.bin" "$OFF" > /dev/null 2>&1
+if cmp -s "$D/h/uno.txt" "$D/6-uno.txt" && cmp -s "$D/h/sotto/due.bin" "$D/6-due.bin"; then
+    echo "  [OK]  estratti dalla finestra, sottocartella compresa, identici"
+else
+    echo "  [NO]  il .tar.gz non si e' estratto giusto (vedi $D/6-aperto.ppm)"; esito=1
+fi
+
+# --- 7. Un .tar.gz fatto dalla finestra, giudicato da tarfile ---------------
+#
+# Due «Aggiungi file...»: la seconda RISCRIVE l'archivio (un gzip non si
+# riapre in coda), ed e' quella la strada da provare.
+echo "=== 7. ne crea uno .tar.gz: Nuovo e due Aggiungi ==="
+{
+    avvia "/exwin/bin/archivi "
+    echo "key:f10@2"; echo "key:down@1"; echo "key:ret@3"
+    echo "/disk/n.tar.gz@4"
+    echo "key:f10@2"; echo "key:right@1"; echo "key:down,down@2"; echo "key:ret@3"
+    echo "/disk/prova/alfa.txt@5"
+    echo "key:f10@2"; echo "key:right@1"; echo "key:down,down@2"; echo "key:ret@3"
+    echo "/disk/prova/binario@6"
+    echo "foto:$D/7-finito.ppm@2"
+    echo "key:alt-f1@2"; echo "sync@2"
+} > "$D/args.txt"
+mapfile -t A < "$D/args.txt"
+timeout 500 python3 tools/qemu_drive.py "${A[@]}" > "$D/7-crea.log" 2>&1
+rm -f "$D/n.tar.gz" "$D/7-alfa.txt" "$D/7-binario"
+"$DEBUGFS" -R "dump /n.tar.gz $D/n.tar.gz" "$OFF" > /dev/null 2>&1
+"$DEBUGFS" -R "dump /prova/alfa.txt $D/7-alfa.txt" "$OFF" > /dev/null 2>&1
+"$DEBUGFS" -R "dump /prova/binario $D/7-binario" "$OFF" > /dev/null 2>&1
+if [ -s "$D/n.tar.gz" ] && python3 - "$D" <<'PYEOF'
+import sys, tarfile
+d = sys.argv[1]
+t = tarfile.open(d + "/n.tar.gz", "r:gz")
+m = {x.name: t.extractfile(x).read() for x in t.getmembers() if x.isfile()}
+ok = (m.get("alfa.txt") == open(d + "/7-alfa.txt", "rb").read() and
+      m.get("binario") == open(d + "/7-binario", "rb").read() and len(m) == 2)
+sys.exit(0 if ok else 1)
+PYEOF
+then
+    echo "  [OK]  tarfile di Python lo apre: due voci, i byte giusti"
+else
+    echo "  [NO]  il .tar.gz fatto dalla finestra non torna (vedi $D/7-finito.ppm)"; esito=1
 fi
 
 echo ""

@@ -35,6 +35,7 @@ static const char *const g_nomi[] = {
     "ex_scarichi_ferma_tutti",
     "ex_scarichi_finestra",
     "ex_scarichi_alla_fine",
+    "ex_dlg_testo",
     "__lib_avvio"
 };
 
@@ -54,6 +55,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_scarichi_ferma_tutti,
     (void *)ex_scarichi_finestra,
     (void *)ex_scarichi_alla_fine,
+    (void *)ex_dlg_testo,
     (void *)__libc_ponti_avvia
 };
 
