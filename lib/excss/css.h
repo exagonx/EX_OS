@@ -64,6 +64,11 @@ extern "C" {
  * costante sola perche' i due devono essere d'accordo (@NAV-UNITA). */
 #define CSS_CORPO_PREDEFINITO 15
 #define CSS_MISURA_NO   (-32768)        /* per le misure  */
+/* `auto` nei margini (28 settembre 2026): chiede di prendersi lo spazio che
+ * avanza, ed e' cosi' che si centra un blocco con una larghezza
+ * (`margin: 0 auto`). Solo l'impaginatore sa quanto avanza. Chi non lo
+ * distingue lo legga come zero: vedi css_margine(). */
+#define CSS_MISURA_AUTO (-32767)
 #define CSS_FORSE       0xFF            /* per i sì/no    */
 
 /* display */
@@ -71,7 +76,48 @@ extern "C" {
 #define CSS_DISPLAY_INLINE  1
 #define CSS_DISPLAY_BLOCCO  2
 #define CSS_DISPLAY_NIENTE  3
+/* (28 settembre 2026) Un blocco che sta IN LINEA: si affianca ai fratelli
+ * come una parola, con la larghezza sua. */
+#define CSS_DISPLAY_INBLOCCO 4
+/* Un contenitore flessibile: i figli si affiancano in una riga (flex-direction
+ * row, il predefinito) o si impilano (column). inline-flex e' lo stesso. */
+#define CSS_DISPLAY_FLEX     5
 
+/* float (28 settembre 2026) */
+#define CSS_GALLEGGIA_NO    0
+#define CSS_GALLEGGIA_SX    1
+#define CSS_GALLEGGIA_DX    2
+
+/* position (28 settembre 2026) */
+#define CSS_POS_STATICA     0
+#define CSS_POS_RELATIVA    1
+#define CSS_POS_ASSOLUTA    2
+#define CSS_POS_FISSA       3
+#define CSS_POS_APPICCICA   4   /* sticky: per noi e' statica */
+
+/* width, max-width, min-width in larghezza_perc: un bit per campo quando il
+ * valore e' una PERCENTUALE (in centesimi di punto: 5000 = 50%) invece che
+ * pixel. ! LA % DI UNA LARGHEZZA E' DEL CONTENITORE, che excss non conosce:
+ * la risolve l'impaginatore. */
+#define CSS_LARG_PERC       0x01
+#define CSS_LARG_MAX_PERC   0x02
+#define CSS_LARG_MIN_PERC   0x04
+
+/* clear: un bit per lato (28 settembre 2026, sera) */
+#define CSS_PULISCI_SX      0x01
+#define CSS_PULISCI_DX      0x02
+
+/* justify-content e align-items */
+#define CSS_GIU_INIZIO      0   /* flex-start, start, left, normal */
+#define CSS_GIU_FINE        1   /* flex-end, end, right            */
+#define CSS_GIU_CENTRO      2
+#define CSS_GIU_TRA         3   /* space-between */
+#define CSS_GIU_INTORNO     4   /* space-around  */
+#define CSS_GIU_UGUALE      5   /* space-evenly  */
+#define CSS_ALV_STIRA       0   /* stretch, normal: per noi e' in cima */
+#define CSS_ALV_INIZIO      1
+#define CSS_ALV_FINE        2
+#define CSS_ALV_CENTRO      3
 /* =============================================================================
  * font-family — e QUI SI SCEGLIE COSA SI PUO' DIRE
  *
@@ -132,7 +178,49 @@ typedef struct {
     unsigned char bordo_stile[4];
     unsigned int  bordo_col[4];
     short         imbottitura[4];
+
+    /* LA DISPOSIZIONE (28 settembre 2026, @EXBROWSER-HTML5). Nessuno di
+     * questi si eredita.
+     *   larghezza, _max, _min   px, o centesimi di % (vedi larghezza_perc),
+     *                           o CSS_MISURA_NO (auto / none)
+     *   scatola_bordo           box-sizing: 1 border-box, 0 content-box
+     *   galleggia               CSS_GALLEGGIA_*
+     *   posizione               CSS_POS_*
+     *   pos[4]                  top right bottom left, px o CSS_MISURA_NO
+     *   flex_colonna            flex-direction: 1 column, 0 row
+     *   flex_a_capo             flex-wrap: 1 wrap, 0 nowrap
+     *   flex_cresce             flex-grow, in centesimi (0 = non cresce) */
+    short         larghezza, larghezza_max, larghezza_min;
+    unsigned char larghezza_perc;
+    unsigned char scatola_bordo;
+    unsigned char galleggia;
+    unsigned char posizione;
+    short         pos[4];
+    unsigned char flex_colonna;
+    unsigned char flex_a_capo;
+    unsigned short flex_cresce;
+    /*   pulisci                 clear: CSS_PULISCI_*
+     *   giustifica              justify-content: CSS_GIU_*
+     *   allinea_voci            align-items: CSS_ALV_*
+     *   spazio_riga, spazio_col row-gap e column-gap in px, o CSS_MISURA_NO */
+    unsigned char pulisci;
+    unsigned char giustifica;
+    unsigned char allinea_voci;
+    short         spazio_riga, spazio_col;
 } CssStile;
+
+/* Il margine di un lato in pixel per chi non sa cosa farsene di `auto` e di
+ * «non detto»: tutti e due valgono `se_no`. ! IN LINEA NELL'HEADER, e non
+ * nella libreria: excss.so arriva ai programmi da uno stub con la tabella dei
+ * nomi, e tre righe non valgono un nome in piu' nella tabella. */
+static inline int css_margine(const CssStile *s, int lato, int se_no)
+{
+    int m;
+
+    if (!s || lato < 0 || lato > 3) return se_no;
+    m = s->margine[lato];
+    return (m == CSS_MISURA_NO || m == CSS_MISURA_AUTO) ? se_no : m;
+}
 
 /* Mette uno stile a «niente dichiarato». */
 void css_stile_vuoto(CssStile *s);
@@ -236,7 +324,23 @@ typedef struct {
 #define CSS_P_BORDO_STILE   17  /* border-*-style: 17..20 */
 #define CSS_P_BORDO_COL     21  /* border-*-color: 21..24 */
 #define CSS_P_IMBOTTITURA   25  /* padding-*:      25..28 */
-#define CSS_P_N             29
+/* LA DISPOSIZIONE (28 settembre 2026) */
+#define CSS_P_LARG          29  /* width      */
+#define CSS_P_LARG_MAX      30  /* max-width  */
+#define CSS_P_LARG_MIN      31  /* min-width  */
+#define CSS_P_SCATOLA       32  /* box-sizing */
+#define CSS_P_GALLEGGIA     33  /* float      */
+#define CSS_P_POSIZIONE     34  /* position   */
+#define CSS_P_POS           35  /* top right bottom left: 35..38 */
+#define CSS_P_FLEX_DIR      39  /* flex-direction */
+#define CSS_P_FLEX_CAPO     40  /* flex-wrap  */
+#define CSS_P_FLEX_CRESCE   41  /* flex-grow  */
+#define CSS_P_PULISCI       42  /* clear      */
+#define CSS_P_GIUSTIFICA    43  /* justify-content */
+#define CSS_P_ALLINEA_VOCI  44  /* align-items */
+#define CSS_P_SPAZIO_RIGA   45  /* row-gap    */
+#define CSS_P_SPAZIO_COL    46  /* column-gap */
+#define CSS_P_N             47
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */

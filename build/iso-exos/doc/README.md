@@ -112,12 +112,61 @@ salvato lo dice prima e propone lo stesso nome in `.png`. Salva prima in una
 copia accanto e poi rinomina: un salvataggio fallito lascia il file vecchio.
 
 L'annullamento non fotografa l'immagine a ogni tratto: ogni operazione lascia
-in un deposito fisso solo il **rettangolo** che ha toccato, e annullare lo
+in un deposito preso all'avvio (un quarto della memoria libera) solo il **rettangolo** che ha toccato, e annullare lo
 **scambia** con l'immagine — così lo stesso record è anche il «ripeti».
 I codificatori PNG e BMP sono nuovi (`lib/eximg/scrivi.c`), e eximg legge
 anche il BMP in tutte le sue forme (`lib/eximg/bmp.c`). Provato sull'host
 contro ImageMagick (`tools/prova_scrivi.sh`) e in QEMU disegnando col mouse
 (`tools/prova_pennello.sh`). L'icona è provvisoria.
+
+### EXBrowser dispone la pagina
+
+**testato in QEMU** — EXBrowser capisce il CSS che dispone la pagina e non la
+mette più tutta in colonna: `width`, `max-width` e `min-width` (anche in
+percentuale), `margin: auto` per centrare, `float` con il testo che scorre
+accanto, `display: inline-block` e `display: flex` in riga (con `flex-grow`,
+`flex-wrap`, `gap`, `justify-content` e `align-items`), `clear`,
+`position: relative`, e i testi nascosti fuori schermo che non si vedono più. Su
+Wikipedia il riquadro informativo sta a destra col testo accanto, e le voci
+lunghe non si fermano più a 1 MB: la pagina principale ne tiene 3. Corretto
+anche un difetto vecchio: il testo bianco usciva nero
+(`make prova-excss`, `tools/prova_disposizione.sh`).
+
+### La rotella del mouse
+
+**testato in QEMU** — la rotella scorre la pagina in EXBrowser e, in ogni
+programma di ExWin, le liste, le aree di testo e le barre di scorrimento che
+stanno sotto il puntatore: tre righe per scatto. Scorre quello che si guarda,
+non la finestra che ha il fuoco. Per ora vale per il mouse PS/2 (anche
+quello emulato da QEMU e da molti portatili); i mouse USB e seriali la
+rotella non la mandano ancora (`tools/prova_rotella.sh`).
+
+### Il mouse veloce non ferma più la scrivania
+
+**testato in QEMU** — muovere il mouse in fretta mentre si disegnava in
+Pennello bloccava tutto ExWin. Erano due difetti: in Pennello il tracciatore
+di linee non arrivava mai in fondo su certi segmenti, e il server grafico,
+per consegnare un movimento a un programma che non legge, aspettava fino a
+dieci secondi. Adesso i movimenti del mouse si consegnano **senza aspettare**
+(kernel 0.223, `IPC_SENZA_ATTESA`): un programma appeso rallenta solo se
+stesso. Clic e tasti continuano ad arrivare tutti
+(`tools/prova_pennello_veloce.sh`, `tools/prova_linea.sh`).
+
+### gfedit: F5 e l'INPUT del BASIC
+
+**testato in QEMU** — un programma BASIC lanciato con F5 da gfedit ora mostra
+il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
+gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
+
+### ExJs: `Date` e `valueOf`
+
+**testato in QEMU** — col motore ExJs c'è `Date`: `new Date()`, `Date.now()`,
+`Date.UTC`, `Date.parse`, i `get`/`set`, `toISOString`, `toString`,
+`toLocaleString` e `JSON.stringify` di una data. È tutta in UTC, perché EX-OS
+non ha fusi orari; l'ora la dà il navigatore. Gli oggetti nei conti passano
+da `valueOf`: la differenza fra due date è un numero, come misurano i tempi le
+pagine. Provato sull'host (`make prova-exjs`, 307 prove) e in EXBrowser coi
+due motori (`tools/prova_date.sh`).
 
 ### ExJs: `toString` implicito e `join` senza tetto
 
@@ -126,8 +175,7 @@ contro ImageMagick (`tools/prova_scrivi.sh`) e in QEMU disegnando col mouse
 dell'oggetto: `String(location)` è l'indirizzo. `join` non si ferma più a 511
 caratteri, e le prove scritte prima hanno trovato e fatto correggere tre
 difetti in più (vettori annidati, separatori lunghi, un vettore che contiene
-se stesso). ExJs non ha ancora `Date` né `valueOf`: è scritto nei compiti
-(`make prova-exjs`, `make prova-exdom`).
+se stesso) (`make prova-exjs`, `make prova-exdom`).
 
 ### I moduli verso pagine locali, e il pulsante immagine
 

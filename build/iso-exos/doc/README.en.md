@@ -95,12 +95,61 @@ same name as `.png`. It writes a copy next to the file first and then
 renames it: a failed save leaves the old file in place.
 
 Undo does not photograph the picture at every stroke: each operation leaves
-only the **rectangle** it touched in a fixed pool, and undoing **swaps** it
+only the **rectangle** it touched in a pool taken at start (a quarter of the free memory), and undoing **swaps** it
 with the picture — so the same record is also the redo. The PNG and BMP
 encoders are new (`lib/eximg/scrivi.c`), and eximg now reads BMP in all its
 forms (`lib/eximg/bmp.c`). Tested on the host against ImageMagick
 (`tools/prova_scrivi.sh`) and in QEMU by drawing with the mouse
 (`tools/prova_pennello.sh`). The icon is provisional.
+
+### EXBrowser lays out the page
+
+**tested in QEMU** — EXBrowser understands the CSS that lays out a page
+instead of putting everything in one column: `width`, `max-width` and
+`min-width` (percentages too), `margin: auto` to centre, `float` with text
+flowing beside it, `display: inline-block` and `display: flex` in a row (with
+`flex-grow`, `flex-wrap`, `gap`, `justify-content` and `align-items`),
+`clear`, `position: relative`, and off-screen hidden text no longer shows. On
+Wikipedia the infobox sits on the right with the text beside it, and long
+articles no longer stop at 1 MB: the main page holds 3. An old bug is
+fixed too: white text came out black (`make prova-excss`,
+`tools/prova_disposizione.sh`).
+
+### The mouse wheel
+
+**tested in QEMU** — the wheel scrolls the page in EXBrowser and, in every
+ExWin program, the lists, text areas and scroll bars under the pointer: three
+lines per notch. It scrolls what you are looking at, not the window with the
+focus. For now it works with PS/2 mice (including the one QEMU emulates and
+many laptops); USB and serial mice do not send the wheel yet
+(`tools/prova_rotella.sh`).
+
+### A fast mouse no longer freezes the desktop
+
+**tested in QEMU** — moving the mouse quickly while drawing in Pennello froze
+all of ExWin. Two bugs: Pennello's line routine never reached the end of some
+segments, and the window server, delivering a move to a program that was not
+reading, waited up to ten seconds. Mouse moves are now delivered **without
+waiting** (kernel 0.223, `IPC_SENZA_ATTESA`): a hung program only slows
+itself down. Clicks and keys still all arrive
+(`tools/prova_pennello_veloce.sh`, `tools/prova_linea.sh`).
+
+### gfedit: F5 and BASIC INPUT
+
+**tested in QEMU** — a BASIC program started with F5 from gfedit now shows
+the `INPUT` prompt and reads the keyboard: gfedit hands it the console while
+it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
+
+### ExJs: `Date` and `valueOf`
+
+**tested in QEMU** — the ExJs engine has `Date`: `new Date()`, `Date.now()`,
+`Date.UTC`, `Date.parse`, the getters and setters, `toISOString`,
+`toString`, `toLocaleString` and `JSON.stringify` of a date. It is all UTC,
+since EX-OS has no time zones; the browser supplies the time. Objects in
+arithmetic go through `valueOf`: the difference between two dates is a
+number, which is how pages measure time. Tested on the host
+(`make prova-exjs`, 307 checks) and in EXBrowser with both engines
+(`tools/prova_date.sh`).
 
 ### ExJs: implicit `toString` and `join` without a limit
 
@@ -108,8 +157,7 @@ forms (`lib/eximg/bmp.c`). Tested on the host against ImageMagick
 `String(object)`, `'x' + object` and `join` call the object's `toString`:
 `String(location)` is the address. `join` no longer stops at 511 characters,
 and the tests written first found three more bugs that were fixed (nested
-arrays, long separators, an array containing itself). ExJs still has no
-`Date` and no `valueOf`: that is written in the task list (`make prova-exjs`,
+arrays, long separators, an array containing itself) (`make prova-exjs`,
 `make prova-exdom`).
 
 ### Forms to local pages, and the image button

@@ -57,6 +57,167 @@ static int g_fisso = 0;
 
 static void suggerimenti(int v, CssStile *st);   /* piu' avanti, qui sotto */
 
+/* =============================================================================
+ * I FLOAT (28 settembre 2026, @EXBROWSER-HTML5)
+ *
+ * ! UN FLOAT E' UN RETTANGOLO, NON UN MARGINE. La prima idea — sommare la sua
+ * larghezza a g_marg_sx finche' la penna non lo supera — si rompe coi blocchi:
+ * ognuno salva i margini entrando e li rimette uscendo, e rimetterebbe il
+ * float anche dopo che e' finito (o lo toglierebbe prima). Cosi' invece la
+ * riga si chiede, alla y della penna, quali float la toccano e di quanto: e'
+ * geometria, e non dipende da chi ha salvato cosa. E' come fanno Gecko e
+ * tutti gli altri.
+ *
+ * ! E VALE ANCHE DENTRO UNA CELLA: una cella a destra di un float ha la x
+ * oltre il suo bordo, e il float non la tocca — che e' giusto.
+ * rx() e rw() sono riga_x() e riga_w() meno i float; qui dentro si usano
+ * solo loro.
+ * ========================================================================== */
+#define GALLEGGIA_MAX 48
+static struct { int x, w, y1, y2; unsigned char lato; } g_gal[GALLEGGIA_MAX];
+static int g_gal_n = 0;
+
+/* Quante colonne si stanno impaginando una dentro l'altra (celle, float,
+ * inline-block, voci di un flex). */
+static int g_in_colonna = 0;
+
+/* ! LA RIGA SENZA IL MINIMO DI 40 PIXEL DENTRO UNA COLONNA. riga_w() non
+ * scende sotto 40 perche' una pagina con margini enormi non dia righe
+ * negative; ma una voce di flex larga 20 («aaa») si disegnava larga 40 e
+ * avanzava di 20 — l'ultima di un space-between usciva dalla pagina, e il gap
+ * si mangiava (visto con prova_disposizione.sh). In colonna la larghezza
+ * l'ha decisa chi l'ha aperta, e si rispetta fino a 1. */
+static int riga_w_vera(void)
+{
+    int w = area_w() - g_marg_sx - g_marg_dx;
+    int min = g_in_colonna ? 1 : 40;
+    return w < min ? min : w;
+}
+
+/* Quanto i float mangiano la riga alla y della penna, a sinistra e a destra. */
+static void gal_ingombro(int *sx, int *dx)
+{
+    int base_sx = riga_x(), base_dx = riga_x() + riga_w_vera(), i;
+
+    *sx = 0; *dx = 0;
+    for (i = 0; i < g_gal_n; i++) {
+        if (g_pen_y < g_gal[i].y1 || g_pen_y >= g_gal[i].y2) continue;
+        if (g_gal[i].lato == CSS_GALLEGGIA_SX) {
+            int m = g_gal[i].x + g_gal[i].w - base_sx;
+            if (m > *sx && g_gal[i].x < base_dx) *sx = m;
+        } else {
+            int m = base_dx - g_gal[i].x;
+            if (m > *dx && g_gal[i].x + g_gal[i].w > base_sx) *dx = m;
+        }
+    }
+}
+
+static int rx(void)
+{
+    int sx, dx;
+    gal_ingombro(&sx, &dx);
+    return riga_x() + sx;
+}
+
+static int rw(void)
+{
+    int sx, dx, w;
+    gal_ingombro(&sx, &dx);
+    w = riga_w_vera() - sx - dx;
+    if (g_in_colonna) return w < 1 ? 1 : w;
+    return w < 40 ? 40 : w;
+}
+
+/* ! SE FRA I FLOAT NON C'E' PIU' POSTO, SI SCENDE SOTTO IL PRIMO CHE FINISCE:
+ * scrivere in una fessura di quaranta pixel darebbe una colonna di sillabe. */
+static void gal_fai_posto(int serve)
+{
+    int giri = 0;
+
+    while (giri++ < GALLEGGIA_MAX) {
+        int sx, dx, i, sotto = -1;
+
+        gal_ingombro(&sx, &dx);
+        if (sx == 0 && dx == 0) return;
+        if (riga_w_vera() - sx - dx >= serve) return;
+        for (i = 0; i < g_gal_n; i++)
+            if (g_pen_y >= g_gal[i].y1 && g_pen_y < g_gal[i].y2 &&
+                (sotto < 0 || g_gal[i].y2 < sotto)) sotto = g_gal[i].y2;
+        if (sotto < 0) return;
+        g_pen_y = sotto;
+    }
+}
+
+/* clear: la penna scende sotto i float dei lati chiesti. */
+static void pulisci(unsigned char lati)
+{
+    int i;
+
+    if (!lati) return;
+    for (i = 0; i < g_gal_n; i++) {
+        int lato = (g_gal[i].lato == CSS_GALLEGGIA_SX) ? CSS_PULISCI_SX : CSS_PULISCI_DX;
+        if ((lati & lato) && g_gal[i].y2 > g_pen_y) g_pen_y = g_gal[i].y2;
+    }
+    g_pen_x = rx();
+}
+
+/* Sposta tutto quel che si e' impaginato dai pezzi `pz` e dagli sfondi `sf`
+ * in poi: serve ad align-items e a position: relative, che decidono DOPO
+ * dove doveva stare quel che e' gia' stato messo. */
+static void sposta_da(int pz, int sf, int dx, int dy)
+{
+    int i;
+
+    if (!dx && !dy) return;
+    for (i = pz; i < g_pez_n; i++)    { g_pez[i].x += dx; g_pez[i].y += dy; }
+    for (i = sf; i < g_sfondi_n; i++) { g_sfondi[i].x += dx; g_sfondi[i].y += dy; }
+}
+
+/* Il fondo del float piu' basso: la pagina e' alta almeno fin li'. */
+static int gal_fondo(void)
+{
+    int i, f = 0;
+    for (i = 0; i < g_gal_n; i++) if (g_gal[i].y2 > f) f = g_gal[i].y2;
+    return f;
+}
+
+/* ! L'ELEMENTO CHE SI STA IMPAGINANDO COME COLONNA (un float, un inline-block,
+ * un figlio di un flex) non deve rifare la sua strada quando impagina_nodo lo
+ * incontra: sarebbe un float dentro se stesso, per sempre. impagina_in_colonna
+ * lo scrive qui, impagina_nodo lo riconosce e lo tratta da blocco semplice. */
+static int g_col_radice = -1;
+/* L'elemento in position: relative che si sta impaginando: vedi impagina_nodo. */
+static int g_rel_nodo = -1;
+
+/* La larghezza che uno stile chiede, in pixel, dentro `disp` disponibili, gia'
+ * comprensiva di bordi e padding (`extra`) se box-sizing e' content-box. -1 =
+ * nessuna: si prende quel che c'e'. */
+static int larg_risolta(const CssStile *s, int disp, int extra)
+{
+    int w = -1, v;
+    int agg = s->scatola_bordo ? 0 : extra;
+
+    if (s->larghezza != CSS_MISURA_NO) {
+        v = (s->larghezza_perc & CSS_LARG_PERC) ? (int)((long)disp * s->larghezza / 10000) : s->larghezza;
+        w = v + agg;
+    }
+    if (s->larghezza_max != CSS_MISURA_NO) {
+        v = ((s->larghezza_perc & CSS_LARG_MAX_PERC) ? (int)((long)disp * s->larghezza_max / 10000)
+                                                       : s->larghezza_max) + agg;
+        if (w < 0) { if (disp > v) w = v; }
+        else if (w > v) w = v;
+    }
+    if (s->larghezza_min != CSS_MISURA_NO) {
+        v = ((s->larghezza_perc & CSS_LARG_MIN_PERC) ? (int)((long)disp * s->larghezza_min / 10000)
+                                                       : s->larghezza_min) + agg;
+        if (w >= 0 && w < v) w = v;
+    }
+    return w;
+}
+
+/* Bordi piu' padding di sinistra e di destra: quel che box-sizing somma. */
+static int lati_extra(const CssStile *s);
+
 /* ! IL CLIENTE PUO' NON ESSERCI, e non e' un caso di scuola: la prova
  * dell'impaginato non ha un navigatore intorno, e senza cliente deve impaginare
  * il testo e ignorare il resto invece di fermarsi. E' la stessa scelta del
@@ -123,6 +284,13 @@ static unsigned int colore_bordo(const CssStile *st, int lato)
     return (st->bordo_col[lato] == CSS_NIENTE) ? colore_di(st) : st->bordo_col[lato];
 }
 
+static int imbottitura(const CssStile *st, int lato);
+
+static int lati_extra(const CssStile *s)
+{
+    return lato_bordo(s, 1) + lato_bordo(s, 3) + imbottitura(s, 1) + imbottitura(s, 3);
+}
+
 static int imbottitura(const CssStile *st, int lato)
 {
     int p = st->imbottitura[lato];
@@ -160,7 +328,7 @@ static void allinea_riga(void)
         g_stile_ora.allineamento != CSS_ALL_DX) return;
     if (g_riga_primo >= g_pez_n) return;
 
-    avanzo = (riga_x() + riga_w()) - g_pen_x;
+    avanzo = (rx() + rw()) - g_pen_x;
     if (avanzo <= 0) return;
 
     dx = (g_stile_ora.allineamento == CSS_ALL_CENTRO) ? avanzo / 2 : avanzo;
@@ -172,12 +340,13 @@ static void a_capo(void)
     /* ! UNA RIGA VUOTA NON SI ACCUMULA. Un documento indentato produce spazi
      * fra un blocco e l'altro: andando a capo per ognuno si otterrebbero
      * pagine fatte di buchi. Si va a capo solo se sulla riga c'e' qualcosa. */
-    if (g_pen_x <= riga_x()) return;
+    if (g_pen_x <= rx()) return;
 
     allinea_riga();
 
-    g_pen_x  = riga_x();
     g_pen_y += g_riga_h;
+    /* ! LA x DOPO LA y: la riga nuova puo' avere un float in meno. */
+    g_pen_x  = rx();
     g_riga_h = alt_riga_f(font_di(&g_stile_ora));
     g_riga_primo = g_pez_n;
 }
@@ -190,7 +359,9 @@ static void spazio_blocco(int quale)
     int m = g_stile_ora.margine[quale];
 
     a_capo();
-    g_pen_y += (m == CSS_MISURA_NO) ? 6 : m;
+    /* auto in verticale vale zero: e' la regola del CSS per i blocchi */
+    g_pen_y += (m == CSS_MISURA_NO) ? 6 : (m == CSS_MISURA_AUTO) ? 0 : m;
+    g_pen_x = rx();
 }
 
 
@@ -212,9 +383,10 @@ static void parola(const char *t, unsigned int off, int n)
      * testo leggibile: spezzare in mezzo a una parola si vede subito. Una
      * parola piu' larga della finestra si mette lo stesso e sborda — meglio
      * che sparire. */
-    if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
+    if (g_pen_x + w > rx() + rw() && g_pen_x > rx()) a_capo();
+    if (g_pen_x <= rx() && g_gal_n) { gal_fai_posto(w < 120 ? w : 120); g_pen_x = rx(); }
 
-    if (g_pez_n < PEZZI_MAX) {
+    if (g_pez_n < (int)g_pez_max) {
         g_pez[g_pez_n].x = g_pen_x;
         g_pez[g_pez_n].y = g_pen_y;
         g_pez[g_pez_n].w = w;
@@ -330,7 +502,7 @@ static void parole(const char *t, unsigned int base)
          * ragione per cui quel tag esiste. Fuori, una sequenza di spazi e di a
          * capo vale uno spazio solo — che e' la regola dell'HTML. */
         if (g_fisso > 0) {
-            if (t[i] == '\n') { g_pen_x = riga_x() + 1; a_capo(); i++; continue; }
+            if (t[i] == '\n') { g_pen_x = rx() + 1; a_capo(); i++; continue; }
             if (t[i] == '\r') { i++; continue; }
             if (t[i] == ' ' || t[i] == '\t') {
                 int quanti = (t[i] == '\t') ? 8 : 1;
@@ -363,7 +535,7 @@ static void parole(const char *t, unsigned int base)
          * ===================================================================== */
         if (bianco(t[i])) {
             while (bianco(t[i])) i++;
-            if (g_pen_x > riga_x())
+            if (g_pen_x > rx())
                 g_pen_x += ex_larghezza_testo(font_di(&g_stile_ora), " ");
             continue;
         }
@@ -385,10 +557,10 @@ static void pezzo_estraneo(int v, const VistaPezzo *p)
 {
     int w = p->w, h = p->h;
 
-    if (p->stringi && w > riga_w()) w = riga_w();
-    if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
+    if (p->stringi && w > rw()) w = rw();
+    if (g_pen_x + w > rx() + rw() && g_pen_x > rx()) a_capo();
 
-    if (g_pez_n < PEZZI_MAX) {
+    if (g_pez_n < (int)g_pez_max) {
         g_pez[g_pez_n].x = g_pen_x;
         g_pez[g_pez_n].y = g_pen_y;
         g_pez[g_pez_n].w = w;
@@ -573,10 +745,17 @@ static void raccogli_righe(int v, int *righe, int *n)
 
 /* Impagina `nodo` dentro una colonna, e rende l'altezza che ha occupato.
  * Con `prova` a 1 i pezzi si buttano e si rende invece la larghezza usata. */
-static int impagina_in_colonna(int nodo, const CssStile *ered,
-                               int x, int y, int w, int prova, int *alt)
+/* ! `se_stesso` (28 settembre 2026): 0 impagina i FIGLI di `nodo`, ed e' la
+ * cella di una tabella; 1 impagina `nodo` stesso, col suo sfondo, i bordi e
+ * il padding, ed e' un float, un inline-block o un figlio di un flex. */
+static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
+                                  int x, int y, int w, int prova, int *alt,
+                                  int se_stesso)
 {
     int era_sx = g_marg_sx, era_dx = g_marg_dx;
+    int era_gal = g_gal_n, era_rad = g_col_radice;
+
+    g_in_colonna++;
     int era_px = g_pen_x, era_py = g_pen_y;
     int era_rh = g_riga_h, era_rp = g_riga_primo;
     int primo  = g_pez_n, primo_sf = g_sfondi_n;
@@ -590,16 +769,25 @@ static int impagina_in_colonna(int nodo, const CssStile *ered,
     if (g_marg_sx < 0) g_marg_sx = 0;
     if (g_marg_dx < 0) g_marg_dx = 0;
 
-    g_pen_x      = riga_x();
+    g_pen_x      = rx();
     g_pen_y      = y;
     g_riga_h     = alt_riga_f(font_di(ered));
     g_riga_primo = g_pez_n;
 
     /* I figli della cella, non la cella: `td` non e' un blocco, e trattarlo da
      * tale aggiungerebbe uno stacco dentro ogni casella. */
-    for (f = g_doc.nodi[nodo].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo)
-        impagina_nodo(f, ered);
+    if (se_stesso) {
+        g_col_radice = nodo;
+        impagina_nodo(nodo, ered);
+    } else {
+        for (f = g_doc.nodi[nodo].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo)
+            impagina_nodo(f, ered);
+    }
+    g_col_radice = era_rad;
     a_capo();
+    /* i float di dentro allungano la colonna */
+    for (i = era_gal; i < g_gal_n; i++)
+        if (g_gal[i].y2 > g_pen_y) g_pen_y = g_gal[i].y2;
 
     *alt = g_pen_y - y;
     if (*alt < g_riga_h) *alt = g_riga_h;
@@ -611,12 +799,22 @@ static int impagina_in_colonna(int nodo, const CssStile *ered,
     }
 
     if (prova) { g_pez_n = primo; g_sfondi_n = primo_sf; }
+    /* ! I FLOAT DI DENTRO NON ESCONO DALLA COLONNA: fuori, la riga non deve
+     * restringersi per un rettangolo che sta dentro una cella. */
+    g_gal_n = era_gal;
+    g_in_colonna--;
     g_misura = era_mis;
 
     g_marg_sx = era_sx; g_marg_dx = era_dx;
     g_pen_x = era_px;   g_pen_y = era_py;
     g_riga_h = era_rh;  g_riga_primo = era_rp;
     return larga;
+}
+
+static int impagina_in_colonna(int nodo, const CssStile *ered,
+                               int x, int y, int w, int prova, int *alt)
+{
+    return impagina_in_colonna_ex(nodo, ered, x, y, w, prova, alt, 0);
 }
 
 static void impagina_tabella(int v, const CssStile *mio)
@@ -658,7 +856,7 @@ static void impagina_tabella(int v, const CssStile *mio)
 
             css_calcola(&g_css, &g_doc, f, mio, &sc);
             suggerimenti(f, &sc);
-            w = impagina_in_colonna(f, &sc, riga_x(), 0, riga_w(), 1, &a);
+            w = impagina_in_colonna(f, &sc, rx(), 0, rw(), 1, &a);
 
             sp = quanto_scavalca(f, "colspan");
             if (c + sp > TAB_COL_MAX) sp = TAB_COL_MAX - c;
@@ -692,7 +890,7 @@ static void impagina_tabella(int v, const CssStile *mio)
         if (largh[c] < 12) largh[c] = 12;
         somma += largh[c];
     }
-    disp = riga_w() - (n_col - 1) * TAB_SPAZIO;
+    disp = rw() - (n_col - 1) * TAB_SPAZIO;
     if (disp < n_col * 12) disp = n_col * 12;
 
     if (somma > disp) {
@@ -722,7 +920,7 @@ static void impagina_tabella(int v, const CssStile *mio)
 
         for (c = 0; c < n_col; c++) tot += largh[c];
         tot += (n_col - 1) * TAB_SPAZIO;
-        i_bordo_tab = bordo_metti(riga_x(), y0, tot, 0, bordo);
+        i_bordo_tab = bordo_metti(rx(), y0, tot, 0, bordo);
     }
 
     /* ! LA MAPPA DI CIO' CHE E' GIA' OCCUPATO, ed e' tutto cio' che serve per
@@ -746,7 +944,7 @@ static void impagina_tabella(int v, const CssStile *mio)
                 if (q > alt_riga_tab) alt_riga_tab = q;
             }
 
-        x0 = riga_x();
+        x0 = rx();
         c  = 0;
         for (f = g_doc.nodi[righe[r]].primo_figlio; f >= 0;
              f = g_doc.nodi[f].prossimo) {
@@ -858,10 +1056,224 @@ static void impagina_tabella(int v, const CssStile *mio)
     if (i_bordo_tab >= 0) g_sfondi[i_bordo_tab].h = y0 - y_inizio;
 
     g_pen_y      = y0;
-    g_pen_x      = riga_x();
+    g_pen_x      = rx();
     g_riga_h     = alt_riga_f(font_di(mio));
     g_riga_primo = g_pez_n;
     g_tab_liv--;
+}
+
+/* =============================================================================
+ * FLOAT, INLINE-BLOCK, FLEX (28 settembre 2026, @EXBROWSER-HTML5)
+ *
+ * Tutti e tre sono la stessa operazione vista da tre lati: un elemento
+ * impaginato in una COLONNA sua, larga quanto chiede o quanto gli serve, e
+ * poi messo da qualche parte — sul bordo (float), sulla riga come una parola
+ * (inline-block), accanto ai fratelli (flex). La colonna e' quella delle celle
+ * di tabella, che c'era gia' e funzionava.
+ *
+ * ! «QUANTO GLI SERVE» SI MISURA IMPAGINANDO PER PROVA su tutta la larghezza
+ * e guardando il pezzo piu' a destra: e' la misura delle celle, e ne ha gli
+ * stessi limiti (un testo lungo prende tutta la riga).
+ * ========================================================================== */
+static int misura_elemento(int v, const CssStile *ered, int disp, int *alt)
+{
+    int a = 0, w = impagina_in_colonna_ex(v, ered, rx(), 0, disp, 1, &a, 1);
+
+    if (alt) *alt = a;
+    return w < 1 ? 1 : w;
+}
+
+/* La larghezza di un elemento messo in colonna: quella chiesta, o quella che
+ * gli serve, mai piu' di `disp`. */
+static int larg_elemento(int v, const CssStile *mio, const CssStile *ered, int disp)
+{
+    int w = larg_risolta(mio, disp, lati_extra(mio));
+
+    if (w < 0) w = misura_elemento(v, ered, disp, 0);
+    if (w > disp) w = disp;
+    return w < 1 ? 1 : w;
+}
+
+static void galleggia(int v, const CssStile *mio, const CssStile *ered)
+{
+    int w, x, alt = 0;
+
+    a_capo();
+    pulisci(mio->pulisci);
+    w = larg_elemento(v, mio, ered, rw());
+    gal_fai_posto(w);
+    x = (mio->galleggia == CSS_GALLEGGIA_SX) ? rx() : rx() + rw() - w;
+    impagina_in_colonna_ex(v, ered, x, g_pen_y, w, g_misura, &alt, 1);
+    if (g_gal_n < GALLEGGIA_MAX) {
+        g_gal[g_gal_n].x = x;
+        g_gal[g_gal_n].w = w;
+        g_gal[g_gal_n].y1 = g_pen_y;
+        g_gal[g_gal_n].y2 = g_pen_y + alt;
+        g_gal[g_gal_n].lato = mio->galleggia;
+        g_gal_n++;
+    }
+    g_pen_x = rx();
+    g_riga_primo = g_pez_n;
+}
+
+static void in_blocco(int v, const CssStile *mio, const CssStile *ered)
+{
+    int w, alt = 0, dx = css_margine(mio, 1, 0), sx = css_margine(mio, 3, 0);
+
+    w = larg_elemento(v, mio, ered, rw());
+    if (g_pen_x + sx + w > rx() + rw() && g_pen_x > rx()) a_capo();
+    g_pen_x += sx;
+    impagina_in_colonna_ex(v, ered, g_pen_x, g_pen_y, w, g_misura, &alt, 1);
+    g_pen_x += w + dx;
+    if (alt > g_riga_h) g_riga_h = alt;
+}
+
+/* Un elemento figlio di un flex va messo? Gli spazi fra un tag e l'altro no. */
+static int voce_flex(int f)
+{
+    if (g_doc.nodi[f].tipo == HTML_TESTO) {
+        const char *t = html_testo(&g_doc, f);
+        while (t && *t) { if (!bianco(*t)) return 1; t++; }
+        return 0;
+    }
+    return g_doc.nodi[f].tipo == HTML_ELEMENTO;
+}
+
+#define FLEX_VOCI 64
+
+/* ! IL FLEX IN RIGA, e basta: i figli si affiancano, ognuno largo quanto gli
+ * serve (o quanto chiede con width), lo spazio che avanza va a chi ha
+ * flex-grow, e se non ci stanno si stringono in proporzione — o vanno a capo
+ * con flex-wrap. Mancano justify-content, align-items, gap, order: i menu dei
+ * siti si leggono gia' cosi', e quello che manca sposta, non nasconde. */
+static void flessibile(int v, const CssStile *mio)
+{
+    int voce[FLEX_VOCI], pref[FLEX_VOCI], minimo[FLEX_VOCI], cresce[FLEX_VOCI], n = 0, f, i;
+    int x0, disp, y, gcol, grig;
+    CssStile st;
+
+    a_capo();
+    x0 = rx(); disp = rw(); y = g_pen_y;
+
+    for (f = g_doc.nodi[v].primo_figlio; f >= 0 && n < FLEX_VOCI; f = g_doc.nodi[f].prossimo) {
+        if (!voce_flex(f)) continue;
+        if (g_doc.nodi[f].tipo == HTML_ELEMENTO) {
+            css_calcola(&g_css, &g_doc, f, mio, &st);
+            if (st.display == CSS_DISPLAY_NIENTE || st.visibile == 0) continue;
+            if (invisibile(html_nome(&g_doc, f))) continue;
+            pref[n] = larg_elemento(f, &st, mio, disp);
+            cresce[n] = st.flex_cresce;
+            /* chi dichiara la larghezza non scende sotto di lei */
+            minimo[n] = (larg_risolta(&st, disp, lati_extra(&st)) >= 0) ? pref[n]
+                      : misura_elemento(f, mio, 1, 0);
+        } else {
+            pref[n] = misura_elemento(f, mio, disp, 0);
+            minimo[n] = misura_elemento(f, mio, 1, 0);
+            cresce[n] = 0;
+        }
+        if (minimo[n] > pref[n]) minimo[n] = pref[n];
+        voce[n++] = f;
+    }
+
+    gcol = mio->spazio_col  == CSS_MISURA_NO ? 0 : mio->spazio_col;
+    grig = mio->spazio_riga == CSS_MISURA_NO ? 0 : mio->spazio_riga;
+
+    i = 0;
+    while (i < n) {
+        int j = i, somma = 0, cr = 0, alto = 0, x, k, cede = 0, spazi, libero, cnt;
+        int larg[FLEX_VOCI], alti[FLEX_VOCI], pz[FLEX_VOCI + 1], sf[FLEX_VOCI + 1];
+        int prima = 0, fra = 0;
+
+        /* una riga: finche' ci stanno, o tutte se non si va a capo */
+        while (j < n && (j == i || !mio->flex_a_capo || somma + gcol * (j - i) + pref[j] <= disp)) {
+            somma += pref[j]; cr += cresce[j]; cede += pref[j] - minimo[j]; j++;
+        }
+        cnt = j - i;
+        spazi = gcol * (cnt - 1);
+        /* ! IL GAP SI TOGLIE PRIMA DI DIVIDERE: e' spazio che nessuna voce
+         * puo' prendersi. */
+        disp -= spazi;
+        for (k = i; k < j; k++) {
+            int w = pref[k];
+
+            if (somma < disp && cr > 0) w += (int)((long)(disp - somma) * cresce[k] / cr);
+            /* ! SI STRINGE CHI PUO' CEDERE, e mai sotto la parola piu' larga
+             * che contiene (min-width: auto del CSS). Stringere tutti in
+             * proporzione — il primo giro — metteva «Fai una donazione» di
+             * Wikipedia in una colonna di venti pixel, e il testo usciva dalla
+             * pagina. Se neanche cosi' ci stanno, sbordano: come nei browser. */
+            else if (somma > disp) {
+                int manca = somma - disp;
+                if (cede <= manca) w = minimo[k];
+                else w = pref[k] - (int)((long)manca * (pref[k] - minimo[k]) / cede);
+            }
+            if (w < 1) w = 1;
+            larg[k - i] = w;
+        }
+
+        /* justify-content: dove va lo spazio che nessuno si e' preso */
+        libero = disp;
+        for (k = 0; k < cnt; k++) libero -= larg[k];
+        if (libero > 0) {
+            switch (mio->giustifica) {
+            case CSS_GIU_FINE:    prima = libero; break;
+            case CSS_GIU_CENTRO:  prima = libero / 2; break;
+            case CSS_GIU_TRA:     fra = cnt > 1 ? libero / (cnt - 1) : 0; break;
+            case CSS_GIU_INTORNO: fra = libero / cnt; prima = fra / 2; break;
+            case CSS_GIU_UGUALE:  fra = libero / (cnt + 1); prima = fra; break;
+            default: break;
+            }
+        }
+        disp += spazi;
+
+        x = x0 + prima;
+        for (k = i; k < j; k++) {
+            int alt = 0;
+
+            pz[k - i] = g_pez_n; sf[k - i] = g_sfondi_n;
+            impagina_in_colonna_ex(voce[k], mio, x, y, larg[k - i], g_misura, &alt, 1);
+            alti[k - i] = alt;
+            x += larg[k - i] + gcol + fra;
+            if (alt > alto) alto = alt;
+        }
+        pz[cnt] = g_pez_n; sf[cnt] = g_sfondi_n;
+
+        /* align-items: chi e' piu' basso della riga scende di quanto serve.
+         * I pezzi sono gia' posati: si spostano, non si rifanno. */
+        if (mio->allinea_voci == CSS_ALV_CENTRO || mio->allinea_voci == CSS_ALV_FINE) {
+            for (k = 0; k < cnt; k++) {
+                int giu = alto - alti[k];
+                int q, dq = (mio->allinea_voci == CSS_ALV_CENTRO) ? giu / 2 : giu;
+
+                for (q = pz[k]; q < pz[k + 1]; q++) g_pez[q].y += dq;
+                for (q = sf[k]; q < sf[k + 1]; q++) g_sfondi[q].y += dq;
+            }
+        }
+        y += alto;
+        i = j;
+        if (i < n) y += grig;
+    }
+
+    g_pen_y = y;
+    g_pen_x = rx();
+    g_riga_h = alt_riga_f(font_di(mio));
+    g_riga_primo = g_pez_n;
+}
+
+/* ! IL TESTO «SOLO PER I LETTORI DI SCHERMO» NON SI MOSTRA. I siti lo
+ * scrivono in posizione assoluta fuori dallo schermo (left: -9999px) o in un
+ * riquadro di un pixel: per chi guarda non c'e'. Impaginato nel flusso — come
+ * si faceva — erano righe di «Salta al contenuto» in cima a ogni pagina. */
+static int nascosto_posizione(const CssStile *s)
+{
+    int i;
+
+    if (s->posizione != CSS_POS_ASSOLUTA && s->posizione != CSS_POS_FISSA) return 0;
+    for (i = 0; i < 4; i++)
+        if (s->pos[i] != CSS_MISURA_NO && s->pos[i] <= -1000) return 1;
+    if (s->larghezza != CSS_MISURA_NO && !(s->larghezza_perc & CSS_LARG_PERC) &&
+        s->larghezza <= 1) return 1;
+    return 0;
 }
 
 static void impagina_nodo(int v, const CssStile *ered)
@@ -890,8 +1302,10 @@ static void impagina_nodo(int v, const CssStile *ered)
         unsigned int col_sotto = 0;
         CssStile    mio;
         int         e_blocco;
+        int         radice = (v == g_col_radice);
 
         if (invisibile(nome)) return;
+        if (radice) g_col_radice = -1;      /* i figli sono figli qualunque */
 
         css_calcola(&g_css, &g_doc, v, ered, &mio);
         suggerimenti(v, &mio);
@@ -907,6 +1321,42 @@ static void impagina_nodo(int v, const CssStile *ered)
          * li mostra con `:checked ~`. Tenere un buco al loro posto sarebbe
          * peggio che non tenerlo. */
         if (mio.visibile == 0) return;
+
+        if (nascosto_posizione(&mio)) return;
+
+        /* ! position: relative SPOSTA QUEL CHE HA GIA' IMPAGINATO, e il posto
+         * resta dov'era: e' la definizione del CSS. Si impagina l'elemento
+         * normalmente — una seconda volta dentro impagina_nodo, riconosciuta
+         * da g_rel_nodo — e poi si spostano i suoi pezzi. */
+        if (mio.posizione == CSS_POS_RELATIVA && v != g_rel_nodo &&
+            (mio.pos[0] != CSS_MISURA_NO || mio.pos[1] != CSS_MISURA_NO ||
+             mio.pos[2] != CSS_MISURA_NO || mio.pos[3] != CSS_MISURA_NO)) {
+            int pz = g_pez_n, sf = g_sfondi_n, era = g_rel_nodo;
+            int dx = mio.pos[3] != CSS_MISURA_NO ? mio.pos[3] :
+                     mio.pos[1] != CSS_MISURA_NO ? -mio.pos[1] : 0;
+            int dy = mio.pos[0] != CSS_MISURA_NO ? mio.pos[0] :
+                     mio.pos[2] != CSS_MISURA_NO ? -mio.pos[2] : 0;
+
+            if (radice) g_col_radice = v;       /* la seconda volta lo deve rivedere */
+            g_rel_nodo = v;
+            impagina_nodo(v, ered);
+            g_rel_nodo = era;
+            sposta_da(pz, sf, dx, dy);
+            return;
+        }
+
+        /* ! PRIMA DI g_stile_ora = mio: a_capo chiude la riga del PADRE, con
+         * l'allineamento del padre. */
+        if (!radice && mio.galleggia != CSS_GALLEGGIA_NO) { galleggia(v, &mio, ered); return; }
+        if (!radice && mio.display == CSS_DISPLAY_INBLOCCO) { in_blocco(v, &mio, ered); return; }
+
+        /* La radice di una colonna e' un blocco, e i suoi margini verticali
+         * predefiniti non si aggiungono: il posto l'ha gia' deciso chi l'ha
+         * messa li'. */
+        if (radice) {
+            if (mio.margine[0] == CSS_MISURA_NO) mio.margine[0] = 0;
+            if (mio.margine[2] == CSS_MISURA_NO) mio.margine[2] = 0;
+        }
 
         g_stile_ora = mio;
 
@@ -926,9 +1376,9 @@ static void impagina_nodo(int v, const CssStile *ered)
              * finita, come per i blocchi. */
             if (mio.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
                 sf = g_sfondi_n++;
-                g_sfondi[sf].x = riga_x();
+                g_sfondi[sf].x = rx();
                 g_sfondi[sf].y = g_pen_y;
-                g_sfondi[sf].w = riga_w();
+                g_sfondi[sf].w = rw();
                 g_sfondi[sf].h = 0;
                 g_sfondi[sf].colore = mio.sfondo;
                 g_sfondi[sf].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
@@ -946,7 +1396,7 @@ static void impagina_nodo(int v, const CssStile *ered)
             return;
         }
 
-        if (uguale(nome, "br")) { g_pen_x = riga_x() + 1; a_capo(); return; }
+        if (uguale(nome, "br")) { g_pen_x = rx() + 1; a_capo(); return; }
 
         /* ! <hr> E' UNA RIGA, non uno stacco piu' grande: finora era solo un
          * blocco vuoto, cioe' un po' d'aria in mezzo alla pagina — e chi
@@ -955,9 +1405,9 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (uguale(nome, "hr")) {
             spazio_blocco(0);
             if (g_sfondi_n < SFONDI_MAX) {
-                g_sfondi[g_sfondi_n].x = riga_x();
+                g_sfondi[g_sfondi_n].x = rx();
                 g_sfondi[g_sfondi_n].y = g_pen_y + 2;
-                g_sfondi[g_sfondi_n].w = riga_w();
+                g_sfondi[g_sfondi_n].w = rw();
                 g_sfondi[g_sfondi_n].h = 2;
                 g_sfondi[g_sfondi_n].colore = EX_OMBRA;
                 g_sfondi_n++;
@@ -1017,27 +1467,50 @@ static void impagina_nodo(int v, const CssStile *ered)
         e_blocco = blocco(nome);
         if (mio.display == CSS_DISPLAY_BLOCCO) e_blocco = 1;
         if (mio.display == CSS_DISPLAY_INLINE) e_blocco = 0;
+        if (mio.display == CSS_DISPLAY_FLEX || radice) e_blocco = 1;
 
         if (e_blocco) {
+            if (mio.pulisci) { a_capo(); pulisci(mio.pulisci); }
             spazio_blocco(0);
 
             /* ! I RIENTRI SI SOMMANO A QUELLI DI FUORI: un blocco dentro un
              * altro rientra due volte, ed e' cosi' che si vedono le citazioni
              * annidate. Valgono solo sui blocchi — un margine su un pezzo di
              * testo in linea non ha un lato a cui attaccarsi. */
-            if (mio.margine[3] != CSS_MISURA_NO) g_marg_sx += mio.margine[3];
-            if (mio.margine[1] != CSS_MISURA_NO) g_marg_dx += mio.margine[1];
+            g_marg_sx += css_margine(&mio, 3, 0);
+            g_marg_dx += css_margine(&mio, 1, 0);
             if (g_marg_sx < 0) g_marg_sx = 0;
             if (g_marg_dx < 0) g_marg_dx = 0;
 
-            g_pen_x = riga_x();
+            /* ! LA LARGHEZZA E I MARGINI auto (28 settembre 2026): un blocco
+             * con width o max-width piu' stretto della riga si stringe, e lo
+             * spazio che avanza va ai margini auto — metta' e meta' e' il
+             * centraggio (`margin: 0 auto`), tutto a sinistra lo spinge a
+             * destra. Senza auto resta a sinistra. La radice di una colonna
+             * la sua larghezza l'ha gia'. */
+            if (!radice) {
+                int disp = rw(), w = larg_risolta(&mio, disp, lati_extra(&mio));
+
+                if (w >= 0 && w < disp) {
+                    int avanzo = disp - w, sposta = 0;
+                    int a_sx = mio.margine[3] == CSS_MISURA_AUTO;
+                    int a_dx = mio.margine[1] == CSS_MISURA_AUTO;
+
+                    if (a_sx && a_dx) sposta = avanzo / 2;
+                    else if (a_sx)    sposta = avanzo;
+                    g_marg_sx += sposta;
+                    g_marg_dx += avanzo - sposta;
+                }
+            }
+
+            g_pen_x = rx();
             g_riga_primo = g_pez_n;
 
             if (mio.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
                 sfondo_mio = g_sfondi_n++;
-                g_sfondi[sfondo_mio].x = riga_x();
+                g_sfondi[sfondo_mio].x = rx();
                 g_sfondi[sfondo_mio].y = g_pen_y;
-                g_sfondi[sfondo_mio].w = riga_w();
+                g_sfondi[sfondo_mio].w = rw();
                 g_sfondi[sfondo_mio].h = 0;
                 g_sfondi[sfondo_mio].colore = mio.sfondo;
                 g_sfondi[sfondo_mio].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
@@ -1050,7 +1523,7 @@ static void impagina_nodo(int v, const CssStile *ered)
              * l'altezza solo a fine blocco, quello di sotto nasce li'. */
             bt = lato_bordo(&mio, 0); br = lato_bordo(&mio, 1);
             bb = lato_bordo(&mio, 2); bl = lato_bordo(&mio, 3);
-            box_x = riga_x(); box_w = riga_w(); box_y = g_pen_y;
+            box_x = rx(); box_w = rw(); box_y = g_pen_y;
             if (bt) rettangolo(box_x, box_y, box_w, bt, colore_bordo(&mio, 0));
             if (bl) i_sx = rettangolo(box_x, box_y, bl, 0, colore_bordo(&mio, 3));
             if (br) i_dx = rettangolo(box_x + box_w - br, box_y, br, 0, colore_bordo(&mio, 1));
@@ -1059,7 +1532,7 @@ static void impagina_nodo(int v, const CssStile *ered)
             g_marg_sx += bl + imbottitura(&mio, 3);
             g_marg_dx += br + imbottitura(&mio, 1);
             g_pen_y   += bt + imbottitura(&mio, 0);
-            g_pen_x = riga_x();
+            g_pen_x = rx();
         }
 
         /* ! IL SEGNO DI UNA VOCE DIPENDE DALLA LISTA CHE LA CONTIENE, e la
@@ -1149,6 +1622,10 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (!e_blocco && mio.margine[3] != CSS_MISURA_NO && mio.margine[3] > 0)
             g_pen_x += mio.margine[3];
 
+        if (e_blocco && mio.display == CSS_DISPLAY_FLEX && !mio.flex_colonna) {
+            flessibile(v, &mio);
+            g_stile_ora = mio;
+        } else
         for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
             impagina_nodo(f, &mio);
             g_stile_ora = mio;      /* i figli l'hanno cambiato: si rimette */
@@ -1169,21 +1646,21 @@ static void impagina_nodo(int v, const CssStile *ered)
              * bordo di sotto. Solo se c'e' qualcosa da chiudere la penna scende:
              * un blocco senza bordi e padding resta esattamente com'era. */
             if (pb || bb || bt || bl || br) {
-                g_pen_y += ((g_pen_x > riga_x()) ? g_riga_h : 0) + pb;
+                g_pen_y += ((g_pen_x > rx()) ? g_riga_h : 0) + pb;
                 if (bb) rettangolo(box_x, g_pen_y, box_w, bb, col_sotto);
                 g_pen_y += bb;
                 if (i_sx >= 0) g_sfondi[i_sx].h = g_pen_y - box_y;
                 if (i_dx >= 0) g_sfondi[i_dx].h = g_pen_y - box_y;
             }
             if (sfondo_mio >= 0) {
-                int fine = g_pen_y + ((g_pen_x > riga_x()) ? g_riga_h : 0);
+                int fine = g_pen_y + ((g_pen_x > rx()) ? g_riga_h : 0);
 
                 g_sfondi[sfondo_mio].h = fine - g_sfondi[sfondo_mio].y;
                 if (g_sfondi[sfondo_mio].h < 1) g_sfondi[sfondo_mio].h = 1;
             }
             g_marg_sx = era_sx;
             g_marg_dx = era_dx;
-            g_pen_x = riga_x();
+            g_pen_x = rx();
             g_riga_primo = g_pez_n;
             spazio_blocco(2);
         }
@@ -1210,6 +1687,9 @@ void impagina(void)
     g_marg_sx = g_marg_dx = 0;
     g_riga_primo = 0;
     g_sfondi_n = 0;
+    g_gal_n = 0;
+    g_col_radice = -1;
+    g_rel_nodo = -1;
     g_pen_x = area_x();
     g_pen_y = area_y();
     g_link_ora = -1;
@@ -1225,6 +1705,8 @@ void impagina(void)
     a_capo();
 
     g_altezza = g_pen_y - area_y() + g_riga_h;
+    /* un float puo' scendere piu' giu' dell'ultima riga di testo */
+    if (gal_fondo() - area_y() > g_altezza) g_altezza = gal_fondo() - area_y();
     if (g_altezza < 1) g_altezza = 1;
 }
 

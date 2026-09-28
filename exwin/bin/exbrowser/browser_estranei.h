@@ -50,7 +50,7 @@
 #define IMM_MAX      64
 #define IMM_BYTE_MAX (128u * 1024u)     /* il file di UNA immagine  */
 #define IMM_PX_MIN   (256u * 1024u)
-#define IMM_PX_MAX   (2048u * 1024u)
+#define IMM_PX_MAX   (4096u * 1024u)   /* 2048K fino al 28 settembre 2026: vedi imm_tetto_scegli */
 #define CTRL_MAX        192
 #define CTRL_VAL_MAX    256
 #define CTRL_TESTO      0       /* input di testo, password, ricerca... */

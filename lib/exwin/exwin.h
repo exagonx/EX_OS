@@ -111,6 +111,13 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * Only the window that called ex_finestre_segui() receives it: the desktop,
  * which asks what to do. */
 #define EXM_SISTEMA     0x000F
+/* The mouse wheel turned over this window (28 September 2026). wp is the
+ * number of notches as a SIGNED int — positive towards the user, i.e. "the
+ * page goes down" — and lp the pointer, as for EXM_MOUSE_GIU. It arrives only
+ * when the toolkit did not use it: a list, a text area or a scroll bar under
+ * the pointer scrolls by itself, three lines per notch (EX_ROTELLA_RIGHE). */
+#define EXM_ROTELLA     0x0010
+#define EX_ROTELLA_RIGHE 3
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
 #define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))

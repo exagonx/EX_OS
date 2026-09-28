@@ -103,6 +103,22 @@ void css_stile_vuoto(CssStile *s)
         s->bordo_col[i]   = CSS_NIENTE;
         s->imbottitura[i] = CSS_MISURA_NO;
     }
+    s->larghezza      = CSS_MISURA_NO;
+    s->larghezza_max  = CSS_MISURA_NO;
+    s->larghezza_min  = CSS_MISURA_NO;
+    s->larghezza_perc = 0;
+    s->scatola_bordo  = 0;
+    s->galleggia      = CSS_GALLEGGIA_NO;
+    s->posizione      = CSS_POS_STATICA;
+    for (i = 0; i < 4; i++) s->pos[i] = CSS_MISURA_NO;
+    s->flex_colonna   = 0;
+    s->flex_a_capo    = 0;
+    s->flex_cresce    = 0;
+    s->pulisci        = 0;
+    s->giustifica     = CSS_GIU_INIZIO;
+    s->allinea_voci   = CSS_ALV_STIRA;
+    s->spazio_riga    = CSS_MISURA_NO;
+    s->spazio_col     = CSS_MISURA_NO;
 }
 
 void css_prepara(CssFoglio *f,
@@ -178,7 +194,22 @@ int css_colore(const char *v, unsigned int n, unsigned int *out)
     return leggi_colore(v, n, out);
 }
 
+static int leggi_colore_grezzo(const char *v, unsigned int n, unsigned int *out);
+
+/* ! IL BIANCO ERA «NESSUN COLORE» (trovato il 28 settembre 2026). In ARGB il
+ * bianco opaco e' 0xFFFFFFFF, cioe' proprio CSS_NIENTE: `color: #fff` si
+ * leggeva «non detto», e il testo bianco delle barre scure dei siti usciva
+ * NERO — nero su scuro, cioe' niente. Visto con prova_disposizione.sh: il
+ * testo bianco del riquadro blu era nero. Il bianco diventa 0xFFFFFFFE, un
+ * blu di 254 che a vederlo e' lo stesso bianco. */
 static int leggi_colore(const char *v, unsigned int n, unsigned int *out)
+{
+    if (!leggi_colore_grezzo(v, n, out)) return 0;
+    if (*out == CSS_NIENTE) *out = 0xFFFFFFFEu;
+    return 1;
+}
+
+static int leggi_colore_grezzo(const char *v, unsigned int n, unsigned int *out)
 {
     unsigned int i;
 
@@ -459,6 +490,26 @@ static const PropNota PROPRIETA[] = {
     { "padding-right",       CSS_P_IMBOTTITURA + 1 },
     { "padding-bottom",      CSS_P_IMBOTTITURA + 2 },
     { "padding-left",        CSS_P_IMBOTTITURA + 3 },
+    { "width",               CSS_P_LARG            },
+    { "max-width",           CSS_P_LARG_MAX        },
+    { "min-width",           CSS_P_LARG_MIN        },
+    { "box-sizing",          CSS_P_SCATOLA         },
+    { "float",               CSS_P_GALLEGGIA       },
+    { "position",            CSS_P_POSIZIONE       },
+    { "top",                 CSS_P_POS + 0         },
+    { "right",               CSS_P_POS + 1         },
+    { "bottom",              CSS_P_POS + 2         },
+    { "left",                CSS_P_POS + 3         },
+    { "flex-direction",      CSS_P_FLEX_DIR        },
+    { "flex-wrap",           CSS_P_FLEX_CAPO       },
+    { "flex-grow",           CSS_P_FLEX_CRESCE     },
+    { "clear",               CSS_P_PULISCI         },
+    { "justify-content",     CSS_P_GIUSTIFICA      },
+    { "align-items",         CSS_P_ALLINEA_VOCI    },
+    { "row-gap",             CSS_P_SPAZIO_RIGA     },
+    { "column-gap",          CSS_P_SPAZIO_COL      },
+    { "grid-row-gap",        CSS_P_SPAZIO_RIGA     },
+    { "grid-column-gap",     CSS_P_SPAZIO_COL      },
     { 0, 0 }
 };
 
@@ -548,7 +599,92 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
 
     case CSS_P_MARG_SOPRA: case CSS_P_MARG_DX:
     case CSS_P_MARG_SOTTO: case CSS_P_MARG_SX:
+        if (parola_e(v, n, "auto")) { *out = (unsigned int)(CSS_MISURA_AUTO + 32768); return 1; }
         return leggi_lunghezza(v, n, 1, out);
+
+    /* LA DISPOSIZIONE (28 settembre 2026). «auto» e «none» sono il valore
+     * iniziale, che per noi e' «non detto»: 0 + 32768 - 32768 = CSS_MISURA_NO. */
+    case CSS_P_LARG: case CSS_P_LARG_MAX: case CSS_P_LARG_MIN:
+        if (parola_e(v, n, "auto") || parola_e(v, n, "none")) { *out = 0; return 1; }
+        return leggi_lunghezza(v, n, 0, out);
+
+    case CSS_P_POS + 0: case CSS_P_POS + 1: case CSS_P_POS + 2: case CSS_P_POS + 3:
+        if (parola_e(v, n, "auto")) { *out = 0; return 1; }
+        return leggi_lunghezza(v, n, 1, out);
+
+    case CSS_P_SCATOLA:
+        if (parola_e(v, n, "border-box"))  { *out = 1; return 1; }
+        if (parola_e(v, n, "content-box")) { *out = 0; return 1; }
+        return 0;
+
+    case CSS_P_GALLEGGIA:
+        if (parola_e(v, n, "left")  || parola_e(v, n, "inline-start")) { *out = CSS_GALLEGGIA_SX; return 1; }
+        if (parola_e(v, n, "right") || parola_e(v, n, "inline-end"))   { *out = CSS_GALLEGGIA_DX; return 1; }
+        if (parola_e(v, n, "none")) { *out = CSS_GALLEGGIA_NO; return 1; }
+        return 0;
+
+    case CSS_P_POSIZIONE:
+        if (parola_e(v, n, "static"))   { *out = CSS_POS_STATICA;   return 1; }
+        if (parola_e(v, n, "relative")) { *out = CSS_POS_RELATIVA;  return 1; }
+        if (parola_e(v, n, "absolute")) { *out = CSS_POS_ASSOLUTA;  return 1; }
+        if (parola_e(v, n, "fixed"))    { *out = CSS_POS_FISSA;     return 1; }
+        if (parola_e(v, n, "sticky") || parola_e(v, n, "-webkit-sticky"))
+            { *out = CSS_POS_APPICCICA; return 1; }
+        return 0;
+
+    case CSS_P_FLEX_DIR:
+        if (parola_e(v, n, "row") || parola_e(v, n, "row-reverse"))       { *out = 0; return 1; }
+        if (parola_e(v, n, "column") || parola_e(v, n, "column-reverse")) { *out = 1; return 1; }
+        return 0;
+
+    case CSS_P_FLEX_CAPO:
+        if (parola_e(v, n, "wrap") || parola_e(v, n, "wrap-reverse")) { *out = 1; return 1; }
+        if (parola_e(v, n, "nowrap")) { *out = 0; return 1; }
+        return 0;
+
+    case CSS_P_PULISCI:
+        if (parola_e(v, n, "none"))  { *out = 0; return 1; }
+        if (parola_e(v, n, "left")  || parola_e(v, n, "inline-start")) { *out = CSS_PULISCI_SX; return 1; }
+        if (parola_e(v, n, "right") || parola_e(v, n, "inline-end"))   { *out = CSS_PULISCI_DX; return 1; }
+        if (parola_e(v, n, "both"))  { *out = CSS_PULISCI_SX | CSS_PULISCI_DX; return 1; }
+        return 0;
+
+    case CSS_P_GIUSTIFICA:
+        if (parola_e(v, n, "flex-start") || parola_e(v, n, "start") || parola_e(v, n, "left") ||
+            parola_e(v, n, "normal") || parola_e(v, n, "stretch")) { *out = CSS_GIU_INIZIO; return 1; }
+        if (parola_e(v, n, "flex-end") || parola_e(v, n, "end") || parola_e(v, n, "right"))
+            { *out = CSS_GIU_FINE; return 1; }
+        if (parola_e(v, n, "center"))        { *out = CSS_GIU_CENTRO;  return 1; }
+        if (parola_e(v, n, "space-between")) { *out = CSS_GIU_TRA;     return 1; }
+        if (parola_e(v, n, "space-around"))  { *out = CSS_GIU_INTORNO; return 1; }
+        if (parola_e(v, n, "space-evenly"))  { *out = CSS_GIU_UGUALE;  return 1; }
+        return 0;
+
+    case CSS_P_ALLINEA_VOCI:
+        if (parola_e(v, n, "stretch") || parola_e(v, n, "normal") || parola_e(v, n, "baseline"))
+            { *out = CSS_ALV_STIRA; return 1; }
+        if (parola_e(v, n, "flex-start") || parola_e(v, n, "start")) { *out = CSS_ALV_INIZIO; return 1; }
+        if (parola_e(v, n, "flex-end") || parola_e(v, n, "end"))     { *out = CSS_ALV_FINE;   return 1; }
+        if (parola_e(v, n, "center"))                                 { *out = CSS_ALV_CENTRO; return 1; }
+        return 0;
+
+    case CSS_P_SPAZIO_RIGA: case CSS_P_SPAZIO_COL:
+        if (parola_e(v, n, "normal")) { *out = 0; return 1; }
+        return leggi_lunghezza(v, n, 0, out);
+
+    case CSS_P_FLEX_CRESCE: {
+        /* un numero puro, anche con la virgola: si tiene in centesimi */
+        unsigned int i = 0, cent = 0, cifre = 0, dec = 0;
+        while (i < n && v[i] >= '0' && v[i] <= '9') { cent = cent * 10 + (unsigned int)(v[i] - '0'); i++; cifre = 1; if (cent > 600) return 0; }
+        cent *= 100;
+        if (i < n && v[i] == '.') {
+            i++;
+            while (i < n && v[i] >= '0' && v[i] <= '9') { if (dec < 2) cent += (unsigned int)(v[i] - '0') * (dec ? 1u : 10u); dec++; i++; cifre = 1; }
+        }
+        if (!cifre || i != n) return 0;
+        *out = cent;
+        return 1;
+    }
 
     case CSS_P_PESO: {
         int peso = 0;
@@ -600,9 +736,21 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
         return leggi_lunghezza(v, n, 0, out);             /* il padding non e' mai negativo */
 
     case CSS_P_DISPLAY:
-        if (n == 4 && minusc((unsigned char)v[0]) == 'n') { *out = CSS_DISPLAY_NIENTE; return 1; }
-        if (n == 5 && minusc((unsigned char)v[0]) == 'b') { *out = CSS_DISPLAY_BLOCCO; return 1; }
-        if (n == 6 && minusc((unsigned char)v[0]) == 'i') { *out = CSS_DISPLAY_INLINE; return 1; }
+        if (parola_e(v, n, "none"))   { *out = CSS_DISPLAY_NIENTE; return 1; }
+        if (parola_e(v, n, "block"))  { *out = CSS_DISPLAY_BLOCCO; return 1; }
+        if (parola_e(v, n, "inline")) { *out = CSS_DISPLAY_INLINE; return 1; }
+        /* (28 settembre 2026) Prima questi si buttavano, e l'elemento teneva
+         * il display del suo nome: un <li> in un menu `display: flex` restava
+         * una riga per voce. list-item, grid e table sono blocchi per noi:
+         * la griglia e la tabella in CSS non si impaginano come tali. */
+        if (parola_e(v, n, "inline-block") || parola_e(v, n, "inline-table"))
+            { *out = CSS_DISPLAY_INBLOCCO; return 1; }
+        if (parola_e(v, n, "flex") || parola_e(v, n, "inline-flex"))
+            { *out = CSS_DISPLAY_FLEX; return 1; }
+        if (parola_e(v, n, "list-item") || parola_e(v, n, "grid") ||
+            parola_e(v, n, "inline-grid") || parola_e(v, n, "table") ||
+            parola_e(v, n, "flow-root"))
+            { *out = CSS_DISPLAY_BLOCCO; return 1; }
         return 0;
 
     default:
@@ -710,17 +858,55 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
         k = parole(v, n, da, lu, 4);
         if (k == 0) return 1;
         for (q = 0; q < k; q++) {
-            /* ! «auto» NEI MARGINI VALE ZERO QUI: il centraggio che chiede
-             * (margin: 0 auto) vuole una larghezza, che non c'e' ancora.
-             * Senza questa riga tutta la dichiarazione si perderebbe, anche il
-             * margine verticale che invece si capisce. */
-            if (base == CSS_P_MARG_SOPRA && parola_e(v + da[q], lu[q], "auto")) { vals[q] = 32768; continue; }
+            /* ! «auto» NEI MARGINI E' CSS_MISURA_AUTO (dal 28 settembre 2026;
+             * prima valeva zero, perche' il centraggio che chiede — margin: 0
+             * auto — voleva una larghezza che non c'era). Qui va detto a parte
+             * perche' leggi_valore lo capisce solo sul lato singolo, e senza
+             * questa riga si perderebbe tutta la dichiarazione. */
+            if (base == CSS_P_MARG_SOPRA && parola_e(v + da[q], lu[q], "auto")) {
+                vals[q] = (unsigned int)(CSS_MISURA_AUTO + 32768);   /* dal 28/09 e' auto davvero */
+                continue;
+            }
             /* il valore di un lato si legge come quello del primo: i quattro
              * codici di ogni proprieta' sono in fila, sopra-destra-sotto-sinistra */
             if (!leggi_valore(base, v + da[q], lu[q], &vals[q])) return 1;
         }
         for (x = 0; x < 4; x++)
             coda_metti(it, (unsigned short)(base + x), vals[LATO_DA[k - 1][x]]);
+        return 1;
+    }
+
+    /* flex: «1», «1 1 0%», «auto», «none» — qui conta solo quanto cresce.
+     * flex-flow: la direzione e l'andare a capo, in un ordine qualunque. */
+    if (parola_e(nome, nn, "flex")) {
+        unsigned int w;
+        k = parole(v, n, da, lu, 3);
+        if (k == 0) return 1;
+        if (parola_e(v + da[0], lu[0], "none"))      coda_metti(it, CSS_P_FLEX_CRESCE, 0);
+        else if (parola_e(v + da[0], lu[0], "auto")) coda_metti(it, CSS_P_FLEX_CRESCE, 100);
+        else if (leggi_valore(CSS_P_FLEX_CRESCE, v + da[0], lu[0], &w))
+            coda_metti(it, CSS_P_FLEX_CRESCE, w);
+        return 1;
+    }
+    /* gap: una o due lunghezze, riga e colonna */
+    if (parola_e(nome, nn, "gap") || parola_e(nome, nn, "grid-gap")) {
+        unsigned int a, b;
+        k = parole(v, n, da, lu, 2);
+        if (k == 0) return 1;
+        if (!leggi_valore(CSS_P_SPAZIO_RIGA, v + da[0], lu[0], &a)) return 1;
+        b = a;
+        if (k == 2 && !leggi_valore(CSS_P_SPAZIO_COL, v + da[1], lu[1], &b)) return 1;
+        coda_metti(it, CSS_P_SPAZIO_RIGA, a);
+        coda_metti(it, CSS_P_SPAZIO_COL, b);
+        return 1;
+    }
+    if (parola_e(nome, nn, "flex-flow")) {
+        unsigned int w;
+        k = parole(v, n, da, lu, 2);
+        for (q = 0; q < k; q++) {
+            if (leggi_valore(CSS_P_FLEX_DIR, v + da[q], lu[q], &w))       coda_metti(it, CSS_P_FLEX_DIR, w);
+            else if (leggi_valore(CSS_P_FLEX_CAPO, v + da[q], lu[q], &w)) coda_metti(it, CSS_P_FLEX_CAPO, w);
+        }
         return 1;
     }
 
@@ -839,7 +1025,10 @@ static int e_lunghezza(unsigned short p)
 {
     return p == CSS_P_CORPO || (p >= CSS_P_MARG_SOPRA && p <= CSS_P_MARG_SX) ||
            (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
-           (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4);
+           (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4) ||
+           (p >= CSS_P_LARG && p <= CSS_P_LARG_MIN) ||
+           (p >= CSS_P_POS && p < CSS_P_POS + 4) ||
+           p == CSS_P_SPAZIO_RIGA || p == CSS_P_SPAZIO_COL;
 }
 
 /* Durante css_calcola, le lunghezze relative vincenti aspettano qui la fine
@@ -860,8 +1049,35 @@ static void posa_px(CssStile *s, unsigned short prop, int px)
     g_rel = r;
 }
 
+/* Il bit di larghezza_perc di una delle tre larghezze. */
+static unsigned char bit_perc(unsigned short prop)
+{
+    return prop == CSS_P_LARG ? CSS_LARG_PERC :
+           prop == CSS_P_LARG_MAX ? CSS_LARG_MAX_PERC : CSS_LARG_MIN_PERC;
+}
+
+static short *campo_larg(CssStile *s, unsigned short prop)
+{
+    return prop == CSS_P_LARG ? &s->larghezza :
+           prop == CSS_P_LARG_MAX ? &s->larghezza_max : &s->larghezza_min;
+}
+
 static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
 {
+    /* ! LA % DI UNA LARGHEZZA NON SI RISOLVE QUI: e' del contenitore, che
+     * sa solo l'impaginatore (css.h, larghezza_perc). Si tiene in centesimi
+     * di punto, e vince come un valore assoluto — non dipende dal corpo. */
+    if (prop >= CSS_P_LARG && prop <= CSS_P_LARG_MIN && (val & REL_BIT) &&
+        ((val >> 24) & 0x7Fu) == REL_PERC) {
+        int cent = (int)(val & 0xFFFFFFu) - (int)REL_ZERO;
+
+        if (cent < 0) cent = 0;
+        if (cent > 32000) cent = 32000;
+        if (g_rel) g_rel[prop] = 0;
+        *campo_larg(s, prop) = (short)cent;
+        s->larghezza_perc |= bit_perc(prop);
+        return;
+    }
     if (e_lunghezza(prop)) {
         if (val & REL_BIT) {
             if (g_rel) { g_rel[prop] = val; return; }
@@ -900,6 +1116,22 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_IMBOTTITURA + 0: case CSS_P_IMBOTTITURA + 1:
     case CSS_P_IMBOTTITURA + 2: case CSS_P_IMBOTTITURA + 3:
         s->imbottitura[prop - CSS_P_IMBOTTITURA] = (short)((int)val - 32768);       break;
+    case CSS_P_LARG: case CSS_P_LARG_MAX: case CSS_P_LARG_MIN:
+        *campo_larg(s, prop) = (short)((int)val - 32768);
+        s->larghezza_perc &= (unsigned char)~bit_perc(prop);                       break;
+    case CSS_P_SCATOLA:    s->scatola_bordo = (unsigned char)val;       break;
+    case CSS_P_GALLEGGIA:  s->galleggia = (unsigned char)val;           break;
+    case CSS_P_POSIZIONE:  s->posizione = (unsigned char)val;           break;
+    case CSS_P_POS + 0: case CSS_P_POS + 1: case CSS_P_POS + 2: case CSS_P_POS + 3:
+        s->pos[prop - CSS_P_POS] = (short)((int)val - 32768);               break;
+    case CSS_P_FLEX_DIR:   s->flex_colonna = (unsigned char)val;        break;
+    case CSS_P_FLEX_CAPO:  s->flex_a_capo = (unsigned char)val;         break;
+    case CSS_P_FLEX_CRESCE: s->flex_cresce = (unsigned short)val;       break;
+    case CSS_P_PULISCI:    s->pulisci = (unsigned char)val;             break;
+    case CSS_P_GIUSTIFICA: s->giustifica = (unsigned char)val;          break;
+    case CSS_P_ALLINEA_VOCI: s->allinea_voci = (unsigned char)val;      break;
+    case CSS_P_SPAZIO_RIGA: s->spazio_riga = (short)((int)val - 32768); break;
+    case CSS_P_SPAZIO_COL:  s->spazio_col  = (short)((int)val - 32768); break;
     default: break;
     }
 }

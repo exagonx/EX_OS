@@ -250,6 +250,10 @@ fi
 
 # --- Copia eventuali programmi già compilati ----------------------------------
 
+# Le copie-alias che sul floppy non vanno (vedi il ciclo qui sotto). Il
+# Makefile le legge da qui per il suo controllo: un elenco solo.
+ALIAS_SOLO_CD="whoami chown poweroff reboot halt"
+
 if ls build/bin/* >/dev/null 2>&1; then
     log_info "Copia programmi in /bin/..."
     for prog in build/bin/*; do
@@ -263,7 +267,23 @@ if ls build/bin/* >/dev/null 2>&1; then
         case "$fname" in
             *.o|*.d|*.a|*.so) log_info "  Saltato (non eseguibile): $fname"; continue ;;
         esac
-        [ -x "$prog" ] || { log_info "  Saltato (non eseguibile): $fname"; continue; }
+        # ! UN PROGRAMMA SI RICONOSCE DAL CONTENUTO, NON DAL BIT DI
+        # ESECUZIONE (@FLOPPY-PIENO, 28 settembre 2026). Il progetto passa da
+        # un PC all'altro con MEGA, che quel bit non lo porta: lo stesso
+        # build/bin dava due floppy diversi a seconda di chi lanciava make, e
+        # su uno dei due mancava /bin/sh — la shell che il kernel avvia.
+        # Un eseguibile di EX-OS e' un ELF: si guardano i primi quattro byte.
+        [ "$(head -c 4 "$prog" | od -An -c | tr -d ' ')" = '177ELF' ] || \
+            { log_info "  Saltato (non e' un ELF): $fname"; continue; }
+        # ! GLI ALIAS STANNO SOLO SUL CD. whoami e' id, chown e' chmod,
+        # poweroff/reboot/halt sono shutdown: copie dello stesso binario che
+        # guardano argv[0], 68 KB in tutto, e sul floppy non ci stanno. La
+        # shell li trova lo stesso (alias_di in bin/sh/shell.c: lancia
+        # l'originale col nome chiesto), e poweroff, reboot e halt per lei
+        # sono comandi interni.
+        case " $ALIAS_SOLO_CD " in
+            *" $fname "*) log_info "  Saltato (alias, solo sul CD): $fname"; continue ;;
+        esac
 
         mcopy -i "$IMG" "$prog" "::/bin/$fname"
         log_ok "  Programma copiato: $fname"

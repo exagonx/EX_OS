@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.004");
+EX_VERSIONE("kbd.drv", "0.005");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1228,10 +1228,14 @@ static void kbd_drain(void)
  * parla al dispositivo.
  * ========================================================================== */
 static int          g_mouse_c_e   = 0;   /* ha risposto al reset? */
-static unsigned char g_mp[3];            /* pacchetto in costruzione */
+static unsigned char g_mp[4];            /* pacchetto in costruzione */
 static unsigned int g_mp_n        = 0;   /* quanti byte ne ho */
+/* 3 byte, o 4 se il mouse ha accettato il modo IntelliMouse (la rotella):
+ * vedi mouse_rotella_accendi. */
+static unsigned int g_mp_lung     = 3;
 static int          g_m_dx        = 0;   /* accumulati, azzerati leggendo */
 static int          g_m_dy        = 0;
+static int          g_m_dz        = 0;   /* la rotella, positiva verso l'utente */
 static unsigned int g_m_bottoni   = 0;
 static unsigned int g_m_persi     = 0;
 static unsigned int g_m_novita    = 0;   /* qualcosa e' cambiato dall'ultima lettura */
@@ -1246,7 +1250,7 @@ static void mouse_byte(unsigned char b)
     if (g_mp_n == 0 && !(b & 0x08)) { g_m_persi++; return; }
 
     g_mp[g_mp_n++] = b;
-    if (g_mp_n < 3) return;
+    if (g_mp_n < g_mp_lung) return;
     g_mp_n = 0;
 
     /* Traboccamento: il movimento non ci sta in un byte con segno. Il valore
@@ -1268,6 +1272,10 @@ static void mouse_byte(unsigned char b)
         g_m_dy -= dy;
         g_m_bottoni = (unsigned int)(g_mp[0] & 0x07);
         g_m_novita  = 1;
+
+        /* Il quarto byte e' la rotella, con segno: positivo quando gira
+         * verso chi la usa (la pagina scende). */
+        if (g_mp_lung == 4) g_m_dz += (int)(signed char)g_mp[3];
     }
 }
 
@@ -1354,6 +1362,40 @@ static int mouse_comando(unsigned char cmd)
  * viaggio ha chiuso un difetto. Qui il viaggio e' un riavvio in un'altra
  * stanza, quindi la frase deve bastare da sola. */
 static char g_mouse_perche[160] = "non ancora provato";
+
+/* =============================================================================
+ * LA ROTELLA — il modo IntelliMouse (28 settembre 2026)
+ *
+ * Un mouse PS/2 parte in modo compatibile, pacchetti da tre byte e niente
+ * rotella. Il modo IntelliMouse si chiede con una combinazione convenuta:
+ * tre «frequenze di campionamento» di fila, 200, 100 e 80. Un mouse che la
+ * conosce da li' in poi risponde con ID 3 e manda QUATTRO byte, il quarto e'
+ * la rotella; uno che non la conosce ha solo cambiato frequenza e continua
+ * a rispondere ID 0.
+ *
+ * ! SI DECIDE DALL'ID, NON DAGLI ACK. Anche un mouse senza rotella accetta le
+ * tre frequenze: e' leggere l'ID dopo che dice come saranno i pacchetti, e
+ * credere a quattro byte quando ne arrivano tre sfaserebbe tutto.
+ * ! LA FREQUENZA RESTA 80 al secondo: per un puntatore e' abbastanza, e il
+ * driver somma comunque i movimenti fra una lettura e l'altra.
+ * ========================================================================== */
+#define MOUSE_CMD_FREQ      0xF3
+#define MOUSE_CMD_ID        0xF2
+
+static void mouse_rotella_accendi(void)
+{
+    static const unsigned char freq[3] = { 200, 100, 80 };
+    int i, r;
+
+    g_mp_lung = 3;
+    for (i = 0; i < 3; i++) {
+        if (mouse_comando(MOUSE_CMD_FREQ) != MOUSE_ACK) return;
+        if (mouse_comando(freq[i]) != MOUSE_ACK) return;
+    }
+    if (mouse_comando(MOUSE_CMD_ID) != MOUSE_ACK) return;
+    r = mouse_leggi_ms(KBC_TMO_ACK);
+    if (r == 3) g_mp_lung = 4;
+}
 
 static int mouse_hw_init(void)
 {
@@ -1443,6 +1485,10 @@ static int mouse_hw_init(void)
             continue;
         }
 
+        /* Prima di accendere i pacchetti: dopo, le risposte ai comandi si
+         * mescolerebbero al movimento. */
+        mouse_rotella_accendi();
+
         r = mouse_comando(MOUSE_CMD_REPORT_ON);
         if (r != MOUSE_ACK) {
             snprintf(g_mouse_perche, sizeof(g_mouse_perche),
@@ -1452,7 +1498,8 @@ static int mouse_hw_init(void)
         }
 
         snprintf(g_mouse_perche, sizeof(g_mouse_perche),
-                 "ha risposto al giro %d", giro + 1);
+                 "ha risposto al giro %d%s", giro + 1,
+                 g_mp_lung == 4 ? ", con la rotella" : "");
         return 1;
     }
 
@@ -1470,6 +1517,7 @@ static void mouse_rispondi(unsigned int pid)
     s.bottoni  = g_m_bottoni;
     s.presente = (unsigned int)g_mouse_c_e;
     s.persi    = g_m_persi;
+    s.dz       = g_m_dz;
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
 
@@ -1479,6 +1527,7 @@ static void mouse_rispondi(unsigned int pid)
      * guardando il client. */
     g_m_dx     = 0;
     g_m_dy     = 0;
+    g_m_dz     = 0;
     g_m_persi  = 0;
     g_m_novita = 0;
 }

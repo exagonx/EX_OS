@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.014"
+#define VERSIONE_APP "0.017"
 /* The size the window is BORN with. Since 26 September 2026 it can be
  * resized (@EXBROWSER-1024): the size it has NOW is g_fin_w x g_fin_h. */
 #define FIN_W       760
@@ -100,11 +100,23 @@
 #define ID_IMP_URL     729     /* the «personale» engine's template */
 #define ID_IMP_SALVA   725
 #define ID_IMP_ANNULLA 726
+/* ! I TETTI SONO DUE PER OGNI VETTORE (28 settembre 2026, sera). Questi sono
+ * quelli di un IFRAME, cioe' i tetti di sempre: un iframe si alloca con
+ * malloc, e su EX-OS sbrk da' le pagine SUBITO — ogni byte in piu' qui sarebbe
+ * RAM vera per ogni iframe della pagina. Quelli della pagina principale, sotto
+ * con _PR, sono vettori statici: stanno nel BSS, che il kernel carica solo
+ * quando si tocca, e una pagina piccola non paga niente. Prima erano uguali,
+ * e una voce di Wikipedia (Venezia) arrivava troncata a 1 MB. */
 #define PAGINA_MAX  (1024u * 1024u)
 #define NODI_MAX    24000
 #define ARENA_MAX   (1024u * 1024u)
 #define ATTR_MAX    16000
 #define PEZZI_MAX   24000
+#define PAGINA_MAX_PR  (3u * 1024u * 1024u)
+#define NODI_MAX_PR    60000
+#define ARENA_MAX_PR   (3u * 1024u * 1024u)
+#define ATTR_MAX_PR    40000
+#define PEZZI_MAX_PR   60000
 #define LINK_MAX    2048
 #define LINK_ARENA  (192u * 1024u)
 #define STORIA_MAX  32
@@ -127,7 +139,9 @@
 #define SFONDI_MAX  1024
 #define SCORRI_W    16
 #define SCORRI_MIN  24          /* il pollice non scende sotto: sparirebbe */
-#define FONT_MAX    24
+/* ! 64 E NON 24 DAL 28 SETTEMBRE 2026: con la voce intera di Wikipedia i 24
+ * finivano e il titolo usciva col carattere normale (vedi font_per). */
+#define FONT_MAX    64
 #define CORPO_MIN   6
 #define CORPO_MAX   72
 #define FAM_SERIF   0
@@ -182,11 +196,13 @@ typedef struct {
 #define GEN_MAX     (64u * 1024u)   /* the text the layout makes up: bullets, numbers */
 
 typedef struct {
-    HtmlNodo       nodi[NODI_MAX];
-    HtmlAttr       attr[ATTR_MAX];
-    char           arena[ARENA_MAX];
+    /* i vettori grandi e i loro tetti: vedi PAGINA_MAX_PR */
+    HtmlNodo      *nodi;
+    HtmlAttr      *attr;
+    char          *arena;
+    unsigned int   nodi_max, attr_max, arena_max, pez_max;
     HtmlDoc        doc;
-    Pezzo          pez[PEZZI_MAX];
+    Pezzo         *pez;
     int            pez_n;
     char           link_arena[LINK_ARENA];
     unsigned int   link_off[LINK_MAX];
@@ -223,6 +239,10 @@ extern VistaImp *g_vi;
 #define g_doc              (g_vi->doc)
 #define g_pez              (g_vi->pez)
 #define g_pez_n            (g_vi->pez_n)
+#define g_nodi_max         (g_vi->nodi_max)
+#define g_attr_max         (g_vi->attr_max)
+#define g_arena_max        (g_vi->arena_max)
+#define g_pez_max          (g_vi->pez_max)
 #define g_link_arena       (g_vi->link_arena)
 #define g_link_off         (g_vi->link_off)
 #define g_link_n           (g_vi->link_n)

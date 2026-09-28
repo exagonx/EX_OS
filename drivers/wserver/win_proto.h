@@ -186,6 +186,12 @@ static inline void win_nome_servizio(char *out, unsigned int max)
 #define WIN_EV_CHIUDI       5
 #define WIN_EV_DISEGNA      6   /* «ridisegnati»: sei stato scoperto */
 #define WIN_EV_MISURA       7   /* sei stata ridimensionata */
+/* La rotella del mouse (28 settembre 2026): arriva alla finestra SOTTO IL
+ * PUNTATORE, non a quella col fuoco — si scorre quel che si guarda. Gli
+ * scatti stanno in `tasto`, come int con segno: positivi verso chi usa il
+ * mouse, cioe' «la pagina scende». x e y dicono dove sta il puntatore, per
+ * chi ha piu' cose da scorrere nella stessa finestra. WinEvento non cambia. */
+#define WIN_EV_ROTELLA      8
 
 /* Stili di una finestra di primo livello */
 #define WIN_ST_TITOLO       0x0001  /* ha la barra del titolo */

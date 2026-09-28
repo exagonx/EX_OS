@@ -214,6 +214,7 @@ static void rispondi(unsigned int pid)
     s.bottoni  = g_bottoni;
     s.presente = 1;                     /* la UART c'e': oltre non si sa */
     s.persi    = g_persi;
+    s.dz       = 0;                     /* il protocollo Microsoft non ha rotella */
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
 

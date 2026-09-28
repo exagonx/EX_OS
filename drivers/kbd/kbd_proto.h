@@ -299,7 +299,18 @@ typedef struct {
      * sincronia si scarta — non c'e' altro da fare — ma tacerlo vorrebbe dire
      * un puntatore che ogni tanto salta senza che niente lo spieghi. */
     unsigned int persi;
+    /* ! LA ROTELLA, IN FONDO E NON IN MEZZO (28 settembre 2026): scatti
+     * accumulati, POSITIVI VERSO CHI USA IL MOUSE — cioe' «la pagina va giu'»,
+     * come dy. In fondo, perche' chi riceve controlla `len >= sizeof`: un
+     * client vecchio legge i primi cinque campi e ignora questo, e un client
+     * nuovo davanti a un driver vecchio (messaggio piu' corto) lo considera
+     * zero. Un driver senza rotella (seriale, USB in modo boot) manda 0. */
+    int          dz;
 } MouseStato;
+
+/* Quanto e' lungo un MouseStato senza la rotella: i driver di prima del 28
+ * settembre 2026 mandano questo. */
+#define MOUSE_STATO_VECCHIO  (5u * 4u)
 
 /* =============================================================================
  * DOVE SI TROVA IL MOUSE — un posto solo per la regola

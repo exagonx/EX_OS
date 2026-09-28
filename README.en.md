@@ -102,6 +102,28 @@ forms (`lib/eximg/bmp.c`). Tested on the host against ImageMagick
 (`tools/prova_scrivi.sh`) and in QEMU by drawing with the mouse
 (`tools/prova_pennello.sh`). The icon is provisional.
 
+### EXBrowser lays out the page
+
+**tested in QEMU** — EXBrowser understands the CSS that lays out a page
+instead of putting everything in one column: `width`, `max-width` and
+`min-width` (percentages too), `margin: auto` to centre, `float` with text
+flowing beside it, `display: inline-block` and `display: flex` in a row (with
+`flex-grow`, `flex-wrap`, `gap`, `justify-content` and `align-items`),
+`clear`, `position: relative`, and off-screen hidden text no longer shows. On
+Wikipedia the infobox sits on the right with the text beside it, and long
+articles no longer stop at 1 MB: the main page holds 3. An old bug is
+fixed too: white text came out black (`make prova-excss`,
+`tools/prova_disposizione.sh`).
+
+### The mouse wheel
+
+**tested in QEMU** — the wheel scrolls the page in EXBrowser and, in every
+ExWin program, the lists, text areas and scroll bars under the pointer: three
+lines per notch. It scrolls what you are looking at, not the window with the
+focus. For now it works with PS/2 mice (including the one QEMU emulates and
+many laptops); USB and serial mice do not send the wheel yet
+(`tools/prova_rotella.sh`).
+
 ### A fast mouse no longer freezes the desktop
 
 **tested in QEMU** — moving the mouse quickly while drawing in Pennello froze

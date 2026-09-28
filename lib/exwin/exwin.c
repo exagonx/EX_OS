@@ -1389,7 +1389,11 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
  * Adesso i BYTE del file stanno in una riserva a parte, con un contatore: la
  * stessa faccia a sei corpi e' un file solo in memoria e sei voci qui. E le
  * voci possono essere molte, perche' una voce da sola non pesa niente. */
-#define FONT_MAX        48
+/* ! 96 E NON 48 DAL 28 SETTEMBRE 2026: il navigatore da solo ne vuole fino a
+ * 64 (una faccia per corpo), e con la voce intera di Wikipedia i 24 che si
+ * teneva finivano — il titolo usciva col carattere normale. Un posto costa
+ * poco: il file e' condiviso, e i glifi si fanno solo quando servono. */
+#define FONT_MAX        96
 
 /* ! E DODICI FILE ERANO «LE NOSTRE DODICI FACCE», cioe' un CONTO e non un
  * confine: lo stesso errore dell'otto qui sopra, rifatto un piano piu' in la'.
@@ -4896,6 +4900,58 @@ static int mdi_toccabile(Oggetto *o, ExFinestra padre, int x, int y)
     return x >= cx && x < cx + cw && y >= cy && y < cy + ch;
 }
 
+static ExFinestra controllo_in(ExFinestra padre, int x, int y);
+
+/* Muove `*primo` di `passo` restando fra 0 e `n - visibili`. Rende 1 se si
+ * e' mosso. */
+static int rotella_sposta(unsigned int *primo, int passo,
+                          unsigned int n, unsigned int visibili)
+{
+    long v = (long)*primo + passo;
+    long max = (n > visibili) ? (long)(n - visibili) : 0;
+
+    if (v > max) v = max;
+    if (v < 0) v = 0;
+    if ((unsigned int)v == *primo) return 0;
+    *primo = (unsigned int)v;
+    return 1;
+}
+
+/* =============================================================================
+ * ! LA ROTELLA LA USA PRIMA IL CONTROLLO SOTTO IL PUNTATORE (28 settembre
+ * 2026), e l'applicazione la riceve solo se nessuno l'ha presa: una lista o
+ * un'area di testo scorrono da sole, come scorrono da sole con PagGiu', e una
+ * finestra fatta di controlli non deve scrivere una riga per averla. Si
+ * sposta la VISTA, non la scelta ne' il cursore: guardare piu' in basso non
+ * e' scegliere. Una barra di scorrimento invece e' il documento
+ * dell'applicazione, e si muove come col trascinamento: EXM_COMANDO.
+ * Rende 1 se l'ha presa.
+ * ============================================================================= */
+static int rotella_controllo(ExFinestra f, int x, int y, int scatti)
+{
+    Oggetto *o = ogg(controllo_in(f, x, y));
+    int      passo = scatti * EX_ROTELLA_RIGHE;
+
+    if (!o || scatti == 0) return 0;
+
+    if (o->classe == CL_LISTA) {
+        Lista *L = lista_di(o);
+        return L ? rotella_sposta(&L->primo, passo, L->n, L->righe) || 1 : 0;
+    }
+    if (o->classe == CL_AREA) {
+        Area *A = area_di(o);
+        return A ? rotella_sposta(&A->top, passo, A->n, A->righe) || 1 : 0;
+    }
+    if (o->classe == CL_SCORRI) {
+        unsigned int prima = o->valore;
+        scorri_muovi(o, passo);
+        if (o->valore != prima)
+            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)o->valore);
+        return 1;
+    }
+    return 0;
+}
+
 static ExFinestra controllo_in(ExFinestra padre, int x, int y)
 {
     int i;
@@ -5850,6 +5906,14 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
         switch (e.tipo) {
         case WIN_EV_CHIUDI:     m->msg = EXM_CHIUDI;    return 1;
+        case WIN_EV_ROTELLA:
+            if (rotella_controllo(f, (int)e.x, (int)e.y, (int)e.tasto)) {
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+            m->msg = EXM_ROTELLA;
+            m->wp  = e.tasto;
+            return 1;
         case WIN_EV_TASTO:
             /* ! IL TASTO ARRIVA GIA' TRADOTTO dal servizio 'kbd': carattere
              * nei bit bassi, tasti speciali da 0x100, modificatori in alto.
@@ -6750,7 +6814,7 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.003"
+#define EXWIN_VERSIONE "0.005"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 

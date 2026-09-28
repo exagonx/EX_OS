@@ -261,7 +261,7 @@ static int est_misura(int v, VistaPezzo *p)
             else if (uguale(tipo, "hidden"))   t = CTRL_NASCOSTO;
         }
 
-        if (g_ctrl_n >= CTRL_MAX || g_pez_n >= PEZZI_MAX)
+        if (g_ctrl_n >= CTRL_MAX || g_pez_n >= (int)g_pez_max)
             return VISTA_SALTA;
 
         {

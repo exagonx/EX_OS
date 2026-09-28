@@ -1860,6 +1860,20 @@ static int ha_barra(const char *nome)
     return 0;
 }
 
+/* ! GLI ALIAS CHE SUL FLOPPY NON CI SONO (@FLOPPY-PIENO, 28 settembre 2026).
+ * whoami e' id, chown e' chmod: lo stesso binario, che guarda argv[0]. Sul CD
+ * ci sono le copie; sul floppy no, perche' con loro non ci starebbe /bin/sh
+ * (tools/mkfloppy.sh, ALIAS_SOLO_CD). Se il nome battuto non si trova, si
+ * lancia l'originale e argv[0] resta quello battuto: il programma fa la cosa
+ * giusta senza saperne niente. poweroff, reboot e halt non servono qui: per
+ * la shell sono comandi interni. */
+static const char *alias_di(const char *prog)
+{
+    if (sh_strcmp(prog, "whoami") == 0) return "id";
+    if (sh_strcmp(prog, "chown")  == 0) return "chmod";
+    return 0;
+}
+
 /* Compone in `dst` la prima voce del PATH sotto cui `prog` esiste
  * davvero. Ritorna 0 se l'ha trovato, -1 se nessuna voce combacia.
  *
@@ -1897,6 +1911,11 @@ static int cerca_nel_path(const char *prog, char *dst, uint32_t dim)
         if (file_esiste(dst)) return 0;
     }
 
+    /* Un alias che qui non c'e': si cerca il programma di cui e' copia. */
+    {
+        const char *orig = alias_di(prog);
+        if (orig) return cerca_nel_path(orig, dst, dim);
+    }
     return -1;
 }
 
@@ -1968,7 +1987,9 @@ static void run_program(const char *prog, int argc, char *argv[],
                         SpawnExtra *extra, int *pid_out)
 {
     char        path[PATH_MAX_SH];
+    char        nome_alias[PATH_MAX_SH];
     const char *da_lanciare = prog;
+    const char *argv0 = 0;
     SpawnExtra  solo_ambiente;
     int         pid;
 
@@ -1983,6 +2004,18 @@ static void run_program(const char *prog, int argc, char *argv[],
             return;
         }
         da_lanciare = path;
+
+        /* ! UN ALIAS SI PRESENTA COL SUO NOME: trovato /bin/id per `whoami`,
+         * argv[0] e' "/bin/whoami" — un percorso che non esiste, ma id guarda
+         * solo la parte finale, ed e' quella che decide cosa fa. Con
+         * "/bin/id" whoami si comportava da id (visto in QEMU). */
+        if (alias_di(prog)) {
+            uint32_t i = sh_strlen(path);
+            while (i > 0 && path[i - 1] != '/') i--;
+            sh_strcpy(nome_alias, path, i + 1);
+            sh_strcpy(nome_alias + i, prog, PATH_MAX_SH - i);
+            argv0 = nome_alias;
+        }
     }
 
     /* Senza redirezioni resta comunque una cosa da passare: l'ambiente.
@@ -2002,7 +2035,7 @@ static void run_program(const char *prog, int argc, char *argv[],
     {
         char *argv0_scritto = argv[0];
 
-        argv[0] = (char *)da_lanciare;
+        argv[0] = (char *)(argv0 ? argv0 : da_lanciare);
         pid = sh_spawn_ex(da_lanciare, argc, argv, extra);
         argv[0] = argv0_scritto;
     }

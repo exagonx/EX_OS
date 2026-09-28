@@ -89,7 +89,8 @@
 typedef struct Vista {
     VistaImp       imp;
     VistaEst       est;
-    unsigned char  pagina[PAGINA_MAX];
+    unsigned char *pagina;          /* PAGINA_MAX_PR la principale, PAGINA_MAX un iframe */
+    unsigned int   pagina_max;
     unsigned int   pagina_n;
     char           ancora[64];
     char           qui[EXHTTP_URL_MAX];
@@ -102,7 +103,7 @@ typedef struct Vista {
     void *         js_mem;
     void *         dom_mem;
     unsigned int   vista;
-    unsigned char  script_fatto[NODI_MAX];
+    unsigned char *script_fatto;    /* uno per nodo: imp.nodi_max */
     int            script_n;
 } Vista;
 
@@ -111,6 +112,7 @@ static Vista *g_v  = &g_principale;
 VistaImp     *g_vi = &g_principale.imp;
 VistaEst     *g_ve = &g_principale.est;
 #define g_pagina           (g_v->pagina)
+#define g_pagina_max       (g_v->pagina_max)
 #define g_pagina_n         (g_v->pagina_n)
 #define g_ancora           (g_v->ancora)
 #define g_qui              (g_v->qui)
@@ -123,6 +125,27 @@ VistaEst     *g_ve = &g_principale.est;
 #define g_vista            (g_v->vista)
 #define g_script_fatto     (g_v->script_fatto)
 #define g_script_n         (g_v->script_n)
+
+/* I vettori grandi della pagina principale: nel BSS, pagati solo se toccati
+ * (vedi PAGINA_MAX_PR in browser_priv.h). */
+static HtmlNodo      g_pr_nodi[NODI_MAX_PR];
+static HtmlAttr      g_pr_attr[ATTR_MAX_PR];
+static char          g_pr_arena[ARENA_MAX_PR];
+static Pezzo         g_pr_pez[PEZZI_MAX_PR];
+static unsigned char g_pr_pagina[PAGINA_MAX_PR];
+static unsigned char g_pr_script[NODI_MAX_PR];
+
+static void vista_principale_vettori(void)
+{
+    Vista *v = &g_principale;
+
+    v->imp.nodi = g_pr_nodi;    v->imp.nodi_max  = NODI_MAX_PR;
+    v->imp.attr = g_pr_attr;    v->imp.attr_max  = ATTR_MAX_PR;
+    v->imp.arena = g_pr_arena;  v->imp.arena_max = ARENA_MAX_PR;
+    v->imp.pez = g_pr_pez;      v->imp.pez_max   = PEZZI_MAX_PR;
+    v->pagina = g_pr_pagina;    v->pagina_max    = PAGINA_MAX_PR;
+    v->script_fatto = g_pr_script;
+}
 
 /* What a fresh view must hold that is not zero. */
 static void vista_prepara(Vista *v)
@@ -286,8 +309,14 @@ static void imm_tetto_scegli(void)
 
     if (meminfo(&mi) != 0) { g_imm_px_tot = IMM_PX_MIN; return; }
 
-    /* free_kb / 16 kilobyte, in pixel da quattro byte: free_kb * 16. */
-    g_imm_px_tot = mi.free_kb * 16u;
+    /* free_kb / 16 kilobyte, in pixel da quattro byte: free_kb * 16.
+     *
+     * ! UN OTTAVO SOPRA I 48 MB LIBERI (28 settembre 2026). Il sedicesimo e'
+     * la misura della macchina da 32 MB, dove un milione di pixel finiva le
+     * pagine fisiche; su una da 128 si fermava a 1,8 milioni e la voce
+     * Venezia lasciava fuori sei immagini con 90 MB liberi. Sopra la soglia la
+     * pagina si puo' prendere il doppio, fino a IMM_PX_MAX. */
+    g_imm_px_tot = (mi.free_kb > 48u * 1024u) ? mi.free_kb * 32u : mi.free_kb * 16u;
 
     if (g_imm_px_tot < IMM_PX_MIN) g_imm_px_tot = IMM_PX_MIN;
     if (g_imm_px_tot > IMM_PX_MAX) g_imm_px_tot = IMM_PX_MAX;
@@ -434,7 +463,7 @@ static int discende_da(int nodo, int avo)
 
     /* Il tetto sui passi e' contro un albero che si fosse chiuso ad anello:
      * non deve succedere, e se succede si esce invece di girare per sempre. */
-    for (i = 0; nodo >= 0 && i < (int)NODI_MAX; i++) {
+    for (i = 0; nodo >= 0 && i < (int)g_nodi_max; i++) {
         if (nodo == avo) return 1;
         nodo = g_doc.nodi[nodo].padre;
     }
@@ -617,7 +646,7 @@ static unsigned char g_imm_buf[IMM_BYTE_MAX];
  * cut short is a syntax error at its last line. One byte is always kept free
  * for the zero QuickJS wants (see un_script). BSS: untouched, it costs
  * nothing. */
-static unsigned char g_js_buf[PAGINA_MAX];
+static unsigned char g_js_buf[PAGINA_MAX_PR];
 
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
 static void (*g_img_libera)(EximgBitmap *);
@@ -1018,7 +1047,19 @@ ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
             g_font[i].famiglia == famiglia && g_font[i].corpo == (short)corpo)
             return g_font[i].f;
 
-    if (g_font_n >= FONT_MAX) return g_font_testo;
+    /* ! A RISERVA PIENA, LA STESSA FACCIA COL CORPO PIU' VICINO: un titolo
+     * un po' piu' piccolo del dovuto si riconosce ancora come titolo, il
+     * testo normale no. */
+    if (g_font_n >= FONT_MAX) {
+        int meglio = -1, dist = 1000;
+        for (i = 0; i < g_font_n; i++) {
+            int d = g_font[i].corpo - corpo;
+            if (d < 0) d = -d;
+            if (g_font[i].f && g_font[i].neretto == neretto && g_font[i].corsivo == corsivo &&
+                g_font[i].famiglia == famiglia && d < dist) { dist = d; meglio = i; }
+        }
+        return meglio >= 0 ? g_font[meglio].f : g_font_testo;
+    }
 
     k = famiglia * 4 + neretto + corsivo * 2;
     g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
@@ -2890,7 +2931,7 @@ static int ponte_risolvi(void *dato, const char *rif, char *out,
 /* Rende 1 se il motore c'e' ed e' agganciato al documento di adesso. */
 static int motore_apri(void)
 {
-    unsigned int quanto;
+    unsigned int quanto, nodi_js;
 
     /* ! ANCHE QUI VANNO RIMESSI TUTT'E DUE. Il motore riusato si porta
      * dietro i ganci di prima, ma l'indirizzo no: e' cambiato, ed e' proprio
@@ -2916,12 +2957,20 @@ static int motore_apri(void)
     exjs_uscita_metti(g_js, js_uscita, 0);
     exjs_orologio_metti(g_js, js_orologio, 0);
 
-    quanto    = exdom_quanto_serve(NODI_MAX, JS_TESTO, JS_ASCOLTI);
+    /* ! IL PONTE SI DIMENSIONA SUI NODI CHE LA PAGINA HA, piu' un margine
+     * per quelli che gli script creeranno — non sul tetto della vista, che
+     * per la principale e' 60000: malloc da' le pagine subito, e un Legame
+     * per nodo mai nato sarebbe RAM buttata. Un nodo oltre la capienza, per
+     * il ponte, e' null (exdom.c). */
+    nodi_js = g_doc.nodi_n + 8000u;
+    if (nodi_js < NODI_MAX) nodi_js = NODI_MAX;
+    if (nodi_js > g_nodi_max) nodi_js = g_nodi_max;
+    quanto    = exdom_quanto_serve(nodi_js, JS_TESTO, JS_ASCOLTI);
     g_dom_mem = malloc(quanto);
     if (!g_dom_mem) { motore_chiudi(); dico("javascript: memoria non disponibile"); return 0; }
 
     g_dom = exdom_apri(g_dom_mem, quanto, g_js, &g_doc,
-                       NODI_MAX, JS_TESTO, JS_ASCOLTI);
+                       nodi_js, JS_TESTO, JS_ASCOLTI);
     if (!g_dom) { motore_chiudi(); dico("javascript: il ponte non si apre"); return 0; }
 
     /* ! L'INDIRIZZO GLIELO DICIAMO NOI, e da qui viene tutto `location`. Il
@@ -3056,7 +3105,7 @@ static int attaccato(int n)
 {
     int giri = 0;
 
-    while (n >= 0 && giri++ < NODI_MAX) {
+    while (n >= 0 && giri++ < (int)g_nodi_max) {
         if (n == g_doc.radice) return 1;
         n = g_doc.nodi[n].padre;
     }
@@ -3187,7 +3236,7 @@ static void esegui_script(void)
 {
     int i;
 
-    memset(g_script_fatto, 0, sizeof(g_script_fatto));
+    memset(g_script_fatto, 0, g_nodi_max);
     g_script_n = 0;
 
     /* ! SPENTO SI CONTROLLA QUI E NON PIU' IN BASSO, prima che il motore si
@@ -3196,7 +3245,7 @@ static void esegui_script(void)
      * sarebbero spesi per non fare nulla. */
     if (!g_js_acceso) return;
 
-    for (i = 0; i < (int)g_doc.nodi_n && i < NODI_MAX; i++) un_script(i, 0);
+    for (i = 0; i < (int)g_doc.nodi_n && i < (int)g_nodi_max; i++) un_script(i, 0);
 
     /* ! UNA PAGINA SENZA <script> PUO' AVERE LO STESSO DEI GESTORI: onclick=,
      * onchange=, onload= negli attributi. Il motore si apriva solo davanti a
@@ -3222,7 +3271,7 @@ static void esegui_script_nuovi(void)
     int i;
 
     if (!g_js_acceso || !g_js) return;
-    for (i = 0; i < (int)g_doc.nodi_n && i < NODI_MAX; i++)
+    for (i = 0; i < (int)g_doc.nodi_n && i < (int)g_nodi_max; i++)
         if (!g_script_fatto[i]) un_script(i, 1);
 }
 
@@ -3527,7 +3576,7 @@ static int segui_location(void)
  * ! THE SECOND BUFFER IS BSS AND COSTS NOTHING UNTIL USED: ELF pages load on
  * demand, and a page that is not gzip never touches it.
  * ============================================================================= */
-static unsigned char g_gz[PAGINA_MAX];
+static unsigned char g_gz[PAGINA_MAX_PR];
 
 static unsigned long gz_crc32(const unsigned char *d, unsigned int n)
 {
@@ -3569,7 +3618,7 @@ static unsigned int gz_srotola(unsigned int n)
     if (i + 8 > n) return 0;
 
     isize = gz_le32(g_pagina + n - 4);
-    if (isize == 0 || isize > sizeof(g_gz)) return 0;
+    if (isize == 0 || isize > sizeof(g_gz) || isize > g_pagina_max) return 0;
     if (inflate(g_pagina + i, n - i - 8, g_gz, (unsigned int)isize, &fatti) != 0 ||
         fatti != isize || gz_crc32(g_gz, fatti) != gz_le32(g_pagina + n - 8))
         return 0;
@@ -3588,8 +3637,8 @@ static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
         unsigned int t0 = uptime_ms();
 
         ok = g_da_postare
-             ? exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), e)
-             : exhttp_prendi(url, g_pagina, sizeof(g_pagina), e);
+             ? exhttp_posta(url, g_da_postare, g_pagina, g_pagina_max, e)
+             : exhttp_prendi(url, g_pagina, g_pagina_max, e);
         g_t_rete += uptime_ms() - t0;
         g_t_rete_n++;
     }
@@ -3864,7 +3913,7 @@ static int scarica_in(const char *url, const char *dove)
     g_ferma = 0;
     exhttp_verso(verso_disco, 0);
     g_in_rete = 1;
-    ok = exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e);
+    ok = exhttp_prendi(url, g_pagina, g_pagina_max, &e);
     g_in_rete = 0;
     exhttp_verso(0, 0);
     close(g_scarico_fd);
@@ -4010,8 +4059,8 @@ static void documento_nuovo(unsigned int n)
      * adesso. */
     motore_chiudi();
 
-    html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
-                 g_arena, ARENA_MAX);
+    html_prepara(&g_doc, g_nodi, g_nodi_max, g_attr, g_attr_max,
+                 g_arena, g_arena_max);
     html_analizza(&g_doc, (const char *)g_pagina, n);
 
     /* Il primo <base href> della pagina, reso assoluto rispetto all'indirizzo
@@ -4124,6 +4173,20 @@ static Vista *cornice_vista(int k)
     if (g_corn_v[k]) return g_corn_v[k];
     v = (Vista *)malloc(sizeof(Vista));
     if (!v) return 0;
+    /* I tetti di un iframe sono quelli di sempre: vedi PAGINA_MAX_PR. */
+    v->imp.nodi   = (HtmlNodo *)malloc(NODI_MAX * sizeof(HtmlNodo));
+    v->imp.attr   = (HtmlAttr *)malloc(ATTR_MAX * sizeof(HtmlAttr));
+    v->imp.arena  = (char *)malloc(ARENA_MAX);
+    v->imp.pez    = (Pezzo *)malloc(PEZZI_MAX * sizeof(Pezzo));
+    v->pagina     = (unsigned char *)malloc(PAGINA_MAX);
+    v->script_fatto = (unsigned char *)malloc(NODI_MAX);
+    /* ! free() su EX-OS non rende niente: chi non e' riuscito resta allocato,
+     * e la vista non si usa. Succede solo con la memoria finita. */
+    if (!v->imp.nodi || !v->imp.attr || !v->imp.arena || !v->imp.pez ||
+        !v->pagina || !v->script_fatto) return 0;
+    v->imp.nodi_max = NODI_MAX;  v->imp.attr_max = ATTR_MAX;
+    v->imp.arena_max = ARENA_MAX; v->imp.pez_max = PEZZI_MAX;
+    v->pagina_max = PAGINA_MAX;
     /* ! ONLY THE SMALL FIELDS: a memset of the whole view would touch 4.7 MB
      * that the iframe's page may never use. The big vectors are filled by
      * html_prepara and the layout before anyone reads them. */
@@ -4211,7 +4274,7 @@ static void cornice_carica(int k)
     if (!url[0]) {
         strcpy(e.finale, "about:blank");
     } else if (e_locale(url)) {
-        if (!locale_leggi(url, g_pagina, sizeof(g_pagina), &n, &e.troncata)) goto fine;
+        if (!locale_leggi(url, g_pagina, g_pagina_max, &n, &e.troncata)) goto fine;
         e.byte = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
     } else if (!prendi_dalla_rete(url, &e) || !e_tipo_da_pagina(e.tipo)) {
@@ -4498,7 +4561,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     /* ! IL DISCO PRIMA DI TUTTO IL RESTO, e senza passare dalla cache: vedi il
      * blocco «I FILE LOCALI» piu' in alto. */
     if (e_locale(url)) {
-        if (!locale_leggi(url, g_pagina, sizeof(g_pagina), &n, &e.troncata)) {
+        if (!locale_leggi(url, g_pagina, g_pagina_max, &n, &e.troncata)) {
             char perc[PERC_MAX];
 
             /* ! SI DICE IL PERCORSO, NON L'INDIRIZZO. Chi ha sbagliato a
@@ -4516,7 +4579,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
         e.byte   = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
         e.finale[sizeof(e.finale) - 1] = '\0';
-    } else if (usa_cache && cache_leggi(url, g_pagina, sizeof(g_pagina), &n)) {
+    } else if (usa_cache && cache_leggi(url, g_pagina, g_pagina_max, &n)) {
         e.codice = 200;
         e.byte   = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
@@ -4533,7 +4596,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
          * fresca. Nella riga di stato compare «(copia locale: la rete non
          * risponde)», e non e' una nota, e' il verdetto.
          * ===================================================================== */
-        if (cache_leggi(url, g_pagina, sizeof(g_pagina), &n)) {
+        if (cache_leggi(url, g_pagina, g_pagina_max, &n)) {
             memset(&e, 0, sizeof(e));
             e.codice = 200;
             e.byte   = n;
@@ -4618,9 +4681,9 @@ static void vai(const char *url, int in_storia, int usa_cache)
                 e.troncata ? " pagina troncata" : "",
                 g_doc.troncato ? " albero troncato" : "",
                 g_css.troncato ? " stile troncato" : "",
-                g_doc.nodi_n, (unsigned int)NODI_MAX,
-                g_doc.arena_n / 1024u, (unsigned int)(ARENA_MAX / 1024u),
-                (unsigned int)g_pez_n, (unsigned int)PEZZI_MAX);
+                g_doc.nodi_n, g_nodi_max,
+                g_doc.arena_n / 1024u, g_arena_max / 1024u,
+                (unsigned int)g_pez_n, g_pez_max);
     } else {
         snprintf(msg, sizeof(msg), "%s, %u byte, %u nodi%s",
                  stato_codice, e.byte, g_doc.nodi_n,
@@ -6662,6 +6725,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * ! E LA SVEGLIA SI SPEGNE QUANDO NON ASPETTA PIU' NESSUNO. Una pagina che
      * ha finito non ha motivo di svegliare il browser cinque volte al secondo
      * per sempre. */
+    /* ! LA ROTELLA SCORRE LA PAGINA (28 settembre 2026, @EXBROWSER-HTML5):
+     * tre righe per scatto come ovunque (EX_ROTELLA_RIGHE), cioe' il doppio
+     * della freccia, che fa 24 pixel. Solo sopra la pagina: sopra la barra
+     * dell'indirizzo non c'e' niente da scorrere. Una <select> o una
+     * <textarea> sotto il puntatore la prendono prima, nel toolkit. */
+    case EXM_ROTELLA:
+        if (EX_Y(lp) >= area_y())
+            scorri((int)wp * EX_ROTELLA_RIGHE * 16);
+        return 0;
+
     case EXM_TEMPO: {
         int aspetta = 0, cornici;
 
@@ -6740,6 +6813,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 int main(int argc, char **argv)
 {
     ExMsg m;
+
+    /* ! PER PRIMA COSA I VETTORI DELLA PAGINA: da qui in poi g_nodi, g_pez e
+     * g_pagina sono puntatori, e nessuno li deve trovare a zero. */
+    vista_principale_vettori();
 
     /* ! IL CLIENTE DELL'IMPAGINATO SI INSTALLA PRIMA DI TUTTO, e prima vuol
      * dire prima della finestra: senza, l'impaginato impagina il testo e

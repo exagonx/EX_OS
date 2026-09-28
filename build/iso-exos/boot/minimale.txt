@@ -27,6 +27,7 @@ bin/polltest
 bin/rename
 bin/rm
 bin/rmdir
+bin/sh
 bin/shmtest
 bin/shutdown
 bin/stack

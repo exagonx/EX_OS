@@ -4919,6 +4919,9 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
 # ! LA GUARDIA GEMELLA DI QUELLA DEL CD. Guarda cosa mkfloppy.sh COPIEREBBE
 # — tutto cio' che trova in build/bin, build/drivers/*.drv e build/lib/*.so —
 # e si ferma se qualcosa di quello non e' fra le dipendenze dell'immagine.
+# ! LA SCELTA E' LA STESSA DI mkfloppy.sh, riga per riga: un ELF (non il bit
+# di esecuzione, che MEGA non porta) e non un alias di ALIAS_SOLO_CD, letto
+# dallo script stesso perche' l'elenco sia uno solo (@FLOPPY-PIENO).
 #
 # ! CONTROLLA IL PRODOTTO, NON L'ELENCO DEI SORGENTI, e qui sta la
 # differenza con `verifica-programmi`. Quella parte dai sorgenti e chiede
@@ -4934,11 +4937,13 @@ verifica-dipendenze-floppy:
 	done; \
 	manca=""; \
 	copiati=""; \
+	alias=$$(sed -n 's/^ALIAS_SOLO_CD="\(.*\)"/\1/p' $(TOOLS_DIR)/mkfloppy.sh); \
 	for f in $(BUILD_BIN)/*; do \
 	    [ -f "$$f" ] || continue; \
 	    n=$$(basename $$f); \
 	    case "$$n" in *.o|*.d|*.a|*.so) continue ;; esac; \
-	    [ -x "$$f" ] || continue; \
+	    [ "$$(head -c 4 "$$f" | od -An -c | tr -d ' ')" = '177ELF' ] || continue; \
+	    case " $$alias " in *" $$n "*) continue ;; esac; \
 	    copiati="$$copiati $$n"; \
 	done; \
 	for f in $(BUILD_DRIVERS)/*.drv $(BUILD_LIB)/*.so; do \

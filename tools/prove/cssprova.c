@@ -415,7 +415,11 @@ int main(void)
     ok("padding negativo: si butta", s.imbottitura[0] == CSS_MISURA_NO);
     carica("<p>x</p>", "p { margin: 10px auto }");
     stile_di(trova("p"), &s);
-    ok("margin: 10px auto (auto = 0)", s.margine[0] == 10 && s.margine[1] == 0 && s.margine[2] == 10 && s.margine[3] == 0);
+    /* Dal 28 settembre 2026 auto e' CSS_MISURA_AUTO, non zero: lo decide
+     * l'impaginatore, che sa quanto spazio avanza. */
+    ok("margin: 10px auto (auto resta auto)", s.margine[0] == 10 && s.margine[1] == CSS_MISURA_AUTO &&
+       s.margine[2] == 10 && s.margine[3] == CSS_MISURA_AUTO);
+    ok("css_margine legge auto come zero", css_margine(&s, 1, 0) == 0 && css_margine(&s, 0, 0) == 10);
     carica("<p>x</p>", "p { margin: 1px 2px 3px }");
     stile_di(trova("p"), &s);
     ok("margin con tre valori", s.margine[0] == 1 && s.margine[1] == 2 && s.margine[2] == 3 && s.margine[3] == 2);
@@ -477,6 +481,70 @@ int main(void)
             ok("style= da solo: 0.5em sul corpo che ha", t.margine[0] == 10);
         }
     }
+
+    printf("\n=== la disposizione: width, float, position, flex (28 settembre 2026) ===\n\n");
+    carica("<div>x</div>", "div { width: 300px; max-width: 50%; min-width: 10em; margin: 0 auto }");
+    stile_di(trova("div"), &s);
+    ok("width in px", s.larghezza == 300 && !(s.larghezza_perc & CSS_LARG_PERC));
+    ok("max-width in % resta una percentuale (5000 = 50%)",
+       s.larghezza_max == 5000 && (s.larghezza_perc & CSS_LARG_MAX_PERC));
+    ok("min-width in em sul corpo (10 x 15 = 150)", s.larghezza_min == 150);
+    ok("margin: 0 auto", s.margine[1] == CSS_MISURA_AUTO && s.margine[3] == CSS_MISURA_AUTO && s.margine[0] == 0);
+    carica("<div>x</div>", "div { width: 50% } div { width: 200px }");
+    stile_di(trova("div"), &s);
+    ok("un px dopo una % toglie il segno della %", s.larghezza == 200 && !(s.larghezza_perc & CSS_LARG_PERC));
+    carica("<div>x</div>", "div { width: 200px } div { width: auto }");
+    stile_di(trova("div"), &s);
+    ok("width: auto torna non detta", s.larghezza == CSS_MISURA_NO);
+    carica("<div>x</div>", "div { box-sizing: border-box; float: right; position: absolute; left: -9999px; top: 2em }");
+    stile_di(trova("div"), &s);
+    ok("box-sizing: border-box", s.scatola_bordo == 1);
+    ok("float: right", s.galleggia == CSS_GALLEGGIA_DX);
+    ok("position: absolute", s.posizione == CSS_POS_ASSOLUTA);
+    ok("left negativo e top in em", s.pos[3] == -9999 && s.pos[0] == 30);
+    carica("<ul><li>x</li></ul>", "ul { display: flex; flex-flow: column wrap } li { flex: 1 1 0% }");
+    stile_di(trova("ul"), &s);
+    ok("display: flex", s.display == CSS_DISPLAY_FLEX);
+    ok("flex-flow: column wrap", s.flex_colonna == 1 && s.flex_a_capo == 1);
+    stile_di(trova("li"), &s);
+    ok("flex: 1 1 0% = cresce 1 (100 centesimi)", s.flex_cresce == 100);
+    carica("<span>x</span>", "span { display: inline-block; width: 12.5% }");
+    stile_di(trova("span"), &s);
+    ok("display: inline-block", s.display == CSS_DISPLAY_INBLOCCO);
+    ok("width 12.5% = 1250", s.larghezza == 1250 && (s.larghezza_perc & CSS_LARG_PERC));
+    carica("<li>x</li>", "li { display: list-item }");
+    stile_di(trova("li"), &s);
+    ok("list-item e' un blocco", s.display == CSS_DISPLAY_BLOCCO);
+    {
+        CssStile padre, figlio;
+        carica("<div><p>x</p></div>", "div { width: 100px; float: left; position: fixed }");
+        stile_di(trova("div"), &padre);
+        css_calcola(&g_fog, &g_doc, trova("p"), &padre, &figlio);
+        ok("width, float e position NON si ereditano",
+           figlio.larghezza == CSS_MISURA_NO && figlio.galleggia == CSS_GALLEGGIA_NO &&
+           figlio.posizione == CSS_POS_STATICA);
+    }
+    {
+        CssStile t;
+        css_stile_vuoto(&t);
+        { const char *st = "width: 25%; margin-left: auto"; css_stile_inline(st, (unsigned int)strlen(st), &t); }
+        ok("style= con width in %: resta %, non la finestra", t.larghezza == 2500 && (t.larghezza_perc & CSS_LARG_PERC));
+        ok("style= con margin-left: auto", t.margine[3] == CSS_MISURA_AUTO);
+    }
+
+    carica("<nav>x</nav>", "nav { clear: both; justify-content: space-between; align-items: center; gap: 8px 1em }");
+    stile_di(trova("nav"), &s);
+    ok("clear: both", s.pulisci == (CSS_PULISCI_SX | CSS_PULISCI_DX));
+    ok("justify-content: space-between", s.giustifica == CSS_GIU_TRA);
+    ok("align-items: center", s.allinea_voci == CSS_ALV_CENTRO);
+    ok("gap: 8px 1em = riga 8, colonna 15", s.spazio_riga == 8 && s.spazio_col == 15);
+    carica("<nav>x</nav>", "nav { gap: 5px }");
+    stile_di(trova("nav"), &s);
+    ok("gap con un valore solo vale per tutti e due", s.spazio_riga == 5 && s.spazio_col == 5);
+    carica("<p>x</p>", "p { color: #fff; background: white }");
+    stile_di(trova("p"), &s);
+    ok("il bianco non e' «nessun colore» (CSS_NIENTE)", s.colore != CSS_NIENTE && s.sfondo != CSS_NIENTE &&
+       (s.colore & 0xFFFFFF) >= 0xFFFFFE);
 
     printf("\n%d prove, %d fallite\n", fatti, falliti);
     return falliti ? 1 : 0;

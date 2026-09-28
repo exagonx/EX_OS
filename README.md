@@ -119,6 +119,28 @@ anche il BMP in tutte le sue forme (`lib/eximg/bmp.c`). Provato sull'host
 contro ImageMagick (`tools/prova_scrivi.sh`) e in QEMU disegnando col mouse
 (`tools/prova_pennello.sh`). L'icona è provvisoria.
 
+### EXBrowser dispone la pagina
+
+**testato in QEMU** — EXBrowser capisce il CSS che dispone la pagina e non la
+mette più tutta in colonna: `width`, `max-width` e `min-width` (anche in
+percentuale), `margin: auto` per centrare, `float` con il testo che scorre
+accanto, `display: inline-block` e `display: flex` in riga (con `flex-grow`,
+`flex-wrap`, `gap`, `justify-content` e `align-items`), `clear`,
+`position: relative`, e i testi nascosti fuori schermo che non si vedono più. Su
+Wikipedia il riquadro informativo sta a destra col testo accanto, e le voci
+lunghe non si fermano più a 1 MB: la pagina principale ne tiene 3. Corretto
+anche un difetto vecchio: il testo bianco usciva nero
+(`make prova-excss`, `tools/prova_disposizione.sh`).
+
+### La rotella del mouse
+
+**testato in QEMU** — la rotella scorre la pagina in EXBrowser e, in ogni
+programma di ExWin, le liste, le aree di testo e le barre di scorrimento che
+stanno sotto il puntatore: tre righe per scatto. Scorre quello che si guarda,
+non la finestra che ha il fuoco. Per ora vale per il mouse PS/2 (anche
+quello emulato da QEMU e da molti portatili); i mouse USB e seriali la
+rotella non la mandano ancora (`tools/prova_rotella.sh`).
+
 ### Il mouse veloce non ferma più la scrivania
 
 **testato in QEMU** — muovere il mouse in fretta mentre si disegnava in

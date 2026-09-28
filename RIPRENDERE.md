@@ -216,6 +216,54 @@ e INPUT senza F5.
 (confermato da claude-B, che ci ha trovato anche la causa di @FLOPPY-PIENO).
 Si lanciano con `bash`.
 
+**Il floppy senza shell** (@FLOPPY-PIENO, chiuso). Il floppy del commit
+3896fc6 non aveva `/bin/sh`. mkfloppy.sh copiava solo i file col bit di
+esecuzione, e MEGA quel bit non lo porta (la causa l'ha trovata claude-B): su
+un PC entravano le copie-alias (whoami, chown, poweroff, reboot, halt: 68 KB) e
+il floppy traboccava, sull'altro restavano fuori insieme alla shell. Adesso si
+sceglie per contenuto (un ELF) e gli alias stanno solo sul CD
+(`ALIAS_SOLO_CD`); la shell, se non li trova, lancia `id` o `chmod` con
+argv[0] che finisce col nome battuto. ! Al primo tentativo whoami si
+comportava da id: la shell passa il PERCORSO come argv[0], e il percorso era
+/bin/id. Provato: stesso floppy con i bit accesi, spenti o com'erano; in QEMU
+dal floppy `whoami` dice root.
+
+**Il CSS che dispone la pagina** (@EXBROWSER-HTML5, sera). width, max-width e min-width con la % del contenitore, `margin: auto`
+vero, float, inline-block, flex in riga, e i testi fuori schermo che non si
+mostrano. I float sono RETTANGOLI interrogati alla y della penna, non margini:
+i blocchi salvano e rimettono g_marg, e un float fatto coi margini sarebbe
+durato troppo o troppo poco. Inline-block, flex e float usano la colonna delle
+celle di tabella, che adesso sa impaginare anche l'elemento stesso. Su
+Wikipedia vera il riquadro informativo sta a destra col testo accanto. ! Primo
+giro: «Fai una donazione» in una colonna di venti pixel — il flex stringeva
+tutti in proporzione; ora nessuno scende sotto la sua parola piu' larga. !
+Trovato: il bianco era CSS_NIENTE, e il testo bianco usciva nero. ! Con 32 MB
+il navigatore a volte non carica exhttp.so: la prova usa 64 MB.
+Poi **le pagine oltre 1 MB**: Venezia arrivava troncata. I tetti adesso sono
+per vista — grandi e statici per la pagina (BSS, su richiesta), quelli di
+sempre per un iframe, che si alloca con malloc e su EX-OS sbrk da' le pagine
+subito. ! Con la voce intera la riserva dei caratteri (24) finiva e il titolo
+usciva normale: 64 nel navigatore, 96 nel toolkit, e a riserva piena la faccia
+col corpo piu' vicino.
+Prima ancora, `clear`, `gap`, `justify-content`, `align-items` e lo spostamento di
+`position: relative` (i pezzi gia' posati si spostano: `sposta_da`). ! La
+prova ha trovato che riga_w() non scende mai sotto 40 pixel: una voce di flex
+larga 20 si disegnava larga 40 e l'ultima di un space-between usciva dalla
+pagina. Dentro una colonna il minimo ora e' 1. ! E la prova stessa sbagliava
+due volte: i pixel sfumati del testo somigliano per caso ai colori di sfondo,
+e allargavano le scatole. Ora conta solo le fasce di righe piene.
+
+**La rotella del mouse** (@EXBROWSER-HTML5). Non c'era in nessun punto della
+catena, e adesso c'e' in tutti: kbd.drv 0.005 accende il modo IntelliMouse del
+PS/2 (tre frequenze convenute, poi l'ID: 3 = pacchetti da quattro byte),
+MouseStato ha `dz` in fondo, wserver 0.005 manda WIN_EV_ROTELLA alla finestra
+sotto il puntatore, exwin.so 0.004 ne fa EXM_ROTELLA e scorre da se' liste,
+aree di testo e barre, EXBrowser 0.015 scorre la pagina. ! Il primo giro di
+`tools/prova_rotella.sh` e' fallito in un modo strano — ferma ai cinque scatti
+in giu', scesa ai cinque in su — e le fotografie l'hanno spiegato: nel monitor
+di QEMU `mouse_move 0 0 1` e' la rotella IN SU. Il driver aveva ragione, la
+prova no. Resta la rotella dei mouse USB e seriali.
+
 **Date in ExJs, e valueOf** (@EXJS-LACUNE). `Date` sta in lib/exjs/base.c,
 tutta in UTC perche' EX-OS non ha fusi. **L'ora la da' chi ospita**:
 `exjs_orologio_metti` e' nuova nell'interfaccia, facoltativa nello stub (una

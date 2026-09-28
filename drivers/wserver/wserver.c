@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.004");
+EX_VERSIONE("wserver", "0.005");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -1387,8 +1387,27 @@ static void manda_evento(const Finestra *f, unsigned int tipo,
      * Un movimento perso lo rimpiazza il prossimo: va SENZA ATTESA. Il clic,
      * il rilascio, un tasto non si ripetono: quelli aspettano il loro posto. */
     (void)ipc_send(f->pid, WIN_MSG_EVENTO |
-                   (tipo == WIN_EV_MOUSE_MOSSO ? IPC_SENZA_ATTESA : 0u),
+                   (tipo == WIN_EV_MOUSE_MOSSO || tipo == WIN_EV_ROTELLA
+                    ? IPC_SENZA_ATTESA : 0u),
                    &e, sizeof(e));
+}
+
+/* La rotella: alla finestra sotto il puntatore, sull'area del client. Uno
+ * scatto perso vale come un movimento perso (va SENZA ATTESA: vedi sopra),
+ * e una finestra che un suo dialogo modale blocca non scorre — come non
+ * riceve i clic. */
+static void rotella(int dz)
+{
+    unsigned int dove = 0;
+    int idx, md;
+
+    if (dz == 0) return;
+    idx = sotto(g_px, g_py, &dove);
+    if (idx < 0 || dove != 0) return;
+    md = modale_di(g_fin[idx].pid);
+    if (md >= 0 && md != idx) return;
+    manda_evento(&g_fin[idx], WIN_EV_ROTELLA, g_px, g_py, g_bottoni,
+                 (unsigned int)dz);
 }
 
 /* -----------------------------------------------------------------------------
@@ -2325,14 +2344,18 @@ static int servi_messaggio(unsigned int ms)
     if (meta.tipo == MOUSE_MSG_STATO) {
         MouseStato s;
         g_mouse_chiesto = 0;
-        if (meta.len >= sizeof(s)) {
-            memcpy(&s, buf, sizeof(s));
-            if (!s.dx && !s.dy && s.bottoni == g_bottoni) {
+        /* ! UN DRIVER DI PRIMA DELLA ROTELLA manda un messaggio piu' corto:
+         * si accetta, e la rotella vale zero (kbd_proto.h). */
+        if (meta.len >= MOUSE_STATO_VECCHIO) {
+            memset(&s, 0, sizeof(s));
+            memcpy(&s, buf, meta.len < sizeof(s) ? meta.len : sizeof(s));
+            if (!s.dx && !s.dy && !s.dz && s.bottoni == g_bottoni) {
                 g_mouse_vuoto = 1;
                 g_mouse_vuoto_ms = uptime_ms();
             }
             mouse_stato(&s);
             mouse_agisci();
+            rotella(s.dz);
         }
         return 1;
     }
