@@ -334,6 +334,14 @@ typedef void (*ExJsUscita)(const char *testo, unsigned int n, void *dato);
 
 void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato);
 
+/* L'OROLOGIO, per Date (@EXJS-LACUNE, 28 settembre 2026): i millisecondi
+ * dall'1 gennaio 1970 (UTC), dati da chi ospita il motore — la libreria non
+ * ha un orologio suo, come non ha la rete. Senza, Date.now() vale 0.
+ * ! FACOLTATIVA: una exjs.so di prima non la esporta, e lo stub allora non fa
+ * niente invece di fermare il programma. QuickJS ha la sua Date e la ignora. */
+typedef double (*ExJsOrologio)(void *dato);
+void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato);
+
 /* L'oggetto globale: e' li' che si appendono `console`, `document`, `window`. */
 ExJsVal exjs_globale(ExJsCtx *c);
 

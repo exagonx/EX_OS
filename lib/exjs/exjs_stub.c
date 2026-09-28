@@ -119,6 +119,7 @@ static struct {
     int (*pompa)(ExJsCtx *, unsigned int);
     int (*lavori_in_attesa)(ExJsCtx *);
     void (*memoria)(ExJsCtx *, unsigned int *, unsigned int *, unsigned int *, unsigned int *);
+    void (*orologio_metti)(ExJsCtx *, ExJsOrologio, void *);   /* puo' mancare */
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -260,6 +261,11 @@ static void assicura(void)
         chiedi(t, "exjs_lavori_in_attesa");
     P.memoria = (void (*)(ExJsCtx *, unsigned int *, unsigned int *, unsigned int *, unsigned int *))
         chiedi(t, "exjs_memoria");
+    /* ! FACOLTATIVA, E PERCIO' SENZA chiedi: una exjs.so di prima del 28
+     * settembre 2026 non la esporta, e fermare il browser per un orologio
+     * sarebbe un prezzo sproporzionato. Senza, Date.now() vale 0. */
+    P.orologio_metti = (void (*)(ExJsCtx *, ExJsOrologio, void *))
+        exlib_simbolo(t, "exjs_orologio_metti");
 
     P.pronto = 1;
 }
@@ -344,6 +350,9 @@ int exjs_proto_metti(ExJsCtx *c, ExJsVal ogg, ExJsVal proto)
 
 void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato)
 { assicura(); P.uscita_metti(c, f, dato); }
+
+void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato)
+{ assicura(); if (P.orologio_metti) P.orologio_metti(c, f, dato); }
 
 ExJsVal exjs_globale(ExJsCtx *c)
 { assicura(); return P.globale(c); }

@@ -115,6 +115,9 @@
 # persona e una sessione) toccano lo stesso albero. Un foglio di lavoro, non
 # storia: le regole sono in testa al file (27 settembre 2026).
 /scambio.txt
+# Le istruzioni per il secondo profilo (28 settembre 2026): un foglio di
+# coordinamento come scambio.txt, non storia del progetto.
+/ISTRUZIONI-SECONDO-PROFILO.md
 
 # continua.sh riprende una sessione di Claude Code per il suo ID: la sessione
 # vive in ~/.claude/ di UNA macchina, e fuori da li' lo script non serve.

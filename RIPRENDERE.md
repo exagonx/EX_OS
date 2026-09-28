@@ -26,6 +26,215 @@ manca» apre quello.
 
 ---
 
+# 28 settembre 2026 — Pennello, e una cartella condivisa da due PC
+
+**La cartella del progetto adesso la usano due PC** attraverso MEGA: qui
+continua il sistema (claude-A), dall'altro PC un secondo profilo porta Firefox
+(Exilla, claude-B). Chi tocca che cosa si scrive in `scambio.txt`
+(PRENDO/LASCIO/CHIEDO); le regole per l'altro profilo sono in
+`ISTRUZIONI-SECONDO-PROFILO.md`. Tutto quel che si costruisce sta in
+`cross_build/`, una cartella per lavoro, e non piu' nella home.
+
+! **`.megaignore` nella radice esclude SOLO quel che e' della singola
+macchina o si rigenera da solo**: `exilla-obj` (gli oggetti di Firefox,
+decine di GB riscritti a ogni compilazione), `__pycache__`, i file di swap
+degli editor, `settings.local.json`. Il resto deve passare. Provato: MEGAsync
+sorveglia `cross_build/exos-cross` ma non `cross_build/exilla-obj`. Il
+pacchetto finito di Exilla va in `cross_build/exilla-pacchetto/`, che passa.
+
+**@PAINT e' fatto: Pennello**, il programma di disegno di ExWin
+(`/exwin/bin/pennello`). Le tre domande aperte da giorni si sono decise
+cosi': legge quel che legge eximg, scrive BMP e PNG; in memoria sempre ARGB;
+l'annullamento in un deposito fisso che tiene solo i rettangoli toccati, e
+annullare SCAMBIA il rettangolo — cosi' lo stesso record e' anche il ripeti.
+
+! **I codificatori (`lib/eximg/scrivi.c`) si compilano dentro chi scrive**,
+non in eximg.so: la libreria la apre ogni programma che mostra un'immagine.
+Il **lettore BMP** invece e' entrato in eximg (`bmp.c`): il toolkit il BMP lo
+legge da se' ma non da' i pixel a nessuno.
+
+Due cose che la prova sull'host (`tools/prova_scrivi.sh`) ha trovato subito:
+
+- il lettore PNG di eximg **butta via l'alfa** apposta, e il toolkit ci
+  conta: una rilettura «uguale» si confronta sui soli RGB, e l'alfa scritta
+  la controlla ImageMagick;
+- un BMP a 16 bit scalato con la proporzione (x*255/31) differisce di uno da
+  quel che fanno tutti gli altri, che **ripetono i bit** (abcde -> abcdeabc).
+  Adesso anche noi.
+
+! La prima prova in QEMU tirava il tratto da (330, 260): dentro la tela, ma
+sotto la foto di 320x200 che sta nel suo angolo. Il punto adesso e' dentro la
+foto, ed e' scritto nella prova perche'.
+
+! **Una app nuova di ExWin va in DUE elenchi del Makefile**: `PROGRAMMI_EXWIN`
+(la compila `make all`) e `EXWIN_OUT` (le dipendenze dell'ISO). Con la sola
+prima, `make iso-exos` copiava sul CD il binario VECCHIO senza ricompilarlo:
+la seconda prova sarebbe girata su un Pennello di prima della correzione.
+
+**Ctrl+C sulla console di testo** (@TASTI-SISTEMA, kernel 0.221, kbd.drv
+0.004): in modo cotto chiede «[Ctrl+C] Fermo "textline" (PID 20)? s/n» e
+ferma solo su «s»; al prompt svuota la riga e il prompt torna. Provato con
+`tools/prova_ctrlc.sh` (6/6), e Ctrl+Alt+Canc ancora 3/3.
+
+! **Chi fermare lo diceva gia' la shell**, al pty: `pty_ctl(PTY_CTL_FG)` col
+figlio che aspetta, 0 al prompt. Sulla console quella chiamata rispondeva
+ENOTTY e si perdeva; adesso il kernel la tiene per console e il driver la
+legge (SYS_CONSOLE_CTRLC, 216). La shell non e' cambiata di una riga. Il
+primo piano di SYS_CONSOLE_SETFG non andava: al prompt e' la shell stessa.
+
+! Il 216 e' accanto a 214 e 215: il commento sul 233 in syscall.h ricorda
+perche' un numero si controlla prima di prenderlo.
+
+**@IMMAGINI: il visualizzatore** (`/exwin/bin/immagini`): zoom che calcola
+solo cio' che si vede, le immagini della cartella con Pag giu'/su', e
+`/exwin/lib/tipi.txt` che dice al file manager con che cosa aprire un file.
+Provato in QEMU, 8 su 8 (`tools/prova_immagini.sh`).
+
+! **La prima prova dava zero pixel rossi, e ho dato la colpa alla memoria**
+(32 MB, una PNG 1600x1000). L'ho scritto nei commenti prima di averlo
+provato; a 64 MB falliva uguale. Era **il lettore PNG di eximg, che leggeva
+solo gli 8 bit**: ImageMagick salva un colore solo come tavolozza da 1 bit.
+Adesso `png.c` legge 1/2/4/8/16 bit e Adam7, e `tools/prova_png.sh` lo
+confronta con ImageMagick su 92 file (45 interlacciati). I commenti sbagliati
+sono corretti.
+
+! Il file manager all'avvio ha il fuoco sull'ALBERO delle cartelle: in una
+prova da tastiera serve un Tab prima di muoversi fra i file.
+
+**@NAV-BORDER: `border` e `padding` in EXBrowser** (0.009). excss legge i
+bordi lato per lato e le scorciatoie (`border`, `border-top`...,
+`border-width/-style/-color`, `padding`, `margin` con 1-4 valori); i blocchi
+si disegnano col loro riquadro e il contenuto rientra. `cssprova` 114/114,
+`tools/prova_bordi.sh` 5/5.
+
+! **Una dichiarazione valeva UNA proprieta'**, e per questo nessuna scorciatoia
+era mai esistita — nemmeno `margin: 0 auto`. Adesso l'iteratore ha una coda.
+! E uno sfondo di blocco non azzerava il suo `.bordo`: le voci della lista si
+riusano, e ne poteva uscire il contorno di una tabella di un'altra pagina.
+
+**@NAV-UNITA: em, rem, %** (EXBrowser 0.010). Una misura relativa si scrive nel
+foglio com'e' e si risolve in fondo a `css_calcola`: prima il corpo sul
+padre, poi tutto il resto sul corpo dell'elemento. `cssprova` 128/128,
+`prova_bordi.sh` 7/7 (un bordo di 0.5em su un testo da 2em misura 15 pixel).
+! La vecchia prova diceva «2em si RIFIUTA»: l'ho cambiata, col perche'.
+! La % di margini e padding e' sulla larghezza della finestra, non del
+contenitore: excss non lo conosce. E' scritto in @NAV-UNITA.
+! Il bit che segna «relativa» e' il bit alto, che un colore ARGB ha acceso:
+si guarda solo sulle proprieta' che sono lunghezze (`e_lunghezza`).
+
+**@NAV-CURSORE** (EXBrowser 0.011): un clic in una casella o in un'area della
+pagina mette il cursore dove si e' cliccato. Il toolkit lo sapeva gia' fare;
+le caselle delle pagine le disegna il navigatore da se', e il clic dava solo
+il fuoco. `tools/prova_cursore.sh`: lo script della pagina riceve
+«abcXdefghij».
+! La prova legge il valore da un `throw` in un gestore del clic, che finisce
+sulla seriale. Con `onclick=` scritto nell'HTML non arrivava niente, con
+`addEventListener` si': annotato in @NAV-CURSORE come domanda aperta.
+
+**@NAV-GIF: le GIF animate si muovono**, in EXBrowser (0.012) e in Immagini
+(0.002). eximg ha un iteratore — apri, passo, chiudi — che compone i
+fotogrammi (smaltimento, trasparenza, posizione) e dice quanto aspettare;
+l'orologio resta di chi chiama. `tools/prova_gif.sh` confronta ogni
+fotogramma con `-coalesce` di ImageMagick per due giri interi;
+`tools/prova_gif_anima.sh` fotografa il cambio in QEMU.
+! Nella prova in QEMU il visualizzatore ha una GIF DI ALTRI COLORI: col
+navigatore ancora a schermo, contare il rosso e il blu l'avrebbe fatto passare
+anche fermo.
+! Il navigatore fonde la trasparenza sul bianco: ex_pixmap non guarda l'alfa,
+e un pixel trasparente della tela sarebbe venuto nero.
+
+**Un difetto trovato da una prova: gli `onclick=` senza `<script>` non
+giravano** (EXBrowser 0.013). Il motore JavaScript si apriva solo davanti a uno
+`<script>`, quindi una pagina coi soli gestori negli attributi — i siti
+semplici e vecchi sono fatti cosi' — non ne eseguiva nessuno, in silenzio.
+Adesso si apre anche se c'e' almeno un attributo `on...=`.
+`tools/prova_onclick.sh` lo prova su una pagina con un pulsante e basta.
+
+**EXBrowser 0.014, due cose.** `<input type="image">` manda `nome.x` e
+`nome.y` del punto cliccato (prima zero), dentro il rettangolo del pulsante
+con cui si disegna. E un secondo difetto trovato scrivendo la prova: un
+indirizzo `file:` con `?domanda` cercava un file chiamato «r.html?b.x=3», quindi
+un modulo GET verso una pagina locale finiva nel nulla. `tools/prova_modulo_immagine.sh`
+prova tutt'e due (la seriale dice `QUERY[?b.x=110&b.y=4]`).
+! La nota di @NAVMETA sui selettori «a meta'» era vecchia di quattro giorni e
+falsa: corretta.
+
+! **Il segnaposto dei flag e' stato ricreato da solo alle 10:03**, stessa
+impronta, e tutto si e' ricompilato. Causa non trovata (sospetto MEGA, che
+sincronizza build/): scritto in @BUILD-FLAG con cosa guardare la prossima
+volta. E @SUONO-MIX e' stato guardato e lasciato apposta: scritto perche'.
+
+**Le meta' JavaScript di @NAVMETA** (exjs): `toString` implicito e `join`
+senza tetto. Scritte PRIMA le prove, che hanno trovato otto sbagliate — piu'
+di quelle cercate: `String([[1,2],3])` dava «1,2», un separatore lungo si
+tagliava, `a.push(a); String(a)` finiva la memoria. La regola che le ha
+chiuse tutte: **prima si convertono le stringhe (e si esegue JavaScript),
+poi si apre il filo**. Anche `exjs_concat` la violava: `''+[1,2,3]` dava «1»
+appena convertire ha cominciato ad allocare. jsprova 266/266, domprova
+260/260 (`String(location)` e' l'indirizzo anche con ExJs).
+! Misurato e scritto in @EXJS-LACUNE: ExJs non ha `Date` e non chiama
+`valueOf`. Pesa poco perche' il predefinito e' QuickJS.
+
+**«Pennello blocca tutto se il mouse va veloce»** (segnalato da chi lo usa).
+Riprodotto con `tools/prova_pennello_veloce.sh` (300 movimenti a 10 ms l'uno
+col pulsante premuto: `monr:` nuovo in qemu_drive.py) e trovato **tre
+difetti uno sotto l'altro**, ognuno nascosto dal precedente:
+
+1. **Pennello prendeva 16 MB per l'annulla**: su 32 MB con la grafica accesa
+   restavano 204 KB (`mem`), e al primo trascinamento «PMM: OUT OF MEMORY».
+   Adesso il deposito e' un quarto del libero (pool_prendi).
+2. **`linea()` non finiva su certi segmenti**: il doppio dell'errore di
+   Bresenham ricalcolato a meta' passo, e da (166,154) a (164,155) la y
+   scavalcava l'arrivo — Pennello girava a vuoto per sempre. Trovato con una
+   traccia (l'ultima `forma` entrata e mai uscita) e gdb sull'host.
+   `tools/prova_linea.sh` prova le funzioni VERE estratte dal sorgente: 11604
+   segmenti, ellissi e rettangoli; sulla versione vecchia non finisce.
+3. **Il server grafico restava fermo 10 secondi dentro ipc_send**: su una
+   casella piena ipc_send RIPROVA per dieci secondi (kernel/ipc/ipc.c), e
+   wserver credeva il contrario («se il client non raccoglie, non si
+   insiste»). Col mouse veloce la casella di Pennello si riempiva di
+   movimenti. Adesso c'e' IPC_SENZA_ATTESA, un bit nel tipo (ipc.h), e il
+   server lo usa per i MOVIMENTI; clic, rilascio e tasti restano garantiti.
+   Trovato con una traccia temporanea in wserver (tolta): il suo ciclo
+   smetteva di girare esattamente all'inizio della raffica.
+In piu' Pennello raccoglie i movimenti in coda e annuncia lo schermo al piu'
+ogni 50 ms. ! Tre volte un verdetto e' stato sbagliato prima di essere giusto
+(una raffica che non allargava niente, un rilevatore sulla tavolozza, un
+puntatore «arrivato» ma disegno fermo): la prova ha le sue note. ! wserver
+0.004 e il kernel 0.223 vanno aggiornati insieme (version.h, che aveva
+claude-B per @PTHREAD, era gia' stato rilasciato).
+
+**gfedit, F5: «non appare il prompt con INPUT»**. Il primo piano della console
+restava a gfedit, e l'INPUT del programma BASIC leggeva subito la fine
+dell'input. Adesso gfedit lo cede al figlio mentre gira (console_setfg, come
+sudo) e Ctrl+C lo puo' fermare (PTY_CTL_FG). `tools/prova_runbas.sh` ha una
+quinta parte che mancava: F5 con un INPUT — le altre provavano F5 senza INPUT
+e INPUT senza F5.
+
+! Visto strada facendo: gli script `tools/prova_*.sh` hanno i permessi
+`rw-------`, senza esecuzione: e' MEGA, che i bit di esecuzione non li porta
+(confermato da claude-B, che ci ha trovato anche la causa di @FLOPPY-PIENO).
+Si lanciano con `bash`.
+
+**Date in ExJs, e valueOf** (@EXJS-LACUNE). `Date` sta in lib/exjs/base.c,
+tutta in UTC perche' EX-OS non ha fusi. **L'ora la da' chi ospita**:
+`exjs_orologio_metti` e' nuova nell'interfaccia, facoltativa nello stub (una
+exjs.so vecchia si apre lo stesso) e vuota in QuickJS, che ha la sua Date.
+EXBrowser aggancia una volta i secondi dell'orologio vero a `uptime_ms`, cosi'
+`b - a` non va mai sotto zero. I giorni si contano con gli interi a 32 bit di
+Hinnant: la divisione a 64 bit nei programmi non c'e'. Poi **ToPrimitive**
+(`exjs_primitivo`, valueOf e poi toString), usato da `exjs_a_numero` e dal `+`:
+`o * 2` con valueOf 5 fa 10, `b - a` fra due Date e' un numero.
+! La prima versione girava per sempre su `0/0 != 0/0`: il NaN del motore non
+e' ne' doppio ne' puntatore, e veniva rimandato a exjs_a_numero. Visto con gdb
+sul banco fermo. ! Strada facendo: `JSON.stringify({a:undefined,b:1})` dava
+`{,"b":1}`. jsprova 307/307, domprova 260/260, e `tools/prova_date.sh` in QEMU
+coi due motori: l'anno vero, `b - a`, ISO, JSON, valueOf, Date.UTC. ExJs non
+ha `throw`, quindi la sua pagina dice l'esito con la RIGA dell'errore. Resta
+scritto in @EXJS-LACUNE: throw, i fusi, `instanceof` e f.prototype con `new`.
+
+---
+
 # 27 settembre 2026 — cerca e sostituisci, la scrivania, e tre verita' sul toolkit
 
 **@EDIT-CERCA e' fatto e provato** (2 su 2). La prova falliva, e aveva

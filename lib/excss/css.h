@@ -59,6 +59,10 @@ extern "C" {
  * sapere se ereditare dal padre o no. Zero non va bene — zero e' nero.
  * --------------------------------------------------------------------------- */
 #define CSS_NIENTE      0xFFFFFFFFu     /* per i colori   */
+/* Il corpo del testo quando nessuno lo dice, in px: e' la base di `em` e `rem`
+ * in cima alla pagina, e il navigatore lo usa per il testo senza stile. Una
+ * costante sola perche' i due devono essere d'accordo (@NAV-UNITA). */
+#define CSS_CORPO_PREDEFINITO 15
 #define CSS_MISURA_NO   (-32768)        /* per le misure  */
 #define CSS_FORSE       0xFF            /* per i sì/no    */
 
@@ -113,6 +117,21 @@ typedef struct {
      * quasi sempre un menu a comparsa in posizione assoluta, il cui posto
      * non conta (Vector 2022 nasconde cosi' i suoi menu). */
     unsigned char visibile;
+
+    /* I bordi (@NAV-BORDER, 28 settembre 2026), sopra-destra-sotto-sinistra.
+     * ! UN BORDO C'E' SOLO SE HA UNO STILE: e' la regola del CSS, e non una
+     * scelta nostra — `border: 1px #ccc` senza «solid» non si vede. Lo
+     * spessore da solo non basta. Tutti gli stili visibili (solid, dashed,
+     * dotted, double...) si disegnano pieni: il tratteggio non c'e'.
+     *   bordo       spessore in px, o CSS_MISURA_NO (= medium, 3 px)
+     *   bordo_stile 1 visibile, 0 none/hidden, CSS_FORSE non detto (= none)
+     *   bordo_col   ARGB, o CSS_NIENTE = il colore del testo (currentcolor)
+     * Il padding e' lo spazio fra il bordo e il contenuto, in px. Nessuno dei
+     * due si eredita. */
+    short         bordo[4];
+    unsigned char bordo_stile[4];
+    unsigned int  bordo_col[4];
+    short         imbottitura[4];
 } CssStile;
 
 /* Mette uno stile a «niente dichiarato». */
@@ -210,7 +229,14 @@ typedef struct {
 #define CSS_P_MARG_SX       10
 #define CSS_P_FAMIGLIA      11  /* font-family  */
 #define CSS_P_VISIBILE      12  /* visibility (28 settembre 2026) */
-#define CSS_P_N             13
+/* @NAV-BORDER (28 settembre 2026): i bordi e il padding, lato per lato, nella
+ * stessa rotazione dei margini — sopra, destra, sotto, sinistra. Il codice del
+ * lato e' la base piu' 0..3. */
+#define CSS_P_BORDO_LARG    13  /* border-*-width: 13..16 */
+#define CSS_P_BORDO_STILE   17  /* border-*-style: 17..20 */
+#define CSS_P_BORDO_COL     21  /* border-*-color: 21..24 */
+#define CSS_P_IMBOTTITURA   25  /* padding-*:      25..28 */
+#define CSS_P_N             29
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */

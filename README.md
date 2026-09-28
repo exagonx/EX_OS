@@ -101,6 +101,187 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Pennello, il programma di disegno
+
+**testato in QEMU** — `/exwin/bin/pennello [file]`, nel menu Avvio: matita,
+pennello, gomma, spruzzo, riempimento, contagocce, linea, rettangolo ed
+ellisse (vuoti o pieni), quattro spessori, zoom da 1x a 8x, specchio,
+rotazione, inversione dei colori, cambio di dimensioni, **annulla e ripeti**.
+**Apre** BMP, PNG, JPG, GIF e ICO; **salva** in PNG e BMP — un JPG aperto e
+salvato lo dice prima e propone lo stesso nome in `.png`. Salva prima in una
+copia accanto e poi rinomina: un salvataggio fallito lascia il file vecchio.
+
+L'annullamento non fotografa l'immagine a ogni tratto: ogni operazione lascia
+in un deposito preso all'avvio (un quarto della memoria libera) solo il **rettangolo** che ha toccato, e annullare lo
+**scambia** con l'immagine — così lo stesso record è anche il «ripeti».
+I codificatori PNG e BMP sono nuovi (`lib/eximg/scrivi.c`), e eximg legge
+anche il BMP in tutte le sue forme (`lib/eximg/bmp.c`). Provato sull'host
+contro ImageMagick (`tools/prova_scrivi.sh`) e in QEMU disegnando col mouse
+(`tools/prova_pennello.sh`). L'icona è provvisoria.
+
+### Il mouse veloce non ferma più la scrivania
+
+**testato in QEMU** — muovere il mouse in fretta mentre si disegnava in
+Pennello bloccava tutto ExWin. Erano due difetti: in Pennello il tracciatore
+di linee non arrivava mai in fondo su certi segmenti, e il server grafico,
+per consegnare un movimento a un programma che non legge, aspettava fino a
+dieci secondi. Adesso i movimenti del mouse si consegnano **senza aspettare**
+(kernel 0.223, `IPC_SENZA_ATTESA`): un programma appeso rallenta solo se
+stesso. Clic e tasti continuano ad arrivare tutti
+(`tools/prova_pennello_veloce.sh`, `tools/prova_linea.sh`).
+
+### gfedit: F5 e l'INPUT del BASIC
+
+**testato in QEMU** — un programma BASIC lanciato con F5 da gfedit ora mostra
+il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
+gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
+
+### ExJs: `Date` e `valueOf`
+
+**testato in QEMU** — col motore ExJs c'è `Date`: `new Date()`, `Date.now()`,
+`Date.UTC`, `Date.parse`, i `get`/`set`, `toISOString`, `toString`,
+`toLocaleString` e `JSON.stringify` di una data. È tutta in UTC, perché EX-OS
+non ha fusi orari; l'ora la dà il navigatore. Gli oggetti nei conti passano
+da `valueOf`: la differenza fra due date è un numero, come misurano i tempi le
+pagine. Provato sull'host (`make prova-exjs`, 307 prove) e in EXBrowser coi
+due motori (`tools/prova_date.sh`).
+
+### ExJs: `toString` implicito e `join` senza tetto
+
+**testato sull'host** — col motore ExJs (QuickJS resta il predefinito)
+`String(oggetto)`, `'x' + oggetto` e `join` chiamano il `toString`
+dell'oggetto: `String(location)` è l'indirizzo. `join` non si ferma più a 511
+caratteri, e le prove scritte prima hanno trovato e fatto correggere tre
+difetti in più (vettori annidati, separatori lunghi, un vettore che contiene
+se stesso) (`make prova-exjs`, `make prova-exdom`).
+
+### I moduli verso pagine locali, e il pulsante immagine
+
+**testato in QEMU** — un indirizzo `file:` con una domanda (`pagina.html?x=1`)
+apre il file giusto invece di cercarne uno col punto interrogativo nel nome:
+un modulo GET verso una pagina locale adesso arriva, e la pagina legge
+`location.search`. E `<input type="image">` manda il punto cliccato invece di
+zero (`tools/prova_modulo_immagine.sh`).
+
+### Gli `onclick=` girano anche senza `<script>`
+
+**testato in QEMU** — correzione di un difetto: il motore JavaScript si apriva
+solo davanti a uno `<script>`, quindi una pagina con i soli gestori negli
+attributi (`onclick=`, `onchange=`, `onload=`) non ne eseguiva nessuno
+(`tools/prova_onclick.sh`).
+
+### Le GIF animate si muovono
+
+**testato in QEMU** — in EXBrowser e nel visualizzatore Immagini. eximg compone
+i fotogrammi — posizione, trasparenza, smaltimento, il giro che ricomincia — e
+dice quanto deve restare ognuno; l'orologio resta di chi mostra l'immagine.
+Provato contro ImageMagick fotogramma per fotogramma (`tools/prova_gif.sh`) e
+fotografato mentre cambia (`tools/prova_gif_anima.sh`). La sveglia di ExWin fa
+al più cinque giri al secondo: una GIF molto veloce va più piano.
+
+### Il clic nelle caselle delle pagine mette il cursore lì
+
+**testato in QEMU** — prima un clic dentro una casella o un'area di una pagina
+le dava il fuoco e lasciava il cursore in fondo; adesso lo mette fra le due
+lettere più vicine al punto cliccato (`tools/prova_cursore.sh`).
+
+### EXBrowser capisce em, rem e %
+
+**testato in QEMU** — `font-size: 1.5em`, `margin: 2em`, `padding: 0.5rem`,
+`font-size: 120%`, e le parole `small`, `large`, `larger`: prima le misure
+erano solo in pixel e tutto il resto si buttava. Una misura relativa si
+risolve alla fine della cascata — il corpo sul padre, il resto sul corpo
+dell'elemento — e la prova la misura in pixel sullo schermo
+(`tools/prova_bordi.sh`, `make prova-excss`). La % dei margini si prende
+ancora sulla larghezza della finestra.
+
+### EXBrowser disegna i bordi del CSS, e il padding
+
+**testato in QEMU** — `border`, `border-top` e gli altri lati, `border-width`,
+`border-style`, `border-color`, `padding` e la scorciatoia `margin` con da uno
+a quattro valori: i blocchi si disegnano col loro riquadro e il contenuto
+rientra. Prima i bordi c'erano solo per le tabelle con `border=`, e nessuna
+scorciatoia del CSS si leggeva — nemmeno `margin: 0 auto`. Restano i bordi
+degli elementi in linea e quelli CSS delle tabelle (`tools/prova_bordi.sh`,
+`make prova-excss`).
+
+### Immagini, il visualizzatore, e le PNG di ogni tipo
+
+**testato in QEMU** — `/exwin/bin/immagini [file]`, nel menu Avvio: adatta
+alla finestra le immagini grandi, «1» per il 100%, + e - dal 10% all'800%, e
+Pag giù / Pag su per passare alle altre immagini della cartella. Dal file
+manager ci si arriva col doppio clic: la regola sta in `/exwin/lib/tipi.txt`,
+**«queste estensioni si aprono con quel programma»**, un file del sistema e
+non del programma. Strada facendo il lettore PNG di eximg ha imparato **tutte
+le profondità (1, 2, 4, 16 bit) e l'interlacciamento Adam7**: prima leggeva
+solo gli 8 bit, e una PNG di un colore solo non si apriva. Provato contro
+ImageMagick su 92 file (`tools/prova_png.sh`) e in QEMU
+(`tools/prova_immagini.sh`).
+
+### Ctrl+C sulla console di testo chiede, e poi ferma
+
+**testato in QEMU** — in modo riga, Ctrl+C chiede `[Ctrl+C] Fermo "textline"
+(PID 20)? s/n` e ferma il programma solo con «s». Al prompt svuota la riga e
+il prompt torna; un programma in modo crudo (gfedit) lo riceve come tasto.
+Chi fermare lo diceva già la shell: il kernel (0.221) adesso lo tiene per
+ogni console, e il driver della tastiera lo legge con `SYS_CONSOLE_CTRLC`
+(216). Con Ctrl+Alt+Canc, è il compito dei «tasti che fermano le cose»
+(`tools/prova_ctrlc.sh`, `tools/prova_tasti_sistema.sh`).
+
+### La ricerca su Wikipedia, e le regole @media
+
+**testato in QEMU, sulla rete vera** — «Cerca non fa niente» non era la
+ricerca: era la tabella TCP di `ip.drv`, piena dopo una pagina di Wikipedia,
+con posti morti che non tornavano liberi. Adesso si liberano. EXBrowser valuta
+le regole `@media`, `@supports` e `@layer` invece di saltarle (erano 578 su
+964 nel foglio di Wikipedia), e con loro `visibility`, `:checked` e le
+`<label>`. La pagina resta in colonna: mancano `width`, `float`, `padding` e
+`flex`.
+
+### Calctor, la calcolatrice
+
+**testato in QEMU** — `/exwin/bin/calctor`: normale, scientifica e
+programmatore (32 bit in base 2, 8, 10 e 16), un display di quattro righe e
+la cronologia in una finestra sua, da salvare come testo. Si scrive
+un'espressione, con le precedenze: `2 + 3 * 4` fa 14. Strada facendo il
+toolkit ha preso le tendine laterali, `ex_abilita()` ed `ex_dlg_testo()`, e
+il tetto dei controlli per programma è passato da 64 — che faceva fallire
+`ex_crea` in silenzio — a 192 (`tools/prova_calctor.sh`).
+
+### La scrivania: la cartella del profilo, le unità, il registro
+
+**testato in QEMU** — a sinistra le icone di `$HOME/desktop` (un
+collegamento è un `.lnk` di testo), a destra ogni unità montata: pm se ne
+accorge da solo, anche di un `mount` fatto a mano. Lo sfondo si dispone
+(angolo, centro, allarga, ripeti). Il **Registro di sistema** non è più una
+schermata ma un anello di 32 KB nel kernel, con l'ora e il PID su ogni riga
+(`tools/prova_desktop.sh`, `tools/prova_registro.sh`).
+
+### L'editor cerca e sostituisce
+
+**testato in QEMU** — Cerca (Ctrl+F), F3 e Shift+F3 per il successivo e il
+precedente, Sostituisci una o tutte. Nel toolkit **Shift+Tab** adesso torna
+indietro davvero, e il pulsante che ha il fuoco si vede (`tools/prova_edit_cerca.sh`).
+
+### Archivi apre i tar, e il file manager rinomina
+
+**testato in QEMU** — Archivi apre e crea `.tar` e `.tar.gz`, con lo stesso
+codice di `/bin/tar` (`lib/extar`, compilato dentro tutti e due). Nel file
+manager, **Rinomina** con F2 (`tools/prova_tar.sh`, `tools/prova_filemgr.sh`).
+
+### `runbas`: i programmi QBASIC girano da soli
+
+**testato in QEMU** — `runbas mioprog.bas` esegue un programma con
+l'interprete di `gfbasic/`, e gfedit lo lancia con **F5**. Le funzioni
+matematiche che la libc non ha (SIN, EXP, ^...) sono quelle dell'x87
+(`tools/prova_runbas.sh`).
+
+### I percorsi dei programmi in un file
+
+**da testare su un sistema installato** — `/boot/percorsi.txt`: la shell
+aggiunge in coda al PATH le directory che ci trova, e netupdate ci scrive le
+sue quando installa un pacchetto in un posto nuovo.
+
 ### HTTPS: da 23 a 28 siti su 30 — AES-GCM, P-256 e TLS 1.2
 
 **testato in QEMU, sulla rete vera** — dei sette siti su trenta che non si
@@ -3176,7 +3357,7 @@ proprio l'indirizzo da cui leggere i nomi.
 | 249 | fb_map      | `void**`      | —          | —   | mappa il framebuffer: la capacità **stretta** che ha sostituito `mmio_map` per il server grafico |
 | 250 | interrompi  | pid           | segnale    | —   | Ctrl+C che morde: il segnale arriva al gruppo in primo piano |
 | 251 | pty_apri    | `int fd[2]`   | —          | —   | una coppia padrone/schiavo |
-| 252 | pty_ctl     | fd            | comando    | arg | misura della finestra, modo raw, gruppo in primo piano |
+| 252 | pty_ctl     | fd            | comando    | arg | misura della finestra, modo raw, gruppo in primo piano (sulla console: chi ferma Ctrl+C) |
 | 253 | statperm    | `const char*` | `StatPerm*`| —   | modo, uid e gid di un percorso **senza aprirlo** |
 | 254 | su          | `const char*` | password   | —   | «diventa root SE sai la password», e decide il kernel |
 
@@ -3319,6 +3500,14 @@ un comando — la console morirebbe. Due meccanismi lo impediscono:
 2. Chi prende la tastiera parlando **direttamente** al servizio `kbd` via IPC —
    la modalità raw di `gfedit` — non passa da `sys_read`, quindi controlla da sé
    `ConsoleInfo.fg` e si rifiuta di partire in background, spiegando perché.
+
+**Ctrl+C** (dal 28 settembre 2026, kernel 0.221). Sulla console di testo, in
+modo riga, chiede `[Ctrl+C] Fermo "textline" (PID 20)? s/n` e ferma il
+programma solo con «s»; al prompt svuota la riga. Chi fermare lo dice la
+shell con `pty_ctl(0, PTY_CTL_FG, pid)` — il figlio che aspetta, 0 al prompt —
+e non `SYS_CONSOLE_SETFG`, perché al prompt il primo piano è la shell stessa.
+Nel terminale in finestra Ctrl+C ferma subito, senza chiedere: lì lo gestisce
+la disciplina del pty, nel kernel.
 
 ---
 
@@ -3495,7 +3684,10 @@ exwin                       accende la grafica sulla console 5
 /exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
 /exwin/bin/exbrowser [URL]  EXBrowser, il navigatore (un percorso assoluto diventa file:)
 /exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
-/exwin/bin/archivi [ZIP]    gli archivi ZIP: apre, estrae, crea
+/exwin/bin/archivi [ARCH]   gli archivi ZIP, TAR e TAR.GZ: apre, estrae, crea
+/exwin/bin/calctor          la calcolatrice: normale, scientifica, programmatore
+/exwin/bin/pennello [FILE]  il programma di disegno: apre BMP PNG JPG GIF ICO, salva PNG e BMP
+/exwin/bin/immagini [FILE]  il visualizzatore di immagini, con lo zoom e la cartella
 /exwin/bin/fontprova        la prova dei font TrueType, fatta per essere vista
 /exwin/bin/orologio         data e ora nell'angolo della barra
 ```

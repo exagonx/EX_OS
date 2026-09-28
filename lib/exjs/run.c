@@ -346,8 +346,12 @@ static ExJsVal binario(Ese *E, int op, ExJsVal a, ExJsVal b, int n)
         /* ! IL PIU' E' L'UNICO OPERATORE CHE GUARDA I TIPI: se uno dei due e'
          * una stringa, si concatena; altrimenti si somma. `1 + "2"` fa "12", e
          * ogni pagina del mondo ci conta. */
-        if (exjs_tipo(c, a) == EXJS_STRINGA || exjs_tipo(c, b) == EXJS_STRINGA ||
-            exjs_tipo(c, a) == EXJS_OGGETTO || exjs_tipo(c, b) == EXJS_OGGETTO)
+        /* ! UN OGGETTO PRIMA DIVENTA UN VALORE SEMPLICE (28 settembre 2026):
+         * `o + 1` con valueOf 5 fa 6, `data + ''` e' il testo della data, un
+         * vettore e' il suo testo. Prima ogni oggetto concatenava. */
+        if (exjs_tipo(c, a) == EXJS_OGGETTO) a = exjs_primitivo(c, a, 0);
+        if (exjs_tipo(c, b) == EXJS_OGGETTO) b = exjs_primitivo(c, b, 0);
+        if (exjs_tipo(c, a) == EXJS_STRINGA || exjs_tipo(c, b) == EXJS_STRINGA)
             return concatena(E, a, b);
         return exjs_numero(c, exjs_a_numero(c, a) + exjs_a_numero(c, b));
 
@@ -909,6 +913,13 @@ static void esegui(Ese *E, int n, int ambito)
             int p;
             for (p = exjs_prop_prima(E->c, k); p >= 0 && !E->rotto; ) {
                 int prossima = exjs_prop_prossima(E->c, p);
+
+                /* I nomi che cominciano con \001 sono del motore (il tempo di
+                 * una Date): non si enumerano. */
+                if (exjs_arena_leggi(E->c, exjs_prop_nome(E->c, p))[0] == '\001') {
+                    p = prossima;
+                    continue;
+                }
 
                 assegna_a_nome(E, ambito, nome_var,
                                exjs_stringa_off(E->c, exjs_prop_nome(E->c, p)));

@@ -123,4 +123,30 @@ done
 seriale | grep -q "^Premi un tasto: x" || { echo "  [NO]  GET non ha preso il tasto"; tutto=0; esito=1; }
 [ $tutto = 1 ] && echo "  [OK]  le domande prima delle risposte; GET senza Invio"
 
+# --- 5. INPUT dentro F5 di gfedit (28 settembre 2026) -----------------------
+#
+# ! LA PARTE 3 LANCIAVA DA gfedit UN PROGRAMMA SENZA INPUT, e la 4 provava gli
+# INPUT da runbas lanciato dalla shell: la combinazione non l'aveva provata
+# nessuno. Il difetto, segnalato da chi lo usa: da F5 il prompt non
+# aspettava la risposta, perche' il primo piano della console restava a
+# gfedit e l'INPUT del programma leggeva subito la fine dell'input.
+echo "=== 5. F5 in gfedit: l'INPUT aspetta la risposta ==="
+cat > "$D/f5input.bas" <<'BAS'
+DIM n AS INTEGER
+INPUT "Numero"; n
+PRINT "RISPOSTA "; n * 2
+BAS
+"$DEBUGFS" -w -R "write $D/f5input.bas f5input.bas" "$OFF" > /dev/null 2>&1
+rm -f "$SER"
+timeout 300 python3 tools/qemu_drive.py "mount hd0p1 /disk@6" \
+    "gfedit /disk/f5input.bas@4" "key:f5@6" "21@3" "key:ret@3" "key:alt-x@3" \
+    "echo DOPO-F5@2" > "$D/5.log" 2>&1
+if seriale | grep -q "RISPOSTA 42"; then
+    echo "  [OK]  l'INPUT ha aspettato la risposta: 21 -> RISPOSTA 42"
+else
+    echo "  [NO]  da F5 l'INPUT non ha ricevuto la risposta (vedi $SER)"; esito=1
+fi
+seriale | grep -qx "DOPO-F5" && echo "  [OK]  gfedit si e' chiuso e la shell e' tornata" \
+    || { echo "  [NO]  dopo F5 la shell non e' tornata"; esito=1; }
+
 exit $esito

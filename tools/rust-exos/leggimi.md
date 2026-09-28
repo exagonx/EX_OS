@@ -5,10 +5,47 @@ cronologia** di questo repository — stessa regola di GCC, OpenSSL e FreeBASIC,
 scritta nel `.gitignore`. Qui dentro va ciò che è nostro: il bersaglio, gli
 involucri, e questa ricetta.
 
-> **Stato: niente di questo è ancora stato costruito.** Questo file è il piano,
-> scritto con i blocchi misurati dentro EX-OS il 4 settembre 2026. Quando il
-> passo 0 sarà fatto, questa riga sparisce e al suo posto ci va il comando che
-> lo rifà, come in `tools/freebasic-exos/leggimi.md`.
+> **Stato, 28 settembre 2026: il passo 0 è fatto e provato** (@RUST-0, tappa 2
+> di Exilla). Un programma Rust `no_std` compilato su Linux gira dentro EX-OS:
+> `argc`/`argv` arrivano, `printf` della libc risponde, l'aritmetica a 64 bit
+> di `compiler_builtins` e un iteratore di `core` danno i numeri giusti, e nel
+> binario (11 816 byte) non c'è un'istruzione SSE o MMX. Lo rifà:
+>
+>     tools/rust-exos/prova.sh
+>
+> (il programma è `tools/rust-exos/prova/`; la preparazione del nightly è in
+> testa allo script).
+>
+> **Anche il passo 1 è fatto, lo stesso giorno** (@RUST-1): l'allocatore
+> globale sta in `tools/rust-exos/prova/src/allocatore.rs` — `malloc` fino
+> agli 8 byte di allineamento che garantisce, `memalign` sopra, `realloc` solo
+> dove non tradisce l'allineamento. Provati dentro EX-OS: `Vec` + `sort`,
+> `format!`, `Box<dyn Trait>`, `BTreeMap`, un `#[repr(align(64))]` e centomila
+> `push` (cioè le `realloc`). I passi 2–4 restano il piano scritto sotto.
+
+### Passo 0: cosa è cambiato rispetto al piano, provandolo
+
+Tre cose che il piano del 4 settembre non poteva sapere, perché Rust è
+cambiato nel frattempo (nightly 1.101, 27 settembre 2026):
+
+- **i numeri del bersaglio sono numeri**: `"target-pointer-width": 32`, non
+  `"32"` — la stringa adesso è un errore;
+- **la disposizione dei dati vuole `i128:128`**: LLVM dal 2024 allinea gli
+  interi a 128 bit a 16 byte, e un `data-layout` senza quel pezzo è rifiutato
+  perché «diverso da quello di `i686-unknown-none`»;
+- **un bersaglio da file va dichiarato**: `-Z json-target-spec`.
+
+E una del collegamento: **`libprova.a` va DENTRO il gruppo** con `libc.a`.
+`main` sta nella libreria Rust, ma lo chiede `_libc_start` in `libc.a`, che
+viene dopo: fuori dal gruppo `ld` ha già scartato l'archivio quando scopre che
+serviva. Si collega con il `ld` i386-exos (quello di questa macchina:
+`tools/exilla/toolchain-questa-macchina.sh`) e con `crt0.o`, `libc.a` e
+`libgcc.a` della toolchain condivisa: la stessa strada dei programmi C.
+
+! **Rust non sta nella home**, per la regola del progetto: `rustup` lavora con
+`RUSTUP_HOME`/`CARGO_HOME` in `cross_build/<macchina>/rust-macchina`, e gli
+oggetti di cargo in `cross_build/<macchina>/costruzione-rust`. Tutt'e due sono
+esclusi da MEGA (`.megaignore`): sono di una macchina sola.
 
 ## La domanda da cui parte tutto
 

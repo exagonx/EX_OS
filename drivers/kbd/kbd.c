@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.003");
+EX_VERSIONE("kbd.drv", "0.004");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -363,6 +363,92 @@ static int ctrl_alt_canc(void)
 static void echo_char(char c)
 {
     echo(&c, 1);
+}
+
+/* =============================================================================
+ * CTRL+C ON A TEXT CONSOLE (@TASTI-SISTEMA, 28 September 2026)
+ *
+ * In cooked mode Ctrl+C is not a byte for the program: it ASKS whether to stop
+ * the program that runs in the foreground of this console, and stops it only
+ * on «s». Asked, not done: it was the request («una domanda, con si' e no»),
+ * and a Ctrl+C typed by mistake in the middle of an installation must not
+ * cost the installation.
+ *
+ * ! WHO IS «THE PROGRAM» THE SHELL SAYS, NOT THE DRIVER. The shell declares
+ * it with pty_ctl(PTY_CTL_FG) — the child it waits for, 0 at its prompt — and
+ * the kernel keeps it per console (SYS_CONSOLE_CTRLC). The console foreground
+ * (SYS_CONSOLE_SETFG) would not do: at the prompt it is the shell itself, and
+ * the question would offer to stop the shell.
+ *
+ * ! AT THE PROMPT Ctrl+C EMPTIES THE LINE, as in a window terminal (the pty),
+ * and hands the shell an empty line, so the prompt comes back on a new row.
+ *
+ * ! IN RAW MODE IT STAYS A KEY: a full-screen program (gfedit) asked for every
+ * key, Ctrl+C included, and the raw branch returns before arriving here.
+ * ============================================================================= */
+static void ring_put_line(ConsoleIn *c, const char *s, unsigned len);
+
+static unsigned g_cc_pid = 0;           /* waiting for s/n about this pid */
+static unsigned g_cc_console = 0;
+
+/* The name of a process, from procinfo, without its directory; "?" if it
+ * is not found. */
+static void nome_processo(unsigned pid, char *out, unsigned max)
+{
+    static ProcInfo v[PROCINFO_MAX_BATCH];
+    unsigned da = 0, i;
+    int n;
+
+    snprintf(out, max, "?");
+    while ((n = procinfo(v, PROCINFO_MAX_BATCH, da)) > 0) {
+        for (i = 0; i < (unsigned)n; i++)
+            if (v[i].pid == pid) {
+                /* The name without its directory: «textline», not
+                 * «/bin/textline» — the question names a program. */
+                const char *b = strrchr(v[i].name, '/');
+                snprintf(out, max, "%s", b ? b + 1 : v[i].name);
+                return;
+            }
+        da += (unsigned)n;
+    }
+}
+
+static void ctrl_c(ConsoleIn *c)
+{
+    char t[120], nome[PROCINFO_NAME_MAX];
+    int  pid = console_ctrlc(g_attiva);
+    int  n;
+
+    if (pid <= 0) {
+        echo("^C\r\n", 4);
+        c->line_len = 0;
+        c->line_col = 0;
+        ring_put_line(c, "", 0);
+        return;
+    }
+    nome_processo((unsigned)pid, nome, sizeof(nome));
+    n = snprintf(t, sizeof(t), "^C\r\n[Ctrl+C] Fermo \"%s\" (PID %d)? s/n ", nome, pid);
+    echo(t, (unsigned)n);
+    g_cc_pid = (unsigned)pid;
+    g_cc_console = g_attiva;
+}
+
+/* The answer: any key. Returns 1 when the key was the answer. */
+static int ctrl_c_risposta(char ascii)
+{
+    unsigned pid = g_cc_pid;
+
+    if (!pid) return 0;
+    g_cc_pid = 0;
+    if (g_cc_console != g_attiva) return 0;     /* the console changed: forgotten */
+    if (ascii == 's' || ascii == 'S' || ascii == 'y' || ascii == 'Y') {
+        echo("s\r\n", 3);
+        if (interrompi((int)pid) < 0) echo("[non si ferma: non e' piu' in esecuzione?]\r\n", 44);
+        else log_seriale("kbd: Ctrl+C, programma fermato");
+    } else {
+        echo("n\r\n", 3);
+    }
+    return 1;
 }
 
 /* =============================================================================
@@ -1042,6 +1128,10 @@ static void kbd_process_scancode(unsigned char sc)
     else if (g_ctrl && ascii >= 'A' && ascii <= 'Z') ascii = (char)(ascii - 'A' + 1);
 
     if (ascii == 0) return;
+
+    /* Ctrl+C: see ctrl_c(). First the answer to a question already asked. */
+    if (ctrl_c_risposta(ascii)) return;
+    if (ascii == 3) { ctrl_c(c); return; }
 
     /* Backspace: agisce sul buffer di riga, che è ancora tutto qui — è
      * proprio per questo che la riga non viene consegnata carattere per

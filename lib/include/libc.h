@@ -649,11 +649,14 @@ void    sched_yield(void);
  *
  *     void filo(void *arg) { lavoro(arg); thread_esci(0); }
  *
- * ! QUEL CHE NON E' PER FILO, ed e' dichiarato invece che scoperto: le
- * variabili `__thread` e `errno` sono per PROCESSO, non per filo (il blocco
- * TLS e' in comune). Due fili che guardano errno nello stesso momento si
- * pestano i piedi: chi ha bisogno del motivo di un errore lo legga dal valore
- * di ritorno, che nelle nostre funzioni c'e' sempre.
+ * ! `__thread` ED errno SONO PER FILO (corretto il 28 settembre 2026: qui
+ * c'era scritto il contrario, rimasto da prima del 4 settembre). Ogni filo ha
+ * il SUO blocco TLS, rifatto dall'immagine dell'eseguibile (proc_thread_crea),
+ * e errno sta in una tabella indicizzata dal thread pointer (__errno_dove).
+ * Resta vero che dentro una LIBRERIA CONDIVISA `__thread` non si puo' usare:
+ * il TLS dinamico non c'e' (kernel/include/sched.h).
+ *
+ * Sopra questi fili ci sono anche i thread POSIX: lib/include/pthread.h.
  *
  * ! IL LUCCHETTO DORME DAVVERO, dal 4 settembre 2026: chi non riesce a
  * prenderlo esce dalla coda dello scheduler invece di girare cedendo la CPU, e
@@ -971,6 +974,27 @@ int        timespec_get(struct timespec *ts, int base);
  * corta di un tick dorme davvero invece di tornare subito. */
 int        nanosleep(const struct timespec *req, struct timespec *rem);
 
+/* =============================================================================
+ * clock_gettime — i due orologi di POSIX (@PTHREAD, 28 settembre 2026)
+ *
+ * CLOCK_REALTIME e' l'ora del calendario (timespec_get); CLOCK_MONOTONIC conta
+ * dall'accensione e non torna mai indietro (uptime_ms). ! Il secondo e' quello
+ * giusto per le scadenze: un orologio che l'utente rimette cambierebbe la
+ * durata di un'attesa gia' cominciata. La risoluzione e' 10 ms per tutt'e due.
+ * Un orologio sconosciuto rende -1 con EINVAL.
+ * ============================================================================= */
+typedef int clockid_t;
+#define CLOCK_REALTIME            0
+#define CLOCK_MONOTONIC           1
+#define CLOCK_PROCESS_CPUTIME_ID  2
+#define CLOCK_THREAD_CPUTIME_ID   3
+#define CLOCK_MONOTONIC_RAW       4
+#define CLOCK_REALTIME_COARSE     5
+#define CLOCK_MONOTONIC_COARSE    6
+#define CLOCK_BOOTTIME            7
+int        clock_gettime(clockid_t orologio, struct timespec *ts);
+int        clock_getres(clockid_t orologio, struct timespec *ts);
+
 /* ! Tutte e quattro tornano 0, e non significa «root»: significa che su
  * EX-OS non esiste la domanda. Serve a OPENSSL_issetugid(), che chiede
  * «giro con privilegi non miei?» — e qui la risposta onesta e' no. */
@@ -1069,6 +1093,13 @@ int console_testo(char *buf, unsigned int max);
  * Same returns as console_testo; on a kernel older than 0.220 a negative
  * error (ENOSYS), and then console_testo is what there is. */
 int console_registro(char *buf, unsigned int max);
+
+/* Who Ctrl+C stops on text console n: the pid the shell declared with
+ * pty_ctl(0, PTY_CTL_FG, pid) on that console, 0 if nobody — the shell is at
+ * its prompt — or if that process is gone. Only root may ask; it is the
+ * keyboard driver's question (@TASTI-SISTEMA, 28 September 2026). A negative
+ * error on a kernel older than 0.221. */
+int console_ctrlc(unsigned int n);
 int console_write(unsigned int n, const void *buf, unsigned int len);
 
 /* =============================================================================

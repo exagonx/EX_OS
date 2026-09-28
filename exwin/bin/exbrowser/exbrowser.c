@@ -621,6 +621,11 @@ static unsigned char g_js_buf[PAGINA_MAX];
 
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
 static void (*g_img_libera)(EximgBitmap *);
+/* Le GIF animate (@NAV-GIF): facoltative. Una eximg.so di prima non le ha, e
+ * allora si mostra il primo fotogramma come si e' sempre fatto. */
+static int  (*g_anima_apri)(const unsigned char *, unsigned int, EximgAnim **);
+static int  (*g_anima_passo)(EximgAnim *, EximgBitmap *, unsigned int *);
+static void (*g_anima_chiudi)(EximgAnim *);
 
 /* =============================================================================
  * LA BARRA DI SCORRIMENTO
@@ -678,6 +683,14 @@ static int eximg_pronta(void)
                            exlib_simbolo(t, "eximg_carica");
             g_img_libera = (void (*)(EximgBitmap *))
                            exlib_simbolo(t, "eximg_libera");
+            g_anima_apri = (int (*)(const unsigned char *, unsigned int, EximgAnim **))
+                           exlib_simbolo(t, "eximg_anima_apri");
+            g_anima_passo = (int (*)(EximgAnim *, EximgBitmap *, unsigned int *))
+                            exlib_simbolo(t, "eximg_anima_passo");
+            g_anima_chiudi = (void (*)(EximgAnim *))exlib_simbolo(t, "eximg_anima_chiudi");
+            /* tutte e tre o nessuna */
+            if (!g_anima_apri || !g_anima_passo || !g_anima_chiudi)
+                g_anima_apri = 0;
         }
     }
 
@@ -690,8 +703,11 @@ static void imm_libera_tutte(void)
 {
     int i;
 
-    for (i = 0; i < g_imm_n; i++)
+    for (i = 0; i < g_imm_n; i++) {
         if (g_imm[i].px) { free(g_imm[i].px); g_imm[i].px = 0; }
+        if (g_imm[i].anima && g_anima_chiudi) g_anima_chiudi((EximgAnim *)g_imm[i].anima);
+        g_imm[i].anima = 0;
+    }
 
     g_imm_n  = 0;
     g_imm_px = 0;
@@ -788,6 +804,10 @@ int imm_indice(int nodo, const char *src)
     g_imm[i].ris_h  = 0;
     g_imm[i].px     = 0;
     g_imm[i].stato  = 0;
+    /* ! ANCHE QUESTO, o una voce riusata porterebbe l'animazione di
+     * un'immagine di prima, gia' chiusa (@NAV-GIF). */
+    g_imm[i].anima  = 0;
+    g_imm[i].anima_prossimo = 0;
     strncpy(g_imm[i].src, src, sizeof(g_imm[i].src) - 1);
     g_imm[i].src[sizeof(g_imm[i].src) - 1] = '\0';
     return i;
@@ -825,6 +845,31 @@ void misura(const Imm *im, unsigned int nw, unsigned int nh,
 }
 
 /* Copia nella misura voluta, col vicino piu' vicino. */
+/* Un fotogramma di un'animazione nel buffer che l'immagine ha gia' (@NAV-GIF).
+ * ! NIENTE malloc: un'animazione gira per tutto il tempo in cui la pagina
+ * resta aperta, e un buffer nuovo a ogni fotogramma sarebbe memoria persa a
+ * ogni fotogramma. ! E L'ALFA SI FONDE SUL BIANCO DELLA PAGINA: ex_pixmap non
+ * la guarda, e un pixel trasparente della tela di eximg vale 0 — nero. */
+static void ridimensiona_in(const EximgBitmap *bm, unsigned int *d,
+                            unsigned int w, unsigned int h)
+{
+    unsigned int y;
+
+    for (y = 0; y < h; y++) {
+        const unsigned int *s = bm->px + (y * bm->altezza / h) * bm->larghezza;
+        unsigned int       *r = d + y * w;
+        unsigned int        x;
+
+        for (x = 0; x < w; x++) {
+            unsigned int v = s[x * bm->larghezza / w], a = v >> 24;
+            if (a == 0xFF) { r[x] = v; continue; }
+            r[x] = ((((v >> 16) & 0xFF) * a + 255u * (255u - a)) / 255u) << 16 |
+                   ((((v >> 8) & 0xFF) * a + 255u * (255u - a)) / 255u) << 8 |
+                   (((v & 0xFF) * a + 255u * (255u - a)) / 255u);
+        }
+    }
+}
+
 static unsigned int *ridimensiona(const EximgBitmap *bm,
                                   unsigned int w, unsigned int h)
 {
@@ -1197,7 +1242,12 @@ static int percorso_di(const char *url, char *out, unsigned int max)
      * e' un percorso RELATIVO alla directory di lavoro del browser, che non e'
      * quella che si aveva in mente. */
     out[i++] = '/';
-    while (*c && i + 1 < max) out[i++] = *c++;
+    /* ! LA DOMANDA E IL FRAMMENTO NON SONO DEL FILE (28 settembre 2026): fino
+     * a oggi «file:///disk/r.html?b.x=3» apriva un file chiamato
+     * «r.html?b.x=3», che non c'e' — un modulo GET mandato a una pagina
+     * locale, o un collegamento con `?` a una guida, finivano nel nulla. La
+     * domanda resta nell'indirizzo, dove location.search la legge. */
+    while (*c && *c != '?' && *c != '#' && i + 1 < max) out[i++] = *c++;
     out[i] = '\0';
     return 1;
 }
@@ -1908,6 +1958,26 @@ static unsigned int ora_epoca(void)
     return (unsigned int)tv.tv_sec;
 }
 
+/* L'orologio di Date (exjs_orologio_metti), in millesimi dall'epoca.
+ *
+ * ! I SECONDI DALL'OROLOGIO VERO, I MILLESIMI DA uptime_ms, agganciati UNA
+ * VOLTA: sommare i millesimi di uptime ai secondi di adesso farebbe tornare
+ * indietro il tempo a ogni cambio di secondo, e `b - a` fra due Date
+ * verrebbe negativo. Cosi' e' fermo di meno di un secondo rispetto all'ora
+ * vera, ma cresce sempre. */
+static double js_orologio(void *dato)
+{
+    static double base;
+    static int    agganciato = 0;
+
+    (void)dato;
+    if (!agganciato) {
+        base = (double)ora_epoca() * 1000.0 - (double)uptime_ms();
+        agganciato = 1;
+    }
+    return base + (double)uptime_ms();
+}
+
 /* $HOME/.app/browser/biscotti.txt, accanto alle impostazioni. */
 static int bis_prepara(void)
 {
@@ -2282,6 +2352,28 @@ static int imm_prendi(int k)
 
     im->px = ridimensiona(&bm, w, h);
     g_img_libera(&bm);
+
+    /* ! UNA GIF ANIMATA SI APRE ANCHE COME ANIMAZIONE (@NAV-GIF), e il primo
+     * passo si fa subito: la tela composta prende il posto del primo
+     * fotogramma nudo, che su un'animazione a pezzi puo' essere solo un
+     * angolo. La misura resta quella decisa qui sopra; la sveglia la tiene
+     * anima_giro(). */
+    if (im->px && g_anima_apri) {
+        EximgAnim  *a = 0;
+        EximgBitmap v;
+        unsigned int ms = 100;
+
+        if (g_anima_apri(g_imm_buf, n, &a)) {
+            if (g_anima_passo(a, &v, &ms)) {
+                ridimensiona_in(&v, im->px, w, h);
+                im->anima = a;
+                im->anima_prossimo = uptime_ms() + ms;
+                ex_sveglia(g_f, 100);
+            } else {
+                g_anima_chiudi(a);
+            }
+        }
+    }
 
     /* ! ANCHE QUESTA E' «NON C'ERA POSTO», e va contata come le altre. Il tetto
      * dei pixel dice quanto vogliamo prenderne; questa riga e' la macchina che
@@ -2822,6 +2914,7 @@ static int motore_apri(void)
     g_js = exjs_apri(g_js_mem, quanto, JS_OGGETTI, JS_ARENA);
     if (!g_js) { motore_chiudi(); dico("javascript: il motore non si apre"); return 0; }
     exjs_uscita_metti(g_js, js_uscita, 0);
+    exjs_orologio_metti(g_js, js_orologio, 0);
 
     quanto    = exdom_quanto_serve(NODI_MAX, JS_TESTO, JS_ASCOLTI);
     g_dom_mem = malloc(quanto);
@@ -2980,6 +3073,19 @@ static void script_evento(int nodo, const char *tipo)
     js_grida(&err);
 }
 
+/* C'e' almeno un attributo on...= (un gestore scritto nell'HTML)? I nomi
+ * degli attributi exhtml li tiene in minuscolo. */
+static int ha_gestori_attributo(void)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_doc.attr_n; i++) {
+        const char *n = g_doc.arena + g_doc.attr[i].nome;
+        if (n[0] == 'o' && n[1] == 'n' && n[2]) return 1;
+    }
+    return 0;
+}
+
 /* Runs script node i if it should run. Returns 1 if it was handled (run, or
  * given up for good), 0 if it must be looked at again later. */
 static int un_script(int i, int dinamico)
@@ -3091,6 +3197,14 @@ static void esegui_script(void)
     if (!g_js_acceso) return;
 
     for (i = 0; i < (int)g_doc.nodi_n && i < NODI_MAX; i++) un_script(i, 0);
+
+    /* ! UNA PAGINA SENZA <script> PUO' AVERE LO STESSO DEI GESTORI: onclick=,
+     * onchange=, onload= negli attributi. Il motore si apriva solo davanti a
+     * uno <script>, e quei gestori non giravano MAI — trovato il 28 settembre
+     * 2026 con tools/prova_cursore.sh, dove un onclick= non rispondeva. Si
+     * apre anche per loro, ma solo se ce n'e' almeno uno: il costo (mezzo
+     * megabyte, due librerie) resta di chi lo usa. */
+    if (!g_js && ha_gestori_attributo()) motore_apri();
 
     /* ! LA SVEGLIA SI CHIEDE SOLO SE C'E' QUALCOSA CHE ASPETTA. Una pagina con
      * uno script che ha finito non ha motivo di svegliare il browser cinque
@@ -5398,6 +5512,10 @@ static int primo_invio(int m)
  * submit dentro lo stesso modulo: il server guarda QUALE nome e' arrivato.
  * Mandarli tutti sarebbe come premerli tutti insieme; non mandarne nessuno —
  * com'era — vuol dire che quel modulo non si puo' usare. */
+/* Dove si e' cliccato un <input type="image">, dentro il suo rettangolo:
+ * lo scrive clic_pagina, lo legge (e lo azzera) manda_modulo. */
+static int g_imm_clic_x = 0, g_imm_clic_y = 0;
+
 static void manda_modulo(int m, int attivato)
 {
     static char q[MODULO_CORPO_MAX];
@@ -5429,22 +5547,30 @@ static void manda_modulo(int m, int attivato)
 
             /* ! UN PULSANTE IMMAGINE MANDA LE COORDINATE, non il suo valore:
              * `nome.x` e `nome.y`. Certi server guardano solo se `nome.x` c'e'.
-             * Qui sono ZERO E SI DICHIARA — un `type="image"` si disegna come
-             * un pulsante, non come l'immagine cliccabile che dovrebbe essere,
-             * quindi un punto preciso non ce l'ha e inventarlo sarebbe peggio
-             * che dire zero. */
+             * Sono il punto del clic DENTRO IL RETTANGOLO del controllo
+             * (28 settembre 2026; prima erano sempre zero). Il rettangolo e'
+             * quello di un pulsante — l'immagine del `src` non si disegna
+             * ancora — quindi un server che guarda DOVE si e' cliccato nella
+             * figura riceve un punto del pulsante. Da tastiera restano zero,
+             * come nei browser veri. */
             if (genere == PULS_IMMAGINE) {
                 const char *fine[2] = { ".x", ".y" };
-                int         k;
+                int         k, v[2];
 
+                v[0] = g_imm_clic_x < 0 ? 0 : g_imm_clic_x;
+                v[1] = g_imm_clic_y < 0 ? 0 : g_imm_clic_y;
                 for (k = 0; k < 2; k++) {
+                    char num[12];
+                    int  j = 0;
                     if (!primo) q[pos++] = '&';
                     primo = 0;
                     pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
                     pos = aggiungi_codificato(q, pos, (int)sizeof(q), fine[k]);
                     q[pos++] = '=';
-                    q[pos++] = '0';
+                    snprintf(num, sizeof(num), "%d", v[k]);
+                    while (num[j] && pos < (int)sizeof(q) - 1) q[pos++] = num[j++];
                 }
+                g_imm_clic_x = g_imm_clic_y = 0;    /* il prossimo invio, se da tastiera, e' zero */
                 continue;
             }
 
@@ -5856,6 +5982,55 @@ static void spunte_all_albero(void)
     impagina();
 }
 
+/* =============================================================================
+ * LE GIF ANIMATE (@NAV-GIF, 28 settembre 2026)
+ *
+ * Un giro a ogni EXM_TEMPO: le animazioni a cui tocca passano al fotogramma
+ * dopo, e se almeno una si vede la pagina si ridisegna. Rende 1 se ce n'e'
+ * almeno una viva: finche' e' cosi' la sveglia non si spegne.
+ *
+ * ! LA RISOLUZIONE E' QUELLA DELLA SVEGLIA, 200 ms (vedi EXM_TEMPO): una GIF
+ * da 100 ms va a meta' velocita'. E' scritto, ed e' meglio di un fotogramma
+ * fermo.
+ * ! SOLO LA PAGINA PRINCIPALE: le animazioni dentro un <iframe> mostrano il
+ * primo fotogramma, come prima.
+ * ============================================================================= */
+static int anima_giro(void)
+{
+    unsigned int ora = uptime_ms();
+    int k, vive = 0, cambiate = 0;
+
+    if (!g_anima_apri || g_v != &g_principale) return 0;
+    for (k = 0; k < g_imm_n; k++) {
+        Imm *im = &g_imm[k];
+        EximgBitmap v;
+        unsigned int ms = 100;
+
+        if (!im->anima || !im->px) continue;
+        vive = 1;
+        if ((int)(ora - im->anima_prossimo) < 0) continue;
+        if (!g_anima_passo((EximgAnim *)im->anima, &v, &ms)) {
+            g_anima_chiudi((EximgAnim *)im->anima);
+            im->anima = 0;
+            continue;
+        }
+        ridimensiona_in(&v, im->px, im->w, im->h);
+        im->anima_prossimo = ora + ms;
+        cambiate = 1;
+    }
+    if (cambiate) {
+        int i, visibile = 0;
+
+        for (i = 0; i < g_pez_n && !visibile; i++) {
+            int y = g_pez[i].y - g_scorri;
+            if (!EST_E_IMM(g_pez[i].rif) || !g_imm[EST_CHI(g_pez[i].rif)].anima) continue;
+            if (y + g_pez[i].h >= area_y() && y <= area_y() + area_h()) visibile = 1;
+        }
+        if (visibile) disegna();
+    }
+    return vive;
+}
+
 static void clic_pagina(int x, int y)
 {
     int k;
@@ -5920,6 +6095,17 @@ static void clic_pagina(int x, int y)
              * clic_al_documento. */
             if (genere == PULS_AZZERA) { azzera_modulo(c->modulo); return; }
             if (genere == PULS_NULLA)  { disegna(); return; }
+            /* Il punto del clic dentro il controllo, per `nome.x` e `nome.y`
+             * di un type="image" (vedi manda_modulo). */
+            if (genere == PULS_IMMAGINE) {
+                int i2;
+                for (i2 = 0; i2 < g_pez_n; i2++)
+                    if (EST_E_CTRL(g_pez[i2].rif) && EST_CHI(g_pez[i2].rif) == k) {
+                        g_imm_clic_x = x - g_pez[i2].x;
+                        g_imm_clic_y = y - (g_pez[i2].y - g_scorri);
+                        break;
+                    }
+            }
             manda_modulo(c->modulo, k);
             return;
         }
@@ -5957,6 +6143,13 @@ static void clic_pagina(int x, int y)
              * ========================================================= */
             ex_fuoco_via(g_f);
             g_ctrl_fuoco = k;
+            /* ! IL CURSORE VA DOVE SI E' CLICCATO (@NAV-CURSORE), non resta
+             * dov'era e non va in fondo: e' cosi' che si corregge una
+             * lettera a meta' parola senza dieci frecce. */
+            if (c->tipo == CTRL_TESTO || c->tipo == CTRL_AREA) {
+                c->cur = (short)est_cursore_da_clic(k, x, y);
+                c->sel = -1;
+            }
             break;
         }
         disegna();
@@ -6502,6 +6695,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * engine, and the wake-up goes off only when NOBODY waits. */
         cornici = cornici_pompa();
         cornici_carica();
+        /* Le GIF animate tengono accesa la sveglia finche' ce n'e' una viva. */
+        if (anima_giro()) aspetta = 1;
         if (!aspetta && !cornici && !cornici_da_caricare()) ex_sveglia(g_f, 0);
 
         if (g_js) {

@@ -84,6 +84,158 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Pennello, the paint program
+
+**tested in QEMU** — `/exwin/bin/pennello [file]`, in the Start menu: pencil,
+brush, eraser, spray, fill, colour picker, line, rectangle and ellipse (empty
+or full), four widths, zoom from 1x to 8x, mirror, rotate, invert colours,
+resize, **undo and redo**. It **opens** BMP, PNG, JPG, GIF and ICO and
+**saves** PNG and BMP — a JPG opened and saved says so first and offers the
+same name as `.png`. It writes a copy next to the file first and then
+renames it: a failed save leaves the old file in place.
+
+Undo does not photograph the picture at every stroke: each operation leaves
+only the **rectangle** it touched in a fixed pool, and undoing **swaps** it
+with the picture — so the same record is also the redo. The PNG and BMP
+encoders are new (`lib/eximg/scrivi.c`), and eximg now reads BMP in all its
+forms (`lib/eximg/bmp.c`). Tested on the host against ImageMagick
+(`tools/prova_scrivi.sh`) and in QEMU by drawing with the mouse
+(`tools/prova_pennello.sh`). The icon is provisional.
+
+### ExJs: implicit `toString` and `join` without a limit
+
+**tested on the host** — with the ExJs engine (QuickJS stays the default)
+`String(object)`, `'x' + object` and `join` call the object's `toString`:
+`String(location)` is the address. `join` no longer stops at 511 characters,
+and the tests written first found three more bugs that were fixed (nested
+arrays, long separators, an array containing itself). ExJs still has no
+`Date` and no `valueOf`: that is written in the task list (`make prova-exjs`,
+`make prova-exdom`).
+
+### Forms to local pages, and the image button
+
+**tested in QEMU** — a `file:` address with a query (`page.html?x=1`) opens
+the right file instead of looking for one with the question mark in its name:
+a GET form sent to a local page now arrives, and the page reads
+`location.search`. And `<input type="image">` sends the clicked point instead
+of zero (`tools/prova_modulo_immagine.sh`).
+
+### `onclick=` runs even without a `<script>`
+
+**tested in QEMU** — a bug fix: the JavaScript engine was opened only for a
+`<script>`, so a page with nothing but inline handlers (`onclick=`,
+`onchange=`, `onload=`) ran none of them (`tools/prova_onclick.sh`).
+
+### Animated GIFs move
+
+**tested in QEMU** — in EXBrowser and in the Immagini viewer. eximg composes
+the frames — position, transparency, disposal, the loop starting again — and
+says how long each one stays; the clock belongs to whoever shows the picture.
+Tested against ImageMagick frame by frame (`tools/prova_gif.sh`) and
+photographed while it changes (`tools/prova_gif_anima.sh`). ExWin's wake-up
+runs at most five times a second: a very fast GIF runs slower.
+
+### A click in a page's text box puts the caret there
+
+**tested in QEMU** — a click inside a page's text box or text area used to
+give it the focus and leave the caret at the end; now it goes between the two
+letters nearest to the click (`tools/prova_cursore.sh`).
+
+### EXBrowser understands em, rem and %
+
+**tested in QEMU** — `font-size: 1.5em`, `margin: 2em`, `padding: 0.5rem`,
+`font-size: 120%`, and the keywords `small`, `large`, `larger`: until now
+lengths were pixels only and everything else was dropped. A relative length
+is resolved at the end of the cascade — font size against the parent, the
+rest against the element's own size — and the test measures it in pixels on
+screen (`tools/prova_bordi.sh`, `make prova-excss`). Percent margins are
+still taken on the window width.
+
+### EXBrowser draws CSS borders, and padding
+
+**tested in QEMU** — `border`, `border-top` and the other sides,
+`border-width`, `border-style`, `border-color`, `padding` and the `margin`
+shorthand with one to four values: blocks are drawn with their box and the
+content is inset. Before, borders existed only for tables with `border=`, and
+no CSS shorthand was read at all — not even `margin: 0 auto`. Borders of
+inline elements and CSS borders of tables are still missing
+(`tools/prova_bordi.sh`, `make prova-excss`).
+
+### Immagini, the picture viewer, and PNGs of every kind
+
+**tested in QEMU** — `/exwin/bin/immagini [file]`, in the Start menu: fits
+large pictures to the window, "1" for 100%, + and - from 10% to 800%, and
+PgDn / PgUp to move to the other pictures of the directory. From the file
+manager a double click gets there: the rule is in `/exwin/lib/tipi.txt`,
+**"these extensions open with that program"**, a file of the system and not
+of the program. Along the way eximg's PNG reader learned **every bit depth
+(1, 2, 4, 16) and Adam7 interlacing**: it used to read 8 bits only, and a
+one-colour PNG did not open. Tested against ImageMagick on 92 files
+(`tools/prova_png.sh`) and in QEMU (`tools/prova_immagini.sh`).
+
+### Ctrl+C on the text console asks, then stops
+
+**tested in QEMU** — in line mode Ctrl+C asks `[Ctrl+C] Fermo "textline"
+(PID 20)? s/n` and stops the program only on "s". At the prompt it empties
+the line and the prompt comes back; a program in raw mode (gfedit) gets it as
+a key. Who to stop was already said by the shell: the kernel (0.221) now keeps
+it per console, and the keyboard driver reads it with `SYS_CONSOLE_CTRLC`
+(216). Together with Ctrl+Alt+Del this completes the "keys that stop things"
+task (`tools/prova_ctrlc.sh`, `tools/prova_tasti_sistema.sh`).
+
+### Searching Wikipedia, and @media rules
+
+**tested in QEMU, on the real network** — "Search does nothing" was not the
+search: it was the TCP table of `ip.drv`, full after one Wikipedia page, with
+dead slots that never came free. Now they do. EXBrowser evaluates `@media`,
+`@supports` and `@layer` rules instead of skipping them (578 out of 964 in
+Wikipedia's sheet), and with them `visibility`, `:checked` and `<label>`. The
+page is still laid out in one column: `width`, `float`, `padding` and `flex`
+are missing.
+
+### Calctor, the calculator
+
+**tested in QEMU** — `/exwin/bin/calctor`: normal, scientific and programmer
+(32 bits in base 2, 8, 10 and 16), a four-line display and the tape in a
+window of its own, which can be saved as text. What you type is an
+expression, with precedence: `2 + 3 * 4` gives 14. Along the way the toolkit
+got side menus, `ex_abilita()` and `ex_dlg_testo()`, and the limit of
+controls per program went from 64 — which made `ex_crea` fail silently — to
+192 (`tools/prova_calctor.sh`).
+
+### The desktop: the profile folder, the drives, the log
+
+**tested in QEMU** — on the left the icons of `$HOME/desktop` (a shortcut is
+a text `.lnk`), on the right every mounted drive: pm notices by itself, even
+a `mount` typed by hand. The wallpaper can be placed (corner, centre,
+stretch, tile). The **System log** is no longer one screen but a 32 KB ring
+in the kernel, with the time and the PID on every line
+(`tools/prova_desktop.sh`, `tools/prova_registro.sh`).
+
+### The editor finds and replaces
+
+**tested in QEMU** — Find (Ctrl+F), F3 and Shift+F3 for next and previous,
+Replace one or all. In the toolkit **Shift+Tab** now really goes back, and
+the focused button shows it (`tools/prova_edit_cerca.sh`).
+
+### Archivi opens tar files, and the file manager renames
+
+**tested in QEMU** — Archivi opens and creates `.tar` and `.tar.gz` with the
+same code as `/bin/tar` (`lib/extar`, compiled into both). In the file
+manager, **Rename** with F2 (`tools/prova_tar.sh`, `tools/prova_filemgr.sh`).
+
+### `runbas`: QBASIC programs run on their own
+
+**tested in QEMU** — `runbas myprog.bas` runs a program with the `gfbasic/`
+interpreter, and gfedit launches it with **F5**. The maths functions the libc
+lacks (SIN, EXP, ^...) are the x87's (`tools/prova_runbas.sh`).
+
+### Program paths in a file
+
+**to be tested on an installed system** — `/boot/percorsi.txt`: the shell
+appends to the PATH the directories it finds there, and netupdate writes its
+own when it installs a package in a new place.
+
 ### HTTPS: from 23 to 28 sites out of 30 — AES-GCM, P-256 and TLS 1.2
 
 **tested in QEMU, on the real network** — of the seven sites out of thirty
@@ -3136,7 +3288,7 @@ to read the names from.
 | 249 | fb_map      | `void**`      | —          | —   | maps the framebuffer: the **narrow** capability that replaced `mmio_map` for the window server |
 | 250 | interrompi  | pid           | signal     | —   | Ctrl+C that bites: the signal reaches the foreground group |
 | 251 | pty_apri    | `int fd[2]`   | —          | —   | a master/slave pair |
-| 252 | pty_ctl     | fd            | command    | arg | window size, raw mode, foreground group |
+| 252 | pty_ctl     | fd            | command    | arg | window size, raw mode, foreground group (on the console: who Ctrl+C stops) |
 | 253 | statperm    | `const char*` | `StatPerm*`| —   | mode, uid and gid of a path **without opening it** |
 | 254 | su          | `const char*` | password   | —   | «become root IF you know the password», and the kernel decides |
 
@@ -3283,6 +3435,15 @@ mechanisms prevent it:
    over IPC — `gfedit`'s raw mode — does not go through `sys_read`, so it
    checks `ConsoleInfo.fg` itself and refuses to start in the background,
    explaining why.
+
+
+**Ctrl+C** (since 28 September 2026, kernel 0.221). On the text console, in
+line mode, it asks `[Ctrl+C] Fermo "textline" (PID 20)? s/n` and stops the
+program only on "s"; at the prompt it empties the line. Who to stop is said
+by the shell with `pty_ctl(0, PTY_CTL_FG, pid)` — the child it waits for, 0 at
+the prompt — and not by `SYS_CONSOLE_SETFG`, because at the prompt the
+foreground is the shell itself. In a window terminal Ctrl+C stops at once,
+without asking: there the pty's line discipline in the kernel handles it.
 
 ---
 
@@ -3458,7 +3619,10 @@ exwin                       brings up graphics on console 5
 /exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
 /exwin/bin/exbrowser [URL]  EXBrowser, the browser (an absolute path becomes a file:)
 /exwin/bin/exide [DIR]      the visual development environment
-/exwin/bin/archivi [ZIP]    ZIP archives: open, extract, create
+/exwin/bin/archivi [ARCH]   ZIP, TAR and TAR.GZ archives: open, extract, create
+/exwin/bin/calctor          the calculator: normal, scientific, programmer
+/exwin/bin/pennello [FILE]  the paint program: opens BMP PNG JPG GIF ICO, saves PNG and BMP
+/exwin/bin/immagini [FILE]  the picture viewer, with zoom and the directory
 /exwin/bin/fontprova        the TrueType font test, made to be looked at
 /exwin/bin/orologio         date and time in the corner of the bar
 ```

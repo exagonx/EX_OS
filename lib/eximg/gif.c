@@ -25,10 +25,12 @@
  * un'immagine giusta all'inizio e spazzatura da meta' in poi — che e' il modo
  * peggiore di sbagliare, perche' sembra un problema di dati e non di codice.
  *
- * ! UN SOLO FOTOGRAMMA, DICHIARATO. Le GIF animate sono comunissime sul web e
- * qui si mostra il PRIMO: mostrarne uno fermo e' cio' che fa un browser mentre
- * carica, ed e' molto meglio di un rettangolo vuoto. Animarla vorrebbe dire un
- * orologio dentro la libreria delle immagini, che e' un'altra cosa.
+ * ! eximg_carica() DA' IL PRIMO FOTOGRAMMA, e resta cosi'. Le animazioni
+ * (@NAV-GIF, 28 settembre 2026) passano da eximg_anima_*, in fondo al file:
+ * un iteratore che compone un fotogramma alla volta. L'OROLOGIO NON STA QUI —
+ * era l'obiezione scritta in questo punto fino a oggi, ed era giusta: la
+ * libreria dice «il prossimo, e quanto deve restare a schermo», e quando
+ * chiederlo lo decide chi ha una sveglia (il navigatore, il visualizzatore).
  *
  * ! E LA TRASPARENZA C'E', perche' senza non si vede il difetto: le GIF del web
  * sono quasi tutte icone su fondo trasparente, e senza il canale alfa
@@ -36,6 +38,7 @@
  * scelto come «invisibile» — spesso nero.
  * ============================================================================= */
 
+#include <stdlib.h>
 #include "eximg_interno.h"
 
 /* Il dizionario: 4096 voci, ognuna «il codice prima» piu' «un byte». La
@@ -91,6 +94,100 @@ static int leggi_codice(Nastro *s, unsigned int larghezza)
         s->bit    -= larghezza;
         return (int)c;
     }
+}
+
+/* -----------------------------------------------------------------------------
+ * LZW: dai codici agli indici della tavolozza
+ *
+ * `pos` punta al byte della «misura minima» dei codici, subito dopo il
+ * descrittore (e la tavolozza locale). Scrive al piu' `totale` indici e dice
+ * quanti in *scritti. Rende 0 solo se la misura minima e' impossibile: un
+ * flusso che finisce prima si tiene per quel che ha dato, come fa ogni
+ * lettore di GIF — il resto dell'immagine resta del colore 0.
+ * --------------------------------------------------------------------------- */
+static int gif_lzw(const unsigned char *d, unsigned int n, unsigned int pos,
+                   unsigned char *indici, unsigned int totale, unsigned int *scritti_out)
+{
+    static unsigned short prima[GIF_CODICI];
+    static unsigned char  ultimo[GIF_CODICI];
+    static unsigned char  pila[GIF_PILA];
+    unsigned int  min, pulisci, fine, larghezza, prossimo, i;
+    unsigned int  scritti = 0;
+    int           precedente = -1, primo = 0;
+    Nastro        s;
+
+    if (pos >= n) return 0;
+    min = d[pos++];
+    if (min < 2 || min > 11) return 0;
+
+    pulisci   = 1u << min;
+    fine      = pulisci + 1u;
+    prossimo  = fine + 1u;
+    larghezza = min + 1u;
+
+    for (i = 0; i < pulisci; i++) { prima[i] = 0xFFFF; ultimo[i] = (unsigned char)i; }
+
+    s.d = d; s.n = n; s.pos = pos; s.resta = 0;
+    s.accum = 0; s.bit = 0; s.finito = 0;
+
+    for (;;) {
+        int c = leggi_codice(&s, larghezza);
+        unsigned int p_n = 0;
+        int cur;
+
+        if (c < 0) break;
+        if ((unsigned int)c == fine) break;
+
+        if ((unsigned int)c == pulisci) {
+            /* ! IL CODICE DI PULIZIA RIPORTA TUTTO ALL'INIZIO, larghezza
+             * compresa. Dimenticare la larghezza e' il difetto classico:
+             * i primi codici dopo la pulizia si leggono con quella
+             * vecchia e l'immagine diventa spazzatura da li' in poi. */
+            prossimo   = fine + 1u;
+            larghezza  = min + 1u;
+            precedente = -1;
+            continue;
+        }
+
+        cur = c;
+
+        /* ! IL CASO «CODICE NON ANCORA NEL DIZIONARIO» ESISTE DAVVERO,
+         * e non e' un file guasto: e' la sequenza KwKwK, che il
+         * compressore emette prima che il decompressore abbia potuto
+         * costruire quella voce. Si ricostruisce dal precedente piu' il
+         * proprio primo carattere. */
+        if ((unsigned int)cur >= prossimo) {
+            if (precedente < 0) break;
+            pila[p_n++] = (unsigned char)primo;
+            cur = precedente;
+        }
+
+        while (cur >= 0 && (unsigned int)cur >= pulisci) {
+            if (p_n >= GIF_PILA) { p_n = 0; break; }
+            pila[p_n++] = ultimo[cur];
+            cur = (prima[cur] == 0xFFFF) ? -1 : (int)prima[cur];
+        }
+        if (cur < 0) break;
+        if (p_n >= GIF_PILA) break;
+        pila[p_n++] = ultimo[cur];
+        primo = ultimo[cur];
+
+        while (p_n > 0 && scritti < totale)
+            indici[scritti++] = pila[--p_n];
+
+        if (precedente >= 0 && prossimo < GIF_CODICI) {
+            prima[prossimo]  = (unsigned short)precedente;
+            ultimo[prossimo] = (unsigned char)primo;
+            prossimo++;
+            if (prossimo == (1u << larghezza) && larghezza < 12)
+                larghezza++;
+        }
+        precedente = c;
+
+        if (scritti >= totale) break;
+    }
+    *scritti_out = scritti;
+    return 1;
 }
 
 /* -----------------------------------------------------------------------------
@@ -188,87 +285,12 @@ int eximg_gif(const unsigned char *d, unsigned int n, EximgBitmap *bm)
 
         /* --- LZW ---------------------------------------------------------- */
         {
-            unsigned int  min = d[pos++];
-            unsigned int  pulisci, fine, larghezza, prossimo;
-            unsigned short prima[GIF_CODICI];
-            unsigned char  ultimo[GIF_CODICI];
-            unsigned char  pila[GIF_PILA];
             unsigned char *indici;
             unsigned int   scritti = 0, totale = iw * ih;
-            int            precedente = -1, primo = 0;
-            Nastro         s;
-
-            if (min < 2 || min > 11) return 0;
 
             indici = (unsigned char *)eximg_memoria(totale);
             if (!indici) return 0;
-
-            pulisci   = 1u << min;
-            fine      = pulisci + 1u;
-            prossimo  = fine + 1u;
-            larghezza = min + 1u;
-
-            for (i = 0; i < pulisci; i++) { prima[i] = 0xFFFF; ultimo[i] = (unsigned char)i; }
-
-            s.d = d; s.n = n; s.pos = pos; s.resta = 0;
-            s.accum = 0; s.bit = 0; s.finito = 0;
-
-            for (;;) {
-                int c = leggi_codice(&s, larghezza);
-                unsigned int p_n = 0;
-                int cur;
-
-                if (c < 0) break;
-                if ((unsigned int)c == fine) break;
-
-                if ((unsigned int)c == pulisci) {
-                    /* ! IL CODICE DI PULIZIA RIPORTA TUTTO ALL'INIZIO, larghezza
-                     * compresa. Dimenticare la larghezza e' il difetto classico:
-                     * i primi codici dopo la pulizia si leggono con quella
-                     * vecchia e l'immagine diventa spazzatura da li' in poi. */
-                    prossimo   = fine + 1u;
-                    larghezza  = min + 1u;
-                    precedente = -1;
-                    continue;
-                }
-
-                cur = c;
-
-                /* ! IL CASO «CODICE NON ANCORA NEL DIZIONARIO» ESISTE DAVVERO,
-                 * e non e' un file guasto: e' la sequenza KwKwK, che il
-                 * compressore emette prima che il decompressore abbia potuto
-                 * costruire quella voce. Si ricostruisce dal precedente piu' il
-                 * proprio primo carattere. */
-                if ((unsigned int)cur >= prossimo) {
-                    if (precedente < 0) break;
-                    pila[p_n++] = (unsigned char)primo;
-                    cur = precedente;
-                }
-
-                while (cur >= 0 && (unsigned int)cur >= pulisci) {
-                    if (p_n >= GIF_PILA) { p_n = 0; break; }
-                    pila[p_n++] = ultimo[cur];
-                    cur = (prima[cur] == 0xFFFF) ? -1 : (int)prima[cur];
-                }
-                if (cur < 0) break;
-                if (p_n >= GIF_PILA) break;
-                pila[p_n++] = ultimo[cur];
-                primo = ultimo[cur];
-
-                while (p_n > 0 && scritti < totale)
-                    indici[scritti++] = pila[--p_n];
-
-                if (precedente >= 0 && prossimo < GIF_CODICI) {
-                    prima[prossimo]  = (unsigned short)precedente;
-                    ultimo[prossimo] = (unsigned char)primo;
-                    prossimo++;
-                    if (prossimo == (1u << larghezza) && larghezza < 12)
-                        larghezza++;
-                }
-                precedente = c;
-
-                if (scritti >= totale) break;
-            }
+            if (!gif_lzw(d, n, pos, indici, totale, &scritti)) return 0;
 
             /* --- dagli indici ai pixel ------------------------------------ */
             bm->px = (unsigned int *)eximg_memoria(totale * 4u);
@@ -315,6 +337,229 @@ int eximg_gif(const unsigned char *d, unsigned int n, EximgBitmap *bm)
 
             bm->larghezza = iw;
             bm->altezza   = ih;
+            return 1;
+        }
+    }
+}
+
+/* =============================================================================
+ * LE ANIMAZIONI (@NAV-GIF, 28 settembre 2026)
+ *
+ * Un iteratore: eximg_anima_apri() prende il file (e ne tiene una copia),
+ * eximg_anima_passo() compone il fotogramma dopo sulla TELA — lo schermo
+ * logico della GIF — e dice quanti millisecondi deve restare, a fine file
+ * ricomincia. La tela e' della libreria: chi chiama la guarda, la scala, e non
+ * la libera.
+ *
+ * ! LO SMALTIMENTO E' META' DELL'ANIMAZIONE. Ogni fotogramma dice cosa fare
+ * del suo rettangolo PRIMA del prossimo: lasciarlo (0, 1), cancellarlo al
+ * trasparente (2), rimettere com'era prima di lui (3). Chi lo ignora vede le
+ * animazioni fatte di pezzi piccoli sporcarsi a ogni giro — la palla che
+ * rimbalza lascia la scia.
+ *
+ * ! LA MEMORIA SI PRENDE UNA VOLTA, all'apertura: tela, copia per lo
+ * smaltimento 3 e indici sono della misura dello schermo logico. Un passo non
+ * alloca niente, e un'animazione che gira per ore non consuma memoria (su
+ * EX-OS free() non restituisce niente al sistema: vedi @DIF-GROSSI).
+ * ============================================================================= */
+#define ANIMA_PIXEL_MAX (2048u * 2048u)
+
+struct EximgAnim {
+    unsigned char *d;               /* la copia del file */
+    unsigned int   n;
+    unsigned int   w, h;            /* lo schermo logico */
+    unsigned int   inizio;          /* il primo blocco dopo la tavolozza globale */
+    unsigned int   pos;             /* dove si legge il prossimo */
+    unsigned char  tav_glob[256 * 3];
+    unsigned int   n_glob;
+    unsigned int  *tela, *salva;
+    unsigned char *indici;
+    int            disp;            /* lo smaltimento del fotogramma a schermo */
+    unsigned int   rx, ry, rw, rh;  /* e il suo rettangolo */
+    unsigned int   visti;           /* fotogrammi composti in questo giro */
+};
+
+/* Salta i sotto-blocchi da `pos`, terminatore compreso. 0 se il file finisce. */
+static int salta_blocchi(const unsigned char *d, unsigned int n, unsigned int *pos)
+{
+    while (*pos < n && d[*pos] != 0) {
+        *pos += 1u + d[*pos];
+        if (*pos > n) return 0;
+    }
+    if (*pos >= n) return 0;
+    (*pos)++;
+    return 1;
+}
+
+/* Quanti descrittori d'immagine ci sono, fermandosi a due: basta sapere se e'
+ * un'animazione. */
+static unsigned int conta_fotogrammi(const unsigned char *d, unsigned int n, unsigned int pos)
+{
+    unsigned int quanti = 0;
+
+    while (pos < n && quanti < 2) {
+        if (d[pos] == 0x3B) break;
+        if (d[pos] == 0x21) {
+            pos += 2;
+            if (!salta_blocchi(d, n, &pos)) break;
+            continue;
+        }
+        if (d[pos] != 0x2C || pos + 10 > n) break;
+        {
+            unsigned char flag = d[pos + 9];
+            pos += 10;
+            if (flag & 0x80) pos += 3u * (2u << (flag & 7));
+            pos++;                          /* la misura minima dei codici */
+            if (pos > n || !salta_blocchi(d, n, &pos)) break;
+        }
+        quanti++;
+    }
+    return quanti;
+}
+
+void eximg_anima_chiudi(EximgAnim *a)
+{
+    if (!a) return;
+    free(a->d); free(a->tela); free(a->salva); free(a->indici);
+    free(a);
+}
+
+int eximg_anima_apri(const unsigned char *d, unsigned int n, EximgAnim **out)
+{
+    EximgAnim *a;
+    unsigned int pos = 13, i, w, h;
+
+    if (!out) return 0;
+    *out = 0;
+    if (!d || n < 13 || d[0] != 'G' || d[1] != 'I' || d[2] != 'F' || d[3] != '8') return 0;
+    w = le16(d + 6);
+    h = le16(d + 8);
+    if (w == 0 || h == 0 || w > EXIMG_LATO_MAX || h > EXIMG_LATO_MAX || w * h > ANIMA_PIXEL_MAX) return 0;
+    if (d[10] & 0x80) pos += 3u * (2u << (d[10] & 7));
+    if (pos > n || conta_fotogrammi(d, n, pos) < 2) return 0;   /* ferma: eximg_carica basta */
+
+    a = (EximgAnim *)calloc(1, sizeof(*a));
+    if (!a) return 0;
+    a->d = (unsigned char *)malloc(n);
+    a->tela = (unsigned int *)malloc(w * h * 4u);
+    a->salva = (unsigned int *)malloc(w * h * 4u);
+    a->indici = (unsigned char *)malloc(w * h);
+    if (!a->d || !a->tela || !a->salva || !a->indici) { eximg_anima_chiudi(a); return 0; }
+    for (i = 0; i < n; i++) a->d[i] = d[i];
+    a->n = n; a->w = w; a->h = h;
+    if (d[10] & 0x80) {
+        a->n_glob = 2u << (d[10] & 7);
+        for (i = 0; i < a->n_glob * 3u; i++) a->tav_glob[i] = d[13 + i];
+    }
+    a->inizio = a->pos = pos;
+    for (i = 0; i < w * h; i++) a->tela[i] = 0;   /* trasparente */
+    a->disp = 0;
+    *out = a;
+    return 1;
+}
+
+int eximg_anima_passo(EximgAnim *a, EximgBitmap *vista, unsigned int *ms)
+{
+    const unsigned char *d;
+    unsigned int n, giri = 0;
+    int trasparente = -1, disp = 0;
+    unsigned int ritardo = 0;
+
+    if (!a || !vista) return 0;
+    d = a->d; n = a->n;
+
+    for (;;) {
+        unsigned int pos = a->pos;
+
+        /* a fine file si ricomincia; due giri a vuoto vogliono dire un file
+         * senza fotogrammi leggibili, e ci si ferma */
+        if (pos >= n || d[pos] == 0x3B) {
+            if (a->visti == 0 || ++giri > 1) return 0;
+            a->pos = a->inizio;
+            a->visti = 0;
+            continue;
+        }
+        if (d[pos] == 0x21) {
+            if (pos + 2 > n) { a->pos = n; continue; }
+            if (d[pos + 1] == 0xF9 && pos + 7 <= n && d[pos + 2] >= 4) {
+                disp = (d[pos + 3] >> 2) & 7;
+                ritardo = le16(d + pos + 4);
+                trasparente = (d[pos + 3] & 0x01) ? (int)d[pos + 6] : -1;
+            }
+            pos += 2;
+            if (!salta_blocchi(d, n, &pos)) pos = n;
+            a->pos = pos;
+            continue;
+        }
+        if (d[pos] != 0x2C || pos + 10 > n) { a->pos = n; continue; }
+
+        {
+            unsigned int ix = le16(d + pos + 1), iy = le16(d + pos + 3);
+            unsigned int iw = le16(d + pos + 5), ih = le16(d + pos + 7);
+            unsigned char flag = d[pos + 9];
+            const unsigned char *tav = a->tav_glob;
+            unsigned int n_tav = a->n_glob, scritti = 0, x, y, i;
+
+            pos += 10;
+            if (flag & 0x80) {
+                n_tav = 2u << (flag & 7);
+                if (pos + n_tav * 3u > n) { a->pos = n; continue; }
+                tav = d + pos;
+                pos += n_tav * 3u;
+            }
+
+            /* Lo smaltimento del fotogramma di PRIMA, adesso. */
+            if (a->visti > 0) {
+                if (a->disp == 2) {
+                    for (y = a->ry; y < a->ry + a->rh && y < a->h; y++)
+                        for (x = a->rx; x < a->rx + a->rw && x < a->w; x++) a->tela[y * a->w + x] = 0;
+                } else if (a->disp == 3) {
+                    for (i = 0; i < a->w * a->h; i++) a->tela[i] = a->salva[i];
+                }
+            } else {
+                for (i = 0; i < a->w * a->h; i++) a->tela[i] = 0;
+            }
+            if (disp == 3) for (i = 0; i < a->w * a->h; i++) a->salva[i] = a->tela[i];
+
+            /* ! UN FOTOGRAMMA PIU' GRANDE DELLA TELA SI TAGLIA: gli indici
+             * sono della misura della tela, e i pixel fuori non si vedrebbero
+             * comunque. */
+            if (iw && ih && iw * ih <= a->w * a->h && n_tav &&
+                gif_lzw(d, n, pos, a->indici, iw * ih, &scritti)) {
+                int intreccia = (flag & 0x40) != 0;
+                static const unsigned int inizio[4] = { 0, 4, 2, 1 };
+                static const unsigned int passo[4]  = { 8, 8, 4, 2 };
+                unsigned int riga_src = 0, p;
+
+                for (p = 0; p < (intreccia ? 4u : 1u); p++) {
+                    for (y = intreccia ? inizio[p] : 0; y < ih; y += intreccia ? passo[p] : 1, riga_src++) {
+                        for (x = 0; x < iw; x++) {
+                            unsigned int k = riga_src * iw + x, idx, tx = ix + x, ty = iy + y;
+                            if (k >= scritti) continue;
+                            idx = a->indici[k];
+                            if ((int)idx == trasparente || idx >= n_tav) continue;
+                            if (tx >= a->w || ty >= a->h) continue;
+                            a->tela[ty * a->w + tx] = 0xFF000000u | ((unsigned int)tav[idx * 3] << 16) |
+                                                     ((unsigned int)tav[idx * 3 + 1] << 8) | tav[idx * 3 + 2];
+                        }
+                    }
+                }
+            }
+
+            pos++;                                  /* la misura minima */
+            if (!salta_blocchi(d, n, &pos)) pos = n;
+            a->pos = pos;
+            a->disp = disp;
+            a->rx = ix; a->ry = iy; a->rw = iw; a->rh = ih;
+            a->visti++;
+
+            vista->larghezza = a->w;
+            vista->altezza   = a->h;
+            vista->px        = a->tela;
+            /* ! UN RITARDO DI 0 O 1 CENTESIMO NON E' «IL PIU' VELOCE POSSIBILE»:
+             * i browser lo leggono come 100 ms da vent'anni, e le GIF del web
+             * sono fatte contando su questo. */
+            if (ms) *ms = ritardo <= 1 ? 100u : ritardo * 10u;
             return 1;
         }
     }

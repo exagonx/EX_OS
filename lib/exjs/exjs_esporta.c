@@ -87,6 +87,8 @@ static const char *const g_nomi[] = {
 
     "exjs_memoria",
 
+    "exjs_orologio_metti",
+
     "__lib_avvio"
 };
 
@@ -132,6 +134,11 @@ static void *const g_indirizzi[] = {
     (void *)exjs_lavori_in_attesa,
 
     (void *)exjs_memoria,
+
+    /* ! IN FONDO, e non vicino a exjs_uscita_metti: un nome nuovo in mezzo
+     * non rompe niente (lo stub cerca per nome), ma in fondo si vede quando
+     * e' arrivato. */
+    (void *)exjs_orologio_metti,
 
     (void *)__libc_ponti_avvia
 };

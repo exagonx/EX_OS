@@ -50,6 +50,34 @@ typedef struct {
  * alloca oggi. */
 int  eximg_carica(const unsigned char *dati, unsigned int n, EximgBitmap *bm);
 
+/* =============================================================================
+ * LE ANIMAZIONI GIF (@NAV-GIF, 28 settembre 2026)
+ *
+ * eximg_carica() da' sempre il primo fotogramma. Chi vuole l'animazione:
+ *
+ *     EximgAnim *a;
+ *     if (eximg_anima_apri(dati, n, &a)) {           // 1 solo se ne ha due o piu'
+ *         EximgBitmap v; unsigned int ms;
+ *         while (eximg_anima_passo(a, &v, &ms)) {    // v punta alla tela
+ *             ...mostra v, aspetta ms...
+ *         }
+ *         eximg_anima_chiudi(a);
+ *     }
+ *
+ * ! L'OROLOGIO E' DI CHI CHIAMA: la libreria compone e dice quanto aspettare,
+ * non aspetta. `v.px` e' della libreria (non si passa a eximg_libera) e vale
+ * fino al passo dopo. I dati si copiano: il buffer di chi chiama si puo'
+ * riusare subito. Pixel ARGB, alfa 0 dove l'animazione e' trasparente.
+ *
+ * ! SU UNA eximg.so PIU' VECCHIA questi nomi non ci sono: chi li usa li cerca
+ * con exlib_simbolo e, se mancano, mostra il primo fotogramma come prima.
+ * ============================================================================= */
+typedef struct EximgAnim EximgAnim;
+
+int  eximg_anima_apri(const unsigned char *dati, unsigned int n, EximgAnim **a);
+int  eximg_anima_passo(EximgAnim *a, EximgBitmap *vista, unsigned int *ms);
+void eximg_anima_chiudi(EximgAnim *a);
+
 /* Restituisce il bitmap e lo azzera. Su un bitmap gia' azzerato non fa
  * niente: chiamarla due volte e' innocuo. */
 void eximg_libera(EximgBitmap *bm);

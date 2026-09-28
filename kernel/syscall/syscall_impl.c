@@ -911,6 +911,8 @@ int32_t sys_thread_attendi(InterruptFrame *frame)
             break;
         }
         if (filo == NULL) return ERR(ESRCH);
+        /* Staccato: il suo PCB e' gia' promesso al reaper di init. */
+        if (filo->staccato)   return ERR(EINVAL);
 
         if (filo->state == PROC_ZOMBIE) {
             if (codice) *codice = filo->exit_code;
@@ -1033,6 +1035,41 @@ int32_t sys_thread_fermarsi(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * I FILI STACCATI E LA PILA — SYS_THREAD_STACCA (217), SYS_THREAD_PILA (218)
+ *
+ * ! LA PILA LA DICE IL KERNEL perche' e' lui che l'ha piazzata: SpiderMonkey
+ * misura quanto puo' ancora scendere prima di fermare una ricorsione di
+ * JavaScript, e su un numero inventato scriverebbe nella guardia — o sotto.
+ * ============================================================================= */
+int32_t sys_thread_stacca(InterruptFrame *frame)
+{
+    uint32_t tid = frame->ebx;
+    int32_t  r;
+
+    interrupts_disable();
+    r = proc_filo_stacca(tid);
+    interrupts_enable();
+    return r;
+}
+
+int32_t sys_thread_pila(InterruptFrame *frame)
+{
+    uint32_t  tid  = frame->ebx;
+    uint32_t *out  = (uint32_t *)frame->ecx;
+    Process  *self = proc_get_current();
+    Process  *p;
+
+    if (!syscall_verify_ptr(out, 2 * sizeof(uint32_t))) return ERR(EFAULT);
+    p = tid ? proc_get_by_pid(tid) : self;
+    if (p == NULL || p->state == PROC_ZOMBIE) return ERR(ESRCH);
+    if (p->tgid != self->tgid)                return ERR(ESRCH);
+    if (p->user_stack_limit == 0)             return ERR(ENOSYS);
+    out[0] = p->user_stack_limit;
+    out[1] = p->user_stack_top;
+    return 0;
+}
+
+/* =============================================================================
  * SYS_CONSOLE_SETFG (232) -- Dichiara il processo in primo piano
  *
  * ebx = pid (0 = nessuno)
@@ -1089,6 +1126,36 @@ int32_t console_grafica_attuale(void)
         }
     }
     return g_console_grafica;
+}
+
+/* =============================================================================
+ * SYS_CONSOLE_CTRLC (216) — who Ctrl+C stops on a text console
+ *
+ * The keyboard driver asks it when Ctrl+C arrives in cooked mode, then asks
+ * the USER («fermo il programma?») and stops it with SYS_INTERROMPI. See
+ * sched_console_ctrlc in sched.h and ctrl_c() in drivers/kbd/kbd.c.
+ *
+ * ! A PID THAT IS GONE ANSWERS 0: the shell clears the value when it is back
+ * at the prompt, but a shell killed while it waited never does, and pids are
+ * reused — the next Ctrl+C would offer to stop a stranger.
+ * ============================================================================= */
+int32_t sys_console_ctrlc(InterruptFrame *frame)
+{
+    uint32_t console = frame->ebx;
+    uint32_t pid;
+    Process *self = proc_get_current();
+    Process *p;
+
+    if (self == NULL || self->uid != 0) return ERR(EPERM);
+    if (console >= VGA_N_CONSOLE) return ERR(EINVAL);
+    pid = sched_console_ctrlc(console);
+    if (pid == 0) return 0;
+    p = proc_get_by_pid(pid);
+    if (p == NULL || p->state == PROC_ZOMBIE) {
+        sched_set_console_ctrlc(console, 0);
+        return 0;
+    }
+    return (int32_t)pid;
 }
 
 int32_t sys_console_grafica(InterruptFrame *frame)
@@ -4878,6 +4945,17 @@ int32_t sys_pty_ctl(InterruptFrame *frame)
     Process  *proc = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD) return ERR(EBADF);
+
+    /* ! ON THE KEYBOARD OF A TEXT CONSOLE ONE COMMAND MEANS SOMETHING TOO:
+     * «who Ctrl+C stops» (@TASTI-SISTEMA, 28 September 2026). The shell
+     * already said it to every stdin, and the console answered ENOTTY; now
+     * it keeps the pid for the keyboard driver, which asks before stopping.
+     * Everything else stays ENOTTY: a console has no size to set here and
+     * no line discipline of the kernel's. */
+    if (proc->fdt[fd].type == FD_STDIN && cmd == PTY_CTL_FG) {
+        sched_set_console_ctrlc(proc->console, arg);
+        return 0;
+    }
     if (proc->fdt[fd].type != FD_PTY_M && proc->fdt[fd].type != FD_PTY_S)
         return ERR(ENOTTY);
 

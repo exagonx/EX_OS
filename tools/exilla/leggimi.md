@@ -19,6 +19,77 @@ manuali, siti semplici); Exilla serve dove serve un motore intero.
 > e' il piano, con i dati misurati sull'albero. Ogni tappa, quando e' fatta,
 > lascia qui il comando che la rifa'.
 
+## Diario delle tappe
+
+### 28 settembre 2026 — tappa 0 (gli attrezzi) e i primi due passi di Rust
+
+Si lavora sul PC di compilazione (I5SVRDEB: Core i5, 4 core, 31 GB, Debian 12,
+glibc 2.36), mentre l'altro PC segue la coda: vedi
+`ISTRUZIONI-SECONDO-PROFILO.md` e `scambio.txt` (qui si firma **claude-B**).
+
+- **La toolchain condivisa non parte qui**: `cross_build/exos-cross` (GCC 17,
+  C e C++, con libstdc++ per EX-OS) e' nata su Debian 13 e vuole GLIBC 2.38.
+  Le sue librerie PER EX-OS vanno benissimo; vanno rifatti solo i programmi
+  che girano sull'host. Lo fa `tools/exilla/toolchain-questa-macchina.sh`, in
+  `cross_build/<macchina>/exos-cross`, senza toccare quella condivisa.
+  **Fatta e provata**: binutils 2.44 e GCC 17 (C, C++, LTO) per questa
+  macchina, venti minuti di compilazione su 4 core.
+- **Il C++ di Mozilla gira dentro EX-OS**: `tools/exilla/prova-cxx.sh`, 5 su 5
+  piu' il distruttore globale. Compilato come Gecko (-fno-exceptions
+  -fno-rtti): i COSTRUTTORI GLOBALI partono prima di main (lib/libc_avvio.c
+  percorre __init_array), new/delete e le virtuali, std::string, std::vector
+  + std::sort, std::map; all'uscita i distruttori globali. ! Il binario pesa
+  1,3 MB: libstdc++ e' statica, e std::string/std::map ne tirano dentro molto.
+  Per ora non conta; conterà per libxul.
+- **Rust gira dentro EX-OS** (@RUST-0 e @RUST-1): `tools/rust-exos/prova.sh`.
+  Firefox non si costruisce senza Rust — nemmeno SpiderMonkey da solo — quindi
+  e' sul cammino critico: vedi `tools/rust-exos/leggimi.md`.
+- **Il disco**: su questo PC restano 28 GB. Una compilazione di Firefox ne
+  vuole 30–40: prima della tappa 6 va liberato spazio o usato un altro disco.
+
+### 28 settembre 2026 — tappa 1: i fili POSIX (@PTHREAD), kernel 0.222
+
+**Fatta e provata**: `tools/exilla/prova-pthread.sh`, 15 su 15 dentro EX-OS.
+
+- **Libc**: `<pthread.h>` e `<semaphore.h>` sopra i fili che c'erano gia'
+  (thread_crea, il lucchetto che dorme, le condizioni): create/join/detach,
+  lucchetti normali, ricorsivi e con controllo, condizioni sui due orologi,
+  rwlock, once, chiavi con distruttori, `clock_gettime`. errno per filo fino a
+  64 fili.
+- **Kernel 0.222**:
+  - un filo che eseguiva PER PRIMO una pagina di codice moriva di page fault:
+    il caricamento su richiesta cercava i segmenti nel PCB del filo, che non
+    li ha (sono del capogruppo);
+  - `SYS_THREAD_STACCA` (217): un filo staccato lo raccoglie init;
+  - `SYS_THREAD_PILA` (218): fondo e cima della pila, per `pthread_getattr_np`
+    (SpiderMonkey ci misura la ricorsione);
+  - 128 processi, 64 fili per programma, 2 MB di riserva di pila per filo.
+- **I ponti di libc.so per impronta** (FNV-1a) invece che per nome: la tabella
+  dei nomi non stava piu' sul floppy.
+
+Come si rifa', su questa macchina:
+
+    tools/exilla/costruisci-privato.sh            # kernel, libc.so, ISO privata
+    tools/gcc-exos/prepara-cross.sh "$PWD/cross_build/<macchina>/exos-cross"
+    tools/exilla/prova-pthread.sh
+
+! **IL SECONDO COMANDO NON E' FACOLTATIVO**: i programmi di prova si collegano
+alla `libc.a` della toolchain, non a quella della copia privata. Senza, la prova
+gira col kernel nuovo e la libc vecchia — ed e' successo: i fili staccati si
+fermavano a 63 perche' il vecchio `pthread_create` non lo diceva al kernel.
+
+! **La costruzione e' privata** (`cross_build/<macchina>/costruzione-sistema`,
+fuori da MEGA): `make BUILD_DIR=... DIST_DIR=...` NON basta, perche'
+`tools/mkfloppy.sh` scrive `dist/` per nome fisso.
+
+**Prossima tappa**: Rust `std` (passi 2 e 3 di `tools/rust-exos/leggimi.md`),
+poi i socket BSD.
+
+! **MEGA**: le cartelle `costruzione-*`, `rust-macchina` ed `exilla-obj` sono
+escluse (`.megaignore`). ! E `scambio.txt` si scrive SOLO in coda: il 28
+settembre una correzione fatta con `sed -i` (che riscrive il file) si e'
+incrociata con un'aggiunta dell'altro PC e MEGA ha fatto `scambio(1).txt`.
+
 ---
 
 ## 1. L'albero
@@ -81,11 +152,8 @@ Opzioni di configurazione per spegnere cio' che su EX-OS non c'e' (tutte in
 L'elenco e' lo stesso che serve a Rust (`tools/rust-exos/leggimi.md`), e va
 fatto per primo, perche' Exilla ha bisogno di entrambi:
 
-- **TLS per filo** (oggi il blocco TLS e' del processo) e **attese che bloccano
-  davvero** (futex): i fili ci sono dal 4 settembre 2026, ma il mutex gira
-  cedendo la CPU;
-- l'**interfaccia `pthread`** sopra i fili: thread, mutex, variabili di
-  condizione, chiavi;
+- ~~TLS per filo, attese che bloccano, l'interfaccia `pthread`~~: fatte (tappa
+  1, 28 settembre 2026 — vedi il diario);
 - i **socket BSD** (`socket`, `connect`, `bind`, `listen`, `accept`, `send`,
   `recv`, `getaddrinfo`) sopra lo stack IP, che oggi si usa per messaggi;
 - **`dlopen`/`dlsym`** (o, in alternativa, un `libxul` collegato staticamente);

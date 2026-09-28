@@ -130,6 +130,27 @@ struct ExJsCtx {
     char         scratch[64];
 
     /* =====================================================================
+     * I FILI APERTI E I TESTI IN CORSO (@NAVMETA, 28 settembre 2026)
+     *
+     * ! MENTRE UN FILO E' APERTO NON SI PUO' ESEGUIRE JAVASCRIPT: una funzione
+     * crea stringhe, e le scriverebbe in coda all'arena, cioe' in mezzo al
+     * filo. exjs_a_stringa chiama `toString` solo se fili_aperti e' zero.
+     * Si azzera all'inizio di ogni esecuzione di primo livello: un filo mai
+     * chiuso (una via d'uscita dimenticata) non spegne toString per sempre.
+     *
+     * ! LA PILA DEI VETTORI IN CONVERSIONE ferma i cicli: `a.push(a)` e poi
+     * String(a) scendeva per sempre e finiva la memoria del motore. Un
+     * vettore che ricompare vale la stringa vuota, come nei browser.
+     * ===================================================================== */
+    unsigned int fili_aperti;
+    int          testo_pila[16];
+    unsigned int testo_n;
+
+    /* L'orologio di chi ospita, per Date (exjs_orologio_metti). */
+    ExJsOrologio orologio;
+    void        *orologio_dato;
+
+    /* =====================================================================
      * ! L'ALBERO STA DENTRO IL CONTESTO, e non lo passa chi chiama.
      *
      * exjs_esegui riceve del TESTO: se l'albero fosse suo, ogni chiamante
@@ -351,6 +372,7 @@ const char *exjs_arena_leggi(ExJsCtx *c, unsigned int off)
 unsigned int exjs_arena_apri(ExJsCtx *c)
 {
     if (c->arena_n >= c->arena_max) { c->finita = 1; return EXJS_FILO_NO; }
+    c->fili_aperti++;
     return c->arena_n;
 }
 
@@ -369,6 +391,7 @@ int exjs_arena_aggiungi(ExJsCtx *c, const char *s, unsigned int n)
  * entrato: mezza stringa e' un risultato sbagliato che sembra giusto. */
 ExJsVal exjs_arena_chiudi(ExJsCtx *c, unsigned int off)
 {
+    if (off != EXJS_FILO_NO && c->fili_aperti) c->fili_aperti--;
     if (off == EXJS_FILO_NO || c->arena_n + 1 > c->arena_max) {
         c->finita = 1;
         return exjs_stringa(c, "", -1);
@@ -579,6 +602,65 @@ static double testo_a_numero(const char *s)
     return segno * v;
 }
 
+void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato)
+{
+    if (!c) return;
+    c->orologio = f;
+    c->orologio_dato = dato;
+}
+
+double exjs_orologio_ms(ExJsCtx *c)
+{
+    return (c && c->orologio) ? c->orologio(c->orologio_dato) : 0.0;
+}
+
+static int prop_trova_pub(ExJsCtx *c, int ogg, const char *nome);
+
+/* Chiama il metodo `nome` di v senza argomenti; 1 se c'era, era una funzione
+ * e ha reso un valore SEMPLICE (non un oggetto), che finisce in *out. */
+static int metodo_semplice(ExJsCtx *c, ExJsVal v, const char *nome, ExJsVal *out)
+{
+    int          p;
+    ExJsVal      f, r;
+    ExJsErrore   err;
+    ExJsOggetto *F;
+
+    if (c->fili_aperti != 0 || c->testo_n >= 8) return 0;   /* vedi fili_aperti */
+    p = prop_trova_pub(c, (int)PUNT_IDX(v), nome);
+    if (p < 0) return 0;
+    f = exjs_prop_val(c, p);
+    F = E_PUNT(f) ? exjs_ogg(c, (int)PUNT_IDX(f)) : 0;
+    if (!F || F->classe != EXJS_CL_FUNZIONE) return 0;
+    err.messaggio[0] = '\0';
+    c->testo_pila[c->testo_n++] = -1;
+    r = exjs_invoca(c, f, v, 0, 0, &err);
+    c->testo_n--;
+    if (err.messaggio[0]) return 0;
+    if (E_PUNT(r) && PUNT_TAG(r) != T_STR) return 0;        /* un oggetto: non vale */
+    *out = r;
+    return 1;
+}
+
+/* ! ToPrimitive (@EXJS-LACUNE, 28 settembre 2026). Prima un oggetto diventava
+ * sempre il suo TESTO: `o * 2` con `valueOf(){return 5}` faceva NaN invece di
+ * 10, e `b - a` fra due Date non si poteva nemmeno scrivere. L'ordine e'
+ * quello del linguaggio: valueOf e poi toString, tranne una Date senza
+ * suggerimento di numero (il `+`), che vuole prima il testo. */
+ExJsVal exjs_primitivo(ExJsCtx *c, ExJsVal v, int numero)
+{
+    ExJsVal      r;
+    ExJsOggetto *O;
+    int          data;
+
+    if (!E_PUNT(v) || PUNT_TAG(v) == T_STR) return v;
+    O = exjs_ogg(c, (int)PUNT_IDX(v));
+    if (!O || O->classe == EXJS_CL_FUNZIONE) return v;
+    data = prop_trova_pub(c, (int)PUNT_IDX(v), EXJS_DATA_TEMPO) >= 0;
+    if (O->classe != EXJS_CL_VETTORE && (numero || !data) && metodo_semplice(c, v, "valueOf", &r))
+        return r;
+    return exjs_stringa(c, exjs_a_stringa(c, v), -1);
+}
+
 double exjs_a_numero(ExJsCtx *c, ExJsVal v)
 {
     if (E_DOPPIO(v)) return a_doppio(v);
@@ -590,8 +672,14 @@ double exjs_a_numero(ExJsCtx *c, ExJsVal v)
     if (E_PUNT(v) && PUNT_TAG(v) == T_STR)
         return testo_a_numero(exjs_arena_leggi(c, PUNT_IDX(v)));
 
-    /* Un oggetto diventa prima testo e poi numero: `[5]` fa cinque perche' il
-     * suo testo e' "5". Vedi exjs_a_stringa. */
+    /* Un oggetto diventa un valore semplice (exjs_primitivo: valueOf, poi
+     * toString) e poi numero: `[5]` fa cinque perche' il suo testo e' "5". */
+    /* ! SOLO UN OGGETTO: il NaN del motore (MASC senza indice) non e' ne'
+     * doppio ne' puntatore, e rimandarlo qui girava per sempre. */
+    if (E_PUNT(v) && PUNT_TAG(v) == T_OGG) {
+        ExJsVal p = exjs_primitivo(c, v, 1);
+        if (p != v) return exjs_a_numero(c, p);
+    }
     return testo_a_numero(exjs_a_stringa(c, v));
 }
 
@@ -668,6 +756,8 @@ static void numero_a_testo(double d, char *out, unsigned int max)
     out[i] = '\0';
 }
 
+static int prop_trova_pub(ExJsCtx *c, int ogg, const char *nome);
+
 const char *exjs_a_stringa(ExJsCtx *c, ExJsVal v)
 {
     if (E_DOPPIO(v)) {
@@ -685,6 +775,31 @@ const char *exjs_a_stringa(ExJsCtx *c, ExJsVal v)
             ExJsOggetto *O = exjs_ogg(c, (int)PUNT_IDX(v));
             if (O && O->classe == EXJS_CL_FUNZIONE) return "function";
             if (O && O->classe == EXJS_CL_VETTORE)  return exjs_vettore_testo(c, v);
+        }
+        /* ! IL toString DELL'OGGETTO, se ne ha uno (@NAVMETA, 28 settembre
+         * 2026). Prima si rendeva sempre «[object Object]»: `'x' + location`
+         * e `String(location)` davano quello invece dell'indirizzo, e un
+         * oggetto con il suo toString non veniva mai ascoltato. Solo se
+         * nessun filo e' aperto (vedi fili_aperti) e non troppo in fondo:
+         * un toString che converte se stesso si ferma. */
+        if (c->fili_aperti == 0 && c->testo_n < 8) {
+            int p = prop_trova_pub(c, (int)PUNT_IDX(v), "toString");
+            if (p >= 0) {
+                ExJsVal     f = exjs_prop_val(c, p), r;
+                ExJsErrore  err;
+                ExJsOggetto *F = E_PUNT(f) ? exjs_ogg(c, (int)PUNT_IDX(f)) : 0;
+
+                if (F && F->classe == EXJS_CL_FUNZIONE) {
+                    err.messaggio[0] = '\0';
+                    c->testo_pila[c->testo_n++] = -1;
+                    r = exjs_invoca(c, f, v, 0, 0, &err);
+                    c->testo_n--;
+                    if (!err.messaggio[0]) {
+                        if (E_PUNT(r) && PUNT_TAG(r) == T_STR) return exjs_arena_leggi(c, PUNT_IDX(r));
+                        if (!E_PUNT(r)) return exjs_a_stringa(c, r);
+                    }
+                }
+            }
         }
         return "[object Object]";
     }
@@ -723,6 +838,12 @@ static int prop_trova(ExJsCtx *c, int ogg, const char *nome, int risali)
 int exjs_prop_trova(ExJsCtx *c, int ogg, const char *nome, int risali)
 {
     return prop_trova(c, ogg, nome, risali);
+}
+
+/* Per exjs_a_stringa, che sta piu' su: la proprieta' lungo il prototipo. */
+static int prop_trova_pub(ExJsCtx *c, int ogg, const char *nome)
+{
+    return prop_trova(c, ogg, nome, 1);
 }
 
 ExJsVal exjs_prop_val(ExJsCtx *c, int p)
@@ -1010,7 +1131,13 @@ void exjs_vettore_tronca(ExJsCtx *c, ExJsVal vet, unsigned int nuova)
 int  exjs_proto_str(ExJsCtx *c) { return c->proto_str; }
 int  exjs_proto_vet(ExJsCtx *c) { return c->proto_vet; }
 int  exjs_proto_num(ExJsCtx *c) { return c->proto_num; }
-void exjs_ese_metti(ExJsCtx *c, void *e) { c->ese = e; }
+void exjs_ese_metti(ExJsCtx *c, void *e)
+{
+    /* Un'esecuzione di primo livello comincia: nessun filo e' aperto, nessun
+     * vettore e' in conversione (vedi fili_aperti in ExJsCtx). */
+    if (!c->ese && e) { c->fili_aperti = 0; c->testo_n = 0; }
+    c->ese = e;
+}
 void*exjs_ese_prendi(ExJsCtx *c) { return c->ese; }
 
 /* ! UN GENERATORE PSEUDOCASUALE PROPRIO, e non quello del sistema: Math.random
@@ -1038,30 +1165,37 @@ int     exjs_globale_idx(ExJsCtx *c) { return c->globale; }
  * succede SEMPRE, perche' e' il caso in cui il posto di servizio si usa.
  * Percio' la prima si copia subito, prima di chiedere la seconda.
  * ========================================================================== */
+/* Il testo di `v` in un posto che NON SI MUOVE: se exjs_a_stringa ha reso
+ * il posto di servizio o una parola fissa, se ne fa una stringa nell'arena. */
+static const char *testo_fermo(ExJsCtx *c, ExJsVal v)
+{
+    const char *s = exjs_a_stringa(c, v);
+    unsigned int off;
+
+    if (s >= c->arena && s < c->arena + c->arena_n) return s;
+    off = exjs_arena_metti(c, s, lung(s));
+    return c->finita ? "" : c->arena + off;
+}
+
+/* ! LE DUE STRINGHE PRIMA, LA SCRITTURA DOPO (@NAVMETA, 28 settembre 2026).
+ * Prima la prima meta' si scriveva in coda all'arena e POI si chiedeva la
+ * seconda: finche' convertire non allocava andava bene, ma un vettore o un
+ * toString allocano — e scrivevano in mezzo. `''+[1,2,3]` dava «1», e
+ * `'x'+o` con un toString dava «xarguments». L'ordine di conversione resta
+ * quello del linguaggio: prima `a`, poi `b`. */
 ExJsVal exjs_concat(ExJsCtx *c, ExJsVal a, ExJsVal b)
 {
-    char         tmp[96];
-    const char  *sa = exjs_a_stringa(c, a), *sb;
-    unsigned int off, i, j;
-    int          corta;
+    const char  *sa = testo_fermo(c, a), *sb;
+    unsigned int off, j;
 
-    for (i = 0; i + 1 < sizeof(tmp) && sa[i]; i++) tmp[i] = sa[i];
-    corta = (sa[i] == '\0');
-    tmp[i] = '\0';
+    sb = testo_fermo(c, b);
+    if (c->finita) return exjs_indefinito();
 
     off = c->arena_n;
-
-    /* La prima: dalla copia se ci stava, altrimenti dall'arena (e allora era
-     * gia' una stringa vera, che il posto di servizio non tocca). */
-    {
-        const char *s = corta ? tmp : sa;
-        for (j = 0; s[j]; j++) {
-            if (c->arena_n + 2 > c->arena_max) { c->finita = 1; return exjs_indefinito(); }
-            c->arena[c->arena_n++] = s[j];
-        }
+    for (j = 0; sa[j]; j++) {
+        if (c->arena_n + 2 > c->arena_max) { c->finita = 1; return exjs_indefinito(); }
+        c->arena[c->arena_n++] = sa[j];
     }
-
-    sb = exjs_a_stringa(c, b);
     for (j = 0; sb[j]; j++) {
         if (c->arena_n + 2 > c->arena_max) { c->finita = 1; return exjs_indefinito(); }
         c->arena[c->arena_n++] = sb[j];
@@ -1156,36 +1290,67 @@ unsigned int exjs_lunghezza(ExJsCtx *c, ExJsVal vet)
     return (O && O->classe == EXJS_CL_VETTORE) ? O->lunghezza : 0;
 }
 
-/* Il testo di un vettore: gli elementi separati da virgola, e `null` e
- * `undefined` che diventano stringa vuota. `[1,null,2].toString()` fa "1,,2". */
+/* Il testo di un vettore: gli elementi separati da `sep` (la virgola per
+ * toString), e `null` e `undefined` che diventano stringa vuota.
+ * `[1,null,2].toString()` fa "1,,2". E' anche il cuore di join, in base.c.
+ *
+ * ! IN DUE PASSATE (@NAVMETA, 28 settembre 2026), e la seconda e' tutta la
+ * correzione. Prima si scriveva in coda all'arena elemento per elemento, e un
+ * elemento che era a sua volta un vettore scriveva il suo testo NELLO STESSO
+ * posto: `String([[1,2],3])` dava «1,2». E join lavorava in mezzo kilobyte.
+ *   1. ogni elemento diventa una STRINGA VERA in un vettore di appoggio —
+ *      qui si puo' allocare ed eseguire JavaScript (i toString), perche'
+ *      nessun filo e' aperto;
+ *   2. si apre il filo e si concatenano: sono stringhe gia' nell'arena, e
+ *      leggerle non scrive niente.
+ * ! UN VETTORE CHE CONTIENE SE STESSO vale la stringa vuota dove ricompare
+ * (testo_pila), come nei browser: `a=[1]; a.push(a)` da' «1,». */
+const char *exjs_vettore_testo_sep(ExJsCtx *c, ExJsVal vet, const char *sep)
+{
+    int          k = exjs_a_oggetto(vet);
+    ExJsOggetto *O = exjs_ogg(c, k);
+    ExJsVal      tmp, r;
+    unsigned int i, l, j, ls;
+    unsigned int f;
+
+    if (!O || O->classe != EXJS_CL_VETTORE) return "";
+    for (i = 0; i < c->testo_n; i++) if (c->testo_pila[i] == k) return "";
+    if (c->testo_n >= sizeof(c->testo_pila) / sizeof(c->testo_pila[0])) return "";
+    l = O->lunghezza;
+
+    /* 1. le stringhe, in un vettore di appoggio */
+    tmp = exjs_vettore(c);
+    if (c->finita) return "";
+    c->testo_pila[c->testo_n++] = k;
+    for (i = 0; i < l; i++) {
+        ExJsVal e = exjs_indice_prendi(c, vet, i);
+        const char *s;
+
+        if (e == V_INDEF || e == V_NULLO) { exjs_indice_metti(c, tmp, i, exjs_stringa(c, "", 0)); continue; }
+        if (E_PUNT(e) && PUNT_TAG(e) == T_STR) { exjs_indice_metti(c, tmp, i, e); continue; }
+        s = exjs_a_stringa(c, e);
+        exjs_indice_metti(c, tmp, i, exjs_stringa(c, s, -1));
+        if (c->finita) break;
+    }
+    c->testo_n--;
+    if (c->finita) return "";
+
+    /* 2. il filo: si legge e basta */
+    for (ls = 0; sep[ls]; ls++) ;
+    f = exjs_arena_apri(c);
+    for (i = 0; i < l && f != EXJS_FILO_NO; i++) {
+        ExJsVal e = exjs_indice_prendi(c, tmp, i);
+        const char *s = exjs_arena_leggi(c, PUNT_IDX(e));
+
+        if (i && !exjs_arena_aggiungi(c, sep, ls)) break;
+        for (j = 0; s[j]; j++) ;
+        if (!exjs_arena_aggiungi(c, s, j)) break;
+    }
+    r = exjs_arena_chiudi(c, f);
+    return exjs_arena_leggi(c, PUNT_IDX(r));
+}
+
 const char *exjs_vettore_testo(ExJsCtx *c, ExJsVal vet)
 {
-    ExJsOggetto *O = exjs_ogg(c, exjs_a_oggetto(vet));
-    unsigned int i, n = 0, off;
-
-    if (!O) return "";
-    off = c->arena_n;
-
-    for (i = 0; i < O->lunghezza; i++) {
-        ExJsVal e = c->elem[O->elem_off + i];
-        const char *s;
-        unsigned int j;
-
-        if (i && !exjs_arena_metti(c, ",", 1)) return "";
-        if (i) c->arena_n--;                 /* si concatena: via lo '\0' */
-
-        if (e == V_INDEF || e == V_NULLO) continue;
-
-        s = exjs_a_stringa(c, e);
-        for (j = 0; s[j]; j++) {
-            if (c->arena_n + 2 > c->arena_max) { c->finita = 1; return ""; }
-            c->arena[c->arena_n++] = s[j];
-        }
-        c->arena[c->arena_n] = '\0';
-        n++;
-    }
-    (void)n;
-    if (c->arena_n >= c->arena_max) { c->finita = 1; return ""; }
-    c->arena[c->arena_n++] = '\0';
-    return c->arena + off;
+    return exjs_vettore_testo_sep(c, vet, ",");
 }

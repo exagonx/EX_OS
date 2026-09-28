@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.007"
+#define VERSIONE_APP "0.008"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -914,35 +914,88 @@ static int albero_apri_fino_a(const char *perc)
 }
 
 /* =============================================================================
- * Aprire un file: lo si passa all'editor
+ * Aprire un file: col programma che /exwin/lib/tipi.txt associa alla sua
+ * estensione, e con l'editor se non ce n'e' uno (@IMMAGINI, 28 settembre 2026)
+ *
+ * ! LA REGOLA STA IN UN FILE DEL SISTEMA, NON QUI: e' la parte del compito che
+ * «puo' crescere», perche' riguarda anche la scrivania e il navigatore. Qui
+ * la si legge e basta. Senza il file, o senza una riga per quell'estensione,
+ * si fa quel che si e' sempre fatto: l'editor.
  *
  * ! SI CERCA IN DUE POSTI, E L'ORDINE CONTA: su un sistema installato l'albero
  * sta in /exwin, avviando dal CD sta sotto /cdrom. Stessa regola del program
- * manager, per la stessa ragione.
+ * manager, per la stessa ragione — e vale per tipi.txt come per i programmi.
  * ============================================================================= */
+
+/* Il programma di tipi.txt per l'estensione `e` (minuscola), in `out`; 0 se
+ * non c'e'. */
+static int programma_per(const char *e, char *out, unsigned int max)
+{
+    static const char *const dove[2] = { "/exwin/lib/tipi.txt", "/cdrom/exwin/lib/tipi.txt" };
+    char buf[2048], *riga, *fine;
+    int  fd = -1, n, i;
+
+    if (!e[0]) return 0;
+    for (i = 0; i < 2 && fd < 0; i++) fd = open(dove[i], O_RDONLY, 0);
+    if (fd < 0) return 0;
+    n = (int)read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    for (riga = buf; riga && *riga; riga = fine) {
+        char *barra, *p;
+        size_t le = strlen(e);
+
+        fine = strchr(riga, '\n');
+        if (fine) *fine++ = '\0';
+        if (riga[0] == '#' || !(barra = strchr(riga, '|'))) continue;
+        *barra = '\0';
+        /* Le estensioni sono parole separate da spazi, prima della barra. */
+        for (p = riga; *p; ) {
+            while (*p == ' ' || *p == '\t') p++;
+            if (!strncmp(p, e, le) && (p[le] == ' ' || p[le] == '\t' || p[le] == '\0')) {
+                char *q = barra + 1;
+                while (*q == ' ' || *q == '\t') q++;
+                snprintf(out, max, "%s", q);
+                for (i = (int)strlen(out); i > 0 && (out[i - 1] == ' ' || out[i - 1] == '\r' || out[i - 1] == '\t'); i--)
+                    out[i - 1] = '\0';
+                return out[0] != '\0';
+            }
+            while (*p && *p != ' ' && *p != '\t') p++;
+        }
+    }
+    return 0;
+}
+
 static void apri_file(const char *percorso)
 {
-    static const char *editori[2] = {
-        "/exwin/bin/edit", "/cdrom/exwin/bin/edit"
-    };
-    static char copia[PERC_MAX];
-    char *argv[3];
+    static char copia[PERC_MAX], prog[PERC_MAX], dal_cd[PERC_MAX + 8];
+    const char *prova[2];
+    const char *nome = strrchr(percorso, '/');
+    char e[8], *argv[3];
     int i;
 
     strncpy(copia, percorso, PERC_MAX - 1);
     copia[PERC_MAX - 1] = '\0';
-
     argv[1] = copia;
     argv[2] = 0;
 
+    estensione(nome ? nome + 1 : percorso, e, sizeof(e));
+    if (!programma_per(e, prog, sizeof(prog))) snprintf(prog, sizeof(prog), "/exwin/bin/edit");
+    snprintf(dal_cd, sizeof(dal_cd), "/cdrom%s", prog);
+    prova[0] = prog;
+    prova[1] = dal_cd;
+
     for (i = 0; i < 2; i++) {
-        argv[0] = (char *)editori[i];
-        if (spawn_ex(editori[i], argv, 0, 0, 0) >= 0) {
-            sprintf(g_avviso, "aperto con l'editor: %s", copia);
+        argv[0] = (char *)prova[i];
+        if (spawn_ex(prova[i], argv, 0, 0, 0) >= 0) {
+            const char *b = strrchr(prog, '/');
+            snprintf(g_avviso, sizeof(g_avviso), "aperto con %s: %s", b ? b + 1 : prog, copia);
             return;
         }
     }
-    strcpy(g_avviso, "l'editor non si trova: /exwin/bin/edit");
+    snprintf(g_avviso, sizeof(g_avviso), "non si trova il programma: %s", prog);
 }
 
 /* =============================================================================

@@ -75,7 +75,11 @@ typedef struct IpcMessage {
 /* =============================================================================
  * Costanti scheduler
  * ============================================================================= */
-#define MAX_PROCESSES       64      /* Massimo numero processi simultanei */
+/* ! 128 DAL 28 SETTEMBRE 2026 (Exilla): un browser vero tiene una trentina di
+ * fili, e con 64 posti in tutto un programma solo si sarebbe mangiato mezzo
+ * sistema. Costa BSS del kernel (circa 12 KB di PCB per posto) e, solo per chi
+ * esiste davvero, 128 KB di stack kernel sotto la soglia bassa di kernel.h. */
+#define MAX_PROCESSES       128     /* Massimo numero processi simultanei */
 
 /* Quante zone di memoria condivisa puo' tenere aperte un processo.
  *
@@ -146,8 +150,13 @@ typedef struct IpcMessage {
 /* ! 64 KB SONO LA RISERVA, NON LA RAM: della piazzola si impegnano subito il
  * blocco TLS e USER_STACK_INIT byte di stack, e il resto arriva su richiesta
  * come per lo stack del processo (vedi proc_thread_crea e pf_cresci_stack). */
-#define FILO_STACK_SIZE     65536   /* 64KB per filo, come lo stack iniziale */
-#define FILO_MAX            8       /* capogruppo compreso: sette fili in piu' */
+/* ! 2 MB E 64 FILI DAL 28 SETTEMBRE 2026 (tappa 1 di Exilla). 64 KB bastavano
+ * ai programmi di casa; SpiderMonkey e il codice di Mozilla chiedono pile da
+ * megabyte, e un browser ne fa decine. Sono INDIRIZZI: la banda passa da mezzo
+ * mega a 126 MB di spazio sotto il TLS, tolti al tetto dello heap che ne ha
+ * quasi tre giga. La RAM resta quella che il filo tocca davvero. */
+#define FILO_STACK_SIZE     (2u * 1024u * 1024u)   /* riserva per filo */
+#define FILO_MAX            64      /* capogruppo compreso: 63 fili in piu' */
 #define FILI_BANDA          ((FILO_MAX - 1) * (FILO_STACK_SIZE + 4096))
 #define USER_STACK_INIT     8192    /* 8KB impegnati al caricamento */
 
@@ -504,6 +513,11 @@ typedef struct Process {
     uint32_t        tgid;           /* pid del capogruppo (== pid se non e' un filo) */
     FileDescriptor *fdt;            /* la tabella VERA: propria o del capogruppo */
     uint32_t        filo_posto;     /* quale piazzola di stack occupa (0 = capogruppo) */
+    /* ! UN FILO STACCATO NON LO ASPETTA NESSUNO (pthread_detach, 28 settembre
+     * 2026): quando esce il suo PCB va al reaper di init invece di restare
+     * zombie finche' muore il gruppo. Prima di questo un server che fa un filo
+     * per connessione esauriva il pool dopo FILO_MAX connessioni. */
+    uint32_t        staccato;
 
     /* ! DOVE STA ASPETTANDO, per l'attesa che DORME davvero (4 settembre
      * 2026). E' l'indirizzo virtuale su cui il filo si e' addormentato: chi
@@ -779,6 +793,7 @@ void     proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid);
 /* CHIEDE a un filo del proprio gruppo di fermarsi: 0, oppure -ESRCH.
  * Va chiamata a interruzioni spente, come proc_attesa_sveglia. */
 int      proc_filo_ferma(uint32_t tid);
+int      proc_filo_stacca(uint32_t tid);
 
 extern Process *g_init_task;  /* task reaper (PID 2), adotta gli orfani */
 Process *proc_get_by_pid(uint32_t pid);
@@ -820,6 +835,18 @@ int      proc_interrompi_locked(uint32_t pid);  /* per chi ha gia' il cli */
  * ============================================================================= */
 uint32_t sched_console_fg(uint32_t console);
 void     sched_set_console_fg(uint32_t console, uint32_t pid);
+
+/* Who Ctrl+C stops on a text console (@TASTI-SISTEMA, 28 September 2026).
+ *
+ * ! IT IS NOT THE FOREGROUND ABOVE, and the difference is the shell: at the
+ * prompt the shell IS in the foreground — it reads the keyboard — but a
+ * Ctrl+C there must not kill it. The shell already says both things, the
+ * same way it does to a pty: SYS_CONSOLE_SETFG with itself, and
+ * SYS_PTY_CTL(PTY_CTL_FG) with the child it waits for, or 0 at the prompt.
+ * On a console stdin that second call used to answer ENOTTY; now it lands
+ * here, and the keyboard driver reads it with SYS_CONSOLE_CTRLC. */
+uint32_t sched_console_ctrlc(uint32_t console);
+void     sched_set_console_ctrlc(uint32_t console, uint32_t pid);
 void     sched_unblock_locked(uint32_t pid); /* Come sopra, ma il chiamante deve già avere cli attivo (uso da contesto IRQ, es. ipc.c) */
 void     sched_sleep(uint32_t ms);      /* Dorme per ms millisecondi */
 

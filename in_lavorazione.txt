@@ -194,11 +194,11 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
   1  @SUONO-CAMPIONI  la tavola d'onde e' otto seni: servono campioni da file
   1  @NAV-CJK         cinese, giapponese e coreano: mancano i font
-  1  @NAV-UNITA       le unita' relative del CSS (em, %, rem) e @media
+  1  @NAV-UNITA       FATTO em rem % pt vw; la % dei margini e' sulla finestra
   1  @NAV-BIDI        l'arabo e l'ebraico si vedono ma vanno nel verso sbagliato
-  1  @NAV-CURSORE     il cursore non si piazza col mouse dentro le caselle
-  1  @NAV-BORDER      `border` nel CSS: oggi i bordi si fanno solo dall'attributo
-  1  @NAV-GIF         le GIF animate mostrano il primo fotogramma
+  1  @NAV-CURSORE     FATTO: il clic mette il cursore li'; resta il trascinamento
+  1  @NAV-BORDER      FATTO border e padding sui blocchi; restano in linea e tabelle CSS
+  1  @NAV-GIF         FATTO nel navigatore e in Immagini; al piu' 5 fotogrammi al secondo
   1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
   1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
   1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
@@ -215,7 +215,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @SIS-2D-STORIA   come ci si e' arrivati: cinque strade chiuse e un blocco
   1  @DIF-GROSSI      cc1plus non entrava in memoria: il corpo passa dal disco
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
-  1  @IMMAGINI        manca un visualizzatore di immagini: il decodificatore c'e' gia'
+  1  @IMMAGINI        FATTO: Immagini, zoom e cartella; tipi.txt; PNG a ogni profondita' e Adam7
   1  @FIN-ICONA       FATTO e provato in QEMU: resta il ferro, e le icone sul desktop
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
   1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
@@ -223,8 +223,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @SUONO-HDA       l'HD Audio provato solo sul codec finto di QEMU (idem)
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
   1  @WIFI-4318       la radio della Broadcom: manca il firmware, non la voglia
-  1  @RUST-0          un programma no_std che gira, compilato da Linux
-  1  @TASTI-SISTEMA   ! Ctrl+Alt+Canc FATTO (grafica e testo); resta CTRL+C
+  1  @RUST-0          FATTO e provato il 28/09 (Exilla): tools/rust-exos/prova.sh
+  1  @TASTI-SISTEMA   FATTI Ctrl+Alt+Canc e Ctrl+C in console; nel terminale in finestra non chiede
   1  @GRAFICA-MODALE  FATTO: riavvio e spegnimento con la grafica accesa
   1  @FILEMGR-OPS     FATTO anche Rinomina (F2), provato: resta l'avanzamento
   1  @GFEDIT-SEL      FATTO e provato sul ferro: resta da guardare il toolkit
@@ -240,6 +240,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @EDIT-CERCA      FATTO e provato in QEMU (2 su 2): Cerca, F3, Shift+F3, Sostituisci
   1  @ARCHIVI-TAR     FATTO e provato: lib/extar, Archivi apre e crea .tar/.tar.gz
   1  @CALCTOR         FATTO e provato (8/8): la calcolatrice, tre modalita', e il toolkit nuovo
+  1  @BUILD-FLAG      il segnaposto dei flag ricreato da solo: tutto ricompilato (causa ignota)
+  1  @EXJS-LACUNE     FATTE Date e valueOf (28/09, 307/307 e QEMU coi due motori): resta throw
   1  @PM-SFONDO       FATTO tutto, disposizione compresa (angolo centro allarga ripeti)
   1  @PM-DESKTOP      FATTO e provato in QEMU (5/5 con PM-UNITA): icone non spostabili
   1  @PM-UNITA        FATTO e provato: si accorge da solo dei mount (ogni 2 s)
@@ -247,7 +249,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @AVVIO-LOGIN     FATTO e provato in QEMU: resta la macchina vera
   1  @ICONE           FATTE: toolkit, menu, exide e file manager. Mancano i disegni
   1  @EXIDE-ICONE     FATTO tutto e provato: mancano solo i disegni delle icone
-  1  @PAINT           ! un Paint Brush per ExWin: BMP, JPG, GIF, PNG, TIFF
+  1  @PAINT           FATTO: Pennello, apre 5 formati e salva PNG/BMP; resta testo e selezione
   1  @EXWIN-LOG       FATTO l'anello (32 KB, ora e pid); resta la pipe per i figli di pm
   1  @ICONE-APP       i disegni _64/_128 ci sono; archivi aggiunta il 27 settembre (dal PNG)
   1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
@@ -262,10 +264,11 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @ARCHIVI-VISTA   FATTO e provato in QEMU: tutti e otto i punti
   1  @EXBROWSER-1024  FATTO e provato in QEMU: resta cosa ha visto sul ferro per gcc
   1  @EXIDE-NOMI      FATTO: nomi nel pannello (fotografati) e nel manuale, radio rotondo
+  1  @EXBROWSER-SELECT FATTO: le <select> mostrano le opzioni; oltre 256 in una pagina si tronca
   1  @EXBROWSER-HTML5 ! «Cerca» FATTO; Wikipedia meglio (@media, visibility, menu): resta il CSS di disposizione
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
-  2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
+  2  @RUST-1          FATTO e provato il 28/09: Box, Vec, String, BTreeMap, align(64)
   3  @RUST-2          libexos: file, processi, IPC, finestre <- @RUST-1
   4  @RUST-3          la std: un sys nuovo dentro library/std <- @RUST-2
   5  @RUST-4          rustc sul CD degli strumenti           <- @RUST-3
@@ -412,6 +415,14 @@ DUE REGOLE IMPARATE QUI, CHE VALGONO OLTRE I FILI
    -EBUSY. Mescolare due flussi vuol dire un mixer software, che e' un lavoro
    vero e non una riga, e va fatto quando serve invece che inventato di
    nascosto dentro il driver della scheda.
+   ! GUARDATO IL 28 SETTEMBRE 2026 E LASCIATO, apposta. Fatto bene e' un
+     SERVIZIO a se' (non il driver) che fa da unico client della scheda: un
+     anello in memoria condivisa per ogni programma, la conversione fra
+     frequenze e formati diversi (22050 e 44100, 8 e 16 bit, mono e stereo),
+     e lo stesso protocollo di oggi (drivers/audio/audio_proto.h) perche' i
+     programmi non cambino. Il punto dove oggi nasce il -EBUSY e'
+     drivers/audio/audio_comune.c, nel ramo di AUDIO_MSG_APRI. Nessuno l'ha
+     ancora chiesto: si fa il giorno che due programmi devono suonare insieme.
 
 5. @SUONO-CAMPIONI LA TAVOLA D'ONDE E' OTTO SENI. Il MIDI sulle schede PCI si sente ed e'
    intonato, ma e' un timbro solo: il cambio di strumento si ignora e la
@@ -3137,42 +3148,81 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
     - I DISEGNI delle icone degli strumenti. Il meccanismo c'e' (vedi sotto),
       i file no: li fa chi disegna le icone, e basta metterli.
 
-! @PAINT UN PROGRAMMA DI DISEGNO PER ExWin! @PAINT UN PROGRAMMA DI DISEGNO PER ExWin, tipo Paint Brush di Windows 3.11.
-  (chiesto il 22 settembre 2026)
+! @PAINT UN PROGRAMMA DI DISEGNO PER ExWin, tipo Paint Brush di Windows 3.11:
+  FATTO IL 28 SETTEMBRE 2026 (pennello 0.001), chiesto il 22 settembre.
 
-  Chiesto: che tratti BMP, JPG, GIF, PNG e TIFF; PCX «non credo sia ancora
-  utilizzato».
+  /exwin/bin/pennello [file], nel menu come «Pennello». Strumenti: matita,
+  pennello, gomma, spruzzo, riempi, contagocce, linea, rettangolo e ellisse
+  (vuoti o pieni); quattro spessori; zoom 1x-8x; specchio, rotazione,
+  inversione, dimensioni; annulla e ripeti. Le scelte nel profilo,
+  $HOME/.exwin/config/pennello.cfg.
 
-  ! META' DEL LAVORO E' GIA' FATTA, E VA DETTO SUBITO: eximg legge PNG, GIF,
-    JPG e ICO, e il toolkit legge il BMP da se'. APRIRE un'immagine e'
-    ex_immagine() o eximg_carica(). Il lavoro vero e' l'altro verso —
-    SCRIVERE — e il disegno a mano libera.
+  LE TRE DOMANDE DI PRIMA, E COME SONO STATE DECISE:
+    - LEGGE tutto quel che legge eximg: BMP, PNG, JPG, GIF, ICO. SCRIVE BMP e
+      PNG. Un JPG aperto e salvato con Ctrl+S: Pennello dice prima che quel
+      formato non si scrive, e il dialogo propone lo stesso nome in .png;
+    - in memoria sempre ARGB a 32 bit; i codificatori convertono;
+    - l'annullamento sta in un deposito preso all'avvio: ogni
+      operazione ci lascia solo il RETTANGOLO che ha toccato, coi pixel di
+      prima, e annullare SCAMBIA il rettangolo con l'immagine — lo stesso
+      record diventa il «ripeti». 64 operazioni al massimo, meno se grandi.
+      (Dal 28 settembre il deposito e' un quarto della memoria libera, fra
+      256 KB e 16 MB: i 16 MB fissi su una macchina con poca memoria
+      lasciavano 204 KB a tutto il resto.)
 
-  ! E SCRIVERE NON E' LEGGERE AL CONTRARIO. Oggi nel sistema non c'e' un
-    codificatore di nessun formato:
-      - BMP si scrive in un pomeriggio, ed e' il formato in cui salvare finche'
-        non ci sara' altro;
-      - PNG vuole DEFLATE in COMPRESSIONE, che C'E' dal 23 settembre
-        (lib/exzip/deflate.c, vedi @ARCHIVI-COMPRIME): a un PNG servono in
-        piu' l'intestazione zlib, i filtri per riga e i CRC dei pezzi;
-      - JPG in scrittura e' una DCT piu' le tavole di Huffman: e' un lavoro suo;
-      - GIF vuole LZW, e TIFF e' una famiglia di formati piu' che un formato —
-        chi lo apre deve reggere una decina di combinazioni di compressione e
-        disposizione dei piani.
+  ! 28 SETTEMBRE 2026, «PENNELLO BLOCCA TUTTO SE IL MOUSE VA VELOCE» (0.004,
+    kernel 0.223, wserver 0.004). Erano due difetti uno sopra l'altro:
+    - linea() (Bresenham) aveva l'errore iniziale sbagliato e per certe
+      pendenze non arrivava MAI al punto finale: ciclo infinito, Pennello
+      smetteva di leggere. Prova sull'host: tools/prova_linea.sh (le funzioni
+      vere di pennello.c, 11604 linee);
+    - e un programma che non legge fermava il SERVER: la casella IPC tiene 4
+      messaggi e ipc_send su una casella piena riprovava per 10 secondi, a
+      ogni movimento del mouse. Ora c'e' IPC_SENZA_ATTESA (un bit nel tipo)
+      e wserver lo usa per i movimenti; clic e tasti aspettano ancora.
+    ! VALE PER OGNI PROGRAMMA ExWin, non solo per Pennello: un'applicazione
+      appesa adesso rallenta solo se stessa. Se un giorno anche un clic
+      perso diventasse un problema, il posto e' manda_evento in wserver.c.
+    Prova in QEMU: tools/prova_pennello_veloce.sh (con `monr:` di
+    qemu_drive.py, un comando del monitor ogni 10 ms).
 
-  ! PCX: ha ragione chi l'ha chiesto a dubitarne, ma e' anche il piu' facile di
-    tutti — RLE per righe, cento righe in tutto. Se servira' un formato
-    scrivibile e compresso prima che ci sia DEFLATE, e' quello.
+  ! I CODIFICATORI NON SONO IN eximg.so: lib/eximg/scrivi.c si compila DENTRO
+    chi scrive (col lib/exzip/deflate.c che serve al PNG), come archivi fa
+    con deflate. eximg.so la apre ogni programma che mostra un'immagine, e
+    salvarne una lo fa solo un programma di disegno.
 
-  DA DECIDERE PRIMA (le stesse tre domande di @ZIP):
-    - quali formati in LETTURA e quali in SCRITTURA. Non e' lo stesso elenco, e
-      un programma che apre un TIFF e non sa risalvarlo deve dirlo prima, non
-      al momento del salvataggio;
-    - la tavolozza e la profondita': si lavora sempre a 32 bit in memoria
-      (com'e' gia' eximg) e si converte scrivendo;
-    - l'annullamento. Un programma di disegno senza «annulla» non si usa, e
-      tenerlo a istantanee dell'immagine intera costa memoria che su questo
-      sistema non si restituisce (vedi @DIF-GROSSI).
+  ! IL BMP ORA LO LEGGE ANCHE eximg (lib/eximg/bmp.c), ultimo in tabella: il
+    toolkit il BMP lo legge da se' e lo mette a schermo, ma non da' i PIXEL a
+    nessuno. Legge 1/4/8 bit con tavolozza, 16/24/32, BITFIELDS, RLE8, RLE4,
+    le intestazioni OS/2 e V4/V5, dal basso e dall'alto.
+
+  ! L'ALFA A ZERO DAPPERTUTTO VUOL DIRE «NIENTE ALFA»: i lettori PNG e JPG di
+    eximg la lasciano a zero apposta («alfa ignorata» in png.c, e il toolkit
+    ci conta). Pennello allora la fa opaca, e salva opaco.
+
+  PROVATO:
+    - sull'host, tools/prova_scrivi.sh: PNG e BMP scritti da noi letti da
+      ImageMagick pixel per pixel (alfa compresa nel PNG), e undici forme di
+      BMP scritte da ImageMagick lette da bmp.c uguali alle sue;
+    - in QEMU, tools/prova_pennello.sh: apre un JPG dalla riga di comando, ci
+      si disegna col mouse, Ctrl+Z/Ctrl+Y, Ctrl+S (avviso, poi .png) e Salva
+      con nome in .bmp. Fuori: i due file hanno gli stessi pixel, e dal JPG
+      decodificato differisce solo il disegno.
+
+  QUEL CHE MANCA, in ordine di quanto serve:
+    - il TESTO dentro l'immagine: il toolkit scrive i caratteri sulla
+      finestra, non in un bitmap. Serve un ex_scrivi che renda i pixel;
+    - la SELEZIONE (ritaglia, copia, incolla, sposta): gli appunti del
+      sistema portano solo testo;
+    - il secondo bottone del mouse: ExWin non dice quale bottone e' stato
+      premuto, quindi lo sfondo si sceglie con «Scambia» (o X);
+    - SCRIVERE JPG, GIF, TIFF (e LEGGERE TIFF): JPG e' una DCT piu' Huffman,
+      GIF vuole LZW, TIFF e' una famiglia. PCX, se servisse, e' il piu' facile;
+    - l'icona di Pennello e' PROVVISORIA (fatta con ImageMagick): va il
+      disegno vero, a 64 e 128;
+    - il riempimento ha una pila di 65536 semi: su un'area frastagliata oltre
+      misura si ferma e lo dice nella riga di stato;
+    - provarlo sulla macchina vera, e col mouse vero.
 
 ! @EXIDE-SFOGLIA IL PROGETTO NUOVO SCEGLIE DOVE, E SE LO RICORDA: FATTO IL 22
   SETTEMBRE 2026 (exide 0.013), chiesto lo stesso giorno.
@@ -3406,29 +3456,42 @@ QUATTRO COLONNE»); le ultime due sono arrivate il 21 settembre da
 correzioni.txt, e sono marcate urgenti. L'ordine qui sotto e' quello in cui
 sono arrivate, non quello in cui vanno fatte.
 
-! @IMMAGINI UN VISUALIZZATORE DI IMMAGINI.
+! @IMMAGINI UN VISUALIZZATORE DI IMMAGINI: FATTO IL 28 SETTEMBRE 2026
+  (immagini 0.001, filemgr 0.008; tools/prova_immagini.sh 8/8,
+  tools/prova_png.sh 92/92).
 
-  ! IL GROSSO C'E' GIA', ed e' la ragione per cui questo compito e' piccolo e
-    non va confuso con «scrivere un decodificatore». lib/eximg decodifica, e
-    `ex_immagine(ExFinestra, percorso, x, y)` disegna un file dentro una
-    finestra: e' gia' nell'intestazione del toolkit (lib/exwin/exwin.h).
-    Quello che manca e' l'APPLICAZIONE — una finestra, l'apri, lo scorrimento
-    quando l'immagine e' piu' grande, e il passare al file dopo nella stessa
-    directory.
+  /exwin/bin/immagini [file | cartella], nel menu come «Immagini». Pag giu'/
+  Spazio e Pag su'/Backspace scorrono le immagini della cartella in ordine di
+  nome, Home e Fine vanno alla prima e all'ultima; Ctrl+E apre quella che si
+  vede in Pennello.
 
-  Da decidere, e la decisione va presa PRIMA di scrivere:
-    - i formati che eximg sa gia' leggere, e quelli che no. Un visualizzatore
-      che apre tre file su dieci fa sembrare rotte le immagini, non il
-      programma;
-    - se ingrandisce e rimpicciolisce, o se mostra a grandezza vera e basta.
-      La seconda e' onesta e si fa oggi; la prima vuole un ricampionamento;
-    - come ci si arriva dal file manager. Il doppio clic su un'immagine
-      dovrebbe aprirlo — cioe' serve una regola «questa estensione si apre
-      con quel programma», che oggi in EX-OS non c'e' da nessuna parte.
-      ! QUESTA E' LA PARTE CHE PUO' CRESCERE: e' un pezzo di sistema, non di
-        un'applicazione, e riguarda anche l'editor e il browser.
+  LE TRE DECISIONI:
+    - i formati sono quelli di eximg (BMP, PNG, JPG, GIF, ICO), e la cartella
+      mostra solo quelli: «la successiva» non cade mai su un file che non si
+      apre;
+    - lo zoom c'e': «adatta» di partenza per un'immagine piu' grande della
+      finestra, «1» per il 100%, + e - dal 10% all'800%. Rimpicciolendo si fa
+      la media (al piu' 4x4 campioni per pixel), ingrandendo si ripete il
+      pixel. Si calcola solo cio' che si vede: nessuna immagine scalata in
+      memoria, a qualunque zoom;
+    - dal file manager ci si arriva col doppio clic (o Invio) grazie a
+      /exwin/lib/tipi.txt, «queste estensioni si aprono con quel programma»:
+      immagini, archivi, pagine HTML. Cio' che non e' elencato va all'editor
+      come prima.
 
-  Va in PROGRAMMI_EXWIN e in un albero suo sotto exwin/bin/, come filemgr.
+  ! IL LETTORE PNG DI eximg LEGGEVA SOLO GLI 8 BIT, e la prima prova l'ha
+    trovato subito: ImageMagick salva un colore solo come tavolozza da 1 bit.
+    Adesso png.c legge 1, 2, 4, 8 e 16 bit e l'interlacciamento Adam7, e
+    tools/prova_png.sh lo confronta con ImageMagick su 92 file. Vale anche per
+    il toolkit, EXBrowser e Pennello.
+
+  QUEL CHE MANCA:
+    - tipi.txt lo legge solo il file manager: la scrivania (pm) apre i file
+      del desktop con la sua regola, EXBrowser chiede «apri con» a modo suo.
+      Farli leggere tipi.txt e' il passo dopo;
+    - l'icona di Immagini non c'e' (nel menu la voce e' senza);
+    - le GIF animate mostrano il primo fotogramma (@NAV-GIF);
+    - ruotare la vista, lo schermo intero, la presentazione.
 
 ! @FIN-ICONA LE FINESTRE SI RIDUCONO A ICONA — sul desktop E sulla barra.
 
@@ -4583,20 +4646,42 @@ Le prove che contano, e come si lanciano:
     caratteri comuni, oppure dichiararlo a schermo invece che lasciare un
     collegamento vuoto che sembra rotto.
 
- 2. @NAV-UNITA LE UNITA' RELATIVE (em, %, rem) e @media. Sono le piu' vicine a essere
-    fattibili — `font-size` accetta solo i pixel — ma vogliono la misura del
-    contenitore, che l'impaginazione a penna corrente non ha in mano quando
-    serve.
+ 2. @NAV-UNITA LE UNITA' RELATIVE: FATTE IL 28 SETTEMBRE 2026 (exbrowser 0.010;
+    cssprova 128/128, prova_bordi.sh 7/7). @media era gia' fatta stamattina.
+    - em, rem e % per font-size, margini, padding e spessori dei bordi; pt e
+      vw si convertono subito in pixel; le parole di font-size (small, large,
+      x-large..., larger, smaller); le frazioni contano (1.5em);
+    - ! UNA RELATIVA SI RISOLVE IN FONDO A css_calcola, NON QUANDO SI LEGGE:
+      prima il corpo, sul corpo del PADRE; poi il resto, sul corpo
+      dell'elemento appena deciso. Anche se `margin: 2em` e' scritto prima
+      di `font-size` nella stessa regola;
+    - CSS_CORPO_PREDEFINITO (15) sta in css.h: e' la base di rem e il corpo
+      del testo senza stile del navigatore, e i due devono coincidere.
+    RESTA: la % di margini e padding si prende sulla larghezza della FINESTRA
+    (quella delle @media), non su quella del contenitore, che excss non
+    conosce: giusta per i blocchi di primo livello, troppo larga dentro.
+    E calc(), vh, ch, ex non ci sono; width e height non esistono ancora.
 
  3. @NAV-BIDI L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
     sono (DejaVu), ma si impaginano da sinistra a destra come tutto il resto:
     una riga di arabo si legge al contrario. Il BiDi non c'e' ed e' un lavoro
     suo, non un ritocco.
 
- 4. @NAV-CURSORE IL CURSORE NON SI PIAZZA COL MOUSE. Nelle caselle e nelle aree si muove
-    con le frecce, Home, Fine e le cancellazioni; un clic dentro il testo pero'
-    da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
-    si e' cliccato.
+ 4. @NAV-CURSORE IL CURSORE SI PIAZZA COL MOUSE: FATTO IL 28 SETTEMBRE 2026
+    (exbrowser 0.011; tools/prova_cursore.sh, 2/2).
+    - un clic in una casella o in un'area di una pagina mette il cursore fra
+      le due lettere piu' vicine al punto cliccato (est_cursore_da_clic, in
+      browser_estranei.c accanto al disegno: e' lo stesso conto al contrario,
+      e i due devono restare uguali). Nell'area prima si trova la riga, con
+      lo stesso a capo del disegno; la password si misura sugli asterischi;
+    - le caselle del TOOLKIT lo facevano gia' (casella_clic in exwin.c): il
+      difetto era solo dei controlli che la pagina disegna da se'.
+    RESTA: tirare col mouse per selezionare (c'e' solo Shift+frecce); il
+    doppio clic che sceglie una parola.
+    ! LA DOMANDA NATA DALLA PROVA E' CHIUSA (exbrowser 0.013): un onclick= su
+    una pagina SENZA <script> non girava perche' il motore si apriva solo
+    per gli <script>. Adesso si apre anche se c'e' almeno un attributo on...=
+    (ha_gestori_attributo). Provato: tools/prova_onclick.sh.
 
 ! I TETTI DEL CSS SONO STATI ALZATI il 4 settembre 2026, perche' un foglio
   vero non ci stava: quello di DuckDuckGo e' 105.607 byte con 1652 selettori e
@@ -4606,12 +4691,116 @@ Le prove che contano, e come si lanciano:
   DuckDuckGo spariva del tutto, schermo bianco. «stile troncato» nella riga di
   stato e' il primo posto da guardare quando una pagina arriva e non si vede.
 
- 5. @NAV-BORDER `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
-    delle tabelle. `border-collapse`, i colori e i lati separati non ci sono.
+ 5. @NAV-BORDER `border` NEL CSS: FATTO IL 28 SETTEMBRE 2026 (exbrowser 0.009;
+    tools/prove/cssprova.c 114/114, tools/prova_bordi.sh 5/5).
+    - excss legge border-{top,right,bottom,left}-{width,style,color} e le
+      scorciatoie border, border-top/right/bottom/left, border-width,
+      border-style, border-color; e insieme padding (e padding-*) e la
+      scorciatoia margin, con 1-4 valori (auto = 0);
+    - ! UNA DICHIARAZIONE ADESSO PUO' VALERE PIU' PROPRIETA': dich_prossima ha
+      una coda, la scorciatoia si espande li' e le voci escono una per volta.
+      Per questo CSS_DICH_MAX e' passato a 60000;
+    - l'impaginatore disegna i bordi dei BLOCCHI come rettangoli pieni nella
+      lista degli sfondi (SFONDI_MAX 1024), e il contenuto rientra di bordo +
+      padding. Senza uno stile il bordo non c'e', come vuole il CSS;
+    - di passaggio: uno sfondo di blocco non azzerava il suo `.bordo`, e poteva
+      ereditare il contorno di una tabella di una pagina precedente.
+    RESTA: i bordi degli elementi IN LINEA (uno <span> col bordo) e quelli CSS
+    delle tabelle e delle celle (border-collapse); tratteggio e puntini si
+    disegnano pieni; rgb() non si legge ancora come colore (la parola si
+    salta e il bordo prende il colore del testo); le unita' relative sono
+    @NAV-UNITA.
 
- 6. @NAV-GIF LE GIF ANIMATE MOSTRANO IL PRIMO FOTOGRAMMA, ed e' dichiarato: animarle
-    vorrebbe dire un orologio dentro la libreria delle immagini.
+ 6. @NAV-GIF LE GIF ANIMATE SI MUOVONO: FATTO IL 28 SETTEMBRE 2026 (exbrowser 0.012,
+    immagini 0.002; tools/prova_gif.sh sull'host, tools/prova_gif_anima.sh
+    in QEMU).
+    - ! L'OROLOGIO NON E' NELLA LIBRERIA, ed era l'obiezione scritta qui: eximg
+      da' un ITERATORE (eximg_anima_apri / _passo / _chiudi, esportati in
+      fondo alla tabella) che compone il fotogramma dopo sulla tela e dice
+      quanti ms deve restare; quando chiederlo lo decide chi ha una sveglia;
+    - la composizione c'e' tutta: posizione dei fotogrammi, trasparenza,
+      smaltimento none/background/previous, intreccio, il giro che ricomincia;
+      provata contro -coalesce di ImageMagick, due giri per animazione. Un
+      ritardo di 0 o 1 centesimo vale 100 ms, come in tutti i browser;
+    - la memoria si prende all'apertura (tela, copia per «previous», indici):
+      un passo non alloca, e il navigatore scala nel buffer che l'immagine ha
+      gia' (ridimensiona_in), fondendo la trasparenza sul bianco.
+    RESTA: la sveglia di ExWin fa al piu' 5 giri al secondo, quindi una GIF da
+    100 ms va a meta' velocita'; dentro un <iframe> resta il primo
+    fotogramma; il navigatore ridisegna la pagina intera a ogni fotogramma
+    (con molte animazioni pesera').
 
+
+=============================================================================
+@EXJS-LACUNE COSE CHE ExJs NON HA (misurate il 28 settembre 2026)
+=============================================================================
+
+! CONTANO POCO FINCHE' IL PREDEFINITO E' QuickJS (dal 23 settembre, vedi
+  exbrowser.c, g_qjs). Pesano su chi sceglie ExJs nelle impostazioni, e sul
+  giorno in cui ExJs dovesse tornare il motore di tutti.
+
+- (FATTA IL 28 SETTEMBRE 2026) `Date`, in lib/exjs/base.c. Tutta in UTC:
+  EX-OS non ha fusi, getHours e getUTCHours sono lo stesso numero e
+  getTimezoneOffset e' 0. L'ORA LA DA' CHI OSPITA con exjs_orologio_metti
+  (EXBrowser: i secondi dell'orologio vero agganciati una volta a
+  uptime_ms, cosi' non torna mai indietro); senza, Date.now() e' 0. Nello
+  stub e' FACOLTATIVA: una exjs.so vecchia si apre lo stesso. In QuickJS la
+  funzione e' vuota, perche' la sua Date l'ora la chiede alla libc.
+  Il tempo sta nella proprieta' nascosta "\001t" (EXJS_DATA_TEMPO): for..in
+  e JSON.stringify saltano i nomi che cominciano con \001.
+  ! SOLO DIVISIONI A 32 BIT nei calcoli dei giorni (Hinnant): __divdi3 nei
+    programmi di EX-OS non c'e'.
+- (FATTO IL 28 SETTEMBRE 2026) ToPrimitive: exjs_primitivo in val.c, valueOf
+  e poi toString (una Date col `+` vuole prima il testo). Lo usano
+  exjs_a_numero e il `+` di run.c. `o * 2` con valueOf 5 fa 10, `o + 1` fa
+  6, `b - a` fra due Date e' un numero.
+  ! IL NaN DEL MOTORE (MASC senza indice) NON E' NE' DOPPIO NE' PUNTATORE:
+    la prima versione lo rimandava a exjs_a_numero e girava per sempre su
+    `0/0 != 0/0`. La conversione si fa solo per T_OGG.
+- Trovato strada facendo: JSON.stringify scriveva `{,"b":1}` quando la prima
+  voce era saltata (undefined o funzione). Corretto.
+
+COSA RESTA:
+- `throw`, `try`, `switch`: una nativa non sa lanciare, quindi
+  toISOString di una data non valida rende «Invalid Date» invece del
+  RangeError. tools/prova_date.sh per ExJs ricava l'esito dalla RIGA
+  dell'errore proprio per questo.
+- I fusi orari: quando il sistema ne avra' uno, lo spostamento va in
+  data_campi/data_componi (base.c) e in getTimezoneOffset.
+- Date.parse capisce l'ISO 8601 e le forme di toString, toUTCString,
+  «Jan 1, 2000» e «1/31/2000»; il resto e' NaN.
+- new f() non aggancia f.prototype all'oggetto nuovo (N_NUOVO in run.c):
+  Date se lo aggancia da se', le funzioni scritte in JavaScript no. E
+  `instanceof` il parser lo legge ma run.c non ha un caso per lui: le due
+  cose vanno fatte insieme.
+
+Il banco per provarle e' tools/prove/jsprova.c (make prova-exjs).
+
+=============================================================================
+@BUILD-FLAG IL SEGNAPOSTO DEI FLAG RICREATO DA SOLO (visto il 28 settembre 2026)
+=============================================================================
+
+! COSA SI E' VISTO. Alle 10:03 build/.flag-e08088162e aveva l'ora di quel
+  momento, con la STESSA impronta di stamattina: qualcosa l'aveva tolto, e la
+  regola $(SEGNO_FLAG) l'ha ricreato — il che butta gli oggetti e fa
+  ricompilare TUTTO (libc.so, le librerie, ogni programma, poi l'ISO). Due
+  make di fila subito dopo non ricompilano niente: non e' un difetto che si
+  ripete da solo, e' qualcosa che ha toccato il file.
+
+! LA CAUSA NON L'HO TROVATA, e va scritto invece di indovinarla. Sospetti:
+  - MEGA: build/ si sincronizza fra i due PC (e' tracciata da git, vedi
+    SVILUPPO.md), e il registro di MEGAsync mostra caricamenti continui di
+    build/obj. Un .flag- con un'altra impronta arrivato dall'altro PC, o il
+    nostro tolto la', basterebbe;
+  - un bersaglio del Makefile che fa `rm -f build/.flag-*` fuori dalla sua
+    regola (da cercare).
+
+DA FARE: la prossima volta che succede, guardare SUBITO il registro di
+MEGAsync (~/.local/share/data/Mega Limited/MEGAsync/logs, ruota in fretta)
+cercando «.flag-». Se e' MEGA, l'esclusione giusta e' build/.flag-* nel
+.megaignore (il segnaposto e' della singola macchina: le impronte dipendono
+dal compilatore di ognuna) — e va chiesta con un CHIEDO, perche' .megaignore
+e' comune.
 
 =============================================================================
 @NAVMETA IL NAVIGATORE — LE META' CHE MANCANO A COSE GIA' FATTE
@@ -4628,28 +4817,34 @@ nel codice, dove comincia.
 ! CON ExJs IL TETTO VERO E' L'ARENA del motore (96 KB nel browser), non i
   128 KB del buffer: una risposta piu' grande diventa la stringa vuota.
 
-! `join` LAVORA ANCORA SU MEZZO KILOBYTE (diario: 2 settembre, il difetto dei
-  511 caratteri). Non passa dal «filo» perche' fra un pezzo e l'altro chiama
-  exjs_a_stringa sull'elemento, e su un vettore annidato quella SCRIVE
-  NELL'ARENA, cioe' in mezzo al filo aperto. Farlo bene vuole prima decidere
-  quel caso.
+! (FATTE IL 28 SETTEMBRE 2026, jsprova 266/266, domprova 260/260) `join` su
+  mezzo kilobyte e `exjs_a_stringa` che non chiamava `toString`. Il caso da
+  decidere era quello scritto qui: convertire un elemento SCRIVE
+  nell'arena. Deciso cosi':
+    - un vettore diventa testo in DUE passate (exjs_vettore_testo_sep): prima
+      ogni elemento in una stringa vera, poi il filo, che legge e basta. Vale
+      per join, String(vettore) e i vettori annidati;
+    - exjs_concat fa lo stesso: prima le due stringhe, poi la scrittura;
+    - toString si chiama solo se NESSUN FILO E' APERTO (ExJsCtx.fili_aperti,
+      azzerato a ogni esecuzione di primo livello) e non oltre 8 livelli;
+    - un vettore che contiene se stesso vale "" dove ricompare (testo_pila).
+  Trovati strada facendo, e corretti: `String([[1,2],3])` dava «1,2»; un
+  separatore di join oltre i 31 caratteri si tagliava; `a.push(a); String(a)`
+  finiva la memoria del motore.
 
-! `exjs_a_stringa` NON CHIAMA `toString`. `String(location)` rende l'indirizzo
-  con QuickJS e "[object Object]" con ExJs: e' la conversione IMPLICITA che
-  manca, e vale per qualunque oggetto del DOM messo dentro una stringa. Il
-  posto e' val.c; vuole un'esecuzione aperta, quindi non e' una riga.
-
-! I SELETTORI SONO META'. Un CssPezzo conosce tipo, classe e id: `[attr]`,
-  `>`, `+`, `~` e le classi multiple non ci sono. Le pseudo-classi NON ci sono
-  nemmeno, e un selettore che le contiene non trova NIENTE invece di trovare
-  la cosa sbagliata — la scelta e' voluta.
+! (SUPERATA il 24 settembre 2026, corretta qui il 28: la nota diceva che
+  `[attr]`, `>`, `+`, `~`, le classi multiple e le pseudo-classi non c'erano.
+  Ci sono tutte — CssPezzo ha attr, comb, pseudo, nth — e tools/prove/cssprova.c
+  le prova. Restano fuori :hover, :focus e gli pseudo-elementi, che in una
+  pagina che nessuno sta toccando non combaciano.)
 
 ! LA PERSISTENZA DEI BISCOTTI NON E' PROVATA DENTRO EX-OS, solo sul banco: da
   CD non si scrive, e il giro completo vuole un sistema installato.
 
-! `<input type="image">` MANDA `nome.x` e `nome.y`, e SONO ZERO: qui si
-  disegna come un pulsante e non come l'immagine cliccabile che dovrebbe
-  essere, quindi un punto preciso non ce l'ha.
+! `<input type="image">` MANDA `nome.x` e `nome.y` DEL PUNTO CLICCATO (dal 28
+  settembre 2026, exbrowser 0.014; prima zero), ma dentro il rettangolo di un
+  PULSANTE: l'immagine del `src` non si disegna ancora. Resta da fare:
+  disegnarla, e allora le coordinate diventano quelle della figura.
 
 
 =============================================================================
@@ -4668,10 +4863,23 @@ CTRL+ALT+CANC: FATTO IL 26 SETTEMBRE 2026 (tools/prova_tasti_sistema.sh, 3/3)
     quello bloccato. E' la risposta alla domanda «cosa succede se nessuno
     risponde» scritta qui sotto.
 
-RESTA CTRL+C. ! E IL PEZZO CHE QUI SOTTO SI DA' PER MANCANTE C'E' GIA', in
-  parte: SYS_CONSOLE_SETFG (232) dichiara il processo in primo piano di una
-  console, e SYS_CONSOLE_INFO lo rende (campo fg). Chi fa Ctrl+C parta da li'
-  (la shell lo dichiara? quando?) prima di costruire gruppi di processi.
+CTRL+C SULLA CONSOLE DI TESTO: FATTO IL 28 SETTEMBRE 2026 (kernel 0.221,
+  kbd.drv 0.004; tools/prova_ctrlc.sh, 6/6, e prova_tasti_sistema.sh 3/3)
+  - in modo cotto Ctrl+C CHIEDE: «[Ctrl+C] Fermo "textline" (PID 20)? s/n».
+    «s» (o «y») lo ferma con interrompi(); qualunque altro tasto lo lascia;
+  - al prompt, dove non c'e' niente da fermare, svuota la riga e da' alla
+    shell una riga vuota: il prompt torna a capo, come nel terminale in
+    finestra;
+  - in modo crudo resta un tasto: gfedit lo riceve com'era.
+  ! CHI E' «IL PROGRAMMA» LO DICE LA SHELL, e lo diceva gia': pty_ctl(0,
+    PTY_CTL_FG, figlio) quando aspetta un figlio, 0 al prompt. Sullo stdin di
+    una console rispondeva ENOTTY; adesso il kernel lo annota per quella
+    console (sched_console_ctrlc) e il driver lo legge con SYS_CONSOLE_CTRLC
+    (216). Il primo piano di SYS_CONSOLE_SETFG non bastava: al prompt e' la
+    shell stessa, e la domanda avrebbe offerto di fermare lei.
+  ! NEL TERMINALE IN FINESTRA Ctrl+C FERMA SENZA CHIEDERE (lo fa il pty, nel
+    kernel: kernel/ipc/pty.c, disciplina()). Farlo chiedere anche li' vuol dire portare la
+    domanda nella disciplina del pty: resta da fare, se serve.
 
 Due tasti e un servizio, chiesti insieme perche' sono la stessa mancanza: in
 EX-OS, oggi, non c'e' nessun modo di dire «fermati» a qualcosa che gira.
@@ -5005,3 +5213,17 @@ un programma: il primo lavoro e' tirarla fuori.
   sinistra apre l'indirizzo, in quella di destra cerca. Il messaggio del tasto
   non dice da quale casella arrivi — per saperlo e' nato ex_fuoco_chi() nel
   toolkit.
+
+2026-09-28 16:03 claude-B — @PTHREAD FATTO e provato (tappa 1 di Exilla, kernel 0.222):
+  pthread e semafori nella libc, fili staccati (syscall 217) e pila di un
+  filo (218) nel kernel, MAX_PROCESSES 128, FILO_MAX 64, pila di un filo 2 MB
+  di riserva. Prova: tools/exilla/prova-pthread.sh, 15 su 15.
+  @FLOPPY-PIENO: una causa trovata, vedi scambio.txt (2026-09-28 16:03). Da decidere
+  come rendere uguali i due floppy (es. mkfloppy.sh con un elenco esplicito
+  invece del bit di esecuzione).
+
+2026-09-28 16:38 claude-A — Pennello non blocca piu' ExWin (linea() e IPC_SENZA_ATTESA,
+  kernel 0.223, wserver 0.004: vedi @PAINT), gfedit mostra il prompt di
+  INPUT con F5 (il figlio ha il primo piano della console), Date e valueOf
+  in ExJs (@EXJS-LACUNE). ! MEGA NON PORTA I BIT DI ESECUZIONE, confermato
+  anche qui: gli script nuovi di tools/ si lanciano con `bash`, non con ./.

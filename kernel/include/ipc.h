@@ -73,4 +73,26 @@ void    ipc_cleanup_process(uint32_t pid);
  * mailbox è piena la notifica viene scartata silenziosamente. */
 int     ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num);
 
+/* =============================================================================
+ * IPC_SENZA_ATTESA — un bit nel `tipo` di ipc_send (28 settembre 2026)
+ *
+ * Su una casella piena ipc_send RIPROVA ogni 5 ms fino a dieci secondi, e
+ * per un driver temporaneamente indietro e' la cosa giusta. Per il server
+ * grafico no: col mouse mosso in fretta mandava a Pennello un movimento per
+ * pacchetto, la casella di Pennello (4 posti) si riempiva, e il SERVER restava
+ * fermo dentro ipc_send — puntatore immobile, schermo congelato — mentre
+ * Pennello a sua volta aspettava posto nella casella del server. Il commento
+ * di wserver diceva «se il client non raccoglie, non si insiste»: era vero
+ * nell'intenzione e falso nel kernel.
+ *
+ * Con questo bit acceso nel tipo, una casella piena rende subito -EBUSY; il
+ * bit si toglie prima di consegnare, quindi chi riceve vede il tipo vero. Si
+ * usa per cio' che, perso, e' rimpiazzato dal prossimo (un movimento), mai
+ * per cio' che non si ripete (un clic).
+ *
+ * ! DUPLICATO A MANO in drivers/wserver/wserver.c, come le altre costanti
+ * che attraversano la syscall.
+ * ============================================================================= */
+#define IPC_SENZA_ATTESA  0x80000000u
+
 #endif /* IPC_H */

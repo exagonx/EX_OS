@@ -78,8 +78,9 @@ TESTA_PONTI = """/* GENERATO DA tools/genlibc.py — NON MODIFICARE A MANO.
  *
  * I ponti verso libc.so: %d salti indiretti, uno per funzione.
  *
- * __libc_ponti_nomi e' un BLOCCO di stringhe una dopo l'altra, nello stesso
- * ordine della tabella: si scorre avanzando di strlen+1.
+ * __libc_ponti_impronte ha, nello stesso ordine della tabella, l'IMPRONTA di
+ * ogni nome (FNV-1a a 32 bit): quattro byte invece del nome intero. Il nome
+ * lo tiene libc.so; chi si avvia ne calcola l'impronta e confronta.
  *
  * Ogni ponte e' un `jmp *tabella+N`, e non tocca ne' gli argomenti ne' il
  * valore di ritorno: e' il motivo per cui questo file puo' esistere senza
@@ -116,23 +117,41 @@ def scrivi_esporta(percorso, nomi):
     open(percorso, "w").write("".join(r))
 
 
-def scrivi_ponti(percorso, nomi):
-    r = [TESTA_PONTI % len(nomi)]
+# ! L'IMPRONTA AL POSTO DEL NOME (28 settembre 2026). Ogni programma portava
+# con se' i nomi di TUTTE le funzioni della libc, in fila — circa 6 KB — e il
+# floppy da 1,44 MB li pagava una volta per programma: aggiungere alla libc i
+# thread POSIX (sessanta funzioni dal nome lungo) costava 65 KB di floppy e lo
+# faceva traboccare. Quattro byte per funzione bastano per riconoscerla; il
+# nome resta in libc.so (libc_esporta.S), che e' uno solo.
+#
+# ! LA STESSA FUNZIONE IN lib/libc_ponti.c, riga per riga: se le due diver-
+# gessero, ogni programma si fermerebbe all'avvio dicendo che manca una
+# funzione.
+def impronta(nome):
+    h = 2166136261
+    for c in nome.encode():
+        h = ((h ^ c) * 16777619) & 0xFFFFFFFF
+    return h
 
+def scrivi_ponti(percorso, nomi):
+    impronte = {}
+    for n in nomi:
+        h = impronta(n)
+        if h in impronte:
+            # Due nomi con la stessa impronta: un programma prenderebbe la
+            # funzione sbagliata senza dirlo. Si ferma la costruzione.
+            raise SystemExit("genlibc: %s e %s hanno la stessa impronta %08x: "
+                             "cambia impronta() qui e in lib/libc_ponti.c"
+                             % (impronte[h], n, h))
+        impronte[h] = n
+    r = [TESTA_PONTI % len(nomi)]
     r.append('\n    .section .bss\n    .align 4\n')
     r.append('    .globl __libc_ponti_tabella\n__libc_ponti_tabella:\n')
     r.append("    .space %d\n" % (4 * len(nomi)))
-
-    # ! I NOMI SONO UN BLOCCO UNICO, NON UN VETTORE DI PUNTATORI. Un vettore
-    # di 322 puntatori sono 1288 byte in ogni programma, e non servono a
-    # niente: le stringhe stanno gia' una dopo l'altra, separate dallo zero
-    # finale, e chi le legge avanza di strlen+1. Mille e trecento byte per
-    # programma, su una quarantina di programmi, sono cinquanta kilobyte su un
-    # floppy da 1.44 MB.
     r.append('\n    .section .rodata\n    .align 4\n')
-    r.append('    .globl __libc_ponti_nomi\n__libc_ponti_nomi:\n')
+    r.append('    .globl __libc_ponti_impronte\n__libc_ponti_impronte:\n')
     for n in nomi:
-        r.append('    .asciz "%s"\n' % n)
+        r.append('    .long 0x%08x        /* %s */\n' % (impronta(n), n))
 
     r.append('\n    .align 4\n    .globl __libc_ponti_quanti\n__libc_ponti_quanti:\n')
     r.append("    .long %d\n" % len(nomi))

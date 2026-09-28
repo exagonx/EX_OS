@@ -112,6 +112,8 @@ void syscall_init(void)
     syscall_table[SYS_ATTESA_SVEGLIA] = sys_attesa_sveglia;
     syscall_table[SYS_THREAD_FERMA]    = sys_thread_ferma;
     syscall_table[SYS_THREAD_FERMARSI] = sys_thread_fermarsi;
+    syscall_table[SYS_THREAD_STACCA]   = sys_thread_stacca;
+    syscall_table[SYS_THREAD_PILA]     = sys_thread_pila;
     syscall_table[SYS_GETPID]      = sys_getpid;
     syscall_table[SYS_GETPPID]     = sys_getppid;
     syscall_table[SYS_MMAP]        = sys_mmap;
@@ -197,6 +199,7 @@ void syscall_init(void)
     syscall_table[SYS_CONSOLE_REGISTRO] = sys_console_registro;
     syscall_table[SYS_CONSOLE_SETFG]  = sys_console_setfg;
     syscall_table[SYS_CONSOLE_GRAFICA] = sys_console_grafica;
+    syscall_table[SYS_CONSOLE_CTRLC]  = sys_console_ctrlc;
 
     for (i = 0; i < SYSCALL_COUNT; i++) if (syscall_table[i]) count++;
     klog(LOG_INFO, "SYSCALL: %u syscall registrate (int 0x80)", count);

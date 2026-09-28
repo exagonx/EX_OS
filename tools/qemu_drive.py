@@ -289,7 +289,13 @@ def main():
             # socket. Dentro un argomento solo si passa da rapidi(), che
             # scrive e basta: un decimo di secondo l'uno, che e' quanto
             # separa davvero due clic di una mano.
-            if cmd.startswith("mon:"):
+            # `monr:` e' come `mon:` con piu' comandi, ma uno ogni 10 ms: e'
+            # un mouse MOSSO IN FRETTA, cento pacchetti al secondo, come una
+            # mano vera. Serve a provare chi riceve i movimenti piu' veloce
+            # di quanto riesca a disegnarli (Pennello, 28 settembre 2026).
+            if cmd.startswith("monr:"):
+                mon.rapidi([z.strip() for z in cmd[5:].split(";")], passo=0.01)
+            elif cmd.startswith("mon:"):
                 pezzi = [z.strip() for z in cmd[4:].split(";")]
                 if len(pezzi) == 1:
                     mon.cmd(pezzi[0], settle=0.25)

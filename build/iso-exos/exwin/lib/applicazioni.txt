@@ -48,6 +48,8 @@ File manager           | /exwin/bin/filemgr   | /exwin/icon/baseapp/filemgr_64.i
 EXBrowser              | /exwin/bin/exbrowser | /exwin/icon/baseapp/exbrowser_64.ico
 Archivi                | /exwin/bin/archivi   | /exwin/icon/baseapp/archivi_64.ico
 Calctor                | /exwin/bin/calctor   | /exwin/icon/baseapp/calctor_64.ico
+Pennello               | /exwin/bin/pennello  | /exwin/icon/baseapp/pennello_64.ico
+Immagini               | /exwin/bin/immagini
 Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
 Strumenti/Terminale    | /exwin/bin/term      | /exwin/icon/baseapp/term_64.ico
 Strumenti/EX-IDE       | /exwin/bin/exide     | /exwin/icon/baseapp/exide_64.ico

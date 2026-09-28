@@ -36,11 +36,26 @@
 extern void              *__libc_ponti_tabella[];
 extern const unsigned int __libc_ponti_quanti;
 
-/* ! UN BLOCCO DI STRINGHE, non un vettore di puntatori: i nomi stanno uno dopo
- * l'altro separati dallo zero finale, nello stesso ordine della tabella. Un
- * vettore di 322 puntatori sarebbero 1288 byte in ogni programma per dire una
- * cosa che le stringhe dicono gia' da se'. */
-extern const char         __libc_ponti_nomi[];
+/* ! LE IMPRONTE, NON I NOMI (28 settembre 2026): quattro byte per funzione,
+ * nello stesso ordine della tabella. Prima c'era un blocco con tutti i nomi in
+ * fila, circa 6 KB in OGNI programma — e il floppy li pagava una volta per
+ * programma: sessanta funzioni nuove nella libc lo facevano traboccare. Il
+ * nome lo tiene libc.so; qui se ne calcola l'impronta e si confronta. Vedi
+ * tools/genlibc.py, che rifiuta di costruire se due nomi ne hanno una uguale.
+ *
+ * ! E VALE IN TUTT'E DUE I SENSI: libc.so esporta ancora i NOMI, quindi un
+ * programma vecchio (coi nomi) su una libc nuova funziona, e un programma
+ * nuovo su una libc vecchia pure — l'impronta la calcola chi si avvia. */
+extern const unsigned int __libc_ponti_impronte[];
+
+/* FNV-1a a 32 bit: la stessa di tools/genlibc.py, riga per riga. */
+static unsigned int impronta(const char *s)
+{
+    unsigned int h = 2166136261u;
+
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
+    return h;
+}
 
 static const char *const g_dove[] = {
     "/lib/libc.so",
@@ -54,6 +69,16 @@ static void scrivi(const char *s)
     while (s[n]) n++;
     __asm__ volatile ("int $0x80" :: "a"(SYS_WRITE), "b"(2), "c"(s), "d"(n)
                       : "memory");
+}
+
+static void scrivi_esa(unsigned int v)
+{
+    char t[9];
+    int  i;
+
+    for (i = 7; i >= 0; i--) { t[i] = "0123456789abcdef"[v & 15]; v >>= 4; }
+    t[8] = 0;
+    scrivi(t);
 }
 
 static void muori(const char *s)
@@ -74,31 +99,33 @@ static void muori(const char *s)
 void __libc_ponti_avvia(void)
 {
     const ExLibTesta *t;
-    const char *nome;
-    unsigned int i;
+    unsigned int      i, e;
 
     t = exlib_apri_fra(g_dove, (int)(sizeof g_dove / sizeof g_dove[0]));
     if (t == 0)
         muori("libc: non trovo la libreria condivisa /lib/libc.so\n");
 
-    nome = __libc_ponti_nomi;
+    for (i = 0; i < __libc_ponti_quanti; i++) __libc_ponti_tabella[i] = 0;
 
-    for (i = 0; i < __libc_ponti_quanti; i++) {
-        void *p = exlib_simbolo(t, nome);
+    /* Un giro sulle funzioni che libc.so offre: di ognuna l'impronta, e il
+     * suo indirizzo va nel posto che la chiede. 445 per 445 confronti di
+     * interi: niente, rispetto a leggere il file. */
+    for (e = 0; e < t->n; e++) {
+        unsigned int h = impronta(t->nomi[e]);
 
-        /* ! UN NOME CHE MANCA SI DICE, E SI DICE QUALE. E' il solo modo di
-         * accorgersi che la libc installata e' piu' vecchia del programma —
-         * l'unico guaio che la risoluzione per nome non impedisce. Senza
-         * questo controllo il puntatore resterebbe zero e il programma
-         * cadrebbe piu' tardi, in un punto che non c'entra niente. */
-        if (p == 0) {
-            scrivi("libc: la libreria condivisa non ha la funzione: ");
-            scrivi(nome);
+        for (i = 0; i < __libc_ponti_quanti; i++)
+            if (__libc_ponti_impronte[i] == h)
+                __libc_ponti_tabella[i] = t->indirizzi[e];
+    }
+
+    /* ! UNA FUNZIONE CHE MANCA SI DICE, e si dice quale — con l'impronta,
+     * perche' il nome qui non c'e' piu': impronta() di tools/genlibc.py sui
+     * nomi della libc lo ritrova. E' il solo modo di accorgersi che la libc
+     * installata e' piu' vecchia del programma. */
+    for (i = 0; i < __libc_ponti_quanti; i++)
+        if (__libc_ponti_tabella[i] == 0) {
+            scrivi("libc: la libreria condivisa non ha la funzione con impronta ");
+            scrivi_esa(__libc_ponti_impronte[i]);
             muori("\n      La libc installata e' piu' vecchia di questo programma.\n");
         }
-        __libc_ponti_tabella[i] = p;
-
-        while (*nome) nome++;       /* al nome dopo, oltre lo zero finale */
-        nome++;
-    }
 }

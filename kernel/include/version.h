@@ -336,7 +336,34 @@
  * l'ha cominciata; SYS_CONSOLE_REGISTRO (215) lo rende. Prima il registro era
  * una schermata sola, e cio' che scorreva via si perdeva.
  */
-#define EXOS_VERSION    "0.220"
+/* 0.220 -> 0.221: CTRL+C SULLA CONSOLE DI TESTO (@TASTI-SISTEMA, 28 settembre
+ * 2026).
+ *
+ * SYS_PTY_CTL(PTY_CTL_FG) sullo stdin di una console non risponde piu' ENOTTY:
+ * annota per quella console chi Ctrl+C deve fermare (sched_console_ctrlc), e
+ * SYS_CONSOLE_CTRLC (216) lo rende al driver della tastiera, che chiede prima
+ * di fermarlo. La shell lo dichiarava gia': nessun programma cambia.
+ */
+/* 0.221 -> 0.222: UN FILO CARICA LE PAGINE DELL'ESEGUIBILE (28 settembre
+ * 2026, Exilla). pf_carica_da_file cercava i segmenti nel PCB di chi faultava,
+ * e quello di un filo non ne ha: sono del capogruppo. Un filo che eseguiva per
+ * primo una pagina di codice moriva sulla propria EIP. Vedi immagine_di() in
+ * kernel/mm/paging.c.
+ *
+ * E, nella stessa versione, il resto della tappa 1: SYS_THREAD_STACCA (217)
+ * per i fili che nessuno aspetta, SYS_THREAD_PILA (218) per sapere dove sta la
+ * pila di un filo; MAX_PROCESSES 64 -> 128, FILO_MAX 8 -> 64, la riserva di
+ * pila di un filo 64 KB -> 2 MB (indirizzi, non RAM). */
+/* 0.222 -> 0.223: IPC_SENZA_ATTESA (28 settembre 2026, claude-A).
+ *
+ * Un bit nel tipo di ipc_send (kernel/include/ipc.h): su una casella piena
+ * rende subito -EBUSY invece di riprovare per dieci secondi. Lo usa wserver
+ * (0.004) per i movimenti del mouse: col mouse veloce dentro Pennello il
+ * server restava fermo in ipc_send verso un client pieno, e sembrava tutto
+ * bloccato. ! wserver 0.004 vuole questo kernel: su uno vecchio il bit
+ * arriverebbe dentro il tipo e il client non riconoscerebbe i movimenti.
+ */
+#define EXOS_VERSION    "0.223"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

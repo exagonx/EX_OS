@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # =============================================================================
 PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi calctor
+PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi calctor pennello immagini
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -2158,6 +2158,7 @@ EXIMG_PNG     := lib/eximg/png.c
 EXIMG_ICO     := lib/eximg/ico.c
 EXIMG_JPG     := lib/eximg/jpg.c
 EXIMG_GIF     := lib/eximg/gif.c
+EXIMG_BMP     := lib/eximg/bmp.c
 EXIMG_INFLATE := lib/eximg/inflate.c
 EXIMG_ESPORTA := lib/eximg/eximg_esporta.c
 EXIMG_HDR     := lib/eximg/eximg.h lib/eximg/eximg_interno.h lib/eximg/inflate.h
@@ -2165,7 +2166,7 @@ EXIMG_LD      := lib/eximg/eximg.ld
 
 EXIMG_SO := $(BUILD_EXWIN_LIB)/eximg.so
 
-$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) \
+$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) $(EXIMG_BMP) \
              $(EXIMG_INFLATE) $(EXIMG_ESPORTA) \
              $(EXIMG_HDR) $(EXIMG_LD) $(EXLIB_SRC) $(EXLIB_HDR) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
@@ -2176,12 +2177,13 @@ $(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ICO) -o $(BUILD_OBJ)/soimg_ico.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_JPG) -o $(BUILD_OBJ)/soimg_jpg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_GIF) -o $(BUILD_OBJ)/soimg_gif.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_BMP) -o $(BUILD_OBJ)/soimg_bmp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/soimg_inflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ESPORTA) -o $(BUILD_OBJ)/soimg_esporta.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXIMG_LD) \
 	    $(BUILD_OBJ)/soimg_esporta.o $(BUILD_OBJ)/soimg_main.o \
 	    $(BUILD_OBJ)/soimg_png.o $(BUILD_OBJ)/soimg_ico.o \
-	    $(BUILD_OBJ)/soimg_jpg.o $(BUILD_OBJ)/soimg_gif.o \
+	    $(BUILD_OBJ)/soimg_jpg.o $(BUILD_OBJ)/soimg_gif.o $(BUILD_OBJ)/soimg_bmp.o \
 	    $(BUILD_OBJ)/soimg_inflate.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
@@ -2327,6 +2329,9 @@ winprova: dirs $(WINPROVA_BIN)
 #   /exwin/dev    i pezzi grafici che vogliono il varco dei driver
 # =============================================================================
 EXWIN_APPLIST := exwin/lib/applicazioni.txt
+# Con che cosa si apre un file, per estensione: lo legge il file manager
+# (@IMMAGINI). Si copia accanto all'elenco delle applicazioni.
+EXWIN_TIPI    := exwin/lib/tipi.txt
 
 # ! LE ICONE SONO DATI, E L'ISO DEVE DIPENDERNE. Il comando che le copia c'era
 # gia'; la dipendenza no, e la differenza si vede il giorno che si cambia
@@ -2483,6 +2488,65 @@ $(CALCTOR_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(CALCTOR_SRC) $(CALCTOR_LD) lib/exm
 
 .PHONY: calctor
 calctor: dirs $(CALCTOR_BIN)
+
+# --- /exwin/bin/pennello: il programma di disegno (@PAINT, 28 settembre 2026) --
+#
+# Due stub (exwin, exdlg) e tre pezzi compilati dentro: exinfo, i codificatori
+# BMP e PNG (lib/eximg/scrivi.c) e il DEFLATE che serve al PNG. Per LEGGERE le
+# immagini apre eximg.so quando serve, come il toolkit: non ci si collega.
+PENNELLO_SRC := exwin/bin/pennello/pennello.c
+PENNELLO_BIN := $(BUILD_EXWIN_BIN)/pennello
+PENNELLO_LD  := exwin/bin/pennello/pennello.ld
+
+$(PENNELLO_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(PENNELLO_SRC) $(PENNELLO_LD) \
+             lib/eximg/scrivi.c lib/eximg/scrivi.h lib/eximg/eximg.h lib/exzip/deflate.c lib/exzip/deflate.h \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/pennello ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/eximg -I drivers/wserver -I drivers/kbd -c $(PENNELLO_SRC) -o $(BUILD_OBJ)/pennello_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -I lib/exzip -c lib/eximg/scrivi.c -o $(BUILD_OBJ)/pennello_scrivi.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c lib/exzip/deflate.c -o $(BUILD_OBJ)/pennello_deflate.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/pennello_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/pennello_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/pennello_info.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/pennello_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PENNELLO_LD) \
+	    $(BUILD_OBJ)/pennello_start.o $(BUILD_OBJ)/pennello_main.o \
+	    $(BUILD_OBJ)/pennello_scrivi.o $(BUILD_OBJ)/pennello_deflate.o \
+	    $(BUILD_OBJ)/pennello_exwin.o $(BUILD_OBJ)/pennello_exdlg.o $(BUILD_OBJ)/pennello_info.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] pennello compilato: $@"
+
+.PHONY: pennello
+pennello: dirs $(PENNELLO_BIN)
+
+# --- /exwin/bin/immagini: il visualizzatore di immagini (@IMMAGINI, 28 settembre 2026)
+#
+# Due stub (exwin, exdlg) ed exinfo compilato dentro. Le immagini le legge
+# eximg.so, aperta quando serve come fa il toolkit.
+IMMAGINI_SRC := exwin/bin/immagini/immagini.c
+IMMAGINI_BIN := $(BUILD_EXWIN_BIN)/immagini
+IMMAGINI_LD  := exwin/bin/immagini/immagini.ld
+
+$(IMMAGINI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(IMMAGINI_SRC) $(IMMAGINI_LD) lib/eximg/eximg.h \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/immagini ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/eximg -I drivers/wserver -I drivers/kbd -c $(IMMAGINI_SRC) -o $(BUILD_OBJ)/immagini_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/immagini_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/immagini_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/immagini_info.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/immagini_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(IMMAGINI_LD) \
+	    $(BUILD_OBJ)/immagini_start.o $(BUILD_OBJ)/immagini_main.o \
+	    $(BUILD_OBJ)/immagini_exwin.o $(BUILD_OBJ)/immagini_exdlg.o $(BUILD_OBJ)/immagini_info.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] immagini compilato: $@"
+
+.PHONY: immagini
+immagini: dirs $(IMMAGINI_BIN)
 
 EDIT_SRC := exwin/bin/edit/edit.c
 EDIT_BIN := $(BUILD_EXWIN_BIN)/edit
@@ -2722,6 +2786,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
              $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
+             $(PENNELLO_BIN) $(IMMAGINI_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) \
              $(EXTTF_SO) \
@@ -3017,6 +3082,14 @@ $(ID_BIN): $(ID_SRC) $(ID_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_ST
 	@cp $@ $(BUILD_BIN)/whoami
 	@echo "[OK] id compilato: $@ (e whoami)"
 
+# ! IL SECONDO NOME HA UNA REGOLA SUA (28 settembre 2026), come gzip/gunzip.
+# La copia qui sopra si fa come effetto collaterale, ma il floppy chiede
+# $(BUILD_BIN)/whoami come file: in un albero gia' costruito c'e' e nessuno se
+# ne accorge, in uno pulito (un clone nuovo, BUILD_DIR altrove) make si ferma
+# con «nessuna regola per generare whoami».
+$(BUILD_BIN)/whoami: $(ID_BIN)
+	@cp $< $@
+
 .PHONY: id
 id: dirs $(ID_BIN)
 
@@ -3076,6 +3149,10 @@ $(SHUTDOWN_BIN): $(SHUTDOWN_SRC) $(SHUTDOWN_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(
 	@cp $@ $(BUILD_BIN)/halt
 	@echo "[OK] shutdown compilato: $@ (e poweroff, reboot, halt)"
 
+# Gli altri tre nomi: una regola ciascuno, per lo stesso motivo di whoami.
+$(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt: $(SHUTDOWN_BIN)
+	@cp $< $@
+
 .PHONY: shutdown
 shutdown: dirs $(SHUTDOWN_BIN)
 
@@ -3097,6 +3174,10 @@ $(PERM_BIN): $(PERM_SRC) $(PERM_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(L
 	    $(BUILD_OBJ)/perm_start.o $(BUILD_OBJ)/perm_main.o $(LIBC_PONTI_OBJ) -o $@
 	@cp $@ $(BUILD_BIN)/chown
 	@echo "[OK] chmod compilato: $@ (e chown)"
+
+# chown: una regola sua, per lo stesso motivo di whoami.
+$(BUILD_BIN)/chown: $(PERM_BIN)
+	@cp $< $@
 
 .PHONY: chmod
 chmod: dirs $(PERM_BIN)
@@ -6948,7 +7029,7 @@ verifica-dipendenze-cd:
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_DOC) \
-             $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_ICONE) \
+             $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_TIPI) $(EXWIN_ICONE) \
              $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(PROVA_WAV) $(PROVA_MID) \
              $(WSERVER_OUT) \
@@ -6996,6 +7077,7 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@mkdir -p $(ISOX_ROOT)/exwin/bin $(ISOX_ROOT)/exwin/lib $(ISOX_ROOT)/exwin/dev
 	@cp $(BUILD_EXWIN_BIN)/* $(ISOX_ROOT)/exwin/bin/ 2>/dev/null || true
 	@cp $(EXWIN_APPLIST) $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
+	@cp $(EXWIN_TIPI) $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
 	@# ! LE ICONE, E CON IL PERCORSO CHE HANNO QUI. applicazioni.txt le
 	@# nomina per percorso assoluto — /exwin/icon/baseapp/edit_64.ico — e un
 	@# elenco che punta a file che sul CD non ci sono e' un menu senza

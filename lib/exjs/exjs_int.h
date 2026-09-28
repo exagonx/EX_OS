@@ -310,6 +310,18 @@ void         exjs_prop_metti_val(ExJsCtx *c, int p, ExJsVal v);
 int          exjs_globale_idx(ExJsCtx *c);
 int          exjs_finita(ExJsCtx *c);
 const char  *exjs_vettore_testo(ExJsCtx *c, ExJsVal vet);
+/* Lo stesso con un separatore a scelta: e' join (@NAVMETA). `sep` deve stare
+ * in un posto che non si muove (l'arena), non nel posto di servizio. */
+const char  *exjs_vettore_testo_sep(ExJsCtx *c, ExJsVal vet, const char *sep);
+/* I millisecondi dell'orologio di chi ospita (0 se non c'e'). */
+double       exjs_orologio_ms(ExJsCtx *c);
+/* ToPrimitive: un oggetto diventa un valore semplice. `numero` = 1 prova
+ * prima valueOf (e' il caso di `-`, `*`, `<`); 0 e' il suggerimento del `+`,
+ * che per una Date vuole il testo. Un valore gia' semplice torna com'e'. */
+ExJsVal      exjs_primitivo(ExJsCtx *c, ExJsVal v, int numero);
+/* Il segno interno di una Date, dove sta il suo tempo: base.c e val.c lo
+ * devono chiamare con lo stesso nome. */
+#define EXJS_DATA_TEMPO  "\001t"
 ExJsVal      exjs_concat(ExJsCtx *c, ExJsVal a, ExJsVal b);
 int          exjs_prop_prima(ExJsCtx *c, int ogg);
 int          exjs_prop_prossima(ExJsCtx *c, int p);

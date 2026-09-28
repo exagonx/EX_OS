@@ -11,21 +11,22 @@
  *
  * PNG — la parte che serve davvero
  *
- * Profondita' 8 bit, e i cinque tipi di colore che si incontrano:
- *
+ * Tutte le profondita' (1, 2, 4, 8, 16 bit) e i cinque tipi di colore:
  *     0  grigio            2  RGB           3  tavolozza
  *     4  grigio + alfa     6  RGBA
+ * e l'interlacciamento Adam7.
  *
- * ! NIENTE INTERLACCIAMENTO ADAM7, ED E' DICHIARATO. Un PNG interlacciato non
- * e' un'immagine con le righe in ordine diverso: sono SETTE immagini piu'
- * piccole, ognuna col suo filtro e la sua larghezza, da ricomporre. E' un
- * pezzo di codice a se' che si esercita solo con i file che lo usano — cioe'
- * quasi mai — e un pezzo mai esercitato e' un pezzo di cui non si sa se
- * funziona. Chi ne ha uno lo salva senza interlacciamento.
+ * ! FINO AL 28 SETTEMBRE 2026 SOLO 8 BIT E NIENTE ADAM7, e la ragione era
+ * scritta qui: un pezzo mai esercitato e' un pezzo di cui non si sa se
+ * funziona. Poi il visualizzatore (@IMMAGINI) ha mostrato «formato non
+ * riconosciuto» su una PNG qualunque — ImageMagick salva un'immagine di pochi
+ * colori a tavolozza da 1 bit — e un lettore che rifiuta i file comuni fa
+ * sembrare rotte le immagini. La risposta alla vecchia obiezione e' la prova:
+ * tools/prova_png.sh fa scrivere a ImageMagick ogni combinazione di tipo,
+ * profondita' e interlacciamento e confronta i pixel con i suoi.
  *
- * ! NIENTE 16 BIT PER CANALE. Si troncherebbero comunque a 8 per andare a
- * schermo, e leggerli vorrebbe dire il doppio del codice per buttare via
- * meta' di quello che si e' letto.
+ * ! I 16 BIT SI LEGGONO E SI TRONCANO A 8 (il byte alto): lo schermo ne ha 8,
+ * e tenerne di piu' in memoria non cambierebbe un pixel visibile.
  *
  * ! I FILTRI SONO IL CUORE, E SONO CINQUE. Ogni riga di un PNG e' preceduta da
  * un byte che dice come e' stata predetta dalla riga sopra e dal pixel a
@@ -102,6 +103,61 @@ static int sfiltra(unsigned char tipo, unsigned char *riga,
     return 0;
 }
 
+/* =============================================================================
+ * Le righe sotto gli 8 bit, i 16 bit, e le sette passate di Adam7
+ * (28 settembre 2026, @IMMAGINI)
+ * ============================================================================= */
+
+/* I byte di una riga di `w` pixel, senza il byte del filtro. */
+static unsigned int riga_byte(unsigned int w, unsigned int canali, unsigned int prof)
+{
+    return (w * canali * prof + 7u) / 8u;
+}
+
+/* Il campione `c` del pixel `x`, portato a 8 bit. `scala` = 0 per un indice di
+ * tavolozza, che resta com'e'.
+ * ! SOTTO GLI 8 BIT IL GRIGIO SI MOLTIPLICA, NON SI SPOSTA: a 1 bit il bianco
+ * e' 1, e 1 << 7 darebbe 128 invece di 255. */
+static unsigned int campione(const unsigned char *dati, unsigned int x, unsigned int c,
+                             unsigned int canali, unsigned int prof, int scala)
+{
+    unsigned int i = x * canali + c, v, max;
+
+    if (prof == 8)  return dati[i];
+    if (prof == 16) return dati[i * 2];             /* il byte alto */
+    v = (dati[(i * prof) / 8u] >> (8u - prof - (i * prof) % 8u)) & ((1u << prof) - 1u);
+    if (!scala) return v;
+    max = (1u << prof) - 1u;
+    return v * 255u / max;
+}
+
+/* Dove comincia la passata `p` di Adam7 e di quanto salta. Senza
+ * interlacciamento, una passata sola che copre tutto. */
+static void passata_passi(unsigned int p, unsigned int interl, unsigned int *x0, unsigned int *y0,
+                          unsigned int *dx, unsigned int *dy)
+{
+    static const unsigned char X0[7] = { 0, 4, 0, 2, 0, 1, 0 };
+    static const unsigned char Y0[7] = { 0, 0, 4, 0, 2, 0, 1 };
+    static const unsigned char DX[7] = { 8, 8, 4, 4, 2, 2, 1 };
+    static const unsigned char DY[7] = { 8, 8, 8, 4, 4, 2, 2 };
+
+    if (!interl) { *x0 = *y0 = 0; *dx = *dy = 1; return; }
+    *x0 = X0[p]; *y0 = Y0[p]; *dx = DX[p]; *dy = DY[p];
+}
+
+/* Quanti pixel ha la passata `p`, in larghezza e altezza. Puo' essere zero: su
+ * un'immagine piccola alcune passate sono vuote, e non hanno nemmeno il byte
+ * del filtro. */
+static void passata_misura(unsigned int p, unsigned int interl, unsigned int w, unsigned int h,
+                           unsigned int *pw, unsigned int *ph)
+{
+    unsigned int x0, y0, dx, dy;
+
+    passata_passi(p, interl, &x0, &y0, &dx, &dy);
+    *pw = w > x0 ? (w - x0 + dx - 1u) / dx : 0;
+    *ph = h > y0 ? (h - y0 + dy - 1u) / dy : 0;
+}
+
 int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm)
 {
     static const unsigned char FIRMA[8] = { 137,'P','N','G',13,10,26,10 };
@@ -152,23 +208,31 @@ int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm)
     if (larg == 0 || alt == 0 || zlib_n == 0) return 0;
     if (larg > EXIMG_LATO_MAX || alt > EXIMG_LATO_MAX) return 0;
 
-    /* ! I LIMITI SI DICHIARANO E SI RIFIUTANO, non si troncano. Un'immagine
-     * troncata a meta' e' un difetto che chi guarda attribuisce al file. */
-    if (prof != 8) return 0;
-    if (interlacciato != 0) return 0;
-
+    /* Le combinazioni che la specifica ammette; il resto e' un file rotto. */
     switch (tipo) {
-    case 0: canali = 1; break;      /* grigio */
-    case 2: canali = 3; break;      /* RGB */
-    case 3: canali = 1; break;      /* tavolozza: un indice per pixel */
-    case 4: canali = 2; break;      /* grigio + alfa */
-    case 6: canali = 4; break;      /* RGBA */
+    case 0: canali = 1; if (prof != 1 && prof != 2 && prof != 4 && prof != 8 && prof != 16) return 0; break;
+    case 3: canali = 1; if (prof != 1 && prof != 2 && prof != 4 && prof != 8) return 0; break;
+    case 2: canali = 3; if (prof != 8 && prof != 16) return 0; break;
+    case 4: canali = 2; if (prof != 8 && prof != 16) return 0; break;
+    case 6: canali = 4; if (prof != 8 && prof != 16) return 0; break;
     default: return 0;
     }
+    if (interlacciato > 1) return 0;
     if (tipo == 3 && n_tavolozza == 0) return 0;
 
-    bpp    = canali;
-    attesi = alt * (larg * bpp + 1u);   /* ogni riga ha il byte del filtro */
+    /* ! bpp E' «DI QUANTO SI TORNA INDIETRO» PER IL FILTRO, in byte, e sotto
+     * gli 8 bit vale 1: la specifica lo vuole cosi', non la divisione. */
+    bpp = (canali * prof) / 8u;
+    if (bpp == 0) bpp = 1;
+
+    /* I byte da decomprimere: una passata sola, o le sette di Adam7, ognuna
+     * con le sue righe e il suo byte di filtro per riga. */
+    attesi = 0;
+    for (i = 0; i < (interlacciato ? 7u : 1u); i++) {
+        unsigned int pw, ph;
+        passata_misura(i, interlacciato, larg, alt, &pw, &ph);
+        if (pw && ph) attesi += ph * (riga_byte(pw, canali, prof) + 1u);
+    }
 
     zlib_dati = (unsigned char *)eximg_memoria(zlib_n);
     grezzo    = (unsigned char *)eximg_memoria(attesi);
@@ -201,42 +265,53 @@ int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm)
         if (prodotti != attesi) return 0;
     }
 
-    /* --- togliere i filtri e comporre l'ARGB ------------------------------ */
+    /* --- togliere i filtri e comporre l'ARGB, passata per passata --------- */
     bm->larghezza = larg;
     bm->altezza   = alt;
     bm->px = (unsigned int *)eximg_memoria(larg * alt * 4u);
     if (!bm->px) return 0;
 
     {
-        unsigned int y;
-        unsigned char *prec = 0;
+        unsigned char *riga = grezzo;
+        unsigned int   pass;
 
-        for (y = 0; y < alt; y++) {
-            unsigned char *riga = grezzo + y * (larg * bpp + 1u);
-            unsigned char  f    = riga[0];
-            unsigned char *dati = riga + 1;
-            unsigned int   x;
+        for (pass = 0; pass < (interlacciato ? 7u : 1u); pass++) {
+            unsigned int pw, ph, rb, y, x0, y0, dx, dy;
+            unsigned char *prec = 0;
 
-            if (sfiltra(f, dati, prec, larg * bpp, bpp) != 0) return 0;
-            prec = dati;
+            passata_misura(pass, interlacciato, larg, alt, &pw, &ph);
+            if (!pw || !ph) continue;
+            rb = riga_byte(pw, canali, prof);
+            passata_passi(pass, interlacciato, &x0, &y0, &dx, &dy);
 
-            for (x = 0; x < larg; x++) {
-                const unsigned char *p = dati + x * bpp;
-                unsigned int r, g, b;
+            for (y = 0; y < ph; y++, riga += rb + 1u) {
+                unsigned char *dati = riga + 1;
+                unsigned int   x;
 
-                switch (tipo) {
-                case 0: r = g = b = p[0];               break;
-                case 2: r = p[0]; g = p[1]; b = p[2];   break;
-                case 4: r = g = b = p[0];               break;   /* alfa ignorata */
-                case 6: r = p[0]; g = p[1]; b = p[2];   break;   /* alfa ignorata */
-                default: {                                       /* tavolozza */
-                    unsigned int k = p[0];
-                    if (k >= n_tavolozza) k = 0;
-                    r = tavolozza[k*3]; g = tavolozza[k*3+1]; b = tavolozza[k*3+2];
-                    break;
+                if (sfiltra(riga[0], dati, prec, rb, bpp) != 0) return 0;
+                prec = dati;
+
+                for (x = 0; x < pw; x++) {
+                    unsigned int r, g, b;
+
+                    switch (tipo) {
+                    case 0: r = g = b = campione(dati, x, 0, 1, prof, 1); break;
+                    case 2: r = campione(dati, x, 0, 3, prof, 1);
+                            g = campione(dati, x, 1, 3, prof, 1);
+                            b = campione(dati, x, 2, 3, prof, 1); break;
+                    case 4: r = g = b = campione(dati, x, 0, 2, prof, 1); break;  /* alfa ignorata */
+                    case 6: r = campione(dati, x, 0, 4, prof, 1);                /* alfa ignorata */
+                            g = campione(dati, x, 1, 4, prof, 1);
+                            b = campione(dati, x, 2, 4, prof, 1); break;
+                    default: {                                                   /* tavolozza */
+                        unsigned int k = campione(dati, x, 0, 1, prof, 0);
+                        if (k >= n_tavolozza) k = 0;
+                        r = tavolozza[k*3]; g = tavolozza[k*3+1]; b = tavolozza[k*3+2];
+                        break;
+                    }
+                    }
+                    bm->px[(y0 + y * dy) * larg + x0 + x * dx] = (r << 16) | (g << 8) | b;
                 }
-                }
-                bm->px[y * larg + x] = (r << 16) | (g << 8) | b;
             }
         }
     }

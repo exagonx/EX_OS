@@ -60,13 +60,22 @@
  * ============================================================================= */
 
 #include "libc.h"
+
+/* Un bit nel tipo di ipc_send: una casella piena rende subito -EBUSY invece di
+ * riprovare per dieci secondi. DUPLICATO A MANO da kernel/include/ipc.h, dove
+ * sta la spiegazione intera. Un kernel piu' vecchio di questo non lo conosce:
+ * il bit gli arriva dentro il tipo, e il messaggio non e' riconosciuto — per
+ * questo wserver e kernel vanno aggiornati insieme. */
+#ifndef IPC_SENZA_ATTESA
+#define IPC_SENZA_ATTESA  0x80000000u
+#endif
 #include "kbd_proto.h"
 #include "win_proto.h"
 #include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.003");
+EX_VERSIONE("wserver", "0.004");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -1369,11 +1378,17 @@ static void manda_evento(const Finestra *f, unsigned int tipo,
      * il commento su WinEvento in win_proto.h. */
     e.tempo   = uptime_ms();
 
-    /* ! SE IL CLIENT NON RACCOGLIE, NON SI INSISTE. La mailbox e' profonda
-     * quattro messaggi: un client fermo la riempirebbe, e da li' in poi ogni
-     * ipc_send fallirebbe. Un evento perso e' meno grave di un server che si
-     * blocca su un client che non risponde piu'. */
-    (void)ipc_send(f->pid, WIN_MSG_EVENTO, &e, sizeof(e));
+    /* ! SE IL CLIENT NON RACCOGLIE, NON SI INSISTE — ma per i MOVIMENTI va
+     * detto al kernel (28 settembre 2026). Questo commento diceva che su una
+     * casella piena ipc_send fallisce: non e' vero, RIPROVA per dieci
+     * secondi. Col mouse veloce dentro Pennello la sua casella si riempiva
+     * di movimenti e il server restava fermo qui — puntatore immobile,
+     * schermo congelato, «blocca tutto» (tools/prova_pennello_veloce.sh).
+     * Un movimento perso lo rimpiazza il prossimo: va SENZA ATTESA. Il clic,
+     * il rilascio, un tasto non si ripetono: quelli aspettano il loro posto. */
+    (void)ipc_send(f->pid, WIN_MSG_EVENTO |
+                   (tipo == WIN_EV_MOUSE_MOSSO ? IPC_SENZA_ATTESA : 0u),
+                   &e, sizeof(e));
 }
 
 /* -----------------------------------------------------------------------------

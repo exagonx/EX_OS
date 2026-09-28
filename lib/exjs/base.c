@@ -699,29 +699,25 @@ static ExJsVal nat_pop(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
     return v;
 }
 
+/* ! join NON HA PIU' TETTI (@NAVMETA, 28 settembre 2026): prima componeva in
+ * mezzo kilobyte, e un separatore oltre i 31 caratteri si tagliava. Adesso e'
+ * exjs_vettore_testo_sep, in val.c, in due passate — vedi li' perche'. */
 static ExJsVal nat_join(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         sep[32], out[TESTO_MAX], pezzo[TESTO_MAX];
-    unsigned int l = exjs_lunghezza(c, q), i, k = 0, j;
+    ExJsVal     sep;
+    const char *t;
 
     (void)d;
-    if (n > 0 && exjs_tipo(c, a[0]) != EXJS_INDEFINITO)
-        copia_val(c, a[0], sep, sizeof(sep));
-    else { sep[0] = ','; sep[1] = '\0'; }
-
-    for (i = 0; i < l; i++) {
-        ExJsVal e = exjs_indice_prendi(c, q, i);
-
-        if (i) for (j = 0; sep[j] && k + 1 < sizeof(out); j++) out[k++] = sep[j];
-        /* null e undefined diventano stringa vuota: `[1,null,2].join('-')` fa
-         * "1--2", non "1-null-2". */
-        if (exjs_tipo(c, e) == EXJS_INDEFINITO || exjs_tipo(c, e) == EXJS_NULLO)
-            continue;
-        copia_val(c, e, pezzo, sizeof(pezzo));
-        for (j = 0; pezzo[j] && k + 1 < sizeof(out); j++) out[k++] = pezzo[j];
+    if (n > 0 && exjs_tipo(c, a[0]) != EXJS_INDEFINITO) {
+        /* il separatore nell'arena, dove non si muove: il posto di servizio
+         * lo riscriverebbe la prima conversione di un numero */
+        sep = (exjs_tipo(c, a[0]) == EXJS_STRINGA) ? a[0]
+                                                   : exjs_stringa(c, exjs_a_stringa(c, a[0]), -1);
+    } else {
+        sep = exjs_stringa(c, ",", 1);
     }
-    out[k] = '\0';
-    return exjs_stringa(c, out, -1);
+    t = exjs_vettore_testo_sep(c, q, exjs_a_stringa(c, sep));
+    return exjs_stringa(c, t, -1);
 }
 
 static ExJsVal nat_indexOf_vet(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
@@ -1061,6 +1057,9 @@ static void c_stringa(Comp *C, const char *s)
     c_car(C, '"');
 }
 
+static int  data_tempo(ExJsCtx *c, ExJsVal v, double *t);
+static void data_testo(double t, int modo, char *o);
+
 static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
 {
     char tmp[TESTO_MAX];
@@ -1099,6 +1098,18 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
     default: break;
     }
 
+    /* Una Date si scrive col suo toJSON: il testo ISO, o null se non e'
+     * valida. */
+    {
+        double t;
+        if (data_tempo(c, v, &t)) {
+            if (t != t) { c_testo(C, "null"); return; }
+            data_testo(t, 1, tmp);
+            c_stringa(C, tmp);
+            return;
+        }
+    }
+
     /* Un vettore. */
     {
         int          k = exjs_a_oggetto(v);
@@ -1128,8 +1139,13 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
                  p = exjs_prop_prossima(c, p))
                 elenco[quanti++] = p;
 
+            int scritte = 0;
+
             for (i = quanti - 1; i >= 0 && !C->rotto; i--) {
-                ExJsVal pv = exjs_prop_val(c, elenco[i]);
+                ExJsVal     pv = exjs_prop_val(c, elenco[i]);
+                const char *nome = exjs_arena_leggi(c, exjs_prop_nome(c, elenco[i]));
+
+                if (nome[0] == '\001') continue;         /* nascosta: Date */
 
                 /* Le voci `undefined` e le funzioni SPARISCONO da un oggetto:
                  * e' cio' che fa JavaScript, e ci si conta per non serializzare
@@ -1137,8 +1153,11 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
                 if (exjs_tipo(c, pv) == EXJS_INDEFINITO ||
                     exjs_tipo(c, pv) == EXJS_FUNZIONE) continue;
 
-                if (i != quanti - 1) c_car(C, ',');
-                c_stringa(C, exjs_arena_leggi(c, exjs_prop_nome(c, elenco[i])));
+                /* ! LA VIRGOLA SI CONTA SU QUELLE SCRITTE, non sull'indice:
+                 * con la prima voce saltata usciva `{,"b":1}`, che nessuno
+                 * rilegge. */
+                if (scritte++) c_car(C, ',');
+                c_stringa(C, nome);
                 c_car(C, ':');
                 componi(c, C, pv, profondo + 1);
             }
@@ -1451,6 +1470,484 @@ static void metti_nat_ogg(ExJsCtx *c, int ogg, const char *nome,
     metti_nat(c, exjs_da_oggetto(ogg), nome, f, dato);
 }
 
+/* =============================================================================
+ * Date (@EXJS-LACUNE, 28 settembre 2026)
+ *
+ * ! L'OROLOGIO E' DI CHI OSPITA: exjs_orologio_metti. La libreria non sa che
+ * ore sono, come non sa scaricare una pagina; senza orologio `new Date()` e'
+ * l'1 gennaio 1970, che e' un valore valido e non un errore.
+ *
+ * ! TUTTO IN UTC. EX-OS non ha fusi orari, quindi l'ora «locale» e' quella di
+ * Greenwich: getHours e getUTCHours rendono lo stesso numero e
+ * getTimezoneOffset rende 0. Una pagina che conta i giorni funziona; una che
+ * mostra l'ora mostra quella di Londra d'inverno. Il giorno che il sistema
+ * avra' un fuso, lo spostamento si mette in data_locale e basta.
+ *
+ * ! SOLO DIVISIONI A 32 BIT. Il giorno si ricava col double (pavimento), e
+ * da li' in giu' anno, mese e giorno con gli interi di Howard Hinnant: nei
+ * programmi di EX-OS la divisione a 64 bit (__divdi3) non c'e', e un `%` su
+ * un long long compila sull'host e non si collega sul sistema.
+ *
+ * ! IL TEMPO STA IN UNA PROPRIETA' NASCOSTA, EXJS_DATA_TEMPO, il cui nome
+ * comincia con \001: for..in e JSON.stringify saltano quei nomi, e nessuna
+ * pagina puo' scriverne uno per sbaglio.
+ * ========================================================================== */
+#define MS_GIORNO   86400000.0
+#define TEMPO_MAX   8.64e15              /* cento milioni di giorni, la norma */
+
+static const char *const nomi_giorno[7] = { "Sun","Mon","Tue","Wed","Thu","Fri","Sat" };
+static const char *const nomi_mese[12] = { "Jan","Feb","Mar","Apr","May","Jun",
+                                           "Jul","Aug","Sep","Oct","Nov","Dec" };
+
+static double data_nan(void) { double z = 0.0; return z / z; }
+
+/* Intero verso lo zero, come ToIntegerOrInfinity (senza l'infinito: chi
+ * chiama ha gia' escluso i valori non finiti). */
+static double tronca(double d)
+{
+    if (d > 9e15 || d < -9e15) return d;     /* gia' intero, e il cast sfora */
+    return (double)(long long)d;
+}
+
+static int finito(double d) { return d == d && d < 1.7e308 && d > -1.7e308; }
+
+/* TimeClip: fuori dai cento milioni di giorni il tempo non e' valido. */
+static double taglia_tempo(double t)
+{
+    if (!finito(t) || t > TEMPO_MAX || t < -TEMPO_MAX) return data_nan();
+    return tronca(t) + 0.0;              /* + 0.0 toglie il meno dallo zero */
+}
+
+/* Giorni dall'1/1/1970 di una data del calendario gregoriano (Hinnant). */
+static int giorni_da_data(int y, int m, int d)
+{
+    int era, yoe, doy, doe;
+
+    y -= m <= 2;
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = y - era * 400;
+    doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+static void data_da_giorni(int z, int *y, int *m, int *d)
+{
+    int era, doe, yoe, doy, mp;
+
+    z += 719468;
+    era = (z >= 0 ? z : z - 146096) / 146097;
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp  = (5 * doy + 2) / 153;
+    *d  = doy - (153 * mp + 2) / 5 + 1;
+    *m  = mp < 10 ? mp + 3 : mp - 9;
+    *y  = yoe + era * 400 + (*m <= 2);
+}
+
+/* I campi di un tempo valido: anno, mese (0-11), giorno, ore, minuti,
+ * secondi, millesimi, e in f[7] il giorno della settimana (0 = domenica). */
+static void data_campi(double t, int f[8])
+{
+    double g = pavimento(t / MS_GIORNO);
+    int    r = (int)(t - g * MS_GIORNO);
+    int    gi = (int)g;
+
+    data_da_giorni(gi, &f[0], &f[1], &f[2]);
+    f[1] -= 1;
+    f[3] = r / 3600000;
+    f[4] = r / 60000 % 60;
+    f[5] = r / 1000 % 60;
+    f[6] = r % 1000;
+    f[7] = ((gi % 7) + 11) % 7;          /* l'1/1/1970 era un giovedi' */
+}
+
+/* MakeDay + MakeTime + MakeDate, coi campi in double perche' le pagine ci
+ * mettono di tutto: il mese 13 e' gennaio dell'anno dopo, il giorno 0 e'
+ * l'ultimo del mese prima. */
+static double data_componi(const double f[7])
+{
+    double y, mo, ym, mn, giorni, ora;
+    int    i;
+
+    for (i = 0; i < 7; i++) if (!finito(f[i])) return data_nan();
+    y  = tronca(f[0]);
+    mo = tronca(f[1]);
+    ym = y + pavimento(mo / 12.0);
+    mn = mo - pavimento(mo / 12.0) * 12.0;
+    if (ym > 400000.0 || ym < -400000.0) return data_nan();
+    giorni = (double)giorni_da_data((int)ym, (int)mn + 1, 1) + tronca(f[2]) - 1.0;
+    ora = tronca(f[3]) * 3600000.0 + tronca(f[4]) * 60000.0 +
+          tronca(f[5]) * 1000.0 + tronca(f[6]);
+    return giorni * MS_GIORNO + ora;
+}
+
+/* ---- scrivere ------------------------------------------------------------ */
+static char *d_int(char *o, int v, int cifre)
+{
+    char         b[12];
+    unsigned int u, n = 0;
+
+    if (v < 0) { *o++ = '-'; u = (unsigned int)(-(v + 1)) + 1u; }
+    else u = (unsigned int)v;
+    do { b[n++] = (char)('0' + u % 10u); u /= 10u; } while (u);
+    while ((int)n < cifre) b[n++] = '0';
+    while (n) *o++ = b[--n];
+    return o;
+}
+
+static char *d_txt(char *o, const char *s) { while (*s) *o++ = *s++; return o; }
+
+/* modo: 0 toString, 1 toISOString, 2 toUTCString, 3 toDateString,
+ * 4 toTimeString, 5 toLocaleString, 6 toLocaleDateString, 7 toLocaleTimeString */
+static void data_testo(double t, int modo, char *o)
+{
+    int f[8], h12;
+
+    if (t != t) { d_txt(o, "Invalid Date")[0] = '\0'; return; }
+    data_campi(t, f);
+    h12 = f[3] % 12 ? f[3] % 12 : 12;
+
+    switch (modo) {
+    case 1:
+        if (f[0] < 0 || f[0] > 9999) { *o++ = f[0] < 0 ? '-' : '+';
+                                       o = d_int(o, f[0] < 0 ? -f[0] : f[0], 6); }
+        else o = d_int(o, f[0], 4);
+        *o++ = '-'; o = d_int(o, f[1] + 1, 2); *o++ = '-'; o = d_int(o, f[2], 2);
+        *o++ = 'T'; o = d_int(o, f[3], 2); *o++ = ':'; o = d_int(o, f[4], 2);
+        *o++ = ':'; o = d_int(o, f[5], 2); *o++ = '.'; o = d_int(o, f[6], 3);
+        *o++ = 'Z';
+        break;
+    case 2:
+        o = d_txt(o, nomi_giorno[f[7]]); o = d_txt(o, ", "); o = d_int(o, f[2], 2);
+        *o++ = ' '; o = d_txt(o, nomi_mese[f[1]]); *o++ = ' '; o = d_int(o, f[0], 4);
+        *o++ = ' '; o = d_int(o, f[3], 2); *o++ = ':'; o = d_int(o, f[4], 2);
+        *o++ = ':'; o = d_int(o, f[5], 2); o = d_txt(o, " GMT");
+        break;
+    case 5: case 6: case 7:
+        if (modo != 7) {
+            o = d_int(o, f[1] + 1, 1); *o++ = '/'; o = d_int(o, f[2], 1);
+            *o++ = '/'; o = d_int(o, f[0], 1);
+        }
+        if (modo == 5) o = d_txt(o, ", ");
+        if (modo != 6) {
+            o = d_int(o, h12, 1); *o++ = ':'; o = d_int(o, f[4], 2);
+            *o++ = ':'; o = d_int(o, f[5], 2); o = d_txt(o, f[3] < 12 ? " AM" : " PM");
+        }
+        break;
+    default:                                     /* 0, 3, 4 */
+        if (modo != 4) {
+            o = d_txt(o, nomi_giorno[f[7]]); *o++ = ' '; o = d_txt(o, nomi_mese[f[1]]);
+            *o++ = ' '; o = d_int(o, f[2], 2); *o++ = ' '; o = d_int(o, f[0], 4);
+        }
+        if (modo == 0) *o++ = ' ';
+        if (modo != 3) {
+            o = d_int(o, f[3], 2); *o++ = ':'; o = d_int(o, f[4], 2); *o++ = ':';
+            o = d_int(o, f[5], 2); o = d_txt(o, " GMT+0000 (Coordinated Universal Time)");
+        }
+        break;
+    }
+    *o = '\0';
+}
+
+/* ---- leggere ------------------------------------------------------------- */
+static int d_cifre(const char **ps, int max, int *v)
+{
+    const char *s = *ps;
+    int         n = 0;
+
+    *v = 0;
+    while (n < max && *s >= '0' && *s <= '9') { *v = *v * 10 + (*s - '0'); s++; n++; }
+    *ps = s;
+    return n;
+}
+
+static int d_minuscola(char ch) { return (ch >= 'A' && ch <= 'Z') ? ch + 32 : ch; }
+
+/* Il formato ISO della norma: AAAA, AAAA-MM, AAAA-MM-GG, poi facoltativi
+ * THH:mm, :ss, .sss e Z o +HH:mm. Rende 0 se non lo e'. */
+static int data_leggi_iso(const char *s, double *out)
+{
+    double f[7] = { 0, 0, 1, 0, 0, 0, 0 };
+    int    v, segno = 1, n, spost = 0;
+
+    if (*s == '+' || *s == '-') {
+        segno = *s == '-' ? -1 : 1; s++;
+        if (d_cifre(&s, 6, &v) != 6) return 0;
+    } else if (d_cifre(&s, 4, &v) != 4) return 0;
+    f[0] = segno * v;
+    if (*s == '-') { s++; if (d_cifre(&s, 2, &v) != 2) return 0; f[1] = v - 1;
+        if (*s == '-') { s++; if (d_cifre(&s, 2, &v) != 2) return 0; f[2] = v; } }
+    if (*s == 'T' || *s == 't' || *s == ' ') {
+        s++;
+        if (d_cifre(&s, 2, &v) != 2 || *s != ':') return 0;
+        f[3] = v; s++;
+        if (d_cifre(&s, 2, &v) != 2) return 0;
+        f[4] = v;
+        if (*s == ':') { s++; if (d_cifre(&s, 2, &v) != 2) return 0; f[5] = v;
+            if (*s == '.' || *s == ',') { s++; n = d_cifre(&s, 3, &v);
+                if (!n) return 0;
+                while (n < 3) { v *= 10; n++; }
+                f[6] = v;
+                while (*s >= '0' && *s <= '9') s++; } }
+        if (*s == 'Z' || *s == 'z') s++;
+        else if (*s == '+' || *s == '-') {
+            int sg = *s == '-' ? -1 : 1, hh, mm = 0;
+            s++;
+            if (d_cifre(&s, 2, &hh) != 2) return 0;
+            if (*s == ':') s++;
+            d_cifre(&s, 2, &mm);
+            spost = sg * (hh * 60 + mm);
+        }
+    }
+    if (*s) return 0;
+    if (f[1] > 11 || f[2] < 1 || f[2] > 31 || f[3] > 24 || f[4] > 59 || f[5] > 59)
+        return 0;
+    *out = data_componi(f) - spost * 60000.0;
+    return 1;
+}
+
+/* Il resto, alla buona: le forme che scrive toString e toUTCString
+ * («Thu Jan 01 1970 00:00:00 GMT+0000», «Thu, 01 Jan 1970 00:00:00 GMT») e
+ * quelle americane «Jan 1, 1970» e «1/31/1970». I nomi dei giorni si
+ * saltano, GMT e UTC anche. */
+static double data_leggi(const char *s)
+{
+    double f[7] = { -1e9, -1, -1, 0, 0, 0, 0 };
+    int    v, i, numeri[3], nn = 0, spost = 0, ora_vista = 0;
+
+    while (*s == ' ') s++;
+    if (data_leggi_iso(s, &f[0])) return taglia_tempo(f[0]);
+    f[0] = -1e9;
+
+    while (*s) {
+        if (*s >= '0' && *s <= '9') {
+            d_cifre(&s, 9, &v);
+            if (*s == ':') {                                   /* l'ora */
+                f[3] = v; s++; d_cifre(&s, 2, &v); f[4] = v; ora_vista = 1;
+                if (*s == ':') { s++; d_cifre(&s, 2, &v); f[5] = v; }
+                continue;
+            }
+            if (*s == '/') {                                   /* M/G/A */
+                f[1] = v - 1; s++; d_cifre(&s, 2, &v); f[2] = v;
+                if (*s == '/') { s++; d_cifre(&s, 9, &v); f[0] = v; }
+                continue;
+            }
+            if (nn < 3) numeri[nn++] = v;
+            continue;
+        }
+        if ((*s == '+' || *s == '-') && s[1] >= '0' && s[1] <= '9' && ora_vista) {
+            int sg = *s == '-' ? -1 : 1;                       /* GMT+0100 */
+            s++; d_cifre(&s, 4, &v);
+            spost = sg * ((v / 100) * 60 + v % 100);
+            continue;
+        }
+        if (d_minuscola(*s) >= 'a' && d_minuscola(*s) <= 'z') {
+            char p[4]; int k = 0;
+            while (d_minuscola(*s) >= 'a' && d_minuscola(*s) <= 'z') {
+                if (k < 3) p[k++] = (char)d_minuscola(*s);
+                s++;
+            }
+            p[k] = '\0';
+            for (i = 0; i < 12; i++)
+                if (k == 3 && d_minuscola(nomi_mese[i][0]) == p[0] &&
+                    nomi_mese[i][1] == p[1] && nomi_mese[i][2] == p[2]) f[1] = i;
+            if ((p[0] == 'p' || p[0] == 'a') && p[1] == 'm' && k == 2) {
+                if (p[0] == 'p' && f[3] < 12) f[3] += 12;
+                if (p[0] == 'a' && f[3] == 12) f[3] = 0;
+            }
+            continue;
+        }
+        s++;
+    }
+    /* I numeri sciolti: il giorno e l'anno, in un ordine qualunque — l'anno
+     * e' quello grande. */
+    for (i = 0; i < nn; i++) {
+        if (numeri[i] > 31 || f[2] >= 0) { if (f[0] == -1e9) f[0] = numeri[i]; }
+        else f[2] = numeri[i];
+    }
+    if (f[0] == -1e9 || f[1] < 0 || f[2] < 1) return data_nan();
+    return taglia_tempo(data_componi(f) - spost * 60000.0);
+}
+
+/* ---- l'oggetto ----------------------------------------------------------- */
+static int data_tempo(ExJsCtx *c, ExJsVal v, double *t)
+{
+    int k = exjs_a_oggetto(v), p;
+
+    if (k < 0) return 0;
+    p = exjs_prop_trova(c, k, EXJS_DATA_TEMPO, 0);
+    if (p < 0) return 0;
+    *t = exjs_a_numero(c, exjs_prop_val(c, p));
+    return 1;
+}
+
+static double data_questo(ExJsCtx *c, ExJsVal q)
+{
+    double t;
+    return data_tempo(c, q, &t) ? t : data_nan();
+}
+
+static void data_metti(ExJsCtx *c, ExJsVal q, double t)
+{
+    exjs_metti(c, q, EXJS_DATA_TEMPO, exjs_numero(c, t));
+}
+
+static double data_adesso(ExJsCtx *c)
+{
+    return taglia_tempo(pavimento(exjs_orologio_ms(c)));
+}
+
+/* I campi dagli argomenti di new Date(a, m, ...) e di Date.UTC. */
+static double data_da_argomenti(ExJsCtx *c, const ExJsVal *a, int n)
+{
+    double f[7] = { 0, 0, 1, 0, 0, 0, 0 };
+    int    i;
+
+    for (i = 0; i < n && i < 7; i++) f[i] = exjs_a_numero(c, a[i]);
+    if (finito(f[0])) { double y = tronca(f[0]); if (y >= 0 && y <= 99) f[0] = 1900 + y; }
+    return taglia_tempo(data_componi(f));
+}
+
+static ExJsVal nat_Date(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    char   b[80];
+    double t;
+
+    /* ! SENZA new, Date() e' una STRINGA, l'ora di adesso, e gli argomenti
+     * non contano. Con new `this` e' l'oggetto appena fatto. */
+    if (exjs_a_oggetto(q) < 0 || q == exjs_globale(c)) {
+        data_testo(data_adesso(c), 0, b);
+        return exjs_stringa(c, b, -1);
+    }
+    if (n == 0) t = data_adesso(c);
+    else if (n == 1) {
+        if (!data_tempo(c, a[0], &t)) {
+            ExJsVal p = exjs_primitivo(c, a[0], 0);
+            t = exjs_tipo(c, p) == EXJS_STRINGA ? data_leggi(exjs_a_stringa(c, p))
+                                                : taglia_tempo(exjs_a_numero(c, p));
+        }
+    } else t = data_da_argomenti(c, a, n);
+
+    data_metti(c, q, t);
+    exjs_proto_metti(c, q, exjs_da_oggetto((int)(long)d));
+    return q;
+}
+
+static ExJsVal nat_Date_now(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    (void)q; (void)a; (void)n; (void)d;
+    return exjs_numero(c, data_adesso(c));
+}
+
+static ExJsVal nat_Date_UTC(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    (void)q; (void)d;
+    return exjs_numero(c, n ? data_da_argomenti(c, a, n) : data_nan());
+}
+
+static ExJsVal nat_Date_parse(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    (void)q; (void)d;
+    return exjs_numero(c, n ? data_leggi(exjs_a_stringa(c, a[0])) : data_nan());
+}
+
+/* I get: dato 0-6 un campo, 7 il giorno della settimana, 8 il tempo intero,
+ * 9 lo spostamento del fuso, 10 getYear. */
+static ExJsVal nat_data_get(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    double t = data_questo(c, q);
+    int    f[8], k = (int)(long)d;
+
+    (void)a; (void)n;
+    if (t != t) return exjs_numero(c, t);
+    if (k == 8) return exjs_numero(c, t);
+    if (k == 9) return exjs_numero(c, 0.0);
+    data_campi(t, f);
+    return exjs_numero(c, (double)(k == 10 ? f[0] - 1900 : f[k]));
+}
+
+/* I set: dato = primo campo | (quanti argomenti al massimo << 4). setTime ha
+ * dato 15. */
+static ExJsVal nat_data_set(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    double t = data_questo(c, q), f[7];
+    int    k = (int)(long)d & 15, max = (int)(long)d >> 4, i, g[8];
+
+    if (exjs_a_oggetto(q) < 0) return exjs_numero(c, data_nan());
+    if (k == 15) t = taglia_tempo(n ? exjs_a_numero(c, a[0]) : data_nan());
+    else if (n == 0) t = data_nan();
+    else {
+        /* setFullYear su una data non valida riparte dall'1/1/1970. */
+        if (t != t) { if (k != 0) return exjs_numero(c, t); t = 0.0; }
+        data_campi(t, g);
+        for (i = 0; i < 7; i++) f[i] = g[i];
+        for (i = 0; i < n && i < max; i++) f[k + i] = exjs_a_numero(c, a[i]);
+        t = taglia_tempo(data_componi(f));
+    }
+    data_metti(c, q, t);
+    return exjs_numero(c, t);
+}
+
+static ExJsVal nat_data_testo(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    char   b[80];
+    double t = data_questo(c, q);
+
+    (void)a; (void)n;
+    /* toJSON di una data non valida e' null. toISOString dovrebbe lanciare
+     * un RangeError, ma una nativa qui non sa lanciare: rende «Invalid Date». */
+    if ((int)(long)d == 8) {
+        if (t != t) return exjs_nullo();
+        d = (void *)1;
+    }
+    data_testo(t, (int)(long)d, b);
+    return exjs_stringa(c, b, -1);
+}
+
+static void data_registra(ExJsCtx *c, ExJsVal g)
+{
+    static const struct { const char *nome; int dato; } get[] = {
+        { "getFullYear", 0 }, { "getMonth", 1 }, { "getDate", 2 }, { "getHours", 3 },
+        { "getMinutes", 4 }, { "getSeconds", 5 }, { "getMilliseconds", 6 },
+        { "getDay", 7 }, { "getUTCFullYear", 0 }, { "getUTCMonth", 1 },
+        { "getUTCDate", 2 }, { "getUTCHours", 3 }, { "getUTCMinutes", 4 },
+        { "getUTCSeconds", 5 }, { "getUTCMilliseconds", 6 }, { "getUTCDay", 7 },
+        { "getTime", 8 }, { "valueOf", 8 }, { "getTimezoneOffset", 9 }, { "getYear", 10 },
+    };
+    static const struct { const char *nome; int dato; } set[] = {
+        { "setFullYear", 0 | 3 << 4 }, { "setMonth", 1 | 2 << 4 }, { "setDate", 2 | 1 << 4 },
+        { "setHours", 3 | 4 << 4 }, { "setMinutes", 4 | 3 << 4 }, { "setSeconds", 5 | 2 << 4 },
+        { "setMilliseconds", 6 | 1 << 4 },
+        { "setUTCFullYear", 0 | 3 << 4 }, { "setUTCMonth", 1 | 2 << 4 }, { "setUTCDate", 2 | 1 << 4 },
+        { "setUTCHours", 3 | 4 << 4 }, { "setUTCMinutes", 4 | 3 << 4 },
+        { "setUTCSeconds", 5 | 2 << 4 }, { "setUTCMilliseconds", 6 | 1 << 4 },
+        { "setTime", 15 },
+    };
+    static const struct { const char *nome; int dato; } testo[] = {
+        { "toString", 0 }, { "toISOString", 1 }, { "toUTCString", 2 }, { "toGMTString", 2 },
+        { "toDateString", 3 }, { "toTimeString", 4 }, { "toLocaleString", 5 },
+        { "toLocaleDateString", 6 }, { "toLocaleTimeString", 7 }, { "toJSON", 8 },
+    };
+    ExJsVal      proto = exjs_oggetto(c), D;
+    unsigned int i;
+
+    for (i = 0; i < sizeof(get) / sizeof(get[0]); i++)
+        metti_nat(c, proto, get[i].nome, nat_data_get, (void *)(long)get[i].dato);
+    for (i = 0; i < sizeof(set) / sizeof(set[0]); i++)
+        metti_nat(c, proto, set[i].nome, nat_data_set, (void *)(long)set[i].dato);
+    for (i = 0; i < sizeof(testo) / sizeof(testo[0]); i++)
+        metti_nat(c, proto, testo[i].nome, nat_data_testo, (void *)(long)testo[i].dato);
+
+    D = exjs_costruttore(c, nat_Date, (void *)(long)exjs_a_oggetto(proto), "Date");
+    exjs_metti(c, g, "Date", D);
+    exjs_metti(c, D, "prototype", proto);
+    metti_nat(c, D, "now",   nat_Date_now,   0);
+    metti_nat(c, D, "UTC",   nat_Date_UTC,   0);
+    metti_nat(c, D, "parse", nat_Date_parse, 0);
+}
+
 void exjs_base_registra(ExJsCtx *c)
 {
     ExJsVal g, math;
@@ -1472,6 +1969,7 @@ void exjs_base_registra(ExJsCtx *c)
     metti_nat(c, g, "String",     nat_String,     0);
     metti_nat(c, g, "Number",     nat_Number,     0);
     metti_nat(c, g, "Boolean",    nat_Boolean,    0);
+    data_registra(c, g);
 
     /* console.log, e `console` e' un oggetto perche' cosi' lo scrivono tutti. */
     {
@@ -1545,9 +2043,10 @@ void exjs_base_registra(ExJsCtx *c)
 /* =============================================================================
  * QUELLO CHE NON C'E', DICHIARATO
  *
- *   Date                          vuole l'orologio, e l'orologio non sta in
- *                                 questa libreria: arrivera' come nativa
- *                                 registrata da chi ospita, come setTimeout
+ *   Date nei fusi orari           e' tutta in UTC (vedi Date): EX-OS non ha
+ *                                 fusi. Le native non lanciano, e
+ *                                 toISOString di una data non valida rende
+ *                                 «Invalid Date» invece del RangeError
  *   RegExp                        e con lui replace globale e split per
  *                                 espressione: e' uno scaglione suo
  *   toFixed, toString(base)       poco usati fuori dai numeri formattati

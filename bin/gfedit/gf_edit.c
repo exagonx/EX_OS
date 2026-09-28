@@ -632,7 +632,20 @@ void gf_az_esegui(GfEdit *self)
     av[2] = 0;
     pid = spawn_ex(rb, av, environ, 0, 0);
     if (pid < 0) printf("runbas non parte (errore %d)\n", pid);
-    else         waitpid(pid, &stato, 0);
+    else {
+        /* ! IL PRIMO PIANO VA AL PROGRAMMA (28 settembre 2026, segnalato da
+         * chi lo usa: «non appare il prompt con INPUT»). La console da' la
+         * tastiera solo a chi e' in primo piano, e a tutti gli altri la
+         * FINE DELL'INPUT: il primo piano era di gfedit, e l'INPUT del
+         * programma leggeva subito niente e andava avanti. Si fa come sudo e
+         * install: il figlio lo prende mentre gira, e gfedit se lo riprende.
+         * E Ctrl+C lo ferma (col permesso chiesto): vedi PTY_CTL_FG. */
+        console_setfg((unsigned int)pid);
+        (void)pty_ctl(0, PTY_CTL_FG, (unsigned int)pid);
+        waitpid(pid, &stato, 0);
+        console_setfg((unsigned int)getpid());
+        (void)pty_ctl(0, PTY_CTL_FG, (unsigned int)getpid());
+    }
 
     printf("\n--- finito%s. Invio per tornare all'editor ---",
            (pid >= 0 && stato != 0) ? " con un errore" : "");

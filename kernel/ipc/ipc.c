@@ -93,8 +93,12 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
 
     uint32_t sender_pid = proc_get_current()->pid;
     uint32_t attempts;
+    /* Senza attesa: un tentativo solo (vedi IPC_SENZA_ATTESA in ipc.h). */
+    uint32_t tentativi  = (tipo & IPC_SENZA_ATTESA) ? 1u : IPC_SEND_MAX_RETRY;
 
-    for (attempts = 0; attempts < IPC_SEND_MAX_RETRY; attempts++) {
+    tipo &= ~IPC_SENZA_ATTESA;
+
+    for (attempts = 0; attempts < tentativi; attempts++) {
         Process *dest = proc_get_by_pid(dest_pid);
         if (dest == NULL || dest->state == PROC_UNUSED ||
             dest->state == PROC_ZOMBIE) {
@@ -134,7 +138,9 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
 
         /* Mailbox piena: il caso comune è un driver temporaneamente
          * indietro con l'elaborazione — riprova dopo una breve attesa
-         * invece di bloccare indefinitamente il mittente. */
+         * invece di bloccare indefinitamente il mittente. Senza attesa,
+         * niente sonno: si rinuncia subito. */
+        if (tentativi == 1u) break;
         sched_sleep(IPC_SEND_RETRY_MS);
     }
 

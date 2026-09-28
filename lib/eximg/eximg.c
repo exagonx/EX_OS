@@ -70,6 +70,8 @@ static const EximgDecodificatore g_decodificatori[] = {
     eximg_jpg,
     eximg_gif,
     eximg_ico,
+    eximg_bmp,      /* ultimo: il BMP il toolkit lo legge da se', e qui
+                     * arriva solo chi vuole i PIXEL (@PAINT) */
     0
 };
 

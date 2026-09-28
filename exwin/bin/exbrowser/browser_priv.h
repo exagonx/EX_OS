@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.008"
+#define VERSIONE_APP "0.014"
 /* The size the window is BORN with. Since 26 September 2026 it can be
  * resized (@EXBROWSER-1024): the size it has NOW is g_fin_w x g_fin_h. */
 #define FIN_W       760
@@ -115,10 +115,16 @@
  * sites: about 2.5 MB per view, touched only as far as a page uses it. */
 #define CSS_REGOLE_MAX  16000
 #define CSS_PEZZI_MAX   40000
-#define CSS_DICH_MAX    30000
+/* ! 60000 E NON 30000 DAL 28 SETTEMBRE 2026 (@NAV-BORDER): una scorciatoia si
+ * espande nelle sue proprieta', e `border: 1px solid #ccc` da sola vale dodici
+ * dichiarazioni. Si paga solo quel che una pagina usa davvero. */
+#define CSS_DICH_MAX    60000
 #define CSS_ARENA_MAX   (1024u * 1024u)
 #define CSS_FOGLI_MAX   16      /* quanti <link rel=stylesheet> si seguono */
-#define SFONDI_MAX  256
+/* ! 1024 E NON 256 DAL 28 SETTEMBRE 2026 (@NAV-BORDER): un blocco con un
+ * bordo CSS ne usa fino a cinque — lo sfondo e un rettangolo per lato — e una
+ * pagina con una lista di riquadri finiva i posti a meta'. */
+#define SFONDI_MAX  1024
 #define SCORRI_W    16
 #define SCORRI_MIN  24          /* il pollice non scende sotto: sparirebbe */
 #define FONT_MAX    24

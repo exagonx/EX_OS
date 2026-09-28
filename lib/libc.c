@@ -240,6 +240,8 @@ typedef struct {
 #define SYS_ATTESA_DORMI   204
 #define SYS_ATTESA_SVEGLIA 205
 #define SYS_THREAD_FERMA    206
+#define SYS_THREAD_STACCA   217
+#define SYS_THREAD_PILA     218
 #define SYS_THREAD_FERMARSI 207
 #define SYS_GETPID      20
 /* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
@@ -397,6 +399,7 @@ typedef struct { unsigned int bit; } fd_set;
 #define SYS_CONSOLE_GRAFICA 255
 #define SYS_CONSOLE_TESTO  214
 #define SYS_CONSOLE_REGISTRO 215
+#define SYS_CONSOLE_CTRLC  216
 #define SYS_IOCTL         54
 #define SYS_DUP           41
 #define SYS_DUP2          63
@@ -4656,6 +4659,639 @@ void semaforo_lascia(volatile int *s)
     attesa_sveglia(s, 1);
 }
 
+/* =============================================================================
+ * I THREAD POSIX (@PTHREAD, 28 settembre 2026 — tappa 1 di Exilla)
+ *
+ * L'interfaccia di lib/include/pthread.h sopra i fili di qui sopra: il perche'
+ * di ogni scelta sta la'. Qui l'aritmetica.
+ *
+ * ! LE STRUTTURE SONO RIPETUTE, come tutto in questo file: libc.c non include
+ * il proprio header (vedi in cima). DEVONO COINCIDERE con pthread.h e
+ * semaphore.h campo per campo — un campo in piu' da una parte sola sposta
+ * tutti quelli dopo, e i lucchetti di chi ha compilato con l'header
+ * diventerebbero i contatori di chi ha compilato con la libc.
+ *
+ * ! IL DESCRITTORE DI UN FILO STA IN UNA TABELLA FISSA, trovata dal thread
+ * pointer (`%gs:0`) come errno: ogni filo ha il suo TCB, e il suo indirizzo e'
+ * una chiave buona. Fissa perche' la dimensione e' quella dei fili possibili
+ * (FILI_MAX_PER_PROCESSO, con margine), e perche' pthread_self dev'essere
+ * chiamabile anche prima che malloc sia pronta.
+ * ============================================================================= */
+#define EDEADLK       35
+#define PTHREAD_FILI  64
+#define P_CHIAVI      128
+#define P_ITERAZIONI  4
+
+typedef struct {
+    int     staccato;
+    size_t  pila;
+    void   *pila_base;
+    size_t  pila_misura;
+} pthread_attr_t;
+typedef struct { volatile int m; int tipo; volatile int padrone; int conta; } pthread_mutex_t;
+typedef struct { int tipo; } pthread_mutexattr_t;
+typedef struct { volatile int c; int orologio; } pthread_cond_t;
+typedef struct { int orologio; } pthread_condattr_t;
+typedef struct {
+    pthread_mutex_t m;
+    pthread_cond_t  c;
+    int lettori, scrittore, scrittori_attesa;
+} pthread_rwlock_t;
+typedef struct { int nulla; } pthread_rwlockattr_t;
+typedef unsigned long pthread_t;
+typedef unsigned int  pthread_key_t;
+struct sched_param { int sched_priority; };
+typedef struct { volatile int s; } sem_t;
+
+void thread_esci(int codice);
+int  thread_attendi(int tid, int *codice);
+int  thread_crea(void (*fn)(void *), void *arg);
+void mutex_prendi(volatile int *m);
+int  mutex_prova(volatile int *m);
+void mutex_lascia(volatile int *m);
+void condizione_aspetta(volatile int *c, volatile int *m);
+void condizione_aspetta_ms(volatile int *c, volatile int *m, unsigned int ms);
+void condizione_segnala(volatile int *c);
+void condizione_segnala_tutti(volatile int *c);
+void semaforo_prendi(volatile int *s);
+int  semaforo_prendi_ms(volatile int *s, unsigned int ms);
+int  semaforo_prova(volatile int *s);
+void semaforo_lascia(volatile int *s);
+int  getpid(void);
+int  raise(int sig);
+int  nanosleep(const struct timespec *req, struct timespec *rem);
+void sched_yield(void);
+
+typedef struct {
+    volatile int usato;
+    volatile int tp;            /* il thread pointer del filo: la chiave */
+    int          tid;
+    void      *(*fn)(void *);
+    void        *arg;
+    void        *ris;
+    volatile int finito;
+    volatile int staccato;
+    char         nome[16];
+    void        *chiavi[P_CHIAVI];
+} Filo;
+
+static Filo         g_fili[PTHREAD_FILI];
+static volatile int g_fili_m = 0;                  /* Mutex della tabella */
+static volatile int g_chiavi_usate[P_CHIAVI];
+static void       (*g_chiavi_distr[P_CHIAVI])(void *);
+
+static unsigned int tp_mio(void)
+{
+    unsigned int tp;
+    __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp));
+    return tp;
+}
+
+static Filo *filo_libero(void)
+{
+    int i;
+
+    mutex_prendi(&g_fili_m);
+    for (i = 0; i < PTHREAD_FILI; i++)
+        if (!g_fili[i].usato) {
+            memset(&g_fili[i], 0, sizeof(Filo));
+            g_fili[i].usato = 1;
+            mutex_lascia(&g_fili_m);
+            return &g_fili[i];
+        }
+    mutex_lascia(&g_fili_m);
+    return NULL;
+}
+
+static void filo_rilascia(Filo *f)
+{
+    mutex_prendi(&g_fili_m);
+    f->usato = 0;
+    f->tp    = 0;
+    mutex_lascia(&g_fili_m);
+}
+
+/* ! IL FILO PRINCIPALE (e ogni filo nato con thread_crea invece che con
+ * pthread_create) NON HA UN DESCRITTORE finche' non lo chiede: se ne fa uno
+ * alla prima domanda. Staccato, perche' nessuno lo aspettera' con join. */
+pthread_t pthread_self(void)
+{
+    unsigned int tp = tp_mio();
+    Filo        *f;
+    int          i;
+
+    for (i = 0; i < PTHREAD_FILI; i++)
+        if (g_fili[i].usato && (unsigned int)g_fili[i].tp == tp && tp != 0)
+            return (pthread_t)&g_fili[i];
+
+    f = filo_libero();
+    if (!f) return 0;
+    f->tp       = (int)tp;
+    f->tid      = getpid();
+    f->staccato = 1;
+    return (pthread_t)f;
+}
+
+int pthread_equal(pthread_t a, pthread_t b) { return a == b; }
+
+static void chiavi_distruggi(Filo *f)
+{
+    int giro, k, ancora;
+
+    for (giro = 0; giro < P_ITERAZIONI; giro++) {
+        ancora = 0;
+        for (k = 0; k < P_CHIAVI; k++) {
+            void *v = f->chiavi[k];
+
+            if (v && g_chiavi_usate[k] && g_chiavi_distr[k]) {
+                f->chiavi[k] = NULL;
+                g_chiavi_distr[k](v);
+                ancora = 1;
+            }
+        }
+        if (!ancora) break;
+    }
+}
+
+void pthread_exit(void *ris)
+{
+    Filo *f = (Filo *)pthread_self();
+
+    if (f) {
+        chiavi_distruggi(f);
+        f->ris    = ris;
+        f->finito = 1;
+        /* Staccato: nessuno verra' a prendere il risultato, il posto torna
+         * libero subito. Il PCB del filo lo raccoglie il reaper di init: il
+         * kernel lo sa da SYS_THREAD_STACCA (kernel 0.222). */
+        if (f->staccato) filo_rilascia(f);
+    }
+    thread_esci(0);
+    for (;;) { }
+}
+
+/* Il primo codice di ogni filo nato qui: si fa riconoscere, poi chiama. */
+static void filo_trampolino(void *arg)
+{
+    Filo *f = (Filo *)arg;
+
+    f->tp = (int)tp_mio();
+    pthread_exit(f->fn(f->arg));
+}
+
+int pthread_create(pthread_t *t, const pthread_attr_t *a,
+                   void *(*fn)(void *), void *arg)
+{
+    Filo *f;
+    int   tid;
+
+    if (!t || !fn) return EINVAL;
+    f = filo_libero();
+    if (!f) return EAGAIN;
+    f->fn       = fn;
+    f->arg      = arg;
+    f->staccato = a ? a->staccato : 0;
+
+    tid = thread_crea(filo_trampolino, f);
+    if (tid < 0) {
+        int e = errno;
+        filo_rilascia(f);
+        return e ? e : EAGAIN;
+    }
+    f->tid = tid;
+    *t = (pthread_t)f;
+    /* ! IL KERNEL LO SA DOPO, e va bene: se il filo e' gia' finito il kernel
+     * lo trova zombie e lo passa a init lo stesso. Il descrittore qui non si
+     * tocca piu': un filo staccato lo libera da se' in pthread_exit. */
+    if (f->staccato) _syscall1(SYS_THREAD_STACCA, (uint32_t)tid);
+    return 0;
+}
+
+int pthread_join(pthread_t t, void **ris)
+{
+    Filo *f = (Filo *)t;
+
+    if (!f || !f->usato) return ESRCH;
+    if (f->staccato) return EINVAL;
+    if (f->tp != 0 && (unsigned int)f->tp == tp_mio()) return EDEADLK;
+    if (thread_attendi(f->tid, NULL) != 0) return errno ? errno : ESRCH;
+    if (ris) *ris = f->ris;
+    filo_rilascia(f);
+    return 0;
+}
+
+int pthread_detach(pthread_t t)
+{
+    Filo *f = (Filo *)t;
+
+    if (!f || !f->usato) return ESRCH;
+    if (f->staccato) return EINVAL;
+    f->staccato = 1;
+    _syscall1(SYS_THREAD_STACCA, (uint32_t)f->tid);
+    if (f->finito) filo_rilascia(f);
+    return 0;
+}
+
+int pthread_yield(void) { sched_yield(); return 0; }
+
+/* I segnali di EX-OS sono del processo e si consegnano dentro (raise): a se
+ * stessi si puo', a un altro filo no, e lo si dice. */
+int pthread_kill(pthread_t t, int segnale)
+{
+    if (t != pthread_self()) return ENOSYS;
+    if (segnale == 0) return 0;
+    return raise(segnale) == 0 ? 0 : EINVAL;
+}
+
+int pthread_sigmask(int come, const void *nuovo, void *vecchio)
+{
+    (void)come; (void)nuovo; (void)vecchio;
+    return 0;
+}
+
+int pthread_setname_np(pthread_t t, const char *nome)
+{
+    Filo *f = (Filo *)t;
+
+    if (!f || !nome) return EINVAL;
+    strncpy(f->nome, nome, sizeof(f->nome) - 1);
+    f->nome[sizeof(f->nome) - 1] = '\0';
+    return 0;
+}
+
+int pthread_getname_np(pthread_t t, char *nome, size_t max)
+{
+    Filo *f = (Filo *)t;
+
+    if (!f || !nome || max == 0) return EINVAL;
+    strncpy(nome, f->nome, max - 1);
+    nome[max - 1] = '\0';
+    return 0;
+}
+
+/* ! I LIMITI DELLA PILA LI DICE IL KERNEL (SYS_THREAD_PILA, kernel 0.222):
+ * e' lui che l'ha piazzata. Chi misura la pila con questi numeri
+ * (SpiderMonkey) su un numero inventato scriverebbe fuori. La base e' il
+ * fondo, come in POSIX; la misura arriva fino alla cima utile. */
+int pthread_getattr_np(pthread_t t, pthread_attr_t *a)
+{
+    Filo        *f = (Filo *)t;
+    unsigned int pila[2];
+    int          r;
+
+    if (!a || !f) return EINVAL;
+    memset(a, 0, sizeof(*a));
+    r = (int)_syscall2(SYS_THREAD_PILA, (uint32_t)f->tid, (uint32_t)pila);
+    if (r < 0) return -r;
+    a->staccato    = f->staccato;
+    a->pila_base   = (void *)pila[0];
+    a->pila_misura = pila[1] - pila[0];
+    a->pila        = a->pila_misura;
+    return 0;
+}
+
+int pthread_setschedparam(pthread_t t, int politica, const struct sched_param *p)
+{ (void)t; (void)politica; (void)p; return 0; }
+int pthread_getschedparam(pthread_t t, int *politica, struct sched_param *p)
+{ (void)t; if (politica) *politica = 0; if (p) p->sched_priority = 0; return 0; }
+
+/* --- gli attributi ---------------------------------------------------------- */
+int pthread_attr_init(pthread_attr_t *a)
+{ if (!a) return EINVAL; memset(a, 0, sizeof(*a)); a->pila = 2u * 1024u * 1024u; return 0; }
+int pthread_attr_destroy(pthread_attr_t *a) { (void)a; return 0; }
+int pthread_attr_setdetachstate(pthread_attr_t *a, int s)
+{ if (!a || (s != 0 && s != 1)) return EINVAL; a->staccato = s; return 0; }
+int pthread_attr_getdetachstate(const pthread_attr_t *a, int *s)
+{ if (!a || !s) return EINVAL; *s = a->staccato; return 0; }
+int pthread_attr_setstacksize(pthread_attr_t *a, size_t m)
+{ if (!a || m < 16384) return EINVAL; a->pila = m; return 0; }
+int pthread_attr_getstacksize(const pthread_attr_t *a, size_t *m)
+{ if (!a || !m) return EINVAL; *m = a->pila; return 0; }
+int pthread_attr_getstack(const pthread_attr_t *a, void **b, size_t *m)
+{ if (!a || !b || !m) return EINVAL; *b = a->pila_base; *m = a->pila_misura; return 0; }
+int pthread_attr_setguardsize(pthread_attr_t *a, size_t m) { (void)a; (void)m; return 0; }
+int pthread_attr_setscope(pthread_attr_t *a, int x) { (void)a; (void)x; return 0; }
+int pthread_attr_setinheritsched(pthread_attr_t *a, int x) { (void)a; (void)x; return 0; }
+int pthread_attr_setschedpolicy(pthread_attr_t *a, int x) { (void)a; (void)x; return 0; }
+int pthread_attr_getschedpolicy(const pthread_attr_t *a, int *x)
+{ (void)a; if (x) *x = 0; return 0; }
+int pthread_attr_setschedparam(pthread_attr_t *a, const struct sched_param *p)
+{ (void)a; (void)p; return 0; }
+int pthread_attr_getschedparam(const pthread_attr_t *a, struct sched_param *p)
+{ (void)a; if (p) p->sched_priority = 0; return 0; }
+
+/* --- i lucchetti ---------------------------------------------------------------
+ * ! IL PADRONE SI SEGNA SOLO DOVE SERVE, cioe' nei ricorsivi e in quelli col
+ * controllo: getpid() e' una chiamata di sistema, e un lucchetto normale non
+ * deve pagarla a ogni presa. */
+int pthread_mutex_init(pthread_mutex_t *m, const pthread_mutexattr_t *a)
+{
+    if (!m) return EINVAL;
+    m->m = 0; m->padrone = 0; m->conta = 0;
+    m->tipo = a ? a->tipo : 0;
+    return 0;
+}
+int pthread_mutex_destroy(pthread_mutex_t *m) { return (m && m->m) ? EBUSY : 0; }
+
+int pthread_mutex_lock(pthread_mutex_t *m)
+{
+    int io;
+
+    if (!m) return EINVAL;
+    if (m->tipo == 0) { mutex_prendi(&m->m); return 0; }
+    io = getpid();
+    if (m->padrone == io) {
+        if (m->tipo == 1) { m->conta++; return 0; }
+        return EDEADLK;
+    }
+    mutex_prendi(&m->m);
+    m->padrone = io;
+    m->conta   = 1;
+    return 0;
+}
+
+int pthread_mutex_trylock(pthread_mutex_t *m)
+{
+    int io;
+
+    if (!m) return EINVAL;
+    if (m->tipo == 0) return mutex_prova(&m->m) ? 0 : EBUSY;
+    io = getpid();
+    if (m->padrone == io) {
+        if (m->tipo == 1) { m->conta++; return 0; }
+        return EBUSY;
+    }
+    if (!mutex_prova(&m->m)) return EBUSY;
+    m->padrone = io;
+    m->conta   = 1;
+    return 0;
+}
+
+int pthread_mutex_unlock(pthread_mutex_t *m)
+{
+    if (!m) return EINVAL;
+    if (m->tipo != 0) {
+        if (m->padrone != getpid()) return EPERM;
+        if (--m->conta > 0) return 0;
+        m->padrone = 0;
+    }
+    mutex_lascia(&m->m);
+    return 0;
+}
+
+/* Quanti millisecondi mancano a `quando` sull'orologio `orologio`: 0 se e'
+ * gia' passato. */
+int clock_gettime(int orologio, struct timespec *ts);
+static unsigned int ms_a(const struct timespec *quando, int orologio)
+{
+    struct timespec ora;
+    long secondi, ms;
+
+    /* ! A 32 BIT, NON A 64: la divisione di un long long vuole __divdi3, che
+     * libc.so non porta con se'. Si tagliano i secondi a ventiquattro giorni —
+     * oltre, i millisecondi non stanno comunque in un int. */
+    if (clock_gettime(orologio, &ora) != 0) return 0;
+    secondi = quando->tv_sec - ora.tv_sec;
+    if (secondi < 0) return 0;
+    if (secondi > 2000000) secondi = 2000000;
+    ms = secondi * 1000 + (quando->tv_nsec - ora.tv_nsec) / 1000000;
+    return ms > 0 ? (unsigned int)ms : 0;
+}
+
+int pthread_mutex_timedlock(pthread_mutex_t *m, const struct timespec *quando)
+{
+    for (;;) {
+        unsigned int resta;
+        int          r = pthread_mutex_trylock(m);
+
+        if (r != EBUSY) return r;
+        resta = quando ? ms_a(quando, 0) : 1;
+        if (resta == 0) return ETIMEDOUT;
+        {
+            struct timespec pausa = { 0, 1000000 };    /* un tick, arrotondato */
+            nanosleep(&pausa, NULL);
+        }
+    }
+}
+
+int pthread_mutexattr_init(pthread_mutexattr_t *a) { if (!a) return EINVAL; a->tipo = 0; return 0; }
+int pthread_mutexattr_destroy(pthread_mutexattr_t *a) { (void)a; return 0; }
+int pthread_mutexattr_settype(pthread_mutexattr_t *a, int t)
+{ if (!a || t < 0 || t > 2) return EINVAL; a->tipo = t; return 0; }
+int pthread_mutexattr_gettype(const pthread_mutexattr_t *a, int *t)
+{ if (!a || !t) return EINVAL; *t = a->tipo; return 0; }
+
+/* --- le condizioni ---------------------------------------------------------------
+ * ! UN LUCCHETTO RICORSIVO SI LASCIA TUTTO E SI RIPRENDE TUTTO: condizione_
+ * aspetta lascia il Mutex di sotto, e il conteggio va rimesso com'era dopo. */
+int pthread_cond_init(pthread_cond_t *c, const pthread_condattr_t *a)
+{ if (!c) return EINVAL; c->c = 0; c->orologio = a ? a->orologio : 0; return 0; }
+int pthread_cond_destroy(pthread_cond_t *c) { (void)c; return 0; }
+
+static int cond_aspetta(pthread_cond_t *c, pthread_mutex_t *m, int con_scadenza,
+                        unsigned int ms)
+{
+    int padrone = m->padrone, conta = m->conta;
+
+    if (m->tipo != 0) { m->padrone = 0; m->conta = 0; }
+    if (con_scadenza) condizione_aspetta_ms(&c->c, &m->m, ms ? ms : 1);
+    else              condizione_aspetta(&c->c, &m->m);
+    if (m->tipo != 0) { m->padrone = padrone; m->conta = conta; }
+    return 0;
+}
+
+int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m)
+{
+    if (!c || !m) return EINVAL;
+    return cond_aspetta(c, m, 0, 0);
+}
+
+int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
+                           const struct timespec *quando)
+{
+    unsigned int ms;
+
+    if (!c || !m || !quando) return EINVAL;
+    ms = ms_a(quando, c->orologio);
+    if (ms == 0) return ETIMEDOUT;
+    cond_aspetta(c, m, 1, ms);
+    /* condizione_aspetta_ms non dice se e' scaduta: lo dice l'orologio. */
+    return ms_a(quando, c->orologio) == 0 ? ETIMEDOUT : 0;
+}
+
+int pthread_cond_signal(pthread_cond_t *c)    { if (!c) return EINVAL; condizione_segnala(&c->c); return 0; }
+int pthread_cond_broadcast(pthread_cond_t *c) { if (!c) return EINVAL; condizione_segnala_tutti(&c->c); return 0; }
+int pthread_condattr_init(pthread_condattr_t *a) { if (!a) return EINVAL; a->orologio = 0; return 0; }
+int pthread_condattr_destroy(pthread_condattr_t *a) { (void)a; return 0; }
+int pthread_condattr_setclock(pthread_condattr_t *a, int o)
+{ if (!a || (o != 0 && o != 1)) return EINVAL; a->orologio = o; return 0; }
+int pthread_condattr_getclock(const pthread_condattr_t *a, int *o)
+{ if (!a || !o) return EINVAL; *o = a->orologio; return 0; }
+
+/* --- lettori e scrittori -------------------------------------------------------------
+ * ! CHI ASPETTA DI SCRIVERE PASSA DAVANTI ai lettori nuovi: altrimenti un
+ * flusso continuo di letture lo farebbe aspettare per sempre. */
+int pthread_rwlock_init(pthread_rwlock_t *l, const pthread_rwlockattr_t *a)
+{
+    (void)a;
+    if (!l) return EINVAL;
+    memset(l, 0, sizeof(*l));
+    return 0;
+}
+int pthread_rwlock_destroy(pthread_rwlock_t *l) { (void)l; return 0; }
+
+int pthread_rwlock_rdlock(pthread_rwlock_t *l)
+{
+    pthread_mutex_lock(&l->m);
+    while (l->scrittore || l->scrittori_attesa) pthread_cond_wait(&l->c, &l->m);
+    l->lettori++;
+    pthread_mutex_unlock(&l->m);
+    return 0;
+}
+
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *l)
+{
+    int r = EBUSY;
+
+    pthread_mutex_lock(&l->m);
+    if (!l->scrittore && !l->scrittori_attesa) { l->lettori++; r = 0; }
+    pthread_mutex_unlock(&l->m);
+    return r;
+}
+
+int pthread_rwlock_wrlock(pthread_rwlock_t *l)
+{
+    pthread_mutex_lock(&l->m);
+    l->scrittori_attesa++;
+    while (l->scrittore || l->lettori) pthread_cond_wait(&l->c, &l->m);
+    l->scrittori_attesa--;
+    l->scrittore = 1;
+    pthread_mutex_unlock(&l->m);
+    return 0;
+}
+
+int pthread_rwlock_trywrlock(pthread_rwlock_t *l)
+{
+    int r = EBUSY;
+
+    pthread_mutex_lock(&l->m);
+    if (!l->scrittore && !l->lettori) { l->scrittore = 1; r = 0; }
+    pthread_mutex_unlock(&l->m);
+    return r;
+}
+
+int pthread_rwlock_unlock(pthread_rwlock_t *l)
+{
+    pthread_mutex_lock(&l->m);
+    if (l->scrittore) l->scrittore = 0;
+    else if (l->lettori > 0) l->lettori--;
+    pthread_cond_broadcast(&l->c);
+    pthread_mutex_unlock(&l->m);
+    return 0;
+}
+
+/* --- una volta sola ---------------------------------------------------------------------
+ * 0 = mai, 1 = in corso, 2 = fatto. ! Chi arriva mentre e' in corso ASPETTA
+ * che finisca: tornare subito vorrebbe dire usare quel che non e' ancora
+ * pronto. */
+static volatile int g_una_m = 0;
+static volatile int g_una_c = 0;
+
+int pthread_once(volatile int *o, void (*fn)(void))
+{
+    if (!o || !fn) return EINVAL;
+    if (*o == 2) return 0;
+    mutex_prendi(&g_una_m);
+    if (*o == 0) {
+        *o = 1;
+        mutex_lascia(&g_una_m);
+        fn();
+        mutex_prendi(&g_una_m);
+        *o = 2;
+        condizione_segnala_tutti(&g_una_c);
+    } else {
+        while (*o != 2) condizione_aspetta(&g_una_c, &g_una_m);
+    }
+    mutex_lascia(&g_una_m);
+    return 0;
+}
+
+/* --- le chiavi ----------------------------------------------------------------------------- */
+int pthread_key_create(pthread_key_t *k, void (*distr)(void *))
+{
+    int i;
+
+    if (!k) return EINVAL;
+    mutex_prendi(&g_fili_m);
+    for (i = 0; i < P_CHIAVI; i++)
+        if (!g_chiavi_usate[i]) {
+            int j;
+            g_chiavi_usate[i] = 1;
+            g_chiavi_distr[i] = distr;
+            for (j = 0; j < PTHREAD_FILI; j++) g_fili[j].chiavi[i] = NULL;
+            mutex_lascia(&g_fili_m);
+            *k = (pthread_key_t)i;
+            return 0;
+        }
+    mutex_lascia(&g_fili_m);
+    return EAGAIN;
+}
+
+int pthread_key_delete(pthread_key_t k)
+{
+    if (k >= P_CHIAVI || !g_chiavi_usate[k]) return EINVAL;
+    g_chiavi_usate[k] = 0;
+    g_chiavi_distr[k] = NULL;
+    return 0;
+}
+
+void *pthread_getspecific(pthread_key_t k)
+{
+    Filo *f;
+
+    if (k >= P_CHIAVI) return NULL;
+    f = (Filo *)pthread_self();
+    return f ? f->chiavi[k] : NULL;
+}
+
+int pthread_setspecific(pthread_key_t k, const void *v)
+{
+    Filo *f;
+
+    if (k >= P_CHIAVI || !g_chiavi_usate[k]) return EINVAL;
+    f = (Filo *)pthread_self();
+    if (!f) return ENOMEM;
+    f->chiavi[k] = (void *)v;
+    return 0;
+}
+
+/* --- i semafori POSIX ------------------------------------------------------------------------ */
+int sem_init(sem_t *s, int pshared, unsigned int v)
+{
+    if (!s) { errno = EINVAL; return -1; }
+    if (pshared) { errno = ENOSYS; return -1; }
+    s->s = (int)v;
+    return 0;
+}
+int sem_destroy(sem_t *s) { (void)s; return 0; }
+int sem_wait(sem_t *s) { semaforo_prendi(&s->s); return 0; }
+int sem_trywait(sem_t *s)
+{
+    if (semaforo_prova(&s->s)) return 0;
+    errno = EAGAIN;
+    return -1;
+}
+int sem_timedwait(sem_t *s, const struct timespec *quando)
+{
+    unsigned int ms = ms_a(quando, 0);
+
+    if (semaforo_prova(&s->s)) return 0;
+    if (ms == 0) { errno = ETIMEDOUT; return -1; }
+    return semaforo_prendi_ms(&s->s, ms);
+}
+int sem_post(sem_t *s) { semaforo_lascia(&s->s); return 0; }
+int sem_getvalue(sem_t *s, int *v) { *v = s->s; return 0; }
+
 int wait(int *stato)
 {
     return waitpid(-1, stato, 0);
@@ -6576,6 +7212,37 @@ int timespec_get(struct timespec *ts, int base)
     return base;
 }
 
+/* clock_gettime — vedi lib/include/libc.h. REALTIME e' timespec_get,
+ * MONOTONIC conta da uptime_ms(); i due «CPUTIME» non si misurano, e rendono
+ * il monotono: un tempo che scorre e' meglio di un errore per chi misura
+ * quanto ci mette un pezzo di codice. */
+int clock_gettime(int orologio, struct timespec *ts)
+{
+    unsigned int ms;
+
+    if (ts == NULL) { errno = EINVAL; return -1; }
+    switch (orologio) {
+    case 0: case 5:                                     /* REALTIME */
+        if (timespec_get(ts, TIME_UTC) != TIME_UTC) { errno = EINVAL; return -1; }
+        return 0;
+    case 1: case 2: case 3: case 4: case 6: case 7:     /* il resto: monotono */
+        ms = uptime_ms();
+        ts->tv_sec  = (long)(ms / 1000u);
+        ts->tv_nsec = (long)((ms % 1000u) * 1000000u);
+        return 0;
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+int clock_getres(int orologio, struct timespec *ts)
+{
+    if (orologio < 0 || orologio > 7) { errno = EINVAL; return -1; }
+    if (ts) { ts->tv_sec = 0; ts->tv_nsec = 10000000; }   /* il tick: 10 ms */
+    return 0;
+}
+
 int console_switch(unsigned int n)
 {
     return (int)_syscall1(SYS_CONSOLE_SWITCH, n);
@@ -6618,6 +7285,12 @@ int console_testo(char *buf, unsigned int max)
 int console_registro(char *buf, unsigned int max)
 {
     return (int)_syscall2(SYS_CONSOLE_REGISTRO, (uint32_t)buf, (uint32_t)max);
+}
+
+/* Who Ctrl+C stops on text console n (@TASTI-SISTEMA): see libc.h. */
+int console_ctrlc(unsigned int n)
+{
+    return (int)_syscall1(SYS_CONSOLE_CTRLC, n);
 }
 
 int ipc_register(const char *name)
@@ -7153,7 +7826,7 @@ char **environ = NULL;
  * Il ramo `tp == 0` resta per i casi che quel caricatore non ha preparato — un
  * task del kernel — dove un errno condiviso e' comunque meglio di un fault.
  * ============================================================================= */
-#define ERRNO_POSTI  16
+#define ERRNO_POSTI  64          /* quanti FILO_MAX nel kernel (0.222) */
 
 static struct { volatile int tp; int valore; } g_errno_posti[ERRNO_POSTI];
 

@@ -102,7 +102,10 @@ int main(void)
     ok("20 senza unita'", s.corpo == 20);
     carica("<p>x</p>", "p { font-size: 2em }");
     stile_di(trova("p"), &s);
-    ok("2em si RIFIUTA, non si indovina", s.corpo == CSS_MISURA_NO);
+    /* ! FINO AL 28 SETTEMBRE 2026 QUI SI VERIFICAVA IL CONTRARIO: «2em si
+     * rifiuta, non si indovina». Adesso em si capisce (@NAV-UNITA), e senza un
+     * padre vale sul corpo predefinito. */
+    ok("2em senza padre: 2 x il corpo predefinito", s.corpo == 2 * CSS_CORPO_PREDEFINITO);
 
     printf("\n=== la specificita' ===\n");
     carica("<p class='c' id='i'>x</p>",
@@ -222,7 +225,7 @@ int main(void)
     css_media_larghezza(1280);
     carica("<p>x</p>", "@media print, screen { p { color: red } }");
     stile_di(trova("p"), &s);
-    ok("la virgola e' un «o»", s.colore == 0xFFFF0000u);
+    ok("la virgola e' un 'o'", s.colore == 0xFFFF0000u);
     carica("<p>x</p>", "@media screen and (prefers-color-scheme:dark) { p { color: red } }");
     stile_di(trova("p"), &s);
     ok("schema scuro: no", s.colore == CSS_NIENTE);
@@ -232,7 +235,7 @@ int main(void)
     carica("<p>x</p>", "@supports (mask-image:none) { p { color: red } } @supports not (mask-image:none) { p { font-size: 9px } }");
     stile_di(trova("p"), &s);
     ok("@supports di cio' che non si sa: no...", s.colore == CSS_NIENTE);
-    ok("...e il suo «not»: si'", s.corpo == 9);
+    ok("...e il suo 'not': si'", s.corpo == 9);
     carica("<p>x</p>", "@supports (color: red) { p { color: red } }");
     stile_di(trova("p"), &s);
     ok("@supports di cio' che si sa: si'", s.colore == 0xFFFF0000u);
@@ -374,6 +377,106 @@ int main(void)
         ok("...e le regole sono tutte", g_fog.regole_n >= 6001);
     }
 
+
+    printf("\n=== border e padding, e le scorciatoie (@NAV-BORDER) ===\n");
+    carica("<p>x</p>", "p { border: 2px solid #ff0000 }");
+    stile_di(trova("p"), &s);
+    ok("border: tutti e quattro i lati", s.bordo[0] == 2 && s.bordo[1] == 2 && s.bordo[2] == 2 && s.bordo[3] == 2);
+    ok("border: lo stile", s.bordo_stile[0] == 1 && s.bordo_stile[3] == 1);
+    ok("border: il colore", (s.bordo_col[2] & 0xFFFFFF) == 0xFF0000);
+    carica("<p>x</p>", "p { border: #00f 1px dashed }");
+    stile_di(trova("p"), &s);
+    ok("border: le parole in un ordine qualunque", s.bordo[1] == 1 && s.bordo_stile[1] == 1 && (s.bordo_col[1] & 0xFFFFFF) == 0x0000FF);
+    carica("<p>x</p>", "p { border: 1px #ccc }");
+    stile_di(trova("p"), &s);
+    ok("border senza stile: stile none (non si vede)", s.bordo_stile[0] == 0);
+    carica("<p>x</p>", "p { border: 3px solid red } p { border: none }");
+    stile_di(trova("p"), &s);
+    ok("border: none toglie lo stile, e lo spessore torna medium", s.bordo_stile[0] == 0 && s.bordo[0] == 3);
+    carica("<p>x</p>", "p { border-bottom: thick solid }");
+    stile_di(trova("p"), &s);
+    ok("border-bottom: solo il lato di sotto, thick = 5", s.bordo[2] == 5 && s.bordo_stile[2] == 1 && s.bordo_stile[0] == CSS_FORSE);
+    ok("border-bottom senza colore: currentcolor", s.bordo_col[2] == CSS_NIENTE);
+    carica("<p>x</p>", "p { border-width: 1px 2px 3px 4px; border-style: solid none }");
+    stile_di(trova("p"), &s);
+    ok("border-width con quattro valori", s.bordo[0] == 1 && s.bordo[1] == 2 && s.bordo[2] == 3 && s.bordo[3] == 4);
+    ok("border-style con due valori", s.bordo_stile[0] == 1 && s.bordo_stile[1] == 0 && s.bordo_stile[2] == 1 && s.bordo_stile[3] == 0);
+    carica("<p>x</p>", "p { border-color: red green blue }");
+    stile_di(trova("p"), &s);
+    ok("border-color con tre valori", (s.bordo_col[1] & 0xFFFFFF) == (s.bordo_col[3] & 0xFFFFFF) && (s.bordo_col[0] & 0xFFFFFF) == 0xFF0000);
+    carica("<p>x</p>", "p { border-left: 1px solid rgb(10, 20, 30) }");
+    stile_di(trova("p"), &s);
+    ok("una parola che non si capisce (rgb) si salta, il resto resta", s.bordo[3] == 1 && s.bordo_stile[3] == 1);
+    carica("<p>x</p>", "p { padding: 4px 8px }");
+    stile_di(trova("p"), &s);
+    ok("padding con due valori", s.imbottitura[0] == 4 && s.imbottitura[1] == 8 && s.imbottitura[2] == 4 && s.imbottitura[3] == 8);
+    carica("<p>x</p>", "p { padding: -3px }");
+    stile_di(trova("p"), &s);
+    ok("padding negativo: si butta", s.imbottitura[0] == CSS_MISURA_NO);
+    carica("<p>x</p>", "p { margin: 10px auto }");
+    stile_di(trova("p"), &s);
+    ok("margin: 10px auto (auto = 0)", s.margine[0] == 10 && s.margine[1] == 0 && s.margine[2] == 10 && s.margine[3] == 0);
+    carica("<p>x</p>", "p { margin: 1px 2px 3px }");
+    stile_di(trova("p"), &s);
+    ok("margin con tre valori", s.margine[0] == 1 && s.margine[1] == 2 && s.margine[2] == 3 && s.margine[3] == 2);
+    carica("<div><p>x</p></div>", "div { border: 1px solid red; padding: 5px }");
+    stile_di(trova("p"), &s);
+    ok("bordi e padding NON si ereditano", s.bordo_stile[0] == CSS_FORSE && s.imbottitura[0] == CSS_MISURA_NO);
+    carica("<p>x</p>", "p { border: 2px solid red; color: blue; margin-top: 7px }");
+    stile_di(trova("p"), &s);
+    ok("dopo una scorciatoia le dichiarazioni seguenti si leggono", (s.colore & 0xFFFFFF) == 0x0000FF && s.margine[0] == 7);
+    {
+        CssStile t;
+        css_stile_vuoto(&t);
+        css_stile_inline("border:1px solid #0f0;padding-left:6px", 38, &t);
+        ok("anche nell'attributo style", t.bordo[0] == 1 && (t.bordo_col[0] & 0xFFFFFF) == 0x00FF00 && t.imbottitura[3] == 6);
+    }
+
+    printf("\n=== le unita' relative: em, rem, %% (@NAV-UNITA) ===\n");
+    {
+        CssStile padre, figlio;
+        carica("<div><p>x</p></div>", "div { font-size: 20px } p { font-size: 1.5em; margin-top: 1em; padding-left: 0.5em }");
+        stile_di(trova("div"), &padre);
+        css_calcola(&g_fog, &g_doc, trova("p"), &padre, &figlio);
+        ok("1.5em di un padre da 20: 30", figlio.corpo == 30);
+        ok("margin 1em: sul corpo DELL'ELEMENTO (30), non del padre", figlio.margine[0] == 30);
+        ok("padding 0.5em: 15", figlio.imbottitura[3] == 15);
+        carica("<div><p>x</p></div>", "div { font-size: 20px } p { font-size: 150% }");
+        stile_di(trova("div"), &padre);
+        css_calcola(&g_fog, &g_doc, trova("p"), &padre, &figlio);
+        ok("150% del padre da 20: 30", figlio.corpo == 30);
+        carica("<div><p>x</p></div>", "div { font-size: 40px } p { font-size: 2rem }");
+        stile_di(trova("div"), &padre);
+        css_calcola(&g_fog, &g_doc, trova("p"), &padre, &figlio);
+        ok("2rem non guarda il padre: 2 x il corpo predefinito", figlio.corpo == 2 * CSS_CORPO_PREDEFINITO);
+        carica("<div><p>x</p></div>", "div { font-size: 20px } p { font-size: larger }");
+        stile_di(trova("div"), &padre);
+        css_calcola(&g_fog, &g_doc, trova("p"), &padre, &figlio);
+        ok("larger = 1.2 volte il padre (24)", figlio.corpo == 24);
+        carica("<p>x</p>", "p { font-size: large; margin-left: 12pt; border-top: 0.25em solid red }");
+        stile_di(trova("p"), &s);
+        ok("font-size: large = 18", s.corpo == 18);
+        ok("12pt = 16px", s.margine[3] == 16);
+        ok("un bordo di 0.25em su un corpo da 18: 4", s.bordo[0] == 4);
+        carica("<p>x</p>", "p { margin-top: 2em; font-size: 10px }");
+        stile_di(trova("p"), &s);
+        ok("em sul corpo anche se il corpo si dichiara DOPO", s.margine[0] == 20);
+        carica("<p>x</p>", "p { margin-top: 2em } p { margin-top: 7px }");
+        stile_di(trova("p"), &s);
+        ok("un assoluto dopo vince su una relativa di prima", s.margine[0] == 7);
+        carica("<p>x</p>", "p { color: #ff0000; margin-top: 3px }");
+        stile_di(trova("p"), &s);
+        ok("un colore col bit alto non si scambia per una relativa", (s.colore & 0xFFFFFF) == 0xFF0000);
+        carica("<p>x</p>", "p { font-size: 2furlong }");
+        stile_di(trova("p"), &s);
+        ok("un'unita' che non esiste si butta", s.corpo == CSS_MISURA_NO);
+        {
+            CssStile t;
+            css_stile_vuoto(&t);
+            css_stile_inline("font-size:20px;margin-top:0.5em", 31, &t);
+            ok("style= da solo: 0.5em sul corpo che ha", t.margine[0] == 10);
+        }
+    }
 
     printf("\n%d prove, %d fallite\n", fatti, falliti);
     return falliti ? 1 : 0;

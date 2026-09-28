@@ -1,0 +1,29 @@
+# Cosa MEGAsync NON sincronizza fra i due PC di questo progetto.
+#
+# ! SOLO CIO' CHE E' DELLA SINGOLA MACCHINA O SI RIGENERA DA SOLO. Tutto il
+# resto - sorgenti, build/, dist/, cross_build/ con le toolchain, .git,
+# scambio.txt - deve passare: e' il modo in cui i due PC lavorano insieme.
+# Prima di aggiungere una riga qui, chiedersi se l'altro PC ne ha bisogno.
+#
+# Sintassi: -<cosa>:<nome>, dove d = cartella, f = file; il nome vale in
+# qualunque sottocartella. Le regole generali (Thumbs.db, *.tmp...) stanno in
+# ~/MEGA/.megaignore.
+
+# La cartella degli oggetti di Firefox: decine di GB che cambiano a ogni
+# compilazione. Sincronizzarla mentre make la riscrive vuol dire copie in
+# conflitto a centinaia. Si rigenera da `mach build`; il RISULTATO (il
+# pacchetto di Exilla) va copiato fuori, in cross_build/exilla-pacchetto/,
+# che invece si sincronizza.
+-d:exilla-obj
+
+# La cache del bytecode di Python: ogni PC la riscrive con la propria
+# versione di Python (3.11 su Debian 12, 3.13 su Debian 13).
+-d:__pycache__
+-f:*.pyc
+
+# I file di scambio degli editor mentre un file e' aperto.
+-f:.*.swp
+-f:.*.swo
+
+# I permessi di Claude Code di QUESTA macchina: ogni PC ha i suoi.
+-f:settings.local.json

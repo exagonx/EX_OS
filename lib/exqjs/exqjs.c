@@ -1020,6 +1020,13 @@ void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato)
     c->uscita_dato = dato;
 }
 
+/* QuickJS ha la sua Date, che l'ora la chiede alla libc (gettimeofday): qui
+ * l'orologio di chi ospita non serve e si ignora. */
+void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato)
+{
+    (void)c; (void)f; (void)dato;
+}
+
 ExJsVal exjs_globale(ExJsCtx *c)
 {
     if (!c) return BOX_INDEF;

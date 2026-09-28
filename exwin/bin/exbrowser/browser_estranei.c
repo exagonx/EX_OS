@@ -527,6 +527,84 @@ static int est_misura(int v, VistaPezzo *p)
  * h sono quelle che questo file aveva chiesto. Non c'e' un solo numero da
  * ricalcolare — l'impaginato ha tenuto il conto, come per ogni altra parola.
  * ============================================================================= */
+/* =============================================================================
+ * IL CURSORE DOVE SI CLICCA (@NAV-CURSORE, 28 settembre 2026)
+ *
+ * ! E' IL DISEGNO LETTO AL CONTRARIO, e sta qui accanto apposta: la casella
+ * scrive il testo da cx + 4, l'area va a capo ogni (cw - 8) / 8 caratteri e
+ * ogni 18 pixel a partire da y + 3. Se uno dei due conti cambia e l'altro no,
+ * il cursore finisce accanto al punto cliccato — il difetto di prima, solo
+ * piu' piccolo.
+ *
+ * ! IL PUNTO E' FRA DUE LETTERE, e si sceglie quello piu' vicino: un clic
+ * sulla meta' destra di una «m» mette il cursore DOPO la «m», come ovunque.
+ * ============================================================================= */
+
+/* In `t` (lunghi n), il punto fra due lettere piu' vicino a `dx` pixel
+ * dall'inizio del testo. */
+static int piu_vicino(const char *t, int n, int dx)
+{
+    static char pre[CTRL_VAL_MAX];
+    int j, meglio = 0, dist = 1 << 30;
+
+    for (j = 0; j <= n && j < CTRL_VAL_MAX - 1; j++) {
+        int w, d;
+
+        memcpy(pre, t, (unsigned int)j);
+        pre[j] = '\0';
+        w = ex_larghezza_testo(EX_FONT_SISTEMA, pre);
+        d = w > dx ? w - dx : dx - w;
+        if (d < dist) { dist = d; meglio = j; }
+        if (w > dx) break;                  /* da qui in poi ci si allontana */
+    }
+    return meglio;
+}
+
+int est_cursore_da_clic(int k, int x, int y)
+{
+    Ctrl *c;
+    int   i, px = -1, py = 0, pw = 0, n;
+
+    if (k < 0 || k >= g_ctrl_n) return 0;
+    c = &g_ctrl[k];
+    for (n = 0; c->valore[n]; n++) ;
+    for (i = 0; i < g_pez_n; i++)
+        if (EST_E_CTRL(g_pez[i].rif) && EST_CHI(g_pez[i].rif) == k) {
+            px = g_pez[i].x; py = g_pez[i].y - g_scorri; pw = g_pez[i].w;
+            break;
+        }
+    if (px < 0) return n;                   /* non si vede: in fondo, come prima */
+
+    if (c->tipo == CTRL_AREA) {
+        /* La riga cliccata, poi i caratteri che l'area ci ha messo. */
+        int per_riga = (pw - 8) / 8, riga = (y - (py + 3)) / 18, r = 0, i0 = 0;
+
+        if (per_riga < 1) per_riga = 1;
+        if (riga < 0) riga = 0;
+        for (;;) {
+            int ini = i0, q = 0;
+
+            while (c->valore[i0] && c->valore[i0] != '\n' && q < per_riga && q < CTRL_VAL_MAX - 1) { i0++; q++; }
+            if (r == riga) return ini + piu_vicino(c->valore + ini, q, x - (px + 4));
+            if (!c->valore[i0]) return n;   /* sotto l'ultima riga: in fondo */
+            if (c->valore[i0] == '\n') i0++;
+            r++;
+        }
+    }
+
+    /* La casella: una riga sola. La password ha un asterisco per lettera, e
+     * gli asterischi sono larghi diversamente dalle lettere: si misura quel
+     * che si VEDE. */
+    {
+        static char mostra[CTRL_VAL_MAX];
+        int j;
+
+        for (j = 0; j < n && j < CTRL_VAL_MAX - 1; j++) mostra[j] = c->segreto ? '*' : c->valore[j];
+        mostra[j] = '\0';
+        return piu_vicino(mostra, j, x - (px + 4));
+    }
+}
+
 static void est_disegna(int rif, int x, int y, int w, int h)
 {
     if (EST_E_CORN(rif)) { cornice_disegna(EST_CHI(rif), x, y, w, h); return; }

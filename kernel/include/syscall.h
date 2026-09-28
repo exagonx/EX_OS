@@ -298,6 +298,12 @@ typedef struct {
  * every line with the time and the pid of who wrote it. ebx = buffer,
  * ecx = size; same rules. See vga_console_registro. */
 #define SYS_CONSOLE_REGISTRO 215
+/* Who Ctrl+C stops on text console ebx (@TASTI-SISTEMA, 28 September 2026):
+ * the pid the shell declared with SYS_PTY_CTL(PTY_CTL_FG) on its console
+ * stdin, 0 if nobody (the shell is at its prompt) or if that process is
+ * gone. Only root asks: it is the keyboard driver's question. See
+ * sched_console_ctrlc in sched.h. */
+#define SYS_CONSOLE_CTRLC  216
 /* Chi rivendica la console della GRAFICA, e chi chiede quale sia.
  * ebx: 0 = chiedi (rende il numero, -1 se nessuna), 1 = prendi (la mia),
  *      2 = lascia. Vedi sys_console_grafica.
@@ -830,6 +836,13 @@ typedef struct {
  * Il perche' delle due parole che servono (`ferma` e `scuoti`) sta in sched.h. */
 #define SYS_THREAD_FERMA    206 /* ebx = tid              -> 0 o negativo */
 #define SYS_THREAD_FERMARSI 207 /* niente                 -> 1 se e' stato chiesto */
+
+/* I fili che nessuno aspettera' e dove sta la pila (28 settembre 2026, tappa 1
+ * di Exilla: pthread_detach e pthread_getattr_np). Numeri liberi del blocco
+ * 214-218. La pila: out[0] = fondo della riserva, out[1] = cima utile (sotto
+ * il blocco TLS); tid 0 = chi chiama. */
+#define SYS_THREAD_STACCA   217 /* ebx = tid              -> 0 o negativo */
+#define SYS_THREAD_PILA     218 /* ebx = tid, ecx = uint32_t[2] -> 0 o negativo */
 
 /* =============================================================================
  * UN DISCO SERVITO DA UN PROCESSO (208, 209, 210)
@@ -1384,6 +1397,8 @@ int32_t sys_attesa_dormi(InterruptFrame *f);
 int32_t sys_attesa_sveglia(InterruptFrame *f);
 int32_t sys_thread_ferma(InterruptFrame *f);
 int32_t sys_thread_fermarsi(InterruptFrame *f);
+int32_t sys_thread_stacca(InterruptFrame *f);
+int32_t sys_thread_pila(InterruptFrame *f);
 int32_t sys_getpid(InterruptFrame *f);
 int32_t sys_getppid(InterruptFrame *f);
 int32_t sys_mmap(InterruptFrame *f);
@@ -1434,6 +1449,7 @@ int32_t sys_console_testo(InterruptFrame *f);
 int32_t sys_console_registro(InterruptFrame *f);
 int32_t sys_console_setfg(InterruptFrame *f);
 int32_t sys_console_grafica(InterruptFrame *f);
+int32_t sys_console_ctrlc(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);
 int32_t sys_irq_bind(InterruptFrame *f);

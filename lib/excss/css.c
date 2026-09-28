@@ -28,6 +28,14 @@
 /* -----------------------------------------------------------------------------
  * Gli attrezzi, tutti locali
  * --------------------------------------------------------------------------- */
+/* Confronto fra due stringhe corte gia' in minuscolo (la libc di chi usa
+ * questa libreria non e' detto che ci sia: excss si compila anche sull'host). */
+static int strcmp_c(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
 static int minusc(int c)
 {
     return (c >= 'A' && c <= 'Z') ? c + 32 : c;
@@ -89,6 +97,12 @@ void css_stile_vuoto(CssStile *s)
     s->famiglia     = CSS_FAM_EREDITA;
     for (i = 0; i < 4; i++) s->margine[i] = CSS_MISURA_NO;
     s->visibile     = CSS_FORSE;
+    for (i = 0; i < 4; i++) {
+        s->bordo[i]       = CSS_MISURA_NO;
+        s->bordo_stile[i] = CSS_FORSE;
+        s->bordo_col[i]   = CSS_NIENTE;
+        s->imbottitura[i] = CSS_MISURA_NO;
+    }
 }
 
 void css_prepara(CssFoglio *f,
@@ -234,6 +248,95 @@ static int leggi_misura(const char *v, unsigned int n, int *out)
 }
 
 /* -----------------------------------------------------------------------------
+ * Le unita' relative: em, rem, % (@NAV-UNITA, 28 settembre 2026)
+ *
+ * ! UNA MISURA RELATIVA NON SI RISOLVE QUANDO SI LEGGE IL FOGLIO: 2em vale 30
+ * pixel sotto un titolo e 26 sotto un paragrafo. Si scrive nel CssDich cosi'
+ * com'e' — il valore in centesimi, e l'unita' — e diventa pixel in
+ * css_calcola(), quando lo stile del padre e' noto (vedi risolvi_relative).
+ *
+ * pt e vw invece sono assolute rispetto a cose che si sanno gia' (il punto
+ * tipografico e la larghezza della finestra delle @media): si convertono
+ * subito, e dal numero non si distinguono dai px.
+ * --------------------------------------------------------------------------- */
+#define REL_BIT     0x80000000u
+#define REL_EM      1u
+#define REL_REM     2u
+#define REL_PERC    3u
+#define REL_ZERO    0x800000u            /* centesimi con segno, spostati */
+
+static int g_media_w;                    /* la larghezza delle @media, piu' giu' */
+
+static unsigned int rel_codifica(unsigned int unita, int centesimi)
+{
+    if (centesimi < -800000) centesimi = -800000;
+    if (centesimi >  800000) centesimi =  800000;
+    return REL_BIT | (unita << 24) | ((unsigned int)(centesimi + (int)REL_ZERO) & 0xFFFFFFu);
+}
+
+/* Una lunghezza, codificata per il campo CssDich.numero: px (e pt, vw) come
+ * sempre — m + 32768 — oppure relativa con REL_BIT. Rende 0 se non si capisce.
+ * `neg` = 0 rifiuta i negativi (padding, bordi). */
+static int leggi_lunghezza(const char *v, unsigned int n, int neg, unsigned int *out)
+{
+    unsigned int i = 0, k;
+    int segno = 1, cent = 0, cifre = 0, dec = 0;
+    char u[4];
+
+    if (i < n && (v[i] == '-' || v[i] == '+')) { if (v[i] == '-') segno = -1; i++; }
+    while (i < n && v[i] >= '0' && v[i] <= '9') { cent = cent * 10 + (v[i] - '0'); i++; cifre = 1; if (cent > 1000000) return 0; }
+    cent *= 100;
+    if (i < n && v[i] == '.') {
+        i++;
+        while (i < n && v[i] >= '0' && v[i] <= '9') {
+            if (dec < 2) cent += (v[i] - '0') * (dec == 0 ? 10 : 1);
+            dec++; i++; cifre = 1;
+        }
+    }
+    if (!cifre) return 0;
+    cent *= segno;
+    if (!neg && cent < 0) return 0;
+
+    for (k = 0; i < n && k < 3; i++, k++) u[k] = (char)minusc((unsigned char)v[i]);
+    if (i < n) return 0;                 /* un'unita' piu' lunga di tre lettere */
+    u[k] = 0;
+
+    if (k == 0 || !strcmp_c(u, "px")) {  /* il numero nudo vale px (e 0 e' 0) */
+        int m = cent / 100;
+        if (m < -20000) m = -20000;
+        if (m >  20000) m =  20000;
+        *out = (unsigned int)(m + 32768);
+        return 1;
+    }
+    if (!strcmp_c(u, "pt")) { *out = (unsigned int)(cent * 4 / 300 + 32768); return 1; }   /* 1pt = 4/3 px */
+    if (!strcmp_c(u, "vw")) { *out = (unsigned int)(g_media_w * cent / 10000 + 32768); return 1; }
+    if (!strcmp_c(u, "em"))  { *out = rel_codifica(REL_EM, cent);   return 1; }
+    if (!strcmp_c(u, "rem")) { *out = rel_codifica(REL_REM, cent);  return 1; }
+    if (!strcmp_c(u, "%"))   { *out = rel_codifica(REL_PERC, cent); return 1; }
+    return 0;
+}
+
+/* Il valore in pixel di una lunghezza relativa `num`.
+ *   base_em   il corpo che vale 1em: del PADRE per font-size, dell'elemento
+ *             per tutto il resto;
+ *   base_perc la misura che vale 100%: il corpo del padre per font-size, la
+ *             larghezza della finestra per margini e padding.
+ * ! LA % DI UN MARGINE E' UN'APPROSSIMAZIONE, e va detta: il CSS la vuole
+ * della larghezza del CONTENITORE, che excss non conosce — la sa
+ * l'impaginatore, dopo. La finestra e' giusta per i blocchi di primo livello e
+ * troppo larga per quelli annidati. */
+static int rel_px(unsigned int num, int base_em, int base_perc)
+{
+    unsigned int unita = (num >> 24) & 0x7Fu;
+    int cent = (int)(num & 0xFFFFFFu) - (int)REL_ZERO;
+    int base = (unita == REL_EM) ? base_em : (unita == REL_REM) ? CSS_CORPO_PREDEFINITO : base_perc;
+
+    /* em e rem sono volte (1.5em = 150 centesimi di volta), la % e' gia'
+     * cento volte piu' grande (150% = 15000 centesimi di punto percentuale). */
+    return (int)((long)cent * base / (unita == REL_PERC ? 10000 : 100));
+}
+
+/* -----------------------------------------------------------------------------
  * font-family: da un elenco di nomi a una delle tre facce che abbiamo
  *
  * ! SI SCORRE L'ELENCO E CI SI FERMA AL PRIMO NOME CHE SI CONOSCE. E' l'ordine
@@ -340,6 +443,22 @@ static const PropNota PROPRIETA[] = {
     { "margin-left",      CSS_P_MARG_SX    },
     { "font-family",      CSS_P_FAMIGLIA   },
     { "visibility",       CSS_P_VISIBILE   },
+    { "border-top-width",    CSS_P_BORDO_LARG + 0  },
+    { "border-right-width",  CSS_P_BORDO_LARG + 1  },
+    { "border-bottom-width", CSS_P_BORDO_LARG + 2  },
+    { "border-left-width",   CSS_P_BORDO_LARG + 3  },
+    { "border-top-style",    CSS_P_BORDO_STILE + 0 },
+    { "border-right-style",  CSS_P_BORDO_STILE + 1 },
+    { "border-bottom-style", CSS_P_BORDO_STILE + 2 },
+    { "border-left-style",   CSS_P_BORDO_STILE + 3 },
+    { "border-top-color",    CSS_P_BORDO_COL + 0   },
+    { "border-right-color",  CSS_P_BORDO_COL + 1   },
+    { "border-bottom-color", CSS_P_BORDO_COL + 2   },
+    { "border-left-color",   CSS_P_BORDO_COL + 3   },
+    { "padding-top",         CSS_P_IMBOTTITURA + 0 },
+    { "padding-right",       CSS_P_IMBOTTITURA + 1 },
+    { "padding-bottom",      CSS_P_IMBOTTITURA + 2 },
+    { "padding-left",        CSS_P_IMBOTTITURA + 3 },
     { 0, 0 }
 };
 
@@ -357,13 +476,52 @@ static int prop_codice(const char *s, unsigned int n, unsigned short *out)
     return 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * I bordi e il padding (@NAV-BORDER, 28 settembre 2026)
+ * --------------------------------------------------------------------------- */
+
+/* v, lungo n, e' la parola `p` (senza badare alle maiuscole)? */
+static int parola_e(const char *v, unsigned int n, const char *p)
+{
+    unsigned int k = 0;
+
+    while (k < n && p[k] && minusc((unsigned char)v[k]) == p[k]) k++;
+    return k == n && p[k] == '\0';
+}
+
+/* Uno spessore di bordo: una misura, o thin / medium / thick. I tre nomi il
+ * CSS non li fissa; 1, 3 e 5 pixel sono quel che fanno tutti i browser. */
+static int leggi_spessore(const char *v, unsigned int n, unsigned int *out)
+{
+    int m;
+
+    if (parola_e(v, n, "thin"))   m = 1;
+    else if (parola_e(v, n, "medium")) m = 3;
+    else if (parola_e(v, n, "thick"))  m = 5;
+    else return leggi_lunghezza(v, n, 0, out);
+    *out = (unsigned int)(m + 32768);
+    return 1;
+}
+
+/* Uno stile di bordo: 0 per none e hidden, 1 per tutti quelli che si vedono. */
+static int leggi_stile_bordo(const char *v, unsigned int n, unsigned int *out)
+{
+    static const char *const visti[] = {
+        "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset", 0
+    };
+    int i;
+
+    if (parola_e(v, n, "none") || parola_e(v, n, "hidden")) { *out = 0; return 1; }
+    for (i = 0; visti[i]; i++) if (parola_e(v, n, visti[i])) { *out = 1; return 1; }
+    return 0;
+}
+
 /* Da testo del valore al numero che finisce in CssDich. Rende 0 se il valore
  * non si capisce: la dichiarazione allora si butta, non il resto della regola. */
 static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
                         unsigned int *out)
 {
     unsigned int c;
-    int          m;
 
     switch (prop) {
     case CSS_P_COLORE:
@@ -372,14 +530,25 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
         *out = c;
         return 1;
 
-    case CSS_P_CORPO:
+    case CSS_P_CORPO: {
+        /* Le parole di font-size: le assolute sono la scala di tutti i
+         * browser riportata al nostro corpo di 15; larger e smaller sono
+         * relative al padre, come 1.2em e 0.83em. */
+        static const struct { const char *p; int px; } PAROLE[] = {
+            { "xx-small", 9 }, { "x-small", 10 }, { "small", 13 }, { "medium", CSS_CORPO_PREDEFINITO },
+            { "large", 18 }, { "x-large", 24 }, { "xx-large", 32 }, { 0, 0 }
+        };
+        int j;
+        for (j = 0; PAROLE[j].p; j++)
+            if (parola_e(v, n, PAROLE[j].p)) { *out = (unsigned int)(PAROLE[j].px + 32768); return 1; }
+        if (parola_e(v, n, "larger"))  { *out = rel_codifica(REL_EM, 120); return 1; }
+        if (parola_e(v, n, "smaller")) { *out = rel_codifica(REL_EM, 83);  return 1; }
+        return leggi_lunghezza(v, n, 0, out);
+    }
+
     case CSS_P_MARG_SOPRA: case CSS_P_MARG_DX:
     case CSS_P_MARG_SOTTO: case CSS_P_MARG_SX:
-        if (!leggi_misura(v, n, &m)) return 0;
-        if (m < -20000) m = -20000;
-        if (m >  20000) m =  20000;
-        *out = (unsigned int)(m + 32768);      /* senza segno per il campo */
-        return 1;
+        return leggi_lunghezza(v, n, 1, out);
 
     case CSS_P_PESO: {
         int peso = 0;
@@ -410,6 +579,25 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
         if ((n == 6 && minusc((unsigned char)v[0]) == 'h') ||
             (n == 8 && minusc((unsigned char)v[0]) == 'c')) { *out = 0; return 1; }
         return 0;
+
+    case CSS_P_BORDO_LARG + 0: case CSS_P_BORDO_LARG + 1:
+    case CSS_P_BORDO_LARG + 2: case CSS_P_BORDO_LARG + 3:
+        return leggi_spessore(v, n, out);
+
+    case CSS_P_BORDO_STILE + 0: case CSS_P_BORDO_STILE + 1:
+    case CSS_P_BORDO_STILE + 2: case CSS_P_BORDO_STILE + 3:
+        return leggi_stile_bordo(v, n, out);
+
+    case CSS_P_BORDO_COL + 0: case CSS_P_BORDO_COL + 1:
+    case CSS_P_BORDO_COL + 2: case CSS_P_BORDO_COL + 3:
+        if (parola_e(v, n, "currentcolor")) { *out = CSS_NIENTE; return 1; }
+        if (!leggi_colore(v, n, &c)) return 0;
+        *out = c;
+        return 1;
+
+    case CSS_P_IMBOTTITURA + 0: case CSS_P_IMBOTTITURA + 1:
+    case CSS_P_IMBOTTITURA + 2: case CSS_P_IMBOTTITURA + 3:
+        return leggi_lunghezza(v, n, 0, out);             /* il padding non e' mai negativo */
 
     case CSS_P_DISPLAY:
         if (n == 4 && minusc((unsigned char)v[0]) == 'n') { *out = CSS_DISPLAY_NIENTE; return 1; }
@@ -453,14 +641,134 @@ static void salta_vuoto(const char *t, unsigned int *i, unsigned int fine)
 }
 
 
+/* ! LA CODA C'E' PER LE SCORCIATOIE (@NAV-BORDER, 28 settembre 2026). Una
+ * dichiarazione era una proprieta'; `border: 1px solid red` ne vale dodici,
+ * `margin: 0 auto` quattro. La scorciatoia si espande qui, le voci escono una
+ * per volta alle chiamate successive, e chi scorre le dichiarazioni — le
+ * regole e l'attributo `style` — non si accorge di niente. */
+#define DICH_CODA 16
+
 typedef struct {
-    const char  *t;
-    unsigned int i, n;
+    const char    *t;
+    unsigned int   i, n;
+    unsigned short coda_p[DICH_CODA];
+    unsigned int   coda_v[DICH_CODA];
+    unsigned int   coda_n, coda_i;
 } DichIter;
+
+static void coda_metti(DichIter *it, unsigned short p, unsigned int v)
+{
+    if (it->coda_n < DICH_CODA) { it->coda_p[it->coda_n] = p; it->coda_v[it->coda_n] = v; it->coda_n++; }
+}
+
+/* Le parole di un valore, separate da spazi ma non dentro le parentesi —
+ * rgb(1, 2, 3) e' una parola sola. Al piu' `max`; rende quante. */
+static unsigned int parole(const char *v, unsigned int n, unsigned int *da,
+                           unsigned int *lung, unsigned int max)
+{
+    unsigned int i = 0, k = 0;
+
+    while (i < n && k < max) {
+        unsigned int inizio, par = 0;
+
+        while (i < n && spazio((unsigned char)v[i])) i++;
+        if (i >= n) break;
+        inizio = i;
+        while (i < n && (par || !spazio((unsigned char)v[i]))) {
+            if (v[i] == '(') par++;
+            else if (v[i] == ')' && par) par--;
+            i++;
+        }
+        da[k] = inizio; lung[k] = i - inizio; k++;
+    }
+    return k;
+}
+
+/* I quattro lati da uno a quattro valori, alla maniera del CSS: 1 = tutti,
+ * 2 = sopra/sotto e destra/sinistra, 3 = sopra, destra/sinistra, sotto. */
+static const unsigned char LATO_DA[4][4] = {
+    { 0, 0, 0, 0 }, { 0, 1, 0, 1 }, { 0, 1, 2, 1 }, { 0, 1, 2, 3 }
+};
+
+/* Se `nome` e' una scorciatoia che si conosce, la espande nella coda di `it`
+ * e rende 1 (anche se nessun valore si e' capito: la dichiarazione e' sua). */
+static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
+                       const char *v, unsigned int n)
+{
+    unsigned int da[4], lu[4], k, q, x;
+    unsigned short base = 0;
+    int lato = -1;
+
+    /* margin, padding, border-width/-style/-color: da uno a quattro valori */
+    if      (parola_e(nome, nn, "margin"))       base = CSS_P_MARG_SOPRA;
+    else if (parola_e(nome, nn, "padding"))      base = CSS_P_IMBOTTITURA;
+    else if (parola_e(nome, nn, "border-width")) base = CSS_P_BORDO_LARG;
+    else if (parola_e(nome, nn, "border-style")) base = CSS_P_BORDO_STILE;
+    else if (parola_e(nome, nn, "border-color")) base = CSS_P_BORDO_COL;
+    if (base) {
+        unsigned int vals[4];
+        k = parole(v, n, da, lu, 4);
+        if (k == 0) return 1;
+        for (q = 0; q < k; q++) {
+            /* ! «auto» NEI MARGINI VALE ZERO QUI: il centraggio che chiede
+             * (margin: 0 auto) vuole una larghezza, che non c'e' ancora.
+             * Senza questa riga tutta la dichiarazione si perderebbe, anche il
+             * margine verticale che invece si capisce. */
+            if (base == CSS_P_MARG_SOPRA && parola_e(v + da[q], lu[q], "auto")) { vals[q] = 32768; continue; }
+            /* il valore di un lato si legge come quello del primo: i quattro
+             * codici di ogni proprieta' sono in fila, sopra-destra-sotto-sinistra */
+            if (!leggi_valore(base, v + da[q], lu[q], &vals[q])) return 1;
+        }
+        for (x = 0; x < 4; x++)
+            coda_metti(it, (unsigned short)(base + x), vals[LATO_DA[k - 1][x]]);
+        return 1;
+    }
+
+    /* border e border-top/right/bottom/left: spessore, stile e colore in un
+     * ordine qualunque. ! CIO' CHE NON SI DICE TORNA AL VALORE INIZIALE —
+     * medium, none, currentcolor — e non resta com'era: e' la regola delle
+     * scorciatoie, ed e' il modo in cui i siti TOLGONO un bordo
+     * (`border: 0`, o `border: none`). */
+    if (parola_e(nome, nn, "border")) lato = 4;
+    else if (parola_e(nome, nn, "border-top"))    lato = 0;
+    else if (parola_e(nome, nn, "border-right"))  lato = 1;
+    else if (parola_e(nome, nn, "border-bottom")) lato = 2;
+    else if (parola_e(nome, nn, "border-left"))   lato = 3;
+    if (lato < 0) return 0;
+    {
+        unsigned int larg = 3u + 32768u, stile = 0, col = CSS_NIENTE, w;
+
+        k = parole(v, n, da, lu, 3);
+        for (q = 0; q < k; q++) {
+            if (leggi_stile_bordo(v + da[q], lu[q], &w))      stile = w;
+            else if (leggi_spessore(v + da[q], lu[q], &w))    larg = w;
+            else if (parola_e(v + da[q], lu[q], "currentcolor")) col = CSS_NIENTE;
+            else if (leggi_colore(v + da[q], lu[q], &w))      col = w;
+            /* una parola che non si capisce (un rgb(), una variabile) si
+             * salta: il bordo resta, col colore del testo */
+        }
+        for (x = 0; x < 4; x++) {
+            if (lato != 4 && (int)x != lato) continue;
+            coda_metti(it, (unsigned short)(CSS_P_BORDO_LARG + x), larg);
+            coda_metti(it, (unsigned short)(CSS_P_BORDO_STILE + x), stile);
+            coda_metti(it, (unsigned short)(CSS_P_BORDO_COL + x), col);
+        }
+    }
+    return 1;
+}
 
 static int dich_prossima(DichIter *it, unsigned short *prop, unsigned int *val)
 {
-    while (it->i < it->n) {
+    for (;;) {
+    if (it->coda_i < it->coda_n) {
+        *prop = it->coda_p[it->coda_i];
+        *val  = it->coda_v[it->coda_i];
+        it->coda_i++;
+        return 1;
+    }
+    it->coda_n = it->coda_i = 0;
+    if (it->i >= it->n) return 0;
+    {
         unsigned int pi, pf, vi, vf;
 
         for (;;) {
@@ -515,16 +823,57 @@ static int dich_prossima(DichIter *it, unsigned short *prop, unsigned int *val)
         if (pf > pi && vf > vi && prop_codice(it->t + pi, pf - pi, prop) &&
             leggi_valore(*prop, it->t + vi, vf - vi, val))
             return 1;
+        if (pf > pi && vf > vi &&
+            scorciatoia(it, it->t + pi, pf - pi, it->t + vi, vf - vi)) continue;
         /* valore o proprieta' non capiti: si butta questa e si va avanti */
     }
-    return 0;
+    }
 }
 
 /* Posa una dichiarazione su uno stile. ! LO SWITCH E' COMPLETO APPOSTA: con
  * -Wall il compilatore segnala il giorno che si aggiunge un CSS_P_ e ci si
  * dimentica di questo punto. */
+/* Le proprieta' che sono lunghezze, cioe' quelle in cui REL_BIT vuol dire
+ * «relativa». ! SOLO QUESTE: un colore ARGB ha il bit alto acceso anche lui. */
+static int e_lunghezza(unsigned short p)
+{
+    return p == CSS_P_CORPO || (p >= CSS_P_MARG_SOPRA && p <= CSS_P_MARG_SX) ||
+           (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
+           (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4);
+}
+
+/* Durante css_calcola, le lunghezze relative vincenti aspettano qui la fine
+ * della cascata: il corpo dell'elemento, che e' la base di em, lo si sa solo
+ * dopo. Fuori da css_calcola e' 0, e una relativa si risolve subito. */
+static unsigned int *g_rel = 0;
+
+static void css_posa(CssStile *s, unsigned short prop, unsigned int val);
+
+static void posa_px(CssStile *s, unsigned short prop, int px)
+{
+    unsigned int *r = g_rel;
+
+    if (px < -20000) px = -20000;
+    if (px >  20000) px =  20000;
+    g_rel = 0;
+    css_posa(s, prop, (unsigned int)(px + 32768));
+    g_rel = r;
+}
+
 static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
 {
+    if (e_lunghezza(prop)) {
+        if (val & REL_BIT) {
+            if (g_rel) { g_rel[prop] = val; return; }
+            {   /* fuori dalla cascata (un attributo style da solo): la base e'
+                 * il corpo che lo stile ha gia', o quello predefinito */
+                int c = (s->corpo == CSS_MISURA_NO) ? CSS_CORPO_PREDEFINITO : s->corpo;
+                posa_px(s, prop, rel_px(val, c, prop == CSS_P_CORPO ? c : g_media_w));
+            }
+            return;
+        }
+        if (g_rel) g_rel[prop] = 0;     /* un valore assoluto vince su una relativa di prima */
+    }
     switch (prop) {
     case CSS_P_COLORE:     s->colore = val;                            break;
     case CSS_P_SFONDO:     s->sfondo = val;                            break;
@@ -539,6 +888,18 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_MARG_DX:    s->margine[1] = (short)((int)val - 32768);  break;
     case CSS_P_MARG_SOTTO: s->margine[2] = (short)((int)val - 32768);  break;
     case CSS_P_MARG_SX:    s->margine[3] = (short)((int)val - 32768);  break;
+    case CSS_P_BORDO_LARG + 0: case CSS_P_BORDO_LARG + 1:
+    case CSS_P_BORDO_LARG + 2: case CSS_P_BORDO_LARG + 3:
+        s->bordo[prop - CSS_P_BORDO_LARG] = (short)((int)val - 32768);              break;
+    case CSS_P_BORDO_STILE + 0: case CSS_P_BORDO_STILE + 1:
+    case CSS_P_BORDO_STILE + 2: case CSS_P_BORDO_STILE + 3:
+        s->bordo_stile[prop - CSS_P_BORDO_STILE] = (unsigned char)val;              break;
+    case CSS_P_BORDO_COL + 0: case CSS_P_BORDO_COL + 1:
+    case CSS_P_BORDO_COL + 2: case CSS_P_BORDO_COL + 3:
+        s->bordo_col[prop - CSS_P_BORDO_COL] = val;                                 break;
+    case CSS_P_IMBOTTITURA + 0: case CSS_P_IMBOTTITURA + 1:
+    case CSS_P_IMBOTTITURA + 2: case CSS_P_IMBOTTITURA + 3:
+        s->imbottitura[prop - CSS_P_IMBOTTITURA] = (short)((int)val - 32768);       break;
     default: break;
     }
 }
@@ -551,7 +912,7 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
 
     if (!testo || !s) return;
 
-    it.t = testo; it.i = 0; it.n = n;
+    it.t = testo; it.i = 0; it.n = n; it.coda_n = it.coda_i = 0;
     while (dich_prossima(&it, &prop, &val)) css_posa(s, prop, val);
 }
 
@@ -1313,7 +1674,7 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
 
             if (f->regole_n >= f->regole_max) { f->troncato = 1; return fatte; }
 
-            it.t = testo; it.i = gr_i; it.n = gr_f;
+            it.t = testo; it.i = gr_i; it.n = gr_f; it.coda_n = it.coda_i = 0;
             while (dich_prossima(&it, &prop, &val)) {
                 if (f->dich_n >= f->dich_max) { f->troncato = 1; break; }
                 f->dich[f->dich_n].proprieta = prop;
@@ -1633,6 +1994,7 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
                  const CssStile *ereditato, CssStile *out)
 {
     unsigned int peso_di[CSS_P_N];
+    unsigned int rel[CSS_P_N];
     unsigned int i;
     int          k;
 
@@ -1655,6 +2017,9 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
 
     if (!f || !d || nodo < 0) return;
     if (d->nodi[nodo].tipo != HTML_ELEMENTO) return;
+
+    for (i = 0; i < CSS_P_N; i++) rel[i] = 0;
+    g_rel = rel;
 
     {
         /* ! THE CANDIDATES, THEN IN READING ORDER: at equal weight the rule
@@ -1738,5 +2103,26 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
         unsigned int n = 0;
 
         if (st) { while (st[n]) n++; css_stile_inline(st, n, out); }
+    }
+
+    /* ! LE RELATIVE ALLA FINE, E IN QUEST'ORDINE (@NAV-UNITA). Prima il corpo,
+     * che si misura su quello del PADRE; poi tutto il resto, che si misura sul
+     * corpo dell'elemento appena deciso — `font-size: 2em; margin: 1em` vuol
+     * dire un margine grande quanto il testo grande, non quanto quello di
+     * fuori. */
+    g_rel = 0;
+    {
+        int padre = (ereditato && ereditato->corpo != CSS_MISURA_NO) ? ereditato->corpo
+                                                                     : CSS_CORPO_PREDEFINITO;
+        int mio;
+        unsigned short p;
+
+        if (rel[CSS_P_CORPO]) {
+            int c = rel_px(rel[CSS_P_CORPO], padre, padre);
+            posa_px(out, CSS_P_CORPO, c < 1 ? 1 : c);
+        }
+        mio = (out->corpo == CSS_MISURA_NO) ? padre : out->corpo;
+        for (p = 0; p < CSS_P_N; p++)
+            if (p != CSS_P_CORPO && rel[p]) posa_px(out, p, rel_px(rel[p], mio, g_media_w));
     }
 }

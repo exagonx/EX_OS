@@ -73,7 +73,7 @@ static ExFont font_di(const CssStile *st)
 {
     int neretto = (st->grassetto == 1);
     int corsivo = (st->corsivo == 1);
-    int corpo   = (st->corpo == CSS_MISURA_NO) ? 15 : st->corpo;
+    int corpo   = (st->corpo == CSS_MISURA_NO) ? CSS_CORPO_PREDEFINITO : st->corpo;
     int fam;
 
     /* ! IL TAG BATTE IL FOGLIO SOLO DOVE IL FOGLIO TACE. Dentro <pre> o <code>
@@ -87,7 +87,7 @@ static ExFont font_di(const CssStile *st)
     else                                    fam = g_fisso > 0 ? FAM_MONO
                                                               : FAM_SERIF;
 
-    if (!neretto && !corsivo && fam == FAM_SERIF && corpo == 15)
+    if (!neretto && !corsivo && fam == FAM_SERIF && corpo == CSS_CORPO_PREDEFINITO)
         return g_font_testo;
     return font_per(neretto, corsivo, fam, corpo);
 }
@@ -95,6 +95,52 @@ static ExFont font_di(const CssStile *st)
 static unsigned int colore_di(const CssStile *st)
 {
     return (st->colore == CSS_NIENTE) ? EX_NERO : st->colore;
+}
+
+/* =============================================================================
+ * I bordi e il padding del CSS (@NAV-BORDER, 28 settembre 2026)
+ *
+ * ! SOLO SUI BLOCCHI. Un bordo su uno <span> va spezzato fra le righe in cui
+ * lo <span> cade, e l'impaginato a pezzi di parola non sa ancora dove comincia
+ * e finisce una riga di un elemento: per ora li' non si disegna. Anche le
+ * tabelle restano col loro `border=` (bordo_tabella qui sotto).
+ * ============================================================================= */
+
+/* Lo spessore di un lato, o 0 se il lato non si vede: senza uno stile il
+ * bordo non c'e', anche con uno spessore (e' la regola del CSS). */
+static int lato_bordo(const CssStile *st, int lato)
+{
+    int w;
+
+    if (st->bordo_stile[lato] != 1) return 0;
+    w = (st->bordo[lato] == CSS_MISURA_NO) ? 3 : st->bordo[lato];   /* medium */
+    return w < 0 ? 0 : (w > 50 ? 50 : w);
+}
+
+/* Il colore di un lato; senza, quello del testo (currentcolor). */
+static unsigned int colore_bordo(const CssStile *st, int lato)
+{
+    return (st->bordo_col[lato] == CSS_NIENTE) ? colore_di(st) : st->bordo_col[lato];
+}
+
+static int imbottitura(const CssStile *st, int lato)
+{
+    int p = st->imbottitura[lato];
+    return (p == CSS_MISURA_NO || p < 0) ? 0 : (p > 200 ? 200 : p);
+}
+
+/* Un rettangolo pieno nella lista degli sfondi; rende il suo indice, o -1 se
+ * la lista e' piena (e allora quel lato semplicemente non si vede). */
+static int rettangolo(int x, int y, int w, int h, unsigned int colore)
+{
+    int i;
+
+    if (g_sfondi_n >= SFONDI_MAX || w <= 0) return -1;
+    i = g_sfondi_n++;
+    g_sfondi[i].x = x; g_sfondi[i].y = y; g_sfondi[i].w = w; g_sfondi[i].h = h;
+    g_sfondi[i].colore = colore;
+    g_sfondi[i].bordo  = 0;
+    return i;
 }
 
 static int alt_riga_f(ExFont f)
@@ -839,6 +885,9 @@ static void impagina_nodo(int v, const CssStile *ered)
         int         era_link = g_link_ora;
         int         era_sx = g_marg_sx, era_dx = g_marg_dx;
         int         sfondo_mio = -1;
+        int         bt = 0, br = 0, bb = 0, bl = 0, pb = 0;   /* bordi e padding di sotto */
+        int         i_sx = -1, i_dx = -1, box_x = 0, box_w = 0, box_y = 0;
+        unsigned int col_sotto = 0;
         CssStile    mio;
         int         e_blocco;
 
@@ -882,6 +931,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[sf].w = riga_w();
                 g_sfondi[sf].h = 0;
                 g_sfondi[sf].colore = mio.sfondo;
+                g_sfondi[sf].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
             }
 
             impagina_tabella(v, &mio);
@@ -990,7 +1040,26 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[sfondo_mio].w = riga_w();
                 g_sfondi[sfondo_mio].h = 0;
                 g_sfondi[sfondo_mio].colore = mio.sfondo;
+                g_sfondi[sfondo_mio].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
             }
+
+            /* I BORDI E IL PADDING (@NAV-BORDER, 28 settembre 2026). Il
+             * riquadro e' quello dello sfondo; i lati sono rettangoli pieni
+             * della stessa lista, e il contenuto rientra di bordo piu' padding
+             * come rientra dei margini. Quelli di sinistra e di destra hanno
+             * l'altezza solo a fine blocco, quello di sotto nasce li'. */
+            bt = lato_bordo(&mio, 0); br = lato_bordo(&mio, 1);
+            bb = lato_bordo(&mio, 2); bl = lato_bordo(&mio, 3);
+            box_x = riga_x(); box_w = riga_w(); box_y = g_pen_y;
+            if (bt) rettangolo(box_x, box_y, box_w, bt, colore_bordo(&mio, 0));
+            if (bl) i_sx = rettangolo(box_x, box_y, bl, 0, colore_bordo(&mio, 3));
+            if (br) i_dx = rettangolo(box_x + box_w - br, box_y, br, 0, colore_bordo(&mio, 1));
+            col_sotto = colore_bordo(&mio, 2);
+            pb = imbottitura(&mio, 2);
+            g_marg_sx += bl + imbottitura(&mio, 3);
+            g_marg_dx += br + imbottitura(&mio, 1);
+            g_pen_y   += bt + imbottitura(&mio, 0);
+            g_pen_x = riga_x();
         }
 
         /* ! IL SEGNO DI UNA VOCE DIPENDE DALLA LISTA CHE LA CONTIENE, e la
@@ -1096,6 +1165,16 @@ static void impagina_nodo(int v, const CssStile *ered)
 
         if (e_blocco) {
             a_capo();
+            /* Il fondo del riquadro: il contenuto, il padding di sotto, poi il
+             * bordo di sotto. Solo se c'e' qualcosa da chiudere la penna scende:
+             * un blocco senza bordi e padding resta esattamente com'era. */
+            if (pb || bb || bt || bl || br) {
+                g_pen_y += ((g_pen_x > riga_x()) ? g_riga_h : 0) + pb;
+                if (bb) rettangolo(box_x, g_pen_y, box_w, bb, col_sotto);
+                g_pen_y += bb;
+                if (i_sx >= 0) g_sfondi[i_sx].h = g_pen_y - box_y;
+                if (i_dx >= 0) g_sfondi[i_dx].h = g_pen_y - box_y;
+            }
             if (sfondo_mio >= 0) {
                 int fine = g_pen_y + ((g_pen_x > riga_x()) ? g_riga_h : 0);
 

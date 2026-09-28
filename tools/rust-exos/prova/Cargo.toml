@@ -1,0 +1,17 @@
+# tools/rust-exos/prova — @RUST-0: un programma no_std che gira dentro EX-OS.
+# Si costruisce con tools/rust-exos/prova.sh (vedi li').
+[package]
+name = "prova"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+
+[profile.dev]
+panic = "abort"

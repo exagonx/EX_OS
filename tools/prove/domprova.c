@@ -1416,6 +1416,10 @@ int main(int argc, char **argv)
         D = apparecchia(PAG, &c);
         exdom_indirizzo(D, URL);
         prova_gia("href e' l'indirizzo intero", c, "location.href", URL);
+        /* @NAVMETA, 28 settembre 2026: con ExJs il toString implicito
+         * mancava, e queste due rendevano "[object Object]". */
+        prova_gia("String(location) e' l'indirizzo", c, "String(location)", URL);
+        prova_gia("'' + location e' l'indirizzo", c, "'' + location", URL);
         prova_gia("protocol", c, "location.protocol", "https:");
         prova_gia("host col numero di porta", c, "location.host", "ex.os:8080");
         prova_gia("hostname senza", c, "location.hostname", "ex.os");

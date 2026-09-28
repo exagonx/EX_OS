@@ -313,7 +313,7 @@ static void idle_task_fn(void)
  * morto o non chiamera' mai waitpid() — gli "orfani". Senza questo, ogni
  * processo terminato il cui genitore non esegue waitpid() (es. un servizio
  * in background, un driver che si schianta, o la shell che muore prima di
- * un figlio) occupa per sempre uno slot nel pool PCB (MAX_PROCESSES=64),
+ * un figlio) occupa per sempre uno slot nel pool PCB (MAX_PROCESSES),
  * fino al blocco totale del sistema.
  *
  * Meccanismo:
@@ -977,6 +977,21 @@ void sched_set_console_fg(uint32_t console, uint32_t pid)
     g_console_fg[console] = pid;
 }
 
+/* Who Ctrl+C stops, per console: see sched.h. */
+static uint32_t g_console_ctrlc[VGA_N_CONSOLE];
+
+uint32_t sched_console_ctrlc(uint32_t console)
+{
+    if (console >= VGA_N_CONSOLE) return 0;
+    return g_console_ctrlc[console];
+}
+
+void sched_set_console_ctrlc(uint32_t console, uint32_t pid)
+{
+    if (console >= VGA_N_CONSOLE) return;
+    g_console_ctrlc[console] = pid;
+}
+
 void sched_unblock(uint32_t pid)
 {
     interrupts_disable();
@@ -1623,8 +1638,12 @@ static void proc_esci(int32_t exit_code, int fatale)
         g_current->state = PROC_ZOMBIE;
         g_proc_count--;
         runq_remove(g_current);
+        /* ! STACCATO: nessuno lo aspettera', il PCB va al reaper di init
+         * (lo raccoglie entro un giro, cento millisecondi). */
+        if (g_current->staccato && g_init_task != NULL)
+            g_current->ppid = g_init_task->pid;
         /* Sveglia chi lo stesse aspettando con thread_attendi(). */
-        if (g_current->ppid != 0) sched_unblock_locked(g_current->ppid);
+        else if (g_current->ppid != 0) sched_unblock_locked(g_current->ppid);
         {
             Process *dopo = sched_pick_next();
             sched_switch_to(dopo);
@@ -1777,8 +1796,9 @@ void proc_reap_zombie(Process *p)
      * quelle di prima sarebbero perse per sempre. Sedici pagine per filo, a
      * ogni giro.
      *
-     * Si passa tutta la piazzola e non solo la parte impegnata: sono sedici
-     * giri, e cosi' non dipende da quanto lo stack fosse cresciuto.
+     * Si passa tutta la piazzola e non solo la parte impegnata: sono 512
+     * giri (2 MB, dal 28 settembre 2026), e cosi' non dipende da quanto lo
+     * stack fosse cresciuto.
      * ========================================================================= */
     if (p->filo_posto != 0 && p->page_directory != NULL &&
         p->user_stack_limit != 0) {
@@ -1892,6 +1912,27 @@ void proc_kill(uint32_t pid)
 Process *proc_get_current(void)
 {
     return g_current;
+}
+
+/* =============================================================================
+ * proc_filo_stacca — nessuno aspettera' questo filo (pthread_detach)
+ *
+ * Da chiamare a interruzioni spente. Se il filo e' gia' zombie lo si da'
+ * subito a init; se e' vivo lo fara' proc_esci quando esce. Il capogruppo non
+ * si stacca: e' lui che il padre aspetta con waitpid.
+ * ============================================================================= */
+int proc_filo_stacca(uint32_t tid)
+{
+    Process *p = proc_get_by_pid(tid);
+
+    if (g_current == NULL || p == NULL)  return ERR(ESRCH);
+    if (p->tgid != g_current->tgid)     return ERR(ESRCH);
+    if (p->pid == p->tgid)              return ERR(EINVAL);
+    if (p->staccato)                    return ERR(EINVAL);
+    p->staccato = 1;
+    if (p->state == PROC_ZOMBIE && g_init_task != NULL)
+        p->ppid = g_init_task->pid;
+    return 0;
 }
 
 Process *proc_get_by_pid(uint32_t pid)

@@ -100,6 +100,10 @@ typedef struct {
     unsigned int *px;               /* ARGB, nostri: free() li restituisce     */
     unsigned char stato;            /* 0 da prendere, 1 presa, 2 rinunciata    */
     char          src[EXHTTP_URL_MAX];
+    /* Una GIF animata (@NAV-GIF, 28 settembre 2026): l'iteratore di eximg, e
+     * quando (uptime_ms) tocca al prossimo fotogramma. 0 = immagine ferma. */
+    void         *anima;
+    unsigned int  anima_prossimo;
 } Imm;
 extern int g_js_acceso;
 
@@ -129,6 +133,11 @@ typedef struct {
 
 /* In exbrowser.c: draw iframe k of the current (parent) view in its rectangle. */
 void cornice_disegna(int k, int x, int y, int w, int h);
+
+/* In browser_estranei.c: where the caret goes when text control k is clicked
+ * at window point (x, y) — the index of the character before which it lands
+ * (@NAV-CURSORE). It redoes the arithmetic of the drawing, next to it. */
+int est_cursore_da_clic(int k, int x, int y);
 
 /* One document's controls and images: see VistaImp in browser_priv.h. */
 typedef struct {

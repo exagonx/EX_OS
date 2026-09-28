@@ -353,6 +353,14 @@ static void raccogli(const char *testo, unsigned int n, void *dato)
 #define MOTORE_OGG   400
 #define MOTORE_ARENA 16384
 
+/* Un orologio fermo per le prove di Date: 2001-09-09T01:46:40.123Z, una
+ * domenica. Con l'ora vera ogni esecuzione darebbe un risultato diverso. */
+static double orologio_fisso(void *dato)
+{
+    (void)dato;
+    return 1000000000123.0;
+}
+
 static void prova_esegui(const char *nome, const char *codice, const char *atteso)
 {
     static unsigned char memoria[1 << 20];
@@ -368,6 +376,7 @@ static void prova_esegui(const char *nome, const char *codice, const char *attes
     if (!c) { printf("NO   %-34s il contesto non si apre\n", nome); sbagliate++; return; }
     g_console_n = 0; g_console[0] = '\0';
     exjs_uscita_metti(c, raccogli, 0);
+    exjs_orologio_metti(c, orologio_fisso, 0);
 
     if (!exjs_esegui(c, codice, (unsigned int)strlen(codice), &r, &err)) {
         if (atteso == 0) {
@@ -822,6 +831,65 @@ int main(void)
     prova_esegui("random sta fra 0 e 1",
                  "var r=Math.random();r>=0&&r<1;",            "true");
 
+    printf("\n=== la libreria di base: Date e valueOf ===\n\n");
+    prova_esegui("Date(0) ISO",        "new Date(0).toISOString();", "1970-01-01T00:00:00.000Z");
+    prova_esegui("Date.now dall'orologio", "Date.now();",     "1000000000123");
+    prova_esegui("new Date() e' adesso", "new Date().getTime();", "1000000000123");
+    prova_esegui("adesso in ISO",      "new Date().toISOString();", "2001-09-09T01:46:40.123Z");
+    prova_esegui("getDay domenica",    "new Date().getDay();", "0");
+    prova_esegui("campi",              "var d=new Date(2024,1,29,13,5,9,7);"
+                 "[d.getFullYear(),d.getMonth(),d.getDate(),d.getHours(),"
+                 "d.getMinutes(),d.getSeconds(),d.getMilliseconds()].join(' ');",
+                 "2024 1 29 13 5 9 7");
+    /* ! IL MESE 12 E' GENNAIO DELL'ANNO DOPO, il giorno 0 l'ultimo del mese
+     * prima: i calendari scritti a mano ci contano. */
+    prova_esegui("mese che trabocca",  "new Date(2023,12,1).toISOString();", "2024-01-01T00:00:00.000Z");
+    prova_esegui("giorno 0",           "new Date(2024,2,0).getDate();", "29");
+    prova_esegui("anno a due cifre",   "new Date(99,0).getFullYear();", "1999");
+    prova_esegui("prima del 1970",     "new Date(-1).toISOString();", "1969-12-31T23:59:59.999Z");
+    prova_esegui("Date.UTC",           "Date.UTC(2000,0,1);", "946684800000");
+    prova_esegui("leggere ISO",        "Date.parse('2000-01-01T00:00:00Z');", "946684800000");
+    prova_esegui("leggere ISO +02:00", "Date.parse('2000-01-01T02:00+02:00');", "946684800000");
+    prova_esegui("leggere solo data",  "new Date('2024-03-15').getDate();", "15");
+    prova_esegui("leggere toUTCString","Date.parse('Sat, 01 Jan 2000 00:00:00 GMT');", "946684800000");
+    prova_esegui("leggere toString",
+                 "var d=new Date(123456789000);Date.parse(d.toString())==d.getTime()-d.getMilliseconds();",
+                 "true");
+    prova_esegui("leggere Jan 1, 2000","Date.parse('Jan 1, 2000');", "946684800000");
+    prova_esegui("stringa sbagliata",  "isNaN(new Date('pippo').getTime());", "true");
+    prova_esegui("Invalid Date",       "String(new Date('pippo'));", "Invalid Date");
+    prova_esegui("toUTCString",        "new Date(0).toUTCString();", "Thu, 01 Jan 1970 00:00:00 GMT");
+    prova_esegui("toString",           "new Date(0).toString();",
+                 "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)");
+    prova_esegui("toLocaleString",     "new Date(0).toLocaleString();", "1/1/1970, 12:00:00 AM");
+    prova_esegui("getTimezoneOffset",  "new Date().getTimezoneOffset();", "0");
+    prova_esegui("setDate che trabocca","var d=new Date(2024,0,31);d.setDate(32);d.getMonth();", "1");
+    prova_esegui("setHours rende il tempo","new Date(0).setHours(1);", "3600000");
+    prova_esegui("setFullYear",        "var d=new Date(0);d.setFullYear(2000,5,15);d.toISOString();",
+                 "2000-06-15T00:00:00.000Z");
+    prova_esegui("setTime",            "var d=new Date();d.setTime(5);d.valueOf();", "5");
+    prova_esegui("Date() senza new",   "typeof Date();", "string");
+    prova_esegui("new Date(data)",     "var a=new Date(77);new Date(a).getTime();", "77");
+    /* ! LA DIFFERENZA FRA DUE DATE E' UN NUMERO: e' il modo in cui ogni
+     * pagina misura il tempo, e prima dava NaN. */
+    prova_esegui("b - a",              "var a=new Date(1000),b=new Date(4500);b-a;", "3500");
+    prova_esegui("confronto fra date", "new Date(1)<new Date(2);", "true");
+    prova_esegui("+data",              "+new Date(42);", "42");
+    prova_esegui("data + '' e' testo", "(new Date(0)+'').slice(0,3);", "Thu");
+    prova_esegui("JSON di una data",   "JSON.stringify({d:new Date(0)});",
+                 "{\"d\":\"1970-01-01T00:00:00.000Z\"}");
+    prova_esegui("for..in non vede il tempo",
+                 "var d=new Date(0),n=0,k;for(k in d)n++;n;", "0");
+    prova_esegui("valueOf nel *",      "var o={valueOf:function(){return 5}};o*2;", "10");
+    prova_esegui("valueOf nel +",      "var o={valueOf:function(){return 5}};o+1;", "6");
+    prova_esegui("toString se valueOf e' un oggetto",
+                 "var o={toString:function(){return '7'}};o*2;", "14");
+    prova_esegui("vettore + numero",   "[1,2]+3;", "1,23");
+    prova_esegui("oggetto + testo",    "({})+'!';", "[object Object]!");
+    /* ! LA VIRGOLA IN TESTA: con la prima voce saltata JSON.stringify
+     * scriveva {,"b":1}. */
+    prova_esegui("JSON salta la prima voce", "JSON.stringify({a:undefined,b:1});", "{\"b\":1}");
+
     printf("\n=== la libreria di base: le stringhe ===\n\n");
     prova_esegui("charAt",             "'ciao'.charAt(1);",   "i");
     prova_esegui("charCodeAt",         "'A'.charCodeAt(0);",  "65");
@@ -1087,6 +1155,28 @@ int main(void)
                  LUNGA "('  ' + s + '  ').trim().length", "1280");
     /* ! DUE TESTI LUNGHI CHE DIFFERISCONO IN FONDO SONO DIVERSI, e con la
      * copia troncata risultavano uguali. */
+    /* @NAVMETA, 28 settembre 2026: toString implicito, e join senza tetto */
+    prova_esegui("vettore annidato in testa, String()",
+                 "String([[1,2],3])", "1,2,3");
+    prova_esegui("vettori annidati in join",
+                 "[[1,2],[3,[4,5]]].join('-')", "1,2-3,4,5");
+    prova_esegui("join di 2000 caratteri non si taglia",
+                 "var a=[]; for (var i=0;i<200;i++) a.push('abcdefghij'); a.join('').length", "2000");
+    prova_esegui("join con un separatore lungo",
+                 "['a','b'].join('----------------------------------------separatore')",
+                 "a----------------------------------------separatoreb");
+    prova_esegui("toString implicito nella concatenazione",
+                 "var o={toString:function(){return 'io'}}; 'x'+o", "xio");
+    prova_esegui("toString implicito in String()",
+                 "var o={toString:function(){return 'io'}}; String(o)", "io");
+    prova_esegui("toString degli elementi in join",
+                 "var o={toString:function(){return 'io'}}; [o,1,o].join('+')", "io+1+io");
+    prova_esegui("un oggetto senza toString resta [object Object]",
+                 "String({a:1})", "[object Object]");
+    prova_esegui("un vettore che contiene se stesso non gira per sempre",
+                 "var a=[1]; a.push(a); String(a)", "1,");
+    prova_esegui("un toString che rende un numero",
+                 "var o={toString:function(){return 42}}; 'n='+o", "n=42");
     prova_esegui("due lunghe si confrontano per intero",
                  LUNGA "var a = s + 'A'; var b = s + 'B'; (a < b) + ' ' + (a == b)",
                  "true false");

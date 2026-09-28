@@ -1232,6 +1232,24 @@ static int pf_cresci_stack(Process *p, InterruptFrame *frame,
  * l'altro appena entrato, e un buffer condiviso significherebbe il
  * contenuto di una pagina scritto dentro quella di un altro processo.
  * ============================================================================= */
+/* ! L'IMMAGINE DELL'ESEGUIBILE E' DEL CAPOGRUPPO (28 settembre 2026). Un filo
+ * nasce con exe_handle = -1 e nessuna VMA: il file e i segmenti li tiene il
+ * primo del gruppo, e la page directory e' la stessa. Senza questo passaggio
+ * un filo che eseguiva per PRIMO una pagina di codice mai toccata dal
+ * principale moriva di page fault sulla propria EIP — il caricamento su
+ * richiesta c'era dal 4 settembre, e nessuna prova aveva un filo che
+ * arrivasse prima del principale su una pagina. L'ha trovato la prova dei
+ * thread POSIX (tools/exilla/prova-pthread.sh). */
+static Process *immagine_di(Process *p)
+{
+    if (p && p->tgid != 0 && p->tgid != p->pid && p->exe_handle < 0) {
+        Process *capo = proc_get_by_pid(p->tgid);
+
+        if (capo && capo->page_directory == p->page_directory) return capo;
+    }
+    return p;
+}
+
 static int pf_carica_da_file(Process *p, uint32_t fault_addr)
 {
     uint32_t pagina = fault_addr & 0xFFFFF000;
@@ -1239,6 +1257,7 @@ static int pf_carica_da_file(Process *p, uint32_t fault_addr)
     uint32_t i, phys, letti = 0, da_leggere = 0, off_file = 0;
     uint8_t  buf[PAGE_SIZE];
 
+    p = immagine_di(p);
     if (p == NULL || p->exe_handle < 0 || p->page_directory == NULL) return 0;
 
     for (i = 0; i < p->n_vma; i++) {
@@ -1328,7 +1347,7 @@ static int pf_carica_da_file(Process *p, uint32_t fault_addr)
  * ============================================================================= */
 void vm_precarica_utente(uint32_t addr, uint32_t len)
 {
-    Process *p = proc_get_current();
+    Process *p = immagine_di(proc_get_current());
     uint32_t pag, fine;
 
     if (p == NULL || p->exe_handle < 0 || p->n_vma == 0 || len == 0) return;
