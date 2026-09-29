@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.011"
+#define VERSIONE_APP "0.012"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -2308,7 +2308,10 @@ static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     /* The icons (@PM-DESKTOP, @PM-UNITA): a click selects, a double click
      * opens, and the clock looks for new drives and files. */
-    if (msg == EXM_TEMPO) { desk_controlla(0); return 0; }
+    /* ! NOT 0: that makes the toolkit redraw the whole desktop, 800x572,
+     * every DESK_GIRO ms even when nothing changed. desk_controlla draws by
+     * itself when something did. */
+    if (msg == EXM_TEMPO) { desk_controlla(0); return EX_NON_RIDISEGNARE; }
     if (msg == EXM_MOUSE_GIU || msg == EXM_DOPPIOCLIC) {
         int i = desk_sotto(EX_X(lp), EX_Y(lp));
 

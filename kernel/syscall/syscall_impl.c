@@ -874,7 +874,16 @@ int32_t sys_thread_crea(InterruptFrame *frame)
      * su richiesta di un programma. */
     if (entry == 0 || entry >= USER_SPACE_END) return ERR(EFAULT);
 
-    return proc_thread_crea(entry, arg);
+    {
+        int32_t  tid = proc_thread_crea(entry, arg);
+        Process *self = proc_get_current();
+        Process *filo = (tid > 0) ? proc_get_by_pid((uint32_t)tid) : NULL;
+
+        /* A new thread inherits its creator's signal mask (POSIX). Its
+         * alternate stack and pending set start empty. */
+        if (filo != NULL && self != NULL) filo->seg_bloccati = self->seg_bloccati;
+        return tid;
+    }
 }
 
 int32_t sys_thread_esci(InterruptFrame *frame)
@@ -1067,6 +1076,16 @@ int32_t sys_thread_pila(InterruptFrame *frame)
     out[0] = p->user_stack_limit;
     out[1] = p->user_stack_top;
     return 0;
+}
+
+/* SYS_PROC_GRUPPO (164): il tgid di un pid. Vedi syscall.h. */
+int32_t sys_proc_gruppo(InterruptFrame *frame)
+{
+    uint32_t pid = frame->ebx;
+    Process *p   = pid ? proc_get_by_pid(pid) : proc_get_current();
+
+    if (p == NULL) return ERR(ESRCH);
+    return (int32_t)p->tgid;
 }
 
 /* =============================================================================
@@ -1339,8 +1358,11 @@ int32_t sys_mmap(InterruptFrame *frame)
         }
     }
 
-    /* Flag pagine */
-    pg_flags = PG_PRESENT | PG_USER;
+    /* Flag pagine. PROT_NONE is a present page without PG_USER: the frame is
+     * there, ring 3 cannot touch it until mprotect says so (paging_proteggi
+     * explains why it is not "not present"). */
+    pg_flags = PG_PRESENT;
+    if (p->prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) pg_flags |= PG_USER;
     if (p->prot & PROT_WRITE) pg_flags |= PG_WRITABLE;
 
     /* Alloca e mappa le pagine */
@@ -1379,6 +1401,32 @@ int32_t sys_mmap(InterruptFrame *frame)
          pages, vaddr, p->prot);
 
     return (int32_t)vaddr;
+}
+
+/* =============================================================================
+ * SYS_MPROTECT (125) -- change the access rights of pages already mapped
+ *
+ * ebx = addr (page aligned, as POSIX wants), ecx = length, edx = PROT_*.
+ * The work and the reasons are in paging_proteggi (kernel/mm/paging.c).
+ * ============================================================================= */
+int32_t sys_mprotect(InterruptFrame *frame)
+{
+    uint32_t addr = frame->ebx;
+    uint32_t len  = frame->ecx;
+    uint32_t prot = frame->edx;
+    Process *proc = proc_get_current();
+    uint32_t pages;
+
+    if (proc == NULL) return ERR(ESRCH);
+    if (addr & (PAGE_SIZE - 1)) return ERR(EINVAL);
+    if (prot & ~(uint32_t)(PROT_READ | PROT_WRITE | PROT_EXEC)) return ERR(EINVAL);
+    if (len == 0) return 0;
+    if (addr < USER_SPACE_BASE || addr >= USER_SPACE_END) return ERR(ENOMEM);
+
+    pages = ALIGN_UP(len, PAGE_SIZE) / PAGE_SIZE;
+    if (pages > (USER_SPACE_END - addr) / PAGE_SIZE) return ERR(ENOMEM);
+
+    return (int32_t)paging_proteggi(proc, addr, pages, prot);
 }
 
 /* =============================================================================

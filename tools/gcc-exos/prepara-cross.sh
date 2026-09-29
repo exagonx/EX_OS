@@ -134,7 +134,11 @@ CC="${CC:-gcc}"
 # dal Makefile non hanno, perche' li' sono i linker script a buttarli via.
 # Due strade per la stessa libreria che producono binari diversi sono
 # esattamente cio' che rende inconfrontabili due disassemblati.
-CFLAGS="-m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie \
+# ! E LA CPU DI BASE, COME NEL Makefile (CPU_BASE): senza -march il gcc di
+# sistema compila per i686 e mette `cmov` in malloc, stat, nanosleep e compagni
+# — trovate il 29 settembre 2026 nel primo programma Rust con la std, che si
+# collega a questa libc.a. Su un Pentium MMX sono istruzioni che non esistono.
+CFLAGS="-m32 -march=pentium-mmx -mtune=pentium-mmx -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie \
         -fno-asynchronous-unwind-tables \
         -Wall -O2 -std=c11 -ffunction-sections -fdata-sections"
 

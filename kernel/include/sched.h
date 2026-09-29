@@ -611,6 +611,28 @@ typedef struct Process {
      * ========================================================================= */
     uint32_t        interrotto;
 
+    /* =========================================================================
+     * SIGNALS (kernel 0.227) — see kernel/sched/segnali.c
+     *
+     * The ACTIONS belong to the program, so they are read from the group
+     * leader (the task whose pid is tgid) and written only there: a thread
+     * that calls sigaction changes it for all of them, as POSIX says. The
+     * MASK, the PENDING set and the ALTERNATE STACK belong to each thread.
+     *
+     * The handler addresses are not here: the libc keeps them. The kernel
+     * knows only whether a signal is caught, with which flags and which
+     * extra mask, and the one libc entry point that dispatches them all.
+     * A PCB is zeroed at birth, so a new process starts with every signal
+     * at SIG_DFL, nothing blocked and nothing pending — as after exec.
+     * ========================================================================= */
+    uint32_t        seg_ingresso;           /* libc dispatcher, 0 = none (leader) */
+    uint32_t        seg_flag[32];           /* SEG_PRESO | SA_* per signal (leader) */
+    uint32_t        seg_maschera_az[32];    /* sa_mask per signal (leader) */
+    uint32_t        seg_bloccati;           /* this thread's mask */
+    uint32_t        seg_pendenti;           /* raised, not delivered yet */
+    uint32_t        seg_pila_base;          /* sigaltstack, 0 = none */
+    uint32_t        seg_pila_dim;
+
 /* =============================================================================
  * La directory corrente — UNA PER PROCESSO
  *

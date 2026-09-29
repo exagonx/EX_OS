@@ -66,7 +66,7 @@ qemu-img create -f raw "$IMG" 32M > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, size=63488, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
-export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso
+export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM="${EXOS_CDROM:-dist/exos.iso}"
 export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
 timeout 300 python3 tools/qemu_drive.py "mkfs -t ext2 -L prova hd0p1@4" "si@30" > "$D/0.log" 2>&1
 "$(command -v debugfs || echo /sbin/debugfs)" -w -R "write $D/rustprova rustprova" \

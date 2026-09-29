@@ -9,6 +9,8 @@
 # quello della copia privata (tools/exilla/costruisci-privato.sh) se c'e', se
 # no quello condiviso di dist/: in tutt'e due i casi SI LEGGE SOLTANTO.
 #
+# CD_FORZATO=<iso> sceglie il CD (per confrontare con quello di prima).
+#
 # Le cose temporanee stanno in cross_build/<macchina>/costruzione-prova (fuori
 # da MEGA). Con /dev/kvm scrivibile la macchina va con -enable-kvm.
 # =============================================================================
@@ -17,7 +19,7 @@ BIN="$1"; shift
 [ -f "$BIN" ] || { echo "uso: $0 <binario> [argomenti]" >&2; exit 2; }
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 D="$PWD/cross_build/$MACCHINA/costruzione-prova"
-CD="$PWD/cross_build/$MACCHINA/costruzione-sistema/albero/dist/exos.iso"
+CD="${CD_FORZATO:-$PWD/cross_build/$MACCHINA/costruzione-sistema/albero/dist/exos.iso}"
 [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
 IMG="$D/esegui-hd.img"
 NOME=$(basename "$BIN")

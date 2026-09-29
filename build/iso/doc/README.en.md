@@ -84,6 +84,662 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The browser starts at 32 MB too
+
+**tested in QEMU** - at 32 MB EXBrowser sometimes did not start ("LIB:
+pagina non allocata"). It was not memory: two programs asking for the same
+shared library at the same time stole each other's slot in the kernel's
+loader while the first waited for the disk. Kernel 0.224 reserves the slot
+before reading, and whoever comes later waits.
+
+### ExJs has regular expressions
+
+**tested in QEMU and on the host** - the ExJs engine reads `/.../flags` and
+has `RegExp`: classes, groups (named too), alternation, greedy and lazy
+quantifiers, backreferences, `(?=` and `(?!`, the flags g i m s y; and with
+them `exec`, `test`, `replace` and `replaceAll` (with `$1`, `$<name>` or a
+function), `split`, `match`, `matchAll`, `search`. An expression that would
+run for ever stops with an error instead of freezing the page. With regular
+expressions the browser's prelude runs under ExJs too. Lookbehind is missing
+(`make prova-exjs`, 492 tests).
+
+### Tabs: in the editor, in exide and in the browser
+
+**tested in QEMU** - the editor opens several files, one per tab (`edit
+a.txt b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab moves between tabs, Ctrl+W closes
+the chosen one and asks if it was modified. In exide the project's file
+window keeps several sources in tabs. EXBrowser opens links in a new tab
+(`target="_blank"`, Ctrl+click, Ctrl+T) or in a new window (Shift+click,
+Ctrl+N, the right button on a link); background tabs keep their address and
+reload when you come back. The tab bar is a toolkit control, available to
+every program (`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
+
+### ExJs reads today's JavaScript
+
+**tested in QEMU and on the host** - the ExJs engine (QuickJS stays the
+default) reads `let` and `const`, arrows, classes with `extends` and
+`super`, `` `${}` `` templates, destructuring, spread, `?.`, `??`, `**`,
+`for..of` and labels, and has `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, the newer array and string methods, `toFixed` and the
+`Math` functions. Numbers print as in every other engine (`0.1 + 0.2` is
+`0.30000000000000004`, `1e21` is `1e+21`) and `for..in` gives keys in
+creation order. Regular expressions and Promises are still missing, and
+objects are not reclaimed (`make prova-exjs`, 448 tests;
+`tools/prova_es2015.sh`).
+
+### ExJs: `throw`, `try`, `switch` and prototypes
+
+**tested on the host** - the ExJs engine (QuickJS stays the default) has
+`throw`, `try`/`catch`/`finally` and `switch`; `new F()` inherits the
+methods of `F.prototype`, and `instanceof` works. `Error`, `TypeError`,
+`RangeError` and the others exist, and the engine's own errors can be caught.
+A script stopped for running too long cannot. Reading a property of
+`undefined` still gives `undefined` instead of throwing (`make prova-exjs`,
+342 tests).
+
+### The right button, dragging, and file associations
+
+**tested in QEMU** - the right button opens a menu. On the desktop: New
+folder, New file, Paste, and on an icon also Open, Rename, Copy, Cut, Delete.
+The file manager has the same items; there several rows can be chosen
+(Ctrl+click, Shift+click) and dragged onto a folder on the left: a window asks
+whether to copy them, move them or leave them. A file that is not a program
+opens with the program it belongs to (`/exwin/lib/tipi.txt`): from the file
+manager, the desktop and the shell, where `nota.txt` opens the editor
+(`tools/prova_tasto_destro.sh`; Ctrl and Shift with the mouse cannot be tested
+in QEMU).
+
+### Pennello writes
+
+**tested in QEMU** — Pennello has a Text tool (key T): click where the text
+starts, type it, and it goes into the picture in the chosen colour; the width
+buttons choose its size (12, 16, 24 or 36 pixels). It is undone like any
+other stroke (`tools/prova_pennello_testo.sh`).
+
+### Pennello, the paint program
+
+**tested in QEMU** — `/exwin/bin/pennello [file]`, in the Start menu: pencil,
+brush, eraser, spray, fill, colour picker, line, rectangle and ellipse (empty
+or full), four widths, zoom from 1x to 8x, mirror, rotate, invert colours,
+resize, **undo and redo**. It **opens** BMP, PNG, JPG, GIF and ICO and
+**saves** PNG and BMP — a JPG opened and saved says so first and offers the
+same name as `.png`. It writes a copy next to the file first and then
+renames it: a failed save leaves the old file in place.
+
+Undo does not photograph the picture at every stroke: each operation leaves
+only the **rectangle** it touched in a pool taken at start (a quarter of the free memory), and undoing **swaps** it
+with the picture — so the same record is also the redo. The PNG and BMP
+encoders are new (`lib/eximg/scrivi.c`), and eximg now reads BMP in all its
+forms (`lib/eximg/bmp.c`). Tested on the host against ImageMagick
+(`tools/prova_scrivi.sh`) and in QEMU by drawing with the mouse
+(`tools/prova_pennello.sh`). The icon is provisional.
+
+### EXBrowser lays out the page
+
+**tested in QEMU** — EXBrowser understands the CSS that lays out a page
+instead of putting everything in one column: `width`, `max-width` and
+`min-width` (percentages too), `margin: auto` to centre, `float` with text
+flowing beside it, `display: inline-block` and `display: flex` in a row (with
+`flex-grow`, `flex-wrap`, `gap`, `justify-content` and `align-items`),
+`clear`, `position: relative`, and off-screen hidden text no longer shows. On
+Wikipedia the infobox sits on the right with the text beside it, and long
+articles no longer stop at 1 MB: the main page holds 3. An old bug is
+fixed too: white text came out black (`make prova-excss`,
+`tools/prova_disposizione.sh`).
+
+### Searching Wikipedia
+
+**tested in QEMU** — Wikipedia's search box is shown and works: "roma" +
+Enter opens the article, "canale grande" + the Search button opens the
+results page. The bug was in the transport: URLs with a path over 512
+characters were cut, and Wikipedia's stylesheet arrived wrong. The limit is
+now 1024, and a longer URL gives an error instead of asking for something
+else.
+
+### Calctor as an adding machine
+
+**tested in QEMU** — with the Cronologia box on, Calctor becomes an office
+adding machine: the = key goes away, + and - become two tall keys, and each
+adds (or subtracts) to the total and shows it at once. `12 * 3 +` finishes
+the product and adds 36; `+` again prints the subtotal on the tape.
+
+### The mouse wheel
+
+**tested in QEMU** — the wheel scrolls the page in EXBrowser and, in every
+ExWin program, the lists, text areas and scroll bars under the pointer: three
+lines per notch. It scrolls what you are looking at, not the window with the
+focus. For now it works with PS/2 mice (including the one QEMU emulates and
+many laptops); USB and serial mice do not send the wheel yet
+(`tools/prova_rotella.sh`).
+
+### A fast mouse no longer freezes the desktop
+
+**tested in QEMU** — moving the mouse quickly while drawing in Pennello froze
+all of ExWin. Two bugs: Pennello's line routine never reached the end of some
+segments, and the window server, delivering a move to a program that was not
+reading, waited up to ten seconds. Mouse moves are now delivered **without
+waiting** (kernel 0.223, `IPC_SENZA_ATTESA`): a hung program only slows
+itself down. Clicks and keys still all arrive
+(`tools/prova_pennello_veloce.sh`, `tools/prova_linea.sh`).
+
+### gfedit: F5 and BASIC INPUT
+
+**tested in QEMU** — a BASIC program started with F5 from gfedit now shows
+the `INPUT` prompt and reads the keyboard: gfedit hands it the console while
+it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
+
+### ExJs: `Date` and `valueOf`
+
+**tested in QEMU** — the ExJs engine has `Date`: `new Date()`, `Date.now()`,
+`Date.UTC`, `Date.parse`, the getters and setters, `toISOString`,
+`toString`, `toLocaleString` and `JSON.stringify` of a date. It is all UTC,
+since EX-OS has no time zones; the browser supplies the time. Objects in
+arithmetic go through `valueOf`: the difference between two dates is a
+number, which is how pages measure time. Tested on the host
+(`make prova-exjs`, 307 checks) and in EXBrowser with both engines
+(`tools/prova_date.sh`).
+
+### ExJs: implicit `toString` and `join` without a limit
+
+**tested on the host** — with the ExJs engine (QuickJS stays the default)
+`String(object)`, `'x' + object` and `join` call the object's `toString`:
+`String(location)` is the address. `join` no longer stops at 511 characters,
+and the tests written first found three more bugs that were fixed (nested
+arrays, long separators, an array containing itself) (`make prova-exjs`,
+`make prova-exdom`).
+
+### Forms to local pages, and the image button
+
+**tested in QEMU** — a `file:` address with a query (`page.html?x=1`) opens
+the right file instead of looking for one with the question mark in its name:
+a GET form sent to a local page now arrives, and the page reads
+`location.search`. And `<input type="image">` sends the clicked point instead
+of zero (`tools/prova_modulo_immagine.sh`).
+
+### `onclick=` runs even without a `<script>`
+
+**tested in QEMU** — a bug fix: the JavaScript engine was opened only for a
+`<script>`, so a page with nothing but inline handlers (`onclick=`,
+`onchange=`, `onload=`) ran none of them (`tools/prova_onclick.sh`).
+
+### Animated GIFs move
+
+**tested in QEMU** — in EXBrowser and in the Immagini viewer. eximg composes
+the frames — position, transparency, disposal, the loop starting again — and
+says how long each one stays; the clock belongs to whoever shows the picture.
+Tested against ImageMagick frame by frame (`tools/prova_gif.sh`) and
+photographed while it changes (`tools/prova_gif_anima.sh`). ExWin's wake-up
+runs at most five times a second: a very fast GIF runs slower.
+
+### A click in a page's text box puts the caret there
+
+**tested in QEMU** — a click inside a page's text box or text area used to
+give it the focus and leave the caret at the end; now it goes between the two
+letters nearest to the click (`tools/prova_cursore.sh`).
+
+### EXBrowser understands em, rem and %
+
+**tested in QEMU** — `font-size: 1.5em`, `margin: 2em`, `padding: 0.5rem`,
+`font-size: 120%`, and the keywords `small`, `large`, `larger`: until now
+lengths were pixels only and everything else was dropped. A relative length
+is resolved at the end of the cascade — font size against the parent, the
+rest against the element's own size — and the test measures it in pixels on
+screen (`tools/prova_bordi.sh`, `make prova-excss`). Percent margins are
+still taken on the window width.
+
+### EXBrowser draws CSS borders, and padding
+
+**tested in QEMU** — `border`, `border-top` and the other sides,
+`border-width`, `border-style`, `border-color`, `padding` and the `margin`
+shorthand with one to four values: blocks are drawn with their box and the
+content is inset. Before, borders existed only for tables with `border=`, and
+no CSS shorthand was read at all — not even `margin: 0 auto`. Borders of
+inline elements and CSS borders of tables are still missing
+(`tools/prova_bordi.sh`, `make prova-excss`).
+
+### Immagini, the picture viewer, and PNGs of every kind
+
+**tested in QEMU** — `/exwin/bin/immagini [file]`, in the Start menu: fits
+large pictures to the window, "1" for 100%, + and - from 10% to 800%, and
+PgDn / PgUp to move to the other pictures of the directory. From the file
+manager a double click gets there: the rule is in `/exwin/lib/tipi.txt`,
+**"these extensions open with that program"**, a file of the system and not
+of the program. Along the way eximg's PNG reader learned **every bit depth
+(1, 2, 4, 16) and Adam7 interlacing**: it used to read 8 bits only, and a
+one-colour PNG did not open. Tested against ImageMagick on 92 files
+(`tools/prova_png.sh`) and in QEMU (`tools/prova_immagini.sh`).
+
+### Ctrl+C on the text console asks, then stops
+
+**tested in QEMU** — in line mode Ctrl+C asks `[Ctrl+C] Fermo "textline"
+(PID 20)? s/n` and stops the program only on "s". At the prompt it empties
+the line and the prompt comes back; a program in raw mode (gfedit) gets it as
+a key. Who to stop was already said by the shell: the kernel (0.221) now keeps
+it per console, and the keyboard driver reads it with `SYS_CONSOLE_CTRLC`
+(216). Together with Ctrl+Alt+Del this completes the "keys that stop things"
+task (`tools/prova_ctrlc.sh`, `tools/prova_tasti_sistema.sh`).
+
+### Searching Wikipedia, and @media rules
+
+**tested in QEMU, on the real network** — "Search does nothing" was not the
+search: it was the TCP table of `ip.drv`, full after one Wikipedia page, with
+dead slots that never came free. Now they do. EXBrowser evaluates `@media`,
+`@supports` and `@layer` rules instead of skipping them (578 out of 964 in
+Wikipedia's sheet), and with them `visibility`, `:checked` and `<label>`. The
+page is still laid out in one column: `width`, `float`, `padding` and `flex`
+are missing.
+
+### Calctor, the calculator
+
+**tested in QEMU** — `/exwin/bin/calctor`: normal, scientific and programmer
+(32 bits in base 2, 8, 10 and 16), a four-line display and the tape in a
+window of its own, which can be saved as text. What you type is an
+expression, with precedence: `2 + 3 * 4` gives 14. Along the way the toolkit
+got side menus, `ex_abilita()` and `ex_dlg_testo()`, and the limit of
+controls per program went from 64 — which made `ex_crea` fail silently — to
+192 (`tools/prova_calctor.sh`).
+
+### The desktop: the profile folder, the drives, the log
+
+**tested in QEMU** — on the left the icons of `$HOME/desktop` (a shortcut is
+a text `.lnk`), on the right every mounted drive: pm notices by itself, even
+a `mount` typed by hand. The wallpaper can be placed (corner, centre,
+stretch, tile). The **System log** is no longer one screen but a 32 KB ring
+in the kernel, with the time and the PID on every line
+(`tools/prova_desktop.sh`, `tools/prova_registro.sh`).
+
+### The editor finds and replaces
+
+**tested in QEMU** — Find (Ctrl+F), F3 and Shift+F3 for next and previous,
+Replace one or all. In the toolkit **Shift+Tab** now really goes back, and
+the focused button shows it (`tools/prova_edit_cerca.sh`).
+
+### Archivi opens tar files, and the file manager renames
+
+**tested in QEMU** — Archivi opens and creates `.tar` and `.tar.gz` with the
+same code as `/bin/tar` (`lib/extar`, compiled into both). In the file
+manager, **Rename** with F2 (`tools/prova_tar.sh`, `tools/prova_filemgr.sh`).
+
+### `runbas`: QBASIC programs run on their own
+
+**tested in QEMU** — `runbas myprog.bas` runs a program with the `gfbasic/`
+interpreter, and gfedit launches it with **F5**. The maths functions the libc
+lacks (SIN, EXP, ^...) are the x87's (`tools/prova_runbas.sh`).
+
+### Program paths in a file
+
+**to be tested on an installed system** — `/boot/percorsi.txt`: the shell
+appends to the PATH the directories it finds there, and netupdate writes its
+own when it installs a package in a new place.
+
+### HTTPS: from 23 to 28 sites out of 30 — AES-GCM, P-256 and TLS 1.2
+
+**tested in QEMU, on the real network** — of the seven sites out of thirty
+that did not open, one was the certificate chain (fixed this morning) and the
+others were TLS. The client now has:
+
+- **AES-128-GCM** next to ChaCha20 (`lib/excrypt/gcm.c`, on top of the Wi-Fi's AES);
+- key exchange on **P-256**, **in constant time** (`lib/excrypt/p256.c`, not
+  `excurva`, which is for public numbers only), asked for by the server with a
+  **HelloRetryRequest** — which used to be an error;
+- **TLS 1.2**, the modern half: ECDHE with AES-GCM or ChaCha20, RSA-PSS,
+  PKCS#1 v1.5 and ECDSA signatures, Extended Master Secret, and the
+  "DOWNGRD" check.
+
+Poste, Corriere, Gazzetta and Istat open. The two left (Stack Overflow and
+eBay) open TLS and then answer 403: a robot block of theirs. Tested on the
+host (`tools/prova_gcm.sh`, `tools/prova_p256.sh`: thousands of cases against
+Python's `cryptography`) and against `openssl s_server` (`make
+prova-cliente-tls`, 20 cases).
+
+### The Download window, in the toolkit
+
+**tested in QEMU** — EXBrowser's downloads run in a process of their own
+(`scarica -avanza`), and the browser stays free to browse. The **Download**
+window opens by itself, shows percentage, size, average speed and time left,
+closes without stopping anything and comes back from **Strumenti > Download**;
+**Ferma** removes the half file. It lives in the toolkit
+(`lib/exdlg/scarichi.c`, with `ex_guarda_fd` in exwin), so any program made
+with exide can use it: see the exide manual, "Scaricare file"
+(`tools/prova_download.sh`).
+
+### EXBrowser asks "open or download", and Archivi takes directories
+
+**tested in QEMU** — a link to a file that is not a page (a ZIP, a program, an
+image) is no longer laid out as garbage: EXBrowser asks **Apri con Archivi**
+(or with the editor), **Scarica** or **Annulla**. It notices from the name,
+before downloading, or from the server's `Content-Type` when the name says
+nothing. The download goes to disk as it arrives, without the 1 MB ceiling of
+pages (`tools/prova_apri_scarica.sh`).
+
+In **Archivi** there is **Comandi > Aggiungi cartella...**, and `zip
+archivio.zip cartella` takes the whole tree too: every directory has its own
+`name/` entry, so empty ones come back out on extraction (`tools/prova_zip.sh`,
+step 6).
+
+### Certificates: the chain stops at the first root, and more can be added
+
+**tested in QEMU, on the real network** — before changing anything it was
+measured (`tools/prova_certificati.sh`): of thirty common sites EX-OS opened
+23, and **only one** was a certificate problem. www.amazon.it sends at the end
+a *cross-signed* copy of the DigiCert root, signed by an old, retired VeriSign
+root; `excert` required the last link sent to be signed by one of our roots,
+and refused it. Now the chain stops at the first root in the store, as the big
+browsers do: Amazon opens.
+
+The other six were not certificates: three servers speak only TLS 1.2 (our
+client only 1.3), two do not accept ChaCha20 or x25519, one blocks robots.
+They are written down in `@EXBROWSER-CERT`.
+
+And **CAs can be added**: **File > Aggiungi un certificato...** in EXBrowser,
+from an address or a file; who it is and its SHA-256 fingerprint are shown
+before saying "Mi fido". They go into `$HOME/.app/exhttp/certi.pem` and apply
+to every program that opens `https`, `scarica` included — tested by
+`tools/prova_certi_aggiunti.sh`.
+
+### The browser is called EXBrowser
+
+**to be tested** — `/exwin/bin/browser` becomes `/exwin/bin/exbrowser`, at
+version 0.003: the name was chosen by its user, and it changes everywhere it is
+a name rather than a word — the window title, "About", the Start menu entry,
+the icon (`exbrowser_64.ico`), the manual (`/exwin/doc/exbrowser.html`) and the
+data in `$HOME/.app/exbrowser/`.
+
+! **THE OLD DATA MOVES BY ITSELF**: at the first start `$HOME/.app/browser/`
+becomes `$HOME/.app/exbrowser/`, with settings, cookies and cache. If it
+cannot — a home on FAT, where "exbrowser" does not fit in 8.3 — the old one
+keeps being used, and it says so: an old name is better than being logged out
+of every site.
+
+### Icons: a toolkit API, and the desktop menu that uses it
+
+**tested in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
+live in `exwin.so`, that is, in what every graphical program already links:
+icons belong to everybody, not to one program. The real weight — decoding PNG,
+JPG and ICO — stays in `eximg.so`, which is opened only in front of the first
+icon that is not a BMP.
+
+! **An icon is not an image drawn once**, which is why it has functions of its
+own: a menu is repainted every time it opens, and with `ex_immagine()` that
+would be ten file reads and ten decodes each time. It is opened once, kept, and
+the last rendering (size + background) stays ready.
+
+! **The scaler really was needed.** Icons are born at 64 and 128 pixels, a menu
+entry is 24 tall. It **averages** the pixels that collapse into one: taking the
+middle one, on a four-times reduction, throws away fifteen pixels out of
+sixteen and thin edges disappear in patches.
+
+! **And `eximg` was throwing the alpha away.** The code said so: *"the 1-bit
+mask is skipped... the day [the server] can blend, that is where it will be
+fetched from"*. That day was this one — what blends is not the server but the
+toolkit — and without alpha the icons came out as squares of pure background:
+invisible, that is, "they do not load" while they were being drawn perfectly,
+entirely transparent.
+
+In the **Avvio** menu: the icon before the name, and **categories** that open
+to the side. A slash in the name is enough to make one — `Strumenti/Editor` —
+and they are declared nowhere else.
+
+### ZIP archives: one library, one command and one window
+
+**tested in QEMU, and by a foreign reader** — `lib/exzip` knows about ZIP and
+knows nothing about windows; `/bin/zip` and `/exwin/bin/archivi` call the same
+nine functions.
+
+```
+zip a.zip one.txt two.txt        create
+zip -l a.zip                     list
+zip -x a.zip /disk/out           extract
+```
+
+It writes "store" and also reads **deflate**, because the hard part was already
+there: `lib/eximg/inflate.c` has been decoding DEFLATE for months for PNG, GIF
+and the fonts.
+
+! **The test that counts is the one by whoever did not write the format**: the
+archive EX-OS makes is opened by Info-ZIP's `unzip -t`. An archiver that
+re-reads its own archives only proves it is consistent with itself.
+
+### Archivi: a real table, and an archive that builds itself
+
+**tested in QEMU** — separate **Nome** and **Percorso** columns, a click on
+a header sorts (another reverses), the borders between headers can be
+dragged, a scroll bar. Every file or directory added leaves the archive
+complete at once: `lib/exzip` can reopen a finished archive and add to it
+(`ex_zip_riapri`). **Opzioni**: compression (none, fast, normal, best) and
+default extension, in `/exwin/config/archivi.cfg`.
+
+### Minimize, and the taskbar of open programs
+
+**tested in QEMU** — every window has a **«_»** button next to the close
+button, and the bottom bar shows the open programs with their icon. A click
+on an entry restores a minimized window, exactly where it was and as large as
+it was, or brings forward one hidden behind the others. The window server
+keeps the list and sends it to the taskbar by itself; programs did not have
+to change a line. `tools/prova_riduci.sh` measures it in pixels.
+
+### tar, gzip and gunzip
+
+**tested in QEMU, and by outside readers** — one program, `bin/tar/tar.c`,
+answering to three names. It is static: the DEFLATE of `lib/exzip` and the
+inflate of `lib/eximg` are compiled into it.
+
+```
+tar czf a.tgz folder             create (z = gzip)
+tar tf a.tgz                     list
+tar xf a.tgz -C /disk/out        extract (gzip is recognised by itself)
+gzip file / gunzip file.gz
+```
+
+It reads GNU tar archives with long names too, in GNU and pax format.
+`tools/prova_tar.sh` has its archives opened by GNU tar, `gzip -t` and
+Python, and has EX-OS open archives made by GNU tar.
+
+### The login page no longer gets covered by the boot messages
+
+**tested in QEMU on an installed disk** — `login` waits for the console to go
+quiet (up to 1500 ms, measured) before printing the name prompt, and listens to
+the keyboard while it waits: whoever is already typing waits for nothing.
+
+! **The `waitpid` was there, and it waited for the wrong thing**: half of
+`/boot/avvio.sh` is lines ending in `&`, and those processes are
+**grandchildren** — children of the script's shell. When `waitpid` returns they
+are alive, they hold the console and they have not spoken yet.
+
+### EX-IDE's new project picks where, and remembers it
+
+**tested in QEMU, over two boots** — Ctrl+N opens the file dialog with the tree
+and the **"Nuova cartella (Ctrl+N)"** button; home is asked of `HOME` and the
+last directory used lives in `$HOME/.app/exide/`.
+
+! **The button lives in the dialog, not in the program**: `ex_dlg_salva` has it
+for everyone, and the ZIP archiver — written a few hours later — found it ready
+without doing anything.
+
+### `wserver` uses the 2D engine where there is one, and draws itself where there is not
+
+**tested in QEMU for the software path, on the metal for the protocol** — the
+window server asks the card for large fills when a 2D engine is there, and does
+them with MMX when it is not.
+
+! **And it does not ask for privileges: it asks for a rectangle.** The engine is
+driven with `mmio_map` and `ioport_bind`, which are a driver's. `wserver` lost
+those privileges **on purpose** on 19 August 2026: it was called
+`/dev/wserver.drv` only to get `mmio_map`, and that name kept graphics out of
+multi-user — `/dev` is root's, so an ordinary user could not run the server.
+Putting it back among the drivers to go faster would be a month backwards, and
+would hand it the *wide* capability instead of the narrow one.
+
+So a **service**, not a library:
+
+```
+drivers/accel/accel_proto.h   the contract, and it belongs to neither side
+sis.drv -2dservizio           registers 'accel2d': FILL, COPY, INFO
+sis.drv -2dchiedi             tests it FROM OUTSIDE, the way wserver uses it
+```
+
+`/boot/avvio.sh` starts it (written by `hwconfig`), because only the system can
+execute things in `/dev`. On a machine that is not a SiS the command **exits
+silently**: no card, no service, no line.
+
+! **The software path is the NORMAL path, not a fallback.** On VESA, on the
+generic framebuffer and inside QEMU nobody registers the service, `ipc_lookup`
+finds nothing, and filling is done with MMX at 377 MB/s — the bus limit for
+writing. In QEMU the boot line says exactly that:
+
+```
+wserver: nessun motore 2D, riempio da me con MMX
+```
+
+! **The protocol carries operations, not pixels**, which is what makes it
+affordable: one IPC round trip measured on the Acer — whole background, 480000
+pixels — is **under a millisecond**, and filling the screen costs milliseconds.
+
+! **And there is a threshold, because the engine saves half the time, not all
+of it.** The message must be paid for out of *half* the rectangle's cost. At
+4096 pixels the saving is 21 µs, less than the message: a net loss, and that was
+the first draft's threshold. At 32768 the saving is 165 µs, and the whole
+background is worth 2500.
+
+! **Waiting for the reply uses `ipc_scegli`, not `ipc_recv_timeout`**, and that
+is the most important line of the work. This server's rule is written above
+`mouse_chiedi()`: «one place reads the mailbox». A `recv` that takes any message
+eats the clients' requests — it has happened, and the symptom was «the server
+does not answer», one time in three. `ipc_scegli` filters, and **while it waits
+it drains** the kernel queue onto the shelf instead of letting it fill: the
+mailbox is four messages deep, and when it is full every `ipc_send` towards the
+server fails — including the delivery of a keystroke.
+
+! **What is left is a single measurement:** proving that `wserver` really uses
+it on the real machine. The `servite` counter in `AccInfo` exists for that. And
+the gain to expect is the **fill one (1.9x)**, not the copy one: the compositor
+does no screen-to-screen copy, because the clients' areas live in system RAM.
+The 14x is only reachable by changing the compositing strategy.
+
+### The SiS 2D engine draws: 14x on screen-to-screen copies
+
+**tested on the real machine, from cold** — the 2D accelerator of the Acer
+Aspire 3000's SiS 6330 works. After a clean reboot, with no bring-up command
+beforehand:
+
+```
+sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
+  il riempimento e' giusto, bordi compresi.
+  la copia e' identica all'originale.
+  la sovrapposizione e' gestita dal motore.
+
+operazione                   CPU     motore   guadagno
+riempire                     377 MB/s    734 MB/s   1.9x
+copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
+```
+
+! **The line that counts is the second.** Filling the screen the CPU already
+does at the limit of the bus (see `fbprova` further down); copying screen to
+screen costs it a **read** from the framebuffer, which on this card is four and
+a half times slower than a write. The engine does it inside the card, without
+the pixels crossing the bus even once. That is exactly what the compositor does
+when it moves a window or scrolls a terminal.
+
+**It was two bits, and the diagnostic had been printing them from day one:**
+
+| register | bit | name in sisfb | what it turns on |
+|---|---|---|---|
+| SR20 | 0x01 | `SIS_MEM_MAP_IO_ENABLE` | the register window |
+| SR1E | 0x40 | `SIS_ENABLE_2D` | the engine |
+
+Step 4 of `-2ddiagnosi` showed «SR1E = 0x20, SR20 = 0xa0» for as long as that
+code has existed, and those numbers had ended up in the reports among the facts
+«established on the real machine». They were two **measurements**, and nobody
+read them as two **absences** — while five explanations were tried and closed.
+
+! **And the order is not negotiable**, because the step that was missing in the
+middle is the one that hung the machine:
+
+```
+1. SR20 bit 0            open the window
+2. Q_BASE_ADDR = base    WHERE the engine reads its commands from
+3. SR27 0x1F, SR26 0x01  threshold and queue RESET
+4. WRITEPORT <- READPORT empty queue
+5. SR1E bit 6            THE ENGINE, last
+6. SR26 = 0x22           queue in MMIO mode
+```
+
+Right after the window opens `Q_BASE_ADDR` reads **zero**: turning the engine on
+there means starting it fetching commands from address zero of video memory and
+writing wherever those commands say — a bus master off on its own. The machine
+stops and no longer answers even a ping. It happened, once, and it is why step 2
+is there now.
+
+! **The base is computed, not picked**: `CR79` bits 7-4 give the megabytes of
+shared memory (64 on the Acer) and the queue goes in the last 512 KB. If that
+measurement is not recognised, `sis2d_apri()` **gives up** and leaves the engine
+off.
+
+! **The bring-up is done by `sis2d_apri()`, and only if needed** — that is, if
+`Q_STATUS` reads all ones. If the window already answers, somebody else turned
+it on: redoing the sequence would mean resetting a queue that may be working.
+
+! **`wserver` does not use it yet.** The gain is there and the compositor is not
+taking it: that is the next step, and it lives together with narrowing the dirty
+regions.
+
+### The clock can be set: kernel 0.218 and `/bin/date`
+
+**tested on the real machine** — ever since it existed, August 2026, the EX-OS
+CMOS clock could only be **read**: there was `SYS_TIME` and no twin of it. That
+was not a theoretical hole. The Acer Aspire 3000 used for testing read **2005**,
+and every file it uploaded to an FTP server arrived dated «Feb 9 2005»: the only
+way to fix it was to enter the BIOS.
+
+    date                        mercoledi' 16 settembre 2026, 16:09:20
+    date -d                     2026-09-16
+    date -t                     16:09:30
+    date -set-date:2026/09/16   the date  (root only)
+    date -set-time:17:52:30     the time  (the seconds can be left out)
+
+`SYS_TIME_SET` (213) calls `rtc_write()`, and it is **root's, like `mount`**:
+whoever moves the time changes the date of every file anybody else will write,
+and with it `netupdate -check`'s judgement about what is newer.
+
+! **Writing has one trap more than the three of reading**: you do not write
+while the chip is counting. If the update falls in the middle of the six
+registers, the chip overwrites half of what you have just put there. The `SET`
+bit of register B stops the count for the duration of the write.
+
+! **There is no `time` command, and that is deliberate**: on any Unix `time
+command` *measures* how long a command takes to run. Spending that name on
+printing the clock would mean not having it the day it is needed. The details —
+the format that is preserved, the century register, the 2099 limit — are under
+**[`date`](#date--what-time-it-is-and-putting-it-right)**.
+
+On the metal: the Acer went from Thursday 10 February 2005 to Wednesday 16
+September 2026, written and read back, and the date survived a power cycle.
+
+### A bare `ls` also says when and what
+
+**tested in QEMU** — `ls` used to print two things, the name and the size. The
+date was already there, but only under `-d`, `-md` or `-l`, that is, only for
+whoever knew they existed; and the type had to be inferred from the trailing
+slash on the name. The two commonest questions in front of a list of files are
+«how old is it?» and «is it a folder?».
+
+```
+ex-os:/> ls
+data        ora    tipo    dimensione  nome
+2026-09-16  18:10  <DIR>            -  BOOT
+2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
+```
+
+! **And it costs one `stat()` per entry**, which the bare mode did not do
+before: on a floppy that is felt. So the old behaviour has not gone away, it
+lives under **`-s`**, and that is the mode to use on a slow disk or in a large
+directory.
+
+! **There is no creation date**, and that is not a choice: the directory entry
+FAT, ext2 and ISO 9660 hand to the VFS keeps **one** date/time pair, and
+`struct stat` indeed sets `st_ctime` and `st_atime` equal to `st_mtime`.
+
 ### USB sticks get ejected, not yanked: `eject`
 
 **tested in QEMU, the whole round trip** — `automount` already mounted them by
@@ -1379,7 +2035,8 @@ says so: an empty twenty-byte ACK, and the flow restarts.
 ### The browser runs JavaScript, and there are two engines
 
 **tested** — 256 tests on the language, 244 on the bridge with ExJs and 244 with
-QuickJS, plus fifteen panels exercised inside EX-OS.
+QuickJS, plus fifteen panels exercised inside EX-OS (on 29 September 2026 they
+are 448 on the language and 264 on the bridge with each engine).
 
 **Two engines, one interface.** `exjs.so` is written here; `quickjs.so` is
 QuickJS compiled for EX-OS. You choose which one to load, and the bridge to the
@@ -1896,7 +2553,7 @@ forever.
 | `/exwin/bin/wserver` composes windows and moves the pointer, **in ring 3 and unprivileged** | tested |
 | **ExWin** toolkit, Win32-style, with headers for **C, C++ and FreeBASIC** | tested |
 | Controls: window, button, label, text box, group box, separator, header, terminal | tested |
-| `exwin` brings up graphics **on a console of its own**: Alt+F2 goes there, Alt+F1 comes back to the shell | tested |
+| `exwin` brings up graphics **on console 5**: Alt+F5 goes there, Alt+F1 comes back to the shell | tested |
 | A **shell inside a window**, over two pipes | tested |
 | Image backgrounds: BMP today, and the reader table is already the right shape for JPG, PNG and ICO | tested |
 
@@ -1920,12 +2577,12 @@ to know the screen format would have six paths to try instead of one.
 
 | | |
 |---|---|
-| `pm` — desktop, taskbar at the bottom, **Start** button, menu of applications | tested |
+| `pm` — desktop, taskbar at the bottom, **Start** button, menu of applications; the right button creates, renames, copies and deletes | tested |
 | **Exit** (back to the shell) and **Shut down** entries in the menu | tested |
 | `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — graphical applications **do not live in `/bin`** | tested |
 | The application list is a **text file**, `/exwin/lib/applicazioni.txt` | tested |
-| `filemgr` — file manager: scrolling list, directories first, opens files with the editor | tested |
-| `edit` — text editor: arrows, Home/End, PgUp/PgDn, Delete, mouse click, Ctrl+S, Ctrl+Q | tested |
+| `filemgr` — file manager: scrolling list, directories first, right button, drag and drop, opens every file with its program | tested |
+| `edit` — text editor: several files in tabs, find and replace, undo, clipboard, Ctrl+S, Ctrl+Q | tested |
 
 ! **GRAPHICAL APPLICATIONS DO NOT LIVE IN `/bin`, AND THAT IS A DECISION.**
 Programs in `/bin` are launched from a shell and talk to a terminal; these want
@@ -2510,7 +3167,7 @@ make distclean    # Remove build/ and dist/
 ```
 
 `make iso` includes native `as` and `ld` if it finds them in
-`$(BINUTILS_NATIVI)` (default `~/exos-native/build-nativi`); if they are not
+`$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); if they are not
 there it says so and builds the CD anyway. How to build them:
 `tools/binutils-exos/leggimi.md`.
 
@@ -2769,7 +3426,7 @@ to read the names from.
 | 249 | fb_map      | `void**`      | —          | —   | maps the framebuffer: the **narrow** capability that replaced `mmio_map` for the window server |
 | 250 | interrompi  | pid           | signal     | —   | Ctrl+C that bites: the signal reaches the foreground group |
 | 251 | pty_apri    | `int fd[2]`   | —          | —   | a master/slave pair |
-| 252 | pty_ctl     | fd            | command    | arg | window size, raw mode, foreground group |
+| 252 | pty_ctl     | fd            | command    | arg | window size, raw mode, foreground group (on the console: who Ctrl+C stops) |
 | 253 | statperm    | `const char*` | `StatPerm*`| —   | mode, uid and gid of a path **without opening it** |
 | 254 | su          | `const char*` | password   | —   | «become root IF you know the password», and the kernel decides |
 
@@ -2917,18 +3574,34 @@ mechanisms prevent it:
    checks `ConsoleInfo.fg` itself and refuses to start in the background,
    explaining why.
 
+
+**Ctrl+C** (since 28 September 2026, kernel 0.221). On the text console, in
+line mode, it asks `[Ctrl+C] Fermo "textline" (PID 20)? s/n` and stops the
+program only on "s"; at the prompt it empties the line. Who to stop is said
+by the shell with `pty_ctl(0, PTY_CTL_FG, pid)` — the child it waits for, 0 at
+the prompt — and not by `SYS_CONSOLE_SETFG`, because at the prompt the
+foreground is the shell itself. In a window terminal Ctrl+C stops at once,
+without asking: there the pty's line discipline in the kernel handles it.
+
 ---
 
-## Virtual consoles — Alt+F1 … Alt+F4
+## Virtual consoles — Alt+F1 … Alt+F5
 
-Four independent screens, only one visible at a time, each with its own shell
-started at boot. **Alt+F1..F4** switches: the program that was running is
-neither suspended nor closed, it keeps working and drawing into its own
-buffer, and finds the screen intact when you come back to it.
+**Five** independent screens (`VGA_N_CONSOLE`), only one visible at a time,
+each with its own shell — or its own `login` — started at boot. **Alt+F1..F5**
+switches: the program that was running is neither suspended nor closed, it
+keeps working and drawing into its own buffer, and finds the screen intact
+when you come back to it.
 
 It is the answer to "how do I start something else without closing this
 one": open `gfedit` on console 2, press Alt+F3, you get a clean prompt, and
 Alt+F2 takes you back to the editor exactly where you left it.
+
+! **The graphics live on console 5.** `exwin` restarts the window server up
+there and says so at startup (`grafica accesa sulla console 5`): from a text
+console you get there with **Alt+F5**, and **Alt+F1** takes you back to the
+shell. It is also why a test driving the desktop presses `Alt+F1` before
+launching an application and `Alt+F5` right after.
 
 | | |
 |---|---|
@@ -2991,6 +3664,14 @@ It returns `-ENODEV` if the clock does not answer or hands back an impossible
 date (which happens on old hardware with a flat CMOS battery): in that case
 the caller must say "time unknown" instead of showing an invented one —
 gfedit writes `--:--:--`.
+
+**And from kernel 0.218 it can also be WRITTEN**: `time_set()` (`SYS_TIME_SET`,
+213) puts the clock right, is root's, and accepts years from 1980 to 2099. The
+command that uses it is `date`, with `-set-date:` and `-set-time:`; the reason
+behind every choice is under
+**[`date`](#date--what-time-it-is-and-putting-it-right)**. Until then the clock
+could only be read, and on a machine with the wrong date there was no way to fix
+it from inside EX-OS.
 
 ! In QEMU the RTC starts in **UTC**, not local time. To see the time in your
 timezone you need `-rtc base=localtime` among the Makefile's `QEMU_FLAGS`.
@@ -3067,27 +3748,44 @@ would not respond.
 ## The graphical interface in practice
 
 ```
-exwin                       brings up graphics on a console of its own
-                            Alt+F2 goes there, Alt+F1 returns to the shell
+exwin                       brings up graphics on console 5
+                            Alt+F5 goes there, Alt+F1 returns to the shell
 
 /exwin/bin/pm               the desktop (exwin starts it by itself)
 /exwin/bin/filemgr [DIR]    the file manager
-/exwin/bin/edit [FILE]      the text editor
+/exwin/bin/edit [FILE...]   the text editor: one file per tab
 /exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
-/exwin/bin/browser [URL]    the browser (an absolute path becomes a file:)
+/exwin/bin/exbrowser [URL]  EXBrowser, the browser (an absolute path becomes a file:)
 /exwin/bin/exide [DIR]      the visual development environment
+/exwin/bin/archivi [ARCH]   ZIP, TAR and TAR.GZ archives: open, extract, create
+/exwin/bin/calctor          the calculator: normal, scientific, programmer
+/exwin/bin/pennello [FILE]  the paint program: opens BMP PNG JPG GIF ICO, saves PNG and BMP
+/exwin/bin/immagini [FILE]  the picture viewer, with zoom and the directory
 /exwin/bin/fontprova        the TrueType font test, made to be looked at
 /exwin/bin/orologio         date and time in the corner of the bar
 ```
 
 Once graphics are up, the shell **stays alive on console 0**: you keep working
-there and switch to the desktop with `Alt+F2`.
+there and switch to the desktop with `Alt+F5`.
 
 **From the desktop they open from the Avvio menu**, which reads its entries
-from `/exwin/lib/applicazioni.txt` — one line per application, `displayed name |
-path`. The **Applicazioni...** item of that same menu adds and removes lines
-from that file, and the `@avvio <path>` directive says which program starts by
-itself with the desktop (that is how the clock is already there).
+from `/exwin/lib/applicazioni.txt`. One line per application, with an
+**optional** third field for the icon:
+
+```
+Displayed name         | /path/executable     | /path/icon.ico
+Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
+```
+
+! **A slash in the name makes a category.** `Strumenti/Editor` is the entry
+"Editor" inside "Strumenti": in the menu, categories sit at the top and open a
+list **to the side**, with their icons. They are declared nowhere else — they
+exist as long as an entry names them.
+
+The **Applicazioni...** item of that same menu adds and removes lines from that
+file (putting back the category and icon of what it does not show), and the
+`@avvio <path>` directive says which program starts by itself with the desktop
+(that is how the clock is already there).
 
 ! **ADDING AN APPLICATION IS ONE LINE, NOT A RECOMPILATION**, and the file
 stays readable and editable by hand on purpose: a configuration file only a
@@ -3106,28 +3804,75 @@ separation that makes everything else possible, seen from the awkward side.
 | Backspace, Delete | erase backwards and forwards |
 | Enter | splits the line |
 | mouse click | places the cursor |
+| Shift + arrows, Ctrl+A | select text |
+| Ctrl+X, Ctrl+C, Ctrl+V | cut, copy, paste |
+| Ctrl+Z | undo (cut, paste, delete) |
+| Ctrl+F, F3, Shift+F3, Ctrl+H | find, next, previous, replace |
+| Ctrl+N, Ctrl+O | a new file, an opened file: each in its own tab |
+| Ctrl+Tab, Ctrl+Shift+Tab | next tab, previous tab |
+| Ctrl+W | closes the tab; asks if the file was modified |
 | Ctrl+S | save; with no name it opens the **Save as** dialog |
-| Ctrl+Q | quit; if the text was modified it warns and asks again |
+| Ctrl+Q | quit; if files were modified it says how many and asks |
 
-The buttons are **New**, **Open**, **Save**, **Save as**, **Reload**. "Open"
-and "Save as" live in `exdlg.so`, the shared dialog library, which the file
-manager uses too.
+The same things are in the **File** and **Modifica** menus. "Open" and "Save
+as" live in `exdlg.so`, the shared dialog library, which the file manager uses
+too. `edit a.txt b.txt` opens two tabs.
 
-Missing, and declared: undo, selection and clipboard. And a **yes/no** dialog:
-today "do you want to lose your changes?" is asked by making you press the same
-button twice, and it shows.
+Missing, and declared: **redo** after an undo, and undoing typing (the
+commands that change the text are undone, not the keys typed). A file over
+512 lines opens partially and is not saved.
 
 ### The file manager
 
 Scrolling list, **directories first**, `Up` and `Open` buttons, a status line
-with the path. Arrows and Enter as well as the mouse. Pressing "Open" on a file
-hands it to the editor, looked for in `/exwin/bin` and then in
-`/cdrom/exwin/bin`.
+with the path. Arrows and Enter as well as the mouse. "Open" on a file opens it
+with the program it belongs to (`/exwin/lib/tipi.txt`: images with Immagini,
+archives with Archivi, pages with EXBrowser, everything else with the editor),
+looked for in `/exwin/bin` and then in `/cdrom/exwin/bin`.
+
+The **right button** opens a menu: Open, New folder, New file, Rename, Copy,
+Cut, Paste, Delete. **Several rows** are chosen with Ctrl+click and
+Shift+click, or marked with the space bar; dragged onto a folder of the tree on
+the left, a window asks whether to copy them, move them or leave them.
+
+**Since 16 September 2026 the list has four columns and sorts on a click**
+(`filemgr` 0.002):
+
+```
+Cartelle     |[Nome ^][Tipo][Dimensione][Data]
+- /          | bin         <DIR>          -  2026-09-16 20:57
+  + bin      | boot.img    <FILE>   1474560  2026-09-16 20:57
+  + boot     | KERNEL.BIN  <FILE>    270376  2026-09-16 20:57
+```
+
+One click picks the column, a second click on the same one **reverses the
+direction**, and the arrow in the label says which it is: «what is it sorted
+by» and «in which direction» are two questions, and without a hint the second
+one is answered by guessing. **Each column remembers its own direction** —
+sorting by date you want the newest on top, sorting by name you want the A.
+
+! **The header is not a new toolkit control**: it is four buttons aligned to
+the columns, derived from the **same constants** the row is. It is the same
+choice as the tree on the left, which is «a list with indentation in it» and
+not a tree control. Written twice, the widths would drift apart the first time
+a column was widened — and the symptom would be a header pointing at the wrong
+column, which is a lie.
 
 ! **DIRECTORIES COME FIRST, AND IT IS NOT COSMETIC:** in a directory with a
-hundred files, the ones you want to enter would be scattered among them. It is
-the only thing this list sorts — sorting names would mean a comparison that
-depends on the language.
+hundred files, the ones you want to enter would be scattered among them. They
+stay on top **whichever column you pick**; the only one that mixes them is
+«Tipo», where separating them is exactly what the click asked for.
+
+! **Two directories are not sorted by size.** The column shows a dash — the
+number filesystems keep there is the size of the entry on disk, not how much
+the contents weigh — but the number is there all the same, and sorting on it
+left the folders in an order the viewer cannot explain. Between two dashes they
+sort by name, which is the only thing on show.
+
+! **The date costs one `stat()` per entry**, which the directory entry does not
+carry. Here the price can be paid: a directory is read when somebody enters it,
+not in a loop. It is the same date as `ls`, the **modification** one: the
+filesystems do not keep a creation date.
 
 ### The terminal in a window
 
@@ -3143,10 +3888,10 @@ pipe that question does not exist — the server gives the keys to the focused
 window, and from there they go into *that* shell's pipe. That is how two of
 them can be open without disturbing each other.
 
-### The browser
+### EXBrowser, the browser
 
-`/exwin/bin/browser [URL]`. With no argument it starts from the home page; with
-an absolute path (`browser /exwin/doc/browser.html`) it turns it into a `file:`,
+`/exwin/bin/exbrowser [URL]`. With no argument it starts from the home page;
+with an absolute path (`exbrowser /exwin/doc/exbrowser.html`) it turns it into a `file:`,
 which is the only form the rest of the program knows.
 
 The bar carries **two boxes**: the address and **Cerca**, which composes the
@@ -3154,6 +3899,17 @@ query for the engine chosen in **File > Impostazioni** (duckduckgo, wikipedia,
 marginalia) by itself. What the page can do — text that wraps and scrolls,
 links, images, style sheets, tables, forms, HTTPS, cookies, JavaScript — is in
 the "What's new" entries above, which are where that work is told in full.
+
+| keys | what they do |
+|---|---|
+| Ctrl+T, `target="_blank"`, `window.open()` | a new tab |
+| Ctrl+click on a link | a new tab, in the background |
+| Ctrl+N, Shift+click | a new window (a second EXBrowser) |
+| right button on a link | Open, in a new tab, in a new window, Copy the address |
+| Ctrl+Tab, Ctrl+W | next tab; closes the tab (the last one closes the window) |
+
+Tabs you are not looking at keep their address and position, not the page:
+coming back reloads it, from the cache if it is there.
 
 ### EX-IDE — the visual development environment
 
@@ -3178,6 +3934,10 @@ the generated and the written never touch:
 | `finestra.h` | exide only: the ids, the pointers, the prototypes |
 | `finestra_gen.c` | exide only: creates the controls and dispatches the events |
 | `finestra.c` | **you only**: exide *adds* the missing handlers at the end, and never rewrites what is there |
+
+The project's other sources (`src/`) open from **Strumenti > Files**, in a
+window with **tabs**: one file per tab, "Apri..." or Ctrl+O to add one, and
+switching tab saves the file.
 
 ### The font test
 

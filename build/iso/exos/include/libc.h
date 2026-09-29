@@ -170,6 +170,7 @@ int     mbtowc(wchar_t *dst, const char *src, size_t n);
 int     wctomb(char *dst, wchar_t c);
 char   *strdup(const char *s);
 char   *strtok(char *s, const char *sep);
+char   *strtok_r(char *s, const char *sep, char **stato);
 size_t  strspn(const char *s, const char *accetta);
 size_t  strcspn(const char *s, const char *rifiuta);
 void   *memchr(const void *s, int c, size_t n);
@@ -185,6 +186,7 @@ void   *memchr(const void *s, int c, size_t n);
 #define errno   (*__errno_dove())
 int *__errno_dove(void);
 char *strerror(int err);
+int     strerror_r(int err, char *buf, size_t n);   /* XSI: 0 o ERANGE */
 void        perror(const char *msg);
 
 /* =============================================================================
@@ -556,6 +558,13 @@ typedef unsigned int jmp_buf[6];
 int     setjmp(jmp_buf env);
 void    longjmp(jmp_buf env, int val) __attribute__((noreturn));
 
+/* sigsetjmp / siglongjmp: a jmp_buf, then "was the mask saved" and the mask.
+ * The way out of a signal handler that does not return (libc.a only: see
+ * the signals section). */
+typedef unsigned int sigjmp_buf[8];
+int     sigsetjmp(sigjmp_buf env, int salva_maschera);
+void    siglongjmp(sigjmp_buf env, int val) __attribute__((noreturn));
+
 /* Syscall wrapper */
 /* Variadica come su POSIX: il terzo argomento sono i permessi di
  * creazione, che EX-OS IGNORA (non ha proprietari ne' permessi sui file).
@@ -648,11 +657,14 @@ void    sched_yield(void);
  *
  *     void filo(void *arg) { lavoro(arg); thread_esci(0); }
  *
- * ! QUEL CHE NON E' PER FILO, ed e' dichiarato invece che scoperto: le
- * variabili `__thread` e `errno` sono per PROCESSO, non per filo (il blocco
- * TLS e' in comune). Due fili che guardano errno nello stesso momento si
- * pestano i piedi: chi ha bisogno del motivo di un errore lo legga dal valore
- * di ritorno, che nelle nostre funzioni c'e' sempre.
+ * ! `__thread` ED errno SONO PER FILO (corretto il 28 settembre 2026: qui
+ * c'era scritto il contrario, rimasto da prima del 4 settembre). Ogni filo ha
+ * il SUO blocco TLS, rifatto dall'immagine dell'eseguibile (proc_thread_crea),
+ * e errno sta in una tabella indicizzata dal thread pointer (__errno_dove).
+ * Resta vero che dentro una LIBRERIA CONDIVISA `__thread` non si puo' usare:
+ * il TLS dinamico non c'e' (kernel/include/sched.h).
+ *
+ * Sopra questi fili ci sono anche i thread POSIX: lib/include/pthread.h.
  *
  * ! IL LUCCHETTO DORME DAVVERO, dal 4 settembre 2026: chi non riesce a
  * prenderlo esce dalla coda dello scheduler invece di girare cedendo la CPU, e
@@ -701,6 +713,11 @@ int     thread_attendi(int tid, int *codice); /* 0, oppure -1 con errno */
  * thread_ferma rende 0, oppure -1 con ESRCH se quel tid non e' del gruppo. */
 int     thread_ferma(int tid);
 int     thread_devo_fermarmi(void);   /* 1 se qualcuno l'ha chiesto */
+
+/* Il programma a cui appartiene un pid (0 = chi chiama), cioe' il pid del suo
+ * capogruppo; -1 con ESRCH se non c'e'. Serve ai servizi: un messaggio porta il
+ * pid del FILO che l'ha mandato, e le risorse sono del programma. */
+int     proc_gruppo(int pid);
 
 /* ! UN LUCCHETTO CHE GIRA, e il tipo e' un intero apposta: si azzera con
  * MUTEX_LIBERO e non ha bisogno di nessuna funzione di inizializzazione, che
@@ -955,9 +972,16 @@ double     difftime(time_t fine, time_t inizio);
 /* ! LA RISOLUZIONE VERA E' 10 ms, il tick del PIT: tv_nsec e' sempre un
  * multiplo di 10 000 000. La struttura ha i nanosecondi perche' cosi' e'
  * fatta, non perche' li sappiamo misurare. */
+/* ! tv_sec E' time_t DAL 29 SETTEMBRE 2026, come vuole POSIX e come era gia'
+ * timeval (vedi il commento su time_t in lib/libc.c). Era long: 32 bit dentro
+ * una struttura che il crate `libc` di Rust — e con lui la std e tutto il
+ * codice Rust di Firefox — legge con un tv_sec da 64. Un programma Rust avrebbe
+ * letto tv_nsec nella meta' alta dei secondi. Misura: 8 -> 12 byte; nessuna
+ * libreria di terzi precompilata usa funzioni che la passano (controllato con
+ * nm sulle .a della toolchain). */
 struct timespec {
-    long tv_sec;
-    long tv_nsec;
+    time_t tv_sec;
+    long   tv_nsec;
 };
 #define TIME_UTC 1
 /* Ritorna `base` se ha funzionato, 0 se no — e non e' la solita
@@ -969,6 +993,27 @@ int        timespec_get(struct timespec *ts, int base);
  * timer a 100 Hz. Si arrotonda per ECCESSO, cosi' una richiesta piu'
  * corta di un tick dorme davvero invece di tornare subito. */
 int        nanosleep(const struct timespec *req, struct timespec *rem);
+
+/* =============================================================================
+ * clock_gettime — i due orologi di POSIX (@PTHREAD, 28 settembre 2026)
+ *
+ * CLOCK_REALTIME e' l'ora del calendario (timespec_get); CLOCK_MONOTONIC conta
+ * dall'accensione e non torna mai indietro (uptime_ms). ! Il secondo e' quello
+ * giusto per le scadenze: un orologio che l'utente rimette cambierebbe la
+ * durata di un'attesa gia' cominciata. La risoluzione e' 10 ms per tutt'e due.
+ * Un orologio sconosciuto rende -1 con EINVAL.
+ * ============================================================================= */
+typedef int clockid_t;
+#define CLOCK_REALTIME            0
+#define CLOCK_MONOTONIC           1
+#define CLOCK_PROCESS_CPUTIME_ID  2
+#define CLOCK_THREAD_CPUTIME_ID   3
+#define CLOCK_MONOTONIC_RAW       4
+#define CLOCK_REALTIME_COARSE     5
+#define CLOCK_MONOTONIC_COARSE    6
+#define CLOCK_BOOTTIME            7
+int        clock_gettime(clockid_t orologio, struct timespec *ts);
+int        clock_getres(clockid_t orologio, struct timespec *ts);
 
 /* ! Tutte e quattro tornano 0, e non significa «root»: significa che su
  * EX-OS non esiste la domanda. Serve a OPENSSL_issetugid(), che chiede
@@ -1055,6 +1100,26 @@ int console_switch(unsigned int n);
  * flag tenuto dal server morirebbe con lui lasciando la porta aperta su una
  * stanza vuota. Il kernel ricontrolla da se' che chi l'aveva presa sia vivo. */
 int console_grafica(int azione);
+
+/* The text of the GRAPHICS console — the desktop's log: every line of its
+ * cells, trailing blanks cut, '\n' after each, at most max bytes and no
+ * '\0'. Returns the bytes written, -1 when no graphics is running, a
+ * negative error when the graphics belongs to another user. The window that
+ * shows it is «Registro di sistema» (@EXWIN-LOG, 26 September 2026). */
+int console_testo(char *buf, unsigned int max);
+
+/* The same log as a RING: the last 32 KB written to the graphics console,
+ * not just what is on its screen, each line starting «hh:mm:ss   pid  ».
+ * Same returns as console_testo; on a kernel older than 0.220 a negative
+ * error (ENOSYS), and then console_testo is what there is. */
+int console_registro(char *buf, unsigned int max);
+
+/* Who Ctrl+C stops on text console n: the pid the shell declared with
+ * pty_ctl(0, PTY_CTL_FG, pid) on that console, 0 if nobody — the shell is at
+ * its prompt — or if that process is gone. Only root may ask; it is the
+ * keyboard driver's question (@TASTI-SISTEMA, 28 September 2026). A negative
+ * error on a kernel older than 0.221. */
+int console_ctrlc(unsigned int n);
 int console_write(unsigned int n, const void *buf, unsigned int len);
 
 /* =============================================================================
@@ -2079,19 +2144,44 @@ int     rename(const char *da, const char *a);
 int     atexit(void (*fn)(void));
 
 /* =============================================================================
- * SEGNALI — ci sono i nomi, non c'e' la consegna. Vedi lib/libc.c.
+ * SIGNALS — Linux numbers. Since kernel 0.227 they are delivered for real
+ * (sigaction, faults, kill), in the static libc.a; the libc.so on the floppy
+ * keeps the old signal()/raise() that only call the handler from raise().
+ * See lib/libc.c and kernel/sched/segnali.c.
  * ============================================================================= */
 #define SIGHUP   1
 #define SIGINT   2
 #define SIGQUIT  3
 #define SIGILL   4
+#define SIGTRAP  5
 #define SIGABRT  6
+#define SIGIOT   SIGABRT
+#define SIGBUS   7
 #define SIGFPE   8
 #define SIGKILL  9
+#define SIGUSR1 10
 #define SIGSEGV 11
+#define SIGUSR2 12
 #define SIGPIPE 13
 #define SIGALRM 14
 #define SIGTERM 15
+#define SIGSTKFLT 16
+#define SIGCHLD 17
+#define SIGCONT 18
+#define SIGSTOP 19
+#define SIGTSTP 20
+#define SIGTTIN 21
+#define SIGTTOU 22
+#define SIGURG  23
+#define SIGXCPU 24
+#define SIGXFSZ 25
+#define SIGVTALRM 26
+#define SIGPROF 27
+#define SIGWINCH 28
+#define SIGIO   29
+#define SIGPOLL SIGIO
+#define SIGPWR  30
+#define SIGSYS  31
 #define SIG_MAX 32
 /* ! NSIG e' lo STESSO numero di SIG_MAX con il nome che usa il codice di
  * terzi: e' quello con cui si dimensiona una tabella di gestori, e
@@ -2119,6 +2209,118 @@ typedef int sig_atomic_t;
 void  (*signal(int sig, void (*gestore)(int)))(int);
 int     raise(int sig);
 char *strsignal(int sig);
+
+/* ! sigset_t IS 32 BITS, one per signal: EX-OS has no realtime signals.
+ * The Rust libc crate for EX-OS (tools/rust-exos/std/libc-exos.rs) says the
+ * same, and struct sigaction below has its field order. */
+typedef unsigned int sigset_t;
+
+typedef union sigval {
+    int   sival_int;
+    void *sival_ptr;
+} sigval_t;
+
+/* 128 bytes like Linux i386, with si_addr and si_pid where Linux has them.
+ * ! DUPLICATED BY HAND from SegInfo in kernel/include/syscall.h. */
+typedef struct {
+    int si_signo;
+    int si_errno;
+    int si_code;
+    union {
+        void *si_addr;              /* SIGSEGV, SIGBUS, SIGILL, SIGFPE */
+        struct {
+            int          si_pid;
+            unsigned int si_uid;
+        } _mandato;
+        int _resto[29];
+    } _campi;
+} siginfo_t;
+#define si_addr  _campi.si_addr
+#define si_pid   _campi._mandato.si_pid
+#define si_uid   _campi._mandato.si_uid
+
+/* si_code */
+#define SI_USER      0
+#define SI_KERNEL    0x80
+#define SI_TKILL     (-6)
+#define SEGV_MAPERR  1
+#define SEGV_ACCERR  2
+#define BUS_ADRALN   1
+#define ILL_ILLOPN   2
+#define FPE_INTDIV   1
+#define TRAP_BRKPT   1
+
+struct sigaction {
+    union {
+        void (*sa_handler)(int);
+        void (*sa_sigaction)(int, siginfo_t *, void *);
+    } _gestore;
+    sigset_t sa_mask;
+    int      sa_flags;
+};
+#define sa_handler   _gestore.sa_handler
+#define sa_sigaction _gestore.sa_sigaction
+
+#define SA_NOCLDSTOP 0x00000001     /* accepted, meaningless: no job control */
+#define SA_NOCLDWAIT 0x00000002
+#define SA_SIGINFO   0x00000004
+#define SA_ONSTACK   0x08000000
+#define SA_RESTART   0x10000000     /* what happens anyway: nothing is interrupted */
+#define SA_NODEFER   0x40000000
+#define SA_RESETHAND 0x80000000
+#define SA_NOMASK    SA_NODEFER
+#define SA_ONESHOT   SA_RESETHAND
+
+#define SIG_BLOCK    0
+#define SIG_UNBLOCK  1
+#define SIG_SETMASK  2
+
+typedef struct {
+    void  *ss_sp;
+    int    ss_flags;
+    size_t ss_size;
+} stack_t;
+#define SS_ONSTACK   1
+#define SS_DISABLE   2
+#define MINSIGSTKSZ  2048
+#define SIGSTKSZ     8192
+
+/* mcontext_t / ucontext_t: Linux i386 up to uc_mcontext, so that
+ * uc_mcontext.gregs[REG_EIP] means what it means there. The handler may
+ * change the registers: the interrupted code resumes from them.
+ * ! DUPLICATED BY HAND from SegContesto in kernel/include/syscall.h. */
+enum {
+    REG_GS = 0, REG_FS, REG_ES, REG_DS, REG_EDI, REG_ESI, REG_EBP, REG_ESP,
+    REG_EBX, REG_EDX, REG_ECX, REG_EAX, REG_TRAPNO, REG_ERR, REG_EIP, REG_CS,
+    REG_EFL, REG_UESP, REG_SS
+};
+#define NGREG 19
+typedef int greg_t;
+typedef greg_t gregset_t[NGREG];
+typedef struct {
+    gregset_t     gregs;
+    void         *fpregs;           /* the x87 state (FNSAVE, 108 bytes) */
+    unsigned long oldmask;
+    unsigned long cr2;
+} mcontext_t;
+
+typedef struct ucontext_t {
+    unsigned long      uc_flags;
+    struct ucontext_t *uc_link;
+    stack_t            uc_stack;
+    mcontext_t         uc_mcontext;
+    sigset_t           uc_sigmask;
+} ucontext_t;
+
+int     sigaction(int sig, const struct sigaction *nuova, struct sigaction *prima);
+int     sigprocmask(int come, const sigset_t *nuova, sigset_t *prima);
+int     sigaltstack(const stack_t *nuova, stack_t *prima);
+int     kill(int pid, int sig);
+int     sigemptyset(sigset_t *s);
+int     sigfillset(sigset_t *s);
+int     sigaddset(sigset_t *s, int sig);
+int     sigdelset(sigset_t *s, int sig);
+int     sigismember(const sigset_t *s, int sig);
 
 /* =============================================================================
  * Localizzazione (solo "C") e interrogazioni sul sistema
@@ -2219,6 +2421,10 @@ int     getpagesize(void);
 
 void   *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off);
 int     munmap(void *addr, size_t lung);
+/* Kernel 0.227. PROT_NONE is a page ring 3 cannot touch, PROT_EXEC is
+ * PROT_READ (no NX without PAE). A frame shared with other processes (library
+ * code) cannot be made writable: EACCES. See paging_proteggi in the kernel. */
+int     mprotect(void *addr, size_t lung, int prot);
 
 /* pathconf: gli stessi limiti, ma riferiti a un file.
  * ! NON dipendono dal percorso: su EX-OS convivono quattro filesystem
@@ -3162,5 +3368,240 @@ void sha256_avvia(Sha256 *s);
 void sha256_dai(Sha256 *s, const void *dati, size_t len);
 void sha256_fine(Sha256 *s, unsigned char out[32]);
 void sha256_fine_esa(Sha256 *s, char out[65]);
+
+/* =============================================================================
+ * I SOCKET BSD (@SOCKET-BSD, 29 settembre 2026) — <sys/socket.h>,
+ * <netinet/in.h>, <netinet/tcp.h>, <arpa/inet.h>, <netdb.h> sono facciate su
+ * questa sezione.
+ *
+ * ! SONO DELLA LIBC, NON DEL KERNEL. Lo stack IP e' un processo (ip.drv) e la
+ * libc gli parla per IPC (drivers/net/ip_proto.h): un socket e' una voce di una
+ * tabella della libc, e il suo descrittore parte da PRESA_BASE per non potersi
+ * confondere con uno del kernel (che ne ha 32). read, write, close, fcntl,
+ * ioctl, fstat e poll li riconoscono; select no, perche' fd_set ha 32 bit.
+ *
+ * ! I NUMERI SONO QUELLI DI LINUX (famiglie, tipi, opzioni, flag), come gli
+ * errno di questa libc: il codice di terzi — e il crate libc di Rust — li
+ * conosce gia'.
+ *
+ * ! COSA NON C'E', detto qui e non scoperto:
+ *   - IPv6 e AF_UNIX: socket() risponde EAFNOSUPPORT;
+ *   - shutdown(SHUT_WR) non manda il FIN (lo stack non sa chiudere a meta'):
+ *     smette solo di scrivere; SHUT_RDWR chiude davvero;
+ *   - connect() non bloccante si completa comunque prima di tornare (POSIX lo
+ *     permette: rende 0 invece di EINPROGRESS);
+ *   - UDP: un datagramma che arriva mentre nessun filo del programma lo sta
+ *     aspettando lo stack lo scarta (drivers/net/ip_proto.h, UDP);
+ *   - dup/dup2 di un socket: EOPNOTSUPP;
+ *   - i descrittori non passano ai figli.
+ * ============================================================================= */
+#define PRESA_BASE      1024    /* il primo descrittore di un socket */
+
+typedef unsigned int    socklen_t;
+typedef unsigned short  sa_family_t;
+typedef unsigned short  in_port_t;
+typedef unsigned int    in_addr_t;
+
+#define AF_UNSPEC       0
+#define AF_UNIX         1
+#define AF_LOCAL        AF_UNIX
+#define AF_INET         2
+#define AF_INET6        10
+#define PF_UNSPEC       AF_UNSPEC
+#define PF_UNIX         AF_UNIX
+#define PF_INET         AF_INET
+#define PF_INET6        AF_INET6
+
+#define SOCK_STREAM     1
+#define SOCK_DGRAM      2
+#define SOCK_RAW        3
+#define SOCK_SEQPACKET  5
+#define SOCK_NONBLOCK   04000
+#define SOCK_CLOEXEC    02000000
+
+#define IPPROTO_IP      0
+#define IPPROTO_ICMP    1
+#define IPPROTO_TCP     6
+#define IPPROTO_UDP     17
+#define IPPROTO_IPV6    41
+
+#define SOL_SOCKET      1
+#define SO_REUSEADDR    2
+#define SO_TYPE         3
+#define SO_ERROR        4
+#define SO_BROADCAST    6
+#define SO_SNDBUF       7
+#define SO_RCVBUF       8
+#define SO_KEEPALIVE    9
+#define SO_LINGER       13
+#define SO_REUSEPORT    15
+#define SO_RCVTIMEO     20
+#define SO_SNDTIMEO     21
+#define SOMAXCONN       128
+
+#define TCP_NODELAY     1
+#define TCP_MAXSEG      2
+#define TCP_KEEPIDLE    4
+#define TCP_KEEPINTVL   5
+#define TCP_KEEPCNT     6
+#define IP_TOS          1
+#define IP_TTL          2
+#define IPV6_V6ONLY     26
+
+#define MSG_OOB         0x1
+#define MSG_PEEK        0x2
+#define MSG_DONTWAIT    0x40
+#define MSG_WAITALL     0x100
+#define MSG_NOSIGNAL    0x4000
+
+#define SHUT_RD         0
+#define SHUT_WR         1
+#define SHUT_RDWR       2
+
+#define FIONREAD        0x541B
+#define FIONBIO         0x5421
+
+#define INADDR_ANY       ((in_addr_t)0x00000000)
+#define INADDR_BROADCAST ((in_addr_t)0xFFFFFFFF)
+#define INADDR_NONE      ((in_addr_t)0xFFFFFFFF)
+#define INADDR_LOOPBACK  ((in_addr_t)0x7F000001)   /* ordine dell'host */
+#define INET_ADDRSTRLEN  16
+#define INET6_ADDRSTRLEN 46
+
+struct sockaddr {
+    sa_family_t sa_family;
+    char        sa_data[14];
+};
+
+struct sockaddr_storage {
+    sa_family_t   ss_family;
+    unsigned char __ss_pad[126];
+};
+
+struct in_addr { in_addr_t s_addr; };           /* ordine di rete */
+
+struct sockaddr_in {
+    sa_family_t    sin_family;
+    in_port_t      sin_port;                    /* ordine di rete */
+    struct in_addr sin_addr;
+    unsigned char  sin_zero[8];
+};
+
+struct in6_addr { unsigned char s6_addr[16]; };
+
+struct sockaddr_in6 {
+    sa_family_t     sin6_family;
+    in_port_t       sin6_port;
+    unsigned int    sin6_flowinfo;
+    struct in6_addr sin6_addr;
+    unsigned int    sin6_scope_id;
+};
+
+struct sockaddr_un {
+    sa_family_t sun_family;
+    char        sun_path[108];
+};
+
+struct linger { int l_onoff; int l_linger; };
+
+struct iovec { void *iov_base; size_t iov_len; };
+
+struct msghdr {
+    void         *msg_name;
+    socklen_t     msg_namelen;
+    struct iovec *msg_iov;
+    int           msg_iovlen;
+    void         *msg_control;
+    socklen_t     msg_controllen;
+    int           msg_flags;
+};
+
+int     socket(int dominio, int tipo, int protocollo);
+int     socketpair(int dominio, int tipo, int protocollo, int sv[2]);
+int     bind(int fd, const struct sockaddr *a, socklen_t len);
+int     listen(int fd, int coda);
+int     accept(int fd, struct sockaddr *a, socklen_t *len);
+int     accept4(int fd, struct sockaddr *a, socklen_t *len, int flag);
+int     connect(int fd, const struct sockaddr *a, socklen_t len);
+ssize_t send(int fd, const void *buf, size_t n, int flag);
+ssize_t recv(int fd, void *buf, size_t n, int flag);
+ssize_t sendto(int fd, const void *buf, size_t n, int flag,
+               const struct sockaddr *a, socklen_t len);
+ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
+                 struct sockaddr *a, socklen_t *len);
+ssize_t sendmsg(int fd, const struct msghdr *m, int flag);
+ssize_t recvmsg(int fd, struct msghdr *m, int flag);
+ssize_t readv(int fd, const struct iovec *v, int n);
+ssize_t writev(int fd, const struct iovec *v, int n);
+int     shutdown(int fd, int come);
+int     getsockopt(int fd, int livello, int nome, void *val, socklen_t *len);
+int     setsockopt(int fd, int livello, int nome, const void *val, socklen_t len);
+int     getsockname(int fd, struct sockaddr *a, socklen_t *len);
+int     getpeername(int fd, struct sockaddr *a, socklen_t *len);
+
+unsigned short htons(unsigned short v);
+unsigned short ntohs(unsigned short v);
+unsigned int   htonl(unsigned int v);
+unsigned int   ntohl(unsigned int v);
+int            inet_pton(int famiglia, const char *s, void *dst);
+const char    *inet_ntop(int famiglia, const void *src, char *dst, socklen_t n);
+in_addr_t      inet_addr(const char *s);
+int            inet_aton(const char *s, struct in_addr *out);
+char          *inet_ntoa(struct in_addr a);    /* buffer statico, come ovunque */
+
+/* <netdb.h> ------------------------------------------------------------------
+ * ! getaddrinfo HA UN RISOLUTORE SUO, compatto, sopra i socket UDP di qui: il
+ * DNS di lib/dns.c si collega programma per programma, e metterlo dentro la
+ * libc farebbe scontrare i simboli di chi lo collega gia'. Solo record A. */
+#define AI_PASSIVE      0x01
+#define AI_CANONNAME    0x02
+#define AI_NUMERICHOST  0x04
+#define AI_NUMERICSERV  0x400
+#define AI_ADDRCONFIG   0x20
+#define AI_V4MAPPED     0x08
+#define AI_ALL          0x10
+#define NI_MAXHOST      1025
+#define NI_MAXSERV      32
+#define NI_NUMERICHOST  1
+#define NI_NUMERICSERV  2
+
+#define EAI_BADFLAGS    (-1)
+#define EAI_NONAME      (-2)
+#define EAI_AGAIN       (-3)
+#define EAI_FAIL        (-4)
+#define EAI_FAMILY      (-6)
+#define EAI_SOCKTYPE    (-7)
+#define EAI_SERVICE     (-8)
+#define EAI_MEMORY      (-10)
+#define EAI_SYSTEM      (-11)
+
+struct addrinfo {
+    int              ai_flags;
+    int              ai_family;
+    int              ai_socktype;
+    int              ai_protocol;
+    socklen_t        ai_addrlen;
+    struct sockaddr *ai_addr;
+    char            *ai_canonname;
+    struct addrinfo *ai_next;
+};
+
+struct hostent {
+    char  *h_name;
+    char **h_aliases;
+    int    h_addrtype;
+    int    h_length;
+    char **h_addr_list;
+};
+#define h_addr h_addr_list[0]
+
+int             getaddrinfo(const char *nodo, const char *servizio,
+                            const struct addrinfo *consigli, struct addrinfo **ris);
+void            freeaddrinfo(struct addrinfo *ai);
+const char     *gai_strerror(int e);
+int             getnameinfo(const struct sockaddr *a, socklen_t len, char *host,
+                            socklen_t hlen, char *serv, socklen_t slen, int flag);
+struct hostent *gethostbyname(const char *nome);   /* statica, non rientrante */
+int             gethostname(char *nome, size_t n);
 
 #endif /* LIBC_H */

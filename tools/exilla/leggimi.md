@@ -82,8 +82,57 @@ fermavano a 63 perche' il vecchio `pthread_create` non lo diceva al kernel.
 fuori da MEGA): `make BUILD_DIR=... DIST_DIR=...` NON basta, perche'
 `tools/mkfloppy.sh` scrive `dist/` per nome fisso.
 
-**Prossima tappa**: Rust `std` (passi 2 e 3 di `tools/rust-exos/leggimi.md`),
-poi i socket BSD.
+### 29 settembre 2026 — la `std` di Rust (@RUST-STD), kernel 0.225
+
+**Fatta e provata**: `tools/rust-exos/prova-std.sh`, 29 su 29 dentro EX-OS —
+file, directory, ambiente, tempo, thread, `Mutex`, `Condvar`, canali,
+`RwLock`, `thread_local!`. EX-OS è un bersaglio **unix** che nella `std` si
+comporta come NuttX: il perché e il come stanno nel passo 3 di
+`tools/rust-exos/leggimi.md`.
+
+Cosa ha trovato nel sistema, ed è sistemato:
+- `struct timespec` con `tv_sec` a 32 bit: ora `time_t`, come POSIX;
+- `stat()` e `poll()` rendevano `-errno` invece di `-1`;
+- `mkdir` con il genitore mancante rispondeva `EIO` (kernel 0.225);
+- la `libc.a` della toolchain era compilata per i686 (`cmov`), non per il
+  Pentium MMX: `tools/gcc-exos/prepara-cross.sh` ora passa `-march`;
+- `strerror_r` mancava.
+
+Prove rifatte sul CD nuovo, tutte verdi: `prova-pthread.sh`, `prova-cxx.sh`,
+`tools/rust-exos/prova.sh`, `polltest`, `libctest` (le stesse 206 di prima;
+le 15 che falliscono dal CD scrivono in `/`, che lì è in sola lettura).
+
+### 29 settembre 2026 — i socket BSD (@SOCKET-BSD), kernel 0.226
+
+**Fatti e provati**, in C e in Rust, con la rete vera di QEMU:
+
+    tools/exilla/prova-socket.sh        # C: 23 su 23
+    tools/rust-exos/prova-rete.sh       # std::net: 9 su 9
+
+Client e servitore TCP (100 000 byte andata e ritorno), UDP, `poll`, modo non
+bloccante, `SO_RCVTIMEO`, un socket usato da un filo diverso da quello che
+l'ha aperto, `close` che sveglia un `recv` fermo, `getaddrinfo` col DNS vero
+(`example.com` risolto dentro EX-OS). L'altra parte è
+`tools/exilla/prova-socket-host.py` sull'host.
+
+Com'è fatto (il contratto sta in `lib/include/libc.h`, sezione «I SOCKET BSD»):
+- **nella libc, sopra lo stack IP per IPC**: un socket è una voce di una
+  tabella della libc, con descrittori da 1024 in su; `read`, `write`, `close`,
+  `fcntl`, `ioctl`, `fstat` e `poll` li riconoscono;
+- **nella `libc.a`, non nella `libc.so`**: la libreria condivisa sta sul
+  floppy, e i socket la portavano da 98 a 117 KB. Chi li usa (Rust, Exilla, il
+  software portato) si collega alla `libc.a`;
+- **lo stack assegna le connessioni al programma, non al filo** (ip.drv
+  0.005): serve `SYS_PROC_GRUPPO` (164, kernel 0.226), il pid del capogruppo;
+- **lo scaffale dei messaggi IPC ora è per filo**: era della libc e senza
+  lucchetto, e due fili che parlano con lo stack si sarebbero scambiati le
+  risposte.
+
+Cosa manca, dichiarato: IPv6 e `AF_UNIX`, il FIN di `shutdown(SHUT_WR)`, la
+`connect` non bloccante (si completa subito), `dup` di un socket.
+
+**Prossima tappa**: ExWin (la tabella del paragrafo 3) oppure SpiderMonkey da
+solo (tappa 4). La memoria per costruire Firefox resta da liberare.
 
 ! **MEGA**: le cartelle `costruzione-*`, `rust-macchina` ed `exilla-obj` sono
 escluse (`.megaignore`). ! E `scambio.txt` si scrive SOLO in coda: il 28

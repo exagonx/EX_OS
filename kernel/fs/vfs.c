@@ -1414,6 +1414,36 @@ static int modifica(const char *abs, int quale)
      * lascerebbe cancellare a chiunque un file leggibile da tutti. */
     if (!permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI)) return ERR(EACCES);
 
+    /* =========================================================================
+     * ! GLI ERRORI CHE UN PROGRAMMA DEVE POTER DISTINGUERE SI DECIDONO QUI
+     * (29 settembre 2026), prima di chiedere al filesystem: ext2 rende -1 per
+     * «il genitore non c'e'» come per un disco che non risponde, e il ramo
+     * sotto ne faceva EIO. Un mkdir con il genitore mancante diceva «errore di
+     * I/O», e create_dir_all della std di Rust — che su ENOENT crea il
+     * genitore e riprova — si fermava li'. Lo stesso per cancellare un file
+     * che non c'e'. Sono le risposte di POSIX, e valgono per FAT come per ext2.
+     * ========================================================================= */
+    {
+        char    padre[VFS_PATH_MAX];
+        VfsStat st;
+        int     i;
+
+        for (i = 0; abs[i] && i < VFS_PATH_MAX - 1; i++) padre[i] = abs[i];
+        padre[i] = '\0';
+        while (i > 1 && padre[i - 1] != '/') i--;
+        if (i > 1) i--;
+        if (i == 0) i = 1;
+        padre[i] = '\0';
+
+        if (vfs_stat_nl(padre, &st) != 0) return ERR(ENOENT);
+        if (!st.is_dir)                   return ERR(ENOTDIR);
+        if (quale != 0) {
+            if (vfs_stat_nl(abs, &st) != 0) return ERR(ENOENT);
+            if (quale == 1 && !st.is_dir)  return ERR(ENOTDIR);
+            if (quale == 2 && st.is_dir)   return ERR(EISDIR);
+        }
+    }
+
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         if (quale == 0) return fat12_mkdir(interno);
         if (quale == 1) return fat12_rmdir(interno);

@@ -221,3 +221,51 @@ CAMPO(blkinfo_setlo,    BlkInfo, settori_lo)
 CAMPO(blkinfo_guasto,   BlkInfo, guasto)
 
 DIM(jmp_buf,            jmp_buf)
+
+/* --- I fili POSIX (28 settembre 2026) e i socket BSD (29 settembre) ----------
+ * ! Stanno nella libc.a e il crate libc di Rust ne ripete le misure
+ * (tools/rust-exos/std/libc-exos.rs): se cambiano qui, cambiano la'. */
+#include <pthread.h>
+#include <semaphore.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+
+DIM(pthread_t,          pthread_t)
+DIM(pthread_attr,       pthread_attr_t)
+DIM(pthread_mutex,      pthread_mutex_t)
+DIM(pthread_cond,       pthread_cond_t)
+DIM(pthread_rwlock,     pthread_rwlock_t)
+DIM(sem,                sem_t)
+
+DIM(sockaddr,           struct sockaddr)
+DIM(sockaddr_in,        struct sockaddr_in)
+CAMPO(sockaddr_in_port, struct sockaddr_in, sin_port)
+CAMPO(sockaddr_in_addr, struct sockaddr_in, sin_addr)
+DIM(sockaddr_in6,       struct sockaddr_in6)
+DIM(sockaddr_storage,   struct sockaddr_storage)
+DIM(addrinfo,           struct addrinfo)
+CAMPO(addrinfo_addr,    struct addrinfo, ai_addr)
+CAMPO(addrinfo_next,    struct addrinfo, ai_next)
+DIM(msghdr,             struct msghdr)
+DIM(iovec,              struct iovec)
+DIM(hostent,            struct hostent)
+
+/* --- I segnali (kernel 0.227, @SEGNALI) ---------------------------------------
+ * ! struct sigaction e sigset_t li ripete anche il crate libc di Rust
+ * (tools/rust-exos/std/libc-exos.rs); siginfo_t e ucontext_t hanno la forma
+ * di Linux i386 fin dove il codice portato la legge (si_addr, gregs). */
+#include <signal.h>
+#include <setjmp.h>
+
+DIM(sigset_t,           sigset_t)
+DIM(sigaction,          struct sigaction)
+CAMPO(sigaction_mask,   struct sigaction, sa_mask)
+CAMPO(sigaction_flags,  struct sigaction, sa_flags)
+DIM(siginfo_t,          siginfo_t)
+CAMPO(siginfo_addr,     siginfo_t, si_addr)
+DIM(stack_t,            stack_t)
+DIM(ucontext_t,         ucontext_t)
+CAMPO(ucontext_mcontext, ucontext_t, uc_mcontext)
+CAMPO(ucontext_sigmask, ucontext_t, uc_sigmask)
+DIM(sigjmp_buf,         sigjmp_buf)

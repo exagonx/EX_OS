@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.006");
+EX_VERSIONE("wserver", "0.007");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -186,6 +186,12 @@ static char g_servizio[32];
 
 /* Lo schermo */
 static unsigned char *g_fb = 0;
+/* ! g_fb IS WHERE WE DRAW, g_schermo IS THE SCREEN (29 September 2026). When
+ * the shadow could be allocated g_fb points at it and every rectangle is
+ * composed there first, then copied to g_schermo in one pass: see mostra().
+ * Without it, g_fb == g_schermo and drawing goes straight to the screen. */
+static unsigned char *g_schermo = 0;
+static int            g_ombra = 0;
 static unsigned int g_fb_passo = 0, g_fb_w = 0, g_fb_h = 0, g_fb_bit = 0;
 
 /* Il puntatore */
@@ -701,7 +707,10 @@ static void riempi(unsigned int x, unsigned int y, unsigned int w,
          * rettangolo che non c'e': chi ha chiesto crede di aver disegnato.
          * ================================================================= */
         g_conta_px += w * h;
-        if (g_acc && (unsigned int)(w * h) >= ACC_SOGLIA_PX && acc_riempi(x, y, w, h, c))
+        /* With the shadow the fill must land in RAM, where the card's
+         * engine cannot reach: the accelerator is for the screen only. */
+        if (g_acc && !g_ombra && (unsigned int)(w * h) >= ACC_SOGLIA_PX &&
+            acc_riempi(x, y, w, h, c))
             return;
 
         for (j = 0; j < h; j++) {
@@ -1145,6 +1154,46 @@ static void componi_rett(const Rett *r)
     }
 }
 
+/* =============================================================================
+ * mostra — one composed rectangle, from the shadow to the screen
+ * (29 September 2026, @GRAFICA-FLUIDA)
+ *
+ * ! COMPOSING ON THE SCREEN SHOWS THE STEPS. Inside one dirty rectangle the
+ * background goes first, then each window, then the outline, then the
+ * pointer: every pixel is written once (the regions of 22 September), but
+ * the POINTER is drawn over a window that has just been drawn under it, so
+ * for the time of a window copy it is not there. Moving the mouse over a big
+ * window made it blink. Composing in RAM first and copying the result shows
+ * only finished rectangles.
+ *
+ * ! IT IS X's SHADOW FRAMEBUFFER (shadowfb), and the price is the one X pays:
+ * one more copy, RAM to screen. On the Acer writing the screen is as fast as
+ * writing RAM (375 MB/s, @GRAFICA-SCATTI) and READING it is slow — and this
+ * copy never reads the screen. The shadow is also what a future move by
+ * copy (ACC_MSG_COPIA, or the CPU) would read from, instead of the 77 MB/s
+ * of the framebuffer.
+ * ============================================================================= */
+static void mostra(const Rett *r)
+{
+    int x0 = r->x0 < 0 ? 0 : r->x0, y0 = r->y0 < 0 ? 0 : r->y0;
+    int x1 = r->x1 > (int)g_fb_w ? (int)g_fb_w : r->x1;
+    int y1 = r->y1 > (int)g_fb_h ? (int)g_fb_h : r->y1;
+    unsigned int bpp = g_fb_bit >> 3;
+    int j;
+
+    if (!g_ombra || x1 <= x0 || y1 <= y0) return;
+
+    for (j = y0; j < y1; j++) {
+        unsigned int off = (unsigned int)j * g_fb_passo + (unsigned int)x0 * bpp;
+
+        if (g_fb_bit == 32 && g_mmx)
+            mmx_copia32((unsigned int *)(g_schermo + off),
+                        (const unsigned int *)(g_fb + off), (unsigned int)(x1 - x0));
+        else
+            memcpy(g_schermo + off, g_fb + off, (unsigned int)(x1 - x0) * bpp);
+    }
+}
+
 /* Every dirty rectangle, then the list is empty again. */
 static void componi(void)
 {
@@ -1155,8 +1204,12 @@ static void componi(void)
 
         r.x0 = 0; r.y0 = 0; r.x1 = (int)g_fb_w; r.y1 = (int)g_fb_h;
         componi_rett(&r);
+        mostra(&r);
     } else {
-        for (i = 0; i < g_n_sp; i++) componi_rett(&g_sp[i]);
+        for (i = 0; i < g_n_sp; i++) {
+            componi_rett(&g_sp[i]);
+            mostra(&g_sp[i]);
+        }
     }
 
     /* ! IL RITAGLIO SI RIMETTE A «TUTTO» SUBITO DOPO, e non e' una
@@ -2577,6 +2630,16 @@ static int servi_messaggio(unsigned int ms)
         idx = trova_id(w->id);
         if (idx < 0 || g_fin[idx].pid != meta.sender_pid) break;
 
+        /* `-conta`: who asks, and how much. The count of frames says the
+         * desktop is busy; this line says who keeps it busy. */
+        if (g_conta) {
+            char riga[112];
+            sprintf(riga, "wserver: aggiorna finestra %u (PID %u, '%s') %ux%u a %u,%u",
+                    w->id, meta.sender_pid, g_fin[idx].titolo,
+                    w->larghezza, w->altezza, w->x, w->y);
+            log_seriale(riga);
+        }
+
         /* ! ONLY THIS WINDOW, NOT THE SCREEN. Here was sporca_tutto(): every
          * key typed in the editor, every tick of the clock repainted
          * 800x600 — 5 to 10 ms each on the Acer (@GRAFICA-SCATTI). The
@@ -2806,6 +2869,26 @@ int main(int argc, char **argv)
     g_fb_w     = v.larghezza;
     g_fb_h     = v.altezza;
     g_fb_bit   = v.bit;
+
+    /* The shadow of the screen (see mostra). Without memory for it, or with
+     * `-noombra`, we draw on the screen as before. */
+    g_schermo = g_fb;
+    {
+        int vuole = 1;
+        unsigned char *o;
+
+        for (i = 1; i < argc; i++)
+            if (strcmp(argv[i], "-noombra") == 0) vuole = 0;
+        o = vuole ? (unsigned char *)malloc(g_fb_passo * g_fb_h) : 0;
+        if (o) {
+            memset(o, 0, g_fb_passo * g_fb_h);
+            g_fb = o;
+            g_ombra = 1;
+            log_seriale("wserver: compongo in un'ombra in RAM e copio sullo schermo");
+        } else {
+            log_seriale("wserver: niente ombra, compongo direttamente sullo schermo");
+        }
+    }
 
     /* ! SULLA SERIALE, non con printf: questo processo gira su una console
      * sua, e un messaggio scritto li' non lo legge nessuno. E' lo stesso

@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.004");
+EX_VERSIONE("ip.drv", "0.005");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -73,7 +73,7 @@ EX_VERSIONE("ip.drv", "0.004");
 
 #define IP_INTEST       20      /* senza opzioni: le nostre non ne hanno */
 #define IP_VERSIONE_IHL 0x45
-#define IP_TTL          64
+#define IP_TTL_USCITA   64  /* era IP_TTL: ora e' il nome dell'opzione dei socket in libc.h */
 #define IP_PROTO_ICMP   1
 #define IP_PROTO_UDP    17
 #define IP_PROTO_TCP    6
@@ -115,7 +115,7 @@ static VoceArp g_arp[IP_ARP_VOCI];
 /* --- Porte UDP aperte ------------------------------------------------------ */
 /* Vedi ip_proto.h: non sono prese, sono porte. Quattro bastano a un client
  * DHCP e a un risolutore DNS, che e' cio' che serve adesso. */
-#define UDP_PORTE      4
+#define UDP_PORTE      16      /* 4 fino alla 0.004: con i socket BSD ogni programma ne apre */
 #define UDP_CARICO_MAX 1472     /* 1500 di MTU - 20 di IP - 8 di UDP */
 
 static struct {
@@ -417,7 +417,7 @@ static unsigned int componi_ip(unsigned char *f, const unsigned char *mac_dest,
     metti16(f + 16, tot);
     metti16(f + 18, g_id_ip++);
     metti16(f + 20, 0);               /* nessun flag, nessun frammento */
-    f[22] = IP_TTL;
+    f[22] = IP_TTL_USCITA;
     f[23] = (unsigned char)protocollo;
     metti16(f + 24, 0);               /* somma di controllo: dopo */
     memcpy(f + 26, g_cfg.ip, 4);
@@ -900,6 +900,26 @@ static int tcp_riprendi_orfane(void)
     return presi;
 }
 
+/* =============================================================================
+ * ! LE CONNESSIONI SONO DEL PROGRAMMA, NON DEL FILO (0.005, 29 settembre 2026).
+ *
+ * Un messaggio porta il pid di chi l'ha mandato, e per un programma con piu'
+ * fili quel pid e' del FILO. Con i socket BSD un filo apre e un altro legge —
+ * e' il modo normale di lavorare di un navigatore — e il controllo sul pid lo
+ * rifiutava. Il proprietario e' quindi il GRUPPO (SYS_PROC_GRUPPO: il pid del
+ * capogruppo), e le risposte continuano ad andare al pid del filo che ha
+ * chiesto, perche' la cassetta IPC e' sua.
+ *
+ * ! pid_vivo(proprietario) CONTINUA A VALERE: il capogruppo vive finche' vive
+ * il programma (quando esce porta via tutti i fili).
+ * ============================================================================= */
+static unsigned int gruppo_di(unsigned int pid)
+{
+    int g = proc_gruppo((int)pid);
+
+    return g > 0 ? (unsigned int)g : pid;
+}
+
 static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
 {
     Conn *c;
@@ -910,7 +930,7 @@ static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
     /* ! Solo chi l'ha aperta puo' usarla: un identificativo e' un numero
      * piccolo e indovinabile, e senza questo controllo un processo
      * qualunque potrebbe leggere i dati di un altro. */
-    if (c->proprietario != cliente) return NULL;
+    if (c->proprietario != gruppo_di(cliente)) return NULL;
     return c;
 }
 
@@ -1520,7 +1540,7 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
     c->snd_una  = (uptime_ms() << 8) ^ (c->porta_loc << 16) ^ 0x45584F53u;
     c->snd_nxt  = c->snd_una;
     c->finestra = 1024;          /* provvisoria: la vera arriva col SYN+ACK */
-    c->proprietario = cliente;
+    c->proprietario = gruppo_di(cliente);
 
     c->stato    = S_SYN_INVIA;
     tcp_manda(c, TCP_SYN, NULL, 0);
@@ -1577,7 +1597,7 @@ static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
     memset(c, 0, sizeof(*c));
     c->stato        = S_ASCOLTA;
     c->porta_loc    = a->porta;
-    c->proprietario = cliente;
+    c->proprietario = gruppo_di(cliente);
 
     rispondi_esito(cliente, (int)tcp_id(c));
 }
@@ -1695,6 +1715,20 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
         return;
     }
 
+    /* ! CHI ASPETTAVA DATI SU QUESTA CONNESSIONE RICEVE LA FINE (0.005): con i
+     * socket BSD un filo chiude mentre un altro e' fermo in recv, e senza
+     * questa risposta resterebbe fermo per sempre — la connessione non gli
+     * consegnera' piu' niente. Zero byte e' la fine dei dati, come per una
+     * connessione chiusa dall'altra parte. */
+    if (c->attesa_pid != 0 && c->attesa_tipo == IP_MSG_TCP_RICEVI) {
+        IpTcpDati fine;
+
+        fine.id  = tcp_id(c);
+        fine.len = 0;
+        ipc_send(c->attesa_pid, IP_MSG_TCP_DATI, &fine, sizeof(fine));
+        c->attesa_pid = 0;
+    }
+
     /* Quel che e' arrivato e non e' stato letto non lo leggera' piu' nessuno. */
     c->chiusa_cliente = 1;
     c->rx_len = 0;
@@ -1733,6 +1767,7 @@ static void tcp_info(unsigned int cliente, const IpTcpRif *r)
         info.in_coda_tx = c->tx_len;
         memcpy(info.ip, c->ip, 4);
         info.porta      = c->porta_rem;
+        info.porta_loc  = c->porta_loc;
     }
     ipc_send(cliente, IP_MSG_TCP_INFO, &info, sizeof(info));
 }
@@ -1995,16 +2030,17 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
     if (udp_cerca(porta) >= 0) { rispondi_esito(client, -EADDRINUSE); return; }
 
     for (i = 0; i < UDP_PORTE; i++) if (!g_udp[i].usata) { libero = i; break; }
-    if (libero < 0 && tcp_riprendi_orfane() > 0) {
-        int q;
-
-        for (q = 0; q < IP_TCP_CONNESSIONI; q++)
-            if (g_tcp[q].stato == S_LIBERA) { libero = q; break; }
-    }
+    /* ! LE PORTE UDP ORFANE SI RIPRENDONO DALLA TABELLA UDP. Fino alla 0.004
+     * qui si riprendevano le connessioni TCP orfane e si usava come indice UDP
+     * il primo slot TCP libero: una porta di un programma morto non tornava mai,
+     * e l'indice poteva cadere su una porta UDP ancora in uso. */
+    if (libero < 0)
+        for (i = 0; i < UDP_PORTE; i++)
+            if (!pid_vivo(g_udp[i].proprietario)) { libero = i; break; }
     if (libero < 0) { rispondi_esito(client, -ENFILE); return; }
 
     g_udp[libero].porta        = porta;
-    g_udp[libero].proprietario = client;
+    g_udp[libero].proprietario = gruppo_di(client);
     g_udp[libero].lettore      = 0;
     g_udp[libero].usata        = 1;
 
@@ -2018,7 +2054,7 @@ static void udp_chiudi(unsigned int client, const IpUdpApri *a)
     int i = udp_cerca(a->porta);
 
     if (i < 0) { rispondi_esito(client, -ENOENT); return; }
-    if (g_udp[i].proprietario != client) { rispondi_esito(client, -EPERM); return; }
+    if (g_udp[i].proprietario != gruppo_di(client)) { rispondi_esito(client, -EPERM); return; }
 
     g_udp[i].usata = 0;
     rispondi_esito(client, 0);
@@ -2040,7 +2076,7 @@ static void udp_invia(unsigned int client, const unsigned char *payload,
     if (n > UDP_CARICO_MAX) { rispondi_esito(client, -EMSGSIZE); return; }
 
     i = udp_cerca(inv.porta_locale);
-    if (i < 0 || g_udp[i].proprietario != client) {
+    if (i < 0 || g_udp[i].proprietario != gruppo_di(client)) {
         rispondi_esito(client, -EPERM);
         return;
     }
@@ -2102,7 +2138,7 @@ static void udp_ricevi(unsigned int client, const IpUdpApri *a)
 {
     int i = udp_cerca(a->porta);
 
-    if (i < 0 || g_udp[i].proprietario != client) {
+    if (i < 0 || g_udp[i].proprietario != gruppo_di(client)) {
         rispondi_esito(client, -EPERM);
         return;
     }

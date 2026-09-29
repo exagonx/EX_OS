@@ -138,6 +138,38 @@ static struct {
     unsigned int (*colora_c)(void *, const char *, unsigned char *, unsigned int);
     ExFinestra   (*mdi_attivo)(ExFinestra);
     void         (*mdi_attiva)(ExFinestra);
+
+    void         (*lista_icona)(ExFinestra, unsigned int, ExIcona);
+    unsigned int (*lista_margine)(ExFinestra);
+    ExIcona      (*icona_apri)(const char *);
+    unsigned int (*icona_lato)(ExIcona);
+    int          (*icona_disegna)(ExFinestra, ExIcona, int, int,
+                                  unsigned int, unsigned int);
+    void         (*icona_metti)(ExFinestra, ExIcona, unsigned int);
+    void         (*icona_chiudi)(ExIcona);
+    unsigned int (*a_vista)(ExFinestra, unsigned int *);
+    void         (*a_mostra_da)(ExFinestra, unsigned int);
+    int          (*guarda_fd)(int, ExGuarda, void *);
+    void         (*tab_contenuto)(ExFinestra, int);
+    void         (*finestre_segui)(ExFinestra);
+    int          (*finestre_elenco)(ExVoceFin *, int);
+    void         (*finestra_attiva)(unsigned int);
+    void         (*attiva)(ExFinestra);          /* optional: 28 September 2026 */
+    void         (*scrivi_in)(unsigned int *, int, int, ExFont, int, int, const char *, unsigned int);
+    int          (*menu_comparsa)(ExFinestra, int, int, const char *const *, int);
+    int          (*apri_file)(const char *, char *, unsigned int);
+    void         (*lista_multipla)(ExFinestra, int);
+    int          (*lista_scelte)(ExFinestra, unsigned int *, int);
+    int          (*lista_riga_a)(ExFinestra, int);
+    void         (*voci_schede)(ExFinestra, int);
+    int          (*voce_togli)(ExFinestra, unsigned int);
+    void         (*voce_rinomina)(ExFinestra, unsigned int, const char *);
+    void         (*finestra_riduci)(unsigned int);
+    void         (*chiudi_altre)(void);
+    void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
+    int          (*imm_disponi)(ExFinestra, const char *, int, int, int, int, int, unsigned int);
+    const char  *(*versione)(void);
+    void         (*abilita)(ExFinestra, int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -279,6 +311,58 @@ static void assicura(void)
                       chiedi(t, "ex_colora_c");
     P.mdi_attivo    = (ExFinestra (*)(ExFinestra)) chiedi(t, "ex_mdi_attivo");
     P.mdi_attiva    = (void (*)(ExFinestra))       chiedi(t, "ex_mdi_attiva");
+
+    P.lista_icona   = (void (*)(ExFinestra, unsigned int, ExIcona))
+                      chiedi(t, "ex_lista_icona");
+    P.lista_margine = (unsigned int (*)(ExFinestra))
+                      chiedi(t, "ex_lista_margine");
+    P.icona_apri    = (ExIcona (*)(const char *))  chiedi(t, "ex_icona_apri");
+    P.icona_lato    = (unsigned int (*)(ExIcona))  chiedi(t, "ex_icona_lato");
+    P.icona_disegna = (int (*)(ExFinestra, ExIcona, int, int, unsigned int,
+                               unsigned int))      chiedi(t, "ex_icona_disegna");
+    P.icona_metti   = (void (*)(ExFinestra, ExIcona, unsigned int))
+                      chiedi(t, "ex_icona_metti");
+    P.icona_chiudi  = (void (*)(ExIcona))          chiedi(t, "ex_icona_chiudi");
+    P.a_vista       = (unsigned int (*)(ExFinestra, unsigned int *))
+                      chiedi(t, "ex_area_vista");
+    P.a_mostra_da   = (void (*)(ExFinestra, unsigned int))
+                      chiedi(t, "ex_area_mostra_da");
+    /* ! FACOLTATIVA: chi la usa (i download di exdlg) sa dire che manca. */
+    P.guarda_fd     = (int (*)(int, ExGuarda, void *))
+                      exlib_simbolo(t, "ex_guarda_fd");
+    P.tab_contenuto = (void (*)(ExFinestra, int))
+                      exlib_simbolo(t, "ex_tab_contenuto");
+    /* ! OPTIONAL, like the two above: a new taskbar over an old exwin.so
+     * starts, and simply shows no entries. */
+    P.finestre_segui  = (void (*)(ExFinestra))
+                        exlib_simbolo(t, "ex_finestre_segui");
+    P.finestre_elenco = (int (*)(ExVoceFin *, int))
+                        exlib_simbolo(t, "ex_finestre_elenco");
+    P.finestra_attiva = (void (*)(unsigned int))
+                        exlib_simbolo(t, "ex_finestra_attiva");
+    P.attiva          = (void (*)(ExFinestra))exlib_simbolo(t, "ex_attiva");
+    P.scrivi_in       = (void (*)(unsigned int *, int, int, ExFont, int, int, const char *, unsigned int))
+                        exlib_simbolo(t, "ex_scrivi_in");
+    P.menu_comparsa   = (int (*)(ExFinestra, int, int, const char *const *, int))
+                        exlib_simbolo(t, "ex_menu_comparsa");
+    P.apri_file       = (int (*)(const char *, char *, unsigned int))exlib_simbolo(t, "ex_apri_file");
+    P.lista_multipla  = (void (*)(ExFinestra, int))exlib_simbolo(t, "ex_lista_multipla");
+    P.lista_scelte    = (int (*)(ExFinestra, unsigned int *, int))exlib_simbolo(t, "ex_lista_scelte");
+    P.lista_riga_a    = (int (*)(ExFinestra, int))exlib_simbolo(t, "ex_lista_riga_a");
+    P.voci_schede     = (void (*)(ExFinestra, int))exlib_simbolo(t, "ex_voci_schede");
+    P.voce_togli      = (int (*)(ExFinestra, unsigned int))exlib_simbolo(t, "ex_voce_togli");
+    P.voce_rinomina   = (void (*)(ExFinestra, unsigned int, const char *))
+                        exlib_simbolo(t, "ex_voce_rinomina");
+    P.finestra_riduci = (void (*)(unsigned int))
+                        exlib_simbolo(t, "ex_finestra_riduci");
+    P.chiudi_altre    = (void (*)(void))
+                        exlib_simbolo(t, "ex_chiudi_le_altre");
+    P.area_seleziona  = (void (*)(ExFinestra, unsigned int, unsigned int, unsigned int))
+                        exlib_simbolo(t, "ex_area_seleziona");
+    P.imm_disponi     = (int (*)(ExFinestra, const char *, int, int, int, int, int, unsigned int))
+                        exlib_simbolo(t, "ex_immagine_disponi");
+    P.versione        = (const char *(*)(void)) exlib_simbolo(t, "ex_versione");
+    P.abilita         = (void (*)(ExFinestra, int)) exlib_simbolo(t, "ex_abilita");
 
     P.pronto = 1;
 }
@@ -457,3 +541,111 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
 
 ExFinestra ex_mdi_attivo(ExFinestra c) { assicura(); return P.mdi_attivo(c); }
 void       ex_mdi_attiva(ExFinestra c) { assicura(); P.mdi_attiva(c); }
+
+ExIcona      ex_icona_apri(const char *p)  { assicura(); return P.icona_apri(p); }
+
+void ex_lista_icona(ExFinestra f, unsigned int riga, ExIcona ic)
+{
+    assicura();
+    P.lista_icona(f, riga, ic);
+}
+
+unsigned int ex_lista_margine(ExFinestra f)
+{
+    assicura();
+    return P.lista_margine(f);
+}
+unsigned int ex_icona_lato(ExIcona ic)     { assicura(); return P.icona_lato(ic); }
+void         ex_icona_chiudi(ExIcona ic)   { assicura(); P.icona_chiudi(ic); }
+unsigned int ex_area_vista(ExFinestra f, unsigned int *v) { assicura(); return P.a_vista(f, v); }
+void         ex_area_mostra_da(ExFinestra f, unsigned int r) { assicura(); P.a_mostra_da(f, r); }
+int          ex_guarda_fd(int fd, ExGuarda fn, void *dato)
+{ assicura(); return P.guarda_fd ? P.guarda_fd(fd, fn, dato) : -2; }
+
+/* Optional: an older exwin.so without it just keeps Tab to itself. */
+void         ex_tab_contenuto(ExFinestra f, int si)
+{ assicura(); if (P.tab_contenuto) P.tab_contenuto(f, si); }
+
+void         ex_finestre_segui(ExFinestra f)
+{ assicura(); if (P.finestre_segui) P.finestre_segui(f); }
+
+int          ex_finestre_elenco(ExVoceFin *v, int max)
+{ assicura(); return P.finestre_elenco ? P.finestre_elenco(v, max) : 0; }
+
+void         ex_finestra_attiva(unsigned int id)
+{ assicura(); if (P.finestra_attiva) P.finestra_attiva(id); }
+void         ex_attiva(ExFinestra f)
+{ assicura(); if (P.attiva) P.attiva(f); }
+void ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
+                  const char *s, unsigned int c)
+{ assicura(); if (P.scrivi_in) P.scrivi_in(px, w, h, f, x, y, s, c); }
+int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
+{ assicura(); return P.menu_comparsa ? P.menu_comparsa(f, x, y, voci, n) : -1; }
+int ex_apri_file(const char *percorso, char *prog, unsigned int max)
+{ assicura(); return P.apri_file ? P.apri_file(percorso, prog, max) : -1; }
+void ex_lista_multipla(ExFinestra f, int si)
+{ assicura(); if (P.lista_multipla) P.lista_multipla(f, si); }
+int ex_lista_scelte(ExFinestra f, unsigned int *righe, int max)
+{ assicura(); if (P.lista_scelte) return P.lista_scelte(f, righe, max);
+  if (righe && max > 0) { righe[0] = ex_lista_scelta(f); return 1; } return 0; }
+int ex_lista_riga_a(ExFinestra f, int y)
+{ assicura(); return P.lista_riga_a ? P.lista_riga_a(f, y) : -1; }
+/* Su una exwin.so vecchia le schede sono una barra di linguette qualunque:
+ * niente X e niente Ctrl+Tab, e togliere o rinominare non si puo'. */
+void ex_voci_schede(ExFinestra c, int si)
+{ assicura(); if (P.voci_schede) P.voci_schede(c, si); }
+int ex_voce_togli(ExFinestra c, unsigned int i)
+{ assicura(); return P.voce_togli ? P.voce_togli(c, i) : 0; }
+void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
+{ assicura(); if (P.voce_rinomina) P.voce_rinomina(c, i, testo); }
+
+void         ex_finestra_riduci(unsigned int id)
+{ assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }
+
+void         ex_chiudi_le_altre(void)
+{ assicura(); if (P.chiudi_altre) P.chiudi_altre(); }
+
+/* Over an older exwin.so: the cursor goes there, without the selection. */
+void         ex_area_seleziona(ExFinestra a, unsigned int riga, unsigned int da,
+                               unsigned int fino)
+{
+    assicura();
+    if (P.area_seleziona) P.area_seleziona(a, riga, da, fino);
+    else                  ex_area_vai(a, riga, fino);
+}
+
+/* Over an exwin.so from before 27 September 2026 there is no version. */
+const char  *ex_versione(void)
+{
+    assicura();
+    return P.versione ? P.versione() : "(di prima delle versioni)";
+}
+
+/* Over an older exwin.so the control simply stays usable. */
+void         ex_abilita(ExFinestra c, int si)
+{
+    assicura();
+    if (P.abilita) P.abilita(c, si);
+}
+
+/* Over an older exwin.so: the image as it is, in the corner. */
+int          ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
+                                 int w, int h, int modo, unsigned int sfondo)
+{
+    assicura();
+    if (P.imm_disponi) return P.imm_disponi(f, percorso, x, y, w, h, modo, sfondo);
+    return P.immagine(f, percorso, x, y);
+}
+
+void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
+{
+    assicura();
+    P.icona_metti(c, ic, lato);
+}
+
+int ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
+                     unsigned int lato, unsigned int sfondo)
+{
+    assicura();
+    return P.icona_disegna(f, ic, x, y, lato, sfondo);
+}

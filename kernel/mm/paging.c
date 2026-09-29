@@ -18,6 +18,7 @@
 #include "idt.h"
 #include "sched.h"
 #include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
+#include "syscall.h" /* PROT_* and the errno values of paging_proteggi */
 
 /* =============================================================================
  * Struttura Page Directory Entry (PDE) — formato hardware x86
@@ -1477,6 +1478,22 @@ void page_fault_handler(InterruptFrame *frame)
         }
     }
 
+    /* A handler for SIGSEGV runs instead of the obituary below. SEGV_ACCERR
+     * (2) for a page of the process that is there but not allowed
+     * (mprotect), SEGV_MAPERR (1) for one that is not there.
+     * ! BELOW USER_SPACE_BASE THE CPU SAYS "PROTECTION", because the kernel
+     * half is mapped (supervisor only) in every process: NULL lands there.
+     * For the program nothing is there, and Linux says MAPERR for NULL, so
+     * that is what code that tells the two apart expects.
+     * See kernel/sched/segnali.c. */
+    if (from_user &&
+        segnali_fault(frame, 11,
+                      ((err & 0x1) && fault_addr >= USER_SPACE_BASE &&
+                       fault_addr < USER_SPACE_END) ? 2 : 1,
+                      fault_addr)) {
+        return;
+    }
+
     if (from_user) {
         Process *p = proc_get_current();
 
@@ -1571,4 +1588,168 @@ void page_fault_handler(InterruptFrame *frame)
 
     kpanic("Page Fault non gestito in ring0 a 0x%08x (EIP=0x%08x)",
            fault_addr, frame->eip);
+}
+
+/* =============================================================================
+ * paging_proteggi — mprotect(): change what ring 3 may do with its own pages
+ *
+ * The i386 without PAE has two bits for this, and they are enough:
+ *
+ *   PROT_NONE              PG_USER off: the page stays PRESENT, with its frame,
+ *                          but ring 3 cannot touch it (a #PF with P=1, U=1).
+ *   PROT_READ / PROT_EXEC  PG_USER on, PG_WRITABLE off.
+ *   PROT_WRITE             PG_USER and PG_WRITABLE on.
+ *
+ * ! PROT_NONE IS NOT "NOT PRESENT", and the difference matters. A non-present
+ * PTE here already means three things (never mapped, on swap via PG_SWAP,
+ * still in the executable via a VMA), and every walker of the tables reads it
+ * that way. A present page without PG_USER is invisible to all of them: it is
+ * freed on exit like any other, and paging_vittima never picks it for swap
+ * (it skips !PG_USER), so it is never lost either.
+ *
+ * ! THE KERNEL STILL READS AND WRITES THESE PAGES, because CR0.WP is off and
+ * supervisor accesses ignore both bits. A read() into a PROT_READ buffer
+ * succeeds instead of failing with EFAULT: POSIX allows either, and nothing
+ * in the kernel faults on user memory it has been handed.
+ *
+ * ! EXEC IS READ. Without NX there is no way to refuse execution, so a JIT
+ * that writes code and then asks for PROT_READ|PROT_EXEC gets exactly what it
+ * needs, and one that forgets to ask still runs.
+ *
+ * ! A SHARED FRAME NEVER BECOMES WRITABLE. Library code is the same frame in
+ * every process (pmm_ref_count > 1): making it writable here would let this
+ * process write into everybody else's copy. Linux would copy it first; we
+ * refuse with EACCES, which is what POSIX says for "not allowed on this
+ * mapping". Taking write AWAY from a shared page is fine: it is ours to lose.
+ *
+ * Pages that exist but are not in RAM (on swap, or still in the executable)
+ * are brought in first, so the new bits have a PTE to land on. A page that
+ * does not exist at all fails the whole call with ENOMEM, before anything is
+ * changed: POSIX wants either the whole range or an error.
+ * ============================================================================= */
+int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
+{
+    PDE     *pd;
+    uint32_t i, va, nuovi;
+    uint32_t ram = pmm_get_total_pages() * PAGE_SIZE;
+
+    if (p == NULL || p->page_directory == NULL) return -EINVAL;
+    pd = p->page_directory;
+
+    /* 1. Every page must be resident. */
+    for (i = 0; i < pagine; i++) {
+        PTE *pt;
+        uint32_t pdi, pti;
+
+        va  = virt + i * PAGE_SIZE;
+        pdi = PD_INDEX(va);
+        pti = PT_INDEX(va);
+
+        if ((pd[pdi] & PG_PRESENT) && (pd[pdi] & PG_HUGE)) {
+            if (spezza_4mb(pd, pdi) != 0) return -ENOMEM;
+        }
+        if (pd[pdi] & PG_PRESENT) {
+            pt = (PTE *)PG_ADDR(pd[pdi]);
+            if (pt[pti] & PG_PRESENT) continue;
+            if (SWAP_PTE_E_SWAP(pt[pti])) {
+                if (!pf_torna_da_swap(p, va)) return -ENOMEM;
+                continue;
+            }
+        }
+        if (!pf_carica_da_file(p, va)) return -ENOMEM;
+    }
+
+    nuovi = 0;
+    if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) nuovi |= PG_USER;
+    if (prot & PROT_WRITE)                           nuovi |= PG_WRITABLE;
+
+    interrupts_disable();
+
+    /* 2. Check the whole range before changing any of it. */
+    for (i = 0; i < pagine; i++) {
+        PTE *pt;
+        uint32_t pte, frame;
+
+        va = virt + i * PAGE_SIZE;
+        if (!(pd[PD_INDEX(va)] & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
+        pt  = (PTE *)PG_ADDR(pd[PD_INDEX(va)]);
+        pte = pt[PT_INDEX(va)];
+        if (!(pte & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
+
+        frame = PG_ADDR(pte);
+        if ((nuovi & PG_WRITABLE) && !(pte & PG_WRITABLE) &&
+            frame < ram && pmm_ref_count(frame) != 1) {
+            interrupts_enable();
+            return -EACCES;
+        }
+    }
+
+    /* 3. Apply. */
+    for (i = 0; i < pagine; i++) {
+        PTE *pt;
+
+        va = virt + i * PAGE_SIZE;
+        pt = (PTE *)PG_ADDR(pd[PD_INDEX(va)]);
+        pt[PT_INDEX(va)] = (pt[PT_INDEX(va)] & ~(uint32_t)(PG_USER | PG_WRITABLE))
+                           | nuovi;
+        /* Threads share the directory, so "current" is enough: every thread
+         * of this program runs on this same CR3. */
+        if (proc_get_current() != NULL &&
+            proc_get_current()->page_directory == pd)
+            __asm__ volatile ("invlpg (%0)" : : "r"(va) : "memory");
+    }
+
+    interrupts_enable();
+    return 0;
+}
+
+/* =============================================================================
+ * paging_utente_pronta — may the kernel write [va, va+len) of process p?
+ *
+ * For the signal frame, which the kernel writes on the user stack while the
+ * process is not running it. Pages below ESP are often not committed yet:
+ * they are brought in exactly as a fault from the stack would (growth, swap,
+ * the executable). A page that is absent for good, or that the process has
+ * made read-only or PROT_NONE, gives 0.
+ *
+ * ! THE ANSWER MUST COME BEFORE THE WRITE, not from a fault during it. The
+ * kernel writes with supervisor rights, so a read-only page would be written
+ * anyway (CR0.WP is off), and a page that is missing would be a ring-0 fault
+ * — a panic. The most common reason to deliver SIGSEGV is a stack that has
+ * run out, which is exactly the case where the write would land on nothing.
+ * ============================================================================= */
+int paging_utente_pronta(Process *p, uint32_t va, uint32_t len)
+{
+    uint32_t pagina, fine;
+
+    if (p == NULL || p->page_directory == NULL || len == 0) return 0;
+    if (va < USER_SPACE_BASE || va + len < va || va + len > USER_SPACE_END)
+        return 0;
+
+    fine = va + len;
+    for (pagina = va & 0xFFFFF000; pagina < fine; pagina += PAGE_SIZE) {
+        PDE *pd = p->page_directory;
+        PTE *pt;
+        uint32_t pte = 0;
+
+        if ((pd[PD_INDEX(pagina)] & PG_PRESENT) &&
+            !(pd[PD_INDEX(pagina)] & PG_HUGE)) {
+            pt  = (PTE *)PG_ADDR(pd[PD_INDEX(pagina)]);
+            pte = pt[PT_INDEX(pagina)];
+        }
+
+        if (!(pte & PG_PRESENT)) {
+            int ok = SWAP_PTE_E_SWAP(pte) ? pf_torna_da_swap(p, pagina)
+                   : (pf_cresci_stack(p, NULL, pagina, 0, 0) ||
+                      pf_carica_da_file(p, pagina));
+            if (!ok) return 0;
+            if (!(pd[PD_INDEX(pagina)] & PG_PRESENT)) return 0;
+            pt  = (PTE *)PG_ADDR(pd[PD_INDEX(pagina)]);
+            pte = pt[PT_INDEX(pagina)];
+        }
+
+        if ((pte & (PG_PRESENT | PG_USER | PG_WRITABLE)) !=
+            (PG_PRESENT | PG_USER | PG_WRITABLE)) return 0;
+    }
+    return 1;
 }

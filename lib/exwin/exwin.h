@@ -63,6 +63,18 @@ typedef struct {
 
 typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
 
+/* What a window procedure returns (exwin.so 0.010, 29 September 2026):
+ *   0                    handled: the toolkit then redraws the WHOLE window
+ *                        (EXM_DISEGNA to the procedure, and ex_aggiorna);
+ *   EX_NON_RIDISEGNARE   handled, and nothing visible changed — or the
+ *                        procedure has already drawn and called ex_aggiorna
+ *                        itself: the toolkit does not redraw;
+ *   anything else        not handled: ex_procedura_base does its default.
+ * ! THE FIRST ONE IS WHY A BIG PROGRAM FLICKERED: every clock tick and every
+ * mouse move it handled redrew the whole window. A procedure that knows
+ * better says so with the second. */
+#define EX_NON_RIDISEGNARE  0x4E524431L
+
 /* --- I messaggi ---------------------------------------------------------- */
 #define EXM_CREA        0x0001  /* la finestra e' nata */
 #define EXM_DISEGNA     0x0002  /* ridisegnati: il contenuto va rifatto */

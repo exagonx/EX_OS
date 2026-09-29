@@ -32,7 +32,7 @@ DEBUGFS=$(command -v debugfs || echo /usr/sbin/debugfs)
     tools/exilla/prova-cxx.cc -o "$D/prova-cxx" || exit 1
 echo "compilata: $(stat -c %s "$D/prova-cxx") byte"
 
-export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso
+export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM="${EXOS_CDROM:-dist/exos.iso}"
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
 SER=/tmp/exos/serialexilla.txt

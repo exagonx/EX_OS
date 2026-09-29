@@ -242,6 +242,14 @@ typedef struct {
 #define SYS_THREAD_FERMA    206
 #define SYS_THREAD_STACCA   217
 #define SYS_THREAD_PILA     218
+#define SYS_PROC_GRUPPO     164
+/* Signals and mprotect (kernel 0.227): see "SIGNALS, DELIVERED BY THE KERNEL". */
+#define SYS_MPROTECT        125
+#define SYS_SEG_AZIONE      165
+#define SYS_SEG_MASCHERA    166
+#define SYS_SEG_RITORNO     167
+#define SYS_SEG_PILA        168
+#define SYS_SEG_MANDA       169
 #define SYS_THREAD_FERMARSI 207
 #define SYS_GETPID      20
 /* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
@@ -468,6 +476,7 @@ typedef struct {
 #define EILSEQ       84
 #define EDOM         33
 #define EOVERFLOW    75
+#define ERANGE       34
 #define ETIMEDOUT   110
 
 /* La lunghezza massima di un percorso: VFS_PATH_MAX del kernel, e le due
@@ -550,6 +559,55 @@ char       *getenv(const char *chiave);   /* tmp_componi legge TMPDIR */
 #define SIG_DFL ((void (*)(int))0)
 #define SIG_IGN ((void (*)(int))1)
 #define SIG_ERR ((void (*)(int))-1)
+#define SIGBUS   7
+#define SIGSTOP 19
+
+/* The signal types, duplicated from lib/include/libc.h like everything else
+ * here (kernel 0.227, @SEGNALI). The layouts are explained there. */
+typedef unsigned int sigset_t;
+typedef struct {
+    int si_signo;
+    int si_errno;
+    int si_code;
+    union {
+        void *si_addr;
+        struct { int si_pid; unsigned int si_uid; } _mandato;
+        int _resto[29];
+    } _campi;
+} siginfo_t;
+struct sigaction {
+    union {
+        void (*sa_handler)(int);
+        void (*sa_sigaction)(int, siginfo_t *, void *);
+    } _gestore;
+    sigset_t sa_mask;
+    int      sa_flags;
+};
+#define sa_handler   _gestore.sa_handler
+#define sa_sigaction _gestore.sa_sigaction
+#define SA_SIGINFO   0x00000004
+#define SA_RESTART   0x10000000
+#define SA_RESETHAND 0x80000000
+#define SIG_BLOCK    0
+#define SIG_UNBLOCK  1
+#define SIG_SETMASK  2
+typedef struct { void *ss_sp; int ss_flags; size_t ss_size; } stack_t;
+typedef struct {
+    int           gregs[19];
+    void         *fpregs;
+    unsigned long oldmask;
+    unsigned long cr2;
+} mcontext_t;
+typedef struct ucontext_t {
+    unsigned long      uc_flags;
+    struct ucontext_t *uc_link;
+    stack_t            uc_stack;
+    mcontext_t         uc_mcontext;
+    sigset_t           uc_sigmask;
+} ucontext_t;
+typedef unsigned int sigjmp_buf[8];
+int  sigprocmask(int come, const sigset_t *nuova, sigset_t *prima);
+void longjmp(unsigned int *env, int val) __attribute__((noreturn));
 
 /* sysconf */
 #define _SC_ARG_MAX             0
@@ -835,10 +893,11 @@ struct rusage {
 };
 
 /* Duplicata da lib/include/libc.h come tutto il resto. ! La risoluzione
- * vera e' 10 ms: tv_nsec e' sempre un multiplo di 10 000 000. */
+ * vera e' 10 ms: tv_nsec e' sempre un multiplo di 10 000 000. ! tv_sec e'
+ * time_t dal 29 settembre 2026: vedi l'header. */
 struct timespec {
-    long tv_sec;
-    long tv_nsec;
+    time_t tv_sec;
+    long   tv_nsec;
 };
 #define TIME_UTC 1
 
@@ -3981,8 +4040,31 @@ int open(const char *path, int flags, ...)
     return err_posix(_syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, 0));
 }
 
+/* ! I SOCKET HANNO DESCRITTORI DA PRESA_BASE IN SU, e le funzioni dei
+ * descrittori li riconoscono qui: il kernel non ne sa niente (vedi la sezione
+ * dei socket in fondo al file e in lib/include/libc.h). */
+#define PRESA_BASE      1024
+#ifdef EXOS_LIBC_SO
+#define E_PRESA(fd)     0               /* nella libc.so i socket non ci sono */
+#else
+#define E_PRESA(fd)     ((fd) >= PRESA_BASE)
+#endif
+#ifndef EXOS_LIBC_SO
+static int     presa_chiudi(int fd);
+static int     presa_fcntl(int fd, int cmd, unsigned int arg);
+static int     presa_ioctl(int fd, unsigned int req, void *arg);
+#else
+#define presa_chiudi(fd)            (-1)
+#define presa_fcntl(fd, cmd, arg)   (-1)
+#define presa_ioctl(fd, req, arg)   (-1)
+#define poll_misto(f, n, t)         (-1)
+#endif
+ssize_t        send(int fd, const void *buf, size_t n, int flag);
+ssize_t        recv(int fd, void *buf, size_t n, int flag);
+
 int close(int fd)
 {
+    if (E_PRESA(fd)) return presa_chiudi(fd);
     return err_posix(_syscall1(SYS_CLOSE, (uint32_t)fd));
 }
 
@@ -3994,11 +4076,13 @@ int close(int fd)
  * una lseek() esplicita invece di dare per scontato di ripartire da capo. */
 int dup(int fd)
 {
+    if (E_PRESA(fd)) { errno = 95; return -1; }    /* EOPNOTSUPP: vedi libc.h */
     return (int)err_posix(_syscall1(SYS_DUP, (uint32_t)fd));
 }
 
 int dup2(int vecchio, int nuovo)
 {
+    if (E_PRESA(vecchio) || E_PRESA(nuovo)) { errno = 95; return -1; }
     return (int)err_posix(_syscall2(SYS_DUP2, (uint32_t)vecchio, (uint32_t)nuovo));
 }
 
@@ -4015,17 +4099,27 @@ int fcntl(int fd, int cmd, ...)
     arg = __builtin_va_arg(ap, uint32_t);
     __builtin_va_end(ap);
 
+    if (E_PRESA(fd)) return presa_fcntl(fd, cmd, arg);
     return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg));
 }
 
 ssize_t read(int fd, void *buf, size_t n)
 {
+    if (E_PRESA(fd)) return recv(fd, buf, n, 0);
     return err_posix(_syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, n));
 }
 
 ssize_t write(int fd, const void *buf, size_t n)
 {
+    if (E_PRESA(fd)) return send(fd, buf, n, 0);
     return err_posix(_syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n));
+}
+
+/* Il programma a cui appartiene `pid` (0 = chi chiama): il pid del capogruppo.
+ * Vedi SYS_PROC_GRUPPO in kernel/include/syscall.h. */
+int proc_gruppo(int pid)
+{
+    return (int)err_posix(_syscall1(SYS_PROC_GRUPPO, (uint32_t)pid));
 }
 
 int getpid(void)
@@ -4042,6 +4136,7 @@ int getpid(void)
  * ============================================================================= */
 int ioctl(int fd, unsigned int request, void *arg)
 {
+    if (E_PRESA(fd)) return presa_ioctl(fd, request, arg);
     return _syscall3(SYS_IOCTL, (uint32_t)fd, request, (uint32_t)arg);
 }
 
@@ -4894,6 +4989,7 @@ int pthread_detach(pthread_t t)
 
 int pthread_yield(void) { sched_yield(); return 0; }
 
+#ifdef EXOS_LIBC_SO
 /* I segnali di EX-OS sono del processo e si consegnano dentro (raise): a se
  * stessi si puo', a un altro filo no, e lo si dice. */
 int pthread_kill(pthread_t t, int segnale)
@@ -4903,11 +4999,32 @@ int pthread_kill(pthread_t t, int segnale)
     return raise(segnale) == 0 ? 0 : EINVAL;
 }
 
-int pthread_sigmask(int come, const void *nuovo, void *vecchio)
+int pthread_sigmask(int come, const sigset_t *nuovo, sigset_t *vecchio)
 {
     (void)come; (void)nuovo; (void)vecchio;
     return 0;
 }
+#else
+/* Kernel 0.227: the signal goes to that thread (its tid is a pid). The
+ * thread that calls is 0, which is also how the main thread — whose Filo
+ * may have no tid — names itself. */
+int pthread_kill(pthread_t t, int segnale)
+{
+    Filo   *f = (Filo *)t;
+    int32_t r;
+
+    if (!f) return ESRCH;
+    r = _syscall2(SYS_SEG_MANDA,
+                  (t == pthread_self()) ? 0u : (uint32_t)f->tid,
+                  (uint32_t)segnale);
+    return (r < 0) ? -r : 0;
+}
+
+int pthread_sigmask(int come, const sigset_t *nuovo, sigset_t *vecchio)
+{
+    return sigprocmask(come, nuovo, vecchio) < 0 ? errno : 0;
+}
+#endif
 
 int pthread_setname_np(pthread_t t, const char *nome)
 {
@@ -5045,15 +5162,17 @@ int clock_gettime(int orologio, struct timespec *ts);
 static unsigned int ms_a(const struct timespec *quando, int orologio)
 {
     struct timespec ora;
+    long long diff;
     long secondi, ms;
 
     /* ! A 32 BIT, NON A 64: la divisione di un long long vuole __divdi3, che
      * libc.so non porta con se'. Si tagliano i secondi a ventiquattro giorni —
-     * oltre, i millisecondi non stanno comunque in un int. */
+     * oltre, i millisecondi non stanno comunque in un int. La sottrazione dei
+     * time_t si fa a 64 (non divide) e si taglia prima di scendere a 32. */
     if (clock_gettime(orologio, &ora) != 0) return 0;
-    secondi = quando->tv_sec - ora.tv_sec;
-    if (secondi < 0) return 0;
-    if (secondi > 2000000) secondi = 2000000;
+    diff = quando->tv_sec - ora.tv_sec;
+    if (diff < 0) return 0;
+    secondi = diff > 2000000 ? 2000000 : (long)diff;
     ms = secondi * 1000 + (quando->tv_nsec - ora.tv_nsec) / 1000000;
     return ms > 0 ? (unsigned int)ms : 0;
 }
@@ -5691,6 +5810,7 @@ int rename(const char *da, const char *a)
     return 0;
 }
 
+#ifdef EXOS_LIBC_SO
 /* =============================================================================
  * Segnali: ci sono i nomi, non c'e' la consegna
  *
@@ -5736,6 +5856,258 @@ int raise(int sig)
     }
     return 0;
 }
+
+#else /* libc.a: signals delivered by the kernel */
+/* =============================================================================
+ * SIGNALS, DELIVERED BY THE KERNEL (kernel 0.227, @SEGNALI)
+ *
+ * The kernel knows, per signal, only "default / ignore / caught" with the
+ * flags and the extra mask, plus ONE entry point: __exos_segnale_entra below.
+ * The handlers are here, in g_azioni. When a signal comes the kernel writes a
+ * SegTelaio on the stack (the interrupted registers, siginfo, ucontext) and
+ * jumps to the entry point with ESP on it; the entry point saves the FPU,
+ * calls the handler through __exos_segnale_esegui, restores the FPU and asks
+ * the kernel to resume the interrupted code (SYS_SEG_RITORNO).
+ *
+ * ! THE FPU IS SAVED HERE, NOT BY THE KERNEL: FNSAVE in ring 3 is allowed and
+ * costs the kernel nothing. It is done in assembly BEFORE any C runs, since
+ * compiled code may use the x87 anywhere; FNSAVE also resets the unit, so the
+ * handler starts from a clean state. 108 bytes: FNSAVE, not FXSAVE, because
+ * the baseline is the Pentium MMX (MMX registers are the x87 ones).
+ *
+ * ! ONLY IN libc.a, like the sockets: the libc.so on the floppy has no room.
+ * There, signal() and raise() are the old ones above.
+ * ============================================================================= */
+
+/* ! DUPLICATED BY HAND from kernel/include/syscall.h. */
+typedef struct {
+    uint32_t tipo;          /* 0 default, 1 ignore, 2 caught */
+    uint32_t flag;
+    uint32_t maschera;
+    uint32_t ingresso;
+} SegAzione;
+
+typedef struct {
+    uint32_t    sig;
+    siginfo_t  *info;
+    ucontext_t *contesto;
+    uint32_t    riservato;
+    siginfo_t   si;
+    ucontext_t  uc;
+} SegTelaio;
+
+static struct sigaction g_azioni[SIG_MAX];
+
+void __exos_segnale_esegui(SegTelaio *t, void *fpu);
+
+void __exos_segnale_esegui(SegTelaio *t, void *fpu)
+{
+    struct sigaction *a;
+
+    if (t->sig == 0 || t->sig >= SIG_MAX) return;
+    a = &g_azioni[t->sig];
+    t->uc.uc_mcontext.fpregs = fpu;
+
+    if (a->sa_flags & SA_SIGINFO) {
+        if (a->sa_sigaction) a->sa_sigaction((int)t->sig, t->info, t->contesto);
+    } else if (a->sa_handler != SIG_DFL && a->sa_handler != SIG_IGN) {
+        a->sa_handler((int)t->sig);
+    }
+    /* SA_RESETHAND: the kernel has already gone back to SIG_DFL; the copy
+     * here follows, so sigaction(sig, NULL, &old) tells the truth. */
+    if (a->sa_flags & SA_RESETHAND) {
+        a->sa_handler = SIG_DFL;
+        a->sa_flags   = 0;
+    }
+}
+
+/* ESP -> SegTelaio (16-byte aligned by the kernel). 112 = 108 of FNSAVE
+ * rounded to 16, so the call below happens with ESP aligned as the i386
+ * ABI wants. */
+__asm__(
+".text\n"
+".globl __exos_segnale_entra\n"
+".type __exos_segnale_entra, @function\n"
+"__exos_segnale_entra:\n"
+"    movl  %esp, %esi\n"            /* esi = the frame (callee-saved) */
+"    subl  $112, %esp\n"
+"    fnsave (%esp)\n"
+"    movl  %esp, %edi\n"            /* edi = the FPU image */
+"    subl  $8, %esp\n"
+"    pushl %edi\n"
+"    pushl %esi\n"
+"    call  __exos_segnale_esegui\n"
+"    addl  $16, %esp\n"
+"    frstor (%edi)\n"
+"    movl  8(%esi), %ebx\n"         /* SegTelaio.contesto */
+"    movl  $167, %eax\n"            /* SYS_SEG_RITORNO */
+"    int   $0x80\n"
+"    hlt\n"                         /* never: seg_ritorno does not come back */
+".size __exos_segnale_entra, .-__exos_segnale_entra\n"
+);
+extern void __exos_segnale_entra(void);
+
+int sigemptyset(sigset_t *s) { if (!s) { errno = EINVAL; return -1; } *s = 0; return 0; }
+int sigfillset(sigset_t *s)  { if (!s) { errno = EINVAL; return -1; } *s = ~0u; return 0; }
+
+int sigaddset(sigset_t *s, int sig)
+{
+    if (!s || sig <= 0 || sig >= SIG_MAX) { errno = EINVAL; return -1; }
+    *s |= 1u << sig;
+    return 0;
+}
+
+int sigdelset(sigset_t *s, int sig)
+{
+    if (!s || sig <= 0 || sig >= SIG_MAX) { errno = EINVAL; return -1; }
+    *s &= ~(1u << sig);
+    return 0;
+}
+
+int sigismember(const sigset_t *s, int sig)
+{
+    if (!s || sig <= 0 || sig >= SIG_MAX) { errno = EINVAL; return -1; }
+    return (*s >> sig) & 1u;
+}
+
+int sigaction(int sig, const struct sigaction *nuova, struct sigaction *prima)
+{
+    SegAzione k;
+    int32_t   r;
+
+    if (sig <= 0 || sig >= SIG_MAX) { errno = EINVAL; return -1; }
+    if (prima) *prima = g_azioni[sig];
+    if (!nuova) return 0;
+
+    k.tipo     = (nuova->sa_handler == SIG_IGN) ? 1
+               : (nuova->sa_handler == SIG_DFL && !(nuova->sa_flags & SA_SIGINFO)) ? 0
+               : 2;
+    k.flag     = (uint32_t)nuova->sa_flags;
+    k.maschera = nuova->sa_mask;
+    k.ingresso = (uint32_t)(uintptr_t)__exos_segnale_entra;
+
+    /* The table first: a signal that comes the instant the kernel is told
+     * must find its handler already here. */
+    {
+        struct sigaction vecchia = g_azioni[sig];
+
+        g_azioni[sig] = *nuova;
+        r = _syscall3(SYS_SEG_AZIONE, (uint32_t)sig, (uint32_t)(uintptr_t)&k, 0);
+        if (r < 0) {
+            g_azioni[sig] = vecchia;
+            errno = -r;
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* BSD semantics, as on glibc: the handler stays installed, and a signal is
+ * blocked while its own handler runs. */
+void (*signal(int sig, void (*gestore)(int)))(int)
+{
+    struct sigaction a, prima;
+
+    memset(&a, 0, sizeof(a));
+    a.sa_handler = gestore;
+    a.sa_flags   = SA_RESTART;
+    if (sigaction(sig, &a, &prima) < 0) return SIG_ERR;
+    return (prima.sa_flags & SA_SIGINFO) ? (void (*)(int))prima.sa_sigaction
+                                         : prima.sa_handler;
+}
+
+int sigprocmask(int come, const sigset_t *nuova, sigset_t *prima)
+{
+    int32_t r = _syscall3(SYS_SEG_MASCHERA, (uint32_t)come,
+                          (uint32_t)(uintptr_t)nuova, (uint32_t)(uintptr_t)prima);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+int sigaltstack(const stack_t *nuova, stack_t *prima)
+{
+    int32_t r = _syscall2(SYS_SEG_PILA, (uint32_t)(uintptr_t)nuova,
+                          (uint32_t)(uintptr_t)prima);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+/* pid > 0 only: EX-OS has no process groups, so 0 and the negative forms
+ * have nobody to name. */
+int kill(int pid, int sig)
+{
+    int32_t r;
+
+    if (pid <= 0) { errno = (pid == 0 || pid == -1) ? EPERM : ESRCH; return -1; }
+    r = _syscall2(SYS_SEG_MANDA, (uint32_t)pid, (uint32_t)sig);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+/* ! THE HANDLER HAS RUN WHEN raise() RETURNS, as POSIX requires: the signal
+ * becomes pending on this thread and the kernel delivers it on the way out
+ * of this very syscall. */
+int raise(int sig)
+{
+    int32_t r;
+
+    if (sig <= 0 || sig >= SIG_MAX) { errno = EINVAL; return -1; }
+
+    /* The old libc said why it was dying; the kernel only logs it. */
+    if (g_azioni[sig].sa_handler == SIG_DFL &&
+        !(g_azioni[sig].sa_flags & SA_SIGINFO) &&
+        (sig == SIGABRT || sig == SIGSEGV || sig == SIGILL || sig == SIGFPE ||
+         sig == SIGBUS)) {
+        sigset_t m = 0;
+        sigprocmask(SIG_BLOCK, NULL, &m);
+        if (!(m & (1u << sig))) fprintf(stderr, "%s\n", strsignal(sig));
+    }
+
+    r = _syscall2(SYS_SEG_MANDA, 0, (uint32_t)sig);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+/* sigsetjmp saves the mask if asked, then becomes setjmp (a tail jump: the
+ * return address and env are still where setjmp looks for them). */
+__asm__(
+".text\n"
+".globl sigsetjmp\n"
+".type sigsetjmp, @function\n"
+"sigsetjmp:\n"
+"    movl  4(%esp), %eax\n"
+"    movl  8(%esp), %ecx\n"
+"    movl  %ecx, 24(%eax)\n"
+"    testl %ecx, %ecx\n"
+"    jz    1f\n"
+"    pushl %ebx\n"
+"    leal  28(%eax), %edx\n"        /* &env[7] */
+"    xorl  %ecx, %ecx\n"
+"    movl  $166, %eax\n"            /* SYS_SEG_MASCHERA: only read */
+"    movl  %ecx, %ebx\n"
+"    int   $0x80\n"
+"    popl  %ebx\n"
+"1:  jmp   setjmp\n"
+".size sigsetjmp, .-sigsetjmp\n"
+);
+
+void siglongjmp(sigjmp_buf env, int val)
+{
+    if (env[6]) sigprocmask(SIG_SETMASK, (const sigset_t *)&env[7], NULL);
+    longjmp(env, val);
+}
+
+
+/* ! libc.a only, like the rest: 176 bytes were enough to fill the floppy
+ * (29 September 2026, "Disk full" copying libc.so). */
+int mprotect(void *addr, size_t lung, int prot)
+{
+    int32_t r = _syscall3(SYS_MPROTECT, (uint32_t)(uintptr_t)addr,
+                          (uint32_t)lung, (uint32_t)prot);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+#endif /* EXOS_LIBC_SO */
 
 /* `char *` e non `const char *` per la stessa ragione di strerror: e' la
  * firma dello standard, ed e' quella che il codice di terzi ridichiara. */
@@ -6400,11 +6772,27 @@ int ipc_send(unsigned int dest_pid, unsigned int tipo,
 #define IPC_SCAFF_MSG   24      /* quanti messaggi al massimo */
 #define IPC_SCAFF_BYTE  6144    /* e quanti byte in tutto: quattro pieni */
 
+/* =============================================================================
+ * ! OGNI MESSAGGIO SULLO SCAFFALE SA DI QUALE FILO E' (29 settembre 2026).
+ *
+ * La cassetta IPC e' del FILO — il kernel indirizza per pid, e un filo ha il
+ * suo — ma lo scaffale e' della libc, cioe' di tutto il processo. Senza questo
+ * campo un filo metteva da parte la risposta dello stack IP destinata a lui, e
+ * un altro filo che aspettava una risposta dello stesso tipo se la prendeva:
+ * due connessioni che si scambiano i dati. Con i socket BSD, dove ogni filo di
+ * un navigatore parla con lo stack per conto suo, sarebbe stata la regola.
+ *
+ * ! IL LUCCHETTO PROTEGGE LO SCAFFALE, NON L'ATTESA: si prende per guardare e
+ * per mettere, mai mentre si dorme sulla cassetta del kernel. Tenerlo durante
+ * l'attesa vorrebbe dire un filo solo alla volta in ascolto.
+ * ============================================================================= */
 static struct {
     IpcMessage   meta;
     unsigned int off;           /* dove stanno i dati dentro g_scaff_dati */
     unsigned int len;
+    unsigned int filo;          /* il pid del filo nella cui cassetta era arrivato */
 } g_scaff[IPC_SCAFF_MSG];
+static volatile int g_scaff_m = 0;        /* Mutex dello scaffale */
 
 static unsigned char g_scaff_dati[IPC_SCAFF_BYTE];
 static unsigned int  g_scaff_n     = 0;   /* messaggi in fila, dal piu' vecchio */
@@ -6436,7 +6824,7 @@ static void scaff_togli(unsigned int i)
 }
 
 static int scaff_metti(const IpcMessage *meta, const void *dati,
-                       unsigned int len)
+                       unsigned int len, unsigned int filo)
 {
     if (!meta) return -1;
     if (len > IPC_MSG_MAX_DATA) return -1;
@@ -6446,6 +6834,7 @@ static int scaff_metti(const IpcMessage *meta, const void *dati,
     g_scaff[g_scaff_n].meta = *meta;
     g_scaff[g_scaff_n].off  = g_scaff_usati;
     g_scaff[g_scaff_n].len  = len;
+    g_scaff[g_scaff_n].filo = filo;
     if (len && dati) memcpy(g_scaff_dati + g_scaff_usati, dati, len);
     g_scaff_usati += len;
     g_scaff_n++;
@@ -6454,12 +6843,26 @@ static int scaff_metti(const IpcMessage *meta, const void *dati,
 
 int ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len)
 {
-    return scaff_metti(meta, dati, len);
+    unsigned int filo = (unsigned int)getpid();
+    int          r;
+
+    mutex_prendi(&g_scaff_m);
+    r = scaff_metti(meta, dati, len, filo);
+    mutex_lascia(&g_scaff_m);
+    return r;
 }
 
+/* Quanti ce ne sono PER CHI CHIEDE: i messaggi degli altri fili non si
+ * possono prendere da qui, e contarli farebbe credere che c'e' posta. */
 unsigned int ipc_pronto(void)
 {
-    return g_scaff_n;
+    unsigned int filo = (unsigned int)getpid(), i, n = 0;
+
+    mutex_prendi(&g_scaff_m);
+    for (i = 0; i < g_scaff_n; i++)
+        if (g_scaff[i].filo == filo) n++;
+    mutex_lascia(&g_scaff_m);
+    return n;
 }
 
 /* Serve il messaggio i-esimo a chi lo ha chiesto e lo toglie. */
@@ -6475,11 +6878,23 @@ static int scaff_consegna(unsigned int i, IpcMessage *out_meta,
     return (int)q;
 }
 
-/* Serve il primo messaggio dello scaffale, se ce n'e' uno. Rende i byte, o -1. */
+/* Serve il primo messaggio dello scaffale DI QUESTO FILO, se ce n'e' uno.
+ * Rende i byte, o -1. */
 static int scaffale_prendi(IpcMessage *out_meta, void *buf, unsigned int buf_len)
 {
-    if (g_scaff_n == 0) return -1;
-    return scaff_consegna(0, out_meta, buf, buf_len);
+    unsigned int filo, i;
+    int          r = -1;
+
+    if (g_scaff_n == 0) return -1;          /* il caso di sempre: niente lucchetto */
+    filo = (unsigned int)getpid();
+    mutex_prendi(&g_scaff_m);
+    for (i = 0; i < g_scaff_n; i++)
+        if (g_scaff[i].filo == filo) {
+            r = scaff_consegna(i, out_meta, buf, buf_len);
+            break;
+        }
+    mutex_lascia(&g_scaff_m);
+    return r;
 }
 
 int ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len)
@@ -6528,7 +6943,9 @@ int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
  * mentre aspetta altro non puo' pagarli. Con IPC_SUBITO la cassetta si chiede a
  * poll() — che risponde senza dormire — e quando e' vuota si torna scaduti.
  * ============================================================================= */
-static unsigned char g_scegli_buf[IPC_MSG_MAX_DATA];
+/* ! IL BUFFER DI SERVIZIO STA SULLA PILA dal 29 settembre 2026: era statico, e
+ * due fili dentro ipc_scegli insieme ci scrivevano tutti e due. Sono 1536 byte
+ * per chiamata, su pile che sono di 256 KB (il principale) e 2 MB (i fili). */
 
 /* ! C'E' POSTA NELLA CASSETTA DEL KERNEL? — chiesto senza aspettare. Serve solo
  * a IPC_SUBITO: leggere con una scadenza corta non sarebbe la stessa cosa,
@@ -6549,20 +6966,32 @@ static int c_e_posta(void)
 int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
                void *buf, unsigned int buf_len, unsigned int ms)
 {
-    unsigned int i = 0;
-    unsigned int inizio = uptime_ms();
+    unsigned int  i = 0;
+    unsigned int  inizio = uptime_ms();
+    unsigned int  filo;
+    unsigned char posta[IPC_MSG_MAX_DATA];
 
     if (!filtro) return ipc_recv_timeout(out_meta, buf, buf_len, ms);
 
     /* Prima lo scaffale, dal piu' vecchio: cio' che e' gia' in casa non fa
-     * aspettare nessuno. Un ALTRUI si salta e resta al suo posto. */
+     * aspettare nessuno. Un ALTRUI si salta e resta al suo posto — e quel che
+     * e' arrivato a un altro filo non si guarda nemmeno. */
+    filo = (unsigned int)getpid();
+    mutex_prendi(&g_scaff_m);
     while (i < g_scaff_n) {
-        int d = filtro(&g_scaff[i].meta, dato);
+        int d;
 
-        if (d == IPC_MIO)   return scaff_consegna(i, out_meta, buf, buf_len);
+        if (g_scaff[i].filo != filo) { i++; continue; }
+        d = filtro(&g_scaff[i].meta, dato);
+        if (d == IPC_MIO) {
+            int r = scaff_consegna(i, out_meta, buf, buf_len);
+            mutex_lascia(&g_scaff_m);
+            return r;
+        }
         if (d == IPC_BUTTA) { scaff_togli(i); continue; }
         i++;
     }
+    mutex_lascia(&g_scaff_m);
 
     /* Poi la cassetta del kernel. */
     for (;;) {
@@ -6585,7 +7014,7 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
         }
 
         r = (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)&meta,
-                           (uint32_t)g_scegli_buf, IPC_MSG_MAX_DATA, resta);
+                           (uint32_t)posta, IPC_MSG_MAX_DATA, resta);
         if (r < 0) return r;
 
         {
@@ -6600,7 +7029,7 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
 
                 if (out_meta) *out_meta = meta;
                 if (c > buf_len) c = buf_len;
-                if (c && buf) memcpy(buf, g_scegli_buf, c);
+                if (c && buf) memcpy(buf, posta, c);
                 return (int)c;
             }
 
@@ -6609,7 +7038,8 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
             /* ALTRUI: aspetta il suo padrone sullo scaffale. E se non c'e'
              * piu' posto si fa spazio buttando il piu' vecchio che non e' del
              * chiamante — vedi il perche' in cima. */
-            while (scaff_metti(&meta, g_scegli_buf, q) < 0) {
+            mutex_prendi(&g_scaff_m);
+            while (scaff_metti(&meta, posta, q, filo) < 0) {
                 unsigned int k;
                 int          buttato = 0;
 
@@ -6621,14 +7051,18 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
                  * sempre: quel che e' del chiamante e' gia' stato consegnato
                  * dalla scorsa dello scaffale, qui sopra. */
                 for (k = 0; k < g_scaff_n; k++)
-                    if (filtro(&g_scaff[k].meta, dato) != IPC_MIO) {
+                    if (g_scaff[k].filo == filo &&
+                        filtro(&g_scaff[k].meta, dato) != IPC_MIO) {
                         scaff_togli(k);
                         buttato = 1;
                         break;
                     }
+                /* Nessuno dei miei da buttare: il piu' vecchio in assoluto. */
+                if (!buttato && g_scaff_n > 0) { scaff_togli(0); buttato = 1; }
 
                 if (!buttato) break;
             }
+            mutex_lascia(&g_scaff_m);
         }
     }
 }
@@ -7207,7 +7641,7 @@ int timespec_get(struct timespec *ts, int base)
     adesso = time(NULL);
     if (adesso == (time_t)-1) return 0;     /* l'orologio non risponde */
 
-    ts->tv_sec  = (long)adesso;
+    ts->tv_sec  = adesso;
     ts->tv_nsec = (long)((uptime_ms() % 1000u) * 1000000u);
     return base;
 }
@@ -7227,7 +7661,7 @@ int clock_gettime(int orologio, struct timespec *ts)
         return 0;
     case 1: case 2: case 3: case 4: case 6: case 7:     /* il resto: monotono */
         ms = uptime_ms();
-        ts->tv_sec  = (long)(ms / 1000u);
+        ts->tv_sec  = (time_t)(ms / 1000u);
         ts->tv_nsec = (long)((ms % 1000u) * 1000000u);
         return 0;
     default:
@@ -7497,10 +7931,27 @@ int log_seriale(const char *s)
     return (int)_syscall2(SYS_LOG, (unsigned int)s, n);
 }
 
+/* ! -1 E errno, non -errno (29 settembre 2026): come stat, era rimasta alla
+ * convenzione vecchia. */
+static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout)
+{
+    return (int)err_posix(_syscall3(SYS_POLL, (unsigned int)fds, nfds,
+                                    (unsigned int)timeout));
+}
+
+#ifndef EXOS_LIBC_SO
+static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout);
+#endif
+
+/* Con un socket fra i descrittori il giro lo fa poll_misto (sezione dei
+ * socket); senza, e' la syscall di sempre. */
 int poll(struct pollfd *fds, unsigned int nfds, int timeout)
 {
-    return (int)_syscall3(SYS_POLL, (unsigned int)fds, nfds,
-                          (unsigned int)timeout);
+    unsigned int i;
+
+    for (i = 0; fds && i < nfds; i++)
+        if (E_PRESA(fds[i].fd)) return poll_misto(fds, nfds, timeout);
+    return poll_kernel(fds, nfds, timeout);
 }
 
 /* =============================================================================
@@ -7557,7 +8008,7 @@ int select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
     }
 
     rc = poll(v, n, ms);
-    if (rc < 0) { errno = -rc; return -1; }
+    if (rc < 0) return -1;                  /* errno l'ha gia' messo poll */
 
     if (leggere)   FD_ZERO(leggere);
     if (scrivere)  FD_ZERO(scrivere);
@@ -8084,6 +8535,7 @@ void *sbrk(int incr)
 
 long lseek(int fd, long offset, int whence)
 {
+    if (E_PRESA(fd)) { errno = 29; return -1; }   /* ESPIPE: un socket non ha posizione */
     int32_t r = _syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset,
                           (uint32_t)whence);
     if (r < 0) { errno = -r; return -1; }
@@ -8160,10 +8612,16 @@ int stat(const char *path, struct stat *st)
     Stat g;
     int  r;
 
-    if (st == NULL) { errno = 14; return -14; }   /* EFAULT */
+    /* ! -1 E errno, COME VUOLE POSIX (29 settembre 2026). Rendeva -errno —
+     * -2 per un file che non c'e' — la convenzione vecchia che fstat aveva
+     * gia' lasciato ad agosto. Chi controllava `< 0` non se ne accorgeva; la
+     * std di Rust guarda `== -1`, e per lei ogni percorso esisteva:
+     * fs::metadata di un file cancellato rispondeva Ok, create_dir_all non
+     * creava niente. statraw imposta gia' errno. */
+    if (st == NULL) { errno = EFAULT; return -1; }
 
     r = statraw(path, &g);
-    if (r < 0) return r;
+    if (r < 0) return -1;
 
     stat_da_grezzo(&g, st);
     return 0;
@@ -8190,6 +8648,15 @@ int fstat(int fd, struct stat *st)
      * al file per cosa e' costato altrove. `fsize` invece rendeva gia' -1,
      * quindi il ramo sotto era corretto per caso. */
     if (st == NULL) { errno = EFAULT; return -1; }
+
+    if (E_PRESA(fd)) {                            /* un socket: tipo e basta */
+        if (fcntl(fd, 1 /* F_GETFD */) < 0) return -1;
+        memset(st, 0, sizeof(*st));
+        st->st_mode    = 0140000u | 0666u;        /* S_IFSOCK */
+        st->st_nlink   = 1;
+        st->st_blksize = 512;
+        return 0;
+    }
 
     dim = fsize(fd);
     if (dim < 0) return -1;
@@ -9148,6 +9615,26 @@ char *strerror(int err)
     }
 }
 
+/* strerror_r, la forma XSI di POSIX (quella che rende un int): il messaggio di
+ * strerror copiato in `buf`. ERANGE se non ci sta — il pezzo che ci sta c'e'
+ * comunque, terminato. La chiede la std di Rust (@RUST-STD, 29 settembre 2026)
+ * per io::Error, e la usa il codice C di terzi che vuole essere sicuro coi
+ * fili: qui strerror e' gia' rientrante (stringhe costanti), la copia no. */
+int strerror_r(int err, char *buf, size_t n)
+{
+    const char *m = strerror(err);
+    size_t      k = strlen(m);
+
+    if (buf == NULL || n == 0) return ERANGE;
+    if (k >= n) {
+        memcpy(buf, m, n - 1);
+        buf[n - 1] = '\0';
+        return ERANGE;
+    }
+    memcpy(buf, m, k + 1);
+    return 0;
+}
+
 void perror(const char *msg)
 {
     if (msg != NULL && msg[0] != '\0') {
@@ -9684,6 +10171,1412 @@ void sha256_esa(const void *dati, size_t len, char out[65])
  * regole del Makefile, quindi un oggetto in piu' sarebbe stato venti modifiche
  * e almeno una dimenticanza.
  * ============================================================================= */
+/* ! NON NELLA libc.so (29 settembre 2026): la libreria condivisa sta sul floppy
+ * da 1,44 MB, e i socket la portavano da 98 a 117 KB — il floppy non si
+ * chiudeva piu'. I programmi del sistema parlano allo stack per IPC e non li
+ * usano; li usa chi si collega alla libc.a: Rust, Exilla, il software portato.
+ * Se un giorno servissero a un programma dinamico, la strada e' una socket.so
+ * sul CD, non la libc del floppy. */
+#ifndef EXOS_LIBC_SO
+/* =============================================================================
+ * I SOCKET BSD (@SOCKET-BSD, 29 settembre 2026)
+ *
+ * Il contratto sta in lib/include/libc.h, nella sezione omonima: qui come e'
+ * fatto. Un socket e' una voce di g_prese; il suo descrittore e' PRESA_BASE +
+ * indice. Dietro c'e' lo stack IP (drivers/ip/ip.c), a cui si parla col
+ * protocollo di drivers/net/ip_proto.h — le strutture sono ripetute qui sotto,
+ * come tutto cio' che questo file prende dagli header, e vanno tenute uguali.
+ *
+ * ! UNA DOMANDA ALLA VOLTA, E NESSUNA ABBANDONATA. Le risposte dello stack non
+ * portano un numero di richiesta: l'unico modo di non scambiarle e' che ogni
+ * filo ne aspetti una sola e la aspetti fino in fondo. Per questo le attese con
+ * scadenza non si fanno MAI dentro lo stack (una RICEVI dimenticata
+ * consegnerebbe i suoi dati a chi non li aspetta): quando serve una scadenza,
+ * si chiede lo STATO a intervalli e si legge solo quando c'e' qualcosa.
+ * Lo stack risponde sempre — anche alle attese che scadono, con -ETIMEDOUT.
+ *
+ * ! LE RISPOSTE ARRIVANO AL FILO CHE CHIEDE: la cassetta IPC e' sua, e lo
+ * scaffale della libc dal 29 settembre separa i messaggi per filo. Lo stack
+ * assegna le connessioni al PROGRAMMA (ip.drv 0.005), quindi un filo apre e un
+ * altro legge.
+ * ============================================================================= */
+#define PRESE_MAX       64
+
+#define S_AF_INET       2
+#define S_SOCK_STREAM   1
+#define S_SOCK_DGRAM    2
+#define S_SOCK_NONBLOCK 04000
+#define S_SOL_SOCKET    1
+#define S_IPPROTO_TCP   6
+#define S_IPPROTO_UDP   17
+#define S_MSG_PEEK      0x2
+#define S_MSG_DONTWAIT  0x40
+#define S_MSG_WAITALL   0x100
+#define S_O_NONBLOCK    0x800
+#define S_F_GETFD       1
+#define S_F_SETFD       2
+#define S_F_GETFL       3
+#define S_F_SETFL       4
+#define S_S_IFSOCK      0140000
+#define S_FIONREAD      0x541B
+#define S_FIONBIO       0x5421
+#define S_POLLIN        0x1
+#define S_POLLOUT       0x4
+#define S_POLLERR       0x8
+#define S_POLLHUP       0x10
+#define S_POLLNVAL      0x20
+
+#define E_NOTSOCK       88
+#define E_DESTADDRREQ   89
+#define E_MSGSIZE       90
+#define E_PROTONOSUPP   93
+#define E_OPNOTSUPP     95
+#define E_AFNOSUPPORT   97
+#define E_ADDRINUSE     98
+#define E_NETDOWN       100
+#define E_NETUNREACH    101
+#define E_CONNABORTED   103
+#define E_CONNRESET     104
+#define E_ISCONN        106
+#define E_NOTCONN       107
+#define E_CONNREFUSED   111
+#define E_HOSTUNREACH   113
+#define E_PIPE          32
+#define E_NOPROTOOPT    92
+#define E_NFILE         23
+
+/* drivers/net/ip_proto.h, ripetuto */
+#define P_IP_MSG_STATO       2
+#define P_IP_MSG_UDP_APRI    5
+#define P_IP_MSG_UDP_CHIUDI  6
+#define P_IP_MSG_UDP_INVIA   7
+#define P_IP_MSG_UDP_RICEVI  8
+#define P_IP_MSG_TCP_APRI    9
+#define P_IP_MSG_TCP_INVIA  10
+#define P_IP_MSG_TCP_RICEVI 11
+#define P_IP_MSG_TCP_CHIUDI 12
+#define P_IP_MSG_TCP_STATO  13
+#define P_IP_MSG_TCP_ASCOLTA 14
+#define P_IP_MSG_TCP_ACCETTA 15
+#define P_IP_MSG_ESITO     128
+#define P_IP_MSG_STATO_R   129
+#define P_IP_MSG_UDP_DATI  132
+#define P_IP_MSG_TCP_DATI  133
+#define P_IP_MSG_TCP_INFO  134
+#define P_TCP_APERTA         2
+#define P_TCP_DATI_MAX     (IPC_MSG_MAX_DATA - 16)
+
+typedef struct { unsigned char ip[4]; unsigned int porta, timeout_ms; } PTcpApri;
+typedef struct { unsigned int id; } PTcpRif;
+typedef struct { unsigned int porta; } PTcpAscolta;
+typedef struct { unsigned int id, timeout_ms; } PTcpAccetta;
+typedef struct { unsigned int id, len; } PTcpDati;
+typedef struct {
+    unsigned int  id, stato, in_coda_rx, in_coda_tx;
+    unsigned char ip[4];
+    unsigned int  porta, porta_loc;
+} PTcpInfo;
+typedef struct { unsigned int porta; } PUdpApri;
+typedef struct { unsigned char ip[4]; unsigned int porta, porta_locale; } PUdpInvia;
+typedef struct { unsigned char ip[4]; unsigned int porta, porta_locale, len; } PUdpDati;
+typedef struct {
+    unsigned char ip[4], maschera[4], gateway[4], dns[4];
+} PIpConfig;
+
+/* <netinet/in.h>, ripetuto */
+struct sockaddr        { unsigned short sa_family; char sa_data[14]; };
+struct in_addr         { unsigned int s_addr; };
+struct sockaddr_in {
+    unsigned short sin_family, sin_port;
+    struct in_addr sin_addr;
+    unsigned char  sin_zero[8];
+};
+struct iovec  { void *iov_base; size_t iov_len; };
+struct msghdr {
+    void *msg_name; unsigned int msg_namelen;
+    struct iovec *msg_iov; int msg_iovlen;
+    void *msg_control; unsigned int msg_controllen; int msg_flags;
+};
+struct addrinfo {
+    int ai_flags, ai_family, ai_socktype, ai_protocol;
+    unsigned int ai_addrlen;
+    struct sockaddr *ai_addr;
+    char *ai_canonname;
+    struct addrinfo *ai_next;
+};
+struct hostent { char *h_name; char **h_aliases; int h_addrtype, h_length; char **h_addr_list; };
+
+typedef struct {
+    int           usata;
+    int           tipo;          /* S_SOCK_STREAM o S_SOCK_DGRAM */
+    unsigned int  id;            /* connessione o ascoltatore dello stack, 0 = nessuno */
+    int           ascolta;
+    unsigned int  porta_loc;     /* legata con bind, o data dallo stack */
+    int           udp_aperta;    /* la porta UDP e' stata aperta nello stack */
+    int           udp_prenotata; /* c'e' una UDP_RICEVI in volo */
+    unsigned char ip_rem[4];
+    unsigned int  porta_rem;
+    int           connesso;
+    int           nonblocc;
+    int           cloexec;
+    int           chiusa_rd, chiusa_wr;
+    int           fine;          /* l'altra parte ha chiuso: la lettura rende 0 */
+    unsigned int  rcv_ms, snd_ms;
+    unsigned char *avanzo;       /* cio' che una consegna ha portato in piu' */
+    unsigned int  a_pos, a_fine;
+    unsigned char *udp_dato;     /* un datagramma arrivato e non ancora letto */
+    unsigned int  udp_len;
+    int           udp_pieno;
+    unsigned char udp_da_ip[4];
+    unsigned int  udp_da_porta;
+} Presa;
+
+static Presa        g_prese[PRESE_MAX];
+static volatile int g_prese_m = 0;
+static int          g_pid_ip  = 0;
+
+static unsigned short scambia16(unsigned short v) { return (unsigned short)((v >> 8) | (v << 8)); }
+static unsigned int   scambia32(unsigned int v)
+{
+    return (v >> 24) | ((v >> 8) & 0xFF00u) | ((v << 8) & 0xFF0000u) | (v << 24);
+}
+unsigned short htons(unsigned short v) { return scambia16(v); }
+unsigned short ntohs(unsigned short v) { return scambia16(v); }
+unsigned int   htonl(unsigned int v)   { return scambia32(v); }
+unsigned int   ntohl(unsigned int v)   { return scambia32(v); }
+
+static Presa *presa_di(int fd)
+{
+    int i = fd - PRESA_BASE;
+
+    if (i < 0 || i >= PRESE_MAX || !g_prese[i].usata) return NULL;
+    return &g_prese[i];
+}
+
+static int presa_nuova(int tipo)
+{
+    int i;
+
+    mutex_prendi(&g_prese_m);
+    for (i = 0; i < PRESE_MAX; i++)
+        if (!g_prese[i].usata) {
+            memset(&g_prese[i], 0, sizeof(Presa));
+            g_prese[i].usata = 1;
+            g_prese[i].tipo  = tipo;
+            mutex_lascia(&g_prese_m);
+            return PRESA_BASE + i;
+        }
+    mutex_lascia(&g_prese_m);
+    return -E_NFILE;
+}
+
+static void dormi_ms(unsigned int ms)
+{
+    struct timespec t;
+
+    t.tv_sec  = ms / 1000u;
+    t.tv_nsec = (long)(ms % 1000u) * 1000000L;
+    nanosleep(&t, NULL);
+}
+
+/* --- il dialogo con lo stack ------------------------------------------------ */
+typedef struct { int pid; unsigned int tipo; } AttesaIp;
+
+/* La risposta che si aspetta, oppure un ESITO: su una richiesta sbagliata lo
+ * stack risponde con un ESITO anche quando la risposta buona sarebbe altro
+ * (tcp_ricevi con un id che non c'e').
+ *
+ * ! UN FILTRO VEDE SOLO L'INTESTAZIONE, non i dati (IpcMessage della libc non
+ * li porta): per UDP non puo' sapere di quale porta e' un datagramma. Per
+ * questo i datagrammi li prende chiunque aspetti e li smista udp_smista(),
+ * nella casella del socket giusto. */
+static int filtro_ip(const IpcMessage *m, void *d)
+{
+    const AttesaIp *a = (const AttesaIp *)d;
+
+    if ((int)m->sender_pid != a->pid) return IPC_ALTRUI;
+    if (m->tipo == a->tipo) return IPC_MIO;
+    if (m->tipo == P_IP_MSG_ESITO && a->tipo != P_IP_MSG_UDP_DATI) return IPC_MIO;
+    return IPC_ALTRUI;
+}
+
+static int pid_ip(void)
+{
+    if (g_pid_ip <= 0) g_pid_ip = ipc_lookup("ip");
+    return g_pid_ip;
+}
+
+/* Manda e aspetta; rende i byte della risposta (tipo in *tipo_r) o -errno. */
+static int ip_chiedi(unsigned int tipo, const void *dati, unsigned int len,
+                     unsigned int risp, void *buf, unsigned int max,
+                     unsigned int *tipo_r)
+{
+    AttesaIp   a;
+    IpcMessage meta;
+    int        r, pid = pid_ip();
+
+    if (pid <= 0) return -E_NETDOWN;
+    if (ipc_send((unsigned int)pid, tipo, dati, len) < 0) {
+        g_pid_ip = 0;               /* lo stack e' ripartito: si ricerca */
+        return -E_NETDOWN;
+    }
+    a.pid = pid; a.tipo = risp;
+    r = ipc_scegli(filtro_ip, &a, &meta, buf, max, 0);
+    if (r >= 0 && tipo_r) *tipo_r = meta.tipo;
+    return r;
+}
+
+static int ip_esito(unsigned int tipo, const void *dati, unsigned int len)
+{
+    int codice = -EIO;
+    int r = ip_chiedi(tipo, dati, len, P_IP_MSG_ESITO, &codice, sizeof(codice), NULL);
+
+    if (r < 0) return r;
+    return r < (int)sizeof(codice) ? -EIO : codice;
+}
+
+static int tcp_info(Presa *p, PTcpInfo *info)
+{
+    PTcpRif      r;
+    unsigned int t = 0;
+    int          n;
+
+    memset(info, 0, sizeof(*info));
+    r.id = p->id;
+    n = ip_chiedi(P_IP_MSG_TCP_STATO, &r, sizeof(r), P_IP_MSG_TCP_INFO,
+                  info, sizeof(*info), &t);
+    if (n < 0) return n;
+    return t == P_IP_MSG_TCP_INFO ? 0 : -EIO;
+}
+
+static int presa_errore(int e) { errno = e < 0 ? -e : e; return -1; }
+
+/* --- creare e legare ---------------------------------------------------------- */
+int socket(int dominio, int tipo, int protocollo)
+{
+    int base = tipo & ~(S_SOCK_NONBLOCK | 02000000);
+    int fd;
+
+    (void)protocollo;
+    if (dominio != S_AF_INET) return presa_errore(E_AFNOSUPPORT);
+    if (base != S_SOCK_STREAM && base != S_SOCK_DGRAM) return presa_errore(E_PROTONOSUPP);
+    fd = presa_nuova(base);
+    if (fd < 0) return presa_errore(fd);
+    presa_di(fd)->nonblocc = (tipo & S_SOCK_NONBLOCK) != 0;
+    presa_di(fd)->cloexec  = (tipo & 02000000) != 0;
+    return fd;
+}
+
+int socketpair(int dominio, int tipo, int protocollo, int sv[2])
+{
+    (void)dominio; (void)tipo; (void)protocollo; (void)sv;
+    return presa_errore(E_AFNOSUPPORT);     /* niente AF_UNIX: vedi libc.h */
+}
+
+static int indirizzo_in(const struct sockaddr *a, unsigned int len,
+                        unsigned char ip[4], unsigned int *porta)
+{
+    struct sockaddr_in s;
+
+    if (a == NULL || len < sizeof(s)) return -EINVAL;
+    memcpy(&s, a, sizeof(s));
+    if (s.sin_family != S_AF_INET) return -E_AFNOSUPPORT;
+    memcpy(ip, &s.sin_addr.s_addr, 4);
+    *porta = ntohs(s.sin_port);
+    return 0;
+}
+
+static void scrivi_in(struct sockaddr *a, unsigned int *len,
+                      const unsigned char ip[4], unsigned int porta)
+{
+    struct sockaddr_in s;
+    unsigned int       q;
+
+    if (a == NULL || len == NULL) return;
+    memset(&s, 0, sizeof(s));
+    s.sin_family = S_AF_INET;
+    s.sin_port   = htons((unsigned short)porta);
+    memcpy(&s.sin_addr.s_addr, ip, 4);
+    q = *len < sizeof(s) ? *len : sizeof(s);
+    memcpy(a, &s, q);
+    *len = sizeof(s);
+}
+
+static int udp_apri(Presa *p)
+{
+    PUdpApri a;
+    int      r;
+
+    if (p->udp_aperta) return 0;
+    a.porta = p->porta_loc;
+    r = ip_esito(P_IP_MSG_UDP_APRI, &a, sizeof(a));
+    if (r < 0) return r;
+    p->porta_loc  = (unsigned int)r;
+    p->udp_aperta = 1;
+    return 0;
+}
+
+int bind(int fd, const struct sockaddr *a, unsigned int len)
+{
+    Presa        *p = presa_di(fd);
+    unsigned char ip[4];
+    unsigned int  porta;
+    int           r;
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    r = indirizzo_in(a, len, ip, &porta);
+    if (r < 0) return presa_errore(r);
+    if (p->porta_loc != 0 || p->udp_aperta) return presa_errore(EINVAL);
+    p->porta_loc = porta;
+    if (p->tipo == S_SOCK_DGRAM) {
+        r = udp_apri(p);
+        if (r < 0) { p->porta_loc = 0; return presa_errore(r); }
+    }
+    return 0;
+}
+
+int listen(int fd, int coda)
+{
+    static unsigned int prossima = 0;
+    Presa      *p = presa_di(fd);
+    PTcpAscolta a;
+    int         r, giri;
+
+    (void)coda;
+    if (!p) return presa_errore(EBADF);
+    if (p->tipo != S_SOCK_STREAM) return presa_errore(E_OPNOTSUPP);
+    if (p->ascolta) return 0;
+    for (giri = 0; giri < 64; giri++) {
+        /* Porta 0: se ne sceglie una effimera, come farebbe bind(). */
+        if (p->porta_loc == 0) {
+            if (prossima == 0) prossima = 40000u + (uptime_ms() % 9000u);
+            a.porta = prossima++;
+        } else a.porta = p->porta_loc;
+        r = ip_esito(P_IP_MSG_TCP_ASCOLTA, &a, sizeof(a));
+        if (r > 0) {
+            p->id = (unsigned int)r; p->ascolta = 1; p->porta_loc = a.porta;
+            return 0;
+        }
+        if (r != -E_ADDRINUSE || p->porta_loc != 0) return presa_errore(r);
+    }
+    return presa_errore(E_ADDRINUSE);
+}
+
+/* --- connettersi -------------------------------------------------------------- */
+int connect(int fd, const struct sockaddr *a, unsigned int len)
+{
+    Presa        *p = presa_di(fd);
+    unsigned char ip[4];
+    unsigned int  porta;
+    PTcpApri      ap;
+    int           r, giri;
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    r = indirizzo_in(a, len, ip, &porta);
+    if (r < 0) return presa_errore(r);
+
+    if (p->tipo == S_SOCK_DGRAM) {           /* UDP: si ricorda e basta */
+        memcpy(p->ip_rem, ip, 4);
+        p->porta_rem = porta;
+        p->connesso  = 1;
+        return 0;
+    }
+    if (p->connesso || p->ascolta) return presa_errore(E_ISCONN);
+
+    memcpy(ap.ip, ip, 4);
+    ap.porta      = porta;
+    ap.timeout_ms = 20000;
+    /* ! -EAGAIN E' L'ARP: lo stack non conosce ancora l'indirizzo Ethernet del
+     * prossimo salto, ha mandato la domanda e chiede di riprovare. */
+    for (giri = 0; giri < 30; giri++) {
+        r = ip_esito(P_IP_MSG_TCP_APRI, &ap, sizeof(ap));
+        if (r != -EAGAIN) break;
+        dormi_ms(100);
+    }
+    if (r <= 0) {
+        if (r == 0 || r == -ETIMEDOUT) return presa_errore(r ? r : ETIMEDOUT);
+        return presa_errore(r);
+    }
+    p->id        = (unsigned int)r;
+    p->connesso  = 1;
+    memcpy(p->ip_rem, ip, 4);
+    p->porta_rem = porta;
+    {
+        PTcpInfo info;
+
+        if (tcp_info(p, &info) == 0) p->porta_loc = info.porta_loc;
+    }
+    return 0;
+}
+
+int accept4(int fd, struct sockaddr *a, unsigned int *len, int flag)
+{
+    Presa       *p = presa_di(fd), *n;
+    PTcpAccetta  ac;
+    PTcpInfo     info;
+    int          r, nuovo;
+    unsigned int inizio = uptime_ms();
+
+    if (!p) return presa_errore(EBADF);
+    if (!p->ascolta) return presa_errore(EINVAL);
+    ac.id = p->id;
+    for (;;) {
+        ac.timeout_ms = p->nonblocc ? 0 : 1000;
+        r = ip_esito(P_IP_MSG_TCP_ACCETTA, &ac, sizeof(ac));
+        if (r > 0) break;
+        if (r != -EAGAIN && r != -ETIMEDOUT) return presa_errore(r);
+        if (p->nonblocc) return presa_errore(EAGAIN);
+        if (p->rcv_ms && uptime_ms() - inizio >= p->rcv_ms) return presa_errore(EAGAIN);
+    }
+    nuovo = presa_nuova(S_SOCK_STREAM);
+    if (nuovo < 0) {
+        PTcpRif rif;
+
+        rif.id = (unsigned int)r;
+        ip_esito(P_IP_MSG_TCP_CHIUDI, &rif, sizeof(rif));
+        return presa_errore(nuovo);
+    }
+    n = presa_di(nuovo);
+    n->id       = (unsigned int)r;
+    n->connesso = 1;
+    n->nonblocc = (flag & S_SOCK_NONBLOCK) != 0;
+    n->cloexec  = (flag & 02000000) != 0;
+    if (tcp_info(n, &info) == 0) {
+        memcpy(n->ip_rem, info.ip, 4);
+        n->porta_rem = info.porta;
+        n->porta_loc = info.porta_loc ? info.porta_loc : p->porta_loc;
+    }
+    scrivi_in(a, len, n->ip_rem, n->porta_rem);
+    return nuovo;
+}
+
+int accept(int fd, struct sockaddr *a, unsigned int *len)
+{
+    return accept4(fd, a, len, 0);
+}
+
+/* --- scrivere ------------------------------------------------------------------- */
+static ssize_t tcp_manda(Presa *p, const unsigned char *buf, size_t n, int flag)
+{
+    unsigned char msg[IPC_MSG_MAX_DATA];
+    PTcpDati      d;
+    size_t        fatti = 0;
+    unsigned int  inizio = uptime_ms();
+    int           nb = p->nonblocc || (flag & S_MSG_DONTWAIT);
+
+    if (!p->connesso) return presa_errore(E_NOTCONN);
+    if (p->chiusa_wr) return presa_errore(E_PIPE);
+    while (fatti < n) {
+        unsigned int q = (unsigned int)(n - fatti);
+        int          r;
+
+        if (q > P_TCP_DATI_MAX) q = P_TCP_DATI_MAX;
+        d.id = p->id; d.len = q;
+        memcpy(msg, &d, sizeof(d));
+        memcpy(msg + sizeof(d), buf + fatti, q);
+        r = ip_esito(P_IP_MSG_TCP_INVIA, msg, (unsigned int)sizeof(d) + q);
+        if (r < 0) {
+            if (fatti) return (ssize_t)fatti;
+            return presa_errore(r == -EBADF || r == -EINVAL ? -E_PIPE : r);
+        }
+        if (r == 0) {
+            /* Il buffer dello stack e' pieno: chi non blocca lo dice, chi
+             * blocca aspetta che si svuoti — se la connessione e' ancora viva. */
+            PTcpInfo info;
+
+            if (fatti && nb) return (ssize_t)fatti;
+            if (nb) return presa_errore(EAGAIN);
+            if (tcp_info(p, &info) < 0 || info.stato != P_TCP_APERTA)
+                return fatti ? (ssize_t)fatti : presa_errore(E_PIPE);
+            if (p->snd_ms && uptime_ms() - inizio >= p->snd_ms)
+                return fatti ? (ssize_t)fatti : presa_errore(EAGAIN);
+            dormi_ms(10);
+            continue;
+        }
+        fatti += (size_t)r;
+        if (nb && (unsigned int)r < q) break;
+    }
+    return (ssize_t)fatti;
+}
+
+static int udp_prenota(Presa *p);
+
+static ssize_t udp_manda(Presa *p, const void *buf, size_t n,
+                         const unsigned char ip[4], unsigned int porta)
+{
+    unsigned char msg[IPC_MSG_MAX_DATA];
+    PUdpInvia     inv;
+    int           r, giri;
+
+    if (n > IPC_MSG_MAX_DATA - sizeof(inv)) return presa_errore(E_MSGSIZE);
+    r = udp_apri(p);
+    if (r < 0) return presa_errore(r);
+    /* ! LA RICEZIONE SI PRENOTA PRIMA DI MANDARE: lo stack butta un datagramma
+     * che arriva mentre nessuno lo aspetta, e la risposta di un DNS vicino
+     * arriva prima che il chiamante sia tornato da sendto per chiamare
+     * recvfrom. E' quello che fa gia' lib/dns.c; la prima versione di questa
+     * sezione no, e ogni domanda al DNS di QEMU andava persa. */
+    udp_prenota(p);
+    memcpy(inv.ip, ip, 4);
+    inv.porta = porta; inv.porta_locale = p->porta_loc;
+    memcpy(msg, &inv, sizeof(inv));
+    memcpy(msg + sizeof(inv), buf, n);
+    for (giri = 0; giri < 20; giri++) {
+        r = ip_esito(P_IP_MSG_UDP_INVIA, msg, (unsigned int)(sizeof(inv) + n));
+        if (r != -EBUSY) break;         /* un'altra risoluzione ARP in corso */
+        dormi_ms(50);
+    }
+    return r < 0 ? presa_errore(r) : (ssize_t)n;
+}
+
+ssize_t sendto(int fd, const void *buf, size_t n, int flag,
+               const struct sockaddr *a, unsigned int len)
+{
+    Presa        *p = presa_di(fd);
+    unsigned char ip[4];
+    unsigned int  porta;
+
+    if (!p) return presa_errore(EBADF);
+    if (p->tipo == S_SOCK_STREAM) return tcp_manda(p, (const unsigned char *)buf, n, flag);
+    if (a) {
+        int r = indirizzo_in(a, len, ip, &porta);
+
+        if (r < 0) return presa_errore(r);
+    } else if (p->connesso) {
+        memcpy(ip, p->ip_rem, 4);
+        porta = p->porta_rem;
+    } else return presa_errore(E_DESTADDRREQ);
+    return udp_manda(p, buf, n, ip, porta);
+}
+
+ssize_t send(int fd, const void *buf, size_t n, int flag)
+{
+    return sendto(fd, buf, n, flag, NULL, 0);
+}
+
+/* --- leggere ---------------------------------------------------------------------- */
+static ssize_t da_avanzo(Presa *p, unsigned char *buf, size_t n, int flag)
+{
+    unsigned int q = p->a_fine - p->a_pos;
+
+    if (q > n) q = (unsigned int)n;
+    memcpy(buf, p->avanzo + p->a_pos, q);
+    if (!(flag & S_MSG_PEEK)) p->a_pos += q;
+    return (ssize_t)q;
+}
+
+/* Una consegna dallo stack, nell'avanzo. Rende 1 se ha portato dati, 0 alla
+ * fine, -errno sull'errore. */
+static int tcp_riempi(Presa *p)
+{
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    PTcpRif       r;
+    PTcpDati      d;
+    unsigned int  t = 0;
+    int           n;
+
+    if (!p->avanzo) {
+        p->avanzo = (unsigned char *)malloc(P_TCP_DATI_MAX);
+        if (!p->avanzo) return -ENOMEM;
+    }
+    r.id = p->id;
+    n = ip_chiedi(P_IP_MSG_TCP_RICEVI, &r, sizeof(r), P_IP_MSG_TCP_DATI,
+                  buf, sizeof(buf), &t);
+    if (n < 0) return n;
+    if (t == P_IP_MSG_ESITO) {
+        int codice;
+
+        memcpy(&codice, buf, sizeof(codice));
+        return codice < 0 ? codice : -EIO;
+    }
+    if (n < (int)sizeof(d)) return -EIO;
+    memcpy(&d, buf, sizeof(d));
+    if (d.len == 0) { p->fine = 1; return 0; }
+    if (d.len > P_TCP_DATI_MAX || d.len > (unsigned int)n - sizeof(d)) return -EIO;
+    memcpy(p->avanzo, buf + sizeof(d), d.len);
+    p->a_pos = 0; p->a_fine = d.len;
+    return 1;
+}
+
+static ssize_t tcp_prendi(Presa *p, unsigned char *buf, size_t n, int flag)
+{
+    unsigned int inizio = uptime_ms();
+    int          nb = p->nonblocc || (flag & S_MSG_DONTWAIT);
+    size_t       fatti = 0;
+
+    if (!p->connesso) return presa_errore(E_NOTCONN);
+    if (n == 0) return 0;
+    for (;;) {
+        int r;
+
+        if (p->a_pos < p->a_fine) {
+            ssize_t q = da_avanzo(p, buf + fatti, n - fatti, flag);
+
+            fatti += (size_t)q;
+            if (!(flag & S_MSG_WAITALL) || fatti == n || (flag & S_MSG_PEEK))
+                return (ssize_t)fatti;
+            continue;
+        }
+        if (p->fine || p->chiusa_rd) return (ssize_t)fatti;
+
+        /* ! CON UNA SCADENZA, O SENZA BLOCCARE, SI GUARDA PRIMA DI CHIEDERE: una
+         * RICEVI resta in volo finche' arrivano dati, e non si puo' ritirare
+         * (vedi in cima alla sezione). */
+        if (nb || p->rcv_ms) {
+            PTcpInfo info;
+
+            r = tcp_info(p, &info);
+            if (r < 0) return fatti ? (ssize_t)fatti : presa_errore(r);
+            if (info.in_coda_rx == 0 && info.stato == P_TCP_APERTA) {
+                if (fatti) return (ssize_t)fatti;
+                if (nb) return presa_errore(EAGAIN);
+                if (uptime_ms() - inizio >= p->rcv_ms) return presa_errore(EAGAIN);
+                dormi_ms(10);
+                continue;
+            }
+        }
+        r = tcp_riempi(p);
+        if (r < 0) return fatti ? (ssize_t)fatti : presa_errore(r == -EBADF ? -E_CONNRESET : r);
+    }
+}
+
+/* Prende UN datagramma dello stack arrivato a questo filo e lo mette nella
+ * casella del socket della sua porta (se e' piena, o il socket non c'e' piu',
+ * si butta: UDP perde comunque). Rende 1 se ne ha smistato uno, 0 se e'
+ * scaduta l'attesa, -errno. `ms` come ipc_scegli: 0 senza scadenza. */
+static int udp_smista(unsigned int ms)
+{
+    unsigned char msg[IPC_MSG_MAX_DATA];
+    AttesaIp      at;
+    IpcMessage    meta;
+    PUdpDati      u;
+    int           r, i;
+
+    at.pid = pid_ip(); at.tipo = P_IP_MSG_UDP_DATI;
+    if (at.pid <= 0) return -E_NETDOWN;
+    r = ipc_scegli(filtro_ip, &at, &meta, msg, sizeof(msg), ms);
+    if (r == -ETIMEDOUT) return 0;
+    if (r < 0) return r;
+    if (r < (int)sizeof(u)) return 1;
+    memcpy(&u, msg, sizeof(u));
+    if (u.len > (unsigned int)r - sizeof(u)) u.len = (unsigned int)r - sizeof(u);
+    for (i = 0; i < PRESE_MAX; i++) {
+        Presa *p = &g_prese[i];
+
+        if (!p->usata || p->tipo != S_SOCK_DGRAM || !p->udp_aperta) continue;
+        if (p->porta_loc != u.porta_locale) continue;
+        p->udp_prenotata = 0;               /* la sua prenotazione e' servita */
+        if (p->udp_pieno) break;
+        if (!p->udp_dato) p->udp_dato = (unsigned char *)malloc(IPC_MSG_MAX_DATA);
+        if (!p->udp_dato) break;
+        memcpy(p->udp_dato, msg + sizeof(u), u.len);
+        p->udp_len = u.len;
+        memcpy(p->udp_da_ip, u.ip, 4);
+        p->udp_da_porta = u.porta;
+        p->udp_pieno = 1;
+        break;
+    }
+    return 1;
+}
+
+static int udp_prenota(Presa *p)
+{
+    PUdpApri ap;
+    int      pid = pid_ip();
+
+    if (p->udp_prenotata) return 0;
+    if (pid <= 0) return -E_NETDOWN;
+    ap.porta = p->porta_loc;
+    if (ipc_send((unsigned int)pid, P_IP_MSG_UDP_RICEVI, &ap, sizeof(ap)) < 0)
+        return -E_NETDOWN;
+    p->udp_prenotata = 1;
+    return 0;
+}
+
+/* UDP: la ricezione si prenota e si aspetta finche' nella casella del socket
+ * non c'e' un datagramma. Con una scadenza la prenotazione resta: il datagramma
+ * che arrivera' sara' del prossimo recvfrom. */
+static ssize_t udp_prendi(Presa *p, void *buf, size_t n, int flag,
+                          struct sockaddr *a, unsigned int *len)
+{
+    unsigned int inizio = uptime_ms();
+    int          nb = p->nonblocc || (flag & S_MSG_DONTWAIT);
+
+    if (!p->udp_aperta) return presa_errore(EINVAL);   /* niente bind, niente sendto */
+    while (!p->udp_pieno) {
+        unsigned int ms;
+        int          r = udp_prenota(p);
+
+        if (r < 0) return presa_errore(r);
+        if (nb) ms = IPC_SUBITO;
+        else if (p->rcv_ms) {
+            unsigned int passati = uptime_ms() - inizio;
+
+            if (passati >= p->rcv_ms) return presa_errore(EAGAIN);
+            ms = p->rcv_ms - passati;
+        } else ms = 0;
+        r = udp_smista(ms);
+        if (r < 0) return presa_errore(r);
+        if (r == 0 && !p->udp_pieno) return presa_errore(EAGAIN);
+    }
+    if (n > p->udp_len) n = p->udp_len;
+    memcpy(buf, p->udp_dato, n);
+    scrivi_in(a, len, p->udp_da_ip, p->udp_da_porta);
+    if (!(flag & S_MSG_PEEK)) p->udp_pieno = 0;
+    return (ssize_t)n;
+}
+
+ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
+                 struct sockaddr *a, unsigned int *len)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(EBADF);
+    if (p->tipo == S_SOCK_DGRAM) return udp_prendi(p, buf, n, flag, a, len);
+    if (a && len) scrivi_in(a, len, p->ip_rem, p->porta_rem);
+    return tcp_prendi(p, (unsigned char *)buf, n, flag);
+}
+
+ssize_t recv(int fd, void *buf, size_t n, int flag)
+{
+    return recvfrom(fd, buf, n, flag, NULL, NULL);
+}
+
+ssize_t sendmsg(int fd, const struct msghdr *m, int flag)
+{
+    unsigned char *tutto;
+    size_t         tot = 0, o = 0;
+    ssize_t        r;
+    int            i;
+
+    if (!m) return presa_errore(EINVAL);
+    for (i = 0; i < m->msg_iovlen; i++) tot += m->msg_iov[i].iov_len;
+    tutto = (unsigned char *)malloc(tot ? tot : 1);
+    if (!tutto) return presa_errore(ENOMEM);
+    for (i = 0; i < m->msg_iovlen; i++) {
+        memcpy(tutto + o, m->msg_iov[i].iov_base, m->msg_iov[i].iov_len);
+        o += m->msg_iov[i].iov_len;
+    }
+    r = sendto(fd, tutto, tot, flag, (const struct sockaddr *)m->msg_name, m->msg_namelen);
+    free(tutto);
+    return r;
+}
+
+ssize_t recvmsg(int fd, struct msghdr *m, int flag)
+{
+    unsigned char *tutto;
+    size_t         tot = 0, o = 0;
+    ssize_t        r;
+    int            i;
+
+    if (!m) return presa_errore(EINVAL);
+    for (i = 0; i < m->msg_iovlen; i++) tot += m->msg_iov[i].iov_len;
+    tutto = (unsigned char *)malloc(tot ? tot : 1);
+    if (!tutto) return presa_errore(ENOMEM);
+    r = recvfrom(fd, tutto, tot, flag, (struct sockaddr *)m->msg_name,
+                 m->msg_name ? &m->msg_namelen : NULL);
+    for (i = 0; r > 0 && i < m->msg_iovlen && o < (size_t)r; i++) {
+        size_t q = m->msg_iov[i].iov_len;
+
+        if (q > (size_t)r - o) q = (size_t)r - o;
+        memcpy(m->msg_iov[i].iov_base, tutto + o, q);
+        o += q;
+    }
+    free(tutto);
+    m->msg_controllen = 0;
+    m->msg_flags = 0;
+    return r;
+}
+
+/* readv/writev per ogni descrittore: un pezzo alla volta, quindi non atomiche
+ * — come lo e' gia' write() su una pipe piena. */
+ssize_t readv(int fd, const struct iovec *v, int n)
+{
+    ssize_t tot = 0;
+    int     i;
+
+    for (i = 0; i < n; i++) {
+        ssize_t r = read(fd, v[i].iov_base, v[i].iov_len);
+
+        if (r < 0) return tot ? tot : r;
+        tot += r;
+        if ((size_t)r < v[i].iov_len) break;
+    }
+    return tot;
+}
+
+ssize_t writev(int fd, const struct iovec *v, int n)
+{
+    ssize_t tot = 0;
+    int     i;
+
+    for (i = 0; i < n; i++) {
+        ssize_t r = write(fd, v[i].iov_base, v[i].iov_len);
+
+        if (r < 0) return tot ? tot : r;
+        tot += r;
+        if ((size_t)r < v[i].iov_len) break;
+    }
+    return tot;
+}
+
+/* --- chiudere --------------------------------------------------------------------- */
+
+static int presa_chiudi(int fd)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(EBADF);
+    if (p->tipo == S_SOCK_STREAM && p->id) {
+        PTcpRif r;
+
+        r.id = p->id;
+        ip_esito(P_IP_MSG_TCP_CHIUDI, &r, sizeof(r));
+    } else if (p->tipo == S_SOCK_DGRAM && p->udp_aperta) {
+        PUdpApri a;
+
+        a.porta = p->porta_loc;
+        ip_esito(P_IP_MSG_UDP_CHIUDI, &a, sizeof(a));
+        /* Un datagramma gia' consegnato per una prenotazione non servita
+         * arrivera' a nessuno: udp_smista lo buttera' quando lo trova. */
+    }
+    free(p->avanzo);
+    free(p->udp_dato);
+    mutex_prendi(&g_prese_m);
+    p->usata = 0;
+    mutex_lascia(&g_prese_m);
+    return 0;
+}
+
+int shutdown(int fd, int come)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p->connesso) return presa_errore(E_NOTCONN);
+    if (come == 0 || come == 2) p->chiusa_rd = 1;
+    if (come == 1 || come == 2) p->chiusa_wr = 1;
+    /* ! SOLO SHUT_RDWR CHIUDE NELLO STACK: la sua chiusura butta anche cio' che
+     * deve ancora arrivare, e un «ho finito di scrivere» non deve perdere la
+     * risposta. Vedi libc.h. */
+    if (come == 2 && p->tipo == S_SOCK_STREAM && p->id) {
+        PTcpRif r;
+
+        r.id = p->id;
+        ip_esito(P_IP_MSG_TCP_CHIUDI, &r, sizeof(r));
+        p->fine = 1;
+    }
+    return 0;
+}
+
+/* --- opzioni e nomi ------------------------------------------------------------------ */
+int getsockopt(int fd, int livello, int nome, void *val, unsigned int *len)
+{
+    Presa *p = presa_di(fd);
+    int    v = 0;
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!val || !len) return presa_errore(EFAULT);
+    if (livello == S_SOL_SOCKET && (nome == 20 || nome == 21)) {
+        struct timeval tv;
+        unsigned int   ms = nome == 20 ? p->rcv_ms : p->snd_ms;
+
+        tv.tv_sec = ms / 1000u; tv.tv_usec = (long)(ms % 1000u) * 1000L;
+        if (*len > sizeof(tv)) *len = sizeof(tv);
+        memcpy(val, &tv, *len);
+        return 0;
+    }
+    if (livello == S_SOL_SOCKET) {
+        switch (nome) {
+        case 3:  v = p->tipo; break;                  /* SO_TYPE */
+        case 4:  v = 0; break;                        /* SO_ERROR: connect e' sincrono */
+        case 7: case 8: v = 8192; break;              /* SO_SNDBUF, SO_RCVBUF */
+        case 2: case 6: case 9: case 13: case 15: v = 0; break;
+        default: return presa_errore(E_NOPROTOOPT);
+        }
+    } else if (livello == S_IPPROTO_TCP) {
+        v = (nome == 1) ? 1 : 0;                      /* TCP_NODELAY: non si ritarda mai */
+    } else if (livello == 0) {
+        v = (nome == 2) ? 64 : 0;                     /* IP_TTL */
+    } else return presa_errore(E_NOPROTOOPT);
+    if (*len > sizeof(v)) *len = sizeof(v);
+    memcpy(val, &v, *len);
+    return 0;
+}
+
+int setsockopt(int fd, int livello, int nome, const void *val, unsigned int len)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (livello == S_SOL_SOCKET && (nome == 20 || nome == 21)) {
+        struct timeval tv;
+        unsigned int   ms;
+
+        if (!val || len < sizeof(tv)) return presa_errore(EINVAL);
+        memcpy(&tv, val, sizeof(tv));
+        ms = (unsigned int)tv.tv_sec * 1000u + (unsigned int)(tv.tv_usec / 1000L);
+        if (ms == 0 && (tv.tv_sec || tv.tv_usec)) ms = 1;
+        if (nome == 20) p->rcv_ms = ms; else p->snd_ms = ms;
+        return 0;
+    }
+    /* ! LE ALTRE SI ACCETTANO E NON CAMBIANO NIENTE, e lo si dice: riuso delle
+     * porte, keepalive, misure dei buffer, TCP_NODELAY (lo stack non ritarda
+     * mai), TTL. Rifiutarle farebbe fallire programmi che le chiedono per
+     * abitudine; getsockopt risponde con quel che succede davvero. */
+    if (livello == S_SOL_SOCKET || livello == S_IPPROTO_TCP || livello == 0 ||
+        livello == 41) return 0;
+    return presa_errore(E_NOPROTOOPT);
+}
+
+static int ip_locale(unsigned char ip[4])
+{
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    unsigned int  t = 0;
+    int           n = ip_chiedi(P_IP_MSG_STATO, NULL, 0, P_IP_MSG_STATO_R,
+                                buf, sizeof(buf), &t);
+
+    if (n < (int)sizeof(PIpConfig) || t != P_IP_MSG_STATO_R) return -1;
+    memcpy(ip, ((PIpConfig *)buf)->ip, 4);
+    return 0;
+}
+
+int getsockname(int fd, struct sockaddr *a, unsigned int *len)
+{
+    Presa        *p = presa_di(fd);
+    unsigned char ip[4] = { 0, 0, 0, 0 };
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (p->connesso) ip_locale(ip);
+    scrivi_in(a, len, ip, p->porta_loc);
+    return 0;
+}
+
+int getpeername(int fd, struct sockaddr *a, unsigned int *len)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p->connesso) return presa_errore(E_NOTCONN);
+    scrivi_in(a, len, p->ip_rem, p->porta_rem);
+    return 0;
+}
+
+/* --- i descrittori comuni ----------------------------------------------------------- */
+static int presa_fcntl(int fd, int cmd, unsigned int arg)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(EBADF);
+    switch (cmd) {
+    case S_F_GETFL: return O_RDWR | (p->nonblocc ? S_O_NONBLOCK : 0);
+    case S_F_SETFL: p->nonblocc = (arg & S_O_NONBLOCK) != 0; return 0;
+    case S_F_GETFD: return p->cloexec;
+    case S_F_SETFD: p->cloexec = (int)(arg & 1u); return 0;
+    default:        return presa_errore(E_OPNOTSUPP);   /* F_DUPFD: vedi libc.h */
+    }
+}
+
+static int presa_ioctl(int fd, unsigned int req, void *arg)
+{
+    Presa *p = presa_di(fd);
+
+    if (!p) return presa_errore(EBADF);
+    if (req == S_FIONBIO) {
+        if (!arg) return presa_errore(EFAULT);
+        p->nonblocc = *(int *)arg != 0;
+        return 0;
+    }
+    if (req == S_FIONREAD) {
+        int n = (int)(p->a_fine - p->a_pos);
+
+        if (!arg) return presa_errore(EFAULT);
+        if (p->tipo == S_SOCK_STREAM && p->connesso) {
+            PTcpInfo info;
+
+            if (tcp_info(p, &info) == 0) n += (int)info.in_coda_rx;
+        }
+        *(int *)arg = n;
+        return 0;
+    }
+    return presa_errore(ENOTTY);
+}
+
+/* Che cosa si puo' fare adesso con un socket, per poll(). */
+static short presa_pronta(Presa *p, short voluti)
+{
+    short    r = 0;
+    PTcpInfo info;
+
+    if (p->tipo == S_SOCK_DGRAM) {
+        r |= S_POLLOUT;
+        /* ! UN DATAGRAMMA C'E' SE E' GIA' NELLA CASELLA, o se arriva adesso: si
+         * prenota (se non lo e') e si smista quel che c'e' senza aspettare. */
+        if ((voluti & S_POLLIN) && p->udp_aperta && !p->udp_pieno) {
+            if (udp_prenota(p) == 0)
+                while (udp_smista(IPC_SUBITO) > 0 && !p->udp_pieno) { }
+        }
+        if (p->udp_pieno) r |= S_POLLIN;
+        return (short)(r & (voluti | S_POLLERR | S_POLLHUP));
+    }
+
+    if (p->ascolta) {
+        /* Un ascoltatore e' «leggibile» quando c'e' qualcuno da accettare: lo si
+         * saprebbe solo accettando, e allora lo si dice pronto e accept(), non
+         * bloccante, rende EAGAIN se non era vero. */
+        return (short)(voluti & S_POLLIN);
+    }
+    if (!p->connesso) return 0;
+    if (p->a_pos < p->a_fine || p->fine) r |= S_POLLIN;
+    if (tcp_info(p, &info) < 0) return S_POLLERR;
+    if (info.in_coda_rx > 0) r |= S_POLLIN;
+    if (info.stato == P_TCP_APERTA) r |= S_POLLOUT;
+    else r |= S_POLLIN | S_POLLHUP;           /* la lettura rende la fine */
+    return (short)(r & (voluti | S_POLLERR | S_POLLHUP));
+}
+
+/* ! poll CON I SOCKET DENTRO: i descrittori del kernel li guarda il kernel, i
+ * socket li guarda lo stack. Se ce n'e' anche uno solo, poll diventa un giro:
+ * il kernel con una scadenza corta (dieci millisecondi, un tick — dorme
+ * davvero, e si sveglia prima se un suo descrittore si muove), poi lo STATO di
+ * ogni socket. Costa una domanda allo stack per socket per giro, cioe' niente
+ * rispetto a una pagina che arriva; e un programma senza socket non passa di
+ * qui. La strada per toglierlo, il giorno che si misuri, e' che lo stack
+ * sappia svegliare chi aspetta. */
+static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout);
+
+static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
+{
+    struct pollfd  locali[64];
+    unsigned int   mappa[64];
+    unsigned int   nk = 0, i;
+    unsigned int   inizio = uptime_ms();
+
+    if (nfds > 64) { errno = EINVAL; return -1; }
+    for (i = 0; i < nfds; i++)
+        if (fds[i].fd < PRESA_BASE) { locali[nk] = fds[i]; mappa[nk] = i; nk++; }
+
+    for (;;) {
+        int pronti = 0, r;
+
+        for (i = 0; i < nfds; i++) fds[i].revents = 0;
+        if (nk) {
+            unsigned int k;
+
+            r = poll_kernel(locali, nk, 0);
+            if (r < 0) return -1;
+            for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
+        }
+        for (i = 0; i < nfds; i++) {
+            if (fds[i].fd >= PRESA_BASE) {
+                Presa *p = presa_di(fds[i].fd);
+
+                fds[i].revents = p ? presa_pronta(p, fds[i].events) : S_POLLNVAL;
+            }
+            if (fds[i].revents) pronti++;
+        }
+        if (pronti) return pronti;
+        if (timeout == 0) return 0;
+        if (timeout > 0 && uptime_ms() - inizio >= (unsigned int)timeout) return 0;
+        if (nk) {
+            unsigned int k;
+
+            r = poll_kernel(locali, nk, 10);
+            if (r > 0) {
+                for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
+                return r;
+            }
+        } else dormi_ms(10);
+    }
+}
+
+/* --- indirizzi in testo -------------------------------------------------------------- */
+int inet_pton(int famiglia, const char *s, void *dst)
+{
+    unsigned char ip[4];
+    int           i;
+
+    if (famiglia != S_AF_INET) { errno = E_AFNOSUPPORT; return -1; }
+    for (i = 0; i < 4; i++) {
+        int v = 0, cifre = 0;
+
+        while (*s >= '0' && *s <= '9') {
+            v = v * 10 + (*s++ - '0');
+            if (++cifre > 3 || v > 255) return 0;
+        }
+        if (cifre == 0) return 0;
+        ip[i] = (unsigned char)v;
+        if (i < 3 && *s++ != '.') return 0;
+    }
+    if (*s) return 0;
+    memcpy(dst, ip, 4);
+    return 1;
+}
+
+const char *inet_ntop(int famiglia, const void *src, char *dst, unsigned int n)
+{
+    const unsigned char *b = (const unsigned char *)src;
+    char                 t[16];
+
+    if (famiglia != S_AF_INET) { errno = E_AFNOSUPPORT; return NULL; }
+    snprintf(t, sizeof(t), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    if (strlen(t) + 1 > n) { errno = 28; return NULL; }   /* ENOSPC */
+    strcpy(dst, t);
+    return dst;
+}
+
+int inet_aton(const char *s, struct in_addr *out)
+{
+    return inet_pton(S_AF_INET, s, &out->s_addr) == 1;
+}
+
+unsigned int inet_addr(const char *s)
+{
+    unsigned int a;
+
+    return inet_pton(S_AF_INET, s, &a) == 1 ? a : 0xFFFFFFFFu;
+}
+
+char *inet_ntoa(struct in_addr a)
+{
+    static char t[16];
+
+    inet_ntop(S_AF_INET, &a.s_addr, t, sizeof(t));
+    return t;
+}
+
+int gethostname(char *nome, size_t n)
+{
+    if (!nome || n < 5) { errno = EINVAL; return -1; }
+    strcpy(nome, "exos");
+    return 0;
+}
+
+/* --- il risolutore ---------------------------------------------------------------------
+ * Una domanda A al DNS che il DHCP ha dato allo stack (IpConfig.dns), sopra un
+ * socket UDP di questa sezione. Tre tentativi da due secondi. */
+static int dns_chiedi(const char *nome, unsigned char ip[4])
+{
+    unsigned char      buf[IPC_MSG_MAX_DATA], q[300];
+    PIpConfig          cfg;
+    struct sockaddr_in srv;
+    struct timeval     tv;
+    unsigned int       t = 0, o, id;
+    int                n, fd, giro, esito = -2;       /* EAI_NONAME */
+    const char        *s;
+
+    n = ip_chiedi(P_IP_MSG_STATO, NULL, 0, P_IP_MSG_STATO_R, buf, sizeof(buf), &t);
+    if (n < (int)sizeof(cfg) || t != P_IP_MSG_STATO_R) return -11;    /* EAI_SYSTEM */
+    memcpy(&cfg, buf, sizeof(cfg));
+    if (!cfg.dns[0] && !cfg.dns[1] && !cfg.dns[2] && !cfg.dns[3]) return -4;   /* EAI_FAIL */
+
+    /* La domanda: intestazione, nome a etichette, tipo A, classe IN. */
+    id = (uptime_ms() * 2654435761u) >> 16;
+    memset(q, 0, 12);
+    q[0] = (unsigned char)(id >> 8); q[1] = (unsigned char)id;
+    q[2] = 0x01;                                /* ricorsione desiderata */
+    q[5] = 1;                                   /* una domanda */
+    o = 12;
+    for (s = nome; *s; ) {
+        const char  *pt = strchr(s, '.');
+        unsigned int l  = pt ? (unsigned int)(pt - s) : (unsigned int)strlen(s);
+
+        if (l == 0 || l > 63 || o + l + 6 > sizeof(q)) return -2;
+        q[o++] = (unsigned char)l;
+        memcpy(q + o, s, l); o += l;
+        s += l;
+        if (*s == '.') s++;
+    }
+    q[o++] = 0;
+    q[o++] = 0; q[o++] = 1;                     /* A */
+    q[o++] = 0; q[o++] = 1;                     /* IN */
+
+    fd = socket(S_AF_INET, S_SOCK_DGRAM, 0);
+    if (fd < 0) return -11;
+    tv.tv_sec = 2; tv.tv_usec = 0;
+    setsockopt(fd, S_SOL_SOCKET, 20, &tv, sizeof(tv));
+    memset(&srv, 0, sizeof(srv));
+    srv.sin_family = S_AF_INET;
+    srv.sin_port   = htons(53);
+    memcpy(&srv.sin_addr.s_addr, cfg.dns, 4);
+
+    for (giro = 0; giro < 3 && esito == -2; giro++) {
+        unsigned int k, dom, ris, p;
+
+        if (sendto(fd, q, o, 0, (struct sockaddr *)&srv, sizeof(srv)) < 0) { esito = -3; continue; }
+        n = (int)recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
+        if (n < 12) { esito = -2; if (n < 0) esito = -3; continue; }   /* EAI_AGAIN */
+        if (((unsigned int)buf[0] << 8 | buf[1]) != (id & 0xFFFFu)) continue;   /* non e' la nostra */
+        if ((buf[3] & 0x0F) == 3) { esito = -2; break; }                 /* NXDOMAIN */
+        if ((buf[3] & 0x0F) != 0) { esito = -4; break; }
+        dom = (unsigned int)buf[4] << 8 | buf[5];
+        ris = (unsigned int)buf[6] << 8 | buf[7];
+        p = 12;
+        for (k = 0; k < dom && p < (unsigned int)n; k++) {        /* salta le domande */
+            while (p < (unsigned int)n && buf[p] && (buf[p] & 0xC0) != 0xC0) p += buf[p] + 1u;
+            p += (p < (unsigned int)n && (buf[p] & 0xC0) == 0xC0) ? 2u : 1u;
+            p += 4;
+        }
+        for (k = 0; k < ris && p + 10 < (unsigned int)n; k++) {    /* le risposte */
+            unsigned int tipo, lung;
+
+            while (p < (unsigned int)n && buf[p] && (buf[p] & 0xC0) != 0xC0) p += buf[p] + 1u;
+            p += (p < (unsigned int)n && (buf[p] & 0xC0) == 0xC0) ? 2u : 1u;
+            if (p + 10 > (unsigned int)n) break;
+            tipo = (unsigned int)buf[p] << 8 | buf[p + 1];
+            lung = (unsigned int)buf[p + 8] << 8 | buf[p + 9];
+            p += 10;
+            if (tipo == 1 && lung == 4 && p + 4 <= (unsigned int)n) {
+                memcpy(ip, buf + p, 4);
+                esito = 0;
+                break;
+            }
+            p += lung;                          /* un CNAME: si va avanti */
+        }
+    }
+    close(fd);
+    return esito;
+}
+
+static int servizio_porta(const char *s, int solo_numeri)
+{
+    static const struct { const char *nome; int porta; } noti[] = {
+        { "http", 80 }, { "https", 443 }, { "ftp", 21 }, { "ssh", 22 },
+        { "telnet", 23 }, { "domain", 53 }, { "smtp", 25 }, { "pop3", 110 },
+        { "imap", 143 }, { "ntp", 123 },
+    };
+    unsigned int i;
+    char        *fine;
+    long         v;
+
+    if (!s || !*s) return 0;
+    v = strtol(s, &fine, 10);
+    if (*fine == '\0') return (v >= 0 && v <= 65535) ? (int)v : -1;
+    if (solo_numeri) return -1;
+    for (i = 0; i < sizeof(noti) / sizeof(noti[0]); i++)
+        if (strcmp(s, noti[i].nome) == 0) return noti[i].porta;
+    return -1;
+}
+
+void freeaddrinfo(struct addrinfo *ai);
+
+int getaddrinfo(const char *nodo, const char *servizio,
+                const struct addrinfo *consigli, struct addrinfo **ris)
+{
+    unsigned char    ip[4] = { 0, 0, 0, 0 };
+    int              flag = consigli ? consigli->ai_flags : 0;
+    int              fam  = consigli ? consigli->ai_family : 0;
+    int              tipo = consigli ? consigli->ai_socktype : 0;
+    int              porta, t;
+    struct addrinfo *testa = NULL, **coda = &testa;
+
+    if (!ris) return -1;
+    *ris = NULL;
+    if (!nodo && !servizio) return -2;
+    if (fam != 0 && fam != S_AF_INET) return -6;                         /* EAI_FAMILY */
+    if (tipo != 0 && tipo != S_SOCK_STREAM && tipo != S_SOCK_DGRAM) return -7;
+    porta = servizio_porta(servizio, flag & 0x400);
+    if (porta < 0) return -8;                                            /* EAI_SERVICE */
+
+    if (!nodo) {
+        if (!(flag & 0x01)) { ip[0] = 127; ip[3] = 1; }                  /* non passivo */
+    } else if (inet_pton(S_AF_INET, nodo, ip) != 1) {
+        if (flag & 0x04) return -2;                                      /* NUMERICHOST */
+        if (strcmp(nodo, "localhost") == 0) { ip[0] = 127; ip[3] = 1; }
+        else {
+            int r = dns_chiedi(nodo, ip);
+
+            if (r != 0) return r;
+        }
+    }
+
+    for (t = S_SOCK_STREAM; t <= S_SOCK_DGRAM; t++) {
+        struct addrinfo    *a;
+        struct sockaddr_in *s;
+        size_t              ln = (flag & 0x02) && nodo ? strlen(nodo) + 1 : 0;
+
+        if (tipo && tipo != t) continue;
+        a = (struct addrinfo *)malloc(sizeof(*a) + sizeof(*s) + ln);
+        if (!a) { freeaddrinfo(testa); return -10; }                     /* EAI_MEMORY */
+        memset(a, 0, sizeof(*a) + sizeof(*s));
+        s = (struct sockaddr_in *)(a + 1);
+        s->sin_family = S_AF_INET;
+        s->sin_port   = htons((unsigned short)porta);
+        memcpy(&s->sin_addr.s_addr, ip, 4);
+        a->ai_family   = S_AF_INET;
+        a->ai_socktype = t;
+        a->ai_protocol = t == S_SOCK_STREAM ? S_IPPROTO_TCP : S_IPPROTO_UDP;
+        a->ai_addrlen  = sizeof(*s);
+        a->ai_addr     = (struct sockaddr *)s;
+        if (ln) { a->ai_canonname = (char *)(s + 1); memcpy(a->ai_canonname, nodo, ln); }
+        *coda = a;
+        coda  = &a->ai_next;
+    }
+    *ris = testa;
+    return 0;
+}
+
+void freeaddrinfo(struct addrinfo *ai)
+{
+    while (ai) {
+        struct addrinfo *dopo = ai->ai_next;
+
+        free(ai);
+        ai = dopo;
+    }
+}
+
+const char *gai_strerror(int e)
+{
+    switch (e) {
+    case 0:   return "nessun errore";
+    case -2:  return "nome sconosciuto";
+    case -3:  return "il DNS non risponde, riprovare";
+    case -4:  return "errore del DNS";
+    case -6:  return "famiglia di indirizzi non supportata";
+    case -7:  return "tipo di socket non supportato";
+    case -8:  return "servizio sconosciuto";
+    case -10: return "memoria esaurita";
+    case -11: return "errore di sistema (vedi errno)";
+    default:  return "errore di risoluzione";
+    }
+}
+
+int getnameinfo(const struct sockaddr *a, unsigned int len, char *host,
+                unsigned int hlen, char *serv, unsigned int slen, int flag)
+{
+    unsigned char ip[4];
+    unsigned int  porta;
+
+    (void)flag;       /* solo numerico: non c'e' la ricerca inversa */
+    if (indirizzo_in(a, len, ip, &porta) < 0) return -6;
+    if (host && hlen && !inet_ntop(S_AF_INET, ip, host, hlen)) return -11;
+    if (serv && slen) snprintf(serv, slen, "%u", porta);
+    return 0;
+}
+
+struct hostent *gethostbyname(const char *nome)
+{
+    static unsigned char  ip[4];
+    static char          *lista[2];
+    static char           nome_c[256];
+    static struct hostent h;
+    static char          *alias[1];
+
+    if (!nome) return NULL;
+    if (inet_pton(S_AF_INET, nome, ip) != 1) {
+        if (strcmp(nome, "localhost") == 0) { ip[0] = 127; ip[1] = 0; ip[2] = 0; ip[3] = 1; }
+        else if (dns_chiedi(nome, ip) != 0) return NULL;
+    }
+    strncpy(nome_c, nome, sizeof(nome_c) - 1);
+    lista[0] = (char *)ip; lista[1] = NULL; alias[0] = NULL;
+    h.h_name = nome_c; h.h_aliases = alias; h.h_addrtype = S_AF_INET;
+    h.h_length = 4; h.h_addr_list = lista;
+    return &h;
+}
+
+#endif /* !EXOS_LIBC_SO: i socket */
+
 #ifndef EXOS_LIBC_SO
 #include "libc_avvio.c"
 #endif

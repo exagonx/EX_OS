@@ -367,6 +367,9 @@ typedef struct {
     unsigned int  in_coda_tx;    /* byte accettati e non ancora confermati */
     unsigned char ip[4];
     unsigned int  porta;
+    /* ! IN FONDO, dalla 0.005 di ip.drv: la porta di QUESTA parte, per
+     * getsockname(). Chi legge solo i campi di prima non se ne accorge. */
+    unsigned int  porta_loc;
 } IpTcpInfo;
 
 /* Risposta generica.

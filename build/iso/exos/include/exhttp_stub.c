@@ -53,6 +53,10 @@ static struct {
     void (*da)(unsigned long);
     int (*posta)(const char *, const char *, unsigned char *, unsigned int,
                  ExHttpEsito *);
+    int (*certi_esamina)(const unsigned char *, unsigned int, char *, unsigned int);
+    int (*certi_aggiungi)(const unsigned char *, unsigned int);
+    unsigned long (*attesi)(void);
+    void (*intest)(const char *);      /* facoltativa (28 settembre 2026) */
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -93,6 +97,18 @@ static void assicura(void)
     P.verso    = (void (*)(ExHttpVerso, void *))chiedi(t, "exhttp_verso");
     P.da       = (void (*)(unsigned long))chiedi(t, "exhttp_da");
 
+    /* ! LE DUE DEI CERTIFICATI SONO FACOLTATIVE, e per una ragione sola:
+     * netupdate. Ricompilato, porta questo stub; se trovasse sulla macchina
+     * un exhttp.so di prima e si fermasse all'avvio per due nomi che non gli
+     * servono, non potrebbe piu' installare proprio la libreria nuova.
+     * Mancano? Le funzioni rispondono «non si puo'», e basta. */
+    P.certi_esamina  = (int (*)(const unsigned char *, unsigned int, char *,
+                                unsigned int))exlib_simbolo(t, "exhttp_certi_esamina");
+    P.certi_aggiungi = (int (*)(const unsigned char *, unsigned int))
+                       exlib_simbolo(t, "exhttp_certi_aggiungi");
+    P.attesi = (unsigned long (*)(void))exlib_simbolo(t, "exhttp_attesi");
+    P.intest = (void (*)(const char *))exlib_simbolo(t, "exhttp_intestazioni");
+
     P.pronto = 1;
 }
 
@@ -115,6 +131,20 @@ void exhttp_verso(ExHttpVerso f, void *dato)
 
 void exhttp_da(unsigned long primo)
 { assicura(); P.da(primo); }
+
+void exhttp_intestazioni(const char *righe)
+{ assicura(); if (P.intest) P.intest(righe); }
+
+int exhttp_certi_esamina(const unsigned char *dati, unsigned int n,
+                         char *testo, unsigned int max)
+{ assicura(); return P.certi_esamina ? P.certi_esamina(dati, n, testo, max) : -2; }
+
+int exhttp_certi_aggiungi(const unsigned char *dati, unsigned int n)
+{ assicura(); return P.certi_aggiungi ? P.certi_aggiungi(dati, n) : -2; }
+
+/* Optional as well: without it the percentage is simply not known. */
+unsigned long exhttp_attesi(void)
+{ assicura(); return P.attesi ? P.attesi() : 0; }
 
 int exhttp_posta(const char *url, const char *corpo, unsigned char *buf,
                  unsigned int max, ExHttpEsito *e)

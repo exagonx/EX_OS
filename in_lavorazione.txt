@@ -209,6 +209,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @BAD-BLOCCHI     FATTO su ext2 E su FAT: chkdsk -badblock -fix
   1  @PROVE-MACCHINA  ftpswap provato la' il 16 settembre; eject aspetta una chiavetta
   1  @GRAFICA-SCATTI  ridisegno per finestra e ciclo a eventi fatti: regioni esatte
+  1  @GRAFICA-FLUIDA  FATTI doppio buffer, ombra dello schermo, EX_NON_RIDISEGNARE; resta la sincronia verticale
   1  @TELNET-SCALA    scaletta e troncamento SISTEMATI: resta la sessione che si impianta
   1  @SIS-2D          FATTO: il motore 2D disegna, 14x sulla copia
   1  @ACCEL-2D        wserver lo usa via servizio; resta da provarlo sul ferro
@@ -224,6 +225,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
   1  @WIFI-4318       la radio della Broadcom: manca il firmware, non la voglia
   1  @RUST-0          FATTO e provato il 28/09 (Exilla): tools/rust-exos/prova.sh
+  1  @SEGNALI        FATTO e provato (23/23): sigaction con consegna vera e mprotect; resta dlopen
   1  @TASTI-SISTEMA   FATTI Ctrl+Alt+Canc e Ctrl+C in console; nel terminale in finestra non chiede
   1  @GRAFICA-MODALE  FATTO: riavvio e spegnimento con la grafica accesa
   1  @FILEMGR-OPS     FATTO anche Rinomina (F2), provato: resta l'avanzamento
@@ -5722,3 +5724,87 @@ un programma: il primo lavoro e' tirarla fuori.
   INPUT con F5 (il figlio ha il primo piano della console), Date e valueOf
   in ExJs (@EXJS-LACUNE). ! MEGA NON PORTA I BIT DI ESECUZIONE, confermato
   anche qui: gli script nuovi di tools/ si lanciano con `bash`, non con ./.
+
+2026-09-29 16:49 claude-B — @RUST-STD FATTO e provato (kernel 0.225): la std di Rust gira
+  dentro EX-OS, 29 su 29 (tools/rust-exos/prova-std.sh). Bersaglio unix che
+  si comporta come NuttX; sorgenti in tools/rust-exos/std/. Sistemati nel
+  sistema: timespec POSIX, stat/poll con -1 ed errno, mkdir ENOENT, libc.a
+  della toolchain senza cmov, strerror_r. Prossimo: @SOCKET-BSD.
+
+2026-09-29 17:33 claude-B — @SOCKET-BSD FATTO e provato (kernel 0.226, ip.drv 0.005): i
+  socket BSD nella libc.a sopra lo stack IP, getaddrinfo col DNS. Prove:
+  tools/exilla/prova-socket.sh (C, 23/23), tools/rust-exos/prova-rete.sh
+  (std::net, 9/9). Lo scaffale IPC ora e' per filo. Non nella libc.so
+  (floppy pieno): se servissero a un programma dinamico, una socket.so sul CD.
+
+2026-09-29 18:29 claude-A — @SEGNALI FATTO e provato (kernel 0.227): la tappa 1 di Exilla
+  che claude-B aveva lasciato in coda, fatta da qui perche' lui e' fermo.
+  mprotect (SYS 125): PROT_NONE e' una pagina PRESENTE senza PG_USER, non una
+  pagina assente (il non-presente ha gia' tre significati: mai mappata, swap,
+  eseguibile); PROT_READ toglie PG_WRITABLE; un frame condiviso (codice di una
+  libreria) non diventa scrivibile: EACCES. mmap onora PROT_NONE.
+  I segnali (SYS 165-169, kernel/sched/segnali.c): il kernel scrive un telaio
+  (registri, siginfo, ucontext con la forma di Linux i386) sulla pila o sulla
+  sigaltstack e salta al dispatcher della libc, che salva la FPU (FNSAVE),
+  chiama il gestore e torna con SYS_SEG_RITORNO; il gestore puo' cambiare i
+  registri. Le eccezioni in ring 3 diventano SIGSEGV/SIGILL/SIGFPE/SIGBUS/
+  SIGTRAP se c'e' un gestore; raise, kill e pthread_kill rendono il segnale
+  pendente e si consegna all'uscita della syscall. sigprocmask per filo,
+  sigaltstack, SA_SIGINFO/ONSTACK/NODEFER/RESETHAND, sigsetjmp/siglongjmp.
+  Prova: tools/prova_segnali.sh (tools/prove/segnaliprova.c), 23 su 23 —
+  NULL, sola lettura, PROT_NONE, ud2 con EIP spostato dal gestore, divisione
+  per zero, pila esaurita sulla sigaltstack, pthread_kill nel filo giusto.
+  prova_ctrlc.sh verde, libctest 206/15 come prima.
+  ! SOLO NELLA libc.a, come i socket: nella libc.so del floppy restano signal
+  e raise di prima. E IL FLOPPY ERA PIENO di 7,7 KB (la libc.so di oggi piu'
+  4 KB di kernel): shmtest e' passato sul CD, scelto dall'utente; restano 6 KB.
+  ! COSA MANCA, scritto in testa a segnali.c: un filo che non chiama mai il
+  kernel non riceve i segnali mandati; un'attesa non si interrompe (niente
+  EINTR, SA_RESTART e' quel che succede comunque); kill di un segnale non
+  preso a un ALTRO programma passa da proc_interrompi, quindi esce con 130.
+  Prossimo della tappa 1: dlopen/dlsym (o libxul statica), shm_open.
+
+2026-09-29 claude-A — @GRAFICA-FLUIDA lo sfarfallio «in base al carico, peggio nei
+  programmi grossi come EXBrowser» (detto dall'utente). Tre cause, tre
+  correzioni, sul modello di quel che Windows e Wayland hanno scritto:
+  1. IL SERVER LEGGEVA LA FINESTRA MENTRE IL CLIENT CI DISEGNAVA. Il toolkit
+     disegnava nella zona condivisa: prima il fondo, poi i controlli, e una
+     composizione capitata in mezzo mostrava la finestra a meta'. Ora `pix` e'
+     un buffer privato e presenta() copia nella zona solo il rettangolo finito,
+     a ex_aggiorna e a ridisegna_controllo (il doppio buffer di GDI, il commit
+     di Wayland). Senza memoria per il buffer si disegna nella zona come prima.
+     exwin.so 0.010.
+  2. IL PUNTATORE LAMPEGGIAVA: si disegnava dopo la finestra che copre. Ora
+     wserver compone ogni rettangolo in un'ombra dello schermo in RAM e lo copia
+     in un colpo (lo shadowfb di X); con l'ombra l'acceleratore non riempie
+     piu' lo sfondo, perche' il riempimento deve finire in RAM. `-noombra` per
+     tornare indietro. wserver 0.007.
+  3. OGNI MESSAGGIO GESTITO RIDISEGNAVA LA FINESTRA INTERA: e' la regola di
+     ex_smista (la procedura rende 0, il toolkit manda EXM_DISEGNA e
+     ex_aggiorna di tutta la finestra). Misurato con `exwin -conta`, che ora
+     dice anche CHI manda gli aggiornamenti: a scrivania ferma la scrivania
+     ridipingeva 800x572 ogni 2 secondi (la sua sveglia), ed EXBrowser rifaceva
+     la pagina a ogni sveglia (5-10 al secondo mentre carica o anima) e a ogni
+     movimento del mouse. Nuovo valore di ritorno EX_NON_RIDISEGNARE (exwin.h):
+     «gestito, non e' cambiato niente, o ho gia' disegnato io». Usato dalla
+     scrivania (EXM_TEMPO) e da EXBrowser (EXM_TEMPO, salvo quando la barra di
+     stato e' cambiata; EXM_MOUSE_MOSSO, EXM_MOUSE_SU, EXM_ROTELLA). A
+     scrivania ferma: da ~235.000 pixel al secondo a ~8.000 (l'orologio).
+     E l'orologio stesso: il suo commento prometteva «si ridisegna solo se il
+     testo e' cambiato», ma il `return 0` lo faceva ridisegnare al toolkit
+     due volte al secondo. Corretto anche lui: a scrivania ferma, UN
+     fotogramma al minuto.
+  Prove: prova_ridisegno BUONO (col solo buffer e con l'ombra), prova_exbrowser
+  BUONO, prova_gif_anima (navigatore e Immagini), prova_onclick, prova_es2015
+  (i due motori), prova_edit_schede, prova_nav_schede. Il giudizio
+  sullo sfarfallio e' dell'utente, sul ferro: nelle fotografie non si vede.
+  ! RESTA: la sincronia col ritorno verticale (lo strappo su una finestra
+  grande); rettangoli piu' stretti per pulsanti ed etichette; all'avvio la
+  scrivania si disegna due volte e la barra quattro; le altre applicazioni con una sveglia
+  (immagini, pennello) si possono convertire a EX_NON_RIDISEGNARE una per una.
+  ! E UN FAULT DA CAPIRE: una volta sola su una quindicina di avvii del kernel
+  0.227, sh0 (gia' partita, dopo «Accendo la rete») e' caduta con un page
+  fault di PROTEZIONE in lettura sul proprio codice (0x08003944, vma[0]).
+  Nessuna delle modifiche di oggi toglie PG_USER a un processo che non chiama
+  mprotect; sei avvii di fila per riprodurlo sono andati bene. Se ricompare:
+  la seriale e' la traccia, e la domanda e' chi ha scritto quella PTE o PDE.

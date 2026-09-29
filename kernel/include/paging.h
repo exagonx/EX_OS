@@ -90,4 +90,14 @@ PDE     *paging_get_kernel_directory(void);
 PDE     *paging_get_current_directory(void);
 void     page_fault_handler(InterruptFrame *frame);
 
+/* mprotect(): PROT_* on `pagine` pages from `virt` of process `p` (a
+ * struct Process *). 0, -ENOMEM (a page that does not exist), -EACCES (write
+ * on a frame shared with other processes). See paging.c. */
+struct Process;
+int      paging_proteggi(struct Process *p, uint32_t virt, uint32_t pagine,
+                         uint32_t prot);
+/* 1 if the kernel may write [va, va+len) for process p: present (brought in
+ * if it has to be), user and writable. For the signal frame. See paging.c. */
+int      paging_utente_pronta(struct Process *p, uint32_t va, uint32_t len);
+
 #endif /* PAGING_H */

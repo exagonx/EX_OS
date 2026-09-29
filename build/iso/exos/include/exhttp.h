@@ -118,6 +118,26 @@ int exhttp_posta(const char *url, const char *corpo,
                  unsigned char *buf, unsigned int max, ExHttpEsito *e);
 
 /* =============================================================================
+ * I certificati aggiunti da chi usa il sistema (23 settembre 2026)
+ *
+ * Stanno in $HOME/.app/exhttp/certi.pem e valgono per ogni programma che apre
+ * https per quella persona. `dati` e' un file .pem (anche con piu' certificati)
+ * o un .der/.crt binario di uno solo.
+ *
+ * exhttp_certi_esamina() scrive in `testo` una descrizione leggibile — chi e',
+ * chi l'ha emesso, le date, se e' una CA, l'impronta SHA-256 — ed e' quella da
+ * mostrare PRIMA di chiedere conferma: fidarsi di una CA vuol dire fidarsi di
+ * ogni sito che firma. Rende quanti certificati ha trovato, <0 se illeggibili.
+ *
+ * exhttp_certi_aggiungi() li scrive in fondo al file e fa rileggere il
+ * magazzino alla prossima connessione. Aggiunge SOLO le CA. Rende quante ne ha
+ * aggiunte, <0 se non riesce a scrivere il file.
+ * ============================================================================= */
+int exhttp_certi_esamina(const unsigned char *dati, unsigned int n,
+                         char *testo, unsigned int max);
+int exhttp_certi_aggiungi(const unsigned char *dati, unsigned int n);
+
+/* =============================================================================
  * I BISCOTTI — exhttp non li tiene, li chiede e li consegna
  *
  * ! LA DISPENSA STA IN CHI CHIAMA. Sapere che cosa e' un dominio, quando una
@@ -211,6 +231,13 @@ typedef int (*ExHttpVerso)(void *dato, const unsigned char *d, unsigned int n);
 
 void exhttp_verso(ExHttpVerso f, void *dato);
 
+/* How many bytes the body now arriving is declared to be (Content-Length), or
+ * 0 when the server did not say — chunked answers, or closed at the end.
+ * Valid from the first byte handed to the verso. It is what a percentage is
+ * made of (the download window of EXBrowser, `scarica -avanza`). Added on
+ * 23 September 2026. */
+unsigned long exhttp_attesi(void);
+
 /* =============================================================================
  * exhttp_da — la prossima richiesta chiede il corpo DA un certo byte
  *
@@ -230,6 +257,13 @@ void exhttp_verso(ExHttpVerso f, void *dato);
  * senza che nessuno se ne accorga, perche' 206 e' una risposta buona.
  * ========================================================================== */
 void exhttp_da(unsigned long primo);
+
+/* Le intestazioni della PROSSIMA richiesta, righe «Nome: valore» separate da
+ * a capo (28 settembre 2026): quelle di setRequestHeader e di fetch. Si
+ * filtrano — niente a capo dentro, niente Host, Content-Length, Cookie e le
+ * altre vietate agli script — e un Content-Type sostituisce quello dei POST.
+ * Facoltativa nello stub: su una exhttp.so vecchia non fa niente. */
+void exhttp_intestazioni(const char *righe);
 
 /* =============================================================================
  * A CHE PUNTO E' LA STRETTA DI MANO

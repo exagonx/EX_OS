@@ -44,8 +44,14 @@ typedef struct {
     char         titolo[TESTO_LEN];
     ExProcedura  proc;
 
-    /* Solo per il primo livello: i pixel */
+    /* Solo per il primo livello: i pixel.
+     * ! `pix` IS WHERE THE TOOLKIT DRAWS, `zona` IS WHAT THE SERVER READS
+     * (29 September 2026). They are two buffers, and a finished rectangle
+     * goes from one to the other only when the program says it is finished
+     * (presenta(), from ex_aggiorna). If the private one could not be had,
+     * pix == zona and everything is as before. See presenta(). */
     unsigned int *pix;
+    unsigned int *zona;
     unsigned int  passo_px;     /* pixel per riga */
     unsigned int  premuto;      /* il controllo e' giu' */
     ExFinestra    fuoco;        /* solo per il primo livello: chi ha i tasti */
@@ -2427,6 +2433,60 @@ static void combo_sopra(ExFinestra f);
  * ! DISEGNARLA DUE VOLTE NON FA DANNO, e capita: chi chiama ex_aggiorna piu'
  * volte ridisegna gli stessi pixel sopra se stessi.
  * ============================================================================= */
+/* =============================================================================
+ * presenta — copy a FINISHED rectangle to the pixels the server reads
+ * (29 September 2026, @GRAFICA-FLUIDA)
+ *
+ * ! THE SERVER READS THE SHARED ZONE WHENEVER IT LIKES: when the pointer
+ * moves over the window, when another window changes, when this one is
+ * uncovered. Until today the toolkit drew straight into that zone, background
+ * first and controls after, so a composition that fell in the middle showed
+ * the window half drawn — the empty background, the old text half gone. It
+ * is the flicker the user saw "depending on the load", worst in the biggest
+ * programs (EXBrowser), because those stay half drawn the longest.
+ *
+ * ! IT IS WHAT WINDOWS AND WAYLAND DO, and both wrote it down. Windows GDI
+ * called it double buffering (WS_EX_COMPOSITED, BeginBufferedPaint): draw
+ * off screen, copy the result in one go. Wayland made it the rule: a client
+ * draws in its own buffer and "commits" it, and the compositor never shows a
+ * buffer that was not committed ("every frame is perfect").
+ *
+ * The copy is RAM to RAM, about 357 MB/s measured on the Acer (see
+ * @GRAFICA-SCATTI): 640x400 is under 3 ms, and only the declared rectangle
+ * is copied. What remains possible is a composition during THIS copy, which
+ * can show old rows above new ones for one frame: two complete images, not
+ * a half-drawn one — and the next composition fixes it.
+ * ============================================================================= */
+static void presenta(const Oggetto *r, int x, int y, int w, int h)
+{
+    int j;
+
+    if (!r || !r->pix || !r->zona || r->pix == r->zona) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > r->w) w = r->w - x;
+    if (y + h > r->h) h = r->h - y;
+    if (w <= 0 || h <= 0) return;
+
+    for (j = 0; j < h; j++) {
+        unsigned int o = (unsigned int)(y + j) * r->passo_px + (unsigned int)x;
+        memcpy(r->zona + o, r->pix + o, (unsigned int)w * sizeof(unsigned int));
+    }
+}
+
+/* The private buffer for a zone of `passo` x `alt` pixels, or the zone itself
+ * if there is no memory for it: then the window draws in place, as it did
+ * before double buffering, instead of not drawing at all. */
+static unsigned int *retro_nuovo(unsigned int *zona, unsigned int passo,
+                                 unsigned int alt)
+{
+    unsigned int *b = (unsigned int *)malloc((size_t)passo * alt * sizeof(unsigned int));
+
+    if (!b) return zona;
+    memcpy(b, zona, (size_t)passo * alt * sizeof(unsigned int));
+    return b;
+}
+
 void ex_aggiorna(ExFinestra f)
 {
     Oggetto   *r = radice(f);
@@ -2442,6 +2502,8 @@ void ex_aggiorna(ExFinestra f)
          * sovrapponessero, quella aperta per ultima e' la tendina. */
         combo_sopra(rh);
     }
+
+    presenta(r, 0, 0, r->w, r->h);
 
     w.id = r->win_id;
     w.x = 0; w.y = 0;
@@ -2516,6 +2578,7 @@ static int ridisegna_controllo(Oggetto *o)
     disegna_figli(h);
     menu_sopra(rh);
     combo_sopra(rh);
+    presenta(r, x0, y0, x1 - x0, y1 - y0);
 
     w.id = r->win_id;
     w.x = (unsigned int)x0;
@@ -4921,8 +4984,9 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         o->win_id   = r.id;
         o->w        = (int)r.larghezza;
         o->h        = (int)r.altezza;
-        o->pix      = (unsigned int *)z.virt;
+        o->zona     = (unsigned int *)z.virt;
         o->passo_px = r.larghezza;
+        o->pix      = retro_nuovo(o->zona, o->passo_px, r.altezza);
 
         /* ! DOVE E' FINITA LO DICE IL SERVER, e con EX_AUTO e' l'unico modo di
          * saperlo: qui dentro x e y valgono ancora il -1 che si e' chiesto. */
@@ -4951,7 +5015,9 @@ void ex_distruggi(ExFinestra f)
         memset(&w, 0, sizeof(w));
         w.id = o->win_id;
         (void)ipc_send((unsigned int)g_server, WIN_MSG_DISTRUGGI, &w, sizeof(w));
-        if (o->pix) shm_chiudi((void *)o->pix);
+        if (o->pix && o->pix != o->zona) free(o->pix);
+        if (o->zona) shm_chiudi((void *)o->zona);
+        o->pix = o->zona = 0;
     }
 
     /* ! IL POSTO DELLE VOCI SI LIBERA, quello della lista e dell'area no, e la
@@ -5163,15 +5229,36 @@ static int rimappa(ExFinestra f, const WinCreata *r)
         /* ! -EEXIST VUOL DIRE «CE L'HO GIA'», cioe' che questa e' una
          * ripetizione e la ricevuta e' andata persa. Si risponde ridisegnando,
          * che e' anche il modo con cui la ricevuta si manda. */
-        return (o->pix && (int)r->larghezza == o->w &&
+        return (o->zona && (int)r->larghezza == o->w &&
                           (int)r->altezza   == o->h);
     }
 
-    vecchio     = o->pix;
-    o->pix      = (unsigned int *)z.virt;
-    o->w        = (int)r->larghezza;
-    o->h        = (int)r->altezza;
-    o->passo_px = r->passo / 4;
+    vecchio     = o->zona;
+    {
+        unsigned int *retro_vecchio = o->pix;
+        unsigned int  passo_vecchio = o->passo_px;
+        int           w_vecchio = o->w, h_vecchio = o->h;
+        int           j, cw, ch;
+
+        o->zona     = (unsigned int *)z.virt;
+        o->w        = (int)r->larghezza;
+        o->h        = (int)r->altezza;
+        o->passo_px = r->passo / 4;
+        o->pix      = retro_nuovo(o->zona, o->passo_px, (unsigned int)o->h);
+
+        /* What was drawn stays where it was until the program redraws in the
+         * new size: the part that fits is carried over, so a composition
+         * before that redraw shows the old picture and not a black one. */
+        if (retro_vecchio && o->pix != o->zona) {
+            cw = (w_vecchio < o->w) ? w_vecchio : o->w;
+            ch = (h_vecchio < o->h) ? h_vecchio : o->h;
+            for (j = 0; j < ch; j++)
+                memcpy(o->pix + (unsigned int)j * o->passo_px,
+                       retro_vecchio + (unsigned int)j * passo_vecchio,
+                       (unsigned int)cw * sizeof(unsigned int));
+        }
+        if (retro_vecchio && retro_vecchio != vecchio) free(retro_vecchio);
+    }
 
     /* ! ANCHE LA POSIZIONE ARRIVA QUI DENTRO, e va presa. Il server la mette
      * nella ricevuta della misura perche' ridimensionare dall'angolo puo'
@@ -6950,7 +7037,16 @@ void ex_smista(const ExMsg *m)
     if (!o) return;
 
     if (o->proc) {
-        if (o->proc(m->finestra, m->msg, m->wp, m->lp) == 0) {
+        long esito = o->proc(m->finestra, m->msg, m->wp, m->lp);
+
+        /* Handled, and the procedure says there is nothing to redraw (see
+         * EX_NON_RIDISEGNARE in exwin.h). Only the drop-downs are put back on
+         * top, in case the procedure drew under them. */
+        if (esito == EX_NON_RIDISEGNARE) {
+            tendine_ancora_sopra(m->finestra);
+            return;
+        }
+        if (esito == 0) {
             /* La procedura ha gestito il messaggio: si ridisegna comunque,
              * perche' quasi sempre l'ha gestito cambiando qualcosa.
              *
@@ -7408,7 +7504,7 @@ void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.009"
+#define EXWIN_VERSIONE "0.010"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 

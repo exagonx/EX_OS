@@ -7,7 +7,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * =============================================================================
  *
- * <signal.h> — i nomi dei segnali; la consegna non c'e'
+ * <signal.h> — i segnali (consegnati dal kernel dalla 0.227, nella libc.a)
  *
  * Facciata sottile su libc.h, come gli altri header con i nomi standard:
  * due elenchi della stessa funzione divergono, e la divergenza si

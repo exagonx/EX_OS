@@ -41,6 +41,19 @@ static struct {
     int (*avviso)(const char *, const char *);
     int (*conferma)(const char *, const char *, const char *, const char *);
     int (*riga)(const char *, const char *, char *, unsigned int);
+    int (*percorso)(const char *, const char *, const char *,
+                    char *, unsigned int);
+    int (*chiedi)(const char *, const char *, const char *,
+                  char *, unsigned int);
+    int (*scegli)(const char *, const char *, const char *const *, int);
+    int  (*sc_avvia)(const char *, const char *);
+    int  (*sc_info)(int, ExScarico *);
+    void (*sc_ferma)(int);
+    int  (*sc_in_corso)(void);
+    void (*sc_ferma_tutti)(void);
+    void (*sc_finestra)(void);
+    void (*sc_alla_fine)(ExScaricoFine, void *);
+    int  (*testo)(const char *, const char *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -71,6 +84,26 @@ static void assicura(void)
                           const char *)) chiedi(t, "ex_dlg_conferma");
     P.riga   = (int (*)(const char *, const char *, char *, unsigned int))
                chiedi(t, "ex_dlg_riga");
+    P.percorso = (int (*)(const char *, const char *, const char *,
+                          char *, unsigned int)) chiedi(t, "ex_dlg_percorso");
+    P.chiedi   = (int (*)(const char *, const char *, const char *,
+                          char *, unsigned int)) chiedi(t, "ex_dlg_chiedi");
+
+    /* ! FACOLTATIVA: senza, ex_dlg_scegli ripiega su una conferma fra la
+     * prima risposta e l'ultima. Un programma nuovo sopra un exdlg.so di prima
+     * deve partire lo stesso. */
+    P.scegli = (int (*)(const char *, const char *, const char *const *, int))
+               exlib_simbolo(t, "ex_dlg_scegli");
+
+    /* I download: FACOLTATIVI per la stessa ragione. */
+    P.sc_avvia       = (int (*)(const char *, const char *))exlib_simbolo(t, "ex_scarico_avvia");
+    P.sc_info        = (int (*)(int, ExScarico *))exlib_simbolo(t, "ex_scarico_info");
+    P.sc_ferma       = (void (*)(int))exlib_simbolo(t, "ex_scarico_ferma");
+    P.sc_in_corso    = (int (*)(void))exlib_simbolo(t, "ex_scarichi_in_corso");
+    P.sc_ferma_tutti = (void (*)(void))exlib_simbolo(t, "ex_scarichi_ferma_tutti");
+    P.sc_finestra    = (void (*)(void))exlib_simbolo(t, "ex_scarichi_finestra");
+    P.sc_alla_fine   = (void (*)(ExScaricoFine, void *))exlib_simbolo(t, "ex_scarichi_alla_fine");
+    P.testo          = (int (*)(const char *, const char *))exlib_simbolo(t, "ex_dlg_testo");
 
     P.pronto = 1;
 }
@@ -100,9 +133,51 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
     return P.conferma(titolo, testo, si, no);
 }
 
+int  ex_scarico_avvia(const char *u, const char *d)
+{ assicura(); return P.sc_avvia ? P.sc_avvia(u, d) : EX_SC_ERR_VECCHIA; }
+int  ex_scarico_info(int id, ExScarico *s)
+{ assicura(); return P.sc_info ? P.sc_info(id, s) : 0; }
+void ex_scarico_ferma(int id)        { assicura(); if (P.sc_ferma) P.sc_ferma(id); }
+int  ex_scarichi_in_corso(void)      { assicura(); return P.sc_in_corso ? P.sc_in_corso() : 0; }
+void ex_scarichi_ferma_tutti(void)   { assicura(); if (P.sc_ferma_tutti) P.sc_ferma_tutti(); }
+void ex_scarichi_finestra(void)      { assicura(); if (P.sc_finestra) P.sc_finestra(); }
+void ex_scarichi_alla_fine(ExScaricoFine fn, void *d)
+{ assicura(); if (P.sc_alla_fine) P.sc_alla_fine(fn, d); }
+
+int ex_dlg_scegli(const char *titolo, const char *testo,
+                  const char *const *voci, int n)
+{
+    assicura();
+    if (P.scegli) return P.scegli(titolo, testo, voci, n);
+    if (!voci || n < 1) return -1;
+    return P.conferma(titolo, testo, voci[0], voci[n - 1]) ? 0 : -1;
+}
+
 int ex_dlg_riga(const char *titolo, const char *domanda,
                 char *valore, unsigned int max)
 {
     assicura();
     return P.riga(titolo, domanda, valore, max);
+}
+
+int ex_dlg_percorso(const char *titolo, const char *etichetta, const char *ok,
+                    char *percorso, unsigned int max)
+{
+    assicura();
+    return P.percorso(titolo, etichetta, ok, percorso, max);
+}
+
+int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
+                  char *valore, unsigned int max)
+{
+    assicura();
+    return P.chiedi(titolo, domanda, ok, valore, max);
+}
+
+/* Over an exdlg.so from before 27 September 2026: an ordinary warning. */
+int ex_dlg_testo(const char *titolo, const char *testo)
+{
+    assicura();
+    if (P.testo) return P.testo(titolo, testo);
+    return P.avviso(titolo, testo);
 }

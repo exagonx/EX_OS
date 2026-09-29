@@ -21,7 +21,17 @@ involucri, e questa ricetta.
 > agli 8 byte di allineamento che garantisce, `memalign` sopra, `realloc` solo
 > dove non tradisce l'allineamento. Provati dentro EX-OS: `Vec` + `sort`,
 > `format!`, `Box<dyn Trait>`, `BTreeMap`, un `#[repr(align(64))]` e centomila
-> `push` (cioè le `realloc`). I passi 2–4 restano il piano scritto sotto.
+> `push` (cioè le `realloc`).
+>
+> **E il passo 3 — la `std` vera — è fatto il 29 settembre 2026** (@RUST-STD):
+> un programma Rust normale, con `fn main`, gira dentro EX-OS con file,
+> directory, ambiente, tempo, **thread**, `Mutex`, `Condvar`, canali, `RwLock` e
+> `thread_local!` — 29 controlli su 29. Lo rifà:
+>
+>     tools/rust-exos/prova-std.sh
+>
+> Com'è fatto sta nel paragrafo del passo 3, più sotto. Il passo 2 (`libexos`)
+> resta da fare; il passo 4 non è più bloccato dai thread.
 
 ### Passo 0: cosa è cambiato rispetto al piano, provandolo
 
@@ -55,8 +65,9 @@ ragione è una sola e si misura:
 
 ```
 thread_crea / attendi / esci     C'E' dal 4 settembre 2026 (syscall 201-203)
-TLS per filo                     manca      mmap        c'e'
-futex / attese che bloccano      manca      poll/select c'e'
+TLS per filo                     c'e'       mmap        c'e'
+futex / attese che bloccano      c'e'       poll/select c'e'
+pthread                          c'e' (28 settembre 2026, kernel 0.222)
 fork                             manca      signal      c'e'
 socket (BSD)                     manca      C++ 17      c'e' (gcc 17 sul CD)
 dlopen / dlsym                   manca
@@ -173,23 +184,58 @@ Un crate nostro con gli involucri sicuri su ciò che EX-OS offre: file
 invece che soltanto possibile — e vive in questa directory, non dentro
 l'albero di Rust.
 
-## Passo 3 — la `std`: un `sys` nuovo dentro la libreria standard
+## Passo 3 — la `std` (FATTO il 29 settembre 2026)
 
-È il porting vero, e si fa nella libreria, non nel compilatore: `library/std`
-ha uno strato per sistema (`sys/pal/`), e ci sono già port fatti così per UEFI,
-per Hermit, per SGX. Il grosso — file, io, tempo, processi — si mappa su quel
-che EX-OS ha.
+Il piano diceva «un `sys` nuovo, e i thread dichiarati non supportati». È
+andata diversamente, per due ragioni misurate:
 
-! **I THREAD SI DICHIARANO NON SUPPORTATI, e non è una scorciatoia**: EX-OS non
-ne ha, e `sys/pal/unsupported/thread.rs` esiste apposta perché anche altri
-bersagli sono in quella condizione. `std::thread::spawn` renderà un errore
-invece di un thread; `File`, `String`, `Vec`, i formattatori e cargo
-funzionano. Fingere dei thread — eseguire la closure nel chiamante — sarebbe la
-cosa peggiore: un programma che crede di avere due flussi e ne ha uno solo si
-comporta bene finché non conta.
+- **i thread ci sono** (tappa 1 di Exilla, kernel 0.222: `pthread` vero);
+- **Firefox usa il crate `libc` dappertutto**, non solo la `std`: un bersaglio
+  che non fosse della famiglia unix lascerebbe fuori tutto il suo codice Rust.
 
-Da qui in poi funziona **cargo**, e con lui i crate che non vogliono thread né
-socket.
+Quindi EX-OS è un bersaglio **unix** (`"os": "exos"`, `"target-family":
+["unix"]` in `i686-unknown-exos.json`) che passa per la nostra libc, e dentro
+la `std` **si comporta come NuttX**: un sistema POSIX con i pthread e senza
+fork, che la `std` nomina già in una cinquantina di punti.
+
+I sorgenti del porting stanno in `tools/rust-exos/std/`:
+
+| file | cosa fa |
+|---|---|
+| `libc-exos.rs` | il modulo EX-OS del crate `libc`: tipi, strutture e costanti **presi da `lib/include`**. Un numero sbagliato qui è un campo letto spostato. |
+| `aggiungi-exos.py` | ogni `target_os = "nuttx"` di `std` e `libc` diventa `any(nuttx, exos)`; poi le eccezioni, una per una, ognuna con il suo perché |
+| `os-exos/` | `std::os::exos` (le estensioni dei metadati sulla nostra `struct stat`) |
+| `prepara.sh` | copia `library` (dal rust-src del nightly) e il crate `libc` in `cross_build/<macchina>/costruzione-std`, e ci applica quanto sopra |
+
+Le eccezioni, cioè dove EX-OS **non** è NuttX: il nome del sistema; la
+casualità da `getentropy`; `errno` da `__errno_dove`; i tempi dei file al
+secondo (`st_mtime`, non `st_mtim`); niente `openat` (`remove_dir_all` cammina
+per nomi); `FD_CLOEXEC` senza effetto (EX-OS non ha exec che erediti).
+
+**I SOCKET** ci sono dal 29 settembre 2026 (@SOCKET-BSD): `std::net` —
+`TcpStream`, `TcpListener`, `UdpSocket`, `to_socket_addrs` col DNS — gira
+dentro EX-OS. Prova: `tools/rust-exos/prova-rete.sh` (con la rete di QEMU e
+un host dall'altra parte). Solo IPv4; stanno nella `libc.a`.
+
+! **CARGO NON VEDE I CAMBI ALLA NOSTRA `std`**: per le librerie di
+`-Z build-std` guarda la versione, non le date. `prova-std.sh` tiene
+un'impronta dei sorgenti del porting e butta la costruzione quando cambia.
+
+! **`libc.a` DELLA TOOLCHAIN**: il programma si collega con `i386-exos-gcc`,
+cioè con la `libc.a` di questa macchina. Dopo ogni modifica alla libc va
+rifatta: `tools/gcc-exos/prepara-cross.sh "$PWD/cross_build/<macchina>/exos-cross"`.
+
+Cosa ha trovato, e sistemato, la prima `std` (29 settembre 2026):
+
+- `struct timespec` aveva `tv_sec` a 32 bit con `time_t` a 64: ora è `time_t`,
+  come vuole POSIX (`lib/include/libc.h`, 8 → 12 byte);
+- `stat()` e `poll()` rendevano `-errno` invece di `-1`: per la `std` ogni file
+  esisteva;
+- il kernel rispondeva `EIO` a un `mkdir` con il genitore mancante (kernel
+  0.225: `ENOENT`, `ENOTDIR`, `EISDIR`);
+- la `libc.a` della toolchain era compilata per i686 e non per il Pentium MMX:
+  `cmov` in `malloc`, `stat`, `nanosleep`;
+- mancava `strerror_r`.
 
 ## Passo 4 — rustc sul CD degli strumenti
 
@@ -202,6 +248,9 @@ socket.
    collegano deve comunque avere `Thread`;
 3. serve la memoria: LLVM in compilazione vuole qualche giga, e il binario è un
    ordine di grandezza sopra cc1 (33 MB).
+
+(Aggiornamento, 29 settembre 2026: i punti 1 e 2 ci sono — `std` e thread
+veri. Resta il 3, la memoria, e la costruzione di LLVM stesso.)
 
 ! **QUINDI IL CD NON PUÒ AVERE RUSTC FINCHÉ EX-OS NON HA I THREAD**, ed è lo
 stesso muro contro cui si ferma il porting di Firefox (diario, 3 settembre

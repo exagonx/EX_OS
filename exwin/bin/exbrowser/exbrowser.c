@@ -1264,9 +1264,14 @@ static const char CSS_DI_SISTEMA[] =
      * perche' la sua regola sta piu' in alto nella cascata. */
     "table, td { text-align: left }";
 
+/* How many times the status line changed: EXM_TEMPO looks at it to know
+ * whether it needs the toolkit's redraw (see the end of that case). */
+static unsigned int g_dico_n = 0;
+
 static void dico(const char *s)
 {
     if (g_stato) ex_testo_metti(g_stato, s);
+    g_dico_n++;
 }
 
 /* =============================================================================
@@ -7074,10 +7079,18 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_ROTELLA:
         if (EX_Y(lp) >= area_y())
             scorri((int)wp * EX_ROTELLA_RIGHE * 16);
-        return 0;
+        return EX_NON_RIDISEGNARE;          /* scorri() has drawn */
 
+    /* ! FROM HERE ON, EX_NON_RIDISEGNARE AND NOT 0 (29 September 2026). A 0
+     * makes the toolkit redraw the whole window — the whole page — after the
+     * message, and these come ten times a second while a page loads or a GIF
+     * moves (EXM_TEMPO) and at every pixel of mouse movement (EXM_MOUSE_MOSSO).
+     * The page was being drawn again and again for nothing, and it was the
+     * flicker the user saw "depending on the load". Whatever really changes
+     * the page goes through disegna(), which calls ex_aggiorna itself. */
     case EXM_TEMPO: {
         int aspetta = 0, cornici;
+        unsigned int dico_prima = g_dico_n;
 
         if (g_js) {
             ctrl_al_dom();
@@ -7119,7 +7132,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
              * gli script della pagina. */
             segui_location();
         }
-        return 0;
+        /* The status line is a toolkit control and shows only when the
+         * window is redrawn: if a script or the network wrote there, the
+         * redraw is still wanted. */
+        return (g_dico_n != dico_prima) ? 0 : EX_NON_RIDISEGNARE;
     }
 
     case EXM_MOUSE_GIU: {
@@ -7175,12 +7191,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 
     case EXM_MOUSE_MOSSO:
-        barra_mosso(EX_Y(lp));
-        return 0;
+        barra_mosso(EX_Y(lp));              /* draws itself if it scrolls */
+        return EX_NON_RIDISEGNARE;
 
     case EXM_MOUSE_SU:
         g_trascino = 0;
-        return 0;
+        return EX_NON_RIDISEGNARE;
 
     case EXM_DISEGNA:
         disegna();

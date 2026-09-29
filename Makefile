@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo fdprova kbprova mouse_prog kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog polltest toolinst login sudo help_prog keymap libc testo fdprova kbprova mouse_prog kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi calctor pennello immagini
 
@@ -858,7 +858,7 @@ cmp_prog: dirs $(CMP_BIN)
 # l'unico modo di averne due che si conoscono. I valori attesi sono funzioni
 # dei soli indici, quindi ogni byte ha una risposta giusta nota in anticipo.
 SHMTEST_SRC := bin/shmtest/shmtest.c
-SHMTEST_BIN := $(BUILD_BIN)/shmtest
+SHMTEST_BIN := $(BUILD_BIN_CD)/shmtest
 SHMTEST_LD  := bin/shmtest/shmtest.ld
 
 $(SHMTEST_BIN): $(SHMTEST_SRC) $(SHMTEST_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
@@ -4767,6 +4767,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/mm/shm.c \
                   $(KERNEL_DIR)/mm/swap.c \
                   $(KERNEL_DIR)/sched/sched.c \
+                  $(KERNEL_DIR)/sched/segnali.c \
                   $(KERNEL_DIR)/ipc/ipc.c \
                   $(KERNEL_DIR)/ipc/pipe.c \
                   $(KERNEL_DIR)/ipc/pty.c \
@@ -4908,7 +4909,7 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
-                        $(HWINFO_BIN) $(CMP_BIN) $(SHMTEST_BIN) $(POLLTEST_BIN) \
+                        $(HWINFO_BIN) $(CMP_BIN) $(POLLTEST_BIN) \
                         $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
                         $(TESTO_BIN) $(FDPROVA_BIN) $(KBPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(DATE_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
                         $(SHUTDOWN_BIN) $(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt \
@@ -6951,7 +6952,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
-                  $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) \
+                  $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) $(SHMTEST_BIN) \
                   $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN) $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN) $(RUNBAS_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA

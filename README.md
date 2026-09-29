@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.218
+**Versione:** 0.227
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -100,6 +100,49 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### La grafica non sfarfalla piu'
+
+**testato in QEMU, da giudicare sul ferro** — lo sfarfallio si vedeva «in
+base al carico», peggio nei programmi grossi come EXBrowser. Le cause erano
+tre. Il server leggeva una finestra mentre il programma ci stava ancora
+disegnando: ora ogni finestra disegna in un buffer suo e al server arriva
+solo il rettangolo finito (il doppio buffer di Windows, il *commit* di
+Wayland). Il puntatore lampeggiava: il server compone in una copia dello
+schermo in RAM e poi la copia sullo schermo in un colpo (`exwin -noombra`
+per tornare indietro). E ogni messaggio gestito ridisegnava la finestra
+intera: la scrivania si ridipingeva ogni due secondi, EXBrowser rifaceva la
+pagina a ogni scatto della sveglia e a ogni movimento del mouse. Un
+programma ora puo' dire «non e' cambiato niente» (`EX_NON_RIDISEGNARE`).
+A scrivania ferma il server compone un fotogramma al minuto, prima due o
+tre al secondo; `exwin -conta` dice anche chi chiede gli aggiornamenti.
+
+### I segnali arrivano davvero, e c'e' `mprotect`
+
+**testato in QEMU** (`tools/prova_segnali.sh`, 23 su 23) — dal kernel 0.227
+un programma collegato con la `libc.a` puo' installare un gestore con
+`sigaction`: un puntatore sbagliato, un'istruzione non valida o una
+divisione per zero chiamano il gestore invece di chiudere il programma, con
+l'indirizzo e i registri, anche su una pila alternativa (`sigaltstack`); il
+gestore puo' cambiare i registri e il programma riparte da li'. `raise`,
+`kill` e `pthread_kill` arrivano al filo giusto, e ci sono `sigprocmask`,
+`sigsetjmp` e `siglongjmp`. `mprotect` rende una pagina di sola lettura o
+intoccabile. Serve a Firefox (Exilla). Nella `libc.so` del floppy non c'e'
+posto: li' `signal` e `raise` restano quelli di prima.
+
+### I socket BSD
+
+**testato in QEMU** (in C 23 su 23, in Rust 9 su 9) — nella `libc.a` ci sono
+`socket`, `connect`, `bind`, `listen`, `accept`, `send`, `recv`, `poll` sui
+socket e `getaddrinfo` con il DNS, sopra lo stack IP di EX-OS (kernel 0.226).
+Solo IPv4. Servono al software portato: Rust (`std::net`) e Firefox.
+
+### La `std` di Rust gira dentro EX-OS
+
+**testato in QEMU** (`tools/rust-exos/prova-std.sh`, 29 su 29) — un
+programma Rust con la libreria standard vera, compilato da Linux, usa file,
+cartelle, tempo, fili, `Mutex`, `Condvar` e canali dentro EX-OS (kernel
+0.225). E' la seconda tappa di Exilla, il porting di Firefox.
 
 ### Il navigatore parte anche a 32 MB
 
@@ -3591,7 +3634,9 @@ liberato: un figlio resta `ZOMBIE` finché il padre non lo raccoglie (il reaper 
 init si occupa solo degli orfani).
 
 **Non c'è `bg`**, e non è una dimenticanza: `bg` riprende un processo *sospeso*, e
-per sospenderlo servirebbe un Ctrl+Z — cioè i segnali, che EX-OS non ha. Un job
+per sospenderlo servirebbe un Ctrl+Z — cioè un segnale che fermi un processo e lo
+lasci ripartire, che EX-OS non ha (dalla 0.227 i segnali ci sono, ma SIGSTOP e
+SIGCONT no, e la shell non ne manda). Un job
 qui o gira o è finito, non esiste lo stato in mezzo.
 
 **L'output si mescola.** Un job in background scrive sulla stessa console della
@@ -3608,7 +3653,7 @@ un comando — la console morirebbe. Due meccanismi lo impediscono:
 1. `sys_read` su `stdin` restituisce la **fine dell'input** a chi non è il
    processo in primo piano della propria console. La shell dichiara il primo
    piano con `SYS_CONSOLE_SETFG` (sé stessa al prompt, il figlio quando lo
-   aspetta). Unix qui userebbe `SIGTTIN`; senza segnali, l'EOF è l'unica risposta
+   aspetta). Unix qui userebbe `SIGTTIN`; senza quel segnale, l'EOF è l'unica risposta
    possibile — ed è comunque vera, quel programma input non ne avrà mai.
 2. Chi prende la tastiera parlando **direttamente** al servizio `kbd` via IPC —
    la modalità raw di `gfedit` — non passa da `sys_read`, quindi controlla da sé
@@ -4605,7 +4650,8 @@ kernel. Le regole che contano sono tutte di confine:
 > una pipe non è distinguibile da un blocco eterno. E scrivere quando non
 > c'è più nessun lettore dà `EPIPE`, non un'attesa.
 
-> ! **Niente `SIGPIPE`**: EX-OS non ha i segnali, quindi si vede solo il
+> ! **Niente `SIGPIPE`**: la pipe non manda segnali (quelli della 0.227 li
+> mandano solo i guasti e `kill`), quindi si vede solo il
 > valore di ritorno. Chi non guarda quello di `write()` non se ne accorge.
 > E **niente garanzia di atomicità**: la scrittura può essere parziale
 > anche sotto `PIPE_BUF`.

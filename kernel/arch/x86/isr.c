@@ -441,6 +441,23 @@ void isr_handler(InterruptFrame *frame)
      * ========================================================================= */
     if ((frame->cs & 0x3) == 3) {
         Process *p = proc_get_current();
+        int      sig, codice;
+
+        /* The signal each exception is on Linux, with its si_code. A caught
+         * one runs its handler instead of dying (kernel/sched/segnali.c). */
+        switch (int_no) {
+            case 0:  sig = 8;  codice = 1;    break;  /* SIGFPE FPE_INTDIV */
+            case 16:
+            case 19: sig = 8;  codice = 0;    break;  /* SIGFPE */
+            case 1:
+            case 3:  sig = 5;  codice = 1;    break;  /* SIGTRAP TRAP_BRKPT */
+            case 6:  sig = 4;  codice = 2;    break;  /* SIGILL ILL_ILLOPN */
+            case 11:
+            case 12:
+            case 17: sig = 7;  codice = 0x80; break;  /* SIGBUS SI_KERNEL */
+            default: sig = 11; codice = 0x80; break;  /* SIGSEGV SI_KERNEL */
+        }
+        if (segnali_fault(frame, sig, codice, 0)) return;
 
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_RED);
         kprintf("\n[FAULT] PID %u '%s': eccezione %u (%s) a EIP=0x%08x "

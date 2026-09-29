@@ -82,8 +82,8 @@ solo  = prova-make
 
 nota  = Con questo si COSTRUISCE, non si compila soltanto: make decide
 nota  = cosa rifare e in che ordine, `ar` mette gli oggetti in una
-nota  = libreria. E' cio' che serve a compilare un programma vero — il
-nota  = primo e' FreeBASIC — invece che un file per volta.
+nota  = libreria. E' cio' che serve a compilare un programma vero - il
+nota  = primo e' FreeBASIC - invece che un file per volta.
 nota  = !! La prova sta in /prova-make: si copia in una directory
 nota  = scrivibile (il CD non lo e'), si lancia `make`, e `./prova` deve
 nota  = dire 385.

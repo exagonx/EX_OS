@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.." || exit 1
 # EXOS_ISTANZA.
 rm -f /tmp/exos/serialtn.txt
 
-EXOS_ISTANZA=tn EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_ATTESA_FINALE=90 \
+EXOS_ISTANZA=tn EXOS_NO_FLOPPY=1 EXOS_CDROM="${EXOS_CDROM:-dist/exos.iso}" EXOS_ATTESA_FINALE=90 \
 EXOS_QEMU_EXTRA="-netdev user,id=n1,net=10.0.0.0/24,host=10.0.0.2,dhcpstart=10.0.0.15,hostfwd=tcp::2323-:23 -device ne2k_pci,netdev=n1" \
 timeout 200 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" "telnetd -s -v@10" \
     > /tmp/exos/tn.log 2>&1 &

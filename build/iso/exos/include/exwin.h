@@ -104,6 +104,42 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * sola: il ciclo dei messaggi dorme finche' non arriva un evento, e un
  * orologio si aggiornerebbe solo quando l'utente muove il mouse. */
 #define EXM_TEMPO       0x000D
+/* The list of open windows has changed: read it with ex_finestre_elenco().
+ * Only the window that called ex_finestre_segui() receives it. */
+#define EXM_FINESTRE    0x000E
+/* Ctrl+Alt+Canc was pressed with the graphics on screen (@TASTI-SISTEMA).
+ * Only the window that called ex_finestre_segui() receives it: the desktop,
+ * which asks what to do. */
+#define EXM_SISTEMA     0x000F
+/* The mouse wheel turned over this window (28 September 2026). wp is the
+ * number of notches as a SIGNED int — positive towards the user, i.e. "the
+ * page goes down" — and lp the pointer, as for EXM_MOUSE_GIU. It arrives only
+ * when the toolkit did not use it: a list, a text area or a scroll bar under
+ * the pointer scrolls by itself, three lines per notch (EX_ROTELLA_RIGHE). */
+#define EXM_ROTELLA     0x0010
+/* The RIGHT mouse button was pressed on this window (29 September 2026,
+ * @MOUSE-DESTRO). lp is the point, as for EXM_MOUSE_GIU; wp is the control
+ * under it, or 0. On a list the row under the pointer is chosen first, so
+ * ex_lista_scelta says which one was clicked. The usual answer is
+ * ex_menu_comparsa(). */
+#define EXM_MOUSE_DESTRO 0x0011
+/* Rows of a list were dragged and released over ANOTHER control of the same
+ * window (29 September 2026, @FM-TRASCINA). wp: the list's id in the low 16
+ * bits, the target control's id in the high 16; lp: the release point, as for
+ * EXM_MOUSE_GIU. Which rows: ex_lista_scelte on the list; where on a target
+ * list: ex_lista_riga_a. */
+#define EXM_LASCIATO    0x0012
+/* Una scheda di documenti chiede di chiudersi: la sua X, o Ctrl+W. wp = id
+ * del controllo, lp = l'indice. Il toolkit NON la toglie: e' il programma
+ * che sa se c'e' da salvare, e poi chiama ex_voce_togli(). (29 settembre
+ * 2026, @TOOLKIT-SCHEDE) */
+#define EXM_SCHEDA_CHIUDI 0x0013
+/* EXM_MOUSE_GIU e EXM_DOPPIOCLIC portano in wp i modificatori (KBD_MOD_CTRL,
+ * _SHIFT, _ALT) del momento del clic: dal 29 settembre 2026, con wserver
+ * 0.006 e exwin.so 0.009. Prima wp era 0. */
+#define EX_DA(wp)       ((unsigned int)(wp) & 0xFFFFu)
+#define EX_A(wp)        ((unsigned int)(wp) >> 16)
+#define EX_ROTELLA_RIGHE 3
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
 #define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))
@@ -165,6 +201,11 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * server. Chi mette questo bit deve gestire EXM_MISURA. */
 #define EX_RIDIM        0x0080
 #define EX_FIGLIO       0x0100  /* e' un controllo dentro un'altra finestra */
+/* ! SPENTO (27 settembre 2026, per Calctor): il controllo c'e', si vede
+ * grigio, e non si preme ne' prende il fuoco. Si mette alla creazione o con
+ * ex_abilita(). Nasconderlo (ex_mostra) direbbe «non esiste»; spento dice
+ * «esiste, ma adesso no» — le cifre 2..9 di una calcolatrice in binario. */
+#define EX_SPENTO       0x0200
 
 /* --- I colori, in ARGB --------------------------------------------------- */
 #define EX_NERO         0x00000000
@@ -220,6 +261,24 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  *     "scorrimento"   una barra: verticale o orizzontale secondo la FORMA
  *     "combo"         un elenco a discesa: si vede la scelta, si apre l'elenco
  *     "tab"           una fila di linguette, una scelta
+ *     "immagine"      un'icona e basta: ornamento, non si clicca
+ *
+ * ! «immagine» NON PRENDE IL FUOCO E NON MANDA COMANDI, ed e' il suo mestiere:
+ * sta li' e si fa guardare. Gli si da' l'icona con ex_icona_metti() come a un
+ * pulsante, e la disegna QUADRATA E CENTRATA nel riquadro — le icone sono
+ * quadrate, il riquadro che si tira no, e allargarle al rettangolo vorrebbe
+ * dire deformarle. Prima dell'immagine l'ornamento si faceva con
+ * un'«etichetta» dal testo vuoto: funzionava, ed era un trucco da spiegare
+ * ogni volta.
+ *
+ * ! E LA MISURA E' QUELLA DEL CONTROLLO: il `lato` passato a ex_icona_metti()
+ * qui non conta, perche' l'icona NON sta accanto a una scritta — e' tutto il
+ * controllo. Si tira il riquadro, e l'immagine lo riempie.
+ *
+ * ! CHI VUOLE UNA FIGURA CHE SI CLICCA USA UN'«etichetta» CON L'ICONA: quella
+ * ha l'evento Clic, e un'etichetta con icona ed evento Clic e' esattamente un
+ * collegamento. Un controllo in piu' per chiamarlo con un altro nome sarebbe
+ * un controllo che fa quel che ne fa gia' uno.
  *
  * Per una finestra di primo livello: `padre` = 0, `id` = 0, `proc` = la
  * procedura. Per un controllo: `padre` = la finestra, `id` = il numero con cui
@@ -314,6 +373,79 @@ ExFinestra  ex_fuoco_chi(ExFinestra finestra);
  * dentro. Un programma qualunque non ha motivo di chiamarla. */
 void        ex_spegni_scrivania(void);
 
+/* =============================================================================
+ * THE OPEN WINDOWS, FOR A TASKBAR (@FIN-ICONA, 26 September 2026)
+ *
+ * ex_finestre_segui(f): from now on the server sends the list of open
+ * windows whenever it changes, and f receives EXM_FINESTRE each time. The
+ * first list arrives at once. One follower per desktop: the last to ask.
+ *
+ * ex_finestre_elenco(): copies the last list received into v, at most max
+ * entries, in creation order; returns how many there are.
+ *
+ * ex_finestra_attiva(id): restore it if minimized, bring it to the front,
+ * give it the focus. ex_finestra_riduci(id): minimize it — the same as the
+ * «_» button the server draws next to the close button.
+ *
+ * ! THE ids ARE THE SERVER'S, not ExFinestra handles: the windows belong to
+ * other programs. The pid says whose, and is how a taskbar finds the icon.
+ * ============================================================================= */
+#define EX_VF_RIDOTTA   0x0001      /* minimized */
+#define EX_VF_FUOCO     0x0002      /* has the keyboard focus */
+
+typedef struct {
+    unsigned int id;
+    unsigned int pid;
+    unsigned int stato;             /* EX_VF_* */
+    char         titolo[48];
+} ExVoceFin;
+
+void        ex_finestre_segui(ExFinestra f);
+int         ex_finestre_elenco(ExVoceFin *v, int max);
+void        ex_finestra_attiva(unsigned int id);
+/* The same for one of this program's own windows, by handle: to the front,
+ * with the keyboard focus (28 September 2026). A program that opens a side
+ * window — Calctor's tape — gives the focus back to the main one with this.
+ * Optional in the stub: over an older exwin.so it does nothing. */
+void        ex_attiva(ExFinestra f);
+
+/* A pop-up menu at (x, y) of window f's client area (where the right button
+ * was pressed): `n` items, returns the index chosen - click or Enter - or -1
+ * for Esc or a closed window (a click on another of the program's windows
+ * only brings the menu back to the front: it is modal). Modal for the program, like
+ * a dialog. An item "-" is a separator line and cannot be chosen.
+ * (29 September 2026, @MOUSE-DESTRO; optional in the stub: -1 over an older
+ * exwin.so.) */
+int         ex_menu_comparsa(ExFinestra f, int x, int y,
+                             const char *const *voci, int n);
+
+/* Opens a file with the program /exwin/lib/tipi.txt associates to its
+ * extension (the editor for what is not listed), from /cdrom too when the
+ * system runs from the CD. Returns the pid, or -1; `prog` (may be 0) gets the
+ * program chosen. The one place that reads tipi.txt: the file manager, the
+ * desktop and the others call this. (29 September 2026, @ASSOCIAZIONI;
+ * optional in the stub: -1 over an older exwin.so.) */
+int         ex_apri_file(const char *percorso, char *prog, unsigned int max);
+
+/* MULTIPLE CHOICE in a list (29 September 2026, @LISTA-MULTI): switched on
+ * per list. Ctrl+click adds or removes a row, Shift+click takes the range
+ * from the last click, a plain click takes one row - unless it is already
+ * chosen, so that the group can be dragged away. ex_lista_scelte writes the
+ * chosen rows (at most `max`) and returns how many; with the multiple choice
+ * off, or nothing marked, it is the current row alone. ex_lista_riga_a is
+ * the row under the window y, or -1. All three optional in the stub. */
+void        ex_lista_multipla(ExFinestra lista, int si);
+int         ex_lista_scelte(ExFinestra lista, unsigned int *righe, int max);
+int         ex_lista_riga_a(ExFinestra lista, int y);
+
+void        ex_finestra_riduci(unsigned int id);
+
+/* Asks every program but this one to close, as with their X button; the
+ * server stays on. Used by the desktop to shut down with the graphics still
+ * on (@GRAFICA-MODALE): the list of ex_finestre_segui() then says who is
+ * left. */
+void        ex_chiudi_le_altre(void);
+
 /* -----------------------------------------------------------------------------
  * Gli appunti, senza passare da `ex_area`
  *
@@ -364,7 +496,28 @@ void ex_smista(const ExMsg *m);
 void ex_esci(int codice);
 
 /* Cio' che la procedura deve chiamare per tutto quello che non gestisce:
- * disegna i controlli, ridisegna la cornice, chiude su EXM_CHIUDI. */
+ * disegna i controlli, ridisegna la cornice, chiude su EXM_CHIUDI.
+ *
+ * ! WHAT YOUR WINDOW DRAWS ITSELF BELONGS IN YOUR OWN EXM_DISEGNA, not only in
+ * the function that changes it. This call wipes the client area and knows
+ * nothing about the header row, the status line or the path label you paint by
+ * hand: anything that brings your window back to the front erases them, and
+ * what brings it back is the server itself, every time a dialog opened on top
+ * of it closes.
+ *
+ * So the shape that works is this one, and the redraw helper goes through the
+ * procedure rather than around it:
+ *
+ *     case EXM_DISEGNA:
+ *         ex_procedura_base(f, msg, wp, lp);
+ *         la_mia_roba();
+ *         return 0;
+ *
+ * ! IT IS WRITTEN HERE BECAUSE IT WAS PAID FOR TWICE IN ONE DAY, on 22
+ * September 2026: the path line of ExDlg vanished the instant it changed, the
+ * defect was found and written down, and a few hours later a brand new program
+ * lost its header row to the same cause. A lesson kept in the file where it
+ * was learnt is a lesson the next file does not read. */
 long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
 
 /* -----------------------------------------------------------------------------
@@ -463,6 +616,14 @@ ExFont ex_font_apri(const char *percorso, int corpo);
 
 ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo);
 
+/* Writes `s` INTO an ARGB bitmap of w x h pixels (not on a window), with the
+ * font's glyphs and the same antialiasing as ex_scrivi_con; y is the top of
+ * the line, and touched pixels become opaque. For programs that draw text
+ * into a picture - Pennello's Text tool (28 September 2026). Optional in the
+ * stub: over an older exwin.so it draws nothing. */
+void        ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
+                         const char *s, unsigned int c);
+
 /* Il nome del file che ex_font_trova userebbe, senza aprirlo: serve a chi
  * vuole DIRE quale carattere sta usando — o quale non ha trovato. */
 const char *ex_font_nome(int famiglia, int grassetto, int corsivo);
@@ -488,6 +649,21 @@ void   ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
  * massimo e' un quinto di secondo; per un'animazione fluida serve un'altra
  * cosa, non questa. */
 void   ex_sveglia(ExFinestra f, unsigned int ms);
+
+/* A descriptor watched by the message loop: `fn` is called, from inside
+ * ex_prendi_msg, when there is something to read on `fd` or its other end has
+ * closed. fn == 0 stops watching it. Up to 16. It is how a program keeps
+ * reading a pipe — a child process, a download — while its windows stay alive,
+ * with no timer and no window needed. (23 September 2026) */
+typedef void (*ExGuarda)(void *dato, int fd);
+int    ex_guarda_fd(int fd, ExGuarda fn, void *dato);
+
+/* Tab on the last control (or with nothing focused) leaves the toolkit and
+ * reaches the window procedure as EXM_TASTO, so an application that draws its
+ * own focusable things — the browser's page — can take it. Off by default;
+ * the application gives the focus back with ex_fuoco(). Shift+Tab is not
+ * affected. See exwin.c. */
+void   ex_tab_contenuto(ExFinestra finestra, int si);
 void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
 
 /* -----------------------------------------------------------------------------
@@ -520,6 +696,96 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
  * Rende 1 se l'ha disegnata, 0 se il formato non e' (ancora) riconosciuto.
  * --------------------------------------------------------------------------- */
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y);
+
+/* -----------------------------------------------------------------------------
+ * UN'IMMAGINE DENTRO UN RIQUADRO (27 settembre 2026, per lo sfondo di pm)
+ *
+ * Riempie il riquadro x,y,w,h con l'immagine disposta secondo `modo`:
+ *
+ *     EX_IMM_ANGOLO   com'e', nell'angolo in alto a sinistra (= ex_immagine)
+ *     EX_IMM_CENTRO   com'e', al centro; se e' piu' grande si vede il mezzo
+ *     EX_IMM_ALLARGA  stirata a coprire tutto il riquadro, senza badare alle
+ *                     proporzioni (come «Estendi» di Windows)
+ *     EX_IMM_RIPETI   ripetuta a piastrelle dall'angolo
+ *
+ * Dove l'immagine non arriva resta `sfondo`. L'immagine e' OPACA, come in
+ * ex_immagine: l'alfa non si fonde. Si legge con gli stessi lettori delle
+ * icone (BMP qui, il resto in eximg.so). Rende 1 se l'ha disegnata, 0 se non
+ * la sa leggere.
+ *
+ * ! IL RIQUADRO SI COMPONE IN MEMORIA E SI POSA UNA VOLTA: per 800x600 sono
+ * 1,9 MB presi e resi dentro la chiamata. Pezzo per pezzo, una piastrella da
+ * 16 pixel su uno schermo intero sarebbero duemila ex_pixmap.
+ * --------------------------------------------------------------------------- */
+#define EX_IMM_ANGOLO   0
+#define EX_IMM_CENTRO   1
+#define EX_IMM_ALLARGA  2
+#define EX_IMM_RIPETI   3
+
+int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
+                        int w, int h, int modo, unsigned int sfondo);
+
+/* -----------------------------------------------------------------------------
+ * LE ICONE — un'immagine che si tiene, e si ridisegna a qualunque misura
+ *
+ * ! UN'ICONA NON E' UN'IMMAGINE DISEGNATA UNA VOLTA, ed e' per questo che ha
+ * funzioni sue. Un'immagine si posa e si dimentica; un'icona sta in un menu che
+ * si ridisegna a ogni apertura, in una riga di un elenco che scorre, su un
+ * pulsante che si preme: decodificarla a ogni disegno vorrebbe dire leggere un
+ * file e aprire eximg.so venti volte per aprire un menu. Qui si apre una volta,
+ * si tiene, e si disegna quante volte serve.
+ *
+ * ! E SI RIDIMENSIONA, PERCHE' I FILE NON SONO DELLA MISURA CHE SERVE. Le icone
+ * di questo sistema nascono a 64 e 128 pixel; una voce di menu e' alta 24 e una
+ * riga di elenco 16. Senza un riduttore l'unica scelta sarebbe disegnarle
+ * grandi come sono - cioe' non usarle - o chiedere a chi le disegna una copia
+ * per ogni posto in cui compariranno, che e' un lavoro che si rifa' ogni volta
+ * che una misura cambia. Il riduttore fa la MEDIA dei pixel che collassano in
+ * uno solo: prendere quello in mezzo (il "piu' vicino") su un rimpicciolimento
+ * di quattro volte butta quindici pixel su sedici, e i bordi sottili spariscono
+ * a chiazze.
+ *
+ * ! IL COLORE DI FONDO SI PASSA, E NON E' UNA SCOMODITA' EVITABILE. Le icone
+ * hanno l'alfa - i bordi sono semitrasparenti, e senza alfa un tondo dentro un
+ * quadrato ha gli angoli neri - ma ex_pixmap() posa i pixel e basta: e' una
+ * memcpy, non una fusione. Finche' il server non sapra' fondere, chi disegna
+ * deve dire SU CHE COSA: il giorno che lo sapra', questo parametro diventera'
+ * facoltativo e niente di cio' che e' scritto oggi cambiera' comportamento.
+ *
+ *     ExIcona ic = ex_icona_apri("/exwin/icon/baseapp/filemgr_64.ico");
+ *     ex_icona_disegna(f, ic, 6, y, 16, EX_GRIGIO);    // 64 -> 16
+ *
+ * `ex_icona_apri` rende 0 se il file non c'e' o se nessun lettore lo riconosce,
+ * e 0 e' un'icona che non si disegna: chi non ha un'icona passa 0 e non deve
+ * scrivere un `if`. E' la stessa idea del font 0 di ex_scrivi_con().
+ * --------------------------------------------------------------------------- */
+typedef unsigned int ExIcona;
+
+ExIcona      ex_icona_apri(const char *percorso);
+
+/* Il lato dell'icona com'e' nel file, in pixel. 0 se l'icona non c'e'. */
+unsigned int ex_icona_lato(ExIcona ic);
+
+/* La disegna in un quadrato di `lato` pixel, fondendola su `sfondo`. Rende 1,
+ * o 0 se l'icona non c'e' - e allora non ha disegnato niente, che e' cio' che
+ * permette di chiamarla senza controllare. */
+int          ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
+                              unsigned int lato, unsigned int sfondo);
+
+/* ! CHIUDERE UN'ICONA E' RARO, e la maggior parte dei programmi non lo fara'
+ * mai: un menu tiene le sue finche' vive. Esiste per chi ne carica di nuove a
+ * ogni cambio di directory - un file manager - e senza la tavola si
+ * riempirebbe. */
+/* Attacca un'icona a un CONTROLLO — un pulsante, un'etichetta — che da quel
+ * momento se la disegna da se', a sinistra della scritta. `lato` a 0 la fa
+ * scegliere al controllo, sull'altezza che ha.
+ *
+ * ! UN PULSANTE CON L'ICONA RESTA UN PULSANTE: si preme, si sposta, si
+ * ridisegna, e l'icona lo segue. Disegnarla sopra da fuori vorrebbe dire
+ * rifarla a ogni ridisegno del padre e ricordarsi di spostarla a mano. */
+void         ex_icona_metti(ExFinestra controllo, ExIcona ic, unsigned int lato);
+
+void         ex_icona_chiudi(ExIcona ic);
 
 /* =============================================================================
  * IL CONTENITORE MDI — finestre dentro una finestra
@@ -584,6 +850,10 @@ void       ex_mdi_attiva(ExFinestra figlio);
 int  ex_acceso(ExFinestra c);
 void ex_accendi(ExFinestra c, int acceso);
 
+/* Accende (1) o spegne (0) un controllo: vedi EX_SPENTO. Uno spento che aveva
+ * il fuoco lo passa al successivo. Il ridisegno lo chiede chi chiama. */
+void ex_abilita(ExFinestra c, int si);
+
 /* -----------------------------------------------------------------------------
  * La barra di scorrimento
  *
@@ -627,6 +897,20 @@ unsigned int ex_voci_quante(ExFinestra c);
 unsigned int ex_voce_scelta(ExFinestra c);
 void         ex_voce_scegli(ExFinestra c, unsigned int i);
 const char  *ex_voce_testo(ExFinestra c, unsigned int i);
+
+/* LE SCHEDE DI DOCUMENTI (29 settembre 2026, @TOOLKIT-SCHEDE): una "tab"
+ * con ex_voci_schede(c, 1) diventa la barra delle schede di un editor o di
+ * un navigatore. Ogni linguetta ha la sua X (manda EXM_SCHEDA_CHIUDI), le
+ * frecce compaiono quando non ci stanno tutte, e dalla finestra intera
+ * Ctrl+Tab / Ctrl+PgGiu vanno alla scheda dopo, Ctrl+Shift+Tab / Ctrl+PgSu a
+ * quella prima (arrivano come EXM_COMANDO col nuovo indice), Ctrl+W chiede
+ * di chiudere quella scelta. La barra tiene solo i titoli: cosa mostrare
+ * sotto lo sa il programma. ex_voce_togli toglie una scheda (la scelta passa
+ * alla vicina), ex_voce_rinomina cambia un titolo (l'asterisco di un file
+ * modificato). Facoltative nello stub. */
+void         ex_voci_schede(ExFinestra c, int si);
+int          ex_voce_togli(ExFinestra c, unsigned int i);
+void         ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo);
 
 /* =============================================================================
  * IL TESTO COLORATO — «areacodice», e il gancio che lo colora
@@ -695,6 +979,27 @@ unsigned int ex_colora_c(void *dato, const char *riga,
  * --------------------------------------------------------------------------- */
 void         ex_lista_svuota(ExFinestra lista);
 int          ex_lista_aggiungi(ExFinestra lista, const char *testo);
+
+/* Un'icona davanti a una riga; `ic` a 0 la toglie.
+ *
+ * ! SI CHIAMA DOPO ex_lista_aggiungi(), sulla riga appena messa, e non e' una
+ * scomodita': quasi tutte le liste di questo sistema sono testo e basta, e un
+ * argomento in piu' in ex_lista_aggiungi() avrebbe voluto dire uno zero
+ * aggiunto a ogni chiamata gia' scritta.
+ *
+ *     ex_lista_aggiungi(l, "Pulsante");
+ *     ex_lista_icona(l, ex_lista_quante(l) - 1, ic);
+ *
+ * ! L'ICONA SI FONDE SUL FONDO DELLA RIGA, che sulla riga scelta e' blu: lo fa
+ * il controllo, e per questo l'icona va data a lui invece di disegnarla sopra
+ * da fuori. */
+void         ex_lista_icona(ExFinestra lista, unsigned int riga, ExIcona ic);
+
+/* Quanti PIXEL la lista tiene a sinistra per le icone, 0 se non ne ha nessuna.
+ * Serve a chi disegna un'intestazione sopra una lista incolonnata a spazi: le
+ * righe si spostano, e l'intestazione deve seguirle. La corsia e' larga due
+ * caratteri esatti proprio perche' quei conti tornino. */
+unsigned int ex_lista_margine(ExFinestra lista);
 unsigned int ex_lista_quante(ExFinestra lista);
 unsigned int ex_lista_scelta(ExFinestra lista);
 void         ex_lista_scegli(ExFinestra lista, unsigned int i);
@@ -726,6 +1031,9 @@ unsigned int ex_area_righe(ExFinestra area);
 const char  *ex_area_riga(ExFinestra area, unsigned int i);
 int          ex_area_modificato(ExFinestra area);
 void         ex_area_pulita(ExFinestra area);
+/* ! COUNTS FROM ONE (riga 1, col 1): it was written for a status line.
+ * ex_area_vai() and ex_area_seleziona() count from ZERO — subtract one
+ * before passing a position from here to them. */
 void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *col);
 
 /* ! IL CURSORE SI PORTA, e non solo si legge. E' quel che serve a una colonna
@@ -736,6 +1044,16 @@ void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *
  * dove si sta guardando. */
 void         ex_area_vai(ExFinestra area, unsigned int riga, unsigned int col);
 
+/* ! LA VISTA, SEPARATA DAL CURSORE (23 settembre 2026): e' quel che serve a
+ * una barra di scorrimento accanto all'area. ex_area_vista() dice la prima
+ * riga visibile, e in `visibili` quante ne stanno a video; ex_area_mostra_da()
+ * fa partire la vista da una riga SENZA muovere il cursore — come in ogni
+ * editor, trascinare la barra guarda altrove, e il primo tasto riporta la
+ * vista dove si sta scrivendo. Oltre la fine non si va: l'ultima pagina e'
+ * piena, non mezza vuota. */
+unsigned int ex_area_vista(ExFinestra area, unsigned int *visibili);
+void         ex_area_mostra_da(ExFinestra area, unsigned int riga);
+
 /* ! UNA RIGA INTERA SI SOSTITUISCE IN UN COLPO, senza passare da un tasto per
  * volta: e' quel che serve a un «cerca e sostituisci», che cambia un pezzo di
  * riga senza che nessuno lo stia scrivendo a tastiera. Si tronca alla
@@ -743,6 +1061,13 @@ void         ex_area_vai(ExFinestra area, unsigned int riga, unsigned int col);
  * colori da questa riga in giu' come ogni altra modifica. */
 void         ex_area_riga_metti(ExFinestra area, unsigned int riga,
                                 const char *testo);
+
+/* Selects columns [da, a) of one line, cursor at the end, and brings it into
+ * view as ex_area_vai() does: what «find» needs to show what it found — and
+ * then a typed character replaces it, as with any selection (26 September
+ * 2026, @EDIT-CERCA). */
+void         ex_area_seleziona(ExFinestra area, unsigned int riga,
+                               unsigned int da, unsigned int a);
 
 /* -----------------------------------------------------------------------------
  * La selezione e gli appunti
@@ -803,11 +1128,28 @@ int          ex_area_cancella(ExFinestra area);
  * Coi tasti: F10 apre, le frecce girano fra titoli e voci, Invio sceglie, Esc
  * chiude — e qualunque altro tasto chiude, invece di sparire nel nulla.
  *
- * Rende 0 se non c'e' piu' posto (6 titoli per finestra, 12 voci per titolo).
+ * ! LE TENDINE LATERALI (27 settembre 2026): un titolo con la barra,
+ *
+ *     ex_menu_voce(mb, "Opzioni/Modalita", "Normale",     ID_NORMALE);
+ *     ex_menu_voce(mb, "Opzioni/Modalita", "Scientifica", ID_SCIENT);
+ *
+ * mette in «Opzioni» la voce «Modalita >», che apre di fianco una tendina con
+ * Normale e Scientifica. Si apre col clic o con destra/Invio, sinistra o Esc
+ * la richiudono. Un livello solo, quattro tendine laterali per finestra. Su un
+ * exwin.so di prima «Opzioni/Modalita» diventa un titolo in barra: le voci ci
+ * sono lo stesso, piu' scomode.
+ *
+ * Rende 0 se non c'e' piu' posto (6 titoli per finestra, 16 voci per titolo).
  * --------------------------------------------------------------------------- */
 ExFinestra ex_menu(ExFinestra finestra);
 int        ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
                         unsigned int id);
+
+/* La versione di ExWin — di questo exwin.so, quello che gira, non quello con
+ * cui il programma e' stato compilato. +0.001 a ogni modifica della libreria,
+ * come ogni programma (EXWIN_VERSIONE in exwin.c). Contata dal 27 settembre
+ * 2026: prima la libreria non ne aveva una. «Informazioni su» la mostra. */
+const char *ex_versione(void);
 
 /* Quanto e' grande lo schermo. 0 se si e' in modo testo. */
 void ex_schermo(unsigned int *larghezza, unsigned int *altezza);

@@ -370,7 +370,21 @@
  * «LIB: pagina ... non allocata». Ora lo slot si prenota (LIB_IN_CARICO) e
  * il secondo aspetta; il buffer di lettura non e' piu' static. Vedi
  * kernel/loader/lib.c. */
-#define EXOS_VERSION    "0.224"
+/* 0.224 -> 0.225: mkdir, rmdir e unlink rispondono ENOENT, ENOTDIR ed EISDIR
+ * invece di EIO (29 settembre 2026, claude-B, @RUST-STD). Il ramo ext2 del VFS
+ * faceva di ogni errore «errore di I/O», anche del genitore che non c'e': la
+ * std di Rust (create_dir_all, remove_file) non poteva distinguere. Vedi
+ * modifica() in kernel/fs/vfs.c. */
+/* 0.225 -> 0.226: SYS_PROC_GRUPPO (164), il tgid di un pid (29 settembre 2026,
+ * claude-B, @SOCKET-BSD). Lo stack IP assegna le connessioni al PROGRAMMA e non
+ * al filo che le ha aperte: con i socket BSD un filo apre e un altro legge. */
+/* 0.226 -> 0.227: SEGNALI CON LA CONSEGNA VERA E mprotect (29 settembre 2026,
+ * claude-A, @SEGNALI, per Exilla). SYS_MPROTECT (125), SYS_SEG_AZIONE,
+ * _MASCHERA, _RITORNO, _PILA, _MANDA (165-169). Un'eccezione in ring 3 con un
+ * gestore installato salta al gestore invece di uccidere; i segnali mandati
+ * si consegnano all'uscita da una syscall. mmap onora PROT_NONE. Vedi
+ * kernel/sched/segnali.c e paging_proteggi in kernel/mm/paging.c. */
+#define EXOS_VERSION    "0.227"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

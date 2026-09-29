@@ -38,7 +38,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `orologio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("orologio", VERSIONE_APP);
 
 /* ! LA MISURA E' RICAVATA DAL TESTO PIU' LUNGO CHE PUO' USCIRE, non scelta a
@@ -122,9 +122,14 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * server di ricomporre lo schermo due volte al secondo per sempre — su una
      * macchina che ridisegna tutto lo schermo a ogni aggiornamento e' lavoro
      * continuo per niente. Cosi' si lavora sessanta volte in meno. */
+    /* ! AND THE RETURN VALUE IS WHAT KEEPS THAT PROMISE (29 September 2026).
+     * `return 0` means "handled" to the toolkit, which then redraws the whole
+     * window anyway: the check above saved nothing, and a change of minute was
+     * drawn twice. EX_NON_RIDISEGNARE says "nothing to do", or "done". */
     case EXM_TEMPO:
-        if (!aggiorna()) return 0;
-        /* cade nel disegno */
+        if (!aggiorna()) return EX_NON_RIDISEGNARE;
+        proc(f, EXM_DISEGNA, 0, 0);
+        return EX_NON_RIDISEGNARE;
 
     case EXM_DISEGNA:
         ex_riempi(f, 0, 0, FIN_W, FIN_H, EX_GRIGIO);

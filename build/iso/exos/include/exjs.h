@@ -254,7 +254,12 @@ int  exjs_motore_ora(void);
  * Chi ospita deve chiamarla sempre, qualunque motore ci sia sotto. */
 void exjs_chiudi(ExJsCtx *c);
 
-/* Esegue `sorgente`. Rende 1 se e' andata, 0 se no — e in quel caso `err`
+/* ! `sorgente[n]` MUST BE '\0'. ExJs reads `n` bytes, QuickJS reads a C
+ * string (JS_Eval in quickjs.h), and a buffer reused without the zero hands
+ * QuickJS the tail of whatever was there before: see un_script() in
+ * exbrowser.c, 24 September 2026.
+ *
+ * Esegue `sorgente`. Rende 1 se e' andata, 0 se no — e in quel caso `err`
  * (se dato) dice dove e perche'. Il valore dell'ultima espressione, se
  * interessa, esce da `risultato`.
  *
@@ -328,6 +333,14 @@ unsigned int exjs_lunghezza(ExJsCtx *c, ExJsVal vet);
 typedef void (*ExJsUscita)(const char *testo, unsigned int n, void *dato);
 
 void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato);
+
+/* L'OROLOGIO, per Date (@EXJS-LACUNE, 28 settembre 2026): i millisecondi
+ * dall'1 gennaio 1970 (UTC), dati da chi ospita il motore — la libreria non
+ * ha un orologio suo, come non ha la rete. Senza, Date.now() vale 0.
+ * ! FACOLTATIVA: una exjs.so di prima non la esporta, e lo stub allora non fa
+ * niente invece di fermare il programma. QuickJS ha la sua Date e la ignora. */
+typedef double (*ExJsOrologio)(void *dato);
+void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato);
 
 /* L'oggetto globale: e' li' che si appendono `console`, `document`, `window`. */
 ExJsVal exjs_globale(ExJsCtx *c);

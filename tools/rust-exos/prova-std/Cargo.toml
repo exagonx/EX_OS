@@ -1,0 +1,13 @@
+# tools/rust-exos/prova-std — @RUST-STD: un programma Rust con la std vera.
+# Si costruisce con tools/rust-exos/prova-std.sh (vedi li').
+[package]
+name = "prova-std"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+
+[profile.dev]
+panic = "abort"

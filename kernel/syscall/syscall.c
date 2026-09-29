@@ -85,6 +85,18 @@ void syscall_handler(InterruptFrame *frame)
         vfs_sync();
         proc_esci_fatale(130);  /* 128 + 2, come Unix riporta un Ctrl+C */
     }
+
+    /* Signals sent to this thread (kill, raise, pthread_kill) come out here,
+     * on the way back to ring 3, where the registers to save are all in the
+     * frame. Only from ring 3: a syscall made by the kernel itself has no
+     * user stack to put a frame on. See kernel/sched/segnali.c. */
+    {
+        Process *p = proc_get_current();
+
+        if (p != NULL && (frame->cs & 3) == 3 &&
+            (p->seg_pendenti & ~p->seg_bloccati) != 0)
+            segnali_consegna(frame);
+    }
 }
 
 void syscall_init(void)
@@ -114,9 +126,16 @@ void syscall_init(void)
     syscall_table[SYS_THREAD_FERMARSI] = sys_thread_fermarsi;
     syscall_table[SYS_THREAD_STACCA]   = sys_thread_stacca;
     syscall_table[SYS_THREAD_PILA]     = sys_thread_pila;
+    syscall_table[SYS_PROC_GRUPPO]     = sys_proc_gruppo;
     syscall_table[SYS_GETPID]      = sys_getpid;
     syscall_table[SYS_GETPPID]     = sys_getppid;
     syscall_table[SYS_MMAP]        = sys_mmap;
+    syscall_table[SYS_MPROTECT]    = sys_mprotect;
+    syscall_table[SYS_SEG_AZIONE]   = sys_seg_azione;
+    syscall_table[SYS_SEG_MASCHERA] = sys_seg_maschera;
+    syscall_table[SYS_SEG_RITORNO]  = sys_seg_ritorno;
+    syscall_table[SYS_SEG_PILA]     = sys_seg_pila;
+    syscall_table[SYS_SEG_MANDA]    = sys_seg_manda;
     syscall_table[SYS_MUNMAP]      = sys_munmap;
     syscall_table[SYS_IOCTL]       = sys_ioctl;
     syscall_table[SYS_EXEC]        = sys_exec;

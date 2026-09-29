@@ -844,6 +844,134 @@ typedef struct {
 #define SYS_THREAD_STACCA   217 /* ebx = tid              -> 0 o negativo */
 #define SYS_THREAD_PILA     218 /* ebx = tid, ecx = uint32_t[2] -> 0 o negativo */
 
+/* ! A QUALE PROGRAMMA APPARTIENE UN pid (29 settembre 2026, @SOCKET-BSD): il
+ * tgid, cioe' il pid del capogruppo. Un servizio che riceve un messaggio vede
+ * solo il pid del FILO che l'ha mandato; lo stack IP ci decide di chi e' una
+ * connessione, e un socket aperto da un filo deve poterlo usare un altro filo
+ * dello stesso programma. Non e' un segreto: il gruppo si vede gia' da ps. */
+#define SYS_PROC_GRUPPO     164 /* ebx = pid (0 = me)     -> tgid o -ESRCH */
+
+/* =============================================================================
+ * SIGNALS AND mprotect (kernel 0.227) — the design is in kernel/sched/segnali.c
+ *
+ * mprotect: ebx = addr (page aligned), ecx = length, edx = PROT_*.
+ *           0, -EINVAL, -ENOMEM (a page in the range does not exist), -EACCES.
+ *           The number is Linux's.
+ *
+ * seg_azione:   ebx = signal, ecx = const SegAzione * (NULL: only read),
+ *               edx = SegAzione * (NULL: not wanted). Catching or ignoring
+ *               SIGKILL or SIGSTOP is -EINVAL.
+ * seg_maschera: ebx = SIG_BLOCK/SIG_UNBLOCK/SIG_SETMASK, ecx = const uint32_t *
+ *               (NULL), edx = uint32_t * (NULL). The calling thread's mask.
+ * seg_ritorno:  ebx = SegContesto * that the kernel wrote. Never returns to the
+ *               caller: it resumes the interrupted code.
+ * seg_pila:     ebx = const SegPila * (NULL), ecx = SegPila * (NULL).
+ *               sigaltstack of the calling thread.
+ * seg_manda:    ebx = pid of a task (0 = the calling thread), ecx = signal
+ *               (0 = only check that it exists and may be signalled).
+ * --------------------------------------------------------------------------- */
+#define SYS_MPROTECT        125
+#define SYS_SEG_AZIONE      165
+#define SYS_SEG_MASCHERA    166
+#define SYS_SEG_RITORNO     167
+#define SYS_SEG_PILA        168
+#define SYS_SEG_MANDA       169
+
+/* SegAzione.tipo */
+#define SEG_PREDEFINITO     0       /* SIG_DFL */
+#define SEG_IGNORA          1       /* SIG_IGN */
+#define SEG_PRESO           2       /* a handler: the kernel jumps to .ingresso */
+#define SEG_TIPO            3       /* the bits of the type in seg_flag[] */
+
+/* sa_flags: Linux values, so that code built for Linux means the same. */
+#define SA_SIGINFO          0x00000004u
+#define SA_ONSTACK          0x08000000u
+#define SA_RESTART          0x10000000u     /* accepted: nothing is interrupted */
+#define SA_NODEFER          0x40000000u
+#define SA_RESETHAND        0x80000000u
+
+#define SIG_BLOCK           0
+#define SIG_UNBLOCK         1
+#define SIG_SETMASK         2
+
+#define SS_ONSTACK          1
+#define SS_DISABLE          2
+#define MINSIGSTKSZ         2048
+
+/* ! DUPLICATED BY HAND in lib/include/libc.h (struct sigaction is the libc's
+ * own; this is what the libc tells the kernel). */
+typedef struct {
+    uint32_t tipo;          /* SEG_PREDEFINITO / SEG_IGNORA / SEG_PRESO */
+    uint32_t flag;          /* SA_* */
+    uint32_t maschera;      /* sa_mask: blocked while the handler runs */
+    uint32_t ingresso;      /* the libc dispatcher (only with SEG_PRESO) */
+} SegAzione;
+
+/* stack_t, Linux order. */
+typedef struct {
+    uint32_t sp;
+    int32_t  flag;
+    uint32_t dim;
+} SegPila;
+
+/* siginfo_t: 128 bytes like Linux i386, with the fields where Linux has them
+ * (si_addr and si_pid both at offset 12). */
+typedef struct {
+    int32_t  signo;
+    int32_t  errno_;
+    int32_t  codice;
+    uint32_t indirizzo;     /* si_addr, or si_pid for a signal that was sent */
+    uint32_t uid;           /* si_uid */
+    uint32_t resto[27];
+} SegInfo;
+
+/* mcontext_t.gregs: the index of each register is Linux's REG_* */
+#define SEG_REG_GS    0
+#define SEG_REG_FS    1
+#define SEG_REG_ES    2
+#define SEG_REG_DS    3
+#define SEG_REG_EDI   4
+#define SEG_REG_ESI   5
+#define SEG_REG_EBP   6
+#define SEG_REG_ESP   7
+#define SEG_REG_EBX   8
+#define SEG_REG_EDX   9
+#define SEG_REG_ECX   10
+#define SEG_REG_EAX   11
+#define SEG_REG_TRAPNO 12
+#define SEG_REG_ERR   13
+#define SEG_REG_EIP   14
+#define SEG_REG_CS    15
+#define SEG_REG_EFL   16
+#define SEG_REG_UESP  17
+#define SEG_REG_SS    18
+#define SEG_NREG      19
+
+/* ucontext_t: Linux i386 up to uc_mcontext; the mask is 4 bytes and not
+ * glibc's 128 (sigset_t is 32 bits here). The handler may change gregs:
+ * seg_ritorno resumes from what it finds, EIP and the flags included. */
+typedef struct {
+    uint32_t flag;                  /* uc_flags */
+    uint32_t link;                  /* uc_link, always NULL */
+    SegPila  pila;                  /* uc_stack */
+    uint32_t gregs[SEG_NREG];       /* uc_mcontext */
+    uint32_t fpregs;                /*   the libc fills it (it saves the FPU) */
+    uint32_t oldmask;
+    uint32_t cr2;
+    uint32_t maschera;              /* uc_sigmask */
+} SegContesto;
+
+/* What the kernel puts on the user stack, 16-byte aligned, with ESP pointing
+ * at `sig` and EIP at the libc dispatcher. */
+typedef struct {
+    uint32_t    sig;
+    uint32_t    info;               /* &this->si */
+    uint32_t    contesto;           /* &this->uc */
+    uint32_t    riservato;
+    SegInfo     si;
+    SegContesto uc;
+} SegTelaio;
+
 /* =============================================================================
  * UN DISCO SERVITO DA UN PROCESSO (208, 209, 210)
  *
@@ -1399,9 +1527,20 @@ int32_t sys_thread_ferma(InterruptFrame *f);
 int32_t sys_thread_fermarsi(InterruptFrame *f);
 int32_t sys_thread_stacca(InterruptFrame *f);
 int32_t sys_thread_pila(InterruptFrame *f);
+int32_t sys_proc_gruppo(InterruptFrame *f);
 int32_t sys_getpid(InterruptFrame *f);
 int32_t sys_getppid(InterruptFrame *f);
 int32_t sys_mmap(InterruptFrame *f);
+int32_t sys_mprotect(InterruptFrame *f);
+int32_t sys_seg_azione(InterruptFrame *f);      /* kernel/sched/segnali.c */
+int32_t sys_seg_maschera(InterruptFrame *f);
+int32_t sys_seg_ritorno(InterruptFrame *f);
+int32_t sys_seg_pila(InterruptFrame *f);
+int32_t sys_seg_manda(InterruptFrame *f);
+/* The two ways in: a fault in ring 3 (1 = the handler will run, 0 = kill as
+ * before) and the pending signals on the way out of a syscall. */
+int     segnali_fault(InterruptFrame *f, int sig, int32_t codice, uint32_t indirizzo);
+void    segnali_consegna(InterruptFrame *f);
 int32_t sys_munmap(InterruptFrame *f);
 int32_t sys_ioctl(InterruptFrame *f);
 int32_t sys_exec(InterruptFrame *f);

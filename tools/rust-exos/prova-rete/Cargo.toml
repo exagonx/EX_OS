@@ -1,0 +1,13 @@
+# tools/rust-exos/prova-rete — @SOCKET-BSD: std::net dentro EX-OS.
+# Si costruisce con tools/rust-exos/prova-rete.sh (vedi li').
+[package]
+name = "prova-rete"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+
+[profile.dev]
+panic = "abort"
