@@ -101,6 +101,14 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### La memoria condivisa di POSIX
+
+**testato in QEMU** (`tools/prova_shm.sh`, 16 su 16) — nella `libc.a` ci
+sono `shm_open`, `ftruncate` e `mmap` su quel descrittore, sopra le zone di
+memoria condivisa di EX-OS: due programmi aprono lo stesso nome e vedono le
+stesse pagine, anche con i nomi lunghi che usa Mozilla. Una zona non cresce
+dopo la nascita e `O_EXCL` non fa niente. Serve a Firefox (Exilla).
+
 ### La grafica non sfarfalla piu'
 
 **testato in QEMU, da giudicare sul ferro** — lo sfarfallio si vedeva «in

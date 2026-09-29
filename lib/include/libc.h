@@ -3110,6 +3110,17 @@ int     modo_testo(void);
 int     shm_apri(ShmZona *z);
 int     shm_chiudi(void *p);
 
+/* POSIX shared memory on top of the zones, libc.a only (@SHM-OPEN, 29
+ * September 2026): shm_open gives a descriptor, ftruncate CREATES the zone
+ * (on EX-OS a zone is born with its size), mmap on the descriptor returns
+ * it. What differs from POSIX — O_EXCL does nothing, a zone cannot grow,
+ * MAP_PRIVATE is shared, shm_unlink only says 0, a process opens a name
+ * once — is written in lib/libc.c. ftruncate works only on these
+ * descriptors: files have truncate(path). */
+int     shm_open(const char *nome, int flag, mode_t modo);
+int     shm_unlink(const char *nome);
+int     ftruncate(int fd, off_t lung);
+
 /* -----------------------------------------------------------------------------
  * interrompi() — «smettila», detto a un altro processo
  *

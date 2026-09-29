@@ -451,6 +451,7 @@ typedef struct {
  * tabella di strerror() qui sotto. */
 #define EPERM         1
 #define ENOENT        2
+#define ENXIO         6
 #define ESRCH         3
 #define EINTR         4
 #define EIO           5
@@ -4044,10 +4045,26 @@ int open(const char *path, int flags, ...)
  * descrittori li riconoscono qui: il kernel non ne sa niente (vedi la sezione
  * dei socket in fondo al file e in lib/include/libc.h). */
 #define PRESA_BASE      1024
+/* And shared memory from shm_open() from SHMFD_BASE up (@SHM-OPEN, 29
+ * September 2026): a socket is below it, a zone above. */
+#define SHMFD_BASE      2048
+#define SHMFD_MAX       16
 #ifdef EXOS_LIBC_SO
 #define E_PRESA(fd)     0               /* nella libc.so i socket non ci sono */
+#define E_SHMFD(fd)     0
 #else
-#define E_PRESA(fd)     ((fd) >= PRESA_BASE)
+#define E_PRESA(fd)     ((fd) >= PRESA_BASE && (fd) < SHMFD_BASE)
+#define E_SHMFD(fd)     ((fd) >= SHMFD_BASE && (fd) < SHMFD_BASE + SHMFD_MAX)
+/* ! THROUGH POINTERS THAT ONLY shm_open FILLS, and not direct calls. close,
+ * fstat, mmap and munmap are in every program; naming the shm functions from
+ * them made the linker pull the whole of shm into every program that closes
+ * a file — and the floppy lost 4 KB to it. A program that never calls
+ * shm_open now pays four null pointers. */
+struct stat;
+static int  (*g_shm_chiudi)(int fd);
+static int  (*g_shm_fstat)(int fd, struct stat *st);
+static long (*g_shm_mmap)(size_t lung, int fd, long off);
+static int  (*g_shm_munmap)(void *addr);
 #endif
 #ifndef EXOS_LIBC_SO
 static int     presa_chiudi(int fd);
@@ -4065,6 +4082,9 @@ ssize_t        recv(int fd, void *buf, size_t n, int flag);
 int close(int fd)
 {
     if (E_PRESA(fd)) return presa_chiudi(fd);
+#ifndef EXOS_LIBC_SO
+    if (E_SHMFD(fd) && g_shm_chiudi) return g_shm_chiudi(fd);
+#endif
     return err_posix(_syscall1(SYS_CLOSE, (uint32_t)fd));
 }
 
@@ -6335,6 +6355,16 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
 
     if (lung == 0) { errno = EINVAL; return MAP_FAILED; }
 
+#ifndef EXOS_LIBC_SO
+    /* A descriptor from shm_open: the zone is already mapped, its address
+     * is the answer. `addr`, `prot` and MAP_PRIVATE are not honoured: see
+     * the shm_open section. */
+    if (E_SHMFD(fd) && g_shm_mmap) {
+        long v = g_shm_mmap(lung, fd, off);
+        return (v < 0) ? MAP_FAILED : (void *)(uintptr_t)v;
+    }
+#endif
+
     if (fd != -1 || !(flags & MAP_ANONYMOUS)) {
         /* ENODEV e non ENOSYS: la syscall c'e', e' il TIPO di mappatura
          * che non e' supportato — ed e' quello che dice POSIX per una
@@ -6360,7 +6390,17 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
 
 int munmap(void *addr, size_t lung)
 {
-    int32_t r = _syscall2(SYS_MUNMAP, (uint32_t)(uintptr_t)addr,
+    int32_t r;
+
+#ifndef EXOS_LIBC_SO
+    /* ! A ZONE IS NOT GIVEN TO SYS_MUNMAP, which would hand its pages back
+     * to the system while another process still uses them. */
+    if (g_shm_munmap) {
+        int k = g_shm_munmap(addr);
+        if (k != 1) return k;
+    }
+#endif
+    r = _syscall2(SYS_MUNMAP, (uint32_t)(uintptr_t)addr,
                           (uint32_t)lung);
     if (r < 0) { errno = -r; return -1; }
     return 0;
@@ -8039,6 +8079,210 @@ int shm_chiudi(void *p)
     return (int)_syscall1(SYS_SHM_CHIUDI, (unsigned int)p);
 }
 
+#ifndef EXOS_LIBC_SO
+/* =============================================================================
+ * shm_open, ftruncate, mmap: POSIX shared memory on EX-OS zones
+ * (@SHM-OPEN, 29 September 2026, for Exilla)
+ *
+ * POSIX says: open a name, give it a size with ftruncate, mmap the
+ * descriptor. The EX-OS zone (shm_apri) is born with its size and already
+ * mapped, so the pieces are rearranged:
+ *   - shm_open attaches to the zone if it exists; otherwise it only
+ *     remembers the name, and the zone is CREATED by ftruncate, which is the
+ *     first moment the size is known;
+ *   - mmap on the descriptor returns the zone's address (plus the offset);
+ *   - the zone is closed when the descriptor is closed AND every mapping is
+ *     gone, in either order, as POSIX wants (a mapping outlives its fd).
+ *
+ * ! WHAT DOES NOT HOLD, said here and not discovered:
+ *   - O_EXCL is 0 on EX-OS (<fcntl.h>): O_CREAT on an existing name attaches;
+ *   - a zone cannot grow: ftruncate beyond its size is EINVAL;
+ *   - MAP_PRIVATE on a zone is still shared, and PROT_* is not applied;
+ *   - shm_unlink only answers 0: the zone goes away when its last user
+ *     closes it, and until then the name is taken;
+ *   - one process can open a name once (the kernel says EEXIST to a second
+ *     shm_apri of the same zone): a second shm_open of it here is EEXIST.
+ *
+ * NAMES: the kernel takes 15 characters and Mozilla's are longer
+ * ("/org.mozilla.ipc.1234.5"), so the name becomes "P" + the name without
+ * the slash when it fits, else "P#" + an FNV-1a hash in hex. The "P" keeps
+ * them away from the system's own zones (windows, clipboard).
+ * ============================================================================= */
+typedef struct {
+    int          usato;
+    int          aperto;        /* the descriptor is still open */
+    int          mappe;         /* mmap calls not yet undone */
+    char         nome[16];      /* the kernel's name */
+    unsigned int byte;          /* 0 until the zone exists */
+    unsigned int virt;
+} ShmFd;
+
+static ShmFd g_shmfd[SHMFD_MAX];
+
+static void shmfd_nome(const char *posix, char *k)
+{
+    unsigned int h = 2166136261u, n;
+    const char  *c;
+
+    while (*posix == '/') posix++;
+    n = (unsigned int)strlen(posix);
+    if (n > 0 && n <= 14) {
+        k[0] = 'P';
+        memcpy(k + 1, posix, n + 1);
+        return;
+    }
+    for (c = posix; *c; c++) h = (h ^ (unsigned char)*c) * 16777619u;
+    snprintf(k, 16, "P#%08x", h);
+}
+
+/* The slot goes when nobody holds it any more: descriptor closed and no
+ * mapping left. */
+static void shmfd_forse_libera(ShmFd *z)
+{
+    if (z->aperto || z->mappe) return;
+    if (z->virt) shm_chiudi((void *)(uintptr_t)z->virt);
+    memset(z, 0, sizeof(*z));
+}
+
+static int  shmfd_chiudi(int fd);
+static int  shmfd_fstat(int fd, struct stat *st);
+static long shmfd_mmap(size_t lung, int fd, long off);
+static int  shmfd_munmap(void *addr);
+
+int shm_open(const char *nome, int flag, mode_t modo)
+{
+    ShmZona  q;
+    ShmFd   *z = 0;
+    int      i, r;
+    char     k[16];
+
+    (void)modo;
+    if (!nome || !nome[0]) { errno = EINVAL; return -1; }
+    shmfd_nome(nome, k);
+
+    for (i = 0; i < SHMFD_MAX; i++)
+        if (g_shmfd[i].usato && strcmp(g_shmfd[i].nome, k) == 0) {
+            errno = EEXIST;
+            return -1;
+        }
+    for (i = 0; i < SHMFD_MAX && g_shmfd[i].usato; i++) ;
+    if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
+    z = &g_shmfd[i];
+
+    memset(&q, 0, sizeof(q));
+    strcpy(q.nome, k);
+    r = shm_apri(&q);                 /* attach, if it is there */
+    if (r < 0 && (r != -ENOENT || !(flag & O_CREAT))) { errno = -r; return -1; }
+
+    /* From now on close, fstat, mmap and munmap know about zones (see
+     * g_shm_chiudi: only a program that calls shm_open pays for this). */
+    g_shm_chiudi = shmfd_chiudi;
+    g_shm_fstat  = shmfd_fstat;
+    g_shm_mmap   = shmfd_mmap;
+    g_shm_munmap = shmfd_munmap;
+
+    memset(z, 0, sizeof(*z));
+    z->usato  = 1;
+    z->aperto = 1;
+    strcpy(z->nome, k);
+    if (r == 0) { z->byte = q.byte; z->virt = q.virt; }
+    return SHMFD_BASE + i;
+}
+
+int shm_unlink(const char *nome)
+{
+    (void)nome;
+    return 0;
+}
+
+int ftruncate(int fd, off_t lung)
+{
+    ShmFd  *z;
+    ShmZona q;
+    int     r;
+
+    if (!E_SHMFD(fd) || !g_shmfd[fd - SHMFD_BASE].usato ||
+        !g_shmfd[fd - SHMFD_BASE].aperto) {
+        /* Files have truncate(path) on EX-OS, not ftruncate: say so. */
+        errno = E_SHMFD(fd) ? EBADF : ENOSYS;
+        return -1;
+    }
+    z = &g_shmfd[fd - SHMFD_BASE];
+    if (lung < 0) { errno = EINVAL; return -1; }
+    if (z->virt) {
+        if ((unsigned long)lung > z->byte) { errno = EINVAL; return -1; }
+        return 0;
+    }
+    if (lung == 0) return 0;
+
+    memset(&q, 0, sizeof(q));
+    strcpy(q.nome, z->nome);
+    q.byte = (unsigned int)lung;
+    q.flag = SHM_CREA;
+    r = shm_apri(&q);
+    if (r < 0) { errno = -r; return -1; }
+    z->byte = q.byte;
+    z->virt = q.virt;
+    return 0;
+}
+
+static int shmfd_chiudi(int fd)
+{
+    ShmFd *z = &g_shmfd[fd - SHMFD_BASE];
+
+    if (!z->usato || !z->aperto) { errno = EBADF; return -1; }
+    z->aperto = 0;
+    shmfd_forse_libera(z);
+    return 0;
+}
+
+static int shmfd_fstat(int fd, struct stat *st)
+{
+    ShmFd *z = &g_shmfd[fd - SHMFD_BASE];
+
+    if (!z->usato || !z->aperto) { errno = EBADF; return -1; }
+    memset(st, 0, sizeof(*st));
+    st->st_mode    = S_IFREG | 0600u;
+    st->st_nlink   = 1;
+    st->st_size    = z->byte;
+    st->st_blksize = 4096;
+    return 0;
+}
+
+static long shmfd_mmap(size_t lung, int fd, long off)
+{
+    ShmFd *z = &g_shmfd[fd - SHMFD_BASE];
+
+    if (!z->usato || !z->aperto) { errno = EBADF; return -1; }
+    if (!z->virt) { errno = ENXIO; return -1; }     /* no ftruncate yet */
+    if (off < 0 || (off & 4095) ||
+        (unsigned long)off + lung > ((z->byte + 4095u) & ~4095u)) {
+        errno = ENXIO;
+        return -1;
+    }
+    z->mappe++;
+    return (long)(z->virt + (unsigned int)off);
+}
+
+/* 1: not a zone, go on with SYS_MUNMAP. 0: done. */
+static int shmfd_munmap(void *addr)
+{
+    unsigned int a = (unsigned int)(uintptr_t)addr;
+    int i;
+
+    for (i = 0; i < SHMFD_MAX; i++) {
+        ShmFd *z = &g_shmfd[i];
+
+        if (!z->usato || !z->virt || !z->mappe) continue;
+        if (a < z->virt || a >= z->virt + z->byte) continue;
+        z->mappe--;
+        shmfd_forse_libera(z);
+        return 0;
+    }
+    return 1;
+}
+#endif /* !EXOS_LIBC_SO */
+
 int interrompi(int pid)
 {
     return (int)_syscall1(SYS_INTERROMPI, (unsigned int)pid);
@@ -8649,6 +8893,9 @@ int fstat(int fd, struct stat *st)
      * quindi il ramo sotto era corretto per caso. */
     if (st == NULL) { errno = EFAULT; return -1; }
 
+#ifndef EXOS_LIBC_SO
+    if (E_SHMFD(fd) && g_shm_fstat) return g_shm_fstat(fd, st);
+#endif
     if (E_PRESA(fd)) {                            /* un socket: tipo e basta */
         if (fcntl(fd, 1 /* F_GETFD */) < 0) return -1;
         memset(st, 0, sizeof(*st));

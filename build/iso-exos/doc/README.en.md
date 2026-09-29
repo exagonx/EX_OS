@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.218
+**Version:** 0.227
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -83,6 +83,49 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### The graphics no longer flicker
+
+**tested in QEMU, to be judged on real hardware** - the flicker came "with
+the load", worst in big programs like EXBrowser. There were three causes.
+The server read a window while the program was still drawing in it: now
+every window draws into a buffer of its own and the server only gets the
+finished rectangle (Windows' double buffering, Wayland's *commit*). The
+pointer blinked: the server composes into a copy of the screen in RAM and
+then copies it to the screen in one go (`exwin -noombra` goes back). And
+every handled message redrew the whole window: the desktop repainted every
+two seconds, EXBrowser redrew the page at every timer tick and every mouse
+move. A program can now say "nothing changed" (`EX_NON_RIDISEGNARE`). With
+the desktop idle the server composes one frame a minute, where it did two
+or three a second; `exwin -conta` also says who asks for updates.
+
+### Signals are really delivered, and there is `mprotect`
+
+**tested in QEMU** (`tools/prova_segnali.sh`, 23 out of 23) - since kernel
+0.227 a program linked with `libc.a` can install a handler with
+`sigaction`: a bad pointer, an invalid instruction or a division by zero
+call the handler instead of closing the program, with the address and the
+registers, on an alternate stack too (`sigaltstack`); the handler may change
+the registers and the program resumes from them. `raise`, `kill` and
+`pthread_kill` reach the right thread, and there are `sigprocmask`,
+`sigsetjmp` and `siglongjmp`. `mprotect` makes a page read-only or
+untouchable. Firefox (Exilla) needs it. The floppy's `libc.so` has no room:
+there `signal` and `raise` stay as they were.
+
+### BSD sockets
+
+**tested in QEMU** (in C 23 out of 23, in Rust 9 out of 9) - `libc.a` has
+`socket`, `connect`, `bind`, `listen`, `accept`, `send`, `recv`, `poll` on
+sockets and `getaddrinfo` with DNS, on top of the EX-OS IP stack (kernel
+0.226). IPv4 only. They are for ported software: Rust (`std::net`) and
+Firefox.
+
+### Rust's `std` runs inside EX-OS
+
+**tested in QEMU** (`tools/rust-exos/prova-std.sh`, 29 out of 29) - a Rust
+program with the real standard library, compiled on Linux, uses files,
+directories, time, threads, `Mutex`, `Condvar` and channels inside EX-OS
+(kernel 0.225). It is the second stage of Exilla, the Firefox port.
 
 ### The browser starts at 32 MB too
 
@@ -3548,7 +3591,9 @@ A finished job is announced at the next prompt — `[1] terminato: tsleep
 
 **There is no `bg`**, and that is not an oversight: `bg` resumes a
 *suspended* process, and suspending one would need a Ctrl+Z — that is,
-signals, which EX-OS does not have. A job here is either running or finished;
+a signal that stops a process and lets it resume, which EX-OS does not have
+(signals exist since 0.227, but not SIGSTOP and SIGCONT, and the shell sends
+none). A job here is either running or finished;
 the state in between does not exist.
 
 **Output gets mixed together.** A background job writes to the same console
@@ -3566,7 +3611,7 @@ mechanisms prevent it:
 1. `sys_read` on `stdin` returns **end of input** to anyone who is not the
    foreground process of its own console. The shell declares the foreground
    with `SYS_CONSOLE_SETFG` (itself at the prompt, the child while waiting
-   for it). Unix would use `SIGTTIN` here; without signals, EOF is the only
+   for it). Unix would use `SIGTTIN` here; without that signal, EOF is the only
    possible answer — and it is true anyway, that program will never get any
    input.
 2. Whoever takes the keyboard by talking **directly** to the `kbd` service
@@ -4569,7 +4614,8 @@ kernel. The rules that matter are all about boundaries:
 > indistinguishable from an eternal block. And writing when there is no
 > reader left gives `EPIPE`, not a wait.
 
-> ! **No `SIGPIPE`**: EX-OS has no signals, so only the return value is
+> ! **No `SIGPIPE`**: a pipe sends no signals (those of 0.227 come only from
+> faults and `kill`), so only the return value is
 > visible. Whoever does not look at `write()`'s does not notice. And **no
 > atomicity guarantee**: a write can be partial even below `PIPE_BUF`.
 

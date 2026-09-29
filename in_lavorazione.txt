@@ -226,6 +226,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @WIFI-4318       la radio della Broadcom: manca il firmware, non la voglia
   1  @RUST-0          FATTO e provato il 28/09 (Exilla): tools/rust-exos/prova.sh
   1  @SEGNALI        FATTO e provato (23/23): sigaction con consegna vera e mprotect; resta dlopen
+  1  @SHM-OPEN       FATTO e provato (16/16): shm_open, ftruncate e mmap sopra le zone, nella libc.a
   1  @TASTI-SISTEMA   FATTI Ctrl+Alt+Canc e Ctrl+C in console; nel terminale in finestra non chiede
   1  @GRAFICA-MODALE  FATTO: riavvio e spegnimento con la grafica accesa
   1  @FILEMGR-OPS     FATTO anche Rinomina (F2), provato: resta l'avanzamento
@@ -5808,3 +5809,24 @@ un programma: il primo lavoro e' tirarla fuori.
   Nessuna delle modifiche di oggi toglie PG_USER a un processo che non chiama
   mprotect; sei avvii di fila per riprodurlo sono andati bene. Se ricompare:
   la seriale e' la traccia, e la domanda e' chi ha scritto quella PTE o PDE.
+
+2026-09-29 claude-A — @SHM-OPEN FATTO e provato (16/16): la memoria condivisa di
+  POSIX sopra le zone del kernel, nella sola libc.a, per Exilla. shm_open da'
+  un descrittore da SHMFD_BASE (2048) in su — i socket stanno sotto, da 1024 —
+  e si attacca alla zona se c'e'; se non c'e' la CREA ftruncate, primo momento
+  in cui la misura si sa (in EX-OS una zona nasce con la sua misura); mmap sul
+  descrittore rende la zona; la zona si chiude quando il descrittore e' chiuso
+  E ogni mappatura e' tolta. munmap su una zona non va piu' a SYS_MUNMAP, che
+  avrebbe restituito pagine usate da un altro processo. I nomi POSIX lunghi
+  (quelli di Mozilla) diventano «P#» + un'impronta FNV di otto cifre.
+  ! NON TIENE: O_EXCL (vale 0 in EX-OS), una zona che cresce (EINVAL),
+  MAP_PRIVATE (resta condivisa), shm_unlink (rende solo 0), lo stesso nome
+  due volte nello stesso processo (EEXIST). Scritto in lib/libc.c.
+  ! E GLI AGGANCI PASSANO DA PUNTATORI che solo shm_open riempie: con le
+  chiamate dirette close/fstat/mmap/munmap tiravano dentro tutta shm in ogni
+  programma, e il floppy e' sceso da 6 KB liberi a 2 (coi puntatori e'
+  tornato a 6). Prova:
+  tools/prova_shm.sh (tools/prove/shmprova.c), padre e figlio con un nome
+  lungo come quelli di Mozilla; prova_segnali ancora 23/23.
+  Resta della tappa 1: dlopen/dlsym (o libxul statica). ! libc-exos.rs (il
+  crate libc di Rust, di claude-B) non dichiara ancora shm_open e ftruncate.
