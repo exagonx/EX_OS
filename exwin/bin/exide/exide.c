@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.017"
+#define VERSIONE_APP "0.018"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -118,6 +118,8 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_FE_CERCA   984
 #define ID_FE_CHIUDI  985
 #define ID_FE_SOSTIT  986
+#define ID_FE_TAB     987
+#define ID_FE_APRI    988
 
 /* La finestra dell'editor: il suo menu e i suoi controlli. */
 #define ID_ED_SALVA   941
@@ -2740,6 +2742,8 @@ static void progetto_nuovo(void)
     dico("progetto creato: src, inc, lib, bin, obj");
 }
 
+static void progetto_apri_dir(const char *dir);
+
 static void progetto_apri(void)
 {
     char p[PERC_MAX];
@@ -2764,7 +2768,14 @@ static void progetto_apri(void)
     }
     *taglio = '\0';                     /* via anche «src» */
 
-    strncpy(g_prog_dir, p, PERC_MAX - 1);
+    progetto_apri_dir(p);
+}
+
+/* Apre il progetto nella directory `dir` (quella che contiene src/): la
+ * usano «Apri...» e la riga di comando, `exide /progetti/prova`. */
+static void progetto_apri_dir(const char *dir)
+{
+    strncpy(g_prog_dir, dir, PERC_MAX - 1);
     g_prog_dir[PERC_MAX - 1] = '\0';
 
     if (!dis_carica()) { dico("finestra.dis non si legge"); return; }
@@ -3991,8 +4002,17 @@ static void progetto_scheda_apri(void)
  * libera (vedi il perche' in exwin.c) — e se non si azzera il coloritore un
  * file .txt aperto dopo un .c si vede colorato come se fosse C.
  * ============================================================================= */
-static ExFinestra g_fe_f, g_fe_cod, g_fe_stato;
+static ExFinestra g_fe_f, g_fe_cod, g_fe_stato, g_fe_tab;
 static char       g_fe_nome[64] = "";     /* relativo a <progetto>/src */
+
+/* LE SCHEDE (29 settembre 2026, @EXIDE-SCHEDE): i file aperti, uno per
+ * scheda, nell'ordine della barra. ! CAMBIANDO SCHEDA SI SALVA, come fanno le
+ * linguette di «Sorgente»: e' la regola di exide, e cosi' non serve tenere
+ * in memoria i testi delle schede che aspettano — ognuna si rilegge dal
+ * disco quando torna. */
+#define FE_MAX 10
+static char g_fe_file[FE_MAX][64];
+static int  g_fe_n = 0;
 
 static void file_percorso(char *out, const char *nome)
 {
@@ -4080,18 +4100,29 @@ static void editori_salva_tutti(void)
     if (g_fe_f) fe_salva();
 }
 
+static void fe_apri_altro(void);
+
 static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     case EXM_COMANDO:
         switch (wp) {
         case ID_FE_SALVA:  fe_salva(); break;
+        case ID_FE_APRI:   fe_apri_altro(); break;
+        case ID_FE_TAB:
+            if (lp >= 0 && lp < g_fe_n && strcmp(g_fe_file[lp], g_fe_nome) != 0) {
+                fe_salva();
+                fe_carica(g_fe_file[lp]);
+                ex_fuoco(g_fe_cod);
+            }
+            break;
         case ID_FE_CERCA:  area_cerca(g_fe_cod, g_fe_stato); break;
         case ID_FE_SOSTIT: area_sostituisci(g_fe_cod, g_fe_stato); break;
         case ID_FE_CHIUDI:
             fe_salva();
             ex_distruggi(f);
             g_fe_f = 0;
+            g_fe_n = 0;
             ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
             return 0;
         default: break;
@@ -4106,6 +4137,7 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp & KBD_MOD_CTRL) {
             switch (wp & KBD_KEY_MASK) {
             case 's': case 'S': fe_salva();                        return 0;
+            case 'o': case 'O': fe_apri_altro();                   return 0;
             case 'f': case 'F': area_cerca(g_fe_cod, g_fe_stato);  return 0;
             case 'c': case 'C': ex_area_copia(g_fe_cod);           return 0;
             case 'x': case 'X':
@@ -4121,10 +4153,27 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
+    /* La X di una scheda, o Ctrl+W: si salva quella scelta, e l'ultima
+     * che si chiude chiude la finestra. */
+    case EXM_SCHEDA_CHIUDI: {
+        int i = (int)lp, k, era = (strcmp(g_fe_file[i], g_fe_nome) == 0);
+
+        if (i < 0 || i >= g_fe_n) return 0;
+        if (era) fe_salva();
+        if (g_fe_n == 1) return proc_fe(f, EXM_CHIUDI, 0, 0);
+        for (k = i; k + 1 < g_fe_n; k++) strcpy(g_fe_file[k], g_fe_file[k + 1]);
+        g_fe_n--;
+        ex_voce_togli(g_fe_tab, (unsigned int)i);
+        if (era) fe_carica(g_fe_file[ex_voce_scelta(g_fe_tab)]);
+        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        return 0;
+    }
+
     case EXM_CHIUDI:
         fe_salva();
         ex_distruggi(f);
         g_fe_f = 0;
+        g_fe_n = 0;
         ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
         return 0;
 
@@ -4133,14 +4182,58 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     return ex_procedura_base(f, msg, wp, lp);
 }
 
-/* Apre `nome` (un file dentro <progetto>/src) nel file-editor. Se la finestra
- * e' gia' aperta su un ALTRO file lo salva prima di cambiarlo — la stessa
- * regola delle linguette del sorgente principale. */
+static void file_editor_apri(const char *nome);
+
+/* «Apri...» dentro la finestra: la finestra e' modale, e l'elenco Files non
+ * si raggiunge finche' e' aperta — un altro sorgente si sceglie da qui. Solo
+ * dentro <progetto>/src, come l'elenco: il nome della scheda e' relativo a
+ * li'. */
+static void fe_apri_altro(void)
+{
+    char p[PERC_MAX], src[PERC_MAX];
+    size_t l;
+
+    file_percorso(p, g_fe_nome);
+    if (!ex_dlg_apri(p, sizeof(p))) return;
+    snprintf(src, sizeof(src), "%s/src/", g_prog_dir);
+    l = strlen(src);
+    if (strncmp(p, src, l) != 0 || !p[l] || strlen(p + l) >= 64) {
+        ex_testo_metti(g_fe_stato, "qui si aprono i sorgenti del progetto (src/)");
+        return;
+    }
+    file_editor_apri(p + l);
+}
+
+/* La scheda di `nome`, aggiunta se non c'e'. -1 se la barra e' piena. */
+static int fe_scheda(const char *nome)
+{
+    int i;
+
+    for (i = 0; i < g_fe_n; i++) if (strcmp(g_fe_file[i], nome) == 0) return i;
+    if (g_fe_n >= FE_MAX || !ex_voce_aggiungi(g_fe_tab, nome)) return -1;
+    strncpy(g_fe_file[g_fe_n], nome, sizeof(g_fe_file[0]) - 1);
+    g_fe_file[g_fe_n][sizeof(g_fe_file[0]) - 1] = '\0';
+    return g_fe_n++;
+}
+
+/* Apre `nome` (un file dentro <progetto>/src) nel file-editor, in una scheda
+ * sua (@EXIDE-SCHEDE); se e' gia' aperto, la sua scheda. Il file di prima si
+ * salva prima di cambiare — la stessa regola delle linguette del sorgente
+ * principale. */
 static void file_editor_apri(const char *nome)
 {
+    int k;
+
     if (g_fe_f) {
-        if (strcmp(g_fe_nome, nome) != 0) fe_salva();
-        fe_carica(nome);
+        k = fe_scheda(nome);
+        if (k < 0) {
+            char m[80];
+            snprintf(m, sizeof(m), "al massimo %d file aperti: chiudine uno", FE_MAX);
+            ex_testo_metti(g_fe_stato, m);
+            return;
+        }
+        if (strcmp(g_fe_nome, nome) != 0) { fe_salva(); fe_carica(nome); }
+        ex_voce_scegli(g_fe_tab, (unsigned int)k);
         ex_fuoco(g_fe_cod);
         ex_procedura_base(g_fe_f, EXM_DISEGNA, 0, 0);
         return;
@@ -4151,15 +4244,20 @@ static void file_editor_apri(const char *nome)
                      60, 40, 640, 460, 0, 0, proc_fe);
     if (g_fe_f == 0) { dico("non riesco ad aprire il file"); return; }
 
-    g_fe_cod = ex_crea("areacodice", "", EX_FIGLIO, 4, 4, 632, 400,
+    g_fe_tab = ex_crea("tab", "", EX_FIGLIO, 4, 4, 632, 22, g_fe_f, ID_FE_TAB, 0);
+    ex_voci_schede(g_fe_tab, 1);
+    g_fe_n = 0;
+    g_fe_cod = ex_crea("areacodice", "", EX_FIGLIO, 4, 28, 632, 376,
                        g_fe_f, 0, 0);
     ex_crea("pulsante", "Salva", EX_FIGLIO, 4, 408, 90, 26, g_fe_f, ID_FE_SALVA, 0);
     ex_crea("pulsante", "Cerca", EX_FIGLIO, 102, 408, 90, 26, g_fe_f, ID_FE_CERCA, 0);
     ex_crea("pulsante", "Sostituisci", EX_FIGLIO, 200, 408, 110, 26,
             g_fe_f, ID_FE_SOSTIT, 0);
     ex_crea("pulsante", "Chiudi", EX_FIGLIO, 318, 408, 90, 26, g_fe_f, ID_FE_CHIUDI, 0);
+    ex_crea("pulsante", "Apri...", EX_FIGLIO, 416, 408, 90, 26, g_fe_f, ID_FE_APRI, 0);
     g_fe_stato = ex_crea("etichetta", "", EX_FIGLIO, 4, 440, 630, 16, g_fe_f, 0, 0);
 
+    fe_scheda(nome);
     fe_carica(nome);
     ex_fuoco(g_fe_cod);
     ex_procedura_base(g_fe_f, EXM_DISEGNA, 0, 0);

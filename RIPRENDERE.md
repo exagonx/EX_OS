@@ -282,6 +282,16 @@ vero). ! verifica-exjs compila soltanto: che exjs.so non si collegasse
 l'ha detto solo make iso-exos. E chiesti a fine giornata, scritti e non
 ancora cominciati: **le schede** nel toolkit, poi nel navigatore (con le
 finestre nuove), nell'editor e in exide.
+Dopo il commit, **le schede**: nel toolkit la barra di linguette che c'era
+diventa anche barra di schede di documenti (X, frecce, Ctrl+Tab, Ctrl+W), e
+la usano l'editor (piu' file, uno alla volta nell'area e gli altri in
+memoria), exide (la finestra dei file) e il navigatore (Ctrl+T, _blank,
+open(), e le finestre nuove con Shift+clic). ! Nel navigatore le schede in
+sottofondo si scaricano e si ricaricano: tenerle vive costerebbe MB. ! Tre
+difetti trovati strada facendo: un controllo nascosto prendeva il fuoco col
+Tab; 200 KB di BSS in piu' e a 32 MB il navigatore non caricava exhttp.so
+(le schede ora sono un malloc alla seconda); e il clic non portava i
+modificatori al programma.
 Prima, **la ricerca di Wikipedia**, chiesta di nuovo: il pulsante non cercava.
 Non era il modulo. exhttp troncava il percorso a 512 byte, e il foglio di
 Wikipedia (537) perdeva la coda `&only=styles`: arrivava il JavaScript che

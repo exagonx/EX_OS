@@ -258,11 +258,11 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   2  @DESK-MENU       FATTO e provato in QEMU (prova_tasto_destro.sh)
   2  @FM-MENU         FATTO e provato in QEMU (prova_tasto_destro.sh)
   2  @FM-TRASCINA     FATTO e provato in QEMU: Copia / Sposta / Annulla
-  1  @TOOLKIT-SCHEDE  un controllo «schede» in exwin.so: barra, Ctrl+Tab, chiudere !
-  1  @NAV-FINESTRA    EXBrowser apre una pagina in una finestra nuova (_blank, window.open) !
-  2  @NAV-SCHEDE      EXBrowser: piu' pagine in schede della stessa finestra <- @TOOLKIT-SCHEDE !
-  2  @EDIT-SCHEDE     l'editor di testo con piu' file, uno per scheda <- @TOOLKIT-SCHEDE !
-  2  @EXIDE-SCHEDE    exide: i sorgenti del progetto in schede <- @TOOLKIT-SCHEDE !
+  1  @TOOLKIT-SCHEDE  FATTO (29/09): ex_voci_schede, X, frecce, Ctrl+Tab/PgSu/PgGiu, Ctrl+W
+  1  @NAV-FINESTRA    FATTO e provato in QEMU (4/4): Shift+clic, tasto destro, Ctrl+N
+  2  @NAV-SCHEDE      FATTO e provato (3/3): Ctrl+T, _blank, open(); in sottofondo si scarica
+  2  @EDIT-SCHEDE     FATTO e provato in QEMU (3/3): un file per scheda, edit a b c
+  2  @EXIDE-SCHEDE    FATTO e provato in QEMU: la finestra dei file ha le schede
   1  @EXWIN-LOG       FATTO l'anello (32 KB, ora e pid); resta la pipe per i figli di pm
   1  @ICONE-APP       i disegni _64/_128 ci sono; archivi aggiunta il 27 settembre (dal PNG)
   1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
@@ -4828,6 +4828,51 @@ IL PIANO:
      chiede per ognuna.
   5. @EXIDE-SCHEDE: i sorgenti del progetto in schede, col modulo attivo che
      segue la scheda.
+
+FATTO IL 29 SETTEMBRE 2026 — com'e' andata, per chi riprende:
+  - exwin.so 0.009: la barra «tab» che c'era gia' (le linguette di un
+    pannello) ha la modalita' schede, ex_voci_schede(c, 1). Una X su ogni
+    linguetta (EXM_SCHEDA_CHIUDI: wp = id, lp = indice; il toolkit NON la
+    toglie, decide il programma), le frecce quando non ci stanno, titoli
+    tagliati con ~, e dalla finestra intera Ctrl+Tab / Ctrl+Shift+Tab /
+    Ctrl+PgGiu / Ctrl+PgSu e Ctrl+W. Nuove ex_voce_togli, ex_voce_rinomina
+    (facoltative nello stub). La barra a schede non e' una fermata di Tab.
+    ! E UN CONTROLLO NASCOSTO NON PRENDE PIU' IL FUOCO (accetta_fuoco): la
+      barra del navigatore, nascosta, si prendeva il primo Tab.
+    ! EXM_MOUSE_GIU ed EXM_DOPPIOCLIC portano in wp i modificatori
+      (KBD_MOD_*): prima wp era 0 (nessun programma lo leggeva).
+  - l'editor (edit 0.004): un'area sola e i documenti che ci entrano a turno
+    (AREA_MAX del toolkit e' 2): ogni scheda tiene testo, percorso,
+    cursore, vista, «modificato» e la sua pila di annullamenti. Ctrl+N,
+    Ctrl+O (in una scheda nuova, o in quella del file se e' gia' aperto),
+    Ctrl+W chiede se modificato; Esci conta i file modificati di tutte le
+    schede; `edit a b c` apre tre schede. ! Senza memoria per mettere via il
+    testo la scheda non si lascia (resterebbe vuota). 12 schede al massimo.
+  - exide (0.018): la finestra dei file del progetto ha le schede; cambiando
+    scheda si salva (la regola delle linguette di «Sorgente»); «Apri...» e
+    Ctrl+O dentro la finestra, che e' modale e non lascia tornare a Files.
+    La finestra «Sorgente» (tre file fissi) resta com'era.
+  - EXBrowser (0.025): target="_blank" e window.open() aprono una scheda
+    nuova (come Firefox), Ctrl+clic una scheda dietro, Shift+clic una
+    finestra nuova; il tasto destro su un collegamento: Apri, in una scheda
+    nuova, in una finestra nuova, Copia l'indirizzo; File > Nuova scheda
+    (Ctrl+T) e Nuova finestra (Ctrl+N). Ogni finestra e' un processo.
+    ! window.open vale solo dentro un clic (o Invio): chiamata mentre la
+      pagina si carica non apre niente. Sta nella riga iniziale del
+      preludio (browser_preludio.c), perche' il preludio usa le regexp e con
+      ExJs non gira.
+    ! LE SCHEDE IN SOTTOFONDO SI SCARICANO: tengono indirizzo, titolo,
+      scorrimento e cronologia, e tornandoci la pagina si ricarica (cache in
+      RAM o su disco). Si perdono i moduli a meta' e lo stato degli script.
+      Tenerle vive costerebbe qualche MB a scheda.
+    ! La barra compare dalla seconda scheda: con una sola la finestra e' la
+      stessa di prima, e le prove a coordinate restano giuste. Le schede
+      stanno in un malloc chiesto alla seconda: 200 KB nel BSS e a 32 MB
+      exhttp.so non si caricava piu'.
+    ! Un target con un nome (non _blank) dovrebbe riusare la finestra con
+      quel nome: qui ne apre sempre una nuova.
+  Prove: tools/prova_edit_schede.sh, prova_exide_schede.sh,
+  prova_nav_finestra.sh (4/4), prova_nav_schede.sh (3/3).
 
 =============================================================================
 =============================================================================

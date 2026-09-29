@@ -161,6 +161,9 @@ static struct {
     void         (*lista_multipla)(ExFinestra, int);
     int          (*lista_scelte)(ExFinestra, unsigned int *, int);
     int          (*lista_riga_a)(ExFinestra, int);
+    void         (*voci_schede)(ExFinestra, int);
+    int          (*voce_togli)(ExFinestra, unsigned int);
+    void         (*voce_rinomina)(ExFinestra, unsigned int, const char *);
     void         (*finestra_riduci)(unsigned int);
     void         (*chiudi_altre)(void);
     void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
@@ -346,6 +349,10 @@ static void assicura(void)
     P.lista_multipla  = (void (*)(ExFinestra, int))exlib_simbolo(t, "ex_lista_multipla");
     P.lista_scelte    = (int (*)(ExFinestra, unsigned int *, int))exlib_simbolo(t, "ex_lista_scelte");
     P.lista_riga_a    = (int (*)(ExFinestra, int))exlib_simbolo(t, "ex_lista_riga_a");
+    P.voci_schede     = (void (*)(ExFinestra, int))exlib_simbolo(t, "ex_voci_schede");
+    P.voce_togli      = (int (*)(ExFinestra, unsigned int))exlib_simbolo(t, "ex_voce_togli");
+    P.voce_rinomina   = (void (*)(ExFinestra, unsigned int, const char *))
+                        exlib_simbolo(t, "ex_voce_rinomina");
     P.finestra_riduci = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_riduci");
     P.chiudi_altre    = (void (*)(void))
@@ -583,6 +590,14 @@ int ex_lista_scelte(ExFinestra f, unsigned int *righe, int max)
   if (righe && max > 0) { righe[0] = ex_lista_scelta(f); return 1; } return 0; }
 int ex_lista_riga_a(ExFinestra f, int y)
 { assicura(); return P.lista_riga_a ? P.lista_riga_a(f, y) : -1; }
+/* Su una exwin.so vecchia le schede sono una barra di linguette qualunque:
+ * niente X e niente Ctrl+Tab, e togliere o rinominare non si puo'. */
+void ex_voci_schede(ExFinestra c, int si)
+{ assicura(); if (P.voci_schede) P.voci_schede(c, si); }
+int ex_voce_togli(ExFinestra c, unsigned int i)
+{ assicura(); return P.voce_togli ? P.voce_togli(c, i) : 0; }
+void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
+{ assicura(); if (P.voce_rinomina) P.voce_rinomina(c, i, testo); }
 
 void         ex_finestra_riduci(unsigned int id)
 { assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }

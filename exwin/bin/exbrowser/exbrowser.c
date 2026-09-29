@@ -674,10 +674,14 @@ static void (*g_anima_chiudi)(EximgAnim *);
  * subito dopo css_calcola. */
 
 int area_x(void) { return g_vi->cornice ? g_vi->ax : MARGINE; }
-int area_y(void) { return g_vi->cornice ? g_vi->ay : BARRA_Y + BARRA_H + MARGINE; }
+/* La barra delle schede, alta SCHEDE_H, c'e' solo dalla seconda scheda in
+ * poi (@NAV-SCHEDE): con una scheda sola la finestra e' quella di sempre. */
+static int g_schede_h = 0;
+
+int area_y(void) { return g_vi->cornice ? g_vi->ay : BARRA_Y + BARRA_H + MARGINE + g_schede_h; }
 int area_w(void) { return g_vi->cornice ? g_vi->aw : g_fin_w - 2 * MARGINE - SCORRI_W; }
 int area_h(void) { return g_vi->cornice ? g_vi->ah
-                                        : g_fin_h - BARRA_Y - BARRA_H - 2 * MARGINE - 20; }
+                                        : g_fin_h - BARRA_Y - BARRA_H - 2 * MARGINE - 20 - g_schede_h; }
 
 int barra_x(void) { return area_x() + area_w() + 2; }
 
@@ -3589,10 +3593,13 @@ static int  ancora_vai(const char *nome);
 
 /* Rende 1 se ha davvero cambiato pagina: chi chiama deve sapere che l'albero
  * che aveva in mano un istante fa non c'e' piu'. */
+static void finestre_da_script(void);
+
 static int segui_location(void)
 {
     char dove[EXHTTP_URL_MAX], assoluto[EXHTTP_URL_MAX];
 
+    finestre_da_script();
     if (!g_dom) return 0;
     if (!exdom_dove_andare(g_dom, dove, sizeof(dove))) return 0;
     if (!dove[0]) return 0;
@@ -5365,8 +5372,275 @@ static void home_predefinita(void)
         }
 }
 
+/* =============================================================================
+ * UNA FINESTRA NUOVA (@NAV-FINESTRA, 29 settembre 2026)
+ *
+ * ! OGNI FINESTRA E' UN PROCESSO, un secondo EXBrowser con l'indirizzo: la
+ * memoria la paga la finestra che si apre, e una pagina che fa cadere il suo
+ * navigatore non porta via le altre. Le impostazioni sono le stesse perche'
+ * sta nel profilo ($HOME/.app/exbrowser), che il figlio eredita con
+ * l'ambiente.
+ * ============================================================================= */
+static int g_clic_ctrl = 0;         /* il clic di adesso aveva Ctrl premuto */
+static int g_gesto = 0;             /* siamo dentro un clic: window.open vale */
+
+static void scheda_nuova(const char *url, int sfondo);
+
+static void finestra_nuova(const char *indirizzo)
+{
+    char *av[3];
+    char  bin[64];
+
+    strcpy(bin, "/exwin/bin/exbrowser");
+    if (access(bin, F_OK) != 0) strcpy(bin, "/cdrom/exwin/bin/exbrowser");
+    av[0] = bin;
+    av[1] = (char *)indirizzo;
+    av[2] = 0;
+    if (spawn_ex(av[0], av, environ, 0, 0) < 0) dico("la finestra nuova non parte");
+    else dico("aperto in una finestra nuova");
+}
+
+/* ! window.open() LO REGISTRA IL PRELUDIO in window.__ex_apri, e le finestre
+ * si aprono qui, dopo lo script: lo stesso giro di location (segui_location).
+ * ! SOLO DENTRO UN CLIC, come fanno tutti i navigatori contro le finestre che
+ * si aprono da sole: una pagina che lo chiama mentre si carica non apre
+ * niente, e lo si dice. */
+static void finestre_da_script(void)
+{
+    ExJsVal      g, v;
+    unsigned int i, n;
+
+    if (!g_js) return;
+    g = exjs_globale(g_js);
+    v = exjs_prendi(g_js, g, "__ex_apri");
+    if (exjs_tipo(g_js, v) != EXJS_OGGETTO) return;
+    n = exjs_lunghezza(g_js, v);
+    if (n == 0) return;
+    for (i = 0; i < n && i < 4; i++) {
+        char dove[EXHTTP_URL_MAX], assoluto[EXHTTP_URL_MAX];
+
+        strncpy(dove, exjs_a_stringa(g_js, exjs_indice_prendi(g_js, v, i)), sizeof(dove) - 1);
+        dove[sizeof(dove) - 1] = '\0';
+        if (!g_gesto) { dico("una finestra che si apriva da sola: bloccata"); break; }
+        if (!dove[0] || strcmp(dove, "about:blank") == 0) continue;
+        if (risolvi(dove, assoluto, sizeof(assoluto))) scheda_nuova(assoluto, 0);
+        g_gesto = 0;                    /* un clic, una finestra */
+    }
+    exjs_metti(g_js, g, "__ex_apri", exjs_vettore(g_js));
+}
+
+/* =============================================================================
+ * LE SCHEDE (@NAV-SCHEDE, 29 settembre 2026)
+ *
+ * ! LE SCHEDE IN SOTTOFONDO NON TENGONO LA PAGINA: tengono il suo indirizzo,
+ * il titolo, dove era scorsa e la sua cronologia, e quando si torna la pagina
+ * si ricarica — dalla cache in RAM o su disco, se c'e'. Tenerle vive vorrebbe
+ * dire un documento, i suoi fogli di stile e il suo motore JavaScript per
+ * ogni scheda: qualche MB l'una, cioe' su una macchina da 32 MB tre o
+ * quattro schede. Si perde quel che vive solo nella pagina: i moduli
+ * riempiti a meta' e lo stato dei suoi script. Firefox fa lo stesso con le
+ * schede che non si guardano da un po', quando la memoria stringe.
+ *
+ * ! LA BARRA COMPARE CON LA SECONDA SCHEDA, e con lei la pagina scende di
+ * SCHEDE_H: la y dei pezzi e' in coordinate della finestra (vedi area_y), e
+ * si reimpagina.
+ * ============================================================================= */
+#define SCHEDE_MAX  10
+#define SCHEDE_H    22
+
+static int scorri_max(void);
+
+typedef struct {
+    char url[EXHTTP_URL_MAX];
+    char titolo[32];
+    int  scorri;
+    char storia[STORIA_MAX][EXHTTP_URL_MAX];
+    int  storia_n;
+} Scheda;
+
+/* ! SU RICHIESTA, NON NEL BSS: sono 200 KB (dieci schede, trentadue
+ * indirizzi di cronologia l'una), e il navigatore su una macchina da 32 MB
+ * sta gia' sul filo — con loro nel BSS exhttp.so non si caricava piu'
+ * (29 settembre 2026). Si chiedono alla seconda scheda; chi ne usa una sola
+ * non le paga. */
+static Scheda    *g_sch = 0;
+static int        g_sch_n = 1, g_sch_attiva = 0;
+static ExFinestra g_schede = 0;
+static char       g_sch_visto[EXHTTP_URL_MAX] = "";   /* l'indirizzo del titolo */
+
+/* Il <title> della pagina, o il nome dell'indirizzo. */
+static void pagina_titolo(char *out, unsigned int max)
+{
+    unsigned int i;
+    const char  *u, *b;
+
+    out[0] = '\0';
+    for (i = 0; i < g_principale.imp.doc.nodi_n; i++) {
+        const HtmlNodo *N = &g_principale.imp.doc.nodi[i];
+        if (N->tipo == HTML_ELEMENTO &&
+            strcmp(html_nome(&g_principale.imp.doc, (int)i), "title") == 0 &&
+            N->primo_figlio >= 0) {
+            const char *t = html_testo(&g_principale.imp.doc, N->primo_figlio);
+            while (t && (*t == ' ' || *t == '\n' || *t == '\t')) t++;
+            if (t && *t) { strncpy(out, t, max - 1); out[max - 1] = '\0'; }
+            break;
+        }
+    }
+    if (out[0]) return;
+    u = g_qui;
+    b = strrchr(u, '/');
+    if (b && b[1]) u = b + 1;
+    else if ((b = strstr(u, "://")) != 0) u = b + 3;
+    strncpy(out, u[0] ? u : "nuova scheda", max - 1);
+    out[max - 1] = '\0';
+}
+
+/* Il titolo della scheda scelta segue la pagina: si guarda a ogni disegno,
+ * ma si ricalcola solo quando l'indirizzo e' cambiato. */
+void schede_segui_titolo(void)
+{
+    char t[32];
+
+    if (!g_schede || g_sch_n < 2 || strcmp(g_sch_visto, g_qui) == 0) return;
+    strncpy(g_sch_visto, g_qui, sizeof(g_sch_visto) - 1);
+    pagina_titolo(t, sizeof(t));
+    strcpy(g_sch[g_sch_attiva].titolo, t);
+    ex_voce_rinomina(g_schede, (unsigned int)g_sch_attiva, t);
+}
+
+static void schede_barra(void)
+{
+    int prima = g_schede_h;
+
+    g_schede_h = (g_sch_n >= 2) ? SCHEDE_H : 0;
+    if (!g_schede) return;
+    ex_mostra(g_schede, g_sch_n >= 2);
+    if (prima != g_schede_h) {
+        vista_usa(&g_principale);
+        impagina();
+        if (g_scorri > scorri_max()) g_scorri = scorri_max();
+    }
+}
+
+/* La scheda scelta si mette via: indirizzo, scorrimento, cronologia. */
+static void scheda_metti_via(void)
+{
+    Scheda *S = &g_sch[g_sch_attiva];
+
+    strncpy(S->url, g_qui, sizeof(S->url) - 1);
+    S->url[sizeof(S->url) - 1] = '\0';
+    S->scorri = g_principale.imp.scorri;
+    memcpy(S->storia, g_storia, sizeof(S->storia));
+    S->storia_n = g_storia_n;
+}
+
+static void scheda_riprendi(int i)
+{
+    Scheda *S = &g_sch[i];
+    char    u[EXHTTP_URL_MAX];
+
+    g_sch_attiva = i;
+    ex_voce_scegli(g_schede, (unsigned int)i);
+    memcpy(g_storia, S->storia, sizeof(g_storia));
+    g_storia_n = S->storia_n;
+    strcpy(u, S->url);
+    vista_usa(&g_principale);
+    if (u[0]) {
+        ex_testo_metti(g_url, u);
+        vai(u, 0, 1);
+        vista_usa(&g_principale);
+        g_scorri = S->scorri;
+        if (g_scorri > scorri_max()) g_scorri = scorri_max();
+    }
+    g_sch_visto[0] = '\0';
+    disegna();
+}
+
+static void scheda_scegli(int i)
+{
+    if (i < 0 || i >= g_sch_n || i == g_sch_attiva) return;
+    scheda_metti_via();
+    scheda_riprendi(i);
+}
+
+/* Una scheda nuova con `url`, in fondo; `sfondo` = non la si guarda subito
+ * (Ctrl+clic, come in Firefox). */
+static void scheda_nuova(const char *url, int sfondo)
+{
+    Scheda *S;
+
+    if (!g_sch) g_sch = (Scheda *)malloc(sizeof(Scheda) * SCHEDE_MAX);
+    if (!g_schede || !g_sch || g_sch_n >= SCHEDE_MAX) {
+        dico(g_sch ? "troppe schede: ne apro una finestra nuova"
+                   : "memoria finita per le schede: ne apro una finestra nuova");
+        finestra_nuova(url);
+        return;
+    }
+    if (g_sch_n == 1) {                         /* la prima ha il suo nome */
+        char t[32];
+        pagina_titolo(t, sizeof(t));
+        strcpy(g_sch[0].titolo, t);
+        ex_voce_rinomina(g_schede, 0, t);
+    }
+    S = &g_sch[g_sch_n];
+    memset(S, 0, sizeof(*S));
+    strncpy(S->url, url, sizeof(S->url) - 1);
+    strcpy(S->titolo, "...");
+    ex_voce_aggiungi(g_schede, sfondo ? url : "...");
+    g_sch_n++;
+    schede_barra();
+    if (sfondo) {
+        char t[32];
+        const char *b = strrchr(url, '/');
+        strncpy(t, (b && b[1]) ? b + 1 : url, sizeof(t) - 1);
+        t[sizeof(t) - 1] = '\0';
+        ex_voce_rinomina(g_schede, (unsigned int)(g_sch_n - 1), t);
+        dico("aperto in una scheda nuova");
+        disegna();
+        return;
+    }
+    scheda_metti_via();
+    scheda_riprendi(g_sch_n - 1);
+}
+
+/* ! L'ULTIMA SCHEDA CHE SI CHIUDE CHIUDE LA FINESTRA, come in Firefox: un
+ * navigatore non ha lavoro non salvato da perdere. */
+static void esci(void);
+
+static void scheda_chiudi(int i)
+{
+    int k;
+
+    if (i < 0 || i >= g_sch_n) return;
+    if (g_sch_n == 1) { esci(); return; }
+    if (i == g_sch_attiva) scheda_metti_via();
+    for (k = i; k + 1 < g_sch_n; k++) g_sch[k] = g_sch[k + 1];
+    g_sch_n--;
+    ex_voce_togli(g_schede, (unsigned int)i);
+    if (i < g_sch_attiva) g_sch_attiva--;
+    schede_barra();
+    if (i == g_sch_attiva || g_sch_attiva >= g_sch_n) {
+        int j = (i < g_sch_n) ? i : g_sch_n - 1;
+        g_sch_attiva = -1;
+        scheda_riprendi(j);
+    } else {
+        ex_voce_scegli(g_schede, (unsigned int)g_sch_attiva);
+        disegna();
+    }
+}
+
 /* Un collegamento premuto: si risolve contro l'indirizzo di adesso. */
+static void segui_dove(int k, int nuova);
+
+static int g_clic_shift = 0;
+
+/* Ctrl+clic: una scheda nuova, dietro; Shift+clic: una finestra nuova. */
 static void segui(int k)
+{
+    segui_dove(k, g_clic_shift ? 1 : g_clic_ctrl ? 3 : 0);
+}
+
+static void segui_dove(int k, int nuova)
 {
     char nuovo[EXHTTP_URL_MAX];
     const char *rif;
@@ -5385,6 +5659,10 @@ static void segui(int k)
 
     if (!risolvi(rif, nuovo, sizeof(nuovo))) return;
 
+    /* target="_blank": una scheda nuova davanti, come Firefox */
+    if (!nuova && g_link_nuova[k]) nuova = 2;
+    if (nuova == 1) { finestra_nuova(nuovo); return; }
+    if (nuova >= 2) { scheda_nuova(nuovo, nuova == 3); return; }
     vai(nuovo, 1, 0);
 }
 
@@ -6388,8 +6666,10 @@ static void tab_premi(void)
     int i = tab_indice();
 
     if (i < 0) return;
+    g_gesto = 1;                        /* Invio vale un clic: window.open */
     clic_pagina(g_pez[i].x + (g_pez[i].w > 2 ? g_pez[i].w / 2 : 0),
                 g_pez[i].y - g_scorri + pezzo_alto(i) / 2);
+    g_gesto = 0;
 }
 
 /* =============================================================================
@@ -6419,6 +6699,7 @@ static void ridisponi(int w, int h)
     ex_misura(g_url, CERCA_X - 44 - 4 - (MARGINE + 32), 22);
     ex_sposta(g_stato,   MARGINE, g_fin_h - 18);
     ex_misura(g_stato, g_fin_w - 2 * MARGINE, 16);
+    if (g_schede) ex_misura(g_schede, g_fin_w - 2 * MARGINE, SCHEDE_H);
 
     impagina();
     if (g_scorri > scorri_max()) g_scorri = scorri_max();
@@ -6434,6 +6715,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     case EXM_MISURA:
         ridisponi(EX_X(lp), EX_Y(lp));
+        return 0;
+
+    /* La X di una scheda, o Ctrl+W (@NAV-SCHEDE). */
+    case EXM_SCHEDA_CHIUDI:
+        scheda_chiudi((int)lp);
         return 0;
 
     case EXM_COMANDO:
@@ -6484,6 +6770,9 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * l'ha. */
         if (wp == ID_ESCI)  { esci();         return 0; }
         if (wp == ID_SCARICHI) { ex_scarichi_finestra(); return 0; }
+        if (wp == ID_NUOVA)    { finestra_nuova(g_home[0] ? g_home : "about:blank"); return 0; }
+        if (wp == ID_SCHEDA)   { scheda_nuova(g_home[0] ? g_home : "about:blank", 0); return 0; }
+        if (wp == ID_SCHEDE)   { scheda_scegli((int)lp); return 0; }
         if (wp == ID_INDIETRO) {
             if (g_storia_n > 0) {
                 char indietro[EXHTTP_URL_MAX];
@@ -6722,6 +7011,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == 'o' || c == 'O') { apri_locale();  return 0; }
             if (c == 's' || c == 'S') { salva_pagina(); return 0; }
             if (c == 'q' || c == 'Q') { esci();         return 0; }
+            if (c == 'n' || c == 'N') { proc(f, EXM_COMANDO, ID_NUOVA, 0); return 0; }
+            if (c == 't' || c == 'T') { proc(f, EXM_COMANDO, ID_SCHEDA, 0); return 0; }
             if (c == 'h' || c == 'H') { vai_a_casa();   return 0; }
         }
 
@@ -6839,7 +7130,47 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * a text field clicked takes it (clic_pagina does that). */
         g_tab_link = -1;
         g_tab_rif  = -1;
+        /* wp porta i modificatori del clic (exwin.so 0.009) */
+        g_clic_ctrl  = (wp & KBD_MOD_CTRL) != 0;
+        g_clic_shift = (wp & KBD_MOD_SHIFT) != 0;
+        g_gesto      = 1;
         clic_pagina(x, y);
+        g_gesto      = 0;
+        g_clic_ctrl  = 0;
+        g_clic_shift = 0;
+        return 0;
+    }
+
+    /* Il tasto destro su un collegamento (@NAV-FINESTRA). */
+    case EXM_MOUSE_DESTRO: {
+        int x = EX_X(lp), y = EX_Y(lp), k;
+        static const char *const VOCI[] = { "Apri", "Apri in una scheda nuova",
+                                            "Apri in una finestra nuova",
+                                            "-", "Copia l'indirizzo" };
+        static const char *const PAGINA[] = { "Indietro", "Nuova scheda", "Nuova finestra" };
+
+        if ((k = link_sotto(x, y)) < 0) {
+            int s = ex_menu_comparsa(f, x, y, PAGINA, 3);
+            if (s == 0) proc(f, EXM_COMANDO, ID_INDIETRO, 0);
+            if (s == 1) proc(f, EXM_COMANDO, ID_SCHEDA, 0);
+            if (s == 2) proc(f, EXM_COMANDO, ID_NUOVA, 0);
+            return 0;
+        }
+        switch (ex_menu_comparsa(f, x, y, VOCI, 5)) {
+        case 0: segui_dove(k, 0); break;
+        case 1: segui_dove(k, 2); break;
+        case 2: segui_dove(k, 1); break;
+        case 4: {
+            char nuovo[EXHTTP_URL_MAX];
+            if (risolvi(link_url(k), nuovo, sizeof(nuovo))) {
+                ex_appunti_metti(nuovo, (unsigned int)strlen(nuovo));
+                dico("indirizzo copiato");
+            }
+            break;
+        }
+        default: break;
+        }
+        disegna();
         return 0;
     }
 
@@ -6912,6 +7243,8 @@ int main(int argc, char **argv)
     {
         ExFinestra menu = ex_menu(g_f);
 
+        ex_menu_voce(menu, "File", "Nuova scheda\tCtrl+T",        ID_SCHEDA);
+        ex_menu_voce(menu, "File", "Nuova finestra\tCtrl+N",      ID_NUOVA);
         ex_menu_voce(menu, "File", "Apri...\tCtrl+O",             ID_APRI);
         ex_menu_voce(menu, "File", "Pagina iniziale\tCtrl+H",     ID_HOME);
         ex_menu_voce(menu, "File", "Salva con nome...\tCtrl+S",   ID_SALVA);
@@ -6957,6 +7290,14 @@ int main(int argc, char **argv)
     g_url = ex_crea("testo", "", EX_FIGLIO, MARGINE + 32, BARRA_Y + 4,
                     CERCA_X - 44 - 4 - (MARGINE + 32), 22,
                     g_f, ID_URL, 0);
+    /* La barra delle schede: c'e' sempre, si vede dalla seconda (@NAV-SCHEDE). */
+    g_schede = ex_crea("tab", "", EX_FIGLIO, MARGINE, BARRA_Y + BARRA_H + 2,
+                       FIN_W - 2 * MARGINE, SCHEDE_H, g_f, ID_SCHEDE, 0);
+    if (g_schede) {
+        ex_voci_schede(g_schede, 1);
+        ex_voce_aggiungi(g_schede, "...");
+        ex_mostra(g_schede, 0);
+    }
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       MARGINE, g_fin_h - 18, g_fin_w - 2 * MARGINE, 16, g_f, 0, 0);

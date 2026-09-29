@@ -281,7 +281,17 @@ typedef struct {
     unsigned int n;
     unsigned int sel;
     char         testo[VOCI_N_MAX][VOCI_TESTO_MAX];
+    /* LE SCHEDE DI DOCUMENTI (29 settembre 2026, @TOOLKIT-SCHEDE): una X su
+     * ogni linguetta, le frecce quando non ci stanno tutte (`primo` e' la
+     * prima che si vede), Ctrl+Tab e Ctrl+W dalla finestra intera. Vedi
+     * ex_voci_schede(). */
+    unsigned int schede;
+    unsigned int primo;
 } Voci;
+
+#define TAB_CHIUDI_W    14      /* la X in fondo a una linguetta */
+#define TAB_FRECCIA_W   16
+#define TAB_LARG_MAX   180      /* una scheda non e' piu' larga di cosi' */
 
 static Voci g_voci[VOCI_MAX];
 
@@ -839,6 +849,17 @@ static void origine(Oggetto *o, int *ox, int *oy)
 static int accetta_fuoco(const Oggetto *o)
 {
     if (o->stile & EX_SPENTO) return 0;         /* ex_abilita(c, 0) */
+    /* ! NASCOSTO (ex_mostra(c, 0)) NON PRENDE IL FUOCO: Tab ci arrivava lo
+     * stesso, e i tasti finivano in un controllo che non si vede (trovato
+     * il 29 settembre 2026 con la barra delle schede del navigatore). */
+    if (!(o->stile & EX_VISIBILE)) return 0;
+    /* ! LE SCHEDE DI DOCUMENTI NON SONO UNA FERMATA DI Tab: si girano con
+     * Ctrl+Tab da tutta la finestra (vedi schede_tasto), e cosi' il giro dei
+     * Tab di una finestra resta quello di prima quando le schede arrivano. */
+    if (o->classe == CL_TAB) {
+        Voci *V = voci_di(o);
+        if (V && V->schede) return 0;
+    }
     return o->classe == CL_TESTO || o->classe == CL_PULSANTE ||
            o->classe == CL_TERMINALE || o->classe == CL_LISTA ||
            o->classe == CL_AREA || o->classe == CL_SPUNTA ||
@@ -3429,25 +3450,79 @@ static int scorri_clic(Oggetto *o, int x, int y, int *presa)
 }
 
 /* Quale linguetta sta sotto x. Rende -1 se nessuna. */
-static int tab_indice(const Oggetto *o, int x)
+static int tab_larg(const Voci *V, unsigned int i)
 {
-    Voci *V = voci_di(o);
-    int ox, oy, px;
+    int w = larg(V->testo[i]) + 16;
+
+    if (V->schede) {
+        w += TAB_CHIUDI_W;
+        if (w > TAB_LARG_MAX) w = TAB_LARG_MAX;
+    }
+    return w;
+}
+
+/* Servono le frecce? Solo alle schede, e solo se non ci stanno tutte. */
+static int tab_frecce(const Oggetto *o, const Voci *V)
+{
+    unsigned int i;
+    int          tot = 0;
+
+    if (!V->schede) return 0;
+    for (i = 0; i < V->n; i++) tot += tab_larg(V, i);
+    return tot > o->w;
+}
+
+/* ! LA SCHEDA SCELTA SI VEDE SEMPRE: si sposta `primo` finche' ci sta. Una
+ * scheda aperta con Ctrl+T o scelta con Ctrl+Tab fuori dalla vista sarebbe
+ * una scelta che non si vede. */
+static void tab_mostra_scelta(const Oggetto *o, Voci *V)
+{
+    int spazio = o->w - (tab_frecce(o, V) ? 2 * TAB_FRECCIA_W : 0);
+
+    if (!V->schede || V->n == 0) { V->primo = 0; return; }
+    if (V->primo >= V->n) V->primo = V->n - 1;
+    if (V->primo > V->sel) V->primo = V->sel;
+    while (V->primo < V->sel) {
+        unsigned int i;
+        int          w = 0;
+        for (i = V->primo; i <= V->sel; i++) w += tab_larg(V, i);
+        if (w <= spazio) break;
+        V->primo++;
+    }
+}
+
+/* Dove cade x: 0 niente, 1 una linguetta, 2 la sua X, 3 la freccia a
+ * sinistra, 4 quella a destra. *k riceve l'indice della linguetta. */
+static int tab_zona(const Oggetto *o, int x, int *k)
+{
+    Voci        *V = voci_di(o);
+    int          ox, oy, px, fine;
     unsigned int i;
 
-    if (!V) return -1;
+    *k = -1;
+    if (!V) return 0;
     origine((Oggetto *)o, &ox, &oy);
-    px = ox + o->x;
+    px   = ox + o->x;
+    fine = px + o->w;
+    if (tab_frecce(o, V)) {
+        if (x >= fine - 2 * TAB_FRECCIA_W && x < fine - TAB_FRECCIA_W) return 3;
+        if (x >= fine - TAB_FRECCIA_W && x < fine) return 4;
+        fine -= 2 * TAB_FRECCIA_W;
+    }
+    for (i = V->schede ? V->primo : 0; i < V->n; i++) {
+        int lw = tab_larg(V, i);
 
-    for (i = 0; i < V->n; i++) {
-        int lw = larg(V->testo[i]) + 16;
-
-        if (px + lw > ox + o->x + o->w) break;
-        if (x >= px && x < px + lw) return (int)i;
+        if (px + lw > fine) break;
+        if (x >= px && x < px + lw) {
+            *k = (int)i;
+            if (V->schede && x >= px + lw - TAB_CHIUDI_W - 2) return 2;
+            return 1;
+        }
         px += lw;
     }
-    return -1;
+    return 0;
 }
+
 
 static void disegna_oggetto(Oggetto *o)
 {
@@ -3999,22 +4074,48 @@ static void disegna_oggetto(Oggetto *o)
         ex_riempi(o->padre, x, y + o->h - 1, o->w, 1, EX_OMBRA);
         if (!V) break;
 
-        for (i = 0; i < V->n; i++) {
-            int lw = larg(V->testo[i]) + 16;
-            int su = (i == V->sel) ? 0 : 2;
+        {
+            int fine = x + o->w, frecce = tab_frecce(o, V);
 
-            if (px + lw > x + o->w) break;      /* quel che non ci sta non c'e' */
+            if (frecce) fine -= 2 * TAB_FRECCIA_W;
+            tab_mostra_scelta(o, V);
+            for (i = V->schede ? V->primo : 0; i < V->n; i++) {
+                int  lw = tab_larg(V, i);
+                int  su = (i == V->sel) ? 0 : 2;
+                char t[VOCI_TESTO_MAX];
 
-            ex_riempi(o->padre, px, y + su, lw, o->h - su, EX_GRIGIO);
-            ex_riempi(o->padre, px, y + su, lw, 1, EX_LUCE);
-            ex_riempi(o->padre, px, y + su, 1, o->h - su, EX_LUCE);
-            ex_riempi(o->padre, px + lw - 1, y + su, 1, o->h - su, EX_OMBRA);
-            if (i != V->sel)
-                ex_riempi(o->padre, px, y + o->h - 1, lw, 1, EX_OMBRA);
+                if (px + lw > fine) break;      /* quel che non ci sta non c'e' */
 
-            ex_scrivi(o->padre, px + 8, y + su + (o->h - su - 16) / 2,
-                      V->testo[i], EX_NERO);
-            px += lw;
+                ex_riempi(o->padre, px, y + su, lw, o->h - su, EX_GRIGIO);
+                ex_riempi(o->padre, px, y + su, lw, 1, EX_LUCE);
+                ex_riempi(o->padre, px, y + su, 1, o->h - su, EX_LUCE);
+                ex_riempi(o->padre, px + lw - 1, y + su, 1, o->h - su, EX_OMBRA);
+                if (i != V->sel)
+                    ex_riempi(o->padre, px, y + o->h - 1, lw, 1, EX_OMBRA);
+
+                /* un titolo troppo lungo si taglia con «~» */
+                strncpy(t, V->testo[i], sizeof(t) - 1);
+                t[sizeof(t) - 1] = '\0';
+                if (V->schede) {
+                    int spazio = lw - 16 - TAB_CHIUDI_W;
+                    size_t l = strlen(t);
+                    while (l > 1 && larg(t) > spazio) { t[--l] = '\0'; t[l - 1] = '~'; }
+                }
+                ex_scrivi(o->padre, px + 8, y + su + (o->h - su - 16) / 2, t, EX_NERO);
+                if (V->schede)
+                    ex_scrivi(o->padre, px + lw - TAB_CHIUDI_W - 2, y + su + (o->h - su - 16) / 2,
+                              "x", i == V->sel ? EX_NERO : EX_OMBRA);
+                px += lw;
+            }
+            if (frecce) {
+                int fx = x + o->w - 2 * TAB_FRECCIA_W, k;
+                for (k = 0; k < 2; k++) {
+                    ex_riempi(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1, EX_GRIGIO);
+                    ex_rilievo(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1);
+                    ex_scrivi(o->padre, fx + k * TAB_FRECCIA_W + 4, y + (o->h - 16) / 2,
+                              k ? ">" : "<", EX_NERO);
+                }
+            }
         }
         break;
     }
@@ -5733,6 +5834,52 @@ static void casella_clic(Oggetto *o, int mx, int x0)
     o->c_sel = 0;
 }
 
+/* =============================================================================
+ * I TASTI DELLE SCHEDE, dalla finestra intera (@TOOLKIT-SCHEDE)
+ *
+ * Ctrl+Tab e Ctrl+PgGiu la scheda dopo, Ctrl+Shift+Tab e Ctrl+PgSu quella
+ * prima (girando in tondo), Ctrl+W chiede di chiudere quella scelta. Solo se
+ * la finestra ha una barra in modalita' schede: altrove Ctrl+Tab resta quel
+ * che era. Rende il controllo, e il messaggio da mandare, o 0.
+ * ========================================================================== */
+static ExFinestra schede_tasto(ExFinestra f, unsigned int k, unsigned int *msg,
+                               unsigned int *wp, long *lp)
+{
+    unsigned int c = k & KBD_KEY_MASK, i;
+    Oggetto     *r = radice(f);
+    int          dove = 0;
+
+    if (!r || !(k & KBD_MOD_CTRL)) return 0;
+    if (c == '\t')                   dove = (k & KBD_MOD_SHIFT) ? -1 : 1;
+    else if (c == KBD_K_PGDN)        dove = 1;
+    else if (c == KBD_K_PGUP)        dove = -1;
+    else if (c == 'w' || c == 'W')   dove = 2;
+    else return 0;
+
+    for (i = 0; i < VOCI_MAX; i++) {
+        Voci    *V = &g_voci[i];
+        Oggetto *o;
+
+        if (!V->usato || !V->schede) continue;
+        o = ogg(V->ogg);
+        if (!o || o->classe != CL_TAB || radice(V->ogg) != r) continue;
+        if (V->n == 0) return 0;
+        if (dove == 2) {
+            *msg = EXM_SCHEDA_CHIUDI;
+            *wp  = o->id;
+            *lp  = (long)V->sel;
+            return V->ogg;
+        }
+        if (V->n < 2) return 0;
+        V->sel = (dove > 0) ? (V->sel + 1) % V->n : (V->sel + V->n - 1) % V->n;
+        *msg = EXM_COMANDO;
+        *wp  = o->id;
+        *lp  = (long)V->sel;
+        return V->ogg;
+    }
+    return 0;
+}
+
 static int tasto_al_fuoco(ExFinestra f, unsigned int k)
 {
     Oggetto *r = radice(f);
@@ -6276,6 +6423,24 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
             }
 
+            /* Le schede di documenti: Ctrl+Tab, Ctrl+W... da tutta la
+             * finestra, prima del controllo col fuoco (che per Ctrl+Tab
+             * sposterebbe il fuoco). */
+            {
+                unsigned int msg = 0, wp = 0;
+                long         lp = 0;
+                ExFinestra   t = schede_tasto(f, e.tasto, &msg, &wp, &lp);
+
+                if (t) {
+                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    m->finestra = destinatario(t);
+                    m->msg = msg;
+                    m->wp  = wp;
+                    m->lp  = lp;
+                    return 1;
+                }
+            }
+
             if (tasto_al_fuoco(f, e.tasto)) {
                 /* =========================================================
                  * ! CONSUMATO DA UNA CASELLA — MA L'APPLICAZIONE VA AVVISATA
@@ -6646,10 +6811,29 @@ static int prendi_msg(ExMsg *m, int bloccante)
             }
 
             if (co && co->classe == CL_TAB) {
-                int k = tab_indice(co, (int)e.x);
+                int   k, z = tab_zona(co, (int)e.x, &k);
                 Voci *V = voci_di(co);
 
-                if (k < 0 || !V) continue;
+                if (!V) continue;
+                if (z == 3 || z == 4) {             /* le frecce scorrono */
+                    if (z == 3 && V->primo > 0) V->primo--;
+                    if (z == 4 && V->primo + 1 < V->n) V->primo++;
+                    if (V->sel < V->primo) V->sel = V->primo;
+                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    m->finestra = destinatario(c);
+                    m->msg = EXM_COMANDO;
+                    m->wp  = co->id;
+                    m->lp  = (long)V->sel;
+                    return 1;
+                }
+                if (z == 2) {                       /* la X: decide il programma */
+                    m->finestra = destinatario(c);
+                    m->msg = EXM_SCHEDA_CHIUDI;
+                    m->wp  = co->id;
+                    m->lp  = (long)k;
+                    return 1;
+                }
+                if (k < 0) continue;
                 V->sel = (unsigned int)k;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 m->finestra = destinatario(c);
@@ -6712,6 +6896,10 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * il toolkit non sa cosa voglia dire, e chi lo sa e' chi ha
              * disegnato. */
             m->msg = doppio ? EXM_DOPPIOCLIC : EXM_MOUSE_GIU;
+            /* ! I MODIFICATORI DEL CLIC IN wp (29 settembre 2026): il server
+             * li manda da wserver 0.006, e Ctrl+clic su un collegamento apre
+             * una finestra nuova. Prima wp era sempre 0. */
+            m->wp  = e.tasto;
             return 1;
         }
         default:
@@ -7182,11 +7370,45 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
     return V->testo[i];
 }
 
+void ex_voci_schede(ExFinestra c, int si)
+{
+    Voci *V = voci_da_h(c);
+
+    if (!V) return;
+    V->schede = si ? 1 : 0;
+    V->primo  = 0;
+}
+
+int ex_voce_togli(ExFinestra c, unsigned int i)
+{
+    Voci        *V = voci_da_h(c);
+    unsigned int j;
+
+    if (!V || i >= V->n) return 0;
+    for (j = i; j + 1 < V->n; j++) memcpy(V->testo[j], V->testo[j + 1], VOCI_TESTO_MAX);
+    V->n--;
+    /* ! LA SCELTA RESTA DOV'ERA SE SI TOGLIE UNA SCHEDA DOPO, scala di uno
+     * se era dopo quella tolta, e se era proprio lei passa alla vicina di
+     * destra (o all'ultima): e' quel che fanno tutti i programmi a schede. */
+    if (V->sel > i || (V->sel == i && V->sel >= V->n && V->sel > 0)) V->sel--;
+    if (V->primo > 0 && V->primo >= V->n) V->primo = V->n - 1;
+    return 1;
+}
+
+void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
+{
+    Voci *V = voci_da_h(c);
+
+    if (!V || i >= V->n || !testo) return;
+    strncpy(V->testo[i], testo, VOCI_TESTO_MAX - 1);
+    V->testo[i][VOCI_TESTO_MAX - 1] = '\0';
+}
+
 /* La versione della libreria: vedi ex_versione() in exwin.h. +0.001 a ogni
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.008"
+#define EXWIN_VERSIONE "0.009"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 

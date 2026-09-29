@@ -33,7 +33,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `edit -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.003"
+#define VERSIONE_APP "0.004"
 EX_VERSIONE("edit", VERSIONE_APP);
 
 #define FIN_W       640
@@ -41,8 +41,9 @@ EX_VERSIONE("edit", VERSIONE_APP);
 
 /* La barra dei menu occupa i primi 20 pixel; l'area comincia sotto. */
 #define MENU_H      20
+#define SCHEDE_H    22          /* la barra delle schede sotto i menu */
 #define AREA_X      4
-#define AREA_Y      (MENU_H + 4)
+#define AREA_Y      (MENU_H + SCHEDE_H + 4)
 #define BASSO       24          /* la riga di stato in fondo */
 #define BARRA_W     16          /* la barra di scorrimento a destra */
 
@@ -70,12 +71,14 @@ EX_VERSIONE("edit", VERSIONE_APP);
 #define ID_INFO       21
 
 #define ID_BARRA      30
+#define ID_SCHEDE     31
+#define ID_CHIUDI     32
 
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
 static char g_avviso[96] = "";
 
-static ExFinestra g_f, g_area, g_stato, g_menu, g_barra;
+static ExFinestra g_f, g_area, g_stato, g_menu, g_barra, g_schede;
 
 /* -----------------------------------------------------------------------------
  * Caricare
@@ -154,22 +157,14 @@ static int salva_come(void)
     return salva();
 }
 
+static void doc_apri(const char *perc);
+
+/* ! APRIRE NON BUTTA PIU' VIA NIENTE (29 settembre 2026): il file va in una
+ * scheda sua, quindi la domanda «il testo e' cambiato, aprire lo stesso?»
+ * non serve piu'. */
 static void apri_con_dialogo(void)
 {
     char nuovo[PERC_MAX];
-
-    /* ! ADESSO LA DOMANDA E' UNA DOMANDA. Fino al 18 agosto 2026 il primo
-     * «Apri» avvisava e il secondo procedeva, perche' ExDlg aveva un dialogo
-     * solo e con un pulsante solo. Con ex_dlg_conferma() si chiede una volta e
-     * si risponde — e il dialogo e' modale, quindi non si puo' rispondere
-     * continuando a scrivere nel testo. */
-    if (ex_area_modificato(g_area) &&
-        !ex_dlg_conferma("Modifiche non salvate",
-                         "Il testo e' cambiato. Aprire un altro file?",
-                         "Apri lo stesso", "Annulla")) {
-        strcpy(g_avviso, "apertura annullata: il testo e' ancora quello");
-        return;
-    }
 
     strncpy(nuovo, g_perc, PERC_MAX - 1);
     nuovo[PERC_MAX - 1] = '\0';
@@ -178,12 +173,7 @@ static void apri_con_dialogo(void)
         strcpy(g_avviso, "apertura annullata");
         return;
     }
-
-    strncpy(g_perc, nuovo, PERC_MAX - 1);
-    g_perc[PERC_MAX - 1] = '\0';
-
-    if (carica(g_perc)) sprintf(g_avviso, "aperto: %u righe", ex_area_righe(g_area));
-    else                strcpy(g_avviso, "non c'era: file nuovo");
+    doc_apri(nuovo);
 }
 
 static int salva(void)
@@ -224,9 +214,13 @@ static int salva(void)
 /* -----------------------------------------------------------------------------
  * La riga di stato
  * --------------------------------------------------------------------------- */
+static void doc_segui_titolo(void);
+
 static void stato_aggiorna(void)
 {
     char s[200];
+
+    if (g_schede) doc_segui_titolo();
     const char *nome = g_perc[0] ? g_perc : "(senza nome)";
     unsigned int r = 0, c = 0;
 
@@ -282,12 +276,16 @@ static void ridisegna(void)
  * una domanda che difende il lavoro di qualcuno divergono alla prima modifica:
  * ne resterebbe una che non chiede piu' niente, e nessuno se ne accorgerebbe
  * finche' non perde un testo. */
+static int doc_modificati(void);
+
 static void esci_se_si_puo(void)
 {
-    if (ex_area_modificato(g_area) &&
-        !ex_dlg_conferma("Modifiche non salvate",
-                         "Il testo e' cambiato. Uscire senza salvare?",
-                         "Esci", "Torna al testo")) {
+    int  n = doc_modificati();
+    char q[96];
+
+    if (n == 1) strcpy(q, "Un file e' cambiato. Uscire senza salvare?");
+    else        snprintf(q, sizeof(q), "%d file sono cambiati. Uscire senza salvarli?", n);
+    if (n && !ex_dlg_conferma("Modifiche non salvate", q, "Esci", "Torna al testo")) {
         strcpy(g_avviso, "non uscito: il testo e' ancora qui");
         return;
     }
@@ -416,6 +414,9 @@ static void annulla_segna(void)
     g_passi_n++;
 }
 
+static void area_segna_modificata(void);
+static void area_segna_modificata_presto(void) { area_segna_modificata(); }
+
 /* Rimette il testo del passo piu' recente. Rende 0 se non c'era niente. */
 static int annulla_fai(void)
 {
@@ -439,7 +440,266 @@ static int annulla_fai(void)
 
     g_passi_n--;
     passo_libera(g_passi_n);
+    /* il testo rimesso non e' quello del file: e' modificato */
+    area_segna_modificata_presto();
     return 1;
+}
+
+/* La pila degli annullamenti di un file che si chiude o si ricarica. */
+static void passo_tutti_via(void)
+{
+    while (g_passi_n > 0) passo_scarta_vecchio();
+    g_passi_byte = 0;
+}
+
+/* =============================================================================
+ * PIU' FILE, UNO PER SCHEDA (29 settembre 2026, @EDIT-SCHEDE)
+ *
+ * ! UN'AREA SOLA, E I DOCUMENTI CHE CI ENTRANO A TURNO. Il toolkit tiene due
+ * aree di testo per programma (AREA_MAX), e ognuna vuole il suo mezzo mega:
+ * un'area per file non ci starebbe. Quindi la scheda scelta sta nell'area, e
+ * le altre aspettano in memoria col loro testo, il percorso, il cursore, la
+ * vista, il segno «modificato» e la loro pila di annullamenti. Cambiare
+ * scheda e' scambiare: la scheda che lascia si mette via (doc_metti_via), quella
+ * che arriva si rimette nell'area (doc_riprendi).
+ *
+ * ! LE VARIABILI DI PRIMA (g_perc, g_parziale, g_passi) SONO QUELLE DELLA
+ * SCHEDA SCELTA, e il resto del programma non e' cambiato: salva, cerca,
+ * annulla lavorano come prima, sul file che si vede.
+ * ============================================================================= */
+#define DOC_MAX 12
+
+typedef struct {
+    int          usato;
+    char         perc[PERC_MAX];
+    int          parziale;
+    char        *testo;             /* le righe unite da '\n', mentre aspetta */
+    int          modificato;
+    unsigned int riga, col, vista;
+    Passo        passi[ANNULLA_MAX];
+    int          passi_n;
+    unsigned int passi_byte;
+} Doc;
+
+static Doc g_doc[DOC_MAX];
+static int g_ndoc = 0;              /* quante schede, nell'ordine della barra */
+static int g_attivo = 0;            /* quale, fra 0 e g_ndoc - 1 */
+
+static const char *base_nome(const char *p)
+{
+    const char *u = strrchr(p, '/');
+    return (u && u[1]) ? u + 1 : p;
+}
+
+/* Il titolo di una scheda: il nome del file, con * se e' modificato. */
+static void doc_titolo(int i, int modificato)
+{
+    char t[40];
+
+    snprintf(t, sizeof(t), "%s%s", modificato ? "*" : "",
+             g_doc[i].perc[0] ? base_nome(g_doc[i].perc) : "senza nome");
+    if (strcmp(t, ex_voce_testo(g_schede, (unsigned int)i)) != 0) {
+        ex_voce_rinomina(g_schede, (unsigned int)i, t);
+    }
+}
+
+/* Il titolo della scheda scelta segue il file e il suo asterisco. */
+static void doc_segui_titolo(void)
+{
+    strncpy(g_doc[g_attivo].perc, g_perc, PERC_MAX - 1);
+    g_doc[g_attivo].perc[PERC_MAX - 1] = '\0';
+    doc_titolo(g_attivo, ex_area_modificato(g_area));
+}
+
+/* La scheda scelta lascia l'area: tutto quel che serve per riaverla. */
+static int doc_metti_via(void)
+{
+    Doc          *D = &g_doc[g_attivo];
+    unsigned int  byte = 0;
+    char         *t = testo_di_adesso(&byte);
+
+    /* ! SENZA MEMORIA PER IL TESTO LA SCHEDA NON SI LASCIA: rimetterla
+     * dopo darebbe una scheda vuota, cioe' il file perso senza una parola. */
+    if (!t) {
+        strcpy(g_avviso, "memoria finita: resto su questa scheda");
+        return 0;
+    }
+
+    strncpy(D->perc, g_perc, PERC_MAX - 1);
+    D->perc[PERC_MAX - 1] = '\0';
+    D->parziale   = g_parziale;
+    D->modificato = ex_area_modificato(g_area);
+    ex_area_cursore(g_area, &D->riga, &D->col);
+    D->vista      = ex_area_vista(g_area, 0);
+    D->testo      = t;
+    memcpy(D->passi, g_passi, sizeof(g_passi));
+    D->passi_n    = g_passi_n;
+    D->passi_byte = g_passi_byte;
+    memset(g_passi, 0, sizeof(g_passi));
+    g_passi_n = 0;
+    g_passi_byte = 0;
+    /* il titolo si aggiorna anche qui: una scheda aperta e subito lasciata
+     * (edit a b c) non passa mai dalla riga di stato */
+    doc_titolo(g_attivo, D->modificato);
+    return 1;
+}
+
+/* Rimette nell'area il testo t (righe unite da '\n'). */
+static void area_da_testo(const char *t)
+{
+    char         riga[512];
+    unsigned int i = 0, a;
+
+    ex_area_svuota(g_area);
+    while (t && t[i]) {
+        a = 0;
+        while (t[i] && t[i] != '\n' && a < sizeof(riga) - 1) riga[a++] = t[i++];
+        riga[a] = '\0';
+        ex_area_aggiungi(g_area, riga);
+        if (t[i] == '\n') i++;
+    }
+}
+
+/* Il testo e' cambiato rispetto al file: l'area lo deve sapere. Si
+ * riscrive la prima riga uguale a se stessa, che accende il segno. */
+static void area_segna_modificata(void)
+{
+    char r[512];
+
+    strncpy(r, ex_area_riga(g_area, 0), sizeof(r) - 1);
+    r[sizeof(r) - 1] = '\0';
+    ex_area_riga_metti(g_area, 0, r);
+}
+
+/* La scheda i torna nell'area. */
+static void doc_riprendi(int i)
+{
+    Doc *D = &g_doc[i];
+
+    g_attivo = i;
+    area_da_testo(D->testo);
+    if (D->testo) { free(D->testo); D->testo = 0; }
+    ex_area_pulita(g_area);
+    if (D->modificato) area_segna_modificata();
+    ex_area_vai(g_area, D->riga ? D->riga - 1 : 0, D->col ? D->col - 1 : 0);
+    ex_area_mostra_da(g_area, D->vista);
+    strncpy(g_perc, D->perc, PERC_MAX - 1);
+    g_perc[PERC_MAX - 1] = '\0';
+    g_parziale = D->parziale;
+    memcpy(g_passi, D->passi, sizeof(g_passi));
+    g_passi_n    = D->passi_n;
+    g_passi_byte = D->passi_byte;
+    ex_voce_scegli(g_schede, (unsigned int)i);
+}
+
+static void doc_scegli(int i)
+{
+    if (i == g_attivo || i < 0 || i >= g_ndoc) return;
+    if (!doc_metti_via()) { ex_voce_scegli(g_schede, (unsigned int)g_attivo); return; }
+    doc_riprendi(i);
+    g_avviso[0] = '\0';
+}
+
+/* Una scheda nuova, vuota, in fondo, e scelta. 0 se non ci sta. */
+static int doc_nuovo(void)
+{
+    Doc *D;
+
+    if (g_ndoc >= DOC_MAX || !ex_voce_aggiungi(g_schede, "senza nome")) {
+        sprintf(g_avviso, "al massimo %d file aperti: chiudine uno", DOC_MAX);
+        return 0;
+    }
+    if (g_ndoc > 0 && !doc_metti_via()) {
+        ex_voce_togli(g_schede, (unsigned int)g_ndoc);
+        return 0;
+    }
+    D = &g_doc[g_ndoc];
+    memset(D, 0, sizeof(*D));
+    D->usato = 1;
+    g_attivo = g_ndoc++;
+    ex_area_svuota(g_area);
+    ex_area_pulita(g_area);
+    g_perc[0] = '\0';
+    g_parziale = 0;
+    ex_voce_scegli(g_schede, (unsigned int)g_attivo);
+    return 1;
+}
+
+/* La scheda scelta e' vuota, senza nome e intatta: un file aperto la prende
+ * invece di aggiungerne un'altra accanto (l'editor aperto senza file). */
+static int doc_vergine(void)
+{
+    return g_perc[0] == '\0' && !ex_area_modificato(g_area) &&
+           ex_area_righe(g_area) <= 1 && ex_area_riga(g_area, 0)[0] == '\0';
+}
+
+/* Apre `perc` in una scheda: quella dove e' gia' aperto, se c'e'. */
+static void doc_apri(const char *perc)
+{
+    int i;
+
+    for (i = 0; i < g_ndoc; i++) {
+        const char *p = (i == g_attivo) ? g_perc : g_doc[i].perc;
+        if (p[0] && strcmp(p, perc) == 0) {
+            doc_scegli(i);
+            sprintf(g_avviso, "era gia' aperto");
+            return;
+        }
+    }
+    if (!doc_vergine() && !doc_nuovo()) return;
+    strncpy(g_perc, perc, PERC_MAX - 1);
+    g_perc[PERC_MAX - 1] = '\0';
+    if (carica(g_perc)) sprintf(g_avviso, "aperto: %u righe", ex_area_righe(g_area));
+    else                strcpy(g_avviso, "non c'era: file nuovo");
+    passo_tutti_via();
+}
+
+/* ! CHIUDERE UNA SCHEDA MODIFICATA CHIEDE, come uscire. L'ultima non sparisce:
+ * resta una scheda vuota, come un editor appena aperto. */
+static void doc_chiudi(int i)
+{
+    int k, mod;
+
+    if (i < 0 || i >= g_ndoc) return;
+    if (i != g_attivo) doc_scegli(i);
+    if (i != g_attivo) return;                  /* non si e' potuta scegliere */
+    mod = ex_area_modificato(g_area);
+    if (mod) {
+        char q[PERC_MAX + 64];
+        snprintf(q, sizeof(q), "%s e' cambiato. Chiudere senza salvare?",
+                 g_perc[0] ? base_nome(g_perc) : "Il testo senza nome");
+        if (!ex_dlg_conferma("Modifiche non salvate", q, "Chiudi", "Annulla")) {
+            strcpy(g_avviso, "non chiuso");
+            return;
+        }
+    }
+    passo_tutti_via();
+    if (g_ndoc == 1) {                          /* l'ultima: resta vuota */
+        ex_area_svuota(g_area);
+        ex_area_pulita(g_area);
+        g_perc[0] = '\0';
+        g_parziale = 0;
+        strcpy(g_avviso, "chiuso");
+        return;
+    }
+    for (k = i; k + 1 < g_ndoc; k++) g_doc[k] = g_doc[k + 1];
+    memset(&g_doc[g_ndoc - 1], 0, sizeof(Doc));
+    g_ndoc--;
+    ex_voce_togli(g_schede, (unsigned int)i);
+    /* la vicina di destra, o l'ultima */
+    g_attivo = (i < g_ndoc) ? i : g_ndoc - 1;
+    doc_riprendi(g_attivo);
+    strcpy(g_avviso, "chiuso");
+}
+
+/* Quanti file modificati, contando anche le schede che aspettano. */
+static int doc_modificati(void)
+{
+    int i, n = 0;
+
+    for (i = 0; i < g_ndoc; i++)
+        n += (i == g_attivo) ? ex_area_modificato(g_area) : g_doc[i].modificato;
+    return n;
 }
 
 static void informazioni(void)
@@ -657,10 +917,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_COMANDO:
         g_avviso[0] = '\0';
         if (wp == ID_SALVA)     { salva();            break; }
-        if (wp == ID_NUOVO)     { ex_area_svuota(g_area); g_perc[0] = '\0';
-                                  g_parziale = 0;     break; }
+        if (wp == ID_NUOVO)     { doc_nuovo();        break; }
+        if (wp == ID_CHIUDI)    { doc_chiudi(g_attivo); break; }
+        if (wp == ID_SCHEDE)    { doc_scegli((int)lp); break; }
         if (wp == ID_RICARICA)  {
-            if (g_perc[0]) carica(g_perc);
+            if (g_perc[0]) { carica(g_perc); passo_tutti_via(); }
             else strcpy(g_avviso, "niente da ricaricare: non c'e' un file");
             break;
         }
@@ -741,6 +1002,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             }
             if (c == 'a' || c == 'A') { ex_area_seleziona_tutto(g_area); break; }
             if (c == 'q' || c == 'Q') { esci_se_si_puo();      break; }
+            if (c == 'n' || c == 'N') { doc_nuovo();           break; }
+            if (c == 'o' || c == 'O') { apri_con_dialogo();    break; }
             if (c == 'f' || c == 'F') { cerca();               break; }
             if (c == 'h' || c == 'H') { sostituisci();         break; }
         }
@@ -753,6 +1016,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             break;
         }
         return ex_procedura_base(f, msg, wp, lp);
+
+    /* La X di una scheda, o Ctrl+W (@TOOLKIT-SCHEDE). */
+    case EXM_SCHEDA_CHIUDI:
+        g_avviso[0] = '\0';
+        doc_chiudi((int)lp);
+        break;
 
     case EXM_CHIUDI:
         /* ! CHIUDERE IN SILENZIO UN TESTO MODIFICATO E' IL MODO PIU' FACILE DI
@@ -768,6 +1037,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         int w = EX_X(lp), h = EX_Y(lp);
 
         ex_misura(g_area, w - AREA_X * 2 - BARRA_W, h - AREA_Y - BASSO);
+        if (g_schede) ex_misura(g_schede, w - AREA_X * 2, SCHEDE_H);
         if (g_barra) {
             ex_sposta(g_barra, w - AREA_X - BARRA_W, AREA_Y);
             ex_misura(g_barra, BARRA_W, h - AREA_Y - BASSO);
@@ -800,10 +1070,6 @@ int main(int argc, char **argv)
 {
     ExMsg m;
 
-    if (argc >= 2) {
-        strncpy(g_perc, argv[1], PERC_MAX - 1);
-        g_perc[PERC_MAX - 1] = '\0';
-    }
 
     /* ! EX_AUTO E EX_RIDIM, e sono due richieste diverse. EX_AUTO dice «mettila
      * tu», ed e' cio' che permette di aprire due editor senza che il secondo
@@ -823,8 +1089,9 @@ int main(int argc, char **argv)
      * e' due posti in cui leggere cosa sa fare il programma, e il secondo si
      * dimentica di crescere: «Taglia» non ci sarebbe mai finito. */
     g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Nuovo",            ID_NUOVO);
-    ex_menu_voce(g_menu, "File", "Apri...",          ID_APRI);
+    ex_menu_voce(g_menu, "File", "Nuovo\tCtrl+N",    ID_NUOVO);
+    ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O",  ID_APRI);
+    ex_menu_voce(g_menu, "File", "Chiudi\tCtrl+W",   ID_CHIUDI);
     ex_menu_voce(g_menu, "File", "-",                0);
     ex_menu_voce(g_menu, "File", "Salva\tCtrl+S",     ID_SALVA);
     ex_menu_voce(g_menu, "File", "Salva con nome...", ID_SALVACOME);
@@ -849,6 +1116,11 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
 
+    /* Le schede: una per file, anche quando il file e' uno solo. */
+    g_schede = ex_crea("tab", "", EX_FIGLIO, AREA_X, MENU_H + 2,
+                       FIN_W - AREA_X * 2, SCHEDE_H, g_f, ID_SCHEDE, 0);
+    ex_voci_schede(g_schede, 1);
+
     g_area = ex_crea("areatesto", "", EX_FIGLIO,
                      AREA_X, AREA_Y, FIN_W - AREA_X * 2 - BARRA_W,
                      FIN_H - AREA_Y - BASSO, g_f, 0, 0);
@@ -871,15 +1143,19 @@ int main(int argc, char **argv)
      * F10, che a menu chiuso non serve a nessun altro. */
     ex_fuoco(g_area);
 
-    if (g_perc[0]) {
-        if (carica(g_perc))
+    /* ! OGNI ARGOMENTO E' UN FILE, ognuno nella sua scheda: `edit a.c b.h`. */
+    doc_nuovo();
+    {
+        int i;
+        for (i = 1; i < argc; i++) {
+            doc_apri(argv[i]);
             printf("edit: %s, %u righe%s\n", g_perc, ex_area_righe(g_area),
                    g_parziale ? " (PARZIALE)" : "");
-        else
-            printf("edit: %s non c'e': file nuovo\n", g_perc);
-    } else {
-        printf("edit: file nuovo, senza nome\n");
+        }
+        if (argc < 2) printf("edit: file nuovo, senza nome\n");
+        if (argc > 2) doc_scegli(0);
     }
+    g_avviso[0] = '\0';
 
     ridisegna();
 

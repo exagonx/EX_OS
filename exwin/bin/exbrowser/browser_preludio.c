@@ -307,7 +307,7 @@ static const char PRELUDIO[] =
  * the screen's are real numbers, so they go in before the script. */
 void preludio_esegui(ExJsCtx *js, int dentro_w, int dentro_h)
 {
-    char         testa[256];
+    char         testa[512];
     unsigned int sw = 0, sh = 0;
     ExJsErrore   err;
     ExJsVal      r;
@@ -320,7 +320,14 @@ void preludio_esegui(ExJsCtx *js, int dentro_w, int dentro_h)
     snprintf(testa, sizeof(testa),
              "innerWidth = %d; innerHeight = %d; outerWidth = %d; outerHeight = %d;"
              "screen = { width: %u, height: %u, availWidth: %u, availHeight: %u,"
-             " colorDepth: 32, pixelDepth: 32 };",
+             " colorDepth: 32, pixelDepth: 32 };"
+             /* ! window.open QUI E NON NEL PRELUDIO (29 settembre 2026,
+              * @NAV-FINESTRA): il preludio usa le espressioni regolari, che
+              * ExJs non legge, e con ExJs non gira. Questa riga la leggono
+              * tutti e due. Le finestre le apre exbrowser.c dopo lo script
+              * (finestre_da_script), e solo dentro un clic. */
+             "__ex_apri = []; open = function (u) {"
+             " __ex_apri.push(u === undefined ? 'about:blank' : String(u)); return null; };",
              dentro_w, dentro_h, dentro_w, dentro_h, sw, sh, sw, sh);
     memset(&err, 0, sizeof(err));
     if (!exjs_esegui(js, testa, (unsigned int)strlen(testa), &r, &err))

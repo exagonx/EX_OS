@@ -175,6 +175,18 @@ itself down. Clicks and keys still all arrive
 the `INPUT` prompt and reads the keyboard: gfedit hands it the console while
 it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
 
+### Tabs: in the editor, in exide and in the browser
+
+**tested in QEMU** - the editor opens several files, one per tab (`edit
+a.txt b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab moves between tabs, Ctrl+W closes
+the chosen one and asks if it was modified. In exide the project's file
+window keeps several sources in tabs. EXBrowser opens links in a new tab
+(`target="_blank"`, Ctrl+click, Ctrl+T) or in a new window (Shift+click,
+Ctrl+N, the right button on a link); background tabs keep their address and
+reload when you come back. The tab bar is a toolkit control, available to
+every program (`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
+
 ### ExJs reads today's JavaScript
 
 **tested in QEMU and on the host** - the ExJs engine (QuickJS stays the

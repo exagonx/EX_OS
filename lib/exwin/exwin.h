@@ -129,6 +129,14 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * EXM_MOUSE_GIU. Which rows: ex_lista_scelte on the list; where on a target
  * list: ex_lista_riga_a. */
 #define EXM_LASCIATO    0x0012
+/* Una scheda di documenti chiede di chiudersi: la sua X, o Ctrl+W. wp = id
+ * del controllo, lp = l'indice. Il toolkit NON la toglie: e' il programma
+ * che sa se c'e' da salvare, e poi chiama ex_voce_togli(). (29 settembre
+ * 2026, @TOOLKIT-SCHEDE) */
+#define EXM_SCHEDA_CHIUDI 0x0013
+/* EXM_MOUSE_GIU e EXM_DOPPIOCLIC portano in wp i modificatori (KBD_MOD_CTRL,
+ * _SHIFT, _ALT) del momento del clic: dal 29 settembre 2026, con wserver
+ * 0.006 e exwin.so 0.009. Prima wp era 0. */
 #define EX_DA(wp)       ((unsigned int)(wp) & 0xFFFFu)
 #define EX_A(wp)        ((unsigned int)(wp) >> 16)
 #define EX_ROTELLA_RIGHE 3
@@ -889,6 +897,20 @@ unsigned int ex_voci_quante(ExFinestra c);
 unsigned int ex_voce_scelta(ExFinestra c);
 void         ex_voce_scegli(ExFinestra c, unsigned int i);
 const char  *ex_voce_testo(ExFinestra c, unsigned int i);
+
+/* LE SCHEDE DI DOCUMENTI (29 settembre 2026, @TOOLKIT-SCHEDE): una "tab"
+ * con ex_voci_schede(c, 1) diventa la barra delle schede di un editor o di
+ * un navigatore. Ogni linguetta ha la sua X (manda EXM_SCHEDA_CHIUDI), le
+ * frecce compaiono quando non ci stanno tutte, e dalla finestra intera
+ * Ctrl+Tab / Ctrl+PgGiu vanno alla scheda dopo, Ctrl+Shift+Tab / Ctrl+PgSu a
+ * quella prima (arrivano come EXM_COMANDO col nuovo indice), Ctrl+W chiede
+ * di chiudere quella scelta. La barra tiene solo i titoli: cosa mostrare
+ * sotto lo sa il programma. ex_voce_togli toglie una scheda (la scelta passa
+ * alla vicina), ex_voce_rinomina cambia un titolo (l'asterisco di un file
+ * modificato). Facoltative nello stub. */
+void         ex_voci_schede(ExFinestra c, int si);
+int          ex_voce_togli(ExFinestra c, unsigned int i);
+void         ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo);
 
 /* =============================================================================
  * IL TESTO COLORATO — «areacodice», e il gancio che lo colora

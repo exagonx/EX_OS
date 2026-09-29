@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.023"
+#define VERSIONE_APP "0.025"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
@@ -95,6 +95,9 @@
 #define ID_CERCA    12
 #define ID_CERTI    13
 #define ID_SCARICHI 14
+#define ID_NUOVA    15      /* File > Nuova finestra */
+#define ID_SCHEDA   16      /* File > Nuova scheda */
+#define ID_SCHEDE   17      /* la barra delle schede */
 #define ID_IMP_HOME    720
 #define ID_IMP_ORA     721
 #define ID_IMP_JS      722
@@ -211,6 +214,9 @@ typedef struct {
     int            pez_n;
     char           link_arena[LINK_ARENA];
     unsigned int   link_off[LINK_MAX];
+    /* 1 = il collegamento si apre in una finestra nuova (target="_blank" o
+     * un nome di finestra; @NAV-FINESTRA, 29 settembre 2026) */
+    unsigned char  link_nuova[LINK_MAX];
     int            link_n;
     CssRegola      css_reg[CSS_REGOLE_MAX];
     CssPezzo       css_pezzi[CSS_PEZZI_MAX];
@@ -250,6 +256,7 @@ extern VistaImp *g_vi;
 #define g_pez_max          (g_vi->pez_max)
 #define g_link_arena       (g_vi->link_arena)
 #define g_link_off         (g_vi->link_off)
+#define g_link_nuova       (g_vi->link_nuova)
 #define g_link_n           (g_vi->link_n)
 #define g_css_reg          (g_vi->css_reg)
 #define g_css_pezzi        (g_vi->css_pezzi)
@@ -288,6 +295,8 @@ int riga_x(void);
 /* --------------------- e quel che il navigatore chiede all'impaginato (3) */
 void impagina(void);
 void disegna(void);
+/* il titolo della scheda scelta segue la pagina (exbrowser.c, @NAV-SCHEDE) */
+void schede_segui_titolo(void);
 /* The document's own part of the drawing, inside area_*(): what an iframe
  * draws in its rectangle. disegna() is this plus the window around it. */
 void disegna_contenuto(void);

@@ -1665,6 +1665,15 @@ static void impagina_nodo(int v, const CssStile *ered)
                         g_link_arena[g_link_usati + k] = h[k];
                     g_link_arena[g_link_usati + k] = '\0';
                     g_link_usati += k + 1;
+                    /* ! target: _self, _top e _parent restano qui; _blank e
+                     * ogni altro nome aprono una finestra nuova. Un nome gia'
+                     * usato dovrebbe riusare la sua finestra: qui ne apre
+                     * sempre un'altra, e sta scritto. */
+                    {
+                        const char *t = html_attr(&g_doc, v, "target");
+                        g_link_nuova[g_link_n] = (t && t[0] && !uguale(t, "_self") &&
+                                                  !uguale(t, "_top") && !uguale(t, "_parent"));
+                    }
                     g_link_ora = g_link_n++;
                 }
             }
@@ -1849,6 +1858,7 @@ void disegna(void)
      * ex_procedura_base riempie il fondo E ridisegna i figli: e' la stessa
      * cosa in una chiamata, e resta giusta il giorno che si aggiunge un
      * pulsante. */
+    schede_segui_titolo();              /* prima dei controlli: la linguetta */
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     disegna_barra();
     disegna_contenuto();

@@ -193,6 +193,19 @@ stesso. Clic e tasti continuano ad arrivare tutti
 il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
 gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
 
+### Le schede: nell'editor, in exide e nel navigatore
+
+**testato in QEMU** — l'editor apre più file, uno per scheda (`edit a.txt
+b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab gira fra le schede, Ctrl+W chiude quella
+scelta e chiede se è modificata. In exide la finestra dei file del
+progetto tiene più sorgenti in schede. EXBrowser apre i collegamenti in una
+scheda nuova (`target="_blank"`, Ctrl+clic, Ctrl+T) o in una finestra nuova
+(Shift+clic, Ctrl+N, il tasto destro su un collegamento); le schede in
+sottofondo tengono l'indirizzo e si ricaricano quando si torna. La barra
+delle schede è un controllo del toolkit, a disposizione di ogni programma
+(`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
+
 ### ExJs legge il JavaScript di oggi
 
 **testato in QEMU e sull'host** — il motore ExJs (QuickJS resta il
