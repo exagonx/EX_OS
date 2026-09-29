@@ -18,6 +18,8 @@
 #   lilla    (tre righe) e verde chiaro: align-items: center; gap: 30px ->
 #            il verde chiaro a meta' altezza del lilla, 30 pixel dopo
 #   corallo  position: relative; left: 40px -> 40 pixel a destra del bordo
+#   mattone  width: 1500px -> si ferma al bordo della pagina, non va sopra la
+#            barra di scorrimento (il ritaglio del 28 settembre)
 #   e il testo del blu e' #FFFFFF: fino al 28 settembre il bianco era
 #   CSS_NIENTE («nessun colore») e usciva nero
 #
@@ -58,6 +60,7 @@ nav a + a { background: #E0E020 }
 <div style="display: flex; justify-content: space-between"><span style="background: #808000">aaa</span><span style="background: #400080; color: #FFFFFF">bbb</span><span style="background: #FF80C0">ccc</span></div>
 <div style="display: flex; align-items: center; gap: 30px"><div style="background: #C0C0FF">alto<br>alto<br>alto</div><div style="background: #80FF80">basso</div></div>
 <div style="position: relative; left: 40px; width: 100px; background: #FF6060">spostato</div>
+<div style="width: 1500px; background: #A05050">largo millecinquecento pixel</div>
 </body></html>
 PAGINA
 
@@ -168,6 +171,9 @@ if Li and Vc:
 else: dì(False, "align-items: manca il lilla o il verde chiaro")
 if Co: dì(abs((Co[0] - sx0) - 40) <= 3, "position: relative; left: 40px: corallo a %d dal bordo" % (Co[0] - sx0))
 else: dì(False, "position: relative: il corallo non c'e'")
+Ma = scatola((0xA0, 0x50, 0x50))
+if Ma: dì(Ma[2] <= dx0 + 2, "width: 1500px: il mattone si ferma a %d (bordo %d)" % (Ma[2], dx0))
+else: dì(False, "width: 1500px: il mattone non c'e'")
 sys.exit(esito)
 EOF
 esito=$?

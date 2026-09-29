@@ -381,6 +381,11 @@ typedef struct {
 void        ex_finestre_segui(ExFinestra f);
 int         ex_finestre_elenco(ExVoceFin *v, int max);
 void        ex_finestra_attiva(unsigned int id);
+/* The same for one of this program's own windows, by handle: to the front,
+ * with the keyboard focus (28 September 2026). A program that opens a side
+ * window — Calctor's tape — gives the focus back to the main one with this.
+ * Optional in the stub: over an older exwin.so it does nothing. */
+void        ex_attiva(ExFinestra f);
 void        ex_finestra_riduci(unsigned int id);
 
 /* Asks every program but this one to close, as with their X button; the

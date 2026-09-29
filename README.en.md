@@ -115,6 +115,22 @@ articles no longer stop at 1 MB: the main page holds 3. An old bug is
 fixed too: white text came out black (`make prova-excss`,
 `tools/prova_disposizione.sh`).
 
+### Searching Wikipedia
+
+**tested in QEMU** — Wikipedia's search box is shown and works: "roma" +
+Enter opens the article, "canale grande" + the Search button opens the
+results page. The bug was in the transport: URLs with a path over 512
+characters were cut, and Wikipedia's stylesheet arrived wrong. The limit is
+now 1024, and a longer URL gives an error instead of asking for something
+else.
+
+### Calctor as an adding machine
+
+**tested in QEMU** — with the Cronologia box on, Calctor becomes an office
+adding machine: the = key goes away, + and - become two tall keys, and each
+adds (or subtracts) to the total and shows it at once. `12 * 3 +` finishes
+the product and adds 36; `+` again prints the subtotal on the tape.
+
 ### The mouse wheel
 
 **tested in QEMU** — the wheel scrolls the page in EXBrowser and, in every

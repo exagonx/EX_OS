@@ -4315,6 +4315,19 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
 
 ! @CALCTOR LA CALCOLATRICE DI ExWin. (chiesta e fatta il 27 settembre 2026)
 
+  ! 28 SETTEMBRE 2026, sera (chiesto): CON LA CRONOLOGIA ACCESA E' UNA
+    CALCOLATRICE DA UFFICIO (0.002). Il tasto = sparisce, + e - diventano due
+    tasti alti (colonne 3 e 4, righe 4-5: blocco 3 della tabella, al posto di
+    - + =) e ognuno somma o sottrae al totale e lo mostra subito — il «+=» e
+    il «-=» delle scriventi. «12 * 3 +» chiude il prodotto e somma 36; + di
+    nuovo senza un numero nuovo scrive il subtotale; un'espressione cominciata
+    DAL totale mostrato lo sostituisce invece di sommarsi (contava due volte).
+    Invio e = dalla tastiera valgono +. Vedi nastro() in calctor.c.
+    ! La finestra del nastro si prendeva il fuoco aprendosi, e da tastiera la
+    calcolatrice non rispondeva piu': ex_attiva() nuovo nel toolkit
+    (exwin.so 0.006) glielo rende. Provato in QEMU: 12+ 5+ 3- = 14, 2*3+ = 20,
+    + = «20 subtotale».
+
   /exwin/bin/calctor (0.001), con le icone calctor_64/_128 gia' disegnate.
   Menu File (Nuovo = azzera la cronologia, Salva = la scrive in .txt, Esci),
   Opzioni (Modalita, una tendina LATERALE), Info (Informazioni su, Istruzioni:
@@ -4541,7 +4554,33 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
      RESTA:
        - l'intestazione di Wikipedia sborda a destra: le @media si decidono
          come su 1280 pixel (vedi sopra) e la finestra ne ha 740 — casella di
-         ricerca e link non ci stanno neanche al minimo;
+         ricerca e link non ci stanno neanche al minimo. (Dalla stessa sera
+         quel che sporge dalla pagina NON SI DISEGNA: parole e sfondi si
+         ritagliano al bordo, come in un browser senza scorrimento
+         orizzontale — prima finivano sopra la barra di scorrimento. Una
+         parola che comincia al margine sinistro si disegna comunque: e' piu'
+         larga della pagina, e sparire sarebbe peggio. I link «Entra» e «Fai
+         una donazione» di Wikipedia quindi non si vedono: lo scorrimento
+         orizzontale e' il seguito.)
+       - (FATTO il 28 sera, chiesto di nuovo: «il pulsante su Wikipedia non
+         fa partire la ricerca e non da' risultati»). La causa non era il
+         modulo: exhttp troncava il percorso a 512 byte (HTTP_PERCORSO_MAX),
+         il foglio di Wikipedia ne ha 537, la coda «&only=styles» si perdeva e
+         arrivava il JavaScript che avvolge il CSS. La @media che mostra la
+         casella di ricerca non c'era, e la casella era display:none. Trovato
+         con tre tracce temporanee (tolte): i controlli al clic, lo stile dei
+         nodi della ricerca, le dichiarazioni display nella cascata; e
+         salvando su disco il foglio ricevuto. Poi, col CSS vero, quattro
+         difetti della disposizione: le colonne DENTRO una misura buttavano i
+         pezzi (prova 2), min-width senza width ignorato, la larghezza CSS dei
+         controlli (max-width preso per width: «Ricerca» largo 420), controlli
+         stretti a 1 pixel nella misura minima. E le misure consumavano i posti
+         dei controlli (VistaPezzo.prova). Provato su it.wikipedia.org: «roma»
+         + Invio apre Roma, «canale grande» + Ricerca apre i risultati
+         (1 - 20 di 40 040). RESTA: nella pagina dei risultati le miniature
+         stanno SOTTO il testo del risultato invece che accanto.
+         ! Il metodo che ha funzionato: un foglio di stile «sbagliato» si
+         riconosce solo confrontando i BYTE ricevuti con quelli di curl.
        - (FATTI la stessa sera: clear, gap/row-gap/column-gap,
          justify-content, align-items center/end, lo spostamento di position:
          relative. prova_disposizione.sh 10/10, cssprova 154/154. ! Trovato:

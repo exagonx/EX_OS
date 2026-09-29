@@ -41,9 +41,19 @@ extern "C" {
 #endif
 
 #define HTTP_HOST_MAX       128
-#define HTTP_PERCORSO_MAX   512
+/* ! 1024 E NON 512 DAL 28 SETTEMBRE 2026, ed era il difetto dietro «il
+ * pulsante di Wikipedia non cerca». Il foglio di stile di Wikipedia ha un
+ * indirizzo di 561 caratteri, il percorso 537: si troncava a 512, la coda
+ * «&only=styles&skin=vector-2022» non arrivava, e il server rispondeva col
+ * JAVASCRIPT che avvolge quel CSS. Il lettore CSS ne ricavava regole a caso,
+ * la @media che rimette la casella di ricerca non c'era, e la casella restava
+ * display:none — niente da cliccare. Adesso ci sta ogni percorso di un URL
+ * da EXHTTP_URL_MAX, e uno piu' lungo fa fallire http_url invece di partire
+ * troncato. ! HttpUrl cambia misura: exhttp.so ed EXBrowser (l'unico che la
+ * usa) vanno aggiornati insieme. */
+#define HTTP_PERCORSO_MAX   1024
 #define HTTP_TIPO_MAX        96
-#define HTTP_POSIZIONE_MAX  512
+#define HTTP_POSIZIONE_MAX  1024     /* 512 fino al 28 settembre 2026: vedi sopra */
 
 /* ! I BISCOTTI DI UNA RISPOSTA SONO PIU' D'UNO, e per questo sono un vettore e
  * non un campo. `Set-Cookie` e' l'unica intestazione che un server manda

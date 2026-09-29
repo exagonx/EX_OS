@@ -132,6 +132,22 @@ lunghe non si fermano più a 1 MB: la pagina principale ne tiene 3. Corretto
 anche un difetto vecchio: il testo bianco usciva nero
 (`make prova-excss`, `tools/prova_disposizione.sh`).
 
+### La ricerca di Wikipedia
+
+**testato in QEMU** — la casella di ricerca di Wikipedia si vede e si usa:
+«roma» + Invio apre la voce, «canale grande» + il pulsante Ricerca apre la
+pagina dei risultati. Il difetto era nel trasporto: gli indirizzi con un
+percorso oltre i 512 caratteri venivano troncati, e il foglio di stile di
+Wikipedia arrivava sbagliato. Adesso il tetto è 1024, e un indirizzo più lungo
+dà errore invece di chiedere un'altra cosa.
+
+### Calctor da ufficio
+
+**testato in QEMU** — con la casella Cronologia accesa Calctor diventa una
+calcolatrice da ufficio: il tasto = sparisce, + e - diventano due tasti alti e
+ognuno somma (o sottrae) al totale mostrandolo subito. `12 * 3 +` chiude il
+prodotto e somma 36; `+` di nuovo scrive il subtotale sul nastro.
+
 ### La rotella del mouse
 
 **testato in QEMU** — la rotella scorre la pagina in EXBrowser e, in ogni

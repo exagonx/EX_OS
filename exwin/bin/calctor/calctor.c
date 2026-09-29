@@ -31,6 +31,13 @@
  * with two rules would be worse. The functions (sin, x^2, 1/x...) act at once
  * on the number just typed, as on every pocket calculator.
  *
+ * ! WITH THE TAPE ON IT IS AN ADDING MACHINE (28 September 2026, asked by
+ * the user): «=» goes away, «+» and «-» become two tall keys, and each one
+ * both adds (or subtracts) the number typed to a running total AND shows
+ * that total — the «+=» and «-=» of office printing calculators. «12 x 3 +»
+ * finishes the product and adds 36; «+» again with no new number prints
+ * the subtotal. Enter and «=» from the keyboard work as «+». See nastro().
+ *
  * ! THE CHOICES ARE THE USER'S, SO THEY LIVE IN THE PROFILE:
  * $HOME/.exwin/config/calctor.cfg — mode, base, degrees or radians, whether
  * the tape window is open (the rule in SVILUPPO.md).
@@ -46,7 +53,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `calctor -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("calctor", VERSIONE_APP);
 
 /* --- Geometry -------------------------------------------------------------- */
@@ -116,6 +123,10 @@ static Tasto g_t[] = {
     { "0", "0", 0, 0, 5, 1, 0 }, { "00", "00", 0, 1, 5, 1, 0 }, { ".", ".", 0, 2, 5, 1, 0 },
     { "+", "+", 0, 3, 5, 1, 0 },
 
+    /* the tape (adding machine) keys: in the main block, two rows tall,
+     * shown instead of - + = when the tape is on */
+    { "+", "+", 3, 3, 4, 2, 0 }, { "-", "-", 3, 4, 4, 2, 0 },
+
     /* scientific, 4 x 6 */
     { "DEG", "ang", 1, 0, 0, 1, 0 }, { "pi", "pi", 1, 1, 0, 1, 0 },
     { "e", "e", 1, 2, 0, 1, 0 },     { "n!", "n!", 1, 3, 0, 1, 0 },
@@ -174,6 +185,12 @@ static char   g_lab[48] = "";    /* its label, when a function made it */
 static double g_mem = 0.0;
 static char   g_err[64] = "";
 static int    g_dopo_uguale = 0; /* the value shown is the result of «=» */
+
+/* The adding machine, when the tape is on: see nastro(). */
+static int    g_nastro = 0;       /* the tape box is on */
+static double g_tot = 0.0;        /* the running total */
+static int    g_tot_mostrato = 0; /* the value shown IS the total, not an operand */
+static int    g_da_totale = 0;    /* the expression began from the total shown */
 
 /* The tape: every calculation finished with «=». */
 #define CRON_MAX 1000
@@ -565,6 +582,71 @@ static void uguale(void)
     g_dopo_uguale = 1;
 }
 
+/* =============================================================================
+ * THE ADDING MACHINE: «+» and «-» with the tape on
+ *
+ * A number followed by + or - goes into the total, and the total is shown at
+ * once: the key is operator and «=» together. A product or a quotient typed
+ * before is finished first (12 x 3 + adds 36). + with nothing new typed is
+ * the subtotal. An expression started FROM the total shown (the total times
+ * 2) REPLACES the total, or it would count twice.
+ * ============================================================================= */
+static void nastro(char op)
+{
+    char   espr[256], r[64], riga[340];
+    double v;
+    int    nuovo, aperte = 0, i;
+
+    if (g_err[0]) return;
+    nuovo = g_scrive || g_ntok > 0 || (g_ha && !g_tot_mostrato);
+
+    if (!nuovo) {
+        formatta(g_tot, r, sizeof(r));
+        snprintf(riga, sizeof(riga), "%s  subtotale", r);
+        cron_aggiungi(riga);
+        metti_valore(g_tot, 0);
+        g_tot_mostrato = 1;
+        return;
+    }
+
+    if (g_ntok > 0) {
+        if (g_scrive || g_ha) spingi_operando();
+        else if (ultimo() == T_OP) g_ntok--;
+        for (i = 0; i < g_ntok; i++) aperte += g_tok[i].t == T_AP ? 1 : g_tok[i].t == T_CH ? -1 : 0;
+        while (aperte-- > 0) tok_push(T_CH, 0.0, 0, 0);
+        riga_corrente(espr, sizeof(espr));
+        if (!valuta(g_tok, g_ntok, &v)) { g_ntok = 0; return; }
+        if (g_modo != MODO_PROG && fabs(v) < 1e-13) v = 0.0;
+        formatta(v, r, sizeof(r));
+        snprintf(riga, sizeof(riga), "%s = %s", espr, r);
+        cron_aggiungi(riga);
+        g_ntok = 0;
+    } else {
+        v = operando();
+    }
+
+    if (g_da_totale) g_tot = v;
+    else             g_tot += op == '-' ? -v : v;
+    if (g_modo == MODO_PROG) g_tot = (double)a32((long long)g_tot);
+    if (g_modo != MODO_PROG && fabs(g_tot) < 1e-13) g_tot = 0.0;
+
+    formatta(v, r, sizeof(r));
+    if (g_da_totale) snprintf(riga, sizeof(riga), "%s  totale", r);
+    else             snprintf(riga, sizeof(riga), "%s %c", r, op);
+    cron_aggiungi(riga);
+
+    metti_valore(g_tot, 0);
+    g_tot_mostrato = 1;
+    g_da_totale = 0;
+}
+
+static void nastro_azzera(void)
+{
+    g_tot = 0.0;
+    g_tot_mostrato = 0;
+    g_da_totale = 0;
+}
+
 static double fattoriale(double n)
 {
     double r = 1.0;
@@ -661,6 +743,20 @@ static void esegui(const char *c)
     int dopo = g_dopo_uguale;
 
     g_dopo_uguale = 0;
+
+    /* The adding machine takes + - and = for itself (see nastro). */
+    if (g_nastro) {
+        if (!strcmp(c, "+") || !strcmp(c, "=")) { nastro('+'); return; }
+        if (!strcmp(c, "-"))                     { nastro('-'); return; }
+        if (!strcmp(c, "C")) nastro_azzera();
+        else if (g_tot_mostrato && !g_scrive &&
+                 (!strcmp(c, "*") || !strcmp(c, "/") || !strcmp(c, "^") || !strcmp(c, "mod") ||
+                  !strcmp(c, "and") || !strcmp(c, "or") || !strcmp(c, "xor") ||
+                  !strcmp(c, "shl") || !strcmp(c, "shr")))
+            g_da_totale = 1;
+        g_tot_mostrato = 0;
+    }
+
     if (dopo && !strcmp(c, "(")) { g_ha = 0; g_scrive = 0; g_lab[0] = '\0'; }
     if (!strcmp(c, "C"))  { tutto_azzera(); return; }
     if (!strcmp(c, "CE")) { g_err[0] = '\0'; g_scrive = 0; g_ha = 0; g_lab[0] = '\0'; strcpy(g_ent, "0"); return; }
@@ -803,7 +899,11 @@ static void tasti_aggiorna(void)
     for (i = 0; i < N_TASTI; i++) {
         Tasto *t = &g_t[i];
         int    vis = t->blocco == 0 || (t->blocco == 1 && g_modo == MODO_SCI) ||
-                     (t->blocco == 2 && g_modo == MODO_PROG);
+                     (t->blocco == 2 && g_modo == MODO_PROG) || (t->blocco == 3 && g_nastro);
+
+        /* With the tape on, - + = give way to the two tall keys. */
+        if (t->blocco == 0 && g_nastro &&
+            (!strcmp(t->cod, "+") || !strcmp(t->cod, "-") || !strcmp(t->cod, "="))) vis = 0;
         int    si = 1;
 
         if (!t->c) continue;
@@ -892,6 +992,10 @@ static void cron_apri(void)
     if (g_ncr) ex_lista_scegli(g_lcron, (unsigned int)g_ncr - 1);
     ex_procedura_base(g_fcron, EXM_DISEGNA, 0, 0);
     ex_aggiorna(g_fcron);
+    /* ! IL FUOCO TORNA ALLA CALCOLATRICE: il nastro nasce per ultimo e se lo
+     * prendeva, e le cifre battute andavano a lui — da tastiera la
+     * calcolatrice non rispondeva piu' (visto in QEMU, 28 settembre 2026). */
+    ex_attiva(g_f);
 }
 
 static void cron_chiudi(void)
@@ -997,6 +1101,12 @@ static void istruzioni(void)
         "tutte le operazioni fatte, come il rotolo di carta di una "
         "calcolatrice da ufficio. File > Nuovo la svuota, File > Salva "
         "la scrive in un file di testo (.txt).\n"
+        "Con la Cronologia accesa Calctor diventa una calcolatrice da "
+        "ufficio: il tasto = sparisce, + e - diventano due tasti alti, e "
+        "ognuno somma (o sottrae) il numero battuto al totale e mostra "
+        "subito il totale. 12 * 3 + chiude il prodotto e somma 36. "
+        "Premere + di nuovo senza un numero nuovo scrive il subtotale. "
+        "Invio e = dalla tastiera valgono +. C azzera anche il totale.\n"
         "\n"
         "LA TASTIERA\n"
         "Cifre, + - * / ^ % ( ) e il punto (o la virgola). Invio o = "
@@ -1086,6 +1196,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_ISTR:   istruzioni(); ridisegna(); return 0;
         case ID_CRON:
             if (ex_acceso(g_cron)) cron_apri(); else cron_chiudi();
+            /* ! THE KEYS CHANGE WITH THE BOX, and so does the arithmetic:
+             * what was being typed under the other rule starts over. */
+            g_nastro = ex_acceso(g_cron);
+            tutto_azzera();
+            nastro_azzera();
+            tasti_aggiorna();
             opzioni_salva();
             ridisegna();
             break;
@@ -1175,7 +1291,7 @@ int main(int argc, char **argv)
 
     for (i = 0; i < N_TASTI; i++) {
         Tasto *t = &g_t[i];
-        int    x = (t->blocco == 0 ? MARGINE : X_EXTRA) + t->col * PASSO_X;
+        int    x = (t->blocco == 0 || t->blocco == 3 ? MARGINE : X_EXTRA) + t->col * PASSO_X;
         int    y = Y_TASTI + t->riga * PASSO_Y;
 
         t->c = ex_crea("pulsante", t->testo, EX_FIGLIO, x, y, BW,
@@ -1185,9 +1301,9 @@ int main(int argc, char **argv)
     g_font_grande  = ex_font_trova(EX_FAM_MONO, 22, 1, 0);
     g_font_piccolo = ex_font_trova(EX_FAM_MONO, 14, 0, 0);
 
+    if (g_cron_all_avvio) { ex_accendi(g_cron, 1); cron_apri(); g_nastro = 1; }
     tasti_aggiorna();
     if (g_modo == MODO_NORM) ex_misura(g_f, W_NORMALE, H_FIN);
-    if (g_cron_all_avvio) { ex_accendi(g_cron, 1); cron_apri(); }
     ex_fuoco_via(g_f);
     ridisegna();
 

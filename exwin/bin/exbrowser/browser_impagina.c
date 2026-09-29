@@ -215,6 +215,15 @@ static int larg_risolta(const CssStile *s, int disp, int extra)
     return w;
 }
 
+/* min-width in pixel, o -1: vale anche quando la larghezza e' automatica
+ * (vedi larg_elemento). */
+static int larg_minima(const CssStile *s, int disp, int extra)
+{
+    if (s->larghezza_min == CSS_MISURA_NO) return -1;
+    return ((s->larghezza_perc & CSS_LARG_MIN_PERC) ? (int)((long)disp * s->larghezza_min / 10000)
+                                                    : s->larghezza_min) + (s->scatola_bordo ? 0 : extra);
+}
+
 /* Bordi piu' padding di sinistra e di destra: quel che box-sizing somma. */
 static int lati_extra(const CssStile *s);
 
@@ -557,7 +566,11 @@ static void pezzo_estraneo(int v, const VistaPezzo *p)
 {
     int w = p->w, h = p->h;
 
-    if (p->stringi && w > rw()) w = rw();
+    /* ! NON SOTTO I 60 PIXEL: la misura «minima» del flex impagina in una
+     * colonna di un pixel, e un pulsante stretto fino a 1 diventava la sua
+     * larghezza minima — «Ricerca» di Wikipedia usciva largo 19 pixel. In una
+     * colonna cosi' stretta un controllo tiene la sua misura, e sborda. */
+    if (p->stringi && w > rw() && rw() >= 60) w = rw();
     if (g_pen_x + w > rx() + rw() && g_pen_x > rx()) a_capo();
 
     if (g_pez_n < (int)g_pez_max) {
@@ -745,7 +758,13 @@ static void raccogli_righe(int v, int *righe, int *n)
 
 /* Impagina `nodo` dentro una colonna, e rende l'altezza che ha occupato.
  * Con `prova` a 1 i pezzi si buttano e si rende invece la larghezza usata. */
-/* ! `se_stesso` (28 settembre 2026): 0 impagina i FIGLI di `nodo`, ed e' la
+/* ! `prova`: 0 si impagina davvero; 1 si MISURA e i pezzi si buttano; 2
+ * (28 settembre 2026) si impagina DENTRO una misura di fuori, e i pezzi si
+ * tengono — li buttera' lei. Con 1 anche qui, un flex dentro un flex misurato
+ * buttava i suoi pezzi, la misura di fuori non vedeva niente e diceva «largo
+ * 1»: su Wikipedia il logo risultava largo un pixel e la ricerca gli finiva
+ * sopra.
+ * ! `se_stesso` (28 settembre 2026): 0 impagina i FIGLI di `nodo`, ed e' la
  * cella di una tabella; 1 impagina `nodo` stesso, col suo sfondo, i bordi e
  * il padding, ed e' un float, un inline-block o un figlio di un flex. */
 static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
@@ -762,7 +781,7 @@ static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
     int era_mis = g_misura;
     int larga  = 0, i, f;
 
-    g_misura = prova;
+    g_misura = prova != 0;
 
     g_marg_sx = x - area_x();
     g_marg_dx = (area_x() + area_w()) - (x + w);
@@ -798,7 +817,7 @@ static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
         if (destra > larga) larga = destra;
     }
 
-    if (prova) { g_pez_n = primo; g_sfondi_n = primo_sf; }
+    if (prova == 1) { g_pez_n = primo; g_sfondi_n = primo_sf; }
     /* ! I FLOAT DI DENTRO NON ESCONO DALLA COLONNA: fuori, la riga non deve
      * restringersi per un rettangolo che sta dentro una cella. */
     g_gal_n = era_gal;
@@ -1089,7 +1108,14 @@ static int larg_elemento(int v, const CssStile *mio, const CssStile *ered, int d
 {
     int w = larg_risolta(mio, disp, lati_extra(mio));
 
-    if (w < 0) w = misura_elemento(v, ered, disp, 0);
+    /* ! min-width VALE ANCHE SULLA LARGHEZZA MISURATA: `.cdx-text-input` di
+     * Wikipedia ha min-width 256 e nessuna width, e il flex la stringeva a
+     * 48 pixel sotto il logo. */
+    if (w < 0) {
+        int mn = larg_minima(mio, disp, lati_extra(mio));
+        w = misura_elemento(v, ered, disp, 0);
+        if (mn > w) w = mn;
+    }
     if (w > disp) w = disp;
     return w < 1 ? 1 : w;
 }
@@ -1103,7 +1129,7 @@ static void galleggia(int v, const CssStile *mio, const CssStile *ered)
     w = larg_elemento(v, mio, ered, rw());
     gal_fai_posto(w);
     x = (mio->galleggia == CSS_GALLEGGIA_SX) ? rx() : rx() + rw() - w;
-    impagina_in_colonna_ex(v, ered, x, g_pen_y, w, g_misura, &alt, 1);
+    impagina_in_colonna_ex(v, ered, x, g_pen_y, w, g_misura ? 2 : 0, &alt, 1);
     if (g_gal_n < GALLEGGIA_MAX) {
         g_gal[g_gal_n].x = x;
         g_gal[g_gal_n].w = w;
@@ -1123,7 +1149,7 @@ static void in_blocco(int v, const CssStile *mio, const CssStile *ered)
     w = larg_elemento(v, mio, ered, rw());
     if (g_pen_x + sx + w > rx() + rw() && g_pen_x > rx()) a_capo();
     g_pen_x += sx;
-    impagina_in_colonna_ex(v, ered, g_pen_x, g_pen_y, w, g_misura, &alt, 1);
+    impagina_in_colonna_ex(v, ered, g_pen_x, g_pen_y, w, g_misura ? 2 : 0, &alt, 1);
     g_pen_x += w + dx;
     if (alt > g_riga_h) g_riga_h = alt;
 }
@@ -1166,6 +1192,10 @@ static void flessibile(int v, const CssStile *mio)
             /* chi dichiara la larghezza non scende sotto di lei */
             minimo[n] = (larg_risolta(&st, disp, lati_extra(&st)) >= 0) ? pref[n]
                       : misura_elemento(f, mio, 1, 0);
+            {
+                int mn = larg_minima(&st, disp, lati_extra(&st));
+                if (mn > minimo[n]) minimo[n] = mn;
+            }
         } else {
             pref[n] = misura_elemento(f, mio, disp, 0);
             minimo[n] = misura_elemento(f, mio, 1, 0);
@@ -1231,7 +1261,7 @@ static void flessibile(int v, const CssStile *mio)
             int alt = 0;
 
             pz[k - i] = g_pez_n; sf[k - i] = g_sfondi_n;
-            impagina_in_colonna_ex(voce[k], mio, x, y, larg[k - i], g_misura, &alt, 1);
+            impagina_in_colonna_ex(voce[k], mio, x, y, larg[k - i], g_misura ? 2 : 0, &alt, 1);
             alti[k - i] = alt;
             x += larg[k - i] + gcol + fra;
             if (alt > alto) alto = alt;
@@ -1443,6 +1473,7 @@ static void impagina_nodo(int v, const CssStile *ered)
 
             p.w = p.h = p.rif = 0;
             p.nel_flusso = p.stringi = p.aria_dx = p.aria_giu = 0;
+            p.prova = g_misura;
             p.testo = 0;
             p.testo_off = 0;
 
@@ -1459,7 +1490,30 @@ static void impagina_nodo(int v, const CssStile *ered)
                 if (p.testo && p.testo[0]) parole(p.testo, p.testo_off);
                 return;
             }
-            if (r == VISTA_PEZZO) { pezzo_estraneo(v, &p); return; }
+            if (r == VISTA_PEZZO) {
+                /* ! LA LARGHEZZA DEL CSS VALE ANCHE PER UN CONTROLLO (28
+                 * settembre 2026): la casella di ricerca di Wikipedia e'
+                 * `width: 100%`, e restava di venti caratteri. Solo per i
+                 * pezzi che si stringono (i controlli): un'immagine ha le
+                 * sue misure, e allargarla la deformerebbe. */
+                if (p.stringi) {
+                    int mn = larg_minima(&mio, rw(), 0);
+                    /* ! width decide, max-width e min-width limitano soltanto:
+                     * il pulsante «Ricerca» ha solo un max-width, e preso
+                     * per larghezza diventava largo 420 pixel. */
+                    if (mio.larghezza != CSS_MISURA_NO) {
+                        int w = larg_risolta(&mio, rw(), 0);
+                        if (w > 0) p.w = w;
+                    } else if (mio.larghezza_max != CSS_MISURA_NO) {
+                        int mx = (mio.larghezza_perc & CSS_LARG_MAX_PERC)
+                                 ? (int)((long)rw() * mio.larghezza_max / 10000) : mio.larghezza_max;
+                        if (mx > 0 && p.w > mx) p.w = mx;
+                    }
+                    if (mn > 0 && p.w < mn) p.w = mn;
+                }
+                pezzo_estraneo(v, &p);
+                return;
+            }
         }
 
         /* L'elenco dei blocchi resta la regola di base; `display` la
@@ -1491,6 +1545,12 @@ static void impagina_nodo(int v, const CssStile *ered)
             if (!radice) {
                 int disp = rw(), w = larg_risolta(&mio, disp, lati_extra(&mio));
 
+                /* ! min-width PIU' LARGO DELLA RIGA: il blocco sborda a destra
+                 * invece di stringersi (e' la regola del CSS). */
+                if (w < 0) {
+                    int mn = larg_minima(&mio, disp, lati_extra(&mio));
+                    if (mn > disp) g_marg_dx -= mn - disp;
+                }
                 if (w >= 0 && w < disp) {
                     int avanzo = disp - w, sposta = 0;
                     int a_sx = mio.margine[3] == CSS_MISURA_AUTO;
@@ -1821,8 +1881,13 @@ void disegna_contenuto(void)
         if (h <= 0) continue;
 
         if (!g_sfondi[i].bordo) {
-            ex_riempi(g_f, g_sfondi[i].x, y, g_sfondi[i].w, h,
-                      g_sfondi[i].colore);
+            /* ! ANCHE DI LATO (28 settembre 2026): quel che sporge dalla
+             * pagina non si vede, come in un browser senza scorrimento
+             * orizzontale — e non finisce sopra la barra di scorrimento. */
+            int x = g_sfondi[i].x, w = g_sfondi[i].w;
+            if (x < T_X()) { w -= T_X() - x; x = T_X(); }
+            if (x + w > T_X() + T_W()) w = T_X() + T_W() - x;
+            if (w > 0) ex_riempi(g_f, x, y, w, h, g_sfondi[i].colore);
             continue;
         }
 
@@ -1861,6 +1926,12 @@ void disegna_contenuto(void)
          * scorsa in su deve tagliarsi da sola, una casella di testo a meta'
          * non si deve disegnare affatto. Sono due risposte diverse alla stessa
          * domanda, e la domanda non e' dell'impaginato. */
+        /* ! E DI LATO: un pezzo tutto fuori dalla pagina non si disegna.
+         * Succede quando la pagina e' piu' larga della finestra — l'intestazione
+         * di Wikipedia, pensata per 1280 pixel (le @media), disegnava i suoi
+         * link sopra la barra di scorrimento. */
+        if (g_pez[i].x >= T_X() + T_W() || g_pez[i].x + g_pez[i].w <= T_X()) continue;
+
         if (g_pez[i].rif >= 0) {
             if (g_cliente && g_cliente->disegna)
                 g_cliente->disegna(g_pez[i].rif, g_pez[i].x, y,
@@ -1875,6 +1946,12 @@ void disegna_contenuto(void)
          * vedeva appena il documento diventava piu' lungo della finestra —
          * cioe' proprio quando e' arrivata la barra di scorrimento. */
         if (y < T_Y() || y + ph > T_Y() + T_H()) continue;
+        /* Una parola non si taglia a meta': se sporge, non c'e'. ! TRANNE
+         * quella che comincia al margine sinistro: e' piu' larga della pagina
+         * intera (un indirizzo lungo), non ha un posto dove stare, e si
+         * disegna come sempre — sparire sarebbe peggio che sbordare. */
+        if (g_pez[i].x < T_X() ||
+            (g_pez[i].x + g_pez[i].w > T_X() + T_W() && g_pez[i].x > T_X() + 8)) continue;
 
         {
             ExFont       f = g_pez[i].font;

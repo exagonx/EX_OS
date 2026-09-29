@@ -60,6 +60,25 @@ static void prova_url(void)
     ok(http_url("www.esempio.it/pagina", &u) &&
        strcmp(u.host, "www.esempio.it") == 0 && u.porta == 80,
        "senza schema si assume http");
+    /* ! IL PERCORSO LUNGO DI WIKIPEDIA (28 settembre 2026): 537 caratteri,
+     * con la coda che conta. Prima si troncava a 512 in silenzio. */
+    {
+        static char lungo[700];
+        unsigned int q;
+        strcpy(lungo, "https://it.wikipedia.org/w/load.php?modules=");
+        for (q = (unsigned int)strlen(lungo); q < 540; q++) lungo[q] = 'x';
+        strcpy(lungo + 540, "&only=styles&skin=vector-2022");
+        ok(http_url(lungo, &u) && strstr(u.percorso, "&only=styles&skin=vector-2022") != 0,
+           "un percorso di 550 caratteri arriva intero, coda compresa");
+    }
+    {
+        static char troppo[1200];
+        unsigned int q;
+        strcpy(troppo, "http://a.it/");
+        for (q = 12; q < 1150; q++) troppo[q] = 'y';
+        troppo[1150] = '\0';
+        ok(!http_url(troppo, &u), "un percorso oltre 1024 si rifiuta, non si tronca");
+    }
 
     ok(http_url("http://10.0.2.2:8080/a?b=c", &u) &&
        strcmp(u.host, "10.0.2.2") == 0 && u.porta == 8080 &&

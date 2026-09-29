@@ -129,7 +129,15 @@ int http_url(const char *url, HttpUrl *u)
 
     /* Il percorso: tutto il resto, e se manca e' «/». */
     if (url[i] == '\0') copia(u->percorso, "/", sizeof(u->percorso));
-    else                copia(u->percorso, url + i, sizeof(u->percorso));
+    else {
+        /* ! UN PERCORSO TROPPO LUNGO NON SI TRONCA: si rifiuta. Troncato
+         * chiede un'ALTRA risorsa, e la risposta sbagliata arriva senza
+         * nessun errore (vedi HTTP_PERCORSO_MAX). */
+        unsigned int l = 0;
+        while (url[i + l]) l++;
+        if (l >= sizeof(u->percorso)) return 0;
+        copia(u->percorso, url + i, sizeof(u->percorso));
+    }
 
     return 1;
 }

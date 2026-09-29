@@ -172,6 +172,7 @@ static const char *const g_nomi[] = {
     /* Added on 27 September 2026: side menus, and the version (Calctor). */
     "ex_versione",
     "ex_abilita",
+    "ex_attiva",
 
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
@@ -291,6 +292,7 @@ static void *const g_indirizzi[] = {
 
     (void *)ex_versione,
     (void *)ex_abilita,
+    (void *)ex_attiva,
 
     (void *)__libc_ponti_avvia
 };

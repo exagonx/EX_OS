@@ -154,6 +154,7 @@ static struct {
     void         (*finestre_segui)(ExFinestra);
     int          (*finestre_elenco)(ExVoceFin *, int);
     void         (*finestra_attiva)(unsigned int);
+    void         (*attiva)(ExFinestra);          /* optional: 28 September 2026 */
     void         (*finestra_riduci)(unsigned int);
     void         (*chiudi_altre)(void);
     void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
@@ -330,6 +331,7 @@ static void assicura(void)
                         exlib_simbolo(t, "ex_finestre_elenco");
     P.finestra_attiva = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_attiva");
+    P.attiva          = (void (*)(ExFinestra))exlib_simbolo(t, "ex_attiva");
     P.finestra_riduci = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_riduci");
     P.chiudi_altre    = (void (*)(void))
@@ -551,6 +553,8 @@ int          ex_finestre_elenco(ExVoceFin *v, int max)
 
 void         ex_finestra_attiva(unsigned int id)
 { assicura(); if (P.finestra_attiva) P.finestra_attiva(id); }
+void         ex_attiva(ExFinestra f)
+{ assicura(); if (P.attiva) P.attiva(f); }
 
 void         ex_finestra_riduci(unsigned int id)
 { assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }

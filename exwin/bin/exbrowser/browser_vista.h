@@ -62,6 +62,13 @@ typedef struct {
 
     const char  *testo;     /* VISTA_TESTO: cosa impaginare al suo posto     */
     unsigned int testo_off; /* ... e dove sta, nell'arena del documento      */
+
+    /* ! DETTO DALL'IMPAGINATO (28 settembre 2026): 1 se e' un passaggio di
+     * sola MISURA, i cui pezzi si buttano. Il flex misura ogni voce due
+     * volte e il float una: chi tiene uno stato per nodo — un controllo col
+     * suo posto e quel che l'utente ci ha scritto — non deve consumarlo per
+     * una misura. Su Wikipedia le misure prendevano 58 posti su 192. */
+    int          prova;
 } VistaPezzo;
 
 typedef struct {

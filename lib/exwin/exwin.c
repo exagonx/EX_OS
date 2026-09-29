@@ -963,6 +963,15 @@ static void finestra_chiedi(unsigned int tipo, unsigned int id)
 
 void ex_finestra_attiva(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
 
+/* Brings one of OUR windows to the front with the keyboard focus, by its
+ * handle: the program does not know the server's id, the toolkit does. */
+void ex_attiva(ExFinestra f)
+{
+    Oggetto *r = radice(f);
+
+    if (r && r->win_id) finestra_chiedi(WIN_MSG_ATTIVA, r->win_id);
+}
+
 void ex_chiudi_le_altre(void)
 {
     if (!server_trova()) return;
@@ -6814,7 +6823,7 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.005"
+#define EXWIN_VERSIONE "0.006"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 

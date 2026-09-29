@@ -239,7 +239,24 @@ giro: «Fai una donazione» in una colonna di venti pixel — il flex stringeva
 tutti in proporzione; ora nessuno scende sotto la sua parola piu' larga. !
 Trovato: il bianco era CSS_NIENTE, e il testo bianco usciva nero. ! Con 32 MB
 il navigatore a volte non carica exhttp.so: la prova usa 64 MB.
-Poi **le pagine oltre 1 MB**: Venezia arrivava troncata. I tetti adesso sono
+Poi **la ricerca di Wikipedia**, chiesta di nuovo: il pulsante non cercava.
+Non era il modulo. exhttp troncava il percorso a 512 byte, e il foglio di
+Wikipedia (537) perdeva la coda `&only=styles`: arrivava il JavaScript che
+avvolge il CSS, la @media che mostra la casella non c'era, la casella era
+`display:none`. ! Ci si e' arrivati per esclusione, con tracce temporanee: i
+controlli al clic (il campo non aveva un pezzo), lo stile (display 3), la
+cascata (la regola @media mancava), e alla fine i byte del foglio salvati su
+disco e confrontati con curl. Col CSS vero sono venuti fuori quattro difetti
+del flex di ieri (misure annidate che si buttavano i pezzi, min-width, la
+larghezza CSS dei controlli, i controlli stretti a 1 pixel). Adesso «roma» +
+Invio apre Roma e «canale grande» + Ricerca da' 40 040 risultati.
+E **Calctor da ufficio**: con la cronologia accesa niente =, + e - alti che
+sommano e mostrano il totale.
+Prima ancora, il **ritaglio di lato**: quel che sporge dalla pagina non si disegna piu'
+sopra la barra di scorrimento (l'intestazione di Wikipedia, pensata per 1280
+pixel). E il tetto dei pixel delle immagini, un ottavo della memoria libera
+sopra i 48 MB: Venezia non lascia piu' fuori immagini.
+Prima, **le pagine oltre 1 MB**: Venezia arrivava troncata. I tetti adesso sono
 per vista — grandi e statici per la pagina (BSS, su richiesta), quelli di
 sempre per un iframe, che si alloca con malloc e su EX-OS sbrk da' le pagine
 subito. ! Con la voce intera la riserva dei caratteri (24) finiva e il titolo
@@ -23283,3 +23300,9 @@ piu' di 64 MB di RAM quella mappatura si sovrappone allo spazio utente. Non
 verificato: le prove girano a 32 MB.
 
 ---
+
+## 2026-09-28 23:39 — claude-B (Exilla), pausa
+Tappa 1 (fili POSIX) FATTA: kernel 0.222, prova-pthread 15/15. Tutto rilasciato
+in scambio.txt, testo pronto in messaggio-commit.txt (manca solo ./gitupdate.sh).
+Prossimo: Rust std (tools/rust-exos/leggimi.md passi 2-3), poi socket BSD.
+Diario e comandi per rifare: tools/exilla/leggimi.md.

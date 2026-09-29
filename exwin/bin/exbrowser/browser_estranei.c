@@ -243,6 +243,9 @@ static int est_misura(int v, VistaPezzo *p)
      * ===================================================================== */
     if (uguale(nome, "input") || uguale(nome, "button") ||
         uguale(nome, "select") || uguale(nome, "textarea")) {
+        static Ctrl g_ctrl_prova;
+        Ctrl       *c;
+        int         opz_prima_misura;
         const char *tipo = html_attr(&g_doc, v, "type");
         const char *val  = html_attr(&g_doc, v, "value");
         const char *sz   = html_attr(&g_doc, v, "size");
@@ -264,8 +267,14 @@ static int est_misura(int v, VistaPezzo *p)
         if (g_ctrl_n >= CTRL_MAX || g_pez_n >= (int)g_pez_max)
             return VISTA_SALTA;
 
+        /* ! UNA MISURA LAVORA SU UN CONTROLLO DI SERVIZIO: nessun posto preso,
+         * nessuna opzione accodata, e soprattutto nessun posto VERO
+         * sovrascritto — il flex misura un campo e il pulsante accanto, e il
+         * secondo avrebbe cancellato quel che l'utente scriveva nel primo. */
+        c = p->prova ? &g_ctrl_prova : &g_ctrl[g_ctrl_n];
+        opz_prima_misura = g_opz_n;
+
         {
-            Ctrl *c = &g_ctrl[g_ctrl_n];
             int   i = 0;
 
             const char *nm = html_attr(&g_doc, v, "name");
@@ -414,14 +423,17 @@ static int est_misura(int v, VistaPezzo *p)
          * niente pezzo, niente larghezza, niente penna che avanza. Da qui
          * in giu' si parla solo di come si DISEGNA un controllo, e quello
          * non si disegna. */
-        if (t == CTRL_NASCOSTO) { g_ctrl_n++; return VISTA_SALTA; }
+        if (t == CTRL_NASCOSTO) {
+            if (p->prova) g_opz_n = opz_prima_misura; else g_ctrl_n++;
+            return VISTA_SALTA;
+        }
 
         switch (t) {
         case CTRL_SPUNTA:
         case CTRL_RADIO:    w = 14; h = 14; break;
         case CTRL_PULSANTE: {
             int n_car = 0;
-            while (g_ctrl[g_ctrl_n].valore[n_car]) n_car++;
+            while (c->valore[n_car]) n_car++;
             w = 16 + n_car * 8;
             if (w < 56) w = 56;
             h = 22;
@@ -446,10 +458,15 @@ static int est_misura(int v, VistaPezzo *p)
         p->w        = w;
         p->h        = h;
         p->rif      = EST_CTRL(g_ctrl_n);
-        p->stringi  = 1;
+        /* Una spunta o un radio non si stringono e non si allargano: tengono
+         * i loro 14 pixel. ! Il CSS di Vector mette sulle spunte dei menu
+         * `width: 100%` con opacity 0 (una trappola per il clic): allargata
+         * al CSS, la spunta diventava un riquadro vuoto largo 418 pixel. */
+        p->stringi  = (t == CTRL_SPUNTA || t == CTRL_RADIO) ? 0 : 1;
         p->aria_dx  = 4;
         p->aria_giu = 4;
-        g_ctrl_n++;
+        if (p->prova) g_opz_n = opz_prima_misura;
+        else          g_ctrl_n++;
         return VISTA_PEZZO;
     }
 
