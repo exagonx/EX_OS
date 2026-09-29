@@ -101,6 +101,61 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le schede: nell'editor, in exide e nel navigatore
+
+**testato in QEMU** — l'editor apre più file, uno per scheda (`edit a.txt
+b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab gira fra le schede, Ctrl+W chiude quella
+scelta e chiede se è modificata. In exide la finestra dei file del
+progetto tiene più sorgenti in schede. EXBrowser apre i collegamenti in una
+scheda nuova (`target="_blank"`, Ctrl+clic, Ctrl+T) o in una finestra nuova
+(Shift+clic, Ctrl+N, il tasto destro su un collegamento); le schede in
+sottofondo tengono l'indirizzo e si ricaricano quando si torna. La barra
+delle schede è un controllo del toolkit, a disposizione di ogni programma
+(`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
+
+### ExJs legge il JavaScript di oggi
+
+**testato in QEMU e sull'host** — il motore ExJs (QuickJS resta il
+predefinito) legge `let` e `const`, le frecce, le classi con `extends` e
+`super`, i modelli `` `${}` ``, la destrutturazione, lo spread, `?.`, `??`,
+`**`, `for..of` e le etichette, e ha `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, i metodi nuovi di vettori e stringhe, `toFixed` e
+le funzioni di `Math`. I numeri si scrivono come in ogni altro motore
+(`0.1 + 0.2` è `0.30000000000000004`, `1e21` è `1e+21`) e `for..in` dà le
+chiavi nell'ordine in cui sono nate. Mancano ancora le espressioni regolari
+e le Promise, e gli oggetti non si recuperano (`make prova-exjs`, 448 prove;
+`tools/prova_es2015.sh`).
+
+### ExJs: `throw`, `try`, `switch` e i prototipi
+
+**testato sull'host** — il motore ExJs (QuickJS resta il predefinito) ha
+`throw`, `try`/`catch`/`finally` e `switch`; `new F()` eredita i metodi di
+`F.prototype`, e c'è `instanceof`. Ci sono `Error`, `TypeError`,
+`RangeError` e gli altri, e gli errori del motore stesso si prendono con un
+`catch`. Uno script fermato perché gira da troppo invece no. Leggere una
+proprietà di `undefined` rende ancora `undefined` invece di lanciare
+(`make prova-exjs`, 342 prove).
+
+### Il tasto destro, il trascinare e le associazioni
+
+**testato in QEMU** — il tasto destro apre un menu. Sulla scrivania: Nuova
+cartella, Nuovo file, Incolla, e su un'icona anche Apri, Rinomina, Copia,
+Taglia, Cancella. Nel file manager le stesse voci; lì si possono anche
+scegliere più righe (Ctrl+clic, Shift+clic) e trascinarle su una cartella a
+sinistra: una finestra chiede se copiarle, spostarle o lasciar perdere. Un
+file che non è un programma si apre col programma che gli spetta
+(`/exwin/lib/tipi.txt`): dal file manager, dalla scrivania e dalla shell, dove
+`nota.txt` apre l'editor (`tools/prova_tasto_destro.sh`; Ctrl e Shift col
+mouse in QEMU non si possono provare).
+
+### Pennello scrive
+
+**testato in QEMU** — Pennello ha lo strumento Testo (tasto T): un clic dove
+comincia la scritta, la si batte, ed entra nell'immagine col colore scelto; lo
+spessore ne decide la grandezza (12, 16, 24 o 36 pixel). Si annulla come ogni
+altro tratto (`tools/prova_pennello_testo.sh`).
+
 ### Pennello, il programma di disegno
 
 **testato in QEMU** — `/exwin/bin/pennello [file]`, nel menu Avvio: matita,
@@ -157,25 +212,6 @@ non la finestra che ha il fuoco. Per ora vale per il mouse PS/2 (anche
 quello emulato da QEMU e da molti portatili); i mouse USB e seriali la
 rotella non la mandano ancora (`tools/prova_rotella.sh`).
 
-### Il tasto destro, il trascinare e le associazioni
-
-**testato in QEMU** — il tasto destro apre un menu. Sulla scrivania: Nuova
-cartella, Nuovo file, Incolla, e su un'icona anche Apri, Rinomina, Copia,
-Taglia, Cancella. Nel file manager le stesse voci; lì si possono anche
-scegliere più righe (Ctrl+clic, Shift+clic) e trascinarle su una cartella a
-sinistra: una finestra chiede se copiarle, spostarle o lasciar perdere. Un
-file che non è un programma si apre col programma che gli spetta
-(`/exwin/lib/tipi.txt`): dal file manager, dalla scrivania e dalla shell, dove
-`nota.txt` apre l'editor (`tools/prova_tasto_destro.sh`; Ctrl e Shift col
-mouse in QEMU non si possono provare).
-
-### Pennello scrive
-
-**testato in QEMU** — Pennello ha lo strumento Testo (tasto T): un clic dove
-comincia la scritta, la si batte, ed entra nell'immagine col colore scelto; lo
-spessore ne decide la grandezza (12, 16, 24 o 36 pixel). Si annulla come ogni
-altro tratto (`tools/prova_pennello_testo.sh`).
-
 ### Il mouse veloce non ferma più la scrivania
 
 **testato in QEMU** — muovere il mouse in fretta mentre si disegnava in
@@ -192,42 +228,6 @@ stesso. Clic e tasti continuano ad arrivare tutti
 **testato in QEMU** — un programma BASIC lanciato con F5 da gfedit ora mostra
 il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
 gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
-
-### Le schede: nell'editor, in exide e nel navigatore
-
-**testato in QEMU** — l'editor apre più file, uno per scheda (`edit a.txt
-b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab gira fra le schede, Ctrl+W chiude quella
-scelta e chiede se è modificata. In exide la finestra dei file del
-progetto tiene più sorgenti in schede. EXBrowser apre i collegamenti in una
-scheda nuova (`target="_blank"`, Ctrl+clic, Ctrl+T) o in una finestra nuova
-(Shift+clic, Ctrl+N, il tasto destro su un collegamento); le schede in
-sottofondo tengono l'indirizzo e si ricaricano quando si torna. La barra
-delle schede è un controllo del toolkit, a disposizione di ogni programma
-(`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
-`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
-
-### ExJs legge il JavaScript di oggi
-
-**testato in QEMU e sull'host** — il motore ExJs (QuickJS resta il
-predefinito) legge `let` e `const`, le frecce, le classi con `extends` e
-`super`, i modelli `` `${}` ``, la destrutturazione, lo spread, `?.`, `??`,
-`**`, `for..of` e le etichette, e ha `Object`, `Array`, `Map`, `Set`,
-`call`/`apply`/`bind`, i metodi nuovi di vettori e stringhe, `toFixed` e
-le funzioni di `Math`. I numeri si scrivono come in ogni altro motore
-(`0.1 + 0.2` è `0.30000000000000004`, `1e21` è `1e+21`) e `for..in` dà le
-chiavi nell'ordine in cui sono nate. Mancano ancora le espressioni regolari
-e le Promise, e gli oggetti non si recuperano (`make prova-exjs`, 448 prove;
-`tools/prova_es2015.sh`).
-
-### ExJs: `throw`, `try`, `switch` e i prototipi
-
-**testato sull'host** — il motore ExJs (QuickJS resta il predefinito) ha
-`throw`, `try`/`catch`/`finally` e `switch`; `new F()` eredita i metodi di
-`F.prototype`, e c'è `instanceof`. Ci sono `Error`, `TypeError`,
-`RangeError` e gli altri, e gli errori del motore stesso si prendono con un
-`catch`. Uno script fermato perché gira da troppo invece no. Leggere una
-proprietà di `undefined` rende ancora `undefined` invece di lanciare
-(`make prova-exjs`, 342 prove).
 
 ### ExJs: `Date` e `valueOf`
 
@@ -2044,7 +2044,8 @@ byte, e la finestra riparte.
 ### Il navigatore esegue JavaScript, e i motori sono due
 
 **testato** — 256 prove sul linguaggio, 244 sul ponte con ExJs e 244 con
-QuickJS, più quindici riquadri provati dentro EX-OS.
+QuickJS, più quindici riquadri provati dentro EX-OS (al 29 settembre 2026
+sono 448 sul linguaggio e 264 sul ponte con ciascuno dei due motori).
 
 **Due motori, la stessa interfaccia.** `exjs.so` è scritto qui dentro;
 `quickjs.so` è QuickJS compilato per EX-OS. Si sceglie quale caricare, e il
@@ -2590,12 +2591,12 @@ di una.
 
 | | |
 |---|---|
-| `pm` — scrivania, barra in basso, pulsante **Avvio**, menu con le applicazioni | testato |
+| `pm` — scrivania, barra in basso, pulsante **Avvio**, menu con le applicazioni; tasto destro per creare, rinominare, copiare e cancellare | testato |
 | Voci **Esci** (torna alla shell) e **Spegni** nel menu | testato |
 | `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — le applicazioni grafiche **non stanno in `/bin`** | testato |
 | L'elenco delle applicazioni è un **file di testo**, `/exwin/lib/applicazioni.txt` | testato |
-| `filemgr` — file manager: elenco che scorre, directory in cima, apre i file con l'editor | testato |
-| `edit` — editor di testo: frecce, Home/End, PgSu/PgGiù, Canc, clic del mouse, Ctrl+S, Ctrl+Q | testato |
+| `filemgr` — file manager: elenco che scorre, directory in cima, tasto destro, trascinare, apre ogni file col suo programma | testato |
+| `edit` — editor di testo: più file in schede, cerca e sostituisci, annulla, appunti, Ctrl+S, Ctrl+Q | testato |
 
 ! **LE APPLICAZIONI GRAFICHE NON STANNO IN `/bin`, ED È UNA DECISIONE.** I
 programmi di `/bin` si lanciano da una shell e parlano con un terminale; questi
@@ -3773,7 +3774,7 @@ exwin                       accende la grafica sulla console 5
 
 /exwin/bin/pm               la scrivania (la avvia exwin da sola)
 /exwin/bin/filemgr [DIR]    il file manager
-/exwin/bin/edit [FILE]      l'editor di testo
+/exwin/bin/edit [FILE...]   l'editor di testo: un file per scheda
 /exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
 /exwin/bin/exbrowser [URL]  EXBrowser, il navigatore (un percorso assoluto diventa file:)
 /exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
@@ -3825,22 +3826,37 @@ possibile tutto il resto, vista dal lato scomodo.
 | Backspace, Canc | cancellano indietro e avanti |
 | Invio | spezza la riga |
 | clic del mouse | posiziona il cursore |
+| Shift + frecce, Ctrl+A | scelgono il testo |
+| Ctrl+X, Ctrl+C, Ctrl+V | tagliano, copiano, incollano |
+| Ctrl+Z | annulla (taglia, incolla, cancella) |
+| Ctrl+F, F3, Shift+F3, Ctrl+H | cerca, il successivo, il precedente, sostituisce |
+| Ctrl+N, Ctrl+O | un file nuovo, un file aperto: ognuno nella sua scheda |
+| Ctrl+Tab, Ctrl+Shift+Tab | la scheda dopo, quella prima |
+| Ctrl+W | chiude la scheda; se il file è modificato chiede |
 | Ctrl+S | salva; senza nome apre il dialogo **Salva con nome** |
-| Ctrl+Q | esce; se il testo è modificato avvisa e chiede di nuovo |
+| Ctrl+Q | esce; se ci sono file modificati dice quanti e chiede |
 
-I pulsanti sono **Nuovo**, **Apri**, **Salva**, **Salva come**, **Ricarica**.
-«Apri» e «Salva con nome» stanno in `exdlg.so`, la libreria condivisa dei
-dialoghi, che usa anche il file manager.
+Le stesse cose stanno nei menu **File** e **Modifica**. «Apri» e «Salva con
+nome» stanno in `exdlg.so`, la libreria condivisa dei dialoghi, che usa anche
+il file manager. `edit a.txt b.txt` apre due schede.
 
-Manca, dichiarato: annullamento, selezione e appunti. E un dialogo con
-**sì/no**: oggi «vuoi perdere le modifiche?» si chiede facendo premere due
-volte lo stesso pulsante, e si vede che è un ripiego.
+Manca, dichiarato: il **ripeti** dopo un annulla, e annullare la
+digitazione (si annullano i comandi che cambiano il testo, non i tasti
+battuti). Un file oltre le 512 righe si apre in parte e non si salva.
 
 ### Il file manager
 
 Elenco che scorre, **directory in cima**, pulsanti `Su` e `Apri`, riga di
-stato col percorso. Frecce e Invio oltre al mouse. Premendo «Apri» su un file
-lo passa all'editor, cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
+stato col percorso. Frecce e Invio oltre al mouse. «Apri» su un file lo apre
+col programma che gli spetta (`/exwin/lib/tipi.txt`: le immagini con
+Immagini, gli archivi con Archivi, le pagine con EXBrowser, il resto con
+l'editor), cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
+
+Il **tasto destro** apre un menu: Apri, Nuova cartella, Nuovo file,
+Rinomina, Copia, Taglia, Incolla, Cancella. Si scelgono **più righe** con
+Ctrl+clic e Shift+clic, o segnandole con la barra spaziatrice; trascinate su
+una cartella dell'albero a sinistra, una finestra chiede se copiarle,
+spostarle o lasciar perdere.
 
 **Dal 16 settembre 2026 l'elenco ha quattro colonne e si ordina cliccando**
 (`filemgr` 0.002):
@@ -3908,6 +3924,17 @@ spezza e scorre, collegamenti, immagini, fogli di stile, tabelle, moduli,
 HTTPS, biscotti, JavaScript — sta nelle voci di «Novità» qui sopra, che sono
 il posto dove quel lavoro è raccontato per intero.
 
+| tasti | che cosa fanno |
+|---|---|
+| Ctrl+T, `target="_blank"`, `window.open()` | una scheda nuova |
+| Ctrl+clic su un collegamento | una scheda nuova, dietro |
+| Ctrl+N, Shift+clic | una finestra nuova (un secondo EXBrowser) |
+| tasto destro su un collegamento | Apri, in una scheda nuova, in una finestra nuova, Copia l'indirizzo |
+| Ctrl+Tab, Ctrl+W | la scheda dopo; chiude la scheda (l'ultima chiude la finestra) |
+
+Le schede che non si guardano tengono l'indirizzo e la posizione, non la
+pagina: tornandoci la pagina si ricarica, dalla cache se c'è.
+
 ### EX-IDE — l'ambiente di sviluppo visuale
 
 `/exwin/bin/exide [DIR]`. Con un argomento apre subito il progetto che sta in
@@ -3930,6 +3957,10 @@ generato e lo scritto non si tocchino mai:
 | `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
 | `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
 | `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano, in fondo, e non riscrive mai quel che c'è |
+
+Gli altri sorgenti del progetto (`src/`) si aprono da **Strumenti > Files**, in
+una finestra con le **schede**: un file per scheda, «Apri...» o Ctrl+O per
+aggiungerne, e cambiando scheda il file si salva.
 
 ### La prova dei font
 

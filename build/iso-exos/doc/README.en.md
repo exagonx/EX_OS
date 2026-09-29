@@ -84,6 +84,60 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Tabs: in the editor, in exide and in the browser
+
+**tested in QEMU** - the editor opens several files, one per tab (`edit
+a.txt b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab moves between tabs, Ctrl+W closes
+the chosen one and asks if it was modified. In exide the project's file
+window keeps several sources in tabs. EXBrowser opens links in a new tab
+(`target="_blank"`, Ctrl+click, Ctrl+T) or in a new window (Shift+click,
+Ctrl+N, the right button on a link); background tabs keep their address and
+reload when you come back. The tab bar is a toolkit control, available to
+every program (`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
+
+### ExJs reads today's JavaScript
+
+**tested in QEMU and on the host** - the ExJs engine (QuickJS stays the
+default) reads `let` and `const`, arrows, classes with `extends` and
+`super`, `` `${}` `` templates, destructuring, spread, `?.`, `??`, `**`,
+`for..of` and labels, and has `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, the newer array and string methods, `toFixed` and the
+`Math` functions. Numbers print as in every other engine (`0.1 + 0.2` is
+`0.30000000000000004`, `1e21` is `1e+21`) and `for..in` gives keys in
+creation order. Regular expressions and Promises are still missing, and
+objects are not reclaimed (`make prova-exjs`, 448 tests;
+`tools/prova_es2015.sh`).
+
+### ExJs: `throw`, `try`, `switch` and prototypes
+
+**tested on the host** - the ExJs engine (QuickJS stays the default) has
+`throw`, `try`/`catch`/`finally` and `switch`; `new F()` inherits the
+methods of `F.prototype`, and `instanceof` works. `Error`, `TypeError`,
+`RangeError` and the others exist, and the engine's own errors can be caught.
+A script stopped for running too long cannot. Reading a property of
+`undefined` still gives `undefined` instead of throwing (`make prova-exjs`,
+342 tests).
+
+### The right button, dragging, and file associations
+
+**tested in QEMU** - the right button opens a menu. On the desktop: New
+folder, New file, Paste, and on an icon also Open, Rename, Copy, Cut, Delete.
+The file manager has the same items; there several rows can be chosen
+(Ctrl+click, Shift+click) and dragged onto a folder on the left: a window asks
+whether to copy them, move them or leave them. A file that is not a program
+opens with the program it belongs to (`/exwin/lib/tipi.txt`): from the file
+manager, the desktop and the shell, where `nota.txt` opens the editor
+(`tools/prova_tasto_destro.sh`; Ctrl and Shift with the mouse cannot be tested
+in QEMU).
+
+### Pennello writes
+
+**tested in QEMU** — Pennello has a Text tool (key T): click where the text
+starts, type it, and it goes into the picture in the chosen colour; the width
+buttons choose its size (12, 16, 24 or 36 pixels). It is undone like any
+other stroke (`tools/prova_pennello_testo.sh`).
+
 ### Pennello, the paint program
 
 **tested in QEMU** — `/exwin/bin/pennello [file]`, in the Start menu: pencil,
@@ -140,25 +194,6 @@ focus. For now it works with PS/2 mice (including the one QEMU emulates and
 many laptops); USB and serial mice do not send the wheel yet
 (`tools/prova_rotella.sh`).
 
-### The right button, dragging, and file associations
-
-**tested in QEMU** - the right button opens a menu. On the desktop: New
-folder, New file, Paste, and on an icon also Open, Rename, Copy, Cut, Delete.
-The file manager has the same items; there several rows can be chosen
-(Ctrl+click, Shift+click) and dragged onto a folder on the left: a window asks
-whether to copy them, move them or leave them. A file that is not a program
-opens with the program it belongs to (`/exwin/lib/tipi.txt`): from the file
-manager, the desktop and the shell, where `nota.txt` opens the editor
-(`tools/prova_tasto_destro.sh`; Ctrl and Shift with the mouse cannot be tested
-in QEMU).
-
-### Pennello writes
-
-**tested in QEMU** — Pennello has a Text tool (key T): click where the text
-starts, type it, and it goes into the picture in the chosen colour; the width
-buttons choose its size (12, 16, 24 or 36 pixels). It is undone like any
-other stroke (`tools/prova_pennello_testo.sh`).
-
 ### A fast mouse no longer freezes the desktop
 
 **tested in QEMU** — moving the mouse quickly while drawing in Pennello froze
@@ -174,41 +209,6 @@ itself down. Clicks and keys still all arrive
 **tested in QEMU** — a BASIC program started with F5 from gfedit now shows
 the `INPUT` prompt and reads the keyboard: gfedit hands it the console while
 it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
-
-### Tabs: in the editor, in exide and in the browser
-
-**tested in QEMU** - the editor opens several files, one per tab (`edit
-a.txt b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab moves between tabs, Ctrl+W closes
-the chosen one and asks if it was modified. In exide the project's file
-window keeps several sources in tabs. EXBrowser opens links in a new tab
-(`target="_blank"`, Ctrl+click, Ctrl+T) or in a new window (Shift+click,
-Ctrl+N, the right button on a link); background tabs keep their address and
-reload when you come back. The tab bar is a toolkit control, available to
-every program (`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
-`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
-
-### ExJs reads today's JavaScript
-
-**tested in QEMU and on the host** - the ExJs engine (QuickJS stays the
-default) reads `let` and `const`, arrows, classes with `extends` and
-`super`, `` `${}` `` templates, destructuring, spread, `?.`, `??`, `**`,
-`for..of` and labels, and has `Object`, `Array`, `Map`, `Set`,
-`call`/`apply`/`bind`, the newer array and string methods, `toFixed` and the
-`Math` functions. Numbers print as in every other engine (`0.1 + 0.2` is
-`0.30000000000000004`, `1e21` is `1e+21`) and `for..in` gives keys in
-creation order. Regular expressions and Promises are still missing, and
-objects are not reclaimed (`make prova-exjs`, 448 tests;
-`tools/prova_es2015.sh`).
-
-### ExJs: `throw`, `try`, `switch` and prototypes
-
-**tested on the host** - the ExJs engine (QuickJS stays the default) has
-`throw`, `try`/`catch`/`finally` and `switch`; `new F()` inherits the
-methods of `F.prototype`, and `instanceof` works. `Error`, `TypeError`,
-`RangeError` and the others exist, and the engine's own errors can be caught.
-A script stopped for running too long cannot. Reading a property of
-`undefined` still gives `undefined` instead of throwing (`make prova-exjs`,
-342 tests).
 
 ### ExJs: `Date` and `valueOf`
 
@@ -2016,7 +2016,8 @@ says so: an empty twenty-byte ACK, and the flow restarts.
 ### The browser runs JavaScript, and there are two engines
 
 **tested** — 256 tests on the language, 244 on the bridge with ExJs and 244 with
-QuickJS, plus fifteen panels exercised inside EX-OS.
+QuickJS, plus fifteen panels exercised inside EX-OS (on 29 September 2026 they
+are 448 on the language and 264 on the bridge with each engine).
 
 **Two engines, one interface.** `exjs.so` is written here; `quickjs.so` is
 QuickJS compiled for EX-OS. You choose which one to load, and the bridge to the
@@ -2557,12 +2558,12 @@ to know the screen format would have six paths to try instead of one.
 
 | | |
 |---|---|
-| `pm` — desktop, taskbar at the bottom, **Start** button, menu of applications | tested |
+| `pm` — desktop, taskbar at the bottom, **Start** button, menu of applications; the right button creates, renames, copies and deletes | tested |
 | **Exit** (back to the shell) and **Shut down** entries in the menu | tested |
 | `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — graphical applications **do not live in `/bin`** | tested |
 | The application list is a **text file**, `/exwin/lib/applicazioni.txt` | tested |
-| `filemgr` — file manager: scrolling list, directories first, opens files with the editor | tested |
-| `edit` — text editor: arrows, Home/End, PgUp/PgDn, Delete, mouse click, Ctrl+S, Ctrl+Q | tested |
+| `filemgr` — file manager: scrolling list, directories first, right button, drag and drop, opens every file with its program | tested |
+| `edit` — text editor: several files in tabs, find and replace, undo, clipboard, Ctrl+S, Ctrl+Q | tested |
 
 ! **GRAPHICAL APPLICATIONS DO NOT LIVE IN `/bin`, AND THAT IS A DECISION.**
 Programs in `/bin` are launched from a shell and talk to a terminal; these want
@@ -3733,7 +3734,7 @@ exwin                       brings up graphics on console 5
 
 /exwin/bin/pm               the desktop (exwin starts it by itself)
 /exwin/bin/filemgr [DIR]    the file manager
-/exwin/bin/edit [FILE]      the text editor
+/exwin/bin/edit [FILE...]   the text editor: one file per tab
 /exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
 /exwin/bin/exbrowser [URL]  EXBrowser, the browser (an absolute path becomes a file:)
 /exwin/bin/exide [DIR]      the visual development environment
@@ -3784,23 +3785,36 @@ separation that makes everything else possible, seen from the awkward side.
 | Backspace, Delete | erase backwards and forwards |
 | Enter | splits the line |
 | mouse click | places the cursor |
+| Shift + arrows, Ctrl+A | select text |
+| Ctrl+X, Ctrl+C, Ctrl+V | cut, copy, paste |
+| Ctrl+Z | undo (cut, paste, delete) |
+| Ctrl+F, F3, Shift+F3, Ctrl+H | find, next, previous, replace |
+| Ctrl+N, Ctrl+O | a new file, an opened file: each in its own tab |
+| Ctrl+Tab, Ctrl+Shift+Tab | next tab, previous tab |
+| Ctrl+W | closes the tab; asks if the file was modified |
 | Ctrl+S | save; with no name it opens the **Save as** dialog |
-| Ctrl+Q | quit; if the text was modified it warns and asks again |
+| Ctrl+Q | quit; if files were modified it says how many and asks |
 
-The buttons are **New**, **Open**, **Save**, **Save as**, **Reload**. "Open"
-and "Save as" live in `exdlg.so`, the shared dialog library, which the file
-manager uses too.
+The same things are in the **File** and **Modifica** menus. "Open" and "Save
+as" live in `exdlg.so`, the shared dialog library, which the file manager uses
+too. `edit a.txt b.txt` opens two tabs.
 
-Missing, and declared: undo, selection and clipboard. And a **yes/no** dialog:
-today "do you want to lose your changes?" is asked by making you press the same
-button twice, and it shows.
+Missing, and declared: **redo** after an undo, and undoing typing (the
+commands that change the text are undone, not the keys typed). A file over
+512 lines opens partially and is not saved.
 
 ### The file manager
 
 Scrolling list, **directories first**, `Up` and `Open` buttons, a status line
-with the path. Arrows and Enter as well as the mouse. Pressing "Open" on a file
-hands it to the editor, looked for in `/exwin/bin` and then in
-`/cdrom/exwin/bin`.
+with the path. Arrows and Enter as well as the mouse. "Open" on a file opens it
+with the program it belongs to (`/exwin/lib/tipi.txt`: images with Immagini,
+archives with Archivi, pages with EXBrowser, everything else with the editor),
+looked for in `/exwin/bin` and then in `/cdrom/exwin/bin`.
+
+The **right button** opens a menu: Open, New folder, New file, Rename, Copy,
+Cut, Paste, Delete. **Several rows** are chosen with Ctrl+click and
+Shift+click, or marked with the space bar; dragged onto a folder of the tree on
+the left, a window asks whether to copy them, move them or leave them.
 
 **Since 16 September 2026 the list has four columns and sorts on a click**
 (`filemgr` 0.002):
@@ -3867,6 +3881,17 @@ marginalia) by itself. What the page can do — text that wraps and scrolls,
 links, images, style sheets, tables, forms, HTTPS, cookies, JavaScript — is in
 the "What's new" entries above, which are where that work is told in full.
 
+| keys | what they do |
+|---|---|
+| Ctrl+T, `target="_blank"`, `window.open()` | a new tab |
+| Ctrl+click on a link | a new tab, in the background |
+| Ctrl+N, Shift+click | a new window (a second EXBrowser) |
+| right button on a link | Open, in a new tab, in a new window, Copy the address |
+| Ctrl+Tab, Ctrl+W | next tab; closes the tab (the last one closes the window) |
+
+Tabs you are not looking at keep their address and position, not the page:
+coming back reloads it, from the cache if it is there.
+
 ### EX-IDE — the visual development environment
 
 `/exwin/bin/exide [DIR]`. With an argument it opens the project living in that
@@ -3890,6 +3915,10 @@ the generated and the written never touch:
 | `finestra.h` | exide only: the ids, the pointers, the prototypes |
 | `finestra_gen.c` | exide only: creates the controls and dispatches the events |
 | `finestra.c` | **you only**: exide *adds* the missing handlers at the end, and never rewrites what is there |
+
+The project's other sources (`src/`) open from **Strumenti > Files**, in a
+window with **tabs**: one file per tab, "Apri..." or Ctrl+O to add one, and
+switching tab saves the file.
 
 ### The font test
 
