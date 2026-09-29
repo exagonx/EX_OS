@@ -1681,14 +1681,14 @@ excss_so: dirs $(EXCSS_SO)
 # contare da solo il giorno che arrivera' un motore JavaScript». A dire se ci
 # sta e' tools/fette.py, che le misure le legge dagli ELF veri.
 # =============================================================================
-EXJS_SRC     := lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c                 lib/exjs/run.c lib/exjs/base.c lib/exjs/libreria.c
+EXJS_SRC     := lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c                 lib/exjs/run.c lib/exjs/base.c lib/exjs/libreria.c lib/exjs/regexp.c
 EXJS_HDR     := lib/exjs/exjs.h lib/exjs/exjs_int.h
 EXJS_ESPORTA := lib/exjs/exjs_esporta.c
 EXJS_STUB    := lib/exjs/exjs_stub.c
 EXJS_LD      := lib/exjs/exjs.ld
 EXJS_SO      := $(BUILD_EXWIN_LIB)/exjs.so
 
-EXJS_OBJ     := $(BUILD_OBJ)/sojs_lex.o $(BUILD_OBJ)/sojs_parse.o                 $(BUILD_OBJ)/sojs_val.o $(BUILD_OBJ)/sojs_run.o                 $(BUILD_OBJ)/sojs_base.o $(BUILD_OBJ)/sojs_libreria.o
+EXJS_OBJ     := $(BUILD_OBJ)/sojs_lex.o $(BUILD_OBJ)/sojs_parse.o                 $(BUILD_OBJ)/sojs_val.o $(BUILD_OBJ)/sojs_run.o                 $(BUILD_OBJ)/sojs_base.o $(BUILD_OBJ)/sojs_libreria.o $(BUILD_OBJ)/sojs_regexp.o
 
 $(EXJS_SO): $(EXJS_SRC) $(EXJS_HDR) $(EXJS_ESPORTA) $(EXJS_LD)             $(EXLIB_HDR) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exjs.so ==="
@@ -6648,7 +6648,7 @@ prova-exjs:
 	@mkdir -p $(PROVE_HOST_DIR)
 	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/jsprova \
 	    tools/prove/jsprova.c lib/exjs/lex.c lib/exjs/parse.c \
-	    lib/exjs/val.c lib/exjs/run.c lib/exjs/base.c lib/exjs/libreria.c -I lib/exjs
+	    lib/exjs/val.c lib/exjs/run.c lib/exjs/base.c lib/exjs/libreria.c lib/exjs/regexp.c -I lib/exjs
 	@$(PROVE_HOST_DIR)/jsprova
 
 # ! E COMPILA ANCHE PER IL BERSAGLIO, non solo per l'host. Il banco gira a 64
@@ -6656,9 +6656,9 @@ prova-exjs:
 # diverse. Lo stesso controllo c'e' per extls e per excert.
 .PHONY: verifica-exjs
 verifica-exjs: lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
-               lib/exjs/base.c lib/exjs/libreria.c lib/exjs/exjs.h lib/exjs/exjs_int.h
+               lib/exjs/base.c lib/exjs/libreria.c lib/exjs/regexp.c lib/exjs/exjs.h lib/exjs/exjs_int.h
 	@for f in lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
-	          lib/exjs/base.c lib/exjs/libreria.c; do \
+	          lib/exjs/base.c lib/exjs/libreria.c lib/exjs/regexp.c; do \
 	    n=$$(basename $$f .c); \
 	    $(CC) $(CFLAGS_USER) -I lib/exjs -I lib/include -c $$f \
 	        -o $(BUILD_OBJ)/exjs_$${n}_prova.o || exit 1; \
@@ -6682,7 +6682,7 @@ prova-exdom:
 	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/domprova \
 	    tools/prove/domprova.c lib/exdom/exdom.c lib/exhtml/html.c \
 	    lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
-	    lib/exjs/base.c lib/exjs/libreria.c -I lib/exdom -I lib/exjs -I lib/exhtml
+	    lib/exjs/base.c lib/exjs/libreria.c lib/exjs/regexp.c -I lib/exdom -I lib/exjs -I lib/exhtml
 	@$(PROVE_HOST_DIR)/domprova
 
 .PHONY: verifica-exdom

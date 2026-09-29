@@ -985,8 +985,12 @@ static ExJsVal valuta(Ese *E, int n, int ambito)
     case N_NULLO:   return exjs_nullo();
 
     case N_QUESTO: {
+        /* ! FUORI DA OGNI FUNZIONE `this` E' L'OGGETTO GLOBALE (29 settembre
+         * 2026): `(function (G) {...})(this)` e' il modo in cui molte
+         * librerie — e il preludio del navigatore — trovano window. Prima
+         * era undefined. */
         int p = exjs_prop_trova(c, ambito, "this", 1);
-        return (p >= 0) ? exjs_prop_val(c, p) : exjs_indefinito();
+        return (p >= 0) ? exjs_prop_val(c, p) : exjs_globale(c);
     }
 
     case N_NOME: {
@@ -1062,6 +1066,9 @@ static ExJsVal valuta(Ese *E, int n, int ambito)
         }
         return o;
     }
+
+    case N_REGEXP:
+        return exjs_regexp_nuova(c, E->A->arena + N->testo, N->op);
 
     case N_CATENA: {
         ExJsVal v;

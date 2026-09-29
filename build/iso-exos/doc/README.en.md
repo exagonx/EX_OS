@@ -84,6 +84,25 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The browser starts at 32 MB too
+
+**tested in QEMU** - at 32 MB EXBrowser sometimes did not start ("LIB:
+pagina non allocata"). It was not memory: two programs asking for the same
+shared library at the same time stole each other's slot in the kernel's
+loader while the first waited for the disk. Kernel 0.224 reserves the slot
+before reading, and whoever comes later waits.
+
+### ExJs has regular expressions
+
+**tested in QEMU and on the host** - the ExJs engine reads `/.../flags` and
+has `RegExp`: classes, groups (named too), alternation, greedy and lazy
+quantifiers, backreferences, `(?=` and `(?!`, the flags g i m s y; and with
+them `exec`, `test`, `replace` and `replaceAll` (with `$1`, `$<name>` or a
+function), `split`, `match`, `matchAll`, `search`. An expression that would
+run for ever stops with an error instead of freezing the page. With regular
+expressions the browser's prelude runs under ExJs too. Lookbehind is missing
+(`make prova-exjs`, 492 tests).
+
 ### Tabs: in the editor, in exide and in the browser
 
 **tested in QEMU** - the editor opens several files, one per tab (`edit

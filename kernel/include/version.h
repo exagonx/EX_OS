@@ -363,7 +363,14 @@
  * bloccato. ! wserver 0.004 vuole questo kernel: su uno vecchio il bit
  * arriverebbe dentro il tipo e il client non riconoscerebbe i movimenti.
  */
-#define EXOS_VERSION    "0.223"
+/* 0.223 -> 0.224: DUE PROCESSI CHE CARICANO INSIEME LA STESSA LIBRERIA
+ * (29 settembre 2026, claude-A, @NAV-32MB). lib_apri segnava lo slot come
+ * usato solo a lettura finita: chi arrivava mentre il primo aspettava il
+ * disco prendeva lo stesso slot e lo ricominciava, e il primo moriva su
+ * «LIB: pagina ... non allocata». Ora lo slot si prenota (LIB_IN_CARICO) e
+ * il secondo aspetta; il buffer di lettura non e' piu' static. Vedi
+ * kernel/loader/lib.c. */
+#define EXOS_VERSION    "0.224"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

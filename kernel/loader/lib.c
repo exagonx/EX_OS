@@ -109,6 +109,9 @@ typedef struct {
     int      privata;   /* 1 = ogni processo ne vuole una sua */
 } LibPagina;
 
+/* usata: 0 libera, 1 pronta, LIB_IN_CARICO mentre la si legge dal disco */
+#define LIB_IN_CARICO 2
+
 typedef struct {
     int        usata;
     char       percorso[LIB_PERC_MAX];
@@ -321,7 +324,10 @@ static int leggi_libreria(const char *percorso, Libreria *L)
 
         /* Il contenuto: solo p_filesz byte, il resto e' .bss e resta a zero. */
         if (ph.p_filesz > 0) {
-            static uint8_t buf[512];
+            /* ! SULLA PILA, NON static: mentre si aspetta il disco puo' girare
+             * un altro processo che carica un'altra libreria, e un posto solo
+             * per tutti e due si prenderebbe i byte dell'altro. */
+            uint8_t buf[512];
             uint32_t resta = ph.p_filesz;
             uint32_t fpos  = ph.p_offset;
             uint32_t vpos  = ph.p_vaddr;
@@ -485,12 +491,33 @@ int32_t lib_apri(const char *percorso, Process *proc, uint32_t *out_tabella)
     if (percorso == NULL || proc == NULL || out_tabella == NULL)
         return ERR(EINVAL);
 
-    /* Gia' in cache? Allora si aggancia e basta: il disco non si tocca. */
+    /* =========================================================================
+     * ! DUE PROCESSI CHE CHIEDONO INSIEME LA STESSA LIBRERIA (29 settembre
+     * 2026, @NAV-32MB). La lettura dal disco aspetta il driver, che in un
+     * minikernel e' un altro processo: nel frattempo gira chiunque. Prima lo
+     * slot si segnava `usata` solo a lettura finita, quindi il secondo che
+     * arrivava non vedeva la libreria, prendeva LO STESSO slot libero e
+     * ricominciava da capo — n_pagine a zero, un elenco nuovo — sotto i piedi
+     * del primo, che finiva su «pagina ... non allocata». Il sintomo era un
+     * navigatore che ogni tanto non partiva («exhttp.so», «exdlg.so»), piu'
+     * spesso a 32 MB, e una seconda prova uguale che passava.
+     *
+     * Adesso lo slot si prenota prima di leggere (LIB_IN_CARICO), e chi
+     * trova la stessa libreria in carico aspetta cedendo il turno finche'
+     * non e' pronta, o finche' chi la caricava non ha rinunciato.
+     * ========================================================================= */
+cerca:
+    L = NULL;
     for (i = 0; i < LIB_MAX; i++) {
         if (!g_lib[i].usata) continue;
         if (perc_uguale(g_lib[i].percorso, percorso)) { L = &g_lib[i]; break; }
     }
+    if (L != NULL && L->usata == LIB_IN_CARICO) {
+        sched_yield();
+        goto cerca;
+    }
 
+    /* Gia' in cache? Allora si aggancia e basta: il disco non si tocca. */
     if (L == NULL) {
         for (i = 0; i < LIB_MAX; i++)
             if (!g_lib[i].usata) { L = &g_lib[i]; break; }
@@ -506,6 +533,7 @@ int32_t lib_apri(const char *percorso, Process *proc, uint32_t *out_tabella)
         }
 
         perc_copia(L->percorso, percorso);
+        L->usata = LIB_IN_CARICO;               /* prenotata: vedi sopra */
         rc = leggi_libreria(percorso, L);
         if (rc != 0) { disfa(L); return rc; }
         L->usata = 1;

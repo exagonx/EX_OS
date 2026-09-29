@@ -580,6 +580,47 @@ static int leggi_modello(ExJsLex *L)
     return TK_MODELLO;
 }
 
+int exjs_lex_regexp(ExJsLex *L)
+{
+    int  in_classe = 0, flag = 0;
+    char c;
+
+    L->pos     = L->inizio + 1;                 /* dopo la barra d'apertura */
+    L->testo_n = 0;
+    for (;;) {
+        if (L->pos >= L->n) return errore(L, "espressione regolare non chiusa");
+        c = L->sorgente[L->pos];
+        if (c == '\n' || c == '\r') return errore(L, "a capo dentro un'espressione regolare");
+        avanti1(L);
+        if (c == '\\') {
+            if (L->pos >= L->n) return errore(L, "espressione regolare non chiusa");
+            if (!metti(L, c) || !metti(L, avanti1(L))) return errore(L, "espressione regolare troppo lunga");
+            continue;
+        }
+        if (c == '[') in_classe = 1;
+        else if (c == ']') in_classe = 0;
+        else if (c == '/' && !in_classe) break;
+        if (!metti(L, c)) return errore(L, "espressione regolare troppo lunga");
+    }
+    L->testo[L->testo_n] = '\0';
+    while (L->pos < L->n) {
+        c = L->sorgente[L->pos];
+        if      (c == 'g') flag |= RE_G;
+        else if (c == 'i') flag |= RE_I;
+        else if (c == 'm') flag |= RE_M;
+        else if (c == 's') flag |= RE_S;
+        else if (c == 'y') flag |= RE_Y;
+        else if (c == 'u' || c == 'd') flag |= RE_U;
+        else if (e_dentro_nome(c)) return errore(L, "flag sconosciuto dopo un'espressione regolare");
+        else break;
+        avanti1(L);
+    }
+    L->numero = (double)flag;
+    L->fine   = L->pos;
+    L->tipo   = TK_REGEXP;
+    return TK_REGEXP;
+}
+
 int exjs_lex_avanti(ExJsLex *L)
 {
     char c;
@@ -679,6 +720,7 @@ const char *exjs_lex_nome(int tipo)
     case TK_E_E_UG:     return "&&=";
     case TK_O_O_UG:     return "||=";
     case TK_MODELLO:    return "un modello `...`";
+    case TK_REGEXP:     return "un'espressione regolare";
     default: break;
     }
 

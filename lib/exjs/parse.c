@@ -562,6 +562,22 @@ static int primaria(Par *P)
     case TK_MODELLO:
         return modello(P);
 
+    /* ! UNA BARRA DOVE SI ASPETTA UN VALORE APRE UN'ESPRESSIONE REGOLARE
+     * (vedi exjs_lex_regexp): qui si sa, nel lessico no. */
+    case '/': case TK_DIV_UG: {
+        unsigned int off;
+
+        if (exjs_lex_regexp(&P->L) == TK_ERRORE) { P->rotto = 1; return -1; }
+        off = arena(P, P->L.testo, P->L.testo_n);
+        n = nodo(P, N_REGEXP);
+        if (n >= 0) {
+            P->A->nodi[n].testo = off;
+            P->A->nodi[n].op    = (unsigned char)P->L.numero;
+        }
+        avanti(P);
+        return n;
+    }
+
     case TK_SUPER:
         n = nodo(P, N_SUPER);
         avanti(P);
@@ -1717,6 +1733,7 @@ const char *exjs_nodo_nome(int tipo)
     case N_CLASSE:     return "classe";
     case N_SUPER:      return "super";
     case N_CATENA:     return "catena";
+    case N_REGEXP:     return "regexp";
     default:           return "?";
     }
 }

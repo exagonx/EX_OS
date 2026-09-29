@@ -282,6 +282,17 @@ vero). ! verifica-exjs compila soltanto: che exjs.so non si collegasse
 l'ha detto solo make iso-exos. E chiesti a fine giornata, scritti e non
 ancora cominciati: **le schede** nel toolkit, poi nel navigatore (con le
 finestre nuove), nell'editor e in exide.
+Poi **le espressioni regolari in ExJs** (lib/exjs/regexp.c): il lessico
+legge /../ quando il costruttore dell'albero glielo chiede, e un automa a
+ritorno all'indietro fa il resto. ! La guardia sulla profondita' com'era
+scritta non proteggeva niente: 2500 livelli da 352 byte l'uno, su una pila
+da 256 KB. Misurati con -fstack-usage, il lookahead spostato in una
+funzione sua (112 byte a livello) e i casi in coda fatti in un ciclo, il
+tetto e' 400. ! A 32 MB il navigatore a volte non caricava una sua libreria, e
+non era la memoria: era una corsa nel kernel. Due processi che chiedono
+insieme la stessa libreria prendevano lo stesso slot, e il secondo lo
+ricominciava sotto il primo mentre questo aspettava il disco. Kernel 0.224:
+lo slot si prenota prima di leggere (@NAV-32MB).
 Dopo il commit, **le schede**: nel toolkit la barra di linguette che c'era
 diventa anche barra di schede di documenti (X, frecce, Ctrl+Tab, Ctrl+W), e
 la usano l'editor (piu' file, uno alla volta nell'area e gli altri in

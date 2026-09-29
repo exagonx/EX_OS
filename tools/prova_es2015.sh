@@ -6,7 +6,8 @@
 # La stessa pagina due volte: con QuickJS (il predefinito) e con ExJs (una casa
 # su ext2 con "motore = exjs" nelle impostazioni). Lo script usa quello che le
 # pagine di oggi usano - let e const, frecce, classi con extends e super,
-# modelli `${}`, destrutturazione, spread, ?. e ??, Map, for..of - anche sul
+# modelli `${}`, destrutturazione, spread, ?. e ??, Map, for..of, le
+# espressioni regolari (dal 29 settembre anche in ExJs) - anche sul
 # DOM vero (querySelectorAll, textContent), e finisce LANCIANDO un Error col
 # suo esito: e' l'unica cosa di una pagina che arriva sulla seriale.
 #
@@ -58,6 +59,10 @@ prova('spread e resto', Math.max(...[1, 5, 3]) === 5 && ((...z) => z.length)(1, 
 let e = '';
 try { null.f(); } catch (err) { e = err instanceof TypeError ? 'T' : 'X'; }
 prova('try e catch', e === 'T');
+prova('regexp', /^(\\w+)@(\\w+)\\.it\$/.exec('io@casa.it')[2] === 'casa' &&
+      'a1b22'.replace(/\\d+/g, n => '<' + n + '>') === 'a<1>b<22>' &&
+      'x, y ,z'.split(/\\s*,\\s*/).join('') === 'xyz');
+prova('regexp sul DOM', ps.filter(p => /^d/.test(p.textContent)).length === 1);
 throw new Error(no.length ? 'ES-$2-NO ' + no.join(', ') : 'ES-$2-OK');
 </script></body></html>
 PAGINA
@@ -67,6 +72,12 @@ pagina e.html EXJS
 printf 'motore = exjs\n' > "$D/imp.txt"
 
 export EXOS_ISTANZA=es2015 EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso
+# ! 64 MB, COME LE ALTRE PROVE DEL NAVIGATORE. Il navigatore che a 32 MB ogni
+# tanto non caricava una libreria era una corsa nel kernel (due processi che
+# caricavano la stessa libreria insieme), corretta nel kernel 0.224: da li'
+# questa prova passa anche a 32 MB (29 settembre 2026). Si resta a 64 per
+# misurare quel che la prova cerca e non la memoria.
+export EXOS_RAM=64M
 export EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide"
 rm -f "$IMG"
 qemu-img create -f raw "$IMG" 32M > /dev/null

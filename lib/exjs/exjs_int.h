@@ -38,6 +38,8 @@
 #define TK_NOME        128      /* identificatore */
 #define TK_NUMERO      129
 #define TK_STRINGA     130
+#define TK_REGEXP      132      /* /corpo/flag: lo chiede il costruttore
+                                 * dell'albero (exjs_lex_regexp) */
 #define TK_MODELLO     131      /* `testo ${espr}`: il gettone e' tutto il
                                  * sorgente fra i backtick, che il costruttore
                                  * dell'albero spezza */
@@ -250,6 +252,7 @@ typedef struct {
                                  * c=costruttore (N_FUNZIONE)            */
 #define N_SUPER        62
 #define N_CATENA       63       /* la radice di una catena con ?.       */
+#define N_REGEXP       64       /* /corpo/flag: testo = corpo, op = flag */
 
 typedef struct {
     unsigned char tipo;
@@ -451,6 +454,25 @@ void exjs_lex_apri(ExJsLex *L, const char *sorgente, unsigned int n,
 /* Avanza al gettone successivo. Rende il tipo, TK_FINE alla fine, TK_ERRORE
  * dopo aver riempito `err`. */
 int exjs_lex_avanti(ExJsLex *L);
+
+/* ! LA BARRA NON SI SA COS'E' FINCHE' NON SI SA DOVE STA: dopo un valore
+ * divide, dove si aspetta un valore apre un'espressione regolare. Lo sa il
+ * costruttore dell'albero, che quando in primaria() trova '/' o '/=' chiede
+ * di rileggere il gettone da capo come /corpo/flag (29 settembre 2026). Il
+ * corpo va in testo, i flag (RE_*) in numero. */
+int exjs_lex_regexp(ExJsLex *L);
+
+/* I flag di un'espressione regolare (regexp.c) */
+#define RE_G  1
+#define RE_I  2
+#define RE_M  4
+#define RE_S  8
+#define RE_Y  16
+#define RE_U  32
+
+/* --- regexp.c --- */
+ExJsVal exjs_regexp_nuova(ExJsCtx *c, const char *corpo, int flag);
+void    exjs_regexp_registra(ExJsCtx *c);
 
 /* Il nome di un gettone, per i messaggi d'errore. Sempre una stringa valida. */
 const char *exjs_lex_nome(int tipo);

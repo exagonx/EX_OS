@@ -41,6 +41,12 @@ done
 printf 'motore = exjs\n' > "$D/imp.txt"
 
 export EXOS_ISTANZA=navfin EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso
+# ! 64 MB, COME LE ALTRE PROVE DEL NAVIGATORE. Il navigatore che a 32 MB ogni
+# tanto non caricava una libreria era una corsa nel kernel (due processi che
+# caricavano la stessa libreria insieme), corretta nel kernel 0.224: da li'
+# questa prova passa anche a 32 MB (29 settembre 2026). Si resta a 64 per
+# misurare quel che la prova cerca e non la memoria.
+export EXOS_RAM=64M
 export EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide"
 rm -f "$IMG"
 qemu-img create -f raw "$IMG" 32M > /dev/null

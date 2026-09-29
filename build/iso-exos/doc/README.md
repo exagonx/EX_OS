@@ -101,6 +101,25 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Il navigatore parte anche a 32 MB
+
+**testato in QEMU** — a 32 MB EXBrowser ogni tanto non partiva («LIB:
+pagina non allocata»). Non era la memoria: due programmi che chiedevano
+insieme la stessa libreria condivisa si rubavano il posto nel caricatore
+del kernel, mentre il primo aspettava il disco. Il kernel 0.224 prenota il
+posto prima di leggere, e chi arriva dopo aspetta.
+
+### ExJs ha le espressioni regolari
+
+**testato in QEMU e sull'host** — il motore ExJs legge `/.../flag` e ha
+`RegExp`: classi, gruppi (anche con nome), alternanza, quantificatori avidi
+e pigri, riferimenti all'indietro, `(?=` e `(?!`, i flag g i m s y; e con
+loro `exec`, `test`, `replace` e `replaceAll` (con `$1`, `$<nome>` o una
+funzione), `split`, `match`, `matchAll`, `search`. Un'espressione che
+girerebbe per sempre si ferma con un errore invece di bloccare la pagina.
+Con le regexp il preludio del navigatore gira anche con ExJs. Manca il
+guardare indietro (`make prova-exjs`, 492 prove).
+
 ### Le schede: nell'editor, in exide e nel navigatore
 
 **testato in QEMU** — l'editor apre più file, uno per scheda (`edit a.txt

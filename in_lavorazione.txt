@@ -242,7 +242,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @CALCTOR         FATTO e provato (8/8): la calcolatrice, tre modalita', e il toolkit nuovo
   1  @BUILD-FLAG      il segnaposto dei flag ricreato da solo: tutto ricompilato (causa ignota)
   1  @EXJS-LACUNE     FATTE: ES2015 e oltre, libreria, numeri (29/09, jsprova 448/448)
-  1  @EXJS-REGEXP     ExJs non ha le espressioni regolari: /a+/, replace e split con regexp
+  1  @EXJS-REGEXP     FATTO (29/09): /../ e RegExp, exec, test, replace, split, match; jsprova 492/492
+  1  @NAV-32MB        FATTO (29/09, kernel 0.224): era una corsa nel caricatore di librerie
   1  @EXJS-GC         ExJs non recupera gli oggetti: 2000 nel navigatore, poi si ferma
   1  @PM-SFONDO       FATTO tutto, disposizione compresa (angolo centro allarga ripeti)
   1  @PM-DESKTOP      FATTO e provato in QEMU (5/5 con PM-UNITA): icone non spostabili
@@ -4773,7 +4774,39 @@ radici: il globale, i prototipi, i lavori in coda, e quello che exdom tiene
 l'arena delle stringhe resta com'e' (si compatta dopo, se serve).
 
 =============================================================================
-@EXJS-REGEXP LE ESPRESSIONI REGOLARI (aperto il 29 settembre 2026)
+@NAV-32MB IL NAVIGATORE A 32 MB (aperto il 29 settembre 2026)
+=============================================================================
+
+Su una macchina (o un QEMU) da 32 MB EXBrowser ogni tanto non parte: una
+delle sue librerie condivise non si carica — «LIB: '/exwin/lib/exhttp.so':
+pagina ... non allocata», oppure lo stub che dice «la libreria condivisa non
+esporta un nome che serve a questo programma» — e la stessa corsa ripetuta
+passa. Era gia' nel diario del 28 settembre; le prove del navigatore girano
+a 64 MB (EXOS_RAM=64M) per non misurare questo al posto di quel che cercano.
+Da capire: quanta memoria fisica tengono le librerie caricate (exjs.so e'
+passata da 97 a 170 KB il 29 settembre, exwin.so e' cresciuta), quanto del
+BSS da 21 MB del navigatore si tocca davvero all'avvio, e se il caricatore
+di librerie potesse dire «memoria finita» invece di un nome che manca.
+
+TROVATO E CORRETTO LO STESSO GIORNO: NON ERA LA MEMORIA. «Pagina non
+allocata» non e' il messaggio della memoria finita (quel ramo esce senza
+dire niente): e' il caricatore che, copiando il file, non trova piu' la
+pagina che aveva preparato. lib_apri (kernel/loader/lib.c) segnava lo slot
+come usato solo a lettura finita; la lettura aspetta il driver del disco,
+che e' un altro processo, e intanto un secondo processo che chiedeva la
+stessa libreria (all'avvio della grafica succede: il navigatore, la
+scrivania, l'orologio) prendeva LO STESSO slot e lo ricominciava da zero
+sotto il primo. Anche il buffer di lettura era static, condiviso. Kernel
+0.224: lo slot si prenota prima di leggere (LIB_IN_CARICO), chi arriva dopo
+aspetta cedendo il turno; il buffer sta sulla pila. A 32 MB: 8 avvii su 8
+del navigatore, e prova_nav_finestra (4/4) e prova_nav_schede (3/3) passano
+(prima della correzione due corse su quelle di oggi erano cadute cosi').
+! Se il processo che carica muore a meta', chi aspetta aspetta per sempre:
+  oggi un processo non muore dentro una chiamata di sistema, ma il giorno
+  che succedera' questo punto va rivisto.
+
+=============================================================================
+@EXJS-REGEXP LE ESPRESSIONI REGOLARI (aperto e FATTO il 29 settembre 2026)
 =============================================================================
 
 `/a+/` e' un errore di sintassi in ExJs: il lessico non sa distinguere la
@@ -4781,6 +4814,32 @@ barra che divide da quella che apre una regexp (lex.c lo dice gia': la
 decisione deve arrivare dal costruttore dell'albero, in primaria()). Poi
 serve un motore (un automa con ritorno all'indietro basta per le regexp delle
 pagine), RegExp.test/exec, e replace/split/match con una regexp.
+
+FATTO IL 29 SETTEMBRE 2026:
+  - il lessico legge /corpo/flag quando lo chiede primaria() (exjs_lex_regexp:
+    la barra dove si aspetta un valore); la divisione resta divisione.
+  - lib/exjs/regexp.c: un automa a ritorno all'indietro con le
+    continuazioni. Classi, \d \w \s \b, ancore, gruppi (anche con nome e
+    non catturanti), alternanza, quantificatori avidi e pigri, {n,m},
+    riferimenti \1 e \k<nome>, (?= ) e (?! ); flag g i m s y. RegExp,
+    exec, test, lastIndex; replace e replaceAll (con $1 $& $` $' $<nome> $$
+    e con una funzione, anche per le stringhe), split con i gruppi, match,
+    matchAll, search.
+  - ! LE DUE GUARDIE: 2 milioni di passi (un (a*)*b non blocca la pagina:
+    RangeError) e 400 livelli di ricorsione. Il tetto esce dalla pila:
+    256 KB per programma, e un livello costa 112 byte sull'i386 (misurato
+    con -fstack-usage; il lookahead, 352, sta in una funzione a parte
+    apposta). I caratteri, le ancore e il passare al nodo dopo non
+    ricorrono (un ciclo), e .* \s+ [a-z]* non ricorrono per carattere: ricorre
+    solo un gruppo ripetuto, una volta a giro. (x)* su 3000 caratteri
+    lancia RangeError: scritto e provato.
+  - ! BYTE, NON CARATTERI (le stringhe di ExJs sono UTF-8), e il flag i
+    piega solo l'ASCII. Il guardare indietro (?<= ) non c'e'.
+  - `this` fuori dalle funzioni e' l'oggetto globale: con questo e le
+    regexp il preludio del navigatore gira anche con ExJs (prima cadeva
+    alla riga 87, sulla prima regexp).
+  jsprova 492/492 (44 nuove), domprova 264/264 coi due motori,
+  prova_es2015.sh con le regexp in QEMU coi due motori.
 
 =============================================================================
 @TOOLKIT-SCHEDE @NAV-FINESTRA @NAV-SCHEDE @EDIT-SCHEDE @EXIDE-SCHEDE

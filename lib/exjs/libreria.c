@@ -1234,6 +1234,7 @@ void exjs_libreria_registra(ExJsCtx *c)
     nat(c, g, "decodeURI",          nat_decodifica, 0);
 
     exjs_metti(c, g, "globalThis", g);       /* NaN, Infinity, undefined: val.c */
+    exjs_regexp_registra(c);
 
     {
         static const char *const NOMI[] = { "sin", "cos", "tan", "atan", "atan2", "asin",
