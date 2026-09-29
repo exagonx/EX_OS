@@ -258,6 +258,13 @@ unsigned long exhttp_attesi(void);
  * ========================================================================== */
 void exhttp_da(unsigned long primo);
 
+/* Le intestazioni della PROSSIMA richiesta, righe «Nome: valore» separate da
+ * a capo (28 settembre 2026): quelle di setRequestHeader e di fetch. Si
+ * filtrano — niente a capo dentro, niente Host, Content-Length, Cookie e le
+ * altre vietate agli script — e un Content-Type sostituisce quello dei POST.
+ * Facoltativa nello stub: su una exhttp.so vecchia non fa niente. */
+void exhttp_intestazioni(const char *righe);
+
 /* =============================================================================
  * A CHE PUNTO E' LA STRETTA DI MANO
  *

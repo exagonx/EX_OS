@@ -51,7 +51,7 @@ extern "C" {
  * da EXHTTP_URL_MAX, e uno piu' lungo fa fallire http_url invece di partire
  * troncato. ! HttpUrl cambia misura: exhttp.so ed EXBrowser (l'unico che la
  * usa) vanno aggiornati insieme. */
-#define HTTP_PERCORSO_MAX   1024
+#define HTTP_PERCORSO_MAX   2048     /* e 2048 dalla sera stessa: EXHTTP_URL_LUNGO in exhttp.c */
 #define HTTP_TIPO_MAX        96
 #define HTTP_POSIZIONE_MAX  1024     /* 512 fino al 28 settembre 2026: vedi sopra */
 

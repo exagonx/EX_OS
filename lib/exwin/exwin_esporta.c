@@ -173,6 +173,12 @@ static const char *const g_nomi[] = {
     "ex_versione",
     "ex_abilita",
     "ex_attiva",
+    "ex_scrivi_in",
+    "ex_menu_comparsa",
+    "ex_apri_file",
+    "ex_lista_multipla",
+    "ex_lista_scelte",
+    "ex_lista_riga_a",
 
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
@@ -293,6 +299,12 @@ static void *const g_indirizzi[] = {
     (void *)ex_versione,
     (void *)ex_abilita,
     (void *)ex_attiva,
+    (void *)ex_scrivi_in,
+    (void *)ex_menu_comparsa,
+    (void *)ex_apri_file,
+    (void *)ex_lista_multipla,
+    (void *)ex_lista_scelte,
+    (void *)ex_lista_riga_a,
 
     (void *)__libc_ponti_avvia
 };

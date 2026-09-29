@@ -69,6 +69,10 @@ typedef struct {
      * suo posto e quel che l'utente ci ha scritto — non deve consumarlo per
      * una misura. Su Wikipedia le misure prendevano 58 posti su 192. */
     int          prova;
+
+    /* DETTO DALL'IMPAGINATO: la larghezza che il CSS chiede per questo
+     * elemento, gia' in pixel (width: 100% risolto sulla colonna), o 0. */
+    int          larg_css;
 } VistaPezzo;
 
 typedef struct {

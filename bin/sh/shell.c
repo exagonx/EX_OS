@@ -1094,7 +1094,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.003"
+#define SH_VERSIONE  "0.004"
 
 #define MAX_LINE    512
 
@@ -1982,6 +1982,113 @@ static void spiega_avvio_fallito(const char *path, int err)
  * trovasse un omonimo prima di loro, il compilatore userebbe i pezzi di un
  * altro. Vedi il commento sull'albero /exos nella regola del CD, nel Makefile.
  * ============================================================================= */
+/* =============================================================================
+ * LE ASSOCIAZIONI ALLA SHELL (29 settembre 2026, @ASSOCIAZIONI)
+ *
+ * Un file che esiste ma non e' un programma (ENOEXEC) si apre col programma
+ * che /exwin/lib/tipi.txt associa alla sua estensione — la stessa regola del
+ * file manager e della scrivania (ex_apri_file nel toolkit). Ma la shell sta
+ * in modo testo: un programma di ExWin da qui non parte. Allora:
+ *   - se tipi.txt ha un programma, lo si DICE («si apre con ... dentro
+ *     ExWin») invece di lanciarlo nel vuoto;
+ *   - altrimenti — un testo, come per ExWin — si apre con l'editor di testo
+ *     della console, gfedit, cercato nel PATH.
+ * ! Letto qui a mano: la shell non ha la libc, e la regola e' dieci righe.
+ * ============================================================================= */
+static void run_program(const char *prog, int argc, char *argv[],
+                        int background, const char *cmdline,
+                        SpawnExtra *extra, int *pid_out);
+
+static int tipi_programma_sh(const char *e, char *out, uint32_t max)
+{
+    static char buf[4096];
+    static const char *const dove[2] = { "/exwin/lib/tipi.txt", "/cdrom/exwin/lib/tipi.txt" };
+    int  fd = -1, n, i;
+    char *riga, *fine;
+    uint32_t le = sh_strlen(e);
+
+    if (!e[0]) return 0;
+    for (i = 0; i < 2 && fd < 0; i++) fd = syscall3(SYS_OPEN, (uint32_t)dove[i], 0, 0);
+    if (fd < 0) return 0;
+    n = sh_read(fd, buf, sizeof(buf) - 1);
+    syscall1(SYS_CLOSE, (uint32_t)fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    for (riga = buf; riga && *riga; riga = fine) {
+        char *barra = 0, *p;
+
+        for (fine = riga; *fine && *fine != '\n'; fine++) if (*fine == '|' && !barra) barra = fine;
+        if (*fine) *fine++ = '\0'; else fine = 0;
+        if (riga[0] == '#' || !barra) continue;
+        *barra = '\0';
+        for (p = riga; *p; ) {
+            uint32_t k = 0;
+            while (*p == ' ' || *p == '\t') p++;
+            while (k < le && p[k] == e[k]) k++;
+            if (k == le && (p[le] == ' ' || p[le] == '\t' || p[le] == '\0')) {
+                char *q = barra + 1;
+                uint32_t l;
+                while (*q == ' ' || *q == '\t') q++;
+                sh_strcpy(out, q, max);
+                l = sh_strlen(out);
+                while (l > 0 && (out[l - 1] == ' ' || out[l - 1] == '\r' || out[l - 1] == '\t')) out[--l] = '\0';
+                return out[0] != '\0';
+            }
+            while (*p && *p != ' ' && *p != '\t') p++;
+        }
+    }
+    return 0;
+}
+
+/* 1 when the file can be read and does not start with \177ELF. */
+static int non_e_elf(const char *path)
+{
+    char m[4];
+    int  fd = sh_open(path, 0), n;
+
+    if (fd < 0) return 0;
+    n = sh_read(fd, m, 4);
+    sh_close(fd);
+    return n >= 0 && !(n == 4 && m[0] == 0x7F && m[1] == 'E' && m[2] == 'L' && m[3] == 'F');
+}
+
+static int apri_associato(const char *path, int background, const char *cmdline,
+                          SpawnExtra *extra, int *pid_out)
+{
+    const char *nome = path, *punto = 0, *p;
+    char        e[12], prog[200];
+    uint32_t    k = 0;
+    char       *av[3];
+    char        percorso[PATH_MAX_SH];
+
+    for (p = path; *p; p++) if (*p == '/') nome = p + 1;
+    for (p = nome; *p; p++) if (*p == '.') punto = p;
+    e[0] = '\0';
+    if (punto && punto != nome) {
+        for (p = punto + 1; *p && k + 1 < sizeof(e); p++, k++)
+            e[k] = (*p >= 'A' && *p <= 'Z') ? (char)(*p + 32) : *p;
+        e[k] = '\0';
+    }
+    if (tipi_programma_sh(e, prog, sizeof(prog))) {
+        print("exec: ");
+        print(path);
+        print(": si apre con ");
+        print(prog);
+        printerr(", dentro ExWin (exwin)");
+        g_ultimo_stato = 126;
+        if (pid_out) *pid_out = -1;
+        return 1;
+    }
+    if (cerca_nel_path("gfedit", percorso, PATH_MAX_SH) != 0) return 0;
+    sh_strcpy(percorso, path, sizeof(percorso));      /* l'argomento, non il programma */
+    av[0] = (char *)"gfedit";
+    av[1] = percorso;
+    av[2] = 0;
+    run_program("gfedit", 2, av, background, cmdline, extra, pid_out);
+    return 1;
+}
+
 static void run_program(const char *prog, int argc, char *argv[],
                         int background, const char *cmdline,
                         SpawnExtra *extra, int *pid_out)
@@ -2029,6 +2136,14 @@ static void run_program(const char *prog, int argc, char *argv[],
         extra = &solo_ambiente;
     }
 
+    /* ! THE CONTENT IS LOOKED AT BEFORE THE SPAWN, not only after it fails:
+     * the kernel's loader logs every non-ELF file it is handed as an error
+     * ("ELF: magic non valido", twice), and opening a text file is not an
+     * error. A file that cannot be read goes on to the spawn, which says why. */
+    if (non_e_elf(da_lanciare) &&
+        apri_associato(da_lanciare, background, cmdline, extra, pid_out))
+        return;
+
     /* argv[0] diventa il percorso per la durata della spawn e torna com'era
      * subito dopo: chi ci ha passato l'array lo riusa per l'elenco dei job e
      * per i messaggi d'errore, e se lo ritroverebbe cambiato sotto. */
@@ -2045,6 +2160,11 @@ static void run_program(const char *prog, int argc, char *argv[],
         avvia_figlio(pid, background, cmdline);
         return;
     }
+
+    /* ! UN FILE CHE NON E' UN PROGRAMMA SI APRE COL SUO (29 settembre 2026,
+     * @ASSOCIAZIONI): `nota.txt` battuto alla shell apre l'editor. */
+    if (pid == -SH_ENOEXEC && apri_associato(da_lanciare, background, cmdline, extra, pid_out))
+        return;
 
     /* Il file c'era e lo spawn e' fallito lo stesso: il motivo e' un
      * altro e va detto com'e'. Prima si passava alla voce successiva del

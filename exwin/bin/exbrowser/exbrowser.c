@@ -827,6 +827,7 @@ int imm_indice(int nodo, const char *src)
     g_imm[i].nodo   = nodo;
     g_imm[i].dich_w = numero(html_attr(&g_doc, nodo, "width"));
     g_imm[i].dich_h = numero(html_attr(&g_doc, nodo, "height"));
+    g_imm[i].css_w  = 0;
     g_imm[i].w      = 0;
     g_imm[i].h      = 0;
     g_imm[i].ris_w  = 0;
@@ -857,7 +858,8 @@ void misura(const Imm *im, unsigned int nw, unsigned int nh,
     *ph = 0;
     if (nw == 0 || nh == 0) return;
 
-    if (!w && !h)  { w = nw; h = nh; }
+    if (im->css_w) { w = im->css_w; h = nh * w / nw; }   /* il CSS vince, in proporzione */
+    else if (!w && !h)  { w = nw; h = nh; }
     else if (!h)   { h = nh * w / nw; }
     else if (!w)   { w = nw * h / nh; }
 
@@ -871,6 +873,33 @@ void misura(const Imm *im, unsigned int nw, unsigned int nh,
 
     *pw = w;
     *ph = h;
+}
+
+/* =============================================================================
+ * imm_rifai — un'immagine gia' caricata alla misura che ora chiede il CSS
+ *
+ * ! SUL POSTO E SOLO IN GIU'. free() su EX-OS non rende niente: ricaricare a
+ * ogni cambio di misura sarebbe memoria persa a ogni giro. Col vicino piu'
+ * vicino, partendo dal primo pixel, la sorgente di ogni pixel non sta mai
+ * prima della destinazione (la misura nuova e' piu' piccola nei due versi),
+ * quindi si riscrive nello stesso buffer senza pestarsi. Piu' grande non si
+ * fa: l'impaginazione viene prima delle immagini, e quando arrivano il CSS
+ * e' gia' quello giusto.
+ * ============================================================================= */
+void imm_rifai(int k)
+{
+    Imm          *im = &g_imm[k];
+    unsigned int  nw = im->css_w, nh, y, x;
+
+    if (!im->px || !nw || !im->w || !im->h || nw >= im->w) return;
+    nh = im->h * nw / im->w;
+    if (nh < 1) nh = 1;
+    for (y = 0; y < nh; y++)
+        for (x = 0; x < nw; x++)
+            im->px[y * nw + x] = im->px[(y * im->h / nh) * im->w + x * im->w / nw];
+    g_imm_px -= im->w * im->h - nw * nh;
+    im->w = nw;
+    im->h = nh;
 }
 
 /* Copia nella misura voluta, col vicino piu' vicino. */
@@ -2169,7 +2198,7 @@ static void bis_dallo_script(void)
  * un ordine.
  * ============================================================================= */
 typedef struct {
-    char         url[EXHTTP_URL_MAX];
+    char         url[NAV_URL_MAX];
     unsigned int byte;                  /* 0 = casella libera */
     unsigned int uso;
 } RamVoce;
@@ -2204,6 +2233,8 @@ static void ram_metti(const char *url, const unsigned char *dati, unsigned int n
      * grande sta gia' nel suo buffer, e sacrificare otto casella per lei
      * vorrebbe dire buttare le otto cose che si rileggono davvero. */
     if (n == 0 || n > RAM_CASELLA) return;
+    /* un indirizzo che non ci sta non si ritroverebbe mai: non si tiene */
+    if (strlen(url) >= sizeof(g_ram[0].url)) return;
 
     for (i = 0; i < RAM_VOCI; i++) {
         if (g_ram[i].byte == 0) { scelta = i; break; }
@@ -2269,6 +2300,8 @@ static void cache_scrivi(const char *url, const unsigned char *dati,
 
     if (!g_cache_accesa) return;
     if (!g_cache[0] || n == 0) return;
+    /* un indirizzo piu' lungo di CacheTesta.url non si rileggerebbe mai */
+    if (strlen(url) >= sizeof(((CacheTesta *)0)->url)) return;
 
     /* ! QUANDO IL TETTO E' PIENO SI SMETTE DI SCRIVERE MA SI CONTINUA A
      * LEGGERE. Una cache che si svuota da sola a meta' navigazione sarebbe
@@ -2341,7 +2374,7 @@ static int imm_prendi(int k)
     Imm         *im = &g_imm[k];
     ExHttpEsito  e;
     EximgBitmap  bm;
-    char         url[EXHTTP_URL_MAX];
+    char         url[NAV_URL_MAX];
     unsigned int n = 0;
     unsigned int w, h;
 
@@ -2597,7 +2630,7 @@ static void raccogli_css(void)
         if (uguale(nome, "link") && presi < CSS_FOGLI_MAX) {
             const char  *rel  = html_attr(&g_doc, i, "rel");
             const char  *href = html_attr(&g_doc, i, "href");
-            char         url[EXHTTP_URL_MAX];
+            char         url[NAV_URL_MAX];
             unsigned int n = 0;
             int          e_foglio = 0, a;
 
@@ -2678,6 +2711,20 @@ static void raccogli_css(void)
  * ========================================================================== */
 #define JS_OGGETTI    2000u
 #define JS_ARENA      (96u * 1024u)
+/* ! E SOPRA I 48 MB LIBERI L'ARENA E' 384 KB (29 settembre 2026, @NAVMETA):
+ * con ExJs una risposta di XMLHttpRequest diventa una stringa dell'arena, e
+ * oltre i 96 KB diventava la stringa VUOTA — il buffer della rete ne tiene
+ * 128. Si decide all'apertura, sulla memoria libera, come per le immagini
+ * (imm_tetto_scegli): la macchina da 32 MB resta com'era. */
+#define JS_ARENA_GRANDE (384u * 1024u)
+
+static unsigned int js_arena(void)
+{
+    MemInfo mi;
+
+    if (meminfo(&mi) != 0) return JS_ARENA;
+    return mi.free_kb > 48u * 1024u ? JS_ARENA_GRANDE : JS_ARENA;
+}
 #define JS_TESTO      (64u * 1024u)
 #define JS_ASCOLTI    256u
 /* ! 256 SINCE 23 SEPTEMBER 2026, and 16 before: amazon.com's home page has
@@ -2820,7 +2867,7 @@ static unsigned char *g_xhr_buf = 0;
 
 static int rete_per_script(void *dato, ExDomRichiesta *r)
 {
-    char         url[EXHTTP_URL_MAX];
+    char         url[NAV_URL_MAX];
     ExHttpEsito  e;
     int          post;
 
@@ -2878,6 +2925,8 @@ static int rete_per_script(void *dato, ExDomRichiesta *r)
     }
 
     memset(&e, 0, sizeof(e));
+    /* le intestazioni dello script, per questa richiesta sola (@NAVMETA) */
+    if (r->intestazioni && r->intestazioni[0]) exhttp_intestazioni(r->intestazioni);
     g_in_rete = 1;
     {
         int ok = post ? exhttp_posta(url, r->corpo ? r->corpo : "",
@@ -2931,7 +2980,7 @@ static int ponte_risolvi(void *dato, const char *rif, char *out,
 /* Rende 1 se il motore c'e' ed e' agganciato al documento di adesso. */
 static int motore_apri(void)
 {
-    unsigned int quanto, nodi_js;
+    unsigned int quanto, nodi_js, arena;
 
     /* ! ANCHE QUI VANNO RIMESSI TUTT'E DUE. Il motore riusato si porta
      * dietro i ganci di prima, ma l'indirizzo no: e' cambiato, ed e' proprio
@@ -2948,11 +2997,12 @@ static int motore_apri(void)
      * motivo per cui cambiare motore vale dalla pagina dopo. */
     exjs_motore(g_qjs);
 
-    quanto   = exjs_quanto_serve(JS_OGGETTI, JS_ARENA);
+    arena    = js_arena();
+    quanto   = exjs_quanto_serve(JS_OGGETTI, arena);
     g_js_mem = malloc(quanto);
     if (!g_js_mem) { dico("javascript: memoria non disponibile"); return 0; }
 
-    g_js = exjs_apri(g_js_mem, quanto, JS_OGGETTI, JS_ARENA);
+    g_js = exjs_apri(g_js_mem, quanto, JS_OGGETTI, arena);
     if (!g_js) { motore_chiudi(); dico("javascript: il motore non si apre"); return 0; }
     exjs_uscita_metti(g_js, js_uscita, 0);
     exjs_orologio_metti(g_js, js_orologio, 0);
@@ -3156,7 +3206,7 @@ static int un_script(int i, int dinamico)
     /* --- lo script che sta altrove ---------------------------------- */
     src = html_attr(&g_doc, i, "src");
     if (src && src[0]) {
-        char         url[EXHTTP_URL_MAX];
+        char         url[NAV_URL_MAX];
         unsigned int n = 0;
 
         if (!risolvi(src, url, sizeof(url))) { script_evento(i, "error"); return 1; }

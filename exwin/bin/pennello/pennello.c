@@ -56,7 +56,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pennello -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.004"
+#define VERSIONE_APP "0.005"
 EX_VERSIONE("pennello", VERSIONE_APP);
 
 /* --- Geometry -------------------------------------------------------------- */
@@ -97,18 +97,18 @@ enum {
 
 enum {
     S_MATITA, S_PENNELLO, S_GOMMA, S_SPRUZZO, S_RIEMPI, S_CONTAGOCCE,
-    S_LINEA, S_RETT, S_RETT_PIENO, S_ELLISSE, S_ELLISSE_PIENA, N_STRUMENTI
+    S_LINEA, S_RETT, S_RETT_PIENO, S_ELLISSE, S_ELLISSE_PIENA, S_TESTO, N_STRUMENTI
 };
 
 static const char *const STRUMENTO_NOME[N_STRUMENTI] = {
     "Matita", "Pennello", "Gomma", "Spruzzo", "Riempi", "Contagocce",
-    "Linea", "Rettangolo", "Rett. pieno", "Ellisse", "Ellisse piena"
+    "Linea", "Rettangolo", "Rett. pieno", "Ellisse", "Ellisse piena", "Testo"
 };
 /* The key that chooses each tool, and its name in the profile. */
-static const char STRUMENTO_TASTO[N_STRUMENTI] = { 'p', 'b', 'e', 'a', 'f', 'i', 'l', 'r', 'R', 'o', 'O' };
+static const char STRUMENTO_TASTO[N_STRUMENTI] = { 'p', 'b', 'e', 'a', 'f', 'i', 'l', 'r', 'R', 'o', 'O', 't' };
 static const char *const STRUMENTO_CFG[N_STRUMENTI] = {
     "matita", "pennello", "gomma", "spruzzo", "riempi", "contagocce",
-    "linea", "rett", "rettpieno", "ellisse", "ellissepiena"
+    "linea", "rett", "rettpieno", "ellisse", "ellissepiena", "testo"
 };
 
 #define N_SPESSORI 4
@@ -632,6 +632,53 @@ static void tratto(int x0, int y0, int x1, int y1)
 
 static void strumento_scegli(int s);
 
+/* =============================================================================
+ * IL TESTO (28 settembre 2026, @PAINT: «il testo dentro l'immagine»)
+ *
+ * Un clic dove comincia la scritta, una riga da scrivere, e il testo entra
+ * nei PIXEL dell'immagine col colore scelto: ex_scrivi_in, nel toolkit, fa
+ * con un bitmap quel che ex_scrivi_con fa con la finestra. La grandezza la
+ * danno i quattro spessori (12, 16, 24, 36 pixel). E' un'operazione come le
+ * altre: si annulla e si ripete col rettangolo che ha toccato.
+ * ! Il testo scritto l'ultima volta si ripropone: chi mette la stessa
+ * etichetta in tre punti la batte una volta.
+ * ============================================================================= */
+static const int CORPO_TESTO[N_SPESSORI] = { 12, 16, 24, 36 };
+static char g_testo[160] = "";
+
+static void ridisegna(void);
+
+static void testo_metti(int x, int y)
+{
+    ExFont       f;
+    int          w, h;
+    unsigned int i;
+
+    if (x < 0 || y < 0 || x >= g_iw || y >= g_ih) return;
+    if (!ex_dlg_riga("Testo", "Il testo da scrivere nell'immagine:", g_testo,
+                     sizeof(g_testo)) || !g_testo[0]) {
+        ridisegna();
+        return;
+    }
+    f = ex_font_trova(EX_FAM_SANS, CORPO_TESTO[g_sp], 0, 0);
+    for (i = 0; i < (unsigned int)(g_iw * g_ih); i++) g_prima[i] = g_img[i];
+    ex_scrivi_in(g_img, g_iw, g_ih, f, x, y, g_testo, g_col);
+
+    /* il rettangolo toccato, con un margine: un glifo puo' sporgere di un
+     * pixel dalla sua casella */
+    w = ex_larghezza_testo(f, g_testo);
+    h = ex_font_altezza(f);
+    g_sx0 = x > 2 ? x - 2 : 0;
+    g_sy0 = y > 2 ? y - 2 : 0;
+    g_sx1 = x + w + 2 < g_iw ? x + w + 2 : g_iw - 1;
+    g_sy1 = y + h + 2 < g_ih ? y + h + 2 : g_ih - 1;
+    storia_aggiungi(g_sx0, g_sy0, g_sx1, g_sy1);
+    g_mod = 1;
+    ridisegna();
+    stato_aggiorna();
+    titolo_aggiorna();
+}
+
 static void op_inizia(int mx, int my)
 {
     int x, y;
@@ -647,6 +694,8 @@ static void op_inizia(int mx, int my)
         ex_aggiorna(g_f);
         return;
     }
+    if (g_str == S_TESTO) { testo_metti(x, y); return; }
+
     for (i = 0; i < (unsigned int)(g_iw * g_ih); i++) g_prima[i] = g_img[i];
     g_sx0 = g_sy0 = 0x7FFFFFFF;
     g_sx1 = g_sy1 = -1;
@@ -1322,9 +1371,11 @@ static void istruzioni(void)
         "GLI STRUMENTI (a sinistra, o con un tasto)\n"
         "  P matita, B pennello, E gomma, A spruzzo, F riempi, I contagocce,\n"
         "  L linea, R rettangolo, Shift+R rettangolo pieno, O ellisse,\n"
-        "  Shift+O ellisse piena.\n"
+        "  Shift+O ellisse piena, T testo.\n"
         "  Le forme si tirano: si preme dove comincia e si lascia dove finisce.\n"
         "  Il contagocce prende il colore e torna allo strumento di prima.\n"
+        "  Il testo: un clic dove comincia la scritta, poi la si batte. Lo\n"
+        "  spessore ne sceglie la grandezza (12, 16, 24 o 36 pixel).\n"
         "\n"
         "LO SPESSORE: 1, 3, 5 o 9 pixel, oppure [ e ] per stringere e allargare.\n"
         "  La gomma e' piu' larga del pennello dello stesso spessore.\n"

@@ -306,6 +306,12 @@ typedef struct {
      * nuovo davanti a un driver vecchio (messaggio piu' corto) lo considera
      * zero. Un driver senza rotella (seriale, USB in modo boot) manda 0. */
     int          dz;
+    /* ! E I MODIFICATORI DELLA TASTIERA (29 settembre 2026, @LISTA-MULTI):
+     * KBD_MOD_SHIFT, _CTRL, _ALT, com'erano quando il mouse e' cambiato. Il
+     * PS/2 li sa perche' tastiera e mouse sono lo stesso driver; Ctrl+clic e
+     * Shift+clic scelgono piu' righe di una lista. In fondo, per la stessa
+     * ragione di dz. Un driver senza tastiera manda 0. */
+    unsigned int modificatori;
 } MouseStato;
 
 /* Quanto e' lungo un MouseStato senza la rotella: i driver di prima del 28

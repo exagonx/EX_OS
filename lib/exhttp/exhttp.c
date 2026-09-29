@@ -1095,6 +1095,109 @@ void exhttp_da(unsigned long primo)
     g_da = primo;
 }
 
+/* =============================================================================
+ * exhttp_intestazioni — le intestazioni di uno script (@NAVMETA, 28 settembre)
+ *
+ * Come exhttp_da: vale per la chiamata SUCCESSIVA, redirezioni comprese, e poi
+ * si azzera. Arrivano da setRequestHeader e dagli headers di fetch.
+ *
+ * ! SI FILTRANO, E NON E' PRUDENZA DI MANIERA. Una riga con un a capo dentro
+ * sarebbe una seconda richiesta infilata nella prima; e le intestazioni che
+ * la norma vieta agli script (Host, Content-Length, Cookie, Connection...)
+ * le decide il trasporto: una pagina che mente sulla lunghezza del corpo fa
+ * aspettare il server per sempre. Una riga che non passa si butta, le altre
+ * restano. Content-Type invece si puo', e SOSTITUISCE il nostro dei POST.
+ * ============================================================================= */
+#define INTEST_MAX 1536
+static char g_intest[INTEST_MAX];          /* messe da chi chiama       */
+static char g_intest_attivo[INTEST_MAX];   /* quelle della chiamata     */
+
+static int intest_vietata(const char *n, unsigned int l)
+{
+    static const char *const V[] = {
+        "host", "content-length", "connection", "cookie", "cookie2",
+        "keep-alive", "te", "trailer", "transfer-encoding", "upgrade",
+        "accept-encoding", "accept-charset", "expect", "date", "via",
+        "referer", "origin", "dnt", 0
+    };
+    unsigned int i, k;
+    char b[32];
+
+    if (l >= sizeof(b)) return 0;
+    for (k = 0; k < l; k++) b[k] = (char)((n[k] >= 'A' && n[k] <= 'Z') ? n[k] + 32 : n[k]);
+    b[l] = '\0';
+    if (!strncmp(b, "proxy-", 6) || !strncmp(b, "sec-", 4)) return 1;
+    for (i = 0; V[i]; i++) if (!strcmp(b, V[i])) return 1;
+    return 0;
+}
+
+static int intest_nome_ok(char ch)
+{
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+           (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' ||
+           ch == '!' || ch == '#' || ch == '$' || ch == '%' || ch == '&' ||
+           ch == '\'' || ch == '*' || ch == '+' || ch == '^' || ch == '`' ||
+           ch == '|' || ch == '~';
+}
+
+void exhttp_intestazioni(const char *righe)
+{
+    unsigned int n = 0;
+
+    g_intest[0] = '\0';
+    while (righe && *righe) {
+        const char  *ini = righe, *fine, *due;
+        unsigned int l, q;
+
+        while (*righe && *righe != '\n') righe++;
+        fine = righe;
+        if (*righe == '\n') righe++;
+        if (fine > ini && fine[-1] == '\r') fine--;
+
+        for (due = ini; due < fine && *due != ':'; due++) if (!intest_nome_ok(*due)) break;
+        if (due == ini || due >= fine || *due != ':') continue;
+        if (intest_vietata(ini, (unsigned int)(due - ini))) continue;
+        for (q = 0; ini + q < fine; q++) if (ini[q] == '\r' || ini[q] == '\0') break;
+        l = (unsigned int)(fine - ini);
+        if (q != l || n + l + 3 > sizeof(g_intest)) continue;
+        memcpy(g_intest + n, ini, l);
+        n += l;
+        g_intest[n++] = '\r';
+        g_intest[n++] = '\n';
+        g_intest[n] = '\0';
+    }
+}
+
+/* Aggiunge le intestazioni della chiamata alla testa gia' scritta in `req`
+ * (che finisce con la riga vuota). Rende la lunghezza nuova, o -1. */
+static int intest_metti(char *req, int n, unsigned int max)
+{
+    unsigned int l = (unsigned int)strlen(g_intest_attivo);
+    const char  *p;
+
+    if (l == 0) return n;
+    /* un Content-Type della pagina sostituisce il nostro */
+    for (p = g_intest_attivo; *p; ) {
+        if (!strncasecmp(p, "content-type:", 13)) {
+            static const char nostro[] = "\r\nContent-Type: application/x-www-form-urlencoded";
+            char *c = strstr(req, nostro);
+            if (c) {
+                unsigned int t = (unsigned int)(sizeof(nostro) - 1);
+                memmove(c, c + t, (unsigned int)n - (unsigned int)(c - req) - t + 1);
+                n -= (int)t;
+            }
+            break;
+        }
+        while (*p && *p != '\n') p++;
+        if (*p) p++;
+    }
+    if (n < 4 || (unsigned int)n + l + 1 > max) return -1;
+    /* prima della riga vuota finale: «...\r\n» + le nostre + «\r\n» */
+    memmove(req + n - 2 + l, req + n - 2, 3);
+    memcpy(req + n - 2, g_intest_attivo, l);
+    return n + (int)l;
+}
+
 #define ATTESA_MS  10000
 
 static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
@@ -1261,6 +1364,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
         n = http_richiesta_testa_da(req, sizeof(req), u, "EX-OS",
                                     g_corpo ? (long)corpo_len : -1L, 1, bis,
                                     g_da_attivo);
+        if (n > 0) n = intest_metti(req, n, sizeof(req));
     }
     if (n <= 0) { strcpy(e->errore, "richiesta troppo lunga"); return 0; }
     if (t->scrivi(t->stato, (const unsigned char *)req, (unsigned int)n) != n) {
@@ -1594,15 +1698,27 @@ int exhttp_posta(const char *url, const char *corpo,
     return r;
 }
 
+/* ! L'INDIRIZZO CHE SI CHIEDE PUO' ESSERE PIU' LUNGO DI QUELLO CHE SI RENDE
+ * (28 settembre 2026). EXHTTP_URL_MAX (600) e' la misura di ExHttpEsito.finale,
+ * che attraversa il confine della libreria e non si tocca; ma qui dentro
+ * l'indirizzo si TRONCAVA in silenzio a 600, e il foglio di stile della
+ * pagina dei risultati di Wikipedia (636) chiedeva un'altra cosa. Adesso fino
+ * a EXHTTP_URL_LUNGO passa, e oltre si rifiuta con un errore. */
+#define EXHTTP_URL_LUNGO 2048
+
 int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
                   ExHttpEsito *e)
 {
-    char adesso[EXHTTP_URL_MAX];
+    char adesso[EXHTTP_URL_LUNGO];
     int  salto;
 
     if (!url || !buf || !e || max == 0) return 0;
 
     memset(e, 0, sizeof(*e));
+    if (strlen(url) >= sizeof(adesso)) {
+        strncpy(e->errore, "indirizzo troppo lungo", sizeof(e->errore) - 1);
+        return 0;
+    }
     strncpy(adesso, url, sizeof(adesso) - 1);
     adesso[sizeof(adesso) - 1] = '\0';
 
@@ -1611,12 +1727,15 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
      * salti — e per nessun'altra. Vedi il commento sopra g_da. */
     g_da_attivo = g_da;
     g_da        = 0;
+    strcpy(g_intest_attivo, g_intest);
+    g_intest[0] = '\0';
 
     for (salto = 0; salto <= EXHTTP_SALTI_MAX; salto++) {
         HttpUrl         u;
         HttpRisposta    r;
         ExHttpTrasporto t;
         int             ok, riusata = 0;
+        const char     *corpo_di_prima;
 
         e->salti = salto;
         strncpy(e->finale, adesso, sizeof(e->finale) - 1);
@@ -1667,6 +1786,7 @@ riprova:
         }
 
 collegato:
+        corpo_di_prima = g_corpo;
         ok = exhttp_scambio(&t, &u, buf, max, e, &r);
         g_corpo = 0;            /* la redirezione dopo un POST si segue in GET */
 
@@ -1678,6 +1798,15 @@ collegato:
         if (!ok && riusata) {
             g_vivo_c = 0;               /* e' gia' morta: non si richiude */
             riusata  = 0;
+            /* ! IL CORPO SI RIMETTE (28 settembre 2026, difetto vecchio). La
+             * riga qui sopra lo azzerava prima di sapere se la connessione
+             * riusata era morta: il secondo tentativo partiva senza, cioe'
+             * in GET. Un modulo in POST arrivava al server come GET vuoto,
+             * senza errori, ogni volta che il server aveva chiuso la
+             * connessione tenuta aperta — trovato da
+             * tools/prova_intestazioni.sh, col server di Python che chiude
+             * sempre. */
+            g_corpo = corpo_di_prima;
             memset(e, 0, sizeof(*e));
             e->salti = salto;
             strncpy(e->finale, adesso, sizeof(e->finale) - 1);
@@ -1703,7 +1832,7 @@ collegato:
         /* Una redirezione: si rifa' il giro con la posizione nuova. */
         if ((r.codice == 301 || r.codice == 302 || r.codice == 303 ||
              r.codice == 307 || r.codice == 308) && r.posizione[0]) {
-            char nuovo[EXHTTP_URL_MAX];
+            char nuovo[EXHTTP_URL_LUNGO];
 
             unisci_url(&u, r.posizione, nuovo, sizeof(nuovo));
             strncpy(adesso, nuovo, sizeof(adesso) - 1);

@@ -303,6 +303,7 @@ static int est_misura(int v, VistaPezzo *p)
             }
 
             c->tipo    = (unsigned char)t;
+            c->imm     = -1;
             c->segreto = (unsigned char)(tipo && uguale(tipo, "password"));
             if (!suo)
                 c->acceso = (unsigned char)(html_attr(&g_doc, v, "checked") != 0);
@@ -437,6 +438,25 @@ static int est_misura(int v, VistaPezzo *p)
             w = 16 + n_car * 8;
             if (w < 56) w = 56;
             h = 22;
+
+            /* ! UN PULSANTE-IMMAGINE SI DISEGNA COME LA SUA FIGURA (@NAVMETA,
+             * 28 settembre 2026): la figura si registra come quella di un
+             * <img> — stesso caricamento, stessa cache — e il pulsante ne
+             * prende le misure. Finche' non arriva resta il pulsante grigio,
+             * con le misure dichiarate se ci sono. Le coordinate del clic
+             * (nome.x, nome.y) diventano cosi' quelle della figura. */
+            if (tipo && uguale(tipo, "image")) {
+                const char *src = html_attr(&g_doc, v, "src");
+                int         k   = (src && src[0]) ? imm_indice(v, src) : -1;
+
+                c->imm = (short)k;
+                if (k >= 0 && g_imm[k].px) { w = (int)g_imm[k].w; h = (int)g_imm[k].h; }
+                else if (k >= 0 && g_imm[k].dich_w && g_imm[k].dich_h) {
+                    unsigned int rw, rh;
+                    misura(&g_imm[k], g_imm[k].dich_w, g_imm[k].dich_h, &rw, &rh);
+                    if (rw && rh) { w = (int)rw; h = (int)rh; }
+                }
+            }
             break;
         }
         case CTRL_AREA:     w = 320; h = 88; break;
@@ -482,6 +502,23 @@ static int est_misura(int v, VistaPezzo *p)
          * colloca. */
         p->nel_flusso = 1;
         p->aria_giu   = 3;
+
+        /* ! LA LARGHEZZA DEL CSS (28 settembre 2026). In una misura di prova
+         * si usa e basta: salvarla vorrebbe dire la colonna di un pixel della
+         * misura minima, poi quella vera, e un'immagine ricaricata a ogni
+         * impaginazione. Quando cambia davvero, l'immagine gia' caricata si
+         * rifa' alla misura nuova (dalla cache: costa poco). */
+        if (k >= 0 && p->larg_css > 0) {
+            unsigned int cw = (unsigned int)p->larg_css;
+            if (p->prova) {
+                unsigned int nw = g_imm[k].px ? g_imm[k].w : g_imm[k].dich_w;
+                unsigned int nh = g_imm[k].px ? g_imm[k].h : g_imm[k].dich_h;
+                if (nw && nh) { p->w = (int)cw; p->h = (int)(nh * cw / nw); p->rif = EST_IMM(k); return VISTA_PEZZO; }
+            } else if (g_imm[k].css_w != cw) {
+                g_imm[k].css_w = cw;
+                if (g_imm[k].px) imm_rifai(k);
+            }
+        }
 
         if (k >= 0 && g_imm[k].px) {
             p->w   = (int)g_imm[k].w;
@@ -655,6 +692,10 @@ static void est_disegna(int rif, int x, int y, int w, int h)
 
         switch (c->tipo) {
         case CTRL_PULSANTE:
+            if (c->imm >= 0 && c->imm < g_imm_n && g_imm[c->imm].px) {
+                est_disegna(EST_IMM(c->imm), x, y, w, h);
+                break;
+            }
             ex_riempi(g_f, cx, y, cw, ch, EX_GRIGIO);
             ex_rilievo(g_f, cx, y, cw, ch);
             ex_scrivi(g_f,

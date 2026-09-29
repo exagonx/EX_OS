@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.008"
+#define VERSIONE_APP "0.009"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -927,75 +927,19 @@ static int albero_apri_fino_a(const char *perc)
  * manager, per la stessa ragione — e vale per tipi.txt come per i programmi.
  * ============================================================================= */
 
-/* Il programma di tipi.txt per l'estensione `e` (minuscola), in `out`; 0 se
- * non c'e'. */
-static int programma_per(const char *e, char *out, unsigned int max)
-{
-    static const char *const dove[2] = { "/exwin/lib/tipi.txt", "/cdrom/exwin/lib/tipi.txt" };
-    char buf[2048], *riga, *fine;
-    int  fd = -1, n, i;
-
-    if (!e[0]) return 0;
-    for (i = 0; i < 2 && fd < 0; i++) fd = open(dove[i], O_RDONLY, 0);
-    if (fd < 0) return 0;
-    n = (int)read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0) return 0;
-    buf[n] = '\0';
-
-    for (riga = buf; riga && *riga; riga = fine) {
-        char *barra, *p;
-        size_t le = strlen(e);
-
-        fine = strchr(riga, '\n');
-        if (fine) *fine++ = '\0';
-        if (riga[0] == '#' || !(barra = strchr(riga, '|'))) continue;
-        *barra = '\0';
-        /* Le estensioni sono parole separate da spazi, prima della barra. */
-        for (p = riga; *p; ) {
-            while (*p == ' ' || *p == '\t') p++;
-            if (!strncmp(p, e, le) && (p[le] == ' ' || p[le] == '\t' || p[le] == '\0')) {
-                char *q = barra + 1;
-                while (*q == ' ' || *q == '\t') q++;
-                snprintf(out, max, "%s", q);
-                for (i = (int)strlen(out); i > 0 && (out[i - 1] == ' ' || out[i - 1] == '\r' || out[i - 1] == '\t'); i--)
-                    out[i - 1] = '\0';
-                return out[0] != '\0';
-            }
-            while (*p && *p != ' ' && *p != '\t') p++;
-        }
-    }
-    return 0;
-}
-
+/* ! LA REGOLA LA LEGGE IL TOOLKIT (29 settembre 2026, @ASSOCIAZIONI):
+ * ex_apri_file e' la stessa per il file manager, la scrivania e gli altri. */
 static void apri_file(const char *percorso)
 {
-    static char copia[PERC_MAX], prog[PERC_MAX], dal_cd[PERC_MAX + 8];
-    const char *prova[2];
-    const char *nome = strrchr(percorso, '/');
-    char e[8], *argv[3];
-    int i;
+    char prog[200];
+    const char *b;
 
-    strncpy(copia, percorso, PERC_MAX - 1);
-    copia[PERC_MAX - 1] = '\0';
-    argv[1] = copia;
-    argv[2] = 0;
-
-    estensione(nome ? nome + 1 : percorso, e, sizeof(e));
-    if (!programma_per(e, prog, sizeof(prog))) snprintf(prog, sizeof(prog), "/exwin/bin/edit");
-    snprintf(dal_cd, sizeof(dal_cd), "/cdrom%s", prog);
-    prova[0] = prog;
-    prova[1] = dal_cd;
-
-    for (i = 0; i < 2; i++) {
-        argv[0] = (char *)prova[i];
-        if (spawn_ex(prova[i], argv, 0, 0, 0) >= 0) {
-            const char *b = strrchr(prog, '/');
-            snprintf(g_avviso, sizeof(g_avviso), "aperto con %s: %s", b ? b + 1 : prog, copia);
-            return;
-        }
+    if (ex_apri_file(percorso, prog, sizeof(prog)) >= 0) {
+        b = strrchr(prog, '/');
+        snprintf(g_avviso, sizeof(g_avviso), "aperto con %s: %s", b ? b + 1 : prog, percorso);
+    } else {
+        snprintf(g_avviso, sizeof(g_avviso), "non si trova il programma: %s", prog);
     }
-    snprintf(g_avviso, sizeof(g_avviso), "non si trova il programma: %s", prog);
 }
 
 /* =============================================================================
@@ -1124,8 +1068,16 @@ static void set_costruisci(void)
         if (g_segno[i] && g_set_n < VOCI_MAX) g_set[g_set_n++] = i;
     if (g_set_n > 0) return;
 
-    s = ex_lista_scelta(g_elenco);
-    if (s < g_voci) g_set[g_set_n++] = s;
+    /* ! LE RIGHE SCELTE COL MOUSE (29 settembre 2026, @LISTA-MULTI): con
+     * Ctrl+clic e Shift+clic se ne sceglie piu' d'una, e valgono come i segni
+     * della barra. Senza nessuna delle due, la riga corrente. */
+    {
+        unsigned int righe[VOCI_MAX];
+        int k, n = ex_lista_scelte(g_elenco, righe, VOCI_MAX);
+
+        for (k = 0; k < n; k++) if (righe[k] < g_voci) g_set[g_set_n++] = righe[k];
+    }
+    (void)s;
 }
 
 /* =============================================================================
@@ -1333,6 +1285,10 @@ static void destinazione_di(unsigned int i, const char *dest, int uno_solo,
     }
 }
 
+/* La destinazione gia' decisa (un trascinamento su una cartella dell'albero):
+ * allora non si chiede. 0 = si chiede col dialogo, come sempre. */
+static const char *g_dest_fissa = 0;
+
 static void comando_copia(int sposta)
 {
     char dest[PERC_MAX], sorg[PERC_MAX], d[PERC_MAX];
@@ -1362,7 +1318,10 @@ static void comando_copia(int sposta)
         dest[PERC_MAX - 1] = '\0';
     }
 
-    if (!ex_dlg_salva(dest, PERC_MAX)) {
+    if (g_dest_fissa) {
+        strncpy(dest, g_dest_fissa, PERC_MAX - 1);
+        dest[PERC_MAX - 1] = '\0';
+    } else if (!ex_dlg_salva(dest, PERC_MAX)) {
         strcpy(g_avviso, sposta ? "spostamento annullato" : "copia annullata");
         return;
     }
@@ -1881,6 +1840,173 @@ static void informazioni(void)
 /* =============================================================================
  * La procedura
  * ============================================================================= */
+/* =============================================================================
+ * IL TASTO DESTRO, GLI APPUNTI E IL TRASCINARE (29 settembre 2026: @FM-MENU,
+ * @FM-TRASCINA, chiesti)
+ *
+ * ! GLI APPUNTI DEI FILE SONO DEL FILE MANAGER, non del sistema: gli appunti
+ * del sistema portano solo testo. «Copia» e «Taglia» ricordano i percorsi,
+ * «Incolla» li copia (o li sposta) nella cartella mostrata, con fai_uno —
+ * la stessa strada di Copia e Sposta, e quindi con i suoi controlli (dentro
+ * se stesso, originale tolto solo a copia finita).
+ * ============================================================================= */
+#define APPUNTI_MAX 64
+static char          g_app[APPUNTI_MAX][PERC_MAX];
+static unsigned char g_app_dir[APPUNTI_MAX];
+static int           g_app_n = 0, g_app_taglia = 0;
+
+static void appunti_prendi(int taglia)
+{
+    unsigned int i;
+
+    set_costruisci();
+    g_app_n = 0;
+    for (i = 0; i < g_set_n && g_app_n < APPUNTI_MAX; i++) {
+        voce_percorso(g_set[i], g_app[g_app_n], PERC_MAX);
+        g_app_dir[g_app_n] = g_dir_flag[g_set[i]];
+        g_app_n++;
+    }
+    g_app_taglia = taglia;
+    sprintf(g_avviso, "%d voci %s: Incolla le mette nella cartella che mostri",
+            g_app_n, taglia ? "da spostare" : "da copiare");
+}
+
+static void appunti_incolla(void)
+{
+    char        d[PERC_MAX];
+    struct stat st;
+    unsigned int nfile = 0;
+    int         i, esistono = 0, fatte = 0, falliti = 0;
+
+    if (g_app_n == 0) { strcpy(g_avviso, "gli appunti sono vuoti: prima Copia o Taglia"); return; }
+    for (i = 0; i < g_app_n; i++) {
+        unisci(d, sizeof(d), g_dir, base(g_app[i]));
+        if (stat(d, &st) == 0) esistono++;
+    }
+    if (esistono > 0) {
+        char t[200];
+        sprintf(t, "Qui %d voci esistono gia'.  Le sostituisco?", esistono);
+        if (!ex_dlg_conferma("Esiste gia'", t, "Sostituisci", "Annulla")) {
+            strcpy(g_avviso, "annullato: non ho toccato niente");
+            return;
+        }
+    }
+    for (i = 0; i < g_app_n; i++) {
+        unisci(d, sizeof(d), g_dir, base(g_app[i]));
+        if (fai_uno(g_app[i], g_app_dir[i], d, g_app_taglia, &nfile) == 1) fatte++;
+        else falliti++;
+    }
+    sprintf(g_avviso, "%s %d voci in %s%s", g_app_taglia ? "spostate" : "copiate",
+            fatte, g_dir, falliti ? " (alcune non riuscite)" : "");
+    if (g_app_taglia && falliti == 0) g_app_n = 0;   /* spostate: non ci sono piu' */
+    leggi(g_dir);
+}
+
+static void comando_nuovo_file(void)
+{
+    static char nome[DIRENT_NAME_MAX] = "";
+    char perc[PERC_MAX], dom[PERC_MAX + 48];
+    int  fd;
+
+    snprintf(dom, sizeof(dom), "Il nome del file nuovo in %s:", g_dir);
+    if (!ex_dlg_chiedi("Nuovo file", dom, "Crea", nome, sizeof(nome)) || !nome[0]) {
+        strcpy(g_avviso, "annullato");
+        return;
+    }
+    unisci(perc, sizeof(perc), g_dir, nome);
+    /* ! UN FILE CHE C'E' GIA' NON SI TOCCA: la libc non ha O_EXCL, quindi si
+     * guarda prima, e si apre senza O_TRUNC — anche nel caso peggiore un file
+     * esistente non si svuota. */
+    {
+        struct stat st;
+        if (stat(perc, &st) == 0) { sprintf(g_avviso, "%s esiste gia'", perc); return; }
+    }
+    fd = open(perc, O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) { sprintf(g_avviso, "non riesco a creare %s: %s", perc, strerror(errno)); return; }
+    close(fd);
+    sprintf(g_avviso, "creato %s", perc);
+    leggi(g_dir);
+}
+
+static void menu_destro(ExFinestra c, int x, int y)
+{
+    static const char *const V[] = {
+        "Apri", "-", "Nuova cartella", "Nuovo file", "-",
+        "Rinomina", "Copia", "Taglia", "Incolla", "-", "Cancella"
+    };
+    static const char *const VA[] = { "Nuova cartella", "Nuovo file", "Incolla" };
+    int k;
+
+    /* nell'albero: si va nella cartella cliccata, e li' si crea o si incolla */
+    if (c == g_albero) {
+        scegli_albero(0, -1);
+        k = ex_menu_comparsa(g_f, x, y, VA, 3);
+        if (k == 0) comando_nuova_dir();
+        else if (k == 1) comando_nuovo_file();
+        else if (k == 2) appunti_incolla();
+        return;
+    }
+    k = ex_menu_comparsa(g_f, x, y, V, 11);
+    switch (k) {
+    case 0:  scegli_elenco(1); break;
+    case 2:  comando_nuova_dir(); break;
+    case 3:  comando_nuovo_file(); break;
+    case 5:  comando_rinomina(); break;
+    case 6:  appunti_prendi(0); break;
+    case 7:  appunti_prendi(1); break;
+    case 8:  appunti_incolla(); break;
+    case 10: comando_cancella(); break;
+    default: break;
+    }
+}
+
+/* Delle righe dell'elenco lasciate su una cartella dell'albero: si chiede
+ * se copiarle o spostarle, e poi si fa con comando_copia verso quella
+ * cartella (senza il dialogo della destinazione). */
+static void lasciato(unsigned int da, unsigned int a, int y)
+{
+    static const char *const R[] = { "Copia", "Sposta", "Annulla" };
+    char dest[PERC_MAX], t[PERC_MAX + 80];
+    int  riga, k;
+    unsigned int i;
+
+    if (da != ID_ELENCO || a != ID_ALBERO) return;
+    riga = ex_lista_riga_a(g_albero, y);
+    if (riga < 0 || (unsigned int)riga >= g_nodi) return;
+    percorso_nodo(riga, dest, sizeof(dest));
+    /* Dropped back on the folder it came from: nothing to ask. */
+    if (strcmp(dest, g_dir) == 0) { strcpy(g_avviso, "sono gia' qui"); return; }
+    set_costruisci();
+    if (g_set_n == 0) return;
+
+    /* ! A FOLDER NEVER GOES INSIDE ITSELF: copied, it would copy its own copy
+     * until PROFONDITA; moved, rename() would hang it under itself, out of
+     * reach of any path. */
+    for (i = 0; i < g_set_n; i++) {
+        char v[PERC_MAX];
+        size_t l;
+
+        if (!voce_percorso(g_set[i], v, sizeof(v))) continue;
+        l = strlen(v);
+        if (strncmp(dest, v, l) == 0 && (dest[l] == '\0' || dest[l] == '/')) {
+            sprintf(g_avviso, "%s non puo' andare dentro se stessa", base(v));
+            return;
+        }
+    }
+    if (g_set_n == 1 && voce_percorso(g_set[0], t, sizeof(t))) {
+        char n1[DIRENT_NAME_MAX];
+        strncpy(n1, base(t), sizeof(n1) - 1);
+        n1[sizeof(n1) - 1] = '\0';
+        snprintf(t, sizeof(t), "Copiare o spostare %s in %s?", n1, dest);
+    } else
+        snprintf(t, sizeof(t), "Copiare o spostare %u voci in %s?", g_set_n, dest);
+    k = ex_dlg_scegli("Trascina", t, R, 3);
+    if (k != 0 && k != 1) { strcpy(g_avviso, "annullato: non ho toccato niente"); return; }
+    g_dest_fissa = dest;
+    comando_copia(k == 1);
+    g_dest_fissa = 0;
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
@@ -1963,6 +2089,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == KBD_K_F(2)) { comando_rinomina(); break; }
         }
         return ex_procedura_base(f, msg, wp, lp);
+
+    case EXM_MOUSE_DESTRO:
+        g_avviso[0] = '\0';
+        menu_destro((ExFinestra)wp, EX_X(lp), EX_Y(lp));
+        break;
+
+    case EXM_LASCIATO:
+        g_avviso[0] = '\0';
+        lasciato(EX_DA(wp), EX_A(wp), EX_Y(lp));
+        break;
 
     case EXM_MISURA:
         disponi(EX_X(lp), EX_Y(lp));
@@ -2061,6 +2197,7 @@ int main(int argc, char **argv)
                        ALBERO_W + 10, MENU_H + 4 + INTEST_H, ELENCO_W,
                        FIN_H - MENU_H - 4 - INTEST_H - BASSO,
                        g_f, ID_ELENCO, 0);
+    ex_lista_multipla(g_elenco, 1);   /* Ctrl+clic e Shift+clic (@LISTA-MULTI) */
     if (!g_albero || !g_elenco) {
         printf("filemgr: non riesco a creare le due aree\n");
         return 1;

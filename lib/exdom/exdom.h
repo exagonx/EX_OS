@@ -278,6 +278,13 @@ typedef struct {
     unsigned int byte;
     int          codice;        /* 200, 404... 0 = non e' partita         */
     const char  *tipo;          /* Content-Type della risposta, o 0       */
+
+    /* ! IN FONDO (28 settembre 2026): le intestazioni di setRequestHeader o
+     * degli headers di fetch, righe «Nome: valore\r\n», o 0. Chi risponde
+     * le passa a exhttp_intestazioni. exdom.so ed EXBrowser vanno insieme:
+     * un navigatore nuovo leggerebbe questo campo oltre la fine di una
+     * struttura vecchia. */
+    const char  *intestazioni;
 } ExDomRichiesta;
 
 /* Rende 1 se la richiesta e' stata fatta (anche con un codice di errore:

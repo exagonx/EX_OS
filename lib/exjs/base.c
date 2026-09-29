@@ -946,7 +946,7 @@ static ExJsVal scorri(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, int modo)
         arg[2] = q;
 
         r = exjs_chiama(c, f, questo, arg, 3, 0);
-        if (exjs_finita(c)) break;
+        if (exjs_finita(c) || exjs_interrotto(c)) break;
 
         if (modo == 1) exjs_indice_metti(c, out, k++, r);
         if (modo == 2 && exjs_a_booleano(c, r))
@@ -1127,10 +1127,9 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
             return;
         }
 
-        /* Un oggetto: le sue proprieta' PROPRIE, in ordine di dichiarazione.
-         * L'elenco e' concatenato al contrario, quindi si rovescia scrivendo
-         * a ritroso — le pagine si aspettano l'ordine in cui le chiavi sono
-         * state messe. */
+        /* Un oggetto: le sue proprieta' PROPRIE, in ordine di dichiarazione,
+         * che e' l'ordine dell'elenco (dal 29 settembre 2026; prima era
+         * concatenato al contrario e qui si rovesciava). */
         c_car(C, '{');
         {
             int p, elenco[256], quanti = 0, i;
@@ -1141,9 +1140,12 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
 
             int scritte = 0;
 
-            for (i = quanti - 1; i >= 0 && !C->rotto; i--) {
+            for (i = 0; i < quanti && !C->rotto; i++) {
                 ExJsVal     pv = exjs_prop_val(c, elenco[i]);
                 const char *nome = exjs_arena_leggi(c, exjs_prop_nome(c, elenco[i]));
+
+                /* un get: il suo valore, come fa JSON vero */
+                if (exjs_e_accessore(c, pv)) pv = exjs_prendi(c, exjs_da_oggetto(k), nome);
 
                 if (nome[0] == '\001') continue;         /* nascosta: Date */
 
@@ -1896,11 +1898,15 @@ static ExJsVal nat_data_testo(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, vo
     double t = data_questo(c, q);
 
     (void)a; (void)n;
-    /* toJSON di una data non valida e' null. toISOString dovrebbe lanciare
-     * un RangeError, ma una nativa qui non sa lanciare: rende «Invalid Date». */
+    /* toJSON di una data non valida e' null; toISOString lancia un
+     * RangeError (dal 29 settembre 2026: prima una nativa non sapeva
+     * lanciare, e rendeva «Invalid Date»). */
     if ((int)(long)d == 8) {
         if (t != t) return exjs_nullo();
         d = (void *)1;
+    } else if ((int)(long)d == 1 && t != t) {
+        exjs_lancia_errore(c, "RangeError", "Invalid time value");
+        return exjs_indefinito();
     }
     data_testo(t, (int)(long)d, b);
     return exjs_stringa(c, b, -1);
@@ -1948,6 +1954,76 @@ static void data_registra(ExJsCtx *c, ExJsVal g)
     metti_nat(c, D, "parse", nat_Date_parse, 0);
 }
 
+
+/* =============================================================================
+ * Error e i suoi figli (@EXJS-LACUNE, 29 settembre 2026)
+ *
+ * Con throw servono gli oggetti da lanciare. Ognuno ha un prototipo con
+ * `name`, e quelli dei figli risalgono a quello di Error: cosi' funzionano
+ * sia `e instanceof RangeError` sia `e instanceof Error`. Chiamati con o
+ * senza new fanno la stessa cosa, come nella norma. Il `dato` della nativa
+ * e' l'indice del prototipo.
+ * ========================================================================== */
+static ExJsVal nat_errore(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    ExJsVal      o = exjs_oggetto(c);
+    ExJsOggetto *O = exjs_ogg(c, exjs_a_oggetto(o));
+
+    (void)q;
+    if (!O) return o;
+    O->proto = (int)(long)d;
+    if (n > 0 && exjs_tipo(c, a[0]) != EXJS_INDEFINITO)
+        exjs_metti(c, o, "message", exjs_stringa(c, exjs_a_stringa(c, a[0]), -1));
+    return o;
+}
+
+static ExJsVal nat_errore_testo(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    char         b[EXJS_ERR_LEN + 40];
+    const char  *s;
+    unsigned int i = 0, j;
+
+    (void)a; (void)n; (void)d;
+    s = exjs_a_stringa(c, exjs_prendi(c, q, "name"));
+    for (j = 0; s[j] && i < 40; j++) b[i++] = s[j];
+    s = exjs_a_stringa(c, exjs_prendi(c, q, "message"));
+    if (s[0] && i + 2 < sizeof(b)) { b[i++] = ':'; b[i++] = ' '; }
+    for (j = 0; s[j] && i + 1 < sizeof(b); j++) b[i++] = s[j];
+    b[i] = '\0';
+    return exjs_stringa(c, b, -1);
+}
+
+static void errori_registra(ExJsCtx *c, ExJsVal g)
+{
+    static const char *const FIGLI[] = { "TypeError", "RangeError", "SyntaxError",
+                                         "ReferenceError", "EvalError", "URIError" };
+    ExJsVal      base = exjs_oggetto(c), f;
+    int          ib = exjs_a_oggetto(base);
+    unsigned int k;
+
+    if (ib < 0) return;
+    exjs_metti(c, base, "name", exjs_stringa(c, "Error", -1));
+    exjs_metti(c, base, "message", exjs_stringa(c, "", -1));
+    metti_nat(c, base, "toString", nat_errore_testo, 0);
+    f = exjs_nativa(c, nat_errore, (void *)(long)ib, "Error");
+    exjs_metti(c, f, "prototype", base);
+    exjs_metti(c, base, "constructor", f);
+    exjs_metti(c, g, "Error", f);
+
+    for (k = 0; k < sizeof(FIGLI) / sizeof(FIGLI[0]); k++) {
+        ExJsVal      pr = exjs_oggetto(c);
+        ExJsOggetto *P  = exjs_ogg(c, exjs_a_oggetto(pr));
+
+        if (!P) return;
+        P->proto = ib;
+        exjs_metti(c, pr, "name", exjs_stringa(c, FIGLI[k], -1));
+        f = exjs_nativa(c, nat_errore, (void *)(long)exjs_a_oggetto(pr), FIGLI[k]);
+        exjs_metti(c, f, "prototype", pr);
+        exjs_metti(c, pr, "constructor", f);
+        exjs_metti(c, g, FIGLI[k], f);
+    }
+}
+
 void exjs_base_registra(ExJsCtx *c)
 {
     ExJsVal g, math;
@@ -1970,6 +2046,7 @@ void exjs_base_registra(ExJsCtx *c)
     metti_nat(c, g, "Number",     nat_Number,     0);
     metti_nat(c, g, "Boolean",    nat_Boolean,    0);
     data_registra(c, g);
+    errori_registra(c, g);
 
     /* console.log, e `console` e' un oggetto perche' cosi' lo scrivono tutti. */
     {
@@ -2038,15 +2115,14 @@ void exjs_base_registra(ExJsCtx *c)
         metti_nat_ogg(c, pv, "map",      nat_map,         0);
         metti_nat_ogg(c, pv, "filter",   nat_filter,      0);
     }
+    exjs_libreria_registra(c);
 }
 
 /* =============================================================================
  * QUELLO CHE NON C'E', DICHIARATO
  *
  *   Date nei fusi orari           e' tutta in UTC (vedi Date): EX-OS non ha
- *                                 fusi. Le native non lanciano, e
- *                                 toISOString di una data non valida rende
- *                                 «Invalid Date» invece del RangeError
+ *                                 fusi
  *   RegExp                        e con lui replace globale e split per
  *                                 espressione: e' uno scaglione suo
  *   toFixed, toString(base)       poco usati fuori dai numeri formattati

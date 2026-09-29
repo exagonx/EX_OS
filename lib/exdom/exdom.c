@@ -95,6 +95,7 @@ typedef struct {
     int     e_fetch;            /* 1 = fetch, 0 = XMLHttpRequest */
     ExJsVal chi;                /* l'XHR, oppure la promessa da risolvere */
     ExJsVal metodo, url, corpo;
+    ExJsVal intest;             /* le intestazioni, o undefined */
 } InCorso;
 
 struct ExDom {
@@ -169,7 +170,8 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori);
 static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v);
 static ExJsVal stile_oggetto(ExDom *D, Legame *L);
 static int  coda_metti(ExDom *D, int e_fetch, ExJsVal chi,
-                       const char *metodo, ExJsVal url, ExJsVal corpo);
+                        const char *metodo, ExJsVal url, ExJsVal corpo,
+                        ExJsVal intest);
 static void xhr_fallita(ExDom *D, ExJsVal x);
 static void xhr_riuscita(ExDom *D, ExJsVal x, const ExDomRichiesta *r);
 static void metti_metodo(ExDom *D, ExJsVal dove, const char *nome, ExJsNativa f);
@@ -3365,6 +3367,7 @@ static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     r.url        = url;
     r.corpo      = 0;
     r.tipo_corpo = 0;
+    r.intestazioni = 0;
 
     if (n_arg >= 2 && exjs_tipo(c, a[1]) == EXJS_OGGETTO) {
         ExJsVal m = exjs_prendi(c, a[1], "method");
@@ -3382,9 +3385,14 @@ static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
         ExJsVal p = promessa_vuota(D);
 
         if (exjs_tipo(c, p) != EXJS_OGGETTO) return p;
+        /* Le intestazioni le ha gia' messe in riga il preludio del
+         * navigatore (opzioni.__intest): elencare le chiavi di un oggetto
+         * l'interfaccia dei motori non lo sa fare, un for..in si'. */
         if (coda_metti(D, 1, p, r.metodo, a[0],
                        r.corpo ? exjs_stringa(c, r.corpo, -1)
-                               : exjs_indefinito()))
+                               : exjs_indefinito(),
+                       (n_arg >= 2 && exjs_tipo(c, a[1]) == EXJS_OGGETTO)
+                       ? exjs_prendi(c, a[1], "__intest") : exjs_indefinito()))
             return p;
 
         /* La coda piena si dice subito: una promessa che non si risolvera' mai
@@ -3455,6 +3463,8 @@ static ExJsVal m_xhr_open(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     if (n_arg < 2) return exjs_indefinito();
     exjs_metti(c, questo, "__metodo", a[0]);
     exjs_metti(c, questo, "__url", a[1]);
+    /* open() ricomincia: le intestazioni di prima non valgono piu' */
+    exjs_metti(c, questo, "__intest", exjs_stringa(c, "", 0));
     /* ! IL TERZO ARGOMENTO ADESSO CONTA. Assente vuol dire ASINCRONA, come nel
      * DOM, ed e' anche la forma che si scrive sempre; `false` chiede la
      * risposta prima di tornare, e c'e' del codice che ci conta — legge un file
@@ -3465,15 +3475,39 @@ static ExJsVal m_xhr_open(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     return exjs_indefinito();
 }
 
-/* ! LE INTESTAZIONI SI PRENDONO E SI BUTTANO, e va detto qui e nella guida.
- * exhttp costruisce la richiesta da se' e non ha un posto dove infilarne una
- * in piu': accettarle e non mandarle e' una bugia, ma RIFIUTARLE fermerebbe
- * ogni pagina che ne mette una — e sono quasi tutte. Fra le due si e' scelta
- * quella che lascia la pagina viva, e la si e' scritta in tre posti. */
+/* ! LE INTESTAZIONI ADESSO ARRIVANO (28 settembre 2026, @NAVMETA). Fino a
+ * ieri si prendevano e si buttavano, perche' exhttp non aveva dove metterle:
+ * adesso si accumulano sull'oggetto in righe «Nome: valore», e send() le passa
+ * a chi fa la richiesta, che le consegna a exhttp_intestazioni. Il filtro
+ * (niente a capo, niente Host o Content-Length) e' li', nel trasporto: vale
+ * per fetch e per XHR allo stesso modo. Qui si scarta solo cio' che non e'
+ * nemmeno una coppia. */
 static ExJsVal m_xhr_header(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                             int n_arg, void *dato)
 {
-    (void)c; (void)questo; (void)a; (void)n_arg; (void)dato;
+    static char  riga[1024];
+    ExJsVal      prima;
+    const char  *p;
+    unsigned int n = 0, k;
+
+    (void)dato;
+    if (n_arg < 2) return exjs_indefinito();
+    /* ! UN A CAPO NEL NOME O NEL VALORE SI RIFIUTA QUI, e solo qui si puo':
+     * piu' in la' le intestazioni viaggiano in righe, e un «\r\n» dentro un
+     * valore sarebbe una riga in piu' — un'intestazione iniettata. (Visto
+     * con tools/prova_intestazioni.sh: «X-Iniettata: 1» arrivava al server.) */
+    for (p = exjs_a_stringa(c, a[0]); *p; p++) if (*p == '\r' || *p == '\n') return exjs_indefinito();
+    for (p = exjs_a_stringa(c, a[1]); *p; p++) if (*p == '\r' || *p == '\n') return exjs_indefinito();
+    prima = exjs_prendi(c, questo, "__intest");
+    if (exjs_tipo(c, prima) == EXJS_STRINGA)
+        for (p = exjs_a_stringa(c, prima); *p && n < sizeof(riga) - 1; p++) riga[n++] = *p;
+    for (p = exjs_a_stringa(c, a[0]), k = 0; *p && n < sizeof(riga) - 1; p++, k++) riga[n++] = *p;
+    if (k == 0) return exjs_indefinito();
+    if (n + 2 < sizeof(riga)) { riga[n++] = ':'; riga[n++] = ' '; }
+    for (p = exjs_a_stringa(c, a[1]); *p && n < sizeof(riga) - 3; p++) riga[n++] = *p;
+    riga[n++] = '\r'; riga[n++] = '\n';
+    riga[n] = '\0';
+    exjs_metti(c, questo, "__intest", exjs_stringa(c, riga, (int)n));
     return exjs_indefinito();
 }
 
@@ -3534,7 +3568,8 @@ static ExJsVal m_xhr_send(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
      * segue `send()` gira prima di `onload`, che e' quel che le pagine si
      * aspettano — e che prima non succedeva. */
     if (exjs_a_booleano(c, exjs_prendi(c, questo, "__async"))) {
-        if (coda_metti(D, 0, questo, exjs_a_stringa(c, m), u, corpo))
+        if (coda_metti(D, 0, questo, exjs_a_stringa(c, m), u, corpo,
+                       exjs_prendi(c, questo, "__intest")))
             return exjs_indefinito();
         /* ! LA CODA PIENA E' UN FALLIMENTO SUBITO, non un'attesa infinita: una
          * pagina che aspetta un `onload` che non arrivera' mai non ha modo di
@@ -3548,6 +3583,11 @@ static ExJsVal m_xhr_send(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     r.corpo      = (exjs_tipo(c, corpo) == EXJS_STRINGA)
                    ? exjs_a_stringa(c, corpo) : 0;
     r.tipo_corpo = 0;
+    {
+        ExJsVal ih = exjs_prendi(c, questo, "__intest");
+        r.intestazioni = (exjs_tipo(c, ih) == EXJS_STRINGA) ? exjs_a_stringa(c, ih) : 0;
+        if (r.intestazioni && !r.intestazioni[0]) r.intestazioni = 0;
+    }
 
     if (!rete_chiedi(D, &r) || r.codice == 0) { xhr_fallita(D, questo); }
     else                                        xhr_riuscita(D, questo, &r);
@@ -3689,7 +3729,8 @@ static ExJsVal m_xhr_nuovo(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
 /* Mette in coda. Rende 0 se non c'e' posto — e allora chi chiama fallisce
  * subito, invece di far aspettare per sempre una risposta che non arrivera'. */
 static int coda_metti(ExDom *D, int e_fetch, ExJsVal chi,
-                      const char *metodo, ExJsVal url, ExJsVal corpo)
+                      const char *metodo, ExJsVal url, ExJsVal corpo,
+                      ExJsVal intest)
 {
     ExJsCtx *c = D->js;
     int      i;
@@ -3709,6 +3750,8 @@ static int coda_metti(ExDom *D, int e_fetch, ExJsVal chi,
                         ? url : exjs_stringa(c, exjs_a_stringa(c, url), -1);
     D->coda[i].corpo  = (exjs_tipo(c, corpo) == EXJS_STRINGA)
                         ? corpo : exjs_indefinito();
+    D->coda[i].intest = (exjs_tipo(c, intest) == EXJS_STRINGA)
+                        ? intest : exjs_indefinito();
     return 1;
 }
 
@@ -3747,6 +3790,9 @@ int exdom_rete_pompa(ExDom *D)
     r.corpo      = (exjs_tipo(c, lavoro.corpo) == EXJS_STRINGA)
                    ? exjs_a_stringa(c, lavoro.corpo) : 0;
     r.tipo_corpo = 0;
+    r.intestazioni = (exjs_tipo(c, lavoro.intest) == EXJS_STRINGA)
+                     ? exjs_a_stringa(c, lavoro.intest) : 0;
+    if (r.intestazioni && !r.intestazioni[0]) r.intestazioni = 0;
 
     if (!rete_chiedi(D, &r) || r.codice == 0) {
         if (lavoro.e_fetch)

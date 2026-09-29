@@ -244,6 +244,14 @@ typedef struct {
      * disegno della lista, cioe' a ogni scorrimento. Qui c'e' il numero di
      * un'icona gia' aperta. */
     ExIcona     *ic;                    /* cap of them */
+
+    /* LA SCELTA MULTIPLA (29 settembre 2026, @LISTA-MULTI): accesa da
+     * ex_lista_multipla. `segni` ha un byte per riga (cap), 1 = scelta; `sel`
+     * resta la riga «corrente», quella del cursore; `ancora` e' dove comincia
+     * uno Shift+clic. */
+    int           multi;
+    unsigned char *segni;
+    unsigned int  ancora;
 } Lista;
 
 static Lista g_lista[LISTA_MAX];
@@ -962,6 +970,210 @@ static void finestra_chiedi(unsigned int tipo, unsigned int id)
 }
 
 void ex_finestra_attiva(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
+
+/* =============================================================================
+ * ex_apri_file — un file si apre col suo programma (29 settembre 2026,
+ * @ASSOCIAZIONI)
+ *
+ * ! LA REGOLA E' UNA, IN /exwin/lib/tipi.txt, E LA LEGGE UNA FUNZIONE SOLA.
+ * Fino a oggi la leggeva il file manager (nel suo apri_file) e la scrivania
+ * ne aveva una SUA, scritta nel codice e diversa: le immagini le apriva col
+ * navigatore, tipi.txt dice Immagini. Due verita' divergono al primo file che
+ * si aggiunge a una sola. Adesso il file manager e la scrivania chiamano
+ * questa, e chi verra' dopo pure. Cio' che tipi.txt non elenca si apre con
+ * l'editor. Dal CD i programmi si cercano anche sotto /cdrom.
+ * ============================================================================= */
+static int tipi_programma(const char *e, char *out, unsigned int max)
+{
+    static const char *const dove[2] = { "/exwin/lib/tipi.txt", "/cdrom/exwin/lib/tipi.txt" };
+    static char buf[4096];
+    char       *riga, *fine;
+    int         fd = -1, n, i;
+    size_t      le = strlen(e);
+
+    if (!e[0]) return 0;
+    for (i = 0; i < 2 && fd < 0; i++) fd = open(dove[i], O_RDONLY, 0);
+    if (fd < 0) return 0;
+    n = (int)read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    for (riga = buf; riga && *riga; riga = fine) {
+        char *barra, *p;
+
+        fine = strchr(riga, '\n');
+        if (fine) *fine++ = '\0';
+        if (riga[0] == '#' || !(barra = strchr(riga, '|'))) continue;
+        *barra = '\0';
+        for (p = riga; *p; ) {
+            while (*p == ' ' || *p == '\t') p++;
+            if (!strncmp(p, e, le) && (p[le] == ' ' || p[le] == '\t' || p[le] == '\0')) {
+                char *q = barra + 1;
+                while (*q == ' ' || *q == '\t') q++;
+                snprintf(out, max, "%s", q);
+                for (i = (int)strlen(out); i > 0 && (out[i - 1] == ' ' || out[i - 1] == '\r' || out[i - 1] == '\t'); i--)
+                    out[i - 1] = '\0';
+                return out[0] != '\0';
+            }
+            while (*p && *p != ' ' && *p != '\t') p++;
+        }
+    }
+    return 0;
+}
+
+int ex_apri_file(const char *percorso, char *prog, unsigned int max)
+{
+    static char copia[256], p[200], dal_cd[216];
+    const char *nome, *punto;
+    char        e[12], *argv[3];
+    unsigned int k = 0;
+    int         i, pid;
+
+    if (!percorso || !percorso[0]) return -1;
+    nome  = strrchr(percorso, '/');
+    nome  = nome ? nome + 1 : percorso;
+    punto = strrchr(nome, '.');
+    e[0] = '\0';
+    if (punto && punto != nome) {
+        for (punto++; *punto && k + 1 < sizeof(e); punto++, k++)
+            e[k] = (*punto >= 'A' && *punto <= 'Z') ? (char)(*punto + 32) : *punto;
+        e[k] = '\0';
+    }
+    if (!tipi_programma(e, p, sizeof(p))) snprintf(p, sizeof(p), "/exwin/bin/edit");
+    if (prog && max) snprintf(prog, max, "%s", p);
+
+    snprintf(copia, sizeof(copia), "%s", percorso);
+    snprintf(dal_cd, sizeof(dal_cd), "/cdrom%s", p);
+    argv[1] = copia;
+    argv[2] = 0;
+    for (i = 0; i < 2; i++) {
+        argv[0] = i ? dal_cd : p;
+        pid = spawn_ex(argv[0], argv, environ, 0, 0);
+        if (pid >= 0) return pid;
+    }
+    return -1;
+}
+
+/* =============================================================================
+ * ex_menu_comparsa — il menu del tasto destro (29 settembre 2026, @MOUSE-DESTRO)
+ *
+ * ! UNA FINESTRA SUA E NON UNA TENDINA DISEGNATA NEL PADRE. Le tendine della
+ * barra dei menu stanno dentro i pixel della finestra, e un menu del tasto
+ * destro deve poter uscire dal bordo (la scrivania e' tutta finestra, ma un
+ * file manager piccolo no). Una finestra senza titolo, sopra e modale, con
+ * una lista: si sceglie col clic o con Invio, le frecce si spostano, Esc e
+ * la crocetta rinunciano. E' lo stesso ciclo dei dialoghi di exdlg.
+ * ============================================================================= */
+#define CM_MAX 16
+static int        g_cm_scelta;
+static ExFinestra g_cm_lista;
+static int        g_cm_n;
+static int        g_cm_indice[CM_MAX];     /* riga della lista -> voce */
+
+static long cm_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_COMANDO:
+        if (wp == 1 && (EX_APRIRE(lp) || EX_COL(lp) >= 0)) {
+            unsigned int r = ex_lista_scelta(g_cm_lista);
+            if (r < (unsigned int)g_cm_n) g_cm_scelta = g_cm_indice[r];
+        }
+        return 0;
+    case EXM_TASTO:
+        if ((wp & KBD_KEY_MASK) == 27) { g_cm_scelta = -1; return 0; }
+        break;
+    case EXM_CHIUDI:
+        g_cm_scelta = -1;
+        return 0;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+void ex_lista_multipla(ExFinestra f, int si)
+{
+    Lista *L = lista_da_h(f);
+    if (!L) return;
+    L->multi = si ? 1 : 0;
+    memset(L->segni, 0, L->cap);
+    if (L->multi && L->sel < L->n) L->segni[L->sel] = 1;
+}
+
+int ex_lista_scelte(ExFinestra f, unsigned int *righe, int max)
+{
+    Lista       *L = lista_da_h(f);
+    unsigned int i;
+    int          n = 0;
+
+    if (!L || !righe || max < 1 || L->n == 0) return 0;
+    if (L->multi)
+        for (i = 0; i < L->n && n < max; i++) if (L->segni[i]) righe[n++] = i;
+    if (n == 0) { righe[0] = L->sel; n = 1; }
+    return n;
+}
+
+int ex_lista_riga_a(ExFinestra f, int y)
+{
+    Oggetto     *co = ogg(f);
+    Lista       *L  = co ? lista_di(co) : 0;
+    int          ox, oy, d;
+    unsigned int r;
+
+    if (!L || L->n == 0) return -1;
+    origine(co, &ox, &oy);
+    (void)ox;
+    d = y - (oy + co->y) - 2;
+    if (d < 0) return -1;
+    r = L->primo + (unsigned int)(d / LISTA_RIGA_H);
+    return r < L->n ? (int)r : -1;
+}
+
+int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
+{
+    Oggetto     *r = radice(f);
+    ExFinestra   p;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    int          i, w = 60, h, sx, sy;
+
+    if (!r || !voci || n < 1) return -1;
+    g_cm_n = 0;
+    for (i = 0; i < n && g_cm_n < CM_MAX; i++) {
+        int lw;
+        if (!voci[i] || !strcmp(voci[i], "-")) continue;   /* separatori: niente */
+        lw = ex_larghezza_testo(0, voci[i]) + 24;
+        if (lw > w) w = lw;
+        g_cm_indice[g_cm_n++] = i;
+    }
+    if (g_cm_n == 0) return -1;
+    h = g_cm_n * LISTA_RIGA_H + 8;
+
+    /* dove si e' cliccato, sullo schermo, e dentro lo schermo */
+    ex_schermo(&sw, &sh);
+    sx = r->x + x;
+    sy = r->y + y;
+    if (sw && sx + w > (int)sw) sx = (int)sw - w;
+    if (sh && sy + h > (int)sh) sy = (int)sh - h;
+    if (sx < 0) sx = 0;
+    if (sy < 0) sy = 0;
+
+    g_cm_scelta = -2;
+    p = ex_crea("finestra", "", EX_BORDO | EX_SOPRA | EX_MODALE, sx, sy, w, h, 0, 0, cm_proc);
+    if (!p) return -1;
+    g_cm_lista = ex_crea("lista", "", EX_FIGLIO, 2, 2, w - 4, h - 4, p, 1, 0);
+    for (i = 0; i < g_cm_n; i++) ex_lista_aggiungi(g_cm_lista, voci[g_cm_indice[i]]);
+    ex_lista_scegli(g_cm_lista, 0);
+    ex_fuoco(g_cm_lista);
+    ex_procedura_base(p, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(p);
+
+    while (g_cm_scelta == -2 && ex_prendi_msg(&m)) ex_smista(&m);
+
+    ex_distruggi(p);
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(f);
+    return g_cm_scelta < 0 ? -1 : g_cm_scelta;
+}
 
 /* Brings one of OUR windows to the front with the keyboard focus, by its
  * handle: the program does not know the server's id, the toolkit does. */
@@ -2037,6 +2249,69 @@ static int larg(const char *s)
 /* the text box's own helpers, further down with its keys */
 static int casella_sel(const Oggetto *o, unsigned int *a, unsigned int *b);
 static int larg_n(const char *s, unsigned int k);
+
+/* =============================================================================
+ * ex_scrivi_in — il testo nei PIXEL di chi chiama, non nella finestra
+ * (28 settembre 2026, @PAINT: lo strumento Testo di Pennello)
+ *
+ * Gli stessi glifi e la stessa fusione dei bordi di ex_scrivi_con, ma dentro
+ * un bitmap ARGB (w x h, una riga dopo l'altra). Un pixel toccato diventa
+ * opaco: l'inchiostro copre, anche su un PNG trasparente. La y e' la cima
+ * della riga, come per ex_scrivi_con.
+ * ============================================================================= */
+static void px_fuso(unsigned int *px, int w, int h, int x, int y,
+                    unsigned int c, unsigned int a)
+{
+    unsigned int d;
+
+    if (x < 0 || y < 0 || x >= w || y >= h || a == 0) return;
+    if (a >= 255) { px[y * w + x] = 0xFF000000u | (c & 0xFFFFFFu); return; }
+    d = px[y * w + x];
+    px[y * w + x] = 0xFF000000u |
+        (fondi_canale((c >> 16) & 0xFFu, (d >> 16) & 0xFFu, a) << 16) |
+        (fondi_canale((c >>  8) & 0xFFu, (d >>  8) & 0xFFu, a) <<  8) |
+         fondi_canale( c        & 0xFFu,  d        & 0xFFu, a);
+}
+
+void ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
+                  const char *s, unsigned int c)
+{
+    const ExFontDati *fo;
+    ExTtf             t = ttf_di(f);
+
+    if (!px || !s || w <= 0 || h <= 0) return;
+    if (t) {
+        int base = T.base(t);
+
+        while (*s) {
+            unsigned int         ch = prossimo_codice(&s);
+            ExTtf                q  = ttf_per_codice(f, t, ch);
+            int                  gw, gh, sx, sy, qx, qy, b2;
+            const unsigned char *cop = T.glifo(q, ch, &gw, &gh, &sx, &sy);
+
+            b2 = (q == t) ? base : T.base(q);
+            if (cop && gw > 0 && gh > 0)
+                for (qy = 0; qy < gh; qy++)
+                    for (qx = 0; qx < gw; qx++)
+                        px_fuso(px, w, h, x + sx + qx, y + b2 - sy + qy, c, cop[qy * gw + qx]);
+            x += T.larghezza_car(q, ch);
+        }
+        return;
+    }
+    fo = font_di(f);
+    while (*s) {
+        unsigned char        ch = codice_a_cp437(prossimo_codice(&s));
+        const unsigned char *g  = exfont_glifo(fo, ch);
+        unsigned int         cw = exfont_larghezza_car(fo, ch), rr, b;
+
+        if (g)
+            for (rr = 0; rr < fo->altezza; rr++)
+                for (b = 0; b < cw; b++)
+                    if (g[rr * fo->passo + (b >> 3)] & (0x80u >> (b & 7)))
+                        px_fuso(px, w, h, x + (int)b, y + (int)rr, c, 255);
+        x += (int)cw;
+    }
+}
 
 void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
                    const char *s, unsigned int c)
@@ -3536,7 +3811,7 @@ static void disegna_oggetto(Oggetto *o)
              * riga scelta; un fondo si'. */
             unsigned int fondo = EX_BIANCO;
 
-            if (v == L->sel) {
+            if (v == L->sel || (L->multi && v < L->n && L->segni[v])) {
                 fondo = col_fuoco ? EX_BLU : EX_GRIGIO_SC;
                 ex_riempi(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
                           fondo);
@@ -3552,7 +3827,7 @@ static void disegna_oggetto(Oggetto *o)
 
             ex_scrivi(o->padre, x + 4 + gutter, ry,
                       &L->voci[v * LISTA_TESTO_MAX],
-                      (v == L->sel) ? EX_BIANCO : EX_NERO);
+                      (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_BIANCO : EX_NERO);
         }
         break;
     }
@@ -4354,6 +4629,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 
         char         *avanzo = 0;
         ExIcona      *avanzo_ic = 0;
+        unsigned char *avanzo_sg = 0;
         unsigned int  avanzo_cap = 0;
 
         /* Stessa regola dell'area: prima un posto col buffer gia' pronto.
@@ -4370,6 +4646,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
                 avanzo     = L->voci;
                 avanzo_ic  = L->ic;
                 avanzo_cap = L->cap;
+                avanzo_sg  = L->segni;
                 break;
             }
         if (!L)
@@ -4381,6 +4658,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         L->voci  = avanzo;
         L->ic    = avanzo_ic;
         L->cap   = avanzo_cap;
+        L->segni = avanzo_sg;
         L->ogg   = (ExFinestra)(i + 1);
         L->righe = (unsigned int)(h / LISTA_RIGA_H);
 
@@ -4396,9 +4674,11 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
             L->ic   = (ExIcona *)malloc(LISTA_VOCI_PRIMA * sizeof(ExIcona));
             L->cap  = LISTA_VOCI_PRIMA;
         }
-        if (!L->voci || !L->ic) { o->usato = 0; return 0; }
+        if (!L->segni) L->segni = (unsigned char *)malloc(L->cap);
+        if (!L->voci || !L->ic || !L->segni) { o->usato = 0; return 0; }
         memset(L->voci, 0, (size_t)L->cap * LISTA_TESTO_MAX);
         memset(L->ic, 0, (size_t)L->cap * sizeof(ExIcona));
+        memset(L->segni, 0, L->cap);
 
         L->usato = 1;
         return (ExFinestra)(i + 1);
@@ -4852,6 +5132,38 @@ static void area_punta(Oggetto *co, int x, int y)
     A->cy = r;
     A->cx = (c > area_lung(A, r)) ? area_lung(A, r) : c;
     area_segui(A);
+}
+
+/* Una riga sola scelta, quella del cursore: e' quel che fanno il clic
+ * semplice e le frecce in una lista a scelta multipla. */
+static void lista_uno(Lista *L)
+{
+    if (!L || !L->multi) return;
+    memset(L->segni, 0, L->n);
+    if (L->sel < L->n) L->segni[L->sel] = 1;
+    L->ancora = L->sel;
+}
+
+/* Il clic su una riga di una lista a scelta multipla, coi modificatori:
+ * Ctrl aggiunge o toglie, Shift prende l'intervallo dall'ancora, niente
+ * sceglie quella sola — tranne se era gia' fra le scelte: allora il gruppo
+ * resta, perche' e' cosi' che lo si trascina via tutto insieme. */
+static void lista_clic_multi(Lista *L, unsigned int mod)
+{
+    unsigned int a, b, i;
+
+    if (!L || !L->multi || L->sel >= L->n) return;
+    if (mod & KBD_MOD_CTRL) {
+        L->segni[L->sel] = (unsigned char)!L->segni[L->sel];
+        L->ancora = L->sel;
+    } else if (mod & KBD_MOD_SHIFT) {
+        a = L->ancora < L->sel ? L->ancora : L->sel;
+        b = L->ancora < L->sel ? L->sel : L->ancora;
+        memset(L->segni, 0, L->n);
+        for (i = a; i <= b && i < L->n; i++) L->segni[i] = 1;
+    } else if (!L->segni[L->sel]) {
+        lista_uno(L);
+    }
 }
 
 static void lista_punta(Oggetto *co, int y)
@@ -5568,8 +5880,8 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         passo = L->righe ? L->righe : 1;
 
         switch (c) {
-        case KBD_K_DOWN:  if (L->sel + 1 < L->n) L->sel++;                break;
-        case KBD_K_UP:    if (L->sel > 0) L->sel--;                       break;
+        case KBD_K_DOWN:  if (L->sel + 1 < L->n) L->sel++; lista_uno(L);  break;
+        case KBD_K_UP:    if (L->sel > 0) L->sel--; lista_uno(L);         break;
         case KBD_K_HOME:  L->sel = 0;                                     break;
         case KBD_K_END:   L->sel = L->n - 1;                              break;
         case KBD_K_PGUP:  L->sel = (L->sel > passo) ? L->sel - passo : 0;  break;
@@ -5915,6 +6227,22 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
         switch (e.tipo) {
         case WIN_EV_CHIUDI:     m->msg = EXM_CHIUDI;    return 1;
+        case WIN_EV_DESTRO: {
+            ExFinestra c = controllo_in(f, (int)e.x, (int)e.y);
+            Oggetto   *co = ogg(c);
+
+            /* su una lista si sceglie prima la riga sotto il puntatore */
+            if (co && co->classe == CL_LISTA) {
+                Lista *L = lista_di(co);
+                lista_punta(co, (int)e.y);
+                /* una riga fuori dal gruppo scelto ne diventa l'unica */
+                if (L && L->multi && L->sel < L->n && !L->segni[L->sel]) lista_uno(L);
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+            }
+            m->msg = EXM_MOUSE_DESTRO;
+            m->wp  = (unsigned int)c;
+            return 1;
+        }
         case WIN_EV_ROTELLA:
             if (rotella_controllo(f, (int)e.x, (int)e.y, (int)e.tasto)) {
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
@@ -6051,8 +6379,17 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 continue;
             }
             if (co && co->classe == CL_LISTA) {
-                lista_punta(co, (int)e.y);
-                if (!ridisegna_controllo(co)) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                /* ! FUORI DALLA LISTA LA SCELTA NON SI MUOVE (29 settembre
+                 * 2026): chi trascina via delle righe — verso una cartella
+                 * dell'albero del file manager — le porta con se', e la
+                 * scelta non deve scorrere dietro al puntatore. */
+                if (controllo_in(f, (int)e.x, (int)e.y) == g_trascinato) {
+                    Lista *L = lista_di(co);
+                    unsigned int prima = L ? L->sel : 0;
+                    lista_punta(co, (int)e.y);
+                    if (L && L->multi && L->sel != prima && !L->segni[L->sel]) lista_uno(L);
+                    if (!ridisegna_controllo(co)) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                }
                 continue;
             }
             m->msg = EXM_MOUSE_MOSSO;
@@ -6130,6 +6467,23 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 ExFinestra quale = g_trascinato;
 
                 g_trascinato = 0;
+
+                /* ! LASCIATO SU UN ALTRO CONTROLLO (29 settembre 2026,
+                 * @FM-TRASCINA): righe di una lista portate sopra un altro
+                 * controllo della stessa finestra. L'applicazione riceve
+                 * EXM_LASCIATO con i due id e il punto; che cosa voglia dire
+                 * — copiare dei file in una cartella — lo sa lei. */
+                if (L) {
+                    ExFinestra dove = controllo_in(f, (int)e.x, (int)e.y);
+                    Oggetto   *od   = ogg(dove);
+
+                    if (od && dove != quale) {
+                        m->finestra = destinatario(quale);
+                        m->msg = EXM_LASCIATO;
+                        m->wp  = (co->id & 0xFFFFu) | ((unsigned int)od->id << 16);
+                        return 1;
+                    }
+                }
                 if (L && L->sel != g_tras_sel) {
                     m->finestra = destinatario(quale);
                     m->msg = EXM_COMANDO;
@@ -6339,6 +6693,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 lista_punta(co, (int)e.y);
                 g_trascinato = c;
                 L = lista_di(co);
+                lista_clic_multi(L, e.tasto);
                 g_tras_sel = L ? L->sel : 0;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 m->finestra = destinatario(c);
@@ -6543,6 +6898,7 @@ void ex_lista_svuota(ExFinestra f)
     Lista *L = lista_da_h(f);
     if (!L) return;
     L->n = L->sel = L->primo = 0;
+    L->ancora = 0;
 }
 
 /* Rende 1 se la voce c'e' entrata, 0 se la lista e' piena. */
@@ -6568,6 +6924,12 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
         ic = (ExIcona *)realloc(L->ic, (size_t)nuovo * sizeof(ExIcona));
         if (!ic) return 0;
         L->ic  = ic;
+        {
+            unsigned char *sg = (unsigned char *)realloc(L->segni, nuovo);
+            if (!sg) return 0;
+            memset(sg + L->cap, 0, nuovo - L->cap);
+            L->segni = sg;
+        }
         L->cap = nuovo;
     }
 
@@ -6581,6 +6943,7 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
      * azzera — altrimenti la voce nuova erediterebbe l'icona di quella che
      * occupava il posto prima. */
     L->ic[L->n] = 0;
+    L->segni[L->n] = 0;
 
     L->n++;
     return 1;
@@ -6823,7 +7186,7 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.006"
+#define EXWIN_VERSIONE "0.008"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 

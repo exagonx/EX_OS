@@ -192,6 +192,11 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * mouse, cioe' «la pagina scende». x e y dicono dove sta il puntatore, per
  * chi ha piu' cose da scorrere nella stessa finestra. WinEvento non cambia. */
 #define WIN_EV_ROTELLA      8
+/* Il tasto DESTRO premuto sull'area di una finestra (29 settembre 2026,
+ * @MOUSE-DESTRO): un tipo suo, e non WIN_EV_MOUSE_GIU coi bottoni, perche' un
+ * toolkit vecchio lo prenderebbe per un clic sinistro — e premerebbe il
+ * pulsante sotto il puntatore. Chi non lo conosce lo ignora. */
+#define WIN_EV_DESTRO       9
 
 /* Stili di una finestra di primo livello */
 #define WIN_ST_TITOLO       0x0001  /* ha la barra del titolo */
@@ -331,7 +336,9 @@ typedef struct {
     unsigned int tipo;          /* WIN_EV_* */
     unsigned int x, y;          /* dentro l'area del client, non sullo schermo */
     unsigned int bottoni;       /* per il mouse */
-    unsigned int tasto;         /* scancode, per WIN_EV_TASTO */
+    unsigned int tasto;         /* scancode, per WIN_EV_TASTO; per la PRESSIONE
+                                 * del mouse (GIU, DESTRO) i modificatori della
+                                 * tastiera, KBD_MOD_* (29 settembre 2026) */
     unsigned int tempo;         /* millisecondi dall'avvio, presi dal SERVER */
 } WinEvento;
 

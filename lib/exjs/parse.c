@@ -196,6 +196,72 @@ static void punto_virgola(Par *P)
 }
 
 /* =============================================================================
+ * GUARDARE AVANTI (29 settembre 2026)
+ *
+ * ! SU UNA COPIA DEL LESSICO, che poi si butta. Serve dove un gettone solo non
+ * basta a decidere: `(a, b) => ...` comincia come una parentesi, `nome:` come
+ * un'espressione. L'errore eventuale si rimette com'era: se il testo e'
+ * sbagliato, lo dira' la lettura vera.
+ * ! E SOLO QUANDO IL GETTONE CORRENTE NON E' UNA STRINGA: il lessico scioglie
+ * le stringhe in un posto solo, e la copia ci scriverebbe sopra.
+ * ========================================================================== */
+static int sbircia(Par *P)
+{
+    ExJsLex    c = P->L;
+    ExJsErrore e;
+    int        t;
+
+    if (P->err) e = *P->err;
+    t = exjs_lex_avanti(&c);
+    if (P->err) *P->err = e;
+    return t;
+}
+
+/* Il gettone corrente e' il nome `s`? (`of`, `get`, `static`: nomi, non
+ * parole chiave, e contano solo in certi posti.) */
+static int e_nome(Par *P, const char *s)
+{
+    unsigned int i, n = P->L.fine - P->L.inizio;
+    const char  *t = P->L.sorgente + P->L.inizio;
+
+    if (tk(P) != TK_NOME) return 0;
+    for (i = 0; i < n; i++) if (s[i] != t[i]) return 0;
+    return s[n] == '\0';
+}
+
+/* Il primo carattere dopo il gettone corrente, saltando gli spazi (non i
+ * commenti): per `x =>` e per `nome:`, che si chiedono a ogni nome letto e
+ * non possono costare un secondo giro del lessico. `due` riceve quello dopo. */
+static char dopo(Par *P, char *due)
+{
+    unsigned int j = P->L.pos;
+    const char  *s = P->L.sorgente;
+
+    while (j < P->L.n && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n')) j++;
+    *due = (j + 1 < P->L.n) ? s[j + 1] : '\0';
+    return (j < P->L.n) ? s[j] : '\0';
+}
+
+/* `(` ... `)` seguito da `=>`? */
+static int e_freccia(Par *P)
+{
+    ExJsLex    c = P->L;
+    ExJsErrore e;
+    int        prof = 0, t = tk(P), si = 0;
+
+    if (P->err) e = *P->err;
+    for (;;) {
+        if (t == '(' || t == '[' || t == '{') prof++;
+        else if (t == ')' || t == ']' || t == '}') { if (--prof == 0) break; }
+        else if (t == TK_FINE || t == TK_ERRORE) break;
+        t = exjs_lex_avanti(&c);
+    }
+    if (prof == 0 && t == ')') si = (exjs_lex_avanti(&c) == TK_FRECCIA);
+    if (P->err) *P->err = e;
+    return si;
+}
+
+/* =============================================================================
  * LE PRECEDENZE
  *
  * ! UNA TABELLA, E UN POSTO SOLO. Il numero e' il livello: piu' alto lega piu'
@@ -209,7 +275,7 @@ static void punto_virgola(Par *P)
 static int precedenza(int t, int senza_in)
 {
     switch (t) {
-    case TK_O_O:                                    return 1;
+    case TK_O_O: case TK_NULLISH:                   return 1;
     case TK_E_E:                                    return 2;
     case '|':                                       return 3;
     case '^':                                       return 4;
@@ -222,6 +288,7 @@ static int precedenza(int t, int senza_in)
     case TK_SHL: case TK_SHR: case TK_SHR_U:        return 8;
     case '+': case '-':                             return 9;
     case '*': case '/': case '%':                   return 10;
+    case TK_POT:                                    return 11;
     default:                                        return 0;
     }
 }
@@ -232,6 +299,7 @@ static int e_assegnazione(int t)
     case '=': case TK_PIU_UG: case TK_MENO_UG: case TK_PER_UG:
     case TK_DIV_UG: case TK_MOD_UG: case TK_SHL_UG: case TK_SHR_UG:
     case TK_SHR_U_UG: case TK_AND_UG: case TK_OR_UG: case TK_XOR_UG:
+    case TK_POT_UG: case TK_NULLISH_UG: case TK_E_E_UG: case TK_O_O_UG:
         return 1;
     default:
         return 0;
@@ -247,6 +315,11 @@ static int assegnazione(Par *P, int senza_in);
 static int istruzione(Par *P);
 static int blocco(Par *P);
 static int funzione(Par *P, int e_dichiarazione);
+static int funzione_resto(Par *P, unsigned int nome);
+static int primaria(Par *P);
+static int con_coda(Par *P);
+static int classe(Par *P, int e_dichiarazione);
+static int modello(Par *P);
 
 /* =============================================================================
  * LE ESPRESSIONI PRIMARIE
@@ -260,7 +333,14 @@ static int lista_argomenti(Par *P, int *primo)
 
     if (!accetta(P, ')')) {
         for (;;) {
-            int e = assegnazione(P, 0);
+            int e;
+
+            if (tk(P) == ')') break;                /* virgola finale */
+            if (accetta(P, TK_PUNTINI)) {
+                int x = assegnazione(P, 0);
+                e = nodo(P, N_ESPANDI);
+                if (e >= 0) P->A->nodi[e].a = x;
+            } else e = assegnazione(P, 0);
             if (P->rotto) return 0;
             if (*primo < 0) *primo = e; else P->A->nodi[ultimo].prossimo = e;
             ultimo = e;
@@ -270,6 +350,161 @@ static int lista_argomenti(Par *P, int *primo)
         if (!pretendi(P, ')')) return 0;
     }
     return 1;
+}
+
+/* =============================================================================
+ * I PARAMETRI (29 settembre 2026): un nome, un modello, un valore predefinito,
+ * il resto. Stessa lettura per le funzioni, i metodi e le frecce.
+ * ========================================================================== */
+static int parametro(Par *P)
+{
+    int p = nodo(P, N_PARAMETRO), resto = 0;
+
+    if (p < 0) return -1;
+    if (accetta(P, TK_PUNTINI)) resto = 1;
+    if (tk(P) == TK_NOME) {
+        P->A->nodi[p].testo = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+        avanti(P);
+    } else if (tk(P) == '{' || tk(P) == '[') {
+        int m = primaria(P);
+        if (P->rotto) return -1;
+        P->A->nodi[p].b = m;
+    } else {
+        p_errore(P, "atteso il nome di un parametro", exjs_lex_nome(tk(P)));
+        return -1;
+    }
+    if (!resto && accetta(P, '=')) P->A->nodi[p].a = assegnazione(P, 0);
+    P->A->nodi[p].op = (unsigned char)resto;
+    return P->rotto ? -1 : p;
+}
+
+static int parametri(Par *P, int *primo)
+{
+    int ultimo = -1;
+
+    *primo = -1;
+    if (!pretendi(P, '(')) return 0;
+    while (!P->rotto && tk(P) != ')') {
+        int p = parametro(P);
+        if (P->rotto) return 0;
+        if (*primo < 0) *primo = p; else P->A->nodi[ultimo].prossimo = p;
+        ultimo = p;
+        if (!accetta(P, ',')) break;
+    }
+    return pretendi(P, ')');
+}
+
+/* Dopo i parametri: `=> espressione` o `=> { ... }`. */
+static int freccia_corpo(Par *P, int primo)
+{
+    int corpo, n;
+
+    if (!pretendi(P, TK_FRECCIA)) return -1;
+    if (tk(P) == '{') corpo = blocco(P);
+    else {
+        int e = assegnazione(P, 0), r;
+
+        r     = nodo(P, N_RITORNA);
+        corpo = nodo(P, N_BLOCCO);
+        if (P->rotto) return -1;
+        P->A->nodi[r].a     = e;
+        P->A->nodi[corpo].a = r;
+    }
+    if (P->rotto) return -1;
+    n = nodo(P, N_FUNZIONE);
+    if (n < 0) return -1;
+    P->A->nodi[n].a  = primo;
+    P->A->nodi[n].b  = corpo;
+    P->A->nodi[n].op = 1;
+    return n;
+}
+
+/* La chiave di una voce: un nome (anche una parola chiave), una stringa, un
+ * numero, o `[espressione]`, che finisce in *calc. */
+static int chiave(Par *P, unsigned int *off, int *calc)
+{
+    *calc = -1;
+    *off  = 0;
+    if (accetta(P, '[')) {
+        *calc = assegnazione(P, 0);
+        return pretendi(P, ']');
+    }
+    /* ! LA CHIAVE PUO' ESSERE UN NOME, UNA STRINGA O UN NUMERO, e anche una
+     * PAROLA CHIAVE: `{if: 1}` e' legale, e le pagine vere lo usano.
+     * Rifiutarla vorrebbe dire non saper leggere oggetti scritti da un
+     * minificatore. */
+    if (tk(P) == TK_STRINGA)
+        *off = arena(P, P->L.testo, P->L.testo_n);
+    else if (tk(P) == TK_NUMERO || tk(P) == TK_NOME || tk(P) >= TK_VAR)
+        *off = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+    else {
+        p_errore(P, "atteso il nome di una proprieta'", exjs_lex_nome(tk(P)));
+        return 0;
+    }
+    avanti(P);
+    return !P->rotto;
+}
+
+/* Una voce di un oggetto letterale o di una classe. Il significato dei campi
+ * sta accanto a N_VOCE in exjs_int.h. */
+static int voce_oggetto(Par *P, int in_classe)
+{
+    int          voce = nodo(P, N_VOCE), calc = -1, v = -1, tipo = 0, statico = 0, era_nome;
+    unsigned int off = 0;
+
+    if (voce < 0) return -1;
+    if (!in_classe && accetta(P, TK_PUNTINI)) {
+        P->A->nodi[voce].a  = assegnazione(P, 0);
+        P->A->nodi[voce].op = 2;
+        return P->rotto ? -1 : voce;
+    }
+    if (in_classe && e_nome(P, "static")) {
+        int t2 = sbircia(P);
+        if (t2 != '(' && t2 != '=' && t2 != ';' && t2 != '}') { statico = 1; avanti(P); }
+    }
+    if (e_nome(P, "get") || e_nome(P, "set")) {
+        int t2 = sbircia(P);
+        if (t2 != ':' && t2 != '(' && t2 != ',' && t2 != '}' && t2 != '=' && t2 != ';') {
+            tipo = e_nome(P, "get") ? 3 : 4;
+            avanti(P);
+        }
+    }
+    era_nome = (tk(P) == TK_NOME);
+    if (!chiave(P, &off, &calc)) return -1;
+
+    if (tipo == 3 || tipo == 4 || tk(P) == '(') {
+        v = funzione_resto(P, off);
+    } else if (in_classe) {                         /* un campo: x = 1; */
+        tipo = 5;
+        if (accetta(P, '=')) v = assegnazione(P, 0);
+        accetta(P, ';');
+    } else if (accetta(P, ':')) {
+        v = assegnazione(P, 0);
+    } else if (era_nome && calc < 0) {
+        /* {a} vuol dire {a: a}; {a = 1} vale solo in un modello */
+        int nn = nodo(P, N_NOME);
+        if (nn < 0) return -1;
+        P->A->nodi[nn].testo = off;
+        v = nn;
+        if (accetta(P, '=')) {
+            int d = assegnazione(P, 0), as = nodo(P, N_ASSEGNA);
+            if (as < 0) return -1;
+            P->A->nodi[as].op = '=';
+            P->A->nodi[as].a  = nn;
+            P->A->nodi[as].b  = d;
+            v = as;
+        }
+    } else {
+        p_errore(P, "atteso ':' dopo la chiave", exjs_lex_nome(tk(P)));
+        return -1;
+    }
+    if (P->rotto) return -1;
+    P->A->nodi[voce].testo = off;
+    P->A->nodi[voce].a     = v;
+    P->A->nodi[voce].b     = calc;
+    P->A->nodi[voce].c     = statico;
+    P->A->nodi[voce].op    = (unsigned char)tipo;
+    return voce;
 }
 
 static int primaria(Par *P)
@@ -298,8 +533,15 @@ static int primaria(Par *P)
     }
 
     case TK_NOME: {
+        char         d2;
         unsigned int off = arena(P, P->L.sorgente + P->L.inizio,
                                  P->L.fine - P->L.inizio);
+        if (dopo(P, &d2) == '=' && d2 == '>') {     /* x => ... */
+            int p = nodo(P, N_PARAMETRO);
+            if (p >= 0) P->A->nodi[p].testo = off;
+            avanti(P);
+            return freccia_corpo(P, p);
+        }
         n = nodo(P, N_NOME);
         if (n >= 0) P->A->nodi[n].testo = off;
         avanti(P);
@@ -314,8 +556,24 @@ static int primaria(Par *P)
     case TK_FUNCTION:
         return funzione(P, 0);
 
+    case TK_CLASS:
+        return classe(P, 0);
+
+    case TK_MODELLO:
+        return modello(P);
+
+    case TK_SUPER:
+        n = nodo(P, N_SUPER);
+        avanti(P);
+        return n;
+
     case '(': {
         int e;
+        if (e_freccia(P)) {                         /* (a, b) => ... */
+            int primo;
+            if (!parametri(P, &primo)) return -1;
+            return freccia_corpo(P, primo);
+        }
         avanti(P);
         e = espressione(P, 0);
         pretendi(P, ')');
@@ -335,6 +593,11 @@ static int primaria(Par *P)
                  * mezzo e' `undefined`. Trattarli come una virgola di troppo
                  * cambierebbe la lunghezza del vettore. */
                 if (tk(P) == ',') e = nodo(P, N_NULLO);
+                else if (accetta(P, TK_PUNTINI)) {
+                    int x = assegnazione(P, 0);
+                    e = nodo(P, N_ESPANDI);
+                    if (e >= 0) P->A->nodi[e].a = x;
+                }
                 else              e = assegnazione(P, 0);
                 if (P->rotto) return -1;
 
@@ -358,58 +621,18 @@ static int primaria(Par *P)
 
         n = nodo(P, N_OGGETTO);
         avanti(P);
-        if (!accetta(P, '}')) {
-            for (;;) {
-                int          v, voce;
-                unsigned int off;
+        while (!P->rotto && tk(P) != '}') {
+            int voce = voce_oggetto(P, 0);
 
-                /* ! LA CHIAVE PUO' ESSERE UN NOME, UNA STRINGA O UN NUMERO, e
-                 * anche una PAROLA CHIAVE: `{if: 1}` e' legale, e le pagine
-                 * vere lo usano. Rifiutarla vorrebbe dire non saper leggere
-                 * oggetti scritti da un minificatore. */
-                if (tk(P) == TK_STRINGA) {
-                    off = arena(P, P->L.testo, P->L.testo_n);
-                } else if (tk(P) == TK_NUMERO) {
-                    /* Il numero diventa il suo testo cosi' com'e' scritto. */
-                    off = arena(P, P->L.sorgente + P->L.inizio,
-                                P->L.fine - P->L.inizio);
-                } else if (tk(P) == TK_NOME || tk(P) >= TK_VAR) {
-                    off = arena(P, P->L.sorgente + P->L.inizio,
-                                P->L.fine - P->L.inizio);
-                } else {
-                    p_errore(P, "atteso il nome di una proprieta'",
-                             exjs_lex_nome(tk(P)));
-                    return -1;
-                }
-                avanti(P);
-                if (!pretendi(P, ':')) return -1;
-
-                v    = assegnazione(P, 0);
-                voce = nodo(P, N_VOCE);
-                if (P->rotto) return -1;
-
-                P->A->nodi[voce].testo = off;
-                P->A->nodi[voce].a     = v;
-
-                if (primo < 0) primo = voce;
-                else           P->A->nodi[ultimo].prossimo = voce;
-                ultimo = voce;
-
-                if (accetta(P, ',')) {
-                    if (tk(P) == '}') { avanti(P); break; }
-                    continue;
-                }
-                if (!pretendi(P, '}')) return -1;
-                break;
-            }
+            if (P->rotto) return -1;
+            if (primo < 0) primo = voce; else P->A->nodi[ultimo].prossimo = voce;
+            ultimo = voce;
+            if (!accetta(P, ',')) break;
         }
+        if (!pretendi(P, '}')) return -1;
         if (n >= 0) P->A->nodi[n].a = primo;
         return n;
     }
-
-    case TK_SWITCH: case TK_TRY: case TK_THROW:
-        p_errore(P, "questo scaglione di ExJs non ha ancora switch, try e throw", 0);
-        return -1;
 
     default:
         p_errore(P, "atteso un valore", exjs_lex_nome(tk(P)));
@@ -425,10 +648,62 @@ static int primaria(Par *P)
  * Percio' `new` legge la sua coda SENZA le chiamate, prende gli argomenti se
  * ci sono, e solo dopo la coda ricomincia.
  * ========================================================================== */
+static int coda_vera(Par *P, int sin, int con_chiamate, int *opz);
+
+/* ! UNA CATENA CON ?. HA UNA RADICE (N_CATENA): li' finisce il corto
+ * circuito. `a?.b.c` con a undefined e' undefined tutto, non un errore su
+ * `.c`; e la radice e' anche il punto dove il segno si spegne. */
 static int coda(Par *P, int sin, int con_chiamate)
+{
+    int opz = 0, r = coda_vera(P, sin, con_chiamate, &opz), n;
+
+    if (r < 0 || !opz) return r;
+    n = nodo(P, N_CATENA);
+    if (n >= 0) P->A->nodi[n].a = r;
+    return n;
+}
+
+static int coda_vera(Par *P, int sin, int con_chiamate, int *opz)
 {
     for (;;) {
         if (P->rotto) return -1;
+
+        if (tk(P) == TK_OPZ) {
+            int m;
+
+            avanti(P);
+            *opz = 1;
+            if (tk(P) == '(') {
+                int primo;
+                if (!lista_argomenti(P, &primo)) return -1;
+                m = nodo(P, N_CHIAMATA);
+                if (m < 0) return -1;
+                P->A->nodi[m].a = sin;
+                P->A->nodi[m].b = primo;
+            } else if (accetta(P, '[')) {
+                int i = espressione(P, 0);
+                if (!pretendi(P, ']')) return -1;
+                m = nodo(P, N_INDICE);
+                if (m < 0) return -1;
+                P->A->nodi[m].a = sin;
+                P->A->nodi[m].b = i;
+            } else {
+                unsigned int off;
+                if (tk(P) != TK_NOME && tk(P) < TK_VAR) {
+                    p_errore(P, "atteso un nome dopo '?.'", exjs_lex_nome(tk(P)));
+                    return -1;
+                }
+                off = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+                avanti(P);
+                m = nodo(P, N_MEMBRO);
+                if (m < 0) return -1;
+                P->A->nodi[m].a     = sin;
+                P->A->nodi[m].testo = off;
+            }
+            P->A->nodi[m].op = 1;
+            sin = m;
+            continue;
+        }
 
         if (tk(P) == '.') {
             unsigned int off;
@@ -585,11 +860,12 @@ static int binari(Par *P, int minimo, int senza_in)
         if (pr == 0 || pr < minimo) return sin;
 
         avanti(P);
-        /* +1: gli operatori binari di JavaScript associano tutti a sinistra. */
-        des = binari(P, pr + 1, senza_in);
+        /* +1: gli operatori binari di JavaScript associano a sinistra —
+         * tutti tranne `**`, che associa a destra: 2 ** 3 ** 2 e' 2 ** 9. */
+        des = binari(P, op == TK_POT ? pr : pr + 1, senza_in);
         if (P->rotto) return -1;
 
-        n = nodo(P, (op == TK_E_E || op == TK_O_O) ? N_LOGICO : N_BINARIO);
+        n = nodo(P, (op == TK_E_E || op == TK_O_O || op == TK_NULLISH) ? N_LOGICO : N_BINARIO);
         if (n < 0) return -1;
         P->A->nodi[n].op = (unsigned char)op;
         P->A->nodi[n].a  = sin;
@@ -665,47 +941,11 @@ static int espressione(Par *P, int senza_in)
 /* =============================================================================
  * LE FUNZIONI
  * ========================================================================== */
-static int funzione(Par *P, int e_dichiarazione)
+static int funzione_resto(Par *P, unsigned int nome)
 {
-    int          n, primo = -1, ultimo = -1, corpo;
-    unsigned int nome = 0;
+    int primo, corpo, n;
 
-    avanti(P);                          /* `function` */
-
-    if (tk(P) == TK_NOME) {
-        nome = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
-        avanti(P);
-    } else if (e_dichiarazione) {
-        p_errore(P, "una funzione dichiarata vuole un nome", exjs_lex_nome(tk(P)));
-        return -1;
-    }
-
-    if (!pretendi(P, '(')) return -1;
-    if (!accetta(P, ')')) {
-        for (;;) {
-            unsigned int pn;
-            int          p;
-
-            if (tk(P) != TK_NOME) {
-                p_errore(P, "atteso il nome di un parametro", exjs_lex_nome(tk(P)));
-                return -1;
-            }
-            pn = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
-            avanti(P);
-
-            p = nodo(P, N_PARAMETRO);
-            if (p < 0) return -1;
-            P->A->nodi[p].testo = pn;
-
-            if (primo < 0) primo = p; else P->A->nodi[ultimo].prossimo = p;
-            ultimo = p;
-
-            if (accetta(P, ',')) continue;
-            break;
-        }
-        if (!pretendi(P, ')')) return -1;
-    }
-
+    if (!parametri(P, &primo)) return -1;
     corpo = blocco(P);
     if (P->rotto) return -1;
 
@@ -717,9 +957,269 @@ static int funzione(Par *P, int e_dichiarazione)
     return n;
 }
 
+static int funzione(Par *P, int e_dichiarazione)
+{
+    unsigned int nome = 0;
+
+    avanti(P);                          /* `function` */
+
+    if (tk(P) == TK_NOME) {
+        nome = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+        avanti(P);
+    } else if (e_dichiarazione) {
+        p_errore(P, "una funzione dichiarata vuole un nome", exjs_lex_nome(tk(P)));
+        return -1;
+    }
+    return funzione_resto(P, nome);
+}
+
+/* =============================================================================
+ * LE CLASSI (29 settembre 2026)
+ *
+ * Il costruttore c'e' sempre nell'albero: se non e' scritto se ne fa uno
+ * vuoto, e in una classe derivata e' segnato (op 2) perche' passi gli
+ * argomenti al padre, come dice la norma.
+ * ========================================================================== */
+static int classe(Par *P, int e_dichiarazione)
+{
+    unsigned int nome = 0;
+    int          padre = -1, primo = -1, ultimo = -1, costr = -1, n;
+
+    avanti(P);                          /* `class` */
+    if (tk(P) == TK_NOME) {
+        nome = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+        avanti(P);
+    } else if (e_dichiarazione) {
+        p_errore(P, "una classe dichiarata vuole un nome", exjs_lex_nome(tk(P)));
+        return -1;
+    }
+    if (accetta(P, TK_EXTENDS)) padre = con_coda(P);
+    if (!pretendi(P, '{')) return -1;
+
+    while (!P->rotto && tk(P) != '}') {
+        int v;
+
+        if (accetta(P, ';')) continue;
+        v = voce_oggetto(P, 1);
+        if (P->rotto) return -1;
+        {
+            ExJsNodo *V = &P->A->nodi[v];
+            const char *k = P->A->arena + V->testo;
+            if (V->op == 0 && V->b < 0 && !V->c && V->testo &&
+                k[0]=='c' && k[1]=='o' && k[2]=='n' && k[3]=='s' && k[4]=='t' &&
+                k[5]=='r' && k[6]=='u' && k[7]=='c' && k[8]=='t' && k[9]=='o' &&
+                k[10]=='r' && k[11]=='\0') {
+                costr = V->a;
+                continue;
+            }
+        }
+        if (primo < 0) primo = v; else P->A->nodi[ultimo].prossimo = v;
+        ultimo = v;
+    }
+    if (!pretendi(P, '}')) return -1;
+
+    if (costr < 0) {
+        int corpo = nodo(P, N_BLOCCO);
+        costr = nodo(P, N_FUNZIONE);
+        if (costr < 0 || corpo < 0) return -1;
+        P->A->nodi[costr].b  = corpo;
+        P->A->nodi[costr].op = (padre >= 0) ? 2 : 0;
+    }
+    P->A->nodi[costr].testo = nome;
+    P->A->nodi[costr].op   |= 4;                /* e' un costruttore di classe */
+
+    n = nodo(P, N_CLASSE);
+    if (n < 0) return -1;
+    P->A->nodi[n].testo = nome;
+    P->A->nodi[n].a     = padre;
+    P->A->nodi[n].b     = primo;
+    P->A->nodi[n].c     = costr;
+    return n;
+}
+
+/* =============================================================================
+ * I MODELLI `testo ${espressione} testo` (29 settembre 2026)
+ *
+ * ! DIVENTANO UNA CATENA DI +, che comincia sempre da una stringa (magari
+ * vuota): cosi' il + concatena anche quando la prima espressione e' un
+ * numero. Le espressioni si leggono con un secondo costruttore sullo stesso
+ * albero, puntato sul pezzo di sorgente fra `${` e `}`.
+ * ========================================================================== */
+static unsigned int modello_fine_espr(const char *s, unsigned int n, unsigned int i)
+{
+    int prof = 1;
+
+    while (i < n) {
+        char c = s[i];
+        if (c == '{') prof++;
+        else if (c == '}') { if (--prof == 0) return i; }
+        else if (c == '"' || c == '\'' || c == '`') {
+            char q = c;
+            i++;
+            while (i < n && s[i] != q) {
+                if (s[i] == '\\') i++;
+                else if (q == '`' && s[i] == '$' && i + 1 < n && s[i + 1] == '{') {
+                    unsigned int f = modello_fine_espr(s, n, i + 2);
+                    if (f >= n) return n;
+                    i = f;
+                }
+                i++;
+            }
+        }
+        i++;
+    }
+    return n;
+}
+
+static int esa1(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Il testo fra due espressioni, con gli scappamenti sciolti, dritto
+ * nell'arena dell'albero (sciolto non e' mai piu' lungo dell'originale). */
+static int modello_testo(Par *P, const char *s, unsigned int n)
+{
+    ExJsAst     *A = P->A;
+    unsigned int off, i, k = 0;
+    int          nd;
+
+    if (P->rotto) return -1;
+    if (A->arena_n + n + 1 > A->arena_max) {
+        A->troncato = 1;
+        return p_errore(P, "lo script e' troppo grande per l'arena dei nomi", 0);
+    }
+    off = A->arena_n;
+    for (i = 0; i < n; i++) {
+        char c = s[i];
+        if (c == '\\' && i + 1 < n) {
+            char d = s[++i];
+            switch (d) {
+            case 'n': c = '\n'; break;
+            case 't': c = '\t'; break;
+            case 'r': c = '\r'; break;
+            case '0': c = '\0'; break;
+            case 'b': c = '\b'; break;
+            case 'f': c = '\f'; break;
+            case 'v': c = '\v'; break;
+            case '\n': continue;                    /* riga che continua */
+            case 'x':
+                if (i + 2 < n && esa1(s[i+1]) >= 0 && esa1(s[i+2]) >= 0) {
+                    c = (char)(esa1(s[i+1]) * 16 + esa1(s[i+2]));
+                    i += 2;
+                } else c = 'x';
+                break;
+            case 'u':
+                /* \uXXXX in UTF-8, come fanno le stringhe */
+                if (i + 4 < n && esa1(s[i+1]) >= 0 && esa1(s[i+2]) >= 0 &&
+                    esa1(s[i+3]) >= 0 && esa1(s[i+4]) >= 0) {
+                    unsigned int u = (unsigned)(esa1(s[i+1]) << 12 | esa1(s[i+2]) << 8 |
+                                                esa1(s[i+3]) << 4  | esa1(s[i+4]));
+                    i += 4;
+                    if (u < 0x80) c = (char)u;
+                    else if (u < 0x800) {
+                        A->arena[off + k++] = (char)(0xC0 | (u >> 6));
+                        c = (char)(0x80 | (u & 0x3F));
+                    } else {
+                        A->arena[off + k++] = (char)(0xE0 | (u >> 12));
+                        A->arena[off + k++] = (char)(0x80 | ((u >> 6) & 0x3F));
+                        c = (char)(0x80 | (u & 0x3F));
+                    }
+                } else c = 'u';
+                break;
+            default: c = d; break;                  /* \` \$ \\ \' \" */
+            }
+        } else if (c == '\r') {
+            if (i + 1 < n && s[i + 1] == '\n') continue;   /* CRLF e' un a capo */
+            c = '\n';
+        }
+        A->arena[off + k++] = c;
+    }
+    A->arena[off + k] = '\0';
+    A->arena_n += k + 1;
+    nd = nodo(P, N_STRINGA);
+    if (nd >= 0) P->A->nodi[nd].testo = off;
+    return nd;
+}
+
+static int modello_unisci(Par *P, int acc, int x)
+{
+    int n;
+
+    if (acc < 0) return x;
+    n = nodo(P, N_BINARIO);
+    if (n < 0) return -1;
+    P->A->nodi[n].op = '+';
+    P->A->nodi[n].a  = acc;
+    P->A->nodi[n].b  = x;
+    return n;
+}
+
+static int modello(Par *P)
+{
+    const char  *s = P->L.sorgente + P->L.inizio + 1;
+    unsigned int n = P->L.fine - P->L.inizio - 2, i = 0, da = 0;
+    int          acc = -1, riga = P->L.t_riga;
+
+    while (!P->rotto) {
+        while (i < n && !(s[i] == '$' && i + 1 < n && s[i + 1] == '{')) {
+            if (s[i] == '\\') i++;
+            i++;
+        }
+        if (i > n) i = n;
+        acc = modello_unisci(P, acc, modello_testo(P, s + da, i - da));
+        if (i >= n) break;
+        {
+            unsigned int f = modello_fine_espr(s, n, i + 2);
+            Par          Q;
+            int          e;
+
+            if (f >= n) return p_errore(P, "${ senza } nel modello", 0);
+            Q.A = P->A; Q.err = P->err; Q.rotto = 0;
+            exjs_lex_apri(&Q.L, s + i + 2, f - (i + 2), P->L.testo, P->L.testo_max, P->err);
+            Q.L.riga = riga;
+            avanti(&Q);
+            e = espressione(&Q, 0);
+            if (!Q.rotto && tk(&Q) != TK_FINE)
+                p_errore(&Q, "atteso } nel modello", exjs_lex_nome(tk(&Q)));
+            if (Q.rotto) { P->rotto = 1; return -1; }
+            acc = modello_unisci(P, acc, e);
+            i = da = f + 1;
+        }
+    }
+    if (P->rotto) return -1;
+    avanti(P);
+    return acc;
+}
+
 /* =============================================================================
  * LE ISTRUZIONI
  * ========================================================================== */
+/* 1 se fra i nodi nati da `da` in poi c'e' una funzione o una classe: una
+ * chiusura che puo' ricordarsi le variabili di questo giro. */
+static int ha_chiusure(Par *P, unsigned int da)
+{
+    unsigned int i;
+    for (i = da; i < P->A->nodi_n; i++)
+        if (P->A->nodi[i].tipo == N_FUNZIONE || P->A->nodi[i].tipo == N_CLASSE) return 1;
+    return 0;
+}
+
+/* 1 se fra queste istruzioni c'e' un let, un const o una classe: il blocco
+ * avra' un ambito suo. */
+static int ha_lessicali(Par *P, int n)
+{
+    for (; n >= 0; n = P->A->nodi[n].prossimo) {
+        ExJsNodo *N = &P->A->nodi[n];
+        if (N->tipo == N_VAR && N->op) return 1;
+        if (N->tipo == N_CLASSE && N->testo) return 1;
+    }
+    return 0;
+}
+
 static int blocco(Par *P)
 {
     int n, primo = -1, ultimo = -1;
@@ -735,7 +1235,12 @@ static int blocco(Par *P)
     }
     if (!pretendi(P, '}')) return -1;
 
-    if (n >= 0) P->A->nodi[n].a = primo;
+    if (n >= 0) {
+        P->A->nodi[n].a  = primo;
+        P->A->nodi[n].op = (unsigned char)ha_lessicali(P, primo);
+        if (P->A->nodi[n].op && ha_chiusure(P, (unsigned int)n + 1))
+            P->A->nodi[n].op |= 2;
+    }
     return n;
 }
 
@@ -743,19 +1248,25 @@ static int blocco(Par *P)
 static int dichiarazioni(Par *P, int senza_in)
 {
     int n = nodo(P, N_VAR), primo = -1, ultimo = -1;
+    int genere = (tk(P) == TK_LET) ? 1 : (tk(P) == TK_CONST) ? 2 : 0;
 
-    avanti(P);                          /* `var` */
+    avanti(P);                          /* `var`, `let`, `const` */
+    if (n >= 0) P->A->nodi[n].op = (unsigned char)genere;
 
     for (;;) {
-        unsigned int nome;
-        int          d, val = -1;
+        unsigned int nome = 0;
+        int          d, val = -1, mod = -1;
 
-        if (tk(P) != TK_NOME) {
+        if (tk(P) == '{' || tk(P) == '[') {
+            mod = primaria(P);                      /* un modello */
+            if (P->rotto) return -1;
+        } else if (tk(P) != TK_NOME) {
             p_errore(P, "atteso il nome di una variabile", exjs_lex_nome(tk(P)));
             return -1;
+        } else {
+            nome = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+            avanti(P);
         }
-        nome = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
-        avanti(P);
 
         if (accetta(P, '=')) val = assegnazione(P, senza_in);
         if (P->rotto) return -1;
@@ -764,6 +1275,7 @@ static int dichiarazioni(Par *P, int senza_in)
         if (d < 0) return -1;
         P->A->nodi[d].testo = nome;
         P->A->nodi[d].a     = val;
+        P->A->nodi[d].b     = mod;
 
         if (primo < 0) primo = d; else P->A->nodi[ultimo].prossimo = d;
         ultimo = d;
@@ -786,19 +1298,38 @@ static int dichiarazioni(Par *P, int senza_in)
  * ========================================================================== */
 static int ciclo_for(Par *P)
 {
-    int inizio = -1, n;
+    int          inizio = -1, n;
+    unsigned int da = P->A->nodi_n;             /* per ha_chiusure */
 
     avanti(P);                          /* `for` */
     if (!pretendi(P, '(')) return -1;
 
     if (tk(P) == ';') {
         inizio = -1;
-    } else if (tk(P) == TK_VAR) {
+    } else if (tk(P) == TK_VAR || tk(P) == TK_LET || tk(P) == TK_CONST) {
         inizio = dichiarazioni(P, 1);
     } else {
         inizio = espressione(P, 1);
     }
     if (P->rotto) return -1;
+
+    if (e_nome(P, "of")) {
+        int oggetto, corpo;
+
+        avanti(P);
+        oggetto = assegnazione(P, 0);
+        if (!pretendi(P, ')')) return -1;
+        corpo = istruzione(P);
+        if (P->rotto) return -1;
+
+        n = nodo(P, N_PER_DI);
+        if (n < 0) return -1;
+        P->A->nodi[n].op = (unsigned char)ha_chiusure(P, da);
+        P->A->nodi[n].a = inizio;
+        P->A->nodi[n].b = oggetto;
+        P->A->nodi[n].d = corpo;
+        return n;
+    }
 
     if (tk(P) == TK_IN) {
         int oggetto, corpo;
@@ -811,6 +1342,7 @@ static int ciclo_for(Par *P)
 
         n = nodo(P, N_PER_IN);
         if (n < 0) return -1;
+        P->A->nodi[n].op = (unsigned char)ha_chiusure(P, da);
         P->A->nodi[n].a = inizio;
         P->A->nodi[n].b = oggetto;
         P->A->nodi[n].d = corpo;
@@ -831,6 +1363,7 @@ static int ciclo_for(Par *P)
 
         n = nodo(P, N_PER);
         if (n < 0) return -1;
+        P->A->nodi[n].op = (unsigned char)ha_chiusure(P, da);
         P->A->nodi[n].a = inizio;
         P->A->nodi[n].b = prova;
         P->A->nodi[n].c = passo;
@@ -849,13 +1382,16 @@ static int istruzione(Par *P)
     case '{':   return blocco(P);
     case ';':   n = nodo(P, N_VUOTO); avanti(P); return n;
 
-    case TK_VAR:
+    case TK_VAR: case TK_LET: case TK_CONST:
         n = dichiarazioni(P, 0);
         punto_virgola(P);
         return n;
 
     case TK_FUNCTION:
         return funzione(P, 1);
+
+    case TK_CLASS:
+        return classe(P, 1);
 
     case TK_IF: {
         int prova, allora, altrimenti = -1;
@@ -934,20 +1470,134 @@ static int istruzione(Par *P)
         return n;
     }
 
-    case TK_BREAK:
-        avanti(P); punto_virgola(P);
-        return nodo(P, N_ROMPI);
+    case TK_BREAK: case TK_CONTINUE: {
+        int          t = tk(P);
+        unsigned int et = 0;
 
-    case TK_CONTINUE:
-        avanti(P); punto_virgola(P);
-        return nodo(P, N_CONTINUA);
+        avanti(P);
+        if (tk(P) == TK_NOME && !P->L.a_capo_prima) {   /* un'etichetta */
+            et = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+            avanti(P);
+        }
+        punto_virgola(P);
+        n = nodo(P, t == TK_BREAK ? N_ROMPI : N_CONTINUA);
+        if (n >= 0) P->A->nodi[n].testo = et;
+        return n;
+    }
 
-    case TK_SWITCH: case TK_TRY: case TK_THROW: case TK_CATCH: case TK_FINALLY:
-        p_errore(P, "questo scaglione di ExJs non ha ancora switch, try e throw", 0);
+    /* throw, try e switch (@EXJS-LACUNE, 29 settembre 2026). */
+    case TK_THROW: {
+        int e;
+
+        avanti(P);
+        /* ! UN A CAPO DOPO `throw` E' UN ERRORE, non un punto e virgola: la
+         * norma lo vieta proprio perche' `throw` da solo non vuol dire
+         * niente, e lasciarlo passare lancerebbe undefined. */
+        if (P->L.a_capo_prima) { p_errore(P, "a capo dopo throw", 0); return -1; }
+        e = espressione(P, 0);
+        punto_virgola(P);
+        if (P->rotto) return -1;
+        n = nodo(P, N_LANCIA);
+        if (n >= 0) P->A->nodi[n].a = e;
+        return n;
+    }
+
+    case TK_TRY: {
+        int prova, param = -1, cattura = -1, infine = -1;
+
+        avanti(P);
+        prova = blocco(P);
+        if (accetta(P, TK_CATCH)) {
+            /* `catch {` senza nome c'e' dal 2019, e il codice minimizzato
+             * lo usa. */
+            if (accetta(P, '(')) {
+                if (tk(P) != TK_NOME) { p_errore(P, "atteso un nome in catch", exjs_lex_nome(tk(P))); return -1; }
+                param = nodo(P, N_PARAMETRO);
+                if (param >= 0)
+                    P->A->nodi[param].testo = arena(P, P->L.sorgente + P->L.inizio,
+                                                    P->L.fine - P->L.inizio);
+                avanti(P);
+                if (!pretendi(P, ')')) return -1;
+            }
+            cattura = blocco(P);
+        }
+        if (accetta(P, TK_FINALLY)) infine = blocco(P);
+        if (P->rotto) return -1;
+        if (cattura < 0 && infine < 0) { p_errore(P, "try senza catch e senza finally", 0); return -1; }
+
+        n = nodo(P, N_PROVA);
+        if (n < 0) return -1;
+        P->A->nodi[n].a = prova;
+        P->A->nodi[n].b = param;
+        P->A->nodi[n].c = cattura;
+        P->A->nodi[n].d = infine;
+        return n;
+    }
+
+    case TK_SWITCH: {
+        int d, primo = -1, ultimo = -1, visto_default = 0;
+
+        avanti(P);
+        if (!pretendi(P, '(')) return -1;
+        d = espressione(P, 0);
+        if (!pretendi(P, ')')) return -1;
+        if (!pretendi(P, '{')) return -1;
+
+        while (!P->rotto && tk(P) != '}' && tk(P) != TK_FINE) {
+            int caso, prova = -1, s1 = -1, s2 = -1;
+
+            if (accetta(P, TK_CASE)) prova = espressione(P, 0);
+            else if (accetta(P, TK_DEFAULT)) {
+                if (visto_default++) { p_errore(P, "due default nello stesso switch", 0); return -1; }
+            } else { p_errore(P, "atteso case o default", exjs_lex_nome(tk(P))); return -1; }
+            if (!pretendi(P, ':')) return -1;
+
+            caso = nodo(P, N_CASO);
+            if (caso < 0) return -1;
+            while (!P->rotto && tk(P) != TK_CASE && tk(P) != TK_DEFAULT &&
+                   tk(P) != '}' && tk(P) != TK_FINE) {
+                int s = istruzione(P);
+                if (P->rotto) return -1;
+                if (s1 < 0) s1 = s; else P->A->nodi[s2].prossimo = s;
+                s2 = s;
+            }
+            P->A->nodi[caso].a = prova;
+            P->A->nodi[caso].b = s1;
+            if (primo < 0) primo = caso; else P->A->nodi[ultimo].prossimo = caso;
+            ultimo = caso;
+        }
+        if (!pretendi(P, '}')) return -1;
+
+        n = nodo(P, N_SCEGLI);
+        if (n < 0) return -1;
+        P->A->nodi[n].a = d;
+        P->A->nodi[n].b = primo;
+        return n;
+    }
+
+    case TK_CATCH: case TK_FINALLY:
+        p_errore(P, "catch o finally senza try", 0);
         return -1;
 
     default: {
-        int e = espressione(P, 0);
+        int e;
+
+        char d2;
+
+        if (tk(P) == TK_NOME && dopo(P, &d2) == ':') {  /* fuori: for (...) */
+            unsigned int et = arena(P, P->L.sorgente + P->L.inizio, P->L.fine - P->L.inizio);
+            int          dentro;
+
+            avanti(P); avanti(P);
+            dentro = istruzione(P);
+            if (P->rotto) return -1;
+            n = nodo(P, N_ETICHETTA);
+            if (n < 0) return -1;
+            P->A->nodi[n].testo = et;
+            P->A->nodi[n].a     = dentro;
+            return n;
+        }
+        e = espressione(P, 0);
 
         punto_virgola(P);
         if (P->rotto) return -1;
@@ -1008,7 +1658,10 @@ int exjs_analizza(ExJsAst *A, const char *sorgente, unsigned int n,
 
     if (P.rotto) return 0;
 
-    if (prog >= 0) A->nodi[prog].a = primo;
+    if (prog >= 0) {
+        A->nodi[prog].a  = primo;
+        A->nodi[prog].op = (unsigned char)ha_lessicali(&P, primo);
+    }
     A->radice = prog;
     return 1;
 }
@@ -1054,6 +1707,16 @@ const char *exjs_nodo_nome(int tipo)
     case N_ROMPI:      return "rompi";
     case N_CONTINUA:   return "continua";
     case N_VUOTO:      return "vuoto";
+    case N_LANCIA:     return "lancia";
+    case N_PROVA:      return "prova";
+    case N_SCEGLI:     return "scegli";
+    case N_CASO:       return "caso";
+    case N_ESPANDI:    return "espandi";
+    case N_PER_DI:     return "per_di";
+    case N_ETICHETTA:  return "etichetta";
+    case N_CLASSE:     return "classe";
+    case N_SUPER:      return "super";
+    case N_CATENA:     return "catena";
     default:           return "?";
     }
 }

@@ -72,12 +72,12 @@ static void prova_url(void)
            "un percorso di 550 caratteri arriva intero, coda compresa");
     }
     {
-        static char troppo[1200];
+        static char troppo[2300];
         unsigned int q;
         strcpy(troppo, "http://a.it/");
-        for (q = 12; q < 1150; q++) troppo[q] = 'y';
-        troppo[1150] = '\0';
-        ok(!http_url(troppo, &u), "un percorso oltre 1024 si rifiuta, non si tronca");
+        for (q = 12; q < 2200; q++) troppo[q] = 'y';
+        troppo[2200] = '\0';
+        ok(!http_url(troppo, &u), "un percorso oltre HTTP_PERCORSO_MAX (2048) si rifiuta, non si tronca");
     }
 
     ok(http_url("http://10.0.2.2:8080/a?b=c", &u) &&

@@ -175,6 +175,7 @@ struct ExJsCtx {
      * e ogni punto che legge una proprieta' andrebbe ricordato.
      * ===================================================================== */
     int          proto_str, proto_vet, proto_num, proto_fun;
+    int          proto_ogg;         /* hasOwnProperty & co.: in fondo a tutti */
 
     /* ! LO STATO D'ESECUZIONE IN CORSO, e serve a una cosa sola: permettere a
      * una funzione NATIVA di chiamare una funzione scritta in JavaScript.
@@ -282,6 +283,15 @@ ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
     c->proto_vet = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
     c->proto_num = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
     c->proto_fun = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+    /* ! IL PROTOTIPO DI TUTTI GLI OGGETTI (29 settembre 2026): quello dei
+     * tipi semplici e dei vettori risale a lui, e exjs_prendi lo consulta
+     * per ultimo per ogni oggetto che non e' un ambito. */
+    c->proto_ogg = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+    {
+        int k[4], j;
+        k[0] = c->proto_str; k[1] = c->proto_vet; k[2] = c->proto_num; k[3] = c->proto_fun;
+        for (j = 0; j < 4; j++) if (exjs_ogg(c, k[j])) exjs_ogg(c, k[j])->proto = c->proto_ogg;
+    }
     c->ese  = 0;
     c->seme = 2463534242u;          /* un seme qualunque, ma non zero */
     c->base_fatta  = 0;
@@ -331,6 +341,12 @@ static unsigned int lung(const char *s)
     unsigned int n = 0;
     while (s[n]) n++;
     return n;
+}
+
+static int nome_uguale(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
 }
 
 unsigned int exjs_arena_metti(ExJsCtx *c, const char *s, unsigned int n)
@@ -691,68 +707,125 @@ double exjs_a_numero(ExJsCtx *c, ExJsVal v)
  * quelle di `%g`. Un intero si scrive senza virgola (`1`, non `1.000000`),
  * l'infinito si scrive «Infinity», e NaN si scrive «NaN».
  * --------------------------------------------------------------------------- */
+/* ! LE CIFRE PIU' CORTE CHE RILEGGONO LO STESSO NUMERO (29 settembre 2026),
+ * che e' la regola di JavaScript: 0.1 + 0.2 si scrive 0.30000000000000004,
+ * e 0.1 si scrive 0.1. Prima si scrivevano sei decimali al massimo (0.3), e
+ * la parte intera si calcolava in un long long: sopra 9.2e18 traboccava, e
+ * 1e21 diventava «0».
+ *
+ * ! IL long double E' IL MARGINE: sull'i386 e sull'host sono 64 bit di
+ * mantissa, undici in piu' del double, e le potenze di dieci fino a 10^27
+ * ci stanno esatte. Si provano 1, 2, ... 17 cifre e ci si ferma alla prima
+ * che, riletta, rende il numero di partenza. Non e' Ryu: su qualche numero
+ * al limite puo' scrivere una cifra in piu' del necessario, mai un numero
+ * diverso. */
+static long double dieci_alla(int k)
+{
+    long double r = 1.0L, b = 10.0L;
+    int         neg = k < 0;
+
+    if (neg) k = -k;
+    while (k) { if (k & 1) r *= b; b *= b; k >>= 1; }
+    return neg ? 1.0L / r : r;
+}
+
+/* `p` cifre significative di d > 0: le mette in `cif` (senza punto) e rende
+ * l'esponente decimale della prima (d ~ 0.c1c2... * 10^(e+1)). */
+static int cifre_di(double d, int p, char *cif)
+{
+    long double x = d, m;
+    unsigned long long q, lim = 1;
+    int         e = 0, k;
+
+    for (k = 0; k < p; k++) lim *= 10ULL;
+    while (x >= 10.0L) { x /= 10.0L; e++; if (e > 400) break; }
+    while (x < 1.0L)   { x *= 10.0L; e--; if (e < -400) break; }
+    m = (long double)d * dieci_alla(p - 1 - e);
+    q = (unsigned long long)(m + 0.5L);
+    if (q >= lim) { e++; m = (long double)d * dieci_alla(p - 1 - e); q = (unsigned long long)(m + 0.5L); }
+    if (q == 0) q = 1;
+    for (k = p - 1; k >= 0; k--) { cif[k] = (char)('0' + (int)(q % 10ULL)); q /= 10ULL; }
+    cif[p] = '\0';
+    return e;
+}
+
+static double rileggi(const char *cif, int p, int e)
+{
+    unsigned long long q = 0;
+    int                k;
+
+    for (k = 0; k < p; k++) q = q * 10ULL + (unsigned long long)(cif[k] - '0');
+    return (double)((long double)q * dieci_alla(e - p + 1));
+}
+
 static void numero_a_testo(double d, char *out, unsigned int max)
 {
-    char         cifre[32];
-    unsigned int n = 0, i;
-    int          neg = 0;
-    double       ip;
+    char         cif[20];
+    unsigned int i = 0;
+    int          p, e, n, k;
 
-    if (max < 8) { if (max) out[0] = '\0'; return; }
-
+    if (max < 32) { if (max) out[0] = '\0'; return; }
     if (d != d) { out[0]='N'; out[1]='a'; out[2]='N'; out[3]='\0'; return; }
-
-    if (d < 0) { neg = 1; d = -d; }
-
-    if (d > 1.7e308) {
-        i = 0;
-        if (neg) out[i++] = '-';
-        out[i++]='I'; out[i++]='n'; out[i++]='f'; out[i++]='i';
-        out[i++]='n'; out[i++]='i'; out[i++]='t'; out[i++]='y'; out[i]='\0';
+    if (d == 0.0) { out[0] = '0'; out[1] = '\0'; return; }     /* anche -0 */
+    if (d < 0) { out[i++] = '-'; d = -d; }
+    if (d > 1.7976931348623157e308) {
+        const char *t = "Infinity";
+        while (*t) out[i++] = *t++;
+        out[i] = '\0';
         return;
     }
 
-    /* La parte intera, a rovescio. */
-    ip = d;
-    {
-        double t = ip;
-        if (t < 1.0) cifre[n++] = '0';
-        while (t >= 1.0 && n < sizeof(cifre)) {
-            double q = t / 10.0;
-            double r;
-            /* pavimento a mano: il motore non tira dentro math.h per questo */
-            double qi = (double)(long long)q;
-            r = t - qi * 10.0;
-            if (r >= 10.0) { r -= 10.0; qi += 1.0; }
-            cifre[n++] = (char)('0' + (int)r);
-            t = qi;
-        }
+    for (p = 1; p <= 17; p++) {
+        e = cifre_di(d, p, cif);
+        if (rileggi(cif, p, e) == d) break;
     }
+    if (p > 17) { p = 17; e = cifre_di(d, p, cif); }
+    while (p > 1 && cif[p - 1] == '0') p--;      /* 1.50 -> 1.5 */
+    n = e + 1;                                   /* le cifre prima del punto */
 
-    i = 0;
-    if (neg && i + 1 < max) out[i++] = '-';
-    while (n > 0 && i + 1 < max) out[i++] = cifre[--n];
+    if (n >= p && n <= 21) {                     /* intero: 123, 1e20 */
+        for (k = 0; k < p; k++) out[i++] = cif[k];
+        for (; k < n; k++)      out[i++] = '0';
+    } else if (n > 0 && n <= 21) {               /* 12.5 */
+        for (k = 0; k < n; k++) out[i++] = cif[k];
+        out[i++] = '.';
+        for (; k < p; k++)      out[i++] = cif[k];
+    } else if (n > -6 && n <= 0) {               /* 0.00125 */
+        out[i++] = '0'; out[i++] = '.';
+        for (k = 0; k < -n; k++) out[i++] = '0';
+        for (k = 0; k < p; k++)  out[i++] = cif[k];
+    } else {                                     /* 1.5e+21, 1e-7 */
+        char ex[8];
+        int  x = n - 1, en = 0;
 
-    /* La parte frazionaria: al massimo sei cifre, e gli zeri finali si
-     * tolgono — `0.5` non e' `0.500000`. */
-    {
-        double fr = d - (double)(long long)d;
-        if (fr > 1e-12) {
-            unsigned int start = i, k;
-
-            if (i + 1 < max) out[i++] = '.';
-            for (k = 0; k < 6 && i + 1 < max; k++) {
-                int c2;
-                fr *= 10.0;
-                c2 = (int)fr;
-                if (c2 > 9) c2 = 9;
-                out[i++] = (char)('0' + c2);
-                fr -= c2;
-            }
-            while (i > start + 1 && out[i-1] == '0') i--;
-            if (i > start && out[i-1] == '.') i--;
-        }
+        out[i++] = cif[0];
+        if (p > 1) { out[i++] = '.'; for (k = 1; k < p; k++) out[i++] = cif[k]; }
+        out[i++] = 'e';
+        out[i++] = x < 0 ? '-' : '+';
+        if (x < 0) x = -x;
+        do { ex[en++] = (char)('0' + x % 10); x /= 10; } while (x);
+        while (en) out[i++] = ex[--en];
     }
+    out[i] = '\0';
+}
+
+/* toFixed: `dec` decimali, arrotondando; sopra 1e21 e' il testo normale. */
+void exjs_numero_fisso(double d, int dec, char *out, unsigned int max)
+{
+    unsigned long long q;
+    char         t[48];
+    unsigned int i = 0, n = 0, k;
+
+    if (max < 48) { if (max) out[0] = '\0'; return; }
+    if (d != d || d >= 1e21 || d <= -1e21) { numero_a_testo(d, out, max); return; }
+    if (dec < 0) dec = 0;
+    if (dec > 20) dec = 20;
+    if (d < 0) { d = -d; out[i++] = '-'; }
+    q = (unsigned long long)((long double)d * dieci_alla(dec) + 0.5L);
+    do { t[n++] = (char)('0' + (int)(q % 10ULL)); q /= 10ULL; } while (q && n < sizeof(t));
+    while (n <= (unsigned int)dec) t[n++] = '0';
+    for (k = n; k > (unsigned int)dec; k--) out[i++] = t[k - 1];
+    if (dec) { out[i++] = '.'; for (; k > 0; k--) out[i++] = t[k - 1]; }
     out[i] = '\0';
 }
 
@@ -876,6 +949,23 @@ int exjs_metti(ExJsCtx *c, ExJsVal ogg, const char *nome, ExJsVal v)
      * copre. Risalire vorrebbe dire che scrivere su un oggetto cambia tutti
      * quelli che condividono il prototipo. */
     p = prop_trova(c, i, nome, 0);
+    /* ! UN ACCESSORE (set x(v)) SI CHIAMA invece di essere sovrascritto,
+     * anche quando sta sul prototipo — e' cosi' che il setter di una classe
+     * vede le scritture su ogni istanza. Gli ambiti non ne hanno mai, e non
+     * pagano la ricerca. */
+    {
+        ExJsOggetto *O = exjs_ogg(c, i);
+        int          q = p;
+
+        if (q < 0 && O && O->classe != EXJS_CL_AMBITO && O->proto >= 0)
+            q = prop_trova(c, O->proto, nome, 1);
+        if (q >= 0 && exjs_e_accessore(c, c->prop[q].valore)) {
+            ExJsVal    set = exjs_prendi(c, c->prop[q].valore, "\001s");
+            ExJsErrore err;
+            if (exjs_tipo(c, set) == EXJS_FUNZIONE) exjs_invoca(c, set, ogg, &v, 1, &err);
+            return 1;
+        }
+    }
     if (p >= 0) { c->prop[p].valore = v; return 1; }
 
     if (c->prop_n >= c->prop_max) { c->finita = 1; return 0; }
@@ -886,13 +976,97 @@ int exjs_metti(ExJsCtx *c, ExJsVal ogg, const char *nome, ExJsVal v)
 
         c->prop[np].nome     = off;
         c->prop[np].valore   = v;
-        c->prop[np].prossima = O->prima_prop;
-        O->prima_prop = np;
+        c->prop[np].prossima = -1;
+        /* ! IN CODA, NON IN TESTA (29 settembre 2026): l'ordine delle chiavi
+         * e' quello in cui sono nate, e for..in, Object.keys e JSON lo
+         * rendono cosi'. Messe in testa, for..in le dava al contrario e JSON
+         * doveva rovesciarle a mano. */
+        if (O->prima_prop < 0) O->prima_prop = np;
+        else {
+            int q = O->prima_prop;
+            while (c->prop[q].prossima >= 0) q = c->prop[q].prossima;
+            c->prop[q].prossima = np;
+        }
     }
     return 1;
 }
 
+static ExJsVal prendi_crudo(ExJsCtx *c, ExJsVal ogg, const char *nome);
+
+/* ! LA LETTURA CHE CHIAMA IL GETTER sta qui intorno a quella di sempre: se
+ * quel che si trova e' un accessore, il valore e' cio' che rende get, con
+ * `this` l'oggetto da cui si e' partiti (non quello dove sta il getter). */
 ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
+{
+    ExJsVal v = prendi_crudo(c, ogg, nome);
+
+    if (E_PUNT(v) && PUNT_TAG(v) != T_STR && exjs_e_accessore(c, v)) {
+        ExJsVal    get = prendi_crudo(c, v, "\001g");
+        ExJsErrore err;
+        /* ! NON MENTRE UN FILO E' APERTO: il getter creerebbe stringhe in
+         * mezzo a quella che si sta componendo (vedi fili_aperti). Succede
+         * con JSON.stringify: li' un get rende undefined, e la voce salta. */
+        if (exjs_tipo(c, get) != EXJS_FUNZIONE || c->fili_aperti) return V_INDEF;
+        return exjs_invoca(c, get, ogg, 0, 0, &err);
+    }
+    return v;
+}
+
+int exjs_e_accessore(ExJsCtx *c, ExJsVal v)
+{
+    ExJsOggetto *O;
+
+    if (!E_PUNT(v) || PUNT_TAG(v) == T_STR) return 0;
+    O = exjs_ogg(c, (int)PUNT_IDX(v));
+    return O && O->classe == EXJS_CL_ACCESSORE;
+}
+
+void exjs_accessore_metti(ExJsCtx *c, ExJsVal ogg, const char *nome,
+                          ExJsVal get, ExJsVal set)
+{
+    int     i = exjs_a_oggetto(ogg), p;
+    ExJsVal A;
+
+    if (i < 0) return;
+    p = prop_trova(c, i, nome, 0);
+    if (p >= 0 && exjs_e_accessore(c, c->prop[p].valore)) A = c->prop[p].valore;
+    else {
+        A = exjs_da_oggetto(exjs_ogg_nuovo(c, EXJS_CL_ACCESSORE));
+        if (exjs_a_oggetto(A) < 0) return;
+        if (p >= 0) c->prop[p].valore = A;
+        else {
+            /* metterlo senza passare dal setter che non c'e' ancora */
+            ExJsOggetto *O = exjs_ogg(c, i);
+            if (O) {
+                int salva = O->proto;
+                O->proto = -1;                  /* niente accessori ereditati */
+                exjs_metti(c, ogg, nome, A);
+                O->proto = salva;
+            }
+        }
+    }
+    if (exjs_tipo(c, get) == EXJS_FUNZIONE) exjs_metti(c, A, "\001g", get);
+    if (exjs_tipo(c, set) == EXJS_FUNZIONE) exjs_metti(c, A, "\001s", set);
+}
+
+int exjs_togli(ExJsCtx *c, ExJsVal ogg, const char *nome)
+{
+    ExJsOggetto *O = exjs_ogg(c, exjs_a_oggetto(ogg));
+    int          p, prima = -1;
+
+    if (!O) return 0;
+    for (p = O->prima_prop; p >= 0; prima = p, p = c->prop[p].prossima) {
+        const char *n = exjs_arena_leggi(c, c->prop[p].nome);
+        if (nome_uguale(n, nome)) {
+            if (prima < 0) O->prima_prop = c->prop[p].prossima;
+            else           c->prop[prima].prossima = c->prop[p].prossima;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static ExJsVal prendi_crudo(ExJsCtx *c, ExJsVal ogg, const char *nome)
 {
     int i = exjs_a_oggetto(ogg), p;
 
@@ -930,6 +1104,22 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
     p = prop_trova(c, i, nome, 0);
     if (p >= 0) return c->prop[p].valore;
 
+    /* ! IL prototype DI UNA FUNZIONE SCRITTA IN JAVASCRIPT NASCE QUANDO SI
+     * CHIEDE (29 settembre 2026), con `constructor` che torna alla funzione.
+     * Farlo a ogni funzione creata costerebbe un oggetto per ogni chiusura,
+     * e le pagine ne creano a migliaia senza mai usarlo. */
+    {
+        ExJsOggetto *O = exjs_ogg(c, i);
+        if (O && O->classe == EXJS_CL_FUNZIONE && O->nodo >= 0 &&
+            nome_uguale(nome, "prototype")) {
+            ExJsVal pr = exjs_oggetto(c);
+            if (exjs_a_oggetto(pr) < 0) return V_INDEF;
+            exjs_metti(c, pr, "constructor", ogg);
+            exjs_metti(c, ogg, "prototype", pr);
+            return pr;
+        }
+    }
+
     {
         ExJsOggetto *O = exjs_ogg(c, i);
         if (O && O->eso_leggi) {
@@ -957,6 +1147,10 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
         else if (O && O->classe == EXJS_CL_FUNZIONE) pr = c->proto_fun;
         if (pr >= 0) {
             p = prop_trova(c, pr, nome, 1);
+            if (p >= 0) return c->prop[p].valore;
+        }
+        if (O && O->classe != EXJS_CL_AMBITO && c->proto_ogg >= 0 && i != c->proto_ogg) {
+            p = prop_trova(c, c->proto_ogg, nome, 0);
             if (p >= 0) return c->prop[p].valore;
         }
     }
@@ -1131,6 +1325,8 @@ void exjs_vettore_tronca(ExJsCtx *c, ExJsVal vet, unsigned int nuova)
 int  exjs_proto_str(ExJsCtx *c) { return c->proto_str; }
 int  exjs_proto_vet(ExJsCtx *c) { return c->proto_vet; }
 int  exjs_proto_num(ExJsCtx *c) { return c->proto_num; }
+int  exjs_proto_fun(ExJsCtx *c) { return c->proto_fun; }
+int  exjs_proto_ogg(ExJsCtx *c) { return c->proto_ogg; }
 void exjs_ese_metti(ExJsCtx *c, void *e)
 {
     /* Un'esecuzione di primo livello comincia: nessun filo e' aperto, nessun

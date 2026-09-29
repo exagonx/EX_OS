@@ -115,6 +115,22 @@ articles no longer stop at 1 MB: the main page holds 3. An old bug is
 fixed too: white text came out black (`make prova-excss`,
 `tools/prova_disposizione.sh`).
 
+### Searching Wikipedia
+
+**tested in QEMU** — Wikipedia's search box is shown and works: "roma" +
+Enter opens the article, "canale grande" + the Search button opens the
+results page. The bug was in the transport: URLs with a path over 512
+characters were cut, and Wikipedia's stylesheet arrived wrong. The limit is
+now 1024, and a longer URL gives an error instead of asking for something
+else.
+
+### Calctor as an adding machine
+
+**tested in QEMU** — with the Cronologia box on, Calctor becomes an office
+adding machine: the = key goes away, + and - become two tall keys, and each
+adds (or subtracts) to the total and shows it at once. `12 * 3 +` finishes
+the product and adds 36; `+` again prints the subtotal on the tape.
+
 ### The mouse wheel
 
 **tested in QEMU** — the wheel scrolls the page in EXBrowser and, in every
@@ -123,6 +139,25 @@ lines per notch. It scrolls what you are looking at, not the window with the
 focus. For now it works with PS/2 mice (including the one QEMU emulates and
 many laptops); USB and serial mice do not send the wheel yet
 (`tools/prova_rotella.sh`).
+
+### The right button, dragging, and file associations
+
+**tested in QEMU** - the right button opens a menu. On the desktop: New
+folder, New file, Paste, and on an icon also Open, Rename, Copy, Cut, Delete.
+The file manager has the same items; there several rows can be chosen
+(Ctrl+click, Shift+click) and dragged onto a folder on the left: a window asks
+whether to copy them, move them or leave them. A file that is not a program
+opens with the program it belongs to (`/exwin/lib/tipi.txt`): from the file
+manager, the desktop and the shell, where `nota.txt` opens the editor
+(`tools/prova_tasto_destro.sh`; Ctrl and Shift with the mouse cannot be tested
+in QEMU).
+
+### Pennello writes
+
+**tested in QEMU** — Pennello has a Text tool (key T): click where the text
+starts, type it, and it goes into the picture in the chosen colour; the width
+buttons choose its size (12, 16, 24 or 36 pixels). It is undone like any
+other stroke (`tools/prova_pennello_testo.sh`).
 
 ### A fast mouse no longer freezes the desktop
 
@@ -139,6 +174,29 @@ itself down. Clicks and keys still all arrive
 **tested in QEMU** — a BASIC program started with F5 from gfedit now shows
 the `INPUT` prompt and reads the keyboard: gfedit hands it the console while
 it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
+
+### ExJs reads today's JavaScript
+
+**tested in QEMU and on the host** - the ExJs engine (QuickJS stays the
+default) reads `let` and `const`, arrows, classes with `extends` and
+`super`, `` `${}` `` templates, destructuring, spread, `?.`, `??`, `**`,
+`for..of` and labels, and has `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, the newer array and string methods, `toFixed` and the
+`Math` functions. Numbers print as in every other engine (`0.1 + 0.2` is
+`0.30000000000000004`, `1e21` is `1e+21`) and `for..in` gives keys in
+creation order. Regular expressions and Promises are still missing, and
+objects are not reclaimed (`make prova-exjs`, 448 tests;
+`tools/prova_es2015.sh`).
+
+### ExJs: `throw`, `try`, `switch` and prototypes
+
+**tested on the host** - the ExJs engine (QuickJS stays the default) has
+`throw`, `try`/`catch`/`finally` and `switch`; `new F()` inherits the
+methods of `F.prototype`, and `instanceof` works. `Error`, `TypeError`,
+`RangeError` and the others exist, and the engine's own errors can be caught.
+A script stopped for running too long cannot. Reading a property of
+`undefined` still gives `undefined` instead of throwing (`make prova-exjs`,
+342 tests).
 
 ### ExJs: `Date` and `valueOf`
 

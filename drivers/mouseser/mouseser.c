@@ -215,6 +215,7 @@ static void rispondi(unsigned int pid)
     s.presente = 1;                     /* la UART c'e': oltre non si sa */
     s.persi    = g_persi;
     s.dz       = 0;                     /* il protocollo Microsoft non ha rotella */
+    s.modificatori = 0;                 /* la tastiera la sa un altro driver */
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
 

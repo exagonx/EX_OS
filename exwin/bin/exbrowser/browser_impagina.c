@@ -1474,6 +1474,11 @@ static void impagina_nodo(int v, const CssStile *ered)
             p.w = p.h = p.rif = 0;
             p.nel_flusso = p.stringi = p.aria_dx = p.aria_giu = 0;
             p.prova = g_misura;
+            p.larg_css = 0;
+            if (mio.larghezza != CSS_MISURA_NO) {
+                int lw = larg_risolta(&mio, rw(), 0);
+                p.larg_css = lw > 0 ? lw : 0;
+            }
             p.testo = 0;
             p.testo_off = 0;
 

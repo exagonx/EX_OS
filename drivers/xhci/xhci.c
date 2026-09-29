@@ -1656,6 +1656,7 @@ static void rispondi(unsigned int pid)
     s.presente = 1;
     s.persi = 0;
     s.dz = 0;       /* in modo boot l'HID non porta la rotella */
+    s.modificatori = 0;
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
     g_dx = 0; g_dy = 0; g_novita = 0;

@@ -38,6 +38,9 @@
 #define TK_NOME        128      /* identificatore */
 #define TK_NUMERO      129
 #define TK_STRINGA     130
+#define TK_MODELLO     131      /* `testo ${espr}`: il gettone e' tutto il
+                                 * sorgente fra i backtick, che il costruttore
+                                 * dell'albero spezza */
 
 /* Operatori di piu' caratteri. Uno per riga, e il nome dice come si scrive. */
 #define TK_UGUALE      140      /* ==   */
@@ -64,6 +67,16 @@
 #define TK_AND_UG      161      /* &=   */
 #define TK_OR_UG       162      /* |=   */
 #define TK_XOR_UG      163      /* ^=   */
+/* ES2015 e dopo (29 settembre 2026) */
+#define TK_FRECCIA     164      /* =>   */
+#define TK_NULLISH     165      /* ??   */
+#define TK_OPZ         166      /* ?.   */
+#define TK_POT         167      /* **   */
+#define TK_POT_UG      168      /* **=  */
+#define TK_PUNTINI     169      /* ...  */
+#define TK_NULLISH_UG  170      /* ??=  */
+#define TK_E_E_UG      171      /* &&=  */
+#define TK_O_O_UG      172      /* ||=  */
 
 /* Le parole chiave. Sono gettoni a se' e non nomi, perche' `if` non e' una
  * variabile che si possa chiamare cosi': deciderlo qui evita che il
@@ -95,6 +108,11 @@
 #define TK_FINALLY     204
 #define TK_THROW       205
 #define TK_VOID        206
+#define TK_LET         207
+#define TK_CONST       208
+#define TK_CLASS       209
+#define TK_EXTENDS     210
+#define TK_SUPER       211
 
 /* =============================================================================
  * IL LETTORE DI GETTONI
@@ -194,6 +212,44 @@ typedef struct {
 #define N_ROMPI        51
 #define N_CONTINUA     52
 #define N_VUOTO        53
+#define N_LANCIA       54       /* throw a                            */
+#define N_PROVA        55       /* try a catch(b) c finally d; b = il
+                                 * N_PARAMETRO del nome o -1             */
+#define N_SCEGLI       56       /* switch (a) { b = primo N_CASO }      */
+#define N_CASO         57       /* case a: (-1 = default), b = prima
+                                 * istruzione                           */
+/* ES2015 e dopo (29 settembre 2026). I nodi vecchi prendono significati in
+ * piu' attraverso `op`, dove prima era sempre zero:
+ *   N_FUNZIONE.op  1 = freccia (niente this e arguments suoi),
+ *                  2 = costruttore implicito di una classe derivata,
+ *                  4 = costruttore di una classe (i campi, super)
+ *   N_PARAMETRO    a = valore predefinito, b = modello da destrutturare
+ *                  (testo 0), op 1 = resto (...r)
+ *   N_VAR.op       0 var, 1 let, 2 const
+ *   N_DICHIARA.b   un modello ({a, b} o [x, y]) al posto del nome
+ *   N_BLOCCO.op    1 = contiene let, const o class; 2 = e dentro c'e' una
+ *                  chiusura (vedi esegui, N_BLOCCO: l'ambito suo si fa
+ *                  solo quando serve, perche' ogni ambito e' un oggetto e
+ *                  gli oggetti non si recuperano)
+ *   N_PER, N_PER_IN, N_PER_DI .op 1 = il corpo contiene una chiusura: con
+ *                  let, un ambito per giro
+ *   N_PROGRAMMA.op lo stesso, ma dichiara nell'ambito che riceve
+ *   N_VOCE.op      0 chiave: valore (anche un metodo), 2 ...spread, 3 get,
+ *                  4 set, 5 campo di classe; b = chiave calcolata o -1;
+ *                  c = 1 static
+ *   N_MEMBRO, N_INDICE, N_CHIAMATA .op 1 = ?. (facoltativo)
+ *   N_ROMPI, N_CONTINUA .testo = l'etichetta, 0 se non c'e'
+ *   N_LOGICO.op    anche TK_NULLISH
+ * Un oggetto o vettore letterale a sinistra di = , in una dichiarazione o in
+ * un parametro e' un MODELLO: N_ASSEGNA dentro vuol dire valore predefinito,
+ * N_ESPANDI vuol dire il resto. */
+#define N_ESPANDI      58       /* ...a  in vettori, chiamate, oggetti  */
+#define N_PER_DI       59       /* for (a of b) d                       */
+#define N_ETICHETTA    60       /* testo: a                             */
+#define N_CLASSE       61       /* testo=nome, a=padre, b=prima voce,
+                                 * c=costruttore (N_FUNZIONE)            */
+#define N_SUPER        62
+#define N_CATENA       63       /* la radice di una catena con ?.       */
 
 typedef struct {
     unsigned char tipo;
@@ -235,6 +291,7 @@ typedef struct {
 #define EXJS_CL_VETTORE   1
 #define EXJS_CL_FUNZIONE  2
 #define EXJS_CL_AMBITO    3
+#define EXJS_CL_ACCESSORE 4        /* get/set: vedi exjs_accessore_metti */
 
 typedef struct {
     unsigned int nome;              /* scostamento nell'arena */
@@ -329,11 +386,39 @@ unsigned int exjs_prop_nome(ExJsCtx *c, int p);
 int          exjs_proto_str(ExJsCtx *c);
 int          exjs_proto_vet(ExJsCtx *c);
 int          exjs_proto_num(ExJsCtx *c);
+int          exjs_proto_fun(ExJsCtx *c);
+int          exjs_proto_ogg(ExJsCtx *c);
+/* libreria.c: Object, Array, call/apply/bind e il resto (29 settembre 2026) */
+void         exjs_libreria_registra(ExJsCtx *c);
+/* b ** e, con le funzioni del coprocessore (libreria.c) */
+double       exjs_potenza(double b, double e);
+/* get e set (29 settembre 2026): la proprieta' `nome` di ogg diventa un
+ * accessore; get o set possono essere undefined per lasciare quello che
+ * c'e'. exjs_prendi e exjs_metti chiamano le funzioni. */
+void         exjs_accessore_metti(ExJsCtx *c, ExJsVal ogg, const char *nome,
+                                  ExJsVal get, ExJsVal set);
+int          exjs_e_accessore(ExJsCtx *c, ExJsVal v);
+/* delete: toglie la proprieta' propria `nome`; 1 se c'era */
+int          exjs_togli(ExJsCtx *c, ExJsVal ogg, const char *nome);
 void         exjs_ese_metti(ExJsCtx *c, void *e);
 void        *exjs_ese_prendi(ExJsCtx *c);
 double       exjs_random(ExJsCtx *c);
 
 /* --- base.c: la libreria di base si registra sul globale --- */
+/* --- val.c: toFixed (base.c) --- */
+void         exjs_numero_fisso(double d, int dec, char *out, unsigned int max);
+
+/* --- run.c: una nativa che LANCIA (@EXJS-LACUNE, 29 settembre 2026) ---
+ * Da chiamare dentro una nativa e rendere subito dopo: l'eccezione
+ * risale come quella di un `throw`, e un try..catch la prende. Fuori da
+ * un'esecuzione non fa niente. exjs_lancia_errore costruisce l'oggetto col
+ * costruttore globale `tipo` ("RangeError", "TypeError"...). */
+void         exjs_lancia(ExJsCtx *c, ExJsVal v);
+/* 1 se l'esecuzione e' ferma (un'eccezione, un errore): i cicli delle native
+ * che richiamano JavaScript smettono subito. */
+int          exjs_interrotto(ExJsCtx *c);
+void         exjs_lancia_errore(ExJsCtx *c, const char *tipo, const char *msg);
+
 void         exjs_base_registra(ExJsCtx *c);
 int          exjs_base_gia_fatta(ExJsCtx *c);
 void         exjs_base_segna(ExJsCtx *c);

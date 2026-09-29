@@ -61,6 +61,7 @@ static const char *const g_nomi[] = {
     "exhttp_certi_esamina",
     "exhttp_certi_aggiungi",
     "exhttp_attesi",
+    "exhttp_intestazioni",
 
     "__lib_avvio"
 };
@@ -82,6 +83,7 @@ static void *const g_indirizzi[] = {
     (void *)exhttp_certi_esamina,
     (void *)exhttp_certi_aggiungi,
     (void *)exhttp_attesi,
+    (void *)exhttp_intestazioni,
 
     (void *)__libc_ponti_avvia
 };

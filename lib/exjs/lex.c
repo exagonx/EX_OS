@@ -110,6 +110,9 @@ static const Chiave CHIAVI[] = {
     { "try",        TK_TRY },        { "catch",      TK_CATCH },
     { "finally",    TK_FINALLY },    { "throw",      TK_THROW },
     { "void",       TK_VOID },
+    { "let",        TK_LET },        { "const",      TK_CONST },
+    { "class",      TK_CLASS },      { "extends",    TK_EXTENDS },
+    { "super",      TK_SUPER },
     { 0, 0 }
 };
 
@@ -253,34 +256,49 @@ static int leggi_numero(ExJsLex *L)
         return TK_NUMERO;
     }
 
-    while (L->pos < L->n && e_cifra(L->sorgente[L->pos]))
-        v = v * 10.0 + (double)(avanti1(L) - '0');
+    /* ! LE CIFRE IN UN INTERO, L'ESPONENTE A PARTE, E UNA SOLA MOLTIPLICAZIONE
+     * ALLA FINE (29 settembre 2026). Sommare 0.1, 0.01... cifra per cifra
+     * accumulava errori: `0.0000001` non era 1e-7, e si scriveva
+     * 1.0000000000000005e-7. Diciannove cifre stanno in 64 bit; le altre
+     * contano solo come esponente. Il long double e' quello di val.c. */
+    {
+        unsigned long long m = 0;
+        int  esp10 = 0, cifre_m = 0;
 
-    if (L->pos < L->n && L->sorgente[L->pos] == '.') {
-        double scala = 1.0;
-        avanti1(L);
         while (L->pos < L->n && e_cifra(L->sorgente[L->pos])) {
-            scala *= 0.1;
-            v += (double)(avanti1(L) - '0') * scala;
+            int k = avanti1(L) - '0';
+            if (cifre_m < 19) { m = m * 10ULL + (unsigned long long)k; if (m) cifre_m++; }
+            else esp10++;
         }
-    }
-
-    if (L->pos < L->n && (L->sorgente[L->pos] == 'e' || L->sorgente[L->pos] == 'E')) {
-        int segno = 1, esp = 0, cifre = 0;
-        double f = 1.0;
-
-        avanti1(L);
-        if (L->pos < L->n && (L->sorgente[L->pos] == '+' || L->sorgente[L->pos] == '-'))
-            segno = (avanti1(L) == '-') ? -1 : 1;
-        while (L->pos < L->n && e_cifra(L->sorgente[L->pos])) {
-            esp = esp * 10 + (avanti1(L) - '0');
-            cifre++;
-            if (esp > 4096) esp = 4096;     /* oltre e' comunque infinito */
+        if (L->pos < L->n && L->sorgente[L->pos] == '.') {
+            avanti1(L);
+            while (L->pos < L->n && e_cifra(L->sorgente[L->pos])) {
+                int k = avanti1(L) - '0';
+                if (cifre_m < 19) { m = m * 10ULL + (unsigned long long)k; if (m) cifre_m++; esp10--; }
+            }
         }
-        if (!cifre) return errore(L, "esponente senza cifre");
+        if (L->pos < L->n && (L->sorgente[L->pos] == 'e' || L->sorgente[L->pos] == 'E')) {
+            int segno = 1, esp = 0, cifre = 0;
 
-        while (esp--) f *= 10.0;
-        v = (segno > 0) ? v * f : v / f;
+            avanti1(L);
+            if (L->pos < L->n && (L->sorgente[L->pos] == '+' || L->sorgente[L->pos] == '-'))
+                segno = (avanti1(L) == '-') ? -1 : 1;
+            while (L->pos < L->n && e_cifra(L->sorgente[L->pos])) {
+                esp = esp * 10 + (avanti1(L) - '0');
+                cifre++;
+                if (esp > 4096) esp = 4096;     /* oltre e' comunque infinito */
+            }
+            if (!cifre) return errore(L, "esponente senza cifre");
+            esp10 += segno * esp;
+        }
+        {
+            long double x = (long double)m, b = 10.0L, p = 1.0L;
+            int         e = esp10 < 0 ? -esp10 : esp10;
+
+            while (e) { if (e & 1) p *= b; b *= b; e >>= 1; }
+            x = (esp10 < 0) ? x / p : x * p;
+            v = (double)x;
+        }
     }
 
     L->numero = v;
@@ -421,6 +439,7 @@ static int operatore(ExJsLex *L)
         break;
     case '=':
         if (d == '=' && e == '=')             { t = TK_ID_UGUALE;  quanti = 3; }
+        else if (d == '>')                    { t = TK_FRECCIA;    quanti = 2; }
         else if (d == '=')                    { t = TK_UGUALE;     quanti = 2; }
         else                                  { t = '=';           quanti = 1; }
         break;
@@ -440,7 +459,9 @@ static int operatore(ExJsLex *L)
         else                                  { t = '-';           quanti = 1; }
         break;
     case '*':
-        if (d == '=')                         { t = TK_PER_UG;     quanti = 2; }
+        if (d == '*' && e == '=')             { t = TK_POT_UG;     quanti = 3; }
+        else if (d == '*')                    { t = TK_POT;        quanti = 2; }
+        else if (d == '=')                    { t = TK_PER_UG;     quanti = 2; }
         else                                  { t = '*';           quanti = 1; }
         break;
     /* ! QUI, IL GIORNO DELLE ESPRESSIONI REGOLARI. Oggi la barra e' sempre
@@ -456,12 +477,14 @@ static int operatore(ExJsLex *L)
         else                                  { t = '%';           quanti = 1; }
         break;
     case '&':
-        if (d == '&')                         { t = TK_E_E;        quanti = 2; }
+        if (d == '&' && e == '=')             { t = TK_E_E_UG;     quanti = 3; }
+        else if (d == '&')                    { t = TK_E_E;        quanti = 2; }
         else if (d == '=')                    { t = TK_AND_UG;     quanti = 2; }
         else                                  { t = '&';           quanti = 1; }
         break;
     case '|':
-        if (d == '|')                         { t = TK_O_O;        quanti = 2; }
+        if (d == '|' && e == '=')             { t = TK_O_O_UG;     quanti = 3; }
+        else if (d == '|')                    { t = TK_O_O;        quanti = 2; }
         else if (d == '=')                    { t = TK_OR_UG;      quanti = 2; }
         else                                  { t = '|';           quanti = 1; }
         break;
@@ -470,8 +493,20 @@ static int operatore(ExJsLex *L)
         else                                  { t = '^';           quanti = 1; }
         break;
 
+    case '?':
+        /* `?.` ma non `a?.5:1`, dove il punto comincia un numero */
+        if (d == '?' && e == '=')             { t = TK_NULLISH_UG; quanti = 3; }
+        else if (d == '?')                    { t = TK_NULLISH;    quanti = 2; }
+        else if (d == '.' && !(e >= '0' && e <= '9')) { t = TK_OPZ; quanti = 2; }
+        else                                  { t = '?';           quanti = 1; }
+        break;
+    case '.':
+        if (d == '.' && e == '.')             { t = TK_PUNTINI;    quanti = 3; }
+        else                                  { t = '.';           quanti = 1; }
+        break;
+
     case '(': case ')': case '{': case '}': case '[': case ']':
-    case ';': case ',': case ':': case '?': case '.': case '~':
+    case ';': case ',': case ':': case '~':
         t = (int)(unsigned char)c; quanti = 1;
         break;
 
@@ -482,6 +517,67 @@ static int operatore(ExJsLex *L)
     while (quanti--) avanti1(L);
     L->tipo = t;
     return t;
+}
+
+/* -----------------------------------------------------------------------------
+ * I modelli `...${...}...` (29 settembre 2026)
+ *
+ * ! QUI SI TROVA SOLO LA FINE, il resto lo fa il costruttore dell'albero: le
+ * espressioni dentro `${}` sono JavaScript intero, con stringhe, graffe e
+ * altri modelli, e chi sa leggerle e' lui. Il lessico deve solo saltarle
+ * senza sbagliare la graffa che le chiude.
+ * --------------------------------------------------------------------------- */
+static int salta_modello(ExJsLex *L);
+
+static int salta_espressione(ExJsLex *L)
+{
+    int prof = 1;
+
+    while (L->pos < L->n) {
+        char c = L->sorgente[L->pos];
+
+        if (c == '{') { prof++; avanti1(L); continue; }
+        if (c == '}') { avanti1(L); if (--prof == 0) return 1; continue; }
+        if (c == '`') { if (!salta_modello(L)) return 0; continue; }
+        if (c == '"' || c == '\'') {
+            char q = c;
+            avanti1(L);
+            while (L->pos < L->n && L->sorgente[L->pos] != q) {
+                if (L->sorgente[L->pos] == '\\') avanti1(L);
+                if (L->pos < L->n) avanti1(L);
+            }
+            if (L->pos >= L->n) return 0;
+            avanti1(L);
+            continue;
+        }
+        avanti1(L);
+    }
+    return 0;
+}
+
+static int salta_modello(ExJsLex *L)
+{
+    avanti1(L);                                 /* il ` di apertura */
+    while (L->pos < L->n) {
+        char c = L->sorgente[L->pos];
+
+        if (c == '\\') { avanti1(L); if (L->pos < L->n) avanti1(L); continue; }
+        if (c == '`')  { avanti1(L); return 1; }
+        if (c == '$' && guarda(L, 1) == '{') {
+            avanti1(L); avanti1(L);
+            if (!salta_espressione(L)) return 0;
+            continue;
+        }
+        avanti1(L);
+    }
+    return 0;
+}
+
+static int leggi_modello(ExJsLex *L)
+{
+    if (!salta_modello(L)) return errore(L, "modello ` non chiuso");
+    L->tipo = TK_MODELLO;
+    return TK_MODELLO;
 }
 
 int exjs_lex_avanti(ExJsLex *L)
@@ -506,6 +602,12 @@ int exjs_lex_avanti(ExJsLex *L)
 
     if (c == '"' || c == '\'') {
         int t = leggi_stringa(L);
+        L->fine = L->pos;
+        return t;
+    }
+
+    if (c == '`') {
+        int t = leggi_modello(L);
         L->fine = L->pos;
         return t;
     }
@@ -567,6 +669,16 @@ const char *exjs_lex_nome(int tipo)
     case TK_AND_UG:     return "&=";
     case TK_OR_UG:      return "|=";
     case TK_XOR_UG:     return "^=";
+    case TK_FRECCIA:    return "=>";
+    case TK_NULLISH:    return "?\?";
+    case TK_OPZ:        return "?.";
+    case TK_POT:        return "**";
+    case TK_POT_UG:     return "**=";
+    case TK_PUNTINI:    return "...";
+    case TK_NULLISH_UG: return "?\?=";
+    case TK_E_E_UG:     return "&&=";
+    case TK_O_O_UG:     return "||=";
+    case TK_MODELLO:    return "un modello `...`";
     default: break;
     }
 

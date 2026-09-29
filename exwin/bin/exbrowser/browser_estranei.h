@@ -73,6 +73,7 @@ typedef struct {
     short         opz_n;        /* quante ne ha */
     short         opz_ora;      /* quale e' scelta adesso */
     int           nodo;         /* il nodo che l'ha generato, -1 se libero */
+    short         imm;          /* type="image": la sua figura in g_imm, -1 */
     short         cur;          /* dove si sta scrivendo, dentro `valore` */
     /* ! L'ANCORA DELLA SELEZIONE, -1 quando non c'e' niente di scelto. La
      * selezione e' il tratto fra `sel` e `cur`, in un verso o nell'altro: chi
@@ -95,6 +96,10 @@ typedef struct {
 typedef struct {
     int           nodo;             /* il nodo <img> dentro g_doc              */
     unsigned int  dich_w, dich_h;   /* width= e height=, 0 se non ci sono      */
+    /* La larghezza che chiede il CSS (width: 100% di una colonna da 90), gia'
+     * in pixel, o 0. Vince sugli attributi, e l'altezza segue le proporzioni
+     * (28 settembre 2026: le miniature dei risultati di Wikipedia). */
+    unsigned int  css_w;
     unsigned int  w, h;             /* la misura con cui si disegna            */
     unsigned int  ris_w, ris_h;     /* il posto riservato prima che arrivasse  */
     unsigned int *px;               /* ARGB, nostri: free() li restituisce     */
@@ -106,6 +111,8 @@ typedef struct {
     unsigned int  anima_prossimo;
 } Imm;
 extern int g_js_acceso;
+/* In exbrowser.c: l'immagine k gia' caricata si porta a css_w (vedi Imm). */
+void imm_rifai(int k);
 
 /* =============================================================================
  * AN IFRAME, as the layout sees it: a rectangle with a document inside

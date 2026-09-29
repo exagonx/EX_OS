@@ -99,6 +99,18 @@ static int rete_finta(void *dato, ExDomRichiesta *r)
     g_rete_corpo[0] = '\0';
     if (r->corpo) snprintf(g_rete_corpo, sizeof(g_rete_corpo), "%s", r->corpo);
 
+    /* (28 settembre 2026) l'eco delle intestazioni e del metodo */
+    if (strcmp(r->url, "/intest") == 0 || strcmp(r->url, "/metodo") == 0) {
+        static char eco[512];
+        snprintf(eco, sizeof(eco), "%s", r->url[1] == 'i'
+                 ? (r->intestazioni ? r->intestazioni : "(nessuna)")
+                 : (r->metodo ? r->metodo : "?"));
+        r->risposta = eco;
+        r->byte     = (unsigned int)strlen(eco);
+        r->codice   = 200;
+        r->tipo     = "text/plain";
+        return 1;
+    }
     if (strcmp(r->url, "/ciao") == 0) {
         r->risposta = "buongiorno";
         r->byte     = 10;
@@ -1618,6 +1630,23 @@ int main(int argc, char **argv)
     prova_dopo("di un'altra rende null", PAG,
                "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();",
                "String(x.getResponseHeader('X-Qualcosa'))", "null");
+    /* ! LE INTESTAZIONI ARRIVANO (28 settembre 2026): prima si buttavano. */
+    prova_dopo("setRequestHeader arriva a chi fa la richiesta", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/intest', false);"
+               "x.setRequestHeader('X-Prova', 'ciao'); x.send();",
+               "x.responseText", "X-Prova: ciao\r\n");
+    prova_dopo("un XHR sincrono in POST resta un POST", PAG,
+               "var x = new XMLHttpRequest(); x.open('POST', '/metodo', false);"
+               "x.setRequestHeader('X-Prova', 'ciao'); x.send('{}');",
+               "x.responseText", "POST");
+    prova_dopo("un a capo in un valore non fa due intestazioni", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/intest', false);"
+               "x.setRequestHeader('X-A', 'b\\r\\nX-Iniettata: 1'); x.send();",
+               "x.responseText", "(nessuna)");
+    prova_dopo("open() ricomincia le intestazioni", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/intest', false);"
+               "x.setRequestHeader('X-Vecchia', '1'); x.open('GET', '/intest', false);"
+               "x.send();", "x.responseText", "(nessuna)");
     prova_dopo("setRequestHeader si accetta e non ferma niente", PAG,
                "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
                "x.setRequestHeader('X-Prova', '1'); x.send();", "x.status", "200");

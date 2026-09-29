@@ -59,7 +59,12 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.019"
+#define VERSIONE_APP "0.023"
+/* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
+ * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
+ * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
+ * TIENE (l'indirizzo della pagina, la cronologia) resta da 600. */
+#define NAV_URL_MAX 2048
 /* The size the window is BORN with. Since 26 September 2026 it can be
  * resized (@EXBROWSER-1024): the size it has NOW is g_fin_w x g_fin_h. */
 #define FIN_W       760

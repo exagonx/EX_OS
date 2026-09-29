@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.005");
+EX_VERSIONE("wserver", "0.006");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -191,6 +191,9 @@ static unsigned int g_fb_passo = 0, g_fb_w = 0, g_fb_h = 0, g_fb_bit = 0;
 /* Il puntatore */
 static int g_px = 0, g_py = 0;
 static unsigned int g_bottoni = 0, g_bottoni_prec = 0;
+/* I modificatori della tastiera all'ultimo stato del mouse (KBD_MOD_*): vanno
+ * nel campo `tasto` degli eventi di pressione (@LISTA-MULTI). */
+static unsigned int g_mouse_mod = 0;
 
 /* Il trascinamento in corso */
 static int g_trascino = -1;             /* indice, -1 = nessuno */
@@ -1671,6 +1674,7 @@ static void mouse_stato(const MouseStato *s)
     if (s->dx || s->dy) sporca_puntatore(g_px, g_py);   /* e dov'e' */
 
     g_bottoni = s->bottoni;
+    g_mouse_mod = s->modificatori;
 }
 
 /* Definita fra le richieste dei client: e' la stessa cosa, chiesta col mouse
@@ -1886,6 +1890,22 @@ static void mouse_agisci(void)
     idx = sotto(g_px, g_py, &dove);
     if (idx < 0) { g_bottoni_prec = g_bottoni; return; }
 
+    /* IL TASTO DESTRO (29 settembre 2026, @MOUSE-DESTRO): sull'area di una
+     * finestra la porta davanti e glielo dice; sulla barra del titolo non fa
+     * niente. Una finestra bloccata da un suo modale non lo riceve, come non
+     * riceve il sinistro. */
+    if ((g_bottoni & MOUSE_BTN_DES) && !(g_bottoni_prec & MOUSE_BTN_DES) && dove == 0) {
+        int md = modale_di(g_fin[idx].pid);
+
+        if (md >= 0 && md != idx) porta_su(md);
+        else {
+            porta_su(idx);
+            manda_evento(&g_fin[idx], WIN_EV_DESTRO, g_px, g_py, g_bottoni, g_mouse_mod);
+        }
+        g_bottoni_prec = g_bottoni;
+        return;
+    }
+
     /* ! IL CLIC SU UNA FINESTRA BLOCCATA NON SI PERDE IN SILENZIO: porta
      * davanti la modale. Buttarlo e basta darebbe un'applicazione che non
      * risponde e nessun indizio sul perche' — e la finestra che aspetta la
@@ -1925,7 +1945,7 @@ static void mouse_agisci(void)
             g_px_prec = g_px;
             g_py_prec = g_py;
             manda_evento(&g_fin[idx], WIN_EV_MOUSE_GIU, g_px, g_py,
-                         g_bottoni, 0);
+                         g_bottoni, g_mouse_mod);
         }
     }
 

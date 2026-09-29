@@ -155,6 +155,12 @@ static struct {
     int          (*finestre_elenco)(ExVoceFin *, int);
     void         (*finestra_attiva)(unsigned int);
     void         (*attiva)(ExFinestra);          /* optional: 28 September 2026 */
+    void         (*scrivi_in)(unsigned int *, int, int, ExFont, int, int, const char *, unsigned int);
+    int          (*menu_comparsa)(ExFinestra, int, int, const char *const *, int);
+    int          (*apri_file)(const char *, char *, unsigned int);
+    void         (*lista_multipla)(ExFinestra, int);
+    int          (*lista_scelte)(ExFinestra, unsigned int *, int);
+    int          (*lista_riga_a)(ExFinestra, int);
     void         (*finestra_riduci)(unsigned int);
     void         (*chiudi_altre)(void);
     void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
@@ -332,6 +338,14 @@ static void assicura(void)
     P.finestra_attiva = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_attiva");
     P.attiva          = (void (*)(ExFinestra))exlib_simbolo(t, "ex_attiva");
+    P.scrivi_in       = (void (*)(unsigned int *, int, int, ExFont, int, int, const char *, unsigned int))
+                        exlib_simbolo(t, "ex_scrivi_in");
+    P.menu_comparsa   = (int (*)(ExFinestra, int, int, const char *const *, int))
+                        exlib_simbolo(t, "ex_menu_comparsa");
+    P.apri_file       = (int (*)(const char *, char *, unsigned int))exlib_simbolo(t, "ex_apri_file");
+    P.lista_multipla  = (void (*)(ExFinestra, int))exlib_simbolo(t, "ex_lista_multipla");
+    P.lista_scelte    = (int (*)(ExFinestra, unsigned int *, int))exlib_simbolo(t, "ex_lista_scelte");
+    P.lista_riga_a    = (int (*)(ExFinestra, int))exlib_simbolo(t, "ex_lista_riga_a");
     P.finestra_riduci = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_riduci");
     P.chiudi_altre    = (void (*)(void))
@@ -555,6 +569,20 @@ void         ex_finestra_attiva(unsigned int id)
 { assicura(); if (P.finestra_attiva) P.finestra_attiva(id); }
 void         ex_attiva(ExFinestra f)
 { assicura(); if (P.attiva) P.attiva(f); }
+void ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
+                  const char *s, unsigned int c)
+{ assicura(); if (P.scrivi_in) P.scrivi_in(px, w, h, f, x, y, s, c); }
+int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
+{ assicura(); return P.menu_comparsa ? P.menu_comparsa(f, x, y, voci, n) : -1; }
+int ex_apri_file(const char *percorso, char *prog, unsigned int max)
+{ assicura(); return P.apri_file ? P.apri_file(percorso, prog, max) : -1; }
+void ex_lista_multipla(ExFinestra f, int si)
+{ assicura(); if (P.lista_multipla) P.lista_multipla(f, si); }
+int ex_lista_scelte(ExFinestra f, unsigned int *righe, int max)
+{ assicura(); if (P.lista_scelte) return P.lista_scelte(f, righe, max);
+  if (righe && max > 0) { righe[0] = ex_lista_scelta(f); return 1; } return 0; }
+int ex_lista_riga_a(ExFinestra f, int y)
+{ assicura(); return P.lista_riga_a ? P.lista_riga_a(f, y) : -1; }
 
 void         ex_finestra_riduci(unsigned int id)
 { assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }

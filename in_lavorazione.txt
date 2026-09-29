@@ -199,7 +199,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @NAV-CURSORE     FATTO: il clic mette il cursore li'; resta il trascinamento
   1  @NAV-BORDER      FATTO border e padding sui blocchi; restano in linea e tabelle CSS
   1  @NAV-GIF         FATTO nel navigatore e in Immagini; al piu' 5 fotogrammi al secondo
-  1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
+  1  @NAVMETA         FATTE il 28-29/09: intestazioni, input image, biscotti su disco, arena ExJs
   1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
   1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
   1  @EXT2-DOPPIO     un blocco liberato due volte sull'Acer: il driver l'ha fermato
@@ -241,7 +241,9 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @ARCHIVI-TAR     FATTO e provato: lib/extar, Archivi apre e crea .tar/.tar.gz
   1  @CALCTOR         FATTO e provato (8/8): la calcolatrice, tre modalita', e il toolkit nuovo
   1  @BUILD-FLAG      il segnaposto dei flag ricreato da solo: tutto ricompilato (causa ignota)
-  1  @EXJS-LACUNE     FATTE Date e valueOf (28/09, 307/307 e QEMU coi due motori): resta throw
+  1  @EXJS-LACUNE     FATTE: ES2015 e oltre, libreria, numeri (29/09, jsprova 448/448)
+  1  @EXJS-REGEXP     ExJs non ha le espressioni regolari: /a+/, replace e split con regexp
+  1  @EXJS-GC         ExJs non recupera gli oggetti: 2000 nel navigatore, poi si ferma
   1  @PM-SFONDO       FATTO tutto, disposizione compresa (angolo centro allarga ripeti)
   1  @PM-DESKTOP      FATTO e provato in QEMU (5/5 con PM-UNITA): icone non spostabili
   1  @PM-UNITA        FATTO e provato: si accorge da solo dei mount (ogni 2 s)
@@ -249,7 +251,18 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @AVVIO-LOGIN     FATTO e provato in QEMU: resta la macchina vera
   1  @ICONE           FATTE: toolkit, menu, exide e file manager. Mancano i disegni
   1  @EXIDE-ICONE     FATTO tutto e provato: mancano solo i disegni delle icone
-  1  @PAINT           FATTO: Pennello, apre 5 formati e salva PNG/BMP; resta testo e selezione
+  1  @PAINT           FATTO: Pennello, 5 formati, PNG/BMP, e il testo (29/09); resta la selezione
+  1  @MOUSE-DESTRO    FATTO (29/09): WIN_EV_DESTRO, EXM_MOUSE_DESTRO, ex_menu_comparsa
+  1  @ASSOCIAZIONI    FATTO (29/09): ex_apri_file per file manager e scrivania, e la shell
+  1  @LISTA-MULTI     FATTO (29/09): Ctrl e Shift col mouse; in QEMU non si provano (vedi sotto)
+  2  @DESK-MENU       FATTO e provato in QEMU (prova_tasto_destro.sh)
+  2  @FM-MENU         FATTO e provato in QEMU (prova_tasto_destro.sh)
+  2  @FM-TRASCINA     FATTO e provato in QEMU: Copia / Sposta / Annulla
+  1  @TOOLKIT-SCHEDE  un controllo «schede» in exwin.so: barra, Ctrl+Tab, chiudere !
+  1  @NAV-FINESTRA    EXBrowser apre una pagina in una finestra nuova (_blank, window.open) !
+  2  @NAV-SCHEDE      EXBrowser: piu' pagine in schede della stessa finestra <- @TOOLKIT-SCHEDE !
+  2  @EDIT-SCHEDE     l'editor di testo con piu' file, uno per scheda <- @TOOLKIT-SCHEDE !
+  2  @EXIDE-SCHEDE    exide: i sorgenti del progetto in schede <- @TOOLKIT-SCHEDE !
   1  @EXWIN-LOG       FATTO l'anello (32 KB, ora e pid); resta la pipe per i figli di pm
   1  @ICONE-APP       i disegni _64/_128 ci sono; archivi aggiunta il 27 settembre (dal PNG)
   1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
@@ -3210,8 +3223,15 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
       decodificato differisce solo il disegno.
 
   QUEL CHE MANCA, in ordine di quanto serve:
-    - il TESTO dentro l'immagine: il toolkit scrive i caratteri sulla
-      finestra, non in un bitmap. Serve un ex_scrivi che renda i pixel;
+    - (FATTO il 29 settembre 2026, Pennello 0.005) il TESTO dentro
+      l'immagine: strumento Testo (tasto T), un clic, una riga da scrivere,
+      grandezza dagli spessori (12/16/24/36). Nel toolkit ex_scrivi_in, che
+      scrive in un bitmap ARGB coi glifi e la fusione di ex_scrivi_con
+      (exwin.so 0.007, facoltativa nello stub). Si annulla come il resto.
+      Provato: tools/prova_pennello_testo.sh (la scritta nel PNG salvato,
+      Ctrl+Z la toglie), prova_pennello.sh 7/7. Manca: il testo non si
+      sposta dopo averlo messo (servira' la selezione), un carattere solo
+      (sans), nessun grassetto;
     - la SELEZIONE (ritaglia, copia, incolla, sposta): gli appunti del
       sistema portano solo testo;
     - il secondo bottone del mouse: ExWin non dice quale bottone e' stato
@@ -4577,8 +4597,18 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
          stretti a 1 pixel nella misura minima. E le misure consumavano i posti
          dei controlli (VistaPezzo.prova). Provato su it.wikipedia.org: «roma»
          + Invio apre Roma, «canale grande» + Ricerca apre i risultati
-         (1 - 20 di 40 040). RESTA: nella pagina dei risultati le miniature
-         stanno SOTTO il testo del risultato invece che accanto.
+         (1 - 20 di 40 040). E le miniature SOTTO il testo, corrette il 29:
+         il foglio della pagina dei risultati ha un indirizzo di 636
+         caratteri, e exhttp_prendi lo troncava a 600 (EXHTTP_URL_MAX) con
+         strncpy — lo stesso difetto un piano piu' su. Dentro exhttp ora si
+         accettano 2048 (EXHTTP_URL_LUNGO) e oltre si rifiuta; ExHttpEsito
+         resta da 600, quindi netupdate, scarica e senderror non cambiano. Il
+         navigatore risolve fogli, script e immagini in buffer da NAV_URL_MAX
+         (2048); le cache non tengono indirizzi che non ci stanno. E le
+         immagini seguono la larghezza CSS (Imm.css_w, VistaPezzo.larg_css):
+         la miniatura con width:100% in una colonna da 90 e' larga 90, in
+         proporzione; gia' caricata si rimpicciolisce sul posto (imm_rifai),
+         mai piu' grande. prova_disposizione.sh 12/12.
          ! Il metodo che ha funzionato: un foglio di stile «sbagliato» si
          riconosce solo confrontando i BYTE ricevuti con quelli di curl.
        - (FATTI la stessa sera: clear, gap/row-gap/column-gap,
@@ -4648,6 +4678,158 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
     disegno, un progetto vecchio deve continuare ad aprirsi — si cambia
     l'etichetta mostrata, non la parola salvata, o si leggono tutte e due.
 
+=============================================================================
+@MOUSE-DESTRO @ASSOCIAZIONI @LISTA-MULTI @DESK-MENU @FM-MENU @FM-TRASCINA
+IL TASTO DESTRO, IL TRASCINARE, LE ASSOCIAZIONI (chiesti il 29 settembre 2026)
+=============================================================================
+
+Chiesto, parola per parola: «il click con il tasto destro sul desktop
+permette di creare rinominare cancellare copiare directory e files, su file
+manager oltre il tasto destro implementa anche il trascina, trascinando una
+directory o uno o piu' files selezionati nell'area destra in una directory
+nell'area sinistra deve apparire una finestra modale che chiede se voglio
+copiare o spostare o annullare, aggiungi al file manager e al sistema la
+possibilita' che eseguendo un file che non e' un eseguibile questo andra' a
+richiamare l'applicazione associata ad esempio se e' un .txt verra' aperto
+con editor».
+
+COM'E' OGGI, misurato prima di cominciare:
+  - wserver guarda SOLO il tasto sinistro (mouse_agisci: MOUSE_BTN_SIN): il
+    destro non arriva a nessuna finestra, ed e' il motivo per cui Pennello
+    sceglie il colore di sfondo con «Scambia». Il toolkit ha le tendine della
+    barra dei menu, non un menu a comparsa.
+  - le associazioni ci sono A META': /exwin/lib/tipi.txt (estensioni |
+    programma, cio' che non c'e' si apre con l'editor), ma le legge solo il
+    file manager al doppio clic. La shell, la scrivania e chi lancia un
+    programma non ne sanno niente.
+  - le liste del toolkit hanno UNA scelta (ex_lista_scelta).
+
+IL PIANO:
+  1. @MOUSE-DESTRO: il server manda il tasto destro come WIN_EV_MOUSE_GIU con
+     i bottoni (e un tipo suo, per i client vecchi che non guardano i
+     bottoni); il toolkit ne fa EXM_MOUSE_DESTRO, e una funzione di menu a
+     comparsa (una tendina che si apre dove si e' cliccato e rende la voce
+     scelta, modale per chi la chiede).
+  2. @ASSOCIAZIONI: una funzione sola che legge tipi.txt, nella libreria che
+     tutti gia' usano, al posto di quella del file manager; la usano il file
+     manager, la scrivania e la shell (un file che esiste ma non e' un ELF si
+     apre col suo programma; in modo testo con l'editor di testo).
+  3. @LISTA-MULTI: Ctrl+clic aggiunge o toglie, Shift+clic prende l'intervallo,
+     e una funzione per sapere quali sono scelte.
+  4. @DESK-MENU e @FM-MENU: Nuova cartella, Nuovo file, Rinomina, Cancella,
+     Copia, Incolla (gli appunti dei file sono dei due programmi, non del
+     sistema: il sistema porta solo testo).
+  5. @FM-TRASCINA: premuto sulla lista di destra e lasciato su una cartella
+     dell'albero di sinistra, una finestra modale: «Copia», «Sposta»,
+     «Annulla». Col mouse relativo di QEMU la prova passa da tastiera dove
+     puo' e dai clic a passi di dieci dove non puo'.
+
+FATTO IL 29 SETTEMBRE 2026 — com'e' andata, per chi riprende:
+  - kbd.drv 0.006: MouseStato ha `modificatori` IN FONDO (KBD_MOD_*), cosi'
+    il server sa se un clic e' Ctrl+clic. mouseser, uhci e xhci mettono 0.
+  - wserver 0.006: WIN_EV_DESTRO (9) sull'area di una finestra, dopo averla
+    portata davanti; i modificatori viaggiano nel campo `tasto` di
+    WIN_EV_MOUSE_GIU e WIN_EV_DESTRO. Un client vecchio ignora il tipo 9.
+  - exwin.so 0.008: EXM_MOUSE_DESTRO (wp = il controllo sotto il puntatore,
+    su una lista la riga si sceglie prima), EXM_LASCIATO (una lista
+    trascinata e lasciata su un altro controllo: EX_DA(wp), EX_A(wp), la y in
+    lp), ex_menu_comparsa, ex_apri_file, ex_lista_multipla, ex_lista_scelte,
+    ex_lista_riga_a. Tutte facoltative nello stub.
+    ! kbd.drv, wserver ed exwin.so VANNO INSIEME.
+  - la scrivania (pm 0.011): tasto destro sul vuoto: Nuova cartella, Nuovo
+    file, Incolla; su un'icona anche Apri, Rinomina, Copia, Taglia,
+    Cancella; su un'unita' solo Apri. Gli appunti sono del processo, un
+    percorso; incollare un nome che c'e' gia' fa «copia di NOME».
+  - il file manager (0.009): lo stesso menu sull'elenco (Nuova cartella,
+    Nuovo file, Rinomina, Copia, Taglia, Incolla, Cancella) e sull'albero;
+    scelta multipla accesa sull'elenco; le righe trascinate e lasciate su
+    una cartella dell'albero chiedono Copia / Sposta / Annulla (il fuoco su
+    Annulla). Lasciate sulla cartella da cui vengono non chiedono niente, e
+    una cartella non va dentro se stessa.
+  - la shell (sh 0.004): un file che non comincia con \177ELF si apre col
+    suo programma. Se tipi.txt ne nomina uno (e' di ExWin) lo dice e rende
+    126; altrimenti gfedit. Il controllo si fa PRIMA della spawn: il loader
+    del kernel scrive due righe [ERROR] per ogni file che non e' un ELF.
+  - tools/prova_tasto_destro.sh: shell, scrivania e file manager, ogni
+    verdetto da `ls`. Il puntatore di QEMU arriva dieci pixel prima del
+    bersaglio: sulle righe di 16 pixel conta (vedi il commento nella prova).
+  RESTA: Ctrl+clic e Shift+clic non si provano in QEMU, perche' sendkey
+  preme e rilascia e non tiene premuto un modificatore mentre si clicca. Si
+  provano a mano, o sulla macchina vera.
+
+=============================================================================
+@EXJS-GC ExJs NON RECUPERA GLI OGGETTI (aperto il 29 settembre 2026)
+=============================================================================
+
+Ogni oggetto, vettore, funzione e AMBITO DI CHIAMATA prende una casella della
+tavola (exjs_ogg_nuovo) e non la rende piu'. Il navigatore ne concede 2000
+(JS_OGGETTI in exbrowser.c): un ciclo che chiama una funzione duemila volte
+finisce la scorta, e da li' lo script si ferma. E' il motivo vero per cui
+ExJs non puo' reggere una pagina di oggi, anche ora che ne legge la sintassi.
+Strada pensata, non ancora scritta: un marca-e-spazza fra un'esecuzione e
+l'altra (dopo exjs_esegui, exjs_pompa), quando in pila non c'e' niente;
+radici: il globale, i prototipi, i lavori in coda, e quello che exdom tiene
+(i gestori degli eventi: exdom dovra' dirli). Le caselle libere in una lista;
+l'arena delle stringhe resta com'e' (si compatta dopo, se serve).
+
+=============================================================================
+@EXJS-REGEXP LE ESPRESSIONI REGOLARI (aperto il 29 settembre 2026)
+=============================================================================
+
+`/a+/` e' un errore di sintassi in ExJs: il lessico non sa distinguere la
+barra che divide da quella che apre una regexp (lex.c lo dice gia': la
+decisione deve arrivare dal costruttore dell'albero, in primaria()). Poi
+serve un motore (un automa con ritorno all'indietro basta per le regexp delle
+pagine), RegExp.test/exec, e replace/split/match con una regexp.
+
+=============================================================================
+@TOOLKIT-SCHEDE @NAV-FINESTRA @NAV-SCHEDE @EDIT-SCHEDE @EXIDE-SCHEDE
+LE SCHEDE, E LE FINESTRE NUOVE DEL NAVIGATORE (chiesti il 29 settembre 2026)
+=============================================================================
+
+Chiesto, parola per parola: «exbrowser deve supportare l'apertura di pagine
+su nuove finestre o su nuovi tab della stessa finestra aggiungilo alle
+implementazioni, l'editor di testo pure deve supportare piu file in tab,
+quindi la questione dei tab sarebbe buono metterlo nel toolkit e
+implementarlo anche in exide».
+
+COM'E' OGGI, misurato prima di cominciare:
+  - il toolkit non ha schede. C'e' ex_tab_contenuto() (24 settembre), che e'
+    un'altra cosa: il tasto Tab dentro un controllo, non una barra di schede.
+    ! Ogni modifica al Tab in exwin.c va pensata anche per le schede: di
+    solito le schede si girano con Ctrl+Tab e Ctrl+Shift+Tab.
+  - EXBrowser ha UNA pagina per processo: niente target="_blank", niente
+    window.open, niente «apri in una finestra nuova».
+  - l'editor (exwin/bin/edit) tiene un file solo; exide un sorgente per volta.
+
+IL PIANO:
+  1. @TOOLKIT-SCHEDE: un controllo "schede" in exwin.so, come la lista: una
+     barra di linguette sopra un'area, ex_schede_aggiungi(titolo),
+     ex_schede_togli(i), ex_schede_scegli(i), ex_schede_scelta(), e un
+     messaggio al programma quando si cambia scheda o si chiede di chiuderne
+     una (la X sulla linguetta, il clic centrale, Ctrl+W). Ctrl+Tab e
+     Ctrl+Shift+Tab girano. Troppe linguette: si scorrono con due frecce.
+     Il controllo NON tiene il contenuto: ogni programma sa cosa mostrare
+     sotto (una pagina, un file), e la scheda e' solo la scelta. Facoltativo
+     nello stub, come sempre.
+  2. @NAV-FINESTRA (non aspetta niente): target="_blank" e window.open()
+     lanciano un secondo EXBrowser con l'indirizzo; il tasto destro su un
+     collegamento offre «Apri in una finestra nuova». Ogni finestra e' un
+     processo: la memoria la paga chi apre, e un crash non porta via le
+     altre.
+  3. @NAV-SCHEDE: Ctrl+T, Ctrl+clic e «Apri in una scheda nuova» sul tasto
+     destro. ! Una scheda nello stesso processo vuol dire piu' documenti,
+     fogli di stile e contesti JavaScript insieme: il navigatore oggi ha le
+     sue tabelle una volta sola (g_doc, g_css, g_js, le immagini). Prima di
+     scrivere si misura quanto costa una pagina, e si decide se le schede in
+     sottofondo si tengono intere o si ricaricano quando si torna.
+  4. @EDIT-SCHEDE: l'editor apre piu' file, uno per scheda; File/Apri ne
+     aggiunge una, chiudere una scheda modificata chiede di salvare; uscire
+     chiede per ognuna.
+  5. @EXIDE-SCHEDE: i sorgenti del progetto in schede, col modulo attivo che
+     segue la scheda.
+
+=============================================================================
 =============================================================================
 @VISTA L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi
 =============================================================================
@@ -4881,19 +5063,70 @@ Le prove che contano, e come si lanciano:
 - Trovato strada facendo: JSON.stringify scriveva `{,"b":1}` quando la prima
   voce era saltata (undefined o funzione). Corretto.
 
+- (FATTI IL 29 SETTEMBRE 2026) `throw`, `try`/`catch`/`finally`, `switch`,
+  `new` che aggancia f.prototype, `instanceof`, e Error, TypeError,
+  RangeError, SyntaxError, ReferenceError, EvalError, URIError. jsprova
+  342/342 (35 nuove), domprova 264/264 coi due motori, prova_date.sh OK.
+  Come e' fatto (run.c): un'eccezione e' lo stato `rotto` che c'era gia',
+  con `catturabile`, `ha_valore` ed `eccezione` accanto; try lo spegne. Gli
+  errori del motore si prendono anch'essi, come TypeError col messaggio
+  italiano (ReferenceError per «nome non definito»). ! LA GUARDIA DEI PASSI
+  NON SI PRENDE: uno script fermato perche' gira da troppo non deve potersi
+  riprendere con un catch. finally gira sempre e poi rimette com'era,
+  tranne se esce lui (return, break, throw). Una nativa lancia con
+  exjs_lancia / exjs_lancia_errore (exjs_int.h: interne, non esportate) -
+  toISOString di una data non valida ora e' un RangeError. Il prototype
+  di una funzione JavaScript nasce quando qualcuno lo chiede (val.c,
+  exjs_prendi), non a ogni chiusura.
+
+- (FATTO IL 29 SETTEMBRE 2026, POMERIGGIO) LA SINTASSI DI OGGI E LA
+  LIBRERIA. Una sonda di 80 costrutti comuni ne trovava 50 rifiutati; ora
+  passano tutti tranne RegExp, Promise e Symbol. jsprova 448/448, domprova
+  264/264 coi due motori, tools/prova_es2015.sh in QEMU OK coi due motori.
+  Sintassi: let/const (per blocco), frecce, classi (extends, super, static,
+  campi, get/set), modelli `${}`, destrutturazione (dichiarazioni,
+  parametri, assegnazioni, for..of), valori predefiniti e resto nei
+  parametri, spread in vettori/chiamate/oggetti, chiavi abbreviate,
+  calcolate e metodi, get/set negli oggetti, for..of, ?., ??, **, ??= ||=
+  &&= **=, etichette con break e continue, delete vero.
+  Libreria (lib/exjs/libreria.c, file nuovo): Object (keys, values,
+  entries, assign, create, defineProperty con get/set, getPrototypeOf...),
+  Array (isArray, from, of, costruttore), includes, some, every, find,
+  findIndex, reduce, splice, fill, at, flat; startsWith, endsWith,
+  padStart, padEnd, repeat, trimStart/End; toFixed, toString(base),
+  Number.isInteger e costanti; call, apply, bind; hasOwnProperty;
+  encodeURIComponent e compagni; Math (sin, cos, log, exp, atan2... con le
+  istruzioni x87); Map e Set.
+  Difetti vecchi trovati e corretti: i numeri si scrivevano con sei
+  decimali (0.1+0.2 = «0.3») e 1e21 diventava «0» (ora le cifre piu' corte
+  che rileggono lo stesso numero); il lessico leggeva 0.0000001 impreciso;
+  for..in enumerava le chiavi AL CONTRARIO (JSON le rovesciava a mano);
+  'abc'[1] rendeva undefined.
+  ! L'AMBITO DI UN BLOCCO CON let SI RIUSA SE DENTRO NON CI SONO CHIUSURE
+    (run.c, ambito_riusato): ogni ambito e' un oggetto e gli oggetti non si
+    recuperano (@EXJS-GC). Con una chiusura dentro, uno per giro.
+  ! UN get NON SI CHIAMA MENTRE UN FILO E' APERTO (JSON.stringify): la voce
+    salta. Il getter scriverebbe stringhe in mezzo a quella in corso.
+  ! exjs.so e' cresciuta da 97 a 153 KB (sta nella sua fascia di 1 MB). Il
+    collegamento elenca gli oggetti a mano (EXJS_OBJ): un file nuovo va
+    messo anche li', oltre che in EXJS_SRC — verifica-exjs compila soltanto
+    e non se ne accorge.
+
 COSA RESTA:
-- `throw`, `try`, `switch`: una nativa non sa lanciare, quindi
-  toISOString di una data non valida rende «Invalid Date» invece del
-  RangeError. tools/prova_date.sh per ExJs ricava l'esito dalla RIGA
-  dell'errore proprio per questo.
+- RegExp (@EXJS-REGEXP), Promise e async/await, Symbol e gli iteratori
+  (for..of gira su vettori, stringhe, Map, Set e cio' che ha length), i
+  generatori, const che si riassegna senza errore, la zona morta prima di
+  let (si legge undefined).
+- ! LEGGERE UNA PROPRIETA' DI undefined NON LANCIA: `var o; o.x` rende
+  undefined, dove la norma vuole un TypeError. Tolleranza vecchia, lasciata
+  apposta ora che try c'e': cambiarla vuol dire pagine che si fermano dove
+  oggi vanno avanti, e va provata sulle pagine vere prima.
+- tools/prova_date.sh per ExJs ricava ancora l'esito dalla RIGA di `(0)()`:
+  funziona, e adesso si potrebbe scrivere con try.
 - I fusi orari: quando il sistema ne avra' uno, lo spostamento va in
   data_campi/data_componi (base.c) e in getTimezoneOffset.
 - Date.parse capisce l'ISO 8601 e le forme di toString, toUTCString,
   «Jan 1, 2000» e «1/31/2000»; il resto e' NaN.
-- new f() non aggancia f.prototype all'oggetto nuovo (N_NUOVO in run.c):
-  Date se lo aggancia da se', le funzioni scritte in JavaScript no. E
-  `instanceof` il parser lo legge ma run.c non ha un caso per lui: le due
-  cose vanno fatte insieme.
 
 Il banco per provarle e' tools/prove/jsprova.c (make prova-exjs).
 
@@ -4930,13 +5163,25 @@ e' comune.
 Sono limiti dichiarati dentro pezzi che funzionano. Ognuno e' scritto anche
 nel codice, dove comincia.
 
-! `setRequestHeader` ACCETTA E BUTTA (diario: 2 settembre, «XMLHttpRequest E
-  fetch»). exhttp costruisce la richiesta da se' e non ha dove infilarne una in
-  piu'. Rifiutarle fermerebbe ogni pagina che ne mette una. E' scritto in tre
-  posti.
+! (FATTO IL 28/29 SETTEMBRE 2026) `setRequestHeader` e gli `headers` di fetch
+  ARRIVANO al server: exdom le accumula (una riga con un a capo si rifiuta li',
+  l'unico posto dove nome e valore sono ancora separati), ExDomRichiesta ha
+  `intestazioni` in fondo, il navigatore le passa a exhttp_intestazioni(), che
+  toglie quelle vietate agli script (Host, Content-Length, Cookie...) e lascia
+  che un Content-Type sostituisca il nostro dei POST. Headers di fetch: il
+  preludio le mette in riga (options.__intest), perche' la parte nativa non sa
+  percorrere un oggetto; c'e' anche una classe Headers minima. Provato:
+  tools/prova_intestazioni.sh 6/6 con un server Python vero, domprova 264/264.
+  ! E TROVATO UN DIFETTO VECCHIO: un POST su una connessione riusata ma
+    chiusa dal server si ritentava SENZA CORPO, cioe' in GET (g_corpo si
+    azzerava prima del ritentativo). Corretto in exhttp_prendi.
 
-! CON ExJs IL TETTO VERO E' L'ARENA del motore (96 KB nel browser), non i
-  128 KB del buffer: una risposta piu' grande diventa la stringa vuota.
+! CON ExJs IL TETTO VERO E' L'ARENA del motore, non i 128 KB del buffer: una
+  risposta piu' grande diventa la stringa vuota. (Dal 29 settembre 2026
+  l'arena si sceglie sulla memoria libera, js_arena in exbrowser.c: 384 KB
+  sopra i 48 MB liberi, 96 come prima sotto. tools/prova_xhr_grande.sh: 120
+  KB arrivano interi con 128 MB, e con 32 la prova fallisce come deve — sulla
+  macchina piccola il tetto resta.)
 
 ! (FATTE IL 28 SETTEMBRE 2026, jsprova 266/266, domprova 260/260) `join` su
   mezzo kilobyte e `exjs_a_stringa` che non chiamava `toString`. Il caso da
@@ -4959,13 +5204,17 @@ nel codice, dove comincia.
   le prova. Restano fuori :hover, :focus e gli pseudo-elementi, che in una
   pagina che nessuno sta toccando non combaciano.)
 
-! LA PERSISTENZA DEI BISCOTTI NON E' PROVATA DENTRO EX-OS, solo sul banco: da
-  CD non si scrive, e il giro completo vuole un sistema installato.
+! (PROVATA IL 29 SETTEMBRE 2026) LA PERSISTENZA DEI BISCOTTI DENTRO EX-OS:
+  tools/prova_biscotti_disco.sh, casa su ext2 e server Python sull'host. Il
+  primo navigatore riceve un biscotto con Max-Age e lo scrive in
+  $HOME/.app/exbrowser/biscotti.txt; un secondo navigatore, nato dopo, lo
+  legge dal file e lo rimanda (2/2). Basta una casa scrivibile.
 
 ! `<input type="image">` MANDA `nome.x` e `nome.y` DEL PUNTO CLICCATO (dal 28
-  settembre 2026, exbrowser 0.014; prima zero), ma dentro il rettangolo di un
-  PULSANTE: l'immagine del `src` non si disegna ancora. Resta da fare:
-  disegnarla, e allora le coordinate diventano quelle della figura.
+  settembre 2026, exbrowser 0.014; prima zero), e dalla 0.021 SI DISEGNA LA
+  SUA FIGURA (registrata come un <img>, Ctrl.imm), con le sue misure: le
+  coordinate sono quelle della figura. Senza figura resta il pulsante grigio.
+  Provato in prova_disposizione.sh (13/13).
 
 
 =============================================================================

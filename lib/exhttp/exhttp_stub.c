@@ -56,6 +56,7 @@ static struct {
     int (*certi_esamina)(const unsigned char *, unsigned int, char *, unsigned int);
     int (*certi_aggiungi)(const unsigned char *, unsigned int);
     unsigned long (*attesi)(void);
+    void (*intest)(const char *);      /* facoltativa (28 settembre 2026) */
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -106,6 +107,7 @@ static void assicura(void)
     P.certi_aggiungi = (int (*)(const unsigned char *, unsigned int))
                        exlib_simbolo(t, "exhttp_certi_aggiungi");
     P.attesi = (unsigned long (*)(void))exlib_simbolo(t, "exhttp_attesi");
+    P.intest = (void (*)(const char *))exlib_simbolo(t, "exhttp_intestazioni");
 
     P.pronto = 1;
 }
@@ -129,6 +131,9 @@ void exhttp_verso(ExHttpVerso f, void *dato)
 
 void exhttp_da(unsigned long primo)
 { assicura(); P.da(primo); }
+
+void exhttp_intestazioni(const char *righe)
+{ assicura(); if (P.intest) P.intest(righe); }
 
 int exhttp_certi_esamina(const unsigned char *dati, unsigned int n,
                          char *testo, unsigned int max)

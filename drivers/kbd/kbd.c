@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.005");
+EX_VERSIONE("kbd.drv", "0.006");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1518,6 +1518,8 @@ static void mouse_rispondi(unsigned int pid)
     s.presente = (unsigned int)g_mouse_c_e;
     s.persi    = g_m_persi;
     s.dz       = g_m_dz;
+    s.modificatori = (g_shift ? KBD_MOD_SHIFT : 0u) | (g_ctrl ? KBD_MOD_CTRL : 0u) |
+                     (g_alt ? KBD_MOD_ALT : 0u);
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
 

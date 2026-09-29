@@ -117,6 +117,20 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * when the toolkit did not use it: a list, a text area or a scroll bar under
  * the pointer scrolls by itself, three lines per notch (EX_ROTELLA_RIGHE). */
 #define EXM_ROTELLA     0x0010
+/* The RIGHT mouse button was pressed on this window (29 September 2026,
+ * @MOUSE-DESTRO). lp is the point, as for EXM_MOUSE_GIU; wp is the control
+ * under it, or 0. On a list the row under the pointer is chosen first, so
+ * ex_lista_scelta says which one was clicked. The usual answer is
+ * ex_menu_comparsa(). */
+#define EXM_MOUSE_DESTRO 0x0011
+/* Rows of a list were dragged and released over ANOTHER control of the same
+ * window (29 September 2026, @FM-TRASCINA). wp: the list's id in the low 16
+ * bits, the target control's id in the high 16; lp: the release point, as for
+ * EXM_MOUSE_GIU. Which rows: ex_lista_scelte on the list; where on a target
+ * list: ex_lista_riga_a. */
+#define EXM_LASCIATO    0x0012
+#define EX_DA(wp)       ((unsigned int)(wp) & 0xFFFFu)
+#define EX_A(wp)        ((unsigned int)(wp) >> 16)
 #define EX_ROTELLA_RIGHE 3
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
@@ -386,6 +400,36 @@ void        ex_finestra_attiva(unsigned int id);
  * window — Calctor's tape — gives the focus back to the main one with this.
  * Optional in the stub: over an older exwin.so it does nothing. */
 void        ex_attiva(ExFinestra f);
+
+/* A pop-up menu at (x, y) of window f's client area (where the right button
+ * was pressed): `n` items, returns the index chosen - click or Enter - or -1
+ * for Esc or a closed window (a click on another of the program's windows
+ * only brings the menu back to the front: it is modal). Modal for the program, like
+ * a dialog. An item "-" is a separator line and cannot be chosen.
+ * (29 September 2026, @MOUSE-DESTRO; optional in the stub: -1 over an older
+ * exwin.so.) */
+int         ex_menu_comparsa(ExFinestra f, int x, int y,
+                             const char *const *voci, int n);
+
+/* Opens a file with the program /exwin/lib/tipi.txt associates to its
+ * extension (the editor for what is not listed), from /cdrom too when the
+ * system runs from the CD. Returns the pid, or -1; `prog` (may be 0) gets the
+ * program chosen. The one place that reads tipi.txt: the file manager, the
+ * desktop and the others call this. (29 September 2026, @ASSOCIAZIONI;
+ * optional in the stub: -1 over an older exwin.so.) */
+int         ex_apri_file(const char *percorso, char *prog, unsigned int max);
+
+/* MULTIPLE CHOICE in a list (29 September 2026, @LISTA-MULTI): switched on
+ * per list. Ctrl+click adds or removes a row, Shift+click takes the range
+ * from the last click, a plain click takes one row - unless it is already
+ * chosen, so that the group can be dragged away. ex_lista_scelte writes the
+ * chosen rows (at most `max`) and returns how many; with the multiple choice
+ * off, or nothing marked, it is the current row alone. ex_lista_riga_a is
+ * the row under the window y, or -1. All three optional in the stub. */
+void        ex_lista_multipla(ExFinestra lista, int si);
+int         ex_lista_scelte(ExFinestra lista, unsigned int *righe, int max);
+int         ex_lista_riga_a(ExFinestra lista, int y);
+
 void        ex_finestra_riduci(unsigned int id);
 
 /* Asks every program but this one to close, as with their X button; the
@@ -563,6 +607,14 @@ ExFont ex_font_apri(const char *percorso, int corpo);
 #define EX_FAM_MONO     2
 
 ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo);
+
+/* Writes `s` INTO an ARGB bitmap of w x h pixels (not on a window), with the
+ * font's glyphs and the same antialiasing as ex_scrivi_con; y is the top of
+ * the line, and touched pixels become opaque. For programs that draw text
+ * into a picture - Pennello's Text tool (28 September 2026). Optional in the
+ * stub: over an older exwin.so it draws nothing. */
+void        ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
+                         const char *s, unsigned int c);
 
 /* Il nome del file che ex_font_trova userebbe, senza aprirlo: serve a chi
  * vuole DIRE quale carattere sta usando — o quale non ha trovato. */

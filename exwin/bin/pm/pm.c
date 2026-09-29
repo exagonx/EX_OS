@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.010"
+#define VERSIONE_APP "0.011"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -2016,20 +2016,18 @@ static void desk_apri(int i)
                            "aprire: manca la riga \"percorso = ...\".");
         return;
     case DV_FILE:
-        e = strrchr(v->perc, '.');
-        e = e ? e + 1 : "";
-        if (!strcmp(e, "txt") || !strcmp(e, "md") || !strcmp(e, "cfg") ||
-            !strcmp(e, "c") || !strcmp(e, "h") || !strcmp(e, "bas") ||
-            !strcmp(e, "sh") || !strcmp(e, "log"))
-            desk_lancia("/exwin/bin/edit", v->perc);
-        else if (!strcmp(e, "zip") || !strcmp(e, "gz") || !strcmp(e, "tgz") ||
-                 !strcmp(e, "tar"))
-            desk_lancia("/exwin/bin/archivi", v->perc);
-        else if (!strcmp(e, "html") || !strcmp(e, "htm") || !strcmp(e, "png") ||
-                 !strcmp(e, "jpg") || !strcmp(e, "gif") || !strcmp(e, "bmp"))
-            desk_lancia("/exwin/bin/exbrowser", v->perc);
-        else
-            desk_lancia("/exwin/bin/filemgr", g_desk_dir);
+        /* ! LE ASSOCIAZIONI SONO QUELLE DI tipi.txt (29 settembre 2026,
+         * @ASSOCIAZIONI): qui c'era un elenco suo, diverso — le immagini col
+         * navigatore — e un file sconosciuto apriva il file manager. */
+        (void)e;
+        {
+            char prog[200];
+            if (ex_apri_file(v->perc, prog, sizeof(prog)) < 0) {
+                char m[260];
+                snprintf(m, sizeof(m), "Non riesco ad avviare %s.", prog);
+                ex_dlg_avviso("Scrivania", m);
+            }
+        }
         return;
     default:                    /* a directory or a drive: the file manager */
         desk_lancia("/exwin/bin/filemgr", v->perc);
@@ -2050,6 +2048,256 @@ static void desk_controlla(int forza)
 }
 
 
+
+/* =============================================================================
+ * THE RIGHT BUTTON ON THE DESKTOP (29 September 2026, @DESK-MENU)
+ *
+ * Asked for: create, rename, delete and copy folders and files from the
+ * desktop. Everything happens in the desktop directory ($HOME/desktop); the
+ * drives only offer "Apri", since renaming or deleting a mount point from
+ * here is never what was meant.
+ *
+ * ! THE CLIPBOARD IS THIS PROCESS'S, one path at a time: Copia or Taglia
+ * remember it, Incolla puts it on the desktop. A pasted name that is already
+ * there becomes "copia di NAME" rather than overwriting it - the VFS
+ * truncates on open, and what is lost that way does not come back.
+ * ============================================================================= */
+#define DESK_PROF   16          /* nesting a copy or a delete goes down to */
+
+static char g_dv_app[160] = "";         /* the path copied or cut, "" = none */
+static int  g_dv_taglia = 0;
+
+static int desk_e_dir(const char *p)
+{
+    struct stat st;
+    return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static int desk_copia_file(const char *da, const char *a)
+{
+    static char buf[4096];
+    int fa, fb, n;
+
+    fa = open(da, O_RDONLY, 0);
+    if (fa < 0) return -1;
+    fb = open(a, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fb < 0) { close(fa); return -1; }
+    while ((n = (int)read(fa, buf, sizeof(buf))) > 0)
+        if ((int)write(fb, buf, (unsigned int)n) != n) { n = -1; break; }
+    close(fa);
+    close(fb);
+    return n < 0 ? -1 : 0;
+}
+
+/* Copies a file or a whole directory; 0 = done. */
+static int desk_copia(const char *da, const char *a, int giu)
+{
+    DIR           *d;
+    struct dirent *e;
+    int            r = 0;
+
+    if (!desk_e_dir(da)) return desk_copia_file(da, a);
+    if (giu > DESK_PROF) return -1;
+    /* ! NOT INTO ITSELF: a folder pasted inside its own subtree would copy
+     * forever, each level holding the one before. */
+    if (strncmp(a, da, strlen(da)) == 0 && a[strlen(da)] == '/') return -1;
+    if (mkdir(a, 0755) < 0 && errno != EEXIST) return -1;
+    d = opendir(da);
+    if (!d) return -1;
+    while (r == 0 && (e = readdir(d)) != 0) {
+        char s[200], t[200];
+
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        snprintf(s, sizeof(s), "%s/%s", da, e->d_name);
+        snprintf(t, sizeof(t), "%s/%s", a, e->d_name);
+        r = desk_copia(s, t, giu + 1);
+    }
+    closedir(d);
+    return r;
+}
+
+/* Deletes a file or a whole directory; 0 = done. The directory is read again
+ * from the start after every removal: readdir over a directory being emptied
+ * is not something to trust. */
+static int desk_cancella(const char *p, int giu)
+{
+    if (!desk_e_dir(p)) return unlink(p) == 0 ? 0 : -1;
+    if (giu > DESK_PROF) return -1;
+    for (;;) {
+        DIR           *d = opendir(p);
+        struct dirent *e;
+        char           s[200];
+        int            trovato = 0;
+
+        if (!d) return -1;
+        while ((e = readdir(d)) != 0) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+            snprintf(s, sizeof(s), "%s/%s", p, e->d_name);
+            trovato = 1;
+            break;
+        }
+        closedir(d);
+        if (!trovato) break;
+        if (desk_cancella(s, giu + 1) != 0) return -1;
+    }
+    return rmdir(p) == 0 ? 0 : -1;
+}
+
+static const char *desk_base(const char *p)
+{
+    const char *u = strrchr(p, '/');
+    return u ? u + 1 : p;
+}
+
+/* The name as typed, checked: not empty, no "/", not taken. */
+static int desk_nome_nuovo(const char *titolo, const char *domanda,
+                           const char *ok, char *nome, unsigned int max,
+                           char *perc, unsigned int pmax)
+{
+    if (!ex_dlg_chiedi(titolo, domanda, ok, nome, max) || !nome[0]) return 0;
+    if (strchr(nome, '/') || !strcmp(nome, ".") || !strcmp(nome, "..")) {
+        ex_dlg_avviso(titolo, "Un nome non contiene \"/\" e non e' \".\" "
+                      "ne' \"..\".");
+        return 0;
+    }
+    snprintf(perc, pmax, "%s/%s", g_desk_dir, nome);
+    if (access(perc, 0) == 0) {
+        char m[160];
+        snprintf(m, sizeof(m), "%s esiste gia' sulla scrivania.", nome);
+        ex_dlg_avviso(titolo, m);
+        return 0;
+    }
+    return 1;
+}
+
+static void desk_errore(const char *titolo, const char *cosa)
+{
+    char m[260];
+    snprintf(m, sizeof(m), "%s: %s.", cosa, strerror(errno));
+    ex_dlg_avviso(titolo, m);
+}
+
+static void desk_nuovo(int cartella)
+{
+    char nome[40] = "", p[200];
+    int  fd;
+
+    if (!desk_nome_nuovo(cartella ? "Nuova cartella" : "Nuovo file",
+                         "Il nome:", "Crea", nome, sizeof(nome), p, sizeof(p)))
+        return;
+    if (cartella) {
+        if (mkdir(p, 0755) < 0) desk_errore("Nuova cartella", nome);
+        return;
+    }
+    fd = open(p, O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) desk_errore("Nuovo file", nome);
+    else close(fd);
+}
+
+static void desk_rinomina(VoceDesk *v)
+{
+    char nome[40], p[200], domanda[80];
+
+    strncpy(nome, desk_base(v->perc), sizeof(nome) - 1);
+    nome[sizeof(nome) - 1] = '\0';
+    snprintf(domanda, sizeof(domanda), "Il nome nuovo di %s:", nome);
+    if (!desk_nome_nuovo("Rinomina", domanda, "Rinomina", nome, sizeof(nome),
+                         p, sizeof(p)))
+        return;
+    if (rename(v->perc, p) != 0) desk_errore("Rinomina", v->nome);
+}
+
+static void desk_cancella_voce(VoceDesk *v)
+{
+    char m[200];
+    int  dir = desk_e_dir(v->perc);
+
+    snprintf(m, sizeof(m), dir ? "Cancello la cartella %s e tutto quello che "
+             "contiene?" : "Cancello %s?", desk_base(v->perc));
+    if (!ex_dlg_conferma("Cancella", m, "Cancella", "Annulla")) return;
+    if (desk_cancella(v->perc, 0) != 0) desk_errore("Cancella", v->nome);
+    if (!strcmp(g_dv_app, v->perc)) g_dv_app[0] = '\0';
+}
+
+static void desk_incolla(void)
+{
+    char a[200];
+    const char *b;
+    int  k;
+
+    if (!g_dv_app[0]) {
+        ex_dlg_avviso("Incolla", "Non c'e' niente da incollare: prima Copia "
+                      "o Taglia.");
+        return;
+    }
+    if (access(g_dv_app, 0) != 0) {
+        ex_dlg_avviso("Incolla", "Quello che era stato copiato non c'e' piu'.");
+        g_dv_app[0] = '\0';
+        return;
+    }
+    b = desk_base(g_dv_app);
+    snprintf(a, sizeof(a), "%s/%s", g_desk_dir, b);
+    if (!strcmp(a, g_dv_app) && g_dv_taglia) { g_dv_app[0] = '\0'; return; }
+    for (k = 1; access(a, 0) == 0 && k < 100; k++) {
+        if (k == 1) snprintf(a, sizeof(a), "%s/copia di %s", g_desk_dir, b);
+        else        snprintf(a, sizeof(a), "%s/copia %d di %s", g_desk_dir, k, b);
+    }
+    if (access(a, 0) == 0) { ex_dlg_avviso("Incolla", "Troppe copie."); return; }
+
+    /* Cut: a rename when it can (same drive), otherwise copy and delete. */
+    if (g_dv_taglia && rename(g_dv_app, a) == 0) { g_dv_app[0] = '\0'; return; }
+    if (desk_copia(g_dv_app, a, 0) != 0) {
+        desk_errore("Incolla", b);
+        return;
+    }
+    if (g_dv_taglia) {
+        if (desk_cancella(g_dv_app, 0) != 0) desk_errore("Taglia", b);
+        g_dv_app[0] = '\0';
+    }
+}
+
+static void desk_menu(ExFinestra f, int x, int y)
+{
+    static const char *const VUOTO[] = { "Nuova cartella", "Nuovo file",
+                                         "-", "Incolla" };
+    static const char *const VOCE[]  = { "Apri", "-", "Rinomina", "Copia",
+                                         "Taglia", "Cancella", "-",
+                                         "Nuova cartella", "Nuovo file",
+                                         "Incolla" };
+    static const char *const UNITA[] = { "Apri" };
+    int       i = desk_sotto(x, y), k;
+    VoceDesk *v;
+
+    if (i != g_dv_sel) { g_dv_sel = i; scrivania_disegna(); ex_aggiorna(f); }
+    if (i < 0) {
+        k = ex_menu_comparsa(f, x, y, VUOTO, 4);
+        if (k == 0) desk_nuovo(1);
+        else if (k == 1) desk_nuovo(0);
+        else if (k == 3) desk_incolla();
+    } else if (g_dv[i].tipo >= DV_CD) {
+        if (ex_menu_comparsa(f, x, y, UNITA, 1) == 0) desk_apri(i);
+        return;
+    } else {
+        v = &g_dv[i];
+        k = ex_menu_comparsa(f, x, y, VOCE, 10);
+        switch (k) {
+        case 0: desk_apri(i); return;
+        case 2: desk_rinomina(v); break;
+        case 3:
+        case 4:
+            strncpy(g_dv_app, v->perc, sizeof(g_dv_app) - 1);
+            g_dv_app[sizeof(g_dv_app) - 1] = '\0';
+            g_dv_taglia = (k == 4);
+            return;
+        case 5: desk_cancella_voce(v); break;
+        case 7: desk_nuovo(1); break;
+        case 8: desk_nuovo(0); break;
+        case 9: desk_incolla(); break;
+        default: return;
+        }
+    }
+    desk_controlla(1);          /* what changed shows at once, not in 2 s */
+}
 static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     /* ! E SI MANDA AL SERVER SUBITO. Disegnare riempie la zona condivisa; e'
@@ -2072,6 +2320,7 @@ static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (msg == EXM_DOPPIOCLIC && i >= 0) desk_apri(i);
         return 0;
     }
+    if (msg == EXM_MOUSE_DESTRO) { desk_menu(f, EX_X(lp), EX_Y(lp)); return 0; }
     return ex_procedura_base(f, msg, wp, lp);
 }
 

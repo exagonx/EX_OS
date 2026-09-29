@@ -132,6 +132,22 @@ lunghe non si fermano più a 1 MB: la pagina principale ne tiene 3. Corretto
 anche un difetto vecchio: il testo bianco usciva nero
 (`make prova-excss`, `tools/prova_disposizione.sh`).
 
+### La ricerca di Wikipedia
+
+**testato in QEMU** — la casella di ricerca di Wikipedia si vede e si usa:
+«roma» + Invio apre la voce, «canale grande» + il pulsante Ricerca apre la
+pagina dei risultati. Il difetto era nel trasporto: gli indirizzi con un
+percorso oltre i 512 caratteri venivano troncati, e il foglio di stile di
+Wikipedia arrivava sbagliato. Adesso il tetto è 1024, e un indirizzo più lungo
+dà errore invece di chiedere un'altra cosa.
+
+### Calctor da ufficio
+
+**testato in QEMU** — con la casella Cronologia accesa Calctor diventa una
+calcolatrice da ufficio: il tasto = sparisce, + e - diventano due tasti alti e
+ognuno somma (o sottrae) al totale mostrandolo subito. `12 * 3 +` chiude il
+prodotto e somma 36; `+` di nuovo scrive il subtotale sul nastro.
+
 ### La rotella del mouse
 
 **testato in QEMU** — la rotella scorre la pagina in EXBrowser e, in ogni
@@ -140,6 +156,25 @@ stanno sotto il puntatore: tre righe per scatto. Scorre quello che si guarda,
 non la finestra che ha il fuoco. Per ora vale per il mouse PS/2 (anche
 quello emulato da QEMU e da molti portatili); i mouse USB e seriali la
 rotella non la mandano ancora (`tools/prova_rotella.sh`).
+
+### Il tasto destro, il trascinare e le associazioni
+
+**testato in QEMU** — il tasto destro apre un menu. Sulla scrivania: Nuova
+cartella, Nuovo file, Incolla, e su un'icona anche Apri, Rinomina, Copia,
+Taglia, Cancella. Nel file manager le stesse voci; lì si possono anche
+scegliere più righe (Ctrl+clic, Shift+clic) e trascinarle su una cartella a
+sinistra: una finestra chiede se copiarle, spostarle o lasciar perdere. Un
+file che non è un programma si apre col programma che gli spetta
+(`/exwin/lib/tipi.txt`): dal file manager, dalla scrivania e dalla shell, dove
+`nota.txt` apre l'editor (`tools/prova_tasto_destro.sh`; Ctrl e Shift col
+mouse in QEMU non si possono provare).
+
+### Pennello scrive
+
+**testato in QEMU** — Pennello ha lo strumento Testo (tasto T): un clic dove
+comincia la scritta, la si batte, ed entra nell'immagine col colore scelto; lo
+spessore ne decide la grandezza (12, 16, 24 o 36 pixel). Si annulla come ogni
+altro tratto (`tools/prova_pennello_testo.sh`).
 
 ### Il mouse veloce non ferma più la scrivania
 
@@ -157,6 +192,29 @@ stesso. Clic e tasti continuano ad arrivare tutti
 **testato in QEMU** — un programma BASIC lanciato con F5 da gfedit ora mostra
 il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
 gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
+
+### ExJs legge il JavaScript di oggi
+
+**testato in QEMU e sull'host** — il motore ExJs (QuickJS resta il
+predefinito) legge `let` e `const`, le frecce, le classi con `extends` e
+`super`, i modelli `` `${}` ``, la destrutturazione, lo spread, `?.`, `??`,
+`**`, `for..of` e le etichette, e ha `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, i metodi nuovi di vettori e stringhe, `toFixed` e
+le funzioni di `Math`. I numeri si scrivono come in ogni altro motore
+(`0.1 + 0.2` è `0.30000000000000004`, `1e21` è `1e+21`) e `for..in` dà le
+chiavi nell'ordine in cui sono nate. Mancano ancora le espressioni regolari
+e le Promise, e gli oggetti non si recuperano (`make prova-exjs`, 448 prove;
+`tools/prova_es2015.sh`).
+
+### ExJs: `throw`, `try`, `switch` e i prototipi
+
+**testato sull'host** — il motore ExJs (QuickJS resta il predefinito) ha
+`throw`, `try`/`catch`/`finally` e `switch`; `new F()` eredita i metodi di
+`F.prototype`, e c'è `instanceof`. Ci sono `Error`, `TypeError`,
+`RangeError` e gli altri, e gli errori del motore stesso si prendono con un
+`catch`. Uno script fermato perché gira da troppo invece no. Leggere una
+proprietà di `undefined` rende ancora `undefined` invece di lanciare
+(`make prova-exjs`, 342 prove).
 
 ### ExJs: `Date` e `valueOf`
 

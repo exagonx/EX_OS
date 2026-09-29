@@ -239,7 +239,50 @@ giro: «Fai una donazione» in una colonna di venti pixel — il flex stringeva
 tutti in proporzione; ora nessuno scende sotto la sua parola piu' larga. !
 Trovato: il bianco era CSS_NIENTE, e il testo bianco usciva nero. ! Con 32 MB
 il navigatore a volte non carica exhttp.so: la prova usa 64 MB.
-Poi **la ricerca di Wikipedia**, chiesta di nuovo: il pulsante non cercava.
+Il 29 **Pennello scrive**: lo strumento Testo (T) mette una riga nell'immagine
+col colore scelto e la grandezza dello spessore. Il toolkit ha preso
+`ex_scrivi_in`, che scrive in un bitmap invece che su una finestra.
+E da @NAVMETA: il pulsante `<input type="image">` disegna la sua figura,
+e **le intestazioni degli script arrivano** (setRequestHeader, headers di
+fetch). ! La prova con un server Python vero ha trovato due difetti: un «\r\n»
+dentro un valore iniettava un'intestazione (ora si rifiuta in exdom), e — piu'
+vecchio e piu' grave — **un POST su una connessione riusata ma chiusa si
+ritentava in GET, senza corpo**: exhttp azzerava il corpo prima del secondo
+tentativo. Ogni modulo poteva arrivare vuoto, senza errori.
+Poi, chiesti lo stesso giorno, **il tasto destro, il trascinare e le
+associazioni**. Il server non guardava il tasto destro affatto: ora lo manda
+(WIN_EV_DESTRO) e il toolkit ha un menu a comparsa. Sulla scrivania e nel file
+manager si creano, rinominano, copiano, tagliano, incollano e cancellano file
+e cartelle; nel file manager le righe (anche piu' d'una, Ctrl e Shift col
+mouse: il driver della tastiera ora dice i modificatori anche al mouse)
+trascinate su una cartella dell'albero chiedono Copia / Sposta / Annulla. Un
+file che non e' un programma si apre col suo, da tipi.txt, dappertutto: il
+file manager, la scrivania, e la shell (`nota.txt` apre gfedit). ! La shell
+guarda i primi quattro byte PRIMA di lanciare: il loader del kernel scrive due
+righe [ERROR] per ogni file che non e' un ELF. ! Il puntatore di QEMU arriva
+dieci pixel prima di dove lo si manda: la prima prova lasciava i file sulla
+cartella sbagliata. ! E rename() di ext2 mette il nome nuovo in fondo alla
+directory: dopo una rinomina le icone della scrivania cambiano posto.
+Poi, dalla coda, **ExJs impara throw, try e switch**, con `new` che
+aggancia `F.prototype`, `instanceof` ed Error coi suoi figli. L'eccezione e'
+lo stato d'errore che c'era gia' (`rotto`), piu' il valore lanciato: try lo
+spegne. ! La guardia dei passi non si prende con un catch, o uno script
+infinito si riprenderebbe da solo. ! Il banco ha trovato che ExJs legge
+`undefined.x` senza errore: e' una tolleranza vecchia, lasciata e scritta.
+Nel pomeriggio **ExJs ha imparato il JavaScript di oggi**: una sonda di 80
+costrutti comuni ne trovava 50 rifiutati, ora passano tutti tranne RegExp,
+Promise e Symbol. let/const, frecce, classi, modelli, destrutturazione,
+spread, ?., ??, for..of, etichette; e una libreria nuova (libreria.c). Le
+prove hanno trovato difetti vecchi: i numeri a sei decimali (0.1+0.2 dava
+«0.3», 1e21 dava «0»), for..in al contrario, 'abc'[1] undefined. ! ExJs non
+recupera gli oggetti, e ogni ambito e' un oggetto: l'ambito di un blocco
+con let si riusa quando dentro non ci sono chiusure (@EXJS-GC e' il lavoro
+vero). ! verifica-exjs compila soltanto: che exjs.so non si collegasse
+(libreria.o fuori da EXJS_OBJ, e una divisione a 64 bit per una variabile)
+l'ha detto solo make iso-exos. E chiesti a fine giornata, scritti e non
+ancora cominciati: **le schede** nel toolkit, poi nel navigatore (con le
+finestre nuove), nell'editor e in exide.
+Prima, **la ricerca di Wikipedia**, chiesta di nuovo: il pulsante non cercava.
 Non era il modulo. exhttp troncava il percorso a 512 byte, e il foglio di
 Wikipedia (537) perdeva la coda `&only=styles`: arrivava il JavaScript che
 avvolge il CSS, la @media che mostra la casella non c'era, la casella era
@@ -249,7 +292,11 @@ cascata (la regola @media mancava), e alla fine i byte del foglio salvati su
 disco e confrontati con curl. Col CSS vero sono venuti fuori quattro difetti
 del flex di ieri (misure annidate che si buttavano i pezzi, min-width, la
 larghezza CSS dei controlli, i controlli stretti a 1 pixel). Adesso «roma» +
-Invio apre Roma e «canale grande» + Ricerca da' 40 040 risultati.
+Invio apre Roma e «canale grande» + Ricerca da' 40 040 risultati. ! Il giorno
+dopo le miniature dei risultati, sotto il testo: stesso difetto un piano piu'
+su, exhttp_prendi troncava a 600 l'indirizzo del foglio (636). Adesso 2048
+dentro exhttp e nel navigatore, senza toccare ExHttpEsito; e le immagini
+seguono `width` del CSS.
 E **Calctor da ufficio**: con la cronologia accesa niente =, + e - alti che
 sommano e mostrano il totale.
 Prima ancora, il **ritaglio di lato**: quel che sporge dalla pagina non si disegna piu'
