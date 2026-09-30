@@ -84,6 +84,76 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Selecting and copying text in EXBrowser
+
+**tested in QEMU** (`tools/prova_selezione.sh`) — drag the mouse over the
+page's text, the selection turns blue, Ctrl+C copies it and Ctrl+V pastes it
+in ExEditor or exide. Ctrl+A selects the whole page. For this, mouse
+coordinates outside the window (left or above) now reach applications as
+negative numbers: before, they became huge ones.
+
+### The pointer over links
+
+**tested in QEMU** (`tools/prova_passaggio.sh`) — over a link the status bar
+shows where it leads, and the page gets `onmouseover` and `onmouseout`. The
+window server sends button-less movement only to windows that ask for it
+(`ex_mouse_passaggio`), like X's event mask. Handlers written in attributes
+(`onclick="..."`) are real functions: `this` is the element and
+`return false` cancels what follows.
+
+### EXBrowser and Wikipedia
+
+**tested in QEMU** (`tools/prova_wiki.sh`) — on a long article, links after
+the 2048th were drawn but did not open: the limit is now 8192. Images are
+fetched when they are about to enter the window, not all at the start (one
+Wikipedia article: network time from 49 to 7 seconds). Still to do:
+`display:grid`, `:has()`, generated content (`::before`) and the script and
+layout times.
+
+### Progressive JPEG
+
+**tested on the host** (`tools/prova_jpg.sh`, against ImageMagick) —
+wallpapers and web photos saved as progressive JPEG now open, in the browser,
+the image viewer and as the desktop wallpaper.
+
+### ExEditor, pop-up menus, tabs
+
+**tested in QEMU** (`tools/prova_menu_chiudi.sh`) — the editor is now called
+ExEditor (`/exwin/bin/exeditor`). The right-click menu closes with Esc or a
+click outside, and the desktop no longer turns grey while it is open. The
+tabs' X is a red button.
+
+### ExEditor writes RTF
+
+**tested in QEMU** (`tools/prova_rtf.sh`) and on the host (`rtfprova`,
+`rtfvistaprova`, and with LibreOffice) — an `.rtf` file opens in ExEditor
+with its styles, and File > "Nuovo documento RTF" makes an empty one. Above
+the text there is a format bar: bold, italic and underline (showing the
+style under the caret), typeface, size, colour and the four alignments;
+there are also the Formato menu and Ctrl+B, Ctrl+I, Ctrl+U. It saves RTF,
+which WordPad and LibreOffice open. Undo and find are not there yet in RTF
+documents.
+
+### exide
+
+**tested in QEMU** (`tools/prova_exide_autoaggiorna.sh`) — scroll bars in
+the source, every window resizable, and an "Autoaggiorna Proprieta" item
+(Strumenti) saved in its configuration: leaving a box applies the property
+without pressing Applica. A click in the box now puts the caret where it
+lands (exide used to take the focus away), and a form wider than the canvas
+no longer covers the properties.
+
+### Profile folders
+
+**tested in QEMU** (`tools/prova_desktop.sh`) — the first time the desktop
+starts, the profile gets the Documents, Images and Media folders, each with
+a link on the desktop; deleting the link removes only the link, and says so.
+
+### toolinst
+
+**to be tested** — `toolinst` makes the programs it installs executable:
+before, only root could run `gcc` or `fbc`.
+
 ### `dlopen` and `dlsym`
 
 **tested in QEMU** (`tools/prova_dl.sh`, 11 out of 11) - a program linked

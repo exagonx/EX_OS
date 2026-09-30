@@ -2378,6 +2378,50 @@ static void gestore_attributo(ExDom *D, int nodo, const char *tipo,
     if (!testo || !testo[0]) return;
 
     exjs_metti(D->js, exjs_globale(D->js), "event", ev);
+
+    /* =========================================================================
+     * ! THE ATTRIBUTE IS THE BODY OF A FUNCTION, as in every browser
+     * (30 September 2026, @NAV-WIKI): function (event) { <attribute> },
+     * called with `this` = the element. Run as a top-level script, as until
+     * today, three very common forms failed:
+     *   - onclick="return false"  — a `return` outside a function is a
+     *     syntax error, so the handler did nothing at all;
+     *   - onmouseover="this.style.color='red'" — `this` was the global
+     *     object, not the element;
+     *   - the value returned: false means "do not follow the link / do not
+     *     submit", exactly as preventDefault() does.
+     * An attribute too long for the buffer runs the old way, at top level.
+     * ===================================================================== */
+    {
+        static char  corpo[8192];
+        static const char capo[] = "(function (event) {\n";
+        static const char coda[] = "\n})";
+        unsigned int n = lung(testo), k = 0, j;
+        ExJsVal      f, arg[1];
+
+        if (n + sizeof(capo) + sizeof(coda) < sizeof(corpo)) {
+            for (j = 0; capo[j]; j++) corpo[k++] = capo[j];
+            for (j = 0; j < n; j++)   corpo[k++] = testo[j];
+            for (j = 0; coda[j]; j++) corpo[k++] = coda[j];
+            corpo[k] = '\0';
+
+            if (!exjs_esegui(D->js, corpo, k, &f, &mio)) {
+                if (err && !*avuto) { *err = mio; *avuto = 1; }
+                return;
+            }
+            arg[0] = ev;
+            azzera_errore(&mio);
+            r = exjs_invoca(D->js, f, exdom_avvolgi(D, nodo), arg, 1, &mio);
+            if (mio.messaggio[0]) {
+                if (err && !*avuto) { *err = mio; *avuto = 1; }
+                return;
+            }
+            if (exjs_tipo(D->js, r) == EXJS_BOOLEANO && !exjs_a_booleano(D->js, r))
+                exjs_metti(D->js, ev, "defaultPrevented", exjs_booleano(1));
+            return;
+        }
+    }
+
     if (!exjs_esegui(D->js, testo, lung(testo), &r, &mio)) {
         if (err && !*avuto) { *err = mio; *avuto = 1; }
     }

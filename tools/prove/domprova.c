@@ -1014,6 +1014,16 @@ int main(int argc, char **argv)
     prova_evento("puo' anche lui annullare il seguito",
                  "<div id=\"uno\" onclick=\"event.preventDefault()\">x</div>",
                  "uno", "click", "", "", 0);
+    /* 30 settembre 2026: l'attributo e' il corpo di una funzione. */
+    prova_evento("return false nell'attributo annulla il seguito",
+                 "<a id=\"uno\" href=\"#\" onclick=\"return false\">x</a>",
+                 "uno", "click", "", "", 0);
+    prova_evento("return true no",
+                 "<a id=\"uno\" href=\"#\" onclick=\"return true\">x</a>",
+                 "uno", "click", "", "", 1);
+    prova_evento("this nell'attributo e' l'elemento",
+                 "<div id=\"uno\" onmouseover=\"console.log(this.id + ' ' + event.type)\">x</div>",
+                 "uno", "mouseover", "", "uno mouseover\n", 1);
 
     printf("\n--- quel che uno script rotto non deve rompere ---\n");
 

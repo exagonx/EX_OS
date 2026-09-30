@@ -33,5 +33,40 @@
 #define EXOS_UNISTD_H
 
 #include "libc.h"
+#include <limits.h>     /* PATH_MAX: il codice di terzi lo aspetta da qui */
+
+/* (@EXILLA-JS, 30 settembre 2026) */
+#define STDIN_FILENO    0
+#define STDOUT_FILENO   1
+#define STDERR_FILENO   2
+
+/* ! EX-OS NON HA fork(): i processi nascono con spawn (vedi spawn_ex in
+ * libc.h). fork esiste perche' il codice portabile la nomina, e risponde -1
+ * con ENOSYS: chi la chiama la tratta gia' come un fallimento. Solo libc.a. */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+pid_t   fork(void);
+
+/* POSIX che EX-OS ha a meta' o non ha (@EXILLA-JS): pread/pwrite passano da
+ * lseek e rimettono la posizione; fsync rende 0 (i filesystem scrivono gia'
+ * sul disco a ogni write); getppid c'e'. I link simbolici, i proprietari
+ * cambiati per descrittore, chroot e le FIFO con nome non esistono: ENOSYS
+ * o, per readlink su un file che non e' un link, EINVAL — come vuole POSIX. */
+pid_t   getppid(void);
+ssize_t pread(int fd, void *buf, size_t n, off_t pos);
+ssize_t pwrite(int fd, const void *buf, size_t n, off_t pos);
+int     fsync(int fd);
+ssize_t readlink(const char *percorso, char *buf, size_t n);
+int     symlink(const char *bersaglio, const char *percorso);
+int     linkat(int dfd1, const char *p1, int dfd2, const char *p2, int flag);
+int     lchown(const char *percorso, unsigned int uid, unsigned int gid);
+int     fchown(int fd, unsigned int uid, unsigned int gid);
+int     chroot(const char *percorso);
+int     mkfifo(const char *percorso, mode_t modo);
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EXOS_UNISTD_H */

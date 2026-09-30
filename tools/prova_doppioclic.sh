@@ -185,7 +185,7 @@ P_SU=$(echo $(( DLG_X + 28 )) $(( DLG_Y + 12 )))
 
 {
     echo "exwin@12"
-    echo "/exwin/bin/edit &@8"
+    echo "/exwin/bin/exeditor &@8"
     echo "key:alt-f2@3"
     echo "key:f10@2"
     echo "key:down@1"

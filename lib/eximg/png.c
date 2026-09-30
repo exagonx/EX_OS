@@ -131,6 +131,17 @@ static unsigned int campione(const unsigned char *dati, unsigned int x, unsigned
     return v * 255u / max;
 }
 
+/* The raw sample, all its bits (16 at depth 16): tRNS names a transparent
+ * colour at full depth. */
+static unsigned int campione_pieno(const unsigned char *dati, unsigned int x, unsigned int c,
+                           unsigned int canali, unsigned int prof)
+{
+    unsigned int i = x * canali + c;
+
+    if (prof == 16) return ((unsigned int)dati[i * 2] << 8) | dati[i * 2 + 1];
+    return campione(dati, x, c, canali, prof, 0);
+}
+
 /* Dove comincia la passata `p` di Adam7 e di quanto salta. Senza
  * interlacciamento, una passata sola che copre tutto. */
 static void passata_passi(unsigned int p, unsigned int interl, unsigned int *x0, unsigned int *y0,
@@ -166,6 +177,9 @@ int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm)
     unsigned char prof = 0, tipo = 0, interlacciato = 1;
     unsigned char tavolozza[256 * 3];
     unsigned int  n_tavolozza = 0;
+    unsigned char alfa_tav[256];                /* tRNS of a palette */
+    unsigned int  trasp[3] = { 0, 0, 0 };       /* tRNS of grey or RGB */
+    int           ha_trasp = 0;
     unsigned char *zlib_dati;
     unsigned int   zlib_n = 0;
     unsigned char *grezzo;
@@ -196,6 +210,13 @@ int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm)
             n_tavolozza = len / 3u;
             if (n_tavolozza > 256) n_tavolozza = 256;
             for (i = 0; i < n_tavolozza * 3u; i++) tavolozza[i] = d[pos + 8 + i];
+        } else if (t[0]=='t' && t[1]=='R' && t[2]=='N' && t[3]=='S') {
+            const unsigned char *q = d + pos + 8;
+            ha_trasp = 1;
+            for (i = 0; i < 256; i++) alfa_tav[i] = (unsigned char)(i < len ? q[i] : 255);
+            if (len >= 2) trasp[0] = ((unsigned int)q[0] << 8) | q[1];
+            if (len >= 6) { trasp[1] = ((unsigned int)q[2] << 8) | q[3];
+                            trasp[2] = ((unsigned int)q[4] << 8) | q[5]; }
         } else if (t[0]=='I' && t[1]=='D' && t[2]=='A' && t[3]=='T') {
             zlib_n += len;
         } else if (t[0]=='I' && t[1]=='E' && t[2]=='N' && t[3]=='D') {
@@ -292,34 +313,44 @@ int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm)
                 prec = dati;
 
                 for (x = 0; x < pw; x++) {
-                    unsigned int r, g, b;
+                    unsigned int r, g, b, a = 255;
 
                     switch (tipo) {
-                    case 0: r = g = b = campione(dati, x, 0, 1, prof, 1); break;
+                    case 0: r = g = b = campione(dati, x, 0, 1, prof, 1);
+                            if (ha_trasp && campione_pieno(dati, x, 0, 1, prof) == trasp[0]) a = 0;
+                            break;
                     case 2: r = campione(dati, x, 0, 3, prof, 1);
                             g = campione(dati, x, 1, 3, prof, 1);
-                            b = campione(dati, x, 2, 3, prof, 1); break;
-                    case 4: r = g = b = campione(dati, x, 0, 2, prof, 1); break;  /* alfa ignorata */
-                    case 6: r = campione(dati, x, 0, 4, prof, 1);                /* alfa ignorata */
+                            b = campione(dati, x, 2, 3, prof, 1);
+                            if (ha_trasp && campione_pieno(dati, x, 0, 3, prof) == trasp[0] &&
+                                campione_pieno(dati, x, 1, 3, prof) == trasp[1] &&
+                                campione_pieno(dati, x, 2, 3, prof) == trasp[2]) a = 0;
+                            break;
+                    case 4: r = g = b = campione(dati, x, 0, 2, prof, 1);
+                            a = campione(dati, x, 1, 2, prof, 1); break;
+                    case 6: r = campione(dati, x, 0, 4, prof, 1);
                             g = campione(dati, x, 1, 4, prof, 1);
-                            b = campione(dati, x, 2, 4, prof, 1); break;
+                            b = campione(dati, x, 2, 4, prof, 1);
+                            a = campione(dati, x, 3, 4, prof, 1); break;
                     default: {                                                   /* tavolozza */
                         unsigned int k = campione(dati, x, 0, 1, prof, 0);
                         if (k >= n_tavolozza) k = 0;
                         r = tavolozza[k*3]; g = tavolozza[k*3+1]; b = tavolozza[k*3+2];
+                        if (ha_trasp) a = alfa_tav[k];
                         break;
                     }
                     }
-                    bm->px[(y0 + y * dy) * larg + x0 + x * dx] = (r << 16) | (g << 8) | b;
+                    bm->px[(y0 + y * dy) * larg + x0 + x * dx] = (a << 24) | (r << 16) | (g << 8) | b;
                 }
             }
         }
     }
 
-    /* ! L'ALFA SI IGNORA, ED E' DICHIARATO. Il server compone finestre opache:
-     * non c'e' un canale alfa su cui fondere, e fingere di rispettarlo — per
-     * esempio moltiplicando per il fondo — darebbe un risultato giusto solo
-     * sopra a un colore piatto. Quando il server sapra' fondere, questa riga
-     * diventera' una mescolanza vera. */
+    /* ! L'ALFA C'E' DAL 30 SETTEMBRE 2026 (@IMG-FORMATI), e prima si
+     * ignorava: i loghi trasparenti del web uscivano su un fondo nero. Ogni
+     * pixel la porta — 255 se il file non ne ha — e la fonde chi sa su cosa
+     * sta disegnando: il navigatore sul bianco della pagina, Immagini sul suo
+     * grigio, il toolkit per le icone. Chi non la guarda (ex_pixmap) vede i
+     * colori come prima. */
     return 1;
 }

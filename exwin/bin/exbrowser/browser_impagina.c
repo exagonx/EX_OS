@@ -488,6 +488,22 @@ static unsigned int genera(const char *s)
 }
 
 /* Il testo di un pezzo, da qualunque delle due arene venga. */
+static const char *testo_pezzo(unsigned int off);
+
+int pezzo_parola(int i, char *out, int max)
+{
+    const char *t;
+    int k = 0;
+
+    if (i < 0 || i >= g_pez_n || g_pez[i].rif >= 0 || max < 1) { if (max > 0) out[0] = '\0'; return 0; }
+    t = testo_pezzo(g_pez[i].testo);
+    while (t[k] && t[k] != ' ' && t[k] != '\n' && t[k] != '\r' && t[k] != '\t' && k < max - 1) {
+        out[k] = t[k]; k++;
+    }
+    out[k] = '\0';
+    return k;
+}
+
 static const char *testo_pezzo(unsigned int off)
 {
     if (off & GEN_BIT) return g_gen + (off & ~GEN_BIT);
@@ -1651,7 +1667,7 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (uguale(nome, "a")) {
             const char *h = html_attr(&g_doc, v, "href");
 
-            if (h && h[0] && g_link_n < LINK_MAX) {
+            if (h && h[0] && (unsigned int)g_link_n < g_link_max) {
                 unsigned int k = 0;
 
                 /* ! SE L'ARENA E' PIENA IL LINK NON SI SCRIVE A META'. Un
@@ -1659,7 +1675,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                  * parte» in un browser vuol dire una pagina sbagliata senza
                  * un errore. Si smette di raccoglierli e basta. */
                 while (h[k]) k++;
-                if (g_link_usati + k + 1 <= LINK_ARENA) {
+                if (g_link_usati + k + 1 <= g_link_arena_max) {
                     g_link_off[g_link_n] = g_link_usati;
                     for (k = 0; h[k]; k++)
                         g_link_arena[g_link_usati + k] = h[k];
@@ -1992,6 +2008,15 @@ void disegna_contenuto(void)
                     cop[k] = t[k]; k++;
                 }
                 cop[k] = '\0';
+                /* The selected words: white on blue, the width of the word
+                 * and the space after it (@NAV-SELEZIONE). Only the page's
+                 * own view: an iframe keeps its own. */
+                if (!g_vi->cornice && g_sel_da >= 0 && i >= g_sel_da && i <= g_sel_a) {
+                    int sp = (i < g_sel_a && i + 1 < g_pez_n && g_pez[i + 1].y == g_pez[i].y)
+                           ? g_pez[i + 1].x - g_pez[i].x : g_pez[i].w;
+                    ex_riempi(g_f, g_pez[i].x, y, sp > 0 ? sp : g_pez[i].w, ph, EX_BLU);
+                    c = EX_BIANCO;
+                }
                 ex_scrivi_con(g_f, f, g_pez[i].x, y, cop, c);
 
                 /* ! UN COLLEGAMENTO SI SOTTOLINEA, e non basta il colore: su

@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.012"
+#define VERSIONE_APP "0.013"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -1686,7 +1686,7 @@ static int scrivania_disegna(void)
  * FAT, and a text file anyone can write by hand is the simplest thing that
  * works everywhere:
  *
- *     percorso = /exwin/bin/edit        (required)
+ *     percorso = /exwin/bin/exeditor    (required)
  *     nome     = Editor                 (optional: the caption)
  *     icona    = /exwin/icon/...ico     (optional: otherwise the program's
  *                                        own, from applicazioni.txt)
@@ -1712,6 +1712,7 @@ typedef struct {
     char    perc[160];          /* what it is: file, directory, mount point */
     char    apri[160];          /* for a link: the program */
     int     tipo;               /* DV_* */
+    int     cartella_lnk;       /* a link whose `percorso` is a directory */
     ExIcona ic;                 /* 0 = draw the pictogram */
     int     x, y;
 } VoceDesk;
@@ -1721,6 +1722,43 @@ static int          g_dv_n = 0;
 static int          g_dv_sel = -1;
 static unsigned int g_dv_firma = 0;
 static char         g_desk_dir[160];
+
+/* =============================================================================
+ * THE PROFILE'S OWN FOLDERS (30 September 2026, asked by the user)
+ *
+ * Documents, Images and Media are made inside the profile, and each gets a
+ * link on the desktop, so they open with a double click.
+ *
+ * ! THE LINK IS MADE ONLY WITH THE FOLDER, the first time. mkdir fails when
+ * the folder is already there, and then nothing is written: a link the user
+ * has taken away does not come back at every start.
+ *
+ * ! AND FROM THE DESKTOP ONLY THE LINK GOES AWAY: the folder is in the
+ * profile, not on the desktop, and "Cancella" on its link says so
+ * (desk_cancella_voce). Losing one's documents to a click on an icon is not
+ * a thing a desktop should allow.
+ * ============================================================================= */
+static const char *const CARTELLE_PROFILO[] = { "Documents", "Images", "Media", 0 };
+
+static void desk_cartelle_profilo(const char *casa)
+{
+    int i;
+
+    for (i = 0; CARTELLE_PROFILO[i]; i++) {
+        char dir[200], lnk[240], riga[260];
+        int  fd;
+
+        snprintf(dir, sizeof(dir), "%s/%s", casa, CARTELLE_PROFILO[i]);
+        if (mkdir(dir, 0755) != 0) continue;            /* already there */
+        snprintf(lnk, sizeof(lnk), "%s/%s.lnk", g_desk_dir, CARTELLE_PROFILO[i]);
+        fd = open(lnk, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) continue;
+        snprintf(riga, sizeof(riga), "# collegamento\npercorso = %s\nnome = %s\n",
+                 dir, CARTELLE_PROFILO[i]);
+        (void)write(fd, riga, strlen(riga));
+        close(fd);
+    }
+}
 
 static void desk_dir_trova(void)
 {
@@ -1733,6 +1771,7 @@ static void desk_dir_trova(void)
      * system it simply fails, and the desktop shows the drives only. */
     if (casa[0]) mkdir(casa, 0700);
     mkdir(g_desk_dir, 0755);
+    if (casa[0]) desk_cartelle_profilo(casa);
 }
 
 static unsigned int desk_firma_agg(unsigned int h, const char *s)
@@ -1788,6 +1827,10 @@ static void desk_lnk_leggi(VoceDesk *v)
         }
     }
     if (!v->ic && v->apri[0]) v->ic = desk_icona_app(v->apri);
+    {
+        struct stat st;
+        v->cartella_lnk = (v->apri[0] && stat(v->apri, &st) == 0 && S_ISDIR(st.st_mode));
+    }
 }
 
 static int desk_tipo_unita(const MountInfo *m)
@@ -1900,9 +1943,19 @@ static void desk_cerchio(int cx, int cy, int r, unsigned int c)
 }
 
 /* The pictograms, 32x32, for what has no icon file. */
+#define DV_LNK_CARTELLA 100     /* only for drawing: a link to a folder */
 static void desk_pittogramma(int tipo, int x, int y)
 {
     switch (tipo) {
+    case DV_LNK_CARTELLA:       /* the folder, with the little arrow box */
+        ex_riempi(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
+        ex_riempi(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
+        ex_rilievo(g_scr, x + 2, y + 9, 28, 19);
+        ex_riempi(g_scr, x + 4, y + 20, 10, 10, EX_BIANCO);
+        ex_riquadro_disegna(g_scr, x + 4, y + 20, 10, 10, EX_NERO);
+        ex_riempi(g_scr, x + 7, y + 23, 5, 2, EX_BLU);
+        ex_riempi(g_scr, x + 10, y + 23, 2, 5, EX_BLU);
+        break;
     case DV_CARTELLA:
         ex_riempi(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
         ex_riempi(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
@@ -1957,7 +2010,7 @@ static void desk_disegna(void)
         int       l, tx;
 
         if (v->ic) ex_icona_disegna(g_scr, v->ic, ix, iy, DESK_ICONA, EX_SCRIVANIA);
-        else       desk_pittogramma(v->tipo, ix, iy);
+        else       desk_pittogramma(v->cartella_lnk ? DV_LNK_CARTELLA : v->tipo, ix, iy);
 
         /* The caption, cut to nine characters with «~», white on a dark
          * shadow so it reads on any image; blue when selected. */
@@ -2011,6 +2064,9 @@ static void desk_apri(int i)
 
     switch (v->tipo) {
     case DV_LNK:
+        /* A link to a folder opens it in the file manager, as the folder
+         * itself would; to a program, runs it. */
+        if (v->cartella_lnk) { desk_lancia("/exwin/bin/filemgr", v->apri); return; }
         if (v->apri[0]) desk_lancia(v->apri, 0);
         else ex_dlg_avviso("Scrivania", "Il collegamento non dice che cosa "
                            "aprire: manca la riga \"percorso = ...\".");
@@ -2212,6 +2268,18 @@ static void desk_cancella_voce(VoceDesk *v)
     char m[200];
     int  dir = desk_e_dir(v->perc);
 
+    /* ! A LINK IS REMOVED, NEVER WHAT IT POINTS TO — and for a folder that
+     * matters enough to be said: desk_cancella gets the .lnk file only. */
+    if (v->tipo == DV_LNK && v->cartella_lnk) {
+        char mm[400];
+        snprintf(mm, sizeof(mm), "Tolgo dalla scrivania il collegamento a %s?\n\n"
+                 "La cartella NON si cancella: resta in %s con tutto quello che "
+                 "contiene. Se vuoi cancellarla, fallo dal file manager.",
+                 v->nome, v->apri);
+        if (!ex_dlg_conferma("Togli il collegamento", mm, "Togli", "Annulla")) return;
+        if (desk_cancella(v->perc, 0) != 0) desk_errore("Togli il collegamento", v->nome);
+        return;
+    }
     snprintf(m, sizeof(m), dir ? "Cancello la cartella %s e tutto quello che "
              "contiene?" : "Cancello %s?", desk_base(v->perc));
     if (!ex_dlg_conferma("Cancella", m, "Cancella", "Annulla")) return;

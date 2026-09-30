@@ -73,7 +73,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("toolinst", "0.001");
+EX_VERSIONE("toolinst", "0.002");
 
 #define PERC_MAX   320
 #define BLOCCO     4096
@@ -590,9 +590,34 @@ static int confronta(const char *da, const char *a)
  * Copia
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* =============================================================================
+ * ! UN PROGRAMMA COPIATO NASCE 0644, E SOLO ROOT LO ESEGUE (30 settembre 2026)
+ *
+ * ext2_create da' 0644 a ogni file nuovo, e il kernel non guarda i permessi
+ * quando esegue root: installati da qui, gcc, cc1, as, ld e fbc partivano per
+ * l'amministratore e rispondevano EACCES a ogni altro utente. install e
+ * netupdate lo sapevano gia' (fanno chmod 0755 su quel che copiano); qui
+ * mancava. Un eseguibile si riconosce dal CONTENUTO — l'ELF, o «#!» di uno
+ * script — come fa il floppy: il bit di esecuzione MEGA non lo porta, e il
+ * nome non dice niente (cc1 e crt1.o stanno nella stessa cartella). Le
+ * librerie condivise sono ELF anche loro, e senza x il caricatore non le apre.
+ *
+ * Sui sistemi installati prima di oggi: `netupdate -permessi`, da root.
+ * ============================================================================= */
+static void permessi_da_contenuto(const char *a, const unsigned char *primi, int n)
+{
+    int esegue = (n >= 4 && primi[0] == 0x7F && primi[1] == 'E' &&
+                  primi[2] == 'L' && primi[3] == 'F') ||
+                 (n >= 2 && primi[0] == '#' && primi[1] == '!');
+
+    if (esegue) (void)chmod(a, 0755);           /* su FAT rende ENOSYS: pazienza */
+}
+
 static int copia_file(const char *da, const char *a)
 {
     int fs, fd, n, tot = 0;
+    unsigned char primi[4];
+    int           n_primi = 0;
 
     fs = open(da, O_RDONLY);
     if (fs < 0) {
@@ -611,6 +636,11 @@ static int copia_file(const char *da, const char *a)
 
     while ((n = (int)read(fs, buf, BLOCCO)) > 0) {
         int scritti = 0;
+
+        if (tot == 0) {
+            for (n_primi = 0; n_primi < 4 && n_primi < n; n_primi++)
+                primi[n_primi] = (unsigned char)buf[n_primi];
+        }
 
         while (scritti < n) {
             int w = (int)write(fd, buf + scritti, (unsigned int)(n - scritti));
@@ -636,6 +666,7 @@ static int copia_file(const char *da, const char *a)
         n_errori++;
         return -1;
     }
+    permessi_da_contenuto(a, primi, n_primi);
     return tot;
 }
 

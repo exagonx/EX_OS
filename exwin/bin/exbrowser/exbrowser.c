@@ -134,6 +134,9 @@ static char          g_pr_arena[ARENA_MAX_PR];
 static Pezzo         g_pr_pez[PEZZI_MAX_PR];
 static unsigned char g_pr_pagina[PAGINA_MAX_PR];
 static unsigned char g_pr_script[NODI_MAX_PR];
+static char          g_pr_link_arena[LINK_ARENA_PR];
+static unsigned int  g_pr_link_off[LINK_MAX_PR];
+static unsigned char g_pr_link_nuova[LINK_MAX_PR];
 
 static void vista_principale_vettori(void)
 {
@@ -145,6 +148,9 @@ static void vista_principale_vettori(void)
     v->imp.pez = g_pr_pez;      v->imp.pez_max   = PEZZI_MAX_PR;
     v->pagina = g_pr_pagina;    v->pagina_max    = PAGINA_MAX_PR;
     v->script_fatto = g_pr_script;
+    v->imp.link_arena = g_pr_link_arena; v->imp.link_arena_max = LINK_ARENA_PR;
+    v->imp.link_off   = g_pr_link_off;   v->imp.link_max       = LINK_MAX_PR;
+    v->imp.link_nuova = g_pr_link_nuova;
 }
 
 /* What a fresh view must hold that is not zero. */
@@ -794,7 +800,8 @@ unsigned int numero(const char *s)
  * ========================================================================== */
 static int formato_ignoto(const char *src)
 {
-    static const char *const FUORI[] = { ".svg", ".webp", ".avif", ".bmp", 0 };
+    /* .webp e .bmp si leggono dal 30 settembre 2026 (@IMG-FORMATI). */
+    static const char *const FUORI[] = { ".svg", ".avif", 0 };
     int n = 0, i, k;
 
     while (src[n]) n++;
@@ -936,7 +943,7 @@ static unsigned int *ridimensiona(const EximgBitmap *bm,
                                   unsigned int w, unsigned int h)
 {
     unsigned int *d = (unsigned int *)malloc(w * h * sizeof(unsigned int));
-    unsigned int  y;
+    unsigned int  y, i, alfa = 0;
 
     if (!d) return 0;
 
@@ -946,8 +953,13 @@ static unsigned int *ridimensiona(const EximgBitmap *bm,
         unsigned int       *r = d + y * w;
         unsigned int        x;
 
-        for (x = 0; x < w; x++) r[x] = s[x * bm->larghezza / w];
+        for (x = 0; x < w; x++) { r[x] = s[x * bm->larghezza / w]; alfa |= r[x]; }
     }
+    /* ! ALFA ZERO DAPPERTUTTO VUOL DIRE «SENZA ALFA» (il JPEG, il BMP: vedi
+     * lib/eximg/png.c): l'immagine e' opaca, e si disegna fusa (ex_pixmap_fuso)
+     * come le altre. Senza questa riga sarebbe tutta trasparente. */
+    if ((alfa >> 24) == 0)
+        for (i = 0; i < w * h; i++) d[i] |= 0xFF000000u;
     return d;
 }
 
@@ -1273,9 +1285,68 @@ static unsigned int g_dico_n = 0;
 static int  g_sopra_link = -1;
 static char g_stato_prima[160];
 
+/* @NAV-SELEZIONE: see browser_priv.h. g_sel_inizio is the word where the
+ * button went down; g_sel_trascina says the button is still down. */
+int         g_sel_da = -1, g_sel_a = -1;
+static int  g_sel_inizio = -1, g_sel_trascina = 0;
+
+/* The word at or just before (x, y) in the page, in document order: the last
+ * text piece whose top is above the pointer and that, on the pointer's line,
+ * starts before it. -1 = none (above the first word). */
+static int pezzo_vicino(int x, int y)
+{
+    int i, best = -1;
+
+    for (i = 0; i < g_pez_n; i++) {
+        int py, h;
+
+        if (g_pez[i].rif >= 0) continue;
+        py = g_pez[i].y - g_scorri;
+        h  = ex_font_altezza(g_pez[i].font);
+        if (py > y) continue;
+        if (y < py + h && g_pez[i].x > x) continue;     /* same line, further right */
+        best = i;
+    }
+    return best;
+}
+
+static void dico(const char *s);
+
+static void selezione_copia(void)
+{
+    static char buf[64 * 1024];
+    unsigned int n = 0;
+    int i;
+
+    if (g_sel_da < 0) return;
+    for (i = g_sel_da; i <= g_sel_a && i < g_pez_n; i++) {
+        char w[256];
+        int  k = pezzo_parola(i, w, sizeof(w));
+
+        if (k <= 0) continue;
+        if (n > 0 && n < sizeof(buf) - 1)
+            buf[n++] = (g_pez[i].y != g_pez[i - 1].y) ? '\n' : ' ';
+        if (n + (unsigned int)k >= sizeof(buf) - 1) break;
+        memcpy(buf + n, w, (size_t)k);
+        n += (unsigned int)k;
+    }
+    buf[n] = '\0';
+    if (n) { ex_appunti_metti(buf, n); dico("testo copiato"); }
+}
+/* The DOM node under the pointer, for mouseover/mouseout (-1: none). */
+static int  g_sopra_nodo = -1;
+
+/* ! THE STATUS LINE SHOWS ITSELF (30 September 2026): ex_ridisegna redraws
+ * the label alone. Before, it waited for the next redraw of the whole window
+ * — which since EX_NON_RIDISEGNARE no longer comes after every message, and
+ * the line stayed on "immagine 1 di 64...". If the toolkit cannot, g_dico_n
+ * still asks EXM_TEMPO for the old redraw. */
 static void dico(const char *s)
 {
-    if (g_stato) ex_testo_metti(g_stato, s);
+    if (g_stato) {
+        ex_testo_metti(g_stato, s);
+        if (ex_ridisegna(g_stato)) return;
+    }
     g_dico_n++;
 }
 
@@ -2516,20 +2587,62 @@ static int imm_ci_sta(int k)
     return g_imm_px + w * h <= g_imm_px_tot;
 }
 
-/* Tutte quelle che l'impaginazione ha trovato, una per volta. */
-static void immagini_prendi(void)
+/* =============================================================================
+ * THE IMAGES THAT ARE SEEN FIRST (30 September 2026, @NAV-WIKI)
+ *
+ * ! THE NETWORK WAS THE WHOLE WAIT: Wikipedia's article on Venice took 48 s,
+ * and 46 of them were 71 requests made one after the other — every image of
+ * the article, down to the last one at the bottom, before the page could be
+ * used. Now at load only the images within two screens of where the page is
+ * shown are fetched; the others wait until scrolling brings them near, as
+ * `loading="lazy"` does in real browsers. The wait moves to where it is
+ * needed, and a page read only at the top never pays for its bottom.
+ *
+ * imm_y() is where an image's first piece sits on the page, or -1 when it
+ * has none — its size is not known yet, or it is not laid out: such an image
+ * is fetched at once, as before, since without its size it has no place.
+ * ============================================================================= */
+static int g_imm_da_vedere = 0;     /* scrolled: some image may now be near */
+
+static int imm_y(int k)
+{
+    int i;
+
+    for (i = 0; i < g_pez_n; i++)
+        if (EST_E_IMM(g_pez[i].rif) && EST_CHI(g_pez[i].rif) == k)
+            return g_pez[i].y;
+    return -1;
+}
+
+/* Those the layout found and that are near what is shown, one at a time.
+ * Returns how many are still waiting because they are further down. */
+static int immagini_prendi(void)
 {
     char msg[160];
-    int  k;
+    int  k, lontane = 0;
+    int  fino = g_scorri + 3 * area_h();
 
     /* ! SPENTE NON VUOL DIRE «RIQUADRO VUOTO»: i pezzi non sono nemmeno
      * stati creati, e al loro posto si legge l'`alt`, che e' cio' che il
      * testo alternativo serve a fare. Chi spegne le immagini di solito lo fa
      * perche' la rete e' lenta, e vuole leggere. */
-    if (!g_img_accese) return;
+    if (!g_img_accese) return 0;
 
     for (k = 0; k < g_imm_n; k++) {
         if (g_imm[k].stato != 0) continue;
+
+        {
+            int y = imm_y(k);
+            /* ! NO POSITION IS NOT "FAR": an image without width= and
+             * height= has no piece until it arrives, because its size is not
+             * known — and it would never arrive (prova_gif_anima caught it).
+             * Only an image that HAS a place, and a far one, waits. */
+            if (y >= 0 &&
+                (y > fino || y + (int)g_imm[k].ris_h < g_scorri - area_h())) {
+                lontane++;
+                continue;
+            }
+        }
 
         if (!imm_ci_sta(k)) {
             g_imm_fuori++;
@@ -2585,7 +2698,23 @@ static void immagini_prendi(void)
             disegna();
         }
     }
+    return lontane;
+}
 
+/* After a scroll: if an image is still waiting, the timer fetches the near
+ * ones once the scrolling has stopped (EXM_TEMPO), not in the middle of it:
+ * a fetch blocks, and the wheel would stutter. */
+static void immagini_vicine(void)
+{
+    int k;
+
+    if (!g_img_accese || !g_f) return;
+    for (k = 0; k < g_imm_n; k++)
+        if (g_imm[k].stato == 0) {
+            g_imm_da_vedere = 1;
+            ex_sveglia(g_f, 250);
+            return;
+        }
 }
 
 /* -----------------------------------------------------------------------------
@@ -3850,7 +3979,7 @@ static const char *programma_per(const char *ext, const char **quale)
 
     if (strcmp(ext, "zip") == 0) { bin = "archivi"; *quale = "Archivi"; }
     for (i = 0; !bin && testo[i]; i++)
-        if (strcmp(ext, testo[i]) == 0) { bin = "edit"; *quale = "l'editor"; }
+        if (strcmp(ext, testo[i]) == 0) { bin = "exeditor"; *quale = "l'editor"; }
     if (!bin) return 0;
 
     snprintf(dove, sizeof(dove), "/exwin/bin/%s", bin);
@@ -4247,10 +4376,15 @@ static Vista *cornice_vista(int k)
     v->imp.pez    = (Pezzo *)malloc(PEZZI_MAX * sizeof(Pezzo));
     v->pagina     = (unsigned char *)malloc(PAGINA_MAX);
     v->script_fatto = (unsigned char *)malloc(NODI_MAX);
+    v->imp.link_arena = (char *)malloc(LINK_ARENA);
+    v->imp.link_off   = (unsigned int *)malloc(LINK_MAX * sizeof(unsigned int));
+    v->imp.link_nuova = (unsigned char *)malloc(LINK_MAX);
     /* ! free() su EX-OS non rende niente: chi non e' riuscito resta allocato,
      * e la vista non si usa. Succede solo con la memoria finita. */
     if (!v->imp.nodi || !v->imp.attr || !v->imp.arena || !v->imp.pez ||
-        !v->pagina || !v->script_fatto) return 0;
+        !v->pagina || !v->script_fatto || !v->imp.link_arena ||
+        !v->imp.link_off || !v->imp.link_nuova) return 0;
+    v->imp.link_max = LINK_MAX;  v->imp.link_arena_max = LINK_ARENA;
     v->imp.nodi_max = NODI_MAX;  v->imp.attr_max = ATTR_MAX;
     v->imp.arena_max = ARENA_MAX; v->imp.pez_max = PEZZI_MAX;
     v->pagina_max = PAGINA_MAX;
@@ -4534,6 +4668,13 @@ static void vai(const char *url, int in_storia, int usa_cache)
         g_da_postare = 0;
         return;
     }
+
+    /* A new page: the node and the link under the pointer belong to the old
+     * one, and a mouseout sent to their numbers would land on a stranger. */
+    g_sopra_nodo = -1;
+    g_sopra_link = -1;
+    g_sel_da = g_sel_a = g_sel_inizio = -1;
+    g_sel_trascina = 0;
     g_t_rete = g_t_rete_n = g_t_js = g_t_css = g_t_imp = 0;
 
     /* ! L'ANCORA SI STACCA PRIMA DI CHIEDERE LA PAGINA, e non e' un ritocco:
@@ -5687,8 +5828,19 @@ static int link_sotto(int x, int y)
                                          : ex_font_altezza(g_pez[i].font);
 
         if (g_pez[i].link < 0) continue;
-        if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
-            y >= py && y < py + h) return g_pez[i].link;
+        {
+            /* ! THE SPACE BETWEEN TWO WORDS OF THE SAME LINK IS THE LINK TOO
+             * (30 September 2026): passing over "Vai al contenuto" the
+             * status line jumped between the address and the old text at
+             * every gap, and a click on a space did nothing. */
+            int w = g_pez[i].w;
+
+            if (i + 1 < g_pez_n && g_pez[i + 1].link == g_pez[i].link &&
+                g_pez[i + 1].y == g_pez[i].y && g_pez[i + 1].x > g_pez[i].x)
+                w = g_pez[i + 1].x - g_pez[i].x;
+            if (x >= g_pez[i].x && x < g_pez[i].x + w &&
+                y >= py && y < py + h) return g_pez[i].link;
+        }
     }
     return -1;
 }
@@ -6256,6 +6408,7 @@ static void scorri(int quanto)
     if (g_scorri < 0) g_scorri = 0;
     if (g_scorri > max) g_scorri = max;
     disegna();
+    immagini_vicine();
 }
 
 static void scorri_a(int y);
@@ -6298,6 +6451,7 @@ static void scorri_a(int y)
     if (y == g_scorri) return;
     g_scorri = y;
     disegna();
+    immagini_vicine();
 }
 
 /* ! IL TRASCINAMENTO SI RICORDA DA DOVE HA PRESO IL POLLICE, e non e' un
@@ -7018,6 +7172,17 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * passare il tasto, che e' esattamente cio' che permette a Ctrl+O di
          * funzionare mentre si sta scrivendo un indirizzo. */
         if (wp & KBD_MOD_CTRL) {
+            /* The page's selected text (@NAV-SELEZIONE): Ctrl+C copies it,
+             * Ctrl+A chooses every word of the page. */
+            if (c == 'c' || c == 'C') { selezione_copia(); return EX_NON_RIDISEGNARE; }
+            if (c == 'a' || c == 'A') {
+                int i;
+                g_sel_da = g_sel_a = -1;
+                for (i = 0; i < g_pez_n; i++)
+                    if (g_pez[i].rif < 0) { if (g_sel_da < 0) g_sel_da = i; g_sel_a = i; }
+                disegna();
+                return EX_NON_RIDISEGNARE;
+            }
             if (c == 'o' || c == 'O') { apri_locale();  return 0; }
             if (c == 's' || c == 'S') { salva_pagina(); return 0; }
             if (c == 'q' || c == 'Q') { esci();         return 0; }
@@ -7097,6 +7262,20 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         int aspetta = 0, cornici;
         unsigned int dico_prima = g_dico_n;
 
+        /* The images that scrolling has brought near (see imm_y). The status
+         * line gets back what it said: "immagine 12 di 40..." is news only
+         * while it is happening. */
+        if (g_imm_da_vedere && g_v == &g_principale && !g_in_rete) {
+            char prima[160];
+            const char *t = g_stato ? ex_testo_prendi(g_stato) : 0;
+
+            strncpy(prima, t ? t : "", sizeof(prima) - 1);
+            prima[sizeof(prima) - 1] = '\0';
+            g_imm_da_vedere = 0;
+            immagini_prendi();
+            if (g_stato) dico(prima);
+        }
+
         if (g_js) {
             ctrl_al_dom();
             exjs_pompa(g_js, uptime_ms());
@@ -7147,6 +7326,20 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         int x = EX_X(lp), y = EX_Y(lp);
 
         if (barra_giu(x, y)) return 0;
+
+        /* The selection: a press on the page's text begins one (not on a
+         * link, which is followed); a press anywhere takes the old one away. */
+        {
+            int c_era = (g_sel_da >= 0);
+
+            g_sel_da = g_sel_a = -1;
+            g_sel_inizio = (y >= area_y() && link_sotto(x, y) < 0) ? pezzo_vicino(x, y) : -1;
+            g_sel_trascina = (g_sel_inizio >= 0);
+            /* ! THE KEYS COME TO THE PAGE: with the focus still in the address
+             * bar, Ctrl+C was the text box's, and copied its (empty) choice. */
+            if (g_sel_trascina) ex_fuoco_via(g_f);
+            if (c_era) disegna();
+        }
         /* A click moves the focus where it lands: the Tab stop is forgotten,
          * a text field clicked takes it (clic_pagina does that). */
         g_tab_link = -1;
@@ -7196,6 +7389,24 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 
     case EXM_MOUSE_MOSSO:
+        if (g_sel_trascina && !g_trascino) {
+            int p = pezzo_vicino(EX_X(lp), EX_Y(lp));
+
+            /* Before the first word of the page (left of it, or above): the
+             * selection reaches that word, it does not stop one short. */
+            if (p < 0)
+                for (p = 0; p < g_pez_n && g_pez[p].rif >= 0; p++) ;
+            if (p >= g_pez_n) p = -1;
+            int da = p < g_sel_inizio ? p : g_sel_inizio;
+            int a  = p < g_sel_inizio ? g_sel_inizio : p;
+
+            if (p >= 0 && (da != g_sel_da || a != g_sel_a)) {
+                g_sel_da = da;
+                g_sel_a  = a;
+                disegna();
+            }
+            return EX_NON_RIDISEGNARE;
+        }
         barra_mosso(EX_Y(lp));              /* draws itself if it scrolls */
         return EX_NON_RIDISEGNARE;
 
@@ -7207,29 +7418,67 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         int k = (EX_Y(lp) >= area_y()) ? link_sotto(EX_X(lp), EX_Y(lp)) : -1;
         static char dove[EXHTTP_URL_MAX];
 
-        if (k == g_sopra_link || !g_stato) return EX_NON_RIDISEGNARE;
-        if (g_sopra_link < 0) {
+        /* What the status line says before a link takes it over — saved
+         * BEFORE the page's handlers run: an error of theirs goes to the
+         * status line too, and must not become what comes back. */
+        if (k != g_sopra_link && g_sopra_link < 0 && g_stato) {
             const char *t = ex_testo_prendi(g_stato);
             strncpy(g_stato_prima, t ? t : "", sizeof(g_stato_prima) - 1);
             g_stato_prima[sizeof(g_stato_prima) - 1] = '\0';
         }
+
+        /* ! mouseover AND mouseout, when the NODE under the pointer changes
+         * (not at every pixel), as browsers do. A script that changes the
+         * page is redrawn by rifai_se_cambiato; a page without handlers pays
+         * one call per node crossed. */
+        if (g_dom) {
+            int n = (EX_Y(lp) >= area_y()) ? nodo_sotto(EX_X(lp), EX_Y(lp)) : -1;
+
+            if (n != g_sopra_nodo) {
+                ExJsErrore err;
+
+                ctrl_al_dom();
+                memset(&err, 0, sizeof(err));
+                if (g_sopra_nodo >= 0 && g_sopra_nodo < (int)g_doc.nodi_n)
+                    exdom_evento(g_dom, g_sopra_nodo, "mouseout", &err);
+                if (n >= 0) exdom_evento(g_dom, n, "mouseover", &err);
+                g_sopra_nodo = n;
+                js_grida(&err);
+                rifai_se_cambiato();
+                dopo_gli_script();
+                if (segui_location()) return 0;
+            }
+        }
+
+        if (k == g_sopra_link || !g_stato) return EX_NON_RIDISEGNARE;
         g_sopra_link = k;
         if (k >= 0)
             ex_testo_metti(g_stato, risolvi(link_url(k), dove, sizeof(dove))
                                     ? dove : link_url(k));
         else
             ex_testo_metti(g_stato, g_stato_prima);
-        return 0;
+        return ex_ridisegna(g_stato) ? EX_NON_RIDISEGNARE : 0;
     }
 
     case EXM_MOUSE_FUORI:
+        if (g_dom && g_sopra_nodo >= 0 && g_sopra_nodo < (int)g_doc.nodi_n) {
+            ExJsErrore err;
+
+            memset(&err, 0, sizeof(err));
+            exdom_evento(g_dom, g_sopra_nodo, "mouseout", &err);
+            js_grida(&err);
+            rifai_se_cambiato();
+            dopo_gli_script();
+        }
+        g_sopra_nodo = -1;
         if (g_sopra_link < 0 || !g_stato) return EX_NON_RIDISEGNARE;
         g_sopra_link = -1;
         ex_testo_metti(g_stato, g_stato_prima);
-        return 0;
+        return ex_ridisegna(g_stato) ? EX_NON_RIDISEGNARE : 0;
 
     case EXM_MOUSE_SU:
         g_trascino = 0;
+        g_sel_trascina = 0;
         return EX_NON_RIDISEGNARE;
 
     case EXM_DISEGNA:

@@ -1,0 +1,28 @@
+--- a/build/moz.configure/init.configure
++++ b/build/moz.configure/init.configure
+@@ -527,6 +527,9 @@
+         canonical_os = canonical_kernel = "NetBSD"
+     elif os.startswith("openbsd"):
+         canonical_os = canonical_kernel = "OpenBSD"
++    elif os.startswith("exos"):
++        # EX-OS (Exilla): a POSIX system of its own, modelled on OpenBSD here.
++        canonical_os = canonical_kernel = "EXOS"
+     elif os.startswith("solaris"):
+         canonical_os = canonical_kernel = "SunOS"
+     elif os.startswith("wasi") and allow_wasi:
+@@ -936,6 +939,15 @@
+ 
+ 
+ @depends(target)
++def target_is_exos(target):
++    if target.kernel == "EXOS":
++        return True
++
++
++set_define("XP_EXOS", target_is_exos)
++
++
++@depends(target)
+ def target_is_netbsd(target):
+     if target.kernel == "NetBSD":
+         return True

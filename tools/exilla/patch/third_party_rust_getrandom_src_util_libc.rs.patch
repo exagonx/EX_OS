@@ -1,0 +1,11 @@
+--- a/third_party/rust/getrandom/src/util_libc.rs
++++ b/third_party/rust/getrandom/src/util_libc.rs
+@@ -22,6 +22,8 @@
+         use __errno as errno_location;
+     } else if #[cfg(target_os = "aix")] {
+         use libc::_Errno as errno_location;
++    } else if #[cfg(target_os = "exos")] {
++        use libc::__errno_dove as errno_location;
+     }
+ }
+ 

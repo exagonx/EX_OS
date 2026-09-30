@@ -1712,12 +1712,13 @@ int     diventa_root(const char *nome, const char *password);
 /* stat() riempie la struttura POSIX; statraw() da' i campi grezzi del
  * filesystem (attributi FAT, primo cluster, data e ora codificate) a chi
  * ne ha bisogno davvero — mkfs, fdisk, un ls che mostri gli attributi. */
-/* ! chmod, fchmod e umask NON CAMBIANO NIENTE: EX-OS non ha permessi, e
- * l'unico bit che i filesystem tengono davvero — la sola lettura di FAT —
- * non ha una syscall che lo scriva. Ci sono perche' il codice di terzi le
- * chiama (bfd le usa a ogni file eseguibile che produce) e rattoppare i
- * sorgenti altrui sarebbe peggio. Vedi lib/libc.c per il ragionamento, ed
- * e' la stessa convenzione di O_EXCL in <fcntl.h>. */
+/* chmod CAMBIA DAVVERO I PERMESSI (SYS_CHMOD) su ext2, dove proprietario e
+ * modo esistono; su FAT rende ENOSYS, perche' FAT non li ha.
+ * ! fchmod INVECE NON CAMBIA NIENTE: non c'e' una syscall che lavori su un
+ * descrittore, e rende 0 per il codice di terzi che la chiama. Chi deve
+ * rendere eseguibile un file che ha scritto chiami chmod(percorso, 0755).
+ * (Corretto il 30 settembre 2026: qui era scritto che EX-OS non ha permessi,
+ * cosa vera prima di agosto e non piu' dopo.) */
 int     chmod(const char *path, mode_t modo);
 int     fchmod(int fd, mode_t modo);
 mode_t  umask(mode_t maschera);

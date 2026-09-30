@@ -37,6 +37,19 @@
 #include "libc.h"
 #include <stdarg.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* ! extern "C" (30 settembre 2026): senza, un programma C++ cercava queste
+ * funzioni coi nomi decorati del C++ e il collegamento non le trovava. */
+
+/* Le conversioni «ricominciabili» fra byte e caratteri larghi (@EXILLA-JS, 30
+ * settembre 2026). Con la codifica Latin-1 di qui (vedi sopra) uno stato non
+ * serve: si legge un byte e si fa un carattere, e *src avanza come vuole C99. */
+size_t    mbsrtowcs(wchar_t *dst, const char **src, size_t n, mbstate_t *stato);
+size_t    wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato);
+size_t    wcrtomb(char *dst, wchar_t c, mbstate_t *stato);
+
 /* wchar_t, wint_t, WEOF, mbstate_t, mbstowcs, mbrtowc e wcstombs stanno
  * in libc.h, come ogni altra cosa: la fonte e' una sola. */
 
@@ -73,5 +86,31 @@ double              wcstod(const wchar_t *s, wchar_t **fine);
  * scrive un ciclo di riallocazione che non termina mai. */
 int  swprintf(wchar_t *buf, size_t dim, const wchar_t *fmt, ...);
 int  vswprintf(wchar_t *buf, size_t dim, const wchar_t *fmt, va_list ap);
+
+#ifdef __cplusplus
+}
+#endif
+
+/* ! PER IL C++: la libstdc++ di EX-OS e' costruita senza _GLIBCXX_USE_WCHAR_T,
+ * e allora <cwchar> include questo file ma non porta le funzioni in std::. Il
+ * codice di terzi scrive std::wcslen (SpiderMonkey, vm/CharacterEncoding.cpp):
+ * le si porta qui, una per una (@EXILLA-JS, 30 settembre 2026). */
+#ifdef __cplusplus
+namespace std {
+using ::mbstate_t;
+using ::wcslen;
+using ::wcscmp;
+using ::wcsncmp;
+using ::wcscpy;
+using ::wcsncpy;
+using ::wcschr;
+using ::wmemcpy;
+using ::wmemset;
+using ::mbrtowc;
+using ::wcrtomb;
+using ::mbsrtowcs;
+using ::wcsrtombs;
+}
+#endif
 
 #endif /* EXOS_WCHAR_H */

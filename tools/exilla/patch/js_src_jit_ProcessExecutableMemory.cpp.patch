@@ -1,0 +1,29 @@
+--- a/js/src/jit/ProcessExecutableMemory.cpp
++++ b/js/src/jit/ProcessExecutableMemory.cpp
+@@ -690,7 +690,7 @@
+   uint8_t* base_;
+ 
+   // The fields below should only be accessed while we hold the lock.
+-  Mutex lock_ MOZ_UNANNOTATED;
++  js::Mutex lock_ MOZ_UNANNOTATED;
+ 
+   // pagesAllocated_ is an Atomic so that bytesAllocated does not have to
+   // take the lock.
+@@ -778,7 +778,7 @@
+   // Take the lock and try to allocate.
+   void* p = nullptr;
+   {
+-    LockGuard<Mutex> guard(lock_);
++    LockGuard<js::Mutex> guard(lock_);
+     MOZ_ASSERT(pagesAllocated_ <= MaxCodePages);
+ 
+     // Check if we have enough pages available.
+@@ -870,7 +870,7 @@
+ #endif
+   }
+ 
+-  LockGuard<Mutex> guard(lock_);
++  LockGuard<js::Mutex> guard(lock_);
+   MOZ_ASSERT(numPages <= pagesAllocated_);
+   pagesAllocated_ -= numPages;
+ 

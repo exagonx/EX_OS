@@ -252,6 +252,7 @@ typedef struct {
 #define SYS_SEG_MANDA       169
 #define SYS_THREAD_FERMARSI 207
 #define SYS_GETPID      20
+#define SYS_GETPPID     64
 /* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
  * qui sopra: libc.c non include quell'header. Sono quelli di Linux. */
 #define SYS_SETUID      23
@@ -1667,7 +1668,13 @@ struct _FILE {
     size_t          dim;    /* capacita' del buffer            */
     size_t          pos;    /* byte consumati (R) o accumulati (W) */
     size_t          fine;   /* byte validi nel buffer (solo R) */
-    int             rimesso;/* carattere di ungetc, -1 se nessuno */
+    /* ! QUATTRO CARATTERI DI ungetc, NON UNO (30 settembre 2026). Uno e' il
+     * minimo che il C garantisce, ma la shell di SpiderMonkey ne rimette tre
+     * di fila (guarda se il file comincia col BOM dell'UTF-8) e con uno solo
+     * gli ultimi due si perdevano: ogni file JavaScript arrivava al parser
+     * senza i primi due caratteri. La glibc ne tiene di piu'; qui quattro. */
+    int             rimessi;    /* quanti ce ne sono in pila */
+    unsigned char   pila[4];    /* l'ultimo rimesso e' il primo a uscire */
 };
 
 #define STDIN_BUF_SIZE  512     /* quanto una riga del driver kbd */
@@ -1677,9 +1684,9 @@ static unsigned char buf_stdin[STDIN_BUF_SIZE];
 static unsigned char buf_stdout[512];
 static unsigned char buf_stderr[128];
 
-static FILE f_stdin  = { 0, _F_LETT,             buf_stdin,  STDIN_BUF_SIZE, 0, 0, -1 };
-static FILE f_stdout = { 1, _F_SCRIT | _F_AUTO,  buf_stdout, sizeof(buf_stdout), 0, 0, -1 };
-static FILE f_stderr = { 2, _F_SCRIT | _F_AUTO,  buf_stderr, sizeof(buf_stderr), 0, 0, -1 };
+static FILE f_stdin  = { 0, _F_LETT,             buf_stdin,  STDIN_BUF_SIZE, 0, 0, 0 };
+static FILE f_stdout = { 1, _F_SCRIT | _F_AUTO,  buf_stdout, sizeof(buf_stdout), 0, 0, 0 };
+static FILE f_stderr = { 2, _F_SCRIT | _F_AUTO,  buf_stderr, sizeof(buf_stderr), 0, 0, 0 };
 
 FILE *stdin  = &f_stdin;
 FILE *stdout = &f_stdout;
@@ -1838,11 +1845,7 @@ int fgetc(FILE *f)
 {
     if (f == NULL) return -1;
 
-    if (f->rimesso >= 0) {
-        int c = f->rimesso;
-        f->rimesso = -1;
-        return c;
-    }
+    if (f->rimessi > 0) return (int)f->pila[--f->rimessi];
 
     if (f->flag & _F_INSCRIT) { scarica(f); f->flag &= ~(unsigned)_F_INSCRIT; }
     if (riempi(f) != 0) return -1;
@@ -1859,10 +1862,9 @@ int getchar(void)
 
 int ungetc(int c, FILE *f)
 {
-    /* Un solo carattere di rimessa: e' il minimo garantito dal C standard
-     * ed e' tutto cio' che serve a un parser che guarda avanti di uno. */
-    if (f == NULL || c < 0 || f->rimesso >= 0) return -1;
-    f->rimesso = c;
+    /* Fino a quattro caratteri: vedi struct _FILE. */
+    if (f == NULL || c < 0 || f->rimessi >= 4) return -1;
+    f->pila[f->rimessi++] = (unsigned char)c;
     f->flag &= ~(unsigned)_F_EOF;
     return c;
 }
@@ -1955,7 +1957,7 @@ FILE *fdopen(int fd, const char *modo)
     f->dim     = FILE_BUF_SIZE;
     f->pos     = 0;
     f->fine    = 0;
-    f->rimesso = -1;
+    f->rimessi = 0;
     f->flag    = _F_MIO;
 
     if (modo[0] == 'r') f->flag |= _F_LETT  | (modo[1] == '+' ? _F_SCRIT : 0);
@@ -2037,7 +2039,7 @@ FILE *freopen(const char *path, const char *modo, FILE *f)
     f->flag    = (nuovo->flag & ~(unsigned)_F_MIO) | (f->flag & _F_MIO);
     f->pos     = 0;
     f->fine    = 0;
-    f->rimesso = -1;
+    f->rimessi = 0;
 
     dimentica_flusso(nuovo);
     free(nuovo->buf);
@@ -2105,7 +2107,7 @@ long ftell(FILE *f)
      * formato di file che li contiene. */
     if (f->flag & _F_INSCRIT) return (long)k + (long)f->pos;
 
-    return (long)k - (long)(f->fine - f->pos) - (f->rimesso >= 0 ? 1 : 0);
+    return (long)k - (long)(f->fine - f->pos) - f->rimessi;
 }
 
 int fseek(FILE *f, long off, int whence)
@@ -2121,11 +2123,11 @@ int fseek(FILE *f, long off, int whence)
         /* Stessa correzione di ftell: uno spostamento RELATIVO deve
          * partire da dove crede il chiamante, non da dove e' arrivata la
          * lettura anticipata. */
-        off -= (long)(f->fine - f->pos) + (f->rimesso >= 0 ? 1 : 0);
+        off -= (long)(f->fine - f->pos) + f->rimessi;
     }
 
     f->pos = f->fine = 0;
-    f->rimesso = -1;
+    f->rimessi = 0;
     f->flag &= ~(unsigned)_F_EOF;
 
     r = _syscall3(SYS_LSEEK, (uint32_t)f->fd, (uint32_t)off, (uint32_t)whence);
@@ -3455,7 +3457,10 @@ void quick_exit(int code)
     _Exit(code);
 }
 
-void abort(void)
+/* ! DEBOLE (30 settembre 2026): la libc.a e' un oggetto solo, quindi chi
+ * ridefinisce abort — mozalloc di Firefox lo fa, per lasciare una traccia prima
+ * di cadere — si scontrava con questa. Debole, vince la sua. */
+__attribute__((weak)) void abort(void)
 {
     /* Causa un fault intenzionale */
     exit(134);
@@ -10568,6 +10573,303 @@ void sha256_esa(const void *dati, size_t len, char out[65])
  * regole del Makefile, quindi un oggetto in piu' sarebbe stato venti modifiche
  * e almeno una dimenticanza.
  * ============================================================================= */
+/* =============================================================================
+ * CIO' CHE LA SHELL DI SPIDERMONKEY CHIEDE ALLA LIBC (@EXILLA-JS, 30 settembre
+ * 2026, tappa 4 di Exilla). Le dichiarazioni stanno in <string.h>, <time.h>,
+ * <wchar.h>, <sys/mman.h>, <sys/resource.h>, <sys/syscall.h> e <libgen.h>.
+ *
+ * ! SOLO NELLA libc.a, come i socket, i segnali e dlopen: il floppy non ha
+ * posto, e i programmi del sistema non le chiedono.
+ * ============================================================================= */
+#ifndef EXOS_LIBC_SO
+struct rlimit { unsigned long rlim_cur, rlim_max; };
+
+size_t strnlen(const char *s, size_t n)
+{
+    size_t i = 0;
+
+    while (i < n && s[i]) i++;
+    return i;
+}
+
+/* EX-OS non sa in che fuso si trova: UTC, come localtime(). */
+long  timezone = 0;
+int   daylight = 0;
+char *tzname[2] = { "UTC", "UTC" };
+
+void tzset(void) { }
+
+/* ! UN CONSIGLIO, E SI PUO' NON SEGUIRE: le pagine restano come sono. Chi
+ * chiede MADV_DONTNEED per restituire memoria (il GC) la ritrova com'era, che
+ * POSIX permette; il costo e' che la RAM non torna al sistema finche' il
+ * programma non la libera con munmap. */
+int madvise(void *addr, size_t lung, int consiglio)
+{
+    (void)addr; (void)lung; (void)consiglio;
+    return 0;
+}
+
+int posix_madvise(void *addr, size_t lung, int consiglio)
+{
+    (void)addr; (void)lung; (void)consiglio;
+    return 0;
+}
+
+/* I limiti che ci sono per costruzione: vedi <sys/resource.h>. */
+int getrlimit(int risorsa, struct rlimit *r)
+{
+    if (!r) { errno = EFAULT; return -1; }
+    switch (risorsa) {
+    case 3:  r->rlim_cur = r->rlim_max = 262144ul; return 0;   /* RLIMIT_STACK: USER_STACK_MAX */
+    case 7:  r->rlim_cur = r->rlim_max = 32ul;     return 0;   /* RLIMIT_NOFILE: MAX_FD */
+    case 0: case 1: case 2: case 4: case 5: case 6: case 8: case 9:
+        r->rlim_cur = r->rlim_max = ~0ul;                      /* RLIM_INFINITY */
+        return 0;
+    default: errno = EINVAL; return -1;
+    }
+}
+
+int setrlimit(int risorsa, const struct rlimit *r)
+{
+    struct rlimit ora;
+
+    if (getrlimit(risorsa, &ora) != 0) return -1;
+    if (!r || r->rlim_cur > ora.rlim_max || r->rlim_max > ora.rlim_max) {
+        errno = 1;                                   /* EPERM: non si allarga */
+        return -1;
+    }
+    return 0;                                        /* stringere: si accetta e basta */
+}
+
+/* ! LA VARIANTE «LOCALE» DI __stack_chk_fail: GCC su i386 la chiama nel
+ * codice non-PIC compilato con -fstack-protector (lo fa Firefox). Fa la stessa
+ * cosa: il canarino e' rotto, il programma finisce. */
+void __stack_chk_fail(void);
+__attribute__((visibility("hidden"))) void __stack_chk_fail_local(void)
+{
+    __stack_chk_fail();
+}
+
+/* =============================================================================
+ * ! LE ATOMICHE A 64 BIT (@EXILLA-JS, 30 settembre 2026). Senza SSE non c'e'
+ * un'istruzione che legga otto byte in un colpo, e GCC chiama queste funzioni
+ * di libatomic, che la toolchain non ha (--disable-libatomic). Sono tutte
+ * sopra `lock cmpxchg8b`, che il Pentium ha: si confronta e si scambia finche'
+ * nessuno si e' messo in mezzo. Il nome e' dato con asm: con il nome vero GCC
+ * le prenderebbe per le sue funzioni interne e protesterebbe per la firma.
+ * ============================================================================= */
+typedef unsigned long long u64_at;
+
+static u64_at cas8(volatile u64_at *p, u64_at atteso, u64_at nuovo)
+{
+    __asm__ __volatile__("lock; cmpxchg8b %1"
+                         : "+A"(atteso), "+m"(*p)
+                         : "b"((unsigned int)nuovo), "c"((unsigned int)(nuovo >> 32))
+                         : "memory", "cc");
+    return atteso;                          /* cio' che c'era */
+}
+
+u64_at at_load8(const volatile void *p, int m) __asm__("__atomic_load_8");
+u64_at at_load8(const volatile void *p, int m)
+{
+    (void)m;
+    return cas8((volatile u64_at *)p, 0, 0);
+}
+
+u64_at at_xchg8(volatile void *p, u64_at v, int m) __asm__("__atomic_exchange_8");
+u64_at at_xchg8(volatile void *p, u64_at v, int m)
+{
+    u64_at vecchio = *(volatile u64_at *)p, visto;
+
+    (void)m;
+    while ((visto = cas8((volatile u64_at *)p, vecchio, v)) != vecchio) vecchio = visto;
+    return vecchio;
+}
+
+void at_store8(volatile void *p, u64_at v, int m) __asm__("__atomic_store_8");
+void at_store8(volatile void *p, u64_at v, int m)
+{
+    at_xchg8(p, v, m);
+}
+
+_Bool at_cmpxchg8(volatile void *p, void *atteso, u64_at v, _Bool debole, int ms, int mf)
+    __asm__("__atomic_compare_exchange_8");
+_Bool at_cmpxchg8(volatile void *p, void *atteso, u64_at v, _Bool debole, int ms, int mf)
+{
+    u64_at a = *(u64_at *)atteso;
+    u64_at visto = cas8((volatile u64_at *)p, a, v);
+
+    (void)debole; (void)ms; (void)mf;
+    if (visto == a) return 1;
+    *(u64_at *)atteso = visto;
+    return 0;
+}
+
+#define AT_OP8(nome, simbolo, espr, rende)                              \
+    u64_at nome(volatile void *p, u64_at v, int m) __asm__(simbolo);    \
+    u64_at nome(volatile void *p, u64_at v, int m)                      \
+    {                                                                   \
+        u64_at vecchio = *(volatile u64_at *)p, nuovo, visto;           \
+        (void)m;                                                        \
+        for (;;) {                                                      \
+            nuovo = (espr);                                             \
+            visto = cas8((volatile u64_at *)p, vecchio, nuovo);         \
+            if (visto == vecchio) return (rende);                       \
+            vecchio = visto;                                            \
+        }                                                               \
+    }
+AT_OP8(at_fadd8, "__atomic_fetch_add_8", vecchio + v, vecchio)
+AT_OP8(at_fsub8, "__atomic_fetch_sub_8", vecchio - v, vecchio)
+AT_OP8(at_fand8, "__atomic_fetch_and_8", vecchio & v, vecchio)
+AT_OP8(at_for8,  "__atomic_fetch_or_8",  vecchio | v, vecchio)
+AT_OP8(at_fxor8, "__atomic_fetch_xor_8", vecchio ^ v, vecchio)
+AT_OP8(at_addf8, "__atomic_add_fetch_8", vecchio + v, nuovo)
+AT_OP8(at_subf8, "__atomic_sub_fetch_8", vecchio - v, nuovo)
+
+/* =============================================================================
+ * POSIX a meta' (vedi <unistd.h>)
+ * ============================================================================= */
+int getppid(void)
+{
+    return (int)_syscall1(SYS_GETPPID, 0);
+}
+
+ssize_t pread(int fd, void *buf, size_t n, long pos)
+{
+    long    prima = lseek(fd, 0, 1);            /* SEEK_CUR */
+    ssize_t r;
+
+    if (prima < 0 || lseek(fd, pos, 0) < 0) return -1;
+    r = read(fd, buf, n);
+    lseek(fd, prima, 0);
+    return r;
+}
+
+ssize_t pwrite(int fd, const void *buf, size_t n, long pos)
+{
+    long    prima = lseek(fd, 0, 1);
+    ssize_t r;
+
+    if (prima < 0 || lseek(fd, pos, 0) < 0) return -1;
+    r = write(fd, buf, n);
+    lseek(fd, prima, 0);
+    return r;
+}
+
+/* I filesystem di EX-OS scrivono sul disco a ogni write: non c'e' niente in
+ * sospeso da spingere. */
+int fsync(int fd)
+{
+    return fcntl(fd, 1 /* F_GETFD */) < 0 ? -1 : 0;
+}
+
+ssize_t readlink(const char *percorso, char *buf, size_t n)
+{
+    struct stat st;
+
+    (void)buf; (void)n;
+    if (stat(percorso, &st) != 0) return -1;
+    errno = EINVAL;                             /* esiste, e non e' un link */
+    return -1;
+}
+
+int symlink(const char *b, const char *p)                  { (void)b; (void)p; errno = ENOSYS; return -1; }
+int linkat(int a, const char *p1, int b, const char *p2, int f) { (void)a; (void)p1; (void)b; (void)p2; (void)f; errno = ENOSYS; return -1; }
+int lchown(const char *p, unsigned int u, unsigned int g)   { return chown(p, u, g); }
+int fchown(int fd, unsigned int u, unsigned int g)          { (void)fd; (void)u; (void)g; errno = ENOSYS; return -1; }
+int chroot(const char *p)                                   { (void)p; errno = ENOSYS; return -1; }
+int mkfifo(const char *p, unsigned int m)                   { (void)p; (void)m; errno = ENOSYS; return -1; }
+
+/* fork: EX-OS non ce l'ha (vedi <unistd.h>). */
+int fork(void)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+/* syscall() alla Linux: solo gettid, che su EX-OS e' il pid del filo. */
+long syscall(long numero, ...)
+{
+    if (numero == 224) return getpid();              /* SYS_gettid */
+    errno = ENOSYS;
+    return -1;
+}
+
+/* basename/dirname di POSIX: vedi <libgen.h>. */
+char *basename(char *p)
+{
+    static char punto[] = ".";
+    size_t      n;
+    char       *b;
+
+    if (!p || !*p) return punto;
+    n = strlen(p);
+    while (n > 1 && p[n - 1] == '/') p[--n] = '\0';
+    b = strrchr(p, '/');
+    return (b && b[1]) ? b + 1 : p;
+}
+
+char *dirname(char *p)
+{
+    static char punto[] = ".";
+    size_t      n;
+
+    if (!p || !*p) return punto;
+    n = strlen(p);
+    while (n > 1 && p[n - 1] == '/') n--;              /* le «/» in fondo */
+    while (n > 0 && p[n - 1] != '/') n--;              /* l'ultimo nome */
+    if (n == 0) return punto;
+    while (n > 1 && p[n - 1] == '/') n--;              /* le «/» prima del nome */
+    p[n] = '\0';
+    return p;
+}
+
+/* Latin-1, come tutta la parte larga di questa libc: un byte, un carattere. */
+size_t wcrtomb(char *dst, wchar_t c, mbstate_t *stato)
+{
+    (void)stato;
+    if (!dst) return 1;
+    if ((unsigned int)c > 0xFFu) { errno = EILSEQ; return (size_t)-1; }
+    *dst = (char)c;
+    return 1;
+}
+
+size_t mbsrtowcs(wchar_t *dst, const char **src, size_t n, mbstate_t *stato)
+{
+    const unsigned char *s = (const unsigned char *)*src;
+    size_t               i = 0;
+
+    (void)stato;
+    if (!dst) return strlen(*src);
+    while (i < n) {
+        dst[i] = (wchar_t)s[i];
+        if (s[i] == 0) { *src = NULL; return i; }
+        i++;
+    }
+    *src = (const char *)(s + i);
+    return i;
+}
+
+size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
+{
+    const wchar_t *s = *src;
+    size_t         i = 0;
+
+    (void)stato;
+    for (;;) {
+        wchar_t c = s[i];
+
+        if ((unsigned int)c > 0xFFu) { errno = EILSEQ; return (size_t)-1; }
+        if (dst) {
+            if (i >= n) { *src = s + i; return i; }
+            dst[i] = (char)c;
+        }
+        if (c == 0) { if (dst) *src = NULL; return i; }
+        i++;
+    }
+}
+#endif /* !EXOS_LIBC_SO */
+
 /* ! NON NELLA libc.so (29 settembre 2026): la libreria condivisa sta sul floppy
  * da 1,44 MB, e i socket la portavano da 98 a 117 KB — il floppy non si
  * chiudeva piu'. I programmi del sistema parlano allo stack per IPC e non li

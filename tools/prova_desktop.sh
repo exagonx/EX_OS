@@ -46,7 +46,7 @@ printf 'label: dos\nunit: sectors\n\nstart=2048, size=63488, type=83, bootable\n
 timeout 300 python3 tools/qemu_drive.py "mkfs -t ext2 -L prova hd0p1@4" "si@40" \
     > "$D/0.log" 2>&1
 printf 'una nota\n' > "$D/nota.txt"
-printf '# collegamento\npercorso = /exwin/bin/edit\nnome = Editor\n' > "$D/editor.lnk"
+printf '# collegamento\npercorso = /exwin/bin/exeditor\nnome = Editor\n' > "$D/editor.lnk"
 for c in "mkdir casa" "mkdir casa/desktop" "mkdir casa/desktop/progetti" \
          "write $D/nota.txt casa/desktop/nota.txt" \
          "write $D/editor.lnk casa/desktop/editor.lnk"; do
@@ -139,6 +139,18 @@ if [ "$LN" -gt 0 ] && [ "$LN" = "$LE" ]; then echo "  [OK]  nota.txt: si e' aper
 else echo "  [NO]  nota.txt: finestra larga $LN, l'editor e' $LE"; esito=1; fi
 if [ "$LD" -gt 0 ] && [ "$LD" != "$LE" ]; then echo "  [OK]  l'unita': si e' aperto il file manager (largo $LD)"
 else echo "  [NO]  l'unita': finestra larga $LD"; esito=1; fi
+
+# --- 3. le cartelle del profilo (30 settembre 2026) ----------------------------
+# pm, alla prima volta, crea Documents, Images e Media nel profilo e un .lnk
+# per ciascuna sulla scrivania. Il verdetto e' il disco, letto da fuori.
+echo "=== 3. le cartelle del profilo e i loro collegamenti ==="
+CASA=$("$DEBUGFS" -R "ls /casa" "$IMG?offset=1048576" 2>/dev/null)
+SCRV=$("$DEBUGFS" -R "ls /casa/desktop" "$IMG?offset=1048576" 2>/dev/null)
+for c in Documents Images Media; do
+    if echo "$CASA" | grep -qw "$c" && echo "$SCRV" | grep -q "$c.lnk"; then
+        echo "  [OK]  $c nel profilo, e $c.lnk sulla scrivania"
+    else echo "  [NO]  $c: manca la cartella o il collegamento"; esito=1; fi
+done
 
 echo ""
 echo "  Le fotografie e i registri sono in $D"

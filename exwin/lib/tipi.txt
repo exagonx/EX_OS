@@ -12,6 +12,6 @@
 # ! IL PROGRAMMA SI SCRIVE COME STA SU UN SISTEMA INSTALLATO (/exwin/bin/...):
 # avviando dal CD chi legge questo file lo cerca anche sotto /cdrom.
 
-bmp png jpg jpeg gif ico  | /exwin/bin/immagini
+bmp png jpg jpeg gif ico webp | /exwin/bin/immagini
 zip tar gz tgz            | /exwin/bin/archivi
 html htm                  | /exwin/bin/exbrowser

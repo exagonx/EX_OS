@@ -43,7 +43,7 @@ printf 'beta\n' > "$D/b.txt"
 
 timeout 500 python3 tools/qemu_drive.py \
     "mount hd0p1 /disk@6" "exwin@12" "key:alt-f1@2" \
-    "/exwin/bin/edit /disk/a.txt /disk/b.txt &@8" "key:alt-f5@3" \
+    "/exwin/bin/exeditor /disk/a.txt /disk/b.txt &@8" "key:alt-f5@3" \
     "foto:$D/1-aperti.ppm@1" \
     "key:ctrl-tab@2" "X@n1" "foto:$D/2-b-modificato.ppm@1" "key:ctrl-s@3" \
     "key:ctrl-tab@2" "Y@n1" "key:ctrl-w@3" "foto:$D/3-domanda.ppm@1" \

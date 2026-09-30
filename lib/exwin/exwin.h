@@ -161,8 +161,12 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
 #define EX_A(wp)        ((unsigned int)(wp) >> 16)
 #define EX_ROTELLA_RIGHE 3
 
-#define EX_X(lp)        ((int)((lp) & 0xFFFF))
-#define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))
+/* ! THE SIGN IS KEPT (30 September 2026): a drag that leaves the window on
+ * the left or at the top goes on sending moves, and there x or y is negative.
+ * Read unsigned, -2 became 65534, and the browser's selection jumped from
+ * the first word of the line to the last. */
+#define EX_X(lp)        ((int)(short)((lp) & 0xFFFF))
+#define EX_Y(lp)        ((int)(short)(((lp) >> 16) & 0xFFFF))
 
 /* =============================================================================
  * ! PER UN EXM_COMANDO CHE VIENE DA UNA LISTA, lp DICE **COME**, e sono due
@@ -226,6 +230,9 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * ex_abilita(). Nasconderlo (ex_mostra) direbbe «non esiste»; spento dice
  * «esiste, ma adesso no» — le cifre 2..9 di una calcolatrice in binario. */
 #define EX_SPENTO       0x0200
+/* A pop-up window (30 September 2026): a click anywhere outside it sends it
+ * EXM_CHIUDI (from wserver 0.008). ex_menu_comparsa uses it. */
+#define EX_COMPARSA     0x0400
 
 /* --- I colori, in ARGB --------------------------------------------------- */
 #define EX_NERO         0x00000000
@@ -464,6 +471,30 @@ void        ex_finestra_riduci(unsigned int id);
  * to stop. Over an older server nothing arrives, which is the same as not
  * asking: a program must work without them. */
 void        ex_mouse_passaggio(ExFinestra f, int si);
+
+/* Draws ONE control again and shows only its rectangle, without the window
+ * around it: a label (a status line), a terminal, a text area, a list, when
+ * it is a direct child of its window and nothing created after it lies on
+ * top. 1 = done; 0 = it could not, and the caller redraws the window. Over
+ * an older exwin.so it always says 0. (exwin.so 0.011) */
+int         ex_ridisegna(ExFinestra c);
+
+/* A menu entry with a check mark (exwin.so 0.011): after ex_menu_voce, this
+ * makes the entry `id` one that shows a mark, on or off. The click still
+ * arrives as EXM_COMANDO: the program flips its setting and calls this again.
+ * Over an older exwin.so the entry is a plain one. */
+void        ex_menu_spunta(ExFinestra menu, unsigned int id, int acceso);
+
+/* Drawing in window f stays inside (x, y, w, h) until ex_ritaglio(f, 0, 0, 0, 0)
+ * (30 September 2026). For a program that draws a part of its window itself
+ * (a canvas, a page): set it, draw, take it away before returning. Over an
+ * older exwin.so it does nothing. */
+void        ex_ritaglio(ExFinestra f, int x, int y, int w, int h);
+
+/* As ex_pixmap, but each pixel is blended over what is there by its alpha
+ * (255 opaque, 0 not drawn). Over an older exwin.so it is ex_pixmap. */
+void        ex_pixmap_fuso(ExFinestra f, int x, int y, int w, int h,
+                           const unsigned int *px, unsigned int passo);
 
 /* Asks every program but this one to close, as with their X button; the
  * server stays on. Used by the desktop to shut down with the graphics still

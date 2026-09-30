@@ -596,10 +596,8 @@ static int nella_tela(int mx, int my)
  * off the edge, and what is off is simply not drawn. */
 static void in_immagine(int mx, int my, int *x, int *y)
 {
-    /* The client coordinates come as 16 unsigned bits: a drag above or left of
-     * the window arrives as a large number, and is made negative again. */
-    if (mx > 32767) mx -= 65536;
-    if (my > 32767) my -= 65536;
+    /* A drag above or left of the window arrives negative (EX_X and EX_Y
+     * keep the sign since 30 September 2026). */
     *x = g_ox + (mx - TELA_X) / g_zoom - (mx < TELA_X ? 1 : 0);
     *y = g_oy + (my - TELA_Y) / g_zoom - (my < TELA_Y ? 1 : 0);
 }

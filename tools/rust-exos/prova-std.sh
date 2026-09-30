@@ -25,6 +25,13 @@ export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 export CARGO_TARGET_DIR="$B/costruzione-rust"
 export __CARGO_TESTS_ONLY_SRC_ROOT="$B/costruzione-std/library"
 export PATH="$B/exos-cross/bin:$PATH"
+# ! IL BERSAGLIO PER NOME, non per percorso del .json (30 settembre 2026): una
+# libreria compilata col percorso porta nell'identita' un'impronta del file
+# («i686-unknown-exos-8757...») e non si mescola con quelle cercate per nome —
+# che e' come le cerca il sistema di costruzione di Mozilla, attraverso il
+# sysroot (tools/rust-exos/std/installa-sysroot.sh). rustc-exos mette
+# RUST_TARGET_PATH e -Zunstable-options.
+export RUSTC="$RADICE/tools/rust-exos/rustc-exos"
 
 tools/rust-exos/std/prepara.sh > "$B/costruzione-std.log" 2>&1 || {
     cat "$B/costruzione-std.log"; exit 1; }
@@ -42,8 +49,7 @@ if [ "$(cat "$CARGO_TARGET_DIR/impronta-std" 2>/dev/null)" != "$IMPR" ]; then
 fi
 
 (cd tools/rust-exos/prova-std && "$CARGO" +nightly build --release \
-    -Z build-std=std,panic_abort -Z json-target-spec \
-    --target ../i686-unknown-exos.json) || exit 1
+    -Z build-std=std,panic_abort --target i686-unknown-exos) || exit 1
 BIN="$CARGO_TARGET_DIR/i686-unknown-exos/release/prova-std"
 
 # ! LA CPU DI BASE E' IL PENTIUM MMX (Makefile, CPU_BASE): niente SSE e niente

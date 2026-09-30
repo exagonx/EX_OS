@@ -101,6 +101,77 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Selezionare e copiare il testo in EXBrowser
+
+**testato in QEMU** (`tools/prova_selezione.sh`) — si trascina col mouse sul
+testo della pagina, la scelta si colora di blu, Ctrl+C la copia e in ExEditor
+o in exide Ctrl+V la incolla. Ctrl+A sceglie tutta la pagina. Per farlo le
+coordinate del mouse fuori dalla finestra (a sinistra o in alto) arrivano
+negative anche alle applicazioni: prima diventavano numeri enormi.
+
+### Il puntatore sopra i collegamenti
+
+**testato in QEMU** (`tools/prova_passaggio.sh`) — passando sopra un
+collegamento la barra di stato mostra dove porta, e la pagina riceve
+`onmouseover` e `onmouseout`. Il server grafico manda il movimento senza tasti
+solo alle finestre che lo chiedono (`ex_mouse_passaggio`), come la maschera
+degli eventi di X. I gestori scritti negli attributi (`onclick="..."`) sono
+funzioni vere: `this` è l'elemento e `return false` annulla il seguito.
+
+### EXBrowser e Wikipedia
+
+**testato in QEMU** (`tools/prova_wiki.sh`) — su una voce lunga i collegamenti
+dopo il 2048esimo si disegnavano ma non si aprivano: ora sono 8192. Le
+immagini si scaricano quando stanno per entrare nella finestra, non tutte
+all'inizio (una voce di Wikipedia: da 49 a 7 secondi di rete). Restano da
+fare `display:grid`, `:has()`, il contenuto generato (`::before`) e i tempi di
+script e impaginazione.
+
+### JPEG progressivi
+
+**testato sull'host** (`tools/prova_jpg.sh`, contro ImageMagick) — gli sfondi e
+le foto del web salvati in JPEG progressivo ora si aprono, nel navigatore,
+nel visualizzatore di immagini e come sfondo della scrivania.
+
+### ExEditor, menu a comparsa, schede
+
+**testato in QEMU** (`tools/prova_menu_chiudi.sh`) — l'editor si chiama
+ExEditor (`/exwin/bin/exeditor`). Il menu del tasto destro si chiude con Esc o
+con un clic fuori, e la scrivania non diventa più grigia mentre è aperto. La
+X delle schede è un pulsante rosso.
+
+### ExEditor scrive in RTF
+
+**testato in QEMU** (`tools/prova_rtf.sh`) e sull'host (`rtfprova`,
+`rtfvistaprova`, e con LibreOffice) — un file `.rtf` si apre in ExEditor con
+i suoi stili, e File > «Nuovo documento RTF» ne crea uno vuoto. Sopra il
+testo c'è una barra di formato: grassetto, corsivo e sottolineato (che
+mostrano lo stile sotto il cursore), carattere, corpo, colore e i quattro
+allineamenti; ci sono anche il menu Formato e Ctrl+B, Ctrl+I, Ctrl+U. Si
+salva in RTF, e WordPad o LibreOffice lo aprono. Non ci sono ancora
+l'annullamento e la ricerca nei documenti RTF.
+
+### exide
+
+**testato in QEMU** (`tools/prova_exide_autoaggiorna.sh`) — barre di
+scorrimento nel sorgente, tutte le finestre ridimensionabili, e la voce
+«Autoaggiorna Proprieta» (Strumenti), salvata nella configurazione: uscire
+da una casella applica la proprietà senza premere Applica. Il clic nella
+casella ora mette il cursore dove si clicca (prima exide le toglieva il
+fuoco), e un modulo più largo della tela non copre più le proprietà.
+
+### Le cartelle del profilo
+
+**testato in QEMU** (`tools/prova_desktop.sh`) — alla prima accensione della
+scrivania il profilo ha le cartelle Documents, Images e Media, ciascuna con
+un collegamento sulla scrivania; cancellarlo toglie solo il collegamento, e
+lo dice.
+
+### toolinst
+
+**da testare** — `toolinst` rende eseguibili i programmi che installa: prima
+solo root poteva lanciare `gcc` o `fbc`.
+
 ### `dlopen` e `dlsym`
 
 **testato in QEMU** (`tools/prova_dl.sh`, 11 su 11) — un programma collegato

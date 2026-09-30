@@ -1,0 +1,25 @@
+#!/bin/sh
+# =============================================================================
+# tools/rust-exos/rustc-exos — rustc che conosce il bersaglio i686-unknown-exos
+#
+# Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# ! UN BERSAGLIO DA FILE .json NON STA IN `rustc --print target-list` e si usa
+# solo con -Zunstable-options; e chi chiama rustc — cargo, il sistema di
+# costruzione di Mozilla — non lo sa. Questo involucro mette RUST_TARGET_PATH
+# (dove sta i686-unknown-exos.json) e aggiunge l'opzione quando il bersaglio
+# compare fra gli argomenti; per tutto il resto e' rustc e basta. La std sta
+# nel sysroot: tools/rust-exos/std/installa-sysroot.sh.
+# =============================================================================
+QUI=$(cd "$(dirname "$0")" && pwd)
+export RUST_TARGET_PATH="$QUI${RUST_TARGET_PATH:+:$RUST_TARGET_PATH}"
+# ! IL rustc VERO DEL NIGHTLY, non il proxy di rustup con «+nightly»: dentro
+# cargo il proxy riceve l'argomento come un file da compilare («couldn't find
+# file `+nightly`»). RUSTUP_HOME lo mettono gli script che ci chiamano.
+VERO="${RUSTC_VERO:-$(ls -d "${RUSTUP_HOME:-$HOME/.rustup}"/toolchains/nightly-*/bin/rustc 2>/dev/null | head -1)}"
+[ -x "$VERO" ] || { echo "rustc-exos: non trovo il rustc del nightly (RUSTUP_HOME?)" >&2; exit 1; }
+case " $* " in
+    *i686-unknown-exos*) exec "$VERO" -Zunstable-options "$@" ;;
+esac
+exec "$VERO" "$@"

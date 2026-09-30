@@ -165,6 +165,10 @@ static struct {
     int          (*voce_togli)(ExFinestra, unsigned int);
     void         (*voce_rinomina)(ExFinestra, unsigned int, const char *);
     void         (*mouse_passaggio)(ExFinestra, int);
+    int          (*ridisegna)(ExFinestra);
+    void         (*menu_spunta)(ExFinestra, unsigned int, int);
+    void         (*ritaglio)(ExFinestra, int, int, int, int);
+    void         (*pixmap_fuso)(ExFinestra, int, int, int, int, const unsigned int *, unsigned int);
     void         (*finestra_riduci)(unsigned int);
     void         (*chiudi_altre)(void);
     void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
@@ -356,6 +360,13 @@ static void assicura(void)
                         exlib_simbolo(t, "ex_voce_rinomina");
     P.mouse_passaggio = (void (*)(ExFinestra, int))
                         exlib_simbolo(t, "ex_mouse_passaggio");
+    P.ridisegna       = (int (*)(ExFinestra))exlib_simbolo(t, "ex_ridisegna");
+    P.menu_spunta     = (void (*)(ExFinestra, unsigned int, int))
+                        exlib_simbolo(t, "ex_menu_spunta");
+    P.ritaglio        = (void (*)(ExFinestra, int, int, int, int))
+                        exlib_simbolo(t, "ex_ritaglio");
+    P.pixmap_fuso     = (void (*)(ExFinestra, int, int, int, int, const unsigned int *, unsigned int))
+                        exlib_simbolo(t, "ex_pixmap_fuso");
     P.finestra_riduci = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_riduci");
     P.chiudi_altre    = (void (*)(void))
@@ -604,6 +615,21 @@ void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
 /* Over an older exwin.so the window simply gets no passing messages. */
 void ex_mouse_passaggio(ExFinestra f, int si)
 { assicura(); if (P.mouse_passaggio) P.mouse_passaggio(f, si); }
+int ex_ridisegna(ExFinestra c)
+{ assicura(); return P.ridisegna ? P.ridisegna(c) : 0; }
+void ex_menu_spunta(ExFinestra menu, unsigned int id, int acceso)
+{ assicura(); if (P.menu_spunta) P.menu_spunta(menu, id, acceso); }
+/* Over an older exwin.so nothing is clipped: the drawing is as before. */
+void ex_ritaglio(ExFinestra f, int x, int y, int w, int h)
+{ assicura(); if (P.ritaglio) P.ritaglio(f, x, y, w, h); }
+/* Over an older exwin.so the pixels are laid down as they are. */
+void ex_pixmap_fuso(ExFinestra f, int x, int y, int w, int h,
+                    const unsigned int *px, unsigned int passo)
+{
+    assicura();
+    if (P.pixmap_fuso) P.pixmap_fuso(f, x, y, w, h, px, passo);
+    else ex_pixmap(f, x, y, w, h, px, passo);
+}
 
 void         ex_finestra_riduci(unsigned int id)
 { assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }

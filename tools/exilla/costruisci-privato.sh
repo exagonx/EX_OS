@@ -33,6 +33,14 @@ rsync -a --delete \
     --exclude=/cross_build --exclude=/.git --exclude=/dist --exclude=/build \
     ./ "$COPIA/"
 mkdir -p "$COPIA/dist" "$COPIA/build/bin"
+# ! I PROGRAMMI CHE L'ALBERO VERO NON HA PIU' IN build/bin SI TOLGONO DALLA COPIA
+# (30 settembre 2026): rsync non tocca build/, e un programma spostato sul CD
+# (shmtest) restava qui e finiva sul floppy — verifica-dipendenze-floppy lo
+# fermava come dipendenza mancante.
+for f in "$COPIA"/build/bin/*; do
+    [ -f "$f" ] || continue
+    [ -e "build/bin/$(basename "$f")" ] || rm -f "$f"
+done
 for p in chown halt poweroff reboot whoami sh; do
     [ -f "$COPIA/build/bin/$p" ] && chmod -x "$COPIA/build/bin/$p"
 done

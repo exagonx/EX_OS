@@ -334,6 +334,14 @@ int main(void)
     carica("<p class='a'>x</p><p>y</p>", "p:not(.a) { color: red }");
     stile_di(trova_n("p", 0), &s); ok(":not(.a) esclude", s.colore == CSS_NIENTE);
     stile_di(trova_n("p", 1), &s); ok(":not(.a) prende gli altri", s.colore == 0xFFFF0000u);
+    /* 30 settembre 2026: nessuno ha il fuoco, quindi :not(:focus) vale sempre
+     * (e' cosi' che Wikipedia nasconde «Vai al contenuto»). */
+    carica("<a class='salta'>x</a>", "a.salta:not(:focus) { color: red }");
+    stile_di(trova("a"), &s); ok(":not(:focus) corrisponde", s.colore == 0xFFFF0000u);
+    carica("<a>x</a>", "a:not(:hover) { color: red }");
+    stile_di(trova("a"), &s); ok(":not(:hover) corrisponde", s.colore == 0xFFFF0000u);
+    carica("<a>x</a>", "a:focus { color: red }");
+    stile_di(trova("a"), &s); ok(":focus da solo no", s.colore == CSS_NIENTE);
 
     carica("<a href='#'>x</a>", "a:hover { color: red } a { font-weight: bold }");
     stile_di(trova("a"), &s);

@@ -895,9 +895,13 @@ static void est_disegna(int rif, int x, int y, int w, int h)
         if (cima + alta > area_y() + area_h())
             alta = area_y() + area_h() - cima;
 
+        /* ! FUSA, NON COPIATA (30 settembre 2026): un logo trasparente
+         * prende il fondo della pagina che ha sotto, qualunque colore sia.
+         * Un'immagine opaca ha alfa 255 dappertutto (ridimensiona()) e
+         * costa un confronto per pixel. */
         if (alta > 0)
-            ex_pixmap(g_f, x, cima, (int)im->w, alta,
-                      im->px + (unsigned int)salta * im->w, im->w);
+            ex_pixmap_fuso(g_f, x, cima, (int)im->w, alta,
+                           im->px + (unsigned int)salta * im->w, im->w);
         return;
     }
 }

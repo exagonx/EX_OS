@@ -27,86 +27,26 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from exos_libc import QUI, leggi, scrivi, cambia, cambia_re, regola, aggiungi_libc  # noqa: E402
+
 LAVORO = sys.argv[1]
 STD = os.path.join(LAVORO, "library", "std", "src")
 LIBC = os.path.join(LAVORO, "libc", "src")
-QUI = os.path.dirname(os.path.abspath(__file__))
-
-NUTTX = 'target_os = "nuttx"'
-TUTTI_E_DUE = 'any(target_os = "nuttx", target_os = "exos")'
-
-# File dove la regola NON si applica: li sistema un'eccezione.
 SALTA = {
-    os.path.join(STD, "sys", "env_consts.rs"),      # il nome del sistema
-    os.path.join(STD, "sys", "random", "mod.rs"),   # getentropy, non arc4random
-    os.path.join(STD, "os", "mod.rs"),              # os::exos, non os::nuttx
+    os.path.join(STD, "sys", "env_consts.rs"),
+    os.path.join(STD, "sys", "random", "mod.rs"),
+    os.path.join(STD, "os", "mod.rs"),
     os.path.join(STD, "os", "unix", "mod.rs"),
 }
-
-
-def leggi(p):
-    with open(p, encoding="utf-8") as f:
-        return f.read()
-
-
-def scrivi(p, t):
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(t)
-
-
-def cambia(p, prima, dopo, volte=1):
-    t = leggi(p)
-    n = t.count(prima)
-    if n != volte:
-        sys.exit(f"aggiungi-exos: in {p} '{prima[:60]}...' compare {n} volte, "
-                 f"ne aspettavo {volte}")
-    scrivi(p, t.replace(prima, dopo))
-
-
-def cambia_re(p, modello, sostituto, volte):
-    t = leggi(p)
-    nuovo, n = re.subn(modello, sostituto, t)
-    if n != volte:
-        sys.exit(f"aggiungi-exos: in {p} '{modello[:60]}' compare {n} volte, "
-                 f"ne aspettavo {volte}")
-    scrivi(p, nuovo)
-
-
-def regola(radice):
-    n = 0
-    for cartella, _, file in os.walk(radice):
-        for nome in file:
-            if not nome.endswith(".rs"):
-                continue
-            p = os.path.join(cartella, nome)
-            if p in SALTA:
-                continue
-            t = leggi(p)
-            if NUTTX in t and TUTTI_E_DUE not in t:
-                n += t.count(NUTTX)
-                scrivi(p, t.replace(NUTTX, TUTTI_E_DUE))
-    return n
-
-
-# --- il crate libc -------------------------------------------------------------
-# Il modulo nostro va scelto PRIMA di quello di NuttX: cfg_if prende il primo
-# ramo che vale, e dopo la regola anche quello di NuttX varrebbe per EX-OS.
-m = os.path.join(LIBC, "unix", "mod.rs")
-cambia(m, '    } else if #[cfg(target_os = "nuttx")] {\n        mod nuttx;',
-       '    } else if #[cfg(target_os = "exos")] {\n        mod exos;\n'
-       '        pub use self::exos::*;\n'
-       '    } else if #[cfg(target_os = "nuttx")] {\n        mod nuttx;')
-os.makedirs(os.path.join(LIBC, "unix", "exos"), exist_ok=True)
-scrivi(os.path.join(LIBC, "unix", "exos", "mod.rs"),
-       leggi(os.path.join(QUI, "libc-exos.rs")))
-print(f"libc: {regola(LIBC)} punti NuttX ora valgono anche per EX-OS")
+print(f"libc: {aggiungi_libc(LIBC)} punti NuttX ora valgono anche per EX-OS")
 
 # ! errno: il crate lo cerca per nome di funzione, e ogni sistema ha il suo. Il
 # nostro e' __errno_dove (lib/libc.c), lo stesso che usa la macro errno in C.
 # (lo aggancia la std, in sys/pal/unix/os.rs: vedi sotto)
 
 # --- la std ----------------------------------------------------------------------
-print(f"std:  {regola(STD)} punti NuttX ora valgono anche per EX-OS")
+print(f"std:  {regola(STD, SALTA)} punti NuttX ora valgono anche per EX-OS")
 
 # Il nome del sistema, per std::env::consts::OS.
 cambia(os.path.join(STD, "sys", "env_consts.rs"),

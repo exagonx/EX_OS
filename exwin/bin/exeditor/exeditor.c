@@ -1,5 +1,5 @@
 /* =============================================================================
- * exwin/bin/edit/edit.c
+ * exwin/bin/exeditor/exeditor.c
  * EX-OS — Extensible Operating System
  *
  * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
@@ -11,7 +11,7 @@
  *
  * L'editor di testo grafico
  *
- *     /exwin/bin/edit [FILE]
+ *     /exwin/bin/exeditor [FILE...]
  *
  * ! NON E' /bin/gfedit CON LE FINESTRE. gfedit vive su una console in modo
  * raw, si disegna da se' i menu a tendina e possiede lo schermo intero; qui lo
@@ -31,10 +31,11 @@
 #include "exdlg.h"
 #include "exinfo.h"
 #include "kbd_proto.h"
+#include "exrtf_vista.h"
 
-/* +0.001 a ogni modifica: `edit -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.004"
-EX_VERSIONE("edit", VERSIONE_APP);
+/* +0.001 a ogni modifica: `exeditor -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+#define VERSIONE_APP "0.006"
+EX_VERSIONE("exeditor", VERSIONE_APP);
 
 #define FIN_W       640
 #define FIN_H       420
@@ -55,6 +56,7 @@ EX_VERSIONE("edit", VERSIONE_APP);
 #define ID_APRI       4
 #define ID_SALVACOME  5
 #define ID_ESCI       6
+#define ID_NUOVO_RTF  7
 
 #define ID_TAGLIA     10
 #define ID_COPIA      11
@@ -74,11 +76,38 @@ EX_VERSIONE("edit", VERSIONE_APP);
 #define ID_SCHEDE     31
 #define ID_CHIUDI     32
 
+/* The RTF format bar and the Formato menu (@RTF). The bar's three switches
+ * send their new state; the menu's entries switch. */
+#define ID_R_G        40
+#define ID_R_C        41
+#define ID_R_S        42
+#define ID_R_FAM      43
+#define ID_R_CORPO    44
+#define ID_R_COLORE   45
+#define ID_R_SIN      46
+#define ID_R_CEN      47
+#define ID_R_DES      48
+#define ID_R_GIU      49
+#define ID_M_G        50
+#define ID_M_C        51
+#define ID_M_S        52
+
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
 static char g_avviso[96] = "";
 
 static ExFinestra g_f, g_area, g_stato, g_menu, g_barra, g_schede;
+
+/* The window's client size, for the RTF view that has no control to resize. */
+static int g_fw = FIN_W, g_fh = FIN_H;
+
+/* The chosen tab is a rich text document (@RTF): the view shows it instead of
+ * the text area. See "RTF MODE" below. */
+static int g_rtf = 0;
+static ExRtfVista g_vista;
+static int rtf_salva(void);
+static int rtf_carica(const char *percorso);
+static void vista_disegna_se(void);
 
 /* -----------------------------------------------------------------------------
  * Caricare
@@ -186,6 +215,7 @@ static int salva(void)
         return 0;
     }
     if (g_perc[0] == '\0') return salva_come();
+    if (g_rtf) return rtf_salva();
 
     fd = open(g_perc, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
@@ -226,6 +256,14 @@ static void stato_aggiorna(void)
 
     if (g_avviso[0]) {
         sprintf(s, "%s  -  %s", nome, g_avviso);
+    } else if (g_rtf) {
+        static const char *const AL[4] = { "a sinistra", "centrato", "a destra", "giustificato" };
+        const ExRtfDoc *d = g_vista.doc;
+        unsigned int p = exrtf_paragrafo(d, g_vista.cur), a = exrtf_vista_allineamento(&g_vista);
+
+        sprintf(s, "%s%s  -  RTF  -  paragrafo %u/%u, %s%s",
+                g_vista.modificato ? "*" : "", nome, p + 1, d->par_n, AL[a < 4 ? a : 0],
+                g_parziale ? "  [PARZIALE: non si salva]" : "");
     } else {
         ex_area_cursore(g_area, &r, &c);
         sprintf(s, "%s%s  -  riga %u/%u  col %u%s",
@@ -268,6 +306,7 @@ static void ridisegna(void)
     stato_aggiorna();
     barra_allinea();
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    vista_disegna_se();
     ex_aggiorna(g_f);
 }
 
@@ -300,7 +339,10 @@ static void istruzioni(void)
                   "Ctrl+Q esce.  Gli appunti sono di tutta la scrivania: "
                   "si copia qui e si incolla in un altro editor.  "
                   "Ctrl+F cerca, F3 la successiva, Shift+F3 la precedente; "
-                  "Ctrl+H sostituisce.");
+                  "Ctrl+H sostituisce.  Un file .rtf si apre in modalita' RTF "
+                  "(anche File > Nuovo documento RTF): Ctrl+B, Ctrl+I, Ctrl+U e "
+                  "la barra sopra il testo cambiano il carattere; si salva in "
+                  "RTF, e WordPad o LibreOffice lo aprono.");
 }
 
 /* =============================================================================
@@ -479,11 +521,376 @@ typedef struct {
     Passo        passi[ANNULLA_MAX];
     int          passi_n;
     unsigned int passi_byte;
+    /* A rich text document (@RTF) keeps its text in its own buffers the whole
+     * time, and while it waits only the view's place is kept. */
+    int          rtf;
+    ExRtfDoc     rd;
+    unsigned int v_cur, v_anc, v_prima;
+    ExRtfStile   v_stile;
 } Doc;
 
 static Doc g_doc[DOC_MAX];
 static int g_ndoc = 0;              /* quante schede, nell'ordine della barra */
 static int g_attivo = 0;            /* quale, fra 0 e g_ndoc - 1 */
+
+/* =============================================================================
+ * RTF MODE (@RTF stage 3, 30 September 2026)
+ *
+ * ! A TAB IS TEXT OR RICH TEXT, and it is decided when it opens: a file that
+ * begins with "{\rtf", or a new one whose name ends in .rtf, is rich text;
+ * anything else is text as always. File > "Nuovo documento RTF" makes an
+ * empty one. The text area and the view never show together: the chosen tab
+ * decides which is visible, each with its bar (the area's scroll bar, or the
+ * format bar).
+ *
+ * ! ONE VIEW, MANY DOCUMENTS, as with the area: g_vista is pointed at the
+ * chosen tab's document, and a tab that is left keeps only where its caret
+ * and its first line were (vista_metti_via). Its text never moves: every rich
+ * text tab has its own buffers. The lines are laid out again on return - they
+ * depend on the window's width anyway.
+ *
+ * ! WHAT IS NOT THERE YET, declared: undo, find and replace; pictures, tables
+ * and lists in a file that is read (their text comes, the rest does not - see
+ * lib/exrtf/exrtf.h). Typing is ASCII, as in the text area: the keyboard
+ * service sends a window nothing else.
+ * ============================================================================= */
+#define RTF_TESTO    (256u * 1024u)
+#define RTF_PEZZI    8192u
+#define RTF_PAR      8192u
+#define RTF_RIGHE    16384u
+#define RTF_BARRA_H  26
+
+static ExRtfRiga *g_righe = 0;
+static ExFinestra g_rg, g_rc, g_rs, g_rfam, g_rcorpo, g_rcol;
+static ExFinestra g_rsin, g_rcen, g_rdes, g_rgiu;
+static int        g_mod_visto = -1;     /* the "modified" the tab title shows */
+
+static const unsigned int CORPI[] = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72 };
+#define CORPI_N   (sizeof(CORPI) / sizeof(CORPI[0]))
+static const char *const COLORE_NOME[] = {
+    "Nero", "Rosso", "Verde", "Blu", "Arancio", "Viola", "Grigio", "Bordeaux"
+};
+static const unsigned int COLORE[] = {
+    0x000000, 0xC00000, 0x008000, 0x0000C0, 0xE07000, 0x800080, 0x808080, 0x800000
+};
+#define COLORI_N  (sizeof(COLORE) / sizeof(COLORE[0]))
+
+static int doc_nuovo(void);
+
+static int rtf_buffer(Doc *D)
+{
+    char          *t = (char *)malloc(RTF_TESTO);
+    ExRtfPezzo    *p = (ExRtfPezzo *)malloc(RTF_PEZZI * sizeof(ExRtfPezzo));
+    unsigned char *a = (unsigned char *)malloc(RTF_PAR);
+
+    if (!g_righe) g_righe = (ExRtfRiga *)malloc(RTF_RIGHE * sizeof(ExRtfRiga));
+    if (!t || !p || !a || !g_righe) {
+        free(t); free(p); free(a);
+        return 0;
+    }
+    exrtf_prepara(&D->rd, t, RTF_TESTO, p, RTF_PEZZI, a, RTF_PAR);
+    return 1;
+}
+
+static void rtf_libera(Doc *D)
+{
+    if (!D->rtf) return;
+    free(D->rd.testo);
+    free(D->rd.pezzi);
+    free(D->rd.allinea);
+    memset(&D->rd, 0, sizeof(D->rd));
+    D->rtf = 0;
+}
+
+/* Where the view goes: under the format bar, down to the status line. */
+static void vista_rett(int *x, int *y, int *w, int *h)
+{
+    *x = AREA_X;
+    *y = AREA_Y + RTF_BARRA_H;
+    *w = g_fw - AREA_X * 2;
+    *h = g_fh - *y - BASSO;
+    if (*w < 60) *w = 60;
+    if (*h < 30) *h = 30;
+}
+
+static void vista_collega(int i)
+{
+    Doc *D = &g_doc[i];
+    int  x, y, w, h;
+
+    exrtf_vista_prepara(&g_vista, &D->rd, g_righe, RTF_RIGHE);
+    g_vista.stile      = D->v_stile;
+    g_vista.modificato = D->modificato;
+    vista_rett(&x, &y, &w, &h);
+    exrtf_vista_posto(&g_vista, x, y, w, h);
+    g_vista.cur   = D->v_cur <= D->rd.testo_n ? D->v_cur : D->rd.testo_n;
+    g_vista.anc   = D->v_anc <= D->rd.testo_n ? D->v_anc : D->rd.testo_n;
+    g_vista.prima = D->v_prima < g_vista.righe_n ? D->v_prima : 0;
+    g_mod_visto   = -1;
+}
+
+static void vista_metti_via(Doc *D)
+{
+    D->v_cur      = g_vista.cur;
+    D->v_anc      = g_vista.anc;
+    D->v_prima    = g_vista.prima;
+    D->v_stile    = g_vista.stile;
+    D->modificato = g_vista.modificato;
+}
+
+/* The format bar shows the style under the caret. 1 if something changed
+ * (then the window is redrawn whole: the bar's controls draw only that way). */
+static int barra_rtf_segui(void)
+{
+    const ExRtfStile *s;
+    unsigned int      i, k = 0;
+    int               cambiato = 0;
+
+    if (!g_rtf || !g_rg) return 0;
+    s = exrtf_vista_stile(&g_vista);
+    if (ex_acceso(g_rg) != (int)s->grassetto)    { ex_accendi(g_rg, s->grassetto);    cambiato = 1; }
+    if (ex_acceso(g_rc) != (int)s->corsivo)      { ex_accendi(g_rc, s->corsivo);      cambiato = 1; }
+    if (ex_acceso(g_rs) != (int)s->sottolineato) { ex_accendi(g_rs, s->sottolineato); cambiato = 1; }
+    if (ex_voce_scelta(g_rfam) != s->famiglia)   { ex_voce_scegli(g_rfam, s->famiglia); cambiato = 1; }
+    for (i = 1; i < CORPI_N; i++) {
+        unsigned int di = CORPI[i] > s->corpo ? CORPI[i] - s->corpo : s->corpo - CORPI[i];
+        unsigned int dk = CORPI[k] > s->corpo ? CORPI[k] - s->corpo : s->corpo - CORPI[k];
+        if (di < dk) k = i;
+    }
+    if (ex_voce_scelta(g_rcorpo) != k) { ex_voce_scegli(g_rcorpo, k); cambiato = 1; }
+    for (i = 0; i < COLORI_N && COLORE[i] != s->colore; i++) ;
+    if (i < COLORI_N && ex_voce_scelta(g_rcol) != i) { ex_voce_scegli(g_rcol, i); cambiato = 1; }
+    return cambiato;
+}
+
+/* Text area or view, and their bars; the keys go with them. */
+static void modo_mostra(void)
+{
+    ExFinestra barra[10];
+    int        i;
+
+    barra[0] = g_rg;   barra[1] = g_rc;     barra[2] = g_rs;
+    barra[3] = g_rfam; barra[4] = g_rcorpo; barra[5] = g_rcol;
+    barra[6] = g_rsin; barra[7] = g_rcen;   barra[8] = g_rdes; barra[9] = g_rgiu;
+    ex_mostra(g_area, !g_rtf);
+    if (g_barra) ex_mostra(g_barra, !g_rtf);
+    for (i = 0; i < 10; i++) if (barra[i]) ex_mostra(barra[i], g_rtf);
+    /* ! THE HIDDEN AREA MUST LOSE THE FOCUS, or the keys would go on being
+     * typed into a text nobody sees. With no control focused they come to
+     * this program, which gives them to the view. */
+    ex_tab_contenuto(g_f, g_rtf);           /* Tab is a letter of the text */
+    if (g_rtf) { ex_fuoco_via(g_f); barra_rtf_segui(); }
+    else       ex_fuoco(g_area);
+}
+
+static void vista_disegna_se(void)
+{
+    if (!g_rtf || !g_vista.doc) return;
+    g_vista.fuoco = (ex_fuoco_chi(g_f) == 0);
+    exrtf_vista_disegna(&g_vista, g_f);
+}
+
+static void stato_aggiorna(void);
+static void ridisegna(void);
+
+/* After the view changed: only the view and the status line, unless the
+ * format bar or the tab's asterisk changed too. No flash of the window's grey
+ * under the text at every key. */
+static long vista_aggiorna(void)
+{
+    if (barra_rtf_segui() || g_mod_visto != g_vista.modificato) {
+        g_mod_visto = g_vista.modificato;
+        ridisegna();
+        return EX_NON_RIDISEGNARE;
+    }
+    stato_aggiorna();
+    vista_disegna_se();
+    ex_ridisegna(g_stato);
+    ex_aggiorna(g_f);
+    return EX_NON_RIDISEGNARE;
+}
+
+/* Tab i becomes an empty rich text document (the view shows it). */
+static int rtf_diventa(int i)
+{
+    Doc *D = &g_doc[i];
+
+    if (!D->rtf) {
+        if (!rtf_buffer(D)) {
+            strcpy(g_avviso, "memoria finita: il documento RTF non si apre");
+            return 0;
+        }
+        D->rtf = 1;
+    } else {
+        exrtf_prepara(&D->rd, D->rd.testo, D->rd.testo_max, D->rd.pezzi, D->rd.pezzi_max,
+                      D->rd.allinea, D->rd.par_max);
+    }
+    exrtf_stile_base(&D->v_stile);
+    D->v_cur = D->v_anc = D->v_prima = 0;
+    D->modificato = 0;
+    passo_tutti_via();
+    ex_area_svuota(g_area);
+    ex_area_pulita(g_area);
+    g_rtf = 1;
+    vista_collega(i);
+    modo_mostra();
+    return 1;
+}
+
+static void rtf_nuovo_doc(void)
+{
+    if (!doc_nuovo()) return;
+    if (rtf_diventa(g_attivo)) strcpy(g_avviso, "documento RTF nuovo");
+}
+
+/* A file that begins "{\rtf" is rich text; one that is not there yet is, if
+ * its name ends in .rtf. */
+static int e_file_rtf(const char *perc)
+{
+    char         b[16];
+    int          fd = open(perc, O_RDONLY, 0), n;
+    unsigned int l = (unsigned int)strlen(perc);
+
+    if (fd >= 0) {
+        n = (int)read(fd, b, sizeof(b));
+        close(fd);
+        return n > 0 && exrtf_e_rtf(b, (unsigned int)n);
+    }
+    return l > 4 && perc[l - 4] == '.' &&
+           (perc[l - 3] | 32) == 'r' && (perc[l - 2] | 32) == 't' && (perc[l - 1] | 32) == 'f';
+}
+
+/* Reads the chosen tab's file into its document. 0: not there (a new one). */
+static int rtf_carica(const char *perc)
+{
+    Doc         *D = &g_doc[g_attivo];
+    int          fd = open(perc, O_RDONLY, 0);
+    long         n;
+    unsigned int k = 0;
+    char        *b;
+
+    if (fd < 0) return 0;
+    n = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    if (n < 0) n = 0;
+    b = (char *)malloc((unsigned int)n + 1);
+    if (!b) {
+        close(fd);
+        strcpy(g_avviso, "memoria finita: il file non si legge");
+        g_parziale = 1;
+        return 1;
+    }
+    while (k < (unsigned int)n) {
+        int r = (int)read(fd, b + k, (unsigned int)n - k);
+        if (r <= 0) break;
+        k += (unsigned int)r;
+    }
+    close(fd);
+
+    exrtf_prepara(&D->rd, D->rd.testo, D->rd.testo_max, D->rd.pezzi, D->rd.pezzi_max,
+                  D->rd.allinea, D->rd.par_max);
+    exrtf_leggi(&D->rd, b, k);
+    free(b);
+    /* ! READ IN PART, NOT SAVED: the same rule as the text area. Saving what
+     * fit would cut the rest of the user's document without showing it. */
+    g_parziale = D->rd.troncato || k < (unsigned int)n;
+    exrtf_vista_nuovo(&g_vista);
+    barra_rtf_segui();              /* the bar shows the first letter's style */
+    g_mod_visto = -1;
+    return 1;
+}
+
+static int rtf_salva(void)
+{
+    Doc         *D = &g_doc[g_attivo];
+    unsigned int max = D->rd.testo_n * 16 + D->rd.pezzi_n * 64 + 8192, n;
+    char        *b = (char *)malloc(max);
+    int          fd;
+
+    if (!b) { strcpy(g_avviso, "memoria finita: non salvato"); return 0; }
+    n = exrtf_scrivi(&D->rd, b, max);
+    if (!n) { free(b); strcpy(g_avviso, "non salvato: l'RTF non entra nella memoria"); return 0; }
+    fd = open(g_perc, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { free(b); sprintf(g_avviso, "non riesco a scrivere %s", g_perc); return 0; }
+    if (write(fd, b, n) != (ssize_t)n) {
+        close(fd);
+        free(b);
+        strcpy(g_avviso, "scrittura interrotta: il file e' incompleto");
+        return 0;
+    }
+    close(fd);
+    free(b);
+    g_vista.modificato = 0;
+    sprintf(g_avviso, "salvato: RTF, %u byte", n);
+    return 1;
+}
+
+/* A command of the format bar or of the Formato menu. */
+static void formato(unsigned int id, long lp)
+{
+    if (!g_rtf) {
+        strcpy(g_avviso, "il formato c'e' nei documenti RTF (File > Nuovo documento RTF)");
+        return;
+    }
+    switch (id) {
+    case ID_R_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, (unsigned int)ex_acceso(g_rg)); break;
+    case ID_R_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, (unsigned int)ex_acceso(g_rc)); break;
+    case ID_R_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, (unsigned int)ex_acceso(g_rs)); break;
+    case ID_M_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, EXRTF_INVERTI); break;
+    case ID_M_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, EXRTF_INVERTI); break;
+    case ID_M_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, EXRTF_INVERTI); break;
+    case ID_R_FAM:
+        if (lp >= 0 && lp <= EXRTF_MONO) exrtf_vista_cambia(&g_vista, EXRTF_C_FAMIGLIA, (unsigned int)lp);
+        break;
+    case ID_R_CORPO:
+        if (lp >= 0 && (unsigned long)lp < CORPI_N)
+            exrtf_vista_cambia(&g_vista, EXRTF_C_CORPO, CORPI[lp]);
+        break;
+    case ID_R_COLORE:
+        if (lp >= 0 && (unsigned long)lp < COLORI_N)
+            exrtf_vista_cambia(&g_vista, EXRTF_C_COLORE, COLORE[lp]);
+        break;
+    case ID_R_SIN: case ID_R_CEN: case ID_R_DES: case ID_R_GIU:
+        exrtf_vista_allinea(&g_vista, id - ID_R_SIN);
+        break;
+    default: break;
+    }
+    /* ! THE KEYS GO BACK TO THE TEXT: a combo or a switch chosen with the mouse
+     * took the focus, and the next letter typed would go to it. */
+    ex_fuoco_via(g_f);
+    barra_rtf_segui();
+}
+
+/* The format bar: B, I, U as switches (they show the style under the caret),
+ * typeface, size, colour, and the four alignments. Hidden until a rich text
+ * tab is chosen. */
+static void barra_rtf_crea(void)
+{
+    int y = AREA_Y + 2, i;
+
+    g_rg = ex_crea("spunta", "G", EX_FIGLIO, 4, y, 34, 20, g_f, ID_R_G, 0);
+    g_rc = ex_crea("spunta", "C", EX_FIGLIO, 40, y, 34, 20, g_f, ID_R_C, 0);
+    g_rs = ex_crea("spunta", "S", EX_FIGLIO, 76, y, 34, 20, g_f, ID_R_S, 0);
+    g_rfam = ex_crea("combo", "", EX_FIGLIO, 116, y, 76, 20, g_f, ID_R_FAM, 0);
+    ex_voce_aggiungi(g_rfam, "Serif");
+    ex_voce_aggiungi(g_rfam, "Sans");
+    ex_voce_aggiungi(g_rfam, "Mono");
+    g_rcorpo = ex_crea("combo", "", EX_FIGLIO, 196, y, 52, 20, g_f, ID_R_CORPO, 0);
+    for (i = 0; i < (int)CORPI_N; i++) {
+        char t[8];
+        snprintf(t, sizeof(t), "%u", CORPI[i]);
+        ex_voce_aggiungi(g_rcorpo, t);
+    }
+    g_rcol = ex_crea("combo", "", EX_FIGLIO, 252, y, 92, 20, g_f, ID_R_COLORE, 0);
+    for (i = 0; i < (int)COLORI_N; i++) ex_voce_aggiungi(g_rcol, COLORE_NOME[i]);
+    g_rsin = ex_crea("pulsante", "Sin", EX_FIGLIO, 350, y, 40, 20, g_f, ID_R_SIN, 0);
+    g_rcen = ex_crea("pulsante", "Cen", EX_FIGLIO, 392, y, 40, 20, g_f, ID_R_CEN, 0);
+    g_rdes = ex_crea("pulsante", "Des", EX_FIGLIO, 434, y, 40, 20, g_f, ID_R_DES, 0);
+    g_rgiu = ex_crea("pulsante", "Giu", EX_FIGLIO, 476, y, 40, 20, g_f, ID_R_GIU, 0);
+    ex_voce_scegli(g_rfam, 0);
+    ex_voce_scegli(g_rcorpo, 4);                /* 12 */
+    ex_voce_scegli(g_rcol, 0);
+}
 
 static const char *base_nome(const char *p)
 {
@@ -508,15 +915,27 @@ static void doc_segui_titolo(void)
 {
     strncpy(g_doc[g_attivo].perc, g_perc, PERC_MAX - 1);
     g_doc[g_attivo].perc[PERC_MAX - 1] = '\0';
-    doc_titolo(g_attivo, ex_area_modificato(g_area));
+    doc_titolo(g_attivo, g_rtf ? g_vista.modificato : ex_area_modificato(g_area));
 }
 
 /* La scheda scelta lascia l'area: tutto quel che serve per riaverla. */
+static void vista_metti_via(Doc *D);
+
 static int doc_metti_via(void)
 {
     Doc          *D = &g_doc[g_attivo];
     unsigned int  byte = 0;
-    char         *t = testo_di_adesso(&byte);
+    char         *t;
+
+    if (g_rtf) {                    /* its text never leaves its buffers */
+        strncpy(D->perc, g_perc, PERC_MAX - 1);
+        D->perc[PERC_MAX - 1] = '\0';
+        D->parziale = g_parziale;
+        vista_metti_via(D);
+        doc_titolo(g_attivo, D->modificato);
+        return 1;
+    }
+    t = testo_di_adesso(&byte);
 
     /* ! SENZA MEMORIA PER IL TESTO LA SCHEDA NON SI LASCIA: rimetterla
      * dopo darebbe una scheda vuota, cioe' il file perso senza una parola. */
@@ -572,11 +991,25 @@ static void area_segna_modificata(void)
 }
 
 /* La scheda i torna nell'area. */
+static void vista_collega(int i);
+static void modo_mostra(void);
+
 static void doc_riprendi(int i)
 {
     Doc *D = &g_doc[i];
 
     g_attivo = i;
+    if (D->rtf) {
+        g_rtf = 1;
+        strncpy(g_perc, D->perc, PERC_MAX - 1);
+        g_perc[PERC_MAX - 1] = '\0';
+        g_parziale = D->parziale;
+        vista_collega(i);
+        ex_voce_scegli(g_schede, (unsigned int)i);
+        modo_mostra();
+        return;
+    }
+    g_rtf = 0;
     area_da_testo(D->testo);
     if (D->testo) { free(D->testo); D->testo = 0; }
     ex_area_pulita(g_area);
@@ -590,6 +1023,7 @@ static void doc_riprendi(int i)
     g_passi_n    = D->passi_n;
     g_passi_byte = D->passi_byte;
     ex_voce_scegli(g_schede, (unsigned int)i);
+    modo_mostra();
 }
 
 static void doc_scegli(int i)
@@ -621,7 +1055,9 @@ static int doc_nuovo(void)
     ex_area_pulita(g_area);
     g_perc[0] = '\0';
     g_parziale = 0;
+    g_rtf = 0;
     ex_voce_scegli(g_schede, (unsigned int)g_attivo);
+    modo_mostra();
     return 1;
 }
 
@@ -629,6 +1065,7 @@ static int doc_nuovo(void)
  * invece di aggiungerne un'altra accanto (l'editor aperto senza file). */
 static int doc_vergine(void)
 {
+    if (g_rtf) return 0;
     return g_perc[0] == '\0' && !ex_area_modificato(g_area) &&
            ex_area_righe(g_area) <= 1 && ex_area_riga(g_area, 0)[0] == '\0';
 }
@@ -649,6 +1086,15 @@ static void doc_apri(const char *perc)
     if (!doc_vergine() && !doc_nuovo()) return;
     strncpy(g_perc, perc, PERC_MAX - 1);
     g_perc[PERC_MAX - 1] = '\0';
+    if (e_file_rtf(g_perc)) {
+        if (!rtf_diventa(g_attivo)) return;         /* it said why */
+        if (rtf_carica(g_perc))
+            sprintf(g_avviso, "aperto: documento RTF, %u paragrafi%s", g_vista.doc->par_n,
+                    g_parziale ? ", SOLO IN PARTE" : "");
+        else
+            strcpy(g_avviso, "non c'era: documento RTF nuovo");
+        return;
+    }
     if (carica(g_perc)) sprintf(g_avviso, "aperto: %u righe", ex_area_righe(g_area));
     else                strcpy(g_avviso, "non c'era: file nuovo");
     passo_tutti_via();
@@ -663,7 +1109,7 @@ static void doc_chiudi(int i)
     if (i < 0 || i >= g_ndoc) return;
     if (i != g_attivo) doc_scegli(i);
     if (i != g_attivo) return;                  /* non si e' potuta scegliere */
-    mod = ex_area_modificato(g_area);
+    mod = g_rtf ? g_vista.modificato : ex_area_modificato(g_area);
     if (mod) {
         char q[PERC_MAX + 64];
         snprintf(q, sizeof(q), "%s e' cambiato. Chiudere senza salvare?",
@@ -674,7 +1120,10 @@ static void doc_chiudi(int i)
         }
     }
     passo_tutti_via();
+    if (g_doc[i].rtf) rtf_libera(&g_doc[i]);
+    g_rtf = 0;
     if (g_ndoc == 1) {                          /* l'ultima: resta vuota */
+        modo_mostra();
         ex_area_svuota(g_area);
         ex_area_pulita(g_area);
         g_perc[0] = '\0';
@@ -698,7 +1147,8 @@ static int doc_modificati(void)
     int i, n = 0;
 
     for (i = 0; i < g_ndoc; i++)
-        n += (i == g_attivo) ? ex_area_modificato(g_area) : g_doc[i].modificato;
+        n += (i != g_attivo) ? g_doc[i].modificato :
+             g_rtf ? g_vista.modificato : ex_area_modificato(g_area);
     return n;
 }
 
@@ -706,11 +1156,12 @@ static void informazioni(void)
 {
     char t[640];
 
-    exinfo_testo(t, sizeof(t), "Editor", VERSIONE_APP,
+    exinfo_testo(t, sizeof(t), "ExEditor", VERSIONE_APP,
                  "L'editor di testo di EX-OS, sul toolkit ExWin.  Il testo, "
-                 "il cursore e lo scorrimento sono del controllo areatesto; "
-                 "qui dentro c'e' solo leggere un file, scriverlo e decidere "
-                 "cosa fare quando va storto.");
+                 "il cursore e lo scorrimento sono del controllo areatesto, "
+                 "e nei documenti RTF della vista di lib/exrtf; qui dentro "
+                 "c'e' leggere un file, scriverlo e decidere cosa fare quando "
+                 "va storto.");
     ex_dlg_avviso("Informazioni su", t);
 }
 
@@ -918,10 +1369,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         g_avviso[0] = '\0';
         if (wp == ID_SALVA)     { salva();            break; }
         if (wp == ID_NUOVO)     { doc_nuovo();        break; }
+        if (wp == ID_NUOVO_RTF) { rtf_nuovo_doc();    break; }
+        if ((wp >= ID_R_G && wp <= ID_R_GIU) || (wp >= ID_M_G && wp <= ID_M_S)) {
+            formato(wp, lp);
+            break;
+        }
         if (wp == ID_CHIUDI)    { doc_chiudi(g_attivo); break; }
         if (wp == ID_SCHEDE)    { doc_scegli((int)lp); break; }
         if (wp == ID_RICARICA)  {
-            if (g_perc[0]) { carica(g_perc); passo_tutti_via(); }
+            if (g_perc[0] && g_rtf) rtf_carica(g_perc);
+            else if (g_perc[0]) { carica(g_perc); passo_tutti_via(); }
             else strcpy(g_avviso, "niente da ricaricare: non c'e' un file");
             break;
         }
@@ -929,6 +1386,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SALVACOME) { salva_come();       break; }
         if (wp == ID_ESCI)      { esci_se_si_puo();   break; }
 
+        /* The edit menu on a rich text tab: the view does it. */
+        if (g_rtf && (wp == ID_TAGLIA || wp == ID_COPIA || wp == ID_INCOLLA ||
+                      wp == ID_CANCELLA || wp == ID_SELTUTTO)) {
+            if (wp == ID_TAGLIA)   exrtf_vista_taglia(&g_vista);
+            if (wp == ID_COPIA)    exrtf_vista_copia(&g_vista);
+            if (wp == ID_INCOLLA)  exrtf_vista_incolla(&g_vista);
+            if (wp == ID_CANCELLA && g_vista.cur != g_vista.anc) exrtf_vista_tasto(&g_vista, KBD_K_DEL);
+            if (wp == ID_SELTUTTO) exrtf_vista_tutto(&g_vista);
+            break;
+        }
+        if (g_rtf && (wp == ID_ANNULLA || wp == ID_CERCA || wp == ID_AVANTI ||
+                      wp == ID_INDIETRO || wp == ID_SOSTITUISCI)) {
+            strcpy(g_avviso, "nei documenti RTF annulla e cerca non ci sono ancora");
+            break;
+        }
         if (wp == ID_ANNULLA)   {
             if (annulla_fai()) strcpy(g_avviso, "annullato");
             else               strcpy(g_avviso, "non c'e' niente da annullare");
@@ -983,6 +1455,23 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         g_avviso[0] = '\0';
         c = wp & KBD_KEY_MASK;
 
+        /* ! ON A RICH TEXT TAB THE KEYS ARE THE VIEW'S, but for the program's
+         * own shortcuts: the view would take Ctrl+S as nothing. */
+        if (g_rtf) {
+            if (wp & KBD_MOD_CTRL) {
+                if (c == 's' || c == 'S') { salva();            break; }
+                if (c == 'q' || c == 'Q') { esci_se_si_puo();   break; }
+                if (c == 'n' || c == 'N') { doc_nuovo();        break; }
+                if (c == 'o' || c == 'O') { apri_con_dialogo(); break; }
+                if (c == 'z' || c == 'Z' || c == 'f' || c == 'F' || c == 'h' || c == 'H') {
+                    strcpy(g_avviso, "nei documenti RTF annulla e cerca non ci sono ancora");
+                    break;
+                }
+            }
+            if (exrtf_vista_tasto(&g_vista, wp)) return vista_aggiorna();
+            return ex_procedura_base(f, msg, wp, lp);
+        }
+
         /* ! LE SCORCIATOIE LE ESEGUE L'APPLICAZIONE, NON IL MENU. Il menu le
          * SCRIVE — e' il tab nel testo della voce — ma non le cattura: un menu
          * che si prendesse Ctrl+S da solo se lo prenderebbe anche mentre si
@@ -1036,6 +1525,14 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_MISURA: {
         int w = EX_X(lp), h = EX_Y(lp);
 
+        g_fw = w;
+        g_fh = h;
+        if (g_rtf) {
+            int vx, vy, vw, vh;
+            vista_rett(&vx, &vy, &vw, &vh);
+            exrtf_vista_posto(&g_vista, vx, vy, vw, vh);
+        }
+
         ex_misura(g_area, w - AREA_X * 2 - BARRA_W, h - AREA_Y - BASSO);
         if (g_schede) ex_misura(g_schede, w - AREA_X * 2, SCHEDE_H);
         if (g_barra) {
@@ -1050,12 +1547,39 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     /* ! IL DISEGNO CHE ARRIVA DAL TOOLKIT — dopo ogni tasto battuto
      * nell'area — passa di qui per rimettere la barra dove l'area e' andata;
      * senza, la barra resterebbe ferma mentre si scrive in fondo al testo. */
-    case EXM_DISEGNA:
+    case EXM_DISEGNA: {
+        long r;
+
         /* ! E LA RIGA DI STATO CON LEI: prima di qui nessuno la rifaceva
          * dopo un tasto battuto nell'area, e «riga 1/512» restava scritto
          * mentre si scendeva di pagina in pagina. */
         stato_aggiorna();
         barra_allinea();
+        r = ex_procedura_base(f, msg, wp, lp);
+        /* The view over the grey the base painted; ex_aggiorna puts an open
+         * menu or combo back on top of it. */
+        if (g_rtf) { vista_disegna_se(); ex_aggiorna(g_f); }
+        return r;
+    }
+
+    /* The mouse on the rich text view (@RTF). */
+    case EXM_MOUSE_GIU:
+        if (g_rtf && exrtf_vista_clic(&g_vista, EX_X(lp), EX_Y(lp), (wp & KBD_MOD_SHIFT) != 0)) {
+            ex_fuoco_via(g_f);
+            return vista_aggiorna();
+        }
+        return ex_procedura_base(f, msg, wp, lp);
+    case EXM_MOUSE_MOSSO:
+        if (g_rtf && exrtf_vista_trascina(&g_vista, EX_X(lp), EX_Y(lp))) return vista_aggiorna();
+        return ex_procedura_base(f, msg, wp, lp);
+    case EXM_MOUSE_SU:
+        if (g_rtf) exrtf_vista_su(&g_vista);
+        return ex_procedura_base(f, msg, wp, lp);
+    case EXM_DOPPIOCLIC:
+        if (g_rtf && exrtf_vista_doppio(&g_vista, EX_X(lp), EX_Y(lp))) return vista_aggiorna();
+        return ex_procedura_base(f, msg, wp, lp);
+    case EXM_ROTELLA:
+        if (g_rtf) { exrtf_vista_rotella(&g_vista, (int)wp); return vista_aggiorna(); }
         return ex_procedura_base(f, msg, wp, lp);
 
     default:
@@ -1075,11 +1599,11 @@ int main(int argc, char **argv)
      * tu», ed e' cio' che permette di aprire due editor senza che il secondo
      * finisca esattamente sopra il primo; EX_RIDIM dice che la finestra si puo'
      * tirare per l'angolo, e impegna a rispondere a EXM_MISURA. */
-    g_f = ex_crea("finestra", "Editor",
+    g_f = ex_crea("finestra", "ExEditor",
                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
-        printf("edit: il server a finestre non risponde.\n");
+        printf("exeditor: il server a finestre non risponde.\n");
         printf("      Avvialo con:  exwin\n");
         return 1;
     }
@@ -1090,6 +1614,7 @@ int main(int argc, char **argv)
      * dimentica di crescere: «Taglia» non ci sarebbe mai finito. */
     g_menu = ex_menu(g_f);
     ex_menu_voce(g_menu, "File", "Nuovo\tCtrl+N",    ID_NUOVO);
+    ex_menu_voce(g_menu, "File", "Nuovo documento RTF", ID_NUOVO_RTF);
     ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O",  ID_APRI);
     ex_menu_voce(g_menu, "File", "Chiudi\tCtrl+W",   ID_CHIUDI);
     ex_menu_voce(g_menu, "File", "-",                0);
@@ -1113,6 +1638,15 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Modifica", "Trova precedente\tShift+F3", ID_INDIETRO);
     ex_menu_voce(g_menu, "Modifica", "Sostituisci...\tCtrl+H", ID_SOSTITUISCI);
 
+    ex_menu_voce(g_menu, "Formato", "Grassetto\tCtrl+B",    ID_M_G);
+    ex_menu_voce(g_menu, "Formato", "Corsivo\tCtrl+I",      ID_M_C);
+    ex_menu_voce(g_menu, "Formato", "Sottolineato\tCtrl+U", ID_M_S);
+    ex_menu_voce(g_menu, "Formato", "-",                    0);
+    ex_menu_voce(g_menu, "Formato", "Allinea a sinistra",   ID_R_SIN);
+    ex_menu_voce(g_menu, "Formato", "Centra",               ID_R_CEN);
+    ex_menu_voce(g_menu, "Formato", "Allinea a destra",     ID_R_DES);
+    ex_menu_voce(g_menu, "Formato", "Giustifica",           ID_R_GIU);
+
     ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
 
@@ -1125,7 +1659,7 @@ int main(int argc, char **argv)
                      AREA_X, AREA_Y, FIN_W - AREA_X * 2 - BARRA_W,
                      FIN_H - AREA_Y - BASSO, g_f, 0, 0);
     if (!g_area) {
-        printf("edit: non riesco a creare l'area di testo\n");
+        printf("exeditor: non riesco a creare l'area di testo\n");
         return 1;
     }
 
@@ -1136,6 +1670,9 @@ int main(int argc, char **argv)
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);
+
+    /* The rich text tabs' format bar, hidden while a text tab is chosen. */
+    barra_rtf_crea();
 
     /* ! IL FUOCO ALL'AREA, ESPLICITAMENTE: e' l'unico controllo della finestra
      * che i tasti se li merita. La barra dei menu il fuoco non lo prende — un
@@ -1149,10 +1686,14 @@ int main(int argc, char **argv)
         int i;
         for (i = 1; i < argc; i++) {
             doc_apri(argv[i]);
-            printf("edit: %s, %u righe%s\n", g_perc, ex_area_righe(g_area),
-                   g_parziale ? " (PARZIALE)" : "");
+            if (g_rtf)
+                printf("exeditor: %s, RTF, %u paragrafi%s\n", g_perc, g_vista.doc->par_n,
+                       g_parziale ? " (PARZIALE)" : "");
+            else
+                printf("exeditor: %s, %u righe%s\n", g_perc, ex_area_righe(g_area),
+                       g_parziale ? " (PARZIALE)" : "");
         }
-        if (argc < 2) printf("edit: file nuovo, senza nome\n");
+        if (argc < 2) printf("exeditor: file nuovo, senza nome\n");
         if (argc > 2) doc_scegli(0);
     }
     g_avviso[0] = '\0';
@@ -1166,14 +1707,9 @@ int main(int argc, char **argv)
 /* =============================================================================
  * QUELLO CHE MANCA, DICHIARATO
  *
- * ! NIENTE ANNULLAMENTO. /bin/gfedit ce l'ha, a giornale di operazioni; qui
- * no, ed e' la cosa che manca di piu' adesso che c'e' un «Taglia» — un taglio
- * sbagliato non si rimette a posto.
- *
- * ! LA SELEZIONE SI FA COI TASTI, NON COL MOUSE. Shift piu' le frecce
- * funziona; trascinare il puntatore sul testo no, perche' il server manda il
- * bottone giu' e il bottone su ma non il movimento con il bottone premuto —
- * WIN_EV_MOUSE_MOSSO e' nel protocollo e nessuno lo manda ancora.
+ * ! L'ANNULLAMENTO C'E' SOLO PER I COMANDI (taglia, incolla, cancella) nei
+ * file di testo, e non c'e' nei documenti RTF, dove mancano anche Cerca e
+ * Sostituisci: vedi RTF MODE.
  *
  * ! E GLI APPUNTI SONO SOLO TESTO. Una zona condivisa da 4 KB con dentro dei
  * byte: chi copia mille righe ne ritrova quante ce ne stanno. Un servizio

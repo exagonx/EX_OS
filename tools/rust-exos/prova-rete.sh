@@ -18,9 +18,15 @@ export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 export CARGO_TARGET_DIR="$B/costruzione-rust"
 export __CARGO_TESTS_ONLY_SRC_ROOT="$B/costruzione-std/library"
 export PATH="$B/exos-cross/bin:$PATH"
+# ! IL BERSAGLIO PER NOME, non per percorso del .json (30 settembre 2026): una
+# libreria compilata col percorso porta nell'identita' un'impronta del file
+# («i686-unknown-exos-8757...») e non si mescola con quelle cercate per nome —
+# che e' come le cerca il sistema di costruzione di Mozilla, attraverso il
+# sysroot (tools/rust-exos/std/installa-sysroot.sh). rustc-exos mette
+# RUST_TARGET_PATH e -Zunstable-options.
+export RUSTC="$PWD/tools/rust-exos/rustc-exos"
 (cd tools/rust-exos/prova-rete && "$CARGO" +nightly build --release \
-    -Z build-std=std,panic_abort -Z json-target-spec \
-    --target ../i686-unknown-exos.json) || exit 1
+    -Z build-std=std,panic_abort --target i686-unknown-exos) || exit 1
 BIN="$CARGO_TARGET_DIR/i686-unknown-exos/release/prova-rete"
 n=$(i386-exos-objdump -d "$BIN" | grep -cE 'xmm|\bcmov')
 echo "collegato: $(stat -c %s "$BIN") byte, istruzioni oltre il Pentium MMX: $n"

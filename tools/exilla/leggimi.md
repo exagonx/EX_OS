@@ -131,8 +131,64 @@ Com'è fatto (il contratto sta in `lib/include/libc.h`, sezione «I SOCKET BSD»
 Cosa manca, dichiarato: IPv6 e `AF_UNIX`, il FIN di `shutdown(SHUT_WR)`, la
 `connect` non bloccante (si completa subito), `dup` di un socket.
 
-**Prossima tappa**: ExWin (la tabella del paragrafo 3) oppure SpiderMonkey da
-solo (tappa 4). La memoria per costruire Firefox resta da liberare.
+### 30 settembre 2026 — tappa 4: SpiderMonkey dentro EX-OS (@EXILLA-JS)
+
+**La shell `js` di Firefox si costruisce per EX-OS e ci gira dentro**: senza
+JIT (l'interprete) e senza ICU, collegata staticamente, 14 MB spogliata.
+`tools/exilla/prova-js.sh`: **17 su 17** sul kernel 0.227 — classi, closure,
+generatori, espressioni regolari, BigInt, array tipizzati, Map/Set/WeakMap,
+Proxy, Unicode, JSON, Date, Math, il garbage collector con 200 000 oggetti,
+Promise e async/await. Il binario non ha istruzioni oltre il Pentium MMX
+fuori dai percorsi SIMD che Mozilla sceglie a runtime.
+
+    tools/exilla/js-costruisci.sh configure     # mozconfig: tools/exilla/mozconfig-js
+    tools/exilla/js-costruisci.sh build -j4     # oggetti in cross_build/exilla-obj/js
+    tools/exilla/prova-js.sh                    # la prova dentro EX-OS
+
+Come si arriva a costruirla:
+
+- **EX-OS per il sistema di costruzione di Mozilla** e' un sistema suo,
+  «EXOS», sul modello di OpenBSD: `split_triplet`, le costanti di mozbuild,
+  `XP_EXOS`, `config.sub`. Niente PIE (EX-OS carica gli eseguibili al loro
+  indirizzo), niente editline (la console non ha termios), zlib quello
+  dell'albero.
+- **Rust senza -Z build-std**: la std di EX-OS si installa nel sysroot del
+  nightly (`tools/rust-exos/std/installa-sysroot.sh`) e il bersaglio si chiama
+  per nome attraverso `tools/rust-exos/rustc-exos`. ! La std va compilata col
+  bersaglio PER NOME, non col percorso del .json: l'identita' delle librerie
+  porterebbe un'impronta del file e rustc non le mescola.
+- **I crate che Firefox porta con se'** (`libc`, `getrandom`) imparano EX-OS con
+  `tools/exilla/rust-fornitori.py`, che rifa' anche i loro checksum.
+- **Le modifiche all'albero** (che non ha un .git) si segnano con
+  `tools/exilla/tocca.sh` e diventano patch con `tools/exilla/patch-crea.sh`:
+  sono in `tools/exilla/patch/`. Per rimetterle su un albero pulito:
+  `cd firefox-main && for p in ../tools/exilla/patch/*.patch; do patch -p1 < "$p"; done`.
+
+Cosa ha trovato nel sistema, ed e' sistemato:
+- **`ungetc` teneva un carattere solo**: la shell ne rimette tre (guarda se c'e'
+  il BOM) e ogni file JavaScript arrivava senza i primi due;
+- **il `limits.h` di GCC** della toolchain di questa macchina era la versione
+  «senza libc sotto»: `PATH_MAX` non arrivava a nessun programma
+  (`toolchain-questa-macchina.sh` ora lo prende dall'origine);
+- mancavano: le atomiche a 64 bit (senza libatomic), `__stack_chk_fail_local`,
+  `strnlen`, `tzset`, `madvise`, `getrlimit`, `syscall(SYS_gettid)`,
+  `basename`/`dirname`, `mbsrtowcs`/`wcsrtombs`, `pread`/`pwrite`, `fsync`,
+  `getppid`, `STDIN_FILENO`; `abort` e' debole (mozalloc lo ridefinisce);
+- le dichiarazioni aggiunte a un header vanno in `extern "C"`, o dal C++ non si
+  collegano.
+- **la `libm.a` della toolchain** (openlibm) era compilata per i686: `cmov` in
+  `pow` e altre dieci funzioni. openlibm mette da se' `-march=i686`: ora
+  `tools/openlibm-exos/prepara-libm.sh` gli passa `MARCH=pentium-mmx`.
+
+! **`Mutex` di `libc.h`** (il lucchetto della libc, nel namespace globale) e'
+ambiguo con `js::Mutex` dentro SpiderMonkey: per ora quattro file lo
+qualificano (`tools/exilla/qualifica-mutex.py`); la cura vera e' in `libc.h`,
+nascondere i nomi propri di EX-OS a chi vuole solo POSIX.
+
+**Prossima tappa**: NSPR e NSS (tappa 5), la rete e il TLS di Gecko. Prima,
+in `libc.h` (ora libero): nascondere `Mutex` & c. a chi vuole solo POSIX e
+togliere `qualifica-mutex.py`. La memoria per costruire Firefox intero resta
+da liberare.
 
 ! **MEGA**: le cartelle `costruzione-*`, `rust-macchina` ed `exilla-obj` sono
 escluse (`.megaignore`). ! E `scambio.txt` si scrive SOLO in coda: il 28

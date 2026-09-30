@@ -5869,3 +5869,237 @@ un programma: il primo lavoro e' tirarla fuori.
   lo fa l'utente con `git checkout HEAD -- drivers/wserver/wserver.c`.
   Poi vanno rifatte le tre aggiunte di @EXWIN-PASSAGGIO al server (win_proto.h
   le ha gia': WIN_MSG_PASSAGGIO e WIN_EV_USCITO).
+
+2026-09-30 claude-A — @EXWIN-PASSAGGIO e @NAV-WIKI (EXBrowser: collegamenti, Wikipedia)
+  - IL PASSAGGIO DEL MOUSE (Exilla tappa 3, e serve al navigatore). wserver
+    0.008: WIN_MSG_PASSAGGIO chiede il movimento SENZA tasti, e WIN_EV_USCITO
+    dice che il puntatore e' uscito; solo a chi lo chiede, come la maschera
+    degli eventi di X (a tutte avrebbe fatto ridisegnare cento volte al
+    secondo chi rende 0). exwin.so 0.011: ex_mouse_passaggio(), EXM_MOUSE_SOPRA
+    ed EXM_MOUSE_FUORI; ex_ridisegna(controllo) ridisegna UNA etichetta da sola.
+  - EXBrowser 0.027: sopra un collegamento la barra di stato mostra dove porta;
+    onmouseover/onmouseout alla pagina quando cambia il nodo sotto il
+    puntatore; dico() si mostra da sola (con EX_NON_RIDISEGNARE la barra era
+    rimasta su «immagine 1 di 64...»).
+  - I GESTORI NEGLI ATTRIBUTI SONO FUNZIONI (lib/exdom): function(event){...}
+    con this = l'elemento; `onclick="return false"` era un errore di sintassi,
+    e ora annulla il seguito come preventDefault. domprova 267/267 coi due motori.
+  - «I COLLEGAMENTI NON SI APRONO»: LINK_MAX era 2048 per ogni vista, e una
+    voce di Wikipedia (Roma) ne ha circa 5250: dal 2049esimo il collegamento si
+    disegnava ma non si registrava, e il clic non faceva niente. Ora la pagina
+    ha LINK_MAX_PR 8192 con 1 MB di indirizzi (BSS), gli iframe 2048 come
+    prima; ATTR_MAX_PR 80000 (Roma ne ha ~37000).
+  - LE IMMAGINI VICINE PRIMA: si scaricano subito solo quelle entro due
+    schermate da cio' che si vede, le altre quando lo scorrimento le avvicina
+    (EXM_TEMPO, a scorrimento fermo). Un'immagine senza misure non ha posto
+    finche' non arriva, e si prende subito come prima (prova_gif_anima l'ha
+    trovato). Venezia: rete da 48,9 s in 47 richieste a 7,4 s in 8.
+  - :not(:focus) CORRISPONDE (lib/excss): nessuno ha il fuoco in una pagina
+    disegnata; letto come «mai», spegneva la regola con cui Wikipedia nasconde
+    «Vai al contenuto». cssprova 157/157.
+  - Prove nuove: tools/prova_passaggio.sh, tools/prova_wiki.sh (Venezia, con
+    la riga dei tempi); tools/locali/prova_destro_grigio.sh (la foto della
+    scrivania col dialogo aperto: 204060, non C0C0C0).
+  ! COSA MANCA ANCORA A WIKIPEDIA (misurato sul foglio vero, 1351 selettori):
+    display:grid (la disposizione a colonne di Vector 2022: 4 dichiarazioni e
+    10 grid-template), 22 :not() composti, 16 :where(), 4 :has() che non
+    corrispondono mai, 102 ::before/::after (contenuto generato: icone,
+    separatori); overflow e clip non si applicano. E i tempi: script ~7,4 s
+    (il caricatore di MediaWiki e i suoi moduli) e impaginazione fino a 8 s
+    in QEMU, da misurare con un profilo prima di toccarli. La rete ha ancora
+    UNA connessione tenuta aperta per volta: it.wikipedia.org e
+    upload.wikimedia.org si danno il cambio.
+
+2026-09-30 claude-A — richieste dell'utente di oggi, FATTE (provate come detto):
+  - IL MENU DEL TASTO DESTRO SI CHIUDE col clic fuori ed Esc (WIN_ST_COMPARSA:
+    il server manda EXM_CHIUDI a una finestra a comparsa quando si preme fuori;
+    EX_COMPARSA nel toolkit). tools/prova_menu_chiudi.sh 3/3.
+  - LA SCRIVANIA NON DIVENTA PIU' GRIGIA col tasto destro, e i 22 ridisegni
+    col fondo grigio del ciclo dei messaggi passano dalla procedura della
+    finestra (ridisegna_finestra). Foto: 204060 col dialogo aperto.
+  - LA X DELLE SCHEDE E' UN PULSANTE ROSSO con la croce bianca (tab_x_rossa).
+  - L'EDITOR SI CHIAMA exeditor (/exwin/bin/exeditor, exwin/bin/exeditor/),
+    0.005; applicazioni.txt, apertura predefinita dei file, EXBrowser e le
+    prove aggiornati. ! Un .lnk o un profilo vecchio che nomina /exwin/bin/edit
+    non trova piu' il programma: su un sistema installato netupdate porta il
+    nuovo e il vecchio resta finche' non si toglie.
+  - IL JPEG PROGRESSIVO (SOF2) si legge: DC e AC, prima passata e
+    raffinamento, EOBRUN, restart, scansioni di una componente sulla sua
+    griglia. tools/prova_jpg.sh (sull'host, contro ImageMagick) 8/8, e uno
+    sfondo 1920x1080 progressivo. Era la causa degli sfondi e delle foto del
+    web che non si aprivano.
+  - LE CARTELLE DEL PROFILO: Documents, Images, Media, fatte da pm alla prima
+    volta con un .lnk sulla scrivania ciascuna; il .lnk di una cartella apre il
+    file manager, si disegna come cartella con la freccia, e «Cancella» toglie
+    solo il collegamento, dicendolo. pm 0.013. (Da provare in QEMU.)
+
+! LA CODA (30 settembre 2026, chiesta dall'utente). ORDINE DI LAVORO: prima
+  3 e 4 (exide) e 2 (selezione nel navigatore), che sono piccoli; poi 1 (RTF),
+  che e' di giorni; il 5 quando c'e' tempo:
+  1. @RTF exeditor in modalita' RTF, «base» (scelta dell'utente): apre e salva
+     .rtf compatibili con WordPad/LibreOffice; grassetto, corsivo,
+     sottolineato, carattere, corpo, colore, allineamento; barra di pulsanti e
+     Ctrl+B/I/U. Serve un controllo nuovo in exwin.so («testoricco»: pezzi di
+     testo con stile, a capo, cursore, selezione, scorrimento), poi il lettore
+     e lo scrittore RTF, poi l'editor. A tappe, ognuna con la sua prova.
+  2. @NAV-SELEZIONE selezionare del testo in EXBrowser e copiarlo negli
+     appunti, per incollarlo in exeditor o exide.
+  3. @EXIDE-SCORRI le barre di scorrimento nell'area del sorgente di exide.
+     E le finestre di exide, compresa quella del sorgente, si devono poter
+     ridimensionare (chiesto lo stesso giorno).
+  4. @EXIDE-PROPRIETA menu Strumenti > «Autoaggiorna Proprieta», una voce con
+     la spunta, salvata nella configurazione: se e' accesa, uscire da una
+     casella applica la proprieta' senza premere Applica. E il clic del mouse
+     nelle caselle delle proprieta' deve mettere il cursore dove si clicca.
+  5. @NAV-WIKI il resto per Wikipedia: display:grid, :where/:has e i :not()
+     composti, ::before/::after, overflow e clip; e i tempi di script e
+     impaginazione (7-8 s ciascuno in QEMU), da misurare con un profilo.
+
+2026-09-30 claude-A — @RTF tappa 1 FATTA: il modello e l'RTF (lib/exrtf/exrtf.h, rtf.c).
+  Il documento e' testo UTF-8 + pezzi con stile (famiglia serif/sans/mono col
+  nome del carattere, corpo, grassetto, corsivo, sottolineato, colore) +
+  allineamento per paragrafo. Il lettore capisce quel che WordPad e LibreOffice
+  scrivono per queste cose e salta il resto coi suoi gruppi (\* , stylesheet,
+  info, pict, header...); \'hh in Windows-1252 e \uN (saltando i caratteri di
+  riserva). Una famiglia non detta (\fnil, LibreOffice per Liberation Mono) si
+  ricava dal nome. Lo scrittore produce un RTF semplice. Niente libc: la
+  memoria e' di chi chiama. Prova: tools/prove/rtfprova.c, 17/17; e con
+  LibreOffice sull'host: un suo RTF si legge giusto, e il nostro lui lo apre
+  con grassetto, corsivo, sottolineato, colore, carattere, corpo e centratura.
+  ! TAPPE CHE RESTANO: 2) il controllo «testoricco» in exwin.so (disegno a
+  pezzi con i caratteri della famiglia e del corpo — ex_font_trova c'e' gia' —,
+  a capo per parole, cursore e selezione, scrittura, scorrimento); 3) exeditor:
+  apre un .rtf nel controllo nuovo, salva in RTF, barra con B/I/U, carattere,
+  corpo, colore, allineamento, Ctrl+B/I/U; 4) la libreria in exrtf.so (o in
+  exwin.so) quando l'editor la usa, e l'ISO.
+
+2026-09-30 claude-A — coda punti 2, 3, 4 FATTI, e i permessi di toolinst:
+  - @NAV-SELEZIONE: in EXBrowser si trascina sul testo della pagina (non su
+    un collegamento, che si segue), la scelta si disegna bianco su blu, Ctrl+C
+    la copia negli appunti (parole separate da spazio, righe da a capo),
+    Ctrl+A sceglie tutto. Premere nella pagina toglie il fuoco alla barra
+    dell'indirizzo: prima Ctrl+C era della casella, e copiava il suo niente.
+    tools/prova_selezione.sh: EXBrowser -> Ctrl+C -> exeditor -> Ctrl+V ->
+    Ctrl+S, e il file letto da fuori contiene la riga. OK.
+  - ! EX_X ED EX_Y TENGONO IL SEGNO (lib/exwin/exwin.h). Un trascinamento che
+    esce dalla finestra a sinistra o in alto continua a mandare movimenti con
+    x o y negativa, e la macro li leggeva a 16 bit senza segno: -2 = 65534, e
+    la scelta nel navigatore saltava dall'inizio della riga all'ultima parola.
+    Pennello e Immagini lo correggevano ciascuno a mano (tolto). Si ricompila
+    chi usa la macro: nel Makefile le app dipendono gia' da EXWIN_HDR.
+  - ! LA PRIMA STESURA DELLA PROVA partiva da x=20 e il clic cadeva sul bordo
+    della finestra (il puntatore di QEMU arriva 10 px prima): nessun evento a
+    nessuno, e sembrava un difetto della selezione. Ora si parte a destra
+    della riga e si trascina a sinistra FIN OLTRE il bordo, che prova anche
+    il segno.
+  - tools/prova_pennello_veloce.sh diceva «server intasato» su un sistema
+    fermo: il quadrato dove cerca il puntatore partiva da (396, 296) e la
+    punta sta a (390, 290), sempre per i 10 px. Allargato; passa.
+  - @EXIDE-SCORRI: le aree di testo del toolkit hanno le barre di
+    scorrimento (verticale e orizzontale, 14 px, pollice trascinabile, clic
+    sopra/sotto = una pagina); exide 0.019 ha tutte le finestre
+    ridimensionabili: la principale (la tela prende lo spazio), Sorgente,
+    Manuale, Shell, l'editor degli eventi.
+  - @EXIDE-PROPRIETA: Strumenti > «Autoaggiorna Proprieta», voce con la
+    spunta (ex_menu_spunta, nuova in exwin.so), salvata in
+    $HOME/.app/exide/impostazioni.txt; accesa, uscire da una casella applica
+    la proprieta' senza Applica. Il clic nelle caselle mette gia' il cursore
+    dove si clicca (casella_clic del toolkit).
+    ! exide e' provato solo in parte: si costruisce e parte; autoaggiorna e
+    ridimensionamenti sono DA PROVARE in QEMU.
+  - @PERMESSI-TOOLINST: i programmi installati da toolinst nascevano 0644 e
+    solo root li eseguiva (gcc, fbc...). toolinst 0.002 fa chmod 0755 sui file
+    ELF e sugli script #! dopo averli copiati. ! Su un sistema gia'
+    installato i file vecchi restano 0644: si reinstalla il pacchetto, o
+    chmod a mano da root.
+
+2026-09-30 13:24 claude-B — @EXILLA-JS (tappa 4 di Exilla) IN CORSO, fermato per riavvio:
+  - FATTO: la shell js di SpiderMonkey si costruisce per EX-OS
+    (tools/exilla/js-costruisci.sh configure && ... build -j4; mozconfig in
+    tools/exilla/mozconfig-js; oggetti in cross_build/exilla-obj/js) e GIRA
+    dentro EX-OS: js -e "print(6*7,...)" corretto.
+  - Patch a firefox-main in tools/exilla/patch/ (19), fatte con
+    tools/exilla/tocca.sh + patch-crea.sh; crate Rust forniti con
+    tools/exilla/rust-fornitori.py; std Rust nel sysroot con
+    tools/rust-exos/std/installa-sysroot.sh e tools/rust-exos/rustc-exos.
+  - DA FARE: 1) rilanciare la costruzione (e' stata interrotta a meta' con
+    CFLAGS -march=pentium-mmx); 2) tools/exilla/prova-js.sh (prova-js.js:
+    classi, regex, BigInt, Promise, GC...); la prima prova falliva perche'
+    ungetc teneva 1 carattere: corretto in libc.c (4), libc.a gia' rifatta;
+    3) diario in tools/exilla/leggimi.md e messaggio-commit.txt.
+  - Cura vera da fare in libc.h (preso da claude-A): nascondere Mutex/
+    Condizione/Semaforo a chi vuole solo POSIX; per ora js::Mutex nei file
+    di SpiderMonkey (tools/exilla/qualifica-mutex.py).
+
+2026-09-30 claude-A — exide provato in QEMU, e @RTF tappe 2 e 3 FATTE:
+  - tools/prova_exide_autoaggiorna.sh (3/3): la voce si accende da tastiera
+    (F10, frecce), impostazioni.txt dice «autoaggiorna = 1», al secondo
+    avvio la spunta c'e' (le due foto differiscono solo per il segno, 16
+    pixel), e cambiata la larghezza nella casella, Tab la applica senza
+    Applica.
+  - ! LA PROVA HA TROVATO IL DIFETTO DEL CLIC NELLA CASELLA (chiesto
+    dall'utente): exide chiamava ex_fuoco_via a OGNI EXM_MOUSE_GIU, e il
+    toolkit manda quel messaggio anche per un clic in una casella, DOPO
+    averle dato il fuoco e messo il cursore. Cliccata, la casella tornava
+    sorda: niente cursore, i tasti non andavano da nessuna parte. Ora il
+    fuoco si toglie solo per un clic sulla tela.
+  - E LA TELA NON DEBORDA PIU': un modulo piu' largo della tela (500 su una
+    tela stretta) si disegnava sopra l'elenco delle proprieta'. exwin.so
+    0.012 offre ex_ritaglio(f, x, y, w, h): lo stesso ritaglio che il
+    toolkit usava per le finestre MDI, alle applicazioni che disegnano da se'
+    una parte della finestra. Uno solo, non una pila; chi lo mette lo toglie
+    (w o h 0) prima di tornare.
+  - @RTF TAPPA 2: le modifiche del modello (lib/exrtf/rtf.c: inserisci,
+    cancella, cambia uno stile su un tratto, allinea i paragrafi, lo stile
+    in un punto) e la VISTA (lib/exrtf/vista.c, exrtf_vista.h): righe a capo
+    per parole, ogni pezzo col suo carattere, corpo, colore e sottolineato,
+    allineamento a sinistra, centro, destra e giustificato; cursore,
+    scelta col mouse e con Maiusc, Ctrl+frecce per parole, doppio clic sulla
+    parola, appunti (testo semplice), rotella, barra di scorrimento.
+    ! NON E' UN CONTROLLO DEL TOOLKIT: i controlli di exwin.so non hanno una
+    procedura loro, e uno che conoscesse i pezzi con stile legherebbe il
+    toolkit al modello. La vista disegna con le chiamate pubbliche
+    (ex_riempi, ex_scrivi_con, ex_font_trova) e il programma le passa i
+    messaggi del suo rettangolo, come EXBrowser con la pagina. Niente libc.
+    Prove sull'host: tools/prove/rtfprova.c 30/30 (13 nuove sulle modifiche),
+    tools/prove/rtfvistaprova.c 29/29 con un exwin finto (lettere larghe
+    meta' del corpo: a capo, cursore e clic sono numeri da confrontare).
+  - @RTF TAPPA 3: ExEditor 0.006. Un file che comincia con {\rtf, o uno
+    nuovo che finisce in .rtf, si apre in modalita' RTF; File > «Nuovo
+    documento RTF». La scheda RTF nasconde l'area di testo e mostra la barra
+    di formato (G C S come spunte che dicono lo stile sotto il cursore;
+    carattere Serif/Sans/Mono; corpo; colore; Sin Cen Des Giu) e la vista;
+    menu Formato; Ctrl+B/I/U; si salva in RTF. Dopo un tasto si ridisegnano
+    solo la vista e la riga di stato (niente lampo grigio a ogni lettera).
+    tools/prova_rtf.sh: un RTF di WordPad si apre con i suoi stili, si
+    scrive in fondo una riga con Ctrl+B, Ctrl+S, e il file riletto
+    sull'host ha la riga in grassetto e tutti gli stili di prima.
+    ! COSA MANCA, dichiarato nel sorgente: annulla, cerca e sostituisci nei
+    documenti RTF; immagini, tabelle ed elenchi di un file letto (si legge
+    il loro testo). Si scrive in ASCII, come nell'area di testo.
+    ! TAPPA 4 RIMANDATA: rtf.c e vista.c stanno dentro exeditor. Diventano
+    exrtf.so quando un secondo programma li vorra' (il Makefile lo dice).
+  - Ripassate dopo i cambi di oggi: prova_rtf 6/6, prova_edit_schede,
+    prova_edit_cerca, prova_selezione, prova_passaggio, prova_onclick,
+    prova_pennello_veloce, prova_desktop (anche la parte 3: Documents,
+    Images, Media e i loro .lnk, letti dal disco). Resta DA PROVARE su un
+    sistema installato: toolinst e i permessi 0755.
+
+! LA CODA DEL NAVIGATORE (30 settembre 2026, chiesta dall'utente: «procedi
+  con exbrowser e i file immagini non supportati, implementa le parti
+  mancanti di css html4 html5 e javascript, ottimizza il caricamento»).
+  Ordine: dal piu' misurabile al piu' largo.
+  1. @IMG-FORMATI: WebP (VP8L senza perdita, VP8 con perdita, alfa), JPEG
+     CMYK/Adobe, BMP nel navigatore (la libreria lo legge gia'), SVG di base
+     (forme, percorsi, colori pieni). Prova sull'host contro ImageMagick.
+  2. @NAV-VELOCE: misurare prima (rete, script, css, impaginazione) su due o
+     tre siti veri, poi togliere il tempo dove sta.
+  3. @NAV-CSS: display:grid, :where/:is/:has, ::before/::after col
+     contenuto generato, overflow e clip.
+  4. @NAV-HTML/@NAV-JS: quel che le pagine vere chiedono e manca, trovato
+     guardando gli errori sulla seriale, non indovinato.
+
+2026-09-30 14:31 claude-B — @EXILLA-JS FATTO (tappa 4 di Exilla): SpiderMonkey gira dentro
+  EX-OS, tools/exilla/prova-js.sh 17/17 sul kernel 0.227. Diario in
+  tools/exilla/leggimi.md. Prossimo: libc.h (Mutex nascosto a chi vuole solo
+  POSIX), poi tappa 5 (NSPR e NSS).

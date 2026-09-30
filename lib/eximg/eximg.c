@@ -23,7 +23,11 @@
 /* -----------------------------------------------------------------------------
  * La memoria della decodifica in corso
  *
- * ! OTTO BLOCCHI BASTANO E IL LIMITE E' DICHIARATO. Il PNG ne chiede tre — gli
+ * ! 64 BLOCCHI DAL 30 SETTEMBRE 2026, e prima otto: il WebP ne vuole di piu'
+ * (i pezzi della sua arena, i piani del VP8, i pixel), e otto erano la
+ * misura del PNG.
+ *
+ * ! IL LIMITE E' DICHIARATO. Il PNG ne chiede tre — gli
  * IDAT concatenati, le righe grezze, i pixel — e un decodificatore che ne
  * volesse piu' di otto sta facendo qualcosa che va guardato, non allargato.
  *
@@ -32,7 +36,7 @@
  * decodificatori. Qui non c'e' nessuno che lo faccia: un'applicazione grafica
  * di EX-OS ha un filo solo, e le immagini le carica una per volta.
  * --------------------------------------------------------------------------- */
-#define BLOCCHI_MAX     8
+#define BLOCCHI_MAX     64
 
 static void        *g_blocchi[BLOCCHI_MAX];
 static unsigned int g_quanti = 0;
@@ -70,6 +74,7 @@ static const EximgDecodificatore g_decodificatori[] = {
     eximg_jpg,
     eximg_gif,
     eximg_ico,
+    eximg_webp,     /* 30 settembre 2026, @IMG-FORMATI */
     eximg_bmp,      /* ultimo: il BMP il toolkit lo legge da se', e qui
                      * arriva solo chi vuole i PIXEL (@PAINT) */
     0

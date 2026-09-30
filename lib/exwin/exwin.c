@@ -491,6 +491,9 @@ typedef struct {
     char         testo[MENU_TESTO_MAX];
     unsigned int id;                    /* 0 = separatore */
     int          sub;                   /* >= 0: apre la tendina laterale sub */
+    /* 0 = a plain entry; 1 = one with a check mark, off; 2 = on
+     * (ex_menu_spunta, 30 September 2026) */
+    unsigned char spunta;
 } MenuVoce;
 
 /* ! LE TENDINE LATERALI (27 settembre 2026, per Calctor): una voce che ne
@@ -998,6 +1001,34 @@ static void finestra_chiedi(unsigned int tipo, unsigned int id)
 
 void ex_finestra_attiva(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
 
+/* One control drawn again and shown, alone: see ridisegna_controllo for
+ * which ones can (terminal, text area, list, label). 0 = it could not: the
+ * caller redraws the window, as it would have. */
+static int ridisegna_controllo(Oggetto *o);
+int ex_ridisegna(ExFinestra c)
+{
+    return ridisegna_controllo(ogg(c));
+}
+
+/* A menu entry with a check mark: `acceso` 1 shows it, 0 hides it; the entry
+ * keeps the room for it either way, so it does not move when it changes. The
+ * application decides what the mark means and flips it on EXM_COMANDO. */
+void ex_menu_spunta(ExFinestra menu, unsigned int id, int acceso)
+{
+    Menu *M = menu_di(ogg(menu));
+    unsigned int t, i;
+
+    if (!M || id == 0) return;
+    for (t = 0; t < M->n; t++)
+        for (i = 0; i < M->titolo[t].n; i++)
+            if (M->titolo[t].voce[i].id == id)
+                M->titolo[t].voce[i].spunta = acceso ? 2 : 1;
+    for (t = 0; t < M->nsub; t++)
+        for (i = 0; i < M->sub[t].n; i++)
+            if (M->sub[t].voce[i].id == id)
+                M->sub[t].voce[i].spunta = acceso ? 2 : 1;
+}
+
 void ex_mouse_passaggio(ExFinestra f, int si)
 {
     Oggetto   *r = radice(f);
@@ -1079,7 +1110,7 @@ int ex_apri_file(const char *percorso, char *prog, unsigned int max)
             e[k] = (*punto >= 'A' && *punto <= 'Z') ? (char)(*punto + 32) : *punto;
         e[k] = '\0';
     }
-    if (!tipi_programma(e, p, sizeof(p))) snprintf(p, sizeof(p), "/exwin/bin/edit");
+    if (!tipi_programma(e, p, sizeof(p))) snprintf(p, sizeof(p), "/exwin/bin/exeditor");
     if (prog && max) snprintf(prog, max, "%s", p);
 
     snprintf(copia, sizeof(copia), "%s", percorso);
@@ -1197,7 +1228,8 @@ int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
     if (sy < 0) sy = 0;
 
     g_cm_scelta = -2;
-    p = ex_crea("finestra", "", EX_BORDO | EX_SOPRA | EX_MODALE, sx, sy, w, h, 0, 0, cm_proc);
+    p = ex_crea("finestra", "", EX_BORDO | EX_SOPRA | EX_MODALE | EX_COMPARSA,
+                sx, sy, w, h, 0, 0, cm_proc);
     if (!p) return -1;
     g_cm_lista = ex_crea("lista", "", EX_FIGLIO, 2, 2, w - 4, h - 4, p, 1, 0);
     for (i = 0; i < g_cm_n; i++) ex_lista_aggiungi(g_cm_lista, voci[g_cm_indice[i]]);
@@ -1418,6 +1450,19 @@ static void clip_stringi(int x, int y, int w, int h)
 
 static void clip_togli(void) { g_clip = 0; }
 
+/* The same clip, for a program that draws a part of its window by itself and
+ * must not spill out of it (30 September 2026): exide's canvas, where a form
+ * wider than the canvas covered the property list. One rectangle, in the
+ * window's pixels as ex_riempi takes them; w or h 0 takes it away, and a
+ * program that sets it takes it away before returning from its drawing -
+ * the toolkit's own drawing comes after. */
+void ex_ritaglio(ExFinestra f, int x, int y, int w, int h)
+{
+    (void)f;
+    if (w <= 0 || h <= 0) clip_togli();
+    else clip_metti(x, y, w, h);
+}
+
 static int clip_dentro(int x, int y)
 {
     if (!g_clip) return 1;
@@ -1587,6 +1632,35 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
         memcpy(r->pix + (unsigned int)(y + j) * r->passo_px + (unsigned int)x,
                px + (unsigned int)j * passo,
                (unsigned int)w * sizeof(unsigned int));
+}
+
+/* The same, blending each pixel by its alpha over what is already there
+ * (30 September 2026, @IMG-FORMATI): a transparent logo of a web page over
+ * the page's own background, whatever colour it is. Alpha 255 is copied, 0
+ * is skipped: a photo costs one test per pixel. */
+void ex_pixmap_fuso(ExFinestra f, int x, int y, int w, int h,
+                    const unsigned int *px, unsigned int passo)
+{
+    Oggetto *r = radice(f);
+    int i, j, x0 = x, y0 = y;
+
+    if (!r || !r->pix || !px || w <= 0 || h <= 0) return;
+    if (passo == 0) passo = (unsigned int)w;
+    if (!ritaglia(r, &x, &y, &w, &h)) return;
+    px += (unsigned int)(y - y0) * passo + (unsigned int)(x - x0);
+    for (j = 0; j < h; j++) {
+        const unsigned int *s = px + (unsigned int)j * passo;
+        unsigned int       *d = r->pix + (unsigned int)(y + j) * r->passo_px + (unsigned int)x;
+
+        for (i = 0; i < w; i++) {
+            unsigned int v = s[i], a = v >> 24, o = d[i];
+            if (a == 255) { d[i] = v; continue; }
+            if (a == 0) continue;
+            d[i] = (fondi_canale((v >> 16) & 0xFFu, (o >> 16) & 0xFFu, a) << 16) |
+                   (fondi_canale((v >> 8) & 0xFFu, (o >> 8) & 0xFFu, a) << 8) |
+                   fondi_canale(v & 0xFFu, o & 0xFFu, a);
+        }
+    }
 }
 
 void ex_riquadro_disegna(ExFinestra f, int x, int y, int w, int h, unsigned int c)
@@ -2568,6 +2642,11 @@ void ex_aggiorna(ExFinestra f)
  * ex_aggiorna(): they may lie over the control.
  * ============================================================================= */
 static void disegna_oggetto(Oggetto *o);
+/* The scroll bars of a text area (30 September 2026): see area_barre_disegna. */
+#define AREA_BARRA  14
+static void area_barre_disegna(const Oggetto *o, Area *A, int x, int y);
+static int  g_area_barra = 0;       /* 1 vertical, 2 horizontal: a thumb dragged */
+static int  g_area_presa = 0;       /* where the thumb was taken */
 static void disegna_figli(ExFinestra padre);
 
 static int ridisegna_controllo(Oggetto *o)
@@ -2578,8 +2657,13 @@ static int ridisegna_controllo(Oggetto *o)
     int x0, y0, x1, y1, i;
 
     if (!o || !o->usato || !(o->stile & EX_VISIBILE) || g_server < 0) return 0;
+    /* ! A LABEL IS ACCEPTED TOO (30 September 2026), with its background
+     * painted grey first: it does not paint its own rectangle, but in this
+     * toolkit a label always sits on the grey of its window (see the note on
+     * blending in punto_fuso). It is what lets a status line change without
+     * redrawing the window it sits in — EXBrowser's page. */
     if (o->classe != CL_TERMINALE && o->classe != CL_AREA &&
-        o->classe != CL_LISTA) return 0;
+        o->classe != CL_LISTA && o->classe != CL_ETICHETTA) return 0;
 
     h  = (ExFinestra)(o - g_ogg + 1);
     rh = radice_h(h);
@@ -2602,6 +2686,7 @@ static int ridisegna_controllo(Oggetto *o)
     if (y1 > r->h) y1 = r->h;
     if (x1 <= x0 || y1 <= y0) return 1;         /* nothing of it is visible */
 
+    if (o->classe == CL_ETICHETTA) ex_riempi(rh, o->x, o->y, o->w, o->h, EX_GRIGIO);
     disegna_oggetto(o);
     disegna_figli(h);
     menu_sopra(rh);
@@ -2846,6 +2931,15 @@ static void menu_geometria(Menu *M)
 
 /* La larghezza di una tendina: la voce piu' lunga, con la scorciatoia contata
  * a destra e tre spazi in mezzo perche' non si tocchino. */
+/* Room for the check mark, in a drop-down that has entries with one. */
+static int menu_spazio_spunta(const MenuTitolo *T)
+{
+    unsigned int i;
+
+    for (i = 0; i < T->n; i++) if (T->voce[i].spunta) return 12;
+    return 0;
+}
+
 static int menu_tendina_w(const MenuTitolo *T)
 {
     unsigned int i;
@@ -2876,7 +2970,7 @@ static int menu_tendina_w(const MenuTitolo *T)
 
         if (l > max) max = l;
     }
-    return max + 20;
+    return max + 20 + menu_spazio_spunta(T);
 }
 
 static int menu_tendina_h(const MenuTitolo *T)
@@ -2940,6 +3034,7 @@ static void menu_voci_disegna(ExFinestra f, const MenuTitolo *T, int tx, int ty,
                               int tw, int evidenziata)
 {
     unsigned int i;
+    int sp = menu_spazio_spunta(T);
 
     for (i = 0; i < T->n; i++) {
         int ry = ty + 3 + (int)i * MENU_RIGA_H;
@@ -2963,10 +3058,17 @@ static void menu_voci_disegna(ExFinestra f, const MenuTitolo *T, int tx, int ty,
             if (l >= sizeof(sinistra)) l = sizeof(sinistra) - 1;
             memcpy(sinistra, t, l);
             sinistra[l] = '\0';
-            ex_scrivi(f, tx + 8, ry, sinistra, colore);
+            ex_scrivi(f, tx + 8 + sp, ry, sinistra, colore);
             ex_scrivi(f, tx + tw - 8 - larg(tab + 1), ry, tab + 1, colore);
         } else {
-            ex_scrivi(f, tx + 8, ry, t, colore);
+            ex_scrivi(f, tx + 8 + sp, ry, t, colore);
+        }
+        if (T->voce[i].spunta == 2) {           /* the check mark, drawn */
+            static const signed char dy[8] = { 7, 8, 9, 8, 7, 6, 5, 4 };
+            int k;
+
+            for (k = 0; k < 8; k++)
+                ex_riempi(f, tx + 6 + k, ry + dy[k], 1, 2, colore);
         }
         if (T->voce[i].sub >= 0) ex_scrivi(f, tx + tw - 8 - larg(">"), ry, ">", colore);
     }
@@ -3615,6 +3717,30 @@ static int tab_zona(const Oggetto *o, int x, int *k)
 }
 
 
+/* =============================================================================
+ * tab_x_rossa — the close button of a tab (30 September 2026)
+ *
+ * ! A BUTTON, NOT A LETTER. It was an "x" written in the tab's text colour,
+ * and the user asked for something that reads as a button: a small red
+ * square with a raised edge and a white cross, as the close buttons of the
+ * systems people know. It sits in the same place the click already counts as
+ * "close" (tab_zona). A tab that is not the chosen one gets a duller red, so
+ * the chosen one still stands out.
+ * ============================================================================= */
+#define TAB_X_LATO      12
+
+static void tab_x_rossa(ExFinestra f, int bx, int by, int scelta)
+{
+    int k, n = TAB_X_LATO;
+
+    ex_riempi(f, bx, by, n, n, scelta ? 0x00D03030 : 0x00B06060);
+    ex_rilievo(f, bx, by, n, n);
+    for (k = 0; k < n - 6; k++) {               /* the cross, two pixels thick */
+        ex_riempi(f, bx + 3 + k, by + 3 + k, 2, 1, EX_BIANCO);
+        ex_riempi(f, bx + n - 5 - k, by + 3 + k, 2, 1, EX_BIANCO);
+    }
+}
+
 static void disegna_oggetto(Oggetto *o)
 {
     int ox, oy, x, y;
@@ -3934,6 +4060,7 @@ static void disegna_oggetto(Oggetto *o)
             if (sotto[0] == '\t') sotto[0] = ' ';
             if (sotto[0]) ex_scrivi(o->padre, cx, cy, sotto, EX_BIANCO);
         }
+        area_barre_disegna(o, A, x, y);
         break;
     }
 
@@ -4194,8 +4321,8 @@ static void disegna_oggetto(Oggetto *o)
                 }
                 ex_scrivi(o->padre, px + 8, y + su + (o->h - su - 16) / 2, t, EX_NERO);
                 if (V->schede)
-                    ex_scrivi(o->padre, px + lw - TAB_CHIUDI_W - 2, y + su + (o->h - su - 16) / 2,
-                              "x", i == V->sel ? EX_NERO : EX_OMBRA);
+                    tab_x_rossa(o->padre, px + lw - TAB_CHIUDI_W - 1,
+                                y + su + (o->h - su - TAB_X_LATO) / 2, i == V->sel);
                 px += lw;
             }
             if (frecce) {
@@ -4749,8 +4876,8 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         A->ogg       = (ExFinestra)(i + 1);
         A->righe_max = rmax;
         A->col_max   = cmax;
-        A->righe = (unsigned int)(h / AREA_RIGA_H);
-        A->cols  = (unsigned int)((w - 4) / AREA_CAR_W);
+        A->righe = (unsigned int)((h - AREA_BARRA) / AREA_RIGA_H);
+        A->cols  = (unsigned int)((w - 4 - AREA_BARRA) / AREA_CAR_W);
         if (A->righe == 0 || A->cols == 0) { o->usato = 0; return 0; }
 
         A->testo = avanzo ? avanzo : (char *)malloc(A->righe_max * A->col_max);
@@ -4971,7 +5098,8 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
                 | ((stile & EX_SFONDO) ? WIN_ST_SFONDO : 0)
                 | ((stile & EX_SOPRA)  ? WIN_ST_SOPRA  : 0)
                 | ((stile & EX_MODALE) ? WIN_ST_MODALE : 0)
-                | ((stile & EX_RIDIM)  ? WIN_ST_RIDIM  : 0);
+                | ((stile & EX_RIDIM)  ? WIN_ST_RIDIM  : 0)
+                | ((stile & EX_COMPARSA) ? WIN_ST_COMPARSA : 0);
         strncpy(c.titolo, o->titolo, WIN_TITOLO_LEN - 1);
 
         if (ipc_send((unsigned int)g_server, WIN_MSG_CREA, &c, sizeof(c)) < 0) {
@@ -5188,8 +5316,8 @@ void ex_misura(ExFinestra f, int w, int h)
     } else if (o->classe == CL_AREA) {
         Area *A = area_di(o);
         if (A) {
-            A->righe = (unsigned int)(h / AREA_RIGA_H);
-            A->cols  = (unsigned int)((w - 4) / AREA_CAR_W);
+            A->righe = (unsigned int)((h - AREA_BARRA) / AREA_RIGA_H);
+            A->cols  = (unsigned int)((w - 4 - AREA_BARRA) / AREA_CAR_W);
             if (A->righe == 0) A->righe = 1;
             if (A->cols  == 0) A->cols  = 1;
             area_segui(A);
@@ -5348,6 +5476,132 @@ static void area_punta(Oggetto *co, int x, int y)
     A->cy = r;
     A->cx = (c > area_lung(A, r)) ? area_lung(A, r) : c;
     area_segui(A);
+}
+
+/* =============================================================================
+ * THE SCROLL BARS OF A TEXT AREA (30 September 2026, asked for exide's source)
+ *
+ * ! ALWAYS THERE, both of them, and not only when the text overflows: a bar
+ * that appears when the text grows would change how many columns fit while
+ * the user types, and the line under the caret would jump. The space is
+ * taken once, at creation (AREA_BARRA off rows and columns).
+ *
+ * They move the VIEW (top, left), not the caret, as scroll bars do in every
+ * editor: the arrows by one line (four columns), the gutter by a page, the
+ * thumb by dragging. The geometry is the same as the "scorrimento" control's.
+ * ============================================================================= */
+static void barra_geo(int lun, int sp, unsigned int massimo, unsigned int pagina,
+                      unsigned int valore, int *gola, int *cp, int *cl)
+{
+    unsigned int ampiezza = massimo + pagina;
+    int tot = lun - 2 * sp;
+
+    if (tot < 8) tot = 8;
+    *gola = tot;
+    *cl = (ampiezza > 0) ? (int)((unsigned int)tot * pagina / ampiezza) : tot;
+    if (*cl < 8)   *cl = 8;
+    if (*cl > tot) *cl = tot;
+    if (valore > massimo) valore = massimo;
+    *cp = massimo ? (int)((unsigned int)(tot - *cl) * valore / massimo) : 0;
+}
+
+static void barra_disegna(ExFinestra f, int x, int y, int lun, int sp, int oriz,
+                          unsigned int massimo, unsigned int pagina, unsigned int valore)
+{
+    int gola, cp, cl;
+
+    barra_geo(lun, sp, massimo, pagina, valore, &gola, &cp, &cl);
+    if (oriz) {
+        ex_riempi(f, x, y, lun, sp, EX_GRIGIO_SC);
+        ex_riempi(f, x, y, sp, sp, EX_GRIGIO);        ex_rilievo(f, x, y, sp, sp);
+        triangolino(f, x + 3, y + 3, sp - 6, 2, EX_NERO);
+        ex_riempi(f, x + lun - sp, y, sp, sp, EX_GRIGIO); ex_rilievo(f, x + lun - sp, y, sp, sp);
+        triangolino(f, x + lun - sp + 3, y + 3, sp - 6, 3, EX_NERO);
+        ex_riempi(f, x + sp + cp, y, cl, sp, EX_GRIGIO); ex_rilievo(f, x + sp + cp, y, cl, sp);
+    } else {
+        ex_riempi(f, x, y, sp, lun, EX_GRIGIO_SC);
+        ex_riempi(f, x, y, sp, sp, EX_GRIGIO);        ex_rilievo(f, x, y, sp, sp);
+        triangolino(f, x + 3, y + 3, sp - 6, 0, EX_NERO);
+        ex_riempi(f, x, y + lun - sp, sp, sp, EX_GRIGIO); ex_rilievo(f, x, y + lun - sp, sp, sp);
+        triangolino(f, x + 3, y + lun - sp + 3, sp - 6, 1, EX_NERO);
+        ex_riempi(f, x, y + sp + cp, sp, cl, EX_GRIGIO); ex_rilievo(f, x, y + sp + cp, sp, cl);
+    }
+}
+
+/* How far the view can go: rows past the page, and columns past the longest
+ * line (plus one, for the caret after the last character). */
+static void area_massimi(Area *A, unsigned int *mv, unsigned int *mo)
+{
+    unsigned int i, lunga = 0;
+
+    for (i = 0; i < A->n; i++) {
+        unsigned int l = area_lung(A, i);
+        if (l > lunga) lunga = l;
+    }
+    *mv = (A->n > A->righe) ? A->n - A->righe : 0;
+    *mo = (lunga + 1 > A->cols) ? lunga + 1 - A->cols : 0;
+}
+
+static void area_barre_disegna(const Oggetto *o, Area *A, int x, int y)
+{
+    unsigned int mv, mo;
+    int bx = x + o->w - AREA_BARRA - 1, hy = y + o->h - AREA_BARRA - 1;
+
+    if (!A) return;
+    area_massimi(A, &mv, &mo);
+    barra_disegna(o->padre, bx, y + 1, o->h - AREA_BARRA - 2, AREA_BARRA, 0, mv, A->righe, A->top);
+    barra_disegna(o->padre, x + 1, hy, o->w - AREA_BARRA - 2, AREA_BARRA, 1, mo, A->cols, A->left);
+    ex_riempi(o->padre, bx, hy, AREA_BARRA, AREA_BARRA, EX_GRIGIO);
+}
+
+/* A press on a bar: 1 if it was on one (the view moved, or a drag began). */
+static int area_barra_clic(Oggetto *co, int x, int y)
+{
+    Area *A = area_di(co);
+    int   ox, oy, lx, ly, vert, pos, lun, gola, cp, cl;
+    unsigned int mv, mo, massimo, pagina, *val, passo;
+
+    if (!A) return 0;
+    origine(co, &ox, &oy);
+    lx = x - (ox + co->x);
+    ly = y - (oy + co->y);
+    vert = (lx >= co->w - AREA_BARRA - 1 && ly < co->h - AREA_BARRA - 1);
+    if (!vert && !(ly >= co->h - AREA_BARRA - 1 && lx < co->w - AREA_BARRA - 1))
+        return (lx >= co->w - AREA_BARRA - 1 && ly >= co->h - AREA_BARRA - 1);
+
+    area_massimi(A, &mv, &mo);
+    if (vert) { pos = ly - 1; lun = co->h - AREA_BARRA - 2; massimo = mv; pagina = A->righe; val = &A->top;  passo = 1; }
+    else      { pos = lx - 1; lun = co->w - AREA_BARRA - 2; massimo = mo; pagina = A->cols;  val = &A->left; passo = 4; }
+    barra_geo(lun, AREA_BARRA, massimo, pagina, *val, &gola, &cp, &cl);
+
+    if (pos < AREA_BARRA)                       *val = (*val > passo) ? *val - passo : 0;
+    else if (pos >= lun - AREA_BARRA)           *val += passo;
+    else if (pos < AREA_BARRA + cp)             *val = (*val > pagina) ? *val - pagina : 0;
+    else if (pos >= AREA_BARRA + cp + cl)       *val += pagina;
+    else { g_area_barra = vert ? 1 : 2; g_area_presa = pos - AREA_BARRA - cp; }
+    if (*val > massimo) *val = massimo;
+    return 1;
+}
+
+/* The thumb dragged: the view follows the pointer. */
+static void area_barra_trascina(Oggetto *co, int x, int y)
+{
+    Area *A = area_di(co);
+    int   ox, oy, pos, lun, gola, cp, cl, libero, nuovo;
+    unsigned int mv, mo, massimo, pagina, *val;
+
+    if (!A || !g_area_barra) return;
+    origine(co, &ox, &oy);
+    area_massimi(A, &mv, &mo);
+    if (g_area_barra == 1) { pos = y - (oy + co->y) - 1; lun = co->h - AREA_BARRA - 2; massimo = mv; pagina = A->righe; val = &A->top; }
+    else                   { pos = x - (ox + co->x) - 1; lun = co->w - AREA_BARRA - 2; massimo = mo; pagina = A->cols;  val = &A->left; }
+    barra_geo(lun, AREA_BARRA, massimo, pagina, *val, &gola, &cp, &cl);
+    libero = gola - cl;
+    if (libero <= 0 || massimo == 0) { *val = 0; return; }
+    nuovo = pos - AREA_BARRA - g_area_presa;
+    if (nuovo < 0) nuovo = 0;
+    if (nuovo > libero) nuovo = libero;
+    *val = (unsigned int)((long)nuovo * (long)massimo / libero);
 }
 
 /* Una riga sola scelta, quella del cursore: e' quel che fanno il clic
@@ -6695,7 +6949,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
             }
 
             if (co && co->classe == CL_AREA) {
-                area_punta(co, (int)e.x, (int)e.y);
+                if (g_area_barra) area_barra_trascina(co, (int)e.x, (int)e.y);
+                else              area_punta(co, (int)e.x, (int)e.y);
                 if (!ridisegna_controllo(co)) ridisegna_finestra(f);
                 continue;
             }
@@ -6718,6 +6973,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
         }
 
         case WIN_EV_MOUSE_SU: {
+            g_area_barra = 0;                   /* a thumb, if one was held */
             g_mdi_trascina = 0;
             /* =================================================================
              * ! QUI PARTE IL COMANDO, ed e' il rilascio a farlo partire.
@@ -7013,6 +7269,13 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * guarda EX_APRIRE(lp): il doppio clic lo accende come l'Invio. */
             if (co && co->classe == CL_AREA) {
                 Area *A = area_di(co);
+
+                /* A press on a scroll bar moves the view, not the caret. */
+                if (area_barra_clic(co, (int)e.x, (int)e.y)) {
+                    g_trascinato = c;
+                    if (!ridisegna_controllo(co)) ridisegna_finestra(f);
+                    continue;
+                }
 
                 area_punta(co, (int)e.x, (int)e.y);
 
@@ -7573,7 +7836,7 @@ void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.011"
+#define EXWIN_VERSIONE "0.012"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 
@@ -7637,6 +7900,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
                 P->voce[P->n].testo[MENU_TESTO_MAX - 1] = '\0';
                 P->voce[P->n].id  = MENU_ID_SUB;
                 P->voce[P->n].sub = s;
+                P->voce[P->n].spunta = 0;
                 P->n++;
             }
             T = &M->sub[s];
@@ -7646,6 +7910,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
                 T->voce[T->n].testo[0] = '\0';
                 T->voce[T->n].id = 0;
                 T->voce[T->n].sub = -1;
+                T->voce[T->n].spunta = 0;
                 T->n++;
                 return 1;
             }
@@ -7654,6 +7919,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
             T->voce[T->n].testo[MENU_TESTO_MAX - 1] = '\0';
             T->voce[T->n].id  = id;
             T->voce[T->n].sub = -1;
+            T->voce[T->n].spunta = 0;
             T->n++;
             return 1;
         }
@@ -7684,6 +7950,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
         T->voce[T->n].testo[0] = '\0';
         T->voce[T->n].id = 0;
         T->voce[T->n].sub = -1;
+        T->voce[T->n].spunta = 0;
         T->n++;
         return 1;
     }
@@ -7694,6 +7961,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
     T->voce[T->n].testo[MENU_TESTO_MAX - 1] = '\0';
     T->voce[T->n].id = id;
     T->voce[T->n].sub = -1;
+    T->voce[T->n].spunta = 0;
     T->n++;
     return 1;
 }

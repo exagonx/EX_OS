@@ -267,6 +267,11 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * ============================================================================= */
 #define WIN_ST_RIDIM        0x0080
 
+/* A POP-UP (30 September 2026): a right-button menu, a drop-down. A mouse
+ * button pressed anywhere outside it sends it WIN_EV_CHIUDI, as menus do on
+ * every system: the user closes one by clicking elsewhere. */
+#define WIN_ST_COMPARSA     0x0100
+
 #define WIN_TITOLO_LEN      48
 
 /* -----------------------------------------------------------------------------

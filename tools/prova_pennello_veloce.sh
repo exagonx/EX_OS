@@ -56,12 +56,17 @@ mapfile -t A < "$D/args.txt"
 timeout 600 python3 tools/qemu_drive.py "${A[@]}" > "$D/1.log" 2>&1
 
 # Il puntatore: pixel quasi neri nel quadrato attorno a (400, 300).
+# ! DA 386 E DA 286, NON DA 396: il puntatore di QEMU arriva 10 px prima, e
+# la sua punta sta a (390, 290). Col quadrato da 396 la prova diceva «il
+# server e' intasato» su un sistema fermo, con l'ellisse gia' disegnata (30
+# settembre 2026). L'ellisse (centro 340,250, raggio 50) a y 286 arriva a x
+# 375: nel quadrato non entra.
 arrivato() {
     python3 - "$1" <<'PY'
 import sys
 d = open(sys.argv[1], "rb").read(); p = d.split(b"\n", 3)
 w, h = map(int, p[1].split()); px = p[3]
-n = sum(1 for y in range(296, 316) for x in range(396, 416)
+n = sum(1 for y in range(286, 316) for x in range(386, 416)
         if px[(y*w+x)*3] < 30 and px[(y*w+x)*3+1] < 30 and px[(y*w+x)*3+2] < 30)
 print(1 if n >= 5 else 0)
 PY

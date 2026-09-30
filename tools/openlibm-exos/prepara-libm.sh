@@ -97,8 +97,14 @@ echo "  sysroot  : $SYSROOT"
 
 cd "$SORGENTI"
 make clean > /dev/null 2>&1 || true
-make ARCH=i387 OS=Linux USEGCC=1 \
-     CC=i386-exos-gcc AR=i386-exos-ar RANLIB=i386-exos-ranlib \
+# ! LA CPU DI BASE, COME NEL Makefile (CPU_BASE): senza -march il GCC di EX-OS
+# compila per i686, e pow e __kernel_rem_pio2 uscivano con cmov — trovate il 30
+# settembre 2026 nella shell di SpiderMonkey, che si collega a questa libm. Si
+# dice con MARCH, la variabile di openlibm: il suo Make.inc per ARCH=i387 mette
+# da se' -march=i686 DOPO i flag di chi chiama, e un -march dentro CC perdeva.
+CPU_BASE="-march=pentium-mmx -mtune=pentium-mmx"
+make ARCH=i387 OS=Linux USEGCC=1 MARCH=pentium-mmx \
+     CC="i386-exos-gcc -mtune=pentium-mmx" AR=i386-exos-ar RANLIB=i386-exos-ranlib \
      libopenlibm.a > costruzione.log 2>&1 || {
         echo "  ! make fallito: vedi $SORGENTI/costruzione.log" >&2
         exit 1
@@ -122,7 +128,7 @@ cp libopenlibm.a "$SYSROOT/lib/libm.a"
 # dichiarata in math.h sta in libm.a e vuole -lm». Il perche' esteso sta
 # in testa a nearbyintl-exos.c.
 echo "  aggiungo nearbyintl (manca a openlibm 0.8.7)"
-i386-exos-gcc -O2 -c -o "$SORGENTI/nearbyintl-exos.o" \
+i386-exos-gcc $CPU_BASE -O2 -c -o "$SORGENTI/nearbyintl-exos.o" \
     "$QUI/nearbyintl-exos.c" || {
         echo "  ! compilazione di nearbyintl-exos.c fallita" >&2
         exit 1

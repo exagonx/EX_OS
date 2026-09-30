@@ -19,7 +19,7 @@
  * /exwin/lib/tipi.txt.
  *
  * THE THREE DECISIONS THE TASK ASKED FOR BEFORE WRITING:
- *   - the formats are eximg's: BMP, PNG, JPG, GIF, ICO. The directory list
+ *   - the formats are eximg's: BMP, PNG, JPG, GIF, ICO, WebP. The directory list
  *     holds only those, so «next» never lands on a file it cannot show;
  *   - it zooms: «fit to the window» for a picture larger than the window (the
  *     default), 100%, and steps from 10% to 800%. Shrinking AVERAGES the
@@ -42,7 +42,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `immagini -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("immagini", VERSIONE_APP);
 
 #define MENU_H      20
@@ -361,7 +361,7 @@ static int carica(const char *p)
          * only 8-bit PNGs then — and a message that is sure of itself sent
          * the search the wrong way. */
         snprintf(g_errore, sizeof(g_errore),
-                 "Non si legge: non e' BMP, PNG, JPG, GIF o ICO, e' guasto, o manca la memoria.");
+                 "Non si legge: non e' BMP, PNG, JPG, GIF, ICO o WebP, e' guasto, o manca la memoria.");
         return 0;
     }
     /* ! ALPHA ZERO EVERYWHERE MEANS «NO ALPHA» (the PNG and JPG readers of
@@ -393,7 +393,8 @@ static int immagine_per_nome(const char *nome)
     for (p++; *p && k + 1 < sizeof(e); p++, k++) e[k] = (char)((*p >= 'A' && *p <= 'Z') ? *p + 32 : *p);
     e[k] = 0;
     return !strcmp(e, "bmp") || !strcmp(e, "png") || !strcmp(e, "jpg") ||
-           !strcmp(e, "jpeg") || !strcmp(e, "gif") || !strcmp(e, "ico");
+           !strcmp(e, "jpeg") || !strcmp(e, "gif") || !strcmp(e, "ico") ||
+           !strcmp(e, "webp");
 }
 
 static int confronta(const char *a, const char *b)
@@ -557,7 +558,7 @@ static void informazioni(void)
     char t[640];
 
     exinfo_testo(t, sizeof(t), "Immagini", VERSIONE_APP,
-                 "Il visualizzatore di immagini di ExWin: BMP, PNG, JPG, GIF e ICO, "
+                 "Il visualizzatore di immagini di ExWin: BMP, PNG, JPG, GIF, ICO e WebP, "
                  "con lo zoom e il passaggio alle altre immagini della cartella.");
     ex_dlg_avviso("Informazioni su", t);
 }
@@ -568,7 +569,7 @@ static void istruzioni(void)
         "SCORRERE LA CARTELLA\n"
         "  Pag giu' o Spazio: la successiva. Pag su' o Backspace: la precedente.\n"
         "  Home e Fine: la prima e l'ultima. Si vedono solo le immagini della\n"
-        "  cartella (BMP, PNG, JPG, GIF, ICO), in ordine di nome.\n"
+        "  cartella (BMP, PNG, JPG, GIF, ICO, WebP), in ordine di nome.\n"
         "\n"
         "LO ZOOM\n"
         "  A: adatta alla finestra (un'immagine piu' grande si rimpicciolisce,\n"
@@ -668,9 +669,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     case EXM_MOUSE_MOSSO:
         if (g_tira) {
-            int x = EX_X(lp), y = EX_Y(lp);
-            if (x > 32767) x -= 65536;
-            if (y > 32767) y -= 65536;
+            int x = EX_X(lp), y = EX_Y(lp);    /* negative off the window */
             g_ox = g_tox - (x - g_tx);
             g_oy = g_toy - (y - g_ty);
             scorri(0, 0);

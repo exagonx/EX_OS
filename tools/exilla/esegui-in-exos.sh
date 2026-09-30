@@ -10,6 +10,8 @@
 # no quello condiviso di dist/: in tutt'e due i casi SI LEGGE SOLTANTO.
 #
 # CD_FORZATO=<iso> sceglie il CD (per confrontare con quello di prima).
+# ALTRI="f1 f2" mette altri file accanto al programma; EXOS_RAM la memoria;
+# DISCO_MB la misura del disco di prova (32 se non detta).
 #
 # Le cose temporanee stanno in cross_build/<macchina>/costruzione-prova (fuori
 # da MEGA). Con /dev/kvm scrivibile la macchina va con -enable-kvm.
@@ -26,8 +28,8 @@ NOME=$(basename "$BIN")
 mkdir -p "$D"
 
 rm -f "$IMG"
-qemu-img create -f raw "$IMG" 32M > /dev/null
-printf 'label: dos\nunit: sectors\n\nstart=2048, size=63488, type=83, bootable\n' \
+qemu-img create -f raw "$IMG" "${DISCO_MB:-32}M" > /dev/null
+printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD"
@@ -35,6 +37,11 @@ export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
 timeout 300 python3 tools/qemu_drive.py "mkfs -t ext2 -L prova hd0p1@4" "si@30" > "$D/esegui-0.log" 2>&1
 "$(command -v debugfs || echo /sbin/debugfs)" -w -R "write $BIN $NOME" \
     "$IMG?offset=1048576" > /dev/null 2>&1
+# ALTRI="file1 file2": altri file da mettere accanto al programma, in /disk.
+for f in $ALTRI; do
+    "$(command -v debugfs || echo /sbin/debugfs)" -w -R "write $f $(basename "$f")" \
+        "$IMG?offset=1048576" > /dev/null 2>&1
+done
 
 SER=/tmp/exos/serialexilla.txt
 rm -f "$SER"

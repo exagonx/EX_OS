@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.018"
+#define VERSIONE_APP "0.019"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -91,6 +91,7 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_DIRECTORY  926
 #define ID_PROGETTO   927
 #define ID_ICONA      928   /* scegliere l'icona del controllo scelto */
+#define ID_AUTOAGG    989   /* Strumenti > Autoaggiorna Proprieta (30 settembre 2026) */
 
 #define ID_MANUALE    931
 #define ID_INFO       932
@@ -397,8 +398,12 @@ static ExFinestra g_cmb_form;       /* l'elenco a discesa delle maschere */
 /* L'area della maschera dentro la finestra di exide. */
 #define TELA_X   164
 #define TELA_Y    46
-#define TELA_W   436
-#define TELA_H   396
+/* ! THE CANVAS FOLLOWS THE WINDOW (30 September 2026): the windows of exide
+ * can be resized, and the canvas takes what the tools on the left and the
+ * properties on the right leave. 436x396 is its size at the start. */
+static int g_tela_w = 436, g_tela_h = 396;
+#define TELA_W   g_tela_w
+#define TELA_H   g_tela_h
 
 /* ! LA GRIGLIA E' DI QUATTRO PIXEL, e serve a una cosa sola: due controlli
  * messi «alla stessa altezza» ci stanno davvero. A mano si sbaglia di un
@@ -677,6 +682,11 @@ static void disegna_tela(void)
     ex_riempi(g_f, TELA_X, TELA_Y, TELA_W, TELA_H, 0x00505050);
     ex_incavo(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
 
+    /* ! THE FORM STAYS ON THE CANVAS (30 September 2026): a form wider or
+     * taller than the canvas - 500 wide on a canvas made narrow by resizing
+     * the window - was drawn over the property list next to it. */
+    ex_ritaglio(g_f, TELA_X + 2, TELA_Y + 2, TELA_W - 4, TELA_H - 4);
+
     /* La maschera: telaio, barra del titolo, area del client. */
     ex_riempi(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24,
               EX_GRIGIO);
@@ -700,6 +710,7 @@ static void disegna_tela(void)
 
     if (g_sel >= 0 && g_ctrl[g_sel].usato)
         disegna_maniglie(&g_ctrl[g_sel], ox, oy);
+    ex_ritaglio(g_f, 0, 0, 0, 0);
 }
 
 /* =============================================================================
@@ -798,6 +809,9 @@ static void fprop_valore(int k, char *out, unsigned int max)
     }
 }
 
+static void val_segna(int k);                   /* Autoaggiorna: see below */
+static int  profilo_perc(char *dst, unsigned int dim, const char *nome);
+
 static void prop_mostra(void)
 {
     int k;
@@ -817,6 +831,7 @@ static void prop_mostra(void)
         }
         fprop_valore((int)ex_lista_scelta(g_lst_prop), val, sizeof(val));
         ex_testo_metti(g_val, val);
+        val_segna((int)ex_lista_scelta(g_lst_prop));
         return;
     }
 
@@ -827,6 +842,7 @@ static void prop_mostra(void)
     }
     prop_valore((int)ex_lista_scelta(g_lst_prop), val, sizeof(val));
     ex_testo_metti(g_val, val);
+    val_segna((int)ex_lista_scelta(g_lst_prop));
 }
 
 /* ! IL NOME DI UN CONTROLLO DIVENTA UN NOME DI FUNZIONE, quindi non puo'
@@ -850,10 +866,9 @@ static void nome_pulito(char *s)
  * perche' cambiare il nome dalla scheda deve aggiornare anche l'elenco. */
 static void form_mostra(void);
 
-static void prop_applica(void)
+static void prop_applica_k(int k)
 {
     Ctrl *c;
-    int   k = (int)ex_lista_scelta(g_lst_prop);
     const char *v = ex_testo_prendi(g_val);
     int   n;
 
@@ -975,6 +990,89 @@ static void prop_applica(void)
     g_sporco = 1;
     prop_mostra();
     dico("proprieta' applicata");
+}
+
+static void prop_applica(void)
+{
+    prop_applica_k((int)ex_lista_scelta(g_lst_prop));
+}
+
+/* =============================================================================
+ * AUTOAGGIORNA PROPRIETA (30 September 2026, asked by the user)
+ *
+ * With the setting on, leaving the value box applies what was written there,
+ * without Applica: the Tab key, a click on the canvas, on another property.
+ *
+ * ! THE ROW IS THE ONE THE BOX WAS FILLED FOR, not the one chosen now. A click
+ * on another property moves the list's choice BEFORE the program hears about
+ * it — the toolkit does that when the button goes down — and applying to "the
+ * chosen row" would write the value into the property just clicked. So the
+ * row, the control, the form and the text are remembered when the box is
+ * filled (val_segna), and only a text that changed is applied.
+ *
+ * The setting lives in $HOME/.app/exide/impostazioni.txt, next to ultima.txt.
+ * ============================================================================= */
+static int  g_auto_prop = 0;
+static int  g_val_k = -1, g_val_sel = -1, g_val_form = -1;
+static char g_val_testo[TESTO_MAX];
+
+static void val_segna(int k)
+{
+    const char *t = ex_testo_prendi(g_val);
+
+    g_val_k = k;
+    g_val_sel = g_sel;
+    g_val_form = g_form_sel;
+    strncpy(g_val_testo, t ? t : "", sizeof(g_val_testo) - 1);
+    g_val_testo[sizeof(g_val_testo) - 1] = '\0';
+}
+
+/* Called for every message, BEFORE it is handled: see above. */
+static void auto_controlla(void)
+{
+    static ExFinestra prima = 0;
+    ExFinestra ora = ex_fuoco_chi(g_f);
+
+    if (g_auto_prop && prima == g_val && ora != g_val && g_val_k >= 0 &&
+        g_sel == g_val_sel && g_form_sel == g_val_form) {
+        const char *t = ex_testo_prendi(g_val);
+
+        if (t && strcmp(t, g_val_testo) != 0) {
+            unsigned int scelta = ex_lista_scelta(g_lst_prop);
+
+            prop_applica_k(g_val_k);            /* redraws the list at row 0 */
+            ex_lista_scegli(g_lst_prop, scelta);
+        }
+    }
+    prima = ora;
+}
+
+static void impostazioni_leggi(void)
+{
+    char p[PERC_MAX], buf[128];
+    int  fd, n;
+
+    if (!profilo_perc(p, sizeof(p), "impostazioni.txt")) return;
+    fd = open(p, O_RDONLY, 0);
+    if (fd < 0) return;
+    n = (int)read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    if (strstr(buf, "autoaggiorna = 1")) g_auto_prop = 1;
+}
+
+static void impostazioni_scrivi(void)
+{
+    char p[PERC_MAX];
+    const char *t = g_auto_prop ? "autoaggiorna = 1\n" : "autoaggiorna = 0\n";
+    int  fd;
+
+    if (!profilo_perc(p, sizeof(p), "impostazioni.txt")) return;
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    (void)write(fd, t, strlen(t));
+    close(fd);
 }
 
 /* =============================================================================
@@ -2385,6 +2483,20 @@ static void area_sostituisci(ExFinestra area, ExFinestra stato)
 static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
+    /* Resized: the code takes the room, the function list keeps its width. */
+    case EXM_MISURA: {
+        int w = EX_X(lp), h = EX_Y(lp);
+
+        if (w < 400) w = 400;
+        if (h < 200) h = 200;
+        ex_misura(g_ed_tab, w, 24);
+        ex_misura(g_ed_funz, 200, h - 100);
+        ex_misura(g_ed_cod, w - 214, h - 100);
+        ex_sposta(g_ed_stato, 6, h - 44);
+        ex_misura(g_ed_stato, w - 20, 16);
+        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        return EX_NON_RIDISEGNARE;
+    }
     case EXM_COMANDO:
         switch (wp) {
         case ID_ED_SALVA:  ed_salva(); break;
@@ -2487,7 +2599,7 @@ static void editor_apri(int quale, int riga)
     }
 
     g_ed = ex_crea("finestra", "Sorgente",
-                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE | EX_RIDIM,
                    30, 20, 740, 520, 0, 0, proc_ed);
     if (g_ed == 0) { dico("non riesco ad aprire l'editor"); return; }
 
@@ -3165,9 +3277,35 @@ static int manuale_pagina(void)
  * — il componente /exwin non installato, un CD montato a meta', una copia del
  * solo binario. Queste righe pesano tre kilobyte e ci sono sempre. Adesso sono
  * la seconda scelta invece che l'unica. */
+/* The manual's and the shell's windows: one control each, which fills the
+ * window when it is resized (30 September 2026). And their X closes THAT
+ * window: with no procedure the base took it for the program's X, and closing
+ * the manual closed exide. */
+static ExFinestra g_man_f = 0, g_man_a = 0, g_sh_f = 0, g_sh_t = 0;
+
+static long proc_uno(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    int dentro = (f == g_man_f) ? 8 : 4;
+    ExFinestra c = (f == g_man_f) ? g_man_a : g_sh_t;
+
+    if (msg == EXM_MISURA) {
+        ex_misura(c, EX_X(lp) - dentro, EX_Y(lp) - dentro);
+        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        return EX_NON_RIDISEGNARE;
+    }
+    if (msg == EXM_CHIUDI) {
+        ex_distruggi(f);
+        if (f == g_man_f) g_man_f = g_man_a = 0;
+        else              g_sh_f = g_sh_t = 0;
+        return EX_NON_RIDISEGNARE;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
 static void manuale(void)
 {
-    static ExFinestra fm = 0, am = 0;
+#define fm g_man_f
+#define am g_man_a
     int i;
 
     if (fm) { ex_procedura_base(fm, EXM_DISEGNA, 0, 0); return; }
@@ -3175,7 +3313,7 @@ static void manuale(void)
     if (manuale_pagina()) return;
 
     fm = ex_crea("finestra", "Manuale di EX-IDE",
-                 EX_TITOLO | EX_BORDO | EX_CHIUDI, 60, 40, 620, 460, 0, 0, 0);
+                 EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM, 60, 40, 620, 460, 0, 0, proc_uno);
     if (fm == 0) { dico("non riesco ad aprire il manuale"); return; }
 
     am = ex_crea("areatesto", "", EX_FIGLIO, 4, 4, 612, 452, fm, 0, 0);
@@ -3186,6 +3324,8 @@ static void manuale(void)
 
     ex_procedura_base(fm, EXM_DISEGNA, 0, 0);
 }
+#undef fm
+#undef am
 
 static void informazioni(void)
 {
@@ -4003,6 +4143,7 @@ static void progetto_scheda_apri(void)
  * file .txt aperto dopo un .c si vede colorato come se fosse C.
  * ============================================================================= */
 static ExFinestra g_fe_f, g_fe_cod, g_fe_stato, g_fe_tab;
+static ExFinestra g_fe_btn[5];      /* Salva, Cerca, Sostituisci, Chiudi, Apri */
 static char       g_fe_nome[64] = "";     /* relativo a <progetto>/src */
 
 /* LE SCHEDE (29 settembre 2026, @EXIDE-SCHEDE): i file aperti, uno per
@@ -4105,6 +4246,21 @@ static void fe_apri_altro(void);
 static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
+    /* Resized: the code takes the room, the buttons stay under it. */
+    case EXM_MISURA: {
+        static const int bx[5] = { 4, 102, 200, 318, 416 };
+        int w = EX_X(lp), h = EX_Y(lp), i;
+
+        if (w < 520) w = 520;
+        if (h < 200) h = 200;
+        ex_misura(g_fe_tab, w - 8, 22);
+        ex_misura(g_fe_cod, w - 8, h - 84);
+        for (i = 0; i < 5; i++) ex_sposta(g_fe_btn[i], bx[i], h - 52);
+        ex_sposta(g_fe_stato, 4, h - 20);
+        ex_misura(g_fe_stato, w - 10, 16);
+        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        return EX_NON_RIDISEGNARE;
+    }
     case EXM_COMANDO:
         switch (wp) {
         case ID_FE_SALVA:  fe_salva(); break;
@@ -4240,7 +4396,7 @@ static void file_editor_apri(const char *nome)
     }
 
     g_fe_f = ex_crea("finestra", nome,
-                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE | EX_RIDIM,
                      60, 40, 640, 460, 0, 0, proc_fe);
     if (g_fe_f == 0) { dico("non riesco ad aprire il file"); return; }
 
@@ -4249,12 +4405,12 @@ static void file_editor_apri(const char *nome)
     g_fe_n = 0;
     g_fe_cod = ex_crea("areacodice", "", EX_FIGLIO, 4, 28, 632, 376,
                        g_fe_f, 0, 0);
-    ex_crea("pulsante", "Salva", EX_FIGLIO, 4, 408, 90, 26, g_fe_f, ID_FE_SALVA, 0);
-    ex_crea("pulsante", "Cerca", EX_FIGLIO, 102, 408, 90, 26, g_fe_f, ID_FE_CERCA, 0);
-    ex_crea("pulsante", "Sostituisci", EX_FIGLIO, 200, 408, 110, 26,
-            g_fe_f, ID_FE_SOSTIT, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 318, 408, 90, 26, g_fe_f, ID_FE_CHIUDI, 0);
-    ex_crea("pulsante", "Apri...", EX_FIGLIO, 416, 408, 90, 26, g_fe_f, ID_FE_APRI, 0);
+    g_fe_btn[0] = ex_crea("pulsante", "Salva", EX_FIGLIO, 4, 408, 90, 26, g_fe_f, ID_FE_SALVA, 0);
+    g_fe_btn[1] = ex_crea("pulsante", "Cerca", EX_FIGLIO, 102, 408, 90, 26, g_fe_f, ID_FE_CERCA, 0);
+    g_fe_btn[2] = ex_crea("pulsante", "Sostituisci", EX_FIGLIO, 200, 408, 110, 26,
+                          g_fe_f, ID_FE_SOSTIT, 0);
+    g_fe_btn[3] = ex_crea("pulsante", "Chiudi", EX_FIGLIO, 318, 408, 90, 26, g_fe_f, ID_FE_CHIUDI, 0);
+    g_fe_btn[4] = ex_crea("pulsante", "Apri...", EX_FIGLIO, 416, 408, 90, 26, g_fe_f, ID_FE_APRI, 0);
     g_fe_stato = ex_crea("etichetta", "", EX_FIGLIO, 4, 440, 630, 16, g_fe_f, 0, 0);
 
     fe_scheda(nome);
@@ -4411,8 +4567,8 @@ static void directory_apri(void)
  * ============================================================================= */
 static void shell_progetto(void)
 {
-    static ExFinestra ft = 0;
-    ExFinestra t;
+#define ft g_sh_f
+#define t  g_sh_t
 
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
     if (ft) { ex_procedura_base(ft, EXM_DISEGNA, 0, 0); return; }
@@ -4420,7 +4576,7 @@ static void shell_progetto(void)
     if (chdir(g_prog_dir) != 0) { dico("non riesco a entrare nel progetto"); return; }
 
     ft = ex_crea("finestra", "Shell del progetto",
-                 EX_TITOLO | EX_BORDO | EX_CHIUDI, 80, 60, 648, 408, 0, 0, 0);
+                 EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM, 80, 60, 648, 408, 0, 0, proc_uno);
     if (ft == 0) { dico("non riesco ad aprire la shell"); return; }
 
     t = ex_crea("terminale", "/bin/sh", EX_FIGLIO, 2, 2, 644, 404, ft, 0, 0);
@@ -4433,6 +4589,8 @@ static void shell_progetto(void)
     ex_procedura_base(ft, EXM_DISEGNA, 0, 0);
     dico("shell aperta nella directory del progetto");
 }
+#undef ft
+#undef t
 
 /* =============================================================================
  * LA PROCEDURA DELLA FINESTRA
@@ -4543,9 +4701,42 @@ static void ctrl_taglia(void)
     dico("tagliato: Incolla lo rimette, anche in un'altra maschera");
 }
 
+/* =============================================================================
+ * THE MAIN WINDOW, RESIZED (30 September 2026, asked by the user)
+ *
+ * Tools on the left and properties on the right keep their width; the canvas
+ * in the middle takes the rest; everything grows downwards to the status
+ * line. The numbers are those of the 780x486 window it starts as, written as
+ * distances from the right and bottom edges.
+ * ============================================================================= */
+static ExFinestra g_int_prop, g_btn_applica, g_btn_elimina;
+
+static void finestra_disponi(int w, int h)
+{
+    if (w < 560) w = 560;
+    if (h < 300) h = 300;
+    g_tela_w = w - TELA_X - 180;
+    g_tela_h = h - 90;
+    ex_misura(g_lst_strum, 152, h - 90);
+    ex_sposta(g_int_prop, w - 174, 24);
+    ex_sposta(g_lst_prop, w - 174, 46);
+    ex_misura(g_lst_prop, 168, h - 146);
+    ex_sposta(g_val, w - 174, h - 94);
+    ex_sposta(g_btn_applica, w - 174, h - 68);
+    ex_sposta(g_btn_elimina, w - 86, h - 68);
+    ex_sposta(g_stato, 8, h - 34);
+    ex_misura(g_stato, w - 20, 16);
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
+    case EXM_MISURA:
+        finestra_disponi(EX_X(lp), EX_Y(lp));
+        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        disegna_tela();
+        ex_aggiorna(f);
+        return EX_NON_RIDISEGNARE;
     case EXM_COMANDO:
         switch (wp) {
         case ID_STRUMENTI:
@@ -4568,12 +4759,20 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (g_sel < 0 || !g_ctrl[g_sel].usato) fprop_valore(k, v, sizeof(v));
             else                                   prop_valore(k, v, sizeof(v));
             ex_testo_metti(g_val, v);
+            val_segna(k);
             ex_fuoco(g_val);
             break;
         }
 
         case ID_VALORE:
         case ID_APPLICA:  prop_applica(); break;
+        case ID_AUTOAGG:
+            g_auto_prop = !g_auto_prop;
+            impostazioni_scrivi();
+            ex_menu_spunta(g_menu, ID_AUTOAGG, g_auto_prop);
+            dico(g_auto_prop ? "le proprieta' si applicano uscendo dalla casella"
+                             : "le proprieta' si applicano col pulsante Applica");
+            break;
         case ID_ELIMINA:  elimina();      break;
 
         /* L'elenco a discesa manda la riga scelta in lp, non l'indice della
@@ -4650,10 +4849,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
-    case EXM_MOUSE_GIU:
-        tela_clic(EX_X(lp), EX_Y(lp), 0);
-        ex_fuoco_via(f);
+    case EXM_MOUSE_GIU: {
+        int x = EX_X(lp), y = EX_Y(lp);
+
+        tela_clic(x, y, 0);
+        /* ! ONLY A CLICK ON THE CANVAS takes the keys away from the boxes
+         * (30 September 2026). The toolkit sends EXM_MOUSE_GIU for a click in
+         * a text box too, after giving it the focus and placing the caret:
+         * taking the focus away here for every click left the property box
+         * deaf to the mouse - clicked, no caret, typing went nowhere. */
+        if (x >= TELA_X && x < TELA_X + TELA_W && y >= TELA_Y && y < TELA_Y + TELA_H)
+            ex_fuoco_via(f);
         return 0;
+    }
 
     case EXM_DOPPIOCLIC:
         tela_clic(EX_X(lp), EX_Y(lp), 1);
@@ -4755,7 +4963,7 @@ int main(int argc, char **argv)
     form_azzera(&g_form[0], "principale", "Finestra");
 
     g_f = ex_crea("finestra", "EX-IDE - nessun progetto",
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI, 4, 24, 780, 486, 0, 0, proc);
+                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM, 4, 24, 780, 486, 0, 0, proc);
     if (g_f == 0) {
         printf("exide: il server a finestre non risponde.\n");
         printf("       Avvialo con:  exwin\n");
@@ -4791,6 +4999,10 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Strumenti", "-",           0);
     ex_menu_voce(g_menu, "Strumenti", "Icona del controllo...", ID_ICONA);
     ex_menu_voce(g_menu, "Strumenti", "Progetto",    ID_PROGETTO);
+    ex_menu_voce(g_menu, "Strumenti", "-",           0);
+    ex_menu_voce(g_menu, "Strumenti", "Autoaggiorna Proprieta", ID_AUTOAGG);
+    impostazioni_leggi();
+    ex_menu_spunta(g_menu, ID_AUTOAGG, g_auto_prop);
 
     ex_menu_voce(g_menu, "Aiuto", "Manuale",          ID_MANUALE);
     ex_menu_voce(g_menu, "Aiuto", "Informazioni su",  ID_INFO);
@@ -4815,15 +5027,15 @@ int main(int argc, char **argv)
     ex_crea("pulsante", "Togli", EX_FIGLIO, TELA_X + 350, 24, 84, 22,
             g_f, ID_FORM_TOGLI, 0);
 
-    ex_crea("intestazione", "Proprieta'", EX_FIGLIO, 606, 24, 168, 20,
-            g_f, 0, 0);
+    g_int_prop = ex_crea("intestazione", "Proprieta'", EX_FIGLIO, 606, 24, 168, 20,
+                         g_f, 0, 0);
     g_lst_prop = ex_crea("lista", "", EX_FIGLIO, 606, 46, 168, 340,
                          g_f, ID_PROPRIETA, 0);
     g_val = ex_crea("testo", "", EX_FIGLIO, 606, 392, 168, 22, g_f, ID_VALORE, 0);
-    ex_crea("pulsante", "Applica", EX_FIGLIO, 606, 418, 80, 24,
-            g_f, ID_APPLICA, 0);
-    ex_crea("pulsante", "Elimina", EX_FIGLIO, 694, 418, 80, 24,
-            g_f, ID_ELIMINA, 0);
+    g_btn_applica = ex_crea("pulsante", "Applica", EX_FIGLIO, 606, 418, 80, 24,
+                            g_f, ID_APPLICA, 0);
+    g_btn_elimina = ex_crea("pulsante", "Elimina", EX_FIGLIO, 694, 418, 80, 24,
+                            g_f, ID_ELIMINA, 0);
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO, 8, 452, 760, 16, g_f, 0, 0);
 
@@ -4845,6 +5057,6 @@ int main(int argc, char **argv)
     disegna_tela();
     ex_aggiorna(g_f);
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_prendi_msg(&m)) { auto_controlla(); ex_smista(&m); }
     return 0;
 }

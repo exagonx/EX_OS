@@ -42,7 +42,7 @@ esito=0
 echo "=== 1. Sostituisci, Tutte ==="
 timeout 400 python3 tools/qemu_drive.py \
     "mount hd0p1 /disk@6" "exwin@12" "key:alt-f1@2" \
-    "/exwin/bin/edit /disk/a.txt &@6" "key:alt-f5@3" \
+    "/exwin/bin/exeditor /disk/a.txt &@6" "key:alt-f5@3" \
     "key:ctrl-h@2" "uno@2" "UNO@2" "key:shift-tab@1" "key:shift-tab@1" "key:ret@3" \
     "key:ctrl-s@3" "key:alt-f1@2" "sync@2" > "$D/1.log" 2>&1
 "$DEBUGFS" -R "dump /a.txt $D/a-dopo.txt" "$OFF" > /dev/null 2>&1
@@ -55,7 +55,7 @@ fi
 echo "=== 2. Sostituisci, Una, poi F3 ==="
 timeout 400 python3 tools/qemu_drive.py \
     "mount hd0p1 /disk@6" "exwin@12" "key:alt-f1@2" \
-    "/exwin/bin/edit /disk/b.txt &@6" "key:alt-f5@3" \
+    "/exwin/bin/exeditor /disk/b.txt &@6" "key:alt-f5@3" \
     "key:ctrl-h@2" "a@2" "b@2" "key:shift-tab@1" "key:ret@3" \
     "key:f3@2" "key:ctrl-s@3" "key:alt-f1@2" "sync@2" > "$D/2.log" 2>&1
 "$DEBUGFS" -R "dump /b.txt $D/b-dopo.txt" "$OFF" > /dev/null 2>&1

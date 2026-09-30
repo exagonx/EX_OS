@@ -22,15 +22,15 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="$RADICE/cross_build/$MACCHINA"
 LAV="$B/costruzione-std"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
-RUSTC="${RUSTC:-$(command -v rustc || echo "$HOME/.cargo/bin/rustc")}"
+PROXY_RUSTC="$HOME/.cargo/bin/rustc"   # il proxy di rustup: RUSTC puo essere rustc-exos
 
-SRC="$("$RUSTC" +nightly --print sysroot)/lib/rustlib/src/rust/library"
+SRC="$("$PROXY_RUSTC" +nightly --print sysroot)/lib/rustlib/src/rust/library"
 [ -d "$SRC/std" ] || { echo "manca rust-src nel nightly ($SRC)" >&2; exit 1; }
 VER=$(grep -A1 '^name = "libc"$' "$SRC/Cargo.lock" | sed -n 's/^version = "\(.*\)"/\1/p')
 LIBC=$(ls -d "$CARGO_HOME"/registry/src/*/"libc-$VER" 2>/dev/null | head -1)
 if [ -z "$LIBC" ]; then
     # Il crate si scarica una volta sola: cargo fetch sul Cargo.lock della library.
-    (cd "$SRC" && "$(dirname "$RUSTC")/cargo" +nightly fetch >/dev/null 2>&1) || true
+    (cd "$SRC" && "$(dirname "$PROXY_RUSTC")/cargo" +nightly fetch >/dev/null 2>&1) || true
     LIBC=$(ls -d "$CARGO_HOME"/registry/src/*/"libc-$VER" | head -1)
 fi
 echo "std da $SRC"

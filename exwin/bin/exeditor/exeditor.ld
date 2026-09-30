@@ -1,5 +1,5 @@
 /* =============================================================================
- * exwin/bin/edit/edit.ld
+ * exwin/bin/exeditor/exeditor.ld
  * EX-OS — Extensible Operating System
  *
  * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>

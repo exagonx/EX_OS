@@ -106,6 +106,15 @@ cp -an "$ORIGINE/i386-exos/include" "$PREFISSO/i386-exos/" 2>/dev/null || true
 for f in "$ORIGINE/lib/gcc/i386-exos/$VERSIONE"/*.a "$ORIGINE/lib/gcc/i386-exos/$VERSIONE"/*.o; do
     [ -f "$f" ] && cp -n "$f" "$PREFISSO/lib/gcc/i386-exos/$VERSIONE/"
 done
+# ! E IL limits.h DI GCC SI PRENDE DALL'ORIGINE, sovrascrivendo (30 settembre
+# 2026). GCC ne installa due versioni: quella che fa #include_next del
+# limits.h della libc, se in fase di costruzione trova gli header del
+# bersaglio, e quella «senza libc sotto» altrimenti. Qui GCC si costruisce
+# PRIMA di copiare gli header, e usciva la seconda: PATH_MAX (lib/include/
+# limits.h) non arrivava a nessun programma, e se n'e' accorta la shell di
+# SpiderMonkey. Il file non dipende dall'host.
+cp "$ORIGINE/lib/gcc/i386-exos/$VERSIONE/include/limits.h" \
+   "$PREFISSO/lib/gcc/i386-exos/$VERSIONE/include/limits.h"
 
 # --- 4. la verifica: compila e collega, C e C++ ---------------------------------
 PROVA="$DEST/costruzione-prova"

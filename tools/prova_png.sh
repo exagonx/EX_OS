@@ -26,7 +26,7 @@ printf '#include <stdlib.h>\n#include <string.h>\n' > "$D/shim/libc.h"
 gcc -O1 -Wall -Wno-unused-result -I "$D/shim" -I lib/eximg -I lib/exzip \
     tools/prove/scrivi_prova.c lib/eximg/scrivi.c lib/exzip/deflate.c \
     lib/eximg/eximg.c lib/eximg/bmp.c lib/eximg/png.c lib/eximg/jpg.c \
-    lib/eximg/gif.c lib/eximg/ico.c lib/eximg/inflate.c \
+    lib/eximg/gif.c lib/eximg/ico.c lib/eximg/inflate.c lib/eximg/webp.c lib/eximg/vp8.c \
     -o "$D/leggi" || exit 1
 
 FATTI=0; FALLITI=0
@@ -44,19 +44,42 @@ prova() {   # nome misura tipo-colore profondita' interlacciamento [colori]
         echo "  *** FALLITO: $n ($veri): eximg non lo legge"; FALLITI=$((FALLITI + 1)); return
     fi
     magick "$f" -alpha off -depth 8 rgb:"$D/$n.suo.rgb"
-    if python3 - "$D/$n.nostro.rgba" "$D/$n.suo.rgb" "$bd" <<'EOF'
+    magick "$f" -alpha on -channel A -separate -depth 8 gray:"$D/$n.suo.a"
+    # ! E L'ALFA (30 settembre 2026): prima eximg la buttava, ora la porta.
+    if python3 - "$D/$n.nostro.rgba" "$D/$n.suo.rgb" "$bd" "$D/$n.suo.a" <<'EOF'
 import sys
 a = open(sys.argv[1], "rb").read(); b = open(sys.argv[2], "rb").read()
+al = open(sys.argv[4], "rb").read()
 tol = 1 if sys.argv[3] == "16" else 0
 n = len(b) // 3
-if len(a) != n * 4: sys.exit(1)
+if len(a) != n * 4 or len(al) != n: sys.exit(1)
 for i in range(n):
     for k in range(3):
         if abs(a[i*4+k] - b[i*3+k]) > tol: sys.exit(1)
+    if abs(a[i*4+3] - al[i]) > tol: sys.exit(1)
 EOF
     then echo "  $n: uguale  ($veri)"
     else echo "  *** FALLITO: $n ($veri): pixel diversi"; FALLITI=$((FALLITI + 1)); fi
 }
+
+# tRNS: un colore della tavolozza trasparente, e un colore RGB trasparente.
+for il in None PNG; do
+    for ct in 3 2; do
+        n="trns$ct-$il"; f="$D/$n.png"
+        magick -size 37x23 xc:'#E02020' -fill white -draw 'rectangle 0,0 18,11' \
+            -transparent white -define png:color-type=$ct -define png:bit-depth=8 -interlace "$il" \
+            "$([ $ct = 3 ] && echo PNG8:)$f"     # ! per la tavolozza il tRNS lo scrive solo PNG8:
+        FATTI=$((FATTI + 1))
+        grep -q tRNS "$f" || { echo "  *** FALLITO: $n non ha tRNS"; FALLITI=$((FALLITI + 1)); continue; }
+        "$D/leggi" leggi "$f" "$D/$n.nostro.rgba" > /dev/null &&
+        magick "$f" -alpha on -channel A -separate -depth 8 gray:"$D/$n.suo.a" &&
+        python3 - "$D/$n.nostro.rgba" "$D/$n.suo.a" <<'EOF' && echo "  $n: alfa uguale" || { echo "  *** FALLITO: $n"; FALLITI=$((FALLITI + 1)); }
+import sys
+a = open(sys.argv[1], "rb").read(); al = open(sys.argv[2], "rb").read()
+sys.exit(0 if len(a) == len(al) * 4 and all(a[i*4+3] == al[i] for i in range(len(al))) and 0 in al else 1)
+EOF
+    done
+done
 
 for m in 1x1 3x5 37x23; do
     for il in None PNG; do

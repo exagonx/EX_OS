@@ -18,17 +18,22 @@
  *
  *     bit  ->  Huffman  ->  zigzag  ->  dequantizza  ->  IDCT  ->  YCbCr->RGB
  *
- * ! SOLO BASELINE SEQUENZIALE (SOF0), ED E' DICHIARATO. Il JPEG progressivo
- * (SOF2) non e' una variante del formato: e' una SECONDA decodifica, con i
- * coefficienti sparsi su piu' passate da ricomporre prima di trasformare
- * alcunche'. Vale piu' o meno quanto tutto questo file. Chi ha un progressivo
- * lo risalva sequenziale — e il messaggio glielo dice invece di disegnare
- * spazzatura.
+ * ! BASELINE (SOF0, SOF1) E, DAL 30 SETTEMBRE 2026, PROGRESSIVO (SOF2). Il
+ * progressivo non e' una variante del formato: e' una SECONDA decodifica, con
+ * i coefficienti sparsi su piu' passate da ricomporre prima di trasformare
+ * alcunche' — vedi «IL PROGRESSIVO» piu' giu'. Fino a quel giorno si
+ * rifiutava, ed era dichiarato; ma sul web e negli sfondi fotografici il
+ * progressivo e' la meta' dei JPEG, e l'utente li vedeva non aprirsi ne' nel
+ * navigatore, ne' come sfondo, ne' in Immagini.
  *
- * ! NIENTE ARITMETICO, NIENTE 12 BIT, NIENTE CMYK. Il primo non si incontra
- * (era brevettato), il secondo nemmeno, il terzo vuole anche la trasformazione
- * dei colori Adobe. Rifiutarli e' una riga; leggerli male sono immagini
- * sbagliate che sembrano un difetto nostro.
+ * ! NIENTE ARITMETICO, NIENTE 12 BIT. Il primo non si incontra (era
+ * brevettato), il secondo nemmeno. Rifiutarli e' una riga; leggerli male sono
+ * immagini sbagliate che sembrano un difetto nostro.
+ *
+ * ! IL CMYK SI LEGGE DAL 30 SETTEMBRE 2026 (@IMG-FORMATI): quattro componenti,
+ * e il marcatore Adobe (APP14) dice se sono CMYK o YCCK e che sono salvate
+ * INVERTITE, come le scrive Photoshop. Sono le foto preparate per la stampa e
+ * poi caricate su un sito: prima non si aprivano.
  *
  * ! E TUTTO E' A NUMERI INTERI. La virgola mobile qui costerebbe due volte: le
  * istruzioni x87 su un Pentium sono lente, e ogni processo che le usa fa
@@ -42,7 +47,7 @@
 /* -----------------------------------------------------------------------------
  * I limiti, dichiarati in un posto solo
  * --------------------------------------------------------------------------- */
-#define COMP_MAX        3           /* grigio o YCbCr: il CMYK si rifiuta */
+#define COMP_MAX        4           /* grigio, YCbCr, CMYK o YCCK */
 #define CAMP_MAX        2           /* fattori di campionamento 1 o 2     */
 #define HUFF_TAB        4           /* la specifica ne ammette quattro    */
 
@@ -63,6 +68,10 @@ typedef struct {
     int dc_prec;                    /* il DC dell'ultimo blocco: e' differenziale */
     unsigned char *piano;           /* i campioni decodificati               */
     unsigned int   pl, pa;          /* misure del piano                      */
+    /* Solo per il progressivo: i coefficienti di ogni blocco, in ordine
+     * naturale e non ancora dequantizzati, bl x ba blocchi da 64. */
+    short         *coef;
+    unsigned int   bl, ba;
 } Comp;
 
 typedef struct {
@@ -82,6 +91,10 @@ typedef struct {
     unsigned int  larg, alt;
     int           hmax, vmax;
     unsigned int  ri;               /* intervallo di restart, in MCU */
+    int           progressivo;      /* SOF2 */
+    unsigned int  eobrun;           /* progressivo: blocchi ancora «finiti» */
+    int           adobe;            /* -1 niente APP14, sennò la trasformazione:
+                                     * 0 CMYK (o RGB), 1 YCbCr, 2 YCCK */
 } Jpg;
 
 /* Lo zigzag: l'ordine in cui i 64 coefficienti stanno nel file.
@@ -420,6 +433,231 @@ static int scansione(Jpg *j)
 /* -----------------------------------------------------------------------------
  * Il file: i marcatori
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * IL PROGRESSIVO (SOF2) — la specifica, allegato G.1.2
+ *
+ * Un'immagine progressiva arriva in piu' SCANSIONI. Ognuna porta, per una o
+ * piu' componenti, solo una FASCIA dei 64 coefficienti (da Ss a Se, nello
+ * zigzag) e solo alcuni BIT (Al e' il bit piu' basso portato; Ah > 0 vuol dire
+ * che e' un raffinamento di bit gia' arrivati). Quattro generi:
+ *
+ *     DC primo       Ss = 0,  Ah = 0   il DC, differenziale come nel baseline
+ *     DC raffina     Ss = 0,  Ah > 0   un bit in piu' del DC
+ *     AC primo       Ss > 0,  Ah = 0   una fascia di AC, con le «corse di fine
+ *                                      blocco» (EOBRUN) che coprono piu' blocchi
+ *     AC raffina     Ss > 0,  Ah > 0   un bit in piu' degli AC gia' non zero, e
+ *                                      i nuovi coefficienti che diventano +-1
+ *
+ * ! SI TENGONO TUTTI I COEFFICIENTI FINO ALLA FINE: ogni scansione ne aggiunge
+ * un pezzo, e solo dopo l'ultima si dequantizza e si trasforma. E' la memoria
+ * che il baseline non paga: 128 byte per blocco da 8x8.
+ *
+ * ! UNA SCANSIONE DI UNA SOLA COMPONENTE NON VA PER MCU: va per i blocchi di
+ * quella componente, nella loro griglia, che e' piu' piccola della griglia
+ * delle MCU quando la componente e' sottocampionata. Sbagliare qui da' il
+ * colore spostato rispetto alla luminanza.
+ * ============================================================================= */
+static void prog_affina(Bit *b, short *p, int bit)
+{
+    if (prendi_bit(b) && (*p & bit) == 0)
+        *p = (short)(*p + (*p >= 0 ? bit : -bit));
+}
+
+static int prog_blocco(Jpg *j, Comp *c, short *co, int ss, int se, int ah, int al)
+{
+    Bit *b = &j->b;
+    int  k;
+
+    if (ss == 0) {                                  /* il DC */
+        if (ah == 0) {
+            int t = huff_decodifica(b, &j->hdc[c->td]);
+
+            if (t < 0 || t > 15) return 0;
+            c->dc_prec += estendi(prendi_bits(b, t), t);
+            co[0] = (short)(c->dc_prec * (1 << al));
+        } else if (prendi_bit(b)) {
+            co[0] = (short)(co[0] | (1 << al));
+        }
+        return 1;
+    }
+
+    if (ah == 0) {                                  /* AC, prima passata */
+        if (j->eobrun) { j->eobrun--; return 1; }
+        for (k = ss; k <= se; ) {
+            int rs = huff_decodifica(b, &j->hac[c->ta]), r, sz;
+
+            if (rs < 0) return 0;
+            r = rs >> 4; sz = rs & 15;
+            if (sz == 0) {
+                if (r < 15) {
+                    j->eobrun = (1u << r) - 1u;
+                    if (r) j->eobrun += (unsigned int)prendi_bits(b, r);
+                    break;
+                }
+                k += 16;
+                continue;
+            }
+            k += r;
+            if (k > 63) return 0;
+            co[ZIGZAG[k]] = (short)(estendi(prendi_bits(b, sz), sz) * (1 << al));
+            k++;
+        }
+        return 1;
+    }
+
+    {                                               /* AC, raffinamento */
+        int bit = 1 << al;
+
+        if (j->eobrun) {
+            j->eobrun--;
+            for (k = ss; k <= se; k++)
+                if (co[ZIGZAG[k]]) prog_affina(b, &co[ZIGZAG[k]], bit);
+            return 1;
+        }
+        k = ss;
+        while (k <= se) {
+            int rs = huff_decodifica(b, &j->hac[c->ta]), r, sz;
+
+            if (rs < 0) return 0;
+            r = rs >> 4; sz = rs & 15;
+            if (sz == 0) {
+                if (r < 15) {
+                    j->eobrun = (1u << r);
+                    if (r) j->eobrun += (unsigned int)prendi_bits(b, r);
+                    /* this block is the first of the run: finish refining it */
+                    for (; k <= se; k++)
+                        if (co[ZIGZAG[k]]) prog_affina(b, &co[ZIGZAG[k]], bit);
+                    j->eobrun--;
+                    return 1;
+                }
+                /* r == 15: sixteen zeros to skip, refining on the way */
+            } else {
+                sz = prendi_bit(b) ? bit : -bit;
+            }
+            while (k <= se) {
+                short *q = &co[ZIGZAG[k]];
+
+                k++;
+                if (*q) { prog_affina(b, q, bit); continue; }
+                if (r == 0) {
+                    if (sz) *q = (short)sz;
+                    break;
+                }
+                r--;
+            }
+        }
+        return 1;
+    }
+}
+
+/* Il restart dentro una scansione progressiva: come nel baseline, piu'
+ * l'EOBRUN che non attraversa un marcatore RSTn. */
+static void prog_restart(Jpg *j)
+{
+    unsigned int p = j->b.pos;
+    int i;
+
+    j->b.bit_n = 0;
+    j->b.finiti = 0;
+    while (p + 1 < j->b.n &&
+           !(j->b.d[p] == 0xFF && j->b.d[p+1] >= 0xD0 && j->b.d[p+1] <= 0xD7)) p++;
+    if (p + 1 < j->b.n) j->b.pos = p + 2;
+    for (i = 0; i < j->n_comp; i++) j->comp[i].dc_prec = 0;
+    j->eobrun = 0;
+}
+
+/* Una scansione progressiva. `sc` sono le componenti che porta (ns di loro). */
+static int prog_scansione(Jpg *j, Comp **sc, int ns, int ss, int se, int ah, int al)
+{
+    unsigned int contate = 0;
+    int i;
+
+    j->eobrun = 0;
+    for (i = 0; i < j->n_comp; i++) j->comp[i].dc_prec = 0;
+
+    if (ns == 1) {
+        Comp *c = sc[0];
+        unsigned int cl = ((j->larg * (unsigned int)c->h + (unsigned int)j->hmax - 1u) /
+                           (unsigned int)j->hmax + 7u) / 8u;
+        unsigned int ca = ((j->alt * (unsigned int)c->v + (unsigned int)j->vmax - 1u) /
+                           (unsigned int)j->vmax + 7u) / 8u;
+        unsigned int bx, by;
+
+        if (cl > c->bl) cl = c->bl;
+        if (ca > c->ba) ca = c->ba;
+        for (by = 0; by < ca; by++)
+            for (bx = 0; bx < cl; bx++) {
+                if (j->ri && contate == j->ri) { prog_restart(j); contate = 0; }
+                if (!prog_blocco(j, c, c->coef + (by * c->bl + bx) * 64u, ss, se, ah, al))
+                    return 0;
+                contate++;
+            }
+        return 1;
+    }
+
+    /* Piu' componenti insieme: solo il DC, e per MCU come nel baseline. */
+    if (ss != 0) return 0;
+    {
+        unsigned int mcux = (j->larg + (unsigned int)(j->hmax * 8) - 1u) / (unsigned int)(j->hmax * 8);
+        unsigned int mcuy = (j->alt  + (unsigned int)(j->vmax * 8) - 1u) / (unsigned int)(j->vmax * 8);
+        unsigned int mx, my;
+
+        for (my = 0; my < mcuy; my++)
+            for (mx = 0; mx < mcux; mx++) {
+                if (j->ri && contate == j->ri) { prog_restart(j); contate = 0; }
+                for (i = 0; i < ns; i++) {
+                    Comp *c = sc[i];
+                    int bx, by;
+
+                    for (by = 0; by < c->v; by++)
+                        for (bx = 0; bx < c->h; bx++) {
+                            unsigned int x = mx * (unsigned int)c->h + (unsigned int)bx;
+                            unsigned int y = my * (unsigned int)c->v + (unsigned int)by;
+
+                            if (x >= c->bl || y >= c->ba) return 0;
+                            if (!prog_blocco(j, c, c->coef + (y * c->bl + x) * 64u, 0, 0, ah, al))
+                                return 0;
+                        }
+                }
+                contate++;
+            }
+    }
+    return 1;
+}
+
+/* Dopo l'ultima scansione: dequantizza e trasforma ogni blocco nel suo piano. */
+static void prog_finisci(Jpg *j)
+{
+    int i, k, cf[64];
+    unsigned int bx, by;
+
+    for (i = 0; i < j->n_comp; i++) {
+        Comp *c = &j->comp[i];
+
+        for (by = 0; by < c->ba; by++)
+            for (bx = 0; bx < c->bl; bx++) {
+                const short *co = c->coef + (by * c->bl + bx) * 64u;
+
+                for (k = 0; k < 64; k++)
+                    cf[ZIGZAG[k]] = dequantizza(co[ZIGZAG[k]], j->quant[c->tq][k]);
+                idct8x8(cf, c->piano + by * 8u * c->pl + bx * 8u, c->pl);
+            }
+    }
+}
+
+/* Dove ricomincia la lettura dei marcatori dopo i dati di una scansione: il
+ * primo 0xFF seguito da qualcosa che non e' un riempimento ne' un RSTn. */
+static unsigned int dopo_dati(const unsigned char *d, unsigned int n, unsigned int p)
+{
+    while (p + 1 < n) {
+        if (d[p] == 0xFF && d[p+1] != 0x00 && !(d[p+1] >= 0xD0 && d[p+1] <= 0xD7) &&
+            d[p+1] != 0xFF)
+            return p;
+        p++;
+    }
+    return n;
+}
+
 int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
 {
     Jpg j;
@@ -434,8 +672,9 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
         for (k = 0; k < 64; k++) j.quant[i][k] = 1;
     }
     j.n_comp = 0; j.larg = 0; j.alt = 0; j.ri = 0;
+    j.progressivo = 0; j.eobrun = 0; j.adobe = -1;
     j.hmax = 1; j.vmax = 1;
-    for (i = 0; i < COMP_MAX; i++) j.comp[i].piano = 0;
+    for (i = 0; i < COMP_MAX; i++) { j.comp[i].piano = 0; j.comp[i].coef = 0; }
 
     while (p + 3 < n) {
         unsigned int len;
@@ -453,8 +692,11 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
 
         switch (c) {
         case 0xC0:                          /* SOF0: baseline */
-        case 0xC1: {                        /* SOF1: sequenziale esteso */
+        case 0xC1:                          /* SOF1: sequenziale esteso */
+        case 0xC2: {                        /* SOF2: progressivo */
             unsigned int q = p + 2;
+
+            j.progressivo = (c == 0xC2);
 
             if (len < 8) return 0;
             if (d[q] != 8) return 0;        /* solo 8 bit per campione */
@@ -462,7 +704,7 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
             j.larg = ((unsigned int)d[q+3] << 8) | d[q+4];
             j.n_comp = d[q+5];
 
-            if (j.n_comp != 1 && j.n_comp != 3) return 0;
+            if (j.n_comp != 1 && j.n_comp != 3 && j.n_comp != 4) return 0;
             if (j.larg == 0 || j.alt == 0) return 0;
             if (j.larg > EXIMG_LATO_MAX || j.alt > EXIMG_LATO_MAX) return 0;
             if (len < 8u + 3u * (unsigned int)j.n_comp) return 0;
@@ -491,7 +733,7 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
          * arriverebbe alla scansione, che leggerebbe i suoi coefficienti
          * parziali come se fossero completi: un'immagine di rumore invece di
          * un messaggio che dice cosa fare. */
-        case 0xC2: case 0xC3: case 0xC5: case 0xC6: case 0xC7:
+        case 0xC3: case 0xC5: case 0xC6: case 0xC7:
         case 0xC9: case 0xCA: case 0xCB: case 0xCD: case 0xCE: case 0xCF:
             return 0;
 
@@ -577,6 +819,56 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
             if (len < 6) return 0;
 
             ns = d[q];
+            if (j.progressivo) {
+                Comp        *sc[COMP_MAX];
+                unsigned int e = q + 1u + 2u * (unsigned int)ns;
+                int          ss, se, ah, al;
+
+                if (ns < 1 || ns > j.n_comp || len < 6u + 2u * (unsigned int)ns) return 0;
+                for (i = 0; i < (unsigned int)ns; i++) {
+                    int id = d[q + 1 + i*2], td = d[q + 2 + i*2] >> 4;
+                    int ta = d[q + 2 + i*2] & 15;
+
+                    if (td >= HUFF_TAB || ta >= HUFF_TAB) return 0;
+                    sc[i] = 0;
+                    for (k = 0; k < (unsigned int)j.n_comp; k++)
+                        if (j.comp[k].id == id) sc[i] = &j.comp[k];
+                    if (!sc[i]) return 0;
+                    sc[i]->td = td;
+                    sc[i]->ta = ta;
+                }
+                ss = d[e]; se = d[e + 1]; ah = d[e + 2] >> 4; al = d[e + 2] & 15;
+                if (ss > 63 || se > 63 || ss > se || al > 13 || (ss == 0 && se != 0))
+                    return 0;
+
+                /* The first scan: the planes and the coefficients, zeroed. */
+                if (!j.comp[0].coef) {
+                    unsigned int mcux = (j.larg + (unsigned int)(j.hmax*8) - 1u) / (unsigned int)(j.hmax*8);
+                    unsigned int mcuy = (j.alt  + (unsigned int)(j.vmax*8) - 1u) / (unsigned int)(j.vmax*8);
+
+                    for (i = 0; i < (unsigned int)j.n_comp; i++) {
+                        Comp *cc = &j.comp[i];
+                        unsigned int z;
+
+                        cc->bl = mcux * (unsigned int)cc->h;
+                        cc->ba = mcuy * (unsigned int)cc->v;
+                        cc->pl = cc->bl * 8u;
+                        cc->pa = cc->ba * 8u;
+                        cc->piano = (unsigned char *)eximg_memoria(cc->pl * cc->pa);
+                        cc->coef  = (short *)eximg_memoria(cc->bl * cc->ba * 64u * sizeof(short));
+                        if (!cc->piano || !cc->coef) return 0;
+                        for (z = 0; z < cc->bl * cc->ba * 64u; z++) cc->coef[z] = 0;
+                    }
+                }
+
+                j.b.d = d; j.b.n = n; j.b.pos = p + len;
+                j.b.bit_buf = 0; j.b.bit_n = 0; j.b.finiti = 0;
+                /* ! A SCAN CUT SHORT IS NOT THE END: the image so far is kept,
+                 * as a browser shows a progressive JPEG while it arrives. */
+                (void)prog_scansione(&j, sc, ns, ss, se, ah, al);
+                p = dopo_dati(d, n, j.b.pos > 0 ? j.b.pos - 1u : 0u);
+                continue;
+            }
             if (ns != j.n_comp) return 0;
             if (len < 6u + 2u * (unsigned int)ns) return 0;
 
@@ -624,6 +916,12 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
             goto pronto;
         }
 
+        case 0xEE:                          /* APP14 «Adobe»: la trasformazione */
+            if (len >= 14 && d[p + 2] == 'A' && d[p + 3] == 'd' && d[p + 4] == 'o' &&
+                d[p + 5] == 'b' && d[p + 6] == 'e')
+                j.adobe = d[p + 2 + 11];
+            break;
+
         default:
             break;                          /* APPn, COM e il resto: si salta */
         }
@@ -631,6 +929,12 @@ int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm)
         p += len;
     }
 
+    /* The progressive image ends here, at EOI (or at the end of the data):
+     * all its scans are in, and now they become pixels. */
+    if (j.progressivo && j.comp[0].coef) {
+        prog_finisci(&j);
+        goto pronto;
+    }
     return 0;                               /* niente SOS: non c'e' immagine */
 
 pronto:
@@ -645,6 +949,30 @@ pronto:
                 unsigned int v = j.comp[0].piano[y * j.comp[0].pl + x];
 
                 bm->px[y * j.larg + x] = (v << 16) | (v << 8) | v;
+            } else if (j.n_comp == 4) {
+                /* ! CMYK: C, M, Y e K per pixel, e la luce che resta e'
+                 * (1 - inchiostro) * (1 - nero). Con il marcatore Adobe i
+                 * valori sono gia' salvati invertiti (255 = niente
+                 * inchiostro), e basta moltiplicarli; in YCCK i primi tre
+                 * sono un YCbCr che dice l'inchiostro. */
+                unsigned int v[4], k, r, g, b;
+                for (k = 0; k < 4; k++) {
+                    Comp *cc = &j.comp[k];
+                    v[k] = cc->piano[(y * (unsigned int)cc->v / (unsigned int)j.vmax) * cc->pl +
+                                     (x * (unsigned int)cc->h / (unsigned int)j.hmax)];
+                }
+                if (j.adobe == 2) {
+                    unsigned int rgb = ycbcr((int)v[0], (int)v[1], (int)v[2]);
+                    v[0] = 255u - ((rgb >> 16) & 255u);
+                    v[1] = 255u - ((rgb >> 8) & 255u);
+                    v[2] = 255u - (rgb & 255u);
+                } else if (j.adobe < 0) {
+                    for (k = 0; k < 4; k++) v[k] = 255u - v[k];     /* not inverted */
+                }
+                r = v[0] * v[3] / 255u;
+                g = v[1] * v[3] / 255u;
+                b = v[2] * v[3] / 255u;
+                bm->px[y * j.larg + x] = (r << 16) | (g << 8) | b;
             } else {
                 /* ! IL CROMA SI RIPETE, NON SI INTERPOLA. Con 4:2:0 c'e' un
                  * campione di colore ogni quattro pixel, e stenderlo a

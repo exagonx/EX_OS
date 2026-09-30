@@ -172,6 +172,7 @@ typedef struct {
      * tells a minimized window from one its program created hidden. */
     unsigned int ridotta;
     unsigned int passaggio;         /* WIN_MSG_PASSAGGIO: wants movement without buttons */
+    unsigned int chiusa_chiesta;    /* a pop-up already told to close */
 } Finestra;
 
 static Finestra g_fin[FINESTRE_MAX];
@@ -1841,6 +1842,25 @@ static void passaggio(void)
     }
 }
 
+/* A button pressed outside a pop-up closes it (WIN_ST_COMPARSA): the pop-up
+ * gets WIN_EV_CHIUDI, once. The click itself goes on to wherever it was
+ * going — a window of the same program is blocked by the pop-up, which is
+ * modal, and is not reached anyway. */
+static void comparse_chiudi(void)
+{
+    unsigned int dove = 0;
+    int sopra, i;
+
+    if (!(g_bottoni & ~g_bottoni_prec)) return;          /* no new press */
+    sopra = sotto(g_px, g_py, &dove);
+    for (i = 0; i < FINESTRE_MAX; i++) {
+        if (!g_fin[i].usata || !(g_fin[i].stile & WIN_ST_COMPARSA)) continue;
+        if (i == sopra || g_fin[i].chiusa_chiesta) continue;
+        g_fin[i].chiusa_chiesta = 1;
+        manda_evento(&g_fin[i], WIN_EV_CHIUDI, g_px, g_py, 0, 0);
+    }
+}
+
 static void mouse_agisci(void)
 {
     unsigned int giu = (g_bottoni & MOUSE_BTN_SIN) &&
@@ -2085,6 +2105,8 @@ static void crea(unsigned int pid, const WinCrea *c)
     }
 
     g_fin[i].usata     = 1;
+    g_fin[i].passaggio = 0;         /* the slot may be reused: nothing asked yet */
+    g_fin[i].chiusa_chiesta = 0;
     g_fin[i].id        = g_prossimo_id++;
     g_fin[i].pid       = pid;
     g_fin[i].x         = c->x;
@@ -2469,6 +2491,7 @@ static int servi_messaggio(unsigned int ms)
                 g_mouse_vuoto_ms = uptime_ms();
             }
             mouse_stato(&s);
+            comparse_chiudi();
             mouse_agisci();
             passaggio();
             rotella(s.dz);

@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.009"
+#define VERSIONE_APP "0.010"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -662,7 +662,8 @@ static int tipo_di(unsigned int i)
     if (!strcmp(e, "txt") || !strcmp(e, "md")  || !strcmp(e, "cfg") ||
         !strcmp(e, "cnf") || !strcmp(e, "log") || !strcmp(e, "dis")) return 2;
     if (!strcmp(e, "bmp") || !strcmp(e, "png") || !strcmp(e, "jpg") ||
-        !strcmp(e, "jpeg")|| !strcmp(e, "gif") || !strcmp(e, "ico")) return 3;
+        !strcmp(e, "jpeg")|| !strcmp(e, "gif") || !strcmp(e, "ico") ||
+        !strcmp(e, "webp")) return 3;
     if (!strcmp(e, "zip") || !strcmp(e, "gz")  || !strcmp(e, "tar")) return 4;
     if (!strcmp(e, "c")   || !strcmp(e, "h")   || !strcmp(e, "s")   ||
         !strcmp(e, "bas") || !strcmp(e, "sh")  || !strcmp(e, "py"))  return 5;

@@ -1448,6 +1448,29 @@ static int leggi_composto(CssFoglio *f, const char *t, unsigned int *pi,
 
                 while (x < y && spazio((unsigned char)t[x])) x++;
                 while (y > x && spazio((unsigned char)t[y - 1])) y--;
+
+                /* ! :not(:focus) ALWAYS MATCHES HERE (30 September 2026). In a
+                 * page that is drawn and not touched nothing is hovered,
+                 * focused, active or visited, so the negation of such a state
+                 * is true for every element. Read as "cannot honour -> never
+                 * matches" — the rule for the state alone — it turned the rule
+                 * off: Wikipedia hides its "Vai al contenuto" links with
+                 * .mw-jump-link:not(:focus){position:absolute;width:1px}, and
+                 * they showed at the top of every article. */
+                if (y - x > 1 && t[x] == ':' && t[x + 1] != ':') {
+                    static const char *const STATI[] = {
+                        "hover", "focus", "active", "visited", "focus-within",
+                        "focus-visible", "target", "target-within", 0
+                    };
+                    char         st[32];
+                    unsigned int q = 0, z;
+
+                    for (z = x + 1; z < y && q < sizeof(st) - 1; z++)
+                        st[q++] = (char)minusc((unsigned char)t[z]);
+                    st[q] = '\0';
+                    for (k = 0; STATI[k]; k++) if (pari(st, STATI[k])) break;
+                    if (STATI[k] && z == y) continue;
+                }
                 for (j = x; j < y; j++)
                     if (spazio((unsigned char)t[j]) || t[j] == ',' || t[j] == '>' ||
                         t[j] == ':' || t[j] == '+' || t[j] == '~' || t[j] == '\\') break;

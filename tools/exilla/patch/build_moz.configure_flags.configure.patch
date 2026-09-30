@@ -1,0 +1,16 @@
+--- a/build/moz.configure/flags.configure
++++ b/build/moz.configure/flags.configure
+@@ -543,7 +543,12 @@
+ # ---------------------------------
+ @depends(building_with_gnu_compatible_cc, target)
+ def moz_program_ldflags(building_with_gnu_compatible_cc, target):
+-    if building_with_gnu_compatible_cc and target.kernel not in ("Darwin", "WASI"):
++    # EX-OS loads executables at their link address: no PIE.
++    if building_with_gnu_compatible_cc and target.kernel not in (
++        "Darwin",
++        "WASI",
++        "EXOS",
++    ):
+         return ["-pie"]
+ 
+ 

@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # =============================================================================
 PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi calctor pennello immagini
+PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -2160,14 +2160,16 @@ EXIMG_JPG     := lib/eximg/jpg.c
 EXIMG_GIF     := lib/eximg/gif.c
 EXIMG_BMP     := lib/eximg/bmp.c
 EXIMG_INFLATE := lib/eximg/inflate.c
+EXIMG_WEBP    := lib/eximg/webp.c lib/eximg/vp8.c
 EXIMG_ESPORTA := lib/eximg/eximg_esporta.c
-EXIMG_HDR     := lib/eximg/eximg.h lib/eximg/eximg_interno.h lib/eximg/inflate.h
+EXIMG_HDR     := lib/eximg/eximg.h lib/eximg/eximg_interno.h lib/eximg/inflate.h \
+                 lib/eximg/webp_interno.h lib/eximg/webp_tabelle.h
 EXIMG_LD      := lib/eximg/eximg.ld
 
 EXIMG_SO := $(BUILD_EXWIN_LIB)/eximg.so
 
 $(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) $(EXIMG_BMP) \
-             $(EXIMG_INFLATE) $(EXIMG_ESPORTA) \
+             $(EXIMG_INFLATE) $(EXIMG_WEBP) $(EXIMG_ESPORTA) \
              $(EXIMG_HDR) $(EXIMG_LD) $(EXLIB_SRC) $(EXLIB_HDR) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/eximg.so ==="
@@ -2179,12 +2181,14 @@ $(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) $(
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_GIF) -o $(BUILD_OBJ)/soimg_gif.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_BMP) -o $(BUILD_OBJ)/soimg_bmp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/soimg_inflate.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c lib/eximg/webp.c -o $(BUILD_OBJ)/soimg_webp.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c lib/eximg/vp8.c -o $(BUILD_OBJ)/soimg_vp8.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ESPORTA) -o $(BUILD_OBJ)/soimg_esporta.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXIMG_LD) \
 	    $(BUILD_OBJ)/soimg_esporta.o $(BUILD_OBJ)/soimg_main.o \
 	    $(BUILD_OBJ)/soimg_png.o $(BUILD_OBJ)/soimg_ico.o \
 	    $(BUILD_OBJ)/soimg_jpg.o $(BUILD_OBJ)/soimg_gif.o $(BUILD_OBJ)/soimg_bmp.o \
-	    $(BUILD_OBJ)/soimg_inflate.o \
+	    $(BUILD_OBJ)/soimg_inflate.o $(BUILD_OBJ)/soimg_webp.o $(BUILD_OBJ)/soimg_vp8.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
 	@# a mano era la TERZA copia della stessa mappa — il .ld, il commento
@@ -2415,7 +2419,7 @@ $(FILEMGR_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(FILEMGR_SRC) $(FILEMGR_LD) $(EXWIN
 .PHONY: filemgr
 filemgr: dirs $(FILEMGR_BIN)
 
-# --- /exwin/bin/edit: l'editor di testo grafico ------------------------------
+# --- /exwin/bin/exeditor: l'editor di testo grafico (era /exwin/bin/edit fino al 30 settembre 2026)---------------------------
 # --- /exwin/bin/archivi: l'archiviatore grafico ------------------------------
 #
 # ! E' LA META' DI ExWin DI @ZIP, e non contiene una riga di formato ZIP: il
@@ -2548,29 +2552,36 @@ $(IMMAGINI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(IMMAGINI_SRC) $(IMMAGINI_LD) lib/
 .PHONY: immagini
 immagini: dirs $(IMMAGINI_BIN)
 
-EDIT_SRC := exwin/bin/edit/edit.c
-EDIT_BIN := $(BUILD_EXWIN_BIN)/edit
-EDIT_LD  := exwin/bin/edit/edit.ld
+EDIT_SRC := exwin/bin/exeditor/exeditor.c
+EDIT_BIN := $(BUILD_EXWIN_BIN)/exeditor
+EDIT_LD  := exwin/bin/exeditor/exeditor.ld
+# The RTF mode (@RTF, 30 September 2026): the model and the view, linked in
+# for now; they become a shared library when a second program wants them.
+EXRTF_SRC := lib/exrtf/rtf.c lib/exrtf/vista.c
+EXRTF_HDR := lib/exrtf/exrtf.h lib/exrtf/exrtf_vista.h
 
 $(EDIT_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
-             $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(EXDLG_STUB) $(EXDLG_HDR) $(EXRTF_SRC) $(EXRTF_HDR) \
              $(WIN_PROTO) $(FONT_SRC) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
-	@echo "=== Compilazione /exwin/bin/edit ==="
+	@echo "=== Compilazione /exwin/bin/exeditor ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(EDIT_SRC) -o $(BUILD_OBJ)/edit_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exrtf -I drivers/wserver -I drivers/kbd -c $(EDIT_SRC) -o $(BUILD_OBJ)/edit_main.o
+	$(CC) $(CFLAGS_USER) -I lib/exrtf -c lib/exrtf/rtf.c -o $(BUILD_OBJ)/edit_rtf.o
+	$(CC) $(CFLAGS_USER) -I lib/exrtf -I lib/exwin -I drivers/kbd -c lib/exrtf/vista.c -o $(BUILD_OBJ)/edit_vista.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/edit_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/edit_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/edit_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/edit_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EDIT_LD) \
 	    $(BUILD_OBJ)/edit_start.o $(BUILD_OBJ)/edit_main.o \
+	    $(BUILD_OBJ)/edit_rtf.o $(BUILD_OBJ)/edit_vista.o \
 	    $(BUILD_OBJ)/edit_exwin.o \
 	    $(BUILD_OBJ)/edit_exdlg.o $(BUILD_OBJ)/edit_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
-	@echo "[OK] edit compilato: $@"
+	@echo "[OK] exeditor compilato: $@"
 
-.PHONY: edit
-edit: dirs $(EDIT_BIN)
+.PHONY: exeditor
+exeditor: dirs $(EDIT_BIN)
 
 # --- /exwin/bin/exide: l'ambiente di sviluppo visuale ------------------------
 #

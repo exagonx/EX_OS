@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.027"
+#define VERSIONE_APP "0.029"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
@@ -123,10 +123,17 @@
 #define PAGINA_MAX_PR  (3u * 1024u * 1024u)
 #define NODI_MAX_PR    60000
 #define ARENA_MAX_PR   (3u * 1024u * 1024u)
-#define ATTR_MAX_PR    40000
+#define ATTR_MAX_PR    80000   /* Roma su Wikipedia: ~37000 (30 settembre 2026) */
 #define PEZZI_MAX_PR   60000
 #define LINK_MAX    2048
 #define LINK_ARENA  (192u * 1024u)
+/* ! THE PAGE'S LINKS HAVE THEIR OWN CEILING TOO (30 September 2026,
+ * @NAV-WIKI). A Wikipedia article (Roma) has about 5250 links: with 2048 for
+ * every view, from the 2049th on a link was drawn but not recorded, and a
+ * click on it did nothing — "the links do not open", further down the page.
+ * Static vectors in the BSS like the others: paid only as far as used. */
+#define LINK_MAX_PR    8192
+#define LINK_ARENA_PR  (1024u * 1024u)
 #define STORIA_MAX  32
 /* ! RAISED ON 24 SEPTEMBER 2026 (they were 2400 rules, 5000 declarations,
  * 160 KB, 4 sheets): amazon.com's home page links 8 sheets, two of 262 and
@@ -212,11 +219,12 @@ typedef struct {
     HtmlDoc        doc;
     Pezzo         *pez;
     int            pez_n;
-    char           link_arena[LINK_ARENA];
-    unsigned int   link_off[LINK_MAX];
+    char          *link_arena;
+    unsigned int  *link_off;
     /* 1 = il collegamento si apre in una finestra nuova (target="_blank" o
      * un nome di finestra; @NAV-FINESTRA, 29 settembre 2026) */
-    unsigned char  link_nuova[LINK_MAX];
+    unsigned char *link_nuova;
+    unsigned int   link_max, link_arena_max;   /* LINK_MAX(_PR), LINK_ARENA(_PR) */
     int            link_n;
     CssRegola      css_reg[CSS_REGOLE_MAX];
     CssPezzo       css_pezzi[CSS_PEZZI_MAX];
@@ -258,6 +266,8 @@ extern VistaImp *g_vi;
 #define g_link_off         (g_vi->link_off)
 #define g_link_nuova       (g_vi->link_nuova)
 #define g_link_n           (g_vi->link_n)
+#define g_link_max         (g_vi->link_max)
+#define g_link_arena_max   (g_vi->link_arena_max)
 #define g_css_reg          (g_vi->css_reg)
 #define g_css_pezzi        (g_vi->css_pezzi)
 #define g_css_dich         (g_vi->css_dich)
@@ -307,5 +317,18 @@ int uguale(const char *a, const char *b);
 
 /* ------------------------------------------------ browser_preludio.c */
 void preludio_esegui(ExJsCtx *js, int dentro_w, int dentro_h);
+
+
+/* =============================================================================
+ * THE SELECTED TEXT OF THE PAGE (@NAV-SELEZIONE, 30 September 2026)
+ *
+ * Pieces from g_sel_da to g_sel_a (indices in g_pez, -1 = none), chosen by
+ * dragging over the page in exbrowser.c and drawn white on blue by disegna.
+ * A piece is a word: the selection goes word by word, and the copied text
+ * gets a space between words on a line and a newline between lines.
+ * pezzo_parola copies the word of piece i into out (at most max-1 bytes).
+ * ============================================================================= */
+extern int g_sel_da, g_sel_a;
+int pezzo_parola(int i, char *out, int max);
 
 #endif /* BROWSER_PRIV_H */

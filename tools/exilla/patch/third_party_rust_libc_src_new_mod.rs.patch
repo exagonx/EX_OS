@@ -1,0 +1,11 @@
+--- a/third_party/rust/libc/src/new/mod.rs
++++ b/third_party/rust/libc/src/new/mod.rs
+@@ -96,7 +96,7 @@
+     } else if #[cfg(target_os = "nto")] {
+         mod nto;
+         pub(crate) use nto::*;
+-    } else if #[cfg(target_os = "nuttx")] {
++    } else if #[cfg(any(target_os = "nuttx", target_os = "exos"))] {
+         mod nuttx;
+         pub(crate) use nuttx::*;
+     } else if #[cfg(target_os = "openbsd")] {

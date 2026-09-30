@@ -31,7 +31,8 @@ SER=/tmp/exos/serialpassaggio.txt
 
 {
     echo '<html><body>'
-    for i in 1 2 3 4 5 6; do
+    echo "<p><a href=\"http://esempio.it/passaggio-1\" onmouseover=\"throw new Error('MOUSEOVER-GIRATO')\" onmouseout=\"throw new Error('MOUSEOUT-GIRATO')\">COLLEGAMENTO NUMERO 1, LUNGO APPOSTA PER IL MOUSE, LUNGO LUNGO LUNGO</a></p>"
+    for i in 2 3 4 5 6; do
         echo "<p><a href=\"http://esempio.it/passaggio-$i\">COLLEGAMENTO NUMERO $i, LUNGO APPOSTA PER IL MOUSE, LUNGO LUNGO LUNGO</a></p>"
     done
     echo '</body></html>'
@@ -54,7 +55,10 @@ timeout 300 python3 tools/qemu_drive.py "mkfs -t ext2 -L prova hd0p1@4" "si@40" 
     # sulla prima riga di collegamenti: 150 a destra, 110 in giu' (a passi di
     # dieci: il mouse di QEMU e' relativo)
     for i in $(seq 1 15); do echo "mon:mouse_move 10 0@0"; done
-    for i in $(seq 1 11); do echo "mon:mouse_move 0 10@0"; done
+    # ! 10 PASSI E NON 11: con 11 il puntatore finisce nello spazio FRA due
+    # righe di collegamenti (y=88 nell'area), e la barra ha gia' rimesso il
+    # testo di prima. Visto con la diagnostica, il 30 settembre 2026.
+    for i in $(seq 1 10); do echo "mon:mouse_move 0 10@0"; done
     echo "mon:mouse_move 1 0@2"
     echo "foto:$D/b-sopra.ppm@1"
     # i segnaposto sulla seriale li scrive la shell: con la grafica davanti
@@ -99,13 +103,25 @@ dentro, n = False, 0
 for r in righe:
     if 'PASSAGGIO-INIZIO' in r: dentro = True
     elif 'PASSAGGIO-FINE' in r: dentro = False
-    elif dentro and 'aggiorna finestra' in r and '168x20' not in r: n += 1
+    elif dentro and 'aggiorna finestra' in r and '168x20' not in r:
+        # ! SI CONTANO I RIDISEGNI DELLA PAGINA, non la barra di stato: quella
+        # si ridisegna da sola (744x16) quando si entra o si esce da un
+        # collegamento, ed e' proprio il comportamento voluto.
+        import re
+        m = re.search(r"\) (\d+)x(\d+) a", r)
+        if not m or int(m.group(2)) > 30: n += 1
 # ! AL PIU' UNO: tornando alla grafica con Alt+F5 un programma puo' essere
 # chiamato a ridisegnarsi una volta. Senza EX_NON_RIDISEGNARE sarebbero dieci.
 if n <= 1:
-    print("  [OK]  dieci passi sopra lo stesso collegamento: %d aggiornamenti (al piu' 1)" % n); ok += 1
+    print("  [OK]  dieci passi sopra lo stesso collegamento: %d ridisegni della pagina (al piu' 1)" % n); ok += 1
 else:
     print("  [NO]  dieci passi sopra lo stesso collegamento: %d aggiornamenti" % n)
+tutto = '\n'.join(righe)
+for nome in ('MOUSEOVER', 'MOUSEOUT'):
+    if nome + '-GIRATO' in tutto:
+        print("  [OK]  on%s nell'attributo ha girato" % nome.lower()); ok += 1
+    else:
+        print("  [NO]  on%s nell'attributo non ha girato" % nome.lower())
 print("  Le fotografie sono in %s" % d)
-sys.exit(0 if ok == 3 else 1)
+sys.exit(0 if ok == 5 else 1)
 PY

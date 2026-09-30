@@ -1,0 +1,17 @@
+--- a/build/moz.configure/rust.configure
++++ b/build/moz.configure/rust.configure
+@@ -300,8 +300,14 @@
+ 
+ @depends(rustc, when=rust_compiler)
+ @imports(_from="__builtin__", _import="ValueError")
++@imports("os")
+ def rust_supported_targets(rustc):
+     out = check_cmd_output(rustc, "--print", "target-list").splitlines()
++    # EX-OS (Exilla): a target described by a JSON spec found through
++    # RUST_TARGET_PATH is not listed by --print target-list.
++    for d in os.environ.get("RUST_TARGET_PATH", "").split(os.pathsep):
++        if d and os.path.isdir(d):
++            out += [f[:-5] for f in sorted(os.listdir(d)) if f.endswith(".json")]
+     data = {}
+     for t in out:
+         try:
