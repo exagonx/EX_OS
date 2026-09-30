@@ -164,6 +164,7 @@ static struct {
     void         (*voci_schede)(ExFinestra, int);
     int          (*voce_togli)(ExFinestra, unsigned int);
     void         (*voce_rinomina)(ExFinestra, unsigned int, const char *);
+    void         (*mouse_passaggio)(ExFinestra, int);
     void         (*finestra_riduci)(unsigned int);
     void         (*chiudi_altre)(void);
     void         (*area_seleziona)(ExFinestra, unsigned int, unsigned int, unsigned int);
@@ -353,6 +354,8 @@ static void assicura(void)
     P.voce_togli      = (int (*)(ExFinestra, unsigned int))exlib_simbolo(t, "ex_voce_togli");
     P.voce_rinomina   = (void (*)(ExFinestra, unsigned int, const char *))
                         exlib_simbolo(t, "ex_voce_rinomina");
+    P.mouse_passaggio = (void (*)(ExFinestra, int))
+                        exlib_simbolo(t, "ex_mouse_passaggio");
     P.finestra_riduci = (void (*)(unsigned int))
                         exlib_simbolo(t, "ex_finestra_riduci");
     P.chiudi_altre    = (void (*)(void))
@@ -598,6 +601,9 @@ int ex_voce_togli(ExFinestra c, unsigned int i)
 { assicura(); return P.voce_togli ? P.voce_togli(c, i) : 0; }
 void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
 { assicura(); if (P.voce_rinomina) P.voce_rinomina(c, i, testo); }
+/* Over an older exwin.so the window simply gets no passing messages. */
+void ex_mouse_passaggio(ExFinestra f, int si)
+{ assicura(); if (P.mouse_passaggio) P.mouse_passaggio(f, si); }
 
 void         ex_finestra_riduci(unsigned int id)
 { assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }

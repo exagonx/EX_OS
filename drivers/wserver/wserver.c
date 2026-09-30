@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.007");
+EX_VERSIONE("wserver", "0.008");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -171,6 +171,7 @@ typedef struct {
      * as @FIN-ICONA asks, costs nothing because nothing was lost. The flag
      * tells a minimized window from one its program created hidden. */
     unsigned int ridotta;
+    unsigned int passaggio;         /* WIN_MSG_PASSAGGIO: wants movement without buttons */
 } Finestra;
 
 static Finestra g_fin[FINESTRE_MAX];
@@ -1799,6 +1800,47 @@ static void ripristina(int idx)
     porta_su(idx);
 }
 
+/* =============================================================================
+ * passaggio — movement with no button, to the window under the pointer that
+ * asked for it (WIN_MSG_PASSAGGIO), and WIN_EV_USCITO to the one it left
+ * (wserver 0.008, @EXWIN-PASSAGGIO).
+ *
+ * ! THE WINDOW IS REMEMBERED BY ID, NOT BY INDEX: a slot of g_fin is reused
+ * when a window closes, and an index kept across that would send "you were
+ * left" to a stranger.
+ * ============================================================================= */
+static unsigned int g_passa_id = 0;
+static int          g_passa_x = -1, g_passa_y = -1;
+
+static void passaggio(void)
+{
+    unsigned int dove = 0, id = 0;
+    int idx = -1, prima;
+
+    if (g_bottoni == 0 && g_trascino < 0 && g_ridim < 0) {
+        idx = sotto(g_px, g_py, &dove);
+        if (idx >= 0) {
+            int md = modale_di(g_fin[idx].pid);
+            if (dove != 0 || !g_fin[idx].passaggio || (md >= 0 && md != idx))
+                idx = -1;
+        }
+    }
+    if (idx >= 0) id = g_fin[idx].id;
+
+    if (id != g_passa_id) {
+        prima = g_passa_id ? trova_id(g_passa_id) : -1;
+        if (prima >= 0 && g_fin[prima].passaggio)
+            manda_evento(&g_fin[prima], WIN_EV_USCITO, g_px, g_py, 0, 0);
+        g_passa_id = id;
+        g_passa_x = g_passa_y = -1;
+    }
+    if (idx >= 0 && (g_px != g_passa_x || g_py != g_passa_y)) {
+        manda_evento(&g_fin[idx], WIN_EV_MOUSE_MOSSO, g_px, g_py, 0, 0);
+        g_passa_x = g_px;
+        g_passa_y = g_py;
+    }
+}
+
 static void mouse_agisci(void)
 {
     unsigned int giu = (g_bottoni & MOUSE_BTN_SIN) &&
@@ -2428,6 +2470,7 @@ static int servi_messaggio(unsigned int ms)
             }
             mouse_stato(&s);
             mouse_agisci();
+            passaggio();
             rotella(s.dz);
         }
         return 1;
@@ -2600,6 +2643,16 @@ static int servi_messaggio(unsigned int ms)
         } else {
             riduci(idx);
         }
+        break;
+    }
+
+    case WIN_MSG_PASSAGGIO: {
+        WinRegione *w = (WinRegione *)buf;
+        int idx;
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid)
+            g_fin[idx].passaggio = (w->x != 0);
         break;
     }
 

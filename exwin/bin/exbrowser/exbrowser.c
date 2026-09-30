@@ -1268,6 +1268,11 @@ static const char CSS_DI_SISTEMA[] =
  * whether it needs the toolkit's redraw (see the end of that case). */
 static unsigned int g_dico_n = 0;
 
+/* The link under the pointer (-1: none) and what the status line said
+ * before it showed the link's address (EXM_MOUSE_SOPRA). */
+static int  g_sopra_link = -1;
+static char g_stato_prima[160];
+
 static void dico(const char *s)
 {
     if (g_stato) ex_testo_metti(g_stato, s);
@@ -7194,6 +7199,35 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         barra_mosso(EX_Y(lp));              /* draws itself if it scrolls */
         return EX_NON_RIDISEGNARE;
 
+    /* The pointer over a link shows where it goes, in the status line, as
+     * every browser does; off the link, the status line gets back what it
+     * said (@EXWIN-PASSAGGIO, 30 September 2026). ! Only a CHANGE of link
+     * redraws: these come at every pixel the mouse moves. */
+    case EXM_MOUSE_SOPRA: {
+        int k = (EX_Y(lp) >= area_y()) ? link_sotto(EX_X(lp), EX_Y(lp)) : -1;
+        static char dove[EXHTTP_URL_MAX];
+
+        if (k == g_sopra_link || !g_stato) return EX_NON_RIDISEGNARE;
+        if (g_sopra_link < 0) {
+            const char *t = ex_testo_prendi(g_stato);
+            strncpy(g_stato_prima, t ? t : "", sizeof(g_stato_prima) - 1);
+            g_stato_prima[sizeof(g_stato_prima) - 1] = '\0';
+        }
+        g_sopra_link = k;
+        if (k >= 0)
+            ex_testo_metti(g_stato, risolvi(link_url(k), dove, sizeof(dove))
+                                    ? dove : link_url(k));
+        else
+            ex_testo_metti(g_stato, g_stato_prima);
+        return 0;
+    }
+
+    case EXM_MOUSE_FUORI:
+        if (g_sopra_link < 0 || !g_stato) return EX_NON_RIDISEGNARE;
+        g_sopra_link = -1;
+        ex_testo_metti(g_stato, g_stato_prima);
+        return 0;
+
     case EXM_MOUSE_SU:
         g_trascino = 0;
         return EX_NON_RIDISEGNARE;
@@ -7231,6 +7265,7 @@ int main(int argc, char **argv)
         printf("         Avvialo con:  exwin\n");
         return 1;
     }
+    ex_mouse_passaggio(g_f, 1);         /* the address of a link, passing over it */
 
     /* ! IL FONT E' PROPORZIONALE SE C'E', ALTRIMENTI QUELLO DI SISTEMA, e non
      * si muore per un file mancante: ex_font_apri rende 0, che E' il font di

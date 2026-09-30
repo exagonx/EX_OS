@@ -8281,6 +8281,156 @@ static int shmfd_munmap(void *addr)
     }
     return 1;
 }
+
+/* =============================================================================
+ * dlopen, dlsym, dlclose, dlerror — on EX-OS libraries (@DLOPEN, 29 Sept 2026)
+ *
+ * An EX-OS shared library is not an ELF shared object with a dynamic symbol
+ * table: it is linked at its own address and exports a table of names and
+ * addresses, ExLibTesta (lib/include/exlib.h), that SYS_LIB_APRI maps and
+ * hands back. dlopen is exlib_apri with a search path, dlsym is a look-up in
+ * that table. It is what a ported program needs to open an OPTIONAL library
+ * and carry on without it when it is not there — which is how Firefox uses
+ * dlopen almost everywhere.
+ *
+ * ! NOT AN ELF LOADER. A library built by the cross compiler as an ordinary
+ * .so (PIC, DT_NEEDED, relocations) is not loaded: dlopen says NULL and
+ * dlerror says why. libxul is therefore linked statically into the program
+ * (the choice written in tools/exilla/leggimi.md, stage 1); a real dynamic
+ * loader is a job of its own.
+ *
+ * ! THE SAME CODE AS lib/exlib/exlib.c, with other names: system programs
+ * link libc.c AND exlib.c, and the same names twice would not link. The
+ * checks (magic, version) and the call to __lib_avvio are the same, and for
+ * the same reasons, written there.
+ * ============================================================================= */
+#define SYS_LIB_APRI_DL   248
+#define DL_MAGIA          0x424C5845u     /* EXLIB_MAGIA */
+#define DL_VERSIONE       1u              /* EXLIB_VERSIONE */
+
+typedef struct {
+    unsigned int        magia;
+    unsigned int        versione;
+    unsigned int        n;
+    const char *const  *nomi;
+    void *const        *indirizzi;
+} DlTesta;                               /* ExLibTesta, duplicated by hand */
+
+static const char *g_dl_errore = 0;
+static char        g_dl_testo[160];
+
+static void dl_sbaglio(const char *cosa, const char *chi)
+{
+    snprintf(g_dl_testo, sizeof(g_dl_testo), "%s: %s", chi ? chi : "?", cosa);
+    g_dl_errore = g_dl_testo;
+}
+
+static void *dl_cerca(const DlTesta *t, const char *nome)
+{
+    unsigned int i;
+
+    for (i = 0; i < t->n; i++)
+        if (t->nomi[i] && strcmp(t->nomi[i], nome) == 0) return t->indirizzi[i];
+    return 0;
+}
+
+/* The table, or 0; *esiste says whether the file could be mapped at all. */
+static const DlTesta *dl_apri_uno(const char *percorso, int *esiste)
+{
+    int            r = (int)_syscall1(SYS_LIB_APRI_DL, (uint32_t)(uintptr_t)percorso);
+    const DlTesta *t;
+
+    if (r <= 0) return 0;
+    *esiste = 1;
+    t = (const DlTesta *)(uintptr_t)r;
+    if (t->magia != DL_MAGIA || t->versione != DL_VERSIONE ||
+        t->n == 0 || t->nomi == 0 || t->indirizzi == 0)
+        return 0;
+    {
+        void (*avvia)(void) = (void (*)(void))dl_cerca(t, "__lib_avvio");
+        if (avvia) avvia();
+    }
+    return t;
+}
+
+/* ! THE HANDLE OF THE PROGRAM ITSELF (dlopen(NULL)) exists, because code
+ * asks for it before looking anything up; but a static program has no symbol
+ * table at run time, so dlsym on it finds nothing — said by dlerror. */
+static const DlTesta g_dl_programma = { 0, 0, 0, 0, 0 };
+
+void *dlopen(const char *nome, int flag)
+{
+    static const char *const dove[] = {
+        "/lib/", "/exwin/lib/", "/cdrom/lib/", "/cdrom/exwin/lib/", 0
+    };
+    const DlTesta *t = 0;
+    int            esiste = 0, i;
+    char           percorso[256];
+
+    (void)flag;                 /* RTLD_LAZY/NOW/GLOBAL: everything is bound */
+    if (nome == 0) return (void *)&g_dl_programma;
+
+    if (strchr(nome, '/')) {
+        t = dl_apri_uno(nome, &esiste);
+    } else {
+        const char *extra = getenv("LD_LIBRARY_PATH");
+
+        if (extra && *extra && strlen(extra) + strlen(nome) + 2 < sizeof(percorso)) {
+            snprintf(percorso, sizeof(percorso), "%s/%s", extra, nome);
+            t = dl_apri_uno(percorso, &esiste);
+        }
+        for (i = 0; !t && dove[i]; i++) {
+            snprintf(percorso, sizeof(percorso), "%s%s", dove[i], nome);
+            t = dl_apri_uno(percorso, &esiste);
+        }
+    }
+    if (!t) {
+        dl_sbaglio(esiste ? "not an EX-OS library (no ExLibTesta): only EX-OS "
+                            "libraries can be opened, see dlopen in lib/libc.c"
+                          : "cannot open shared object file (missing, or not an ELF the kernel can map)",
+                   nome);
+        return 0;
+    }
+    return (void *)t;
+}
+
+void *dlsym(void *h, const char *nome)
+{
+    const DlTesta *t = (const DlTesta *)h;
+    void          *p;
+
+    if (!nome) { dl_sbaglio("no symbol name", "dlsym"); return 0; }
+    if (t == 0 || t == &g_dl_programma || t == (const DlTesta *)-1) {
+        dl_sbaglio("undefined symbol (a static program has no symbol table "
+                   "at run time)", nome);
+        return 0;
+    }
+    p = dl_cerca(t, nome);
+    if (!p) dl_sbaglio("undefined symbol", nome);
+    return p;
+}
+
+/* Libraries stay mapped until the program ends: the kernel shares them
+ * between processes and has no per-process unload. POSIX allows it. */
+int dlclose(void *h)
+{
+    (void)h;
+    return 0;
+}
+
+char *dlerror(void)
+{
+    const char *e = g_dl_errore;
+
+    g_dl_errore = 0;
+    return (char *)e;
+}
+
+int dladdr(const void *indirizzo, void *info) /* Dl_info *, see libc.h */
+{
+    (void)indirizzo; (void)info;
+    return 0;                   /* "not found": no symbol tables at run time */
+}
 #endif /* !EXOS_LIBC_SO */
 
 int interrompi(int pid)

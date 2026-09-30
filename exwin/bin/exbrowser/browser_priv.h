@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.026"
+#define VERSIONE_APP "0.027"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si

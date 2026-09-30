@@ -84,6 +84,23 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### `dlopen` and `dlsym`
+
+**tested in QEMU** (`tools/prova_dl.sh`, 11 out of 11) - a program linked
+with `libc.a` can open an EX-OS library by name on demand
+(`dlopen("exzip.so", ...)`), find its functions with `dlsym` and call them;
+if the library is not there, `dlerror` says why. An arbitrary ELF `.so` is
+not loaded: EX-OS libraries have a table of their own, and Firefox links
+statically. With this the first stage of Exilla (the system) is done.
+
+### POSIX shared memory
+
+**tested in QEMU** (`tools/prova_shm.sh`, 16 out of 16) - `libc.a` has
+`shm_open`, `ftruncate` and `mmap` on that descriptor, on top of the EX-OS
+shared memory zones: two programs open the same name and see the same
+pages, even with the long names Mozilla uses. A zone does not grow after it
+is born and `O_EXCL` does nothing. Firefox (Exilla) needs it.
+
 ### The graphics no longer flicker
 
 **tested in QEMU, to be judged on real hardware** - the flicker came "with

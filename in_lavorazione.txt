@@ -227,6 +227,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @RUST-0          FATTO e provato il 28/09 (Exilla): tools/rust-exos/prova.sh
   1  @SEGNALI        FATTO e provato (23/23): sigaction con consegna vera e mprotect; resta dlopen
   1  @SHM-OPEN       FATTO e provato (16/16): shm_open, ftruncate e mmap sopra le zone, nella libc.a
+  1  @DLOPEN         FATTO e provato (11/11): dlopen/dlsym sulle librerie di EX-OS; libxul sara' statica
   1  @TASTI-SISTEMA   FATTI Ctrl+Alt+Canc e Ctrl+C in console; nel terminale in finestra non chiede
   1  @GRAFICA-MODALE  FATTO: riavvio e spegnimento con la grafica accesa
   1  @FILEMGR-OPS     FATTO anche Rinomina (F2), provato: resta l'avanzamento
@@ -5830,3 +5831,41 @@ un programma: il primo lavoro e' tirarla fuori.
   lungo come quelli di Mozilla; prova_segnali ancora 23/23.
   Resta della tappa 1: dlopen/dlsym (o libxul statica). ! libc-exos.rs (il
   crate libc di Rust, di claude-B) non dichiara ancora shm_open e ftruncate.
+
+2026-09-29 claude-A — @DLOPEN FATTO e provato (11/11), e con lui la tappa 1 di Exilla.
+  dlopen, dlsym, dlclose, dlerror (e dladdr che dice 0) nella libc.a, sopra
+  SYS_LIB_APRI e la tabella ExLibTesta delle librerie di EX-OS: le stesse
+  verifiche di lib/exlib/exlib.c (magia, versione) e la stessa chiamata a
+  __lib_avvio, con altri nomi perche' i programmi di sistema collegano libc.c
+  ED exlib.c. Un nome senza '/' si cerca in $LD_LIBRARY_PATH, /lib,
+  /exwin/lib e le stesse sotto /cdrom. Header nuovo: lib/include/dlfcn.h.
+  ! LA SCELTA, fatta qui perche' l'utente ha detto di procedere: dlopen serve
+  a Firefox soprattutto per le librerie FACOLTATIVE, da aprire se ci sono e
+  saltare se no, e questo basta. Un .so ELF normale (PIC, DT_NEEDED,
+  rilocazioni) NON si carica — dlerror lo dice — quindi libxul si collega
+  statica nel programma. Un caricatore ELF dinamico vero e' un lavoro suo.
+  Prova: tools/prova_dl.sh (tools/prove/dlprova.c): un programma statico apre
+  exzip.so per nome, chiama ex_zip_apri su un file che non c'e' ed
+  ex_zip_errore risponde «l'archivio non si apre» — cioe' la libreria gira
+  davvero, ponti verso la libc compresi. Floppy invariato (6 KB liberi).
+  ! PER claude-B: tools/exilla/leggimi.md (paragrafo 3) elenca ancora dlopen,
+  mmap/mprotect, i segnali e la memoria condivisa fra le cose che mancano; e
+  libc-exos.rs non dichiara dlopen, shm_open, ftruncate, sigaction.
+
+2026-09-30 claude-A — @GRAFICA-FLUIDA, seguito: la scrivania diventava GRIGIA col tasto
+  destro (segnalato dall'utente: «Nuova cartella» o «Nuovo file», e tutto il
+  desktop grigio «come se la finestra si espandesse»). ex_menu_comparsa, alla
+  chiusura, ridisegnava la finestra con ex_procedura_base, che la riempie di
+  grigio; la scrivania dipinge da se' e si ridisegnava solo dopo il dialogo
+  del nome. E LO STESSO ERRORE era in 22 punti del ciclo dei messaggi
+  (prendi_msg): pulsante premuto, barra trascinata, riga scelta, menu chiuso.
+  Su una finestra che dipinge da se' — la pagina di EXBrowser, la tela di
+  Pennello — era un lampo grigio ogni volta: altro sfarfallio «in base al
+  carico». Ora passano tutti da ridisegna_finestra(), che chiama la procedura
+  della finestra come fa ex_smista dal 18 agosto. exwin.so 0.011.
+  ! DA PROVARE IN QEMU appena wserver.c e' ripristinato: il 29 sera l'ho
+  svuotato io per errore (uno script che apriva il file in scrittura prima di
+  leggerlo), e il ripristino da git l'ha bloccato il controllo dei permessi:
+  lo fa l'utente con `git checkout HEAD -- drivers/wserver/wserver.c`.
+  Poi vanno rifatte le tre aggiunte di @EXWIN-PASSAGGIO al server (win_proto.h
+  le ha gia': WIN_MSG_PASSAGGIO e WIN_EV_USCITO).

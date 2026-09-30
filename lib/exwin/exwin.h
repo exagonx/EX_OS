@@ -146,6 +146,14 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * che sa se c'e' da salvare, e poi chiama ex_voce_togli(). (29 settembre
  * 2026, @TOOLKIT-SCHEDE) */
 #define EXM_SCHEDA_CHIUDI 0x0013
+/* The pointer passing over the window with no button pressed, lp = x | y<<16
+ * like the other mouse messages; and leaving it (no coordinates). Only to a
+ * window that asked with ex_mouse_passaggio (exwin.so 0.011, wserver 0.008,
+ * @EXWIN-PASSAGGIO). ! They come a hundred times a second: a procedure that
+ * handles them returns EX_NON_RIDISEGNARE unless it has something to redraw,
+ * or the toolkit redraws the whole window at every pixel. */
+#define EXM_MOUSE_SOPRA   0x0014
+#define EXM_MOUSE_FUORI   0x0015
 /* EXM_MOUSE_GIU e EXM_DOPPIOCLIC portano in wp i modificatori (KBD_MOD_CTRL,
  * _SHIFT, _ALT) del momento del clic: dal 29 settembre 2026, con wserver
  * 0.006 e exwin.so 0.009. Prima wp era 0. */
@@ -451,6 +459,11 @@ int         ex_lista_scelte(ExFinestra lista, unsigned int *righe, int max);
 int         ex_lista_riga_a(ExFinestra lista, int y);
 
 void        ex_finestra_riduci(unsigned int id);
+
+/* EXM_MOUSE_SOPRA and EXM_MOUSE_FUORI for this window: 1 to receive them, 0
+ * to stop. Over an older server nothing arrives, which is the same as not
+ * asking: a program must work without them. */
+void        ex_mouse_passaggio(ExFinestra f, int si);
 
 /* Asks every program but this one to close, as with their X button; the
  * server stays on. Used by the desktop to shut down with the graphics still

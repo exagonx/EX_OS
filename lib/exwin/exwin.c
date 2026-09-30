@@ -998,6 +998,18 @@ static void finestra_chiedi(unsigned int tipo, unsigned int id)
 
 void ex_finestra_attiva(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
 
+void ex_mouse_passaggio(ExFinestra f, int si)
+{
+    Oggetto   *r = radice(f);
+    WinRegione w;
+
+    if (!r || !r->win_id || !server_trova()) return;
+    memset(&w, 0, sizeof(w));
+    w.id = r->win_id;
+    w.x  = si ? 1u : 0u;
+    ipc_send((unsigned int)g_server, WIN_MSG_PASSAGGIO, &w, sizeof(w));
+}
+
 /* =============================================================================
  * ex_apri_file — un file si apre col suo programma (29 settembre 2026,
  * @ASSOCIAZIONI)
@@ -1197,8 +1209,24 @@ int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
     while (g_cm_scelta == -2 && ex_prendi_msg(&m)) ex_smista(&m);
 
     ex_distruggi(p);
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
+    /* ! THE REDRAW GOES THROUGH THE WINDOW'S OWN PROCEDURE, not the base
+     * (30 September 2026). The base fills the window with grey and draws the
+     * controls: right for a window made of controls, wrong for one that paints
+     * its own pixels. The desktop turned grey as soon as «Nuova cartella» was
+     * chosen, and stayed grey while it asked for the name. The same lesson as
+     * ex_smista (18 August 2026); a procedure that does not handle
+     * EXM_DISEGNA falls back to the base by itself. */
+    {
+        ExFinestra rh = radice_h(f);
+        Oggetto   *ro = ogg(rh);
+
+        long       esito = 1;
+
+        if (ro && ro->proc) esito = ro->proc(rh, EXM_DISEGNA, 0, 0);
+        if (esito != 0 && esito != EX_NON_RIDISEGNARE)
+            ex_procedura_base(rh, EXM_DISEGNA, 0, 0);
+        ex_aggiorna(rh);
+    }
     return g_cm_scelta < 0 ? -1 : g_cm_scelta;
 }
 
@@ -6239,6 +6267,34 @@ int ex_guarda_fd(int fd, ExGuarda fn, void *dato)
     return 0;
 }
 
+/* =============================================================================
+ * ridisegna_finestra — the whole window again, through ITS procedure
+ * (30 September 2026, @GRAFICA-FLUIDA)
+ *
+ * ! THE MESSAGE LOOP REDREW WITH THE BASE, twenty-two times: a button going
+ * down, a scroll bar dragged, a row chosen, a menu closed. The base fills the
+ * window with grey and draws the controls — and presents it. On a window that
+ * paints its own pixels (EXBrowser's page, the desktop, Pennello's canvas)
+ * that was a grey flash every time, until the application drew again; on the
+ * desktop, after the right-button menu, it stayed grey for as long as the
+ * name was being asked. ex_smista learnt this on 18 August 2026; the loop had
+ * not. A procedure that does not handle EXM_DISEGNA falls back to the base by
+ * itself, so windows made only of controls see no difference.
+ * ============================================================================= */
+static void ridisegna_finestra(ExFinestra f)
+{
+    ExFinestra rh = radice_h(f);
+    Oggetto   *ro = ogg(rh);
+
+    long       esito = 1;
+
+    if (ro && ro->proc) esito = ro->proc(rh, EXM_DISEGNA, 0, 0);
+    /* Not handled (anything but 0 and EX_NON_RIDISEGNARE): the base, as
+     * ex_smista does. */
+    if (esito != 0 && esito != EX_NON_RIDISEGNARE)
+        ex_procedura_base(rh, EXM_DISEGNA, 0, 0);
+}
+
 static int prendi_msg(ExMsg *m, int bloccante)
 {
     IpcMessage    meta;
@@ -6459,6 +6515,19 @@ static int prendi_msg(ExMsg *m, int bloccante)
         m->wp = 0;
         m->lp = (long)((e.x & 0xFFFF) | ((e.y & 0xFFFF) << 16));
 
+        /* The pointer passing with no button (@EXWIN-PASSAGGIO): only a
+         * window that asked gets these, and they go straight to it — the
+         * drag logic below is for a button held down. */
+        if (e.tipo == WIN_EV_MOUSE_MOSSO && e.bottoni == 0) {
+            m->msg = EXM_MOUSE_SOPRA;
+            return 1;
+        }
+        if (e.tipo == WIN_EV_USCITO) {
+            m->msg = EXM_MOUSE_FUORI;
+            m->lp  = 0;
+            return 1;
+        }
+
         switch (e.tipo) {
         case WIN_EV_CHIUDI:     m->msg = EXM_CHIUDI;    return 1;
         case WIN_EV_DESTRO: {
@@ -6471,7 +6540,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 lista_punta(co, (int)e.y);
                 /* una riga fuori dal gruppo scelto ne diventa l'unica */
                 if (L && L->multi && L->sel < L->n && !L->segni[L->sel]) lista_uno(L);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
             }
             m->msg = EXM_MOUSE_DESTRO;
             m->wp  = (unsigned int)c;
@@ -6479,7 +6548,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
         }
         case WIN_EV_ROTELLA:
             if (rotella_controllo(f, (int)e.x, (int)e.y, (int)e.tasto)) {
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 continue;
             }
             m->msg = EXM_ROTELLA;
@@ -6498,7 +6567,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 unsigned int cmd = 0;
 
                 if (menu_tasto(f, e.tasto, &cmd)) {
-                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    ridisegna_finestra(f);
                     /* ! L'APPLICAZIONE SI RIDISEGNA ANCHE LEI (27 settembre
                      * 2026): la base rifa' solo i controlli, e il display di
                      * Calctor spariva a ogni tendina aperta. Stessa regola
@@ -6519,7 +6588,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 ExFinestra   t = schede_tasto(f, e.tasto, &msg, &wp, &lp);
 
                 if (t) {
-                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    ridisegna_finestra(f);
                     m->finestra = destinatario(t);
                     m->msg = msg;
                     m->wp  = wp;
@@ -6550,7 +6619,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                  * regola era nata. Chi non disegna niente di suo non fa
                  * niente e paga solo il giro del ciclo.
                  * ========================================================= */
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 m->msg = EXM_DISEGNA;
                 m->wp  = 0;
                 m->lp  = 0;
@@ -6573,7 +6642,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * lista. */
             if (g_mdi_trascina) {
                 mdi_sposta(g_mdi_trascina, (int)e.x, (int)e.y);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 continue;
             }
 
@@ -6594,7 +6663,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                     if (giu != pr->premuto) {
                         pr->premuto = giu;
-                        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                        ridisegna_finestra(f);
                     }
                 }
             }
@@ -6617,7 +6686,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                                       : ((int)e.y - oy - co->y)) - spess,
                                 g_scorri_presa);
                 if (co->valore == prima) continue;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 m->finestra = destinatario(g_trascinato);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
@@ -6627,7 +6696,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
             if (co && co->classe == CL_AREA) {
                 area_punta(co, (int)e.x, (int)e.y);
-                if (!ridisegna_controllo(co)) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                if (!ridisegna_controllo(co)) ridisegna_finestra(f);
                 continue;
             }
             if (co && co->classe == CL_LISTA) {
@@ -6640,7 +6709,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     unsigned int prima = L ? L->sel : 0;
                     lista_punta(co, (int)e.y);
                     if (L && L->multi && L->sel != prima && !L->segni[L->sel]) lista_uno(L);
-                    if (!ridisegna_controllo(co)) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    if (!ridisegna_controllo(co)) ridisegna_finestra(f);
                 }
                 continue;
             }
@@ -6691,7 +6760,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                         g_ogg[j].premuto = 0;
                         cambiato = 1;
                     }
-                if (cambiato) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                if (cambiato) ridisegna_finestra(f);
             }
 
             /* ! IL PULSANTE SI SERVE PRIMA DELLA LISTA TRASCINATA. Sono due
@@ -6765,7 +6834,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 unsigned int cmd = 0;
 
                 if (menu_clic(f, (int)e.x, (int)e.y, &cmd)) {
-                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    ridisegna_finestra(f);
                     if (cmd == 0) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
                     m->msg = EXM_COMANDO;
                     m->wp  = cmd;
@@ -6782,7 +6851,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 ExFinestra quale = 0;
 
                 if (combo_clic(f, (int)e.x, (int)e.y, &cid, &scelto, &quale)) {
-                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    ridisegna_finestra(f);
                     if (!scelto) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
                     m->finestra = destinatario(quale);
                     m->msg = EXM_COMANDO;
@@ -6800,7 +6869,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 int esito = mdi_clic(f, (int)e.x, (int)e.y, &chiudi);
 
                 if (esito != 0) {
-                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    ridisegna_finestra(f);
                     if (chiudi) {
                         /* ! LA CHIUSURA VA ALLA FINESTRA FIGLIA, non
                          * all'applicazione: e' lei che deve poter dire di no,
@@ -6861,7 +6930,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (co && co->classe == CL_PULSANTE) {
                 co->premuto = 1;
                 g_premuto   = c;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 continue;
             }
 
@@ -6873,7 +6942,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (co && (co->classe == CL_SPUNTA || co->classe == CL_RADIO)) {
                 co->premuto = 1;
                 g_premuto   = c;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 continue;
             }
 
@@ -6889,7 +6958,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     g_scorri_presa = presa;
                     continue;               /* preso il cursore: niente e' cambiato */
                 }
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 m->finestra = destinatario(c);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
@@ -6906,7 +6975,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     if (z == 3 && V->primo > 0) V->primo--;
                     if (z == 4 && V->primo + 1 < V->n) V->primo++;
                     if (V->sel < V->primo) V->sel = V->primo;
-                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    ridisegna_finestra(f);
                     m->finestra = destinatario(c);
                     m->msg = EXM_COMANDO;
                     m->wp  = co->id;
@@ -6922,7 +6991,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
                 if (k < 0) continue;
                 V->sel = (unsigned int)k;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 m->finestra = destinatario(c);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
@@ -6933,7 +7002,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             /* Aprire la tendina non e' scegliere: non si manda niente. */
             if (co && co->classe == CL_COMBO) {
                 g_combo_aperto = c;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 continue;
             }
 
@@ -6954,7 +7023,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 if (A) { A->sel = 1; A->ax = A->cx; A->ay = A->cy; }
 
                 g_trascinato = c;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 continue;
             }
 
@@ -6966,7 +7035,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 L = lista_di(co);
                 lista_clic_multi(L, e.tasto);
                 g_tras_sel = L ? L->sel : 0;
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ridisegna_finestra(f);
                 m->finestra = destinatario(c);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
@@ -7504,7 +7573,7 @@ void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.010"
+#define EXWIN_VERSIONE "0.011"
 
 const char *ex_versione(void) { return EXWIN_VERSIONE; }
 

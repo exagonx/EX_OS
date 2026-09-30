@@ -101,6 +101,15 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### `dlopen` e `dlsym`
+
+**testato in QEMU** (`tools/prova_dl.sh`, 11 su 11) — un programma collegato
+con la `libc.a` puo' aprire a richiesta una libreria di EX-OS per nome
+(`dlopen("exzip.so", ...)`), trovarne le funzioni con `dlsym` e chiamarle; se
+la libreria non c'e', `dlerror` dice perche'. Un `.so` ELF qualunque invece
+non si carica: le librerie di EX-OS hanno una tabella loro, e Firefox si
+collega statico. Con questo la prima tappa di Exilla (il sistema) e' fatta.
+
 ### La memoria condivisa di POSIX
 
 **testato in QEMU** (`tools/prova_shm.sh`, 16 su 16) — nella `libc.a` ci

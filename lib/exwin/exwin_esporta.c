@@ -182,6 +182,7 @@ static const char *const g_nomi[] = {
     "ex_voci_schede",               /* 29 settembre 2026, @TOOLKIT-SCHEDE */
     "ex_voce_togli",
     "ex_voce_rinomina",
+    "ex_mouse_passaggio",           /* 30 settembre 2026, @EXWIN-PASSAGGIO */
 
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
@@ -311,6 +312,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_voci_schede,
     (void *)ex_voce_togli,
     (void *)ex_voce_rinomina,
+    (void *)ex_mouse_passaggio,
 
     (void *)__libc_ponti_avvia
 };

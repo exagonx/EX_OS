@@ -3121,6 +3121,34 @@ int     shm_open(const char *nome, int flag, mode_t modo);
 int     shm_unlink(const char *nome);
 int     ftruncate(int fd, off_t lung);
 
+/* dlopen & c. on EX-OS libraries — the ones with an ExLibTesta table
+ * (lib/include/exlib.h) — libc.a only (@DLOPEN, 29 September 2026). A name
+ * without '/' is looked for in $LD_LIBRARY_PATH, /lib, /exwin/lib and the
+ * same under /cdrom. An ordinary ELF .so is NOT loaded (dlerror says so):
+ * libxul is linked statically. dlclose keeps the library; dlsym on
+ * dlopen(NULL) finds nothing; dladdr always says 0. */
+#define RTLD_LAZY       0x0001
+#define RTLD_NOW        0x0002
+#define RTLD_NOLOAD     0x0004
+#define RTLD_GLOBAL     0x0100
+#define RTLD_LOCAL      0x0000
+#define RTLD_NODELETE   0x1000
+#define RTLD_DEFAULT    ((void *)0)
+#define RTLD_NEXT       ((void *)-1)
+
+typedef struct {
+    const char *dli_fname;
+    void       *dli_fbase;
+    const char *dli_sname;
+    void       *dli_saddr;
+} Dl_info;
+
+void   *dlopen(const char *nome, int flag);
+void   *dlsym(void *h, const char *nome);
+int     dlclose(void *h);
+char   *dlerror(void);
+int     dladdr(const void *indirizzo, Dl_info *info);
+
 /* -----------------------------------------------------------------------------
  * interrompi() — «smettila», detto a un altro processo
  *
