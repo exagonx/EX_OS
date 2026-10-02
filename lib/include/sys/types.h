@@ -25,4 +25,11 @@
 
 #include "../libc.h"
 
+/* int8_t ... int64_t: glibc li definisce QUI (bits/stdint-intn.h), e il codice
+ * di terzi li usa includendo solo <sys/types.h> o <stdlib.h> — parakeet.cpp di
+ * Firefox scrive int64_t con dentro soltanto <string> e <vector>. Sono gli
+ * stessi typedef di <stdint.h> (dalle macro del compilatore), quindi non
+ * possono contraddirlo. */
+#include <stdint.h>
+
 #endif /* EXOS_SYS_TYPES_H */

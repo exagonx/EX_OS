@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/backend/libc/event/poll_fd.rs
++++ b/third_party/rust/rustix/src/backend/libc/event/poll_fd.rs
+@@ -38,7 +38,7 @@
+         /// `POLLHUP`
+         const HUP = c::POLLHUP;
+         /// `POLLNVAL`
+-        #[cfg(not(target_os = "espidf"))]
++        #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+         const NVAL = c::POLLNVAL;
+         /// `POLLRDHUP`
+         #[cfg(any(

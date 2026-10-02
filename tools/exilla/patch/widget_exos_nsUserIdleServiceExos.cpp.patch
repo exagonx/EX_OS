@@ -1,0 +1,11 @@
+--- a/widget/exos/nsUserIdleServiceExos.cpp
++++ b/widget/exos/nsUserIdleServiceExos.cpp
+@@ -0,0 +1,8 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsUserIdleServiceExos.h"
++
++// EX-OS does not report the time since the last input yet.
++bool nsUserIdleServiceExos::PollIdleTime(uint32_t* aIdleTime) { return false; }

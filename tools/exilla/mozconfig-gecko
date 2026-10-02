@@ -1,0 +1,37 @@
+# tools/exilla/mozconfig-gecko — il browser per EX-OS (tappa 6 di Exilla). La
+# usa tools/exilla/gecko-costruisci.sh, che prepara l'ambiente.
+#
+# Il toolkit e' «cairo-exos» (widget/exos): per la tappa 6 non apre finestre,
+# ogni finestra e' una HeadlessWidget e il risultato si salva con --screenshot.
+# ! Un processo solo: EX-OS non ha fork ne' il passaggio di descrittori fra
+# processi che l'IPC di Gecko usa. Si lancia con MOZ_FORCE_DISABLE_E10S=1.
+ac_add_options --enable-project=browser
+ac_add_options --target=i386-unknown-exos
+ac_add_options --enable-default-toolkit=cairo-exos
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/../cross_build/exilla-obj/gecko
+ac_add_options --enable-optimize
+ac_add_options --disable-debug
+ac_add_options --disable-tests
+ac_add_options --disable-bootstrap
+ac_add_options --disable-jemalloc
+ac_add_options --disable-jit
+ac_add_options --without-system-zlib
+ac_add_options --without-wasm-sandboxed-libraries
+# Cio' che EX-OS non ha, o che alla tappa 6 non serve.
+ac_add_options --disable-crashreporter
+ac_add_options --disable-updater
+ac_add_options --disable-webrtc
+ac_add_options --disable-sandbox
+ac_add_options --disable-accessibility
+ac_add_options --disable-parental-controls
+ac_add_options --disable-negotiateauth
+ac_add_options --disable-geckodriver
+ac_add_options --disable-default-browser-agent
+ac_add_options --disable-audio-backends
+# bindgen (Stylo e altri crate) legge gli header C++ con una libclang
+# dell'host. ! NON QUELLA DI DEBIAN 12 (clang 14): non capisce la libstdc++ di
+# GCC 17 (operator() statici del C++23, __builtin_popcountg). E' il clang di
+# Mozilla, scaricato con `mach artifact toolchain --from-build linux64-clang`
+# in cross_build/<macchina>/costruzione-strumenti/mozclang.
+ac_add_options --with-clang-path=@TOPSRCDIR@/../cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/bin/clang
+ac_add_options --with-libclang-path=@TOPSRCDIR@/../cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/lib

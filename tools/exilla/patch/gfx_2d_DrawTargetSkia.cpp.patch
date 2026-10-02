@@ -1,0 +1,11 @@
+--- a/gfx/2d/DrawTargetSkia.cpp
++++ b/gfx/2d/DrawTargetSkia.cpp
+@@ -1916,7 +1916,7 @@
+   SkScalar gamma = SK_Scalar1;
+ #endif
+ 
+-#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_ANDROID)
++#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_ANDROID) || defined(XP_EXOS)
+   int32_t gammaVal = StaticPrefs::gfx_font_rendering_freetype_gamma();
+   int32_t contrastVal =
+       StaticPrefs::gfx_font_rendering_freetype_enhanced_contrast();

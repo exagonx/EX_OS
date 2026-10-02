@@ -1,0 +1,14 @@
+--- a/security/nss/cmd/certutil/certext.c
++++ b/security/nss/cmd/certutil/certext.c
+@@ -476,6 +476,11 @@
+ 
+ SEC_ASN1_MKSUB(SEC_ObjectIDTemplate)
+ 
++/* In a static build libcertdb's copy is linked in too, and it is not public:
++ * this one stays private to certutil. */
++#ifdef NSS_USE_STATIC_LIBS
++static
++#endif
+ const SEC_ASN1Template CERT_OidSeqTemplate[] = {
+     { SEC_ASN1_SEQUENCE_OF | SEC_ASN1_XTRN, offsetof(CERTOidSequence, oids),
+       SEC_ASN1_SUB(SEC_ObjectIDTemplate) }

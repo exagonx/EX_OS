@@ -1,0 +1,65 @@
+--- a/third_party/rust/rustix/src/lib.rs
++++ b/third_party/rust/rustix/src/lib.rs
+@@ -188,7 +188,7 @@
+ // versions of libc and not others.
+ #[cfg(any(
+     all(linux_raw, feature = "use-libc-auxv"),
+-    all(libc, not(any(windows, target_os = "espidf", target_os = "wasi")))
++    all(libc, not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))
+ ))]
+ #[macro_use]
+ mod weak;
+@@ -232,7 +232,7 @@
+ pub mod ioctl;
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -248,7 +248,7 @@
+ #[cfg(feature = "net")]
+ #[cfg_attr(docsrs, doc(cfg(feature = "net")))]
+ pub mod net;
+-#[cfg(not(any(windows, target_os = "espidf")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"))))]
+ #[cfg(feature = "param")]
+ #[cfg_attr(docsrs, doc(cfg(feature = "param")))]
+ pub mod param;
+@@ -279,7 +279,7 @@
+ #[cfg(not(any(
+     windows,
+     target_os = "android",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -303,7 +303,7 @@
+ #[cfg(feature = "thread")]
+ #[cfg_attr(docsrs, doc(cfg(feature = "thread")))]
+ pub mod thread;
+-#[cfg(not(any(windows, target_os = "espidf")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"))))]
+ #[cfg(feature = "time")]
+ #[cfg_attr(docsrs, doc(cfg(feature = "time")))]
+ pub mod time;
+@@ -353,7 +353,7 @@
+ pub(crate) mod path;
+ 
+ // Private modules used by multiple public modules.
+-#[cfg(not(any(windows, target_os = "espidf")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"))))]
+ #[cfg(any(feature = "thread", feature = "time"))]
+ mod clockid;
+ #[cfg(linux_kernel)]
+@@ -372,7 +372,7 @@
+ #[cfg(any(feature = "process", feature = "thread"))]
+ #[cfg(linux_kernel)]
+ mod prctl;
+-#[cfg(not(any(windows, target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[cfg(any(
+     feature = "io_uring",
+     feature = "process",

@@ -1,0 +1,21 @@
+--- a/ipc/chromium/src/base/platform_thread_posix.cc
++++ b/ipc/chromium/src/base/platform_thread_posix.cc
+@@ -14,6 +14,8 @@
+ #elif defined(XP_LINUX)
+ #  include <sys/syscall.h>
+ #  include <sys/prctl.h>
++#elif defined(XP_EXOS)
++#  include <sys/syscall.h>
+ #endif
+ 
+ #if !defined(XP_DARWIN)
+@@ -50,6 +52,9 @@
+   return port;
+ #elif defined(XP_LINUX)
+   return syscall(__NR_gettid);
++#elif defined(XP_EXOS)
++  // EX-OS: the kernel's thread id, as on Linux.
++  return syscall(SYS_gettid);
+ #elif defined(XP_OPENBSD) || defined(XP_SOLARIS) || defined(__GLIBC__)
+   return (intptr_t)(pthread_self());
+ #elif defined(XP_NETBSD)

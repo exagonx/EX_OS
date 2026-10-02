@@ -81,6 +81,7 @@ typedef unsigned int        blkcnt_t;
  * ma wint_t no: quello e' della libreria, e le isw* e tow* lo prendono
  * come argomento. */
 typedef int                 wint_t;
+#define WEOF                ((wint_t)-1)
 
 /* Lo stato di una conversione multibyte. Duplicato da lib/include/libc.h,
  * come gli altri tipi: questo file non include il proprio header. */
@@ -293,6 +294,7 @@ typedef struct {
 #define SYS_CHDIR       12
 #define SYS_LSEEK        19
 #define SYS_STAT        106
+#define SYS_FSTAT       108
 #define SYS_READDIR     141
 #define SYS_IPC_SEND     220
 #define SYS_IPC_RECV     221
@@ -623,6 +625,9 @@ void longjmp(unsigned int *env, int val) __attribute__((noreturn));
 #define _PC_NO_TRUNC            7
 #define _SC_CLK_TCK             2
 #define _SC_NPROCESSORS_ONLN   84
+#define _SC_PHYS_PAGES         85
+#define _SC_GETPW_R_SIZE_MAX   70
+#define _SC_AVPHYS_PAGES       86
 
 typedef long clock_t;
 struct tms { clock_t tms_utime, tms_stime, tms_cutime, tms_cstime; };
@@ -868,6 +873,12 @@ typedef struct {
 } MmapParams;
 
 #define MAP_ANONYMOUS   0x20
+#ifndef MAP_SHARED                      /* gli stessi valori di lib/include/libc.h */
+#define MAP_SHARED      0x01
+#define MAP_PRIVATE     0x02
+#define PROT_READ       0x1
+#define PROT_WRITE      0x2
+#endif
 #define MAP_FAILED      ((void *)-1)
 #define RUSAGE_SELF      0
 #define RUSAGE_CHILDREN (-1)
@@ -3513,7 +3524,17 @@ __attribute__((weak)) void abort(void)
  * cambiarne il contratto, quando i numeri diranno che serve.
  * ============================================================================= */
 
-#define HEAP_ALLINEA    8u
+/* ! SEDICI, NON OTTO (2 ottobre 2026, tappa 6 di Exilla). Su i386 il GCC di
+ * EX-OS dice _Alignof(max_align_t) == 16 e __STDCPP_DEFAULT_NEW_ALIGNMENT__
+ * == 16: un `operator new` semplice deve dare memoria allineata a 16, e un
+ * tipo alignas(16) NON passa da memalign. Il codice che si fida (arene che
+ * arrotondano il puntatore e poi riempiono il blocco fino in fondo) con un
+ * blocco allineato a 8 scriveva fino a 8 byte oltre la fine: proprio
+ * `prec` e `succ` dell'intestazione dopo. Gecko cadeva dentro malloc
+ * seguendo un `succ` fatto di testo (0x6d2e7379, «ys.m»). Con
+ * l'intestazione da 16 e il break a pagine intere, arrotondare le taglie a
+ * 16 basta perche' ogni blocco cada su 16. */
+#define HEAP_ALLINEA    16u
 #define HEAP_MIN_SBRK   (64u * 1024u)   /* si chiede memoria a blocchi grossi */
 #define HEAP_MIN_SPEZZA 32u             /* avanzo sotto il quale non si spezza */
 #define HEAP_PAGINA     4096u           /* la pagina del bersaglio */
@@ -3536,8 +3557,19 @@ typedef struct Blocco {
 } Blocco;
 
 #define BLOCCO_HDR  (sizeof(Blocco))
+typedef char heap_hdr_allineata[(sizeof(Blocco) % HEAP_ALLINEA) == 0 ? 1 : -1];
 #define BLOCCO_DATI(b)  ((void *)((char *)(b) + BLOCCO_HDR))
 #define DATI_BLOCCO(p)  ((Blocco *)((char *)(p) - BLOCCO_HDR))
+
+/* Il controllo dello heap (EXOS_MALLOC_CONTROLLA) sta piu' in basso, coi
+ * wrapper pubblici; heap_malloc lo chiama mentre scorre la lista. */
+#ifdef EXOS_LIBC_PORTATI
+static int  g_heap_controlla;
+static void ctl_anello(struct Blocco *b);
+static void mm_dice(const char *op, uint32_t a, uint32_t l, uint32_t x, int32_t r);
+#else
+#define mm_dice(op, a, l, x, r) ((void)0)
+#endif
 
 static Blocco *heap_primo = NULL;
 static Blocco *heap_ultimo = NULL;
@@ -3577,6 +3609,7 @@ static Blocco *heap_estendi(size_t utile)
     /* sbrk(0) ritorna la cima attuale; sbrk(n) la sposta e ritorna la
      * VECCHIA cima, che e' l'inizio della memoria appena ottenuta. */
     base = _syscall1(SYS_SBRK, (uint32_t)quanto);
+    mm_dice("sbrk", (uint32_t)base, (uint32_t)quanto, 0, base);
     if (base <= 0) return NULL;
 
     b = (Blocco *)(uintptr_t)base;
@@ -3627,13 +3660,13 @@ static void heap_spezza(Blocco *b, size_t utile)
     b->dim  = utile;
 }
 
-void *malloc(size_t size)
+static void *heap_malloc(size_t size)
 {
     Blocco *b;
     size_t  utile;
 
-    /* malloc(0) puo' ritornare NULL o un puntatore unico: si ritorna un
-     * blocco vero, cosi' free() su quel puntatore e' legittima e il
+    /* heap_malloc(0) puo' ritornare NULL o un puntatore unico: si ritorna un
+     * blocco vero, cosi' heap_free() su quel puntatore e' legittima e il
      * chiamante non deve distinguere il caso. */
     if (size == 0) size = 1;
 
@@ -3641,6 +3674,9 @@ void *malloc(size_t size)
     if (utile < size) return NULL;      /* overflow dell'arrotondamento */
 
     for (b = heap_primo; b != NULL; b = b->succ) {
+#ifdef EXOS_LIBC_PORTATI
+        if (g_heap_controlla > 0) ctl_anello(b);
+#endif
         if (b->libero && b->dim >= utile) {
             heap_spezza(b, utile);
             b->libero = 0;
@@ -3679,7 +3715,7 @@ void *malloc(size_t size)
  * esattamente i byte di riempimento del test.
  *
  * La separazione in due funzioni non e' cosmetica: il controllo su
- * `b->libero` SERVE agli altri chiamanti. free() e memalign() chiamano
+ * `b->libero` SERVE agli altri chiamanti. heap_free() e heap_memalign() chiamano
  * heap_fondi_con_succ(b->prec) senza sapere se il predecessore sia
  * libero, e fondere un blocco allocato col suo vicino consegnerebbe due
  * volte la stessa memoria. Quel controllo resta nel guscio; qui sotto
@@ -3708,7 +3744,7 @@ static void heap_fondi_con_succ(Blocco *b)
 /* =============================================================================
  * heap_restituisci — la memoria torna al kernel
  *
- * PERCHE' ESISTE. Fino ad agosto 2026 free() non chiamava MAI sbrk con un
+ * PERCHE' ESISTE. Fino ad agosto 2026 heap_free() non chiamava MAI sbrk con un
  * incremento negativo: la memoria tornava disponibile per il processo, ma
  * non per il sistema. Un programma che allocasse a picchi — cioe'
  * qualunque compilatore: un albero di sintassi per funzione, buttato e
@@ -3739,15 +3775,33 @@ static void heap_fondi_con_succ(Blocco *b)
  *      all'infinito. E' lo stesso motivo per cui glibc ha M_TRIM_THRESHOLD.
  *
  * ! IL CONTROLLO DI TAGLIA VIENE PRIMA DI sbrk(0), ed e' voluto: e'
- * aritmetica pura, quindi la free() normale — quella che non restituisce
+ * aritmetica pura, quindi la heap_free() normale — quella che non restituisce
  * niente — non paga nessuna syscall. Rimettere il conto dopo la sbrk(0)
  * annullerebbe il guadagno che l'allocatore nuovo era andato a prendere.
  * ============================================================================= */
+/* Diventa 1 alla prima pthread_create e non torna piu' a 0. */
+static volatile int g_ci_sono_fili = 0;
+
 static void heap_restituisci(void)
 {
     Blocco *b = heap_ultimo;
     char   *cima;
     size_t  totale, quanto;
+
+    /* =====================================================================
+     * ! CON PIU' FILI LO HEAP NON SI ACCORCIA (1 ottobre 2026, Exilla).
+     *
+     * Sul kernel di EX-OS sbrk e mmap spostano LO STESSO confine
+     * (heap_end): una mmap anonima si prende le pagine in cima, proprio dove
+     * lo heap della malloc cresce. Restituire e' fatto di due passi — leggere
+     * la cima con sbrk(0), poi abbassarla con sbrk(-n) — e se in mezzo un
+     * altro filo fa una mmap (il garbage collector di SpiderMonkey mappa a
+     * blocchi da un mega) la cima e' salita, e sbrk(-n) toglie le ultime
+     * pagine della SUA mappatura. Gecko cadeva leggendo un mutex «appena
+     * oltre heap_end». Il lucchetto della malloc non basta: mmap non ci passa.
+     * Con un filo solo la gara non c'e' e la memoria torna come prima.
+     * ===================================================================== */
+    if (g_ci_sono_fili) return;
 
     if (b == NULL || !b->libero) return;
 
@@ -3770,11 +3824,11 @@ static void heap_restituisci(void)
     b->dim -= quanto;
 }
 
-void free(void *ptr)
+static void heap_free(void *ptr)
 {
     Blocco *b;
 
-    if (ptr == NULL) return;            /* free(NULL) e' legittima */
+    if (ptr == NULL) return;            /* heap_free(NULL) e' legittima */
 
     b = DATI_BLOCCO(ptr);
 
@@ -3814,7 +3868,7 @@ void free(void *ptr)
  * per free: si legge un'intestazione che non c'e'. NULL invece si accetta e
  * rende 0, perche' e' il caso che capita davvero.
  * ============================================================================= */
-size_t malloc_usable_size(void *ptr)
+static size_t heap_malloc_usable_size(void *ptr)
 {
     Blocco *b;
 
@@ -3824,7 +3878,7 @@ size_t malloc_usable_size(void *ptr)
     return b->dim;
 }
 
-void *calloc(size_t nmemb, size_t size)
+static void *heap_calloc(size_t nmemb, size_t size)
 {
     size_t tot = nmemb * size;
     void  *p;
@@ -3834,19 +3888,19 @@ void *calloc(size_t nmemb, size_t size)
      * una scrittura fuori dai suoi confini che nessuno segnala. */
     if (nmemb != 0 && tot / nmemb != size) return NULL;
 
-    p = malloc(tot);
+    p = heap_malloc(tot);
     if (p) memset(p, 0, tot);
     return p;
 }
 
-void *realloc(void *ptr, size_t size)
+static void *heap_realloc(void *ptr, size_t size)
 {
     Blocco *b;
     void   *nuovo;
     size_t  copia;
 
-    if (ptr == NULL)  return malloc(size);
-    if (size == 0)    { free(ptr); return NULL; }
+    if (ptr == NULL)  return heap_malloc(size);
+    if (size == 0)    { heap_free(ptr); return NULL; }
 
     b = DATI_BLOCCO(ptr);
 
@@ -3874,7 +3928,7 @@ void *realloc(void *ptr, size_t size)
         return ptr;
     }
 
-    nuovo = malloc(size);
+    nuovo = heap_malloc(size);
     if (nuovo == NULL) return NULL;     /* l'originale resta valido */
 
     /* Si copia il MINIMO fra vecchia e nuova dimensione. La versione
@@ -3882,7 +3936,7 @@ void *realloc(void *ptr, size_t size)
      * blocco vecchio quando si ingrandiva. */
     copia = (b->dim < size) ? b->dim : size;
     memcpy(nuovo, ptr, copia);
-    free(ptr);
+    heap_free(ptr);
     return nuovo;
 }
 
@@ -3892,7 +3946,7 @@ void *realloc(void *ptr, size_t size)
  * CHI LE CHIEDE: la libstdc++. Dal C++17 un tipo con allineamento
  * superiore a quello naturale non passa piu' per `operator new(size_t)`
  * ma per `operator new(size_t, align_val_t)`, e l'implementazione di
- * quella nella libreria standard e' un involucro attorno a memalign()
+ * quella nella libreria standard e' un involucro attorno a heap_memalign()
  * (libsupc++/new_opa.cc). Se memalign non c'e', la libstdc++ ne mette una
  * che ignora l'allineamento richiesto.
  *
@@ -3908,9 +3962,9 @@ void *realloc(void *ptr, size_t size)
  *
  * ! LA CONSEGUENZA CHE CONTA: il puntatore restituito ha davanti a se'
  * un'intestazione normale, agganciata alla lista in ordine di indirizzo
- * come tutte. Quindi free() lo tratta come un blocco qualunque, e la
+ * come tutte. Quindi heap_free() lo tratta come un blocco qualunque, e la
  * fusione con i vicini funziona senza sapere nulla di tutto questo. Non
- * serve una `aligned_free`, e chi passa il puntatore a una free() ignara
+ * serve una `aligned_free`, e chi passa il puntatore a una heap_free() ignara
  * — per esempio codice di terzi — non rompe niente.
  *
  * La testa resta come blocco LIBERO invece di essere sprecata: su una
@@ -3918,7 +3972,7 @@ void *realloc(void *ptr, size_t size)
  * disponibili invece di restare in ostaggio del blocco allineato.
  * ============================================================================= */
 
-void *memalign(size_t allineamento, size_t size)
+static void *heap_memalign(size_t allineamento, size_t size)
 {
     Blocco   *b, *nuovo;
     void     *grezzo;
@@ -3933,8 +3987,8 @@ void *memalign(size_t allineamento, size_t size)
         return NULL;
     }
 
-    /* Fino a otto byte non c'e' niente da fare: malloc gia' li garantisce. */
-    if (allineamento <= HEAP_ALLINEA) return malloc(size);
+    /* Fino a HEAP_ALLINEA byte non c'e' niente da fare: malloc gia' li garantisce. */
+    if (allineamento <= HEAP_ALLINEA) return heap_malloc(size);
 
     if (size == 0) size = 1;
     utile = heap_allinea(size);
@@ -3943,7 +3997,7 @@ void *memalign(size_t allineamento, size_t size)
     /* Il margine e' `allineamento` (quanto al piu' si deve avanzare) piu'
      * un'intestazione (quella che va messa davanti al risultato). */
     if (utile + allineamento + BLOCCO_HDR < utile) return NULL;
-    grezzo = malloc(utile + allineamento + BLOCCO_HDR);
+    grezzo = heap_malloc(utile + allineamento + BLOCCO_HDR);
     if (grezzo == NULL) return NULL;
 
     if (((uintptr_t)grezzo & (allineamento - 1u)) == 0) {
@@ -3985,15 +4039,10 @@ void *memalign(size_t allineamento, size_t size)
  * fa rispettare: rifiutare renderebbe la funzione inutilizzabile come
  * ripiego di memalign, che e' l'uso che ne fa la libstdc++, e concedere in
  * piu' non rompe nessun programma corretto. */
-void *aligned_alloc(size_t allineamento, size_t size)
-{
-    return memalign(allineamento, size);
-}
-
 /* ! NON IMPOSTA errno E NON RITORNA -1: posix_memalign e' l'eccezione
  * che RITORNA il codice di errore. Trattarla come le altre e' l'errore
  * classico su questa funzione. */
-int posix_memalign(void **risultato, size_t allineamento, size_t size)
+static int heap_posix_memalign(void **risultato, size_t allineamento, size_t size)
 {
     void *p;
 
@@ -4006,11 +4055,363 @@ int posix_memalign(void **risultato, size_t allineamento, size_t size)
         return EINVAL;
     }
 
-    p = memalign(allineamento, size);
+    p = heap_memalign(allineamento, size);
     if (p == NULL) return ENOMEM;
 
     *risultato = p;
     return 0;
+}
+
+/* =============================================================================
+ * ! LO HEAP HA UN LUCCHETTO (1 ottobre 2026, tappa 6 di Exilla).
+ *
+ * Non l'aveva: la lista dei blocchi si scorreva e si cuciva senza protezione,
+ * e bastava che due fili allocassero insieme per rovinarla. Finche' i fili li
+ * usavano pochi programmi di casa non si vedeva; Gecko alloca da decine di
+ * fili e cadeva dentro malloc, scrivendo a un «indirizzo» che era un pezzo di
+ * testo (0x72657377, «wser»).
+ *
+ * Le funzioni heap_* qui sopra sono quelle di prima, senza lucchetto, e si
+ * chiamano fra loro (realloc usa malloc e free): il lucchetto lo prendono solo
+ * queste, una volta per chiamata. E' mutex_prendi, il futex a tre stati: senza
+ * contesa nessuna chiamata di sistema.
+ * ============================================================================= */
+void mutex_prendi(volatile int *m);
+void mutex_lascia(volatile int *m);
+static volatile int g_heap_lucchetto = 0;
+
+/* =============================================================================
+ * IL CONTROLLO DELLO HEAP (EXOS_MALLOC_CONTROLLA=1, 2 ottobre 2026)
+ *
+ * Per scoprire CHI scrive oltre la fine di un blocco. Gecko cadeva dentro
+ * malloc seguendo un `succ` fatto di testo: il danno si vede lontano da dove
+ * e' stato fatto, e senza strumenti il colpevole non ha nome.
+ *
+ * Con la variabile d'ambiente a 1 (letta alla prima allocazione, e da li'
+ * non cambia: environ e' pronto prima dei costruttori, vedi libc_avvio.c)
+ * ogni blocco ha in coda una ZONA ROSSA e una targhetta:
+ *
+ *   [hdr][byte chiesti][zona rossa 0xFD, almeno 16][targhetta]
+ *   targhetta = magia, byte chiesti, quattro indirizzi di ritorno
+ *
+ * free e realloc controllano la zona rossa del blocco; malloc, mentre
+ * scorre la lista, controlla che ogni `succ` punti dentro lo heap e indietro.
+ * Al primo guasto stampa sullo stderr il blocco, chi lo aveva chiesto (i
+ * ritorni si risolvono con addr2line o col nm del programma) e i byte attorno,
+ * poi abort(). malloc_usable_size dice i byte chiesti, non `dim`: chi scrive
+ * fino al numero che riceve non deve toccare la zona rossa.
+ *
+ * ! LA CATENA DEI CHIAMANTI SEGUE I FRAME POINTER: vale per il codice
+ * compilato con -fno-omit-frame-pointer (Gecko lo e'); dove manca, si ferma
+ * al primo anello che non sembra un frame dello stesso stack.
+ *
+ * ! SOLO NELLA libc.a DELLA TOOLCHAIN CROSS (EXOS_LIBC_PORTATI, vedi
+ * tools/gcc-exos/prepara-cross.sh). Nella libc del Makefile ogni programma
+ * del floppy che chiama malloc se lo sarebbe portato dentro, e il floppy non
+ * si chiudeva piu'. Li' le ctl_* sono gusci vuoti e spariscono.
+ * ============================================================================= */
+#ifdef EXOS_LIBC_PORTATI
+#define CTL_ZONA     16u
+#define CTL_RITORNI  4
+#define CTL_TARGA    (8u + 4u * CTL_RITORNI)
+#define CTL_EXTRA    (CTL_ZONA + CTL_TARGA)
+#define CTL_MAGIA    0xC0DE5AFEu
+#define CTL_ROSSO    0xFDu
+
+typedef struct {
+    uint32_t magia;
+    uint32_t chiesti;
+    uint32_t ritorni[CTL_RITORNI];
+} CtlTarga;
+
+static int g_heap_controlla = -1;           /* -1 = non ancora deciso */
+ssize_t write(int fd, const void *buf, size_t n);
+
+static int ctl_attivo(void)
+{
+    if (g_heap_controlla < 0) {
+        const char *v = getenv("EXOS_MALLOC_CONTROLLA");
+        g_heap_controlla = (v != NULL && v[0] == '1') ? 1 : 0;
+    }
+    return g_heap_controlla;
+}
+
+static CtlTarga *ctl_targa(Blocco *b)
+{
+    return (CtlTarga *)((char *)BLOCCO_DATI(b) + b->dim - CTL_TARGA);
+}
+
+static void ctl_scrivi(const char *s)
+{
+    write(2, s, strlen(s));
+}
+
+static void ctl_hex(const char *etichetta, uint32_t v)
+{
+    char buf[12];
+    int  i;
+
+    ctl_scrivi(etichetta);
+    buf[0] = '0'; buf[1] = 'x';
+    for (i = 0; i < 8; i++) buf[2 + i] = "0123456789abcdef"[(v >> (28 - 4 * i)) & 15u];
+    buf[10] = ' '; buf[11] = 0;
+    ctl_scrivi(buf);
+}
+
+/* `n` byte da `p` in esadecimale e come testo, sedici per riga. */
+static void ctl_byte(const unsigned char *p, size_t n)
+{
+    size_t i, j;
+    char   riga[80];
+
+    for (i = 0; i < n; i += 16) {
+        int k = 0;
+        ctl_hex("\n  ", (uint32_t)(uintptr_t)(p + i));
+        for (j = 0; j < 16 && i + j < n; j++) {
+            riga[k++] = "0123456789abcdef"[p[i + j] >> 4];
+            riga[k++] = "0123456789abcdef"[p[i + j] & 15u];
+            riga[k++] = ' ';
+        }
+        riga[k++] = ' ';
+        for (j = 0; j < 16 && i + j < n; j++)
+            riga[k++] = (p[i + j] >= 32 && p[i + j] < 127) ? (char)p[i + j] : '.';
+        riga[k] = 0;
+        ctl_scrivi(riga);
+    }
+}
+
+static void ctl_racconta(const char *cosa, Blocco *b)
+{
+    CtlTarga *t;
+    int       i;
+
+    ctl_scrivi("\n[MALLOC] ");
+    ctl_scrivi(cosa);
+    ctl_hex("\n  blocco ", (uint32_t)(uintptr_t)b);
+    ctl_hex("dati ", (uint32_t)(uintptr_t)BLOCCO_DATI(b));
+    ctl_hex("dim ", (uint32_t)b->dim);
+    ctl_hex("libero ", (uint32_t)b->libero);
+    ctl_hex("prec ", (uint32_t)(uintptr_t)b->prec);
+    ctl_hex("succ ", (uint32_t)(uintptr_t)b->succ);
+    if (!b->libero && b->dim >= CTL_EXTRA && b->dim < 0x40000000u) {
+        t = ctl_targa(b);
+        ctl_hex("\n  targhetta: magia ", t->magia);
+        ctl_hex("chiesti ", t->chiesti);
+        ctl_scrivi("\n  chiesto da:");
+        for (i = 0; i < CTL_RITORNI; i++) ctl_hex(" ", t->ritorni[i]);
+        ctl_scrivi("\n  fine dei dati e zona rossa:");
+        if (t->chiesti <= b->dim) {
+            size_t da = t->chiesti > 48 ? t->chiesti - 48 : 0;
+            ctl_byte((unsigned char *)BLOCCO_DATI(b) + da, b->dim - da);
+        }
+    }
+    ctl_scrivi("\n");
+}
+
+/* Marca un blocco appena dato: zona rossa, targhetta, chiamanti. */
+static void *ctl_marca(void *p, size_t chiesti, void *cornice)
+{
+    Blocco        *b;
+    CtlTarga      *t;
+    unsigned char *z;
+    uint32_t      *fp = (uint32_t *)cornice;
+    int            i;
+
+    if (p == NULL) return NULL;
+    b = DATI_BLOCCO(p);
+    t = ctl_targa(b);
+    z = (unsigned char *)p + chiesti;
+    memset(z, CTL_ROSSO, (size_t)((unsigned char *)t - z));
+    t->magia   = CTL_MAGIA;
+    t->chiesti = (uint32_t)chiesti;
+    for (i = 0; i < CTL_RITORNI; i++) {
+        uint32_t *succ;
+        if (fp == NULL || ((uintptr_t)fp & 3u) != 0) { t->ritorni[i] = 0; continue; }
+        t->ritorni[i] = fp[1];
+        succ = (uint32_t *)(uintptr_t)fp[0];
+        if (fp[1] == 0 || succ <= fp || (uintptr_t)succ - (uintptr_t)fp > 0x100000u) fp = NULL;
+        else fp = succ;
+    }
+    return p;
+}
+
+/* Controlla zona rossa e targhetta di un blocco che sta per essere liberato o
+ * spostato. Al guasto racconta e abortisce. */
+static void ctl_verifica(void *p, const char *chi)
+{
+    Blocco        *b = DATI_BLOCCO(p);
+    CtlTarga      *t;
+    unsigned char *z;
+
+    if (b->libero) { ctl_racconta(chi, b); ctl_scrivi("  (blocco gia' libero)\n"); abort(); }
+    if (b->dim < CTL_EXTRA) { ctl_racconta(chi, b); abort(); }
+    t = ctl_targa(b);
+    if (t->magia != CTL_MAGIA || t->chiesti > b->dim - CTL_EXTRA) {
+        ctl_racconta("targhetta rovinata: scritto oltre la zona rossa", b);
+        abort();
+    }
+    for (z = (unsigned char *)p + t->chiesti; z < (unsigned char *)t; z++) {
+        if (*z != CTL_ROSSO) {
+            ctl_racconta("zona rossa scritta: qualcuno e' andato oltre i byte chiesti", b);
+            abort();
+        }
+    }
+}
+
+/* Dentro heap_malloc, per ogni blocco della lista: `succ` deve stare nello
+ * heap, dopo `b`, e puntare indietro a `b`. */
+static void ctl_anello(Blocco *b)
+{
+    Blocco *s = b->succ;
+
+    if (s == NULL) return;
+    if (((uintptr_t)s & (HEAP_ALLINEA - 1u)) != 0 || s <= b || s > heap_ultimo ||
+        s->prec != b) {
+        ctl_racconta("intestazione rovinata (succ non valido)", b);
+        if (b->prec) {
+            ctl_racconta("il blocco prima, il probabile colpevole:", b->prec);
+        }
+        ctl_scrivi("  byte attorno all'intestazione:");
+        ctl_byte((unsigned char *)b - 48, 48 + BLOCCO_HDR);
+        ctl_scrivi("\n");
+        abort();
+    }
+}
+/* EXOS_MMAP_DICE=1: ogni sbrk, mmap, munmap e mprotect su stderr, una riga
+ * ciascuno (indirizzo, byte, prot|flag<<8, risultato). Per scoprire chi ha
+ * tolto la scrittura a una pagina che la malloc credeva sua. */
+static void mm_dice(const char *op, uint32_t a, uint32_t l, uint32_t x, int32_t r)
+{
+    static int dice = -1;
+
+    if (dice < 0) {
+        const char *v = getenv("EXOS_MMAP_DICE");
+        dice = (v != NULL && v[0] == '1');
+    }
+    if (!dice) return;
+    ctl_scrivi("[MM] ");
+    ctl_scrivi(op);
+    ctl_hex(" ", a);
+    ctl_hex("", l);
+    ctl_hex("", x);
+    ctl_hex("-> ", (uint32_t)r);
+    ctl_scrivi("\n");
+}
+
+#else  /* il controllo e' solo nella libc.a del software portato: vedi prepara-cross.sh */
+#define CTL_EXTRA 0u
+typedef struct { uint32_t chiesti; } CtlTarga;
+static int       ctl_attivo(void) { return 0; }
+static CtlTarga *ctl_targa(Blocco *b) { (void)b; return NULL; }
+static void     *ctl_marca(void *p, size_t n, void *c) { (void)n; (void)c; return p; }
+static void      ctl_verifica(void *p, const char *c) { (void)p; (void)c; }
+#endif
+
+void *malloc(size_t size)
+{
+    void *p;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo())
+        p = ctl_marca(heap_malloc(size + CTL_EXTRA), size, __builtin_frame_address(0));
+    else
+        p = heap_malloc(size);
+    mutex_lascia(&g_heap_lucchetto);
+    return p;
+}
+
+void free(void *ptr)
+{
+    if (ptr == NULL) return;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo()) ctl_verifica(ptr, "free");
+    heap_free(ptr);
+    mutex_lascia(&g_heap_lucchetto);
+}
+
+void *calloc(size_t nmemb, size_t size)
+{
+    void  *p;
+    size_t tot = nmemb * size;
+
+    if (nmemb != 0 && tot / nmemb != size) return NULL;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo()) {
+        p = ctl_marca(heap_malloc(tot + CTL_EXTRA), tot, __builtin_frame_address(0));
+        if (p) memset(p, 0, tot);
+    } else {
+        p = heap_calloc(nmemb, size);
+    }
+    mutex_lascia(&g_heap_lucchetto);
+    return p;
+}
+
+void *realloc(void *ptr, size_t size)
+{
+    void *p;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo() && ptr != NULL && size != 0) {
+        /* Sempre spostato: la zona rossa va rifatta comunque. */
+        uint32_t vecchi;
+        ctl_verifica(ptr, "realloc");
+        vecchi = ctl_targa(DATI_BLOCCO(ptr))->chiesti;
+        p = ctl_marca(heap_malloc(size + CTL_EXTRA), size, __builtin_frame_address(0));
+        if (p) {
+            memcpy(p, ptr, vecchi < size ? vecchi : size);
+            heap_free(ptr);
+        }
+    } else if (ctl_attivo() && ptr == NULL) {
+        p = ctl_marca(heap_malloc(size + CTL_EXTRA), size, __builtin_frame_address(0));
+    } else if (ctl_attivo()) {
+        ctl_verifica(ptr, "realloc a zero");
+        heap_free(ptr);
+        p = NULL;
+    } else {
+        p = heap_realloc(ptr, size);
+    }
+    mutex_lascia(&g_heap_lucchetto);
+    return p;
+}
+
+void *memalign(size_t allineamento, size_t size)
+{
+    void *p;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo())
+        p = ctl_marca(heap_memalign(allineamento, size + CTL_EXTRA), size,
+                      __builtin_frame_address(0));
+    else
+        p = heap_memalign(allineamento, size);
+    mutex_lascia(&g_heap_lucchetto);
+    return p;
+}
+
+void *aligned_alloc(size_t allineamento, size_t size)
+{
+    return memalign(allineamento, size);
+}
+
+int posix_memalign(void **risultato, size_t allineamento, size_t size)
+{
+    int r;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo()) {
+        r = heap_posix_memalign(risultato, allineamento, size + CTL_EXTRA);
+        if (r == 0) ctl_marca(*risultato, size, __builtin_frame_address(0));
+    } else {
+        r = heap_posix_memalign(risultato, allineamento, size);
+    }
+    mutex_lascia(&g_heap_lucchetto);
+    return r;
+}
+
+size_t malloc_usable_size(void *ptr)
+{
+    size_t n;
+    mutex_prendi(&g_heap_lucchetto);
+    if (ctl_attivo() && ptr != NULL) n = ctl_targa(DATI_BLOCCO(ptr))->chiesti;
+    else                             n = heap_malloc_usable_size(ptr);
+    mutex_lascia(&g_heap_lucchetto);
+    return n;
 }
 
 /* =============================================================================
@@ -4043,6 +4444,8 @@ int open(const char *path, int flags, ...)
         (void)__builtin_va_arg(args, int);   /* mode_t, ignorato */
         __builtin_va_end(args);
     }
+    /* O_CLOEXEC e O_NOFOLLOW: vedi libc.h. Il kernel non li conosce. */
+    flags &= ~(0x80000 | 0x20000);
     return err_posix(_syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, 0));
 }
 
@@ -4053,7 +4456,9 @@ int open(const char *path, int flags, ...)
 /* And shared memory from shm_open() from SHMFD_BASE up (@SHM-OPEN, 29
  * September 2026): a socket is below it, a zone above. */
 #define SHMFD_BASE      2048
-#define SHMFD_MAX       16
+/* 128 e non 16 (2 ottobre 2026): Gecko ne tiene aperte decine insieme, e
+ * con SHM_ANON non costano zone del kernel. */
+#define SHMFD_MAX       128
 #ifdef EXOS_LIBC_SO
 #define E_PRESA(fd)     0               /* nella libc.so i socket non ci sono */
 #define E_SHMFD(fd)     0
@@ -4070,6 +4475,8 @@ static int  (*g_shm_chiudi)(int fd);
 static int  (*g_shm_fstat)(int fd, struct stat *st);
 static long (*g_shm_mmap)(size_t lung, int fd, long off);
 static int  (*g_shm_munmap)(void *addr);
+static int  (*g_shm_dup)(int fd);
+static int  g_shmfd[SHMFD_MAX];        /* vedi shm_open: zona+1, 0 = libero */
 #endif
 #ifndef EXOS_LIBC_SO
 static int     presa_chiudi(int fd);
@@ -4102,12 +4509,22 @@ int close(int fd)
 int dup(int fd)
 {
     if (E_PRESA(fd)) { errno = 95; return -1; }    /* EOPNOTSUPP: vedi libc.h */
+#ifndef EXOS_LIBC_SO
+    if (E_SHMFD(fd)) {
+        if (g_shm_dup) return g_shm_dup(fd);
+        errno = EBADF;
+        return -1;
+    }
+#endif
     return (int)err_posix(_syscall1(SYS_DUP, (uint32_t)fd));
 }
 
 int dup2(int vecchio, int nuovo)
 {
-    if (E_PRESA(vecchio) || E_PRESA(nuovo)) { errno = 95; return -1; }
+    if (E_PRESA(vecchio) || E_PRESA(nuovo) || E_SHMFD(vecchio) || E_SHMFD(nuovo)) {
+        errno = 95;
+        return -1;
+    }
     return (int)err_posix(_syscall2(SYS_DUP2, (uint32_t)vecchio, (uint32_t)nuovo));
 }
 
@@ -4125,6 +4542,24 @@ int fcntl(int fd, int cmd, ...)
     __builtin_va_end(ap);
 
     if (E_PRESA(fd)) return presa_fcntl(fd, cmd, arg);
+#ifndef EXOS_LIBC_SO
+    /* Una zona di shm_open: F_DUPFD e' dup, il resto (close-on-exec, flag)
+     * non ha niente da cambiare — EX-OS non ha exec che erediti descrittori
+     * di memoria condivisa — e si risponde che va bene. */
+    if (E_SHMFD(fd)) {
+        if (cmd == 0 /* F_DUPFD */) return dup(fd);
+        if (!g_shm_dup || g_shmfd[fd - SHMFD_BASE] == 0) { errno = EBADF; return -1; }
+        return (cmd == 3 /* F_GETFL */) ? 2 /* O_RDWR */ : 0;
+    }
+#endif
+    /* ! I LUCCHETTI SUI FILE (F_GETLK 5, F_SETLK 6, F_SETLKW 7) NON CI SONO:
+     * «libero» a chi chiede, «preso» a chi prende — vedi <fcntl.h>. Il
+     * descrittore pero' deve esistere. (@EXILLA-NSS, 30 settembre 2026) */
+    if (cmd >= 5 && cmd <= 7) {
+        if (_syscall3(SYS_FCNTL, (uint32_t)fd, 1u /* F_GETFD */, 0) < 0) { errno = EBADF; return -1; }
+        if (cmd == 5 && arg) *(short *)arg = 2;         /* l_type = F_UNLCK */
+        return 0;
+    }
     return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg));
 }
 
@@ -4147,9 +4582,31 @@ int proc_gruppo(int pid)
     return (int)err_posix(_syscall1(SYS_PROC_GRUPPO, (uint32_t)pid));
 }
 
-int getpid(void)
+/* ! getpid() E' IL PROCESSO, filo_id() IL FILO (1 ottobre 2026, Exilla).
+ * Per il kernel ogni filo e' un processo del gruppo del capogruppo, e
+ * SYS_GETPID risponde quello del filo. POSIX invece vuole lo STESSO getpid()
+ * in tutti i fili: Gecko ricorda il processo che ha creato un canale e lo
+ * confronta dal filo che lo usa, e con due numeri diversi si fermava
+ * (MOZ_RELEASE_ASSERT in Endpoint::Bind). getpid() ora e' il capogruppo, e si
+ * ricorda: non cambia per tutta la vita del processo. Quello che dentro la
+ * libc vuole davvero il filo (il tid dei pthread, il padrone di un mutex, lo
+ * scaffale IPC) chiama filo_id(). */
+static int filo_id(void)
 {
     return _syscall1(SYS_GETPID, 0);
+}
+
+static int g_mio_pid = 0;
+
+int getpid(void)
+{
+    if (g_mio_pid == 0) {
+        int io = filo_id();
+        int capo = _syscall1(SYS_PROC_GRUPPO, (uint32_t)io);
+
+        g_mio_pid = capo > 0 ? capo : io;
+    }
+    return g_mio_pid;
 }
 
 /* =============================================================================
@@ -4572,7 +5029,7 @@ int thread_devo_fermarmi(void)
  * lavorare: si sbloccherebbe solo allo scadere del quanto. `sched_yield()`
  * trasforma un'attesa di dieci millisecondi in una di pochi microsecondi.
  * --------------------------------------------------------------------------- */
-void sched_yield(void);         /* piu' avanti in questo file */
+int sched_yield(void);         /* piu' avanti in questo file */
 
 static int mutex_xchg(volatile int *dove, int valore)
 {
@@ -4840,7 +5297,7 @@ void semaforo_lascia(volatile int *s);
 int  getpid(void);
 int  raise(int sig);
 int  nanosleep(const struct timespec *req, struct timespec *rem);
-void sched_yield(void);
+int sched_yield(void);
 
 typedef struct {
     volatile int usato;
@@ -4907,7 +5364,7 @@ pthread_t pthread_self(void)
     f = filo_libero();
     if (!f) return 0;
     f->tp       = (int)tp;
-    f->tid      = getpid();
+    f->tid      = filo_id();
     f->staccato = 1;
     return (pthread_t)f;
 }
@@ -4966,6 +5423,7 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a,
     int   tid;
 
     if (!t || !fn) return EINVAL;
+    g_ci_sono_fili = 1;                 /* vedi heap_restituisci */
     f = filo_libero();
     if (!f) return EAGAIN;
     f->fn       = fn;
@@ -5000,6 +5458,16 @@ int pthread_join(pthread_t t, void **ris)
     return 0;
 }
 
+/* EX-OS non ha fork(): non c'e' niente da preparare, i gestori non
+ * serviranno mai. Solo in libc.a. */
+#ifndef EXOS_LIBC_SO
+int pthread_atfork(void (*prima)(void), void (*genitore)(void), void (*figlio)(void))
+{
+    (void)prima; (void)genitore; (void)figlio;
+    return 0;
+}
+#endif
+
 int pthread_detach(pthread_t t)
 {
     Filo *f = (Filo *)t;
@@ -5013,6 +5481,13 @@ int pthread_detach(pthread_t t)
 }
 
 int pthread_yield(void) { sched_yield(); return 0; }
+
+/* <sched.h>: uno scheduler con una priorita' sola per i fili. Solo in
+ * libc.a (il floppy e' pieno). */
+#ifndef EXOS_LIBC_SO
+int sched_get_priority_min(int politica) { (void)politica; return 0; }
+int sched_get_priority_max(int politica) { (void)politica; return 0; }
+#endif
 
 #ifdef EXOS_LIBC_SO
 /* I segnali di EX-OS sono del processo e si consegnano dentro (raise): a se
@@ -5141,7 +5616,7 @@ int pthread_mutex_lock(pthread_mutex_t *m)
 
     if (!m) return EINVAL;
     if (m->tipo == 0) { mutex_prendi(&m->m); return 0; }
-    io = getpid();
+    io = filo_id();
     if (m->padrone == io) {
         if (m->tipo == 1) { m->conta++; return 0; }
         return EDEADLK;
@@ -5158,7 +5633,7 @@ int pthread_mutex_trylock(pthread_mutex_t *m)
 
     if (!m) return EINVAL;
     if (m->tipo == 0) return mutex_prova(&m->m) ? 0 : EBUSY;
-    io = getpid();
+    io = filo_id();
     if (m->padrone == io) {
         if (m->tipo == 1) { m->conta++; return 0; }
         return EBUSY;
@@ -5173,7 +5648,7 @@ int pthread_mutex_unlock(pthread_mutex_t *m)
 {
     if (!m) return EINVAL;
     if (m->tipo != 0) {
-        if (m->padrone != getpid()) return EPERM;
+        if (m->padrone != filo_id()) return EPERM;
         if (--m->conta > 0) return 0;
         m->padrone = 0;
     }
@@ -5266,6 +5741,18 @@ int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
 int pthread_cond_signal(pthread_cond_t *c)    { if (!c) return EINVAL; condizione_segnala(&c->c); return 0; }
 int pthread_cond_broadcast(pthread_cond_t *c) { if (!c) return EINVAL; condizione_segnala_tutti(&c->c); return 0; }
 int pthread_condattr_init(pthread_condattr_t *a) { if (!a) return EINVAL; a->orologio = 0; return 0; }
+
+/* ! PTHREAD_PROCESS_SHARED SI ACCETTA E NON CAMBIA NIENTE: il lucchetto e'
+ * un futex nella memoria del chiamante, e funziona fra processi solo se
+ * quella memoria e' condivisa — cosa che il lucchetto non puo' sapere. Gecko
+ * lo chiede per i lucchetti fra processi, e su EX-OS gira in un processo solo.
+ * Solo in libc.a. */
+#ifndef EXOS_LIBC_SO
+int pthread_mutexattr_setpshared(pthread_mutexattr_t *a, int p) { return (a && (p == 0 || p == 1)) ? 0 : EINVAL; }
+int pthread_mutexattr_getpshared(const pthread_mutexattr_t *a, int *p) { if (!a || !p) return EINVAL; *p = 0; return 0; }
+int pthread_condattr_setpshared(pthread_condattr_t *a, int p) { return (a && (p == 0 || p == 1)) ? 0 : EINVAL; }
+int pthread_condattr_getpshared(const pthread_condattr_t *a, int *p) { if (!a || !p) return EINVAL; *p = 0; return 0; }
+#endif
 int pthread_condattr_destroy(pthread_condattr_t *a) { (void)a; return 0; }
 int pthread_condattr_setclock(pthread_condattr_t *a, int o)
 { if (!a || (o != 0 && o != 1)) return EINVAL; a->orologio = o; return 0; }
@@ -5645,6 +6132,36 @@ int mkstemp(char *modello)
     errno = EEXIST;
     return -1;
 }
+
+/* mkstemps: come mkstemp, ma le sei X stanno prima di un suffisso lungo
+ * `suffisso` caratteri ("prefXXXXXX.png", 4). Le X si riempiono con cifre
+ * esadecimali di random(). Solo in libc.a. */
+#ifndef EXOS_LIBC_SO
+long random(void);                  /* piu' avanti in questo file */
+
+int mkstemps(char *modello, int suffisso)
+{
+    static const char cifre[] = "0123456789abcdef";
+    size_t len;
+    int    fd, tentativi, j;
+
+    if (modello == NULL || suffisso < 0) { errno = EINVAL; return -1; }
+    len = strlen(modello);
+    if (len < 6 + (size_t)suffisso) { errno = EINVAL; return -1; }
+
+    for (tentativi = 0; tentativi < 32; tentativi++) {
+        char *x = modello + len - suffisso - 6;
+        unsigned long r = (unsigned long)random() ^ ((unsigned long)getpid() << 16);
+
+        for (j = 0; j < 6; j++, r >>= 4) x[j] = cifre[r & 0xf];
+        if (access(modello, F_OK) == 0) continue;
+        fd = open(modello, O_RDWR | O_CREAT | O_TRUNC);
+        if (fd >= 0) return fd;
+    }
+    errno = EEXIST;
+    return -1;
+}
+#endif
 
 /* ! mktemp E' LA VERSIONE INSICURA DI mkstemp, e lo e' per costruzione:
  * riempie le sei X e se ne va SENZA creare il file, quindi fra il nome e
@@ -6129,6 +6646,7 @@ int mprotect(void *addr, size_t lung, int prot)
 {
     int32_t r = _syscall3(SYS_MPROTECT, (uint32_t)(uintptr_t)addr,
                           (uint32_t)lung, (uint32_t)prot);
+    mm_dice("mprotect", (uint32_t)(uintptr_t)addr, (uint32_t)lung, (uint32_t)prot, r);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
@@ -6233,6 +6751,8 @@ struct lconv *localeconv(void)
 /* =============================================================================
  * Interrogazioni sul sistema
  * ============================================================================= */
+int meminfo(MemInfo *mi);          /* piu' avanti in questo file */
+
 long sysconf(int nome)
 {
     switch (nome) {
@@ -6240,6 +6760,16 @@ long sysconf(int nome)
         case _SC_OPEN_MAX:          return 32;    /* MAX_FD del kernel */
         case _SC_CLK_TCK:           return 100;   /* il PIT gira a 100 Hz */
         case _SC_NPROCESSORS_ONLN:  return 1;
+        case 83 /* _SC_NPROCESSORS_CONF */: return 1;   /* per NSPR, 30 settembre 2026 */
+        case 75 /* _SC_THREAD_STACK_MIN */: return 16384;
+        case _SC_GETPW_R_SIZE_MAX:  return 64 + 256;   /* getpwuid_r, vedi <pwd.h> */
+        case _SC_PHYS_PAGES:
+        case _SC_AVPHYS_PAGES: {                  /* per Gecko, 30 settembre 2026 */
+            MemInfo mi;
+
+            if (meminfo(&mi) < 0) { errno = EINVAL; return -1; }
+            return (long)((nome == _SC_PHYS_PAGES ? mi.total_kb : mi.free_kb) / 4u);
+        }
         case _SC_ARG_MAX:           return 16 * 320;
         default:                    errno = EINVAL; return -1;
     }
@@ -6359,6 +6889,7 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
     int32_t    r;
 
     if (lung == 0) { errno = EINVAL; return MAP_FAILED; }
+    flags &= ~0x4000;                   /* MAP_NORESERVE: vedi libc.h */
 
 #ifndef EXOS_LIBC_SO
     /* A descriptor from shm_open: the zone is already mapped, its address
@@ -6367,6 +6898,46 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
     if (E_SHMFD(fd) && g_shm_mmap) {
         long v = g_shm_mmap(lung, fd, off);
         return (v < 0) ? MAP_FAILED : (void *)(uintptr_t)v;
+    }
+#endif
+
+#ifndef EXOS_LIBC_SO
+    /* =====================================================================
+     * ! UN FILE SI MAPPA COPIANDOLO (1 ottobre 2026, tappa 6 di Exilla).
+     * Il kernel mappa solo memoria anonima. Una mappatura PRIVATA, o in
+     * sola lettura, di un file e' pero' indistinguibile da memoria anonima
+     * con dentro i byte del file: chi la scrive cambia la propria copia, che
+     * e' esattamente MAP_PRIVATE. Gecko legge cosi' omni.ja, e senza questo
+     * rispondeva «The installation seems to be corrupt».
+     *
+     * ! RESTA FUORI MAP_SHARED IN SCRITTURA: li' le scritture dovrebbero
+     * tornare nel file, e una copia le perderebbe in silenzio. ENODEV, come
+     * prima. Il prezzo della copia e' la RAM e la lettura iniziale: un file
+     * da 40 MB costa 40 MB subito. Solo in libc.a.
+     * ===================================================================== */
+    if (fd != -1 && !(flags & MAP_ANONYMOUS)) {
+        extern ssize_t pread(int fd, void *buf, size_t n, long pos);
+        extern int munmap(void *addr, size_t lung);
+        unsigned char *m;
+        size_t         letti = 0;
+
+        if ((flags & MAP_SHARED) && (prot & PROT_WRITE)) {
+            errno = ENODEV;
+            return MAP_FAILED;
+        }
+        m = mmap(addr, lung, PROT_READ | PROT_WRITE,
+                 (flags & ~(MAP_SHARED | MAP_PRIVATE)) | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (m == MAP_FAILED) return MAP_FAILED;
+        while (letti < lung) {
+            ssize_t n = pread(fd, m + letti, lung - letti, off + (long)letti);
+            if (n < 0) { int e = errno; munmap(m, lung); errno = e; return MAP_FAILED; }
+            if (n == 0) break;          /* oltre la fine: il resto resta a zero */
+            letti += (size_t)n;
+        }
+        if (prot != (PROT_READ | PROT_WRITE) && mprotect(m, lung, prot) != 0) {
+            int e = errno; munmap(m, lung); errno = e; return MAP_FAILED;
+        }
+        return m;
     }
 #endif
 
@@ -6386,6 +6957,7 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
     p.offset = (uint32_t)off;
 
     r = _syscall1(SYS_MMAP, (uint32_t)(uintptr_t)&p);
+    mm_dice("mmap", p.addr, p.length, p.prot | (p.flags << 8), r);
     if (r <= 0) {
         errno = (r < 0) ? -r : ENOMEM;
         return MAP_FAILED;
@@ -6407,13 +6979,18 @@ int munmap(void *addr, size_t lung)
 #endif
     r = _syscall2(SYS_MUNMAP, (uint32_t)(uintptr_t)addr,
                           (uint32_t)lung);
+    mm_dice("munmap", (uint32_t)(uintptr_t)addr, (uint32_t)lung, 0, r);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
 
-void sched_yield(void)
+/* ! int E NON void (30 settembre 2026): e' la firma di POSIX, e la libstdc++
+ * con i fili la usa come valore (gthr-posix.h: `return sched_yield ();`).
+ * Non fallisce mai. */
+int sched_yield(void)
 {
     _syscall1(SYS_SCHED_YIELD, 0);
+    return 0;
 }
 
 /* ! Ritorna int e non void: e' quello che dice POSIX, e chi controlla il
@@ -6888,7 +7465,7 @@ static int scaff_metti(const IpcMessage *meta, const void *dati,
 
 int ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len)
 {
-    unsigned int filo = (unsigned int)getpid();
+    unsigned int filo = (unsigned int)filo_id();
     int          r;
 
     mutex_prendi(&g_scaff_m);
@@ -6901,7 +7478,7 @@ int ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len)
  * possono prendere da qui, e contarli farebbe credere che c'e' posta. */
 unsigned int ipc_pronto(void)
 {
-    unsigned int filo = (unsigned int)getpid(), i, n = 0;
+    unsigned int filo = (unsigned int)filo_id(), i, n = 0;
 
     mutex_prendi(&g_scaff_m);
     for (i = 0; i < g_scaff_n; i++)
@@ -6931,7 +7508,7 @@ static int scaffale_prendi(IpcMessage *out_meta, void *buf, unsigned int buf_len
     int          r = -1;
 
     if (g_scaff_n == 0) return -1;          /* il caso di sempre: niente lucchetto */
-    filo = (unsigned int)getpid();
+    filo = (unsigned int)filo_id();
     mutex_prendi(&g_scaff_m);
     for (i = 0; i < g_scaff_n; i++)
         if (g_scaff[i].filo == filo) {
@@ -7021,7 +7598,7 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
     /* Prima lo scaffale, dal piu' vecchio: cio' che e' gia' in casa non fa
      * aspettare nessuno. Un ALTRUI si salta e resta al suo posto — e quel che
      * e' arrivato a un altro filo non si guarda nemmeno. */
-    filo = (unsigned int)getpid();
+    filo = (unsigned int)filo_id();
     mutex_prendi(&g_scaff_m);
     while (i < g_scaff_n) {
         int d;
@@ -7293,6 +7870,8 @@ struct tm *localtime_r(const time_t *t, struct tm *out)
  * che fuso si trova). Su un sistema con i fusi questa e' la differenza fra
  * mktime e timegm, e qui non c'e'.
  * ============================================================================= */
+time_t timegm(struct tm *tm);       /* sotto */
+
 time_t mktime(struct tm *tm)
 {
     long anno, mese, giorni, secondi;
@@ -7355,6 +7934,9 @@ time_t mktime(struct tm *tm)
         return quando;
     }
 }
+
+/* Vedi la dichiarazione in lib/include/libc.h. */
+time_t timegm(struct tm *tm) { return mktime(tm); }
 
 /* asctime e ctime — la data in venticinque caratteri e una riga a capo.
  *
@@ -8105,24 +8687,39 @@ int shm_chiudi(void *p)
  *   - MAP_PRIVATE on a zone is still shared, and PROT_* is not applied;
  *   - shm_unlink only answers 0: the zone goes away when its last user
  *     closes it, and until then the name is taken;
- *   - one process can open a name once (the kernel says EEXIST to a second
- *     shm_apri of the same zone): a second shm_open of it here is EEXIST.
+ *   - a name opened again by the same process, or dup()ed, is a new
+ *     descriptor on the SAME zone (see ShmZonaP below).
+ *   - shm_open(SHM_ANON, ...) is a zone private to the process: anonymous
+ *     memory, no kernel zone (<sys/mman.h>).
  *
  * NAMES: the kernel takes 15 characters and Mozilla's are longer
  * ("/org.mozilla.ipc.1234.5"), so the name becomes "P" + the name without
  * the slash when it fits, else "P#" + an FNV-1a hash in hex. The "P" keeps
  * them away from the system's own zones (windows, clipboard).
  * ============================================================================= */
+/* ! LA ZONA E IL DESCRITTORE SONO DUE COSE (2 ottobre 2026, tappa 6 di
+ * Exilla). Prima ogni descrittore ERA una zona, e un processo poteva aprire
+ * un nome una volta sola. Gecko apre lo stesso nome due volte (il secondo in
+ * sola lettura: e' il descrittore "congelato" che poi passa agli altri), lo
+ * duplica con dup() per darlo a chi lo mappa, e solo dopo chiude: cadeva in
+ * WritableSharedMap con un MOZ_RELEASE_ASSERT. Adesso un nome gia' aperto
+ * da questo processo da' un descrittore NUOVO sulla stessa zona, dup() fa
+ * lo stesso, e la zona va via quando non la tiene piu' nessun descrittore e
+ * nessuna mappatura. La sola lettura non si applica (vedi sopra: PROT_*). */
 typedef struct {
     int          usato;
-    int          aperto;        /* the descriptor is still open */
+    int          privata;       /* da SHM_ANON: memoria anonima, niente kernel */
+    int          descrittori;   /* descrittori aperti su questa zona */
     int          mappe;         /* mmap calls not yet undone */
     char         nome[16];      /* the kernel's name */
     unsigned int byte;          /* 0 until the zone exists */
     unsigned int virt;
-} ShmFd;
+} ShmZonaP;
 
-static ShmFd g_shmfd[SHMFD_MAX];
+static ShmZonaP g_shmzona[SHMFD_MAX];
+#ifndef SHM_ANON
+#define SHM_ANON  ((char *)1)       /* come in <sys/mman.h> */
+#endif
 
 static void shmfd_nome(const char *posix, char *k)
 {
@@ -8140,58 +8737,100 @@ static void shmfd_nome(const char *posix, char *k)
     snprintf(k, 16, "P#%08x", h);
 }
 
-/* The slot goes when nobody holds it any more: descriptor closed and no
- * mapping left. */
-static void shmfd_forse_libera(ShmFd *z)
+/* La zona di un descrittore, o NULL se non e' aperto. */
+static ShmZonaP *shmfd_zona(int fd)
 {
-    if (z->aperto || z->mappe) return;
-    if (z->virt) shm_chiudi((void *)(uintptr_t)z->virt);
+    int z;
+
+    if (!E_SHMFD(fd)) return NULL;
+    z = g_shmfd[fd - SHMFD_BASE];
+    return z ? &g_shmzona[z - 1] : NULL;
+}
+
+/* The zone goes when nobody holds it any more: no descriptor and no
+ * mapping left. */
+static void shmfd_forse_libera(ShmZonaP *z)
+{
+    if (z->descrittori || z->mappe) return;
+    if (z->virt && z->privata) {
+        int32_t r = _syscall2(SYS_MUNMAP, z->virt, (z->byte + 4095u) & ~4095u);
+        mm_dice("munmap-shm", z->virt, (z->byte + 4095u) & ~4095u, 0, r);
+    }
+    else if (z->virt)
+        shm_chiudi((void *)(uintptr_t)z->virt);
     memset(z, 0, sizeof(*z));
+}
+
+/* Un descrittore nuovo sulla zona `zi`. */
+static int shmfd_nuovo(int zi)
+{
+    int i;
+
+    for (i = 0; i < SHMFD_MAX && g_shmfd[i]; i++) ;
+    if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
+    g_shmfd[i] = zi + 1;
+    g_shmzona[zi].descrittori++;
+    return SHMFD_BASE + i;
 }
 
 static int  shmfd_chiudi(int fd);
 static int  shmfd_fstat(int fd, struct stat *st);
 static long shmfd_mmap(size_t lung, int fd, long off);
 static int  shmfd_munmap(void *addr);
+static int  shmfd_dup(int fd);
 
 int shm_open(const char *nome, int flag, mode_t modo)
 {
     ShmZona  q;
-    ShmFd   *z = 0;
-    int      i, r;
+    ShmZonaP *z;
+    int      i, r, fd;
     char     k[16];
 
     (void)modo;
-    if (!nome || !nome[0]) { errno = EINVAL; return -1; }
+    if (!nome) { errno = EINVAL; return -1; }
+    if (nome != SHM_ANON && !nome[0]) { errno = EINVAL; return -1; }
+
+    g_shm_chiudi = shmfd_chiudi;
+    g_shm_fstat  = shmfd_fstat;
+    g_shm_mmap   = shmfd_mmap;
+    g_shm_munmap = shmfd_munmap;
+    g_shm_dup    = shmfd_dup;
+
+    /* SHM_ANON: una zona privata, senza nome; la memoria arriva con
+     * ftruncate, come per le altre. */
+    if (nome == SHM_ANON) {
+        for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
+        if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
+        memset(&g_shmzona[i], 0, sizeof(g_shmzona[i]));
+        g_shmzona[i].usato   = 1;
+        g_shmzona[i].privata = 1;
+        fd = shmfd_nuovo(i);
+        if (fd < 0) memset(&g_shmzona[i], 0, sizeof(g_shmzona[i]));
+        return fd;
+    }
     shmfd_nome(nome, k);
 
+    /* Gia' aperta da questo processo: un altro descrittore sulla stessa. */
     for (i = 0; i < SHMFD_MAX; i++)
-        if (g_shmfd[i].usato && strcmp(g_shmfd[i].nome, k) == 0) {
-            errno = EEXIST;
-            return -1;
-        }
-    for (i = 0; i < SHMFD_MAX && g_shmfd[i].usato; i++) ;
+        if (g_shmzona[i].usato && strcmp(g_shmzona[i].nome, k) == 0)
+            return shmfd_nuovo(i);
+
+    for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
     if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
-    z = &g_shmfd[i];
+    z = &g_shmzona[i];
 
     memset(&q, 0, sizeof(q));
     strcpy(q.nome, k);
     r = shm_apri(&q);                 /* attach, if it is there */
     if (r < 0 && (r != -ENOENT || !(flag & O_CREAT))) { errno = -r; return -1; }
 
-    /* From now on close, fstat, mmap and munmap know about zones (see
-     * g_shm_chiudi: only a program that calls shm_open pays for this). */
-    g_shm_chiudi = shmfd_chiudi;
-    g_shm_fstat  = shmfd_fstat;
-    g_shm_mmap   = shmfd_mmap;
-    g_shm_munmap = shmfd_munmap;
-
     memset(z, 0, sizeof(*z));
-    z->usato  = 1;
-    z->aperto = 1;
+    z->usato = 1;
     strcpy(z->nome, k);
     if (r == 0) { z->byte = q.byte; z->virt = q.virt; }
-    return SHMFD_BASE + i;
+    fd = shmfd_nuovo(i);
+    if (fd < 0) shmfd_forse_libera(z);
+    return fd;
 }
 
 int shm_unlink(const char *nome)
@@ -8202,23 +8841,30 @@ int shm_unlink(const char *nome)
 
 int ftruncate(int fd, off_t lung)
 {
-    ShmFd  *z;
-    ShmZona q;
-    int     r;
+    ShmZonaP *z = shmfd_zona(fd);
+    ShmZona   q;
+    int       r;
 
-    if (!E_SHMFD(fd) || !g_shmfd[fd - SHMFD_BASE].usato ||
-        !g_shmfd[fd - SHMFD_BASE].aperto) {
+    if (z == NULL) {
         /* Files have truncate(path) on EX-OS, not ftruncate: say so. */
         errno = E_SHMFD(fd) ? EBADF : ENOSYS;
         return -1;
     }
-    z = &g_shmfd[fd - SHMFD_BASE];
     if (lung < 0) { errno = EINVAL; return -1; }
     if (z->virt) {
         if ((unsigned long)lung > z->byte) { errno = EINVAL; return -1; }
         return 0;
     }
     if (lung == 0) return 0;
+
+    if (z->privata) {
+        void *m = mmap(NULL, (size_t)lung, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (m == MAP_FAILED) return -1;
+        z->byte = (unsigned int)lung;
+        z->virt = (unsigned int)(uintptr_t)m;
+        return 0;
+    }
 
     memset(&q, 0, sizeof(q));
     strcpy(q.nome, z->nome);
@@ -8233,19 +8879,28 @@ int ftruncate(int fd, off_t lung)
 
 static int shmfd_chiudi(int fd)
 {
-    ShmFd *z = &g_shmfd[fd - SHMFD_BASE];
+    ShmZonaP *z = shmfd_zona(fd);
 
-    if (!z->usato || !z->aperto) { errno = EBADF; return -1; }
-    z->aperto = 0;
+    if (z == NULL) { errno = EBADF; return -1; }
+    g_shmfd[fd - SHMFD_BASE] = 0;
+    z->descrittori--;
     shmfd_forse_libera(z);
     return 0;
 }
 
+static int shmfd_dup(int fd)
+{
+    ShmZonaP *z = shmfd_zona(fd);
+
+    if (z == NULL) { errno = EBADF; return -1; }
+    return shmfd_nuovo((int)(z - g_shmzona));
+}
+
 static int shmfd_fstat(int fd, struct stat *st)
 {
-    ShmFd *z = &g_shmfd[fd - SHMFD_BASE];
+    ShmZonaP *z = shmfd_zona(fd);
 
-    if (!z->usato || !z->aperto) { errno = EBADF; return -1; }
+    if (z == NULL) { errno = EBADF; return -1; }
     memset(st, 0, sizeof(*st));
     st->st_mode    = S_IFREG | 0600u;
     st->st_nlink   = 1;
@@ -8256,9 +8911,9 @@ static int shmfd_fstat(int fd, struct stat *st)
 
 static long shmfd_mmap(size_t lung, int fd, long off)
 {
-    ShmFd *z = &g_shmfd[fd - SHMFD_BASE];
+    ShmZonaP *z = shmfd_zona(fd);
 
-    if (!z->usato || !z->aperto) { errno = EBADF; return -1; }
+    if (z == NULL) { errno = EBADF; return -1; }
     if (!z->virt) { errno = ENXIO; return -1; }     /* no ftruncate yet */
     if (off < 0 || (off & 4095) ||
         (unsigned long)off + lung > ((z->byte + 4095u) & ~4095u)) {
@@ -8276,7 +8931,7 @@ static int shmfd_munmap(void *addr)
     int i;
 
     for (i = 0; i < SHMFD_MAX; i++) {
-        ShmFd *z = &g_shmfd[i];
+        ShmZonaP *z = &g_shmzona[i];
 
         if (!z->usato || !z->virt || !z->mappe) continue;
         if (a < z->virt || a >= z->virt + z->byte) continue;
@@ -8503,6 +9158,207 @@ ssize_t getrandom(void *buf, size_t len, unsigned int flags)
     if (n < 0) { errno = -n; return -1; }
     return (ssize_t)n;
 }
+
+#ifndef EXOS_LIBC_SO
+/* =============================================================================
+ * arc4random — il DRBG in spazio utente (@ARC4RANDOM, 1 ottobre 2026)
+ *
+ * Il contratto sta in lib/include/libc.h. Il kernel raccoglie il seme e lo
+ * conta con prudenza: ogni prelievo da getentropy() scala la stima, e chi
+ * chiede spesso (Gecko vuole byte casuali per ogni UUID, ogni hash, ogni
+ * connessione) riceve EAGAIN. Qui il seme si prende UNA volta, 40 byte
+ * (chiave e nonce di ChaCha20), e si espande.
+ *
+ * Il generatore e' quello di OpenBSD nella sostanza: ChaCha20 (RFC 7539),
+ * e dopo ogni richiesta i primi 40 byte di un blocco nuovo diventano la
+ * chiave successiva ("fast key erasure"), quindi chi legge la memoria dopo
+ * non risale ai byte gia' consegnati. Ogni ARC4_RESEME byte prodotti si
+ * mescolano nella chiave altri 40 byte del kernel; se in quel momento il
+ * kernel dice EAGAIN si va avanti con la chiave che c'e' — e' gia' buona.
+ *
+ * ! IL PRIMO SEME SI ASPETTA, NON SI INVENTA: se getentropy() dice EAGAIN si
+ * riprova ogni 10 ms (ogni richiesta fa girare al kernel la raccolta da
+ * jitter), fino a un minuto; poi abort(). Proseguire senza seme vorrebbe
+ * dire chiavi prevedibili, e arc4random non ha un modo per fallire.
+ *
+ * Solo in libc.a: la libc.so del floppy non ha posto.
+ * ============================================================================= */
+
+#define ARC4_RESEME     (1600u * 1024u)
+
+static volatile int g_arc4_lucchetto = 0;
+static uint32_t     g_arc4_stato[16];
+static int          g_arc4_seminato = 0;
+static uint32_t     g_arc4_prodotti = 0;
+
+#define ARC4_ROT(v, n)   (((v) << (n)) | ((v) >> (32 - (n))))
+#define ARC4_QR(a, b, c, d) do {                                   \
+    a += b; d ^= a; d = ARC4_ROT(d, 16);                           \
+    c += d; b ^= c; b = ARC4_ROT(b, 12);                           \
+    a += b; d ^= a; d = ARC4_ROT(d, 8);                            \
+    c += d; b ^= c; b = ARC4_ROT(b, 7);                            \
+} while (0)
+
+/* Un blocco di ChaCha20 (64 byte) dallo stato, poi il contatore avanza. */
+static void arc4_blocco(uint32_t st[16], unsigned char out[64])
+{
+    uint32_t x[16];
+    int      i;
+
+    for (i = 0; i < 16; i++) x[i] = st[i];
+    for (i = 0; i < 10; i++) {
+        ARC4_QR(x[0], x[4], x[ 8], x[12]);
+        ARC4_QR(x[1], x[5], x[ 9], x[13]);
+        ARC4_QR(x[2], x[6], x[10], x[14]);
+        ARC4_QR(x[3], x[7], x[11], x[15]);
+        ARC4_QR(x[0], x[5], x[10], x[15]);
+        ARC4_QR(x[1], x[6], x[11], x[12]);
+        ARC4_QR(x[2], x[7], x[ 8], x[13]);
+        ARC4_QR(x[3], x[4], x[ 9], x[14]);
+    }
+    for (i = 0; i < 16; i++) {
+        uint32_t v = x[i] + st[i];
+        out[4 * i]     = (unsigned char)v;
+        out[4 * i + 1] = (unsigned char)(v >> 8);
+        out[4 * i + 2] = (unsigned char)(v >> 16);
+        out[4 * i + 3] = (unsigned char)(v >> 24);
+    }
+    st[12]++;
+}
+
+static uint32_t arc4_le32(const unsigned char *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/* Chiave (32 byte) e nonce (12 byte) nello stato; il contatore riparte.
+ * Esposta col nome riservato solo per la prova coi vettori di RFC 7539. */
+void __exos_chacha20_imposta(uint32_t st[16], const unsigned char chiave[32],
+                             uint32_t contatore, const unsigned char nonce[12])
+{
+    int i;
+
+    st[0] = 0x61707865u; st[1] = 0x3320646eu;
+    st[2] = 0x79622d32u; st[3] = 0x6b206574u;
+    for (i = 0; i < 8; i++) st[4 + i] = arc4_le32(chiave + 4 * i);
+    st[12] = contatore;
+    for (i = 0; i < 3; i++) st[13 + i] = arc4_le32(nonce + 4 * i);
+}
+
+void __exos_chacha20_blocco(uint32_t st[16], unsigned char out[64])
+{
+    arc4_blocco(st, out);
+}
+
+/* Mescola 40 byte nella chiave e nel nonce correnti (XOR) e riparte. */
+static void arc4_mescola(const unsigned char seme[40])
+{
+    unsigned char k[40];
+    int           i;
+
+    for (i = 0; i < 8; i++) {
+        k[4 * i]     = (unsigned char)g_arc4_stato[4 + i];
+        k[4 * i + 1] = (unsigned char)(g_arc4_stato[4 + i] >> 8);
+        k[4 * i + 2] = (unsigned char)(g_arc4_stato[4 + i] >> 16);
+        k[4 * i + 3] = (unsigned char)(g_arc4_stato[4 + i] >> 24);
+    }
+    for (i = 0; i < 2; i++) {
+        k[32 + 4 * i]     = (unsigned char)g_arc4_stato[14 + i];
+        k[32 + 4 * i + 1] = (unsigned char)(g_arc4_stato[14 + i] >> 8);
+        k[32 + 4 * i + 2] = (unsigned char)(g_arc4_stato[14 + i] >> 16);
+        k[32 + 4 * i + 3] = (unsigned char)(g_arc4_stato[14 + i] >> 24);
+    }
+    for (i = 0; i < 40; i++) k[i] ^= seme[i];
+    {
+        unsigned char nonce[12] = {0};
+        for (i = 0; i < 8; i++) nonce[4 + i] = k[32 + i];
+        __exos_chacha20_imposta(g_arc4_stato, k, 0, nonce);
+    }
+    memset(k, 0, sizeof k);
+}
+
+static void arc4_semina(void)
+{
+    unsigned char seme[40];
+    int           tentativi;
+
+    for (tentativi = 0; getentropy(seme, sizeof seme) != 0; tentativi++) {
+        struct timespec pausa = { 0, 10 * 1000 * 1000 };
+        if (tentativi >= 6000) {
+            static const char msg[] =
+                "arc4random: il sistema non da' entropia dopo un minuto\n";
+            write(2, msg, sizeof msg - 1);
+            abort();
+        }
+        nanosleep(&pausa, NULL);
+    }
+    arc4_mescola(seme);
+    memset(seme, 0, sizeof seme);
+    g_arc4_seminato = 1;
+    g_arc4_prodotti = 0;
+}
+
+static void arc4_controlla_seme(size_t n)
+{
+    if (!g_arc4_seminato) {
+        arc4_semina();
+    } else if (g_arc4_prodotti > ARC4_RESEME) {
+        unsigned char seme[40];
+        if (getentropy(seme, sizeof seme) == 0) arc4_mescola(seme);
+        memset(seme, 0, sizeof seme);
+        g_arc4_prodotti = 0;
+    }
+    g_arc4_prodotti += (uint32_t)(n > 0xffffu ? 0xffffu : n);
+}
+
+/* Dopo ogni richiesta: un blocco nuovo diventa la chiave seguente. */
+static void arc4_ricambia(void)
+{
+    unsigned char b[64];
+
+    arc4_blocco(g_arc4_stato, b);
+    arc4_mescola(b);
+    memset(b, 0, sizeof b);
+}
+
+void arc4random_buf(void *buf, size_t n)
+{
+    unsigned char *p = (unsigned char *)buf;
+    unsigned char  b[64];
+
+    mutex_prendi(&g_arc4_lucchetto);
+    arc4_controlla_seme(n);
+    while (n > 0) {
+        size_t m = n < 64 ? n : 64;
+        arc4_blocco(g_arc4_stato, b);
+        memcpy(p, b, m);
+        p += m; n -= m;
+        if (g_arc4_stato[12] == 0) arc4_ricambia();   /* contatore girato */
+    }
+    arc4_ricambia();
+    mutex_lascia(&g_arc4_lucchetto);
+    memset(b, 0, sizeof b);
+}
+
+uint32_t arc4random(void)
+{
+    uint32_t v;
+    arc4random_buf(&v, sizeof v);
+    return v;
+}
+
+/* Uniforme in [0, limite): si scartano i valori sotto 2^32 mod limite. */
+uint32_t arc4random_uniform(uint32_t limite)
+{
+    uint32_t minimo, v;
+
+    if (limite < 2) return 0;
+    minimo = (uint32_t)(-limite) % limite;
+    do { v = arc4random(); } while (v < minimo);
+    return v % limite;
+}
+#endif /* !EXOS_LIBC_SO */
 
 /* =============================================================================
  * Configurazione e identita' del sistema — vedi libc.h per il contratto
@@ -9060,21 +9916,31 @@ int fstat(int fd, struct stat *st)
         return 0;
     }
 
+    /* Un file: lo dice il kernel (SYS_FSTAT, dal 0.228), con la stessa
+     * identita' e la stessa data che stat() da' per il suo percorso.
+     *
+     * ! PRIMA st_ino QUI VALEVA 0, «perche' un descrittore non porta con se'
+     * il percorso». SQLite prende l'identita' con fstat all'apertura e prima
+     * di ogni scrittura la confronta con stat sul percorso: 0 contro un
+     * numero vero voleva dire «il file e' stato spostato», e rifiutava di
+     * scriverci — il database delle chiavi di NSS restava senza password.
+     * Vedi sys_fstat in kernel/syscall/syscall_impl.c. */
+    {
+        Stat g;
+
+        if (_syscall2(SYS_FSTAT, (uint32_t)fd, (uint32_t)&g) == 0) {
+            stat_da_grezzo(&g, st);
+            return 0;
+        }
+    }
+
     dim = fsize(fd);
     if (dim < 0) return -1;
 
-    /* Tutto il resto e' quello che si puo' dire di un descrittore senza
-     * una syscall fstat: la dimensione e' vera, il tipo e' un'ipotesi
-     * ragionevole, i tempi non ci sono. Dichiarato nell'header.
-     *
-     * ! st_ino RESTA 0 QUI, e a differenza di stat() non e' una svista
-     * riparata: un descrittore non porta con se' il percorso, e senza
-     * quello il VFS non sa dire di quale oggetto si tratti. Chi confronta
-     * due FILE per identita' — e' cio' che il difetto di stat() aveva
-     * insegnato a temere — deve passare da stat() sul percorso, dove
-     * l'identita' e' vera (st_ident, vedi kernel/fs/vfs.c). Il giorno che
-     * servisse davvero, la strada e' una syscall SYS_FSTAT che chieda al
-     * VFS l'ident dell'handle: c'e' gia', e' solo da esporre. */
+    /* Il resto (console, pipe, un kernel piu' vecchio del 0.228) e' quello
+     * che si puo' dire di un descrittore senza SYS_FSTAT: la dimensione e'
+     * vera, il tipo e' un'ipotesi ragionevole, identita' e tempi non ci
+     * sono. */
     st->st_dev   = 0;
     st->st_ino   = 0;
     st->st_mode  = S_IFREG | 0644u;
@@ -10609,6 +11475,21 @@ int madvise(void *addr, size_t lung, int consiglio)
     return 0;
 }
 
+int msync(void *addr, size_t lung, int flag)
+{
+    (void)addr; (void)lung; (void)flag;
+    return 0;
+}
+
+/* ! EX-OS NON HA I LUCCHETTI SUI FILE: flock dice di si' e non esclude
+ * nessuno. Chi conta su di lui per non aprire due volte la stessa cosa (il
+ * profilo di Firefox) non e' protetto, e lo si dice qui e in <sys/file.h>. */
+int flock(int fd, int come)
+{
+    (void)come;
+    return fcntl(fd, 1 /* F_GETFD */) < 0 ? -1 : 0;
+}
+
 int posix_madvise(void *addr, size_t lung, int consiglio)
 {
     (void)addr; (void)lung; (void)consiglio;
@@ -10620,7 +11501,7 @@ int getrlimit(int risorsa, struct rlimit *r)
 {
     if (!r) { errno = EFAULT; return -1; }
     switch (risorsa) {
-    case 3:  r->rlim_cur = r->rlim_max = 262144ul; return 0;   /* RLIMIT_STACK: USER_STACK_MAX */
+    case 3:  r->rlim_cur = r->rlim_max = 8ul * 1024 * 1024; return 0;   /* RLIMIT_STACK: USER_STACK_MAX (0.229) */
     case 7:  r->rlim_cur = r->rlim_max = 32ul;     return 0;   /* RLIMIT_NOFILE: MAX_FD */
     case 0: case 1: case 2: case 4: case 5: case 6: case 8: case 9:
         r->rlim_cur = r->rlim_max = ~0ul;                      /* RLIM_INFINITY */
@@ -10780,6 +11661,114 @@ int fchown(int fd, unsigned int u, unsigned int g)          { (void)fd; (void)u;
 int chroot(const char *p)                                   { (void)p; errno = ENOSYS; return -1; }
 int mkfifo(const char *p, unsigned int m)                   { (void)p; (void)m; errno = ENOSYS; return -1; }
 
+/* =============================================================================
+ * Per NSPR (@EXILLA-NSPR, 30 settembre 2026): execve, uname, i protocolli,
+ * gethostbyaddr. Vedi libc.h e <sys/utsname.h>.
+ * ============================================================================= */
+int execve(const char *percorso, char *const argv[], char *const envp[])
+{
+    return err_posix(_syscall3(SYS_EXEC, (uint32_t)percorso, (uint32_t)argv,
+                               (uint32_t)envp));
+}
+
+struct utsname { char sysname[65], nodename[65], release[65], version[65], machine[65]; };
+
+int uname(struct utsname *u)
+{
+    const char *n = getenv("HOSTNAME"), *v = getenv("OSVER");
+
+    if (!u) { errno = EFAULT; return -1; }
+    memset(u, 0, sizeof(*u));
+    strcpy(u->sysname, "EX-OS");
+    strncpy(u->nodename, (n && *n) ? n : "exos", 64);
+    strncpy(u->release, (v && *v) ? v : "0", 64);
+    strcpy(u->version, "EX-OS");
+    strcpy(u->machine, "i386");
+    return 0;
+}
+
+int h_errno = 0;
+
+const char *hstrerror(int e)
+{
+    switch (e) {
+    case 1:  return "nome sconosciuto";
+    case 2:  return "il DNS non risponde, riprovare";
+    case 3:  return "errore del DNS";
+    case 4:  return "il nome non ha un indirizzo";
+    default: return "errore di risoluzione";
+    }
+}
+
+struct protoent { char *p_name; char **p_aliases; int p_proto; };
+
+static struct protoent *protocollo(const char *nome, int numero)
+{
+    static char           *niente[1] = { 0 };
+    static struct protoent p;
+    static const struct { const char *nome; int n; } noti[] = {
+        { "ip", 0 }, { "icmp", 1 }, { "tcp", 6 }, { "udp", 17 },
+    };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(noti) / sizeof(noti[0]); i++)
+        if ((nome && strcmp(nome, noti[i].nome) == 0) || (!nome && numero == noti[i].n)) {
+            p.p_name = (char *)noti[i].nome;
+            p.p_aliases = niente;
+            p.p_proto = noti[i].n;
+            return &p;
+        }
+    return NULL;
+}
+
+struct protoent *getprotobyname(const char *nome)  { return nome ? protocollo(nome, -1) : NULL; }
+struct protoent *getprotobynumber(int numero)      { return protocollo(NULL, numero); }
+
+/* =============================================================================
+ * Per NSS e SQLite (@EXILLA-NSS): utimes, syslog, termios. Vedi gli header.
+ * ============================================================================= */
+int utimes(const char *percorso, const struct timeval tempi[2])
+{
+    struct stat st;
+
+    (void)tempi;
+    return stat(percorso, &st);
+}
+
+static char g_syslog_nome[32] = "";
+
+void openlog(const char *nome, int opzioni, int servizio)
+{
+    (void)opzioni; (void)servizio;
+    strncpy(g_syslog_nome, nome ? nome : "", sizeof(g_syslog_nome) - 1);
+}
+
+void vsyslog(int priorita, const char *fmt, __builtin_va_list ap)
+{
+    char riga[200];
+    int  n = 0;
+
+    (void)priorita;
+    if (g_syslog_nome[0]) n = snprintf(riga, sizeof(riga), "%s: ", g_syslog_nome);
+    vsnprintf(riga + n, sizeof(riga) - (size_t)n, fmt, ap);
+    log_seriale(riga);
+}
+
+void syslog(int priorita, const char *fmt, ...)
+{
+    __builtin_va_list ap;
+
+    __builtin_va_start(ap, fmt);
+    vsyslog(priorita, fmt, ap);
+    __builtin_va_end(ap);
+}
+
+void closelog(void) { g_syslog_nome[0] = '\0'; }
+
+struct termios;
+int tcgetattr(int fd, struct termios *t)             { (void)fd; (void)t; errno = ENOTTY; return -1; }
+int tcsetattr(int fd, int c, const struct termios *t) { (void)fd; (void)c; (void)t; errno = ENOTTY; return -1; }
+
 /* fork: EX-OS non ce l'ha (vedi <unistd.h>). */
 int fork(void)
 {
@@ -10790,7 +11779,7 @@ int fork(void)
 /* syscall() alla Linux: solo gettid, che su EX-OS e' il pid del filo. */
 long syscall(long numero, ...)
 {
-    if (numero == 224) return getpid();              /* SYS_gettid */
+    if (numero == 224) return filo_id();             /* SYS_gettid */
     errno = ENOSYS;
     return -1;
 }
@@ -10823,6 +11812,477 @@ char *dirname(char *p)
     p[n] = '\0';
     return p;
 }
+
+/* fputwc, fputws — la stdio larga, quanto ne chiede fmt (dentro le stringhe
+ * di Gecko, xpcom/string). Latin-1 come il resto: un carattere che non ci
+ * sta diventa '?', perche' lo stream e' di byte e mezza riga persa e' peggio
+ * di un punto interrogativo. */
+wint_t fputwc(wchar_t c, FILE *f)
+{
+    unsigned char b = (unsigned int)c > 0xFFu ? '?' : (unsigned char)c;
+
+    return fputc(b, f) == EOF ? WEOF : (wint_t)c;
+}
+
+int fputws(const wchar_t *s, FILE *f)
+{
+    for (; *s; s++) {
+        if (fputwc(*s, f) == WEOF) return -1;
+    }
+    return 0;
+}
+
+/* =============================================================================
+ * La stdio larga e i suoi dintorni (30 settembre 2026, tappa 6 di Exilla)
+ *
+ * ! LA libstdc++ ACCENDE wchar_t SOLO SE <wchar.h> DICHIARA TUTTO QUESTO: il
+ * suo configure prova ogni nome, e al primo che manca spegne std::wstring,
+ * std::wostream e compagni. Gecko li usa nel suo nucleo (fmt dentro
+ * xpcom/string). Latin-1 come il resto della parte larga: un carattere
+ * largo e' un byte dello stream.
+ *
+ * ! LE scanf LARGHE LEGGONO IN STRETTO: il testo e il formato si
+ * convertono in Latin-1 e decide vsscanf. Vale per i numeri e le parole;
+ * %ls e %lc scriverebbero byte dove il chiamante aspetta wchar_t, quindi non
+ * si usano (non li usa nessuno di cio' che gira qui).
+ * ============================================================================= */
+wint_t btowc(int c) { return c == EOF ? WEOF : (wint_t)(unsigned char)c; }
+int    wctob(wint_t c) { return (c == WEOF || (unsigned int)c > 0xFFu) ? EOF : (int)c; }
+int    mbsinit(const mbstate_t *stato) { (void)stato; return 1; }   /* senza stato */
+size_t mbrlen(const char *s, size_t n, mbstate_t *stato) { return mbrtowc(0, s, n, stato); }
+
+wint_t fgetwc(FILE *f) { int c = fgetc(f); return c == EOF ? WEOF : (wint_t)(unsigned char)c; }
+wint_t getwc(FILE *f) { return fgetwc(f); }
+wint_t getwchar(void) { return fgetwc(stdin); }
+wint_t ungetwc(wint_t c, FILE *f)
+{
+    if (c == WEOF || (unsigned int)c > 0xFFu) return WEOF;
+    return ungetc((int)c, f) == EOF ? WEOF : c;
+}
+wint_t putwc(wchar_t c, FILE *f) { return fputwc(c, f); }
+wint_t putwchar(wchar_t c) { return fputwc(c, stdout); }
+
+wchar_t *fgetws(wchar_t *s, int n, FILE *f)
+{
+    int i = 0;
+
+    if (n <= 0) return 0;
+    while (i < n - 1) {
+        wint_t c = fgetwc(f);
+        if (c == WEOF) break;
+        s[i++] = (wchar_t)c;
+        if (c == L'\n') break;
+    }
+    if (i == 0) return 0;
+    s[i] = 0;
+    return s;
+}
+
+/* Lo stream non ha un orientamento: si dice quello che si chiede. */
+int fwide(FILE *f, int modo) { (void)f; return modo; }
+
+int vfwprintf(FILE *f, const wchar_t *fmt, __builtin_va_list ap)
+{
+    wchar_t  corto[512];
+    wchar_t *buf = corto;
+    size_t   dim = 512;
+    int      n;
+
+    for (;;) {
+        __builtin_va_list copia;
+        __builtin_va_copy(copia, ap);
+        n = vswprintf(buf, dim, fmt, copia);
+        __builtin_va_end(copia);
+        if (n >= 0 && (size_t)n < dim) break;
+        if (buf != corto) free(buf);
+        dim *= 4;
+        if (dim > 1u << 20 || !(buf = malloc(dim * sizeof(wchar_t)))) return -1;
+    }
+    if (fputws(buf, f) < 0) n = -1;
+    if (buf != corto) free(buf);
+    return n;
+}
+int vwprintf(const wchar_t *fmt, __builtin_va_list ap) { return vfwprintf(stdout, fmt, ap); }
+int fwprintf(FILE *f, const wchar_t *fmt, ...)
+{
+    __builtin_va_list ap; int n;
+    __builtin_va_start(ap, fmt); n = vfwprintf(f, fmt, ap); __builtin_va_end(ap);
+    return n;
+}
+int wprintf(const wchar_t *fmt, ...)
+{
+    __builtin_va_list ap; int n;
+    __builtin_va_start(ap, fmt); n = vfwprintf(stdout, fmt, ap); __builtin_va_end(ap);
+    return n;
+}
+
+/* Da largo a Latin-1, in un buffer allocato (0 se non ci sta). */
+static char *largo_in_stretto(const wchar_t *w)
+{
+    size_t n = 0, i;
+    char  *s;
+
+    while (w[n]) n++;
+    if (!(s = malloc(n + 1))) return 0;
+    for (i = 0; i <= n; i++) s[i] = (unsigned int)w[i] > 0xFFu ? '?' : (char)w[i];
+    return s;
+}
+
+int vswscanf(const wchar_t *s, const wchar_t *fmt, __builtin_va_list ap)
+{
+    char *ss = largo_in_stretto(s), *ff = largo_in_stretto(fmt);
+    int   n = EOF;
+
+    if (ss && ff) n = vsscanf(ss, ff, ap);
+    free(ss); free(ff);
+    return n;
+}
+int swscanf(const wchar_t *s, const wchar_t *fmt, ...)
+{
+    __builtin_va_list ap; int n;
+    __builtin_va_start(ap, fmt); n = vswscanf(s, fmt, ap); __builtin_va_end(ap);
+    return n;
+}
+/* Dallo stream: una riga alla volta, poi come sopra. */
+int vfwscanf(FILE *f, const wchar_t *fmt, __builtin_va_list ap)
+{
+    wchar_t riga[1024];
+
+    if (!fgetws(riga, 1024, f)) return EOF;
+    return vswscanf(riga, fmt, ap);
+}
+int vwscanf(const wchar_t *fmt, __builtin_va_list ap) { return vfwscanf(stdin, fmt, ap); }
+int fwscanf(FILE *f, const wchar_t *fmt, ...)
+{
+    __builtin_va_list ap; int n;
+    __builtin_va_start(ap, fmt); n = vfwscanf(f, fmt, ap); __builtin_va_end(ap);
+    return n;
+}
+int wscanf(const wchar_t *fmt, ...)
+{
+    __builtin_va_list ap; int n;
+    __builtin_va_start(ap, fmt); n = vfwscanf(stdin, fmt, ap); __builtin_va_end(ap);
+    return n;
+}
+
+/* La collazione della località C e' l'ordine dei codici. */
+int wcscoll(const wchar_t *a, const wchar_t *b) { return wcscmp(a, b); }
+size_t wcsxfrm(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    size_t l = 0;
+
+    while (src[l]) l++;
+    if (n > 0) {
+        size_t i, m = l < n - 1 ? l : n - 1;
+        for (i = 0; i < m; i++) dst[i] = src[i];
+        dst[m] = 0;
+    }
+    return l;
+}
+
+wchar_t *wcstok(wchar_t *s, const wchar_t *sep, wchar_t **resto)
+{
+    wchar_t *fine;
+
+    if (!s) s = *resto;
+    if (!s) return 0;
+    s += wcsspn(s, sep);
+    if (!*s) { *resto = 0; return 0; }
+    fine = wcspbrk(s, sep);
+    if (fine) { *fine = 0; *resto = fine + 1; } else *resto = 0;
+    return s;
+}
+
+size_t wcsftime(wchar_t *dst, size_t max, const wchar_t *fmt, const struct tm *tm)
+{
+    char   *ff = largo_in_stretto(fmt);
+    char    corto[512];
+    size_t  n = 0, i;
+
+    if (!ff) return 0;
+    if (max > 0) {
+        n = strftime(corto, max < sizeof(corto) ? max : sizeof(corto), ff, tm);
+        for (i = 0; i <= n; i++) dst[i] = (wchar_t)(unsigned char)corto[i];
+    }
+    free(ff);
+    return n;
+}
+
+/* <wctype.h> per nome: l'indice nell'elenco, 0 per un nome sconosciuto. */
+static const char *const classi_larghe[] = {
+    "alnum", "alpha", "blank", "cntrl", "digit", "graph",
+    "lower", "print", "punct", "space", "upper", "xdigit", 0
+};
+unsigned int wctype(const char *nome)
+{
+    unsigned int i;
+
+    for (i = 0; classi_larghe[i]; i++)
+        if (strcmp(nome, classi_larghe[i]) == 0) return i + 1;
+    return 0;
+}
+int iswctype(wint_t c, unsigned int classe)
+{
+    switch (classe) {
+        case 1:  return iswalnum(c);
+        case 2:  return iswalpha(c);
+        case 3:  return iswblank(c);
+        case 4:  return iswcntrl(c);
+        case 5:  return iswdigit(c);
+        case 6:  return iswgraph(c);
+        case 7:  return iswlower(c);
+        case 8:  return iswprint(c);
+        case 9:  return iswpunct(c);
+        case 10: return iswspace(c);
+        case 11: return iswupper(c);
+        case 12: return iswxdigit(c);
+        default: return 0;
+    }
+}
+unsigned int wctrans(const char *nome)
+{
+    if (strcmp(nome, "tolower") == 0) return 1;
+    if (strcmp(nome, "toupper") == 0) return 2;
+    return 0;
+}
+wint_t towctrans(wint_t c, unsigned int t)
+{
+    return t == 1 ? towlower(c) : t == 2 ? towupper(c) : c;
+}
+
+float       wcstof(const wchar_t *s, wchar_t **fine)  { return (float)wcstod(s, fine); }
+long double wcstold(const wchar_t *s, wchar_t **fine) { return wcstod(s, fine); }
+
+/* =============================================================================
+ * Quello che Gecko chiede per nome (30 settembre 2026, tappa 6 di Exilla).
+ * Le spiegazioni stanno accanto alle dichiarazioni in lib/include/libc.h.
+ * ============================================================================= */
+int faccessat(int dirfd, const char *path, int modo, int flag)
+{
+    (void)flag;
+    if (dirfd != -100 /* AT_FDCWD */ && (!path || path[0] != '/')) {
+        errno = ENOSYS;
+        return -1;
+    }
+    return access(path, modo);
+}
+
+/* random: xorshift a 32 bit, con uno stato suo (rand() ha il proprio). */
+static unsigned int g_random_stato = 1;
+void srandom(unsigned int seme) { g_random_stato = seme ? seme : 1; }
+long random(void)
+{
+    unsigned int x = g_random_stato;
+
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    g_random_stato = x;
+    return (long)(x & 0x7FFFFFFFu);
+}
+
+unsigned int alarm(unsigned int secondi) { (void)secondi; return 0; }
+
+static const char *const nomi_mesi[12] = {
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december"
+};
+static const char *const nomi_giorni[7] = {
+    "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
+};
+
+/* Un numero di al piu' `cifre` cifre, fra min e max. */
+static const char *sp_numero(const char *s, int cifre, int min, int max, int *v)
+{
+    int n = 0, letti = 0;
+
+    while (*s == ' ') s++;
+    while (letti < cifre && *s >= '0' && *s <= '9') { n = n * 10 + (*s++ - '0'); letti++; }
+    if (letti == 0 || n < min || n > max) return 0;
+    *v = n;
+    return s;
+}
+
+/* Un nome dall'elenco, intero o abbreviato alle prime tre lettere. */
+static const char *sp_nome(const char *s, const char *const *nomi, int quanti, int *v)
+{
+    int i;
+
+    for (i = 0; i < quanti; i++) {
+        size_t l = strlen(nomi[i]);
+        if (strncasecmp(s, nomi[i], l) == 0) { *v = i; return s + l; }
+        if (strncasecmp(s, nomi[i], 3) == 0) { *v = i; return s + 3; }
+    }
+    return 0;
+}
+
+char *strptime(const char *s, const char *fmt, struct tm *tm)
+{
+    int v;
+
+    while (*fmt && s) {
+        if (*fmt == ' ' || *fmt == '\t' || *fmt == '\n') {
+            while (*s == ' ' || *s == '\t' || *s == '\n') s++;
+            fmt++;
+            continue;
+        }
+        if (*fmt != '%') {
+            if (*s++ != *fmt++) return 0;
+            continue;
+        }
+        fmt++;
+        switch (*fmt++) {
+            case 'Y': if ((s = sp_numero(s, 4, 0, 9999, &v))) tm->tm_year = v - 1900; break;
+            case 'y': if ((s = sp_numero(s, 2, 0, 99, &v))) tm->tm_year = v < 69 ? v + 100 : v; break;
+            case 'm': if ((s = sp_numero(s, 2, 1, 12, &v))) tm->tm_mon = v - 1; break;
+            case 'd': case 'e': if ((s = sp_numero(s, 2, 1, 31, &v))) tm->tm_mday = v; break;
+            case 'H': if ((s = sp_numero(s, 2, 0, 23, &v))) tm->tm_hour = v; break;
+            case 'M': if ((s = sp_numero(s, 2, 0, 59, &v))) tm->tm_min = v; break;
+            case 'S': if ((s = sp_numero(s, 2, 0, 60, &v))) tm->tm_sec = v; break;
+            case 'j': if ((s = sp_numero(s, 3, 1, 366, &v))) tm->tm_yday = v - 1; break;
+            case 'b': case 'B': case 'h':
+                if ((s = sp_nome(s, nomi_mesi, 12, &v))) tm->tm_mon = v;
+                break;
+            case 'a': case 'A':
+                if ((s = sp_nome(s, nomi_giorni, 7, &v))) tm->tm_wday = v;
+                break;
+            case 'p':
+                if (strncasecmp(s, "am", 2) == 0) { if (tm->tm_hour == 12) tm->tm_hour = 0; s += 2; }
+                else if (strncasecmp(s, "pm", 2) == 0) { if (tm->tm_hour < 12) tm->tm_hour += 12; s += 2; }
+                else s = 0;
+                break;
+            case 'T': s = strptime(s, "%H:%M:%S", tm); break;
+            case 'D': s = strptime(s, "%m/%d/%y", tm); break;
+            case 'R': s = strptime(s, "%H:%M", tm); break;
+            case 'n': case 't': while (*s == ' ' || *s == '\t' || *s == '\n') s++; break;
+            case '%': if (*s++ != '%') s = 0; break;
+            default: return 0;                 /* una conversione che non si sa fare */
+        }
+    }
+    return (char *)s;
+}
+
+/* mlock/munlock: vedi lib/include/libc.h. */
+int mlock(const void *addr, size_t lung) { (void)addr; (void)lung; return 0; }
+int munlock(const void *addr, size_t lung) { (void)addr; (void)lung; return 0; }
+
+int pipe2(int fd[2], int flag)
+{
+    if (pipe(fd) < 0) return -1;
+    if (flag & 0x800 /* O_NONBLOCK */) {
+        fcntl(fd[0], 4 /* F_SETFL */, 0x800);
+        fcntl(fd[1], 4 /* F_SETFL */, 0x800);
+    }
+    return 0;
+}
+
+/* <net/if.h>: nessuna interfaccia con un nome (vedi l'header). */
+struct if_nameindex { unsigned int if_index; char *if_name; };
+unsigned int if_nametoindex(const char *nome) { (void)nome; errno = ENXIO; return 0; }
+char *if_indextoname(unsigned int indice, char *nome) { (void)indice; (void)nome; errno = ENXIO; return 0; }
+struct if_nameindex *if_nameindex(void)
+{
+    struct if_nameindex *e = calloc(1, sizeof(*e));    /* solo il terminatore */
+    return e;
+}
+void if_freenameindex(struct if_nameindex *e) { free(e); }
+
+/* <link.h>: i programmi sono statici, non c'e' un elenco di oggetti. */
+struct dl_phdr_info;
+int dl_iterate_phdr(int (*f)(struct dl_phdr_info *, size_t, void *), void *dato)
+{
+    (void)f; (void)dato;
+    return 0;
+}
+
+/* <pwd.h>: una voce sola, fatta con l'ambiente (vedi lib/include/pwd.h). */
+struct passwd {
+    char *pw_name; char *pw_passwd; uid_t pw_uid; gid_t pw_gid;
+    char *pw_gecos; char *pw_dir; char *pw_shell;
+};
+
+static void voce_utente(struct passwd *pw, char *nome, char *casa)
+{
+    const char *u = getenv("USER"), *h = getenv("HOME");
+
+    strncpy(nome, u && *u ? u : "utente", 63); nome[63] = 0;
+    strncpy(casa, h && *h ? h : "/", 255);     casa[255] = 0;
+    pw->pw_name = nome;
+    pw->pw_passwd = (char *)"x";
+    pw->pw_uid = (uid_t)getuid();
+    pw->pw_gid = (gid_t)getgid();
+    pw->pw_gecos = nome;
+    pw->pw_dir = casa;
+    pw->pw_shell = (char *)"/bin/sh";
+}
+
+struct passwd *getpwuid(uid_t uid)
+{
+    static struct passwd pw;
+    static char nome[64], casa[256];
+
+    (void)uid;
+    voce_utente(&pw, nome, casa);
+    return &pw;
+}
+
+struct passwd *getpwnam(const char *nome)
+{
+    struct passwd *pw = getpwuid(0);
+    return strcmp(nome, pw->pw_name) == 0 ? pw : 0;
+}
+
+int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t dim, struct passwd **ris)
+{
+    (void)uid;
+    *ris = 0;
+    if (dim < 64 + 256) return ERANGE;
+    voce_utente(pw, buf, buf + 64);
+    *ris = pw;
+    return 0;
+}
+
+int getpwnam_r(const char *nome, struct passwd *pw, char *buf, size_t dim, struct passwd **ris)
+{
+    int r = getpwuid_r(0, pw, buf, dim, ris);
+
+    if (r == 0 && strcmp(nome, pw->pw_name) != 0) *ris = 0;
+    return r;
+}
+
+/* <grp.h>: un gruppo solo, col nome dell'utente (vedi l'header). */
+struct group { char *gr_name; char *gr_passwd; gid_t gr_gid; char **gr_mem; };
+
+struct group *getgrgid(gid_t gid)
+{
+    static struct group gr;
+    static char nome[64];
+    static char *membri[1];
+    const char *u = getenv("USER");
+
+    if (gid != (gid_t)getgid()) return 0;
+    strncpy(nome, u && *u ? u : "utente", 63); nome[63] = 0;
+    gr.gr_name = nome;
+    gr.gr_passwd = (char *)"x";
+    gr.gr_gid = gid;
+    membri[0] = 0;
+    gr.gr_mem = membri;
+    return &gr;
+}
+
+struct group *getgrnam(const char *nome)
+{
+    struct group *gr = getgrgid((gid_t)getgid());
+    return (gr && strcmp(nome, gr->gr_name) == 0) ? gr : 0;
+}
+
+/* Nessun gruppo supplementare. */
+int getgroups(int dim, gid_t elenco[]) { (void)dim; (void)elenco; return 0; }
+
+/* ftello, fseeko — ftell e fseek con off_t. Qui off_t e' un long come la
+ * posizione di ftell, quindi sono la stessa cosa; il codice di terzi (llama.cpp
+ * di Firefox) le chiama per non fermarsi ai 2 GB altrove. */
+off_t ftello(FILE *f) { return (off_t)ftell(f); }
+
+int fseeko(FILE *f, off_t off, int da) { return fseek(f, (long)off, da); }
 
 /* Latin-1, come tutta la parte larga di questa libc: un byte, un carattere. */
 size_t wcrtomb(char *dst, wchar_t c, mbstate_t *stato)
@@ -12252,6 +13712,24 @@ int getnameinfo(const struct sockaddr *a, unsigned int len, char *host,
     if (host && hlen && !inet_ntop(S_AF_INET, ip, host, hlen)) return -11;
     if (serv && slen) snprintf(serv, slen, "%u", porta);
     return 0;
+}
+
+/* Nessuna ricerca inversa: il nome e' il numero (vedi libc.h). */
+struct hostent *gethostbyaddr(const void *ind, unsigned int len, int famiglia)
+{
+    static unsigned char  ip[4];
+    static char          *lista[2], *alias[1];
+    static char           nome[16];
+    static struct hostent h;
+    extern int            h_errno;
+
+    if (!ind || len != 4 || famiglia != S_AF_INET) { h_errno = 1; return NULL; }
+    memcpy(ip, ind, 4);
+    inet_ntop(S_AF_INET, ip, nome, sizeof(nome));
+    lista[0] = (char *)ip; lista[1] = NULL; alias[0] = NULL;
+    h.h_name = nome; h.h_aliases = alias; h.h_addrtype = S_AF_INET;
+    h.h_length = 4; h.h_addr_list = lista;
+    return &h;
 }
 
 struct hostent *gethostbyname(const char *nome)

@@ -1,0 +1,44 @@
+--- a/widget/exos/moz.build
++++ b/widget/exos/moz.build
+@@ -0,0 +1,41 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# EX-OS (Exilla): the widget toolkit. For now every window is a
++# HeadlessWidget (see nsWindow.cpp).
++
++with Files("**"):
++    BUG_COMPONENT = ("Core", "Widget")
++
++EXPORTS += [
++    "nsLookAndFeel.h",
++]
++
++UNIFIED_SOURCES += [
++    "GfxInfo.cpp",
++    "MediaKeysEventSourceFactory.cpp",
++    "nsAppShell.cpp",
++    "nsBidiKeyboard.cpp",
++    "nsLookAndFeel.cpp",
++    "nsPrintSettingsExos.cpp",
++    "nsUserIdleServiceExos.cpp",
++    "nsWidgetFactory.cpp",
++    "nsWindow.cpp",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]
++
++include("/ipc/chromium/chromium-config.mozbuild")
++
++FINAL_LIBRARY = "xul"
++
++LOCAL_INCLUDES += [
++    "/layout/base",
++    "/layout/generic",
++    "/widget",
++    "/widget/headless",
++    "/xpcom/components",
++]

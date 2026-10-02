@@ -1,0 +1,24 @@
+--- a/widget/Theme.cpp
++++ b/widget/Theme.cpp
+@@ -114,9 +114,9 @@
+ 
+ }  // namespace
+ 
+-#ifdef ANDROID
++#if defined(ANDROID) || defined(XP_EXOS)
+ already_AddRefed<Theme> do_CreateNativeThemeDoNotUseDirectly() {
+-  // Android doesn't have a native theme.
++  // Android (and EX-OS) don't have a native theme.
+   return do_AddRef(new Theme(Theme::ScrollbarStyle()));
+ }
+ #endif
+@@ -1506,6 +1506,9 @@
+   return MakeUnique<ScrollbarDrawingGTK>();
+ #elif ANDROID
+   return MakeUnique<ScrollbarDrawingAndroid>();
++#elif defined(XP_EXOS)
++  // EX-OS: thin scrollbars that need no system theme, as on Android.
++  return MakeUnique<ScrollbarDrawingAndroid>();
+ #else
+ #  error "Unknown platform, need scrollbar implementation."
+ #endif

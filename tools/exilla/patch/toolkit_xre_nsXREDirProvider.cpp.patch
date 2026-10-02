@@ -1,0 +1,13 @@
+--- a/toolkit/xre/nsXREDirProvider.cpp
++++ b/toolkit/xre/nsXREDirProvider.cpp
+@@ -1166,7 +1166,9 @@
+   const char* homeDir = PR_GetEnv("HOME");
+   if (!homeDir || !*homeDir) return NS_ERROR_FAILURE;
+ 
+-#  ifdef ANDROID /* We want (ProfD == ProfLD) on Android. */
++#  if defined(ANDROID) || defined(XP_EXOS)
++  /* We want (ProfD == ProfLD) on Android. EX-OS (Exilla) has no XDG
++     directories (those helpers exist for GTK only): $HOME, as on Android. */
+   MOZ_TRY(NS_NewNativeLocalFile(nsDependentCString(homeDir),
+                                 getter_AddRefs(localDir)));
+ #  else

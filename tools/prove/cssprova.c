@@ -551,7 +551,7 @@ int main(void)
     ok("gap con un valore solo vale per tutti e due", s.spazio_riga == 5 && s.spazio_col == 5);
     carica("<p>x</p>", "p { color: #fff; background: white }");
     stile_di(trova("p"), &s);
-    ok("il bianco non e' «nessun colore» (CSS_NIENTE)", s.colore != CSS_NIENTE && s.sfondo != CSS_NIENTE &&
+    ok("il bianco non e' \"nessun colore\" (CSS_NIENTE)", s.colore != CSS_NIENTE && s.sfondo != CSS_NIENTE &&
        (s.colore & 0xFFFFFF) >= 0xFFFFFE);
 
     printf("\n%d prove, %d fallite\n", fatti, falliti);

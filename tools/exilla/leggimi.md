@@ -180,20 +180,211 @@ Cosa ha trovato nel sistema, ed e' sistemato:
   `pow` e altre dieci funzioni. openlibm mette da se' `-march=i686`: ora
   `tools/openlibm-exos/prepara-libm.sh` gli passa `MARCH=pentium-mmx`.
 
-! **`Mutex` di `libc.h`** (il lucchetto della libc, nel namespace globale) e'
-ambiguo con `js::Mutex` dentro SpiderMonkey: per ora quattro file lo
-qualificano (`tools/exilla/qualifica-mutex.py`); la cura vera e' in `libc.h`,
-nascondere i nomi propri di EX-OS a chi vuole solo POSIX.
+! **`Mutex` di `libc.h`** (il lucchetto della libc, nel namespace globale)
+era ambiguo con `js::Mutex` dentro SpiderMonkey. Cura: con `-DEXOS_SOLO_POSIX`
+(lo passa `js-costruisci.sh`) `libc.h` nasconde `Mutex`, `Condizione`,
+`Semaforo` e le loro funzioni; `pthread.h` e `semaphore.h` usano il tipo vero.
+I programmi di EX-OS non cambiano.
 
-**Prossima tappa**: NSPR e NSS (tappa 5), la rete e il TLS di Gecko. Prima,
-in `libc.h` (ora libero): nascondere `Mutex` & c. a chi vuole solo POSIX e
-togliere `qualifica-mutex.py`. La memoria per costruire Firefox intero resta
-da liberare.
+**Prossima tappa**: NSPR e NSS (tappa 5), la rete e il TLS di Gecko. La
+memoria per costruire Firefox intero resta da liberare.
 
 ! **MEGA**: le cartelle `costruzione-*`, `rust-macchina` ed `exilla-obj` sono
 escluse (`.megaignore`). ! E `scambio.txt` si scrive SOLO in coda: il 28
 settembre una correzione fatta con `sed -i` (che riscrive il file) si e'
 incrociata con un'aggiunta dell'altro PC e MEGA ha fatto `scambio(1).txt`.
+
+### 30 settembre 2026 — tappa 5: NSPR e NSS dentro EX-OS (@EXILLA-NSPR, @EXILLA-NSS), kernel 0.228
+
+**NSPR e NSS di Firefox girano dentro EX-OS**: fili, lucchetti, file, DNS e
+TCP con `PR_Poll`; un database di certificati (SQLite), una chiave RSA e un
+certificato autofirmato fatti da `certutil`, e una connessione **TLS 1.3**
+(`TLS_AES_256_GCM_SHA384`) da `tstclnt` a un server HTTPS dell'host.
+
+    tools/exilla/js-costruisci.sh build -j4     # NSPR la costruisce mozbuild (--enable-nspr-build)
+    tools/exilla/prova-nspr.sh                  # 16 su 16
+    tools/exilla/nss-costruisci.sh              # NSS con gyp + ninja, statico
+    tools/exilla/prova-sqlite.sh                # 15 su 15, SQLite come la usa il softoken
+    tools/exilla/prova-nss.sh                   # database, certificato, TLS
+
+- **NSPR** conosce EX-OS come sistema suo: `pr/include/md/_exos.h` e
+  `_exos.cfg`, `pr/src/md/unix/exos.c`, e EXOS nelle liste dei pthread, di
+  `ptio.c`, `prtime.c`; la casualita' da `getentropy()`, i nomi con
+  `getaddrinfo`. mozbuild ne fa librerie statiche.
+- **NSS** si costruisce col suo `build.sh`, da una copia in
+  `cross_build/<macchina>/costruzione-nss`, **statico**: EX-OS non ha librerie
+  condivise, e il softoken (che NSS carica con `dlopen`) entra nei programmi
+  (`NSS_STATIC_SOFTOKEN`, le varianti `*_static`). ! build.sh chiede anche le
+  `.so`: un `ninja-build` finto gli fa generare i file e fermarsi, poi ninja
+  costruisce solo i programmi scelti. `gyp` lo chiama con `-DOS=exos`.
+- **freebl** prende la casualita' da `getentropy()` (`unix_urandom.c`, lo
+  stesso ramo di OpenBSD): EX-OS non ha `/dev/urandom`, e senza quella ogni
+  operazione del softoken finiva in `CKR_DEVICE_ERROR`.
+
+Cosa ha trovato nel sistema, ed e' sistemato:
+- **`fstat()` dava `st_ino = 0`**, `stat()` l'identita' vera. SQLite prende
+  l'identita' con fstat e prima di ogni scrittura la confronta con stat sul
+  percorso: per lui il file era stato spostato («attempt to write a readonly
+  database») e `certutil -N` diceva «password errata». Ora c'e' `SYS_FSTAT`
+  (108, kernel 0.228) e fstat da' gli stessi campi di stat.
+- mancava quello che NSPR e NSS chiedono per nome: `struct flock` e
+  i lock di `fcntl` (sempre concessi: un programma alla volta usa il
+  database), `flock`, `utimes`, `syslog` (sulla seriale), `termios` che
+  risponde ENOTTY, `uname`, `gethostbyaddr`, `h_errno`, `msync`,
+  `EHOSTDOWN`, `POLLPRI`, `ip_mreq`.
+
+! **`[ERROR] ENTROPIA: jitter ...`**: il kernel lo scrive sulla console a ogni
+`getentropy()`, e NSS la chiama spesso (145 righe in una prova). Non e' un
+errore di NSS.
+
+**Prossima tappa**: Gecko con `widget/headless` (tappa 6).
+
+### 30 settembre - 2 ottobre 2026 — tappa 6 FATTA: Gecko senza finestre (@EXILLA-GECKO), kernel 0.230
+
+Stato: il configure del browser passa; la costruzione intera si itera
+(`tools/exilla/gecko-costruisci.sh build --keep-going`, oggetti in
+`cross_build/exilla-obj/gecko`). Niente binario ancora.
+
+    tools/exilla/gecko-costruisci.sh configure   # mozconfig: tools/exilla/mozconfig-gecko
+    tools/exilla/gecko-costruisci.sh build --keep-going -j4
+
+Le scelte:
+- **Toolkit `cairo-exos`** (`widget/exos`): per ora ogni finestra e' una
+  HeadlessWidget; l'appshell dorme su una variabile di condizione. La
+  grafica e' `gfxExosPlatform`: FreeType senza fontconfig, il `gfxFT2FontList`
+  di Android, i caratteri di ExWin (`/exwin/font`, `/cdrom/exwin/font`, o
+  `EXILLA_FONTS`).
+- **Un processo solo**: si lancia con `MOZ_FORCE_DISABLE_E10S=1` (EX-OS non ha
+  fork ne' il passaggio di descrittori che l'IPC usa).
+- **Tutto statico**: su EX-OS ogni SharedLibrary di mozbuild (e di gyp) e'
+  una libreria statica; `libxul` entra nel programma (`firefox` con il
+  collegamento «dependent», senza XPCOM glue); NSS col softoken dentro
+  (`pk11wrap_static`). Cio' che Gecko apre con dlopen (ffvpx, l'inferenza
+  locale, i plugin GMP) a runtime semplicemente non c'e'.
+- **rustix** (HTTP/3, tempfile): EX-OS si comporta come ESP-IDF, come nella
+  std si comporta come NuttX (`tools/exilla/rust-fornitori.py`); tranne i
+  `sockaddr`, che sono quelli di Linux.
+- **I file generati da GN** (ANGLE): EX-OS prende il ramo di OpenBSD
+  (`tools/exilla/gn-exos.sh`, una directory alla volta).
+
+Cosa ha trovato nel sistema, ed e' sistemato:
+- **La libstdc++ di EX-OS non aveva i fili** («Thread model: single»): niente
+  `std::mutex`, e le statiche locali senza lucchetto. `tools/exilla/gcc-fili.sh`
+  rifa' compilatore, libgcc e libstdc++ con `--enable-threads=posix` nella
+  toolchain di QUESTA macchina (quella condivisa non e' toccata); la libgcc
+  usa i pthread con riferimenti forti (`libgcc/gthr.h`, via
+  `tools/gcc-exos/applica.py`). Prova: `tools/exilla/prova-cxx-fili.cpp`, 3/3.
+- `sched_yield` rende `int`; `abort` si dichiara `(abort)(void)` (la macro di
+  tsystem.h); nuovi `fenv.h` (quello di openlibm), `alloca.h`, `sched.h`;
+  `static_assert` in C; `ftello`/`fseeko`; `fputwc`/`fputws`;
+  `_SC_PHYS_PAGES`; gli interi a larghezza fissa in `<sys/types.h>` (e
+  `<stdlib.h>` per il codice di terzi); `program_invocation_name`.
+- ! **`applica.py` applicava due volte** le modifiche fatte quando i commenti
+  avevano l'altro segno di avviso: ora confronta normalizzando.
+
+! **cargo non ricontrolla i crate di `third_party/rust`**: dopo averne
+cambiato uno si puliscono i suoi oggetti (o l'objdir), o resta il vecchio.
+
+**1 ottobre 2026, a che punto e'.** Undici giri di costruzione: tutto il C++
+e tutto il Rust di Gecko compilano per EX-OS, e il giro 11 e' arrivato al
+collegamento di `firefox`; da li' si sono aggiunti i pezzi di piattaforma che
+mancavano. La prova e' pronta: `tools/exilla/prova-gecko.sh` impacchetta
+(`mach package`), fa un disco ext2 sull'host con `mke2fs -d` (Firefox, i
+caratteri, una pagina con testo, colori e JavaScript) e chiede a EX-OS
+`firefox --headless --screenshot`.
+
+Le scelte di questi giri:
+- **il compilatore** e' ora con `--enable-checking=release` (i verificatori
+  dell'istantanea di sviluppo fermavano harfbuzz con un errore interno), e la
+  libstdc++ ha anche `wchar_t`: il nucleo di Gecko usa `std::wostream` (fmt in
+  `xpcom/string`), e il configure della libstdc++ lo accende solo se
+  `<wchar.h>` dichiara tutta la stdio larga — 24 nomi aggiunti alla libc;
+- **bindgen** usa il clang di Mozilla (22.1.8, `mach artifact toolchain`,
+  in `costruzione-strumenti/mozclang`): quello di Debian 12 non legge la
+  libstdc++ di GCC 17;
+- **i crate Rust** seguono un sistema modello, come la std segue NuttX:
+  `rustix` e `socket2` come ESP-IDF (tranne i sockaddr di rustix, che sono
+  quelli di Linux), `quinn-udp`, `mtu` e `libloading` come Redox (tranne il
+  `dlerror` di libloading). Prima di ogni giro si controllano a parte con un
+  crate di prova (`cross_build/<macchina>/prova-rustix`), che compila in
+  secondi i 18 crate di terzi di `gkrust` che usano `libc`;
+- **`__unix__`**: il GCC di EX-OS non lo definisce, Firefox lo riceve nelle
+  opzioni del compilatore (msgpack, Skia);
+- in `libc.h` l'`extern "C"` ora copre anche socket e DNS (dal C++ uscivano
+  nomi decorati), `environ` per il codice di terzi e' la variabile vera,
+  `struct stat` arriva solo da `<sys/stat.h>` e `DiskInfo` non si vede.
+
+**La pila del filo principale e' di 8 MB dal kernel 0.229** (erano 256 KB):
+Gecko da' 512 KB di pila a JavaScript sul filo principale, e una ricorsione
+profonda sarebbe uscita dalla riserva. Sono indirizzi, non RAM. Provato: 1000
+livelli da 4 KB, e `getrlimit(RLIMIT_STACK)` dice 8192 KB.
+
+**SoundTouch (LGPL 2.1) e' collegata staticamente in `firefox`** (decisione
+dell'utente, 1 ottobre 2026). Mozilla la tiene in `liblgpllibs.so` perche' la
+LGPL chiede che chi riceve il programma possa ricollegarlo con un'altra
+versione della libreria: su EX-OS, senza librerie condivise ELF, lo si
+garantisce con i sorgenti completi, le patch e gli script di costruzione,
+pubblici. Le sue funzioni per RLBox hanno il prefisso `ST_` (un `Clear` nudo
+si scontrava con quello del GL software di WebRender).
+
+Il limite che la prima esecuzione dira' se pesa: **32 descrittori per
+processo** (`MAX_FD`, legato al `fd_set` a 32 bit della libc). Per arrivare
+alla schermata non e' servito toccarlo.
+
+**2 ottobre 2026: la pagina e' disegnata dentro EX-OS** (giro 32,
+`tools/exilla/prova-gecko.sh`, 337 secondi in QEMU con KVM):
+
+    firefox --headless -no-remote -profile /disk/profilo --window-size 800,600 \
+            --screenshot /disk/schermata.png file:///disk/prova.html
+    Screenshot saved to: /disk/schermata.png
+
+![la prima pagina di Gecko dentro EX-OS](tappa6-schermata.png)
+
+Testo, grassetto, corsivo, monospazio (Liberation), i tre riquadri e la riga
+scritta dal JavaScript. Fra il primo avvio e la schermata, nell'ordine in cui
+Firefox ci e' caduto sopra:
+
+1. **omni.ja letto come zeri**: la libc ora fa `mmap` di un file privato o in
+   sola lettura copiandolo (`pread` in memoria anonima). `MAP_SHARED` in
+   scrittura resta `ENODEV`.
+2. **`RandomUint64OrDie`, poi `nsID::GenerateUUID`**: il kernel conta
+   l'entropia con prudenza e risponde `EAGAIN` a chi chiede spesso. Nella
+   libc c'e' `arc4random` (ChaCha20, RFC 7539, seminato una volta da
+   `getentropy`), e Gecko e NSS la usano come sui BSD.
+3. **`getpid` diverso per filo**: ora e' il capogruppo; gli usi interni della
+   libc tengono l'id del filo.
+4. **la malloc senza lucchetto**: l'ha avuto. E allinea a 16 (`max_align_t` e
+   `__STDCPP_DEFAULT_NEW_ALIGNMENT__` sono 16 su i386).
+5. ! **I crash dentro la malloc che restavano erano del KERNEL**: ogni filo
+   aveva la sua COPIA di `heap_end`, ferma alla nascita, e `sbrk`/`mmap` di
+   fili diversi si davano gli stessi indirizzi, mappandoci sopra pagine
+   azzerate. Lo spazio degli indirizzi e' ora del gruppo (0.230). Trovato con
+   il controllo dello heap della libc (`EXOS_MALLOC_CONTROLLA=1`: zona rossa e
+   chiamanti per ogni blocco), che ha mostrato zeri sopra un blocco sano.
+   `prova-cxx-fili` lo riproduce: sul kernel 0.229 muore, sul 0.230 passa.
+6. **`WritableSharedMap`, poi la lista dei caratteri**: la memoria condivisa.
+   `shm_open` ora separa la zona dal descrittore (lo stesso nome due volte,
+   `dup`, `fcntl`), e `shm_open(SHM_ANON)` da' una zona privata del processo:
+   le zone del kernel sono 24 in tutto il sistema, e sono le finestre. Gecko
+   su EX-OS usa quella. `tools/exilla/prova-shm-gecko.c`, 49/49.
+7. ! **Un fault di PROTEZIONE su una pagina della malloc**: una tabella delle
+   pagine nata da una mappatura `PROT_NONE` restava del kernel (la voce di
+   directory prendeva i flag della prima pagina). Gecko riserva 1 GB
+   `PROT_NONE` per cercare un buco e lo rende subito; la malloc ci tornava
+   sopra. Ora le tabelle dello spazio utente hanno sempre `PG_USER`, e
+   `PROT_NONE` senza `MAP_FIXED` riserva soltanto (`PG_RISERVA`: niente
+   pagine fisiche finche' `mprotect` non apre). Trovato con
+   `EXOS_MMAP_DICE=1`, che scrive ogni `sbrk`/`mmap`/`munmap`/`mprotect`.
+8. **lo screenshot voleva un processo di contenuto**: `HeadlessShell` crea il
+   `<browser>` remoto solo se l'e10s e' acceso.
+
+Restano, e non fermano niente: lo user agent dice «X11; Linux x86_64» (il
+ramo di piattaforma di `nsHttpHandler` non conosce EX-OS); IndexedDB fallisce
+con «UnknownError» (lo usano Remote Settings e Normandy: e' la prossima cosa
+da guardare); i processi «socket» e «tab» si provano a lanciare e falliscono
+con un avviso; le estensioni di sistema non finiscono di partire prima della
+chiusura. Il floppy del sistema era sceso a 512 byte liberi: `help` e
+`kbprova` sono passati sul CD (decisione dell'utente) e ora ne ha 64 KB.
 
 ---
 

@@ -1,0 +1,274 @@
+--- a/third_party/rust/rustix/src/backend/libc/process/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/process/syscalls.rs
+@@ -8,7 +8,7 @@
+ #[cfg(all(feature = "alloc", feature = "fs", not(target_os = "wasi")))]
+ use crate::backend::conv::ret_discarded_char_ptr;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "redox",
+     target_os = "vita",
+@@ -31,7 +31,7 @@
+ use crate::io;
+ #[cfg(not(any(
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -43,19 +43,19 @@
+ use crate::process::Gid;
+ #[cfg(not(target_os = "wasi"))]
+ use crate::process::Pid;
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ use crate::process::Signal;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "vita",
+     target_os = "wasi"
+ )))]
+ use crate::process::Uid;
+-#[cfg(not(any(target_os = "espidf", target_os = "vita", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")))]
+ use crate::process::{RawPid, WaitOptions, WaitStatus};
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -65,7 +65,7 @@
+ use crate::process::{Resource, Rlimit};
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -157,7 +157,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -175,7 +175,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -193,7 +193,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -211,7 +211,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -223,7 +223,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -241,7 +241,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -259,7 +259,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -276,7 +276,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -307,7 +307,7 @@
+ 
+ /// Convert a C `c::rlimit` to a Rust `Rlimit`.
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -330,7 +330,7 @@
+ 
+ /// Convert a Rust [`Rlimit`] to a C `c::rlimit`.
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -350,13 +350,13 @@
+     Ok(c::rlimit { rlim_cur, rlim_max })
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "vita", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn wait(waitopts: WaitOptions) -> io::Result<Option<(Pid, WaitStatus)>> {
+     _waitpid(!0, waitopts)
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "vita", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn waitpid(
+     pid: Option<Pid>,
+@@ -365,13 +365,13 @@
+     _waitpid(Pid::as_raw(pid), waitopts)
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "vita", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn waitpgid(pgid: Pid, waitopts: WaitOptions) -> io::Result<Option<(Pid, WaitStatus)>> {
+     _waitpid(-pgid.as_raw_nonzero().get(), waitopts)
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "vita", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn _waitpid(
+     pid: RawPid,
+@@ -386,7 +386,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -409,7 +409,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -435,7 +435,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -461,7 +461,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -511,7 +511,7 @@
+ /// returned successfully.
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -553,13 +553,13 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn kill_process(pid: Pid, sig: Signal) -> io::Result<()> {
+     unsafe { ret(c::kill(pid.as_raw_nonzero().get(), sig.as_raw())) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn kill_process_group(pid: Pid, sig: Signal) -> io::Result<()> {
+     unsafe {
+@@ -570,24 +570,24 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn kill_current_process_group(sig: Signal) -> io::Result<()> {
+     unsafe { ret(c::kill(0, sig.as_raw())) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ pub(crate) fn test_kill_process(pid: Pid) -> io::Result<()> {
+     unsafe { ret(c::kill(pid.as_raw_nonzero().get(), 0)) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn test_kill_process_group(pid: Pid) -> io::Result<()> {
+     unsafe { ret(c::kill(pid.as_raw_nonzero().get().wrapping_neg(), 0)) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[inline]
+ pub(crate) fn test_kill_current_process_group() -> io::Result<()> {
+     unsafe { ret(c::kill(0, 0)) }
+@@ -682,7 +682,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",

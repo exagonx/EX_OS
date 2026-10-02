@@ -1,0 +1,13 @@
+--- a/ipc/glue/GeckoChildProcessHost.cpp
++++ b/ipc/glue/GeckoChildProcessHost.cpp
+@@ -342,6 +342,10 @@
+   virtual Result<Ok, LaunchError> DoSetup() override;
+ };
+ typedef LinuxProcessLauncher ProcessLauncher;
++#  elif defined(XP_EXOS)
++// EX-OS (Exilla) runs Gecko in a single process: the plain POSIX launcher is
++// here so that the code builds, and is not used.
++typedef PosixProcessLauncher ProcessLauncher;
+ #  elif defined(MOZ_WIDGET_UIKIT)
+ class IosProcessLauncher : public PosixProcessLauncher {
+  public:

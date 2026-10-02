@@ -80,7 +80,7 @@ int main(int argc, char **argv)
     }
     verifica(pid > 0, "il figlio parte");
     if (pid > 0) waitpid(pid, &stato, 0);
-    verifica(stato == 0, "il figlio ha aperto il nome e letto «dal padre»");
+    verifica(stato == 0, "il figlio ha aperto il nome e letto \"dal padre\"");
     verifica(strcmp(p + 4096, "dal figlio") == 0, "e la sua risposta si legge qui");
 
     verifica(munmap(p, 8192) == 0, "munmap della zona");

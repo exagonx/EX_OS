@@ -223,6 +223,11 @@ s! {
         pub ipv6mr_multiaddr: in6_addr,
         pub ipv6mr_interface: c_uint,
     }
+    pub struct cmsghdr {
+        pub cmsg_len: socklen_t,
+        pub cmsg_level: c_int,
+        pub cmsg_type: c_int,
+    }
     pub struct msghdr {
         pub msg_name: *mut c_void,
         pub msg_namelen: socklen_t,
@@ -327,6 +332,10 @@ pub const EBADMSG: c_int = 74;
 pub const EOVERFLOW: c_int = 75;
 pub const EILSEQ: c_int = 84;
 pub const ENOTSOCK: c_int = 88;
+pub const EMULTIHOP: c_int = 72;
+pub const EPFNOSUPPORT: c_int = 96;
+pub const ETOOMANYREFS: c_int = 109;
+pub const EHOSTDOWN: c_int = 112;
 pub const EDESTADDRREQ: c_int = 89;
 pub const EMSGSIZE: c_int = 90;
 pub const EPROTOTYPE: c_int = 91;
@@ -438,6 +447,15 @@ pub const POLLNVAL: c_short = 0x20;
 // sys/mman.h
 pub const PROT_NONE: c_int = 0;
 pub const PROT_READ: c_int = 1;
+pub const MADV_NORMAL: c_int = 0;
+pub const MADV_RANDOM: c_int = 1;
+pub const MADV_SEQUENTIAL: c_int = 2;
+pub const MADV_WILLNEED: c_int = 3;
+pub const MADV_DONTNEED: c_int = 4;
+pub const MADV_FREE: c_int = 8;
+pub const MS_ASYNC: c_int = 1;
+pub const MS_INVALIDATE: c_int = 2;
+pub const MS_SYNC: c_int = 4;
 pub const PROT_WRITE: c_int = 2;
 pub const PROT_EXEC: c_int = 4;
 pub const MAP_SHARED: c_int = 0x01;
@@ -502,6 +520,8 @@ pub const SO_BROADCAST: c_int = 6;
 pub const SO_SNDBUF: c_int = 7;
 pub const SO_RCVBUF: c_int = 8;
 pub const SO_KEEPALIVE: c_int = 9;
+pub const SO_OOBINLINE: c_int = 10;
+pub const SO_ACCEPTCONN: c_int = 30;
 pub const SO_LINGER: c_int = 13;
 pub const SO_RCVTIMEO: c_int = 20;
 pub const SO_SNDTIMEO: c_int = 21;
@@ -511,6 +531,11 @@ pub const IPPROTO_TCP: c_int = 6;
 pub const IPPROTO_UDP: c_int = 17;
 pub const IPPROTO_IPV6: c_int = 41;
 pub const TCP_NODELAY: c_int = 1;
+pub const TCP_MAXSEG: c_int = 2;
+pub const IP_TOS: c_int = 1;
+pub const IP_RECVTOS: c_int = 13;
+pub const _SC_GETPW_R_SIZE_MAX: c_int = 70;
+pub const SCM_RIGHTS: c_int = 1;
 pub const IP_TTL: c_int = 2;
 pub const IP_MULTICAST_IF: c_int = 32;
 pub const IP_MULTICAST_TTL: c_int = 33;
@@ -523,12 +548,19 @@ pub const IPV6_MULTICAST_HOPS: c_int = 18;
 pub const IPV6_MULTICAST_LOOP: c_int = 19;
 pub const IPV6_JOIN_GROUP: c_int = 20;
 pub const IPV6_LEAVE_GROUP: c_int = 21;
+pub const IPV6_ADD_MEMBERSHIP: c_int = IPV6_JOIN_GROUP;
+pub const IPV6_DROP_MEMBERSHIP: c_int = IPV6_LEAVE_GROUP;
 pub const IPV6_V6ONLY: c_int = 26;
 pub const SHUT_RD: c_int = 0;
 pub const SHUT_WR: c_int = 1;
 pub const SHUT_RDWR: c_int = 2;
 pub const MSG_PEEK: c_int = 2;
 pub const MSG_NOSIGNAL: c_int = 0x4000;
+pub const MSG_DONTROUTE: c_int = 0x4;
+pub const MSG_CTRUNC: c_int = 0x8;
+pub const MSG_TRUNC: c_int = 0x20;
+pub const MSG_EOR: c_int = 0x80;
+pub const MSG_MORE: c_int = 0x8000;
 pub const MSG_OOB: c_int = 0x1;
 pub const MSG_DONTWAIT: c_int = 0x40;
 pub const MSG_WAITALL: c_int = 0x100;
@@ -538,7 +570,7 @@ pub const TCP_KEEPIDLE: c_int = 4;
 pub const TCP_KEEPINTVL: c_int = 5;
 pub const TCP_KEEPCNT: c_int = 6;
 pub const FIONREAD: c_int = 0x541B;
-pub const FIONBIO: c_int = 0x5421;
+pub const FIONBIO: c_uint = 0x5421;
 pub const EAI_SYSTEM: c_int = -11;
 
 extern "C" {
@@ -552,6 +584,22 @@ extern "C" {
         arg: *mut c_void,
     ) -> c_int;
     pub fn pthread_getattr_np(thread: pthread_t, attr: *mut pthread_attr_t) -> c_int;
+    pub fn getpwuid(uid: crate::uid_t) -> *mut passwd;
+    pub fn madvise(addr: *mut c_void, len: size_t, advice: c_int) -> c_int;
+    pub fn mprotect(addr: *mut c_void, len: size_t, prot: c_int) -> c_int;
+    pub fn msync(addr: *mut c_void, len: size_t, flags: c_int) -> c_int;
+    pub fn getpwuid_r(
+        uid: crate::uid_t,
+        pwd: *mut passwd,
+        buf: *mut c_char,
+        buflen: size_t,
+        result: *mut *mut passwd,
+    ) -> c_int;
+    pub fn pthread_atfork(
+        prepare: Option<unsafe extern "C" fn()>,
+        parent: Option<unsafe extern "C" fn()>,
+        child: Option<unsafe extern "C" fn()>,
+    ) -> c_int;
     pub fn pthread_attr_getstack(
         attr: *const pthread_attr_t,
         stackaddr: *mut *mut c_void,
@@ -567,7 +615,7 @@ extern "C" {
     pub fn dirfd(dirp: *mut DIR) -> c_int;
     pub fn memalign(align: size_t, size: size_t) -> *mut c_void;
     pub fn getentropy(buf: *mut c_void, buflen: size_t) -> c_int;
-    pub fn ioctl(fd: c_int, request: c_int, ...) -> c_int;
+    pub fn ioctl(fd: c_int, request: c_uint, ...) -> c_int;
     pub fn futimens(fd: c_int, times: *const timespec) -> c_int;
     pub fn pipe2(fds: *mut c_int, flags: c_int) -> c_int;
 
@@ -589,4 +637,52 @@ extern "C" {
     ) -> c_int;
     pub fn recvmsg(sockfd: c_int, msg: *mut msghdr, flags: c_int) -> ssize_t;
     pub fn sendmsg(sockfd: c_int, msg: *const msghdr, flags: c_int) -> ssize_t;
+}
+
+// I dati di controllo (cmsg): le stesse macro di lib/include/libc.h. EX-OS non
+// guarda msg_control, ma quinn-udp (HTTP/3) li compone e li legge.
+const fn CMSG_ALIGN(len: usize) -> usize {
+    (len + core::mem::size_of::<usize>() - 1) & !(core::mem::size_of::<usize>() - 1)
+}
+
+// ! FUNZIONI SCRITTE PER ESTESO, NON DENTRO f! { }: questo file serve due
+// versioni del crate libc, quella della std (il suo f! vuole `pub unsafe fn`)
+// e quella di Firefox (il suo vuole `pub fn`). Rotto il 1 ottobre 2026,
+// trovato da prova-std il 2.
+#[inline]
+pub unsafe fn CMSG_FIRSTHDR(mhdr: *const msghdr) -> *mut cmsghdr {
+    if (*mhdr).msg_controllen as usize >= core::mem::size_of::<cmsghdr>() {
+        (*mhdr).msg_control.cast::<cmsghdr>()
+    } else {
+        core::ptr::null_mut::<cmsghdr>()
+    }
+}
+
+#[inline]
+pub unsafe fn CMSG_NXTHDR(mhdr: *const msghdr, cmsg: *const cmsghdr) -> *mut cmsghdr {
+    if ((*cmsg).cmsg_len as usize) < core::mem::size_of::<cmsghdr>() {
+        return core::ptr::null_mut::<cmsghdr>();
+    }
+    let prossimo = (cmsg as usize + CMSG_ALIGN((*cmsg).cmsg_len as usize)) as *mut cmsghdr;
+    let fine = (*mhdr).msg_control as usize + (*mhdr).msg_controllen as usize;
+    if prossimo as usize + core::mem::size_of::<cmsghdr>() > fine {
+        core::ptr::null_mut::<cmsghdr>()
+    } else {
+        prossimo
+    }
+}
+
+#[inline]
+pub unsafe fn CMSG_DATA(cmsg: *const cmsghdr) -> *mut c_uchar {
+    cmsg.offset(1) as *mut c_uchar
+}
+
+#[inline]
+pub const unsafe fn CMSG_SPACE(length: c_uint) -> c_uint {
+    (CMSG_ALIGN(length as usize) + CMSG_ALIGN(core::mem::size_of::<cmsghdr>())) as c_uint
+}
+
+#[inline]
+pub const unsafe fn CMSG_LEN(length: c_uint) -> c_uint {
+    CMSG_ALIGN(core::mem::size_of::<cmsghdr>()) as c_uint + length
 }

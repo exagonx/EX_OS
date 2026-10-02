@@ -1,0 +1,20 @@
+--- a/widget/exos/nsWindow.cpp
++++ b/widget/exos/nsWindow.cpp
+@@ -0,0 +1,17 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla), first stage: every window is a HeadlessWidget. It lays out
++ * and paints in memory; --screenshot saves the result. The windows of ExWin
++ * come with the next stage (a real nsWindow here). */
++
++#include "nsIWidget.h"
++
++already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {
++  return nsIWidget::CreateHeadlessWidget();
++}
++
++already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
++  return nsIWidget::CreateHeadlessWidget();
++}

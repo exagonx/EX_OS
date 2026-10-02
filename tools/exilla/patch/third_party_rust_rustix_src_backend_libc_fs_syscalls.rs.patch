@@ -1,0 +1,223 @@
+--- a/third_party/rust/rustix/src/backend/libc/fs/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/fs/syscalls.rs
+@@ -10,14 +10,14 @@
+ use crate::ffi::CStr;
+ #[cfg(all(apple, feature = "alloc"))]
+ use crate::ffi::CString;
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "vita")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "vita")))]
+ use crate::fs::Access;
+-#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox")))]
+ use crate::fs::AtFlags;
+ #[cfg(not(any(
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "nto",
+     target_os = "redox",
+@@ -25,7 +25,7 @@
+ )))]
+ use crate::fs::FallocateFlags;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -39,7 +39,7 @@
+ use crate::fs::SealFlags;
+ #[cfg(not(any(
+     solarish,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "netbsd",
+@@ -49,11 +49,11 @@
+     target_os = "wasi",
+ )))]
+ use crate::fs::StatFs;
+-#[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+ use crate::fs::Timestamps;
+ #[cfg(not(any(
+     apple,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "redox",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -79,7 +79,7 @@
+     apple,
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -253,7 +253,7 @@
+ 
+ #[cfg(not(any(
+     solarish,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "netbsd",
+@@ -337,7 +337,7 @@
+     unsafe { ret(c::link(c_str(old_path), c_str(new_path))) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox")))]
+ pub(crate) fn linkat(
+     old_dirfd: BorrowedFd<'_>,
+     old_path: &CStr,
+@@ -400,7 +400,7 @@
+     unsafe { ret(c::unlink(c_str(path))) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox")))]
+ pub(crate) fn unlinkat(dirfd: BorrowedFd<'_>, path: &CStr, flags: AtFlags) -> io::Result<()> {
+     // macOS ≤ 10.9 lacks `unlinkat`.
+     #[cfg(target_os = "macos")]
+@@ -729,7 +729,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox")))]
+ pub(crate) fn statat(dirfd: BorrowedFd<'_>, path: &CStr, flags: AtFlags) -> io::Result<Stat> {
+     // See the comments in `fstat` about using `crate::fs::statx` here.
+     #[cfg(all(
+@@ -798,7 +798,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "emscripten",
+     target_os = "vita"
+@@ -809,7 +809,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita"
+@@ -880,7 +880,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita"
+@@ -1094,7 +1094,7 @@
+ 
+ #[cfg(not(any(
+     linux_kernel,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "redox",
+     target_os = "wasi"
+ )))]
+@@ -1175,7 +1175,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "redox", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox", target_os = "wasi")))]
+ pub(crate) fn chownat(
+     dirfd: BorrowedFd<'_>,
+     path: &CStr,
+@@ -1197,7 +1197,7 @@
+ 
+ #[cfg(not(any(
+     apple,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita",
+@@ -1277,7 +1277,7 @@
+     apple,
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -1364,7 +1364,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -1490,7 +1490,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "solaris",
+     target_os = "vita",
+@@ -1518,7 +1518,7 @@
+ }
+ 
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita",
+@@ -1592,7 +1592,7 @@
+ 
+ #[cfg(not(any(
+     solarish,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "netbsd",
+@@ -1638,7 +1638,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "vita")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "vita")))]
+ pub(crate) fn futimens(fd: BorrowedFd<'_>, times: &Timestamps) -> io::Result<()> {
+     // Old 32-bit version: libc has `futimens` but it is not y2038 safe by
+     // default. But there may be a `__futimens64` we can use.
+@@ -1739,7 +1739,7 @@
+     apple,
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "nto",
+     target_os = "redox",
+@@ -1822,7 +1822,7 @@
+ #[cfg(not(any(
+     apple,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",

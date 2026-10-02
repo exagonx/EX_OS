@@ -1,0 +1,82 @@
+--- a/third_party/rust/rustix/src/fs/mod.rs
++++ b/third_party/rust/rustix/src/fs/mod.rs
+@@ -5,13 +5,13 @@
+ mod constants;
+ #[cfg(linux_kernel)]
+ mod copy_file_range;
+-#[cfg(all(feature = "alloc", not(any(target_os = "espidf", target_os = "redox"))))]
++#[cfg(all(feature = "alloc", not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox"))))]
+ mod dir;
+ #[cfg(not(any(
+     apple,
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -34,7 +34,7 @@
+ #[cfg(linux_kernel)]
+ mod ioctl;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -50,12 +50,12 @@
+ mod seek_from;
+ #[cfg(target_os = "linux")]
+ mod sendfile;
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ mod special;
+ #[cfg(linux_kernel)]
+ mod statx;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita",
+@@ -70,13 +70,13 @@
+ pub use constants::*;
+ #[cfg(linux_kernel)]
+ pub use copy_file_range::copy_file_range;
+-#[cfg(all(feature = "alloc", not(any(target_os = "espidf", target_os = "redox"))))]
++#[cfg(all(feature = "alloc", not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox"))))]
+ pub use dir::{Dir, DirEntry};
+ #[cfg(not(any(
+     apple,
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -97,7 +97,7 @@
+ #[cfg(linux_kernel)]
+ pub use ioctl::*;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "vita",
+@@ -113,12 +113,12 @@
+ pub use seek_from::SeekFrom;
+ #[cfg(target_os = "linux")]
+ pub use sendfile::sendfile;
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ pub use special::*;
+ #[cfg(linux_kernel)]
+ pub use statx::*;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita",

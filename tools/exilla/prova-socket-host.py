@@ -5,7 +5,7 @@
 # Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-#     prova-socket-host.py <seriale di QEMU>
+#     prova-socket-host.py <seriale di QEMU> [solo-eco]
 #
 # Sull'host: un eco TCP sulla 7801 e un eco UDP sulla 7802 (EX-OS le vede a
 # 10.0.0.2, la rete «user» di QEMU); quando la prova scrive sulla seriale che
@@ -52,6 +52,12 @@ def eco_udp():
 
 threading.Thread(target=eco_tcp, daemon=True).start()
 threading.Thread(target=eco_udp, daemon=True).start()
+
+# «solo-eco» (tools/exilla/prova-nspr.sh): niente cliente, solo i due eco finche'
+# chi ci ha lanciato non ci ferma.
+if len(sys.argv) > 2 and sys.argv[2] == "solo-eco":
+    while True:
+        time.sleep(3600)
 
 # Si aspetta che EX-OS sia in ascolto, poi si bussa.
 fine = time.time() + 400

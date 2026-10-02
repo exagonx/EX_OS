@@ -1,0 +1,15 @@
+--- a/dom/ipc/PContent.ipdl
++++ b/dom/ipc/PContent.ipdl
+@@ -205,9 +205,9 @@
+ // SetXPCOMProcessAttributes passes an array of font data to the child,
+ // but each platform needs different details so we have platform-specific
+ // versions of the SystemFontListEntry type:
+-#if defined(ANDROID)
+-// Used on Android to pass the list of fonts on the device
+-// to the child process
++#if defined(ANDROID) || defined(XP_EXOS)
++// Used on Android (and EX-OS, which shares its FreeType font list) to pass
++// the list of fonts on the device to the child process
+ struct SystemFontListEntry {
+     nsCString familyName;
+     nsCString faceName;

@@ -291,6 +291,11 @@ typedef long fpos_t;
 int     fgetpos(FILE *f, fpos_t *pos);
 int     fsetpos(FILE *f, const fpos_t *pos);
 
+/* ftello, fseeko: ftell e fseek con off_t, che qui e' un long anche lui.
+ * Solo in libc.a. */
+off_t   ftello(FILE *f);
+int     fseeko(FILE *f, off_t off, int da);
+
 /* =============================================================================
  * setbuf, setvbuf — ! CI SONO MA NON CAMBIANO NIENTE
  *
@@ -467,7 +472,10 @@ void    quick_exit(int code);
  * come errore, come tutti. */
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
-void    abort(void);
+/* ! IL NOME TRA PARENTESI (30 settembre 2026): la libgcc, costruita coi fili,
+ * include <pthread.h> (quindi questo file) DOPO che tsystem.h di GCC ha
+ * definito la macro abort(). Tra parentesi il nome non si espande. */
+void    (abort)(void);
 void   *malloc(size_t size);
 
 /* ! alloca() NON E' UNA FUNZIONE E NON PUO' ESSERLO: prende spazio sullo
@@ -640,7 +648,11 @@ char   *getcwd(char *buf, size_t size);
  * '/', e il file deve ESISTERE. ! Non segue collegamenti simbolici
  * perche' EX-OS non ne ha. Con `resolved` NULL alloca con malloc. */
 char   *realpath(const char *path, char *resolved);
-void    sched_yield(void);
+
+/* argv[0] del programma, come l'ha ricevuto main (lo mette l'avvio,
+ * lib/libc_avvio.c). Il nome e' quello di glibc. */
+extern char *program_invocation_name;
+int     sched_yield(void);
 
 /* =============================================================================
  * I FILI — piu' flussi dentro lo stesso programma (4 settembre 2026)
@@ -719,11 +731,25 @@ int     thread_devo_fermarmi(void);   /* 1 se qualcuno l'ha chiesto */
  * pid del FILO che l'ha mandato, e le risorse sono del programma. */
 int     proc_gruppo(int pid);
 
+/* =============================================================================
+ * ! EXOS_SOLO_POSIX NASCONDE I NOMI DI EX-OS (30 settembre 2026, @EXILLA-JS).
+ *
+ * I tre tipi qui sotto — Mutex, Condizione, Semaforo — stanno nel namespace
+ * globale con nomi comuni, e il codice di terzi ne ha di suoi: dentro
+ * SpiderMonkey, con `using namespace js`, `Mutex` era ambiguo fra ::Mutex e
+ * js::Mutex. Chi compila codice di terzi definisce EXOS_SOLO_POSIX
+ * (tools/exilla/js-costruisci.sh lo fa per Firefox) e questi nomi — tipi e
+ * funzioni — spariscono; restano pthread.h e semaphore.h, che usano il tipo
+ * vero (volatile int). I programmi di EX-OS non cambiano.
+ * ============================================================================= */
+#define MUTEX_LIBERO  0
+
+#ifndef EXOS_SOLO_POSIX
 /* ! UN LUCCHETTO CHE GIRA, e il tipo e' un intero apposta: si azzera con
  * MUTEX_LIBERO e non ha bisogno di nessuna funzione di inizializzazione, che
  * e' l'unica forma che non si puo' dimenticare di chiamare. */
 typedef volatile int Mutex;
-#define MUTEX_LIBERO  0
+#endif
 
 /* ! L'ATTESA CHE DORME, ed e' quel che sta sotto al lucchetto. Si dorme su un
  * indirizzo finche' qualcuno non sveglia chi aspetta LI'.
@@ -739,9 +765,11 @@ typedef volatile int Mutex;
 int     attesa_dormi(volatile int *dove, int atteso, unsigned int ms);
 int     attesa_sveglia(volatile int *dove, int quanti);  /* 0 = tutti */
 
+#ifndef EXOS_SOLO_POSIX
 void    mutex_prendi(Mutex *m);
 int     mutex_prova(Mutex *m);   /* 1 se preso, 0 se era occupato */
 void    mutex_lascia(Mutex *m);
+#endif
 
 /* ! UNA CONDIZIONE E' UN CONTATORE DI SEGNALI, e anche qui il tipo e' un intero
  * apposta: si azzera con CONDIZIONE_ZERO e non c'e' nessuna inizializzazione da
@@ -763,13 +791,15 @@ void    mutex_lascia(Mutex *m);
  * condizione_aspetta LASCIA il lucchetto mentre dorme e lo RIPRENDE prima di
  * tornare; chi segnala non ha bisogno di tenerlo. `ms` a zero non ha scadenza,
  * e la scadenza non si distingue da un risveglio (col `while` non serve). */
-typedef volatile int Condizione;
 #define CONDIZIONE_ZERO  0
+#ifndef EXOS_SOLO_POSIX
+typedef volatile int Condizione;
 
 void    condizione_aspetta(Condizione *c, Mutex *m);
 void    condizione_aspetta_ms(Condizione *c, Mutex *m, unsigned int ms);
 void    condizione_segnala(Condizione *c);        /* uno */
 void    condizione_segnala_tutti(Condizione *c);  /* tutti */
+#endif
 
 /* ! UN SEMAFORO E' UN CONTATORE DI POSTI, e si inizializza col numero di posti
  * che ci sono: `Semaforo posti_liberi = 1;` e' una coda di un posto,
@@ -779,8 +809,9 @@ void    condizione_segnala_tutti(Condizione *c);  /* tutti */
  *
  * A differenza del lucchetto NON HA UN PADRONE: chi lascia puo' non essere chi
  * ha preso, ed e' proprio quel che serve fra un produttore e un consumatore. */
-typedef volatile int Semaforo;
 #define SEMAFORO_ZERO  0
+#ifndef EXOS_SOLO_POSIX
+typedef volatile int Semaforo;
 
 void    semaforo_prendi(Semaforo *s);
 /* ! QUI `ms` A ZERO VUOL DIRE «NON ASPETTARE», al contrario di attesa_dormi
@@ -789,6 +820,7 @@ void    semaforo_prendi(Semaforo *s);
 int     semaforo_prendi_ms(Semaforo *s, unsigned int ms); /* 0, o -1 ETIMEDOUT */
 int     semaforo_prova(Semaforo *s);   /* 1 se preso subito, 0 se era a zero */
 void    semaforo_lascia(Semaforo *s);
+#endif /* !EXOS_SOLO_POSIX */
 
 /* =============================================================================
  * ! sleep RITORNA unsigned int, E NON void — corretto ad agosto 2026
@@ -961,6 +993,9 @@ struct tm *localtime_r(const time_t *t, struct tm *out);
  * IGNORATI e riscritti. Interpreta i campi come UTC, perche' EX-OS non sa
  * in che fuso si trova. */
 time_t     mktime(struct tm *tm);
+/* timegm: mktime in UTC. Su EX-OS sono la stessa cosa (vedi mktime in
+ * lib/libc.c): il sistema non ha fusi orari. */
+time_t     timegm(struct tm *tm);
 int        gettimeofday(struct timeval *tv, void *fuso);
 
 /* La differenza fra due istanti, in secondi. Su EX-OS time_t e' un intero
@@ -1234,6 +1269,9 @@ int procinfo(ProcInfo *buf, unsigned int max, unsigned int start);
  *            disco da 64 GB che si presenta come da 32, per una HPA
  *            attiva o per un jumper di limitazione.
  * ============================================================================= */
+/* ! NASCOSTI AL CODICE DI TERZI (EXOS_SOLO_POSIX): «DiskInfo» e' anche una
+ * struttura di Gecko (xpcom/base/nsSystemInfo.h). */
+#ifndef EXOS_SOLO_POSIX
 #define DISKINFO_MAX_PART   16
 
 /* Schema */
@@ -1280,6 +1318,7 @@ typedef struct {
 /* Riempie *di per l'unita' idx (0..3). Ritorna 0 anche se lo slot e'
  * vuoto: in quel caso di->presente vale 0. */
 int diskinfo(unsigned int idx, DiskInfo *di);
+#endif /* EXOS_SOLO_POSIX */
 
 /* Dispositivo a blocchi. `primo`/`settori` sono la FINESTRA: ogni accesso
  * viene tradotto e rifiutato se ne esce. DUPLICATA A MANO in
@@ -1457,6 +1496,11 @@ int truncate(const char *path, unsigned int size);
 #define O_TRUNC     0x200
 #define O_APPEND    0x400
 #define O_NONBLOCK  0x800
+/* Accettati e tolti dalla libc prima del kernel (i numeri di Linux):
+ * O_CLOEXEC perche' EX-OS non ha exec che erediti i descrittori, O_NOFOLLOW
+ * perche' non ci sono collegamenti simbolici da non seguire. */
+#define O_NOFOLLOW  0x20000
+#define O_CLOEXEC   0x80000
 #define O_ACCMODE   3
 
 /* =============================================================================
@@ -1621,20 +1665,15 @@ typedef struct {
  * non 4. E' lo stesso limite che ha gia' `lseek()`, che e' la syscall
  * sotto: dichiararlo senza segno non renderebbe piu' grandi i file,
  * renderebbe solo silenziosa la troncatura al confine col kernel. */
-struct stat {
-    dev_t           st_dev;     /* sempre 0: EX-OS non numera i volumi */
-    ino_t           st_ino;     /* primo cluster/inode, 0 dove non si applica */
-    mode_t          st_mode;    /* tipo | permessi ricostruiti */
-    nlink_t         st_nlink;   /* sempre 1 */
-    uid_t           st_uid;     /* sempre 0: non ci sono utenti */
-    gid_t           st_gid;     /* sempre 0 */
-    off_t           st_size;
-    blksize_t       st_blksize; /* 512: il settore, l'unita' vera dei nostri fs */
-    blkcnt_t        st_blocks;  /* settori da 512 occupati, arrotondati per eccesso */
-    time_t          st_atime;   /* = st_mtime: non si tiene l'ultimo accesso */
-    time_t          st_mtime;
-    time_t          st_ctime;   /* = st_mtime */
-};
+/* ! LA DEFINIZIONE STA IN exos_stat.h (30 settembre 2026). Per i programmi di
+ * EX-OS arriva da qui come sempre; per il codice di terzi (EXOS_SOLO_POSIX)
+ * solo da <sys/stat.h>, come con glibc: cairo ha una sua «struct stat» (le
+ * statistiche del suo osservatore) e non include <sys/stat.h>. */
+#ifndef EXOS_SOLO_POSIX
+#include "exos_stat.h"
+#else
+struct stat;
+#endif
 
 void   *sbrk(int incr);      /* cima dell'heap; ritorna la posizione VECCHIA */
 long    lseek(int fd, long offset, int whence);
@@ -1729,10 +1768,11 @@ int     stat(const char *path, struct stat *st);
 int     lstat(const char *path, struct stat *st);
 int     statraw(const char *path, Stat *st);
 
-/* fstat() lavora su un file APERTO. Non c'e' una syscall per farlo: la
- * dimensione si ottiene con due lseek (vedi fsize), quindi tipo e data
- * NON sono quelli veri — st_mode dice "file regolare" e i tempi valgono
- * zero. Chi ha il percorso usi stat(), che sa tutto. */
+/* fstat() lavora su un file APERTO. Per un file la risposta e' quella di
+ * stat() sul suo percorso — identita' (st_ino) e data comprese — e viene
+ * dal kernel (SYS_FSTAT, dal 0.228). Per console e pipe, e su un kernel
+ * piu' vecchio, c'e' solo la dimensione: st_mode dice "file regolare",
+ * st_ino e i tempi valgono zero. */
 int     fstat(int fd, struct stat *st);
 /* Dimensione di un file APERTO, lasciando la posizione dov'era.
  * Non c'e' una syscall fstat: si compone di due lseek. */
@@ -1872,6 +1912,12 @@ int     listdir(const char *path, DirEntry *buf, int max);
 #define EISCONN         106
 #define ENOTCONN        107
 #define ECONNREFUSED    111
+#define EHOSTDOWN       112     /* non lo produce nessuno; il nome serve a NSPR */
+/* Neanche questi li produce nessuno: i nomi (e i numeri di Linux) li chiede
+ * rustix, il crate Rust dell'HTTP/3 di Firefox (tappa 6). */
+#define EMULTIHOP        72
+#define EPFNOSUPPORT     96
+#define ETOOMANYREFS    109
 #define EHOSTUNREACH    113
 #define EALREADY        114
 #define EINPROGRESS     115
@@ -2073,7 +2119,16 @@ int     wait(int *stato);
  * quel ripiego il primo processo — che il padre non ce l'ha — resterebbe
  * senza PATH. Vedi il commento in lib/libc.c.
  * ============================================================================= */
+/* ! PER IL CODICE DI TERZI (EXOS_SOLO_POSIX) environ E' LA VARIABILE VERA,
+ * non la macro: quello si collega sempre statico a libc.a, dove environ e'
+ * proprio la memoria che __environ_dove() rende (lib/libc.c). La macro
+ * rompeva chi usa il nome per una variabile locale — Gecko scrive
+ * `char** environ = PR_DuplicateEnvironment();`. */
+#ifdef EXOS_SOLO_POSIX
+extern char **environ;
+#else
 #define environ (*__environ_dove())
+#endif
 
 int     putenv(char *voce);          /* la voce ENTRA nell'ambiente, senza copia */
 int     setenv(const char *nome, const char *valore, int sovrascrivi);
@@ -2124,12 +2179,25 @@ int            closedir(DIR *d);
  * File temporanei, interrogazioni, rinomina
  * ============================================================================= */
 #define F_OK    0
+/* faccessat: EX-OS non ha descrittori di directory; si accetta AT_FDCWD (o un
+ * percorso assoluto), e i flag non cambiano niente: non ci sono utenti
+ * reali ed effettivi diversi ne' collegamenti simbolici. Solo in libc.a. */
+#define AT_FDCWD            (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_EACCESS          0x200
+#define AT_REMOVEDIR        0x200
+#define AT_SYMLINK_FOLLOW   0x400
+int     faccessat(int dirfd, const char *path, int modo, int flag);
+/* pipe2: pipe() e poi i flag (O_NONBLOCK; O_CLOEXEC si ignora, vedi open).
+ * Solo in libc.a. */
+int     pipe2(int fd[2], int flag);
 #define X_OK    1
 #define W_OK    2
 #define R_OK    4
 
 char   *tmpnam(char *buf);
 int     mkstemp(char *modello);      /* il modello finisce per XXXXXX */
+int     mkstemps(char *modello, int suffisso);   /* XXXXXX poi un suffisso; solo in libc.a */
 /* ! mktemp NON crea il file: da' solo il nome, e fra il nome e l'uso ci
  * puo' entrare qualcun altro. E' cosi' su ogni Unix — si usi mkstemp. */
 char   *mktemp(char *modello);
@@ -2250,6 +2318,25 @@ typedef struct {
 #define ILL_ILLOPN   2
 #define FPE_INTDIV   1
 #define TRAP_BRKPT   1
+/* Il resto dei codici, coi numeri di Linux: il kernel produce solo quelli
+ * sopra, ma il codice di terzi li nomina tutti in uno switch. */
+#define ILL_ILLOPC   1
+#define ILL_ILLADR   3
+#define ILL_ILLTRP   4
+#define ILL_PRVOPC   5
+#define ILL_PRVREG   6
+#define ILL_COPROC   7
+#define ILL_BADSTK   8
+#define FPE_INTOVF   2
+#define FPE_FLTDIV   3
+#define FPE_FLTOVF   4
+#define FPE_FLTUND   5
+#define FPE_FLTRES   6
+#define FPE_FLTINV   7
+#define FPE_FLTSUB   8
+#define BUS_ADRERR   2
+#define BUS_OBJERR   3
+#define TRAP_TRACE   2
 
 struct sigaction {
     union {
@@ -2317,6 +2404,7 @@ int     sigaction(int sig, const struct sigaction *nuova, struct sigaction *prim
 int     sigprocmask(int come, const sigset_t *nuova, sigset_t *prima);
 int     sigaltstack(const stack_t *nuova, stack_t *prima);
 int     kill(int pid, int sig);
+int     execve(const char *percorso, char *const argv[], char *const envp[]);
 int     sigemptyset(sigset_t *s);
 int     sigfillset(sigset_t *s);
 int     sigaddset(sigset_t *s, int sig);
@@ -2383,8 +2471,29 @@ struct lconv *localeconv(void);
 #define _SC_PAGESIZE            30
 #define _SC_CLK_TCK             2
 #define _SC_NPROCESSORS_ONLN    84
+/* La RAM, in pagine (i numeri di Linux): la chiede llama.cpp di Firefox per
+ * decidere quanto modello caricare. Vengono da meminfo(). */
+#define _SC_PHYS_PAGES          85
+#define _SC_AVPHYS_PAGES        86
+#define _SC_PAGE_SIZE           _SC_PAGESIZE
+/* Quanto buffer chiede getpwuid_r (vedi <pwd.h>): 64 + 256. */
+#define _SC_GETPW_R_SIZE_MAX    70
 
 long    sysconf(int nome);
+
+/* srandom/random: un generatore a se', distinto da rand(). Solo in libc.a. */
+void    srandom(unsigned int seme);
+long    random(void);
+
+/* ! alarm NON SVEGLIA: EX-OS non ha ancora una sveglia per processo che
+ * mandi SIGALRM. Rende 0 («nessun allarme prima») e non programma niente;
+ * chi la usa come rete di sicurezza (abseil) resta senza. Solo in libc.a. */
+unsigned int alarm(unsigned int secondi);
+
+/* strptime: le conversioni della localita' C (%Y %m %d %H %M %S %y %j %e
+ * %b %B %h %a %A %p %n %t %T %D %R %%). Solo in libc.a. */
+struct tm;
+char   *strptime(const char *s, const char *fmt, struct tm *tm);
 
 /* La dimensione della pagina, con il nome che le da' BSD. E' `sysconf
  * (_SC_PAGESIZE)` scritto piu' corto, e c'e' perche' il codice di terzi
@@ -2418,6 +2527,9 @@ int     getpagesize(void);
 #define MAP_FIXED       0x10
 #define MAP_ANONYMOUS   0x20
 #define MAP_ANON        MAP_ANONYMOUS
+/* Accettato e tolto: EX-OS non impegna la memoria prima del primo accesso
+ * comunque (le pagine arrivano su fault). */
+#define MAP_NORESERVE   0x4000
 #define MAP_FAILED      ((void *)-1)
 
 void   *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off);
@@ -3249,6 +3361,7 @@ int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
 #define POLL_MAX        16      /* voci per chiamata */
 
 #define POLLIN      0x0001      /* c'e' qualcosa da leggere */
+#define POLLPRI     0x0002      /* dati urgenti: non ce ne sono mai, il nome serve (NSPR) */
 #define POLLOUT     0x0004      /* si puo' scrivere senza bloccare */
 #define POLLERR     0x0008      /* errore: solo in uscita */
 #define POLLHUP     0x0010      /* l'altro capo se n'e' andato: solo in uscita */
@@ -3292,6 +3405,15 @@ int     select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
  * ============================================================================= */
 int     getentropy(void *buf, size_t len);
 ssize_t getrandom(void *buf, size_t len, unsigned int flags);
+
+/* arc4random: byte casuali che non finiscono mai (solo libc.a). ChaCha20
+ * seminato UNA volta da getentropy() e poi rimescolato ogni 1,6 MB; non
+ * fallisce: al primo uso, se il kernel non ha ancora entropia, aspetta
+ * (fino a un minuto, poi abort). E' la strada per chi chiede spesso —
+ * getentropy() chiamata di continuo risponde EAGAIN. */
+__UINT32_TYPE__ arc4random(void);
+void     arc4random_buf(void *buf, size_t n);
+__UINT32_TYPE__ arc4random_uniform(__UINT32_TYPE__ limite);
 
 /* Richiede accesso a un range di porte I/O [base, base+count).
  * Sovrascrive un'eventuale bind precedente. Ritorna 0 su successo.
@@ -3363,14 +3485,16 @@ int     osversion(char *buf, size_t size);
  * per un problema di configurazione è indistinguibile da uno bloccato. */
 int     verboseboot(void);
 
-#ifdef __cplusplus
-}   /* extern "C" — aperto molto piu' sopra, vedi il commento li' */
-#endif
+/* ! L'extern "C" NON SI CHIUDE PIU' QUI (1 ottobre 2026): le sezioni che
+ * seguono (SHA-256, socket, DNS) sono arrivate dopo e restavano fuori, e dal
+ * C++ ntohl, setsockopt, getaddrinfo... uscivano con nomi decorati che la
+ * libc non ha. Si chiude in fondo al file. */
 
 
 /* =============================================================================
  * SHA-256 — vedi il commento in lib/libc.c prima di usarla per le password
  * ============================================================================= */
+#ifndef EXOS_SOLO_POSIX   /* nomi comuni: vedi EXOS_SOLO_POSIX sopra (NSS ha il suo sha256) */
 void sha256(const void *dati, size_t len, unsigned char out[32]);
 void sha256_esa(const void *dati, size_t len, char out[65]);
 
@@ -3408,6 +3532,7 @@ void sha256_avvia(Sha256 *s);
 void sha256_dai(Sha256 *s, const void *dati, size_t len);
 void sha256_fine(Sha256 *s, unsigned char out[32]);
 void sha256_fine_esa(Sha256 *s, char out[65]);
+#endif /* !EXOS_SOLO_POSIX */
 
 /* =============================================================================
  * I SOCKET BSD (@SOCKET-BSD, 29 settembre 2026) — <sys/socket.h>,
@@ -3473,6 +3598,8 @@ typedef unsigned int    in_addr_t;
 #define SO_SNDBUF       7
 #define SO_RCVBUF       8
 #define SO_KEEPALIVE    9
+#define SO_OOBINLINE    10      /* accettata e ignorata: EX-OS non ha dati urgenti */
+#define SO_ACCEPTCONN   30
 #define SO_LINGER       13
 #define SO_REUSEPORT    15
 #define SO_RCVTIMEO     20
@@ -3480,12 +3607,23 @@ typedef unsigned int    in_addr_t;
 #define SOMAXCONN       128
 
 #define TCP_NODELAY     1
+#define TCP_MAXSEG      2       /* il nome per socket2 (Firefox); lo stack non lo regola */
 #define TCP_MAXSEG      2
 #define TCP_KEEPIDLE    4
 #define TCP_KEEPINTVL   5
 #define TCP_KEEPCNT     6
 #define IP_TOS          1
 #define IP_TTL          2
+#define IP_TOS          1       /* il nome per socket2 (Firefox); lo stack non lo usa */
+#define IP_RECVTOS      13      /* idem, per quinn-udp */
+/* Il multicast non c'e' (lo stack non lo fa): le opzioni esistono col numero di
+ * Linux perche' il codice di terzi le nomina, e setsockopt le accetta senza
+ * effetto — vedi la sezione dei socket in lib/libc.c. */
+#define IP_MULTICAST_IF    32
+#define IP_MULTICAST_TTL   33
+#define IP_MULTICAST_LOOP  34
+#define IP_ADD_MEMBERSHIP  35
+#define IP_DROP_MEMBERSHIP 36
 #define IPV6_V6ONLY     26
 
 #define MSG_OOB         0x1
@@ -3493,6 +3631,13 @@ typedef unsigned int    in_addr_t;
 #define MSG_DONTWAIT    0x40
 #define MSG_WAITALL     0x100
 #define MSG_NOSIGNAL    0x4000
+/* Nomi di Linux che il codice di terzi scrive (rustix): lo stack di EX-OS non
+ * li guarda. */
+#define MSG_DONTROUTE   0x4
+#define MSG_CTRUNC      0x8
+#define MSG_TRUNC       0x20
+#define MSG_EOR         0x80
+#define MSG_MORE        0x8000
 
 #define SHUT_RD         0
 #define SHUT_WR         1
@@ -3544,6 +3689,11 @@ struct sockaddr_un {
 
 struct linger { int l_onoff; int l_linger; };
 
+struct ip_mreq {
+    struct in_addr imr_multiaddr;
+    struct in_addr imr_interface;
+};
+
 struct iovec { void *iov_base; size_t iov_len; };
 
 struct msghdr {
@@ -3569,6 +3719,34 @@ ssize_t sendto(int fd, const void *buf, size_t n, int flag,
                const struct sockaddr *a, socklen_t len);
 ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
                  struct sockaddr *a, socklen_t *len);
+/* I dati di controllo (cmsg), con le macro di Linux. ! EX-OS non passa
+ * descrittori fra processi (SCM_RIGHTS): sendmsg/recvmsg non guardano
+ * msg_control. Ci sono perche' il codice di terzi li scrive (l'IPC di Gecko,
+ * che su EX-OS non parte). */
+struct cmsghdr {
+    socklen_t cmsg_len;
+    int       cmsg_level;
+    int       cmsg_type;
+};
+#define SCM_RIGHTS         1
+#define CMSG_ALIGN(len)    (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
+#define CMSG_DATA(c)       ((unsigned char *)((struct cmsghdr *)(c) + 1))
+#define CMSG_SPACE(len)    (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
+#define CMSG_LEN(len)      (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_FIRSTHDR(m)   ((size_t)(m)->msg_controllen >= sizeof(struct cmsghdr) \
+                            ? (struct cmsghdr *)(m)->msg_control : (struct cmsghdr *)0)
+static inline struct cmsghdr *__exos_cmsg_nxthdr(struct msghdr *m, struct cmsghdr *c)
+{
+    unsigned char *prossimo = (unsigned char *)c + CMSG_ALIGN(c->cmsg_len);
+    unsigned char *fine = (unsigned char *)m->msg_control + m->msg_controllen;
+
+    if (c->cmsg_len < sizeof(struct cmsghdr) ||
+        prossimo + sizeof(struct cmsghdr) > fine)
+        return (struct cmsghdr *)0;
+    return (struct cmsghdr *)prossimo;
+}
+#define CMSG_NXTHDR(m, c)  __exos_cmsg_nxthdr((m), (c))
+
 ssize_t sendmsg(int fd, const struct msghdr *m, int flag);
 ssize_t recvmsg(int fd, struct msghdr *m, int flag);
 ssize_t readv(int fd, const struct iovec *v, int n);
@@ -3642,6 +3820,17 @@ const char     *gai_strerror(int e);
 int             getnameinfo(const struct sockaddr *a, socklen_t len, char *host,
                             socklen_t hlen, char *serv, socklen_t slen, int flag);
 struct hostent *gethostbyname(const char *nome);   /* statica, non rientrante */
+
 int             gethostname(char *nome, size_t n);
+
+/* mlock/munlock: EX-OS non manda su disco le pagine di chi le chiede (la swap
+ * esiste, ma non c'e' modo di escluderne un intervallo): rendono 0 e non
+ * bloccano niente. Le chiede NSS per la memoria delle chiavi. Solo in libc.a. */
+int             mlock(const void *addr, size_t lung);
+int             munlock(const void *addr, size_t lung);
+
+#ifdef __cplusplus
+}   /* extern "C" — aperto molto piu' sopra, vedi il commento li' */
+#endif
 
 #endif /* LIBC_H */

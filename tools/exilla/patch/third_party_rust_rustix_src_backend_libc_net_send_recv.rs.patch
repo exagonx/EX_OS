@@ -1,0 +1,29 @@
+--- a/third_party/rust/rustix/src/backend/libc/net/send_recv.rs
++++ b/third_party/rust/rustix/src/backend/libc/net/send_recv.rs
+@@ -17,7 +17,7 @@
+             windows,
+             target_os = "aix",
+             target_os = "cygwin",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "nto",
+             target_os = "haiku",
+             target_os = "horizon",
+@@ -74,7 +74,7 @@
+             solarish,
+             windows,
+             target_os = "aix",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "haiku",
+             target_os = "horizon",
+             target_os = "nto",
+@@ -92,7 +92,7 @@
+             windows,
+             target_os = "aix",
+             target_os = "cygwin",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "haiku",
+             target_os = "horizon",
+             target_os = "hurd",

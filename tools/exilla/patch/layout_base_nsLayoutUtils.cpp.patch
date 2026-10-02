@@ -1,0 +1,13 @@
+--- a/layout/base/nsLayoutUtils.cpp
++++ b/layout/base/nsLayoutUtils.cpp
+@@ -9865,6 +9865,10 @@
+   // UI font-size.
+   aName = u"sans-serif"_ns;
+   aStyle.size = 15;
++#elif defined(XP_EXOS)
++  // EX-OS: the same answer as GTK (widget/exos/nsLookAndFeel.cpp).
++  aName = u"sans-serif"_ns;
++  aStyle.size = 15;
+ #else
+ #  error "Unknown platform"
+ #endif

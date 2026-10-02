@@ -1,0 +1,20 @@
+--- a/security/nss/lib/freebl/freebl.gyp
++++ b/security/nss/lib/freebl/freebl.gyp
+@@ -36,7 +36,7 @@
+           ],
+         }],
+         [ 'OS=="linux" or OS=="android" or OS=="dragonfly" or OS=="freebsd" or \
+-           OS=="netbsd" or OS=="openbsd"', {
++           OS=="netbsd" or OS=="openbsd" or OS=="exos"', {
+           'cflags': [
+             '-mpclmul',
+             '-maes',
+@@ -103,7 +103,7 @@
+           ],
+         }],
+         [ 'OS=="linux" or OS=="android" or OS=="dragonfly" or OS=="freebsd" or \
+-           OS=="netbsd" or OS=="openbsd"', {
++           OS=="netbsd" or OS=="openbsd" or OS=="exos"', {
+           'cflags': [
+             '-mpclmul',
+             '-maes',

@@ -1,0 +1,36 @@
+--- a/third_party/angle/angle_common_gn/moz.build
++++ b/third_party/angle/angle_common_gn/moz.build
+@@ -136,7 +136,7 @@
+         "/third_party/angle/src/common/system_utils_posix.cpp"
+     ]
+ 
+-if CONFIG["OS_TARGET"] == "OpenBSD":
++if CONFIG["OS_TARGET"] in ("OpenBSD", "EXOS"):
+ 
+     DEFINES["EGL_NO_X11"] = True
+     DEFINES["USE_GLIB"] = "1"
+@@ -147,6 +147,15 @@
+     DEFINES["__STDC_CONSTANT_MACROS"] = True
+     DEFINES["__STDC_FORMAT_MACROS"] = True
+ 
++# EX-OS (Exilla): the OpenBSD branch above has no system utilities; EX-OS
++# takes the POSIX ones (the Linux file only adds what /proc would give).
++if CONFIG["OS_TARGET"] == "EXOS":
++
++    UNIFIED_SOURCES += [
++        "/third_party/angle/src/common/system_utils_linux.cpp",
++        "/third_party/angle/src/common/system_utils_posix.cpp"
++    ]
++
+ if CONFIG["OS_TARGET"] == "WINNT":
+ 
+     DEFINES["ANGLE_IS_WIN"] = True
+@@ -212,7 +221,7 @@
+ 
+     DEFINES["_DEBUG"] = True
+ 
+-if CONFIG["MOZ_DEBUG"] == "1" and CONFIG["OS_TARGET"] == "OpenBSD":
++if CONFIG["MOZ_DEBUG"] == "1" and CONFIG["OS_TARGET"] in ("OpenBSD", "EXOS"):
+ 
+     DEFINES["_DEBUG"] = True
+ 

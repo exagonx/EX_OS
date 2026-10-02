@@ -1,29 +1,19 @@
-# Cosa MEGAsync NON sincronizza fra i due PC di questo progetto.
+# .megaignore del progetto EX-OS — cio' che MEGAsync NON sincronizza.
 #
 # ! SOLO CIO' CHE E' DELLA SINGOLA MACCHINA O SI RIGENERA DA SOLO. Tutto il
-# resto - sorgenti, build/, dist/, cross_build/ con le toolchain, .git,
-# scambio.txt - deve passare: e' il modo in cui i due PC lavorano insieme.
-# Prima di aggiungere una riga qui, chiedersi se l'altro PC ne ha bisogno.
-#
-# Sintassi: -<cosa>:<nome>, dove d = cartella, f = file; il nome vale in
-# qualunque sottocartella. Le regole generali (Thumbs.db, *.tmp...) stanno in
-# ~/MEGA/.megaignore.
+# resto deve passare fra i due PC (vedi ISTRUZIONI-SECONDO-PROFILO.md, 3.2).
+# Sintassi: -:nome  esclude i file e le cartelle con quel nome, dovunque.
 
-# La cartella degli oggetti di Firefox: decine di GB che cambiano a ogni
-# compilazione. Sincronizzarla mentre make la riscrive vuol dire copie in
-# conflitto a centinaia. Si rigenera da `mach build`; il RISULTATO (il
-# pacchetto di Exilla) va copiato fuori, in cross_build/exilla-pacchetto/,
-# che invece si sincronizza.
--d:exilla-obj
-
-# La cache del bytecode di Python: ogni PC la riscrive con la propria
-# versione di Python (3.11 su Debian 12, 3.13 su Debian 13).
--d:__pycache__
--f:*.pyc
-
-# I file di scambio degli editor mentre un file e' aperto.
--f:.*.swp
--f:.*.swo
-
-# I permessi di Claude Code di QUESTA macchina: ogni PC ha i suoi.
--f:settings.local.json
+# gli oggetti della costruzione di Firefox (decine di GB)
+-:exilla-obj
+# le cartelle di compilazione della toolchain di UNA macchina
+# (cross_build/<macchina>/costruzione-binutils, costruzione-gcc, ...)
+-:costruzione-*
+# Rust (rustup, nightly, rust-src) di UNA macchina: cross_build/<macchina>/rust-macchina
+-:rust-macchina
+# i rifiuti di Python e degli editor
+-:__pycache__
+-:*.swp
+-:*.swo
+# i permessi locali di Claude Code
+-:settings.local.json

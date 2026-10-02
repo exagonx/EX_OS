@@ -1,0 +1,15 @@
+--- a/toolkit/library/gen_buildid.py
++++ b/toolkit/library/gen_buildid.py
+@@ -22,6 +22,12 @@
+     )
+ 
+ 
++def without_list(output):
++    # EX-OS (Exilla): no object list to depend on (see moz.build).
++    write_file(output, None)
++    return set()
++
++
+ def tests(output, buildid):
+     write_file(output, buildid)
+ 

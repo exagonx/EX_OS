@@ -1,0 +1,74 @@
+--- a/third_party/rust/rustix/src/backend/libc/net/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/net/syscalls.rs
+@@ -19,7 +19,7 @@
+ use core::ptr::null_mut;
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]
+@@ -184,7 +184,7 @@
+ 
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]
+@@ -218,7 +218,7 @@
+ 
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]
+@@ -240,7 +240,7 @@
+ 
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]
+@@ -285,7 +285,7 @@
+     apple,
+     windows,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",
+@@ -320,7 +320,7 @@
+     apple,
+     windows,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",
+@@ -349,7 +349,7 @@
+     apple,
+     windows,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",
+@@ -366,7 +366,7 @@
+     apple,
+     windows,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",

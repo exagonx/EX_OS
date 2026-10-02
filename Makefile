@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog polltest toolinst login sudo help_prog keymap libc testo fdprova kbprova mouse_prog kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog polltest toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini
 
@@ -1005,10 +1005,12 @@ $(LOGIN_BIN): $(LOGIN_SRC) $(EXUSER_SRC) $(EXUSER_HDR) $(KBD_DRV_PROTO) \
 login: dirs $(LOGIN_BIN)
 
 # --- /bin/help: l'aiuto, sfogliato da /boot/help.txt --------------------------
-# Sta sul floppy con il testo che legge: un sistema che si avvia deve poter
-# dire cosa sa fare, e il banner della shell rimanda proprio qui.
+# ! SOLO SUL CD dal 2 ottobre 2026 (decisione dell'utente): il floppy aveva
+# 512 byte liberi, e help con il suo testo ne occupava 50 KB. Senza /bin/help
+# la shell mostra il suo aiuto di riserva (cmd_help in bin/sh/shell.c); il CD
+# ha /bin/help e /boot/help.txt.
 HELP_SRC := bin/help/help.c
-HELP_BIN := $(BUILD_BIN)/help
+HELP_BIN := $(BUILD_BIN_CD)/help
 HELP_LD  := bin/help/help.ld
 
 $(HELP_BIN): $(HELP_SRC) $(KBD_DRV_PROTO) $(HELP_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
@@ -3280,14 +3282,16 @@ $(FDPROVA_BIN): $(FDPROVA_SRC) $(FDPROVA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIB
 	    $(BUILD_OBJ)/fdprova_start.o $(BUILD_OBJ)/fdprova_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] fdprova compilato: $@"
 
-# --- Programma /bin/kbprova (floppy) -----------------------------------------
-# La prova passo passo della tastiera. Sta sul floppy per la stessa ragione di
-# fdprova: serve su una macchina che non parte bene, dove il CD potrebbe non
-# esserci. Il lavoro lo fa il kernel (SYS_KBPROVA), che legge l'8042 a tappeto
+# --- Programma /bin/kbprova (CD, e i floppy di diagnostica) --------------------
+# La prova passo passo della tastiera. ! DAL 2 OTTOBRE 2026 NON STA PIU' SUL
+# FLOPPY NORMALE (decisione dell'utente, per fare spazio): sta sul CD, e i due
+# floppy che la usano — diagnostic.img e floppy-verboso.img — se la copiano
+# dentro da soli (vedi le loro regole). Li' serve davvero: su una macchina
+# che non parte bene, dove il CD potrebbe non esserci. Il lavoro lo fa il kernel (SYS_KBPROVA), che legge l'8042 a tappeto
 # e insieme conta gli IRQ1 — due misure diverse, e la differenza fra le due
 # dice dove si ferma la catena fra il tasto e il programma.
 KBPROVA_SRC := bin/kbprova/kbprova.c
-KBPROVA_BIN := $(BUILD_BIN)/kbprova
+KBPROVA_BIN := $(BUILD_BIN_CD)/kbprova
 KBPROVA_LD  := bin/kbprova/kbprova.ld
 
 $(KBPROVA_BIN): $(KBPROVA_SRC) $(KBPROVA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
@@ -3346,9 +3350,11 @@ fdprova: dirs $(FDPROVA_BIN)
 # Cambiano due file di configurazione, e si vede quali.
 DIAGNOSTIC_IMG := $(DIST_DIR)/diagnostic.img
 
-$(DIAGNOSTIC_IMG): $(FLOPPY_IMG)
+$(DIAGNOSTIC_IMG): $(FLOPPY_IMG) $(KBPROVA_BIN)
 	@echo "=== Creazione floppy di diagnostica: $@ ==="
 	@cp $(FLOPPY_IMG) $@
+	@# kbprova non sta sul floppy normale (2 ottobre 2026): qui si'.
+	@mcopy -o -i $@ $(KBPROVA_BIN) ::/bin/kbprova
 	@rm -rf $(BUILD_DIR)/diag && mkdir -p $(BUILD_DIR)/diag
 	@mtype -i $@ ::/boot/kernel.cfg > $(BUILD_DIR)/diag/kernel.cfg
 	@sed -i -e 's/^verboseboot = 0/verboseboot = 1/' \
@@ -3384,9 +3390,10 @@ diagnostic: $(DIAGNOSTIC_IMG)
 # sia attiva lo si legge solo qui.
 FLOPPY_VERBOSO_IMG := $(DIST_DIR)/floppy-verboso.img
 
-$(FLOPPY_VERBOSO_IMG): $(FLOPPY_IMG)
+$(FLOPPY_VERBOSO_IMG): $(FLOPPY_IMG) $(KBPROVA_BIN)
 	@echo "=== Creazione floppy verboso: $@ ==="
 	@cp $(FLOPPY_IMG) $@
+	@mcopy -o -i $@ $(KBPROVA_BIN) ::/bin/kbprova
 	@rm -rf $(BUILD_DIR)/verboso && mkdir -p $(BUILD_DIR)/verboso
 	@mtype -i $@ ::/boot/kernel.cfg > $(BUILD_DIR)/verboso/kernel.cfg
 	@sed -i -e 's/^verboseboot = 0/verboseboot = 1/' $(BUILD_DIR)/verboso/kernel.cfg
@@ -4921,8 +4928,8 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
                         $(HWINFO_BIN) $(CMP_BIN) $(POLLTEST_BIN) \
-                        $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
-                        $(TESTO_BIN) $(FDPROVA_BIN) $(KBPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(DATE_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
+                        $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(KEYMAP_BIN) \
+                        $(TESTO_BIN) $(FDPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(DATE_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
                         $(SHUTDOWN_BIN) $(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt \
                         $(FLOPPY_DRV_OUT) $(KBD_DRV_OUT) $(SVGA_DRV_OUT) \
                         $(VGAPROVA_OUT) $(PCI_DRV_OUT) $(MOUSESER_OUT) \
@@ -5046,7 +5053,7 @@ fixsys:
 
 $(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) \
                $(PROGRAMMI_FLOPPY_OUT) \
-               boot/kernel.cfg boot/kernel.txt boot/help.txt \
+               boot/kernel.cfg boot/kernel.txt \
                $(TOOLS_DIR)/mkfloppy.sh \
                | dirs verifica-dipendenze-floppy
 	@echo "=== Creazione Immagine Floppy FAT12 1.44MB ==="
@@ -6964,7 +6971,8 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) $(SHMTEST_BIN) \
-                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN) $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN) $(RUNBAS_BIN)
+                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN) $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN) $(RUNBAS_BIN) \
+                  $(HELP_BIN) $(KBPROVA_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE

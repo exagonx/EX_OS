@@ -1,0 +1,29 @@
+--- a/third_party/rust/rustix/src/backend/libc/system/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/system/syscalls.rs
+@@ -13,7 +13,7 @@
+ };
+ #[cfg(not(any(
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "redox",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -49,7 +49,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "redox",
+     target_os = "vita",
+@@ -68,7 +68,7 @@
+     target_os = "android",
+     target_os = "cygwin",
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "illumos",
+     target_os = "haiku",
+     target_os = "horizon",

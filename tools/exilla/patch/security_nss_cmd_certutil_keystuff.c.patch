@@ -1,0 +1,20 @@
+--- a/security/nss/cmd/certutil/keystuff.c
++++ b/security/nss/cmd/certutil/keystuff.c
+@@ -31,6 +31,9 @@
+     rv = SECFailure; \
+     break;
+ 
++/* In a static build (NSS_USE_STATIC_LIBS) libcryptohi's own copy, declared in
++ * keythi.h, is linked in: defining it here too would be a duplicate. */
++#ifndef NSS_USE_STATIC_LIBS
+ const SEC_ASN1Template SECKEY_PQGParamsTemplate[] = {
+     { SEC_ASN1_SEQUENCE, 0, NULL, sizeof(SECKEYPQGParams) },
+     { SEC_ASN1_INTEGER, offsetof(SECKEYPQGParams, prime) },
+@@ -38,6 +41,7 @@
+     { SEC_ASN1_INTEGER, offsetof(SECKEYPQGParams, base) },
+     { 0 }
+ };
++#endif /* !NSS_USE_STATIC_LIBS */
+ 
+ /* returns 0 for success, -1 for failure (EOF encountered) */
+ static int

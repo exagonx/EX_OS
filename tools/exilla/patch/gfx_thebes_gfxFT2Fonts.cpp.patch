@@ -1,0 +1,12 @@
+--- a/gfx/thebes/gfxFT2Fonts.cpp
++++ b/gfx/thebes/gfxFT2Fonts.cpp
+@@ -11,6 +11,9 @@
+ #elif defined(ANDROID)
+ #  include "gfxAndroidPlatform.h"
+ #  define gfxToolkitPlatform gfxAndroidPlatform
++#elif defined(XP_EXOS)
++#  include "gfxExosPlatform.h"
++#  define gfxToolkitPlatform gfxExosPlatform
+ #endif
+ 
+ #include "gfxFT2FontBase.h"

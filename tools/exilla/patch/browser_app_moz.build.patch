@@ -1,0 +1,12 @@
+--- a/browser/app/moz.build
++++ b/browser/app/moz.build
+@@ -110,6 +110,9 @@
+ browser_linkage = "standalone"
+ if CONFIG["FUZZING_SNAPSHOT"] or CONFIG["AFLFUZZ"]:
+     browser_linkage = "dependent"
++# EX-OS (Exilla): libxul is static and linked in, no XPCOM glue to load it.
++if CONFIG["OS_TARGET"] == "EXOS":
++    browser_linkage = "dependent"
+ 
+ if CONFIG["MOZ_NO_PIE_COMPAT"]:
+     GeckoProgram(CONFIG["MOZ_APP_NAME"] + "-bin", linkage=browser_linkage)

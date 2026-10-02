@@ -1,0 +1,10 @@
+--- a/toolkit/components/processtools/moz.build
++++ b/toolkit/components/processtools/moz.build
+@@ -54,5 +54,7 @@
+     ]
+ elif toolkit in ("cocoa", "uikit"):
+     UNIFIED_SOURCES += ["ProcInfo.mm"]
++elif toolkit == "exos":
++    UNIFIED_SOURCES += ["ProcInfo_exos.cpp"]
+ 
+ include("/ipc/chromium/chromium-config.mozbuild")

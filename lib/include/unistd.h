@@ -40,6 +40,18 @@
 #define STDOUT_FILENO   1
 #define STDERR_FILENO   2
 
+/* Le opzioni POSIX che EX-OS ha davvero, col valore di POSIX 2008: il codice
+ * di terzi le controlla prima di usare la funzione (l'orologio monotono di
+ * ipc/chromium in Gecko non compilava senza _POSIX_MONOTONIC_CLOCK). Solo
+ * quelle vere: dichiararne una che manca sarebbe peggio che tacerla. */
+#define _POSIX_VERSION          200809L
+#define _POSIX_TIMERS           200809L   /* clock_gettime, nanosleep */
+#define _POSIX_MONOTONIC_CLOCK  200809L   /* CLOCK_MONOTONIC */
+#define _POSIX_THREADS          200809L   /* pthread (tappa 1 di Exilla) */
+#define _POSIX_SEMAPHORES       200809L   /* <semaphore.h> */
+
+#define _SC_NPROCESSORS_CONF 83      /* i processori: uno (vedi sysconf) */
+
 /* ! EX-OS NON HA fork(): i processi nascono con spawn (vedi spawn_ex in
  * libc.h). fork esiste perche' il codice portabile la nomina, e risponde -1
  * con ENOSYS: chi la chiama la tratta gia' come un fallimento. Solo libc.a. */

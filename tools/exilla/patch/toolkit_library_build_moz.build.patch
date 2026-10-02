@@ -1,0 +1,34 @@
+--- a/toolkit/library/build/moz.build
++++ b/toolkit/library/build/moz.build
+@@ -21,13 +21,24 @@
+             SHARED_LIBRARY_NAME,
+             CONFIG["DLL_SUFFIX"],
+         )
+-    GeneratedFile(
+-        "dependentlibs.list",
+-        "dependentlibs.list.gtest",
+-        script="dependentlibs.py",
+-        entry_point="gen_list",
+-        inputs=["!/dist/bin/%s" % full_libname],
+-    )
++    if CONFIG["OS_TARGET"] == "EXOS":
++        # EX-OS (Exilla): libxul is linked into the program, there is no
++        # shared library to preload. The (empty) lists still exist because
++        # the package manifest names them.
++        GeneratedFile(
++            "dependentlibs.list",
++            "dependentlibs.list.gtest",
++            script="dependentlibs.py",
++            entry_point="gen_empty_list",
++        )
++    else:
++        GeneratedFile(
++            "dependentlibs.list",
++            "dependentlibs.list.gtest",
++            script="dependentlibs.py",
++            entry_point="gen_list",
++            inputs=["!/dist/bin/%s" % full_libname],
++        )
+     FINAL_TARGET_FILES += ["!dependentlibs.list", "!dependentlibs.list.gtest"]
+ 
+ # Generate GDB pretty printer-autoload files only on Linux. OSX's GDB is

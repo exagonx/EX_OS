@@ -1,0 +1,11 @@
+--- a/third_party/angle/angle_program_version_id_gn/moz.build
++++ b/third_party/angle/angle_program_version_id_gn/moz.build
+@@ -51,7 +51,7 @@
+         script="/python/mozbuild/mozbuild/action/write_path_list.py",
+     )
+ 
+-if CONFIG["OS_TARGET"] == "OpenBSD":
++if CONFIG["OS_TARGET"] in ("OpenBSD", "EXOS"):
+ 
+     GeneratedFile(
+         "/third_party/angle/gen/ANGLEShaderProgramVersion.h.rsp",

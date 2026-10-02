@@ -1,0 +1,69 @@
+--- a/media/libsoundtouch/src/RLBoxSoundTouchFactory.cpp
++++ b/media/libsoundtouch/src/RLBoxSoundTouchFactory.cpp
+@@ -10,53 +10,53 @@
+ 
+ extern "C" {
+ 
+-void SetSampleRate(SoundTouch* mTimeStretcher, uint srate) {
++void ST_SetSampleRate(SoundTouch* mTimeStretcher, uint srate) {
+   mTimeStretcher->setSampleRate(srate);
+ }
+ 
+-void SetChannels(SoundTouch* mTimeStretcher, uint numChannels) {
++void ST_SetChannels(SoundTouch* mTimeStretcher, uint numChannels) {
+   mTimeStretcher->setChannels(numChannels);
+ }
+ 
+-void SetPitch(SoundTouch* mTimeStretcher, double newPitch) {
++void ST_SetPitch(SoundTouch* mTimeStretcher, double newPitch) {
+   mTimeStretcher->setPitch(newPitch);
+ }
+ 
+-void SetSetting(SoundTouch* mTimeStretcher, int settingId, int value) {
++void ST_SetSetting(SoundTouch* mTimeStretcher, int settingId, int value) {
+   mTimeStretcher->setSetting(settingId, value);
+ }
+ 
+-void SetTempo(SoundTouch* mTimeStretcher, double newTempo) {
++void ST_SetTempo(SoundTouch* mTimeStretcher, double newTempo) {
+   mTimeStretcher->setTempo(newTempo);
+ }
+ 
+-void SetRate(SoundTouch* mTimeStretcher, double newRate) {
++void ST_SetRate(SoundTouch* mTimeStretcher, double newRate) {
+   mTimeStretcher->setRate(newRate);
+ }
+ 
+-uint NumChannels(SoundTouch* mTimeStretcher) {
++uint ST_NumChannels(SoundTouch* mTimeStretcher) {
+   return mTimeStretcher->numChannels();
+ }
+ 
+-uint NumSamples(SoundTouch* mTimeStretcher) {
++uint ST_NumSamples(SoundTouch* mTimeStretcher) {
+   return mTimeStretcher->numSamples();
+ }
+ 
+-uint NumUnprocessedSamples(SoundTouch* mTimeStretcher) {
++uint ST_NumUnprocessedSamples(SoundTouch* mTimeStretcher) {
+   return mTimeStretcher->numUnprocessedSamples();
+ }
+ 
+-void PutSamples(SoundTouch* mTimeStretcher, const SAMPLETYPE* samples,
++void ST_PutSamples(SoundTouch* mTimeStretcher, const SAMPLETYPE* samples,
+                 uint numSamples) {
+   mTimeStretcher->putSamples(samples, numSamples);
+ }
+ 
+-uint ReceiveSamples(SoundTouch* mTimeStretcher, SAMPLETYPE* output,
++uint ST_ReceiveSamples(SoundTouch* mTimeStretcher, SAMPLETYPE* output,
+                     uint maxSamples) {
+   return mTimeStretcher->receiveSamples(output, maxSamples);
+ }
+ 
+-void Clear(SoundTouch* mTimeStretcher) { mTimeStretcher->clear(); }
++void ST_Clear(SoundTouch* mTimeStretcher) { mTimeStretcher->clear(); }
+ 
+-void Flush(SoundTouch* mTimeStretcher) { return mTimeStretcher->flush(); }
++void ST_Flush(SoundTouch* mTimeStretcher) { return mTimeStretcher->flush(); }
+ }

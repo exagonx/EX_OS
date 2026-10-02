@@ -123,7 +123,7 @@ int main(void)
     nuovo("uno due tre quattro", 110, 200);
     ok(v.righe_n == 3 && v.righe[0].fine == 8 && v.righe[1].inizio == 8 &&
        v.righe[1].fine == 12 && v.righe[2].inizio == 12 && v.righe[2].fine == 19,
-       "80 px: «uno due » / «tre » / «quattro»");
+       "80 px: \"uno due \" / \"tre \" / \"quattro\"");
     ok(v.righe[0].largo == 56 && v.righe[0].h == 20 && v.righe[1].y == 20,
        "la larghezza senza lo spazio in coda, l'altezza dal font");
     nuovo("supercalifragilistico", 110, 200);
@@ -154,10 +154,10 @@ int main(void)
     nuovo("uno due tre", 400, 200);
     tasto(KBD_K_RIGHT | KBD_MOD_CTRL, 1);
     tasto(KBD_K_RIGHT | KBD_MOD_SHIFT, 3);
-    ok(v.anc == 4 && v.cur == 7, "Maiusc+destra sceglie «due»");
+    ok(v.anc == 4 && v.cur == 7, "Maiusc+destra sceglie \"due\"");
     exrtf_vista_tasto(&v, 'b' | KBD_MOD_CTRL);
     ok(d.pezzi_n == 3 && d.pezzi[1].inizio == 4 && d.pezzi[1].lung == 3 && d.pezzi[1].stile.grassetto,
-       "Ctrl+B: «due» in grassetto");
+       "Ctrl+B: \"due\" in grassetto");
     g_ri_n = g_sc_n = 0;
     exrtf_vista_disegna(&v, 1);
     for (i = 0; i < g_sc_n && strcmp(g_sc[i].t, "due") != 0; i++) ;

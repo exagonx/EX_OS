@@ -1365,6 +1365,25 @@ int32_t sys_mmap(InterruptFrame *frame)
     if (p->prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) pg_flags |= PG_USER;
     if (p->prot & PROT_WRITE) pg_flags |= PG_WRITABLE;
 
+    /* ! PROT_NONE SENZA MAP_FIXED SI RISERVA SOLTANTO (0.230): lo spazio e'
+     * del processo, le pagine fisiche arrivano con mprotect. Vedi PG_RISERVA
+     * in paging.h. Con MAP_FIXED (un JIT che restituisce pagine) si resta
+     * sulla strada di sempre, che sostituisce quel che c'era. */
+    if (!(p->flags & MAP_FIXED) && !(p->prot & (PROT_READ | PROT_WRITE | PROT_EXEC))) {
+        for (i = 0; i < pages; i++) {
+            if (paging_riserva(proc->page_directory, vaddr + i * PAGE_SIZE) != 0) {
+                uint32_t j;
+                for (j = 0; j < i; j++)
+                    paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
+                return ERR(ENOMEM);
+            }
+        }
+        if (vaddr + pages * PAGE_SIZE > proc->heap_end)
+            proc->heap_end = vaddr + pages * PAGE_SIZE;
+        klog(LOG_DEBUG, "SYSCALL mmap: %u pagine RISERVATE a 0x%08x", pages, vaddr);
+        return (int32_t)vaddr;
+    }
+
     /* Alloca e mappa le pagine */
     for (i = 0; i < pages; i++) {
         uint32_t phys = pmm_alloc_page();
@@ -2801,6 +2820,8 @@ int32_t sys_chdir(InterruptFrame *frame)
     return 0;
 }
 
+static void stat_da_vfs(const VfsStat *vs, Stat *st);
+
 /* =============================================================================
  * SYS_STAT (106) -- Informazioni su un file
  *
@@ -2823,6 +2844,17 @@ int32_t sys_stat(InterruptFrame *frame)
     r = vfs_stat(abs, &vs);
     if (r != 0) return r;
 
+    stat_da_vfs(&vs, st);
+    klog(LOG_DEBUG, "SYSCALL stat('%s') -> %u byte%s", abs, vs.dimensione,
+         vs.is_dir ? " (directory)" : "");
+    return 0;
+}
+
+/* Riempie la Stat dell'utente da quello che dice il VFS. La usano stat e
+ * fstat: i due devono dare gli STESSI campi per lo stesso file, o chi li
+ * confronta vede due file (vedi sys_fstat). */
+static void stat_da_vfs(const VfsStat *vs, Stat *st)
+{
     /* I campi di Stat hanno i nomi di FAT12 perche' li' e' nata, ma il
      * dato arriva dal VFS e vale su qualunque filesystem montato.
      *
@@ -2834,18 +2866,51 @@ int32_t sys_stat(InterruptFrame *frame)
      *
      * Gli attributi usano le convenzioni FAT (0x10 directory, 0x01 sola
      * lettura) perche' sono quelle che i programmi gia' interpretano. */
-    st->st_size       = vs.dimensione;
-    st->st_ident      = vs.ident;
-    st->st_attr       = (uint16_t)((vs.is_dir       ? 0x10 : 0x00) |
-                                   (vs.sola_lettura ? 0x01 : 0x00));
+    st->st_size       = vs->dimensione;
+    st->st_ident      = vs->ident;
+    st->st_attr       = (uint16_t)((vs->is_dir       ? 0x10 : 0x00) |
+                                   (vs->sola_lettura ? 0x01 : 0x00));
     /* Dal 0.168 la data arriva davvero dal filesystem. Zero continua a
      * significare «questo volume non la tiene» — la libc lo sa e stampa
      * dei trattini invece di inventare il 1980. */
-    st->st_date       = vs.data;
-    st->st_time       = vs.ora;
+    st->st_date       = vs->data;
+    st->st_time       = vs->ora;
+}
 
-    klog(LOG_DEBUG, "SYSCALL stat('%s') -> %u byte%s", abs, vs.dimensione,
-         vs.is_dir ? " (directory)" : "");
+/* =============================================================================
+ * SYS_FSTAT (108) -- Informazioni su un file APERTO
+ *
+ * ebx = fd
+ * ecx = stat*  (buffer Stat utente, lo stesso di SYS_STAT)
+ *
+ * Solo per i file (FD_FILE); per il resto (console, pipe) risponde ENOSYS
+ * e la libc fa da se', come faceva prima che questa syscall ci fosse.
+ *
+ * ! C'E' PERCHE' fstat() DAVA st_ino = 0 e stat() l'identita' vera. SQLite
+ * (e con lui il database delle chiavi di NSS) apre un file, ne prende
+ * l'identita' con fstat, e prima di ogni scrittura controlla con stat sul
+ * percorso che sia ancora lo stesso file: con 0 contro un numero vero
+ * concludeva che il file era stato spostato e rifiutava di scriverci
+ * («attempt to write a readonly database», SQLITE_READONLY_DBMOVED). E con
+ * tutti i file aperti a identita' 0, i suoi lock li credeva di un file solo.
+ * ============================================================================= */
+int32_t sys_fstat(InterruptFrame *frame)
+{
+    int32_t  fd   = (int32_t)frame->ebx;
+    Stat    *st   = (Stat *)frame->ecx;
+    Process *proc = proc_get_current();
+    VfsStat  vs;
+    int32_t  r;
+
+    if (!syscall_verify_ptr(st, sizeof(Stat)))  return ERR(EFAULT);
+    if (fd < 0 || fd >= MAX_FD)                 return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED)        return ERR(EBADF);
+    if (proc->fdt[fd].type != FD_FILE)          return ERR(ENOSYS);
+
+    r = vfs_fstat((int)proc->fdt[fd].inode, &vs);
+    if (r != 0) return r;
+
+    stat_da_vfs(&vs, st);
     return 0;
 }
 
@@ -5896,3 +5961,37 @@ int32_t sys_blk_scansiona(InterruptFrame *frame)
     klog(LOG_INFO, "SYSCALL blk_scansiona('%s')", knome);
     return blk_scansiona(dev);
 }
+
+/* =============================================================================
+ * GLI INVOLUCRI *_gruppo — lo spazio degli indirizzi e' del gruppo (0.230)
+ *
+ * Il perche' sta in kernel/sched/sched.c, sopra proc_spazio_capo. Qui il
+ * come: le syscall che spostano heap_end restano come sono, e lavorano sul
+ * PCB del filo che chiama; l'involucro, a lucchetto preso, gli copia prima
+ * il heap_end del capogruppo e dopo lo riporta indietro. Un filo solo per
+ * volta, e sempre col confine vero.
+ * ============================================================================= */
+static int32_t con_lo_spazio(int32_t (*fai)(InterruptFrame *), InterruptFrame *frame)
+{
+    Process *io   = proc_get_current();
+    Process *capo = proc_spazio_capo(io);
+    int32_t  r;
+
+    if (io == NULL || capo == NULL) return fai(frame);
+
+    proc_spazio_prendi(capo);
+    io->heap_end = capo->heap_end;
+    r = fai(frame);
+    capo->heap_end = io->heap_end;
+    proc_spazio_lascia(capo);
+    return r;
+}
+
+int32_t sys_mmap_gruppo(InterruptFrame *f)       { return con_lo_spazio(sys_mmap, f); }
+int32_t sys_munmap_gruppo(InterruptFrame *f)     { return con_lo_spazio(sys_munmap, f); }
+int32_t sys_sbrk_gruppo(InterruptFrame *f)       { return con_lo_spazio(sys_sbrk, f); }
+int32_t sys_shm_apri_gruppo(InterruptFrame *f)   { return con_lo_spazio(sys_shm_apri, f); }
+int32_t sys_shm_chiudi_gruppo(InterruptFrame *f) { return con_lo_spazio(sys_shm_chiudi, f); }
+int32_t sys_dma_alloc_gruppo(InterruptFrame *f)  { return con_lo_spazio(sys_dma_alloc, f); }
+int32_t sys_fb_map_gruppo(InterruptFrame *f)     { return con_lo_spazio(sys_fb_map, f); }
+int32_t sys_mmio_map_gruppo(InterruptFrame *f)   { return con_lo_spazio(sys_mmio_map, f); }

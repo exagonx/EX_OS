@@ -1,0 +1,47 @@
+--- a/third_party/rust/rustix/src/backend/libc/mod.rs
++++ b/third_party/rust/rustix/src/backend/libc/mod.rs
+@@ -114,7 +114,7 @@
+ pub(crate) mod io_uring;
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -127,7 +127,7 @@
+ #[cfg(not(target_os = "wasi"))]
+ #[cfg(feature = "net")]
+ pub(crate) mod net;
+-#[cfg(not(any(windows, target_os = "espidf")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"))))]
+ #[cfg(any(
+     feature = "param",
+     feature = "runtime",
+@@ -158,7 +158,7 @@
+ #[cfg(not(windows))]
+ #[cfg(feature = "thread")]
+ pub(crate) mod thread;
+-#[cfg(not(any(windows, target_os = "espidf")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"))))]
+ #[cfg(feature = "time")]
+ pub(crate) mod time;
+ 
+@@ -191,7 +191,7 @@
+ #[cfg(not(any(
+     windows,
+     target_os = "android",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -213,7 +213,7 @@
+     linux_kernel,
+     windows,
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "nto",
+     target_os = "horizon",
+ )))]

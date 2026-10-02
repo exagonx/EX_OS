@@ -1,0 +1,95 @@
+--- a/third_party/rust/quinn-udp/src/unix.rs
++++ b/third_party/rust/quinn-udp/src/unix.rs
+@@ -58,7 +58,7 @@
+     pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
+         let io = sock.0;
+         let mut cmsg_platform_space = 0;
+-        #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
++        #[cfg(not(any(any(target_os = "redox", target_os = "exos"), target_os = "hurd")))]
+         if cfg!(target_os = "linux")
+             || cfg!(bsd)
+             || cfg!(apple)
+@@ -171,7 +171,7 @@
+         }
+ 
+         // Options standardized in RFC 3542
+-        #[cfg(not(target_os = "redox"))]
++        #[cfg(not(any(target_os = "redox", target_os = "exos")))]
+         if !is_ipv4 {
+             set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
+             set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
+@@ -247,7 +247,7 @@
+         target_os = "openbsd",
+         target_os = "netbsd",
+         target_os = "dragonfly",
+-        target_os = "redox",
++        any(target_os = "redox", target_os = "exos"),
+         target_os = "hurd",
+         solarish
+     )))]
+@@ -278,7 +278,7 @@
+         target_os = "openbsd",
+         target_os = "netbsd",
+         target_os = "dragonfly",
+-        target_os = "redox",
++        any(target_os = "redox", target_os = "exos"),
+         target_os = "hurd",
+         solarish,
+         apple_slow
+@@ -625,7 +625,7 @@
+     target_os = "openbsd",
+     target_os = "netbsd",
+     target_os = "dragonfly",
+-    target_os = "redox",
++    any(target_os = "redox", target_os = "exos"),
+     target_os = "hurd",
+     solarish
+ )))]
+@@ -665,7 +665,7 @@
+     target_os = "openbsd",
+     target_os = "netbsd",
+     target_os = "dragonfly",
+-    target_os = "redox",
++    any(target_os = "redox", target_os = "exos"),
+     target_os = "hurd",
+     solarish,
+     apple
+@@ -743,7 +743,7 @@
+             }
+         }
+     } else {
+-        #[cfg(not(target_os = "redox"))]
++        #[cfg(not(any(target_os = "redox", target_os = "exos")))]
+         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
+     }
+ 
+@@ -779,9 +779,9 @@
+                     }
+                 }
+             }
+-            #[cfg(any(target_os = "redox", target_os = "hurd"))]
++            #[cfg(any(any(target_os = "redox", target_os = "exos"), target_os = "hurd"))]
+             IpAddr::V6(_) => {}
+-            #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
++            #[cfg(not(any(any(target_os = "redox", target_os = "exos"), target_os = "hurd")))]
+             IpAddr::V6(v6) => {
+                 let pktinfo = libc::in6_pktinfo {
+                     ipi6_ifindex: 0,
+@@ -870,7 +870,7 @@
+             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
+                 self.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+             },
+-            #[cfg(not(target_os = "redox",))]
++            #[cfg(not(any(target_os = "redox", target_os = "exos"),))]
+             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
+                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
+                 // https://bugreport.apple.com/web/?problemID=48761855
+@@ -896,7 +896,7 @@
+                 let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
+                 self.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
+             }
+-            #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
++            #[cfg(not(any(any(target_os = "redox", target_os = "exos"), target_os = "hurd")))]
+             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
+                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
+                 self.dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));

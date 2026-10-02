@@ -1,0 +1,36 @@
+--- a/third_party/rust/rustix/src/maybe_polyfill/no_std/os/fd/owned.rs
++++ b/third_party/rust/rustix/src/maybe_polyfill/no_std/os/fd/owned.rs
+@@ -106,14 +106,14 @@
+         // We want to atomically duplicate this file descriptor and set the
+         // CLOEXEC flag, and currently that's done via F_DUPFD_CLOEXEC. This
+         // is a POSIX flag that was added to Linux in 2.6.24.
+-        #[cfg(not(target_os = "espidf"))]
++        #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+         let fd = crate::io::fcntl_dupfd_cloexec(self, 0)?;
+ 
+         // For ESP-IDF, F_DUPFD is used instead, because the CLOEXEC semantics
+         // will never be supported, as this is a bare metal framework with
+         // no capabilities for multi-process execution. While F_DUPFD is also
+         // not supported yet, it might be (currently it returns ENOSYS).
+-        #[cfg(target_os = "espidf")]
++        #[cfg(any(target_os = "espidf", target_os = "exos"))]
+         let fd = crate::io::fcntl_dupfd(self, 0)?;
+ 
+         Ok(fd.into())
+@@ -138,14 +138,14 @@
+         // We want to atomically duplicate this file descriptor and set the
+         // CLOEXEC flag, and currently that's done via F_DUPFD_CLOEXEC. This
+         // is a POSIX flag that was added to Linux in 2.6.24.
+-        #[cfg(not(target_os = "espidf"))]
++        #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+         let fd = crate::io::fcntl_dupfd_cloexec(self, 3)?;
+ 
+         // For ESP-IDF, F_DUPFD is used instead, because the CLOEXEC semantics
+         // will never be supported, as this is a bare metal framework with
+         // no capabilities for multi-process execution. While F_DUPFD is also
+         // not supported yet, it might be (currently it returns ENOSYS).
+-        #[cfg(target_os = "espidf")]
++        #[cfg(any(target_os = "espidf", target_os = "exos"))]
+         let fd = crate::io::fcntl_dupfd(self, 3)?;
+ 
+         Ok(fd)

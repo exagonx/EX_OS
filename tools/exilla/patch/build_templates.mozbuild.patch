@@ -1,0 +1,15 @@
+--- a/build/templates.mozbuild
++++ b/build/templates.mozbuild
+@@ -155,7 +155,11 @@
+     """Template for shared libraries."""
+     Library(name)
+ 
+-    FORCE_SHARED_LIB = True
++    # EX-OS (Exilla) cannot load ELF shared objects: every shared library is
++    # built as a static one. Those libxul links end up in the program; those
++    # Gecko loads with dlopen are simply not there at run time.
++    if CONFIG["OS_TARGET"] != "EXOS":
++        FORCE_SHARED_LIB = True
+ 
+     if output_category:
+         SHARED_LIBRARY_OUTPUT_CATEGORY = output_category

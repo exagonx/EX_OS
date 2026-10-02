@@ -1,0 +1,63 @@
+--- a/third_party/rust/socket2/src/lib.rs
++++ b/third_party/rust/socket2/src/lib.rs
+@@ -279,13 +279,13 @@
+     pub const DCCP: Type = Type(sys::SOCK_DCCP);
+ 
+     /// Type corresponding to `SOCK_SEQPACKET`.
+-    #[cfg(all(feature = "all", not(any(target_os = "espidf", target_os = "wasi"))))]
++    #[cfg(all(feature = "all", not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))))]
+     pub const SEQPACKET: Type = Type(sys::SOCK_SEQPACKET);
+ 
+     /// Type corresponding to `SOCK_RAW`.
+     #[cfg(all(
+         feature = "all",
+-        not(any(target_os = "redox", target_os = "espidf", target_os = "wasi"))
++        not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))
+     ))]
+     pub const RAW: Type = Type(sys::SOCK_RAW);
+ }
+@@ -384,7 +384,7 @@
+     ///
+     /// On Unix this corresponds to the `MSG_TRUNC` flag.
+     /// On Windows this corresponds to the `WSAEMSGSIZE` error code.
+-    #[cfg(not(target_os = "espidf"))]
++    #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+     pub const fn is_truncated(self) -> bool {
+         self.0 & sys::MSG_TRUNC != 0
+     }
+@@ -442,7 +442,7 @@
+         target_os = "redox",
+         target_os = "solaris",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "haiku",
+     )))]
+@@ -452,7 +452,7 @@
+         target_os = "redox",
+         target_os = "solaris",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "haiku",
+     )))]
+@@ -470,7 +470,7 @@
+                 target_os = "redox",
+                 target_os = "solaris",
+                 target_os = "nto",
+-                target_os = "espidf",
++                any(target_os = "espidf", target_os = "exos"),
+                 target_os = "vita",
+                 target_os = "haiku",
+             )))]
+@@ -480,7 +480,7 @@
+                 target_os = "redox",
+                 target_os = "solaris",
+                 target_os = "nto",
+-                target_os = "espidf",
++                any(target_os = "espidf", target_os = "exos"),
+                 target_os = "vita",
+                 target_os = "haiku",
+             )))]

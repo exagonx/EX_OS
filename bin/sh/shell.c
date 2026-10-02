@@ -1294,8 +1294,11 @@ static int esegui_script(const char *nome, const char *etichetta,
  * ! QUESTO SI VEDE SOLO SE /bin/help NON C'E'. Non e' un secondo elenco
  * da tenere aggiornato — sarebbe la solita coppia di liste che divergono,
  * ed e' proprio cio' che si e' voluto togliere. Dice il minimo per
- * muoversi e dove sta l'aiuto vero: se qualcuno finisce qui, il problema
- * e' un'immagine incompleta, non la mancanza di documentazione.
+ * muoversi e dove sta l'aiuto vero.
+ *
+ * ! SUL FLOPPY E' NORMALE FINIRE QUI dal 2 ottobre 2026: /bin/help e
+ * /boot/help.txt stanno solo sul CD (il floppy era pieno). Avviando dal CD
+ * c'e' l'aiuto vero; dal floppy, col CD montato, /cdrom/bin/help.
  * ============================================================================= */
 static void cmd_help(void)
 {
@@ -1303,8 +1306,8 @@ static void cmd_help(void)
     println("/bin/help non c'e': questo e' l'aiuto di riserva.");
     print(CLR_WHITE);
     println("");
-    println("L'aiuto completo sta in /boot/help.txt e lo mostra /bin/help.");
-    println("Mancano l'uno o l'altro: l'immagine e' incompleta.");
+    println("L'aiuto completo sta sul CD: /bin/help, che legge /boot/help.txt.");
+    println("Dal floppy, col CD montato: /cdrom/bin/help.");
     println("");
     print(CLR_CYAN);
     println("Per muoversi intanto:");

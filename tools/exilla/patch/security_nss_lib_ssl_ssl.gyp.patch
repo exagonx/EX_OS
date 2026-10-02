@@ -1,0 +1,19 @@
+--- a/security/nss/lib/ssl/ssl.gyp
++++ b/security/nss/lib/ssl/ssl.gyp
+@@ -90,7 +90,15 @@
+         'ssl',
+         '<(DEPTH)/lib/nss/nss.gyp:nss3',
+         '<(DEPTH)/lib/util/util.gyp:nssutil3',
+-        '<(DEPTH)/lib/freebl/freebl.gyp:freebl',
++      ],
++      'conditions': [
++        # EX-OS (Exilla): freebl is linked in statically through the softoken
++        # (see lib/nss/nss.gyp); its loader would define the same functions.
++        [ 'OS!="exos"', {
++          'dependencies': [
++            '<(DEPTH)/lib/freebl/freebl.gyp:freebl',
++          ],
++        }],
+       ],
+       'variables': {
+         'mapfile': 'ssl.def'

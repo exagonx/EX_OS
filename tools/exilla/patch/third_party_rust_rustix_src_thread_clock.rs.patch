@@ -1,0 +1,29 @@
+--- a/third_party/rust/rustix/src/thread/clock.rs
++++ b/third_party/rust/rustix/src/thread/clock.rs
+@@ -6,7 +6,7 @@
+ #[cfg(not(any(
+     apple,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "freebsd", // FreeBSD 12 has clock_nanosleep, but libc targets FreeBSD 11.
+     target_os = "openbsd",
+     target_os = "redox",
+@@ -31,7 +31,7 @@
+     apple,
+     target_os = "dragonfly",
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "freebsd", // FreeBSD 12 has clock_nanosleep, but libc targets FreeBSD 11.
+     target_os = "haiku",
+     target_os = "horizon",
+@@ -61,7 +61,7 @@
+     apple,
+     target_os = "dragonfly",
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "freebsd", // FreeBSD 12 has clock_nanosleep, but libc targets FreeBSD 11.
+     target_os = "haiku",
+     target_os = "horizon",

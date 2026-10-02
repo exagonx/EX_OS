@@ -1,0 +1,128 @@
+--- a/third_party/rust/socket2/src/sys/unix.rs
++++ b/third_party/rust/socket2/src/sys/unix.rs
+@@ -84,10 +84,10 @@
+ pub(crate) use libc::SOCK_DCCP;
+ #[cfg(all(
+     feature = "all",
+-    not(any(target_os = "redox", target_os = "espidf", target_os = "wasi"))
++    not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))
+ ))]
+ pub(crate) use libc::SOCK_RAW;
+-#[cfg(all(feature = "all", not(any(target_os = "espidf", target_os = "wasi"))))]
++#[cfg(all(feature = "all", not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))))]
+ pub(crate) use libc::SOCK_SEQPACKET;
+ pub(crate) use libc::{SOCK_DGRAM, SOCK_STREAM};
+ // Used in `Protocol`.
+@@ -117,7 +117,7 @@
+     sa_family_t, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t,
+ };
+ // Used in `RecvFlags`.
+-#[cfg(not(any(target_os = "redox", target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ pub(crate) use libc::MSG_TRUNC;
+ #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+ pub(crate) use libc::SO_OOBINLINE;
+@@ -138,7 +138,7 @@
+         target_os = "redox",
+         target_os = "solaris",
+         target_os = "haiku",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "wasi",
+         target_os = "cygwin",
+@@ -155,14 +155,14 @@
+     target_os = "redox",
+     target_os = "solaris",
+     target_os = "haiku",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "vita",
+     target_os = "wasi",
+ )))]
+ pub(crate) use libc::IPV6_RECVTCLASS;
+ #[cfg(all(
+     feature = "all",
+-    not(any(target_os = "redox", target_os = "espidf", target_os = "wasi"))
++    not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))
+ ))]
+ pub(crate) use libc::IP_HDRINCL;
+ #[cfg(not(any(
+@@ -177,7 +177,7 @@
+     target_os = "haiku",
+     target_os = "hurd",
+     target_os = "nto",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "vita",
+     target_os = "wasi",
+     target_os = "cygwin",
+@@ -230,7 +230,7 @@
+     target_os = "redox",
+     target_os = "fuchsia",
+     target_os = "nto",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "vita",
+     target_os = "wasi",
+ )))]
+@@ -403,7 +403,7 @@
+     target_os = "solaris",
+     target_os = "tvos",
+     target_os = "watchos",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "vita",
+     target_os = "cygwin",
+ ))]
+@@ -505,16 +505,16 @@
+     libc::SOCK_DGRAM,
+     #[cfg(all(feature = "all", target_os = "linux"))]
+     libc::SOCK_DCCP,
+-    #[cfg(not(any(target_os = "redox", target_os = "espidf", target_os = "wasi")))]
++    #[cfg(not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+     libc::SOCK_RAW,
+     #[cfg(not(any(
+         target_os = "redox",
+         target_os = "haiku",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "wasi"
+     )))]
+     libc::SOCK_RDM,
+-    #[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++    #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+     libc::SOCK_SEQPACKET,
+     /* TODO: add these optional bit OR-ed flags:
+     #[cfg(any(
+@@ -580,7 +580,7 @@
+     /// On Unix this corresponds to the `MSG_EOR` flag.
+     ///
+     /// [`SEQPACKET`]: Type::SEQPACKET
+-    #[cfg(not(target_os = "espidf"))]
++    #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+     pub const fn is_end_of_record(self) -> bool {
+         self.0 & libc::MSG_EOR != 0
+     }
+@@ -626,10 +626,10 @@
+ impl std::fmt::Debug for RecvFlags {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         let mut s = f.debug_struct("RecvFlags");
+-        #[cfg(not(target_os = "espidf"))]
++        #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+         s.field("is_end_of_record", &self.is_end_of_record());
+         s.field("is_out_of_band", &self.is_out_of_band());
+-        #[cfg(not(target_os = "espidf"))]
++        #[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+         s.field("is_truncated", &self.is_truncated());
+         #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
+         s.field("is_confirm", &self.is_confirm());
+@@ -1394,7 +1394,7 @@
+     target_os = "redox",
+     target_os = "solaris",
+     target_os = "nto",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "vita",
+     target_os = "cygwin",
+     target_os = "wasi",

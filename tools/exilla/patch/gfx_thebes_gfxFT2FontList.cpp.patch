@@ -1,0 +1,77 @@
+--- a/gfx/thebes/gfxFT2FontList.cpp
++++ b/gfx/thebes/gfxFT2FontList.cpp
+@@ -2,10 +2,14 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-#include <android/log.h>
++#ifdef MOZ_WIDGET_ANDROID
++#  include <android/log.h>
++#endif
+ #include <dirent.h>
+ 
+-#include "gfxAndroidPlatform.h"
++#ifdef MOZ_WIDGET_ANDROID
++#  include "gfxAndroidPlatform.h"
++#endif
+ #include "mozilla/Base64.h"
+ #include "mozilla/EndianUtils.h"
+ #include "mozilla/MemoryReporting.h"
+@@ -15,7 +19,9 @@
+ #include "mozilla/dom/ContentChild.h"
+ #include "nsReadableUtils.h"
+ #include "nsXULAppAPI.h"
+-#define ALOG(args...) __android_log_print(ANDROID_LOG_INFO, "Gecko", ##args)
++#ifdef MOZ_WIDGET_ANDROID
++#  define ALOG(args...) __android_log_print(ANDROID_LOG_INFO, "Gecko", ##args)
++#endif
+ 
+ #include "ft2build.h"
+ #include FT_FREETYPE_H
+@@ -109,7 +115,10 @@
+       cursor.Copy(&bufSize);
+       NS_ASSERTION(bufSize == item->RealSize(), "error reading bundled font");
+       // fontData takes ownership of fontDataBuf
+-      auto fontData = MakeRefPtr<FontData>(std::move(fontDataBuf), bufSize);
++      // Through a const pointer: GCC will not bind FontData's
++      // const uint8_t*&& to a moved uint8_t* (clang does).
++      const uint8_t* constBuf = fontDataBuf;
++      auto fontData = MakeRefPtr<FontData>(std::move(constBuf), bufSize);
+       auto ufd = MakeRefPtr<FTUserFontData>(fontData);
+       face = ufd->CloneFace(mFTFontIndex);
+       if (!face) {
+@@ -1585,11 +1594,19 @@
+     }
+   }
+ 
+-  if (!useSystemFontAPI)
+-#endif
+-  {
++  if (!useSystemFontAPI) {
+     FindFontsInDir(androidFontsRoot, mFontNameCache.get());
+   }
++#elif defined(XP_EXOS)
++  // EX-OS: the fonts ExWin uses (Liberation, DejaVu), in the same places
++  // ExWin looks for them; EXILLA_FONTS chooses another directory.
++  if (const char* dir = PR_GetEnv("EXILLA_FONTS")) {
++    FindFontsInDir(nsDependentCString(dir), mFontNameCache.get());
++  } else {
++    FindFontsInDir("/exwin/font"_ns, mFontNameCache.get());
++    FindFontsInDir("/cdrom/exwin/font"_ns, mFontNameCache.get());
++  }
++#endif
+ 
+   // Look for fonts stored in omnijar, unless we're on a low-memory
+   // device where we don't want to spend the RAM to decompress them.
+@@ -1917,6 +1934,11 @@
+   if (ff.IsNull()) {
+     ff = FindFamily(aFontVisibilityProvider, "Droid Sans"_ns);
+   }
++#elif defined(XP_EXOS)
++  ff = FindFamily(aFontVisibilityProvider, "Liberation Sans"_ns);
++  if (ff.IsNull()) {
++    ff = FindFamily(aFontVisibilityProvider, "DejaVu Sans"_ns);
++  }
+ #endif
+   /* TODO: what about Qt or other platforms that may use this? */
+   return ff;

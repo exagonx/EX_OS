@@ -1,0 +1,35 @@
+--- a/xpcom/build/BinaryPath.h
++++ b/xpcom/build/BinaryPath.h
+@@ -19,7 +19,7 @@
+     defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__)
+ #  include <sys/sysctl.h>
+ #endif
+-#if defined(__OpenBSD__)
++#if defined(__OpenBSD__) || defined(XP_EXOS)
+ #  include <sys/stat.h>
+ #endif
+ #include "mozilla/UniquePtr.h"
+@@ -195,7 +195,14 @@
+     return NS_OK;
+   }
+ 
+-#elif defined(__OpenBSD__)
++#elif defined(__OpenBSD__) || defined(XP_EXOS)
++#  if defined(XP_EXOS)
++  // EX-OS has neither /proc nor sysctl: the libc keeps argv[0] (with glibc's
++  // name), and from there it is the same search OpenBSD does.
++  static nsresult Get(char aResult[MAXPATHLEN]) {
++    return GetFromArgv0(program_invocation_name, aResult);
++  }
++#  else
+   static nsresult Get(char aResult[MAXPATHLEN]) {
+     static bool cached = false;
+     static char cachedPath[MAXPATHLEN];
+@@ -231,6 +238,7 @@
+     }
+     return r;
+   }
++#  endif
+ 
+   static nsresult GetFromArgv0(const char* aArgv0, char aResult[MAXPATHLEN]) {
+     struct stat fileStat;

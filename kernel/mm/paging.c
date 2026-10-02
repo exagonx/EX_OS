@@ -55,6 +55,7 @@ typedef uint32_t PTE;   /* Page Table Entry */
 /* Definita piu' avanti, accanto al resto di PSE: serve gia' a paging_map_page,
  * che nel file viene prima. */
 static int spezza_4mb(PDE *pd, uint32_t pd_idx);
+static int pte_riservata(uint32_t virt);
 
 /* Indici nella PD/PT da indirizzo virtuale */
 #define PD_INDEX(vaddr) (((vaddr) >> 22) & 0x3FF)  /* Bit 31-22 */
@@ -228,6 +229,15 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
     if (pd[pd_idx] & PG_PRESENT) {
         /* Page Table già esistente: usa quella */
         pt = (PTE *)PG_ADDR(pd[pd_idx]);
+
+        /* Una tabella dello spazio utente nata senza PG_USER (prima della
+         * 0.230, vedi sotto) lo riceve adesso, e il TLB si ricarica: una voce
+         * di directory vale per 4 MB, invlpg di un indirizzo non basta. */
+        if ((flags & PG_USER) && !(pd[pd_idx] & PG_USER) &&
+            virt_addr >= USER_SPACE_BASE) {
+            pd[pd_idx] |= PG_USER;
+            if (g_paging_enabled) write_cr3(read_cr3());
+        }
     } else {
         /* Page Table non esiste: alloca una nuova pagina dal PMM.
          *
@@ -279,8 +289,22 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
             while (n--) *p++ = 0;
         }
 
-        /* Inserisci nella Page Directory */
-        pd[pd_idx] = pt_phys | PG_PRESENT | PG_WRITABLE | (flags & PG_USER);
+        /* Inserisci nella Page Directory.
+         *
+         * ! NELLO SPAZIO UTENTE LA VOCE DI DIRECTORY HA SEMPRE PG_USER
+         * (kernel 0.230, 2 ottobre 2026). Prendeva i flag della PRIMA pagina
+         * mappata nella fascia di 4 MB: se quella era PROT_NONE (presente,
+         * senza PG_USER), la fascia restava del kernel per sempre — munmap
+         * toglie le pagine, non la tabella. Gecko riserva 1 GB PROT_NONE per
+         * cercare un buco (FindFreeAddressSpace) e lo rende subito; la malloc
+         * faceva sbrk sulle stesse pagine e cadeva con un fault di PROTEZIONE
+         * sulla prima scrittura oltre 0x1bc00000, un confine di 4 MB. Lo
+         * stesso sarebbe toccato a un mprotect da PROT_NONE a scrittura (il
+         * JIT). I permessi veri stanno nella PTE di ogni pagina: la voce di
+         * directory deve solo non toglierli. Sotto USER_SPACE_BASE (la fascia
+         * kernel) resta com'era. */
+        pd[pd_idx] = pt_phys | PG_PRESENT | PG_WRITABLE |
+                     ((virt_addr >= USER_SPACE_BASE) ? PG_USER : (flags & PG_USER));
 
         klog(LOG_DEBUG, "PAGING: nuova PT a 0x%08x per PD[%u]", pt_phys, pd_idx);
     }
@@ -1486,9 +1510,13 @@ void page_fault_handler(InterruptFrame *frame)
      * For the program nothing is there, and Linux says MAPERR for NULL, so
      * that is what code that tells the two apart expects.
      * See kernel/sched/segnali.c. */
+    /* Una pagina PG_RISERVA (mmap PROT_NONE) e' del processo e non e'
+     * permessa: SEGV_ACCERR come se fosse presente, che e' cio' che dice
+     * Linux per PROT_NONE. */
     if (from_user &&
         segnali_fault(frame, 11,
-                      ((err & 0x1) && fault_addr >= USER_SPACE_BASE &&
+                      (((err & 0x1) || pte_riservata(fault_addr)) &&
+                       fault_addr >= USER_SPACE_BASE &&
                        fault_addr < USER_SPACE_END) ? 2 : 1,
                       fault_addr)) {
         return;
@@ -1503,7 +1531,7 @@ void page_fault_handler(InterruptFrame *frame)
         if (p != NULL && p->user_stack_limit != 0 &&
             fault_addr <  p->user_stack_limit &&
             fault_addr >= p->user_stack_limit - USER_STACK_MAX) {
-            /* La riserva si MISURA, non si scrive: un processo ne ha 256 KB
+            /* La riserva si MISURA, non si scrive: un processo ne ha 8 MB
              * e un filo i 64 della sua piazzola, e dire il numero sbagliato
              * manda a cercare il guasto dalla parte sbagliata. */
             klog(LOG_ERROR, "PF: PID %u '%s' ha esaurito lo stack "
@@ -1542,7 +1570,7 @@ void page_fault_handler(InterruptFrame *frame)
 
             klog(LOG_ERROR, "PF:   heap 0x%08x..0x%08x (tetto 0x%08x), "
                  "stack 0x%08x..0x%08x",
-                 p->heap_start, p->heap_end, p->heap_max,
+                 p->heap_start, proc_spazio_capo(p)->heap_end, p->heap_max,
                  p->user_stack_limit, p->user_stack_top);
 
             for (i = 0; i < p->n_vma; i++) {
@@ -1556,8 +1584,8 @@ void page_fault_handler(InterruptFrame *frame)
 
             if (fault_addr >= p->heap_start && fault_addr < p->heap_max) {
                 klog(LOG_ERROR, "PF:   l'indirizzo e' nello HEAP, %s heap_end: "
-                     "%s", (fault_addr < p->heap_end) ? "SOTTO" : "SOPRA",
-                     (fault_addr < p->heap_end)
+                     "%s", (fault_addr < proc_spazio_capo(p)->heap_end) ? "SOTTO" : "SOPRA",
+                     (fault_addr < proc_spazio_capo(p)->heap_end)
                        ? "pagina persa sotto il confine (smappata da un sbrk "
                          "negativo?)"
                        : "il programma ha scritto oltre cio' che ha chiesto");
@@ -1588,6 +1616,41 @@ void page_fault_handler(InterruptFrame *frame)
 
     kpanic("Page Fault non gestito in ring0 a 0x%08x (EIP=0x%08x)",
            fault_addr, frame->eip);
+}
+
+/* La PTE di `virt` nel processo corrente e' un segnaposto PG_RISERVA? */
+static int pte_riservata(uint32_t virt)
+{
+    Process *p = proc_get_current();
+    PDE     *pd;
+    PTE     *pt;
+
+    if (p == NULL || p->page_directory == NULL) return 0;
+    pd = p->page_directory;
+    if (!(pd[PD_INDEX(virt)] & PG_PRESENT) || (pd[PD_INDEX(virt)] & PG_HUGE)) return 0;
+    pt = (PTE *)PG_ADDR(pd[PD_INDEX(virt)]);
+    return PTE_E_RISERVA(pt[PT_INDEX(virt)]);
+}
+
+/* =============================================================================
+ * paging_riserva — mette a `virt` il segnaposto PG_RISERVA (vedi paging.h)
+ *
+ * La tabella si fa con paging_map_page, che sa crearla; la PTE che lascia
+ * per un istante (fisico 0, senza PG_USER: ring 3 non la puo' toccare) si
+ * sostituisce subito col segnaposto. Rende 0, o -1 se manca la tabella.
+ * ============================================================================= */
+int paging_riserva(PDE *pd, uint32_t virt)
+{
+    PTE *pt;
+
+    virt &= 0xFFFFF000;
+    if (paging_map_page(pd, virt, 0, 0) != 0) return -1;
+    pt = (PTE *)PG_ADDR(pd[PD_INDEX(virt)]);
+    pt[PT_INDEX(virt)] = PG_RISERVA;
+    if (g_paging_enabled) {
+        __asm__ volatile ("invlpg (%0)" :: "r"(virt) : "memory");
+    }
+    return 0;
 }
 
 /* =============================================================================
@@ -1653,6 +1716,17 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
             if (pt[pti] & PG_PRESENT) continue;
             if (SWAP_PTE_E_SWAP(pt[pti])) {
                 if (!pf_torna_da_swap(p, va)) return -ENOMEM;
+                continue;
+            }
+            /* Riservata da una mmap PROT_NONE: la pagina arriva adesso,
+             * azzerata e ancora PROT_NONE; i bit nuovi li mette il passo 3. */
+            if (PTE_E_RISERVA(pt[pti])) {
+                uint32_t fis = pmm_alloc_page();
+                if (fis == 0 && swap_sfratta()) fis = pmm_alloc_page();
+                if (fis == 0) return -ENOMEM;
+                paging_azzera_fisica(fis);
+                pt[pti] = fis | PG_PRESENT;
+                __asm__ volatile ("invlpg (%0)" :: "r"(va) : "memory");
                 continue;
             }
         }

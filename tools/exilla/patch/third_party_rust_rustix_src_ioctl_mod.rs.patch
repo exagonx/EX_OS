@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/ioctl/mod.rs
++++ b/third_party/rust/rustix/src/ioctl/mod.rs
+@@ -337,7 +337,7 @@
+ type _Opcode = c::c_int;
+ 
+ // ESP-IDF uses a `c_uint`.
+-#[cfg(target_os = "espidf")]
++#[cfg(any(target_os = "espidf", target_os = "exos"))]
+ type _Opcode = c::c_uint;
+ 
+ // Windows has `ioctlsocket`, which uses `i32`.

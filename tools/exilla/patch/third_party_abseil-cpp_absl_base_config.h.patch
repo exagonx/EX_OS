@@ -1,0 +1,12 @@
+--- a/third_party/abseil-cpp/absl/base/config.h
++++ b/third_party/abseil-cpp/absl/base/config.h
+@@ -345,7 +345,8 @@
+     defined(__myriad2__) || defined(__HAIKU__) || defined(__OpenBSD__) || \
+     defined(__NetBSD__) || defined(__QNX__) || defined(__VXWORKS__) ||    \
+     defined(__hexagon__) || defined(__XTENSA__) ||                        \
+-    defined(_WASI_EMULATED_MMAN)
++    defined(_WASI_EMULATED_MMAN) ||                                       \
++    defined(__exos__) /* EX-OS (Exilla): anonymous mmap, which is enough */
+ #define ABSL_HAVE_MMAP 1
+ #endif
+ 

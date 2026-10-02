@@ -1,0 +1,14 @@
+--- a/python/mozbuild/mozbuild/frontend/gyp_reader.py
++++ b/python/mozbuild/mozbuild/frontend/gyp_reader.py
+@@ -234,7 +234,10 @@
+             else:
+                 context["PROGRAM"] = name
+             if spec["type"] == "shared_library":
+-                context["FORCE_SHARED_LIB"] = True
++                # EX-OS (Exilla) has no ELF shared objects: static instead,
++                # as in build/templates.mozbuild.
++                if config.substs.get("OS_TARGET") != "EXOS":
++                    context["FORCE_SHARED_LIB"] = True
+             elif spec["type"] == "static_library":
+                 if spec.get("variables", {}).get("no_expand_libs", "0") == "1":
+                     # PSM links a NSS static library, but our folded libnss

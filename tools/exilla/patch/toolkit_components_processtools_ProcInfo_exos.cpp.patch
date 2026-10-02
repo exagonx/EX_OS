@@ -1,0 +1,38 @@
+--- a/toolkit/components/processtools/ProcInfo_exos.cpp
++++ b/toolkit/components/processtools/ProcInfo_exos.cpp
+@@ -0,0 +1,35 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): the kernel does not expose CPU time or memory per process
++ * to programs yet, and Gecko runs in a single process. Everything answers
++ * "not implemented", and the per-process query gathers nothing. */
++
++#include "mozilla/ProcInfo.h"
++
++namespace mozilla {
++
++int GetCycleTimeFrequencyMHz() { return 0; }
++
++nsresult GetCpuTimeSinceProcessStartInMs(uint64_t* aResult) {
++  return NS_ERROR_NOT_IMPLEMENTED;
++}
++
++nsresult GetCurrentProcessMemoryUsage(uint64_t* aResult) {
++  return NS_ERROR_NOT_IMPLEMENTED;
++}
++
++nsresult GetGpuTimeSinceProcessStartInMs(uint64_t* aResult) {
++  return NS_ERROR_NOT_IMPLEMENTED;
++}
++
++ProcInfoPromise::ResolveOrRejectValue GetProcInfoSync(
++    nsTArray<ProcInfoRequest>&& aRequests) {
++  ProcInfoPromise::ResolveOrRejectValue result;
++  HashMap<base::ProcessId, ProcInfo> gathered;
++  result.SetResolve(std::move(gathered));
++  return result;
++}
++
++}  // namespace mozilla

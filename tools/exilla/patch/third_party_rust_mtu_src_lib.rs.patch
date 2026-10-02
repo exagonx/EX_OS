@@ -1,0 +1,11 @@
+--- a/third_party/rust/mtu/src/lib.rs
++++ b/third_party/rust/mtu/src/lib.rs
+@@ -114,7 +114,7 @@
+     target_os = "ios",
+     target_os = "tvos",
+     target_os = "visionos",
+-    target_os = "redox"
++    any(target_os = "redox", target_os = "exos")
+ ))]
+ pub fn interface_and_mtu_impl(remote: IpAddr) -> Result<(String, usize)> {
+     return Err(default_err());

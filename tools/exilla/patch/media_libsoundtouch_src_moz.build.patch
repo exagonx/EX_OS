@@ -1,0 +1,14 @@
+--- a/media/libsoundtouch/src/moz.build
++++ b/media/libsoundtouch/src/moz.build
+@@ -69,7 +69,10 @@
+     soundtouch_defines = WASM_DEFINES
+ 
+ else:
+-    SOURCES += ["/config/external/rlbox/rlbox_thread_locals.cpp"]
++    # EX-OS (Exilla): lgpllibs is static and libxul already has these
++    # (config/external/rlbox); a second copy is a duplicate definition.
++    if CONFIG["OS_TARGET"] != "EXOS":
++        SOURCES += ["/config/external/rlbox/rlbox_thread_locals.cpp"]
+     if CONFIG['INTEL_ARCHITECTURE']:
+         if CONFIG['MOZ_SAMPLE_TYPE_FLOAT32']:
+             SOURCES += ['sse_optimized.cpp']

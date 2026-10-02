@@ -33,11 +33,26 @@
 #define POSIX_MADV_WILLNEED   MADV_WILLNEED
 #define POSIX_MADV_DONTNEED   MADV_DONTNEED
 
+/* SHM_ANON, il nome di FreeBSD per una memoria condivisa SENZA nome: con
+ * shm_open(SHM_ANON, ...) EX-OS da' una zona PRIVATA del processo — memoria
+ * anonima, nessuna zona del kernel, condivisa solo fra i descrittori e le
+ * mappe di chi l'ha aperta. E' cio' che serve a un programma a processo unico
+ * che usa la memoria condivisa come Gecko (@EXILLA-GECKO, 2 ottobre 2026):
+ * le zone del kernel sono 24 in tutto il sistema, e sono delle finestre. */
+#define SHM_ANON  ((char *)1)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 int madvise(void *addr, size_t lung, int consiglio);
 int posix_madvise(void *addr, size_t lung, int consiglio);
+
+/* msync: le pagine di un file mappato non si scrivono in ritardo su EX-OS
+ * (mmap di un file e' una copia): non c'e' niente da spingere. */
+#define MS_ASYNC        1
+#define MS_INVALIDATE   2
+#define MS_SYNC         4
+int msync(void *addr, size_t lung, int flag);
 #ifdef __cplusplus
 }
 #endif

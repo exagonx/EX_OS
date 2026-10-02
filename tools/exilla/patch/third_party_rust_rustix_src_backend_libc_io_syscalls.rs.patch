@@ -1,0 +1,80 @@
+--- a/third_party/rust/rustix/src/backend/libc/io/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/io/syscalls.rs
+@@ -7,7 +7,7 @@
+ use crate::fd::{AsFd as _, BorrowedFd, OwnedFd, RawFd};
+ #[cfg(not(any(
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "nto",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -18,7 +18,7 @@
+ use crate::io::{self, FdFlags};
+ use crate::ioctl::{IoctlOutput, Opcode};
+ use core::cmp::min;
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+ use {
+     crate::backend::MAX_IOV,
+     crate::io::{IoSlice, IoSliceMut},
+@@ -70,7 +70,7 @@
+     unsafe { ret_usize(c::pwrite(borrowed_fd(fd), buf.as_ptr().cast(), len, offset)) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+ pub(crate) fn readv(fd: BorrowedFd<'_>, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+     unsafe {
+         ret_usize(c::readv(
+@@ -81,7 +81,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+ pub(crate) fn writev(fd: BorrowedFd<'_>, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+     unsafe {
+         ret_usize(c::writev(
+@@ -94,7 +94,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",
+@@ -125,7 +125,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "nto",
+     target_os = "horizon",
+@@ -242,12 +242,12 @@
+     unsafe { ret(c::fcntl(borrowed_fd(fd), c::F_SETFD, flags.bits())) }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ pub(crate) fn fcntl_dupfd_cloexec(fd: BorrowedFd<'_>, min: RawFd) -> io::Result<OwnedFd> {
+     unsafe { ret_owned_fd(c::fcntl(borrowed_fd(fd), c::F_DUPFD_CLOEXEC, min)) }
+ }
+ 
+-#[cfg(target_os = "espidf")]
++#[cfg(any(target_os = "espidf", target_os = "exos"))]
+ pub(crate) fn fcntl_dupfd(fd: BorrowedFd<'_>, min: RawFd) -> io::Result<OwnedFd> {
+     unsafe { ret_owned_fd(c::fcntl(borrowed_fd(fd), c::F_DUPFD, min)) }
+ }
+@@ -269,7 +269,7 @@
+     target_os = "aix",
+     target_os = "android",
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",

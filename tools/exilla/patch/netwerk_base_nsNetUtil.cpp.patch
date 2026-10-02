@@ -1,0 +1,20 @@
+--- a/netwerk/base/nsNetUtil.cpp
++++ b/netwerk/base/nsNetUtil.cpp
+@@ -100,7 +100,7 @@
+ #include "nsStringStream.h"
+ #include "nsSyncStreamListener.h"
+ #include "nsViewSourceHandler.h"
+-#ifndef XP_IOS
++#if !defined(XP_IOS) && !defined(XP_EXOS)  // no moz-icon: (image/decoders/icon)
+ #  include "nsIconURI.h"
+ #endif
+ #include "DecoderTraits.h"
+@@ -2031,7 +2031,7 @@
+         .Finalize(aURI);
+   }
+ 
+-#ifndef XP_IOS
++#if !defined(XP_IOS) && !defined(XP_EXOS)  // no moz-icon: (image/decoders/icon)
+   if (scheme.EqualsLiteral("moz-icon")) {
+     return NS_MutateURI(new nsMozIconURI::Mutator())
+         .SetSpec(aSpec)

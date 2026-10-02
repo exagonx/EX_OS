@@ -1,0 +1,11 @@
+--- a/config/external/nspr/prcpucfg.h
++++ b/config/external/nspr/prcpucfg.h
+@@ -17,6 +17,8 @@
+ #  include "md/_freebsd.cfg"
+ #elif defined(__NetBSD__)
+ #  include "md/_netbsd.cfg"
++#elif defined(__exos__)
++#  include "md/_exos.cfg"
+ #elif defined(__OpenBSD__)
+ #  include "md/_openbsd.cfg"
+ #elif defined(__linux__)

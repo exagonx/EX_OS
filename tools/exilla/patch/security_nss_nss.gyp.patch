@@ -1,0 +1,22 @@
+--- a/security/nss/nss.gyp
++++ b/security/nss/nss.gyp
+@@ -111,11 +111,15 @@
+         {
+           'target_name': 'nss_cmds',
+           'type': 'none',
+-          'dependencies': [
+-            'cmd/certutil/certutil.gyp:certutil',
+-            'cmd/pk12util/pk12util.gyp:pk12util',
+-          ],
+           'conditions': [
++            # EX-OS (Exilla): Gecko links NSS statically and needs none of the
++            # tools; they come from NSS's own build (tools/exilla/nss-costruisci.sh).
++            [ 'OS!="exos"', {
++              'dependencies': [
++                'cmd/certutil/certutil.gyp:certutil',
++                'cmd/pk12util/pk12util.gyp:pk12util',
++              ],
++            }],
+             [ 'comm_client==1', {
+               'dependencies': [
+                 'cmd/smimetools/smimetools.gyp:cmsutil',

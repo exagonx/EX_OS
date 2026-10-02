@@ -1,0 +1,26 @@
+--- a/widget/exos/nsPrintSettingsExos.cpp
++++ b/widget/exos/nsPrintSettingsExos.cpp
+@@ -0,0 +1,23 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): no printers; what can be printed goes to a PDF file, as on
++ * Android. */
++
++#include "nsPrintSettingsImpl.h"
++
++class nsPrintSettingsExos : public nsPrintSettings {
++ public:
++  nsPrintSettingsExos() {
++    SetOutputFormat(nsIPrintSettings::kOutputFormatPDF);
++    SetPrinterName(u"PDF printer"_ns);
++  }
++};
++
++already_AddRefed<nsIPrintSettings> CreatePlatformPrintSettings(
++    const mozilla::PrintSettingsInitializer& aSettings) {
++  auto settings = mozilla::MakeRefPtr<nsPrintSettingsExos>();
++  settings->InitWithInitializer(aSettings);
++  return settings.forget();
++}

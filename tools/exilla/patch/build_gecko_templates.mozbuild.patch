@@ -1,0 +1,16 @@
+--- a/build/gecko_templates.mozbuild
++++ b/build/gecko_templates.mozbuild
+@@ -41,7 +41,12 @@
+             if CONFIG["MOZ_ASAN"] or CONFIG["MOZ_UBSAN"] or CONFIG["MOZ_TSAN"]:
+                 USE_LIBS += ["sanitizer-options"]
+             DEFINES["MOZ_HAS_MOZGLUE"] = True
+-            if CONFIG["MOZ_GLUE_IN_PROGRAM"] and CONFIG["CC_TYPE"] in ("clang", "gcc"):
++            # Not on EX-OS (Exilla): static programs, no dynamic symbol table.
++            if (
++                CONFIG["MOZ_GLUE_IN_PROGRAM"]
++                and CONFIG["CC_TYPE"] in ("clang", "gcc")
++                and CONFIG["OS_TARGET"] != "EXOS"
++            ):
+                 LDFLAGS += ["-rdynamic"]
+         elif mozglue == "library":
+             LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True

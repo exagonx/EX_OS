@@ -140,17 +140,34 @@ CC="${CC:-gcc}"
 # collega a questa libc.a. Su un Pentium MMX sono istruzioni che non esistono.
 CFLAGS="-m32 -march=pentium-mmx -mtune=pentium-mmx -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie \
         -fno-asynchronous-unwind-tables \
-        -Wall -O2 -std=c11 -ffunction-sections -fdata-sections"
+        -Wall -O2 -std=c11 -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI"
+# ! -DEXOS_LIBC_PORTATI (2 ottobre 2026): questa libc.a e' quella del software
+# portato (Exilla, Rust, GCC). Cio' che serve solo a loro e costa a ogni
+# programma che chiama malloc — il controllo dello heap, EXOS_MALLOC_CONTROLLA
+# — sta solo qui: i programmi del floppy si collegano alla libc.a del Makefile
+# e se lo sarebbero portato dentro tutti («Disk full»).
 
 $CC -m32 -c lib/start.S -o "$PREFISSO/i386-exos/lib/crt0.o"
 $CC $CFLAGS -c lib/libc.c -o "$PREFISSO/i386-exos/lib/libc.o"
 ar rcs "$PREFISSO/i386-exos/lib/libc.a" "$PREFISSO/i386-exos/lib/libc.o"
 rm -f "$PREFISSO/i386-exos/lib/libc.o"
 
+# ! LIBRERIE VUOTE per -lpthread, -ldl e -lrt (30 settembre 2026): i thread,
+# dlopen e i tempi stanno nella libc, ma il codice portato da Linux (NSS fra i
+# primi) le chiede per nome, e il linker si ferma su «cannot find -lpthread».
+for l in pthread dl rt; do
+    rm -f "$PREFISSO/i386-exos/lib/lib$l.a"
+    ar rcs "$PREFISSO/i386-exos/lib/lib$l.a"
+done
+
 # Gli header stanno anche in sottodirectory (sys/): si copia l'ALBERO,
 # non i soli file di primo livello — un <sys/stat.h> mancante si
 # manifesta molto dopo, quando un sorgente di terzi non compila.
-cp -r lib/include/. "$PREFISSO/i386-exos/include/"
+# ! -p: SI CONSERVA LA DATA DEGLI HEADER (1 ottobre 2026). Copiati con la data
+# di oggi sembravano tutti nuovi, e ogni volta che si rifaceva la sola libc.a
+# chi li include — Firefox, quattordicimila file — si ricompilava per intero:
+# un'ora e mezza per una riga cambiata in lib/libc.c.
+cp -rp lib/include/. "$PREFISSO/i386-exos/include/"
 
 # ! E LO STESSO ALBERO ANCHE COME sys-include, che non e' un doppione.
 #

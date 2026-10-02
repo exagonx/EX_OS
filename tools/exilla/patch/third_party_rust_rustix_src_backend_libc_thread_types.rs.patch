@@ -1,0 +1,10 @@
+--- a/third_party/rust/rustix/src/backend/libc/thread/types.rs
++++ b/third_party/rust/rustix/src/backend/libc/thread/types.rs
+@@ -1,6 +1,6 @@
+ #[cfg(all(
+     any(freebsdlike, linux_kernel, target_os = "fuchsia"),
+-    not(any(target_os = "espidf", target_os = "vita"))
++    not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita"))
+ ))]
+ use crate::backend::c;
+ 

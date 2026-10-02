@@ -71,6 +71,10 @@
 EX_VERSIONE("help", "0.001");
 
 #define FILE_AIUTO   "/boot/help.txt"
+/* ! DAL 2 OTTOBRE 2026 help E IL SUO TESTO STANNO SOLO SUL CD. Avviando dal
+ * CD, /boot e' quello del CD e FILE_AIUTO c'e'. Avviando dal floppy con il CD
+ * montato si lancia /cdrom/bin/help, e il testo e' li' accanto. */
+#define FILE_AIUTO_CD "/cdrom/boot/help.txt"
 
 #define TESTO_MAX    32768
 #define RIGHE_MAX    1600
@@ -194,6 +198,7 @@ static int carica(void)
     int fd, n, i;
 
     fd = open(FILE_AIUTO, O_RDONLY);
+    if (fd < 0) fd = open(FILE_AIUTO_CD, O_RDONLY);
     if (fd < 0) return -1;
 
     n = (int)read(fd, g_testo, sizeof(g_testo) - 1);
@@ -568,7 +573,7 @@ int main(int argc, char **argv)
     if (carica() != 0) {
         printf("help: non riesco a leggere %s\n\n", FILE_AIUTO);
         printf("Il testo dell'aiuto e' un file, non e' dentro i programmi.\n");
-        printf("Sul floppy sta in /boot; se manca, l'immagine e' incompleta.\n");
+        printf("Sta sul CD, in /boot (o in %s col CD montato).\n", FILE_AIUTO_CD);
         return 1;
     }
 

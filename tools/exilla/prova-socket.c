@@ -250,7 +250,7 @@ int main(void)
         inet_ntop(AF_INET, &((struct sockaddr_in *)ai->ai_addr)->sin_addr, t, sizeof(t));
         printf("        (example.com = %s)\n", t);
         freeaddrinfo(ai);
-    } else printf("        (example.com: %s — senza internet dall'host e' normale)\n",
+    } else printf("        (example.com: %s - senza internet dall'host e' normale)\n",
                   gai_strerror(r));
 
     printf("prova-socket: %d NO\n", g_no);

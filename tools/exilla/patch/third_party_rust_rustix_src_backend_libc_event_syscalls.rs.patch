@@ -1,0 +1,38 @@
+--- a/third_party/rust/rustix/src/backend/libc/event/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/event/syscalls.rs
+@@ -14,7 +14,7 @@
+     linux_kernel,
+     target_os = "freebsd",
+     target_os = "illumos",
+-    target_os = "espidf"
++    any(target_os = "espidf", target_os = "exos")
+ ))]
+ use crate::event::EventfdFlags;
+ #[cfg(any(bsd, linux_kernel, target_os = "wasi"))]
+@@ -45,7 +45,7 @@
+     solarish,
+     target_os = "freebsd",
+     target_os = "illumos",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "redox"
+ ))]
+ use {crate::backend::conv::ret_owned_fd, crate::fd::OwnedFd};
+@@ -54,7 +54,7 @@
+     linux_kernel,
+     target_os = "freebsd",
+     target_os = "illumos",
+-    target_os = "espidf"
++    any(target_os = "espidf", target_os = "exos")
+ ))]
+ pub(crate) fn eventfd(initval: u32, flags: EventfdFlags) -> io::Result<OwnedFd> {
+     #[cfg(linux_kernel)]
+@@ -80,7 +80,7 @@
+         ret_owned_fd(eventfd(initval, bitflags_bits!(flags)))
+     }
+ 
+-    #[cfg(any(target_os = "illumos", target_os = "espidf"))]
++    #[cfg(any(target_os = "illumos", any(target_os = "espidf", target_os = "exos")))]
+     unsafe {
+         ret_owned_fd(c::eventfd(initval, bitflags_bits!(flags)))
+     }

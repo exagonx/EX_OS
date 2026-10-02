@@ -384,7 +384,21 @@
  * gestore installato salta al gestore invece di uccidere; i segnali mandati
  * si consegnano all'uscita da una syscall. mmap onora PROT_NONE. Vedi
  * kernel/sched/segnali.c e paging_proteggi in kernel/mm/paging.c. */
-#define EXOS_VERSION    "0.227"
+/* 0.227 -> 0.228: SYS_FSTAT (108), fstat di un descrittore aperto (30 settembre
+ * 2026, claude-B, @EXILLA-NSS). fstat() dava st_ino = 0 e stat() l'identita'
+ * vera: SQLite, che le confronta, credeva il file spostato e non ci scriveva
+ * piu' («attempt to write a readonly database»). Vedi sys_fstat. */
+/* 0.228 -> 0.229: la pila del filo principale si riserva per 8 MB invece di
+ * 256 KB (1 ottobre 2026, claude-B, @EXILLA-GECKO): Gecko ne da' 512 a
+ * JavaScript. Vedi USER_STACK_MAX in kernel/include/sched.h. */
+/* 0.229 -> 0.230: lo spazio degli indirizzi e' del gruppo. I fili avevano
+ * ciascuno una COPIA di heap_end, ferma alla nascita: sbrk e mmap di un filo
+ * davano indirizzi gia' dati a un altro, e vi mappavano pagine azzerate sopra
+ * (la malloc di Gecko perdeva i suoi dati). Ora sbrk, mmap, munmap, shm, dma,
+ * fb e mmio lavorano sul heap_end del capogruppo, sotto un suo lucchetto.
+ * E le tabelle delle pagine dello spazio utente nascono sempre con PG_USER:
+ * una fascia di 4 MB aperta da una mappatura PROT_NONE restava del kernel. */
+#define EXOS_VERSION    "0.230"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -1,0 +1,47 @@
+--- a/widget/exos/nsAppShell.cpp
++++ b/widget/exos/nsAppShell.cpp
+@@ -0,0 +1,44 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsAppShell.h"
++
++nsAppShell::nsAppShell() : mPending(false) {
++  pthread_mutex_init(&mLock, nullptr);
++  pthread_cond_init(&mWake, nullptr);
++}
++
++nsAppShell::~nsAppShell() {
++  pthread_cond_destroy(&mWake);
++  pthread_mutex_destroy(&mLock);
++}
++
++nsresult nsAppShell::Init() { return nsBaseAppShell::Init(); }
++
++// Called from any thread: wake the main thread up.
++void nsAppShell::ScheduleNativeEventCallback() {
++  pthread_mutex_lock(&mLock);
++  mPending = true;
++  pthread_cond_signal(&mWake);
++  pthread_mutex_unlock(&mLock);
++}
++
++// Called on the main thread. With aMayWait it sleeps until someone schedules
++// a callback; the only native event there is, for now, is that one.
++bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
++  bool run;
++
++  pthread_mutex_lock(&mLock);
++  while (aMayWait && !mPending) {
++    pthread_cond_wait(&mWake, &mLock);
++  }
++  run = mPending;
++  mPending = false;
++  pthread_mutex_unlock(&mLock);
++
++  if (run) {
++    NativeEventCallback();
++  }
++  return run;
++}

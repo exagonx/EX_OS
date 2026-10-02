@@ -1,0 +1,30 @@
+--- a/python/mozbuild/mozbuild/frontend/emitter.py
++++ b/python/mozbuild/mozbuild/frontend/emitter.py
+@@ -838,6 +838,12 @@
+ 
+         soname = context.get("SONAME")
+ 
++        # EX-OS (Exilla): shared libraries are built static (see
++        # build/templates.mozbuild); their shared-object names mean nothing.
++        if not shared_lib and context.config.substs.get("OS_TARGET") == "EXOS":
++            shared_name = None
++            soname = None
++
+         lib_defines = context.get("LIBRARY_DEFINES")
+ 
+         wasm_lib = context.get("SANDBOXED_WASM_LIBRARY_NAME")
+@@ -949,6 +955,14 @@
+                     )
+ 
+             symbols_file = context.get("SYMBOLS_FILE")
++            # EX-OS (Exilla): shared libraries are built static (see
++            # build/templates.mozbuild); their export lists mean nothing there.
++            if (
++                symbols_file
++                and not shared_lib
++                and context.config.substs.get("OS_TARGET") == "EXOS"
++            ):
++                symbols_file = None
+             if symbols_file:
+                 if not shared_lib:
+                     raise SandboxValidationError(

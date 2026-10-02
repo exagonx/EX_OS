@@ -1,0 +1,12 @@
+--- a/config/external/nspr/libc/moz.build
++++ b/config/external/nspr/libc/moz.build
+@@ -2,7 +2,8 @@
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+-if CONFIG["MOZ_FOLD_LIBS"]:
++# EX-OS has no ELF shared libraries: NSPR is linked statically there.
++if CONFIG["MOZ_FOLD_LIBS"] or CONFIG["OS_TARGET"] == "EXOS":
+     Library("plc4")
+ else:
+     SharedLibrary("plc4")

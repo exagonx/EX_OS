@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/backend/libc/pipe/types.rs
++++ b/third_party/rust/rustix/src/backend/libc/pipe/types.rs
+@@ -18,7 +18,7 @@
+         /// `O_DIRECT`
+         #[cfg(not(any(
+             solarish,
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "haiku",
+             target_os = "horizon",
+             target_os = "hurd",

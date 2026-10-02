@@ -1,0 +1,17 @@
+--- a/security/nss/coreconf/config.gypi
++++ b/security/nss/coreconf/config.gypi
+@@ -416,6 +416,14 @@
+               'OPENBSD',
+             ],
+           }],
++          # EX-OS (Exilla): a POSIX system of its own; no hardware crypto
++          # paths (the base CPU is a Pentium MMX), flock that excludes nobody.
++          [ 'OS=="exos"', {
++            'defines': [
++              'EXOS',
++              'HAVE_BSD_FLOCK',
++            ],
++          }],
+           ['OS=="mac" or OS=="ios" or OS=="dragonfly" or OS=="freebsd" or OS=="netbsd" or OS=="openbsd"', {
+             'defines': [
+               'HAVE_BSD_FLOCK',

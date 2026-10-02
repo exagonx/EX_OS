@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/backend/libc/net/mod.rs
++++ b/third_party/rust/rustix/src/backend/libc/net/mod.rs
+@@ -2,7 +2,7 @@
+ pub(crate) mod ext;
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]

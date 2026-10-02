@@ -1,0 +1,29 @@
+--- a/third_party/rust/rustix/src/backend/libc/conv.rs
++++ b/third_party/rust/rustix/src/backend/libc/conv.rs
+@@ -3,7 +3,7 @@
+ //! for converting between rustix's types and libc types.
+ 
+ use super::c;
+-#[cfg(all(feature = "alloc", not(any(windows, target_os = "espidf"))))]
++#[cfg(all(feature = "alloc", not(any(windows, any(target_os = "espidf", target_os = "exos")))))]
+ use super::fd::IntoRawFd as _;
+ use super::fd::{AsRawFd as _, BorrowedFd, FromRawFd as _, LibcFd, OwnedFd, RawFd};
+ #[cfg(not(windows))]
+@@ -18,7 +18,7 @@
+ 
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -35,7 +35,7 @@
+ 
+ #[cfg(all(
+     feature = "alloc",
+-    not(any(windows, target_os = "espidf", target_os = "redox"))
++    not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "redox"))
+ ))]
+ #[inline]
+ pub(super) fn owned_fd(fd: OwnedFd) -> LibcFd {

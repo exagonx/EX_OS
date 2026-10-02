@@ -1,0 +1,20 @@
+--- a/third_party/rust/rustix/src/net/send_recv/mod.rs
++++ b/third_party/rust/rustix/src/net/send_recv/mod.rs
+@@ -13,7 +13,7 @@
+ 
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]
+@@ -21,7 +21,7 @@
+ 
+ #[cfg(not(any(
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita"
+ )))]

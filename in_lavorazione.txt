@@ -6103,3 +6103,53 @@ un programma: il primo lavoro e' tirarla fuori.
   EX-OS, tools/exilla/prova-js.sh 17/17 sul kernel 0.227. Diario in
   tools/exilla/leggimi.md. Prossimo: libc.h (Mutex nascosto a chi vuole solo
   POSIX), poi tappa 5 (NSPR e NSS).
+
+2026-09-30 15:21 claude-B — @EXOS-SOLO-POSIX FATTO: con -DEXOS_SOLO_POSIX libc.h nasconde
+  Mutex/Condizione/Semaforo (e le loro funzioni) al codice di terzi; Firefox
+  compila senza patch su js::Mutex (15 patch in tools/exilla/patch/).
+  prova-js 17/17, prova-pthread 15/15. Prossimo: tappa 5 (NSPR e NSS).
+
+2026-09-30 18:32 claude-B — @EXILLA-NSPR @EXILLA-NSS FATTO (tappa 5 di Exilla, kernel 0.228):
+  NSPR e NSS girano dentro EX-OS. prova-nspr 16/16; prova-nss: certutil fa il
+  database SQLite, una chiave RSA e un certificato, tstclnt parla TLS 1.3 con
+  l'host. Nel kernel SYS_FSTAT (108): fstat dava st_ino = 0 e SQLite credeva
+  il file spostato (prova-sqlite 15/15). Regressioni ok: prova-js, -pthread,
+  -socket. Diario in tools/exilla/leggimi.md. Prossimo: tappa 6 (Gecko
+  headless). ! Il kernel scrive «[ERROR] ENTROPIA: jitter ...» a ogni
+  getentropy(): NSS lo chiama spesso, la console se ne riempie.
+
+2026-10-02 15:40 claude-B — @EXILLA-GECKO FATTO (tappa 6 di Exilla, kernel 0.230): Firefox
+  disegna una pagina dentro EX-OS. `firefox --headless --screenshot` carica
+  un file locale e salva l'immagine (testo Liberation, grassetto, corsivo,
+  monospazio, riquadri colorati, una riga scritta dal JavaScript):
+  tools/exilla/prova-gecko.sh, l'immagine in tools/exilla/tappa6-schermata.png.
+  Diario in tools/exilla/leggimi.md.
+  ! PER TUTTI, nel kernel 0.230 (trovati da Firefox, valgono per ogni
+  programma con piu' fili):
+    - i fili avevano ciascuno una COPIA di heap_end: sbrk/mmap di fili diversi
+      si davano gli stessi indirizzi e ci mappavano sopra pagine azzerate.
+      Ora lo spazio degli indirizzi e' del gruppo (involucri *_gruppo);
+    - una tabella delle pagine nata da una mappatura PROT_NONE restava del
+      kernel: ora nello spazio utente la voce di directory ha sempre PG_USER;
+    - mmap PROT_NONE senza MAP_FIXED riserva soltanto (PG_RISERVA): le pagine
+      arrivano con mprotect.
+  Nella libc (libc.a): malloc con lucchetto e allineata a 16, arc4random,
+  shm_open con piu' descrittori sulla stessa zona e SHM_ANON (zona privata),
+  mmap di file per copia, getpid uguale in tutti i fili; per il software
+  portato EXOS_MALLOC_CONTROLLA=1 (zona rossa) e EXOS_MMAP_DICE=1.
+  ! IL FLOPPY HA 512 BYTE LIBERI: la prossima aggiunta a libc.so o ai
+  programmi del floppy deve prima fare spazio.
+  Regressioni ok: segnali, prova-cxx-fili 8/8, prova-shm-gecko 49/49,
+  pthread, socket, nspr, nss, sqlite, js, std, prova_avvio_login.
+  Prossimo: tappa 7 (widget/exos, la finestra vera in ExWin). Restano da
+  guardare: IndexedDB «UnknownError», lo user agent che dice Linux.
+
+2026-10-02 17:40 claude-B — @FLOPPY-SPAZIO FATTO (chiesto dall'utente): help e kbprova
+  passano dal floppy al CD, e con loro /boot/help.txt. Il floppy da 512 byte
+  liberi a 64 KB. Dal floppy `help` da' l'aiuto di riserva della shell (dice
+  dove sta quello vero); col CD montato trova /cdrom/bin/help, che legge
+  /cdrom/boot/help.txt. diagnostic.img e floppy-verboso.img si copiano dentro
+  kbprova da soli. ! build/bin/help e build/bin/kbprova sono stati tolti: ora
+  si costruiscono in build/bin-cd. Provato in QEMU. Anche: verifica-ascii
+  fermava make all (sei stringhe con « » o il trattino lungo, in tools/prove
+  di claude-A e in tools/exilla/prova-socket.c), sistemate.

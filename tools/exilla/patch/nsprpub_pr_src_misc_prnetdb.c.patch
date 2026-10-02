@@ -1,0 +1,17 @@
+--- a/nsprpub/pr/src/misc/prnetdb.c
++++ b/nsprpub/pr/src/misc/prnetdb.c
+@@ -2115,6 +2115,14 @@
+ #define FREEADDRINFO freeaddrinfo
+ #define GETNAMEINFO getnameinfo
+ 
++#elif defined(EXOS)
++
++/* EX-OS has getaddrinfo without IPv6. */
++typedef struct addrinfo PRADDRINFO;
++#define GETADDRINFO getaddrinfo
++#define FREEADDRINFO freeaddrinfo
++#define GETNAMEINFO getnameinfo
++
+ #elif defined(_PR_INET6_PROBE)
+ 
+ typedef struct addrinfo PRADDRINFO;

@@ -1,0 +1,29 @@
+--- a/third_party/rust/rustix/src/backend/libc/net/msghdr.rs
++++ b/third_party/rust/rustix/src/backend/libc/net/msghdr.rs
+@@ -13,7 +13,7 @@
+ 
+ /// Convert the value to the `msg_iovlen` field of a `msghdr` struct.
+ #[cfg(all(
+-    not(any(windows, target_os = "espidf", target_os = "wasi")),
++    not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "wasi")),
+     any(
+         target_os = "android",
+         target_os = "redox",
+@@ -31,7 +31,7 @@
+ 
+ /// Convert the value to the `msg_iovlen` field of a `msghdr` struct.
+ #[cfg(all(
+-    not(any(windows, target_os = "espidf", target_os = "vita", target_os = "wasi")),
++    not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")),
+     not(any(
+         target_os = "android",
+         target_os = "redox",
+@@ -74,7 +74,7 @@
+     target_os = "aix",
+     target_os = "cygwin",
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "haiku",
+     target_os = "hurd",

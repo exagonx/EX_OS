@@ -1,0 +1,11 @@
+--- a/gfx/layers/ipc/CompositorBridgeParent.cpp
++++ b/gfx/layers/ipc/CompositorBridgeParent.cpp
+@@ -60,7 +60,7 @@
+ #include "mozilla/mozalloc.h"                          // for operator new, etc
+ #include "mozilla/webrender/RenderThread.h"
+ #include "mozilla/webrender/WebRenderAPI.h"
+-#ifndef MOZ_WIDGET_UIKIT
++#if !defined(MOZ_WIDGET_UIKIT) && !defined(XP_EXOS)
+ #  include "mozilla/widget/HeadlessCompositorWidgetParent.h"
+ #endif
+ #include "nsCOMPtr.h"         // for already_AddRefed

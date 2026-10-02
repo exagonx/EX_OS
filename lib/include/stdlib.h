@@ -34,4 +34,11 @@
 
 #include "libc.h"
 
+/* Per il codice di terzi (EXOS_SOLO_POSIX), come glibc: <stdlib.h> porta con
+ * se' <sys/types.h>, e con lui gli interi a larghezza fissa. I programmi di
+ * EX-OS non lo vedono. */
+#ifdef EXOS_SOLO_POSIX
+#include <sys/types.h>
+#endif
+
 #endif /* EXOS_STDLIB_H */

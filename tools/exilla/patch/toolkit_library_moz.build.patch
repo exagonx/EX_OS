@@ -1,0 +1,22 @@
+--- a/toolkit/library/moz.build
++++ b/toolkit/library/moz.build
+@@ -413,9 +413,16 @@
+             CONFIG["DLL_PREFIX"],
+             CONFIG["DLL_SUFFIX"].lstrip(".").replace(".", "_"),
+         )
+-    GeneratedFile(
+-        "buildid.cpp", script="gen_buildid.py", inputs=["!build/%s.list" % libxul_list]
+-    )
++    if CONFIG["OS_TARGET"] == "EXOS":
++        # EX-OS (Exilla): libxul is a static library, with no linker list to
++        # depend on. The buildid is the one of the build that generated it.
++        GeneratedFile("buildid.cpp", script="gen_buildid.py", entry_point="without_list")
++    else:
++        GeneratedFile(
++            "buildid.cpp",
++            script="gen_buildid.py",
++            inputs=["!build/%s.list" % libxul_list],
++        )
+ 
+     EXPORTS += [
+         "buildid_section.h",

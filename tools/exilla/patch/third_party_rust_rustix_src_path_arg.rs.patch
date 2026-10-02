@@ -1,0 +1,20 @@
+--- a/third_party/rust/rustix/src/path/arg.rs
++++ b/third_party/rust/rustix/src/path/arg.rs
+@@ -1002,7 +1002,7 @@
+         #[cfg(all(
+             libc,
+             not(any(
+-                target_os = "espidf",
++                any(target_os = "espidf", target_os = "exos"),
+                 target_os = "horizon",
+                 target_os = "hurd",
+                 target_os = "vita",
+@@ -1013,7 +1013,7 @@
+         #[cfg(linux_raw)]
+         const LARGE_PATH_BUFFER_SIZE: usize = linux_raw_sys::general::PATH_MAX as usize;
+         #[cfg(any(
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "horizon",
+             target_os = "hurd",
+             target_os = "vita",

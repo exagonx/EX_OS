@@ -27,6 +27,19 @@ typedef uint32_t PTE;
 #define PG_ACCESSED     (1 << 5)
 #define PG_DIRTY        (1 << 6)
 #define PG_GLOBAL       (1 << 8)
+/* =============================================================================
+ * PG_RISERVA — una pagina RISERVATA ma senza memoria (kernel 0.230)
+ *
+ * Una PTE non presente con il bit 10 (uno dei tre che la CPU lascia al
+ * sistema; il 9 e' PG_SWAP, vedi swap.h). La mette una mmap anonima PROT_NONE:
+ * lo spazio e' del processo, ma nessuna pagina fisica c'e' ancora. Chi la
+ * tocca muore come per ogni PROT_NONE; mprotect le da' una pagina azzerata
+ * nel momento in cui la rende accessibile. Prima PROT_NONE allocava e azzerava
+ * davvero ogni pagina: Gecko ne riserva 1 GB per cercare un buco e lo rende
+ * subito, e su una macchina da 1,5 GB passava per lo swap.
+ * ========================================================================== */
+#define PG_RISERVA      (1u << 10)
+#define PTE_E_RISERVA(pte)  (((pte) & (PG_PRESENT | (1u << 9) | PG_RISERVA)) == PG_RISERVA)
 
 /* =============================================================================
  * FINESTRA DI RIMAPPATURA FISICA
@@ -67,6 +80,7 @@ int      paging_mappa_framebuffer(uint32_t phys, uint32_t byte);
 int      paging_map_page(PDE *pd, uint32_t virt, uint32_t phys, uint32_t flags);
 void     paging_unmap_page(PDE *pd, uint32_t virt);
 uint32_t paging_get_physical(PDE *pd, uint32_t virt);
+int      paging_riserva(PDE *pd, uint32_t virt);
 PDE     *paging_create_directory(void);
 void     paging_destroy_directory(PDE *pd);
 

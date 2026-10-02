@@ -1,0 +1,17 @@
+--- a/toolkit/library/build/dependentlibs.py
++++ b/toolkit/library/build/dependentlibs.py
+@@ -136,6 +136,14 @@
+     return deps
+ 
+ 
++def gen_empty_list(output):
++    # EX-OS (Exilla): no shared libraries (see moz.build).
++    output.write("")
++    with open(output.name + ".gtest", "w") as gtest_out:
++        gtest_out.write("")
++    return set()
++
++
+ def gen_list(output, lib):
+     libpaths = [os.path.join(substs["DIST"], "bin")]
+     binary_type = get_type(lib)

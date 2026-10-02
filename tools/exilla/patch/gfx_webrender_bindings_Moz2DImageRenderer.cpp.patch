@@ -1,0 +1,20 @@
+--- a/gfx/webrender_bindings/Moz2DImageRenderer.cpp
++++ b/gfx/webrender_bindings/Moz2DImageRenderer.cpp
+@@ -181,7 +181,7 @@
+ #elif defined(XP_WIN)
+     font.mUnscaledFont = new UnscaledFontDWrite(
+         reinterpret_cast<IDWriteFontFace*>(aHandle), nullptr);
+-#elif defined(ANDROID)
++#elif defined(ANDROID) || defined(XP_EXOS)
+     font.mUnscaledFont = new UnscaledFontFreeType(
+         reinterpret_cast<const char*>(aHandle), aIndex);
+ #else
+@@ -255,7 +255,7 @@
+       FontType::MAC;
+ #elif defined(XP_WIN)
+       FontType::DWRITE;
+-#elif defined(ANDROID)
++#elif defined(ANDROID) || defined(XP_EXOS)
+       FontType::FREETYPE;
+ #else
+       FontType::FONTCONFIG;

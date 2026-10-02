@@ -19,7 +19,6 @@ LOADER="build/stage2.bin"       # Stage 2 loader
 KERNEL="build/kernel.bin"       # Kernel binario
 KERNEL_CFG="boot/kernel.cfg"    # File di configurazione kernel
 KERNEL_TXT="boot/kernel.txt"    # Spiegazione delle voci del .cfg (non letto dal kernel)
-HELP_TXT="boot/help.txt"        # Il testo che /bin/help sfoglia
 
 # Dimensione floppy 1.44MB in byte (512 * 2880 settori)
 FLOPPY_SIZE=1474560
@@ -223,17 +222,9 @@ else
     log_warn "kernel.txt non trovato ($KERNEL_TXT) — /boot resta senza spiegazioni"
 fi
 
-# ! SENZA QUESTO FILE, `help` NON HA NIENTE DA DIRE. Il banner della shell
-# rimanda a `help` a ogni avvio: il testo va sul floppy insieme al
-# programma che lo legge, o il primo comando che si prova risponde che non
-# trova un file.
-if [ -f "$HELP_TXT" ]; then
-    log_info "Copia help.txt in /boot/..."
-    mcopy -i "$IMG" "$HELP_TXT" ::/boot/HELP.TXT
-    log_ok "HELP.TXT copiato in /boot/"
-else
-    log_warn "help.txt non trovato ($HELP_TXT) — help non avra' testo da mostrare"
-fi
+# ! help.txt NON VA SUL FLOPPY dal 2 ottobre 2026: lo legge solo /bin/help,
+# che sta sul CD insieme a lui (decisione dell'utente, il floppy era pieno).
+# Senza /bin/help la shell mostra il suo aiuto di riserva.
 
 # --- Copia eventuali driver già compilati -------------------------------------
 

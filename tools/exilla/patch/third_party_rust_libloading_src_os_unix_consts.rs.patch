@@ -1,0 +1,38 @@
+--- a/third_party/rust/libloading/src/os/unix/consts.rs
++++ b/third_party/rust/libloading/src/os/unix/consts.rs
+@@ -85,7 +85,7 @@
+             target_env = "newlib",
+ 
+             target_os = "fuchsia",
+-            target_os = "redox",
++            any(target_os = "redox", target_os = "exos"),
+             target_os = "nto",
+             target_os = "hurd",
+         ))] {
+@@ -124,7 +124,7 @@
+             target_env = "newlib",
+ 
+             target_os = "fuchsia",
+-            target_os = "redox",
++            any(target_os = "redox", target_os = "exos"),
+             target_os = "nto",
+             target_os = "hurd",
+         ))] {
+@@ -176,7 +176,7 @@
+             target_env = "newlib",
+ 
+             target_os = "fuchsia",
+-            target_os = "redox",
++            any(target_os = "redox", target_os = "exos"),
+             target_os = "nto",
+             target_os = "hurd",
+         ))] {
+@@ -222,7 +222,7 @@
+             target_env = "newlib",
+ 
+             target_os = "fuchsia",
+-            target_os = "redox",
++            any(target_os = "redox", target_os = "exos"),
+             target_os = "hurd",
+         ))] {
+             pub(super) const RTLD_LOCAL: c_int = 0;

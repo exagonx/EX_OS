@@ -1,0 +1,11 @@
+--- a/nsprpub/pr/src/misc/prtime.c
++++ b/nsprpub/pr/src/misc/prtime.c
+@@ -1780,7 +1780,7 @@
+          */
+ 
+ #if (__GLIBC__ >= 2) || defined(NETBSD) || defined(OPENBSD) || \
+-    defined(FREEBSD) || defined(DARWIN) || defined(ANDROID)
++    defined(FREEBSD) || defined(DARWIN) || defined(ANDROID) || defined(EXOS)
+         a.tm_zone = NULL;
+         a.tm_gmtoff = time->tm_params.tp_gmt_offset + time->tm_params.tp_dst_offset;
+ #endif

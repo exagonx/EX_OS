@@ -300,6 +300,27 @@ MODIFICHE = [
         "#endif\n"
         "}",
     ),
+    # ! I FILI DELLA libgcc COME RIFERIMENTI FORTI (30 settembre 2026, per
+    # Exilla, che ha costruito la libstdc++ con --enable-threads=posix).
+    # gthr-posix.h chiama pthread_* con riferimenti DEBOLI e crede che i
+    # fili ci siano se pthread_cancel esiste. Su EX-OS tutto si collega
+    # staticamente: un simbolo debole non tira dentro niente da libc.a, e
+    # pthread_cancel non c'e' — i lucchetti della libgcc non chiuderebbero
+    # niente. La libstdc++ fa gia' lo stesso (os/generic/os_defines.h).
+    (
+        "libgcc/gthr.h",
+        "#ifndef GTHREAD_USE_WEAK\n"
+        "#define GTHREAD_USE_WEAK 1\n"
+        "#endif",
+        "#ifdef __exos__\n"
+        "#undef GTHREAD_USE_WEAK\n"
+        "#define GTHREAD_USE_WEAK 0\n"
+        "#endif\n"
+        "\n"
+        "#ifndef GTHREAD_USE_WEAK\n"
+        "#define GTHREAD_USE_WEAK 1\n"
+        "#endif",
+    ),
     (
         "libstdc++-v3/configure",
         '  if test "x${with_newlib}" = "xyes"; then\n'
@@ -395,7 +416,13 @@ def applica(albero):
 
         testo = open(percorso, encoding="utf-8", errors="surrogateescape").read()
 
-        if nuovo in testo:
+        # ! I SEGNALI NEI COMMENTI SONO CAMBIATI (settembre 2026: il simbolo
+        # di avviso e' diventato "!"). Un albero modificato prima ha l'altro
+        # segno: senza normalizzare, qui la modifica sembrava assente, il
+        # testo di riferimento c'era ancora (le modifiche che AGGIUNGONO dopo
+        # di lui lo lasciano intatto) e si applicava una seconda volta —
+        # sarif-sink.cc e' uscito con due #else e un #endif, 30 settembre.
+        if nuovo.replace("\u26a0\ufe0f", "!") in testo.replace("\u26a0\ufe0f", "!"):
             print("  [gia' presente] %s" % rel)
             continue
 

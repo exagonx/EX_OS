@@ -1,0 +1,29 @@
+--- a/gfx/thebes/gfxPlatform.cpp
++++ b/gfx/thebes/gfxPlatform.cpp
+@@ -82,6 +82,8 @@
+ #  include "gfxPlatformGtk.h"
+ #elif defined(ANDROID)
+ #  include "gfxAndroidPlatform.h"
++#elif defined(XP_EXOS)
++#  include "gfxExosPlatform.h"
+ #endif
+ #if defined(MOZ_WIDGET_ANDROID)
+ #  include "mozilla/java/HardwareCodecCapabilityUtilsWrappers.h"
+@@ -775,6 +777,8 @@
+     sHasVariationFontSupport = gfxPlatformGtk::CheckVariationFontSupport();
+ #elif defined(ANDROID)
+     sHasVariationFontSupport = gfxAndroidPlatform::CheckVariationFontSupport();
++#elif defined(XP_EXOS)
++    sHasVariationFontSupport = gfxExosPlatform::CheckVariationFontSupport();
+ #else
+ #  error "No gfxPlatform implementation available"
+ #endif
+@@ -914,6 +918,8 @@
+   gPlatform = new gfxPlatformGtk;
+ #elif defined(ANDROID)
+   gPlatform = new gfxAndroidPlatform;
++#elif defined(XP_EXOS)
++  gPlatform = new gfxExosPlatform;
+ #else
+ #  error "No gfxPlatform implementation available"
+ #endif

@@ -1,0 +1,40 @@
+--- a/gfx/thebes/moz.build
++++ b/gfx/thebes/moz.build
+@@ -99,6 +99,24 @@
+     UNIFIED_SOURCES += [
+         "AndroidSystemFontIterator.cpp",
+     ]
++elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "exos":
++    # EX-OS (Exilla): FreeType fonts read from a directory, as on Android.
++    EXPORTS += [
++        "gfxExosPlatform.h",
++        "gfxFT2FontBase.h",
++        "gfxFT2Fonts.h",
++    ]
++    EXPORTS.mozilla.gfx += [
++        "PrintTargetPDF.h",
++    ]
++    SOURCES += [
++        "gfxExosPlatform.cpp",
++        "gfxFT2FontBase.cpp",
++        "gfxFT2FontList.cpp",
++        "gfxFT2Fonts.cpp",
++        "gfxFT2Utils.cpp",
++        "PrintTargetPDF.cpp",
++    ]
+ elif CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
+     EXPORTS += [
+         "gfxMacUtils.h",
+@@ -271,10 +289,10 @@
+     "/widget/gtk",
+ ]
+ 
+-if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("android", "gtk"):
++if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("android", "exos", "gtk"):
+     DEFINES["MOZ_ENABLE_FREETYPE"] = True
+ 
+-if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("android"):
++if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("android", "exos"):
+     CXXFLAGS += CONFIG["CAIRO_FT_CFLAGS"]
+ 
+ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":

@@ -269,6 +269,13 @@ def main():
             invio = not delay.startswith("n")
             if not invio:
                 delay = delay[1:]
+            # «cmd@~secondi»: aspetta che la shell torni al prompt, al piu'
+            # quei secondi (1 ottobre 2026, Exilla). Un programma che puo'
+            # metterci un quarto d'ora o cadere in due secondi — Firefox —
+            # con l'attesa fissa costava sempre il quarto d'ora.
+            al_prompt = delay.startswith("~")
+            if al_prompt:
+                delay = delay[1:]
             wait = float(delay) if delay else 4.0
             print("--- invio %r (attesa %.1fs%s)"
                   % (cmd, wait, "" if invio else ", senza Invio"))
@@ -293,6 +300,7 @@ def main():
             # un mouse MOSSO IN FRETTA, cento pacchetti al secondo, come una
             # mano vera. Serve a provare chi riceve i movimenti piu' veloce
             # di quanto riesca a disegnarli (Pennello, 28 settembre 2026).
+            prima = 0
             if cmd.startswith("monr:"):
                 mon.rapidi([z.strip() for z in cmd[5:].split(";")], passo=0.01)
             elif cmd.startswith("mon:"):
@@ -306,8 +314,20 @@ def main():
             elif cmd.startswith("key:"):
                 mon.tasti(cmd[4:].split(","))
             else:
+                with open(SER, "r", errors="replace") as fh:
+                    prima = fh.read().count("ex-os")
                 mon.typeline(cmd, invio)
-            time.sleep(wait)
+            if al_prompt:
+                fine = time.time() + wait
+                time.sleep(1.0)
+                while time.time() < fine:
+                    with open(SER, "r", errors="replace") as fh:
+                        if fh.read().count("ex-os") > prima:
+                            break
+                    time.sleep(1.0)
+                time.sleep(1.0)
+            else:
+                time.sleep(wait)
 
         print("=== info pic ===")
         print(mon.cmd("info pic", settle=0.6))

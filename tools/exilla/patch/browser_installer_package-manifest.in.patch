@@ -1,0 +1,65 @@
+--- a/browser/installer/package-manifest.in
++++ b/browser/installer/package-manifest.in
+@@ -70,6 +70,8 @@
+ #ifndef MOZ_STATIC_JS
+ @BINPATH@/@DLL_PREFIX@mozjs@DLL_SUFFIX@
+ #endif
++; EX-OS (Exilla): every library is linked into the firefox program.
++#ifndef XP_EXOS
+ #ifndef MOZ_SYSTEM_NSPR
+ #ifndef MOZ_FOLD_LIBS
+ @BINPATH@/@DLL_PREFIX@nspr4@DLL_SUFFIX@
+@@ -82,6 +84,7 @@
+ #else
+ @BINPATH@/@DLL_PREFIX@xul@DLL_SUFFIX@
+ #endif
++#endif
+ #ifdef XP_MACOSX
+ @BINPATH@/@MOZ_CHILD_PROCESS_NAME@.app/
+ @BINPATH@/@MOZ_EME_PROCESS_NAME@.app/
+@@ -171,6 +174,8 @@
+ #endif
+ #endif
+ @RESPATH@/platform.ini
++; EX-OS (Exilla): every library is linked into the firefox program.
++#ifndef XP_EXOS
+ #ifndef MOZ_FOLD_LIBS
+ @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
+ #endif
+@@ -179,6 +184,7 @@
+ @BINPATH@/@DLL_PREFIX@mozavutil@DLL_SUFFIX@
+ @BINPATH@/@DLL_PREFIX@mozavcodec@DLL_SUFFIX@
+ @BINPATH@/@DLL_PREFIX@mozinference@DLL_SUFFIX@
++#endif
+ 
+ ; [Components]
+ #ifdef ACCESSIBILITY
+@@ -347,6 +353,8 @@
+ ; NSS libraries are signed in the staging directory,
+ ; meaning their .chk files are created there directly.
+ ;
++; EX-OS (Exilla): every library is linked into the firefox program.
++#ifndef XP_EXOS
+ #ifndef MOZ_SYSTEM_NSS
+ #if defined(XP_LINUX) && !defined(ANDROID)
+ @BINPATH@/@DLL_PREFIX@freeblpriv3@DLL_SUFFIX@
+@@ -364,6 +372,7 @@
+ #endif
+ @BINPATH@/@DLL_PREFIX@softokn3@DLL_SUFFIX@
+ #endif
++#endif
+ @RESPATH@/chrome/pippki@JAREXT@
+ @RESPATH@/chrome/pippki.manifest
+ 
+@@ -441,8 +450,11 @@
+ #endif
+ 
+ ; media
++; EX-OS (Exilla): every library is linked into the firefox program.
++#ifndef XP_EXOS
+ @RESPATH@/gmp-clearkey/0.1/@DLL_PREFIX@clearkey@DLL_SUFFIX@
+ @RESPATH@/gmp-clearkey/0.1/manifest.json
++#endif
+ #if defined(MOZ_WMF_CDM) && defined(ENABLE_TESTS)
+ @BINPATH@/@DLL_PREFIX@wmfclearkey@DLL_SUFFIX@
+ #endif

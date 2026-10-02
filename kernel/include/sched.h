@@ -130,7 +130,13 @@ typedef struct IpcMessage {
  * byte sotto ESP prima di aggiornarlo, ed e' il caso peggiore fra le
  * istruzioni che toccano memoria sotto il puntatore di stack.
  * ============================================================================= */
-#define USER_STACK_MAX      262144  /* 256KB riservati (spazio, non RAM) */
+/* ! 8 MB DAL 1 OTTOBRE 2026 (0.229, tappa 6 di Exilla), come Linux. Erano
+ * 256 KB: bastavano ai programmi di casa, ma Gecko da' a JavaScript 512 KB di
+ * pila sul filo principale (XPCJSContext.cpp), e una ricorsione profonda
+ * sarebbe uscita dalla riserva — un processo ucciso invece di un
+ * «too much recursion». Sono INDIRIZZI: la RAM e' solo quella toccata, e lo
+ * heap perde meno di 8 MB dei suoi quasi tre giga. */
+#define USER_STACK_MAX      (8u * 1024u * 1024u)  /* riservati (spazio, non RAM) */
 
 /* =============================================================================
  * LA BANDA DEGLI STACK DEI FILI
@@ -771,6 +777,15 @@ typedef struct Process {
         uint32_t    pagine;
     }               shm[SHM_PER_PROC];
 
+    /* =========================================================================
+     * spazio_occupato — IL LUCCHETTO DELLO SPAZIO DEGLI INDIRIZZI (0.230)
+     *
+     * Conta solo quello del CAPOGRUPPO: vedi proc_spazio_prendi in sched.c.
+     * In fondo alla struttura apposta, per non spostare nessun campo che
+     * qualcuno legga per scostamento.
+     * ========================================================================= */
+    volatile uint32_t spazio_occupato;
+
 } Process;
 
 /* =============================================================================
@@ -820,6 +835,9 @@ int      proc_filo_stacca(uint32_t tid);
 extern Process *g_init_task;  /* task reaper (PID 2), adotta gli orfani */
 Process *proc_get_by_pid(uint32_t pid);
 Process *proc_get_current(void);
+Process *proc_spazio_capo(Process *p);
+void     proc_spazio_prendi(Process *capo);
+void     proc_spazio_lascia(Process *capo);
 extern Process g_process_pool[MAX_PROCESSES];   /* usato da ipc.c per il registro nomi */
 
 /* Scheduler */

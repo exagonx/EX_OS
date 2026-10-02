@@ -1,0 +1,146 @@
+--- a/third_party/rust/socket2/src/socket.rs
++++ b/third_party/rust/socket2/src/socket.rs
+@@ -784,7 +784,7 @@
+             target_os = "linux",
+             target_os = "netbsd",
+             target_os = "openbsd",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "vita",
+             target_os = "cygwin",
+         ))
+@@ -834,7 +834,7 @@
+             target_os = "linux",
+             target_os = "netbsd",
+             target_os = "openbsd",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "vita",
+             target_os = "cygwin",
+         ))
+@@ -1211,7 +1211,7 @@
+     /// [`set_header_included_v4`]: Socket::set_header_included_v4
+     #[cfg(all(
+         feature = "all",
+-        not(any(target_os = "redox", target_os = "espidf", target_os = "wasi"))
++        not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))
+     ))]
+     pub fn header_included_v4(&self) -> io::Result<bool> {
+         unsafe {
+@@ -1237,7 +1237,7 @@
+     )]
+     #[cfg(all(
+         feature = "all",
+-        not(any(target_os = "redox", target_os = "espidf", target_os = "wasi"))
++        not(any(target_os = "redox", any(target_os = "espidf", target_os = "exos"), target_os = "wasi"))
+     ))]
+     pub fn set_header_included_v4(&self, included: bool) -> io::Result<()> {
+         unsafe {
+@@ -1340,7 +1340,7 @@
+         target_os = "redox",
+         target_os = "solaris",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+@@ -1375,7 +1375,7 @@
+         target_os = "redox",
+         target_os = "solaris",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+@@ -1412,7 +1412,7 @@
+         target_os = "redox",
+         target_os = "fuchsia",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "wasi",
+     )))]
+@@ -1451,7 +1451,7 @@
+         target_os = "redox",
+         target_os = "fuchsia",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "wasi",
+     )))]
+@@ -1673,7 +1673,7 @@
+         target_os = "solaris",
+         target_os = "haiku",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+@@ -1706,7 +1706,7 @@
+         target_os = "solaris",
+         target_os = "haiku",
+         target_os = "nto",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+@@ -1748,7 +1748,7 @@
+         feature = "all",
+         not(any(
+             target_os = "redox",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "openbsd",
+             target_os = "freebsd",
+             target_os = "dragonfly",
+@@ -1779,7 +1779,7 @@
+         feature = "all",
+         not(any(
+             target_os = "redox",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "openbsd",
+             target_os = "freebsd",
+             target_os = "dragonfly",
+@@ -2081,7 +2081,7 @@
+         target_os = "solaris",
+         target_os = "haiku",
+         target_os = "hurd",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "wasi",
+     )))]
+@@ -2107,7 +2107,7 @@
+         target_os = "solaris",
+         target_os = "haiku",
+         target_os = "hurd",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "vita",
+         target_os = "wasi",
+     )))]
+@@ -2140,7 +2140,7 @@
+             target_os = "solaris",
+             target_os = "haiku",
+             target_os = "hurd",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "vita",
+             target_os = "cygwin",
+             target_os = "wasi",
+@@ -2170,7 +2170,7 @@
+             target_os = "solaris",
+             target_os = "haiku",
+             target_os = "hurd",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "vita",
+             target_os = "cygwin",
+             target_os = "wasi",

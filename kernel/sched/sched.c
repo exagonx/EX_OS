@@ -1948,6 +1948,56 @@ Process *proc_get_by_pid(uint32_t pid)
 }
 
 /* =============================================================================
+ * LO SPAZIO DEGLI INDIRIZZI E' DEL GRUPPO (kernel 0.230, 2 ottobre 2026)
+ *
+ * I fili di un processo hanno la stessa page directory, quindi lo stesso
+ * spazio degli indirizzi; ma heap_start/heap_end/heap_max stanno nel PCB, e
+ * proc_filo_crea li COPIAVA. Da li' ogni filo aveva il suo heap_end, fermo al
+ * momento della nascita. Il primo filo che chiamava sbrk (la malloc) o mmap
+ * riceveva indirizzi che un altro filo aveva gia' avuto, e paging_map_page vi
+ * metteva sopra pagine nuove AZZERATE: i dati della malloc sparivano. Gecko
+ * cadeva dentro malloc seguendo un `succ` fatto di testo, o trovava zeri in
+ * mezzo a un blocco.
+ *
+ * Adesso chi tocca lo spazio (sbrk, mmap, munmap, shm, dma, fb, mmio: gli
+ * involucri *_gruppo in syscall_impl.c) prende il lucchetto del capogruppo,
+ * lavora sul heap_end del capogruppo e lo riporta li'. Il lucchetto, e non
+ * le interruzioni spente, perche' quelle syscall allocano e azzerano pagine
+ * e possono chiedere spazio allo swap: lavoro lungo che deve poter essere
+ * interrotto. Chi lo trova occupato cede la CPU e riprova.
+ * ============================================================================= */
+Process *proc_spazio_capo(Process *p)
+{
+    Process *capo;
+
+    if (p == NULL || p->tgid == 0 || p->tgid == p->pid) return p;
+    capo = proc_get_by_pid(p->tgid);
+    /* Il capogruppo e' sparito (non dovrebbe: il gruppo muore con lui): si
+     * resta sul filo, come prima di questa correzione. */
+    return capo ? capo : p;
+}
+
+void proc_spazio_prendi(Process *capo)
+{
+    for (;;) {
+        uint32_t flag = read_eflags();
+        interrupts_disable();
+        if (!capo->spazio_occupato) {
+            capo->spazio_occupato = 1;
+            if (flag & 0x200u) interrupts_enable();
+            return;
+        }
+        if (flag & 0x200u) interrupts_enable();
+        sched_yield();
+    }
+}
+
+void proc_spazio_lascia(Process *capo)
+{
+    capo->spazio_occupato = 0;
+}
+
+/* =============================================================================
  * sched_dump — Stampa stato scheduler (debug)
  * ============================================================================= */
 void sched_dump(void)

@@ -1,0 +1,26 @@
+--- a/browser/components/shell/HeadlessShell.sys.mjs
++++ b/browser/components/shell/HeadlessShell.sys.mjs
+@@ -90,13 +90,21 @@
+ 
+     let doc = windowlessBrowser.document;
+     let browser = doc.createXULElement("browser");
+-    browser.setAttribute("remote", "true");
++    // A remote browser needs a content process. Where there is none (e10s
++    // disabled, as on EX-OS, where Exilla is a single process) the page is
++    // loaded in this process: frameLoader.remoteTab would otherwise be null.
++    let remote = Services.appinfo.browserTabsRemoteAutostart;
++    if (remote) {
++      browser.setAttribute("remote", "true");
++    }
+     browser.setAttribute("type", "content");
+     browser.style.width = `${contentWidth}px`;
+     browser.style.minWidth = `${contentWidth}px`;
+     browser.style.height = `${contentHeight}px`;
+     browser.style.minHeight = `${contentHeight}px`;
+-    browser.setAttribute("maychangeremoteness", "true");
++    if (remote) {
++      browser.setAttribute("maychangeremoteness", "true");
++    }
+     // Suppress initial about:blank so it can't race any explicit load below.
+     browser.setAttribute("nodefaultsrc", "true");
+     doc.documentElement.appendChild(browser);
