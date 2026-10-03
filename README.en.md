@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.234
+**Version:** 0.235
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -120,9 +120,13 @@ page and saves what it drew (text, bold, italic, coloured boxes, a line
 written by JavaScript). Diary and picture in `tools/exilla/leggimi.md`. The
 seventh stage — a real window in ExWin — is under way.
 
-### Kernel 0.228–0.234: what Firefox found
+### Kernel 0.228–0.235: what Firefox found
 
 **tested in QEMU** — fixes that matter to every program with threads:
+- **0.235**: ext2 reads and writes the contiguous blocks of a file in one
+  command, and the sector cache (from 64 KB to 1 MB) keeps the metadata
+  instead of the data: Firefox opens its window in 65 seconds instead of 75
+  in QEMU.
 - **0.234**: `mmap` with `MAP_FIXED` over pages already mapped frees them
   first (they were lost): Firefox's JavaScript JIT needs it.
 - **0.233**: `ftruncate` on an open file and 256 open files in the system

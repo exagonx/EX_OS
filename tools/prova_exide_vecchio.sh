@@ -103,7 +103,33 @@ for f in finestra.c finestra.c.prima-inglese finestra.h finestra_gen.c finestra.
     "$DEBUGFS" -R "dump vecchio/src/$f $D/dopo/$f" "$OFF" > /dev/null 2>&1
 done
 
-echo "=== 3. i file dopo il salvataggio ==="
+echo "=== 3. l'anteprima: il pulsante e' un pulsante, la casella una casella ==="
+# ! IL 3 OTTOBRE 2026 SI ERANO VISTI TUTTI UGUALI: il disegnatore confrontava
+# le classi coi nomi italiani, e dopo la traduzione ogni controllo ricadeva nel
+# disegno di riserva, un rettangolo bianco come la casella di testo. Qui si
+# guarda il colore dentro i due controlli del progetto (pulsante a 20,20 e
+# casella a 20,60 della maschera, che exide mette in alto a sinistra).
+quota() {
+    python3 - "$@" <<'FINEPY'
+import sys
+f, x0, y0, x1, y1, r, g, b = sys.argv[1], *map(int, sys.argv[2:])
+d = open(f, "rb").read().split(b"\n", 3)
+w = int(d[1].split()[0]); px = d[3]
+tot = sum(1 for y in range(y0, y1) for x in range(x0, x1)
+          if px[(y * w + x) * 3:(y * w + x) * 3 + 3] == bytes((r, g, b)))
+print(tot * 100 // ((x1 - x0) * (y1 - y0)))
+FINEPY
+}
+if [ -f "$D/2-aperto.ppm" ]; then
+    g=$(quota "$D/2-aperto.ppm" 200 122 280 140 192 192 192)
+    w=$(quota "$D/2-aperto.ppm" 240 162 330 178 255 255 255)
+    [ "${g:-0}" -ge 50 ] && ok "il pulsante e' grigio ($g%)" || no "il pulsante non e' disegnato da pulsante ($g% grigio)"
+    [ "${w:-0}" -ge 50 ] && ok "la casella di testo e' bianca ($w%)" || no "la casella di testo non e' bianca ($w%)"
+else
+    no "manca la fotografia di exide"
+fi
+
+echo "=== 4. i file dopo il salvataggio ==="
 C="$D/dopo/finestra.c"
 if [ -s "$C" ]; then
     grep -q "void Pulsante1_Click(void)" "$C" && ok "l'handler si chiama Pulsante1_Click" \
@@ -125,7 +151,7 @@ grep -q "h_CasellaTesto1" "$H" 2>/dev/null && ok "finestra.h tiene l'alias h_Cas
 grep -q "finestra_crea" "$H" 2>/dev/null && ok "finestra.h tiene l'alias finestra_crea" \
                                          || no "finestra.h senza l'alias finestra_crea"
 
-echo "=== 4. compila con gli header nuovi ==="
+echo "=== 5. compila con gli header nuovi ==="
 for f in finestra.c finestra_gen.c; do
     if [ -s "$D/dopo/$f" ] && gcc -m32 -ffreestanding -fno-builtin -std=c11 -Wall -nostdlib \
             -I "$D/dopo" -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd \

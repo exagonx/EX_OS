@@ -101,6 +101,15 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Quattro giochi: EXKlondike, EXSpider, EXMajong, EXGO
+
+**da testare sul ferro, provato in QEMU** — nel menu Avvio > Giochi: il
+solitario classico, lo Spider a uno, due o quattro semi, il solitario con le
+tessere del mahjong (ogni partita si puo' vincere) e il go su 9x9, 13x13 o
+19x19 contro il computer o in due. Carte, tessere e pietre sono disegnate dal
+programma, ciascuno ha la sua icona, e le scelte e le partite vinte si
+ricordano nel profilo.
+
 ### L'API di ExWin e' in inglese, ed exide e' coerente
 
 **da testare sul ferro, provato in QEMU** — funzioni, messaggi, stili e tipi

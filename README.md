@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.234
+**Versione:** 0.235
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -139,9 +139,12 @@ riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
 `tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
 in corso.
 
-### Kernel 0.228–0.234: quello che Firefox ha trovato
+### Kernel 0.228–0.235: quello che Firefox ha trovato
 
 **testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
+- **0.235**: ext2 legge e scrive i blocchi contigui di un file in un comando
+  solo, e la cache dei settori (da 64 KB a 1 MB) tiene i metadati invece dei
+  dati: Firefox apre la finestra in 65 secondi invece di 75 in QEMU.
 - **0.234**: `mmap` con `MAP_FIXED` sopra pagine gia' mappate le libera
   prima (restavano perse): serve al JIT di JavaScript di Firefox.
 - **0.233**: `ftruncate` su un file aperto e 256 file aperti nel sistema

@@ -411,7 +411,12 @@
  * pagine fisiche che sostituisce (restavano allocate per sempre), e con
  * PROT_NONE riserva soltanto: e' come il JIT di SpiderMonkey impegna e
  * restituisce la sua memoria. */
-#define EXOS_VERSION    "0.234"
+/* 0.234 -> 0.235: ext2 legge e scrive i blocchi contigui di un file in un
+ * comando solo, i dati dei file non passano piu' dalla cache dei settori, e
+ * la cache (da 64 KB a 1 MB, con tabella hash) tiene i metadati; una write()
+ * che non cambia lunghezza, blocchi o data non riscrive inode e superblocco.
+ * Firefox aspettava il disco. */
+#define EXOS_VERSION    "0.235"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -219,6 +219,22 @@ static int leggi_blocco(Ext2Mount *m, uint32_t n, void *dst)
                     m->sett_per_blocco, dst);
 }
 
+/* ! I DATI DI UN FILE A CORSE (0.235, @EXILLA-DISCO): n blocchi consecutivi
+ * sul disco in un solo comando, e senza passare dalla cache dei settori.
+ * Firefox carica i suoi 275 MB e i suoi archivi un blocco da 4 KB per
+ * comando ATA, ognuno con la sua attesa: le corse ne fanno uno ogni 256 KB. */
+#define CORSA_MAX 64u
+
+static int leggi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst)
+{
+    if (n == 0 || n + quanti > m->n_blocchi) {
+        klog(LOG_ERROR, "EXT2: corsa %u+%u fuori dal volume (%u)", n, quanti, m->n_blocchi);
+        return -1;
+    }
+    return blk_read_diretto(m->blkdev, (uint64_t)n * m->sett_per_blocco,
+                            quanti * m->sett_per_blocco, dst);
+}
+
 static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
 {
     if (n == 0 || n >= m->n_blocchi) {
@@ -1380,6 +1396,16 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
              * Leggere il blocco 0 restituirebbe il record di avvio del
              * volume dentro il file. */
             for (k = 0; k < q; k++) dst[letti + k] = 0;
+        } else if (in == 0 && q == m->dim_blocco) {
+            /* Blocchi interi: quanti ne seguono contigui sul disco, e una
+             * lettura sola dritta nel buffer di chi chiede. */
+            uint32_t n = 1, max = (size - letti) / m->dim_blocco;
+
+            if (max > CORSA_MAX) max = CORSA_MAX;
+            while (n < max && mappa_blocco(m, mnt, inode, log + n) == blk + n) n++;
+            if (leggi_corsa(m, blk, n, dst + letti) != 0) break;
+            letti += n * m->dim_blocco;
+            continue;
         } else {
             if (leggi_blocco(m, blk, b_dati) != 0) break;
             for (k = 0; k < q; k++) dst[letti + k] = b_dati[in + k];
@@ -2062,6 +2088,28 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
         blk = mappa_o_alloca(m, mnt, inode, log, gruppo, &charge);
         if (blk == 0) break;                    /* volume pieno */
 
+        /* Blocchi interi contigui sul disco: un comando solo, dritti dal
+         * buffer di chi scrive (0.235). */
+        if (in == 0 && q == m->dim_blocco) {
+            uint32_t n = 1, max = (size - scritti) / m->dim_blocco;
+
+            if (max > CORSA_MAX) max = CORSA_MAX;
+            while (n < max) {
+                uint32_t b2 = mappa_o_alloca(m, mnt, inode, log + n, gruppo, &charge);
+                if (b2 != blk + n) {
+                    /* Allocato (o gia' li') ma non contiguo: lo scrivera'
+                     * il giro dopo, che lo ritrova nella mappa. */
+                    break;
+                }
+                n++;
+            }
+            if (g_ind_mnt >= 0 && g_ind_num >= blk && g_ind_num < blk + n) g_ind_mnt = -1;
+            if (blk_write(m->blkdev, (uint64_t)blk * m->sett_per_blocco,
+                          n * m->sett_per_blocco, src + scritti) != 0) break;
+            scritti += n * m->dim_blocco;
+            continue;
+        }
+
         /* Lettura-modifica-scrittura solo se si scrive un pezzo di
          * blocco. Un blocco intero si sovrascrive e basta: rileggerlo
          * prima sarebbe una lettura buttata su ogni blocco di ogni file. */
@@ -2078,6 +2126,19 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
     }
 
     if (scritti == 0) return -1;
+
+    {
+        uint32_t prima_mtime = le32(inode + 16), adesso = unix_ora_corrente();
+        int      cambiato = charge != 0 || offset + scritti > dim ||
+                            (adesso != 0 && adesso != prima_mtime);
+
+        /* ! L'INODE E IL SUPERBLOCCO SI RISCRIVONO SOLO SE SONO CAMBIATI
+         * (0.235): erano due scritture in piu' per OGNI write(), e una
+         * pagina di SQLite riscritta al suo posto non tocca ne' la lunghezza
+         * ne' i blocchi liberi. La data si guarda al secondo, come la tiene
+         * ext2. */
+        if (!cambiato) return (int)scritti;
+    }
 
     if (offset + scritti > dim) p32(inode + 4, offset + scritti);
     p32(inode + 28, le32(inode + 28) + charge * (m->dim_blocco / 512u));
@@ -2097,7 +2158,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
     }
 
     if (scrivi_inode(m, num, inode) != 0) return -1;
-    if (super_aggiorna(m) != 0) return -1;
+    if (charge && super_aggiorna(m) != 0) return -1;
 
     return (int)scritti;
 }

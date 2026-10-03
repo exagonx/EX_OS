@@ -532,7 +532,7 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
     int x = ox + c->x, y = oy + c->y;
     const char *cl = g_strum[c->tipo].classe;
 
-    if (strcmp(cl, "pulsante") == 0) {
+    if (strcmp(cl, "button") == 0) {
         int tx = x + 6;
 
         ex_fill_rect(g_f, x, y, c->w, c->h, EX_GRAY);
@@ -552,7 +552,7 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
         }
 
         ex_draw_text(g_f, tx, y + (c->h - 16) / 2, c->testo, EX_BLACK);
-    } else if (strcmp(cl, "etichetta") == 0) {
+    } else if (strcmp(cl, "label") == 0) {
         if (icona_ctrl(c)) {
             int lato = c->h < 8 ? 8 : (c->h > 32 ? 32 : c->h);
 
@@ -561,7 +561,7 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
         } else {
             ex_draw_text(g_f, x, y, c->testo, EX_BLACK);
         }
-    } else if (strcmp(cl, "immagine") == 0) {
+    } else if (strcmp(cl, "image") == 0) {
         /* ! QUADRATA E CENTRATA, come la disegnera' il toolkit: un disegnatore
          * che la mostrasse allargata al riquadro mentirebbe sul risultato. E
          * senza icona si vede il riquadro tratteggiato — un'immagine vuota
@@ -574,7 +574,7 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
                              (unsigned int)lato, EX_GRAY);
         else
             ex_draw_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
-    } else if (strcmp(cl, "testo") == 0 || strcmp(cl, "combo") == 0) {
+    } else if (strcmp(cl, "textbox") == 0 || strcmp(cl, "combo") == 0) {
         ex_fill_rect(g_f, x, y, c->w, c->h, EX_WHITE);
         ex_draw_sunken(g_f, x, y, c->w, c->h);
         ex_draw_text(g_f, x + 3, y + (c->h - 16) / 2, c->testo, EX_BLACK);
@@ -582,7 +582,7 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
             ex_fill_rect(g_f, x + c->w - 19, y + 2, 17, c->h - 4, EX_GRAY);
             ex_draw_raised(g_f, x + c->w - 19, y + 2, 17, c->h - 4);
         }
-    } else if (strcmp(cl, "spunta") == 0) {
+    } else if (strcmp(cl, "checkbox") == 0) {
         ex_fill_rect(g_f, x, y + (c->h - 13) / 2, 13, 13, EX_WHITE);
         ex_draw_sunken(g_f, x, y + (c->h - 13) / 2, 13, 13);
         ex_draw_text(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_BLACK);
@@ -594,19 +594,19 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
         cerchio(x + 6, y + c->h / 2, 6, EX_DARK_GRAY);
         cerchio(x + 6, y + c->h / 2, 5, EX_WHITE);
         ex_draw_text(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_BLACK);
-    } else if (strcmp(cl, "riquadro") == 0) {
+    } else if (strcmp(cl, "frame") == 0) {
         ex_draw_sunken(g_f, x, y + 8, c->w, c->h - 8);
         ex_draw_raised(g_f, x + 1, y + 9, c->w - 2, c->h - 10);
         ex_fill_rect(g_f, x + 6, y + 8, (int)strlen(c->testo) * 8 + 6, 2, EX_GRAY);
         ex_draw_text(g_f, x + 9, y, c->testo, EX_BLACK);
-    } else if (strcmp(cl, "separatore") == 0) {
+    } else if (strcmp(cl, "separator") == 0) {
         ex_fill_rect(g_f, x, y, c->w, 1, EX_SHADOW);
         ex_fill_rect(g_f, x, y + 1, c->w, 1, EX_HIGHLIGHT);
-    } else if (strcmp(cl, "intestazione") == 0) {
+    } else if (strcmp(cl, "header") == 0) {
         ex_fill_rect(g_f, x, y, c->w, c->h, EX_BLUE);
         ex_draw_raised(g_f, x, y, c->w, c->h);
         ex_draw_text(g_f, x + 6, y + (c->h - 16) / 2, c->testo, EX_WHITE);
-    } else if (strcmp(cl, "scorrimento") == 0) {
+    } else if (strcmp(cl, "scrollbar") == 0) {
         ex_fill_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
         ex_fill_rect(g_f, x, y, c->w, 16, EX_GRAY);
         ex_draw_raised(g_f, x, y, c->w, 16);
@@ -736,8 +736,8 @@ static int prende_icona(int tipo)
 {
     const char *cl = g_strum[tipo].classe;
 
-    return strcmp(cl, "pulsante") == 0 || strcmp(cl, "etichetta") == 0 ||
-           strcmp(cl, "immagine") == 0;
+    return strcmp(cl, "button") == 0 || strcmp(cl, "label") == 0 ||
+           strcmp(cl, "image") == 0;
 }
 
 static void prop_valore(int k, char *out, unsigned int max)
@@ -1126,7 +1126,7 @@ static void impostazioni_scrivi(void)
  * LE ICONE DEL PANNELLO DEGLI STRUMENTI
  *
  * ! IL NOME DEL FILE E' LA CLASSE, e non una tabella scritta qui dentro:
- * /exwin/icon/strumenti/pulsante.ico sta davanti alla voce «Pulsante»,
+ * /exwin/icon/strumenti/button.ico (o pulsante.ico) sta davanti alla voce «Pulsante»,
  * lista.ico davanti a «Lista». Cosi' aggiungere l'icona di uno strumento e'
  * mettere un file con il nome giusto — non ricompilare exide — ed e' la stessa
  * regola per cui applicazioni.txt nomina le icone per percorso invece di
@@ -1146,18 +1146,23 @@ static ExIcon icona_strumento(int tipo)
         "/exwin/icon/strumenti/",
         "/cdrom/exwin/icon/strumenti/"
     };
+    /* Il nome della classe in inglese, poi quello di prima del 3 ottobre
+     * 2026: le icone gia' messe come pulsante.ico continuano a valere. */
+    const char *nomi[2];
     char p[PERC_MAX];
-    int  d;
+    int  d, k;
 
-    for (d = 0; d < 2; d++) {
-        ExIcon ic;
+    nomi[0] = g_strum[tipo].classe;
+    nomi[1] = classe_di_prima(tipo);
+    for (k = 0; k < 2; k++)
+        for (d = 0; d < 2; d++) {
+            ExIcon ic;
 
-        if (snprintf(p, sizeof(p), "%s%s.ico", dove[d],
-                     g_strum[tipo].classe) >= (int)sizeof(p)) continue;
-
-        ic = ex_icon_open(p);
-        if (ic) return ic;
-    }
+            if (snprintf(p, sizeof(p), "%s%s.ico", dove[d], nomi[k]) >= (int)sizeof(p))
+                continue;
+            ic = ex_icon_open(p);
+            if (ic) return ic;
+        }
     return 0;
 }
 

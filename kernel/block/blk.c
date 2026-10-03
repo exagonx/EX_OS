@@ -17,6 +17,7 @@
 #include "atapi.h"
 #include "mbr.h"
 #include "fat12.h"
+#include "pmm.h"
 #include "syscall.h"    /* ERR() e i codici errno, per blk_rescan */
 
 /* g_n e' il MASSIMO INDICE MAI USATO, non il numero di dispositivi vivi.
@@ -537,57 +538,114 @@ static int cd_read(const BlkDev *b, uint64_t lba, uint32_t n, uint8_t *p)
  * partizioni dello stesso disco hanno LBA relativi che si sovrappongono, e
  * usare quelli darebbe a una i settori dell'altra.
  * ============================================================================= */
-#define CACHE_VOCI   128        /* 128 x 512 B = 64 KB */
+#define CACHE_VOCI   2048       /* 2048 x 512 B = 1 MB, fuori dal BSS */
+#define CACHE_SECCHI 1024       /* le liste della tabella hash */
 #define CACHE_MAX_N  8          /* fino a 4 KB per richiesta */
 
+/* =============================================================================
+ * ! DA 64 KB A 1 MB, E FUORI DAL BSS (0.235, @EXILLA-DISCO).
+ *
+ * 128 settori erano sedici blocchi da 4 KB: un disco formattato con blocchi
+ * da 4 KB — quello di Firefox — riempiva la cache con i dati dei file a ogni
+ * lettura, e la tabella degli inode e le directory, che si rileggono a ogni
+ * read() per risolvere il percorso, ne uscivano subito. Adesso i dati dei file
+ * passano da blk_read_diretto() e qui restano i metadati, in 2048 settori.
+ *
+ * ! LA MEMORIA SI PRENDE DALLA FASCIA KERNEL ALL'AVVIO, come il pool dei
+ * processi: un megabyte nel BSS sposterebbe la fine del kernel oltre la
+ * finestra di paging a 0x3FF000 (l'ASSERT in kernel.ld). Se non c'e', la
+ * cache resta spenta e si legge dal disco come prima.
+ *
+ * ! LA RICERCA E' UNA TABELLA HASH, NON PIU' UNA SCANSIONE: 2048 confronti
+ * per ogni settore cercato costerebbero piu' del comando risparmiato. Lo
+ * sfratto resta lineare (la meno usata di recente): capita solo quando si va
+ * comunque al disco.
+ * ============================================================================= */
 typedef struct {
     int      disco;             /* -1 = voce libera */
+    int      dopo;              /* la voce successiva nella stessa lista, -1 */
     uint64_t lba;
     uint32_t uso;               /* per l'LRU: piu' alto = usato piu' di recente */
     uint8_t  dati[512];
 } VoceCache;
 
-static VoceCache g_cache[CACHE_VOCI];
-static uint32_t  g_cache_orologio = 0;
-static int       g_cache_pronta   = 0;
+static VoceCache *g_cache;
+static int        g_secchio[CACHE_SECCHI];
+static uint32_t   g_cache_orologio = 0;
+static int        g_cache_pronta   = 0;     /* 1 = provata (anche se spenta) */
+
+static uint32_t secchio(int disco, uint64_t lba)
+{
+    return ((uint32_t)lba ^ ((uint32_t)(lba >> 32) * 31u) ^ ((uint32_t)disco << 9)) &
+           (CACHE_SECCHI - 1u);
+}
 
 static void cache_init(void)
 {
-    int k;
-    for (k = 0; k < CACHE_VOCI; k++) g_cache[k].disco = -1;
+    uint32_t byte = (uint32_t)sizeof(VoceCache) * CACHE_VOCI;
+    uint32_t fis  = pmm_alloc_pages_kernel((byte + 4095u) / 4096u);
+    int      k;
+
     g_cache_pronta = 1;
+    for (k = 0; k < CACHE_SECCHI; k++) g_secchio[k] = -1;
+    if (fis == 0) {
+        klog(LOG_WARN, "BLK: niente memoria per la cache dei settori, si legge dal disco");
+        return;
+    }
+    g_cache = (VoceCache *)fis;
+    for (k = 0; k < CACHE_VOCI; k++) { g_cache[k].disco = -1; g_cache[k].dopo = -1; }
+    klog(LOG_INFO, "BLK: cache di %u settori a 0x%08x", (unsigned)CACHE_VOCI, fis);
 }
 
 static VoceCache *cache_trova(int disco, uint64_t lba)
 {
     int k;
-    for (k = 0; k < CACHE_VOCI; k++) {
+
+    if (!g_cache) return NULL;
+    for (k = g_secchio[secchio(disco, lba)]; k >= 0; k = g_cache[k].dopo)
         if (g_cache[k].disco == disco && g_cache[k].lba == lba) return &g_cache[k];
-    }
     return NULL;
 }
 
+static void cache_stacca(int k)
+{
+    int *p = &g_secchio[secchio(g_cache[k].disco, g_cache[k].lba)];
+
+    while (*p >= 0 && *p != k) p = &g_cache[*p].dopo;
+    if (*p == k) *p = g_cache[k].dopo;
+    g_cache[k].dopo  = -1;
+    g_cache[k].disco = -1;
+}
+
 /* La voce da sacrificare: una libera se c'e', altrimenti la meno usata di
- * recente. La scansione e' lineare su 128 voci — a fronte di un comando
- * ATA da millisecondi, cercare non costa niente. */
+ * recente, staccata dalla sua lista. */
 static VoceCache *cache_slot(void)
 {
     int k, migliore = 0;
+
     for (k = 0; k < CACHE_VOCI; k++) {
         if (g_cache[k].disco < 0) return &g_cache[k];
         if (g_cache[k].uso < g_cache[migliore].uso) migliore = k;
     }
+    cache_stacca(migliore);
     return &g_cache[migliore];
 }
 
 static void cache_metti(int disco, uint64_t lba, const uint8_t *dati)
 {
-    VoceCache *v = cache_trova(disco, lba);
+    VoceCache *v;
 
+    if (!g_cache) return;
+    v = cache_trova(disco, lba);
     if (v == NULL) {
+        uint32_t s;
+
         v = cache_slot();
         v->disco = disco;
         v->lba   = lba;
+        s = secchio(disco, lba);
+        v->dopo = g_secchio[s];
+        g_secchio[s] = (int)(v - g_cache);
     }
     copia(v->dati, dati, 512u);
     v->uso = ++g_cache_orologio;
@@ -600,12 +658,13 @@ static void cache_metti(int disco, uint64_t lba, const uint8_t *dati)
 static void cache_svuota(int disco)
 {
     int k;
-    for (k = 0; k < CACHE_VOCI; k++) {
-        if (disco < 0 || g_cache[k].disco == disco) g_cache[k].disco = -1;
-    }
+
+    if (!g_cache) return;
+    for (k = 0; k < CACHE_VOCI; k++)
+        if (g_cache[k].disco >= 0 && (disco < 0 || g_cache[k].disco == disco)) cache_stacca(k);
 }
 
-int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
+static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
 {
     const BlkDev *b = blk_get(i);
     uint64_t      abs;
@@ -659,7 +718,7 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
     /* --- la cache, solo per le richieste piccole: vedi il commento sopra --- */
     if (!g_cache_pronta) cache_init();
 
-    if (n <= CACHE_MAX_N) {
+    if (usa_cache && g_cache && n <= CACHE_MAX_N) {
         uint8_t *p = (uint8_t *)buf;
         uint32_t tutti = 1;
 
@@ -680,6 +739,20 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
     }
 
     return ata_read(b->disco, abs, n, buf);
+}
+
+int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
+{
+    return leggi(i, lba, n, buf, 1);
+}
+
+/* ! I DATI DEI FILE NON PASSANO DALLA CACHE (0.235): un file si legge una
+ * volta e in sequenza, e farlo passare di qui sfratterebbe i metadati che si
+ * rileggono sempre. La coerenza e' garantita lo stesso: la cache e'
+ * write-through, il disco ha sempre l'ultima versione. */
+int blk_read_diretto(int i, uint64_t lba, uint32_t n, void *buf)
+{
+    return leggi(i, lba, n, buf, 0);
 }
 
 /* =============================================================================
@@ -922,7 +995,10 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
      * accettato. Si aggiorna solo cio' che era gia' in cache — una
      * scrittura di dati non deve sfrattare i metadati per far posto a se'
      * stessa. */
-    if (g_cache_pronta && n <= CACHE_MAX_N) {
+    /* ! DI QUALUNQUE LUNGHEZZA (0.235): ext2 adesso scrive i blocchi contigui
+     * in un comando solo, e un settore gia' in cache dentro una scrittura
+     * lunga restava quello di prima. */
+    if (g_cache) {
         const uint8_t *p = (const uint8_t *)buf;
         for (k = 0; k < n; k++) {
             VoceCache *v = cache_trova(b->disco, abs + k);

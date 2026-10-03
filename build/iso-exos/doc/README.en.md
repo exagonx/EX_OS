@@ -84,6 +84,14 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Four games: EXKlondike, EXSpider, EXMajong, EXGO
+
+**to be tested on hardware, tested in QEMU** — in Start > Giochi: the classic
+solitaire, Spider with one, two or four suits, the mahjong solitaire (every
+deal can be won) and go on 9x9, 13x13 or 19x19 against the computer or
+between two people. Cards, tiles and stones are drawn by program, each game
+has its own icon, and choices and games won are kept in the profile.
+
 ### The ExWin API is in English, and exide is consistent
 
 **to be tested on hardware, tested in QEMU** — ExWin's functions, messages,

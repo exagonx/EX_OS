@@ -118,6 +118,8 @@ int  blk_trova(const char *nome);
  * richiesta esce dalla finestra. */
 int  blk_read (int i, uint64_t lba, uint32_t n, void *buf);
 int  blk_write(int i, uint64_t lba, uint32_t n, const void *buf);
+/* Come blk_read, ma senza passare dalla cache: per i dati dei file. */
+int  blk_read_diretto(int i, uint64_t lba, uint32_t n, void *buf);
 int  blk_flush(int i);
 
 /* Indice del dispositivo che rappresenta la partizione `numero` del disco
