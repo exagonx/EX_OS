@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.020"
+#define VERSIONE_APP "0.021"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -3658,6 +3658,31 @@ static int aspetta_vivo(int pid)
     }
 }
 
+/* L'exwin.h della radice degli strumenti e' quello con l'API inglese? Si
+ * cerca un nome che c'e' solo da allora. Se il file non si apre si lascia
+ * fare al compilatore: dira' lui che manca. */
+static int strumenti_attuali(void)
+{
+    static const char CERCA[] = "ex_peek_message";
+    char h[PERC_MAX], buf[2048];
+    unsigned int visti = 0;
+    int  fd, n, i;
+
+    sprintf(h, "%s/include/exwin.h", g_cc_radice);
+    fd = open(h, O_RDONLY, 0);
+    if (fd < 0) return 1;
+    while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
+        for (i = 0; i < n; i++) {
+            if (buf[i] == CERCA[visti]) {
+                if (++visti == sizeof(CERCA) - 1) { close(fd); return 1; }
+            } else {
+                visti = buf[i] == CERCA[0] ? 1u : 0u;
+            }
+        }
+    close(fd);
+    return 0;
+}
+
 static void compila(void)
 {
     char        p[PERC_MAX], log[PERC_MAX], msg[120];
@@ -3710,6 +3735,32 @@ static void compila(void)
             ex_default_proc(g_cc, EXM_PAINT, 0, 0);
             return;
         }
+    }
+
+    /* ! E SI GUARDA SE GLI HEADER SONO QUELLI CHE QUESTO EXIDE SI ASPETTA
+     * (4 ottobre 2026). Il 3 ottobre l'API di ExWin e' passata all'inglese, e
+     * `netupdate` ha portato su una macchina l'exide nuovo con gli strumenti
+     * di prima: finestra.h diceva ExWindow, exwin.h conosceva solo
+     * ExFinestra, e il compilatore rispondeva con una pagina di «tipo
+     * sconosciuto» che sembrava un difetto del codice generato. Un exwin.h
+     * senza ex_peek_message e' di prima: lo si dice, e si dice cosa fare. */
+    if (!strumenti_attuali()) {
+        ex_list_clear(g_cc_uscita);
+        ex_list_add(g_cc_uscita, "Gli strumenti di sviluppo sono piu' vecchi di questo exide:");
+        {
+            char h[PERC_MAX];
+            sprintf(h, "%s/include/exwin.h", g_cc_radice);
+            ex_list_add(g_cc_uscita, h);
+        }
+        ex_list_add(g_cc_uscita, "non ha l'API in inglese (ExWindow, ex_create...), e il codice");
+        ex_list_add(g_cc_uscita, "generato qui non ci compilerebbe.");
+        ex_list_add(g_cc_uscita, "");
+        ex_list_add(g_cc_uscita, "Aggiornali:   netupdate -check");
+        ex_list_add(g_cc_uscita, "oppure monta il CD degli strumenti nuovo e rilancia toolinst.");
+        ex_set_text(g_cc_stato, "strumenti da aggiornare: guarda qui sotto");
+        dico("gli strumenti di sviluppo sono di prima dell'API inglese");
+        ex_default_proc(g_cc, EXM_PAINT, 0, 0);
+        return;
     }
 
     /* ! L'USCITA VA IN UN FILE, non in una pipe: una pipe vorrebbe dire

@@ -7416,8 +7416,34 @@ usb: $(FLOPPY_IMG)
 #
 # NON fa parte di `make all`: e' una pubblicazione, non una compilazione.
 # =============================================================================
+# ! GLI HEADER E GLI STUB DEGLI STRUMENTI SI RINFRESCANO A OGNI netinst
+# (4 ottobre 2026). mknetinst.sh pubblica build/iso/exos com'e', e quello lo
+# compone `make iso`: se nel frattempo e' cambiato exwin.h — il 3 ottobre e'
+# cambiata TUTTA l'API — sul server finivano l'exide nuovo e gli header di
+# prima, e `netupdate -check` portava su una macchina un exide che genera
+# codice che il suo stesso compilatore non conosce («tipi mancanti»). I
+# compilatori sono binari grossi e cambiano di rado: quelli restano di
+# `make iso`. Questi sono sorgenti, e devono essere quelli del sistema che si
+# pubblica. E' la stessa lista della regola del CD, qui sopra: chi ne cambia
+# una cambi l'altra.
+.PHONY: sdk-fresco
+sdk-fresco: $(LIBC_PONTI_OBJ) $(LIBC_SO)
+	@if [ -d $(ISO_ROOT)/exos/include ]; then \
+	    cp -r lib/include/. $(ISO_ROOT)/exos/include/; \
+	    cp $(EXWIN_HDR) $(EXWIN_SRC) $(WIN_PROTO) $(ISO_ROOT)/exos/include/; \
+	    for f in $(ESOS_STUB); do cp $$f $(ISO_ROOT)/exos/include/; done; \
+	    cp lib/programma.ld $(ISO_ROOT)/exos/programma.ld; \
+	    cp $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(ISO_ROOT)/exos/; \
+	    if [ -d $(ISO_ROOT)/exos/i386-exos/include ]; then \
+	        cp -r lib/include/. $(ISO_ROOT)/exos/i386-exos/include/; \
+	    fi; \
+	    echo "[OK] header, stub e ponti degli strumenti rinfrescati in $(ISO_ROOT)/exos"; \
+	else \
+	    echo "     (nessun albero degli strumenti in $(ISO_ROOT): si pubblica il solo sistema)"; \
+	fi
+
 .PHONY: netinst
-netinst: iso-exos
+netinst: iso-exos sdk-fresco
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh
 	@$(TOOLS_DIR)/mknetinst.sh
 
