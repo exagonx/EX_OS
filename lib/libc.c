@@ -387,7 +387,7 @@ struct pollfd {
     short revents;
 };
 
-#define POLL_FD_IPC       32
+#define POLL_FD_IPC       128   /* = FD_IPC, dal kernel 0.232 */
 #define POLL_IN       0x0001
 #define POLL_OUT      0x0004
 
@@ -3574,6 +3574,86 @@ static void mm_dice(const char *op, uint32_t a, uint32_t l, uint32_t x, int32_t 
 static Blocco *heap_primo = NULL;
 static Blocco *heap_ultimo = NULL;
 
+/* =============================================================================
+ * I CASSETTI — le liste dei blocchi LIBERI per taglia (3 ottobre 2026, Exilla)
+ *
+ * ! malloc SCORREVA TUTTI I BLOCCHI, liberi e occupati, dal primo: con lo heap
+ * di Firefox (centinaia di MB, centinaia di migliaia di blocchi) ogni malloc
+ * ne visitava centinaia di migliaia tenendo il lucchetto, e gli altri fili
+ * aspettavano. Sembrava un blocco: l'interfaccia di Firefox non finiva mai di
+ * caricarsi, e campionando la CPU l'EIP stava nel ciclo di heap_malloc.
+ *
+ * La lista per indirizzo (prec/succ) resta com'era: serve alle fusioni. In
+ * piu' ogni blocco libero sta in un CASSETTO secondo la sua taglia, e i due
+ * puntatori del cassetto stanno nei SUOI dati (un blocco libero non ha dati
+ * da tenere): niente memoria in piu'. Cassetti 0..63 = taglie esatte 16..1024
+ * byte (tutto e' multiplo di HEAP_ALLINEA); dal 64 in su una potenza di due
+ * ciascuno. malloc guarda il cassetto della taglia e quelli sopra: nei
+ * piccoli ogni blocco va bene, nei grandi si cerca il primo che basta.
+ *
+ * ! REGOLA: un blocco libero sta in un cassetto se e solo se dim > 0 (il
+ * pezzo di testa lasciato da memalign puo' avere dim 0, e li' non ci sono i
+ * sedici byte dei due puntatori). Chi cambia dim a un blocco libero lo toglie
+ * prima e lo rimette dopo.
+ * ============================================================================= */
+#define HEAP_CASSETTI   96
+typedef struct Legami { struct Blocco *prima, *dopo; } Legami;
+#define LEGAMI(b)       ((Legami *)BLOCCO_DATI(b))
+static Blocco *g_cassetto[HEAP_CASSETTI];
+
+static unsigned int cassetto_di(size_t dim)
+{
+    unsigned int k = 0;
+
+    if (dim <= 1024u) return (unsigned int)((dim + 15u) / 16u) - (dim ? 1u : 0u);
+    while ((dim >> k) > 1u) k++;            /* k = floor(log2(dim)), >= 10 */
+    k = 64u + (k - 10u);
+    return k < HEAP_CASSETTI ? k : HEAP_CASSETTI - 1u;
+}
+
+static void cassetto_metti(Blocco *b)
+{
+    unsigned int i;
+    Legami      *l;
+
+    if (b->dim == 0) return;
+    i = cassetto_di(b->dim);
+    l = LEGAMI(b);
+    l->prima = NULL;
+    l->dopo  = g_cassetto[i];
+    if (g_cassetto[i]) LEGAMI(g_cassetto[i])->prima = b;
+    g_cassetto[i] = b;
+}
+
+static void cassetto_togli(Blocco *b)
+{
+    Legami *l;
+
+    if (b->dim == 0) return;
+    l = LEGAMI(b);
+    if (l->prima) LEGAMI(l->prima)->dopo = l->dopo;
+    else          g_cassetto[cassetto_di(b->dim)] = l->dopo;
+    if (l->dopo)  LEGAMI(l->dopo)->prima = l->prima;
+}
+
+/* Il primo blocco libero con dim >= utile, tolto dal suo cassetto; o NULL. */
+static Blocco *cassetto_cerca(size_t utile)
+{
+    unsigned int i;
+    Blocco      *b;
+
+    for (i = cassetto_di(utile); i < HEAP_CASSETTI; i++) {
+        for (b = g_cassetto[i]; b != NULL; b = LEGAMI(b)->dopo) {
+            if (b->dim >= utile) {
+                cassetto_togli(b);
+                return b;
+            }
+            if (i < 64) break;              /* taglia esatta: o va o no */
+        }
+    }
+    return NULL;
+}
+
 static size_t heap_allinea(size_t n)
 {
     return (n + (HEAP_ALLINEA - 1u)) & ~(HEAP_ALLINEA - 1u);
@@ -3610,7 +3690,11 @@ static Blocco *heap_estendi(size_t utile)
      * VECCHIA cima, che e' l'inizio della memoria appena ottenuta. */
     base = _syscall1(SYS_SBRK, (uint32_t)quanto);
     mm_dice("sbrk", (uint32_t)base, (uint32_t)quanto, 0, base);
-    if (base <= 0) return NULL;
+    /* ! UN ERRORE E' -4095..-1, NON «<= 0»: lo heap puo' salire oltre i 2 GB
+     * (heap_max arriva a ~0xB79BB000), e un indirizzo da li' in su, letto
+     * come int, e' negativo — malloc avrebbe risposto NULL con la memoria
+     * libera. Trovato dal banco di prova dell'allocatore (3 ottobre 2026). */
+    if (base == 0 || (uint32_t)base >= 0xFFFFF001u) return NULL;
 
     b = (Blocco *)(uintptr_t)base;
     b->dim    = quanto - BLOCCO_HDR;
@@ -3628,12 +3712,15 @@ static Blocco *heap_estendi(size_t utile)
      * usare pur essendo adiacenti. */
     if (b->prec && b->prec->libero &&
         (char *)b->prec + BLOCCO_HDR + b->prec->dim == (char *)b) {
+        cassetto_togli(b->prec);
         b->prec->dim += BLOCCO_HDR + b->dim;
         b->prec->succ = NULL;
         heap_ultimo = b->prec;
+        cassetto_metti(b->prec);
         return b->prec;
     }
 
+    cassetto_metti(b);
     return b;
 }
 
@@ -3641,6 +3728,7 @@ static Blocco *heap_estendi(size_t utile)
  * essere un blocco a sua volta. Un avanzo minuscolo resta attaccato: una
  * lista piena di frammenti da otto byte costa piu' memoria (in
  * intestazioni) di quanta ne recuperi. */
+static void heap_fondi_con_succ(Blocco *b);
 static void heap_spezza(Blocco *b, size_t utile)
 {
     Blocco *resto;
@@ -3658,6 +3746,11 @@ static void heap_spezza(Blocco *b, size_t utile)
 
     b->succ = resto;
     b->dim  = utile;
+    cassetto_metti(resto);
+    /* L'avanzo si unisce al vicino libero che lo segue: senza, restavano
+     * blocchi liberi affiancati e mai fusi (136 su un milione di operazioni
+     * del banco di prova), e lo heap non tornava mai indietro. */
+    heap_fondi_con_succ(resto);
 }
 
 static void *heap_malloc(size_t size)
@@ -3673,22 +3766,17 @@ static void *heap_malloc(size_t size)
     utile = heap_allinea(size);
     if (utile < size) return NULL;      /* overflow dell'arrotondamento */
 
-    for (b = heap_primo; b != NULL; b = b->succ) {
-#ifdef EXOS_LIBC_PORTATI
-        if (g_heap_controlla > 0) ctl_anello(b);
-#endif
-        if (b->libero && b->dim >= utile) {
-            heap_spezza(b, utile);
-            b->libero = 0;
-            return BLOCCO_DATI(b);
-        }
+    b = cassetto_cerca(utile);
+    if (b == NULL) {
+        b = heap_estendi(utile);
+        if (b == NULL) return NULL;
+        cassetto_togli(b);
     }
-
-    b = heap_estendi(utile);
-    if (b == NULL) return NULL;
-
-    heap_spezza(b, utile);
+#ifdef EXOS_LIBC_PORTATI
+    if (g_heap_controlla > 0) { if (b->prec) ctl_anello(b->prec); ctl_anello(b); }
+#endif
     b->libero = 0;
+    heap_spezza(b, utile);
     return BLOCCO_DATI(b);
 }
 
@@ -3727,10 +3815,13 @@ static void heap_assorbi_succ(Blocco *b)
     if (s == NULL || !s->libero) return;
     if ((char *)b + BLOCCO_HDR + b->dim != (char *)s) return;
 
+    cassetto_togli(s);
+    if (b->libero) cassetto_togli(b);
     b->dim += BLOCCO_HDR + s->dim;
     b->succ = s->succ;
     if (s->succ) s->succ->prec = b;
     else         heap_ultimo = b;
+    if (b->libero) cassetto_metti(b);
 }
 
 /* Fonde due blocchi LIBERI e adiacenti. E' la versione da usare quando
@@ -3821,7 +3912,9 @@ static void heap_restituisci(void)
     /* L'intestazione resta dov'e' — sta SOTTO la parte restituita — e il
      * blocco continua a esistere, solo piu' corto. Sfilarlo dalla lista
      * avrebbe voluto dire scrivere in `b` dopo averlo smappato. */
+    cassetto_togli(b);
     b->dim -= quanto;
+    cassetto_metti(b);
 }
 
 static void heap_free(void *ptr)
@@ -3839,6 +3932,7 @@ static void heap_free(void *ptr)
     if (b->libero) return;
 
     b->libero = 1;
+    cassetto_metti(b);
     heap_fondi_con_succ(b);
     if (b->prec) heap_fondi_con_succ(b->prec);
 
@@ -4027,6 +4121,7 @@ static void *heap_memalign(size_t allineamento, size_t size)
     b->succ   = nuovo;
     b->dim    = offset;
     b->libero = 1;
+    cassetto_metti(b);
     if (b->prec) heap_fondi_con_succ(b->prec);
 
     /* La coda in eccesso torna all'heap, se ne vale la pena. */
@@ -5255,7 +5350,7 @@ void semaforo_lascia(volatile int *s)
  * chiamabile anche prima che malloc sia pronta.
  * ============================================================================= */
 #define EDEADLK       35
-#define PTHREAD_FILI  64
+#define PTHREAD_FILI  128     /* = FILO_MAX del kernel (0.231) */
 #define P_CHIAVI      128
 #define P_ITERAZIONI  4
 
@@ -5407,7 +5502,13 @@ void pthread_exit(void *ris)
     for (;;) { }
 }
 
-/* Il primo codice di ogni filo nato qui: si fa riconoscere, poi chiama. */
+/* Il primo codice di ogni filo nato qui: si fa riconoscere, poi chiama.
+ *
+ * ! force_align_arg_pointer: la pila che il kernel da' al filo non e'
+ * allineata a 16, e il codice SSE di Firefox (PremultiplyRow_SSE2, un movdqa
+ * su una variabile locale) cadeva con #GP sul filo di WebRender (3 ottobre
+ * 2026). GCC riallinea qui, e da qui in giu' l'ABI e' rispettata. */
+__attribute__((force_align_arg_pointer, noinline))
 static void filo_trampolino(void *arg)
 {
     Filo *f = (Filo *)arg;
@@ -6442,6 +6543,8 @@ static struct sigaction g_azioni[SIG_MAX];
 
 void __exos_segnale_esegui(SegTelaio *t, void *fpu);
 
+/* Riallinea la pila a 16 per il gestore (vedi filo_trampolino). */
+__attribute__((force_align_arg_pointer))
 void __exos_segnale_esegui(SegTelaio *t, void *fpu)
 {
     struct sigaction *a;
@@ -6757,7 +6860,7 @@ long sysconf(int nome)
 {
     switch (nome) {
         case _SC_PAGESIZE:          return 4096;
-        case _SC_OPEN_MAX:          return 32;    /* MAX_FD del kernel */
+        case _SC_OPEN_MAX:          return 128;   /* MAX_FD del kernel (0.232) */
         case _SC_CLK_TCK:           return 100;   /* il PIT gira a 100 Hz */
         case _SC_NPROCESSORS_ONLN:  return 1;
         case 83 /* _SC_NPROCESSORS_CONF */: return 1;   /* per NSPR, 30 settembre 2026 */
@@ -6958,8 +7061,9 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
 
     r = _syscall1(SYS_MMAP, (uint32_t)(uintptr_t)&p);
     mm_dice("mmap", p.addr, p.length, p.prot | (p.flags << 8), r);
-    if (r <= 0) {
-        errno = (r < 0) ? -r : ENOMEM;
+    /* Un indirizzo oltre i 2 GB e' negativo come int: errore e' -4095..-1. */
+    if (r == 0 || (uint32_t)r >= 0xFFFFF001u) {
+        errno = (r != 0) ? -r : ENOMEM;
         return MAP_FAILED;
     }
     return (void *)(uintptr_t)r;
@@ -9784,7 +9888,11 @@ int verboseboot(void)
 void *sbrk(int incr)
 {
     int32_t r = _syscall1(SYS_SBRK, (uint32_t)incr);
-    if (r <= 0) { errno = (r < 0) ? -r : 12 /* ENOMEM */; return (void *)-1; }
+    /* Oltre i 2 GB l'indirizzo e' negativo come int: errore e' -4095..-1. */
+    if (r == 0 || (uint32_t)r >= 0xFFFFF001u) {
+        errno = (r != 0) ? -r : 12 /* ENOMEM */;
+        return (void *)-1;
+    }
     return (void *)(uintptr_t)r;
 }
 

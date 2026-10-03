@@ -62,6 +62,17 @@ cat > "$S/prova.html" <<'EOF'
 </body></html>
 EOF
 
+# La seconda pagina: la apre prova-finestra.sh scrivendo l'indirizzo.
+cat > "$S/seconda.html" <<'EOF2'
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Seconda</title></head>
+<body style="background:#fff3c4; font-family:sans-serif; margin:24px">
+  <h1 style="color:#7a3e00">SECONDA PAGINA</h1>
+  <p>Ci si arriva scrivendo l'indirizzo nella barra di Firefox, dentro ExWin.</p>
+  <p><a href="prova.html">Torna alla prima</a></p>
+</body></html>
+EOF2
+
 # --- il disco: una partizione ext2 fatta qui, messa a 1 MB ------------------------
 MB=$(( $(du -sm "$S" | cut -f1) * 13 / 10 + 128 ))
 IMG="$D/gecko-hd.img"; PART="$D/gecko-part.img"

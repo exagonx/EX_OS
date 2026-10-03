@@ -1047,7 +1047,7 @@ typedef struct {
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
-#define FD_IPC            32
+#define FD_IPC            128   /* = MAX_FD (sched.h), dal kernel 0.232 */
 #define POLL_MAX          16    /* voci per chiamata: il kernel le copia */
 
 #define POLLIN        0x0001    /* c'e' qualcosa da leggere */

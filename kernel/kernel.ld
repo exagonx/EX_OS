@@ -93,6 +93,10 @@ SECTIONS
 
     _kernel_end = .;
 
+    /* ! LA FINESTRA: paging_azzera_fisica mappa e smappa la pagina 0x3FF000.
+     * Un kernel che ci arriva sopra si toglie un pezzo da solo (0.232). */
+    ASSERT(_kernel_end <= 0x3FF000, "il kernel arriva alla finestra di paging a 0x3FF000")
+
     /* -------------------------------------------------------------------------
      * Scarta sezioni non necessarie nel kernel
      * ------------------------------------------------------------------------- */

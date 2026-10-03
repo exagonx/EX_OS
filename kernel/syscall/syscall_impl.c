@@ -84,7 +84,7 @@ static int solo_root(const char *chi)
     return 0;
 }
 
-extern Process g_process_pool[MAX_PROCESSES];
+extern Process *g_process_pool;
 
 /* Directory di lavoro corrente (globale, semplificazione per ora) */
 /* =============================================================================

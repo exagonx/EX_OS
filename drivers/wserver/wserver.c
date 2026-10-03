@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.008");
+EX_VERSIONE("wserver", "0.010");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -149,6 +149,9 @@ EX_VERSIONE("wserver", "0.008");
 
 extern const unsigned char font8x16[256 * 16];
 
+/* Quanti eventi si tengono per un client che non legge (vedi metti_evento). */
+#define CODA_EVENTI     64
+
 typedef struct {
     unsigned int usata;
     unsigned int id;
@@ -173,6 +176,10 @@ typedef struct {
     unsigned int ridotta;
     unsigned int passaggio;         /* WIN_MSG_PASSAGGIO: wants movement without buttons */
     unsigned int chiusa_chiesta;    /* a pop-up already told to close */
+    /* Gli eventi che il client non ha ancora potuto ricevere (casella piena):
+     * vedi metti_evento. */
+    WinEvento    coda[CODA_EVENTI];
+    unsigned int n_coda;
 } Finestra;
 
 static Finestra g_fin[FINESTRE_MAX];
@@ -1228,6 +1235,26 @@ static void componi(void)
 /* -----------------------------------------------------------------------------
  * Le finestre
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * ! UNA FINESTRA E' DEL PROCESSO, NON DEL FILO (2 ottobre 2026, Exilla).
+ *
+ * Il server riconosce il padrone dal pid del mittente, e per il kernel ogni
+ * filo ha il suo. Un programma a un filo solo non se ne accorge; Firefox si':
+ * la finestra la crea il filo principale, ma i pixel li consegna il filo che
+ * compone (WebRender), e il suo WIN_MSG_AGGIORNA veniva buttato come se fosse
+ * di un estraneo. Vale chi sta nello stesso GRUPPO del creatore (proc_gruppo,
+ * il capogruppo di un pid). Gli eventi vanno sempre a chi l'ha creata.
+ * ============================================================================= */
+static int suo(unsigned int padrone, unsigned int mittente)
+{
+    int a, b;
+
+    if (padrone == mittente) return 1;
+    a = proc_gruppo((int)padrone);
+    b = proc_gruppo((int)mittente);
+    return a > 0 && a == b;
+}
+
 static int trova_id(unsigned int id)
 {
     int i;
@@ -1419,7 +1446,68 @@ static int sotto(int x, int y, unsigned int *dove)
     return -1;
 }
 
-static void manda_evento(const Finestra *f, unsigned int tipo,
+/* =============================================================================
+ * ! IL SERVER NON ASPETTA NESSUN CLIENT (wserver 0.010, 3 ottobre 2026).
+ *
+ * Gli eventi si mandavano con un ipc_send che, a casella piena, riprova per
+ * dieci secondi: i movimenti senza attesa, ma il clic, il rilascio e i tasti
+ * si'. Una casella e' profonda quattro messaggi, e un client occupato a
+ * lungo — Firefox mentre si avvia — la lasciava piena: al primo clic il
+ * server restava fermo ad aspettarlo, e con lui lo schermo intero, puntatore
+ * compreso. E' la regola di ogni server a finestre: un client lento rallenta
+ * se stesso, non gli altri.
+ *
+ * Ora ogni evento parte SENZA ATTESA; se la casella e' piena va nella coda
+ * della finestra, in ordine, e svuota_code() la riprova a ogni giro del ciclo.
+ * Un movimento in coda si sostituisce col nuovo (conta l'ultima posizione),
+ * una rotella si somma. Se la coda e' piena l'evento si perde e lo si conta.
+ * ============================================================================= */
+static unsigned int g_eventi_persi = 0;
+
+static int prova_evento(const Finestra *f, const WinEvento *e)
+{
+    return ipc_send(f->pid, WIN_MSG_EVENTO | IPC_SENZA_ATTESA, e, sizeof(*e)) == 0;
+}
+
+static void metti_evento(Finestra *f, const WinEvento *e)
+{
+    if (f->n_coda == 0 && prova_evento(f, e)) return;
+
+    if (f->n_coda > 0) {
+        WinEvento *u = &f->coda[f->n_coda - 1];
+        if (u->tipo == e->tipo && e->tipo == WIN_EV_MOUSE_MOSSO) { *u = *e; return; }
+        if (u->tipo == e->tipo && e->tipo == WIN_EV_ROTELLA) {
+            u->tasto = (unsigned int)((int)u->tasto + (int)e->tasto);
+            return;
+        }
+    }
+    if (f->n_coda >= CODA_EVENTI) {
+        if (g_eventi_persi++ == 0 || g_verboso)
+            log_seriale("wserver: coda eventi piena, un evento perso");
+        return;
+    }
+    f->coda[f->n_coda++] = *e;
+}
+
+static void svuota_code(void)
+{
+    int i;
+
+    for (i = 0; i < FINESTRE_MAX; i++) {
+        Finestra    *f = &g_fin[i];
+        unsigned int fatti = 0;
+
+        if (!f->usata || f->n_coda == 0) continue;
+        while (fatti < f->n_coda && prova_evento(f, &f->coda[fatti])) fatti++;
+        if (fatti) {
+            unsigned int k;
+            for (k = fatti; k < f->n_coda; k++) f->coda[k - fatti] = f->coda[k];
+            f->n_coda -= fatti;
+        }
+    }
+}
+
+static void manda_evento(Finestra *f, unsigned int tipo,
                          int x, int y, unsigned int bottoni, unsigned int tasto)
 {
     WinEvento e;
@@ -1444,10 +1532,7 @@ static void manda_evento(const Finestra *f, unsigned int tipo,
      * schermo congelato, «blocca tutto» (tools/prova_pennello_veloce.sh).
      * Un movimento perso lo rimpiazza il prossimo: va SENZA ATTESA. Il clic,
      * il rilascio, un tasto non si ripetono: quelli aspettano il loro posto. */
-    (void)ipc_send(f->pid, WIN_MSG_EVENTO |
-                   (tipo == WIN_EV_MOUSE_MOSSO || tipo == WIN_EV_ROTELLA
-                    ? IPC_SENZA_ATTESA : 0u),
-                   &e, sizeof(e));
+    metti_evento(f, &e);
 }
 
 /* La rotella: alla finestra sotto il puntatore, sull'area del client. Uno
@@ -1628,7 +1713,7 @@ static void kbd_tasto(unsigned int k)
         e.bottoni = 0;
         e.tasto   = k;          /* gia' tradotto: NON e' uno scancode */
         e.tempo   = uptime_ms();
-        (void)ipc_send(f->pid, WIN_MSG_EVENTO, &e, sizeof(e));
+        metti_evento(f, &e);
     }
 }
 
@@ -2107,6 +2192,7 @@ static void crea(unsigned int pid, const WinCrea *c)
     g_fin[i].usata     = 1;
     g_fin[i].passaggio = 0;         /* the slot may be reused: nothing asked yet */
     g_fin[i].chiusa_chiesta = 0;
+    g_fin[i].n_coda    = 0;
     g_fin[i].id        = g_prossimo_id++;
     g_fin[i].pid       = pid;
     g_fin[i].x         = c->x;
@@ -2579,7 +2665,7 @@ static int servi_messaggio(unsigned int ms)
         /* ! SI CONTROLLA CHE SIA SUA. Senza, un processo qualunque potrebbe
          * chiudere le finestre di un altro conoscendone il numero — e i
          * numeri sono piccoli e consecutivi. */
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) distruggi(idx);
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) distruggi(idx);
         break;
     }
 
@@ -2588,7 +2674,7 @@ static int servi_messaggio(unsigned int ms)
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) {
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) {
             /* Where it was and where it is: nothing else changed. The old
              * one first, or the old frame stays painted (see the drag). */
             sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
@@ -2613,7 +2699,7 @@ static int servi_messaggio(unsigned int ms)
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid &&
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid) &&
             w->larghezza && w->altezza)
             ridimensiona(idx, w->larghezza, w->altezza);
         break;
@@ -2624,7 +2710,7 @@ static int servi_messaggio(unsigned int ms)
         int idx;
         if (meta.len < sizeof(WinTitolo)) break;
         idx = trova_id(t->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) {
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) {
             memcpy(g_fin[idx].titolo, t->titolo, WIN_TITOLO_LEN);
             g_fin[idx].titolo[WIN_TITOLO_LEN - 1] = '\0';
             sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
@@ -2637,7 +2723,7 @@ static int servi_messaggio(unsigned int ms)
 
         log_seriale("wserver: chiudo le applicazioni degli altri");
         for (n = 0; n < FINESTRE_MAX; n++) {
-            if (!g_fin[n].usata || g_fin[n].pid == meta.sender_pid) continue;
+            if (!g_fin[n].usata || suo(g_fin[n].pid, meta.sender_pid)) continue;
             if (g_fin[n].ridotta) ripristina(n);
             manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
         }
@@ -2674,7 +2760,7 @@ static int servi_messaggio(unsigned int ms)
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid)
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid))
             g_fin[idx].passaggio = (w->x != 0);
         break;
     }
@@ -2684,7 +2770,7 @@ static int servi_messaggio(unsigned int ms)
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) porta_su(idx);
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) porta_su(idx);
         break;
     }
 
@@ -2704,7 +2790,7 @@ static int servi_messaggio(unsigned int ms)
          * serve un messaggio in piu' per dire una cosa che si sa gia'. */
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx < 0 || g_fin[idx].pid != meta.sender_pid) break;
+        if (idx < 0 || !suo(g_fin[idx].pid, meta.sender_pid)) break;
 
         /* `-conta`: who asks, and how much. The count of frames says the
          * desktop is busy; this line says who keeps it busy. */
@@ -3063,6 +3149,8 @@ int main(int argc, char **argv)
          * Il tetto c'e' perche' un client impazzito non ci tenga fermi. */
         if (servi_messaggio(attesa))
             for (n = 1; n < 16 && servi_messaggio(IPC_SUBITO); n++) { }
+
+        svuota_code();
 
         ora = uptime_ms();
 

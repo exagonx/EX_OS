@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.227
+**Versione:** 0.232
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -100,6 +100,50 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Firefox in una finestra di ExWin
+
+**testato in QEMU** (`tools/exilla/prova-finestra.sh`) — la settima tappa di
+Exilla: Firefox si apre in una finestra vera del server grafico, con le schede,
+la barra degli indirizzi e la pagina, e riceve mouse e tastiera. Per arrivarci
+EX-OS ha avuto una `malloc` nuova (liste dei blocchi liberi per taglia: la
+vecchia scorreva tutto lo heap a ogni chiamata), la pila allineata per il
+codice SSE, e wserver 0.009 che accetta i pixel da ogni filo del programma.
+Immagine in `tools/exilla/tappa7-finestra.png`.
+
+### Firefox disegna la sua prima pagina dentro EX-OS
+
+**testato in QEMU** (`tools/exilla/prova-gecko.sh`) — la sesta tappa di
+Exilla, il porting di Firefox: `firefox --headless --screenshot` apre una
+pagina locale e salva cio' che ha disegnato (testo, grassetto, corsivo,
+riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
+`tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
+in corso.
+
+### Kernel 0.228–0.232: quello che Firefox ha trovato
+
+**testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
+- **0.232**: 128 file aperti per processo (erano 32): Firefox ne apre di piu'
+  e non trovava i caratteri.
+- **0.231**: 128 fili per processo (erano 64) e 192 processi nel sistema:
+  Firefox con una finestra vera ne usa piu' di 63.
+- **0.230**: i fili di un processo avevano ciascuno una *copia* del confine
+  dello heap, e `sbrk`/`mmap` di fili diversi si davano gli stessi indirizzi.
+  Ora lo spazio degli indirizzi e' del processo. Una tabella delle pagine nata
+  da una mappatura `PROT_NONE` non resta piu' del kernel, e `PROT_NONE` riserva
+  lo spazio senza occupare RAM finche' `mprotect` non lo apre.
+- **0.229**: la pila del filo principale si riserva per 8 MB.
+- **0.228**: `fstat` dice l'identita' vera del file (SQLite ne ha bisogno).
+- Nella `libc.a`: `malloc` con lucchetto e allineata a 16, `arc4random`
+  (ChaCha20), `shm_open` piu' completa (anche `SHM_ANON`), `mmap` di un file,
+  `getpid` uguale in tutti i fili.
+
+### Il floppy ha di nuovo spazio
+
+**testato in QEMU** — `help` e `kbprova` (e `/boot/help.txt`) stanno ora solo
+sul CD: il floppy era sceso a 512 byte liberi e ne ha 64 KB. Dal floppy `help`
+mostra l'aiuto di riserva della shell; col CD montato c'e' `/cdrom/bin/help`.
+I floppy di diagnostica si portano dentro `kbprova` da soli.
 
 ### Selezionare e copiare il testo in EXBrowser
 

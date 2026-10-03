@@ -3352,12 +3352,12 @@ int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
  * select() c'e' per i programmi che la usano gia', ed e' scritta SOPRA poll()
  * dentro la libc: nel kernel l'attesa su piu' sorgenti e' una sola, perche'
  * scriverla due volte vuol dire sbagliarla due volte. Le sue maschere non
- * possono nominare FD_IPC — un fd_set arriva a 32 bit e FD_IPC e' il 32esimo.
+ * possono nominare FD_IPC — un fd_set arriva a 32 bit e FD_IPC (= MAX_FD, 128) ne sta fuori.
  *
  * STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h e ripetuta in
  * lib/libc.c, che non include questo file: TRE copie, tutte identiche.
  * ============================================================================= */
-#define FD_IPC          32      /* la mailbox IPC come sorgente di poll() */
+#define FD_IPC          128     /* la mailbox IPC come sorgente di poll(); = MAX_FD dal kernel 0.232 */
 #define POLL_MAX        16      /* voci per chiamata */
 
 #define POLLIN      0x0001      /* c'e' qualcosa da leggere */

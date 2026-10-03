@@ -40,8 +40,18 @@ static Process *g_current = NULL;
 static Process *g_idle_task = NULL;
 Process        *g_init_task = NULL;   /* reaper kernel task, adotta gli orfani */
 
-/* Pool di PCB statici (evita kmalloc durante il boot) */
-Process g_process_pool[MAX_PROCESSES];
+/* =============================================================================
+ * IL POOL DEI PCB — allocato da sched_init, non nel BSS (kernel 0.232)
+ *
+ * ! IL KERNEL NON DEVE ARRIVARE A 0x3FF000. L'ultima pagina dei primi 4 MB e'
+ * la finestra di paging_azzera_fisica (e delle sue sorelle): ci si mappa per
+ * un istante una pagina fisica qualunque e poi la si toglie. Con 192 processi
+ * e 128 descrittori il pool statico ci arrivava sopra, e la prima finestra
+ * chiusa smappava un pezzo del kernel stesso: page fault in ring0 all'avvio,
+ * su un PCB. Da qui il pool sta in pagine contigue della fascia kernel, e
+ * kernel.ld controlla che _kernel_end resti sotto la finestra.
+ * ============================================================================= */
+Process *g_process_pool;
 
 /* PID counter */
 static uint32_t g_next_pid = 1;
@@ -2032,6 +2042,20 @@ void sched_init(void)
     uint32_t i;
 
 klog(LOG_INFO, "SCHED: inizializzazione scheduler preemptive...");
+
+    {
+        uint32_t byte   = (uint32_t)sizeof(Process) * MAX_PROCESSES;
+        uint32_t pagine = (byte + PAGE_SIZE - 1) / PAGE_SIZE;
+        uint32_t fis    = pmm_alloc_pages_kernel(pagine);
+        uint8_t *p;
+
+        if (fis == 0) kpanic("SCHED: niente memoria per il pool dei processi");
+        g_process_pool = (Process *)fis;
+        p = (uint8_t *)fis;
+        while (byte--) *p++ = 0;
+        klog(LOG_INFO, "SCHED: pool di %u PCB a 0x%08x (%u KB)",
+             (unsigned)MAX_PROCESSES, fis, pagine * 4);
+    }
 
     /* Azzera strutture */
     for (i = 0; i < MAX_PROCESSES; i++) {

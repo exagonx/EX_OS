@@ -184,6 +184,13 @@ cp -rp lib/include/. "$PREFISSO/i386-exos/include/"
 # include nessuno.
 ln -sfn include "$PREFISSO/i386-exos/sys-include"
 
+# ! I PROTOCOLLI DI ExWin, PER IL SOFTWARE PORTATO (2 ottobre 2026): Exilla
+# parla direttamente al server a finestre (widget/exos) e usa le STESSE
+# definizioni del server, non una copia che divergerebbe. In <exos/>, con
+# la data originale come il resto.
+mkdir -p "$PREFISSO/i386-exos/include/exos"
+cp -p drivers/wserver/win_proto.h drivers/kbd/kbd_proto.h "$PREFISSO/i386-exos/include/exos/"
+
 echo "[OK] crt0.o, libc.a e $(ls lib/include/*.h | wc -l) header installati"
 echo ""
 echo "Aggiungi al PATH:  export PATH=\"$PREFISSO/bin:\$PATH\""

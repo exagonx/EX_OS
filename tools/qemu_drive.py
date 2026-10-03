@@ -309,6 +309,12 @@ def main():
                     mon.cmd(pezzi[0], settle=0.25)
                 else:
                     mon.rapidi(pezzi)
+            # `regs:/percorso` accoda a quel file i registri della CPU (info
+            # registers): ripetuto, e' un campionatore povero di chi sta
+            # girando — l'EIP e il CR3 dicono quale programma e dove.
+            elif cmd.startswith("regs:"):
+                with open(cmd[5:], "a") as fh:
+                    fh.write(mon.cmd("info registers", settle=0.05) + "\n====\n")
             elif cmd.startswith("foto:"):
                 mon.cmd("screendump " + cmd[5:], settle=0.8)
             elif cmd.startswith("key:"):

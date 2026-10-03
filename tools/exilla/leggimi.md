@@ -388,6 +388,66 @@ chiusura. Il floppy del sistema era sceso a 512 byte liberi: `help` e
 
 ---
 
+### 2-3 ottobre 2026 — tappa 7 IN CORSO: la finestra vera in ExWin (@EXILLA-FINESTRE), kernel 0.232
+
+**3 ottobre 2026: Firefox gira in una finestra di ExWin** (giro 43,
+`tools/exilla/prova-finestra.sh`): l'interfaccia intera — schede, barra degli
+indirizzi, pulsanti — e la pagina di prova col suo JavaScript; il titolo nella
+barra di ExWin, la finestra nella barra delle applicazioni, il puntatore e il
+clic arrivano.
+
+![Firefox in una finestra di ExWin](tappa7-finestra.png)
+
+Come e' fatto `widget/exos`:
+- **le finestre sono del server**: una finestra principale, un dialogo o un
+  popup chiede a wserver una finestra (WIN_MSG_CREA) e ne riceve una zona di
+  memoria condivisa ARGB; WebRender (software) disegna li' dentro dal suo filo
+  (`StartRemoteDrawingInRegion`) e manda WIN_MSG_AGGIORNA col rettangolo
+  cambiato. Il protocollo e' `<exos/win_proto.h>`, lo stesso del server;
+- **la posta**: il filo principale dorme nel kernel aspettando i messaggi IPC
+  (gli eventi del server, e le lettere con cui gli altri fili lo svegliano),
+  al piu' 250 ms per volta (`ExosPosta.cpp`);
+- mouse (anche il passaggio senza tasti), tasto destro col menu contestuale,
+  rotella, tastiera (i codici di EX-OS, le accentate in CP437, i tasti
+  speciali) attraverso `TextEventDispatcher`.
+
+Cosa ha trovato in EX-OS, nell'ordine:
+1. **wserver 0.009**: una finestra e' del processo, non del filo (i pixel li
+   manda il filo di WebRender);
+2. **kernel 0.231**: 128 fili per processo e 192 processi (Gecko con
+   l'interfaccia supera i 63 fili);
+3. **kernel 0.232**: 128 file aperti per processo (oltre il 32esimo non
+   trovava piu' i caratteri); e il pool dei processi fuori dal BSS: arrivava
+   alla finestra di paging a 0x3FF000, trovato con un watchpoint hardware nel
+   gdb di QEMU, e ora `kernel.ld` lo impedisce;
+4. ! **la malloc scorreva tutto lo heap a ogni chiamata**: con l'interfaccia
+   di Firefox (centinaia di migliaia di blocchi) sembrava un blocco. Trovato
+   campionando la CPU (`regs:` di `qemu_drive.py`). Ora ha i cassetti dei
+   blocchi liberi per taglia; il banco `tools/exilla/banco-heap.sh` la prova
+   sull'host con un milione di operazioni. Lo stesso banco ha trovato che
+   `malloc`, `sbrk` e `mmap` davano errore per un indirizzo oltre i 2 GB;
+5. **la pila allineata a 16**: un `movdqa` di WebRender cadeva con #GP. Ora la
+   libc la allinea in `_start`, all'ingresso dei fili e dei gestori di segnale.
+
+**3 ottobre 2026, tastiera e navigazione**: un clic nella barra degli
+indirizzi, `file:///disk/seconda.html` scritto con la tastiera (italiana: i
+`:` e i `/` arrivano giusti) e Invio: Firefox carica la seconda pagina, e il
+titolo della finestra di ExWin diventa «Seconda - Nightly».
+
+![la seconda pagina, aperta scrivendo l'indirizzo](tappa7-tastiera.png)
+
+Per arrivarci: **wserver 0.010 non aspetta nessun client**. Clic e tasti si
+spedivano aspettando che la casella del client (quattro messaggi) avesse
+posto; Firefox, occupato ad avviarsi, la svuotava di rado, e al primo clic il
+server restava fermo con tutto lo schermo. Ora ogni evento parte senza
+attesa e, a casella piena, aspetta in una coda della finestra (i movimenti si
+accorpano). E Firefox legge fino a sedici messaggi per volta.
+
+! **E' LENTO**: in QEMU Firefox impiega piu' di venti secondi a reagire a una
+pagina scritta nella barra; la prova aspetta un minuto. Restano: i menu
+(popup), il ridimensionamento, gli errori di SQLite sul profilo («unable to
+open database file»); il cursore ha una forma sola.
+
 ## 1. L'albero
 
 `/firefox-main/` (fuori da git, vedi `.gitignore`): **Firefox 158.0a1**, 4,9 GB.

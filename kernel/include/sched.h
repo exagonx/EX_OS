@@ -79,7 +79,9 @@ typedef struct IpcMessage {
  * fili, e con 64 posti in tutto un programma solo si sarebbe mangiato mezzo
  * sistema. Costa BSS del kernel (circa 12 KB di PCB per posto) e, solo per chi
  * esiste davvero, 128 KB di stack kernel sotto la soglia bassa di kernel.h. */
-#define MAX_PROCESSES       128     /* Massimo numero processi simultanei */
+/* 192 dal kernel 0.231: ogni filo e' un posto, e un Firefox ne vuole un
+ * centinaio. Un posto costa circa 12,7 KB di BSS del kernel. */
+#define MAX_PROCESSES       192     /* Massimo numero processi simultanei */
 
 /* Quante zone di memoria condivisa puo' tenere aperte un processo.
  *
@@ -103,7 +105,12 @@ typedef struct IpcMessage {
  * l'uscita, gli header della catena di inclusione e uno o due file
  * temporanei, e 16 e' un tetto che si tocca senza fare niente di strano.
  * Costa 16 FileDescriptor in piu' per PCB. */
-#define MAX_FD              32      /* File descriptor per processo */
+/* 128 e non 32 (kernel 0.232): Firefox con una finestra vera apre caratteri,
+ * database e cache insieme, e oltre il 32esimo file le aperture fallivano —
+ * «unable to find a usable font». Costa 96 FileDescriptor (20 byte) in piu'
+ * per PCB, circa 370 KB su 192 processi. ! FD_IPC (syscall.h, libc.h) vale
+ * MAX_FD e si sposta con lui: va ricompilato chi usa poll sulla mailbox. */
+#define MAX_FD              128     /* File descriptor per processo */
 #define KERNEL_STACK_SIZE   131072  /* 128KB stack kernel per processo — RAM estesa via PMM */
 /* =============================================================================
  * STACK UTENTE A CRESCITA SU FAULT (kernel 0.124)
@@ -162,7 +169,10 @@ typedef struct IpcMessage {
  * mega a 126 MB di spazio sotto il TLS, tolti al tetto dello heap che ne ha
  * quasi tre giga. La RAM resta quella che il filo tocca davvero. */
 #define FILO_STACK_SIZE     (2u * 1024u * 1024u)   /* riserva per filo */
-#define FILO_MAX            64      /* capogruppo compreso: 63 fili in piu' */
+/* ! 128 DAL 2 OTTOBRE 2026 (kernel 0.231): Firefox con una finestra vera
+ * supera i 63 fili (WebRender, i glifi, i pool di Gecko) e si fermava in
+ * nsThreadPool. La banda passa a 254 MB di indirizzi. */
+#define FILO_MAX            128     /* capogruppo compreso: 127 fili in piu' */
 #define FILI_BANDA          ((FILO_MAX - 1) * (FILO_STACK_SIZE + 4096))
 #define USER_STACK_INIT     8192    /* 8KB impegnati al caricamento */
 
@@ -838,7 +848,7 @@ Process *proc_get_current(void);
 Process *proc_spazio_capo(Process *p);
 void     proc_spazio_prendi(Process *capo);
 void     proc_spazio_lascia(Process *capo);
-extern Process g_process_pool[MAX_PROCESSES];   /* usato da ipc.c per il registro nomi */
+extern Process *g_process_pool;  /* MAX_PROCESSES PCB, da sched_init */   /* usato da ipc.c per il registro nomi */
 
 /* Scheduler */
 void     sched_tick(void);              /* Chiamato ogni IRQ0 (100Hz) */

@@ -398,7 +398,13 @@
  * fb e mmio lavorano sul heap_end del capogruppo, sotto un suo lucchetto.
  * E le tabelle delle pagine dello spazio utente nascono sempre con PG_USER:
  * una fascia di 4 MB aperta da una mappatura PROT_NONE restava del kernel. */
-#define EXOS_VERSION    "0.230"
+/* 0.230 -> 0.231: 128 fili per processo (erano 64) e 192 processi nel sistema
+ * (erano 128). Firefox con una finestra vera di ExWin superava i 63 fili e si
+ * fermava in nsThreadPool. */
+/* 0.231 -> 0.232: 128 descrittori per processo (erano 32); FD_IPC, che vale
+ * MAX_FD, passa a 128. Firefox con la finestra vera apriva piu' di 32 file e
+ * non trovava piu' i caratteri. */
+#define EXOS_VERSION    "0.232"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
