@@ -133,8 +133,8 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
  *   ex_scarichi_ferma_tutti()     ! CALL IT BEFORE EXITING: the downloads are
  *                                  child processes and would go on alone
  *
- * The progress arrives through the message loop (ex_guarda_fd in exwin), so
- * the program must be in ex_prendi_msg — which every ExWin program is.
+ * The progress arrives through the message loop (ex_watch_fd in exwin), so
+ * the program must be in ex_get_message — which every ExWin program is.
  *
  * ! ExScarico CROSSES THE LIBRARY BOUNDARY, SO ITS LAYOUT IS A PROMISE: it is
  * never changed. Something new goes into a new function.
@@ -147,7 +147,7 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
 #define EX_SC_ERR_PROGRAMMA  -1     /* /bin/scarica missing, or no pipe */
 #define EX_SC_ERR_USO        -2     /* address or file name too long */
 #define EX_SC_ERR_PIENO      -3     /* sixteen running at once */
-#define EX_SC_ERR_TOOLKIT    -4     /* exwin.so older than this: no ex_guarda_fd */
+#define EX_SC_ERR_TOOLKIT    -4     /* exwin.so older than this: no ex_watch_fd */
 #define EX_SC_ERR_VECCHIA    -5     /* exdlg.so older than this */
 
 #define EXSC_URL_MAX   512

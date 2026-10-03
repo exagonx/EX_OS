@@ -85,7 +85,38 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
         il modo piu' rapido di sapere se un carattere si carica</td></tr>
 <tr><td><b>Orologio</b> <code>orologio</code></td>
     <td>l'ora, ed e' l'esempio piu' corto di applicazione grafica</td></tr>
+<tr><td><b>EXKlondike</b> <code>exklondike</code></td>
+    <td>il solitario classico (Avvio &gt; Giochi)</td></tr>
+<tr><td><b>EXSpider</b> <code>exspider</code></td>
+    <td>il solitario a due mazzi, con uno, due o quattro semi</td></tr>
+<tr><td><b>EXMajong</b> <code>exmajong</code></td>
+    <td>il solitario con le tessere del mahjong</td></tr>
+<tr><td><b>EXGO</b> <code>exgo</code></td>
+    <td>il go, contro il computer o in due</td></tr>
 </table>
+
+<h3 id="giochi">I giochi</h3>
+
+<p>Stanno nel menu <b>Avvio &gt; Giochi</b>. Tutti e quattro hanno il menu
+<b>Partita</b> (nuova partita con F2 o Ctrl+N, annulla con Ctrl+Z, esci con
+Ctrl+Q) e <b>Info &gt; Istruzioni</b>, che spiega le regole. Le scelte e le
+partite vinte si ricordano in <code>$HOME/.exwin/config/&lt;gioco&gt;.cfg</code>.</p>
+
+<ul>
+<li><b>EXKlondike</b>: sette colonne, il mazzo e quattro basi. Le carte si
+    trascinano col mouse; un clic su una carta la manda dove puo' andare.
+    Spazio gira il mazzo. Si pesca una carta o tre (Partita).</li>
+<li><b>EXSpider</b>: dieci colonne, otto scale dal re all'asso da completare.
+    Un clic sul mazzo in basso a destra (o il tasto D) distribuisce una carta
+    per colonna; H suggerisce una mossa.</li>
+<li><b>EXMajong</b>: 144 tessere a tartaruga, da togliere a coppie uguali e
+    libere. Ogni partita si puo' vincere; H suggerisce, M mescola quando non
+    resta nessuna coppia.</li>
+<li><b>EXGO</b>: scacchiera 9x9, 13x13 o 19x19. Il computer gioca col bianco
+    ed e' un principiante: serve a imparare le regole. Due passaggi di fila
+    chiudono la partita; si segnano i gruppi morti con un clic e si contano i
+    punti (pietre e territorio, komi 6,5 al bianco).</li>
+</ul>
 
 <h2>La scrivania: icone, unita', sfondo e registro</h2>
 
@@ -174,7 +205,7 @@ chiede un font: un orologio non deve pagare un rasterizzatore di curve.
 
 <p class="nota">
 <b>Se il testo esce tutto con lo stesso carattere squadrato, quello e' il font
-di sistema</b>, cioe' il ripiego. <code>ex_font_apri</code> rende 0 quando un
+di sistema</b>, cioe' il ripiego. <code>ex_font_open</code> rende 0 quando un
 file non c'e' o non si apre, e zero <i>e'</i> il font di sistema: la finestra
 resta leggibile e nessuno dice niente. Si guarda con <code>fontprova</code>,
 che prova i file uno per uno, e nel navigatore con <b>Aiuto &gt; Informazioni

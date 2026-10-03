@@ -38,7 +38,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `orologio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("orologio", VERSIONE_APP);
 
 /* ! LA MISURA E' RICAVATA DAL TESTO PIU' LUNGO CHE PUO' USCIRE, non scelta a
@@ -52,7 +52,7 @@ EX_VERSIONE("orologio", VERSIONE_APP);
  * lo stesso numero sta in exwin/bin/pm/pm.c. Se cambia la', cambia qui. */
 #define BARRA_H     28
 
-static ExFinestra g_f;
+static ExWindow g_f;
 static char       g_testo[TESTO_MAX + 1] = "";
 
 static const char *MESI[12] = {
@@ -86,11 +86,11 @@ static int aggiorna(void)
     return 1;
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
     /* =====================================================================
@@ -105,7 +105,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * si puo' battere dentro — non prende il fuoco della tastiera — quindi o
      * si risponde al mouse o non si risponde a niente.
      * ===================================================================== */
-    case EXM_MOUSE_GIU: {
+    case EXM_MOUSE_DOWN: {
         char t[512];
 
         exinfo_testo(t, sizeof(t), "Orologio", VERSIONE_APP,
@@ -125,22 +125,22 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     /* ! AND THE RETURN VALUE IS WHAT KEEPS THAT PROMISE (29 September 2026).
      * `return 0` means "handled" to the toolkit, which then redraws the whole
      * window anyway: the check above saved nothing, and a change of minute was
-     * drawn twice. EX_NON_RIDISEGNARE says "nothing to do", or "done". */
-    case EXM_TEMPO:
-        if (!aggiorna()) return EX_NON_RIDISEGNARE;
-        proc(f, EXM_DISEGNA, 0, 0);
-        return EX_NON_RIDISEGNARE;
+     * drawn twice. EX_NO_REDRAW says "nothing to do", or "done". */
+    case EXM_TIMER:
+        if (!aggiorna()) return EX_NO_REDRAW;
+        proc(f, EXM_PAINT, 0, 0);
+        return EX_NO_REDRAW;
 
-    case EXM_DISEGNA:
-        ex_riempi(f, 0, 0, FIN_W, FIN_H, EX_GRIGIO);
-        ex_incavo(f, 0, 0, FIN_W, FIN_H);
-        ex_scrivi(f, (FIN_W - ex_larghezza_testo(EX_FONT_SISTEMA, g_testo)) / 2,
-                  2, g_testo, EX_NERO);
-        ex_aggiorna(f);
+    case EXM_PAINT:
+        ex_fill_rect(f, 0, 0, FIN_W, FIN_H, EX_GRAY);
+        ex_draw_sunken(f, 0, 0, FIN_W, FIN_H);
+        ex_draw_text(f, (FIN_W - ex_text_width(EX_FONT_SYSTEM, g_testo)) / 2,
+                  2, g_testo, EX_BLACK);
+        ex_update(f);
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
@@ -151,7 +151,7 @@ int main(int argc, char **argv)
 
     (void)argc; (void)argv;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     if (sw == 0) {
         printf("orologio: il server a finestre non risponde.\n");
         printf("          Avvialo con:  exwin\n");
@@ -159,7 +159,7 @@ int main(int argc, char **argv)
     }
 
     /* All'estremita' destra della barra, con quattro pixel di aria dal bordo. */
-    g_f = ex_crea("finestra", "", EX_SOPRA,
+    g_f = ex_create("window", "", EX_TOPMOST,
                   (int)sw - FIN_W - 4, (int)sh - BARRA_H + 4,
                   FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
@@ -168,15 +168,15 @@ int main(int argc, char **argv)
     }
 
     aggiorna();
-    proc(g_f, EXM_DISEGNA, 0, 0);
+    proc(g_f, EXM_PAINT, 0, 0);
 
     /* ! MEZZO SECONDO, PER UN OROLOGIO AL MINUTO, e non e' spreco: la sveglia
      * costa un confronto dentro un ciclo che gia' si sveglia da solo cinque
      * volte al secondo, e il disegno si fa solo quando il testo cambia. Con un
      * periodo di un minuto esatto l'ora si vedrebbe cambiare con un ritardo
      * fino a un minuto intero, che su un orologio si nota. */
-    ex_sveglia(g_f, 500);
+    ex_set_timer(g_f, 500);
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }

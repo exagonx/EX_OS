@@ -137,7 +137,7 @@ static int leggi_dib(const unsigned char *d, unsigned int n, EximgBitmap *bm)
      * che la maschera a 1 bit si saltava «perche' il server compone finestre
      * opache e non c'e' niente su cui fondere, e il giorno che sapra' fondere
      * e' li' che si andra' a prenderla». A fondere non e' il server ma
-     * ex_icona_disegna() del toolkit, che l'icona la rimpicciolisce e la posa
+     * ex_icon_draw() del toolkit, che l'icona la rimpicciolisce e la posa
      * su un colore noto (22 settembre 2026) - e senza alfa un'icona tonda in
      * un menu grigio ha gli angoli neri.
      *

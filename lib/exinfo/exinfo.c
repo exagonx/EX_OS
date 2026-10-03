@@ -18,7 +18,7 @@
 /* The version of the exwin.so that is running (lib/exwin, 27 September 2026).
  * WEAK: a program with exinfo and without the toolkit still links, and just
  * does not say it. */
-const char *ex_versione(void) __attribute__((weak));
+const char *ex_version(void) __attribute__((weak));
 
 /* I due estremi dell'immagine caricata. `_start` e' il punto d'ingresso, cioe'
  * l'inizio di .text; `_bss_end` lo pone il linker script alla fine di .bss.
@@ -112,7 +112,7 @@ void exinfo_testo(char *out, unsigned int max, const char *nome,
      * tre righe, e le dodici bastano ancora. */
     {
         MemInfo     mi;
-        const char *exwin = ex_versione ? ex_versione() : 0;
+        const char *exwin = ex_version ? ex_version() : 0;
         char        ram[64];
 
         if (meminfo(&mi) == 0)

@@ -56,6 +56,7 @@
 #define SYS_CHDIR       12
 #define SYS_STAT        106
 #define SYS_FSTAT       108    /* stat di un descrittore aperto (vedi sys_fstat) */
+#define SYS_FTRUNCATE   109    /* ftruncate: misura di un file aperto (0.233) */
 #define SYS_LSEEK       19
 #define SYS_READDIR     141    /* elenca una directory (vedi sys_readdir) */
 #define SYS_GETENV      184    /* legge una variabile [env] di /boot/kernel.cfg */
@@ -1552,6 +1553,7 @@ int32_t sys_getcwd(InterruptFrame *f);
 int32_t sys_chdir(InterruptFrame *f);
 int32_t sys_stat(InterruptFrame *f);
 int32_t sys_fstat(InterruptFrame *f);
+int32_t sys_ftruncate(InterruptFrame *f);
 int32_t sys_lseek(InterruptFrame *f);
 int32_t sys_readdir(InterruptFrame *f);
 int32_t sys_getenv(InterruptFrame *f);

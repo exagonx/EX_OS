@@ -1675,6 +1675,23 @@ static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
          ? ERR(EIO) : 0;
 }
 
+/* ftruncate: il file aperto `h`, col montaggio e il percorso interno che il
+ * VFS si e' segnato all'apertura. Stesse regole di vfs_truncate_nl. */
+static int vfs_ftruncate_nl(int h, uint32_t nuova_dim)
+{
+    int im;
+
+    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    im = g_file[h].im;
+    if (g_mnt[im].sola_lettura || g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
+    if (g_mnt[im].tipo == VFS_FS_FAT12FD) return ERR(ENOSYS);
+    if (g_mnt[im].tipo == VFS_FS_EXT2)
+        return (ext2_truncate(g_mnt[im].mnt, g_file[h].interno, nuova_dim) != 0)
+             ? ERR(EIO) : 0;
+    return (fat_truncate(g_mnt[im].mnt, g_file[h].interno, nuova_dim) != 0)
+         ? ERR(EIO) : 0;
+}
+
 static void vfs_sync_nl(void)
 {
     int i;
@@ -1914,6 +1931,11 @@ int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
 int vfs_truncate(const char *abs, uint32_t nuova_dim)
 {
     int r; fs_prendi_n("truncate"); r = vfs_truncate_nl(abs, nuova_dim); fs_rilascia(); return r;
+}
+
+int vfs_ftruncate(int h, uint32_t nuova_dim)
+{
+    int r; fs_prendi_n("ftruncate"); r = vfs_ftruncate_nl(h, nuova_dim); fs_rilascia(); return r;
 }
 
 void vfs_sync(void)

@@ -133,48 +133,67 @@ variabili: la tabella delle finestre di ExWin e' in <code>.bss</code>, e
 sarebbe la stessa per tutti.
 </p>
 
+<h2 id="api-inglese">L'API di ExWin e' in inglese (dal 3 ottobre 2026)</h2>
+<p>
+Le funzioni, i messaggi, gli stili e i tipi di ExWin hanno nomi inglesi, come
+nel resto della programmazione: <code>ex_create</code>, <code>ex_destroy</code>,
+<code>ex_set_text</code>, <code>ex_get_message</code>, <code>EXM_CLOSE</code>,
+<code>EX_CAPTION</code>, <code>ExWindow</code>... Anche le classi dei controlli
+passate a <code>ex_create</code>: <code>"window"</code>, <code>"button"</code>,
+<code>"label"</code>, <code>"textbox"</code>, <code>"list"</code>,
+<code>"textarea"</code>, <code>"checkbox"</code>...
+</p>
+<p>
+<b>I nomi italiani di prima funzionano ancora</b>, come alias deprecati:
+<code>exwin.h</code> e <code>exwin.bi</code> li definiscono (tranne se si
+definisce <code>EXWIN_SENZA_NOMI_ITALIANI</code> prima dell'include, che e' il
+modo di controllare di non usarne piu'), e <code>exwin.so</code> esporta i due
+nomi, quindi anche i programmi gia' compilati funzionano senza ricompilarli. La
+tabella completa italiano &rarr; inglese e' <code>tools/exwin-inglese/mappa.txt</code>.
+</p>
+
 <h2>Un'applicazione grafica, dalla prima riga</h2>
 
 <pre>#include "libc.h"
 #include "exwin.h"
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
-    case EXM_COMANDO:
-        if (wp == 1) ex_titolo(f, "hai scelto la voce di menu");
+    case EXM_COMMAND:
+        if (wp == 1) ex_set_title(f, "hai scelto la voce di menu");
         return 0;
 
-    case EXM_DISEGNA:
-        ex_riempi(f, 0, 20, 300, 180, EX_GRIGIO);
-        ex_scrivi(f, 12, 40, "Ciao da EX-OS", EX_NERO);
-        ex_aggiorna(f);
+    case EXM_PAINT:
+        ex_fill_rect(f, 0, 20, 300, 180, EX_GRAY);
+        ex_draw_text(f, 12, 40, "Ciao da EX-OS", EX_BLACK);
+        ex_update(f);
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
 int main(void)
 {
     ExMsg      m;
-    ExFinestra f, menu;
+    ExWindow f, menu;
 
-    f = ex_crea("finestra", "Esempio",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    f = ex_create("window", "Esempio",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                 EX_AUTO, EX_AUTO, 300, 200, 0, 0, proc);
     if (!f) { printf("il server a finestre non risponde: avvialo con exwin\n");
               return 1; }
 
-    menu = ex_menu(f);
-    ex_menu_voce(menu, "File", "Prova", 1);
+    menu = ex_menu_bar(f);
+    ex_menu_add_item(menu, "File", "Prova", 1);
 
-    while (ex_prendi_msg(&amp;m)) ex_smista(&amp;m);
+    while (ex_get_message(&amp;m)) ex_dispatch(&amp;m);
     return 0;
 }</pre>
 

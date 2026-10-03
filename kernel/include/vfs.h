@@ -34,7 +34,10 @@
  * tiene aperto il proprio eseguibile per tutta la vita, quindi il tetto
  * non conta piu' i soli file aperti dai programmi ma anche i programmi
  * stessi — quattro shell e i loro figli ci arrivavano vicino. */
-#define VFS_MAX_OPEN    64
+/* 256 e non 64 (kernel 0.233): 64 file aperti in TUTTO il sistema, e Firefox
+ * da solo ne tiene decine (caratteri, database, cache): SQLite rispondeva
+ * «unable to open database file». Un posto costa circa 330 byte. */
+#define VFS_MAX_OPEN    256
 #define VFS_PUNTO_MAX   24
 #define VFS_PATH_MAX    320
 
@@ -193,6 +196,9 @@ int  vfs_rename (const char *da, const char *a);
  * la sa fare e risponde ENOSYS: e' l'unico driver senza troncamento, e
  * dirlo e' meglio che fingere di aver fatto qualcosa. */
 int  vfs_truncate(const char *abs, uint32_t nuova_dim);
+/* La stessa cosa su un file APERTO (ftruncate): il file e' quello del
+ * descrittore anche se nel frattempo e' stato rinominato. */
+int  vfs_ftruncate(int h, uint32_t nuova_dim);
 void vfs_sync   (void);
 
 #endif /* VFS_H */

@@ -1,6 +1,6 @@
 /* GENERATO DA tools/genlibc.py — NON MODIFICARE A MANO.
  *
- * La tabella che libc.so mette a disposizione: 447 funzioni, ognuna col suo
+ * La tabella che libc.so mette a disposizione: 448 funzioni, ognuna col suo
  * nome. Chi la legge risolve per NOME, quindi l'ordine di questo file non e'
  * parte dell'ABI e puo' cambiare a ogni ricostruzione senza rompere niente.
  */
@@ -783,122 +783,124 @@ ln386:
 ln387:
     .asciz "time_set"
 ln388:
-    .asciz "times"
+    .asciz "timegm"
 ln389:
-    .asciz "timespec_get"
+    .asciz "times"
 ln390:
-    .asciz "tmpfile"
+    .asciz "timespec_get"
 ln391:
-    .asciz "tmpnam"
+    .asciz "tmpfile"
 ln392:
-    .asciz "toascii"
+    .asciz "tmpnam"
 ln393:
-    .asciz "tolower"
+    .asciz "toascii"
 ln394:
-    .asciz "toupper"
+    .asciz "tolower"
 ln395:
-    .asciz "towlower"
+    .asciz "toupper"
 ln396:
-    .asciz "towupper"
+    .asciz "towlower"
 ln397:
-    .asciz "truncate"
+    .asciz "towupper"
 ln398:
-    .asciz "tty_clear"
+    .asciz "truncate"
 ln399:
-    .asciz "tty_getsize"
+    .asciz "tty_clear"
 ln400:
-    .asciz "tty_raw"
+    .asciz "tty_getsize"
 ln401:
-    .asciz "umask"
+    .asciz "tty_raw"
 ln402:
-    .asciz "umount"
+    .asciz "umask"
 ln403:
-    .asciz "ungetc"
+    .asciz "umount"
 ln404:
-    .asciz "unlink"
+    .asciz "ungetc"
 ln405:
-    .asciz "unsetenv"
+    .asciz "unlink"
 ln406:
-    .asciz "uptime_ms"
+    .asciz "unsetenv"
 ln407:
-    .asciz "usleep"
+    .asciz "uptime_ms"
 ln408:
-    .asciz "utime"
+    .asciz "usleep"
 ln409:
-    .asciz "verboseboot"
+    .asciz "utime"
 ln410:
-    .asciz "vfprintf"
+    .asciz "verboseboot"
 ln411:
-    .asciz "vfscanf"
+    .asciz "vfprintf"
 ln412:
-    .asciz "video_info"
+    .asciz "vfscanf"
 ln413:
-    .asciz "vprintf"
+    .asciz "video_info"
 ln414:
-    .asciz "vscanf"
+    .asciz "vprintf"
 ln415:
-    .asciz "vsnprintf"
+    .asciz "vscanf"
 ln416:
-    .asciz "vsprintf"
+    .asciz "vsnprintf"
 ln417:
-    .asciz "vsscanf"
+    .asciz "vsprintf"
 ln418:
-    .asciz "vswprintf"
+    .asciz "vsscanf"
 ln419:
-    .asciz "wait"
+    .asciz "vswprintf"
 ln420:
-    .asciz "waitpid"
+    .asciz "wait"
 ln421:
-    .asciz "wcscat"
+    .asciz "waitpid"
 ln422:
-    .asciz "wcschr"
+    .asciz "wcscat"
 ln423:
-    .asciz "wcscmp"
+    .asciz "wcschr"
 ln424:
-    .asciz "wcscpy"
+    .asciz "wcscmp"
 ln425:
-    .asciz "wcscspn"
+    .asciz "wcscpy"
 ln426:
-    .asciz "wcslen"
+    .asciz "wcscspn"
 ln427:
-    .asciz "wcsncat"
+    .asciz "wcslen"
 ln428:
-    .asciz "wcsncmp"
+    .asciz "wcsncat"
 ln429:
-    .asciz "wcsncpy"
+    .asciz "wcsncmp"
 ln430:
-    .asciz "wcspbrk"
+    .asciz "wcsncpy"
 ln431:
-    .asciz "wcsrchr"
+    .asciz "wcspbrk"
 ln432:
-    .asciz "wcsspn"
+    .asciz "wcsrchr"
 ln433:
-    .asciz "wcsstr"
+    .asciz "wcsspn"
 ln434:
-    .asciz "wcstod"
+    .asciz "wcsstr"
 ln435:
-    .asciz "wcstol"
+    .asciz "wcstod"
 ln436:
-    .asciz "wcstoll"
+    .asciz "wcstol"
 ln437:
-    .asciz "wcstombs"
+    .asciz "wcstoll"
 ln438:
-    .asciz "wcstoul"
+    .asciz "wcstombs"
 ln439:
-    .asciz "wcstoull"
+    .asciz "wcstoul"
 ln440:
-    .asciz "wctomb"
+    .asciz "wcstoull"
 ln441:
-    .asciz "wmemchr"
+    .asciz "wctomb"
 ln442:
-    .asciz "wmemcmp"
+    .asciz "wmemchr"
 ln443:
-    .asciz "wmemcpy"
+    .asciz "wmemcmp"
 ln444:
-    .asciz "wmemmove"
+    .asciz "wmemcpy"
 ln445:
-    .asciz "wmemset"
+    .asciz "wmemmove"
 ln446:
+    .asciz "wmemset"
+ln447:
     .asciz "write"
 
     .align 4
@@ -1350,6 +1352,7 @@ libc_nomi:
     .long ln444
     .long ln445
     .long ln446
+    .long ln447
 
     .align 4
 libc_indirizzi:
@@ -1741,6 +1744,7 @@ libc_indirizzi:
     .long time
     .long time_now
     .long time_set
+    .long timegm
     .long times
     .long timespec_get
     .long tmpfile
@@ -1807,7 +1811,7 @@ libc_indirizzi:
 libc_tabella:
     .long 0x424C5845        /* EXLIB_MAGIA, 'EXLB' */
     .long 1                 /* EXLIB_VERSIONE */
-    .long 447
+    .long 448
     .long libc_nomi
     .long libc_indirizzi
 

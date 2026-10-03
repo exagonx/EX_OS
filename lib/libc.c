@@ -295,6 +295,7 @@ typedef struct {
 #define SYS_LSEEK        19
 #define SYS_STAT        106
 #define SYS_FSTAT       108
+#define SYS_FTRUNCATE   109
 #define SYS_READDIR     141
 #define SYS_IPC_SEND     220
 #define SYS_IPC_RECV     221
@@ -6986,6 +6987,64 @@ int getpagesize(void)
  * ! SU FALLIMENTO RITORNA MAP_FAILED, cioe' (void *)-1, NON NULL: e' la
  * convenzione di POSIX ed e' il modo classico di sbagliare a usarla.
  * ============================================================================= */
+#ifndef EXOS_LIBC_SO
+/* Le mappature condivise e scrivibili di un file (vedi mmap): dove stanno, e
+ * un descrittore loro (dup) per riscrivere i byte nel file. */
+#define MAPPE_COND 32
+static struct { unsigned char *a; size_t lung; int fd; long off; } g_mappe_cond[MAPPE_COND];
+static volatile int g_mappe_cond_m = 0;
+
+static int mappa_ricorda(void *m, size_t lung, int fd, long off)
+{
+    int i, d = dup(fd);
+
+    if (d < 0) return -1;
+    mutex_prendi(&g_mappe_cond_m);
+    for (i = 0; i < MAPPE_COND; i++)
+        if (!g_mappe_cond[i].a) {
+            g_mappe_cond[i].a = (unsigned char *)m;
+            g_mappe_cond[i].lung = lung;
+            g_mappe_cond[i].fd = d;
+            g_mappe_cond[i].off = off;
+            mutex_lascia(&g_mappe_cond_m);
+            return 0;
+        }
+    mutex_lascia(&g_mappe_cond_m);
+    close(d);
+    return -1;
+}
+
+/* Riscrive nel file la parte [a, a+lung) delle mappature condivise che la
+ * toccano; con `togli` le dimentica (munmap). Rende 1 se ne ha trovata una. */
+static int mappe_riscrivi(void *a, size_t lung, int togli)
+{
+    extern ssize_t pwrite(int fd, const void *buf, size_t n, long pos);
+    unsigned char *da = (unsigned char *)a, *a_fine = da + lung;
+    int i, trovata = 0;
+
+    mutex_prendi(&g_mappe_cond_m);
+    for (i = 0; i < MAPPE_COND; i++) {
+        unsigned char *m = g_mappe_cond[i].a, *m_fine;
+        unsigned char *x, *y;
+
+        if (!m) continue;
+        m_fine = m + g_mappe_cond[i].lung;
+        if (a_fine <= m || da >= m_fine) continue;
+        x = da > m ? da : m;
+        y = a_fine < m_fine ? a_fine : m_fine;
+        (void)pwrite(g_mappe_cond[i].fd, x, (size_t)(y - x),
+                     g_mappe_cond[i].off + (long)(x - m));
+        trovata = 1;
+        if (togli) {
+            close(g_mappe_cond[i].fd);
+            g_mappe_cond[i].a = 0;
+        }
+    }
+    mutex_lascia(&g_mappe_cond_m);
+    return trovata;
+}
+#endif
+
 void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
 {
     MmapParams p;
@@ -7024,10 +7083,12 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
         unsigned char *m;
         size_t         letti = 0;
 
-        if ((flags & MAP_SHARED) && (prot & PROT_WRITE)) {
-            errno = ENODEV;
-            return MAP_FAILED;
-        }
+        /* ! MAP_SHARED IN SCRITTURA: una copia che torna nel file a msync e
+         * munmap (3 ottobre 2026). Vale per un processo solo — due
+         * processi che mappano lo stesso file non si vedrebbero — ed e' il
+         * caso di SQLite in modalita' WAL (il file -shm), che Firefox usa
+         * per i suoi database e che rispondeva «disk I/O error». */
+        int condivisa = (flags & MAP_SHARED) && (prot & PROT_WRITE);
         m = mmap(addr, lung, PROT_READ | PROT_WRITE,
                  (flags & ~(MAP_SHARED | MAP_PRIVATE)) | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (m == MAP_FAILED) return MAP_FAILED;
@@ -7039,6 +7100,11 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
         }
         if (prot != (PROT_READ | PROT_WRITE) && mprotect(m, lung, prot) != 0) {
             int e = errno; munmap(m, lung); errno = e; return MAP_FAILED;
+        }
+        if (condivisa && mappa_ricorda(m, lung, fd, off) != 0) {
+            munmap(m, lung);
+            errno = ENOMEM;
+            return MAP_FAILED;
         }
         return m;
     }
@@ -7080,6 +7146,7 @@ int munmap(void *addr, size_t lung)
         int k = g_shm_munmap(addr);
         if (k != 1) return k;
     }
+    (void)mappe_riscrivi(addr, lung, 1);
 #endif
     r = _syscall2(SYS_MUNMAP, (uint32_t)(uintptr_t)addr,
                           (uint32_t)lung);
@@ -8950,9 +9017,10 @@ int ftruncate(int fd, off_t lung)
     int       r;
 
     if (z == NULL) {
-        /* Files have truncate(path) on EX-OS, not ftruncate: say so. */
-        errno = E_SHMFD(fd) ? EBADF : ENOSYS;
-        return -1;
+        /* Un file: il kernel lo sa fare dal 0.233 (SYS_FTRUNCATE). */
+        if (E_SHMFD(fd)) { errno = EBADF; return -1; }
+        if (lung < 0)    { errno = EINVAL; return -1; }
+        return (int)err_posix(_syscall2(SYS_FTRUNCATE, (uint32_t)fd, (uint32_t)lung));
     }
     if (lung < 0) { errno = EINVAL; return -1; }
     if (z->virt) {
@@ -11585,7 +11653,12 @@ int madvise(void *addr, size_t lung, int consiglio)
 
 int msync(void *addr, size_t lung, int flag)
 {
-    (void)addr; (void)lung; (void)flag;
+    (void)flag;
+#ifndef EXOS_LIBC_SO
+    (void)mappe_riscrivi(addr, lung, 0);
+#else
+    (void)addr; (void)lung;
+#endif
     return 0;
 }
 

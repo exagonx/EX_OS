@@ -20,14 +20,14 @@
 #include "kbd_proto.h"
 
 /* --- exwin finto --------------------------------------------------------- */
-ExFont ex_font_trova(int fam, int corpo, int grassetto, int corsivo)
+ExFont ex_font_find(int fam, int corpo, int grassetto, int corsivo)
 {
     return (ExFont)((unsigned)corpo | ((unsigned)grassetto << 8) | ((unsigned)corsivo << 9) |
                     ((unsigned)fam << 10));
 }
-int ex_font_altezza(ExFont f) { return (int)(f & 255) + 4; }
-int ex_font_base(ExFont f)    { return (int)(f & 255); }
-int ex_larghezza_testo(ExFont f, const char *s)
+int ex_font_height(ExFont f) { return (int)(f & 255) + 4; }
+int ex_font_baseline(ExFont f)    { return (int)(f & 255); }
+int ex_text_width(ExFont f, const char *s)
 {
     int n = 0;
     for (; *s; s++) if (((unsigned char)*s & 0xC0) != 0x80) n++;
@@ -38,12 +38,12 @@ typedef struct { int x, y, w, h; unsigned int c; } Riempi;
 typedef struct { int x, y; unsigned int c; ExFont f; char t[128]; } Scritto;
 static Riempi  g_ri[4000]; static int g_ri_n;
 static Scritto g_sc[4000]; static int g_sc_n;
-void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
+void ex_fill_rect(ExWindow f, int x, int y, int w, int h, unsigned int c)
 {
     (void)f;
     if (g_ri_n < 4000) { Riempi r = { x, y, w, h, c }; g_ri[g_ri_n++] = r; }
 }
-void ex_scrivi_con(ExFinestra w, ExFont f, int x, int y, const char *s, unsigned int c)
+void ex_draw_text_font(ExWindow w, ExFont f, int x, int y, const char *s, unsigned int c)
 {
     (void)w;
     if (g_sc_n < 4000) {
@@ -53,12 +53,12 @@ void ex_scrivi_con(ExFinestra w, ExFont f, int x, int y, const char *s, unsigned
     }
 }
 static char g_app[4096]; static unsigned int g_app_n;
-unsigned int ex_appunti_metti(const char *t, unsigned int n)
+unsigned int ex_clipboard_set(const char *t, unsigned int n)
 {
     if (n >= sizeof(g_app)) n = sizeof(g_app) - 1;
     memcpy(g_app, t, n); g_app[n] = 0; g_app_n = n; return n;
 }
-unsigned int ex_appunti_prendi(char *out, unsigned int max)
+unsigned int ex_clipboard_get(char *out, unsigned int max)
 {
     unsigned int n = g_app_n < max ? g_app_n : max;
     memcpy(out, g_app, n); return n;
@@ -99,7 +99,7 @@ static int cursore_x(void)
     int i;
     g_ri_n = g_sc_n = 0;
     exrtf_vista_disegna(&v, 1);
-    for (i = 0; i < g_ri_n; i++) if (g_ri[i].w == 2 && g_ri[i].c == EX_NERO) return g_ri[i].x;
+    for (i = 0; i < g_ri_n; i++) if (g_ri[i].w == 2 && g_ri[i].c == EX_BLACK) return g_ri[i].x;
     return -1;
 }
 
@@ -161,7 +161,7 @@ int main(void)
     g_ri_n = g_sc_n = 0;
     exrtf_vista_disegna(&v, 1);
     for (i = 0; i < g_sc_n && strcmp(g_sc[i].t, "due") != 0; i++) ;
-    ok(i < g_sc_n && g_sc[i].c == EX_BIANCO && g_sc[i].x == x0 + 32 && (g_sc[i].f & 256),
+    ok(i < g_sc_n && g_sc[i].c == EX_WHITE && g_sc[i].x == x0 + 32 && (g_sc[i].f & 256),
        "disegnata scelta: bianca, al suo posto, col font grassetto");
     tasto(KBD_K_END, 1);
     scrivi("x");
@@ -198,7 +198,7 @@ int main(void)
     {
         int fine1 = 0, fine2 = 0;
         for (i = 0; i < g_sc_n; i++) {
-            int e = g_sc[i].x + ex_larghezza_testo(g_sc[i].f, g_sc[i].t);
+            int e = g_sc[i].x + ex_text_width(g_sc[i].f, g_sc[i].t);
             if (strcmp(g_sc[i].t, "cc ") == 0) fine1 = g_sc[i].x + 16;
             if (strcmp(g_sc[i].t, "dd ee ff") == 0) fine2 = e;   /* not justified: one piece */
         }

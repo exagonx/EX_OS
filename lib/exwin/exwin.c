@@ -38,25 +38,25 @@ typedef struct {
     unsigned int classe;        /* CL_* */
     unsigned int id;            /* per i controlli */
     unsigned int win_id;        /* id lato server, solo per il primo livello */
-    ExFinestra   padre;         /* 0 = primo livello */
+    ExWindow   padre;         /* 0 = primo livello */
     int          x, y, w, h;
     unsigned int stile;
     char         titolo[TESTO_LEN];
-    ExProcedura  proc;
+    ExWindowProc  proc;
 
     /* Solo per il primo livello: i pixel.
      * ! `pix` IS WHERE THE TOOLKIT DRAWS, `zona` IS WHAT THE SERVER READS
      * (29 September 2026). They are two buffers, and a finished rectangle
      * goes from one to the other only when the program says it is finished
-     * (presenta(), from ex_aggiorna). If the private one could not be had,
+     * (presenta(), from ex_update). If the private one could not be had,
      * pix == zona and everything is as before. See presenta(). */
     unsigned int *pix;
     unsigned int *zona;
     unsigned int  passo_px;     /* pixel per riga */
     unsigned int  premuto;      /* il controllo e' giu' */
-    ExFinestra    fuoco;        /* solo per il primo livello: chi ha i tasti */
+    ExWindow    fuoco;        /* solo per il primo livello: chi ha i tasti */
     /* ! TAB PAST THE LAST CONTROL GOES TO THE CONTENT, for a window that asked
-     * (ex_tab_contenuto). Only the top level uses it. */
+     * (ex_tab_content). Only the top level uses it. */
     unsigned char tab_contenuto;
     unsigned int  cursore;      /* posizione del cursore in una casella */
     /* A text box's selection runs from `ancora` to `cursore`, when c_sel is 1;
@@ -85,14 +85,14 @@ typedef struct {
      * quando le finestre sono otto. */
     unsigned int  z;
 
-    /* La sveglia periodica: vedi ex_sveglia(). Zero = nessuna. */
+    /* La sveglia periodica: vedi ex_set_timer(). Zero = nessuna. */
     unsigned int  sveglia_ms;
     unsigned int  sveglia_quando;    /* uptime_ms della prossima */
 
     /* ! L'ICONA DEL CONTROLLO, e sta QUI e non in una tabella a parte per la
      * stessa ragione del `valore` qui sopra: sono due numeri, non un buffer.
      * Zero vuol dire «nessuna», che e' il caso di quasi tutti i controlli di
-     * quasi tutte le finestre. Vedi ex_icona_metti(). */
+     * quasi tutte le finestre. Vedi ex_set_icon(). */
     unsigned int  icona;
     unsigned int  icona_lato;
 } Oggetto;
@@ -168,7 +168,7 @@ typedef struct {
 
 typedef struct {
     unsigned int usato;
-    ExFinestra   ogg;
+    ExWindow   ogg;
     int          fd_in;         /* noi scriviamo qui, la shell legge */
     int          fd_out;        /* la shell scrive qui, noi leggiamo */
     int          pid;
@@ -183,7 +183,7 @@ typedef struct {
     /* ! IL PROGRAMMA DENTRO PUO' USCIRE, e prima non lo diceva nessuno: la
      * finestra restava aperta con dentro una shell morta. `finito` lo segna,
      * `detto` fa si' che l'applicazione lo senta UNA volta sola — un
-     * EXM_TERMFINITO a ogni giro del ciclo sarebbe un fiume. */
+     * EXM_TERM_EXITED a ogni giro del ciclo sarebbe un fiume. */
     int          finito;
     int          detto;
 } Terminale;
@@ -211,14 +211,14 @@ static Terminale g_term[TERM_MAX];
 #define LISTA_MAX        4
 /* ! A LIST GROWS, since 24 September 2026: it starts with LISTA_VOCI_PRIMA
  * rows and doubles when full, up to LISTA_VOCI_MAX. It was a fixed 512, and
- * past that ex_lista_aggiungi() said no — an archive of 3000 files, or a big
+ * past that ex_list_add() said no — an archive of 3000 files, or a big
  * directory, showed its first 512 and nothing said the rest was missing on
  * the screen. */
 #define LISTA_VOCI_PRIMA 512
 #define LISTA_VOCI_MAX   65536
 #define LISTA_TESTO_MAX  64
 #define LISTA_RIGA_H     16
-#define LISTA_CAR_W       8    /* il passo del carattere: vedi ex_scrivi */
+#define LISTA_CAR_W       8    /* il passo del carattere: vedi ex_draw_text */
 
 /* ! LA CORSIA DELLE ICONE E' LARGA DUE CARATTERI ESATTI, e non «quanto serve».
  * Chi incolonna a mano sopra una lista — il file manager con le sue quattro
@@ -232,7 +232,7 @@ static Terminale g_term[TERM_MAX];
 
 typedef struct {
     unsigned int usato;
-    ExFinestra   ogg;
+    ExWindow   ogg;
     char        *voci;                  /* cap * LISTA_TESTO_MAX */
     unsigned int cap;                   /* how many rows fit now */
     unsigned int n;                     /* quante ce ne sono */
@@ -249,10 +249,10 @@ typedef struct {
      * la riga vorrebbe dire rileggere e ridecodificare un file a ogni
      * disegno della lista, cioe' a ogni scorrimento. Qui c'e' il numero di
      * un'icona gia' aperta. */
-    ExIcona     *ic;                    /* cap of them */
+    ExIcon     *ic;                    /* cap of them */
 
     /* LA SCELTA MULTIPLA (29 settembre 2026, @LISTA-MULTI): accesa da
-     * ex_lista_multipla. `segni` ha un byte per riga (cap), 1 = scelta; `sel`
+     * ex_list_set_multiselect. `segni` ha un byte per riga (cap), 1 = scelta; `sel`
      * resta la riga «corrente», quella del cursore; `ancora` e' dove comincia
      * uno Shift+clic. */
     int           multi;
@@ -283,14 +283,14 @@ static Lista g_lista[LISTA_MAX];
 
 typedef struct {
     unsigned int usato;
-    ExFinestra   ogg;
+    ExWindow   ogg;
     unsigned int n;
     unsigned int sel;
     char         testo[VOCI_N_MAX][VOCI_TESTO_MAX];
     /* LE SCHEDE DI DOCUMENTI (29 settembre 2026, @TOOLKIT-SCHEDE): una X su
      * ogni linguetta, le frecce quando non ci stanno tutte (`primo` e' la
      * prima che si vede), Ctrl+Tab e Ctrl+W dalla finestra intera. Vedi
-     * ex_voci_schede(). */
+     * ex_items_as_tabs(). */
     unsigned int schede;
     unsigned int primo;
 } Voci;
@@ -305,14 +305,14 @@ static Voci g_voci[VOCI_MAX];
  * insieme non le apre nessuno apposta, e se capitasse per un difetto sarebbero
  * due rettangoli sovrapposti in cui il clic finisce in quello sbagliato. Con un
  * handle solo la domanda «quale?» non esiste. */
-static ExFinestra g_combo_aperto = 0;
+static ExWindow g_combo_aperto = 0;
 
 /* A che punto del cursore si e' posato il dito: senza, il cursore salterebbe
  * col suo inizio sotto il puntatore al primo pixel di trascinamento. */
 static int g_scorri_presa = 0;
 
 /* La finestra MDI che si sta trascinando, e dove la si e' presa. */
-static ExFinestra g_mdi_trascina = 0;
+static ExWindow g_mdi_trascina = 0;
 static int        g_mdi_dx = 0, g_mdi_dy = 0;
 
 /* =============================================================================
@@ -360,7 +360,7 @@ static int        g_mdi_dx = 0, g_mdi_dy = 0;
  * memoria per sempre. E' la stessa scelta dell'area di testo, con i numeri
  * portati alla misura di un sorgente vero.
  *
- * ! CHI SUPERA I LIMITI LO SA: ex_area_aggiungi rende 0 quando l'area e' piena,
+ * ! CHI SUPERA I LIMITI LO SA: ex_textarea_add_line rende 0 quando l'area e' piena,
  * e chi carica un file DEVE guardarlo — caricarne meta' e poi salvarlo
  * cancellerebbe il resto senza averlo mai mostrato.
  * ============================================================================= */
@@ -372,7 +372,7 @@ static int        g_mdi_dx = 0, g_mdi_dy = 0;
 
 typedef struct {
     unsigned int usato;
-    ExFinestra   ogg;
+    ExWindow   ogg;
     char        *testo;                 /* righe_max * col_max */
     unsigned int righe_max, col_max;    /* la capienza di QUESTA area */
     unsigned int n;                     /* quante righe ci sono (>= 1) */
@@ -402,7 +402,7 @@ typedef struct {
      * ricalcola solo da dove il testo e' cambiato in giu', e `stati_validi`
      * dice fin dove la catena e' buona.
      * ================================================================= */
-    ExColora       colora;
+    ExHighlighter       colora;
     void          *colora_dato;
     unsigned char *stato;               /* uno per riga, o 0 se non si colora */
     unsigned int   stati_validi;        /* quante righe di `stato` valgono */
@@ -472,7 +472,7 @@ static Appunti *appunti(void)
  * il giorno che capitera' sara' perche' il menu e' diventato troppo lungo, e
  * la risposta giusta sara' accorciarlo.
  *
- * ! E LA SCELTA ARRIVA COME EXM_COMANDO, con lo stesso id di un pulsante. Non
+ * ! E LA SCELTA ARRIVA COME EXM_COMMAND, con lo stesso id di un pulsante. Non
  * e' pigrizia: premere «Salva» nella barra dei pulsanti e sceglierlo dal menu
  * File sono LA STESSA DECISIONE presa in due modi, e chi scrive
  * l'applicazione non deve imparare due meccanismi per sentirla. E' la stessa
@@ -492,7 +492,7 @@ typedef struct {
     unsigned int id;                    /* 0 = separatore */
     int          sub;                   /* >= 0: apre la tendina laterale sub */
     /* 0 = a plain entry; 1 = one with a check mark, off; 2 = on
-     * (ex_menu_spunta, 30 September 2026) */
+     * (ex_menu_check, 30 September 2026) */
     unsigned char spunta;
 } MenuVoce;
 
@@ -514,7 +514,7 @@ typedef struct {
 
 typedef struct {
     unsigned int usato;
-    ExFinestra   ogg;
+    ExWindow   ogg;
     unsigned int n;
     MenuTitolo   titolo[MENU_TITOLI_MAX];
     int          aperto;                /* quale tendina, -1 = nessuna */
@@ -535,14 +535,14 @@ static Oggetto g_ogg[OGGETTI_MAX];
  * selezione oltre il bordo dell'area la vedrebbe passare al controllo accanto
  * — e con essa il cursore. Il trascinamento appartiene a chi l'ha cominciato,
  * che e' la stessa regola che il server applica alle finestre. */
-static ExFinestra g_trascinato = 0;
+static ExWindow g_trascinato = 0;
 
 /* ! IL PULSANTE TENUTO GIU', e serve perche' il comando parte al RILASCIO.
  * Fra la pressione e il rilascio il puntatore puo' uscire dal pulsante, e in
  * quel caso il comando non deve partire: senza ricordarsi QUALE fosse, al
  * rilascio non ci sarebbe modo di sapere se si sta alzando il dito dallo
  * stesso pulsante su cui lo si era posato. Vedi WIN_EV_MOUSE_SU. */
-static ExFinestra g_premuto = 0;
+static ExWindow g_premuto = 0;
 
 /* ! LA RIGA SCELTA QUANDO IL DITO E' SCESO, per sapere al rilascio se il
  * trascinamento l'ha cambiata. Senza, chi sceglie una voce trascinando invece
@@ -586,9 +586,9 @@ static unsigned int g_tras_sel = 0;
 
 static unsigned int g_clic_ms = 0;
 static int          g_clic_x = 0, g_clic_y = 0;
-static ExFinestra   g_clic_ogg = 0;
+static ExWindow   g_clic_ogg = 0;
 
-static int doppio_clic(ExFinestra c, int x, int y, unsigned int ora)
+static int doppio_clic(ExWindow c, int x, int y, unsigned int ora)
 {
     int          dx  = x - g_clic_x;
     int          dy  = y - g_clic_y;
@@ -617,7 +617,7 @@ static int     g_codice = 0;
 /* -----------------------------------------------------------------------------
  * Servizio interno
  * --------------------------------------------------------------------------- */
-static Oggetto *ogg(ExFinestra f)
+static Oggetto *ogg(ExWindow f)
 {
     if (f == 0 || f > OGGETTI_MAX) return 0;
     if (!g_ogg[f - 1].usato) return 0;
@@ -631,14 +631,14 @@ static Oggetto *ogg(ExFinestra f)
 static Area *area_di(const Oggetto *o)
 {
     int i;
-    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o - g_ogg + 1);
 
     for (i = 0; i < AREA_MAX; i++)
         if (g_area[i].usato && g_area[i].ogg == h) return &g_area[i];
     return 0;
 }
 
-static Area *area_da_h(ExFinestra f)
+static Area *area_da_h(ExWindow f)
 {
     Oggetto *o = ogg(f);
     return o ? area_di(o) : 0;
@@ -673,14 +673,14 @@ static void area_segui(Area *A)
 static Lista *lista_di(const Oggetto *o)
 {
     int i;
-    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o - g_ogg + 1);
 
     for (i = 0; i < LISTA_MAX; i++)
         if (g_lista[i].usato && g_lista[i].ogg == h) return &g_lista[i];
     return 0;
 }
 
-static Lista *lista_da_h(ExFinestra f)
+static Lista *lista_da_h(ExWindow f)
 {
     Oggetto *o = ogg(f);
     return o ? lista_di(o) : 0;
@@ -689,14 +689,14 @@ static Lista *lista_da_h(ExFinestra f)
 static Voci *voci_di(const Oggetto *o)
 {
     int i;
-    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o - g_ogg + 1);
 
     for (i = 0; i < VOCI_MAX; i++)
         if (g_voci[i].usato && g_voci[i].ogg == h) return &g_voci[i];
     return 0;
 }
 
-static Voci *voci_da_h(ExFinestra f)
+static Voci *voci_da_h(ExWindow f)
 {
     Oggetto *o = ogg(f);
     return o ? voci_di(o) : 0;
@@ -719,12 +719,12 @@ static Menu *menu_di(const Oggetto *o)
 
     if (!o || o->classe != CL_MENU) return 0;
     for (j = 0; j < MENU_MAX; j++)
-        if (g_menu[j].usato && g_menu[j].ogg == (ExFinestra)(o - g_ogg + 1))
+        if (g_menu[j].usato && g_menu[j].ogg == (ExWindow)(o - g_ogg + 1))
             return &g_menu[j];
     return 0;
 }
 
-static Oggetto *radice(ExFinestra f)
+static Oggetto *radice(ExWindow f)
 {
     Oggetto *o = ogg(f);
 
@@ -733,7 +733,7 @@ static Oggetto *radice(ExFinestra f)
 }
 
 /* La maniglia della finestra di primo livello che contiene un oggetto. */
-static ExFinestra radice_h(ExFinestra f)
+static ExWindow radice_h(ExWindow f)
 {
     Oggetto *o = ogg(f);
 
@@ -743,6 +743,23 @@ static ExFinestra radice_h(ExFinestra f)
 
 static unsigned int classe_da_nome(const char *c)
 {
+    /* I nomi inglesi (3 ottobre 2026), poi quelli italiani di prima: un
+     * programma scritto prima della traduzione funziona com'era. */
+    if (strcmp(c, "window")       == 0) return CL_FINESTRA;
+    if (strcmp(c, "button")       == 0) return CL_PULSANTE;
+    if (strcmp(c, "label")        == 0) return CL_ETICHETTA;
+    if (strcmp(c, "textbox")      == 0) return CL_TESTO;
+    if (strcmp(c, "frame")        == 0) return CL_RIQUADRO;
+    if (strcmp(c, "separator")    == 0) return CL_SEPARATORE;
+    if (strcmp(c, "header")       == 0) return CL_INTESTAZIONE;
+    if (strcmp(c, "terminal")     == 0) return CL_TERMINALE;
+    if (strcmp(c, "list")         == 0) return CL_LISTA;
+    if (strcmp(c, "textarea")     == 0) return CL_AREA;
+    if (strcmp(c, "codearea")     == 0) return CL_AREA;
+    if (strcmp(c, "checkbox")     == 0) return CL_SPUNTA;
+    if (strcmp(c, "scrollbar")    == 0) return CL_SCORRI;
+    if (strcmp(c, "mdichild")     == 0) return CL_MDIFIGLIO;
+    if (strcmp(c, "image")        == 0) return CL_IMMAGINE;
     if (strcmp(c, "finestra")     == 0) return CL_FINESTRA;
     if (strcmp(c, "pulsante")     == 0) return CL_PULSANTE;
     if (strcmp(c, "etichetta")    == 0) return CL_ETICHETTA;
@@ -753,7 +770,7 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "terminale")    == 0) return CL_TERMINALE;
     if (strcmp(c, "lista")        == 0) return CL_LISTA;
     if (strcmp(c, "areatesto")    == 0) return CL_AREA;
-    /* ! LA STESSA CLASSE, e la differenza e' solo la capienza: vedi ex_crea e
+    /* ! LA STESSA CLASSE, e la differenza e' solo la capienza: vedi ex_create e
      * il commento sopra CODICE_RIGHE_MAX. */
     if (strcmp(c, "areacodice")   == 0) return CL_AREA;
     if (strcmp(c, "menu")         == 0) return CL_MENU;
@@ -857,11 +874,11 @@ static void origine(Oggetto *o, int *ox, int *oy)
  * --------------------------------------------------------------------------- */
 static int accetta_fuoco(const Oggetto *o)
 {
-    if (o->stile & EX_SPENTO) return 0;         /* ex_abilita(c, 0) */
-    /* ! NASCOSTO (ex_mostra(c, 0)) NON PRENDE IL FUOCO: Tab ci arrivava lo
+    if (o->stile & EX_DISABLED) return 0;         /* ex_enable(c, 0) */
+    /* ! NASCOSTO (ex_show(c, 0)) NON PRENDE IL FUOCO: Tab ci arrivava lo
      * stesso, e i tasti finivano in un controllo che non si vede (trovato
      * il 29 settembre 2026 con la barra delle schede del navigatore). */
-    if (!(o->stile & EX_VISIBILE)) return 0;
+    if (!(o->stile & EX_VISIBLE)) return 0;
     /* ! LE SCHEDE DI DOCUMENTI NON SONO UNA FERMATA DI Tab: si girano con
      * Ctrl+Tab da tutta la finestra (vedi schede_tasto), e cosi' il giro dei
      * Tab di una finestra resta quello di prima quando le schede arrivano. */
@@ -876,7 +893,7 @@ static int accetta_fuoco(const Oggetto *o)
            o->classe == CL_COMBO || o->classe == CL_TAB;
 }
 
-static void fuoco_metti(ExFinestra f, ExFinestra c)
+static void fuoco_metti(ExWindow f, ExWindow c)
 {
     Oggetto *r = radice(f);
     Oggetto *o = ogg(c);
@@ -892,7 +909,7 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
 }
 
 /* =============================================================================
- * ex_fuoco — dare il fuoco a un controllo, dall'esterno
+ * ex_set_focus — dare il fuoco a un controllo, dall'esterno
  *
  * ! FINO AL 17 AGOSTO 2026 NON SI POTEVA, e il fuoco andava al PRIMO controllo
  * creato che lo accettasse. Sembra un dettaglio finche' non morde: nel dialogo
@@ -909,7 +926,7 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
 /* Definita piu' in basso, dov'e' il resto del dialogo col server. */
 static int server_trova(void);
 
-unsigned int ex_appunti_metti(const char *testo, unsigned int n)
+unsigned int ex_clipboard_set(const char *testo, unsigned int n)
 {
     Appunti     *ap = appunti();
     unsigned int i;
@@ -923,7 +940,7 @@ unsigned int ex_appunti_metti(const char *testo, unsigned int n)
     return n;
 }
 
-unsigned int ex_appunti_prendi(char *out, unsigned int max)
+unsigned int ex_clipboard_get(char *out, unsigned int max)
 {
     Appunti     *ap = appunti();
     unsigned int i, n;
@@ -939,7 +956,7 @@ unsigned int ex_appunti_prendi(char *out, unsigned int max)
     return n;
 }
 
-void ex_spegni_scrivania(void)
+void ex_shutdown_desktop(void)
 {
     if (!server_trova()) return;
     ipc_send((unsigned int)g_server, WIN_MSG_SPEGNI, 0, 0);
@@ -950,10 +967,10 @@ void ex_spegni_scrivania(void)
  *
  * ! THE LIST ARRIVES IN THE MESSAGE LOOP, NOT AS AN ANSWER WAITED FOR. The
  * server sends it whenever it changes; prendi_msg() keeps a copy and hands
- * EXM_FINESTRE to the follower. A synchronous «ask and wait» would throw
- * away the clicks that arrive during the wait — see the loop in ex_crea.
+ * EXM_WINDOW_LIST to the follower. A synchronous «ask and wait» would throw
+ * away the clicks that arrive during the wait — see the loop in ex_create.
  * --------------------------------------------------------------------------- */
-static ExFinestra   g_segui = 0;        /* who receives EXM_FINESTRE */
+static ExWindow   g_segui = 0;        /* who receives EXM_WINDOW_LIST */
 static WinElenco    g_el;               /* the last list received */
 static unsigned int g_el_nuovo = 0;     /* arrived while nobody was reading */
 
@@ -966,14 +983,14 @@ static void elenco_prendi(const unsigned char *buf, unsigned int len)
     g_el_nuovo = 1;
 }
 
-void ex_finestre_segui(ExFinestra f)
+void ex_track_windows(ExWindow f)
 {
     g_segui = f;
     if (!server_trova()) return;
     ipc_send((unsigned int)g_server, WIN_MSG_ELENCO, 0, 0);
 }
 
-int ex_finestre_elenco(ExVoceFin *v, int max)
+int ex_list_windows(ExWindowEntry *v, int max)
 {
     int i, n = (int)g_el.n;
 
@@ -981,8 +998,8 @@ int ex_finestre_elenco(ExVoceFin *v, int max)
     for (i = 0; i < n && i < max; i++) {
         v[i].id    = g_el.v[i].id;
         v[i].pid   = g_el.v[i].pid;
-        v[i].stato = (g_el.v[i].stato & WIN_VOCE_RIDOTTA ? EX_VF_RIDOTTA : 0) |
-                     (g_el.v[i].stato & WIN_VOCE_FUOCO   ? EX_VF_FUOCO   : 0);
+        v[i].stato = (g_el.v[i].stato & WIN_VOCE_RIDOTTA ? EX_WE_MINIMIZED : 0) |
+                     (g_el.v[i].stato & WIN_VOCE_FUOCO   ? EX_WE_FOCUSED   : 0);
         memcpy(v[i].titolo, g_el.v[i].titolo, sizeof(v[i].titolo));
         v[i].titolo[sizeof(v[i].titolo) - 1] = '\0';
     }
@@ -999,21 +1016,21 @@ static void finestra_chiedi(unsigned int tipo, unsigned int id)
     ipc_send((unsigned int)g_server, tipo, &w, sizeof(w));
 }
 
-void ex_finestra_attiva(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
+void ex_activate_window_id(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
 
 /* One control drawn again and shown, alone: see ridisegna_controllo for
  * which ones can (terminal, text area, list, label). 0 = it could not: the
  * caller redraws the window, as it would have. */
 static int ridisegna_controllo(Oggetto *o);
-int ex_ridisegna(ExFinestra c)
+int ex_redraw(ExWindow c)
 {
     return ridisegna_controllo(ogg(c));
 }
 
 /* A menu entry with a check mark: `acceso` 1 shows it, 0 hides it; the entry
  * keeps the room for it either way, so it does not move when it changes. The
- * application decides what the mark means and flips it on EXM_COMANDO. */
-void ex_menu_spunta(ExFinestra menu, unsigned int id, int acceso)
+ * application decides what the mark means and flips it on EXM_COMMAND. */
+void ex_menu_check(ExWindow menu, unsigned int id, int acceso)
 {
     Menu *M = menu_di(ogg(menu));
     unsigned int t, i;
@@ -1029,7 +1046,7 @@ void ex_menu_spunta(ExFinestra menu, unsigned int id, int acceso)
                 M->sub[t].voce[i].spunta = acceso ? 2 : 1;
 }
 
-void ex_mouse_passaggio(ExFinestra f, int si)
+void ex_track_mouse_hover(ExWindow f, int si)
 {
     Oggetto   *r = radice(f);
     WinRegione w;
@@ -1042,7 +1059,7 @@ void ex_mouse_passaggio(ExFinestra f, int si)
 }
 
 /* =============================================================================
- * ex_apri_file — un file si apre col suo programma (29 settembre 2026,
+ * ex_open_file — un file si apre col suo programma (29 settembre 2026,
  * @ASSOCIAZIONI)
  *
  * ! LA REGOLA E' UNA, IN /exwin/lib/tipi.txt, E LA LEGGE UNA FUNZIONE SOLA.
@@ -1092,7 +1109,7 @@ static int tipi_programma(const char *e, char *out, unsigned int max)
     return 0;
 }
 
-int ex_apri_file(const char *percorso, char *prog, unsigned int max)
+int ex_open_file(const char *percorso, char *prog, unsigned int max)
 {
     static char copia[256], p[200], dal_cd[216];
     const char *nome, *punto;
@@ -1126,7 +1143,7 @@ int ex_apri_file(const char *percorso, char *prog, unsigned int max)
 }
 
 /* =============================================================================
- * ex_menu_comparsa — il menu del tasto destro (29 settembre 2026, @MOUSE-DESTRO)
+ * ex_popup_menu — il menu del tasto destro (29 settembre 2026, @MOUSE-DESTRO)
  *
  * ! UNA FINESTRA SUA E NON UNA TENDINA DISEGNATA NEL PADRE. Le tendine della
  * barra dei menu stanno dentro i pixel della finestra, e un menu del tasto
@@ -1137,30 +1154,30 @@ int ex_apri_file(const char *percorso, char *prog, unsigned int max)
  * ============================================================================= */
 #define CM_MAX 16
 static int        g_cm_scelta;
-static ExFinestra g_cm_lista;
+static ExWindow g_cm_lista;
 static int        g_cm_n;
 static int        g_cm_indice[CM_MAX];     /* riga della lista -> voce */
 
-static long cm_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long cm_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
-        if (wp == 1 && (EX_APRIRE(lp) || EX_COL(lp) >= 0)) {
-            unsigned int r = ex_lista_scelta(g_cm_lista);
+    case EXM_COMMAND:
+        if (wp == 1 && (EX_IS_OPEN(lp) || EX_COLUMN(lp) >= 0)) {
+            unsigned int r = ex_list_get_selected(g_cm_lista);
             if (r < (unsigned int)g_cm_n) g_cm_scelta = g_cm_indice[r];
         }
         return 0;
-    case EXM_TASTO:
+    case EXM_KEY:
         if ((wp & KBD_KEY_MASK) == 27) { g_cm_scelta = -1; return 0; }
         break;
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_cm_scelta = -1;
         return 0;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
-void ex_lista_multipla(ExFinestra f, int si)
+void ex_list_set_multiselect(ExWindow f, int si)
 {
     Lista *L = lista_da_h(f);
     if (!L) return;
@@ -1169,7 +1186,7 @@ void ex_lista_multipla(ExFinestra f, int si)
     if (L->multi && L->sel < L->n) L->segni[L->sel] = 1;
 }
 
-int ex_lista_scelte(ExFinestra f, unsigned int *righe, int max)
+int ex_list_get_selection(ExWindow f, unsigned int *righe, int max)
 {
     Lista       *L = lista_da_h(f);
     unsigned int i;
@@ -1182,7 +1199,7 @@ int ex_lista_scelte(ExFinestra f, unsigned int *righe, int max)
     return n;
 }
 
-int ex_lista_riga_a(ExFinestra f, int y)
+int ex_list_row_at(ExWindow f, int y)
 {
     Oggetto     *co = ogg(f);
     Lista       *L  = co ? lista_di(co) : 0;
@@ -1198,10 +1215,10 @@ int ex_lista_riga_a(ExFinestra f, int y)
     return r < L->n ? (int)r : -1;
 }
 
-int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
+int ex_popup_menu(ExWindow f, int x, int y, const char *const *voci, int n)
 {
     Oggetto     *r = radice(f);
-    ExFinestra   p;
+    ExWindow   p;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          i, w = 60, h, sx, sy;
@@ -1211,7 +1228,7 @@ int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
     for (i = 0; i < n && g_cm_n < CM_MAX; i++) {
         int lw;
         if (!voci[i] || !strcmp(voci[i], "-")) continue;   /* separatori: niente */
-        lw = ex_larghezza_testo(0, voci[i]) + 24;
+        lw = ex_text_width(0, voci[i]) + 24;
         if (lw > w) w = lw;
         g_cm_indice[g_cm_n++] = i;
     }
@@ -1219,7 +1236,7 @@ int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
     h = g_cm_n * LISTA_RIGA_H + 8;
 
     /* dove si e' cliccato, sullo schermo, e dentro lo schermo */
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     sx = r->x + x;
     sy = r->y + y;
     if (sw && sx + w > (int)sw) sx = (int)sw - w;
@@ -1228,57 +1245,57 @@ int ex_menu_comparsa(ExFinestra f, int x, int y, const char *const *voci, int n)
     if (sy < 0) sy = 0;
 
     g_cm_scelta = -2;
-    p = ex_crea("finestra", "", EX_BORDO | EX_SOPRA | EX_MODALE | EX_COMPARSA,
+    p = ex_create("window", "", EX_BORDER | EX_TOPMOST | EX_MODAL | EX_POPUP,
                 sx, sy, w, h, 0, 0, cm_proc);
     if (!p) return -1;
-    g_cm_lista = ex_crea("lista", "", EX_FIGLIO, 2, 2, w - 4, h - 4, p, 1, 0);
-    for (i = 0; i < g_cm_n; i++) ex_lista_aggiungi(g_cm_lista, voci[g_cm_indice[i]]);
-    ex_lista_scegli(g_cm_lista, 0);
-    ex_fuoco(g_cm_lista);
-    ex_procedura_base(p, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(p);
+    g_cm_lista = ex_create("list", "", EX_CHILD, 2, 2, w - 4, h - 4, p, 1, 0);
+    for (i = 0; i < g_cm_n; i++) ex_list_add(g_cm_lista, voci[g_cm_indice[i]]);
+    ex_list_select(g_cm_lista, 0);
+    ex_set_focus(g_cm_lista);
+    ex_default_proc(p, EXM_PAINT, 0, 0);
+    ex_update(p);
 
-    while (g_cm_scelta == -2 && ex_prendi_msg(&m)) ex_smista(&m);
+    while (g_cm_scelta == -2 && ex_get_message(&m)) ex_dispatch(&m);
 
-    ex_distruggi(p);
+    ex_destroy(p);
     /* ! THE REDRAW GOES THROUGH THE WINDOW'S OWN PROCEDURE, not the base
      * (30 September 2026). The base fills the window with grey and draws the
      * controls: right for a window made of controls, wrong for one that paints
      * its own pixels. The desktop turned grey as soon as «Nuova cartella» was
      * chosen, and stayed grey while it asked for the name. The same lesson as
-     * ex_smista (18 August 2026); a procedure that does not handle
-     * EXM_DISEGNA falls back to the base by itself. */
+     * ex_dispatch (18 August 2026); a procedure that does not handle
+     * EXM_PAINT falls back to the base by itself. */
     {
-        ExFinestra rh = radice_h(f);
+        ExWindow rh = radice_h(f);
         Oggetto   *ro = ogg(rh);
 
         long       esito = 1;
 
-        if (ro && ro->proc) esito = ro->proc(rh, EXM_DISEGNA, 0, 0);
-        if (esito != 0 && esito != EX_NON_RIDISEGNARE)
-            ex_procedura_base(rh, EXM_DISEGNA, 0, 0);
-        ex_aggiorna(rh);
+        if (ro && ro->proc) esito = ro->proc(rh, EXM_PAINT, 0, 0);
+        if (esito != 0 && esito != EX_NO_REDRAW)
+            ex_default_proc(rh, EXM_PAINT, 0, 0);
+        ex_update(rh);
     }
     return g_cm_scelta < 0 ? -1 : g_cm_scelta;
 }
 
 /* Brings one of OUR windows to the front with the keyboard focus, by its
  * handle: the program does not know the server's id, the toolkit does. */
-void ex_attiva(ExFinestra f)
+void ex_activate(ExWindow f)
 {
     Oggetto *r = radice(f);
 
     if (r && r->win_id) finestra_chiedi(WIN_MSG_ATTIVA, r->win_id);
 }
 
-void ex_chiudi_le_altre(void)
+void ex_close_others(void)
 {
     if (!server_trova()) return;
     ipc_send((unsigned int)g_server, WIN_MSG_CHIUDI_ALTRE, 0, 0);
 }
-void ex_finestra_riduci(unsigned int id) { finestra_chiedi(WIN_MSG_RIDUCI, id); }
+void ex_minimize_window_id(unsigned int id) { finestra_chiedi(WIN_MSG_RIDUCI, id); }
 
-void ex_fuoco_via(ExFinestra f)
+void ex_clear_focus(ExWindow f)
 {
     Oggetto *r = radice(f);
 
@@ -1287,26 +1304,26 @@ void ex_fuoco_via(ExFinestra f)
 }
 
 /* =============================================================================
- * ex_tab_contenuto — Tab from the last control into the window's own content
+ * ex_tab_content — Tab from the last control into the window's own content
  *
  * ! ASKED BY THE BROWSER, 23 September 2026. The toolkit ate every Tab and
  * cycled among its own controls, so a page drawn by the application — links
  * and form fields that are rectangles, not toolkit objects — could never be
  * reached from the keyboard. Firefox goes from the toolbar into the page; with
  * this switch on, a Tab on the LAST control (or with nothing focused) takes
- * the focus away from the toolkit and reaches the application as EXM_TASTO.
- * The application gives it back with ex_fuoco() when its own stops end.
+ * the focus away from the toolkit and reaches the application as EXM_KEY.
+ * The application gives it back with ex_set_focus() when its own stops end.
  *
  * ! OFF BY DEFAULT: a dialog made only of controls keeps cycling as before.
  * ============================================================================= */
-void ex_tab_contenuto(ExFinestra f, int si)
+void ex_tab_content(ExWindow f, int si)
 {
     Oggetto *r = radice(f);
 
     if (r) r->tab_contenuto = (unsigned char)(si != 0);
 }
 
-void ex_fuoco(ExFinestra f)
+void ex_set_focus(ExWindow f)
 {
     Oggetto *o = ogg(f);
 
@@ -1320,7 +1337,7 @@ void ex_fuoco(ExFinestra f)
 
 /* Chi ha il fuoco adesso, o 0. Vale la radice, non il controllo che si passa:
  * il fuoco e' un campo della finestra di primo livello. */
-ExFinestra ex_fuoco_chi(ExFinestra f)
+ExWindow ex_get_focus(ExWindow f)
 {
     Oggetto *r = radice(f);
 
@@ -1330,14 +1347,14 @@ ExFinestra ex_fuoco_chi(ExFinestra f)
 /* Il prossimo controllo che accetta il fuoco, in ordine di creazione. */
 /* La finestra MDI che contiene questo oggetto, se ce n'e' una: definita piu'
  * avanti, insieme alle altre di servizio dell'MDI. */
-static ExFinestra mdi_di(ExFinestra c);
+static ExWindow mdi_di(ExWindow c);
 
 /* ! TAB GIRA DENTRO LA FINESTRA ATTIVA, non per tutta l'applicazione. In un
  * MDI i controlli sono quelli di tutte le finestre messi insieme, e un Tab che
  * uscisse dalla finestra su cui si sta lavorando per finire in una dietro
  * sarebbe un fuoco che si perde: si vedrebbe un cursore lampeggiare in una
  * finestra che non si sta guardando. Il giro si chiude dentro quella attiva. */
-static ExFinestra fuoco_mdi_di(ExFinestra f)
+static ExWindow fuoco_mdi_di(ExWindow f)
 {
     Oggetto *r = radice(f);
 
@@ -1346,66 +1363,66 @@ static ExFinestra fuoco_mdi_di(ExFinestra f)
 
 /* Is there a focusable control AFTER the one that has the focus now? The same
  * walk as fuoco_avanti, without moving anything. */
-static int fuoco_ce_dopo(ExFinestra f)
+static int fuoco_ce_dopo(ExWindow f)
 {
     Oggetto *r = radice(f);
-    ExFinestra dentro = fuoco_mdi_di(f);
+    ExWindow dentro = fuoco_mdi_di(f);
     int i, partenza = -1;
 
     if (!r || !r->fuoco) return 0;
     for (i = 0; i < OGGETTI_MAX; i++) {
         if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
-        if (radice((ExFinestra)(i + 1)) != r) continue;
+        if (radice((ExWindow)(i + 1)) != r) continue;
         if (!accetta_fuoco(&g_ogg[i])) continue;
-        if (mdi_di((ExFinestra)(i + 1)) != dentro) continue;
-        if ((ExFinestra)(i + 1) == r->fuoco) { partenza = i; continue; }
+        if (mdi_di((ExWindow)(i + 1)) != dentro) continue;
+        if ((ExWindow)(i + 1) == r->fuoco) { partenza = i; continue; }
         if (partenza >= 0) return 1;
     }
     return 0;
 }
 
-static void fuoco_avanti(ExFinestra f)
+static void fuoco_avanti(ExWindow f)
 {
     Oggetto *r = radice(f);
-    ExFinestra dentro = fuoco_mdi_di(f);
+    ExWindow dentro = fuoco_mdi_di(f);
     int i, partenza = -1, primo = -1;
 
     if (!r) return;
 
     for (i = 0; i < OGGETTI_MAX; i++) {
         if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
-        if (radice((ExFinestra)(i + 1)) != r) continue;
+        if (radice((ExWindow)(i + 1)) != r) continue;
         if (!accetta_fuoco(&g_ogg[i])) continue;
-        if (mdi_di((ExFinestra)(i + 1)) != dentro) continue;
+        if (mdi_di((ExWindow)(i + 1)) != dentro) continue;
         if (primo < 0) primo = i;
-        if ((ExFinestra)(i + 1) == r->fuoco) { partenza = i; continue; }
-        if (partenza >= 0) { fuoco_metti(f, (ExFinestra)(i + 1)); return; }
+        if ((ExWindow)(i + 1) == r->fuoco) { partenza = i; continue; }
+        if (partenza >= 0) { fuoco_metti(f, (ExWindow)(i + 1)); return; }
     }
-    if (primo >= 0) fuoco_metti(f, (ExFinestra)(primo + 1));
+    if (primo >= 0) fuoco_metti(f, (ExWindow)(primo + 1));
 }
 
 /* Shift+Tab: the one before, wrapping to the last (27 September 2026). Both
  * keys went FORWARD until then, which nobody expects — and the test of the
  * editor's «Sostituisci» picked a button it did not mean. */
-static void fuoco_indietro(ExFinestra f)
+static void fuoco_indietro(ExWindow f)
 {
     Oggetto *r = radice(f);
-    ExFinestra dentro = fuoco_mdi_di(f);
+    ExWindow dentro = fuoco_mdi_di(f);
     int i, prima = -1, ultimo = -1, trovato = 0;
 
     if (!r) return;
 
     for (i = 0; i < OGGETTI_MAX; i++) {
         if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
-        if (radice((ExFinestra)(i + 1)) != r) continue;
+        if (radice((ExWindow)(i + 1)) != r) continue;
         if (!accetta_fuoco(&g_ogg[i])) continue;
-        if (mdi_di((ExFinestra)(i + 1)) != dentro) continue;
-        if ((ExFinestra)(i + 1) == r->fuoco) trovato = 1;
+        if (mdi_di((ExWindow)(i + 1)) != dentro) continue;
+        if ((ExWindow)(i + 1) == r->fuoco) trovato = 1;
         else if (!trovato) prima = i;
         ultimo = i;
     }
-    if (trovato && prima >= 0) fuoco_metti(f, (ExFinestra)(prima + 1));
-    else if (ultimo >= 0)      fuoco_metti(f, (ExFinestra)(ultimo + 1));
+    if (trovato && prima >= 0) fuoco_metti(f, (ExWindow)(prima + 1));
+    else if (ultimo >= 0)      fuoco_metti(f, (ExWindow)(ultimo + 1));
 }
 
 /* =============================================================================
@@ -1453,10 +1470,10 @@ static void clip_togli(void) { g_clip = 0; }
 /* The same clip, for a program that draws a part of its window by itself and
  * must not spill out of it (30 September 2026): exide's canvas, where a form
  * wider than the canvas covered the property list. One rectangle, in the
- * window's pixels as ex_riempi takes them; w or h 0 takes it away, and a
+ * window's pixels as ex_fill_rect takes them; w or h 0 takes it away, and a
  * program that sets it takes it away before returning from its drawing -
  * the toolkit's own drawing comes after. */
-void ex_ritaglio(ExFinestra f, int x, int y, int w, int h)
+void ex_set_clip(ExWindow f, int x, int y, int w, int h)
 {
     (void)f;
     if (w <= 0 || h <= 0) clip_togli();
@@ -1574,7 +1591,7 @@ static void punto_fuso(Oggetto *r, int x, int y, unsigned int c, unsigned int a)
          fondi_canale( c        & 0xFFu,  d        & 0xFFu, a);
 }
 
-void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
+void ex_fill_rect(ExWindow f, int x, int y, int w, int h, unsigned int c)
 {
     Oggetto      *r = radice(f);
     unsigned int *riga;
@@ -1594,7 +1611,7 @@ void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
  * ex_pixmap — posare un rettangolo di pixel gia' pronti
  *
  * ! SENZA QUESTA, UN'IMMAGINE SI DISEGNAVA UN PIXEL PER CHIAMATA. Il lettore
- * BMP faceva `ex_riempi(f, x+i, y+j, 1, 1, c)`: per un'immagine 800x600 sono
+ * BMP faceva `ex_fill_rect(f, x+i, y+j, 1, 1, c)`: per un'immagine 800x600 sono
  * 480000 chiamate di funzione, ognuna con il suo controllo dei limiti — e
  * attraverso i ponti della libreria condivisa, ognuna anche un salto
  * indiretto. Qui i limiti si controllano una volta e si copia per righe.
@@ -1607,7 +1624,7 @@ void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
  * successiva: serve a posare un RITAGLIO di un'immagine piu' grande senza
  * doverla ricopiare.
  * ============================================================================= */
-void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
+void ex_pixmap(ExWindow f, int x, int y, int w, int h,
                const unsigned int *px, unsigned int passo)
 {
     Oggetto *r = radice(f);
@@ -1638,7 +1655,7 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
  * (30 September 2026, @IMG-FORMATI): a transparent logo of a web page over
  * the page's own background, whatever colour it is. Alpha 255 is copied, 0
  * is skipped: a photo costs one test per pixel. */
-void ex_pixmap_fuso(ExFinestra f, int x, int y, int w, int h,
+void ex_pixmap_blend(ExWindow f, int x, int y, int w, int h,
                     const unsigned int *px, unsigned int passo)
 {
     Oggetto *r = radice(f);
@@ -1663,12 +1680,12 @@ void ex_pixmap_fuso(ExFinestra f, int x, int y, int w, int h,
     }
 }
 
-void ex_riquadro_disegna(ExFinestra f, int x, int y, int w, int h, unsigned int c)
+void ex_draw_rect(ExWindow f, int x, int y, int w, int h, unsigned int c)
 {
-    ex_riempi(f, x, y, w, 1, c);
-    ex_riempi(f, x, y + h - 1, w, 1, c);
-    ex_riempi(f, x, y, 1, h, c);
-    ex_riempi(f, x + w - 1, y, 1, h, c);
+    ex_fill_rect(f, x, y, w, 1, c);
+    ex_fill_rect(f, x, y + h - 1, w, 1, c);
+    ex_fill_rect(f, x, y, 1, h, c);
+    ex_fill_rect(f, x + w - 1, y, 1, h, c);
 }
 
 /* =============================================================================
@@ -1681,25 +1698,25 @@ void ex_riquadro_disegna(ExFinestra f, int x, int y, int w, int h, unsigned int 
  * — che e' come si vede uno spigolo illuminato da sopra a sinistra. Al
  * contrario si ottiene un rettangolo che sembra ritagliato male.
  * ============================================================================= */
-static void bordo3d(ExFinestra f, int x, int y, int w, int h,
+static void bordo3d(ExWindow f, int x, int y, int w, int h,
                     unsigned int sopra, unsigned int sotto)
 {
     if (w <= 0 || h <= 0) return;
 
-    ex_riempi(f, x, y + h - 1, w, 1, sotto);            /* il fondo   */
-    ex_riempi(f, x + w - 1, y, 1, h, sotto);            /* la destra  */
-    ex_riempi(f, x, y, w, 1, sopra);                    /* la cima    */
-    ex_riempi(f, x, y, 1, h, sopra);                    /* la sinistra*/
+    ex_fill_rect(f, x, y + h - 1, w, 1, sotto);            /* il fondo   */
+    ex_fill_rect(f, x + w - 1, y, 1, h, sotto);            /* la destra  */
+    ex_fill_rect(f, x, y, w, 1, sopra);                    /* la cima    */
+    ex_fill_rect(f, x, y, 1, h, sopra);                    /* la sinistra*/
 }
 
-void ex_rilievo(ExFinestra f, int x, int y, int w, int h)
+void ex_draw_raised(ExWindow f, int x, int y, int w, int h)
 {
-    bordo3d(f, x, y, w, h, EX_LUCE, EX_OMBRA);
+    bordo3d(f, x, y, w, h, EX_HIGHLIGHT, EX_SHADOW);
 }
 
-void ex_incavo(ExFinestra f, int x, int y, int w, int h)
+void ex_draw_sunken(ExWindow f, int x, int y, int w, int h)
 {
-    bordo3d(f, x, y, w, h, EX_OMBRA, EX_LUCE);
+    bordo3d(f, x, y, w, h, EX_SHADOW, EX_HIGHLIGHT);
 }
 
 /* =============================================================================
@@ -1723,7 +1740,7 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
  * a zero sarebbe invece un disegno tutto sovrapposto nell'angolo.
  * ============================================================================= */
 /* ! OTTO NON BASTAVANO, E IL MODO IN CUI SI SCOPRIVA ERA IL PEGGIORE. Il nono
- * `ex_font_apri` rendeva 0 — che E' il font di sistema, non un errore — quindi
+ * `ex_font_open` rendeva 0 — che E' il font di sistema, non un errore — quindi
  * il programma continuava e disegnava con un carattere diverso. `fontprova` su
  * una directory con dodici facce ne apriva otto e dichiarava «NON aperto» le
  * altre quattro: sembrava che quattro FILE fossero guasti, e invece era la
@@ -1817,7 +1834,7 @@ static const ExFontDati *font_di(ExFont h)
  * non devono pagarlo. Il lettore dei font BITMAP invece sta qui dentro, perche'
  * quello lo usano tutti — vedi il commento in lib/exfont/exfont.h.
  *
- * ! E SE exfont.so NON C'E', NON SI MUORE: il font non si apre, ex_font_apri()
+ * ! E SE exfont.so NON C'E', NON SI MUORE: il font non si apre, ex_font_open()
  * rende 0, e zero e' il font di sistema. Il testo esce con un carattere diverso
  * da quello voluto e il programma continua. Farlo morire vorrebbe dire che
  * installare mezza libreria grafica spegne applicazioni che funzionerebbero.
@@ -1896,7 +1913,7 @@ static unsigned char *file_intero(const char *percorso, int *quanti)
     if (fd < 0) return 0;
 
     /* ! LA MISURA SI CHIEDE AL FILE, NON SI INDOVINA. Qui c'era un tetto di
-     * 256 KB copiato da ex_immagine(), e i font Liberation ne pesano da 280 a
+     * 256 KB copiato da ex_draw_image(), e i font Liberation ne pesano da 280 a
      * 420: si leggevano TRONCATI, e non se ne apriva nemmeno uno. Il difetto
      * non si e' visto come «buffer piccolo» ma come «nessun font si carica»,
      * ed e' stato il controllo di troncamento dentro ttf_apri() a fermarli —
@@ -2027,7 +2044,7 @@ static void file_font_lascia(int i)
     g_file[i].percorso[0] = '\0';
 }
 
-ExFont ex_font_apri(const char *percorso, int corpo)
+ExFont ex_font_open(const char *percorso, int corpo)
 {
     int slot, fi;
 
@@ -2060,7 +2077,7 @@ ExFont ex_font_apri(const char *percorso, int corpo)
 }
 
 /* =============================================================================
- * ex_font_trova / ex_font_nome
+ * ex_font_find / ex_font_name
  * ========================================================================== */
 
 /* Le dodici facce che EX-OS porta con se'. L'ordine e' famiglia * 4 + stile,
@@ -2094,18 +2111,18 @@ static int indice_faccia(int famiglia, int grassetto, int corsivo)
     int fam = famiglia;
     int st  = (grassetto ? 1 : 0) + (corsivo ? 2 : 0);
 
-    if (fam < 0 || fam > 2) fam = EX_FAM_SANS;
+    if (fam < 0 || fam > 2) fam = EX_FAMILY_SANS;
     return fam * 4 + st;
 }
 
-const char *ex_font_nome(int famiglia, int grassetto, int corsivo)
+const char *ex_font_name(int famiglia, int grassetto, int corsivo)
 {
     return FACCE[indice_faccia(famiglia, grassetto, corsivo)];
 }
 
-ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo)
+ExFont ex_font_find(int famiglia, int corpo, int grassetto, int corsivo)
 {
-    int    fam = (famiglia < 0 || famiglia > 2) ? EX_FAM_SANS : famiglia;
+    int    fam = (famiglia < 0 || famiglia > 2) ? EX_FAMILY_SANS : famiglia;
     int    st  = (grassetto ? 1 : 0) + (corsivo ? 2 : 0);
     int    i, slot = -1;
     ExFont f;
@@ -2123,9 +2140,9 @@ ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo)
     /* ! I RIPIEGHI IN ORDINE, e ognuno e' una rinuncia dichiarata: la faccia
      * chiesta, la normale della stessa famiglia, il sans normale. L'ultimo
      * ripiego e' 0, che E' il font di sistema — non un errore. */
-    f = ex_font_apri(FACCE[fam * 4 + st], corpo);
-    if (!f && st != 0) f = ex_font_apri(FACCE[fam * 4], corpo);
-    if (!f && fam != EX_FAM_SANS) f = ex_font_apri(FACCE[EX_FAM_SANS * 4], corpo);
+    f = ex_font_open(FACCE[fam * 4 + st], corpo);
+    if (!f && st != 0) f = ex_font_open(FACCE[fam * 4], corpo);
+    if (!f && fam != EX_FAMILY_SANS) f = ex_font_open(FACCE[EX_FAMILY_SANS * 4], corpo);
 
     if (slot >= 0) {
         g_trovati[slot].usato = 1;
@@ -2137,7 +2154,7 @@ ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo)
     return f;
 }
 
-void ex_font_chiudi(ExFont h)
+void ex_font_close(ExFont h)
 {
     if (h == 0 || h > FONT_MAX) return;
     if (!g_font[h - 1].usato) return;
@@ -2210,9 +2227,9 @@ static ExTtf ripiego_ttf(int corpo)
     if (g_ripiego_n >= RIPIEGO_MAX) return 0;
 
     {
-        ExFont f = ex_font_apri(RIPIEGO_FILE, corpo);
+        ExFont f = ex_font_open(RIPIEGO_FILE, corpo);
 
-        /* ex_font_apri rende 0 anche per «il file non c'e'»: si smette di
+        /* ex_font_open rende 0 anche per «il file non c'e'»: si smette di
          * chiedere, o ogni parola tornerebbe a cercarlo sul disco. */
         if (!f) { if (g_ripiego_n == 0) g_ripiego_no = 1; return 0; }
 
@@ -2245,7 +2262,7 @@ static ExTtf ttf_per_codice(ExFont h, ExTtf suo, unsigned int ch)
     return suo;
 }
 
-int ex_font_altezza(ExFont h)
+int ex_font_height(ExFont h)
 {
     ExTtf t = ttf_di(h);
 
@@ -2253,7 +2270,7 @@ int ex_font_altezza(ExFont h)
     return (int)font_di(h)->altezza;
 }
 
-int ex_font_base(ExFont h)
+int ex_font_baseline(ExFont h)
 {
     ExTtf t = ttf_di(h);
 
@@ -2280,8 +2297,8 @@ int ex_font_base(ExFont h)
  * Un byte CP437 isolato non forma quasi mai una sequenza valida, quindi le due
  * cose convivono senza che nessuno debba dichiarare la codifica.
  *
- * ! E LA MISURA DEVE DECODIFICARE COME IL DISEGNO. Se ex_larghezza_testo conta
- * i byte e ex_scrivi_con conta i caratteri, l'impaginazione del browser e il
+ * ! E LA MISURA DEVE DECODIFICARE COME IL DISEGNO. Se ex_text_width conta
+ * i byte e ex_draw_text_font conta i caratteri, l'impaginazione del browser e il
  * disegno non sono piu' d'accordo: il testo si sovrappone o lascia buchi, e il
  * difetto sembra dell'impaginazione. Le due funzioni usano lo stesso
  * decodificatore, ed e' il motivo per cui sta qui in mezzo.
@@ -2345,7 +2362,7 @@ static unsigned char codice_a_cp437(unsigned int u)
     return (u < 0x100) ? (unsigned char)u : (unsigned char)'?';
 }
 
-int ex_larghezza_testo(ExFont h, const char *s)
+int ex_text_width(ExFont h, const char *s)
 {
     ExTtf t = ttf_di(h);
     int   w = 0;
@@ -2368,7 +2385,7 @@ int ex_larghezza_testo(ExFont h, const char *s)
 }
 
 /* Quanto e' larga una stringa nel font di sistema. Dentro il toolkit si scrive
- * spesso, e `ex_larghezza_testo(0, s)` ripetuto trenta volte direbbe meno di
+ * spesso, e `ex_text_width(0, s)` ripetuto trenta volte direbbe meno di
  * questa. */
 static int larg(const char *s)
 {
@@ -2380,13 +2397,13 @@ static int casella_sel(const Oggetto *o, unsigned int *a, unsigned int *b);
 static int larg_n(const char *s, unsigned int k);
 
 /* =============================================================================
- * ex_scrivi_in — il testo nei PIXEL di chi chiama, non nella finestra
+ * ex_draw_text_buffer — il testo nei PIXEL di chi chiama, non nella finestra
  * (28 settembre 2026, @PAINT: lo strumento Testo di Pennello)
  *
- * Gli stessi glifi e la stessa fusione dei bordi di ex_scrivi_con, ma dentro
+ * Gli stessi glifi e la stessa fusione dei bordi di ex_draw_text_font, ma dentro
  * un bitmap ARGB (w x h, una riga dopo l'altra). Un pixel toccato diventa
  * opaco: l'inchiostro copre, anche su un PNG trasparente. La y e' la cima
- * della riga, come per ex_scrivi_con.
+ * della riga, come per ex_draw_text_font.
  * ============================================================================= */
 static void px_fuso(unsigned int *px, int w, int h, int x, int y,
                     unsigned int c, unsigned int a)
@@ -2402,7 +2419,7 @@ static void px_fuso(unsigned int *px, int w, int h, int x, int y,
          fondi_canale( c        & 0xFFu,  d        & 0xFFu, a);
 }
 
-void ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
+void ex_draw_text_buffer(unsigned int *px, int w, int h, ExFont f, int x, int y,
                   const char *s, unsigned int c)
 {
     const ExFontDati *fo;
@@ -2442,7 +2459,7 @@ void ex_scrivi_in(unsigned int *px, int w, int h, ExFont f, int x, int y,
     }
 }
 
-void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
+void ex_draw_text_font(ExWindow f, ExFont h, int x, int y,
                    const char *s, unsigned int c)
 {
     const ExFontDati *fo;
@@ -2452,7 +2469,7 @@ void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
     if (!s) return;
 
     /* ! LA y RESTA LA CIMA DELLA RIGA, ANCHE COL TRUETYPE, e non diventa la
-     * linea di base. Chi ha scritto ex_scrivi(f, x, y, ...) per un'etichetta
+     * linea di base. Chi ha scritto ex_draw_text(f, x, y, ...) per un'etichetta
      * ha in mente il bordo alto del testo: cambiare significato al parametro
      * a seconda del font vorrebbe dire che lo stesso codice mette la scritta
      * in due posti diversi. La linea di base si ricava, e la ricava questa. */
@@ -2505,34 +2522,34 @@ void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
     }
 }
 
-void ex_scrivi(ExFinestra f, int x, int y, const char *s, unsigned int c)
+void ex_draw_text(ExWindow f, int x, int y, const char *s, unsigned int c)
 {
-    ex_scrivi_con(f, 0, x, y, s, c);
+    ex_draw_text_font(f, 0, x, y, s, c);
 }
 
 /* Le due tendine — quella del menu e quella di un combo — si disegnano dopo
  * tutto il resto: definite piu' avanti, chiamate qui. */
-static void menu_sopra(ExFinestra f);
-static void combo_sopra(ExFinestra f);
+static void menu_sopra(ExWindow f);
+static void combo_sopra(ExWindow f);
 
 /* =============================================================================
  * ! LA TENDINA SI DISEGNA QUI, PER ULTIMA DI TUTTO, e non insieme ai controlli.
  *
  * Il difetto: aperto un menu, bastava muovere il mouse sopra la finestra e la
  * tendina spariva sotto quel che c'era prima. La ragione e' l'ordine, non il
- * server. `ex_procedura_base` disegna i controlli e poi la tendina; ma
+ * server. `ex_default_proc` disegna i controlli e poi la tendina; ma
  * un'applicazione che disegna anche DEL PROPRIO — il navigatore con la pagina,
  * exide con la maschera, chiunque abbia una tela — lo fa DOPO aver chiamato la
  * base, e ci passa sopra. Con il mouse fermo non si notava: e' il movimento che
- * fa arrivare EXM_MOUSE_MOSSO e quindi un ridisegno.
+ * fa arrivare EXM_MOUSE_MOVE e quindi un ridisegno.
  *
- * ! E IL POSTO GIUSTO E' ex_aggiorna(), non «alla fine del disegno»: questa
+ * ! E IL POSTO GIUSTO E' ex_update(), non «alla fine del disegno»: questa
  * funzione e' la riga con cui CHIUNQUE dice «ho finito di disegnare, mostralo».
  * Qualunque cosa abbia disegnato prima, e chiunque l'abbia disegnata, la
  * tendina viene dopo. Non c'e' un altro punto del toolkit che abbia questa
  * proprieta'.
  *
- * ! DISEGNARLA DUE VOLTE NON FA DANNO, e capita: chi chiama ex_aggiorna piu'
+ * ! DISEGNARLA DUE VOLTE NON FA DANNO, e capita: chi chiama ex_update piu'
  * volte ridisegna gli stessi pixel sopra se stessi.
  * ============================================================================= */
 /* =============================================================================
@@ -2589,7 +2606,7 @@ static unsigned int *retro_nuovo(unsigned int *zona, unsigned int passo,
     return b;
 }
 
-void ex_aggiorna(ExFinestra f)
+void ex_update(ExWindow f)
 {
     Oggetto   *r = radice(f);
     WinRegione w;
@@ -2597,7 +2614,7 @@ void ex_aggiorna(ExFinestra f)
     if (!r || g_server < 0) return;
 
     {
-        ExFinestra rh = radice_h(f);
+        ExWindow rh = radice_h(f);
 
         menu_sopra(rh);
         /* E la tendina di un combo dopo il menu: se per disgrazia si
@@ -2631,15 +2648,15 @@ void ex_aggiorna(ExFinestra f)
  * ! IT ONLY DOES IT WHEN IT CAN PROMISE THE RESULT, and returns 0 otherwise
  * so the caller redraws the whole window as before. Three conditions:
  *   - a control that paints ALL of its rectangle (terminal, text area,
- *     list: each starts with ex_riempi of the whole of itself). One that
+ *     list: each starts with ex_fill_rect of the whole of itself). One that
  *     leaves holes would show whatever was under it;
  *   - a direct child of the window. Inside an MDI child, siblings of the
- *     child window may cover it (see ex_procedura_base, EXM_DISEGNA);
+ *     child window may cover it (see ex_default_proc, EXM_PAINT);
  *   - no sibling created after it overlaps it: those are drawn on top of
  *     it (disegna_figli goes in creation order), and drawing it alone would
  *     cover them.
  * The open menu and combo drop-downs are drawn again on top, as in
- * ex_aggiorna(): they may lie over the control.
+ * ex_update(): they may lie over the control.
  * ============================================================================= */
 static void disegna_oggetto(Oggetto *o);
 /* The scroll bars of a text area (30 September 2026): see area_barre_disegna. */
@@ -2647,16 +2664,16 @@ static void disegna_oggetto(Oggetto *o);
 static void area_barre_disegna(const Oggetto *o, Area *A, int x, int y);
 static int  g_area_barra = 0;       /* 1 vertical, 2 horizontal: a thumb dragged */
 static int  g_area_presa = 0;       /* where the thumb was taken */
-static void disegna_figli(ExFinestra padre);
+static void disegna_figli(ExWindow padre);
 
 static int ridisegna_controllo(Oggetto *o)
 {
-    ExFinestra h, rh;
+    ExWindow h, rh;
     Oggetto   *r;
     WinRegione w;
     int x0, y0, x1, y1, i;
 
-    if (!o || !o->usato || !(o->stile & EX_VISIBILE) || g_server < 0) return 0;
+    if (!o || !o->usato || !(o->stile & EX_VISIBLE) || g_server < 0) return 0;
     /* ! A LABEL IS ACCEPTED TOO (30 September 2026), with its background
      * painted grey first: it does not paint its own rectangle, but in this
      * toolkit a label always sits on the grey of its window (see the note on
@@ -2665,7 +2682,7 @@ static int ridisegna_controllo(Oggetto *o)
     if (o->classe != CL_TERMINALE && o->classe != CL_AREA &&
         o->classe != CL_LISTA && o->classe != CL_ETICHETTA) return 0;
 
-    h  = (ExFinestra)(o - g_ogg + 1);
+    h  = (ExWindow)(o - g_ogg + 1);
     rh = radice_h(h);
     r  = ogg(rh);
     if (!r || o->padre != rh) return 0;
@@ -2675,7 +2692,7 @@ static int ridisegna_controllo(Oggetto *o)
     for (i = (int)(o - g_ogg) + 1; i < OGGETTI_MAX; i++) {
         const Oggetto *s = &g_ogg[i];
 
-        if (!s->usato || s->padre != rh || !(s->stile & EX_VISIBILE)) continue;
+        if (!s->usato || s->padre != rh || !(s->stile & EX_VISIBLE)) continue;
         if (s->x < x1 && s->x + s->w > x0 && s->y < y1 && s->y + s->h > y0)
             return 0;
     }
@@ -2686,7 +2703,7 @@ static int ridisegna_controllo(Oggetto *o)
     if (y1 > r->h) y1 = r->h;
     if (x1 <= x0 || y1 <= y0) return 1;         /* nothing of it is visible */
 
-    if (o->classe == CL_ETICHETTA) ex_riempi(rh, o->x, o->y, o->w, o->h, EX_GRIGIO);
+    if (o->classe == CL_ETICHETTA) ex_fill_rect(rh, o->x, o->y, o->w, o->h, EX_GRAY);
     disegna_oggetto(o);
     disegna_figli(h);
     menu_sopra(rh);
@@ -2714,7 +2731,7 @@ static int ridisegna_controllo(Oggetto *o)
 static Terminale *term_di(const Oggetto *o)
 {
     int i;
-    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o - g_ogg + 1);
 
     for (i = 0; i < TERM_MAX; i++)
         if (g_term[i].usato && g_term[i].ogg == h) return &g_term[i];
@@ -2904,7 +2921,7 @@ static int term_tasto(Terminale *t, unsigned int c)
  * dimenticarsene una volta da' un menu che si disegna sopra il successivo.
  * Sono moltiplicazioni per otto: costano meno del difetto.
  * ============================================================================= */
-static Menu *menu_della_finestra(ExFinestra f)
+static Menu *menu_della_finestra(ExWindow f)
 {
     Oggetto *r = radice(f);
     int i;
@@ -2912,7 +2929,7 @@ static Menu *menu_della_finestra(ExFinestra f)
     if (!r) return 0;
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && g_ogg[i].classe == CL_MENU &&
-            radice_h((ExFinestra)(i + 1)) == radice_h(f))
+            radice_h((ExWindow)(i + 1)) == radice_h(f))
             return menu_di(&g_ogg[i]);
     return 0;
 }
@@ -3030,7 +3047,7 @@ static int menu_sub_dove(Menu *M, int *sx, int *sy, int *sw, int *sh)
 }
 
 /* Le voci di una tendina, principale o laterale: lo stesso disegno. */
-static void menu_voci_disegna(ExFinestra f, const MenuTitolo *T, int tx, int ty,
+static void menu_voci_disegna(ExWindow f, const MenuTitolo *T, int tx, int ty,
                               int tw, int evidenziata)
 {
     unsigned int i;
@@ -3041,16 +3058,16 @@ static void menu_voci_disegna(ExFinestra f, const MenuTitolo *T, int tx, int ty,
         const char *t   = T->voce[i].testo;
         const char *tab = strchr(t, '\t');
         char sinistra[MENU_TESTO_MAX];
-        unsigned int colore = EX_NERO;
+        unsigned int colore = EX_BLACK;
 
         if (T->voce[i].id == 0) {
-            ex_riempi(f, tx + 4, ry + MENU_RIGA_H / 2 - 1, tw - 8, 1, EX_OMBRA);
-            ex_riempi(f, tx + 4, ry + MENU_RIGA_H / 2,     tw - 8, 1, EX_LUCE);
+            ex_fill_rect(f, tx + 4, ry + MENU_RIGA_H / 2 - 1, tw - 8, 1, EX_SHADOW);
+            ex_fill_rect(f, tx + 4, ry + MENU_RIGA_H / 2,     tw - 8, 1, EX_HIGHLIGHT);
             continue;
         }
         if ((int)i == evidenziata) {
-            ex_riempi(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, EX_BLU);
-            colore = EX_BIANCO;
+            ex_fill_rect(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, EX_BLUE);
+            colore = EX_WHITE;
         }
         if (tab) {
             unsigned int l = (unsigned int)(tab - t);
@@ -3058,26 +3075,26 @@ static void menu_voci_disegna(ExFinestra f, const MenuTitolo *T, int tx, int ty,
             if (l >= sizeof(sinistra)) l = sizeof(sinistra) - 1;
             memcpy(sinistra, t, l);
             sinistra[l] = '\0';
-            ex_scrivi(f, tx + 8 + sp, ry, sinistra, colore);
-            ex_scrivi(f, tx + tw - 8 - larg(tab + 1), ry, tab + 1, colore);
+            ex_draw_text(f, tx + 8 + sp, ry, sinistra, colore);
+            ex_draw_text(f, tx + tw - 8 - larg(tab + 1), ry, tab + 1, colore);
         } else {
-            ex_scrivi(f, tx + 8 + sp, ry, t, colore);
+            ex_draw_text(f, tx + 8 + sp, ry, t, colore);
         }
         if (T->voce[i].spunta == 2) {           /* the check mark, drawn */
             static const signed char dy[8] = { 7, 8, 9, 8, 7, 6, 5, 4 };
             int k;
 
             for (k = 0; k < 8; k++)
-                ex_riempi(f, tx + 6 + k, ry + dy[k], 1, 2, colore);
+                ex_fill_rect(f, tx + 6 + k, ry + dy[k], 1, 2, colore);
         }
-        if (T->voce[i].sub >= 0) ex_scrivi(f, tx + tw - 8 - larg(">"), ry, ">", colore);
+        if (T->voce[i].sub >= 0) ex_draw_text(f, tx + tw - 8 - larg(">"), ry, ">", colore);
     }
 }
 
 /* ! SI DISEGNA DOPO TUTTI GLI ALTRI, e non insieme alla barra: una tendina
  * aperta COPRE i controlli sotto di se', e i figli si disegnano in ordine di
  * creazione — il menu si crea per primo, quindi finirebbe sotto. */
-static void menu_sopra(ExFinestra f)
+static void menu_sopra(ExWindow f)
 {
     Menu *M = menu_della_finestra(f);
     MenuTitolo *T;
@@ -3090,13 +3107,13 @@ static void menu_sopra(ExFinestra f)
 
     /* Un separatore e' un solco, non una voce: non si sceglie e non si
      * evidenzia (menu_voci_disegna). */
-    ex_riempi(f, tx, ty, tw, th, EX_GRIGIO);
-    ex_rilievo(f, tx, ty, tw, th);
+    ex_fill_rect(f, tx, ty, tw, th, EX_GRAY);
+    ex_draw_raised(f, tx, ty, tw, th);
     menu_voci_disegna(f, T, tx, ty, tw, M->sotto);
 
     if (menu_sub_dove(M, &tx, &ty, &tw, &th)) {
-        ex_riempi(f, tx, ty, tw, th, EX_GRIGIO);
-        ex_rilievo(f, tx, ty, tw, th);
+        ex_fill_rect(f, tx, ty, tw, th, EX_GRAY);
+        ex_draw_raised(f, tx, ty, tw, th);
         menu_voci_disegna(f, &M->sub[M->sub_aperta], tx, ty, tw, M->sub_sotto);
     }
     (void)i;
@@ -3106,7 +3123,7 @@ static int menu_voce_vicina(const MenuTitolo *T, int da, int passo);
 
 /* Rende 1 se il clic era roba del menu — e allora NON deve arrivare ai
  * controlli sotto. `cmd` esce diverso da zero solo se si e' scelta una voce. */
-static int menu_clic(ExFinestra f, int x, int y, unsigned int *cmd)
+static int menu_clic(ExWindow f, int x, int y, unsigned int *cmd)
 {
     Menu *M = menu_della_finestra(f);
     Oggetto *o;
@@ -3204,7 +3221,7 @@ static int menu_voce_vicina(const MenuTitolo *T, int da, int passo)
     return -1;
 }
 
-static int menu_tasto(ExFinestra f, unsigned int k, unsigned int *cmd)
+static int menu_tasto(ExWindow f, unsigned int k, unsigned int *cmd)
 {
     Menu *M = menu_della_finestra(f);
     unsigned int c = k & KBD_KEY_MASK;
@@ -3335,26 +3352,26 @@ static void mdi_client(Oggetto *o, int *cx, int *cy, int *cw, int *ch)
 
 /* Il figlio davanti a tutti, cioe' quello con z piu' alto. Rende 0 se il
  * contenitore e' vuoto. */
-static ExFinestra mdi_attivo(ExFinestra cont)
+static ExWindow mdi_attivo(ExWindow cont)
 {
-    ExFinestra   scelto = 0;
+    ExWindow   scelto = 0;
     unsigned int zmax = 0;
     int          i;
 
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && g_ogg[i].classe == CL_MDIFIGLIO &&
-            g_ogg[i].padre == cont && (g_ogg[i].stile & EX_VISIBILE) &&
+            g_ogg[i].padre == cont && (g_ogg[i].stile & EX_VISIBLE) &&
             (scelto == 0 || g_ogg[i].z >= zmax)) {
-            scelto = (ExFinestra)(i + 1);
+            scelto = (ExWindow)(i + 1);
             zmax   = g_ogg[i].z;
         }
     return scelto;
 }
 
 /* Il figlio piu' in alto che contiene il punto. */
-static ExFinestra mdi_figlio_in(ExFinestra cont, int x, int y)
+static ExWindow mdi_figlio_in(ExWindow cont, int x, int y)
 {
-    ExFinestra   scelto = 0;
+    ExWindow   scelto = 0;
     unsigned int zmax = 0;
     int          i, ox, oy;
 
@@ -3362,14 +3379,14 @@ static ExFinestra mdi_figlio_in(ExFinestra cont, int x, int y)
         Oggetto *o = &g_ogg[i];
 
         if (!o->usato || o->classe != CL_MDIFIGLIO || o->padre != cont) continue;
-        if (!(o->stile & EX_VISIBILE)) continue;
+        if (!(o->stile & EX_VISIBLE)) continue;
 
         origine(o, &ox, &oy);
         if (x < ox + o->x || x >= ox + o->x + o->w) continue;
         if (y < oy + o->y || y >= oy + o->y + o->h) continue;
 
         if (scelto == 0 || o->z >= zmax) {
-            scelto = (ExFinestra)(i + 1);
+            scelto = (ExWindow)(i + 1);
             zmax   = o->z;
         }
     }
@@ -3380,7 +3397,7 @@ static ExFinestra mdi_figlio_in(ExFinestra cont, int x, int y)
  * programma puo' averne piu' d'uno — due pannelli affiancati, ognuno con le
  * sue finestre — e una variabile sola sarebbe il limite piu' stupido da
  * scoprire il giorno che serve il secondo. */
-static ExFinestra mdi_contenitore_in(ExFinestra f, int x, int y)
+static ExWindow mdi_contenitore_in(ExWindow f, int x, int y)
 {
     int i, ox, oy;
 
@@ -3388,24 +3405,24 @@ static ExFinestra mdi_contenitore_in(ExFinestra f, int x, int y)
         Oggetto *o = &g_ogg[i];
 
         if (!o->usato || o->classe != CL_MDI) continue;
-        if (radice((ExFinestra)(i + 1)) != ogg(f)) continue;
-        if (!(o->stile & EX_VISIBILE)) continue;
+        if (radice((ExWindow)(i + 1)) != ogg(f)) continue;
+        if (!(o->stile & EX_VISIBLE)) continue;
 
         origine(o, &ox, &oy);
         if (x >= ox + o->x && x < ox + o->x + o->w &&
             y >= oy + o->y && y < oy + o->y + o->h)
-            return (ExFinestra)(i + 1);
+            return (ExWindow)(i + 1);
     }
     return 0;
 }
 
 /* La finestra MDI che contiene questo oggetto, se ce n'e' una. */
-static ExFinestra mdi_di(ExFinestra c)
+static ExWindow mdi_di(ExWindow c)
 {
     Oggetto *o = ogg(c);
 
     while (o) {
-        if (o->classe == CL_MDIFIGLIO) return (ExFinestra)(o - g_ogg + 1);
+        if (o->classe == CL_MDIFIGLIO) return (ExWindow)(o - g_ogg + 1);
         if (!o->padre) break;
         o = ogg(o->padre);
     }
@@ -3460,15 +3477,15 @@ static unsigned int area_stato_di(Area *A, unsigned int r)
 static unsigned int ruolo_colore(unsigned int ruolo)
 {
     switch (ruolo) {
-    case EX_COD_CHIAVE:   return 0x000000C0u;   /* blu */
-    case EX_COD_TIPO:     return 0x00007070u;   /* verde-azzurro */
-    case EX_COD_STRINGA:  return 0x00A00000u;   /* rosso scuro */
-    case EX_COD_NUMERO:   return 0x00C05000u;   /* arancio scuro */
-    case EX_COD_COMMENTO: return 0x00008000u;   /* verde */
-    case EX_COD_PREPROC:  return 0x00808000u;   /* oliva */
-    case EX_COD_FUNZIONE: return 0x00600060u;   /* viola */
-    case EX_COD_SIMBOLO:  return 0x00404040u;   /* grigio scuro */
-    default:              return EX_NERO;
+    case EX_CODE_KEYWORD:   return 0x000000C0u;   /* blu */
+    case EX_CODE_TYPE:     return 0x00007070u;   /* verde-azzurro */
+    case EX_CODE_STRING:  return 0x00A00000u;   /* rosso scuro */
+    case EX_CODE_NUMBER:   return 0x00C05000u;   /* arancio scuro */
+    case EX_CODE_COMMENT: return 0x00008000u;   /* verde */
+    case EX_CODE_PREPROC:  return 0x00808000u;   /* oliva */
+    case EX_CODE_FUNCTION: return 0x00600060u;   /* viola */
+    case EX_CODE_SYMBOL:  return 0x00404040u;   /* grigio scuro */
+    default:              return EX_BLACK;
     }
 }
 
@@ -3478,9 +3495,9 @@ static unsigned int ruolo_colore(unsigned int ruolo)
  * ! IL TOOLKIT SA RIEMPIRE RETTANGOLI, E BASTA. Un radio e' un cerchio e una
  * freccia e' un triangolo: si fanno una riga per volta, che e' come si sono
  * sempre fatti quando l'unica primitiva era il rettangolo. Costano una decina
- * di ex_riempi l'uno e si disegnano quando qualcosa cambia, non a ogni giro.
+ * di ex_fill_rect l'uno e si disegnano quando qualcosa cambia, non a ogni giro.
  * ============================================================================= */
-static void disco(ExFinestra f, int cx, int cy, int r, unsigned int col)
+static void disco(ExWindow f, int cx, int cy, int r, unsigned int col)
 {
     int dy;
 
@@ -3489,13 +3506,13 @@ static void disco(ExFinestra f, int cx, int cy, int r, unsigned int col)
 
         for (dx = 0; dx <= r; dx++)
             if (dx * dx + dy * dy <= r * r) w = dx;
-        if (w >= 0) ex_riempi(f, cx - w, cy + dy, 2 * w + 1, 1, col);
+        if (w >= 0) ex_fill_rect(f, cx - w, cy + dy, 2 * w + 1, 1, col);
     }
 }
 
 /* Un triangolo pieno dentro un quadrato di lato `lato`. verso: 0 su, 1 giu',
  * 2 sinistra, 3 destra. */
-static void triangolino(ExFinestra f, int x, int y, int lato, int verso,
+static void triangolino(ExWindow f, int x, int y, int lato, int verso,
                         unsigned int col)
 {
     int n = lato / 2, i;
@@ -3507,10 +3524,10 @@ static void triangolino(ExFinestra f, int x, int y, int lato, int verso,
         int p   = (lato - n) / 2 + i;
 
         switch (verso) {
-        case 0: ex_riempi(f, x + off, y + p, lun, 1, col); break;
-        case 1: ex_riempi(f, x + off, y + lato - 1 - p, lun, 1, col); break;
-        case 2: ex_riempi(f, x + p, y + off, 1, lun, col); break;
-        default: ex_riempi(f, x + lato - 1 - p, y + off, 1, lun, col); break;
+        case 0: ex_fill_rect(f, x + off, y + p, lun, 1, col); break;
+        case 1: ex_fill_rect(f, x + off, y + lato - 1 - p, lun, 1, col); break;
+        case 2: ex_fill_rect(f, x + p, y + off, 1, lun, col); break;
+        default: ex_fill_rect(f, x + lato - 1 - p, y + off, 1, lun, col); break;
         }
     }
 }
@@ -3599,7 +3616,7 @@ static void scorri_muovi(Oggetto *o, int quanto)
  * ! E UN RADIO NON SI SPEGNE CLICCANDOLO. Una spunta si', perche' e' una
  * domanda a cui si puo' rispondere di no; un radio e' «quale dei tre», e non
  * poter rispondere nessuno dei tre e' uno stato che nessuno ha chiesto. Si
- * spegne accendendone un altro, o da programma con ex_accendi.
+ * spegne accendendone un altro, o da programma con ex_set_checked.
  * ============================================================================= */
 static void spunta_scatta(Oggetto *o)
 {
@@ -3729,15 +3746,15 @@ static int tab_zona(const Oggetto *o, int x, int *k)
  * ============================================================================= */
 #define TAB_X_LATO      12
 
-static void tab_x_rossa(ExFinestra f, int bx, int by, int scelta)
+static void tab_x_rossa(ExWindow f, int bx, int by, int scelta)
 {
     int k, n = TAB_X_LATO;
 
-    ex_riempi(f, bx, by, n, n, scelta ? 0x00D03030 : 0x00B06060);
-    ex_rilievo(f, bx, by, n, n);
+    ex_fill_rect(f, bx, by, n, n, scelta ? 0x00D03030 : 0x00B06060);
+    ex_draw_raised(f, bx, by, n, n);
     for (k = 0; k < n - 6; k++) {               /* the cross, two pixels thick */
-        ex_riempi(f, bx + 3 + k, by + 3 + k, 2, 1, EX_BIANCO);
-        ex_riempi(f, bx + n - 5 - k, by + 3 + k, 2, 1, EX_BIANCO);
+        ex_fill_rect(f, bx + 3 + k, by + 3 + k, 2, 1, EX_WHITE);
+        ex_fill_rect(f, bx + n - 5 - k, by + 3 + k, 2, 1, EX_WHITE);
     }
 }
 
@@ -3745,7 +3762,7 @@ static void disegna_oggetto(Oggetto *o)
 {
     int ox, oy, x, y;
 
-    if (!o->usato || !(o->stile & EX_VISIBILE)) return;
+    if (!o->usato || !(o->stile & EX_VISIBLE)) return;
 
     origine(o, &ox, &oy);
     x = ox + o->x;
@@ -3760,7 +3777,7 @@ static void disegna_oggetto(Oggetto *o)
      * perche' ha la LUCE sopra e a sinistra e l'OMBRA sotto e a destra:
      * scambiando i due bordi lo stesso disegno sprofonda, ed e' cio' che
      * l'occhio legge come «l'ho premuto» senza doverci pensare. Le due
-     * funzioni c'erano gia' — ex_rilievo e ex_incavo, che chiamano lo stesso
+     * funzioni c'erano gia' — ex_draw_raised e ex_draw_sunken, che chiamano lo stesso
      * bordo3d con i colori invertiti — e non le usava nessuno qui.
      *
      * ! E LA SCRITTA SI SPOSTA DI UN PIXEL IN GIU' E A DESTRA. Sembra un
@@ -3777,11 +3794,11 @@ static void disegna_oggetto(Oggetto *o)
         int lato = (int)o->icona_lato;
         int tx;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
-        ex_riquadro_disegna(o->padre, x, y, o->w, o->h, EX_NERO);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_draw_rect(o->padre, x, y, o->w, o->h, EX_BLACK);
 
-        if (o->premuto) ex_incavo(o->padre,  x + 1, y + 1, o->w - 2, o->h - 2);
-        else            ex_rilievo(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
+        if (o->premuto) ex_draw_sunken(o->padre,  x + 1, y + 1, o->w - 2, o->h - 2);
+        else            ex_draw_raised(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
 
         /* ! CON L'ICONA LA SCRITTA NON E' PIU' IN MEZZO AL PULSANTE, E' IN
          * MEZZO A QUEL CHE RESTA. Centrare il testo sul pulsante intero e
@@ -3794,16 +3811,16 @@ static void disegna_oggetto(Oggetto *o)
             int ix  = x + dx + (o->w - tot) / 2;
 
             if (ix < x + dx + 3) ix = x + dx + 3;
-            ex_icona_disegna(o->padre, (ExIcona)o->icona, ix,
+            ex_icon_draw(o->padre, (ExIcon)o->icona, ix,
                              y + dx + ((int)o->h - lato) / 2,
-                             (unsigned int)lato, EX_GRIGIO);
+                             (unsigned int)lato, EX_GRAY);
             tx = ix + lato + 6;
         } else {
             tx = x + dx + ((int)o->w - larg(o->titolo)) / 2;
         }
 
-        ex_scrivi(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo,
-                  (o->stile & EX_SPENTO) ? EX_GRIGIO_SC : EX_NERO);
+        ex_draw_text(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo,
+                  (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
 
         /* ! THE FOCUS IS SHOWN (27 September 2026). A button with the focus
          * looked like any other, so nobody could see which one Enter would
@@ -3812,8 +3829,8 @@ static void disegna_oggetto(Oggetto *o)
          * its caption. */
         {
             Oggetto *rd = radice(o->padre);
-            if (rd && rd->fuoco == (ExFinestra)(o - g_ogg + 1) && o->w > 10 && o->h > 10)
-                ex_riquadro_disegna(o->padre, x + 4, y + 4, o->w - 8, o->h - 8, EX_BLU);
+            if (rd && rd->fuoco == (ExWindow)(o - g_ogg + 1) && o->w > 10 && o->h > 10)
+                ex_draw_rect(o->padre, x + 4, y + 4, o->w - 8, o->h - 8, EX_BLUE);
         }
         break;
     }
@@ -3832,20 +3849,20 @@ static void disegna_oggetto(Oggetto *o)
      * corto e la si mette in mezzo.
      * ================================================================= */
     case CL_IMMAGINE: {
-        /* ! QUI IL LATO E' QUELLO DEL RIQUADRO, NON QUELLO DI ex_icona_metti.
+        /* ! QUI IL LATO E' QUELLO DEL RIQUADRO, NON QUELLO DI ex_set_icon.
          * Su un pulsante l'icona sta ACCANTO alla scritta e la sua misura e'
          * una scelta; qui l'icona E' il controllo, e la misura e' quella che
          * l'utente ha tirato. Percio' `icona_lato` resta scritto e non si usa:
-         * chi passa un numero a ex_icona_metti su un'immagine non sbaglia, gli
+         * chi passa un numero a ex_set_icon su un'immagine non sbaglia, gli
          * si risponde semplicemente col riquadro. */
         int lato = o->w < o->h ? (int)o->w : (int)o->h;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
         if (o->icona && lato > 0)
-            ex_icona_disegna(o->padre, (ExIcona)o->icona,
+            ex_icon_draw(o->padre, (ExIcon)o->icona,
                              x + ((int)o->w - lato) / 2,
                              y + ((int)o->h - lato) / 2,
-                             (unsigned int)lato, EX_GRIGIO);
+                             (unsigned int)lato, EX_GRAY);
         break;
     }
 
@@ -3855,12 +3872,12 @@ static void disegna_oggetto(Oggetto *o)
         if (o->icona) {
             int lato = (int)o->icona_lato;
 
-            ex_icona_disegna(o->padre, (ExIcona)o->icona, x,
+            ex_icon_draw(o->padre, (ExIcon)o->icona, x,
                              y + ((int)o->h - lato) / 2,
-                             (unsigned int)lato, EX_GRIGIO);
-            ex_scrivi(o->padre, x + lato + 6, y, o->titolo, EX_NERO);
+                             (unsigned int)lato, EX_GRAY);
+            ex_draw_text(o->padre, x + lato + 6, y, o->titolo, EX_BLACK);
         } else {
-            ex_scrivi(o->padre, x, y, o->titolo, EX_NERO);
+            ex_draw_text(o->padre, x, y, o->titolo, EX_BLACK);
         }
         break;
 
@@ -3868,12 +3885,12 @@ static void disegna_oggetto(Oggetto *o)
         Oggetto     *r = radice(o->padre);
         /* ! THE WINDOW OF TEXT FOLLOWS THE CARET, as the old comment here
          * asked for «the day the caret can move»: that day is 24 September
-         * 2026. What does not fit is not drawn (ex_scrivi cuts nothing, and
+         * 2026. What does not fit is not drawn (ex_draw_text cuts nothing, and
          * the letters would land on the control beside). */
         const char  *t = o->titolo;
         unsigned int n = (unsigned int)strlen(t), cur, vis, a = 0, b = 0;
         int          dentro = o->w - 6;      /* i 3 pixel di bordo, due volte */
-        int          fuoco = (r && r->fuoco == (ExFinestra)(o - g_ogg + 1));
+        int          fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
         int          sel;
         char         buf[TESTO_LEN];
         int          ty = y + (o->h - 16) / 2;
@@ -3885,14 +3902,14 @@ static void disegna_oggetto(Oggetto *o)
         vis = 0;
         while (o->vista + vis < n && larg_n(t + o->vista, vis + 1) <= dentro) vis++;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
         /* ! IL BORDO DICE CHI HA I TASTI. Senza, chi guarda non sa dove
          * andra' a finire quello che batte — e Tab sembra non fare niente. */
-        ex_riquadro_disegna(o->padre, x, y, o->w, o->h, fuoco ? EX_BLU : EX_GRIGIO_SC);
+        ex_draw_rect(o->padre, x, y, o->w, o->h, fuoco ? EX_BLUE : EX_DARK_GRAY);
 
         memcpy(buf, t + o->vista, vis);
         buf[vis] = '\0';
-        ex_scrivi(o->padre, x + 3, ty, buf, EX_NERO);
+        ex_draw_text(o->padre, x + 3, ty, buf, EX_BLACK);
 
         sel = fuoco && casella_sel(o, &a, &b);
         if (sel) {
@@ -3903,33 +3920,33 @@ static void disegna_oggetto(Oggetto *o)
                 int sx = larg_n(t + o->vista, da - o->vista);
                 int sw = larg_n(t + da, al - da);
 
-                ex_riempi(o->padre, x + 3 + sx, y + 3, sw, o->h - 6, EX_BLU);
+                ex_fill_rect(o->padre, x + 3 + sx, y + 3, sw, o->h - 6, EX_BLUE);
                 memcpy(buf, t + da, al - da);
                 buf[al - da] = '\0';
-                ex_scrivi(o->padre, x + 3 + sx, ty, buf, EX_BIANCO);
+                ex_draw_text(o->padre, x + 3 + sx, ty, buf, EX_WHITE);
             }
         }
         if (fuoco)
-            ex_riempi(o->padre, x + 3 + larg_n(t + o->vista, cur - o->vista), y + 3, 1,
-                      o->h - 6, EX_NERO);
+            ex_fill_rect(o->padre, x + 3 + larg_n(t + o->vista, cur - o->vista), y + 3, 1,
+                      o->h - 6, EX_BLACK);
         break;
     }
 
     /* Un riquadro e' un solco, non un rettangolo: una riga che rientra e una
      * che sporge subito dopo, come una cucitura nel pannello. */
     case CL_RIQUADRO:
-        ex_incavo(o->padre, x, y + 8, o->w, o->h - 8);
-        ex_rilievo(o->padre, x + 1, y + 9, o->w - 2, o->h - 10);
+        ex_draw_sunken(o->padre, x, y + 8, o->w, o->h - 8);
+        ex_draw_raised(o->padre, x + 1, y + 9, o->w - 2, o->h - 10);
         if (o->titolo[0]) {
-            ex_riempi(o->padre, x + 6, y + 8,
-                      larg(o->titolo) + 6, 2, EX_GRIGIO);
-            ex_scrivi(o->padre, x + 9, y, o->titolo, EX_NERO);
+            ex_fill_rect(o->padre, x + 6, y + 8,
+                      larg(o->titolo) + 6, 2, EX_GRAY);
+            ex_draw_text(o->padre, x + 9, y, o->titolo, EX_BLACK);
         }
         break;
 
     case CL_SEPARATORE:
-        ex_riempi(o->padre, x, y, o->w, 1, EX_OMBRA);
-        ex_riempi(o->padre, x, y + 1, o->w, 1, EX_LUCE);
+        ex_fill_rect(o->padre, x, y, o->w, 1, EX_SHADOW);
+        ex_fill_rect(o->padre, x, y + 1, o->w, 1, EX_HIGHLIGHT);
         break;
 
     case CL_AREA: {
@@ -3938,11 +3955,11 @@ static void disegna_oggetto(Oggetto *o)
         unsigned int k;
         int col_fuoco;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
-        col_fuoco = (r && r->fuoco == (ExFinestra)(o - g_ogg + 1));
-        ex_incavo(o->padre, x, y, o->w, o->h);
-        if (col_fuoco) ex_riquadro_disegna(o->padre, x + 1, y + 1,
-                                           o->w - 2, o->h - 2, EX_BLU);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
+        col_fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
+        ex_draw_sunken(o->padre, x, y, o->w, o->h);
+        if (col_fuoco) ex_draw_rect(o->padre, x + 1, y + 1,
+                                           o->w - 2, o->h - 2, EX_BLUE);
         if (!A) break;
 
         {
@@ -3978,7 +3995,7 @@ static void disegna_oggetto(Oggetto *o)
                  * una stringa aperta prima del bordo sinistro colora anche cio'
                  * che si vede, e dandogli mezza riga direbbe il falso proprio
                  * quando si scorre in orizzontale. */
-                memset(ruoli, EX_COD_NORMALE, sizeof(ruoli));
+                memset(ruoli, EX_CODE_NORMAL, sizeof(ruoli));
                 if (A->colora)
                     A->colora(A->colora_dato, src, ruoli, area_stato_di(A, riga));
 
@@ -3997,8 +4014,8 @@ static void disegna_oggetto(Oggetto *o)
                     if (e_ > d) {
                         da = (int)(d - A->left);
                         a  = (int)(e_ - A->left);
-                        ex_riempi(o->padre, x + 2 + da * AREA_CAR_W, ry - 1,
-                                  (a - da) * AREA_CAR_W, AREA_RIGA_H, EX_BLU);
+                        ex_fill_rect(o->padre, x + 2 + da * AREA_CAR_W, ry - 1,
+                                  (a - da) * AREA_CAR_W, AREA_RIGA_H, EX_BLUE);
                     }
                 }
 
@@ -4024,13 +4041,13 @@ static void disegna_oggetto(Oggetto *o)
 
                     while (p < lung) {
                         int sel_p = (da >= 0 && p >= da && p < a);
-                        unsigned int col = sel_p ? EX_BIANCO
+                        unsigned int col = sel_p ? EX_WHITE
                                                  : ruolo_colore(ruoli[A->left + (unsigned int)p]);
                         int q = p;
 
                         while (q < lung) {
                             int sel_q = (da >= 0 && q >= da && q < a);
-                            unsigned int cq = sel_q ? EX_BIANCO
+                            unsigned int cq = sel_q ? EX_WHITE
                                                     : ruolo_colore(ruoli[A->left + (unsigned int)q]);
                             if (cq != col || sel_q != sel_p) break;
                             q++;
@@ -4038,7 +4055,7 @@ static void disegna_oggetto(Oggetto *o)
 
                         memcpy(pezzo, vis + p, (unsigned int)(q - p));
                         pezzo[q - p] = '\0';
-                        ex_scrivi(o->padre, x + 2 + p * AREA_CAR_W, ry, pezzo, col);
+                        ex_draw_text(o->padre, x + 2 + p * AREA_CAR_W, ry, pezzo, col);
                         p = q;
                     }
                 }
@@ -4054,11 +4071,11 @@ static void disegna_oggetto(Oggetto *o)
             int cy = y + 2 + (int)(A->cy - A->top) * AREA_RIGA_H;
             char sotto[2];
 
-            ex_riempi(o->padre, cx, cy, AREA_CAR_W, AREA_RIGA_H, EX_BLU);
+            ex_fill_rect(o->padre, cx, cy, AREA_CAR_W, AREA_RIGA_H, EX_BLUE);
             sotto[0] = area_riga(A, A->cy)[A->cx];
             sotto[1] = '\0';
             if (sotto[0] == '\t') sotto[0] = ' ';
-            if (sotto[0]) ex_scrivi(o->padre, cx, cy, sotto, EX_BIANCO);
+            if (sotto[0]) ex_draw_text(o->padre, cx, cy, sotto, EX_WHITE);
         }
         area_barre_disegna(o, A, x, y);
         break;
@@ -4071,14 +4088,14 @@ static void disegna_oggetto(Oggetto *o)
         int col_fuoco;
         int gutter = 0;         /* lo spazio a sinistra per le icone */
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
 
         /* ! IL BORDO DICE CHI HA I TASTI, come per la casella di testo: senza,
          * chi guarda non sa se le frecce muoveranno questa lista o un'altra. */
-        col_fuoco = (r && r->fuoco == (ExFinestra)(o - g_ogg + 1));
-        ex_incavo(o->padre, x, y, o->w, o->h);
-        if (col_fuoco) ex_riquadro_disegna(o->padre, x + 1, y + 1,
-                                           o->w - 2, o->h - 2, EX_BLU);
+        col_fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
+        ex_draw_sunken(o->padre, x, y, o->w, o->h);
+        if (col_fuoco) ex_draw_rect(o->padre, x + 1, y + 1,
+                                           o->w - 2, o->h - 2, EX_BLUE);
         if (!L) break;
 
         /* ! SE UNA RIGA HA UN'ICONA, LO SPAZIO LO LASCIANO TUTTE. Indentare
@@ -4102,11 +4119,11 @@ static void disegna_oggetto(Oggetto *o)
             /* ! LA SCELTA E' UN FONDO, NON UN COLORE DEL TESTO. Su voci di
              * lunghezza diversa un testo colorato non dice dove finisce la
              * riga scelta; un fondo si'. */
-            unsigned int fondo = EX_BIANCO;
+            unsigned int fondo = EX_WHITE;
 
             if (v == L->sel || (L->multi && v < L->n && L->segni[v])) {
-                fondo = col_fuoco ? EX_BLU : EX_GRIGIO_SC;
-                ex_riempi(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
+                fondo = col_fuoco ? EX_BLUE : EX_DARK_GRAY;
+                ex_fill_rect(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
                           fondo);
             }
 
@@ -4115,12 +4132,12 @@ static void disegna_oggetto(Oggetto *o)
              * sul bianco ci lascerebbe intorno un alone chiaro — l'alfa dei
              * bordi e' proprio dove si vedrebbe. */
             if (v < L->n && L->ic[v])
-                ex_icona_disegna(o->padre, L->ic[v], x + 3, ry,
+                ex_icon_draw(o->padre, L->ic[v], x + 3, ry,
                                  (unsigned int)LISTA_ICONA_LATO, fondo);
 
-            ex_scrivi(o->padre, x + 4 + gutter, ry,
+            ex_draw_text(o->padre, x + 4 + gutter, ry,
                       &L->voci[v * LISTA_TESTO_MAX],
-                      (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_BIANCO : EX_NERO);
+                      (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_WHITE : EX_BLACK);
         }
         break;
     }
@@ -4130,29 +4147,29 @@ static void disegna_oggetto(Oggetto *o)
         unsigned int r, k;
         char linea[128];
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_NERO);
-        ex_incavo(o->padre, x, y, o->w, o->h);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_BLACK);
+        ex_draw_sunken(o->padre, x, y, o->w, o->h);
         if (!t) break;
 
         for (r = 0; r < t->righe; r++) {
             for (k = 0; k < t->cols && k + 1 < sizeof(linea); k++)
                 linea[k] = t->griglia[r * t->cols + k];
             linea[k] = '\0';
-            ex_scrivi(o->padre, x, y + (int)r * 16, linea, EX_BIANCO);
+            ex_draw_text(o->padre, x, y + (int)r * 16, linea, EX_WHITE);
         }
 
         /* Il cursore: un blocchetto, non un trattino. Su un fondo nero un
          * trattino sottile a volte non si vede, e un terminale in cui non si
          * sa dove si sta scrivendo non e' un terminale. */
-        ex_riempi(o->padre, x + (int)t->cx * 8, y + (int)t->cy * 16 + 14,
-                  8, 2, EX_BIANCO);
+        ex_fill_rect(o->padre, x + (int)t->cx * 8, y + (int)t->cy * 16 + 14,
+                  8, 2, EX_WHITE);
         break;
     }
 
     case CL_INTESTAZIONE:
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_BLU);
-        ex_rilievo(o->padre, x, y, o->w, o->h);
-        ex_scrivi(o->padre, x + 6, y + (o->h - 16) / 2, o->titolo, EX_BIANCO);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_BLUE);
+        ex_draw_raised(o->padre, x, y, o->w, o->h);
+        ex_draw_text(o->padre, x + 6, y + (o->h - 16) / 2, o->titolo, EX_WHITE);
         break;
 
     /* =====================================================================
@@ -4176,23 +4193,23 @@ static void disegna_oggetto(Oggetto *o)
 
         /* Premuto: il riquadro si fa grigio. E' il «sta succedendo» di una
          * spunta, che non ha un rilievo da scambiare come un pulsante. */
-        ex_riempi(o->padre, x, by, lato, lato,
-                  o->premuto ? EX_GRIGIO : EX_BIANCO);
-        ex_incavo(o->padre, x, by, lato, lato);
+        ex_fill_rect(o->padre, x, by, lato, lato,
+                  o->premuto ? EX_GRAY : EX_WHITE);
+        ex_draw_sunken(o->padre, x, by, lato, lato);
 
         if (o->valore) {
             /* Il segno: due tratti, come una V storta. */
             for (i = 0; i < 3; i++)
-                ex_riempi(o->padre, x + 3 + i, by + 5 + i, 2, 2, EX_NERO);
+                ex_fill_rect(o->padre, x + 3 + i, by + 5 + i, 2, 2, EX_BLACK);
             for (i = 0; i < 4; i++)
-                ex_riempi(o->padre, x + 6 + i, by + 7 - i, 2, 2, EX_NERO);
+                ex_fill_rect(o->padre, x + 6 + i, by + 7 - i, 2, 2, EX_BLACK);
         }
 
-        ex_scrivi(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
-                  (o->stile & EX_SPENTO) ? EX_GRIGIO_SC : EX_NERO);
-        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
-            ex_riquadro_disegna(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
-                                larg(o->titolo) + 4, 18, EX_BLU);
+        ex_draw_text(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
+                  (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
+        if (r && r->fuoco == (ExWindow)(o - g_ogg + 1))
+            ex_draw_rect(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
+                                larg(o->titolo) + 4, 18, EX_BLUE);
         break;
     }
 
@@ -4202,16 +4219,16 @@ static void disegna_oggetto(Oggetto *o)
         int cx = x + lato / 2;
         int cy = y + o->h / 2;
 
-        disco(o->padre, cx, cy, lato / 2,     EX_GRIGIO_SC);
+        disco(o->padre, cx, cy, lato / 2,     EX_DARK_GRAY);
         disco(o->padre, cx, cy, lato / 2 - 1,
-              o->premuto ? EX_GRIGIO : EX_BIANCO);
-        if (o->valore) disco(o->padre, cx, cy, 2, EX_NERO);
+              o->premuto ? EX_GRAY : EX_WHITE);
+        if (o->valore) disco(o->padre, cx, cy, 2, EX_BLACK);
 
-        ex_scrivi(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
-                  (o->stile & EX_SPENTO) ? EX_GRIGIO_SC : EX_NERO);
-        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
-            ex_riquadro_disegna(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
-                                larg(o->titolo) + 4, 18, EX_BLU);
+        ex_draw_text(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
+                  (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
+        if (r && r->fuoco == (ExWindow)(o - g_ogg + 1))
+            ex_draw_rect(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
+                                larg(o->titolo) + 4, 18, EX_BLUE);
         break;
     }
 
@@ -4221,32 +4238,32 @@ static void disegna_oggetto(Oggetto *o)
 
         /* La gola rientra, le frecce e il cursore sporgono: e' la regola di
          * sempre — sporge cio' che si preme, rientra cio' in cui sta. */
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO_SC);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_DARK_GRAY);
 
         if (oriz) {
-            ex_riempi(o->padre, x, y, spess, spess, EX_GRIGIO);
-            ex_rilievo(o->padre, x, y, spess, spess);
-            triangolino(o->padre, x + 4, y + 4, spess - 8, 2, EX_NERO);
+            ex_fill_rect(o->padre, x, y, spess, spess, EX_GRAY);
+            ex_draw_raised(o->padre, x, y, spess, spess);
+            triangolino(o->padre, x + 4, y + 4, spess - 8, 2, EX_BLACK);
 
-            ex_riempi(o->padre, x + o->w - spess, y, spess, spess, EX_GRIGIO);
-            ex_rilievo(o->padre, x + o->w - spess, y, spess, spess);
+            ex_fill_rect(o->padre, x + o->w - spess, y, spess, spess, EX_GRAY);
+            ex_draw_raised(o->padre, x + o->w - spess, y, spess, spess);
             triangolino(o->padre, x + o->w - spess + 4, y + 4, spess - 8, 3,
-                        EX_NERO);
+                        EX_BLACK);
 
-            ex_riempi(o->padre, x + spess + cp, y, cl, spess, EX_GRIGIO);
-            ex_rilievo(o->padre, x + spess + cp, y, cl, spess);
+            ex_fill_rect(o->padre, x + spess + cp, y, cl, spess, EX_GRAY);
+            ex_draw_raised(o->padre, x + spess + cp, y, cl, spess);
         } else {
-            ex_riempi(o->padre, x, y, spess, spess, EX_GRIGIO);
-            ex_rilievo(o->padre, x, y, spess, spess);
-            triangolino(o->padre, x + 4, y + 4, spess - 8, 0, EX_NERO);
+            ex_fill_rect(o->padre, x, y, spess, spess, EX_GRAY);
+            ex_draw_raised(o->padre, x, y, spess, spess);
+            triangolino(o->padre, x + 4, y + 4, spess - 8, 0, EX_BLACK);
 
-            ex_riempi(o->padre, x, y + o->h - spess, spess, spess, EX_GRIGIO);
-            ex_rilievo(o->padre, x, y + o->h - spess, spess, spess);
+            ex_fill_rect(o->padre, x, y + o->h - spess, spess, spess, EX_GRAY);
+            ex_draw_raised(o->padre, x, y + o->h - spess, spess, spess);
             triangolino(o->padre, x + 4, y + o->h - spess + 4, spess - 8, 1,
-                        EX_NERO);
+                        EX_BLACK);
 
-            ex_riempi(o->padre, x, y + spess + cp, spess, cl, EX_GRIGIO);
-            ex_rilievo(o->padre, x, y + spess + cp, spess, cl);
+            ex_fill_rect(o->padre, x, y + spess + cp, spess, cl, EX_GRAY);
+            ex_draw_raised(o->padre, x, y + spess + cp, spess, cl);
         }
         break;
     }
@@ -4258,20 +4275,20 @@ static void disegna_oggetto(Oggetto *o)
         Voci    *V = voci_di(o);
         int      bw = 17;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
-        ex_incavo(o->padre, x, y, o->w, o->h);
-        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
-            ex_riquadro_disegna(o->padre, x + 1, y + 1, o->w - 2, o->h - 2,
-                                EX_BLU);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
+        ex_draw_sunken(o->padre, x, y, o->w, o->h);
+        if (r && r->fuoco == (ExWindow)(o - g_ogg + 1))
+            ex_draw_rect(o->padre, x + 1, y + 1, o->w - 2, o->h - 2,
+                                EX_BLUE);
 
         if (V && V->sel < V->n)
-            ex_scrivi(o->padre, x + 4, y + (o->h - 16) / 2, V->testo[V->sel],
-                      EX_NERO);
+            ex_draw_text(o->padre, x + 4, y + (o->h - 16) / 2, V->testo[V->sel],
+                      EX_BLACK);
 
-        ex_riempi(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4, EX_GRIGIO);
-        ex_rilievo(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4);
+        ex_fill_rect(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4, EX_GRAY);
+        ex_draw_raised(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4);
         triangolino(o->padre, x + o->w - bw + 2, y + (o->h - 8) / 2, 8, 1,
-                    EX_NERO);
+                    EX_BLACK);
         break;
     }
 
@@ -4287,9 +4304,9 @@ static void disegna_oggetto(Oggetto *o)
         unsigned int i;
         int          px = x;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
         /* La riga di fondo, che la linguetta scelta interrompe. */
-        ex_riempi(o->padre, x, y + o->h - 1, o->w, 1, EX_OMBRA);
+        ex_fill_rect(o->padre, x, y + o->h - 1, o->w, 1, EX_SHADOW);
         if (!V) break;
 
         {
@@ -4304,12 +4321,12 @@ static void disegna_oggetto(Oggetto *o)
 
                 if (px + lw > fine) break;      /* quel che non ci sta non c'e' */
 
-                ex_riempi(o->padre, px, y + su, lw, o->h - su, EX_GRIGIO);
-                ex_riempi(o->padre, px, y + su, lw, 1, EX_LUCE);
-                ex_riempi(o->padre, px, y + su, 1, o->h - su, EX_LUCE);
-                ex_riempi(o->padre, px + lw - 1, y + su, 1, o->h - su, EX_OMBRA);
+                ex_fill_rect(o->padre, px, y + su, lw, o->h - su, EX_GRAY);
+                ex_fill_rect(o->padre, px, y + su, lw, 1, EX_HIGHLIGHT);
+                ex_fill_rect(o->padre, px, y + su, 1, o->h - su, EX_HIGHLIGHT);
+                ex_fill_rect(o->padre, px + lw - 1, y + su, 1, o->h - su, EX_SHADOW);
                 if (i != V->sel)
-                    ex_riempi(o->padre, px, y + o->h - 1, lw, 1, EX_OMBRA);
+                    ex_fill_rect(o->padre, px, y + o->h - 1, lw, 1, EX_SHADOW);
 
                 /* un titolo troppo lungo si taglia con «~» */
                 strncpy(t, V->testo[i], sizeof(t) - 1);
@@ -4319,7 +4336,7 @@ static void disegna_oggetto(Oggetto *o)
                     size_t l = strlen(t);
                     while (l > 1 && larg(t) > spazio) { t[--l] = '\0'; t[l - 1] = '~'; }
                 }
-                ex_scrivi(o->padre, px + 8, y + su + (o->h - su - 16) / 2, t, EX_NERO);
+                ex_draw_text(o->padre, px + 8, y + su + (o->h - su - 16) / 2, t, EX_BLACK);
                 if (V->schede)
                     tab_x_rossa(o->padre, px + lw - TAB_CHIUDI_W - 1,
                                 y + su + (o->h - su - TAB_X_LATO) / 2, i == V->sel);
@@ -4328,10 +4345,10 @@ static void disegna_oggetto(Oggetto *o)
             if (frecce) {
                 int fx = x + o->w - 2 * TAB_FRECCIA_W, k;
                 for (k = 0; k < 2; k++) {
-                    ex_riempi(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1, EX_GRIGIO);
-                    ex_rilievo(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1);
-                    ex_scrivi(o->padre, fx + k * TAB_FRECCIA_W + 4, y + (o->h - 16) / 2,
-                              k ? ">" : "<", EX_NERO);
+                    ex_fill_rect(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1, EX_GRAY);
+                    ex_draw_raised(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1);
+                    ex_draw_text(o->padre, fx + k * TAB_FRECCIA_W + 4, y + (o->h - 16) / 2,
+                              k ? ">" : "<", EX_BLACK);
                 }
             }
         }
@@ -4346,8 +4363,8 @@ static void disegna_oggetto(Oggetto *o)
      * perche' una finestra figlia si ferma a quel bordo.
      * ================================================================= */
     case CL_MDI:
-        ex_riempi(o->padre, x, y, o->w, o->h, MDI_C_FONDO);
-        ex_incavo(o->padre, x, y, o->w, o->h);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, MDI_C_FONDO);
+        ex_draw_sunken(o->padre, x, y, o->w, o->h);
         break;
 
     /* =====================================================================
@@ -4363,38 +4380,38 @@ static void disegna_oggetto(Oggetto *o)
      * della barra si', anche da lontano.
      * ================================================================= */
     case CL_MDIFIGLIO: {
-        ExFinestra io = (ExFinestra)(o - g_ogg + 1);
+        ExWindow io = (ExWindow)(o - g_ogg + 1);
         int attiva = (mdi_attivo(o->padre) == io);
         int cx, cy, cw, ch;
 
         mdi_client(o, &cx, &cy, &cw, &ch);
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
-        ex_rilievo(o->padre, x, y, o->w, o->h);
-        ex_incavo(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_draw_raised(o->padre, x, y, o->w, o->h);
+        ex_draw_sunken(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
 
-        ex_riempi(o->padre, x + MDI_BORDO, y + MDI_BORDO,
+        ex_fill_rect(o->padre, x + MDI_BORDO, y + MDI_BORDO,
                   o->w - 2 * MDI_BORDO, MDI_BARRA_H,
                   attiva ? MDI_C_ATTIVA : MDI_C_INATTIVA);
-        ex_rilievo(o->padre, x + MDI_BORDO, y + MDI_BORDO,
+        ex_draw_raised(o->padre, x + MDI_BORDO, y + MDI_BORDO,
                    o->w - 2 * MDI_BORDO, MDI_BARRA_H);
-        ex_scrivi(o->padre, x + MDI_BORDO + 5,
+        ex_draw_text(o->padre, x + MDI_BORDO + 5,
                   y + MDI_BORDO + (MDI_BARRA_H - 16) / 2, o->titolo,
                   attiva ? MDI_C_TITOLO : MDI_C_TIT_INA);
 
-        if (o->stile & EX_CHIUDI) {
+        if (o->stile & EX_CLOSEBOX) {
             int bl = MDI_BARRA_H - 4;
             int bx = x + o->w - MDI_BORDO - bl - 1;
             int by = y + MDI_BORDO + 2;
 
-            ex_riempi(o->padre, bx, by, bl, bl, EX_GRIGIO);
-            ex_rilievo(o->padre, bx, by, bl, bl);
-            ex_riempi(o->padre, bx + 4, by + 4, bl - 8, bl - 8, MDI_C_CHIUDI);
-            ex_incavo(o->padre, bx + 4, by + 4, bl - 8, bl - 8);
+            ex_fill_rect(o->padre, bx, by, bl, bl, EX_GRAY);
+            ex_draw_raised(o->padre, bx, by, bl, bl);
+            ex_fill_rect(o->padre, bx + 4, by + 4, bl - 8, bl - 8, MDI_C_CHIUDI);
+            ex_draw_sunken(o->padre, bx + 4, by + 4, bl - 8, bl - 8);
         }
 
         /* Il fondo del client: i controlli di dentro ci si disegnano sopra. */
-        ex_riempi(o->padre, cx, cy, cw, ch, EX_GRIGIO);
+        ex_fill_rect(o->padre, cx, cy, cw, ch, EX_GRAY);
         break;
     }
 
@@ -4404,20 +4421,20 @@ static void disegna_oggetto(Oggetto *o)
         Menu *M = menu_di(o);
         unsigned int i;
 
-        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
-        ex_rilievo(o->padre, x, y, o->w, o->h);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_draw_raised(o->padre, x, y, o->w, o->h);
         if (!M) break;
 
         menu_geometria(M);
         for (i = 0; i < M->n; i++) {
             int tx = x + M->titolo[i].x;
-            unsigned int col = EX_NERO;
+            unsigned int col = EX_BLACK;
 
             if (M->aperto == (int)i) {
-                ex_riempi(o->padre, tx, y + 2, M->titolo[i].w, o->h - 4, EX_BLU);
-                col = EX_BIANCO;
+                ex_fill_rect(o->padre, tx, y + 2, M->titolo[i].w, o->h - 4, EX_BLUE);
+                col = EX_WHITE;
             }
-            ex_scrivi(o->padre, tx + 8, y + (o->h - 16) / 2,
+            ex_draw_text(o->padre, tx + 8, y + (o->h - 16) / 2,
                       M->titolo[i].nome, col);
         }
         break;
@@ -4465,7 +4482,7 @@ static int combo_tendina_dove(Oggetto *o, int *tx, int *ty, int *tw, int *th)
     return 1;
 }
 
-static void combo_sopra(ExFinestra f)
+static void combo_sopra(ExWindow f)
 {
     Oggetto     *o = ogg(g_combo_aperto);
     Voci        *V;
@@ -4477,18 +4494,18 @@ static void combo_sopra(ExFinestra f)
     if (!combo_tendina_dove(o, &tx, &ty, &tw, &th)) return;
 
     V = voci_di(o);
-    ex_riempi(f, tx, ty, tw, th, EX_BIANCO);
-    ex_rilievo(f, tx, ty, tw, th);
+    ex_fill_rect(f, tx, ty, tw, th, EX_WHITE);
+    ex_draw_raised(f, tx, ty, tw, th);
 
     for (i = 0; i < V->n; i++) {
         int ry = ty + 2 + (int)i * VOCI_RIGA_H;
-        unsigned int colore = EX_NERO;
+        unsigned int colore = EX_BLACK;
 
         if (i == V->sel) {
-            ex_riempi(f, tx + 2, ry, tw - 4, VOCI_RIGA_H, EX_BLU);
-            colore = EX_BIANCO;
+            ex_fill_rect(f, tx + 2, ry, tw - 4, VOCI_RIGA_H, EX_BLUE);
+            colore = EX_WHITE;
         }
-        ex_scrivi(f, tx + 4, ry, V->testo[i], colore);
+        ex_draw_text(f, tx + 4, ry, V->testo[i], colore);
     }
 }
 
@@ -4504,8 +4521,8 @@ static void combo_sopra(ExFinestra f)
  * rende l'indice della voce scelta AUMENTATO DI UNO, cosi' che zero voglia dire
  * «nessuna»: la voce zero e' una voce come le altre e non puo' fare da «no».
  * ============================================================================= */
-static int combo_clic(ExFinestra f, int x, int y, unsigned int *id, int *scelto,
-                      ExFinestra *quale)
+static int combo_clic(ExWindow f, int x, int y, unsigned int *id, int *scelto,
+                      ExWindow *quale)
 {
     Oggetto *o = ogg(g_combo_aperto);
     Voci    *V;
@@ -4558,7 +4575,7 @@ static int combo_clic(ExFinestra f, int x, int y, unsigned int *id, int *scelto,
  * Rende: 0 = non e' roba dell'MDI; 1 = consumato qui; 2 = attivata, e adesso il
  * clic va ai controlli di quella finestra.
  * ============================================================================= */
-static void mdi_fuoco_dentro(ExFinestra f, ExFinestra figlio)
+static void mdi_fuoco_dentro(ExWindow f, ExWindow figlio)
 {
     Oggetto *r = radice(f);
     int i;
@@ -4568,8 +4585,8 @@ static void mdi_fuoco_dentro(ExFinestra f, ExFinestra figlio)
 
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && accetta_fuoco(&g_ogg[i]) &&
-            mdi_di((ExFinestra)(i + 1)) == figlio) {
-            fuoco_metti(f, (ExFinestra)(i + 1));
+            mdi_di((ExWindow)(i + 1)) == figlio) {
+            fuoco_metti(f, (ExWindow)(i + 1));
             return;
         }
     /* Una finestra senza controlli non si prende il fuoco: lasciarlo dov'era
@@ -4587,9 +4604,9 @@ static void mdi_fuoco_dentro(ExFinestra f, ExFinestra figlio)
  * l'MDI come un raggruppamento visivo — legittimo — e non deve scoprire che i
  * suoi pulsanti hanno smesso di rispondere.
  * ============================================================================= */
-static ExFinestra destinatario(ExFinestra controllo)
+static ExWindow destinatario(ExWindow controllo)
 {
-    ExFinestra fig = mdi_di(controllo);
+    ExWindow fig = mdi_di(controllo);
     Oggetto   *o   = ogg(fig);
 
     if (fig && o && o->proc) return fig;
@@ -4600,18 +4617,18 @@ static ExFinestra destinatario(ExFinestra controllo)
  * procedura si chiama direttamente invece di passare per il ciclo dei
  * messaggi, e adesso che il destinatario puo' essere una finestra figlia val
  * la pena che sia scritto una volta sola. */
-static void manda_comando(ExFinestra controllo, unsigned int id, long lp)
+static void manda_comando(ExWindow controllo, unsigned int id, long lp)
 {
-    ExFinestra d = destinatario(controllo);
+    ExWindow d = destinatario(controllo);
     Oggetto   *o = ogg(d);
 
-    if (o && o->proc) o->proc(d, EXM_COMANDO, id, lp);
+    if (o && o->proc) o->proc(d, EXM_COMMAND, id, lp);
 }
 
-static int mdi_clic(ExFinestra f, int x, int y, ExFinestra *chiudi)
+static int mdi_clic(ExWindow f, int x, int y, ExWindow *chiudi)
 {
-    ExFinestra cont = mdi_contenitore_in(f, x, y);
-    ExFinestra fig;
+    ExWindow cont = mdi_contenitore_in(f, x, y);
+    ExWindow fig;
     Oggetto   *o;
     int        ox, oy, fx, fy;
 
@@ -4631,7 +4648,7 @@ static int mdi_clic(ExFinestra f, int x, int y, ExFinestra *chiudi)
 
     /* La barra del titolo: chiudere, oppure prendere e trascinare. */
     if (y < fy + MDI_BORDO + MDI_BARRA_H) {
-        if (o->stile & EX_CHIUDI) {
+        if (o->stile & EX_CLOSEBOX) {
             int bl = MDI_BARRA_H - 4;
             int bx = fx + o->w - MDI_BORDO - bl - 1;
             int by = fy + MDI_BORDO + 2;
@@ -4651,7 +4668,7 @@ static int mdi_clic(ExFinestra f, int x, int y, ExFinestra *chiudi)
 }
 
 /* Il trascinamento, con la finestra che si ferma ai bordi del contenitore. */
-static void mdi_sposta(ExFinestra fig, int x, int y)
+static void mdi_sposta(ExWindow fig, int x, int y)
 {
     Oggetto *o = ogg(fig);
     Oggetto *c;
@@ -4679,9 +4696,9 @@ static void mdi_sposta(ExFinestra fig, int x, int y)
     o->y = ny;
 }
 
-static void disegna_figli(ExFinestra padre);
+static void disegna_figli(ExWindow padre);
 
-static void disegna_mdi(ExFinestra cont)
+static void disegna_mdi(ExWindow cont)
 {
     Oggetto *c = ogg(cont);
     int      ox, oy, cx0, cy0;
@@ -4705,7 +4722,7 @@ static void disegna_mdi(ExFinestra cont)
 
             if (!o->usato || o->classe != CL_MDIFIGLIO || o->padre != cont)
                 continue;
-            if (!(o->stile & EX_VISIBILE)) continue;
+            if (!(o->stile & EX_VISIBLE)) continue;
             if (fatti & (1u << (i & 31))) continue;
             if (scelto < 0 || o->z < zmin) { scelto = i; zmin = o->z; }
         }
@@ -4726,14 +4743,14 @@ static void disegna_mdi(ExFinestra cont)
             mdi_client(o, &fcx, &fcy, &fcw, &fch);
             clip_metti(cx0, cy0, c->w, c->h);
             clip_stringi(fcx, fcy, fcw, fch);
-            disegna_figli((ExFinestra)(scelto + 1));
+            disegna_figli((ExWindow)(scelto + 1));
             clip_togli();
         }
     }
     clip_togli();
 }
 
-static void disegna_figli(ExFinestra padre)
+static void disegna_figli(ExWindow padre)
 {
     int i;
 
@@ -4749,7 +4766,7 @@ static void disegna_figli(ExFinestra padre)
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && g_ogg[i].padre == padre) {
             disegna_oggetto(&g_ogg[i]);
-            disegna_figli((ExFinestra)(i + 1));
+            disegna_figli((ExWindow)(i + 1));
         }
 
     /* ! LA TENDINA PER ULTIMA, E SOLO AL PRIMO LIVELLO. Deve coprire i
@@ -4761,7 +4778,7 @@ static void disegna_figli(ExFinestra padre)
     {
         Oggetto *p = ogg(padre);
 
-        /* ! LE TENDINE NON SI DISEGNANO PIU' QUI, ma dentro ex_aggiorna(): sta
+        /* ! LE TENDINE NON SI DISEGNANO PIU' QUI, ma dentro ex_update(): sta
          * scritto li' il perche', ed e' un difetto che si vedeva solo muovendo
          * il mouse con un menu aperto. */
         (void)p;
@@ -4795,9 +4812,9 @@ static int server_trova(void)
     return 0;
 }
 
-ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
+ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
                    int x, int y, int w, int h,
-                   ExFinestra padre, unsigned int id, ExProcedura proc)
+                   ExWindow padre, unsigned int id, ExWindowProc proc)
 {
     unsigned int cl = classe_da_nome(classe);
     int i;
@@ -4815,7 +4832,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
     o->id     = id;
     o->padre  = padre;
     o->x = x; o->y = y; o->w = w; o->h = h;
-    o->stile  = stile | EX_VISIBILE;
+    o->stile  = stile | EX_VISIBLE;
     o->proc   = proc;
     if (titolo) {
         strncpy(o->titolo, titolo, TESTO_LEN - 1);
@@ -4829,7 +4846,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
     if (cl != CL_FINESTRA && padre) {
         Oggetto *r = radice(padre);
         if (r && r->fuoco == 0 && accetta_fuoco(o))
-            r->fuoco = (ExFinestra)(i + 1);
+            r->fuoco = (ExWindow)(i + 1);
     }
 
     /* ! UNA FINESTRA FIGLIA NASCE DAVANTI, che e' quello che si aspetta
@@ -4837,7 +4854,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
      * aprirne una sembrerebbe non aver fatto niente. */
     if (cl == CL_MDIFIGLIO) {
         o->z = ++g_mdi_z;
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
     if (cl == CL_AREA) {
@@ -4845,7 +4862,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         /* ! LA CAPIENZA LA DECIDE IL NOME DELLA CLASSE, e qui e' l'unico posto
          * in cui «areatesto» e «areacodice» sono due cose diverse: da qui in
          * poi sono lo stesso controllo. */
-        int   codice = (strcmp(classe, "areacodice") == 0);
+        int   codice = (strcmp(classe, "areacodice") == 0 || strcmp(classe, "codearea") == 0);
         int   j;
 
         unsigned int rmax = codice ? CODICE_RIGHE_MAX : AREA_RIGHE_MAX;
@@ -4873,7 +4890,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         if (!A) { o->usato = 0; return 0; }
 
         memset(A, 0, sizeof(*A));
-        A->ogg       = (ExFinestra)(i + 1);
+        A->ogg       = (ExWindow)(i + 1);
         A->righe_max = rmax;
         A->col_max   = cmax;
         A->righe = (unsigned int)((h - AREA_BARRA) / AREA_RIGA_H);
@@ -4897,20 +4914,20 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 
         A->n = 1;                       /* un'area vuota ha una riga vuota */
         A->usato = 1;
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
     /* ! LA BARRA NASCE CON IL CURSORE CHE RIEMPIE LA GOLA, e non e' un
      * dettaglio estetico: `massimo` a zero vuol dire «non c'e' niente da
      * scorrere», ed e' esattamente cio' che si vede — una barra che non si
-     * puo' muovere. Chi la crea le dara' i limiti veri con ex_scorri_limiti
+     * puo' muovere. Chi la crea le dara' i limiti veri con ex_scroll_set_range
      * quando sapra' quanto e' lungo il documento, e fino ad allora la barra
      * dice la verita' invece di mostrare un cursore piccolo che non scorre. */
     if (cl == CL_SCORRI) {
         o->valore  = 0;
         o->massimo = 0;
         o->pagina  = 1;
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
     if (cl == CL_COMBO || cl == CL_TAB) {
@@ -4921,9 +4938,9 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         if (!V) { o->usato = 0; return 0; }
 
         memset(V, 0, sizeof(*V));
-        V->ogg   = (ExFinestra)(i + 1);
+        V->ogg   = (ExWindow)(i + 1);
         V->usato = 1;
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
     if (cl == CL_MENU) {
@@ -4934,12 +4951,12 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         if (!M) { o->usato = 0; return 0; }
 
         memset(M, 0, sizeof(*M));
-        M->ogg    = (ExFinestra)(i + 1);
+        M->ogg    = (ExWindow)(i + 1);
         M->aperto = -1;
         M->sotto  = -1;
         M->sub_aperta = -1;
         M->usato  = 1;
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
     if (cl == CL_LISTA) {
@@ -4947,7 +4964,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         int j;
 
         char         *avanzo = 0;
-        ExIcona      *avanzo_ic = 0;
+        ExIcon      *avanzo_ic = 0;
         unsigned char *avanzo_sg = 0;
         unsigned int  avanzo_cap = 0;
 
@@ -4978,7 +4995,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         L->ic    = avanzo_ic;
         L->cap   = avanzo_cap;
         L->segni = avanzo_sg;
-        L->ogg   = (ExFinestra)(i + 1);
+        L->ogg   = (ExWindow)(i + 1);
         L->righe = (unsigned int)(h / LISTA_RIGA_H);
 
         /* Una lista alta meno di una riga non e' una lista: meglio dire di no
@@ -4990,17 +5007,17 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
          * back here, so a smaller block would only be a second one. */
         if (!L->voci) {
             L->voci = (char *)malloc(LISTA_VOCI_PRIMA * LISTA_TESTO_MAX);
-            L->ic   = (ExIcona *)malloc(LISTA_VOCI_PRIMA * sizeof(ExIcona));
+            L->ic   = (ExIcon *)malloc(LISTA_VOCI_PRIMA * sizeof(ExIcon));
             L->cap  = LISTA_VOCI_PRIMA;
         }
         if (!L->segni) L->segni = (unsigned char *)malloc(L->cap);
         if (!L->voci || !L->ic || !L->segni) { o->usato = 0; return 0; }
         memset(L->voci, 0, (size_t)L->cap * LISTA_TESTO_MAX);
-        memset(L->ic, 0, (size_t)L->cap * sizeof(ExIcona));
+        memset(L->ic, 0, (size_t)L->cap * sizeof(ExIcon));
         memset(L->segni, 0, L->cap);
 
         L->usato = 1;
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
     if (cl == CL_TERMINALE) {
@@ -5013,7 +5030,7 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         if (!t) { o->usato = 0; return 0; }
 
         memset(t, 0, sizeof(*t));
-        t->ogg   = (ExFinestra)(i + 1);
+        t->ogg   = (ExWindow)(i + 1);
         t->cols  = (unsigned int)(w / 8);
         t->righe = (unsigned int)(h / 16);
         if (t->cols == 0 || t->righe == 0) { o->usato = 0; return 0; }
@@ -5072,10 +5089,10 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 
         /* Il titolo era il percorso della shell: nella griglia non ci va. */
         o->titolo[0] = '\0';
-        return (ExFinestra)(i + 1);
+        return (ExWindow)(i + 1);
     }
 
-    if (cl != CL_FINESTRA) return (ExFinestra)(i + 1);
+    if (cl != CL_FINESTRA) return (ExWindow)(i + 1);
 
     /* Primo livello: si chiede al server. */
     {
@@ -5092,14 +5109,14 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         c.x = (unsigned int)x; c.y = (unsigned int)y;
         c.larghezza = (unsigned int)w; c.altezza = (unsigned int)h;
         c.stile = WIN_ST_VISIBILE
-                | ((stile & EX_TITOLO) ? WIN_ST_TITOLO : 0)
-                | ((stile & EX_BORDO)  ? WIN_ST_BORDO  : 0)
-                | ((stile & EX_CHIUDI) ? WIN_ST_CHIUDI : 0)
-                | ((stile & EX_SFONDO) ? WIN_ST_SFONDO : 0)
-                | ((stile & EX_SOPRA)  ? WIN_ST_SOPRA  : 0)
-                | ((stile & EX_MODALE) ? WIN_ST_MODALE : 0)
-                | ((stile & EX_RIDIM)  ? WIN_ST_RIDIM  : 0)
-                | ((stile & EX_COMPARSA) ? WIN_ST_COMPARSA : 0);
+                | ((stile & EX_CAPTION) ? WIN_ST_TITOLO : 0)
+                | ((stile & EX_BORDER)  ? WIN_ST_BORDO  : 0)
+                | ((stile & EX_CLOSEBOX) ? WIN_ST_CHIUDI : 0)
+                | ((stile & EX_BACKGROUND) ? WIN_ST_SFONDO : 0)
+                | ((stile & EX_TOPMOST)  ? WIN_ST_SOPRA  : 0)
+                | ((stile & EX_MODAL) ? WIN_ST_MODALE : 0)
+                | ((stile & EX_RESIZABLE)  ? WIN_ST_RIDIM  : 0)
+                | ((stile & EX_POPUP) ? WIN_ST_COMPARSA : 0);
         strncpy(c.titolo, o->titolo, WIN_TITOLO_LEN - 1);
 
         if (ipc_send((unsigned int)g_server, WIN_MSG_CREA, &c, sizeof(c)) < 0) {
@@ -5150,13 +5167,13 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         o->y = (int)r.y;
     }
 
-    return (ExFinestra)(i + 1);
+    return (ExWindow)(i + 1);
 }
 
-void ex_distruggi(ExFinestra f)
+void ex_destroy(ExWindow f)
 {
     Oggetto   *o = ogg(f);
-    ExFinestra rh;
+    ExWindow rh;
     int i;
 
     if (!o) return;
@@ -5164,7 +5181,7 @@ void ex_distruggi(ExFinestra f)
 
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && g_ogg[i].padre == f)
-            ex_distruggi((ExFinestra)(i + 1));
+            ex_destroy((ExWindow)(i + 1));
 
     if (o->classe == CL_FINESTRA && g_server >= 0) {
         WinRegione w;
@@ -5190,7 +5207,7 @@ void ex_distruggi(ExFinestra f)
      * come un elenco vuoto, e si scopre solo usando il programma a lungo.
      *
      * Il buffer non si puo' restituire — free() qui non restituisce niente —
-     * quindi resta agganciato al posto, e ex_crea riusa il posto CON il suo
+     * quindi resta agganciato al posto, e ex_create riusa il posto CON il suo
      * buffer. Cosi' aprire e chiudere mille volte costa quanto aprire una. */
     {
         Voci  *V = voci_di(o);
@@ -5222,7 +5239,7 @@ void ex_distruggi(ExFinestra f)
     }
 }
 
-void ex_titolo(ExFinestra f, const char *s)
+void ex_set_title(ExWindow f, const char *s)
 {
     Oggetto *o = ogg(f);
 
@@ -5244,7 +5261,7 @@ void ex_titolo(ExFinestra f, const char *s)
     }
 }
 
-void ex_sposta(ExFinestra f, int x, int y)
+void ex_move(ExWindow f, int x, int y)
 {
     Oggetto *o = ogg(f);
 
@@ -5261,13 +5278,13 @@ void ex_sposta(ExFinestra f, int x, int y)
 }
 
 /* =============================================================================
- * ex_misura — cambiare misura
+ * ex_resize — cambiare misura
  *
  * ! DUE COSE DIVERSE SOTTO UN NOME SOLO, e va detto invece che nascosto. Su un
  * CONTROLLO e' un fatto compiuto: i pixel sono quelli del padre, e cambiargli
  * misura e' cambiare due numeri e la geometria di dentro. Su una FINESTRA DI
  * PRIMO LIVELLO e' una RICHIESTA: la zona di pixel la crea il server, e la
- * misura vera torna indietro con EXM_MISURA — che puo' anche essere piu'
+ * misura vera torna indietro con EXM_SIZE — che puo' anche essere piu'
  * piccola di quella chiesta, se non ci stava nello schermo.
  *
  * ! E QUI NON SI TOCCA o->w, apposta. Segnarsi la misura chiesta come se fosse
@@ -5276,7 +5293,7 @@ void ex_sposta(ExFinestra f, int x, int y)
  * memoria condivisa. La misura la scrive un posto solo: rimappa(), quando la
  * zona nuova e' aperta per davvero.
  * ============================================================================= */
-void ex_misura(ExFinestra f, int w, int h)
+void ex_resize(ExWindow f, int w, int h)
 {
     Oggetto *o = ogg(f);
 
@@ -5325,17 +5342,17 @@ void ex_misura(ExFinestra f, int w, int h)
     }
 }
 
-void ex_mostra(ExFinestra f, int visibile)
+void ex_show(ExWindow f, int visibile)
 {
     Oggetto *o = ogg(f);
     if (!o) return;
-    if (visibile) o->stile |= EX_VISIBILE;
-    else          o->stile &= ~(unsigned int)EX_VISIBILE;
+    if (visibile) o->stile |= EX_VISIBLE;
+    else          o->stile &= ~(unsigned int)EX_VISIBLE;
 }
 
-void ex_testo_metti(ExFinestra f, const char *s) { ex_titolo(f, s); }
+void ex_set_text(ExWindow f, const char *s) { ex_set_title(f, s); }
 
-const char *ex_testo_prendi(ExFinestra f)
+const char *ex_get_text(ExWindow f)
 {
     Oggetto *o = ogg(f);
     return o ? o->titolo : "";
@@ -5344,12 +5361,12 @@ const char *ex_testo_prendi(ExFinestra f)
 /* -----------------------------------------------------------------------------
  * Il ciclo dei messaggi
  * --------------------------------------------------------------------------- */
-static ExFinestra da_win_id(unsigned int win_id)
+static ExWindow da_win_id(unsigned int win_id)
 {
     int i;
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && g_ogg[i].classe == CL_FINESTRA &&
-            g_ogg[i].win_id == win_id) return (ExFinestra)(i + 1);
+            g_ogg[i].win_id == win_id) return (ExWindow)(i + 1);
     return 0;
 }
 
@@ -5368,7 +5385,7 @@ static ExFinestra da_win_id(unsigned int win_id)
  *
  * Rende 1 se da qui in poi si puo' disegnare nella misura nuova.
  * ============================================================================= */
-static int rimappa(ExFinestra f, const WinCreata *r)
+static int rimappa(ExWindow f, const WinCreata *r)
 {
     Oggetto      *o = ogg(f);
     ShmZona       z;
@@ -5505,26 +5522,26 @@ static void barra_geo(int lun, int sp, unsigned int massimo, unsigned int pagina
     *cp = massimo ? (int)((unsigned int)(tot - *cl) * valore / massimo) : 0;
 }
 
-static void barra_disegna(ExFinestra f, int x, int y, int lun, int sp, int oriz,
+static void barra_disegna(ExWindow f, int x, int y, int lun, int sp, int oriz,
                           unsigned int massimo, unsigned int pagina, unsigned int valore)
 {
     int gola, cp, cl;
 
     barra_geo(lun, sp, massimo, pagina, valore, &gola, &cp, &cl);
     if (oriz) {
-        ex_riempi(f, x, y, lun, sp, EX_GRIGIO_SC);
-        ex_riempi(f, x, y, sp, sp, EX_GRIGIO);        ex_rilievo(f, x, y, sp, sp);
-        triangolino(f, x + 3, y + 3, sp - 6, 2, EX_NERO);
-        ex_riempi(f, x + lun - sp, y, sp, sp, EX_GRIGIO); ex_rilievo(f, x + lun - sp, y, sp, sp);
-        triangolino(f, x + lun - sp + 3, y + 3, sp - 6, 3, EX_NERO);
-        ex_riempi(f, x + sp + cp, y, cl, sp, EX_GRIGIO); ex_rilievo(f, x + sp + cp, y, cl, sp);
+        ex_fill_rect(f, x, y, lun, sp, EX_DARK_GRAY);
+        ex_fill_rect(f, x, y, sp, sp, EX_GRAY);        ex_draw_raised(f, x, y, sp, sp);
+        triangolino(f, x + 3, y + 3, sp - 6, 2, EX_BLACK);
+        ex_fill_rect(f, x + lun - sp, y, sp, sp, EX_GRAY); ex_draw_raised(f, x + lun - sp, y, sp, sp);
+        triangolino(f, x + lun - sp + 3, y + 3, sp - 6, 3, EX_BLACK);
+        ex_fill_rect(f, x + sp + cp, y, cl, sp, EX_GRAY); ex_draw_raised(f, x + sp + cp, y, cl, sp);
     } else {
-        ex_riempi(f, x, y, sp, lun, EX_GRIGIO_SC);
-        ex_riempi(f, x, y, sp, sp, EX_GRIGIO);        ex_rilievo(f, x, y, sp, sp);
-        triangolino(f, x + 3, y + 3, sp - 6, 0, EX_NERO);
-        ex_riempi(f, x, y + lun - sp, sp, sp, EX_GRIGIO); ex_rilievo(f, x, y + lun - sp, sp, sp);
-        triangolino(f, x + 3, y + lun - sp + 3, sp - 6, 1, EX_NERO);
-        ex_riempi(f, x, y + sp + cp, sp, cl, EX_GRIGIO); ex_rilievo(f, x, y + sp + cp, sp, cl);
+        ex_fill_rect(f, x, y, sp, lun, EX_DARK_GRAY);
+        ex_fill_rect(f, x, y, sp, sp, EX_GRAY);        ex_draw_raised(f, x, y, sp, sp);
+        triangolino(f, x + 3, y + 3, sp - 6, 0, EX_BLACK);
+        ex_fill_rect(f, x, y + lun - sp, sp, sp, EX_GRAY); ex_draw_raised(f, x, y + lun - sp, sp, sp);
+        triangolino(f, x + 3, y + lun - sp + 3, sp - 6, 1, EX_BLACK);
+        ex_fill_rect(f, x, y + sp + cp, sp, cl, EX_GRAY); ex_draw_raised(f, x, y + sp + cp, sp, cl);
     }
 }
 
@@ -5551,7 +5568,7 @@ static void area_barre_disegna(const Oggetto *o, Area *A, int x, int y)
     area_massimi(A, &mv, &mo);
     barra_disegna(o->padre, bx, y + 1, o->h - AREA_BARRA - 2, AREA_BARRA, 0, mv, A->righe, A->top);
     barra_disegna(o->padre, x + 1, hy, o->w - AREA_BARRA - 2, AREA_BARRA, 1, mo, A->cols, A->left);
-    ex_riempi(o->padre, bx, hy, AREA_BARRA, AREA_BARRA, EX_GRIGIO);
+    ex_fill_rect(o->padre, bx, hy, AREA_BARRA, AREA_BARRA, EX_GRAY);
 }
 
 /* A press on a bar: 1 if it was on one (the view moved, or a drag began). */
@@ -5674,9 +5691,9 @@ static int lista_colonna(Oggetto *co, int x)
  * dal telaio, si vedono tagliati e non si devono poter premere. Senza questo
  * controllo il clic passerebbe ATTRAVERSO le finestre, che e' il difetto che si
  * nota per primo e si spiega per ultimo. */
-static int mdi_toccabile(Oggetto *o, ExFinestra padre, int x, int y)
+static int mdi_toccabile(Oggetto *o, ExWindow padre, int x, int y)
 {
-    ExFinestra mio = mdi_di((ExFinestra)(o - g_ogg + 1));
+    ExWindow mio = mdi_di((ExWindow)(o - g_ogg + 1));
     Oggetto   *f;
     int        cx, cy, cw, ch;
 
@@ -5691,7 +5708,7 @@ static int mdi_toccabile(Oggetto *o, ExFinestra padre, int x, int y)
     return x >= cx && x < cx + cw && y >= cy && y < cy + ch;
 }
 
-static ExFinestra controllo_in(ExFinestra padre, int x, int y);
+static ExWindow controllo_in(ExWindow padre, int x, int y);
 
 /* Muove `*primo` di `passo` restando fra 0 e `n - visibili`. Rende 1 se si
  * e' mosso. */
@@ -5715,13 +5732,13 @@ static int rotella_sposta(unsigned int *primo, int passo,
  * finestra fatta di controlli non deve scrivere una riga per averla. Si
  * sposta la VISTA, non la scelta ne' il cursore: guardare piu' in basso non
  * e' scegliere. Una barra di scorrimento invece e' il documento
- * dell'applicazione, e si muove come col trascinamento: EXM_COMANDO.
+ * dell'applicazione, e si muove come col trascinamento: EXM_COMMAND.
  * Rende 1 se l'ha presa.
  * ============================================================================= */
-static int rotella_controllo(ExFinestra f, int x, int y, int scatti)
+static int rotella_controllo(ExWindow f, int x, int y, int scatti)
 {
     Oggetto *o = ogg(controllo_in(f, x, y));
-    int      passo = scatti * EX_ROTELLA_RIGHE;
+    int      passo = scatti * EX_WHEEL_LINES;
 
     if (!o || scatti == 0) return 0;
 
@@ -5737,13 +5754,13 @@ static int rotella_controllo(ExFinestra f, int x, int y, int scatti)
         unsigned int prima = o->valore;
         scorri_muovi(o, passo);
         if (o->valore != prima)
-            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)o->valore);
+            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)o->valore);
         return 1;
     }
     return 0;
 }
 
-static ExFinestra controllo_in(ExFinestra padre, int x, int y)
+static ExWindow controllo_in(ExWindow padre, int x, int y)
 {
     int i;
 
@@ -5751,9 +5768,9 @@ static ExFinestra controllo_in(ExFinestra padre, int x, int y)
         Oggetto *o = &g_ogg[i];
         int ox, oy;
 
-        if (!o->usato || o->padre == 0 || !(o->stile & EX_VISIBILE)) continue;
-        if (o->stile & EX_SPENTO) continue;     /* spento: il clic non e' suo */
-        if (radice((ExFinestra)(i + 1)) != ogg(padre)) continue;
+        if (!o->usato || o->padre == 0 || !(o->stile & EX_VISIBLE)) continue;
+        if (o->stile & EX_DISABLED) continue;     /* spento: il clic non e' suo */
+        if (radice((ExWindow)(i + 1)) != ogg(padre)) continue;
         if (o->classe == CL_RIQUADRO || o->classe == CL_SEPARATORE ||
             o->classe == CL_ETICHETTA || o->classe == CL_INTESTAZIONE) continue;
         /* Il contenitore e le finestre figlie li tratta mdi_clic, prima di qui:
@@ -5765,7 +5782,7 @@ static ExFinestra controllo_in(ExFinestra padre, int x, int y)
         origine(o, &ox, &oy);
         if (x >= ox + o->x && x < ox + o->x + o->w &&
             y >= oy + o->y && y < oy + o->y + o->h)
-            return (ExFinestra)(i + 1);
+            return (ExWindow)(i + 1);
     }
     return 0;
 }
@@ -6130,14 +6147,14 @@ static int casella_tasto(Oggetto *o, unsigned int k)
         if (l == 'a') { o->ancora = 0; o->cursore = n; o->c_sel = (n > 0); return 1; }
         if (l == 'c' || l == 'x') {
             if (casella_sel(o, &a, &b)) {
-                ex_appunti_metti(o->titolo + a, b - a);
+                ex_clipboard_set(o->titolo + a, b - a);
                 if (l == 'x') casella_via(o, a, b);
             }
             return 1;
         }
         if (l == 'v') {
             char         buf[TESTO_LEN];
-            unsigned int m = ex_appunti_prendi(buf, sizeof(buf));
+            unsigned int m = ex_clipboard_get(buf, sizeof(buf));
 
             if (m >= sizeof(buf)) m = sizeof(buf) - 1;
             casella_scrivi(o, buf, m);
@@ -6211,7 +6228,7 @@ static void casella_clic(Oggetto *o, int mx, int x0)
  * la finestra ha una barra in modalita' schede: altrove Ctrl+Tab resta quel
  * che era. Rende il controllo, e il messaggio da mandare, o 0.
  * ========================================================================== */
-static ExFinestra schede_tasto(ExFinestra f, unsigned int k, unsigned int *msg,
+static ExWindow schede_tasto(ExWindow f, unsigned int k, unsigned int *msg,
                                unsigned int *wp, long *lp)
 {
     unsigned int c = k & KBD_KEY_MASK, i;
@@ -6234,14 +6251,14 @@ static ExFinestra schede_tasto(ExFinestra f, unsigned int k, unsigned int *msg,
         if (!o || o->classe != CL_TAB || radice(V->ogg) != r) continue;
         if (V->n == 0) return 0;
         if (dove == 2) {
-            *msg = EXM_SCHEDA_CHIUDI;
+            *msg = EXM_TAB_CLOSE;
             *wp  = o->id;
             *lp  = (long)V->sel;
             return V->ogg;
         }
         if (V->n < 2) return 0;
         V->sel = (dove > 0) ? (V->sel + 1) % V->n : (V->sel + V->n - 1) % V->n;
-        *msg = EXM_COMANDO;
+        *msg = EXM_COMMAND;
         *wp  = o->id;
         *lp  = (long)V->sel;
         return V->ogg;
@@ -6249,7 +6266,7 @@ static ExFinestra schede_tasto(ExFinestra f, unsigned int k, unsigned int *msg,
     return 0;
 }
 
-static int tasto_al_fuoco(ExFinestra f, unsigned int k)
+static int tasto_al_fuoco(ExWindow f, unsigned int k)
 {
     Oggetto *r = radice(f);
     Oggetto *o;
@@ -6319,7 +6336,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
     if (o->classe == CL_SPUNTA || o->classe == CL_RADIO) {
         if (c != ' ') return 0;
         spunta_scatta(o);
-        manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)o->valore);
+        manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)o->valore);
         return 1;
     }
 
@@ -6340,7 +6357,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         }
 
         if (o->valore != prima)
-            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)o->valore);
+            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)o->valore);
         return 1;
     }
 
@@ -6356,7 +6373,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
 
         switch (c) {
         case ' ':
-            g_combo_aperto = (ExFinestra)(o - g_ogg + 1);
+            g_combo_aperto = (ExWindow)(o - g_ogg + 1);
             return 1;
         case KBD_K_UP:   if (V->sel > 0) V->sel--;            break;
         case KBD_K_DOWN: if (V->sel + 1 < V->n) V->sel++;     break;
@@ -6366,7 +6383,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         }
 
         if (V->sel != prima)
-            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)V->sel);
+            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)V->sel);
         return 1;
     }
 
@@ -6384,7 +6401,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         }
 
         if (V->sel != prima)
-            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)V->sel);
+            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)V->sel);
         return 1;
     }
 
@@ -6407,16 +6424,16 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
             break;
 
         /* ! INVIO NON MUOVE NIENTE: DICE CHE SI E' SCELTO. Arriva
-         * all'applicazione come EXM_COMANDO con l'id della lista, cioe' con lo
+         * all'applicazione come EXM_COMMAND con l'id della lista, cioe' con lo
          * stesso meccanismo di un pulsante premuto — e chi lo riceve non deve
          * imparare un secondo modo di sentire le cose. */
         case '\n':
         case '\r': {
             lista_segui(L);
-            /* L'ultimo argomento e' il bit che EX_APRIRE legge. I bit della
-             * colonna restano a zero, ed e' cio' che fa dire -1 a EX_COL: da
+            /* L'ultimo argomento e' il bit che EX_IS_OPEN legge. I bit della
+             * colonna restano a zero, ed e' cio' che fa dire -1 a EX_COLUMN: da
              * tastiera una colonna non c'e'. */
-            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, 1);
+            manda_comando((ExWindow)(o - g_ogg + 1), o->id, 1);
             return 1;
         }
 
@@ -6431,8 +6448,8 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
     return 0;
 }
 
-/* ! DUE PORTE SULLO STESSO CICLO, e il corpo e' uno solo. `ex_prendi_msg`
- * dorme finche' non succede qualcosa; `ex_msg_ora` guarda e torna. La seconda
+/* ! DUE PORTE SULLO STESSO CICLO, e il corpo e' uno solo. `ex_get_message`
+ * dorme finche' non succede qualcosa; `ex_peek_message` guarda e torna. La seconda
  * e' nata perche' un programma che sta ASPETTANDO ALTRO — una risposta dalla
  * rete, per dirne una — deve poter restare vivo senza rinunciare a quel che
  * sta facendo: se dormisse qui dentro, l'attesa diventerebbe due.
@@ -6451,10 +6468,10 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
  * quindi non lo si puo' perdere.
  *
  * ! CHI DORME PUO' BUTTARE, CHI NON DORME NO, e la differenza non e' un
- * dettaglio di comodo. `ex_prendi_msg` dorme solo quando l'applicazione non sta
+ * dettaglio di comodo. `ex_get_message` dorme solo quando l'applicazione non sta
  * aspettando nient'altro: se siamo li', nessun'altra attesa e' aperta e una
  * risposta rimasta indietro non serve piu' a nessuno — buttarla tiene pulito lo
- * scaffale. `ex_msg_ora` invece si chiama PROPRIO MENTRE si aspetta altro, e
+ * scaffale. `ex_peek_message` invece si chiama PROPRIO MENTRE si aspetta altro, e
  * li' quella stessa risposta e' di qualcuno: buttarla vuol dire che chi
  * l'aspetta aspetta per sempre. E' il guasto che ha fatto smettere di aprirsi
  * le pagine https quando la stretta di mano ha cominciato a leggere a pezzi.
@@ -6479,17 +6496,17 @@ static int filtro_finestra(const IpcMessage *m, void *dato)
 }
 
 /* =============================================================================
- * ex_guarda_fd — a descriptor watched by the message loop (23 September 2026)
+ * ex_watch_fd — a descriptor watched by the message loop (23 September 2026)
  *
  * The loop already slept on the IPC mailbox AND on the pipes of the terminal
  * controls together: the thing SYS_POLL was made for. This opens the same
  * door to anyone — a program, or a library like the downloads of exdlg —
  * that has a pipe to read while the windows stay alive: the function is
  * called when there is something to read (or the other end closed), from
- * inside ex_prendi_msg, between one message and the next.
+ * inside ex_get_message, between one message and the next.
  *
  * ! NO TIMER, AND NO WINDOW NEEDED. The first version of the download window
- * would have polled on EXM_TEMPO — but EXM_TEMPO belongs to a window, and a
+ * would have polled on EXM_TIMER — but EXM_TIMER belongs to a window, and a
  * download must go on when its window is closed. A descriptor belongs to
  * the process.
  * ============================================================================= */
@@ -6497,12 +6514,12 @@ static int filtro_finestra(const IpcMessage *m, void *dato)
 
 static struct {
     int        fd;
-    ExGuarda   fn;
+    ExWatchProc   fn;
     void      *dato;
 } g_guardati[GUARDATI_MAX];
 static int g_n_guardati = 0;
 
-int ex_guarda_fd(int fd, ExGuarda fn, void *dato)
+int ex_watch_fd(int fd, ExWatchProc fn, void *dato)
 {
     int i;
 
@@ -6531,22 +6548,22 @@ int ex_guarda_fd(int fd, ExGuarda fn, void *dato)
  * paints its own pixels (EXBrowser's page, the desktop, Pennello's canvas)
  * that was a grey flash every time, until the application drew again; on the
  * desktop, after the right-button menu, it stayed grey for as long as the
- * name was being asked. ex_smista learnt this on 18 August 2026; the loop had
- * not. A procedure that does not handle EXM_DISEGNA falls back to the base by
+ * name was being asked. ex_dispatch learnt this on 18 August 2026; the loop had
+ * not. A procedure that does not handle EXM_PAINT falls back to the base by
  * itself, so windows made only of controls see no difference.
  * ============================================================================= */
-static void ridisegna_finestra(ExFinestra f)
+static void ridisegna_finestra(ExWindow f)
 {
-    ExFinestra rh = radice_h(f);
+    ExWindow rh = radice_h(f);
     Oggetto   *ro = ogg(rh);
 
     long       esito = 1;
 
-    if (ro && ro->proc) esito = ro->proc(rh, EXM_DISEGNA, 0, 0);
-    /* Not handled (anything but 0 and EX_NON_RIDISEGNARE): the base, as
-     * ex_smista does. */
-    if (esito != 0 && esito != EX_NON_RIDISEGNARE)
-        ex_procedura_base(rh, EXM_DISEGNA, 0, 0);
+    if (ro && ro->proc) esito = ro->proc(rh, EXM_PAINT, 0, 0);
+    /* Not handled (anything but 0 and EX_NO_REDRAW): the base, as
+     * ex_dispatch does. */
+    if (esito != 0 && esito != EX_NO_REDRAW)
+        ex_default_proc(rh, EXM_PAINT, 0, 0);
 }
 
 static int prendi_msg(ExMsg *m, int bloccante)
@@ -6558,7 +6575,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
     for (;;) {
         WinEvento e;
-        ExFinestra f;
+        ExWindow f;
 
         if (g_uscita) return 0;
 
@@ -6572,7 +6589,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
         if (g_el_nuovo && g_segui) {
             g_el_nuovo  = 0;
             m->finestra = g_segui;
-            m->msg      = EXM_FINESTRE;
+            m->msg      = EXM_WINDOW_LIST;
             m->wp       = 0;
             m->lp       = 0;
             return 1;
@@ -6598,8 +6615,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
                  * si chiude da se'. */
                 if ((int)(ora - o->sveglia_quando) >= 0) {
                     o->sveglia_quando = ora + o->sveglia_ms;
-                    m->finestra = (ExFinestra)(j + 1);
-                    m->msg      = EXM_TEMPO;
+                    m->finestra = (ExWindow)(j + 1);
+                    m->msg      = EXM_TIMER;
                     m->wp       = 0;
                     m->lp       = (long)ora;
                     return 1;
@@ -6649,7 +6666,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     && !gia) continue;
 
                 /* ! BY DESCRIPTOR, NOT BY POSITION: a function called here may
-                 * remove itself (ex_guarda_fd(fd, 0, 0) at the end of a
+                 * remove itself (ex_watch_fd(fd, 0, 0) at the end of a
                  * download), and the table shifts under the loop. */
                 for (k = primo_guardato; k < nv; k++) {
                     int q;
@@ -6674,7 +6691,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     if (term_leggi(&g_term[j])) {
                         cambiato = 1;
                         if (!ridisegna_controllo(ogg(g_term[j].ogg)))
-                            ex_procedura_base(radice_h(g_term[j].ogg), EXM_DISEGNA, 0, 0);
+                            ex_default_proc(radice_h(g_term[j].ogg), EXM_PAINT, 0, 0);
                     }
 
                     /* ! E SE IL PROGRAMMA DENTRO E' USCITO, SI DICE — una
@@ -6684,7 +6701,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     if (g_term[j].finito && !g_term[j].detto) {
                         g_term[j].detto = 1;
                         m->finestra = radice_h(g_term[j].ogg);
-                        m->msg      = EXM_TERMFINITO;
+                        m->msg      = EXM_TERM_EXITED;
                         m->wp       = 0;
                         m->lp       = 0;
                         return 1;
@@ -6706,7 +6723,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                        IPC_SUBITO) < 0) continue;
 
         /* ! LA ZONA NUOVA SI PRENDE PRIMA DI SVEGLIARE L'APPLICAZIONE, e non
-         * dopo: consegnando EXM_MISURA con i pixel ancora vecchi, la prima
+         * dopo: consegnando EXM_SIZE con i pixel ancora vecchi, la prima
          * cosa che l'applicazione fa — ridisegnarsi nella misura nuova —
          * scriverebbe oltre la fine della zona vecchia. */
         if (meta.tipo == WIN_MSG_MISURATA && meta.len >= sizeof(WinCreata)) {
@@ -6717,7 +6734,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (f == 0 || !rimappa(f, &r)) continue;
 
             m->finestra = f;
-            m->msg      = EXM_MISURA;
+            m->msg      = EXM_SIZE;
             m->wp       = 0;
             m->lp       = (long)((r.larghezza & 0xFFFF) |
                                  ((r.altezza & 0xFFFF) << 16));
@@ -6727,8 +6744,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
         /* ! LA POSIZIONE NUOVA SI PRENDE E NON SI DICE A NESSUNO: e' il
          * toolkit che si tiene aggiornato, non una notizia per
          * l'applicazione. Chi ha trascinato la finestra l'ha gia' vista
-         * muoversi; a chi scrive il programma serve solo che ex_sposta() e
-         * ex_misura() non partano da un ricordo sbagliato. */
+         * muoversi; a chi scrive il programma serve solo che ex_move() e
+         * ex_resize() non partano da un ricordo sbagliato. */
         if (meta.tipo == WIN_MSG_POSTA && meta.len >= sizeof(WinRegione)) {
             WinRegione r;
             Oggetto   *o;
@@ -6742,7 +6759,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
         if (meta.tipo == WIN_MSG_SISTEMA) {
             if (!g_segui) continue;
             m->finestra = g_segui;
-            m->msg      = EXM_SISTEMA;
+            m->msg      = EXM_SYSTEM;
             m->wp       = 0;
             m->lp       = 0;
             return 1;
@@ -6753,7 +6770,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (!g_segui) continue;
             g_el_nuovo  = 0;
             m->finestra = g_segui;
-            m->msg      = EXM_FINESTRE;
+            m->msg      = EXM_WINDOW_LIST;
             m->wp       = 0;
             m->lp       = 0;
             return 1;
@@ -6773,19 +6790,19 @@ static int prendi_msg(ExMsg *m, int bloccante)
          * window that asked gets these, and they go straight to it — the
          * drag logic below is for a button held down. */
         if (e.tipo == WIN_EV_MOUSE_MOSSO && e.bottoni == 0) {
-            m->msg = EXM_MOUSE_SOPRA;
+            m->msg = EXM_MOUSE_ENTER;
             return 1;
         }
         if (e.tipo == WIN_EV_USCITO) {
-            m->msg = EXM_MOUSE_FUORI;
+            m->msg = EXM_MOUSE_LEAVE;
             m->lp  = 0;
             return 1;
         }
 
         switch (e.tipo) {
-        case WIN_EV_CHIUDI:     m->msg = EXM_CHIUDI;    return 1;
+        case WIN_EV_CHIUDI:     m->msg = EXM_CLOSE;    return 1;
         case WIN_EV_DESTRO: {
-            ExFinestra c = controllo_in(f, (int)e.x, (int)e.y);
+            ExWindow c = controllo_in(f, (int)e.x, (int)e.y);
             Oggetto   *co = ogg(c);
 
             /* su una lista si sceglie prima la riga sotto il puntatore */
@@ -6796,7 +6813,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 if (L && L->multi && L->sel < L->n && !L->segni[L->sel]) lista_uno(L);
                 ridisegna_finestra(f);
             }
-            m->msg = EXM_MOUSE_DESTRO;
+            m->msg = EXM_RIGHT_CLICK;
             m->wp  = (unsigned int)c;
             return 1;
         }
@@ -6805,7 +6822,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 ridisegna_finestra(f);
                 continue;
             }
-            m->msg = EXM_ROTELLA;
+            m->msg = EXM_WHEEL;
             m->wp  = e.tasto;
             return 1;
         case WIN_EV_TASTO:
@@ -6826,8 +6843,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
                      * 2026): la base rifa' solo i controlli, e il display di
                      * Calctor spariva a ogni tendina aperta. Stessa regola
                      * della casella di testo, qui sotto. */
-                    if (cmd == 0) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
-                    m->msg = EXM_COMANDO;
+                    if (cmd == 0) { m->msg = EXM_PAINT; m->wp = 0; m->lp = 0; return 1; }
+                    m->msg = EXM_COMMAND;
                     m->wp  = cmd;
                     return 1;
                 }
@@ -6839,7 +6856,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             {
                 unsigned int msg = 0, wp = 0;
                 long         lp = 0;
-                ExFinestra   t = schede_tasto(f, e.tasto, &msg, &wp, &lp);
+                ExWindow   t = schede_tasto(f, e.tasto, &msg, &wp, &lp);
 
                 if (t) {
                     ridisegna_finestra(f);
@@ -6856,7 +6873,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                  * ! CONSUMATO DA UNA CASELLA — MA L'APPLICAZIONE VA AVVISATA
                  * LO STESSO, e qui c'era scritto il contrario.
                  *
-                 * `ex_procedura_base(EXM_DISEGNA)` rifa' lo SFONDO della
+                 * `ex_default_proc(EXM_PAINT)` rifa' lo SFONDO della
                  * finestra e i controlli del toolkit. Per una finestra fatta
                  * di soli controlli e' tutto, e non svegliare l'applicazione
                  * a ogni lettera era un risparmio giusto. Ma una finestra che
@@ -6874,12 +6891,12 @@ static int prendi_msg(ExMsg *m, int bloccante)
                  * niente e paga solo il giro del ciclo.
                  * ========================================================= */
                 ridisegna_finestra(f);
-                m->msg = EXM_DISEGNA;
+                m->msg = EXM_PAINT;
                 m->wp  = 0;
                 m->lp  = 0;
                 return 1;
             }
-            m->msg = EXM_TASTO;
+            m->msg = EXM_KEY;
             m->wp  = e.tasto;
             return 1;
         /* ! IL TRASCINAMENTO VA AL CONTROLLO CHE HA PRESO IL BOTTONE, non a
@@ -6942,7 +6959,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 if (co->valore == prima) continue;
                 ridisegna_finestra(f);
                 m->finestra = destinatario(g_trascinato);
-                m->msg = EXM_COMANDO;
+                m->msg = EXM_COMMAND;
                 m->wp  = co->id;
                 m->lp  = (long)co->valore;
                 return 1;
@@ -6968,7 +6985,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
                 continue;
             }
-            m->msg = EXM_MOUSE_MOSSO;
+            m->msg = EXM_MOUSE_MOVE;
             return 1;
         }
 
@@ -6990,7 +7007,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * ============================================================= */
             unsigned int cmd_id = 0;
             long         cmd_lp = 0;
-            ExFinestra   cmd_h  = 0;
+            ExWindow   cmd_h  = 0;
             {
                 Oggetto *pr = ogg(g_premuto);
                 int j, cambiato = 0;
@@ -7026,7 +7043,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (cmd_id) {
                 g_trascinato = 0;
                 m->finestra = destinatario(cmd_h);
-                m->msg = EXM_COMANDO;
+                m->msg = EXM_COMMAND;
                 m->wp  = cmd_id;
                 m->lp  = cmd_lp;
                 return 1;
@@ -7041,44 +7058,44 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 Oggetto *co = ogg(g_trascinato);
                 Lista   *L  = co ? lista_di(co) : 0;
 
-                ExFinestra quale = g_trascinato;
+                ExWindow quale = g_trascinato;
 
                 g_trascinato = 0;
 
                 /* ! LASCIATO SU UN ALTRO CONTROLLO (29 settembre 2026,
                  * @FM-TRASCINA): righe di una lista portate sopra un altro
                  * controllo della stessa finestra. L'applicazione riceve
-                 * EXM_LASCIATO con i due id e il punto; che cosa voglia dire
+                 * EXM_DROP con i due id e il punto; che cosa voglia dire
                  * — copiare dei file in una cartella — lo sa lei. */
                 if (L) {
-                    ExFinestra dove = controllo_in(f, (int)e.x, (int)e.y);
+                    ExWindow dove = controllo_in(f, (int)e.x, (int)e.y);
                     Oggetto   *od   = ogg(dove);
 
                     if (od && dove != quale) {
                         m->finestra = destinatario(quale);
-                        m->msg = EXM_LASCIATO;
+                        m->msg = EXM_DROP;
                         m->wp  = (co->id & 0xFFFFu) | ((unsigned int)od->id << 16);
                         return 1;
                     }
                 }
                 if (L && L->sel != g_tras_sel) {
                     m->finestra = destinatario(quale);
-                    m->msg = EXM_COMANDO;
+                    m->msg = EXM_COMMAND;
                     m->wp  = co->id;
                     m->lp  = 0;         /* ne' aperto ne' su una colonna */
                     return 1;
                 }
             }
 
-            m->msg = EXM_MOUSE_SU;
+            m->msg = EXM_MOUSE_UP;
             return 1;
         }
         case WIN_EV_MOUSE_GIU: {
-            /* ! IL CLIC SU UN PULSANTE DIVENTA EXM_COMANDO, e il messaggio
+            /* ! IL CLIC SU UN PULSANTE DIVENTA EXM_COMMAND, e il messaggio
              * grezzo non arriva all'applicazione. E' cio' che distingue un
              * toolkit da un pannello di pixel: chi scrive l'applicazione
              * guarda l'id del pulsante, non le coordinate. */
-            ExFinestra c;
+            ExWindow c;
             Oggetto *co;
             int      doppio;
 
@@ -7091,8 +7108,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                 if (menu_clic(f, (int)e.x, (int)e.y, &cmd)) {
                     ridisegna_finestra(f);
-                    if (cmd == 0) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
-                    m->msg = EXM_COMANDO;
+                    if (cmd == 0) { m->msg = EXM_PAINT; m->wp = 0; m->lp = 0; return 1; }
+                    m->msg = EXM_COMMAND;
                     m->wp  = cmd;
                     return 1;
                 }
@@ -7104,13 +7121,13 @@ static int prendi_msg(ExMsg *m, int bloccante)
             {
                 unsigned int cid = 0;
                 int scelto = 0;
-                ExFinestra quale = 0;
+                ExWindow quale = 0;
 
                 if (combo_clic(f, (int)e.x, (int)e.y, &cid, &scelto, &quale)) {
                     ridisegna_finestra(f);
-                    if (!scelto) { m->msg = EXM_DISEGNA; m->wp = 0; m->lp = 0; return 1; }
+                    if (!scelto) { m->msg = EXM_PAINT; m->wp = 0; m->lp = 0; return 1; }
                     m->finestra = destinatario(quale);
-                    m->msg = EXM_COMANDO;
+                    m->msg = EXM_COMMAND;
                     m->wp  = cid;
                     m->lp  = (long)(scelto - 1);
                     return 1;
@@ -7121,7 +7138,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * ha sotto esattamente come una tendina, e in piu' il clic la
              * porta davanti. Vedi mdi_clic. */
             {
-                ExFinestra chiudi = 0;
+                ExWindow chiudi = 0;
                 int esito = mdi_clic(f, (int)e.x, (int)e.y, &chiudi);
 
                 if (esito != 0) {
@@ -7133,7 +7150,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                          * ricade sulla base, che la distrugge — e NON esce dal
                          * programma, come farebbe per una finestra vera. */
                         m->finestra = chiudi;
-                        m->msg = EXM_CHIUDI;
+                        m->msg = EXM_CLOSE;
                         m->wp  = 0;
                         m->lp  = 0;
                         return 1;
@@ -7170,7 +7187,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             /* =============================================================
              * ! PREMERE NON E' ANCORA COMANDARE.
              *
-             * Fino a oggi EXM_COMANDO partiva qui, alla pressione. E' il
+             * Fino a oggi EXM_COMMAND partiva qui, alla pressione. E' il
              * comportamento che si scrive per primo perche' e' il piu' corto,
              * ed e' anche quello che toglie a chi usa il programma l'unica
              * possibilita' di RIPENSARCI: un pulsante premuto per sbaglio era
@@ -7216,7 +7233,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
                 ridisegna_finestra(f);
                 m->finestra = destinatario(c);
-                m->msg = EXM_COMANDO;
+                m->msg = EXM_COMMAND;
                 m->wp  = co->id;
                 m->lp  = (long)co->valore;
                 return 1;
@@ -7233,14 +7250,14 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     if (V->sel < V->primo) V->sel = V->primo;
                     ridisegna_finestra(f);
                     m->finestra = destinatario(c);
-                    m->msg = EXM_COMANDO;
+                    m->msg = EXM_COMMAND;
                     m->wp  = co->id;
                     m->lp  = (long)V->sel;
                     return 1;
                 }
                 if (z == 2) {                       /* la X: decide il programma */
                     m->finestra = destinatario(c);
-                    m->msg = EXM_SCHEDA_CHIUDI;
+                    m->msg = EXM_TAB_CLOSE;
                     m->wp  = co->id;
                     m->lp  = (long)k;
                     return 1;
@@ -7249,7 +7266,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 V->sel = (unsigned int)k;
                 ridisegna_finestra(f);
                 m->finestra = destinatario(c);
-                m->msg = EXM_COMANDO;
+                m->msg = EXM_COMMAND;
                 m->wp  = co->id;
                 m->lp  = (long)k;
                 return 1;
@@ -7263,10 +7280,10 @@ static int prendi_msg(ExMsg *m, int bloccante)
             }
 
             /* ! UN CLIC SU UNA LISTA SCEGLIE LA RIGA, e l'applicazione lo
-             * riceve come EXM_COMANDO con l'id della lista — lo stesso
+             * riceve come EXM_COMMAND con l'id della lista — lo stesso
              * messaggio dell'Invio, perche' sono la stessa decisione presa in
              * due modi. Chi vuole distinguere «ho scelto» da «ho aperto»
-             * guarda EX_APRIRE(lp): il doppio clic lo accende come l'Invio. */
+             * guarda EX_IS_OPEN(lp): il doppio clic lo accende come l'Invio. */
             if (co && co->classe == CL_AREA) {
                 Area *A = area_di(co);
 
@@ -7300,10 +7317,10 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 g_tras_sel = L ? L->sel : 0;
                 ridisegna_finestra(f);
                 m->finestra = destinatario(c);
-                m->msg = EXM_COMANDO;
+                m->msg = EXM_COMMAND;
                 m->wp  = co->id;
                 /* La colonna sta nei bit alti aumentata di uno, il «aprire»
-                 * nel bit zero: vedi EX_COL e EX_APRIRE in exwin.h. */
+                 * nel bit zero: vedi EX_COLUMN e EX_IS_OPEN in exwin.h. */
                 m->lp  = (long)(((lista_colonna(co, (int)e.x) + 1) << 8) |
                                 (doppio ? 1 : 0));
                 return 1;
@@ -7314,7 +7331,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * un'immagine, su qualunque cosa un programma disegni da se': li'
              * il toolkit non sa cosa voglia dire, e chi lo sa e' chi ha
              * disegnato. */
-            m->msg = doppio ? EXM_DOPPIOCLIC : EXM_MOUSE_GIU;
+            m->msg = doppio ? EXM_DOUBLE_CLICK : EXM_MOUSE_DOWN;
             /* ! I MODIFICATORI DEL CLIC IN wp (29 settembre 2026): il server
              * li manda da wserver 0.006, e Ctrl+clic su un collegamento apre
              * una finestra nuova. Prima wp era sempre 0. */
@@ -7322,47 +7339,47 @@ static int prendi_msg(ExMsg *m, int bloccante)
             return 1;
         }
         default:
-            m->msg = EXM_DISEGNA;
+            m->msg = EXM_PAINT;
             return 1;
         }
     }
 }
 
-int ex_prendi_msg(ExMsg *m) { return prendi_msg(m, 1); }
+int ex_get_message(ExMsg *m) { return prendi_msg(m, 1); }
 
 /* ! RENDE 0 ANCHE QUANDO L'APPLICAZIONE STA USCENDO, come l'altra: chi la usa
  * dentro un'attesa deve accorgersi che non ha piu' senso aspettare. */
-int ex_msg_ora(ExMsg *m) { return prendi_msg(m, 0); }
+int ex_peek_message(ExMsg *m) { return prendi_msg(m, 0); }
 
 /* =============================================================================
  * tendine_ancora_sopra — an open drop-down goes back on top of what the
  * application drew (23 September 2026)
  *
- * ex_aggiorna() draws the open menu and combo drop-downs last, and that is
+ * ex_update() draws the open menu and combo drop-downs last, and that is
  * right for everything the TOOLKIT draws. But an application that paints
- * something of its own in its EXM_DISEGNA — archivi's header row, right
+ * something of its own in its EXM_PAINT — archivi's header row, right
  * under the menu bar — usually does it AFTER calling the base, and so over
  * the drop-down that the base had just put on top. Reported as «the menu is
  * covered by the bar below it as soon as it opens with the mouse».
  *
  * ! HERE, AND NOT IN EVERY APPLICATION: the same shape is in every program
  * that draws its own pixels, and asking each of them to end with
- * ex_aggiorna() is a rule that the next program forgets. Only when a
+ * ex_update() is a rule that the next program forgets. Only when a
  * drop-down is actually open, so it costs nothing otherwise.
  * ============================================================================= */
-static void tendine_ancora_sopra(ExFinestra f)
+static void tendine_ancora_sopra(ExWindow f)
 {
-    ExFinestra rh = radice_h(f);
+    ExWindow rh = radice_h(f);
     Menu      *M  = menu_della_finestra(rh);
     Oggetto   *c  = ogg(g_combo_aperto);
     int        a, b, w, h;
 
     if ((M && menu_tendina_dove(M, &a, &b, &w, &h)) ||
         (c && c->classe == CL_COMBO && radice(c->padre) == ogg(rh)))
-        ex_aggiorna(rh);
+        ex_update(rh);
 }
 
-void ex_smista(const ExMsg *m)
+void ex_dispatch(const ExMsg *m)
 {
     Oggetto *o = ogg(m->finestra);
 
@@ -7372,9 +7389,9 @@ void ex_smista(const ExMsg *m)
         long esito = o->proc(m->finestra, m->msg, m->wp, m->lp);
 
         /* Handled, and the procedure says there is nothing to redraw (see
-         * EX_NON_RIDISEGNARE in exwin.h). Only the drop-downs are put back on
+         * EX_NO_REDRAW in exwin.h). Only the drop-downs are put back on
          * top, in case the procedure drew under them. */
-        if (esito == EX_NON_RIDISEGNARE) {
+        if (esito == EX_NO_REDRAW) {
             tendine_ancora_sopra(m->finestra);
             return;
         }
@@ -7383,7 +7400,7 @@ void ex_smista(const ExMsg *m)
              * perche' quasi sempre l'ha gestito cambiando qualcosa.
              *
              * ! E IL RIDISEGNO PASSA DALLA SUA PROCEDURA, NON DALLA BASE.
-             * Fino al 18 agosto 2026 qui c'era ex_procedura_base(), che
+             * Fino al 18 agosto 2026 qui c'era ex_default_proc(), che
              * riempie la finestra di grigio e ridisegna i controlli: una
              * finestra che disegna i propri pixel — la scrivania, con il suo
              * colore e la sua immagine — se li vedeva cancellare al primo
@@ -7391,18 +7408,25 @@ void ex_smista(const ExMsg *m)
              * perche' il ridisegno non le veniva nemmeno chiesto. Il sintomo
              * era «un clic sullo sfondo lo fa diventare grigio».
              *
-             * Chi non gestisce EXM_DISEGNA ricade sulla base da se', e per
+             * Chi non gestisce EXM_PAINT ricade sulla base da se', e per
              * quelle finestre non cambia niente. */
-            if (m->msg != EXM_DISEGNA)
-                o->proc(m->finestra, EXM_DISEGNA, 0, 0);
-            tendine_ancora_sopra(m->finestra);
+            if (m->msg != EXM_PAINT)
+                o->proc(m->finestra, EXM_PAINT, 0, 0);
+
+            /* ! E IL RIDISEGNO SI PRESENTA QUI (3 ottobre 2026). La base
+             * presenta lo sfondo grigio a meta' del lavoro, e quel che la
+             * procedura disegna DOPO restava nel buffer: la tabella di
+             * archivi spariva dopo ogni dialogo, finche' un altro evento
+             * non la portava a galla. ex_update rimette anche le tendine
+             * sopra, come faceva tendine_ancora_sopra. */
+            ex_update(m->finestra);
             return;
         }
     }
-    ex_procedura_base(m->finestra, m->msg, m->wp, m->lp);
+    ex_default_proc(m->finestra, m->msg, m->wp, m->lp);
 }
 
-long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+long ex_default_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     Oggetto *o = ogg(f);
 
@@ -7410,44 +7434,44 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     if (!o) return 0;
 
     switch (msg) {
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         /* ! CHIUDERE UNA FINESTRA FIGLIA NON CHIUDE IL PROGRAMMA, e la
          * distinzione va fatta QUI perche' e' qui che finisce chi non gestisce
          * la chiusura: senza, il pulsante di chiusura di una finestra MDI
          * spegnerebbe l'applicazione intera — un difetto che si scopre al primo
          * clic e costa il lavoro non salvato. */
         if (o->classe == CL_MDIFIGLIO) {
-            ExFinestra r = radice_h(f);
+            ExWindow r = radice_h(f);
 
-            ex_distruggi(f);
-            ex_procedura_base(r, EXM_DISEGNA, 0, 0);
+            ex_destroy(f);
+            ex_default_proc(r, EXM_PAINT, 0, 0);
             return 0;
         }
-        ex_esci(0);
+        ex_quit(0);
         return 0;
 
-    case EXM_DISEGNA:
+    case EXM_PAINT:
         /* ! UNA FINESTRA FIGLIA NON SI RIDISEGNA DA SOLA: i suoi pixel stanno
          * nella zona del padre e sopra di lei possono essercene altre.
          * Ridisegnare solo lei la farebbe comparire davanti a chi la copre — e
-         * `ex_riempi(f, 0, 0, ...)` per giunta dipingerebbe nell'angolo della
+         * `ex_fill_rect(f, 0, 0, ...)` per giunta dipingerebbe nell'angolo della
          * finestra vera, non nel suo. Si ridisegna tutto. */
         if (o->classe == CL_MDIFIGLIO) {
-            ex_procedura_base(radice_h(f), EXM_DISEGNA, 0, 0);
+            ex_default_proc(radice_h(f), EXM_PAINT, 0, 0);
             return 0;
         }
 
         /* Lo sfondo dell'area del client, e poi i controlli sopra. */
-        ex_riempi(f, 0, 0, o->w, o->h, EX_GRIGIO);
+        ex_fill_rect(f, 0, 0, o->w, o->h, EX_GRAY);
         disegna_figli(f);
-        ex_aggiorna(f);
+        ex_update(f);
         return 0;
 
-    /* ! SI RIDIPINGE SOLO SU EXM_DISEGNA, E NON SU QUALUNQUE MESSAGGIO.
+    /* ! SI RIDIPINGE SOLO SU EXM_PAINT, E NON SU QUALUNQUE MESSAGGIO.
      *
      * Qui `default:` cadeva dentro il disegno, cioe' OGNI messaggio che
      * un'applicazione non gestisce riempiva la sua finestra di grigio. Si
-     * vedeva sull'orologio: un clic sulla barra arriva come EXM_MOUSE_GIU,
+     * vedeva sull'orologio: un clic sulla barra arriva come EXM_MOUSE_DOWN,
      * l'orologio non lo gestisce, e l'ora spariva — per tornare al cambio di
      * minuto, che e' l'unico momento in cui quel programma ridisegna.
      * Segnalato provandolo, non trovato leggendo.
@@ -7458,7 +7482,7 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * ricompone tutto a ogni aggiornamento, e' il tipo di costo che non si
      * vede in un profilo perche' e' sparso dappertutto.
      *
-     * Chi deve ridisegnarsi riceve EXM_DISEGNA dal server — e' il server a
+     * Chi deve ridisegnarsi riceve EXM_PAINT dal server — e' il server a
      * saperlo, quando una finestra viene scoperta — quindi non si perde niente.
      */
     default:
@@ -7466,12 +7490,12 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 }
 
-void ex_esci(int codice) { g_uscita = 1; g_codice = codice; }
+void ex_quit(int codice) { g_uscita = 1; g_codice = codice; }
 
 /* =============================================================================
  * LA SVEGLIA PERIODICA
  *
- * ! SENZA QUESTA UN'APPLICAZIONE NON PUO' FARE NIENTE DA SOLA. ex_prendi_msg()
+ * ! SENZA QUESTA UN'APPLICAZIONE NON PUO' FARE NIENTE DA SOLA. ex_get_message()
  * dorme finche' non arriva un evento: un orologio, un'animazione, una barra di
  * avanzamento non hanno nessuno che li svegli — si aggiornerebbero solo quando
  * l'utente muove il mouse, che e' esattamente il contrario di cio' che
@@ -7491,7 +7515,7 @@ void ex_esci(int codice) { g_uscita = 1; g_codice = codice; }
  * con due finestre puo' averne una che si aggiorna e una ferma senza
  * distinguere niente a mano.
  * ============================================================================= */
-void ex_sveglia(ExFinestra f, unsigned int ms)
+void ex_set_timer(ExWindow f, unsigned int ms)
 {
     Oggetto *o = ogg(f);
 
@@ -7509,7 +7533,7 @@ void ex_sveglia(ExFinestra f, unsigned int ms)
  * farlo. Qui il testo si COPIA dentro la lista al momento: il chiamante puo'
  * usare un buffer sullo stack e dimenticarsene.
  * ============================================================================= */
-void ex_lista_svuota(ExFinestra f)
+void ex_list_clear(ExWindow f)
 {
     Lista *L = lista_da_h(f);
     if (!L) return;
@@ -7518,7 +7542,7 @@ void ex_lista_svuota(ExFinestra f)
 }
 
 /* Rende 1 se la voce c'e' entrata, 0 se la lista e' piena. */
-int ex_lista_aggiungi(ExFinestra f, const char *testo)
+int ex_list_add(ExWindow f, const char *testo)
 {
     Lista *L = lista_da_h(f);
     char *dst;
@@ -7531,13 +7555,13 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
     if (L->n >= L->cap) {
         unsigned int nuovo = L->cap * 2;
         char        *v;
-        ExIcona     *ic;
+        ExIcon     *ic;
 
         if (nuovo > LISTA_VOCI_MAX) return 0;
         v  = (char *)realloc(L->voci, (size_t)nuovo * LISTA_TESTO_MAX);
         if (!v) return 0;
         L->voci = v;
-        ic = (ExIcona *)realloc(L->ic, (size_t)nuovo * sizeof(ExIcona));
+        ic = (ExIcon *)realloc(L->ic, (size_t)nuovo * sizeof(ExIcon));
         if (!ic) return 0;
         L->ic  = ic;
         {
@@ -7554,7 +7578,7 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
     dst[LISTA_TESTO_MAX - 1] = '\0';
 
     /* ! LA RIGA NASCE SENZA ICONA, ANCHE SE QUELLA DI PRIMA NE AVEVA UNA. La
-     * tabella si riusa (ex_lista_svuota non la ripulisce: sarebbero duemila
+     * tabella si riusa (ex_list_clear non la ripulisce: sarebbero duemila
      * byte azzerati a ogni cambio di directory), quindi e' qui che si
      * azzera — altrimenti la voce nuova erediterebbe l'icona di quella che
      * occupava il posto prima. */
@@ -7569,9 +7593,9 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
  *
  * ! SI DA' DOPO AVER AGGIUNTO LA RIGA, e non insieme, perche' e' il caso
  * raro: quasi tutte le liste di questo sistema sono testo e basta, e una
- * ex_lista_aggiungi() con un argomento in piu' avrebbe voluto dire toccare
+ * ex_list_add() con un argomento in piu' avrebbe voluto dire toccare
  * ogni chiamata gia' scritta per aggiungere uno zero. */
-void ex_lista_icona(ExFinestra f, unsigned int riga, ExIcona ic)
+void ex_list_set_icon(ExWindow f, unsigned int riga, ExIcon ic)
 {
     Lista *L = lista_da_h(f);
 
@@ -7587,7 +7611,7 @@ void ex_lista_icona(ExFinestra f, unsigned int riga, ExIcona ic)
  * spostarsi insieme alle righe: senza questa domanda l'applicazione dovrebbe
  * sapere quanto e' larga una corsia di icone — cioe' portarsi dentro una
  * costante del toolkit, e sbagliarla il giorno che cambia. */
-unsigned int ex_lista_margine(ExFinestra f)
+unsigned int ex_list_margin(ExWindow f)
 {
     Lista *L = lista_da_h(f);
     unsigned int i;
@@ -7598,21 +7622,21 @@ unsigned int ex_lista_margine(ExFinestra f)
     return 0;
 }
 
-unsigned int ex_lista_quante(ExFinestra f)
+unsigned int ex_list_count(ExWindow f)
 {
     Lista *L = lista_da_h(f);
     return L ? L->n : 0;
 }
 
-/* L'indice della voce scelta. Con la lista vuota rende 0, e ex_lista_quante()
+/* L'indice della voce scelta. Con la lista vuota rende 0, e ex_list_count()
  * dice che non c'e' niente: chi legge deve guardare prima quella. */
-unsigned int ex_lista_scelta(ExFinestra f)
+unsigned int ex_list_get_selected(ExWindow f)
 {
     Lista *L = lista_da_h(f);
     return L ? L->sel : 0;
 }
 
-void ex_lista_scegli(ExFinestra f, unsigned int i)
+void ex_list_select(ExWindow f, unsigned int i)
 {
     Lista *L = lista_da_h(f);
     if (!L || i >= L->n) return;
@@ -7623,7 +7647,7 @@ void ex_lista_scegli(ExFinestra f, unsigned int i)
 /* Il testo di una voce. Rende "" e non 0 per un indice fuori posto: un
  * puntatore nullo dentro una printf e' un fault, una stringa vuota e' una riga
  * vuota — e la differenza si vede subito. */
-const char *ex_lista_testo(ExFinestra f, unsigned int i)
+const char *ex_list_text(ExWindow f, unsigned int i)
 {
     Lista *L = lista_da_h(f);
 
@@ -7635,12 +7659,12 @@ const char *ex_lista_testo(ExFinestra f, unsigned int i)
  * IL CONTENITORE MDI — l'API
  *
  * ! DUE FUNZIONI SOLE, e non serve altro: chiedere chi e' davanti e portarci
- * qualcuno. Aprire, chiudere, spostare e ridisegnare sono gia' `ex_crea`,
- * `ex_distruggi`, `ex_sposta` e il ridisegno di sempre — una finestra figlia e'
+ * qualcuno. Aprire, chiudere, spostare e ridisegnare sono gia' `ex_create`,
+ * `ex_destroy`, `ex_move` e il ridisegno di sempre — una finestra figlia e'
  * un oggetto come gli altri, ed e' il motivo per cui l'MDI e' costato poche
  * righe invece di un sottosistema.
  * ============================================================================= */
-ExFinestra ex_mdi_attivo(ExFinestra contenitore)
+ExWindow ex_mdi_get_active(ExWindow contenitore)
 {
     Oggetto *o = ogg(contenitore);
 
@@ -7648,7 +7672,7 @@ ExFinestra ex_mdi_attivo(ExFinestra contenitore)
     return mdi_attivo(contenitore);
 }
 
-void ex_mdi_attiva(ExFinestra figlio)
+void ex_mdi_activate(ExWindow figlio)
 {
     Oggetto *o = ogg(figlio);
 
@@ -7668,7 +7692,7 @@ void ex_mdi_attiva(ExFinestra figlio)
  * ALTRI quando si accende questo. Chi scrive l'applicazione non ha motivo di
  * imparare due nomi per leggere un bit.
  * ============================================================================= */
-int ex_acceso(ExFinestra c)
+int ex_is_checked(ExWindow c)
 {
     Oggetto *o = ogg(c);
 
@@ -7676,7 +7700,7 @@ int ex_acceso(ExFinestra c)
     return o->valore ? 1 : 0;
 }
 
-void ex_accendi(ExFinestra c, int acceso)
+void ex_set_checked(ExWindow c, int acceso)
 {
     Oggetto *o = ogg(c);
 
@@ -7692,14 +7716,14 @@ void ex_accendi(ExFinestra c, int acceso)
     o->valore = 0;
 }
 
-void ex_abilita(ExFinestra c, int si)
+void ex_enable(ExWindow c, int si)
 {
     Oggetto *o = ogg(c);
     Oggetto *r;
 
     if (!o || !o->padre) return;
-    if (si) { o->stile &= ~(unsigned int)EX_SPENTO; return; }
-    o->stile |= EX_SPENTO;
+    if (si) { o->stile &= ~(unsigned int)EX_DISABLED; return; }
+    o->stile |= EX_DISABLED;
     o->premuto = 0;
     r = radice(c);
     if (r && r->fuoco == c) fuoco_avanti(c);
@@ -7708,7 +7732,7 @@ void ex_abilita(ExFinestra c, int si)
 /* =============================================================================
  * LA BARRA DI SCORRIMENTO — l'API. Il modello sta accanto a scorri_geo().
  * ============================================================================= */
-void ex_scorri_limiti(ExFinestra c, unsigned int massimo, unsigned int pagina)
+void ex_scroll_set_range(ExWindow c, unsigned int massimo, unsigned int pagina)
 {
     Oggetto *o = ogg(c);
 
@@ -7722,7 +7746,7 @@ void ex_scorri_limiti(ExFinestra c, unsigned int massimo, unsigned int pagina)
     if (o->valore > o->massimo) o->valore = o->massimo;
 }
 
-unsigned int ex_scorri_dove(ExFinestra c)
+unsigned int ex_scroll_get_pos(ExWindow c)
 {
     Oggetto *o = ogg(c);
 
@@ -7730,7 +7754,7 @@ unsigned int ex_scorri_dove(ExFinestra c)
     return o->valore;
 }
 
-void ex_scorri_vai(ExFinestra c, unsigned int dove)
+void ex_scroll_set_pos(ExWindow c, unsigned int dove)
 {
     Oggetto *o = ogg(c);
 
@@ -7746,7 +7770,7 @@ void ex_scorri_vai(ExFinestra c, unsigned int dove)
  * aggiunge una linguetta a una barra stanno facendo la stessa cosa, e due serie
  * di nomi identici sarebbero due serie da tenere d'accordo per sempre.
  * ============================================================================= */
-void ex_voci_svuota(ExFinestra c)
+void ex_items_clear(ExWindow c)
 {
     Voci *V = voci_da_h(c);
 
@@ -7755,7 +7779,7 @@ void ex_voci_svuota(ExFinestra c)
     V->sel = 0;
 }
 
-int ex_voce_aggiungi(ExFinestra c, const char *testo)
+int ex_item_add(ExWindow c, const char *testo)
 {
     Voci *V = voci_da_h(c);
 
@@ -7768,21 +7792,21 @@ int ex_voce_aggiungi(ExFinestra c, const char *testo)
     return 1;
 }
 
-unsigned int ex_voci_quante(ExFinestra c)
+unsigned int ex_items_count(ExWindow c)
 {
     Voci *V = voci_da_h(c);
 
     return V ? V->n : 0;
 }
 
-unsigned int ex_voce_scelta(ExFinestra c)
+unsigned int ex_item_get_selected(ExWindow c)
 {
     Voci *V = voci_da_h(c);
 
     return V ? V->sel : 0;
 }
 
-void ex_voce_scegli(ExFinestra c, unsigned int i)
+void ex_item_select(ExWindow c, unsigned int i)
 {
     Voci *V = voci_da_h(c);
 
@@ -7790,7 +7814,7 @@ void ex_voce_scegli(ExFinestra c, unsigned int i)
     V->sel = i;
 }
 
-const char *ex_voce_testo(ExFinestra c, unsigned int i)
+const char *ex_item_text(ExWindow c, unsigned int i)
 {
     Voci *V = voci_da_h(c);
 
@@ -7798,7 +7822,7 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
     return V->testo[i];
 }
 
-void ex_voci_schede(ExFinestra c, int si)
+void ex_items_as_tabs(ExWindow c, int si)
 {
     Voci *V = voci_da_h(c);
 
@@ -7807,7 +7831,7 @@ void ex_voci_schede(ExFinestra c, int si)
     V->primo  = 0;
 }
 
-int ex_voce_togli(ExFinestra c, unsigned int i)
+int ex_item_remove(ExWindow c, unsigned int i)
 {
     Voci        *V = voci_da_h(c);
     unsigned int j;
@@ -7823,7 +7847,7 @@ int ex_voce_togli(ExFinestra c, unsigned int i)
     return 1;
 }
 
-void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
+void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
 {
     Voci *V = voci_da_h(c);
 
@@ -7832,18 +7856,18 @@ void ex_voce_rinomina(ExFinestra c, unsigned int i, const char *testo)
     V->testo[i][VOCI_TESTO_MAX - 1] = '\0';
 }
 
-/* La versione della libreria: vedi ex_versione() in exwin.h. +0.001 a ogni
+/* La versione della libreria: vedi ex_version() in exwin.h. +0.001 a ogni
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
- * 0.002 = ex_abilita() ed EX_SPENTO; 0.003 = 192 oggetti, e il ridisegno
+ * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.012"
+#define EXWIN_VERSIONE "0.013"
 
-const char *ex_versione(void) { return EXWIN_VERSIONE; }
+const char *ex_version(void) { return EXWIN_VERSIONE; }
 
 /* =============================================================================
  * IL MENU — l'API. Il perche' sta accanto a #define MENU_MAX.
  * ============================================================================= */
-ExFinestra ex_menu(ExFinestra finestra)
+ExWindow ex_menu_bar(ExWindow finestra)
 {
     Oggetto *r = radice(finestra);
     Menu    *M;
@@ -7857,11 +7881,11 @@ ExFinestra ex_menu(ExFinestra finestra)
     M = menu_della_finestra(finestra);
     if (M) return M->ogg;
 
-    return ex_crea("menu", "", EX_FIGLIO, 0, 0, r->w, MENU_BARRA_H,
-                   (ExFinestra)(r - g_ogg + 1), 0, 0);
+    return ex_create("menu", "", EX_CHILD, 0, 0, r->w, MENU_BARRA_H,
+                   (ExWindow)(r - g_ogg + 1), 0, 0);
 }
 
-int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
+int ex_menu_add_item(ExWindow menu, const char *titolo, const char *voce,
                  unsigned int id)
 {
     Menu       *M = menu_di(ogg(menu));
@@ -7884,7 +7908,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
             if (l >= sizeof(su)) l = sizeof(su) - 1;
             memcpy(su, titolo, l);
             su[l] = '\0';
-            if (!ex_menu_voce(menu, su, 0, 0)) return 0;     /* il titolo */
+            if (!ex_menu_add_item(menu, su, 0, 0)) return 0;     /* il titolo */
             for (i = 0; i < M->n; i++)
                 if (strcmp(M->titolo[i].nome, su) == 0) break;
             P = &M->titolo[i];
@@ -7944,7 +7968,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
     if (T->n >= MENU_VOCI_MAX) return 0;
 
     /* ! UN SEPARATORE E' UNA VOCE CON id ZERO, e si scrive "-". Zero non e' un
-     * id valido comunque — EXM_COMANDO con wp a zero non direbbe niente a
+     * id valido comunque — EXM_COMMAND con wp a zero non direbbe niente a
      * nessuno — quindi non c'e' un secondo modo di dirlo da tenere in piedi. */
     if (voce[0] == '-' && voce[1] == '\0') {
         T->voce[T->n].testo[0] = '\0';
@@ -7976,7 +8000,7 @@ int ex_menu_voce(ExFinestra menu, const char *titolo, const char *voce,
  * se ne accorga — e allora il cursore e il numero di righe direbbero una cosa
  * e il testo un'altra.
  * ============================================================================= */
-void ex_area_svuota(ExFinestra f)
+void ex_textarea_clear(ExWindow f)
 {
     Area *A = area_da_h(f);
     if (!A) return;
@@ -7990,7 +8014,7 @@ void ex_area_svuota(ExFinestra f)
 /* Aggiunge una riga in fondo. Rende 1, o 0 se l'area e' piena — e chi carica
  * un file DEVE guardarlo: caricare mezzo file e salvarlo cancellerebbe il
  * resto senza averlo mai mostrato. */
-int ex_area_aggiungi(ExFinestra f, const char *riga)
+int ex_textarea_add_line(ExWindow f, const char *riga)
 {
     Area *A = area_da_h(f);
 
@@ -8013,13 +8037,13 @@ int ex_area_aggiungi(ExFinestra f, const char *riga)
     return 1;
 }
 
-unsigned int ex_area_righe(ExFinestra f)
+unsigned int ex_textarea_line_count(ExWindow f)
 {
     Area *A = area_da_h(f);
     return A ? A->n : 0;
 }
 
-const char *ex_area_riga(ExFinestra f, unsigned int i)
+const char *ex_textarea_line(ExWindow f, unsigned int i)
 {
     Area *A = area_da_h(f);
 
@@ -8027,15 +8051,15 @@ const char *ex_area_riga(ExFinestra f, unsigned int i)
     return area_riga(A, i);
 }
 
-/* 1 se il testo e' cambiato dall'ultimo ex_area_pulita(). Serve a chiedere
+/* 1 se il testo e' cambiato dall'ultimo ex_textarea_set_unmodified(). Serve a chiedere
  * «vuoi salvare?» solo quando ha senso chiederlo. */
-int ex_area_modificato(ExFinestra f)
+int ex_textarea_is_modified(ExWindow f)
 {
     Area *A = area_da_h(f);
     return A ? A->modificato : 0;
 }
 
-void ex_area_pulita(ExFinestra f)
+void ex_textarea_set_unmodified(ExWindow f)
 {
     Area *A = area_da_h(f);
     if (A) A->modificato = 0;
@@ -8056,7 +8080,7 @@ void ex_area_pulita(ExFinestra f)
  * zona muore con l'ultima: e' la semantica della memoria condivisa di EX-OS,
  * non una scelta di qui, e va detta invece che scoperta.
  * ============================================================================= */
-void ex_area_seleziona_tutto(ExFinestra f)
+void ex_textarea_select_all(ExWindow f)
 {
     Area *A = area_da_h(f);
 
@@ -8068,13 +8092,13 @@ void ex_area_seleziona_tutto(ExFinestra f)
     area_segui(A);
 }
 
-int ex_area_copia(ExFinestra f)
+int ex_textarea_copy(ExWindow f)
 {
     Area *A = area_da_h(f);
     return A ? (int)area_sel_copia(A) : 0;
 }
 
-int ex_area_taglia(ExFinestra f)
+int ex_textarea_cut(ExWindow f)
 {
     Area        *A = area_da_h(f);
     unsigned int n;
@@ -8086,7 +8110,7 @@ int ex_area_taglia(ExFinestra f)
     return (int)n;
 }
 
-int ex_area_cancella(ExFinestra f)
+int ex_textarea_delete(ExWindow f)
 {
     Area        *A = area_da_h(f);
     unsigned int y1, x1, y2, x2;
@@ -8097,7 +8121,7 @@ int ex_area_cancella(ExFinestra f)
     return 1;
 }
 
-int ex_area_incolla(ExFinestra f)
+int ex_textarea_paste(ExWindow f)
 {
     Area    *A  = area_da_h(f);
     Appunti *ap = appunti();
@@ -8120,7 +8144,7 @@ int ex_area_incolla(ExFinestra f)
  * dire che il tasto dopo — una lettera qualunque — cancella un pezzo di testo
  * lontano da dove si sta guardando.
  * ============================================================================= */
-unsigned int ex_area_vista(ExFinestra f, unsigned int *visibili)
+unsigned int ex_textarea_get_view(ExWindow f, unsigned int *visibili)
 {
     Area *A = area_da_h(f);
 
@@ -8128,7 +8152,7 @@ unsigned int ex_area_vista(ExFinestra f, unsigned int *visibili)
     return A ? A->top : 0;
 }
 
-void ex_area_mostra_da(ExFinestra f, unsigned int riga)
+void ex_textarea_scroll_to(ExWindow f, unsigned int riga)
 {
     Area *A = area_da_h(f);
     unsigned int massimo;
@@ -8138,14 +8162,14 @@ void ex_area_mostra_da(ExFinestra f, unsigned int riga)
     A->top = (riga > massimo) ? massimo : riga;
 }
 
-void ex_area_seleziona(ExFinestra f, unsigned int riga, unsigned int da,
+void ex_textarea_select(ExWindow f, unsigned int riga, unsigned int da,
                        unsigned int a)
 {
     Area *A = area_da_h(f);
     unsigned int l;
 
     if (!A || A->n == 0 || riga >= A->n) return;
-    ex_area_vai(f, riga, da);           /* the view, centred; selection off */
+    ex_textarea_set_cursor(f, riga, da);           /* the view, centred; selection off */
     l = area_lung(A, riga);
     if (a > l) a = l;
     if (da > a) da = a;
@@ -8156,7 +8180,7 @@ void ex_area_seleziona(ExFinestra f, unsigned int riga, unsigned int da,
     A->cx  = a;
 }
 
-void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
+void ex_textarea_set_cursor(ExWindow f, unsigned int riga, unsigned int col)
 {
     Area *A = area_da_h(f);
     unsigned int l;
@@ -8196,7 +8220,7 @@ void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
  * scrive al tastierino — un carattere, un Invio, un Backspace — perche' fino
  * a oggi nessuno aveva bisogno d'altro. Un «cerca e sostituisci» ha bisogno
  * di cambiare un pezzo di riga senza passare da un tasto per volta, ed e'
- * quel che questa funzione fa: la stessa mancanza di ex_area_vai, la stessa
+ * quel che questa funzione fa: la stessa mancanza di ex_textarea_set_cursor, la stessa
  * ragione — un pezzo del toolkit che si scopre serve solo quando nasce chi
  * ne ha bisogno.
  *
@@ -8210,7 +8234,7 @@ void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
  * tastiera non deve scavalcare anche quella regola, o un commento a blocco
  * che attraversa la riga sostituita colorerebbe ancora cio' che c'era prima.
  * ============================================================================= */
-void ex_area_riga_metti(ExFinestra f, unsigned int riga, const char *testo)
+void ex_textarea_set_line(ExWindow f, unsigned int riga, const char *testo)
 {
     Area *A = area_da_h(f);
     char *r;
@@ -8224,7 +8248,7 @@ void ex_area_riga_metti(ExFinestra f, unsigned int riga, const char *testo)
     area_tocca(A, riga);
 }
 
-void ex_area_colora(ExFinestra f, ExColora fn, void *dato)
+void ex_textarea_set_highlighter(ExWindow f, ExHighlighter fn, void *dato)
 {
     Area *A = area_da_h(f);
 
@@ -8282,7 +8306,7 @@ static int c_nella(const char *const *tab, const char *p, unsigned int n)
     return 0;
 }
 
-unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
+unsigned int ex_highlight_c(void *dato, const char *riga, unsigned char *ruoli,
                          unsigned int stato)
 {
     unsigned int n = (unsigned int)strlen(riga);
@@ -8304,7 +8328,7 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
 
     while (i < n) {
         unsigned int inizio = i;
-        unsigned int ruolo  = EX_COD_NORMALE;
+        unsigned int ruolo  = EX_CODE_NORMAL;
 
         if (blocco) {
             while (i < n) {
@@ -8315,7 +8339,7 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
                 }
                 i++;
             }
-            ruolo = EX_COD_COMMENTO;
+            ruolo = EX_CODE_COMMENT;
         } else if (riga[i] == '/' && i + 1 < n && riga[i + 1] == '*') {
             blocco = 1;
             i += 2;
@@ -8327,10 +8351,10 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
                 }
                 i++;
             }
-            ruolo = EX_COD_COMMENTO;
+            ruolo = EX_CODE_COMMENT;
         } else if (riga[i] == '/' && i + 1 < n && riga[i + 1] == '/') {
             i = n;
-            ruolo = EX_COD_COMMENTO;
+            ruolo = EX_CODE_COMMENT;
         } else if (riga[i] == '"' || riga[i] == '\'') {
             char chiusura = riga[i];
 
@@ -8340,14 +8364,14 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
                 if (riga[i] == chiusura) { i++; break; }
                 i++;
             }
-            ruolo = EX_COD_STRINGA;
+            ruolo = EX_CODE_STRING;
         } else if (c_cifra(riga[i])) {
             /* Un numero comincia con una cifra e prosegue con quel che il C
              * ammette dentro: lettere (0x, la e dell'esponente, i suffissi
              * U e L) e il punto. */
             while (i < n && (c_cifra(riga[i]) || c_lettera(riga[i]) ||
                              riga[i] == '.')) i++;
-            ruolo = EX_COD_NUMERO;
+            ruolo = EX_CODE_NUMBER;
         } else if (c_lettera(riga[i])) {
             unsigned int lung;
 
@@ -8355,29 +8379,29 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
             lung = i - inizio;
 
             if (c_nella(g_c_chiavi, riga + inizio, lung)) {
-                ruolo = EX_COD_CHIAVE;
+                ruolo = EX_CODE_KEYWORD;
             } else if (c_nella(g_c_tipi, riga + inizio, lung)) {
-                ruolo = EX_COD_TIPO;
+                ruolo = EX_CODE_TYPE;
             } else {
                 unsigned int k = i;
 
                 while (k < n && (riga[k] == ' ' || riga[k] == '\t')) k++;
-                ruolo = (k < n && riga[k] == '(') ? EX_COD_FUNZIONE
-                                                  : EX_COD_NORMALE;
+                ruolo = (k < n && riga[k] == '(') ? EX_CODE_FUNCTION
+                                                  : EX_CODE_NORMAL;
             }
         } else if (riga[i] == ' ' || riga[i] == '\t') {
             while (i < n && (riga[i] == ' ' || riga[i] == '\t')) i++;
-            ruolo = EX_COD_NORMALE;
+            ruolo = EX_CODE_NORMAL;
         } else {
             i++;
-            ruolo = EX_COD_SIMBOLO;
+            ruolo = EX_CODE_SYMBOL;
         }
 
         /* ! DENTRO UNA RIGA DEL PREPROCESSORE VINCE IL PREPROCESSORE, tranne
          * che sulle stringhe e sui commenti: `#include "stdio.h"` deve mostrare
          * il nome del file come una stringa, che e' quello che e'. */
-        if (pp && ruolo != EX_COD_COMMENTO && ruolo != EX_COD_STRINGA)
-            ruolo = EX_COD_PREPROC;
+        if (pp && ruolo != EX_CODE_COMMENT && ruolo != EX_CODE_STRING)
+            ruolo = EX_CODE_PREPROC;
 
         while (inizio < i && inizio < n) ruoli[inizio++] = (unsigned char)ruolo;
     }
@@ -8385,7 +8409,7 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
     return blocco ? 1u : 0u;
 }
 
-void ex_area_cursore(ExFinestra f, unsigned int *riga, unsigned int *col)
+void ex_textarea_get_cursor(ExWindow f, unsigned int *riga, unsigned int *col)
 {
     Area *A = area_da_h(f);
 
@@ -8393,7 +8417,7 @@ void ex_area_cursore(ExFinestra f, unsigned int *riga, unsigned int *col)
     if (col)  *col  = A ? A->cx + 1 : 0;
 }
 
-void ex_schermo(unsigned int *larghezza, unsigned int *altezza)
+void ex_screen_size(unsigned int *larghezza, unsigned int *altezza)
 {
     VideoInfo v;
 
@@ -8414,12 +8438,12 @@ void ex_schermo(unsigned int *larghezza, unsigned int *altezza)
  * lettore e aggiungere una riga qui: non si tocca ne' questa funzione, ne'
  * exwin.h, ne' — soprattutto — il server.
  * --------------------------------------------------------------------------- */
-typedef int (*ExLettore)(ExFinestra f, const unsigned char *d, unsigned int n,
+typedef int (*ExLettore)(ExWindow f, const unsigned char *d, unsigned int n,
                          int x, int y);
 
 /* BMP non compresso a 24 o 32 bit: e' il formato piu' semplice che esista, e
  * serve a far nascere la struttura contro qualcosa che si puo' verificare. */
-static int leggi_bmp(ExFinestra f, const unsigned char *d, unsigned int n,
+static int leggi_bmp(ExWindow f, const unsigned char *d, unsigned int n,
                      int x, int y)
 {
     unsigned int off, larg, alt, bit, riga, i, j;
@@ -8451,7 +8475,7 @@ static int leggi_bmp(ExFinestra f, const unsigned char *d, unsigned int n,
             const unsigned char *p = r + i * (bit / 8);
             unsigned int c = ((unsigned int)p[2] << 16) |
                              ((unsigned int)p[1] << 8) | p[0];
-            ex_riempi(f, x + (int)i, y + (int)j, 1, 1, c);
+            ex_fill_rect(f, x + (int)i, y + (int)j, 1, 1, c);
         }
     }
     return 1;
@@ -8513,7 +8537,7 @@ static int eximg_funzioni(int (**carica)(const unsigned char *, unsigned int,
     return 1;
 }
 
-static int leggi_eximg(ExFinestra f, const unsigned char *d, unsigned int n,
+static int leggi_eximg(ExWindow f, const unsigned char *d, unsigned int n,
                        int x, int y)
 {
     int (*carica)(const unsigned char *, unsigned int, EximgBitmap *);
@@ -8537,7 +8561,7 @@ static const ExLettore g_lettori[] = { leggi_bmp, leggi_eximg, 0 };
  * LE ICONE
  *
  * ! UN'ICONA SI APRE UNA VOLTA E SI DISEGNA MILLE, che e' tutta la differenza
- * con ex_immagine(). Un menu di dieci voci si ridisegna a ogni apertura: con
+ * con ex_draw_image(). Un menu di dieci voci si ridisegna a ogni apertura: con
  * la strada delle immagini sarebbero dieci letture di file e dieci
  * decodifiche ogni volta che si preme "Avvio".
  *
@@ -8634,8 +8658,8 @@ static int icona_decodifica(const unsigned char *d, unsigned int n,
     return 1;
 }
 
-/* ex_immagine_disponi: il perche' sta in exwin.h. */
-int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
+/* ex_draw_image_mode: il perche' sta in exwin.h. */
+int ex_draw_image_mode(ExWindow f, const char *percorso, int x, int y,
                         int w, int h, int modo, unsigned int sfondo)
 {
     unsigned char *d;
@@ -8644,9 +8668,9 @@ int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
     int            fd, n, i, j, ox = 0, oy = 0;
 
     if (!percorso || w <= 0 || h <= 0) return 0;
-    if (modo == EX_IMM_ANGOLO) {
-        ex_riempi(f, x, y, w, h, sfondo);
-        return ex_immagine(f, percorso, x, y);
+    if (modo == EX_IMAGE_TOPLEFT) {
+        ex_fill_rect(f, x, y, w, h, sfondo);
+        return ex_draw_image(f, percorso, x, y);
     }
 
     fd = open(percorso, O_RDONLY);
@@ -8669,7 +8693,7 @@ int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
 
     /* Il centro: di quanto l'immagine sta a destra e in basso dell'angolo
      * del riquadro. Negativo quando e' piu' grande: si prende il suo mezzo. */
-    if (modo == EX_IMM_CENTRO) {
+    if (modo == EX_IMAGE_CENTER) {
         ox = (w - (int)iw) / 2;
         oy = (h - (int)ih) / 2;
     }
@@ -8678,10 +8702,10 @@ int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
         for (i = 0; i < w; i++) {
             int sx, sy;
 
-            if (modo == EX_IMM_ALLARGA) {
+            if (modo == EX_IMAGE_STRETCH) {
                 sx = (int)((unsigned int)i * iw / (unsigned int)w);
                 sy = (int)((unsigned int)j * ih / (unsigned int)h);
-            } else if (modo == EX_IMM_RIPETI) {
+            } else if (modo == EX_IMAGE_TILE) {
                 sx = i % (int)iw;
                 sy = j % (int)ih;
             } else {
@@ -8692,7 +8716,7 @@ int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
                     continue;
                 }
             }
-            /* ! OPACA, COME IN ex_immagine: i lettori di PNG e JPG lasciano
+            /* ! OPACA, COME IN ex_draw_image: i lettori di PNG e JPG lasciano
              * l'alfa a zero ("alfa ignorata" in eximg/png.c), e fonderla
              * darebbe uno sfondo tinta unita al posto della foto. */
             out[j * w + i] = px[(unsigned int)sy * iw + (unsigned int)sx] & 0xFFFFFF;
@@ -8705,7 +8729,7 @@ int ex_immagine_disponi(ExFinestra f, const char *percorso, int x, int y,
     return 1;
 }
 
-ExIcona ex_icona_apri(const char *percorso)
+ExIcon ex_icon_open(const char *percorso)
 {
     unsigned char *d;
     unsigned int   cap = 256u * 1024u;
@@ -8739,17 +8763,17 @@ ExIcona ex_icona_apri(const char *percorso)
     g_icone[i].w  = w;
     g_icone[i].h  = h;
 
-    return (ExIcona)(i + 1);            /* 0 resta "nessuna icona" */
+    return (ExIcon)(i + 1);            /* 0 resta "nessuna icona" */
 }
 
-static Icona *icona_di(ExIcona ic)
+static Icona *icona_di(ExIcon ic)
 {
     if (ic == 0 || ic > ICONE_MAX) return 0;
     if (!g_icone[ic - 1].usata) return 0;
     return &g_icone[ic - 1];
 }
 
-unsigned int ex_icona_lato(ExIcona ic)
+unsigned int ex_icon_size(ExIcon ic)
 {
     Icona *I = icona_di(ic);
 
@@ -8823,7 +8847,7 @@ static void riduci(const unsigned int *src, unsigned int sw, unsigned int sh,
     }
 }
 
-int ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
+int ex_icon_draw(ExWindow f, ExIcon ic, int x, int y,
                      unsigned int lato, unsigned int sfondo)
 {
     Icona *I = icona_di(ic);
@@ -8858,7 +8882,7 @@ int ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
  * controllo nuovo.
  *
  * `lato` a 0 sceglie da se': l'altezza del controllo meno un po' d'aria. */
-void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
+void ex_set_icon(ExWindow c, ExIcon ic, unsigned int lato)
 {
     Oggetto *o = ogg(c);
 
@@ -8876,7 +8900,7 @@ void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
     o->icona_lato = lato;
 }
 
-void ex_icona_chiudi(ExIcona ic)
+void ex_icon_close(ExIcon ic)
 {
     Icona *I = icona_di(ic);
 
@@ -8886,7 +8910,7 @@ void ex_icona_chiudi(ExIcona ic)
     memset(I, 0, sizeof(Icona));
 }
 
-int ex_immagine(ExFinestra f, const char *percorso, int x, int y)
+int ex_draw_image(ExWindow f, const char *percorso, int x, int y)
 {
     int fd, n, k;
     unsigned char *d;

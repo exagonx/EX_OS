@@ -81,6 +81,39 @@ int main(int argc, char **argv)
        lettore);
     sqlite3_close(lettore);
 
+    /* La modalita' WAL, quella dei database di Firefox: il file -shm mappato
+     * condiviso e scrivibile, e ftruncate sul -wal (kernel 0.233). */
+    {
+        char wal[256];
+        sqlite3 *w = NULL, *w2 = NULL;
+        int i, giri = 1;
+
+        snprintf(wal, sizeof wal, "%s.wal.sqlite", nome);
+        ok("WAL: apre", sqlite3_open_v2(wal, &w, fl, NULL) == SQLITE_OK, w);
+        ok("WAL: journal_mode=WAL accettato",
+           esegui(w, "PRAGMA journal_mode=WAL;") &&
+           conta(w, "SELECT count(*) FROM pragma_journal_mode WHERE journal_mode='wal';") == 1, w);
+        ok("WAL: CREATE e mille INSERT", esegui(w, "CREATE TABLE IF NOT EXISTS t(a INTEGER, b TEXT);"), w);
+        for (i = 0; i < 1000 && giri; i++) {
+            char q[96];
+            snprintf(q, sizeof q, "INSERT INTO t VALUES(%d, 'riga numero %d');", i, i);
+            giri = esegui(w, q);
+        }
+        ok("WAL: le mille righe", giri && conta(w, "SELECT count(*) FROM t;") == 1000, w);
+        ok("WAL: una seconda connessione le vede",
+           sqlite3_open_v2(wal, &w2, fl, NULL) == SQLITE_OK &&
+           conta(w2, "SELECT count(*) FROM t;") == 1000, w2);
+        ok("WAL: checkpoint con troncamento (ftruncate)",
+           esegui(w, "PRAGMA wal_checkpoint(TRUNCATE);"), w);
+        sqlite3_close(w2);
+        sqlite3_close(w);
+        ok("WAL: riaperto, integrity_check",
+           sqlite3_open_v2(wal, &w, fl, NULL) == SQLITE_OK &&
+           conta(w, "SELECT count(*) FROM t;") == 1000 &&
+           conta(w, "SELECT count(*) FROM pragma_integrity_check WHERE integrity_check='ok';") == 1, w);
+        sqlite3_close(w);
+    }
+
     printf("prova-sqlite: %d NO\n", g_no);
     return g_no;
 }

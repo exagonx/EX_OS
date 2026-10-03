@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.227
+**Version:** 0.234
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -83,6 +83,63 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### The ExWin API is in English, and exide is consistent
+
+**to be tested on hardware, tested in QEMU** — ExWin's functions, messages,
+styles and types have English names (`ex_create`, `ex_set_text`,
+`EXM_CLOSE`, `ExWindow`...); the Italian names remain as aliases, and
+programs already compiled keep working. In exide a control's name is the
+variable to use in code (`Button1`, no longer `h_Button1`), events are
+`Button1_Click()` and the like, and old projects still open and build.
+Name table in `tools/exwin-inglese/mappa.txt`.
+
+### Firefox in an ExWin window
+
+**tested in QEMU** (`tools/exilla/prova-finestra.sh`) — the seventh stage of
+Exilla: Firefox opens in a real window of the graphics server, with tabs, the
+address bar and the page, and receives mouse and keyboard. To get there EX-OS
+got a new `malloc` (free lists by size: the old one walked the whole heap on
+every call), a stack aligned for SSE code, and wserver 0.009, which accepts
+pixels from any thread of the program. Picture in
+`tools/exilla/tappa7-finestra.png`.
+
+### Firefox draws its first page inside EX-OS
+
+**tested in QEMU** (`tools/exilla/prova-gecko.sh`) — the sixth stage of
+Exilla, the port of Firefox: `firefox --headless --screenshot` opens a local
+page and saves what it drew (text, bold, italic, coloured boxes, a line
+written by JavaScript). Diary and picture in `tools/exilla/leggimi.md`. The
+seventh stage — a real window in ExWin — is under way.
+
+### Kernel 0.228–0.234: what Firefox found
+
+**tested in QEMU** — fixes that matter to every program with threads:
+- **0.234**: `mmap` with `MAP_FIXED` over pages already mapped frees them
+  first (they were lost): Firefox's JavaScript JIT needs it.
+- **0.233**: `ftruncate` on an open file and 256 open files in the system
+  (was 64): Firefox's SQLite databases (WAL mode too).
+- **0.232**: 128 open files per process (was 32): Firefox opens more and
+  could not find its fonts.
+- **0.231**: 128 threads per process (was 64) and 192 processes in the
+  system: Firefox with a real window uses more than 63.
+- **0.230**: the threads of a process each had a *copy* of the heap
+  boundary, and `sbrk`/`mmap` from different threads handed out the same
+  addresses. The address space now belongs to the process. A page table born
+  from a `PROT_NONE` mapping no longer stays the kernel's, and `PROT_NONE`
+  reserves address space without using RAM until `mprotect` opens it.
+- **0.229**: the main thread's stack is reserved for 8 MB.
+- **0.228**: `fstat` gives the file's real identity (SQLite needs it).
+- In `libc.a`: `malloc` with a lock and 16-byte alignment, `arc4random`
+  (ChaCha20), a fuller `shm_open` (with `SHM_ANON`), `mmap` of a file,
+  `getpid` the same in every thread.
+
+### The floppy has room again
+
+**tested in QEMU** — `help` and `kbprova` (and `/boot/help.txt`) now live on
+the CD only: the floppy was down to 512 free bytes and now has 64 KB. From
+the floppy, `help` shows the shell's fallback help; with the CD mounted there
+is `/cdrom/bin/help`. The diagnostic floppies carry `kbprova` themselves.
 
 ### Selecting and copying text in EXBrowser
 

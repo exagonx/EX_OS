@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.232
+**Versione:** 0.234
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -101,6 +101,25 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Quattro giochi: EXKlondike, EXSpider, EXMajong, EXGO
+
+**da testare sul ferro, provato in QEMU** — nel menu Avvio > Giochi: il
+solitario classico, lo Spider a uno, due o quattro semi, il solitario con le
+tessere del mahjong (ogni partita si puo' vincere) e il go su 9x9, 13x13 o
+19x19 contro il computer o in due. Carte, tessere e pietre sono disegnate dal
+programma, ciascuno ha la sua icona, e le scelte e le partite vinte si
+ricordano nel profilo.
+
+### L'API di ExWin e' in inglese, ed exide e' coerente
+
+**da testare sul ferro, provato in QEMU** — funzioni, messaggi, stili e tipi
+di ExWin hanno nomi inglesi (`ex_create`, `ex_set_text`, `EXM_CLOSE`,
+`ExWindow`...); i nomi italiani restano come alias, e i programmi gia'
+compilati funzionano. In exide il nome di un controllo e' la variabile da
+usare nel codice (`Button1`, non piu' `h_Button1`), gli eventi sono
+`Button1_Click()` e simili, e i progetti vecchi si aprono e si compilano
+ancora. Tabella dei nomi in `tools/exwin-inglese/mappa.txt`.
+
 ### Firefox in una finestra di ExWin
 
 **testato in QEMU** (`tools/exilla/prova-finestra.sh`) — la settima tappa di
@@ -120,9 +139,13 @@ riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
 `tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
 in corso.
 
-### Kernel 0.228–0.232: quello che Firefox ha trovato
+### Kernel 0.228–0.234: quello che Firefox ha trovato
 
 **testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
+- **0.234**: `mmap` con `MAP_FIXED` sopra pagine gia' mappate le libera
+  prima (restavano perse): serve al JIT di JavaScript di Firefox.
+- **0.233**: `ftruncate` su un file aperto e 256 file aperti nel sistema
+  (erano 64): i database SQLite di Firefox (anche in modalita' WAL).
 - **0.232**: 128 file aperti per processo (erano 32): Firefox ne apre di piu'
   e non trovava i caratteri.
 - **0.231**: 128 fili per processo (erano 64) e 192 processi nel sistema:

@@ -316,7 +316,7 @@ void preludio_esegui(ExJsCtx *js, int dentro_w, int dentro_h)
     exjs_metti(js, exjs_globale(js), "__exos_casuali",
                exjs_nativa(js, nat_casuali, 0, "__exos_casuali"));
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     snprintf(testa, sizeof(testa),
              "innerWidth = %d; innerHeight = %d; outerWidth = %d; outerHeight = %d;"
              "screen = { width: %u, height: %u, availWidth: %u, availHeight: %u,"

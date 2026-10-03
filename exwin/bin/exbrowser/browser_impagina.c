@@ -264,7 +264,7 @@ static ExFont font_di(const CssStile *st)
 
 static unsigned int colore_di(const CssStile *st)
 {
-    return (st->colore == CSS_NIENTE) ? EX_NERO : st->colore;
+    return (st->colore == CSS_NIENTE) ? EX_BLACK : st->colore;
 }
 
 /* =============================================================================
@@ -322,7 +322,7 @@ static int rettangolo(int x, int y, int w, int h, unsigned int colore)
 
 static int alt_riga_f(ExFont f)
 {
-    int h = ex_font_altezza(f);
+    int h = ex_font_height(f);
 
     return h > 0 ? h + 3 : 19;
 }
@@ -386,7 +386,7 @@ static void parola(const char *t, unsigned int off, int n)
     for (i = 0; i < n; i++) cop[i] = t[i];
     cop[n] = '\0';
 
-    w = ex_larghezza_testo(f, cop);
+    w = ex_text_width(f, cop);
 
     /* ! SI VA A CAPO SULLA PAROLA, NON SUL CARATTERE, ed e' cio' che rende il
      * testo leggibile: spezzare in mezzo a una parola si vede subito. Una
@@ -532,7 +532,7 @@ static void parole(const char *t, unsigned int base)
             if (t[i] == ' ' || t[i] == '\t') {
                 int quanti = (t[i] == '\t') ? 8 : 1;
 
-                g_pen_x += quanti * ex_larghezza_testo(font_di(&g_stile_ora), " ");
+                g_pen_x += quanti * ex_text_width(font_di(&g_stile_ora), " ");
                 i++;
                 continue;
             }
@@ -561,7 +561,7 @@ static void parole(const char *t, unsigned int base)
         if (bianco(t[i])) {
             while (bianco(t[i])) i++;
             if (g_pen_x > rx())
-                g_pen_x += ex_larghezza_testo(font_di(&g_stile_ora), " ");
+                g_pen_x += ex_text_width(font_di(&g_stile_ora), " ");
             continue;
         }
         if (!t[i]) break;
@@ -595,7 +595,7 @@ static void pezzo_estraneo(int v, const VistaPezzo *p)
         g_pez[g_pez_n].w = w;
         g_pez[g_pez_n].testo = 0;
         g_pez[g_pez_n].font = g_font_testo;
-        g_pez[g_pez_n].colore = EX_NERO;
+        g_pez[g_pez_n].colore = EX_BLACK;
         g_pez[g_pez_n].h = (short)h;
         g_pez[g_pez_n].link = p->nel_flusso ? (short)g_link_ora : -1;
         g_pez[g_pez_n].rif = (short)p->rif;
@@ -746,7 +746,7 @@ static int bordo_metti(int x, int y, int w, int h, int spess)
     g_sfondi[g_sfondi_n].y      = y;
     g_sfondi[g_sfondi_n].w      = w;
     g_sfondi[g_sfondi_n].h      = h;
-    g_sfondi[g_sfondi_n].colore = EX_GRIGIO_SC;
+    g_sfondi[g_sfondi_n].colore = EX_DARK_GRAY;
     g_sfondi[g_sfondi_n].bordo  = (unsigned char)spess;
     return g_sfondi_n++;
 }
@@ -1455,7 +1455,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[g_sfondi_n].y = g_pen_y + 2;
                 g_sfondi[g_sfondi_n].w = rw();
                 g_sfondi[g_sfondi_n].h = 2;
-                g_sfondi[g_sfondi_n].colore = EX_OMBRA;
+                g_sfondi[g_sfondi_n].colore = EX_SHADOW;
                 g_sfondi_n++;
             }
             g_pen_y += 6;
@@ -1661,7 +1661,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                     if (off != GENERA_NIENTE) parola("-", off, 1);
                 }
             }
-            g_pen_x += ex_larghezza_testo(font_di(&mio), " ");
+            g_pen_x += ex_text_width(font_di(&mio), " ");
         }
 
         if (uguale(nome, "a")) {
@@ -1866,19 +1866,19 @@ void disegna(void)
     if (g_vi->cornice) { disegna_tutto(); return; }
 
     /* ! I CONTROLLI SI RIDISEGNANO PRIMA DEL CONTENUTO, e non basta riempire
-     * di grigio. Qui c'era un ex_riempi su tutta la finestra: dipingeva SOPRA
+     * di grigio. Qui c'era un ex_fill_rect su tutta la finestra: dipingeva SOPRA
      * la casella dell'indirizzo e i pulsanti, che sono figli e stanno negli
      * stessi pixel. Il risultato era una barra sparita al primo disegno — e
      * siccome il primo disegno arriva subito, non si vedeva mai.
      *
-     * ex_procedura_base riempie il fondo E ridisegna i figli: e' la stessa
+     * ex_default_proc riempie il fondo E ridisegna i figli: e' la stessa
      * cosa in una chiamata, e resta giusta il giorno che si aggiunge un
      * pulsante. */
     schede_segui_titolo();              /* prima dei controlli: la linguetta */
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     disegna_barra();
     disegna_contenuto();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 /* Where drawing is cut: the document's area, or for an iframe the part of its
@@ -1893,15 +1893,15 @@ void disegna_contenuto(void)
     int i;
 
     if (g_vi->cornice) {
-        ex_riempi(g_f, T_X(), T_Y(), T_W(), T_H(), EX_BIANCO);
+        ex_fill_rect(g_f, T_X(), T_Y(), T_W(), T_H(), EX_WHITE);
     } else {
-        ex_riempi(g_f, T_X() - 2, T_Y() - 2, T_W() + 4, T_H() + 4,
-                  EX_BIANCO);
-        ex_incavo(g_f, T_X() - 2, T_Y() - 2, T_W() + 4, T_H() + 4);
+        ex_fill_rect(g_f, T_X() - 2, T_Y() - 2, T_W() + 4, T_H() + 4,
+                  EX_WHITE);
+        ex_draw_sunken(g_f, T_X() - 2, T_Y() - 2, T_W() + 4, T_H() + 4);
     }
 
     /* ! GLI SFONDI PRIMA DI TUTTO IL RESTO, e ritagliati a mano all'area come
-     * le immagini: ex_riempi ritaglia alla FINESTRA, non al documento. */
+     * le immagini: ex_fill_rect ritaglia alla FINESTRA, non al documento. */
     for (i = 0; i < g_sfondi_n; i++) {
         int y = g_sfondi[i].y - g_scorri;
         int h = g_sfondi[i].h;
@@ -1918,7 +1918,7 @@ void disegna_contenuto(void)
             int x = g_sfondi[i].x, w = g_sfondi[i].w;
             if (x < T_X()) { w -= T_X() - x; x = T_X(); }
             if (x + w > T_X() + T_W()) w = T_X() + T_W() - x;
-            if (w > 0) ex_riempi(g_f, x, y, w, h, g_sfondi[i].colore);
+            if (w > 0) ex_fill_rect(g_f, x, y, w, h, g_sfondi[i].colore);
             continue;
         }
 
@@ -1932,19 +1932,19 @@ void disegna_contenuto(void)
             int y0 = g_sfondi[i].y - g_scorri;
             int h0 = g_sfondi[i].h;
 
-            ex_riempi(g_f, x, y, b, h, g_sfondi[i].colore);
-            ex_riempi(g_f, x + w - b, y, b, h, g_sfondi[i].colore);
+            ex_fill_rect(g_f, x, y, b, h, g_sfondi[i].colore);
+            ex_fill_rect(g_f, x + w - b, y, b, h, g_sfondi[i].colore);
             if (y0 >= T_Y())
-                ex_riempi(g_f, x, y0, w, b, g_sfondi[i].colore);
+                ex_fill_rect(g_f, x, y0, w, b, g_sfondi[i].colore);
             if (y0 + h0 <= T_Y() + T_H())
-                ex_riempi(g_f, x, y0 + h0 - b, w, b, g_sfondi[i].colore);
+                ex_fill_rect(g_f, x, y0 + h0 - b, w, b, g_sfondi[i].colore);
         }
     }
 
     for (i = 0; i < g_pez_n; i++) {
         int y  = g_pez[i].y - g_scorri;
         int ph = (g_pez[i].rif >= 0)
-                 ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
+                 ? g_pez[i].h : ex_font_height(g_pez[i].font);
 
         /* ! SI DISEGNA SOLO CIO' CHE SI VEDE. Con una pagina di migliaia di
          * righe, dipingere tutto vorrebbe dire pagare l'intero documento a
@@ -1971,7 +1971,7 @@ void disegna_contenuto(void)
         }
 
         /* ! E UNA RIGA DI TESTO A META' NON SI DISEGNA AFFATTO, perche' non
-         * c'e' un ritaglio. `ex_scrivi` taglia alla FINESTRA, non all'area del
+         * c'e' un ritaglio. `ex_draw_text` taglia alla FINESTRA, non all'area del
          * documento: una riga che comincia sopra il bordo veniva dipinta SOPRA
          * LA BARRA DELL'INDIRIZZO, e una in fondo sopra la barra di stato. Si
          * vedeva appena il documento diventava piu' lungo della finestra —
@@ -2014,16 +2014,16 @@ void disegna_contenuto(void)
                 if (!g_vi->cornice && g_sel_da >= 0 && i >= g_sel_da && i <= g_sel_a) {
                     int sp = (i < g_sel_a && i + 1 < g_pez_n && g_pez[i + 1].y == g_pez[i].y)
                            ? g_pez[i + 1].x - g_pez[i].x : g_pez[i].w;
-                    ex_riempi(g_f, g_pez[i].x, y, sp > 0 ? sp : g_pez[i].w, ph, EX_BLU);
-                    c = EX_BIANCO;
+                    ex_fill_rect(g_f, g_pez[i].x, y, sp > 0 ? sp : g_pez[i].w, ph, EX_BLUE);
+                    c = EX_WHITE;
                 }
-                ex_scrivi_con(g_f, f, g_pez[i].x, y, cop, c);
+                ex_draw_text_font(g_f, f, g_pez[i].x, y, cop, c);
 
                 /* ! UN COLLEGAMENTO SI SOTTOLINEA, e non basta il colore: su
                  * uno schermo a pochi colori il blu e il nero si distinguono
                  * male, e chi non li distingue non trova i collegamenti. */
                 if (g_pez[i].link >= 0)
-                    ex_riempi(g_f, g_pez[i].x, y + ex_font_altezza(f) - 2,
+                    ex_fill_rect(g_f, g_pez[i].x, y + ex_font_height(f) - 2,
                               g_pez[i].w, 1, c);
             }
         }
@@ -2040,19 +2040,19 @@ void disegna_contenuto(void)
 
             if (g_tab_link >= 0 ? g_pez[i].link != g_tab_link
                                 : g_pez[i].rif != g_tab_rif) continue;
-            h = (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
+            h = (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_height(g_pez[i].font);
             x = g_pez[i].x - 2;
             y = g_pez[i].y - g_scorri - 1;
             w = g_pez[i].w + 4;
             h = h + 2;
             if (y < T_Y() || y + h > T_Y() + T_H()) continue;
             for (q = 0; q < w; q += 2) {
-                ex_riempi(g_f, x + q, y, 1, 1, EX_NERO);
-                ex_riempi(g_f, x + q, y + h - 1, 1, 1, EX_NERO);
+                ex_fill_rect(g_f, x + q, y, 1, 1, EX_BLACK);
+                ex_fill_rect(g_f, x + q, y + h - 1, 1, 1, EX_BLACK);
             }
             for (q = 0; q < h; q += 2) {
-                ex_riempi(g_f, x, y + q, 1, 1, EX_NERO);
-                ex_riempi(g_f, x + w - 1, y + q, 1, 1, EX_NERO);
+                ex_fill_rect(g_f, x, y + q, 1, 1, EX_BLACK);
+                ex_fill_rect(g_f, x + w - 1, y + q, 1, 1, EX_BLACK);
             }
         }
     }

@@ -53,7 +53,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `calctor -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("calctor", VERSIONE_APP);
 
 /* --- Geometry -------------------------------------------------------------- */
@@ -103,7 +103,7 @@ typedef struct {
     const char *testo;
     const char *cod;
     int         blocco, col, riga, alto;
-    ExFinestra  c;
+    ExWindow  c;
 } Tasto;
 
 static Tasto g_t[] = {
@@ -156,8 +156,8 @@ static Tasto g_t[] = {
 /* =============================================================================
  * THE STATE
  * ============================================================================= */
-static ExFinestra g_f, g_menu, g_r_modo[3], g_cron, g_riq_base, g_r_base[4];
-static ExFinestra g_fcron = 0, g_lcron = 0;     /* the tape window */
+static ExWindow g_f, g_menu, g_r_modo[3], g_cron, g_riq_base, g_r_base[4];
+static ExWindow g_fcron = 0, g_lcron = 0;     /* the tape window */
 static int        g_w = W_NORMALE, g_h = H_FIN;
 static ExFont     g_font_grande, g_font_piccolo;
 
@@ -394,10 +394,10 @@ static void cron_aggiungi(const char *s)
     g_cr[g_ncr] = strdup(s);
     if (g_cr[g_ncr]) g_ncr++;
     if (g_lcron) {
-        ex_lista_aggiungi(g_lcron, s);
-        ex_lista_scegli(g_lcron, ex_lista_quante(g_lcron) - 1);
-        ex_procedura_base(g_fcron, EXM_DISEGNA, 0, 0);
-        ex_aggiorna(g_fcron);
+        ex_list_add(g_lcron, s);
+        ex_list_select(g_lcron, ex_list_count(g_lcron) - 1);
+        ex_default_proc(g_fcron, EXM_PAINT, 0, 0);
+        ex_update(g_fcron);
     }
 }
 
@@ -408,9 +408,9 @@ static void cron_svuota(void)
     for (i = 0; i < g_ncr; i++) free(g_cr[i]);
     g_ncr = 0;
     if (g_lcron) {
-        ex_lista_svuota(g_lcron);
-        ex_procedura_base(g_fcron, EXM_DISEGNA, 0, 0);
-        ex_aggiorna(g_fcron);
+        ex_list_clear(g_lcron);
+        ex_default_proc(g_fcron, EXM_PAINT, 0, 0);
+        ex_update(g_fcron);
     }
 }
 
@@ -420,11 +420,11 @@ static void cron_svuota(void)
 static void scrivi_destra(ExFont fo, int x, int y, int w, const char *s, unsigned int c)
 {
     const char *p = s;
-    int         l = ex_larghezza_testo(fo, p);
+    int         l = ex_text_width(fo, p);
 
     /* Too long: the end is what matters, the beginning goes. */
-    while (*p && l > w) { p++; l = ex_larghezza_testo(fo, p); }
-    ex_scrivi_con(g_f, fo, x + w - l, y, p, c);
+    while (*p && l > w) { p++; l = ex_text_width(fo, p); }
+    ex_draw_text_font(g_f, fo, x + w - l, y, p, c);
 }
 
 static void display_disegna(void)
@@ -432,12 +432,12 @@ static void display_disegna(void)
     int  x = MARGINE, y = Y_DISPLAY, w = g_w - 2 * MARGINE, i, hp, hg;
     char riga[256];
 
-    hp = g_font_piccolo ? ex_font_altezza(g_font_piccolo) : 16;
-    hg = g_font_grande  ? ex_font_altezza(g_font_grande)  : 16;
+    hp = g_font_piccolo ? ex_font_height(g_font_piccolo) : 16;
+    hg = g_font_grande  ? ex_font_height(g_font_grande)  : 16;
     if (hp > 18) hp = 18;
 
-    ex_riempi(g_f, x, y, w, H_DISPLAY, 0x00E8F0E0);
-    ex_incavo(g_f, x, y, w, H_DISPLAY);
+    ex_fill_rect(g_f, x, y, w, H_DISPLAY, 0x00E8F0E0);
+    ex_draw_sunken(g_f, x, y, w, H_DISPLAY);
 
     /* Three lines of tape, oldest at the top. */
     for (i = 0; i < 3; i++) {
@@ -446,27 +446,27 @@ static void display_disegna(void)
     }
 
     /* What is on the left: memory, angles, base. */
-    if (g_mem != 0.0) ex_scrivi(g_f, x + 6, y + H_DISPLAY - 22, "M", EX_NERO);
-    if (g_modo == MODO_SCI)  ex_scrivi(g_f, x + 6, y + 4, g_rad ? "RAD" : "DEG", 0x00505050);
-    if (g_modo == MODO_PROG) ex_scrivi(g_f, x + 6, y + 4, BASI_NOME[g_base], 0x00505050);
+    if (g_mem != 0.0) ex_draw_text(g_f, x + 6, y + H_DISPLAY - 22, "M", EX_BLACK);
+    if (g_modo == MODO_SCI)  ex_draw_text(g_f, x + 6, y + 4, g_rad ? "RAD" : "DEG", 0x00505050);
+    if (g_modo == MODO_PROG) ex_draw_text(g_f, x + 6, y + 4, BASI_NOME[g_base], 0x00505050);
 
     if (g_err[0]) snprintf(riga, sizeof(riga), "%s", g_err);
     else          riga_corrente(riga, sizeof(riga));
     scrivi_destra(g_font_grande, x + 24, y + H_DISPLAY - hg - 4, w - 32, riga,
-                  g_err[0] ? EX_ROSSO : EX_NERO);
+                  g_err[0] ? EX_RED : EX_BLACK);
 }
 
 static void ridisegna_display(void)
 {
     display_disegna();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 static void ridisegna(void)
 {
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     display_disegna();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 /* =============================================================================
@@ -907,7 +907,7 @@ static void tasti_aggiorna(void)
         int    si = 1;
 
         if (!t->c) continue;
-        ex_mostra(t->c, vis);
+        ex_show(t->c, vis);
         if (g_modo == MODO_PROG) {
             const char *c = t->cod;
             int d = -1;
@@ -919,14 +919,14 @@ static void tasti_aggiorna(void)
             if (!strcmp(c, "00")) si = 1;
             if (!strcmp(c, ".") || !strcmp(c, "sqrt") || !strcmp(c, "1/x") || !strcmp(c, "%")) si = 0;
         }
-        ex_abilita(t->c, si);
+        ex_enable(t->c, si);
     }
     if (g_riq_base) {
-        ex_mostra(g_riq_base, g_modo == MODO_PROG);
-        for (i = 0; i < 4; i++) ex_mostra(g_r_base[i], g_modo == MODO_PROG);
+        ex_show(g_riq_base, g_modo == MODO_PROG);
+        for (i = 0; i < 4; i++) ex_show(g_r_base[i], g_modo == MODO_PROG);
     }
     for (i = 0; i < N_TASTI; i++)
-        if (!strcmp(g_t[i].cod, "ang") && g_t[i].c) ex_testo_metti(g_t[i].c, g_rad ? "RAD" : "DEG");
+        if (!strcmp(g_t[i].cod, "ang") && g_t[i].c) ex_set_text(g_t[i].c, g_rad ? "RAD" : "DEG");
 }
 
 /* The number shown, carried into the new mode or base. */
@@ -944,7 +944,7 @@ static void modo_imposta(int m)
 {
     int w;
 
-    if (m == g_modo) { ex_accendi(g_r_modo[m], 1); ridisegna(); return; }
+    if (m == g_modo) { ex_set_checked(g_r_modo[m], 1); ridisegna(); return; }
     {
         double v = operando();
         int    aveva = g_scrive || g_ha;
@@ -953,10 +953,10 @@ static void modo_imposta(int m)
         g_ntok = 0;
         g_err[0] = '\0';
     }
-    ex_accendi(g_r_modo[m], 1);
+    ex_set_checked(g_r_modo[m], 1);
     tasti_aggiorna();
     w = m == MODO_NORM ? W_NORMALE : W_LARGA;
-    if (w != g_w) ex_misura(g_f, w, H_FIN);     /* EXM_MISURA redraws */
+    if (w != g_w) ex_resize(g_f, w, H_FIN);     /* EXM_SIZE redraws */
     else          ridisegna();
     opzioni_salva();
 }
@@ -965,7 +965,7 @@ static void base_imposta(int b)
 {
     porta_valore();
     g_base = b;
-    ex_accendi(g_r_base[b], 1);
+    ex_set_checked(g_r_base[b], 1);
     tasti_aggiorna();
     ridisegna();
     opzioni_salva();
@@ -974,7 +974,7 @@ static void base_imposta(int b)
 /* =============================================================================
  * THE TAPE WINDOW
  * ============================================================================= */
-static long cron_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+static long cron_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 static void cron_apri(void)
 {
@@ -982,45 +982,45 @@ static void cron_apri(void)
     int          i;
 
     if (g_fcron) return;
-    ex_schermo(&sw, &sh);
-    g_fcron = ex_crea("finestra", "Cronologia di Calctor",
-                      EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    ex_screen_size(&sw, &sh);
+    g_fcron = ex_create("window", "Cronologia di Calctor",
+                      EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                       (int)sw > 360 ? (int)sw - 340 : 0, 40, 320, 360, 0, 0, cron_proc);
     if (!g_fcron) return;
-    g_lcron = ex_crea("lista", "", EX_FIGLIO, 4, 4, 312, 352, g_fcron, 1, 0);
-    for (i = 0; i < g_ncr; i++) ex_lista_aggiungi(g_lcron, g_cr[i]);
-    if (g_ncr) ex_lista_scegli(g_lcron, (unsigned int)g_ncr - 1);
-    ex_procedura_base(g_fcron, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_fcron);
+    g_lcron = ex_create("list", "", EX_CHILD, 4, 4, 312, 352, g_fcron, 1, 0);
+    for (i = 0; i < g_ncr; i++) ex_list_add(g_lcron, g_cr[i]);
+    if (g_ncr) ex_list_select(g_lcron, (unsigned int)g_ncr - 1);
+    ex_default_proc(g_fcron, EXM_PAINT, 0, 0);
+    ex_update(g_fcron);
     /* ! IL FUOCO TORNA ALLA CALCOLATRICE: il nastro nasce per ultimo e se lo
      * prendeva, e le cifre battute andavano a lui — da tastiera la
      * calcolatrice non rispondeva piu' (visto in QEMU, 28 settembre 2026). */
-    ex_attiva(g_f);
+    ex_activate(g_f);
 }
 
 static void cron_chiudi(void)
 {
     if (!g_fcron) return;
-    ex_distruggi(g_fcron);
+    ex_destroy(g_fcron);
     g_fcron = g_lcron = 0;
 }
 
-static long cron_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long cron_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         cron_chiudi();
-        ex_accendi(g_cron, 0);
+        ex_set_checked(g_cron, 0);
         ridisegna();
         opzioni_salva();
         return 0;
-    case EXM_MISURA:
-        if (g_lcron) ex_misura(g_lcron, EX_X(lp) - 8, EX_Y(lp) - 8);
+    case EXM_SIZE:
+        if (g_lcron) ex_resize(g_lcron, EX_X(lp) - 8, EX_Y(lp) - 8);
         break;
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         return 0;               /* choosing a line of the tape does nothing */
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 /* =============================================================================
@@ -1162,43 +1162,43 @@ static const char *da_tasto(unsigned int k)
     return 0;
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
-    case EXM_DISEGNA:
-        ex_procedura_base(f, msg, wp, lp);
+    case EXM_PAINT:
+        ex_default_proc(f, msg, wp, lp);
         display_disegna();
-        ex_aggiorna(f);
+        ex_update(f);
         return 0;
 
-    case EXM_MISURA:
+    case EXM_SIZE:
         g_w = EX_X(lp);
         g_h = EX_Y(lp);
-        ex_procedura_base(f, msg, wp, lp);
+        ex_default_proc(f, msg, wp, lp);
         ridisegna();
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         switch (wp) {
         case ID_NUOVO:  cron_svuota(); tutto_azzera(); ridisegna(); return 0;
         /* After a dialog the window is drawn again: the toolkit repaints
          * only its own controls, and the display would stay blank. */
         case ID_SALVA:  salva(); ridisegna(); return 0;
-        case ID_ESCI:   ex_esci(0); return 0;
+        case ID_ESCI:   ex_quit(0); return 0;
         case ID_M_NORM: case ID_R_NORM: modo_imposta(MODO_NORM); break;
         case ID_M_SCI:  case ID_R_SCI:  modo_imposta(MODO_SCI);  break;
         case ID_M_PROG: case ID_R_PROG: modo_imposta(MODO_PROG); break;
         case ID_INFO:   informazioni(); ridisegna(); return 0;
         case ID_ISTR:   istruzioni(); ridisegna(); return 0;
         case ID_CRON:
-            if (ex_acceso(g_cron)) cron_apri(); else cron_chiudi();
+            if (ex_is_checked(g_cron)) cron_apri(); else cron_chiudi();
             /* ! THE KEYS CHANGE WITH THE BOX, and so does the arithmetic:
              * what was being typed under the other rule starts over. */
-            g_nastro = ex_acceso(g_cron);
+            g_nastro = ex_is_checked(g_cron);
             tutto_azzera();
             nastro_azzera();
             tasti_aggiorna();
@@ -1216,15 +1216,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         /* ! THE FOCUS GOES BACK TO THE WINDOW after every button: a button
          * keeping it would take Enter for itself, and typing 2 + 3 Enter
          * would press «+» again instead of giving 5. */
-        ex_fuoco_via(g_f);
+        ex_clear_focus(g_f);
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         if (wp & KBD_MOD_CTRL) {
             unsigned int c = wp & KBD_KEY_MASK;
             if (c == 'n' || c == 'N') { cron_svuota(); tutto_azzera(); ridisegna(); return 0; }
             if (c == 's' || c == 'S') { salva(); ridisegna(); return 0; }
-            if (c == 'q' || c == 'Q') { ex_esci(0); return 0; }
+            if (c == 'q' || c == 'Q') { ex_quit(0); return 0; }
         } else {
             const char *cod = da_tasto(wp);
             if (cod) {
@@ -1240,7 +1240,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 int main(int argc, char **argv)
@@ -1255,7 +1255,7 @@ int main(int argc, char **argv)
      * controlli si creano dentro la finestra che c'e', e un pulsante nato
      * fuori dal bordo non si vede nemmeno quando la finestra si allarga. */
     g_w = W_LARGA;
-    g_f = ex_crea("finestra", "Calctor", EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_f = ex_create("window", "Calctor", EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                   EX_AUTO, EX_AUTO, g_w, H_FIN, 0, 0, proc);
     if (!g_f) {
         printf("calctor: il server a finestre non risponde.\n");
@@ -1263,50 +1263,50 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Nuovo\tCtrl+N", ID_NUOVO);
-    ex_menu_voce(g_menu, "File", "Salva...\tCtrl+S", ID_SALVA);
-    ex_menu_voce(g_menu, "File", "-", 0);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q", ID_ESCI);
-    ex_menu_voce(g_menu, "Opzioni/Modalita", "Normale", ID_M_NORM);
-    ex_menu_voce(g_menu, "Opzioni/Modalita", "Scientifica", ID_M_SCI);
-    ex_menu_voce(g_menu, "Opzioni/Modalita", "Programmatore", ID_M_PROG);
-    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
-    ex_menu_voce(g_menu, "Info", "Istruzioni", ID_ISTR);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Nuovo\tCtrl+N", ID_NUOVO);
+    ex_menu_add_item(g_menu, "File", "Salva...\tCtrl+S", ID_SALVA);
+    ex_menu_add_item(g_menu, "File", "-", 0);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q", ID_ESCI);
+    ex_menu_add_item(g_menu, "Opzioni/Modalita", "Normale", ID_M_NORM);
+    ex_menu_add_item(g_menu, "Opzioni/Modalita", "Scientifica", ID_M_SCI);
+    ex_menu_add_item(g_menu, "Opzioni/Modalita", "Programmatore", ID_M_PROG);
+    ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
+    ex_menu_add_item(g_menu, "Info", "Istruzioni", ID_ISTR);
 
-    g_r_modo[0] = ex_crea("radio", "Normale", EX_FIGLIO, MARGINE, Y_RADIO, 78, 20, g_f, ID_R_NORM, 0);
-    g_r_modo[1] = ex_crea("radio", "Scientifica", EX_FIGLIO, MARGINE + 80, Y_RADIO, 110, 20, g_f, ID_R_SCI, 0);
-    g_r_modo[2] = ex_crea("radio", "Programmatore", EX_FIGLIO, MARGINE + 196, Y_RADIO, 124, 20, g_f, ID_R_PROG, 0);
-    ex_accendi(g_r_modo[g_modo], 1);
+    g_r_modo[0] = ex_create("radio", "Normale", EX_CHILD, MARGINE, Y_RADIO, 78, 20, g_f, ID_R_NORM, 0);
+    g_r_modo[1] = ex_create("radio", "Scientifica", EX_CHILD, MARGINE + 80, Y_RADIO, 110, 20, g_f, ID_R_SCI, 0);
+    g_r_modo[2] = ex_create("radio", "Programmatore", EX_CHILD, MARGINE + 196, Y_RADIO, 124, 20, g_f, ID_R_PROG, 0);
+    ex_set_checked(g_r_modo[g_modo], 1);
 
-    g_cron = ex_crea("spunta", "Cronologia", EX_FIGLIO, MARGINE, Y_SOTTO + 8, 120, 20, g_f, ID_CRON, 0);
+    g_cron = ex_create("checkbox", "Cronologia", EX_CHILD, MARGINE, Y_SOTTO + 8, 120, 20, g_f, ID_CRON, 0);
 
     /* The bases: radios of their own frame, so they are a group apart. */
-    g_riq_base = ex_crea("riquadro", "Base", EX_FIGLIO, X_EXTRA, Y_SOTTO - 4,
+    g_riq_base = ex_create("frame", "Base", EX_CHILD, X_EXTRA, Y_SOTTO - 4,
                          4 * PASSO_X - 4, 38, g_f, 0, 0);
     for (i = 0; i < 4; i++)
-        g_r_base[i] = ex_crea("radio", BASI_NOME[i], EX_FIGLIO, 8 + i * 60, 14, 56, 20,
+        g_r_base[i] = ex_create("radio", BASI_NOME[i], EX_CHILD, 8 + i * 60, 14, 56, 20,
                               g_riq_base, (unsigned int)(ID_B_BIN + i), 0);
-    ex_accendi(g_r_base[g_base], 1);
+    ex_set_checked(g_r_base[g_base], 1);
 
     for (i = 0; i < N_TASTI; i++) {
         Tasto *t = &g_t[i];
         int    x = (t->blocco == 0 || t->blocco == 3 ? MARGINE : X_EXTRA) + t->col * PASSO_X;
         int    y = Y_TASTI + t->riga * PASSO_Y;
 
-        t->c = ex_crea("pulsante", t->testo, EX_FIGLIO, x, y, BW,
+        t->c = ex_create("button", t->testo, EX_CHILD, x, y, BW,
                        BH + (t->alto - 1) * PASSO_Y, g_f, (unsigned int)(ID_TASTO + i), 0);
     }
 
-    g_font_grande  = ex_font_trova(EX_FAM_MONO, 22, 1, 0);
-    g_font_piccolo = ex_font_trova(EX_FAM_MONO, 14, 0, 0);
+    g_font_grande  = ex_font_find(EX_FAMILY_MONO, 22, 1, 0);
+    g_font_piccolo = ex_font_find(EX_FAMILY_MONO, 14, 0, 0);
 
-    if (g_cron_all_avvio) { ex_accendi(g_cron, 1); cron_apri(); g_nastro = 1; }
+    if (g_cron_all_avvio) { ex_set_checked(g_cron, 1); cron_apri(); g_nastro = 1; }
     tasti_aggiorna();
-    if (g_modo == MODO_NORM) ex_misura(g_f, W_NORMALE, H_FIN);
-    ex_fuoco_via(g_f);
+    if (g_modo == MODO_NORM) ex_resize(g_f, W_NORMALE, H_FIN);
+    ex_clear_focus(g_f);
     ridisegna();
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }

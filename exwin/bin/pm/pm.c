@@ -26,7 +26,7 @@
  * il binario vorrebbe dire rifare il program manager per ogni applicazione
  * nuova — e chi installa un programma non ha i sorgenti.
  *
- * ! LA BARRA STA SOPRA A TUTTO (EX_SOPRA). Se una finestra qualunque potesse
+ * ! LA BARRA STA SOPRA A TUTTO (EX_TOPMOST). Se una finestra qualunque potesse
  * coprirla, l'unico modo di tornare al menu sarebbe spostare quella finestra —
  * e con una finestra a schermo intero non si potrebbe affatto.
  * ============================================================================= */
@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.013"
+#define VERSIONE_APP "0.014"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -89,7 +89,7 @@ typedef struct {
      * prima volta. Aprirle tutte all'avvio vorrebbe dire leggere e
      * decodificare venti file per una scrivania che magari nessuno apre. */
     char icona[96];
-    ExIcona ic;                 /* 0 = non ancora aperta, o non c'e' */
+    ExIcon ic;                 /* 0 = non ancora aperta, o non c'e' */
 
     /* Vuota = la voce sta in cima al menu; piena = sta dentro quella
      * categoria, che nel menu si apre di lato. */
@@ -109,10 +109,10 @@ static unsigned int g_da_cdrom = 0;
 static char g_avvio[96]  = "";
 static char g_elenco[96] = "";
 
-static ExFinestra g_barra, g_menu = 0;
+static ExWindow g_barra, g_menu = 0;
 
 /* Il sottomenu di una categoria, e quale: vedi sotto_apri(). */
-static ExFinestra   g_sotto = 0;
+static ExWindow   g_sotto = 0;
 static unsigned int g_sotto_cat = 0;
 static int          g_menu_y = 0;       /* dove comincia il menu, per il lato */
 
@@ -402,7 +402,7 @@ static int applicazioni_scrivi(void)
  * memoria e' lo stesso che disegna il menu: si tocca quello, e il menu dopo e'
  * gia' diverso. Salvare serve a farlo durare, non a farlo valere.
  * ============================================================================= */
-static ExFinestra g_gest = 0, g_gest_lista = 0, g_gest_stato = 0, g_gest_dove = 0;
+static ExWindow g_gest = 0, g_gest_lista = 0, g_gest_stato = 0, g_gest_dove = 0;
 
 static void gest_mostra(void)
 {
@@ -411,7 +411,7 @@ static void gest_mostra(void)
 
     if (!g_gest_lista) return;
 
-    ex_lista_svuota(g_gest_lista);
+    ex_list_clear(g_gest_lista);
 
     for (i = 0; i < g_app_n; i++) {
         /* ! IL SEGNO DELL'AVVIO AUTOMATICO SI VEDE NELL'ELENCO, e non in un
@@ -422,7 +422,7 @@ static void gest_mostra(void)
 
         sprintf(r, "%s %-18s %s", automatica ? "*" : " ",
                 g_app[i].nome, g_app[i].percorso);
-        ex_lista_aggiungi(g_gest_lista, r);
+        ex_list_add(g_gest_lista, r);
     }
 
     /* Un avvio automatico che NON e' fra le voci si mostra lo stesso: e' una
@@ -437,14 +437,14 @@ static void gest_mostra(void)
 
         if (!fra_le_voci) {
             sprintf(r, "* (solo avvio)      %s", g_avvio);
-            ex_lista_aggiungi(g_gest_lista, r);
+            ex_list_add(g_gest_lista, r);
         }
     }
 }
 
 static void gest_dico(const char *t)
 {
-    if (g_gest_stato) ex_testo_metti(g_gest_stato, t);
+    if (g_gest_stato) ex_set_text(g_gest_stato, t);
 }
 
 static void gest_aggiungi(void)
@@ -484,7 +484,7 @@ static void gest_aggiungi(void)
 
 static void gest_togli(void)
 {
-    unsigned int s = ex_lista_scelta(g_gest_lista);
+    unsigned int s = ex_list_get_selected(g_gest_lista);
     unsigned int k;
 
     if (s >= g_app_n) { gest_dico("scegli prima una voce"); return; }
@@ -505,7 +505,7 @@ static void gest_togli(void)
 
 static void gest_auto(void)
 {
-    unsigned int s = ex_lista_scelta(g_gest_lista);
+    unsigned int s = ex_list_get_selected(g_gest_lista);
 
     if (s >= g_app_n) { gest_dico("scegli prima una voce"); return; }
 
@@ -547,21 +547,21 @@ static void gest_salva(void)
     }
 }
 
-static long gest_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long gest_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_distruggi(g_gest);
+    case EXM_CLOSE:
+        ex_destroy(g_gest);
         g_gest = g_gest_lista = g_gest_stato = g_gest_dove = 0;
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_G_AGG)    { gest_aggiungi(); break; }
         if (wp == ID_G_TOGLI)  { gest_togli();    break; }
         if (wp == ID_G_AUTO)   { gest_auto();     break; }
         if (wp == ID_G_SALVA)  { gest_salva();    break; }
         if (wp == ID_G_CHIUDI) {
-            ex_distruggi(g_gest);
+            ex_destroy(g_gest);
             g_gest = g_gest_lista = g_gest_stato = g_gest_dove = 0;
             return 0;
         }
@@ -569,10 +569,10 @@ static long gest_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
     return 0;
 }
 
@@ -582,51 +582,51 @@ static void gest_apri(void)
 
     /* Gia' aperta: si porta davanti invece di aprirne una seconda, che sarebbe
      * due elenchi della stessa cosa che si contraddicono. */
-    if (g_gest) { ex_mostra(g_gest, 1); return; }
+    if (g_gest) { ex_show(g_gest, 1); return; }
 
     x = (int)g_sw > GEST_W ? ((int)g_sw - GEST_W) / 2 : 0;
     y = (int)g_sh > GEST_H ? ((int)g_sh - GEST_H) / 2 : 0;
 
-    g_gest = ex_crea("finestra", "Applicazioni del menu",
-                     EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_gest = ex_create("window", "Applicazioni del menu",
+                     EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                      x, y, GEST_W, GEST_H, 0, 0, gest_proc);
     if (!g_gest) return;
 
-    g_gest_lista = ex_crea("lista", "", EX_FIGLIO,
+    g_gest_lista = ex_create("list", "", EX_CHILD,
                            6, 6, GEST_W - 12, GEST_H - 126,
                            g_gest, ID_G_LISTA, 0);
 
-    ex_crea("pulsante", "Aggiungi...", EX_FIGLIO,
+    ex_create("button", "Aggiungi...", EX_CHILD,
             6, GEST_H - 114, 110, 24, g_gest, ID_G_AGG, 0);
-    ex_crea("pulsante", "Togli", EX_FIGLIO,
+    ex_create("button", "Togli", EX_CHILD,
             122, GEST_H - 114, 80, 24, g_gest, ID_G_TOGLI, 0);
-    ex_crea("pulsante", "Avvio automatico", EX_FIGLIO,
+    ex_create("button", "Avvio automatico", EX_CHILD,
             208, GEST_H - 114, 150, 24, g_gest, ID_G_AUTO, 0);
 
-    ex_crea("etichetta", "L'asterisco segna cio' che parte da solo.", EX_FIGLIO,
+    ex_create("label", "L'asterisco segna cio' che parte da solo.", EX_CHILD,
             6, GEST_H - 86, GEST_W - 12, 16, g_gest, 0, 0);
 
     /* ! IL PERCORSO DEL FILE HA UN'ETICHETTA SUA, e non divide la riga con i
      * messaggi. Prima erano la stessa: aprendo si leggeva il percorso, al
      * primo messaggio spariva — e proprio quando serviva sapere QUALE file non
      * si era riuscito a scrivere. */
-    g_gest_dove = ex_crea("etichetta", "", EX_FIGLIO,
+    g_gest_dove = ex_create("label", "", EX_CHILD,
                           6, GEST_H - 66, GEST_W - 12, 16, g_gest, 0, 0);
 
     /* ! E LO STATO PRENDE TUTTA LA LARGHEZZA, su una riga sua. Stretto accanto
      * ai pulsanti, un messaggio un po' lungo finiva SOTTO di loro: si leggeva
      * «non salvato: non riesco a scrivere» e il resto spariva sotto «Salva». */
-    g_gest_stato = ex_crea("etichetta", "", EX_FIGLIO,
+    g_gest_stato = ex_create("label", "", EX_CHILD,
                            6, GEST_H - 46, GEST_W - 12, 16, g_gest, 0, 0);
 
-    ex_crea("pulsante", "Salva", EX_FIGLIO,
+    ex_create("button", "Salva", EX_CHILD,
             GEST_W - 176, GEST_H - 28, 80, 24, g_gest, ID_G_SALVA, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO,
+    ex_create("button", "Chiudi", EX_CHILD,
             GEST_W - 90, GEST_H - 28, 80, 24, g_gest, ID_G_CHIUDI, 0);
 
     gest_mostra();
-    if (g_gest_dove && g_elenco[0]) ex_testo_metti(g_gest_dove, g_elenco);
-    ex_procedura_base(g_gest, EXM_DISEGNA, 0, 0);
+    if (g_gest_dove && g_elenco[0]) ex_set_text(g_gest_dove, g_elenco);
+    ex_default_proc(g_gest, EXM_PAINT, 0, 0);
 }
 
 /* -----------------------------------------------------------------------------
@@ -634,10 +634,10 @@ static void gest_apri(void)
  *
  * ! E' UNA FINESTRA, NON UN DISEGNO SULLA BARRA. Cosi' sta sopra alle altre
  * senza casi particolari, si chiude distruggendola, e i clic sulle sue voci
- * arrivano come EXM_COMANDO — cioe' con lo stesso meccanismo di tutto il
+ * arrivano come EXM_COMMAND — cioe' con lo stesso meccanismo di tutto il
  * resto, invece che con un calcolo di coordinate a mano.
  * --------------------------------------------------------------------------- */
-static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 /* =============================================================================
  * THE SYSTEM LOG (@EXWIN-LOG, 26 September 2026)
@@ -651,7 +651,7 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
  * ! IT IS NOT MODAL, although «modal» was in the request. On EX-OS a modal
  * window blocks every window of its PROCESS, and the taskbar belongs to this
  * process: a modal log would freeze the taskbar for as long as it is open.
- * It stays above the others instead (EX_SOPRA is not used either: a log is
+ * It stays above the others instead (EX_TOPMOST is not used either: a log is
  * read side by side with the program that writes it).
  *
  * ! THE TEXT IS REPLACED ONLY WHEN IT CHANGED, and the reader's place is
@@ -668,7 +668,7 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
 #define REG_H       360
 #define REG_BUF     32769       /* the kernel's ring (32 KB), and the '\0' */
 
-static ExFinestra   g_reg = 0, g_reg_area = 0;
+static ExWindow   g_reg = 0, g_reg_area = 0;
 static unsigned int g_reg_firma = 0;
 
 static unsigned int firma(const char *p, int n)
@@ -703,54 +703,54 @@ static void registro_leggi(int forza)
     if (!forza && f == g_reg_firma) return;
     g_reg_firma = f;
 
-    prima    = ex_area_vista(g_reg_area, &vis);
-    righe    = ex_area_righe(g_reg_area);
+    prima    = ex_textarea_get_view(g_reg_area, &vis);
+    righe    = ex_textarea_line_count(g_reg_area);
     in_fondo = forza || prima + vis >= righe;
 
-    ex_area_svuota(g_reg_area);
+    ex_textarea_clear(g_reg_area);
     for (riga = buf; *riga; riga = dopo) {
         dopo = strchr(riga, '\n');
         if (dopo) *dopo++ = '\0'; else dopo = riga + strlen(riga);
-        if (!ex_area_aggiungi(g_reg_area, riga)) break;
+        if (!ex_textarea_add_line(g_reg_area, riga)) break;
     }
 
-    righe = ex_area_righe(g_reg_area);
-    if (in_fondo) ex_area_mostra_da(g_reg_area, righe > vis ? righe - vis : 0);
-    else          ex_area_mostra_da(g_reg_area, prima);
-    ex_procedura_base(g_reg, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_reg);
+    righe = ex_textarea_line_count(g_reg_area);
+    if (in_fondo) ex_textarea_scroll_to(g_reg_area, righe > vis ? righe - vis : 0);
+    else          ex_textarea_scroll_to(g_reg_area, prima);
+    ex_default_proc(g_reg, EXM_PAINT, 0, 0);
+    ex_update(g_reg);
 }
 
-static long reg_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long reg_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_distruggi(g_reg);
+    case EXM_CLOSE:
+        ex_destroy(g_reg);
         g_reg = g_reg_area = 0;
         return 0;
-    case EXM_TEMPO:
+    case EXM_TIMER:
         registro_leggi(0);
         return 0;
-    case EXM_MISURA:
-        ex_misura(g_reg_area, EX_X(lp) - 8, EX_Y(lp) - 8);
+    case EXM_SIZE:
+        ex_resize(g_reg_area, EX_X(lp) - 8, EX_Y(lp) - 8);
         break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void registro_apri(void)
 {
     if (g_reg) { registro_leggi(1); return; }
 
-    g_reg = ex_crea("finestra", "Registro di sistema",
-                    EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_reg = ex_create("window", "Registro di sistema",
+                    EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                     EX_AUTO, EX_AUTO, REG_W, REG_H, 0, 0, reg_proc);
     if (!g_reg) return;
-    g_reg_area = ex_crea("areatesto", "", EX_FIGLIO, 4, 4, REG_W - 8, REG_H - 8,
+    g_reg_area = ex_create("textarea", "", EX_CHILD, 4, 4, REG_W - 8, REG_H - 8,
                          g_reg, 0, 0);
-    if (!g_reg_area) { ex_distruggi(g_reg); g_reg = 0; return; }
+    if (!g_reg_area) { ex_destroy(g_reg); g_reg = 0; return; }
 
-    ex_sveglia(g_reg, 1000);
+    ex_set_timer(g_reg, 1000);
     registro_leggi(1);
 }
 
@@ -767,7 +767,7 @@ static void registro_apri(void)
  *   1. a window says what is happening — no close button: it is not a
  *      question;
  *   2. every other program is asked to close, as with its X button
- *      (ex_chiudi_le_altre), and the window lists who is left, from the list
+ *      (ex_close_others), and the window lists who is left, from the list
  *      the taskbar already follows;
  *   3. when nobody is left: «syncing the disks», and reboot(), which syncs.
  *
@@ -782,7 +782,7 @@ static void registro_apri(void)
 #define ID_ARR_VAI  120
 #define ID_ARR_NO   121
 
-static ExFinestra   g_arr = 0, g_arr_testo = 0;
+static ExWindow   g_arr = 0, g_arr_testo = 0;
 static int          g_arr_cosa = -1;        /* EXOS_RB_*, -1 = none in progress */
 static unsigned int g_arr_da = 0;           /* uptime_ms() when it started */
 static int          g_arr_pulsanti = 0;
@@ -790,14 +790,14 @@ static int          g_arr_pulsanti = 0;
 static void arr_dico(const char *t)
 {
     if (!g_arr) return;
-    ex_testo_metti(g_arr_testo, t);
-    ex_procedura_base(g_arr, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_arr);
+    ex_set_text(g_arr_testo, t);
+    ex_default_proc(g_arr, EXM_PAINT, 0, 0);
+    ex_update(g_arr);
 }
 
 static void arr_fine(void)
 {
-    if (g_arr) ex_distruggi(g_arr);
+    if (g_arr) ex_destroy(g_arr);
     g_arr = g_arr_testo = 0;
     g_arr_cosa = -1;
     g_arr_pulsanti = 0;
@@ -829,8 +829,8 @@ static void arr_esegui(void)
 /* The windows of other programs still open, their titles into `nomi`. */
 static int arr_restano(char *nomi, unsigned int max)
 {
-    ExVoceFin    v[16];
-    int          n = ex_finestre_elenco(v, 16), i, quante = 0;
+    ExWindowEntry    v[16];
+    int          n = ex_list_windows(v, 16), i, quante = 0;
     unsigned int io = (unsigned int)getpid();
 
     if (n > 16) n = 16;
@@ -857,26 +857,26 @@ static void arr_controlla(void)
 
     if (s >= ARR_ATTESA && !g_arr_pulsanti) {
         g_arr_pulsanti = 1;
-        ex_crea("pulsante", "Procedi comunque", EX_FIGLIO,
+        ex_create("button", "Procedi comunque", EX_CHILD,
                 ARR_W - 300, ARR_H - 36, 150, 26, g_arr, ID_ARR_VAI, 0);
-        ex_crea("pulsante", "Annulla", EX_FIGLIO,
+        ex_create("button", "Annulla", EX_CHILD,
                 ARR_W - 140, ARR_H - 36, 120, 26, g_arr, ID_ARR_NO, 0);
-        ex_procedura_base(g_arr, EXM_DISEGNA, 0, 0);
-        ex_aggiorna(g_arr);
+        ex_default_proc(g_arr, EXM_PAINT, 0, 0);
+        ex_update(g_arr);
     }
 }
 
-static long arr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long arr_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_TEMPO) { arr_controlla(); return 0; }
-    if (msg == EXM_COMANDO && wp == ID_ARR_VAI) { arr_esegui(); return 0; }
-    if (msg == EXM_COMANDO && wp == ID_ARR_NO) {
+    if (msg == EXM_TIMER) { arr_controlla(); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_ARR_VAI) { arr_esegui(); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_ARR_NO) {
         arr_fine();
         log_seriale("pm: arresto annullato");
         return 0;
     }
-    if (msg == EXM_CHIUDI) return 0;        /* no X: it is not a question */
-    return ex_procedura_base(f, msg, wp, lp);
+    if (msg == EXM_CLOSE) return 0;        /* no X: it is not a question */
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void arresta(int cosa)
@@ -889,7 +889,7 @@ static void arresta(int cosa)
      * where the programs ask «save the changes?» — and that is exactly when
      * this window has something to say. Centred, it sat under the editor's
      * question and could not be seen (tried in QEMU, 26 September 2026). */
-    g_arr = ex_crea("finestra", titolo, EX_TITOLO | EX_BORDO | EX_SOPRA,
+    g_arr = ex_create("window", titolo, EX_CAPTION | EX_BORDER | EX_TOPMOST,
                     ((int)g_sw - ARR_W) / 2, (int)g_sh - BARRA_H - ARR_H - 30,
                     ARR_W, ARR_H, 0, 0, arr_proc);
     if (!g_arr) {
@@ -897,7 +897,7 @@ static void arresta(int cosa)
         reboot(cosa);
         return;
     }
-    g_arr_testo = ex_crea("etichetta", "", EX_FIGLIO, 16, 20, ARR_W - 32, 48,
+    g_arr_testo = ex_create("label", "", EX_CHILD, 16, 20, ARR_W - 32, 48,
                           g_arr, 0, 0);
     g_arr_cosa = cosa;
     g_arr_da   = uptime_ms();
@@ -906,8 +906,8 @@ static void arresta(int cosa)
     arr_dico("Chiedo ai programmi di chiudersi...");
     log_seriale(cosa == EXOS_RB_RESTART ? "pm: riavvio chiesto dal menu"
                                         : "pm: spegnimento chiesto dal menu");
-    ex_chiudi_le_altre();
-    ex_sveglia(g_arr, 1000);
+    ex_close_others();
+    ex_set_timer(g_arr, 1000);
 }
 
 static void menu_chiudi(void)
@@ -916,8 +916,8 @@ static void menu_chiudi(void)
      * chiudere il menu senza chiudere lui lascerebbe sullo schermo un elenco
      * che non appartiene piu' a niente - e che a premerlo avvierebbe ancora i
      * suoi programmi. */
-    if (g_sotto) { ex_distruggi(g_sotto); g_sotto = 0; }
-    if (g_menu)  { ex_distruggi(g_menu);  g_menu = 0; }
+    if (g_sotto) { ex_destroy(g_sotto); g_sotto = 0; }
+    if (g_menu)  { ex_destroy(g_menu);  g_menu = 0; }
 }
 
 /* =============================================================================
@@ -955,10 +955,10 @@ static void categorie_raccogli(void)
  * ! SI APRE UNA VOLTA SOLA ANCHE SE NON C'E'. Un percorso sbagliato rende 0, e
  * senza questa memoria il menu riproverebbe ad aprire quel file a ogni
  * disegno: una lettura fallita per voce, ogni volta. */
-static ExIcona icona_di(App *a)
+static ExIcon icona_di(App *a)
 {
     if (a->ic == 0 && a->icona[0]) {
-        a->ic = ex_icona_apri(a->icona);
+        a->ic = ex_icon_open(a->icona);
         if (a->ic == 0) a->icona[0] = '\0';   /* non ci si riprova */
     }
     return a->ic;
@@ -969,7 +969,7 @@ static ExIcona icona_di(App *a)
  * ! UNA CATEGORIA NON HA UN FILE SUO, e darle una riga nel formato vorrebbe
  * dire un secondo tipo di riga da spiegare a chi scrive il file a mano. La
  * prima voce che ci sta dentro e' una scelta che si capisce da sola. */
-static ExIcona icona_categoria(unsigned int c)
+static ExIcon icona_categoria(unsigned int c)
 {
     unsigned int i;
 
@@ -981,10 +981,10 @@ static ExIcona icona_categoria(unsigned int c)
 
 static void sotto_chiudi(void)
 {
-    if (g_sotto) { ex_distruggi(g_sotto); g_sotto = 0; }
+    if (g_sotto) { ex_destroy(g_sotto); g_sotto = 0; }
 }
 
-static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 /* Apre l'elenco di una categoria ACCANTO alla sua voce.
  *
@@ -1017,7 +1017,7 @@ static void sotto_apri(unsigned int c, int y_voce)
     if (y + h > (int)g_sh - BARRA_H) y = (int)g_sh - BARRA_H - h - 2;
     if (y < 0) y = 0;
 
-    g_sotto = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
+    g_sotto = ex_create("window", "", EX_BORDER | EX_TOPMOST,
                       4 + MENU_W + 2, y, MENU_W, h, 0, 0, menu_proc);
     if (!g_sotto) return;
 
@@ -1025,19 +1025,19 @@ static void sotto_apri(unsigned int c, int y_voce)
 
     n = 0;
     for (i = 0; i < g_app_n; i++) {
-        ExFinestra b;
+        ExWindow b;
 
         if (strcmp(g_app[i].categoria, g_cat[c]) != 0) continue;
 
-        b = ex_crea("pulsante", g_app[i].nome, EX_FIGLIO,
+        b = ex_create("button", g_app[i].nome, EX_CHILD,
                     4, 4 + (int)n * VOCE_H, MENU_W - 8, VOCE_H - 2,
                     g_sotto, ID_VOCE + i, 0);
-        ex_icona_metti(b, icona_di(&g_app[i]), ICONA_LATO);
+        ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
         n++;
     }
 
-    ex_procedura_base(g_sotto, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_sotto);
+    ex_default_proc(g_sotto, EXM_PAINT, 0, 0);
+    ex_update(g_sotto);
 }
 
 static void menu_apri(void)
@@ -1070,7 +1070,7 @@ static void menu_apri(void)
     }
 
     g_menu_y = (int)g_sh - BARRA_H - h - 2;
-    g_menu = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
+    g_menu = ex_create("window", "", EX_BORDER | EX_TOPMOST,
                      4, g_menu_y, MENU_W, h, 0, 0, menu_proc);
     if (!g_menu) return;
 
@@ -1079,57 +1079,57 @@ static void menu_apri(void)
      * a righe alterne. La freccia in fondo al nome dice quali sono quali. */
     for (i = 0; i < g_cat_n; i++) {
         char        t[40];
-        ExFinestra  b;
+        ExWindow  b;
 
         sprintf(t, "%s...", g_cat[i]);
-        b = ex_crea("pulsante", t, EX_FIGLIO,
+        b = ex_create("button", t, EX_CHILD,
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
                     g_menu, ID_CAT + i, 0);
-        ex_icona_metti(b, icona_categoria(i), ICONA_LATO);
+        ex_set_icon(b, icona_categoria(i), ICONA_LATO);
         riga++;
     }
 
     for (i = 0; i < g_app_n; i++) {
-        ExFinestra b;
+        ExWindow b;
 
         if (g_app[i].categoria[0]) continue;    /* sta in un sottomenu */
 
-        b = ex_crea("pulsante", g_app[i].nome, EX_FIGLIO,
+        b = ex_create("button", g_app[i].nome, EX_CHILD,
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
                     g_menu, ID_VOCE + i, 0);
-        ex_icona_metti(b, icona_di(&g_app[i]), ICONA_LATO);
+        ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
         riga++;
     }
 
     /* Una riga a separare le applicazioni da cio' che spegne le cose: sono
      * due categorie diverse, e un clic sbagliato costa molto di piu' da una
      * parte che dall'altra. */
-    ex_crea("separatore", "", EX_FIGLIO,
+    ex_create("separator", "", EX_CHILD,
             6, 6 + (int)riga * VOCE_H, MENU_W - 12, 2, g_menu, 0, 0);
 
     /* ! «APPLICAZIONI...» STA SOTTO LA RIGA, con «Esci» e «Spegni», e non fra
      * le applicazioni: non e' un programma da avviare, e' una cosa che la
      * scrivania sa fare. Metterla in mezzo alle voci vorrebbe anche dire che
      * si sposta ogni volta che se ne aggiunge una. */
-    ex_crea("pulsante", "Applicazioni...", EX_FIGLIO,
+    ex_create("button", "Applicazioni...", EX_CHILD,
             4, 10 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_GESTISCI, 0);
     /* ! «INFORMAZIONI SU» STA CON LE COSE CHE SA FARE LA SCRIVANIA, sotto la
      * riga, e non fra le applicazioni: la scrivania non ha una barra dei menu
      * dove metterla — la sua barra e' quella delle finestre aperte — e questo
      * e' l'unico menu che ha. */
-    ex_crea("pulsante", "Informazioni su", EX_FIGLIO,
+    ex_create("button", "Informazioni su", EX_CHILD,
             4, 10 + (int)(riga + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_INFO, 0);
-    ex_crea("pulsante", "Impostazioni...", EX_FIGLIO,
+    ex_create("button", "Impostazioni...", EX_CHILD,
             4, 10 + (int)(riga + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_IMPOST, 0);
     /* The desktop's log (@EXWIN-LOG): with the things the desktop knows how
      * to do, before the ones that stop it. */
-    ex_crea("pulsante", "Registro di sistema", EX_FIGLIO,
+    ex_create("button", "Registro di sistema", EX_CHILD,
             4, 10 + (int)(riga + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_REGISTRO, 0);
-    ex_crea("pulsante", "Esci", EX_FIGLIO,
+    ex_create("button", "Esci", EX_CHILD,
             4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI, 0);
     /* ! «RIAVVIA» STA FRA «ESCI» E «SPEGNI», ed e' il posto giusto per due
@@ -1144,14 +1144,14 @@ static void menu_apri(void)
      * Per rivedere la scrivania bisogna riavviare, e finche' e' cosi' quel
      * comando deve stare nel menu invece che in una console di testo che chi
      * e' nella grafica non sta guardando. */
-    ex_crea("pulsante", "Riavvia", EX_FIGLIO,
+    ex_create("button", "Riavvia", EX_CHILD,
             4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_RIAVVIA, 0);
-    ex_crea("pulsante", "Spegni", EX_FIGLIO,
+    ex_create("button", "Spegni", EX_CHILD,
             4, 10 + (int)(riga + 6) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI, 0);
 
-    ex_procedura_base(g_menu, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_menu, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -1169,8 +1169,8 @@ static void menu_apri(void)
  * quella porta e' chiusa da un pezzo. Dirlo e' meta' del lavoro — una finestra
  * che sembra non aver fatto niente e' peggio di una che non c'e'.
  * ========================================================================== */
-static ExFinestra g_impost = 0;
-static ExFinestra g_impost_sfondo = 0;  /* the label with the current image */
+static ExWindow g_impost = 0;
+static ExWindow g_impost_sfondo = 0;  /* the label with the current image */
 
 /* Defined with the desktop, further down (@PM-SFONDO). */
 static void sfondo_scegli(void);
@@ -1179,26 +1179,26 @@ static void sfondo_etichetta(void);
 static void sfondo_modo(int modo);
 
 /* How the image sits on the desktop: the word in pm.cfg, and the button. The
- * order is the toolkit's, EX_IMM_ANGOLO..EX_IMM_RIPETI. */
+ * order is the toolkit's, EX_IMAGE_TOPLEFT..EX_IMAGE_TILE. */
 static const char *const DISPOSIZIONI[4]   = { "angolo", "centro", "allarga", "ripeti" };
 static const char *const DISPOSIZIONI_T[4] = { "Angolo", "Centro", "Allarga", "Ripeti" };
-static int g_sfondo_modo = EX_IMM_ANGOLO;
+static int g_sfondo_modo = EX_IMAGE_TOPLEFT;
 
 static const char *const MODI[4] = { "testo", "640x480", "800x600", "1024x768" };
 
-static long impost_proc(ExFinestra f, unsigned int msg,
+static long impost_proc(ExWindow f, unsigned int msg,
                         unsigned int wp, long lp)
 {
-    if (msg == EXM_CHIUDI) { ex_distruggi(f); g_impost = g_impost_sfondo = 0; return 0; }
+    if (msg == EXM_CLOSE) { ex_destroy(f); g_impost = g_impost_sfondo = 0; return 0; }
 
-    if (msg == EXM_COMANDO && wp == ID_SFONDO_SCEGLI) { sfondo_scegli(); return 0; }
-    if (msg == EXM_COMANDO && wp == ID_SFONDO_NIENTE) { sfondo_niente(); return 0; }
-    if (msg == EXM_COMANDO && wp >= ID_SFONDO_MODO && wp < ID_SFONDO_MODO + 4) {
+    if (msg == EXM_COMMAND && wp == ID_SFONDO_SCEGLI) { sfondo_scegli(); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_SFONDO_NIENTE) { sfondo_niente(); return 0; }
+    if (msg == EXM_COMMAND && wp >= ID_SFONDO_MODO && wp < ID_SFONDO_MODO + 4) {
         sfondo_modo((int)(wp - ID_SFONDO_MODO));
         return 0;
     }
 
-    if (msg == EXM_COMANDO && wp >= ID_RIS && wp < ID_RIS + 4) {
+    if (msg == EXM_COMMAND && wp >= ID_RIS && wp < ID_RIS + 4) {
         const char *modo = MODI[wp - ID_RIS];
         char       *av[3];
         char        m[256];
@@ -1238,7 +1238,7 @@ static long impost_proc(ExFinestra f, unsigned int msg,
         ex_dlg_avviso("Risoluzione", m);
         return 0;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void impostazioni_apri(void)
@@ -1248,44 +1248,44 @@ static void impostazioni_apri(void)
     int          i;
 
     /* Gia' aperta: si rimette davanti facendola rivedere. Non c'e' un
-     * «portami in primo piano» nel toolkit, e ex_mostra basta: il server mette
+     * «portami in primo piano» nel toolkit, e ex_show basta: il server mette
      * davanti cio' che torna visibile. */
-    if (g_impost) { ex_mostra(g_impost, 1); return; }
+    if (g_impost) { ex_show(g_impost, 1); return; }
 
-    g_impost = ex_crea("finestra", "Impostazioni",
-                       EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_impost = ex_create("window", "Impostazioni",
+                       EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                        EX_AUTO, EX_AUTO, 300, 316, 0, 0, impost_proc);
     if (!g_impost) return;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     sprintf(t, "Risoluzione: adesso %ux%u", sw, sh);
-    ex_crea("etichetta", t, EX_FIGLIO, 12, 10, 276, 18, g_impost, 0, 0);
+    ex_create("label", t, EX_CHILD, 12, 10, 276, 18, g_impost, 0, 0);
 
-    ex_crea("etichetta", "Si applica al prossimo riavvio.", EX_FIGLIO,
+    ex_create("label", "Si applica al prossimo riavvio.", EX_CHILD,
             12, 30, 276, 18, g_impost, 0, 0);
 
     for (i = 0; i < 4; i++)
-        ex_crea("pulsante", MODI[i], EX_FIGLIO,
+        ex_create("button", MODI[i], EX_CHILD,
                 12 + (i % 2) * 140, 58 + (i / 2) * 34, 132, 28,
                 g_impost, (unsigned int)(ID_RIS + i), 0);
 
-    ex_crea("etichetta", "\"testo\" spegne la grafica all'avvio.", EX_FIGLIO,
+    ex_create("label", "\"testo\" spegne la grafica all'avvio.", EX_CHILD,
             12, 132, 276, 18, g_impost, 0, 0);
 
     /* The desktop image (@PM-SFONDO): applied at once, kept for next time. */
-    ex_crea("separatore", "", EX_FIGLIO, 12, 160, 276, 2, g_impost, 0, 0);
-    g_impost_sfondo = ex_crea("etichetta", "", EX_FIGLIO, 12, 172, 276, 18,
+    ex_create("separator", "", EX_CHILD, 12, 160, 276, 2, g_impost, 0, 0);
+    g_impost_sfondo = ex_create("label", "", EX_CHILD, 12, 172, 276, 18,
                               g_impost, 0, 0);
     sfondo_etichetta();
-    ex_crea("pulsante", "Scegli...", EX_FIGLIO, 12, 200, 132, 28,
+    ex_create("button", "Scegli...", EX_CHILD, 12, 200, 132, 28,
             g_impost, ID_SFONDO_SCEGLI, 0);
-    ex_crea("pulsante", "Nessuno", EX_FIGLIO, 152, 200, 132, 28,
+    ex_create("button", "Nessuno", EX_CHILD, 152, 200, 132, 28,
             g_impost, ID_SFONDO_NIENTE, 0);
     for (i = 0; i < 4; i++)
-        ex_crea("pulsante", DISPOSIZIONI_T[i], EX_FIGLIO, 12 + i * 70, 236, 64, 28,
+        ex_create("button", DISPOSIZIONI_T[i], EX_CHILD, 12 + i * 70, 236, 64, 28,
                 g_impost, (unsigned int)(ID_SFONDO_MODO + i), 0);
 
-    ex_procedura_base(g_impost, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_impost, EXM_PAINT, 0, 0);
 }
 
 static void avvia(unsigned int n)
@@ -1311,9 +1311,9 @@ static void avvia(unsigned int n)
     }
 }
 
-static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO) {
+    if (msg == EXM_COMMAND) {
         /* ! UNA CATEGORIA NON CHIUDE IL MENU, LO ALLARGA, ed e' l'unica voce
          * che si comporta cosi'. Tutte le altre fanno qualcosa e se ne vanno;
          * questa apre l'elenco accanto, e il menu deve restare per far vedere
@@ -1348,14 +1348,14 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * ognuna la stessa chiusura della crocetta e aspetta. Chi ha da
          * salvare fa in tempo; il server rimette il modo testo e muore.
          *
-         * ! E NON SI CHIAMA ex_esci() DOPO. Il server sta per mandare a QUESTA
+         * ! E NON SI CHIAMA ex_quit() DOPO. Il server sta per mandare a QUESTA
          * finestra la sua chiusura, come a tutte le altre: uscire subito
          * vorrebbe dire sparire prima di aver ricevuto il messaggio che si e'
          * appena chiesto di ricevere.
          * ================================================================= */
         if (wp == ID_ESCI) {
             log_seriale("pm: spegnimento della scrivania chiesto dal menu");
-            ex_spegni_scrivania();
+            ex_shutdown_desktop();
             return 0;
         }
 
@@ -1367,7 +1367,7 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * riavvia: il riavvio vero lo fa main(), quando il ciclo dei messaggi
          * e' finito.
          *
-         * Il perche' e' che ex_spegni_scrivania() e' un messaggio, non una
+         * Il perche' e' che ex_shutdown_desktop() e' un messaggio, non una
          * chiamata: manda WIN_MSG_SPEGNI e torna subito. E' il SERVER a fare
          * il lavoro — chiede a ogni applicazione la stessa chiusura della
          * crocetta, le aspetta, rimette il modo testo e muore. Riavviando su
@@ -1419,7 +1419,7 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp >= ID_VOCE) avvia(wp - ID_VOCE);
         return 0;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 /* =============================================================================
@@ -1429,8 +1429,8 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
  * running and switches between programs. A click on an entry restores it if
  * minimized and brings it to the front.
  *
- * ! THE LIST IS THE SERVER'S, and arrives by itself as EXM_FINESTRE every
- * time it changes (ex_finestre_segui). Nothing here is remembered between
+ * ! THE LIST IS THE SERVER'S, and arrives by itself as EXM_WINDOW_LIST every
+ * time it changes (ex_track_windows). Nothing here is remembered between
  * two lists except the icons, so a program that dies while minimized
  * cannot leave an entry behind.
  *
@@ -1452,8 +1452,8 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 #define VB_ICONA     16
 
 typedef struct {
-    ExVoceFin v;
-    ExIcona   ic;
+    ExWindowEntry v;
+    ExIcon   ic;
     int       x, w;
 } VoceBarra;
 
@@ -1469,7 +1469,7 @@ static const char *base_di(const char *p)
     return b;
 }
 
-static ExIcona icona_del_pid(unsigned int pid)
+static ExIcon icona_del_pid(unsigned int pid)
 {
     ProcInfo     pi[PROCINFO_MAX_BATCH];
     unsigned int start = 0, i;
@@ -1513,8 +1513,8 @@ static void vb_disponi(void)
 
 static void vb_leggi(void)
 {
-    ExVoceFin v[16];
-    int       n = ex_finestre_elenco(v, 16), i;
+    ExWindowEntry v[16];
+    int       n = ex_list_windows(v, 16), i;
 
     if (n > 16) n = 16;
     for (i = 0; i < n; i++) {
@@ -1525,29 +1525,29 @@ static void vb_leggi(void)
     vb_disponi();
 }
 
-static void vb_disegna(ExFinestra f)
+static void vb_disegna(ExWindow f)
 {
     int x1 = (int)g_sw - VB_OROLOGIO, i;
     int y = 2, h = BARRA_H - 4;
 
-    ex_riempi(f, VB_X0, 0, x1 - VB_X0, BARRA_H, EX_GRIGIO);
+    ex_fill_rect(f, VB_X0, 0, x1 - VB_X0, BARRA_H, EX_GRAY);
 
     for (i = 0; i < g_vb_n; i++) {
         VoceBarra *b = &g_vb[i];
         int        tx = b->x + 4, spazio, n;
         char       t[48];
-        unsigned int ridotta = b->v.stato & EX_VF_RIDOTTA;
+        unsigned int ridotta = b->v.stato & EX_WE_MINIMIZED;
 
         if (b->w <= 0) continue;
 
         /* ! THE ONE WITH THE FOCUS IS PRESSED IN, the others stick out: the
          * rule of the toolkit — what sticks out can be pressed. */
-        ex_riempi(f, b->x, y, b->w, h, EX_GRIGIO);
-        if ((b->v.stato & EX_VF_FUOCO) && !ridotta) ex_incavo(f, b->x, y, b->w, h);
-        else                                       ex_rilievo(f, b->x, y, b->w, h);
+        ex_fill_rect(f, b->x, y, b->w, h, EX_GRAY);
+        if ((b->v.stato & EX_WE_FOCUSED) && !ridotta) ex_draw_sunken(f, b->x, y, b->w, h);
+        else                                       ex_draw_raised(f, b->x, y, b->w, h);
 
         if (b->ic) {
-            ex_icona_disegna(f, b->ic, tx, y + (h - VB_ICONA) / 2, VB_ICONA, EX_GRIGIO);
+            ex_icon_draw(f, b->ic, tx, y + (h - VB_ICONA) / 2, VB_ICONA, EX_GRAY);
             tx += VB_ICONA + 4;
         }
 
@@ -1559,7 +1559,7 @@ static void vb_disegna(ExFinestra f)
         strncpy(t, b->v.titolo, (size_t)n);
         t[n] = '\0';
         /* A minimized one is written in grey: it is there, but not on screen. */
-        ex_scrivi(f, tx, y + (h - 16) / 2, t, ridotta ? 0x00606060 : EX_NERO);
+        ex_draw_text(f, tx, y + (h - 16) / 2, t, ridotta ? 0x00606060 : EX_BLACK);
     }
 }
 
@@ -1576,15 +1576,15 @@ static int vb_sotto(int x, int y)
 /* -----------------------------------------------------------------------------
  * La barra
  * --------------------------------------------------------------------------- */
-static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO && wp == ID_AVVIO) { menu_apri(); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_AVVIO) { menu_apri(); return 0; }
 
     /* Ctrl+Alt+Canc (@TASTI-SISTEMA): the three roads, and «Annulla» last —
      * Enter pressed without reading must do nothing. A second Ctrl+Alt+Canc
      * within five seconds restarts from the window server, even while this
      * question is open. */
-    if (msg == EXM_SISTEMA) {
+    if (msg == EXM_SYSTEM) {
         /* ! SHORT CAPTIONS: four buttons share the dialog's 420 pixels, and
          * «Esci dalla sessione» pushed «Annulla» out of it. The words go in
          * the question instead. */
@@ -1598,33 +1598,33 @@ static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
         if (r == 0) arresta(EXOS_RB_RESTART);
         else if (r == 1) { log_seriale("pm: uscita dalla sessione (Ctrl+Alt+Canc)");
-                           ex_spegni_scrivania(); }
+                           ex_shutdown_desktop(); }
         else if (r == 2) arresta(EXOS_RB_POWEROFF);
         return 0;
     }
 
-    if (msg == EXM_FINESTRE) {
+    if (msg == EXM_WINDOW_LIST) {
         vb_leggi();
         vb_disegna(f);
-        ex_aggiorna(f);
+        ex_update(f);
         arr_controlla();            /* a shutdown in progress watches it too */
         return 0;
     }
 
-    if (msg == EXM_MOUSE_GIU) {
+    if (msg == EXM_MOUSE_DOWN) {
         int i = vb_sotto(EX_X(lp), EX_Y(lp));
 
-        if (i >= 0) { ex_finestra_attiva(g_vb[i].v.id); return 0; }
+        if (i >= 0) { ex_activate_window_id(g_vb[i].v.id); return 0; }
     }
 
-    if (msg == EXM_DISEGNA) {
-        long r = ex_procedura_base(f, msg, wp, lp);
+    if (msg == EXM_PAINT) {
+        long r = ex_default_proc(f, msg, wp, lp);
 
         vb_disegna(f);
-        ex_aggiorna(f);
+        ex_update(f);
         return r;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1634,7 +1634,7 @@ static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
  * 18 agosto 2026 la scrivania si creava con `0` al posto della procedura, e il
  * colore e l'immagine si mettevano UNA VOLTA subito dopo. Poi bastava un clic
  * sullo sfondo — che fa riordinare le finestre e quindi chiedere un ridisegno —
- * perche' ex_procedura_base ripulisse tutto col grigio di una finestra vuota:
+ * perche' ex_default_proc ripulisse tutto col grigio di una finestra vuota:
  * la scrivania si cancellava, immagine compresa, e non tornava piu'.
  *
  * ! DISEGNARE UNA VOLTA VA BENE FINCHE' NESSUNO CHIEDE DI RIDISEGNARE, ed e' la
@@ -1648,7 +1648,7 @@ static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
  *
  * Rende 0 se c'era un'immagine e non si e' potuta leggere.
  * --------------------------------------------------------------------------- */
-static ExFinestra  g_scr = 0;
+static ExWindow  g_scr = 0;
 static const char *g_sfondo = 0;
 
 static void desk_disegna(void);      /* the icons: see @PM-DESKTOP below */
@@ -1659,10 +1659,10 @@ static int scrivania_disegna(void)
 
     if (!g_scr) return 1;
 
-    ex_riempi(g_scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_SCRIVANIA);
+    ex_fill_rect(g_scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_DESKTOP_COLOR);
     if (g_sfondo &&
-        !ex_immagine_disponi(g_scr, g_sfondo, 0, 0, (int)g_sw,
-                             (int)g_sh - BARRA_H, g_sfondo_modo, EX_SCRIVANIA))
+        !ex_draw_image_mode(g_scr, g_sfondo, 0, 0, (int)g_sw,
+                             (int)g_sh - BARRA_H, g_sfondo_modo, EX_DESKTOP_COLOR))
         ok = 0;
     desk_disegna();
     return ok;
@@ -1713,7 +1713,7 @@ typedef struct {
     char    apri[160];          /* for a link: the program */
     int     tipo;               /* DV_* */
     int     cartella_lnk;       /* a link whose `percorso` is a directory */
-    ExIcona ic;                 /* 0 = draw the pictogram */
+    ExIcon ic;                 /* 0 = draw the pictogram */
     int     x, y;
 } VoceDesk;
 
@@ -1781,7 +1781,7 @@ static unsigned int desk_firma_agg(unsigned int h, const char *s)
 }
 
 /* The program's icon from applicazioni.txt, matching the path. */
-static ExIcona desk_icona_app(const char *prog)
+static ExIcon desk_icona_app(const char *prog)
 {
     unsigned int i;
 
@@ -1823,7 +1823,7 @@ static void desk_lnk_leggi(VoceDesk *v)
             strncpy(v->nome, val, sizeof(v->nome) - 1);
             v->nome[sizeof(v->nome) - 1] = '\0';
         } else if (strcmp(riga, "icona") == 0 && val[0]) {
-            v->ic = ex_icona_apri(val);
+            v->ic = ex_icon_open(val);
         }
     }
     if (!v->ic && v->apri[0]) v->ic = desk_icona_app(v->apri);
@@ -1938,7 +1938,7 @@ static void desk_cerchio(int cx, int cy, int r, unsigned int c)
     for (dy = -r; dy <= r; dy++) {
         int dx = 0;
         while ((dx + 1) * (dx + 1) + dy * dy <= r * r) dx++;
-        ex_riempi(g_scr, cx - dx, cy + dy, 2 * dx + 1, 1, c);
+        ex_fill_rect(g_scr, cx - dx, cy + dy, 2 * dx + 1, 1, c);
     }
 }
 
@@ -1948,53 +1948,53 @@ static void desk_pittogramma(int tipo, int x, int y)
 {
     switch (tipo) {
     case DV_LNK_CARTELLA:       /* the folder, with the little arrow box */
-        ex_riempi(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
-        ex_riempi(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
-        ex_rilievo(g_scr, x + 2, y + 9, 28, 19);
-        ex_riempi(g_scr, x + 4, y + 20, 10, 10, EX_BIANCO);
-        ex_riquadro_disegna(g_scr, x + 4, y + 20, 10, 10, EX_NERO);
-        ex_riempi(g_scr, x + 7, y + 23, 5, 2, EX_BLU);
-        ex_riempi(g_scr, x + 10, y + 23, 2, 5, EX_BLU);
+        ex_fill_rect(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
+        ex_fill_rect(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
+        ex_draw_raised(g_scr, x + 2, y + 9, 28, 19);
+        ex_fill_rect(g_scr, x + 4, y + 20, 10, 10, EX_WHITE);
+        ex_draw_rect(g_scr, x + 4, y + 20, 10, 10, EX_BLACK);
+        ex_fill_rect(g_scr, x + 7, y + 23, 5, 2, EX_BLUE);
+        ex_fill_rect(g_scr, x + 10, y + 23, 2, 5, EX_BLUE);
         break;
     case DV_CARTELLA:
-        ex_riempi(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
-        ex_riempi(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
-        ex_rilievo(g_scr, x + 2, y + 9, 28, 19);
+        ex_fill_rect(g_scr, x + 2, y + 6, 12, 4, 0x00D0A030);
+        ex_fill_rect(g_scr, x + 2, y + 9, 28, 19, 0x00E8C050);
+        ex_draw_raised(g_scr, x + 2, y + 9, 28, 19);
         break;
     case DV_LNK:
     case DV_FILE:
-        ex_riempi(g_scr, x + 6, y + 2, 20, 28, EX_BIANCO);
-        ex_riquadro_disegna(g_scr, x + 6, y + 2, 20, 28, EX_NERO);
-        ex_riempi(g_scr, x + 9, y + 9, 14, 1, 0x00808080);
-        ex_riempi(g_scr, x + 9, y + 13, 14, 1, 0x00808080);
-        ex_riempi(g_scr, x + 9, y + 17, 10, 1, 0x00808080);
+        ex_fill_rect(g_scr, x + 6, y + 2, 20, 28, EX_WHITE);
+        ex_draw_rect(g_scr, x + 6, y + 2, 20, 28, EX_BLACK);
+        ex_fill_rect(g_scr, x + 9, y + 9, 14, 1, 0x00808080);
+        ex_fill_rect(g_scr, x + 9, y + 13, 14, 1, 0x00808080);
+        ex_fill_rect(g_scr, x + 9, y + 17, 10, 1, 0x00808080);
         if (tipo == DV_LNK) {                   /* the little arrow box */
-            ex_riempi(g_scr, x + 4, y + 20, 10, 10, EX_BIANCO);
-            ex_riquadro_disegna(g_scr, x + 4, y + 20, 10, 10, EX_NERO);
-            ex_riempi(g_scr, x + 7, y + 23, 5, 2, EX_BLU);
-            ex_riempi(g_scr, x + 10, y + 23, 2, 5, EX_BLU);
+            ex_fill_rect(g_scr, x + 4, y + 20, 10, 10, EX_WHITE);
+            ex_draw_rect(g_scr, x + 4, y + 20, 10, 10, EX_BLACK);
+            ex_fill_rect(g_scr, x + 7, y + 23, 5, 2, EX_BLUE);
+            ex_fill_rect(g_scr, x + 10, y + 23, 2, 5, EX_BLUE);
         }
         break;
     case DV_CD:
         desk_cerchio(x + 16, y + 16, 14, 0x00C0C0C8);
         desk_cerchio(x + 16, y + 16, 12, 0x00E0E0F0);
         desk_cerchio(x + 16, y + 16, 4, 0x00606060);
-        desk_cerchio(x + 16, y + 16, 2, EX_SCRIVANIA);
+        desk_cerchio(x + 16, y + 16, 2, EX_DESKTOP_COLOR);
         break;
     case DV_FLOPPY:
-        ex_riempi(g_scr, x + 3, y + 3, 26, 26, 0x00303050);
-        ex_riempi(g_scr, x + 9, y + 3, 14, 9, 0x00B0B0B0);
-        ex_riempi(g_scr, x + 7, y + 17, 18, 12, EX_BIANCO);
+        ex_fill_rect(g_scr, x + 3, y + 3, 26, 26, 0x00303050);
+        ex_fill_rect(g_scr, x + 9, y + 3, 14, 9, 0x00B0B0B0);
+        ex_fill_rect(g_scr, x + 7, y + 17, 18, 12, EX_WHITE);
         break;
     case DV_USB:
-        ex_riempi(g_scr, x + 10, y + 2, 12, 8, 0x00B0B0B0);
-        ex_riempi(g_scr, x + 8, y + 10, 16, 20, 0x00303030);
-        ex_riempi(g_scr, x + 14, y + 14, 4, 4, 0x0040C040);
+        ex_fill_rect(g_scr, x + 10, y + 2, 12, 8, 0x00B0B0B0);
+        ex_fill_rect(g_scr, x + 8, y + 10, 16, 20, 0x00303030);
+        ex_fill_rect(g_scr, x + 14, y + 14, 4, 4, 0x0040C040);
         break;
     default:                                    /* DV_DISCO */
-        ex_riempi(g_scr, x + 1, y + 8, 30, 18, 0x00909090);
-        ex_rilievo(g_scr, x + 1, y + 8, 30, 18);
-        ex_riempi(g_scr, x + 24, y + 20, 4, 3, 0x0040C040);
+        ex_fill_rect(g_scr, x + 1, y + 8, 30, 18, 0x00909090);
+        ex_draw_raised(g_scr, x + 1, y + 8, 30, 18);
+        ex_fill_rect(g_scr, x + 24, y + 20, 4, 3, 0x0040C040);
         break;
     }
 }
@@ -2009,7 +2009,7 @@ static void desk_disegna(void)
         char      t[12];
         int       l, tx;
 
-        if (v->ic) ex_icona_disegna(g_scr, v->ic, ix, iy, DESK_ICONA, EX_SCRIVANIA);
+        if (v->ic) ex_icon_draw(g_scr, v->ic, ix, iy, DESK_ICONA, EX_DESKTOP_COLOR);
         else       desk_pittogramma(v->cartella_lnk ? DV_LNK_CARTELLA : v->tipo, ix, iy);
 
         /* The caption, cut to nine characters with «~», white on a dark
@@ -2019,9 +2019,9 @@ static void desk_disegna(void)
         if (strlen(v->nome) > 9) t[8] = '~';
         l = (int)strlen(t);
         tx = v->x + (DESK_CELLA - l * 8) / 2;
-        if (i == g_dv_sel) ex_riempi(g_scr, tx - 2, iy + DESK_ICONA + 2, l * 8 + 4, 18, EX_BLU);
-        else               ex_scrivi(g_scr, tx + 1, iy + DESK_ICONA + 4, t, EX_NERO);
-        ex_scrivi(g_scr, tx, iy + DESK_ICONA + 3, t, EX_BIANCO);
+        if (i == g_dv_sel) ex_fill_rect(g_scr, tx - 2, iy + DESK_ICONA + 2, l * 8 + 4, 18, EX_BLUE);
+        else               ex_draw_text(g_scr, tx + 1, iy + DESK_ICONA + 4, t, EX_BLACK);
+        ex_draw_text(g_scr, tx, iy + DESK_ICONA + 3, t, EX_WHITE);
     }
 }
 
@@ -2078,7 +2078,7 @@ static void desk_apri(int i)
         (void)e;
         {
             char prog[200];
-            if (ex_apri_file(v->perc, prog, sizeof(prog)) < 0) {
+            if (ex_open_file(v->perc, prog, sizeof(prog)) < 0) {
                 char m[260];
                 snprintf(m, sizeof(m), "Non riesco ad avviare %s.", prog);
                 ex_dlg_avviso("Scrivania", m);
@@ -2100,7 +2100,7 @@ static void desk_controlla(int forza)
     g_dv_firma = desk_leggi(1);
     if (g_dv_sel >= g_dv_n) g_dv_sel = -1;
     desk_disponi();
-    if (g_scr) { scrivania_disegna(); ex_aggiorna(g_scr); }
+    if (g_scr) { scrivania_disegna(); ex_update(g_scr); }
 }
 
 
@@ -2324,7 +2324,7 @@ static void desk_incolla(void)
     }
 }
 
-static void desk_menu(ExFinestra f, int x, int y)
+static void desk_menu(ExWindow f, int x, int y)
 {
     static const char *const VUOTO[] = { "Nuova cartella", "Nuovo file",
                                          "-", "Incolla" };
@@ -2336,18 +2336,18 @@ static void desk_menu(ExFinestra f, int x, int y)
     int       i = desk_sotto(x, y), k;
     VoceDesk *v;
 
-    if (i != g_dv_sel) { g_dv_sel = i; scrivania_disegna(); ex_aggiorna(f); }
+    if (i != g_dv_sel) { g_dv_sel = i; scrivania_disegna(); ex_update(f); }
     if (i < 0) {
-        k = ex_menu_comparsa(f, x, y, VUOTO, 4);
+        k = ex_popup_menu(f, x, y, VUOTO, 4);
         if (k == 0) desk_nuovo(1);
         else if (k == 1) desk_nuovo(0);
         else if (k == 3) desk_incolla();
     } else if (g_dv[i].tipo >= DV_CD) {
-        if (ex_menu_comparsa(f, x, y, UNITA, 1) == 0) desk_apri(i);
+        if (ex_popup_menu(f, x, y, UNITA, 1) == 0) desk_apri(i);
         return;
     } else {
         v = &g_dv[i];
-        k = ex_menu_comparsa(f, x, y, VOCE, 10);
+        k = ex_popup_menu(f, x, y, VOCE, 10);
         switch (k) {
         case 0: desk_apri(i); return;
         case 2: desk_rinomina(v); break;
@@ -2366,33 +2366,33 @@ static void desk_menu(ExFinestra f, int x, int y)
     }
     desk_controlla(1);          /* what changed shows at once, not in 2 s */
 }
-static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long scr_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     /* ! E SI MANDA AL SERVER SUBITO. Disegnare riempie la zona condivisa; e'
-     * ex_aggiorna che dice al server di ricomporla. Senza, la scrivania
+     * ex_update che dice al server di ricomporla. Senza, la scrivania
      * sarebbe giusta nella memoria del processo e grigia sullo schermo — che
      * e' esattamente il difetto di prima, con una causa in piu' da cercare. */
-    if (msg == EXM_DISEGNA) { scrivania_disegna(); ex_aggiorna(f); return 0; }
+    if (msg == EXM_PAINT) { scrivania_disegna(); ex_update(f); return 0; }
 
     /* The icons (@PM-DESKTOP, @PM-UNITA): a click selects, a double click
      * opens, and the clock looks for new drives and files. */
     /* ! NOT 0: that makes the toolkit redraw the whole desktop, 800x572,
      * every DESK_GIRO ms even when nothing changed. desk_controlla draws by
      * itself when something did. */
-    if (msg == EXM_TEMPO) { desk_controlla(0); return EX_NON_RIDISEGNARE; }
-    if (msg == EXM_MOUSE_GIU || msg == EXM_DOPPIOCLIC) {
+    if (msg == EXM_TIMER) { desk_controlla(0); return EX_NO_REDRAW; }
+    if (msg == EXM_MOUSE_DOWN || msg == EXM_DOUBLE_CLICK) {
         int i = desk_sotto(EX_X(lp), EX_Y(lp));
 
         if (i != g_dv_sel) {
             g_dv_sel = i;
             scrivania_disegna();
-            ex_aggiorna(f);
+            ex_update(f);
         }
-        if (msg == EXM_DOPPIOCLIC && i >= 0) desk_apri(i);
+        if (msg == EXM_DOUBLE_CLICK && i >= 0) desk_apri(i);
         return 0;
     }
-    if (msg == EXM_MOUSE_DESTRO) { desk_menu(f, EX_X(lp), EX_Y(lp)); return 0; }
-    return ex_procedura_base(f, msg, wp, lp);
+    if (msg == EXM_RIGHT_CLICK) { desk_menu(f, EX_X(lp), EX_Y(lp)); return 0; }
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 /* =============================================================================
@@ -2488,8 +2488,8 @@ static void sfondo_etichetta(void)
     if (!g_impost_sfondo) return;
     snprintf(t, sizeof(t), "Sfondo (%s): %s", DISPOSIZIONI[g_sfondo_modo],
              g_sfondo ? g_sfondo : "(nessuno)");
-    ex_testo_metti(g_impost_sfondo, t);
-    ex_procedura_base(g_impost, EXM_DISEGNA, 0, 0);
+    ex_set_text(g_impost_sfondo, t);
+    ex_default_proc(g_impost, EXM_PAINT, 0, 0);
 }
 
 static void sfondo_applica(const char *nuovo)
@@ -2515,7 +2515,7 @@ static void sfondo_applica(const char *nuovo)
         else       g_sfondo = 0;
         scrivania_disegna();
     }
-    ex_aggiorna(g_scr);
+    ex_update(g_scr);
     sfondo_etichetta();
 
     if (!sfondo_salva()) {
@@ -2545,7 +2545,7 @@ static void sfondo_modo(int modo)
 {
     g_sfondo_modo = modo;
     scrivania_disegna();
-    ex_aggiorna(g_scr);
+    ex_update(g_scr);
     sfondo_etichetta();
     if (!sfondo_salva())
         ex_dlg_avviso("Sfondo", "La disposizione vale adesso, ma pm.cfg non si "
@@ -2561,7 +2561,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++)
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) sfondo = argv[++i];
 
-    ex_schermo(&g_sw, &g_sh);
+    ex_screen_size(&g_sw, &g_sh);
     if (g_sw == 0) {
         printf("pm: il server a finestre non risponde, o lo schermo e' in testo\n");
         return 1;
@@ -2594,7 +2594,7 @@ int main(int argc, char **argv)
     /* La scrivania: una finestra come le altre, con lo stile che la tiene
      * sotto. E' il motivo per cui uno sfondo non e' un caso a parte. */
     {
-        ExFinestra scr = ex_crea("finestra", "", EX_SFONDO,
+        ExWindow scr = ex_create("window", "", EX_BACKGROUND,
                                  0, 0, (int)g_sw, (int)g_sh - BARRA_H,
                                  0, 0, scr_proc);
         if (!scr) {
@@ -2613,7 +2613,7 @@ int main(int argc, char **argv)
         if (!g_sfondo) sfondo_leggi_cfg();     /* -s wins over the saved one */
         desk_dir_trova();
         desk_controlla(1);
-        ex_sveglia(scr, DESK_GIRO);
+        ex_set_timer(scr, DESK_GIRO);
 
         if (!scrivania_disegna()) {
             char msg[160];
@@ -2621,19 +2621,19 @@ int main(int argc, char **argv)
                      g_sfondo ? g_sfondo : "?");
             log_seriale(msg);
         }
-        ex_aggiorna(scr);
+        ex_update(scr);
     }
 
-    g_barra = ex_crea("finestra", "", EX_SOPRA,
+    g_barra = ex_create("window", "", EX_TOPMOST,
                       0, (int)g_sh - BARRA_H, (int)g_sw, BARRA_H,
                       0, 0, barra_proc);
     if (!g_barra) return 1;
 
-    ex_crea("pulsante", "Avvio", EX_FIGLIO, 2, 2, 70, BARRA_H - 4,
+    ex_create("button", "Avvio", EX_CHILD, 2, 2, 70, BARRA_H - 4,
             g_barra, ID_AVVIO, 0);
 
     /* From now on the server tells the taskbar which windows are open. */
-    ex_finestre_segui(g_barra);
+    ex_track_windows(g_barra);
     /* =====================================================================
      * ! L'ANGOLO DESTRO E' DELL'OROLOGIO, e l'orologio e' un PROCESSO A
      * PARTE. Qui c'era la scritta «EX-OS», che non diceva niente che non si
@@ -2667,12 +2667,12 @@ int main(int argc, char **argv)
 
         if (!partito) {
             log_seriale("pm: l'orologio non parte, resta la scritta");
-            ex_crea("etichetta", "EX-OS", EX_FIGLIO, (int)g_sw - 56, 6, 50, 16,
+            ex_create("label", "EX-OS", EX_CHILD, (int)g_sw - 56, 6, 50, 16,
                     g_barra, 0, 0);
         }
     }
 
-    ex_procedura_base(g_barra, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_barra, EXM_PAINT, 0, 0);
 
     printf("pm: scrivania attiva, %u applicazioni nel menu\n", g_app_n);
 
@@ -2719,7 +2719,7 @@ int main(int argc, char **argv)
         }
     }
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
 
     /* =========================================================================
      * ! QUI LA NOSTRA FINESTRA E' CHIUSA, MA IL SERVER STA ANCORA LAVORANDO.

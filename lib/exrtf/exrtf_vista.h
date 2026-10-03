@@ -19,18 +19,18 @@
  * ! IT IS NOT A TOOLKIT CONTROL, AND ON PURPOSE. Controls in exwin.so have no
  * procedure of their own, and one that knew about styled runs would tie the
  * toolkit to this model. The view draws with the toolkit's public calls
- * (ex_riempi, ex_scrivi_con, ex_font_trova), and the program hands it the
+ * (ex_fill_rect, ex_draw_text_font, ex_font_find), and the program hands it the
  * messages of its rectangle - as EXBrowser does with its page:
  *
- *     EXM_DISEGNA      exrtf_vista_disegna(&v, f)
- *     EXM_TASTO        if (exrtf_vista_tasto(&v, wp)) ...redraw...
- *     EXM_MOUSE_GIU    exrtf_vista_clic(&v, x, y, shift)
- *     EXM_MOUSE_MOSSO  exrtf_vista_trascina(&v, x, y)
- *     EXM_DOPPIOCLIC   exrtf_vista_doppio(&v, x, y)
- *     EXM_ROTELLA      exrtf_vista_rotella(&v, (int)wp)
- *     EXM_MISURA       exrtf_vista_posto(&v, ...)
+ *     EXM_PAINT      exrtf_vista_disegna(&v, f)
+ *     EXM_KEY        if (exrtf_vista_tasto(&v, wp)) ...redraw...
+ *     EXM_MOUSE_DOWN    exrtf_vista_clic(&v, x, y, shift)
+ *     EXM_MOUSE_MOVE  exrtf_vista_trascina(&v, x, y)
+ *     EXM_DOUBLE_CLICK   exrtf_vista_doppio(&v, x, y)
+ *     EXM_WHEEL      exrtf_vista_rotella(&v, (int)wp)
+ *     EXM_SIZE       exrtf_vista_posto(&v, ...)
  *
- * The keys reach the program when no control has the focus (ex_fuoco_via).
+ * The keys reach the program when no control has the focus (ex_clear_focus).
  *
  * ! THE LINES ARE THE CALLER'S MEMORY, like the document's buffers: the view
  * allocates nothing, and a document with more lines than righe_max shows its
@@ -85,7 +85,7 @@ void exrtf_vista_posto(ExRtfVista *v, int x, int y, int w, int h);
 /* Lays the lines out again (after a change made outside the view). */
 void exrtf_vista_impagina(ExRtfVista *v);
 
-void exrtf_vista_disegna(ExRtfVista *v, ExFinestra f);
+void exrtf_vista_disegna(ExRtfVista *v, ExWindow f);
 
 /* 1 if the key was the view's (the view must be redrawn), 0 if it is the
  * program's (Ctrl+S, F-keys, Esc...). */

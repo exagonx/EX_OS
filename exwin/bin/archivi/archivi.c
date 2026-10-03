@@ -55,7 +55,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `archivi -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.006"
+#define VERSIONE_APP "0.007"
 EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define FIN_W       680
@@ -110,7 +110,7 @@ static const char *config_file(int crea)
     return f;
 }
 
-static ExFinestra g_f, g_scorri, g_stato, g_menu;
+static ExWindow g_f, g_scorri, g_stato, g_menu;
 
 /* =============================================================================
  * ZIP OR TAR: the one place that knows (@ARCHIVI-TAR)
@@ -276,7 +276,7 @@ static unsigned int g_primo = 0;        /* the first row shown */
 /* A column border being dragged: its column, and where the drag started. */
 static int g_tira = -1, g_tira_x0 = 0, g_tira_w0 = 0;
 
-/* The client size now: set at birth, changed by EXM_MISURA. */
+/* The client size now: set at birth, changed by EXM_SIZE. */
 static int g_w = FIN_W, g_h = FIN_H;
 static int fin_w(void) { return g_w; }
 static int fin_h(void) { return g_h; }
@@ -396,8 +396,8 @@ static void scorri_aggiorna(void)
     unsigned int max = g_rn > vis ? g_rn - vis : 0;
 
     if (g_primo > max) g_primo = max;
-    ex_scorri_limiti(g_scorri, max, vis);
-    ex_scorri_vai(g_scorri, g_primo);
+    ex_scroll_set_range(g_scorri, max, vis);
+    ex_scroll_set_pos(g_scorri, g_primo);
 }
 
 /* ! TEXT IS CUT TO THE COLUMN, with a «~» when something is missing: the
@@ -412,7 +412,7 @@ static void scrivi_in(int x, int y, int w, const char *s, int destra, unsigned i
     if (n > (int)sizeof(t) - 1) n = (int)sizeof(t) - 1;
     if (l > n) { memcpy(t, s, (size_t)n); t[n - 1] = '~'; t[n] = '\0'; l = n; }
     else       { memcpy(t, s, (size_t)l + 1); }
-    ex_scrivi(g_f, destra ? x + w - 4 - l * 8 : x + 4, y, t, c);
+    ex_draw_text(g_f, destra ? x + w - 4 - l * 8 : x + 4, y, t, c);
 }
 
 static void tabella_disegna(void)
@@ -422,27 +422,27 @@ static void tabella_disegna(void)
     char         t[48];
 
     /* The header: one raised cell per column, the sorted one with ^ or v. */
-    ex_riempi(g_f, x0, TAB_Y, tw, TESTA_H, EX_GRIGIO);
+    ex_fill_rect(g_f, x0, TAB_Y, tw, TESTA_H, EX_GRAY);
     for (c = 0, x = x0; c < COLONNE && x < x0 + tw; x += g_col_w[c], c++) {
         int w = g_col_w[c];
 
         if (x + w > x0 + tw) w = x0 + tw - x;
-        ex_rilievo(g_f, x, TAB_Y, w, TESTA_H);
+        ex_draw_raised(g_f, x, TAB_Y, w, TESTA_H);
         if (c == g_ord) snprintf(t, sizeof(t), "%s %c", TITOLI[c], g_ord_giu ? 'v' : '^');
         else            snprintf(t, sizeof(t), "%s", TITOLI[c]);
-        scrivi_in(x, TAB_Y + 1, w, t, 0, EX_NERO);
+        scrivi_in(x, TAB_Y + 1, w, t, 0, EX_BLACK);
     }
 
     /* The rows: a white well, the chosen one in blue. */
     y = righe_y();
-    ex_riempi(g_f, x0, y, tw, righe_h(), EX_BIANCO);
+    ex_fill_rect(g_f, x0, y, tw, righe_h(), EX_WHITE);
     for (k = 0; k < vis && g_primo + k < g_rn; k++) {
         const Riga  *r  = &g_r[g_primo + k];
         int          ry = y + (int)k * RIGA_H;
         int          scelta = (int)(g_primo + k) == g_sel;
-        unsigned int fg = scelta ? EX_BIANCO : EX_NERO;
+        unsigned int fg = scelta ? EX_WHITE : EX_BLACK;
 
-        if (scelta) ex_riempi(g_f, x0, ry, tw, RIGA_H, EX_BLU);
+        if (scelta) ex_fill_rect(g_f, x0, ry, tw, RIGA_H, EX_BLUE);
 
         for (c = 0, x = x0; c < COLONNE && x < x0 + tw; x += g_col_w[c], c++) {
             int w = g_col_w[c];
@@ -475,7 +475,7 @@ static void tabella_disegna(void)
             }
         }
     }
-    ex_incavo(g_f, x0, y, tw, righe_h());
+    ex_draw_sunken(g_f, x0, y, tw, righe_h());
 }
 
 /* Which column border is under x (within three pixels), or -1. */
@@ -522,15 +522,15 @@ static void stato(void)
     if (!g_z) snprintf(t, sizeof(t), "nessun archivio aperto.  %s", g_avviso);
     else      snprintf(t, sizeof(t), "%s - %u voci, compressione %s.  %s",
                        g_perc, g_rn, LIVELLI[g_livello], g_avviso);
-    ex_testo_metti(g_stato, t);
+    ex_set_text(g_stato, t);
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 static void ridisegna(void)
 {
-    proc(g_f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_f);
+    proc(g_f, EXM_PAINT, 0, 0);
+    ex_update(g_f);
 }
 
 static void titolo(void)
@@ -539,7 +539,7 @@ static void titolo(void)
 
     if (g_perc[0]) snprintf(t, sizeof(t), "Archivi - %s", g_perc);
     else           strcpy(t, "Archivi");
-    ex_titolo(g_f, t);
+    ex_set_title(g_f, t);
 }
 
 /* -----------------------------------------------------------------------------
@@ -629,15 +629,15 @@ static void opzioni_salva(void)
 #define ID_LIV_OK  110
 #define ID_LIV_NO  111
 static int        g_liv_fatto;          /* 0 open, 1 saved, -1 cancelled */
-static ExFinestra g_liv_r[4];
+static ExWindow g_liv_r[4];
 
-static long liv_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long liv_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO && wp == ID_LIV_OK) { g_liv_fatto = 1;  return 0; }
-    if (msg == EXM_COMANDO && wp == ID_LIV_NO) { g_liv_fatto = -1; return 0; }
-    if (msg == EXM_CHIUDI)                     { g_liv_fatto = -1; return 0; }
-    if (msg == EXM_TASTO && (wp & KBD_KEY_MASK) == 27) { g_liv_fatto = -1; return 0; }
-    return ex_procedura_base(f, msg, wp, lp);
+    if (msg == EXM_COMMAND && wp == ID_LIV_OK) { g_liv_fatto = 1;  return 0; }
+    if (msg == EXM_COMMAND && wp == ID_LIV_NO) { g_liv_fatto = -1; return 0; }
+    if (msg == EXM_CLOSE)                     { g_liv_fatto = -1; return 0; }
+    if (msg == EXM_KEY && (wp & KBD_KEY_MASK) == 27) { g_liv_fatto = -1; return 0; }
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void compressione_scegli(void)
@@ -648,37 +648,37 @@ static void compressione_scegli(void)
         "Normale: come zlib -6 (predefinita)",
         "Avanzata: cerca di piu', comprime di piu'"
     };
-    ExFinestra   f;
+    ExWindow   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0, l;
     int          w = 360, h = 200;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     g_liv_fatto = 0;
-    f = ex_crea("finestra", "Compressione",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", "Compressione",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 ((int)sw - w) / 2, ((int)sh - h) / 2, w, h, 0, 0, liv_proc);
     if (!f) return;
 
     for (l = 0; l < 4; l++) {
-        g_liv_r[l] = ex_crea("radio", spiega[l], EX_FIGLIO, 16, 16 + (int)l * 26,
+        g_liv_r[l] = ex_create("radio", spiega[l], EX_CHILD, 16, 16 + (int)l * 26,
                              w - 32, 22, f, ID_LIV0 + l, 0);
-        if (l == g_livello) ex_accendi(g_liv_r[l], 1);
+        if (l == g_livello) ex_set_checked(g_liv_r[l], 1);
     }
-    ex_crea("pulsante", "Salva",   EX_FIGLIO, w - 196, h - 40, 84, 26, f, ID_LIV_OK, 0);
-    ex_crea("pulsante", "Annulla", EX_FIGLIO, w - 104, h - 40, 84, 26, f, ID_LIV_NO, 0);
-    ex_fuoco(g_liv_r[g_livello]);
+    ex_create("button", "Salva",   EX_CHILD, w - 196, h - 40, 84, 26, f, ID_LIV_OK, 0);
+    ex_create("button", "Annulla", EX_CHILD, w - 104, h - 40, 84, 26, f, ID_LIV_NO, 0);
+    ex_set_focus(g_liv_r[g_livello]);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
-    while (g_liv_fatto == 0 && ex_prendi_msg(&m)) ex_smista(&m);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
+    while (g_liv_fatto == 0 && ex_get_message(&m)) ex_dispatch(&m);
 
     if (g_liv_fatto == 1) {
-        for (l = 0; l < 4; l++) if (ex_acceso(g_liv_r[l])) g_livello = l;
+        for (l = 0; l < 4; l++) if (ex_is_checked(g_liv_r[l])) g_livello = l;
         a_livello(g_livello);
         opzioni_salva();
     }
-    ex_distruggi(f);
+    ex_destroy(f);
 }
 
 static void estensione_scegli(void)
@@ -1090,7 +1090,7 @@ static void informazioni(void)
 static void esci(void)
 {
     if (g_z) a_chiudi(g_z);
-    ex_esci(0);
+    ex_quit(0);
 }
 
 /* A mouse button down in the client area: the header or a row. */
@@ -1141,19 +1141,19 @@ static void tasto(unsigned int c)
 static void disponi(int w, int h)
 {
     g_w = w; g_h = h;
-    ex_sposta(g_scorri, w - AREA_X - SCORRI_W, righe_y());
-    ex_misura(g_scorri, SCORRI_W, h - righe_y() - BASSO);
-    ex_sposta(g_stato, 6, h - 20);
-    ex_misura(g_stato, w - 12, 16);
+    ex_move(g_scorri, w - AREA_X - SCORRI_W, righe_y());
+    ex_resize(g_scorri, SCORRI_W, h - righe_y() - BASSO);
+    ex_move(g_stato, 6, h - 20);
+    ex_resize(g_stato, w - 12, 16);
     scorri_aggiorna();
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     unsigned int c;
 
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_SCORRI) { g_primo = (unsigned int)lp; break; }
 
         g_avviso[0] = '\0';
@@ -1175,11 +1175,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_INFO)       { informazioni();      break; }
         return 0;
 
-    case EXM_MOUSE_GIU:
+    case EXM_MOUSE_DOWN:
         clic(EX_X(lp), EX_Y(lp));
         break;
 
-    case EXM_MOUSE_MOSSO:
+    case EXM_MOUSE_MOVE:
         if (g_tira < 0) return 0;
         {
             int w = g_tira_w0 + EX_X(lp) - g_tira_x0;
@@ -1187,15 +1187,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         break;
 
-    case EXM_MOUSE_SU:
+    case EXM_MOUSE_UP:
         g_tira = -1;
         return 0;
 
-    case EXM_DOPPIOCLIC:
+    case EXM_DOUBLE_CLICK:
         if (EX_Y(lp) >= righe_y()) { clic(EX_X(lp), EX_Y(lp)); estrai_scelto(); }
         break;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         g_avviso[0] = '\0';
         c = wp & KBD_KEY_MASK;
 
@@ -1206,27 +1206,27 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         if (c == '\n' || c == '\r') { estrai_scelto(); break; }
         if (c >= KBD_K_UP && c <= KBD_K_PGDN) { tasto(c); break; }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         esci();
         return 0;
 
     /* ! EVERYTHING THIS PROGRAM DRAWS OF ITS OWN IS REPAINTED HERE: the
      * server asks for a repaint every time a dialog on top closes, and
-     * ex_procedura_base() wipes the client area. See the note about the
+     * ex_default_proc() wipes the client area. See the note about the
      * header row that was lost twice on 22 September 2026. */
-    case EXM_DISEGNA:
-        ex_procedura_base(f, msg, wp, lp);
+    case EXM_PAINT:
+        ex_default_proc(f, msg, wp, lp);
         tabella_disegna();
         return 0;
 
-    case EXM_MISURA:
+    case EXM_SIZE:
         disponi(EX_X(lp), EX_Y(lp));
         break;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
     ridisegna();
@@ -1240,8 +1240,8 @@ int main(int argc, char **argv)
     opzioni_leggi();
     a_livello(g_livello);
 
-    g_f = ex_crea("finestra", "Archivi",
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_f = ex_create("window", "Archivi",
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
         printf("archivi: il server a finestre non risponde.\n");
@@ -1249,30 +1249,30 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O",  ID_APRI);
-    ex_menu_voce(g_menu, "File", "Nuovo...\tCtrl+N", ID_NUOVO);
-    ex_menu_voce(g_menu, "File", "Costruisci",       ID_COSTRUISCI);
-    ex_menu_voce(g_menu, "File", "-",                0);
-    ex_menu_voce(g_menu, "File", "Chiudi",           ID_CHIUDI);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",     ID_ESCI);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Apri...\tCtrl+O",  ID_APRI);
+    ex_menu_add_item(g_menu, "File", "Nuovo...\tCtrl+N", ID_NUOVO);
+    ex_menu_add_item(g_menu, "File", "Costruisci",       ID_COSTRUISCI);
+    ex_menu_add_item(g_menu, "File", "-",                0);
+    ex_menu_add_item(g_menu, "File", "Chiudi",           ID_CHIUDI);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q",     ID_ESCI);
 
-    ex_menu_voce(g_menu, "Comandi", "Estrai il file scelto\tInvio", ID_ESTRAI);
-    ex_menu_voce(g_menu, "Comandi", "Estrai tutto in...",           ID_ESTRAI_TUT);
-    ex_menu_voce(g_menu, "Comandi", "-",                            0);
-    ex_menu_voce(g_menu, "Comandi", "Aggiungi file...",             ID_AGGIUNGI);
-    ex_menu_voce(g_menu, "Comandi", "Aggiungi cartella...",         ID_AGG_CART);
+    ex_menu_add_item(g_menu, "Comandi", "Estrai il file scelto\tInvio", ID_ESTRAI);
+    ex_menu_add_item(g_menu, "Comandi", "Estrai tutto in...",           ID_ESTRAI_TUT);
+    ex_menu_add_item(g_menu, "Comandi", "-",                            0);
+    ex_menu_add_item(g_menu, "Comandi", "Aggiungi file...",             ID_AGGIUNGI);
+    ex_menu_add_item(g_menu, "Comandi", "Aggiungi cartella...",         ID_AGG_CART);
 
-    ex_menu_voce(g_menu, "Opzioni", "Compressione...",          ID_COMPRESS);
-    ex_menu_voce(g_menu, "Opzioni", "Estensione predefinita...", ID_ESTENSIONE);
+    ex_menu_add_item(g_menu, "Opzioni", "Compressione...",          ID_COMPRESS);
+    ex_menu_add_item(g_menu, "Opzioni", "Estensione predefinita...", ID_ESTENSIONE);
 
-    ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
-    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
+    ex_menu_add_item(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
+    ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
 
-    g_scorri = ex_crea("scorrimento", "", EX_FIGLIO,
+    g_scorri = ex_create("scrollbar", "", EX_CHILD,
                        FIN_W - AREA_X - SCORRI_W, TAB_Y + TESTA_H,
                        SCORRI_W, FIN_H - TAB_Y - TESTA_H - BASSO, g_f, ID_SCORRI, 0);
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO,
+    g_stato = ex_create("label", "", EX_CHILD,
                       6, FIN_H - 20, FIN_W - 12, 16, g_f, 0, 0);
     if (!g_scorri || !g_stato) {
         printf("archivi: non riesco a creare i controlli\n");
@@ -1284,7 +1284,7 @@ int main(int argc, char **argv)
 
     ridisegna();
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
 
     if (g_z) a_chiudi(g_z);
     return 0;

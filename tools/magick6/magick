@@ -1,0 +1,8 @@
+#!/bin/sh
+# tools/magick6/magick - le prove chiamano `magick` (ImageMagick 7); Debian 12
+# ha ImageMagick 6, dove gli stessi comandi si chiamano convert, identify...
+# Uso: PATH="$PWD/tools/magick6:$PATH" bash tools/prova_X.sh
+case "$1" in
+    identify|convert|mogrify|composite|montage|compare) c=$1; shift; exec "$c" "$@" ;;
+esac
+exec convert "$@"

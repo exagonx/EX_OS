@@ -19,8 +19,8 @@
  * =============================================================================
  * ! LA GIUNTURA FRA IL DISEGNO E IL CODICE E' L'ID, e c'era gia'.
  *
- * `ex_crea("pulsante", ..., padre, ID, 0)` da' a ogni controllo un numero, e
- * l'evento torna come EXM_COMANDO con quel numero dentro. Nel disegno il
+ * `ex_create("button", ..., padre, ID, 0)` da' a ogni controllo un numero, e
+ * l'evento torna come EXM_COMMAND con quel numero dentro. Nel disegno il
  * pulsante E' `ID_PULSANTE1`, nel sorgente c'e' `case ID_PULSANTE1:`. Questo
  * programma e' fattibile qui piu' che altrove perche' ExWin era gia' fatto a
  * forma di VB6: non c'e' niente da inventare, c'e' da SCRIVERE quel che il
@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.019"
+#define VERSIONE_APP "0.020"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -153,32 +153,30 @@ typedef struct {
     const char *prefisso;           /* Pulsante1, Casella2... */
     int         w, h;               /* la misura con cui nasce */
     const char *evento[EVENTI_MAX]; /* [0] e' quello predefinito, 0 = fine */
+    /* I nomi italiani degli stessi eventi, di prima del 3 ottobre 2026: un
+     * progetto vecchio ha in finestra.c gli handler con quei nomi, e
+     * handler_assicura() li rinomina invece di aggiungerne di vuoti. */
+    const char *evento_it[EVENTI_MAX];
 } Strumento;
 
 static const Strumento g_strum[] = {
-    { "pulsante",     "Pulsante",     "Pulsante",  90, 26, { "Clic", "SulMouse", 0 } },
-    { "etichetta",    "Etichetta",    "Etichetta", 90, 16, { "SulMouse", "Clic", 0 } },
-    /* ! «Casella testo» and «Checkbox» since 26 September 2026 (@EXIDE-NOMI):
-     * the names in the panel and of NEW controls. Projects keep the class
-     * («testo», «spunta») and the names they already have, so an old project
-     * opens as before. */
-    { "testo",        "Casella testo", "CasellaTesto", 140, 22, { "Cambiato", "Invio", 0 } },
-    { "spunta",       "Checkbox",     "Checkbox", 140, 20, { "Cambiato", 0, 0 } },
-    { "radio",        "Radio",        "Radio",    140, 20, { "Cambiato", 0, 0 } },
-    { "riquadro",     "Riquadro",     "Riquadro", 160, 90, { 0, 0, 0 } },
-    { "separatore",   "Separatore",   "Riga",     160,  2, { 0, 0, 0 } },
-    { "intestazione", "Intestazione", "Titolo",   200, 22, { 0, 0, 0 } },
-    { "lista",        "Lista",        "Lista",    160,110, { "Scelta", "Apertura", 0 } },
-    { "areatesto",    "Area testo",   "Testo",    200,120, { "Cambiato", 0, 0 } },
-    { "areacodice",   "Area codice",  "Codice",   240,140, { "Cambiato", 0, 0 } },
-    { "combo",        "Elenco",       "Elenco",   140, 22, { "Scelta", 0, 0 } },
-    { "tab",          "Linguette",    "Linguette",200, 24, { "Scelta", 0, 0 } },
-    { "scorrimento",  "Scorrimento",  "Barra",     16,120, { "Scorso", 0, 0 } },
-    /* ! L'IMMAGINE NON HA EVENTI, ed e' l'unica insieme a riquadro,
-     * separatore e intestazione: e' ornamento. Chi vuole una figura che si
-     * clicca usa un'Etichetta con l'icona — ha l'evento Clic — e infatti e'
-     * cosi' che si fa un collegamento. */
-    { "immagine",     "Immagine",     "Immagine",  64, 64, { 0, 0, 0 } },
+    /* classe ExWin, nome nel pannello, prefisso del nome, misura,
+     * eventi (inglese), eventi di prima (italiano) */
+    { "button",    "Pulsante",      "Button",    90, 26, { "Click", "MouseOver", 0 },   { "Clic", "SulMouse", 0 } },
+    { "label",     "Etichetta",     "Label",     90, 16, { "MouseOver", "Click", 0 },   { "SulMouse", "Clic", 0 } },
+    { "textbox",   "Casella testo", "TextBox",  140, 22, { "Changed", "Enter", 0 },     { "Cambiato", "Invio", 0 } },
+    { "checkbox",  "Checkbox",      "CheckBox", 140, 20, { "Changed", 0, 0 },           { "Cambiato", 0, 0 } },
+    { "radio",     "Radio",         "Radio",    140, 20, { "Changed", 0, 0 },           { "Cambiato", 0, 0 } },
+    { "frame",     "Riquadro",      "Frame",    160, 90, { 0, 0, 0 },                   { 0, 0, 0 } },
+    { "separator", "Separatore",    "Line",     160,  2, { 0, 0, 0 },                   { 0, 0, 0 } },
+    { "header",    "Intestazione",  "Heading",  200, 22, { 0, 0, 0 },                   { 0, 0, 0 } },
+    { "list",      "Lista",         "List",     160,110, { "Selected", "Opened", 0 },   { "Scelta", "Apertura", 0 } },
+    { "textarea",  "Area testo",    "TextArea", 200,120, { "Changed", 0, 0 },           { "Cambiato", 0, 0 } },
+    { "codearea",  "Area codice",   "CodeArea", 240,140, { "Changed", 0, 0 },           { "Cambiato", 0, 0 } },
+    { "combo",     "Elenco",        "ComboBox", 140, 22, { "Selected", 0, 0 },          { "Scelta", 0, 0 } },
+    { "tab",       "Linguette",     "Tabs",     200, 24, { "Selected", 0, 0 },          { "Scelta", 0, 0 } },
+    { "scrollbar", "Scorrimento",   "ScrollBar", 16,120, { "Scrolled", 0, 0 },          { "Scorso", 0, 0 } },
+    { "image",     "Immagine",      "Image",     64, 64, { 0, 0, 0 },                   { 0, 0, 0 } },
 };
 
 #define STRUM_N ((int)(sizeof(g_strum) / sizeof(g_strum[0])))
@@ -209,7 +207,7 @@ typedef struct {
      * un file di disegno che si porta dentro le immagini non si legge piu' con
      * un editore di testo. */
     char         icona[ICONA_MAX];
-    ExIcona      ic;                /* solo per il disegnatore, non si salva */
+    ExIcon      ic;                /* solo per il disegnatore, non si salva */
 } Ctrl;
 
 static Ctrl g_ctrl[CTRL_MAX];
@@ -218,7 +216,7 @@ static int  g_strum_sel = -1;       /* lo strumento armato, -1 = nessuno */
 static int  g_ridim = -1;           /* quale maniglia si sta tirando, -1 = nessuna */
 
 /* ! UNA FOTOGRAFIA PER TRASCINAMENTO, E SOLO SE QUALCOSA CAMBIA. Un
- * trascinamento manda decine di EXM_MOUSE_MOSSO: fotografando a ognuno, i
+ * trascinamento manda decine di EXM_MOUSE_MOVE: fotografando a ognuno, i
  * sedici passi indietro se li mangerebbe tutti un movimento solo, e si
  * tornerebbe a mezzo pixel per volta. Fotografando invece all'inizio del
  * trascinamento, un clic che sceglie e basta lascerebbe un passo indietro che
@@ -392,8 +390,8 @@ static char g_prog_nome[NOME_MAX] = "";
 static int  g_sporco = 0;                   /* c'e' qualcosa da salvare */
 
 /* Le finestre e i controlli di exide. */
-static ExFinestra g_f, g_lst_strum, g_lst_prop, g_val, g_stato, g_menu;
-static ExFinestra g_cmb_form;       /* l'elenco a discesa delle maschere */
+static ExWindow g_f, g_lst_strum, g_lst_prop, g_val, g_stato, g_menu;
+static ExWindow g_cmb_form;       /* l'elenco a discesa delle maschere */
 
 /* L'area della maschera dentro la finestra di exide. */
 #define TELA_X   164
@@ -415,7 +413,7 @@ static int g_tela_w = 436, g_tela_h = 396;
  * diversi e chi scrive 4 nella casella otterrebbe quel che tirando non puo'. */
 #define MISURA_MIN 8
 
-static void dico(const char *s) { ex_testo_metti(g_stato, s); }
+static void dico(const char *s) { ex_set_text(g_stato, s); }
 
 /* =============================================================================
  * LE LIBRERIE — quel che si collega insieme al progetto
@@ -462,7 +460,7 @@ static char g_cc_radice[PERC_MAX] = "/cdrom/exos";
 /* ! LE OPZIONI OBBLIGATORIE NON STANNO NELLA CASELLA, e c'e' un motivo preciso.
  * La casella e' un controllo "testo", e "testo" tiene al massimo 63 caratteri
  * (TESTO_LEN in exwin.c) — non i 160 del campo che la legge. La prima versione
- * ci aveva scritto settantadue caratteri: alla creazione ex_testo_metti li ha
+ * ci aveva scritto settantadue caratteri: alla creazione ex_set_text li ha
  * TRONCATI a 63, tagliando "-fno-pie" a un "-" solitario in fondo alla riga.
  * Per gcc, un "-" da solo vuol dire «leggi da stdin» — ed e' la ragione vera
  * dietro «-E o -x richiesto quando l'ingresso e' lo standard input»: non
@@ -510,7 +508,7 @@ static int icona_ctrl(const Ctrl *c)
 
     if (!m->icona[0]) return 0;
     if (m->ic == 0) {
-        m->ic = ex_icona_apri(m->icona);
+        m->ic = ex_icon_open(m->icona);
         if (m->ic == 0) return 0;   /* il percorso resta: si corregge a mano */
     }
     return 1;
@@ -525,7 +523,7 @@ static void cerchio(int cx, int cy, int r, unsigned int col)
     for (dy = -r; dy <= r; dy++) {
         int dx = 0;
         while ((dx + 1) * (dx + 1) + dy * dy <= r * r) dx++;
-        ex_riempi(g_f, cx - dx, cy + dy, 2 * dx + 1, 1, col);
+        ex_fill_rect(g_f, cx - dx, cy + dy, 2 * dx + 1, 1, col);
     }
 }
 
@@ -537,9 +535,9 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
     if (strcmp(cl, "pulsante") == 0) {
         int tx = x + 6;
 
-        ex_riempi(g_f, x, y, c->w, c->h, EX_GRIGIO);
-        ex_riquadro_disegna(g_f, x, y, c->w, c->h, EX_NERO);
-        ex_rilievo(g_f, x + 1, y + 1, c->w - 2, c->h - 2);
+        ex_fill_rect(g_f, x, y, c->w, c->h, EX_GRAY);
+        ex_draw_rect(g_f, x, y, c->w, c->h, EX_BLACK);
+        ex_draw_raised(g_f, x + 1, y + 1, c->w - 2, c->h - 2);
 
         /* ! L'ICONA SI VEDE NEL DISEGNATORE, o non si sta disegnando la
          * finestra che uscira'. E' il senso di un disegnatore visuale:
@@ -548,20 +546,20 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
         if (icona_ctrl(c)) {
             int lato = c->h - 6 < 8 ? 8 : (c->h - 6 > 32 ? 32 : c->h - 6);
 
-            ex_icona_disegna(g_f, c->ic, x + 4, y + (c->h - lato) / 2,
-                             (unsigned int)lato, EX_GRIGIO);
+            ex_icon_draw(g_f, c->ic, x + 4, y + (c->h - lato) / 2,
+                             (unsigned int)lato, EX_GRAY);
             tx = x + 4 + lato + 6;
         }
 
-        ex_scrivi(g_f, tx, y + (c->h - 16) / 2, c->testo, EX_NERO);
+        ex_draw_text(g_f, tx, y + (c->h - 16) / 2, c->testo, EX_BLACK);
     } else if (strcmp(cl, "etichetta") == 0) {
         if (icona_ctrl(c)) {
             int lato = c->h < 8 ? 8 : (c->h > 32 ? 32 : c->h);
 
-            ex_icona_disegna(g_f, c->ic, x, y, (unsigned int)lato, EX_GRIGIO);
-            ex_scrivi(g_f, x + lato + 6, y, c->testo, EX_NERO);
+            ex_icon_draw(g_f, c->ic, x, y, (unsigned int)lato, EX_GRAY);
+            ex_draw_text(g_f, x + lato + 6, y, c->testo, EX_BLACK);
         } else {
-            ex_scrivi(g_f, x, y, c->testo, EX_NERO);
+            ex_draw_text(g_f, x, y, c->testo, EX_BLACK);
         }
     } else if (strcmp(cl, "immagine") == 0) {
         /* ! QUADRATA E CENTRATA, come la disegnera' il toolkit: un disegnatore
@@ -571,59 +569,59 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
         int lato = c->w < c->h ? c->w : c->h;
 
         if (icona_ctrl(c) && lato > 0)
-            ex_icona_disegna(g_f, c->ic, x + (c->w - lato) / 2,
+            ex_icon_draw(g_f, c->ic, x + (c->w - lato) / 2,
                              y + (c->h - lato) / 2,
-                             (unsigned int)lato, EX_GRIGIO);
+                             (unsigned int)lato, EX_GRAY);
         else
-            ex_riquadro_disegna(g_f, x, y, c->w, c->h, EX_GRIGIO_SC);
+            ex_draw_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
     } else if (strcmp(cl, "testo") == 0 || strcmp(cl, "combo") == 0) {
-        ex_riempi(g_f, x, y, c->w, c->h, EX_BIANCO);
-        ex_incavo(g_f, x, y, c->w, c->h);
-        ex_scrivi(g_f, x + 3, y + (c->h - 16) / 2, c->testo, EX_NERO);
+        ex_fill_rect(g_f, x, y, c->w, c->h, EX_WHITE);
+        ex_draw_sunken(g_f, x, y, c->w, c->h);
+        ex_draw_text(g_f, x + 3, y + (c->h - 16) / 2, c->testo, EX_BLACK);
         if (strcmp(cl, "combo") == 0) {
-            ex_riempi(g_f, x + c->w - 19, y + 2, 17, c->h - 4, EX_GRIGIO);
-            ex_rilievo(g_f, x + c->w - 19, y + 2, 17, c->h - 4);
+            ex_fill_rect(g_f, x + c->w - 19, y + 2, 17, c->h - 4, EX_GRAY);
+            ex_draw_raised(g_f, x + c->w - 19, y + 2, 17, c->h - 4);
         }
     } else if (strcmp(cl, "spunta") == 0) {
-        ex_riempi(g_f, x, y + (c->h - 13) / 2, 13, 13, EX_BIANCO);
-        ex_incavo(g_f, x, y + (c->h - 13) / 2, 13, 13);
-        ex_scrivi(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_NERO);
+        ex_fill_rect(g_f, x, y + (c->h - 13) / 2, 13, 13, EX_WHITE);
+        ex_draw_sunken(g_f, x, y + (c->h - 13) / 2, 13, 13);
+        ex_draw_text(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_BLACK);
     } else if (strcmp(cl, "radio") == 0) {
         /* ! ROUND, as the toolkit draws it (@EXIDE-NOMI): the designer drew
          * the radio as a square, the same as the checkbox, so the two could
          * not be told apart on the form — and in the program they are not the
          * same thing. A dark disc, and a white one inside. */
-        cerchio(x + 6, y + c->h / 2, 6, EX_GRIGIO_SC);
-        cerchio(x + 6, y + c->h / 2, 5, EX_BIANCO);
-        ex_scrivi(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_NERO);
+        cerchio(x + 6, y + c->h / 2, 6, EX_DARK_GRAY);
+        cerchio(x + 6, y + c->h / 2, 5, EX_WHITE);
+        ex_draw_text(g_f, x + 18, y + (c->h - 16) / 2, c->testo, EX_BLACK);
     } else if (strcmp(cl, "riquadro") == 0) {
-        ex_incavo(g_f, x, y + 8, c->w, c->h - 8);
-        ex_rilievo(g_f, x + 1, y + 9, c->w - 2, c->h - 10);
-        ex_riempi(g_f, x + 6, y + 8, (int)strlen(c->testo) * 8 + 6, 2, EX_GRIGIO);
-        ex_scrivi(g_f, x + 9, y, c->testo, EX_NERO);
+        ex_draw_sunken(g_f, x, y + 8, c->w, c->h - 8);
+        ex_draw_raised(g_f, x + 1, y + 9, c->w - 2, c->h - 10);
+        ex_fill_rect(g_f, x + 6, y + 8, (int)strlen(c->testo) * 8 + 6, 2, EX_GRAY);
+        ex_draw_text(g_f, x + 9, y, c->testo, EX_BLACK);
     } else if (strcmp(cl, "separatore") == 0) {
-        ex_riempi(g_f, x, y, c->w, 1, EX_OMBRA);
-        ex_riempi(g_f, x, y + 1, c->w, 1, EX_LUCE);
+        ex_fill_rect(g_f, x, y, c->w, 1, EX_SHADOW);
+        ex_fill_rect(g_f, x, y + 1, c->w, 1, EX_HIGHLIGHT);
     } else if (strcmp(cl, "intestazione") == 0) {
-        ex_riempi(g_f, x, y, c->w, c->h, EX_BLU);
-        ex_rilievo(g_f, x, y, c->w, c->h);
-        ex_scrivi(g_f, x + 6, y + (c->h - 16) / 2, c->testo, EX_BIANCO);
+        ex_fill_rect(g_f, x, y, c->w, c->h, EX_BLUE);
+        ex_draw_raised(g_f, x, y, c->w, c->h);
+        ex_draw_text(g_f, x + 6, y + (c->h - 16) / 2, c->testo, EX_WHITE);
     } else if (strcmp(cl, "scorrimento") == 0) {
-        ex_riempi(g_f, x, y, c->w, c->h, EX_GRIGIO_SC);
-        ex_riempi(g_f, x, y, c->w, 16, EX_GRIGIO);
-        ex_rilievo(g_f, x, y, c->w, 16);
-        ex_riempi(g_f, x, y + c->h - 16, c->w, 16, EX_GRIGIO);
-        ex_rilievo(g_f, x, y + c->h - 16, c->w, 16);
+        ex_fill_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
+        ex_fill_rect(g_f, x, y, c->w, 16, EX_GRAY);
+        ex_draw_raised(g_f, x, y, c->w, 16);
+        ex_fill_rect(g_f, x, y + c->h - 16, c->w, 16, EX_GRAY);
+        ex_draw_raised(g_f, x, y + c->h - 16, c->w, 16);
     } else if (strcmp(cl, "tab") == 0) {
-        ex_riempi(g_f, x, y, c->w, c->h, EX_GRIGIO);
-        ex_riempi(g_f, x, y + c->h - 1, c->w, 1, EX_OMBRA);
-        ex_rilievo(g_f, x, y, (int)strlen(c->testo) * 8 + 16, c->h);
-        ex_scrivi(g_f, x + 8, y + 3, c->testo, EX_NERO);
+        ex_fill_rect(g_f, x, y, c->w, c->h, EX_GRAY);
+        ex_fill_rect(g_f, x, y + c->h - 1, c->w, 1, EX_SHADOW);
+        ex_draw_raised(g_f, x, y, (int)strlen(c->testo) * 8 + 16, c->h);
+        ex_draw_text(g_f, x + 8, y + 3, c->testo, EX_BLACK);
     } else {
         /* lista, areatesto, areacodice: un buco bianco con dentro la prima riga */
-        ex_riempi(g_f, x, y, c->w, c->h, EX_BIANCO);
-        ex_incavo(g_f, x, y, c->w, c->h);
-        ex_scrivi(g_f, x + 3, y + 2, c->testo, EX_NERO);
+        ex_fill_rect(g_f, x, y, c->w, c->h, EX_WHITE);
+        ex_draw_sunken(g_f, x, y, c->w, c->h);
+        ex_draw_text(g_f, x + 3, y + 2, c->testo, EX_BLACK);
     }
 }
 
@@ -668,8 +666,8 @@ static void disegna_maniglie(const Ctrl *c, int ox, int oy)
 
     for (i = 0; i < 8; i++) {
         maniglia_centro(c, i, ox, oy, &cx, &cy);
-        ex_riempi(g_f, cx - MAN_LATO / 2, cy - MAN_LATO / 2,
-                  MAN_LATO, MAN_LATO, EX_NERO);
+        ex_fill_rect(g_f, cx - MAN_LATO / 2, cy - MAN_LATO / 2,
+                  MAN_LATO, MAN_LATO, EX_BLACK);
     }
 }
 
@@ -679,21 +677,21 @@ static void disegna_tela(void)
     int i;
 
     /* Il ripiano su cui sta la maschera. */
-    ex_riempi(g_f, TELA_X, TELA_Y, TELA_W, TELA_H, 0x00505050);
-    ex_incavo(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
+    ex_fill_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H, 0x00505050);
+    ex_draw_sunken(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
 
     /* ! THE FORM STAYS ON THE CANVAS (30 September 2026): a form wider or
      * taller than the canvas - 500 wide on a canvas made narrow by resizing
      * the window - was drawn over the property list next to it. */
-    ex_ritaglio(g_f, TELA_X + 2, TELA_Y + 2, TELA_W - 4, TELA_H - 4);
+    ex_set_clip(g_f, TELA_X + 2, TELA_Y + 2, TELA_W - 4, TELA_H - 4);
 
     /* La maschera: telaio, barra del titolo, area del client. */
-    ex_riempi(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24,
-              EX_GRIGIO);
-    ex_rilievo(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24);
-    ex_riempi(g_f, TELA_X + 8, TELA_Y + 8, forma()->w, 20, EX_BLU);
-    ex_scrivi(g_f, TELA_X + 13, TELA_Y + 10, forma()->titolo, EX_BIANCO);
-    ex_riempi(g_f, ox, oy, forma()->w, forma()->h, EX_GRIGIO);
+    ex_fill_rect(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24,
+              EX_GRAY);
+    ex_draw_raised(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24);
+    ex_fill_rect(g_f, TELA_X + 8, TELA_Y + 8, forma()->w, 20, EX_BLUE);
+    ex_draw_text(g_f, TELA_X + 13, TELA_Y + 10, forma()->titolo, EX_WHITE);
+    ex_fill_rect(g_f, ox, oy, forma()->w, forma()->h, EX_GRAY);
 
     /* ! SI DISEGNA UNA MASCHERA PER VOLTA, e non e' un ripiego rispetto a
      * mostrarle tutte insieme dentro un contenitore MDI. Il ripiano e' 436x396
@@ -710,7 +708,7 @@ static void disegna_tela(void)
 
     if (g_sel >= 0 && g_ctrl[g_sel].usato)
         disegna_maniglie(&g_ctrl[g_sel], ox, oy);
-    ex_ritaglio(g_f, 0, 0, 0, 0);
+    ex_set_clip(g_f, 0, 0, 0, 0);
 }
 
 /* =============================================================================
@@ -817,7 +815,7 @@ static void prop_mostra(void)
     int k;
     char riga[80], val[64];
 
-    ex_lista_svuota(g_lst_prop);
+    ex_list_clear(g_lst_prop);
 
     if (g_sel < 0 || !g_ctrl[g_sel].usato) {
         /* ! CON IL VALORE ACCANTO, come per i controlli. Prima qui c'erano i
@@ -827,22 +825,22 @@ static void prop_mostra(void)
         for (k = 0; k < FPROP_N; k++) {
             fprop_valore(k, val, sizeof(val));
             sprintf(riga, "%-10s %s", g_fprop_nome[k], val);
-            ex_lista_aggiungi(g_lst_prop, riga);
+            ex_list_add(g_lst_prop, riga);
         }
-        fprop_valore((int)ex_lista_scelta(g_lst_prop), val, sizeof(val));
-        ex_testo_metti(g_val, val);
-        val_segna((int)ex_lista_scelta(g_lst_prop));
+        fprop_valore((int)ex_list_get_selected(g_lst_prop), val, sizeof(val));
+        ex_set_text(g_val, val);
+        val_segna((int)ex_list_get_selected(g_lst_prop));
         return;
     }
 
     for (k = 0; k < PROP_N; k++) {
         prop_valore(k, val, sizeof(val));
         sprintf(riga, "%-10s %s", g_prop_nome[k], val);
-        ex_lista_aggiungi(g_lst_prop, riga);
+        ex_list_add(g_lst_prop, riga);
     }
-    prop_valore((int)ex_lista_scelta(g_lst_prop), val, sizeof(val));
-    ex_testo_metti(g_val, val);
-    val_segna((int)ex_lista_scelta(g_lst_prop));
+    prop_valore((int)ex_list_get_selected(g_lst_prop), val, sizeof(val));
+    ex_set_text(g_val, val);
+    val_segna((int)ex_list_get_selected(g_lst_prop));
 }
 
 /* ! IL NOME DI UN CONTROLLO DIVENTA UN NOME DI FUNZIONE, quindi non puo'
@@ -866,10 +864,48 @@ static void nome_pulito(char *s)
  * perche' cambiare il nome dalla scheda deve aggiornare anche l'elenco. */
 static void form_mostra(void);
 
+/* ! IL NOME DI UN CONTROLLO E' UNA VARIABILE C (dal 3 ottobre 2026: prima
+ * era h_<nome>, che lo teneva lontano da tutto). Una parola chiave o una
+ * funzione della libreria come nome darebbe un programma che non compila, con
+ * un errore che non dice perche'. Si rifiuta qui, dove si sceglie. */
+/* La classe con cui un progetto di prima del 3 ottobre 2026 ha salvato il
+ * controllo: il file .exi la scrive per nome, e allora era in italiano. */
+static const char *classe_di_prima(int t)
+{
+    static const char *const ita[] = {
+        "pulsante", "etichetta", "testo", "spunta", "radio", "riquadro",
+        "separatore", "intestazione", "lista", "areatesto", "areacodice",
+        "combo", "tab", "scorrimento", "immagine"
+    };
+    return (t >= 0 && t < (int)(sizeof(ita) / sizeof(ita[0]))) ? ita[t] : "";
+}
+
+static int nome_riservato(const char *n)
+{
+    static const char *const riservati[] = {
+        "auto", "break", "case", "char", "const", "continue", "default", "do",
+        "double", "else", "enum", "extern", "float", "for", "goto", "if",
+        "inline", "int", "long", "register", "restrict", "return", "short",
+        "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+        "unsigned", "void", "volatile", "while", "main", "exit", "free",
+        "malloc", "calloc", "realloc", "printf", "sprintf", "open", "close",
+        "read", "write", "time", "index", "abs", "strlen", "strcpy", "memcpy",
+        "window", "m", "f", "msg", "wp", "lp", 0
+    };
+    int i;
+
+    if (n[0] == '\0') return 1;
+    if (strncmp(n, "ex_", 3) == 0 || strncmp(n, "EX", 2) == 0 ||
+        strncmp(n, "ID_", 3) == 0) return 1;
+    for (i = 0; riservati[i]; i++)
+        if (strcmp(n, riservati[i]) == 0) return 1;
+    return 0;
+}
+
 static void prop_applica_k(int k)
 {
     Ctrl *c;
-    const char *v = ex_testo_prendi(g_val);
+    const char *v = ex_get_text(g_val);
     int   n;
 
     if (g_sel < 0 || !g_ctrl[g_sel].usato) {
@@ -889,15 +925,16 @@ static void prop_applica_k(int k)
                 nuovo[NOME_MAX - 1] = '\0';
                 nome_pulito(nuovo);
 
-                /* ! «finestra» E' PRENOTATO DALLA PRINCIPALE. I suoi nomi
-                 * generati sono finestra_crea() e finestra_proc() (vedi
-                 * form_crea_fn): una maschera secondaria chiamata cosi'
-                 * genererebbe le stesse due funzioni una seconda volta, e a
+                /* ! «window» (e «finestra», il nome di prima) SONO PRENOTATI
+                 * DALLA PRINCIPALE. I suoi nomi generati sono window_create()
+                 * e window_proc() (vedi form_crea_fn), con finestra_crea()
+                 * come alias: una maschera secondaria chiamata cosi'
+                 * genererebbe le stesse funzioni una seconda volta, e a
                  * fermarsi sarebbe il compilatore su un file che nessuno ha
                  * scritto a mano. */
                 if (!form_e_principale(g_form_sel) &&
-                    strcmp(nuovo, "finestra") == 0) {
-                    dico("\"finestra\" e' il nome della maschera principale");
+                    (strcmp(nuovo, "window") == 0 || strcmp(nuovo, "finestra") == 0)) {
+                    dico("\"window\" e \"finestra\" sono della maschera principale");
                     return;
                 }
                 for (i = 0; i < FORM_MAX; i++)
@@ -941,8 +978,10 @@ static void prop_applica_k(int k)
         int e;
 
         for (e = 0; e < EVENTI_MAX; e++)
-            if (g_strum[c->tipo].evento[e] &&
-                strcmp(g_strum[c->tipo].evento[e], v) == 0)
+            if ((g_strum[c->tipo].evento[e] &&
+                 strcmp(g_strum[c->tipo].evento[e], v) == 0) ||
+                (g_strum[c->tipo].evento_it[e] &&
+                 strcmp(g_strum[c->tipo].evento_it[e], v) == 0))
                 break;
         if (e == EVENTI_MAX) {
             dico("evento sconosciuto per questo controllo");
@@ -959,11 +998,19 @@ static void prop_applica_k(int k)
     istante_segna();
 
     switch (k) {
-    case 0:
-        strncpy(c->nome, v, NOME_MAX - 1);
-        c->nome[NOME_MAX - 1] = '\0';
-        nome_pulito(c->nome);
+    case 0: {
+        char prova[NOME_MAX];
+
+        strncpy(prova, v, NOME_MAX - 1);
+        prova[NOME_MAX - 1] = '\0';
+        nome_pulito(prova);
+        if (nome_riservato(prova)) {
+            dico("nome riservato (parola del C o funzione di libreria): scegline un altro");
+            return;
+        }
+        strcpy(c->nome, prova);
         break;
+    }
     case 1:
         strncpy(c->testo, v, TESTO_MAX - 1);
         c->testo[TESTO_MAX - 1] = '\0';
@@ -994,7 +1041,7 @@ static void prop_applica_k(int k)
 
 static void prop_applica(void)
 {
-    prop_applica_k((int)ex_lista_scelta(g_lst_prop));
+    prop_applica_k((int)ex_list_get_selected(g_lst_prop));
 }
 
 /* =============================================================================
@@ -1018,7 +1065,7 @@ static char g_val_testo[TESTO_MAX];
 
 static void val_segna(int k)
 {
-    const char *t = ex_testo_prendi(g_val);
+    const char *t = ex_get_text(g_val);
 
     g_val_k = k;
     g_val_sel = g_sel;
@@ -1030,18 +1077,18 @@ static void val_segna(int k)
 /* Called for every message, BEFORE it is handled: see above. */
 static void auto_controlla(void)
 {
-    static ExFinestra prima = 0;
-    ExFinestra ora = ex_fuoco_chi(g_f);
+    static ExWindow prima = 0;
+    ExWindow ora = ex_get_focus(g_f);
 
     if (g_auto_prop && prima == g_val && ora != g_val && g_val_k >= 0 &&
         g_sel == g_val_sel && g_form_sel == g_val_form) {
-        const char *t = ex_testo_prendi(g_val);
+        const char *t = ex_get_text(g_val);
 
         if (t && strcmp(t, g_val_testo) != 0) {
-            unsigned int scelta = ex_lista_scelta(g_lst_prop);
+            unsigned int scelta = ex_list_get_selected(g_lst_prop);
 
             prop_applica_k(g_val_k);            /* redraws the list at row 0 */
-            ex_lista_scegli(g_lst_prop, scelta);
+            ex_list_select(g_lst_prop, scelta);
         }
     }
     prima = ora;
@@ -1093,7 +1140,7 @@ static void impostazioni_scrivi(void)
  * tentativi di apertura: farli a ogni ridisegno della lista vorrebbe dire
  * quindici file aperti ogni volta che si sceglie una voce.
  * ============================================================================= */
-static ExIcona icona_strumento(int tipo)
+static ExIcon icona_strumento(int tipo)
 {
     static const char *const dove[] = {
         "/exwin/icon/strumenti/",
@@ -1103,12 +1150,12 @@ static ExIcona icona_strumento(int tipo)
     int  d;
 
     for (d = 0; d < 2; d++) {
-        ExIcona ic;
+        ExIcon ic;
 
         if (snprintf(p, sizeof(p), "%s%s.ico", dove[d],
                      g_strum[tipo].classe) >= (int)sizeof(p)) continue;
 
-        ic = ex_icona_apri(p);
+        ic = ex_icon_open(p);
         if (ic) return ic;
     }
     return 0;
@@ -1270,7 +1317,7 @@ static void ridimensiona(int mx, int my)
     }
     prop_mostra();
     disegna_tela();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 static unsigned int id_libero(void)
@@ -1346,7 +1393,7 @@ static int aggiungi(int tipo, int x, int y)
  * GLI APPUNTI DEL DISEGNO — un controllo, non del testo
  *
  * ! NON SONO GLI APPUNTI DI SISTEMA, e non e' una svista. Quelli
- * (`ex_appunti_metti`) portano TESTO, e sono gia' usati dagli editor per
+ * (`ex_clipboard_set`) portano TESTO, e sono gia' usati dagli editor per
  * copiare pezzi di sorgente fra una finestra e l'altra. Qui si copia un
  * controllo: tipo, misura, testo, evento. Infilarlo negli appunti di sistema
  * vorrebbe dire inventarsi un formato testuale per un rettangolo, e farlo
@@ -1422,7 +1469,7 @@ static void ctrl_incolla(void)
     g_sporco = 1;
     prop_mostra();
     disegna_tela();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 
     {
         char t[80];
@@ -1442,18 +1489,18 @@ static void form_mostra(void)
 
     if (g_cmb_form == 0) return;    /* si chiama anche prima che esista */
 
-    ex_voci_svuota(g_cmb_form);
+    ex_items_clear(g_cmb_form);
     for (i = 0; i < FORM_MAX; i++) {
         if (!g_form[i].usato) continue;
         /* Il nome e' quello che conta nel codice generato; il titolo e' quello
          * che si legge a schermo. Qui servono tutti e due: si sceglie col
          * primo e ci si riconosce col secondo. */
         sprintf(riga, "%s - %s", g_form[i].nome, g_form[i].titolo);
-        ex_voce_aggiungi(g_cmb_form, riga);
+        ex_item_add(g_cmb_form, riga);
         if (i == g_form_sel) quale = n;
         n++;
     }
-    ex_voce_scegli(g_cmb_form, (unsigned int)quale);
+    ex_item_select(g_cmb_form, (unsigned int)quale);
 }
 
 /* Dalla riga scelta nell'elenco alla maschera: non coincidono appena se ne
@@ -1479,7 +1526,7 @@ static void form_scegli(int quale)
     form_mostra();
     prop_mostra();
     disegna_tela();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     dico(g_form[quale].titolo);
 }
 
@@ -1508,7 +1555,7 @@ static void form_nuova(void)
     form_azzera(&g_form[i], nome, titolo);
     g_sporco = 1;
     form_scegli(i);
-    dico("maschera nuova: si apre dal codice con <nome>_crea()");
+    dico("maschera nuova: si apre dal codice con <nome>_create()");
 }
 
 static void form_togli(void)
@@ -1590,7 +1637,7 @@ static int passo(Istante *da, int *da_n, Istante *verso, int *verso_n)
     form_mostra();
     prop_mostra();
     disegna_tela();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     return 1;
 }
 
@@ -1902,7 +1949,8 @@ static int dis_carica(void)
 
                 s = parola(s, w, sizeof(w));
                 for (k = 0; k < STRUM_N; k++)
-                    if (strcmp(g_strum[k].classe, w) == 0) { tipo = k; break; }
+                    if (strcmp(g_strum[k].classe, w) == 0 ||
+                        strcmp(classe_di_prima(k), w) == 0) { tipo = k; break; }
                 if (tipo < 0) continue;     /* classe sconosciuta: si salta */
 
                 for (k = 0; k < CTRL_MAX; k++) if (!g_ctrl[k].usato) break;
@@ -1975,13 +2023,13 @@ static void form_var(int k, char *out)
 
 static void form_crea_fn(int k, char *out)
 {
-    if (form_e_principale(k)) strcpy(out, "finestra_crea");
-    else sprintf(out, "%s_crea", g_form[k].nome);
+    if (form_e_principale(k)) strcpy(out, "window_create");
+    else sprintf(out, "%s_create", g_form[k].nome);
 }
 
 static void form_proc_fn(int k, char *out)
 {
-    if (form_e_principale(k)) strcpy(out, "finestra_proc");
+    if (form_e_principale(k)) strcpy(out, "window_proc");
     else sprintf(out, "%s_proc", g_form[k].nome);
 }
 
@@ -2012,18 +2060,18 @@ static int gen_h(void)
     for (k = 0; k < FORM_MAX; k++)
         if (g_form[k].usato) {
             form_var(k, fn);
-            sprintf(riga, "extern ExFinestra %s;\n", fn);
+            sprintf(riga, "extern ExWindow %s;\n", fn);
             SCRIVI(riga);
         }
 
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato) {
-            sprintf(riga, "extern ExFinestra h_%s;\n", g_ctrl[i].nome);
+            sprintf(riga, "extern ExWindow %s;\n", g_ctrl[i].nome);
             SCRIVI(riga);
         }
 
     SCRIVI("\n/* La principale la apre il main di finestra.c. LE ALTRE LE APRI\n"
-           " * TU, chiamando la loro <nome>_crea() da dove serve - di solito\n"
+           " * TU, chiamando la loro <nome>_create() da dove serve - di solito\n"
            " * dall'handler di un pulsante. Chiamarla due volte non apre due\n"
            " * finestre: se c'e' gia', la ridisegna e basta.\n"
            " *\n"
@@ -2037,7 +2085,7 @@ static int gen_h(void)
             form_proc_fn(k, pn);
             sprintf(riga, "void %s(void);\n", fn);
             SCRIVI(riga);
-            sprintf(riga, "long %s(ExFinestra f, unsigned int msg,\n"
+            sprintf(riga, "long %s(ExWindow f, unsigned int msg,\n"
                           "%*sunsigned int wp, long lp);\n",
                     pn, (int)strlen(pn) + 6, "");
             SCRIVI(riga);
@@ -2049,6 +2097,23 @@ static int gen_h(void)
         if (g_ctrl[i].usato && ha_evento(&g_ctrl[i])) {
             nome_handler(&g_ctrl[i], hn);
             sprintf(riga, "void %s(void);\n", hn);
+            SCRIVI(riga);
+        }
+
+    /* I nomi di prima del 3 ottobre 2026: h_<controllo>, finestra_crea(),
+     * <maschera>_crea() e gli handler con l'evento in italiano. Un
+     * finestra.c scritto allora compila ancora. */
+    SCRIVI("\n/* Nomi di prima del 3 ottobre 2026, per il codice gia' scritto. */\n");
+    for (i = 0; i < CTRL_MAX; i++)
+        if (g_ctrl[i].usato) {
+            sprintf(riga, "#define h_%s %s\n", g_ctrl[i].nome, g_ctrl[i].nome);
+            SCRIVI(riga);
+        }
+    for (k = 0; k < FORM_MAX; k++)
+        if (g_form[k].usato) {
+            form_crea_fn(k, fn);
+            if (form_e_principale(k)) sprintf(riga, "#define finestra_crea %s\n", fn);
+            else sprintf(riga, "#define %s_crea %s\n", g_form[k].nome, fn);
             SCRIVI(riga);
         }
 
@@ -2076,13 +2141,13 @@ static int gen_c(void)
     for (k = 0; k < FORM_MAX; k++)
         if (g_form[k].usato) {
             form_var(k, vn);
-            sprintf(riga, "ExFinestra %s;\n", vn);
+            sprintf(riga, "ExWindow %s;\n", vn);
             SCRIVI(riga);
         }
 
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato) {
-            sprintf(riga, "ExFinestra h_%s;\n", g_ctrl[i].nome);
+            sprintf(riga, "ExWindow %s;\n", g_ctrl[i].nome);
             SCRIVI(riga);
         }
 
@@ -2099,12 +2164,12 @@ static int gen_c(void)
          * della stessa finestra, tutte vive e tutte con gli stessi id. */
         sprintf(riga, "\nvoid %s(void)\n{\n"
                       "    if (%s) {\n"
-                      "        ex_procedura_base(%s, EXM_DISEGNA, 0, 0);\n"
+                      "        ex_default_proc(%s, EXM_PAINT, 0, 0);\n"
                       "        return;\n    }\n\n", fn, vn, vn);
         SCRIVI(riga);
 
-        sprintf(riga, "    %s = ex_crea(\"finestra\", \"%s\",\n"
-                      "        EX_TITOLO | EX_BORDO | EX_CHIUDI,\n"
+        sprintf(riga, "    %s = ex_create(\"window\", \"%s\",\n"
+                      "        EX_CAPTION | EX_BORDER | EX_CLOSEBOX,\n"
                       "        EX_AUTO, EX_AUTO, %d, %d, 0, 0, %s);\n"
                       "    if (%s == 0) return;\n\n",
                 vn, g_form[k].titolo, g_form[k].w, g_form[k].h, pn, vn);
@@ -2115,7 +2180,7 @@ static int gen_c(void)
 
             if (!c->usato || c->form != k) continue;
             nome_id(c, idn);
-            sprintf(riga, "    h_%s = ex_crea(\"%s\", \"%s\", EX_FIGLIO,\n"
+            sprintf(riga, "    %s = ex_create(\"%s\", \"%s\", EX_CHILD,\n"
                           "        %d, %d, %d, %d, %s, %s, 0);\n",
                     c->nome, g_strum[c->tipo].classe, c->testo,
                     c->x, c->y, c->w, c->h, vn, idn);
@@ -2126,25 +2191,25 @@ static int gen_c(void)
              * fuori vorrebbe dire un nome in piu' per controllo in una
              * funzione che ne ha gia' uno per ognuno.
              *
-             * ! E SE L'ICONA NON C'E' NON SUCCEDE NIENTE: ex_icona_apri rende
-             * 0, ex_icona_metti con 0 toglie l'icona e basta. Un programma
+             * ! E SE L'ICONA NON C'E' NON SUCCEDE NIENTE: ex_icon_open rende
+             * 0, ex_set_icon con 0 toglie l'icona e basta. Un programma
              * generato non deve morire perche' e' stato copiato su una
              * macchina dove quel file non e' stato installato. */
             if (c->icona[0]) {
-                sprintf(riga, "    { ExIcona ic = ex_icona_apri(\"%s\");\n"
-                              "      ex_icona_metti(h_%s, ic, 0); }\n",
+                sprintf(riga, "    { ExIcon ic = ex_icon_open(\"%s\");\n"
+                              "      ex_set_icon(%s, ic, 0); }\n",
                         c->icona, c->nome);
                 SCRIVI(riga);
             }
         }
 
-        sprintf(riga, "\n    ex_procedura_base(%s, EXM_DISEGNA, 0, 0);\n}\n\n",
+        sprintf(riga, "\n    ex_default_proc(%s, EXM_PAINT, 0, 0);\n}\n\n",
                 vn);
         SCRIVI(riga);
 
-        sprintf(riga, "long %s(ExFinestra f, unsigned int msg,\n"
+        sprintf(riga, "long %s(ExWindow f, unsigned int msg,\n"
                       "%*sunsigned int wp, long lp)\n{\n"
-                      "    if (msg == EXM_COMANDO) {\n"
+                      "    if (msg == EXM_COMMAND) {\n"
                       "        switch (wp) {\n",
                 pn, (int)strlen(pn) + 6, "");
         SCRIVI(riga);
@@ -2162,7 +2227,7 @@ static int gen_c(void)
         SCRIVI("        default: break;\n        }\n    }\n\n");
 
         if (form_e_principale(k)) {
-            SCRIVI("    if (msg == EXM_CHIUDI) { ex_esci(0); return 0; }\n");
+            SCRIVI("    if (msg == EXM_CLOSE) { ex_quit(0); return 0; }\n");
         } else {
             /* ! CHIUDERE UNA SECONDARIA NON ESCE DAL PROGRAMMA, e gli handle
              * tornano a zero. Il secondo pezzo conta quanto il primo: senza,
@@ -2170,19 +2235,19 @@ static int gen_c(void)
              * chi lo tocca da un handler della finestra rimasta aperta
              * lavorerebbe su un fantasma. Riaprendola, <nome>_crea() li
              * riempie di nuovo. */
-            sprintf(riga, "    if (msg == EXM_CHIUDI) {\n"
-                          "        ex_distruggi(%s);\n"
+            sprintf(riga, "    if (msg == EXM_CLOSE) {\n"
+                          "        ex_destroy(%s);\n"
                           "        %s = 0;\n", vn, vn);
             SCRIVI(riga);
             for (i = 0; i < CTRL_MAX; i++)
                 if (g_ctrl[i].usato && g_ctrl[i].form == k) {
-                    sprintf(riga, "        h_%s = 0;\n", g_ctrl[i].nome);
+                    sprintf(riga, "        %s = 0;\n", g_ctrl[i].nome);
                     SCRIVI(riga);
                 }
             SCRIVI("        return 0;\n    }\n");
         }
 
-        SCRIVI("    return ex_procedura_base(f, msg, wp, lp);\n}\n");
+        SCRIVI("    return ex_default_proc(f, msg, wp, lp);\n}\n");
     }
 #undef SCRIVI
     close(fd);
@@ -2220,8 +2285,8 @@ static int mio_c_assicura(void)
            "#include \"libc.h\"\n#include \"finestra.h\"\n\n"
            "int main(void)\n{\n"
            "    ExMsg m;\n\n"
-           "    finestra_crea();\n"
-           "    while (ex_prendi_msg(&m)) ex_smista(&m);\n"
+           "    window_create();\n"
+           "    while (ex_get_message(&m)) ex_dispatch(&m);\n"
            "    return 0;\n}\n");
 #undef SCRIVI
     close(fd);
@@ -2256,6 +2321,50 @@ static int handler_riga(const char *nome)
 }
 
 /* Rende la riga su cui si trova l'handler, aggiungendolo in fondo se manca. */
+/* Rinomina nel file del programmatore l'identificatore `vecchio` in `nuovo`,
+ * solo come parola intera. Prima della prima volta ne fa una copia,
+ * finestra.c.prima-inglese, e non la rifa' piu'. Rende 1 se ha cambiato. */
+static int mio_c_rinomina(const char *vecchio, const char *nuovo)
+{
+    static char buf[256 * 1024];
+    char  p[PERC_MAX], q[PERC_MAX + 16];
+    int   fd, n = 0, r, fatto = 0;
+    size_t lv = strlen(vecchio), ln = strlen(nuovo), i;
+
+    percorso(p, "finestra.c");
+    fd = open(p, O_RDONLY, 0);
+    if (fd < 0) return 0;
+    while (n < (int)sizeof(buf) - 1 &&
+           (r = (int)read(fd, buf + n, sizeof(buf) - 1 - (size_t)n)) > 0) n += r;
+    close(fd);
+    buf[n] = 0;
+
+    sprintf(q, "%s.prima-inglese", p);
+    fd = open(q, O_RDONLY, 0);
+    if (fd >= 0) close(fd);
+    else {
+        fd = open(q, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) { write(fd, buf, (size_t)n); close(fd); }
+    }
+
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return 0;
+    for (i = 0; i < (size_t)n; ) {
+        int bordo_prima = (i == 0) || !(isalnum((unsigned char)buf[i - 1]) || buf[i - 1] == '_');
+        if (bordo_prima && strncmp(buf + i, vecchio, lv) == 0 &&
+            !(isalnum((unsigned char)buf[i + lv]) || buf[i + lv] == '_')) {
+            write(fd, nuovo, ln);
+            i += lv;
+            fatto = 1;
+        } else {
+            write(fd, buf + i, 1);
+            i++;
+        }
+    }
+    close(fd);
+    return fatto;
+}
+
 static int handler_assicura(const Ctrl *c)
 {
     char p[PERC_MAX], hn[NOME_MAX + 32], testo[256];
@@ -2266,6 +2375,20 @@ static int handler_assicura(const Ctrl *c)
 
     riga = handler_riga(hn);
     if (riga >= 0) return riga;
+
+    /* ! UN PROGETTO DI PRIMA DEL 3 OTTOBRE 2026 ha l'handler col nome
+     * italiano dell'evento (Pulsante1_Clic): si rinomina nel file del
+     * programmatore invece di aggiungerne uno vuoto accanto, che lascerebbe
+     * il codice vero senza nessuno che lo chiama. */
+    if (g_strum[c->tipo].evento_it[c->evento]) {
+        char vecchio[NOME_MAX + 32];
+
+        sprintf(vecchio, "%s_%s", c->nome, g_strum[c->tipo].evento_it[c->evento]);
+        if (handler_riga(vecchio) >= 0 && mio_c_rinomina(vecchio, hn)) {
+            riga = handler_riga(hn);
+            if (riga >= 0) return riga;
+        }
+    }
 
     percorso(p, "finestra.c");
     fd = open(p, O_WRONLY, 0);
@@ -2292,7 +2415,7 @@ static int handler_assicura(const Ctrl *c)
  * chiuso l'editor di un progetto suo e' una domanda a cui si risponde sempre
  * si': una domanda che ha una sola risposta e' una domanda da non fare.
  * ============================================================================= */
-static ExFinestra g_ed, g_ed_cod, g_ed_funz, g_ed_tab, g_ed_stato;
+static ExWindow g_ed, g_ed_cod, g_ed_funz, g_ed_tab, g_ed_stato;
 static int        g_ed_file = 0;        /* quale linguetta */
 
 static const char *const g_ed_nomi[3] = {
@@ -2308,23 +2431,23 @@ static unsigned int g_ed_n;
 
 static void ed_indice(void)
 {
-    unsigned int i, n = ex_area_righe(g_ed_cod);
+    unsigned int i, n = ex_textarea_line_count(g_ed_cod);
 
     g_ed_n = 0;
-    ex_lista_svuota(g_ed_funz);
+    ex_list_clear(g_ed_funz);
 
     for (i = 0; i < n && g_ed_n < 64; i++) {
-        const char *r = ex_area_riga(g_ed_cod, i);
+        const char *r = ex_textarea_line(g_ed_cod, i);
         unsigned int l = (unsigned int)strlen(r);
 
         if (l == 0 || r[0] == ' ' || r[0] == '\t' || r[0] == '#') continue;
         if (r[0] == '/' || r[0] == '*' || r[0] == '{' || r[0] == '}') continue;
 
         if (strchr(r, '(') && r[l - 1] != ';') {
-            ex_lista_aggiungi(g_ed_funz, r);
+            ex_list_add(g_ed_funz, r);
             g_ed_riga[g_ed_n++] = i;
         } else if (!strchr(r, '(') && l > 3 && r[l - 1] == ';') {
-            ex_lista_aggiungi(g_ed_funz, r);
+            ex_list_add(g_ed_funz, r);
             g_ed_riga[g_ed_n++] = i;
         }
     }
@@ -2337,10 +2460,10 @@ static int ed_carica(int quale)
     unsigned int col = 0;
 
     percorso(p, g_ed_nomi[quale]);
-    ex_area_svuota(g_ed_cod);
+    ex_textarea_clear(g_ed_cod);
 
     fd = open(p, O_RDONLY, 0);
-    if (fd < 0) { ex_testo_metti(g_ed_stato, "il file non c'e'"); return 0; }
+    if (fd < 0) { ex_set_text(g_ed_stato, "il file non c'e'"); return 0; }
 
     while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
         for (i = 0; i < n; i++) {
@@ -2348,16 +2471,16 @@ static int ed_carica(int quale)
             if (buf[i] == '\n') {
                 riga[col] = '\0';
                 col = 0;
-                if (!ex_area_aggiungi(g_ed_cod, riga)) goto pieno;
+                if (!ex_textarea_add_line(g_ed_cod, riga)) goto pieno;
                 continue;
             }
             if (col + 1 < sizeof(riga)) riga[col++] = buf[i];
         }
     riga[col] = '\0';
-    if (col) ex_area_aggiungi(g_ed_cod, riga);
+    if (col) ex_textarea_add_line(g_ed_cod, riga);
 pieno:
     close(fd);
-    ex_area_pulita(g_ed_cod);
+    ex_textarea_set_unmodified(g_ed_cod);
     g_ed_file = quale;
     ed_indice();
     return 1;
@@ -2369,23 +2492,23 @@ static int ed_salva(void)
     int  fd;
     unsigned int i, n;
 
-    if (!ex_area_modificato(g_ed_cod)) return 1;
+    if (!ex_textarea_is_modified(g_ed_cod)) return 1;
 
     percorso(p, g_ed_nomi[g_ed_file]);
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) { ex_testo_metti(g_ed_stato, "non riesco a scrivere"); return 0; }
+    if (fd < 0) { ex_set_text(g_ed_stato, "non riesco a scrivere"); return 0; }
 
-    n = ex_area_righe(g_ed_cod);
+    n = ex_textarea_line_count(g_ed_cod);
     for (i = 0; i < n; i++) {
-        const char  *r = ex_area_riga(g_ed_cod, i);
+        const char  *r = ex_textarea_line(g_ed_cod, i);
         unsigned int l = (unsigned int)strlen(r);
 
         if (l) write(fd, r, l);
         write(fd, "\n", 1);
     }
     close(fd);
-    ex_area_pulita(g_ed_cod);
-    ex_testo_metti(g_ed_stato, "salvato");
+    ex_textarea_set_unmodified(g_ed_cod);
+    ex_set_text(g_ed_stato, "salvato");
     return 1;
 }
 
@@ -2394,7 +2517,7 @@ static int ed_salva(void)
  * ricerca sulla sua propria area. La ricerca da capo e la riga trovata non
  * cambiano da un'area all'altra; scriverla due volte avrebbe voluto dire due
  * copie da tenere d'accordo per lo stesso identico ciclo. */
-static void area_cerca(ExFinestra area, ExFinestra stato)
+static void area_cerca(ExWindow area, ExWindow stato)
 {
     static char cosa[64] = "";
     unsigned int i, n, r0 = 0, c0 = 0;
@@ -2402,21 +2525,21 @@ static void area_cerca(ExFinestra area, ExFinestra stato)
     if (!ex_dlg_riga("Cerca", "testo da cercare:", cosa, sizeof(cosa))) return;
     if (cosa[0] == '\0') return;
 
-    ex_area_cursore(area, &r0, &c0);
-    n = ex_area_righe(area);
+    ex_textarea_get_cursor(area, &r0, &c0);
+    n = ex_textarea_line_count(area);
 
     for (i = 1; i <= n; i++) {
         unsigned int k = (r0 + i) % n;
-        const char *r = ex_area_riga(area, k);
+        const char *r = ex_textarea_line(area, k);
         const char *t = strstr(r, cosa);
 
         if (t) {
-            ex_area_vai(area, k, (unsigned int)(t - r));
-            ex_testo_metti(stato, "trovato");
+            ex_textarea_set_cursor(area, k, (unsigned int)(t - r));
+            ex_set_text(stato, "trovato");
             return;
         }
     }
-    ex_testo_metti(stato, "non trovato");
+    ex_set_text(stato, "non trovato");
 }
 
 static void ed_cerca(void) { area_cerca(g_ed_cod, g_ed_stato); }
@@ -2436,7 +2559,7 @@ static void ed_cerca(void) { area_cerca(g_ed_cod, g_ed_stato); }
  * scriverne uno apposta per due righe. Chi vuole annullare puo' farlo dopo
  * la prima domanda quanto dopo la seconda.
  * ============================================================================= */
-static void area_sostituisci(ExFinestra area, ExFinestra stato)
+static void area_sostituisci(ExWindow area, ExWindow stato)
 {
     static char cerca[64]  = "";
     static char cambia[64] = "";
@@ -2447,17 +2570,17 @@ static void area_sostituisci(ExFinestra area, ExFinestra stato)
     if (!ex_dlg_riga("Sostituisci", "sostituisci con:", cambia, sizeof(cambia)))
         return;
 
-    ex_area_cursore(area, &r0, &c0);
-    n = ex_area_righe(area);
+    ex_textarea_get_cursor(area, &r0, &c0);
+    n = ex_textarea_line_count(area);
 
     for (i = 1; i <= n; i++) {
         unsigned int k = (r0 + i) % n;
-        const char *r = ex_area_riga(area, k);
+        const char *r = ex_textarea_line(area, k);
         const char *t = strstr(r, cerca);
 
         if (t) {
             /* ! IL PEZZO DOPO SI LEGGE DA `r` PRIMA DI SCRIVERE, non dopo:
-             * ex_area_riga_metti sostituisce il contenuto della riga, e `r`
+             * ex_textarea_set_line sostituisce il contenuto della riga, e `r`
              * punta DENTRO quel contenuto. Costruire prima l'intera riga
              * nuova in un buffer nostro — e solo poi scriverla — e' cio' che
              * evita di leggere da un posto che si e' appena riscritto. */
@@ -2471,45 +2594,45 @@ static void area_sostituisci(ExFinestra area, ExFinestra stato)
             strncat(nuova, cambia, sizeof(nuova) - strlen(nuova) - 1);
             strncat(nuova, r + dopo, sizeof(nuova) - strlen(nuova) - 1);
 
-            ex_area_riga_metti(area, k, nuova);
-            ex_area_vai(area, k, prima + (unsigned int)strlen(cambia));
-            ex_testo_metti(stato, "sostituito");
+            ex_textarea_set_line(area, k, nuova);
+            ex_textarea_set_cursor(area, k, prima + (unsigned int)strlen(cambia));
+            ex_set_text(stato, "sostituito");
             return;
         }
     }
-    ex_testo_metti(stato, "non trovato");
+    ex_set_text(stato, "non trovato");
 }
 
-static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_ed(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     /* Resized: the code takes the room, the function list keeps its width. */
-    case EXM_MISURA: {
+    case EXM_SIZE: {
         int w = EX_X(lp), h = EX_Y(lp);
 
         if (w < 400) w = 400;
         if (h < 200) h = 200;
-        ex_misura(g_ed_tab, w, 24);
-        ex_misura(g_ed_funz, 200, h - 100);
-        ex_misura(g_ed_cod, w - 214, h - 100);
-        ex_sposta(g_ed_stato, 6, h - 44);
-        ex_misura(g_ed_stato, w - 20, 16);
-        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-        return EX_NON_RIDISEGNARE;
+        ex_resize(g_ed_tab, w, 24);
+        ex_resize(g_ed_funz, 200, h - 100);
+        ex_resize(g_ed_cod, w - 214, h - 100);
+        ex_move(g_ed_stato, 6, h - 44);
+        ex_resize(g_ed_stato, w - 20, 16);
+        ex_default_proc(f, EXM_PAINT, 0, 0);
+        return EX_NO_REDRAW;
     }
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         switch (wp) {
         case ID_ED_SALVA:  ed_salva(); break;
         case ID_ED_CHIUDI:
             ed_salva();
-            ex_distruggi(f);
+            ex_destroy(f);
             g_ed = 0;
-            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_f, EXM_PAINT, 0, 0);
             return 0;
-        case ID_COPIA:     ex_area_copia(g_ed_cod);    break;
-        case ID_INCOLLA:   ex_area_incolla(g_ed_cod);  break;
-        case ID_TAGLIA:    ex_area_taglia(g_ed_cod);   break;
-        case ID_CANCELLA:  ex_area_cancella(g_ed_cod); break;
+        case ID_COPIA:     ex_textarea_copy(g_ed_cod);    break;
+        case ID_INCOLLA:   ex_textarea_paste(g_ed_cod);  break;
+        case ID_TAGLIA:    ex_textarea_cut(g_ed_cod);   break;
+        case ID_CANCELLA:  ex_textarea_delete(g_ed_cod); break;
         case ID_CERCA:     ed_cerca();                 break;
         case ID_SOSTIT:    area_sostituisci(g_ed_cod, g_ed_stato); break;
         case ID_ED_TAB: {
@@ -2523,11 +2646,11 @@ static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             break;
         }
         case ID_ED_FUNZ: {
-            unsigned int k = ex_lista_scelta(g_ed_funz);
+            unsigned int k = ex_list_get_selected(g_ed_funz);
 
             if (k < g_ed_n) {
-                ex_area_vai(g_ed_cod, g_ed_riga[k], 0);
-                ex_fuoco(g_ed_cod);
+                ex_textarea_set_cursor(g_ed_cod, g_ed_riga[k], 0);
+                ex_set_focus(g_ed_cod);
             }
             break;
         }
@@ -2547,85 +2670,85 @@ static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * deve essere mangiata» — l'unica eccezione e' il terminale, dove Ctrl+C
      * e' un carattere. Quindi qui arrivano, ed e' l'applicazione che deve
      * decidere cosa farne. */
-    case EXM_TASTO:
+    case EXM_KEY:
         if (wp & KBD_MOD_CTRL) {
             switch (wp & KBD_KEY_MASK) {
             case 's': case 'S': ed_salva(); ed_indice(); return 0;
             case 'f': case 'F': ed_cerca();              return 0;
-            case 'c': case 'C': ex_area_copia(g_ed_cod); return 0;
+            case 'c': case 'C': ex_textarea_copy(g_ed_cod); return 0;
             case 'x': case 'X':
-                ex_area_taglia(g_ed_cod);
+                ex_textarea_cut(g_ed_cod);
                 ed_indice();
                 /* ! IL DISEGNO SI RIFA' A MANO, e dalla voce di menu no: li'
                  * ridisegna il toolkit chiudendo la tendina. Da tastiera non
                  * chiude niente nessuno, e senza questa riga il testo cambia
                  * e lo schermo resta com'era. */
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ex_default_proc(f, EXM_PAINT, 0, 0);
                 return 0;
             case 'v': case 'V':
-                ex_area_incolla(g_ed_cod);
+                ex_textarea_paste(g_ed_cod);
                 ed_indice();
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ex_default_proc(f, EXM_PAINT, 0, 0);
                 return 0;
             default: break;
             }
         }
         return 0;
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         ed_salva();
-        ex_distruggi(f);
+        ex_destroy(f);
         g_ed = 0;
-        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void editor_apri(int quale, int riga)
 {
-    ExFinestra menu;
+    ExWindow menu;
     int i;
 
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
 
     if (g_ed) {                         /* c'e' gia': si porta li' e basta */
         if (quale != g_ed_file) { ed_salva(); ed_carica(quale); }
-        if (riga >= 0) ex_area_vai(g_ed_cod, (unsigned int)riga, 0);
-        ex_procedura_base(g_ed, EXM_DISEGNA, 0, 0);
+        if (riga >= 0) ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
+        ex_default_proc(g_ed, EXM_PAINT, 0, 0);
         return;
     }
 
-    g_ed = ex_crea("finestra", "Sorgente",
-                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE | EX_RIDIM,
+    g_ed = ex_create("window", "Sorgente",
+                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL | EX_RESIZABLE,
                    30, 20, 740, 520, 0, 0, proc_ed);
     if (g_ed == 0) { dico("non riesco ad aprire l'editor"); return; }
 
-    menu = ex_menu(g_ed);
-    ex_menu_voce(menu, "File", "Salva\tCtrl+S", ID_ED_SALVA);
-    ex_menu_voce(menu, "File", "-", 0);
-    ex_menu_voce(menu, "File", "Chiudi", ID_ED_CHIUDI);
-    ex_menu_voce(menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
-    ex_menu_voce(menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
-    ex_menu_voce(menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
-    ex_menu_voce(menu, "Modifica", "Cancella",        ID_CANCELLA);
-    ex_menu_voce(menu, "Modifica", "-", 0);
-    ex_menu_voce(menu, "Modifica", "Cerca\tCtrl+F",   ID_CERCA);
-    ex_menu_voce(menu, "Modifica", "Sostituisci",     ID_SOSTIT);
+    menu = ex_menu_bar(g_ed);
+    ex_menu_add_item(menu, "File", "Salva\tCtrl+S", ID_ED_SALVA);
+    ex_menu_add_item(menu, "File", "-", 0);
+    ex_menu_add_item(menu, "File", "Chiudi", ID_ED_CHIUDI);
+    ex_menu_add_item(menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
+    ex_menu_add_item(menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
+    ex_menu_add_item(menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
+    ex_menu_add_item(menu, "Modifica", "Cancella",        ID_CANCELLA);
+    ex_menu_add_item(menu, "Modifica", "-", 0);
+    ex_menu_add_item(menu, "Modifica", "Cerca\tCtrl+F",   ID_CERCA);
+    ex_menu_add_item(menu, "Modifica", "Sostituisci",     ID_SOSTIT);
 
-    g_ed_tab = ex_crea("tab", "", EX_FIGLIO, 0, 22, 740, 24, g_ed, ID_ED_TAB, 0);
-    for (i = 0; i < 3; i++) ex_voce_aggiungi(g_ed_tab, g_ed_nomi[i]);
+    g_ed_tab = ex_create("tab", "", EX_CHILD, 0, 22, 740, 24, g_ed, ID_ED_TAB, 0);
+    for (i = 0; i < 3; i++) ex_item_add(g_ed_tab, g_ed_nomi[i]);
 
-    g_ed_funz = ex_crea("lista", "", EX_FIGLIO, 4, 50, 200, 420,
+    g_ed_funz = ex_create("list", "", EX_CHILD, 4, 50, 200, 420,
                         g_ed, ID_ED_FUNZ, 0);
-    g_ed_cod  = ex_crea("areacodice", "", EX_FIGLIO, 208, 50, 526, 420,
+    g_ed_cod  = ex_create("codearea", "", EX_CHILD, 208, 50, 526, 420,
                         g_ed, ID_ED_CODICE, 0);
-    g_ed_stato = ex_crea("etichetta", "", EX_FIGLIO, 6, 476, 720, 16,
+    g_ed_stato = ex_create("label", "", EX_CHILD, 6, 476, 720, 16,
                          g_ed, 0, 0);
 
-    ex_area_colora(g_ed_cod, ex_colora_c, 0);
+    ex_textarea_set_highlighter(g_ed_cod, ex_highlight_c, 0);
 
     /* ! UN EDITOR VUOTO NON DICE NIENTE A NESSUNO. Se il file non c'e' — e non
      * c'e' quando il progetto non si e' potuto scrivere — si chiude e si dice
@@ -2638,17 +2761,17 @@ static void editor_apri(int quale, int riga)
                         "Il progetto e' stato creato davvero? Da CD non si "
                         "puo' scrivere: serve un disco montato in lettura e "
                         "scrittura.", g_prog_dir, g_ed_nomi[quale]);
-        ex_distruggi(g_ed);
+        ex_destroy(g_ed);
         g_ed = 0;
         ex_dlg_avviso("Il sorgente non c'e'", avviso);
         dico("il sorgente non si legge");
         return;
     }
-    ex_voce_scegli(g_ed_tab, (unsigned int)quale);
-    if (riga >= 0) ex_area_vai(g_ed_cod, (unsigned int)riga, 0);
-    ex_fuoco(g_ed_cod);
+    ex_item_select(g_ed_tab, (unsigned int)quale);
+    if (riga >= 0) ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
+    ex_set_focus(g_ed_cod);
 
-    ex_procedura_base(g_ed, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_ed, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -2660,7 +2783,7 @@ static void progetto_titolo(void)
 
     if (g_prog_dir[0]) sprintf(t, "EX-IDE - %s", g_prog_dir);
     else               strcpy(t, "EX-IDE - nessun progetto");
-    ex_titolo(g_f, t);
+    ex_set_title(g_f, t);
 }
 
 static int progetto_salva(void)
@@ -3163,7 +3286,7 @@ static const char *const g_manuale[] = {
 "Un Pulsante e un'Etichetta possono mostrare un'icona prima della",
 "scritta: si sceglie il controllo, poi Strumenti > Icona del",
 "controllo... Il disegnatore la fa vedere subito, e nel codice",
-"generato escono due righe - ex_icona_apri() piu' ex_icona_metti().",
+"generato escono due righe - ex_icon_open() piu' ex_set_icon().",
 "",
 "Le icone di sistema stanno in /exwin/icon/baseapp/ a 64 e 128",
 "pixel; vanno bene anche PNG, JPG, GIF e BMP. Non serve una copia",
@@ -3194,24 +3317,24 @@ static const char *const g_manuale[] = {
 "",
 "GLI STRUMENTI, E I LORO EVENTI",
 "",
-"  Pulsante      Clic, SulMouse       ex_testo_metti/prendi",
-"  Etichetta     SulMouse, Clic       ex_testo_metti",
-"  Casella       Cambiato, Invio      ex_testo_prendi (63 caratteri)",
-"  Spunta        Cambiato             ex_acceso / ex_accendi",
+"  Pulsante      Clic, SulMouse       ex_set_text/prendi",
+"  Etichetta     SulMouse, Clic       ex_set_text",
+"  Casella       Cambiato, Invio      ex_get_text (63 caratteri)",
+"  Spunta        Cambiato             ex_is_checked / ex_set_checked",
 "  Radio         Cambiato             come la Spunta; gruppi = padri",
 "  Riquadro      -                    raggruppa, e fa da padre",
 "  Separatore    -",
 "  Intestazione  -",
 "  Lista         Scelta, Apertura     ex_lista_*",
 "  Area testo    Cambiato             ex_area_*  (due per programma)",
-"  Area codice   Cambiato             ex_area_*, ex_area_colora",
+"  Area codice   Cambiato             ex_area_*, ex_textarea_set_highlighter",
 "  Elenco        Scelta               ex_voce_*",
 "  Linguette     Scelta               ex_voce_*, come l'Elenco",
 "  Scorrimento   Scorso               ex_scorri_*  (la forma decide se",
 "                                     e' verticale o orizzontale)",
 "",
 "! CAMBIARE UN DATO NON RIDISEGNA: dopo aver cambiato un controllo si",
-"  chiude con ex_procedura_base(g_form, EXM_DISEGNA, 0, 0).",
+"  chiude con ex_default_proc(g_form, EXM_PAINT, 0, 0).",
 "",
 "Gli esempi - due caselle che si scambiano il testo, un pulsante che",
 "chiude, l'uscita con la conferma, aprire una seconda finestra - sono",
@@ -3281,25 +3404,25 @@ static int manuale_pagina(void)
  * window when it is resized (30 September 2026). And their X closes THAT
  * window: with no procedure the base took it for the program's X, and closing
  * the manual closed exide. */
-static ExFinestra g_man_f = 0, g_man_a = 0, g_sh_f = 0, g_sh_t = 0;
+static ExWindow g_man_f = 0, g_man_a = 0, g_sh_f = 0, g_sh_t = 0;
 
-static long proc_uno(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_uno(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     int dentro = (f == g_man_f) ? 8 : 4;
-    ExFinestra c = (f == g_man_f) ? g_man_a : g_sh_t;
+    ExWindow c = (f == g_man_f) ? g_man_a : g_sh_t;
 
-    if (msg == EXM_MISURA) {
-        ex_misura(c, EX_X(lp) - dentro, EX_Y(lp) - dentro);
-        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-        return EX_NON_RIDISEGNARE;
+    if (msg == EXM_SIZE) {
+        ex_resize(c, EX_X(lp) - dentro, EX_Y(lp) - dentro);
+        ex_default_proc(f, EXM_PAINT, 0, 0);
+        return EX_NO_REDRAW;
     }
-    if (msg == EXM_CHIUDI) {
-        ex_distruggi(f);
+    if (msg == EXM_CLOSE) {
+        ex_destroy(f);
         if (f == g_man_f) g_man_f = g_man_a = 0;
         else              g_sh_f = g_sh_t = 0;
-        return EX_NON_RIDISEGNARE;
+        return EX_NO_REDRAW;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void manuale(void)
@@ -3308,21 +3431,21 @@ static void manuale(void)
 #define am g_man_a
     int i;
 
-    if (fm) { ex_procedura_base(fm, EXM_DISEGNA, 0, 0); return; }
+    if (fm) { ex_default_proc(fm, EXM_PAINT, 0, 0); return; }
 
     if (manuale_pagina()) return;
 
-    fm = ex_crea("finestra", "Manuale di EX-IDE",
-                 EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM, 60, 40, 620, 460, 0, 0, proc_uno);
+    fm = ex_create("window", "Manuale di EX-IDE",
+                 EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE, 60, 40, 620, 460, 0, 0, proc_uno);
     if (fm == 0) { dico("non riesco ad aprire il manuale"); return; }
 
-    am = ex_crea("areatesto", "", EX_FIGLIO, 4, 4, 612, 452, fm, 0, 0);
-    if (am == 0) { ex_distruggi(fm); fm = 0; dico("non c'e' posto per il manuale"); return; }
+    am = ex_create("textarea", "", EX_CHILD, 4, 4, 612, 452, fm, 0, 0);
+    if (am == 0) { ex_destroy(fm); fm = 0; dico("non c'e' posto per il manuale"); return; }
 
     for (i = 0; g_manuale[i]; i++)
-        if (!ex_area_aggiungi(am, g_manuale[i])) break;
+        if (!ex_textarea_add_line(am, g_manuale[i])) break;
 
-    ex_procedura_base(fm, EXM_DISEGNA, 0, 0);
+    ex_default_proc(fm, EXM_PAINT, 0, 0);
 }
 #undef fm
 #undef am
@@ -3363,7 +3486,7 @@ static void informazioni(void)
  * leggimi del CD degli strumenti, ed e' la ragione per cui qui si compone il
  * percorso invece di scrivere «gcc».
  * ============================================================================= */
-static ExFinestra g_cc, g_cc_f_radice, g_cc_f_opz, g_cc_f_nome, g_cc_uscita,
+static ExWindow g_cc, g_cc_f_radice, g_cc_f_opz, g_cc_f_nome, g_cc_uscita,
                   g_cc_stato;
 
 /* Il nome del binario: se non l'ha scelto nessuno, e' quello del progetto. */
@@ -3456,11 +3579,11 @@ static void carica_uscita(void)
     int  salta = 0;                 /* dentro una sequenza di colore */
     unsigned int col = 0, righe = 0;
 
-    ex_lista_svuota(g_cc_uscita);
+    ex_list_clear(g_cc_uscita);
     sprintf(p, "%s/obj/compila.log", g_prog_dir);
 
     fd = open(p, O_RDONLY, 0);
-    if (fd < 0) { ex_lista_aggiungi(g_cc_uscita, "(nessun registro)"); return; }
+    if (fd < 0) { ex_list_add(g_cc_uscita, "(nessun registro)"); return; }
 
     while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
         for (i = 0; i < n; i++) {
@@ -3488,15 +3611,15 @@ static void carica_uscita(void)
             }
             riga[col] = '\0';
             col = 0;
-            if (!ex_lista_aggiungi(g_cc_uscita, riga)) goto fine;
+            if (!ex_list_add(g_cc_uscita, riga)) goto fine;
             righe++;
         }
     riga[col] = '\0';
-    if (col) ex_lista_aggiungi(g_cc_uscita, riga);
+    if (col) ex_list_add(g_cc_uscita, riga);
 fine:
     close(fd);
     if (righe == 0 && col == 0)
-        ex_lista_aggiungi(g_cc_uscita, "(il compilatore non ha detto niente:"
+        ex_list_add(g_cc_uscita, "(il compilatore non ha detto niente:"
                                        " e' andata bene)");
 }
 
@@ -3520,7 +3643,7 @@ static int aspetta_vivo(int pid)
         if (r == pid) return stato;
         if (r < 0)    return -1;
 
-        while (n++ < 8 && ex_msg_ora(&m)) ex_smista(&m);
+        while (n++ < 8 && ex_peek_message(&m)) ex_dispatch(&m);
         usleep(20000);
 
         /* Un tetto c'e', e generoso: cinque minuti. Oltre, si smette di
@@ -3563,23 +3686,23 @@ static void compila(void)
 
         sprintf(cc, "%s/bin/gcc", g_cc_radice);
         if (access(cc, F_OK) != 0) {
-            ex_lista_svuota(g_cc_uscita);
-            ex_lista_aggiungi(g_cc_uscita, "Il compilatore non c'e':");
-            ex_lista_aggiungi(g_cc_uscita, cc);
-            ex_lista_aggiungi(g_cc_uscita, "");
-            ex_lista_aggiungi(g_cc_uscita,
+            ex_list_clear(g_cc_uscita);
+            ex_list_add(g_cc_uscita, "Il compilatore non c'e':");
+            ex_list_add(g_cc_uscita, cc);
+            ex_list_add(g_cc_uscita, "");
+            ex_list_add(g_cc_uscita,
                 "Sta sul CD DEGLI STRUMENTI, che e' un secondo CD: montalo e");
-            ex_lista_aggiungi(g_cc_uscita,
+            ex_list_add(g_cc_uscita,
                 "riprova.    mount cd1 /cdrom");
-            ex_lista_aggiungi(g_cc_uscita, "");
-            ex_lista_aggiungi(g_cc_uscita,
+            ex_list_add(g_cc_uscita, "");
+            ex_list_add(g_cc_uscita,
                 "Se invece li hai gia' installati sul disco con `toolinst`,");
-            ex_lista_aggiungi(g_cc_uscita,
+            ex_list_add(g_cc_uscita,
                 "scrivi /exos nella radice qui sopra.");
-            ex_testo_metti(g_cc_stato,
+            ex_set_text(g_cc_stato,
                            "il compilatore non c'e': guarda qui sotto");
             dico("il compilatore non c'e' nella radice degli strumenti");
-            ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_cc, EXM_PAINT, 0, 0);
             return;
         }
     }
@@ -3609,7 +3732,7 @@ static void compila(void)
         int t = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
         if (t < 0) {
-            ex_testo_metti(g_cc_stato, "non riesco a scrivere obj/compila.log");
+            ex_set_text(g_cc_stato, "non riesco a scrivere obj/compila.log");
             return;
         }
         close(t);
@@ -3624,8 +3747,8 @@ static void compila(void)
     argv[1] = p;
     argv[2] = 0;
 
-    ex_testo_metti(g_cc_stato, "compilo...");
-    ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+    ex_set_text(g_cc_stato, "compilo...");
+    ex_default_proc(g_cc, EXM_PAINT, 0, 0);
 
     /* ! IL FIGLIO EREDITA LA NOSTRA DIRECTORY DI LAVORO, e spawn_ex non ne
      * prende una per parametro: se non ci si sposta prima, `sh` — e con lui
@@ -3640,7 +3763,7 @@ static void compila(void)
     prima[0] = '\0';
     getcwd(prima, sizeof(prima));
     if (chdir(g_prog_dir) != 0) {
-        ex_testo_metti(g_cc_stato, "non riesco a entrare nella directory del progetto");
+        ex_set_text(g_cc_stato, "non riesco a entrare nella directory del progetto");
         return;
     }
 
@@ -3652,7 +3775,7 @@ static void compila(void)
     if (prima[0]) chdir(prima);
 
     if (pid < 0) {
-        ex_testo_metti(g_cc_stato, "non riesco ad avviare /bin/sh");
+        ex_set_text(g_cc_stato, "non riesco ad avviare /bin/sh");
         return;
     }
 
@@ -3664,113 +3787,113 @@ static void compila(void)
     else sprintf(msg, "il compilatore si e' fermato (esito %d): guarda qui sotto",
                  stato);
 
-    ex_testo_metti(g_cc_stato, msg);
+    ex_set_text(g_cc_stato, msg);
     dico(msg);
-    ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_cc, EXM_PAINT, 0, 0);
 }
 
-static long proc_cc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_cc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     static char riga[2048];
 
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         switch (wp) {
         case ID_CC_RADICE:
-            strncpy(g_cc_radice, ex_testo_prendi(g_cc_f_radice),
+            strncpy(g_cc_radice, ex_get_text(g_cc_f_radice),
                     sizeof(g_cc_radice) - 1);
             g_cc_radice[sizeof(g_cc_radice) - 1] = '\0';
             break;
         case ID_CC_OPZ:
-            strncpy(g_cc_opzioni, ex_testo_prendi(g_cc_f_opz),
+            strncpy(g_cc_opzioni, ex_get_text(g_cc_f_opz),
                     sizeof(g_cc_opzioni) - 1);
             g_cc_opzioni[sizeof(g_cc_opzioni) - 1] = '\0';
             break;
         case ID_CC_NOME:
-            strncpy(g_cc_nome, ex_testo_prendi(g_cc_f_nome),
+            strncpy(g_cc_nome, ex_get_text(g_cc_f_nome),
                     sizeof(g_cc_nome) - 1);
             g_cc_nome[sizeof(g_cc_nome) - 1] = '\0';
             break;
         case ID_CC_SCRIVI:
             /* I campi si rileggono sempre: chi ha scritto e non ha premuto
              * Invio si aspetta lo stesso che valga quel che vede. */
-            strncpy(g_cc_radice, ex_testo_prendi(g_cc_f_radice), sizeof(g_cc_radice) - 1);
-            strncpy(g_cc_opzioni, ex_testo_prendi(g_cc_f_opz), sizeof(g_cc_opzioni) - 1);
-            strncpy(g_cc_nome, ex_testo_prendi(g_cc_f_nome), sizeof(g_cc_nome) - 1);
+            strncpy(g_cc_radice, ex_get_text(g_cc_f_radice), sizeof(g_cc_radice) - 1);
+            strncpy(g_cc_opzioni, ex_get_text(g_cc_f_opz), sizeof(g_cc_opzioni) - 1);
+            strncpy(g_cc_nome, ex_get_text(g_cc_f_nome), sizeof(g_cc_nome) - 1);
             if (scrivi_script()) {
                 riga_compila(riga, sizeof(riga));
-                ex_lista_svuota(g_cc_uscita);
-                ex_lista_aggiungi(g_cc_uscita, "compila.sh scritto:");
-                ex_lista_aggiungi(g_cc_uscita, riga);
-                ex_testo_metti(g_cc_stato, "compila.sh scritto nel progetto");
+                ex_list_clear(g_cc_uscita);
+                ex_list_add(g_cc_uscita, "compila.sh scritto:");
+                ex_list_add(g_cc_uscita, riga);
+                ex_set_text(g_cc_stato, "compila.sh scritto nel progetto");
             }
             break;
         case ID_CC_COMPILA:
-            strncpy(g_cc_radice, ex_testo_prendi(g_cc_f_radice), sizeof(g_cc_radice) - 1);
-            strncpy(g_cc_opzioni, ex_testo_prendi(g_cc_f_opz), sizeof(g_cc_opzioni) - 1);
-            strncpy(g_cc_nome, ex_testo_prendi(g_cc_f_nome), sizeof(g_cc_nome) - 1);
+            strncpy(g_cc_radice, ex_get_text(g_cc_f_radice), sizeof(g_cc_radice) - 1);
+            strncpy(g_cc_opzioni, ex_get_text(g_cc_f_opz), sizeof(g_cc_opzioni) - 1);
+            strncpy(g_cc_nome, ex_get_text(g_cc_f_nome), sizeof(g_cc_nome) - 1);
             compila();
             break;
         case ID_CC_CHIUDI:
-            ex_distruggi(f);
+            ex_destroy(f);
             g_cc = 0;
-            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_f, EXM_PAINT, 0, 0);
             return 0;
         default: break;
         }
         return 0;
 
-    case EXM_CHIUDI:
-        ex_distruggi(f);
+    case EXM_CLOSE:
+        ex_destroy(f);
         g_cc = 0;
-        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void compilatore_apri(void)
 {
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
-    if (g_cc) { ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0); return; }
+    if (g_cc) { ex_default_proc(g_cc, EXM_PAINT, 0, 0); return; }
 
-    g_cc = ex_crea("finestra", "Compilatore",
-                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+    g_cc = ex_create("window", "Compilatore",
+                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
                    40, 40, 700, 440, 0, 0, proc_cc);
     if (g_cc == 0) { dico("non riesco ad aprire il compilatore"); return; }
 
-    ex_crea("etichetta", "radice degli strumenti:", EX_FIGLIO,
+    ex_create("label", "radice degli strumenti:", EX_CHILD,
             10, 12, 190, 16, g_cc, 0, 0);
-    g_cc_f_radice = ex_crea("testo", g_cc_radice, EX_FIGLIO,
+    g_cc_f_radice = ex_create("textbox", g_cc_radice, EX_CHILD,
                             206, 8, 470, 22, g_cc, ID_CC_RADICE, 0);
 
-    ex_crea("etichetta", "opzioni:", EX_FIGLIO, 10, 42, 190, 16, g_cc, 0, 0);
-    g_cc_f_opz = ex_crea("testo", g_cc_opzioni, EX_FIGLIO,
+    ex_create("label", "opzioni:", EX_CHILD, 10, 42, 190, 16, g_cc, 0, 0);
+    g_cc_f_opz = ex_create("textbox", g_cc_opzioni, EX_CHILD,
                          206, 38, 470, 22, g_cc, ID_CC_OPZ, 0);
 
-    ex_crea("etichetta", "nome del binario (in bin/):", EX_FIGLIO,
+    ex_create("label", "nome del binario (in bin/):", EX_CHILD,
             10, 72, 190, 16, g_cc, 0, 0);
-    g_cc_f_nome = ex_crea("testo", binario(), EX_FIGLIO,
+    g_cc_f_nome = ex_create("textbox", binario(), EX_CHILD,
                           206, 68, 200, 22, g_cc, ID_CC_NOME, 0);
 
-    ex_crea("pulsante", "Scrivi compila.sh", EX_FIGLIO,
+    ex_create("button", "Scrivi compila.sh", EX_CHILD,
             10, 102, 150, 26, g_cc, ID_CC_SCRIVI, 0);
-    ex_crea("pulsante", "Compila", EX_FIGLIO,
+    ex_create("button", "Compila", EX_CHILD,
             168, 102, 100, 26, g_cc, ID_CC_COMPILA, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO,
+    ex_create("button", "Chiudi", EX_CHILD,
             276, 102, 100, 26, g_cc, ID_CC_CHIUDI, 0);
 
-    ex_crea("intestazione", "Uscita del compilatore", EX_FIGLIO,
+    ex_create("header", "Uscita del compilatore", EX_CHILD,
             10, 136, 666, 20, g_cc, 0, 0);
-    g_cc_uscita = ex_crea("lista", "", EX_FIGLIO, 10, 158, 666, 220,
+    g_cc_uscita = ex_create("list", "", EX_CHILD, 10, 158, 666, 220,
                           g_cc, ID_CC_USCITA, 0);
-    g_cc_stato = ex_crea("etichetta", "", EX_FIGLIO, 10, 386, 666, 16,
+    g_cc_stato = ex_create("label", "", EX_CHILD, 10, 386, 666, 16,
                          g_cc, 0, 0);
 
     carica_uscita();
-    ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_cc, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -3782,17 +3905,17 @@ static void compilatore_apri(void)
  * starebbero in una finestra ragionevole. Cliccare la riga la accende: e' quel
  * che fa chiunque, e la parentesi quadra dice com'e' messa.
  * ============================================================================= */
-static ExFinestra g_libf, g_lib_lista;
+static ExWindow g_libf, g_lib_lista;
 
 static void lib_mostra(void)
 {
     char riga[LIB_NOME_MAX + 8];
     int  i;
 
-    ex_lista_svuota(g_lib_lista);
+    ex_list_clear(g_lib_lista);
     for (i = 0; i < g_lib_n; i++) {
         sprintf(riga, "[%c] %s", g_lib[i].scelta ? 'x' : ' ', g_lib[i].nome);
-        ex_lista_aggiungi(g_lib_lista, riga);
+        ex_list_add(g_lib_lista, riga);
     }
 }
 
@@ -3815,12 +3938,12 @@ static void lib_aggiungi(void)
     lib_mostra();
 }
 
-static long proc_lib(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_lib(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_LIB_ELENCO) {
-            unsigned int k = ex_lista_scelta(g_lib_lista);
+            unsigned int k = ex_list_get_selected(g_lib_lista);
 
             if ((int)k < g_lib_n) {
                 if (g_lib[k].base) {
@@ -3828,50 +3951,50 @@ static long proc_lib(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 } else {
                     g_lib[k].scelta = !g_lib[k].scelta;
                     lib_mostra();
-                    ex_lista_scegli(g_lib_lista, k);
+                    ex_list_select(g_lib_lista, k);
                 }
             }
         } else if (wp == ID_LIB_AGG) {
             lib_aggiungi();
         } else if (wp == ID_LIB_CHIUDI) {
-            ex_distruggi(f);
+            ex_destroy(f);
             g_libf = 0;
-            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_f, EXM_PAINT, 0, 0);
             return 0;
         }
         return 0;
 
-    case EXM_CHIUDI:
-        ex_distruggi(f);
+    case EXM_CLOSE:
+        ex_destroy(f);
         g_libf = 0;
-        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void librerie_apri(void)
 {
-    if (g_libf) { ex_procedura_base(g_libf, EXM_DISEGNA, 0, 0); return; }
+    if (g_libf) { ex_default_proc(g_libf, EXM_PAINT, 0, 0); return; }
 
-    g_libf = ex_crea("finestra", "Librerie",
-                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+    g_libf = ex_create("window", "Librerie",
+                     EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
                      120, 80, 420, 320, 0, 0, proc_lib);
     if (g_libf == 0) { dico("non riesco ad aprire le librerie"); return; }
 
-    ex_crea("etichetta", "clicca una riga per accenderla o spegnerla",
-            EX_FIGLIO, 10, 10, 400, 16, g_libf, 0, 0);
-    g_lib_lista = ex_crea("lista", "", EX_FIGLIO, 10, 32, 396, 210,
+    ex_create("label", "clicca una riga per accenderla o spegnerla",
+            EX_CHILD, 10, 10, 400, 16, g_libf, 0, 0);
+    g_lib_lista = ex_create("list", "", EX_CHILD, 10, 32, 396, 210,
                           g_libf, ID_LIB_ELENCO, 0);
-    ex_crea("pulsante", "Aggiungi...", EX_FIGLIO, 10, 250, 120, 26,
+    ex_create("button", "Aggiungi...", EX_CHILD, 10, 250, 120, 26,
             g_libf, ID_LIB_AGG, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 138, 250, 100, 26,
+    ex_create("button", "Chiudi", EX_CHILD, 138, 250, 100, 26,
             g_libf, ID_LIB_CHIUDI, 0);
 
     lib_mostra();
-    ex_procedura_base(g_libf, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_libf, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -3902,7 +4025,7 @@ static void librerie_apri(void)
                             * aiuterebbe: la casella la taglierebbe lo stesso —
                             * vedi il difetto delle opzioni del compilatore. */
 
-static ExFinestra g_prgf, g_prg_e_nome, g_prg_e_creato,
+static ExWindow g_prgf, g_prg_e_nome, g_prg_e_creato,
                   g_prg_c_autore, g_prg_c_vers, g_prg_c_descr, g_prg_c_nota,
                   g_prg_stato;
 
@@ -3964,7 +4087,7 @@ static void progetto_leggi(void)
         g_prg_nome[PRG_CAMPO_MAX - 1] = '\0';
     }
     g_prg_creato[0] = '\0';
-    ex_area_svuota(g_prg_c_nota);
+    ex_textarea_clear(g_prg_c_nota);
 
     progetto_percorso(p);
     fd = open(p, O_RDONLY, 0);
@@ -3990,7 +4113,7 @@ static void progetto_leggi(void)
                 col = 0;
 
                 if (nota) {
-                    ex_area_aggiungi(g_prg_c_nota, riga);
+                    ex_textarea_add_line(g_prg_c_nota, riga);
                     continue;
                 }
                 if (strcmp(riga, "[nota]") == 0) { nota = 1; continue; }
@@ -4000,16 +4123,16 @@ static void progetto_leggi(void)
                 if (prg_valore(riga, "creato", g_prg_creato, sizeof(g_prg_creato))) continue;
                 if (prg_valore(riga, "descrizione", descr, sizeof(descr))) continue;
             }
-        if (col && nota) { riga[col] = '\0'; ex_area_aggiungi(g_prg_c_nota, riga); }
+        if (col && nota) { riga[col] = '\0'; ex_textarea_add_line(g_prg_c_nota, riga); }
         close(fd);
     }
 
-    ex_testo_metti(g_prg_e_nome, g_prg_nome);
-    ex_testo_metti(g_prg_e_creato, g_prg_creato[0] ? g_prg_creato : "(non ancora salvata)");
-    ex_testo_metti(g_prg_c_autore, autore);
-    ex_testo_metti(g_prg_c_vers, vers);
-    ex_testo_metti(g_prg_c_descr, descr);
-    ex_area_pulita(g_prg_c_nota);
+    ex_set_text(g_prg_e_nome, g_prg_nome);
+    ex_set_text(g_prg_e_creato, g_prg_creato[0] ? g_prg_creato : "(non ancora salvata)");
+    ex_set_text(g_prg_c_autore, autore);
+    ex_set_text(g_prg_c_vers, vers);
+    ex_set_text(g_prg_c_descr, descr);
+    ex_textarea_set_unmodified(g_prg_c_nota);
 }
 
 static void progetto_scheda_salva(void)
@@ -4019,23 +4142,23 @@ static void progetto_scheda_salva(void)
 
     progetto_percorso(p);
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) { ex_testo_metti(g_prg_stato, "non riesco a scrivere progetto.txt"); return; }
+    if (fd < 0) { ex_set_text(g_prg_stato, "non riesco a scrivere progetto.txt"); return; }
 
     sprintf(riga, "nome = %s\n", g_prg_nome);
     write(fd, riga, strlen(riga));
-    snprintf(riga, sizeof(riga), "autore = %s\n", ex_testo_prendi(g_prg_c_autore));
+    snprintf(riga, sizeof(riga), "autore = %s\n", ex_get_text(g_prg_c_autore));
     write(fd, riga, strlen(riga));
-    snprintf(riga, sizeof(riga), "versione = %s\n", ex_testo_prendi(g_prg_c_vers));
+    snprintf(riga, sizeof(riga), "versione = %s\n", ex_get_text(g_prg_c_vers));
     write(fd, riga, strlen(riga));
     sprintf(riga, "creato = %s\n", g_prg_creato);
     write(fd, riga, strlen(riga));
-    snprintf(riga, sizeof(riga), "descrizione = %s\n", ex_testo_prendi(g_prg_c_descr));
+    snprintf(riga, sizeof(riga), "descrizione = %s\n", ex_get_text(g_prg_c_descr));
     write(fd, riga, strlen(riga));
 
     write(fd, "\n[nota]\n", 8);
-    n = (int)ex_area_righe(g_prg_c_nota);
+    n = (int)ex_textarea_line_count(g_prg_c_nota);
     for (i = 0; i < n; i++) {
-        const char  *r = ex_area_riga(g_prg_c_nota, (unsigned int)i);
+        const char  *r = ex_textarea_line(g_prg_c_nota, (unsigned int)i);
         unsigned int l = (unsigned int)strlen(r);
 
         if (l) write(fd, r, l);
@@ -4043,85 +4166,85 @@ static void progetto_scheda_salva(void)
     }
     close(fd);
 
-    ex_testo_metti(g_prg_stato, "salvato: progetto.txt");
+    ex_set_text(g_prg_stato, "salvato: progetto.txt");
     dico("scheda del progetto salvata");
 }
 
-static long proc_prg(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_prg(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_PR_SALVA) {
             progetto_scheda_salva();
         } else if (wp == ID_PR_CHIUDI) {
             progetto_scheda_salva();
-            ex_distruggi(f);
+            ex_destroy(f);
             g_prgf = 0;
-            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_f, EXM_PAINT, 0, 0);
             return 0;
         }
         return 0;
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         /* ! LA X CHIUDE COME «CHIUDI», salvando: e' una scheda di dati, non
          * codice — non c'e' niente da poter rompere restando aggiornati,
          * e chiedere conferma per un'informazione a basso rischio sarebbe
          * una domanda che si impara a schiacciare senza leggerla. */
         progetto_scheda_salva();
-        ex_distruggi(f);
+        ex_destroy(f);
         g_prgf = 0;
-        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void progetto_scheda_apri(void)
 {
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
-    if (g_prgf) { ex_procedura_base(g_prgf, EXM_DISEGNA, 0, 0); return; }
+    if (g_prgf) { ex_default_proc(g_prgf, EXM_PAINT, 0, 0); return; }
 
-    g_prgf = ex_crea("finestra", "Progetto",
-                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+    g_prgf = ex_create("window", "Progetto",
+                     EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
                      100, 60, 520, 420, 0, 0, proc_prg);
     if (g_prgf == 0) { dico("non riesco ad aprire la scheda del progetto"); return; }
 
-    ex_crea("etichetta", "nome:", EX_FIGLIO, 10, 12, 90, 16, g_prgf, 0, 0);
-    g_prg_e_nome = ex_crea("etichetta", "", EX_FIGLIO, 110, 12, 380, 16,
+    ex_create("label", "nome:", EX_CHILD, 10, 12, 90, 16, g_prgf, 0, 0);
+    g_prg_e_nome = ex_create("label", "", EX_CHILD, 110, 12, 380, 16,
                            g_prgf, 0, 0);
 
-    ex_crea("etichetta", "autore:", EX_FIGLIO, 10, 38, 90, 16, g_prgf, 0, 0);
-    g_prg_c_autore = ex_crea("testo", "", EX_FIGLIO, 110, 34, 380, 22,
+    ex_create("label", "autore:", EX_CHILD, 10, 38, 90, 16, g_prgf, 0, 0);
+    g_prg_c_autore = ex_create("textbox", "", EX_CHILD, 110, 34, 380, 22,
                              g_prgf, ID_PR_AUTORE, 0);
 
-    ex_crea("etichetta", "versione:", EX_FIGLIO, 10, 68, 90, 16, g_prgf, 0, 0);
-    g_prg_c_vers = ex_crea("testo", "", EX_FIGLIO, 110, 64, 120, 22,
+    ex_create("label", "versione:", EX_CHILD, 10, 68, 90, 16, g_prgf, 0, 0);
+    g_prg_c_vers = ex_create("textbox", "", EX_CHILD, 110, 64, 120, 22,
                            g_prgf, ID_PR_VERS, 0);
 
-    ex_crea("etichetta", "creato:", EX_FIGLIO, 250, 68, 60, 16, g_prgf, 0, 0);
-    g_prg_e_creato = ex_crea("etichetta", "", EX_FIGLIO, 310, 68, 180, 16,
+    ex_create("label", "creato:", EX_CHILD, 250, 68, 60, 16, g_prgf, 0, 0);
+    g_prg_e_creato = ex_create("label", "", EX_CHILD, 310, 68, 180, 16,
                              g_prgf, 0, 0);
 
-    ex_crea("etichetta", "descrizione:", EX_FIGLIO, 10, 98, 90, 16, g_prgf, 0, 0);
-    g_prg_c_descr = ex_crea("testo", "", EX_FIGLIO, 110, 94, 380, 22,
+    ex_create("label", "descrizione:", EX_CHILD, 10, 98, 90, 16, g_prgf, 0, 0);
+    g_prg_c_descr = ex_create("textbox", "", EX_CHILD, 110, 94, 380, 22,
                             g_prgf, ID_PR_DESCR, 0);
 
-    ex_crea("intestazione", "Nota", EX_FIGLIO, 10, 128, 480, 20, g_prgf, 0, 0);
-    g_prg_c_nota = ex_crea("areatesto", "", EX_FIGLIO, 10, 150, 480, 190,
+    ex_create("header", "Nota", EX_CHILD, 10, 128, 480, 20, g_prgf, 0, 0);
+    g_prg_c_nota = ex_create("textarea", "", EX_CHILD, 10, 150, 480, 190,
                            g_prgf, ID_PR_NOTA, 0);
 
-    ex_crea("pulsante", "Salva", EX_FIGLIO, 10, 350, 90, 26,
+    ex_create("button", "Salva", EX_CHILD, 10, 350, 90, 26,
             g_prgf, ID_PR_SALVA, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 108, 350, 90, 26,
+    ex_create("button", "Chiudi", EX_CHILD, 108, 350, 90, 26,
             g_prgf, ID_PR_CHIUDI, 0);
-    g_prg_stato = ex_crea("etichetta", "", EX_FIGLIO, 10, 384, 480, 16,
+    g_prg_stato = ex_create("label", "", EX_CHILD, 10, 384, 480, 16,
                           g_prgf, 0, 0);
 
     progetto_leggi();
-    ex_fuoco(g_prg_c_autore);
-    ex_procedura_base(g_prgf, EXM_DISEGNA, 0, 0);
+    ex_set_focus(g_prg_c_autore);
+    ex_default_proc(g_prgf, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -4142,8 +4265,8 @@ static void progetto_scheda_apri(void)
  * libera (vedi il perche' in exwin.c) — e se non si azzera il coloritore un
  * file .txt aperto dopo un .c si vede colorato come se fosse C.
  * ============================================================================= */
-static ExFinestra g_fe_f, g_fe_cod, g_fe_stato, g_fe_tab;
-static ExFinestra g_fe_btn[5];      /* Salva, Cerca, Sostituisci, Chiudi, Apri */
+static ExWindow g_fe_f, g_fe_cod, g_fe_stato, g_fe_tab;
+static ExWindow g_fe_btn[5];      /* Salva, Cerca, Sostituisci, Chiudi, Apri */
 static char       g_fe_nome[64] = "";     /* relativo a <progetto>/src */
 
 /* LE SCHEDE (29 settembre 2026, @EXIDE-SCHEDE): i file aperti, uno per
@@ -4175,11 +4298,11 @@ static int fe_carica(const char *nome)
     unsigned int col = 0;
 
     file_percorso(p, nome);
-    ex_area_svuota(g_fe_cod);
-    ex_area_colora(g_fe_cod, fe_estensione_c(nome) ? ex_colora_c : 0, 0);
+    ex_textarea_clear(g_fe_cod);
+    ex_textarea_set_highlighter(g_fe_cod, fe_estensione_c(nome) ? ex_highlight_c : 0, 0);
 
     fd = open(p, O_RDONLY, 0);
-    if (fd < 0) { ex_testo_metti(g_fe_stato, "il file non c'e'"); return 0; }
+    if (fd < 0) { ex_set_text(g_fe_stato, "il file non c'e'"); return 0; }
 
     while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
         for (i = 0; i < n; i++) {
@@ -4190,17 +4313,17 @@ static int fe_carica(const char *nome)
             }
             riga[col] = '\0';
             col = 0;
-            if (!ex_area_aggiungi(g_fe_cod, riga)) goto pieno;
+            if (!ex_textarea_add_line(g_fe_cod, riga)) goto pieno;
         }
     riga[col] = '\0';
-    if (col) ex_area_aggiungi(g_fe_cod, riga);
+    if (col) ex_textarea_add_line(g_fe_cod, riga);
 pieno:
     close(fd);
-    ex_area_pulita(g_fe_cod);
+    ex_textarea_set_unmodified(g_fe_cod);
 
     strncpy(g_fe_nome, nome, sizeof(g_fe_nome) - 1);
     g_fe_nome[sizeof(g_fe_nome) - 1] = '\0';
-    ex_titolo(g_fe_f, nome);
+    ex_set_title(g_fe_f, nome);
     return 1;
 }
 
@@ -4210,23 +4333,23 @@ static int fe_salva(void)
     int  fd;
     unsigned int i, n;
 
-    if (!ex_area_modificato(g_fe_cod)) return 1;
+    if (!ex_textarea_is_modified(g_fe_cod)) return 1;
 
     file_percorso(p, g_fe_nome);
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) { ex_testo_metti(g_fe_stato, "non riesco a scrivere"); return 0; }
+    if (fd < 0) { ex_set_text(g_fe_stato, "non riesco a scrivere"); return 0; }
 
-    n = ex_area_righe(g_fe_cod);
+    n = ex_textarea_line_count(g_fe_cod);
     for (i = 0; i < n; i++) {
-        const char  *r = ex_area_riga(g_fe_cod, i);
+        const char  *r = ex_textarea_line(g_fe_cod, i);
         unsigned int l = (unsigned int)strlen(r);
 
         if (l) write(fd, r, l);
         write(fd, "\n", 1);
     }
     close(fd);
-    ex_area_pulita(g_fe_cod);
-    ex_testo_metti(g_fe_stato, "salvato");
+    ex_textarea_set_unmodified(g_fe_cod);
+    ex_set_text(g_fe_stato, "salvato");
     return 1;
 }
 
@@ -4243,25 +4366,25 @@ static void editori_salva_tutti(void)
 
 static void fe_apri_altro(void);
 
-static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_fe(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     /* Resized: the code takes the room, the buttons stay under it. */
-    case EXM_MISURA: {
+    case EXM_SIZE: {
         static const int bx[5] = { 4, 102, 200, 318, 416 };
         int w = EX_X(lp), h = EX_Y(lp), i;
 
         if (w < 520) w = 520;
         if (h < 200) h = 200;
-        ex_misura(g_fe_tab, w - 8, 22);
-        ex_misura(g_fe_cod, w - 8, h - 84);
-        for (i = 0; i < 5; i++) ex_sposta(g_fe_btn[i], bx[i], h - 52);
-        ex_sposta(g_fe_stato, 4, h - 20);
-        ex_misura(g_fe_stato, w - 10, 16);
-        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-        return EX_NON_RIDISEGNARE;
+        ex_resize(g_fe_tab, w - 8, 22);
+        ex_resize(g_fe_cod, w - 8, h - 84);
+        for (i = 0; i < 5; i++) ex_move(g_fe_btn[i], bx[i], h - 52);
+        ex_move(g_fe_stato, 4, h - 20);
+        ex_resize(g_fe_stato, w - 10, 16);
+        ex_default_proc(f, EXM_PAINT, 0, 0);
+        return EX_NO_REDRAW;
     }
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         switch (wp) {
         case ID_FE_SALVA:  fe_salva(); break;
         case ID_FE_APRI:   fe_apri_altro(); break;
@@ -4269,17 +4392,17 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (lp >= 0 && lp < g_fe_n && strcmp(g_fe_file[lp], g_fe_nome) != 0) {
                 fe_salva();
                 fe_carica(g_fe_file[lp]);
-                ex_fuoco(g_fe_cod);
+                ex_set_focus(g_fe_cod);
             }
             break;
         case ID_FE_CERCA:  area_cerca(g_fe_cod, g_fe_stato); break;
         case ID_FE_SOSTIT: area_sostituisci(g_fe_cod, g_fe_stato); break;
         case ID_FE_CHIUDI:
             fe_salva();
-            ex_distruggi(f);
+            ex_destroy(f);
             g_fe_f = 0;
             g_fe_n = 0;
-            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_f, EXM_PAINT, 0, 0);
             return 0;
         default: break;
         }
@@ -4289,20 +4412,20 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * all'altra non deve ricordarsi in quale delle due funzionano. Qui non
      * c'e' un menu che le prometta, e proprio per questo vanno scritte nel
      * manuale: una scorciatoia che nessuno annuncia non la trova nessuno. */
-    case EXM_TASTO:
+    case EXM_KEY:
         if (wp & KBD_MOD_CTRL) {
             switch (wp & KBD_KEY_MASK) {
             case 's': case 'S': fe_salva();                        return 0;
             case 'o': case 'O': fe_apri_altro();                   return 0;
             case 'f': case 'F': area_cerca(g_fe_cod, g_fe_stato);  return 0;
-            case 'c': case 'C': ex_area_copia(g_fe_cod);           return 0;
+            case 'c': case 'C': ex_textarea_copy(g_fe_cod);           return 0;
             case 'x': case 'X':
-                ex_area_taglia(g_fe_cod);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ex_textarea_cut(g_fe_cod);
+                ex_default_proc(f, EXM_PAINT, 0, 0);
                 return 0;
             case 'v': case 'V':
-                ex_area_incolla(g_fe_cod);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ex_textarea_paste(g_fe_cod);
+                ex_default_proc(f, EXM_PAINT, 0, 0);
                 return 0;
             default: break;
             }
@@ -4311,31 +4434,31 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     /* La X di una scheda, o Ctrl+W: si salva quella scelta, e l'ultima
      * che si chiude chiude la finestra. */
-    case EXM_SCHEDA_CHIUDI: {
+    case EXM_TAB_CLOSE: {
         int i = (int)lp, k, era = (strcmp(g_fe_file[i], g_fe_nome) == 0);
 
         if (i < 0 || i >= g_fe_n) return 0;
         if (era) fe_salva();
-        if (g_fe_n == 1) return proc_fe(f, EXM_CHIUDI, 0, 0);
+        if (g_fe_n == 1) return proc_fe(f, EXM_CLOSE, 0, 0);
         for (k = i; k + 1 < g_fe_n; k++) strcpy(g_fe_file[k], g_fe_file[k + 1]);
         g_fe_n--;
-        ex_voce_togli(g_fe_tab, (unsigned int)i);
-        if (era) fe_carica(g_fe_file[ex_voce_scelta(g_fe_tab)]);
-        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        ex_item_remove(g_fe_tab, (unsigned int)i);
+        if (era) fe_carica(g_fe_file[ex_item_get_selected(g_fe_tab)]);
+        ex_default_proc(f, EXM_PAINT, 0, 0);
         return 0;
     }
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         fe_salva();
-        ex_distruggi(f);
+        ex_destroy(f);
         g_fe_f = 0;
         g_fe_n = 0;
-        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void file_editor_apri(const char *nome);
@@ -4354,7 +4477,7 @@ static void fe_apri_altro(void)
     snprintf(src, sizeof(src), "%s/src/", g_prog_dir);
     l = strlen(src);
     if (strncmp(p, src, l) != 0 || !p[l] || strlen(p + l) >= 64) {
-        ex_testo_metti(g_fe_stato, "qui si aprono i sorgenti del progetto (src/)");
+        ex_set_text(g_fe_stato, "qui si aprono i sorgenti del progetto (src/)");
         return;
     }
     file_editor_apri(p + l);
@@ -4366,7 +4489,7 @@ static int fe_scheda(const char *nome)
     int i;
 
     for (i = 0; i < g_fe_n; i++) if (strcmp(g_fe_file[i], nome) == 0) return i;
-    if (g_fe_n >= FE_MAX || !ex_voce_aggiungi(g_fe_tab, nome)) return -1;
+    if (g_fe_n >= FE_MAX || !ex_item_add(g_fe_tab, nome)) return -1;
     strncpy(g_fe_file[g_fe_n], nome, sizeof(g_fe_file[0]) - 1);
     g_fe_file[g_fe_n][sizeof(g_fe_file[0]) - 1] = '\0';
     return g_fe_n++;
@@ -4385,38 +4508,38 @@ static void file_editor_apri(const char *nome)
         if (k < 0) {
             char m[80];
             snprintf(m, sizeof(m), "al massimo %d file aperti: chiudine uno", FE_MAX);
-            ex_testo_metti(g_fe_stato, m);
+            ex_set_text(g_fe_stato, m);
             return;
         }
         if (strcmp(g_fe_nome, nome) != 0) { fe_salva(); fe_carica(nome); }
-        ex_voce_scegli(g_fe_tab, (unsigned int)k);
-        ex_fuoco(g_fe_cod);
-        ex_procedura_base(g_fe_f, EXM_DISEGNA, 0, 0);
+        ex_item_select(g_fe_tab, (unsigned int)k);
+        ex_set_focus(g_fe_cod);
+        ex_default_proc(g_fe_f, EXM_PAINT, 0, 0);
         return;
     }
 
-    g_fe_f = ex_crea("finestra", nome,
-                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE | EX_RIDIM,
+    g_fe_f = ex_create("window", nome,
+                     EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL | EX_RESIZABLE,
                      60, 40, 640, 460, 0, 0, proc_fe);
     if (g_fe_f == 0) { dico("non riesco ad aprire il file"); return; }
 
-    g_fe_tab = ex_crea("tab", "", EX_FIGLIO, 4, 4, 632, 22, g_fe_f, ID_FE_TAB, 0);
-    ex_voci_schede(g_fe_tab, 1);
+    g_fe_tab = ex_create("tab", "", EX_CHILD, 4, 4, 632, 22, g_fe_f, ID_FE_TAB, 0);
+    ex_items_as_tabs(g_fe_tab, 1);
     g_fe_n = 0;
-    g_fe_cod = ex_crea("areacodice", "", EX_FIGLIO, 4, 28, 632, 376,
+    g_fe_cod = ex_create("codearea", "", EX_CHILD, 4, 28, 632, 376,
                        g_fe_f, 0, 0);
-    g_fe_btn[0] = ex_crea("pulsante", "Salva", EX_FIGLIO, 4, 408, 90, 26, g_fe_f, ID_FE_SALVA, 0);
-    g_fe_btn[1] = ex_crea("pulsante", "Cerca", EX_FIGLIO, 102, 408, 90, 26, g_fe_f, ID_FE_CERCA, 0);
-    g_fe_btn[2] = ex_crea("pulsante", "Sostituisci", EX_FIGLIO, 200, 408, 110, 26,
+    g_fe_btn[0] = ex_create("button", "Salva", EX_CHILD, 4, 408, 90, 26, g_fe_f, ID_FE_SALVA, 0);
+    g_fe_btn[1] = ex_create("button", "Cerca", EX_CHILD, 102, 408, 90, 26, g_fe_f, ID_FE_CERCA, 0);
+    g_fe_btn[2] = ex_create("button", "Sostituisci", EX_CHILD, 200, 408, 110, 26,
                           g_fe_f, ID_FE_SOSTIT, 0);
-    g_fe_btn[3] = ex_crea("pulsante", "Chiudi", EX_FIGLIO, 318, 408, 90, 26, g_fe_f, ID_FE_CHIUDI, 0);
-    g_fe_btn[4] = ex_crea("pulsante", "Apri...", EX_FIGLIO, 416, 408, 90, 26, g_fe_f, ID_FE_APRI, 0);
-    g_fe_stato = ex_crea("etichetta", "", EX_FIGLIO, 4, 440, 630, 16, g_fe_f, 0, 0);
+    g_fe_btn[3] = ex_create("button", "Chiudi", EX_CHILD, 318, 408, 90, 26, g_fe_f, ID_FE_CHIUDI, 0);
+    g_fe_btn[4] = ex_create("button", "Apri...", EX_CHILD, 416, 408, 90, 26, g_fe_f, ID_FE_APRI, 0);
+    g_fe_stato = ex_create("label", "", EX_CHILD, 4, 440, 630, 16, g_fe_f, 0, 0);
 
     fe_scheda(nome);
     fe_carica(nome);
-    ex_fuoco(g_fe_cod);
-    ex_procedura_base(g_fe_f, EXM_DISEGNA, 0, 0);
+    ex_set_focus(g_fe_cod);
+    ex_default_proc(g_fe_f, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -4431,7 +4554,7 @@ static void file_editor_apri(const char *nome)
 #define FL_MAX      64
 #define FL_NOME_MAX 64
 
-static ExFinestra   g_flf, g_fl_lista;
+static ExWindow   g_flf, g_fl_lista;
 static char         g_fl_nome[FL_MAX][FL_NOME_MAX];
 static unsigned int g_fl_n;
 
@@ -4443,7 +4566,7 @@ static void files_mostra(void)
     unsigned int dim[FL_MAX];
 
     sprintf(srcdir, "%s/src", g_prog_dir);
-    ex_lista_svuota(g_fl_lista);
+    ex_list_clear(g_fl_lista);
     g_fl_n = 0;
 
     while ((n = listdir_from(srcdir, v, 8, start)) > 0) {
@@ -4461,61 +4584,61 @@ static void files_mostra(void)
 
     for (i = 0; i < (int)g_fl_n; i++) {
         sprintf(riga, "%-40s %8u", g_fl_nome[i], dim[i]);
-        ex_lista_aggiungi(g_fl_lista, riga);
+        ex_list_add(g_fl_lista, riga);
     }
-    if (g_fl_n == 0) ex_lista_aggiungi(g_fl_lista, "(src/ e' vuota)");
+    if (g_fl_n == 0) ex_list_add(g_fl_lista, "(src/ e' vuota)");
 }
 
-static long proc_fl(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_fl(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_FL_ELENCO) {
-            unsigned int k = ex_lista_scelta(g_fl_lista);
+            unsigned int k = ex_list_get_selected(g_fl_lista);
 
             /* ! SOLO IL DOPPIO CLIC O L'INVIO APRONO, come in ogni lista di
-             * questo toolkit — EX_APRIRE(lp). Una riga scelta con le frecce
+             * questo toolkit — EX_IS_OPEN(lp). Una riga scelta con le frecce
              * non deve gia' aprire un file: chi scorre l'elenco per leggere i
              * nomi non sta chiedendo di aprirli tutti uno per uno. */
-            if (EX_APRIRE(lp) && k < g_fl_n) file_editor_apri(g_fl_nome[k]);
+            if (EX_IS_OPEN(lp) && k < g_fl_n) file_editor_apri(g_fl_nome[k]);
         } else if (wp == ID_FL_CHIUDI) {
-            ex_distruggi(f);
+            ex_destroy(f);
             g_flf = 0;
-            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            ex_default_proc(g_f, EXM_PAINT, 0, 0);
             return 0;
         }
         return 0;
 
-    case EXM_CHIUDI:
-        ex_distruggi(f);
+    case EXM_CLOSE:
+        ex_destroy(f);
         g_flf = 0;
-        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static void files_apri(void)
 {
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
-    if (g_flf) { files_mostra(); ex_procedura_base(g_flf, EXM_DISEGNA, 0, 0); return; }
+    if (g_flf) { files_mostra(); ex_default_proc(g_flf, EXM_PAINT, 0, 0); return; }
 
-    g_flf = ex_crea("finestra", "Files",
-                    EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+    g_flf = ex_create("window", "Files",
+                    EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
                     140, 90, 420, 340, 0, 0, proc_fl);
     if (g_flf == 0) { dico("non riesco ad aprire la finestra dei file"); return; }
 
-    ex_crea("etichetta", "doppio clic per aprire un sorgente:", EX_FIGLIO,
+    ex_create("label", "doppio clic per aprire un sorgente:", EX_CHILD,
             10, 10, 400, 16, g_flf, 0, 0);
-    g_fl_lista = ex_crea("lista", "", EX_FIGLIO, 10, 32, 396, 250,
+    g_fl_lista = ex_create("list", "", EX_CHILD, 10, 32, 396, 250,
                          g_flf, ID_FL_ELENCO, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 10, 292, 100, 26,
+    ex_create("button", "Chiudi", EX_CHILD, 10, 292, 100, 26,
             g_flf, ID_FL_CHIUDI, 0);
 
     files_mostra();
-    ex_procedura_base(g_flf, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_flf, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -4571,22 +4694,22 @@ static void shell_progetto(void)
 #define t  g_sh_t
 
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
-    if (ft) { ex_procedura_base(ft, EXM_DISEGNA, 0, 0); return; }
+    if (ft) { ex_default_proc(ft, EXM_PAINT, 0, 0); return; }
 
     if (chdir(g_prog_dir) != 0) { dico("non riesco a entrare nel progetto"); return; }
 
-    ft = ex_crea("finestra", "Shell del progetto",
-                 EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM, 80, 60, 648, 408, 0, 0, proc_uno);
+    ft = ex_create("window", "Shell del progetto",
+                 EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE, 80, 60, 648, 408, 0, 0, proc_uno);
     if (ft == 0) { dico("non riesco ad aprire la shell"); return; }
 
-    t = ex_crea("terminale", "/bin/sh", EX_FIGLIO, 2, 2, 644, 404, ft, 0, 0);
+    t = ex_create("terminal", "/bin/sh", EX_CHILD, 2, 2, 644, 404, ft, 0, 0);
     if (t == 0) {
-        ex_distruggi(ft);
+        ex_destroy(ft);
         ft = 0;
         dico("la shell non parte");
         return;
     }
-    ex_procedura_base(ft, EXM_DISEGNA, 0, 0);
+    ex_default_proc(ft, EXM_PAINT, 0, 0);
     dico("shell aperta nella directory del progetto");
 }
 #undef ft
@@ -4709,7 +4832,7 @@ static void ctrl_taglia(void)
  * line. The numbers are those of the 780x486 window it starts as, written as
  * distances from the right and bottom edges.
  * ============================================================================= */
-static ExFinestra g_int_prop, g_btn_applica, g_btn_elimina;
+static ExWindow g_int_prop, g_btn_applica, g_btn_elimina;
 
 static void finestra_disponi(int w, int h)
 {
@@ -4717,30 +4840,30 @@ static void finestra_disponi(int w, int h)
     if (h < 300) h = 300;
     g_tela_w = w - TELA_X - 180;
     g_tela_h = h - 90;
-    ex_misura(g_lst_strum, 152, h - 90);
-    ex_sposta(g_int_prop, w - 174, 24);
-    ex_sposta(g_lst_prop, w - 174, 46);
-    ex_misura(g_lst_prop, 168, h - 146);
-    ex_sposta(g_val, w - 174, h - 94);
-    ex_sposta(g_btn_applica, w - 174, h - 68);
-    ex_sposta(g_btn_elimina, w - 86, h - 68);
-    ex_sposta(g_stato, 8, h - 34);
-    ex_misura(g_stato, w - 20, 16);
+    ex_resize(g_lst_strum, 152, h - 90);
+    ex_move(g_int_prop, w - 174, 24);
+    ex_move(g_lst_prop, w - 174, 46);
+    ex_resize(g_lst_prop, 168, h - 146);
+    ex_move(g_val, w - 174, h - 94);
+    ex_move(g_btn_applica, w - 174, h - 68);
+    ex_move(g_btn_elimina, w - 86, h - 68);
+    ex_move(g_stato, 8, h - 34);
+    ex_resize(g_stato, w - 20, 16);
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_MISURA:
+    case EXM_SIZE:
         finestra_disponi(EX_X(lp), EX_Y(lp));
-        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+        ex_default_proc(f, EXM_PAINT, 0, 0);
         disegna_tela();
-        ex_aggiorna(f);
-        return EX_NON_RIDISEGNARE;
-    case EXM_COMANDO:
+        ex_update(f);
+        return EX_NO_REDRAW;
+    case EXM_COMMAND:
         switch (wp) {
         case ID_STRUMENTI:
-            g_strum_sel = (int)ex_lista_scelta(g_lst_strum);
+            g_strum_sel = (int)ex_list_get_selected(g_lst_strum);
             if (g_strum_sel >= 0 && g_strum_sel < STRUM_N) {
                 char t[80];
 
@@ -4752,15 +4875,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
         case ID_PROPRIETA: {
             char v[64];
-            int  k = (int)ex_lista_scelta(g_lst_prop);
+            int  k = (int)ex_list_get_selected(g_lst_prop);
 
             /* Senza controllo scelto l'elenco e' quello della maschera, e i
              * valori vanno letti da li': prop_valore risponderebbe vuoto. */
             if (g_sel < 0 || !g_ctrl[g_sel].usato) fprop_valore(k, v, sizeof(v));
             else                                   prop_valore(k, v, sizeof(v));
-            ex_testo_metti(g_val, v);
+            ex_set_text(g_val, v);
             val_segna(k);
-            ex_fuoco(g_val);
+            ex_set_focus(g_val);
             break;
         }
 
@@ -4769,7 +4892,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_AUTOAGG:
             g_auto_prop = !g_auto_prop;
             impostazioni_scrivi();
-            ex_menu_spunta(g_menu, ID_AUTOAGG, g_auto_prop);
+            ex_menu_check(g_menu, ID_AUTOAGG, g_auto_prop);
             dico(g_auto_prop ? "le proprieta' si applicano uscendo dalla casella"
                              : "le proprieta' si applicano col pulsante Applica");
             break;
@@ -4814,7 +4937,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (g_sporco && !ex_dlg_conferma("Modifiche non salvate",
                                              "Uscire senza salvare?",
                                              "Esci", "Annulla")) break;
-            ex_esci(0);
+            ex_quit(0);
             break;
 
         case ID_SORGENTE:  editor_apri(0, -1);   break;
@@ -4849,25 +4972,25 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
-    case EXM_MOUSE_GIU: {
+    case EXM_MOUSE_DOWN: {
         int x = EX_X(lp), y = EX_Y(lp);
 
         tela_clic(x, y, 0);
         /* ! ONLY A CLICK ON THE CANVAS takes the keys away from the boxes
-         * (30 September 2026). The toolkit sends EXM_MOUSE_GIU for a click in
+         * (30 September 2026). The toolkit sends EXM_MOUSE_DOWN for a click in
          * a text box too, after giving it the focus and placing the caret:
          * taking the focus away here for every click left the property box
          * deaf to the mouse - clicked, no caret, typing went nowhere. */
         if (x >= TELA_X && x < TELA_X + TELA_W && y >= TELA_Y && y < TELA_Y + TELA_H)
-            ex_fuoco_via(f);
+            ex_clear_focus(f);
         return 0;
     }
 
-    case EXM_DOPPIOCLIC:
+    case EXM_DOUBLE_CLICK:
         tela_clic(EX_X(lp), EX_Y(lp), 1);
         return 0;
 
-    case EXM_MOUSE_MOSSO:
+    case EXM_MOUSE_MOVE:
         if (g_ridim >= 0 && g_sel >= 0 && g_ctrl[g_sel].usato) {
             ridimensiona(EX_X(lp), EX_Y(lp));
             return 0;
@@ -4893,21 +5016,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 g_sporco = 1;
                 prop_mostra();
                 /* ! IL DISEGNO SI RIFA' QUI, e prima non lo faceva nessuno:
-                 * EXM_DISEGNA non arriva da solo mentre si trascina, e il
+                 * EXM_PAINT non arriva da solo mentre si trascina, e il
                  * controllo si vedeva saltare nel posto nuovo solo quando
                  * qualcos'altro faceva ridisegnare la finestra. */
                 disegna_tela();
-                ex_aggiorna(g_f);
+                ex_update(g_f);
             }
         }
         return 0;
 
-    case EXM_MOUSE_SU:
+    case EXM_MOUSE_UP:
         g_trascina = 0;
         g_ridim = -1;
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         if ((wp & KBD_KEY_MASK) == KBD_K_DEL) { elimina(); return 0; }
 
         /* ! LE SCORCIATOIE SCRITTE NEL MENU ADESSO FANNO QUALCOSA. Erano
@@ -4928,28 +5051,28 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             case 's': case 'S': progetto_salva(); return 0;
             case 'n': case 'N': progetto_nuovo(); return 0;
             case 'o': case 'O': progetto_apri();  return 0;
-            case 'q': case 'Q': ex_esci(0);       return 0;
+            case 'q': case 'Q': ex_quit(0);       return 0;
             default: break;
             }
         }
         return 0;
 
-    case EXM_DISEGNA:
-        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    case EXM_PAINT:
+        ex_default_proc(f, EXM_PAINT, 0, 0);
         disegna_tela();
-        ex_aggiorna(f);
+        ex_update(f);
         return 0;
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         if (g_sporco && !ex_dlg_conferma("Modifiche non salvate",
                                          "Uscire senza salvare?",
                                          "Esci", "Annulla")) return 0;
-        ex_esci(0);
+        ex_quit(0);
         return 0;
 
     default: break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 int main(int argc, char **argv)
@@ -4962,57 +5085,57 @@ int main(int argc, char **argv)
      * SEMPRE su un disegno, anche quando non c'e' niente da salvare. */
     form_azzera(&g_form[0], "principale", "Finestra");
 
-    g_f = ex_crea("finestra", "EX-IDE - nessun progetto",
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM, 4, 24, 780, 486, 0, 0, proc);
+    g_f = ex_create("window", "EX-IDE - nessun progetto",
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE, 4, 24, 780, 486, 0, 0, proc);
     if (g_f == 0) {
         printf("exide: il server a finestre non risponde.\n");
         printf("       Avvialo con:  exwin\n");
         return 1;
     }
 
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Nuovo progetto\tCtrl+N", ID_NUOVO);
-    ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O",        ID_APRI);
-    ex_menu_voce(g_menu, "File", "Salva\tCtrl+S",          ID_SALVA);
-    ex_menu_voce(g_menu, "File", "Salva con nome...",      ID_SALVA_COME);
-    ex_menu_voce(g_menu, "File", "Chiudi",                 ID_CHIUDI);
-    ex_menu_voce(g_menu, "File", "-",                      0);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",           ID_ESCI);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Nuovo progetto\tCtrl+N", ID_NUOVO);
+    ex_menu_add_item(g_menu, "File", "Apri...\tCtrl+O",        ID_APRI);
+    ex_menu_add_item(g_menu, "File", "Salva\tCtrl+S",          ID_SALVA);
+    ex_menu_add_item(g_menu, "File", "Salva con nome...",      ID_SALVA_COME);
+    ex_menu_add_item(g_menu, "File", "Chiudi",                 ID_CHIUDI);
+    ex_menu_add_item(g_menu, "File", "-",                      0);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q",           ID_ESCI);
 
-    ex_menu_voce(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
-    ex_menu_voce(g_menu, "Modifica", "Rifai\tCtrl+Y",   ID_RIFAI);
-    ex_menu_voce(g_menu, "Modifica", "-",               0);
-    ex_menu_voce(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
-    ex_menu_voce(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
-    ex_menu_voce(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
-    ex_menu_voce(g_menu, "Modifica", "Cancella",        ID_CANCELLA);
-    ex_menu_voce(g_menu, "Modifica", "-",               0);
-    ex_menu_voce(g_menu, "Modifica", "Cerca\tCtrl+F",   ID_CERCA);
-    ex_menu_voce(g_menu, "Modifica", "Sostituisci",     ID_SOSTIT);
+    ex_menu_add_item(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
+    ex_menu_add_item(g_menu, "Modifica", "Rifai\tCtrl+Y",   ID_RIFAI);
+    ex_menu_add_item(g_menu, "Modifica", "-",               0);
+    ex_menu_add_item(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
+    ex_menu_add_item(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
+    ex_menu_add_item(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
+    ex_menu_add_item(g_menu, "Modifica", "Cancella",        ID_CANCELLA);
+    ex_menu_add_item(g_menu, "Modifica", "-",               0);
+    ex_menu_add_item(g_menu, "Modifica", "Cerca\tCtrl+F",   ID_CERCA);
+    ex_menu_add_item(g_menu, "Modifica", "Sostituisci",     ID_SOSTIT);
 
-    ex_menu_voce(g_menu, "Strumenti", "Sorgente",    ID_SORGENTE);
-    ex_menu_voce(g_menu, "Strumenti", "Shell",       ID_SHELL);
-    ex_menu_voce(g_menu, "Strumenti", "Compilatore", ID_COMPILA);
-    ex_menu_voce(g_menu, "Strumenti", "Librerie",    ID_LIBRERIE);
-    ex_menu_voce(g_menu, "Strumenti", "Files",       ID_FILES);
-    ex_menu_voce(g_menu, "Strumenti", "Directory",   ID_DIRECTORY);
-    ex_menu_voce(g_menu, "Strumenti", "-",           0);
-    ex_menu_voce(g_menu, "Strumenti", "Icona del controllo...", ID_ICONA);
-    ex_menu_voce(g_menu, "Strumenti", "Progetto",    ID_PROGETTO);
-    ex_menu_voce(g_menu, "Strumenti", "-",           0);
-    ex_menu_voce(g_menu, "Strumenti", "Autoaggiorna Proprieta", ID_AUTOAGG);
+    ex_menu_add_item(g_menu, "Strumenti", "Sorgente",    ID_SORGENTE);
+    ex_menu_add_item(g_menu, "Strumenti", "Shell",       ID_SHELL);
+    ex_menu_add_item(g_menu, "Strumenti", "Compilatore", ID_COMPILA);
+    ex_menu_add_item(g_menu, "Strumenti", "Librerie",    ID_LIBRERIE);
+    ex_menu_add_item(g_menu, "Strumenti", "Files",       ID_FILES);
+    ex_menu_add_item(g_menu, "Strumenti", "Directory",   ID_DIRECTORY);
+    ex_menu_add_item(g_menu, "Strumenti", "-",           0);
+    ex_menu_add_item(g_menu, "Strumenti", "Icona del controllo...", ID_ICONA);
+    ex_menu_add_item(g_menu, "Strumenti", "Progetto",    ID_PROGETTO);
+    ex_menu_add_item(g_menu, "Strumenti", "-",           0);
+    ex_menu_add_item(g_menu, "Strumenti", "Autoaggiorna Proprieta", ID_AUTOAGG);
     impostazioni_leggi();
-    ex_menu_spunta(g_menu, ID_AUTOAGG, g_auto_prop);
+    ex_menu_check(g_menu, ID_AUTOAGG, g_auto_prop);
 
-    ex_menu_voce(g_menu, "Aiuto", "Manuale",          ID_MANUALE);
-    ex_menu_voce(g_menu, "Aiuto", "Informazioni su",  ID_INFO);
+    ex_menu_add_item(g_menu, "Aiuto", "Manuale",          ID_MANUALE);
+    ex_menu_add_item(g_menu, "Aiuto", "Informazioni su",  ID_INFO);
 
-    ex_crea("intestazione", "Strumenti", EX_FIGLIO, 6, 24, 152, 20, g_f, 0, 0);
-    g_lst_strum = ex_crea("lista", "", EX_FIGLIO, 6, 46, 152, 396,
+    ex_create("header", "Strumenti", EX_CHILD, 6, 24, 152, 20, g_f, 0, 0);
+    g_lst_strum = ex_create("list", "", EX_CHILD, 6, 46, 152, 396,
                           g_f, ID_STRUMENTI, 0);
     for (i = 0; i < STRUM_N; i++) {
-        ex_lista_aggiungi(g_lst_strum, g_strum[i].etichetta);
-        ex_lista_icona(g_lst_strum, (unsigned int)i, icona_strumento(i));
+        ex_list_add(g_lst_strum, g_strum[i].etichetta);
+        ex_list_set_icon(g_lst_strum, (unsigned int)i, icona_strumento(i));
     }
 
     /* ! LA STRISCIA SOPRA LA TELA ERA VUOTA, ed e' esattamente larga quanto
@@ -5020,24 +5143,24 @@ int main(int argc, char **argv)
      * proprieta'. L'elenco delle maschere sta li' perche' e' li' che si
      * guarda quando ci si chiede «quale sto disegnando» — sopra il disegno,
      * non in un menu che bisogna aprire per sapere la risposta. */
-    g_cmb_form = ex_crea("combo", "", EX_FIGLIO, TELA_X, 24, 256, 22,
+    g_cmb_form = ex_create("combo", "", EX_CHILD, TELA_X, 24, 256, 22,
                          g_f, ID_FORM, 0);
-    ex_crea("pulsante", "Nuova", EX_FIGLIO, TELA_X + 262, 24, 84, 22,
+    ex_create("button", "Nuova", EX_CHILD, TELA_X + 262, 24, 84, 22,
             g_f, ID_FORM_NUOVA, 0);
-    ex_crea("pulsante", "Togli", EX_FIGLIO, TELA_X + 350, 24, 84, 22,
+    ex_create("button", "Togli", EX_CHILD, TELA_X + 350, 24, 84, 22,
             g_f, ID_FORM_TOGLI, 0);
 
-    g_int_prop = ex_crea("intestazione", "Proprieta'", EX_FIGLIO, 606, 24, 168, 20,
+    g_int_prop = ex_create("header", "Proprieta'", EX_CHILD, 606, 24, 168, 20,
                          g_f, 0, 0);
-    g_lst_prop = ex_crea("lista", "", EX_FIGLIO, 606, 46, 168, 340,
+    g_lst_prop = ex_create("list", "", EX_CHILD, 606, 46, 168, 340,
                          g_f, ID_PROPRIETA, 0);
-    g_val = ex_crea("testo", "", EX_FIGLIO, 606, 392, 168, 22, g_f, ID_VALORE, 0);
-    g_btn_applica = ex_crea("pulsante", "Applica", EX_FIGLIO, 606, 418, 80, 24,
+    g_val = ex_create("textbox", "", EX_CHILD, 606, 392, 168, 22, g_f, ID_VALORE, 0);
+    g_btn_applica = ex_create("button", "Applica", EX_CHILD, 606, 418, 80, 24,
                             g_f, ID_APPLICA, 0);
-    g_btn_elimina = ex_crea("pulsante", "Elimina", EX_FIGLIO, 694, 418, 80, 24,
+    g_btn_elimina = ex_create("button", "Elimina", EX_CHILD, 694, 418, 80, 24,
                             g_f, ID_ELIMINA, 0);
 
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO, 8, 452, 760, 16, g_f, 0, 0);
+    g_stato = ex_create("label", "", EX_CHILD, 8, 452, 760, 16, g_f, 0, 0);
 
     /* Un argomento e' la directory di un progetto da aprire subito. */
     if (argc >= 2) {
@@ -5053,10 +5176,10 @@ int main(int argc, char **argv)
     dico(g_prog_dir[0] ? "progetto aperto"
                        : "File > Nuovo progetto per cominciare");
 
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     disegna_tela();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 
-    while (ex_prendi_msg(&m)) { auto_controlla(); ex_smista(&m); }
+    while (ex_get_message(&m)) { auto_controlla(); ex_dispatch(&m); }
     return 0;
 }

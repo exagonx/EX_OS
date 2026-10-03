@@ -1365,11 +1365,25 @@ int32_t sys_mmap(InterruptFrame *frame)
     if (p->prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) pg_flags |= PG_USER;
     if (p->prot & PROT_WRITE) pg_flags |= PG_WRITABLE;
 
-    /* ! PROT_NONE SENZA MAP_FIXED SI RISERVA SOLTANTO (0.230): lo spazio e'
-     * del processo, le pagine fisiche arrivano con mprotect. Vedi PG_RISERVA
-     * in paging.h. Con MAP_FIXED (un JIT che restituisce pagine) si resta
-     * sulla strada di sempre, che sostituisce quel che c'era. */
-    if (!(p->flags & MAP_FIXED) && !(p->prot & (PROT_READ | PROT_WRITE | PROT_EXEC))) {
+    /* ! MAP_FIXED SOPRA PAGINE GIA' MAPPATE LE LIBERA PRIMA (kernel 0.234).
+     * paging_map_page sostituisce la PTE e basta: la pagina fisica di prima
+     * restava allocata e irraggiungibile. Il JIT di SpiderMonkey impegna e
+     * restituisce la sua memoria proprio cosi' (mmap MAP_FIXED sopra la
+     * riserva), migliaia di volte: era una perdita a ogni giro. Le pagine
+     * condivise (librerie: pmm_ref_count > 1) si staccano senza liberarle. */
+    if (p->flags & MAP_FIXED) {
+        for (i = 0; i < pages; i++) {
+            uint32_t va = vaddr + i * PAGE_SIZE;
+            uint32_t pa = paging_get_physical(proc->page_directory, va);
+            if (pa) pmm_free_page(pa & 0xFFFFF000u);
+            paging_unmap_page(proc->page_directory, va);
+        }
+    }
+
+    /* ! PROT_NONE SI RISERVA SOLTANTO (0.230; anche con MAP_FIXED dal 0.234,
+     * ed e' il «decommit» del JIT): lo spazio e' del processo, le pagine
+     * fisiche arrivano con mprotect. Vedi PG_RISERVA in paging.h. */
+    if (!(p->prot & (PROT_READ | PROT_WRITE | PROT_EXEC))) {
         for (i = 0; i < pages; i++) {
             if (paging_riserva(proc->page_directory, vaddr + i * PAGE_SIZE) != 0) {
                 uint32_t j;
@@ -2921,6 +2935,21 @@ int32_t sys_fstat(InterruptFrame *frame)
  * ecx = offset
  * edx = whence (0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END)
  * ============================================================================= */
+/* SYS_FTRUNCATE (109, kernel 0.233): ebx = fd, ecx = la misura nuova.
+ * SQLite tronca i suoi file (giornale, WAL) per descrittore, e Firefox ne
+ * apre una dozzina. */
+int32_t sys_ftruncate(InterruptFrame *frame)
+{
+    int32_t  fd   = (int32_t)frame->ebx;
+    uint32_t dim  = frame->ecx;
+    Process *proc = proc_get_current();
+
+    if (fd < 0 || fd >= MAX_FD)                 return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED)        return ERR(EBADF);
+    if (proc->fdt[fd].type != FD_FILE)          return ERR(EINVAL);
+    return (int32_t)vfs_ftruncate((int)proc->fdt[fd].inode, dim);
+}
+
 int32_t sys_lseek(InterruptFrame *frame)
 {
     int32_t  fd     = (int32_t)frame->ebx;

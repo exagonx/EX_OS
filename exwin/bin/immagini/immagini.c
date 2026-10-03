@@ -42,7 +42,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `immagini -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.003"
+#define VERSIONE_APP "0.004"
 EX_VERSIONE("immagini", VERSIONE_APP);
 
 #define MENU_H      20
@@ -62,7 +62,7 @@ enum {
     ID_BARRA_V = 30, ID_BARRA_O
 };
 
-static ExFinestra g_f, g_menu, g_barra_v, g_barra_o, g_stato;
+static ExWindow g_f, g_menu, g_barra_v, g_barra_o, g_stato;
 static int        g_w = FIN_W, g_h = FIN_H;
 
 static EximgBitmap g_bm;                /* the picture shown, empty if none */
@@ -143,10 +143,10 @@ static void vista_limita(void)
 static void barre_aggiorna(void)
 {
     int mx = g_tw - tela_w(), my = g_th - tela_h();
-    ex_scorri_limiti(g_barra_o, (unsigned int)(mx > 0 ? mx : 0), (unsigned int)tela_w());
-    ex_scorri_vai(g_barra_o, (unsigned int)g_ox);
-    ex_scorri_limiti(g_barra_v, (unsigned int)(my > 0 ? my : 0), (unsigned int)tela_h());
-    ex_scorri_vai(g_barra_v, (unsigned int)g_oy);
+    ex_scroll_set_range(g_barra_o, (unsigned int)(mx > 0 ? mx : 0), (unsigned int)tela_w());
+    ex_scroll_set_pos(g_barra_o, (unsigned int)g_ox);
+    ex_scroll_set_range(g_barra_v, (unsigned int)(my > 0 ? my : 0), (unsigned int)tela_h());
+    ex_scroll_set_pos(g_barra_v, (unsigned int)g_oy);
 }
 
 /* =============================================================================
@@ -168,9 +168,9 @@ static void tela_disegna(void)
     int vw, vh, px, py, c, r;
 
     if (!g_bm.px) {
-        ex_riempi(g_f, X, Y, cw, ch, SFONDO);
-        ex_scrivi(g_f, X + 16, Y + 16,
-                  g_errore[0] ? g_errore : "Nessuna immagine. Ctrl+O per aprirne una.", EX_BIANCO);
+        ex_fill_rect(g_f, X, Y, cw, ch, SFONDO);
+        ex_draw_text(g_f, X + 16, Y + 16,
+                  g_errore[0] ? g_errore : "Nessuna immagine. Ctrl+O per aprirne una.", EX_WHITE);
         return;
     }
     vw = g_tw - g_ox; if (vw > cw) vw = cw;
@@ -182,10 +182,10 @@ static void tela_disegna(void)
 
     /* The grey around: four bands, not the whole canvas under the picture,
      * or every redraw would flash. */
-    if (py > 0)            ex_riempi(g_f, X, Y, cw, py, SFONDO);
-    if (py + vh < ch)      ex_riempi(g_f, X, Y + py + vh, cw, ch - py - vh, SFONDO);
-    if (px > 0)            ex_riempi(g_f, X, Y + py, px, vh, SFONDO);
-    if (px + vw < cw)      ex_riempi(g_f, X + px + vw, Y + py, cw - px - vw, vh, SFONDO);
+    if (py > 0)            ex_fill_rect(g_f, X, Y, cw, py, SFONDO);
+    if (py + vh < ch)      ex_fill_rect(g_f, X, Y + py + vh, cw, ch - py - vh, SFONDO);
+    if (px > 0)            ex_fill_rect(g_f, X, Y + py, px, vh, SFONDO);
+    if (px + vw < cw)      ex_fill_rect(g_f, X + px + vw, Y + py, cw - px - vw, vh, SFONDO);
 
     for (c = 0; c < vw; c++) {
         unsigned int a = (unsigned)(g_ox + c) * (unsigned)w / (unsigned)g_tw, b = (unsigned)(g_ox + c + 1) * (unsigned)w / (unsigned)g_tw;
@@ -231,7 +231,7 @@ static void stato_aggiorna(void)
     else
         snprintf(t, sizeof(t), "%s   %u x %u   %d%%%s", n, g_bm.larghezza, g_bm.altezza,
                  perc_attuale(), g_adatta ? " (adattata)" : "");
-    ex_testo_metti(g_stato, t);
+    ex_set_text(g_stato, t);
 }
 
 static void titolo_aggiorna(void)
@@ -240,7 +240,7 @@ static void titolo_aggiorna(void)
     const char *n = strrchr(g_file, '/');
     n = n ? n + 1 : g_file;
     snprintf(t, sizeof(t), g_file[0] ? "Immagini - %s" : "Immagini", n);
-    ex_titolo(g_f, t);
+    ex_set_title(g_f, t);
 }
 
 static void tutto(void)
@@ -249,9 +249,9 @@ static void tutto(void)
     vista_limita();
     barre_aggiorna();
     stato_aggiorna();
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     tela_disegna();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 /* =============================================================================
@@ -310,7 +310,7 @@ static void anima_ferma(void)
 {
     if (g_an) g_an_chiudi(g_an);
     g_an = 0;
-    ex_sveglia(g_f, 0);
+    ex_set_timer(g_f, 0);
 }
 
 /* Loads `p`. On failure the canvas says why (g_errore) and 0 comes back. */
@@ -347,7 +347,7 @@ static int carica(const char *p)
         unsigned int ms;
         if (g_an_passo(g_an, &v, &ms) && g_bm.larghezza == v.larghezza && g_bm.altezza == v.altezza) {
             g_an_prossimo = uptime_ms() + ms;
-            ex_sveglia(g_f, 100);
+            ex_set_timer(g_f, 100);
         } else anima_ferma();
     }
     free(d);
@@ -550,7 +550,7 @@ static void scorri(int dx, int dy)
     vista_limita();
     barre_aggiorna();
     tela_disegna();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 static void informazioni(void)
@@ -588,12 +588,12 @@ static void istruzioni(void)
  * ============================================================================= */
 static void disponi(void)
 {
-    ex_sposta(g_barra_v, tela_x() + tela_w(), tela_y());
-    ex_misura(g_barra_v, BARRA, tela_h());
-    ex_sposta(g_barra_o, tela_x(), tela_y() + tela_h());
-    ex_misura(g_barra_o, tela_w(), BARRA);
-    ex_sposta(g_stato, 6, g_h - STATO_H + 2);
-    ex_misura(g_stato, g_w - 12, 16);
+    ex_move(g_barra_v, tela_x() + tela_w(), tela_y());
+    ex_resize(g_barra_v, BARRA, tela_h());
+    ex_move(g_barra_o, tela_x(), tela_y() + tela_h());
+    ex_resize(g_barra_o, tela_w(), BARRA);
+    ex_move(g_stato, 6, g_h - STATO_H + 2);
+    ex_resize(g_stato, g_w - 12, 16);
 }
 
 static int tasto(unsigned int wp)
@@ -604,7 +604,7 @@ static int tasto(unsigned int wp)
         switch (c | 32) {
         case 'o': apri(); return 1;
         case 'e': con_pennello(); return 1;
-        case 'q': ex_esci(0); return 1;
+        case 'q': ex_quit(0); return 1;
         }
         return 0;
     }
@@ -626,48 +626,48 @@ static int tasto(unsigned int wp)
     return 0;
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
-    case EXM_DISEGNA:
-        ex_procedura_base(f, msg, wp, lp);
+    case EXM_PAINT:
+        ex_default_proc(f, msg, wp, lp);
         tela_disegna();
-        ex_aggiorna(f);
+        ex_update(f);
         return 0;
 
-    case EXM_MISURA:
+    case EXM_SIZE:
         g_w = EX_X(lp);
         g_h = EX_Y(lp);
-        ex_procedura_base(f, msg, wp, lp);
+        ex_default_proc(f, msg, wp, lp);
         disponi();
         tutto();
         return 0;
 
     /* The animation (@NAV-GIF): the frame whose time has come. The wake-up
-     * is 200 ms at best (see EXM_TEMPO in exwin.h): a 100 ms GIF runs at half
+     * is 200 ms at best (see EXM_TIMER in exwin.h): a 100 ms GIF runs at half
      * speed, which is written, and better than a still frame. */
-    case EXM_TEMPO:
+    case EXM_TIMER:
         if (g_an && (int)(uptime_ms() - g_an_prossimo) >= 0) {
             EximgBitmap v;
             unsigned int ms = 100;
             if (!g_an_passo(g_an, &v, &ms) || !anima_copia(&v)) { anima_ferma(); return 0; }
             g_an_prossimo = uptime_ms() + ms;
             tela_disegna();
-            ex_aggiorna(g_f);
+            ex_update(g_f);
         }
         return 0;
 
-    case EXM_MOUSE_GIU:
+    case EXM_MOUSE_DOWN:
         g_tira = 1;
         g_tx = EX_X(lp); g_ty = EX_Y(lp);
         g_tox = g_ox; g_toy = g_oy;
         return 0;
 
-    case EXM_MOUSE_MOSSO:
+    case EXM_MOUSE_MOVE:
         if (g_tira) {
             int x = EX_X(lp), y = EX_Y(lp);    /* negative off the window */
             g_ox = g_tox - (x - g_tx);
@@ -676,20 +676,20 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
-    case EXM_MOUSE_SU:
+    case EXM_MOUSE_UP:
         g_tira = 0;
         return 0;
 
-    case EXM_DOPPIOCLIC:
+    case EXM_DOUBLE_CLICK:
         /* A double click switches between «fit» and 100%, as in most viewers. */
         zoom_modo(!g_adatta);
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         switch (wp) {
         case ID_APRI:     apri(); break;
         case ID_PENNELLO: con_pennello(); break;
-        case ID_ESCI:     ex_esci(0); break;
+        case ID_ESCI:     ex_quit(0); break;
         case ID_ADATTA:   zoom_modo(1); break;
         case ID_VERA:     zoom_modo(0); break;
         case ID_PIU:      zoom_passo(1); break;
@@ -703,14 +703,14 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_BARRA_O:  g_ox = (int)lp; scorri(0, 0); break;
         case ID_BARRA_V:  g_oy = (int)lp; scorri(0, 0); break;
         }
-        ex_fuoco_via(g_f);
+        ex_clear_focus(g_f);
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         if (tasto(wp)) return 0;
         break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 int main(int argc, char **argv)
@@ -718,11 +718,11 @@ int main(int argc, char **argv)
     ExMsg m;
     unsigned int sw = 0, sh = 0;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     if (sw && (int)sw < g_w + 40) g_w = (int)sw - 40;
     if (sh && (int)sh < g_h + 60) g_h = (int)sh - 60;
 
-    g_f = ex_crea("finestra", "Immagini", EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_f = ex_create("window", "Immagini", EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, g_w, g_h, 0, 0, proc);
     if (!g_f) {
         printf("immagini: il server a finestre non risponde.\n");
@@ -733,25 +733,25 @@ int main(int argc, char **argv)
     g_vista = (unsigned int *)malloc(g_vista_cap * 4);
     if (!g_vista) g_vista_cap = 0;
 
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O", ID_APRI);
-    ex_menu_voce(g_menu, "File", "Modifica con Pennello\tCtrl+E", ID_PENNELLO);
-    ex_menu_voce(g_menu, "File", "-", 0);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q", ID_ESCI);
-    ex_menu_voce(g_menu, "Vista", "Adatta alla finestra\tA", ID_ADATTA);
-    ex_menu_voce(g_menu, "Vista", "Grandezza vera\t1", ID_VERA);
-    ex_menu_voce(g_menu, "Vista", "Ingrandisci\t+", ID_PIU);
-    ex_menu_voce(g_menu, "Vista", "Rimpicciolisci\t-", ID_MENO);
-    ex_menu_voce(g_menu, "Vai", "Successiva\tPag giu'", ID_SUCC);
-    ex_menu_voce(g_menu, "Vai", "Precedente\tPag su'", ID_PREC);
-    ex_menu_voce(g_menu, "Vai", "Prima\tHome", ID_PRIMA);
-    ex_menu_voce(g_menu, "Vai", "Ultima\tFine", ID_ULTIMA);
-    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
-    ex_menu_voce(g_menu, "Info", "Istruzioni", ID_ISTR);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Apri...\tCtrl+O", ID_APRI);
+    ex_menu_add_item(g_menu, "File", "Modifica con Pennello\tCtrl+E", ID_PENNELLO);
+    ex_menu_add_item(g_menu, "File", "-", 0);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q", ID_ESCI);
+    ex_menu_add_item(g_menu, "Vista", "Adatta alla finestra\tA", ID_ADATTA);
+    ex_menu_add_item(g_menu, "Vista", "Grandezza vera\t1", ID_VERA);
+    ex_menu_add_item(g_menu, "Vista", "Ingrandisci\t+", ID_PIU);
+    ex_menu_add_item(g_menu, "Vista", "Rimpicciolisci\t-", ID_MENO);
+    ex_menu_add_item(g_menu, "Vai", "Successiva\tPag giu'", ID_SUCC);
+    ex_menu_add_item(g_menu, "Vai", "Precedente\tPag su'", ID_PREC);
+    ex_menu_add_item(g_menu, "Vai", "Prima\tHome", ID_PRIMA);
+    ex_menu_add_item(g_menu, "Vai", "Ultima\tFine", ID_ULTIMA);
+    ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
+    ex_menu_add_item(g_menu, "Info", "Istruzioni", ID_ISTR);
 
-    g_barra_v = ex_crea("scorrimento", "", EX_FIGLIO, tela_w(), tela_y(), BARRA, tela_h(), g_f, ID_BARRA_V, 0);
-    g_barra_o = ex_crea("scorrimento", "", EX_FIGLIO, 0, tela_y() + tela_h(), tela_w(), BARRA, g_f, ID_BARRA_O, 0);
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO, 6, g_h - STATO_H + 2, g_w - 12, 16, g_f, 0, 0);
+    g_barra_v = ex_create("scrollbar", "", EX_CHILD, tela_w(), tela_y(), BARRA, tela_h(), g_f, ID_BARRA_V, 0);
+    g_barra_o = ex_create("scrollbar", "", EX_CHILD, 0, tela_y() + tela_h(), tela_w(), BARRA, g_f, ID_BARRA_O, 0);
+    g_stato = ex_create("label", "", EX_CHILD, 6, g_h - STATO_H + 2, g_w - 12, 16, g_f, 0, 0);
 
     if (argc > 1 && argv[1][0] != '-') apri_percorso(argv[1]);
     else {
@@ -761,9 +761,9 @@ int main(int argc, char **argv)
 
     disponi();
     titolo_aggiorna();
-    ex_fuoco_via(g_f);
+    ex_clear_focus(g_f);
     tutto();
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }

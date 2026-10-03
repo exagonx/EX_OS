@@ -11,7 +11,7 @@
  *
  * The BMP reader of eximg (@PAINT, 28 September 2026)
  *
- * ! THE TOOLKIT ALREADY READS BMP, AND THIS IS NOT A COPY OF IT. ex_immagine()
+ * ! THE TOOLKIT ALREADY READS BMP, AND THIS IS NOT A COPY OF IT. ex_draw_image()
  * reads the BMP by itself and puts it on the screen: it never hands the pixels
  * to anyone. A paint program needs the pixels, and eximg_carica() is the one
  * door through which an application gets them — for PNG, JPG, GIF and ICO it

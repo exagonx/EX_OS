@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # =============================================================================
 PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini
+PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -2554,6 +2554,41 @@ $(IMMAGINI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(IMMAGINI_SRC) $(IMMAGINI_LD) lib/
 .PHONY: immagini
 immagini: dirs $(IMMAGINI_BIN)
 
+# --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
+#
+# Quattro programmi con la stessa forma, e quindi una regola sola. Dentro
+# ciascuno: lib/exgioco (la tela, le carte, il caso, il profilo), exinfo e i
+# due stub. Il linker script e' uno per tutti: sono programmi normali.
+GIOCHI      := exklondike exspider exmajong exgo
+GIOCHI_BIN  := $(addprefix $(BUILD_EXWIN_BIN)/,$(GIOCHI))
+GIOCO_LIB   := lib/exgioco/tela.c lib/exgioco/carte.c lib/exgioco/exgioco.h
+GIOCO_LD    := lib/exgioco/gioco.ld
+
+define GIOCO_REGOLA
+$(BUILD_EXWIN_BIN)/$(1): exwin/bin/$(1)/$(1).c $(GIOCO_LIB) $(GIOCO_LD) $(EXINFO_SRC) $(EXINFO_HDR) \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/$(1) ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exgioco -I drivers/wserver -I drivers/kbd -c exwin/bin/$(1)/$(1).c -o $(BUILD_OBJ)/$(1)_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exgioco -I drivers/wserver -I drivers/kbd -c lib/exgioco/tela.c -o $(BUILD_OBJ)/$(1)_tela.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exgioco -I drivers/wserver -I drivers/kbd -c lib/exgioco/carte.c -o $(BUILD_OBJ)/$(1)_carte.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/$(1)_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/$(1)_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/$(1)_info.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/$(1)_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(GIOCO_LD) \
+	    $(BUILD_OBJ)/$(1)_start.o $(BUILD_OBJ)/$(1)_main.o \
+	    $(BUILD_OBJ)/$(1)_tela.o $(BUILD_OBJ)/$(1)_carte.o \
+	    $(BUILD_OBJ)/$(1)_exwin.o $(BUILD_OBJ)/$(1)_exdlg.o $(BUILD_OBJ)/$(1)_info.o \
+	    $(LIBC_PONTI_OBJ) -o $$@
+	@echo "[OK] $(1) compilato: $$@"
+
+.PHONY: $(1)
+$(1): dirs $(BUILD_EXWIN_BIN)/$(1)
+endef
+$(foreach g,$(GIOCHI),$(eval $(call GIOCO_REGOLA,$(g))))
+
 EDIT_SRC := exwin/bin/exeditor/exeditor.c
 EDIT_BIN := $(BUILD_EXWIN_BIN)/exeditor
 EDIT_LD  := exwin/bin/exeditor/exeditor.ld
@@ -2799,7 +2834,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
              $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
-             $(PENNELLO_BIN) $(IMMAGINI_BIN) \
+             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) \
              $(EXTTF_SO) \

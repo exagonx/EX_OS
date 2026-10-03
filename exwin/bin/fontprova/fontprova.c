@@ -29,7 +29,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `fontprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("fontprova", VERSIONE_APP);
 
 #define FIN_W   760
@@ -48,7 +48,7 @@ EX_VERSIONE("fontprova", VERSIONE_APP);
  * riga di sole lettere inglesi non proverebbe. */
 static const char *CAMPIONE = "Aa Bb Gg Qq 0123 e' a` o` .,;:!? Ciao EX-OS";
 
-static ExFinestra g_f;
+static ExWindow g_f;
 
 /* =============================================================================
  * ! L'ELENCO DEI FONT SI LEGGE DALLA DIRECTORY, NON SI SCRIVE QUI.
@@ -134,14 +134,14 @@ static void cerca_font(void)
     }
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_INFO) {
             char t[512];
 
@@ -154,39 +154,39 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
-    case EXM_DISEGNA: {
+    case EXM_PAINT: {
         int i, y = 6 + MENU_H;
 
         /* Sotto la barra dei menu: il fondo comincia da li'. */
-        ex_riempi(f, 0, MENU_H, FIN_W, FIN_H - MENU_H, EX_GRIGIO);
+        ex_fill_rect(f, 0, MENU_H, FIN_W, FIN_H - MENU_H, EX_GRAY);
 
         /* Il metro: il font di sistema, che c'e' sempre. */
-        ex_scrivi(f, 8, y, "font di sistema 8x16:", EX_NERO);
-        ex_scrivi(f, 8 + ex_larghezza_testo(EX_FONT_SISTEMA,
+        ex_draw_text(f, 8, y, "font di sistema 8x16:", EX_BLACK);
+        ex_draw_text(f, 8 + ex_text_width(EX_FONT_SYSTEM,
                                             "font di sistema 8x16: "),
-                  y, CAMPIONE, EX_NERO);
+                  y, CAMPIONE, EX_BLACK);
         y += 22;
 
-        ex_riempi(f, 6, y, FIN_W - 12, 2, EX_GRIGIO_SC);
+        ex_fill_rect(f, 6, y, FIN_W - 12, 2, EX_DARK_GRAY);
         y += 8;
 
         if (g_n == 0) {
-            ex_scrivi(f, 8, y,
+            ex_draw_text(f, 8, y,
                       "Nessun file .ttf in /exwin/font: non c'e' niente da",
-                      EX_NERO);
+                      EX_BLACK);
             y += 18;
-            ex_scrivi(f, 8, y,
-                      "provare. Copiane uno li' dentro e rilancia.", EX_NERO);
-            ex_aggiorna(f);
+            ex_draw_text(f, 8, y,
+                      "provare. Copiane uno li' dentro e rilancia.", EX_BLACK);
+            ex_update(f);
             return 0;
         }
 
         for (i = 0; i < g_n; i++) {
             if (g_font[i] == 0) {
-                ex_scrivi(f, 8, y, "NON CARICATO:", EX_ROSSO);
-                ex_scrivi(f, 8 + ex_larghezza_testo(EX_FONT_SISTEMA,
+                ex_draw_text(f, 8, y, "NON CARICATO:", EX_RED);
+                ex_draw_text(f, 8 + ex_text_width(EX_FONT_SYSTEM,
                                                     "NON CARICATO: "),
-                          y, G[i].percorso, EX_ROSSO);
+                          y, G[i].percorso, EX_RED);
                 y += 20;
                 continue;
             }
@@ -195,7 +195,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
              * scelta qui. E' l'interlinea che il disegnatore ha messo nel
              * file: usare il corpo darebbe righe che si toccano, ed e'
              * l'errore che si vede su un paragrafo e mai su una parola. */
-            ex_scrivi_con(f, g_font[i], 8, y, CAMPIONE, EX_NERO);
+            ex_draw_text_font(f, g_font[i], 8, y, CAMPIONE, EX_BLACK);
 
             /* L'etichetta a destra, col font di sistema, per sapere quale e'.
              * ! IL NOME DEL FILE E IL CORPO INSIEME: sapere che il campione e'
@@ -204,11 +204,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 char et[NOME_MAX + 16];
 
                 snprintf(et, sizeof(et), "%s %d", G[i].nome, G[i].corpo);
-                ex_scrivi(f, FIN_W - 8 - ex_larghezza_testo(EX_FONT_SISTEMA, et),
-                          y, et, EX_BLU);
+                ex_draw_text(f, FIN_W - 8 - ex_text_width(EX_FONT_SYSTEM, et),
+                          y, et, EX_BLUE);
             }
 
-            y += ex_font_altezza(g_font[i]) + 6;
+            y += ex_font_height(g_font[i]) + 6;
         }
 
         /* ! UNA RIGA SU FONDO SCURO, per guardare la FUSIONE. L'antialiasing
@@ -216,16 +216,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * fondo grigio chiaro con testo nero e su uno scuro con testo bianco
          * gli errori di fusione vengono opposti, e uno dei due si nota. */
         if (g_font[0]) {
-            ex_riempi(f, 6, y, FIN_W - 12, ex_font_altezza(g_font[0]) + 6, EX_BLU);
-            ex_scrivi_con(f, g_font[0], 10, y + 3, CAMPIONE, EX_BIANCO);
+            ex_fill_rect(f, 6, y, FIN_W - 12, ex_font_height(g_font[0]) + 6, EX_BLUE);
+            ex_draw_text_font(f, g_font[0], 10, y + 3, CAMPIONE, EX_WHITE);
         }
 
-        ex_aggiorna(f);
+        ex_update(f);
         return 0;
     }
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
@@ -236,7 +236,7 @@ int main(int argc, char **argv)
 
     (void)argc; (void)argv;
 
-    g_f = ex_crea("finestra", "Prova dei font", EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_f = ex_create("window", "Prova dei font", EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
         printf("fontprova: il server a finestre non risponde.\n");
@@ -245,9 +245,9 @@ int main(int argc, char **argv)
     }
 
     {
-        ExFinestra menu = ex_menu(g_f);
+        ExWindow menu = ex_menu_bar(g_f);
 
-        ex_menu_voce(menu, "Info", "Informazioni su", ID_INFO);
+        ex_menu_add_item(menu, "Info", "Informazioni su", ID_INFO);
     }
 
     cerca_font();
@@ -260,7 +260,7 @@ int main(int argc, char **argv)
     }
 
     for (i = 0; i < g_n; i++) {
-        g_font[i] = ex_font_apri(G[i].percorso, G[i].corpo);
+        g_font[i] = ex_font_open(G[i].percorso, G[i].corpo);
 
         /* Si dice anche sulla seriale: una fotografia dice CHE non si e'
          * caricato, il log dice quale e a che corpo. */
@@ -268,13 +268,13 @@ int main(int argc, char **argv)
                g_font[i] ? "aperto" : "NON aperto");
     }
 
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
-    proc(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
+    proc(g_f, EXM_PAINT, 0, 0);
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
 
     for (i = 0; i < g_n; i++)
-        if (g_font[i]) ex_font_chiudi(g_font[i]);
+        if (g_font[i]) ex_font_close(g_font[i]);
 
     return 0;
 }

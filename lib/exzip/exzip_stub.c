@@ -15,7 +15,7 @@
  *
  * ! IT IS LINKED, NOT OPENED BY HAND: a program that handles archives knows it
  * does at compile time, which is what tells a stub apart from eximg - that one
- * is opened by ex_immagine() when it finds itself in front of a file's bytes.
+ * is opened by ex_draw_image() when it finds itself in front of a file's bytes.
  * ============================================================================= */
 
 #include "exzip.h"

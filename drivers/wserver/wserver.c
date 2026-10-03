@@ -92,7 +92,7 @@ EX_VERSIONE("wserver", "0.010");
  *                          telaio invece che appoggiato sopra
  *
  * ! LA LUCE VIENE DA SOPRA A SINISTRA, SEMPRE — la stessa convenzione del
- * toolkit (vedi EX_LUCE in exwin.h). Se il telaio e i controlli dentro la
+ * toolkit (vedi EX_HIGHLIGHT in exwin.h). Se il telaio e i controlli dentro la
  * prendessero da due parti diverse, uno dei due sembrerebbe premuto.
  * ============================================================================= */
 #define BORDO           2
@@ -127,7 +127,7 @@ EX_VERSIONE("wserver", "0.010");
 /* I colori, in ARGB. Sono pochi e stanno qui: una scrivania che cambia
  * aspetto non deve voler dire cercarli sparsi nel file. */
 #define C_SFONDO        0x00204060
-/* ! LA BARRA ATTIVA NON E' DELLO STESSO BLU DI EX_BLU, e dal 18 agosto 2026
+/* ! LA BARRA ATTIVA NON E' DELLO STESSO BLU DI EX_BLUE, e dal 18 agosto 2026
  * nemmeno per un pixel. Erano identici, e la coincidenza costava due cose: una
  * riga scelta in una lista e la barra del titolo si confondevano a colpo
  * d'occhio, e — peggio — nessuno guardando una fotografia dello schermo poteva

@@ -15,7 +15,7 @@
  * its stdout, a pipe, says how far it has got (AVANZA / FINE / ERRORE, see
  * bin/scarica/scarica.c).
  *
- * ! THE PIPE IS READ BY THE MESSAGE LOOP (ex_guarda_fd), NOT ON A TIMER: a
+ * ! THE PIPE IS READ BY THE MESSAGE LOOP (ex_watch_fd), NOT ON A TIMER: a
  * timer belongs to a window, and a download must go on when its window is
  * closed. A descriptor belongs to the process.
  *
@@ -56,8 +56,8 @@ typedef struct {
 } Scarico;
 
 static Scarico       g_sc[SC_MAX];
-static ExFinestra    g_win, g_lista, g_nota;
-static ExFinestra    g_b_ferma, g_b_cartella, g_b_togli;
+static ExWindow    g_win, g_lista, g_nota;
+static ExWindow    g_b_ferma, g_b_cartella, g_b_togli;
 static int           g_righe[SC_MAX];      /* list row -> download id */
 static int           g_n_righe;
 static ExScaricoFine g_fine;
@@ -141,25 +141,25 @@ static void finestra_rifai(void)
 
     if (!g_win) return;
 
-    scelta = (int)ex_lista_scelta(g_lista);
-    ex_lista_svuota(g_lista);
+    scelta = (int)ex_list_get_selected(g_lista);
+    ex_list_clear(g_lista);
     g_n_righe = 0;
     for (i = 0; i < SC_MAX; i++) {
         if (!g_sc[i].usato) continue;
         riga_di(&g_sc[i], r, sizeof(r));
-        ex_lista_aggiungi(g_lista, r);
+        ex_list_add(g_lista, r);
         g_righe[g_n_righe++] = i;
     }
-    if (g_n_righe) ex_lista_scegli(g_lista, (unsigned int)(scelta < g_n_righe ? scelta : g_n_righe - 1));
+    if (g_n_righe) ex_list_select(g_lista, (unsigned int)(scelta < g_n_righe ? scelta : g_n_righe - 1));
 
     {
         int in_corso = ex_scarichi_in_corso();
 
         snprintf(r, sizeof(r), in_corso ? "%d in corso. Chiudere questa finestra non li ferma."
                                         : "Nessuno in corso.", in_corso);
-        ex_testo_metti(g_nota, r);
+        ex_set_text(g_nota, r);
     }
-    ex_procedura_base(g_win, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_win, EXM_PAINT, 0, 0);
 }
 
 static int scelto(void)
@@ -167,20 +167,20 @@ static int scelto(void)
     int k;
 
     if (!g_win || g_n_righe == 0) return -1;
-    k = (int)ex_lista_scelta(g_lista);
+    k = (int)ex_list_get_selected(g_lista);
     return (k >= 0 && k < g_n_righe) ? g_righe[k] : -1;
 }
 
-static long proc_finestra(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_finestra(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     int id;
 
     switch (msg) {
     /* ! CHIUDERE LA FINESTRA NON FERMA NIENTE: gli scaricamenti vanno avanti
      * e la finestra si riapre quando serve. La base, qui, chiuderebbe il
-     * PROGRAMMA intero (ex_procedura_base su EXM_CHIUDI esce). */
-    case EXM_CHIUDI:
-        ex_distruggi(g_win);
+     * PROGRAMMA intero (ex_default_proc su EXM_CLOSE esce). */
+    case EXM_CLOSE:
+        ex_destroy(g_win);
         g_win = 0;
         return 0;
 
@@ -189,22 +189,22 @@ static long proc_finestra(ExFinestra f, unsigned int msg, unsigned int wp, long 
      * Enter presses the focused button here. Canc stops the chosen download,
      * Esc closes the window — which stops nothing. The first test pressed
      * Tab and Enter on «Ferma», and the download went on to the end. */
-    case EXM_TASTO: {
+    case EXM_KEY: {
         unsigned int c = wp & 0xFFFF;
-        ExFinestra   chi = ex_fuoco_chi(f);
+        ExWindow   chi = ex_get_focus(f);
 
-        if (c == 27) return proc_finestra(f, EXM_CHIUDI, 0, 0);
-        if (c == 0x0109u) return proc_finestra(f, EXM_COMANDO, ID_FERMA, 0);  /* Canc */
+        if (c == 27) return proc_finestra(f, EXM_CLOSE, 0, 0);
+        if (c == 0x0109u) return proc_finestra(f, EXM_COMMAND, ID_FERMA, 0);  /* Canc */
         if (c == '\n' || c == '\r') {
-            if (chi == g_b_ferma)    return proc_finestra(f, EXM_COMANDO, ID_FERMA, 0);
-            if (chi == g_b_cartella) return proc_finestra(f, EXM_COMANDO, ID_CARTELLA, 0);
-            if (chi == g_b_togli)    return proc_finestra(f, EXM_COMANDO, ID_TOGLI, 0);
+            if (chi == g_b_ferma)    return proc_finestra(f, EXM_COMMAND, ID_FERMA, 0);
+            if (chi == g_b_cartella) return proc_finestra(f, EXM_COMMAND, ID_CARTELLA, 0);
+            if (chi == g_b_togli)    return proc_finestra(f, EXM_COMMAND, ID_TOGLI, 0);
             return 0;
         }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         id = scelto();
         if (wp == ID_FERMA && id >= 0) ex_scarico_ferma(id);
         if (wp == ID_CARTELLA && id >= 0) {
@@ -230,29 +230,29 @@ static long proc_finestra(ExFinestra f, unsigned int msg, unsigned int wp, long 
 
     default:
         (void)lp;
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
 void ex_scarichi_finestra(void)
 {
-    if (g_win) { ex_procedura_base(g_win, EXM_DISEGNA, 0, 0); return; }
+    if (g_win) { ex_default_proc(g_win, EXM_PAINT, 0, 0); return; }
 
-    g_win = ex_crea("finestra", "Download", EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_win = ex_create("window", "Download", EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                     EX_AUTO, EX_AUTO, W_FIN, H_FIN, 0, 0, proc_finestra);
     if (!g_win) return;
 
-    g_lista = ex_crea("lista", "", EX_FIGLIO, 8, 8, W_FIN - 16, H_FIN - 80,
+    g_lista = ex_create("list", "", EX_CHILD, 8, 8, W_FIN - 16, H_FIN - 80,
                       g_win, ID_LISTA, 0);
-    g_b_ferma = ex_crea("pulsante", "Ferma", EX_FIGLIO, 8, H_FIN - 66, 90, 26,
+    g_b_ferma = ex_create("button", "Ferma", EX_CHILD, 8, H_FIN - 66, 90, 26,
                         g_win, ID_FERMA, 0);
-    g_b_cartella = ex_crea("pulsante", "Apri la cartella", EX_FIGLIO, 106, H_FIN - 66,
+    g_b_cartella = ex_create("button", "Apri la cartella", EX_CHILD, 106, H_FIN - 66,
                            150, 26, g_win, ID_CARTELLA, 0);
-    g_b_togli = ex_crea("pulsante", "Togli i finiti", EX_FIGLIO, 264, H_FIN - 66,
+    g_b_togli = ex_create("button", "Togli i finiti", EX_CHILD, 264, H_FIN - 66,
                         130, 26, g_win, ID_TOGLI, 0);
     /* The list has the keys: arrows choose, Canc stops. */
-    ex_fuoco(g_lista);
-    g_nota = ex_crea("etichetta", "", EX_FIGLIO, 8, H_FIN - 30, W_FIN - 16, 16,
+    ex_set_focus(g_lista);
+    g_nota = ex_create("label", "", EX_CHILD, 8, H_FIN - 30, W_FIN - 16, 16,
                      g_win, 0, 0);
     finestra_rifai();
 }
@@ -302,7 +302,7 @@ static void leggi(void *dato, int fd)
     if (n <= 0) {
         int st;
 
-        ex_guarda_fd(fd, 0, 0);
+        ex_watch_fd(fd, 0, 0);
         close(fd);
         s->fd = -1;
         s->vivo = 0;
@@ -353,7 +353,7 @@ int ex_scarico_avvia(const char *url, const char *dove)
     close(p[1]);                        /* ! or EOF never comes: see pipe() */
     if (pid < 0) { close(p[0]); return EX_SC_ERR_PROGRAMMA; }
 
-    if (ex_guarda_fd(p[0], leggi, (void *)(long)id) != 0) {
+    if (ex_watch_fd(p[0], leggi, (void *)(long)id) != 0) {
         /* An exwin.so older than 23 September 2026: nobody would read. */
         interrompi(pid);
         close(p[0]);

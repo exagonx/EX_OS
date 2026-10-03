@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.232
+**Version:** 0.234
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -84,6 +84,24 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Four games: EXKlondike, EXSpider, EXMajong, EXGO
+
+**to be tested on hardware, tested in QEMU** — in Start > Giochi: the classic
+solitaire, Spider with one, two or four suits, the mahjong solitaire (every
+deal can be won) and go on 9x9, 13x13 or 19x19 against the computer or
+between two people. Cards, tiles and stones are drawn by program, each game
+has its own icon, and choices and games won are kept in the profile.
+
+### The ExWin API is in English, and exide is consistent
+
+**to be tested on hardware, tested in QEMU** — ExWin's functions, messages,
+styles and types have English names (`ex_create`, `ex_set_text`,
+`EXM_CLOSE`, `ExWindow`...); the Italian names remain as aliases, and
+programs already compiled keep working. In exide a control's name is the
+variable to use in code (`Button1`, no longer `h_Button1`), events are
+`Button1_Click()` and the like, and old projects still open and build.
+Name table in `tools/exwin-inglese/mappa.txt`.
+
 ### Firefox in an ExWin window
 
 **tested in QEMU** (`tools/exilla/prova-finestra.sh`) — the seventh stage of
@@ -102,9 +120,13 @@ page and saves what it drew (text, bold, italic, coloured boxes, a line
 written by JavaScript). Diary and picture in `tools/exilla/leggimi.md`. The
 seventh stage — a real window in ExWin — is under way.
 
-### Kernel 0.228–0.232: what Firefox found
+### Kernel 0.228–0.234: what Firefox found
 
 **tested in QEMU** — fixes that matter to every program with threads:
+- **0.234**: `mmap` with `MAP_FIXED` over pages already mapped frees them
+  first (they were lost): Firefox's JavaScript JIT needs it.
+- **0.233**: `ftruncate` on an open file and 256 open files in the system
+  (was 64): Firefox's SQLite databases (WAL mode too).
 - **0.232**: 128 open files per process (was 32): Firefox opens more and
   could not find its fonts.
 - **0.231**: 128 threads per process (was 64) and 192 processes in the

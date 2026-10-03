@@ -1990,7 +1990,7 @@ static void spiega_avvio_fallito(const char *path, int err)
  *
  * Un file che esiste ma non e' un programma (ENOEXEC) si apre col programma
  * che /exwin/lib/tipi.txt associa alla sua estensione — la stessa regola del
- * file manager e della scrivania (ex_apri_file nel toolkit). Ma la shell sta
+ * file manager e della scrivania (ex_open_file nel toolkit). Ma la shell sta
  * in modo testo: un programma di ExWin da qui non parte. Allora:
  *   - se tipi.txt ha un programma, lo si DICE («si apre con ... dentro
  *     ExWin») invece di lanciarlo nel vuoto;

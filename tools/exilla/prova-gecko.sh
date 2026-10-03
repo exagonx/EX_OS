@@ -88,7 +88,7 @@ echo "disco: $MB MB, firefox $(du -sh "$S/firefox/firefox" | cut -f1)"
 # --- EX-OS ---------------------------------------------------------------------------
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$B/costruzione-sistema/albero/dist/exos.iso"; [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
-export EXOS_ISTANZA=gecko EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-1536M}"
+export EXOS_ISTANZA=gecko EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
 export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
 rm -f /tmp/exos/serialgecko.txt
 # AMBIENTE="VAR=valore ..." aggiunge variabili (EXOS_MALLOC_CONTROLLA=1, ...).

@@ -33,7 +33,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `term -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("term", VERSIONE_APP);
 
 /* ! LA FINESTRA E' UN MULTIPLO ESATTO DELLA CELLA. Il font e' 8x16 e il
@@ -58,17 +58,17 @@ EX_VERSIONE("term", VERSIONE_APP);
 #define FIN_W       (AREA_W + BORDO * 2)
 #define FIN_H       (AREA_H + BORDO * 2 + MENU_H)
 
-static ExFinestra g_f;
-static ExFinestra g_t;                  /* il controllo «terminale» */
+static ExWindow g_f;
+static ExWindow g_t;                  /* il controllo «terminale» */
 static const char *g_prog = "/bin/sh";
 
 #define ID_INFO   1
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
     /* =====================================================================
@@ -84,7 +84,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * ricordo e' la differenza fra un terminale giusto e uno che disegna fuori
      * dalla propria zona di pixel.
      * ===================================================================== */
-    case EXM_MISURA: {
+    case EXM_SIZE: {
         int w = EX_X(lp) - BORDO * 2;
         /* ! LA BARRA DEI MENU VA TOLTA ANCHE QUI, e dimenticarlo si vede solo
          * ridimensionando: la griglia crescerebbe di venti pixel oltre il
@@ -96,7 +96,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (w < CAR_W * 20) w = CAR_W * 20;
         if (h < CAR_H * 4)  h = CAR_H * 4;
 
-        ex_misura(g_t, w, h);
+        ex_resize(g_t, w, h);
         return 0;
     }
 
@@ -105,7 +105,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * shell morta accetta i tasti, li mostra nella griglia e non risponde —
      * sembra bloccata mentre e' semplicemente vuota. Battere `exit` in una
      * shell chiude il terminale, come su qualunque altro sistema. */
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_INFO) {
             char t[512];
 
@@ -118,19 +118,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
-    case EXM_TERMFINITO:
+    case EXM_TERM_EXITED:
         printf("term: %s e' uscito, chiudo la finestra\n", g_prog);
-        ex_esci(0);
+        ex_quit(0);
         return 0;
     }
 
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 int main(int argc, char **argv)
 {
     ExMsg        m;
-    ExFinestra   t;
+    ExWindow   t;
     unsigned int sw = 0, sh = 0;
     int          x, y;
     char         titolo[96];
@@ -141,7 +141,7 @@ int main(int argc, char **argv)
      * mezzo allo schermo», con accanto scritto che due terminali si sarebbero
      * sovrapposti esattamente: era vero, e restava vero. Il server li mette a
      * cascata perche' e' l'unico a sapere quante finestre ci sono gia'. */
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = EX_AUTO;
     y = EX_AUTO;
     (void)sw; (void)sh;
@@ -152,11 +152,11 @@ int main(int argc, char **argv)
      * commenti si scrive come si vuole; in cio' che va a schermo, ASCII. */
     sprintf(titolo, "Terminale - %s", g_prog);
 
-    /* ! EX_RIDIM SI CHIEDE, e chi lo chiede si impegna a gestire EXM_MISURA:
+    /* ! EX_RESIZABLE SI CHIEDE, e chi lo chiede si impegna a gestire EXM_SIZE:
      * senza quella risposta la griglia resterebbe 80x25 dentro una finestra
      * grande il doppio. Vedi exwin.h accanto allo stile. */
-    g_f = ex_crea("finestra", titolo,
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_f = ex_create("window", titolo,
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   x, y, FIN_W, FIN_H, 0, 0, proc);
     if (g_f == 0) {
         printf("term: il server a finestre non risponde.\n");
@@ -165,30 +165,30 @@ int main(int argc, char **argv)
     }
 
     {
-        ExFinestra menu = ex_menu(g_f);
+        ExWindow menu = ex_menu_bar(g_f);
 
-        ex_menu_voce(menu, "Info", "Informazioni su", ID_INFO);
+        ex_menu_add_item(menu, "Info", "Informazioni su", ID_INFO);
     }
 
     /* ! IL TITOLO DEL CONTROLLO E' IL PROGRAMMA DA AVVIARE, non un'etichetta:
      * e' la convenzione del controllo «terminale», ed e' scritta in exwin.h
      * accanto all'elenco delle classi. */
-    g_t = ex_crea("terminale", g_prog, EX_FIGLIO,
+    g_t = ex_create("terminal", g_prog, EX_CHILD,
                   BORDO, BORDO + MENU_H, AREA_W, AREA_H, g_f, 0, 0);
     t = g_t;
     if (t == 0) {
         printf("term: non riesco ad avviare %s nella finestra\n", g_prog);
-        ex_distruggi(g_f);
+        ex_destroy(g_f);
         return 1;
     }
 
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_f);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
+    ex_update(g_f);
 
     printf("term: %s aperto in una finestra %dx%d (%d colonne per %d righe)\n",
            g_prog, FIN_W, FIN_H, COLONNE, RIGHE);
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }
 

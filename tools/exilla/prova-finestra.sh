@@ -41,7 +41,7 @@ rm -rf "$F" "$T"; mkdir -p "$F" "$T"
 
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$B/costruzione-sistema/albero/dist/exos.iso"; [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
-export EXOS_ISTANZA=finestra EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-1536M}"
+export EXOS_ISTANZA=finestra EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
 export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
 rm -f /tmp/exos/serialfinestra.txt
 
@@ -74,8 +74,10 @@ FOTO_N="${FOTO_N:-5}"
     for i in $(seq 1 7); do echo "mon:mouse_move 0 11@0"; done
     echo "mon:mouse_button 1;mouse_button 0@4"
     echo "foto:$T/barra.ppm@2"
-    echo "file:///disk/seconda.html@20"
-    echo "foto:$T/seconda.ppm@40"
+    echo "file:///disk/seconda.html@1"
+    for i in $(seq 1 "${CAMPIONI_INVIO:-0}"); do echo "regs:$T/regs-invio.txt@0"; done
+    echo "foto:$T/dopo-invio.ppm@20"
+    echo "foto:$T/seconda.ppm@${ATTESA_PAGINA:-40}"
     echo "foto:$T/seconda-dopo.ppm@2"
     for i in $(seq 1 "${CAMPIONI_FINE:-0}"); do echo "regs:$T/regs-fine.txt@0"; done
     echo "key:alt-f1@3"
@@ -88,6 +90,7 @@ timeout $(( FOTO_OGNI * FOTO_N + 900 )) python3 tools/qemu_drive.py "${A[@]}" > 
 
 [ -f "$T/regs.txt" ] && cp "$T/regs.txt" "$F/regs.txt"
 [ -f "$T/regs-fine.txt" ] && cp "$T/regs-fine.txt" "$F/regs-fine.txt"
+[ -f "$T/regs-invio.txt" ] && cp "$T/regs-invio.txt" "$F/regs-invio.txt"
 for p in "$T"/*.ppm; do
     [ -f "$p" ] || continue
     q="$F/$(basename "${p%.ppm}").png"

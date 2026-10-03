@@ -21,7 +21,7 @@
  *
  * ! NON E' UN ESEMPIO, E' UNA PROVA. Serve a far vedere che ogni controllo si
  * disegna dove e' stato messo e che un clic su un pulsante torna indietro come
- * EXM_COMANDO con l'id giusto — cioe' che la catena
+ * EXM_COMMAND con l'id giusto — cioe' che la catena
  * server -> IPC -> libreria -> procedura sia intera. Un esempio si guarda; una
  * prova dice se qualcosa si e' rotto.
  * ============================================================================= */
@@ -31,7 +31,7 @@
 #include "exwin.h"
 
 /* +0.001 a ogni modifica: `winprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("winprova", "0.006");
+EX_VERSIONE("winprova", "0.007");
 
 #define ID_OK       101
 #define ID_ANNULLA  102
@@ -58,8 +58,8 @@ EX_VERSIONE("winprova", "0.006");
 
 #define PASSO       40      /* di quanto cresce a ogni freccia */
 
-static ExFinestra g_etichetta;
-static ExFinestra g_int, g_sep, g_riq, g_t1, g_t2, g_ok, g_ann;
+static ExWindow g_etichetta;
+static ExWindow g_int, g_sep, g_riq, g_t1, g_t2, g_ok, g_ann;
 static unsigned int g_premuti = 0;
 static int g_w = 360, g_h = 220;        /* la misura che la finestra ha ADESSO */
 
@@ -68,7 +68,7 @@ static int g_w = 360, g_h = 220;        /* la misura che la finestra ha ADESSO *
  * ripiego: i movimenti relativi grandi del monitor di QEMU si perdono per
  * strada, quindi una prova che dipende da DOVE si clicca non e' ripetibile.
  * Con le frecce la misura la decide QUESTO file, e quella che arriva indietro
- * in EXM_MISURA e' quella che il server ha davvero concesso — cioe' un numero
+ * in EXM_SIZE e' quella che il server ha davvero concesso — cioe' un numero
  * che si confronta, non un'impressione.
  *
  * ! E SI SCRIVE SULLA SERIALE, non con printf: un'applicazione grafica gira su
@@ -77,18 +77,18 @@ static int g_w = 360, g_h = 220;        /* la misura che la finestra ha ADESSO *
  * ============================================================================= */
 static void rifai_disposizione(int w, int h)
 {
-    ex_misura(g_int, w, 22);
+    ex_resize(g_int, w, 22);
 
-    ex_misura(g_t1, w - 110, 22);
-    ex_misura(g_t2, w - 110, 22);
+    ex_resize(g_t1, w - 110, 22);
+    ex_resize(g_t2, w - 110, 22);
 
-    ex_misura(g_sep, w - 28, 2);
+    ex_resize(g_sep, w - 28, 2);
 
-    ex_misura(g_riq, w - 28, 50);
-    ex_misura(g_etichetta, w - 56, 16);
+    ex_resize(g_riq, w - 28, 50);
+    ex_resize(g_etichetta, w - 56, 16);
 
-    ex_sposta(g_ok,  w - 190, h - 42);
-    ex_sposta(g_ann, w - 100, h - 42);
+    ex_move(g_ok,  w - 190, h - 42);
+    ex_move(g_ann, w - 100, h - 42);
 }
 
 /* =============================================================================
@@ -104,39 +104,39 @@ static void rifai_disposizione(int w, int h)
  * il gruppo che vale, e questa finestra e' anche la prova che le due cose
  * coincidono — accendendone uno si spegne solo chi sta nella stessa cornice.
  * ========================================================================== */
-static ExFinestra g_nuovi_eco, g_nuovi_scv, g_nuovi_sco, g_nuovi_combo;
-static ExFinestra g_nuovi_sp1, g_nuovi_r1, g_nuovi_r2, g_nuovi_r3;
+static ExWindow g_nuovi_eco, g_nuovi_scv, g_nuovi_sco, g_nuovi_combo;
+static ExWindow g_nuovi_sp1, g_nuovi_r1, g_nuovi_r2, g_nuovi_r3;
 
-static long procedura_nuovi(ExFinestra f, unsigned int msg, unsigned int wp,
+static long procedura_nuovi(ExWindow f, unsigned int msg, unsigned int wp,
                             long lp)
 {
     char riga[96];
 
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         sprintf(riga, "winprova: comando id=%u valore=%ld", wp, lp);
         log_seriale(riga);
-        ex_testo_metti(g_nuovi_eco, riga + 10);
+        ex_set_text(g_nuovi_eco, riga + 10);
 
         /* La spunta accende e spegne la barra orizzontale: e' il modo di far
-         * vedere che ex_accendi e ex_scorri_* fanno davvero quel che dicono. */
+         * vedere che ex_set_checked e ex_scorri_* fanno davvero quel che dicono. */
         if (wp == ID_SP1)
-            ex_scorri_limiti(g_nuovi_sco, lp ? 300u : 0u, 40u);
+            ex_scroll_set_range(g_nuovi_sco, lp ? 300u : 0u, 40u);
         return 0;
 
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static int finestra_nuovi(void)
 {
-    ExFinestra f, riq, tab;
+    ExWindow f, riq, tab;
 
-    f = ex_crea("finestra", "Controlli nuovi",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI, 100, 70, 440, 300,
+    f = ex_create("window", "Controlli nuovi",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX, 100, 70, 440, 300,
                 0, 0, procedura_nuovi);
     if (f == 0) {
         printf("winprova: il server a finestre non risponde.\n");
@@ -144,46 +144,46 @@ static int finestra_nuovi(void)
         return 1;
     }
 
-    tab = ex_crea("tab", "", EX_FIGLIO, 0, 0, 440, 24, f, ID_TAB, 0);
-    ex_voce_aggiungi(tab, "Generale");
-    ex_voce_aggiungi(tab, "Aspetto");
-    ex_voce_aggiungi(tab, "Avanzate");
+    tab = ex_create("tab", "", EX_CHILD, 0, 0, 440, 24, f, ID_TAB, 0);
+    ex_item_add(tab, "Generale");
+    ex_item_add(tab, "Aspetto");
+    ex_item_add(tab, "Avanzate");
 
-    g_nuovi_sp1 = ex_crea("spunta", "barra orizzontale accesa", EX_FIGLIO,
+    g_nuovi_sp1 = ex_create("checkbox", "barra orizzontale accesa", EX_CHILD,
                           16, 40, 220, 20, f, ID_SP1, 0);
-    ex_crea("spunta", "salva uscendo", EX_FIGLIO, 16, 66, 220, 20, f, ID_SP2, 0);
+    ex_create("checkbox", "salva uscendo", EX_CHILD, 16, 66, 220, 20, f, ID_SP2, 0);
 
-    riq = ex_crea("riquadro", "Allineamento", EX_FIGLIO,
+    riq = ex_create("frame", "Allineamento", EX_CHILD,
                   16, 96, 200, 96, f, 0, 0);
-    g_nuovi_r1 = ex_crea("radio", "a sinistra", EX_FIGLIO,
+    g_nuovi_r1 = ex_create("radio", "a sinistra", EX_CHILD,
                          12, 22, 170, 20, riq, ID_RAD1, 0);
-    g_nuovi_r2 = ex_crea("radio", "in mezzo",   EX_FIGLIO,
+    g_nuovi_r2 = ex_create("radio", "in mezzo",   EX_CHILD,
                          12, 46, 170, 20, riq, ID_RAD2, 0);
-    g_nuovi_r3 = ex_crea("radio", "a destra",   EX_FIGLIO,
+    g_nuovi_r3 = ex_create("radio", "a destra",   EX_CHILD,
                          12, 70, 170, 20, riq, ID_RAD3, 0);
-    ex_accendi(g_nuovi_r1, 1);
+    ex_set_checked(g_nuovi_r1, 1);
 
-    ex_crea("etichetta", "Carattere:", EX_FIGLIO, 232, 44, 90, 16, f, 0, 0);
-    g_nuovi_combo = ex_crea("combo", "", EX_FIGLIO,
+    ex_create("label", "Carattere:", EX_CHILD, 232, 44, 90, 16, f, 0, 0);
+    g_nuovi_combo = ex_create("combo", "", EX_CHILD,
                             232, 64, 170, 22, f, ID_COMBO, 0);
-    ex_voce_aggiungi(g_nuovi_combo, "serif");
-    ex_voce_aggiungi(g_nuovi_combo, "sans");
-    ex_voce_aggiungi(g_nuovi_combo, "monospazio");
-    ex_voce_aggiungi(g_nuovi_combo, "di sistema");
+    ex_item_add(g_nuovi_combo, "serif");
+    ex_item_add(g_nuovi_combo, "sans");
+    ex_item_add(g_nuovi_combo, "monospazio");
+    ex_item_add(g_nuovi_combo, "di sistema");
 
     /* Verticale perche' e' piu' alta che larga; orizzontale l'altra. Non c'e'
      * nessun bit da mettere d'accordo con la misura. */
-    g_nuovi_scv = ex_crea("scorrimento", "", EX_FIGLIO,
+    g_nuovi_scv = ex_create("scrollbar", "", EX_CHILD,
                           412, 96, 16, 120, f, ID_SCV, 0);
-    ex_scorri_limiti(g_nuovi_scv, 200, 20);
+    ex_scroll_set_range(g_nuovi_scv, 200, 20);
 
-    g_nuovi_sco = ex_crea("scorrimento", "", EX_FIGLIO,
+    g_nuovi_sco = ex_create("scrollbar", "", EX_CHILD,
                           16, 226, 390, 16, f, ID_SCO, 0);
 
-    g_nuovi_eco = ex_crea("etichetta", "nessun comando ancora", EX_FIGLIO,
+    g_nuovi_eco = ex_create("label", "nessun comando ancora", EX_CHILD,
                           16, 252, 400, 16, f, 0, 0);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
     printf("winprova: controlli nuovi. Ogni comando finisce sulla seriale;\n"
            "          Tab gira fra i controlli, spazio scatta le spunte.\n");
     return 0;
@@ -199,11 +199,11 @@ static int finestra_nuovi(void)
  * commento a blocco SU PIU' RIGHE, commento di riga, stringa, carattere,
  * numeri, chiavi, tipi e nomi seguiti da parentesi.
  *
- * ! E L'ELENCO DELLE FUNZIONI E' LA PROVA DI ex_area_vai. Si riconosce una
+ * ! E L'ELENCO DELLE FUNZIONI E' LA PROVA DI ex_textarea_set_cursor. Si riconosce una
  * definizione con una regola grossolana — comincia a colonna zero, contiene una
  * parentesi, non finisce con il punto e virgola — che e' esattamente quel che
  * fara' l'IDE finche' non avra' di meglio. Cliccando una voce, il cursore ci
- * salta: senza ex_area_vai quell'elenco si poteva disegnare e non poteva fare
+ * salta: senza ex_textarea_set_cursor quell'elenco si poteva disegnare e non poteva fare
  * niente.
  * ========================================================================== */
 static const char *const g_sorgente[] = {
@@ -256,7 +256,7 @@ static const char *const g_sorgente[] = {
     0
 };
 
-static ExFinestra g_cod, g_funz;
+static ExWindow g_cod, g_funz;
 static unsigned int g_funz_riga[64];    /* a quale riga porta la voce i-esima */
 static unsigned int g_funz_n = 0;
 
@@ -273,41 +273,41 @@ static int sembra_una_funzione(const char *r)
     return 1;
 }
 
-static long procedura_codice(ExFinestra f, unsigned int msg, unsigned int wp,
+static long procedura_codice(ExWindow f, unsigned int msg, unsigned int wp,
                              long lp)
 {
     char riga[96];
 
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_FUNZ) {
-            unsigned int i = ex_lista_scelta(g_funz);
+            unsigned int i = ex_list_get_selected(g_funz);
 
             if (i < g_funz_n) {
-                ex_area_vai(g_cod, g_funz_riga[i], 0);
-                ex_fuoco(g_cod);
+                ex_textarea_set_cursor(g_cod, g_funz_riga[i], 0);
+                ex_set_focus(g_cod);
                 sprintf(riga, "winprova: salto alla riga %u",
                         g_funz_riga[i] + 1);
                 log_seriale(riga);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                ex_default_proc(f, EXM_PAINT, 0, 0);
             }
         }
         return 0;
 
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static int finestra_codice(void)
 {
-    ExFinestra f;
+    ExWindow f;
     unsigned int i;
 
-    f = ex_crea("finestra", "Area del codice",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI, 40, 40, 720, 420,
+    f = ex_create("window", "Area del codice",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX, 40, 40, 720, 420,
                 0, 0, procedura_codice);
     if (f == 0) {
         printf("winprova: il server a finestre non risponde.\n");
@@ -315,8 +315,8 @@ static int finestra_codice(void)
         return 1;
     }
 
-    g_funz = ex_crea("lista", "", EX_FIGLIO, 6, 6, 180, 400, f, ID_FUNZ, 0);
-    g_cod  = ex_crea("areacodice", "", EX_FIGLIO,
+    g_funz = ex_create("list", "", EX_CHILD, 6, 6, 180, 400, f, ID_FUNZ, 0);
+    g_cod  = ex_create("codearea", "", EX_CHILD,
                      192, 6, 520, 400, f, ID_CODICE, 0);
     if (g_cod == 0) {
         printf("winprova: l'area del codice non si e' aperta\n");
@@ -326,27 +326,27 @@ static int finestra_codice(void)
     /* ! IL COLORITORE SI ATTACCA PRIMA DI CARICARE, e non dopo: attaccarlo dopo
      * funzionerebbe lo stesso — la catena degli stati si rifa' da sola — ma
      * questo e' l'ordine che si legge, ed e' quello che l'IDE seguira'. */
-    ex_area_colora(g_cod, ex_colora_c, 0);
+    ex_textarea_set_highlighter(g_cod, ex_highlight_c, 0);
 
-    ex_area_svuota(g_cod);
+    ex_textarea_clear(g_cod);
     for (i = 0; g_sorgente[i]; i++) {
-        if (!ex_area_aggiungi(g_cod, g_sorgente[i])) {
+        if (!ex_textarea_add_line(g_cod, g_sorgente[i])) {
             printf("winprova: l'area e' piena alla riga %u\n", i);
             break;
         }
         if (sembra_una_funzione(g_sorgente[i]) &&
             g_funz_n < sizeof(g_funz_riga) / sizeof(g_funz_riga[0])) {
             g_funz_riga[g_funz_n++] = i;
-            ex_lista_aggiungi(g_funz, g_sorgente[i]);
+            ex_list_add(g_funz, g_sorgente[i]);
         }
     }
-    ex_area_pulita(g_cod);
-    ex_fuoco(g_cod);
+    ex_textarea_set_unmodified(g_cod);
+    ex_set_focus(g_cod);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
     printf("winprova: area del codice, %u righe, %u funzioni nell'elenco.\n"
            "          Clicca una funzione a sinistra: il cursore ci salta.\n",
-           ex_area_righe(g_cod), g_funz_n);
+           ex_textarea_line_count(g_cod), g_funz_n);
     return 0;
 }
 
@@ -360,10 +360,10 @@ static int finestra_codice(void)
  *
  * ! E LA CHIUSURA SI INTERCETTA. La finestra C dice di no la prima volta e si
  * lascia chiudere la seconda: e' il caso vero — «hai delle modifiche non
- * salvate» — e la prova che EXM_CHIUDI arriva alla figlia e non spegne il
+ * salvate» — e la prova che EXM_CLOSE arriva alla figlia e non spegne il
  * programma.
  * ========================================================================== */
-static ExFinestra g_mdi_cont, g_mdi_a, g_mdi_b, g_mdi_c, g_mdi_eco;
+static ExWindow g_mdi_cont, g_mdi_a, g_mdi_b, g_mdi_c, g_mdi_eco;
 static int g_c_insiste = 0;
 
 static void mdi_dico(const char *chi, unsigned int wp, long lp)
@@ -372,68 +372,68 @@ static void mdi_dico(const char *chi, unsigned int wp, long lp)
 
     sprintf(riga, "winprova: %s: comando id=%u valore=%ld", chi, wp, lp);
     log_seriale(riga);
-    ex_testo_metti(g_mdi_eco, riga + 10);
+    ex_set_text(g_mdi_eco, riga + 10);
 }
 
-static long proc_a(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_a(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO) { mdi_dico("finestra A", wp, lp); return 0; }
-    return ex_procedura_base(f, msg, wp, lp);
+    if (msg == EXM_COMMAND) { mdi_dico("finestra A", wp, lp); return 0; }
+    return ex_default_proc(f, msg, wp, lp);
 }
 
-static long proc_b(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_b(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO) { mdi_dico("finestra B", wp, lp); return 0; }
-    return ex_procedura_base(f, msg, wp, lp);
+    if (msg == EXM_COMMAND) { mdi_dico("finestra B", wp, lp); return 0; }
+    return ex_default_proc(f, msg, wp, lp);
 }
 
-static long proc_c(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc_c(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO) { mdi_dico("finestra C", wp, lp); return 0; }
+    if (msg == EXM_COMMAND) { mdi_dico("finestra C", wp, lp); return 0; }
 
-    if (msg == EXM_CHIUDI && !g_c_insiste) {
+    if (msg == EXM_CLOSE && !g_c_insiste) {
         g_c_insiste = 1;
         log_seriale("winprova: finestra C: la prima chiusura si rifiuta");
-        ex_testo_metti(g_mdi_eco, "la finestra C ha detto di no: riprova");
+        ex_set_text(g_mdi_eco, "la finestra C ha detto di no: riprova");
         return 0;                       /* gestito: non si chiude */
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
-static long procedura_mdi(ExFinestra f, unsigned int msg, unsigned int wp,
+static long procedura_mdi(ExWindow f, unsigned int msg, unsigned int wp,
                           long lp)
 {
-    if (msg == EXM_COMANDO) { mdi_dico("applicazione", wp, lp); return 0; }
-    if (msg == EXM_CHIUDI)  { ex_esci(0); return 0; }
+    if (msg == EXM_COMMAND) { mdi_dico("applicazione", wp, lp); return 0; }
+    if (msg == EXM_CLOSE)  { ex_quit(0); return 0; }
 
-    /* ! F6 GIRA FRA LE FINESTRE, e lo fa l'APPLICAZIONE con ex_mdi_attiva: il
+    /* ! F6 GIRA FRA LE FINESTRE, e lo fa l'APPLICAZIONE con ex_mdi_activate: il
      * toolkit non si prende una scorciatoia di tastiera per conto suo. Quale
      * tasto sia — F6, Ctrl+Tab, una voce di menu — e' una decisione di chi
      * scrive il programma, e il toolkit non deve indovinarla. */
-    if (msg == EXM_TASTO && (wp & KBD_KEY_MASK) == KBD_K_F(6)) {
-        ExFinestra ora = ex_mdi_attivo(g_mdi_cont);
-        ExFinestra giro[3];
+    if (msg == EXM_KEY && (wp & KBD_KEY_MASK) == KBD_K_F(6)) {
+        ExWindow ora = ex_mdi_get_active(g_mdi_cont);
+        ExWindow giro[3];
         int i, k = 0;
 
         giro[0] = g_mdi_a; giro[1] = g_mdi_b; giro[2] = g_mdi_c;
         for (i = 0; i < 3; i++) if (giro[i] == ora) k = i;
         for (i = 1; i <= 3; i++)
             if (giro[(k + i) % 3] != 0) {
-                ex_mdi_attiva(giro[(k + i) % 3]);
+                ex_mdi_activate(giro[(k + i) % 3]);
                 log_seriale("winprova: F6: girata la finestra attiva");
                 break;
             }
         return 0;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 static int finestra_mdi(void)
 {
-    ExFinestra f;
+    ExWindow f;
 
-    f = ex_crea("finestra", "Contenitore MDI",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI, 30, 30, 700, 470,
+    f = ex_create("window", "Contenitore MDI",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX, 30, 30, 700, 470,
                 0, 0, procedura_mdi);
     if (f == 0) {
         printf("winprova: il server a finestre non risponde.\n");
@@ -441,23 +441,23 @@ static int finestra_mdi(void)
         return 1;
     }
 
-    g_mdi_cont = ex_crea("mdi", "", EX_FIGLIO, 6, 6, 688, 430, f, 0, 0);
+    g_mdi_cont = ex_create("mdi", "", EX_CHILD, 6, 6, 688, 430, f, 0, 0);
     if (g_mdi_cont == 0) {
         printf("winprova: il contenitore MDI non si e' aperto\n");
         return 1;
     }
 
-    g_mdi_eco = ex_crea("etichetta", "nessun comando ancora", EX_FIGLIO,
+    g_mdi_eco = ex_create("label", "nessun comando ancora", EX_CHILD,
                         8, 444, 680, 16, f, 0, 0);
 
-    g_mdi_a = ex_crea("mdifiglio", "A - sorgente.c", EX_TITOLO | EX_CHIUDI,
+    g_mdi_a = ex_create("mdichild", "A - sorgente.c", EX_CAPTION | EX_CLOSEBOX,
                       10, 10, 320, 180, g_mdi_cont, 0, proc_a);
-    ex_crea("pulsante", "compila", EX_FIGLIO, 12, 12, 90, 26,
+    ex_create("button", "compila", EX_CHILD, 12, 12, 90, 26,
             g_mdi_a, ID_BOT_A, 0);
-    ex_crea("spunta", "salva prima", EX_FIGLIO, 12, 48, 180, 20,
+    ex_create("checkbox", "salva prima", EX_CHILD, 12, 48, 180, 20,
             g_mdi_a, ID_SPU_A, 0);
 
-    g_mdi_b = ex_crea("mdifiglio", "B - proprieta'", EX_TITOLO | EX_CHIUDI,
+    g_mdi_b = ex_create("mdichild", "B - proprieta'", EX_CAPTION | EX_CLOSEBOX,
                       150, 90, 300, 200, g_mdi_cont, 0, proc_b);
     {
         /* ! LA LISTA E' PIU' ALTA DELL'AREA DEL CLIENT, ed e' apposta: senza
@@ -465,45 +465,45 @@ static int finestra_mdi(void)
          * quel che c'e' sotto. Tagliata al bordo di dentro, e' la prova che il
          * ritaglio del disegno funziona — e la prova che serve, perche' e'
          * l'unico modo di sbagliare che non si vede finche' non capita. */
-        ExFinestra l = ex_crea("lista", "", EX_FIGLIO, 8, 8, 280, 220,
+        ExWindow l = ex_create("list", "", EX_CHILD, 8, 8, 280, 220,
                                g_mdi_b, ID_LIS_B, 0);
 
-        ex_lista_aggiungi(l, "nome");
-        ex_lista_aggiungi(l, "posizione");
-        ex_lista_aggiungi(l, "misura");
-        ex_lista_aggiungi(l, "colore");
+        ex_list_add(l, "nome");
+        ex_list_add(l, "posizione");
+        ex_list_add(l, "misura");
+        ex_list_add(l, "colore");
     }
 
-    g_mdi_c = ex_crea("mdifiglio", "C - uscita", EX_TITOLO | EX_CHIUDI,
+    g_mdi_c = ex_create("mdichild", "C - uscita", EX_CAPTION | EX_CLOSEBOX,
                       60, 230, 360, 150, g_mdi_cont, 0, proc_c);
-    ex_crea("etichetta", "chiudimi: la prima volta dico di no", EX_FIGLIO,
+    ex_create("label", "chiudimi: la prima volta dico di no", EX_CHILD,
             12, 14, 330, 16, g_mdi_c, 0, 0);
-    ex_crea("pulsante", "esegui", EX_FIGLIO, 12, 40, 90, 26,
+    ex_create("button", "esegui", EX_CHILD, 12, 40, 90, 26,
             g_mdi_c, ID_BOT_C, 0);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
     printf("winprova: tre finestre dentro un contenitore MDI.\n"
            "          Trascina una barra del titolo, clicca una finestra\n"
            "          dietro, prova a chiudere la C.\n");
     return 0;
 }
 
-static long procedura(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long procedura(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     /* ! LE FRECCE ARRIVANO QUI ANCHE CON IL FUOCO IN UNA CASELLA, ed e'
      * voluto: una casella di testo consuma i caratteri stampabili, non i tasti
      * speciali. Vedi tasto_al_fuoco() in exwin.c. */
-    case EXM_TASTO:
+    case EXM_KEY:
         switch (wp & KBD_KEY_MASK) {
-        case KBD_K_RIGHT: ex_misura(f, g_w + PASSO, g_h); return 0;
-        case KBD_K_LEFT:  ex_misura(f, g_w - PASSO, g_h); return 0;
-        case KBD_K_DOWN:  ex_misura(f, g_w, g_h + PASSO); return 0;
-        case KBD_K_UP:    ex_misura(f, g_w, g_h - PASSO); return 0;
+        case KBD_K_RIGHT: ex_resize(f, g_w + PASSO, g_h); return 0;
+        case KBD_K_LEFT:  ex_resize(f, g_w - PASSO, g_h); return 0;
+        case KBD_K_DOWN:  ex_resize(f, g_w, g_h + PASSO); return 0;
+        case KBD_K_UP:    ex_resize(f, g_w, g_h - PASSO); return 0;
         }
         break;
 
-    case EXM_MISURA: {
+    case EXM_SIZE: {
         char riga[80];
 
         g_w = EX_X(lp);
@@ -515,28 +515,28 @@ static long procedura(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         g_premuti++;
-        if (wp == ID_OK)      ex_testo_metti(g_etichetta, "premuto OK");
-        if (wp == ID_ANNULLA) ex_testo_metti(g_etichetta, "premuto Annulla");
+        if (wp == ID_OK)      ex_set_text(g_etichetta, "premuto OK");
+        if (wp == ID_ANNULLA) ex_set_text(g_etichetta, "premuto Annulla");
         printf("winprova: comando %u (premuti finora: %u)\n", wp, g_premuti);
         return 0;
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         printf("winprova: chiusura chiesta dall'utente\n");
-        ex_esci(0);
+        ex_quit(0);
         return 0;
     }
 
     /* ! CIO' CHE NON SI GESTISCE VA ALLA BASE, e non si lascia cadere: e' la
      * base a disegnare i controlli e a ridisegnare la finestra. Una procedura
      * che restituisse sempre 0 darebbe una finestra vuota. */
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 int main(int argc, char **argv)
 {
-    ExFinestra f, riq;
+    ExWindow f, riq;
     ExMsg m;
     const char *sfondo = 0;
     int i, terminale = 0, nuovi = 0, codice = 0, mdi = 0;
@@ -551,19 +551,19 @@ int main(int argc, char **argv)
 
     if (nuovi) {
         if (finestra_nuovi() != 0) return 1;
-        while (ex_prendi_msg(&m)) ex_smista(&m);
+        while (ex_get_message(&m)) ex_dispatch(&m);
         return 0;
     }
 
     if (codice) {
         if (finestra_codice() != 0) return 1;
-        while (ex_prendi_msg(&m)) ex_smista(&m);
+        while (ex_get_message(&m)) ex_dispatch(&m);
         return 0;
     }
 
     if (mdi) {
         if (finestra_mdi() != 0) return 1;
-        while (ex_prendi_msg(&m)) ex_smista(&m);
+        while (ex_get_message(&m)) ex_dispatch(&m);
         return 0;
     }
 
@@ -571,24 +571,24 @@ int main(int argc, char **argv)
      * prova che una shell puo' vivere su una PIPE invece che sul tty della
      * console — cioe' che due shell grafiche non si contendono niente. */
     if (terminale) {
-        ExFinestra ft, t;
+        ExWindow ft, t;
 
-        ft = ex_crea("finestra", "Terminale", EX_TITOLO | EX_BORDO | EX_CHIUDI,
+        ft = ex_create("window", "Terminale", EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
                      60, 50, 640, 400, 0, 0, 0);
         if (ft == 0) {
             printf("winprova: il server a finestre non risponde.\n");
             return 1;
         }
-        t = ex_crea("terminale", "/bin/sh", EX_FIGLIO, 2, 2, 636, 396, ft, 0, 0);
+        t = ex_create("terminal", "/bin/sh", EX_CHILD, 2, 2, 636, 396, ft, 0, 0);
         if (t == 0) {
             printf("winprova: non riesco ad avviare la shell nella finestra\n");
             return 1;
         }
 
-        ex_procedura_base(ft, EXM_DISEGNA, 0, 0);
+        ex_default_proc(ft, EXM_PAINT, 0, 0);
         printf("winprova: terminale aperto, la shell gira dentro la finestra\n");
 
-        while (ex_prendi_msg(&m)) ex_smista(&m);
+        while (ex_get_message(&m)) ex_dispatch(&m);
         return 0;
     }
 
@@ -597,23 +597,23 @@ int main(int argc, char **argv)
      * bisogno di un meccanismo suo. */
     if (sfondo) {
         unsigned int sw = 0, sh = 0;
-        ExFinestra s;
+        ExWindow s;
 
-        ex_schermo(&sw, &sh);
-        s = ex_crea("finestra", "", EX_SFONDO, 0, 0, (int)sw, (int)sh,
+        ex_screen_size(&sw, &sh);
+        s = ex_create("window", "", EX_BACKGROUND, 0, 0, (int)sw, (int)sh,
                     0, 0, 0);
         if (s) {
-            if (!ex_immagine(s, sfondo, 0, 0))
+            if (!ex_draw_image(s, sfondo, 0, 0))
                 printf("winprova: %s: formato non riconosciuto\n", sfondo);
-            ex_aggiorna(s);
+            ex_update(s);
         }
     }
 
-    /* ! EX_RIDIM SI CHIEDE, e chi lo chiede si impegna a rifare la propria
-     * disposizione in EXM_MISURA. Qui e' anche la prova che quella catena —
+    /* ! EX_RESIZABLE SI CHIEDE, e chi lo chiede si impegna a rifare la propria
+     * disposizione in EXM_SIZE. Qui e' anche la prova che quella catena —
      * presa, zona nuova, messaggio, ridisegno — sia intera. */
-    f = ex_crea("finestra", "Prova del toolkit",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    f = ex_create("window", "Prova del toolkit",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                 80, 60, g_w, g_h, 0, 0, procedura);
     if (f == 0) {
         /* ! IL CONSIGLIO E' «exwin», e le due cose che diceva prima erano
@@ -627,36 +627,36 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    g_int = ex_crea("intestazione", "Anagrafica", EX_FIGLIO,
+    g_int = ex_create("header", "Anagrafica", EX_CHILD,
                     0, 0, g_w, 22, f, 0, 0);
 
-    ex_crea("etichetta", "Nome:", EX_FIGLIO,  14,  38,  60, 16, f, 0, 0);
-    g_t1 = ex_crea("testo", "Graziano", EX_FIGLIO, 80, 34, g_w - 110, 22, f, 0, 0);
+    ex_create("label", "Nome:", EX_CHILD,  14,  38,  60, 16, f, 0, 0);
+    g_t1 = ex_create("textbox", "Graziano", EX_CHILD, 80, 34, g_w - 110, 22, f, 0, 0);
 
-    ex_crea("etichetta", "Sistema:", EX_FIGLIO, 14,  70,  70, 16, f, 0, 0);
-    g_t2 = ex_crea("testo", "EX-OS", EX_FIGLIO,  80,  66, g_w - 110, 22, f, 0, 0);
+    ex_create("label", "Sistema:", EX_CHILD, 14,  70,  70, 16, f, 0, 0);
+    g_t2 = ex_create("textbox", "EX-OS", EX_CHILD,  80,  66, g_w - 110, 22, f, 0, 0);
 
-    g_sep = ex_crea("separatore", "", EX_FIGLIO, 14, 100, g_w - 28, 2, f, 0, 0);
+    g_sep = ex_create("separator", "", EX_CHILD, 14, 100, g_w - 28, 2, f, 0, 0);
 
-    riq = ex_crea("riquadro", "Esito", EX_FIGLIO, 14, 112, g_w - 28, 50, f, 0, 0);
+    riq = ex_create("frame", "Esito", EX_CHILD, 14, 112, g_w - 28, 50, f, 0, 0);
     g_riq = riq;
-    g_etichetta = ex_crea("etichetta", "nessun pulsante premuto", EX_FIGLIO,
+    g_etichetta = ex_create("label", "nessun pulsante premuto", EX_CHILD,
                           12, 22, g_w - 56, 16, riq, 0, 0);
 
-    g_ok  = ex_crea("pulsante", "OK",      EX_FIGLIO,
+    g_ok  = ex_create("button", "OK",      EX_CHILD,
                     g_w - 190, g_h - 42, 80, 26, f, ID_OK, 0);
-    g_ann = ex_crea("pulsante", "Annulla", EX_FIGLIO,
+    g_ann = ex_create("button", "Annulla", EX_CHILD,
                     g_w - 100, g_h - 42, 80, 26, f, ID_ANNULLA, 0);
 
     /* Il primo disegno: da qui in poi lo rifa' il ciclo dei messaggi. */
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
 
     printf("winprova: finestra aperta %dx%d. Le frecce la ridimensionano;\n"
            "          premi un pulsante o chiudi la finestra.\n", g_w, g_h);
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
 
-    ex_distruggi(f);
+    ex_destroy(f);
     printf("winprova: uscita, %u comandi ricevuti\n", g_premuti);
     return 0;
 }

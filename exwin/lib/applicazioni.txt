@@ -54,3 +54,7 @@ Strumenti/ExEditor     | /exwin/bin/exeditor  | /exwin/icon/baseapp/edit_64.ico
 Strumenti/Terminale    | /exwin/bin/term      | /exwin/icon/baseapp/term_64.ico
 Strumenti/EX-IDE       | /exwin/bin/exide     | /exwin/icon/baseapp/exide_64.ico
 Strumenti/Prova font   | /exwin/bin/fontprova
+Giochi/EXKlondike      | /exwin/bin/exklondike | /exwin/icon/baseapp/exklondike_64.ico
+Giochi/EXSpider        | /exwin/bin/exspider   | /exwin/icon/baseapp/exspider_64.ico
+Giochi/EXMajong        | /exwin/bin/exmajong   | /exwin/icon/baseapp/exmajong_64.ico
+Giochi/EXGO            | /exwin/bin/exgo       | /exwin/icon/baseapp/exgo_64.ico

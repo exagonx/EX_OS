@@ -34,9 +34,9 @@
 #define CIMA        6       /* above the first line */
 #define BARRA      14       /* the vertical scroll bar */
 #define FRAM_MAX  400       /* fragments in one line */
-#define SEL_FONDO  EX_BLU
+#define SEL_FONDO  EX_BLUE
 #define BARRA_FONDO 0x00D8D8D8
-#define BARRA_POLL  EX_GRIGIO_SC
+#define BARRA_POLL  EX_DARK_GRAY
 
 typedef struct {
     unsigned int      da, a;
@@ -54,7 +54,7 @@ int exrtf_pixel(unsigned int punti) { return (int)((punti * 4 + 1) / 3); }
 
 static ExFont font_di(const ExRtfStile *s)
 {
-    return ex_font_trova(s->famiglia, exrtf_pixel(s->corpo), s->grassetto, s->corsivo);
+    return ex_font_find(s->famiglia, exrtf_pixel(s->corpo), s->grassetto, s->corsivo);
 }
 
 static unsigned int minimo(unsigned int a, unsigned int b) { return a < b ? a : b; }
@@ -96,7 +96,7 @@ static unsigned int pezzo_di(const ExRtfDoc *d, unsigned int pos)
     return lo;
 }
 
-/* The width of n bytes in one font. ex_larghezza_testo wants a string: the
+/* The width of n bytes in one font. ex_text_width wants a string: the
  * bytes are copied in pieces, never cutting a UTF-8 character. */
 static int misura_font(ExFont f, const char *t, unsigned int n)
 {
@@ -109,7 +109,7 @@ static int misura_font(ExFont f, const char *t, unsigned int n)
         while (k < n && k > 1 && ((unsigned char)t[k] & 0xC0) == 0x80) k--;
         for (i = 0; i < k; i++) b[i] = t[i] == '\t' ? ' ' : t[i];     /* a tab shows as a space */
         b[k] = '\0';
-        w += ex_larghezza_testo(f, b);
+        w += ex_text_width(f, b);
         t += k;
         n -= k;
     }
@@ -152,14 +152,14 @@ static void metrica(const ExRtfVista *v, unsigned int da, unsigned int a, int *h
 
         if (d->pezzi_n) exrtf_stile_a(d, da > 0 && da >= d->testo_n ? da - 1 : da, &s);
         f = font_di(&s);
-        su = ex_font_base(f);
-        giu = ex_font_altezza(f) - su;
+        su = ex_font_baseline(f);
+        giu = ex_font_height(f) - su;
     } else {
         unsigned int k = pezzo_di(d, da);
 
         while (k < d->pezzi_n && d->pezzi[k].inizio < a) {
             ExFont f = font_di(&d->pezzi[k].stile);
-            int b = ex_font_base(f), hh = ex_font_altezza(f);
+            int b = ex_font_baseline(f), hh = ex_font_height(f);
 
             if (b > su) su = b;
             if (hh - b > giu) giu = hh - b;
@@ -497,7 +497,7 @@ static void stile_segui(ExRtfVista *v)
 /* --------------------------------------------------------------------------
  * Drawing
  * -------------------------------------------------------------------------- */
-static void scrivi_pezzo(ExFinestra f, ExFont fo, int x, int y, const char *t,
+static void scrivi_pezzo(ExWindow f, ExFont fo, int x, int y, const char *t,
                          unsigned int n, unsigned int col)
 {
     char b[256];
@@ -508,21 +508,21 @@ static void scrivi_pezzo(ExFinestra f, ExFont fo, int x, int y, const char *t,
         while (k < n && k > 1 && ((unsigned char)t[k] & 0xC0) == 0x80) k--;
         for (i = 0; i < k; i++) b[i] = t[i] == '\t' ? ' ' : t[i];
         b[k] = '\0';
-        ex_scrivi_con(f, fo, x, y, b, col);
-        x += ex_larghezza_testo(fo, b);
+        ex_draw_text_font(f, fo, x, y, b, col);
+        x += ex_text_width(fo, b);
         t += k;
         n -= k;
     }
 }
 
-void exrtf_vista_disegna(ExRtfVista *v, ExFinestra f)
+void exrtf_vista_disegna(ExRtfVista *v, ExWindow f)
 {
     const ExRtfDoc *d = v->doc;
     unsigned int sel_da = minimo(v->cur, v->anc), sel_a = massimo(v->cur, v->anc);
     unsigned int i, rc = riga_di(v, v->cur);
     int y0, fondo = v->y + v->h;
 
-    ex_riempi(f, v->x, v->y, v->w - BARRA, v->h, EX_BIANCO);
+    ex_fill_rect(f, v->x, v->y, v->w - BARRA, v->h, EX_WHITE);
     if (v->righe_n == 0) return;
     y0 = v->y + CIMA - v->righe[v->prima].y;
 
@@ -536,30 +536,30 @@ void exrtf_vista_disegna(ExRtfVista *v, ExFinestra f)
         for (j = 0; j < n; j++) {
             const Fram *fr = &g_fr[j];
             int scelto = sel_da < sel_a && fr->da >= sel_da && fr->a <= sel_a;
-            unsigned int col = scelto ? EX_BIANCO : fr->st->colore;
+            unsigned int col = scelto ? EX_WHITE : fr->st->colore;
 
-            if (scelto) ex_riempi(f, fr->x, ly, fr->w + fr->extra, r->h, SEL_FONDO);
-            scrivi_pezzo(f, fr->f, fr->x, ly + r->base - ex_font_base(fr->f),
+            if (scelto) ex_fill_rect(f, fr->x, ly, fr->w + fr->extra, r->h, SEL_FONDO);
+            scrivi_pezzo(f, fr->f, fr->x, ly + r->base - ex_font_baseline(fr->f),
                          d->testo + fr->da, fr->a - fr->da, col);
             if (fr->st->sottolineato)
-                ex_riempi(f, fr->x, ly + r->base + 1, fr->w + fr->extra, 1, col);
+                ex_fill_rect(f, fr->x, ly + r->base + 1, fr->w + fr->extra, 1, col);
         }
         /* A chosen end of paragraph shows as a small block, or a selection
          * of empty lines would not show at all. */
         if (sel_da <= r->fine && r->fine < sel_a && r->fine < d->testo_n) {
             int ex = n ? g_fr[n - 1].x + g_fr[n - 1].w + g_fr[n - 1].extra : x_riga(v, r);
-            ex_riempi(f, ex, ly, 6, r->h, SEL_FONDO);
+            ex_fill_rect(f, ex, ly, 6, r->h, SEL_FONDO);
         }
         if (v->fuoco && sel_da == sel_a && i == rc)
-            ex_riempi(f, x_di(v, v->cur), ly, 2, r->h, EX_NERO);
+            ex_fill_rect(f, x_di(v, v->cur), ly, 2, r->h, EX_BLACK);
     }
 
     /* The scroll bar: the thumb says which part of the lines is in sight. */
     {
         int ty, th;
 
-        ex_riempi(f, v->x + v->w - BARRA, v->y, BARRA, v->h, BARRA_FONDO);
-        if (pollice(v, &ty, &th)) ex_riempi(f, v->x + v->w - BARRA + 2, ty, BARRA - 4, th, BARRA_POLL);
+        ex_fill_rect(f, v->x + v->w - BARRA, v->y, BARRA, v->h, BARRA_FONDO);
+        if (pollice(v, &ty, &th)) ex_fill_rect(f, v->x + v->w - BARRA + 2, ty, BARRA - 4, th, BARRA_POLL);
     }
 }
 
@@ -749,7 +749,7 @@ int exrtf_vista_copia(ExRtfVista *v)
     unsigned int da = minimo(v->cur, v->anc), a = massimo(v->cur, v->anc);
 
     if (da == a) return 0;
-    ex_appunti_metti(v->doc->testo + da, a - da);
+    ex_clipboard_set(v->doc->testo + da, a - da);
     return 1;
 }
 
@@ -764,7 +764,7 @@ int exrtf_vista_taglia(ExRtfVista *v)
 int exrtf_vista_incolla(ExRtfVista *v)
 {
     static char b[64 * 1024];
-    unsigned int n = ex_appunti_prendi(b, sizeof(b) - 1), i, k = 0;
+    unsigned int n = ex_clipboard_get(b, sizeof(b) - 1), i, k = 0;
 
     if (n == 0 || n >= sizeof(b)) return 0;
     /* \r\n from other systems becomes \n; other control bytes go */

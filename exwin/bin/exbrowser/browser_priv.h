@@ -282,7 +282,7 @@ extern VistaImp *g_vi;
 #define g_tab_link         (g_vi->tab_link)
 #define g_tab_rif          (g_vi->tab_rif)
 
-extern ExFinestra g_f;
+extern ExWindow g_f;
 extern int g_fin_w, g_fin_h;
 extern ExFont g_font_testo;
 extern int g_marg_sx, g_marg_dx;

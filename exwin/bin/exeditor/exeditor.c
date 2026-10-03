@@ -34,7 +34,7 @@
 #include "exrtf_vista.h"
 
 /* +0.001 a ogni modifica: `exeditor -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.006"
+#define VERSIONE_APP "0.007"
 EX_VERSIONE("exeditor", VERSIONE_APP);
 
 #define FIN_W       640
@@ -96,7 +96,7 @@ static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
 static char g_avviso[96] = "";
 
-static ExFinestra g_f, g_area, g_stato, g_menu, g_barra, g_schede;
+static ExWindow g_f, g_area, g_stato, g_menu, g_barra, g_schede;
 
 /* The window's client size, for the RTF view that has no control to resize. */
 static int g_fw = FIN_W, g_fh = FIN_H;
@@ -119,7 +119,7 @@ static void vista_disegna_se(void);
  * ! UN FILE PIU' GRANDE DEI LIMITI SI CARICA IN PARTE E IL SALVATAGGIO SI
  * BLOCCA. Salvare quello che si e' letto vorrebbe dire CANCELLARE il resto del
  * file dell'utente senza averlo mai mostrato: e' il modo piu' silenzioso che
- * un editor abbia di distruggere dei dati. E' anche perche' ex_area_aggiungi()
+ * un editor abbia di distruggere dei dati. E' anche perche' ex_textarea_add_line()
  * rende 0 quando l'area e' piena, invece di smettere in silenzio.
  * --------------------------------------------------------------------------- */
 static int carica(const char *percorso)
@@ -128,7 +128,7 @@ static int carica(const char *percorso)
     int  fd, n, i;
     unsigned int col = 0;
 
-    ex_area_svuota(g_area);
+    ex_textarea_clear(g_area);
     g_parziale = 0;
 
     fd = open(percorso, O_RDONLY, 0);
@@ -142,7 +142,7 @@ static int carica(const char *percorso)
 
             if (c == '\n') {
                 riga[col] = '\0';
-                if (!ex_area_aggiungi(g_area, riga)) { g_parziale = 1; goto fine; }
+                if (!ex_textarea_add_line(g_area, riga)) { g_parziale = 1; goto fine; }
                 col = 0;
                 continue;
             }
@@ -152,11 +152,11 @@ static int carica(const char *percorso)
         }
     }
     riga[col] = '\0';
-    if (col && !ex_area_aggiungi(g_area, riga)) g_parziale = 1;
+    if (col && !ex_textarea_add_line(g_area, riga)) g_parziale = 1;
 
 fine:
     close(fd);
-    ex_area_pulita(g_area);
+    ex_textarea_set_unmodified(g_area);
     return 1;
 }
 
@@ -223,9 +223,9 @@ static int salva(void)
         return 0;
     }
 
-    n = ex_area_righe(g_area);
+    n = ex_textarea_line_count(g_area);
     for (i = 0; i < n; i++) {
-        const char  *r = ex_area_riga(g_area, i);
+        const char  *r = ex_textarea_line(g_area, i);
         unsigned int l = (unsigned int)strlen(r);
 
         if ((l && write(fd, r, l) != (ssize_t)l) || write(fd, "\n", 1) != 1) {
@@ -236,7 +236,7 @@ static int salva(void)
     }
     close(fd);
 
-    ex_area_pulita(g_area);
+    ex_textarea_set_unmodified(g_area);
     sprintf(g_avviso, "salvato: %u righe", n);
     return 1;
 }
@@ -265,14 +265,14 @@ static void stato_aggiorna(void)
                 g_vista.modificato ? "*" : "", nome, p + 1, d->par_n, AL[a < 4 ? a : 0],
                 g_parziale ? "  [PARZIALE: non si salva]" : "");
     } else {
-        ex_area_cursore(g_area, &r, &c);
+        ex_textarea_get_cursor(g_area, &r, &c);
         sprintf(s, "%s%s  -  riga %u/%u  col %u%s",
-                ex_area_modificato(g_area) ? "*" : "", nome,
-                r, ex_area_righe(g_area), c,
+                ex_textarea_is_modified(g_area) ? "*" : "", nome,
+                r, ex_textarea_line_count(g_area), c,
                 g_parziale ? "  [PARZIALE: non si salva]" : "");
     }
 
-    ex_testo_metti(g_stato, s);
+    ex_set_text(g_stato, s);
 }
 
 /* =============================================================================
@@ -286,28 +286,28 @@ static void stato_aggiorna(void)
  * sposta la vista di solito e' il cursore — un tasto, un Invio in fondo alla
  * pagina — e l'area lo sa gia' fare da se'. Quindi prima di ogni disegno la
  * barra si rimette dove l'area dice (barra_allinea); e quando e' la barra ad
- * essere trascinata, l'area parte da quella riga (ex_area_mostra_da) senza
+ * essere trascinata, l'area parte da quella riga (ex_textarea_scroll_to) senza
  * spostare il cursore: il primo tasto riporta la vista dove si scrive, come
  * in ogni editor.
  * ============================================================================= */
 static void barra_allinea(void)
 {
     unsigned int vis = 0;
-    unsigned int prima = ex_area_vista(g_area, &vis);
-    unsigned int n = ex_area_righe(g_area);
+    unsigned int prima = ex_textarea_get_view(g_area, &vis);
+    unsigned int n = ex_textarea_line_count(g_area);
 
     if (!g_barra) return;
-    ex_scorri_limiti(g_barra, n > vis ? n - vis : 0, vis);
-    ex_scorri_vai(g_barra, prima);
+    ex_scroll_set_range(g_barra, n > vis ? n - vis : 0, vis);
+    ex_scroll_set_pos(g_barra, prima);
 }
 
 static void ridisegna(void)
 {
     stato_aggiorna();
     barra_allinea();
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     vista_disegna_se();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 /* ! UNA SOLA FUNZIONE PER USCIRE, chiamata da tre parti — il menu, Ctrl+Q e il
@@ -328,7 +328,7 @@ static void esci_se_si_puo(void)
         strcpy(g_avviso, "non uscito: il testo e' ancora qui");
         return;
     }
-    ex_esci(0);
+    ex_quit(0);
 }
 
 static void istruzioni(void)
@@ -362,7 +362,7 @@ static void istruzioni(void)
  *
  * ! QUELLO CHE NON SI ANNULLA, DICHIARATO: la digitazione. I tasti se li
  * mangia il controllo areatesto e a questo programma non arrivano mai — c'e'
- * scritto anche accanto a EXM_TASTO qui sotto. Si annullano i tre COMANDI che
+ * scritto anche accanto a EXM_KEY qui sotto. Si annullano i tre COMANDI che
  * modificano il testo — taglia, incolla, cancella — e nient'altro: nemmeno il
  * caricamento di un file, che ha gia' la sua domanda prima di buttare via il
  * lavoro. Per la digitazione servirebbe che fosse il controllo areatesto a
@@ -409,11 +409,11 @@ static void passo_scarta_vecchio(void)
 /* Il testo di adesso, in un blocco solo. Rende 0 se non c'e' memoria. */
 static char *testo_di_adesso(unsigned int *byte)
 {
-    unsigned int n = ex_area_righe(g_area), i, tot = 1;
+    unsigned int n = ex_textarea_line_count(g_area), i, tot = 1;
     char        *b;
 
     for (i = 0; i < n; i++) {
-        const char *r = ex_area_riga(g_area, i);
+        const char *r = ex_textarea_line(g_area, i);
         unsigned int k = 0;
 
         while (r && r[k]) k++;
@@ -425,7 +425,7 @@ static char *testo_di_adesso(unsigned int *byte)
 
     tot = 0;
     for (i = 0; i < n; i++) {
-        const char *r = ex_area_riga(g_area, i);
+        const char *r = ex_textarea_line(g_area, i);
         unsigned int k = 0;
 
         while (r && r[k]) b[tot++] = r[k++];
@@ -469,14 +469,14 @@ static int annulla_fai(void)
     if (g_passi_n == 0) return 0;
 
     t = g_passi[g_passi_n - 1].testo;
-    ex_area_svuota(g_area);
+    ex_textarea_clear(g_area);
 
     i = 0;
     while (t[i]) {
         a = 0;
         while (t[i] && t[i] != '\n' && a < sizeof(riga) - 1) riga[a++] = t[i++];
         riga[a] = '\0';
-        ex_area_aggiungi(g_area, riga);
+        ex_textarea_add_line(g_area, riga);
         if (t[i] == '\n') i++;
     }
 
@@ -561,8 +561,8 @@ static int g_attivo = 0;            /* quale, fra 0 e g_ndoc - 1 */
 #define RTF_BARRA_H  26
 
 static ExRtfRiga *g_righe = 0;
-static ExFinestra g_rg, g_rc, g_rs, g_rfam, g_rcorpo, g_rcol;
-static ExFinestra g_rsin, g_rcen, g_rdes, g_rgiu;
+static ExWindow g_rg, g_rc, g_rs, g_rfam, g_rcorpo, g_rcol;
+static ExWindow g_rsin, g_rcen, g_rdes, g_rgiu;
 static int        g_mod_visto = -1;     /* the "modified" the tab title shows */
 
 static const unsigned int CORPI[] = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72 };
@@ -648,45 +648,45 @@ static int barra_rtf_segui(void)
 
     if (!g_rtf || !g_rg) return 0;
     s = exrtf_vista_stile(&g_vista);
-    if (ex_acceso(g_rg) != (int)s->grassetto)    { ex_accendi(g_rg, s->grassetto);    cambiato = 1; }
-    if (ex_acceso(g_rc) != (int)s->corsivo)      { ex_accendi(g_rc, s->corsivo);      cambiato = 1; }
-    if (ex_acceso(g_rs) != (int)s->sottolineato) { ex_accendi(g_rs, s->sottolineato); cambiato = 1; }
-    if (ex_voce_scelta(g_rfam) != s->famiglia)   { ex_voce_scegli(g_rfam, s->famiglia); cambiato = 1; }
+    if (ex_is_checked(g_rg) != (int)s->grassetto)    { ex_set_checked(g_rg, s->grassetto);    cambiato = 1; }
+    if (ex_is_checked(g_rc) != (int)s->corsivo)      { ex_set_checked(g_rc, s->corsivo);      cambiato = 1; }
+    if (ex_is_checked(g_rs) != (int)s->sottolineato) { ex_set_checked(g_rs, s->sottolineato); cambiato = 1; }
+    if (ex_item_get_selected(g_rfam) != s->famiglia)   { ex_item_select(g_rfam, s->famiglia); cambiato = 1; }
     for (i = 1; i < CORPI_N; i++) {
         unsigned int di = CORPI[i] > s->corpo ? CORPI[i] - s->corpo : s->corpo - CORPI[i];
         unsigned int dk = CORPI[k] > s->corpo ? CORPI[k] - s->corpo : s->corpo - CORPI[k];
         if (di < dk) k = i;
     }
-    if (ex_voce_scelta(g_rcorpo) != k) { ex_voce_scegli(g_rcorpo, k); cambiato = 1; }
+    if (ex_item_get_selected(g_rcorpo) != k) { ex_item_select(g_rcorpo, k); cambiato = 1; }
     for (i = 0; i < COLORI_N && COLORE[i] != s->colore; i++) ;
-    if (i < COLORI_N && ex_voce_scelta(g_rcol) != i) { ex_voce_scegli(g_rcol, i); cambiato = 1; }
+    if (i < COLORI_N && ex_item_get_selected(g_rcol) != i) { ex_item_select(g_rcol, i); cambiato = 1; }
     return cambiato;
 }
 
 /* Text area or view, and their bars; the keys go with them. */
 static void modo_mostra(void)
 {
-    ExFinestra barra[10];
+    ExWindow barra[10];
     int        i;
 
     barra[0] = g_rg;   barra[1] = g_rc;     barra[2] = g_rs;
     barra[3] = g_rfam; barra[4] = g_rcorpo; barra[5] = g_rcol;
     barra[6] = g_rsin; barra[7] = g_rcen;   barra[8] = g_rdes; barra[9] = g_rgiu;
-    ex_mostra(g_area, !g_rtf);
-    if (g_barra) ex_mostra(g_barra, !g_rtf);
-    for (i = 0; i < 10; i++) if (barra[i]) ex_mostra(barra[i], g_rtf);
+    ex_show(g_area, !g_rtf);
+    if (g_barra) ex_show(g_barra, !g_rtf);
+    for (i = 0; i < 10; i++) if (barra[i]) ex_show(barra[i], g_rtf);
     /* ! THE HIDDEN AREA MUST LOSE THE FOCUS, or the keys would go on being
      * typed into a text nobody sees. With no control focused they come to
      * this program, which gives them to the view. */
-    ex_tab_contenuto(g_f, g_rtf);           /* Tab is a letter of the text */
-    if (g_rtf) { ex_fuoco_via(g_f); barra_rtf_segui(); }
-    else       ex_fuoco(g_area);
+    ex_tab_content(g_f, g_rtf);           /* Tab is a letter of the text */
+    if (g_rtf) { ex_clear_focus(g_f); barra_rtf_segui(); }
+    else       ex_set_focus(g_area);
 }
 
 static void vista_disegna_se(void)
 {
     if (!g_rtf || !g_vista.doc) return;
-    g_vista.fuoco = (ex_fuoco_chi(g_f) == 0);
+    g_vista.fuoco = (ex_get_focus(g_f) == 0);
     exrtf_vista_disegna(&g_vista, g_f);
 }
 
@@ -701,13 +701,13 @@ static long vista_aggiorna(void)
     if (barra_rtf_segui() || g_mod_visto != g_vista.modificato) {
         g_mod_visto = g_vista.modificato;
         ridisegna();
-        return EX_NON_RIDISEGNARE;
+        return EX_NO_REDRAW;
     }
     stato_aggiorna();
     vista_disegna_se();
-    ex_ridisegna(g_stato);
-    ex_aggiorna(g_f);
-    return EX_NON_RIDISEGNARE;
+    ex_redraw(g_stato);
+    ex_update(g_f);
+    return EX_NO_REDRAW;
 }
 
 /* Tab i becomes an empty rich text document (the view shows it). */
@@ -729,8 +729,8 @@ static int rtf_diventa(int i)
     D->v_cur = D->v_anc = D->v_prima = 0;
     D->modificato = 0;
     passo_tutti_via();
-    ex_area_svuota(g_area);
-    ex_area_pulita(g_area);
+    ex_textarea_clear(g_area);
+    ex_textarea_set_unmodified(g_area);
     g_rtf = 1;
     vista_collega(i);
     modo_mostra();
@@ -833,9 +833,9 @@ static void formato(unsigned int id, long lp)
         return;
     }
     switch (id) {
-    case ID_R_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, (unsigned int)ex_acceso(g_rg)); break;
-    case ID_R_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, (unsigned int)ex_acceso(g_rc)); break;
-    case ID_R_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, (unsigned int)ex_acceso(g_rs)); break;
+    case ID_R_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, (unsigned int)ex_is_checked(g_rg)); break;
+    case ID_R_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, (unsigned int)ex_is_checked(g_rc)); break;
+    case ID_R_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, (unsigned int)ex_is_checked(g_rs)); break;
     case ID_M_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, EXRTF_INVERTI); break;
     case ID_M_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, EXRTF_INVERTI); break;
     case ID_M_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, EXRTF_INVERTI); break;
@@ -857,7 +857,7 @@ static void formato(unsigned int id, long lp)
     }
     /* ! THE KEYS GO BACK TO THE TEXT: a combo or a switch chosen with the mouse
      * took the focus, and the next letter typed would go to it. */
-    ex_fuoco_via(g_f);
+    ex_clear_focus(g_f);
     barra_rtf_segui();
 }
 
@@ -868,28 +868,28 @@ static void barra_rtf_crea(void)
 {
     int y = AREA_Y + 2, i;
 
-    g_rg = ex_crea("spunta", "G", EX_FIGLIO, 4, y, 34, 20, g_f, ID_R_G, 0);
-    g_rc = ex_crea("spunta", "C", EX_FIGLIO, 40, y, 34, 20, g_f, ID_R_C, 0);
-    g_rs = ex_crea("spunta", "S", EX_FIGLIO, 76, y, 34, 20, g_f, ID_R_S, 0);
-    g_rfam = ex_crea("combo", "", EX_FIGLIO, 116, y, 76, 20, g_f, ID_R_FAM, 0);
-    ex_voce_aggiungi(g_rfam, "Serif");
-    ex_voce_aggiungi(g_rfam, "Sans");
-    ex_voce_aggiungi(g_rfam, "Mono");
-    g_rcorpo = ex_crea("combo", "", EX_FIGLIO, 196, y, 52, 20, g_f, ID_R_CORPO, 0);
+    g_rg = ex_create("checkbox", "G", EX_CHILD, 4, y, 34, 20, g_f, ID_R_G, 0);
+    g_rc = ex_create("checkbox", "C", EX_CHILD, 40, y, 34, 20, g_f, ID_R_C, 0);
+    g_rs = ex_create("checkbox", "S", EX_CHILD, 76, y, 34, 20, g_f, ID_R_S, 0);
+    g_rfam = ex_create("combo", "", EX_CHILD, 116, y, 76, 20, g_f, ID_R_FAM, 0);
+    ex_item_add(g_rfam, "Serif");
+    ex_item_add(g_rfam, "Sans");
+    ex_item_add(g_rfam, "Mono");
+    g_rcorpo = ex_create("combo", "", EX_CHILD, 196, y, 52, 20, g_f, ID_R_CORPO, 0);
     for (i = 0; i < (int)CORPI_N; i++) {
         char t[8];
         snprintf(t, sizeof(t), "%u", CORPI[i]);
-        ex_voce_aggiungi(g_rcorpo, t);
+        ex_item_add(g_rcorpo, t);
     }
-    g_rcol = ex_crea("combo", "", EX_FIGLIO, 252, y, 92, 20, g_f, ID_R_COLORE, 0);
-    for (i = 0; i < (int)COLORI_N; i++) ex_voce_aggiungi(g_rcol, COLORE_NOME[i]);
-    g_rsin = ex_crea("pulsante", "Sin", EX_FIGLIO, 350, y, 40, 20, g_f, ID_R_SIN, 0);
-    g_rcen = ex_crea("pulsante", "Cen", EX_FIGLIO, 392, y, 40, 20, g_f, ID_R_CEN, 0);
-    g_rdes = ex_crea("pulsante", "Des", EX_FIGLIO, 434, y, 40, 20, g_f, ID_R_DES, 0);
-    g_rgiu = ex_crea("pulsante", "Giu", EX_FIGLIO, 476, y, 40, 20, g_f, ID_R_GIU, 0);
-    ex_voce_scegli(g_rfam, 0);
-    ex_voce_scegli(g_rcorpo, 4);                /* 12 */
-    ex_voce_scegli(g_rcol, 0);
+    g_rcol = ex_create("combo", "", EX_CHILD, 252, y, 92, 20, g_f, ID_R_COLORE, 0);
+    for (i = 0; i < (int)COLORI_N; i++) ex_item_add(g_rcol, COLORE_NOME[i]);
+    g_rsin = ex_create("button", "Sin", EX_CHILD, 350, y, 40, 20, g_f, ID_R_SIN, 0);
+    g_rcen = ex_create("button", "Cen", EX_CHILD, 392, y, 40, 20, g_f, ID_R_CEN, 0);
+    g_rdes = ex_create("button", "Des", EX_CHILD, 434, y, 40, 20, g_f, ID_R_DES, 0);
+    g_rgiu = ex_create("button", "Giu", EX_CHILD, 476, y, 40, 20, g_f, ID_R_GIU, 0);
+    ex_item_select(g_rfam, 0);
+    ex_item_select(g_rcorpo, 4);                /* 12 */
+    ex_item_select(g_rcol, 0);
 }
 
 static const char *base_nome(const char *p)
@@ -905,8 +905,8 @@ static void doc_titolo(int i, int modificato)
 
     snprintf(t, sizeof(t), "%s%s", modificato ? "*" : "",
              g_doc[i].perc[0] ? base_nome(g_doc[i].perc) : "senza nome");
-    if (strcmp(t, ex_voce_testo(g_schede, (unsigned int)i)) != 0) {
-        ex_voce_rinomina(g_schede, (unsigned int)i, t);
+    if (strcmp(t, ex_item_text(g_schede, (unsigned int)i)) != 0) {
+        ex_item_rename(g_schede, (unsigned int)i, t);
     }
 }
 
@@ -915,7 +915,7 @@ static void doc_segui_titolo(void)
 {
     strncpy(g_doc[g_attivo].perc, g_perc, PERC_MAX - 1);
     g_doc[g_attivo].perc[PERC_MAX - 1] = '\0';
-    doc_titolo(g_attivo, g_rtf ? g_vista.modificato : ex_area_modificato(g_area));
+    doc_titolo(g_attivo, g_rtf ? g_vista.modificato : ex_textarea_is_modified(g_area));
 }
 
 /* La scheda scelta lascia l'area: tutto quel che serve per riaverla. */
@@ -947,9 +947,9 @@ static int doc_metti_via(void)
     strncpy(D->perc, g_perc, PERC_MAX - 1);
     D->perc[PERC_MAX - 1] = '\0';
     D->parziale   = g_parziale;
-    D->modificato = ex_area_modificato(g_area);
-    ex_area_cursore(g_area, &D->riga, &D->col);
-    D->vista      = ex_area_vista(g_area, 0);
+    D->modificato = ex_textarea_is_modified(g_area);
+    ex_textarea_get_cursor(g_area, &D->riga, &D->col);
+    D->vista      = ex_textarea_get_view(g_area, 0);
     D->testo      = t;
     memcpy(D->passi, g_passi, sizeof(g_passi));
     D->passi_n    = g_passi_n;
@@ -969,12 +969,12 @@ static void area_da_testo(const char *t)
     char         riga[512];
     unsigned int i = 0, a;
 
-    ex_area_svuota(g_area);
+    ex_textarea_clear(g_area);
     while (t && t[i]) {
         a = 0;
         while (t[i] && t[i] != '\n' && a < sizeof(riga) - 1) riga[a++] = t[i++];
         riga[a] = '\0';
-        ex_area_aggiungi(g_area, riga);
+        ex_textarea_add_line(g_area, riga);
         if (t[i] == '\n') i++;
     }
 }
@@ -985,9 +985,9 @@ static void area_segna_modificata(void)
 {
     char r[512];
 
-    strncpy(r, ex_area_riga(g_area, 0), sizeof(r) - 1);
+    strncpy(r, ex_textarea_line(g_area, 0), sizeof(r) - 1);
     r[sizeof(r) - 1] = '\0';
-    ex_area_riga_metti(g_area, 0, r);
+    ex_textarea_set_line(g_area, 0, r);
 }
 
 /* La scheda i torna nell'area. */
@@ -1005,31 +1005,31 @@ static void doc_riprendi(int i)
         g_perc[PERC_MAX - 1] = '\0';
         g_parziale = D->parziale;
         vista_collega(i);
-        ex_voce_scegli(g_schede, (unsigned int)i);
+        ex_item_select(g_schede, (unsigned int)i);
         modo_mostra();
         return;
     }
     g_rtf = 0;
     area_da_testo(D->testo);
     if (D->testo) { free(D->testo); D->testo = 0; }
-    ex_area_pulita(g_area);
+    ex_textarea_set_unmodified(g_area);
     if (D->modificato) area_segna_modificata();
-    ex_area_vai(g_area, D->riga ? D->riga - 1 : 0, D->col ? D->col - 1 : 0);
-    ex_area_mostra_da(g_area, D->vista);
+    ex_textarea_set_cursor(g_area, D->riga ? D->riga - 1 : 0, D->col ? D->col - 1 : 0);
+    ex_textarea_scroll_to(g_area, D->vista);
     strncpy(g_perc, D->perc, PERC_MAX - 1);
     g_perc[PERC_MAX - 1] = '\0';
     g_parziale = D->parziale;
     memcpy(g_passi, D->passi, sizeof(g_passi));
     g_passi_n    = D->passi_n;
     g_passi_byte = D->passi_byte;
-    ex_voce_scegli(g_schede, (unsigned int)i);
+    ex_item_select(g_schede, (unsigned int)i);
     modo_mostra();
 }
 
 static void doc_scegli(int i)
 {
     if (i == g_attivo || i < 0 || i >= g_ndoc) return;
-    if (!doc_metti_via()) { ex_voce_scegli(g_schede, (unsigned int)g_attivo); return; }
+    if (!doc_metti_via()) { ex_item_select(g_schede, (unsigned int)g_attivo); return; }
     doc_riprendi(i);
     g_avviso[0] = '\0';
 }
@@ -1039,24 +1039,24 @@ static int doc_nuovo(void)
 {
     Doc *D;
 
-    if (g_ndoc >= DOC_MAX || !ex_voce_aggiungi(g_schede, "senza nome")) {
+    if (g_ndoc >= DOC_MAX || !ex_item_add(g_schede, "senza nome")) {
         sprintf(g_avviso, "al massimo %d file aperti: chiudine uno", DOC_MAX);
         return 0;
     }
     if (g_ndoc > 0 && !doc_metti_via()) {
-        ex_voce_togli(g_schede, (unsigned int)g_ndoc);
+        ex_item_remove(g_schede, (unsigned int)g_ndoc);
         return 0;
     }
     D = &g_doc[g_ndoc];
     memset(D, 0, sizeof(*D));
     D->usato = 1;
     g_attivo = g_ndoc++;
-    ex_area_svuota(g_area);
-    ex_area_pulita(g_area);
+    ex_textarea_clear(g_area);
+    ex_textarea_set_unmodified(g_area);
     g_perc[0] = '\0';
     g_parziale = 0;
     g_rtf = 0;
-    ex_voce_scegli(g_schede, (unsigned int)g_attivo);
+    ex_item_select(g_schede, (unsigned int)g_attivo);
     modo_mostra();
     return 1;
 }
@@ -1066,8 +1066,8 @@ static int doc_nuovo(void)
 static int doc_vergine(void)
 {
     if (g_rtf) return 0;
-    return g_perc[0] == '\0' && !ex_area_modificato(g_area) &&
-           ex_area_righe(g_area) <= 1 && ex_area_riga(g_area, 0)[0] == '\0';
+    return g_perc[0] == '\0' && !ex_textarea_is_modified(g_area) &&
+           ex_textarea_line_count(g_area) <= 1 && ex_textarea_line(g_area, 0)[0] == '\0';
 }
 
 /* Apre `perc` in una scheda: quella dove e' gia' aperto, se c'e'. */
@@ -1095,7 +1095,7 @@ static void doc_apri(const char *perc)
             strcpy(g_avviso, "non c'era: documento RTF nuovo");
         return;
     }
-    if (carica(g_perc)) sprintf(g_avviso, "aperto: %u righe", ex_area_righe(g_area));
+    if (carica(g_perc)) sprintf(g_avviso, "aperto: %u righe", ex_textarea_line_count(g_area));
     else                strcpy(g_avviso, "non c'era: file nuovo");
     passo_tutti_via();
 }
@@ -1109,7 +1109,7 @@ static void doc_chiudi(int i)
     if (i < 0 || i >= g_ndoc) return;
     if (i != g_attivo) doc_scegli(i);
     if (i != g_attivo) return;                  /* non si e' potuta scegliere */
-    mod = g_rtf ? g_vista.modificato : ex_area_modificato(g_area);
+    mod = g_rtf ? g_vista.modificato : ex_textarea_is_modified(g_area);
     if (mod) {
         char q[PERC_MAX + 64];
         snprintf(q, sizeof(q), "%s e' cambiato. Chiudere senza salvare?",
@@ -1124,8 +1124,8 @@ static void doc_chiudi(int i)
     g_rtf = 0;
     if (g_ndoc == 1) {                          /* l'ultima: resta vuota */
         modo_mostra();
-        ex_area_svuota(g_area);
-        ex_area_pulita(g_area);
+        ex_textarea_clear(g_area);
+        ex_textarea_set_unmodified(g_area);
         g_perc[0] = '\0';
         g_parziale = 0;
         strcpy(g_avviso, "chiuso");
@@ -1134,7 +1134,7 @@ static void doc_chiudi(int i)
     for (k = i; k + 1 < g_ndoc; k++) g_doc[k] = g_doc[k + 1];
     memset(&g_doc[g_ndoc - 1], 0, sizeof(Doc));
     g_ndoc--;
-    ex_voce_togli(g_schede, (unsigned int)i);
+    ex_item_remove(g_schede, (unsigned int)i);
     /* la vicina di destra, o l'ultima */
     g_attivo = (i < g_ndoc) ? i : g_ndoc - 1;
     doc_riprendi(g_attivo);
@@ -1148,7 +1148,7 @@ static int doc_modificati(void)
 
     for (i = 0; i < g_ndoc; i++)
         n += (i != g_attivo) ? g_doc[i].modificato :
-             g_rtf ? g_vista.modificato : ex_area_modificato(g_area);
+             g_rtf ? g_vista.modificato : ex_textarea_is_modified(g_area);
     return n;
 }
 
@@ -1187,13 +1187,13 @@ static char g_ago[AGO_MAX] = "";
 static char g_nuovo[AGO_MAX] = "";
 static int  g_sost_una = 0;             /* F3 replaces, after «Una» */
 
-/* ! THE CURSOR FROM ZERO. ex_area_cursore() counts from ONE — it feeds the
- * status line, «riga 1/1 col 1» — while ex_area_vai() and
- * ex_area_seleziona() count from zero. Mixing them sent every search one
+/* ! THE CURSOR FROM ZERO. ex_textarea_get_cursor() counts from ONE — it feeds the
+ * status line, «riga 1/1 col 1» — while ex_textarea_set_cursor() and
+ * ex_textarea_select() count from zero. Mixing them sent every search one
  * line down: «Una» replaced nothing (tools/prova_edit_cerca.sh, 27 Sept). */
 static void cursore0(unsigned int *r, unsigned int *c)
 {
-    ex_area_cursore(g_area, r, c);
+    ex_textarea_get_cursor(g_area, r, c);
     if (*r) (*r)--;
     if (*c) (*c)--;
 }
@@ -1201,10 +1201,10 @@ static void cursore0(unsigned int *r, unsigned int *c)
 /* The first occurrence at or after (r, c); 1 if found. */
 static int trova_da(unsigned int r, unsigned int c, unsigned int *fr, unsigned int *fc)
 {
-    unsigned int n = ex_area_righe(g_area), k;
+    unsigned int n = ex_textarea_line_count(g_area), k;
 
     for (k = r; k < n; k++) {
-        const char *riga = ex_area_riga(g_area, k);
+        const char *riga = ex_textarea_line(g_area, k);
         const char *p;
 
         if (!riga) continue;
@@ -1228,7 +1228,7 @@ static int avanti(void)
         }
         strcpy(g_avviso, "ricerca ripresa dall'inizio");
     }
-    ex_area_seleziona(g_area, fr, fc, fc + (unsigned int)strlen(g_ago));
+    ex_textarea_select(g_area, fr, fc, fc + (unsigned int)strlen(g_ago));
     return 1;
 }
 
@@ -1243,11 +1243,11 @@ static int indietro(void)
     /* The last occurrence that ENDS before the selection starts: the cursor
      * is at the end of what was found, so «before» is c - l on its line. */
     for (giro = 0; giro < 2; giro++) {
-        unsigned int n = ex_area_righe(g_area);
+        unsigned int n = ex_textarea_line_count(g_area);
         unsigned int da = giro ? n : r + 1;
 
         for (k = da; k-- > 0; ) {
-            const char *riga = ex_area_riga(g_area, k), *p, *ultima = 0;
+            const char *riga = ex_textarea_line(g_area, k), *p, *ultima = 0;
 
             if (!riga) continue;
             for (p = strstr(riga, g_ago); p; p = strstr(p + 1, g_ago)) {
@@ -1258,7 +1258,7 @@ static int indietro(void)
             if (ultima) {
                 unsigned int col = (unsigned int)(ultima - riga);
                 if (giro) strcpy(g_avviso, "ricerca ripresa dalla fine");
-                ex_area_seleziona(g_area, k, col, col + l);
+                ex_textarea_select(g_area, k, col, col + l);
                 return 1;
             }
         }
@@ -1271,7 +1271,7 @@ static int indietro(void)
  * c < 0). Returns how many. */
 static int sostituisci_in(unsigned int r, int c)
 {
-    const char  *riga = ex_area_riga(g_area, r);
+    const char  *riga = ex_textarea_line(g_area, r);
     char         nuova[512];
     unsigned int l = (unsigned int)strlen(g_ago), n = 0, i = 0;
     int          fatte = 0, tutte = c < 0;
@@ -1292,7 +1292,7 @@ static int sostituisci_in(unsigned int r, int c)
         nuova[n++] = riga[i++];
     }
     nuova[n] = '\0';
-    if (fatte) ex_area_riga_metti(g_area, r, nuova);
+    if (fatte) ex_textarea_set_line(g_area, r, nuova);
     return fatte;
 }
 
@@ -1310,14 +1310,14 @@ static void sostituisci_una(void)
     const char  *riga;
 
     cursore0(&r, &c);
-    riga = ex_area_riga(g_area, r);
+    riga = ex_textarea_line(g_area, r);
     if (!riga || c < l || strncmp(riga + c - l, g_ago, l) != 0) {
         if (!avanti()) return;          /* nothing selected yet: find it */
         cursore0(&r, &c);
     }
     annulla_segna();
     sostituisci_in(r, (int)(c - l));
-    ex_area_vai(g_area, r, c - l + (unsigned int)strlen(g_nuovo));
+    ex_textarea_set_cursor(g_area, r, c - l + (unsigned int)strlen(g_nuovo));
     if (avanti()) strcpy(g_avviso, "sostituita; F3 sostituisce la prossima");
     else          strcpy(g_avviso, "sostituita l'ultima");
 }
@@ -1333,9 +1333,9 @@ static void sostituisci(void)
     if (!g_ago[0]) return;
     if (!ex_dlg_chiedi("Sostituisci", "Sostituire con:", "Avanti", g_nuovo, AGO_MAX)) return;
 
-    n = ex_area_righe(g_area);
+    n = ex_textarea_line_count(g_area);
     for (k = 0; k < n; k++) {
-        const char *riga = ex_area_riga(g_area, k), *p;
+        const char *riga = ex_textarea_line(g_area, k), *p;
         if (!riga) continue;
         for (p = strstr(riga, g_ago); p; p = strstr(p + strlen(g_ago), g_ago)) quante++;
     }
@@ -1356,7 +1356,7 @@ static void sostituisci(void)
     }
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     unsigned int c;
 
@@ -1365,7 +1365,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * E' il motivo per cui aggiungere i menu non ha voluto una riga di codice
      * nuovo qui dentro: una voce di menu E' un pulsante, detto in un altro
      * posto. */
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         g_avviso[0] = '\0';
         if (wp == ID_SALVA)     { salva();            break; }
         if (wp == ID_NUOVO)     { doc_nuovo();        break; }
@@ -1411,13 +1411,13 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             int n;
 
             annulla_segna();
-            n = ex_area_taglia(g_area);
+            n = ex_textarea_cut(g_area);
             if (n) sprintf(g_avviso, "tagliati %d byte", n);
             else   strcpy(g_avviso, "non c'e' niente di scelto");
             break;
         }
         if (wp == ID_COPIA)     {
-            int n = ex_area_copia(g_area);
+            int n = ex_textarea_copy(g_area);
             if (n) sprintf(g_avviso, "copiati %d byte", n);
             else   strcpy(g_avviso, "non c'e' niente di scelto");
             break;
@@ -1426,29 +1426,29 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             int n;
 
             annulla_segna();
-            n = ex_area_incolla(g_area);
+            n = ex_textarea_paste(g_area);
             if (n) sprintf(g_avviso, "incollati %d byte", n);
             else   strcpy(g_avviso, "gli appunti sono vuoti");
             break;
         }
         if (wp == ID_CANCELLA)  {
             annulla_segna();
-            if (!ex_area_cancella(g_area))
+            if (!ex_textarea_delete(g_area))
                 strcpy(g_avviso, "non c'e' niente di scelto");
             break;
         }
-        if (wp == ID_SELTUTTO)  { ex_area_seleziona_tutto(g_area); break; }
+        if (wp == ID_SELTUTTO)  { ex_textarea_select_all(g_area); break; }
         if (wp == ID_CERCA)      { cerca();       break; }
         if (wp == ID_AVANTI)     { if (g_sost_una) sostituisci_una(); else avanti(); break; }
         if (wp == ID_INDIETRO)   { indietro();    break; }
         if (wp == ID_SOSTITUISCI) { sostituisci(); break; }
 
-        if (wp == ID_BARRA)      { ex_area_mostra_da(g_area, (unsigned int)lp); break; }
+        if (wp == ID_BARRA)      { ex_textarea_scroll_to(g_area, (unsigned int)lp); break; }
         if (wp == ID_ISTRUZIONI) { istruzioni();  break; }
         if (wp == ID_INFO)       { informazioni(); break; }
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         /* ! QUI ARRIVANO SOLO LE SCORCIATOIE. Le lettere, le frecce, il
          * Backspace e l'Invio li ha gia' mangiati l'area di testo: se sono
          * arrivate fin qui, non erano per lei. */
@@ -1469,7 +1469,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 }
             }
             if (exrtf_vista_tasto(&g_vista, wp)) return vista_aggiorna();
-            return ex_procedura_base(f, msg, wp, lp);
+            return ex_default_proc(f, msg, wp, lp);
         }
 
         /* ! LE SCORCIATOIE LE ESEGUE L'APPLICAZIONE, NON IL MENU. Il menu le
@@ -1480,16 +1480,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp & KBD_MOD_CTRL) {
             if (c == 's' || c == 'S') { salva();               break; }
             if (c == 'x' || c == 'X') { annulla_segna();
-                                        ex_area_taglia(g_area);  break; }
-            if (c == 'c' || c == 'C') { ex_area_copia(g_area);   break; }
+                                        ex_textarea_cut(g_area);  break; }
+            if (c == 'c' || c == 'C') { ex_textarea_copy(g_area);   break; }
             if (c == 'v' || c == 'V') { annulla_segna();
-                                        ex_area_incolla(g_area); break; }
+                                        ex_textarea_paste(g_area); break; }
             if (c == 'z' || c == 'Z') {
                 if (annulla_fai()) strcpy(g_avviso, "annullato");
                 else               strcpy(g_avviso, "non c'e' niente da annullare");
                 break;
             }
-            if (c == 'a' || c == 'A') { ex_area_seleziona_tutto(g_area); break; }
+            if (c == 'a' || c == 'A') { ex_textarea_select_all(g_area); break; }
             if (c == 'q' || c == 'Q') { esci_se_si_puo();      break; }
             if (c == 'n' || c == 'N') { doc_nuovo();           break; }
             if (c == 'o' || c == 'O') { apri_con_dialogo();    break; }
@@ -1504,15 +1504,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             else                    avanti();
             break;
         }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
 
     /* La X di una scheda, o Ctrl+W (@TOOLKIT-SCHEDE). */
-    case EXM_SCHEDA_CHIUDI:
+    case EXM_TAB_CLOSE:
         g_avviso[0] = '\0';
         doc_chiudi((int)lp);
         break;
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         /* ! CHIUDERE IN SILENZIO UN TESTO MODIFICATO E' IL MODO PIU' FACILE DI
          * PERDERE IL LAVORO DI QUALCUNO. La risposta prudente e' «no»:
          * chiudere il dialogo o battere Esc lascia l'editor aperto col testo
@@ -1522,7 +1522,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     /* La finestra ha cambiato misura: l'area di testo prende tutto lo spazio
      * che resta fra la barra dei menu e la riga di stato. */
-    case EXM_MISURA: {
+    case EXM_SIZE: {
         int w = EX_X(lp), h = EX_Y(lp);
 
         g_fw = w;
@@ -1533,21 +1533,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             exrtf_vista_posto(&g_vista, vx, vy, vw, vh);
         }
 
-        ex_misura(g_area, w - AREA_X * 2 - BARRA_W, h - AREA_Y - BASSO);
-        if (g_schede) ex_misura(g_schede, w - AREA_X * 2, SCHEDE_H);
+        ex_resize(g_area, w - AREA_X * 2 - BARRA_W, h - AREA_Y - BASSO);
+        if (g_schede) ex_resize(g_schede, w - AREA_X * 2, SCHEDE_H);
         if (g_barra) {
-            ex_sposta(g_barra, w - AREA_X - BARRA_W, AREA_Y);
-            ex_misura(g_barra, BARRA_W, h - AREA_Y - BASSO);
+            ex_move(g_barra, w - AREA_X - BARRA_W, AREA_Y);
+            ex_resize(g_barra, BARRA_W, h - AREA_Y - BASSO);
         }
-        ex_sposta(g_stato, 6, h - 22);
-        ex_misura(g_stato, w - 12, 16);
+        ex_move(g_stato, 6, h - 22);
+        ex_resize(g_stato, w - 12, 16);
         break;
     }
 
     /* ! IL DISEGNO CHE ARRIVA DAL TOOLKIT — dopo ogni tasto battuto
      * nell'area — passa di qui per rimettere la barra dove l'area e' andata;
      * senza, la barra resterebbe ferma mentre si scrive in fondo al testo. */
-    case EXM_DISEGNA: {
+    case EXM_PAINT: {
         long r;
 
         /* ! E LA RIGA DI STATO CON LEI: prima di qui nessuno la rifaceva
@@ -1555,35 +1555,35 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * mentre si scendeva di pagina in pagina. */
         stato_aggiorna();
         barra_allinea();
-        r = ex_procedura_base(f, msg, wp, lp);
-        /* The view over the grey the base painted; ex_aggiorna puts an open
+        r = ex_default_proc(f, msg, wp, lp);
+        /* The view over the grey the base painted; ex_update puts an open
          * menu or combo back on top of it. */
-        if (g_rtf) { vista_disegna_se(); ex_aggiorna(g_f); }
+        if (g_rtf) { vista_disegna_se(); ex_update(g_f); }
         return r;
     }
 
     /* The mouse on the rich text view (@RTF). */
-    case EXM_MOUSE_GIU:
+    case EXM_MOUSE_DOWN:
         if (g_rtf && exrtf_vista_clic(&g_vista, EX_X(lp), EX_Y(lp), (wp & KBD_MOD_SHIFT) != 0)) {
-            ex_fuoco_via(g_f);
+            ex_clear_focus(g_f);
             return vista_aggiorna();
         }
-        return ex_procedura_base(f, msg, wp, lp);
-    case EXM_MOUSE_MOSSO:
+        return ex_default_proc(f, msg, wp, lp);
+    case EXM_MOUSE_MOVE:
         if (g_rtf && exrtf_vista_trascina(&g_vista, EX_X(lp), EX_Y(lp))) return vista_aggiorna();
-        return ex_procedura_base(f, msg, wp, lp);
-    case EXM_MOUSE_SU:
+        return ex_default_proc(f, msg, wp, lp);
+    case EXM_MOUSE_UP:
         if (g_rtf) exrtf_vista_su(&g_vista);
-        return ex_procedura_base(f, msg, wp, lp);
-    case EXM_DOPPIOCLIC:
+        return ex_default_proc(f, msg, wp, lp);
+    case EXM_DOUBLE_CLICK:
         if (g_rtf && exrtf_vista_doppio(&g_vista, EX_X(lp), EX_Y(lp))) return vista_aggiorna();
-        return ex_procedura_base(f, msg, wp, lp);
-    case EXM_ROTELLA:
+        return ex_default_proc(f, msg, wp, lp);
+    case EXM_WHEEL:
         if (g_rtf) { exrtf_vista_rotella(&g_vista, (int)wp); return vista_aggiorna(); }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
     ridisegna();
@@ -1595,12 +1595,12 @@ int main(int argc, char **argv)
     ExMsg m;
 
 
-    /* ! EX_AUTO E EX_RIDIM, e sono due richieste diverse. EX_AUTO dice «mettila
+    /* ! EX_AUTO E EX_RESIZABLE, e sono due richieste diverse. EX_AUTO dice «mettila
      * tu», ed e' cio' che permette di aprire due editor senza che il secondo
-     * finisca esattamente sopra il primo; EX_RIDIM dice che la finestra si puo'
-     * tirare per l'angolo, e impegna a rispondere a EXM_MISURA. */
-    g_f = ex_crea("finestra", "ExEditor",
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+     * finisca esattamente sopra il primo; EX_RESIZABLE dice che la finestra si puo'
+     * tirare per l'angolo, e impegna a rispondere a EXM_SIZE. */
+    g_f = ex_create("window", "ExEditor",
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
         printf("exeditor: il server a finestre non risponde.\n");
@@ -1612,50 +1612,50 @@ int main(int argc, char **argv)
      * aggiunti accanto. Una fila di pulsanti che fa le stesse cose di un menu
      * e' due posti in cui leggere cosa sa fare il programma, e il secondo si
      * dimentica di crescere: «Taglia» non ci sarebbe mai finito. */
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Nuovo\tCtrl+N",    ID_NUOVO);
-    ex_menu_voce(g_menu, "File", "Nuovo documento RTF", ID_NUOVO_RTF);
-    ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O",  ID_APRI);
-    ex_menu_voce(g_menu, "File", "Chiudi\tCtrl+W",   ID_CHIUDI);
-    ex_menu_voce(g_menu, "File", "-",                0);
-    ex_menu_voce(g_menu, "File", "Salva\tCtrl+S",     ID_SALVA);
-    ex_menu_voce(g_menu, "File", "Salva con nome...", ID_SALVACOME);
-    ex_menu_voce(g_menu, "File", "Ricarica",         ID_RICARICA);
-    ex_menu_voce(g_menu, "File", "-",                0);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",      ID_ESCI);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Nuovo\tCtrl+N",    ID_NUOVO);
+    ex_menu_add_item(g_menu, "File", "Nuovo documento RTF", ID_NUOVO_RTF);
+    ex_menu_add_item(g_menu, "File", "Apri...\tCtrl+O",  ID_APRI);
+    ex_menu_add_item(g_menu, "File", "Chiudi\tCtrl+W",   ID_CHIUDI);
+    ex_menu_add_item(g_menu, "File", "-",                0);
+    ex_menu_add_item(g_menu, "File", "Salva\tCtrl+S",     ID_SALVA);
+    ex_menu_add_item(g_menu, "File", "Salva con nome...", ID_SALVACOME);
+    ex_menu_add_item(g_menu, "File", "Ricarica",         ID_RICARICA);
+    ex_menu_add_item(g_menu, "File", "-",                0);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q",      ID_ESCI);
 
-    ex_menu_voce(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
-    ex_menu_voce(g_menu, "Modifica", "-",               0);
-    ex_menu_voce(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
-    ex_menu_voce(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
-    ex_menu_voce(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
-    ex_menu_voce(g_menu, "Modifica", "-",              0);
-    ex_menu_voce(g_menu, "Modifica", "Cancella\tCanc",  ID_CANCELLA);
-    ex_menu_voce(g_menu, "Modifica", "Seleziona tutto\tCtrl+A", ID_SELTUTTO);
-    ex_menu_voce(g_menu, "Modifica", "-",               0);
-    ex_menu_voce(g_menu, "Modifica", "Cerca...\tCtrl+F", ID_CERCA);
-    ex_menu_voce(g_menu, "Modifica", "Trova successivo\tF3", ID_AVANTI);
-    ex_menu_voce(g_menu, "Modifica", "Trova precedente\tShift+F3", ID_INDIETRO);
-    ex_menu_voce(g_menu, "Modifica", "Sostituisci...\tCtrl+H", ID_SOSTITUISCI);
+    ex_menu_add_item(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
+    ex_menu_add_item(g_menu, "Modifica", "-",               0);
+    ex_menu_add_item(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
+    ex_menu_add_item(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
+    ex_menu_add_item(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
+    ex_menu_add_item(g_menu, "Modifica", "-",              0);
+    ex_menu_add_item(g_menu, "Modifica", "Cancella\tCanc",  ID_CANCELLA);
+    ex_menu_add_item(g_menu, "Modifica", "Seleziona tutto\tCtrl+A", ID_SELTUTTO);
+    ex_menu_add_item(g_menu, "Modifica", "-",               0);
+    ex_menu_add_item(g_menu, "Modifica", "Cerca...\tCtrl+F", ID_CERCA);
+    ex_menu_add_item(g_menu, "Modifica", "Trova successivo\tF3", ID_AVANTI);
+    ex_menu_add_item(g_menu, "Modifica", "Trova precedente\tShift+F3", ID_INDIETRO);
+    ex_menu_add_item(g_menu, "Modifica", "Sostituisci...\tCtrl+H", ID_SOSTITUISCI);
 
-    ex_menu_voce(g_menu, "Formato", "Grassetto\tCtrl+B",    ID_M_G);
-    ex_menu_voce(g_menu, "Formato", "Corsivo\tCtrl+I",      ID_M_C);
-    ex_menu_voce(g_menu, "Formato", "Sottolineato\tCtrl+U", ID_M_S);
-    ex_menu_voce(g_menu, "Formato", "-",                    0);
-    ex_menu_voce(g_menu, "Formato", "Allinea a sinistra",   ID_R_SIN);
-    ex_menu_voce(g_menu, "Formato", "Centra",               ID_R_CEN);
-    ex_menu_voce(g_menu, "Formato", "Allinea a destra",     ID_R_DES);
-    ex_menu_voce(g_menu, "Formato", "Giustifica",           ID_R_GIU);
+    ex_menu_add_item(g_menu, "Formato", "Grassetto\tCtrl+B",    ID_M_G);
+    ex_menu_add_item(g_menu, "Formato", "Corsivo\tCtrl+I",      ID_M_C);
+    ex_menu_add_item(g_menu, "Formato", "Sottolineato\tCtrl+U", ID_M_S);
+    ex_menu_add_item(g_menu, "Formato", "-",                    0);
+    ex_menu_add_item(g_menu, "Formato", "Allinea a sinistra",   ID_R_SIN);
+    ex_menu_add_item(g_menu, "Formato", "Centra",               ID_R_CEN);
+    ex_menu_add_item(g_menu, "Formato", "Allinea a destra",     ID_R_DES);
+    ex_menu_add_item(g_menu, "Formato", "Giustifica",           ID_R_GIU);
 
-    ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
-    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
+    ex_menu_add_item(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
+    ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
 
     /* Le schede: una per file, anche quando il file e' uno solo. */
-    g_schede = ex_crea("tab", "", EX_FIGLIO, AREA_X, MENU_H + 2,
+    g_schede = ex_create("tab", "", EX_CHILD, AREA_X, MENU_H + 2,
                        FIN_W - AREA_X * 2, SCHEDE_H, g_f, ID_SCHEDE, 0);
-    ex_voci_schede(g_schede, 1);
+    ex_items_as_tabs(g_schede, 1);
 
-    g_area = ex_crea("areatesto", "", EX_FIGLIO,
+    g_area = ex_create("textarea", "", EX_CHILD,
                      AREA_X, AREA_Y, FIN_W - AREA_X * 2 - BARRA_W,
                      FIN_H - AREA_Y - BASSO, g_f, 0, 0);
     if (!g_area) {
@@ -1664,11 +1664,11 @@ int main(int argc, char **argv)
     }
 
     /* Piu' alta che larga: il toolkit la fa verticale da se'. */
-    g_barra = ex_crea("scorrimento", "", EX_FIGLIO,
+    g_barra = ex_create("scrollbar", "", EX_CHILD,
                       FIN_W - AREA_X - BARRA_W, AREA_Y, BARRA_W,
                       FIN_H - AREA_Y - BASSO, g_f, ID_BARRA, 0);
 
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO,
+    g_stato = ex_create("label", "", EX_CHILD,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);
 
     /* The rich text tabs' format bar, hidden while a text tab is chosen. */
@@ -1678,7 +1678,7 @@ int main(int argc, char **argv)
      * che i tasti se li merita. La barra dei menu il fuoco non lo prende — un
      * menu che tenesse la tastiera renderebbe muta l'area — e risponde solo a
      * F10, che a menu chiuso non serve a nessun altro. */
-    ex_fuoco(g_area);
+    ex_set_focus(g_area);
 
     /* ! OGNI ARGOMENTO E' UN FILE, ognuno nella sua scheda: `edit a.c b.h`. */
     doc_nuovo();
@@ -1690,7 +1690,7 @@ int main(int argc, char **argv)
                 printf("exeditor: %s, RTF, %u paragrafi%s\n", g_perc, g_vista.doc->par_n,
                        g_parziale ? " (PARZIALE)" : "");
             else
-                printf("exeditor: %s, %u righe%s\n", g_perc, ex_area_righe(g_area),
+                printf("exeditor: %s, %u righe%s\n", g_perc, ex_textarea_line_count(g_area),
                        g_parziale ? " (PARZIALE)" : "");
         }
         if (argc < 2) printf("exeditor: file nuovo, senza nome\n");
@@ -1700,7 +1700,7 @@ int main(int argc, char **argv)
 
     ridisegna();
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }
 

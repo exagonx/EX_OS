@@ -205,11 +205,12 @@ FINEPY
 passi_a() {
     local dx=$1 dy=$2 i d rx ry
     d=$(( (dx < dy ? dx : dy) / 10 ))
-    for ((i = 0; i < d; i++)); do printf '%s\n' "mon:mouse_move 10 10@0"; done
+    # A 50 ms l'uno, come un mouse vero, e non quaranta nello stesso istante.
+    for ((i = 0; i < d; i++)); do printf '%s\n' "mon:mouse_move 10 10@0.05"; done
     rx=$(( dx - d * 10 )); ry=$(( dy - d * 10 ))
-    for ((i = 10; i <= rx; i += 10)); do printf '%s\n' "mon:mouse_move 10 0@0"; done
-    for ((i = 10; i <= ry; i += 10)); do printf '%s\n' "mon:mouse_move 0 10@0"; done
-    printf '%s\n' "mon:mouse_move $(( rx % 10 )) $(( ry % 10 ))@0"
+    for ((i = 10; i <= rx; i += 10)); do printf '%s\n' "mon:mouse_move 10 0@0.05"; done
+    for ((i = 10; i <= ry; i += 10)); do printf '%s\n' "mon:mouse_move 0 10@0.05"; done
+    printf '%s\n' "mon:mouse_move $(( rx % 10 )) $(( ry % 10 ))@1"
 }
 {
     avvia "/exwin/bin/archivi /disk/grande.zip "
@@ -227,7 +228,11 @@ else
     {
         avvia "/exwin/bin/archivi /disk/grande.zip "
         for i in $(seq 1 5); do echo "mon:mouse_move -600 -600@0"; done
-        passi_a $(( CX + 384 )) $(( CY + 31 ))
+        # ! +9 IN TUTTI E DUE I SENSI (3 ottobre 2026): misurato sulla foto, il
+        # puntatore si ferma 9 pixel prima del bersaglio, e a CY+31 cadeva sul
+        # filo alto dell'intestazione, dove il clic non ordina. Cosi' cade a
+        # meta' della cella «Byte».
+        passi_a $(( CX + 393 )) $(( CY + 40 ))
         echo "mon:mouse_button 1@0"
         echo "mon:mouse_button 0@2"
         echo "foto:$D/5-dopo.ppm@2"

@@ -24,7 +24,7 @@ printf '#include <stdlib.h>\n#include <string.h>\n' > "$D/shim/libc.h"
 gcc -O1 -Wall -Wno-unused-result -I "$D/shim" -I lib/eximg -I lib/exzip \
     tools/prove/scrivi_prova.c lib/eximg/scrivi.c lib/exzip/deflate.c \
     lib/eximg/eximg.c lib/eximg/bmp.c lib/eximg/png.c lib/eximg/jpg.c \
-    lib/eximg/gif.c lib/eximg/ico.c lib/eximg/inflate.c \
+    lib/eximg/gif.c lib/eximg/ico.c lib/eximg/inflate.c lib/eximg/webp.c lib/eximg/vp8.c \
     -o "$D/scrivi_prova" || exit 1
 
 FALLITI=0

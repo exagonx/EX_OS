@@ -56,7 +56,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pennello -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.005"
+#define VERSIONE_APP "0.006"
 EX_VERSIONE("pennello", VERSIONE_APP);
 
 /* --- Geometry -------------------------------------------------------------- */
@@ -124,8 +124,8 @@ static const unsigned int TAVOLOZZA[28] = {
 };
 
 /* --- The state ----------------------------------------------------------- */
-static ExFinestra g_f, g_menu, g_barra_v, g_barra_o, g_stato, g_scambia;
-static ExFinestra g_r_str[N_STRUMENTI], g_r_sp[N_SPESSORI];
+static ExWindow g_f, g_menu, g_barra_v, g_barra_o, g_stato, g_scambia;
+static ExWindow g_r_str[N_STRUMENTI], g_r_sp[N_SPESSORI];
 static int        g_w = FIN_W, g_h = FIN_H;        /* the client area */
 
 static unsigned int *g_img;          /* the picture, g_iw x g_ih */
@@ -173,10 +173,10 @@ static void vista_limita(void)
 static void barre_aggiorna(void)
 {
     int mx = g_iw - vis_w(), my = g_ih - vis_h();
-    ex_scorri_limiti(g_barra_o, (unsigned int)(mx > 0 ? mx : 0), (unsigned int)vis_w());
-    ex_scorri_vai(g_barra_o, (unsigned int)g_ox);
-    ex_scorri_limiti(g_barra_v, (unsigned int)(my > 0 ? my : 0), (unsigned int)vis_h());
-    ex_scorri_vai(g_barra_v, (unsigned int)g_oy);
+    ex_scroll_set_range(g_barra_o, (unsigned int)(mx > 0 ? mx : 0), (unsigned int)vis_w());
+    ex_scroll_set_pos(g_barra_o, (unsigned int)g_ox);
+    ex_scroll_set_range(g_barra_v, (unsigned int)(my > 0 ? my : 0), (unsigned int)vis_h());
+    ex_scroll_set_pos(g_barra_v, (unsigned int)g_oy);
 }
 
 /* Draws the part of the canvas that shows picture pixels x0..x1, y0..y1
@@ -193,8 +193,8 @@ static void tela_disegna(int x0, int y0, int x1, int y1)
     if (!g_img) return;
     if (x0 > x1) {
         int pw = (g_iw - g_ox) * z, ph = (g_ih - g_oy) * z;
-        if (pw < tw) ex_riempi(g_f, TELA_X + pw, TELA_Y, tw - pw, th, EX_GRIGIO_SC);
-        if (ph < th) ex_riempi(g_f, TELA_X, TELA_Y + ph, pw < tw ? pw : tw, th - ph, EX_GRIGIO_SC);
+        if (pw < tw) ex_fill_rect(g_f, TELA_X + pw, TELA_Y, tw - pw, th, EX_DARK_GRAY);
+        if (ph < th) ex_fill_rect(g_f, TELA_X, TELA_Y + ph, pw < tw ? pw : tw, th - ph, EX_DARK_GRAY);
         x0 = 0; y0 = 0; x1 = g_iw - 1; y1 = g_ih - 1;
     }
     /* Picture rectangle -> visible part -> canvas pixels. */
@@ -234,16 +234,16 @@ static void colori_disegna(void)
     int y = pal_y(), i;
 
     /* The two colours: the first one on top, the background under it. */
-    ex_incavo(g_f, MARGINE, y, 44, 36);
-    ex_riempi(g_f, MARGINE + 16, y + 14, 24, 18, g_sfondo);
-    ex_riquadro_disegna(g_f, MARGINE + 16, y + 14, 24, 18, EX_NERO);
-    ex_riempi(g_f, MARGINE + 4, y + 4, 24, 18, g_col);
-    ex_riquadro_disegna(g_f, MARGINE + 4, y + 4, 24, 18, EX_NERO);
+    ex_draw_sunken(g_f, MARGINE, y, 44, 36);
+    ex_fill_rect(g_f, MARGINE + 16, y + 14, 24, 18, g_sfondo);
+    ex_draw_rect(g_f, MARGINE + 16, y + 14, 24, 18, EX_BLACK);
+    ex_fill_rect(g_f, MARGINE + 4, y + 4, 24, 18, g_col);
+    ex_draw_rect(g_f, MARGINE + 4, y + 4, 24, 18, EX_BLACK);
 
     for (i = 0; i < 28; i++) {
         int cx = PAL_X + (i % 14) * (CELLA + 2), cy = y + (i / 14) * (CELLA + 2);
-        ex_riempi(g_f, cx, cy, CELLA, CELLA, TAVOLOZZA[i]);
-        ex_riquadro_disegna(g_f, cx, cy, CELLA, CELLA, EX_GRIGIO_SC);
+        ex_fill_rect(g_f, cx, cy, CELLA, CELLA, TAVOLOZZA[i]);
+        ex_draw_rect(g_f, cx, cy, CELLA, CELLA, EX_DARK_GRAY);
     }
 }
 
@@ -253,7 +253,7 @@ static void stato_aggiorna(void)
     snprintf(t, sizeof(t), "%d x %d   %s %d px   zoom %dx   #%06X%s",
              g_iw, g_ih, STRUMENTO_NOME[g_str], SPESSORE[g_sp], g_zoom, g_col & 0xFFFFFF,
              g_mod ? "   (modificata)" : "");
-    ex_testo_metti(g_stato, t);
+    ex_set_text(g_stato, t);
 }
 
 static void titolo_aggiorna(void)
@@ -262,15 +262,15 @@ static void titolo_aggiorna(void)
     const char *n = strrchr(g_file, '/');
     n = n ? n + 1 : g_file;
     snprintf(t, sizeof(t), "Pennello - %s%s", g_file[0] ? n : "senza nome", g_mod ? " *" : "");
-    ex_titolo(g_f, t);
+    ex_set_title(g_f, t);
 }
 
 static void ridisegna(void)
 {
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     tela_disegna(1, 0, 0, 0);
     colori_disegna();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 /* =============================================================================
@@ -389,19 +389,19 @@ static void storia_scambia(int k)
 
 static void annulla(void)
 {
-    if (g_fatti == 0) { ex_testo_metti(g_stato, "Niente da annullare."); return; }
+    if (g_fatti == 0) { ex_set_text(g_stato, "Niente da annullare."); return; }
     storia_scambia(--g_fatti);
     g_mod = 1;
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     titolo_aggiorna();
 }
 
 static void ripeti(void)
 {
-    if (g_fatti >= g_nrec) { ex_testo_metti(g_stato, "Niente da ripetere."); return; }
+    if (g_fatti >= g_nrec) { ex_set_text(g_stato, "Niente da ripetere."); return; }
     storia_scambia(g_fatti++);
     g_mod = 1;
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     titolo_aggiorna();
 }
 
@@ -634,8 +634,8 @@ static void strumento_scegli(int s);
  * IL TESTO (28 settembre 2026, @PAINT: «il testo dentro l'immagine»)
  *
  * Un clic dove comincia la scritta, una riga da scrivere, e il testo entra
- * nei PIXEL dell'immagine col colore scelto: ex_scrivi_in, nel toolkit, fa
- * con un bitmap quel che ex_scrivi_con fa con la finestra. La grandezza la
+ * nei PIXEL dell'immagine col colore scelto: ex_draw_text_buffer, nel toolkit, fa
+ * con un bitmap quel che ex_draw_text_font fa con la finestra. La grandezza la
  * danno i quattro spessori (12, 16, 24, 36 pixel). E' un'operazione come le
  * altre: si annulla e si ripete col rettangolo che ha toccato.
  * ! Il testo scritto l'ultima volta si ripropone: chi mette la stessa
@@ -658,14 +658,14 @@ static void testo_metti(int x, int y)
         ridisegna();
         return;
     }
-    f = ex_font_trova(EX_FAM_SANS, CORPO_TESTO[g_sp], 0, 0);
+    f = ex_font_find(EX_FAMILY_SANS, CORPO_TESTO[g_sp], 0, 0);
     for (i = 0; i < (unsigned int)(g_iw * g_ih); i++) g_prima[i] = g_img[i];
-    ex_scrivi_in(g_img, g_iw, g_ih, f, x, y, g_testo, g_col);
+    ex_draw_text_buffer(g_img, g_iw, g_ih, f, x, y, g_testo, g_col);
 
     /* il rettangolo toccato, con un margine: un glifo puo' sporgere di un
      * pixel dalla sua casella */
-    w = ex_larghezza_testo(f, g_testo);
-    h = ex_font_altezza(f);
+    w = ex_text_width(f, g_testo);
+    h = ex_font_height(f);
     g_sx0 = x > 2 ? x - 2 : 0;
     g_sy0 = y > 2 ? y - 2 : 0;
     g_sx1 = x + w + 2 < g_iw ? x + w + 2 : g_iw - 1;
@@ -689,7 +689,7 @@ static void op_inizia(int mx, int my)
         /* Paint Brush goes back to the tool that was in use: the picker is
          * a glance, not a way of drawing. */
         strumento_scegli(g_str_prima);
-        ex_aggiorna(g_f);
+        ex_update(g_f);
         return;
     }
     if (g_str == S_TESTO) { testo_metti(x, y); return; }
@@ -711,15 +711,15 @@ static void op_inizia(int mx, int my)
             tela_disegna(g_sx0, g_sy0, g_sx1, g_sy1);
         }
         stato_aggiorna();
-        if (!ok) ex_testo_metti(g_stato, "Riempimento incompleto: l'area e' troppo frastagliata. Riprova dal punto rimasto.");
+        if (!ok) ex_set_text(g_stato, "Riempimento incompleto: l'area e' troppo frastagliata. Riprova dal punto rimasto.");
         titolo_aggiorna();
-        ex_aggiorna(g_f);
+        ex_update(g_f);
         return;
     }
     if (!e_forma(g_str)) tratto(x, y, x, y);
     else forma(x, y, x, y);
     if (g_sx1 >= 0) tela_disegna(g_sx0, g_sy0, g_sx1, g_sy1);
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 /* =============================================================================
@@ -729,7 +729,7 @@ static void op_inizia(int mx, int my)
  * tools/prova_pennello_veloce.sh: dopo trecento movimenti in tre secondi il
  * puntatore restava fermo per piu' di sei. Ogni movimento mandava al server
  * un rettangolo di pixel — con l'ellisse, l'intera anteprima: centinaia di KB —
- * piu' un ex_aggiorna. I movimenti arrivavano piu' in fretta di quanto quei
+ * piu' un ex_update. I movimenti arrivavano piu' in fretta di quanto quei
  * disegni si smaltissero, e il server, occupato a riceverli, non muoveva
  * nemmeno il puntatore.
  *
@@ -752,7 +752,7 @@ static void sporca(int x0, int y0, int x1, int y1)
 /* ! L'ANNUNCIO AL SERVER SI DA' AL PIU' OGNI AGG_MS. Raccogliere i movimenti
  * in coda non bastava, ed e' la seconda lezione della stessa prova: Pennello
  * e' veloce, smaltisce ogni movimento prima che arrivi il prossimo, quindi la
- * coda e' quasi sempre vuota — e ogni ex_aggiorna costa al SERVER una
+ * coda e' quasi sempre vuota — e ogni ex_update costa al SERVER una
  * ricomposizione. Cento movimenti al secondo erano cento ricomposizioni, e il
  * server restava indietro di decine di secondi. I pixel vanno nella memoria
  * condivisa subito (ex_pixmap non manda messaggi); l'annuncio aspetta. Quello
@@ -767,13 +767,13 @@ static void annuncia(int forza)
     unsigned int ora = uptime_ms();
 
     if (!forza && ora - g_agg_ultimo < AGG_MS) {
-        if (!g_agg_attesa) ex_sveglia(g_f, AGG_MS);
+        if (!g_agg_attesa) ex_set_timer(g_f, AGG_MS);
         g_agg_attesa = 1;
         return;
     }
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     g_agg_ultimo = ora;
-    if (g_agg_attesa) ex_sveglia(g_f, 0);
+    if (g_agg_attesa) ex_set_timer(g_f, 0);
     g_agg_attesa = 0;
 }
 
@@ -864,7 +864,7 @@ static void tutta_dopo(void)
     storia_aggiungi(0, 0, g_iw - 1, g_ih - 1);
     g_mod = 1;
     tela_disegna(1, 0, 0, 0);
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     stato_aggiorna();
     titolo_aggiorna();
 }
@@ -919,7 +919,7 @@ static void ruota(void)
     ridisegna();
     stato_aggiorna();
     titolo_aggiorna();
-    ex_testo_metti(g_stato, "Ruotata di 90 gradi. La rotazione non si annulla: si ruota altre tre volte.");
+    ex_set_text(g_stato, "Ruotata di 90 gradi. La rotazione non si annulla: si ruota altre tre volte.");
 }
 
 /* "640x480", "640 480", "640,480" */
@@ -1279,7 +1279,7 @@ static void esci(void)
 {
     if (!si_puo_lasciare()) return;
     opzioni_salva();
-    ex_esci(0);
+    ex_quit(0);
 }
 
 /* =============================================================================
@@ -1290,7 +1290,7 @@ static void strumento_scegli(int s)
     if (s < 0 || s >= N_STRUMENTI) return;
     if (s != S_CONTAGOCCE) g_str_prima = s;
     g_str = s;
-    ex_accendi(g_r_str[s], 1);
+    ex_set_checked(g_r_str[s], 1);
     stato_aggiorna();
 }
 
@@ -1298,7 +1298,7 @@ static void spessore_scegli(int i)
 {
     if (i < 0 || i >= N_SPESSORI) return;
     g_sp = i;
-    ex_accendi(g_r_sp[i], 1);
+    ex_set_checked(g_r_sp[i], 1);
     stato_aggiorna();
 }
 
@@ -1308,7 +1308,7 @@ static void scambia_colori(void)
     g_col = g_sfondo;
     g_sfondo = t;
     colori_disegna();
-    ex_aggiorna(g_f);
+    ex_update(g_f);
     stato_aggiorna();
 }
 
@@ -1350,7 +1350,7 @@ static void scorri(int dx, int dy)
     vista_limita();
     barre_aggiorna();
     tela_disegna(1, 0, 0, 0);
-    ex_aggiorna(g_f);
+    ex_update(g_f);
 }
 
 static void informazioni(void)
@@ -1403,13 +1403,13 @@ static void istruzioni(void)
  * ============================================================================= */
 static void disponi(void)
 {
-    ex_sposta(g_barra_v, TELA_X + tela_w(), TELA_Y);
-    ex_misura(g_barra_v, BARRA, tela_h());
-    ex_sposta(g_barra_o, TELA_X, TELA_Y + tela_h());
-    ex_misura(g_barra_o, tela_w(), BARRA);
-    ex_sposta(g_scambia, MARGINE + 48, pal_y() + 8);
-    ex_sposta(g_stato, MARGINE + 2, g_h - STATO_H + 2);
-    ex_misura(g_stato, g_w - 2 * MARGINE - 4, 16);
+    ex_move(g_barra_v, TELA_X + tela_w(), TELA_Y);
+    ex_resize(g_barra_v, BARRA, tela_h());
+    ex_move(g_barra_o, TELA_X, TELA_Y + tela_h());
+    ex_resize(g_barra_o, tela_w(), BARRA);
+    ex_move(g_scambia, MARGINE + 48, pal_y() + 8);
+    ex_move(g_stato, MARGINE + 2, g_h - STATO_H + 2);
+    ex_resize(g_stato, g_w - 2 * MARGINE - 4, 16);
     vista_limita();
     barre_aggiorna();
 }
@@ -1423,7 +1423,7 @@ static void clic_colori(int mx, int my)
         if (mx >= cx && mx < cx + CELLA && my >= cy && my < cy + CELLA) {
             g_col = TAVOLOZZA[i];
             colori_disegna();
-            ex_aggiorna(g_f);
+            ex_update(g_f);
             stato_aggiorna();
             return;
         }
@@ -1465,48 +1465,48 @@ static int tasto(unsigned int wp)
     return 0;
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         esci();
         return 0;
 
-    case EXM_DISEGNA:
-        ex_procedura_base(f, msg, wp, lp);
+    case EXM_PAINT:
+        ex_default_proc(f, msg, wp, lp);
         tela_disegna(1, 0, 0, 0);
         colori_disegna();
-        ex_aggiorna(f);
+        ex_update(f);
         return 0;
 
-    case EXM_MISURA:
+    case EXM_SIZE:
         g_w = EX_X(lp);
         g_h = EX_Y(lp);
-        ex_procedura_base(f, msg, wp, lp);
+        ex_default_proc(f, msg, wp, lp);
         disponi();
         ridisegna();
         return 0;
 
-    case EXM_TEMPO:
+    case EXM_TIMER:
         /* L'annuncio rimasto indietro (vedi annuncia). */
         if (g_agg_attesa) annuncia(1);
         return 0;
 
-    case EXM_MOUSE_GIU:
-    case EXM_DOPPIOCLIC:
+    case EXM_MOUSE_DOWN:
+    case EXM_DOUBLE_CLICK:
         if (nella_tela(EX_X(lp), EX_Y(lp))) op_inizia(EX_X(lp), EX_Y(lp));
         else if (EX_Y(lp) >= pal_y()) clic_colori(EX_X(lp), EX_Y(lp));
         return 0;
 
-    case EXM_MOUSE_MOSSO: {
+    case EXM_MOUSE_MOVE: {
         /* I movimenti gia' in coda si prendono adesso (vedi schermo_svuota):
          * il primo messaggio che non e' un movimento di questa finestra si
          * smista dopo, quando lo schermo e' in pari. */
         ExMsg m2;
         int   x = EX_X(lp), y = EX_Y(lp), altro = 0;
 
-        while (ex_msg_ora(&m2)) {
-            if (m2.msg == EXM_MOUSE_MOSSO && m2.finestra == f) {
+        while (ex_peek_message(&m2)) {
+            if (m2.msg == EXM_MOUSE_MOVE && m2.finestra == f) {
                 if (!e_forma(g_str)) op_muovi(x, y);   /* il tratto passa per ogni punto */
                 x = EX_X(m2.lp); y = EX_Y(m2.lp);
                 continue;
@@ -1516,15 +1516,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         op_muovi(x, y);
         schermo_svuota();
-        if (altro) ex_smista(&m2);
+        if (altro) ex_dispatch(&m2);
         return 0;
     }
 
-    case EXM_MOUSE_SU:
+    case EXM_MOUSE_UP:
         op_finisci(EX_X(lp), EX_Y(lp));
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         switch (wp) {
         case ID_NUOVO:      nuovo(); break;
         case ID_APRI:       apri(); break;
@@ -1548,8 +1548,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_SCAMBIA:    scambia_colori(); break;
         case ID_INFO:       informazioni(); ridisegna(); break;
         case ID_ISTR:       istruzioni(); ridisegna(); break;
-        case ID_BARRA_O:    g_ox = (int)lp; vista_limita(); tela_disegna(1, 0, 0, 0); ex_aggiorna(g_f); break;
-        case ID_BARRA_V:    g_oy = (int)lp; vista_limita(); tela_disegna(1, 0, 0, 0); ex_aggiorna(g_f); break;
+        case ID_BARRA_O:    g_ox = (int)lp; vista_limita(); tela_disegna(1, 0, 0, 0); ex_update(g_f); break;
+        case ID_BARRA_V:    g_oy = (int)lp; vista_limita(); tela_disegna(1, 0, 0, 0); ex_update(g_f); break;
         default:
             if (wp >= ID_STRUMENTO && wp < ID_STRUMENTO + N_STRUMENTI)
                 strumento_scegli((int)(wp - ID_STRUMENTO));
@@ -1559,14 +1559,14 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         /* ! THE FOCUS GOES BACK TO THE WINDOW after every control: a radio
          * keeping it would take the letters of the tools for itself. */
-        ex_fuoco_via(g_f);
+        ex_clear_focus(g_f);
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         if (tasto(wp)) return 0;
         break;
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 /* ! IL DEPOSITO DELL'ANNULLA SI MISURA SULLA MEMORIA LIBERA (28 settembre
@@ -1599,14 +1599,14 @@ int main(int argc, char **argv)
     ExMsg m;
     unsigned int sw = 0, sh = 0;
     int i, y;
-    ExFinestra riq;
+    ExWindow riq;
 
     opzioni_leggi();
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     if (sw && (int)sw < g_w + 40) g_w = (int)sw - 40;
     if (sh && (int)sh < g_h + 60) g_h = (int)sh - 60;
 
-    g_f = ex_crea("finestra", "Pennello", EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_f = ex_create("window", "Pennello", EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, g_w, g_h, 0, 0, proc);
     if (!g_f) {
         printf("pennello: il server a finestre non risponde.\n");
@@ -1620,47 +1620,47 @@ int main(int argc, char **argv)
     pool_prendi();
     if (!g_vista) g_vista_cap = 0;
 
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Nuova...\tCtrl+N", ID_NUOVO);
-    ex_menu_voce(g_menu, "File", "Apri...\tCtrl+O", ID_APRI);
-    ex_menu_voce(g_menu, "File", "Salva\tCtrl+S", ID_SALVA);
-    ex_menu_voce(g_menu, "File", "Salva con nome...", ID_SALVA_COME);
-    ex_menu_voce(g_menu, "File", "-", 0);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q", ID_ESCI);
-    ex_menu_voce(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
-    ex_menu_voce(g_menu, "Modifica", "Ripeti\tCtrl+Y", ID_RIPETI);
-    ex_menu_voce(g_menu, "Modifica", "-", 0);
-    ex_menu_voce(g_menu, "Modifica", "Cancella tutto", ID_CANCELLA);
-    ex_menu_voce(g_menu, "Immagine", "Specchio orizzontale", ID_SPECCHIO_O);
-    ex_menu_voce(g_menu, "Immagine", "Specchio verticale", ID_SPECCHIO_V);
-    ex_menu_voce(g_menu, "Immagine", "Ruota di 90 gradi", ID_RUOTA);
-    ex_menu_voce(g_menu, "Immagine", "Inverti i colori", ID_INVERTI);
-    ex_menu_voce(g_menu, "Immagine", "-", 0);
-    ex_menu_voce(g_menu, "Immagine", "Dimensioni...", ID_DIMENSIONI);
-    ex_menu_voce(g_menu, "Vista", "Zoom 1x", ID_ZOOM1);
-    ex_menu_voce(g_menu, "Vista", "Zoom 2x", ID_ZOOM2);
-    ex_menu_voce(g_menu, "Vista", "Zoom 4x", ID_ZOOM4);
-    ex_menu_voce(g_menu, "Vista", "Zoom 8x", ID_ZOOM8);
-    ex_menu_voce(g_menu, "Colori", "Scegli...", ID_COLORE);
-    ex_menu_voce(g_menu, "Colori", "Scambia con lo sfondo\tX", ID_SCAMBIA_M);
-    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
-    ex_menu_voce(g_menu, "Info", "Istruzioni", ID_ISTR);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Nuova...\tCtrl+N", ID_NUOVO);
+    ex_menu_add_item(g_menu, "File", "Apri...\tCtrl+O", ID_APRI);
+    ex_menu_add_item(g_menu, "File", "Salva\tCtrl+S", ID_SALVA);
+    ex_menu_add_item(g_menu, "File", "Salva con nome...", ID_SALVA_COME);
+    ex_menu_add_item(g_menu, "File", "-", 0);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q", ID_ESCI);
+    ex_menu_add_item(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
+    ex_menu_add_item(g_menu, "Modifica", "Ripeti\tCtrl+Y", ID_RIPETI);
+    ex_menu_add_item(g_menu, "Modifica", "-", 0);
+    ex_menu_add_item(g_menu, "Modifica", "Cancella tutto", ID_CANCELLA);
+    ex_menu_add_item(g_menu, "Immagine", "Specchio orizzontale", ID_SPECCHIO_O);
+    ex_menu_add_item(g_menu, "Immagine", "Specchio verticale", ID_SPECCHIO_V);
+    ex_menu_add_item(g_menu, "Immagine", "Ruota di 90 gradi", ID_RUOTA);
+    ex_menu_add_item(g_menu, "Immagine", "Inverti i colori", ID_INVERTI);
+    ex_menu_add_item(g_menu, "Immagine", "-", 0);
+    ex_menu_add_item(g_menu, "Immagine", "Dimensioni...", ID_DIMENSIONI);
+    ex_menu_add_item(g_menu, "Vista", "Zoom 1x", ID_ZOOM1);
+    ex_menu_add_item(g_menu, "Vista", "Zoom 2x", ID_ZOOM2);
+    ex_menu_add_item(g_menu, "Vista", "Zoom 4x", ID_ZOOM4);
+    ex_menu_add_item(g_menu, "Vista", "Zoom 8x", ID_ZOOM8);
+    ex_menu_add_item(g_menu, "Colori", "Scegli...", ID_COLORE);
+    ex_menu_add_item(g_menu, "Colori", "Scambia con lo sfondo\tX", ID_SCAMBIA_M);
+    ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
+    ex_menu_add_item(g_menu, "Info", "Istruzioni", ID_ISTR);
 
-    riq = ex_crea("riquadro", "Strumenti", EX_FIGLIO, MARGINE, TELA_Y,
+    riq = ex_create("frame", "Strumenti", EX_CHILD, MARGINE, TELA_Y,
                   ATTR_W, 18 + N_STRUMENTI * 20, g_f, 0, 0);
     for (i = 0; i < N_STRUMENTI; i++)
-        g_r_str[i] = ex_crea("radio", STRUMENTO_NOME[i], EX_FIGLIO, 6, 16 + i * 20, ATTR_W - 12, 18,
+        g_r_str[i] = ex_create("radio", STRUMENTO_NOME[i], EX_CHILD, 6, 16 + i * 20, ATTR_W - 12, 18,
                              riq, (unsigned int)(ID_STRUMENTO + i), 0);
     y = TELA_Y + 18 + N_STRUMENTI * 20 + 6;
-    riq = ex_crea("riquadro", "Spessore", EX_FIGLIO, MARGINE, y, ATTR_W, 60, g_f, 0, 0);
+    riq = ex_create("frame", "Spessore", EX_CHILD, MARGINE, y, ATTR_W, 60, g_f, 0, 0);
     for (i = 0; i < N_SPESSORI; i++)
-        g_r_sp[i] = ex_crea("radio", SPESSORE_NOME[i], EX_FIGLIO, 6 + (i % 2) * 48, 16 + (i / 2) * 20, 44, 18,
+        g_r_sp[i] = ex_create("radio", SPESSORE_NOME[i], EX_CHILD, 6 + (i % 2) * 48, 16 + (i / 2) * 20, 44, 18,
                             riq, (unsigned int)(ID_SPESSORE + i), 0);
 
-    g_barra_v = ex_crea("scorrimento", "", EX_FIGLIO, TELA_X + tela_w(), TELA_Y, BARRA, tela_h(), g_f, ID_BARRA_V, 0);
-    g_barra_o = ex_crea("scorrimento", "", EX_FIGLIO, TELA_X, TELA_Y + tela_h(), tela_w(), BARRA, g_f, ID_BARRA_O, 0);
-    g_scambia = ex_crea("pulsante", "Scambia", EX_FIGLIO, MARGINE + 48, pal_y() + 8, 56, 22, g_f, ID_SCAMBIA, 0);
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO, MARGINE + 2, g_h - STATO_H + 2, g_w - 2 * MARGINE - 4, 16, g_f, 0, 0);
+    g_barra_v = ex_create("scrollbar", "", EX_CHILD, TELA_X + tela_w(), TELA_Y, BARRA, tela_h(), g_f, ID_BARRA_V, 0);
+    g_barra_o = ex_create("scrollbar", "", EX_CHILD, TELA_X, TELA_Y + tela_h(), tela_w(), BARRA, g_f, ID_BARRA_O, 0);
+    g_scambia = ex_create("button", "Scambia", EX_CHILD, MARGINE + 48, pal_y() + 8, 56, 22, g_f, ID_SCAMBIA, 0);
+    g_stato = ex_create("label", "", EX_CHILD, MARGINE + 2, g_h - STATO_H + 2, g_w - 2 * MARGINE - 4, 16, g_f, 0, 0);
 
     /* The picture: the file on the command line, or a blank one as large as
      * the canvas. */
@@ -1679,9 +1679,9 @@ int main(int argc, char **argv)
     disponi();
     titolo_aggiorna();
     stato_aggiorna();
-    ex_fuoco_via(g_f);
+    ex_clear_focus(g_f);
     ridisegna();
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }

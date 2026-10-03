@@ -606,7 +606,7 @@ static int piu_vicino(const char *t, int n, int dx)
 
         memcpy(pre, t, (unsigned int)j);
         pre[j] = '\0';
-        w = ex_larghezza_testo(EX_FONT_SISTEMA, pre);
+        w = ex_text_width(EX_FONT_SYSTEM, pre);
         d = w > dx ? w - dx : dx - w;
         if (d < dist) { dist = d; meglio = j; }
         if (w > dx) break;                  /* da qui in poi ci si allontana */
@@ -666,8 +666,8 @@ static void est_disegna(int rif, int x, int y, int w, int h)
     /* =================================================================
      * UN CONTROLLO DI MODULO
      *
-     * ! LA FORMA LA FA IL RILIEVO, non un bordo disegnato: `ex_incavo`
-     * per cio' in cui si scrive, `ex_rilievo` per cio' che si preme. Sono
+     * ! LA FORMA LA FA IL RILIEVO, non un bordo disegnato: `ex_draw_sunken`
+     * per cio' in cui si scrive, `ex_draw_raised` per cio' che si preme. Sono
      * le stesse due funzioni con cui il toolkit disegna i propri
      * controlli, ed e' il motivo per cui una pagina web dentro EX-OS
      * sembra fatta della stessa materia del resto del sistema.
@@ -680,7 +680,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
         int   k;
 
         /* ! UN CONTROLLO E' TUTTO O NIENTE, e il ritaglio sta qui perche' qui
-         * si sa che pezzo e': `ex_scrivi` taglia alla FINESTRA, non all'area
+         * si sa che pezzo e': `ex_draw_text` taglia alla FINESTRA, non all'area
          * del documento, e una casella disegnata a meta' finirebbe sopra la
          * barra dell'indirizzo. Un'immagine invece sporge quanto vuole: il suo
          * ritaglio se lo fa a mano, qui sotto. */
@@ -696,33 +696,33 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                 est_disegna(EST_IMM(c->imm), x, y, w, h);
                 break;
             }
-            ex_riempi(g_f, cx, y, cw, ch, EX_GRIGIO);
-            ex_rilievo(g_f, cx, y, cw, ch);
-            ex_scrivi(g_f,
-                      cx + (cw - ex_larghezza_testo(EX_FONT_SISTEMA, mostra)) / 2,
-                      y + (ch - 16) / 2, mostra, EX_NERO);
+            ex_fill_rect(g_f, cx, y, cw, ch, EX_GRAY);
+            ex_draw_raised(g_f, cx, y, cw, ch);
+            ex_draw_text(g_f,
+                      cx + (cw - ex_text_width(EX_FONT_SYSTEM, mostra)) / 2,
+                      y + (ch - 16) / 2, mostra, EX_BLACK);
             break;
 
         case CTRL_SPUNTA:
         case CTRL_RADIO:
-            ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-            ex_incavo(g_f, cx, y, cw, ch);
+            ex_fill_rect(g_f, cx, y, cw, ch, EX_WHITE);
+            ex_draw_sunken(g_f, cx, y, cw, ch);
             /* ! IL SEGNO E' UN QUADRATINO PIENO, e vale per tutt'e due.
              * Un cerchio disegnato a mano su quattordici pixel viene un
              * ottagono storto: peggio di un quadrato onesto. */
             if (c->acceso)
-                ex_riempi(g_f, cx + 3, y + 3, cw - 6, ch - 6, EX_NERO);
+                ex_fill_rect(g_f, cx + 3, y + 3, cw - 6, ch - 6, EX_BLACK);
             break;
 
         case CTRL_SCELTA:
-            ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-            ex_incavo(g_f, cx, y, cw, ch);
-            ex_scrivi(g_f, cx + 4, y + (ch - 16) / 2, mostra, EX_NERO);
+            ex_fill_rect(g_f, cx, y, cw, ch, EX_WHITE);
+            ex_draw_sunken(g_f, cx, y, cw, ch);
+            ex_draw_text(g_f, cx + 4, y + (ch - 16) / 2, mostra, EX_BLACK);
             /* La freccia in fondo: dice che si apre, anche se non si apre
              * ancora. */
-            ex_riempi(g_f, cx + cw - 18, y + 2, 16, ch - 4, EX_GRIGIO);
-            ex_rilievo(g_f, cx + cw - 18, y + 2, 16, ch - 4);
-            ex_scrivi(g_f, cx + cw - 14, y + (ch - 16) / 2, "v", EX_NERO);
+            ex_fill_rect(g_f, cx + cw - 18, y + 2, 16, ch - 4, EX_GRAY);
+            ex_draw_raised(g_f, cx + cw - 18, y + 2, 16, ch - 4);
+            ex_draw_text(g_f, cx + cw - 14, y + (ch - 16) / 2, "v", EX_BLACK);
             break;
 
         case CTRL_AREA: {
@@ -734,8 +734,8 @@ static void est_disegna(int rif, int x, int y, int w, int h)
             int riga = 0, i0 = 0;
             int per_riga = (cw - 8) / 8;
 
-            ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-            ex_incavo(g_f, cx, y, cw, ch);
+            ex_fill_rect(g_f, cx, y, cw, ch, EX_WHITE);
+            ex_draw_sunken(g_f, cx, y, cw, ch);
 
             if (per_riga < 1) per_riga = 1;
             while (mostra[i0] && (riga + 1) * 18 < ch) {
@@ -752,7 +752,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                 pezzo[q] = '\0';
                 if (mostra[i0] == '\n') i0++;
 
-                ex_scrivi(g_f, cx + 4, y + 3 + riga * 18, pezzo, EX_NERO);
+                ex_draw_text(g_f, cx + 4, y + 3 + riga * 18, pezzo, EX_BLACK);
                 riga++;
 
                 /* ! IL CURSORE STA SULLA RIGA CHE LO CONTIENE. Questo giro
@@ -771,22 +771,22 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                         prima[j] = '\0';
 
                         cur = cx + 4 +
-                              ex_larghezza_testo(EX_FONT_SISTEMA, prima);
+                              ex_text_width(EX_FONT_SYSTEM, prima);
                         if (cur < cx + cw - 3)
-                            ex_riempi(g_f, cur, y + 3 + (riga - 1) * 18,
-                                      2, 15, EX_NERO);
+                            ex_fill_rect(g_f, cur, y + 3 + (riga - 1) * 18,
+                                      2, 15, EX_BLACK);
                     }
                 }
             }
 
             if (qua == g_ctrl_fuoco && riga == 0)
-                ex_riempi(g_f, cx + 4, y + 3, 2, 15, EX_NERO);
+                ex_fill_rect(g_f, cx + 4, y + 3, 2, 15, EX_BLACK);
             break;
         }
 
         default:                     /* casella di testo */
-            ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-            ex_incavo(g_f, cx, y, cw, ch);
+            ex_fill_rect(g_f, cx, y, cw, ch, EX_WHITE);
+            ex_draw_sunken(g_f, cx, y, cw, ch);
 
             /* ! IL TRATTO SCELTO SI VEDE, e va disegnato PRIMA del testo:
              * e' uno sfondo, non un colore delle lettere. Dipingerlo dopo
@@ -799,18 +799,18 @@ static void est_disegna(int rif, int x, int y, int w, int h)
 
                 for (j = 0; j < a && mostra[j]; j++) pre[j] = mostra[j];
                 pre[j] = '\0';
-                x0 = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, pre);
+                x0 = cx + 4 + ex_text_width(EX_FONT_SYSTEM, pre);
 
                 for (j = 0; j < b && mostra[j]; j++) pre[j] = mostra[j];
                 pre[j] = '\0';
-                x1 = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, pre);
+                x1 = cx + 4 + ex_text_width(EX_FONT_SYSTEM, pre);
 
                 if (x1 > cx + cw - 3) x1 = cx + cw - 3;
                 if (x1 > x0)
-                    ex_riempi(g_f, x0, y + 3, x1 - x0, ch - 6, EX_BLU);
+                    ex_fill_rect(g_f, x0, y + 3, x1 - x0, ch - 6, EX_BLUE);
             }
 
-            ex_scrivi(g_f, cx + 4, y + 3, mostra, EX_NERO);
+            ex_draw_text(g_f, cx + 4, y + 3, mostra, EX_BLACK);
             /* ! IL CURSORE SI VEDE SOLO DOVE SI STA SCRIVENDO. Senza, non
              * c'e' modo di sapere quale casella prende i tasti — e chi
              * scrive nel posto sbagliato pensa che la tastiera sia rotta. */
@@ -832,9 +832,9 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                 for (j = 0; j < q && mostra[j]; j++) prima[j] = mostra[j];
                 prima[j] = '\0';
 
-                cur = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, prima);
+                cur = cx + 4 + ex_text_width(EX_FONT_SYSTEM, prima);
                 if (cur < cx + cw - 3)
-                    ex_riempi(g_f, cur, y + 3, 2, ch - 6, EX_NERO);
+                    ex_fill_rect(g_f, cur, y + 3, 2, ch - 6, EX_BLACK);
             }
             break;
         }
@@ -858,7 +858,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
          * quello che hanno sempre fatto i browser.
          *
          * ! E SI RITAGLIA COME L'IMMAGINE CHE ASPETTA, per la ragione
-         * scritta qui sopra: anche ex_riempi ritaglia alla FINESTRA e non
+         * scritta qui sopra: anche ex_fill_rect ritaglia alla FINESTRA e non
          * all'area del documento. Disegnarlo solo quando ci sta tutto
          * sarebbe stato piu' corto, ma un riquadro alto quanto l'area non
          * ci sta MAI per intero: sparirebbe appena lo si scorre, cioe'
@@ -876,13 +876,13 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                 alta = area_y() + area_h() - cima;
 
             if (rw > 0 && alta > 0) {
-                ex_riempi(g_f, x, cima, rw, alta, EX_GRIGIO);
+                ex_fill_rect(g_f, x, cima, rw, alta, EX_GRAY);
 
                 /* Il bordo si incide solo quando il riquadro c'e' tutto:
                  * un incavo tagliato a meta' disegna una riga di luce in
                  * mezzo al testo, e si legge come un difetto. */
                 if (salta == 0 && alta == h)
-                    ex_incavo(g_f, x, cima, rw, alta);
+                    ex_draw_sunken(g_f, x, cima, rw, alta);
             }
             return;
         }
@@ -900,7 +900,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
          * Un'immagine opaca ha alfa 255 dappertutto (ridimensiona()) e
          * costa un confronto per pixel. */
         if (alta > 0)
-            ex_pixmap_fuso(g_f, x, cima, (int)im->w, alta,
+            ex_pixmap_blend(g_f, x, cima, (int)im->w, alta,
                            im->px + (unsigned int)salta * im->w, im->w);
         return;
     }

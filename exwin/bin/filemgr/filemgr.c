@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.010"
+#define VERSIONE_APP "0.011"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -238,7 +238,7 @@ static unsigned int  g_voci = 0;
 static int g_ord = ORD_NOME;
 static int g_giu[4] = { 0, 0, 0, 1 };   /* 1 = dal piu' grande al piu' piccolo */
 
-static ExFinestra g_int_nome, g_int_tipo, g_int_dim, g_int_data;
+static ExWindow g_int_nome, g_int_tipo, g_int_dim, g_int_data;
 
 /* Di quanto l'intestazione e' gia' spostata: vedi intestazione_incolonna(). */
 static unsigned int g_int_margine = 0;
@@ -255,7 +255,7 @@ static int g_da_ricerca = 0;
 static unsigned char g_segno[VOCI_MAX];
 
 static char       g_dir[PERC_MAX] = "/";
-static ExFinestra g_f, g_stato, g_albero, g_elenco, g_menu;
+static ExWindow g_f, g_stato, g_albero, g_elenco, g_menu;
 static char       g_avviso[120] = "";
 
 /* =============================================================================
@@ -426,9 +426,9 @@ static void albero_espandi(int i)
 static void albero_mostra(void)
 {
     unsigned int i;
-    unsigned int scelta = ex_lista_scelta(g_albero);
+    unsigned int scelta = ex_list_get_selected(g_albero);
 
-    ex_lista_svuota(g_albero);
+    ex_list_clear(g_albero);
 
     for (i = 0; i < g_nodi; i++) {
         char riga[80];
@@ -449,10 +449,10 @@ static void albero_mostra(void)
         riga[p] = '\0';
         strncat(riga, g_nodo[i].nome[0] ? g_nodo[i].nome : "/",
                 sizeof(riga) - strlen(riga) - 1);
-        ex_lista_aggiungi(g_albero, riga);
+        ex_list_add(g_albero, riga);
     }
 
-    if (scelta < g_nodi) ex_lista_scegli(g_albero, scelta);
+    if (scelta < g_nodi) ex_list_select(g_albero, scelta);
 }
 
 /* =============================================================================
@@ -569,7 +569,7 @@ static void ordina(void)
  *
  * ! SI CHIEDE ALLA LISTA, NON SI SA. Quanto sia larga una corsia di icone e'
  * roba del toolkit: scriverlo qui vorrebbe dire una costante copiata, e una
- * copia sbagliata il giorno che cambia. ex_lista_margine() rende 0 quando
+ * copia sbagliata il giorno che cambia. ex_list_margin() rende 0 quando
  * nessuna riga ha un'icona — cioe' quando i file delle icone non sono
  * installati — e allora l'intestazione resta dov'e' sempre stata.
  *
@@ -578,17 +578,17 @@ static void ordina(void)
  * vorrebbe dire quattro ridisegni per niente. */
 static void intestazione_incolonna(void)
 {
-    unsigned int m = ex_lista_margine(g_elenco);
+    unsigned int m = ex_list_margin(g_elenco);
     int          d;
 
     if (m == g_int_margine) return;
     g_int_margine = m;
     d = (int)m;
 
-    if (g_int_nome) ex_sposta(g_int_nome, INT_X(C_NOME_X) + d, INT_Y);
-    if (g_int_tipo) ex_sposta(g_int_tipo, INT_X(C_TIPO_X) + d, INT_Y);
-    if (g_int_dim)  ex_sposta(g_int_dim,  INT_X(C_DIM_X)  + d, INT_Y);
-    if (g_int_data) ex_sposta(g_int_data, INT_X(C_DATA_X) + d, INT_Y);
+    if (g_int_nome) ex_move(g_int_nome, INT_X(C_NOME_X) + d, INT_Y);
+    if (g_int_tipo) ex_move(g_int_tipo, INT_X(C_TIPO_X) + d, INT_Y);
+    if (g_int_dim)  ex_move(g_int_dim,  INT_X(C_DIM_X)  + d, INT_Y);
+    if (g_int_data) ex_move(g_int_data, INT_X(C_DATA_X) + d, INT_Y);
 }
 
 /* =============================================================================
@@ -613,7 +613,7 @@ static const char *const g_tipo_nome[TIPI_N] = {
 };
 
 /* Aperte una volta sola, alla prima directory che se ne serve. */
-static ExIcona g_tipo_ic[TIPI_N];
+static ExIcon g_tipo_ic[TIPI_N];
 static int     g_tipi_cercati = 0;
 
 static void tipi_apri(void)
@@ -632,7 +632,7 @@ static void tipi_apri(void)
         for (d = 0; d < 2; d++) {
             if (snprintf(p, sizeof(p), "%s%s.ico", dove[d], g_tipo_nome[t])
                 >= (int)sizeof(p)) continue;
-            g_tipo_ic[t] = ex_icona_apri(p);
+            g_tipo_ic[t] = ex_icon_open(p);
             if (g_tipo_ic[t]) break;
         }
 }
@@ -682,7 +682,7 @@ static void elenco_mostra(void)
 {
     unsigned int i;
 
-    ex_lista_svuota(g_elenco);
+    ex_list_clear(g_elenco);
     tipi_apri();
 
     for (i = 0; i < g_voci; i++) {
@@ -712,8 +712,8 @@ static void elenco_mostra(void)
         campo(riga, C_DATA_X, C_DATA_W, gg, 0);
         campo(riga, C_ORA_X,  C_ORA_W,  hh, 0);
 
-        if (ex_lista_aggiungi(g_elenco, riga))
-            ex_lista_icona(g_elenco, i, g_tipo_ic[tipo_di(i)]);
+        if (ex_list_add(g_elenco, riga))
+            ex_list_set_icon(g_elenco, i, g_tipo_ic[tipo_di(i)]);
     }
 
     /* ! L'INTESTAZIONE SEGUE LE RIGHE. Se c'e' almeno un'icona la lista
@@ -797,7 +797,7 @@ static void ridisegna(void);
 static void intestazione_aggiorna(void)
 {
     static const char *nomi[4] = { "Nome", "Tipo", "Dimensione", "Data" };
-    ExFinestra         q[4];
+    ExWindow         q[4];
     int                i;
 
     q[0] = g_int_nome; q[1] = g_int_tipo; q[2] = g_int_dim; q[3] = g_int_data;
@@ -808,7 +808,7 @@ static void intestazione_aggiorna(void)
         if (!q[i]) continue;
         if (i == g_ord) sprintf(t, "%s %s", nomi[i], g_giu[i] ? "v" : "^");
         else            sprintf(t, "%s", nomi[i]);
-        ex_testo_metti(q[i], t);
+        ex_set_text(q[i], t);
     }
 }
 
@@ -816,8 +816,8 @@ static void intestazione_aggiorna(void)
  * un'altra ci si sposta tenendo il verso che quella colonna aveva.
  *
  * ! IL RIDISEGNO ALLA FINE NON E' DI TROPPO, ED E' COSTATO UNA PROVA. La lista
- * si riempie da se' — ex_lista_svuota() e ex_lista_aggiungi() ridisegnano — ma
- * ex_testo_metti() su un CONTROLLO cambia solo la stringa: e' ex_titolo(), che
+ * si riempie da se' — ex_list_clear() e ex_list_add() ridisegnano — ma
+ * ex_set_text() su un CONTROLLO cambia solo la stringa: e' ex_set_title(), che
  * avvisa il server soltanto per una finestra di primo livello. Senza questa
  * riga l'elenco si riordinava davvero e la freccia restava dov'era: cioe' la
  * cosa peggiore, un'indicazione che dice il falso invece di non dire niente.
@@ -851,14 +851,14 @@ static void stato_aggiorna(void)
                                g_dir, g_voci, segnati);
     else               sprintf(s, "%s  -  %u voci", g_dir, g_voci);
 
-    ex_testo_metti(g_stato, s);
+    ex_set_text(g_stato, s);
 }
 
 static void ridisegna(void)
 {
     stato_aggiorna();
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_f);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
+    ex_update(g_f);
 }
 
 /* =============================================================================
@@ -929,13 +929,13 @@ static int albero_apri_fino_a(const char *perc)
  * ============================================================================= */
 
 /* ! LA REGOLA LA LEGGE IL TOOLKIT (29 settembre 2026, @ASSOCIAZIONI):
- * ex_apri_file e' la stessa per il file manager, la scrivania e gli altri. */
+ * ex_open_file e' la stessa per il file manager, la scrivania e gli altri. */
 static void apri_file(const char *percorso)
 {
     char prog[200];
     const char *b;
 
-    if (ex_apri_file(percorso, prog, sizeof(prog)) >= 0) {
+    if (ex_open_file(percorso, prog, sizeof(prog)) >= 0) {
         b = strrchr(prog, '/');
         snprintf(g_avviso, sizeof(g_avviso), "aperto con %s: %s", b ? b + 1 : prog, percorso);
     } else {
@@ -1074,7 +1074,7 @@ static void set_costruisci(void)
      * della barra. Senza nessuna delle due, la riga corrente. */
     {
         unsigned int righe[VOCI_MAX];
-        int k, n = ex_lista_scelte(g_elenco, righe, VOCI_MAX);
+        int k, n = ex_list_get_selection(g_elenco, righe, VOCI_MAX);
 
         for (k = 0; k < n; k++) if (righe[k] < g_voci) g_set[g_set_n++] = righe[k];
     }
@@ -1474,7 +1474,7 @@ static void comando_cancella(void)
  * ============================================================================= */
 static void comando_nuova_dir(void)
 {
-    unsigned int s = ex_lista_scelta(g_albero);
+    unsigned int s = ex_list_get_selected(g_albero);
     char  dove[PERC_MAX], perc[PERC_MAX], domanda[PERC_MAX + 64];
     static char nome[DIRENT_NAME_MAX] = "";
 
@@ -1516,7 +1516,7 @@ static void comando_nuova_dir(void)
      * only if it is looking at that very directory. */
     if (g_nodo[s].aperto) { albero_chiudi((int)s); albero_espandi((int)s); }
     albero_mostra();
-    ex_lista_scegli(g_albero, s);
+    ex_list_select(g_albero, s);
 
     if (strcmp(dove, g_dir) == 0) leggi(g_dir);
 }
@@ -1534,7 +1534,7 @@ static void comando_nuova_dir(void)
  * ============================================================================= */
 static void comando_rinomina(void)
 {
-    unsigned int s = ex_lista_scelta(g_elenco);
+    unsigned int s = ex_list_get_selected(g_elenco);
     char  da[PERC_MAX], a[PERC_MAX], dir[PERC_MAX], domanda[PERC_MAX + 32];
     char  nome[DIRENT_NAME_MAX];
     char *u;
@@ -1598,7 +1598,7 @@ static void comando_rinomina(void)
  * ============================================================================= */
 static void segna_toggle(void)
 {
-    unsigned int s = ex_lista_scelta(g_elenco);
+    unsigned int s = ex_list_get_selected(g_elenco);
 
     if (s >= g_voci) return;
 
@@ -1608,12 +1608,12 @@ static void segna_toggle(void)
     /* ! E IL CURSORE SCENDE DI UNA RIGA, come su ogni file manager da
      * trent'anni: segnare dieci file di fila dev'essere un gesto ripetuto
      * dieci volte, non dieci gesti da due tasti. */
-    ex_lista_scegli(g_elenco, (s + 1 < g_voci) ? s + 1 : s);
+    ex_list_select(g_elenco, (s + 1 < g_voci) ? s + 1 : s);
 }
 
 static void segna_tutti(int si)
 {
-    unsigned int s = ex_lista_scelta(g_elenco);
+    unsigned int s = ex_list_get_selected(g_elenco);
     unsigned int i;
 
     for (i = 0; i < g_voci; i++) g_segno[i] = (unsigned char)(si ? 1 : 0);
@@ -1621,7 +1621,7 @@ static void segna_tutti(int si)
     /* elenco_mostra() svuota la lista, e con lei la riga scelta: si rimette
      * dov'era, o il cursore salterebbe in cima a ogni «segna tutto». */
     elenco_mostra();
-    if (s < g_voci) ex_lista_scegli(g_elenco, s);
+    if (s < g_voci) ex_list_select(g_elenco, s);
 }
 
 /* =============================================================================
@@ -1724,7 +1724,7 @@ static int sul_segno(unsigned int nodo, int col)
  * del clic dentro la riga, -1 se il comando viene dalla tastiera. */
 static void scegli_albero(int apri, int col)
 {
-    unsigned int s = ex_lista_scelta(g_albero);
+    unsigned int s = ex_list_get_selected(g_albero);
     char perc[PERC_MAX];
     int  segno;
 
@@ -1750,13 +1750,13 @@ static void scegli_albero(int apri, int col)
     if (g_nodo[s].aperto) albero_chiudi((int)s);
     else                  albero_espandi((int)s);
     albero_mostra();
-    ex_lista_scegli(g_albero, s);
+    ex_list_select(g_albero, s);
 }
 
 static void scegli_elenco(int apri)
 {
     char         perc[PERC_MAX];
-    unsigned int s = ex_lista_scelta(g_elenco);
+    unsigned int s = ex_list_get_selected(g_elenco);
 
     if (!apri) return;
     if (!voce_percorso(s, perc, sizeof(perc))) return;
@@ -1773,7 +1773,7 @@ static void scegli_elenco(int apri)
         if (nodo >= 0) {
             albero_espandi(nodo);
             albero_mostra();
-            ex_lista_scegli(g_albero, (unsigned int)nodo);
+            ex_list_select(g_albero, (unsigned int)nodo);
         } else {
             albero_mostra();
         }
@@ -1789,14 +1789,14 @@ static void disponi(int w, int h)
 
     if (alt < 40) alt = 40;
 
-    ex_sposta(g_albero, 4, MENU_H + 4);
-    ex_misura(g_albero, ALBERO_W, alt);
+    ex_move(g_albero, 4, MENU_H + 4);
+    ex_resize(g_albero, ALBERO_W, alt);
 
-    ex_sposta(g_elenco, ALBERO_W + 10, MENU_H + 4);
-    ex_misura(g_elenco, w - ALBERO_W - 14, alt);
+    ex_move(g_elenco, ALBERO_W + 10, MENU_H + 4);
+    ex_resize(g_elenco, w - ALBERO_W - 14, alt);
 
-    ex_sposta(g_stato, 6, h - 22);
-    ex_misura(g_stato, w - 12, 16);
+    ex_move(g_stato, 6, h - 22);
+    ex_resize(g_stato, w - 12, 16);
 }
 
 static void istruzioni(void)
@@ -1929,7 +1929,7 @@ static void comando_nuovo_file(void)
     leggi(g_dir);
 }
 
-static void menu_destro(ExFinestra c, int x, int y)
+static void menu_destro(ExWindow c, int x, int y)
 {
     static const char *const V[] = {
         "Apri", "-", "Nuova cartella", "Nuovo file", "-",
@@ -1941,13 +1941,13 @@ static void menu_destro(ExFinestra c, int x, int y)
     /* nell'albero: si va nella cartella cliccata, e li' si crea o si incolla */
     if (c == g_albero) {
         scegli_albero(0, -1);
-        k = ex_menu_comparsa(g_f, x, y, VA, 3);
+        k = ex_popup_menu(g_f, x, y, VA, 3);
         if (k == 0) comando_nuova_dir();
         else if (k == 1) comando_nuovo_file();
         else if (k == 2) appunti_incolla();
         return;
     }
-    k = ex_menu_comparsa(g_f, x, y, V, 11);
+    k = ex_popup_menu(g_f, x, y, V, 11);
     switch (k) {
     case 0:  scegli_elenco(1); break;
     case 2:  comando_nuova_dir(); break;
@@ -1972,7 +1972,7 @@ static void lasciato(unsigned int da, unsigned int a, int y)
     unsigned int i;
 
     if (da != ID_ELENCO || a != ID_ALBERO) return;
-    riga = ex_lista_riga_a(g_albero, y);
+    riga = ex_list_row_at(g_albero, y);
     if (riga < 0 || (unsigned int)riga >= g_nodi) return;
     percorso_nodo(riga, dest, sizeof(dest));
     /* Dropped back on the folder it came from: nothing to ask. */
@@ -2008,10 +2008,10 @@ static void lasciato(unsigned int da, unsigned int a, int y)
     g_dest_fissa = 0;
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         g_avviso[0] = '\0';
 
         /* ! DALLE LISTE ARRIVA ANCHE COME, non solo COSA: lp dice se si e'
@@ -2020,12 +2020,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * Invio per entrare sarebbero indistinguibili, e l'albero si aprirebbe
          * sotto le dita di chi voleva solo dare un'occhiata; senza la seconda,
          * il «+» dell'albero resterebbe un disegno da guardare. */
-        if (wp == ID_ALBERO) { scegli_albero(EX_APRIRE(lp), EX_COL(lp)); break; }
-        if (wp == ID_ELENCO) { scegli_elenco(EX_APRIRE(lp)); break; }
+        if (wp == ID_ALBERO) { scegli_albero(EX_IS_OPEN(lp), EX_COLUMN(lp)); break; }
+        if (wp == ID_ELENCO) { scegli_elenco(EX_IS_OPEN(lp)); break; }
 
         if (wp == ID_APRI)     { scegli_elenco(1); break; }
         if (wp == ID_AGGIORNA) { leggi(g_dir);     break; }
-        if (wp == ID_ESCI)     { ex_esci(0); return 0; }
+        if (wp == ID_ESCI)     { ex_quit(0); return 0; }
         if (wp == ID_SU) {
             char su[PERC_MAX];
             int i = (int)strlen(g_dir);
@@ -2039,7 +2039,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             vai(su);
             {
                 int nodo = albero_apri_fino_a(su);
-                if (nodo >= 0) ex_lista_scegli(g_albero, (unsigned int)nodo);
+                if (nodo >= 0) ex_list_select(g_albero, (unsigned int)nodo);
             }
             break;
         }
@@ -2064,7 +2064,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_INFO)       { informazioni(); break; }
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         /* ! Tab PASSA DA UN'AREA ALL'ALTRA, e lo fa gia' il toolkit: qui non
          * c'e' niente da scrivere. Resta questo ramo perche' le scorciatoie
          * dei comandi sono dell'applicazione — un menu non cattura i tasti. */
@@ -2074,7 +2074,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == 'c' || c == 'C') { comando_copia(0); break; }
             if (c == 'x' || c == 'X') { comando_copia(1); break; }
             if (c == 'f' || c == 'F') { comando_cerca();  break; }
-            if (c == 'q' || c == 'Q') { ex_esci(0); return 0; }
+            if (c == 'q' || c == 'Q') { ex_quit(0); return 0; }
         }
 
         /* ! LA BARRA E IL TASTO CANC VALGONO SOLO SE IL FUOCO E' SULL'ELENCO.
@@ -2082,35 +2082,35 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * cancellare: rubare li' due tasti vorrebbe dire che la barra, che in
          * una lista scorre, smette di farlo in meta' finestra e nessuno sa
          * perche'. */
-        if (ex_fuoco_chi(g_f) == g_elenco) {
+        if (ex_get_focus(g_f) == g_elenco) {
             unsigned int c = wp & KBD_KEY_MASK;
 
             if (c == ' ')       { segna_toggle();    break; }
             if (c == KBD_K_DEL) { comando_cancella(); break; }
             if (c == KBD_K_F(2)) { comando_rinomina(); break; }
         }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
 
-    case EXM_MOUSE_DESTRO:
+    case EXM_RIGHT_CLICK:
         g_avviso[0] = '\0';
-        menu_destro((ExFinestra)wp, EX_X(lp), EX_Y(lp));
+        menu_destro((ExWindow)wp, EX_X(lp), EX_Y(lp));
         break;
 
-    case EXM_LASCIATO:
+    case EXM_DROP:
         g_avviso[0] = '\0';
-        lasciato(EX_DA(wp), EX_A(wp), EX_Y(lp));
+        lasciato(EX_FROM(wp), EX_TO(wp), EX_Y(lp));
         break;
 
-    case EXM_MISURA:
+    case EXM_SIZE:
         disponi(EX_X(lp), EX_Y(lp));
         break;
 
-    case EXM_CHIUDI:
-        ex_esci(0);
+    case EXM_CLOSE:
+        ex_quit(0);
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
     ridisegna();
@@ -2126,8 +2126,8 @@ int main(int argc, char **argv)
         g_dir[PERC_MAX - 1] = '\0';
     }
 
-    g_f = ex_crea("finestra", "File manager",
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_f = ex_create("window", "File manager",
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
         printf("filemgr: il server a finestre non risponde.\n");
@@ -2135,28 +2135,28 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    g_menu = ex_menu(g_f);
-    ex_menu_voce(g_menu, "File", "Apri\tInvio",   ID_APRI);
-    ex_menu_voce(g_menu, "File", "Su",            ID_SU);
-    ex_menu_voce(g_menu, "File", "Aggiorna",      ID_AGGIORNA);
-    ex_menu_voce(g_menu, "File", "-",             0);
-    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",  ID_ESCI);
+    g_menu = ex_menu_bar(g_f);
+    ex_menu_add_item(g_menu, "File", "Apri\tInvio",   ID_APRI);
+    ex_menu_add_item(g_menu, "File", "Su",            ID_SU);
+    ex_menu_add_item(g_menu, "File", "Aggiorna",      ID_AGGIORNA);
+    ex_menu_add_item(g_menu, "File", "-",             0);
+    ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q",  ID_ESCI);
 
-    ex_menu_voce(g_menu, "Comandi", "Nuova directory",  ID_NUOVA_DIR);
-    ex_menu_voce(g_menu, "Comandi", "-",                0);
-    ex_menu_voce(g_menu, "Comandi", "Copia\tCtrl+C",    ID_COPIA);
-    ex_menu_voce(g_menu, "Comandi", "Sposta\tCtrl+X",   ID_SPOSTA);
-    ex_menu_voce(g_menu, "Comandi", "Cancella\tCanc",   ID_CANCELLA);
-    ex_menu_voce(g_menu, "Comandi", "Rinomina\tF2",     ID_RINOMINA);
-    ex_menu_voce(g_menu, "Comandi", "-",                0);
-    ex_menu_voce(g_menu, "Comandi", "Segna\tSpazio",    ID_SEGNA);
-    ex_menu_voce(g_menu, "Comandi", "Segna tutto",      ID_SEGNA_TUTTI);
-    ex_menu_voce(g_menu, "Comandi", "Nessun segno",     ID_SEGNA_NIENTE);
-    ex_menu_voce(g_menu, "Comandi", "-",                0);
-    ex_menu_voce(g_menu, "Comandi", "Cerca\tCtrl+F",    ID_CERCA);
+    ex_menu_add_item(g_menu, "Comandi", "Nuova directory",  ID_NUOVA_DIR);
+    ex_menu_add_item(g_menu, "Comandi", "-",                0);
+    ex_menu_add_item(g_menu, "Comandi", "Copia\tCtrl+C",    ID_COPIA);
+    ex_menu_add_item(g_menu, "Comandi", "Sposta\tCtrl+X",   ID_SPOSTA);
+    ex_menu_add_item(g_menu, "Comandi", "Cancella\tCanc",   ID_CANCELLA);
+    ex_menu_add_item(g_menu, "Comandi", "Rinomina\tF2",     ID_RINOMINA);
+    ex_menu_add_item(g_menu, "Comandi", "-",                0);
+    ex_menu_add_item(g_menu, "Comandi", "Segna\tSpazio",    ID_SEGNA);
+    ex_menu_add_item(g_menu, "Comandi", "Segna tutto",      ID_SEGNA_TUTTI);
+    ex_menu_add_item(g_menu, "Comandi", "Nessun segno",     ID_SEGNA_NIENTE);
+    ex_menu_add_item(g_menu, "Comandi", "-",                0);
+    ex_menu_add_item(g_menu, "Comandi", "Cerca\tCtrl+F",    ID_CERCA);
 
-    ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
-    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
+    ex_menu_add_item(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
+    ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
 
     {
         /* ! LE COORDINATE DEI PULSANTI ESCONO DALLE STESSE COSTANTI DELLA
@@ -2166,46 +2166,46 @@ int main(int argc, char **argv)
          * che nomina: due serie di numeri si scollano alla prima modifica. */
         const int y = INT_Y;
 
-        ex_crea("etichetta", "Cartelle", EX_FIGLIO,
+        ex_create("label", "Cartelle", EX_CHILD,
                 8, y + 2, ALBERO_W - 8, 14, g_f, 0, 0);
 
-        g_int_nome = ex_crea("pulsante", "Nome", EX_FIGLIO,
+        g_int_nome = ex_create("button", "Nome", EX_CHILD,
                              INT_X(C_NOME_X), y,
                              INT_W(C_NOME_X, C_TIPO_X), INTEST_H,
                              g_f, ID_ORD_NOME, 0);
-        g_int_tipo = ex_crea("pulsante", "Tipo", EX_FIGLIO,
+        g_int_tipo = ex_create("button", "Tipo", EX_CHILD,
                              INT_X(C_TIPO_X), y,
                              INT_W(C_TIPO_X, C_DIM_X), INTEST_H,
                              g_f, ID_ORD_TIPO, 0);
-        g_int_dim  = ex_crea("pulsante", "Dimensione", EX_FIGLIO,
+        g_int_dim  = ex_create("button", "Dimensione", EX_CHILD,
                              INT_X(C_DIM_X), y,
                              INT_W(C_DIM_X, C_DATA_X), INTEST_H,
                              g_f, ID_ORD_DIM, 0);
         /* ! DATA E ORA SONO DUE COLONNE E UN PULSANTE SOLO: sono lo stesso
          * numero scritto in due pezzi, e chi ordina «per ora» senza la data
          * mescolerebbe due giorni diversi. */
-        g_int_data = ex_crea("pulsante", "Data", EX_FIGLIO,
+        g_int_data = ex_create("button", "Data", EX_CHILD,
                              INT_X(C_DATA_X), y,
                              INT_W(C_DATA_X, RIGA_CAR), INTEST_H,
                              g_f, ID_ORD_DATA, 0);
     }
 
-    g_albero = ex_crea("lista", "", EX_FIGLIO,
+    g_albero = ex_create("list", "", EX_CHILD,
                        4, MENU_H + 4 + INTEST_H, ALBERO_W,
                        FIN_H - MENU_H - 4 - INTEST_H - BASSO,
                        g_f, ID_ALBERO, 0);
-    g_elenco = ex_crea("lista", "", EX_FIGLIO,
+    g_elenco = ex_create("list", "", EX_CHILD,
                        ALBERO_W + 10, MENU_H + 4 + INTEST_H, ELENCO_W,
                        FIN_H - MENU_H - 4 - INTEST_H - BASSO,
                        g_f, ID_ELENCO, 0);
-    ex_lista_multipla(g_elenco, 1);   /* Ctrl+clic e Shift+clic (@LISTA-MULTI) */
+    ex_list_set_multiselect(g_elenco, 1);   /* Ctrl+clic e Shift+clic (@LISTA-MULTI) */
     if (!g_albero || !g_elenco) {
         printf("filemgr: non riesco a creare le due aree\n");
         return 1;
     }
     intestazione_aggiorna();
 
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO,
+    g_stato = ex_create("label", "", EX_CHILD,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);
 
     /* La radice: il nodo senza nome, da cui discende ogni percorso. */
@@ -2217,7 +2217,7 @@ int main(int argc, char **argv)
         int nodo = albero_apri_fino_a(g_dir);
 
         albero_mostra();
-        if (nodo >= 0) ex_lista_scegli(g_albero, (unsigned int)nodo);
+        if (nodo >= 0) ex_list_select(g_albero, (unsigned int)nodo);
     }
 
     leggi(g_dir);
@@ -2226,12 +2226,12 @@ int main(int argc, char **argv)
      * creato che lo accetta — che e' comunque l'albero, ma per caso: il giorno
      * che si aggiunge un pulsante prima, le frecce smetterebbero di muovere
      * qualcosa senza che nessuno abbia toccato l'albero. */
-    ex_fuoco(g_albero);
+    ex_set_focus(g_albero);
 
     ridisegna();
     printf("filemgr: %s, %u voci\n", g_dir, g_voci);
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }
 

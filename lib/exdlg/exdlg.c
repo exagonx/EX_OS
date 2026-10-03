@@ -12,7 +12,7 @@
  * I dialoghi «Apri» e «Salva con nome»
  *
  * ! IL CICLO DEI MESSAGGI E' ANNIDATO, non separato. Dentro c'e' lo stesso
- * ex_prendi_msg()/ex_smista() dell'applicazione, che continua a consegnare gli
+ * ex_get_message()/ex_dispatch() dell'applicazione, che continua a consegnare gli
  * eventi anche alle ALTRE finestre: senza, aprire un dialogo lascerebbe il
  * resto del programma senza ridisegni finche' non lo si chiude, e chi guarda
  * penserebbe che si e' bloccato.
@@ -58,11 +58,11 @@
  * riga scelta li conserva il controllo. */
 static unsigned char g_dir_flag[VOCI_MAX];
 static char          g_voce_nome[VOCI_MAX][DIRENT_NAME_MAX];
-static ExFinestra    g_lista;
+static ExWindow    g_lista;
 static char         g_dir[PERC_MAX];
 static char         g_nome[DIRENT_NAME_MAX];
 
-static ExFinestra   g_f, g_casella;
+static ExWindow   g_f, g_casella;
 static int          g_fatto;        /* 0 = ancora aperto, 1 = OK, 2 = annullato */
 static int          g_salva;        /* 1 = dialogo di salvataggio */
 
@@ -81,7 +81,7 @@ static void leggi(void)
     int start = 0, n, i;
     unsigned int quante = 0, d = 0;
 
-    ex_lista_svuota(g_lista);
+    ex_list_clear(g_lista);
 
     while ((n = listdir_from(g_dir, v, 32, start)) > 0) {
         for (i = 0; i < n && quante < VOCI_MAX; i++) {
@@ -118,7 +118,7 @@ static void leggi(void)
         if (g_dir_flag[i]) sprintf(riga, "[%s]", g_voce_nome[i]);
         else               sprintf(riga, " %s", g_voce_nome[i]);
 
-        ex_lista_aggiungi(g_lista, riga);
+        ex_list_add(g_lista, riga);
     }
 }
 
@@ -169,19 +169,19 @@ static void componi(char *out, unsigned int max)
  * percorso corrente, che e' roba del dialogo e non dell'elenco. */
 static void percorso_disegna(void)
 {
-    ex_riempi(g_f, AREA_X, AREA_Y + AREA_H + 4, AREA_W, 16, EX_GRIGIO);
-    ex_scrivi(g_f, AREA_X + 2, AREA_Y + AREA_H + 4, g_dir, EX_NERO);
+    ex_fill_rect(g_f, AREA_X, AREA_Y + AREA_H + 4, AREA_W, 16, EX_GRAY);
+    ex_draw_text(g_f, AREA_X + 2, AREA_Y + AREA_H + 4, g_dir, EX_BLACK);
 }
 
 /* ! IT GOES THROUGH THE PROCEDURE, not through the base painting: that is
  * where the path line is added to the drawing, in one place only (see
- * EXM_DISEGNA in proc). */
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+ * EXM_PAINT in proc). */
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 static void ridisegna(void)
 {
-    proc(g_f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_f);
+    proc(g_f, EXM_PAINT, 0, 0);
+    ex_update(g_f);
 }
 
 /* Il nome scelto va nella casella: e' li' che l'utente lo vede e lo corregge. */
@@ -189,12 +189,12 @@ static void nome_metti(const char *s)
 {
     strncpy(g_nome, s, DIRENT_NAME_MAX - 1);
     g_nome[DIRENT_NAME_MAX - 1] = '\0';
-    ex_testo_metti(g_casella, g_nome);
+    ex_set_text(g_casella, g_nome);
 }
 
 static void conferma(void)
 {
-    const char *t = ex_testo_prendi(g_casella);
+    const char *t = ex_get_text(g_casella);
 
     /* ! SI PRENDE QUELLO CHE C'E' NELLA CASELLA, non quello che era
      * selezionato: l'utente puo' averlo battuto a mano, ed e' l'unico modo di
@@ -207,9 +207,9 @@ static void conferma(void)
 
 static void scegli(void)
 {
-    unsigned int s = ex_lista_scelta(g_lista);
+    unsigned int s = ex_list_get_selected(g_lista);
 
-    if (s >= ex_lista_quante(g_lista)) return;
+    if (s >= ex_list_count(g_lista)) return;
 
     if (g_dir_flag[s]) {
         entra(g_voce_nome[s]);
@@ -279,10 +279,10 @@ static void nuova_cartella(void)
     nome_metti("");
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_OK)      { conferma();      break; }
         if (wp == ID_ANNULLA) { g_fatto = 2; return 0; }
         if (wp == ID_SU)      { entra(".."); nome_metti(""); break; }
@@ -292,28 +292,28 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * semplice sceglie e basta — un clic che entrasse subito renderebbe
          * impossibile scegliere senza aprire. Invio e DOPPIO CLIC invece
          * aprono: sono lo stesso gesto detto con due dispositivi diversi, e
-         * EX_APRIRE(lp) li rende indistinguibili apposta.
+         * EX_IS_OPEN(lp) li rende indistinguibili apposta.
          *
          * ! PRIMA DI OGGI L'INVIO QUI NON FACEVA NIENTE. Con la lista che
-         * aveva i tasti, l'Invio diventava questo EXM_COMANDO — e lp veniva
+         * aveva i tasti, l'Invio diventava questo EXM_COMMAND — e lp veniva
          * buttato via. Chi sceglieva una directory e batteva Invio vedeva il
          * dialogo restare fermo, senza nemmeno un errore: la strada verso il
-         * ramo EXM_TASTO qui sotto era chiusa dalla lista stessa. */
+         * ramo EXM_KEY qui sotto era chiusa dalla lista stessa. */
         if (wp == ID_LISTA) {
-            unsigned int s = ex_lista_scelta(g_lista);
+            unsigned int s = ex_list_get_selected(g_lista);
 
-            if (s >= ex_lista_quante(g_lista)) break;
+            if (s >= ex_list_count(g_lista)) break;
 
             /* Il nome di una directory non va nella casella: li' ci sta il
              * nome del FILE, e una directory non e' un nome da confermare. */
             if (!g_dir_flag[s]) nome_metti(g_voce_nome[s]);
 
-            if (EX_APRIRE(lp)) scegli();
+            if (EX_IS_OPEN(lp)) scegli();
             break;
         }
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         /* ! CTRL+N MAKES A FOLDER, and it is not one more convenience: it is
          * the ONLY way to get there without a mouse. A button that holds the
          * focus does not answer Enter (see tasto_al_fuoco in exwin.c: Enter
@@ -340,15 +340,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * ancora non esiste. Se e' vuota, si apre cio' che e' scelto
          * nell'elenco. Le frecce non arrivano fin qui: le mangia la lista. */
         if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') {
-            const char *s = ex_testo_prendi(g_casella);
+            const char *s = ex_get_text(g_casella);
             if (s && s[0]) { nome_metti(s); conferma(); }
             else           scegli();
             if (g_fatto) return 0;
             break;
         }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_fatto = 2;
         return 0;
 
@@ -362,13 +362,13 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * the paint of the area uncovered by the dialog that had just closed, which
      * swept it away. Result: the line vanished at the very moment it had
      * changed, which is when it was the only thing worth looking at. */
-    case EXM_DISEGNA:
-        ex_procedura_base(f, msg, wp, lp);
+    case EXM_PAINT:
+        ex_default_proc(f, msg, wp, lp);
         percorso_disegna();
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
     ridisegna();
@@ -418,32 +418,32 @@ static int dialogo(char *percorso, unsigned int max, int salva,
     }
 
     /* In mezzo allo schermo: un dialogo nell'angolo si cerca. */
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = sw > DLG_W ? (int)(sw - DLG_W) / 2 : 0;
     y = sh > DLG_H ? (int)(sh - DLG_H) / 2 : 0;
 
-    g_f = ex_crea("finestra", titolo,
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    g_f = ex_create("window", titolo,
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                   x, y, DLG_W, DLG_H, 0, 0, proc);
     if (g_f == 0) return 0;
 
-    g_lista = ex_crea("lista", "", EX_FIGLIO,
+    g_lista = ex_create("list", "", EX_CHILD,
                       AREA_X, AREA_Y, AREA_W, AREA_H, g_f, ID_LISTA, 0);
-    if (g_lista == 0) { ex_distruggi(g_f); return 0; }
+    if (g_lista == 0) { ex_destroy(g_f); return 0; }
 
-    ex_crea("pulsante", "Su", EX_FIGLIO, AREA_X, 2, 44, 20, g_f, ID_SU, 0);
+    ex_create("button", "Su", EX_CHILD, AREA_X, 2, 44, 20, g_f, ID_SU, 0);
 
     /* ! THE NEW FOLDER IS OFFERED ONLY TO WHOEVER IS CHOOSING WHERE TO PUT
      * SOMETHING. In the "Apri" dialog it would be a button that makes an empty
      * directory only to find nothing inside it to open. */
     if (salva)
-        ex_crea("pulsante", "Nuova cartella (Ctrl+N)", EX_FIGLIO,
+        ex_create("button", "Nuova cartella (Ctrl+N)", EX_CHILD,
                 AREA_X + 50, 2, 192, 20, g_f, ID_NUOVA, 0);
 
-    ex_crea("etichetta", etichetta, EX_FIGLIO,
+    ex_create("label", etichetta, EX_CHILD,
             AREA_X, AREA_Y + AREA_H + 26, 90, 16, g_f, 0, 0);
 
-    g_casella = ex_crea("testo", "", EX_FIGLIO,
+    g_casella = ex_create("textbox", "", EX_CHILD,
                         AREA_X + 92, AREA_Y + AREA_H + 22,
                         AREA_W - 92, 22, g_f, 0, 0);
 
@@ -455,9 +455,9 @@ static int dialogo(char *percorso, unsigned int max, int salva,
         int wo = larghezza_pulsante(ok);
         int wa = larghezza_pulsante("Annulla");
 
-        ex_crea("pulsante", ok, EX_FIGLIO,
+        ex_create("button", ok, EX_CHILD,
                 DLG_W - 20 - wa - wo, DLG_H - 32, wo, 24, g_f, ID_OK, 0);
-        ex_crea("pulsante", "Annulla", EX_FIGLIO,
+        ex_create("button", "Annulla", EX_CHILD,
                 DLG_W - 12 - wa, DLG_H - 32, wa, 24, g_f, ID_ANNULLA, 0);
     }
 
@@ -466,22 +466,22 @@ static int dialogo(char *percorso, unsigned int max, int salva,
      * «Su» soltanto perche' ExWin dava il fuoco al primo controllo che lo
      * accettava: le righe qui sopra erano in un ordine che non e' quello in
      * cui si legge, e il commento prometteva di rimetterle a posto il giorno
-     * che ci fosse stata ex_fuoco(). E' quel giorno.
+     * che ci fosse stata ex_set_focus(). E' quel giorno.
      *
      * E il fuoco va alla casella e non al pulsante perche' in un dialogo di
      * scelta file la prima cosa che si fa e' battere un nome. */
-    ex_fuoco(g_casella);
+    ex_set_focus(g_casella);
 
-    ex_testo_metti(g_casella, g_nome);
+    ex_set_text(g_casella, g_nome);
     leggi();
     ridisegna();
 
-    /* ! IL CICLO ANNIDATO. ex_prendi_msg() rende 0 solo se qualcuno ha chiamato
-     * ex_esci(), cioe' se l'applicazione intera se ne sta andando: allora si
+    /* ! IL CICLO ANNIDATO. ex_get_message() rende 0 solo se qualcuno ha chiamato
+     * ex_quit(), cioe' se l'applicazione intera se ne sta andando: allora si
      * esce anche di qui, e si esce senza risultato. */
-    while (!g_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    while (!g_fatto && ex_get_message(&m)) ex_dispatch(&m);
 
-    ex_distruggi(g_f);
+    ex_destroy(g_f);
     g_f = 0;
 
     if (g_fatto != 1) return 0;
@@ -511,9 +511,9 @@ int ex_dlg_percorso(const char *titolo, const char *etichetta, const char *ok,
  * --------------------------------------------------------------------------- */
 static int g_av_fatto;
 
-static long av_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long av_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_COMANDO || msg == EXM_CHIUDI) { g_av_fatto = 1; return 0; }
+    if (msg == EXM_COMMAND || msg == EXM_CLOSE) { g_av_fatto = 1; return 0; }
 
     /* ! INVIO ED Esc CHIUDONO, e fino al 18 agosto 2026 non lo facevano: questo
      * dialogo aveva SOLO il pulsante OK, cioe' si chiudeva solo col mouse.
@@ -521,12 +521,12 @@ static long av_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * senza guardare e' proprio l'Invio, e non succedeva niente. Le altre due
      * finestre di ExDlg lo facevano gia': era questa a essere l'eccezione, e
      * un'eccezione che nessuno aveva scelto. */
-    if (msg == EXM_TASTO) {
+    if (msg == EXM_KEY) {
         unsigned int c = wp & 0xFFFF;
 
         if (c == '\n' || c == '\r' || c == 27) { g_av_fatto = 1; return 0; }
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 /* =============================================================================
@@ -588,7 +588,7 @@ static unsigned int spezza(const char *t, char righe[][AVVISO_COL + 1],
 
 int ex_dlg_avviso(const char *titolo, const char *testo)
 {
-    ExFinestra   f;
+    ExWindow   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          x, y, alt;
@@ -601,29 +601,29 @@ int ex_dlg_avviso(const char *titolo, const char *testo)
     /* ! LA FINESTRA SI MISURA SUL TESTO, non il testo sulla finestra. */
     alt = 24 + (int)n * 16 + 12 + 24 + 16;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = (int)sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
     y = (int)sh > alt      ? (int)(sh - (unsigned int)alt) / 2 : 0;
 
     g_av_fatto = 0;
-    f = ex_crea("finestra", titolo ? titolo : "Avviso",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", titolo ? titolo : "Avviso",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 x, y, AVVISO_W, alt, 0, 0, av_proc);
     if (f == 0) return 1;
 
     for (k = 0; k < n; k++)
-        ex_crea("etichetta", righe[k], EX_FIGLIO,
+        ex_create("label", righe[k], EX_CHILD,
                 12, 20 + (int)k * 16, AVVISO_W - 24, 16, f, 0, 0);
 
-    ex_crea("pulsante", "OK", EX_FIGLIO,
+    ex_create("button", "OK", EX_CHILD,
             (AVVISO_W - 80) / 2, alt - 40, 80, 24, f, 1, 0);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
 
-    while (!g_av_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    while (!g_av_fatto && ex_get_message(&m)) ex_dispatch(&m);
 
-    ex_distruggi(f);
+    ex_destroy(f);
     return 1;
 }
 
@@ -642,40 +642,40 @@ int ex_dlg_avviso(const char *titolo, const char *testo)
 
 static int g_tx_fatto;
 
-static long tx_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long tx_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
-    if (msg == EXM_CHIUDI) { g_tx_fatto = 1; return 0; }
-    if (msg == EXM_COMANDO) {
-        if (wp == 1 || (wp == 2 && EX_APRIRE(lp))) g_tx_fatto = 1;
+    if (msg == EXM_CLOSE) { g_tx_fatto = 1; return 0; }
+    if (msg == EXM_COMMAND) {
+        if (wp == 1 || (wp == 2 && EX_IS_OPEN(lp))) g_tx_fatto = 1;
         return 0;
     }
-    if (msg == EXM_TASTO) {
+    if (msg == EXM_KEY) {
         unsigned int c = wp & 0xFFFF;
 
         if (c == '\n' || c == '\r' || c == 27) { g_tx_fatto = 1; return 0; }
     }
-    return ex_procedura_base(f, msg, wp, lp);
+    return ex_default_proc(f, msg, wp, lp);
 }
 
 int ex_dlg_testo(const char *titolo, const char *testo)
 {
-    ExFinestra   f, l;
+    ExWindow   f, l;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     const char  *p = testo ? testo : "";
     char         riga[TESTO_COL + 1];
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     g_tx_fatto = 0;
-    f = ex_crea("finestra", titolo ? titolo : "Testo",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", titolo ? titolo : "Testo",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 (int)sw > TESTO_W ? (int)(sw - TESTO_W) / 2 : 0,
                 (int)sh > TESTO_H ? (int)(sh - TESTO_H) / 2 : 0,
                 TESTO_W, TESTO_H, 0, 0, tx_proc);
     if (f == 0) return 1;
 
-    l = ex_crea("lista", "", EX_FIGLIO, 8, 8, TESTO_W - 16, TESTO_H - 56, f, 2, 0);
-    ex_crea("pulsante", "Chiudi", EX_FIGLIO,
+    l = ex_create("list", "", EX_CHILD, 8, 8, TESTO_W - 16, TESTO_H - 56, f, 2, 0);
+    ex_create("button", "Chiudi", EX_CHILD,
             (TESTO_W - 90) / 2, TESTO_H - 38, 90, 26, f, 1, 0);
 
     /* Riga per riga; le lunghe si spezzano sull'ultimo spazio che ci sta. */
@@ -693,7 +693,7 @@ int ex_dlg_testo(const char *titolo, const char *testo)
             }
             memcpy(riga, p, k);
             riga[k] = '\0';
-            ex_lista_aggiungi(l, riga);
+            ex_list_add(l, riga);
             p += k;
             n -= k;
             while (n > 0 && *p == ' ') { p++; n--; }
@@ -701,13 +701,13 @@ int ex_dlg_testo(const char *titolo, const char *testo)
         if (!fine) break;
         p = fine + 1;
     }
-    ex_lista_scegli(l, 0);
-    ex_fuoco(l);
+    ex_list_select(l, 0);
+    ex_set_focus(l);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
-    while (!g_tx_fatto && ex_prendi_msg(&m)) ex_smista(&m);
-    ex_distruggi(f);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
+    while (!g_tx_fatto && ex_get_message(&m)) ex_dispatch(&m);
+    ex_destroy(f);
     return 1;
 }
 
@@ -731,12 +731,12 @@ static int larghezza_pulsante(const char *t)
 }
 
 /* I due pulsanti, per sapere chi ha il fuoco quando arriva un Invio. */
-static ExFinestra g_cf_si, g_cf_no;
+static ExWindow g_cf_si, g_cf_no;
 
-static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long cf_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         g_cf_fatto = (wp == ID_SI) ? 1 : 2;
         return 0;
 
@@ -745,11 +745,11 @@ static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * funzione potesse tornare senza risposta, ogni chiamante dovrebbe
      * inventarsi cosa fare in quel caso, e la meta' di loro sceglierebbe di
      * andare avanti. */
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_cf_fatto = 2;
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         /* I tasti vanno alla modale invece di essere buttati: Invio ed Esc
          * sono i due che si battono senza guardare. Un pulsante col fuoco NON
          * consuma Invio (vedi tasto_al_fuoco in exwin.c), quindi arriva fin qui.
@@ -766,13 +766,13 @@ static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * stessa regola della chiusura qui sopra: nel dubbio, la risposta e'
          * quella che non fa danni. */
         if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r')
-            g_cf_fatto = (ex_fuoco_chi(f) == g_cf_si) ? 1 : 2;
+            g_cf_fatto = (ex_get_focus(f) == g_cf_si) ? 1 : 2;
         else if ((wp & 0xFFFF) == 27)
             g_cf_fatto = 2;
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
@@ -784,7 +784,7 @@ static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 int ex_dlg_conferma(const char *titolo, const char *testo,
                     const char *si, const char *no)
 {
-    ExFinestra   f;
+    ExWindow   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          x, y, h, ybot;
@@ -807,18 +807,18 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
      * il 23 settembre 2026. */
     h = CF_H + (n > 2 ? (int)(n - 2) * 16 : 0);
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
     y = (int)sh > h   ? ((int)sh - h) / 2 : 0;
 
     g_cf_fatto = 0;
-    f = ex_crea("finestra", titolo ? titolo : "Conferma",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", titolo ? titolo : "Conferma",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 x, y, AVVISO_W, h, 0, 0, cf_proc);
     if (f == 0) return 0;       /* niente finestra, nessun consenso */
 
     for (i = 0; i < n; i++)
-        ex_crea("etichetta", righe[i], EX_FIGLIO,
+        ex_create("label", righe[i], EX_CHILD,
                 12, 28 + (int)i * 16, AVVISO_W - 24, 16, f, 0, 0);
 
     /* ! I PULSANTI SI MISURANO SULLA LORO SCRITTA, e non e' pignoleria: la
@@ -841,21 +841,21 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
          * dev'essere quello che non perde niente. Prima era scritto qui e non
          * era vero da nessuna parte: il fuoco andava al primo controllo che lo
          * accetta — «si'» — e l'Invio rispondeva «si'» comunque. Vedi cf_proc. */
-        g_cf_si = ex_crea("pulsante", ts, EX_FIGLIO, x0, ybot, ws, 26, f, ID_SI, 0);
-        g_cf_no = ex_crea("pulsante", tn, EX_FIGLIO, x0 + ws + gap, ybot, wn, 26,
+        g_cf_si = ex_create("button", ts, EX_CHILD, x0, ybot, ws, 26, f, ID_SI, 0);
+        g_cf_no = ex_create("button", tn, EX_CHILD, x0 + ws + gap, ybot, wn, 26,
                           f, ID_NO, 0);
-        ex_fuoco(g_cf_no);
+        ex_set_focus(g_cf_no);
     }
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
 
     /* Come gli altri dialoghi: il ciclo e' suo, e continua a smistare agli
      * altri messaggi dell'applicazione — che il server, intanto, non manda
      * piu' a nessun'altra finestra di questo processo. */
-    while (!g_cf_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    while (!g_cf_fatto && ex_get_message(&m)) ex_dispatch(&m);
 
-    ex_distruggi(f);
+    ex_destroy(f);
     return g_cf_fatto == 1;
 }
 
@@ -874,39 +874,39 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
 #define SC_MAX   4
 #define ID_SC0   100
 
-static ExFinestra g_sc_p[SC_MAX];
+static ExWindow g_sc_p[SC_MAX];
 static int        g_sc_n;
 static int        g_sc_scelta;      /* -2 = nothing yet, -1 = cancelled */
 
-static long sc_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long sc_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     int i;
 
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp >= ID_SC0 && (int)wp < ID_SC0 + g_sc_n) g_sc_scelta = (int)wp - ID_SC0;
         return 0;
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_sc_scelta = -1;
         return 0;
-    case EXM_TASTO:
+    case EXM_KEY:
         if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') {
             g_sc_scelta = -1;
             for (i = 0; i < g_sc_n; i++)
-                if (ex_fuoco_chi(f) == g_sc_p[i]) g_sc_scelta = i;
+                if (ex_get_focus(f) == g_sc_p[i]) g_sc_scelta = i;
         } else if ((wp & 0xFFFF) == 27) {
             g_sc_scelta = -1;
         }
         return 0;
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
 int ex_dlg_scegli(const char *titolo, const char *testo,
                   const char *const *voci, int n)
 {
-    ExFinestra   f;
+    ExWindow   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          x, y, h, i, tot = 0, gap = 10, px;
@@ -920,19 +920,19 @@ int ex_dlg_scegli(const char *titolo, const char *testo,
     if (nr == 0) { righe[0][0] = '\0'; nr = 1; }
     h = CF_H + (nr > 2 ? (int)(nr - 2) * 16 : 0);
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
     y = (int)sh > h   ? ((int)sh - h) / 2 : 0;
 
     g_sc_n = n;
     g_sc_scelta = -2;
-    f = ex_crea("finestra", titolo ? titolo : "Scegli",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", titolo ? titolo : "Scegli",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 x, y, AVVISO_W, h, 0, 0, sc_proc);
     if (f == 0) return -1;
 
     for (k = 0; k < nr; k++)
-        ex_crea("etichetta", righe[k], EX_FIGLIO,
+        ex_create("label", righe[k], EX_CHILD,
                 12, 28 + (int)k * 16, AVVISO_W - 24, 16, f, 0, 0);
 
     for (i = 0; i < n; i++) tot += larghezza_pulsante(voci[i]) + (i ? gap : 0);
@@ -940,18 +940,18 @@ int ex_dlg_scegli(const char *titolo, const char *testo,
     for (i = 0; i < n; i++) {
         int w = larghezza_pulsante(voci[i]);
 
-        g_sc_p[i] = ex_crea("pulsante", voci[i], EX_FIGLIO, px, h - 54, w, 26,
+        g_sc_p[i] = ex_create("button", voci[i], EX_CHILD, px, h - 54, w, 26,
                             f, ID_SC0 + i, 0);
         px += w + gap;
     }
-    ex_fuoco(g_sc_p[n - 1]);
+    ex_set_focus(g_sc_p[n - 1]);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
 
-    while (g_sc_scelta == -2 && ex_prendi_msg(&m)) ex_smista(&m);
+    while (g_sc_scelta == -2 && ex_get_message(&m)) ex_dispatch(&m);
 
-    ex_distruggi(f);
+    ex_destroy(f);
     return g_sc_scelta < 0 ? -1 : g_sc_scelta;
 }
 
@@ -980,20 +980,20 @@ int ex_dlg_scegli(const char *titolo, const char *testo,
 #define ID_RG_NO    2
 
 static int        g_rg_fatto;   /* 0 = niente, 1 = ok, 2 = annullato */
-static ExFinestra g_rg_casella;
+static ExWindow g_rg_casella;
 
-static long rg_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long rg_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         g_rg_fatto = (wp == ID_RG_OK) ? 1 : 2;
         return 0;
 
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_rg_fatto = 2;
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         /* Invio conferma, Esc annulla. Una casella di testo NON consuma
          * l'Invio (vedi tasto_al_fuoco in exwin.c) proprio perche' arrivi
          * qui: e' il tasto con cui si finisce di scrivere. */
@@ -1002,34 +1002,34 @@ static long rg_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
 static int riga(const char *titolo, const char *domanda, const char *ok,
                 char *valore, unsigned int max)
 {
-    ExFinestra   f;
+    ExWindow   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          x, y;
 
     if (!valore || max == 0) return 0;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = sw > 420 ? (int)(sw - 420) / 2 : 0;
     y = sh > 150 ? (int)(sh - 150) / 2 : 0;
 
     g_rg_fatto = 0;
-    f = ex_crea("finestra", titolo ? titolo : "Scrivi",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", titolo ? titolo : "Scrivi",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 x, y, 420, 150, 0, 0, rg_proc);
     if (f == 0) return 0;
 
-    ex_crea("etichetta", domanda ? domanda : "", EX_FIGLIO,
+    ex_create("label", domanda ? domanda : "", EX_CHILD,
             12, 28, 396, 16, f, 0, 0);
 
-    g_rg_casella = ex_crea("testo", valore, EX_FIGLIO,
+    g_rg_casella = ex_create("textbox", valore, EX_CHILD,
                            12, 50, 396, 24, f, 0, 0);
 
     {
@@ -1038,29 +1038,29 @@ static int riga(const char *titolo, const char *domanda, const char *ok,
         int gap = 12;
         int x0  = (420 - (ws + gap + wn)) / 2;
 
-        ex_crea("pulsante", ok, EX_FIGLIO, x0, 96, ws, 26, f, ID_RG_OK, 0);
-        ex_crea("pulsante", "Annulla", EX_FIGLIO,
+        ex_create("button", ok, EX_CHILD, x0, 96, ws, 26, f, ID_RG_OK, 0);
+        ex_create("button", "Annulla", EX_CHILD,
                 x0 + ws + gap, 96, wn, 26, f, ID_RG_NO, 0);
     }
 
     /* ! IL FUOCO ALLA CASELLA, o si aprirebbe un dialogo in cui si chiede di
      * scrivere e battere non scrive niente. */
-    ex_fuoco(g_rg_casella);
+    ex_set_focus(g_rg_casella);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
 
-    while (!g_rg_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    while (!g_rg_fatto && ex_get_message(&m)) ex_dispatch(&m);
 
     if (g_rg_fatto == 1) {
-        const char *t = ex_testo_prendi(g_rg_casella);
+        const char *t = ex_get_text(g_rg_casella);
         unsigned int i = 0;
 
         if (t) { for (i = 0; i + 1 < max && t[i]; i++) valore[i] = t[i]; }
         valore[i] = '\0';
     }
 
-    ex_distruggi(f);
+    ex_destroy(f);
     return g_rg_fatto == 1;
 }
 

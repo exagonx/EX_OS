@@ -7,12 +7,10 @@ bin/delete
 bin/disk
 bin/fdisk
 bin/fdprova
-bin/help
 bin/hwconfig
 bin/hwinfo
 bin/id
 bin/install
-bin/kbprova
 bin/keymap
 bin/login
 bin/ls
@@ -37,7 +35,6 @@ bin/toolinst
 bin/trunc
 bin/umount
 bin/uname
-boot/help.txt
 boot/kernel.cfg
 boot/kernel.txt
 dev/kbd.drv

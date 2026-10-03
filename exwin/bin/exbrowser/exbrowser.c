@@ -492,16 +492,16 @@ static int pezzo_del_nodo(int nodo)
 static char          g_storia[STORIA_MAX][EXHTTP_URL_MAX];
 static int           g_storia_n = 0;
 
-ExFinestra    g_f, g_url, g_stato;
+ExWindow    g_f, g_url, g_stato;
 int           g_fin_w = FIN_W, g_fin_h = FIN_H;   /* the size it has now */
-static ExFinestra g_bt_info, g_bt_vai, g_et_cerca;  /* moved on a resize */
+static ExWindow g_bt_info, g_bt_vai, g_et_cerca;  /* moved on a resize */
 /* La casella della ricerca, accanto a quella dell'indirizzo: non e' esportata
  * perche' la guarda solo la procedura della finestra. */
-static ExFinestra g_cerca;
+static ExWindow g_cerca;
 ExFont        g_font_testo = 0, g_font_titolo = 0;
 
 /* ! `load` FIRES ONCE PER PAGE: prova_a_sparare_load() is called on every
- * EXM_TEMPO tick while the page sits idle, and without this flag every
+ * EXM_TIMER tick while the page sits idle, and without this flag every
  * `load` handler would run five times a second. vai() resets it. */
 
 /* ! THE TAB STOP WITH THE FOCUS, as the piece's identity and not its index:
@@ -702,7 +702,7 @@ void disegna_barra(void);
  *
  * ! E SE NON C'E' NON SI MUORE: un browser senza eximg mostra il testo, che e'
  * la maggior parte di una pagina. E' la stessa scelta che fa il toolkit in
- * ex_immagine, per la stessa ragione. */
+ * ex_draw_image, per la stessa ragione. */
 static int eximg_pronta(void)
 {
     static const char *const dove[] = {
@@ -956,7 +956,7 @@ static unsigned int *ridimensiona(const EximgBitmap *bm,
         for (x = 0; x < w; x++) { r[x] = s[x * bm->larghezza / w]; alfa |= r[x]; }
     }
     /* ! ALFA ZERO DAPPERTUTTO VUOL DIRE «SENZA ALFA» (il JPEG, il BMP: vedi
-     * lib/eximg/png.c): l'immagine e' opaca, e si disegna fusa (ex_pixmap_fuso)
+     * lib/eximg/png.c): l'immagine e' opaca, e si disegna fusa (ex_pixmap_blend)
      * come le altre. Senza questa riga sarebbe tutta trasparente. */
     if ((alfa >> 24) == 0)
         for (i = 0; i < w * h; i++) d[i] |= 0xFF000000u;
@@ -1043,7 +1043,7 @@ static int      g_font_n = 0;
 
 /* =============================================================================
  * ! IL RIPIEGO SUL FONT DI SISTEMA E' MUTO, E QUESTI DUE INTERI SONO LA SUA
- * VOCE. `ex_font_apri` rende 0 quando il file non c'e' o non si apre, e zero
+ * VOCE. `ex_font_open` rende 0 quando il file non c'e' o non si apre, e zero
  * E' il font di sistema: la pagina esce leggibile, tutta con lo stesso
  * carattere, e da nessuna parte compare il motivo. Chi guarda non vede «manca
  * un file»: vede un browser che non sa cambiare carattere — che e' una
@@ -1107,7 +1107,7 @@ ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
     }
 
     k = famiglia * 4 + neretto + corsivo * 2;
-    g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
+    g_font[g_font_n].f = ex_font_open(FACCIA[k], corpo);
 
     /* ! E QUANDO NON SI APRE LO SI SCRIVE, col nome del file e col corpo.
      * Il conto in «Informazioni su» dice QUANTI; questo dice QUALI, e la
@@ -1121,7 +1121,7 @@ ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
                FACCIA[k], corpo);
     }
 
-    /* ! ex_font_apri RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
+    /* ! ex_font_open RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
      * si mette in riserva lo stesso, cosi' non si torna a cercarlo a ogni
      * parola. Una pagina con un carattere diverso e' meglio di una pagina
      * lenta. */
@@ -1198,14 +1198,14 @@ static void app_copia(Ctrl *k, int taglia)
     int a, b;
 
     if (!sel_tratto(k, &a, &b)) return;
-    ex_appunti_metti(k->valore + a, (unsigned int)(b - a));
+    ex_clipboard_set(k->valore + a, (unsigned int)(b - a));
     if (taglia) sel_togli(k);
 }
 
 static void app_incolla(Ctrl *k)
 {
     static char  inc[CTRL_VAL_MAX];
-    unsigned int q = ex_appunti_prendi(inc, sizeof(inc));
+    unsigned int q = ex_clipboard_get(inc, sizeof(inc));
     unsigned int i;
 
     sel_togli(k);
@@ -1276,12 +1276,12 @@ static const char CSS_DI_SISTEMA[] =
      * perche' la sua regola sta piu' in alto nella cascata. */
     "table, td { text-align: left }";
 
-/* How many times the status line changed: EXM_TEMPO looks at it to know
+/* How many times the status line changed: EXM_TIMER looks at it to know
  * whether it needs the toolkit's redraw (see the end of that case). */
 static unsigned int g_dico_n = 0;
 
 /* The link under the pointer (-1: none) and what the status line said
- * before it showed the link's address (EXM_MOUSE_SOPRA). */
+ * before it showed the link's address (EXM_MOUSE_ENTER). */
 static int  g_sopra_link = -1;
 static char g_stato_prima[160];
 
@@ -1302,7 +1302,7 @@ static int pezzo_vicino(int x, int y)
 
         if (g_pez[i].rif >= 0) continue;
         py = g_pez[i].y - g_scorri;
-        h  = ex_font_altezza(g_pez[i].font);
+        h  = ex_font_height(g_pez[i].font);
         if (py > y) continue;
         if (y < py + h && g_pez[i].x > x) continue;     /* same line, further right */
         best = i;
@@ -1331,21 +1331,21 @@ static void selezione_copia(void)
         n += (unsigned int)k;
     }
     buf[n] = '\0';
-    if (n) { ex_appunti_metti(buf, n); dico("testo copiato"); }
+    if (n) { ex_clipboard_set(buf, n); dico("testo copiato"); }
 }
 /* The DOM node under the pointer, for mouseover/mouseout (-1: none). */
 static int  g_sopra_nodo = -1;
 
-/* ! THE STATUS LINE SHOWS ITSELF (30 September 2026): ex_ridisegna redraws
+/* ! THE STATUS LINE SHOWS ITSELF (30 September 2026): ex_redraw redraws
  * the label alone. Before, it waited for the next redraw of the whole window
- * — which since EX_NON_RIDISEGNARE no longer comes after every message, and
+ * — which since EX_NO_REDRAW no longer comes after every message, and
  * the line stayed on "immagine 1 di 64...". If the toolkit cannot, g_dico_n
- * still asks EXM_TEMPO for the old redraw. */
+ * still asks EXM_TIMER for the old redraw. */
 static void dico(const char *s)
 {
     if (g_stato) {
-        ex_testo_metti(g_stato, s);
-        if (ex_ridisegna(g_stato)) return;
+        ex_set_text(g_stato, s);
+        if (ex_redraw(g_stato)) return;
     }
     g_dico_n++;
 }
@@ -2527,7 +2527,7 @@ static int imm_prendi(int k)
                 ridimensiona_in(&v, im->px, w, h);
                 im->anima = a;
                 im->anima_prossimo = uptime_ms() + ms;
-                ex_sveglia(g_f, 100);
+                ex_set_timer(g_f, 100);
             } else {
                 g_anima_chiudi(a);
             }
@@ -2702,7 +2702,7 @@ static int immagini_prendi(void)
 }
 
 /* After a scroll: if an image is still waiting, the timer fetches the near
- * ones once the scrolling has stopped (EXM_TEMPO), not in the middle of it:
+ * ones once the scrolling has stopped (EXM_TIMER), not in the middle of it:
  * a fetch blocks, and the wheel would stutter. */
 static void immagini_vicine(void)
 {
@@ -2712,7 +2712,7 @@ static void immagini_vicine(void)
     for (k = 0; k < g_imm_n; k++)
         if (g_imm[k].stato == 0) {
             g_imm_da_vedere = 1;
-            ex_sveglia(g_f, 250);
+            ex_set_timer(g_f, 250);
             return;
         }
 }
@@ -2985,7 +2985,7 @@ static int rete_a_che_punto(void *dato, const char *cosa)
 
     (void)dato;
     if (cosa && cosa[0]) dico(cosa);
-    while (n++ < 8 && ex_msg_ora(&m)) ex_smista(&m);
+    while (n++ < 8 && ex_peek_message(&m)) ex_dispatch(&m);
     return g_ferma ? 0 : 1;
 }
 
@@ -3001,7 +3001,7 @@ static int rete_mentre_aspetta(void *dato)
      * dentro vorrebbe dire rimandare la lettura di quanto ci mette la coda a
      * finire, e su una pagina che ne riceve tanti sarebbe di nuovo un'attesa
      * lunga — solo spostata di posto. */
-    while (n++ < 8 && ex_msg_ora(&m)) ex_smista(&m);
+    while (n++ < 8 && ex_peek_message(&m)) ex_dispatch(&m);
 
     return g_ferma ? 0 : 1;
 }
@@ -3108,7 +3108,7 @@ static void motore_chiudi(void)
     if (g_dom_mem) { free(g_dom_mem); g_dom_mem = 0; }
     g_js  = 0;
     g_dom = 0;
-    ex_sveglia(g_f, 0);
+    ex_set_timer(g_f, 0);
 }
 
 /* Il risolutore, nella forma che vuole il ponte. `dato` non serve: risolvi()
@@ -3452,7 +3452,7 @@ static void esegui_script(void)
      * uno script che ha finito non ha motivo di svegliare il browser cinque
      * volte al secondo per sempre — e su una macchina da 32 MB il costo di un
      * risveglio inutile e' un ridisegno che nessuno ha chiesto. */
-    if (g_js && exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 200);
+    if (g_js && exjs_lavori_in_attesa(g_js)) ex_set_timer(g_f, 200);
 
     dopo_gli_script();
 }
@@ -3553,7 +3553,7 @@ static void rifai_se_cambiato(void)
     g_vista = html_versione(&g_doc);
     disegna();
     /* a script may have added an <iframe>: it loads at the next turn */
-    if (g_v == &g_principale && cornici_da_caricare()) ex_sveglia(g_f, 200);
+    if (g_v == &g_principale && cornici_da_caricare()) ex_set_timer(g_f, 200);
 }
 
 /* =============================================================================
@@ -3561,7 +3561,7 @@ static void rifai_se_cambiato(void)
  *
  * ! CALLED FROM TWO PLACES: at the end of vai(), for the page that waits for
  * nothing (no timer, no fetch/XHR still open: `load` fires at once), and from
- * EXM_TEMPO, for the page that was still waiting when it finished loading.
+ * EXM_TIMER, for the page that was still waiting when it finished loading.
  *
  * ! "WAITING" MEANS TIMERS AND THE DOM'S NETWORK QUEUE, not images: <img>
  * does not go through exdom's queue, so on a page with images still in
@@ -3580,7 +3580,7 @@ static void prova_a_sparare_load(void)
     if (exjs_lavori_in_attesa(g_js) || exdom_rete_in_attesa(g_dom)) {
         /* Someone is still waiting: keep the wake-up on, or a fetch or a
          * timer queued by a DOMContentLoaded handler would never be pumped. */
-        ex_sveglia(g_f, 200);
+        ex_set_timer(g_f, 200);
         return;
     }
 
@@ -3603,7 +3603,7 @@ static int nodo_sotto(int x, int y)
         /* Anything foreign (image or control) has its own height; a
          * control's piece has no font of its own to measure. */
         int h  = (g_pez[i].rif >= 0) ? g_pez[i].h
-                                     : ex_font_altezza(g_pez[i].font);
+                                     : ex_font_height(g_pez[i].font);
 
         if (g_pez[i].nodo < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
@@ -3749,7 +3749,7 @@ static int segui_location(void)
     }
     if (!risolvi(dove, assoluto, sizeof(assoluto))) return 0;
 
-    if (g_v == &g_principale) ex_testo_metti(g_url, assoluto);
+    if (g_v == &g_principale) ex_set_text(g_url, assoluto);
     g_js_salta = 1;
     vai(assoluto, 1, 0);
     return 1;
@@ -4011,7 +4011,7 @@ static void apri_con(const char *bin, const char *file)
  * in this process, the browser waiting. Worse, but it downloads.
  * ============================================================================= */
 static int  scarica_in(const char *url, const char *dove);
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 #define APRI_MAX 16
 static const char *g_apri_dopo[APRI_MAX];
@@ -4033,7 +4033,7 @@ static void scarico_finito(void *dato, int id, int stato)
     }
     g_apri_dopo[id] = 0;
     dico(msg);
-    proc(g_f, EXM_DISEGNA, 0, 0);
+    proc(g_f, EXM_PAINT, 0, 0);
 }
 
 /* Starts `url` into `dove`, then opens it with `bin` if given. */
@@ -4065,7 +4065,7 @@ static void esci(void)
         if (!ex_dlg_conferma("Uscire?", t, "Esci", "Resta")) return;
         ex_scarichi_ferma_tutti();
     }
-    ex_esci(0);
+    ex_quit(0);
 }
 
 static int           g_scarico_fd = -1;
@@ -4102,7 +4102,7 @@ static int scarica_in(const char *url, const char *dove)
 
     snprintf(msg, sizeof(msg), "scarico in %s...  (Esc ferma)", dove);
     dico(msg);
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
 
     memset(&e, 0, sizeof(e));
     g_scarico_n = 0;
@@ -4149,7 +4149,7 @@ static int dove_aprire(const char *nome, char *out, unsigned int max)
     return 1;
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
 
 /* The question, and what follows. `tipo` is 0 when only the name spoke. */
 static void non_e_una_pagina_(const char *url, const char *tipo);
@@ -4162,7 +4162,7 @@ static void non_e_una_pagina_(const char *url, const char *tipo);
 static void non_e_una_pagina(const char *url, const char *tipo)
 {
     non_e_una_pagina_(url, tipo);
-    proc(g_f, EXM_DISEGNA, 0, 0);
+    proc(g_f, EXM_PAINT, 0, 0);
 }
 
 static void non_e_una_pagina_(const char *url, const char *tipo)
@@ -4538,9 +4538,9 @@ void cornice_disegna(int k, int x, int y, int w, int h)
     /* the border, cut to the parent's area as everything else is */
     for (q = y - 1; q <= y + h; q++) {
         if (q < area_y() || q >= area_y() + area_h()) continue;
-        ex_riempi(g_f, x - 1, q, 1, 1, 0x00808080);
-        ex_riempi(g_f, x + w, q, 1, 1, 0x00808080);
-        if (q == y - 1 || q == y + h) ex_riempi(g_f, x - 1, q, w + 2, 1, 0x00808080);
+        ex_fill_rect(g_f, x - 1, q, 1, 1, 0x00808080);
+        ex_fill_rect(g_f, x + w, q, 1, 1, 0x00808080);
+        if (q == y - 1 || q == y + h) ex_fill_rect(g_f, x - 1, q, w + 2, 1, 0x00808080);
     }
     if (p != &g_principale || !f || c->stato != 1) return;
 
@@ -4603,7 +4603,7 @@ static void cornice_vai(const char *url)
     vista_usa(f);
 }
 
-/* One EXM_TEMPO turn for every loaded iframe: timers, network, scripts
+/* One EXM_TIMER turn for every loaded iframe: timers, network, scripts
  * added, load. Returns 1 if any of them is still waiting for something. */
 static int cornici_pompa(void)
 {
@@ -4762,7 +4762,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     if (g_da_postare) usa_cache = 0;
 
     dico(e_locale(url) ? "sto aprendo il file..." : "sto scaricando...");
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
 
     memset(&e, 0, sizeof(e));
 
@@ -4849,7 +4849,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
 
     strncpy(g_qui, e.finale, sizeof(g_qui) - 1);
     g_qui[sizeof(g_qui) - 1] = '\0';
-    ex_testo_metti(g_url, g_qui);
+    ex_set_text(g_url, g_qui);
 
     /* ! LE IMMAGINI DELLA PAGINA DI PRIMA SE NE VANNO QUI, prima che l'albero
      * cambi: dopo html_analizza gli indici dei nodi sono di un altro documento
@@ -4967,7 +4967,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
  * LE VOCI DEL MENU
  *
  * ! LE STESSE DECISIONI CHE SI PRENDONO DAI TASTI, e per questo stanno in
- * funzioni e non dentro il ramo EXM_COMANDO: «Apri» si sceglie dal menu o con
+ * funzioni e non dentro il ramo EXM_COMMAND: «Apri» si sceglie dal menu o con
  * Ctrl+O, e le due strade devono arrivare nello stesso posto. Il toolkit manda
  * la voce di menu e il pulsante come lo stesso messaggio proprio per questo —
  * le scorciatoie no, quelle le esegue l'applicazione, che e' l'unica a sapere
@@ -5019,7 +5019,7 @@ static void apri_locale(void)
     if (!perc[0])                          { dico("nessun file scelto");  return; }
 
     url_di_percorso(perc, url, sizeof(url));
-    ex_testo_metti(g_url, url);
+    ex_set_text(g_url, url);
     vai(url, 1, 0);
 }
 
@@ -5238,7 +5238,7 @@ static void doc_apri(const char *nome)
         if (!locale_esiste(perc)) continue;
 
         url_di_percorso(perc, url, sizeof(url));
-        ex_testo_metti(g_url, url);
+        ex_set_text(g_url, url);
         vai(url, 1, 0);
         return;
     }
@@ -5293,7 +5293,7 @@ static void informazioni(void)
  *
  * ! E' UNA FINESTRA MODALE CON UN CICLO SUO, come la tendina di un <select>:
  * si apre, si gira dentro finche' non si e' deciso, si chiude e si ridisegna
- * la pagina sotto. Il ciclo dei messaggi resta uno solo — `ex_prendi_msg`
+ * la pagina sotto. Il ciclo dei messaggi resta uno solo — `ex_get_message`
  * continua a smistare a tutte le finestre — quindi il resto
  * dell'applicazione non muore mentre e' aperta.
  *
@@ -5307,8 +5307,8 @@ static void informazioni(void)
  * variabili vere a ogni clic vorrebbe dire che «Annulla» deve saper tornare
  * indietro — cioe' tenere la copia lo stesso, ma nel posto piu' scomodo.
  * ============================================================================= */
-static ExFinestra g_imp_f, g_imp_campo, g_imp_bjs, g_imp_bimg, g_imp_bcache;
-static ExFinestra g_imp_bmotore, g_imp_bricerca, g_imp_url;
+static ExWindow g_imp_f, g_imp_campo, g_imp_bjs, g_imp_bimg, g_imp_bcache;
+static ExWindow g_imp_bmotore, g_imp_bricerca, g_imp_url;
 static int        g_imp_fatto;          /* 0 = aperta, 1 = salva, 2 = annulla */
 static int        g_imp_js, g_imp_img, g_imp_cache, g_imp_qjs, g_imp_ricerca;
 
@@ -5317,39 +5317,39 @@ static void imp_etichette(void)
     char t[80];
 
     snprintf(t, sizeof(t), "JavaScript:  %s", g_imp_js ? "acceso" : "spento");
-    ex_titolo(g_imp_bjs, t);
+    ex_set_title(g_imp_bjs, t);
     /* ! IL NOME DEL MOTORE PORTA CON SE' LA SUA TAGLIA, e non e' un vezzo: la
      * differenza fra i due e' mezzo megabyte, ed e' l'unica cosa che chi
      * sceglie deve sapere per scegliere. */
     snprintf(t, sizeof(t), "Motore:  %s", g_imp_qjs ? "QuickJS (594 KB)"
                                                     : "ExJs (66 KB)");
-    ex_titolo(g_imp_bmotore, t);
+    ex_set_title(g_imp_bmotore, t);
     /* ! IL PULSANTE GIRA FRA I TRE, e la scritta dice quello di ADESSO. Con
      * tre voci una spunta non basta piu' e una lista sarebbe un controllo in
      * piu' per tre righe: premere e vedere il nome cambiare e' la stessa cosa
      * che si fa con gli altri interruttori qui accanto. */
     snprintf(t, sizeof(t), "Cerca con:  %s", g_motori[g_imp_ricerca].nome);
-    ex_titolo(g_imp_bricerca, t);
+    ex_set_title(g_imp_bricerca, t);
     snprintf(t, sizeof(t), "Immagini:  %s", g_imp_img ? "accese" : "spente");
-    ex_titolo(g_imp_bimg, t);
+    ex_set_title(g_imp_bimg, t);
     snprintf(t, sizeof(t), "Cache su disco:  %s",
              g_imp_cache ? "accesa" : "spenta");
-    ex_titolo(g_imp_bcache, t);
+    ex_set_title(g_imp_bcache, t);
 
-    /* ex_titolo cambia la scritta e non ridisegna: il disegno lo chiede chi
+    /* ex_set_title cambia la scritta e non ridisegna: il disegno lo chiede chi
      * sa che e' cambiata qualcosa. */
-    ex_procedura_base(g_imp_f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(g_imp_f);
+    ex_default_proc(g_imp_f, EXM_PAINT, 0, 0);
+    ex_update(g_imp_f);
 }
 
-static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long imp_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_imp_fatto = 2;
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_IMP_JS)    { g_imp_js    = !g_imp_js;    imp_etichette(); return 0; }
         if (wp == ID_IMP_IMG)   { g_imp_img   = !g_imp_img;   imp_etichette(); return 0; }
         if (wp == ID_IMP_CACHE) { g_imp_cache = !g_imp_cache; imp_etichette(); return 0; }
@@ -5364,7 +5364,7 @@ static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * CAMPO. Nessuno ricopia a mano un indirizzo lungo guardandolo nella
          * finestra di sotto. */
         if (wp == ID_IMP_ORA) {
-            if (g_qui[0]) ex_testo_metti(g_imp_campo, g_qui);
+            if (g_qui[0]) ex_set_text(g_imp_campo, g_qui);
             return 0;
         }
 
@@ -5372,7 +5372,7 @@ static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_IMP_ANNULLA) { g_imp_fatto = 2; return 0; }
         return 0;
 
-    case EXM_TASTO: {
+    case EXM_KEY: {
         unsigned int c = wp & KBD_KEY_MASK;
 
         if (c == 27)                  g_imp_fatto = 2;
@@ -5381,7 +5381,7 @@ static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
@@ -5392,7 +5392,7 @@ static void impostazioni(void)
     unsigned int sw = 0, sh = 0;
     int          x, y;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     x = ((int)sw - W) / 2;
     y = ((int)sh - H) / 2;
     if (x < 0) x = 0;
@@ -5405,61 +5405,61 @@ static void impostazioni(void)
     g_imp_ricerca = g_ricerca;
     g_imp_fatto = 0;
 
-    g_imp_f = ex_crea("finestra", "Impostazioni",
-                      EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    g_imp_f = ex_create("window", "Impostazioni",
+                      EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                       x, y, W, H, 0, 0, imp_proc);
     if (!g_imp_f) { dico("non riesco ad aprire le impostazioni"); return; }
 
-    ex_crea("etichetta", "Pagina iniziale - si apre all'avvio:", EX_FIGLIO,
+    ex_create("label", "Pagina iniziale - si apre all'avvio:", EX_CHILD,
             12, 10, 416, 16, g_imp_f, 0, 0);
-    g_imp_campo = ex_crea("testo", "", EX_FIGLIO, 12, 30, 416, 22,
+    g_imp_campo = ex_create("textbox", "", EX_CHILD, 12, 30, 416, 22,
                           g_imp_f, ID_IMP_HOME, 0);
-    ex_crea("pulsante", "Usa la pagina di adesso", EX_FIGLIO,
+    ex_create("button", "Usa la pagina di adesso", EX_CHILD,
             12, 58, 200, 22, g_imp_f, ID_IMP_ORA, 0);
 
-    ex_crea("etichetta", "Che cosa puo' fare una pagina:", EX_FIGLIO,
+    ex_create("label", "Che cosa puo' fare una pagina:", EX_CHILD,
             12, 96, 416, 16, g_imp_f, 0, 0);
-    g_imp_bjs    = ex_crea("pulsante", "", EX_FIGLIO, 12, 116, 220, 24,
+    g_imp_bjs    = ex_create("button", "", EX_CHILD, 12, 116, 220, 24,
                            g_imp_f, ID_IMP_JS, 0);
-    g_imp_bimg   = ex_crea("pulsante", "", EX_FIGLIO, 12, 146, 220, 24,
+    g_imp_bimg   = ex_create("button", "", EX_CHILD, 12, 146, 220, 24,
                            g_imp_f, ID_IMP_IMG, 0);
-    g_imp_bcache = ex_crea("pulsante", "", EX_FIGLIO, 12, 176, 220, 24,
+    g_imp_bcache = ex_create("button", "", EX_CHILD, 12, 176, 220, 24,
                            g_imp_f, ID_IMP_CACHE, 0);
-    g_imp_bmotore = ex_crea("pulsante", "", EX_FIGLIO, 240, 116, 188, 24,
+    g_imp_bmotore = ex_create("button", "", EX_CHILD, 240, 116, 188, 24,
                             g_imp_f, ID_IMP_MOTORE, 0);
-    g_imp_bricerca = ex_crea("pulsante", "", EX_FIGLIO, 240, 146, 188, 24,
+    g_imp_bricerca = ex_create("button", "", EX_CHILD, 240, 146, 188, 24,
                              g_imp_f, ID_IMP_RICERCA, 0);
 
     /* the «personale» engine: any site, any parameters */
-    ex_crea("etichetta", "Motore personale ({searchTerms} = le parole):",
-            EX_FIGLIO, 12, 210, 416, 16, g_imp_f, 0, 0);
-    g_imp_url = ex_crea("testo", "", EX_FIGLIO, 12, 230, 416, 22,
+    ex_create("label", "Motore personale ({searchTerms} = le parole):",
+            EX_CHILD, 12, 210, 416, 16, g_imp_f, 0, 0);
+    g_imp_url = ex_create("textbox", "", EX_CHILD, 12, 230, 416, 22,
                         g_imp_f, ID_IMP_URL, 0);
 
-    ex_crea("etichetta", "Si scrivono in $HOME/.app/exbrowser/impostazioni.txt",
-            EX_FIGLIO, 12, 270, 416, 16, g_imp_f, 0, 0);
-    ex_crea("etichetta", "e si possono modificare a mano.",
-            EX_FIGLIO, 12, 288, 416, 16, g_imp_f, 0, 0);
+    ex_create("label", "Si scrivono in $HOME/.app/exbrowser/impostazioni.txt",
+            EX_CHILD, 12, 270, 416, 16, g_imp_f, 0, 0);
+    ex_create("label", "e si possono modificare a mano.",
+            EX_CHILD, 12, 288, 416, 16, g_imp_f, 0, 0);
 
-    ex_crea("pulsante", "Salva",   EX_FIGLIO, 12,  316, 100, 26,
+    ex_create("button", "Salva",   EX_CHILD, 12,  316, 100, 26,
             g_imp_f, ID_IMP_SALVA, 0);
-    ex_crea("pulsante", "Annulla", EX_FIGLIO, 120, 316, 100, 26,
+    ex_create("button", "Annulla", EX_CHILD, 120, 316, 100, 26,
             g_imp_f, ID_IMP_ANNULLA, 0);
 
-    ex_testo_metti(g_imp_campo, g_home);
-    ex_testo_metti(g_imp_url, g_ricerca_url);
+    ex_set_text(g_imp_campo, g_home);
+    ex_set_text(g_imp_url, g_ricerca_url);
     imp_etichette();
-    ex_fuoco(g_imp_campo);
+    ex_set_focus(g_imp_campo);
 
-    while (!g_imp_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    while (!g_imp_fatto && ex_get_message(&m)) ex_dispatch(&m);
 
     if (g_imp_fatto == 1) {
-        const char *t = ex_testo_prendi(g_imp_campo);
+        const char *t = ex_get_text(g_imp_campo);
         int         js_era = g_js_acceso;
 
         strncpy(g_home, t ? t : "", sizeof(g_home) - 1);
         g_home[sizeof(g_home) - 1] = '\0';
-        t = ex_testo_prendi(g_imp_url);
+        t = ex_get_text(g_imp_url);
         strncpy(g_ricerca_url, t ? t : "", sizeof(g_ricerca_url) - 1);
         g_ricerca_url[sizeof(g_ricerca_url) - 1] = '\0';
         g_js_acceso    = g_imp_js;
@@ -5468,7 +5468,7 @@ static void impostazioni(void)
         g_qjs          = g_imp_qjs;
         g_ricerca      = g_imp_ricerca;
 
-        ex_distruggi(g_imp_f);
+        ex_destroy(g_imp_f);
         g_imp_f = 0;
 
         /* ! SI DICE ANCHE QUANDO NON SI RIESCE A SCRIVERE, e le impostazioni
@@ -5485,7 +5485,7 @@ static void impostazioni(void)
         else
             dico("impostazioni salvate");
     } else {
-        ex_distruggi(g_imp_f);
+        ex_destroy(g_imp_f);
         g_imp_f = 0;
         dico("impostazioni non cambiate");
     }
@@ -5503,7 +5503,7 @@ static void vai_a_casa(void)
         dico("nessuna pagina iniziale: scegline una in File > Impostazioni");
         return;
     }
-    ex_testo_metti(g_url, g_home);
+    ex_set_text(g_url, g_home);
     vai(g_home, 1, 1);
 }
 
@@ -5616,7 +5616,7 @@ typedef struct {
  * non le paga. */
 static Scheda    *g_sch = 0;
 static int        g_sch_n = 1, g_sch_attiva = 0;
-static ExFinestra g_schede = 0;
+static ExWindow g_schede = 0;
 static char       g_sch_visto[EXHTTP_URL_MAX] = "";   /* l'indirizzo del titolo */
 
 /* Il <title> della pagina, o il nome dell'indirizzo. */
@@ -5656,7 +5656,7 @@ void schede_segui_titolo(void)
     strncpy(g_sch_visto, g_qui, sizeof(g_sch_visto) - 1);
     pagina_titolo(t, sizeof(t));
     strcpy(g_sch[g_sch_attiva].titolo, t);
-    ex_voce_rinomina(g_schede, (unsigned int)g_sch_attiva, t);
+    ex_item_rename(g_schede, (unsigned int)g_sch_attiva, t);
 }
 
 static void schede_barra(void)
@@ -5665,7 +5665,7 @@ static void schede_barra(void)
 
     g_schede_h = (g_sch_n >= 2) ? SCHEDE_H : 0;
     if (!g_schede) return;
-    ex_mostra(g_schede, g_sch_n >= 2);
+    ex_show(g_schede, g_sch_n >= 2);
     if (prima != g_schede_h) {
         vista_usa(&g_principale);
         impagina();
@@ -5691,13 +5691,13 @@ static void scheda_riprendi(int i)
     char    u[EXHTTP_URL_MAX];
 
     g_sch_attiva = i;
-    ex_voce_scegli(g_schede, (unsigned int)i);
+    ex_item_select(g_schede, (unsigned int)i);
     memcpy(g_storia, S->storia, sizeof(g_storia));
     g_storia_n = S->storia_n;
     strcpy(u, S->url);
     vista_usa(&g_principale);
     if (u[0]) {
-        ex_testo_metti(g_url, u);
+        ex_set_text(g_url, u);
         vai(u, 0, 1);
         vista_usa(&g_principale);
         g_scorri = S->scorri;
@@ -5731,13 +5731,13 @@ static void scheda_nuova(const char *url, int sfondo)
         char t[32];
         pagina_titolo(t, sizeof(t));
         strcpy(g_sch[0].titolo, t);
-        ex_voce_rinomina(g_schede, 0, t);
+        ex_item_rename(g_schede, 0, t);
     }
     S = &g_sch[g_sch_n];
     memset(S, 0, sizeof(*S));
     strncpy(S->url, url, sizeof(S->url) - 1);
     strcpy(S->titolo, "...");
-    ex_voce_aggiungi(g_schede, sfondo ? url : "...");
+    ex_item_add(g_schede, sfondo ? url : "...");
     g_sch_n++;
     schede_barra();
     if (sfondo) {
@@ -5745,7 +5745,7 @@ static void scheda_nuova(const char *url, int sfondo)
         const char *b = strrchr(url, '/');
         strncpy(t, (b && b[1]) ? b + 1 : url, sizeof(t) - 1);
         t[sizeof(t) - 1] = '\0';
-        ex_voce_rinomina(g_schede, (unsigned int)(g_sch_n - 1), t);
+        ex_item_rename(g_schede, (unsigned int)(g_sch_n - 1), t);
         dico("aperto in una scheda nuova");
         disegna();
         return;
@@ -5767,7 +5767,7 @@ static void scheda_chiudi(int i)
     if (i == g_sch_attiva) scheda_metti_via();
     for (k = i; k + 1 < g_sch_n; k++) g_sch[k] = g_sch[k + 1];
     g_sch_n--;
-    ex_voce_togli(g_schede, (unsigned int)i);
+    ex_item_remove(g_schede, (unsigned int)i);
     if (i < g_sch_attiva) g_sch_attiva--;
     schede_barra();
     if (i == g_sch_attiva || g_sch_attiva >= g_sch_n) {
@@ -5775,7 +5775,7 @@ static void scheda_chiudi(int i)
         g_sch_attiva = -1;
         scheda_riprendi(j);
     } else {
-        ex_voce_scegli(g_schede, (unsigned int)g_sch_attiva);
+        ex_item_select(g_schede, (unsigned int)g_sch_attiva);
         disegna();
     }
 }
@@ -5825,7 +5825,7 @@ static int link_sotto(int x, int y)
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
         int h  = EST_E_IMM(g_pez[i].rif) ? g_pez[i].h
-                                         : ex_font_altezza(g_pez[i].font);
+                                         : ex_font_height(g_pez[i].font);
 
         if (g_pez[i].link < 0) continue;
         {
@@ -6234,7 +6234,7 @@ static void manda_modulo(int m, int attivato)
                 g_da_postare = corpo;
             }
 
-            ex_testo_metti(g_url, assoluto);
+            ex_set_text(g_url, assoluto);
             vai(assoluto, 1, 0);
         }
     }
@@ -6250,20 +6250,20 @@ static void manda_modulo(int m, int attivato)
  * costa qualche riga in piu' qui e nessuna nel disegno.
  *
  * ! E IL CICLO ANNIDATO E' L'IDIOMA DI exdlg, non un'invenzione: si continua a
- * chiamare ex_prendi_msg/ex_smista finche' qualcuno non dichiara di aver
+ * chiamare ex_get_message/ex_dispatch finche' qualcuno non dichiara di aver
  * finito. Il resto dell'applicazione resta viva — ridisegna, risponde — e
  * quando l'elenco si chiude si torna dove si era.
  * ========================================================================== */
 #define ID_TENDINA_OK   700
 
-static ExFinestra g_tendina_lista;
+static ExWindow g_tendina_lista;
 static int        g_tendina_fatto;      /* 0 = aperta, 1 = scelto, 2 = via */
 
-static long tendina_proc(ExFinestra f, unsigned int msg, unsigned int wp,
+static long tendina_proc(ExWindow f, unsigned int msg, unsigned int wp,
                          long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         g_tendina_fatto = 2;
         return 0;
 
@@ -6273,17 +6273,17 @@ static long tendina_proc(ExFinestra f, unsigned int msg, unsigned int wp,
      * l'ordine fra loro non e' scritto da nessuna parte. Leggendo qui si
      * prendeva a volte la riga di PRIMA — e il difetto compariva a
      * intermittenza, che e' il peggio. Qui si dice solo CHE si e' finito. */
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_TENDINA_OK || wp == 1) g_tendina_fatto = 1;
         return 0;
 
-    case EXM_TASTO:
+    case EXM_KEY:
         if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') g_tendina_fatto = 1;
         else if ((wp & 0xFFFF) == 27)                         g_tendina_fatto = 2;
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
@@ -6291,7 +6291,7 @@ static long tendina_proc(ExFinestra f, unsigned int msg, unsigned int wp,
 static int tendina(int k, int x, int y)
 {
     Ctrl        *c = &g_ctrl[k];
-    ExFinestra   f;
+    ExWindow   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          h, i, scelto = -1;
@@ -6303,7 +6303,7 @@ static int tendina(int k, int x, int y)
     h = 44 + c->opz_n * 16;
     if (h > 300) h = 300;
 
-    ex_schermo(&sw, &sh);
+    ex_screen_size(&sw, &sh);
     if (x + 240 > (int)sw) x = (int)sw - 240;
     if (y + h > (int)sh)   y = (int)sh - h;
     if (x < 0) x = 0;
@@ -6311,27 +6311,27 @@ static int tendina(int k, int x, int y)
 
     g_tendina_fatto = 0;
 
-    f = ex_crea("finestra", "Scegli",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+    f = ex_create("window", "Scegli",
+                EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
                 x, y, 240, h, 0, 0, tendina_proc);
     if (f == 0) return -1;
 
-    g_tendina_lista = ex_crea("lista", "", EX_FIGLIO, 6, 24, 228, h - 30,
+    g_tendina_lista = ex_create("list", "", EX_CHILD, 6, 24, 228, h - 30,
                               f, 1, 0);
-    if (g_tendina_lista == 0) { ex_distruggi(f); return -1; }
+    if (g_tendina_lista == 0) { ex_destroy(f); return -1; }
 
     for (i = 0; i < c->opz_n; i++)
-        ex_lista_aggiungi(g_tendina_lista, g_opz[c->opz_primo + i]);
-    ex_lista_scegli(g_tendina_lista, (unsigned int)c->opz_ora);
-    ex_fuoco(g_tendina_lista);
+        ex_list_add(g_tendina_lista, g_opz[c->opz_primo + i]);
+    ex_list_select(g_tendina_lista, (unsigned int)c->opz_ora);
+    ex_set_focus(g_tendina_lista);
 
-    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-    ex_aggiorna(f);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
 
-    while (!g_tendina_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+    while (!g_tendina_fatto && ex_get_message(&m)) ex_dispatch(&m);
 
-    if (g_tendina_fatto == 1) scelto = (int)ex_lista_scelta(g_tendina_lista);
-    ex_distruggi(f);
+    if (g_tendina_fatto == 1) scelto = (int)ex_list_get_selected(g_tendina_lista);
+    ex_destroy(f);
 
     /* ! LA PAGINA SI RIDISEGNA DOPO, SEMPRE. La finestra che se ne va lascia
      * il suo buco: il server ridisegna cio' che stava sotto solo se qualcuno
@@ -6387,8 +6387,8 @@ void disegna_barra(void)
     int py, ph;
 
     /* La corsa: incavata, come una scanalatura. */
-    ex_riempi(g_f, x, y, SCORRI_W, h, EX_GRIGIO_SC);
-    ex_incavo(g_f, x, y, SCORRI_W, h);
+    ex_fill_rect(g_f, x, y, SCORRI_W, h, EX_DARK_GRAY);
+    ex_draw_sunken(g_f, x, y, SCORRI_W, h);
 
     /* ! SENZA NIENTE DA SCORRERE NON SI DISEGNA IL POLLICE. Un pollice che
      * riempie tutta la corsa e non si muove sembra bloccato; la scanalatura
@@ -6396,8 +6396,8 @@ void disegna_barra(void)
     if (scorri_max() == 0) return;
 
     pollice(&py, &ph);
-    ex_riempi(g_f, x + 1, py, SCORRI_W - 2, ph, EX_GRIGIO);
-    ex_rilievo(g_f, x + 1, py, SCORRI_W - 2, ph);
+    ex_fill_rect(g_f, x + 1, py, SCORRI_W - 2, ph, EX_GRAY);
+    ex_draw_raised(g_f, x + 1, py, SCORRI_W - 2, ph);
 }
 
 static void scorri(int quanto)
@@ -6508,7 +6508,7 @@ static void barra_mosso(int y)
  *
  * ! ONE FUNCTION FOR BOTH, so the keyboard cannot take a different road from
  * the mouse: same controls, same JavaScript click, same preventDefault. It was
- * the body of EXM_MOUSE_GIU until 23 September 2026.
+ * the body of EXM_MOUSE_DOWN until 23 September 2026.
  * ============================================================================= */
 
 /* ! UNA SPUNTA CLICCATA CAMBIA ANCHE L'ALBERO (28 settembre 2026). Il CSS
@@ -6540,11 +6540,11 @@ static void spunte_all_albero(void)
 /* =============================================================================
  * LE GIF ANIMATE (@NAV-GIF, 28 settembre 2026)
  *
- * Un giro a ogni EXM_TEMPO: le animazioni a cui tocca passano al fotogramma
+ * Un giro a ogni EXM_TIMER: le animazioni a cui tocca passano al fotogramma
  * dopo, e se almeno una si vede la pagina si ridisegna. Rende 1 se ce n'e'
  * almeno una viva: finche' e' cosi' la sveglia non si spegne.
  *
- * ! LA RISOLUZIONE E' QUELLA DELLA SVEGLIA, 200 ms (vedi EXM_TEMPO): una GIF
+ * ! LA RISOLUZIONE E' QUELLA DELLA SVEGLIA, 200 ms (vedi EXM_TIMER): una GIF
  * da 100 ms va a meta' velocita'. E' scritto, ed e' meglio di un fotogramma
  * fermo.
  * ! SOLO LA PAGINA PRINCIPALE: le animazioni dentro un <iframe> mostrano il
@@ -6686,7 +6686,7 @@ static void clic_pagina(int x, int y)
              * ! IL FUOCO SI TOGLIE ALLA CASELLA DELL'INDIRIZZO, o i tasti
              * non arrivano MAI qui. E' il difetto vero dietro la voce
              * «la <textarea> non ha un cursore»: non era il cursore a
-             * mancare, erano i TASTI. `ex_fuoco(g_url)` all'avvio da il
+             * mancare, erano i TASTI. `ex_set_focus(g_url)` all'avvio da il
              * fuoco a un controllo del toolkit, e da quel momento ogni
              * tasto e' suo — i controlli della PAGINA non sono finestre
              * del toolkit, quindi non possono averlo e non ricevevano
@@ -6696,7 +6696,7 @@ static void clic_pagina(int x, int y)
              * Dandolo alla finestra si toglie a ogni suo figlio, e i tasti
              * tornano al nostro gestore, che sa dei controlli disegnati.
              * ========================================================= */
-            ex_fuoco_via(g_f);
+            ex_clear_focus(g_f);
             g_ctrl_fuoco = k;
             /* ! IL CURSORE VA DOVE SI E' CLICCATO (@NAV-CURSORE), non resta
              * dov'era e non va in fondo: e' cosi' che si corregge una
@@ -6769,7 +6769,7 @@ static int tab_indice(void)
 
 static int pezzo_alto(int i)
 {
-    return (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
+    return (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_height(g_pez[i].font);
 }
 
 /* Moves the focus one stop in `verso` (+1 or -1). Returns 0 when there is no
@@ -6811,7 +6811,7 @@ static int tab_muovi(int verso)
             else if (y + h > area_y() + area_h())
                 scorri_a(g_pez[i].y + h - area_y() - area_h() + 8);
         }
-        ex_fuoco_via(g_f);
+        ex_clear_focus(g_f);
         disegna();
         return 1;
     }
@@ -6819,7 +6819,7 @@ static int tab_muovi(int verso)
     g_tab_link = -1;
     g_tab_rif  = -1;
     g_ctrl_fuoco = -1;
-    ex_fuoco(g_url);
+    ex_set_focus(g_url);
     disegna();
     return 0;
 }
@@ -6856,43 +6856,43 @@ static void ridisponi(int w, int h)
     g_fin_w = w < FIN_W_MIN ? FIN_W_MIN : w;
     g_fin_h = h < FIN_H_MIN ? FIN_H_MIN : h;
 
-    ex_sposta(g_bt_info, g_fin_w - MARGINE - 24, BARRA_Y + 4);
-    ex_sposta(g_bt_vai,  g_fin_w - MARGINE - 24 - 4 - 44, BARRA_Y + 4);
-    ex_sposta(g_et_cerca, CERCA_X - 44, BARRA_Y + 7);
-    ex_sposta(g_cerca,   CERCA_X, BARRA_Y + 4);
-    ex_misura(g_url, CERCA_X - 44 - 4 - (MARGINE + 32), 22);
-    ex_sposta(g_stato,   MARGINE, g_fin_h - 18);
-    ex_misura(g_stato, g_fin_w - 2 * MARGINE, 16);
-    if (g_schede) ex_misura(g_schede, g_fin_w - 2 * MARGINE, SCHEDE_H);
+    ex_move(g_bt_info, g_fin_w - MARGINE - 24, BARRA_Y + 4);
+    ex_move(g_bt_vai,  g_fin_w - MARGINE - 24 - 4 - 44, BARRA_Y + 4);
+    ex_move(g_et_cerca, CERCA_X - 44, BARRA_Y + 7);
+    ex_move(g_cerca,   CERCA_X, BARRA_Y + 4);
+    ex_resize(g_url, CERCA_X - 44 - 4 - (MARGINE + 32), 22);
+    ex_move(g_stato,   MARGINE, g_fin_h - 18);
+    ex_resize(g_stato, g_fin_w - 2 * MARGINE, 16);
+    if (g_schede) ex_resize(g_schede, g_fin_w - 2 * MARGINE, SCHEDE_H);
 
     impagina();
     if (g_scorri > scorri_max()) g_scorri = scorri_max();
     disegna();
 }
 
-static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    case EXM_CHIUDI:
+    case EXM_CLOSE:
         esci();
         return 0;
 
-    case EXM_MISURA:
+    case EXM_SIZE:
         ridisponi(EX_X(lp), EX_Y(lp));
         return 0;
 
     /* La X di una scheda, o Ctrl+W (@NAV-SCHEDE). */
-    case EXM_SCHEDA_CHIUDI:
+    case EXM_TAB_CLOSE:
         scheda_chiudi((int)lp);
         return 0;
 
-    case EXM_COMANDO:
+    case EXM_COMMAND:
         if (wp == ID_VAI) {
             /* ! «VAI» NEXT TO THE SEARCH BOX: with the keys in it, it searches.
              * It went to the address even then, and whoever typed in «Cerca»
              * and pressed it landed on the page they were already on. */
-            if (ex_fuoco_chi(g_f) == g_cerca) {
-                const char *t = ex_testo_prendi(g_cerca);
+            if (ex_get_focus(g_f) == g_cerca) {
+                const char *t = ex_get_text(g_cerca);
 
                 cerca(t ? t : "");
                 return 0;
@@ -6903,19 +6903,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
              * pagina di adesso. Se l'indirizzo e' ancora quello della pagina
              * e in Cerca ci sono parole, e' una ricerca. */
             {
-                const char *u = ex_testo_prendi(g_url);
-                const char *t = ex_testo_prendi(g_cerca);
+                const char *u = ex_get_text(g_url);
+                const char *t = ex_get_text(g_cerca);
 
                 if (t && t[strspn(t, " \t")] && (!u || !u[0] || strcmp(u, g_qui) == 0)) {
                     cerca(t);
                     return 0;
                 }
             }
-            vai_o_cerca(ex_testo_prendi(g_url));
+            vai_o_cerca(ex_get_text(g_url));
             return 0;
         }
         if (wp == ID_CERCA) {
-            const char *t = ex_testo_prendi(g_cerca);
+            const char *t = ex_get_text(g_cerca);
 
             cerca(t ? t : "");
             return 0;
@@ -6950,7 +6950,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
-    case EXM_TASTO: {
+    case EXM_KEY: {
         /* ! IL CARATTERE E I MODIFICATORI SONO DUE COSE, e qui c'era solo la
          * prima: `wp & 0xFFFF` butta via i bit alti, che sono Ctrl, Shift e
          * Alt. Finche' il browser non li guardava non si notava; il giorno di
@@ -6983,7 +6983,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == 27) {
                 g_ctrl_fuoco = -1;
                 g_tab_link = g_tab_rif = -1;
-                ex_fuoco(g_url);
+                ex_set_focus(g_url);
                 disegna();
                 return 0;
             }
@@ -7174,30 +7174,30 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp & KBD_MOD_CTRL) {
             /* The page's selected text (@NAV-SELEZIONE): Ctrl+C copies it,
              * Ctrl+A chooses every word of the page. */
-            if (c == 'c' || c == 'C') { selezione_copia(); return EX_NON_RIDISEGNARE; }
+            if (c == 'c' || c == 'C') { selezione_copia(); return EX_NO_REDRAW; }
             if (c == 'a' || c == 'A') {
                 int i;
                 g_sel_da = g_sel_a = -1;
                 for (i = 0; i < g_pez_n; i++)
                     if (g_pez[i].rif < 0) { if (g_sel_da < 0) g_sel_da = i; g_sel_a = i; }
                 disegna();
-                return EX_NON_RIDISEGNARE;
+                return EX_NO_REDRAW;
             }
             if (c == 'o' || c == 'O') { apri_locale();  return 0; }
             if (c == 's' || c == 'S') { salva_pagina(); return 0; }
             if (c == 'q' || c == 'Q') { esci();         return 0; }
-            if (c == 'n' || c == 'N') { proc(f, EXM_COMANDO, ID_NUOVA, 0); return 0; }
-            if (c == 't' || c == 'T') { proc(f, EXM_COMANDO, ID_SCHEDA, 0); return 0; }
+            if (c == 'n' || c == 'N') { proc(f, EXM_COMMAND, ID_NUOVA, 0); return 0; }
+            if (c == 't' || c == 'T') { proc(f, EXM_COMMAND, ID_SCHEDA, 0); return 0; }
             if (c == 'h' || c == 'H') { vai_a_casa();   return 0; }
         }
 
-        /* Tab here means the toolkit let it go (ex_tab_contenuto): the
+        /* Tab here means the toolkit let it go (ex_tab_content): the
          * address bar's controls are done, and the page's stops begin. */
         if (c == '\t') { tab_muovi((wp & KBD_MOD_SHIFT) ? -1 : 1); return 0; }
 
         /* Enter on a stop, or Space on a control: click it. Only when no
          * toolkit control has the keys — otherwise Enter is the address bar's. */
-        if ((g_tab_link >= 0 || g_tab_rif >= 0) && ex_fuoco_chi(g_f) == 0 &&
+        if ((g_tab_link >= 0 || g_tab_rif >= 0) && ex_get_focus(g_f) == 0 &&
             (c == '\n' || c == '\r' || (c == ' ' && g_tab_rif >= 0))) {
             tab_premi();
             return 0;
@@ -7206,18 +7206,18 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         /* ! INVIO FA DUE COSE DIVERSE, E LA DIFFERENZA E' IL FUOCO. Nella
          * barra ci sono due caselle, e il messaggio del tasto non dice da
          * quale arrivi: la casella lascia passare Invio apposta, e chi ce
-         * l'ha lo sa solo il toolkit — ex_fuoco_chi(). Indovinarlo guardando
+         * l'ha lo sa solo il toolkit — ex_get_focus(). Indovinarlo guardando
          * quale testo e' cambiato vorrebbe dire sbagliarlo il giorno che uno
          * cerca due volte la stessa cosa. */
         if (c == '\n' || c == '\r') {
-            if (ex_fuoco_chi(g_f) == g_cerca) {
-                const char *t = ex_testo_prendi(g_cerca);
+            if (ex_get_focus(g_f) == g_cerca) {
+                const char *t = ex_get_text(g_cerca);
 
                 cerca(t ? t : "");
                 return 0;
             }
             {
-                const char *t = ex_testo_prendi(g_url);
+                const char *t = ex_get_text(g_url);
 
                 vai_o_cerca(t);
             }
@@ -7229,12 +7229,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (c == KBD_K_PGUP)  { scorri(-(area_h() - 24)); return 0; }
         if (c == KBD_K_HOME)  { scorri_a(0); return 0; }
         if (c == KBD_K_END)   { scorri_a(scorri_max()); return 0; }
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 
     /* ! I TEMPI SI POMPANO DA QUI, e la risoluzione vera e' 200 ms — la
      * scadenza del poll dentro il ciclo dei messaggi, dichiarata accanto a
-     * ex_sveglia. Un `setTimeout(f, 50)` girera' dopo 200: e' poco per
+     * ex_set_timer. Un `setTimeout(f, 50)` girera' dopo 200: e' poco per
      * un'animazione e basta per tutto il resto, e dirlo e' meglio che
      * promettere i millisecondi e non darli.
      *
@@ -7242,23 +7242,23 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * ha finito non ha motivo di svegliare il browser cinque volte al secondo
      * per sempre. */
     /* ! LA ROTELLA SCORRE LA PAGINA (28 settembre 2026, @EXBROWSER-HTML5):
-     * tre righe per scatto come ovunque (EX_ROTELLA_RIGHE), cioe' il doppio
+     * tre righe per scatto come ovunque (EX_WHEEL_LINES), cioe' il doppio
      * della freccia, che fa 24 pixel. Solo sopra la pagina: sopra la barra
      * dell'indirizzo non c'e' niente da scorrere. Una <select> o una
      * <textarea> sotto il puntatore la prendono prima, nel toolkit. */
-    case EXM_ROTELLA:
+    case EXM_WHEEL:
         if (EX_Y(lp) >= area_y())
-            scorri((int)wp * EX_ROTELLA_RIGHE * 16);
-        return EX_NON_RIDISEGNARE;          /* scorri() has drawn */
+            scorri((int)wp * EX_WHEEL_LINES * 16);
+        return EX_NO_REDRAW;          /* scorri() has drawn */
 
-    /* ! FROM HERE ON, EX_NON_RIDISEGNARE AND NOT 0 (29 September 2026). A 0
+    /* ! FROM HERE ON, EX_NO_REDRAW AND NOT 0 (29 September 2026). A 0
      * makes the toolkit redraw the whole window — the whole page — after the
      * message, and these come ten times a second while a page loads or a GIF
-     * moves (EXM_TEMPO) and at every pixel of mouse movement (EXM_MOUSE_MOSSO).
+     * moves (EXM_TIMER) and at every pixel of mouse movement (EXM_MOUSE_MOVE).
      * The page was being drawn again and again for nothing, and it was the
      * flicker the user saw "depending on the load". Whatever really changes
-     * the page goes through disegna(), which calls ex_aggiorna itself. */
-    case EXM_TEMPO: {
+     * the page goes through disegna(), which calls ex_update itself. */
+    case EXM_TIMER: {
         int aspetta = 0, cornici;
         unsigned int dico_prima = g_dico_n;
 
@@ -7267,7 +7267,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * while it is happening. */
         if (g_imm_da_vedere && g_v == &g_principale && !g_in_rete) {
             char prima[160];
-            const char *t = g_stato ? ex_testo_prendi(g_stato) : 0;
+            const char *t = g_stato ? ex_get_text(g_stato) : 0;
 
             strncpy(prima, t ? t : "", sizeof(prima) - 1);
             prima[sizeof(prima) - 1] = '\0';
@@ -7308,7 +7308,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         cornici_carica();
         /* Le GIF animate tengono accesa la sveglia finche' ce n'e' una viva. */
         if (anima_giro()) aspetta = 1;
-        if (!aspetta && !cornici && !cornici_da_caricare()) ex_sveglia(g_f, 0);
+        if (!aspetta && !cornici && !cornici_da_caricare()) ex_set_timer(g_f, 0);
 
         if (g_js) {
             /* Un `setTimeout` che cambia indirizzo e' il modo classico di
@@ -7319,10 +7319,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         /* The status line is a toolkit control and shows only when the
          * window is redrawn: if a script or the network wrote there, the
          * redraw is still wanted. */
-        return (g_dico_n != dico_prima) ? 0 : EX_NON_RIDISEGNARE;
+        return (g_dico_n != dico_prima) ? 0 : EX_NO_REDRAW;
     }
 
-    case EXM_MOUSE_GIU: {
+    case EXM_MOUSE_DOWN: {
         int x = EX_X(lp), y = EX_Y(lp);
 
         if (barra_giu(x, y)) return 0;
@@ -7337,7 +7337,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             g_sel_trascina = (g_sel_inizio >= 0);
             /* ! THE KEYS COME TO THE PAGE: with the focus still in the address
              * bar, Ctrl+C was the text box's, and copied its (empty) choice. */
-            if (g_sel_trascina) ex_fuoco_via(g_f);
+            if (g_sel_trascina) ex_clear_focus(g_f);
             if (c_era) disegna();
         }
         /* A click moves the focus where it lands: the Tab stop is forgotten,
@@ -7356,7 +7356,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 
     /* Il tasto destro su un collegamento (@NAV-FINESTRA). */
-    case EXM_MOUSE_DESTRO: {
+    case EXM_RIGHT_CLICK: {
         int x = EX_X(lp), y = EX_Y(lp), k;
         static const char *const VOCI[] = { "Apri", "Apri in una scheda nuova",
                                             "Apri in una finestra nuova",
@@ -7364,20 +7364,20 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         static const char *const PAGINA[] = { "Indietro", "Nuova scheda", "Nuova finestra" };
 
         if ((k = link_sotto(x, y)) < 0) {
-            int s = ex_menu_comparsa(f, x, y, PAGINA, 3);
-            if (s == 0) proc(f, EXM_COMANDO, ID_INDIETRO, 0);
-            if (s == 1) proc(f, EXM_COMANDO, ID_SCHEDA, 0);
-            if (s == 2) proc(f, EXM_COMANDO, ID_NUOVA, 0);
+            int s = ex_popup_menu(f, x, y, PAGINA, 3);
+            if (s == 0) proc(f, EXM_COMMAND, ID_INDIETRO, 0);
+            if (s == 1) proc(f, EXM_COMMAND, ID_SCHEDA, 0);
+            if (s == 2) proc(f, EXM_COMMAND, ID_NUOVA, 0);
             return 0;
         }
-        switch (ex_menu_comparsa(f, x, y, VOCI, 5)) {
+        switch (ex_popup_menu(f, x, y, VOCI, 5)) {
         case 0: segui_dove(k, 0); break;
         case 1: segui_dove(k, 2); break;
         case 2: segui_dove(k, 1); break;
         case 4: {
             char nuovo[EXHTTP_URL_MAX];
             if (risolvi(link_url(k), nuovo, sizeof(nuovo))) {
-                ex_appunti_metti(nuovo, (unsigned int)strlen(nuovo));
+                ex_clipboard_set(nuovo, (unsigned int)strlen(nuovo));
                 dico("indirizzo copiato");
             }
             break;
@@ -7388,7 +7388,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
-    case EXM_MOUSE_MOSSO:
+    case EXM_MOUSE_MOVE:
         if (g_sel_trascina && !g_trascino) {
             int p = pezzo_vicino(EX_X(lp), EX_Y(lp));
 
@@ -7405,16 +7405,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 g_sel_a  = a;
                 disegna();
             }
-            return EX_NON_RIDISEGNARE;
+            return EX_NO_REDRAW;
         }
         barra_mosso(EX_Y(lp));              /* draws itself if it scrolls */
-        return EX_NON_RIDISEGNARE;
+        return EX_NO_REDRAW;
 
     /* The pointer over a link shows where it goes, in the status line, as
      * every browser does; off the link, the status line gets back what it
      * said (@EXWIN-PASSAGGIO, 30 September 2026). ! Only a CHANGE of link
      * redraws: these come at every pixel the mouse moves. */
-    case EXM_MOUSE_SOPRA: {
+    case EXM_MOUSE_ENTER: {
         int k = (EX_Y(lp) >= area_y()) ? link_sotto(EX_X(lp), EX_Y(lp)) : -1;
         static char dove[EXHTTP_URL_MAX];
 
@@ -7422,7 +7422,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * BEFORE the page's handlers run: an error of theirs goes to the
          * status line too, and must not become what comes back. */
         if (k != g_sopra_link && g_sopra_link < 0 && g_stato) {
-            const char *t = ex_testo_prendi(g_stato);
+            const char *t = ex_get_text(g_stato);
             strncpy(g_stato_prima, t ? t : "", sizeof(g_stato_prima) - 1);
             g_stato_prima[sizeof(g_stato_prima) - 1] = '\0';
         }
@@ -7450,17 +7450,17 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             }
         }
 
-        if (k == g_sopra_link || !g_stato) return EX_NON_RIDISEGNARE;
+        if (k == g_sopra_link || !g_stato) return EX_NO_REDRAW;
         g_sopra_link = k;
         if (k >= 0)
-            ex_testo_metti(g_stato, risolvi(link_url(k), dove, sizeof(dove))
+            ex_set_text(g_stato, risolvi(link_url(k), dove, sizeof(dove))
                                     ? dove : link_url(k));
         else
-            ex_testo_metti(g_stato, g_stato_prima);
-        return ex_ridisegna(g_stato) ? EX_NON_RIDISEGNARE : 0;
+            ex_set_text(g_stato, g_stato_prima);
+        return ex_redraw(g_stato) ? EX_NO_REDRAW : 0;
     }
 
-    case EXM_MOUSE_FUORI:
+    case EXM_MOUSE_LEAVE:
         if (g_dom && g_sopra_nodo >= 0 && g_sopra_nodo < (int)g_doc.nodi_n) {
             ExJsErrore err;
 
@@ -7471,22 +7471,22 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             dopo_gli_script();
         }
         g_sopra_nodo = -1;
-        if (g_sopra_link < 0 || !g_stato) return EX_NON_RIDISEGNARE;
+        if (g_sopra_link < 0 || !g_stato) return EX_NO_REDRAW;
         g_sopra_link = -1;
-        ex_testo_metti(g_stato, g_stato_prima);
-        return ex_ridisegna(g_stato) ? EX_NON_RIDISEGNARE : 0;
+        ex_set_text(g_stato, g_stato_prima);
+        return ex_redraw(g_stato) ? EX_NO_REDRAW : 0;
 
-    case EXM_MOUSE_SU:
+    case EXM_MOUSE_UP:
         g_trascino = 0;
         g_sel_trascina = 0;
-        return EX_NON_RIDISEGNARE;
+        return EX_NO_REDRAW;
 
-    case EXM_DISEGNA:
+    case EXM_PAINT:
         disegna();
         return 0;
 
     default:
-        return ex_procedura_base(f, msg, wp, lp);
+        return ex_default_proc(f, msg, wp, lp);
     }
 }
 
@@ -7505,8 +7505,8 @@ int main(int argc, char **argv)
     vista_cliente(&g_estranei);
     vista_prepara(&g_principale);
 
-    g_f = ex_crea("finestra", "EXBrowser",
-                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+    g_f = ex_create("window", "EXBrowser",
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     ex_scarichi_alla_fine(scarico_finito, 0);
     if (!g_f) {
@@ -7514,14 +7514,14 @@ int main(int argc, char **argv)
         printf("         Avvialo con:  exwin\n");
         return 1;
     }
-    ex_mouse_passaggio(g_f, 1);         /* the address of a link, passing over it */
+    ex_track_mouse_hover(g_f, 1);         /* the address of a link, passing over it */
 
     /* ! IL FONT E' PROPORZIONALE SE C'E', ALTRIMENTI QUELLO DI SISTEMA, e non
-     * si muore per un file mancante: ex_font_apri rende 0, che E' il font di
+     * si muore per un file mancante: ex_font_open rende 0, che E' il font di
      * sistema. Una pagina con un carattere diverso e' meglio di un browser che
      * non parte. */
-    g_font_testo  = ex_font_apri("/exwin/font/LiberationSerif-Regular.ttf", 15);
-    g_font_titolo = ex_font_apri("/exwin/font/LiberationSans-Bold.ttf", 22);
+    g_font_testo  = ex_font_open("/exwin/font/LiberationSerif-Regular.ttf", 15);
+    g_font_titolo = ex_font_open("/exwin/font/LiberationSans-Bold.ttf", 22);
 
     /* Anche queste due contano: sono le facce del testo normale e dei titoli,
      * cioe' le due che si notano per prime se non si aprono. */
@@ -7541,36 +7541,36 @@ int main(int argc, char **argv)
      * sta a y = 0 e larga quanto la finestra, e tutto il resto comincia sotto
      * di lei — vedi BARRA_Y. */
     {
-        ExFinestra menu = ex_menu(g_f);
+        ExWindow menu = ex_menu_bar(g_f);
 
-        ex_menu_voce(menu, "File", "Nuova scheda\tCtrl+T",        ID_SCHEDA);
-        ex_menu_voce(menu, "File", "Nuova finestra\tCtrl+N",      ID_NUOVA);
-        ex_menu_voce(menu, "File", "Apri...\tCtrl+O",             ID_APRI);
-        ex_menu_voce(menu, "File", "Pagina iniziale\tCtrl+H",     ID_HOME);
-        ex_menu_voce(menu, "File", "Salva con nome...\tCtrl+S",   ID_SALVA);
-        ex_menu_voce(menu, "File", "-",                           0);
-        ex_menu_voce(menu, "File", "Impostazioni...",             ID_IMPOST);
-        ex_menu_voce(menu, "File", "Aggiungi un certificato...",  ID_CERTI);
-        ex_menu_voce(menu, "File", "-",                           0);
-        ex_menu_voce(menu, "File", "Esci\tCtrl+Q",                ID_ESCI);
+        ex_menu_add_item(menu, "File", "Nuova scheda\tCtrl+T",        ID_SCHEDA);
+        ex_menu_add_item(menu, "File", "Nuova finestra\tCtrl+N",      ID_NUOVA);
+        ex_menu_add_item(menu, "File", "Apri...\tCtrl+O",             ID_APRI);
+        ex_menu_add_item(menu, "File", "Pagina iniziale\tCtrl+H",     ID_HOME);
+        ex_menu_add_item(menu, "File", "Salva con nome...\tCtrl+S",   ID_SALVA);
+        ex_menu_add_item(menu, "File", "-",                           0);
+        ex_menu_add_item(menu, "File", "Impostazioni...",             ID_IMPOST);
+        ex_menu_add_item(menu, "File", "Aggiungi un certificato...",  ID_CERTI);
+        ex_menu_add_item(menu, "File", "-",                           0);
+        ex_menu_add_item(menu, "File", "Esci\tCtrl+Q",                ID_ESCI);
 
-        ex_menu_voce(menu, "Strumenti", "Download",               ID_SCARICHI);
+        ex_menu_add_item(menu, "Strumenti", "Download",               ID_SCARICHI);
 
-        ex_menu_voce(menu, "Aiuto", "Guida di EXBrowser",         ID_AIUTO);
-        ex_menu_voce(menu, "Aiuto", "Documentazione di EX-OS",    ID_DOC);
-        ex_menu_voce(menu, "Aiuto", "-",                          0);
-        ex_menu_voce(menu, "Aiuto", "Informazioni su",            ID_INFO);
+        ex_menu_add_item(menu, "Aiuto", "Guida di EXBrowser",         ID_AIUTO);
+        ex_menu_add_item(menu, "Aiuto", "Documentazione di EX-OS",    ID_DOC);
+        ex_menu_add_item(menu, "Aiuto", "-",                          0);
+        ex_menu_add_item(menu, "Aiuto", "Informazioni su",            ID_INFO);
     }
 
-    ex_crea("pulsante", "<", EX_FIGLIO, MARGINE, BARRA_Y + 4, 26, 22,
+    ex_create("button", "<", EX_CHILD, MARGINE, BARRA_Y + 4, 26, 22,
             g_f, ID_INDIETRO, 0);
 
     /* ! I DUE PULSANTI DI DESTRA SI MISURANO DALLA DESTRA, non dalla
      * sinistra: cosi' aggiungerne uno sposta solo il campo dell'indirizzo, che
      * e' l'unico pezzo che puo' restringersi senza diventare inutile. */
-    g_bt_info = ex_crea("pulsante", "?", EX_FIGLIO, g_fin_w - MARGINE - 24,
+    g_bt_info = ex_create("button", "?", EX_CHILD, g_fin_w - MARGINE - 24,
                         BARRA_Y + 4, 24, 22, g_f, ID_INFO, 0);
-    g_bt_vai  = ex_crea("pulsante", "Vai", EX_FIGLIO,
+    g_bt_vai  = ex_create("button", "Vai", EX_CHILD,
                         g_fin_w - MARGINE - 24 - 4 - 44,
                         BARRA_Y + 4, 44, 22, g_f, ID_VAI, 0);
 
@@ -7582,28 +7582,28 @@ int main(int argc, char **argv)
      * ! E L'ETICHETTA C'E' PERCHE' UNA CASELLA VUOTA NON DICE COS'E'. Due
      * caselle bianche una accanto all'altra sono due misteri; con «Cerca»
      * davanti, la seconda si spiega da sola e la prima resta l'indirizzo. */
-    g_et_cerca = ex_crea("etichetta", "Cerca", EX_FIGLIO, CERCA_X - 44,
+    g_et_cerca = ex_create("label", "Cerca", EX_CHILD, CERCA_X - 44,
                          BARRA_Y + 7, 40, 16, g_f, 0, 0);
-    g_cerca = ex_crea("testo", "", EX_FIGLIO, CERCA_X, BARRA_Y + 4,
+    g_cerca = ex_create("textbox", "", EX_CHILD, CERCA_X, BARRA_Y + 4,
                       CERCA_W, 22, g_f, ID_CERCA, 0);
 
-    g_url = ex_crea("testo", "", EX_FIGLIO, MARGINE + 32, BARRA_Y + 4,
+    g_url = ex_create("textbox", "", EX_CHILD, MARGINE + 32, BARRA_Y + 4,
                     CERCA_X - 44 - 4 - (MARGINE + 32), 22,
                     g_f, ID_URL, 0);
     /* La barra delle schede: c'e' sempre, si vede dalla seconda (@NAV-SCHEDE). */
-    g_schede = ex_crea("tab", "", EX_FIGLIO, MARGINE, BARRA_Y + BARRA_H + 2,
+    g_schede = ex_create("tab", "", EX_CHILD, MARGINE, BARRA_Y + BARRA_H + 2,
                        FIN_W - 2 * MARGINE, SCHEDE_H, g_f, ID_SCHEDE, 0);
     if (g_schede) {
-        ex_voci_schede(g_schede, 1);
-        ex_voce_aggiungi(g_schede, "...");
-        ex_mostra(g_schede, 0);
+        ex_items_as_tabs(g_schede, 1);
+        ex_item_add(g_schede, "...");
+        ex_show(g_schede, 0);
     }
 
-    g_stato = ex_crea("etichetta", "", EX_FIGLIO,
+    g_stato = ex_create("label", "", EX_CHILD,
                       MARGINE, g_fin_h - 18, g_fin_w - 2 * MARGINE, 16, g_f, 0, 0);
 
     /* ! IL TETTO DELLE IMMAGINI SI SCEGLIE QUI, a finestra gia' aperta: prima
-     * di ex_crea la memoria che il server a finestre prendera' per questa
+     * di ex_create la memoria che il server a finestre prendera' per questa
      * finestra e' ancora libera, e conterebbe come nostra. */
     imm_tetto_scegli();
 
@@ -7633,10 +7633,10 @@ int main(int argc, char **argv)
     if (!g_home[0]) home_predefinita();
 
     /* Tab past the bar's last control goes into the page (tab_muovi). */
-    ex_tab_contenuto(g_f, 1);
-    ex_fuoco(g_url);
+    ex_tab_content(g_f, 1);
+    ex_set_focus(g_url);
     dico("un indirizzo a sinistra, delle parole in \"Cerca\", e Invio.");
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+    ex_default_proc(g_f, EXM_PAINT, 0, 0);
     disegna();
 
     /* ! UN ARGOMENTO CHE COMINCIA CON «/» E' UN FILE, non un indirizzo, e
@@ -7652,15 +7652,15 @@ int main(int argc, char **argv)
             primo[sizeof(primo) - 1] = '\0';
         }
 
-        ex_testo_metti(g_url, primo);
+        ex_set_text(g_url, primo);
         vai(primo, 0, 0);
     } else if (g_home[0]) {
         /* ! L'ARGOMENTO BATTE LA PAGINA INIZIALE, e non e' discutibile: chi
          * scrive `browser qualcosa` ha chiesto QUELLA pagina. */
-        ex_testo_metti(g_url, g_home);
+        ex_set_text(g_url, g_home);
         vai(g_home, 0, 1);
     }
 
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }

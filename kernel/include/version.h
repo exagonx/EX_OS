@@ -404,7 +404,14 @@
 /* 0.231 -> 0.232: 128 descrittori per processo (erano 32); FD_IPC, che vale
  * MAX_FD, passa a 128. Firefox con la finestra vera apriva piu' di 32 file e
  * non trovava piu' i caratteri. */
-#define EXOS_VERSION    "0.232"
+/* 0.232 -> 0.233: ftruncate su un file aperto (SYS_FTRUNCATE 109) e 256 file
+ * aperti nel sistema invece di 64: SQLite di Firefox non apriva i suoi
+ * database e non poteva troncarli. */
+/* 0.233 -> 0.234: mmap MAP_FIXED sopra pagine gia' mappate libera prima le
+ * pagine fisiche che sostituisce (restavano allocate per sempre), e con
+ * PROT_NONE riserva soltanto: e' come il JIT di SpiderMonkey impegna e
+ * restituisce la sua memoria. */
+#define EXOS_VERSION    "0.234"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
