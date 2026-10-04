@@ -231,6 +231,13 @@ void css_stile_vuoto(CssStile *s);
  * nessuno la dice. Aggiunta il 28 settembre 2026. */
 void css_media_larghezza(int px);
 
+/* Il segno d'elenco dell'ULTIMO elemento passato a css_calcola: 0 se le sue
+ * regole dicono `list-style: none`, 1 se dicono un segno, 2 se non dicono
+ * niente (e allora vale quello della lista che lo contiene: list-style si
+ * eredita). Una funzione e non un campo di CssStile, per non cambiarne la
+ * misura. Aggiunta il 4 ottobre 2026; con un'excss.so di prima rende 2. */
+int css_segno_lista(void);
+
 /* -----------------------------------------------------------------------------
  * L'origine di una dichiarazione, che e' meta' della cascata
  *
@@ -340,7 +347,10 @@ typedef struct {
 #define CSS_P_ALLINEA_VOCI  44  /* align-items */
 #define CSS_P_SPAZIO_RIGA   45  /* row-gap    */
 #define CSS_P_SPAZIO_COL    46  /* column-gap */
-#define CSS_P_N             47
+#define CSS_P_OPACITA       47  /* opacity: 0 o non zero (4 ottobre 2026) */
+#define CSS_P_PUNTATORE     48  /* pointer-events: none o no */
+#define CSS_P_SEGNO         49  /* list-style, list-style-type: none o no */
+#define CSS_P_N             50
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */

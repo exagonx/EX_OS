@@ -150,6 +150,79 @@ void aes_cifra(const AesChiave *c, const unsigned char in[16],
 }
 
 /* =============================================================================
+ * LA DECIFRATURA DI UN BLOCCO — 4 ottobre 2026
+ *
+ * ! FINO A IERI QUI C'ERA SCRITTO «SOLO IN AVANTI», ed era vero: CCM e GCM
+ * chiamano AES solo in cifratura, anche per decifrare. CBC no: per leggere un
+ * record TLS cifrato in CBC serve il cifrario inverso. E serve perche' ci sono
+ * siti — www.tiscali.it, misurato — che in TLS 1.2 accettano SOLO
+ * AES-CBC con SHA-1 (vedi lib/extls/extls_client.c).
+ *
+ * La tabella inversa si calcola dalla SBOX la prima volta: e' la stessa
+ * permutazione letta al contrario, e scriverla a mano sarebbero altri 256
+ * numeri da sbagliare.
+ * ============================================================================= */
+static unsigned char ISBOX[256];
+static int           g_isbox_fatta = 0;
+
+/* Il prodotto nel campo di AES: a per b, modulo x^8 + x^4 + x^3 + x + 1. */
+static unsigned char gmul(unsigned char a, unsigned char b)
+{
+    unsigned char r = 0;
+
+    while (b) {
+        if (b & 1) r ^= a;
+        a = xtime(a);
+        b >>= 1;
+    }
+    return r;
+}
+
+void aes_decifra(const AesChiave *c, const unsigned char in[16],
+                 unsigned char out[16])
+{
+    unsigned char s[16];
+    unsigned int  i;
+    int           giro;
+
+    if (!g_isbox_fatta) {
+        for (i = 0; i < 256; i++) ISBOX[SBOX[i]] = (unsigned char)i;
+        g_isbox_fatta = 1;
+    }
+
+    for (i = 0; i < 16; i++) s[i] = (unsigned char)(in[i] ^ c->rk[c->giri * 16 + i]);
+
+    for (giro = (int)c->giri - 1; giro >= 0; giro--) {
+        unsigned char t[16];
+
+        /* InvShiftRows e InvSubBytes insieme: la riga r torna indietro di r. */
+        for (i = 0; i < 16; i++) {
+            unsigned int r = i % 4, col = i / 4;
+            unsigned int da = ((col + 4 - r) % 4) * 4 + r;
+
+            t[i] = ISBOX[s[da]];
+        }
+        for (i = 0; i < 16; i++) t[i] ^= c->rk[(unsigned int)giro * 16 + i];
+
+        if (giro != 0) {
+            /* InvMixColumns: la matrice 14 11 13 9. */
+            for (i = 0; i < 4; i++) {
+                unsigned char *p = t + i * 4;
+                unsigned char a0 = p[0], a1 = p[1], a2 = p[2], a3 = p[3];
+
+                p[0] = (unsigned char)(gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9));
+                p[1] = (unsigned char)(gmul(a0, 9) ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13));
+                p[2] = (unsigned char)(gmul(a0, 13) ^ gmul(a1, 9) ^ gmul(a2, 14) ^ gmul(a3, 11));
+                p[3] = (unsigned char)(gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9) ^ gmul(a3, 14));
+            }
+        }
+        for (i = 0; i < 16; i++) s[i] = t[i];
+    }
+
+    for (i = 0; i < 16; i++) out[i] = s[i];
+}
+
+/* =============================================================================
  * CCM (RFC 3610) — il modo di WPA2
  *
  * ! E' DUE COSE IN UNA, E VANNO FATTE NELL'ORDINE GIUSTO: un CBC-MAC che

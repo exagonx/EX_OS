@@ -32,6 +32,12 @@
 
 #include "wchar.h"
 
+/* ! extern "C": senza, dal C++ i nomi escono decorati e non si collegano
+ * (la libstdc++ con wchar_t chiamava «wctype(char const*)»). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int    iswalnum(wint_t c);
 int    iswalpha(wint_t c);
 int    iswblank(wint_t c);
@@ -47,5 +53,19 @@ int    iswxdigit(wint_t c);
 
 wint_t towlower(wint_t c);
 wint_t towupper(wint_t c);
+
+/* Le classi e le trasformazioni per nome («alpha», «tolower»), come le vuole
+ * <cwctype> della libstdc++ quando ha wchar_t. Solo in libc.a. Un valore e'
+ * l'indice della classe, 0 se il nome non e' noto. */
+typedef unsigned int wctype_t;
+typedef unsigned int wctrans_t;
+wctype_t  wctype(const char *nome);
+int       iswctype(wint_t c, wctype_t classe);
+wctrans_t wctrans(const char *nome);
+wint_t    towctrans(wint_t c, wctrans_t t);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EXOS_WCTYPE_H */

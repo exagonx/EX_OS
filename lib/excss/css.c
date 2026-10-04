@@ -297,6 +297,8 @@ static int leggi_misura(const char *v, unsigned int n, int *out)
 #define REL_ZERO    0x800000u            /* centesimi con segno, spostati */
 
 static int g_media_w;                    /* la larghezza delle @media, piu' giu' */
+static int g_opaca = 1, g_punta = 1;     /* vedi nascosto_applica() */
+static int g_segno = 2;                  /* vedi css_segno_lista() in css.h */
 
 static unsigned int rel_codifica(unsigned int unita, int centesimi)
 {
@@ -508,6 +510,10 @@ static const PropNota PROPRIETA[] = {
     { "align-items",         CSS_P_ALLINEA_VOCI    },
     { "row-gap",             CSS_P_SPAZIO_RIGA     },
     { "column-gap",          CSS_P_SPAZIO_COL      },
+    { "list-style",          CSS_P_SEGNO           },
+    { "list-style-type",     CSS_P_SEGNO           },
+    { "opacity",             CSS_P_OPACITA         },
+    { "pointer-events",      CSS_P_PUNTATORE       },
     { "grid-row-gap",        CSS_P_SPAZIO_RIGA     },
     { "grid-column-gap",     CSS_P_SPAZIO_COL      },
     { 0, 0 }
@@ -641,6 +647,29 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
         if (parola_e(v, n, "wrap") || parola_e(v, n, "wrap-reverse")) { *out = 1; return 1; }
         if (parola_e(v, n, "nowrap")) { *out = 0; return 1; }
         return 0;
+
+    case CSS_P_OPACITA: {
+        /* Conta solo se e' zero: «0», «0.0», «0%», «.0». */
+        unsigned int k; int zero = n > 0;
+        for (k = 0; k < n; k++)
+            if (v[k] != '0' && v[k] != '.' && v[k] != '%') { zero = 0; break; }
+        *out = zero ? 0u : 1u;
+        return 1;
+    }
+    case CSS_P_PUNTATORE:
+        *out = parola_e(v, n, "none") ? 0u : 1u;
+        return 1;
+    case CSS_P_SEGNO: {
+        /* «none» da solo o dentro la forma breve («none inside»). */
+        unsigned int k;
+        *out = 1u;
+        for (k = 0; k + 4 <= n; k++)
+            if ((k == 0 || v[k - 1] == ' ') && (k + 4 == n || v[k + 4] == ' ') &&
+                minusc((unsigned char)v[k]) == 'n' && minusc((unsigned char)v[k + 1]) == 'o' &&
+                minusc((unsigned char)v[k + 2]) == 'n' && minusc((unsigned char)v[k + 3]) == 'e')
+                *out = 0u;
+        return 1;
+    }
 
     case CSS_P_PULISCI:
         if (parola_e(v, n, "none"))  { *out = 0; return 1; }
@@ -1132,8 +1161,40 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_ALLINEA_VOCI: s->allinea_voci = (unsigned char)val;      break;
     case CSS_P_SPAZIO_RIGA: s->spazio_riga = (short)((int)val - 32768); break;
     case CSS_P_SPAZIO_COL:  s->spazio_col  = (short)((int)val - 32768); break;
+    case CSS_P_OPACITA:    g_opaca = (int)val;                          break;
+    case CSS_P_PUNTATORE:  g_punta = (int)val;                          break;
+    case CSS_P_SEGNO:      g_segno = (int)val;                          break;
     default: break;
     }
+}
+
+/* =============================================================================
+ * «C'E' MA PER ORA NON SI VEDE» — opacity: 0 con pointer-events: none
+ * (4 ottobre 2026)
+ *
+ * Misurato su www.tiscali.it (Tailwind): le tendine del menu e il logo che
+ * compare scorrendo non sono `display: none` ne' `visibility: hidden`: sono
+ * `opacity: 0` e `pointer-events: none`, e uno script le accende. Qui non si
+ * disegnava ne' l'una ne' l'altra proprieta', e le tendine comparivano tutte
+ * aperte in mezzo alla pagina.
+ *
+ * ! SERVONO TUTTE E DUE, E NON LA SOLA OPACITA'. Un elemento a opacity: 0 che
+ * pero' risponde al mouse e' di solito qualcosa che una transizione sta per
+ * far comparire da se' (un testo che entra in dissolvenza): nasconderlo
+ * vorrebbe dire togliere dalla pagina del contenuto vero, che e' peggio di
+ * mostrare un menu. Con tutte e due l'autore ha detto «non c'e'» in ogni modo
+ * che aveva, e si tratta come visibility: hidden — che scende ai figli.
+ *
+ * ! NON STANNO IN CssStile, apposta: allungare quella struttura cambierebbe
+ * la misura di un dato che i programmi passano a excss.so, e uno compilato
+ * ieri si vedrebbe scrivere oltre il suo. css_calcola lavora un nodo per
+ * volta: due variabili del file, azzerate all'inizio, bastano.
+ * ============================================================================= */
+int css_segno_lista(void) { return g_segno; }
+
+static void nascosto_applica(CssStile *s)
+{
+    if (g_opaca == 0 && g_punta == 0) s->visibile = 0;
 }
 
 void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
@@ -1144,8 +1205,10 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
 
     if (!testo || !s) return;
 
+    g_opaca = g_punta = 1;
     it.t = testo; it.i = 0; it.n = n; it.coda_n = it.coda_i = 0;
     while (dich_prossima(&it, &prop, &val)) css_posa(s, prop, val);
+    nascosto_applica(s);
 }
 
 /* -----------------------------------------------------------------------------
@@ -2275,6 +2338,8 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
 
     for (i = 0; i < CSS_P_N; i++) rel[i] = 0;
     g_rel = rel;
+    g_opaca = g_punta = 1;
+    g_segno = 2;
 
     {
         /* ! THE CANDIDATES, THEN IN READING ORDER: at equal weight the rule
@@ -2380,4 +2445,5 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
         for (p = 0; p < CSS_P_N; p++)
             if (p != CSS_P_CORPO && rel[p]) posa_px(out, p, rel_px(rel[p], mio, g_media_w));
     }
+    nascosto_applica(out);
 }

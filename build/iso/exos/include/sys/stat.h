@@ -31,6 +31,7 @@
 #define EXOS_SYS_STAT_H
 
 #include "../libc.h"
+#include "../exos_stat.h"
 
 /* Bit dei permessi, per chi stampa un elenco in stile ls. Ci sono perche'
  * il codice che formatta "rwxr-xr-x" li nomina uno per uno; il valore che

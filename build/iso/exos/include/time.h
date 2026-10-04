@@ -30,6 +30,21 @@
 
 #include "libc.h"
 
+/* tzset e le sue tre variabili (@EXILLA-JS, 30 settembre 2026). ! EX-OS non sa
+ * in che fuso si trova (vedi struct tm in libc.h): tzset non legge niente, e le
+ * variabili dicono UTC — che e' quello che localtime() fa davvero. */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void        tzset(void);
+extern long timezone;
+extern int  daylight;
+extern char *tzname[2];
+#ifdef __cplusplus
+}
+#endif
+
 /* CLOCKS_PER_SEC c'e' anche senza clock(): e' il tick del PIT, ed e' il
  * numero con cui si convertono i millisecondi di uptime_ms(). */
 #define CLOCKS_PER_SEC  100

@@ -15,7 +15,7 @@
  * funzioni C: nessuna gerarchia di classi, nessun conteggio dei riferimenti,
  * nessun std::. Un involucro che aggiungesse un proprio modello a oggetti
  * sarebbe una seconda cosa da tenere allineata alla prima, e le due
- * divergerebbero — mentre qui, se ex_crea() cambia, questo file non compila
+ * divergerebbero — mentre qui, se ex_create() cambia, questo file non compila
  * piu' e lo si scopre subito.
  *
  * ! E NON SERVONO ECCEZIONI NE' RTTI. Una finestra che non si crea rende una
@@ -24,12 +24,12 @@
  *
  *     #include <exwin.hpp>
  *
- *     static long proc(ExFinestra f, unsigned m, unsigned wp, long lp) { ... }
+ *     static long proc(ExWindow f, unsigned m, unsigned wp, long lp) { ... }
  *
  *     int main() {
- *         ExWin::Finestra f("Prova", 100, 100, 320, 200, proc);
- *         ExWin::Pulsante ok(f, "OK", 20, 140, 80, 24, ID_OK);
- *         return ExWin::gira();
+ *         ExWin::Window f("Prova", 100, 100, 320, 200, proc);
+ *         ExWin::Button ok(f, "OK", 20, 140, 80, 24, ID_OK);
+ *         return ExWin::run();
  *     }
  * ============================================================================= */
 
@@ -40,86 +40,116 @@
 
 namespace ExWin {
 
-/* La maniglia con un po' di comodita' intorno. Non possiede niente: e' la
- * libreria C a tenere gli oggetti, esattamente come in C. */
-class Oggetto {
+/* The handle with a little convenience around it. It owns nothing: the C
+ * library keeps the objects, exactly as in C. */
+class Object {
 public:
-    Oggetto() : h(0) {}
-    explicit Oggetto(ExFinestra f) : h(f) {}
+    Object() : h(0) {}
+    explicit Object(ExWindow f) : h(f) {}
 
-    bool       valido() const { return h != 0; }
-    ExFinestra maniglia() const { return h; }
-    operator ExFinestra() const { return h; }
+    bool        valid() const  { return h != 0; }
+    ExWindow    handle() const { return h; }
+    operator ExWindow() const  { return h; }
 
-    void testo(const char *s)   { ex_testo_metti(h, s); }
-    const char *testo() const   { return ex_testo_prendi(h); }
-    void mostra(bool v = true)  { ex_mostra(h, v ? 1 : 0); }
-    void sposta(int x, int y)   { ex_sposta(h, x, y); }
-    /* h_ e non h: il campo si chiama gia' cosi', ed e' la maniglia. */
-    void misura(int w, int h_)  { ex_misura(h, w, h_); }
-    void rilievo(int x, int y, int w, int h_) { ex_rilievo(h, x, y, w, h_); }
-    void incavo(int x, int y, int w, int h_)  { ex_incavo(h, x, y, w, h_); }
+    void        set_text(const char *s) { ex_set_text(h, s); }
+    const char *text() const            { return ex_get_text(h); }
+    void        show(bool v = true)     { ex_show(h, v ? 1 : 0); }
+    void        move(int x, int y)      { ex_move(h, x, y); }
+    /* h_ and not h: the member is already called that, and is the handle. */
+    void        resize(int w, int h_)   { ex_resize(h, w, h_); }
+    void        draw_raised(int x, int y, int w, int h_) { ex_draw_raised(h, x, y, w, h_); }
+    void        draw_sunken(int x, int y, int w, int h_) { ex_draw_sunken(h, x, y, w, h_); }
+
+    /* The Italian names of before 3 October 2026, deprecated. */
+    bool        valido() const           { return valid(); }
+    ExWindow    maniglia() const         { return h; }
+    void        testo(const char *s)     { set_text(s); }
+    const char *testo() const            { return text(); }
+    void        mostra(bool v = true)    { show(v); }
+    void        sposta(int x, int y)     { move(x, y); }
+    void        misura(int w, int h_)    { resize(w, h_); }
+    void        rilievo(int x, int y, int w, int h_) { draw_raised(x, y, w, h_); }
+    void        incavo(int x, int y, int w, int h_)  { draw_sunken(x, y, w, h_); }
 
 protected:
-    ExFinestra h;
+    ExWindow h;
 };
 
-class Finestra : public Oggetto {
+class Window : public Object {
 public:
-    Finestra(const char *titolo, int x, int y, int w, int h_,
-             ExProcedura proc,
-             unsigned int stile = EX_TITOLO | EX_BORDO | EX_CHIUDI)
+    Window(const char *title, int x, int y, int w, int h_,
+           ExWindowProc proc,
+           unsigned int style = EX_CAPTION | EX_BORDER | EX_CLOSEBOX)
     {
-        h = ex_crea("finestra", titolo, stile, x, y, w, h_, 0, 0, proc);
+        h = ex_create("window", title, style, x, y, w, h_, 0, 0, proc);
     }
 
-    ~Finestra() { if (h) ex_distruggi(h); }
+    ~Window() { if (h) ex_destroy(h); }
 
-    void titolo(const char *s) { ex_titolo(h, s); }
-    void aggiorna()            { ex_aggiorna(h); }
-    void riempi(int x, int y, int w, int h_, unsigned int c)
-                               { ex_riempi(h, x, y, w, h_, c); }
-    void scrivi(int x, int y, const char *s, unsigned int c)
-                               { ex_scrivi(h, x, y, s, c); }
-    bool immagine(const char *percorso, int x = 0, int y = 0)
-                               { return ex_immagine(h, percorso, x, y) != 0; }
+    void set_title(const char *s) { ex_set_title(h, s); }
+    void update()                 { ex_update(h); }
+    void fill_rect(int x, int y, int w, int h_, unsigned int c)
+                                  { ex_fill_rect(h, x, y, w, h_, c); }
+    void draw_text(int x, int y, const char *s, unsigned int c)
+                                  { ex_draw_text(h, x, y, s, c); }
+    bool draw_image(const char *path, int x = 0, int y = 0)
+                                  { return ex_draw_image(h, path, x, y) != 0; }
+
+    /* The Italian names, deprecated. */
+    void titolo(const char *s)    { set_title(s); }
+    void aggiorna()               { update(); }
+    void riempi(int x, int y, int w, int h_, unsigned int c) { fill_rect(x, y, w, h_, c); }
+    void scrivi(int x, int y, const char *s, unsigned int c) { draw_text(x, y, s, c); }
+    bool immagine(const char *p, int x = 0, int y = 0)       { return draw_image(p, x, y); }
 
 private:
-    /* ! NON SI COPIA. Due Finestra con la stessa maniglia vorrebbero dire due
-     * distruttori sulla stessa finestra: la seconda ex_distruggi() lavorerebbe
-     * su una maniglia gia' libera. */
-    Finestra(const Finestra &);
-    Finestra &operator=(const Finestra &);
+    /* ! NOT COPYABLE. Two Window objects with the same handle would mean two
+     * destructors on the same window: the second ex_destroy() would work on
+     * a handle already freed. */
+    Window(const Window &);
+    Window &operator=(const Window &);
 };
 
-/* I controlli. Sono tutti la stessa chiamata con una classe diversa, ed e'
- * il motivo per cui aggiungerne uno non tocca questo file piu' di una riga. */
-#define EXWIN_CONTROLLO(Nome, classe)                                         \
-    class Nome : public Oggetto {                                             \
+/* The controls. They are all the same call with a different class, which is
+ * why adding one does not touch this file by more than a line. */
+#define EXWIN_CONTROL(Name, cls)                                              \
+    class Name : public Object {                                              \
     public:                                                                   \
-        Nome(ExFinestra padre, const char *titolo, int x, int y,              \
+        Name(ExWindow parent, const char *title, int x, int y,                \
              int w, int h_, unsigned int id = 0)                              \
-        { h = ex_crea(classe, titolo, EX_FIGLIO, x, y, w, h_, padre, id, 0); } \
+        { h = ex_create(cls, title, EX_CHILD, x, y, w, h_, parent, id, 0); } \
     }
 
-EXWIN_CONTROLLO(Pulsante,     "pulsante");
-EXWIN_CONTROLLO(Etichetta,    "etichetta");
-EXWIN_CONTROLLO(Testo,        "testo");
-EXWIN_CONTROLLO(Riquadro,     "riquadro");
-EXWIN_CONTROLLO(Separatore,   "separatore");
-EXWIN_CONTROLLO(Intestazione, "intestazione");
+EXWIN_CONTROL(Button,    "button");
+EXWIN_CONTROL(Label,     "label");
+EXWIN_CONTROL(TextBox,   "textbox");
+EXWIN_CONTROL(Frame,     "frame");
+EXWIN_CONTROL(Separator, "separator");
+EXWIN_CONTROL(Header,    "header");
 
-#undef EXWIN_CONTROLLO
+#undef EXWIN_CONTROL
 
-/* Il ciclo dei messaggi, come in C ma in una riga. */
-inline int gira()
+/* The message loop, as in C but in one line. */
+inline int run()
 {
     ExMsg m;
-    while (ex_prendi_msg(&m)) ex_smista(&m);
+    while (ex_get_message(&m)) ex_dispatch(&m);
     return 0;
 }
 
-inline void esci(int codice = 0) { ex_esci(codice); }
+inline void quit(int code = 0) { ex_quit(code); }
+
+/* The Italian names of before 3 October 2026, deprecated. */
+typedef Object    Oggetto;
+typedef Window    Finestra;
+typedef Button    Pulsante;
+typedef Label     Etichetta;
+typedef TextBox   Testo;
+typedef Frame     Riquadro;
+typedef Separator Separatore;
+typedef Header    Intestazione;
+inline int  gira()               { return run(); }
+inline void esci(int codice = 0) { quit(codice); }
 
 } /* namespace ExWin */
 

@@ -36,6 +36,11 @@ cat > "$D/img.html" <<'HTML'
 HTML
 
 export EXOS_ISTANZA=imgnav EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso
+# ! 64 MB, NON 32 (4 ottobre 2026): con EXBrowser ancora aperto, in 32 MB a
+# Immagini non resta la memoria per aprire il WebP («manca la memoria»), e la
+# prova accusava il decodificatore. Da solo, o con 64 MB, lo apre. Quanto
+# costa il browser in memoria e' una questione aperta, non di questa prova.
+export EXOS_RAM="${EXOS_RAM:-64M}"
 export EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide"
 rm -f "$IMG" "$D"/*.ppm
 qemu-img create -f raw "$IMG" 32M > /dev/null
@@ -57,10 +62,10 @@ import sys
 def leggi(f):
     d = open(f, "rb").read(); p = d.split(b"\n", 3)
     w, h = map(int, p[1].split()); return w, h, p[3]
-def conta(f, rgb, tol, y0=60, y1=560):
+def conta(f, rgb, tol, y0=60, y1=560, x0=0, x1=10000):
     w, h, px = leggi(f); n = 0
     for y in range(y0, min(y1, h)):
-        for x in range(w):
+        for x in range(x0, min(x1, w)):
             i = (y * w + x) * 3
             if all(abs(px[i + k] - rgb[k]) <= tol for k in range(3)): n += 1
     return n
@@ -75,7 +80,9 @@ n = conta(p, (0x20, 0xc0, 0x20), 24); controlla("il WebP con perdita, verde", n 
 n = conta(p, (0xc0, 0x20, 0xc0), 16); controlla("il WebP senza perdita, magenta", n > 1400, n)
 n = conta(p, (0xe0, 0x20, 0x20), 16); controlla("il PNG, il cerchio rosso", n > 1500, n)
 n = conta(p, (0x00, 0xc0, 0xc0), 24); controlla("il JPEG CMYK, azzurro", n > 1800, n)
-n = conta(p, (0, 0, 0), 12, 70, 200); controlla("niente nero attorno: la trasparenza prende il giallo", n < 60, n)
+# Solo DENTRO la pagina, attorno alle immagini: su tutta la larghezza si
+# contava anche il bordo nero dell'area della pagina (4 ottobre 2026).
+n = conta(p, (0, 0, 0), 12, 86, 150, 24, 320); controlla("niente nero attorno: la trasparenza prende il giallo", n < 60, n)
 n = conta(p, (0xe0, 0xd0, 0x40), 8); controlla("il giallo della pagina c'e'", n > 5000, n)
 n = conta(sys.argv[2], (0xc0, 0x20, 0xc0), 16, 0, 600); controlla("Immagini apre il WebP", n > 1400, n)
 print("  prova_img_nav: %d OK, %d NO" % (ok, no))

@@ -3,8 +3,7 @@ build/kernel/block/blk.o: kernel/block/blk.c kernel/include/kernel.h \
  kernel/include/blkr3.h kernel/include/ata.h kernel/include/atapi.h \
  kernel/include/mbr.h kernel/include/fat12.h kernel/include/syscall.h \
  kernel/include/idt.h lib/include/spawn_abi.h kernel/include/pmm.h \
- kernel/include/sched.h kernel/include/paging.h kernel/include/fpu.h \
- kernel/include/vfs.h kernel/include/blk.h kernel/include/syscall.h
+ kernel/include/syscall.h
 kernel/include/kernel.h:
 kernel/include/blk.h:
 kernel/include/kernel.h:
@@ -18,9 +17,4 @@ kernel/include/syscall.h:
 kernel/include/idt.h:
 lib/include/spawn_abi.h:
 kernel/include/pmm.h:
-kernel/include/sched.h:
-kernel/include/paging.h:
-kernel/include/fpu.h:
-kernel/include/vfs.h:
-kernel/include/blk.h:
 kernel/include/syscall.h:

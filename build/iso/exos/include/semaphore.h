@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-typedef struct { Semaforo s; } sem_t;
+typedef struct { volatile int s; } sem_t;   /* un Semaforo della libc */
 
 int sem_init(sem_t *s, int pshared, unsigned int valore);
 int sem_destroy(sem_t *s);

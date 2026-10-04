@@ -48,6 +48,7 @@
 #include "extls.h"
 #include "excrypt.h"
 #include "excurva.h"
+#include "exbig.h"
 
 /* Traccia di servizio: si accende solo compilando con -DEXTLS_TRACCIA, e serve
  * a confrontare i segreti con il keylog di OpenSSL quando una stretta non va. */
@@ -162,6 +163,10 @@ typedef struct {
     unsigned long long seq;
     int           attiva;
     GcmChiave     gcm;          /* the AES key schedule, for AES-128-GCM */
+    /* TLS 1.2 with AES-CBC and HMAC-SHA1 (see TLS12_RSA_AES128_SHA) */
+    int           cbc;
+    AesChiave     aes;
+    unsigned char mac[20];
 } Direzione;
 
 /* =============================================================================
@@ -223,10 +228,42 @@ typedef struct {
 #define TLS12_ECDHE_ECDSA_CHACHA   0xCCA9
 #define TLS12_ECDHE_RSA_CHACHA     0xCCA8
 
+/* =============================================================================
+ * THE OLD HALF OF 1.2, FOR THE SITES THAT HAVE NOTHING ELSE — 4 October 2026
+ *
+ * Measured from the host with openssl: www.tiscali.it accepts exactly two
+ * cipher suites, TLS_RSA_WITH_AES_128_CBC_SHA and TLS_RSA_WITH_AES_256_CBC_SHA.
+ * No ECDHE, no GCM. With the modern half only, the browser showed «nessun
+ * cifrario in comune» and the site never opened.
+ *
+ * ! THEY ARE OFFERED LAST, and the server chooses: a server that knows any of
+ * the six suites above never ends here. What is lost with these two is real
+ * and worth saying: RSA key transport has no forward secrecy (whoever records
+ * the traffic and later gets the server's key reads it), and CBC with
+ * MAC-then-encrypt is the construction of Lucky13. The record check below does
+ * the MAC over the whole record whatever the padding says and compares
+ * without stopping early; it is not a constant-time implementation, and for a
+ * client that opens a page it does not need to be an oracle anybody can query
+ * at will. The alternative is not a safer connection: it is no connection.
+ *
+ * What it takes: RSA encryption of the pre-master secret (PKCS#1 v1.5, with
+ * lib/exbig), HMAC-SHA1 for the record MAC, and the AES inverse cipher that
+ * lib/excrypt did not have. The PRF is still SHA-256: that belongs to the
+ * version, not to the suite.
+ * ============================================================================= */
+#define TLS12_RSA_AES128_SHA       0x002F
+#define TLS12_RSA_AES256_SHA       0x0035
+
+static int e_cbc12(unsigned int c)
+{
+    return c == TLS12_RSA_AES128_SHA || c == TLS12_RSA_AES256_SHA;
+}
+
 static int e_cifrario12(unsigned int c)
 {
     return c == TLS12_ECDHE_ECDSA_AES128 || c == TLS12_ECDHE_RSA_AES128 ||
-           c == TLS12_ECDHE_ECDSA_CHACHA || c == TLS12_ECDHE_RSA_CHACHA;
+           c == TLS12_ECDHE_ECDSA_CHACHA || c == TLS12_ECDHE_RSA_CHACHA ||
+           e_cbc12(c);
 }
 
 static int e_aes12(unsigned int c)
@@ -261,6 +298,10 @@ typedef struct {
     unsigned int  tipo;          /* il tipo del record in `bin` */
 
     unsigned char bout[AVANTI + REC_MAX + DOPO];
+
+    /* CBC: the MAC wants «key block, 13 bytes of header, the record» in one
+     * piece, and lib/excrypt's sha1() takes one piece. */
+    unsigned char mac_tmp[64 + 13 + REC_MAX];
 
     unsigned int cifrario;  /* TLS_CHACHA or TLS_AES128, from the ServerHello */
 
@@ -378,6 +419,64 @@ static int leggi_tutto(Tls *t, unsigned char *dst, unsigned int n,
 
 /* Legge un record e, se la direzione e' cifrata, lo apre. Lascia il testo in
  * chiaro in t->bin+AVANTI, `fine` byte, e il tipo vero in t->tipo. */
+/* HMAC-SHA1 of «seq, type, 3.3, length, data» for a CBC record (RFC 5246,
+ * 6.2.3.1). hmac_sha1() of lib/excrypt stops at 8 KB and a record is 16: the
+ * two hashes are done here, on t->mac_tmp. */
+static void mac_cbc(Tls *t, const Direzione *d, unsigned int tipo,
+                    const unsigned char *dati, unsigned int n, unsigned char out[20])
+{
+    unsigned char *b = t->mac_tmp, fuori[64 + 20];
+    unsigned long long s = d->seq;
+    unsigned int  k;
+
+    for (k = 0; k < 64; k++) b[k] = (unsigned char)((k < 20 ? d->mac[k] : 0) ^ 0x36);
+    for (k = 0; k < 8; k++) b[64 + k] = (unsigned char)(s >> (56 - 8 * k));
+    b[72] = (unsigned char)tipo; b[73] = 3; b[74] = 3;
+    b[75] = (unsigned char)(n >> 8); b[76] = (unsigned char)n;
+    bcopia(b + 77, dati, n);
+    sha1(b, 77 + n, fuori + 64);
+    for (k = 0; k < 64; k++) fuori[k] = (unsigned char)((k < 20 ? d->mac[k] : 0) ^ 0x5C);
+    sha1(fuori, 84, out);
+}
+
+/* A CBC record just read into t->bin + AVANTI, n bytes: explicit IV, then
+ * the blocks. Leaves the plaintext at t->bin + AVANTI and its length in
+ * *chiaro. */
+static int cbc_apri(Tls *t, unsigned int tipo, unsigned int n, unsigned int *chiaro)
+{
+    unsigned char *p = t->bin + AVANTI, prima[16], questo[16], mio[20];
+    unsigned int  blocchi, k, i, l, pad, dati, male = 0;
+
+    if (n < 48 || (n % 16) != 0) return EXTLS_ERR_PROTOCOLLO;
+    blocchi = n / 16 - 1;
+    bcopia(prima, p, 16);
+    for (k = 0; k < blocchi; k++) {
+        bcopia(questo, p + 16 + 16 * k, 16);
+        aes_decifra(&t->leggo.aes, questo, p + 16 * k);
+        for (i = 0; i < 16; i++) p[16 * k + i] ^= prima[i];
+        bcopia(prima, questo, 16);
+    }
+    l = blocchi * 16;
+
+    /* ! THE MAC IS COMPUTED WHATEVER THE PADDING SAYS: a padding that makes
+     * no sense is treated as no padding, the MAC then fails, and the answer
+     * is the same error either way. */
+    pad = p[l - 1];
+    if (pad + 1 + 20 > l) { male = 1; pad = 0; }
+    for (i = 0; i < pad; i++) if (p[l - 2 - i] != pad) male = 1;
+    if (male) pad = 0;
+    dati = l - pad - 1 - 20;
+
+    mac_cbc(t, &t->leggo, tipo, p, dati, mio);
+    {
+        unsigned char diff = 0;
+        for (i = 0; i < 20; i++) diff |= (unsigned char)(mio[i] ^ p[dati + i]);
+        if (diff || male) return EXTLS_ERR_PROTOCOLLO;
+    }
+    *chiaro = dati;
+    return EXTLS_OK;
+}
+
 static int record_leggi(Tls *t, unsigned int ms)
 {
     unsigned char *h = t->bin;          /* i 5 byte dell'intestazione */
@@ -429,7 +528,16 @@ static int record_leggi(Tls *t, unsigned int ms)
         return EXTLS_OK;
     }
 
-    if (t->v12) {
+    if (t->v12 && t->leggo.cbc) {
+        unsigned int chiaro = 0;
+
+        r = cbc_apri(t, h[0], n, &chiaro);
+        if (r != EXTLS_OK) return r;
+        t->leggo.seq++;
+        t->tipo = h[0];
+        t->pos  = 0;
+        t->fine = chiaro;
+    } else if (t->v12) {
         /* ! 1.2: THE TYPE OUTSIDE IS THE REAL ONE, and the AAD is 13 bytes:
          * sequence number, type, version, length of the PLAINTEXT. AES-GCM
          * carries 8 bytes of explicit nonce before the ciphertext. */
@@ -542,6 +650,34 @@ static int record_scrivi2(Tls *t, unsigned int tipo,
         metti16(b + 3, n);
         if (t->sotto->scrivi(t->sotto->stato, b, 5) != 5) return EXTLS_ERR_RETE;
         if (n && t->sotto->scrivi(t->sotto->stato, b + AVANTI, n) != (int)n)
+            return EXTLS_ERR_RETE;
+        return EXTLS_OK;
+    }
+
+    if (t->v12 && t->scrivo.cbc) {
+        /* IV in the 16 bytes before the text (AVANTI), then text, MAC and
+         * padding, encrypted in place: one piece to send. */
+        unsigned char hdr[5], *iv = b, *p = b + AVANTI;
+        unsigned int  k, i, tot, pad;
+
+        mac_cbc(t, &t->scrivo, tipo, p, n, p + n);
+        tot = n + 20;
+        pad = 16 - (tot % 16);                  /* 1..16 bytes, each pad-1 */
+        for (i = 0; i < pad; i++) p[tot + i] = (unsigned char)(pad - 1);
+        tot += pad;
+
+        t->casuale(iv, 16);
+        for (k = 0; k < tot; k += 16) {
+            const unsigned char *prima = k ? p + k - 16 : iv;
+            for (i = 0; i < 16; i++) p[k + i] ^= prima[i];
+            aes_cifra(&t->scrivo.aes, p + k, p + k);
+        }
+        t->scrivo.seq++;
+
+        hdr[0] = (unsigned char)tipo; hdr[1] = 3; hdr[2] = 3;
+        metti16(hdr + 3, 16 + tot);
+        if (t->sotto->scrivi(t->sotto->stato, hdr, 5) != 5) return EXTLS_ERR_RETE;
+        if (t->sotto->scrivi(t->sotto->stato, b, 16 + tot) != (int)(16 + tot))
             return EXTLS_ERR_RETE;
         return EXTLS_OK;
     }
@@ -764,7 +900,7 @@ static int manda_hello(Tls *t, const char *host, int secondo,
     if (!secondo) t->casuale(t->ch_sessione, 32);
     bcopia(c + i, t->ch_sessione, 32); i += 32;
 
-    metti16(c + i, 12); i += 2;                 /* cipher_suites */
+    metti16(c + i, 16); i += 2;                 /* cipher_suites */
     metti16(c + i, TLS_CHACHA); i += 2;         /* TLS_CHACHA20_POLY1305_SHA256 */
     metti16(c + i, TLS_AES128); i += 2;         /* TLS_AES_128_GCM_SHA256 */
     /* and for a 1.2 server: ECDHE with the same two AEADs */
@@ -772,6 +908,9 @@ static int manda_hello(Tls *t, const char *host, int secondo,
     metti16(c + i, TLS12_ECDHE_RSA_CHACHA); i += 2;
     metti16(c + i, TLS12_ECDHE_ECDSA_AES128); i += 2;
     metti16(c + i, TLS12_ECDHE_RSA_AES128); i += 2;
+    /* and LAST, for the servers that have nothing else: see e_cbc12 */
+    metti16(c + i, TLS12_RSA_AES128_SHA); i += 2;
+    metti16(c + i, TLS12_RSA_AES256_SHA); i += 2;
 
     c[i++] = 1; c[i++] = 0;                     /* compressione: nessuna */
 
@@ -1139,8 +1278,10 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
 {
     ExCert        catena[8];
     unsigned int  quanti = 0, gruppo = 0, punto_n = 0, k;
-    unsigned char punto[65], pms[32], ms[48], impronta[EXTLS_IMPRONTA];
+    unsigned char punto[65], pms[48], ms[48], impronta[EXTLS_IMPRONTA];
+    unsigned int  pms_n = 32;
     int           visto_cert = 0, visto_skx = 0, chiesto_cert = 0, r;
+    int           rsa = e_cbc12(t->cifrario);   /* RSA key transport, no ECDHE */
 
     /* --- what the server says in clear ----------------------------------- */
     for (;;) {
@@ -1163,6 +1304,7 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
             unsigned char firmato[64 + 4 + 65];
             unsigned int  par_n, alg, firma_n;
 
+            if (rsa) return EXTLS_ERR_PROTOCOLLO;   /* none with RSA transport */
             if (!visto_cert || n < 4 || corpo[0] != 3) return EXTLS_ERR_PROTOCOLLO;
             gruppo  = be16(corpo + 1);
             punto_n = corpo[3];
@@ -1192,7 +1334,7 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
         if (tipo == 14) break;                  /* ServerHelloDone */
         return EXTLS_ERR_PROTOCOLLO;
     }
-    if (!visto_cert || !visto_skx) return EXTLS_ERR_PROTOCOLLO;
+    if (!visto_cert || (!visto_skx && !rsa)) return EXTLS_ERR_PROTOCOLLO;
 
     /* --- the certificate is for THIS site, and comes from a real CA ------- */
     if (!passo(EXTLS_P_CATENA)) return EXTLS_ERR_RETE;
@@ -1202,6 +1344,47 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
     if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
     if (excert_nome_combacia(&catena[0], host) != EXCERT_OK) return EXTLS_ERR_NOME;
 
+    /* --- RSA key transport: 48 random bytes, encrypted for the server ---- */
+    if (rsa) {
+        static ExBig  nn, ee, mm, cc;           /* too big for the stack */
+        unsigned char em[512], kx[2 + 512];
+        unsigned int  kn, i;
+
+        if (catena[0].tipo_chiave != EXASN1_CHIAVE_RSA) return EXTLS_ERR_PROTOCOLLO;
+        if (exbig_da_byte(&nn, catena[0].chiave_modulo.p, catena[0].chiave_modulo.n) != 0 ||
+            exbig_da_byte(&ee, catena[0].chiave_esponente.p, catena[0].chiave_esponente.n) != 0)
+            return EXTLS_ERR_PROTOCOLLO;
+        kn = (exbig_bit(&nn) + 7) / 8;
+        if (kn < 128 || kn > 512) return EXTLS_ERR_PROTOCOLLO;
+
+        /* The version in the first two bytes is the one of the ClientHello. */
+        t->casuale(pms, 48);
+        pms[0] = 3; pms[1] = 3;
+        pms_n = 48;
+
+        /* PKCS#1 v1.5, type 2: 00 02, random bytes that are never zero, 00,
+         * the message. */
+        em[0] = 0; em[1] = 2;
+        t->casuale(em + 2, kn - 51);
+        for (i = 2; i < kn - 49; i++)
+            while (em[i] == 0) t->casuale(em + i, 1);
+        em[kn - 49] = 0;
+        bcopia(em + kn - 48, pms, 48);
+
+        if (exbig_da_byte(&mm, em, kn) != 0 || exbig_modexp(&cc, &mm, &ee, &nn) != 0 ||
+            exbig_a_byte(&cc, kx + 2, kn) != 0) return EXTLS_ERR_PROTOCOLLO;
+        for (i = 0; i < sizeof(em); i++) em[i] = 0;
+        metti16(kx, kn);
+        if (!passo(EXTLS_P_SEGRETO)) return EXTLS_ERR_RETE;
+
+        if (chiesto_cert) {
+            static const unsigned char vuoto[3] = { 0, 0, 0 };
+            r = hs_manda(t, 11, vuoto, 3);
+            if (r != EXTLS_OK) return r;
+        }
+        r = hs_manda(t, 16, kx, kn + 2);                    /* ClientKeyExchange */
+        if (r != EXTLS_OK) return r;
+    } else
     /* --- our half of ECDHE, and the pre-master secret -------------------- */
     {
         unsigned char nostro[66];
@@ -1238,22 +1421,34 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
 
     /* --- the master secret, and the keys ---------------------------------- */
     {
-        unsigned char seme[64], blocco[88];
+        unsigned char seme[64], blocco[136];
         unsigned int  kl = e_aes12(t->cifrario) ? 16 : 32;
         unsigned int  il = e_aes12(t->cifrario) ? 4 : 12;
+
+        if (t->cifrario == TLS12_RSA_AES128_SHA) kl = 16;
 
         if (t->ems) {
             /* ! THE HASH OF THE HANDSHAKE SO FAR, ClientKeyExchange included. */
             trascr_impronta(t, impronta);
-            prf12(pms, 32, "extended master secret", impronta, EXTLS_IMPRONTA, ms, 48);
+            prf12(pms, pms_n, "extended master secret", impronta, EXTLS_IMPRONTA, ms, 48);
         } else {
             bcopia(seme, t->ch_random, 32);
             bcopia(seme + 32, t->sh_random, 32);
-            prf12(pms, 32, "master secret", seme, 64, ms, 48);
+            prf12(pms, pms_n, "master secret", seme, 64, ms, 48);
         }
 
         bcopia(seme, t->sh_random, 32);
         bcopia(seme + 32, t->ch_random, 32);
+        if (rsa) {
+            /* CBC: two MAC keys of 20 bytes, then the two AES keys; the IV
+             * travels with every record. */
+            prf12(ms, 48, "key expansion", seme, 64, blocco, 40 + 2 * kl);
+            bcopia(t->scrivo.mac, blocco, 20);
+            bcopia(t->leggo.mac, blocco + 20, 20);
+            aes_chiave(&t->scrivo.aes, blocco + 40, kl);
+            aes_chiave(&t->leggo.aes, blocco + 40 + kl, kl);
+            t->scrivo.cbc = t->leggo.cbc = 1;
+        } else {
         prf12(ms, 48, "key expansion", seme, 64, blocco, 2 * kl + 2 * il);
 
         bcopia(t->scrivo.chiave, blocco, kl);
@@ -1263,6 +1458,7 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
         if (kl == 16) {
             gcm_chiave(&t->scrivo.gcm, t->scrivo.chiave, 16);
             gcm_chiave(&t->leggo.gcm, t->leggo.chiave, 16);
+        }
         }
         t->scrivo.seq = t->leggo.seq = 0;
         for (k = 0; k < sizeof(blocco); k++) blocco[k] = 0;
@@ -1308,7 +1504,7 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
     }
 
     for (k = 0; k < 48; k++) ms[k] = 0;
-    for (k = 0; k < 32; k++) pms[k] = 0;
+    for (k = 0; k < 48; k++) pms[k] = 0;
     t->trascr_n = t->hs_off = 0;
     t->pos = t->fine = 0;
     passo(EXTLS_P_FATTO);

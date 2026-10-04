@@ -375,6 +375,19 @@ static int est_misura(int v, VistaPezzo *p)
 
             if (t == CTRL_PULSANTE && c->valore[0] == '\0') {
                 const char *d = tipo && uguale(tipo, "reset") ? "Azzera" : "Invia";
+
+                /* ! UN <button> SENZA TESTO NON E' UN «Invia» (4 ottobre
+                 * 2026): e' quasi sempre un pulsante con dentro un'icona — il
+                 * menu, la lente, la X — e chiamarli tutti «Invia» riempiva le
+                 * pagine di pulsanti che non inviano niente. Il nome glielo
+                 * da' chi ha scritto la pagina, per chi non vede l'icona:
+                 * aria-label, o title. Senza nemmeno quelli, tre puntini.
+                 * «Invia» resta a <input type=submit> senza value. */
+                if (uguale(html_nome(&g_doc, v), "button")) {
+                    d = html_attr(&g_doc, v, "aria-label");
+                    if (!d || !d[0]) d = html_attr(&g_doc, v, "title");
+                    if (!d || !d[0]) d = "...";
+                }
                 i = 0;
                 while (d[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = d[i]; i++; }
                 c->valore[i] = '\0';

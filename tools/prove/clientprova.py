@@ -40,6 +40,8 @@ SORGENTI = [
     # dal 23 settembre 2026: AES-128-GCM e lo scambio su P-256
     "lib/excrypt/aes.c",        "lib/excrypt/gcm.c",
     "lib/excrypt/p256.c",
+    # dal 4 ottobre 2026: RSA con AES-CBC e SHA-1, per chi non ha altro
+    "lib/excrypt/sha1.c",
 ]
 INCLUDI = ["lib/extls", "lib/excert", "lib/exasn1", "lib/exbig", "lib/excrypt",
            "lib/excurva"]
@@ -272,6 +274,13 @@ def main():
     v12("1.2: scambio su P-256", "srv.pem", "srv.key",
         "ECDHE-RSA-AES128-GCM-SHA256", ("-groups", "P-256"))
 
+    # ! LA META' VECCHIA DI 1.2 (4 ottobre 2026): www.tiscali.it ha solo queste
+    # due. Scambio RSA, AES in CBC, MAC con SHA-1.
+    v12("1.2: RSA, AES-128-CBC, SHA-1 (come tiscali.it)", "srv.pem", "srv.key",
+        "AES128-SHA", ())
+    v12("1.2: RSA, AES-256-CBC, SHA-1", "srv.pem", "srv.key",
+        "AES256-SHA", ())
+
     # ! SENZA EXTENDED MASTER SECRET: il master secret alla vecchia maniera.
     # s_server non ha un'opzione per spegnerlo; il file di configurazione si'.
     cnf = os.path.join(BANCO, "noems.cnf")
@@ -281,6 +290,8 @@ def main():
     amb = dict(os.environ, OPENSSL_CONF=cnf)
     v12("1.2: senza Extended Master Secret", "srv.pem", "srv.key",
         "ECDHE-RSA-AES128-GCM-SHA256", (), ambiente=amb)
+    v12("1.2: AES-128-CBC senza Extended Master Secret", "srv.pem", "srv.key",
+        "AES128-SHA", (), ambiente=amb)
 
     print("\n%d prove superate, %d fallite" % (passate, fallite))
     shutil.rmtree(BANCO, ignore_errors=True)

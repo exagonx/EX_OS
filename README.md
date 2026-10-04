@@ -101,6 +101,16 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### exide: miniature, puntatore, codice non modale; e tiscali.it si apre
+
+**da testare sul ferro, provato in QEMU** — in exide il pannello degli
+strumenti mostra la miniatura di ogni controllo e una frase che lo descrive;
+posato un controllo il mouse torna puntatore; il doppio clic porta il cursore
+dentro la funzione; la finestra del sorgente non e' piu' modale. `make netinst`
+ora pubblica gli header di sviluppo aggiornati (dopo `netupdate` exide
+generava codice che non compilava). EXBrowser apre i siti che in TLS 1.2
+hanno solo RSA con AES-CBC, come www.tiscali.it.
+
 ### Quattro giochi: EXKlondike, EXSpider, EXMajong, EXGO
 
 **da testare sul ferro, provato in QEMU** — nel menu Avvio > Giochi: il

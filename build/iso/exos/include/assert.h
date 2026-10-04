@@ -53,4 +53,13 @@
 void _assert_fallita(const char *cond, const char *file, int riga)
     __attribute__((noreturn));
 
+/* static_assert del C11 (in C++ e' una parola chiave). Il C23 la fa parola
+ * chiave anche in C; fino ad allora e' questa macro, come vuole lo standard,
+ * e il codice di terzi la scrive senza includere altro (AV1 di Firefox). */
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && \
+    __STDC_VERSION__ >= 201112L && __STDC_VERSION__ < 202311L
+# undef static_assert
+# define static_assert _Static_assert
+#endif
+
 #endif /* EXOS_ASSERT_H */

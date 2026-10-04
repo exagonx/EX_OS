@@ -47,6 +47,10 @@ typedef struct {
 int  aes_chiave(AesChiave *c, const unsigned char *chiave, unsigned int byte);
 void aes_cifra(const AesChiave *c, const unsigned char in[16],
                unsigned char out[16]);
+/* Il blocco inverso (4 ottobre 2026): serve a CBC, cioe' al TLS 1.2 dei siti
+ * che non hanno altro. CCM e GCM continuano a non usarlo. */
+void aes_decifra(const AesChiave *c, const unsigned char in[16],
+                 unsigned char out[16]);
 
 /* CCM. `nonce_n` sta fra 7 e 13, `tag_n` e' pari fra 4 e 16 (in WPA2: 13 e 8).
  * `in` e `out` possono essere lo stesso buffer.

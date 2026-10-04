@@ -43,6 +43,9 @@ static const char *const g_nomi[] = {
     /* Aggiunta il 28 settembre 2026: la larghezza per le @media. */
     "css_media_larghezza",
 
+    /* Aggiunta il 4 ottobre 2026: list-style dell'ultimo elemento calcolato. */
+    "css_segno_lista",
+
     "__lib_avvio"
 };
 
@@ -56,6 +59,8 @@ static void *const g_indirizzi[] = {
     (void *)css_colore,
 
     (void *)css_media_larghezza,
+
+    (void *)css_segno_lista,
 
     (void *)__libc_ponti_avvia
 };

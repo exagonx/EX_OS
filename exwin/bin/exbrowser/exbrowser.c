@@ -2742,7 +2742,14 @@ static void raccogli_css(void)
      * le regole «strette» presuppongono un impaginatore che sa rifare la
      * pagina in colonna (width, float, flex), che qui non c'e'. Le regole da
      * scrivania sono quelle piu' provate e le meno bisognose di trucchi. */
-    css_media_larghezza(area_w() > 1280 ? area_w() : 1280);
+    {
+        /* EXBROWSER_MEDIA dice il minimo: 0 = la larghezza vera della pagina.
+         * Serve a confrontare le due scelte sugli stessi siti. */
+        const char *m = getenv("EXBROWSER_MEDIA");
+        int minimo = (m && m[0]) ? atoi(m) : 1280;
+
+        css_media_larghezza(area_w() > minimo ? area_w() : minimo);
+    }
     css_prepara(&g_css, g_css_reg, CSS_REGOLE_MAX, g_css_pezzi, CSS_PEZZI_MAX,
                 g_css_dich, CSS_DICH_MAX, g_css_arena, CSS_ARENA_MAX);
     css_analizza(&g_css, CSS_DI_SISTEMA, sizeof(CSS_DI_SISTEMA) - 1,

@@ -34,4 +34,15 @@
 
 #include "libc.h"
 
+/* strnlen (POSIX 2008): la lunghezza, ma senza guardare oltre n byte
+ * (@EXILLA-JS, 30 settembre 2026). */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+size_t strnlen(const char *s, size_t n);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* EXOS_STRING_H */

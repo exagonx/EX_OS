@@ -1543,7 +1543,10 @@ EXTLS_CLIENT := lib/extls/extls_client.c lib/extls/extls_pem.c \
                 lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
                 lib/excrypt/x25519.c lib/excrypt/fe25519.c \
                 lib/excrypt/sha512.c \
-                lib/excrypt/aes.c lib/excrypt/gcm.c lib/excrypt/p256.c
+                lib/excrypt/aes.c lib/excrypt/gcm.c lib/excrypt/p256.c \
+                lib/excrypt/sha1.c
+# ! sha1.c NEL TLS DAL 4 OTTOBRE 2026: il MAC dei record in AES-CBC, per i
+# siti che in TLS 1.2 non hanno altro (www.tiscali.it).
 # ! p256.c NEL TLS DAL 23 SETTEMBRE 2026, sera: lo scambio di chiavi su
 # secp256r1, a tempo costante, per chi lo chiede con una HelloRetryRequest.
 # ! aes.c E gcm.c NEL TLS DAL 23 SETTEMBRE 2026: il secondo cifrario,

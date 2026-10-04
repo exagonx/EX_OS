@@ -554,6 +554,34 @@ int main(void)
     ok("il bianco non e' \"nessun colore\" (CSS_NIENTE)", s.colore != CSS_NIENTE && s.sfondo != CSS_NIENTE &&
        (s.colore & 0xFFFFFF) >= 0xFFFFFE);
 
+    printf("\n=== opacity: 0 con pointer-events: none (tiscali.it) ===\n");
+    carica("<div class=\"a b\"><p>x</p></div>", ".a{opacity:0}.b{pointer-events:none}");
+    stile_di(trova("div"), &s);
+    ok("opacity:0 + pointer-events:none = non si vede", s.visibile == 0);
+    stile_di(trova("p"), &s);
+    ok("e nemmeno i figli", s.visibile == 0);
+    carica("<div class=a>x</div>", ".a{opacity:0}");
+    stile_di(trova("div"), &s);
+    ok("la sola opacity:0 si lascia vedere (sta per comparire)", s.visibile != 0);
+    carica("<div class=\"a b\">x</div>", ".a{opacity:0.5}.b{pointer-events:none}");
+    stile_di(trova("div"), &s);
+    ok("opacity 0.5 non e' zero", s.visibile != 0);
+    carica("<div class=\"a b c\">x</div>", ".a{opacity:0}.b{pointer-events:none}.c{opacity:1}");
+    stile_di(trova("div"), &s);
+    ok("una regola dopo la riaccende", s.visibile != 0);
+
+    printf("\n=== list-style: none ===\n");
+    carica("<ul><li>x</li></ul>", "ol,ul{list-style:none}");
+    stile_di(trova("ul"), &s);
+    ok("ul{list-style:none} dice 0", css_segno_lista() == 0);
+    stile_di(trova("li"), &s);
+    ok("la voce da sola non dice niente (eredita)", css_segno_lista() == 2);
+    carica("<ul><li>x</li></ul>", "ul{list-style:none inside} li{list-style-type:disc}");
+    stile_di(trova("ul"), &s);
+    ok("la forma breve con none dentro", css_segno_lista() == 0);
+    stile_di(trova("li"), &s);
+    ok("list-style-type: disc sulla voce dice 1", css_segno_lista() == 1);
+
     printf("\n%d prove, %d fallite\n", fatti, falliti);
     return falliti ? 1 : 0;
 }

@@ -1349,11 +1349,14 @@ static void impagina_nodo(int v, const CssStile *ered)
         CssStile    mio;
         int         e_blocco;
         int         radice = (v == g_col_radice);
+        int         segno_mio = 2;      /* list-style di QUESTO elemento */
 
         if (invisibile(nome)) return;
         if (radice) g_col_radice = -1;      /* i figli sono figli qualunque */
 
         css_calcola(&g_css, &g_doc, v, ered, &mio);
+        /* Si legge SUBITO: il prossimo css_calcola (un figlio) lo cambia. */
+        segno_mio = css_segno_lista();
         suggerimenti(v, &mio);
 
         /* ! `display: none` TOGLIE ANCHE I FIGLI, e va fatto qui prima di
@@ -1633,7 +1636,32 @@ static void impagina_nodo(int v, const CssStile *ered)
                 su = g_doc.nodi[su].padre;
             }
 
-            if (numerata) {
+            /* ! `list-style: none` TOGLIE IL SEGNO (4 ottobre 2026). I menu
+             * dei siti veri sono elenchi senza segno — e Tailwind lo toglie a
+             * TUTTI gli elenchi della pagina — e qui ogni voce di menu usciva
+             * con un trattino davanti. Si eredita: se la voce non dice niente
+             * vale quel che dice la lista che la contiene. */
+            if (su >= 0) {
+                CssStile della_lista;
+                int      primo = g_doc.nodi[su].primo_figlio;
+
+                css_calcola(&g_css, &g_doc, su, 0, &della_lista);
+                if (segno_mio == 2) segno_mio = css_segno_lista();
+
+                /* Le voci di un elenco in fila (display: flex) senza segno:
+                 * il sito le stacca con un `gap` o con dei margini che qui
+                 * non sempre ci sono, e due voci attaccate si leggono come
+                 * una parola. Uno spazio davanti a ogni voce dopo la prima. */
+                while (primo >= 0 && g_doc.nodi[primo].tipo != HTML_ELEMENTO)
+                    primo = g_doc.nodi[primo].prossimo;
+                if (segno_mio == 0 && della_lista.display == CSS_DISPLAY_FLEX &&
+                    !della_lista.flex_colonna && primo != v)
+                    g_pen_x += ex_text_width(font_di(&mio), "  ");
+            }
+
+            if (segno_mio == 0) {
+                /* niente segno, e niente spazio per lui */
+            } else if (numerata) {
                 int  quanti = 1, f2;
                 char seg[16];
                 int  q = 0, cifre[8], nc = 0;
@@ -1661,7 +1689,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                     if (off != GENERA_NIENTE) parola("-", off, 1);
                 }
             }
-            g_pen_x += ex_text_width(font_di(&mio), " ");
+            if (segno_mio != 0) g_pen_x += ex_text_width(font_di(&mio), " ");
         }
 
         if (uguale(nome, "a")) {
@@ -1759,6 +1787,8 @@ static void impagina_nodo(int v, const CssStile *ered)
 
 void impagina(void)
 {
+    int pagina_sf = -1;         /* il riquadro dello sfondo della pagina */
+
     g_pez_n = 0;
     g_link_n = 0;
     g_link_usati = 0;
@@ -1786,6 +1816,40 @@ void impagina(void)
     css_stile_vuoto(&g_stile_ora);
     g_riga_h = alt_riga_f(g_font_testo);
 
+    /* ! LO SFONDO DI <body> E' LO SFONDO DELLA PAGINA (4 ottobre 2026), e non
+     * del solo testo: e' la regola dei browser veri, dove il colore di body
+     * riempie tutta la finestra. Qui <body> non e' nemmeno un blocco, e il suo
+     * sfondo — `style`, una regola del foglio o il vecchio `bgcolor` — non si
+     * dipingeva affatto: una pagina su fondo giallo usciva bianca. E' il
+     * PRIMO riquadro, cosi' sta sotto a tutti gli altri; l'altezza si mette
+     * in fondo, quando la pagina e' impaginata. Se body non dice niente vale
+     * lo sfondo di <html>. */
+    {
+        static const char *const CHI[2] = { "body", "html" };
+        unsigned int i;
+        int k;
+
+        for (k = 0; k < 2 && pagina_sf < 0; k++)
+            for (i = 0; i < g_doc.nodi_n; i++) {
+                CssStile sb;
+
+                if (g_doc.nodi[i].tipo != HTML_ELEMENTO ||
+                    !uguale(html_nome(&g_doc, (int)i), CHI[k])) continue;
+                css_calcola(&g_css, &g_doc, (int)i, 0, &sb);
+                suggerimenti((int)i, &sb);
+                if (sb.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
+                    pagina_sf = g_sfondi_n++;
+                    g_sfondi[pagina_sf].x = area_x();
+                    g_sfondi[pagina_sf].y = area_y();
+                    g_sfondi[pagina_sf].w = area_w();
+                    g_sfondi[pagina_sf].h = 0;
+                    g_sfondi[pagina_sf].colore = sb.sfondo;
+                    g_sfondi[pagina_sf].bordo  = 0;
+                }
+                break;
+            }
+    }
+
     {
         CssStile radice;
 
@@ -1798,6 +1862,10 @@ void impagina(void)
     /* un float puo' scendere piu' giu' dell'ultima riga di testo */
     if (gal_fondo() - area_y() > g_altezza) g_altezza = gal_fondo() - area_y();
     if (g_altezza < 1) g_altezza = 1;
+
+    /* Alto quanto la pagina, e almeno quanto la finestra. */
+    if (pagina_sf >= 0)
+        g_sfondi[pagina_sf].h = g_altezza > area_h() ? g_altezza : area_h();
 }
 
 /* =============================================================================

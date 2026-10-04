@@ -43,6 +43,7 @@ static struct {
     void (*vuoto)(CssStile *);
     int  (*colore)(const char *, unsigned int, unsigned int *);
     void (*media_w)(int);
+    int  (*segno)(void);
 } P;
 
 static int assicura(void)
@@ -71,6 +72,8 @@ static int assicura(void)
                          exlib_simbolo(t, "css_colore");
             /* FACOLTATIVA: un'excss.so di prima salta le @media e basta. */
             P.media_w  = (void (*)(int))exlib_simbolo(t, "css_media_larghezza");
+            /* FACOLTATIVA anche questa: senza, ogni elenco ha il suo segno. */
+            P.segno    = (int (*)(void))exlib_simbolo(t, "css_segno_lista");
         }
     }
 
@@ -155,4 +158,9 @@ int css_colore(const char *v, unsigned int n, unsigned int *out)
 void css_media_larghezza(int px)
 {
     if (assicura() && P.media_w) P.media_w(px);
+}
+
+int css_segno_lista(void)
+{
+    return (assicura() && P.segno) ? P.segno() : 2;
 }

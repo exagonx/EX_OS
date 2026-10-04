@@ -27,6 +27,13 @@ _start:
     movl  4(%esp), %eax      /* argc */
     movl  8(%esp), %ecx      /* argv */
     movl 12(%esp), %edx      /* envp */
+    /* ! LA PILA SI ALLINEA A 16 (3 ottobre 2026, Exilla): l'ABI i386 la
+     * vuole cosi' a ogni call, e il codice SSE dei programmi portati ci
+     * conta (movdqa su una variabile locale da' #GP se non lo e'). Il
+     * kernel la consegna allineata a 4. Dopo i tre push la call parte da
+     * un multiplo di 16. */
+    andl  $-16, %esp
+    subl  $4, %esp
     pushl %edx               /* terzo argomento di _libc_start */
     pushl %ecx               /* secondo */
     pushl %eax               /* primo */

@@ -17,7 +17,7 @@
  * per tutto il sistema, vedi kernel/loader/lib.c) e rende quell'indirizzo.
  *
  * ! SI RISOLVE PER NOME, NON PER POSIZIONE, ed e' tutto il punto. Con una
- * tabella posizionale — «la funzione 7 e' ex_scrivi» — riordinare le voci o
+ * tabella posizionale — «la funzione 7 e' ex_draw_text» — riordinare le voci o
  * toglierne una in mezzo romperebbe ogni applicazione gia' compilata, e nessun
  * errore lo direbbe: si chiamerebbe semplicemente la funzione sbagliata. Coi
  * nomi si puo' aggiungere, riordinare e riscrivere il corpo di qualunque

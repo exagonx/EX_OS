@@ -19,7 +19,7 @@
  * tutti.
  *
  * ! E NON SI COLLEGA: SI APRE QUANDO SERVE. Chi disegna un'immagine chiama
- * ex_immagine() del toolkit, che prova prima i formati che sa da se' e apre
+ * ex_draw_image() del toolkit, che prova prima i formati che sa da se' e apre
  * questa libreria solo se non riconosce niente. Un programma che non apre mai
  * un PNG non la carica mai, e non deve saperlo. Vedi exlib_apri_fra().
  *

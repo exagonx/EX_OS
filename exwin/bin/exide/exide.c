@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.021"
+#define VERSIONE_APP "0.022"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -180,6 +180,36 @@ static const Strumento g_strum[] = {
 };
 
 #define STRUM_N ((int)(sizeof(g_strum) / sizeof(g_strum[0])))
+
+/* Che cos'e' ogni strumento, in una frase: sta sotto l'elenco, per quello
+ * scelto o per quello sotto il mouse. Nello stesso ordine di g_strum. */
+static const char *const g_strum_dice[] = {
+    "Un bottone da premere: l'evento Click.",
+    "Una scritta fissa; puo' avere un'icona.",
+    "Una riga dove si scrive: Changed, Enter.",
+    "Una casella da spuntare, si' o no.",
+    "Una scelta fra piu' cerchi dello stesso riquadro.",
+    "Una cornice col titolo che raggruppa altri controlli.",
+    "Una riga che divide due zone.",
+    "Una fascia blu con un titolo.",
+    "Un elenco di righe da scegliere.",
+    "Testo su piu' righe.",
+    "Testo su piu' righe, colorato come il C.",
+    "Una casella con l'elenco a discesa.",
+    "Le linguette per cambiare pagina.",
+    "Una barra di scorrimento.",
+    "Un'immagine o un'icona.",
+};
+#define DICE_PUNTATORE "Sceglie e sposta gli oggetti gia' sulla maschera."
+
+/* Il pannello degli strumenti, a sinistra: una riga per strumento con la sua
+ * miniatura, la prima e' il puntatore. Vedi disegna_strumenti(). */
+#define STR_X     6
+#define STR_Y     46
+#define STR_W     152
+#define STR_RIGA  21
+static int g_str_h = 396;
+static int g_str_sopra = -2;        /* la riga sotto il mouse: -1 puntatore, -2 nessuna */
 
 /* =============================================================================
  * IL DISEGNO — i controlli messi sulla maschera
@@ -390,7 +420,9 @@ static char g_prog_nome[NOME_MAX] = "";
 static int  g_sporco = 0;                   /* c'e' qualcosa da salvare */
 
 /* Le finestre e i controlli di exide. */
-static ExWindow g_f, g_lst_strum, g_lst_prop, g_val, g_stato, g_menu;
+static ExWindow g_f, g_lst_prop, g_val, g_stato, g_menu;
+static ExIcon   g_str_ic[32];        /* le icone degli strumenti, se ci sono */
+static ExFont   g_font_nota;         /* la descrizione sotto gli strumenti */
 static ExWindow g_cmb_form;       /* l'elenco a discesa delle maschere */
 
 /* L'area della maschera dentro la finestra di exide. */
@@ -525,6 +557,182 @@ static void cerchio(int cx, int cy, int r, unsigned int col)
         while ((dx + 1) * (dx + 1) + dy * dy <= r * r) dx++;
         ex_fill_rect(g_f, cx - dx, cy + dy, 2 * dx + 1, 1, col);
     }
+}
+
+/* =============================================================================
+ * IL PANNELLO DEGLI STRUMENTI (4 ottobre 2026, chiesto dall'utente)
+ *
+ * Era una lista di nomi. Adesso ogni riga ha la MINIATURA del controllo —
+ * disegnata qui, com'e' fatto lui — e sotto l'elenco c'e' una frase che dice
+ * che cos'e' quello scelto, o quello sotto il mouse. La prima riga e' il
+ * PUNTATORE: e' lo stato in cui il mouse sceglie e sposta, e ci si torna da
+ * soli dopo aver posato un controllo (vedi tela_clic).
+ *
+ * ! UN FILE /exwin/icon/strumenti/<classe>.ico VINCE SULLA MINIATURA, come
+ * prima: chi ha messo le sue icone le ritrova.
+ * ============================================================================= */
+static void miniatura(int tipo, int x, int y)
+{
+    /* Un riquadro di 28 x 15, con (x, y) in alto a sinistra. */
+    int i;
+
+    switch (tipo) {
+    case -1:                                    /* il puntatore: una freccia */
+        for (i = 0; i < 10; i++) ex_fill_rect(g_f, x + 9, y + 1 + i, i * 7 / 10 + 1, 1, EX_BLACK);
+        ex_fill_rect(g_f, x + 12, y + 10, 2, 4, EX_BLACK);
+        break;
+    case 0:                                     /* button */
+        ex_fill_rect(g_f, x, y + 1, 28, 13, EX_GRAY);
+        ex_draw_rect(g_f, x, y + 1, 28, 13, EX_BLACK);
+        ex_draw_raised(g_f, x + 1, y + 2, 26, 11);
+        ex_fill_rect(g_f, x + 8, y + 7, 12, 2, EX_BLACK);
+        break;
+    case 1:                                     /* label */
+        ex_fill_rect(g_f, x + 2, y + 4, 10, 2, EX_BLACK);
+        ex_fill_rect(g_f, x + 6, y + 4, 2, 9, EX_BLACK);
+        ex_fill_rect(g_f, x + 15, y + 8, 8, 2, EX_BLACK);
+        ex_fill_rect(g_f, x + 15, y + 11, 8, 2, EX_BLACK);
+        break;
+    case 2:                                     /* textbox */
+        ex_fill_rect(g_f, x, y + 2, 28, 12, EX_WHITE);
+        ex_draw_sunken(g_f, x, y + 2, 28, 12);
+        ex_fill_rect(g_f, x + 4, y + 7, 8, 2, EX_BLACK);
+        ex_fill_rect(g_f, x + 14, y + 4, 1, 8, EX_BLACK);
+        break;
+    case 3:                                     /* checkbox */
+        ex_fill_rect(g_f, x + 2, y + 2, 11, 11, EX_WHITE);
+        ex_draw_sunken(g_f, x + 2, y + 2, 11, 11);
+        for (i = 0; i < 3; i++) ex_fill_rect(g_f, x + 4 + i, y + 7 + i, 1, 2, EX_BLACK);
+        for (i = 0; i < 4; i++) ex_fill_rect(g_f, x + 7 + i, y + 8 - i, 1, 2, EX_BLACK);
+        ex_fill_rect(g_f, x + 16, y + 7, 10, 2, EX_DARK_GRAY);
+        break;
+    case 4:                                     /* radio */
+        cerchio(x + 7, y + 7, 5, EX_DARK_GRAY);
+        cerchio(x + 7, y + 7, 4, EX_WHITE);
+        cerchio(x + 7, y + 7, 2, EX_BLACK);
+        ex_fill_rect(g_f, x + 16, y + 7, 10, 2, EX_DARK_GRAY);
+        break;
+    case 5:                                     /* frame */
+        ex_draw_rect(g_f, x, y + 4, 28, 11, EX_DARK_GRAY);
+        ex_fill_rect(g_f, x + 4, y + 3, 10, 3, EX_GRAY);
+        ex_fill_rect(g_f, x + 5, y + 4, 8, 2, EX_BLACK);
+        break;
+    case 6:                                     /* separator */
+        ex_fill_rect(g_f, x, y + 7, 28, 1, EX_DARK_GRAY);
+        ex_fill_rect(g_f, x, y + 8, 28, 1, EX_WHITE);
+        break;
+    case 7:                                     /* header */
+        ex_fill_rect(g_f, x, y + 2, 28, 11, EX_BLUE);
+        ex_fill_rect(g_f, x + 3, y + 7, 12, 2, EX_WHITE);
+        break;
+    case 8:                                     /* list */
+        ex_fill_rect(g_f, x, y, 28, 15, EX_WHITE);
+        ex_draw_sunken(g_f, x, y, 28, 15);
+        ex_fill_rect(g_f, x + 2, y + 2, 24, 4, EX_BLUE);
+        ex_fill_rect(g_f, x + 3, y + 8, 14, 1, EX_BLACK);
+        ex_fill_rect(g_f, x + 3, y + 11, 18, 1, EX_BLACK);
+        break;
+    case 9:                                     /* textarea */
+    case 10:                                    /* codearea */
+        ex_fill_rect(g_f, x, y, 28, 15, EX_WHITE);
+        ex_draw_sunken(g_f, x, y, 28, 15);
+        ex_fill_rect(g_f, x + 3, y + 3, 16, 1, tipo == 10 ? 0x002040C0 : EX_BLACK);
+        ex_fill_rect(g_f, x + 3, y + 6, 20, 1, tipo == 10 ? 0x00208020 : EX_BLACK);
+        ex_fill_rect(g_f, x + (tipo == 10 ? 6 : 3), y + 9, 12, 1, EX_BLACK);
+        ex_fill_rect(g_f, x + 3, y + 12, 18, 1, tipo == 10 ? 0x00C04040 : EX_BLACK);
+        break;
+    case 11:                                    /* combo */
+        ex_fill_rect(g_f, x, y + 2, 28, 12, EX_WHITE);
+        ex_draw_sunken(g_f, x, y + 2, 28, 12);
+        ex_fill_rect(g_f, x + 17, y + 3, 10, 10, EX_GRAY);
+        ex_draw_raised(g_f, x + 17, y + 3, 10, 10);
+        for (i = 0; i < 3; i++) ex_fill_rect(g_f, x + 20 + i, y + 7 + i, 5 - 2 * i, 1, EX_BLACK);
+        break;
+    case 12:                                    /* tab */
+        ex_fill_rect(g_f, x, y + 12, 28, 1, EX_DARK_GRAY);
+        ex_fill_rect(g_f, x + 1, y + 3, 12, 9, EX_GRAY);
+        ex_draw_raised(g_f, x + 1, y + 3, 12, 10);
+        ex_draw_rect(g_f, x + 14, y + 5, 11, 8, EX_DARK_GRAY);
+        break;
+    case 13:                                    /* scrollbar */
+        ex_fill_rect(g_f, x + 10, y, 9, 15, EX_DARK_GRAY);
+        ex_fill_rect(g_f, x + 10, y, 9, 4, EX_GRAY);
+        ex_fill_rect(g_f, x + 10, y + 11, 9, 4, EX_GRAY);
+        ex_fill_rect(g_f, x + 11, y + 6, 7, 3, EX_GRAY);
+        break;
+    default:                                    /* image */
+        ex_fill_rect(g_f, x + 2, y, 24, 15, 0x0090B8E0);
+        ex_draw_rect(g_f, x + 2, y, 24, 15, EX_DARK_GRAY);
+        cerchio(x + 20, y + 4, 2, 0x00F0D040);
+        for (i = 0; i < 7; i++) ex_fill_rect(g_f, x + 10 - i, y + 7 + i, 2 * i + 1, 1, 0x00308040);
+        break;
+    }
+}
+
+static void disegna_strumenti(void)
+{
+    int r, y, n = STRUM_N + 1;
+    int quale = g_str_sopra > -2 ? g_str_sopra : g_strum_sel;
+    const char *dice = quale < 0 ? DICE_PUNTATORE : g_strum_dice[quale];
+    int dy = STR_Y + 2 + n * STR_RIGA + 3;
+
+    ex_fill_rect(g_f, STR_X, STR_Y, STR_W, g_str_h, EX_WHITE);
+    ex_draw_sunken(g_f, STR_X, STR_Y, STR_W, g_str_h);
+    ex_set_clip(g_f, STR_X + 2, STR_Y + 2, STR_W - 4, g_str_h - 4);
+
+    for (r = 0; r < n; r++) {
+        int tipo = r - 1, scelto = tipo == g_strum_sel;
+
+        y = STR_Y + 2 + r * STR_RIGA;
+        if (scelto) ex_fill_rect(g_f, STR_X + 2, y, STR_W - 4, STR_RIGA, EX_BLUE);
+        else if (tipo == g_str_sopra)
+            ex_fill_rect(g_f, STR_X + 2, y, STR_W - 4, STR_RIGA, 0x00DCE6F2);
+        /* La miniatura sta su un quadratino grigio, come il controllo sulla
+         * maschera: su una riga blu si leggerebbe male. */
+        ex_fill_rect(g_f, STR_X + 4, y + 2, 32, STR_RIGA - 4, EX_GRAY);
+        if (tipo >= 0 && g_str_ic[tipo])
+            ex_icon_draw(g_f, g_str_ic[tipo], STR_X + 12, y + 2, 16, EX_GRAY);
+        else
+            miniatura(tipo, STR_X + 6, y + 3);
+        ex_draw_text(g_f, STR_X + 41, y + 2, tipo < 0 ? "Puntatore" : g_strum[tipo].etichetta,
+                     scelto ? EX_WHITE : EX_BLACK);
+    }
+
+    /* La frase, a capo sulle parole, in tre righe al massimo. */
+    ex_fill_rect(g_f, STR_X + 4, dy - 2, STR_W - 8, 1, EX_DARK_GRAY);
+    {
+        char riga[64];
+        const char *p = dice;
+        int k;
+
+        for (k = 0; k < 3 && *p; k++) {
+            unsigned int l = 0, taglio = 0;
+
+            while (p[l] && l + 1 < sizeof(riga)) {
+                riga[l] = p[l]; riga[l + 1] = '\0';
+                if (ex_text_width(g_font_nota, riga) > STR_W - 12) break;
+                l++;
+                if (p[l] == ' ' || p[l] == '\0') taglio = l;
+            }
+            if (!taglio) taglio = l;
+            riga[taglio] = '\0';
+            ex_draw_text_font(g_f, g_font_nota, STR_X + 6, dy + k * 13, riga, EX_BLACK);
+            p += taglio;
+            while (*p == ' ') p++;
+        }
+    }
+    ex_set_clip(g_f, 0, 0, 0, 0);
+}
+
+/* La riga del pannello sotto (x, y): -1 il puntatore, 0.. uno strumento,
+ * -2 se il punto e' fuori dall'elenco. */
+static int strumento_a(int x, int y)
+{
+    int r;
+
+    if (x < STR_X || x >= STR_X + STR_W || y < STR_Y + 2) return -2;
+    r = (y - STR_Y - 2) / STR_RIGA;
+    return r <= STRUM_N ? r - 1 : -2;
 }
 
 static void disegna_controllo(const Ctrl *c, int ox, int oy)
@@ -675,6 +883,8 @@ static void disegna_tela(void)
 {
     int ox = TELA_X + 8, oy = TELA_Y + 8 + 20;      /* dentro il telaio finto */
     int i;
+
+    disegna_strumenti();
 
     /* Il ripiano su cui sta la maschera. */
     ex_fill_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H, 0x00505050);
@@ -2400,7 +2610,9 @@ static int handler_assicura(const Ctrl *c)
     if (fd < 0) return -1;
     lseek(fd, 0, SEEK_END);
 
-    sprintf(testo, "\n/* %s: %s */\nvoid %s(void)\n{\n}\n",
+    /* Una riga vuota e rientrata fra le graffe: e' li' che il doppio clic
+     * porta il cursore (vedi ed_dentro). */
+    sprintf(testo, "\n/* %s: %s */\nvoid %s(void)\n{\n    \n}\n",
             c->nome, g_strum[c->tipo].evento[c->evento], hn);
     write(fd, testo, strlen(testo));
     close(fd);
@@ -2411,10 +2623,14 @@ static int handler_assicura(const Ctrl *c)
 /* =============================================================================
  * LA FINESTRA DEL SORGENTE
  *
- * ! E' MODALE, ed e' una richiesta e non una comodita': finche' si scrive
- * codice il disegno non si tocca, perche' una modifica alla maschera mentre il
- * suo sorgente e' aperto vorrebbe dire decidere quale delle due versioni vale.
- * Si chiude, e il disegnatore torna sotto le mani.
+ * ! NON E' PIU' MODALE (4 ottobre 2026, chiesto dall'utente): resta in primo
+ * piano ma si sposta, e sotto il disegnatore risponde — per leggere il nome o
+ * il testo di un altro controllo mentre si scrive il codice che lo usa. Era
+ * modale perche' una modifica alla maschera col sorgente aperto vuol dire
+ * decidere quale delle due versioni vale; adesso lo si decide in un posto
+ * solo: OGNI salvataggio del progetto salva prima quel che c'e' nell'editor e
+ * poi lo ricarica (progetto_salva), cosi' gli handler aggiunti dal
+ * disegnatore compaiono e niente di scritto a mano si perde.
  *
  * ! E ALLA CHIUSURA SI SALVA DA SE'. Chiedere «vuoi salvare?» a chi ha appena
  * chiuso l'editor di un progetto suo e' una domanda a cui si risponde sempre
@@ -2608,9 +2824,56 @@ static void area_sostituisci(ExWindow area, ExWindow stato)
     ex_set_text(stato, "non trovato");
 }
 
+/* ! IL CURSORE VA DENTRO LA FUNZIONE, non sul suo nome (4 ottobre 2026):
+ * dopo la graffa che apre e prima di quella che chiude, dove si scrive.
+ * `riga` e' quella di «void Nome(void)». Se fra le graffe c'e' una riga, il
+ * cursore va li', dopo il rientro; se il corpo e' vuoto («{» e subito «}»),
+ * va subito dopo la graffa aperta. */
+static void ed_dentro(int riga)
+{
+    unsigned int n = ex_textarea_line_count(g_ed_cod), i, col = 0;
+    const char *r;
+
+    if (riga < 0) return;
+    for (i = (unsigned int)riga; i < n && i < (unsigned int)riga + 4; i++)
+        if (strchr(ex_textarea_line(g_ed_cod, i), '{')) break;
+    if (i >= n || i >= (unsigned int)riga + 4) {
+        ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
+        return;
+    }
+    if (i + 1 < n) {
+        r = ex_textarea_line(g_ed_cod, i + 1);
+        while (r[col] == ' ' || r[col] == '\t') col++;
+        if (r[col] != '}') {
+            ex_textarea_set_cursor(g_ed_cod, i + 1, col);
+            return;
+        }
+    }
+    r = ex_textarea_line(g_ed_cod, i);
+    ex_textarea_set_cursor(g_ed_cod, i, (unsigned int)(strchr(r, '{') - r) + 1);
+}
+
+static int ed_carica(int quale);
+
+/* Il file sul disco e' cambiato sotto l'editor (il disegnatore ha aggiunto un
+ * handler, o ha rigenerato finestra.h): si ricarica tenendo il cursore e la
+ * vista dove stavano. */
+static void ed_ricarica(void)
+{
+    unsigned int r = 1, c = 1, v;
+
+    ex_textarea_get_cursor(g_ed_cod, &r, &c);
+    v = ex_textarea_get_view(g_ed_cod, 0);
+    if (!ed_carica(g_ed_file)) return;
+    ex_textarea_set_cursor(g_ed_cod, r ? r - 1 : 0, c ? c - 1 : 0);
+    ex_textarea_scroll_to(g_ed_cod, v);
+    ex_default_proc(g_ed, EXM_PAINT, 0, 0);
+}
+
 static long proc_ed(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
+
     /* Resized: the code takes the room, the function list keeps its width. */
     case EXM_SIZE: {
         int w = EX_X(lp), h = EX_Y(lp);
@@ -2712,23 +2975,41 @@ static long proc_ed(ExWindow f, unsigned int msg, unsigned int wp, long lp)
     return ex_default_proc(f, msg, wp, lp);
 }
 
-static void editor_apri(int quale, int riga)
+/* `riga` e' quella di una funzione (o -1). Con `dentro` il file e' appena
+ * cambiato sul disco — il doppio clic ha salvato il progetto e forse aggiunto
+ * l'handler — quindi si ricarica, e il cursore va DENTRO la funzione. */
+static void editor_apri(int quale, int riga, int dentro)
 {
     ExWindow menu;
-    int i;
+    unsigned int sw = 800, sh = 600;
+    int i, w, h;
 
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
 
     if (g_ed) {                         /* c'e' gia': si porta li' e basta */
         if (quale != g_ed_file) { ed_salva(); ed_carica(quale); }
-        if (riga >= 0) ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
+        else if (dentro) ed_carica(quale);
+        if (dentro) ed_dentro(riga);
+        else if (riga >= 0) ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
+        ex_item_select(g_ed_tab, (unsigned int)quale);
+        ex_activate(g_ed);
+        ex_set_focus(g_ed_cod);
         ex_default_proc(g_ed, EXM_PAINT, 0, 0);
         return;
     }
 
+    /* ! LA MISURA SI PRENDE DALLO SCHERMO (4 ottobre 2026). Era 740 x 520
+     * fissa: su uno schermo piu' stretto di 800 il bordo destro — dove
+     * l'area del codice ha la sua barra di scorrimento — restava fuori, e la
+     * finestra, modale, non si poteva nemmeno spostare. Adesso sta dentro lo
+     * schermo, in basso a sinistra: le proprieta' del disegnatore, in alto a
+     * destra, restano in vista. Si sposta e si allarga come ogni finestra. */
+    ex_screen_size(&sw, &sh);
+    w = (int)sw - 190; if (w > 640) w = 640; if (w < 400) w = 400;
+    h = (int)sh - 240; if (h > 360) h = 360; if (h < 240) h = 240;
     g_ed = ex_create("window", "Sorgente",
-                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL | EX_RESIZABLE,
-                   30, 20, 740, 520, 0, 0, proc_ed);
+                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_RESIZABLE,
+                   4, (int)sh - h - 60, w, h, 0, 0, proc_ed);
     if (g_ed == 0) { dico("non riesco ad aprire l'editor"); return; }
 
     menu = ex_menu_bar(g_ed);
@@ -2743,14 +3024,14 @@ static void editor_apri(int quale, int riga)
     ex_menu_add_item(menu, "Modifica", "Cerca\tCtrl+F",   ID_CERCA);
     ex_menu_add_item(menu, "Modifica", "Sostituisci",     ID_SOSTIT);
 
-    g_ed_tab = ex_create("tab", "", EX_CHILD, 0, 22, 740, 24, g_ed, ID_ED_TAB, 0);
+    g_ed_tab = ex_create("tab", "", EX_CHILD, 0, 22, w, 24, g_ed, ID_ED_TAB, 0);
     for (i = 0; i < 3; i++) ex_item_add(g_ed_tab, g_ed_nomi[i]);
 
-    g_ed_funz = ex_create("list", "", EX_CHILD, 4, 50, 200, 420,
+    g_ed_funz = ex_create("list", "", EX_CHILD, 4, 50, 200, h - 100,
                         g_ed, ID_ED_FUNZ, 0);
-    g_ed_cod  = ex_create("codearea", "", EX_CHILD, 208, 50, 526, 420,
+    g_ed_cod  = ex_create("codearea", "", EX_CHILD, 208, 50, w - 214, h - 100,
                         g_ed, ID_ED_CODICE, 0);
-    g_ed_stato = ex_create("label", "", EX_CHILD, 6, 476, 720, 16,
+    g_ed_stato = ex_create("label", "", EX_CHILD, 6, h - 44, w - 20, 16,
                          g_ed, 0, 0);
 
     ex_textarea_set_highlighter(g_ed_cod, ex_highlight_c, 0);
@@ -2773,10 +3054,21 @@ static void editor_apri(int quale, int riga)
         return;
     }
     ex_item_select(g_ed_tab, (unsigned int)quale);
-    if (riga >= 0) ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
+    if (dentro) ed_dentro(riga);
+    else if (riga >= 0) ex_textarea_set_cursor(g_ed_cod, (unsigned int)riga, 0);
     ex_set_focus(g_ed_cod);
 
     ex_default_proc(g_ed, EXM_PAINT, 0, 0);
+}
+
+/* Il progetto cambia o si chiude: il sorgente aperto e' di quello di prima.
+ * Si salva e si chiude, come col suo pulsante. */
+static void editor_chiudi(void)
+{
+    if (!g_ed) return;
+    ed_salva();
+    ex_destroy(g_ed);
+    g_ed = 0;
 }
 
 /* =============================================================================
@@ -2794,6 +3086,10 @@ static void progetto_titolo(void)
 static int progetto_salva(void)
 {
     if (g_prog_dir[0] == '\0') { dico("non c'e' nessun progetto aperto"); return 0; }
+
+    /* Quel che c'e' nell'editor va sul disco PRIMA: handler_assicura accoda a
+     * finestra.c, e un testo non salvato gli passerebbe sopra dopo. */
+    if (g_ed) ed_salva();
 
     if (!dis_salva()) return 0;
     if (!gen_h())     { dico("non riesco a scrivere finestra.h"); return 0; }
@@ -2815,6 +3111,8 @@ static int progetto_salva(void)
             if (g_ctrl[i].usato && ha_evento(&g_ctrl[i]))
                 handler_assicura(&g_ctrl[i]);
     }
+
+    if (g_ed) ed_ricarica();
 
     g_sporco = 0;
     dico("salvato: finestra.dis, finestra.h, finestra_gen.c");
@@ -2962,6 +3260,7 @@ static void progetto_nuovo(void)
 
     ultima_scrivi(dir);
 
+    editor_chiudi();
     strncpy(g_prog_dir, dir, PERC_MAX - 1);
     g_prog_dir[PERC_MAX - 1] = '\0';
     n = strrchr(g_prog_dir, '/');
@@ -3015,6 +3314,7 @@ static void progetto_apri(void)
  * usano «Apri...» e la riga di comando, `exide /progetti/prova`. */
 static void progetto_apri_dir(const char *dir)
 {
+    editor_chiudi();
     strncpy(g_prog_dir, dir, PERC_MAX - 1);
     g_prog_dir[PERC_MAX - 1] = '\0';
 
@@ -3237,6 +3537,7 @@ static void progetto_salva_come(const char *nuova)
         return;
     }
 
+    editor_chiudi();
     strncpy(g_prog_dir, dest, PERC_MAX - 1);
     g_prog_dir[PERC_MAX - 1] = '\0';
     {
@@ -4820,7 +5121,7 @@ static void tela_clic(int x, int y, int doppio)
             }
             if (!progetto_salva()) return;   /* il perche' l'ha gia' detto */
             riga = handler_assicura(&g_ctrl[k]);
-            editor_apri(0, riga);
+            editor_apri(0, riga, 1);
             return;
         }
         g_trascina = 1;
@@ -4838,8 +5139,17 @@ static void tela_clic(int x, int y, int doppio)
         int n = aggiungi(g_strum_sel, x - ox, y - oy);
 
         if (n >= 0) {
+            char t[NOME_MAX + 64];
+
             g_sel = n;
-            dico(g_ctrl[n].nome);
+            /* ! POSATO UNO, SI TORNA AL PUNTATORE (4 ottobre 2026, chiesto
+             * dall'utente): lo strumento restava armato, e il clic dopo —
+             * fatto per scegliere o spostare — metteva un altro controllo
+             * dove non lo voleva nessuno. Chi ne vuole un secondo lo sceglie
+             * di nuovo dal pannello. */
+            g_strum_sel = -1;
+            sprintf(t, "%s messo: ora il mouse sceglie e sposta", g_ctrl[n].nome);
+            dico(t);
         }
     } else {
         g_sel = -1;
@@ -4896,7 +5206,7 @@ static void finestra_disponi(int w, int h)
     if (h < 300) h = 300;
     g_tela_w = w - TELA_X - 180;
     g_tela_h = h - 90;
-    ex_resize(g_lst_strum, 152, h - 90);
+    g_str_h = h - 90;
     ex_move(g_int_prop, w - 174, 24);
     ex_move(g_lst_prop, w - 174, 46);
     ex_resize(g_lst_prop, 168, h - 146);
@@ -4918,17 +5228,6 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return EX_NO_REDRAW;
     case EXM_COMMAND:
         switch (wp) {
-        case ID_STRUMENTI:
-            g_strum_sel = (int)ex_list_get_selected(g_lst_strum);
-            if (g_strum_sel >= 0 && g_strum_sel < STRUM_N) {
-                char t[80];
-
-                sprintf(t, "%s: clicca sulla maschera per metterlo",
-                        g_strum[g_strum_sel].etichetta);
-                dico(t);
-            }
-            break;
-
         case ID_PROPRIETA: {
             char v[64];
             int  k = (int)ex_list_get_selected(g_lst_prop);
@@ -4981,6 +5280,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
                                              "Chiudere il progetto senza "
                                              "salvare?", "Chiudi", "Annulla"))
                 break;
+            editor_chiudi();
             g_prog_dir[0] = '\0';
             memset(g_ctrl, 0, sizeof(g_ctrl));
             g_sel = -1;
@@ -4996,7 +5296,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             ex_quit(0);
             break;
 
-        case ID_SORGENTE:  editor_apri(0, -1);   break;
+        case ID_SORGENTE:  editor_apri(0, -1, 0);   break;
         case ID_SHELL:     shell_progetto();     break;
         case ID_COMPILA:   compilatore_apri();   break;
         case ID_LIBRERIE:  librerie_apri();      break;
@@ -5030,6 +5330,21 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 
     case EXM_MOUSE_DOWN: {
         int x = EX_X(lp), y = EX_Y(lp);
+        int st = strumento_a(x, y);
+
+        if (st > -2) {
+            g_strum_sel = st;
+            if (st < 0) dico("puntatore: clicca un oggetto per sceglierlo, tiralo per spostarlo");
+            else {
+                char t[80];
+
+                sprintf(t, "%s: clicca sulla maschera per metterlo", g_strum[st].etichetta);
+                dico(t);
+            }
+            disegna_strumenti();
+            ex_update(f);
+            return EX_NO_REDRAW;
+        }
 
         tela_clic(x, y, 0);
         /* ! ONLY A CLICK ON THE CANVAS takes the keys away from the boxes
@@ -5047,6 +5362,16 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     case EXM_MOUSE_MOVE:
+        if (!g_trascina && g_ridim < 0) {
+            int st = strumento_a(EX_X(lp), EX_Y(lp));
+
+            if (st != g_str_sopra) {
+                g_str_sopra = st;
+                disegna_strumenti();
+                ex_update(f);
+            }
+            return EX_NO_REDRAW;
+        }
         if (g_ridim >= 0 && g_sel >= 0 && g_ctrl[g_sel].usato) {
             ridimensiona(EX_X(lp), EX_Y(lp));
             return 0;
@@ -5187,12 +5512,10 @@ int main(int argc, char **argv)
     ex_menu_add_item(g_menu, "Aiuto", "Informazioni su",  ID_INFO);
 
     ex_create("header", "Strumenti", EX_CHILD, 6, 24, 152, 20, g_f, 0, 0);
-    g_lst_strum = ex_create("list", "", EX_CHILD, 6, 46, 152, 396,
-                          g_f, ID_STRUMENTI, 0);
-    for (i = 0; i < STRUM_N; i++) {
-        ex_list_add(g_lst_strum, g_strum[i].etichetta);
-        ex_list_set_icon(g_lst_strum, (unsigned int)i, icona_strumento(i));
-    }
+    /* Il pannello lo disegna disegna_strumenti(): qui si aprono solo le icone
+     * di chi ne ha messe in /exwin/icon/strumenti. */
+    g_font_nota = ex_font_find(EX_FAMILY_SANS, 11, 0, 0);
+    for (i = 0; i < STRUM_N; i++) g_str_ic[i] = icona_strumento(i);
 
     /* ! LA STRISCIA SOPRA LA TELA ERA VUOTA, ed e' esattamente larga quanto
      * la tela: 436 pixel fra il pannello degli strumenti e quello delle

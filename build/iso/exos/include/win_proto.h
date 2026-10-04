@@ -160,6 +160,22 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * ============================================================================= */
 #define WIN_MSG_CHIUDI_ALTRE 0x570C /* nessun corpo                          */
 
+/* =============================================================================
+ * THE POINTER PASSING OVER A WINDOW (wserver 0.008, 29 September 2026,
+ * @EXWIN-PASSAGGIO, Exilla stage 3)
+ *
+ * WinRegione: id, and x = 1 to receive, 0 to stop. From then on, with no
+ * button pressed, every movement over the window's client area arrives as
+ * WIN_EV_MOUSE_MOSSO with bottoni = 0, and leaving it as WIN_EV_USCITO.
+ *
+ * ! ONLY TO WHO ASKS, as X does with its event mask (PointerMotionMask).
+ * Movement comes a hundred times a second; a program that does not look at
+ * it would still wake up for each one — and a toolkit that redraws after
+ * every message it hands on would redraw a hundred times a second for
+ * nothing. A window that does not ask gets exactly what it got before.
+ * ============================================================================= */
+#define WIN_MSG_PASSAGGIO   0x570D  /* WinRegione: id, x = 1 acceso / 0 spento */
+
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */
@@ -197,6 +213,10 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * toolkit vecchio lo prenderebbe per un clic sinistro — e premerebbe il
  * pulsante sotto il puntatore. Chi non lo conosce lo ignora. */
 #define WIN_EV_DESTRO       9
+/* The pointer has left the client area of a window that asked for
+ * WIN_MSG_PASSAGGIO (or the window went under another one): whatever was
+ * highlighted because the pointer was over it can go back. No coordinates. */
+#define WIN_EV_USCITO       10
 
 /* Stili di una finestra di primo livello */
 #define WIN_ST_TITOLO       0x0001  /* ha la barra del titolo */
@@ -246,6 +266,11 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * ognuno il compito di accorgersene.
  * ============================================================================= */
 #define WIN_ST_RIDIM        0x0080
+
+/* A POP-UP (30 September 2026): a right-button menu, a drop-down. A mouse
+ * button pressed anywhere outside it sends it WIN_EV_CHIUDI, as menus do on
+ * every system: the user closes one by clicking elsewhere. */
+#define WIN_ST_COMPARSA     0x0100
 
 #define WIN_TITOLO_LEN      48
 
