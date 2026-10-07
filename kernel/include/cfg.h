@@ -75,6 +75,15 @@ typedef struct {
      * l'opzione sul dischetto di soccorso, che la radice ce l'ha in RAM. */
     uint32_t    ata_dma;
 
+    /* smp: 1 = i processori in piu' si svegliano e si parcheggiano
+     * (predefinito), 0 = si contano e basta. Vedi kernel/include/smp.h.
+     *
+     * ! ESISTE PER LA SCHEDA CHE NON SI AVVIA: svegliare un processore vuol
+     * dire scrivere nell'APIC locale e mandare un INIT, e su una macchina con
+     * le tabelle sbagliate e' il punto dove un avvio puo' fermarsi. Con 0 il
+     * kernel legge le tabelle e non scrive in nessun registro. */
+    uint32_t    smp;
+
     /* [boot] */
     /* Disposizione della tastiera: la legge /dev/kbd.drv all'avvio con
      * SYS_GETENV. Sta in [kernel] e non in [env] perche' e' una scelta di

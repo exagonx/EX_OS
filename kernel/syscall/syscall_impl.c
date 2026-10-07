@@ -46,6 +46,7 @@ extern void vga_putchar(char c);
 #include "rtc.h"       /* RtcTime, rtc_read: data e ora (SYS_TIME) */
 #include "vga.h"       /* VGA_N_CONSOLE e le console virtuali */
 #include "tty.h"       /* TTY_IOCTL_*: comandi nativi del terminale (sys_ioctl) */
+#include "smp.h"       /* SmpInfo: i processori trovati all'avvio (SYS_CPU_INFO) */
 
 /* =============================================================================
  * ! LE SYSCALL CHE SCAVALCANO IL FILESYSTEM DEVONO CHIEDERE CHI SEI
@@ -3288,6 +3289,34 @@ int32_t sys_uptime(InterruptFrame *frame)
  * puntatore fallisse a meta' compilazione, il chiamante resterebbe con una
  * struttura riempita a meta'.
  * ============================================================================= */
+/* =============================================================================
+ * SYS_CPU_INFO (181) — i processori che smp_init() ha trovato
+ *
+ * ebx = SmpInfo*, ecx = sizeof(SmpInfo) di chi chiama. Come per MemInfo la
+ * dimensione viaggia con la chiamata: se le due copie della struttura non
+ * coincidono si rifiuta, invece di scrivere oltre la fine di quella piccola.
+ * ========================================================================== */
+int32_t sys_cpu_info(InterruptFrame *frame)
+{
+    SmpInfo       *dst  = (SmpInfo *)frame->ebx;
+    uint32_t       size = frame->ecx;
+    const uint8_t *src  = (const uint8_t *)smp_info();
+    uint32_t       i;
+
+    if (size != sizeof(SmpInfo))        return ERR(EINVAL);
+    if (!syscall_verify_ptr(dst, size)) return ERR(EFAULT);
+
+    for (i = 0; i < size; i++) ((uint8_t *)dst)[i] = src[i];
+
+    /* ! OGNI LETTURA MANDA UN MESSAGGIO AI PROCESSORI IN ATTESA, dopo aver
+     * copiato: chi rilegge poco dopo trova `messaggi` cresciuto di uno su
+     * ognuno, ed e' la prova — fatta da dentro una chiamata di sistema, con
+     * le pagine di un processo qualunque — che l'APIC si raggiunge da li' e
+     * che gli altri processori ricevono. E' cio' su cui poggia la tappa 3. */
+    smp_chiama_tutti();
+    return 0;
+}
+
 int32_t sys_meminfo(InterruptFrame *frame)
 {
     MemInfo  *dst  = (MemInfo *)frame->ebx;

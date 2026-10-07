@@ -297,6 +297,102 @@ static void sezione_cpu(void)
 }
 
 /* =============================================================================
+ * I PROCESSORI
+ *
+ * Quanti ne ha trovati il kernel all'avvio, da quale tabella, e che cosa ne ha
+ * fatto. ! «IN ATTESA» NON VUOL DIRE «USATO»: alle tappe 1 e 2 dell'SMP
+ * (ottobre 2026) EX-OS sveglia i processori in piu', da' a ciascuno il suo
+ * timer e li lascia in attesa: tutto il lavoro lo fa quello d'avvio. Dirlo qui
+ * evita di leggere «4 processori» come «va quattro volte piu' veloce».
+ *
+ * L'elenco si legge DUE volte a mezzo secondo di distanza: la differenza dei
+ * battiti dice se il timer di quel processore cammina, e ogni lettura gli
+ * manda un messaggio, quindi alla seconda il conto dei messaggi deve essere
+ * cresciuto. Sono le due cose che la tappa 3 da' per buone.
+ * ========================================================================== */
+static void sezione_processori(void)
+{
+    static const char *fonte[] = {
+        "nessuna tabella (un processore solo)", "ACPI, tabella MADT",
+        "tabella MultiProcessor 1.4", "MultiProcessor, configurazione predefinita"
+    };
+    CpuInfo ci, dopo;
+    unsigned int i;
+    int riletto = 0;
+
+    rap("\n");
+    rap("=============================================================\n");
+    rap(" PROCESSORI\n");
+    rap("=============================================================\n");
+
+    if (cpu_info(&ci) != 0) {
+        rap("  non leggibile: cpu_info() ha rifiutato (kernel prima della 0.237?)\n");
+        return;
+    }
+
+    if (ci.fermi > 0) {
+        usleep(500 * 1000);
+        riletto = (cpu_info(&dopo) == 0);
+    }
+
+    rap("  trovati          %u\n", ci.n);
+    rap("  elenco da        %s\n", ci.fonte < 4 ? fonte[ci.fonte] : "?");
+    if (ci.apic_locale) rap("  APIC locale      0x%08x\n", ci.apic_locale);
+    if (ci.n_ioapic)    rap("  I/O APIC         %u, il primo a 0x%08x\n", ci.n_ioapic, ci.ioapic);
+    if (ci.troppi)      rap("  ! altri %u elencati e ignorati: il kernel ne tiene %u\n",
+                            ci.troppi, (unsigned int)CPU_INFO_MAX);
+    rap("\n");
+
+    for (i = 0; i < ci.n && i < CPU_INFO_MAX; i++) {
+        const CpuVoce *c = &ci.cpu[i];
+        const char    *st;
+
+        switch (c->stato) {
+        case CPU_STATO_AVVIO:    st = "IN USO   - e' quello su cui gira EX-OS"; break;
+        case CPU_STATO_FERMO:    st = "IN ATTESA - acceso, non esegue ancora processi"; break;
+        case CPU_STATO_MUTO:     st = "MUTO     - svegliato, non ha risposto"; break;
+        default:                 st = "NON SVEGLIATO"; break;
+        }
+        rap("  cpu %-2u APIC %-3u  %s\n", i, c->apic_id, st);
+        if (c->firma)
+            rap("                   famiglia %u modello %u stepping %u\n",
+                ((c->firma >> 8) & 0xF) + (((c->firma >> 8) & 0xF) == 0xF ? (c->firma >> 20) & 0xFF : 0),
+                ((c->firma >> 4) & 0xF) | (((c->firma >> 16) & 0xF) << 4),
+                c->firma & 0xF);
+        if (c->stato == CPU_STATO_FERMO && riletto) {
+            unsigned int b = dopo.cpu[i].battiti - c->battiti;
+            unsigned int t = dopo.tick - ci.tick;
+
+            if (ci.timer_per_tick == 0)
+                rap("                   timer     non avviato: il kernel non e' riuscito a misurarlo\n");
+            else
+                rap("                   timer     %u battiti in %u centesimi di secondo: %s\n",
+                    b, t, (b + 5 >= t && b <= t + 5) ? "CAMMINA" : "NON VA COME DOVREBBE");
+            rap("                   messaggi  %s (ricevuti finora: %u)\n",
+                dopo.cpu[i].messaggi > c->messaggi ? "RICEVE" : "NON RICEVE",
+                dopo.cpu[i].messaggi);
+        }
+    }
+
+    if (ci.n > 1) {
+        rap("\n");
+        switch (ci.motivo) {
+        case CPU_MOTIVO_CFG:
+            rap("  Non svegliati perche' /boot/kernel.cfg dice  smp = 0.\n"); break;
+        case CPU_MOTIVO_X2APIC:
+            rap("  Non svegliati: l'APIC e' in modo x2APIC, che il kernel non pilota.\n"); break;
+        case CPU_MOTIVO_SPENTO:
+            rap("  Non svegliati: il BIOS ha lasciato spento l'APIC locale.\n"); break;
+        case CPU_MOTIVO_MEMORIA:
+            rap("  Non svegliati (tutti): mancava memoria nella fascia del kernel.\n"); break;
+        default: break;
+        }
+        rap("  ! EX-OS lavora con UN processore: gli altri, se accesi, aspettano.\n");
+        rap("    Eseguire processi su piu' processori e' la tappa 3 dell'SMP.\n");
+    }
+}
+
+/* =============================================================================
  * LA MEMORIA
  * ========================================================================== */
 static void sezione_memoria(void)
@@ -860,8 +956,9 @@ static void sezione_limiti(void)
     rap("=============================================================\n");
     rap(" COSA QUESTO RAPPORTO NON DICE\n");
     rap("=============================================================\n");
-    rap("  Le fonti sono tre e tutte di sola lettura: CPUID, lo spazio di\n");
-    rap("  configurazione PCI e la bitmap della memoria. Niente e' stato\n");
+    rap("  Le fonti sono quattro e tutte di sola lettura: CPUID, lo spazio\n");
+    rap("  di configurazione PCI, la bitmap della memoria e l'elenco dei\n");
+    rap("  processori che il kernel ha fatto all'avvio. Niente e' stato\n");
     rap("  sondato scrivendo. Percio' NON compaiono:\n");
     rap("\n");
     rap("  schede ISA      non hanno spazio di configurazione: si trovano\n");
@@ -970,6 +1067,7 @@ int main(int argc, char **argv)
     if (!solo_riassunto) {
         intestazione();
         sezione_cpu();
+        sezione_processori();
         sezione_memoria();
         sezione_pci(pid);
         sezione_mancanti();

@@ -82,6 +82,33 @@ typedef uint32_t PTE;
 #define PAGING_FINESTRA_VIRT    0x003FF000u  /* ultima pagina dei primi 4 MB */
 #define PAGING_FINESTRA_FISICA  0x003FF000u  /* la sua identita', riservata */
 
+/* =============================================================================
+ * La pagina fissa dell'APIC locale (tappa 2 dell'SMP, 7 ottobre 2026)
+ *
+ * L'APIC locale sta in cima alla memoria fisica (0xFEE00000), fuori dalla
+ * fascia che ogni processo eredita dal kernel: mappato per identita' lo
+ * vedrebbe solo la directory del kernel, e una chiamata di sistema — che gira
+ * con le pagine del processo — non potrebbe confermare un interrupt ne'
+ * mandare un messaggio a un altro processore.
+ *
+ * Gli si da' una pagina virtuale dentro la tabella statica dei primi 4 MB,
+ * la stessa della finestra e per la stessa ragione: quella tabella e'
+ * condivisa da OGNI spazio di indirizzamento, quindi scriverne una voce vale
+ * dappertutto.
+ *
+ * ! LA PAGINA SCELTA STA NEL BUCO DELLE ROM (0xC0000-0xEFFFF), e non a caso:
+ * la sua omonima fisica non e' RAM, il PMM non la da' a nessuno, e il kernel
+ * non legge niente a quell'indirizzo. Dopo paging_mappa_apic() la ROM di
+ * un'eventuale scheda che stesse proprio li' non e' piu' raggiungibile dal
+ * kernel per identita' — e non lo si e' mai fatto; i driver in ring 3 le ROM
+ * le mappano nel proprio spazio, che e' un'altra cosa.
+ * ========================================================================== */
+#define PAGING_APIC_VIRT        0x000DF000u
+
+/* Punta la pagina fissa all'APIC locale di indirizzo fisico `phys` e rende
+ * l'indirizzo virtuale a cui leggerlo. Una volta, all'avvio. */
+void    *paging_mappa_apic(uint32_t phys);
+
 /* Porta in RAM le pagine dell'eseguibile che coprono un buffer utente,
  * prima di consegnarlo a un driver. Vedi paging.c. */
 void     vm_precarica_utente(uint32_t addr, uint32_t len);

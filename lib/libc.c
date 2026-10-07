@@ -280,6 +280,7 @@ typedef struct {
 #define SYS_VERSION     185
 #define SYS_UPTIME      186
 #define SYS_MEMINFO     187
+#define SYS_CPU_INFO    181
 #define SYS_PROCINFO    188
 #define SYS_DISKINFO    189
 #define SYS_BLKINFO     190
@@ -644,6 +645,18 @@ typedef struct {
     unsigned int total_kb,      free_kb;
     unsigned int page_size;
 } MemInfo;
+
+/* I processori: copia di CpuInfo in lib/include/libc.h, che e' la copia di
+ * SmpInfo in kernel/include/smp.h. Le tre si cambiano insieme. */
+typedef struct {
+    unsigned char apic_id, stato, apic_ver, riservato;
+    unsigned int  firma, capacita, battiti, messaggi;
+} CpuVoce;
+typedef struct {
+    unsigned int n, fermi, fonte, motivo, apic_locale, n_ioapic, ioapic, troppi;
+    unsigned int timer_per_tick, tick;
+    CpuVoce      cpu[16];
+} CpuInfo;
 
 /* Processo + stack — deve restare identico a kernel/include/syscall.h
  * (ProcInfo) e a lib/include/libc.h: attraversa l'ABI della syscall. */
@@ -7320,6 +7333,12 @@ unsigned int sleep(unsigned int sec)
 unsigned int uptime_ms(void)
 {
     return (unsigned int)_syscall1(SYS_UPTIME, 0);
+}
+
+/* I processori trovati all'avvio. Come meminfo: 0, o un -errno. */
+int cpu_info(CpuInfo *ci)
+{
+    return _syscall2(SYS_CPU_INFO, (uint32_t)ci, (uint32_t)sizeof(CpuInfo));
 }
 
 /* La sizeof viaggia con la chiamata: il kernel rifiuta se la sua copia

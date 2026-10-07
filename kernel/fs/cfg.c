@@ -154,6 +154,13 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
                 cfg->ata_dma = 0;
             return;
         }
+        /* Come atadma: solo uno zero scritto per bene spegne. */
+        if (cfg_strcmp(key, "smp") == 0) {
+            cfg->smp = 1;
+            if (value[0] >= '0' && value[0] <= '9' && cfg_atoi(value) == 0)
+                cfg->smp = 0;
+            return;
+        }
         if (cfg_strcmp(key, "verboseboot") == 0) {
             /* Il valore predefinito è 0 (agosto 2026: prima era 1) e resta
              * 0 in tutti i casi dubbi: SOLO un numero diverso da zero fa
@@ -316,6 +323,7 @@ KernelConfig *cfg_load(void)
     g_config.timer_hz     = 100;
     g_config.verbose_boot = 0;   /* default: avvio silenzioso. Vedi cfg.h */
     g_config.ata_dma      = 1;   /* default: il DMA si usa. Vedi cfg.h */
+    g_config.smp          = 1;   /* default: i processori in piu' si svegliano */
     g_config.keymap[0]    = '\0'; /* nessuna: il driver tiene la sua */
     cfg_strcpy(g_config.shell_path, "/bin/sh", sizeof(g_config.shell_path));
 

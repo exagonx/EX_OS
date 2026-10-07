@@ -423,7 +423,13 @@
  * delle pagine nuova si installa a interrupt spenti (paging_map_page), e
  * la creazione di un filo prende il lucchetto dello spazio di
  * indirizzamento (sys_thread_crea). Erano lo stack che spariva a Firefox. */
-#define EXOS_VERSION    "0.236"
+/* 0.236 -> 0.237: piu' processori, tappa 1. All'avvio si cercano nelle
+ * tabelle ACPI (MADT) e MP, si svegliano e si lasciano fermi: vedi smp.h.
+ * EX-OS lavora ancora con uno solo. Nuova SYS_CPU_INFO (181). */
+/* 0.237 -> 0.238: piu' processori, tappa 2. L'APIC locale sta in una pagina
+ * fissa che ogni spazio di indirizzamento vede; ogni processore in piu' ha
+ * il suo timer a 100 Hz e riceve i messaggi degli altri (IPI). */
+#define EXOS_VERSION    "0.238"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -156,6 +156,7 @@ void syscall_init(void)
     syscall_table[SYS_VERSION]     = sys_version;
     syscall_table[SYS_UPTIME]      = sys_uptime;
     syscall_table[SYS_MEMINFO]     = sys_meminfo;
+    syscall_table[SYS_CPU_INFO]    = sys_cpu_info;
     syscall_table[SYS_PROCINFO]    = sys_procinfo;
     syscall_table[SYS_DISKINFO]    = sys_diskinfo;
     syscall_table[SYS_BLKINFO]     = sys_blkinfo;

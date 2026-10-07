@@ -30,6 +30,7 @@
 #include "vol.h"
 #include "fat.h"
 #include "vfs.h"
+#include "smp.h"
 #include "cfg.h"
 #include "elf.h"
 #include "drvmgr.h"
@@ -401,6 +402,13 @@ KernelConfig *cfg = cfg_load();
      * prima: questo file lo si e' appena letto DAL disco. Vedi ata_dma_spegni()
      * e cfg.h. */
     if (cfg->ata_dma == 0) ata_dma_spegni();
+
+    /* ! I PROCESSORI IN PIU' SI CERCANO QUI: dopo kernel.cfg, perche' e' li'
+     * che sta scritto se svegliarli (smp = 0 li conta e basta), a interrupt
+     * accesi, perche' le attese contano i tick, e prima del primo processo,
+     * perche' l'APIC e' mappato solo nella directory del kernel. Su una
+     * macchina con un processore non fa niente: vedi smp.h. */
+    smp_init(cfg->smp != 0);
 
     /* =====================================================================
      * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.

@@ -165,6 +165,16 @@ void paging_finestra_chiudi(void)
     if (g_finestra_eflags & (1u << 9)) __asm__ volatile ("sti");
 }
 
+/* La pagina fissa dell'APIC locale: vedi PAGING_APIC_VIRT in paging.h.
+ * Non cacheabile (PCD e PWT): sono registri, non memoria. */
+void *paging_mappa_apic(uint32_t phys)
+{
+    kernel_page_table_low[PT_INDEX(PAGING_APIC_VIRT)] =
+        (phys & 0xFFFFF000) | PG_PRESENT | PG_WRITABLE | (1u << 4) | (1u << 3);
+    __asm__ volatile ("invlpg (%0)" : : "r"(PAGING_APIC_VIRT) : "memory");
+    return (void *)(PAGING_APIC_VIRT + (phys & 0xFFF));
+}
+
 /* Azzeramento di una pagina fisica qualunque: e' il caso d'uso piu'
  * frequente (ogni pagina nuova consegnata a un processo va azzerata, se no
  * il processo vede i resti di chi c'era prima) e merita di non far

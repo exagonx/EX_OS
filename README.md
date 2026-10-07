@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.236
+**Versione:** 0.238
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -100,6 +100,33 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)
+
+**da testare sul ferro, provato in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4
+processori, con ACPI e con la sola tabella MP, anche sotto KVM; Pentium e
+Pentium II emulati a due zoccoli) — all'avvio il kernel cerca i processori
+nelle tabelle ACPI (MADT) e, dove non ci sono, nella tabella MultiProcessor
+delle schede a due processori degli anni Novanta (doppio Pentium, doppio
+Pentium Pro). Quelli in piu' li sveglia uno alla volta e li porta in modo
+protetto con le tabelle del kernel (**0.237**). Ognuno accende il proprio APIC
+locale, ha un timer suo a 100 battiti al secondo e riceve i messaggi degli
+altri processori; l'APIC sta in una pagina che ogni processo vede, quindi
+anche una chiamata di sistema puo' mandarne uno (**0.238**).
+
+`hwinfo` ha la sezione PROCESSORI: quanti, da quale tabella, e per ognuno se
+e' in uso, in attesa o muto; per quelli in attesa misura in mezzo secondo se
+il timer cammina e se i messaggi arrivano.
+
+! **EX-OS lavora ancora con un processore solo.** Gli altri sono pronti ma
+non eseguono processi: e' la tappa 3, un lucchetto unico sul kernel, ed e' li'
+che arriva il guadagno. Poi i lucchetti piu' fini. Le periferiche restano sul
+PIC verso il processore d'avvio: l'I/O APIC serve a distribuirle, e si fara'
+dopo. Su una macchina con un processore — e su tutto cio' che non ha un APIC
+locale — non cambia niente: il kernel legge qualche byte del BIOS e prosegue.
+
+Se l'avvio si fermasse su una scheda con piu' processori: `smp = 0` in
+`/boot/kernel.cfg` li fa contare senza svegliarli.
 
 ### exide: miniature, puntatore, codice non modale; e tiscali.it si apre
 

@@ -312,6 +312,14 @@ def main():
             # `regs:/percorso` accoda a quel file i registri della CPU (info
             # registers): ripetuto, e' un campionatore povero di chi sta
             # girando — l'EIP e il CR3 dicono quale programma e dove.
+            # `mona:/percorso=comando` manda un comando al monitor e ACCODA la
+            # risposta a quel file: `mona:/tmp/x.txt=info cpus`. E' il modo di
+            # chiedere a QEMU che cosa vede lui (i processori, i registri di
+            # tutti), invece di credere a cio' che il sistema dice di se'.
+            elif cmd.startswith("mona:"):
+                dove, _, comando = cmd[5:].partition("=")
+                with open(dove, "a") as fh:
+                    fh.write(mon.cmd(comando, settle=0.3) + "\n====\n")
             elif cmd.startswith("regs:"):
                 with open(cmd[5:], "a") as fh:
                     fh.write(mon.cmd("info registers", settle=0.05) + "\n====\n")

@@ -4764,6 +4764,7 @@ kernel: dirs stage2 $(KERNEL_BIN)
 
 KERNEL_ASM_SRC := $(KERNEL_DIR)/arch/x86/entry.asm \
                   $(KERNEL_DIR)/arch/x86/isr_stubs.asm \
+                  $(KERNEL_DIR)/arch/x86/smp_tramp.asm \
                   $(KERNEL_DIR)/sched/context_switch.asm
 
 # --- Settori di avvio per disco rigido ----------------------------------------
@@ -4817,6 +4818,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/kbdprova.c \
                   $(KERNEL_DIR)/arch/x86/memfun.c \
                   $(KERNEL_DIR)/arch/x86/tsc.c \
+                  $(KERNEL_DIR)/arch/x86/smp.c \
                   $(KERNEL_DIR)/mm/pmm.c \
                   $(KERNEL_DIR)/mm/paging.c \
                   $(KERNEL_DIR)/mm/kmalloc.c \
