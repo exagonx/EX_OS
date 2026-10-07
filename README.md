@@ -101,6 +101,28 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### ExWin: ogni controllo si nasconde e si spegne
+
+**testato in QEMU** (`tools/prova_exwin_stato.sh`: il progetto si compila
+dentro EX-OS e si prova con la tastiera) — chiesto in correzioni.txt.
+`ex_set_visible(c, 0)` nasconde un controllo senza distruggerlo;
+`ex_set_enabled(c, 0)` lo lascia al suo posto, velato, con dentro quel che il
+programma ci mette, ma chi usa il programma non lo preme e non ci scrive.
+Valgono per ogni tipo di controllo; `ex_is_visible` ed `ex_is_enabled` dicono
+come sta. Prima un controllo spento si riconosceva solo se era un pulsante,
+una spunta o un radio. In exide sono due proprieta', `visibile` e `attivo`, e
+sulla maschera si distinguono a colpo d'occhio. Il manuale di EX-IDE le spiega
+in italiano e in inglese.
+
+**Sul mouse** (`tools/prova_exwin_sulmouse.sh`): con la proprieta' `sulmouse`
+un controllo ha un handler in piu', `<nome>_MouseOver()`, chiamato quando il
+puntatore gli arriva sopra; `ex_show_popup_pointer("testo", "0", "0", "0")`
+mostra un riquadro accanto al puntatore, coi colori di sfondo, scritta e bordo
+scritti come `"255,255,255"` o `"0"` per quelli predefiniti. Provandolo e'
+venuto fuori che nei programmi fatti con exide gli handler `_Changed` ed
+`_Enter` delle caselle di testo non venivano mai chiamati: ora si' (exwin.so
+0.015, exide 0.024; basta riaprire il progetto e salvarlo).
+
 ### Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)
 
 **da testare sul ferro, provato in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4

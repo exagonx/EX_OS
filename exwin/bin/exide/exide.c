@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.022"
+#define VERSIONE_APP "0.024"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -229,6 +229,16 @@ typedef struct {
     int          x, y, w, h;        /* dentro la maschera */
     unsigned int id;
     int          evento;            /* quale voce di g_strum[tipo].evento */
+
+    /* ! AL CONTRARIO, APPOSTA: «nascosto» e «spento» valgono 0 nel caso
+     * normale, cosi' un controllo appena azzerato (memset, un progetto di
+     * prima) nasce visibile e attivo senza che nessuno debba ricordarsene.
+     * Nel pannello si leggono come «visibile» e «attivo», si' o no. */
+    int          nascosto;          /* nasce con ex_set_visible(c, 0) */
+    int          spento;            /* nasce con ex_set_enabled(c, 0) */
+    /* Un secondo handler, <nome>_MouseOver(), accanto a quello dell'evento:
+     * chiamato quando il puntatore arriva sul controllo (EXM_MOUSE_OVER). */
+    int          sulmouse;
 
     /* ! L'ICONA E' UN PERCORSO, NON UN'IMMAGINE. Qui dentro sta la riga che
      * finira' nel codice generato; l'icona vera la apre il programma generato
@@ -735,7 +745,32 @@ static int strumento_a(int x, int y)
     return r <= STRUM_N ? r - 1 : -2;
 }
 
+/* =============================================================================
+ * NEL DISEGNATORE UN CONTROLLO NASCOSTO SI VEDE, o non lo si potrebbe piu'
+ * scegliere per rimetterlo visibile. Porta un tratteggio: righe verticali per
+ * «spento» (il velo che avra' nel programma), una griglia per «nascosto»
+ * (nel programma non ci sara' proprio). Un colpo d'occhio alla maschera dice
+ * chi nasce come.
+ * ============================================================================= */
+static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy);
+
 static void disegna_controllo(const Ctrl *c, int ox, int oy)
+{
+    int x = ox + c->x, y = oy + c->y, i;
+
+    disegna_controllo_nudo(c, ox, oy);
+    if (!c->nascosto && !c->spento) return;
+
+    for (i = 2; i < c->w - 1; i += 4)
+        ex_fill_rect(g_f, x + i, y + 1, 1, c->h - 2, EX_GRAY);
+    if (c->nascosto) {
+        for (i = 2; i < c->h - 1; i += 4)
+            ex_fill_rect(g_f, x + 1, y + i, c->w - 2, 1, EX_GRAY);
+        ex_draw_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
+    }
+}
+
+static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
 {
     int x = ox + c->x, y = oy + c->y;
     const char *cl = g_strum[c->tipo].classe;
@@ -934,11 +969,25 @@ static void disegna_tela(void)
  * sette le ha ogni controllo, questa la usano in due (pulsante ed etichetta).
  * Metterla in mezzo avrebbe spostato di una riga tutte le altre, e chi usa
  * exide le trova dove le ha sempre trovate. */
-#define PROP_N  9
+/* ! «visibile» E «attivo» (7 ottobre 2026, chiesti dall'utente) STANNO DOPO
+ * L'ICONA, per la stessa ragione: le righe che c'erano restano dove sono. Le
+ * hanno tutti i controlli, e valgono «si» finche' non si scrive «no». */
+#define PROP_N  12
 
 static const char *const g_prop_nome[PROP_N] = {
-    "nome", "testo", "x", "y", "larghezza", "altezza", "id", "evento", "icona"
+    "nome", "testo", "x", "y", "larghezza", "altezza", "id", "evento", "icona",
+    "visibile", "attivo", "sulmouse"
 };
+
+/* «si», «no» e i loro parenti: 1, 0, o -1 se non e' nessuno dei due. */
+static int si_o_no(const char *v)
+{
+    if (!strcmp(v, "si") || !strcmp(v, "SI") || !strcmp(v, "Si") || !strcmp(v, "1") ||
+        !strcmp(v, "true") || !strcmp(v, "yes") || !strcmp(v, "vero")) return 1;
+    if (!strcmp(v, "no") || !strcmp(v, "NO") || !strcmp(v, "No") || !strcmp(v, "0") ||
+        !strcmp(v, "false") || !strcmp(v, "falso")) return 0;
+    return -1;
+}
 
 /* Chi puo' avere un'icona. E' la stessa risposta del toolkit: la disegnano il
  * pulsante e l'etichetta (vedi CL_PULSANTE e CL_ETICHETTA in lib/exwin). */
@@ -992,6 +1041,9 @@ static void prop_valore(int k, char *out, unsigned int max)
             out[max - 1] = '\0';
         }
         break;
+    case 9:  strcpy(out, c->nascosto ? "no" : "si"); break;
+    case 10: strcpy(out, c->spento   ? "no" : "si"); break;
+    case 11: strcpy(out, c->sulmouse ? "si" : "no"); break;
     default: break;
     }
 }
@@ -1240,6 +1292,13 @@ static void prop_applica_k(int k)
         c->icona[ICONA_MAX - 1] = '\0';
         if (c->icona[0] == '(') c->icona[0] = '\0';   /* «(nessuna)» riapplicato */
         c->ic = 0;                  /* si riapre al prossimo disegno */
+        break;
+    case 9: case 10: case 11:
+        n = si_o_no(v);
+        if (n < 0) { dico("si scrive  si  oppure  no"); return; }
+        if (k == 9) c->nascosto = !n;
+        else if (k == 10) c->spento = !n;
+        else c->sulmouse = n;
         break;
     default: break;                 /* l'evento, k == 7, e' gia' passato sopra */
     }
@@ -2039,6 +2098,13 @@ static int dis_salva(void)
                 sprintf(riga, "i %s\n", c->icona);
                 write(fd, riga, strlen(riga));
             }
+            /* Lo stato con cui nasce, se non e' quello di tutti: una riga «s»
+             * con visibile e attivo (1 o 0), come la «i» e per la stessa
+             * ragione. Un progetto senza queste righe si legge come sempre. */
+            if (c->nascosto || c->spento || c->sulmouse) {
+                sprintf(riga, "s %d %d %d\n", !c->nascosto, !c->spento, c->sulmouse);
+                write(fd, riga, strlen(riga));
+            }
         }
     }
     close(fd);
@@ -2155,6 +2221,15 @@ static int dis_carica(void)
                 continue;
             }
 
+            if (strcmp(w, "s") == 0) {      /* visibile e attivo: vedi dove si scrive */
+                if (ultimo >= 0) {
+                    s = parola(s, w, sizeof(w)); g_ctrl[ultimo].nascosto = (w[0] == '0');
+                    s = parola(s, w, sizeof(w)); g_ctrl[ultimo].spento   = (w[0] == '0');
+                    s = parola(s, w, sizeof(w)); g_ctrl[ultimo].sulmouse = (w[0] == '1');
+                }
+                continue;
+            }
+
             if (strcmp(w, "c") != 0) continue;
             if (corrente < 0) continue;     /* la sua maschera non c'e' entrata */
 
@@ -2222,6 +2297,49 @@ static int ha_evento(const Ctrl *c)
 static void nome_handler(const Ctrl *c, char *out)
 {
     sprintf(out, "%s_%s", c->nome, g_strum[c->tipo].evento[c->evento]);
+}
+
+/* =============================================================================
+ * DA QUALE MESSAGGIO ARRIVA UN EVENTO (7 ottobre 2026)
+ *
+ * Fino a oggi ogni evento usciva sotto EXM_COMMAND, e per tre di loro era
+ * sbagliato:
+ *   - «MouseOver» di un pulsante o di un'etichetta veniva chiamato al CLIC;
+ *   - «Changed» di una casella o di un'area non veniva chiamato MAI: quei
+ *     controlli consumano i loro tasti dentro il toolkit e un comando non lo
+ *     mandano;
+ *   - «Enter» di una casella neppure: Invio arriva alla finestra come tasto.
+ * Adesso ognuno esce sotto il messaggio che gli corrisponde (exwin.so 0.015).
+ * ============================================================================= */
+#define ARRIVA_COMANDO   0      /* EXM_COMMAND: clic, scelta, spunta, scorrimento */
+#define ARRIVA_SULMOUSE  1      /* EXM_MOUSE_OVER */
+#define ARRIVA_CAMBIATO  2      /* EXM_CHANGED: casella, area testo, area codice */
+#define ARRIVA_INVIO     3      /* EXM_KEY con Invio, e il fuoco sulla casella */
+
+static int come_arriva(const Ctrl *c)
+{
+    const char *e  = g_strum[c->tipo].evento[c->evento];
+    const char *cl = g_strum[c->tipo].classe;
+    int testo = !strcmp(cl, "textbox") || !strcmp(cl, "textarea") || !strcmp(cl, "codearea");
+
+    if (!e) return ARRIVA_COMANDO;
+    if (!strcmp(e, "MouseOver")) return ARRIVA_SULMOUSE;
+    if (testo && !strcmp(e, "Changed")) return ARRIVA_CAMBIATO;
+    if (!strcmp(cl, "textbox") && !strcmp(e, "Enter")) return ARRIVA_INVIO;
+    return ARRIVA_COMANDO;
+}
+
+/* Il controllo ha ANCHE <nome>_MouseOver(), oltre all'handler del suo evento:
+ * proprieta' «sulmouse». Se l'evento scelto e' gia' MouseOver l'handler e'
+ * quello, e non se ne fa un secondo con lo stesso nome. */
+static int ha_sulmouse_in_piu(const Ctrl *c)
+{
+    return c->sulmouse && !(ha_evento(c) && come_arriva(c) == ARRIVA_SULMOUSE);
+}
+
+static void nome_sulmouse(const Ctrl *c, char *out)
+{
+    sprintf(out, "%s_MouseOver", c->nome);
 }
 
 /* ! I NOMI DELLA MASCHERA PRINCIPALE NON HANNO IL SUO NOME DENTRO, e quelli
@@ -2311,6 +2429,12 @@ static int gen_h(void)
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato && ha_evento(&g_ctrl[i])) {
             nome_handler(&g_ctrl[i], hn);
+            sprintf(riga, "void %s(void);\n", hn);
+            SCRIVI(riga);
+        }
+    for (i = 0; i < CTRL_MAX; i++)
+        if (g_ctrl[i].usato && ha_sulmouse_in_piu(&g_ctrl[i])) {
+            nome_sulmouse(&g_ctrl[i], hn);
             sprintf(riga, "void %s(void);\n", hn);
             SCRIVI(riga);
         }
@@ -2416,6 +2540,42 @@ static int gen_c(void)
                         c->icona, c->nome);
                 SCRIVI(riga);
             }
+
+            /* Chi nasce nascosto o spento: una riga ciascuno, subito dopo la
+             * creazione, cosi' la prima volta che la finestra si disegna e'
+             * gia' come deve essere. */
+            if (c->nascosto) {
+                sprintf(riga, "    ex_set_visible(%s, 0);\n", c->nome);
+                SCRIVI(riga);
+            }
+            if (c->spento) {
+                sprintf(riga, "    ex_set_enabled(%s, 0);\n", c->nome);
+                SCRIVI(riga);
+            }
+        }
+
+        /* Quel che la finestra deve chiedere al toolkit perche' gli eventi
+         * arrivino: i movimenti del puntatore, se qualcuno ha un MouseOver;
+         * «il testo e' cambiato», se una casella o un'area ha Changed. */
+        {
+            int vuole_mouse = 0, vuole_cambi = 0;
+
+            for (i = 0; i < CTRL_MAX; i++) {
+                Ctrl *c = &g_ctrl[i];
+
+                if (!c->usato || c->form != k) continue;
+                if (c->sulmouse || (ha_evento(c) && come_arriva(c) == ARRIVA_SULMOUSE))
+                    vuole_mouse = 1;
+                if (ha_evento(c) && come_arriva(c) == ARRIVA_CAMBIATO) vuole_cambi = 1;
+            }
+            if (vuole_mouse) {
+                sprintf(riga, "    ex_track_mouse_hover(%s, 1);\n", vn);
+                SCRIVI(riga);
+            }
+            if (vuole_cambi) {
+                sprintf(riga, "    ex_notify_changes(%s, 1);\n", vn);
+                SCRIVI(riga);
+            }
         }
 
         sprintf(riga, "\n    ex_default_proc(%s, EXM_PAINT, 0, 0);\n}\n\n",
@@ -2433,6 +2593,7 @@ static int gen_c(void)
             Ctrl *c = &g_ctrl[i];
 
             if (!c->usato || c->form != k || !ha_evento(c)) continue;
+            if (come_arriva(c) != ARRIVA_COMANDO) continue;
             nome_id(c, idn);
             nome_handler(c, hn);
             sprintf(riga, "        case %s: %s(); return 0;\n", idn, hn);
@@ -2440,6 +2601,67 @@ static int gen_c(void)
         }
 
         SCRIVI("        default: break;\n        }\n    }\n\n");
+
+        /* Il puntatore e' arrivato su un controllo. Chi non ha un handler
+         * rende EX_NO_REDRAW: non c'e' niente di cambiato da ridisegnare. */
+        {
+            int n = 0;
+
+            for (i = 0; i < CTRL_MAX; i++) {
+                Ctrl *c = &g_ctrl[i];
+                int   suo = c->usato && c->form == k && ha_evento(c) &&
+                            come_arriva(c) == ARRIVA_SULMOUSE;
+
+                if (!c->usato || c->form != k) continue;
+                if (!suo && !ha_sulmouse_in_piu(c)) continue;
+                if (n++ == 0)
+                    SCRIVI("    if (msg == EXM_MOUSE_OVER) {\n        switch (wp) {\n");
+                nome_id(c, idn);
+                if (suo) nome_handler(c, hn); else nome_sulmouse(c, hn);
+                sprintf(riga, "        case %s: %s(); return 0;\n", idn, hn);
+                SCRIVI(riga);
+            }
+            if (n) SCRIVI("        default: return EX_NO_REDRAW;\n        }\n    }\n\n");
+        }
+
+        /* Il testo di una casella o di un'area e' cambiato. */
+        {
+            int n = 0;
+
+            for (i = 0; i < CTRL_MAX; i++) {
+                Ctrl *c = &g_ctrl[i];
+
+                if (!c->usato || c->form != k || !ha_evento(c)) continue;
+                if (come_arriva(c) != ARRIVA_CAMBIATO) continue;
+                if (n++ == 0)
+                    SCRIVI("    if (msg == EXM_CHANGED) {\n        switch (wp) {\n");
+                nome_id(c, idn);
+                nome_handler(c, hn);
+                sprintf(riga, "        case %s: %s(); return 0;\n", idn, hn);
+                SCRIVI(riga);
+            }
+            if (n) SCRIVI("        default: break;\n        }\n    }\n\n");
+        }
+
+        /* Invio in una casella: arriva come tasto, e la casella e' quella
+         * che ha il cursore. */
+        {
+            int n = 0;
+
+            for (i = 0; i < CTRL_MAX; i++) {
+                Ctrl *c = &g_ctrl[i];
+
+                if (!c->usato || c->form != k || !ha_evento(c)) continue;
+                if (come_arriva(c) != ARRIVA_INVIO) continue;
+                if (n++ == 0)
+                    SCRIVI("    if (msg == EXM_KEY && ((wp & 0xFFFF) == '\\n' || (wp & 0xFFFF) == '\\r')) {\n"
+                           "        ExWindow chi = ex_get_focus(f);\n\n");
+                nome_handler(c, hn);
+                sprintf(riga, "        if (chi == %s) { %s(); return 0; }\n", c->nome, hn);
+                SCRIVI(riga);
+            }
+            if (n) SCRIVI("    }\n\n");
+        }
 
         if (form_e_principale(k)) {
             SCRIVI("    if (msg == EXM_CLOSE) { ex_quit(0); return 0; }\n");
@@ -2578,6 +2800,26 @@ static int mio_c_rinomina(const char *vecchio, const char *nuovo)
     }
     close(fd);
     return fatto;
+}
+
+/* L'handler in piu' di «sulmouse»: se in finestra.c non c'e', lo aggiunge
+ * vuoto, come handler_assicura fa per quello dell'evento. */
+static void sulmouse_assicura(const Ctrl *c)
+{
+    char p[PERC_MAX], hn[NOME_MAX + 32], testo[256];
+    int  fd;
+
+    if (!ha_sulmouse_in_piu(c)) return;
+    nome_sulmouse(c, hn);
+    if (handler_riga(hn) >= 0) return;
+
+    percorso(p, "finestra.c");
+    fd = open(p, O_WRONLY, 0);
+    if (fd < 0) return;
+    lseek(fd, 0, SEEK_END);
+    sprintf(testo, "\n/* %s: MouseOver */\nvoid %s(void)\n{\n    \n}\n", c->nome, hn);
+    write(fd, testo, strlen(testo));
+    close(fd);
 }
 
 static int handler_assicura(const Ctrl *c)
@@ -3110,6 +3352,8 @@ static int progetto_salva(void)
         for (i = 0; i < CTRL_MAX; i++)
             if (g_ctrl[i].usato && ha_evento(&g_ctrl[i]))
                 handler_assicura(&g_ctrl[i]);
+        for (i = 0; i < CTRL_MAX; i++)
+            if (g_ctrl[i].usato) sulmouse_assicura(&g_ctrl[i]);
     }
 
     if (g_ed) ed_ricarica();
@@ -3601,7 +3845,33 @@ static const char *const g_manuale[] = {
 "Per il solo ornamento c'e' lo strumento IMMAGINE: e' fatto solo",
 "dell'icona, non si preme e non ha eventi. Per una figura che si",
 "CLICCA si usa invece un'Etichetta col testo vuoto e l'icona, che",
-"l'evento Clic ce l'ha."
+"l'evento Clic ce l'ha.",
+"",
+"VISIBILE E ATTIVO",
+"",
+"Ogni controllo ha le proprieta' visibile e attivo, che valgono si",
+"finche' non ci si scrive no.",
+"  visibile no   il controllo c'e' ma non si vede e non si clicca;",
+"                nel programma: ex_set_visible(TextBox1, 0), e con",
+"                1 torna com'era.",
+"  attivo no     si vede, velato, con dentro quel che il programma",
+"                ci mette, ma chi usa il programma non lo preme e",
+"                non ci scrive: ex_set_enabled(TextBox1, 0).",
+"Sulla maschera uno spento ha righe verticali e uno nascosto una",
+"griglia: si vedono tutti e due, o non si potrebbero scegliere.",
+"ex_is_visible() e ex_is_enabled() dicono come sta adesso.",
+"",
+"SUL MOUSE",
+"",
+"Con la proprieta' sulmouse a si ogni controllo ha un secondo",
+"handler, <nome>_MouseOver(), chiamato quando il puntatore ci",
+"arriva sopra (una volta, non a ogni movimento). Da li':",
+"  ex_show_popup_pointer(\"un aiuto\", \"0\", \"0\", \"0\");",
+"mostra un riquadro accanto al puntatore. I tre colori - sfondo,",
+"scritta, bordo - sono \"rosso,verde,blu\" oppure \"0\" per quello",
+"di tutti (sfondo giallo sbiadito). Se ne va da solo quando il",
+"puntatore cambia controllo, a un clic, a un tasto.",
+"",
 "Si incolla sempre nella maschera che si sta disegnando: taglia,",
 "cambia maschera dall'elenco, incolla, ed e' li'. Il nome e l'id si",
 "rifanno (sono unici in tutto il progetto) e l'handler della copia",

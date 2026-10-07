@@ -95,7 +95,8 @@ chiesto.
 <tr><th>Sezione</th><th>Che cosa ci sta</th></tr>
 <tr><td><code>[kernel]</code></td>
     <td><code>loglevel</code>, <code>timer_hz</code>, <code>verboseboot</code>,
-        <code>keymap</code>, <code>lingua</code>, <code>swap</code></td></tr>
+        <code>keymap</code>, <code>lingua</code>, <code>swap</code>,
+        <code>atadma</code>, <code>smp</code></td></tr>
 <tr><td><code>[env]</code></td>
     <td>le variabili d'ambiente iniziali: <code>PATH</code>,
         <code>HOME</code>, <code>TERM</code></td></tr>
@@ -121,6 +122,56 @@ serve.
 <code>hwconfig</code> guarda la macchina e scrive <code>kernel.cfg</code> da
 solo, tenendo da parte una copia <code>.bak</code> di quello di prima:
 e' la via breve al posto di scriverlo a mano.
+</p>
+
+<h2 id="processori">Piu' di un processore</h2>
+
+<p>
+Dal kernel 0.237 EX-OS si accorge se la macchina ha piu' di un processore, o
+un processore a piu' nuclei. All'avvio li cerca nelle tabelle del BIOS &mdash;
+l'ACPI delle macchine dal 2000 in poi, la tabella MultiProcessor delle schede
+a due processori degli anni Novanta (doppio Pentium, doppio Pentium Pro)
+&mdash; sveglia quelli in piu' uno alla volta e, dalla 0.238, da' a ciascuno
+il suo timer e il modo di ricevere messaggi dagli altri.
+</p>
+
+<p class="nota">
+<b>Per ora lavora un processore solo.</b> Gli altri sono accesi e in attesa:
+non eseguono programmi, e la macchina non va piu' veloce per il fatto di
+averli. E' la base su cui si costruisce il passo dopo, quello in cui
+cominciano a lavorare.
+</p>
+
+<p>Che cosa ha trovato lo dice <code>hwinfo</code>:</p>
+
+<pre>     PROCESSORI
+      trovati          2
+      elenco da        tabella MultiProcessor 1.4
+      APIC locale      0xfee00000
+
+      cpu 0  APIC 0    IN USO   - e' quello su cui gira EX-OS
+      cpu 1  APIC 1    IN ATTESA - acceso, non esegue ancora processi
+                       timer     50 battiti in 50 centesimi di secondo: CAMMINA
+                       messaggi  RICEVE (ricevuti finora: 1)</pre>
+
+<table border="1">
+<tr><th>si legge</th><th>vuol dire</th></tr>
+<tr><td><code>IN USO</code></td><td>il processore da cui la macchina e' partita, e che fa tutto</td></tr>
+<tr><td><code>IN ATTESA</code></td><td>svegliato, ha risposto, ha il suo timer; non lavora ancora</td></tr>
+<tr><td><code>MUTO</code></td><td>il BIOS lo elenca ma non ha risposto: zoccolo vuoto, o processore guasto</td></tr>
+<tr><td><code>NON SVEGLIATO</code></td><td>elencato e lasciato stare: sotto c'e' scritto perche'</td></tr>
+</table>
+
+<p>
+Se su una scheda con piu' processori l'avvio si fermasse, in
+<code>/boot/kernel.cfg</code>, sezione <code>[kernel]</code>:
+</p>
+
+<pre>    smp = 0</pre>
+
+<p>
+e il kernel li conta senza svegliarli. Su una macchina con un processore solo
+niente di tutto questo succede, e la voce non fa differenza.
 </p>
 
 <h2>La memoria, e lo scambio</h2>

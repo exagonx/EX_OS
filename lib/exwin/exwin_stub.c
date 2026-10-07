@@ -175,6 +175,13 @@ static struct {
     int          (*imm_disponi)(ExWindow, const char *, int, int, int, int, int, unsigned int);
     const char  *(*versione)(void);
     void         (*abilita)(ExWindow, int);
+    void         (*visibile)(ExWindow, int);
+    int          (*e_visibile)(ExWindow);
+    void         (*attivo)(ExWindow, int);
+    int          (*e_attivo)(ExWindow);
+    void         (*avvisa_cambi)(ExWindow, int);
+    void         (*avviso)(const char *, const char *, const char *, const char *);
+    void         (*avviso_via)(void);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -377,6 +384,14 @@ static void assicura(void)
                         exlib_simbolo(t, "ex_draw_image_mode");
     P.versione        = (const char *(*)(void)) exlib_simbolo(t, "ex_version");
     P.abilita         = (void (*)(ExWindow, int)) exlib_simbolo(t, "ex_enable");
+    P.visibile        = (void (*)(ExWindow, int)) exlib_simbolo(t, "ex_set_visible");
+    P.e_visibile      = (int (*)(ExWindow)) exlib_simbolo(t, "ex_is_visible");
+    P.attivo          = (void (*)(ExWindow, int)) exlib_simbolo(t, "ex_set_enabled");
+    P.e_attivo        = (int (*)(ExWindow)) exlib_simbolo(t, "ex_is_enabled");
+    P.avvisa_cambi    = (void (*)(ExWindow, int)) exlib_simbolo(t, "ex_notify_changes");
+    P.avviso          = (void (*)(const char *, const char *, const char *, const char *))
+                        exlib_simbolo(t, "ex_show_popup_pointer");
+    P.avviso_via      = (void (*)(void)) exlib_simbolo(t, "ex_hide_popup_pointer");
 
     P.pronto = 1;
 }
@@ -659,6 +674,27 @@ void         ex_enable(ExWindow c, int si)
     assicura();
     if (P.abilita) P.abilita(c, si);
 }
+
+/* exwin.so 0.014. Over an older one the two switches fall back to ex_show and
+ * ex_enable, which do the same; the two questions answer «yes». */
+void ex_set_visible(ExWindow c, int si)
+{ assicura(); if (P.visibile) P.visibile(c, si); else ex_show(c, si); }
+int ex_is_visible(ExWindow c)
+{ assicura(); return P.e_visibile ? P.e_visibile(c) : 1; }
+void ex_set_enabled(ExWindow c, int si)
+{ assicura(); if (P.attivo) P.attivo(c, si); else ex_enable(c, si); }
+int ex_is_enabled(ExWindow c)
+{ assicura(); return P.e_attivo ? P.e_attivo(c) : 1; }
+
+/* exwin.so 0.015. Over an older one there is no EXM_CHANGED, no EXM_MOUSE_OVER
+ * and no box by the pointer: the program runs, those handlers never fire. */
+void ex_notify_changes(ExWindow f, int si)
+{ assicura(); if (P.avvisa_cambi) P.avvisa_cambi(f, si); }
+void ex_show_popup_pointer(const char *text, const char *background,
+                           const char *foreground, const char *border)
+{ assicura(); if (P.avviso) P.avviso(text, background, foreground, border); }
+void ex_hide_popup_pointer(void)
+{ assicura(); if (P.avviso_via) P.avviso_via(); }
 
 /* Over an older exwin.so: the image as it is, in the corner. */
 int          ex_draw_image_mode(ExWindow f, const char *percorso, int x, int y,

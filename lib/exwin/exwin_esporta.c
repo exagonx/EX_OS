@@ -187,6 +187,13 @@ static const char *const g_nomi[] = {
     "ex_menu_check",
     "ex_set_clip",
     "ex_pixmap_blend",
+    "ex_set_visible",                 /* 7 ottobre 2026, @EXWIN-VISIBILE */
+    "ex_is_visible",
+    "ex_set_enabled",
+    "ex_is_enabled",
+    "ex_notify_changes",              /* 7 ottobre 2026, @EXWIN-SULMOUSE */
+    "ex_show_popup_pointer",
+    "ex_hide_popup_pointer",
 
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio",
@@ -301,6 +308,13 @@ static const char *const g_nomi[] = {
     "ex_menu_spunta",
     "ex_ritaglio",
     "ex_pixmap_fuso",
+    "ex_visibile",
+    "ex_e_visibile",
+    "ex_attivo",
+    "ex_e_attivo",
+    "ex_avvisa_cambi",
+    "ex_riquadro_puntatore",
+    "ex_riquadro_puntatore_via",
 };
 
 static void *const g_indirizzi[] = {
@@ -432,6 +446,13 @@ static void *const g_indirizzi[] = {
     (void *)ex_menu_check,
     (void *)ex_set_clip,
     (void *)ex_pixmap_blend,
+    (void *)ex_set_visible,
+    (void *)ex_is_visible,
+    (void *)ex_set_enabled,
+    (void *)ex_is_enabled,
+    (void *)ex_notify_changes,
+    (void *)ex_show_popup_pointer,
+    (void *)ex_hide_popup_pointer,
 
     (void *)__libc_ponti_avvia,
 
@@ -544,6 +565,13 @@ static void *const g_indirizzi[] = {
     (void *)ex_menu_check,
     (void *)ex_set_clip,
     (void *)ex_pixmap_blend,
+    (void *)ex_set_visible,
+    (void *)ex_is_visible,
+    (void *)ex_set_enabled,
+    (void *)ex_is_enabled,
+    (void *)ex_notify_changes,
+    (void *)ex_show_popup_pointer,
+    (void *)ex_hide_popup_pointer,
 };
 
 /* Se qualcuno aggiunge un nome e dimentica l'indirizzo (o viceversa), la

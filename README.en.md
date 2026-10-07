@@ -84,6 +84,28 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### ExWin: every control can be hidden and switched off
+
+**tested in QEMU** (`tools/prova_exwin_stato.sh`: the project is compiled
+inside EX-OS and tried with the keyboard) — asked in correzioni.txt.
+`ex_set_visible(c, 0)` hides a control without destroying it;
+`ex_set_enabled(c, 0)` leaves it in place, dimmed, showing whatever the program
+puts in it, but the user cannot press it or type in it. They work on every
+kind of control; `ex_is_visible` and `ex_is_enabled` say how it stands. Before,
+a disabled control could be told apart only if it was a button, a checkbox or
+a radio. In exide they are two properties, `visibile` and `attivo`, and on the
+form they can be told at a glance. The EX-IDE manual explains them in Italian
+and in English.
+
+**Mouse over** (`tools/prova_exwin_sulmouse.sh`): with the `sulmouse` property
+a control gets one more handler, `<Name>_MouseOver()`, called when the pointer
+arrives over it; `ex_show_popup_pointer("text", "0", "0", "0")` shows a box by
+the pointer, with background, text and border colours written as
+`"255,255,255"` or `"0"` for the defaults. Trying it showed that in programs
+made with exide the `_Changed` and `_Enter` handlers of text boxes were never
+called: now they are (exwin.so 0.015, exide 0.024; open the project and save
+it once).
+
 ### More processors, stages 1 and 2 (kernel 0.237 and 0.238)
 
 **to be tested on hardware, tried in QEMU** (`tools/prova_smp.sh`: 1, 2 and 4

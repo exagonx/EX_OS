@@ -185,6 +185,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
+  1  @EXWIN-VISIBILE  FATTO il 7/10: ex_set_visible/ex_set_enabled, velo, proprieta' e manuale   !
+  1  @EXWIN-SULMOUSE  FATTO il 7/10: EXM_MOUSE_OVER, sulmouse, ex_show_popup_pointer; e Changed/Enter
   1  @USB             resta la prova su una chiavetta VERA: e' hardware, non lavoro
   1  @USB-DISCO       le chiavette si montano: archiviazione USB in ring 3, 4 passi
  --  @RADICE-RAM      il volume in RAM: avviarsi dove il lettore sta sull'USB

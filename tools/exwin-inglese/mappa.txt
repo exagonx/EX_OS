@@ -187,3 +187,10 @@ EX_COD_COMMENTO EX_CODE_COMMENT
 EX_COD_PREPROC EX_CODE_PREPROC
 EX_COD_FUNZIONE EX_CODE_FUNCTION
 EX_COD_SIMBOLO EX_CODE_SYMBOL
+ex_visibile ex_set_visible
+ex_e_visibile ex_is_visible
+ex_attivo ex_set_enabled
+ex_e_attivo ex_is_enabled
+ex_avvisa_cambi ex_notify_changes
+ex_riquadro_puntatore ex_show_popup_pointer
+ex_riquadro_puntatore_via ex_hide_popup_pointer

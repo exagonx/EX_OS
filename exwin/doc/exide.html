@@ -47,6 +47,10 @@ COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
 <li><a href="#file">I quattro file, e quale e' tuo</a></li>
 <li><a href="#finestre">Piu' di una finestra</a></li>
 <li><a href="#proprieta">Le proprieta'</a></li>
+<li><a href="#visibile">Visibile e attivo</a>
+  (<a href="#visible-en">in English</a>)</li>
+<li><a href="#sulmouse">Sul mouse, e il riquadro accanto al puntatore</a>
+  (<a href="#mouseover-en">in English</a>)</li>
 <li><a href="#strumenti">Gli strumenti, uno per uno</a>
   &mdash;
   <a href="#pulsante">Pulsante</a>,
@@ -231,6 +235,20 @@ Applica. Senza nessun controllo scelto &mdash; un clic sul vuoto della maschera
         <code>(non ne ha)</code>. Si sceglie da <b>Strumenti &gt; Icona del
         controllo...</b>, o si batte il percorso a mano. Vuota = nessuna.
         Vedi <a href="#icone">Le icone</a></td></tr>
+<tr><td><code>visibile</code></td>
+    <td><code>si</code> o <code>no</code>. Con <code>no</code> il controllo
+        nasce nascosto: nel codice generato esce
+        <code>ex_set_visible(&lt;nome&gt;, 0)</code>. Vedi
+        <a href="#visibile">Visibile e attivo</a></td></tr>
+<tr><td><code>attivo</code></td>
+    <td><code>si</code> o <code>no</code>. Con <code>no</code> il controllo
+        nasce spento, cioe' in sola lettura per chi usa il programma: esce
+        <code>ex_set_enabled(&lt;nome&gt;, 0)</code></td></tr>
+<tr><td><code>sulmouse</code></td>
+    <td><code>si</code> o <code>no</code> (predefinito). Con <code>si</code> il
+        controllo ha un secondo handler, <code>&lt;nome&gt;_MouseOver()</code>,
+        chiamato quando il puntatore gli arriva sopra. Vedi
+        <a href="#sulmouse">Sul mouse</a></td></tr>
 </table>
 
 <h3>Della finestra</h3>
@@ -660,7 +678,15 @@ chiamata la ridisegna e basta.
 
 <table border="1">
 <tr><th>funzione</th><th>cosa fa</th></tr>
-<tr><td><code>ex_show(h, 0/1)</code></td><td>nascondi o mostra un controllo</td></tr>
+<tr><td><code>ex_set_visible(h, 0/1)</code></td><td>nascondi o mostra un controllo
+    (<a href="#visibile">Visibile e attivo</a>)</td></tr>
+<tr><td><code>ex_set_enabled(h, 0/1)</code></td><td>spegni o riaccendi un controllo:
+    spento si vede ma non si usa</td></tr>
+<tr><td><code>ex_is_visible(h)</code>, <code>ex_is_enabled(h)</code></td>
+    <td>1 o 0: come sta adesso</td></tr>
+<tr><td><code>ex_show_popup_pointer(testo, sfondo, scritta, bordo)</code></td>
+    <td>un riquadro col testo accanto al puntatore
+    (<a href="#sulmouse">Sul mouse</a>); <code>ex_hide_popup_pointer()</code> lo toglie</td></tr>
 <tr><td><code>ex_set_focus(h)</code></td><td>portagli il cursore della tastiera</td></tr>
 <tr><td><code>ex_move(h, x, y)</code></td><td>spostalo a programma acceso</td></tr>
 <tr><td><code>ex_resize(h, w, h)</code></td><td>cambiagli la misura</td></tr>
@@ -675,6 +701,243 @@ il controllo E'; i pixel si rifanno con l'ultima riga. E' il motivo per cui
 quasi tutti gli <a href="#esempi">esempi</a> finiscono cosi'.
 </p>
 </div>
+
+<h2 id="visibile">Visibile e attivo</h2>
+
+<p>
+Ogni controllo, di qualunque tipo, ha due interruttori. Nascono tutti e due
+accesi.
+</p>
+
+<table border="1">
+<tr><th></th><th>che cosa succede</th><th>dal codice</th><th>in exide</th></tr>
+<tr><td><b>visibile</b></td>
+    <td>Con 0 il controllo sparisce dalla finestra <b>senza essere
+        distrutto</b>: non si disegna, non riceve clic, il tasto Tab lo salta.
+        Il testo, le righe, la scelta che aveva restano; con 1 torna dov'era
+        e com'era</td>
+    <td><code>ex_set_visible(TextBox1, 0);</code><br>
+        <code>ex_set_visible(TextBox1, 1);</code><br>
+        <code>if (ex_is_visible(TextBox1)) ...</code></td>
+    <td>proprieta' <code>visibile</code>: <code>si</code> / <code>no</code></td></tr>
+<tr><td><b>attivo</b></td>
+    <td>Con 0 il controllo resta al suo posto, <b>velato</b>, e mostra quel
+        che il programma ci mette &mdash; ma chi usa il programma non lo
+        preme, non ci scrive, non gli da' il cursore. E' la sola lettura vista
+        dall'utente: il programma continua a cambiarlo con
+        <code>ex_set_text()</code> e le altre. Con 1 torna a rispondere</td>
+    <td><code>ex_set_enabled(TextBox1, 0);</code><br>
+        <code>ex_set_enabled(TextBox1, 1);</code><br>
+        <code>if (ex_is_enabled(TextBox1)) ...</code></td>
+    <td>proprieta' <code>attivo</code>: <code>si</code> / <code>no</code></td></tr>
+</table>
+
+<p>Un esempio: una casella che si puo' scrivere solo dopo aver messo la spunta,
+e un pulsante che compare solo quando c'e' qualcosa da inviare.</p>
+
+<pre>
+    void CheckBox1_Changed(void)
+    {
+        ex_set_enabled(TextBox1, ex_is_checked(CheckBox1));
+    }
+
+    void TextBox1_Changed(void)
+    {
+        ex_set_visible(Button1, ex_get_text(TextBox1)[0] != '\0');
+    }
+</pre>
+
+<div class="nota">
+<p>
+<b>Non serve ridisegnare.</b> Quando l'handler torna la finestra si ridisegna
+da se', come dopo <code>ex_set_text()</code>. Solo chi chiama queste funzioni
+fuori da un handler aggiunge
+<code>ex_default_proc(g_form, EXM_PAINT, 0, 0)</code>.
+</p>
+<p>
+<b>Sulla maschera di exide</b> un controllo con <code>attivo no</code> ha righe
+verticali, uno con <code>visibile no</code> una griglia. Si vedono tutti e
+due: un controllo che sparisse dal disegno non si potrebbe piu' scegliere per
+farlo tornare.
+</p>
+<p>
+<code>ex_show()</code> ed <code>ex_enable()</code>, che c'erano gia', sono gli
+stessi due interruttori sotto il nome di prima, e funzionano ancora. Con una
+<code>exwin.so</code> piu' vecchia della 0.014 un controllo spento non e'
+velato (tranne pulsante, checkbox e radio, che ingrigiscono la scritta).
+</p>
+</div>
+
+<h3 id="visible-en">In English: visible and enabled</h3>
+
+<p>
+Every control, of any kind, has two switches. Both start on.
+</p>
+
+<table border="1">
+<tr><th></th><th>what happens</th><th>from code</th><th>in exide</th></tr>
+<tr><td><b>visible</b></td>
+    <td>With 0 the control disappears from the window <b>without being
+        destroyed</b>: it is not drawn, gets no clicks, the Tab key skips it.
+        Its text, rows and selection stay; with 1 it comes back where and as
+        it was</td>
+    <td><code>ex_set_visible(TextBox1, 0);</code><br>
+        <code>ex_set_visible(TextBox1, 1);</code><br>
+        <code>if (ex_is_visible(TextBox1)) ...</code></td>
+    <td>property <code>visibile</code>: <code>si</code> / <code>no</code>
+        (<code>yes</code>, <code>true</code>, <code>1</code>, <code>false</code>,
+        <code>0</code> are accepted too)</td></tr>
+<tr><td><b>enabled</b></td>
+    <td>With 0 the control stays in place, <b>dimmed</b>, and shows whatever
+        the program puts in it &mdash; but the user cannot press it, type in
+        it or give it the keyboard focus. It is read-only as the user sees it:
+        the program still changes it with <code>ex_set_text()</code> and the
+        others. With 1 it answers again</td>
+    <td><code>ex_set_enabled(TextBox1, 0);</code><br>
+        <code>ex_set_enabled(TextBox1, 1);</code><br>
+        <code>if (ex_is_enabled(TextBox1)) ...</code></td>
+    <td>property <code>attivo</code>: <code>si</code> / <code>no</code></td></tr>
+</table>
+
+<p>
+No redraw is needed: when the handler returns the window draws itself again,
+as after <code>ex_set_text()</code>. On the exide form a control with
+<code>attivo no</code> shows vertical lines and one with
+<code>visibile no</code> a grid; both stay visible there, or they could not be
+selected again. <code>ex_show()</code> and <code>ex_enable()</code> are the
+same two switches under their older names and still work.
+</p>
+
+<h2 id="sulmouse">Sul mouse, e il riquadro accanto al puntatore</h2>
+
+<p>
+Ogni controllo puo' accorgersi che il puntatore gli e' arrivato sopra. Si
+mette a <code>si</code> la proprieta' <code>sulmouse</code>, si salva, e in
+<code>finestra.c</code> compare un handler in piu', accanto a quello
+dell'evento:
+</p>
+
+<pre>
+    /* TextBox1: MouseOver */
+    void TextBox1_MouseOver(void)
+    {
+        ex_show_popup_pointer("Scrivi qui il tuo nome", "0", "0", "0");
+    }
+</pre>
+
+<p>
+Viene chiamato <b>una volta, quando il puntatore arriva</b> sul controllo, non
+a ogni movimento. Dentro si fa quel che si vuole: cambiare un testo, accendere
+o spegnere un altro controllo (<a href="#visibile">visibile e attivo</a>),
+mostrare un aiuto.
+</p>
+
+<h3>ex_show_popup_pointer(testo, sfondo, scritta, bordo)</h3>
+
+<p>
+Mostra un riquadro col testo <b>accanto al puntatore</b>. I quattro argomenti
+sono stringhe:
+</p>
+
+<table border="1">
+<tr><th>argomento</th><th>che cos'e'</th><th>con <code>"0"</code></th></tr>
+<tr><td><code>testo</code></td>
+    <td>quel che si legge nel riquadro. Puo' andare a capo con
+        <code>\n</code>, fino a quattro righe</td><td>&mdash;</td></tr>
+<tr><td><code>sfondo</code></td>
+    <td>il colore del riquadro, <code>"rosso,verde,blu"</code> da 0 a 255: per
+        esempio <code>"255,255,255"</code> e' bianco</td>
+    <td>un giallo sbiadito, quasi beige, che non si confonde col bianco di una
+        casella</td></tr>
+<tr><td><code>scritta</code></td>
+    <td>il colore del testo, scritto allo stesso modo</td><td>nero</td></tr>
+<tr><td><code>bordo</code></td>
+    <td>il colore del filetto intorno</td><td>grigio scuro</td></tr>
+</table>
+
+<pre>
+    ex_show_popup_pointer("Attenzione:\nnon si torna indietro",
+                          "255,220,220", "128,0,0", "128,0,0");
+</pre>
+
+<div class="nota">
+<p>
+<b>Dove compare.</b> Sotto a destra del puntatore; se li' non ci sta si apre
+dalla parte opposta &mdash; a sinistra vicino al margine destro, sopra vicino
+al fondo. Sta dentro la finestra del programma.
+</p>
+<p>
+<b>Se ne va da solo</b> quando il puntatore passa a un altro controllo o esce
+dalla finestra, a un clic, a un tasto. Per toglierlo prima:
+<code>ex_hide_popup_pointer()</code>.
+</p>
+<p>
+<b>Sui controlli spenti non scatta</b>: un controllo con <code>attivo no</code>
+per il puntatore non c'e'. E serve <code>exwin.so</code> 0.015 o piu' nuova:
+con una piu' vecchia il programma gira, ma questi handler non vengono mai
+chiamati.
+</p>
+</div>
+
+<p>
+Il Pulsante e l'Etichetta hanno <code>MouseOver</code> anche nell'elenco
+dell'<code>evento</code>: scelto li', e' l'unico handler del controllo. Con
+<code>sulmouse</code> si hanno tutti e due, il clic e il passaggio.
+</p>
+
+<div class="nota">
+<p>
+<b>Cambiato dalla 0.024 di exide.</b> Prima un handler <code>_MouseOver</code>
+veniva chiamato al clic, e <code>_Changed</code> ed <code>_Enter</code> di una
+Casella testo (e <code>_Changed</code> di un'Area) non venivano chiamati mai.
+Adesso ognuno arriva quando dice il suo nome; basta riaprire il progetto e
+salvarlo, e <code>finestra_gen.c</code> si rifa'.
+</p>
+</div>
+
+<h3 id="mouseover-en">In English: mouse over, and the box by the pointer</h3>
+
+<p>
+Every control can notice the pointer arriving over it. Set its
+<code>sulmouse</code> property to <code>si</code>, save, and
+<code>finestra.c</code> gains one more handler,
+<code>&lt;Name&gt;_MouseOver()</code>, next to the one of its event. It is
+called <b>once, when the pointer arrives</b> on the control, not at every
+movement.
+</p>
+
+<p>
+<code>ex_show_popup_pointer(text, background, foreground, border)</code> shows
+a box with <code>text</code> <b>next to the pointer</b>. All four arguments
+are strings. <code>text</code> may hold up to four lines separated by
+<code>\n</code>. Each colour is <code>"red,green,blue"</code>, 0 to 255
+(<code>"255,255,255"</code> is white); <code>"0"</code> means the default: a
+pale, almost beige yellow background that cannot be mistaken for the white of
+a text box, black text, a dark grey border.
+</p>
+
+<pre>
+    void TextBox1_MouseOver(void)
+    {
+        ex_show_popup_pointer("this is a message inside a rectangle", "0", "0", "0");
+    }
+</pre>
+
+<p>
+The box opens below and to the right of the pointer, and on the opposite side
+when it would not fit there. It stays inside the program's window. It goes
+away by itself when the pointer moves to another control or leaves the
+window, at a click, at a key; <code>ex_hide_popup_pointer()</code> removes it
+at once. A disabled control does not fire it. It needs <code>exwin.so</code>
+0.015 or newer.
+</p>
+
+<p>
+Since exide 0.024 every handler is called when its name says: before, a
+<code>_MouseOver</code> handler fired on a click, and <code>_Changed</code>
+and <code>_Enter</code> of a text box never fired. Open the project and save
+it once to regenerate <code>finestra_gen.c</code>.
+</p>
 
 <h2 id="menu">Il menu</h2>
 

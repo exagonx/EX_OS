@@ -203,6 +203,32 @@ int main(void)
 <code>exwin.bi</code> per FreeBASIC e <code>exwin.hpp</code> per il C++.
 </p>
 
+<p>
+Ogni controllo si puo' <b>nascondere</b> senza distruggerlo e <b>spegnere</b>
+senza nasconderlo (exwin.so 0.014): <code>ex_set_visible(c, 0)</code> lo toglie
+dalla finestra finche' non si richiama con 1; <code>ex_set_enabled(c, 0)</code>
+lo lascia al suo posto, velato, con dentro quel che il programma ci mette, ma
+chi usa il programma non lo preme e non ci scrive. <code>ex_is_visible</code>
+ed <code>ex_is_enabled</code> dicono come sta. La spiegazione per esteso, in
+italiano e in inglese, e' nel manuale di
+<a href="exide.html#visibile">EX-IDE</a>, dove sono anche due proprieta'.
+</p>
+
+<p>
+Una finestra che ha chiesto i movimenti del puntatore
+(<code>ex_track_mouse_hover(f, 1)</code>) riceve <code>EXM_MOUSE_OVER</code>
+quando il puntatore <b>arriva su un controllo</b>: una volta, con l'id in
+<code>wp</code> e il controllo in <code>lp</code>. E' il posto da cui chiamare
+<code>ex_show_popup_pointer(testo, sfondo, scritta, bordo)</code>, che mostra
+un riquadro accanto al puntatore (colori <code>"r,g,b"</code>, o
+<code>"0"</code> per quelli di tutti). Chi vuole sapere quando l'utente cambia
+il testo di una casella o di un'area chiede
+<code>ex_notify_changes(f, 1)</code> e riceve <code>EXM_CHANGED</code>. Sono
+di exwin.so 0.015; in EX-IDE sono la proprieta' <code>sulmouse</code> e gli
+eventi <code>Changed</code> ed <code>Enter</code>
+(<a href="exide.html#sulmouse">manuale</a>).
+</p>
+
 <p class="nota">
 <b>La barra dei menu non restringe l'area del client.</b> Il toolkit la mette
 in cima e larga quanto la finestra, ma il posto glielo deve lasciare chi
