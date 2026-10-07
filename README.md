@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.235
+**Versione:** 0.236
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -149,12 +149,25 @@ riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
 `tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
 in corso.
 
-### Kernel 0.228–0.235: quello che Firefox ha trovato
+### Kernel 0.228–0.236: quello che Firefox ha trovato
 
 **testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
+- **0.236**: la memoria anonima (`mmap`, `sbrk`) si da' al primo accesso e non
+  alla richiesta: Firefox scende da 405 a 300 MB. Due corse fra i fili di uno
+  stesso programma, che a Firefox facevano sparire uno stack una volta ogni
+  qualche avvio: la tabella delle pagine nuova si installa a interrupt spenti,
+  e due fili creati nello stesso momento non ricevono piu' lo stesso posto.
+  Nella libc `time()` e `clock_gettime()` leggono l'orologio CMOS una volta e
+  poi contano dal timer (Firefox chiede l'ora 1,7 milioni di volte in un
+  quarto d'ora: erano 209 secondi di accessi alle porte).
+  **I tempi veri di Firefox**, misurati dal suo avvio e non dall'accensione
+  della macchina (QEMU con KVM, 2 GB): finestra dopo 4 secondi, pagina
+  iniziale dopo 8, una pagina locale 0,1 secondi dopo Invio. I «65 secondi»
+  scritti qui sotto contavano anche l'avvio di EX-OS.
 - **0.235**: ext2 legge e scrive i blocchi contigui di un file in un comando
   solo, e la cache dei settori (da 64 KB a 1 MB) tiene i metadati invece dei
-  dati: Firefox apre la finestra in 65 secondi invece di 75 in QEMU.
+  dati: la finestra di Firefox arriva 10 secondi prima (a 65 secondi
+  dall'accensione invece di 75, in QEMU).
 - **0.234**: `mmap` con `MAP_FIXED` sopra pagine gia' mappate le libera
   prima (restavano perse): serve al JIT di JavaScript di Firefox.
 - **0.233**: `ftruncate` su un file aperto e 256 file aperti nel sistema

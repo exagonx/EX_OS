@@ -1,6 +1,6 @@
 --- a/ipc/chromium/src/third_party/libevent/exos/event2/event-config.h
 +++ b/ipc/chromium/src/third_party/libevent/exos/event2/event-config.h
-@@ -0,0 +1,590 @@
+@@ -0,0 +1,586 @@
 +/* EX-OS (Exilla): generated from linux/event2/event-config.h by the Exilla
 +   port (tools/exilla): no epoll, eventfd, timerfd, sendfile, splice; i386
 +   sizes with a 64-bit time_t. The poll and select backends do the work. */
@@ -35,18 +35,14 @@
 +/* Define to 1 if you have the <afunix.h> header file. */
 +/* #undef EVENT__HAVE_AFUNIX_H 1 */
 +
-+#ifdef HAVE_ARC4RANDOM
 +/* Define to 1 if you have the `arc4random' function. */
-+/* #undef EVENT__HAVE_ARC4RANDOM */  /* EX-OS non ce l'ha */
-+#endif
++#define EVENT__HAVE_ARC4RANDOM 1  /* nella libc dal 1 ottobre 2026 */
 +
 +/* Define to 1 if you have the `arc4random_addrandom' function. */
 +/* #undef EVENT__HAVE_ARC4RANDOM_ADDRANDOM */
 +
-+#ifdef HAVE_ARC4RANDOM_BUF
 +/* Define to 1 if you have the `arc4random_buf' function. */
-+/* #undef EVENT__HAVE_ARC4RANDOM_BUF */  /* EX-OS non ce l'ha */
-+#endif
++#define EVENT__HAVE_ARC4RANDOM_BUF 1
 +
 +/* Define to 1 if you have the <arpa/inet.h> header file. */
 +#define EVENT__HAVE_ARPA_INET_H 1

@@ -1,0 +1,14 @@
+--- a/widget/exos/ExosPosta.h
++++ b/widget/exos/ExosPosta.h
+@@ -34,6 +34,11 @@
+ // A request to the server. 0 or a negative errno.
+ int Manda(uint32_t aTipo, const void* aDati, uint32_t aLen);
+ 
++// The machine's uptime, in ms, when this process began.
++uint32_t Nato();
++// The machine's uptime now, in ms.
++uint32_t Ora();
++
+ // Wake the main thread up. From any thread; cheap when already pending.
+ void Sveglia();
+ 

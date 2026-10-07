@@ -1,0 +1,62 @@
+--- a/widget/exos/ExosPosta.cpp
++++ b/widget/exos/ExosPosta.cpp
+@@ -5,6 +5,7 @@
+ #include "ExosPosta.h"
+ 
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ 
+@@ -16,6 +17,10 @@
+ namespace mozilla::widget::exos {
+ 
+ // The wake-up letter. Any type the server does not use; 'EX'.
++static const uint32_t sNato = (uint32_t)uptime_ms();
++uint32_t Nato() { return sNato; }
++uint32_t Ora() { return (uint32_t)uptime_ms(); }
++
+ static const uint32_t kSveglia = 0x45580001u;
+ // ipc_send without waiting (kernel/include/ipc.h): if the mailbox is full,
+ // the main thread has mail anyway and will look at the flag.
+@@ -110,7 +115,20 @@
+   return aMeta->tipo == WIN_MSG_CREATA ? IPC_MIO : IPC_ALTRUI;
+ }
+ 
++static bool RiceviUno(bool aAspetta);
++
++// The mailbox holds four messages: empty it while there is mail, so the
++// server finds room for the next event.
+ bool Ricevi(bool aAspetta) {
++  if (!RiceviUno(aAspetta)) {
++    return false;
++  }
++  for (int i = 0; i < 16 && RiceviUno(false); i++) {
++  }
++  return true;
++}
++
++static bool RiceviUno(bool aAspetta) {
+   IpcMessage meta;
+   // On the stack, like the libc's own: 1.5 KB.
+   unsigned char buf[IPC_MSG_MAX_DATA];
+@@ -118,8 +136,18 @@
+   if (!sPrincipale) {
+     sPrincipale = (uint32_t)getpid();
+   }
++  // Never sleep for good: a wake-up letter can be swallowed by libc code that
++  // waits for its own reply on this thread, and the flag would then stay set
++  // with nobody sending another. PrendiSveglia() is looked at after this.
+   if (ipc_scegli(Tutto, nullptr, &meta, buf, sizeof(buf),
+-                 aAspetta ? 0u : IPC_SUBITO) < 0) {
++                 aAspetta ? 250u : IPC_SUBITO) < 0) {
++    if (aAspetta && sSvegliaChiesta) {
++      static int sDette = 0;
++      if (sDette < 5 && getenv("EXILLA_DIAG")) {
++        sDette++;
++        fprintf(stderr, "exilla: wake-up letter lost, flag still set\n");
++      }
++    }
+     return false;
+   }
+ 

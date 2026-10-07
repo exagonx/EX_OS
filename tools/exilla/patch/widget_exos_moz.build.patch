@@ -1,12 +1,12 @@
 --- a/widget/exos/moz.build
 +++ b/widget/exos/moz.build
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,42 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this
 +# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 +
-+# EX-OS (Exilla): the widget toolkit. For now every window is a
-+# HeadlessWidget (see nsWindow.cpp).
++# EX-OS (Exilla): the widget toolkit. Windows are windows of the ExWin server
++# (nsWindow.cpp); with --headless, HeadlessWidget as everywhere.
 +
 +with Files("**"):
 +    BUG_COMPONENT = ("Core", "Widget")
@@ -16,6 +16,7 @@
 +]
 +
 +UNIFIED_SOURCES += [
++    "ExosPosta.cpp",
 +    "GfxInfo.cpp",
 +    "MediaKeysEventSourceFactory.cpp",
 +    "nsAppShell.cpp",

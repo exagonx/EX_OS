@@ -42,6 +42,29 @@ typedef uint32_t PTE;
 #define PTE_E_RISERVA(pte)  (((pte) & (PG_PRESENT | (1u << 9) | PG_RISERVA)) == PG_RISERVA)
 
 /* =============================================================================
+ * PG_PIGRA — una pagina PROMESSA: arriva al primo accesso (kernel 0.236)
+ *
+ * Una PTE non presente con il bit 11, l'ultimo dei tre lasciati al sistema, e
+ * dentro i permessi che la pagina avra' (PG_USER, PG_WRITABLE). La mettono
+ * mmap anonima e sbrk: lo spazio e' del processo e ci puo' scrivere, ma la
+ * pagina fisica — azzerata — si alloca solo quando qualcuno la tocca davvero
+ * (pf_pagina_pigra, dal gestore dei page fault).
+ *
+ * ! PRIMA OGNI mmap ALLOCAVA E AZZERAVA TUTTO SUBITO. Misurato con Firefox il
+ * 7 ottobre 2026: un solo processo, 65 MB di programma e 329 MB di heap. Un
+ * allocatore moderno chiede la memoria a blocchi grandi e ne usa una parte;
+ * il motore JavaScript riserva decine di megabyte «per dopo». Pagarli tutti
+ * alla richiesta voleva dire memoria occupata da zeri che nessuno legge,
+ * tempo speso ad azzerarli, e — quando una richiesta era piu' grande della
+ * RAM libera — lo swap, o un programma che muore.
+ *
+ * La differenza con PG_RISERVA: quella e' PROT_NONE, chi la tocca muore;
+ * questa e' memoria del processo a tutti gli effetti, solo non ancora data.
+ * ========================================================================== */
+#define PG_PIGRA        (1u << 11)
+#define PTE_E_PIGRA(pte)    (((pte) & (PG_PRESENT | (1u << 9) | PG_RISERVA | PG_PIGRA)) == PG_PIGRA)
+
+/* =============================================================================
  * FINESTRA DI RIMAPPATURA FISICA
  *
  * Una pagina virtuale sola, dentro la fascia mappata in OGNI page
@@ -81,6 +104,9 @@ int      paging_map_page(PDE *pd, uint32_t virt, uint32_t phys, uint32_t flags);
 void     paging_unmap_page(PDE *pd, uint32_t virt);
 uint32_t paging_get_physical(PDE *pd, uint32_t virt);
 int      paging_riserva(PDE *pd, uint32_t virt);
+/* Promette la pagina `virt` con quei permessi (PG_USER, PG_WRITABLE): vedi
+ * PG_PIGRA. Rende 0, o -1 se manca la memoria per la tabella. */
+int  paging_pigra(PDE *pd, uint32_t virt, uint32_t flags);
 PDE     *paging_create_directory(void);
 void     paging_destroy_directory(PDE *pd);
 
@@ -113,5 +139,9 @@ int      paging_proteggi(struct Process *p, uint32_t virt, uint32_t pagine,
 /* 1 if the kernel may write [va, va+len) for process p: present (brought in
  * if it has to be), user and writable. For the signal frame. See paging.c. */
 int      paging_utente_pronta(struct Process *p, uint32_t va, uint32_t len);
+/* Da' subito la pagina promessa a `virt` del processo p, se e' una pigra
+ * (PG_PIGRA): rende 1 se adesso c'e', 0 se non era una pigra o la memoria e'
+ * finita. */
+int      paging_pigra_tocca(struct Process *p, uint32_t virt);
 
 #endif /* PAGING_H */

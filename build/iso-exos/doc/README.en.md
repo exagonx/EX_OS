@@ -84,6 +84,16 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### exide: miniatures, pointer, non-modal code; and tiscali.it opens
+
+**to be tested on hardware, tested in QEMU** — in exide the tools panel shows
+a miniature of each control and a sentence describing it; after a control is
+placed the mouse goes back to the pointer; a double click puts the cursor
+inside the function; the source window is no longer modal. `make netinst`
+now publishes up-to-date development headers (after `netupdate` exide
+generated code that did not compile). EXBrowser opens sites that in TLS 1.2
+only have RSA with AES-CBC, such as www.tiscali.it.
+
 ### Four games: EXKlondike, EXSpider, EXMajong, EXGO
 
 **to be tested on hardware, tested in QEMU** — in Start > Giochi: the classic

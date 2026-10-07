@@ -1,47 +1,73 @@
 --- a/widget/exos/nsAppShell.cpp
 +++ b/widget/exos/nsAppShell.cpp
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,70 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
 +#include "nsAppShell.h"
 +
-+nsAppShell::nsAppShell() : mPending(false) {
-+  pthread_mutex_init(&mLock, nullptr);
-+  pthread_cond_init(&mWake, nullptr);
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++#include "ExosPosta.h"
++#include "HeadlessScreenHelper.h"
++#include "gfxPlatform.h"
++#include "mozilla/widget/Screen.h"
++#include "mozilla/widget/ScreenManager.h"
++
++using namespace mozilla;
++using namespace mozilla::widget;
++
++namespace {
++
++class ExosScreenHelper final : public ScreenManager::Helper {
++ public:
++  ExosScreenHelper() {
++    VideoInfo v;
++    if (video_info(&v) != 0 || !v.larghezza || !v.altezza) {
++      v.larghezza = 1024;
++      v.altezza = 768;
++    }
++    LayoutDeviceIntRect rect(0, 0, (int32_t)v.larghezza, (int32_t)v.altezza);
++    AutoTArray<RefPtr<Screen>, 1> screens;
++    screens.AppendElement(MakeRefPtr<Screen>(
++        rect, rect, 24, 24, 0, DesktopToLayoutDeviceScale(),
++        CSSToLayoutDeviceScale(), 96.0f, Screen::IsPseudoDisplay::No,
++        Screen::IsHDR::No, 80.0f, 1000.0f));
++    ScreenManager::Refresh(std::move(screens));
++  }
++};
++
++}  // namespace
++
++nsresult nsAppShell::Init() {
++  if (getenv("EXILLA_DIAG")) {
++    fprintf(stderr, "exilla: appshell init (pid %d, born at %u ms, now %u ms)\n",
++            (int)getpid(), (unsigned)exos::Nato(), (unsigned)exos::Ora());
++  }
++  exos::PrendiSveglia();
++  ScreenManager& screenManager = ScreenManager::GetSingleton();
++  if (gfxPlatform::IsHeadless()) {
++    screenManager.SetHelper(MakeUnique<HeadlessScreenHelper>());
++  } else {
++    screenManager.SetHelper(MakeUnique<ExosScreenHelper>());
++  }
++  return nsBaseAppShell::Init();
 +}
 +
-+nsAppShell::~nsAppShell() {
-+  pthread_cond_destroy(&mWake);
-+  pthread_mutex_destroy(&mLock);
-+}
++void nsAppShell::ScheduleNativeEventCallback() { exos::Sveglia(); }
 +
-+nsresult nsAppShell::Init() { return nsBaseAppShell::Init(); }
-+
-+// Called from any thread: wake the main thread up.
-+void nsAppShell::ScheduleNativeEventCallback() {
-+  pthread_mutex_lock(&mLock);
-+  mPending = true;
-+  pthread_cond_signal(&mWake);
-+  pthread_mutex_unlock(&mLock);
-+}
-+
-+// Called on the main thread. With aMayWait it sleeps until someone schedules
-+// a callback; the only native event there is, for now, is that one.
 +bool nsAppShell::ProcessNextNativeEvent(bool aMayWait) {
-+  bool run;
-+
-+  pthread_mutex_lock(&mLock);
-+  while (aMayWait && !mPending) {
-+    pthread_cond_wait(&mWake, &mLock);
-+  }
-+  run = mPending;
-+  mPending = false;
-+  pthread_mutex_unlock(&mLock);
-+
-+  if (run) {
++  if (exos::PrendiSveglia()) {
 +    NativeEventCallback();
++    return true;
 +  }
-+  return run;
++  bool fatto = exos::Ricevi(aMayWait);
++  if (exos::PrendiSveglia()) {
++    NativeEventCallback();
++    fatto = true;
++  }
++  return fatto;
 +}

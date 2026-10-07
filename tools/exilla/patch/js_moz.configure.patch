@@ -21,14 +21,14 @@
  
 -@depends("--enable-simulator", target)
 -def wasm_has_heapreg(simulator, target):
-+@depends("--enable-simulator", jit_codegen, target)
-+def wasm_has_heapreg(simulator, codegen, target):
++@depends("--enable-jit", "--enable-simulator", target)
++def wasm_has_heapreg(jit_enabled, simulator, target):
      if target.cpu != "x86":
          return True
  
-+    # Without a JIT (the "none" backend, e.g. EX-OS) there is a HeapReg
-+    # placeholder, and the x86-only paths that work without one don't apply.
-+    if codegen.none:
++    # Without a JIT (the "none" backend) there is a HeapReg placeholder, and
++    # the x86-only paths that work without one don't apply.
++    if not jit_enabled:
 +        return True
 +
      if simulator and simulator[0] == "arm":

@@ -443,10 +443,49 @@ server restava fermo con tutto lo schermo. Ora ogni evento parte senza
 attesa e, a casella piena, aspetta in una coda della finestra (i movimenti si
 accorpano). E Firefox legge fino a sedici messaggi per volta.
 
-! **E' LENTO**: in QEMU Firefox impiega piu' di venti secondi a reagire a una
-pagina scritta nella barra; la prova aspetta un minuto. Restano: i menu
+! ~~E' LENTO~~ (non lo era: vedi il 7 ottobre qui sotto). Restano: i menu
 (popup), il ridimensionamento, gli errori di SQLite sul profilo («unable to
 open database file»); il cursore ha una forma sola.
+
+**7 ottobre 2026, kernel 0.236: quel «lento» era una lettura sbagliata.** Il
+diario del widget scrive i millisecondi DALL'ACCENSIONE della macchina, e
+«titolo (61480 ms)» e' stato letto come «un minuto per aprirsi»: 57 di quei
+secondi erano l'avvio di EX-OS e le attese della prova. Misurato dal kernel
+(il tick della `spawn` di Firefox, il tasto Invio alla porta 0x60) e ora
+scritto dalla prova stessa, in QEMU con KVM e 2 GB:
+
+| | |
+|---|---|
+| dalla nascita del processo alla prima finestra | 4,4 s |
+| alla pagina iniziale col suo titolo | 8,4 s |
+| da Invio al titolo della pagina nuova (`file://`) | 0,13 s |
+
+Il widget ora scrive `born at` (l'ora di nascita del processo) e
+`prova-finestra.sh` fa la sottrazione e stampa «i tempi di Firefox».
+
+Quello che la caccia ha trovato davvero:
+
+1. **la memoria anonima si da' al primo accesso** (`PG_PIGRA`): `mmap` e
+   `sbrk` allocavano e azzeravano tutto subito, e Firefox, che e' un processo
+   solo, teneva 405 MB di cui 329 di heap in gran parte mai toccato. Ora 300;
+2. **uno stack che spariva, una volta ogni qualche avvio** («pagina assente»
+   in cima alla piazzola di un filo, voce della tabella a zero). Due corse:
+   `paging_map_page` vedeva «la tabella non c'e'», la allocava e la
+   installava senza ricontrollare — se in mezzo un altro filo aveva messo la
+   sua, con dentro le sue pagine, veniva coperta; e `sys_thread_crea` stava
+   fuori dal lucchetto dello spazio di indirizzamento, quindi due fili creati
+   insieme potevano ricevere la stessa piazzola. La riga `pde/pte/esp` nel
+   rapporto del fault e' rimasta: e' quella che l'ha fatto vedere;
+3. **l'ora**: `time()` e `clock_gettime(CLOCK_REALTIME)` leggevano il CMOS a
+   ogni chiamata, e Firefox chiede l'ora 1,7 milioni di volte in un quarto
+   d'ora (209 secondi dentro `SYS_TIME`). Ora il CMOS si legge una volta e si
+   conta dal timer; secondi e millisecondi vengono dallo stesso orologio.
+
+! **UNA MODIFICA ALLA libc ARRIVA A FIREFOX SOLO RICOLLEGANDOLO**: si collega
+alla `libc.a` della toolchain. `tools/gcc-exos/prepara-cross.sh
+"$PWD/cross_build/<macchina>/exos-cross"`, poi `touch
+firefox-main/browser/app/nsBrowserApp.cpp` e `tools/exilla/gecko-costruisci.sh
+build binaries` (cinque minuti).
 
 ## 1. L'albero
 

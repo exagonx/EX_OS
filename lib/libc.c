@@ -7867,9 +7867,16 @@ int time_now(RtcTime *t)
 
 /* Rimette l'orologio. Come time_now, rende 0 o un -errno: e' una chiamata
  * di EX-OS, non di POSIX — vedi la nota sui ritorni in cima a questo file. */
+static int g_tod_pronto;    /* vedi tod_adesso(), piu' sotto */
+
 int time_set(const RtcTime *t)
 {
-    return (int)_syscall1(SYS_TIME_SET, (uint32_t)t);
+    int r = (int)_syscall1(SYS_TIME_SET, (uint32_t)t);
+
+    /* Chi ha appena rimesso l'orologio lo rilegge alla prossima domanda,
+     * senza aspettare il minuto: e' l'unico che SA che e' cambiato. */
+    if (r == 0) g_tod_pronto = 0;
+    return r;
 }
 
 /* =============================================================================
@@ -7929,24 +7936,79 @@ static void civile_da_giorni(long g, long *anno, unsigned *mese, unsigned *giorn
     *giorno = d;
 }
 
-time_t time(time_t *t)
+/* I secondi dall'epoca letti dall'orologio CMOS, o -1 se non risponde. */
+static long ora_cmos(void)
 {
     RtcTime r;
-    time_t  secondi;
 
-    if (time_now(&r) < 0) {
-        /* L'orologio non risponde. (time_t)-1 e' il modo con cui il C
-         * standard dice "non lo so": ritornare 0 significherebbe il 1970,
-         * cioe' una data sbagliata spacciata per buona. */
-        if (t) *t = (time_t)-1;
-        return (time_t)-1;
+    if (time_now(&r) < 0) return -1;
+    return giorni_da_civile((long)r.anno, r.mese, r.giorno) * 86400L
+           + (long)r.ora * 3600L + (long)r.minuto * 60L + (long)r.secondo;
+}
+
+/* =============================================================================
+ * ! L'OROLOGIO CMOS SI LEGGE UNA VOLTA, POI SI CONTA DAL TIMER (7 ottobre 2026)
+ *
+ * time() e clock_gettime(CLOCK_REALTIME) leggevano il CMOS a ogni chiamata:
+ * una trentina di accessi alle porte 0x70/0x71, piu' l'attesa che l'orologio
+ * finisca di aggiornarsi. Firefox chiede l'ora 1,7 milioni di volte in un
+ * quarto d'ora, e misurato dal kernel erano 209 secondi passati li' dentro.
+ * In piu' i secondi venivano dal CMOS e i millisecondi da uptime_ms(), due
+ * orologi con la fase diversa: dentro lo stesso secondo l'ora poteva tornare
+ * indietro di quasi un secondo.
+ *
+ * Adesso il CMOS da' la base alla prima domanda, e da li' l'ora e' la base
+ * piu' il tempo del timer: secondi e millisecondi dallo stesso orologio, lo
+ * stesso per time(), gettimeofday() e clock_gettime(). Una volta al minuto il
+ * CMOS si rilegge, e la base si sposta SOLO se la differenza e' di due secondi
+ * o piu': e' il caso di chi ha cambiato la data con time_set(), non della
+ * deriva di un tick. Senza quel caso l'ora non torna mai indietro (vedi piu'
+ * sotto, a gettimeofday, che cosa succede a GCC quando lo fa).
+ * ========================================================================== */
+static long         g_tod_base_sec = 0;
+static unsigned int g_tod_base_ms  = 0;
+static unsigned int g_tod_visto_ms = 0;
+static int          g_tod_pronto   = 0;
+
+static int tod_adesso(long *sec, unsigned int *ms)
+{
+    unsigned int ora_ms = uptime_ms(), trascorsi;
+
+    if (!g_tod_pronto) {
+        long c = ora_cmos();
+        if (c < 0) return -1;
+        g_tod_base_sec = c;
+        g_tod_base_ms  = ora_ms;
+        g_tod_visto_ms = ora_ms;
+        g_tod_pronto   = 1;
+    } else if (ora_ms - g_tod_visto_ms >= 60000u) {
+        long c, d;
+        g_tod_visto_ms = ora_ms;
+        c = ora_cmos();
+        if (c >= 0) {
+            d = c - (g_tod_base_sec + (long)((ora_ms - g_tod_base_ms) / 1000u));
+            if (d >= 2 || d <= -2) {
+                g_tod_base_sec = c;
+                g_tod_base_ms  = ora_ms;
+            }
+        }
     }
+    trascorsi = ora_ms - g_tod_base_ms;   /* corretto anche all'avvolgimento */
+    *sec = g_tod_base_sec + (long)(trascorsi / 1000u);
+    *ms  = trascorsi % 1000u;
+    return 0;
+}
 
-    secondi = (time_t)(giorni_da_civile((long)r.anno, r.mese, r.giorno) * 86400L
-                       + (long)r.ora * 3600L + (long)r.minuto * 60L + (long)r.secondo);
+time_t time(time_t *t)
+{
+    long         sec;
+    unsigned int ms;
 
-    if (t) *t = secondi;
-    return secondi;
+    /* L'orologio non risponde: (time_t)-1 e' il modo con cui il C standard
+     * dice "non lo so". Ritornare 0 sarebbe il 1970 spacciato per buono. */
+    if (tod_adesso(&sec, &ms) < 0) sec = -1;
+    if (t) *t = (time_t)sec;
+    return (time_t)sec;
 }
 
 /* Il risultato sta in una struttura statica, come vuole l'interfaccia del
@@ -8376,40 +8438,25 @@ size_t strftime(char *buf, size_t max, const char *fmt, const struct tm *tm)
  * che e' 2^64 nanosecondi meno tre secondi, cioe' un -3.3 letto come
  * senza segno.
  *
- * ! ORA IL TEMPO SCORRE TUTTO DA uptime_ms(), ancorato UNA VOLTA alla
- * lettura iniziale del CMOS. La conseguenza dichiarata: se qualcuno
- * corregge l'orologio di sistema mentre un programma gira, gettimeofday
- * non se ne accorge. E' il prezzo giusto — un orologio che non torna mai
- * indietro vale piu' di uno che insegue l'ora esatta a scatti.
+ * ! ORA IL TEMPO SCORRE TUTTO DA uptime_ms(), ancorato alla lettura
+ * iniziale del CMOS: e' tod_adesso(), piu' sopra, che dal 7 ottobre 2026
+ * serve anche time() e clock_gettime(). Se qualcuno corregge l'orologio di
+ * sistema mentre un programma gira, lo si vede entro un minuto e solo se la
+ * correzione e' di due secondi o piu': un orologio che non torna indietro
+ * per la deriva di un tick vale piu' di uno che insegue l'ora a scatti.
  * ============================================================================= */
-static long         g_tod_base_sec = 0;
-static unsigned int g_tod_base_ms  = 0;
-static int          g_tod_pronto   = 0;
 
 int gettimeofday(struct timeval *tv, void *fuso)
 {
-    unsigned int ora_ms, trascorsi;
+    long         sec;
+    unsigned int ms;
 
     (void)fuso;         /* obsoleto anche su POSIX */
     if (tv == NULL) return -1;
+    if (tod_adesso(&sec, &ms) < 0) return -1;
 
-    ora_ms = uptime_ms();
-
-    if (!g_tod_pronto) {
-        g_tod_base_sec = (long)time(NULL);
-        g_tod_base_ms  = ora_ms;
-        g_tod_pronto   = 1;
-    }
-
-    trascorsi = ora_ms - g_tod_base_ms;   /* corretto anche all'avvolgimento */
-
-    tv->tv_sec  = g_tod_base_sec + (long)(trascorsi / 1000u);
-    /* ! La risoluzione vera resta 10 ms: il PIT batte a 100 Hz e le
-     * ultime quattro cifre dei microsecondi sono sempre zero. Meglio di
-     * zero secco — chi misura un intervallo breve vede almeno qualcosa
-     * muoversi — ma non e' un orologio ad alta risoluzione, e EX-OS non
-     * ne ha uno. */
-    tv->tv_usec = (long)((trascorsi % 1000u) * 1000u);
+    tv->tv_sec  = sec;
+    tv->tv_usec = (long)(ms * 1000u);
     return 0;
 }
 
@@ -8432,15 +8479,14 @@ double difftime(time_t fine, time_t inizio)
  * e' fatta, non perche' li sappiamo misurare. */
 int timespec_get(struct timespec *ts, int base)
 {
-    time_t adesso;
+    long         sec;
+    unsigned int ms;
 
     if (ts == NULL || base != TIME_UTC) return 0;
+    if (tod_adesso(&sec, &ms) < 0) return 0;    /* l'orologio non risponde */
 
-    adesso = time(NULL);
-    if (adesso == (time_t)-1) return 0;     /* l'orologio non risponde */
-
-    ts->tv_sec  = adesso;
-    ts->tv_nsec = (long)((uptime_ms() % 1000u) * 1000000u);
+    ts->tv_sec  = (time_t)sec;
+    ts->tv_nsec = (long)(ms * 1000000u);
     return base;
 }
 

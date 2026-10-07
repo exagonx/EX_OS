@@ -416,7 +416,14 @@
  * la cache (da 64 KB a 1 MB, con tabella hash) tiene i metadati; una write()
  * che non cambia lunghezza, blocchi o data non riscrive inode e superblocco.
  * Firefox aspettava il disco. */
-#define EXOS_VERSION    "0.235"
+/* 0.235 -> 0.236: la memoria anonima (mmap, sbrk, mprotect di una riserva)
+ * si da' al primo accesso invece che alla richiesta: vedi PG_PIGRA in
+ * paging.h. Firefox occupava 329 MB di heap in gran parte mai toccati.
+ * Nella stessa versione due corse fra i fili di un programma: la tabella
+ * delle pagine nuova si installa a interrupt spenti (paging_map_page), e
+ * la creazione di un filo prende il lucchetto dello spazio di
+ * indirizzamento (sys_thread_crea). Erano lo stack che spariva a Firefox. */
+#define EXOS_VERSION    "0.236"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

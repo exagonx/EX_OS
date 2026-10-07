@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.235
+**Version:** 0.236
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -130,13 +130,25 @@ page and saves what it drew (text, bold, italic, coloured boxes, a line
 written by JavaScript). Diary and picture in `tools/exilla/leggimi.md`. The
 seventh stage — a real window in ExWin — is under way.
 
-### Kernel 0.228–0.235: what Firefox found
+### Kernel 0.228–0.236: what Firefox found
 
 **tested in QEMU** — fixes that matter to every program with threads:
+- **0.236**: anonymous memory (`mmap`, `sbrk`) is given on first access, not
+  on request: Firefox goes from 405 to 300 MB. Two races between the threads
+  of one program, which made a stack disappear under Firefox once every few
+  starts: a new page table is installed with interrupts off, and two threads
+  created at the same moment no longer get the same slot. In the libc
+  `time()` and `clock_gettime()` read the CMOS clock once and then count from
+  the timer (Firefox asks the time 1.7 million times in a quarter of an hour:
+  that was 209 seconds of port accesses).
+  **Firefox's real times**, measured from its own start and not from power-on
+  (QEMU with KVM, 2 GB): window after 4 seconds, start page after 8, a local
+  page 0.1 seconds after Enter. The «65 seconds» written below also counted
+  the boot of EX-OS.
 - **0.235**: ext2 reads and writes the contiguous blocks of a file in one
   command, and the sector cache (from 64 KB to 1 MB) keeps the metadata
-  instead of the data: Firefox opens its window in 65 seconds instead of 75
-  in QEMU.
+  instead of the data: Firefox's window arrives 10 seconds earlier (65
+  seconds after power-on instead of 75, in QEMU).
 - **0.234**: `mmap` with `MAP_FIXED` over pages already mapped frees them
   first (they were lost): Firefox's JavaScript JIT needs it.
 - **0.233**: `ftruncate` on an open file and 256 open files in the system

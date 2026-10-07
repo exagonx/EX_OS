@@ -303,8 +303,38 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
          * JIT). I permessi veri stanno nella PTE di ogni pagina: la voce di
          * directory deve solo non toglierli. Sotto USER_SPACE_BASE (la fascia
          * kernel) resta com'era. */
-        pd[pd_idx] = pt_phys | PG_PRESENT | PG_WRITABLE |
-                     ((virt_addr >= USER_SPACE_BASE) ? PG_USER : (flags & PG_USER));
+        /* =====================================================================
+         * ! LA TABELLA SI INSTALLA SOLO SE NEL FRATTEMPO NON L'HA MESSA UN ALTRO
+         * (7 ottobre 2026).
+         *
+         * Fra il «non c'e'» di qui sopra e questa riga passano un'allocazione,
+         * forse uno sfratto verso lo swap, e l'azzeramento di 4 KB: il tick puo'
+         * togliere la CPU in mezzo, e i fili di un programma hanno la STESSA
+         * directory. Due fili che mappano nello stesso buco da 4 MB facevano
+         * cosi': il primo alloca la sua tabella e viene sospeso; il secondo
+         * alloca la propria, la installa e ci mappa le sue pagine; il primo
+         * riparte e installa la sua SOPRA. Le pagine del secondo non ci sono
+         * piu' — voce a zero, memoria persa — e lui muore piu' tardi con un
+         * «pagina assente» in un posto che aveva gia' usato. Con Firefox, che
+         * crea centocinquanta fili: uno stack sparito, una volta ogni qualche
+         * avvio.
+         *
+         * Si ricontrolla a interrupt spenti e, se la tabella ora c'e', si usa
+         * quella e si rende la nostra.
+         * ===================================================================== */
+        {
+            uint32_t flag = read_eflags();
+
+            interrupts_disable();
+            if (pd[pd_idx] & PG_PRESENT) {
+                if (flag & 0x200u) interrupts_enable();
+                pmm_free_page(pt_phys);
+                return paging_map_page(pd, virt_addr, phys_addr, flags);
+            }
+            pd[pd_idx] = pt_phys | PG_PRESENT | PG_WRITABLE |
+                         ((virt_addr >= USER_SPACE_BASE) ? PG_USER : (flags & PG_USER));
+            if (flag & 0x200u) interrupts_enable();
+        }
 
         klog(LOG_DEBUG, "PAGING: nuova PT a 0x%08x per PD[%u]", pt_phys, pd_idx);
     }
@@ -1372,19 +1402,91 @@ static int pf_carica_da_file(Process *p, uint32_t fault_addr)
  * ============================================================================= */
 void vm_precarica_utente(uint32_t addr, uint32_t len)
 {
-    Process *p = immagine_di(proc_get_current());
+    Process *io = proc_get_current();
+    Process *p  = immagine_di(io);
     uint32_t pag, fine;
 
-    if (p == NULL || p->exe_handle < 0 || p->n_vma == 0 || len == 0) return;
+    if (p == NULL || io == NULL || io->page_directory == NULL || len == 0) return;
 
     fine = addr + len;
     if (fine < addr) return;   /* somma che gira: non e' un buffer valido */
 
     for (pag = addr & 0xFFFFF000; pag < fine; pag += PAGE_SIZE) {
-        if (paging_get_physical(p->page_directory, pag) == 0) {
-            pf_carica_da_file(p, pag);
-        }
+        if (paging_get_physical(io->page_directory, pag) != 0) continue;
+        /* ! ANCHE LE PAGINE PROMESSE (0.236), e per la stessa ragione di
+         * quelle dell'eseguibile: darle da dentro un driver, col lucchetto
+         * del VFS in mano e magari a meta' di un comando al disco, vorrebbe
+         * dire che se la memoria e' finita lo swap parla col disco DENTRO il
+         * disco. Qui la strada e' libera. */
+        if (paging_pigra_tocca(io, pag)) continue;
+        if (p->exe_handle >= 0 && p->n_vma != 0) pf_carica_da_file(p, pag);
     }
+}
+
+/* =============================================================================
+ * LE PAGINE PIGRE — vedi PG_PIGRA in paging.h (kernel 0.236)
+ * ============================================================================= */
+int paging_pigra(PDE *pd, uint32_t virt, uint32_t flags)
+{
+    PTE *pt;
+
+    virt &= 0xFFFFF000;
+    if (paging_map_page(pd, virt, 0, 0) != 0) return -1;
+    pt = (PTE *)PG_ADDR(pd[PD_INDEX(virt)]);
+    pt[PT_INDEX(virt)] = PG_PIGRA | (flags & (PG_USER | PG_WRITABLE));
+    if (g_paging_enabled) {
+        __asm__ volatile ("invlpg (%0)" :: "r"(virt) : "memory");
+    }
+    return 0;
+}
+
+/* La pagina promessa arriva: azzerata, coi permessi che la promessa portava.
+ *
+ * ! AZZERATA SEMPRE, come quando si allocava subito: e' cio' che mmap
+ * promette, e senza il processo leggerebbe i resti di un altro.
+ *
+ * ! E SE LA MEMORIA E' FINITA SI PROVA A FARE POSTO, come ogni altra strada
+ * che chiede una pagina. Se non c'e' nemmeno cosi' si rende 0, e il fault
+ * prosegue verso la sua diagnostica: il processo muore con «pagina assente»
+ * su un indirizzo del suo heap. E' il prezzo dichiarato del dare la memoria
+ * dopo — prima la stessa situazione era una mmap che rispondeva ENOMEM. */
+int paging_pigra_tocca(Process *p, uint32_t virt)
+{
+    uint32_t pagina = virt & 0xFFFFF000, pdi, pti, pte, fisico;
+    PTE     *pt;
+    PDE     *pd;
+
+    if (p == NULL || p->page_directory == NULL) return 0;
+    if (pagina < USER_SPACE_BASE || pagina >= USER_SPACE_END) return 0;
+
+    pd  = p->page_directory;
+    pdi = PD_INDEX(pagina);
+    pti = PT_INDEX(pagina);
+    if (!(pd[pdi] & PG_PRESENT) || (pd[pdi] & PG_HUGE)) return 0;
+    pt  = (PTE *)PG_ADDR(pd[pdi]);
+    pte = pt[pti];
+    if (!PTE_E_PIGRA(pte)) return 0;
+
+    fisico = pmm_alloc_page();
+    if (fisico == 0 && swap_sfratta()) fisico = pmm_alloc_page();
+    if (fisico == 0) {
+        klog(LOG_ERROR, "PF: RAM esaurita dando la pagina 0x%08x a PID %u",
+             pagina, p->pid);
+        return 0;
+    }
+    paging_azzera_fisica(fisico);
+
+    /* ! SI RIGUARDA LA PTE: swap_sfratta puo' aver ceduto la CPU (scrive sul
+     * disco), e un altro filo dello stesso processo puo' aver toccato la
+     * stessa pagina nel frattempo. Mapparla due volte perderebbe la prima. */
+    if (!PTE_E_PIGRA(pt[pti])) {
+        pmm_free_page(fisico);
+        return (pt[pti] & PG_PRESENT) ? 1 : 0;
+    }
+
+    pt[pti] = (fisico & 0xFFFFF000) | (pte & (PG_USER | PG_WRITABLE)) | PG_PRESENT;
+    __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
+    return 1;
 }
 
 /* =============================================================================
@@ -1493,6 +1595,14 @@ void page_fault_handler(InterruptFrame *frame)
          * prima volta. Provando prima il file si rileggerebbe il contenuto
          * ORIGINALE, buttando via tutto cio' che il programma ci aveva
          * scritto sopra — un guasto silenzioso e perfetto. */
+        /* ! LA PAGINA PROMESSA, prima di tutto il resto: e' il caso di gran
+         * lunga piu' frequente (ogni prima scrittura in memoria nuova), e
+         * vale per i due livelli — il kernel che riempie un buffer appena
+         * allocato dal programma arriva qui con CPL=0. */
+        if (!(err & 0x1) && paging_pigra_tocca(p, fault_addr)) {
+            return;
+        }
+
         if (!(err & 0x1) && pf_torna_da_swap(p, fault_addr)) {
             return;
         }
@@ -1548,6 +1658,17 @@ void page_fault_handler(InterruptFrame *frame)
 
         klog(LOG_ERROR, "PF: PID %u '%s' terminato per fault a 0x%08x EIP=0x%08x (%s/%s)",
              p ? p->pid : 0, p ? p->name : "?", fault_addr, frame->eip, reason, access);
+        /* Le voci della directory e della tabella per l'indirizzo: dicono se la
+         * pagina non c'e' mai stata (0), se e' una riserva o una pagina pigra,
+         * o se qualcuno l'ha tolta. Il 7 ottobre 2026 e' stata la riga che ha
+         * fatto trovare la corsa in paging_map_page. */
+        if (p != NULL && p->page_directory != NULL) {
+            PDE pde = p->page_directory[PD_INDEX(fault_addr)];
+            uint32_t pte = ((pde & PG_PRESENT) && !(pde & PG_HUGE))
+                         ? ((PTE *)PG_ADDR(pde))[PT_INDEX(fault_addr)] : 0xFFFFFFFFu;
+            klog(LOG_ERROR, "PF:   pde 0x%08x pte 0x%08x esp 0x%08x cr3 0x%08x pd 0x%08x",
+                 pde, pte, frame->user_esp, read_cr3(), (uint32_t)p->page_directory);
+        }
 
         /* =====================================================================
          * LA MAPPA DEL PROCESSO, subito sotto il fault
@@ -1718,17 +1839,13 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
                 if (!pf_torna_da_swap(p, va)) return -ENOMEM;
                 continue;
             }
-            /* Riservata da una mmap PROT_NONE: la pagina arriva adesso,
-             * azzerata e ancora PROT_NONE; i bit nuovi li mette il passo 3. */
-            if (PTE_E_RISERVA(pt[pti])) {
-                uint32_t fis = pmm_alloc_page();
-                if (fis == 0 && swap_sfratta()) fis = pmm_alloc_page();
-                if (fis == 0) return -ENOMEM;
-                paging_azzera_fisica(fis);
-                pt[pti] = fis | PG_PRESENT;
-                __asm__ volatile ("invlpg (%0)" :: "r"(va) : "memory");
-                continue;
-            }
+            /* ! UNA RISERVA O UNA PROMESSA RESTANO SENZA PAGINA (0.236). Prima
+             * mprotect dava subito a ogni riserva la sua pagina azzerata: ma
+             * e' cosi' che il JIT di SpiderMonkey «impegna» la memoria che ha
+             * riservato, a blocchi grandi, e ne usa una parte. Cambiano i
+             * permessi della promessa (passo 3); la pagina arriva al primo
+             * accesso. */
+            if (PTE_E_RISERVA(pt[pti]) || PTE_E_PIGRA(pt[pti])) continue;
         }
         if (!pf_carica_da_file(p, va)) return -ENOMEM;
     }
@@ -1748,6 +1865,7 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
         if (!(pd[PD_INDEX(va)] & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
         pt  = (PTE *)PG_ADDR(pd[PD_INDEX(va)]);
         pte = pt[PT_INDEX(va)];
+        if (PTE_E_RISERVA(pte) || PTE_E_PIGRA(pte)) continue;   /* senza pagina: niente da controllare */
         if (!(pte & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
 
         frame = PG_ADDR(pte);
@@ -1764,6 +1882,11 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
 
         va = virt + i * PAGE_SIZE;
         pt = (PTE *)PG_ADDR(pd[PD_INDEX(va)]);
+        if (!(pt[PT_INDEX(va)] & PG_PRESENT)) {
+            /* Senza pagina: PROT_NONE e' una riserva, il resto una promessa
+             * coi permessi nuovi. */
+            pt[PT_INDEX(va)] = (nuovi & PG_USER) ? (PG_PIGRA | nuovi) : PG_RISERVA;
+        } else
         pt[PT_INDEX(va)] = (pt[PT_INDEX(va)] & ~(uint32_t)(PG_USER | PG_WRITABLE))
                            | nuovi;
         /* Threads share the directory, so "current" is enough: every thread
@@ -1814,6 +1937,7 @@ int paging_utente_pronta(Process *p, uint32_t va, uint32_t len)
 
         if (!(pte & PG_PRESENT)) {
             int ok = SWAP_PTE_E_SWAP(pte) ? pf_torna_da_swap(p, pagina)
+                   : PTE_E_PIGRA(pte)     ? paging_pigra_tocca(p, pagina)
                    : (pf_cresci_stack(p, NULL, pagina, 0, 0) ||
                       pf_carica_da_file(p, pagina));
             if (!ok) return 0;

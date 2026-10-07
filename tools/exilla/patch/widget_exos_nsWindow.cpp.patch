@@ -1,20 +1,820 @@
 --- a/widget/exos/nsWindow.cpp
 +++ b/widget/exos/nsWindow.cpp
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,817 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
-+/* EX-OS (Exilla), first stage: every window is a HeadlessWidget. It lays out
-+ * and paints in memory; --screenshot saves the result. The windows of ExWin
-+ * come with the next stage (a real nsWindow here). */
++#include "nsWindow.h"
 +
-+#include "nsIWidget.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#include <algorithm>
++
++#include <exos/kbd_proto.h>
++#include <exos/win_proto.h>
++
++#include "ExosPosta.h"
++#include "HeadlessKeyBindings.h"
++#include "mozilla/widget/CompositorWidget.h"
++#include "mozilla/ClearOnShutdown.h"
++#include "mozilla/MouseEvents.h"
++#include "mozilla/NativeKeyBindingsType.h"
++#include "mozilla/StaticPtr.h"
++#include "mozilla/TextEventDispatcher.h"
++#include "mozilla/TextEvents.h"
++#include "mozilla/WidgetUtils.h"
++#include "mozilla/WritingModes.h"
++#include "mozilla/dom/WheelEventBinding.h"
++#include "mozilla/gfx/2D.h"
++#include "nsIRollupListener.h"
++#include "nsIScreen.h"
++
++using namespace mozilla;
++using namespace mozilla::widget;
++
++// The frame the server draws around a top-level window (wserver.c: BORDO and
++// BARRA_H). Not in the protocol: the client area is what we are given.
++static const int32_t kBordo = 2;
++static const int32_t kBarra = 20;
 +
 +already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {
-+  return nsIWidget::CreateHeadlessWidget();
++  nsCOMPtr<nsIWidget> window = new nsWindow();
++  return window.forget();
 +}
 +
 +already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
-+  return nsIWidget::CreateHeadlessWidget();
++  nsCOMPtr<nsIWidget> window = new nsWindow();
++  return window.forget();
++}
++
++namespace mozilla::widget {
++
++class ExosTastiera final : public TextEventDispatcherListener {
++ public:
++  explicit ExosTastiera(nsWindow* aWidget) : mWidget(aWidget) {}
++
++  NS_DECL_ISUPPORTS
++
++  NS_IMETHOD NotifyIME(TextEventDispatcher*, const IMENotification&) override {
++    return NS_OK;
++  }
++  NS_IMETHOD_(IMENotificationRequests) GetIMENotificationRequests() override {
++    return IMENotificationRequests{};
++  }
++  NS_IMETHOD_(void) OnRemovedFrom(TextEventDispatcher*) override {}
++  NS_IMETHOD_(void)
++  WillDispatchKeyboardEvent(TextEventDispatcher*, WidgetKeyboardEvent&,
++                            uint32_t, void*) override {}
++
++  void Spegni() { mWidget = nullptr; }
++
++ private:
++  ~ExosTastiera() = default;
++  nsWindow* mWidget;
++};
++
++NS_IMPL_ISUPPORTS(ExosTastiera, TextEventDispatcherListener,
++                  nsISupportsWeakReference)
++
++}  // namespace mozilla::widget
++
++// The windows in order of activation; the last one is the active one.
++static StaticAutoPtr<nsTArray<nsWindow*>> sAttive;
++
++static already_AddRefed<nsWindow> FinestraAttiva() {
++  if (!sAttive || sAttive->IsEmpty()) {
++    return nullptr;
++  }
++  RefPtr<nsWindow> w = sAttive->LastElement();
++  return w.forget();
++}
++
++static bool Diario() {
++  static int sAcceso = -1;
++  if (sAcceso < 0) {
++    const char* v = getenv("EXILLA_DIAG");
++    sAcceso = (v && v[0] == '1') ? 1 : 0;
++  }
++  return sAcceso == 1;
++}
++
++#define DIARIO(...)                           \
++  do {                                        \
++    if (Diario()) {                           \
++      fprintf(stderr, "exilla: " __VA_ARGS__); \
++      fputc('\n', stderr);                    \
++    }                                         \
++  } while (0)
++
++static void Schermo(int32_t* aW, int32_t* aH) {
++  VideoInfo v;
++  if (video_info(&v) != 0 || !v.larghezza || !v.altezza) {
++    v.larghezza = 1024;
++    v.altezza = 768;
++  }
++  *aW = (int32_t)v.larghezza;
++  *aH = (int32_t)v.altezza;
++}
++
++nsWindow::nsWindow() : mZonaLock("nsWindow::mZonaLock") {
++  mWidgetType = WidgetType::Native;
++  if (!sAttive) {
++    sAttive = new nsTArray<nsWindow*>();
++    ClearOnShutdown(&sAttive);
++  }
++}
++
++nsWindow::~nsWindow() { Destroy(); }
++
++nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
++                          const InitData& aInitData) {
++  BaseCreate(aParent, aInitData);
++  DIARIO("Create %p tipo %d %dx%d a %d,%d", this, (int)aInitData.mWindowType,
++         aRect.Width(), aRect.Height(), aRect.X(), aRect.Y());
++  mBounds = aRect;
++  mRestoreBounds = aRect;
++  mTastiera = new ExosTastiera(this);
++  return NS_OK;
++}
++
++void nsWindow::Destroy() {
++  if (mDestroyed) {
++    return;
++  }
++  mDestroyed = true;
++
++  if (sAttive) {
++    RefPtr<nsWindow> attiva = FinestraAttiva();
++    sAttive->RemoveElement(this);
++    RefPtr<nsWindow> prima = FinestraAttiva();
++    if (this == attiva && prima && prima->mWidgetListener) {
++      prima->mWidgetListener->WindowActivated();
++    }
++  }
++
++  ChiudiFinestra();
++  if (mTastiera) {
++    mTastiera->Spegni();
++    mTastiera = nullptr;
++  }
++
++  nsIWidget::OnDestroy();
++  nsIWidget::Destroy();
++}
++
++bool nsWindow::AttaccaZona(uint32_t aId, uint32_t aGiro, uint32_t aByte,
++                           int32_t aLarghezza, int32_t aAltezza) {
++  ShmZona z;
++  memset(&z, 0, sizeof(z));
++  win_nome_zona(z.nome, aId, aGiro);
++  z.byte = aByte;
++  z.flag = 0;
++  if (shm_apri(&z) != 0 || !z.virt) {
++    return false;
++  }
++
++  uint32_t* vecchia;
++  {
++    MutexAutoLock lock(mZonaLock);
++    vecchia = mZona;
++    mZona = (uint32_t*)(uintptr_t)z.virt;
++    mZonaW = aLarghezza;
++    mZonaH = aAltezza;
++    mZonaId = aId;
++  }
++  if (vecchia) {
++    shm_chiudi(vecchia);
++  }
++  mGiro = aGiro;
++  return true;
++}
++
++void nsWindow::StaccaZona() {
++  uint32_t* vecchia;
++  {
++    MutexAutoLock lock(mZonaLock);
++    vecchia = mZona;
++    mZona = nullptr;
++    mZonaW = mZonaH = 0;
++    mZonaId = 0;
++  }
++  if (vecchia) {
++    shm_chiudi(vecchia);
++  }
++}
++
++bool nsWindow::ApriFinestra() {
++  if (mId || !HaFinestraServer() || !exos::Server()) {
++    return false;
++  }
++
++  int32_t sw, sh;
++  Schermo(&sw, &sh);
++
++  bool popup = mWindowType == WindowType::Popup;
++  int32_t w = std::max(mBounds.Width(), 1);
++  int32_t h = std::max(mBounds.Height(), 1);
++  int32_t x = mBounds.X();
++  int32_t y = mBounds.Y();
++
++  if (!popup) {
++    w = std::min(w, sw - 2 * kBordo);
++    h = std::min(h, sh - kBarra - 2 * kBordo);
++    x = std::clamp(x, kBordo, std::max(kBordo, sw - w - kBordo));
++    y = std::clamp(y, kBarra + kBordo, std::max(kBarra + kBordo, sh - h - kBordo));
++  }
++
++  WinCrea c;
++  memset(&c, 0, sizeof(c));
++  c.x = (unsigned int)std::max(x, 0);
++  c.y = (unsigned int)std::max(y, 0);
++  c.larghezza = (unsigned int)w;
++  c.altezza = (unsigned int)h;
++  c.stile = WIN_ST_VISIBILE |
++            (popup ? WIN_ST_COMPARSA
++                   : WIN_ST_TITOLO | WIN_ST_BORDO | WIN_ST_CHIUDI | WIN_ST_RIDIM);
++  memcpy(c.titolo, mTitolo, WIN_TITOLO_LEN - 1);
++
++  DIARIO("CREA %ux%u a %u,%u stile 0x%x", c.larghezza, c.altezza, c.x, c.y,
++         c.stile);
++  if (exos::Manda(WIN_MSG_CREA, &c, sizeof(c)) < 0) {
++    DIARIO("CREA non spedita");
++    return false;
++  }
++
++  WinCreata r;
++  memset(&r, 0, sizeof(r));
++  if (!exos::AspettaCreata(&r, sizeof(r), 15000) || !r.id) {
++    DIARIO("CREATA non arrivata o rifiutata (id %u)", r.id);
++    return false;
++  }
++  DIARIO("CREATA id %u %ux%u a %u,%u zona %u byte", r.id, r.larghezza,
++         r.altezza, r.x, r.y, r.byte);
++  if (!AttaccaZona(r.id, r.giro, r.byte, (int32_t)r.larghezza,
++                   (int32_t)r.altezza)) {
++    WinRegione d = {r.id, 0, 0, 0, 0};
++    exos::Manda(WIN_MSG_DISTRUGGI, &d, sizeof(d));
++    return false;
++  }
++
++  mId = r.id;
++  exos::Registra(mId, this);
++
++  WinRegione p = {mId, 1, 0, 0, 0};
++  exos::Manda(WIN_MSG_PASSAGGIO, &p, sizeof(p));
++
++  MoveInternal((int32_t)r.x, (int32_t)r.y);
++  ResizeInternal((int32_t)r.larghezza, (int32_t)r.altezza);
++  return true;
++}
++
++void nsWindow::ChiudiFinestra() {
++  if (!mId) {
++    return;
++  }
++  WinRegione d = {mId, 0, 0, 0, 0};
++  exos::Manda(WIN_MSG_DISTRUGGI, &d, sizeof(d));
++  exos::Togli(mId);
++  mId = 0;
++  StaccaZona();
++}
++
++void nsWindow::RaiseWindow() {
++  RefPtr<nsWindow> attiva = FinestraAttiva();
++  if (attiva == this) {
++    return;
++  }
++  if (attiva && attiva->mWidgetListener) {
++    attiva->mWidgetListener->WindowDeactivated();
++  }
++  sAttive->RemoveElement(this);
++  sAttive->AppendElement(this);
++  if (mWidgetListener) {
++    mWidgetListener->WindowActivated();
++  }
++}
++
++void nsWindow::Show(bool aState) {
++  DIARIO("Show %p %d tipo %d", this, aState, (int)mWindowType);
++  mVisible = aState;
++
++  if (HaFinestraServer()) {
++    if (aState) {
++      ApriFinestra();
++    } else {
++      ChiudiFinestra();
++    }
++  }
++
++  if (aState && (mWindowType == WindowType::TopLevel ||
++                 mWindowType == WindowType::Dialog)) {
++    RaiseWindow();
++  }
++  ApplySizeModeSideEffects();
++}
++
++void nsWindow::SetFocus(Raise aRaise, dom::CallerType aCallerType) {
++  if (aRaise != Raise::Yes) {
++    return;
++  }
++  nsWindow* top = static_cast<nsWindow*>(GetTopLevelWidget());
++  if (top && top->IsVisible()) {
++    top->RaiseWindow();
++    if (top->mId) {
++      WinRegione p = {top->mId, 0, 0, 0, 0};
++      exos::Manda(WIN_MSG_PRIMO, &p, sizeof(p));
++    }
++  }
++}
++
++void nsWindow::Move(const DesktopPoint& aPoint) {
++  auto tl = LayoutDeviceIntPoint::Round(aPoint * GetDesktopToDeviceScale());
++  if (mWindowType == WindowType::TopLevel ||
++      mWindowType == WindowType::Dialog) {
++    SetSizeMode(nsSizeMode_Normal);
++  }
++  if (mBounds.IsEqualXY(tl.x, tl.y) && mWindowType != WindowType::Popup) {
++    return;
++  }
++  MoveInternal(tl.x, tl.y);
++  if (mId) {
++    WinRegione s = {mId, (unsigned int)std::max(tl.x.value, 0),
++                    (unsigned int)std::max(tl.y.value, 0), 0, 0};
++    exos::Manda(WIN_MSG_SPOSTA, &s, sizeof(s));
++  }
++}
++
++void nsWindow::MoveInternal(int32_t aX, int32_t aY) {
++  if (mBounds.IsEqualXY(aX, aY)) {
++    return;
++  }
++  mBounds.MoveTo(aX, aY);
++  NotifyWindowMoved(mBounds.TopLeft());
++}
++
++void nsWindow::Resize(const DesktopSize& aSize, bool aRepaint) {
++  int32_t w = NSToIntRound(aSize.width);
++  int32_t h = NSToIntRound(aSize.height);
++  DIARIO("Resize %p %dx%d", this, w, h);
++  ConstrainSize(&w, &h);
++  ResizeInternal(w, h);
++  if (mId && (w != mZonaW || h != mZonaH)) {
++    WinRegione m = {mId, 0, 0, (unsigned int)std::max(w, 1),
++                    (unsigned int)std::max(h, 1)};
++    exos::Manda(WIN_MSG_MISURA, &m, sizeof(m));
++  }
++}
++
++void nsWindow::Resize(const DesktopRect& aRect, bool aRepaint) {
++  Move(aRect.TopLeft());
++  Resize(aRect.Size(), aRepaint);
++}
++
++void nsWindow::ResizeInternal(int32_t aWidth, int32_t aHeight) {
++  if (mBounds.Width() == aWidth && mBounds.Height() == aHeight) {
++    return;
++  }
++  mBounds.SizeTo(LayoutDeviceIntSize(aWidth, aHeight));
++  if (mCompositorWidgetDelegate) {
++    mCompositorWidgetDelegate->NotifyClientSizeChanged(mBounds.Size());
++  }
++  if (mWidgetListener) {
++    mWidgetListener->WindowResized(this, mBounds.Size());
++  }
++  if (mAttachedWidgetListener) {
++    mAttachedWidgetListener->WindowResized(this, mBounds.Size());
++  }
++}
++
++void nsWindow::SetSizeMode(nsSizeMode aMode) {
++  if (aMode == mSizeMode) {
++    return;
++  }
++  mSizeMode = aMode;
++  ApplySizeModeSideEffects();
++}
++
++void nsWindow::ApplySizeModeSideEffects() {
++  if (!mVisible || mEffectiveSizeMode == mSizeMode) {
++    return;
++  }
++  if (mEffectiveSizeMode == nsSizeMode_Normal) {
++    mRestoreBounds = mBounds;
++  }
++
++  int32_t sw, sh;
++  Schermo(&sw, &sh);
++  switch (mSizeMode) {
++    case nsSizeMode_Normal:
++      Move(DesktopPoint(mRestoreBounds.X(), mRestoreBounds.Y()));
++      Resize(DesktopSize(mRestoreBounds.Width(), mRestoreBounds.Height()),
++             true);
++      break;
++    case nsSizeMode_Minimized:
++      if (mId) {
++        WinRegione r = {mId, 0, 0, 0, 0};
++        exos::Manda(WIN_MSG_RIDUCI, &r, sizeof(r));
++      }
++      break;
++    case nsSizeMode_Maximized:
++    case nsSizeMode_Fullscreen:
++      MoveInternal(kBordo, kBarra + kBordo);
++      if (mId) {
++        WinRegione s = {mId, (unsigned int)kBordo,
++                        (unsigned int)(kBarra + kBordo), 0, 0};
++        exos::Manda(WIN_MSG_SPOSTA, &s, sizeof(s));
++      }
++      Resize(DesktopSize(sw - 2 * kBordo, sh - kBarra - 2 * kBordo), true);
++      break;
++    default:
++      break;
++  }
++
++  mEffectiveSizeMode = mSizeMode;
++  if (mWidgetListener) {
++    mWidgetListener->SizeModeChanged(mSizeMode);
++  }
++}
++
++nsresult nsWindow::SetTitle(const nsAString& aTitle) {
++  uint32_t n = 0;
++  for (uint32_t i = 0; i < aTitle.Length() && n + 1 < sizeof(mTitolo); i++) {
++    char16_t ch = aTitle[i];
++    if (ch == 0x2013 || ch == 0x2014) {
++      ch = '-';
++    }
++    mTitolo[n++] = (ch >= 32 && ch < 127) ? (char)ch : '?';
++  }
++  mTitolo[n] = '\0';
++  DIARIO("titolo '%s' (%u ms)", mTitolo, (unsigned)uptime_ms());
++  if (mId) {
++    WinTitolo t;
++    memset(&t, 0, sizeof(t));
++    t.id = mId;
++    memcpy(t.titolo, mTitolo, WIN_TITOLO_LEN - 1);
++    exos::Manda(WIN_MSG_TITOLO, &t, sizeof(t));
++  }
++  return NS_OK;
++}
++
++LayoutDeviceIntPoint nsWindow::WidgetToScreenOffset() {
++  if (HaFinestraServer()) {
++    return mBounds.TopLeft();
++  }
++  return GetTopLevelWidget()->GetBounds().TopLeft();
++}
++
++TextEventDispatcherListener* nsWindow::GetNativeTextEventDispatcherListener() {
++  return mTastiera;
++}
++
++nsresult nsWindow::AttachNativeKeyEvent(WidgetKeyboardEvent& aEvent) {
++  return HeadlessKeyBindings::GetInstance().AttachNativeKeyEvent(aEvent);
++}
++
++bool nsWindow::GetEditCommands(NativeKeyBindingsType aType,
++                               const WidgetKeyboardEvent& aEvent,
++                               nsTArray<CommandInt>& aCommands) {
++  if (NS_WARN_IF(!nsIWidget::GetEditCommands(aType, aEvent, aCommands))) {
++    return false;
++  }
++  Maybe<WritingMode> writingMode;
++  if (aEvent.NeedsToRemapNavigationKey()) {
++    if (RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher()) {
++      writingMode = dispatcher->MaybeQueryWritingModeAtSelection();
++    }
++  }
++  HeadlessKeyBindings::GetInstance().GetEditCommands(aType, aEvent, writingMode,
++                                                     aCommands);
++  return true;
++}
++
++already_AddRefed<gfx::DrawTarget> nsWindow::StartRemoteDrawingInRegion(
++    const LayoutDeviceIntRegion& aInvalidRegion) {
++  static int sPrime = 0;
++  if (sPrime < 5) {
++    sPrime++;
++    DIARIO("StartRemoteDrawing %p zona %p", this, (void*)mZona);
++  }
++  mZonaLock.Lock();
++  if (!mZona || mZonaW <= 0 || mZonaH <= 0) {
++    mZonaLock.Unlock();
++    return nullptr;
++  }
++  RefPtr<gfx::DrawTarget> dt = gfx::Factory::CreateDrawTargetForData(
++      gfx::BackendType::SKIA, (uint8_t*)mZona, gfx::IntSize(mZonaW, mZonaH),
++      mZonaW * 4, gfx::SurfaceFormat::B8G8R8A8);
++  if (!dt) {
++    mZonaLock.Unlock();
++    return nullptr;
++  }
++  return dt.forget();
++}
++
++void nsWindow::EndRemoteDrawingInRegion(
++    gfx::DrawTarget* aDrawTarget, const LayoutDeviceIntRegion& aInvalidRegion) {
++  uint32_t id = mZonaId;
++  LayoutDeviceIntRect r = aInvalidRegion.GetBounds().Intersect(
++      LayoutDeviceIntRect(0, 0, mZonaW, mZonaH));
++  mZonaLock.Unlock();
++
++  if (id && !r.IsEmpty()) {
++    WinRegione u = {id, (unsigned int)r.X(), (unsigned int)r.Y(),
++                    (unsigned int)r.Width(), (unsigned int)r.Height()};
++    exos::Manda(WIN_MSG_AGGIORNA, &u, sizeof(u));
++  }
++}
++
++void nsWindow::OnServerResized(const void* aCreata) {
++  const WinCreata* r = static_cast<const WinCreata*>(aCreata);
++  if (!mId || r->giro == mGiro) {
++    return;
++  }
++  if (!AttaccaZona(r->id, r->giro, r->byte, (int32_t)r->larghezza,
++                   (int32_t)r->altezza)) {
++    return;
++  }
++  // The receipt: an update as large as the new zone (wserver.c).
++  WinRegione u = {mId, 0, 0, r->larghezza, r->altezza};
++  exos::Manda(WIN_MSG_AGGIORNA, &u, sizeof(u));
++  ResizeInternal((int32_t)r->larghezza, (int32_t)r->altezza);
++}
++
++void nsWindow::OnServerMoved(int32_t aX, int32_t aY) { MoveInternal(aX, aY); }
++
++void nsWindow::CreateCompositor(int aWidth, int aHeight) {
++  DIARIO("CreateCompositor %p %dx%d: start", this, aWidth, aHeight);
++  nsIWidget::CreateCompositor(aWidth, aHeight);
++  DIARIO("CreateCompositor %p: done", this);
++}
++
++static Modifiers Modificatori(uint32_t aKbd) {
++  Modifiers m = 0;
++  if (aKbd & KBD_MOD_SHIFT) m |= MODIFIER_SHIFT;
++  if (aKbd & KBD_MOD_CTRL) m |= MODIFIER_CONTROL;
++  if (aKbd & KBD_MOD_ALT) m |= MODIFIER_ALT;
++  return m;
++}
++
++int32_t nsWindow::ContaClic(int32_t aX, int32_t aY, uint32_t aTempo) {
++  if (mClic > 0 && aTempo - mUltimoGiuTempo < 500 &&
++      std::abs(aX - mUltimoGiuX) <= 4 && std::abs(aY - mUltimoGiuY) <= 4) {
++    mClic++;
++  } else {
++    mClic = 1;
++  }
++  mUltimoGiuTempo = aTempo;
++  mUltimoGiuX = aX;
++  mUltimoGiuY = aY;
++  return mClic;
++}
++
++void nsWindow::Mouse(EventMessage aMessaggio, int32_t aX, int32_t aY,
++                     int16_t aBottone, uint32_t aBottoni,
++                     uint32_t aModificatori) {
++  WidgetMouseEvent ev(true, aMessaggio, this, WidgetMouseEvent::eReal);
++  ev.mRefPoint = LayoutDeviceIntPoint(aX, aY);
++  ev.mButton = aBottone;
++  ev.mButtons = (int16_t)(aBottoni & 7);
++  ev.mModifiers = Modificatori(aModificatori);
++  if (aMessaggio == eMouseDown || aMessaggio == eMouseUp) {
++    ev.mClickCount = mClic;
++  }
++  if (aMessaggio == eMouseExitFromWidget) {
++    ev.mExitFrom = Some(WidgetMouseEvent::ePlatformTopLevel);
++  }
++  ev.AssignEventTime(WidgetEventTime());
++  DispatchInputEvent(&ev);
++}
++
++void nsWindow::MenuContestuale(int32_t aX, int32_t aY,
++                               uint32_t aModificatori) {
++  WidgetPointerEvent ev(true, eContextMenu, this);
++  ev.mRefPoint = LayoutDeviceIntPoint(aX, aY);
++  ev.mButton = MouseButton::eSecondary;
++  ev.mModifiers = Modificatori(aModificatori);
++  ev.AssignEventTime(WidgetEventTime());
++  DispatchInputEvent(&ev);
++}
++
++void nsWindow::Rotella(int32_t aX, int32_t aY, int32_t aScatti) {
++  WidgetWheelEvent ev(true, eWheel, this);
++  ev.mRefPoint = LayoutDeviceIntPoint(aX, aY);
++  ev.mDeltaMode = dom::WheelEvent_Binding::DOM_DELTA_LINE;
++  ev.mDeltaY = 3.0 * aScatti;
++  ev.mLineOrPageDeltaY = 3 * aScatti;
++  ev.mWheelTicksY = aScatti;
++  ev.AssignEventTime(WidgetEventTime());
++  DispatchInputEvent(&ev);
++}
++
++// The console of EX-OS speaks code page 437: the keyboard maps give the
++// accented letters as their CP437 byte.
++static const char16_t kCp437[128] = {
++    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, 0x00EA,
++    0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5, 0x00C9, 0x00E6,
++    0x00C6, 0x00F4, 0x00F6, 0x00F2, 0x00FB, 0x00F9, 0x00FF, 0x00D6, 0x00DC,
++    0x00A2, 0x00A3, 0x00A5, 0x20A7, 0x0192, 0x00E1, 0x00ED, 0x00F3, 0x00FA,
++    0x00F1, 0x00D1, 0x00AA, 0x00BA, 0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC,
++    0x00A1, 0x00AB, 0x00BB, 0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561,
++    0x2562, 0x2556, 0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B,
++    0x2510, 0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F,
++    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567, 0x2568,
++    0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B, 0x256A, 0x2518,
++    0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580, 0x03B1, 0x00DF, 0x0393,
++    0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4, 0x03A6, 0x0398, 0x03A9, 0x03B4,
++    0x221E, 0x03C6, 0x03B5, 0x2229, 0x2261, 0x00B1, 0x2265, 0x2264, 0x2320,
++    0x2321, 0x00F7, 0x2248, 0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2,
++    0x25A0, 0x00A0};
++
++struct TastoSpeciale {
++  uint32_t mKbd;
++  uint32_t mKeyCode;
++  KeyNameIndex mNome;
++};
++
++static const TastoSpeciale kSpeciali[] = {
++    {KBD_K_UP, NS_VK_UP, KEY_NAME_INDEX_ArrowUp},
++    {KBD_K_DOWN, NS_VK_DOWN, KEY_NAME_INDEX_ArrowDown},
++    {KBD_K_LEFT, NS_VK_LEFT, KEY_NAME_INDEX_ArrowLeft},
++    {KBD_K_RIGHT, NS_VK_RIGHT, KEY_NAME_INDEX_ArrowRight},
++    {KBD_K_HOME, NS_VK_HOME, KEY_NAME_INDEX_Home},
++    {KBD_K_END, NS_VK_END, KEY_NAME_INDEX_End},
++    {KBD_K_PGUP, NS_VK_PAGE_UP, KEY_NAME_INDEX_PageUp},
++    {KBD_K_PGDN, NS_VK_PAGE_DOWN, KEY_NAME_INDEX_PageDown},
++    {KBD_K_INS, NS_VK_INSERT, KEY_NAME_INDEX_Insert},
++    {KBD_K_DEL, NS_VK_DELETE, KEY_NAME_INDEX_Delete},
++    {KBD_K_F(1), NS_VK_F1, KEY_NAME_INDEX_F1},
++    {KBD_K_F(2), NS_VK_F2, KEY_NAME_INDEX_F2},
++    {KBD_K_F(3), NS_VK_F3, KEY_NAME_INDEX_F3},
++    {KBD_K_F(4), NS_VK_F4, KEY_NAME_INDEX_F4},
++    {KBD_K_F(5), NS_VK_F5, KEY_NAME_INDEX_F5},
++    {KBD_K_F(6), NS_VK_F6, KEY_NAME_INDEX_F6},
++    {KBD_K_F(7), NS_VK_F7, KEY_NAME_INDEX_F7},
++    {KBD_K_F(8), NS_VK_F8, KEY_NAME_INDEX_F8},
++    {KBD_K_F(9), NS_VK_F9, KEY_NAME_INDEX_F9},
++    {KBD_K_F(10), NS_VK_F10, KEY_NAME_INDEX_F10},
++    {KBD_K_F(11), NS_VK_F11, KEY_NAME_INDEX_F11},
++    {KBD_K_F(12), NS_VK_F12, KEY_NAME_INDEX_F12},
++    {8, NS_VK_BACK, KEY_NAME_INDEX_Backspace},
++    {9, NS_VK_TAB, KEY_NAME_INDEX_Tab},
++    {10, NS_VK_RETURN, KEY_NAME_INDEX_Enter},
++    {13, NS_VK_RETURN, KEY_NAME_INDEX_Enter},
++    {27, NS_VK_ESCAPE, KEY_NAME_INDEX_Escape},
++    {127, NS_VK_DELETE, KEY_NAME_INDEX_Delete},
++};
++
++static void PreparaTasto(WidgetKeyboardEvent& aEv, uint32_t aKeyCode,
++                         KeyNameIndex aNome, char16_t aCarattere,
++                         Modifiers aMod) {
++  aEv.mKeyCode = aKeyCode;
++  aEv.mKeyNameIndex = aNome;
++  aEv.mCodeNameIndex = CODE_NAME_INDEX_UNKNOWN;
++  if (aNome == KEY_NAME_INDEX_USE_STRING) {
++    aEv.mKeyValue.Assign(aCarattere);
++  }
++  aEv.mModifiers = aMod;
++  aEv.mLocation = eKeyLocationStandard;
++  aEv.mIsRepeat = false;
++  aEv.mTimeStamp = TimeStamp::Now();
++}
++
++void nsWindow::Tasto(uint32_t aCodice) {
++  uint32_t base = aCodice & KBD_KEY_MASK;
++  uint32_t keyCode = 0;
++  KeyNameIndex nome = KEY_NAME_INDEX_USE_STRING;
++  char16_t carattere = 0;
++  Modifiers mod = Modificatori(aCodice);
++
++  for (const TastoSpeciale& s : kSpeciali) {
++    if (s.mKbd == base) {
++      keyCode = s.mKeyCode;
++      nome = s.mNome;
++      break;
++    }
++  }
++  if (nome == KEY_NAME_INDEX_USE_STRING) {
++    if (base >= 0x80 && base < 0x100) {
++      carattere = kCp437[base - 0x80];
++    } else if (base >= 32 && base < 0x100) {
++      carattere = (char16_t)base;
++    } else {
++      return;
++    }
++    keyCode = WidgetUtils::ComputeKeyCodeFromChar(carattere);
++  }
++
++  RefPtr<TextEventDispatcher> d = GetTextEventDispatcher();
++  if (!d || NS_FAILED(d->BeginNativeInputTransaction())) {
++    return;
++  }
++
++  RefPtr<nsWindow> kungFuDeathGrip(this);
++  nsEventStatus stato = nsEventStatus_eIgnore;
++  WidgetKeyboardEvent giu(true, eKeyDown, this);
++  PreparaTasto(giu, keyCode, nome, carattere, mod);
++  d->DispatchKeyboardEvent(eKeyDown, giu, stato);
++  if (mDestroyed) {
++    return;
++  }
++  if (stato != nsEventStatus_eConsumeNoDefault) {
++    WidgetKeyboardEvent premi(true, eKeyPress, this);
++    PreparaTasto(premi, keyCode, nome, carattere, mod);
++    if (NS_FAILED(d->BeginNativeInputTransaction())) {
++      return;
++    }
++    d->MaybeDispatchKeypressEvents(premi, stato);
++    if (mDestroyed) {
++      return;
++    }
++  }
++  WidgetKeyboardEvent su(true, eKeyUp, this);
++  PreparaTasto(su, keyCode, nome, carattere, mod);
++  stato = nsEventStatus_eIgnore;
++  if (NS_FAILED(d->BeginNativeInputTransaction())) {
++    return;
++  }
++  d->DispatchKeyboardEvent(eKeyUp, su, stato);
++}
++
++void nsWindow::OnServerEvent(const void* aEvento) {
++  const WinEvento* e = static_cast<const WinEvento*>(aEvento);
++  int32_t x = (int32_t)e->x;
++  int32_t y = (int32_t)e->y;
++  RefPtr<nsWindow> kungFuDeathGrip(this);
++
++  if (e->tipo != WIN_EV_MOUSE_MOSSO) {
++    static int sDetti = 0;
++    if (sDetti < 60) {
++      sDetti++;
++      DIARIO("evento %u su %p a %d,%d tasto 0x%x (server %u ms)", e->tipo,
++             this, x, y, e->tasto, e->tempo);
++    }
++  }
++
++  switch (e->tipo) {
++    case WIN_EV_MOUSE_MOSSO:
++      if (!mDentro) {
++        mDentro = true;
++        Mouse(eMouseEnterIntoWidget, x, y, MouseButton::ePrimary, e->bottoni,
++              0);
++      }
++      Mouse(eMouseMove, x, y, MouseButton::ePrimary, e->bottoni, 0);
++      break;
++    case WIN_EV_MOUSE_GIU:
++      ContaClic(x, y, e->tempo);
++      Mouse(eMouseDown, x, y, MouseButton::ePrimary, MOUSE_BTN_SIN, e->tasto);
++      break;
++    case WIN_EV_MOUSE_SU:
++      Mouse(eMouseUp, x, y, MouseButton::ePrimary, e->bottoni, 0);
++      break;
++    case WIN_EV_DESTRO:
++      mClic = 1;
++      Mouse(eMouseDown, x, y, MouseButton::eSecondary, MOUSE_BTN_DES,
++            e->tasto);
++      if (!mDestroyed) {
++        MenuContestuale(x, y, e->tasto);
++      }
++      if (!mDestroyed) {
++        Mouse(eMouseUp, x, y, MouseButton::eSecondary, 0, e->tasto);
++      }
++      break;
++    case WIN_EV_ROTELLA:
++      Rotella(x, y, (int32_t)e->tasto);
++      break;
++    case WIN_EV_USCITO:
++      if (mDentro) {
++        mDentro = false;
++        Mouse(eMouseExitFromWidget, x, y, MouseButton::ePrimary, 0, 0);
++      }
++      break;
++    case WIN_EV_TASTO: {
++      // Keys go to the top-level window: a popup (a menu) is driven by the
++      // document of the window that opened it, as on the other platforms.
++      RefPtr<nsWindow> bersaglio = this;
++      if (mWindowType == WindowType::Popup) {
++        if (RefPtr<nsWindow> attiva = FinestraAttiva()) {
++          bersaglio = attiva;
++        }
++      }
++      bersaglio->Tasto(e->tasto);
++      break;
++    }
++    case WIN_EV_CHIUDI:
++      if (mWindowType == WindowType::Popup) {
++        if (nsIRollupListener* rl = nsIWidget::GetActiveRollupListener()) {
++          nsIRollupListener::RollupOptions opzioni;
++          rl->Rollup(opzioni);
++        }
++      } else if (mWidgetListener) {
++        mWidgetListener->RequestWindowClose(this);
++      }
++      break;
++    default:
++      break;
++  }
 +}

@@ -96,8 +96,12 @@ tutti insieme <a href="#esempi">in fondo</a>, e ogni strumento ci rimanda.
 <li><b>File &gt; Nuovo progetto</b>, e si da' una directory: exide ci crea
 dentro <code>src</code>, <code>inc</code>, <code>lib</code>, <code>bin</code>
 e <code>obj</code>, piu' <code>progetto.txt</code> con autore e data.</li>
-<li>Si sceglie uno <a href="#strumenti">strumento</a> nell'elenco a sinistra e
-si clicca sulla maschera: il controllo nasce li', con un nome e un id suoi.</li>
+<li>Si sceglie uno <a href="#strumenti">strumento</a> nel pannello a sinistra
+&mdash; ogni riga ha la miniatura del controllo, e sotto l'elenco una frase
+dice che cos'e' &mdash; e si clicca sulla maschera: il controllo nasce li', con
+un nome e un id suoi. <b>Posato uno, il mouse torna puntatore</b> (la prima
+riga del pannello): i clic dopo scelgono e spostano quel che c'e' gia', e non
+mettono un altro controllo. Per metterne un secondo lo si sceglie di nuovo.</li>
 <li>Lo si sposta trascinandolo, e lo si RIDIMENSIONA tirando una delle otto
 maniglie nere che gli compaiono attorno quando e' scelto: gli angoli cambiano
 due lati insieme, quelle in mezzo ai bordi uno solo, e il bordo opposto non si
@@ -105,8 +109,15 @@ muove.</li>
 <li>Le <a href="#proprieta">proprieta'</a> a destra dicono nome, testo,
 posizione, misura, id ed evento: si sceglie la riga, si scrive nella casella e
 si preme Applica.</li>
-<li><b>Doppio clic</b> sul controllo: si apre il sorgente dentro la funzione
-che l'evento chiamera'. Se non c'era, exide la aggiunge vuota.</li>
+<li><b>Doppio clic</b> sul controllo: si apre il sorgente con il cursore
+DENTRO la funzione che l'evento chiamera', dopo la <code>{</code> e prima
+della <code>}</code>, pronto per scrivere. Se la funzione non c'era, exide la
+aggiunge vuota. La finestra del sorgente resta in primo piano ma non blocca il
+disegnatore: si sposta, e sotto si possono scegliere gli altri controlli per
+leggerne il nome o il testo nelle proprieta'. Nasce in basso a sinistra, con
+una misura presa dallo schermo, cosi' le barre di scorrimento del codice
+restano sempre in vista. A ogni salvataggio del progetto quel che c'e' nell'editor
+viene salvato e ricaricato, cosi' gli handler nuovi compaiono da soli.</li>
 <li><b>File &gt; Salva</b> scrive <code>finestra.dis</code>,
 <code>finestra.h</code> e <code>finestra_gen.c</code>.</li>
 <li><b>Strumenti &gt; Compilatore</b>, e il pulsante Compila: esce il binario

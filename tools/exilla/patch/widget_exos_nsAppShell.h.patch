@@ -1,38 +1,30 @@
 --- a/widget/exos/nsAppShell.h
 +++ b/widget/exos/nsAppShell.h
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,27 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 +
-+/* EX-OS (Exilla): the application shell. In this first stage every window is
-+ * a HeadlessWidget, so the only "native" event is Gecko asking to be woken
-+ * up: a flag under a mutex, and a condition variable to sleep on. When the
-+ * windows move into ExWin, ExWin's messages will arrive here too. */
++/* EX-OS (Exilla): the application shell. The main thread sleeps in the
++ * kernel waiting for IPC mail: the events of the ExWin windows, and the
++ * letters other threads send to wake it up (see ExosPosta.h). */
 +
 +#ifndef widget_exos_nsAppShell_h
 +#define widget_exos_nsAppShell_h
-+
-+#include <pthread.h>
 +
 +#include "nsBaseAppShell.h"
 +
 +class nsAppShell : public nsBaseAppShell {
 + public:
-+  nsAppShell();
++  nsAppShell() = default;
 +
 +  nsresult Init();
 +
 + protected:
-+  virtual ~nsAppShell();
++  virtual ~nsAppShell() = default;
 +
 +  void ScheduleNativeEventCallback() override;
 +  bool ProcessNextNativeEvent(bool aMayWait) override;
-+
-+ private:
-+  pthread_mutex_t mLock;
-+  pthread_cond_t mWake;
-+  bool mPending;
 +};
 +
 +#endif  // widget_exos_nsAppShell_h

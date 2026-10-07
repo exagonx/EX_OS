@@ -875,9 +875,24 @@ int32_t sys_thread_crea(InterruptFrame *frame)
     if (entry == 0 || entry >= USER_SPACE_END) return ERR(EFAULT);
 
     {
-        int32_t  tid = proc_thread_crea(entry, arg);
+        /* ! UN FILO ALLA VOLTA PER GRUPPO (7 ottobre 2026). proc_thread_crea
+         * sceglie la piazzola guardando i PCB che ci sono, ma il PCB del filo
+         * nuovo nasce in fondo, dopo aver mappato lo stack e letto l'immagine
+         * TLS dal file — e quella lettura puo' cedere la CPU. Due fili dello
+         * stesso programma che ne creano uno nello stesso momento ricevevano la
+         * STESSA piazzola (e lo stesso buffer TLS, che e' uno solo): il primo
+         * che finiva smontava lo stack sotto i piedi dell'altro. E' lo stesso
+         * lucchetto di mmap e sbrk, perche' e' la stessa cosa: lo spazio di
+         * indirizzamento del gruppo. */
         Process *self = proc_get_current();
-        Process *filo = (tid > 0) ? proc_get_by_pid((uint32_t)tid) : NULL;
+        Process *capo = self ? proc_spazio_capo(self) : NULL;
+        int32_t  tid;
+        Process *filo;
+
+        if (capo != NULL) proc_spazio_prendi(capo);
+        tid = proc_thread_crea(entry, arg);
+        if (capo != NULL) proc_spazio_lascia(capo);
+        filo = (tid > 0) ? proc_get_by_pid((uint32_t)tid) : NULL;
 
         /* A new thread inherits its creator's signal mask (POSIX). Its
          * alternate stack and pending set start empty. */
@@ -1398,30 +1413,14 @@ int32_t sys_mmap(InterruptFrame *frame)
         return (int32_t)vaddr;
     }
 
-    /* Alloca e mappa le pagine */
+    /* ! LE PAGINE SI PROMETTONO, NON SI DANNO (kernel 0.236): ognuna arriva
+     * azzerata al primo accesso. Vedi PG_PIGRA in paging.h per le misure che
+     * l'hanno deciso. Qui si alloca solo la tabella che le descrive. */
     for (i = 0; i < pages; i++) {
-        uint32_t phys = pmm_alloc_page();
-        /* Se la RAM e' finita si prova a fare posto: vedi swap.h. */
-        if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
-        if (phys == 0) {
-            /* OOM: libera le pagine già allocate */
+        if (paging_pigra(proc->page_directory, vaddr + i * PAGE_SIZE, pg_flags) != 0) {
             uint32_t j;
-            for (j = 0; j < i; j++) {
-                uint32_t va = vaddr + j * PAGE_SIZE;
-                uint32_t pa = paging_get_physical(proc->page_directory, va);
-                if (pa) pmm_free_page(pa);
-                paging_unmap_page(proc->page_directory, va);
-            }
-            return ERR(ENOMEM);
-        }
-
-        /* Azzera la pagina appena allocata (via finestra: vedi sys_sbrk) */
-        paging_azzera_fisica(phys);
-
-        if (paging_map_page(proc->page_directory,
-                             vaddr + i * PAGE_SIZE,
-                             phys, pg_flags) != 0) {
-            pmm_free_page(phys);
+            for (j = 0; j < i; j++)
+                paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
             return ERR(ENOMEM);
         }
     }
@@ -2647,40 +2646,14 @@ int32_t sys_sbrk(InterruptFrame *frame)
             return ERR(ENOMEM);
         }
 
+        /* Promesse, come in mmap: vedi PG_PIGRA in paging.h (0.236). */
         for (i = 0; i < pages; i++) {
             uint32_t vaddr = proc->heap_end + i * PAGE_SIZE;
-            uint32_t phys  = pmm_alloc_page();
-            /* Se la RAM e' finita si prova a fare posto: vedi swap.h. */
-            if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
-            if (phys == 0) {
-                /* OOM: rilascia le pagine già allocate in questo ciclo */
-                uint32_t j;
-                for (j = 0; j < i; j++) {
-                    uint32_t va = proc->heap_end + j * PAGE_SIZE;
-                    uint32_t pa = paging_get_physical(proc->page_directory, va);
-                    if (pa) pmm_free_page(pa);
-                    paging_unmap_page(proc->page_directory, va);
-                }
-                return ERR(ENOMEM);
-            }
-            /* Azzera la pagina attraverso la finestra di rimappatura: la
-             * pagina appena allocata puo' stare ovunque in RAM, e qui e'
-             * caricato il CR3 del processo chiamante, che mappa per
-             * identita' solo la fascia kernel. Scriverci all'indirizzo
-             * fisico e' esattamente il page fault in ring0 che questa
-             * finestra esiste per evitare. */
-            paging_azzera_fisica(phys);
 
-            if (paging_map_page(proc->page_directory, vaddr, phys, pg_flags) != 0) {
-                pmm_free_page(phys);
-                /* Rilascia le precedenti */
+            if (paging_pigra(proc->page_directory, vaddr, pg_flags) != 0) {
                 uint32_t j;
-                for (j = 0; j < i; j++) {
-                    uint32_t va = proc->heap_end + j * PAGE_SIZE;
-                    uint32_t pa = paging_get_physical(proc->page_directory, va);
-                    if (pa) pmm_free_page(pa);
-                    paging_unmap_page(proc->page_directory, va);
-                }
+                for (j = 0; j < i; j++)
+                    paging_unmap_page(proc->page_directory, proc->heap_end + j * PAGE_SIZE);
                 return ERR(ENOMEM);
             }
         }

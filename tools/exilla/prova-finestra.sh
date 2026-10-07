@@ -55,6 +55,9 @@ FOTO_N="${FOTO_N:-5}"
     echo "key:alt-f1@2"
     echo "/disk/firefox/firefox -no-remote -profile /disk/profilo file:///disk/prova.html &@3"
     echo "key:alt-f5@3"
+    # CAMPIONI_AVVIO=n: n campioni della CPU, uno ogni mezzo secondo, MENTRE
+    # Firefox parte: dicono dove passa il tempo dell'avvio (7 ottobre 2026).
+    for i in $(seq 1 "${CAMPIONI_AVVIO:-0}"); do echo "regs:$T/regs-avvio.txt@0.5"; done
     for i in $(seq 1 "$FOTO_N"); do
         echo "foto:$T/$i.ppm@$FOTO_OGNI"
     done
@@ -91,6 +94,7 @@ timeout $(( FOTO_OGNI * FOTO_N + 900 )) python3 tools/qemu_drive.py "${A[@]}" > 
 [ -f "$T/regs.txt" ] && cp "$T/regs.txt" "$F/regs.txt"
 [ -f "$T/regs-fine.txt" ] && cp "$T/regs-fine.txt" "$F/regs-fine.txt"
 [ -f "$T/regs-invio.txt" ] && cp "$T/regs-invio.txt" "$F/regs-invio.txt"
+[ -f "$T/regs-avvio.txt" ] && cp "$T/regs-avvio.txt" "$F/regs-avvio.txt"
 for p in "$T"/*.ppm; do
     [ -f "$p" ] || continue
     q="$F/$(basename "${p%.ppm}").png"
@@ -99,5 +103,31 @@ done
 tr -d '\r' < /tmp/exos/serialfinestra.txt | sed 's/\x1b\[[0-9;]*m//g' | grep -av ENTROPIA \
     | grep -a "FAULT\|PF:\|Exilla\|exilla:\|firefox\|wserver\|MOZ_CRASH\|Assertion" | tail -40
 tr -d '\r' < /tmp/exos/serialfinestra.txt | sed 's/\x1b\[[0-9;]*m//g' | sed -n '/> stack/,/FINE-FINESTRA/p' | head -60
+# ! I MILLISECONDI DEL DIARIO SONO DALL'ACCENSIONE DELLA MACCHINA, NON DAL LANCIO
+# DI FIREFOX. Il 7 ottobre 2026 «titolo (61480 ms)» e' stato letto per giorni
+# come «Firefox ci mette un minuto ad aprirsi»: 57 di quei secondi erano
+# l'avvio di EX-OS e le attese di questa prova. Qui sotto si fa la sottrazione,
+# cosi' il numero che si legge e' quello che si crede di leggere:
+#   avvio   dal «born at» del processo al primo titolo e a quello definitivo;
+#   pagina  dal tasto Invio (evento tasto 0xa, ora del server) al titolo nuovo.
+echo "=== i tempi di Firefox (dal suo avvio, non dall'accensione) ==="
+tr -d '\r' < /tmp/exos/serialfinestra.txt | python3 -c '
+import re, sys
+t = sys.stdin.read()
+nato = re.search(r"born at (\d+) ms", t)
+tit  = [(m.group(1), int(m.group(2))) for m in re.finditer(r"exilla: titolo .(.*?). \((\d+) ms\)", t)]
+inv  = [int(m.group(1)) for m in re.finditer(r"tasto 0xa \(server (\d+) ms\)", t)]
+if nato and tit:
+    n = int(nato.group(1))
+    print("  avvio:  prima finestra dopo %.1f s" % ((tit[0][1] - n) / 1000.0))
+    pieni = [x for x in tit if x[0].startswith("Exilla")]
+    if pieni: print("          pagina iniziale col suo titolo dopo %.1f s" % ((pieni[0][1] - n) / 1000.0))
+else:
+    print("  avvio:  non misurabile (manca «born at» o un titolo nel diario)")
+if inv:
+    dopo = [x for x in tit if x[1] >= inv[-1] and x[0] and not x[0].startswith("Nightly")]
+    if dopo: print("  pagina: titolo nuovo %.2f s dopo Invio" % ((dopo[0][1] - inv[-1]) / 1000.0))
+    else:    print("  pagina: dopo Invio nessun titolo nuovo")
+'
 echo "=== fotografie in $F ==="
 ls "$F"/*.png 2>/dev/null

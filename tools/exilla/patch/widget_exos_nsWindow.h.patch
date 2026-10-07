@@ -1,0 +1,12 @@
+--- a/widget/exos/nsWindow.h
++++ b/widget/exos/nsWindow.h
+@@ -85,6 +85,9 @@
+   void OnServerResized(const void* aCreata);
+   void OnServerMoved(int32_t aX, int32_t aY);
+ 
++  void CreateCompositor(int aWidth, int aHeight) override;
++  using nsIWidget::CreateCompositor;
++
+   bool Destroyed() const { return mDestroyed; }
+ 
+  private:
