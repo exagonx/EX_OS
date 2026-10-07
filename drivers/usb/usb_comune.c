@@ -43,14 +43,48 @@ int usb_desc_corto(UsbControllo ctl, unsigned int dev, UsbDispositivo *d)
     return 1;
 }
 
+/* =============================================================================
+ * ! TRE TENTATIVI, E SI RICORDA COM'E' ANDATO L'ULTIMO (7 ottobre 2026).
+ *
+ * Su un PC vero, con piu' di un modello di chiavetta, questo passo falliva al
+ * primo colpo e il driver diceva «descrittore di dispositivo non credibile» e
+ * basta: non si sapeva se il trasferimento era fallito o se erano arrivati
+ * byte sbagliati, cioe' se guardare il controller o il dispositivo.
+ *
+ * E' la prima domanda che si fa al dispositivo al suo indirizzo NUOVO, e la
+ * specifica gli da' tempo per abituarcisi: qualcuno se ne prende di piu'.
+ * Si riprova, con una pausa, e quel che e' successo resta in usb_desc_esito e
+ * usb_desc_byte per chi deve dirlo (usb_desc_dice).
+ * ============================================================================= */
+int           usb_desc_esito;       /* quel che ha reso l'ultimo trasferimento */
+unsigned char usb_desc_byte[18];    /* e i byte che c'erano nel tampone */
+
+void usb_desc_dice(const char *chi)
+{
+    printf("%s: descrittore di dispositivo non credibile\n", chi);
+    if (usb_desc_esito != 0)
+        printf("%s:   il trasferimento e' fallito (esito %d) in tutti e tre i "
+               "tentativi\n", chi, usb_desc_esito);
+    else
+        printf("%s:   trasferimento riuscito, ma i byte non sono un descrittore: "
+               "%02x %02x %02x %02x %02x %02x %02x %02x\n", chi,
+               usb_desc_byte[0], usb_desc_byte[1], usb_desc_byte[2], usb_desc_byte[3],
+               usb_desc_byte[4], usb_desc_byte[5], usb_desc_byte[6], usb_desc_byte[7]);
+}
+
 int usb_desc_lungo(UsbControllo ctl, unsigned int dev, UsbDispositivo *d)
 {
     unsigned char b[18];
+    int giro, k, buono = 0;
 
-    if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_DEVICE << 8), 0, b, 18, 1) != 0)
-        return 0;
-
-    if (b[0] < 18 || b[1] != USB_DESC_DEVICE) return 0;
+    for (giro = 0; giro < 3 && !buono; giro++) {
+        if (giro) usleep(50000);
+        for (k = 0; k < 18; k++) b[k] = 0;
+        usb_desc_esito = ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_DEVICE << 8), 0, b, 18, 1);
+        for (k = 0; k < 18; k++) usb_desc_byte[k] = b[k];
+        buono = (usb_desc_esito == 0 && b[0] >= 18 && b[1] == USB_DESC_DEVICE);
+    }
+    if (!buono) return 0;
 
     d->versione  = (unsigned int)b[2] | ((unsigned int)b[3] << 8);
     d->classe    = b[4];

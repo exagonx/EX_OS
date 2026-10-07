@@ -203,7 +203,6 @@ static void dma_copia(uint8_t *dst, const uint8_t *src, uint32_t n)
 
 static uint8_t  g_dma_buf[DMA_BUF_BYTE] __attribute__((aligned(65536)));
 static Prd      g_prdt[1]               __attribute__((aligned(8)));
-static uint16_t g_bm_base   = 0;        /* 0 = niente bus master: si va in PIO */
 static int      g_dma_rotto = 0;        /* 1 = DMA gia' fallito: non si ritenta piu'
                                           * per il resto della sessione. Senza questo
                                           * flag ogni ata_rw() successiva riprovava il
@@ -247,56 +246,140 @@ static void pci_scrivi32(uint8_t bus, uint8_t slot, uint8_t fn, uint8_t off,
  * stato non dice «manca il permesso» — dice solo che non e' successo niente.
  * Su QEMU il bit e' spesso gia' acceso, il che rende la dimenticanza
  * invisibile proprio dove si prova. */
-static uint16_t ata_trova_bus_master(void)
+/* =============================================================================
+ * I CANALI — i due di sempre, piu' quelli dei controller «nativi» (7 ottobre
+ * 2026)
+ *
+ * Un canale IDE e' tre numeri: dove stanno i registri dei comandi, dove sta
+ * quello di controllo, dove sta il suo bus master. Per quarant'anni i primi
+ * due sono stati 0x1F0/0x3F6 e 0x170/0x376, e questo file li aveva scritti
+ * dentro. Ma un controller PCI puo' dichiararsi in MODO NATIVO: le porte non
+ * sono quelle, sono dove il BIOS ha messo i suoi BAR (0 e 1 il primo canale,
+ * 2 e 3 il secondo, 4 il bus master). E' cosi' che si presentano quasi tutti
+ * i controller SATA quando non sono in AHCI: sulla scheda NVIDIA MCP73 da cui
+ * e' nato questo lavoro il disco sta a 0xd480, e a 0x1F0 c'e' solo il vecchio
+ * connettore PATA — vuoto. Il kernel guardava li', e il disco non c'era.
+ *
+ * ! I REGISTRI SONO GLI STESSI, cambia solo dove stanno: tutto il resto del
+ * file — IDENTIFY, PIO, DMA, i reset — passa gia' da ata_base_io() e
+ * ata_base_ctrl(), e non ha dovuto sapere niente.
+ *
+ * ! IL REGISTRO DI CONTROLLO DI UN CANALE NATIVO STA A BAR + 2: il blocco di
+ * controllo e' di quattro porte e quella buona e' la terza. Sui canali di
+ * sempre 0x3F6 e' gia' «0x3F4 + 2», solo che nessuno lo scrive cosi'.
+ * ============================================================================= */
+typedef struct {
+    uint16_t io;        /* i registri dei comandi (otto porte) */
+    uint16_t ctl;       /* stato alternato / controllo */
+    uint16_t bm;        /* il suo bus master, 0 = questo canale va in PIO */
+} AtaCanale;
+
+static AtaCanale g_can[ATA_MAX_CANALI] = {
+    { ATA_PRIMARY_IO,   ATA_PRIMARY_CTRL,   0 },
+    { ATA_SECONDARY_IO, ATA_SECONDARY_CTRL, 0 },
+};
+static int g_n_can = 2;
+
+static void canale_nativo(uint32_t bar_io, uint32_t bar_ctl, uint16_t bm,
+                          unsigned bus, unsigned slot, unsigned fn)
+{
+    if (!(bar_io & 1u) || !(bar_ctl & 1u)) return;      /* non sono porte */
+    bar_io &= 0xFFFCu; bar_ctl &= 0xFFFCu;
+    if (bar_io == 0 || bar_ctl == 0) return;
+    if (g_n_can >= ATA_MAX_CANALI) {
+        klog(LOG_WARN, "ATA: troppi canali: quello a 0x%04x (PCI %u:%u.%u) resta fuori",
+             bar_io, bus, slot, fn);
+        return;
+    }
+    /* ! I CANALI NATIVI VANNO IN PIO, PER ORA (7 ottobre 2026). Sul primo
+     * controller vero su cui sono stati provati — SATA NVIDIA MCP73 — il
+     * disco si riconosce, ma ogni trasferimento DMA lo lascia occupato per
+     * sempre: il bus master a BAR4 dice «finito» senza aver mosso un byte.
+     * Il perche' non si sa ancora (su quei chipset il DMA vero passa
+     * dall'AHCI); in PIO i registri sono gli stessi di IDENTIFY, che la'
+     * funziona. Piu' lento, ma legge e scrive. Il bus master trovato si dice
+     * nel log e non si usa. */
+    (void)bm;
+    g_can[g_n_can].io  = (uint16_t)bar_io;
+    g_can[g_n_can].ctl = (uint16_t)(bar_ctl + 2);
+    g_can[g_n_can].bm  = 0;
+    klog(LOG_INFO, "ATA: canale nativo %d a 0x%04x/0x%04x, in PIO (bus master 0x%04x "
+         "non usato; PCI %u:%u.%u)", g_n_can, bar_io, bar_ctl + 2, bm, bus, slot, fn);
+    g_n_can++;
+}
+
+/* Cerca sul PCI i controller di dischi che parlano IDE: classe 01.01 (IDE),
+ * e 01.04 (RAID) o 01.06 (SATA) quando NON sono in AHCI — in quel caso i
+ * registri IDE non rispondono, e serve un altro driver.
+ *
+ * Per ciascuno: i canali in modo compatibile sono quelli di sempre, e gli si
+ * da' il bus master; quelli in modo nativo si aggiungono all'elenco. Il byte
+ * dell'interfaccia lo dice per la classe IDE (bit 0 il primo canale, bit 2 il
+ * secondo); per RAID e SATA contano i BAR: se ci sono porte, sono native. */
+static void ata_cerca_controller(void)
 {
     uint16_t bus, slot, fn;
+    int      trovato_bm = 0;
 
-    /* ! SI SCANDISCONO TUTTE E OTTO LE FUNZIONI, non solo la zero, e questo
-     * pezzo e' costato la prima prova: il controller IDE del PIIX3 — quello
-     * che QEMU mette di default, ed e' anche il piu' comune sul ferro
-     * dell'epoca — sta in PCI 00:01.**1**, perche' 00:01.0 e' il ponte ISA.
-     *
-     * Guardando la sola funzione 0 non lo si trova mai, e il messaggio che
-     * ne usciva era «nessun bus master IDE sul PCI»: perfettamente vero
-     * riguardo a cio' che era stato guardato, e completamente fuorviante.
-     *
-     * Le funzioni assenti rendono 0xFFFF, quindi provarle tutte non costa
-     * niente e toglie la necessita' di leggere il bit di multifunzione. */
     for (bus = 0; bus < 256; bus++) {
         for (slot = 0; slot < 32; slot++) {
             for (fn = 0; fn < 8; fn++) {
-                uint32_t id = pci_leggi32((uint8_t)bus, (uint8_t)slot,
-                                          (uint8_t)fn, 0x00);
-                uint32_t classe, bar4, cmd;
+                uint8_t  b = (uint8_t)bus, sl = (uint8_t)slot, f = (uint8_t)fn;
+                uint32_t id = pci_leggi32(b, sl, f, 0x00);
+                uint32_t classe, cmd, bar[5], bm;
+                uint8_t  sotto, interf;
+                int      nat1, nat2, k;
 
                 if ((id & 0xFFFFu) == 0xFFFFu) continue;  /* niente qui */
 
-                classe = pci_leggi32((uint8_t)bus, (uint8_t)slot,
-                                     (uint8_t)fn, 0x08);
-                if ((classe >> 16) != 0x0101u) continue;  /* non e' IDE */
-
-                bar4 = pci_leggi32((uint8_t)bus, (uint8_t)slot,
-                                   (uint8_t)fn, 0x20);
-                if ((bar4 & 1u) == 0) continue;           /* non e' in I/O */
-                bar4 &= 0xFFFCu;
-                if (bar4 == 0) continue;
-
-                cmd = pci_leggi32((uint8_t)bus, (uint8_t)slot,
-                                  (uint8_t)fn, 0x04);
-                if ((cmd & 0x0004u) == 0) {
-                    pci_scrivi32((uint8_t)bus, (uint8_t)slot, (uint8_t)fn,
-                                 0x04, cmd | 0x0004u);
+                classe = pci_leggi32(b, sl, f, 0x08);
+                if ((classe >> 24) != 0x01u) continue;    /* non e' un disco */
+                sotto  = (uint8_t)(classe >> 16);
+                interf = (uint8_t)(classe >> 8);
+                if (sotto != 0x01 && sotto != 0x04 && sotto != 0x06) continue;
+                if (sotto != 0x01 && interf == 0x01) {
+                    klog(LOG_INFO, "ATA: controller AHCI in PCI %u:%u.%u: non e' "
+                         "di questo driver", bus, slot, fn);
+                    continue;
                 }
 
-                klog(LOG_INFO, "ATA: bus master IDE a 0x%04x (PCI %u:%u.%u)",
-                     (uint16_t)bar4, bus, slot, fn);
-                return (uint16_t)bar4;
+                for (k = 0; k < 5; k++)
+                    bar[k] = pci_leggi32(b, sl, f, (uint8_t)(0x10 + k * 4));
+                bm = (bar[4] & 1u) ? (bar[4] & 0xFFFCu) : 0;
+
+                if (sotto == 0x01) {
+                    nat1 = (interf & 0x01) != 0;
+                    nat2 = (interf & 0x04) != 0;
+                } else {
+                    nat1 = (bar[0] & 1u) && (bar[0] & 0xFFFCu);
+                    nat2 = (bar[2] & 1u) && (bar[2] & 0xFFFCu);
+                    if (!nat1 && !nat2) continue;         /* niente porte IDE */
+                }
+
+                /* Le porte e il bus master devono essere accesi. */
+                cmd = pci_leggi32(b, sl, f, 0x04);
+                if ((cmd & 0x0005u) != 0x0005u)
+                    pci_scrivi32(b, sl, f, 0x04, cmd | 0x0005u);
+
+                if (nat1) {
+                    canale_nativo(bar[0], bar[1], (uint16_t)bm, bus, slot, fn);
+                } else if (bm && g_can[0].bm == 0) {
+                    g_can[0].bm = (uint16_t)bm;
+                    trovato_bm  = 1;
+                    klog(LOG_INFO, "ATA: bus master IDE a 0x%04x (PCI %u:%u.%u)",
+                         (uint16_t)bm, bus, slot, fn);
+                }
+                if (nat2) {
+                    canale_nativo(bar[2], bar[3], (uint16_t)(bm ? bm + 8 : 0),
+                                  bus, slot, fn);
+                } else if (bm && g_can[1].bm == 0) {
+                    g_can[1].bm = (uint16_t)(bm + 8);
+                }
             }
         }
     }
-
-    klog(LOG_INFO, "ATA: nessun bus master IDE sul PCI, si resta in PIO");
-    return 0;
+    if (!trovato_bm && g_n_can == 2)
+        klog(LOG_INFO, "ATA: nessun bus master IDE sul PCI, si resta in PIO");
 }
 
 /* Un trasferimento DMA di al massimo DMA_MAX_SETT settori, dal/nel buffer di
@@ -313,7 +396,7 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
                           int usa48, int scrivi)
 {
     uint16_t io = base_io(canale);
-    uint16_t bm = (uint16_t)(g_bm_base + (canale ? 8 : 0));
+    uint16_t bm = g_can[canale].bm;
     uint32_t scaduto = 0;
     uint8_t  st;
 
@@ -474,6 +557,13 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
         if (s < 0 || ((uint8_t)s & (ATA_SR_ERR | ATA_SR_DF))) {
             klog(LOG_ERROR, "ATA: DMA, il disco segnala errore a lba=%u "
                  "(stato=0x%02x)", (uint32_t)lba, (uint8_t)s);
+            /* ! UN DISCO RIMASTO OCCUPATO VA RESETTATO, O NON SI RIPRENDE PIU'
+             * (7 ottobre 2026, dal PC vero col controller SATA NVIDIA). Il
+             * bus master dice «finito» ma il disco resta in BSY (stato 0xd0):
+             * il comando DMA non e' mai partito davvero, e lui aspetta ancora.
+             * Senza reset anche il PIO che viene dopo trova il disco occupato,
+             * e ogni lettura finisce in un «timeout BSY» a un settore diverso. */
+            if (s < 0) ata_reset_canale(canale);
             return -1;
         }
     }
@@ -487,12 +577,12 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
 
 uint16_t ata_base_io(int canale)
 {
-    return (canale == 0) ? ATA_PRIMARY_IO : ATA_SECONDARY_IO;
+    return (canale >= 0 && canale < g_n_can) ? g_can[canale].io : ATA_PRIMARY_IO;
 }
 
 uint16_t ata_base_ctrl(int canale)
 {
-    return (canale == 0) ? ATA_PRIMARY_CTRL : ATA_SECONDARY_CTRL;
+    return (canale >= 0 && canale < g_n_can) ? g_can[canale].ctl : ATA_PRIMARY_CTRL;
 }
 
 /* =============================================================================
@@ -892,7 +982,7 @@ int ata_init(void)
      * legge gia' dai dischi, e trovare il DMA solo alla fine vorrebbe dire
      * fare in PIO proprio le letture dell'avvio — che sono quelle che
      * l'utente vede come "quanto ci mette ad accendersi". */
-    g_bm_base = ata_trova_bus_master();
+    ata_cerca_controller();
 
     klog(LOG_INFO, "ATA: rilevamento unita' sui canali primario e secondario...");
 
@@ -902,6 +992,31 @@ int ata_init(void)
             ata_rileva(idx, canale, unita);
             if (g_dev[idx].tipo == ATA_TYPE_ATA) g_trovati++;
             idx++;
+        }
+    }
+
+    /* ! I DISCHI DEI CANALI NATIVI PRENDONO I POSTI LIBERI FRA I QUATTRO DI
+     * SEMPRE, e non un quinto e un sesto. hd0..hd3 restano quel che erano —
+     * primario e secondario, master e slave — su ogni macchina che ha i dischi
+     * li'; ma una scheda col disco sul SATA ha quasi sempre quei posti vuoti,
+     * e dargli hd4 vorrebbe dire rifare `disk`, `fdisk` e l'installatore, che
+     * contano fino a quattro. Il posto e' un nome: quale canale e' davvero lo
+     * dice g_dev[].canale, che e' cio' che usa tutto il resto del file. */
+    for (canale = 2; canale < g_n_can; canale++) {
+        for (unita = 0; unita < 2; unita++) {
+            for (idx = 0; idx < ATA_MAX_DEVICES; idx++)
+                if (g_dev[idx].tipo == ATA_TYPE_NONE) break;
+            if (idx == ATA_MAX_DEVICES) {
+                klog(LOG_WARN, "ATA: i quattro posti sono presi: il canale nativo "
+                     "%d non si guarda oltre", canale);
+                break;
+            }
+            ata_rileva(idx, canale, unita);
+            if (g_dev[idx].tipo == ATA_TYPE_ATA) {
+                g_trovati++;
+                klog(LOG_INFO, "ATA: hd%d e' sul canale nativo %d (0x%04x), unita' %d",
+                     idx, canale, g_can[canale].io, unita);
+            }
         }
     }
 
@@ -979,7 +1094,7 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
      * del solo avvio, il sistema restava utilizzabile in teoria e bloccato
      * in pratica. g_dma_rotto lo impedisce: il primo fallimento lo marca, e
      * da li' in poi si va dritti in PIO senza riprovare. */
-    if (g_bm_base != 0 && !g_dma_rotto) {
+    if (g_can[canale].bm != 0 && !g_dma_rotto) {
         uint64_t   l = lba;
         uint32_t   r = n;
         uint8_t   *q = p;

@@ -1492,7 +1492,7 @@ static int conosci(unsigned int vel)
     }
 
     if (!usb_desc_lungo(controllo, g_slot, &g_dev)) {
-        printf("xhci: descrittore di dispositivo non credibile\n");
+        usb_desc_dice("xhci");
         return 0;
     }
 

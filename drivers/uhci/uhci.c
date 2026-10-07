@@ -588,7 +588,7 @@ static int enumera(unsigned int p, unsigned int indirizzo)
      * lo mette il controller con un comando: e' il motivo per cui questo
      * pezzo non e' finito in usb_comune.c insieme al resto. */
     if (controllo(0, 0x00, USB_REQ_SET_ADDR, indirizzo, 0, 0, 0, 0) != 0) return 0;
-    usleep(5000);                       /* la specifica concede 2 ms */
+    usleep(50000);      /* la specifica dice 2 ms; un PC vero ne ha voluti di piu' */
     g_dev_addr = indirizzo;
 
     if (!usb_desc_lungo(controllo, g_dev_addr, &g_dev)) return 0;

@@ -46,6 +46,10 @@
 /* Un canale ha due unita' (master/slave), e i canali sono due. */
 #define ATA_MAX_DEVICES     4
 
+/* I due canali di sempre, piu' quelli dei controller PCI in modo nativo:
+ * vedi g_can in kernel/block/ata.c. I DISPOSITIVI restano quattro. */
+#define ATA_MAX_CANALI      6
+
 #define ATA_SECTOR_SIZE     512
 
 /* Tipo di unita' trovata */
@@ -57,7 +61,7 @@
 typedef struct {
     uint8_t  presente;      /* 0 = slot vuoto */
     uint8_t  tipo;          /* ATA_TYPE_* */
-    uint8_t  canale;        /* 0 = primario, 1 = secondario */
+    uint8_t  canale;        /* 0 = primario, 1 = secondario, da 2 in su nativo */
     uint8_t  unita;         /* 0 = master, 1 = slave */
 
     uint8_t  lba48;         /* 1 se supporta gli indirizzi a 48 bit */

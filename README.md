@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.238
+**Versione:** 0.240
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -123,9 +123,48 @@ venuto fuori che nei programmi fatti con exide gli handler `_Changed` ed
 `_Enter` delle caselle di testo non venivano mai chiamati: ora si' (exwin.so
 0.015, exide 0.024; basta riaprire il progetto e salvarlo).
 
+### Installare senza lettore CD: `make installa`, e la guida (kernel 0.240)
+
+**provato in QEMU; sul ferro e' in corso** — per un PC senza floppy ne' CD.
+`make installa` fa `dist/installa.img`: 1,44 MB che si caricano tutti in RAM
+(quindi partono da una chiavetta), con gli attrezzi del disco, la rete e
+`netupdate`. Si installa sul disco il sistema piccolo che sta girando, e da
+li' il resto arriva dalla rete. La guida passo passo e' in italiano e in
+inglese, pagina e testo: `exwin/doc/installa-usb.html`,
+`exwin/doc/installa-usb.en.html`, `INSTALLA-USB.txt`, `INSTALLA-USB.en.txt`
+(le genera `tools/doc-installa-usb.py`, da una sorgente sola).
+
+Dalla prima prova sul PC vero: il disco SATA in modo nativo si riconosce, ma
+in DMA restava bloccato («timeout BSY»). Dalla 0.240 quei canali lavorano in
+PIO e un disco rimasto occupato viene resettato.
+
+### Una scheda madre vera: disco SATA e rete NVIDIA (kernel 0.239)
+
+**da testare sul ferro: QEMU non emula ne' l'uno ne' l'altra** — dal referto
+di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
+- **Il disco SATA.** Il controller si presenta come IDE in *modo nativo*: i
+  registri non stanno a 0x1F0 e 0x170 ma dove dicono i suoi BAR. Il kernel
+  guardava solo i due posti di sempre e il disco non lo vedeva. Ora cerca sul
+  PCI i controller IDE, RAID e SATA che non sono in AHCI e ne aggiunge i
+  canali; i dischi trovati prendono i posti liberi fra `hd0` e `hd3`, cosi'
+  `disk`, `fdisk` e l'installatore non cambiano. I dischi di sempre restano
+  dov'erano (questo si' provato in QEMU).
+- **La rete.** `/dev/nforce.drv`, per l'Ethernet integrata nei chipset NVIDIA
+  nForce (MCP67, 73, 77, 79): registri in memoria, senza interrupt, col PHY
+  letto com'e'. `netdetect` la riconosce e lo avvia. Con `-d` stampa i
+  registri senza toccarli e con `-v` racconta l'accensione: sono per la prima
+  prova, che sara' sulla macchina.
+- **Le chiavette USB** su quel PC non venivano riconosciute: i driver EHCI
+  leggevano male i controller a 64 bit, e ora dicono per esteso che cosa
+  fallisce. Con la correzione il referto e' arrivato su chiavetta.
+- **Il dischetto della sonda** (`make sonda`) si costruiva piu': e' tornato a
+  fare solo la lettura dell'hardware, con 470 KB liberi per i referti.
+
 ### Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)
 
-**da testare sul ferro, provato in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4
+**testato sul ferro** (Core 2 Quad Q9650, chipset NVIDIA MCP73: quattro
+processori trovati dall'ACPI, i tre in piu' col timer che cammina e i messaggi
+che arrivano) **e in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4
 processori, con ACPI e con la sola tabella MP, anche sotto KVM; Pentium e
 Pentium II emulati a due zoccoli) — all'avvio il kernel cerca i processori
 nelle tabelle ACPI (MADT) e, dove non ci sono, nella tabella MultiProcessor

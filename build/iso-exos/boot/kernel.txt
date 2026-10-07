@@ -158,6 +158,35 @@ partito davvero, e se non combaciano lo dice. Sono due cose diverse - cosa
 e' scritto e cosa e' successo - e un disallineamento vuol dire che qualcuno
 ha modificato il file senza riavviare.
 
+-------------------------------------------------------------------------------
+atadma = 1                (commentata per default)
+-------------------------------------------------------------------------------
+
+1 (predefinito): il disco si legge e si scrive in DMA. 0: in PIO, un settore
+per volta. Si mette a 0 per LEGGERE UN DISCO MALANDATO, non per andare piu'
+piano: in PIO l'errore torna sul settore, in DMA un trasferimento che il
+disco non porta a termine costa otto secondi di attesa. Vale dall'avvio in
+poi, non durante: questo file il kernel lo legge dal disco.
+
+-------------------------------------------------------------------------------
+smp = 1                   (commentata per default)
+-------------------------------------------------------------------------------
+
+Riguarda solo le macchine con piu' di un processore, o con un processore a
+piu' nuclei. 1 (predefinito): all'avvio il kernel cerca i processori nelle
+tabelle del BIOS (ACPI, oppure la tabella MultiProcessor delle schede a due
+processori), sveglia quelli in piu' e da' a ciascuno il suo timer. 0: li
+conta soltanto, senza scrivere in nessun registro.
+
+EX-OS LAVORA ANCORA CON UN PROCESSORE SOLO (kernel 0.238): gli altri sono
+accesi e in attesa, non eseguono programmi. Che cosa ha trovato lo dice
+`hwinfo`, nella sezione PROCESSORI.
+
+SI METTE A 0 SE L'AVVIO SI FERMA su una scheda con piu' processori: svegliarli
+e' il punto dove una tabella del BIOS sbagliata puo' bloccare la macchina.
+Come per verboseboot conta solo un NUMERO: `smp = no` non spegne niente.
+Su una macchina con un processore la voce non fa differenza.
+
 
 ===============================================================================
 [env] - variabili d'ambiente ereditate dai processi utente

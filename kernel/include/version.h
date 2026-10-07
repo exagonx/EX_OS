@@ -429,7 +429,13 @@
 /* 0.237 -> 0.238: piu' processori, tappa 2. L'APIC locale sta in una pagina
  * fissa che ogni spazio di indirizzamento vede; ogni processore in piu' ha
  * il suo timer a 100 Hz e riceve i messaggi degli altri (IPI). */
-#define EXOS_VERSION    "0.238"
+/* 0.238 -> 0.239: i controller IDE/SATA in modo nativo PCI (le porte dai
+ * BAR invece di 0x1F0 e 0x170): vedi g_can in kernel/block/ata.c. Serve ai
+ * dischi SATA di quasi ogni scheda che non e' in AHCI. */
+/* 0.239 -> 0.240: i canali nativi vanno in PIO (sul SATA NVIDIA MCP73 il DMA
+ * del bus master lasciava il disco occupato), e un disco rimasto in BSY dopo
+ * un DMA fallito si resetta. */
+#define EXOS_VERSION    "0.240"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

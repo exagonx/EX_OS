@@ -289,7 +289,11 @@ static int esegui(unsigned int ed_off, unsigned int primo, unsigned int ultimo,
                 return USB_MASSA_STALLO;
             }
             if (cc != CC_OK && cc != CC_MANCA) {
-                if (g_verboso) printf("ohci: TD %u, condizione %x\n", i, cc);
+                /* Detto sempre, non solo con -v: e' il numero che distingue
+                 * un dispositivo muto (5), un errore di linea (1, 2, 3), un
+                 * pacchetto troppo lungo o troppo corto (8, 9). */
+                if (g_verboso || g_rumore)
+                    printf("ohci:   TD %u, condizione %x\n", i, cc);
                 return -1;
             }
         }
@@ -559,11 +563,11 @@ static int conosci(void)
         if (g_rumore) printf("ohci: SET_ADDRESS rifiutata\n");
         return 0;
     }
-    usleep(10000);
+    usleep(50000);      /* la specifica dice 2 ms; un PC vero ne ha voluti di piu' */
     ed_indirizzo(OFF_ED_CTRL, g_indirizzo, 0, 0, g_dev.maxp0);
 
     if (!usb_desc_lungo(controllo, g_indirizzo, &g_dev)) {
-        if (g_rumore) printf("ohci: descrittore di dispositivo non credibile\n");
+        if (g_rumore) usb_desc_dice("ohci");
         return 0;
     }
 

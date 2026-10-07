@@ -68,7 +68,27 @@ FLOPPY_SECTORS=2880
 #   mkdir     ! SERVE A install, E LA SUA ASSENZA E COSTATA UN VIAGGIO. Un
 #             sistema appena installato vuole /dev, e senza mkdir non c e
 #             modo di crearla a mano quando qualcosa va storto.
-PROGRAMMI="sh ls cp keymap shutdown hwinfo mount disk fdisk mkfs install mkdir"
+PROGRAMMI="sh ls cp keymap shutdown hwinfo mount disk"
+
+# =============================================================================
+# ! IL DISCHETTO DELLA SONDA E' TORNATO A FARE UNA COSA SOLA (7 ottobre 2026,
+# chiesto dall'utente): leggere l'hardware. Negli anni di un mese ci erano
+# finiti dentro la rete, il telnet, gli attrezzi per installare e i driver di
+# una macchina in particolare — tutte cose aggiunte con una buona ragione
+# ciascuna, quando di spazio ce n'era. Poi il kernel e la libc sono cresciuti,
+# e il 7 ottobre `make sonda` finiva con «Disk full»: il dischetto che serve a
+# guardare una macchina NUOVA non si costruiva piu'.
+#
+# Quel che non serve a leggere l'hardware sta negli elenchi «IN_PIU» qui
+# sotto, e ci entra solo con COMPLETO=1, che e' come lo chiamano le voci
+# test-aa3k del Makefile (i dischetti di prova dell'Acer, che la rete e il
+# driver SiS li vogliono davvero).
+#
+# ! verifica-dipendenze-sonda NEL Makefile LEGGE QUESTE RIGHE PER NOME: una
+# variabile nuova va aggiunta anche al suo elenco.
+# =============================================================================
+COMPLETO="${COMPLETO:-0}"
+PROGRAMMI_IN_PIU="fdisk mkfs install mkdir"
 #   dhcp      ! SENZA QUESTO LA RETE NON PARTE DA SOLA. netdetect trova la
 #             scheda e avvia il driver, ip.drv monta lo stack, ma un
 #             indirizzo non se lo da' nessuno: il DHCP sta SOPRA UDP come un
@@ -88,11 +108,17 @@ PROGRAMMI="sh ls cp keymap shutdown hwinfo mount disk fdisk mkfs install mkdir"
 #             scarica un programma aggiornato arriva dalla rete e si mette
 #             in /bin, che tanto e in RAM. Tredicimila byte per non
 #             rifare la strada.
-PROGRAMMI_CD="blkscan automount netdetect ipcfg ping dhcp host audio telnetd scarica"
+PROGRAMMI_CD="blkscan automount"
+PROGRAMMI_CD_IN_PIU="netdetect ipcfg ping dhcp host audio telnetd scarica"
 
 # I driver. kbd serve per battere qualcosa, svga per cambiare modalita' fra
 # un referto e l'altro, sonda e' il motivo per cui questo dischetto esiste.
-DRIVER="kbd.drv svga.drv pci.drv uhci.drv"
+# ! xhci.drv C'E' DAL 7 OTTOBRE 2026 E NON PARTE DA SOLO. Su un PC recente le
+# prese sono quasi tutte USB 3, e senza di lui una chiavetta infilata li' non
+# la vede nessuno; ma prende anche tastiere e mouse USB, e su una macchina che
+# la tastiera ce l'ha proprio li' lanciarlo alla cieca puo' voler dire restare
+# senza. Lo si lancia a mano, e l'autoexec dice come.
+DRIVER="kbd.drv svga.drv pci.drv uhci.drv xhci.drv"
 
 # I driver che stanno in build/drivers-cd. Il PCI e' il fornitore di tutti; i
 # tre controller USB coprono qualunque macchina di quell'epoca.
@@ -117,7 +143,47 @@ DRIVER="kbd.drv svga.drv pci.drv uhci.drv"
 # DHCP prende l indirizzo e che la shell remota risponde davvero. Senza, ogni
 # modifica al dischetto si verifica solo andando alla macchina — ed e' come
 # si e' scoperto, dopo un viaggio, che netdetect non partiva affatto.
-DRIVER_CD="ehci.drv ohci.drv sonda.drv sis.drv mappa.drv sis900.drv ne2k.drv pcnet.drv e1000.drv ip.drv ac97.drv cardbus.drv"
+# nforce.drv sta qui per la sua opzione -d: stampa i registri della scheda di
+# rete NVIDIA senza toccarli, che e' quel che serve quando sul ferro non va.
+DRIVER_CD="ehci.drv ohci.drv sonda.drv mappa.drv nforce.drv"
+DRIVER_CD_IN_PIU="sis.drv sis900.drv ne2k.drv pcnet.drv e1000.drv ip.drv ac97.drv cardbus.drv"
+
+if [ "$COMPLETO" = "1" ]; then
+    PROGRAMMI="$PROGRAMMI $PROGRAMMI_IN_PIU"
+    PROGRAMMI_CD="$PROGRAMMI_CD $PROGRAMMI_CD_IN_PIU"
+    DRIVER_CD="$DRIVER_CD $DRIVER_CD_IN_PIU"
+fi
+
+# =============================================================================
+# INSTALLA=1 — IL DISCHETTO CHE INSTALLA DALLA RETE (7 ottobre 2026, `make
+# installa`, chiesto dall'utente: un PC senza lettore CD)
+#
+# Stessa ossatura della sonda — si carica tutto in RAM, quindi parte anche da
+# una chiavetta o da un lettore USB — ma con dentro quel che serve a mettere
+# EX-OS su un disco vuoto senza nessun altro supporto:
+#
+#   gli attrezzi del disco   disk, fdisk, mkfs, install, mkdir
+#   la rete                  netdetect, lo stack ip, dhcp, e i driver delle
+#                            schede (nforce, e1000, ne2k, pcnet)
+#   netupdate                con la sua libreria exhttp.so: e' lui che dopo
+#                            scarica il resto del sistema dal server
+#
+# ! install COPIA IL SISTEMA CHE STA GIRANDO, cioe' questo dischetto: sul
+# disco finisce un sistema piccolo che si avvia e che HA la rete e netupdate.
+# Riempirlo e' il passo dopo, dal disco, con `netupdate`.
+#
+# Per farci stare tutto restano fuori la sonda, mappa, svga e xhci: questo
+# dischetto non scrive referti.
+# =============================================================================
+INSTALLA="${INSTALLA:-0}"
+PROGRAMMI_CD_INSTALLA="netdetect ipcfg ping dhcp host netupdate"
+DRIVER_CD_INSTALLA="ip.drv e1000.drv ne2k.drv pcnet.drv"
+if [ "$INSTALLA" = "1" ]; then
+    PROGRAMMI="sh ls cp keymap shutdown mount disk $PROGRAMMI_IN_PIU"
+    PROGRAMMI_CD="blkscan automount $PROGRAMMI_CD_INSTALLA"
+    DRIVER="kbd.drv pci.drv uhci.drv"
+    DRIVER_CD="ehci.drv ohci.drv nforce.drv $DRIVER_CD_INSTALLA"
+fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 log_info() { echo -e "${BLUE}[INFO]${NC}  $1"; }
@@ -299,13 +365,16 @@ echo ===============================================================
 sonda.drv -auto
 echo
 echo
-echo Accendo l USB: se infili una chiavetta la monto in /USB/DRIVE0
+echo Accendo l USB: se infili una chiavetta la monto sotto /USB
 /dev/pci.drv &
 /dev/ehci.drv -avvio &
 /dev/ohci.drv -avvio &
 /dev/uhci.drv -avvio &
 automount &
 echo
+AUT
+if [ "$COMPLETO" = "1" ]; then
+cat >> "$TMPAUT" <<'AUT'
 echo Accendo la rete: scheda, stack IP, indirizzo
 #
 # ! LE TRE RIGHE VANNO IN QUEST ORDINE E NON E UNA FORMALITA. netdetect -c
@@ -328,19 +397,30 @@ echo
 ipcfg
 echo
 AUT
+fi
 
 # ! L HEREDOC SOPRA E QUOTATO — <<'AUT' — quindi NON espande le variabili, ed
 # e' giusto cosi': dentro ci sono ^& e altri caratteri che una espansione
 # rovinerebbe. Le righe che cambiano fra un dischetto e l altro si aggiungono
 # qui in mezzo, fra due heredoc, invece di togliere le virgolette e dover poi
 # proteggere tutto il resto.
-printf '%s\n' "$RIGHE_REMOTO" >> "$TMPAUT"
+[ "$COMPLETO" = "1" ] && printf '%s\n' "$RIGHE_REMOTO" >> "$TMPAUT"
 
 cat >> "$TMPAUT" <<'AUT'
 echo Adesso:
 echo   ls /              vedere che il referto ci sia
-echo   ls /USB/DRIVE0    la chiavetta, quando l hai infilata
-echo   cp /SONDA1.TXT /USB/DRIVE0/    portarsi via il referto
+echo   hwinfo            lo stesso a schermo: processore, PROCESSORI, memoria, schede
+echo   disk              i dischi che il kernel vede
+echo   ls /USB           la chiavetta, quando l hai infilata: si chiama
+echo                     HDD0p1 se ha le partizioni (quasi tutte), DRIVE0 se no
+echo   cp /SONDA1.TXT /USB/HDD0p1/    portarsi via il referto
+echo   cp /hwinfo.txt /USB/HDD0p1/    e quello di hwinfo, dopo averlo lanciato
+echo   xhci.drv -v ^&    se la chiavetta non compare: le prese USB 3 (blu, o
+echo                     tutte, su un PC recente) le serve questo driver
+echo   shutdown          fermare la macchina
+AUT
+if [ "$COMPLETO" = "1" ]; then
+cat >> "$TMPAUT" <<'AUT'
 echo   ipcfg             che indirizzo ha preso
 echo   ping 8.8.8.8      se la rete esce davvero
 echo   sis900.drv -debug   TUTTO in /SIS900.TXT: registri, le 32 righe del
@@ -353,14 +433,55 @@ echo   sis900.drv -mac 00:11:22:33:44:55 ^& poi /dev/ip.drv ^& poi dhcp -r ^&
 echo                     se il MAC esce a zero: lo trovi con ipconfig /all
 echo   sis.drv -prova /PROVA.TXT   le quattro varianti del video
 echo   cardbus.drv       lo slot PCMCIA, senza toccarlo
-echo   shutdown          fermare la macchina
 AUT
+fi
+if [ "$INSTALLA" = "1" ]; then
+cat > "$TMPAUT" <<'AUT'
+# autoexec.sh - il dischetto che installa dalla rete (make installa)
+#
+# Una riga = un comando. Lo stesso file finisce sul disco installato: li'
+# accende la rete a ogni avvio, che e' quel che serve a netupdate.
+
+echo ===============================================================
+echo  EX-OS - installazione dalla rete (il sistema e tutto in RAM)
+echo ===============================================================
+/dev/pci.drv &
+/dev/ehci.drv -avvio &
+/dev/ohci.drv -avvio &
+/dev/uhci.drv -avvio &
+automount &
+echo
+echo Accendo la rete: scheda, stack IP, indirizzo
+netdetect -c
+/dev/ip.drv &
+dhcp
+echo
+ipcfg
+echo
+echo PER INSTALLARE SU UN DISCO VUOTO, in ordine:
+echo   disk                          quale disco c e: hd0, hd1...
+echo   fdisk hd0                     n = nuova partizione, tipo 83, poi w
+echo   mkfs -t ext2 -L exos hd0p1    formatta (chiede si)
+echo   mount hd0p1 /disk
+echo   install -t /disk              copia questo sistema e lo rende avviabile
+echo   shutdown                      poi togli la chiavetta e riavvia dal disco
+echo DAL DISCO, per avere tutto il resto:
+echo   netupdate                     la prima volta chiede il server
+echo SE LA RETE NON PARTE:
+echo   nforce.drv -d                 i registri della scheda NVIDIA, senza toccarli
+echo   netdetect                     che scheda vede, e con quale driver
+AUT
+fi
 mcopy -i "$IMG" "$TMPAUT" ::/boot/AUTOEXEC.SH
 rm -f "$TMPAUT"
 log_ok "autoexec.sh scritto (lancia la sonda da solo)"
 
 for p in $PROGRAMMI; do
-    if [ -x "build/bin/$p" ]; then
+    # ! -f E NON -x: sul dischetto (FAT) il permesso di esecuzione non esiste, e
+    # un albero copiato con uno strumento che lo perde lasciava fuori LA SHELL
+    # con un avviso giallo in mezzo a trenta righe verdi — un dischetto che si
+    # costruisce e non arriva al prompt.
+    if [ -f "build/bin/$p" ]; then
         mcopy -i "$IMG" "build/bin/$p" "::/bin/$p"
         log_ok "  /bin/$p"
     else
@@ -376,7 +497,7 @@ if [ -f build/bin/mount ]; then
 fi
 
 for p in $PROGRAMMI_CD; do
-    if [ -x "build/bin-cd/$p" ]; then
+    if [ -f "build/bin-cd/$p" ]; then
         mcopy -i "$IMG" "build/bin-cd/$p" "::/bin/$p"
         log_ok "  /bin/$p"
     else
@@ -393,6 +514,16 @@ if [ -f build/lib/libc.so ]; then
     log_ok "  /lib/libc.so"
 else
     log_err "manca build/lib/libc.so — senza, /bin non funziona"
+fi
+
+# netupdate parla HTTP con exhttp.so, che cerca in /exwin/lib.
+if [ "$INSTALLA" = "1" ]; then
+    [ -f build/exwin/lib/exhttp.so ] || log_err "manca build/exwin/lib/exhttp.so — senza, netupdate non scarica"
+    mmd -i "$IMG" ::/exwin ::/exwin/lib
+    # ! /disk NON SI CREA QUI: `mount` vuole farlo lui, e se lo trova dice
+    # «il punto di montaggio esiste gia'» e l'installazione si ferma li'.
+    mcopy -i "$IMG" build/exwin/lib/exhttp.so ::/exwin/lib/exhttp.so
+    log_ok "  /exwin/lib/exhttp.so"
 fi
 
 for d in $DRIVER_CD; do

@@ -58,6 +58,8 @@ typedef struct {
     /* ! TAB PAST THE LAST CONTROL GOES TO THE CONTENT, for a window that asked
      * (ex_tab_content). Only the top level uses it. */
     unsigned char tab_contenuto;
+    /* The top level asked for EXM_CHANGED (ex_notify_changes). */
+    unsigned char avvisa_cambi;
     unsigned int  cursore;      /* posizione del cursore in una casella */
     /* A text box's selection runs from `ancora` to `cursore`, when c_sel is 1;
      * `vista` is its first character shown (the box scrolls with the caret). */
@@ -2531,6 +2533,7 @@ void ex_draw_text(ExWindow f, int x, int y, const char *s, unsigned int c)
  * tutto il resto: definite piu' avanti, chiamate qui. */
 static void menu_sopra(ExWindow f);
 static void combo_sopra(ExWindow f);
+static void avviso_sopra(ExWindow f);
 
 /* =============================================================================
  * ! LA TENDINA SI DISEGNA QUI, PER ULTIMA DI TUTTO, e non insieme ai controlli.
@@ -2620,6 +2623,9 @@ void ex_update(ExWindow f)
         /* E la tendina di un combo dopo il menu: se per disgrazia si
          * sovrapponessero, quella aperta per ultima e' la tendina. */
         combo_sopra(rh);
+        /* E il riquadro accanto al puntatore sopra a tutto: e' il piu' piccolo
+         * e il piu' effimero. */
+        avviso_sopra(rh);
     }
 
     presenta(r, 0, 0, r->w, r->h);
@@ -3758,7 +3764,54 @@ static void tab_x_rossa(ExWindow f, int bx, int by, int scelta)
     }
 }
 
+/* =============================================================================
+ * IL VELO DI UN CONTROLLO SPENTO (7 ottobre 2026, chiesto dall'utente)
+ *
+ * ex_enable(c, 0) fermava i clic e il fuoco su ogni controllo, ma A VEDERLO lo
+ * dicevano in tre: pulsante, spunta e radio, che ingrigiscono la scritta. Una
+ * casella di testo o una lista spente erano identiche a quelle accese, e chi
+ * usa il programma ci cliccava sopra senza capire perche' non rispondessero.
+ *
+ * ! UN VELO UGUALE PER TUTTI, STESO DOPO IL DISEGNO, e non un colore diverso
+ * dentro il disegno di ciascuna classe: un pixel si' e uno no del grigio della
+ * finestra. Quel che il controllo mostra resta leggibile — un controllo spento
+ * continua a far vedere i dati che il programma ci mette, ed e' il punto — e
+ * sbiadisce quanto basta a dire «adesso no». Una riga qui invece di sedici
+ * rami, e la classe che verra' dopo e' gia' coperta.
+ *
+ * I tre che ingrigiscono da se' non lo prendono: sopra una scritta gia' grigia
+ * la cancellerebbe.
+ * ============================================================================= */
+static void disegna_oggetto_nudo(Oggetto *o);
+
 static void disegna_oggetto(Oggetto *o)
+{
+    Oggetto      *r;
+    unsigned int *riga;
+    int ox, oy, x, y, w, h, i, j;
+
+    disegna_oggetto_nudo(o);
+
+    if (!o->usato || !o->padre || !(o->stile & EX_VISIBLE) ||
+        !(o->stile & EX_DISABLED)) return;
+    if (o->classe == CL_PULSANTE || o->classe == CL_SPUNTA || o->classe == CL_RADIO ||
+        o->classe == CL_MENU || o->classe == CL_MDI || o->classe == CL_MDIFIGLIO ||
+        o->classe == CL_FINESTRA) return;
+
+    r = radice(o->padre);
+    if (!r || !r->pix) return;
+    origine(o, &ox, &oy);
+    x = ox + o->x; y = oy + o->y; w = o->w; h = o->h;
+    if (!ritaglia(r, &x, &y, &w, &h)) return;
+
+    riga = r->pix + (unsigned int)y * r->passo_px + (unsigned int)x;
+    for (j = 0; j < h; j++) {
+        for (i = (x + y + j) & 1; i < w; i += 2) riga[i] = EX_GRAY;
+        riga += r->passo_px;
+    }
+}
+
+static void disegna_oggetto_nudo(Oggetto *o)
 {
     int ox, oy, x, y;
 
@@ -5346,8 +5399,57 @@ void ex_show(ExWindow f, int visibile)
 {
     Oggetto *o = ogg(f);
     if (!o) return;
-    if (visibile) o->stile |= EX_VISIBLE;
-    else          o->stile &= ~(unsigned int)EX_VISIBLE;
+    if (visibile) { o->stile |= EX_VISIBLE; return; }
+    o->stile &= ~(unsigned int)EX_VISIBLE;
+
+    /* ! UN CONTROLLO NASCOSTO NON TIENE IL FUOCO (7 ottobre 2026): Tab non ci
+     * arrivava gia' (vedi accetta_fuoco), ma chi lo aveva nel momento in cui
+     * veniva nascosto se lo teneva, e i tasti finivano in una casella che non
+     * si vede. Come fa ex_enable(c, 0), per la stessa ragione. */
+    if (o->padre) {
+        Oggetto *r = radice(f);
+
+        o->premuto = 0;
+        if (r && r->fuoco == f) fuoco_avanti(f);
+    }
+}
+
+/* =============================================================================
+ * VISIBILE E ATTIVO, coi nomi che uno si aspetta (7 ottobre 2026, chiesto
+ * dall'utente): ex_set_visible / ex_is_visible, ex_set_enabled / ex_is_enabled.
+ *
+ * Sono ex_show() ed ex_enable(), che c'erano, piu' le due domande che
+ * mancavano. Valgono per OGNI controllo, e tutti nascono visibili e attivi.
+ *
+ *   nascosto   non si disegna, non riceve clic, Tab lo salta. Esiste ancora:
+ *              testo, righe, scelta restano, e ex_set_visible(c, 1) lo riporta
+ *              com'era.
+ *   spento     si vede, velato, con dentro quel che il programma ci mette; non
+ *              si preme, non si scrive, non prende il fuoco. E' la «sola
+ *              lettura» di chi usa il programma: il programma continua a
+ *              poterlo cambiare con ex_set_text e le altre.
+ *
+ * ! IL RIDISEGNO ARRIVA DA SOLO quando il gestore del messaggio torna
+ * (ex_dispatch), come per ex_set_text. Chi le chiama fuori da un gestore
+ * ridisegna la finestra.
+ * ============================================================================= */
+void ex_set_visible(ExWindow c, int si) { ex_show(c, si); }
+
+int ex_is_visible(ExWindow c)
+{
+    Oggetto *o = ogg(c);
+
+    return (o && (o->stile & EX_VISIBLE)) ? 1 : 0;
+}
+
+void ex_enable(ExWindow c, int si);
+void ex_set_enabled(ExWindow c, int si) { ex_enable(c, si); }
+
+int ex_is_enabled(ExWindow c)
+{
+    Oggetto *o = ogg(c);
+
+    return (o && !(o->stile & EX_DISABLED)) ? 1 : 0;
 }
 
 void ex_set_text(ExWindow f, const char *s) { ex_set_title(f, s); }
@@ -6566,6 +6668,198 @@ static void ridisegna_finestra(ExWindow f)
         ex_default_proc(rh, EXM_PAINT, 0, 0);
 }
 
+/* =============================================================================
+ * SUL MOUSE, E IL RIQUADRO ACCANTO AL PUNTATORE (7 ottobre 2026, chiesti
+ * dall'utente in correzioni.txt: @EXWIN-SULMOUSE)
+ *
+ * ex_show_popup_pointer(testo, sfondo, scritta, bordo) fa comparire un
+ * riquadro col testo accanto al puntatore, dentro la finestra su cui sta. I
+ * tre colori sono stringhe «rosso,verde,blu» (0..255); "0", "" o NULL vuol
+ * dire quello di tutti: sfondo giallo sbiadito, quasi beige, per non
+ * confonderlo col bianco di una casella; scritta nera; bordo grigio scuro.
+ * Il testo puo' andare a capo, fino a quattro righe.
+ *
+ * ! SE NON CI STA DA UNA PARTE VA DALL'ALTRA: di norma sta sotto a destra del
+ * puntatore; vicino al margine destro si apre a sinistra, vicino al fondo si
+ * apre sopra. Il margine e' quello della finestra, che e' anche quello dello
+ * schermo quando la finestra ci arriva.
+ *
+ * ! SE NE VA DA SOLO: quando il puntatore passa a un altro controllo o esce
+ * dalla finestra, a un clic, a un tasto. Chi lo vuole togliere prima chiama
+ * ex_hide_popup_pointer().
+ *
+ * ! STA NEI PIXEL DELLA FINESTRA, NON IN UNA FINESTRA SUA. Una finestra nuova,
+ * per il server, prende il fuoco dei tasti: un aiuto che compare passando
+ * sopra un pulsante e si porta via la tastiera sarebbe peggio di nessun
+ * aiuto. Si disegna per ultimo in ex_update, come le tendine.
+ * ============================================================================= */
+#define AVVISO_TESTO   200
+#define AVVISO_RIGHE   4
+
+static ExWindow g_sopra_f, g_sopra_c;   /* finestra e controllo sotto il puntatore */
+static int        g_sopra_giu;          /* un bottone e' giu': vedi WIN_EV_USCITO */
+static int        g_punta_x, g_punta_y; /* dove, nell'area della finestra */
+
+static struct {
+    ExWindow     f;                     /* 0 = spento */
+    char         testo[AVVISO_TESTO];
+    unsigned int sfondo, scritta, bordo;
+    int          x, y;                  /* il puntatore quando e' stato chiesto */
+} g_avviso;
+
+static unsigned int avviso_colore(const char *s, unsigned int predefinito)
+{
+    unsigned int v[3] = { 0, 0, 0 };
+    int k = 0, cifre = 0;
+
+    if (!s) return predefinito;
+    for (; *s; s++) {
+        if (*s >= '0' && *s <= '9') { v[k] = v[k] * 10 + (unsigned int)(*s - '0'); cifre++; }
+        else if (*s == ',' && k < 2) k++;
+        else if (*s != ' ') return predefinito;
+    }
+    if (k != 2 || cifre < 3) return predefinito;    /* «0», vuota, o non tre numeri */
+    if (v[0] > 255) v[0] = 255;
+    if (v[1] > 255) v[1] = 255;
+    if (v[2] > 255) v[2] = 255;
+    return (v[0] << 16) | (v[1] << 8) | v[2];
+}
+
+/* Spegne il riquadro e rifa' la finestra, che ce l'ha ancora nei pixel. */
+static void avviso_via(void)
+{
+    ExWindow f = g_avviso.f;
+
+    if (!f) return;
+    g_avviso.f = 0;
+    if (ogg(f)) { ridisegna_finestra(f); ex_update(f); }
+}
+
+void ex_hide_popup_pointer(void) { avviso_via(); }
+
+void ex_show_popup_pointer(const char *testo, const char *sfondo,
+                           const char *scritta, const char *bordo)
+{
+    ExWindow f = g_sopra_f;
+
+    if (!testo || !testo[0] || !f || !ogg(f)) { avviso_via(); return; }
+    if (g_avviso.f && g_avviso.f != f) avviso_via();
+
+    strncpy(g_avviso.testo, testo, AVVISO_TESTO - 1);
+    g_avviso.testo[AVVISO_TESTO - 1] = '\0';
+    g_avviso.sfondo  = avviso_colore(sfondo,  0x00FFF8DC);
+    g_avviso.scritta = avviso_colore(scritta, EX_BLACK);
+    g_avviso.bordo   = avviso_colore(bordo,   EX_DARK_GRAY);
+    g_avviso.x = g_punta_x;
+    g_avviso.y = g_punta_y;
+    g_avviso.f = f;
+    /* Si vede al prossimo ex_update: quello che ex_dispatch fa quando il
+     * gestore del messaggio torna. */
+}
+
+static void avviso_sopra(ExWindow f)
+{
+    Oggetto *r = radice(f);
+    char     riga[AVVISO_RIGHE][AVVISO_TESTO];
+    int      n = 0, i, k = 0, w = 0, h, x, y, alt;
+
+    if (!g_avviso.f || g_avviso.f != f || !r) return;
+
+    riga[0][0] = '\0';
+    for (i = 0; g_avviso.testo[i]; i++) {
+        if (g_avviso.testo[i] == '\n') {
+            riga[n][k] = '\0';
+            if (n + 1 >= AVVISO_RIGHE) break;
+            n++; k = 0; riga[n][0] = '\0';
+            continue;
+        }
+        riga[n][k++] = g_avviso.testo[i];
+    }
+    riga[n][k] = '\0';
+    n++;
+
+    alt = ex_font_height(0);
+    if (alt < 8) alt = 16;
+    for (i = 0; i < n; i++) if (larg(riga[i]) > w) w = larg(riga[i]);
+    w += 10;
+    h  = n * alt + 6;
+
+    x = g_avviso.x + 12;
+    y = g_avviso.y + 18;
+    if (x + w > r->w) x = g_avviso.x - w - 4;       /* non ci sta a destra */
+    if (y + h > r->h) y = g_avviso.y - h - 4;       /* non ci sta sotto */
+    if (x + w > r->w) x = r->w - w;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    ex_fill_rect(f, x, y, w, h, g_avviso.sfondo);
+    ex_draw_rect(f, x, y, w, h, g_avviso.bordo);
+    for (i = 0; i < n; i++)
+        ex_draw_text(f, x + 5, y + 3 + i * alt, riga[i], g_avviso.scritta);
+}
+
+/* EXM_CHANGED for this window's text boxes and text areas: 1 to receive it. */
+void ex_notify_changes(ExWindow f, int si)
+{
+    Oggetto *r = radice(f);
+
+    if (r) r->avvisa_cambi = si ? 1 : 0;
+}
+
+/* =============================================================================
+ * ! «E' CAMBIATO» SI DICE A CHI L'HA CHIESTO (ex_notify_changes, 7 ottobre
+ * 2026). Una casella o un'area consumano i loro tasti dentro il toolkit, e
+ * all'applicazione arrivava solo «ridisegna»: non c'era modo di sapere che il
+ * testo era diverso senza rileggerlo a ogni giro — e gli eventi «Changed» che
+ * exide prometteva per caselle e aree non scattavano mai.
+ *
+ * Passa il tasto al controllo col fuoco. Se lo prende, lascia g_tasto_preso a
+ * 1; se in piu' il testo e' cambiato e la finestra vuole saperlo, riempie `m`
+ * con EXM_CHANGED e rende 1. Per la casella si confronta il testo prima e
+ * dopo; per l'area, che puo' essere lunga, vale il tasto: uno che scrive o
+ * cancella.
+ * ============================================================================= */
+static int g_tasto_preso;
+
+static int tasto_e_cambio(ExWindow f, unsigned int tasto, ExMsg *m)
+{
+    Oggetto     *rr = radice(f);
+    ExWindow     fh = rr ? rr->fuoco : 0;
+    Oggetto     *fo = ogg(fh);
+    char         prima[TESTO_LEN];
+    unsigned int kc = tasto & KBD_KEY_MASK;
+    int          cambiato = 0;
+
+    prima[0] = '\0';
+    if (fo && fo->classe == CL_TESTO) {
+        strncpy(prima, fo->titolo, TESTO_LEN - 1);
+        prima[TESTO_LEN - 1] = '\0';
+    }
+
+    g_tasto_preso = tasto_al_fuoco(f, tasto);
+    if (!g_tasto_preso || !rr || !rr->avvisa_cambi) return 0;
+
+    fo = ogg(fh);                       /* il tasto puo' aver tolto il controllo */
+    if (!fo) return 0;
+    if (fo->classe == CL_TESTO) {
+        cambiato = strcmp(prima, fo->titolo) != 0;
+    } else if (fo->classe == CL_AREA) {
+        if (tasto & KBD_MOD_CTRL)
+            cambiato = ((kc | 0x20) == 'v' || (kc | 0x20) == 'x');
+        else
+            cambiato = (kc >= 0x20 && kc <= 0x7E) || kc == '\n' || kc == '\r' ||
+                       kc == '\b' || kc == '\t' || kc == KBD_K_DEL;
+    }
+    if (!cambiato) return 0;
+
+    ridisegna_finestra(f);
+    m->finestra = destinatario(fh);
+    m->msg = EXM_CHANGED;
+    m->wp  = fo->id;
+    m->lp  = (long)fh;
+    return 1;
+}
+
 static int prendi_msg(ExMsg *m, int bloccante)
 {
     IpcMessage    meta;
@@ -6790,13 +7084,59 @@ static int prendi_msg(ExMsg *m, int bloccante)
          * window that asked gets these, and they go straight to it — the
          * drag logic below is for a button held down. */
         if (e.tipo == WIN_EV_MOUSE_MOSSO && e.bottoni == 0) {
+            /* ! SOPRA QUALE CONTROLLO, E SOLO QUANDO CAMBIA (7 ottobre 2026,
+             * @EXWIN-SULMOUSE). Il movimento arriva cento volte al secondo;
+             * «il puntatore e' arrivato su questo controllo» succede una
+             * volta, ed e' quello che serve a chi vuole mostrare un aiuto o
+             * cambiare un colore: EXM_MOUSE_OVER al posto di QUEL movimento,
+             * con l'id in wp e il controllo in lp. Gli altri movimenti
+             * restano EXM_MOUSE_ENTER, come prima. */
+            ExWindow c = controllo_in(f, (int)e.x, (int)e.y);
+
+            g_punta_x = (int)e.x;
+            g_punta_y = (int)e.y;
+            if (c != g_sopra_c || f != g_sopra_f) {
+                g_sopra_f = f;
+                g_sopra_c = c;
+                avviso_via();
+                if (c) {
+                    m->msg = EXM_MOUSE_OVER;
+                    m->wp  = ogg(c)->id;
+                    m->lp  = (long)c;
+                    return 1;
+                }
+            }
             m->msg = EXM_MOUSE_ENTER;
             return 1;
         }
         if (e.tipo == WIN_EV_USCITO) {
+            /* ! «USCITO» ARRIVA ANCHE A OGNI CLIC, e non e' un'uscita: il
+             * server smette di mandare il passaggio finche' un bottone e'
+             * giu', e lo dice cosi'. Dimenticare su quale controllo si era
+             * vorrebbe dire richiamare <nome>_MouseOver appena il bottone
+             * torna su — l'aiuto che ricompare sotto il dito di chi ha appena
+             * cliccato. Col bottone giu' il riquadro si toglie e basta. */
+            if (!g_sopra_giu) {
+                g_sopra_f = 0;
+                g_sopra_c = 0;
+            }
+            avviso_via();
             m->msg = EXM_MOUSE_LEAVE;
             m->lp  = 0;
             return 1;
+        }
+
+        /* Un tasto o un bottone: il riquadro accanto al puntatore ha finito. */
+        if (e.tipo == WIN_EV_TASTO || e.tipo == WIN_EV_MOUSE_GIU) avviso_via();
+        if (e.tipo == WIN_EV_MOUSE_GIU) g_sopra_giu = 1;
+        if (e.tipo == WIN_EV_MOUSE_SU) {
+            /* Rilasciato altrove (un trascinamento finito fuori): li' si' che
+             * il puntatore se n'e' andato, e il prossimo arrivo conta. */
+            g_sopra_giu = 0;
+            if (g_sopra_f != f || controllo_in(f, (int)e.x, (int)e.y) != g_sopra_c) {
+                g_sopra_f = 0;
+                g_sopra_c = 0;
+            }
         }
 
         switch (e.tipo) {
@@ -6868,7 +7208,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
             }
 
-            if (tasto_al_fuoco(f, e.tasto)) {
+            if (tasto_e_cambio(f, e.tasto, m)) return 1;
+            if (g_tasto_preso) {
                 /* =========================================================
                  * ! CONSUMATO DA UNA CASELLA — MA L'APPLICAZIONE VA AVVISATA
                  * LO STESSO, e qui c'era scritto il contrario.
@@ -7485,6 +7826,14 @@ long ex_default_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
      * Chi deve ridisegnarsi riceve EXM_PAINT dal server — e' il server a
      * saperlo, quando una finestra viene scoperta — quindi non si perde niente.
      */
+    /* ! IL PUNTATORE CHE PASSA NON RIDISEGNA (7 ottobre 2026). Arrivano cento
+     * volte al secondo a chi ha chiesto il passaggio, e una procedura che non
+     * li guarda li lascia cadere qui: rendere 0 voleva dire rifare tutta la
+     * finestra a ogni pixel di mouse. */
+    case EXM_MOUSE_ENTER:
+    case EXM_MOUSE_LEAVE:
+        return EX_NO_REDRAW;
+
     default:
         return 0;
     }
@@ -7860,7 +8209,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.013"
+#define EXWIN_VERSIONE "0.015"
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

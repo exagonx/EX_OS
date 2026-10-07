@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Installing EX-OS without a CD drive &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! NON SI SCRIVE A MANO: lo genera tools/doc-installa-usb.py, insieme
+     alla versione nell'altra lingua e alle due in testo. SOLO ASCII. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="installa.html">Installazione</a> |
+<a href="installa-usb.html">Italiano</a>
+</p>
+
+<h1>Installing EX-OS without a CD drive</h1>
+<p><i>From a USB stick, with the rest of the system from the network. Kernel 0.240, 7 October 2026.</i></p>
+
+<h2>What it is for</h2>
+
+<p>
+This guide puts EX-OS on the hard disk of a PC that has neither a floppy drive
+nor a CD drive. The PC is booted from a USB stick holding a very small system
+(1.44 MB, loaded entirely into memory); with it the disk is prepared and a
+minimal system is installed, and from there the rest comes from the network.
+</p>
+
+<h2>What you need</h2>
+
+<ul>
+<li>a PC with Linux and the EX-OS sources, to build the image;</li>
+<li>any USB stick: IT IS ERASED;</li>
+<li>the target PC, able to boot from USB;</li>
+<li>a network cable to a router that hands out addresses (DHCP);</li>
+<li>a server with the published system (the one made by ./exagonx/repo-
+update.sh), for step 6.</li>
+</ul>
+
+<p class="nota">
+The image takes 1.44 MB of the stick: the rest of its space is not used. Keep
+another stick, formatted FAT32, if you want to take files away from the PC.
+</p>
+
+<h2>1. Build the image</h2>
+
+<p>
+On the Linux PC, in the source directory:
+</p>
+
+<pre>
+    make installa
+</pre>
+
+<p>
+This produces dist/installa.img. It holds the kernel, the shell, the disk
+tools (disk, fdisk, mkfs, install), the network (netdetect, the IP stack, dhcp
+and the nforce, e1000, ne2k and pcnet drivers) and netupdate.
+</p>
+
+<h2>2. Write it to the stick</h2>
+
+<p>
+Plug the stick in and see what it is called:
+</p>
+
+<pre>
+    lsblk -d -o NAME,SIZE,RM,MODEL
+</pre>
+
+<p>
+The stick is the line with RM = 1 and the right size, for example sdc. Then,
+with the real name in place of sdX:
+</p>
+
+<pre>
+    sudo dd if=dist/installa.img of=/dev/sdX bs=512 conv=fsync
+    sync
+</pre>
+
+<p class="nota">
+WARNING: dd writes where it is told, without asking. A wrong name is somebody
+else's disk erased. Check twice.
+</p>
+
+<h2>3. Boot the PC from the stick</h2>
+
+<p>
+Plug the stick into the target PC, switch it on and choose to boot from USB
+(usually F12, F8 or Esc at power-on, or the boot order in the BIOS).
+</p>
+
+<p>
+The boot lines scroll by, then the system starts USB and the network by itself
+and prints the instructions. Among the lines there must be:
+</p>
+
+<pre>
+    VFS: root '/' sul volume in RAM (FAT12)
+</pre>
+
+<p class="nota">
+From this moment the system no longer needs the stick: everything is in
+memory. What you write in / is gone at power-off.
+</p>
+
+<h2>4. Prepare the disk</h2>
+
+<p>
+See which disks the kernel sees:
+</p>
+
+<pre>
+    disk
+</pre>
+
+<p>
+The hard disk is hd0, hd1, hd2 or hd3. The examples use hd0: use the name you
+see. Then create the partition:
+</p>
+
+<pre>
+    fdisk hd0
+</pre>
+
+<p>
+Inside fdisk the commands are letters. On an empty disk, in order: n creates a
+partition, t sets its type (83), a makes it bootable, p shows the result, w
+writes to the disk (it asks for confirmation), q quits. Nothing touches the
+disk before w.
+</p>
+
+<p class="nota">
+WARNING: w erases the partition table that was there. If the disk holds
+something you need, stop here.
+</p>
+
+<p>
+Format the partition and mount it:
+</p>
+
+<pre>
+    mkfs -t ext2 -L exos hd0p1
+    mount hd0p1 /disk
+</pre>
+
+<p>
+mkfs asks for confirmation: the answer is si (Italian for yes).
+</p>
+
+<h2>5. Install</h2>
+
+<pre>
+    install -t /disk
+</pre>
+
+<p>
+The installer asks for the language, the root password, a user name with its
+password, and a few confirmations. It copies the running system to the disk
+and makes it bootable. At the end it says:
+</p>
+
+<pre>
+    Installazione completata. Togli il floppy e riavvia.
+</pre>
+
+<p>
+Shut down, remove the stick and switch on again: the PC boots from the disk.
+</p>
+
+<pre>
+    shutdown
+</pre>
+
+<h2>6. From the disk: the network and the rest of the system</h2>
+
+<p>
+The freshly installed system is small: it has the network and netupdate, not
+the graphics. The first time the network is started by hand, in this order:
+</p>
+
+<pre>
+    /dev/pci.drv &amp;
+    netdetect -c
+    /dev/ip.drv &amp;
+    dhcp
+    ipcfg
+</pre>
+
+<p>
+ipcfg shows the address obtained. If a link of the chain is missing, ipcfg
+says which one and what to type. Then:
+</p>
+
+<pre>
+    netupdate
+</pre>
+
+<p>
+The first time netupdate asks how to connect (http is the simple choice) and
+the server address without http://, for example example.org/exos/netinst. Then
+it downloads and installs the rest of the system.
+</p>
+
+<h2>If something goes wrong</h2>
+
+<ul>
+<li>The disk does not show in disk: the boot lines starting with ATA: are
+needed. A SATA controller in AHCI mode is not handled yet: in the BIOS, if
+there is a choice, pick IDE or Compatible.</li>
+<li>"ATA: DMA" or "timeout BSY" errors: kernel 0.239 gave them on SATA
+controllers in native mode. From 0.240 those controllers work in PIO, slower
+but without those errors: rebuild the image from updated sources.</li>
+<li>The network gets no address: netdetect says which card it sees and with
+which driver. For an NVIDIA nForce, nforce.drv -d prints the registers
+without touching anything: those are the lines to send.</li>
+<li>To take a file away: plug in a FAT32 stick, ls /USB says what it is called
+(usually HDD0p1), then cp /file /USB/HDD0p1/ and shutdown.</li>
+<li>The keyboard types wrong symbols: the image starts with the Italian
+keyboard. keymap us changes it.</li>
+</ul>
+
+<h2>What is tested and what is not</h2>
+
+<ul>
+<li>In QEMU: the whole procedure, from booting in memory to rebooting from the
+disk, with an e1000 card and an IDE disk.</li>
+<li>On a real PC (NVIDIA MCP73, Core 2 Quad): booting from the stick and finding
+the SATA disk. The nforce driver is not yet confirmed on that board.</li>
+</ul>
+
+<p class="nota">
+Coming: a stick that takes the place of the CD, holding the whole system and
+every driver, to install from without a network.
+</p>
+
+</body>
+</html>

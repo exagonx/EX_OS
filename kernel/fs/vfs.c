@@ -434,6 +434,23 @@ void vfs_init(uint8_t boot_drive)
              * finira' comunque senza radice — meglio dirlo qui. */
             klog(LOG_ERROR, "VFS: il volume in RAM non contiene un FAT "
                             "montabile: provo le altre strade");
+            /* ! E SI DICE CHE COSA SI E' LETTO (7 ottobre 2026). Questo
+             * rifiuto e' comparso una volta in QEMU con 64 MB — due avvii
+             * dello stesso dischetto — e non si e' piu' ripetuto dopo una
+             * ricostruzione: il volume in memoria era integro, guardato da
+             * fuori. Senza questi numeri la prossima volta si saprebbe di
+             * nuovo soltanto «non montabile». Sono il settore 0 come lo vede
+             * blk_read: il salto, i byte per settore, i settori per cluster,
+             * la firma (deve essere 55 aa). */
+            {
+                static uint8_t s0[512];
+                int r = blk_read(ird, 0, 1, s0);
+
+                klog(LOG_ERROR, "VFS:   settore 0 del volume: lettura %d, inizio "
+                     "%02x %02x %02x, byte/settore %02x%02x, settori/cluster %02x, "
+                     "firma %02x %02x", r, s0[0], s0[1], s0[2], s0[12], s0[11],
+                     s0[13], s0[510], s0[511]);
+            }
         }
     }
 

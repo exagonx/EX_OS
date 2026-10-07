@@ -40,6 +40,17 @@ static const ReteScheda g_note[] = {
     { 0x8086, 0x100F, "Intel 82545EM (e1000)",                      "/dev/e1000.drv" },
     { 0x8086, 0x10D3, "Intel 82574L (e1000e)",                      "/dev/e1000.drv" },
 
+    /* NVIDIA nForce: l'Ethernet integrata nei chipset MCP. Gli stessi numeri
+     * di g_modelli in drivers/nforce/nforce.c. Provata sul ferro solo la
+     * prima (MCP73, referto in sonda/mb_oem_000). */
+    { 0x10DE, 0x07DC, "NVIDIA nForce MCP73 Ethernet",               "/dev/nforce.drv" },
+    { 0x10DE, 0x07DD, "NVIDIA nForce MCP73 Ethernet",               "/dev/nforce.drv" },
+    { 0x10DE, 0x07DE, "NVIDIA nForce MCP73 Ethernet",               "/dev/nforce.drv" },
+    { 0x10DE, 0x07DF, "NVIDIA nForce MCP73 Ethernet",               "/dev/nforce.drv" },
+    { 0x10DE, 0x0760, "NVIDIA nForce MCP77 Ethernet",               "/dev/nforce.drv" },
+    { 0x10DE, 0x0AB0, "NVIDIA nForce MCP79 Ethernet",               "/dev/nforce.drv" },
+    { 0x10DE, 0x054C, "NVIDIA nForce MCP67 Ethernet",               "/dev/nforce.drv" },
+
     /* ! LA SiS 900 E' L'UNICA DI QUESTA TABELLA IL CUI DRIVER NON VIENE DA UN
      * DOCUMENTO. SiS non ha mai pubblicato i registri: la mappa e' stata
      * misurata sul driver Windows del portatile con tools/scava.py, cercando

@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.235
+**Versione:** 0.239
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -101,6 +101,79 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### ExWin: ogni controllo si nasconde e si spegne
+
+**testato in QEMU** (`tools/prova_exwin_stato.sh`: il progetto si compila
+dentro EX-OS e si prova con la tastiera) — chiesto in correzioni.txt.
+`ex_set_visible(c, 0)` nasconde un controllo senza distruggerlo;
+`ex_set_enabled(c, 0)` lo lascia al suo posto, velato, con dentro quel che il
+programma ci mette, ma chi usa il programma non lo preme e non ci scrive.
+Valgono per ogni tipo di controllo; `ex_is_visible` ed `ex_is_enabled` dicono
+come sta. Prima un controllo spento si riconosceva solo se era un pulsante,
+una spunta o un radio. In exide sono due proprieta', `visibile` e `attivo`, e
+sulla maschera si distinguono a colpo d'occhio. Il manuale di EX-IDE le spiega
+in italiano e in inglese.
+
+**Sul mouse** (`tools/prova_exwin_sulmouse.sh`): con la proprieta' `sulmouse`
+un controllo ha un handler in piu', `<nome>_MouseOver()`, chiamato quando il
+puntatore gli arriva sopra; `ex_show_popup_pointer("testo", "0", "0", "0")`
+mostra un riquadro accanto al puntatore, coi colori di sfondo, scritta e bordo
+scritti come `"255,255,255"` o `"0"` per quelli predefiniti. Provandolo e'
+venuto fuori che nei programmi fatti con exide gli handler `_Changed` ed
+`_Enter` delle caselle di testo non venivano mai chiamati: ora si' (exwin.so
+0.015, exide 0.024; basta riaprire il progetto e salvarlo).
+
+### Una scheda madre vera: disco SATA e rete NVIDIA (kernel 0.239)
+
+**da testare sul ferro: QEMU non emula ne' l'uno ne' l'altra** — dal referto
+di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
+- **Il disco SATA.** Il controller si presenta come IDE in *modo nativo*: i
+  registri non stanno a 0x1F0 e 0x170 ma dove dicono i suoi BAR. Il kernel
+  guardava solo i due posti di sempre e il disco non lo vedeva. Ora cerca sul
+  PCI i controller IDE, RAID e SATA che non sono in AHCI e ne aggiunge i
+  canali; i dischi trovati prendono i posti liberi fra `hd0` e `hd3`, cosi'
+  `disk`, `fdisk` e l'installatore non cambiano. I dischi di sempre restano
+  dov'erano (questo si' provato in QEMU).
+- **La rete.** `/dev/nforce.drv`, per l'Ethernet integrata nei chipset NVIDIA
+  nForce (MCP67, 73, 77, 79): registri in memoria, senza interrupt, col PHY
+  letto com'e'. `netdetect` la riconosce e lo avvia. Con `-d` stampa i
+  registri senza toccarli e con `-v` racconta l'accensione: sono per la prima
+  prova, che sara' sulla macchina.
+- **Le chiavette USB** su quel PC non venivano riconosciute: i driver EHCI
+  leggevano male i controller a 64 bit, e ora dicono per esteso che cosa
+  fallisce. Con la correzione il referto e' arrivato su chiavetta.
+- **Il dischetto della sonda** (`make sonda`) si costruiva piu': e' tornato a
+  fare solo la lettura dell'hardware, con 470 KB liberi per i referti.
+
+### Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)
+
+**testato sul ferro** (Core 2 Quad Q9650, chipset NVIDIA MCP73: quattro
+processori trovati dall'ACPI, i tre in piu' col timer che cammina e i messaggi
+che arrivano) **e in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4
+processori, con ACPI e con la sola tabella MP, anche sotto KVM; Pentium e
+Pentium II emulati a due zoccoli) — all'avvio il kernel cerca i processori
+nelle tabelle ACPI (MADT) e, dove non ci sono, nella tabella MultiProcessor
+delle schede a due processori degli anni Novanta (doppio Pentium, doppio
+Pentium Pro). Quelli in piu' li sveglia uno alla volta e li porta in modo
+protetto con le tabelle del kernel (**0.237**). Ognuno accende il proprio APIC
+locale, ha un timer suo a 100 battiti al secondo e riceve i messaggi degli
+altri processori; l'APIC sta in una pagina che ogni processo vede, quindi
+anche una chiamata di sistema puo' mandarne uno (**0.238**).
+
+`hwinfo` ha la sezione PROCESSORI: quanti, da quale tabella, e per ognuno se
+e' in uso, in attesa o muto; per quelli in attesa misura in mezzo secondo se
+il timer cammina e se i messaggi arrivano.
+
+! **EX-OS lavora ancora con un processore solo.** Gli altri sono pronti ma
+non eseguono processi: e' la tappa 3, un lucchetto unico sul kernel, ed e' li'
+che arriva il guadagno. Poi i lucchetti piu' fini. Le periferiche restano sul
+PIC verso il processore d'avvio: l'I/O APIC serve a distribuirle, e si fara'
+dopo. Su una macchina con un processore — e su tutto cio' che non ha un APIC
+locale — non cambia niente: il kernel legge qualche byte del BIOS e prosegue.
+
+Se l'avvio si fermasse su una scheda con piu' processori: `smp = 0` in
+`/boot/kernel.cfg` li fa contare senza svegliarli.
+
 ### exide: miniature, puntatore, codice non modale; e tiscali.it si apre
 
 **da testare sul ferro, provato in QEMU** — in exide il pannello degli
@@ -149,12 +222,25 @@ riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
 `tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
 in corso.
 
-### Kernel 0.228–0.235: quello che Firefox ha trovato
+### Kernel 0.228–0.236: quello che Firefox ha trovato
 
 **testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
+- **0.236**: la memoria anonima (`mmap`, `sbrk`) si da' al primo accesso e non
+  alla richiesta: Firefox scende da 405 a 300 MB. Due corse fra i fili di uno
+  stesso programma, che a Firefox facevano sparire uno stack una volta ogni
+  qualche avvio: la tabella delle pagine nuova si installa a interrupt spenti,
+  e due fili creati nello stesso momento non ricevono piu' lo stesso posto.
+  Nella libc `time()` e `clock_gettime()` leggono l'orologio CMOS una volta e
+  poi contano dal timer (Firefox chiede l'ora 1,7 milioni di volte in un
+  quarto d'ora: erano 209 secondi di accessi alle porte).
+  **I tempi veri di Firefox**, misurati dal suo avvio e non dall'accensione
+  della macchina (QEMU con KVM, 2 GB): finestra dopo 4 secondi, pagina
+  iniziale dopo 8, una pagina locale 0,1 secondi dopo Invio. I «65 secondi»
+  scritti qui sotto contavano anche l'avvio di EX-OS.
 - **0.235**: ext2 legge e scrive i blocchi contigui di un file in un comando
   solo, e la cache dei settori (da 64 KB a 1 MB) tiene i metadati invece dei
-  dati: Firefox apre la finestra in 65 secondi invece di 75 in QEMU.
+  dati: la finestra di Firefox arriva 10 secondi prima (a 65 secondi
+  dall'accensione invece di 75, in QEMU).
 - **0.234**: `mmap` con `MAP_FIXED` sopra pagine gia' mappate le libera
   prima (restavano perse): serve al JIT di JavaScript di Firefox.
 - **0.233**: `ftruncate` su un file aperto e 256 file aperti nel sistema

@@ -156,6 +156,17 @@ typedef long (*ExWindowProc)(ExWindow, unsigned int, unsigned int, long);
  * or the toolkit redraws the whole window at every pixel. */
 #define EXM_MOUSE_ENTER   0x0014
 #define EXM_MOUSE_LEAVE   0x0015
+/* The pointer, with no button pressed, has come onto a control (exwin.so
+ * 0.015): once when it arrives, not at every movement. wp = the control's id,
+ * lp = the control. Only for a window that asked with ex_track_mouse_hover.
+ * It is where a program shows a hint (ex_show_popup_pointer) or changes a
+ * colour; exide calls <Name>_MouseOver() from it. */
+#define EXM_MOUSE_OVER    0x0016
+/* The user changed the text of a text box or a text area (exwin.so 0.015):
+ * wp = the control's id, lp = the control. Only for a window that asked with
+ * ex_notify_changes. For a text area it means «a key that writes or deletes
+ * was taken», which is almost always a change. */
+#define EXM_CHANGED       0x0017
 /* EXM_MOUSE_DOWN e EXM_DOUBLE_CLICK portano in wp i modificatori (KBD_MOD_CTRL,
  * _SHIFT, _ALT) del momento del clic: dal 29 settembre 2026, con wserver
  * 0.006 e exwin.so 0.009. Prima wp era 0. */
@@ -341,6 +352,27 @@ void       ex_move(ExWindow f, int x, int y);
 void       ex_show(ExWindow f, int visibile);
 
 /* -----------------------------------------------------------------------------
+ * Visible and enabled, for every control (exwin.so 0.014, 7 October 2026)
+ *
+ *   ex_set_visible(c, 0)   hides the control without destroying it: it is not
+ *                          drawn, gets no clicks, Tab skips it. Its text, rows
+ *                          and selection stay; ex_set_visible(c, 1) brings it
+ *                          back as it was.
+ *   ex_set_enabled(c, 0)   the control is shown, dimmed, with whatever the
+ *                          program puts in it, but the user cannot press it,
+ *                          type in it or give it the focus: read-only for the
+ *                          user, still writable by the program (ex_set_text...).
+ *
+ * Every control is born visible and enabled. The window is drawn again by
+ * itself when the message handler returns, as for ex_set_text.
+ * (ex_show and ex_enable are the same two switches under their older names.)
+ * --------------------------------------------------------------------------- */
+void       ex_set_visible(ExWindow c, int si);
+int        ex_is_visible(ExWindow c);
+void       ex_set_enabled(ExWindow c, int si);
+int        ex_is_enabled(ExWindow c);
+
+/* -----------------------------------------------------------------------------
  * Cambiare misura
  *
  * ! SU UN CONTROLLO CAMBIA SUBITO; SU UNA FINESTRA DI PRIMO LIVELLO E' UNA
@@ -473,6 +505,23 @@ void        ex_minimize_window_id(unsigned int id);
  * to stop. Over an older server nothing arrives, which is the same as not
  * asking: a program must work without them. */
 void        ex_track_mouse_hover(ExWindow f, int si);
+
+/* EXM_CHANGED for the text boxes and text areas of this window: 1 to receive
+ * it, 0 to stop (exwin.so 0.015). */
+void        ex_notify_changes(ExWindow f, int si);
+
+/* A small box with `text` next to the pointer, inside the window the pointer
+ * is over (exwin.so 0.015). The three colours are strings "red,green,blue"
+ * (0..255); "0", "" or NULL means the default: a pale, almost beige yellow
+ * background, black text, dark grey border. `text` may hold up to four lines
+ * separated by a newline. The box opens below and to the right of the
+ * pointer, and on the other side when it would not fit. It goes away by
+ * itself when the pointer moves to another control or leaves the window, at a
+ * click, at a key; ex_hide_popup_pointer() removes it at once. Meant to be
+ * called from EXM_MOUSE_OVER (in exide: from <Name>_MouseOver). */
+void        ex_show_popup_pointer(const char *text, const char *background,
+                                  const char *foreground, const char *border);
+void        ex_hide_popup_pointer(void);
 
 /* Draws ONE control again and shows only its rectangle, without the window
  * around it: a label (a status line), a terminal, a text area, a list, when
@@ -1295,6 +1344,15 @@ void ex_screen_size(unsigned int *larghezza, unsigned int *altezza);
 #define ex_acceso                ex_is_checked
 #define ex_accendi               ex_set_checked
 #define ex_abilita               ex_enable
+#define ex_avvisa_cambi            ex_notify_changes
+#define ex_riquadro_puntatore      ex_show_popup_pointer
+#define ex_riquadro_puntatore_via  ex_hide_popup_pointer
+#define EXM_SUL_MOUSE              EXM_MOUSE_OVER
+#define EXM_CAMBIATO               EXM_CHANGED
+#define ex_visibile               ex_set_visible
+#define ex_e_visibile             ex_is_visible
+#define ex_attivo                 ex_set_enabled
+#define ex_e_attivo               ex_is_enabled
 #define ex_scorri_limiti         ex_scroll_set_range
 #define ex_scorri_dove           ex_scroll_get_pos
 #define ex_scorri_vai            ex_scroll_set_pos

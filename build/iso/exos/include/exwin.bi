@@ -161,6 +161,17 @@ declare sub ex_set_title     cdecl alias "ex_set_title" (byval f as ExWindow, by
 declare sub ex_move     cdecl alias "ex_move" (byval f as ExWindow, byval x as long, byval y as long)
 declare sub ex_resize     cdecl alias "ex_resize" (byval f as ExWindow, byval w as long, byval h as long)
 declare sub ex_show     cdecl alias "ex_show" (byval f as ExWindow, byval visibile as long)
+' Visible and enabled, for every control (exwin.so 0.014): see exwin.h.
+declare sub ex_set_visible cdecl alias "ex_set_visible" (byval c as ExWindow, byval si as long)
+declare function ex_is_visible cdecl alias "ex_is_visible" (byval c as ExWindow) as long
+declare sub ex_set_enabled cdecl alias "ex_set_enabled" (byval c as ExWindow, byval si as long)
+declare function ex_is_enabled cdecl alias "ex_is_enabled" (byval c as ExWindow) as long
+' Mouse over a control, text changed, and the box by the pointer (exwin.so 0.015).
+#define EXM_MOUSE_OVER &h0016
+#define EXM_CHANGED    &h0017
+declare sub ex_notify_changes cdecl alias "ex_notify_changes" (byval f as ExWindow, byval si as long)
+declare sub ex_show_popup_pointer cdecl alias "ex_show_popup_pointer" (byval testo as const zstring ptr, byval sfondo as const zstring ptr, byval scritta as const zstring ptr, byval bordo as const zstring ptr)
+declare sub ex_hide_popup_pointer cdecl alias "ex_hide_popup_pointer" ()
 
 '' --- Il rilievo: sporge cio' che si preme, rientra cio' in cui si scrive ----
 declare sub ex_draw_raised cdecl alias "ex_draw_raised" (byval f as ExWindow, byval x as long, byval y as long, byval w as long, byval h as long)
@@ -281,6 +292,10 @@ declare sub ex_screen_size cdecl alias "ex_screen_size" (byval larghezza as ulon
 #define ex_acceso                ex_is_checked
 #define ex_accendi               ex_set_checked
 #define ex_abilita               ex_enable
+#define ex_visibile              ex_set_visible
+#define ex_e_visibile            ex_is_visible
+#define ex_attivo                ex_set_enabled
+#define ex_e_attivo              ex_is_enabled
 #define ex_scorri_limiti         ex_scroll_set_range
 #define ex_scorri_dove           ex_scroll_get_pos
 #define ex_scorri_vai            ex_scroll_set_pos

@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.235
+**Version:** 0.239
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -84,6 +84,79 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### ExWin: every control can be hidden and switched off
+
+**tested in QEMU** (`tools/prova_exwin_stato.sh`: the project is compiled
+inside EX-OS and tried with the keyboard) — asked in correzioni.txt.
+`ex_set_visible(c, 0)` hides a control without destroying it;
+`ex_set_enabled(c, 0)` leaves it in place, dimmed, showing whatever the program
+puts in it, but the user cannot press it or type in it. They work on every
+kind of control; `ex_is_visible` and `ex_is_enabled` say how it stands. Before,
+a disabled control could be told apart only if it was a button, a checkbox or
+a radio. In exide they are two properties, `visibile` and `attivo`, and on the
+form they can be told at a glance. The EX-IDE manual explains them in Italian
+and in English.
+
+**Mouse over** (`tools/prova_exwin_sulmouse.sh`): with the `sulmouse` property
+a control gets one more handler, `<Name>_MouseOver()`, called when the pointer
+arrives over it; `ex_show_popup_pointer("text", "0", "0", "0")` shows a box by
+the pointer, with background, text and border colours written as
+`"255,255,255"` or `"0"` for the defaults. Trying it showed that in programs
+made with exide the `_Changed` and `_Enter` handlers of text boxes were never
+called: now they are (exwin.so 0.015, exide 0.024; open the project and save
+it once).
+
+### A real motherboard: SATA disk and NVIDIA network (kernel 0.239)
+
+**to be tested on hardware: QEMU emulates neither** — from the report of a PC
+with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
+- **The SATA disk.** The controller shows up as IDE in *native mode*: its
+  registers are not at 0x1F0 and 0x170 but where its BARs say. The kernel
+  looked only at the two usual places and did not see the disk. It now looks
+  on the PCI bus for IDE, RAID and SATA controllers that are not in AHCI and
+  adds their channels; the disks found take the free places among `hd0` to
+  `hd3`, so `disk`, `fdisk` and the installer do not change. The usual disks
+  stay where they were (this one tried in QEMU).
+- **The network.** `/dev/nforce.drv`, for the Ethernet built into NVIDIA
+  nForce chipsets (MCP67, 73, 77, 79): registers in memory, no interrupt, the
+  PHY read as it is. `netdetect` recognises it and starts it. `-d` prints the
+  registers without touching them and `-v` tells the power-up step by step:
+  they are for the first trial, which will be on the machine.
+- **USB sticks** were not recognised on that PC: the EHCI driver misread
+  64-bit controllers, and the drivers now say in full what fails. With the
+  fix the report came back on a stick.
+- **The probe floppy** (`make sonda`) no longer built: it is back to reading
+  the hardware only, with 470 KB free for reports.
+
+### More processors, stages 1 and 2 (kernel 0.237 and 0.238)
+
+**tested on hardware** (Core 2 Quad Q9650, NVIDIA MCP73 chipset: four
+processors found from ACPI, the three extra ones with their timer running and
+messages arriving) **and in QEMU** (`tools/prova_smp.sh`: 1, 2 and 4
+processors, with ACPI and with the MP table alone, also under KVM; emulated
+two-socket Pentium and Pentium II) — at boot the kernel looks for the
+processors in the ACPI tables (MADT) and, where there are none, in the
+MultiProcessor table of the two-processor boards of the Nineties (dual
+Pentium, dual Pentium Pro). It wakes the extra ones one at a time and takes
+them to protected mode with the kernel's tables (**0.237**). Each one switches
+its own local APIC on, has a timer of its own at 100 beats a second and
+receives messages from the other processors; the APIC sits in a page every
+process sees, so a system call can send one too (**0.238**).
+
+`hwinfo` has a PROCESSORI section: how many, from which table, and for each
+one whether it is in use, waiting or silent; for the waiting ones it measures
+over half a second whether the timer runs and whether messages arrive.
+
+! **EX-OS still works with one processor.** The others are ready but run no
+processes: that is stage 3, one lock on the kernel, and it is where the gain
+comes. Then finer locks. Devices stay on the PIC towards the boot processor:
+the I/O APIC is for spreading them, and comes later. On a machine with one
+processor — and on anything without a local APIC — nothing changes: the
+kernel reads a few bytes of the BIOS and goes on.
+
+Should boot stop on a board with several processors: `smp = 0` in
+`/boot/kernel.cfg` makes the kernel count them without waking them.
+
 ### exide: miniatures, pointer, non-modal code; and tiscali.it opens
 
 **to be tested on hardware, tested in QEMU** — in exide the tools panel shows
@@ -130,13 +203,25 @@ page and saves what it drew (text, bold, italic, coloured boxes, a line
 written by JavaScript). Diary and picture in `tools/exilla/leggimi.md`. The
 seventh stage — a real window in ExWin — is under way.
 
-### Kernel 0.228–0.235: what Firefox found
+### Kernel 0.228–0.236: what Firefox found
 
 **tested in QEMU** — fixes that matter to every program with threads:
+- **0.236**: anonymous memory (`mmap`, `sbrk`) is given on first access, not
+  on request: Firefox goes from 405 to 300 MB. Two races between the threads
+  of one program, which made a stack disappear under Firefox once every few
+  starts: a new page table is installed with interrupts off, and two threads
+  created at the same moment no longer get the same slot. In the libc
+  `time()` and `clock_gettime()` read the CMOS clock once and then count from
+  the timer (Firefox asks the time 1.7 million times in a quarter of an hour:
+  that was 209 seconds of port accesses).
+  **Firefox's real times**, measured from its own start and not from power-on
+  (QEMU with KVM, 2 GB): window after 4 seconds, start page after 8, a local
+  page 0.1 seconds after Enter. The «65 seconds» written below also counted
+  the boot of EX-OS.
 - **0.235**: ext2 reads and writes the contiguous blocks of a file in one
   command, and the sector cache (from 64 KB to 1 MB) keeps the metadata
-  instead of the data: Firefox opens its window in 65 seconds instead of 75
-  in QEMU.
+  instead of the data: Firefox's window arrives 10 seconds earlier (65
+  seconds after power-on instead of 75, in QEMU).
 - **0.234**: `mmap` with `MAP_FIXED` over pages already mapped frees them
   first (they were lost): Firefox's JavaScript JIT needs it.
 - **0.233**: `ftruncate` on an open file and 256 open files in the system

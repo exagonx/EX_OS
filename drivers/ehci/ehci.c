@@ -127,7 +127,7 @@ EX_VERSIONE("ehci.drv", "0.002");
 #define OFF_QH_CTRL   0x0100    /* endpoint 0 */
 #define OFF_QH_IN     0x0200    /* bulk IN */
 #define OFF_QH_OUT    0x0300    /* bulk OUT */
-#define OFF_QTD       0x1000    /* otto qTD da 32 byte */
+#define OFF_QTD       0x1000    /* otto qTD, uno ogni 64 byte: vedi QTD_PASSO */
 #define OFF_SETUP     0x2000    /* gli 8 byte di una richiesta di controllo */
 #define OFF_BUF       0x3000    /* i dati: 4 KB */
 #define BUF_MAX       4096
@@ -262,10 +262,27 @@ static int prendi_dal_bios(void)
 #define PID_IN        1
 #define PID_SETUP     2
 
-static unsigned int qtd_fis(unsigned int i) { return FIS(OFF_QTD + i * 32); }
+/* =============================================================================
+ * ! UN qTD OGNI 64 BYTE, E NON OGNI 32 (7 ottobre 2026).
+ *
+ * Un qTD e' lungo 32 byte solo su un controller a 32 bit. Quelli che
+ * dichiarano l'indirizzamento a 64 (HCCPARAMS bit 0: quasi tutti i chipset
+ * dal 2008 in poi) ne leggono 52: dopo i cinque puntatori ai dati ce ne sono
+ * altri cinque con la meta' ALTA di ciascuno. Con i qTD accostati a 32 byte
+ * quelle cinque parole erano l'inizio del qTD DOPO — il suo puntatore al
+ * successivo, il suo token — e il controller le prendeva per la parte alta
+ * dell'indirizzo dei dati: un tampone che sta a 3 MB diventava un tampone
+ * oltre i 4 GB. In QEMU, che di suo risponde a 32 bit, non si vedeva.
+ *
+ * A 64 byte c'e' posto per tutti e tredici, e qtd_prepara azzera anche le
+ * parole alte. La QH, che ha lo stesso problema nella sua copia del qTD, sta
+ * gia' a 256 byte dalla successiva.
+ * ============================================================================= */
+#define QTD_PASSO     64
+static unsigned int qtd_fis(unsigned int i) { return FIS(OFF_QTD + i * QTD_PASSO); }
 static volatile unsigned int *qtd(unsigned int i)
 {
-    return VIRT(OFF_QTD + i * 32);
+    return VIRT(OFF_QTD + i * QTD_PASSO);
 }
 
 /* Prepara un qTD. `prossimo` e' l'indice del successivo, o -1 per «ultimo». */
@@ -283,7 +300,7 @@ static void qtd_prepara(unsigned int i, int prossimo, unsigned int pid,
 
     /* I puntatori sono a PAGINE: il primo porta anche lo scostamento dentro
      * la pagina, gli altri no. Con al massimo 4 KB ne bastano due. */
-    for (k = 3; k < 8; k++) t[k] = 0;
+    for (k = 3; k < 16; k++) t[k] = 0;      /* anche le meta' alte: QTD_PASSO */
     t[3] = buf_fis;
     t[4] = (buf_fis + 0x1000u) & ~0xFFFu;
 }
@@ -297,7 +314,7 @@ static void qh_prepara(unsigned int off, unsigned int prossima_fis,
     volatile unsigned int *q = VIRT(off);
     unsigned int k;
 
-    for (k = 0; k < 16; k++) q[k] = 0;
+    for (k = 0; k < 24; k++) q[k] = 0;          /* 17 parole su un controller a 64 bit */
 
     q[0] = prossima_fis | (1u << 1);            /* tipo 1 = QH */
 
@@ -330,6 +347,24 @@ static void qh_prepara(unsigned int off, unsigned int prossima_fis,
  * I qTD invece nascono ATTIVI, li accendiamo noi: se restano accesi vuol dire
  * che nessuno li ha eseguiti, e questa e' una domanda a cui si puo' rispondere
  * con la verita'. */
+/* Un trasferimento andato male, detto per esteso: lo stato di ogni qTD (il
+ * byte basso: 80 ancora attivo, 40 fermato, 20 errore di tampone, 10 babble,
+ * 08 errore di transazione, 04 microframe perso), quello del controller e
+ * quello delle porte con qualcosa attaccato. E' la riga che serve a chi non
+ * ha la macchina davanti. */
+static void esegui_dice(unsigned int primo, unsigned int ultimo, const char *come)
+{
+    unsigned int i, np = rd32(g_mmio, 0x04) & 0xF;
+
+    printf("ehci:   %s; qTD:", come);
+    for (i = primo; i <= ultimo; i++) printf(" %u=%08x", i, qtd(i)[2]);
+    printf("; controller %04x, a 64 bit: %s\n", rd32(g_op, O_USBSTS) & 0xFFFF,
+           (rd32(g_mmio, C_HCCPARAMS) & 1) ? "si" : "no");
+    for (i = 0; i < np && i < 15; i++)
+        if (rd32(g_op, O_PORTSC(i)) & 1)
+            printf("ehci:   porta %u: %08x\n", i, rd32(g_op, O_PORTSC(i)));
+}
+
 static int esegui(unsigned int qh_off, unsigned int primo, unsigned int ultimo,
                   unsigned int ms)
 {
@@ -337,10 +372,17 @@ static int esegui(unsigned int qh_off, unsigned int primo, unsigned int ultimo,
     unsigned int giri, stato, i;
 
     /* La sovrapposizione si azzera PRIMA: vedi il commento qui sopra. */
-    q[3] = 0;
-    q[4] = qtd_fis(primo);
+    /* ! IL PUNTATORE AL PRIMO qTD SI SCRIVE PER ULTIMO: e' quello il «via».
+     * La lista asincrona gira sempre, e il controller che passa di qui trova
+     * la coda ferma e senza errori: appena vede un successivo valido lo carica
+     * nella sua copia. Scritto per secondo, come prima, le due righe dopo
+     * potevano cadere SOPRA la copia appena caricata, azzerandone il token —
+     * cioe' cancellando la fase di SETUP che stava per partire. */
     q[5] = 1u;
+    q[3] = 0;
     q[6] = 0;                                   /* token: nessuno stato vecchio */
+    for (i = 7; i < 17; i++) q[i] = 0;          /* e nessun tampone vecchio */
+    q[4] = qtd_fis(primo);
 
     for (giri = 0; giri < ms * 10; giri++) {
         /* Un errore ferma la catena: puo' essersi fermata su uno qualunque
@@ -350,6 +392,7 @@ static int esegui(unsigned int qh_off, unsigned int primo, unsigned int ultimo,
             if (stato & (QTD_FERMATO | QTD_BABBLE | QTD_ERR_DATI)) {
                 if (g_verboso)
                     printf("ehci: qTD %u fermato (stato %02x)\n", i, stato);
+                if (g_rumore) esegui_dice(primo, ultimo, "errore");
                 return (stato & QTD_FERMATO) ? USB_MASSA_STALLO : -1;
             }
         }
@@ -359,8 +402,10 @@ static int esegui(unsigned int qh_off, unsigned int primo, unsigned int ultimo,
         usleep(100);
     }
 
-    if (g_rumore)
+    if (g_rumore) {
         printf("ehci: trasferimento senza risposta (qTD ancora attivo)\n");
+        esegui_dice(primo, ultimo, "scaduto");
+    }
     return -1;
 }
 
@@ -683,11 +728,11 @@ static int conosci(void)
         if (g_rumore) printf("ehci: SET_ADDRESS rifiutata\n");
         return 0;
     }
-    usleep(10000);
+    usleep(50000);      /* la specifica dice 2 ms; un PC vero ne ha voluti di piu' */
     qh_indirizzo(OFF_QH_CTRL, g_indirizzo, 0, g_dev.maxp0);
 
     if (!usb_desc_lungo(controllo, g_indirizzo, &g_dev)) {
-        if (g_rumore) printf("ehci: descrittore di dispositivo non credibile\n");
+        if (g_rumore) usb_desc_dice("ehci");
         return 0;
     }
 

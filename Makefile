@@ -182,10 +182,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtm
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
+DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv nforce.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -4584,6 +4584,30 @@ $(E1000_DRV_OUT): $(E1000_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(E1000_DRV_LD)
 .PHONY: e1000_drv
 e1000_drv: dirs $(E1000_DRV_OUT)
 
+# --- Driver ring3 nforce.drv: l'Ethernet dei chipset NVIDIA nForce (solo CD) --
+#
+# Registri in memoria (BAR0) come l'e1000, senza interrupt: guarda la scheda a
+# intervalli. QEMU non la emula: si prova solo sul ferro (sonda/mb_oem_000).
+NFORCE_DRV_SRC  := drivers/nforce/nforce.c
+NFORCE_DRV_OUT  := $(BUILD_DRIVERS_CD)/nforce.drv
+NFORCE_DRV_LD   := drivers/nforce/nforce.ld
+
+$(NFORCE_DRV_OUT): $(NFORCE_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NFORCE_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 nforce.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(NFORCE_DRV_SRC) -o $(BUILD_DRIVERS_CD)/nforce_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/nforce_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/nforce_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NFORCE_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/nforce_start.o \
+	    $(BUILD_DRIVERS_CD)/nforce_main.o  \
+	    $(BUILD_DRIVERS_CD)/nforce_libc.o  \
+	    -o $@
+	@echo "[OK] nforce.drv compilato: $@"
+
+.PHONY: nforce_drv
+nforce_drv: dirs $(NFORCE_DRV_OUT)
+
 # --- Stack IPv4 ring3: ip.drv (solo CD) ---------------------------------------
 # ARP + IPv4 + ICMP in un PROCESSO A SE'. Non tocca porte: parla col driver
 # di scheda via IPC come qualunque altro programma. Sta fuori dal driver
@@ -5162,11 +5186,13 @@ SONDA_CONTENUTO := $(STAGE1_BIN) $(STAGE2_BIN) $(SONDA_OUT) \
     $(SHELL_BIN) $(LS_BIN) $(CP_BIN) $(KEYMAP_BIN) $(SHUTDOWN_BIN) \
     $(HWINFO_BIN) $(MOUNT_BIN) $(DISK_BIN) \
     $(FDISK_BIN) $(MKFS_BIN) $(INSTALL_BIN) $(MKDIR_BIN) $(SCARICA_BIN) \
+    $(NETUPDATE_BIN) $(EXHTTP_SO) \
     $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) \
     $(PING_BIN) $(DHCP_BIN) $(HOST_BIN) $(AUDIO_BIN) $(TELNETD_BIN) \
-    $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) \
+    $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) $(XHCI_OUT) \
     $(EHCI_OUT) $(OHCI_OUT) $(SIS_OUT) $(MAPPA_OUT) \
     $(SIS900_DRV_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) $(E1000_DRV_OUT) \
+    $(NFORCE_DRV_OUT) \
     $(IP_DRV_OUT) $(AC97_DRV_OUT) $(CARDBUS_DRV_OUT)
 
 # ! IL CONTROLLO LEGGE GLI ELENCHI DAL COPIONE, non da una copia scritta qui.
@@ -5185,7 +5211,7 @@ verifica-dipendenze-sonda:
 	    dichiarati="$$dichiarati $$(basename $$f)"; \
 	done; \
 	manca=""; \
-	for var in PROGRAMMI PROGRAMMI_CD DRIVER DRIVER_CD; do \
+	for var in PROGRAMMI PROGRAMMI_IN_PIU PROGRAMMI_CD PROGRAMMI_CD_IN_PIU PROGRAMMI_CD_INSTALLA DRIVER DRIVER_CD DRIVER_CD_IN_PIU DRIVER_CD_INSTALLA; do \
 	    voci=$$(sed -n "s/^$$var=\"\(.*\)\"$$/\1/p" $(TOOLS_DIR)/mksonda.sh); \
 	    for n in $$voci; do \
 	        case " $$dichiarati " in \
@@ -5231,7 +5257,7 @@ TEST_AA3K_IMG := $(DIST_DIR)/test_aa3k.img
 .PHONY: test-aa3k
 test-aa3k: verifica-dipendenze-sonda
 	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_CONTENUTO)
-	@MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_IMG)
+	@COMPLETO=1 MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_IMG)
 	@# ! SI DICE QUAL E' IL sis900.drv CHE STA DENTRO. E' il motivo per cui
 	@# questo dischetto esiste, e il 14 settembre 2026 e' stato rifatto con
 	@# quello vecchio senza che si vedesse: stessa dimensione al byte. Il
@@ -5255,7 +5281,7 @@ TEST_AA3K_800 := $(DIST_DIR)/test_aa3k_800.img
 
 .PHONY: test-aa3k-800
 test-aa3k-800: test-aa3k
-	@MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
+	@COMPLETO=1 MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
 	@echo "     ! questo parte in 800x600: il referto che ne esce e' quello"
 	@echo "       della modalita' grafica, da sottrarre a quello in testo."
 
@@ -5281,7 +5307,7 @@ TEST_AA3K_REMOTO := $(DIST_DIR)/test_aa3k_remoto.img
 .PHONY: test-aa3k-remoto
 test-aa3k-remoto: verifica-dipendenze-sonda
 	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_CONTENUTO)
-	@REMOTO=1 MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_REMOTO)
+	@COMPLETO=1 REMOTO=1 MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_REMOTO)
 	@echo ""
 	@echo "  Questo dischetto apre una shell TELNET SENZA PASSWORD sulla"
 	@echo "  porta 23. Leggi l'indirizzo che stampa ipcfg all'avvio e da qui:"
@@ -5298,9 +5324,9 @@ test-aa3k-remoto: verifica-dipendenze-sonda
 # i tre dischetti pronti e provarli in fila.
 .PHONY: test-aa3k-video
 test-aa3k-video: test-aa3k
-	@MODO_VIDEO=1 $(TOOLS_DIR)/mksonda.sh $(DIST_DIR)/test_aa3k_640.img
-	@MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
-	@MODO_VIDEO=3 $(TOOLS_DIR)/mksonda.sh $(DIST_DIR)/test_aa3k_1024.img
+	@COMPLETO=1 MODO_VIDEO=1 $(TOOLS_DIR)/mksonda.sh $(DIST_DIR)/test_aa3k_640.img
+	@COMPLETO=1 MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
+	@COMPLETO=1 MODO_VIDEO=3 $(TOOLS_DIR)/mksonda.sh $(DIST_DIR)/test_aa3k_1024.img
 	@echo ""
 	@echo "  Tre dischetti, una risoluzione l'uno:"
 	@echo "    dist/test_aa3k_640.img    640x480"
@@ -5320,6 +5346,27 @@ test-aa3k-video: test-aa3k
 #
 # Si costruisce sempre con RAMDISCO=1, perche' senza non avrebbe senso:
 #     make sonda-cd
+# =============================================================================
+# installa — IL DISCHETTO CHE INSTALLA DALLA RETE (7 ottobre 2026)
+#
+#     make installa      -> dist/installa.img
+#
+# Per una macchina senza lettore CD: 1,44 MB che si caricano tutti in RAM
+# (quindi partono anche da una chiavetta o da un lettore USB), con gli attrezzi
+# del disco, la rete e netupdate. Si installa sul disco il sistema piccolo che
+# sta girando, e da li' netupdate scarica il resto. Cosa c'e' dentro e perche'
+# sta in tools/mksonda.sh, accanto a INSTALLA.
+# =============================================================================
+INSTALLA_IMG := $(DIST_DIR)/installa.img
+
+.PHONY: installa
+installa: verifica-dipendenze-sonda
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_CONTENUTO)
+	@INSTALLA=1 $(TOOLS_DIR)/mksonda.sh $(INSTALLA_IMG)
+	@echo ""
+	@echo "  Su una chiavetta (LA CANCELLA):  dd if=$(INSTALLA_IMG) of=/dev/sdX bs=512"
+	@echo "  Poi si avvia il PC da li': le istruzioni compaiono a schermo."
+
 SONDA_ISO := $(DIST_DIR)/sonda.iso
 
 .PHONY: sonda-cd
@@ -5540,7 +5587,8 @@ ISO_PROVE := $(filter-out %/prova-make,$(wildcard $(TOOLS_DIR)/iso/*)) \
 # ! UNA LISTA SOLA ANCHE PER I DOCUMENTI, usata sia qui che nella ricetta
 # che li copia. KERNEL_CORE_NOTES.md finiva in doc/ senza essere una
 # dipendenza, ed e' lo stesso modo di sbagliare in piccolo.
-ISO_DOC := README.md README.en.md KERNEL_CORE_NOTES.md gpl-2.0.txt
+ISO_DOC := README.md README.en.md KERNEL_CORE_NOTES.md gpl-2.0.txt \
+           INSTALLA-USB.txt INSTALLA-USB.en.txt
 
 # ! I MANUALI VIAGGIANO COL CD, E IL MOTIVO E' CHE SERVONO PROPRIO LI'. La
 # procedura di installazione la legge chi sta davanti a una macchina da
@@ -7034,7 +7082,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
-                      $(E1000_DRV_OUT) \
+                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
                       $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \
@@ -7238,6 +7286,7 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@cp boot/avvio.sh $(ISOX_ROOT)/boot/avvio.sh
 	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh
 	@cp README.md README.en.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
+	@cp INSTALLA-USB.txt INSTALLA-USB.en.txt $(ISOX_ROOT)/doc/
 	@cp -r $(ISO_MANUALI) $(ISOX_ROOT)/doc/
 	@echo "     manuali: $$(find $(ISO_MANUALI) -name '*.md' | wc -l) capitoli in /doc/manuali"
 	@# ! Anche il kernel e stage2 sulla radice: non servono ad avviare —
@@ -7721,6 +7770,34 @@ help:
 	@echo "                      — controlla che nessun sorgente resti fuori"
 	@echo "  make hd           — Disco avviabile $(HD_IMG) (512 MB, ext2)"
 	@echo "  make run-hd       — Avvia dal disco, SENZA floppy"
+	@echo ""
+	@echo "Supporti che si caricano TUTTI IN RAM (lettore su USB, o da togliere):"
+	@echo "  make RAMDISCO=1 floppy"
+	@echo "                    — Il floppy di avvio dist/floppy.img, ma con la radice"
+	@echo "                      IN RAM: Stage 2 copia l'intero dischetto in memoria"
+	@echo "                      e il kernel lavora da li'. Serve dove il lettore"
+	@echo "                      e' USB (il BIOS lo legge, il kernel no). Vale per"
+	@echo "                      ogni voce: 'make RAMDISCO=1 all', ecc."
+	@echo "                      ! Sovrascrive dist/floppy.img: per tornare a quello"
+	@echo "                      normale, 'make floppy' (RAMDISCO=0 e' il predefinito)"
+	@echo "  make fixsys       — Dischetto di soccorso dist/fixsys.img (sempre in RAM)"
+	@echo "  make sonda        — Dischetto che fa il referto dell'hardware,"
+	@echo "                      dist/sonda.img (sempre in RAM)"
+	@echo "  make sonda-cd     — Lo stesso su CD, dist/sonda.iso"
+	@echo "  make installa     — Dischetto che INSTALLA DALLA RETE, dist/installa.img:"
+	@echo "                      attrezzi del disco, rete e netupdate, tutto in RAM."
+	@echo "                      Per un PC senza lettore CD (va anche su chiavetta)"
+	@echo ""
+	@echo "Altri supporti e pubblicazione:"
+	@echo "  make usb DISPOSITIVO=/dev/sdX [MB=1024]"
+	@echo "                    — Chiavetta avviabile (LA FORMATTA: chiede conferma)"
+	@echo "  make floppy-verboso"
+	@echo "                    — Floppy che mostra il log di avvio, dist/floppy-verboso.img"
+	@echo "  make diagnostic   — Floppy di diagnosi dist/diagnostic.img"
+	@echo "  make netinst      — L'albero per netupdate, dist/netinst (header freschi)"
+	@echo "  make netinst-img  — Il floppy della rete dist/netinst.img (non avviabile)"
+	@echo "  ./exagonx/repo-update.sh"
+	@echo "                    — Costruisce, compone netinst, pubblica e verifica"
 	@echo ""
 	@echo "Test e debug:"
 	@echo "  make run          — Avvia con QEMU"

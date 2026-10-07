@@ -1,6 +1,6 @@
 /* GENERATO DA tools/genlibc.py — NON MODIFICARE A MANO.
  *
- * La tabella che libc.so mette a disposizione: 448 funzioni, ognuna col suo
+ * La tabella che libc.so mette a disposizione: 449 funzioni, ognuna col suo
  * nome. Chi la legge risolve per NOME, quindi l'ordine di questo file non e'
  * parte dell'ABI e puo' cambiare a ogni ricostruzione senza rompere niente.
  */
@@ -117,790 +117,792 @@ ln53:
 ln54:
     .asciz "console_write"
 ln55:
-    .asciz "ctime"
+    .asciz "cpu_info"
 ln56:
-    .asciz "difftime"
+    .asciz "ctime"
 ln57:
-    .asciz "diskinfo"
+    .asciz "difftime"
 ln58:
-    .asciz "div"
+    .asciz "diskinfo"
 ln59:
-    .asciz "diventa_root"
+    .asciz "div"
 ln60:
-    .asciz "dma_alloc"
+    .asciz "diventa_root"
 ln61:
-    .asciz "dup"
+    .asciz "dma_alloc"
 ln62:
-    .asciz "dup2"
+    .asciz "dup"
 ln63:
-    .asciz "execv"
+    .asciz "dup2"
 ln64:
-    .asciz "execvp"
+    .asciz "execv"
 ln65:
-    .asciz "exit"
+    .asciz "execvp"
 ln66:
-    .asciz "fabs"
+    .asciz "exit"
 ln67:
-    .asciz "fb_map"
+    .asciz "fabs"
 ln68:
-    .asciz "fchmod"
+    .asciz "fb_map"
 ln69:
-    .asciz "fclose"
+    .asciz "fchmod"
 ln70:
-    .asciz "fcntl"
+    .asciz "fclose"
 ln71:
-    .asciz "fdopen"
+    .asciz "fcntl"
 ln72:
-    .asciz "fdprova"
+    .asciz "fdopen"
 ln73:
-    .asciz "feof"
+    .asciz "fdprova"
 ln74:
-    .asciz "ferror"
+    .asciz "feof"
 ln75:
-    .asciz "fflush"
+    .asciz "ferror"
 ln76:
-    .asciz "fgetc"
+    .asciz "fflush"
 ln77:
-    .asciz "fgetpos"
+    .asciz "fgetc"
 ln78:
-    .asciz "fgets"
+    .asciz "fgetpos"
 ln79:
-    .asciz "fileno"
+    .asciz "fgets"
 ln80:
-    .asciz "fopen"
+    .asciz "fileno"
 ln81:
-    .asciz "fpathconf"
+    .asciz "fopen"
 ln82:
-    .asciz "fprintf"
+    .asciz "fpathconf"
 ln83:
-    .asciz "fputc"
+    .asciz "fprintf"
 ln84:
-    .asciz "fputs"
+    .asciz "fputc"
 ln85:
-    .asciz "fread"
+    .asciz "fputs"
 ln86:
-    .asciz "free"
+    .asciz "fread"
 ln87:
-    .asciz "freopen"
+    .asciz "free"
 ln88:
-    .asciz "frexp"
+    .asciz "freopen"
 ln89:
-    .asciz "fscanf"
+    .asciz "frexp"
 ln90:
-    .asciz "fseek"
+    .asciz "fscanf"
 ln91:
-    .asciz "fsetpos"
+    .asciz "fseek"
 ln92:
-    .asciz "fsize"
+    .asciz "fsetpos"
 ln93:
-    .asciz "fstat"
+    .asciz "fsize"
 ln94:
-    .asciz "ftell"
+    .asciz "fstat"
 ln95:
-    .asciz "fwrite"
+    .asciz "ftell"
 ln96:
-    .asciz "getc"
+    .asciz "fwrite"
 ln97:
-    .asciz "getchar"
+    .asciz "getc"
 ln98:
-    .asciz "getconf"
+    .asciz "getchar"
 ln99:
-    .asciz "getcwd"
+    .asciz "getconf"
 ln100:
-    .asciz "getegid"
+    .asciz "getcwd"
 ln101:
-    .asciz "getentropy"
+    .asciz "getegid"
 ln102:
-    .asciz "getenv"
+    .asciz "getentropy"
 ln103:
-    .asciz "geteuid"
+    .asciz "getenv"
 ln104:
-    .asciz "getgid"
+    .asciz "geteuid"
 ln105:
-    .asciz "getpagesize"
+    .asciz "getgid"
 ln106:
-    .asciz "getpid"
+    .asciz "getpagesize"
 ln107:
-    .asciz "getrandom"
+    .asciz "getpid"
 ln108:
-    .asciz "getrusage"
+    .asciz "getrandom"
 ln109:
-    .asciz "gets"
+    .asciz "getrusage"
 ln110:
-    .asciz "gettimeofday"
+    .asciz "gets"
 ln111:
-    .asciz "getuid"
+    .asciz "gettimeofday"
 ln112:
-    .asciz "gmtime"
+    .asciz "getuid"
 ln113:
-    .asciz "gmtime_r"
+    .asciz "gmtime"
 ln114:
-    .asciz "imaxabs"
+    .asciz "gmtime_r"
 ln115:
-    .asciz "imaxdiv"
+    .asciz "imaxabs"
 ln116:
-    .asciz "interrompi"
+    .asciz "imaxdiv"
 ln117:
-    .asciz "ioctl"
+    .asciz "interrompi"
 ln118:
-    .asciz "ioport_bind"
+    .asciz "ioctl"
 ln119:
-    .asciz "ioport_in"
+    .asciz "ioport_bind"
 ln120:
-    .asciz "ioport_in16"
+    .asciz "ioport_in"
 ln121:
-    .asciz "ioport_in32"
+    .asciz "ioport_in16"
 ln122:
-    .asciz "ioport_out"
+    .asciz "ioport_in32"
 ln123:
-    .asciz "ioport_out16"
+    .asciz "ioport_out"
 ln124:
-    .asciz "ioport_out32"
+    .asciz "ioport_out16"
 ln125:
-    .asciz "ipc_attendi"
+    .asciz "ioport_out32"
 ln126:
-    .asciz "ipc_lookup"
+    .asciz "ipc_attendi"
 ln127:
-    .asciz "ipc_pronto"
+    .asciz "ipc_lookup"
 ln128:
-    .asciz "ipc_recv"
+    .asciz "ipc_pronto"
 ln129:
-    .asciz "ipc_recv_timeout"
+    .asciz "ipc_recv"
 ln130:
-    .asciz "ipc_register"
+    .asciz "ipc_recv_timeout"
 ln131:
-    .asciz "ipc_rimetti"
+    .asciz "ipc_register"
 ln132:
-    .asciz "ipc_scegli"
+    .asciz "ipc_rimetti"
 ln133:
-    .asciz "ipc_send"
+    .asciz "ipc_scegli"
 ln134:
-    .asciz "irq_bind"
+    .asciz "ipc_send"
 ln135:
-    .asciz "irq_done"
+    .asciz "irq_bind"
 ln136:
-    .asciz "irq_unbind"
+    .asciz "irq_done"
 ln137:
-    .asciz "isalnum"
+    .asciz "irq_unbind"
 ln138:
-    .asciz "isalpha"
+    .asciz "isalnum"
 ln139:
-    .asciz "isascii"
+    .asciz "isalpha"
 ln140:
-    .asciz "isatty"
+    .asciz "isascii"
 ln141:
-    .asciz "isblank"
+    .asciz "isatty"
 ln142:
-    .asciz "iscntrl"
+    .asciz "isblank"
 ln143:
-    .asciz "isdigit"
+    .asciz "iscntrl"
 ln144:
-    .asciz "isgraph"
+    .asciz "isdigit"
 ln145:
-    .asciz "islower"
+    .asciz "isgraph"
 ln146:
-    .asciz "isprint"
+    .asciz "islower"
 ln147:
-    .asciz "ispunct"
+    .asciz "isprint"
 ln148:
-    .asciz "isspace"
+    .asciz "ispunct"
 ln149:
-    .asciz "isupper"
+    .asciz "isspace"
 ln150:
-    .asciz "iswalnum"
+    .asciz "isupper"
 ln151:
-    .asciz "iswalpha"
+    .asciz "iswalnum"
 ln152:
-    .asciz "iswblank"
+    .asciz "iswalpha"
 ln153:
-    .asciz "iswcntrl"
+    .asciz "iswblank"
 ln154:
-    .asciz "iswdigit"
+    .asciz "iswcntrl"
 ln155:
-    .asciz "iswgraph"
+    .asciz "iswdigit"
 ln156:
-    .asciz "iswlower"
+    .asciz "iswgraph"
 ln157:
-    .asciz "iswprint"
+    .asciz "iswlower"
 ln158:
-    .asciz "iswpunct"
+    .asciz "iswprint"
 ln159:
-    .asciz "iswspace"
+    .asciz "iswpunct"
 ln160:
-    .asciz "iswupper"
+    .asciz "iswspace"
 ln161:
-    .asciz "iswxdigit"
+    .asciz "iswupper"
 ln162:
-    .asciz "isxdigit"
+    .asciz "iswxdigit"
 ln163:
-    .asciz "kbprova"
+    .asciz "isxdigit"
 ln164:
-    .asciz "kbstato"
+    .asciz "kbprova"
 ln165:
-    .asciz "labs"
+    .asciz "kbstato"
 ln166:
-    .asciz "ldexp"
+    .asciz "labs"
 ln167:
-    .asciz "ldiv"
+    .asciz "ldexp"
 ln168:
-    .asciz "listdir"
+    .asciz "ldiv"
 ln169:
-    .asciz "listdir_from"
+    .asciz "listdir"
 ln170:
-    .asciz "llabs"
+    .asciz "listdir_from"
 ln171:
-    .asciz "lldiv"
+    .asciz "llabs"
 ln172:
-    .asciz "localeconv"
+    .asciz "lldiv"
 ln173:
-    .asciz "localtime"
+    .asciz "localeconv"
 ln174:
-    .asciz "localtime_r"
+    .asciz "localtime"
 ln175:
-    .asciz "log_seriale"
+    .asciz "localtime_r"
 ln176:
-    .asciz "longjmp"
+    .asciz "log_seriale"
 ln177:
-    .asciz "lseek"
+    .asciz "longjmp"
 ln178:
-    .asciz "lstat"
+    .asciz "lseek"
 ln179:
-    .asciz "malloc"
+    .asciz "lstat"
 ln180:
-    .asciz "malloc_usable_size"
+    .asciz "malloc"
 ln181:
-    .asciz "mblen"
+    .asciz "malloc_usable_size"
 ln182:
-    .asciz "mbrtowc"
+    .asciz "mblen"
 ln183:
-    .asciz "mbstowcs"
+    .asciz "mbrtowc"
 ln184:
-    .asciz "mbtowc"
+    .asciz "mbstowcs"
 ln185:
-    .asciz "memalign"
+    .asciz "mbtowc"
 ln186:
-    .asciz "memchr"
+    .asciz "memalign"
 ln187:
-    .asciz "memcmp"
+    .asciz "memchr"
 ln188:
-    .asciz "memcpy"
+    .asciz "memcmp"
 ln189:
-    .asciz "meminfo"
+    .asciz "memcpy"
 ln190:
-    .asciz "memmove"
+    .asciz "meminfo"
 ln191:
-    .asciz "memset"
+    .asciz "memmove"
 ln192:
-    .asciz "mkdir"
+    .asciz "memset"
 ln193:
-    .asciz "mkstemp"
+    .asciz "mkdir"
 ln194:
-    .asciz "mktemp"
+    .asciz "mkstemp"
 ln195:
-    .asciz "mktime"
+    .asciz "mktemp"
 ln196:
-    .asciz "mmap"
+    .asciz "mktime"
 ln197:
-    .asciz "mmio_map"
+    .asciz "mmap"
 ln198:
-    .asciz "modo_testo"
+    .asciz "mmio_map"
 ln199:
-    .asciz "mount"
+    .asciz "modo_testo"
 ln200:
-    .asciz "mountinfo"
+    .asciz "mount"
 ln201:
-    .asciz "munmap"
+    .asciz "mountinfo"
 ln202:
-    .asciz "mutex_lascia"
+    .asciz "munmap"
 ln203:
-    .asciz "mutex_prendi"
+    .asciz "mutex_lascia"
 ln204:
-    .asciz "mutex_prova"
+    .asciz "mutex_prendi"
 ln205:
-    .asciz "nanosleep"
+    .asciz "mutex_prova"
 ln206:
-    .asciz "nome_utente"
+    .asciz "nanosleep"
 ln207:
-    .asciz "open"
+    .asciz "nome_utente"
 ln208:
-    .asciz "opendir"
+    .asciz "open"
 ln209:
-    .asciz "osversion"
+    .asciz "opendir"
 ln210:
-    .asciz "partwrite"
+    .asciz "osversion"
 ln211:
-    .asciz "pathconf"
+    .asciz "partwrite"
 ln212:
-    .asciz "pclose"
+    .asciz "pathconf"
 ln213:
-    .asciz "perror"
+    .asciz "pclose"
 ln214:
-    .asciz "pipe"
+    .asciz "perror"
 ln215:
-    .asciz "poll"
+    .asciz "pipe"
 ln216:
-    .asciz "popen"
+    .asciz "poll"
 ln217:
-    .asciz "posix_memalign"
+    .asciz "popen"
 ln218:
-    .asciz "printf"
+    .asciz "posix_memalign"
 ln219:
-    .asciz "proc_gruppo"
+    .asciz "printf"
 ln220:
-    .asciz "procinfo"
+    .asciz "proc_gruppo"
 ln221:
-    .asciz "pthread_attr_destroy"
+    .asciz "procinfo"
 ln222:
-    .asciz "pthread_attr_getdetachstate"
+    .asciz "pthread_attr_destroy"
 ln223:
-    .asciz "pthread_attr_getschedparam"
+    .asciz "pthread_attr_getdetachstate"
 ln224:
-    .asciz "pthread_attr_getschedpolicy"
+    .asciz "pthread_attr_getschedparam"
 ln225:
-    .asciz "pthread_attr_getstack"
+    .asciz "pthread_attr_getschedpolicy"
 ln226:
-    .asciz "pthread_attr_getstacksize"
+    .asciz "pthread_attr_getstack"
 ln227:
-    .asciz "pthread_attr_init"
+    .asciz "pthread_attr_getstacksize"
 ln228:
-    .asciz "pthread_attr_setdetachstate"
+    .asciz "pthread_attr_init"
 ln229:
-    .asciz "pthread_attr_setguardsize"
+    .asciz "pthread_attr_setdetachstate"
 ln230:
-    .asciz "pthread_attr_setinheritsched"
+    .asciz "pthread_attr_setguardsize"
 ln231:
-    .asciz "pthread_attr_setschedparam"
+    .asciz "pthread_attr_setinheritsched"
 ln232:
-    .asciz "pthread_attr_setschedpolicy"
+    .asciz "pthread_attr_setschedparam"
 ln233:
-    .asciz "pthread_attr_setscope"
+    .asciz "pthread_attr_setschedpolicy"
 ln234:
-    .asciz "pthread_attr_setstacksize"
+    .asciz "pthread_attr_setscope"
 ln235:
-    .asciz "pthread_cond_broadcast"
+    .asciz "pthread_attr_setstacksize"
 ln236:
-    .asciz "pthread_cond_destroy"
+    .asciz "pthread_cond_broadcast"
 ln237:
-    .asciz "pthread_cond_init"
+    .asciz "pthread_cond_destroy"
 ln238:
-    .asciz "pthread_cond_signal"
+    .asciz "pthread_cond_init"
 ln239:
-    .asciz "pthread_cond_timedwait"
+    .asciz "pthread_cond_signal"
 ln240:
-    .asciz "pthread_cond_wait"
+    .asciz "pthread_cond_timedwait"
 ln241:
-    .asciz "pthread_condattr_destroy"
+    .asciz "pthread_cond_wait"
 ln242:
-    .asciz "pthread_condattr_getclock"
+    .asciz "pthread_condattr_destroy"
 ln243:
-    .asciz "pthread_condattr_init"
+    .asciz "pthread_condattr_getclock"
 ln244:
-    .asciz "pthread_condattr_setclock"
+    .asciz "pthread_condattr_init"
 ln245:
-    .asciz "pthread_create"
+    .asciz "pthread_condattr_setclock"
 ln246:
-    .asciz "pthread_detach"
+    .asciz "pthread_create"
 ln247:
-    .asciz "pthread_equal"
+    .asciz "pthread_detach"
 ln248:
-    .asciz "pthread_exit"
+    .asciz "pthread_equal"
 ln249:
-    .asciz "pthread_getattr_np"
+    .asciz "pthread_exit"
 ln250:
-    .asciz "pthread_getname_np"
+    .asciz "pthread_getattr_np"
 ln251:
-    .asciz "pthread_getschedparam"
+    .asciz "pthread_getname_np"
 ln252:
-    .asciz "pthread_getspecific"
+    .asciz "pthread_getschedparam"
 ln253:
-    .asciz "pthread_join"
+    .asciz "pthread_getspecific"
 ln254:
-    .asciz "pthread_key_create"
+    .asciz "pthread_join"
 ln255:
-    .asciz "pthread_key_delete"
+    .asciz "pthread_key_create"
 ln256:
-    .asciz "pthread_kill"
+    .asciz "pthread_key_delete"
 ln257:
-    .asciz "pthread_mutex_destroy"
+    .asciz "pthread_kill"
 ln258:
-    .asciz "pthread_mutex_init"
+    .asciz "pthread_mutex_destroy"
 ln259:
-    .asciz "pthread_mutex_lock"
+    .asciz "pthread_mutex_init"
 ln260:
-    .asciz "pthread_mutex_timedlock"
+    .asciz "pthread_mutex_lock"
 ln261:
-    .asciz "pthread_mutex_trylock"
+    .asciz "pthread_mutex_timedlock"
 ln262:
-    .asciz "pthread_mutex_unlock"
+    .asciz "pthread_mutex_trylock"
 ln263:
-    .asciz "pthread_mutexattr_destroy"
+    .asciz "pthread_mutex_unlock"
 ln264:
-    .asciz "pthread_mutexattr_gettype"
+    .asciz "pthread_mutexattr_destroy"
 ln265:
-    .asciz "pthread_mutexattr_init"
+    .asciz "pthread_mutexattr_gettype"
 ln266:
-    .asciz "pthread_mutexattr_settype"
+    .asciz "pthread_mutexattr_init"
 ln267:
-    .asciz "pthread_once"
+    .asciz "pthread_mutexattr_settype"
 ln268:
-    .asciz "pthread_rwlock_destroy"
+    .asciz "pthread_once"
 ln269:
-    .asciz "pthread_rwlock_init"
+    .asciz "pthread_rwlock_destroy"
 ln270:
-    .asciz "pthread_rwlock_rdlock"
+    .asciz "pthread_rwlock_init"
 ln271:
-    .asciz "pthread_rwlock_tryrdlock"
+    .asciz "pthread_rwlock_rdlock"
 ln272:
-    .asciz "pthread_rwlock_trywrlock"
+    .asciz "pthread_rwlock_tryrdlock"
 ln273:
-    .asciz "pthread_rwlock_unlock"
+    .asciz "pthread_rwlock_trywrlock"
 ln274:
-    .asciz "pthread_rwlock_wrlock"
+    .asciz "pthread_rwlock_unlock"
 ln275:
-    .asciz "pthread_self"
+    .asciz "pthread_rwlock_wrlock"
 ln276:
-    .asciz "pthread_setname_np"
+    .asciz "pthread_self"
 ln277:
-    .asciz "pthread_setschedparam"
+    .asciz "pthread_setname_np"
 ln278:
-    .asciz "pthread_setspecific"
+    .asciz "pthread_setschedparam"
 ln279:
-    .asciz "pthread_sigmask"
+    .asciz "pthread_setspecific"
 ln280:
-    .asciz "pthread_yield"
+    .asciz "pthread_sigmask"
 ln281:
-    .asciz "pty_apri"
+    .asciz "pthread_yield"
 ln282:
-    .asciz "pty_ctl"
+    .asciz "pty_apri"
 ln283:
-    .asciz "putc"
+    .asciz "pty_ctl"
 ln284:
-    .asciz "putchar"
+    .asciz "putc"
 ln285:
-    .asciz "putenv"
+    .asciz "putchar"
 ln286:
-    .asciz "puts"
+    .asciz "putenv"
 ln287:
-    .asciz "qsort"
+    .asciz "puts"
 ln288:
-    .asciz "quick_exit"
+    .asciz "qsort"
 ln289:
-    .asciz "raise"
+    .asciz "quick_exit"
 ln290:
-    .asciz "rand"
+    .asciz "raise"
 ln291:
-    .asciz "read"
+    .asciz "rand"
 ln292:
-    .asciz "readdir"
+    .asciz "read"
 ln293:
-    .asciz "realloc"
+    .asciz "readdir"
 ln294:
-    .asciz "realpath"
+    .asciz "realloc"
 ln295:
-    .asciz "reboot"
+    .asciz "realpath"
 ln296:
-    .asciz "remove"
+    .asciz "reboot"
 ln297:
-    .asciz "rename"
+    .asciz "remove"
 ln298:
-    .asciz "rewind"
+    .asciz "rename"
 ln299:
-    .asciz "rewinddir"
+    .asciz "rewind"
 ln300:
-    .asciz "rmdir"
+    .asciz "rewinddir"
 ln301:
-    .asciz "sbrk"
+    .asciz "rmdir"
 ln302:
-    .asciz "scanf"
+    .asciz "sbrk"
 ln303:
-    .asciz "sched_yield"
+    .asciz "scanf"
 ln304:
-    .asciz "select"
+    .asciz "sched_yield"
 ln305:
-    .asciz "sem_destroy"
+    .asciz "select"
 ln306:
-    .asciz "sem_getvalue"
+    .asciz "sem_destroy"
 ln307:
-    .asciz "sem_init"
+    .asciz "sem_getvalue"
 ln308:
-    .asciz "sem_post"
+    .asciz "sem_init"
 ln309:
-    .asciz "sem_timedwait"
+    .asciz "sem_post"
 ln310:
-    .asciz "sem_trywait"
+    .asciz "sem_timedwait"
 ln311:
-    .asciz "sem_wait"
+    .asciz "sem_trywait"
 ln312:
-    .asciz "semaforo_lascia"
+    .asciz "sem_wait"
 ln313:
-    .asciz "semaforo_prendi"
+    .asciz "semaforo_lascia"
 ln314:
-    .asciz "semaforo_prendi_ms"
+    .asciz "semaforo_prendi"
 ln315:
-    .asciz "semaforo_prova"
+    .asciz "semaforo_prendi_ms"
 ln316:
-    .asciz "setbuf"
+    .asciz "semaforo_prova"
 ln317:
-    .asciz "setenv"
+    .asciz "setbuf"
 ln318:
-    .asciz "setjmp"
+    .asciz "setenv"
 ln319:
-    .asciz "setlocale"
+    .asciz "setjmp"
 ln320:
-    .asciz "setuid"
+    .asciz "setlocale"
 ln321:
-    .asciz "setvbuf"
+    .asciz "setuid"
 ln322:
-    .asciz "sha256"
+    .asciz "setvbuf"
 ln323:
-    .asciz "sha256_avvia"
+    .asciz "sha256"
 ln324:
-    .asciz "sha256_dai"
+    .asciz "sha256_avvia"
 ln325:
-    .asciz "sha256_esa"
+    .asciz "sha256_dai"
 ln326:
-    .asciz "sha256_fine"
+    .asciz "sha256_esa"
 ln327:
-    .asciz "sha256_fine_esa"
+    .asciz "sha256_fine"
 ln328:
-    .asciz "shm_apri"
+    .asciz "sha256_fine_esa"
 ln329:
-    .asciz "shm_chiudi"
+    .asciz "shm_apri"
 ln330:
-    .asciz "signal"
+    .asciz "shm_chiudi"
 ln331:
-    .asciz "sleep"
+    .asciz "signal"
 ln332:
-    .asciz "snprintf"
+    .asciz "sleep"
 ln333:
-    .asciz "spawn"
+    .asciz "snprintf"
 ln334:
-    .asciz "spawn_ex"
+    .asciz "spawn"
 ln335:
-    .asciz "spawn_su_console"
+    .asciz "spawn_ex"
 ln336:
-    .asciz "spawn_utente"
+    .asciz "spawn_su_console"
 ln337:
-    .asciz "sprintf"
+    .asciz "spawn_utente"
 ln338:
-    .asciz "sqrt"
+    .asciz "sprintf"
 ln339:
-    .asciz "srand"
+    .asciz "sqrt"
 ln340:
-    .asciz "sscanf"
+    .asciz "srand"
 ln341:
-    .asciz "stat"
+    .asciz "sscanf"
 ln342:
-    .asciz "statperm"
+    .asciz "stat"
 ln343:
-    .asciz "statraw"
+    .asciz "statperm"
 ln344:
-    .asciz "strcasecmp"
+    .asciz "statraw"
 ln345:
-    .asciz "strcat"
+    .asciz "strcasecmp"
 ln346:
-    .asciz "strchr"
+    .asciz "strcat"
 ln347:
-    .asciz "strcmp"
+    .asciz "strchr"
 ln348:
-    .asciz "strcoll"
+    .asciz "strcmp"
 ln349:
-    .asciz "strcpy"
+    .asciz "strcoll"
 ln350:
-    .asciz "strcspn"
+    .asciz "strcpy"
 ln351:
-    .asciz "strdup"
+    .asciz "strcspn"
 ln352:
-    .asciz "strerror"
+    .asciz "strdup"
 ln353:
-    .asciz "strerror_r"
+    .asciz "strerror"
 ln354:
-    .asciz "strftime"
+    .asciz "strerror_r"
 ln355:
-    .asciz "strlen"
+    .asciz "strftime"
 ln356:
-    .asciz "strncasecmp"
+    .asciz "strlen"
 ln357:
-    .asciz "strncat"
+    .asciz "strncasecmp"
 ln358:
-    .asciz "strncmp"
+    .asciz "strncat"
 ln359:
-    .asciz "strncpy"
+    .asciz "strncmp"
 ln360:
-    .asciz "strpbrk"
+    .asciz "strncpy"
 ln361:
-    .asciz "strrchr"
+    .asciz "strpbrk"
 ln362:
-    .asciz "strsignal"
+    .asciz "strrchr"
 ln363:
-    .asciz "strspn"
+    .asciz "strsignal"
 ln364:
-    .asciz "strstr"
+    .asciz "strspn"
 ln365:
-    .asciz "strtod"
+    .asciz "strstr"
 ln366:
-    .asciz "strtof"
+    .asciz "strtod"
 ln367:
-    .asciz "strtoimax"
+    .asciz "strtof"
 ln368:
-    .asciz "strtok"
+    .asciz "strtoimax"
 ln369:
-    .asciz "strtok_r"
+    .asciz "strtok"
 ln370:
-    .asciz "strtol"
+    .asciz "strtok_r"
 ln371:
-    .asciz "strtold"
+    .asciz "strtol"
 ln372:
-    .asciz "strtoll"
+    .asciz "strtold"
 ln373:
-    .asciz "strtoul"
+    .asciz "strtoll"
 ln374:
-    .asciz "strtoull"
+    .asciz "strtoul"
 ln375:
-    .asciz "strtoumax"
+    .asciz "strtoull"
 ln376:
-    .asciz "strxfrm"
+    .asciz "strtoumax"
 ln377:
-    .asciz "swprintf"
+    .asciz "strxfrm"
 ln378:
-    .asciz "sysconf"
+    .asciz "swprintf"
 ln379:
-    .asciz "system"
+    .asciz "sysconf"
 ln380:
-    .asciz "thread_attendi"
+    .asciz "system"
 ln381:
-    .asciz "thread_crea"
+    .asciz "thread_attendi"
 ln382:
-    .asciz "thread_devo_fermarmi"
+    .asciz "thread_crea"
 ln383:
-    .asciz "thread_esci"
+    .asciz "thread_devo_fermarmi"
 ln384:
-    .asciz "thread_ferma"
+    .asciz "thread_esci"
 ln385:
-    .asciz "time"
+    .asciz "thread_ferma"
 ln386:
-    .asciz "time_now"
+    .asciz "time"
 ln387:
-    .asciz "time_set"
+    .asciz "time_now"
 ln388:
-    .asciz "timegm"
+    .asciz "time_set"
 ln389:
-    .asciz "times"
+    .asciz "timegm"
 ln390:
-    .asciz "timespec_get"
+    .asciz "times"
 ln391:
-    .asciz "tmpfile"
+    .asciz "timespec_get"
 ln392:
-    .asciz "tmpnam"
+    .asciz "tmpfile"
 ln393:
-    .asciz "toascii"
+    .asciz "tmpnam"
 ln394:
-    .asciz "tolower"
+    .asciz "toascii"
 ln395:
-    .asciz "toupper"
+    .asciz "tolower"
 ln396:
-    .asciz "towlower"
+    .asciz "toupper"
 ln397:
-    .asciz "towupper"
+    .asciz "towlower"
 ln398:
-    .asciz "truncate"
+    .asciz "towupper"
 ln399:
-    .asciz "tty_clear"
+    .asciz "truncate"
 ln400:
-    .asciz "tty_getsize"
+    .asciz "tty_clear"
 ln401:
-    .asciz "tty_raw"
+    .asciz "tty_getsize"
 ln402:
-    .asciz "umask"
+    .asciz "tty_raw"
 ln403:
-    .asciz "umount"
+    .asciz "umask"
 ln404:
-    .asciz "ungetc"
+    .asciz "umount"
 ln405:
-    .asciz "unlink"
+    .asciz "ungetc"
 ln406:
-    .asciz "unsetenv"
+    .asciz "unlink"
 ln407:
-    .asciz "uptime_ms"
+    .asciz "unsetenv"
 ln408:
-    .asciz "usleep"
+    .asciz "uptime_ms"
 ln409:
-    .asciz "utime"
+    .asciz "usleep"
 ln410:
-    .asciz "verboseboot"
+    .asciz "utime"
 ln411:
-    .asciz "vfprintf"
+    .asciz "verboseboot"
 ln412:
-    .asciz "vfscanf"
+    .asciz "vfprintf"
 ln413:
-    .asciz "video_info"
+    .asciz "vfscanf"
 ln414:
-    .asciz "vprintf"
+    .asciz "video_info"
 ln415:
-    .asciz "vscanf"
+    .asciz "vprintf"
 ln416:
-    .asciz "vsnprintf"
+    .asciz "vscanf"
 ln417:
-    .asciz "vsprintf"
+    .asciz "vsnprintf"
 ln418:
-    .asciz "vsscanf"
+    .asciz "vsprintf"
 ln419:
-    .asciz "vswprintf"
+    .asciz "vsscanf"
 ln420:
-    .asciz "wait"
+    .asciz "vswprintf"
 ln421:
-    .asciz "waitpid"
+    .asciz "wait"
 ln422:
-    .asciz "wcscat"
+    .asciz "waitpid"
 ln423:
-    .asciz "wcschr"
+    .asciz "wcscat"
 ln424:
-    .asciz "wcscmp"
+    .asciz "wcschr"
 ln425:
-    .asciz "wcscpy"
+    .asciz "wcscmp"
 ln426:
-    .asciz "wcscspn"
+    .asciz "wcscpy"
 ln427:
-    .asciz "wcslen"
+    .asciz "wcscspn"
 ln428:
-    .asciz "wcsncat"
+    .asciz "wcslen"
 ln429:
-    .asciz "wcsncmp"
+    .asciz "wcsncat"
 ln430:
-    .asciz "wcsncpy"
+    .asciz "wcsncmp"
 ln431:
-    .asciz "wcspbrk"
+    .asciz "wcsncpy"
 ln432:
-    .asciz "wcsrchr"
+    .asciz "wcspbrk"
 ln433:
-    .asciz "wcsspn"
+    .asciz "wcsrchr"
 ln434:
-    .asciz "wcsstr"
+    .asciz "wcsspn"
 ln435:
-    .asciz "wcstod"
+    .asciz "wcsstr"
 ln436:
-    .asciz "wcstol"
+    .asciz "wcstod"
 ln437:
-    .asciz "wcstoll"
+    .asciz "wcstol"
 ln438:
-    .asciz "wcstombs"
+    .asciz "wcstoll"
 ln439:
-    .asciz "wcstoul"
+    .asciz "wcstombs"
 ln440:
-    .asciz "wcstoull"
+    .asciz "wcstoul"
 ln441:
-    .asciz "wctomb"
+    .asciz "wcstoull"
 ln442:
-    .asciz "wmemchr"
+    .asciz "wctomb"
 ln443:
-    .asciz "wmemcmp"
+    .asciz "wmemchr"
 ln444:
-    .asciz "wmemcpy"
+    .asciz "wmemcmp"
 ln445:
-    .asciz "wmemmove"
+    .asciz "wmemcpy"
 ln446:
-    .asciz "wmemset"
+    .asciz "wmemmove"
 ln447:
+    .asciz "wmemset"
+ln448:
     .asciz "write"
 
     .align 4
@@ -1353,6 +1355,7 @@ libc_nomi:
     .long ln445
     .long ln446
     .long ln447
+    .long ln448
 
     .align 4
 libc_indirizzi:
@@ -1411,6 +1414,7 @@ libc_indirizzi:
     .long console_switch
     .long console_testo
     .long console_write
+    .long cpu_info
     .long ctime
     .long difftime
     .long diskinfo
@@ -1811,7 +1815,7 @@ libc_indirizzi:
 libc_tabella:
     .long 0x424C5845        /* EXLIB_MAGIA, 'EXLB' */
     .long 1                 /* EXLIB_VERSIONE */
-    .long 448
+    .long 449
     .long libc_nomi
     .long libc_indirizzi
 

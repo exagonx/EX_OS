@@ -37,6 +37,9 @@ nello stack non porta giu' la macchina, e un driver che muore si rilancia.
 <tr><td><code>ne2k.drv</code></td><td>NE2000 e compatibili &mdash; ISA e PCI</td></tr>
 <tr><td><code>pcnet.drv</code></td><td>AMD PCnet &mdash; e' quella predefinita di VirtualBox</td></tr>
 <tr><td><code>e1000.drv</code></td><td>Intel PRO/1000 &mdash; l'altra scelta comune negli emulatori</td></tr>
+<tr><td><code>nforce.drv</code></td><td>l'Ethernet integrata nelle schede madri con chipset NVIDIA nForce
+    (MCP67, 73, 77, 79). <code>nforce.drv -d</code> stampa i registri senza toccarli,
+    <code>-v</code> racconta l'accensione: servono quando la rete non parte</td></tr>
 </table>
 
 <h2>Accenderla</h2>

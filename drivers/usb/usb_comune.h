@@ -125,8 +125,13 @@ typedef struct {
  * l'indirizzo: finche' non si sa, l'unico valore lecito e' 8. */
 int usb_desc_corto(UsbControllo ctl, unsigned int dev, UsbDispositivo *d);
 
-/* Il descrittore intero: venditore, prodotto, versione, classe. */
+/* Il descrittore intero: venditore, prodotto, versione, classe. Prova tre
+ * volte; se rende 0, usb_desc_dice(nome del driver) stampa che cosa e' andato
+ * storto — trasferimento fallito, o byte che non sono un descrittore. */
 int usb_desc_lungo(UsbControllo ctl, unsigned int dev, UsbDispositivo *d);
+void usb_desc_dice(const char *chi);
+extern int           usb_desc_esito;
+extern unsigned char usb_desc_byte[18];
 
 /* Legge la configurazione, ci cerca un'interfaccia HID «boot» con il suo
  * endpoint di interruzione, e se la trova la ATTIVA (SET_CONFIGURATION,

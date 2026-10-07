@@ -1224,6 +1224,62 @@ typedef struct {
 int meminfo(MemInfo *mi);
 
 /* =============================================================================
+ * I processori della macchina, come li ha trovati il kernel all'avvio.
+ * STRUTTURA DUPLICATA A MANO da kernel/include/smp.h (SmpInfo, SmpCpu): deve
+ * restare identica, e cpu_info() fallisce con -EINVAL se divergono.
+ *
+ * ! EX-OS LAVORA CON UN PROCESSORE SOLO (tappa 1 dell'SMP, ottobre 2026): gli
+ * altri sono accesi e fermi. `n` dice quanti ce ne sono, non quanti lavorano.
+ * ============================================================================= */
+#define CPU_INFO_MAX        16
+
+#define CPU_FONTE_NESSUNA   0   /* nessuna tabella: un processore */
+#define CPU_FONTE_ACPI      1   /* ACPI, tabella MADT */
+#define CPU_FONTE_MP        2   /* tabella MultiProcessor 1.4 */
+#define CPU_FONTE_MP_FISSA  3   /* MP, configurazione predefinita */
+
+#define CPU_STATO_AVVIO     1   /* quello su cui gira EX-OS */
+#define CPU_STATO_FERMO     2   /* acceso, in attesa: riceve timer e messaggi */
+#define CPU_STATO_MUTO      3   /* svegliato, non ha risposto */
+#define CPU_STATO_LASCIATO  4   /* elencato, non svegliato (vedi motivo) */
+
+#define CPU_MOTIVO_NESSUNO  0
+#define CPU_MOTIVO_CFG      1   /* kernel.cfg: smp = 0 */
+#define CPU_MOTIVO_X2APIC   2   /* APIC in modo x2APIC */
+#define CPU_MOTIVO_SPENTO   3   /* APIC locale spento dal BIOS */
+#define CPU_MOTIVO_MEMORIA  4   /* niente memoria per mappare o per le pile */
+
+typedef struct {
+    unsigned char apic_id;
+    unsigned char stato;        /* CPU_STATO_* */
+    unsigned char apic_ver;
+    unsigned char riservato;
+    unsigned int  firma;        /* CPUID.1 EAX; 0 se il processore non ha risposto */
+    unsigned int  capacita;     /* CPUID.1 EDX */
+    unsigned int  battiti;      /* interrupt del suo timer ricevuti (100 al secondo) */
+    unsigned int  messaggi;     /* messaggi da un altro processore ricevuti */
+} CpuVoce;
+
+typedef struct {
+    unsigned int n;             /* processori elencati (almeno 1) */
+    unsigned int fermi;         /* quanti in piu' hanno risposto */
+    unsigned int fonte;         /* CPU_FONTE_* */
+    unsigned int motivo;        /* CPU_MOTIVO_* */
+    unsigned int apic_locale;   /* indirizzo fisico, 0 se non c'e' */
+    unsigned int n_ioapic;
+    unsigned int ioapic;        /* indirizzo fisico del primo */
+    unsigned int troppi;        /* elencati oltre CPU_INFO_MAX, ignorati */
+    unsigned int timer_per_tick;/* conteggi del timer dell'APIC in 10 ms; 0 = non misurato */
+    unsigned int tick;          /* tick del sistema (100 al secondo) alla chiamata */
+    CpuVoce      cpu[CPU_INFO_MAX];
+} CpuInfo;
+
+/* Riempie *ci. Ritorna 0, o un valore negativo in caso di errore.
+ * ! Ogni chiamata manda anche un messaggio a ogni processore in attesa: chi
+ * richiama poco dopo vede `messaggi` cresciuto di uno su ciascuno. */
+int cpu_info(CpuInfo *ci);
+
+/* =============================================================================
  * Descrizione di un processo e dei suoi stack. DUPLICATA A MANO in
  * kernel/include/syscall.h e lib/libc.c: deve restare identica, e
  * procinfo() fallisce con -EINVAL se le copie divergono di dimensione.
