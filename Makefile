@@ -170,9 +170,9 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := aggiungi dmesg ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -182,10 +182,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtm
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv nforce.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
+DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv nforce.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -1306,7 +1306,7 @@ OHCI_LD  := drivers/ohci/ohci.ld
 $(OHCI_OUT): $(OHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(USB_MASSA_SRC) $(USB_MASSA_HDR) $(PCI_DRV_PROTO) $(OHCI_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione driver ring3 ohci.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/usb -c $(OHCI_SRC) -o $(BUILD_DRIVERS_CD)/ohci_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/usb -I drivers/kbd -c $(OHCI_SRC) -o $(BUILD_DRIVERS_CD)/ohci_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/usb -c $(USB_COMUNE_SRC) -o $(BUILD_DRIVERS_CD)/ohci_usb.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/usb -c $(USB_MASSA_SRC) -o $(BUILD_DRIVERS_CD)/ohci_massa.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/ohci_libc.o
@@ -1598,6 +1598,35 @@ $(EXHTTP_SO): $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) $(EXHTTP_ESPORTA) \
 
 .PHONY: exhttp_so
 exhttp_so: dirs $(EXHTTP_SO)
+
+# =============================================================================
+# /exwin/lib/exsuono.so — suonare un WAV o un MP3 da un programma (9 ottobre 2026)
+#
+# La libreria del lettore (exwin/bin/explayer) e di chiunque voglia fare un
+# suono: la scrivania per l'intro, un programma dopo un'azione. Dentro c'e'
+# minimp3 (lib/terze/minimp3, CC0), compilato senza SIMD. Vedi exsuono.h.
+# =============================================================================
+EXSUONO_SRC     := lib/exsuono/exsuono.c
+EXSUONO_HDR     := lib/exsuono/exsuono.h
+EXSUONO_ESPORTA := lib/exsuono/exsuono_esporta.c
+EXSUONO_STUB    := lib/exsuono/exsuono_stub.c
+EXSUONO_LD      := lib/exsuono/exsuono.ld
+EXSUONO_SO      := $(BUILD_EXWIN_LIB)/exsuono.so
+
+$(EXSUONO_SO): $(EXSUONO_SRC) $(EXSUONO_HDR) $(EXSUONO_ESPORTA) $(EXSUONO_LD) \
+               $(EXLIB_HDR) $(AUDIO_PROTO) lib/terze/minimp3/minimp3.h \
+               $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exsuono.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -w -I lib/include -I lib/exsuono -I lib/terze/minimp3 -I drivers/audio -c $(EXSUONO_SRC) -o $(BUILD_OBJ)/sosuono_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exsuono -c $(EXSUONO_ESPORTA) -o $(BUILD_OBJ)/sosuono_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXSUONO_LD) \
+	    $(BUILD_OBJ)/sosuono_esporta.o $(BUILD_OBJ)/sosuono_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exsuono.so compilata: $@"
+
+.PHONY: exsuono_so
+exsuono_so: dirs $(EXSUONO_SO)
 
 # =============================================================================
 # /exwin/lib/exhtml.so — l'albero del marcatore, a disposizione di tutti
@@ -2351,25 +2380,29 @@ EXWIN_TIPI    := exwin/lib/tipi.txt
 # ! CON wildcard, NON CON UN ELENCO: le icone le aggiunge chi le disegna, e un
 # elenco scritto qui sarebbe un elenco da aggiornare a ogni file nuovo.
 EXWIN_ICONE := $(wildcard exwin/icon/*/*)
+# I suoni di ExWin (8 ottobre 2026): l'intro dell'avvio, in WAV e in MP3.
+# Vanno sull'ISO sotto /exwin/sound, come le icone.
+EXWIN_SUONI := $(wildcard exwin/sound/*)
 
 PM_SRC := exwin/bin/pm/pm.c
 PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
 
-$(PM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXDLG_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
+$(PM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXDLG_STUB) $(EXSUONO_STUB) $(EXSUONO_HDR) $(EXLIB_SRC) $(EXLIB_HDR) \
            $(EXWIN_HDR) $(WIN_PROTO) \
            $(FONT_SRC) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/pm ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exsuono -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/pm_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/pm_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/pm_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exsuono -c $(EXSUONO_STUB) -o $(BUILD_OBJ)/pm_suono.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/pm_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PM_LD) \
 	    $(BUILD_OBJ)/pm_start.o $(BUILD_OBJ)/pm_main.o \
 	    $(BUILD_OBJ)/pm_exwin.o $(BUILD_OBJ)/pm_exdlg.o \
-	    $(BUILD_OBJ)/pm_info.o \
+	    $(BUILD_OBJ)/pm_info.o $(BUILD_OBJ)/pm_suono.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] pm compilato: $@"
 
@@ -2556,6 +2589,34 @@ $(IMMAGINI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(IMMAGINI_SRC) $(IMMAGINI_LD) lib/
 
 .PHONY: immagini
 immagini: dirs $(IMMAGINI_BIN)
+
+# --- /exwin/bin/explayer: il lettore audio (9 ottobre 2026) --- vedi exsuono (@EXPLAYER, 28 settembre 2026)
+#
+# Due stub (exwin, exdlg) ed exinfo compilato dentro. Le explayer le legge
+# eximg.so, aperta quando serve come fa il toolkit.
+EXPLAYER_SRC := exwin/bin/explayer/explayer.c
+EXPLAYER_BIN := $(BUILD_EXWIN_BIN)/explayer
+EXPLAYER_LD  := exwin/bin/explayer/explayer.ld
+
+$(EXPLAYER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EXPLAYER_SRC) $(EXPLAYER_LD) $(EXSUONO_STUB) $(EXSUONO_HDR) $(EXSUONO_SO) \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/explayer ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exsuono -I drivers/wserver -I drivers/kbd -c $(EXPLAYER_SRC) -o $(BUILD_OBJ)/explayer_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/explayer_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/explayer_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/explayer_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exsuono -c $(EXSUONO_STUB) -o $(BUILD_OBJ)/explayer_suono.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/explayer_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXPLAYER_LD) \
+	    $(BUILD_OBJ)/explayer_start.o $(BUILD_OBJ)/explayer_main.o \
+	    $(BUILD_OBJ)/explayer_exwin.o $(BUILD_OBJ)/explayer_exdlg.o $(BUILD_OBJ)/explayer_info.o $(BUILD_OBJ)/explayer_suono.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] explayer compilato: $@"
+
+.PHONY: explayer
+explayer: dirs $(EXPLAYER_BIN)
 
 # --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
 #
@@ -2837,9 +2898,9 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
              $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
-             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(GIOCHI_BIN) \
+             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \
-             $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) \
+             $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) $(EXSUONO_SO) \
              $(EXTTF_SO) \
              $(EXIMG_SO)
 
@@ -3278,6 +3339,61 @@ $(XCP_BIN): $(XCP_SRC) $(XCP_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC
 .PHONY: xcp
 xcp: dirs $(XCP_BIN)
 
+# --- /bin/ahci (solo CD e supporto): i dischi all'AHCI, e una misura --------
+AHCI_CMD_SRC := bin/ahci/ahci.c
+AHCI_CMD_BIN := $(BUILD_BIN_CD)/ahci
+AHCI_CMD_LD  := bin/ahci/ahci.ld
+
+$(AHCI_CMD_BIN): $(AHCI_CMD_SRC) $(AHCI_CMD_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/ahci ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(AHCI_CMD_SRC) -o $(BUILD_OBJ)/ahci_main.o
+	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/ahci_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(AHCI_CMD_LD) \
+	    $(BUILD_OBJ)/ahci_start.o $(BUILD_OBJ)/ahci_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] ahci compilato: $@"
+
+.PHONY: ahci
+ahci: dirs $(AHCI_CMD_BIN)
+
+# --- /bin/dmesg (solo CD e supporto): il registro dei messaggi del kernel ----
+DMESG_SRC := bin/dmesg/dmesg.c
+DMESG_BIN := $(BUILD_BIN_CD)/dmesg
+DMESG_LD  := bin/dmesg/dmesg.ld
+
+$(DMESG_BIN): $(DMESG_SRC) $(DMESG_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/dmesg ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(DMESG_SRC) -o $(BUILD_OBJ)/dmesg_main.o
+	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/dmesg_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DMESG_LD) \
+	    $(BUILD_OBJ)/dmesg_start.o $(BUILD_OBJ)/dmesg_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] dmesg compilato: $@"
+
+.PHONY: dmesg
+dmesg: dirs $(DMESG_BIN)
+
+# --- /bin/aggiungi (solo CD e supporto): copia driver e programmi dal --------
+# supporto fatto con `make support` al sistema installato. Vedi bin/aggiungi.
+AGGIUNGI_SRC := bin/aggiungi/aggiungi.c
+AGGIUNGI_BIN := $(BUILD_BIN_CD)/aggiungi
+AGGIUNGI_LD  := bin/aggiungi/aggiungi.ld
+
+$(AGGIUNGI_BIN): $(AGGIUNGI_SRC) $(AGGIUNGI_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/aggiungi ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(AGGIUNGI_SRC) -o $(BUILD_OBJ)/aggiungi_main.o
+	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/aggiungi_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(AGGIUNGI_LD) \
+	    $(BUILD_OBJ)/aggiungi_start.o $(BUILD_OBJ)/aggiungi_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] aggiungi compilato: $@"
+
+.PHONY: aggiungi
+aggiungi: dirs $(AGGIUNGI_BIN)
+
 # --- Programma /bin/netdetect (solo CD) ---------------------------------------
 # Riconosce le schede di rete chiedendo al server PCI e dice quale driver
 # serve. Va in $(BUILD_BIN_CD) e non in $(BUILD_BIN): sul floppy ci
@@ -3457,14 +3573,18 @@ AUDIO_BIN_SRC := bin/audio/audio.c
 AUDIO_BIN     := $(BUILD_BIN_CD)/audio
 AUDIO_BIN_LD  := bin/audio/audio.ld
 
-$(AUDIO_BIN): $(AUDIO_BIN_SRC) $(AUDIO_BIN_LD) $(AUDIO_PROTO) $(AUDIO_SRC) $(AUDIO_HDR) $(PCI_DRV_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+AUDIO_MP3_SRC := bin/audio/mp3.c
+AUDIO_MP3_DIP := bin/audio/mp3.h lib/terze/minimp3/minimp3.h
+
+$(AUDIO_BIN): $(AUDIO_BIN_SRC) $(AUDIO_MP3_SRC) $(AUDIO_MP3_DIP) $(AUDIO_BIN_LD) $(AUDIO_PROTO) $(AUDIO_SRC) $(AUDIO_HDR) $(PCI_DRV_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/audio ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -I drivers/pci -c $(AUDIO_BIN_SRC) -o $(BUILD_OBJ)/audio_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(AUDIO_SRC) -o $(BUILD_OBJ)/audio_tab.o
+	$(CC) $(CFLAGS_USER) -w -I lib/include -I lib/terze/minimp3 -I bin/audio -c $(AUDIO_MP3_SRC) -o $(BUILD_OBJ)/audio_mp3.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/audio_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(AUDIO_BIN_LD) \
-	    $(BUILD_OBJ)/audio_start.o $(BUILD_OBJ)/audio_main.o $(BUILD_OBJ)/audio_tab.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/audio_start.o $(BUILD_OBJ)/audio_main.o $(BUILD_OBJ)/audio_tab.o $(BUILD_OBJ)/audio_mp3.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] audio compilato: $@"
 
 .PHONY: audio
@@ -4608,6 +4728,30 @@ $(NFORCE_DRV_OUT): $(NFORCE_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NFORCE_DRV_
 .PHONY: nforce_drv
 nforce_drv: dirs $(NFORCE_DRV_OUT)
 
+# --- Driver ring3 rtl8169.drv: le Gigabit PCI Realtek RTL8169 (solo CD) -------
+#
+# Registri in memoria (BAR0) come l'e1000, senza interrupt: guarda la scheda a
+# intervalli. QEMU non la emula: si prova solo sul ferro (sonda/mb_oem_000).
+RTL8169_DRV_SRC  := drivers/rtl8169/rtl8169.c
+RTL8169_DRV_OUT  := $(BUILD_DRIVERS_CD)/rtl8169.drv
+RTL8169_DRV_LD   := drivers/rtl8169/rtl8169.ld
+
+$(RTL8169_DRV_OUT): $(RTL8169_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(RTL8169_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 rtl8169.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(RTL8169_DRV_SRC) -o $(BUILD_DRIVERS_CD)/rtl8169_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/rtl8169_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/rtl8169_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RTL8169_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/rtl8169_start.o \
+	    $(BUILD_DRIVERS_CD)/rtl8169_main.o  \
+	    $(BUILD_DRIVERS_CD)/rtl8169_libc.o  \
+	    -o $@
+	@echo "[OK] rtl8169.drv compilato: $@"
+
+.PHONY: rtl8169_drv
+rtl8169_drv: dirs $(RTL8169_DRV_OUT)
+
 # --- Stack IPv4 ring3: ip.drv (solo CD) ---------------------------------------
 # ARP + IPv4 + ICMP in un PROCESSO A SE'. Non tocca porte: parla col driver
 # di scheda via IPC come qualunque altro programma. Sta fuori dal driver
@@ -4843,6 +4987,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/memfun.c \
                   $(KERNEL_DIR)/arch/x86/tsc.c \
                   $(KERNEL_DIR)/arch/x86/smp.c \
+                  $(KERNEL_DIR)/arch/x86/mtrr.c \
                   $(KERNEL_DIR)/mm/pmm.c \
                   $(KERNEL_DIR)/mm/paging.c \
                   $(KERNEL_DIR)/mm/kmalloc.c \
@@ -4862,6 +5007,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/fs/vfs.c \
                   $(KERNEL_DIR)/boot/bootinst.c \
                   $(KERNEL_DIR)/block/ata.c \
+                  $(KERNEL_DIR)/block/ahci.c \
                   $(KERNEL_DIR)/block/atapi.c \
                   $(KERNEL_DIR)/block/mbr.c \
                   $(KERNEL_DIR)/block/vol.c \
@@ -5366,6 +5512,43 @@ installa: verifica-dipendenze-sonda
 	@echo ""
 	@echo "  Su una chiavetta (LA CANCELLA):  dd if=$(INSTALLA_IMG) of=/dev/sdX bs=512"
 	@echo "  Poi si avvia il PC da li': le istruzioni compaiono a schermo."
+
+# =============================================================================
+# make support — dist/support: driver e programmi da AGGIUNGERE a un sistema
+# gia' installato (8 ottobre 2026)
+#
+# Il dischetto che installa non ha posto per tutti i driver, e non deve: sul
+# disco finisce un sistema piccolo, e quel che manca arriva da qui. Il
+# contenuto di dist/support si copia su una chiavetta FAT32, oppure si
+# masterizza dist/support.iso; sul PC, da EX-OS:
+#
+#     /USB/HDD0p1/aggiungi        (chiavetta; `ls /USB` dice il nome)
+#     /cdrom/aggiungi             (CD)
+#
+# `aggiungi` copia dev/ in /dev e bin/ in /bin senza chiedere, e accende la
+# rete in /boot/autoexec.sh se non c'e': al riavvio funziona.
+# =============================================================================
+SUPPORT_DIR := $(DIST_DIR)/support
+SUPPORT_ISO := $(DIST_DIR)/support.iso
+# ! `=` e non `:=`: DRIVER_SOLO_CD_OUT e' definita piu' in basso.
+SUPPORT_DRIVER     = $(DRIVER_SOLO_CD_OUT) $(UHCI_OUT) $(XHCI_OUT)
+SUPPORT_PROGRAMMI  = $(SHELL_BIN) $(DMESG_BIN) $(AHCI_CMD_BIN) $(AUTOMOUNT_BIN) $(BLKSCAN_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) $(PING_BIN) $(DHCP_BIN) \
+                     $(HOST_BIN) $(SCARICA_BIN) $(NETUPDATE_BIN) $(HWINFO_BIN)
+
+.PHONY: support
+support: dirs
+	@$(MAKE) --no-print-directory $(AGGIUNGI_BIN) $(SUPPORT_DRIVER) $(SUPPORT_PROGRAMMI)
+	@mkdir -p $(SUPPORT_DIR)/dev $(SUPPORT_DIR)/bin
+	@cp -f $(AGGIUNGI_BIN) $(SUPPORT_DIR)/aggiungi
+	@cp -f $(SUPPORT_DRIVER) $(SUPPORT_DIR)/dev/
+	@cp -f $(SUPPORT_PROGRAMMI) $(SUPPORT_DIR)/bin/
+	@cp -f SUPPORT.txt $(SUPPORT_DIR)/LEGGIMI.txt
+	@python3 $(TOOLS_DIR)/mkiso.py $(SUPPORT_ISO) --da $(SUPPORT_DIR) --etichetta "EXOS SUPPORT" >/dev/null
+	@echo "[OK] $(SUPPORT_DIR): $$(ls $(SUPPORT_DIR)/dev | wc -l) driver, $$(ls $(SUPPORT_DIR)/bin | wc -l) programmi"
+	@echo ""
+	@echo "  Chiavetta: copia il CONTENUTO di $(SUPPORT_DIR) su una chiavetta FAT32"
+	@echo "  CD:        masterizza $(SUPPORT_ISO)"
+	@echo "  Sul PC:    /USB/HDD0p1/aggiungi   oppure   /cdrom/aggiungi"
 
 SONDA_ISO := $(DIST_DIR)/sonda.iso
 
@@ -7054,7 +7237,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
-                  $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
+                  $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
@@ -7082,7 +7265,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
-                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) \
+                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(RTL8169_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
                       $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \
@@ -7142,7 +7325,7 @@ verifica-dipendenze-cd:
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_DOC) \
-             $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_TIPI) $(EXWIN_ICONE) \
+             $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_TIPI) $(EXWIN_ICONE) $(EXWIN_SUONI) \
              $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(PROVA_WAV) $(PROVA_MID) \
              $(WSERVER_OUT) \
@@ -7210,6 +7393,8 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@rm -rf $(ISOX_ROOT)/exwin/icon
 	@mkdir -p $(ISOX_ROOT)/exwin/icon
 	@cp -r exwin/icon/* $(ISOX_ROOT)/exwin/icon/ 2>/dev/null || true
+	@mkdir -p $(ISOX_ROOT)/exwin/sound
+	@cp -f exwin/sound/* $(ISOX_ROOT)/exwin/sound/ 2>/dev/null || true
 	@# ! E LA LIBRERIA CONDIVISA, che senza di lei le applicazioni grafiche
 	@# non partono affatto. E' un file di /exwin/lib come l'elenco, ma non
 	@# viene dai sorgenti: viene da build/, quindi ha una riga sua.
@@ -7784,6 +7969,9 @@ help:
 	@echo "  make sonda        — Dischetto che fa il referto dell'hardware,"
 	@echo "                      dist/sonda.img (sempre in RAM)"
 	@echo "  make sonda-cd     — Lo stesso su CD, dist/sonda.iso"
+	@echo "  make support      — dist/support (+ support.iso): driver e programmi da"
+	@echo "                      AGGIUNGERE a un sistema installato, da chiavetta o CD:"
+	@echo "                      sul PC si lancia <supporto>/aggiungi"
 	@echo "  make installa     — Dischetto che INSTALLA DALLA RETE, dist/installa.img:"
 	@echo "                      attrezzi del disco, rete e netupdate, tutto in RAM."
 	@echo "                      Per un PC senza lettore CD (va anche su chiavetta)"

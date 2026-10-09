@@ -63,6 +63,8 @@ static const AudioScheda g_schede[] = {
     { 0x8086, 0x3B56, "Intel HD Audio (PCH)",                   "/dev/hdaudio.drv" },
     { 0x1002, 0x4383, "ATI/AMD SB600 HD Audio",                 "/dev/hdaudio.drv" },
     { 0x10DE, 0x0371, "nVidia MCP55 HD Audio",                  "/dev/hdaudio.drv" },
+    /* Provata sul PC vero (8 ottobre 2026): codec Realtek ALC888. */
+    { 0x10DE, 0x07FC, "nVidia MCP73 HD Audio",                  "/dev/hdaudio.drv" },
 };
 
 #define SCHEDE_N ((int)(sizeof(g_schede) / sizeof(g_schede[0])))

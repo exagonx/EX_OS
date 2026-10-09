@@ -281,6 +281,8 @@ typedef struct {
 #define SYS_UPTIME      186
 #define SYS_MEMINFO     187
 #define SYS_CPU_INFO    181
+#define SYS_KLOG         86
+#define SYS_AHCI_PASSA   85
 #define SYS_PROCINFO    188
 #define SYS_DISKINFO    189
 #define SYS_BLKINFO     190
@@ -7339,6 +7341,30 @@ unsigned int uptime_ms(void)
 int cpu_info(CpuInfo *ci)
 {
     return _syscall2(SYS_CPU_INFO, (uint32_t)ci, (uint32_t)sizeof(CpuInfo));
+}
+
+/* I dischi all'AHCI, per questa sessione. Quanti, o un -errno. */
+int ahci_passa(void)
+{
+    return _syscall1(SYS_AHCI_PASSA, 0);
+}
+
+/* I registri dei controller AHCI nel log del kernel, senza scrivere niente. */
+int ahci_guarda(void)
+{
+    return _syscall1(SYS_AHCI_PASSA, 1);
+}
+
+/* 0 = niente da passare, 1 = un disco potrebbe passare all'AHCI, 2 = gia' fatto. */
+int ahci_stato(void)
+{
+    return _syscall1(SYS_AHCI_PASSA, 2);
+}
+
+/* Il registro dei messaggi del kernel: quale = 0 l'avvio, 1 gli ultimi. */
+int klog_leggi(char *buf, unsigned int byte, int quale)
+{
+    return _syscall3(SYS_KLOG, (uint32_t)buf, (uint32_t)byte, (uint32_t)quale);
 }
 
 /* La sizeof viaggia con la chiamata: il kernel rifiuta se la sua copia

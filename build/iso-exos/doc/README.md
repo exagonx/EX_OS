@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.239
+**Versione:** 0.245
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -123,6 +123,80 @@ venuto fuori che nei programmi fatti con exide gli handler `_Changed` ed
 `_Enter` delle caselle di testo non venivano mai chiamati: ora si' (exwin.so
 0.015, exide 0.024; basta riaprire il progetto e salvarlo).
 
+### Installare senza lettore CD: `make installa`, e la guida (kernel 0.240)
+
+**provato in QEMU; sul ferro e' in corso** — per un PC senza floppy ne' CD.
+`make installa` fa `dist/installa.img`: 1,44 MB che si caricano tutti in RAM
+(quindi partono da una chiavetta), con gli attrezzi del disco, la rete e
+`netupdate`. Si installa sul disco il sistema piccolo che sta girando, e da
+li' il resto arriva dalla rete. La guida passo passo e' in italiano e in
+inglese, pagina e testo: `exwin/doc/installa-usb.html`,
+`exwin/doc/installa-usb.en.html`, `INSTALLA-USB.txt`, `INSTALLA-USB.en.txt`
+(le genera `tools/doc-installa-usb.py`, da una sorgente sola).
+
+Dalla prima prova sul PC vero: il disco SATA in modo nativo si riconosce, ma
+in DMA restava bloccato («timeout BSY»). Dalla 0.240 quei canali lavorano in
+PIO e un disco rimasto occupato viene resettato.
+
+**0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
+I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono
+un posto fra `hd0`..`hd3` come gli altri: in QEMU il sistema si installa, legge,
+scrive e si avvia da un disco AHCI. Per i controller che offrono lo stesso
+disco due volte (i registri IDE e l'AHCI, come l'NVIDIA MCP73 del PC di prova,
+dove dai registri IDE funziona solo il PIO) il sistema parte come sempre e
+passa all'AHCI dopo: con `ahci = 1` in `/boot/kernel.cfg` a ogni avvio, o col
+comando `ahci` per la sola sessione in corso, che e' il modo di provarlo senza
+rischio. `ahci -m FILE` misura a quanti KB/s si legge un file. Confermato sul
+PC vero il 9 ottobre, al terzo tentativo: il disco passa all'AHCI e i 35 MB
+di `cc1` si leggono a 59 MB/s, contro i circa 3,4 MB/s del PIO. Su quel
+controller la porta non era mai stata usata in AHCI: accendendo il modo AHCI
+il link cade, e va ristabilito prima di poter leggere la firma del disco.
+`install` (0.006) riconosce da se' una macchina cosi': passa il disco all'AHCI
+prima di copiare e, solo se riesce, scrive `ahci = 1` nel `kernel.cfg`
+installato; su un sistema gia' installato lo fa `ahci -s`.
+
+**0.244**: uscendo dalla grafica la console di testo era piena di righe che
+sembravano guasti e non lo erano. Il diario dei programmi grafici (`SYS_LOG`:
+ogni foglio di stile caricato dal navigatore, ogni errore di uno script di una
+pagina) veniva scritto anche sulla console; ora va sulla seriale e nel
+registro che legge `dmesg`, e basta. Il navigatore usa quel diario al posto di
+`printf`. E «ENTROPIA: jitter...», che compare alla prima connessione cifrata
+su una macchina senza RDRAND, non e' piu' scritto come `[ERROR]`: e' la
+notizia che i bit casuali sono stati raccolti.
+
+**0.243**: la console in grafica era lenta sul PC vero. Misurato li' con
+`fbprova` (1024x768 a 32 bit, video integrato NVIDIA): leggere dalla memoria
+video va a 28 MB/s contro i 10.000 della RAM, e lo scorrimento copiava lo
+schermo su se stesso, cioe' lo rileggeva tutto a ogni riga: un decimo di
+secondo per riga. Ora lo scorrimento non legge mai dallo schermo: le celle
+stanno in RAM, e si ridisegnano solo quelle che dopo lo scorrimento mostrano
+un carattere diverso. In piu' `mtrr.c`, scritto a settembre e mai collegato
+per mancanza di una macchina su cui provarlo, adesso viene chiamato: dichiara
+la memoria video combinabile in scrittura, e rinuncia dicendolo (`dmesg MTRR`)
+se qualcosa non torna. In QEMU la console scorre giusta. Misurato sul PC dopo
+l'aggiornamento: `MTRR: framebuffer 0xd0000000, 4096 KB combinabili in
+scrittura`, e scrivere sullo schermo passa da 160-345 a 1335 MB/s.
+
+**0.242**: il kernel tiene un registro dei propri messaggi, e il nuovo comando
+`dmesg` lo legge: l'avvio (i primi 32 KB, mai sovrascritti) e gli ultimi
+messaggi, anche quelli che il livello di log nasconde a schermo.
+`dmesg PAROLA` mostra solo le righe che la contengono. Nasce dalle prove sul
+PC vero guidato via telnet: senza cavo seriale non c'era modo di sapere che
+cosa il kernel avesse detto all'accensione. Dalle stesse prove: la shell esce
+quando il suo ingresso finisce (ogni sessione telnet caduta lasciava una shell
+viva col suo pseudo-terminale, e alla quinta nessuno entrava piu');
+`nforce.drv` 0.006 trasmette (l'anello di trasmissione di 8 descrittori era
+troppo piccolo per la scheda: riceveva e non mandava niente; a 64 va, provato
+sul PC con `nforce.drv -p`); `audio -i` riconosce l'audio della MCP73 (codec
+ALC888); `netupdate -check -yes` e `-yesall` aggiornano senza chiedere.
+
+**0.241**: il sistema si installava, ma riavviando dal disco il kernel non
+trovava la sua radice. La cercava solo su `hd0`, e un disco SATA su un canale
+nativo sta nel primo posto libero, che puo' essere un altro. Ora guarda tutti
+i dischi: prima la partizione attiva di ognuno, poi la prima ext2 che trova.
+Per aggiornare un disco gia' installato: avvio dalla chiavetta nuova,
+`mount hdNp1 /disk`, `install -a /disk`.
+
 ### Una scheda madre vera: disco SATA e rete NVIDIA (kernel 0.239)
 
 **da testare sul ferro: QEMU non emula ne' l'uno ne' l'altra** — dal referto
@@ -137,8 +211,61 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
 - **La rete.** `/dev/nforce.drv`, per l'Ethernet integrata nei chipset NVIDIA
   nForce (MCP67, 73, 77, 79): registri in memoria, senza interrupt, col PHY
   letto com'e'. `netdetect` la riconosce e lo avvia. Con `-d` stampa i
-  registri senza toccarli e con `-v` racconta l'accensione: sono per la prima
-  prova, che sara' sulla macchina.
+  registri, il PHY e i conteggi del driver in servizio, con `-v` racconta
+  l'accensione. Confermato sulla scheda vera (MCP73) con la 0.008, l'8 ottobre:
+  all'avvio `dhcp` prende l'indirizzo e il gateway risponde al ping in 20 ms, a
+  1000 Mbit. I guasti erano tre: l'anello di trasmissione di 8 descrittori,
+  troppo piccolo per la scheda (non trasmetteva); il filtro per indirizzo, che
+  lasciava passare solo i broadcast (l'offerta DHCP veniva scartata); e le
+  attese brevi fatte con `usleep`, che allungavano l'accensione oltre i dieci
+  secondi. `-p` la prova da sola.
+- **MP3.** `audio brano.mp3` suona un MP3 e `audio -w brano.mp3 brano.wav` lo
+  converte in WAV. Il decodificatore e' `minimp3`, di dominio pubblico (CC0),
+  copiato cosi' com'e' in `lib/terze/minimp3` e compilato senza SIMD per il
+  Pentium MMX. Provato in QEMU convertendo l'intro di `exwin/sound`: i
+  campioni prodotti dentro EX-OS differiscono al piu' di 1 su 32768 da quelli
+  dello stesso decodificatore sul PC di sviluppo, e somigliano al WAV
+  originale per il 99,97%. L'ascolto sul PC vero e' da fare.
+- **Il lettore audio e la libreria del suono.** `explayer` (Avvio > Lettore
+  audio, o un doppio clic su un `.wav` o un `.mp3` nel file manager) suona un
+  elenco di brani: precedente, suona, pausa, ferma, successivo; una barra che
+  mostra dove si e' e che si trascina per andare a un punto qualunque; tre
+  contatori, il tempo trascorso, quello che resta e il totale dell'elenco. Il
+  suono non e' dentro il lettore: lo fa `exsuono.so` (`lib/exsuono`), che ogni
+  programma puo' aprire. Per chi vuole solo un suono dopo un'azione basta
+  `exsuono_avvia_file("/exwin/sound/x.wav")`, che torna subito; il program
+  manager la usa per l'intro all'accensione della scrivania (`suono_avvio =
+  no` in `pm.cfg` la spegne). Trovati facendolo: `audio` non tornava al
+  prompt a fine brano (aspettava che la scheda consumasse gli ultimi byte,
+  meno di un blocco, che una scheda non prende mai) e teneva la scheda
+  occupata; e nel toolkit un pulsante col fuoco non si poteva premere dalla
+  tastiera in nessun programma: ora lo fa la barra spaziatrice (exwin.so
+  0.016). Provato in QEMU con l'HD Audio emulato, dalla tastiera. Sul PC
+  vero e' da ascoltare.
+- **Il menu di avvio dalla tastiera.** Il tasto Windows o Ctrl+Esc lo aprono
+  da qualunque finestra; frecce su e giu' per scegliere, destra (o Invio, o
+  spazio) per entrare in una categoria, sinistra o Esc per uscirne, Invio o
+  spazio per avviare, Esc per chiudere. Il tasto Windows e' un tasto nuovo
+  anche per il driver della tastiera (`KBD_K_WIN`). Provato in QEMU.
+- **Mouse e tastiera USB sui controller OHCI.** `ohci.drv` (0.003) sapeva solo
+  di chiavette, e un mouse USB e' a bassa velocita': su una scheda madre il cui
+  controller lento e' un OHCI (NVIDIA, SiS, ALi) non esisteva, e il sistema
+  cercava un mouse PS/2. Ora un HID «boot» viene riconosciuto e servito col
+  servizio `mouse` (o consegnando i tasti a `kbd`), come gia' faceva
+  `uhci.drv`. Provato in QEMU con un mouse USB su OHCI: `mouse -n 6` legge i
+  movimenti e il bottone; la tastiera USB e il PC vero sono da provare.
+- **Due schede di rete, un cavo.** `netdetect -c` sceglie la scheda che ha il
+  cavo: lo chiede ai driver con la nuova opzione `-l` (`nforce.drv`,
+  `rtl8169.drv`). Prima vinceva «quella aggiunta», anche senza cavo.
+- **Una seconda scheda di rete e il supporto.** `/dev/rtl8169.drv` (0.001) per
+  le Gigabit PCI Realtek RTL8169/8169S/8110S/8169SB/8169SC, scritto per la
+  scheda messa nel PC di prova; QEMU non la emula. Confermato sulla macchina
+  (RTL8169SC): `dhcp` prende l'indirizzo e `ping 8.8.8.8` risponde in 60 ms. `make support` crea `dist/support` e `dist/support.iso`:
+  driver e programmi da aggiungere a un sistema installato, da chiavetta o da
+  CD, col programma `aggiungi` che li copia senza chiedere e accende chiavette
+  e rete in `/boot/autoexec.sh`. Con due schede `netdetect -c` sceglie quella
+  aggiunta; `netdetect -c <parola>` sceglie a mano. Provato in QEMU dal disco
+  installato: dopo `aggiungi` e un riavvio la rete parte da sola (e1000).
 - **Le chiavette USB** su quel PC non venivano riconosciute: i driver EHCI
   leggevano male i controller a 64 bit, e ora dicono per esteso che cosa
   fallisce. Con la correzione il referto e' arrivato su chiavetta.

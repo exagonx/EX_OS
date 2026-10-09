@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.023");
+EX_VERSIONE("netupdate", "0.025");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -1582,12 +1582,65 @@ static int sostituisci(const char *dest, const char *temp)
  * i vecchi sono ancora al loro posto e la macchina parte ancora — poi si
  * scambiano i nomi, e SOLO ALLA FINE si riscrive il settore di avvio.
  * ============================================================================= */
+/* Legge un file piccolo per intero. Rende i byte letti, -1 se non si apre. */
+static int leggi_tutto(const char *nome, unsigned char *buf, int max)
+{
+    int fd = open(nome, O_RDONLY), n, tot = 0;
+
+    if (fd < 0) return -1;
+    while (tot < max && (n = (int)read(fd, buf + tot, (unsigned int)(max - tot))) > 0) tot += n;
+    close(fd);
+    return tot;
+}
+
+static int firma_video(const unsigned char *b, int n)
+{
+    int k;
+
+    for (k = 0; k + 9 <= n; k++)
+        if (memcmp(b + k, "SVGAMODE", 8) == 0) return k + 8;
+    return -1;
+}
+
+/* ! LA RISOLUZIONE SCELTA STA DENTRO stage2.bin, E UNO STAGE 2 NUOVO NON LA SA
+ * (9 ottobre 2026). `svga.drv` scrive il modo in un byte del file, dopo la
+ * firma 'SVGAMODE': sostituendo il file con quello del server quel byte
+ * tornava al valore di chi l'ha costruito, e una macchina messa a 1024x768
+ * ripartiva a 800x600 dopo l'aggiornamento. Il byte si porta dal vecchio al
+ * nuovo PRIMA della verifica: la lunghezza non cambia, il contenuto si'. */
+static void porta_modo_video(void)
+{
+    static unsigned char vecchio[16384], nuovo[16384];
+    int nv = leggi_tutto("/boot/stage2.bin", vecchio, sizeof(vecchio));
+    int nn = leggi_tutto("/boot/stage2.new", nuovo, sizeof(nuovo));
+    int pv, pn, fd, fatti = 0;
+
+    if (nv <= 0 || nn <= 0) return;
+    pv = firma_video(vecchio, nv);
+    pn = firma_video(nuovo, nn);
+    if (pv < 0 || pn < 0 || vecchio[pv] == nuovo[pn]) return;
+
+    nuovo[pn] = vecchio[pv];
+    fd = open("/boot/stage2.new", O_WRONLY);
+    if (fd < 0) return;
+    while (fatti < nn) {
+        int w = (int)write(fd, nuovo + fatti, (unsigned int)(nn - fatti));
+
+        if (w <= 0) break;
+        fatti += w;
+    }
+    close(fd);
+    if (fatti == nn) printf("  = la risoluzione scelta passa allo Stage 2 nuovo\n");
+}
+
 static int fase_avvio(int kernel, int stage2)
 {
     BootInstallInfo info;
     int r;
 
     printf("\nL'avvio\n");
+
+    if (stage2) porta_modo_video();
 
     r = bootverify("/", stage2 ? "stage2.new" : NULL,
                         kernel ? "kernel.new" : NULL, &info);
@@ -2521,7 +2574,11 @@ static int comando_repo(const char *indirizzo)
     return 0;
 }
 
-static int comando_check(void)
+/* `senza_chiedere`: 0 = le due domande; 1 = -yes, aggiorna i file cambiati e
+ * non aggiunge niente; 2 = -yesall, aggiunge anche quelli mai installati.
+ * Serve a chi guida la macchina da lontano o da uno script, dove alla
+ * domanda non risponde nessuno. */
+static int comando_check(int senza_chiedere)
 {
     Config c;
     Conti  k;
@@ -2548,6 +2605,14 @@ static int comando_check(void)
      * HA VOLUTO — install chiede quali directory copiare — e riportarlo dentro
      * con la scusa dell'aggiornamento vuol dire riempire una macchina di roba
      * a cui il suo padrone aveva gia' detto di no. */
+    if (senza_chiedere) {
+        fai_cambiati = (k.cambiati + k.verif + k.scon > 0);
+        fai_nuovi    = (senza_chiedere == 2 && k.nuovi > 0);
+        printf("\n  %s: aggiorno i file cambiati%s, senza chiedere.\n",
+               senza_chiedere == 2 ? "-yesall" : "-yes",
+               senza_chiedere == 2 ? " e installo quelli che mancano"
+                                   : "; quelli mai installati restano fuori");
+    } else {
     fai_cambiati = (k.cambiati + k.verif + k.scon > 0)
         ? chiedi_si("Aggiorno i file cambiati?", 1) : 0;
     fai_nuovi = 0;
@@ -2556,6 +2621,7 @@ static int comando_check(void)
         printf("  chi ha installato non ha voluto (doc, applicazioni grafiche,\n");
         printf("  font). Aggiornare non vuol dire aggiungerli.\n");
         fai_nuovi = chiedi_si("Installo anche quelli?", 0);
+    }
     }
     if (!fai_cambiati && !fai_nuovi) {
         printf("\nNon ho toccato niente.\n");
@@ -3591,6 +3657,10 @@ static void uso(void)
     printf("     netupdate -repo:<indirizzo>        lo stesso, chiedendolo\n");
     printf("                                        al server: <indirizzo>/repo.txt\n");
     printf("     netupdate -check                   cosa e' cambiato sul server\n");
+    printf("     netupdate -check -yes              aggiorna i file cambiati senza\n");
+    printf("                                        chiedere; non aggiunge niente\n");
+    printf("     netupdate -check -yesall           lo stesso, e installa anche i\n");
+    printf("                                        file che qui mancano\n");
     printf("     netupdate -check:guarda            lo stesso, senza toccare niente\n");
     printf("     netupdate -auto                    l'occhiata dell'avvio: zitta,\n");
     printf("                                        e solo se automatico = si\n");
@@ -3640,7 +3710,14 @@ int main(int argc, char **argv)
     if (strncmp(argv[1], "-repo:", 6) == 0) return comando_repo(argv[1] + 6);
     if (strcmp(argv[1], "-repo") == 0)      return comando_repo(NULL);
 
-    if (strcmp(argv[1], "-check") == 0) return comando_check();
+    if (strcmp(argv[1], "-check") == 0) {
+        if (argc > 2 && strcmp(argv[2], "-yes") == 0)    return comando_check(1);
+        if (argc > 2 && strcmp(argv[2], "-yesall") == 0) return comando_check(2);
+        if (argc > 2) { uso(); return 2; }
+        return comando_check(0);
+    }
+    if (strcmp(argv[1], "-yes") == 0)    return comando_check(1);
+    if (strcmp(argv[1], "-yesall") == 0) return comando_check(2);
 
     /* ! «guarda» E' UNA PAROLA RISERVATA DOPO I DUE PUNTI, come «crea» per
      * -registro e «list» per -install. */

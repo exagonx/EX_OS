@@ -172,6 +172,67 @@ int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
     return 1;
 }
 
+/* Tutte le interfacce HID «boot» di un dispositivo (8 ottobre 2026): vedi
+ * usb_comune.h. La catena della configurazione di un ricevitore con due o tre
+ * interfacce passa i 64 byte: qui se ne leggono fino a 256. */
+int usb_configura_hid_tutte(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
+                            UsbHid *out, int max, unsigned int verboso)
+{
+    static unsigned char b[256];
+    unsigned int tot, i;
+    int n = 0, dentro = -1, k;
+
+    if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, 9, 1) != 0)
+        return 0;
+    tot     = (unsigned int)b[2] | ((unsigned int)b[3] << 8);
+    d->conf = b[5];
+    if (tot > sizeof(b)) tot = sizeof(b);
+    if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, tot, 1) != 0)
+        return 0;
+
+    i = 9;
+    while (i + 2 <= tot) {
+        unsigned int len = b[i], tipo = b[i + 1];
+
+        if (len == 0) break;
+        if (tipo == 4 && i + 8 <= tot) {                /* INTERFACE */
+            dentro = -1;
+            if (n < max && b[i + 5] == USB_CLASSE_HID && b[i + 6] == USB_SUB_BOOT &&
+                (b[i + 7] == USB_PROTO_MOUSE || b[i + 7] == USB_PROTO_TASTIERA)) {
+                dentro = n;
+                out[n].proto       = b[i + 7];
+                out[n].interfaccia = b[i + 2];
+                out[n].ep          = 0;
+                out[n].ep_maxp     = 8;
+            }
+        } else if (tipo == 5 && dentro >= 0 && i + 6 <= tot) {  /* ENDPOINT */
+            if ((b[i + 2] & 0x80) && (b[i + 3] & 0x03) == 3 && out[dentro].ep == 0) {
+                out[dentro].ep      = b[i + 2] & 0x0F;
+                out[dentro].ep_maxp = (unsigned int)b[i + 4] |
+                                      (((unsigned int)b[i + 5] & 0x07) << 8);
+                n = dentro + 1;
+            }
+        }
+        i += len;
+    }
+
+    if (n == 0) {
+        if (verboso) printf("usb: non e' un HID 'boot'\n");
+        return 0;
+    }
+
+    if (ctl(dev, 0x00, USB_REQ_SET_CONF, d->conf, 0, 0, 0, 0) != 0) return 0;
+    for (k = 0; k < n; k++) {
+        (void)ctl(dev, 0x21, USB_REQ_SET_PROTO, 0, out[k].interfaccia, 0, 0, 0);
+        (void)ctl(dev, 0x21, USB_REQ_SET_IDLE, 0, out[k].interfaccia, 0, 0, 0);
+    }
+    d->proto       = out[0].proto;
+    d->interfaccia = out[0].interfaccia;
+    d->ep          = out[0].ep;
+    d->ep_maxp     = out[0].ep_maxp;
+    return n;
+}
+
 /* =============================================================================
  * LA MEMORIA DI MASSA — trovare i due endpoint bulk
  *

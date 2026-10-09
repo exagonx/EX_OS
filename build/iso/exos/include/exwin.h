@@ -124,7 +124,7 @@ typedef long (*ExWindowProc)(ExWindow, unsigned int, unsigned int, long);
 /* Ctrl+Alt+Canc was pressed with the graphics on screen (@TASTI-SISTEMA).
  * Only the window that called ex_track_windows() receives it: the desktop,
  * which asks what to do. */
-#define EXM_SYSTEM     0x000F
+#define EXM_SYSTEM     0x000F  /* wp: 0 = Ctrl+Alt+Canc, 1 = menu di avvio (Windows, Ctrl+Esc) */
 /* The mouse wheel turned over this window (28 September 2026). wp is the
  * number of notches as a SIGNED int — positive towards the user, i.e. "the
  * page goes down" — and lp the pointer, as for EXM_MOUSE_DOWN. It arrives only

@@ -435,7 +435,22 @@
 /* 0.239 -> 0.240: i canali nativi vanno in PIO (sul SATA NVIDIA MCP73 il DMA
  * del bus master lasciava il disco occupato), e un disco rimasto in BSY dopo
  * un DMA fallito si resetta. */
-#define EXOS_VERSION    "0.240"
+/* 0.240 -> 0.241: avviandosi da disco la radice si cerca su tutti i dischi
+ * (hd0..hd3) e non solo su hd0: un disco SATA su un canale nativo sta nel
+ * primo posto libero, che puo' essere un altro. Vedi vfs_init. */
+/* 0.241 -> 0.242: il kernel tiene un registro dei propri messaggi (l'avvio e
+ * gli ultimi), che `dmesg` legge con SYS_KLOG: su una macchina vera guidata
+ * dalla rete era l'unica cosa che non si poteva sapere. */
+/* 0.242 -> 0.243: la console grafica scorre senza leggere dalla memoria video
+ * (ridisegna le sole celle cambiate) e mtrr.c, scritto da settembre, e'
+ * collegato: il framebuffer si dichiara combinabile in scrittura. */
+/* 0.243 -> 0.244: il diario dei programmi (SYS_LOG) va sulla seriale e nel
+ * registro letto da `dmesg`, non piu' sulla console; il messaggio
+ * dell'entropia raccolta non e' piu' scritto come un errore. */
+/* 0.244 -> 0.245: i dischi SATA dietro un controller AHCI (ahci.c). Quelli
+ * dei controller che si dichiarano AHCI si usano sempre; con `ahci = 1` in
+ * kernel.cfg passano all'AHCI anche quelli visti prima dai registri IDE. */
+#define EXOS_VERSION    "0.245"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

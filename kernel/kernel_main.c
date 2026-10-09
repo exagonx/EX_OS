@@ -403,6 +403,10 @@ KernelConfig *cfg = cfg_load();
      * e cfg.h. */
     if (cfg->ata_dma == 0) ata_dma_spegni();
 
+    /* `ahci = 1`: il disco gia' visto dai registri IDE passa all'AHCI. Qui e
+     * non prima, per la stessa ragione di atadma: kernel.cfg sta sul disco. */
+    if (cfg->ahci) (void)ata_passa_ad_ahci();
+
     /* ! I PROCESSORI IN PIU' SI CERCANO QUI: dopo kernel.cfg, perche' e' li'
      * che sta scritto se svegliarli (smp = 0 li conta e basta), a interrupt
      * accesi, perche' le attese contano i tick, e prima del primo processo,

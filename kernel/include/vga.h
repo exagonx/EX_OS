@@ -67,6 +67,7 @@ uint8_t vga_get_col(void);
  * esiste una "console corrente" globale, perché il kernel è preemptabile
  * e il timer potrebbe cambiarla in mezzo a una scrittura. */
 void     vga_putchar_su(uint32_t n, char c);
+void     vga_solo_seriale(char c);      /* la seriale e basta, nessuna console */
 void     vga_clear_su(uint32_t n);
 void     vga_setcolor_su(uint32_t n, uint8_t fg, uint8_t bg);
 

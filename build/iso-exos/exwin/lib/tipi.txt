@@ -15,3 +15,4 @@
 bmp png jpg jpeg gif ico webp | /exwin/bin/immagini
 zip tar gz tgz            | /exwin/bin/archivi
 html htm                  | /exwin/bin/exbrowser
+wav mp3                   | /exwin/bin/explayer

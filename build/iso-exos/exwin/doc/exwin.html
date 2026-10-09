@@ -85,6 +85,9 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
         il modo piu' rapido di sapere se un carattere si carica</td></tr>
 <tr><td><b>Orologio</b> <code>orologio</code></td>
     <td>l'ora, ed e' l'esempio piu' corto di applicazione grafica</td></tr>
+<tr><td><b>Lettore audio</b> <code>explayer</code></td>
+    <td>suona WAV e MP3 uno dopo l'altro &mdash; vedi
+        <a href="#lettore">qui sotto</a></td></tr>
 <tr><td><b>EXKlondike</b> <code>exklondike</code></td>
     <td>il solitario classico (Avvio &gt; Giochi)</td></tr>
 <tr><td><b>EXSpider</b> <code>exspider</code></td>
@@ -94,6 +97,43 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <tr><td><b>EXGO</b> <code>exgo</code></td>
     <td>il go, contro il computer o in due</td></tr>
 </table>
+
+<h3 id="lettore">Il lettore audio</h3>
+
+<p>
+Si apre da <b>Avvio</b>, oppure con un doppio clic su un file
+<code>.wav</code> o <code>.mp3</code> nel file manager: il brano parte
+subito. <b>File &gt; Aggiungi...</b> (<code>Ctrl+O</code>) ne mette altri in
+fondo all'elenco; da una console si possono dare tutti insieme:
+<code>explayer uno.mp3 due.wav &amp;</code>.
+</p>
+
+<table border="1">
+<tr><th>Che cosa</th><th>Che cosa fa</th></tr>
+<tr><td><code>|&lt;</code></td><td>nei primi tre secondi va al brano prima; dopo, ricomincia quello che c'e'</td></tr>
+<tr><td><b>Suona</b>, <b>Pausa</b></td><td>parte, o riprende da dove era; si ferma tenendo il punto. La barra spaziatrice fa l'uno o l'altro</td></tr>
+<tr><td><b>Ferma</b></td><td>smette e lascia la scheda audio agli altri programmi</td></tr>
+<tr><td><code>&gt;|</code></td><td>il brano dopo</td></tr>
+<tr><td>la barra</td><td>dice dove si e' nel brano; trascinata (o con le frecce, quando ha il fuoco) porta a quel secondo</td></tr>
+<tr><td>i tre contatori</td><td>il tempo trascorso, quello che resta del brano, e la durata di tutto l'elenco</td></tr>
+<tr><td>l'elenco</td><td>Invio o un doppio clic su una riga la fanno partire; finito un brano parte il successivo</td></tr>
+</table>
+
+<p class="nota">
+<b>La scheda audio serve un programma alla volta.</b> Se un altro sta
+suonando (anche l'intro della scrivania nei suoi dieci secondi) il lettore lo
+dice e basta riprovare. Un brano si legge tutto in memoria prima di partire:
+da una chiavetta lenta ci vuole qualche secondo, e la finestra dice
+&laquo;Apro il brano...&raquo;. La durata nell'elenco di un MP3 non ancora
+aperto e' una stima, giusta al secondo o quasi; diventa esatta quando lo si
+suona.
+</p>
+
+<p>
+L'intro che si sente all'accensione della scrivania e' il file
+<code>/exwin/sound/intro_exos_benvenuto10s.wav</code>. Per non sentirla:
+<code>suono_avvio = no</code> in <code>pm.cfg</code>.
+</p>
 
 <h3 id="giochi">I giochi</h3>
 
@@ -173,8 +213,10 @@ e il numero del processo che l'ha scritta.
 
 <table border="1">
 <tr><th>Tasto</th><th>Che cosa fa</th></tr>
+<tr><td>tasto <code>Windows</code>, <code>Ctrl+Esc</code></td><td>apre il menu di avvio, da qualunque finestra (e premuto di nuovo lo chiude). Frecce su e giu' per scegliere; freccia a destra, Invio o spazio per entrare in una categoria, freccia a sinistra o Esc per uscirne; Invio o spazio avviano la voce scelta; Esc chiude il menu</td></tr>
 <tr><td><code>F10</code></td><td>apre la barra dei menu; frecce per girare, Invio sceglie, Esc chiude</td></tr>
 <tr><td><code>Tab</code></td><td>sposta il fuoco da un controllo al successivo</td></tr>
+<tr><td>barra spaziatrice</td><td>preme il pulsante che ha il fuoco, e accende o spegne una spunta</td></tr>
 <tr><td><code>Ctrl+C</code> <code>Ctrl+X</code> <code>Ctrl+V</code></td>
     <td>appunti &mdash; e valgono anche le combinazioni CUA con Ins e Canc</td></tr>
 </table>
@@ -233,6 +275,7 @@ corpo non le rompe.
 <tr><td><code>exdlg.so</code></td><td>i dialoghi: apri, salva, avviso, conferma</td><td>chi ne ha bisogno</td></tr>
 <tr><td><code>exfont.so</code></td><td>il TrueType: contenitore, curve, rasterizzatore, cache</td><td>al primo font chiesto</td></tr>
 <tr><td><code>eximg.so</code></td><td>PNG, GIF, JPEG, ICO</td><td>chi mostra immagini</td></tr>
+<tr><td><code>exsuono.so</code></td><td>suonare un WAV o un MP3: aprire, pausa, andare a un punto, o un suono e via</td><td>il lettore audio, il program manager per l'intro, chi vuole un suono</td></tr>
 <tr><td><code>exhttp.so</code></td><td>HTTP, HTTPS, TLS 1.3, certificati</td><td>il navigatore</td></tr>
 <tr><td><code>exhtml.so</code> <code>excss.so</code></td><td>l'albero della pagina, i fogli di stile</td><td>il navigatore</td></tr>
 <tr><td><code>exjs.so</code> <code>exdom.so</code></td><td>JavaScript e il ponte col documento</td><td>il navigatore, solo se la pagina ha uno script</td></tr>

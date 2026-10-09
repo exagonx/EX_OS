@@ -13,6 +13,13 @@
  *
  *   netdetect        elenca le schede Ethernet e il driver di ciascuna
  *   netdetect -c     carica il driver della prima scheda che sa guidare
+ *   netdetect -c X   fra piu' schede, quella il cui driver ha X nel nome
+ *
+ * ! CON PIU' SCHEDE, SENZA X, VINCE QUELLA AGGIUNTA (8 ottobre 2026). Una
+ * scheda integrata sta sul bus 0; una infilata in uno zoccolo sta di solito
+ * dietro un ponte, su un bus dal numero piu' alto. Chi ha aggiunto una scheda
+ * a una macchina che ne aveva gia' una lo ha fatto per usarla: la prima
+ * gestibile fuori dal bus 0 passa davanti alla prima in assoluto.
  *   netdetect -t     stampa la tabella dei modelli riconosciuti
  *
  * È il client del server PCI (/dev/pci.drv): non tocca l'hardware, fa una
@@ -165,7 +172,7 @@ static int driver_presente(const char *driver)
 /* -----------------------------------------------------------------------------
  * Caricamento del driver
  * --------------------------------------------------------------------------- */
-#define ATTESA_AVVIO_MS  4000
+#define ATTESA_AVVIO_MS  20000   /* erano 4000: una scheda vera che negozia il link ne vuole di piu' */
 #define PASSO_MS          100
 
 /* Aspetta che il driver registri il proprio servizio. Il nome lo si
@@ -221,6 +228,38 @@ static int carica(const char *driver)
     return 0;
 }
 
+/* Il cavo c'e'? Lo si chiede al driver, con la sua opzione -l, che guarda il
+ * link ed esce senza mettersi in servizio. 1 si', 0 no, -1 non si sa: solo i
+ * driver di questo elenco la conoscono, e a uno che non la conosce non si
+ * puo' passare un'opzione a caso (partirebbe e non uscirebbe piu').
+ *
+ * ! SI SCEGLIE LA SCHEDA COL CAVO (8 ottobre 2026). Con due schede vinceva
+ * «quella aggiunta», e chi aveva il cavo nell'altra restava senza rete con
+ * una scheda che funzionava: e' successo sul PC di prova, due volte. */
+static int ha_il_cavo(const char *driver)
+{
+    static const char *sanno[] = { "nforce.drv", "rtl8169.drv" };
+    const char *vero = dove_sta(driver);
+    unsigned int k;
+    int pid, stato = 0;
+
+    if (vero == NULL) return -1;
+    for (k = 0; k < sizeof(sanno) / sizeof(sanno[0]); k++)
+        if (strstr(driver, sanno[k]) != NULL) break;
+    if (k == sizeof(sanno) / sizeof(sanno[0])) return -1;
+
+    {
+        char *const argv[] = { (char *)vero, (char *)"-l", NULL };
+
+        pid = spawn(vero, argv);
+    }
+    if (pid < 0) return -1;
+    if (waitpid(pid, &stato, 0) < 0) return -1;
+    if (WEXITSTATUS(stato) == 0) return 1;
+    if (WEXITSTATUS(stato) == 1) return 0;
+    return -1;
+}
+
 static void stampa_tabella(void)
 {
     int i;
@@ -259,15 +298,22 @@ int main(int argc, char **argv)
     PciDispositivo d;
     unsigned int   n = 0;
     int            pid_pci, esito, gestibili = 0, carica_dopo = 0;
-    const char    *da_caricare = NULL;
+    const char    *da_caricare = NULL, *voluta = NULL;
+    int            scelta_forte = 0;    /* 1 = aggiunta, 2 = chiesta per nome */
+    const char    *candidate[8];
+    int            n_cand = 0;
 
     if (argc > 1 && strcmp(argv[1], "-t") == 0) { stampa_tabella(); return 0; }
 
-    if (argc > 1 && strcmp(argv[1], "-c") == 0) carica_dopo = 1;
+    if (argc > 1 && strcmp(argv[1], "-c") == 0) {
+        carica_dopo = 1;
+        if (argc > 2) voluta = argv[2];
+    }
 
     if (argc > 1 && !carica_dopo) {
         printf("uso: netdetect        elenca le schede di rete e il loro driver\n");
         printf("     netdetect -c     carica il driver della prima scheda gestibile\n");
+        printf("     netdetect -c X   fra piu' schede, quella col driver che ha X nel nome\n");
         printf("     netdetect -t     stampa la tabella dei modelli riconosciuti\n");
         return 1;
     }
@@ -309,7 +355,16 @@ int main(int argc, char **argv)
                        s->driver);
             } else {
                 printf("           driver: %s\n", s->driver);
-                if (da_caricare == NULL) da_caricare = s->driver;
+                {
+                    int forza = (voluta && strstr(s->driver, voluta)) ? 2
+                              : (d.bus != 0) ? 1 : 0;
+
+                    if (n_cand < 8) candidate[n_cand++] = s->driver;
+                    if (da_caricare == NULL || forza > scelta_forte) {
+                        da_caricare  = s->driver;
+                        scelta_forte = forza;
+                    }
+                }
                 gestibili++;
             }
         }
@@ -330,6 +385,21 @@ int main(int argc, char **argv)
         if (da_caricare == NULL) {
             printf("\nnetdetect: nessuna delle schede trovate ha un driver.\n");
             return 1;
+        }
+        /* Piu' di una scheda, e nessuna chiesta per nome: vince quella col
+         * cavo. Se nessuna dice di averlo, resta la scelta di prima. */
+        if (n_cand > 1 && scelta_forte < 2) {
+            int k;
+
+            for (k = 0; k < n_cand; k++) {
+                int c = ha_il_cavo(candidate[k]);
+
+                if (c == 1) {
+                    printf("netdetect: il cavo e' su %s: uso quella.\n", candidate[k]);
+                    da_caricare = candidate[k];
+                    break;
+                }
+            }
         }
         return carica(da_caricare);
     }

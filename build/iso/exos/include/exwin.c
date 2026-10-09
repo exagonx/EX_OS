@@ -6435,6 +6435,18 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
      * questa opzione». Chi arriva con Tab su una spunta e preme Invio si
      * aspetta di aver risposto alla finestra, non di aver acceso una casella.
      * ================================================================= */
+    /* ! UN PULSANTE COL FUOCO SI PREME CON LA BARRA SPAZIATRICE (9 ottobre
+     * 2026, exwin.so 0.016). Mancava del tutto: Tab portava il fuoco su un
+     * pulsante, la cornice lo mostrava, e nessun tasto lo faceva scattare -
+     * in nessun programma. Trovato provando il lettore audio senza mouse.
+     * Solo lo spazio, come per la spunta qui sotto: Invio resta al programma,
+     * che di solito ne fa «il pulsante predefinito» della finestra. */
+    if (o->classe == CL_PULSANTE) {
+        if (c != ' ' || (o->stile & EX_DISABLED)) return 0;
+        manda_comando((ExWindow)(o - g_ogg + 1), o->id, 0);
+        return 1;
+    }
+
     if (o->classe == CL_SPUNTA || o->classe == CL_RADIO) {
         if (c != ' ') return 0;
         spunta_scatta(o);
@@ -7054,7 +7066,10 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (!g_segui) continue;
             m->finestra = g_segui;
             m->msg      = EXM_SYSTEM;
+            /* wp dice quale tasto di sistema: 0 = Ctrl+Alt+Canc, 1 = il menu
+             * di avvio (tasto Windows o Ctrl+Esc). */
             m->wp       = 0;
+            if (meta.len >= sizeof(unsigned int)) memcpy(&m->wp, buf, sizeof(unsigned int));
             m->lp       = 0;
             return 1;
         }
@@ -8209,7 +8224,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.015"
+#define EXWIN_VERSIONE "0.016"
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

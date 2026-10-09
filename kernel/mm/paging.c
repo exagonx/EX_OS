@@ -175,6 +175,26 @@ void *paging_mappa_apic(uint32_t phys)
     return (void *)(PAGING_APIC_VIRT + (phys & 0xFFF));
 }
 
+/* Registri di una periferica a un indirizzo virtuale BASSO e fisso, nella
+ * tabella che tutti i processi condividono col kernel: serve a chi quei
+ * registri li deve toccare anche da dentro una chiamata di sistema (il
+ * controller dei dischi AHCI). `virt` va scelto in una zona che nessuno usa
+ * (la ROM di espansione sotto 1 MB); non cacheabile, come l'APIC. */
+void *paging_mappa_mmio_basso(uint32_t virt, uint32_t phys, uint32_t pagine)
+{
+    uint32_t i;
+
+    for (i = 0; i < pagine; i++) {
+        uint32_t v = virt + i * PAGE_SIZE;
+
+        kernel_page_table_low[PT_INDEX(v)] =
+            ((phys + i * PAGE_SIZE) & 0xFFFFF000) | PG_PRESENT | PG_WRITABLE |
+            (1u << 4) | (1u << 3);
+        __asm__ volatile ("invlpg (%0)" : : "r"(v) : "memory");
+    }
+    return (void *)(virt + (phys & 0xFFF));
+}
+
 /* Azzeramento di una pagina fisica qualunque: e' il caso d'uso piu'
  * frequente (ogni pagina nuova consegnata a un processo va azzerata, se no
  * il processo vede i resti di chi c'era prima) e merita di non far

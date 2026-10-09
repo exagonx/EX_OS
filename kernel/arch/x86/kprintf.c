@@ -73,6 +73,58 @@ static uint32_t g_capture_max = 0;
  * chiamare vga_putchar direttamente: è ciò che rende possibile catturare
  * un messaggio già formattato senza duplicare il formattatore.
  * ============================================================================= */
+/* -----------------------------------------------------------------------------
+ * Il registro dei messaggi (8 ottobre 2026, kernel 0.242): `dmesg` lo legge
+ *
+ * ! SENZA, UNA MACCHINA GUIDATA DA LONTANO E' MUTA. Quel che il kernel dice
+ * all'avvio passa sullo schermo e sulla seriale e non resta da nessuna parte:
+ * su un PC vero, senza cavo seriale, chi lo guida da una sessione di rete non
+ * puo' sapere perche' un driver ha rinunciato.
+ *
+ * Due zone, perche' servono due cose diverse. La prima tiene L'AVVIO e non si
+ * sovrascrive mai: e' li' che stanno le righe che contano (dischi, video,
+ * processori). La seconda e' un anello con GLI ULTIMI messaggi. Ci finisce
+ * tutto quel che passa da kout(), e anche le righe che il livello di log
+ * nasconde a schermo.
+ * --------------------------------------------------------------------------- */
+#define REG_AVVIO   32768u
+#define REG_ULTIMI  32768u
+static char     g_reg_avvio[REG_AVVIO];
+static uint32_t g_reg_avvio_n = 0;
+static char     g_reg_ultimi[REG_ULTIMI];
+static uint32_t g_reg_ultimi_tot = 0;       /* quanti ne sono passati in tutto */
+static int      g_muto = 0;                 /* 1 = nel registro si', a schermo no */
+
+static void registra(char c)
+{
+    if (g_reg_avvio_n < REG_AVVIO) { g_reg_avvio[g_reg_avvio_n++] = c; return; }
+    g_reg_ultimi[g_reg_ultimi_tot % REG_ULTIMI] = c;
+    g_reg_ultimi_tot++;
+}
+
+/* Copia in `dst` una delle due zone (0 = avvio, 1 = ultimi), dal piu' vecchio.
+ * Rende quanti byte ha copiato. */
+uint32_t klog_copia(char *dst, uint32_t max, int quale)
+{
+    uint32_t n = 0, da, quanti;
+
+    if (quale == 0) {
+        while (n < g_reg_avvio_n && n < max) { dst[n] = g_reg_avvio[n]; n++; }
+        return n;
+    }
+    quanti = g_reg_ultimi_tot < REG_ULTIMI ? g_reg_ultimi_tot : REG_ULTIMI;
+    da     = g_reg_ultimi_tot - quanti;
+    while (n < quanti && n < max) { dst[n] = g_reg_ultimi[(da + n) % REG_ULTIMI]; n++; }
+    return n;
+}
+
+/* Un carattere nel registro senza passare da kout(): per sys_log, che scrive
+ * sulla seriale e non a schermo. */
+void klog_registra(char c)
+{
+    registra(c);
+}
+
 static void kout(char c)
 {
     if (g_capture != NULL) {
@@ -82,7 +134,8 @@ static void kout(char c)
         }
         return;
     }
-    vga_putchar(c);
+    registra(c);
+    if (!g_muto) vga_putchar(c);
 }
 
 static void kout_str(const char *s)
@@ -306,7 +359,9 @@ void klog(int level, const char *fmt, ...)
     is_problem = (level <= LOG_WARN && level > LOG_NONE);
     visible    = (level <= g_loglevel) || (level == LOG_ERROR);
 
-    if (!is_problem && !visible) return;
+    /* I messaggi di dettaglio che il livello nasconde non si formattano
+     * nemmeno: possono essere tanti, e nel registro coprirebbero il resto. */
+    if (!is_problem && !visible && level > LOG_INFO) return;
 
     if (is_problem) {
         slot = g_prob_text[g_prob_next];
@@ -327,11 +382,12 @@ void klog(int level, const char *fmt, ...)
         g_capture = NULL;   /* da qui kout() torna a scrivere a video */
     }
 
-    if (!visible) return;
+    /* Quel che il livello nasconde a schermo va comunque nel registro. */
+    if (!visible) g_muto = 1;
 
-    vga_setcolor(log_colors[level], VGA_COLOR_BLACK);
+    if (!g_muto) vga_setcolor(log_colors[level], VGA_COLOR_BLACK);
     kout_str(log_prefix[level]);
-    vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    if (!g_muto) vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
     if (is_problem) {
         kout_str(slot);          /* già formattato sopra */
@@ -342,6 +398,7 @@ void klog(int level, const char *fmt, ...)
     }
 
     kout('\n');
+    g_muto = 0;
 }
 
 /* =============================================================================

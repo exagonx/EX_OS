@@ -155,6 +155,10 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             return;
         }
         /* Come atadma: solo uno zero scritto per bene spegne. */
+        if (cfg_strcmp(key, "ahci") == 0) {
+            cfg->ahci = (value[0] >= '1' && value[0] <= '9') ? 1 : 0;
+            return;
+        }
         if (cfg_strcmp(key, "smp") == 0) {
             cfg->smp = 1;
             if (value[0] >= '0' && value[0] <= '9' && cfg_atoi(value) == 0)
@@ -324,6 +328,7 @@ KernelConfig *cfg_load(void)
     g_config.verbose_boot = 0;   /* default: avvio silenzioso. Vedi cfg.h */
     g_config.ata_dma      = 1;   /* default: il DMA si usa. Vedi cfg.h */
     g_config.smp          = 1;   /* default: i processori in piu' si svegliano */
+    g_config.ahci         = 0;   /* default: i dischi restano dove sono. Vedi cfg.h */
     g_config.keymap[0]    = '\0'; /* nessuna: il driver tiene la sua */
     cfg_strcpy(g_config.shell_path, "/bin/sh", sizeof(g_config.shell_path));
 

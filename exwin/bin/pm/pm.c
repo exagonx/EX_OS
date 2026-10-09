@@ -35,9 +35,11 @@
 #include "exwin.h"
 #include "exdlg.h"
 #include "exinfo.h"
+#include "exsuono.h"
+#include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.014"
+#define VERSIONE_APP "0.016"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -110,6 +112,14 @@ static char g_avvio[96]  = "";
 static char g_elenco[96] = "";
 
 static ExWindow g_barra, g_menu = 0;
+
+/* Le voci del menu e dell'elenco di lato, per sceglierle coi tasti: vedi
+ * «IL MENU DALLA TASTIERA» piu' sotto. */
+#define VOCI_MAX 64
+static ExWindow     g_mv[VOCI_MAX], g_sv[VOCI_MAX];
+static unsigned int g_mv_id[VOCI_MAX], g_sv_id[VOCI_MAX];
+static int          g_mv_n = 0, g_sv_n = 0, g_mv_sel = 0, g_sv_sel = 0;
+static int          g_da_tastiera = 0;      /* il menu e' stato aperto coi tasti */
 
 /* Il sottomenu di una categoria, e quale: vedi sotto_apri(). */
 static ExWindow   g_sotto = 0;
@@ -918,6 +928,8 @@ static void menu_chiudi(void)
      * suoi programmi. */
     if (g_sotto) { ex_destroy(g_sotto); g_sotto = 0; }
     if (g_menu)  { ex_destroy(g_menu);  g_menu = 0; }
+    g_mv_n = 0;
+    g_da_tastiera = 0;
 }
 
 /* =============================================================================
@@ -979,9 +991,36 @@ static ExIcon icona_categoria(unsigned int c)
     return 0;
 }
 
+/* =============================================================================
+ * IL MENU DALLA TASTIERA (9 ottobre 2026)
+ *
+ * Il tasto Windows o Ctrl+Esc lo aprono; le frecce su e giu' scelgono, la
+ * freccia a destra (o Invio, o lo spazio) entra in una categoria, quella a
+ * sinistra o Esc ne esce, Invio o lo spazio avviano, Esc chiude.
+ *
+ * Le voci sono bottoni del toolkit, e «scelta» vuol dire «ha il fuoco»: cosi'
+ * il riquadro lo disegna il toolkit, ed e' lo stesso che si vede col Tab.
+ * Qui si tiene solo l'elenco, nell'ordine in cui le voci stanno sullo schermo:
+ * uno per il menu e uno per l'elenco di lato.
+ * ============================================================================= */
+
+static ExWindow crea_voce(const char *testo, int x, int y, int w, int h,
+                          ExWindow padre, unsigned int id)
+{
+    ExWindow b = ex_create("button", testo, EX_CHILD, x, y, w, h, padre, id, 0);
+
+    if (b && padre == g_sotto && g_sotto) {
+        if (g_sv_n < VOCI_MAX) { g_sv[g_sv_n] = b; g_sv_id[g_sv_n++] = id; }
+    } else if (b) {
+        if (g_mv_n < VOCI_MAX) { g_mv[g_mv_n] = b; g_mv_id[g_mv_n++] = id; }
+    }
+    return b;
+}
+
 static void sotto_chiudi(void)
 {
     if (g_sotto) { ex_destroy(g_sotto); g_sotto = 0; }
+    g_sv_n = 0;
 }
 
 static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
@@ -1022,6 +1061,8 @@ static void sotto_apri(unsigned int c, int y_voce)
     if (!g_sotto) return;
 
     g_sotto_cat = c;
+    g_sv_n = 0;
+    g_sv_sel = 0;
 
     n = 0;
     for (i = 0; i < g_app_n; i++) {
@@ -1029,9 +1070,9 @@ static void sotto_apri(unsigned int c, int y_voce)
 
         if (strcmp(g_app[i].categoria, g_cat[c]) != 0) continue;
 
-        b = ex_create("button", g_app[i].nome, EX_CHILD,
+        b = crea_voce(g_app[i].nome,
                     4, 4 + (int)n * VOCE_H, MENU_W - 8, VOCE_H - 2,
-                    g_sotto, ID_VOCE + i, 0);
+                    g_sotto, ID_VOCE + i);
         ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
         n++;
     }
@@ -1073,6 +1114,8 @@ static void menu_apri(void)
     g_menu = ex_create("window", "", EX_BORDER | EX_TOPMOST,
                      4, g_menu_y, MENU_W, h, 0, 0, menu_proc);
     if (!g_menu) return;
+    g_mv_n = 0;
+    g_mv_sel = 0;
 
     /* ! PRIMA LE CATEGORIE, POI LE VOCI SCIOLTE. Le prime aprono un elenco, le
      * seconde avviano un programma: mescolarle vorrebbe dire due gesti diversi
@@ -1082,9 +1125,9 @@ static void menu_apri(void)
         ExWindow  b;
 
         sprintf(t, "%s...", g_cat[i]);
-        b = ex_create("button", t, EX_CHILD,
+        b = crea_voce(t,
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
-                    g_menu, ID_CAT + i, 0);
+                    g_menu, ID_CAT + i);
         ex_set_icon(b, icona_categoria(i), ICONA_LATO);
         riga++;
     }
@@ -1094,9 +1137,9 @@ static void menu_apri(void)
 
         if (g_app[i].categoria[0]) continue;    /* sta in un sottomenu */
 
-        b = ex_create("button", g_app[i].nome, EX_CHILD,
+        b = crea_voce(g_app[i].nome,
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
-                    g_menu, ID_VOCE + i, 0);
+                    g_menu, ID_VOCE + i);
         ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
         riga++;
     }
@@ -1111,27 +1154,27 @@ static void menu_apri(void)
      * le applicazioni: non e' un programma da avviare, e' una cosa che la
      * scrivania sa fare. Metterla in mezzo alle voci vorrebbe anche dire che
      * si sposta ogni volta che se ne aggiunge una. */
-    ex_create("button", "Applicazioni...", EX_CHILD,
+    crea_voce("Applicazioni...",
             4, 10 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_GESTISCI, 0);
+            g_menu, ID_GESTISCI);
     /* ! «INFORMAZIONI SU» STA CON LE COSE CHE SA FARE LA SCRIVANIA, sotto la
      * riga, e non fra le applicazioni: la scrivania non ha una barra dei menu
      * dove metterla — la sua barra e' quella delle finestre aperte — e questo
      * e' l'unico menu che ha. */
-    ex_create("button", "Informazioni su", EX_CHILD,
+    crea_voce("Informazioni su",
             4, 10 + (int)(riga + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_INFO, 0);
-    ex_create("button", "Impostazioni...", EX_CHILD,
+            g_menu, ID_INFO);
+    crea_voce("Impostazioni...",
             4, 10 + (int)(riga + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_IMPOST, 0);
+            g_menu, ID_IMPOST);
     /* The desktop's log (@EXWIN-LOG): with the things the desktop knows how
      * to do, before the ones that stop it. */
-    ex_create("button", "Registro di sistema", EX_CHILD,
+    crea_voce("Registro di sistema",
             4, 10 + (int)(riga + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_REGISTRO, 0);
-    ex_create("button", "Esci", EX_CHILD,
+            g_menu, ID_REGISTRO);
+    crea_voce("Esci",
             4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_ESCI, 0);
+            g_menu, ID_ESCI);
     /* ! «RIAVVIA» STA FRA «ESCI» E «SPEGNI», ed e' il posto giusto per due
      * ragioni. La prima e' l'ordine di gravita': si esce dalla scrivania, si
      * riavvia la macchina, si spegne la macchina — ogni voce costa piu' della
@@ -1144,12 +1187,12 @@ static void menu_apri(void)
      * Per rivedere la scrivania bisogna riavviare, e finche' e' cosi' quel
      * comando deve stare nel menu invece che in una console di testo che chi
      * e' nella grafica non sta guardando. */
-    ex_create("button", "Riavvia", EX_CHILD,
+    crea_voce("Riavvia",
             4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_RIAVVIA, 0);
-    ex_create("button", "Spegni", EX_CHILD,
+            g_menu, ID_RIAVVIA);
+    crea_voce("Spegni",
             4, 10 + (int)(riga + 6) * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_SPEGNI, 0);
+            g_menu, ID_SPEGNI);
 
     ex_default_proc(g_menu, EXM_PAINT, 0, 0);
 }
@@ -1311,8 +1354,62 @@ static void avvia(unsigned int n)
     }
 }
 
+/* Mette il fuoco sulla voce scelta del menu (lato = 0) o dell'elenco di lato. */
+static void voce_scegli(int lato)
+{
+    ExWindow fin = lato ? g_sotto : g_menu;
+
+    if (!fin) return;
+    if (lato) { if (g_sv_n > 0) ex_set_focus(g_sv[g_sv_sel]); }
+    else      { if (g_mv_n > 0) ex_set_focus(g_mv[g_mv_sel]); }
+    ex_activate(fin);
+    ex_default_proc(fin, EXM_PAINT, 0, 0);
+    ex_update(fin);
+}
+
+static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
+
+/* Un tasto arrivato al menu o all'elenco di lato. 1 se era per noi. */
+static int menu_tasto(unsigned int tasto)
+{
+    unsigned int k = tasto & KBD_KEY_MASK;
+    int lato = (g_sotto != 0 && g_sv_n > 0);
+
+    if (!g_menu || g_mv_n == 0) return 0;
+
+    if (k == KBD_K_DOWN || k == KBD_K_UP) {
+        int passo = (k == KBD_K_DOWN) ? 1 : -1;
+
+        if (lato) g_sv_sel = (g_sv_sel + passo + g_sv_n) % g_sv_n;
+        else      g_mv_sel = (g_mv_sel + passo + g_mv_n) % g_mv_n;
+        voce_scegli(lato);
+        return 1;
+    }
+    if (k == 27u || (lato && k == KBD_K_LEFT)) {
+        if (lato) { sotto_chiudi(); voce_scegli(0); }
+        else      menu_chiudi();
+        return 1;
+    }
+    if (k == '\n' || k == '\r' || k == ' ' || (!lato && k == KBD_K_RIGHT)) {
+        unsigned int id = lato ? g_sv_id[g_sv_sel] : g_mv_id[g_mv_sel];
+        int categoria = (!lato && id >= ID_CAT && id < ID_CAT + APP_MAX);
+
+        if (k == KBD_K_RIGHT && !categoria) return 1;   /* a destra non c'e' niente */
+        if (categoria && g_sotto && g_sotto_cat == id - ID_CAT) {
+            voce_scegli(1);                             /* e' gia' aperta: ci si entra */
+            return 1;
+        }
+        menu_proc(lato ? g_sotto : g_menu, EXM_COMMAND, id, 0);
+        if (categoria && g_sotto) { g_sv_sel = 0; voce_scegli(1); }
+        return 1;
+    }
+    return 0;
+}
+
 static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
+    if (msg == EXM_KEY && menu_tasto(wp)) return 0;
+
     if (msg == EXM_COMMAND) {
         /* ! UNA CATEGORIA NON CHIUDE IL MENU, LO ALLARGA, ed e' l'unica voce
          * che si comporta cosi'. Tutte le altre fanno qualcosa e se ne vanno;
@@ -1584,6 +1681,15 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
      * Enter pressed without reading must do nothing. A second Ctrl+Alt+Canc
      * within five seconds restarts from the window server, even while this
      * question is open. */
+    /* Il tasto Windows o Ctrl+Esc: il menu, con la prima voce gia' scelta
+     * perche' chi l'ha aperto coi tasti continuera' coi tasti. Premuto di
+     * nuovo, lo chiude. */
+    if (msg == EXM_SYSTEM && wp == 1) {
+        menu_apri();
+        if (g_menu) { g_da_tastiera = 1; g_mv_sel = 0; voce_scegli(0); }
+        return 0;
+    }
+
     if (msg == EXM_SYSTEM) {
         /* ! SHORT CAPTIONS: four buttons share the dialog's 420 pixels, and
          * «Esci dalla sessione» pushed «Annulla» out of it. The words go in
@@ -1650,6 +1756,10 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
  * --------------------------------------------------------------------------- */
 static ExWindow  g_scr = 0;
 static const char *g_sfondo = 0;
+
+/* L'intro all'avvio della scrivania (9 ottobre 2026): 1 = si suona. Si spegne
+ * con  suono_avvio = no  in pm.cfg. */
+static int g_suono_avvio = 1;
 
 static void desk_disegna(void);      /* the icons: see @PM-DESKTOP below */
 
@@ -2450,6 +2560,12 @@ static void sfondo_leggi_cfg(void)
             if (!strncmp(p, DISPOSIZIONI[k], strlen(DISPOSIZIONI[k])))
                 g_sfondo_modo = k;
     }
+    /* suono_avvio = no  spegne l'intro: e' l'unico modo, per ora, e sta nel
+     * profilo di chi e' entrato. Qualunque altra cosa la lascia accesa. */
+    if ((p = strstr(buf, "suono_avvio")) && (p = strchr(p, '='))) {
+        for (p++; *p == ' ' || *p == '\t'; p++) ;
+        g_suono_avvio = !(p[0] == 'n' && p[1] == 'o');
+    }
     p = strstr(buf, "sfondo");
     if (!p || !(p = strchr(p, '='))) return;
     p++;
@@ -2474,8 +2590,9 @@ static int sfondo_salva(void)
     fd = open(cfg, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return 0;
     n = snprintf(t, sizeof(t), "# pm: la scrivania. Lo riscrive Impostazioni.\n"
-                               "sfondo = %s\ndisposizione = %s\n",
-                 g_sfondo ? g_sfondo : "", DISPOSIZIONI[g_sfondo_modo]);
+                               "sfondo = %s\ndisposizione = %s\nsuono_avvio = %s\n",
+                 g_sfondo ? g_sfondo : "", DISPOSIZIONI[g_sfondo_modo],
+                 g_suono_avvio ? "si" : "no");
     if (write(fd, t, (unsigned int)n) != n) { close(fd); return 0; }
     close(fd);
     return 1;
@@ -2675,6 +2792,18 @@ int main(int argc, char **argv)
     ex_default_proc(g_barra, EXM_PAINT, 0, 0);
 
     printf("pm: scrivania attiva, %u applicazioni nel menu\n", g_app_n);
+
+    /* L'intro. La suona un altro processo (exsuono_avvia_file), quindi la
+     * scrivania non aspetta e non ne risente; se la scheda audio non c'e', o
+     * il file, non succede niente. */
+    if (g_suono_avvio) {
+        static const char *const intro[] = {
+            "/exwin/sound/intro_exos_benvenuto10s.wav",
+            "/cdrom/exwin/sound/intro_exos_benvenuto10s.wav"
+        };
+
+        if (exsuono_avvia_file(intro[0]) <= 0) (void)exsuono_avvia_file(intro[1]);
+    }
 
     /* =====================================================================
      * ! L'AVVIO AUTOMATICO PARTE QUANDO LA SCRIVANIA E' PRONTA, NON PRIMA.

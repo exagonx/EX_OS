@@ -3977,6 +3977,13 @@ int shell_main(int argc, char **argv, char **envp)
         n = riga_modifica(line, MAX_LINE);
         if (n < 0) {
             n = sh_read(STDIN, line, MAX_LINE - 1);
+            /* ! ZERO E' LA FINE DEI DATI, NON UNA RIGA VUOTA (8 ottobre 2026):
+             * una riga vuota arriva col suo a capo, cioe' lunga uno. Dietro
+             * una pipe o uno pseudo-terminale vuol dire che dall'altra parte
+             * non c'e' piu' nessuno, e la shell deve uscire. Prima girava
+             * qui per sempre: ogni sessione telnet chiusa lasciava una shell
+             * viva col suo pty, e alla quinta telnetd non ne aveva piu'. */
+            if (n == 0 && !stdin_e_console()) break;
             if (n <= 0) {
                 sh_yield();
                 continue;

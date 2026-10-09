@@ -569,64 +569,47 @@ static void vga_scroll(Console *c)
 {
     uint16_t blank = vga_make_entry(' ', c->colore);
     uint32_t i;
+    /* ! ONLY THE VISIBLE CONSOLE TOUCHES THE SCREEN: a shell on another
+     * console reaching its last line must not move what is shown. Its cells
+     * are updated here and it is drawn whole when it becomes visible. */
+    int      disegna = (g_fb != 0) && e_visibile(c);
+
+    /* =========================================================================
+     * ! IN GRAFICA NON SI LEGGE MAI DALLO SCHERMO (8 ottobre 2026).
+     *
+     * Fino a ieri lo scorrimento copiava la memoria video su se stessa, una
+     * riga di celle piu' in su: «una copia sola». Ma quella copia LEGGE dalla
+     * scheda, e leggere dalla memoria video e' la cosa piu' lenta che una
+     * macchina sappia fare: misurato con fbprova sul PC di prova (Core 2 Quad,
+     * video integrato NVIDIA, 1024x768x32) sono 28 MB/s contro 10.000 della
+     * RAM, cioe' un decimo di secondo PER OGNI RIGA che scorre. Era la console
+     * «piuttosto lenta» di chi l'ha guardata.
+     *
+     * E ridisegnare tutto, il primo tentativo di allora, sono mezzo milione di
+     * scritture a riga. La strada giusta sta in mezzo: le celle le abbiamo in
+     * RAM, quindi si sa cosa c'e' sullo schermo SENZA guardarlo. Dopo lo
+     * scorrimento la cella i deve mostrare quel che mostrava la cella sotto:
+     * si ridisegna solo dove le due sono diverse. Su una schermata di testo,
+     * fatta di spazi e di righe che si somigliano, sono poche celle su
+     * seimila, e sono tutte scritture.
+     * ========================================================================= */
+    if (disegna) disegna_cursore(c, 0);     /* finche' e' ancora al suo posto */
 
     for (i = 0; i < (g_righe - 1) * g_cols; i++) {
-        c->cella[i] = c->cella[i + g_cols];
+        uint16_t sotto = c->cella[i + g_cols];
+
+        if (disegna && c->cella[i] != sotto) disegna_cella(i, sotto);
+        c->cella[i] = sotto;
     }
     for (i = (g_righe - 1) * g_cols; i < g_totale; i++) {
+        if (disegna && c->cella[i] != blank) disegna_cella(i, blank);
         c->cella[i] = blank;
     }
 
     c->row = g_righe - 1;
 
-    /* ! ONLY THE VISIBLE CONSOLE MOVES THE FRAMEBUFFER. This check was
-     * missing — every other path here (riversa_cella, riversa_tutto, the
-     * cursor) had it — so ANY console reaching its last line scrolled the
-     * screen, whoever was on it: a shell on Alt+F1 printing behind the
-     * desktop pushed the windows up a row per line, and painted its own
-     * bottom row over them. The cells above are already updated; the
-     * console is drawn whole when it becomes visible. */
     if (!e_visibile(c)) return;
-
-    /* ! IN GRAFICA NON SI RIDISEGNA TUTTO, SI FA SCORRERE IL FRAMEBUFFER.
-     *
-     * riversa_tutto() a 100x37 vuol dire 3700 celle per 128 pixel ciascuna,
-     * cioe' quasi mezzo milione di scritture — e sono scritture in memoria
-     * VIDEO, non in RAM: non passano dalla cache e su una scheda vera vanno
-     * sul bus una per una. Il primo tentativo faceva esattamente questo, e
-     * il sistema arrivava al prompt in decine di secondi invece che subito.
-     *
-     * Far scorrere la memoria video di una riga di celle costa una copia
-     * sola, in blocchi da 32 bit, piu' l'ultima riga da ridipingere. E'
-     * lo stesso lavoro che in modo testo fa la scheda per conto suo. */
     if (g_fb) {
-        uint32_t riga_px = (uint32_t)CELLA_H * g_fb_pitch;
-        uint32_t alte    = (g_righe - 1) * riga_px;
-        uint32_t *d = (uint32_t *)g_fb;
-        uint32_t *o = (uint32_t *)(g_fb + riga_px);
-        uint32_t  n = alte >> 2, k;
-
-        /* =====================================================================
-         * ! IL CURSORE SI CANCELLA PRIMA DI FAR SCORRERE, non si dichiara
-         * sparito dopo.
-         *
-         * Qui c'era solo `g_cur_disegnato = 0` in fondo, che vuol dire «non c'e'
-         * nessun cursore da cancellare». Ma la copia qui sotto sposta i PIXEL, e
-         * i pixel del cursore erano gia' sullo schermo: salivano insieme al
-         * resto e restavano li' per sempre. Il risultato era un trattino basso
-         * in coda a OGNI riga scorsa — segnalato guardando la console d'avvio,
-         * dove le righe scorrono a decine.
-         *
-         * ! E NON SI RIPARA TOGLIENDO IL CURSORE: quel trattino e' il cursore, e
-         * senza non si vede piu' dove si sta scrivendo. Si ripara cancellandolo
-         * mentre e' ancora suo, cioe' adesso.
-         * ===================================================================== */
-        disegna_cursore(c, 0);
-
-        for (k = 0; k < n; k++) d[k] = o[k];
-
-        for (i = (g_righe - 1) * g_cols; i < g_totale; i++)
-            disegna_cella(i, c->cella[i]);
         g_cur_disegnato = 0;
         return;
     }
@@ -969,6 +952,10 @@ void vga_init_grafica(const BootInfo *info)
                         "resto in modo testo", info->fb_addr);
         return;
     }
+    /* Scrivere a raffica nella memoria video, dove il BIOS non l'ha gia'
+     * disposto: rinuncia da solo, e lo dice nel log, se qualcosa non torna.
+     * Vedi mtrr.c; si legge con `dmesg MTRR`. */
+    (void)mtrr_framebuffer_wc(info->fb_addr, byte_tot);
     (void)a;
 
     g_fb       = (uint8_t *)info->fb_addr;
@@ -1116,6 +1103,12 @@ void vga_putchar(char c)
      * è quello che passa di qui. */
     serial_putchar(c);
     putchar_su(SISTEMA, c);
+}
+
+/* Solo sulla seriale, senza toccare nessuna console: vedi sys_log. */
+void vga_solo_seriale(char c)
+{
+    serial_putchar(c);
 }
 
 void vga_putchar_su(uint32_t n, char c)

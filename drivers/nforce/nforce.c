@@ -49,7 +49,7 @@
 #include "net_proto.h"
 
 /* +0.001 a ogni modifica: `nforce.drv -version` la stampa. */
-EX_VERSIONE("nforce.drv", "0.001");
+EX_VERSIONE("nforce.drv", "0.009");
 
 #define NV_VENDITORE      0x10DE
 #define NV_MMIO_BYTE      0x1000u
@@ -107,12 +107,17 @@ EX_VERSIONE("nforce.drv", "0.001");
 #define MISC1_MEZZO       0x02u       /* half duplex */
 #define TXC_AVVIA         0x01u
 #define TXC_GESTIONE      0x40000000u /* l'unita' di gestione e' attiva */
+#define TXC_SINCRO         0x000F0000u /* a che punto e' l'unita' di gestione */
+#define TXC_SINCRO_PHY     0x00040000u /* ...ha gia' preparato lei il PHY */
+#define TXC_OSPITE         0x00004000u /* «il driver del sistema e' caricato» */
 #define TXS_OCCUPATO      0x01u
 #define FILTRO_SEMPRE     0x7F0000u
 #define FILTRO_PROMISCUO  0x80u
 #define RXC_AVVIA         0x01u
 #define RXS_OCCUPATO      0x01u
 #define SLOT_PREDEF       0x00007F00u
+#define SLOT_MASCHERA      0x0003FF00u
+#define SLOT_1000          0x0003FF00u /* a un gigabit il tempo di slot e' un altro */
 #define TX_RINVIO_PREDEF  0x15050Fu
 #define TX_RINVIO_RG_100  0x16070Fu
 #define TX_RINVIO_RG_1000 0x14050Fu
@@ -173,11 +178,18 @@ EX_VERSIONE("nforce.drv", "0.001");
 #define MII_1000_CTRL     9
 #define MII_1000_STATO    10
 #define BMCR_NEGOZIA      0x1000
+#define BMCR_SPENTO        0x0800      /* il PHY e' a riposo */
+#define BMCR_ISOLATO       0x0400      /* staccato dal MAC */
 #define BMCR_RIPARTI      0x0200
 #define BMSR_LINK         0x0004
 
+/* ! L'ANELLO DI TRASMISSIONE NON PUO' ESSERE PICCOLO (8 ottobre 2026). Con 8
+ * descrittori la scheda riceveva e non trasmetteva MAI: i descrittori
+ * restavano «da mandare» e dhcp non aveva risposta. Dichiarandone 64, sul PC
+ * di prova (MCP73), partono. 64 e' anche il minimo che il driver di
+ * riferimento accetta; quello di ricezione, a 32, funziona. */
 #define RX_N              32
-#define TX_N              8
+#define TX_N              64
 #define BUF_LEN           2048
 #define RX_CHIEDI         1536        /* quanto diciamo alla scheda di accettare */
 
@@ -233,6 +245,15 @@ static unsigned int   g_battiti_link = 0;
 
 static NetContatori   g_cont;
 static int            g_verboso = 0;
+static unsigned int   g_per_noi = 0;        /* frame arrivati al nostro indirizzo */
+static int            g_phy_realtek = 0;    /* -r */
+static int            g_senza_reset = 0;    /* -n */
+
+/* -w e -y: scritture in piu', fatte a scheda pronta e prima di avviarla.
+ * Servono a provare un valore da lontano senza rifare il driver. */
+#define IN_PIU_N 8
+static unsigned int   g_w_reg[IN_PIU_N], g_w_val[IN_PIU_N], g_w_n = 0;
+static unsigned int   g_y_reg[IN_PIU_N], g_y_val[IN_PIU_N], g_y_n = 0;
 
 static unsigned char  g_coda[CODA_N][NET_FRAME_MAX];
 static unsigned int   g_coda_len[CODA_N];
@@ -268,17 +289,31 @@ static unsigned char *tx_buf(unsigned int i) { return (unsigned char *)(g_dma_vi
 static unsigned int rx_buf_fis(unsigned int i) { return g_dma_fis + OFF_RX_BUF + i * BUF_LEN; }
 static unsigned int tx_buf_fis(unsigned int i) { return g_dma_fis + OFF_TX_BUF + i * BUF_LEN; }
 
+/* ! LE ATTESE BREVI NON SI FANNO CON usleep() (8 ottobre 2026). usleep(100)
+ * non dura cento microsecondi: il sistema dorme a battiti da dieci
+ * millisecondi, e un ciclo «fino a 20 ms, a passi di 100 us» ne durava
+ * duemila. L'accensione della scheda prendeva piu' di dieci secondi, e ip.drv
+ * ne aspetta dieci: la scheda in prova da sola andava, e all'avvio dhcp non
+ * trovava nessuno. Una pausa breve e' qualche lettura di un registro; una
+ * scadenza si misura con l'orologio. */
+static void attimo(void)
+{
+    volatile unsigned int i;
+
+    for (i = 0; i < 200; i++) (void)reg_leggi(R_IRQ_STATO);
+}
+
 /* Aspetta che (registro & maschera) valga `atteso`. 0 se e' successo. */
 static int aspetta_reg(unsigned int off, unsigned int maschera, unsigned int atteso,
                        unsigned int ms)
 {
-    unsigned int i;
+    unsigned int t0 = uptime_ms();
 
-    for (i = 0; i < ms * 10; i++) {
+    for (;;) {
         if ((reg_leggi(off) & maschera) == atteso) return 0;
-        usleep(100);
+        if (uptime_ms() - t0 > ms + 10u) return -1;     /* +10: un battito intero */
+        attimo();
     }
-    return -1;
 }
 
 /* -----------------------------------------------------------------------------
@@ -291,7 +326,7 @@ static int mii(unsigned int phy, unsigned int reg, int scrivi, unsigned int valo
     reg_scrivi(R_MII_STATO, MII_ST_LETTURA);
     if (reg_leggi(R_MII_CONTROLLO) & MII_C_IN_USO) {
         reg_scrivi(R_MII_CONTROLLO, MII_C_IN_USO);
-        usleep(100);
+        attimo();
     }
 
     c = (phy << 5) | reg;
@@ -368,6 +403,12 @@ static int link_aggiorna(void)
     if (phyreg & PHY_RGMII) rinvio = (vel == 1000) ? TX_RINVIO_RG_1000 : TX_RINVIO_RG_100;
     else                    rinvio = TX_RINVIO_PREDEF;
     reg_scrivi(R_TX_RINVIO, rinvio);
+
+    /* ! A UN GIGABIT IL TEMPO DI SLOT CAMBIA (8 ottobre 2026). Sul PC di prova
+     * il PHY negozia 1000 Mbit pieni e il link e' su, ma dhcp non riceve
+     * niente: questo registro restava al valore di 10 e 100. */
+    reg_scrivi(R_SLOT, (reg_leggi(R_SLOT) & ~SLOT_MASCHERA) |
+                       (vel == 1000 ? SLOT_1000 : SLOT_PREDEF));
     reg_scrivi(R_TX_SOGLIA, vel == 1000 ? SOGLIA_1000 : SOGLIA_PREDEF);
 
     reg_scrivi(R_MISC1, MISC1_FORZA | (pieno ? 0 : MISC1_MEZZO));
@@ -418,7 +459,7 @@ static void ferma(void)
 
     reg_scrivi(R_TXRX, TXRX_BIT2 | TXRX_RESET | TXRX_DESC_3);
     spingi();
-    usleep(100);
+    attimo();
     reg_scrivi(R_TXRX, TXRX_BIT2 | TXRX_DESC_3);
     spingi();
 }
@@ -463,7 +504,13 @@ static int inizializza_scheda(void)
     reg_scrivi(R_ALIMENTAZIONE2, reg_leggi(R_ALIMENTAZIONE2) & ~ALIM2_ACCENDI);
     spingi();
 
-    gestione = (reg_leggi(R_TX_CONTROLLO) & TXC_GESTIONE) != 0;
+    /* ! IL BIT 30 DA SOLO NON BASTA (8 ottobre 2026). Sul PC di prova il BIOS
+     * lascia 40000000: l'unita' di gestione esiste, ma non ha preso lei il
+     * PHY (i bit di sincronia sono a zero) e quindi non sta usando il MAC.
+     * Prenderlo per «in uso» faceva saltare il reset del MAC. */
+    v = reg_leggi(R_TX_CONTROLLO);
+    gestione = (v & TXC_GESTIONE) && (v & TXC_SINCRO) == TXC_SINCRO_PHY;
+    if (g_senza_reset) gestione = 1;
     if (gestione)
         printf("nforce: c'e' un'unita' di gestione attiva sulla scheda: non "
                "resetto il MAC\n");
@@ -481,10 +528,10 @@ static int inizializza_scheda(void)
         spingi();
         reg_scrivi(R_MAC_RESET, MAC_RESET_SU);
         spingi();
-        usleep(100);
+        attimo();
         reg_scrivi(R_MAC_RESET, 0);
         spingi();
-        usleep(100);
+        attimo();
         reg_scrivi(R_MAC_A, a);
         reg_scrivi(R_MAC_B, b);
         reg_scrivi(R_TX_POLL, tp);
@@ -492,12 +539,23 @@ static int inizializza_scheda(void)
         spingi();
     }
 
-    reg_scrivi(R_MULTI_A, 0xFFFFFFFFu);
-    reg_scrivi(R_MULTI_B, 0xFFFFu);
-    reg_scrivi(R_MULTI_MASCH_A, 0xFFFFFFFFu);
-    reg_scrivi(R_MULTI_MASCH_B, 0xFFFFu);
+    /* ! IL FILTRO PER INDIRIZZO VALE PER TUTTI I FRAME, ANCHE IN PROMISCUO
+     * (8 ottobre 2026). Qui c'erano indirizzo e maschera a tutti uno: «passa
+     * solo chi e' diretto a ff:ff:ff:ff:ff:ff». La scheda riceveva, e nella
+     * prova i conteggi salivano, ma erano solo i broadcast della rete: la
+     * risposta del server DHCP, che arriva indirizzata ALLA SCHEDA, veniva
+     * scartata, e dhcp non andava avanti. Misurato sul PC di prova cambiando
+     * questi quattro registri con -w: da una trentina di frame in cinque
+     * secondi a una cinquantina. Maschera a zero = nessun bit si confronta;
+     * il bit basso dell'indirizzo e' quello che il chip vuole sempre acceso. */
+    reg_scrivi(R_MULTI_A, 0x00000001u);
+    reg_scrivi(R_MULTI_B, 0);
+    reg_scrivi(R_MULTI_MASCH_A, 0);
+    reg_scrivi(R_MULTI_MASCH_B, 0);
     reg_scrivi(R_FILTRO, 0);
-    reg_scrivi(R_TX_CONTROLLO, reg_leggi(R_TX_CONTROLLO) & TXC_GESTIONE);
+    /* ! «IL DRIVER E' CARICATO»: senza questo bit l'unita' di gestione non
+     * lascia il percorso dei dati al sistema. */
+    reg_scrivi(R_TX_CONTROLLO, (reg_leggi(R_TX_CONTROLLO) & TXC_GESTIONE) | TXC_OSPITE);
     reg_scrivi(R_RX_CONTROLLO, 0);
     reg_scrivi(R_ADATTATORE, 0);
 
@@ -539,6 +597,30 @@ static int inizializza_scheda(void)
         int bmsr;
 
         reg_scrivi(R_ADATTATORE, (g_phy << 24) | ADATT_PHY_VALIDO | ADATT_IN_FUNZIONE);
+        if (g_phy_realtek) {
+            /* La preparazione che il driver di riferimento fa a un Realtek
+             * RTL8211B collegato in RGMII. Qui a richiesta (-r): i valori
+             * sono scritti a memoria e vanno confermati dalla scheda. */
+            static const unsigned short passi[][2] = {
+                { 0x1F, 0x0000 }, { 0x19, 0x8E00 }, { 0x1F, 0x0001 }, { 0x13, 0xAD17 },
+                { 0x14, 0xFB54 }, { 0x18, 0xF5C7 }, { 0x1F, 0x0000 },
+            };
+            unsigned int k;
+
+            for (k = 0; k < sizeof(passi) / sizeof(passi[0]); k++)
+                mii(g_phy, passi[k][0], 1, passi[k][1]);
+            mii(g_phy, MII_BMCR, 1, BMCR_NEGOZIA | BMCR_RIPARTI);
+            printf("nforce: PHY Realtek preparato (-r), rinegozio\n");
+            usleep(300000);
+        }
+        {
+            unsigned int k;
+
+            for (k = 0; k < g_y_n; k++) {
+                mii(g_phy, g_y_reg[k], 1, g_y_val[k]);
+                printf("nforce: PHY registro %u <- %04x\n", g_y_reg[k], g_y_val[k]);
+            }
+        }
         (void)mii(g_phy, MII_BMSR, 0, 0);
         bmsr = mii(g_phy, MII_BMSR, 0, 0);
         if (bmsr >= 0 && !(bmsr & BMSR_LINK)) {
@@ -549,7 +631,18 @@ static int inizializza_scheda(void)
             if (bmcr >= 0) {
                 int t;
 
-                if (g_verboso) printf("nforce: niente link, rilancio la negoziazione\n");
+                /* ! UN PHY A RIPOSO NON NEGOZIA (8 ottobre 2026). Un BIOS che
+                 * non avvia dalla rete lo lascia spesso spento o isolato: i
+                 * due bit vanno tolti, o «rilancia» non rilancia niente. E se
+                 * non annuncia nessuna velocita', gli si dicono le quattro di
+                 * base (10 e 100, mezzo e pieno). */
+                int ann = mii(g_phy, MII_ANNUNCIO, 0, 0);
+
+                printf("nforce: niente link (BMCR %04x): sveglio il PHY e rilancio la "
+                       "negoziazione\n", bmcr);
+                if (ann >= 0 && (ann & 0x01E0) == 0)
+                    mii(g_phy, MII_ANNUNCIO, 1, (unsigned int)ann | 0x01E1);
+                bmcr &= ~(BMCR_SPENTO | BMCR_ISOLATO);
                 mii(g_phy, MII_BMCR, 1, (unsigned int)bmcr | BMCR_NEGOZIA | BMCR_RIPARTI);
                 for (t = 0; t < 40; t++) {
                     usleep(100000);
@@ -564,13 +657,21 @@ static int inizializza_scheda(void)
     v = reg_leggi(R_ALIMENTAZIONE);
     if (!(v & ALIM_ACCESO)) reg_scrivi(R_ALIMENTAZIONE, v | ALIM_ACCESO);
     spingi();
-    usleep(100);
+    attimo();
     reg_scrivi(R_ALIMENTAZIONE, reg_leggi(R_ALIMENTAZIONE) | ALIM_VALIDO);
 
     reg_scrivi(R_FILTRO, FILTRO_SEMPRE | FILTRO_PROMISCUO);
 
     g_link = -1;                            /* cosi' il primo aggiornamento scrive */
     link_aggiorna();
+    {
+        unsigned int k;
+
+        for (k = 0; k < g_w_n; k++) {
+            reg_scrivi(g_w_reg[k], g_w_val[k]);
+            printf("nforce: registro %03x <- %08x\n", g_w_reg[k], g_w_val[k]);
+        }
+    }
 
     reg_scrivi(R_RX_CONTROLLO, reg_leggi(R_RX_CONTROLLO) | RXC_AVVIA);
     spingi();
@@ -620,6 +721,7 @@ static void svuota_rx(void)
             }
         }
         if (buono && len >= 14 && len <= NET_FRAME_MAX) {
+            if (memcmp(rx_buf(g_rx_qui), g_mac, 6) == 0) g_per_noi++;
             accoda(rx_buf(g_rx_qui), len);
             g_cont.ricevuti++;
         } else {
@@ -642,13 +744,13 @@ static int trasmetti(const unsigned char *f, unsigned int len)
     if (len > NET_MTU + 14) return -1;
 
     d = tx_desc(g_tx_prossimo);
-    for (i = 0; i < 2000; i++) {            /* fino a 200 ms */
-        if (!(d[D_FLAG / 4] & TX_DA_MANDARE)) break;
-        usleep(100);
-    }
-    if (i == 2000) {
-        g_cont.errori_tx++;
-        return -1;
+    i = uptime_ms();
+    while (d[D_FLAG / 4] & TX_DA_MANDARE) { /* fino a 200 ms */
+        if (uptime_ms() - i > 200u) {
+            g_cont.errori_tx++;
+            return -1;
+        }
+        attimo();
     }
 
     memcpy(tx_buf(g_tx_prossimo), f, len);
@@ -800,7 +902,8 @@ static void stampa_registri(void)
     static const struct { unsigned int off; const char *nome; } r[] = {
         { R_IRQ_STATO, "irq stato" }, { R_MISC1, "misc1" },
         { R_TX_CONTROLLO, "tx controllo" }, { R_TX_STATO, "tx stato" },
-        { R_FILTRO, "filtro" }, { R_RX_CONTROLLO, "rx controllo" },
+        { R_FILTRO, "filtro" }, { R_OFFLOAD, "rx misura" }, { R_RX_CONTROLLO, "rx controllo" },
+        { R_SLOT, "slot" }, { R_TX_RINVIO, "tx rinvio" }, { R_TX_SOGLIA, "tx soglia" },
         { R_RX_STATO, "rx stato" }, { R_MAC_A, "mac A" }, { R_MAC_B, "mac B" },
         { R_PHY_INTERF, "phy interf" }, { R_TX_ANELLO, "anello tx" },
         { R_RX_ANELLO, "anello rx" }, { R_MISURE, "misure" },
@@ -813,6 +916,127 @@ static void stampa_registri(void)
 
     for (i = 0; i < sizeof(r) / sizeof(r[0]); i++)
         printf("  %03x %-14s %08x\n", r[i].off, r[i].nome, reg_leggi(r[i].off));
+}
+
+/* Il PHY, letto dal filo di gestione: e' li' che sta scritto se il cavo c'e'.
+ * BMSR si legge due volte perche' il bit del link e' «a ritenuta». */
+static void stampa_phy(void)
+{
+    int bmcr, bmsr;
+
+    if (phy_cerca() != 0) {
+        printf("  PHY: nessuno risponde sul filo di gestione\n");
+        return;
+    }
+    bmcr = mii(g_phy, MII_BMCR, 0, 0);
+    (void)mii(g_phy, MII_BMSR, 0, 0);
+    bmsr = mii(g_phy, MII_BMSR, 0, 0);
+    printf("  PHY %u  identita' %04x:%04x\n", g_phy,
+           mii(g_phy, MII_ID1, 0, 0) & 0xFFFF, mii(g_phy, MII_ID2, 0, 0) & 0xFFFF);
+    printf("  PHY controllo %04x  stato %04x  annuncio %04x  compagno %04x  1000: %04x %04x\n",
+           bmcr & 0xFFFF, bmsr & 0xFFFF,
+           mii(g_phy, MII_ANNUNCIO, 0, 0) & 0xFFFF, mii(g_phy, MII_COMPAGNO, 0, 0) & 0xFFFF,
+           mii(g_phy, MII_1000_CTRL, 0, 0) & 0xFFFF, mii(g_phy, MII_1000_STATO, 0, 0) & 0xFFFF);
+    printf("  link: %s%s%s\n", (bmsr >= 0 && (bmsr & BMSR_LINK)) ? "SU" : "GIU' (cavo? switch?)",
+           (bmcr >= 0 && (bmcr & BMCR_SPENTO)) ? ", PHY A RIPOSO" : "",
+           (bmcr >= 0 && (bmcr & BMCR_ISOLATO)) ? ", PHY ISOLATO" : "");
+}
+
+/* I conteggi del driver che sta girando, se ce n'e' uno: dicono se i frame
+ * escono (inviati), se ne arrivano (ricevuti), e dove si perdono. */
+static void stampa_conteggi(void)
+{
+    IpcMessage    meta;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    NetContatori  c;
+    int           pid = ipc_lookup(NET_SERVIZIO_0), t;
+
+    if (pid <= 0) {
+        printf("  conteggi: nessun driver di rete in servizio adesso\n");
+        return;
+    }
+    /* ! DI CHI SONO, PRIMA DI TUTTO. Con due schede il driver in servizio
+     * puo' essere quello dell'altra, e i suoi conteggi non dicono niente di
+     * questa. */
+    if (ipc_send(pid, NET_MSG_INFO, 0, 0) >= 0) {
+        for (t = 0; t < 8; t++) {
+            NetStato st;
+
+            if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0) break;
+            if ((int)meta.sender_pid != pid || meta.tipo != NET_MSG_STATO) continue;
+            if (meta.len < sizeof(st)) break;
+            memcpy(&st, buf, sizeof(st));
+            st.modello[sizeof(st.modello) - 1] = 0;
+            printf("  in servizio c'e': %s%s\n", st.modello,
+                   strstr(st.modello, "nForce") ? "" : "  (NON QUESTA SCHEDA)");
+            break;
+        }
+    }
+    if (ipc_send(pid, NET_MSG_CONTATORI, 0, 0) < 0) return;
+    for (t = 0; t < 8; t++) {
+        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0) break;
+        if ((int)meta.sender_pid != pid || meta.tipo != NET_MSG_CONTEGGI) continue;
+        if (meta.len < sizeof(c)) break;
+        memcpy(&c, buf, sizeof(c));
+        printf("  conteggi: inviati %u (errori %u), ricevuti %u (errori %u), "
+               "persi in coda %u, giri %u\n", c.inviati, c.errori_tx, c.ricevuti,
+               c.errori_rx, c.persi_coda, c.battiti);
+        return;
+    }
+    printf("  conteggi: il driver in servizio non risponde\n");
+}
+
+/* -p: la prova da sola. Accende la scheda SENZA mettersi in servizio, per
+ * cinque secondi manda una domanda ARP a tutti ogni mezzo secondo e conta
+ * quel che arriva. Si puo' lanciare mentre un'altra scheda tiene la rete: e'
+ * cosi' che la si prova da lontano. */
+static void prova_da_sola(void)
+{
+    unsigned char f[60];
+    unsigned int  i, giri;
+
+    memset(f, 0, sizeof(f));
+    memset(f, 0xFF, 6);                         /* a tutti */
+    memcpy(f + 6, g_mac, 6);
+    f[12] = 0x08; f[13] = 0x06;                 /* ARP */
+    f[15] = 0x01; f[16] = 0x08; f[18] = 6; f[19] = 4; f[21] = 0x01;
+    memcpy(f + 22, g_mac, 6);
+    f[38] = 192; f[39] = 168; f[40] = 0; f[41] = 1;
+
+    printf("nforce: prova di 5 secondi (una domanda ARP ogni mezzo secondo)\n");
+    for (giri = 0; giri < 250; giri++) {
+        if (giri % 25 == 0) {
+            int r = trasmetti(f, sizeof(f));
+
+            if (r != 0) printf("nforce: la trasmissione %u non parte\n", giri / 25);
+        }
+        usleep(PERIODO_MS * 1000);
+        g_cont.battiti++;
+        servi_scheda();
+        g_coda_conta = 0;                       /* nessuno li legge: si contano e basta */
+    }
+
+    printf("nforce: inviati %u (errori %u), ricevuti %u (errori %u), di cui %u "
+           "diretti a questa scheda\n", g_cont.inviati, g_cont.errori_tx,
+           g_cont.ricevuti, g_cont.errori_rx, g_per_noi);
+    for (i = 0; i < 8; i++)
+        printf("%s%08x", i ? " " : "  tx flag: ", tx_desc(i)[D_FLAG / 4]);
+    printf("\n");
+    for (i = 0; i < 8; i++)
+        printf("%s%08x", i ? " " : "  rx flag: ", rx_desc(i)[D_FLAG / 4]);
+    printf("\n");
+    stampa_registri();
+    printf("nforce: %s\n", (tx_desc(0)[D_FLAG / 4] & TX_DA_MANDARE)
+           ? "NON TRASMETTE: il primo descrittore e' ancora da mandare."
+           : "TRASMETTE.");
+    printf("nforce: %s\n",
+           g_cont.ricevuti ? "RICEVE." :
+           "NON RICEVE NIENTE (su una rete viva in 5 secondi qualcosa passa).");
+    if (g_cont.ricevuti && g_per_noi == 0)
+        printf("nforce: MA NIENTE DI DIRETTO A LEI: se il router ha risposto alle\n"
+               "        domande ARP, il filtro per indirizzo lo sta scartando.\n");
+    ferma();
+    reg_scrivi(R_TX_CONTROLLO, reg_leggi(R_TX_CONTROLLO) & ~TXC_OSPITE);
 }
 
 static void stampa_stato(void)
@@ -890,13 +1114,22 @@ static void uso(void)
     printf("uso: /dev/nforce.drv [-i] [-d] [-v]\n");
     printf("  (nessuna opzione)  si aggancia alla scheda e resta in servizio\n");
     printf("  -i                 la sonda: dice se c'e' e basta\n");
-    printf("  -d                 stampa i registri com'e' adesso, senza toccarli\n");
+    printf("  -d                 registri, PHY e conteggi com'e' adesso: e' la\n");
+    printf("                     schermata da mandare quando la rete non va\n");
     printf("  -v                 racconta ogni passo dell'accensione\n");
+    printf("  -l                 dice se il cavo c'e' (esce con 0) o no (1), e basta:\n");
+    printf("                     lo usa netdetect per scegliere fra due schede\n");
+    printf("  -p                 la prova da sola: accende, trasmette e conta per\n");
+    printf("                     5 secondi senza mettersi in servizio\n");
+    printf("  -r                 prepara il PHY Realtek RTL8211B prima di negoziare\n");
+    printf("  -n                 non resetta il MAC\n");
+    printf("  -w REG=VAL         scrive un registro (esadecimali) prima di avviare\n");
+    printf("  -y REG=VAL         scrive un registro del PHY (esadecimali)\n");
 }
 
 int main(int argc, char **argv)
 {
-    int sonda = 0, registri = 0, i, rc;
+    int sonda = 0, registri = 0, prova = 0, solo_link = 0, i, rc;
     DmaZona z;
     MmioZona m;
 
@@ -904,6 +1137,27 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-i") == 0)      sonda = 1;
         else if (strcmp(argv[i], "-d") == 0) registri = 1;
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
+        else if (strcmp(argv[i], "-p") == 0) prova = 1;
+        else if (strcmp(argv[i], "-l") == 0) solo_link = 1;
+        else if (strcmp(argv[i], "-r") == 0) g_phy_realtek = 1;
+        else if (strcmp(argv[i], "-n") == 0) g_senza_reset = 1;
+        else if ((strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "-y") == 0) && i + 1 < argc) {
+            int   phy = argv[i][1] == 'y';
+            char *u = strchr(argv[i + 1], '=');
+            unsigned int r, val;
+
+            if (u == NULL) { uso(); return 2; }
+            r   = (unsigned int)strtoul(argv[i + 1], NULL, 16);
+            val = (unsigned int)strtoul(u + 1, NULL, 16);
+            if (phy) {
+                if (g_y_n == IN_PIU_N || r > 31) { uso(); return 2; }
+                g_y_reg[g_y_n] = r; g_y_val[g_y_n++] = val & 0xFFFF;
+            } else {
+                if (g_w_n == IN_PIU_N || r >= NV_MMIO_BYTE || (r & 3)) { uso(); return 2; }
+                g_w_reg[g_w_n] = r; g_w_val[g_w_n++] = val;
+            }
+            i++;
+        }
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
         else { uso(); return 2; }
     }
@@ -926,10 +1180,24 @@ int main(int argc, char **argv)
     }
     g_reg = (volatile unsigned char *)m.virt;
 
+    if (solo_link) {
+        int bmsr = -1;
+
+        if (phy_cerca() == 0) {
+            (void)mii(g_phy, MII_BMSR, 0, 0);
+            bmsr = mii(g_phy, MII_BMSR, 0, 0);
+        }
+        rc = (bmsr >= 0 && (bmsr & BMSR_LINK)) ? 0 : 1;
+        printf("nforce: link %s\n", rc == 0 ? "SU" : "GIU'");
+        return rc;
+    }
+
     if (registri) {
-        printf("nforce: registri a 0x%08x, come li ha lasciati chi e' venuto prima\n",
-               g_mmio_fis);
+        printf("nforce: %s, registri a 0x%08x, cosi' come sono adesso\n",
+               g_modello, g_mmio_fis);
         stampa_registri();
+        stampa_phy();
+        stampa_conteggi();
         return 0;
     }
 
@@ -954,10 +1222,20 @@ int main(int argc, char **argv)
     g_dma_fis  = z.fisico;
     memset((void *)g_dma_virt, 0, DMA_BYTE);
 
-    if (inizializza_scheda() != 0) return 1;
+    {
+        unsigned int t0 = uptime_ms();
+
+        if (inizializza_scheda() != 0) return 1;
+        printf("nforce: scheda accesa in %u ms\n", uptime_ms() - t0);
+    }
 
     stampa_stato();
     if (g_verboso) stampa_registri();
+
+    if (prova) {
+        prova_da_sola();
+        return 0;
+    }
 
     if (ipc_register(NET_SERVIZIO_0) < 0) {
         printf("nforce: non riesco a registrare il servizio '%s'\n", NET_SERVIZIO_0);

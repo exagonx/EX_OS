@@ -124,6 +124,19 @@ solo, tenendo da parte una copia <code>.bak</code> di quello di prima:
 e' la via breve al posto di scriverlo a mano.
 </p>
 
+<h2 id="dischi">I dischi: IDE e AHCI</h2>
+<p>
+I dischi si chiamano <code>hd0</code>..<code>hd3</code>, qualunque sia la
+strada per arrivarci: i due canali IDE di sempre, i canali IDE «nativi» di un
+controller PCI, oppure un controller <b>AHCI</b> (dal kernel 0.245). Un
+controller che si dichiara AHCI si usa cosi' fin dall'avvio. Un controller
+che offre lo stesso disco sia dai registri IDE sia dall'AHCI parte dai primi
+e passa all'AHCI dopo, con <code>ahci = 1</code> in
+<code>/boot/kernel.cfg</code> (lo scrive <code>install</code> quando vede che
+funziona) o col comando <code>ahci</code>. Che cosa ha fatto il kernel lo dice
+<code>dmesg AHCI</code>.
+</p>
+
 <h2 id="processori">Piu' di un processore</h2>
 
 <p>

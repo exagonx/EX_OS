@@ -1,0 +1,14 @@
+minimp3 - decodificatore MP3 in un file solo
+============================================
+
+Da dove viene:  https://github.com/lieff/minimp3  (ramo master, scaricato il
+9 ottobre 2026 con curl da raw.githubusercontent.com)
+Licenza:        CC0 1.0 (dominio pubblico) - il testo e' in LICENSE, qui accanto
+Chi lo usa:     bin/audio/mp3.c, per `audio file.mp3`
+
+NON E' CODICE DI EX-OS e non si modifica qui: e' copiato cosi' com'e'. Si
+compila con MINIMP3_NO_SIMD (il bersaglio e' un Pentium MMX: niente SSE) e
+MINIMP3_ONLY_MP3 (solo il layer III). Usa stdint.h, stdlib.h e string.h, e
+nessuna funzione di ingresso e uscita.
+
+Per aggiornarlo: riscaricare minimp3.h e LICENSE dallo stesso indirizzo.

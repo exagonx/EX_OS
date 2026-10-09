@@ -758,6 +758,8 @@ static unsigned kbd_nav_key(unsigned char sc)
         case 0x4F: return KBD_K_END;
         case 0x50: return KBD_K_DOWN;
         case 0x51: return KBD_K_PGDN;
+        case 0x5B: return KBD_K_WIN;    /* Windows sinistro */
+        case 0x5C: return KBD_K_WIN;    /* Windows destro */
         case 0x52: return KBD_K_INS;
         case 0x53: return KBD_K_DEL;
         default:   return 0;

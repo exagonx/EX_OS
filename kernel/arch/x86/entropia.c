@@ -354,7 +354,13 @@ int entropia_preleva(uint8_t *dst, uint32_t n)
      * resta — ed e' un no onesto. */
     if (g_bit < BIT_MINIMI) {
         int fatti = entropia_jitter(BIT_MINIMI * 8);
-        klog(LOG_ERROR, "ENTROPIA: jitter tsc=%d, %d bit stimati, ora %u",
+        /* ! NON E' UN ERRORE, E NON SI SCRIVE COME TALE (9 ottobre 2026). Era
+         * a livello ERROR per vederla comunque, e su una macchina senza RDRAND
+         * compariva in rosso sulla console alla prima connessione cifrata: chi
+         * la leggeva chiedeva che guasto fosse. Riuscita e' una notizia, e
+         * `dmesg ENTROPIA` la mostra; e' un avviso solo se non e' bastata. */
+        klog(g_bit >= BIT_MINIMI ? LOG_INFO : LOG_WARN,
+             "ENTROPIA: jitter tsc=%d, %d bit stimati, ora %u",
              tsc_c_e(), fatti, g_bit);
     }
 

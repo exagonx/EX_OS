@@ -36,6 +36,7 @@ extern void vga_putchar(char c);
 #include "power.h"     /* power_off/reboot/halt (SYS_REBOOT) */
 #include "fat12.h"
 #include "ata.h"
+#include "ahci.h"
 #include "mbr.h"
 #include "vol.h"
 #include "blk.h"
@@ -3317,6 +3318,32 @@ int32_t sys_cpu_info(InterruptFrame *frame)
     return 0;
 }
 
+/* I dischi all'AHCI per questa sessione: quel che fa `ahci = 1` in kernel.cfg,
+ * chiesto a macchina accesa. Solo l'amministratore. Rende quanti sono passati. */
+int32_t sys_ahci_passa(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+
+    if (self == NULL || self->uid != 0) return ERR(EPERM);
+    /* ebx = 1: guardare e basta, i registri nel log (sola lettura). */
+    if (frame->ebx == 1) return (int32_t)ahci_guarda();
+    /* ebx = 2: solo la domanda «si puo'? e' gia' fatto?» (sola lettura). */
+    if (frame->ebx == 2) return (int32_t)ata_ahci_stato();
+    return (int32_t)ata_passa_ad_ahci();
+}
+
+/* Il registro dei messaggi del kernel, per `dmesg`. Vedi kprintf.c. */
+int32_t sys_klog(InterruptFrame *frame)
+{
+    char    *dst  = (char *)frame->ebx;
+    uint32_t size = frame->ecx;
+
+    if (size == 0 || size > 65536u)     return ERR(EINVAL);
+    if (frame->edx > 1u)                return ERR(EINVAL);
+    if (!syscall_verify_ptr(dst, size)) return ERR(EFAULT);
+    return (int32_t)klog_copia(dst, size, (int)frame->edx);
+}
+
 int32_t sys_meminfo(InterruptFrame *frame)
 {
     MemInfo  *dst  = (MemInfo *)frame->ebx;
@@ -5294,9 +5321,15 @@ int32_t sys_log(InterruptFrame *frame)
         testa[k++] = ']';
         testa[k++] = ' ';
 
-        for (d = 0; d < k; d++) vga_putchar(testa[d]);
-        for (d = 0; d < len; d++) vga_putchar(buf[d]);
-        vga_putchar('\n');
+        /* ! SULLA SERIALE E NEL REGISTRO, NON A SCHERMO (9 ottobre 2026).
+         * Qui si usava vga_putchar(), che oltre alla seriale scrive sulla
+         * console di sistema: il diario dei programmi grafici — ogni foglio
+         * di stile del navigatore, ogni errore di uno script — restava sullo
+         * schermo di testo, e uscendo dalla grafica lo si trovava pieno di
+         * righe che sembravano guasti. Chi le vuole le legge con `dmesg`. */
+        for (d = 0; d < k; d++)   { vga_solo_seriale(testa[d]); klog_registra(testa[d]); }
+        for (d = 0; d < len; d++) { vga_solo_seriale(buf[d]);   klog_registra(buf[d]); }
+        vga_solo_seriale('\r'); vga_solo_seriale('\n'); klog_registra('\n');
     }
     return 0;
 }

@@ -63,6 +63,15 @@ static const ReteScheda g_note[] = {
 
     /* Famiglia NE2000 PCI: schede diverse, stessa programmazione */
     { 0x10EC, 0x8029, "Realtek RTL8029(AS) - NE2000 PCI",           "/dev/ne2k.drv"  },
+    /* Le Gigabit PCI di Realtek: gli stessi numeri di g_modelli in
+     * drivers/rtl8169/rtl8169.c. Non le 8168/8111 su PCI Express.
+     * Provata sul ferro la RTL8169SC (8 ottobre 2026). */
+    { 0x10EC, 0x8169, "Realtek RTL8169/8110 Gigabit",               "/dev/rtl8169.drv" },
+    { 0x10EC, 0x8167, "Realtek RTL8169SC/8110SC Gigabit",           "/dev/rtl8169.drv" },
+    { 0x1186, 0x4300, "D-Link DGE-528T (RTL8169)",                  "/dev/rtl8169.drv" },
+    { 0x1259, 0xC107, "Allied Telesyn AT-2500TX (RTL8169)",         "/dev/rtl8169.drv" },
+    { 0x16EC, 0x0116, "U.S. Robotics USR997902 (RTL8169)",          "/dev/rtl8169.drv" },
+    { 0x1737, 0x1032, "Linksys EG1032 (RTL8169)",                   "/dev/rtl8169.drv" },
     { 0x1050, 0x0940, "Winbond W89C940 - NE2000 PCI",               "/dev/ne2k.drv"  },
     { 0x1106, 0x0926, "VIA VT86C926 Amazon - NE2000 PCI",           "/dev/ne2k.drv"  },
     { 0x8E2E, 0x3000, "KTI ET32P2 - NE2000 PCI",                    "/dev/ne2k.drv"  },

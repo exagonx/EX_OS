@@ -169,6 +169,21 @@ disco non porta a termine costa otto secondi di attesa. Vale dall'avvio in
 poi, non durante: questo file il kernel lo legge dal disco.
 
 -------------------------------------------------------------------------------
+ahci = 0                  (commentata per default)
+-------------------------------------------------------------------------------
+
+Riguarda i controller SATA che offrono lo stesso disco in due modi: dai
+registri IDE e dall'AHCI (certi chipset NVIDIA, per esempio). 0 (predefinito):
+il disco resta dove il kernel l'ha trovato all'avvio. 1: a questo file letto,
+il disco passa all'AHCI, che su quei controller e' la strada veloce. Prima di
+scriverlo si prova col comando `ahci`, che fa la stessa cosa per la sola
+sessione in corso: se qualcosa non va, un riavvio rimette tutto com'era; poi
+`ahci -s` scrive questa riga da se'. La scrive anche `install`, quando sulla
+macchina su cui installa vede il passaggio riuscire. `ahci -d` mostra i
+registri del controller senza toccare niente. I controller che si dichiarano
+AHCI non hanno bisogno di questa voce: si usano sempre.
+
+-------------------------------------------------------------------------------
 smp = 1                   (commentata per default)
 -------------------------------------------------------------------------------
 

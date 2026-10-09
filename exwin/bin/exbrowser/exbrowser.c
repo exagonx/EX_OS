@@ -173,6 +173,9 @@ static int cornici_da_caricare(void);     /* the iframes: see cornice_carica */
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
 EX_VERSIONE("exbrowser", VERSIONE_APP);
 
+/* Il diario: sul log del kernel, non sulla console. Definito piu' sotto. */
+static void diario(const char *fmt, ...);
+
 
 /* ! LA BARRA DEI MENU NON RESTRINGE L'AREA DEL CLIENT: il toolkit la mette in
  * cima e larga quanto la finestra, ma il posto glielo deve lasciare chi scrive
@@ -1117,7 +1120,7 @@ ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
     if (g_font[g_font_n].f) g_facce_si++;
     else {
         g_facce_no++;
-        printf("exbrowser: carattere NON aperto: %s corpo %d\n",
+        diario("exbrowser: carattere NON aperto: %s corpo %d\n",
                FACCIA[k], corpo);
     }
 
@@ -1311,6 +1314,24 @@ static int pezzo_vicino(int x, int y)
 }
 
 static void dico(const char *s);
+
+/* Il diario del navigatore: quale foglio, quale script, quale errore.
+ *
+ * ! VA SUL LOG DEL KERNEL, NON SULLA CONSOLE (9 ottobre 2026). Erano printf, e
+ * un programma grafico avviato dal menu eredita la console di testo: uscendo
+ * dalla grafica ci si trovava lo schermo pieno di «exbrowser: foglio ...» e di
+ * «TypeError» delle pagine visitate, che sembravano guasti del sistema. Sul
+ * log arrivano lo stesso alla seriale, dove le prove le leggono, e a `dmesg`. */
+static void diario(const char *fmt, ...)
+{
+    char riga[200];
+    __builtin_va_list ap;
+
+    __builtin_va_start(ap, fmt);
+    vsnprintf(riga, sizeof(riga), fmt, ap);
+    __builtin_va_end(ap);
+    log_seriale(riga);
+}
 
 static void selezione_copia(void)
 {
@@ -1775,7 +1796,7 @@ static void cache_pota(void)
         }
     }
 
-    printf("exbrowser: cache in %s - %u voci, %u KB", g_cache,
+    diario("exbrowser: cache in %s - %u voci, %u KB", g_cache,
            (unsigned int)n - (unsigned int)buttate, totale / 1024u);
     if (buttate) printf(", %d potate", buttate);
     printf("\n");
@@ -1816,11 +1837,11 @@ static void dati_trasloca(void)
     if (access(vecchia, F_OK) != 0) return;     /* nothing to move */
 
     if (rename(vecchia, nuova) == 0) {
-        printf("exbrowser: i dati del vecchio browser passano in %s\n", nuova);
+        diario("exbrowser: i dati del vecchio browser passano in %s\n", nuova);
         return;
     }
     g_app_nome = "/browser";
-    printf("exbrowser: non riesco a spostare %s (%s): la uso dov'e'\n",
+    diario("exbrowser: non riesco a spostare %s (%s): la uso dov'e'\n",
            vecchia, strerror(errno));
 }
 
@@ -1836,11 +1857,11 @@ static void cache_prepara(void)
     g_cache[0] = '\0';
 
     if (!casa || !casa[0]) {
-        printf("exbrowser: HOME non c'e', niente cache su disco.\n");
+        diario("exbrowser: HOME non c'e', niente cache su disco.\n");
         return;
     }
     if (strlen(casa) + 24 >= sizeof(p)) {
-        printf("exbrowser: HOME troppo lungo, niente cache su disco.\n");
+        diario("exbrowser: HOME troppo lungo, niente cache su disco.\n");
         return;
     }
 
@@ -1858,7 +1879,7 @@ static void cache_prepara(void)
     for (i = 0; i < 3; i++) {
         strncat(p, passi[i], sizeof(p) - strlen(p) - 1);
         if (mkdir(p, i == 2 ? 0700 : 0755) != 0 && errno != EEXIST) {
-            printf("exbrowser: niente cache in %s (%s), lavoro in memoria.\n",
+            diario("exbrowser: niente cache in %s (%s), lavoro in memoria.\n",
                    p, strerror(errno));
             return;
         }
@@ -1868,7 +1889,7 @@ static void cache_prepara(void)
     g_cache[sizeof(g_cache) - 1] = '\0';
 
     cache_pota();
-    printf("exbrowser: cache in %s\n", g_cache);
+    diario("exbrowser: cache in %s\n", g_cache);
 }
 
 
@@ -2829,7 +2850,7 @@ static void raccogli_css(void)
                 css_analizza(&g_css, (const char *)g_js_buf, n,
                          CSS_ORIGINE_FOGLIO);
                 /* like Firefox's network tab: which sheet, how big, what it gave */
-                printf("exbrowser: foglio %s: %u byte, %u regole\n", url, n,
+                diario("exbrowser: foglio %s: %u byte, %u regole\n", url, n,
                        g_css.regole_n - prima);
             }
             presi++;
@@ -3251,9 +3272,9 @@ static void js_grida(const ExJsErrore *e)
      * last one, and a page that fails in ten places shows the tenth. On
      * EX-OS a graphical program's output goes to the serial line, which is
      * where the tests read it. */
-    printf("exbrowser: %s\n", b);
+    diario("exbrowser: %s\n", b);
     if (g_js_chi) {
-        printf("exbrowser:    in %s\n", g_js_chi);
+        diario("exbrowser:    in %s\n", g_js_chi);
         if (g_js_testo && e->messaggio[0] == 'S') {       /* SyntaxError */
             char inizio[61];
             int  k;
@@ -3261,7 +3282,7 @@ static void js_grida(const ExJsErrore *e)
             for (k = 0; k < 60 && g_js_testo[k]; k++)
                 inizio[k] = (g_js_testo[k] >= 32 && g_js_testo[k] < 127) ? (char)g_js_testo[k] : '.';
             inizio[k] = '\0';
-            printf("exbrowser:    comincia con: %s\n", inizio);
+            diario("exbrowser:    comincia con: %s\n", inizio);
         }
     }
 }
@@ -4486,7 +4507,7 @@ static void cornice_carica(int k)
         e.byte = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
     } else if (!prendi_dalla_rete(url, &e) || !e_tipo_da_pagina(e.tipo)) {
-        printf("exbrowser: iframe %s: %s\n", url, e.errore[0] ? e.errore : "non e' una pagina");
+        diario("exbrowser: iframe %s: %s\n", url, e.errore[0] ? e.errore : "non e' una pagina");
         goto fine;
     }
     e.finale[sizeof(e.finale) - 1] = '\0';
@@ -4958,7 +4979,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     /* The iframes, now that the page is laid out and shown. */
     cornici_carica();
 
-    printf("exbrowser: tempi: rete %u ms in %u richieste, script %u ms, "
+    diario("exbrowser: tempi: rete %u ms in %u richieste, script %u ms, "
            "css %u ms (%u regole), impaginazione %u ms\n",
            g_t_rete, g_t_rete_n, g_t_js, g_t_css, g_css.regole_n, g_t_imp);
 
@@ -7517,7 +7538,7 @@ int main(int argc, char **argv)
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     ex_scarichi_alla_fine(scarico_finito, 0);
     if (!g_f) {
-        printf("exbrowser: il server a finestre non risponde.\n");
+        diario("exbrowser: il server a finestre non risponde.\n");
         printf("         Avvialo con:  exwin\n");
         return 1;
     }
@@ -7540,7 +7561,7 @@ int main(int argc, char **argv)
      * memoria e' tutta libera e nessuna tabella e' piena. Vederlo qui vuol
      * dire che il guasto e' nel caricamento dei font e non nella pagina. */
     if (!g_font_testo || !g_font_titolo)
-        printf("exbrowser: i caratteri di base non si aprono "
+        diario("exbrowser: i caratteri di base non si aprono "
                "(testo %s, titolo %s): si disegna col font di sistema.\n",
                g_font_testo ? "ok" : "NO", g_font_titolo ? "ok" : "NO");
 

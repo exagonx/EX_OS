@@ -32,7 +32,7 @@ RADICE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 IT = {
     "titolo": "Installare EX-OS senza lettore CD",
     "sotto": "Da una chiavetta USB, con il resto del sistema dalla rete",
-    "aggiornato": "Kernel 0.240, 7 ottobre 2026",
+    "aggiornato": "Kernel 0.245, 9 ottobre 2026",
     "altra": ("installa-usb.en.html", "English"),
     "blocchi": [
         ("h", "A cosa serve"),
@@ -103,6 +103,12 @@ IT = {
         ("p", "L'installatore chiede la lingua, la password di root, un nome "
               "utente con la sua password, e qualche conferma. Copia sul disco "
               "il sistema che sta girando e lo rende avviabile. Alla fine dice:"),
+        ("p", "Se il controller del disco sa parlare AHCI ma il BIOS lo "
+              "presenta come IDE, l'installatore lo dice in una sezione "
+              "Disco e passa all'AHCI prima di copiare: la copia va molto "
+              "piu' svelta, e nel kernel.cfg installato scrive ahci = 1 "
+              "perche' succeda a ogni avvio. Se il passaggio non riesce il "
+              "disco resta com'era."),
         ("c", ["Installazione completata. Togli il floppy e riavvia."]),
         ("p", "Spegnete, togliete la chiavetta e riaccendete: il PC parte dal "
               "disco."),
@@ -134,9 +140,15 @@ IT = {
                "controller SATA in modo nativo. Dalla 0.240 quei controller "
                "lavorano in PIO, piu' lento ma senza quegli errori: rifate "
                "l'immagine con i sorgenti aggiornati.",
+               "Installato, ma riavviando dal disco il sistema non trova il "
+               "disco: succedeva fino al kernel 0.240, che cercava la radice "
+               "solo su hd0. Rifate la chiavetta con i sorgenti aggiornati, "
+               "avviate da li', poi mount hd0p1 /disk (col nome che vedete in "
+               "disk) e install -a /disk, che aggiorna il kernel sul disco.",
                "La rete non prende l'indirizzo: netdetect dice che scheda vede "
                "e con quale driver. Per una NVIDIA nForce, nforce.drv -d stampa "
-               "i registri senza toccare niente: sono le righe da mandare.",
+               "i registri, lo stato del PHY (link SU o GIU') e i conteggi dei "
+               "frame inviati e ricevuti: sono le righe da mandare.",
                "Per portarsi via un file: infilate una chiavetta FAT32, "
                "ls /USB dice come si chiama (di solito HDD0p1), poi "
                "cp /file /USB/HDD0p1/ e shutdown.",
@@ -147,17 +159,34 @@ IT = {
         ("l", ["In QEMU: tutta la procedura, dall'avvio in memoria al riavvio "
                "dal disco, con una scheda e1000 e un disco IDE.",
                "Su un PC vero (NVIDIA MCP73, Core 2 Quad): l'avvio dalla "
-               "chiavetta e il riconoscimento del disco SATA. Il driver nforce "
-               "non e' ancora confermato su quella scheda."]),
-        ("n", "In arrivo: una chiavetta che prende il posto del CD, con sopra "
-              "il sistema intero e tutti i driver, da cui installare senza rete."),
+               "chiavetta, il disco SATA, l'installazione e l'avvio dal disco; "
+               "la rete con una scheda RTL8169SC aggiunta dal supporto. La "
+               "rete integrata (nforce 0.008) prende l'indirizzo all'avvio."]),
+        ("h", "I driver che mancano: il supporto"),
+        ("p", "Il dischetto non ha posto per tutti i driver, e il sistema che "
+              "installa ne ha pochi. Gli altri si aggiungono dopo, dal "
+              "supporto: sul PC di sviluppo make support riempie "
+              "dist/support e ne fa anche dist/support.iso."),
+        ("l", ["Copiate il CONTENUTO di dist/support (aggiungi, dev, bin) su "
+               "una chiavetta FAT32, oppure masterizzate dist/support.iso.",
+               "Sul PC, avviato dal disco. Se la chiavetta non compare da "
+               "sola in ls /USB, tre comandi la accendono: /dev/pci.drv & "
+               "poi /dev/ehci.drv -avvio & poi automount &",
+               "Lanciate /USB/HDD0p1/aggiungi (o /cdrom/aggiungi dal CD). "
+               "Copia i driver in /dev e i programmi in /bin senza chiedere "
+               "niente, e aggiunge a /boot/autoexec.sh le righe che accendono "
+               "chiavette e rete, se mancano.",
+               "shutdown, togliete il supporto, riaccendete: netdetect -c "
+               "trova la scheda di rete e dhcp prende l'indirizzo.",
+               "Con due schede di rete vince quella aggiunta, non quella "
+               "integrata. netdetect -c rtl8169 sceglie a mano."]),
     ],
 }
 
 EN = {
     "titolo": "Installing EX-OS without a CD drive",
     "sotto": "From a USB stick, with the rest of the system from the network",
-    "aggiornato": "Kernel 0.240, 7 October 2026",
+    "aggiornato": "Kernel 0.245, 9 October 2026",
     "altra": ("installa-usb.html", "Italiano"),
     "blocchi": [
         ("h", "What it is for"),
@@ -230,6 +259,11 @@ EN = {
               "name with its password, and a few confirmations. It copies the "
               "running system to the disk and makes it bootable. At the end it "
               "says:"),
+        ("p", "If the disk controller can speak AHCI but the BIOS presents it "
+              "as IDE, the installer says so in a section called Disco and "
+              "moves to AHCI before copying: the copy is much faster, and it "
+              "writes ahci = 1 in the installed kernel.cfg so that it happens "
+              "at every boot. If the switch fails the disk stays as it was."),
         ("c", ["Installazione completata. Togli il floppy e riavvia."]),
         ("p", "Shut down, remove the stick and switch on again: the PC boots "
               "from the disk."),
@@ -260,10 +294,17 @@ EN = {
                "SATA controllers in native mode. From 0.240 those controllers "
                "work in PIO, slower but without those errors: rebuild the "
                "image from updated sources.",
+               "Installed, but on rebooting from the disk the system cannot "
+               "find the disk: this happened up to kernel 0.240, which looked "
+               "for its root on hd0 only. Rewrite the stick from updated "
+               "sources, boot from it, then mount hd0p1 /disk (with the name "
+               "you see in disk) and install -a /disk, which updates the "
+               "kernel on the disk.",
                "The network gets no address: netdetect says which card it sees "
                "and with which driver. For an NVIDIA nForce, nforce.drv -d "
-               "prints the registers without touching anything: those are the "
-               "lines to send.",
+               "prints the registers, the state of the PHY (link SU = up, "
+               "GIU' = down) and the counts of frames sent and received: "
+               "those are the lines to send.",
                "To take a file away: plug in a FAT32 stick, ls /USB says what "
                "it is called (usually HDD0p1), then cp /file /USB/HDD0p1/ and "
                "shutdown.",
@@ -274,11 +315,27 @@ EN = {
         ("l", ["In QEMU: the whole procedure, from booting in memory to "
                "rebooting from the disk, with an e1000 card and an IDE disk.",
                "On a real PC (NVIDIA MCP73, Core 2 Quad): booting from the "
-               "stick and finding the SATA disk. The nforce driver is not yet "
-               "confirmed on that board."]),
-        ("n", "Coming: a stick that takes the place of the CD, holding the "
-              "whole system and every driver, to install from without a "
-              "network."),
+               "stick, the SATA disk, installing and starting from the disk; "
+               "the network with an RTL8169SC card added from the support "
+               "medium. The built-in network (nforce 0.008) gets its address at boot."]),
+        ("h", "The missing drivers: the support medium"),
+        ("p", "The floppy has no room for every driver, and the system it "
+              "installs has few. The others are added afterwards from the "
+              "support medium: on the development PC make support fills "
+              "dist/support and also builds dist/support.iso."),
+        ("l", ["Copy the CONTENT of dist/support (aggiungi, dev, bin) to a "
+               "FAT32 stick, or burn dist/support.iso.",
+               "On the PC, started from the disk. If the stick does not show "
+               "up by itself in ls /USB, three commands start it: "
+               "/dev/pci.drv & then /dev/ehci.drv -avvio & then automount &",
+               "Run /USB/HDD0p1/aggiungi (or /cdrom/aggiungi from the CD). It "
+               "copies the drivers to /dev and the programs to /bin without "
+               "asking, and adds to /boot/autoexec.sh the lines that start "
+               "sticks and network, if missing.",
+               "shutdown, remove the medium, power on: netdetect -c finds "
+               "the network card and dhcp gets the address.",
+               "With two network cards the added one wins, not the built-in "
+               "one. netdetect -c rtl8169 chooses by hand."]),
     ],
 }
 

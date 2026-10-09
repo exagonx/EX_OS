@@ -289,6 +289,26 @@ aggiornerebbe: per questo il dischetto di soccorso lo copia a mano. Vedi
 <a href="#storto">Quando va storto</a>.
 </p>
 
+<h3>Il disco in AHCI</h3>
+<p>
+Certi controller SATA mostrano lo stesso disco in due modi: dai registri IDE,
+dove su alcuni chipset si lavora solo in PIO (qualche MB al secondo), e
+dall'AHCI. Prima di copiare, <code>install</code> guarda se la macchina e' una
+di quelle e in quel caso passa il disco all'AHCI <b>subito</b>: lo dice in una
+sezione <b>Disco</b>, e gia' la copia dei file va veloce. Solo se il passaggio
+e' riuscito scrive <code>ahci = 1</code> nel <code>kernel.cfg</code>
+installato, cosi' il sistema lo rifa' a ogni avvio. Se non riesce, il disco
+resta com'era e nel file non si scrive niente. Sul PC di prova (NVIDIA MCP73)
+la lettura e' passata da circa 3,4 a 59 MB al secondo.
+</p>
+<p>
+Su un sistema gia' installato si fa a mano: <code>ahci -d</code> mostra i
+registri del controller senza toccare niente, <code>ahci</code> passa il disco
+all'AHCI per la sessione in corso, <code>ahci -m FILE</code> misura la
+velocita', e <code>ahci -s</code> lo rende stabile. I controller che si
+dichiarano AHCI non hanno bisogno di niente: si usano sempre.
+</p>
+
 <h2 id="albero">4. Che cosa c'e' sul disco</h2>
 
 <table border="1">
@@ -633,6 +653,8 @@ trasporto e indirizzo.
 <h2 id="rete">8. Aggiornare dalla rete</h2>
 
 <pre>    netupdate -check        guarda che cosa c'e' di nuovo e lo propone
+    netupdate -check -yes   aggiorna i file cambiati senza chiedere
+    netupdate -check -yesall  lo stesso, e installa anche i file che mancano
     netupdate -auto         controlla in silenzio, per /boot/avvio.sh
     netupdate -registro     che cosa e' arrivato da qui
     netupdate -permessi     rimette il bit di esecuzione dove manca</pre>

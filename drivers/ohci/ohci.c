@@ -51,12 +51,13 @@
 
 #include "libc.h"
 #include "pci_proto.h"
+#include "kbd_proto.h"
 #include "usb_comune.h"
 #include "usb_massa.h"
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.002");
+EX_VERSIONE("ohci.drv", "0.006");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00
@@ -72,11 +73,13 @@ EX_VERSIONE("ohci.drv", "0.002");
 #define R_BULKCURRED    0x2C
 #define R_DONEHEAD      0x30
 #define R_FMINTERVAL    0x34
+#define R_FMNUMBER      0x3C
 #define R_PERIODICSTART 0x40
 #define R_RHDESCA       0x48
 #define R_RHSTATUS      0x50
 #define R_RHPORT(n)     (0x54 + (n) * 4)
 
+#define CTRL_PLE        0x00000004u     /* lista periodica accesa */
 #define CTRL_CLE        0x00000010u     /* lista di controllo accesa */
 #define CTRL_BLE        0x00000020u     /* lista bulk accesa */
 #define CTRL_HCFS       0x000000C0u     /* in che stato e' */
@@ -117,6 +120,10 @@ EX_VERSIONE("ohci.drv", "0.002");
 #define OFF_ED_OUT      0x0420
 #define OFF_TD          0x0200      /* otto TD da 16 byte */
 #define OFF_SETUP       0x0300
+/* L'endpoint di interruzione di un mouse o di una tastiera (8 ottobre 2026):
+ * un ED suo, un TD suo e la sua coda, e otto byte per il rapporto. */
+#define OFF_ED_INT      0x0440      /* tre da 0x40: ED, TD e coda ciascuno */
+#define OFF_BUFI        0x0500
 #define OFF_BUF         0x1000
 #define BUF_MAX         4096
 
@@ -168,6 +175,7 @@ static unsigned int g_rumore = 0;
  * macchina che quel controller non ce l'ha e' rumore a ogni accensione. */
 static unsigned int g_avvio = 0;
 static unsigned int g_indirizzo = 0;
+static unsigned int g_porta = 0;        /* la porta di cui ci si sta occupando */
 static unsigned int g_low = 0;          /* il dispositivo e' low speed */
 static UsbDispositivo g_dev;
 
@@ -278,7 +286,12 @@ static int esegui(unsigned int ed_off, unsigned int primo, unsigned int ultimo,
      * lista fino al prossimo giro. */
     wr(R_CMDSTATUS, quale_lista);
 
-    for (giri = 0; giri < ms * 10; giri++) {
+    /* ! LA SCADENZA SI MISURA CON L'OROLOGIO (8 ottobre 2026): usleep(100)
+     * dorme un battito intero, dieci millisecondi, e «mille millisecondi»
+     * contati a giri ne duravano centomila. Un dispositivo muto teneva il
+     * driver fermo per cinque minuti. */
+    giri = uptime_ms();
+    for (;;) {
         int finito = 1;
 
         for (i = primo; i <= ultimo; i++) {
@@ -298,11 +311,22 @@ static int esegui(unsigned int ed_off, unsigned int primo, unsigned int ultimo,
             }
         }
         if (finito) return 0;
+        if (uptime_ms() - giri > ms) break;
 
-        usleep(100);
+        usleep(1000);
     }
 
-    if (g_rumore) printf("ohci: trasferimento senza risposta\n");
+    /* «Senza risposta» vuol dire che il controller il TD non l'ha nemmeno
+     * toccato: allora quel che conta e' in che stato e' LUI, e lo si dice. */
+    if (g_rumore) {
+        unsigned int f1 = rd(R_FMNUMBER) & 0xFFFF;
+
+        usleep(20000);
+        printf("ohci: trasferimento senza risposta: controllo %08x comandi %08x "
+               "interruzioni %08x trame %u -> %u, ED %08x %08x %08x\n",
+               rd(R_CONTROL), rd(R_CMDSTATUS), rd(R_INTSTATUS), f1,
+               rd(R_FMNUMBER) & 0xFFFF, e[0], e[1], e[2]);
+    }
     return -1;
 }
 
@@ -558,7 +582,13 @@ static int conosci(void)
 
     ed_indirizzo(OFF_ED_CTRL, 0, 0, 0, g_dev.maxp0);
 
-    g_indirizzo = 1;
+    /* ! UN INDIRIZZO PER PORTA, NON «1» PER TUTTI (9 ottobre 2026). Un
+     * dispositivo a cui si rinuncia — un lettore di schede vuoto — resta sul
+     * bus col suo indirizzo, e dare lo stesso al successivo vuol dire averne
+     * due che rispondono insieme: sul PC di prova il ricevitore di tastiera e
+     * mouse, provato dopo il lettore di schede, dava «condizione 6» a ogni
+     * trasferimento. La porta piu' uno e' unico per costruzione. */
+    g_indirizzo = g_porta + 1;
     if (controllo(0, 0x00, USB_REQ_SET_ADDR, g_indirizzo, 0, 0, 0, 0) != 0) {
         if (g_rumore) printf("ohci: SET_ADDRESS rifiutata\n");
         return 0;
@@ -614,6 +644,196 @@ static int massa_prepara(void)
 
     usb_massa_servi(&m, "usb0");        /* non torna finche' c'e' */
     return 1;
+}
+
+/* =============================================================================
+ * MOUSE E TASTIERA (HID «boot») — 8 ottobre 2026
+ *
+ * ! SENZA QUESTO, SU MEZZE LE SCHEDE MADRI UN MOUSE USB NON ESISTE. Un mouse e'
+ * a bassa velocita', e un controller EHCI le porte a bassa velocita' le cede
+ * al compagno: su Intel e VIA e' un UHCI, e li' il mouse c'era gia'; su
+ * NVIDIA, SiS e ALi e' un OHCI, e questo driver sapeva solo di chiavette. Sul
+ * PC di prova (MCP73) il sistema cercava un mouse PS/2 con un mouse USB
+ * attaccato.
+ *
+ * L'endpoint di interruzione sta nella lista PERIODICA: le 32 caselle della
+ * HCCA puntano tutte allo stesso ED, che quindi viene servito a ogni trama. Il
+ * suo TD resta li' finche' il dispositivo non ha qualcosa da dire; il driver
+ * non manda niente sul bus, guarda il codice di condizione del TD.
+ *
+ * ! UN DISPOSITIVO PER VOLTA, come il resto di questo file: trovato un mouse
+ * (o una tastiera) il driver lo serve e non guarda piu' le altre porte. Le
+ * chiavette veloci stanno sull'EHCI e non ne risentono.
+ * ============================================================================= */
+static int          g_dx = 0, g_dy = 0;
+static unsigned int g_bottoni = 0, g_novita = 0, g_attesa_pid = 0;
+
+/* ! PIU' DI UN'INTERFACCIA, E SERVONO TUTTE. Sul PC di prova c'e' un ricevitore
+ * senza fili (046d:c534): UN dispositivo, che e' tastiera E mouse, con
+ * un'interfaccia e un endpoint per ciascuno. La prima versione si fermava alla
+ * prima, serviva la tastiera, e il mouse non esisteva. Ogni interfaccia ha il
+ * suo ED, il suo TD e i suoi otto byte; gli ED stanno in fila nella lista
+ * periodica. */
+#define HID_MAX         3
+#define HID_PASSO       0x40
+#define H_ED(k)         (OFF_ED_INT + (k) * HID_PASSO)
+#define H_TD(k)         (OFF_ED_INT + (k) * HID_PASSO + 0x10)
+#define H_CODA(k)       (OFF_ED_INT + (k) * HID_PASSO + 0x20)
+#define H_BUF(k)        (OFF_BUFI + (k) * 0x10)
+
+static UsbHid g_hid[HID_MAX];
+static int    g_n_hid = 0;
+
+static unsigned int hid_len(int k)
+{
+    unsigned int len = g_hid[k].ep_maxp ? g_hid[k].ep_maxp : 8;
+
+    return len > 8 ? 8 : len;
+}
+
+static void int_arma(int k)
+{
+    volatile unsigned int *t = VIRT(H_TD(k));
+    volatile unsigned int *e = VIRT(H_ED(k));
+
+    t[0] = (1u << 18) | (DP_IN << 19) | (7u << 21) | (CC_NIENTE << 28);
+    t[1] = FIS(H_BUF(k));
+    t[2] = FIS(H_CODA(k));
+    t[3] = FIS(H_BUF(k)) + hid_len(k) - 1;
+
+    /* Il bit 1 della testa e' il toggle e si conserva; il bit 0, «fermato»,
+     * si azzera: e' cosi' che un endpoint ripartirebbe dopo uno stallo. */
+    e[1] = FIS(H_CODA(k));
+    e[2] = FIS(H_TD(k)) | (e[2] & 0x2u);
+}
+
+static void int_installa(void)
+{
+    volatile unsigned int *h = VIRT(OFF_HCCA(g_corrente));
+    unsigned int i;
+    int k;
+
+    for (k = 0; k < g_n_hid; k++) {
+        volatile unsigned int *e = VIRT(H_ED(k));
+        unsigned int maxp = g_hid[k].ep_maxp ? g_hid[k].ep_maxp : 8;
+
+        e[0] = (g_indirizzo & 0x7F) | (g_hid[k].ep << 7) | (2u << 11) |
+               (g_low ? (1u << 13) : 0u) | (maxp << 16);
+        e[1] = FIS(H_CODA(k));
+        e[2] = FIS(H_CODA(k));
+        e[3] = (k + 1 < g_n_hid) ? FIS(H_ED(k + 1)) : 0;    /* il prossimo in fila */
+        int_arma(k);
+    }
+
+    for (i = 0; i < 32; i++) h[i] = FIS(H_ED(0));
+    wr(R_CONTROL, rd(R_CONTROL) | CTRL_PLE);
+}
+
+/* Rende i byte del rapporto, 0 se non e' arrivato niente, -1 su un errore. */
+static int leggi_rapporto(int k, unsigned char *out, unsigned int max)
+{
+    volatile unsigned int  *t   = VIRT(H_TD(k));
+    volatile unsigned char *buf = (volatile unsigned char *)(g_dma_virt + H_BUF(k));
+    unsigned int cc = CC_DI(t[0]), n, i;
+
+    if (cc == CC_NIENTE) return 0;              /* il dispositivo tace */
+
+    if (cc != CC_OK && cc != CC_MANCA) {
+        int_arma(k);
+        return -1;
+    }
+    n = t[1] ? (t[1] - FIS(H_BUF(k))) : hid_len(k);     /* CBP a zero = tutti */
+    if (n > max) n = max;
+    for (i = 0; i < n; i++) out[i] = buf[i];
+    int_arma(k);
+    return (int)n;
+}
+
+static void mouse_rispondi(unsigned int pid)
+{
+    MouseStato s;
+
+    s.dx = g_dx; s.dy = g_dy;
+    s.bottoni = g_bottoni;
+    s.presente = 1;
+    s.persi = 0;
+    s.dz = 0;       /* in modo boot l'HID non porta la rotella */
+    s.modificatori = 0;
+
+    if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
+    g_dx = 0; g_dy = 0; g_novita = 0;
+}
+
+/* Se il dispositivo appena conosciuto e' un mouse, una tastiera, o tutti e
+ * due, lo serve e NON TORNA. Rende 0 se non lo e'. */
+static int hid_servi(void)
+{
+    int kbd_pid = -1, c_e_mouse = 0, k;
+
+    g_n_hid = usb_configura_hid_tutte(controllo, g_indirizzo, &g_dev, g_hid,
+                                      HID_MAX, g_verboso);
+    if (g_n_hid <= 0) return 0;
+
+    for (k = 0; k < g_n_hid; k++) {
+        if (g_hid[k].proto == USB_PROTO_TASTIERA) {
+            if (kbd_pid < 0) kbd_pid = ipc_lookup(KBD_SERVICE_NAME);
+            if (kbd_pid < 0)
+                printf("ohci: tastiera USB, ma il servizio '%s' non c'e'\n", KBD_SERVICE_NAME);
+            else
+                printf("ohci: tastiera USB (interfaccia %u) -> scancode al servizio '%s'\n",
+                       g_hid[k].interfaccia, KBD_SERVICE_NAME);
+        } else if (!c_e_mouse) {
+            if (ipc_register(MOUSE_SERVICE_NAME) < 0) {
+                printf("ohci: mouse USB, ma il servizio '%s' c'e' gia'\n", MOUSE_SERVICE_NAME);
+            } else {
+                c_e_mouse = 1;
+                printf("ohci: servizio '%s' attivo (mouse USB, interfaccia %u)\n",
+                       MOUSE_SERVICE_NAME, g_hid[k].interfaccia);
+            }
+        }
+    }
+
+    int_installa();
+
+    for (;;) {
+        IpcMessage    meta;
+        unsigned char payload[64];
+        unsigned char rap[8];
+
+        for (k = 0; k < g_n_hid; k++) {
+            int n = leggi_rapporto(k, rap, sizeof(rap));
+
+            if (g_hid[k].proto == USB_PROTO_TASTIERA) {
+                if (n >= 8 && kbd_pid >= 0) usb_tastiera_rapporto(rap, kbd_pid);
+                continue;
+            }
+            if (c_e_mouse && n >= 3 &&
+                usb_mouse_rapporto(rap, (unsigned int)n, &g_dx, &g_dy, &g_bottoni)) {
+                g_novita = 1;
+                if (g_attesa_pid) {
+                    unsigned int p = g_attesa_pid;
+
+                    g_attesa_pid = 0;
+                    mouse_rispondi(p);
+                }
+            }
+        }
+
+        if (!c_e_mouse) { usleep(1000); continue; }
+
+        /* Un battito: con una tastiera accanto non si puo' restare di piu'
+         * senza guardarla. */
+        if (ipc_recv_timeout(&meta, payload, sizeof(payload), 1) < 0) continue;
+
+        if (meta.tipo == MOUSE_MSG_LEGGI) {
+            unsigned int attendi = 0;
+
+            if (meta.len >= sizeof(unsigned int))
+                memcpy(&attendi, payload, sizeof(unsigned int));
+            if (!attendi || g_novita) mouse_rispondi(meta.sender_pid);
+            else                      g_attesa_pid = meta.sender_pid;
+        }
+    }
 }
 
 /* -----------------------------------------------------------------------------
@@ -749,6 +969,8 @@ static void aspetta_e_servi(const char *chi)
     unsigned char provata[OHCI_MAX][16];
     unsigned char assenze[OHCI_MAX][16];
     unsigned char inserita[OHCI_MAX][16];
+    unsigned char massa_dopo[OHCI_MAX][16];
+    unsigned char rumore_dopo[OHCI_MAX][16];
     unsigned int  p;
     int           c, detto = 0;
 
@@ -756,6 +978,8 @@ static void aspetta_e_servi(const char *chi)
         for (p = 0; p < 16; p++) {
             provata[c][p]  = 0;
             inserita[c][p] = 0;
+            massa_dopo[c][p] = 0;
+            rumore_dopo[c][p] = 0;
             /* ! SI PARTE DA ZERO ASSENZE, NON DA TRE: una porta gia' piena
              * all'accensione non deve sembrare un inserimento appena fatto. */
             assenze[c][p]  = 0;
@@ -793,6 +1017,34 @@ static void aspetta_e_servi(const char *chi)
 
                 g_rumore = inserita[c][p] || g_verboso;
 
+                g_porta = p;
+                if (!porta_prepara(p)) continue;
+                if (!conosci()) continue;
+
+                /* ! PRIMA MOUSE E TASTIERA, SU TUTTE LE PORTE; LE MEMORIE
+                 * DOPO (9 ottobre 2026). Questo driver serve un dispositivo
+                 * per volta, e una memoria servita non torna: con un lettore
+                 * di schede sulla porta 1 e il ricevitore del mouse sulla 5,
+                 * come sul PC di prova, il mouse non veniva mai guardato.
+                 * Se e' un mouse o una tastiera, da qui non si torna. */
+                (void)hid_servi();
+                massa_dopo[c][p] = 1;
+                rumore_dopo[c][p] = (unsigned char)g_rumore;
+            }
+        }
+
+        /* Nessun mouse e nessuna tastiera in questo giro: ora le memorie. */
+        for (c = 0; c < g_n_ohci; c++) {
+            for (p = 0; p < 16; p++) {
+                if (!massa_dopo[c][p]) continue;
+                massa_dopo[c][p] = 0;
+
+                g_corrente = c;
+                g_reg      = g_ohci[c].reg;
+                g_porte    = g_ohci[c].porte;
+                g_porta    = p;
+                g_rumore   = rumore_dopo[c][p];
+
                 if (!porta_prepara(p)) continue;
                 if (!conosci()) continue;
 
@@ -817,7 +1069,7 @@ static void aspetta_e_servi(const char *chi)
 
 int main(int argc, char **argv)
 {
-    unsigned int bar[OHCI_MAX], solo_sonda = 0;
+    unsigned int bar[OHCI_MAX], solo_sonda = 0, solo_stato = 0;
     MmioZona m;
     DmaZona  z;
     int i;
@@ -830,11 +1082,14 @@ int main(int argc, char **argv)
             printf("uso: ohci.drv [-v] [-i] [-avvio]\n");
             printf("  -v      dice tutto quello che vede\n");
             printf("  -i      dice se c'e' un OHCI ed esce\n");
+            printf("  -d      i registri dei controller e le porte, senza toccarli\n");
             printf("  -avvio  se non c'e' niente da fare, esce in silenzio:\n");
             printf("          e' la forma che serve a /boot/avvio.sh\n");
             return 0;
         }
     }
+
+    for (i = 1; i < argc; i++) if (strcmp(argv[i], "-d") == 0) solo_stato = 1;
 
     if (cerca_ohci(bar) == 0) {
         if (!g_avvio)
@@ -842,6 +1097,46 @@ int main(int argc, char **argv)
         return 1;
     }
     if (solo_sonda) return 0;
+
+    /* -d: i registri di ogni controller, SENZA TOCCARE NIENTE. Si puo' dare
+     * mentre un altro ohci.drv e' in servizio: e' cosi' che si guarda da
+     * lontano perche' un dispositivo non risponde. */
+    if (solo_stato) {
+        for (i = 0; i < g_n_ohci; i++) {
+            unsigned int p, np, f1;
+
+            m.fisico = bar[i];
+            m.byte   = 0x1000;
+            if (mmio_map(&m) != 0) { printf("ohci: mmio_map rifiutata\n"); return 1; }
+            g_reg = (volatile unsigned char *)m.virt;
+            f1 = rd(R_FMNUMBER) & 0xFFFF;
+            usleep(20000);
+            printf("ohci: controller %d a 0x%08x\n", i + 1, bar[i]);
+            printf("  controllo %08x (stato %u: 0 reset, 1 ripresa, 2 operativo, 3 sospeso)\n",
+                   rd(R_CONTROL), (rd(R_CONTROL) >> 6) & 3);
+            printf("  comandi %08x  interruzioni %08x  abilitate %08x\n",
+                   rd(R_CMDSTATUS), rd(R_INTSTATUS), rd(R_INTENABLE));
+            printf("  trame %u -> %u in 20 ms  intervallo %08x  periodico %08x\n",
+                   f1, rd(R_FMNUMBER) & 0xFFFF, rd(R_FMINTERVAL), rd(R_PERIODICSTART));
+            printf("  HCCA %08x  lista controllo %08x (ora %08x)  bulk %08x  fatti %08x\n",
+                   rd(R_HCCA), rd(R_CTRLHEADED), rd(R_CTRLCURRED), rd(R_BULKHEADED),
+                   rd(R_DONEHEAD));
+            printf("  hub: A %08x  stato %08x  emulazione (0x100) %08x\n",
+                   rd(R_RHDESCA), rd(R_RHSTATUS), rd(0x100));
+            np = rd(R_RHDESCA) & 0xFF;
+            if (np > 15) np = 15;
+            for (p = 0; p < np; p++) {
+                unsigned int v = rd(R_RHPORT(p));
+
+                if (v & RH_CCS)
+                    printf("  porta %u: %08x  %s%s%s\n", p + 1, v,
+                           (v & RH_LSDA) ? "bassa velocita'" : "piena velocita'",
+                           (v & RH_PES) ? ", abilitata" : ", NON abilitata",
+                           (v & RH_PPS) ? "" : ", senza corrente");
+            }
+        }
+        return 0;
+    }
 
     z.byte = DMA_BYTE;
     if (dma_alloc(&z) != 0) {

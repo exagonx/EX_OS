@@ -84,6 +84,14 @@ typedef struct {
      * kernel legge le tabelle e non scrive in nessun registro. */
     uint32_t    smp;
 
+    /* ahci: 1 = i dischi che un controller offre sia dai registri IDE sia
+     * dall'AHCI passano all'AHCI dopo l'avvio (vedi ata_passa_ad_ahci in
+     * kernel/block/ata.c). 0, il predefinito, li lascia dove sono: e' una
+     * scelta di chi ha quella macchina, finche' non e' provata su piu' di una.
+     * I controller che si dichiarano AHCI non c'entrano: quelli si usano
+     * sempre. */
+    uint32_t    ahci;
+
     /* [boot] */
     /* Disposizione della tastiera: la legge /dev/kbd.drv all'avvio con
      * SYS_GETENV. Sta in [kernel] e non in [env] perche' e' una scelta di

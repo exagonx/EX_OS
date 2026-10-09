@@ -61,6 +61,7 @@
 #include "kernel.h"
 #include "ata.h"
 #include "sched.h"      /* g_ticks */
+#include "ahci.h"
 
 /* Le porte, gli offset dei registri e i bit di stato stanno in ata.h:
  * sono lo stesso bus che usa kernel/block/atapi.c, e una seconda copia
@@ -960,6 +961,28 @@ static void ata_rileva(int idx, int canale, int unita)
  * La chiede `atadma = 0` in /boot/kernel.cfg, e la usa il dischetto di
  * soccorso, che di mestiere legge dischi malandati.
  * ============================================================================= */
+/* Un disco AHCI nel posto `idx`: gli stessi campi che ata_rileva() ricava da
+ * IDENTIFY, dalle stesse parole. */
+static void ahci_riempi(int idx, int k)
+{
+    AtaDevice      *d  = &g_dev[idx];
+    const uint16_t *id = ahci_identify(k);
+
+    d->presente = 1;
+    d->tipo     = ATA_TYPE_ATA;
+    d->canale   = 0;
+    d->unita    = 0;
+    d->ahci     = (uint8_t)(k + 1);
+    ata_stringa(id, 27, 20, d->modello);
+    ata_stringa(id, 10, 10, d->seriale);
+    ata_stringa(id, 23,  4, d->firmware);
+    d->lba48 = (id[83] & (1 << 10)) ? 1 : 0;
+    d->hpa   = (id[82] & (1 << 10)) ? 1 : 0;
+    d->settori        = ahci_settori(k);
+    d->settori_nativi = d->settori;
+    d->clippato       = 0;
+}
+
 void ata_dma_spegni(void)
 {
     if (g_dma_rotto) return;
@@ -976,6 +999,7 @@ int ata_init(void)
     for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
         g_dev[idx].presente = 0;
         g_dev[idx].tipo     = ATA_TYPE_NONE;
+        g_dev[idx].ahci     = 0;
     }
 
     /* ! IL BUS MASTER SI CERCA PRIMA DEL RILEVAMENTO, non dopo: ata_rileva()
@@ -1020,11 +1044,86 @@ int ata_init(void)
         }
     }
 
+    /* ! E I CONTROLLER CHE SI DICHIARANO AHCI (9 ottobre 2026): quelli il
+     * driver IDE li ha saltati, e i loro dischi non hanno un'altra strada.
+     * Prendono anche loro un posto libero fra hd0..hd3. */
+    {
+        int n = ahci_cerca(0), k;
+
+        for (k = 0; k < n; k++) {
+            for (idx = 0; idx < ATA_MAX_DEVICES; idx++)
+                if (g_dev[idx].tipo == ATA_TYPE_NONE) break;
+            if (idx == ATA_MAX_DEVICES) {
+                klog(LOG_WARN, "ATA: i quattro posti sono presi: un disco AHCI resta fuori");
+                break;
+            }
+            ahci_riempi(idx, k);
+            g_trovati++;
+            klog(LOG_INFO, "ATA: hd%d e' sul controller AHCI: '%s' %u MB", idx,
+                 g_dev[idx].modello, (uint32_t)(g_dev[idx].settori / 2048));
+        }
+    }
+
     if (g_trovati == 0) {
         klog(LOG_INFO, "ATA: nessun disco rigido trovato");
     }
 
     return g_trovati;
+}
+
+/* =============================================================================
+ * ata_passa_ad_ahci — lo stesso disco, dalla porta giusta
+ *
+ * ! SI PARTE DAI REGISTRI IDE E SI PASSA ALL'AHCI DOPO, e l'ordine non e' una
+ * comodita'. Certi controller (NVIDIA MCP73 in modo «RAID») offrono i dischi
+ * due volte: dai registri IDE, dove qui funziona solo il PIO, e dall'AHCI a
+ * BAR5. Scegliere l'AHCI lo chiede kernel.cfg (`ahci = 1`), e kernel.cfg sta
+ * SUL disco: per leggerlo il disco bisogna gia' averlo. Percio' si avvia come
+ * sempre, e a configurazione letta il disco gia' noto cambia strada: stesso
+ * hdN, stesse partizioni, altro modo di parlargli. Si riconosce dal numero di
+ * serie. Se l'AHCI non parte, resta tutto com'era.
+ * ============================================================================= */
+static int g_passati = 0;       /* quanti dischi sono passati all'AHCI finora */
+
+/* 0 = niente da passare; 1 = c'e' un disco che potrebbe passare all'AHCI e
+ * sta ancora sui registri IDE; 2 = almeno uno e' gia' passato. La domanda
+ * la fa l'installatore (SYS_AHCI_PASSA con 2), e non cambia niente. */
+int ata_ahci_stato(void)
+{
+    if (g_passati > 0) return 2;
+    return ahci_candidati() ? 1 : 0;
+}
+
+int ata_passa_ad_ahci(void)
+{
+    int prima = ahci_dischi(), n = ahci_cerca(1), k, idx, passati = 0;
+
+    for (k = prima; k < n; k++) {
+        const uint16_t *id = ahci_identify(k);
+        char seriale[21];
+
+        ata_stringa(id, 10, 10, seriale);
+        for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
+            int j = 0;
+
+            if (g_dev[idx].tipo != ATA_TYPE_ATA || g_dev[idx].ahci) continue;
+            while (seriale[j] && seriale[j] == g_dev[idx].seriale[j]) j++;
+            if (seriale[j] || g_dev[idx].seriale[j]) continue;
+
+            g_dev[idx].ahci = (uint8_t)(k + 1);
+            passati++;
+            klog(LOG_INFO, "ATA: hd%d ('%s') passa all'AHCI: da qui si legge e "
+                 "si scrive da li'", idx, g_dev[idx].modello);
+            break;
+        }
+        if (idx == ATA_MAX_DEVICES)
+            klog(LOG_WARN, "AHCI: un disco (seriale '%s') non era fra quelli gia' "
+                 "visti: resta fuori", seriale);
+    }
+    if (n == prima)
+        klog(LOG_INFO, "ATA: ahci = 1, ma nessun controller ha dischi da passare all'AHCI");
+    g_passati += passati;
+    return passati;
 }
 
 const AtaDevice *ata_get_device(int indice)
@@ -1062,6 +1161,10 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
              (uint32_t)lba, n, (uint32_t)d->settori);
         return -1;
     }
+
+    /* Un disco dell'AHCI non passa dai registri IDE: da qui in giu' e' tutto
+     * per gli altri. */
+    if (d->ahci) return ahci_rw(d->ahci - 1, lba, n, buf, scrivi);
 
     canale = d->canale;
     unita  = d->unita;
@@ -1271,6 +1374,7 @@ int ata_flush(int indice)
     int      st;
 
     if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
+    if (d->ahci) return ahci_flush(d->ahci - 1);
 
     io = base_io(d->canale);
 

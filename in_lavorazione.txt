@@ -6155,3 +6155,33 @@ un programma: il primo lavoro e' tirarla fuori.
   si costruiscono in build/bin-cd. Provato in QEMU. Anche: verifica-ascii
   fermava make all (sei stringhe con « » o il trattino lungo, in tools/prove
   di claude-A e in tools/exilla/prova-socket.c), sistemate.
+
+@EXEDITOR-WRITE EXEDITOR COME IL «WRITE» DI WINDOWS 3 (chiesto dall'utente il 9 ottobre 2026)
+  Urgenza ridotta. Due cose, viste dall'utente usando exeditor:
+  1. A destra ci sono DUE barre di scorrimento, una accanto all'altra, e non
+     si capisce a che cosa serva la seconda. Da guardare prima di tutto: e'
+     probabile che siano la barra dell'area di testo del toolkit e una barra
+     disegnata dall'applicazione, e che una delle due sia di troppo.
+  2. Manca la barra degli strumenti sotto il menu, e l'opzione che la
+     accende: le miniature per la formattazione, la scelta del carattere,
+     l'allineamento, il righello — il Write di Windows 3. Il modello dice
+     anche i formati: creare e modificare file RTF, WRI e il vecchio DOC.
+  Da decidere quando ci si mette: fin dove arrivare coi formati (RTF e' testo
+  e si puo' fare per gradi; WRI e DOC sono binari, e leggerli viene prima di
+  scriverli), e se il testo formattato vive nell'area di testo del toolkit o
+  in un controllo nuovo.
+  Stato: DA FARE.
+
+@VOLUME-BARRA L'ICONA DEL VOLUME ACCANTO ALL'OROLOGIO (chiesto dall'utente l'8 ottobre 2026)
+  Da fare dopo il lettore audio, parole dell'utente. Nella barra in basso,
+  vicino all'orologio, un'icona del volume; un clic apre un equalizzatore
+  minimale.
+  Quello che c'e' gia': exsuono_volume() nella libreria e AUDIO_MSG_VOLUME nel
+  protocollo dei driver, cioe' UN volume generale. Un equalizzatore vuole
+  altro: o i controlli di tono del codec, dove ci sono (non su tutti), o un
+  filtro a bande sui campioni dentro exsuono.so prima di darli alla scheda -
+  che pero' vale solo per chi suona attraverso la libreria, non per `audio`
+  da console. Da decidere quando ci si mette; il primo passo utile da solo e'
+  l'icona con il cursore del volume, e il volume ricordato in un file di
+  configurazione.
+  Stato: DA FARE.

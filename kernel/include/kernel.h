@@ -272,6 +272,8 @@ void klog_set_level(int level);
  * quando il livello di log corrente li nasconde a video: serve al boot
  * silenzioso, che pulisce lo schermo e poi li ripropone. Vedi kprintf.c. */
 uint32_t klog_problem_count(void);
+uint32_t klog_copia(char *dst, uint32_t max, int quale);
+void     klog_registra(char c);  /* 0 = avvio, 1 = ultimi */
 void     klog_replay_problems(void);
 
 #endif /* KERNEL_H */

@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.005");
+EX_VERSIONE("install", "0.006");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -1408,6 +1408,37 @@ static int cfg_suggerisci(const char *nuovo, const char *vecchio)
 }
 
 /* Il lavoro vero. `perc` e' il kernel.cfg gia' installato. */
+/* =============================================================================
+ * IL DISCO IN AHCI (9 ottobre 2026)
+ *
+ * Certi controller SATA mostrano il disco due volte: dai registri IDE, dove
+ * su alcuni chipset si va solo in PIO, e dall'AHCI, che e' venti volte piu'
+ * svelto. Il kernel parte sempre dai primi; qui si guarda se la macchina e'
+ * una di quelle, e in quel caso si passa all'AHCI SUBITO — cosi' gia' la
+ * copia dei file va veloce — e, SOLO SE IL PASSAGGIO E' RIUSCITO, si scrive
+ * `ahci = 1` nel kernel.cfg installato, perche' lo rifaccia a ogni avvio.
+ *
+ * ! SI SCRIVE QUEL CHE SI E' VISTO FUNZIONARE, non quel che si spera. Un
+ * passaggio che non riesce lascia il disco dov'era (lo garantisce il kernel),
+ * e allora nel file non si scrive niente: la macchina installata partira'
+ * come questa e' partita.
+ * ============================================================================= */
+static int g_ahci_va = 0;       /* 1 = su questa macchina il disco lavora in AHCI */
+
+static void disco_in_ahci(void)
+{
+    int s = ahci_stato();
+
+    if (s == 1) {
+        printf("\nDisco\n");
+        printf("  il controller del disco sa parlare AHCI: ci passo adesso\n");
+        if (ahci_passa() > 0) printf("  = fatto: da qui il disco lavora in AHCI\n");
+        else printf("  ! non e' riuscito: il disco resta com'era (dmesg AHCI dice perche')\n");
+        s = ahci_stato();
+    }
+    g_ahci_va = (s == 2);
+}
+
 static void aggiorna_kernel_cfg(const char *perc)
 {
     static char  testo[CFG_MAX_BYTE + 1];
@@ -1552,6 +1583,37 @@ static void aggiorna_kernel_cfg(const char *perc)
                 else aggiunte++;
             }
             if (!stretto) printf("    + [kernel] keymap = %s\n", g_keymap);
+        }
+    }
+
+    /* Il disco in AHCI a ogni avvio, dove qui si e' visto che funziona. */
+    if (g_ahci_va) {
+        unsigned int coda = 0;
+        int          dove = cfg_cerca(testo, "kernel", "ahci",
+                                      valore, sizeof(valore), &coda);
+
+        if (dove == 1) {
+            if (cfg_uguale(valore, "1")) {
+                printf("    [kernel] ahci = 1  (era gia' cosi')\n");
+            } else if (cfg_sostituisci(testo, sizeof(testo), "kernel", "ahci", "1")) {
+                printf("    ~ [kernel] ahci = 1  (era %s: su questa macchina l'AHCI va)\n",
+                       valore);
+                aggiunte++;
+            } else {
+                stretto = 1;
+            }
+        } else {
+            static const char riga_ahci[] = "ahci        = 1\n";
+
+            if (dove == 0) {
+                if (!cfg_inserisci(testo, sizeof(testo), coda, riga_ahci)) stretto = 1;
+                else aggiunte++;
+            } else {
+                if (!cfg_appendi_sezione(testo, sizeof(testo), "kernel", riga_ahci))
+                    stretto = 1;
+                else aggiunte++;
+            }
+            if (!stretto) printf("    + [kernel] ahci = 1  (il disco in AHCI a ogni avvio)\n");
         }
     }
 
@@ -1937,6 +1999,9 @@ int main(int argc, char **argv)
      * che ci sia o no. */
     minimale_leggi();
     scegli_componenti(modo_comp, argv[1]);
+
+    /* Prima di copiare: se il disco puo' lavorare in AHCI, ci passa adesso. */
+    disco_in_ahci();
 
     printf(aggiorna ? "\nAggiornamento di EX-OS in %s\n"
                     : "\nInstallazione di EX-OS in %s\n", argv[1]);

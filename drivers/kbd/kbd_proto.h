@@ -230,6 +230,7 @@ typedef struct {
 #define KBD_K_PGDN          0x0107u
 #define KBD_K_INS           0x0108u
 #define KBD_K_DEL           0x0109u
+#define KBD_K_WIN           0x010Au     /* il tasto Windows, sinistro o destro (9 ottobre 2026) */
 
 /* F1..F12 consecutivi: KBD_K_F(1) .. KBD_K_F(12) */
 #define KBD_K_F1            0x0110u

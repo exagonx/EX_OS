@@ -38,9 +38,26 @@ nello stack non porta giu' la macchina, e un driver che muore si rilancia.
 <tr><td><code>pcnet.drv</code></td><td>AMD PCnet &mdash; e' quella predefinita di VirtualBox</td></tr>
 <tr><td><code>e1000.drv</code></td><td>Intel PRO/1000 &mdash; l'altra scelta comune negli emulatori</td></tr>
 <tr><td><code>nforce.drv</code></td><td>l'Ethernet integrata nelle schede madri con chipset NVIDIA nForce
-    (MCP67, 73, 77, 79). <code>nforce.drv -d</code> stampa i registri senza toccarli,
-    <code>-v</code> racconta l'accensione: servono quando la rete non parte</td></tr>
+    (MCP67, 73, 77, 79). <code>nforce.drv -d</code> stampa i registri, lo stato del PHY (link su o giu')
+    e i conteggi dei frame inviati e ricevuti dal driver in servizio,
+    <code>-v</code> racconta l'accensione, <code>-p</code> la prova da sola per cinque secondi
+    (trasmette, conta quel che arriva) senza togliere la rete a un'altra scheda</td></tr>
+<tr><td><code>rtl8169.drv</code></td><td>le Gigabit PCI di Realtek: RTL8169, 8169S, 8110S, 8169SB, 8169SC
+    (non le 8168/8111 su PCI Express). Stesse opzioni <code>-d</code> e <code>-v</code></td></tr>
 </table>
+
+<p>Con due schede <code>netdetect -c</code> sceglie quella che ha il cavo (lo chiede ai driver che
+sanno dirlo, con la loro opzione <code>-l</code>); se nessuna lo dice, quella aggiunta al posto di
+quella integrata; <code>netdetect -c rtl8169</code> sceglie a mano, con una parola
+del nome del driver.</p>
+
+<p>Un sistema appena installato dal dischetto ha pochi driver. Gli altri arrivano dal
+<strong>supporto</strong>: <code>make support</code> riempie <code>dist/support</code>
+(e ne fa <code>dist/support.iso</code>); il contenuto va su una chiavetta FAT32 o su un CD, e sul PC
+si lancia <code>/USB/HDD0p1/aggiungi</code> oppure <code>/cdrom/aggiungi</code>. Copia i driver in
+<code>/dev</code> e i programmi in <code>/bin</code> senza chiedere, e aggiunge a
+<code>/boot/autoexec.sh</code> le righe che accendono chiavette e rete se mancano: al riavvio
+la rete parte da sola.</p>
 
 <h2>Accenderla</h2>
 

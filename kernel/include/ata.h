@@ -76,7 +76,18 @@ typedef struct {
     char     modello[41];   /* IDENTIFY parole 27-46, gia' de-swappate   */
     char     seriale[21];   /* IDENTIFY parole 10-19                     */
     char     firmware[9];   /* IDENTIFY parole 23-26                     */
+
+    /* 0 = si parla dai registri IDE del canale; k + 1 = e' il disco k del
+     * controller AHCI (kernel/block/ahci.c), e canale e unita' dicono solo da
+     * dove lo si era visto prima, se lo si era visto. */
+    uint8_t  ahci;
 } AtaDevice;
+
+/* I dischi gia' visti dai registri IDE di un controller che e' anche AHCI
+ * passano all'AHCI: lo chiede `ahci = 1` in kernel.cfg, dopo che il kernel
+ * l'ha letto. Rende quanti dischi sono passati. Vedi ata.c. */
+int  ata_passa_ad_ahci(void);
+int  ata_ahci_stato(void);      /* 0 niente, 1 si potrebbe, 2 gia' passato */
 
 /* Rileva le unita' sui due canali. Va chiamata dopo l'abilitazione degli
  * interrupt: le attese usano g_ticks. Ritorna quante unita' ATA ha

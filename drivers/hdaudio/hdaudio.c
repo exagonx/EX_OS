@@ -65,7 +65,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `hdaudio.drv -version` la stampa. */
-EX_VERSIONE("hdaudio.drv", "0.001");
+EX_VERSIONE("hdaudio.drv", "0.002");
 
 /* =============================================================================
  * I registri del controller (MMIO, BAR0)
@@ -142,6 +142,13 @@ static unsigned int g_irq   = 0;
 static unsigned int g_codec = 0;
 static unsigned int g_dac   = 0;    /* il widget che converte */
 static unsigned int g_presa = 0;    /* il widget che esce fuori */
+
+/* Tutte le prese d'uscita accese e i convertitori che le servono: vedi
+ * trova_widget(). g_dac e g_presa restano i primi dei due elenchi. */
+#define PRESE_MAX 8
+#define DAC_MAX   6
+static unsigned int g_prese[PRESE_MAX], g_n_prese = 0;
+static unsigned int g_dacs[DAC_MAX],    g_n_dac = 0;
 static unsigned int g_flusso = 1;   /* il numero di flusso, 1..15 */
 static unsigned int g_passi  = 0x7F; /* passi dell'amplificatore, li dice il codec */
 static unsigned int g_vol    = 80;
@@ -230,6 +237,80 @@ static unsigned int parametro(unsigned int nodo, unsigned int p)
  * significa, in un caso su tre, mandare il suono a un connettore che sulla
  * scheda non e' saldato.
  * ========================================================================== */
+#define P_CONN_LEN      0x0E
+#define P_AMP_INGRESSO  0x0D
+
+/* L'elenco delle connessioni di un nodo: da chi puo' prendere il suono. Rende
+ * quante sono. La forma corta (un byte per voce) copre tutti i codec comuni;
+ * il bit 7 di una voce vuol dire «da quella di prima fino a questa». */
+static int connessioni(unsigned int n, unsigned int *v, int max)
+{
+    unsigned int len = parametro(n, P_CONN_LEN), q = len & 0x7F, i;
+    int tot = 0;
+
+    if (len & 0x80) return 0;                   /* forma lunga: non la si incontra */
+    for (i = 0; i < q && tot < max; i += 4) {
+        unsigned int r = 0, k;
+
+        if (verbo(n, V_GET_CONN_LIST, i, &r) < 0) break;
+        for (k = 0; k < 4 && i + k < q && tot < max; k++) {
+            unsigned int e = (r >> (k * 8)) & 0xFF;
+
+            if ((e & 0x80) && tot > 0) {
+                unsigned int da = v[tot - 1] + 1, a = e & 0x7F;
+
+                while (da <= a && tot < max) v[tot++] = da++;
+            } else {
+                v[tot++] = e & 0x7F;
+            }
+        }
+    }
+    return tot;
+}
+
+/* Dal nodo `n` all'indietro fino a un convertitore d'uscita, aprendo ogni
+ * passo. Rende il convertitore raggiunto, 0 se da qui non ci si arriva. */
+static unsigned int apri_strada(unsigned int n, int prof)
+{
+    unsigned int cap  = parametro(n, P_CAP_WIDGET);
+    unsigned int tipo = (cap >> W_TIPO_SH) & 0x0F;
+    unsigned int c[16];
+    int k, i;
+
+    if (tipo == W_USCITA) {
+        verbo(n, V_SET_POWER, 0x00, 0);
+        return n;
+    }
+    if (prof > 5 || tipo == 0x1 || tipo > W_PRESA) return 0;   /* ne' ingressi ne' altro */
+    if (prof > 0 && tipo == W_PRESA) return 0;  /* una presa in mezzo e' un ingresso */
+
+    k = connessioni(n, c, 16);
+    for (i = 0; i < k; i++) {
+        unsigned int d = apri_strada(c[i], prof + 1);
+
+        if (!d) continue;
+        verbo(n, V_SET_POWER, 0x00, 0);
+        if (tipo == 0x2) {
+            /* Un miscelatore: ogni ingresso ha il suo amplificatore, e nasce
+             * muto. Si apre quello da cui arriva il nostro suono, a 0 dB. */
+            unsigned int zero = parametro(n, P_AMP_INGRESSO) & 0x7F;
+
+            verbo(n, V_SET_AMP, 0x4000 | 0x2000 | 0x1000 | ((unsigned int)i << 8) | zero, 0);
+        } else if (k > 1) {
+            verbo(n, V_SET_CONN_SEL, (unsigned int)i, 0);   /* un selettore, o una presa */
+        }
+        /* E l'amplificatore d'uscita del nodo, se ne ha uno e non e' la
+         * presa (quello della presa lo regola il volume): a 0 dB, non muto. */
+        if ((cap & 0x4) && tipo != W_PRESA) {
+            unsigned int zero = parametro(n, P_AMP_USCITA) & 0x7F;
+
+            verbo(n, V_SET_AMP, 0x8000 | 0x2000 | 0x1000 | zero, 0);
+        }
+        return d;
+    }
+    return 0;
+}
+
 static int trova_widget(void)
 {
     unsigned int nodi, primo, i, afg = 0;
@@ -255,56 +336,64 @@ static int trova_widget(void)
     nodi  = nodi & 0xFF;
 
     g_dac = g_presa = 0;
+    g_n_dac = g_n_prese = 0;
+    g_passi = 0x7F;
 
-    for (i = 0; i < nodi; i++) {
-        unsigned int n   = primo + i;
-        unsigned int cap = parametro(n, P_CAP_WIDGET);
+    /* =========================================================================
+     * ! SI APRE TUTTA LA STRADA, DALLA PRESA AL CONVERTITORE (9 ottobre 2026).
+     *
+     * Fino a ieri si prendevano «il primo convertitore» e «la prima presa» e
+     * si accendevano quei due. Va bene su un codec dove sono collegati
+     * direttamente, come quello di QEMU. Su un Realtek ALC888 (il PC di
+     * prova) fra i due c'e' un MISCELATORE, che nasce muto: il collaudo
+     * diceva «suona» — i campioni partivano davvero — e dalle casse non
+     * usciva niente.
+     *
+     * Adesso per ogni presa d'uscita (linea, altoparlanti, cuffie) si
+     * percorre l'elenco delle connessioni all'indietro fino a un convertitore,
+     * e a ogni passo si fa quel che serve a QUEL tipo di nodo: si accende, si
+     * sceglie l'ingresso giusto, si toglie il muto. E si accendono TUTTE le
+     * prese d'uscita collegate, ognuna col suo convertitore: lo stesso suono
+     * esce da ogni presa, e non bisogna indovinare in quale sta il cavo.
+     * ========================================================================= */
+    for (i = 0; i < nodi && g_n_prese < PRESE_MAX; i++) {
+        unsigned int n    = primo + i;
+        unsigned int cap  = parametro(n, P_CAP_WIDGET);
         unsigned int tipo = (cap >> W_TIPO_SH) & 0x0F;
+        unsigned int pcap, cfg = 0, dev, d, k;
 
-        if (tipo == W_USCITA && !g_dac) {
-            g_dac = n;
-            continue;
-        }
+        if (tipo != W_PRESA) continue;
+        pcap = parametro(n, P_CAP_PIN);
+        if (!(pcap & 0x10)) continue;                   /* non sa uscire */
 
-        if (tipo == W_PRESA && !g_presa) {
-            unsigned int pcap = parametro(n, P_CAP_PIN);
-            unsigned int cfg  = 0;
+        verbo(n, P_CONFIG_DEF, 0, &cfg);
+        /* Bit 30-31 = «connettivita'»: 01 = nessuna connessione fisica, il
+         * connettore che la scheda madre non ha saldato. Bit 20-23 = che
+         * cos'e': 0 linea, 1 altoparlanti, 2 cuffie; il resto (CD, SPDIF,
+         * microfono) non e' una presa da cui si ascolta. */
+        if (cfg != 0 && ((cfg >> 30) & 0x3) == 1) continue;
+        dev = (cfg >> 20) & 0xF;
+        if (cfg != 0 && dev > 2) continue;
 
-            if (!(pcap & 0x10)) continue;               /* non sa uscire */
+        d = apri_strada(n, 0);
+        if (!d) continue;
 
-            verbo(n, P_CONFIG_DEF, 0, &cfg);
-            /* Bit 30-31 = «connettivita'»: 01 = nessuna connessione fisica.
-             * Quelle si saltano: e' il connettore che la scheda madre non ha
-             * saldato. Se il codec non risponde si prende comunque, perche'
-             * una presa muta e' meglio di nessuna presa. */
-            if (cfg != 0 && ((cfg >> 30) & 0x3) == 1) continue;
+        verbo(n, V_SET_PIN_CTL, (dev == 2) ? 0xC0 : 0x40, 0);   /* uscita; cuffie col loro amplificatore */
+        verbo(n, V_SET_EAPD, 0x02, 0);
+        g_prese[g_n_prese++] = n;
 
-            g_presa = n;
-        }
+        for (k = 0; k < g_n_dac; k++) if (g_dacs[k] == d) break;
+        if (k == g_n_dac && g_n_dac < DAC_MAX) g_dacs[g_n_dac++] = d;
+
+        { unsigned int a = passi_amp(d), b = passi_amp(n);
+          if (a < g_passi) g_passi = a;
+          if (b < g_passi) g_passi = b; }
     }
 
-    if (!g_dac || !g_presa) return -1;
-
-    /* Se la presa sceglie fra piu' sorgenti, le si dice di ascoltare la
-     * prima: sulle topologie semplici e' il nostro DAC. */
-    verbo(g_presa, V_SET_CONN_SEL, 0, 0);
-
-    /* Accensione dei due, la presa in uscita, e l'amplificatore esterno —
-     * l'EAPD, che sulle schede madri comanda il chip di potenza degli
-     * altoparlanti: senza, tutto funziona e non esce un suono. */
-    verbo(g_dac,   V_SET_POWER, 0x00, 0);
-    verbo(g_presa, V_SET_POWER, 0x00, 0);
-    verbo(g_presa, V_SET_PIN_CTL, 0x40, 0);     /* uscita abilitata */
-    verbo(g_presa, V_SET_EAPD, 0x02, 0);
-
-    /* Il piu' stretto dei due amplificatori: alzarne uno oltre i suoi passi
-     * non serve, e usare quello largo per programmare quello stretto e' come
-     * non averli chiesti. */
-    {
-        unsigned int a = passi_amp(g_dac), b = passi_amp(g_presa);
-        g_passi = (a < b) ? a : b;
-    }
-
+    if (g_n_prese == 0 || g_n_dac == 0) return -1;
+    g_dac   = g_dacs[0];
+    g_presa = g_prese[0];
+    printf("hdaudio: %u prese d'uscita accese, %u convertitori\n", g_n_prese, g_n_dac);
     return 0;
 }
 
@@ -342,8 +431,12 @@ static void volume_su(unsigned int pct)
     if (pct > 100) pct = 100;
     g = (pct * g_passi) / 100;
 
-    amp_uscita(g_dac,   g, pct == 0);
-    amp_uscita(g_presa, g, pct == 0);
+    {
+        unsigned int k;
+
+        for (k = 0; k < g_n_dac; k++)   amp_uscita(g_dacs[k],  g, pct == 0);
+        for (k = 0; k < g_n_prese; k++) amp_uscita(g_prese[k], g, pct == 0);
+    }
 }
 
 /* =============================================================================
@@ -634,8 +727,15 @@ static int hd_apri(AudioFormato *f, unsigned char **buf, unsigned int *byte)
      * l'etichetta con cui i byte viaggiano sul collegamento seriale, e i due
      * capi devono usare la stessa. */
     w32(sd(SD_CTL), (g_flusso << SDCTL_STRM_SH));
-    verbo(g_dac, V_SET_FORMATO, fmt, 0);
-    verbo(g_dac, V_SET_FLUSSO, (g_flusso << 4) | 0, 0);
+    {
+        unsigned int k;
+
+        /* Lo stesso flusso a ogni convertitore: lo stesso suono da ogni presa. */
+        for (k = 0; k < g_n_dac; k++) {
+            verbo(g_dacs[k], V_SET_FORMATO, fmt, 0);
+            verbo(g_dacs[k], V_SET_FLUSSO, (g_flusso << 4) | 0, 0);
+        }
+    }
 
     volume_su(g_vol);
 

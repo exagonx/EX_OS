@@ -51,10 +51,11 @@
 #include "libc.h"
 #include "audio.h"
 #include "audio_proto.h"
+#include "mp3.h"
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `audio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("audio", "0.001");
+EX_VERSIONE("audio", "0.003");
 
 #define ATTESA_MS       2000
 
@@ -613,6 +614,45 @@ static unsigned int leggi16(const unsigned char *p)
     return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
 }
 
+/* =============================================================================
+ * La coda di un brano: silenzio in fondo, e un'attesa che finisce
+ *
+ * ! UNA SCHEDA CONSUMA A BLOCCHI INTERI, E UN BRANO NON FINISCE MAI SU UN
+ * BLOCCO (9 ottobre 2026). Qui si aspettava che l'anello fosse VUOTO: ma gli
+ * ultimi byte, meno di un blocco, la scheda non li prende mai, e `audio`
+ * restava ad aspettarli per sempre tenendosi la scheda. Con l'HD Audio di
+ * QEMU un WAV non tornava piu' al prompt; e l'intro suonata all'avvio della
+ * scrivania lasciava la scheda occupata per chi veniva dopo.
+ *
+ * Due rimedi insieme: in fondo si aggiunge del silenzio, cosi' l'ultimo
+ * blocco si completa e il brano si sente tutto; e l'attesa finisce quando il
+ * contatore dei byte suonati sta fermo per un terzo di secondo.
+ * ========================================================================== */
+static void coda_e_attesa(AudioAnello *anello, unsigned char *dati, unsigned int pid,
+                          int *partito)
+{
+    unsigned int libero = AUDIO_LIBERO(anello), zeri = 16384, ultimo, fermo = 0;
+
+    if (zeri > libero) zeri = libero;
+    while (zeri > 0) {
+        unsigned int testa  = anello->scritto & (anello->byte - 1);
+        unsigned int tratto = anello->byte - testa;
+
+        if (tratto > zeri) tratto = zeri;
+        memset(dati + testa, 0, tratto);
+        anello->scritto += tratto;
+        zeri -= tratto;
+    }
+    if (!*partito) { ipc_send(pid, AUDIO_MSG_VIA, 0, 0); *partito = 1; }
+
+    ultimo = anello->suonato;
+    while (AUDIO_PIENO(anello) > 0 && fermo < 66) {
+        usleep(5000);
+        if (anello->suonato != ultimo) { ultimo = anello->suonato; fermo = 0; }
+        else fermo++;
+    }
+}
+
 static int suona_wav(const char *percorso)
 {
     FILE *f;
@@ -714,7 +754,7 @@ static int suona_wav(const char *percorso)
     {
         int partito = 0;
 
-        while (resta > 0 || AUDIO_PIENO(anello) > 0) {
+        while (resta > 0) {
             unsigned int libero = AUDIO_LIBERO(anello);
             unsigned int testa, tratto, letti;
 
@@ -740,17 +780,156 @@ static int suona_wav(const char *percorso)
             }
 
             if (partito && AUDIO_LIBERO(anello) < 512) usleep(5000);
-            if (!partito && resta == 0) break;
         }
 
-        /* La coda: si aspetta che il driver abbia consumato tutto. */
-        while (partito && AUDIO_PIENO(anello) > 0) usleep(5000);
-        usleep(100000);     /* l'ultima meta' di buffer del DMA */
+        /* La coda: vedi coda_e_attesa(). */
+        coda_e_attesa(anello, dati, pid, &partito);
     }
 
     ipc_send((unsigned int)pid, AUDIO_MSG_CHIUDI, 0, 0);
     shm_chiudi((void *)z.virt);
     fclose(f);
+    return 0;
+}
+
+/* =============================================================================
+ * Suonare un file MP3 (9 ottobre 2026)
+ *
+ * La stessa strada del WAV — aprire il driver col formato, riempire l'anello
+ * condiviso, dare il via — con una sola differenza: i campioni non si leggono
+ * dal file, si chiedono al decodificatore un pezzo per volta (mp3.c). Un
+ * pezzo sono al piu' 4608 byte, e nell'anello si copia in due tratti quando
+ * cade a cavallo della fine.
+ * ========================================================================== */
+static int suona_mp3(const char *percorso)
+{
+    static short  pezzo[MP3_PEZZO_BYTE / 2];
+    AudioFormato  formato;
+    AudioEsito    esito;
+    ShmZona       z;
+    AudioAnello  *anello;
+    unsigned char *dati;
+    unsigned int  pid, hz = 0, canali = 0, in_mano = 0, dato = 0;
+    int           finito = 0, partito = 0;
+
+    pid = (unsigned int)audio_richiedi();
+    if ((int)pid <= 0) return 1;
+
+    if (mp3_apri(percorso, &hz, &canali) != 0) return 1;
+
+    memset(&formato, 0, sizeof(formato));
+    formato.rate   = hz;
+    formato.canali = canali;
+    formato.bit    = 16;
+    printf("%s: MP3, %u Hz, %s\n", percorso, hz, (canali == 2) ? "stereo" : "mono");
+
+    if (chiedi((int)pid, AUDIO_MSG_APRI, &formato, sizeof(formato),
+               AUDIO_MSG_ESITO, &esito, sizeof(esito), ATTESA_MS) < 0 ||
+        esito.esito != 0) {
+        printf("audio: il driver non apre questo formato (%d)\n", esito.esito);
+        mp3_chiudi();
+        return 1;
+    }
+    if (esito.formato.rate != formato.rate || esito.formato.canali != formato.canali ||
+        esito.formato.bit != formato.bit)
+        printf("audio: la scheda non fa questo formato; suono a %u Hz, %u bit, %s\n",
+               esito.formato.rate, esito.formato.bit,
+               (esito.formato.canali == 2) ? "stereo" : "mono");
+
+    memset(&z, 0, sizeof(z));
+    strcpy(z.nome, esito.zona);
+    z.byte = esito.zona_byte;
+    z.flag = 0;
+    if (shm_apri(&z) < 0) {
+        printf("audio: non riesco ad attaccarmi alla zona '%s'\n", esito.zona);
+        mp3_chiudi();
+        return 1;
+    }
+    anello = (AudioAnello *)z.virt;
+    dati   = (unsigned char *)z.virt + anello->dati_off;
+
+    while (!finito || in_mano > dato) {
+        /* Un pezzo nuovo quando quello in mano e' stato dato tutto. */
+        if (!finito && dato == in_mano) {
+            in_mano = mp3_prossimo(pezzo);
+            dato    = 0;
+            if (in_mano == 0) finito = 1;
+        }
+
+        /* Quel che c'e' in mano va nell'anello, per quanto ci sta. */
+        while (dato < in_mano) {
+            unsigned int libero = AUDIO_LIBERO(anello);
+            unsigned int testa  = anello->scritto & (anello->byte - 1);
+            unsigned int tratto = anello->byte - testa;
+
+            if (libero == 0) break;
+            if (tratto > libero)         tratto = libero;
+            if (tratto > in_mano - dato) tratto = in_mano - dato;
+            memcpy(dati + testa, (unsigned char *)pezzo + dato, tratto);
+            anello->scritto += tratto;      /* i campioni prima, il contatore dopo */
+            dato += tratto;
+        }
+
+        if (!partito && (AUDIO_PIENO(anello) > anello->byte / 2 || finito)) {
+            ipc_send(pid, AUDIO_MSG_VIA, 0, 0);
+            partito = 1;
+        }
+        if (partito && dato < in_mano) usleep(5000);
+    }
+    coda_e_attesa(anello, dati, pid, &partito);
+
+    ipc_send(pid, AUDIO_MSG_CHIUDI, 0, 0);
+    shm_chiudi((void *)z.virt);
+    mp3_chiudi();
+    return 0;
+}
+
+/* Da MP3 a WAV, su file: `audio -w brano.mp3 brano.wav`. Non tocca la scheda:
+ * serve a chi vuole il brano non compresso, e a provare il decodificatore su
+ * una macchina che non ha orecchie. */
+static void metti32(unsigned char *p, unsigned int v)
+{
+    p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8);
+    p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24);
+}
+
+static int mp3_in_wav(const char *da, const char *a)
+{
+    static short  pezzo[MP3_PEZZO_BYTE / 2];
+    unsigned char t[44];
+    unsigned int  hz = 0, canali = 0, tot = 0, n;
+    FILE *f;
+
+    if (mp3_apri(da, &hz, &canali) != 0) return 1;
+    f = fopen(a, "wb");
+    if (!f) { printf("audio: %s non si puo' scrivere\n", a); mp3_chiudi(); return 1; }
+
+    memset(t, 0, sizeof(t));
+    fwrite(t, 1, 44, f);                    /* l'intestazione vera alla fine */
+    while ((n = mp3_prossimo(pezzo)) > 0) {
+        if (fwrite(pezzo, 1, n, f) != n) {
+            printf("audio: scrittura fallita su %s (disco pieno?)\n", a);
+            fclose(f); mp3_chiudi();
+            return 1;
+        }
+        tot += n;
+    }
+
+    memcpy(t, "RIFF", 4);  metti32(t + 4, 36 + tot);
+    memcpy(t + 8, "WAVEfmt ", 8);
+    metti32(t + 16, 16);
+    t[20] = 1;  t[22] = (unsigned char)canali;
+    metti32(t + 24, hz);
+    metti32(t + 28, hz * canali * 2);
+    t[32] = (unsigned char)(canali * 2);  t[34] = 16;
+    memcpy(t + 36, "data", 4);  metti32(t + 40, tot);
+    fseek(f, 0, SEEK_SET);
+    fwrite(t, 1, 44, f);
+    fclose(f);
+    mp3_chiudi();
+
+    printf("%s -> %s: %u Hz, %s, %u byte di campioni\n", da, a, hz,
+           (canali == 2) ? "stereo" : "mono", tot);
     return 0;
 }
 
@@ -974,6 +1153,8 @@ static void uso(void)
     printf("  -t                  la tabella delle schede riconosciute\n");
     printf("  -v 0..100           il volume\n");
     printf("  <file>.wav          suona un file WAV (PCM non compresso)\n");
+    printf("  <file>.mp3          suona un file MP3\n");
+    printf("  -w f.mp3 f.wav      converte un MP3 in WAV, senza suonarlo\n");
     printf("  -m <file>.mid       suona un file MIDI\n");
 }
 
@@ -1016,6 +1197,11 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (strcmp(argv[1], "-w") == 0) {
+        if (argc < 4) { printf("uso: audio -w file.mp3 file.wav\n"); return 1; }
+        return mp3_in_wav(argv[2], argv[3]);
+    }
+
     if (strcmp(argv[1], "-m") == 0) {
         if (argc < 3) { printf("uso: audio -m file.mid\n"); return 1; }
         return suona_mid(argv[2]);
@@ -1023,5 +1209,14 @@ int main(int argc, char **argv)
 
     if (argv[1][0] == '-') { uso(); return 1; }
 
+    /* Dal nome: .mp3 al decodificatore, tutto il resto e' un WAV. */
+    {
+        unsigned int n = (unsigned int)strlen(argv[1]);
+
+        if (n > 4 && argv[1][n - 4] == '.' &&
+            (argv[1][n - 3] == 'm' || argv[1][n - 3] == 'M') &&
+            (argv[1][n - 2] == 'p' || argv[1][n - 2] == 'P') && argv[1][n - 1] == '3')
+            return suona_mp3(argv[1]);
+    }
     return suona_wav(argv[1]);
 }

@@ -141,6 +141,23 @@ extern unsigned char usb_desc_byte[18];
 int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
                       unsigned int verboso);
 
+/* Un'interfaccia HID «boot» di un dispositivo: che cos'e' e da dove parla. */
+typedef struct {
+    unsigned int proto;         /* USB_PROTO_MOUSE o USB_PROTO_TASTIERA */
+    unsigned int interfaccia;
+    unsigned int ep;
+    unsigned int ep_maxp;
+} UsbHid;
+
+/* Come usb_configura_hid, ma le prende TUTTE (fino a `max`): un ricevitore
+ * senza fili per tastiera e mouse e' UN dispositivo con DUE interfacce, e chi
+ * si ferma alla prima serve la tastiera e lascia fuori il mouse. Attiva la
+ * configurazione e mette ogni interfaccia in protocollo «boot».
+ *
+ * Rende quante ne ha trovate. */
+int usb_configura_hid_tutte(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
+                            UsbHid *out, int max, unsigned int verboso);
+
 /* Come sopra, ma cerca un'interfaccia di MEMORIA DI MASSA (08/06/50) con i
  * suoi due endpoint bulk, e se la trova la ATTIVA (SET_CONFIGURATION).
  *

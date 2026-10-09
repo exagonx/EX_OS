@@ -1,0 +1,48 @@
+EX-OS - supporto: driver e programmi da aggiungere a un sistema installato
+(si rifa' con `make support`)
+
+1. Copia il CONTENUTO di questa cartella su una chiavetta FAT32
+   (aggiungi, dev/, bin/), oppure masterizza dist/support.iso.
+2. Sul PC, con EX-OS avviato dal disco:
+       /dev/pci.drv &             solo se la chiavetta non compare da sola:
+       /dev/ehci.drv -avvio &     un sistema appena installato non accende
+       automount &                l'USB all'avvio (dopo `aggiungi` si')
+       ls /USB                    come si chiama la chiavetta (di solito HDD0p1)
+       /USB/HDD0p1/aggiungi       dalla chiavetta
+       /cdrom/aggiungi            dal CD
+   Copia i driver in /dev e i programmi in /bin senza chiedere niente, e
+   se in /boot/autoexec.sh le chiavette USB o la rete non sono accese
+   aggiunge le righe che mancano.
+3. shutdown, togli il supporto, riaccendi. All'avvio `netdetect -c` trova la
+   scheda di rete e ne carica il driver; `dhcp` prende l'indirizzo.
+
+Con due schede di rete vince quella aggiunta (non sul bus 0). Per scegliere
+a mano:  netdetect -c rtl8169   (una parola del nome del driver).
+Se la rete non parte:  netdetect   dice che schede vede e con quale driver;
+rtl8169.drv -d  o  nforce.drv -d  stampano la schermata da mandare.
+
+----------------------------------------------------------------------------
+
+EX-OS - support: drivers and programs to add to an installed system
+(rebuilt with `make support`)
+
+1. Copy the CONTENT of this folder to a FAT32 stick (aggiungi, dev/, bin/),
+   or burn dist/support.iso.
+2. On the PC, with EX-OS started from the disk:
+       /dev/pci.drv &             only if the stick does not show up by
+       /dev/ehci.drv -avvio &     itself: a freshly installed system does not
+       automount &                start USB at boot (after `aggiungi` it does)
+       ls /USB                    the name of the stick (usually HDD0p1)
+       /USB/HDD0p1/aggiungi       from the stick
+       /cdrom/aggiungi            from the CD
+   It copies the drivers to /dev and the programs to /bin without asking,
+   and if USB sticks or the network are not started in /boot/autoexec.sh it
+   adds the missing lines.
+3. shutdown, remove the medium, power on. At startup `netdetect -c` finds
+   the network card and loads its driver; `dhcp` gets the address.
+
+With two network cards the added one wins (the one not on bus 0). To choose
+by hand:  netdetect -c rtl8169   (a word of the driver's name).
+If the network does not start:  netdetect   says which cards it sees and
+with which driver;  rtl8169.drv -d  or  nforce.drv -d  print the screen to
+send.

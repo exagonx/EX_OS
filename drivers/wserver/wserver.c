@@ -1680,6 +1680,17 @@ static void kbd_tasto(unsigned int k)
         return;
     }
 
+    /* Il tasto Windows e Ctrl+Esc aprono il menu di avvio da qualunque
+     * finestra (9 ottobre 2026): vanno alla barra, non a chi ha il fuoco.
+     * Stesso messaggio di Ctrl+Alt+Canc, con dentro quale dei due e'. */
+    if ((k & KBD_KEY_MASK) == KBD_K_WIN ||
+        ((k & KBD_MOD_CTRL) && !(k & KBD_MOD_ALT) && (k & KBD_KEY_MASK) == 27u)) {
+        unsigned int quale = 1;
+
+        if (g_elenco_pid) ipc_send(g_elenco_pid, WIN_MSG_SISTEMA, &quale, sizeof(quale));
+        return;
+    }
+
     if (g_n_ordine == 0) return;
     if (g_fuoco < 0 || !g_fin[g_fuoco].usata) fuoco_ricalcola();
     if (g_fuoco < 0) return;

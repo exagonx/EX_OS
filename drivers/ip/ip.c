@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.005");
+EX_VERSIONE("ip.drv", "0.008");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -494,10 +494,14 @@ static void rispondi_echo(const unsigned char *f, unsigned int len,
      * arrivato, quindi il MAC lo conosciamo. Se non c'è (voce scaduta
      * fra l'arrivo e adesso) si rinuncia invece di mandare in broadcast:
      * una risposta ICMP non vale una tempesta. */
+    /* ! SE NON E' IN TABELLA, IL SUO MAC STA NEL FRAME APPENA ARRIVATO
+     * (8 ottobre 2026). Rinunciare voleva dire non rispondere MAI al ping di
+     * una macchina con cui non si era ancora parlato per primi: sul PC di
+     * prova il telnet andava e il ping no. Non e' un broadcast: si risponde
+     * a chi ha scritto, all'indirizzo da cui ha scritto. */
     v = arp_cerca(sorgente);
-    if (v == NULL) return;
 
-    n = componi_ip(risp, v->mac, sorgente, IP_PROTO_ICMP, icmp, len_icmp);
+    n = componi_ip(risp, v ? v->mac : f + 6, sorgente, IP_PROTO_ICMP, icmp, len_icmp);
     if (n == 0) return;
 
     manda_frame(risp, n);
@@ -2178,7 +2182,11 @@ static void manda_tabella_arp(unsigned int client)
  *
  * Lo stack senza scheda non ha nessun ripiego: esce. E un driver uscito
  * all'avvio non lo rilancia nessuno. */
-#define ATTESA_SCHEDA_MS  10000
+/* ! TRENTA SECONDI, NON DIECI (8 ottobre 2026): una scheda vera puo' metterci
+ * a negoziare il link, e chi aspetta poco lascia la macchina senza rete per
+ * un driver che sarebbe arrivato un attimo dopo. Non costa niente a chi e'
+ * svelto: l'attesa finisce appena il servizio compare. */
+#define ATTESA_SCHEDA_MS  30000
 
 static int aggancia_driver(void)
 {
@@ -2408,8 +2416,15 @@ static void stampa_ip(const unsigned char *p)
 static void stampa_config(void)
 {
     if (ip_nullo(g_cfg.ip)) {
-        printf("ip: nessun indirizzo. Lo stack c'e' e non puo' parlare:\n");
-        printf("    lancia  dhcp  per farselo dare, o  ip.drv -a IND\n");
+        /* ! SENZA INDIRIZZO NON SI STAMPANO MASCHERA E GATEWAY (8 ottobre
+         * 2026). All'avvio questa riga esce un attimo prima che dhcp chieda
+         * l'indirizzo, e «gateway nessuno» restava sullo schermo a far
+         * credere che la rete non andasse quando andava: chi ha la macchina
+         * davanti l'ha chiesto. Quel che vale adesso lo dice `ipcfg`. */
+        printf("ip: stack pronto, MAC %02x:%02x:%02x:%02x:%02x:%02x, ancora senza "
+               "indirizzo:\n", g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
+        printf("    lo chiede  dhcp  (o si da' a mano:  ip.drv -a IND)\n");
+        return;
     } else {
         printf("ip: indirizzo  "); stampa_ip(g_cfg.ip);      printf("\n");
     }

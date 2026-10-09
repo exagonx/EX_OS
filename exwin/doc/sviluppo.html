@@ -243,6 +243,63 @@ Per farla comparire nel menu di avvio basta una riga in
 <a href="exwin.html">La scrivania</a>.
 </p>
 
+<h2 id="exsuono">Far suonare un programma: exsuono.so</h2>
+
+<p>
+Il suono non si scrive due volte: sta in <code>/exwin/lib/exsuono.so</code>,
+e un programma lo usa includendo <code>lib/exsuono/exsuono.h</code> e
+collegando lo stub <code>exsuono_stub.c</code>, come per le altre librerie.
+Legge WAV (PCM a 8 o 16 bit) e MP3, e li porta da sola al formato che la
+scheda concede. Se la libreria manca le funzioni rendono un errore: il
+programma resta in piedi, muto.
+</p>
+
+<p><b>Un suono e via</b> &mdash; dopo un'azione, all'avvio, a un errore:</p>
+
+<pre>
+#include "exsuono.h"
+
+exsuono_avvia_file("/exwin/sound/fatto.wav");   /* torna subito */
+</pre>
+
+<p>
+Il file lo suona un processo a parte (<code>/bin/audio</code>), e il
+programma non deve fare altro. Rende il pid, che
+<code>exsuono_ferma_file(pid)</code> usa per farlo smettere prima; un numero
+negativo se non e' partito. Se la scheda e' occupata il suono non si sente,
+e non e' un errore da mostrare.
+</p>
+
+<p><b>Un brano da comandare</b> &mdash; pausa, posizione, durata:</p>
+
+<table border="1">
+<tr><th>Funzione</th><th>Che cosa fa</th></tr>
+<tr><td><code>exsuono_durata(file, &amp;ms)</code></td><td>la durata in millisecondi, senza toccare il brano aperto. Legge solo la testa del file: per un MP3 e' una stima</td></tr>
+<tr><td><code>exsuono_apri(file, &amp;info)</code></td><td>apre il brano e la scheda; <code>info</code> porta frequenza, canali e durata esatta</td></tr>
+<tr><td><code>exsuono_suona()</code>, <code>exsuono_pausa()</code></td><td>parte o riprende; si ferma tenendo il punto</td></tr>
+<tr><td><code>exsuono_vai(ms)</code></td><td>va a quel punto, suonando o in pausa</td></tr>
+<tr><td><code>exsuono_passo()</code></td><td><b>va chiamata spesso</b> (ogni 20-50 ms): porta i campioni alla scheda. Rende 0 quando il brano e' finito</td></tr>
+<tr><td><code>exsuono_posizione()</code></td><td>dove si e', in millisecondi</td></tr>
+<tr><td><code>exsuono_in_corso()</code></td><td>1 se sta suonando</td></tr>
+<tr><td><code>exsuono_volume(percento)</code></td><td>il volume della scheda, da 0 a 100</td></tr>
+<tr><td><code>exsuono_chiudi()</code></td><td>lascia il brano e la scheda</td></tr>
+</table>
+
+<p>
+Gli errori: <code>EXSUONO_NO_FILE</code> (non si apre, o non e' un formato
+letto), <code>EXSUONO_NO_SCHEDA</code> (nessun driver audio risponde),
+<code>EXSUONO_NO_MEMORIA</code>, <code>EXSUONO_OCCUPATA</code> (la scheda sta
+suonando per un altro: serve un programma alla volta).
+</p>
+
+<p class="nota">
+<b>Chi usa <code>exsuono_passo()</code> non puo' dormire in
+<code>ex_run()</code>.</b> Il ciclo dei messaggi va scritto a mano:
+<code>ex_peek_message()</code> finche' c'e' posta, un passo al suono, venti
+millisecondi di sonno. Il lettore audio (<code>exwin/bin/explayer</code>) e'
+l'esempio, in trecento righe.
+</p>
+
 <hr>
 <p class="navi">
 <a href="index.html">Torna alla documentazione</a> |

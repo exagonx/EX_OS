@@ -456,44 +456,84 @@ void vfs_init(uint8_t boot_drive)
 
     /* --- avviati da disco? --- */
     if (boot_drive >= 0x80) {
-        /* Il primo disco ATA. E' un'assunzione, e va detta: il BIOS
-         * numera 0x80, 0x81... in un ordine che non e' garantito
-         * corrispondere a quello dei canali IDE. Finche' si avvia dal
-         * primo disco — il caso normale — coincidono. */
-        int idisco = blk_trova("hd0");
-        int ipart  = (idisco >= 0) ? partizione_attiva(idisco) : -1;
-        int mnt    = -1;
-        int tipo   = 0;
+        /* =================================================================
+         * ! LA RADICE SI CERCA SU TUTTI I DISCHI, NON SOLO SU hd0 (8 ottobre
+         * 2026, dal PC vero col disco sul SATA).
+         *
+         * Qui c'era scritto blk_trova("hd0") e basta, con accanto la sua
+         * confessione: «il primo disco ATA: e' un'assunzione». hd0 e' un
+         * POSTO — il master del canale primario di sempre — e un disco SATA
+         * su un canale nativo prende il primo posto libero, che puo' essere
+         * un altro. Sulla macchina del referto l'installazione riusciva, il
+         * BIOS caricava il kernel, e il kernel non trovava la sua radice: la
+         * cercava su un posto vuoto.
+         *
+         * Due giri. Il primo guarda la partizione ATTIVA di ogni disco, che e'
+         * la regola di sempre e su una macchina con un disco solo da' lo
+         * stesso risultato di prima. Il secondo, se nessuna attiva si monta,
+         * prende la prima partizione ext2 che c'e': chi ha partizionato a
+         * mano e ha dimenticato il segno di avvio ha comunque un sistema li'
+         * sopra, e partire e' meglio che ripiegare su un floppy che non c'e'.
+         *
+         * Il filesystem della root si RICONOSCE, non si assume: avviando da
+         * ext2 una fat_mount() fallisce, e il sintomo era «shell non
+         * trovata» senza alcun accenno alla causa vera.
+         * ================================================================= */
+        int giro, d, ipart = -1, mnt = -1, tipo = 0;
 
-        /* Il filesystem della root si RICONOSCE, non si assume. Prima
-         * c'era solo fat_mount(): avviando da una partizione ext2 quella
-         * chiamata fallisce, e il sistema ripiegava sul floppy — che
-         * durante un avvio da disco non c'e', quindi il sintomo era
-         * "shell non trovata" senza alcun accenno alla causa vera. */
-        if (ipart >= 0) {
-            VolumeInfo vi;
+        for (giro = 0; giro < 2 && mnt < 0; giro++) {
+            for (d = 0; d < 4 && mnt < 0; d++) {
+                char nome[BLK_NOME_MAX];
+                int  idisco;
 
-            if (vol_identifica(ipart, &vi) == 0 && vi.tipo == VOL_FS_EXT2) {
-                mnt  = ext2_mount(ipart);
-                tipo = VFS_FS_EXT2;
-            } else {
-                mnt  = fat_mount(ipart);
-                tipo = VFS_FS_FAT;
+                nome[0] = 'h'; nome[1] = 'd'; nome[2] = (char)('0' + d); nome[3] = '\0';
+                idisco = blk_trova(nome);
+                if (idisco < 0) continue;
+
+                if (giro == 0) {
+                    ipart = partizione_attiva(idisco);
+                } else {
+                    int n = blk_conta(), q;
+
+                    ipart = -1;
+                    for (q = 0; q < n; q++) {
+                        const BlkDev *b = blk_get(q);
+                        VolumeInfo    vi;
+
+                        if (b == NULL || !b->usato || b->tipo != BLK_TIPO_PART) continue;
+                        if (b->nome[0] != 'h' || b->nome[1] != 'd' ||
+                            b->nome[2] != nome[2]) continue;
+                        if (vol_identifica(q, &vi) == 0 && vi.tipo == VOL_FS_EXT2) {
+                            ipart = q;
+                            break;
+                        }
+                    }
+                }
+                if (ipart < 0) continue;
+
+                {
+                    VolumeInfo vi;
+
+                    if (vol_identifica(ipart, &vi) == 0 && vi.tipo == VOL_FS_EXT2) {
+                        mnt  = ext2_mount(ipart);
+                        tipo = VFS_FS_EXT2;
+                    } else {
+                        mnt  = fat_mount(ipart);
+                        tipo = VFS_FS_FAT;
+                    }
+                }
             }
         }
 
         if (mnt >= 0) {
-            const BlkDev *d = blk_get(ipart);
+            const BlkDev *d2 = blk_get(ipart);
 
-            /* La root e' il montaggio che non si smonta mai: senza questa
-             * riga il disco da cui il sistema sta girando risulterebbe
-             * libero, e ripartizionarlo sarebbe permesso. */
             blk_acquisisci(ipart);
 
             g_mnt[0].tipo   = (uint8_t)tipo;
             g_mnt[0].mnt    = mnt;
             g_mnt[0].blkdev = ipart;
-            v_copia(g_mnt[0].dev, d ? d->nome : "hd0", BLK_NOME_MAX);
+            v_copia(g_mnt[0].dev, d2 ? d2->nome : "hd0", BLK_NOME_MAX);
 
             if (tipo == VFS_FS_EXT2)
                 klog(LOG_INFO, "VFS: root '/' su %s (ext2, avvio da disco 0x%02x)",
@@ -504,11 +544,21 @@ void vfs_init(uint8_t boot_drive)
             return;
         }
 
-        /* Non si puo' proseguire in silenzio: senza root non esiste
-         * /bin/sh, e il sintomo sarebbe "shell non trovata" a diversi
-         * passi di distanza dalla causa vera. */
-        klog(LOG_ERROR, "VFS: avvio da disco 0x%02x ma la partizione attiva "
-                        "non e' montabile: ripiego sul floppy", boot_drive);
+        klog(LOG_ERROR, "VFS: avvio da disco 0x%02x ma su nessun disco (hd0..hd3) "
+                        "c'e' una partizione montabile: ripiego sul floppy", boot_drive);
+        {
+            /* E si dice che cosa c'era: «non montabile» da solo non distingue
+             * un disco non visto da una partizione non riconosciuta. */
+            int n = blk_conta(), q;
+
+            for (q = 0; q < n; q++) {
+                const BlkDev *b = blk_get(q);
+
+                if (b != NULL && b->usato)
+                    klog(LOG_ERROR, "VFS:   visto %s, %u settori", b->nome,
+                         (uint32_t)b->settori);
+            }
+        }
     }
 
     /* =====================================================================

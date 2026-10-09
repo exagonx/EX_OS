@@ -108,6 +108,9 @@ lo fa <code>echo</code>, non la shell.
 <tr><td><code>jobs</code> <code>fg</code></td><td>i comandi in secondo piano, e come riprenderli</td></tr>
 <tr><td><code>env</code> <code>export</code></td><td>le variabili d'ambiente</td></tr>
 <tr><td><code>source</code> <code>exec</code></td><td>esegue uno script nella shell di adesso, sostituisce la shell</td></tr>
+<tr><td><code>audio</code></td><td>il suono. Senza argomenti dice se e' acceso e su quale scheda; <code>audio -i</code> cerca la scheda, la collauda e la installa (<code>-i -muto</code> senza far sentire le prove); <code>audio -v 0..100</code> il volume; <code>audio brano.wav</code> e <code>audio brano.mp3</code> suonano un file; <code>audio -m brano.mid</code> un MIDI; <code>audio -w brano.mp3 brano.wav</code> converte un MP3 in WAV senza suonarlo; <code>audio -t</code> la tabella delle schede riconosciute</td></tr>
+<tr><td><code>ahci</code></td><td>i dischi SATA in AHCI (kernel 0.245). <code>ahci -d</code> mostra i registri del controller senza toccare niente; <code>ahci</code> passa all'AHCI, per la sessione in corso, i dischi che il controller offre sia dai registri IDE sia dall'AHCI; <code>ahci -s</code> lo rende stabile scrivendo <code>ahci = 1</code> in <code>/boot/kernel.cfg</code>, solo se il passaggio e' riuscito; <code>ahci -m FILE</code> legge un file e dice a quanti KB/s. Vedi <a href="sistema.html#dischi">I dischi</a></td></tr>
+<tr><td><code>dmesg</code></td><td>quel che il kernel ha detto: l'avvio e gli ultimi messaggi (<code>-a</code> solo l'avvio, <code>-u</code> solo gli ultimi, <code>dmesg PAROLA</code> solo le righe che la contengono). Serve dove lo schermo non si vede, per esempio da una sessione telnet. Vuole il kernel 0.242</td></tr>
 <tr><td><code>hwinfo</code> <code>hwconfig</code></td><td>cosa c'e' in questa macchina (processore, <a href="sistema.html#processori">quanti processori</a>, memoria, schede); scrivere la configurazione da quello che si e' visto</td></tr>
 <tr><td><code>keymap</code></td><td>la disposizione della tastiera</td></tr>
 <tr><td><code>login</code> <code>sudo</code></td><td>entrare, e fare una cosa da amministratore</td></tr>
@@ -120,6 +123,9 @@ lo fa <code>echo</code>, non la shell.
 <code>netdetect</code>, <code>ipcfg</code>, <code>dhcp</code>,
 <code>ping</code>, <code>host</code>, <code>telnet</code>, <code>ftp</code>,
 <code>nettest</code>: stanno tutti in <a href="rete.html">La rete</a>.
+<code>aggiungi</code> non sta in <code>/bin</code>: si lancia dal supporto fatto con
+<code>make support</code> (<code>/cdrom/aggiungi</code>, <code>/USB/HDD0p1/aggiungi</code>) e porta
+sul disco i driver e i programmi che il dischetto di installazione non aveva.
 </p>
 
 <h3>Sviluppo</h3>

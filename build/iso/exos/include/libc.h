@@ -1279,6 +1279,24 @@ typedef struct {
  * richiama poco dopo vede `messaggi` cresciuto di uno su ciascuno. */
 int cpu_info(CpuInfo *ci);
 
+/* Il registro dei messaggi del kernel (kernel 0.242): quel che ha detto
+ * all'avvio (quale = 0, fino a 32 KB, mai sovrascritto) e gli ultimi messaggi
+ * (quale = 1, un anello di 32 KB). Rende i byte copiati o un -errno. */
+int klog_leggi(char *buf, unsigned int byte, int quale);
+
+/* Passa all'AHCI, per questa sessione, i dischi che il controller offre anche
+ * di li' (kernel 0.245, solo amministratore). Rende quanti, o un -errno. */
+int ahci_passa(void);
+
+/* Scrive nel log del kernel i registri dei controller che potrebbero essere
+ * AHCI, in sola lettura (si leggono con `dmesg AHCI`). Quanti, o un -errno. */
+int ahci_guarda(void);
+
+/* Senza cambiare niente: 0 = nessun disco da passare all'AHCI, 1 = ce n'e' uno
+ * che potrebbe e sta ancora sui registri IDE, 2 = e' gia' passato. Un valore
+ * negativo e' un -errno (kernel vecchio, o non si e' amministratore). */
+int ahci_stato(void);
+
 /* =============================================================================
  * Descrizione di un processo e dei suoi stack. DUPLICATA A MANO in
  * kernel/include/syscall.h e lib/libc.c: deve restare identica, e

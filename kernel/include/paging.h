@@ -108,6 +108,7 @@ typedef uint32_t PTE;
 /* Punta la pagina fissa all'APIC locale di indirizzo fisico `phys` e rende
  * l'indirizzo virtuale a cui leggerlo. Una volta, all'avvio. */
 void    *paging_mappa_apic(uint32_t phys);
+void    *paging_mappa_mmio_basso(uint32_t virt, uint32_t phys, uint32_t pagine);
 
 /* Porta in RAM le pagine dell'eseguibile che coprono un buffer utente,
  * prima di consegnarlo a un driver. Vedi paging.c. */
@@ -127,6 +128,10 @@ int      paging_pse_attivo(void);
 /* Mappa il framebuffer VESA con identita' nella PD del kernel E lo annota,
  * cosi' ogni PD di processo creata dopo se lo ritrova. Vedi paging.c. */
 int      paging_mappa_framebuffer(uint32_t phys, uint32_t byte);
+
+/* kernel/arch/x86/mtrr.c: dichiara combinabile in scrittura la memoria video.
+ * 0 se da adesso lo e', -1 se ha rinunciato (e il log dice perche'). */
+int mtrr_framebuffer_wc(uint32_t base, uint32_t byte);
 int      paging_map_page(PDE *pd, uint32_t virt, uint32_t phys, uint32_t flags);
 void     paging_unmap_page(PDE *pd, uint32_t virt);
 uint32_t paging_get_physical(PDE *pd, uint32_t virt);

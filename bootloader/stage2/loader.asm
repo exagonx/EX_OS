@@ -717,6 +717,16 @@ _start:
     mov  al, [fbbpp]
     mov  byte [es:di+37], al
 
+    ; ! LA GRAFICA E' PARTITA: NIENTE SPIEGAZIONE DEL PERCHE' NON E' PARTITA
+    ; (8 ottobre 2026). Da qui si cadeva dritti nel pezzo qui sotto, che
+    ; stampa la ragione della rinuncia ogni volta che la grafica era stata
+    ; chiesta: e a modo impostato, con la misura trovata e lineare, la
+    ; ragione che gli restava da dire era «c e ma non a 16, 24 o 32 bit».
+    ; Su un PC vero quella riga restava in cima allo schermo grafico, a dire
+    ; il falso su una grafica che funzionava. Il byte e' quello in memoria:
+    ; quello nel file, che svga.drv legge, non si tocca.
+    mov  byte [svgamodo], 0
+
 .novesa:
     xor  ax, ax
     mov  es, ax
