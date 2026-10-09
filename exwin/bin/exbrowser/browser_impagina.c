@@ -1554,6 +1554,20 @@ static void impagina_nodo(int v, const CssStile *ered)
 
         if (e_blocco) {
             if (mio.pulisci) { a_capo(); pulisci(mio.pulisci); }
+            /* ! UN BLOCCO CHE NON CI STA ACCANTO A UN GALLEGGIANTE VA SOTTO
+             * (10 ottobre 2026). Un blocco con una larghezza sua - `width`, o
+             * un `min-width` - piu' grande dello spazio rimasto di fianco a
+             * un float non si stringe li' dentro: scende sotto il float, ed
+             * e' quel che fa ogni navigatore. Su Yahoo la colonna dei
+             * risultati (min-width 1000) finiva a destra delle linguette
+             * «Tutti / Immagini / Video», spostata di duecento pixel. */
+            if (g_gal_n) {
+                int qui = rw(), vuole = larg_minima(&mio, qui, 0);
+
+                if (mio.larghezza != CSS_MISURA_NO && !(mio.larghezza_perc & CSS_LARG_PERC) &&
+                    mio.larghezza > vuole) vuole = mio.larghezza;
+                if (vuole > qui) { a_capo(); pulisci(CSS_PULISCI_SX | CSS_PULISCI_DX); }
+            }
             spazio_blocco(0);
 
             /* ! I RIENTRI SI SOMMANO A QUELLI DI FUORI: un blocco dentro un
@@ -1574,11 +1588,31 @@ static void impagina_nodo(int v, const CssStile *ered)
             if (!radice) {
                 int disp = rw(), w = larg_risolta(&mio, disp, lati_extra(&mio));
 
-                /* ! min-width PIU' LARGO DELLA RIGA: il blocco sborda a destra
-                 * invece di stringersi (e' la regola del CSS). */
+                /* ! min-width PIU' LARGO DELLA RIGA NON FA PIU' SBORDARE IL BLOCCO
+                 * (10 ottobre 2026). La regola del CSS dice che sborda a
+                 * destra, e un navigatore vero allora fa scorrere la pagina
+                 * di lato. Qui lo scorrimento orizzontale non c'e': quel che
+                 * sborda NON SI VEDE, o finisce contro la barra di
+                 * scorrimento. I risultati di Yahoo stanno in un riquadro con
+                 * `min-width: 1000px`: in una finestra da 760 un terzo di
+                 * ogni riga era fuori. Una pagina stretta e leggibile vale
+                 * piu' di una pagina larga giusta che non si puo' leggere.
+                 * Il blocco puo' ancora uscire dal suo CONTENITORE (la casella
+                 * di ricerca di Wikipedia lo fa, e deve), ma non dalla
+                 * pagina: si allarga fin dove c'e' pagina, e li' si ferma. */
                 if (w < 0) {
                     int mn = larg_minima(&mio, disp, lati_extra(&mio));
-                    if (mn > disp) g_marg_dx -= mn - disp;
+
+                    if (mn > disp) {
+                        int fuori = mn - disp;
+                        /* la pagina a destra della riga (come T_X()+T_W(), definiti piu' giu') */
+                        int resta = (g_vi->cornice ? g_vi->tx + g_vi->tw : area_x() + area_w())
+                                    - (rx() + disp);
+
+                        if (resta < 0) resta = 0;
+                        if (fuori > resta) fuori = resta;
+                        g_marg_dx -= fuori;
+                    }
                 }
                 if (w >= 0 && w < disp) {
                     int avanzo = disp - w, sposta = 0;

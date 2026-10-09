@@ -257,6 +257,14 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
   un quarto di meta' e scrive i conti di ogni riproduzione nel registro
   (`dmesg hdaudio`). Da riascoltare.
+- **EXBrowser: i risultati di Yahoo al loro posto, e quelli di Bing si
+  aprono.** Su Yahoo la colonna dei risultati finiva a destra delle linguette
+  e oltre il bordo: un blocco che non ci sta accanto a un galleggiante ora
+  scende sotto, e un `min-width` piu' largo della finestra non fa piu'
+  uscire il blocco dalla pagina (lo scorrimento orizzontale non c'e': quel
+  che esce non si vede). Su Bing ogni risultato portava a una pagina bianca:
+  la pagina di passaggio reindirizza da `<body onload="...">`, e l'evento
+  `load` partiva dalla radice del documento senza mai incontrare il body.
 - **EXBrowser: le immagini di sfondo dei CSS.** Loghi e icone di gran parte
   dei siti sono lo SFONDO di un elemento vuoto: `background-image` (anche
   dentro `background`), con `background-repeat`, `-position`, `-size`, e

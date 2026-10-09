@@ -44,6 +44,8 @@ static struct {
     int  (*colore)(const char *, unsigned int, unsigned int *);
     void (*media_w)(int);
     int  (*segno)(void);
+    void (*base)(CssFoglio *, const char *);
+    int  (*sfondo_url)(const CssFoglio *, const CssStile *, char *, unsigned int, const char **);
 } P;
 
 static int assicura(void)
@@ -74,6 +76,11 @@ static int assicura(void)
             P.media_w  = (void (*)(int))exlib_simbolo(t, "css_media_larghezza");
             /* FACOLTATIVA anche questa: senza, ogni elenco ha il suo segno. */
             P.segno    = (int (*)(void))exlib_simbolo(t, "css_segno_lista");
+            /* FACOLTATIVE (10 ottobre 2026): le immagini di sfondo. Con una
+             * excss.so di prima non ce ne sono, e basta. */
+            P.base       = (void (*)(CssFoglio *, const char *))exlib_simbolo(t, "css_base");
+            P.sfondo_url = (int (*)(const CssFoglio *, const CssStile *, char *, unsigned int,
+                                    const char **))exlib_simbolo(t, "css_sfondo_url");
         }
     }
 
@@ -163,4 +170,16 @@ void css_media_larghezza(int px)
 int css_segno_lista(void)
 {
     return (assicura() && P.segno) ? P.segno() : 2;
+}
+
+void css_base(CssFoglio *f, const char *url)
+{
+    if (assicura() && P.base) P.base(f, url);
+}
+
+int css_sfondo_url(const CssFoglio *f, const CssStile *s, char *out, unsigned int max,
+                   const char **base)
+{
+    if (base) *base = 0;
+    return (assicura() && P.sfondo_url) ? P.sfondo_url(f, s, out, max, base) : 0;
 }

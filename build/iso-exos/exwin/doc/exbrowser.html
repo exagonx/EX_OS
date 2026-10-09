@@ -500,6 +500,38 @@ ci stanno restano fuori e la barra di stato le conta. Una pagina si
 reimpagina a ogni immagine che arriva.
 </p>
 
+<h3>Le figure caricate in ritardo, e quelle di sfondo</h3>
+
+<p>
+Molte pagine non scrivono l'indirizzo di una figura in <code>src</code>: lo
+tengono in <code>data-src</code> e lo spostano con uno script quando la
+figura entra nello schermo. EXBrowser lo prende da li' subito, e in mancanza
+dal primo indirizzo di <code>srcset</code>.
+</p>
+
+<p>
+Dal 10 ottobre 2026 si vedono anche le <b>immagini di sfondo dei fogli di
+stile</b> &mdash; e' cosi' che la maggior parte dei siti disegna il proprio
+logo e le icone:
+</p>
+
+<table border="1">
+<tr><th>Proprieta'</th><th>Che cosa si capisce</th></tr>
+<tr><td><code>background-image</code>, e <code>url()</code> dentro <code>background</code></td><td>un indirizzo, relativo al foglio in cui sta scritto</td></tr>
+<tr><td><code>background-repeat</code></td><td><code>repeat</code>, <code>no-repeat</code>, <code>repeat-x</code>, <code>repeat-y</code></td></tr>
+<tr><td><code>background-position</code></td><td>pixel, percento, <code>left</code> <code>center</code> <code>right</code> <code>top</code> <code>bottom</code></td></tr>
+<tr><td><code>background-size</code></td><td><code>cover</code> e una larghezza in pixel o <code>100%</code>: la figura si porta a quella larghezza</td></tr>
+<tr><td><code>height</code>, <code>min-height</code></td><td>in pixel, <code>em</code>, <code>rem</code>: un riquadro vuoto con uno sfondo esiste solo se ha un'altezza</td></tr>
+</table>
+
+<p class="nota">
+<b>Che cosa manca.</b> Le immagini scritte dentro il foglio
+(<code>url(data:...)</code>) non si disegnano ancora. Lo sfondo si mette sui
+blocchi, non sulle parole in linea ne' sulle celle di tabella. Un testo
+nascosto con <code>text-indent</code> sotto il suo logo resta visibile sopra.
+Al piu' quarantotto sfondi per pagina.
+</p>
+
 <h2>La cache</h2>
 
 <p>

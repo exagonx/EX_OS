@@ -234,6 +234,14 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   boundary, and the wrong half was refilled. 0.004 moves the boundary by a
   quarter of a half and writes the counts of each playback to the kernel log
   (`dmesg hdaudio`). To be listened to again.
+- **EXBrowser: Yahoo's results in place, and Bing's open.** On Yahoo the
+  results column ended up to the right of the tabs and past the edge: a block
+  that does not fit beside a float now drops below it, and a `min-width`
+  wider than the window no longer pushes the block out of the page (there is
+  no horizontal scrolling: what goes out is not seen). On Bing every result
+  led to a blank page: the click-through page redirects from `<body
+  onload="...">`, and the `load` event started at the document root and
+  never met the body.
 - **EXBrowser: CSS background images.** Logos and icons of most sites are
   the BACKGROUND of an empty element: `background-image` (also inside
   `background`), with `background-repeat`, `-position`, `-size`, and `height`

@@ -3678,7 +3678,24 @@ static void prova_a_sparare_load(void)
     g_load_sparato = 1;
     ctrl_al_dom();
     memset(&err, 0, sizeof(err));
-    exdom_evento(g_dom, g_doc.radice, "load", &err);
+    /* ! «load» PARTE DAL <body>, NON DALLA RADICE (10 ottobre 2026). Il
+     * gestore scritto nell'attributo - <body onload="vai()"> - e' del body:
+     * mandando l'evento alla radice non lo incontrava mai, perche' un evento
+     * sale verso gli antenati e non scende ai figli. La pagina di passaggio
+     * di Bing (bing.com/ck/a...) fa il suo reindirizzamento proprio da li':
+     * ogni risultato portava a una pagina bianca. Partendo dal body, chi
+     * ascolta sulla radice (window.addEventListener('load')) lo riceve lo
+     * stesso, una volta, mentre sale. */
+    {
+        int i, corpo = g_doc.radice;
+
+        for (i = 0; i < (int)g_doc.nodi_n; i++)
+            if (g_doc.nodi[i].tipo == HTML_ELEMENTO && uguale(html_nome(&g_doc, i), "body")) {
+                corpo = i;
+                break;
+            }
+        exdom_evento(g_dom, corpo, "load", &err);
+    }
     js_grida(&err);
     rifai_se_cambiato();
     dopo_gli_script();

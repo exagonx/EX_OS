@@ -234,6 +234,31 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   boundary, and the wrong half was refilled. 0.004 moves the boundary by a
   quarter of a half and writes the counts of each playback to the kernel log
   (`dmesg hdaudio`). To be listened to again.
+- **EXBrowser: Yahoo's results in place, and Bing's open.** On Yahoo the
+  results column ended up to the right of the tabs and past the edge: a block
+  that does not fit beside a float now drops below it, and a `min-width`
+  wider than the window no longer pushes the block out of the page (there is
+  no horizontal scrolling: what goes out is not seen). On Bing every result
+  led to a blank page: the click-through page redirects from `<body
+  onload="...">`, and the `load` event started at the document root and
+  never met the body.
+- **EXBrowser: CSS background images.** Logos and icons of most sites are
+  the BACKGROUND of an empty element: `background-image` (also inside
+  `background`), with `background-repeat`, `-position`, `-size`, and `height`
+  / `min-height` giving the box a size. The address is relative to the sheet
+  it is written in, not to the page. Yahoo's logo now shows. Two faults found
+  and fixed: a `;` inside `url(data:...;base64,...)` ended the declaration
+  half-way (Yahoo's sheet goes from 2652 to 2856 rules read), and a page with
+  a timer lost ALL its style if the recalculation fired while an image was
+  downloading. Not yet: `data:` images, backgrounds on inline elements.
+- **EXBrowser: lazy-loaded thumbnails.** Image-heavy pages no longer put the
+  address in `src`: they keep it in `data-src` and a script moves it when the
+  picture scrolls into view. That script does not run here, and
+  wallpapers.com and pixels.com had no thumbnails. `<img>` now takes its
+  address from `data-src` (or `srcset`) when `src` is missing or a
+  placeholder. A button made of one picture is named after its `alt`. Still
+  open: CSS backgrounds (Yahoo's logo), the WebP format, and the layout of
+  those pages.
 - **The full-screen button.** In the title bar, between "minimise" and
   "close", a third button makes the window fill the screen down to the
   taskbar, and pressed again puts it back; Alt+F10 does the same. The window
