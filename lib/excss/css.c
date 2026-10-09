@@ -119,6 +119,14 @@ void css_stile_vuoto(CssStile *s)
     s->allinea_voci   = CSS_ALV_STIRA;
     s->spazio_riga    = CSS_MISURA_NO;
     s->spazio_col     = CSS_MISURA_NO;
+    s->sf_url         = 0;
+    s->sf_ripeti      = CSS_SF_RIPETE;
+    s->sf_px          = CSS_SF_PERC;        /* 0% 0%: l'angolo in alto a sinistra */
+    s->sf_py          = CSS_SF_PERC;
+    s->sf_mw          = 0;
+    s->sf_mh          = 0;
+    s->altezza        = CSS_MISURA_NO;
+    s->altezza_min    = CSS_MISURA_NO;
 }
 
 void css_prepara(CssFoglio *f,
@@ -464,7 +472,12 @@ typedef struct { const char *nome; unsigned short codice; } PropNota;
 static const PropNota PROPRIETA[] = {
     { "color",            CSS_P_COLORE     },
     { "background-color", CSS_P_SFONDO     },
-    { "background",       CSS_P_SFONDO     },
+    { "background-image",      CSS_P_SFONDO_IMM },
+    { "background-repeat",     CSS_P_SFONDO_RIP },
+    { "background-position-x", CSS_P_SFONDO_PX  },
+    { "background-position-y", CSS_P_SFONDO_PY  },
+    { "height",                CSS_P_ALT        },
+    { "min-height",            CSS_P_ALT_MIN    },
     { "font-weight",      CSS_P_PESO       },
     { "font-style",       CSS_P_STILE      },
     { "font-size",        CSS_P_CORPO      },
@@ -573,6 +586,122 @@ static int leggi_stile_bordo(const char *v, unsigned int n, unsigned int *out)
     return 0;
 }
 
+/* =============================================================================
+ * L'immagine di sfondo (10 ottobre 2026)
+ *
+ * ! UN INDIRIZZO NON STA IN UN NUMERO, e tutto il resto di questo file posa
+ * numeri. Qui il «numero» e' un PUNTATORE al testo dell'indirizzo, che deve
+ * quindi vivere quanto lo stile che lo porta:
+ *   - letto da un foglio (css_analizza), il testo sta in un buffer che chi
+ *     chiama riusa per il foglio dopo: l'indirizzo si copia nell'arena del
+ *     foglio, con davanti quattro byte che puntano all'indirizzo del foglio
+ *     stesso (css_base). Un url() dentro un foglio e' relativo AL FOGLIO, non
+ *     alla pagina, ed e' la differenza fra trovare lo sprite e chiederlo a un
+ *     indirizzo che non esiste;
+ *   - letto da un attributo style, il testo e' gia' dentro il documento e
+ *     resta li': ci si punta e basta.
+ * css_sfondo_url() distingue i due casi dall'indirizzo: dentro l'arena o no.
+ * ========================================================================== */
+static CssFoglio *g_fog_legge = 0;          /* il foglio che css_analizza sta leggendo */
+
+static int leggi_url(const char *v, unsigned int n, unsigned int *out)
+{
+    unsigned int i = 0, a, b;
+
+    if (parola_e(v, n, "none")) { *out = 0; return 1; }
+
+    /* url( ... ) dovunque nel valore: e' cosi' che lo si trova anche dentro
+     * la scorciatoia `background`. */
+    for (; i + 4 <= n; i++)
+        if ((v[i] == 'u' || v[i] == 'U') && (v[i + 1] == 'r' || v[i + 1] == 'R') &&
+            (v[i + 2] == 'l' || v[i + 2] == 'L') && v[i + 3] == '(') break;
+    if (i + 4 > n) return 0;
+    a = i + 4;
+    while (a < n && (spazio((unsigned char)v[a]) || v[a] == '"' || v[a] == '\'')) a++;
+    b = a;
+    while (b < n && v[b] != ')' && v[b] != '"' && v[b] != '\'') b++;
+    while (b > a && spazio((unsigned char)v[b - 1])) b--;
+    if (b <= a) return 0;
+
+    /* ! UN'IMMAGINE SCRITTA NEL FOGLIO (data:...) NON SI COPIA: non la si sa
+     * ancora disegnare, e sono migliaia di byte l'una. Il foglio di Yahoo ne
+     * ha decine: copiate nell'arena la riempivano, il foglio risultava
+     * «troncato» e la pagina perdeva TUTTO il suo stile per far posto a
+     * immagini che non avrebbe mostrato. Vale come «nessuna immagine». Lo
+     * stesso per un indirizzo irragionevolmente lungo. */
+    if ((b - a >= 5 && v[a] == 'd' && v[a + 1] == 'a' && v[a + 2] == 't' &&
+         v[a + 3] == 'a' && v[a + 4] == ':') || b - a > 1000) {
+        *out = 0;
+        return 1;
+    }
+
+    if (g_fog_legge) {
+        CssFoglio   *f = g_fog_legge;
+        unsigned int serve = 4 + (b - a) + 1, k;
+        char        *dove;
+
+        /* Allineato a 4: davanti all'indirizzo sta un puntatore. */
+        f->arena_n = (f->arena_n + 3u) & ~3u;
+        if (f->arena_n + serve > f->arena_max) { f->troncato = 1; return 0; }
+        dove = f->arena + f->arena_n;
+        *(const char **)(void *)dove = f->base;
+        for (k = 0; k < b - a; k++) dove[4 + k] = v[a + k];
+        dove[4 + (b - a)] = 0;
+        f->arena_n += serve;
+        *out = (unsigned int)(dove + 4);
+    } else {
+        *out = (unsigned int)(v + a);
+    }
+    return 1;
+}
+
+/* Una coordinata della posizione: pixel, percento, o una parola. */
+static int leggi_sf_pos(const char *v, unsigned int n, unsigned int *out)
+{
+    unsigned int l;
+
+    if (parola_e(v, n, "left") || parola_e(v, n, "top"))     { *out = CSS_SF_PERC + 0;   return 1; }
+    if (parola_e(v, n, "center"))                            { *out = CSS_SF_PERC + 50;  return 1; }
+    if (parola_e(v, n, "right") || parola_e(v, n, "bottom")) { *out = CSS_SF_PERC + 100; return 1; }
+    if (!leggi_lunghezza(v, n, 1, &l)) return 0;
+    if (l & REL_BIT) {
+        int cent;
+
+        if (((l >> 24) & 0x7Fu) != REL_PERC) return 0;          /* em, rem: rari qui */
+        cent = ((int)(l & 0xFFFFFFu) - (int)REL_ZERO) / 100;    /* vedi rel_codifica */
+        if (cent < 0) cent = 0;
+        if (cent > 100) cent = 100;
+        *out = (unsigned int)(CSS_SF_PERC + cent);
+        return 1;
+    }
+    *out = (unsigned int)(unsigned short)(short)((int)l - 32768);
+    return 1;
+}
+
+/* Un lato della misura: auto, pixel, percento; cover e contain valgono per
+ * tutti e due e li scrive la scorciatoia. */
+static int leggi_sf_mis(const char *v, unsigned int n, unsigned int *out)
+{
+    unsigned int l;
+
+    if (parola_e(v, n, "auto"))    { *out = 0; return 1; }
+    if (parola_e(v, n, "cover"))   { *out = (unsigned int)(unsigned short)(short)CSS_SF_COPRE;    return 1; }
+    if (parola_e(v, n, "contain")) { *out = (unsigned int)(unsigned short)(short)CSS_SF_CONTIENE; return 1; }
+    if (!leggi_lunghezza(v, n, 0, &l)) return 0;
+    if (l & REL_BIT) {
+        int cent;
+
+        if (((l >> 24) & 0x7Fu) != REL_PERC) return 0;
+        cent = ((int)(l & 0xFFFFFFu) - (int)REL_ZERO) / 100;
+        if (cent < 1) cent = 1;
+        if (cent > 400) cent = 400;
+        *out = (unsigned int)(unsigned short)(short)(-(100 + cent));
+        return 1;
+    }
+    *out = (unsigned int)(unsigned short)(short)((int)l - 32768);
+    return 1;
+}
+
 /* Da testo del valore al numero che finisce in CssDich. Rende 0 se il valore
  * non si capisce: la dichiarazione allora si butta, non il resto della regola. */
 static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
@@ -613,6 +742,31 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
     case CSS_P_LARG: case CSS_P_LARG_MAX: case CSS_P_LARG_MIN:
         if (parola_e(v, n, "auto") || parola_e(v, n, "none")) { *out = 0; return 1; }
         return leggi_lunghezza(v, n, 0, out);
+
+    /* ! L'ALTEZZA IN PERCENTO NON SI PRENDE: sarebbe del contenitore, e qui
+     * l'altezza di un contenitore la decide quel che contiene. Buttarla e'
+     * meglio che leggerla come pixel. */
+    case CSS_P_ALT: case CSS_P_ALT_MIN:
+        if (parola_e(v, n, "auto") || parola_e(v, n, "none")) { *out = 0; return 1; }
+        if (!leggi_lunghezza(v, n, 0, out)) return 0;
+        if ((*out & REL_BIT) && ((*out >> 24) & 0x7Fu) == REL_PERC) return 0;
+        return 1;
+
+    case CSS_P_SFONDO_IMM:
+        return leggi_url(v, n, out);
+
+    case CSS_P_SFONDO_RIP:
+        if (parola_e(v, n, "no-repeat")) { *out = CSS_SF_UNA;      return 1; }
+        if (parola_e(v, n, "repeat"))    { *out = CSS_SF_RIPETE;   return 1; }
+        if (parola_e(v, n, "repeat-x"))  { *out = CSS_SF_RIPETE_X; return 1; }
+        if (parola_e(v, n, "repeat-y"))  { *out = CSS_SF_RIPETE_Y; return 1; }
+        return 0;
+
+    case CSS_P_SFONDO_PX: case CSS_P_SFONDO_PY:
+        return leggi_sf_pos(v, n, out);
+
+    case CSS_P_SFONDO_MW: case CSS_P_SFONDO_MH:
+        return leggi_sf_mis(v, n, out);
 
     case CSS_P_POS + 0: case CSS_P_POS + 1: case CSS_P_POS + 2: case CSS_P_POS + 3:
         if (parola_e(v, n, "auto")) { *out = 0; return 1; }
@@ -876,6 +1030,88 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
     unsigned short base = 0;
     int lato = -1;
 
+    /* =====================================================================
+     * background: colore, immagine, ripetizione, posizione [/ misura], in
+     * qualunque ordine. Ogni parola si prova per quel che puo' essere; quelle
+     * che non si capiscono (scroll, fixed, padding-box...) si saltano. E'
+     * anche la scorciatoia che AZZERA: `background: red` toglie l'immagine
+     * messa da una regola di prima.
+     * ===================================================================== */
+    if (parola_e(nome, nn, "background")) {
+        unsigned int bd[12], bl[12], bk, bq, val, npos = 0, col = CSS_NIENTE;
+        unsigned int url = 0, rip = CSS_SF_RIPETE, px = CSS_SF_PERC, py = CSS_SF_PERC;
+        unsigned int mw = 0, mh = 0;
+        int          nmis = -1;             /* >= 0: si stanno leggendo le misure */
+
+        bk = parole(v, n, bd, bl, 12);
+        for (bq = 0; bq < bk; bq++) {
+            const char  *w = v + bd[bq];
+            unsigned int l = bl[bq];
+
+            /* «posizione / misura», anche attaccati: 50%/cover */
+            {
+                unsigned int z;
+
+                for (z = 0; z < l; z++) if (w[z] == '/') break;
+                if (z < l && !(l >= 4 && w[3] == '(')) {
+                    if (z > 0 && leggi_sf_pos(w, z, &val)) { if (npos == 0) px = val; else py = val; npos++; }
+                    nmis = 0;
+                    w += z + 1; l -= z + 1;
+                    if (l == 0) continue;
+                }
+            }
+            if (nmis >= 0 && leggi_sf_mis(w, l, &val)) {
+                if (nmis == 0) { mw = val; mh = ((short)(unsigned short)val < 0 && (short)(unsigned short)val > -100) ? val : 0; }
+                else mh = val;
+                nmis++;
+                continue;
+            }
+            if (leggi_url(w, l, &val)) { url = val; continue; }
+            if (leggi_valore(CSS_P_SFONDO_RIP, w, l, &val)) { rip = val; continue; }
+            if (leggi_sf_pos(w, l, &val)) {
+                /* Una parola verticale detta per prima (top, bottom) e' la y. */
+                if (parola_e(w, l, "top") || parola_e(w, l, "bottom")) py = val;
+                else if (npos == 0) px = val; else py = val;
+                npos++;
+                continue;
+            }
+            if (leggi_colore(w, l, &val)) { col = val; continue; }
+        }
+        if (npos == 1 && py == CSS_SF_PERC) py = CSS_SF_PERC + 50;   /* un valore solo: l'altro e' center */
+        coda_metti(it, CSS_P_SFONDO, col);
+        coda_metti(it, CSS_P_SFONDO_IMM, url);
+        coda_metti(it, CSS_P_SFONDO_RIP, rip);
+        coda_metti(it, CSS_P_SFONDO_PX, px);
+        coda_metti(it, CSS_P_SFONDO_PY, py);
+        coda_metti(it, CSS_P_SFONDO_MW, mw);
+        coda_metti(it, CSS_P_SFONDO_MH, mh);
+        return 1;
+    }
+    if (parola_e(nome, nn, "background-position")) {
+        unsigned int bd[2], bl[2], bk, a = CSS_SF_PERC, b = CSS_SF_PERC + 50;
+
+        bk = parole(v, n, bd, bl, 2);
+        if (bk >= 1 && !leggi_sf_pos(v + bd[0], bl[0], &a)) return 1;
+        if (bk >= 2 && !leggi_sf_pos(v + bd[1], bl[1], &b)) return 1;
+        if (bk >= 1 && (parola_e(v + bd[0], bl[0], "top") || parola_e(v + bd[0], bl[0], "bottom"))) {
+            unsigned int t = a; a = (bk >= 2) ? b : CSS_SF_PERC + 50; b = t;
+        }
+        coda_metti(it, CSS_P_SFONDO_PX, a);
+        coda_metti(it, CSS_P_SFONDO_PY, b);
+        return 1;
+    }
+    if (parola_e(nome, nn, "background-size")) {
+        unsigned int bd[2], bl[2], bk, a = 0, b = 0;
+
+        bk = parole(v, n, bd, bl, 2);
+        if (bk >= 1 && !leggi_sf_mis(v + bd[0], bl[0], &a)) return 1;
+        if (bk >= 2 && !leggi_sf_mis(v + bd[1], bl[1], &b)) return 1;
+        if (bk == 1 && (short)(unsigned short)a < 0 && (short)(unsigned short)a > -100) b = a;   /* cover, contain */
+        coda_metti(it, CSS_P_SFONDO_MW, a);
+        coda_metti(it, CSS_P_SFONDO_MH, b);
+        return 1;
+    }
+
     /* margin, padding, border-width/-style/-color: da uno a quattro valori */
     if      (parola_e(nome, nn, "margin"))       base = CSS_P_MARG_SOPRA;
     else if (parola_e(nome, nn, "padding"))      base = CSS_P_IMBOTTITURA;
@@ -1013,11 +1249,27 @@ static int dich_prossima(DichIter *it, unsigned short *prop, unsigned int *val)
          * un commento in coda a una dichiarazione finirebbe dentro il valore e
          * ne farebbe fallire la lettura, cioe' una nota innocua spegnerebbe la
          * proprieta'. */
-        while (it->i < it->n && it->t[it->i] != ';' &&
-               !(it->i + 1 < it->n && it->t[it->i] == '/' &&
-                 it->t[it->i + 1] == '*')) it->i++;
-        vf = it->i;
-        while (it->i < it->n && it->t[it->i] != ';') it->i++;
+        /* ! NE' UN ';' DENTRO LE PARENTESI (10 ottobre 2026): un'immagine
+         * scritta nel foglio, url(data:image/png;base64,...), ha un punto e
+         * virgola in mezzo, e il valore finiva li': la dichiarazione si
+         * perdeva e il resto dell'indirizzo veniva letto come proprieta'. */
+        {
+            unsigned int par = 0;
+
+            while (it->i < it->n && (par || it->t[it->i] != ';') &&
+                   !(!par && it->i + 1 < it->n && it->t[it->i] == '/' &&
+                     it->t[it->i + 1] == '*')) {
+                if (it->t[it->i] == '(') par++;
+                else if (it->t[it->i] == ')' && par) par--;
+                it->i++;
+            }
+            vf = it->i;
+            while (it->i < it->n && (par || it->t[it->i] != ';')) {
+                if (it->t[it->i] == '(') par++;
+                else if (it->t[it->i] == ')' && par) par--;
+                it->i++;
+            }
+        }
         while (vf > vi && spazio((unsigned char)it->t[vf - 1])) vf--;
 
         /* ! «!important» SI TOGLIE E SI IGNORA, e va detto: qui non c'e' il
@@ -1056,6 +1308,7 @@ static int e_lunghezza(unsigned short p)
            (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
            (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4) ||
            (p >= CSS_P_LARG && p <= CSS_P_LARG_MIN) ||
+           p == CSS_P_ALT || p == CSS_P_ALT_MIN ||
            (p >= CSS_P_POS && p < CSS_P_POS + 4) ||
            p == CSS_P_SPAZIO_RIGA || p == CSS_P_SPAZIO_COL;
 }
@@ -1161,6 +1414,14 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_ALLINEA_VOCI: s->allinea_voci = (unsigned char)val;      break;
     case CSS_P_SPAZIO_RIGA: s->spazio_riga = (short)((int)val - 32768); break;
     case CSS_P_SPAZIO_COL:  s->spazio_col  = (short)((int)val - 32768); break;
+    case CSS_P_SFONDO_IMM: s->sf_url    = (const char *)val;            break;
+    case CSS_P_SFONDO_RIP: s->sf_ripeti = (unsigned char)val;           break;
+    case CSS_P_SFONDO_PX:  s->sf_px     = (short)(unsigned short)val;   break;
+    case CSS_P_SFONDO_PY:  s->sf_py     = (short)(unsigned short)val;   break;
+    case CSS_P_SFONDO_MW:  s->sf_mw     = (short)(unsigned short)val;   break;
+    case CSS_P_SFONDO_MH:  s->sf_mh     = (short)(unsigned short)val;   break;
+    case CSS_P_ALT:        s->altezza     = (short)((int)val - 32768);  break;
+    case CSS_P_ALT_MIN:    s->altezza_min = (short)((int)val - 32768);  break;
     case CSS_P_OPACITA:    g_opaca = (int)val;                          break;
     case CSS_P_PUNTATORE:  g_punta = (int)val;                          break;
     case CSS_P_SEGNO:      g_segno = (int)val;                          break;
@@ -1197,6 +1458,37 @@ static void nascosto_applica(CssStile *s)
     if (g_opaca == 0 && g_punta == 0) s->visibile = 0;
 }
 
+void css_base(CssFoglio *f, const char *url)
+{
+    unsigned int n = 0;
+
+    if (!f || !f->arena) return;
+    f->base = 0;
+    if (!url || !url[0]) return;
+    while (url[n]) n++;
+    if (f->arena_n + n + 1 > f->arena_max) { f->troncato = 1; return; }
+    f->base = f->arena + f->arena_n;
+    for (n = 0; url[n]; n++) f->arena[f->arena_n++] = url[n];
+    f->arena[f->arena_n++] = 0;
+}
+
+int css_sfondo_url(const CssFoglio *f, const CssStile *s, char *out, unsigned int max,
+                   const char **base)
+{
+    const char  *u;
+    unsigned int n = 0;
+
+    if (base) *base = 0;
+    if (!s || !s->sf_url || !out || max < 2) return 0;
+    u = s->sf_url;
+    if (f && f->arena && u >= f->arena + 4 && u < f->arena + f->arena_max && base)
+        *base = *(const char *const *)(const void *)(u - 4);
+    while (u[n] && u[n] != ')' && u[n] != '"' && u[n] != '\'' && u[n] != ';' &&
+           u[n] != ' ' && n + 1 < max) { out[n] = u[n]; n++; }
+    out[n] = 0;
+    return n > 0;
+}
+
 void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
 {
     DichIter       it;
@@ -1205,6 +1497,7 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
 
     if (!testo || !s) return;
 
+    g_fog_legge = 0;            /* un attributo style: l'indirizzo resta dov'e' */
     g_opaca = g_punta = 1;
     it.t = testo; it.i = 0; it.n = n; it.coda_n = it.coda_i = 0;
     while (dich_prossima(&it, &prop, &val)) css_posa(s, prop, val);
@@ -1883,6 +2176,8 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
 
     if (!f || !f->regole || !f->dich || !f->arena || !testo) return 0;
 
+    g_fog_legge = f;            /* gli url() vanno copiati nella sua arena */
+
     while (i < n) {
         unsigned int sel_i, sel_f, gr_i, gr_f, s;
 
@@ -2023,6 +2318,7 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
             s = e + 1;
         }
     }
+    g_fog_legge = 0;
     return fatte;
 }
 
@@ -2317,6 +2613,7 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
     int          k;
 
     if (!out) return;
+    g_fog_legge = 0;
     css_stile_vuoto(out);
     for (i = 0; i < CSS_P_N; i++) peso_di[i] = 0;
 

@@ -6206,7 +6206,34 @@ un programma: il primo lavoro e' tirarla fuori.
   pulsante fatto con un'icona SVG o un font di icone) prima di dire se e
   quanto costa. C'e' anche il «TypeError: not a function» gia' visto su
   quella pagina.
-  Stato: DA FARE (prima la diagnosi).
+  DIAGNOSI FATTA il 10 ottobre 2026, con le pagine scaricate e guardate:
+  - yahoo.it (it.search.yahoo.com): il pulsante di ricerca NON C'E' nemmeno
+    negli altri navigatori - il foglio di Yahoo dice `.sbb{display:none}` e
+    nessuna regola lo riaccende; si cerca con Invio, e in EXBrowser funziona.
+    Il logo e' un'immagine di SFONDO CSS (uno sprite) su <a id="logo">: qui
+    resta la scritta «Yahoo» perche' excss non ha background-image.
+  - wallpapers.com e pixels.com: le anteprime stavano in data-src (figure
+    caricate «in ritardo» da uno script): FATTO, exbrowser le prende da li'.
+    Su wallpapers.com 100 figure su 159 sono WebP, che eximg.so non legge.
+  FATTO il 10 ottobre 2026: background-image nei CSS (anche dentro
+  `background`), repeat, position, size (cover, larghezza), height e
+  min-height. Il logo di Yahoo si vede. Prova: tools/prove/sito/sfondi/
+  (S.HTM, da aprire da un disco: i nomi sono 8.3 apposta).
+  ! IL WebP C'ERA GIA' (eximg.so, 30 settembre: VP8, VP8L, alfa): l'avevo
+  dato per mancante senza guardare. Le anteprime di wallpapers.com non si
+  vedevano per il solo data-src.
+  DA FARE, in ordine di resa:
+  1. le immagini scritte nel foglio, url(data:...;base64,...): molte icone
+     piccole sono fatte cosi' (serve la decodifica base64 e un posto dove
+     tenerle); lo sfondo sugli elementi in linea e sulle celle;
+     text-indent / overflow:hidden, con cui si nasconde il testo sotto un logo;
+  2. il blocco rosso in cima a google.com (c'era gia' prima di oggi,
+     verificato col codice di HEAD): una regola del foglio di gstatic che qui
+     si applica e in un navigatore vero no;
+  3. l'impaginazione: su wallpapers.com le voci del menu si sovrappongono
+     (flex con position), su pixels.com la testata e' fuori posto. Va
+     guardato caso per caso, con la pagina ridotta al pezzo che sbaglia.
+  Stato: IN PARTE (le anteprime in data-src e i nomi dei pulsanti-figura).
 
 @FINESTRA-MASSIMIZZA IL PULSANTE «A TUTTO SCHERMO» SULLE FINESTRE (chiesto dall'utente il 10 ottobre 2026: «cosa importante»)
   Nel toolkit e nel server a finestre, fra il pulsante di riduzione a icona e

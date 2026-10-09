@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.030"
+#define VERSIONE_APP "0.031"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
@@ -196,6 +196,11 @@ typedef struct {
     int           x, y, w, h;
     unsigned int  colore;
     unsigned char bordo;    /* 0 = si riempie, >0 = contorno di tanti pixel */
+    /* L'immagine di sfondo (10 ottobre 2026): il riferimento che ha dato il
+     * cliente (VistaCliente.sfondo), -1 = nessuna; come si ripete e dove sta. */
+    short         imm;
+    unsigned char imm_rip;
+    short         imm_px, imm_py;
 } Sfondo;
 
 /* ------------------------------------------ quel che i tre file si dividono */

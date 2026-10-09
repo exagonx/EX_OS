@@ -257,6 +257,24 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
   un quarto di meta' e scrive i conti di ogni riproduzione nel registro
   (`dmesg hdaudio`). Da riascoltare.
+- **EXBrowser: le immagini di sfondo dei CSS.** Loghi e icone di gran parte
+  dei siti sono lo SFONDO di un elemento vuoto: `background-image` (anche
+  dentro `background`), con `background-repeat`, `-position`, `-size`, e
+  `height` / `min-height` che danno una misura al riquadro. L'indirizzo e'
+  relativo al foglio in cui sta scritto, non alla pagina. Su Yahoo compare il
+  logo. Due difetti trovati e corretti: un `;` dentro `url(data:...;base64,...)`
+  chiudeva la dichiarazione a meta' (il foglio di Yahoo passa da 2652 a 2856
+  regole lette), e una pagina con un temporizzatore perdeva TUTTO lo stile se
+  il ricalcolo scattava mentre si scaricava un'immagine. Non ancora: le
+  immagini `data:`, lo sfondo sugli elementi in linea.
+- **EXBrowser: le anteprime «in ritardo».** Le pagine piene di figure non
+  mettono piu' l'indirizzo in `src`: lo tengono in `data-src` e uno script lo
+  sposta quando la figura entra nello schermo. Quello script qui non gira, e
+  wallpapers.com e pixels.com restavano senza anteprime. Ora `<img>` prende
+  l'indirizzo da `data-src` (o `srcset`) quando `src` manca o e' un
+  segnaposto. Un pulsante fatto di una sola figura prende il nome dal suo
+  `alt`. Restano: gli sfondi CSS (il logo di Yahoo), il formato WebP, e
+  l'impaginazione di quelle pagine.
 - **Il pulsante «a tutto schermo».** Nella barra del titolo, fra «riduci a
   icona» e «chiudi», un terzo pulsante porta la finestra a riempire lo
   schermo fino alla barra della scrivania, e premuto di nuovo la rimette

@@ -92,6 +92,24 @@ typedef struct {
      * dentro lo scorrimento — e il ritaglio all'area del documento e' di chi
      * disegna: l'impaginato ritaglia il TESTO, che e' l'unica cosa sua. */
     void (*disegna)(int rif, int x, int y, int w, int h);
+
+    /* =========================================================================
+     * L'IMMAGINE DI SFONDO DI UN RIQUADRO (10 ottobre 2026)
+     *
+     * `sfondo`: lo stile di questo nodo chiede un'immagine di sfondo? Rende
+     * un riferimento (>= 0) da ridare a `sfondo_disegna`, o -1. Scaricarla e
+     * tenerla e' del cliente, come per le figure: l'impaginato non sa che
+     * cosa sia una rete.
+     *
+     * `sfondo_disegna`: posala nel riquadro (x, y, w, h) - coordinate dello
+     * schermo - secondo posizione e ripetizione dello stile, e NON FUORI dal
+     * ritaglio (rx, ry, rw, rh), che e' il riquadro tagliato all'area del
+     * documento. Se non e' ancora arrivata non disegna niente.
+     * ========================================================================= */
+    int  (*sfondo)(int nodo, const void *stile, int larg);
+    void (*sfondo_disegna)(int rif, int x, int y, int w, int h,
+                           int pos_x, int pos_y, int ripeti,
+                           int rx, int ry, int rw, int rh);
 } VistaCliente;
 
 /* Si installa una volta, prima della prima impaginazione. Senza cliente

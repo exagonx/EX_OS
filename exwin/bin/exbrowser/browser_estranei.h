@@ -175,6 +175,10 @@ extern VistaEst *g_ve;
 #define g_imm_n            (g_ve->imm_n)
 #define g_imm_px_negato    (g_ve->imm_px_negato)
 int imm_indice(int nodo, const char *src);
+/* L'immagine di sfondo che lo stile chiede per `nodo`, registrata come una
+ * figura (stessa cache, stesso caricamento): il suo indice, o -1. `larg` > 0
+ * e' la larghezza a cui portarla (background-size). In exbrowser.c. */
+int imm_sfondo(int nodo, const CssStile *st, int larg);
 void misura(const Imm *im, unsigned int nw, unsigned int nh,
                    unsigned int *pw, unsigned int *ph);
 

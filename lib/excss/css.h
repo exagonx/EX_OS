@@ -207,7 +207,39 @@ typedef struct {
     unsigned char giustifica;
     unsigned char allinea_voci;
     short         spazio_riga, spazio_col;
+
+    /* =========================================================================
+     * L'IMMAGINE DI SFONDO E L'ALTEZZA (10 ottobre 2026)
+     *
+     * Un logo, un'icona, il riquadro di un'anteprima: mezza rete li disegna
+     * come SFONDO di un elemento vuoto a cui da' una misura. Servono insieme
+     * le due cose: l'immagine, e l'altezza che fa esistere il riquadro.
+     *
+     *   sf_url      l'indirizzo come sta scritto (fino a `)`, a un apice o
+     *               alla fine), 0 = niente. Punta nell'arena del foglio o
+     *               dentro l'attributo style: vive quanto loro. Si legge con
+     *               css_sfondo_url(), che dice anche RISPETTO A CHE COSA e'
+     *               relativo - il foglio da cui viene, non la pagina.
+     *   sf_ripeti   CSS_SF_*
+     *   sf_px,sf_py la posizione: pixel, oppure CSS_SF_PERC + percento
+     *   sf_mw,sf_mh la misura: 0 auto, >0 pixel, CSS_SF_COPRE, CSS_SF_CONTIENE,
+     *               oppure -(100 + percento)
+     *   altezza, altezza_min   px, o CSS_MISURA_NO
+     * ========================================================================= */
+    const char   *sf_url;
+    unsigned char sf_ripeti;
+    short         sf_px, sf_py;
+    short         sf_mw, sf_mh;
+    short         altezza, altezza_min;
 } CssStile;
+
+#define CSS_SF_RIPETE       0   /* repeat: il valore iniziale del CSS */
+#define CSS_SF_UNA          1   /* no-repeat */
+#define CSS_SF_RIPETE_X     2
+#define CSS_SF_RIPETE_Y     3
+#define CSS_SF_PERC         30000   /* sf_px = CSS_SF_PERC + 50 vuol dire 50% */
+#define CSS_SF_COPRE        (-1)
+#define CSS_SF_CONTIENE     (-2)
 
 /* Il margine di un lato in pixel per chi non sa cosa farsene di `auto` e di
  * «non detto»: tutti e due valgono `se_no`. ! IN LINEA NELL'HEADER, e non
@@ -350,7 +382,15 @@ typedef struct {
 #define CSS_P_OPACITA       47  /* opacity: 0 o non zero (4 ottobre 2026) */
 #define CSS_P_PUNTATORE     48  /* pointer-events: none o no */
 #define CSS_P_SEGNO         49  /* list-style, list-style-type: none o no */
-#define CSS_P_N             50
+#define CSS_P_SFONDO_IMM    50  /* background-image */
+#define CSS_P_SFONDO_RIP    51  /* background-repeat */
+#define CSS_P_SFONDO_PX     52  /* background-position, orizzontale */
+#define CSS_P_SFONDO_PY     53  /*                      verticale   */
+#define CSS_P_SFONDO_MW     54  /* background-size, larghezza */
+#define CSS_P_SFONDO_MH     55  /*                  altezza   */
+#define CSS_P_ALT           56  /* height     */
+#define CSS_P_ALT_MIN       57  /* min-height */
+#define CSS_P_N             58
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */
@@ -378,6 +418,9 @@ typedef struct {
     char        *arena;
     unsigned int arena_max, arena_n;
     unsigned int ordine;        /* cresce a ogni regola letta       */
+    /* L'indirizzo del foglio che si sta leggendo (css_base): gli url() delle
+     * sue regole sono relativi a questo. 0 = alla pagina. */
+    const char  *base;
 
     /* ! CHE SIA FINITO LO SPAZIO SI DICE, come in exhtml: un foglio applicato
      * a meta' produce una pagina che sembra sbagliata e non lo dice. */
@@ -419,6 +462,17 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s);
  * LO STESSO parser dei fogli di stile — o due colori scritti allo stesso modo
  * verrebbero due colori diversi. */
 int css_colore(const char *v, unsigned int n, unsigned int *out);
+
+/* Da dire PRIMA di css_analizza per un foglio esterno, col suo indirizzo: gli
+ * url() che contiene sono relativi a quello. 0 = «da qui in poi, alla pagina»
+ * (un <style> dentro il documento). */
+void css_base(CssFoglio *f, const char *url);
+
+/* L'indirizzo dell'immagine di sfondo di uno stile, copiato in `out` senza
+ * apici ne' spazi. `*base` (se non e' 0) riceve l'indirizzo del foglio da cui
+ * viene la regola, o 0 se e' relativo alla pagina. Rende 0 se non c'e'. */
+int css_sfondo_url(const CssFoglio *f, const CssStile *s, char *out, unsigned int max,
+                   const char **base);
 
 void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
                  const CssStile *ereditato, CssStile *out);

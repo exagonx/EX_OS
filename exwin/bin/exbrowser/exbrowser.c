@@ -1602,6 +1602,57 @@ static int risolvi(const char *rif, char *out, unsigned int max)
     return 1;
 }
 
+/* =============================================================================
+ * L'immagine di sfondo di un nodo (10 ottobre 2026)
+ *
+ * Sta nello stesso elenco delle figure - stessa cache, stesso caricamento,
+ * stesso tetto di memoria - con una chiave che nessun nodo vero ha: -(nodo)-2.
+ * L'indirizzo si risolve QUI, e rispetto al foglio da cui viene la regola (lo
+ * dice css_sfondo_url): in g_imm ci va gia' assoluto.
+ *
+ * ! UN TETTO AL NUMERO: una pagina puo' avere uno sfondo su ogni riga di un
+ * elenco. Oltre SFONDI_IMM_MAX le altre restano col loro colore.
+ * ! data: NON SI LEGGE ANCORA (le immagini scritte dentro il foglio, in
+ * base64): e' il pezzo che manca, e molte icone piccole sono fatte cosi'.
+ * ========================================================================== */
+#define SFONDI_IMM_MAX 48
+static int g_sfondi_imm = 0;
+
+int imm_sfondo(int nodo, const CssStile *st, int larg)
+{
+    static char rel[NAV_URL_MAX], ass[NAV_URL_MAX], era[NAV_URL_MAX];
+    const char *base = 0;
+    int i, chiave = -nodo - 2, ok;
+
+    if (!g_img_accese || !st || !st->sf_url) return -1;
+    for (i = 0; i < g_imm_n; i++)
+        if (g_imm[i].nodo == chiave) return i;
+
+    if (!css_sfondo_url(&g_css, st, rel, sizeof(rel), &base)) return -1;
+    if (rel[0] == 'd' && rel[1] == 'a' && rel[2] == 't' && rel[3] == 'a' && rel[4] == ':') return -1;
+    if (formato_ignoto(rel)) return -1;
+    if (g_imm_n >= IMM_MAX || g_sfondi_imm >= SFONDI_IMM_MAX) return -1;
+
+    /* Relativo al foglio: per un momento la «base» e' la sua. */
+    if (base && base[0]) {
+        strncpy(era, g_base, sizeof(era) - 1); era[sizeof(era) - 1] = 0;
+        strncpy(g_base, base, sizeof(g_base) - 1); g_base[sizeof(g_base) - 1] = 0;
+        ok = risolvi(rel, ass, sizeof(ass));
+        strcpy(g_base, era);
+    } else {
+        ok = risolvi(rel, ass, sizeof(ass));
+    }
+    if (!ok || strlen(ass) >= sizeof(g_imm[0].src)) return -1;
+
+    i = g_imm_n++;
+    g_sfondi_imm++;
+    memset(&g_imm[i], 0, sizeof(g_imm[i]));
+    g_imm[i].nodo  = chiave;
+    g_imm[i].css_w = larg > 0 ? (unsigned int)larg : 0;
+    strcpy(g_imm[i].src, ass);
+    return i;
+}
+
 /* -----------------------------------------------------------------------------
  * La cache su disco
  *
@@ -2793,6 +2844,7 @@ static void raccogli_css(void)
                 if (g_doc.nodi[f].tipo != HTML_TESTO) continue;
                 t = html_testo(&g_doc, f);
                 while (t[n]) n++;
+                css_base(&g_css, 0);        /* un <style>: gli url() sono della pagina */
                 css_analizza(&g_css, t, n, CSS_ORIGINE_FOGLIO);
             }
             continue;
@@ -2847,8 +2899,10 @@ static void raccogli_css(void)
 {
                 unsigned int prima = g_css.regole_n;
 
+                css_base(&g_css, url);      /* gli url() di questo foglio sono relativi a lui */
                 css_analizza(&g_css, (const char *)g_js_buf, n,
                          CSS_ORIGINE_FOGLIO);
+                css_base(&g_css, 0);
                 /* like Firefox's network tab: which sheet, how big, what it gave */
                 diario("exbrowser: foglio %s: %u byte, %u regole\n", url, n,
                        g_css.regole_n - prima);
@@ -3576,7 +3630,16 @@ static void rifai_se_cambiato(void)
      * <style> o cambiato una classe: il calcolo dello stile guarda l'albero,
      * ma le REGOLE stanno in un'altra struttura, e quella non si aggiorna da
      * sola. */
-    raccogli_css();
+    /* ! MA NON MENTRE LA RETE E' OCCUPATA (10 ottobre 2026). Questa funzione
+     * puo' scattare da un temporizzatore della pagina mentre si sta
+     * scaricando un'immagine; raccogli_css() butta le regole e rilegge i
+     * fogli, e uno che non sta nella cache va richiesto alla rete - che in
+     * quel momento rifiuta (g_in_rete): le regole erano gia' buttate, e la
+     * pagina restava SENZA STILE. Si e' visto su Yahoo appena ha avuto
+     * un'immagine da scaricare (il logo, uno sfondo CSS). Le regole di prima
+     * restano buone finche' non si possono rifare; un <style> aggiunto in
+     * quell'istante lo prende il giro dopo. */
+    if (!g_in_rete) raccogli_css();
     impagina();
     g_vista = html_versione(&g_doc);
     disegna();
@@ -4424,6 +4487,7 @@ static Vista *cornice_vista(int k)
     v->imp.scorri = v->imp.altezza = 0;
     v->imp.doc.nodi_n = 0;
     v->est.ctrl_n = v->est.opz_n = v->est.mod_n = v->est.imm_n = 0;
+    g_sfondi_imm = 0;           /* le immagini di sfondo ripartono con la pagina */
     v->est.imm_px_negato = 0;
     v->est.corn_n = 0;
     v->pagina_n = 0;

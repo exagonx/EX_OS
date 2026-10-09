@@ -45,6 +45,8 @@ static const char *const g_nomi[] = {
 
     /* Aggiunta il 4 ottobre 2026: list-style dell'ultimo elemento calcolato. */
     "css_segno_lista",
+    "css_base",
+    "css_sfondo_url",
 
     "__lib_avvio"
 };
@@ -61,6 +63,8 @@ static void *const g_indirizzi[] = {
     (void *)css_media_larghezza,
 
     (void *)css_segno_lista,
+    (void *)css_base,
+    (void *)css_sfondo_url,
 
     (void *)__libc_ponti_avvia
 };

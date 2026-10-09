@@ -87,6 +87,27 @@ static const char *img_sorgente(int v, char *buf, unsigned int max)
  * qui, e poi non ci si scende piu': se il contenuto finisse anche nel flusso
  * della pagina, l'etichetta di un pulsante comparirebbe due volte — una dentro
  * il pulsante e una accanto. */
+/* L'alt (o il title) della prima figura dentro il nodo v, o NULL. */
+static const char *alt_dentro(int v, int prof)
+{
+    int f;
+
+    if (v < 0 || prof > 4) return 0;
+    for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+        const char *d;
+
+        if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
+        if (uguale(html_nome(&g_doc, f), "img")) {
+            d = html_attr(&g_doc, f, "alt");
+            if (!d || !d[0]) d = html_attr(&g_doc, f, "title");
+            if (d && d[0]) return d;
+        }
+        d = alt_dentro(f, prof + 1);
+        if (d) return d;
+    }
+    return 0;
+}
+
 static void testo_dentro(int v, char *out, unsigned int max)
 {
     unsigned int n = 0;
@@ -434,6 +455,9 @@ static int est_misura(int v, VistaPezzo *p)
                 if (uguale(html_nome(&g_doc, v), "button")) {
                     d = html_attr(&g_doc, v, "aria-label");
                     if (!d || !d[0]) d = html_attr(&g_doc, v, "title");
+                    /* Un pulsante fatto di una figura: il suo nome e' l'alt
+                     * della figura (la lente di pixels.com, alt='Search'). */
+                    if (!d || !d[0]) d = alt_dentro(v, 0);
                     if (!d || !d[0]) d = "...";
                 }
                 i = 0;
@@ -968,4 +992,62 @@ static void est_disegna(int rif, int x, int y, int w, int h)
     }
 }
 
-const VistaCliente g_estranei = { est_azzera, est_misura, est_disegna };
+/* =============================================================================
+ * L'immagine di sfondo (10 ottobre 2026): vedi VistaCliente in browser_vista.h
+ * ========================================================================== */
+static int est_sfondo(int nodo, const void *stile, int larg)
+{
+    return imm_sfondo(nodo, (const CssStile *)stile, larg);
+}
+
+/* Dove cade un'immagine larga `im` in un riquadro largo `box`: in pixel dal
+ * bordo, o in percento dello spazio che avanza (50% = al centro). */
+static int sf_dove(int pos, int box, int im)
+{
+    if (pos >= CSS_SF_PERC) return (box - im) * (pos - CSS_SF_PERC) / 100;
+    return pos;
+}
+
+static void est_sfondo_disegna(int rif, int x, int y, int w, int h,
+                               int pos_x, int pos_y, int ripeti,
+                               int rx, int ry, int rw, int rh)
+{
+    const Imm *im;
+    int iw, ih, ox, oy, tx, ty, x1 = rx + rw, y1 = ry + rh, fatti = 0;
+    int rip_x = (ripeti == CSS_SF_RIPETE || ripeti == CSS_SF_RIPETE_X);
+    int rip_y = (ripeti == CSS_SF_RIPETE || ripeti == CSS_SF_RIPETE_Y);
+
+    if (rif < 0 || rif >= g_imm_n) return;
+    im = &g_imm[rif];
+    if (!im->px || im->w == 0 || im->h == 0) return;
+    iw = (int)im->w; ih = (int)im->h;
+
+    ox = x + sf_dove(pos_x, w, iw);
+    oy = y + sf_dove(pos_y, h, ih);
+    /* Ripetendo si parte dalla tessera che copre l'angolo del ritaglio. */
+    if (rip_x) { while (ox > rx) ox -= iw; while (ox + iw <= rx) ox += iw; }
+    if (rip_y) { while (oy > ry) oy -= ih; while (oy + ih <= ry) oy += ih; }
+
+    for (ty = oy; ty < y1; ty += ih) {
+        for (tx = ox; tx < x1; tx += iw) {
+            int ax = tx < rx ? rx : tx, ay = ty < ry ? ry : ty;
+            int bx = tx + iw > x1 ? x1 : tx + iw, by = ty + ih > y1 ? y1 : ty + ih;
+
+            if (bx > ax && by > ay)
+                /* Fusa, come le figure: un logo e' quasi sempre un PNG con
+                 * la trasparenza, e sopra c'e' il colore del riquadro. */
+                ex_pixmap_blend(g_f, ax, ay, bx - ax, by - ay,
+                          im->px + (unsigned int)(ay - ty) * (unsigned int)iw + (unsigned int)(ax - tx),
+                          (unsigned int)iw);
+            /* ! UN TETTO ALLE TESSERE: un fondino di un pixel ripetuto su
+             * tutta la pagina sarebbero decine di migliaia di chiamate a ogni
+             * ridisegno. Oltre, si lascia il colore. */
+            if (++fatti > 3000) return;
+            if (!rip_x) break;
+        }
+        if (!rip_y) break;
+    }
+}
+
+const VistaCliente g_estranei = { est_azzera, est_misura, est_disegna,
+                                  est_sfondo, est_sfondo_disegna };

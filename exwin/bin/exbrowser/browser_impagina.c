@@ -317,6 +317,7 @@ static int rettangolo(int x, int y, int w, int h, unsigned int colore)
     g_sfondi[i].x = x; g_sfondi[i].y = y; g_sfondi[i].w = w; g_sfondi[i].h = h;
     g_sfondi[i].colore = colore;
     g_sfondi[i].bordo  = 0;
+    g_sfondi[i].imm    = -1;
     return i;
 }
 
@@ -748,6 +749,7 @@ static int bordo_metti(int x, int y, int w, int h, int spess)
     g_sfondi[g_sfondi_n].h      = h;
     g_sfondi[g_sfondi_n].colore = EX_DARK_GRAY;
     g_sfondi[g_sfondi_n].bordo  = (unsigned char)spess;
+    g_sfondi[g_sfondi_n].imm    = -1;
     return g_sfondi_n++;
 }
 
@@ -1019,6 +1021,7 @@ static void impagina_tabella(int v, const CssStile *mio)
                 g_sfondi[g_sfondi_n].h = 0;
                 g_sfondi[g_sfondi_n].colore = sc.sfondo;
                 g_sfondi[g_sfondi_n].bordo  = 0;
+                g_sfondi[g_sfondi_n].imm    = -1;
                 g_sfondi_n++;
             }
 
@@ -1343,6 +1346,7 @@ static void impagina_nodo(int v, const CssStile *ered)
         int         era_link = g_link_ora;
         int         era_sx = g_marg_sx, era_dx = g_marg_dx;
         int         sfondo_mio = -1;
+        int         alt_cima   = -1;        /* dove comincia il contenuto del blocco */
         int         bt = 0, br = 0, bb = 0, bl = 0, pb = 0;   /* bordi e padding di sotto */
         int         i_sx = -1, i_dx = -1, box_x = 0, box_w = 0, box_y = 0;
         unsigned int col_sotto = 0;
@@ -1431,6 +1435,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[sf].h = 0;
                 g_sfondi[sf].colore = mio.sfondo;
                 g_sfondi[sf].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
+                g_sfondi[sf].imm    = -1;
             }
 
             impagina_tabella(v, &mio);
@@ -1590,7 +1595,12 @@ static void impagina_nodo(int v, const CssStile *ered)
             g_pen_x = rx();
             g_riga_primo = g_pez_n;
 
-            if (mio.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
+            alt_cima = g_pen_y;         /* da qui si misura `height` */
+
+            /* ! UN RIQUADRO DI SFONDO ANCHE PER LA SOLA IMMAGINE (10 ottobre
+             * 2026): un logo o un'icona sono quasi sempre un elemento senza
+             * colore e senza testo, con un'immagine di sfondo e una misura. */
+            if ((mio.sfondo != CSS_NIENTE || mio.sf_url) && g_sfondi_n < SFONDI_MAX) {
                 sfondo_mio = g_sfondi_n++;
                 g_sfondi[sfondo_mio].x = rx();
                 g_sfondi[sfondo_mio].y = g_pen_y;
@@ -1598,6 +1608,17 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[sfondo_mio].h = 0;
                 g_sfondi[sfondo_mio].colore = mio.sfondo;
                 g_sfondi[sfondo_mio].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
+                g_sfondi[sfondo_mio].imm    = -1;
+                if (mio.sf_url && g_cliente && g_cliente->sfondo) {
+                    /* cover e 100% vogliono l'immagine larga quanto il riquadro */
+                    int larg = (mio.sf_mw == CSS_SF_COPRE || mio.sf_mw == -200) ? rw()
+                             : (mio.sf_mw > 0 ? mio.sf_mw : 0);
+
+                    g_sfondi[sfondo_mio].imm     = (short)g_cliente->sfondo(v, &mio, larg);
+                    g_sfondi[sfondo_mio].imm_rip = mio.sf_ripeti;
+                    g_sfondi[sfondo_mio].imm_px  = mio.sf_px;
+                    g_sfondi[sfondo_mio].imm_py  = mio.sf_py;
+                }
             }
 
             /* I BORDI E IL PADDING (@NAV-BORDER, 28 settembre 2026). Il
@@ -1760,6 +1781,16 @@ static void impagina_nodo(int v, const CssStile *ered)
 
         if (e_blocco) {
             a_capo();
+            /* ! `height` E `min-height` (10 ottobre 2026): un riquadro puo'
+             * essere piu' alto di quel che contiene, e uno vuoto con
+             * un'immagine di sfondo esiste solo cosi'. Si allunga, non si
+             * accorcia: tagliare il contenuto vorrebbe `overflow`. */
+            {
+                int vuole = (mio.altezza != CSS_MISURA_NO && mio.altezza > 0) ? mio.altezza : 0;
+
+                if (mio.altezza_min != CSS_MISURA_NO && mio.altezza_min > vuole) vuole = mio.altezza_min;
+                if (vuole > 0 && alt_cima >= 0 && g_pen_y - alt_cima < vuole) g_pen_y = alt_cima + vuole;
+            }
             /* Il fondo del riquadro: il contenuto, il padding di sotto, poi il
              * bordo di sotto. Solo se c'e' qualcosa da chiudere la penna scende:
              * un blocco senza bordi e padding resta esattamente com'era. */
@@ -1845,6 +1876,7 @@ void impagina(void)
                     g_sfondi[pagina_sf].h = 0;
                     g_sfondi[pagina_sf].colore = sb.sfondo;
                     g_sfondi[pagina_sf].bordo  = 0;
+                    g_sfondi[pagina_sf].imm    = -1;
                 }
                 break;
             }
@@ -1986,7 +2018,15 @@ void disegna_contenuto(void)
             int x = g_sfondi[i].x, w = g_sfondi[i].w;
             if (x < T_X()) { w -= T_X() - x; x = T_X(); }
             if (x + w > T_X() + T_W()) w = T_X() + T_W() - x;
-            if (w > 0) ex_fill_rect(g_f, x, y, w, h, g_sfondi[i].colore);
+            if (w > 0 && g_sfondi[i].colore != CSS_NIENTE)
+                ex_fill_rect(g_f, x, y, w, h, g_sfondi[i].colore);
+            /* L'immagine sopra il colore, dentro lo stesso ritaglio. */
+            if (w > 0 && g_sfondi[i].imm >= 0 && g_cliente && g_cliente->sfondo_disegna)
+                g_cliente->sfondo_disegna(g_sfondi[i].imm,
+                                          g_sfondi[i].x, g_sfondi[i].y - g_scorri,
+                                          g_sfondi[i].w, g_sfondi[i].h,
+                                          g_sfondi[i].imm_px, g_sfondi[i].imm_py,
+                                          g_sfondi[i].imm_rip, x, y, w, h);
             continue;
         }
 
