@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.246
+**Version:** 0.247
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -137,6 +137,18 @@ on four. With one processor nothing is switched on. **On the real PC**
 programs together do 2.04 times the work of one, four do 3.32; network, DNS
 and `netupdate` work with the processors running. A short telnet session:
 long use and ExWin are still to be tried.
+
+**0.247**: writing to ext2 takes far fewer disk commands. For every
+kilobyte appended to a file the driver issued nine (bitmap, descriptor,
+zeroed block, pointers, data): blocks are now taken in groups of up to 64
+with one bitmap write, a new data block is not zeroed on disk if it is about
+to be written, and the pointer block is written once per call. When
+`write()` returns the disk is as consistent as before. `netupdate` 0.028
+writes in 64 KB pieces instead of at every packet. Tried in QEMU: Exilla
+(290 MB) installs in 5 minutes instead of 9, the disk passes Linux's
+`e2fsck` and the files have the right hashes. On a disk in PIO the gain
+should be larger: to be measured on the PC. Deleting is still slow (one
+block at a time).
 
 **0.245**: SATA disks behind an AHCI controller (`kernel/block/ahci.c`).
 Controllers that declare themselves AHCI are always used, and their disks take

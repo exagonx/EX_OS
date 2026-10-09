@@ -6381,3 +6381,14 @@ un programma: il primo lavoro e' tirarla fuori.
     applicabili senza riscrivere il server per una tavolozza: da scartare.
   - le schede: il toolkit ha gia' il controllo "tab".
   Stato: DA FARE (dopo exeditor, che e' in corso).
+
+@AVVISO-MEMORIA UN PROGRAMMA CHE VUOLE PIU' MEMORIA DI QUANTA CE N'E' LO DEVE DIRE (chiesto dall'utente il 9 ottobre 2026)
+  Firefox (Exilla) vuole almeno 2 GB di RAM: «e' previsto ed e' normale». In
+  futuro serve un avviso per i programmi che chiedono piu' memoria di quanta
+  la macchina ne ha fisicamente: l'utente va avvertito che il programma non
+  funzionera' bene, prima che se ne accorga da solo. Da decidere dove sta il
+  numero (una riga nel catalogo dei pacchetti, o in applicazioni.txt accanto
+  alla voce) e chi avvisa (il lanciatore, o il program manager per tutti).
+  Intanto: i manuali e il catalogo dicono «512 MB, meglio 1 GB» per Exilla, e
+  vanno corretti a 2 GB.
+  Stato: DA FARE.

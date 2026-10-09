@@ -175,6 +175,38 @@ static uint32_t g_ind_num  = 0;         /* quale blocco c'e' dentro b_ind */
 static int      g_ind_mnt  = -1;
 
 /* =============================================================================
+ * SCRIVERE COSTAVA NOVE COMANDI DI DISCO PER KILOBYTE (9 ottobre 2026)
+ *
+ * L'utente, dopo che la rete e' diventata veloce: «la scrittura di cio' che
+ * arriva risulta lenta». Contati qui dentro, per ogni blocco da 1 KB aggiunto
+ * a un file: leggi il descrittore, leggi la bitmap, scrivi la bitmap, rileggi
+ * e riscrivi il descrittore, scrivi il blocco nuovo AZZERATO, leggi e scrivi
+ * il blocco dei puntatori - e poi il dato. Su un disco in PIO, con la testina
+ * che va dalla bitmap ai dati e ritorno, sono millisecondi a kilobyte.
+ *
+ * Tre cose, e tutte e tre FINISCONO DENTRO LA STESSA ext2_write: quando la
+ * chiamata torna il disco e' coerente come prima, e non c'e' niente in
+ * memoria che un'altra operazione debba conoscere.
+ *
+ *   1. I BLOCCHI SI PRENDONO INSIEME (prenota): chi scrive 64 KB in coda a
+ *      un file marca 64 bit della bitmap in una scrittura sola e aggiorna il
+ *      descrittore una volta. alloca_blocco li consegna da li'. Quel che
+ *      avanza si rilascia prima di tornare.
+ *   2. UN BLOCCO DI DATI NUOVO NON SI AZZERA SUL DISCO se sta per essere
+ *      scritto: lo si azzerava e subito dopo lo si copriva. I blocchi di
+ *      PUNTATORI si azzerano sempre - i loro byte si leggono come indirizzi -
+ *      e un blocco scritto solo in parte ha il resto azzerato in memoria.
+ *   3. IL BLOCCO DEI PUNTATORI SI SCRIVE UNA VOLTA, non a ogni puntatore
+ *      aggiunto: resta in b_ind «sporco» e va sul disco quando se ne carica
+ *      un altro, e comunque prima che ext2_write torni.
+ * ============================================================================= */
+static uint32_t g_pre_primo = 0;        /* i blocchi prenotati: il prossimo... */
+static uint32_t g_pre_n     = 0;        /* ...e quanti ne restano */
+static int      g_zero      = 1;        /* 0: il blocco nuovo non si azzera (dati) */
+static int      g_ind_diff  = 0;        /* 1: dentro ext2_write, b_ind si scrive dopo */
+static int      g_ind_sporco = 0;       /* b_ind ha puntatori non ancora sul disco */
+
+/* =============================================================================
  * Lettura little-endian non allineata
  * ============================================================================= */
 static uint16_t le16(const uint8_t *p)
@@ -247,7 +279,7 @@ static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
      * Metterla nei chiamanti significa che il primo che se ne dimentica
      * legge un blocco indiretto vecchio subito dopo averlo riscritto, e
      * il file finisce a puntare ai blocchi che aveva prima. */
-    if (g_ind_num == n) g_ind_mnt = -1;
+    if (g_ind_num == n && !g_ind_sporco) g_ind_mnt = -1;
 
     return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco,
                      m->sett_per_blocco, src);
@@ -255,9 +287,21 @@ static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
 
 /* Blocco di puntatori, con memoria dell'ultimo. Vedi la nota sulla cache
  * in testa al file. */
+/* Mette sul disco il blocco di puntatori rimasto in memoria (vedi sopra). */
+static int ind_riversa(Ext2Mount *m)
+{
+    if (!g_ind_sporco) return 0;
+    g_ind_sporco = 0;
+    if (g_ind_mnt < 0) return -1;       /* non deve succedere: lo sporco e' sempre in cache */
+    return blk_write(m->blkdev, (uint64_t)g_ind_num * m->sett_per_blocco,
+                     m->sett_per_blocco, b_ind);
+}
+
 static int leggi_indiretto(Ext2Mount *m, int mnt, uint32_t n)
 {
     if (g_ind_mnt == mnt && g_ind_num == n) return 0;
+
+    if (ind_riversa(m) != 0) { g_ind_mnt = -1; return -1; }
 
     if (leggi_blocco(m, n, b_ind) != 0) { g_ind_mnt = -1; return -1; }
 
@@ -478,9 +522,72 @@ static uint32_t primo_libero(uint32_t limite)
  * Il blocco torna GIA' marcato occupato sulla bitmap: chi lo riceve non
  * deve ricordarsi di farlo, e non esiste un istante in cui il blocco e'
  * stato consegnato ma risulta ancora libero a un'altra allocazione. */
+/* Prende fino a `quanti` blocchi liberi CONSECUTIVI, in una scrittura della
+ * bitmap e un aggiornamento del descrittore. Restano in g_pre_primo/g_pre_n:
+ * li consegna alloca_blocco. Puo' prenderne meno, o nessuno: allora si
+ * prosegue un blocco per volta, come sempre. */
+static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
+{
+    uint32_t giro, g, off, dblk, bmp, lim, i, k;
+
+    g_pre_n = 0;
+    if (quanti < 2u) return;
+    if (pref >= m->n_gruppi) pref = 0;
+
+    for (giro = 0; giro < m->n_gruppi; giro++) {
+        g = (pref + giro) % m->n_gruppi;
+
+        if (desc_carica(m, g, &off, &dblk) != 0) return;
+        if (le16(b_desc + off + 12) == 0) continue;
+
+        bmp = le32(b_desc + off + 0);
+        if (leggi_blocco(m, bmp, b_bmp) != 0) return;
+
+        lim = blocchi_nel_gruppo(m, g);
+        i   = primo_libero(lim);
+        if (i >= lim) continue;
+
+        for (k = 0; k < quanti && i + k < lim &&
+                    (b_bmp[(i + k) / 8u] & (1u << ((i + k) % 8u))) == 0; k++)
+            b_bmp[(i + k) / 8u] |= (uint8_t)(1u << ((i + k) % 8u));
+
+        if (scrivi_blocco(m, bmp, b_bmp) != 0) return;
+        if (desc_somma(m, g, 12, -(int)k) != 0) return;
+        m->blocchi_liberi -= k;
+
+        g_pre_primo = m->primo_dato + g * m->blocchi_per_gruppo + i;
+        g_pre_n     = k;
+        return;
+    }
+}
+
+static int libera_blocco(Ext2Mount *m, uint32_t n);
+
+/* I prenotati che nessuno ha usato tornano liberi. */
+static void prenotati_rilascia(Ext2Mount *m)
+{
+    while (g_pre_n > 0) {
+        libera_blocco(m, g_pre_primo);
+        g_pre_primo++;
+        g_pre_n--;
+    }
+}
+
 static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
 {
     uint32_t giro, g, off, dblk, bmp, lim, i, n;
+
+    /* Uno dei prenotati: e' gia' segnato nella bitmap e contato. */
+    if (g_pre_n > 0) {
+        n = g_pre_primo++;
+        g_pre_n--;
+        if (g_zero) {
+            uint32_t k;
+            for (k = 0; k < m->dim_blocco; k++) b_bmp[k] = 0;
+            if (scrivi_blocco(m, n, b_bmp) != 0) return 0;
+        }
+        return n;
+    }
 
     if (pref >= m->n_gruppi) pref = 0;
 
@@ -518,7 +625,7 @@ static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
          * usava prima: consegnarlo com'e' significa che il contenuto di un
          * file cancellato ricompare dentro un file nuovo, e come blocco di
          * puntatori quei byte sarebbero indirizzi verso mezzo volume. */
-        {
+        if (g_zero) {
             uint32_t k;
             for (k = 0; k < m->dim_blocco; k++) b_bmp[k] = 0;
             if (scrivi_blocco(m, n, b_bmp) != 0) return 0;
@@ -788,7 +895,8 @@ static uint32_t punt_o_alloca(Ext2Mount *m, int mnt, uint32_t blk,
     b_ind[idx * 4u + 2] = (uint8_t)(p >> 16);
     b_ind[idx * 4u + 3] = (uint8_t)(p >> 24);
 
-    if (scrivi_blocco(m, blk, b_ind) != 0) { libera_blocco(m, p); return 0; }
+    if (g_ind_diff) g_ind_sporco = 1;       /* lo scrive ind_riversa: vedi in testa */
+    else if (scrivi_blocco(m, blk, b_ind) != 0) { libera_blocco(m, p); return 0; }
 
     (*charge)++;
     return p;
@@ -814,19 +922,26 @@ static uint32_t inode_punt_o_alloca(Ext2Mount *m, uint8_t *inode, uint32_t i,
     return p;
 }
 
+static int g_dati_zero = 1;     /* 0 dentro ext2_write: vedi «SCRIVERE COSTAVA» */
+
 static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint8_t *inode,
                                uint32_t n, uint32_t pref, uint32_t *charge)
 {
     uint32_t ppb = m->punt_per_blocco;
-    uint32_t l1, l2;
+    uint32_t l1, l2, r;
 
-    if (n < 12u) return inode_punt_o_alloca(m, inode, n, pref, charge);
+    /* ! L'ULTIMO PASSO E' IL BLOCCO DI DATI, gli altri sono blocchi di
+     * puntatori: solo il primo puo' nascere senza essere azzerato sul disco.
+     * g_zero torna a 1 subito dopo, qualunque cosa sia successa. */
+#define DATO(chiamata) (g_zero = g_dati_zero, r = (chiamata), g_zero = 1, r)
+
+    if (n < 12u) return DATO(inode_punt_o_alloca(m, inode, n, pref, charge));
     n -= 12u;
 
     if (n < ppb) {
         l1 = inode_punt_o_alloca(m, inode, 12u, pref, charge);
         if (l1 == 0) return 0;
-        return punt_o_alloca(m, mnt, l1, n, pref, charge);
+        return DATO(punt_o_alloca(m, mnt, l1, n, pref, charge));
     }
     n -= ppb;
 
@@ -835,7 +950,7 @@ static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint8_t *inode,
         if (l1 == 0) return 0;
         l2 = punt_o_alloca(m, mnt, l1, n / ppb, pref, charge);
         if (l2 == 0) return 0;
-        return punt_o_alloca(m, mnt, l2, n % ppb, pref, charge);
+        return DATO(punt_o_alloca(m, mnt, l2, n % ppb, pref, charge));
     }
     n -= ppb * ppb;
 
@@ -845,7 +960,8 @@ static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint8_t *inode,
     if (l2 == 0) return 0;
     l2 = punt_o_alloca(m, mnt, l2, (n / ppb) % ppb, pref, charge);
     if (l2 == 0) return 0;
-    return punt_o_alloca(m, mnt, l2, n % ppb, pref, charge);
+    return DATO(punt_o_alloca(m, mnt, l2, n % ppb, pref, charge));
+#undef DATO
 }
 
 /* =============================================================================
@@ -2066,6 +2182,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
     const uint8_t *src = (const uint8_t *)buf;
     uint8_t        inode[128];
     uint32_t       num, dim, scritti = 0, charge = 0, gruppo;
+    int            esito_ind = 0;
 
     if (m == NULL || buf == NULL) return -1;
     if (size == 0) return 0;
@@ -2077,16 +2194,34 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
     dim    = le32(inode + 4);
     gruppo = (num - 1u) / m->inode_per_gruppo;
 
+    /* Vedi «SCRIVERE COSTAVA NOVE COMANDI» in testa al file. Da qui in poi
+     * NON SI ESCE CON return: si va a `fine`, che rimette tutto a posto. */
+    {
+        uint32_t primo_log  = offset / m->dim_blocco;
+        uint32_t ultimo_log = (offset + size - 1u) / m->dim_blocco;
+        uint32_t gia        = (dim + m->dim_blocco - 1u) / m->dim_blocco;  /* blocchi che il file ha */
+        uint32_t servono;
+
+        if (primo_log < gia) primo_log = gia;
+        servono = ultimo_log >= primo_log ? ultimo_log - primo_log + 1u : 0;
+        if (servono > CORSA_MAX) servono = CORSA_MAX;
+        prenota(m, gruppo, servono);
+    }
+    g_dati_zero = 0;
+    g_ind_diff  = 1;
+
     while (scritti < size) {
         uint32_t log = (offset + scritti) / m->dim_blocco;
         uint32_t in  = (offset + scritti) % m->dim_blocco;
         uint32_t q   = m->dim_blocco - in;
-        uint32_t blk, k;
+        uint32_t blk, k, prima = charge;
+        int      nuovo;
 
         if (q > size - scritti) q = size - scritti;
 
         blk = mappa_o_alloca(m, mnt, inode, log, gruppo, &charge);
         if (blk == 0) break;                    /* volume pieno */
+        nuovo = (charge != prima);              /* nato adesso: sul disco non e' azzerato */
 
         /* Blocchi interi contigui sul disco: un comando solo, dritti dal
          * buffer di chi scrive (0.235). */
@@ -2113,9 +2248,11 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
         /* Lettura-modifica-scrittura solo se si scrive un pezzo di
          * blocco. Un blocco intero si sovrascrive e basta: rileggerlo
          * prima sarebbe una lettura buttata su ogni blocco di ogni file. */
-        if (q < m->dim_blocco) {
+        if (q < m->dim_blocco && !nuovo) {
             if (leggi_blocco(m, blk, b_dati) != 0) break;
         } else {
+            /* Intero, o appena nato: il resto del blocco sono zeri, e li
+             * mettiamo noi - il blocco nuovo non e' stato azzerato sul disco. */
             for (k = 0; k < m->dim_blocco; k++) b_dati[k] = 0;
         }
 
@@ -2125,7 +2262,16 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
         scritti += q;
     }
 
+    /* ! QUI SI RIMETTE IL DISCO COERENTE, comunque sia andata: i puntatori
+     * rimasti in memoria vanno scritti, i blocchi prenotati e non usati
+     * tornano liberi, e chi alloca dopo di noi ritrova i blocchi azzerati. */
+    g_dati_zero = 1;
+    g_ind_diff  = 0;
+    if (ind_riversa(m) != 0) esito_ind = -1;
+    prenotati_rilascia(m);
+
     if (scritti == 0) return -1;
+    if (esito_ind != 0) return -1;
 
     {
         uint32_t prima_mtime = le32(inode + 16), adesso = unix_ora_corrente();

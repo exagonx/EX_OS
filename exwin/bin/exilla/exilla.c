@@ -35,10 +35,11 @@
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
+#define MEMORIA_MB  2048u       /* quanta memoria vuole Firefox */
 
 /* Dove sta. EXILLA_DIR la sposta: per chi ha il disco di sistema pieno e un
  * secondo disco montato, e per le prove. */
@@ -76,6 +77,28 @@ static int avvia(int argc, char **argv)
     if (sw == 0) {
         printf("exilla: la scrivania non e' accesa. Prima:  exwin\n");
         return 1;
+    }
+
+    /* ! FIREFOX VUOLE DUE GIGABYTE, E CHI NE HA MENO LO DEVE SAPERE PRIMA
+     * (l'utente, 9 ottobre 2026: «un avviso per i programmi che richiedono
+     * piu' RAM di quanta ce n'e' fisicamente»). Non si rifiuta di partire:
+     * con lo scambio su disco puo' anche andare, piano - ma lento e
+     * instabile senza un perche' e' peggio di una domanda. La soglia sta un
+     * po' sotto i 2048 MB: una macchina «da 2 GB» ne dichiara qualcuno in
+     * meno, fra BIOS e video. Un avviso per tutti i programmi, col numero
+     * scritto nel catalogo, e' @AVVISO-MEMORIA in in_lavorazione.txt. */
+    {
+        MemInfo mi;
+
+        if (meminfo(&mi) == 0 && mi.total_kb / 1024u < MEMORIA_MB - 200u) {
+            char t[260];
+
+            snprintf(t, sizeof(t), "Questa macchina ha %u MB di memoria. Exilla (Firefox) ne "
+                     "vuole almeno %u: con meno parte, ma e' lenta e puo' fermarsi.",
+                     mi.total_kb / 1024u, MEMORIA_MB);
+            printf("exilla: %s\n", t);
+            if (!ex_dlg_conferma("Exilla", t, "Avvia lo stesso", "Annulla")) return 1;
+        }
     }
 
     if (!casa || !casa[0] || strcmp(casa, "/") == 0) {

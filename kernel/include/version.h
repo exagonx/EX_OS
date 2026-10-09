@@ -455,7 +455,7 @@
  * processore, il processo corrente per processore. Il predefinito non cambia
  * (smp = 1: svegliati e fermi), e con un processore solo niente di tutto
  * questo si accende. Vedi kernel/include/smp.h. */
-#define EXOS_VERSION    "0.246"
+#define EXOS_VERSION    "0.247"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

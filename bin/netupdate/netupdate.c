@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.027");
+EX_VERSIONE("netupdate", "0.028");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -2000,6 +2000,25 @@ static void gira_fine(void)
     g_gira_ultimo = -1;
 }
 
+#define POSA_PEZZO (64u * 1024u)
+static unsigned char g_posa[POSA_PEZZO];
+static unsigned int  g_posa_n = 0;
+
+/* Mette sul disco quel che e' in attesa. 0 se e' andata. */
+static int posa_svuota(Posa *q)
+{
+    unsigned int fatti = 0;
+
+    while (fatti < g_posa_n) {
+        int k = (int)write(q->fd, g_posa + fatti, g_posa_n - fatti);
+
+        if (k <= 0) { q->guaio = 1; g_posa_n = 0; return -1; }
+        fatti += (unsigned int)k;
+    }
+    g_posa_n = 0;
+    return 0;
+}
+
 static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
 {
     Posa *q = (Posa *)dato;
@@ -2022,11 +2041,21 @@ static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
         return 0;
     }
 
+    /* ! SI SCRIVE A PEZZI DA 64 KB, NON A OGNI PACCHETTO (9 ottobre 2026). La
+     * rete consegna un migliaio di byte per volta, e ogni write() e' un giro
+     * intero del filesystem - cercare il file, prendere i blocchi, riscrivere
+     * l'inode: con la rete diventata veloce, il disco era rimasto l'imbuto.
+     * Il pezzo si riversa quando e' pieno e, sempre, prima di chiudere il
+     * file (posa_svuota): q->byte conta anche quel che e' ancora qui, ed e'
+     * da li' che si riprende uno scaricamento caduto. */
     while (fatti < n) {
-        int k = (int)write(q->fd, d + fatti, n - fatti);
+        unsigned int k = n - fatti;
 
-        if (k <= 0) { q->guaio = 1; return 0; }
-        fatti += (unsigned int)k;
+        if (k > POSA_PEZZO - g_posa_n) k = POSA_PEZZO - g_posa_n;
+        memcpy(g_posa + g_posa_n, d + fatti, k);
+        g_posa_n += k;
+        fatti += k;
+        if (g_posa_n == POSA_PEZZO && posa_svuota(q) != 0) return 0;
     }
     sha256_dai(&q->sha, d, n);
     q->byte += (long)n;
@@ -2134,6 +2163,7 @@ static int scarica_su_file(Config *c, const char *coda, const char *temp,
             return -1;
         }
 
+        g_posa_n = 0;
         exhttp_verso(posa_verso, &q);
         ok = exhttp_prendi(url, g_buf, BUF_MAX, &e);
         /* ! SI TOGLIE SUBITO, PRIMA DI QUALUNQUE ALTRA COSA. E' un gancio
@@ -2143,6 +2173,7 @@ static int scarica_su_file(Config *c, const char *coda, const char *temp,
          * vale per una chiamata sola, vedi exhttp_da.) */
         exhttp_verso(0, 0);
         gira_fine();
+        posa_svuota(&q);
         close(q.fd);
 
         /* Il server ha ignorato il Range e ha mandato tutto: quel che c'era
@@ -2283,10 +2314,12 @@ static int scarica_a_pezzi(Config *c, const char *coda, const char *temp,
                 return -1;
             }
 
-            exhttp_verso(posa_verso, &q);
+            g_posa_n = 0;
+        exhttp_verso(posa_verso, &q);
             ok = exhttp_prendi(url, g_buf, BUF_MAX, &e);
             exhttp_verso(0, 0);         /* subito: e' un gancio globale */
             gira_fine();
+            posa_svuota(&q);
             close(q.fd);
 
             if (q.guaio) {
