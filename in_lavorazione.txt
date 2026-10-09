@@ -6190,3 +6190,102 @@ un programma: il primo lavoro e' tirarla fuori.
   «volume di ogni uscita e entrata e i canali destra e sinistra». Resta da
   provare sul PC vero (cinque uscite e gli ingressi dell'ALC888); le voci per
   sb, ac97 ed es1371 sono la sola «Volume» del codice comune.
+
+@SELEZIONE-MOUSE SELEZIONARE IL TESTO COL MOUSE (chiesto dall'utente il 10 ottobre 2026)
+  Non urgente, ma va fatto. In exbrowser e nelle altre applicazioni non si
+  puo' selezionare il testo trascinando il mouse: nelle aree di testo, nella
+  barra dell'indirizzo, nelle caselle. Il posto giusto e' il toolkit
+  (lib/exwin: CL_TESTO e CL_AREA), cosi' vale per tutti; le caselle che
+  exbrowser disegna da se' dentro la pagina (i moduli HTML) sono un secondo
+  pezzo. Da decidere insieme: doppio clic = parola, Maiusc+clic = estendi.
+  Stato: DA FARE.
+
+@YAHOO-LOGO EXBROWSER SU www.yahoo.it: IL LOGO E IL PULSANTE DI RICERCA (chiesto dall'utente il 10 ottobre 2026)
+  Il logo non si carica e il pulsante della ricerca non compare. Da guardare
+  che cosa sono (probabile: un SVG, o un'immagine di sfondo CSS, e un
+  pulsante fatto con un'icona SVG o un font di icone) prima di dire se e
+  quanto costa. C'e' anche il «TypeError: not a function» gia' visto su
+  quella pagina.
+  Stato: DA FARE (prima la diagnosi).
+
+@FINESTRA-MASSIMIZZA IL PULSANTE «A TUTTO SCHERMO» SULLE FINESTRE (chiesto dall'utente il 10 ottobre 2026: «cosa importante»)
+  Nel toolkit e nel server a finestre, fra il pulsante di riduzione a icona e
+  quello di chiusura, un terzo pulsante che ingrandisce la finestra a tutto
+  schermo (e premuto di nuovo la riporta com'era). Tocca wserver (la cornice
+  la disegna lui), win_proto.h (uno stile e un evento), lib/exwin (un
+  EX_MAXBOX e la misura nuova ai programmi) e la barra di pm.
+  Stato: FATTO il 10 ottobre 2026 (wserver 0.011), in modo piu' corto del
+  previsto: lo fa tutto il server, per le finestre che hanno gia'
+  WIN_ST_RIDIM (EX_RESIZABLE), con gli stessi messaggi della presa
+  nell'angolo. Niente stile nuovo, niente da cambiare nei programmi. Alt+F10
+  fa lo stesso dalla tastiera. Non fatto: il doppio clic sulla barra del
+  titolo; il pulsante per le finestre a misura fissa (non saprebbero usare
+  lo spazio).
+
+@SFONDO-IMMAGINI UN'IMMAGINE DI /root/Images NON SI PUO' METTERE COME SFONDO (chiesto dall'utente il 10 ottobre 2026)
+  Il file si apre con Immagini, ma da Impostazioni non si riesce a sceglierlo
+  come sfondo: «c'e' un motivo?». Da guardare prima di rispondere: il formato
+  che la scrivania sa leggere per lo sfondo, la misura, o il dialogo di
+  scelta che non arriva a quella directory.
+  Stato: DA FARE (prima la diagnosi).
+
+@RISOLUZIONI LE RISOLUZIONI: QUELLE CHE LA SCHEDA HA, CON LA PROVA (chiesto dall'utente il 10 ottobre 2026)
+  In Impostazioni si sceglie fra quattro modi fissi. Si vuole l'elenco dei
+  modi che la scheda video dichiara (VBE), la scelta fra quelli, una PROVA
+  (si passa al modo, si chiede conferma, senza risposta si torna indietro) e
+  il salvataggio della configurazione.
+  Stato: DA FARE.
+
+@IMPOSTAZIONI-SCHEDE IL PANNELLO IMPOSTAZIONI A SCHEDE; SALVASCHERMO, SCHERMO SPENTO, BLOCCO (chiesto dall'utente il 10 ottobre 2026)
+  Non urgente. Il pannello cresce: va organizzato in schede (Sistema, Video,
+  ...) e da li' si aggiunge il resto. Da metterci: la scelta del salvaschermo
+  (un file che fa da salvaschermo, scelto dal pannello), lo spegnimento dello
+  schermo dopo un tempo, e il blocco automatico dell'utente, da cui si esce
+  con la password. Il suono d'avvio e il volume vanno nella scheda loro.
+  Stato: DA FARE.
+
+@FM-DIVISORE FILE MANAGER: IL SEPARATORE FRA LE DUE AREE SI SPOSTA (chiesto dall'utente il 10 ottobre 2026)
+  Non urgente. Le due aree devono potersi ridimensionare: il separatore
+  centrale si trascina, allargando una e stringendo l'altra.
+  Stato: DA FARE.
+
+@FM-STRUMENTI FILE MANAGER: BARRA DEGLI STRUMENTI, VISTA A ICONE, IL TRASCINAMENTO SI VEDE (chiesto dall'utente il 10 ottobre 2026)
+  Non urgente. Sotto la barra dei menu: copia, incolla, taglia, cancella,
+  nuovo (file vuoto o directory). L'elenco a destra in due viste: lista
+  dettagliata (com'e' adesso) o icone, come sulla scrivania. E trascinando
+  un file il puntatore del mouse deve mostrare che ha preso qualcosa, e
+  tornare normale al rilascio: solo sulla scrivania e nel file manager.
+  Stato: DA FARE.
+
+@VIDEO UN'APPLICAZIONE CHE RIPRODUCE VIDEO (chiesto dall'utente il 10 ottobre 2026)
+  L'utente chiede se serve una licenza per l'MPEG-2 e se si puo' usare un
+  codec a sorgente aperto. Risposta data (non sono un legale; vale quel che
+  so fino alla mia data di conoscenza): l'MPEG-1 e' libero da brevetti da
+  anni; i brevetti dell'MPEG-2 sono scaduti quasi ovunque (negli Stati Uniti
+  nel 2018), da verificare paese per paese prima di distribuire. Codec gia'
+  pronti e con licenza permissiva: pl_mpeg (MPEG-1 video + audio MP2, un file
+  solo, MIT) e' il candidato per cominciare, come minimp3 per l'audio;
+  Theora (BSD) e' il formato nato libero. H.264 e successivi no: troppo
+  pesanti per le macchine piccole e coi brevetti vivi.
+  Il suono c'e' gia' (exsuono.so); serve la sincronia audio-video e il
+  disegno veloce dei fotogrammi (conversione YUV->RGB).
+  Stato: DA FARE (da decidere il formato insieme).
+
+@AVVIO-SCRIVANIA CHE COSA PARTE CON LA SCRIVANIA, SCELTO DAL PANNELLO (chiesto dall'utente il 10 ottobre 2026)
+  Nella scheda «Sistema» del pannello Impostazioni (vedi @IMPOSTAZIONI-SCHEDE)
+  un'area dove accendere e spegnere le funzioni e i programmi che partono
+  all'avvio della scrivania: l'orologio, l'icona del volume, il monitor di
+  sistema (qui sotto), e quel che verra'. Oggi orologio e icona del volume
+  sono fissi dentro pm.
+  Stato: DA FARE.
+
+@MONITOR-SISTEMA L'ICONA DEL MONITOR DI SISTEMA, E IL SUO PANNELLO (chiesto dall'utente il 10 ottobre 2026)
+  Un'icona nella barra, come quella del volume; il pannello mostra con dei
+  grafici l'uso di RAM, CPU (e dei singoli processori, ora che lavorano),
+  disco, gli utenti collegati e i processi attivi, e permette di terminarli:
+  un gestore dei compiti. I dati ci sono gia' quasi tutti nelle chiamate di
+  sistema (SYS_MEMINFO, SYS_PROCINFO, SYS_CPU_INFO, SYS_DISKINFO); manca il
+  tempo di CPU per processo e per processore letto a intervalli (ticks_total
+  c'e' nel PCB) e una chiamata per terminare un processo da un programma.
+  Stato: DA FARE.
+

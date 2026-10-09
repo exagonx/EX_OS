@@ -56,6 +56,7 @@
 #include "paging.h"
 #include "pmm.h"
 #include "sched.h"      /* g_ticks */
+#include "gdt.h"        /* gdt_installa_cpu: la tappa 3 */
 
 /* ! UGUALE A SMP_TRAMP_BASE di smp_tramp.asm. E' la pagina 0x8000-0x8FFF, che
  * pmm_init tiene fuori dal giro perche' ci ha lavorato Stage 2: qui la si
@@ -454,6 +455,114 @@ void smp_ap_messaggio(void)
     apic_scrivi(APIC_FATTO, 0);
 }
 
+/* =============================================================================
+ * Il lucchetto del kernel (tappa 3): la regola sta in smp.h
+ *
+ * ! SI PRENDE E SI LASCIA A INTERRUPT SPENTI. Fra «ho il lucchetto» e «ho
+ * scritto che ce l'ho» non deve passare un interrupt: il suo gestore
+ * leggerebbe «non ce l'ho», proverebbe a prenderlo e aspetterebbe se stesso
+ * per sempre. Lo stesso lasciandolo, a rovescio. La chiamata di sistema entra
+ * a interrupt ACCESI (e' una porta di tipo trappola), quindi qui si spengono
+ * e si rimettono come erano.
+ * ========================================================================== */
+/* ! E' UN LUCCHETTO A NUMERI, COME DAL FORNAIO, E NON «CHI ARRIVA PRIMO».
+ * Con un lucchetto semplice (prova a prenderlo, se e' occupato riprova) vince
+ * chi riprova piu' in fretta: un programma che entra e esce dal kernel in
+ * continuazione - una shell che aspetta un figlio - lo riprendeva sempre un
+ * attimo dopo averlo lasciato, e l'altro processore, fermo ad aspettarlo al
+ * suo battito con gli interrupt spenti, restava fuori per decine di
+ * millisecondi. Misurato con smpprova: un programma solo andava a un decimo.
+ * Qui chi arriva prende un numero e si serve in ordine: chi lascia e
+ * rientra va in coda dietro chi stava aspettando. */
+static volatile uint32_t g_bkl_coda  = 0;   /* il prossimo numero da dare */
+static volatile uint32_t g_bkl_turno = 0;   /* il numero che si sta servendo */
+static volatile uint8_t  g_bkl_tiene[SMP_CPU_MAX];
+
+void bkl_entra(void)
+{
+    uint32_t n, eflags;
+
+    if (!g_smp_lavora) return;
+    __asm__ volatile ("pushf; pop %0; cli" : "=r"(eflags));
+    n = cpu_n();
+    if (!g_bkl_tiene[n]) {
+        uint32_t mio = __sync_fetch_and_add(&g_bkl_coda, 1);
+
+        while (g_bkl_turno != mio) __asm__ volatile ("pause");
+        g_bkl_tiene[n] = 1;
+    }
+    if (eflags & 0x200u) __asm__ volatile ("sti");
+}
+
+void bkl_lascia(void)
+{
+    uint32_t n, eflags;
+
+    if (!g_smp_lavora) return;
+    __asm__ volatile ("pushf; pop %0; cli" : "=r"(eflags));
+    n = cpu_n();
+    if (g_bkl_tiene[n]) {
+        g_bkl_tiene[n] = 0;
+        g_bkl_turno++;                  /* lo scrive solo chi ce l'ha */
+    }
+    if (eflags & 0x200u) __asm__ volatile ("sti");
+}
+
+void bkl_ozio(void) { bkl_lascia(); }
+
+/* All'uscita da ogni gestore, a interrupt spenti (lo stub ha fatto cli e
+ * restano spenti fino a iret). Se si torna in ring 3: prima si guarda se
+ * qualcuno ha chiesto a questo processo di finire, poi si lascia il kernel. */
+void bkl_esci(const void *frame)
+{
+    const InterruptFrame *f = (const InterruptFrame *)frame;
+
+    if (!g_smp_lavora || (f->cs & 3) != 3) return;
+    sched_fine_chiesta();           /* se c'e' da finire, non torna */
+    bkl_lascia();
+}
+
+/* Quanti processori in piu' eseguono processi, e l'ordine di cominciare dato
+ * a uno che era parcheggiato (smp_accendi_lavoro): il suo numero e la pila
+ * del suo ozio, per voce di g_smp.cpu. */
+static uint32_t          g_lavorano = 0;
+static volatile uint32_t g_ordine_n[SMP_CPU_MAX], g_ordine_pila[SMP_CPU_MAX];
+extern void smp_ap_salta(uint32_t pila, uint32_t funzione);
+
+/* Timer e messaggi di un processore in piu', dagli stub di isr_stubs.asm:
+ * possono arrivare mentre gira un programma, quindi col telaio intero e il
+ * lucchetto gia' preso. */
+void smp_ap_irq(InterruptFrame *f)
+{
+    if (f->int_no == VETTORE_BATTITO) {
+        io_sono()->battiti++;
+        /* ! «FATTO» PRIMA DI SCEGLIERE: se lo scheduler cambia processo non
+         * si torna qui per un pezzo, e senza questo il timer non batterebbe
+         * piu' su questo processore. */
+        apic_scrivi(APIC_FATTO, 0);
+        /* Solo se questo processore il kernel ce l'ha davvero: un battito
+         * arrivato un attimo prima che il lucchetto si accendesse e' entrato
+         * senza prenderlo, e non deve toccare lo scheduler. */
+        if (g_smp_lavora && g_bkl_tiene[cpu_n()]) sched_battito_cpu();
+    } else {
+        SmpCpu  *io = io_sono();
+        uint32_t i  = (uint32_t)(io - g_smp.cpu);
+
+        io->messaggi++;
+        apic_scrivi(APIC_FATTO, 0);
+
+        /* L'ordine di cominciare a lavorare, a un processore parcheggiato:
+         * la sua GDT, la FPU in ordine, e via sulla pila del suo ozio. Il
+         * telaio di questo interrupt si abbandona: non si torna. */
+        if (g_ordine_n[i] != 0 && io->stato == SMP_CPU_FERMO) {
+            gdt_installa_cpu(g_ordine_n[i]);
+            __asm__ volatile ("fninit");
+            io->stato = SMP_CPU_LAVORA;
+            smp_ap_salta(g_ordine_pila[i], (uint32_t)sched_cpu_entra);
+        }
+    }
+}
+
 /* -----------------------------------------------------------------------------
  * Il processore svegliato arriva qui, dal trampolino
  *
@@ -466,6 +575,12 @@ void smp_ap_messaggio(void)
  * risposta per passare al successivo, e la casella della pila nel trampolino
  * e' una sola.
  * ----------------------------------------------------------------------------- */
+/* Tappa 3: il numero (1..) e la pila d'ozio del processore che si sta
+ * svegliando; 0 = lo si parcheggia come alle tappe 1 e 2. */
+static volatile uint32_t g_ap_lavora_n = 0, g_ap_lavora_pila = 0;
+extern void smp_irq_battito(void);
+extern void smp_irq_messaggio(void);
+
 static void smp_ap_entra(void)
 {
     uint32_t a = 0, b = 0, c = 0, d = 0;
@@ -480,6 +595,19 @@ static void smp_ap_entra(void)
         apic_scrivi(APIC_TIMER_DIVIDE, TIMER_DIVIDE_16);
         apic_scrivi(APIC_LVT_TIMER, VETTORE_BATTITO | LVT_PERIODICO);
         apic_scrivi(APIC_TIMER_INIZIO, g_smp.timer_per_tick);
+    }
+    if (g_ap_lavora_n != 0) {
+        /* Tappa 3: questo processore esegue processi. La sua GDT e il suo TSS,
+         * la FPU in ordine, e da qui e' il suo compito d'ozio, sulla pila di
+         * quello (smp_ap_salta non torna). «Ci sono» si dice dopo aver
+         * caricato la GDT: da quel momento cpu_n() dice il vero. */
+        uint32_t n = g_ap_lavora_n, pila = g_ap_lavora_pila;
+
+        gdt_installa_cpu(n);
+        __asm__ volatile ("fninit");
+        g_ap_voce->stato = SMP_CPU_LAVORA;
+        g_ap_risposto = 1;
+        smp_ap_salta(pila, (uint32_t)sched_cpu_entra);
     }
     g_ap_risposto = 1;
 
@@ -598,6 +726,62 @@ static const char *nome_fonte(uint32_t f)
 /* =============================================================================
  * smp_init
  * ============================================================================= */
+/* =============================================================================
+ * smp_accendi_lavoro — i processori parcheggiati cominciano a lavorare, ADESSO
+ *
+ * ! ESISTE PER PROVARE SENZA RISCHIARE L'AVVIO. `smp = 2` in kernel.cfg li
+ * mette al lavoro dall'accensione: se su una scheda vera qualcosa non andasse,
+ * la macchina non arriverebbe al prompt, e per togliere la riga servirebbe un
+ * altro disco da cui partire. Da qui invece si parte normali, si da' il
+ * comando (`smpprova -accendi`), e se la macchina si ferma basta riavviarla:
+ * torna com'era. E' la stessa strada del comando `ahci` prima di `ahci = 1`.
+ *
+ * La chiama una chiamata di sistema, quindi il processore d'avvio, dentro il
+ * kernel. Rende quanti processori in piu' lavorano dopo (0 = nessuno).
+ * ========================================================================== */
+int smp_accendi_lavoro(void)
+{
+    uint32_t i, da, nuovi = 0;
+
+    if (g_smp_lavora) return (int)g_lavorano;
+    if (g_apic == 0 || g_smp.timer_per_tick == 0) return 0;
+
+    for (i = 0; i < g_smp.n && i < SMP_CPU_MAX; i++) {
+        uint32_t pila;
+
+        if (g_smp.cpu[i].stato != SMP_CPU_FERMO || g_ordine_n[i] != 0) continue;
+        if (g_lavorano + 1 >= SMP_CPU_MAX) break;
+        pila = sched_cpu_prepara(g_lavorano + 1);
+        if (pila == 0) break;
+        g_ordine_pila[i] = pila;
+        g_ordine_n[i]    = g_lavorano + 1;
+        g_lavorano++;
+        nuovi++;
+    }
+    if (nuovi == 0) return 0;
+
+    smp_chiama_tutti();
+    for (da = g_ticks; g_ticks - da < 100; ) {          /* un secondo al piu' */
+        uint32_t pronti = 0;
+
+        for (i = 0; i < g_smp.n && i < SMP_CPU_MAX; i++)
+            if (g_ordine_n[i] != 0 && g_smp.cpu[i].stato == SMP_CPU_LAVORA) pronti++;
+        if (pronti >= nuovi) break;
+        __asm__ volatile ("pause");
+    }
+
+    /* Come in fondo a smp_init: il kernel e' gia' «preso» da chi scrive. */
+    interrupts_disable();
+    g_bkl_turno    = 0;
+    g_bkl_coda     = 1;
+    g_bkl_tiene[0] = 1;
+    g_smp_lavora   = 1;
+    interrupts_enable();
+
+    klog(LOG_INFO, "SMP: %u processori in piu' messi al lavoro a macchina avviata", g_lavorano);
+    return (int)g_lavorano;
+}
+
 void smp_init(int accendi)
 {
     static uint8_t salvata[PAGE_SIZE];      /* la pagina del trampolino, com'era */
@@ -689,8 +873,11 @@ void smp_init(int accendi)
      * degli interrupt spuri punta a un `iret`: non ne devono arrivare, ma se
      * ne arrivasse uno senza voce nella IDT sarebbe un doppio fault. */
     idt_set_gate(VETTORE_SPURIO,    (uint32_t)smp_spurio,        0x08, 0x8E);
-    idt_set_gate(VETTORE_BATTITO,   (uint32_t)smp_isr_battito,   0x08, 0x8E);
-    idt_set_gate(VETTORE_MESSAGGIO, (uint32_t)smp_isr_messaggio, 0x08, 0x8E);
+    /* Gli stub col telaio intero e il lucchetto (isr_stubs.asm): servono da
+     * quando un processore in piu' puo' essere in ring 3 all'arrivo del suo
+     * timer. Per uno parcheggiato fanno lo stesso lavoro di prima. */
+    idt_set_gate(VETTORE_BATTITO,   (uint32_t)smp_irq_battito,   0x08, 0x8E);
+    idt_set_gate(VETTORE_MESSAGGIO, (uint32_t)smp_irq_messaggio, 0x08, 0x8E);
     apic_scrivi(APIC_SPURIO, APIC_SPURIO_ACCESO | VETTORE_SPURIO);
 
     for (i = 0; i < g_smp.n; i++) g_voce_di[g_smp.cpu[i].apic_id] = (uint8_t)i;
@@ -717,8 +904,17 @@ void smp_init(int accendi)
         pila = pmm_alloc_page_kernel();
         if (pila == 0) { g_smp.motivo = SMP_MOTIVO_MEMORIA; break; }
 
+        /* Tappa 3: gli si prepara l'ozio. Se il timer dell'APIC non conta
+         * resta parcheggiato: senza battito non avrebbe uno scheduler. */
+        g_ap_lavora_n = 0;
+        if (accendi >= 2 && g_smp.timer_per_tick != 0 && g_lavorano + 1 < SMP_CPU_MAX) {
+            g_ap_lavora_pila = sched_cpu_prepara(g_lavorano + 1);
+            if (g_ap_lavora_pila != 0) g_ap_lavora_n = g_lavorano + 1;
+        }
+
         if (sveglia(cpu, pila)) {
-            cpu->stato = SMP_CPU_FERMO;
+            if (g_ap_lavora_n != 0) g_lavorano++;     /* lo stato l'ha scritto lui */
+            else cpu->stato = SMP_CPU_FERMO;
             g_smp.fermi++;
             /* La pila resta sua: e' in attesa li' sopra. */
         } else {
@@ -740,6 +936,19 @@ void smp_init(int accendi)
     if (g_smp.fermi + 1 == g_smp.n)
         for (i = 0; i < PAGE_SIZE; i++) ((uint8_t *)TRAMP_BASE)[i] = salvata[i];
 
-    klog(LOG_INFO, "SMP: %u processori (%s), %u in piu' accesi e in attesa",
-         g_smp.n, nome_fonte(g_smp.fonte), g_smp.fermi);
+    /* ! IL LUCCHETTO SI ACCENDE QUI, CON IL KERNEL GIA' «PRESO» DA CHI SCRIVE:
+     * questo processore e' dentro il kernel in questo momento, e lo lascera'
+     * come tutti - andando in ring 3 o fermandosi nell'ozio. I processori in
+     * piu' da adesso aspettano il loro turno al primo battito. */
+    if (g_lavorano > 0) {
+        interrupts_disable();
+        g_bkl_turno    = 0;             /* il numero 0 e' di chi scrive */
+        g_bkl_coda     = 1;
+        g_bkl_tiene[0] = 1;
+        g_smp_lavora   = 1;
+        interrupts_enable();
+    }
+
+    klog(LOG_INFO, "SMP: %u processori (%s), %u in piu' accesi, %u dei quali lavorano",
+         g_smp.n, nome_fonte(g_smp.fonte), g_smp.fermi, g_lavorano);
 }

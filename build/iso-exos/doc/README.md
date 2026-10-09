@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.245
+**Versione:** 0.246
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -138,6 +138,23 @@ Dalla prima prova sul PC vero: il disco SATA in modo nativo si riconosce, ma
 in DMA restava bloccato («timeout BSY»). Dalla 0.240 quei canali lavorano in
 PIO e un disco rimasto occupato viene resettato.
 
+**0.246**: i processori in piu' eseguono programmi (tappa 3 dell'SMP). Un
+lucchetto unico sul kernel, preso entrando (interrupt, eccezioni, chiamate di
+sistema) e lasciato tornando in ring 3: nel kernel c'e' un processore per
+volta, i programmi girano su tutti. GDT e TSS per processore, il processo
+corrente per processore; il lucchetto e' a numeri (chi arriva prima passa
+prima). Due programmi diversi usano due processori; i fili di uno stesso
+programma no, finche' non c'e' l'invalidazione del TLB fra processori (tappa
+4). **Resta spento di serie**: `smpprova -accendi` lo accende fino al
+riavvio, `smp = 2` in `kernel.cfg` a ogni avvio. `smpprova` misura il lavoro
+fatto: in QEMU con KVM, 4284 giri un programma su un processore, 4296 da
+solo su due (nessuna perdita), 8152 due insieme su due processori, 12638
+quattro insieme su quattro. Con un processore solo niente si accende.
+**Sul PC vero** (Core 2 Quad, NVIDIA MCP73, 10 ottobre): dopo `smpprova
+-accendi` due programmi insieme fanno 2,04 volte il lavoro di uno, quattro
+3,32; rete, DNS e `netupdate` funzionano coi processori al lavoro. Una
+sessione breve da telnet: l'uso lungo e ExWin sono da provare.
+
 **0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
 I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono
 un posto fra `hd0`..`hd3` come gli altri: in QEMU il sistema si installa, legge,
@@ -240,6 +257,22 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
   un quarto di meta' e scrive i conti di ogni riproduzione nel registro
   (`dmesg hdaudio`). Da riascoltare.
+- **Il pulsante «a tutto schermo».** Nella barra del titolo, fra «riduci a
+  icona» e «chiudi», un terzo pulsante porta la finestra a riempire lo
+  schermo fino alla barra della scrivania, e premuto di nuovo la rimette
+  dov'era; lo stesso fa Alt+F10. Lo fa il server a finestre (`wserver`
+  0.011) per ogni finestra ridimensionabile, quindi nessun programma e' stato
+  toccato. Provandolo si e' visto che il file manager, a ogni
+  ridimensionamento, faceva salire le due liste sopra le intestazioni:
+  corretto.
+- **Gli strumenti scaricati si trovano da soli.** `netupdate -check -yesall`
+  installa tutto il sistema, compilatori compresi, in `/exos`; ma il `PATH`
+  di `/boot/kernel.cfg` non lo toccava, e `gcc` dava «comando non trovato» su
+  una macchina che lo aveva sul disco. Ora a fine `-check`, se gli strumenti
+  ci sono e il PATH non li nomina, lo scrive `toolinst -c` (nuovo: solo la
+  configurazione, con la copia in `kernel.cfg.bak`); vale dal riavvio. E
+  exide (0.025) sceglie da solo la radice del compilatore: `/exos` se c'e',
+  altrimenti il CD - prima era fissa a `/cdrom/exos`.
 - **Il pannello dei volumi.** Nella barra, accanto all'orologio, c'e'
   un'icona con l'altoparlante: un clic apre `exvolume`, con una riga per ogni
   uscita e per ogni ingresso della scheda e due cursori per riga, canale
@@ -260,8 +293,8 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   suono non e' dentro il lettore: lo fa `exsuono.so` (`lib/exsuono`), che ogni
   programma puo' aprire. Per chi vuole solo un suono dopo un'azione basta
   `exsuono_avvia_file("/exwin/sound/x.wav")`, che torna subito; il program
-  manager la usa per l'intro all'accensione della scrivania (`suono_avvio =
-  no` in `pm.cfg` la spegne). Trovati facendolo: `audio` non tornava al
+  manager la usa per l'intro all'accensione della scrivania; si spegne con
+  la spunta «Suono all'avvio della scrivania» in Avvio > Impostazioni. Trovati facendolo: `audio` non tornava al
   prompt a fine brano (aspettava che la scheda consumasse gli ultimi byte,
   meno di un blocco, che una scheda non prende mai) e teneva la scheda
   occupata; e nel toolkit un pulsante col fuoco non si poteva premere dalla

@@ -42,7 +42,12 @@ rm -rf "$F" "$T"; mkdir -p "$F" "$T"
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$B/costruzione-sistema/albero/dist/exos.iso"; [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
 export EXOS_ISTANZA=finestra EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
-export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
+# RETE=1: una scheda di rete (la rete «user» di QEMU, che esce su Internet
+# attraverso l'host) e, dentro EX-OS, driver, indirizzo e DNS prima di Firefox.
+# PAGINA=<indirizzo>: la pagina con cui Firefox parte (di solito con RETE=1).
+RETE_QEMU=""; [ -n "${RETE:-}" ] && RETE_QEMU="-netdev user,id=u0 -device e1000,netdev=u0"
+PAGINA="${PAGINA:-file:///disk/prova.html}"
+export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide $RETE_QEMU"
 rm -f /tmp/exos/serialfinestra.txt
 
 FOTO_OGNI="${FOTO_OGNI:-120}"
@@ -51,9 +56,16 @@ FOTO_N="${FOTO_N:-5}"
     echo "mount hd0p1 /disk@5"
     for v in MOZ_FORCE_DISABLE_E10S=1 HOME=/disk/casa LANG=it_IT.UTF-8 \
              EXILLA_FONTS=/disk/font EXILLA_DIAG=1 $AMBIENTE; do echo "export $v@1"; done
+    # ! LA RETE LA ACCENDE GIA' IL SISTEMA all'avvio (scheda, stack, DHCP).
+    # Rifarlo qui a mano avvia un secondo ip.drv, e da li' in poi nessun nome
+    # si risolve piu': il 10 ottobre 2026 Firefox diceva «dnsNotFound» per
+    # questo, non per colpa sua. Si aspetta e si controlla soltanto.
+    if [ -n "${RETE:-}" ]; then
+        echo "host example.com@12"
+    fi
     echo "exwin@14"
     echo "key:alt-f1@2"
-    echo "/disk/firefox/firefox -no-remote -profile /disk/profilo file:///disk/prova.html &@3"
+    echo "/disk/firefox/firefox -no-remote -profile /disk/profilo $PAGINA &@3"
     echo "key:alt-f5@3"
     # CAMPIONI_AVVIO=n: n campioni della CPU, uno ogni mezzo secondo, MENTRE
     # Firefox parte: dicono dove passa il tempo dell'avvio (7 ottobre 2026).

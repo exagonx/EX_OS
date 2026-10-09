@@ -487,6 +487,26 @@ alla `libc.a` della toolchain. `tools/gcc-exos/prepara-cross.sh
 firefox-main/browser/app/nsBrowserApp.cpp` e `tools/exilla/gecko-costruisci.sh
 build binaries` (cinque minuti).
 
+**10 ottobre 2026, kernel 0.245: la prima pagina da Internet, in HTTPS.**
+Firefox nella sua finestra di ExWin, con la rete «user» di QEMU, apre
+`http://example.com/` e poi `https://example.com/`: nome risolto dal DNS di
+EX-OS, connessione TCP, TLS e certificato verificati da NSS, pagina disegnata.
+
+![example.com in HTTPS dentro EX-OS](tappa7-rete.png)
+
+    RETE=1 PAGINA=https://example.com/ FOTO_OGNI=20 FOTO_N=3 tools/exilla/prova-finestra.sh
+
+Dal lancio al titolo «Example Domain» passano circa 25 secondi, di cui 23 dopo
+che la finestra e' gia' aperta: e' il prossimo numero da capire (il primo
+collegamento TLS, il profilo che si crea, o la rete). Il giapponese della
+pagina esce a quadratini: fra i caratteri del disco di prova non ce n'e' uno
+che lo copra. La prova NON deve riaccendere la rete a mano: il sistema lo fa
+all'avvio, e un secondo `ip.drv` lascia tutti senza DNS («dnsNotFound»).
+
+Restano della tappa 7: i menu a comparsa e il ridimensionamento da riprovare
+uno per uno (il codice c'e'), gli errori di IndexedDB/SQLite sul profilo, la
+forma del puntatore, e quei 23 secondi.
+
 ## 1. L'albero
 
 `/firefox-main/` (fuori da git, vedi `.gitignore`): **Firefox 158.0a1**, 4,9 GB.

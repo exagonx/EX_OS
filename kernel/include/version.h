@@ -450,7 +450,12 @@
 /* 0.244 -> 0.245: i dischi SATA dietro un controller AHCI (ahci.c). Quelli
  * dei controller che si dichiarano AHCI si usano sempre; con `ahci = 1` in
  * kernel.cfg passano all'AHCI anche quelli visti prima dai registri IDE. */
-#define EXOS_VERSION    "0.245"
+/* 0.245 -> 0.246: tappa 3 dell'SMP. Con `smp = 2` in kernel.cfg i processori
+ * in piu' eseguono processi: un lucchetto unico sul kernel, GDT e TSS per
+ * processore, il processo corrente per processore. Il predefinito non cambia
+ * (smp = 1: svegliati e fermi), e con un processore solo niente di tutto
+ * questo si accende. Vedi kernel/include/smp.h. */
+#define EXOS_VERSION    "0.246"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

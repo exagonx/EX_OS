@@ -135,7 +135,9 @@ suona.
 <p>
 L'intro che si sente all'accensione della scrivania e' il file
 <code>/exwin/sound/intro_exos_benvenuto10s.wav</code>. Per non sentirla:
-<code>suono_avvio = no</code> in <code>pm.cfg</code>.
+togliere la spunta <b>Suono all'avvio della scrivania</b> in
+<b>Avvio &gt; Impostazioni...</b> (e' la riga <code>suono_avvio = no</code>
+di <code>pm.cfg</code>).
 </p>
 
 <h3 id="volume">Il pannello dei volumi</h3>
@@ -244,12 +246,34 @@ Quel che i programmi della scrivania stampano non finisce sullo schermo ma nel
 e il numero del processo che l'ha scritta.
 </p>
 
+<h2 id="finestre">I pulsanti di una finestra</h2>
+
+<p>
+A destra nella barra del titolo, da sinistra a destra:
+</p>
+
+<table border="1">
+<tr><th>Pulsante</th><th>Che cosa fa</th></tr>
+<tr><td>la lineetta in basso</td><td>riduce la finestra a icona: resta nella barra in fondo, e un clic li' la riporta</td></tr>
+<tr><td>il riquadro</td><td><b>a tutto schermo</b>: la finestra riempie lo schermo fino alla barra. Il pulsante diventa due riquadri sovrapposti, e premuto di nuovo la rimette dov'era e grande com'era. Anche con <code>Alt+F10</code></td></tr>
+<tr><td>il quadratino rosso</td><td>chiude</td></tr>
+</table>
+
+<p class="nota">
+<b>Il pulsante «a tutto schermo» ce l'hanno le finestre che si possono
+ridimensionare</b> &mdash; quelle con i tre segni nell'angolo in basso a
+destra: file manager, editor, terminale, navigatore. Un programma con una
+finestra a misura fissa (il lettore audio, la calcolatrice) non lo ha: non
+saprebbe che cosa mettere nello spazio in piu'.
+</p>
+
 <h2>I tasti che valgono dappertutto</h2>
 
 <table border="1">
 <tr><th>Tasto</th><th>Che cosa fa</th></tr>
 <tr><td>tasto <code>Windows</code>, <code>Ctrl+Esc</code></td><td>apre il menu di avvio, da qualunque finestra (e premuto di nuovo lo chiude). Frecce su e giu' per scegliere; freccia a destra, Invio o spazio per entrare in una categoria, freccia a sinistra o Esc per uscirne; Invio o spazio avviano la voce scelta; Esc chiude il menu</td></tr>
 <tr><td><code>F10</code></td><td>apre la barra dei menu; frecce per girare, Invio sceglie, Esc chiude</td></tr>
+<tr><td><code>Alt+F10</code></td><td>porta la finestra a tutto schermo, e premuto di nuovo la rimette dov'era: lo stesso del pulsante nella barra del titolo</td></tr>
 <tr><td><code>Tab</code></td><td>sposta il fuoco da un controllo al successivo</td></tr>
 <tr><td>barra spaziatrice</td><td>preme il pulsante che ha il fuoco, e accende o spegne una spunta</td></tr>
 <tr><td><code>Ctrl+C</code> <code>Ctrl+X</code> <code>Ctrl+V</code></td>

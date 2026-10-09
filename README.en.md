@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.245
+**Version:** 0.246
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -121,6 +121,23 @@ From the first trial on the real PC: the SATA disk in native mode is found,
 but in DMA it stayed stuck («timeout BSY»). From 0.240 those channels work in
 PIO and a disk left busy is reset.
 
+**0.246**: the extra processors run programs (SMP stage 3). One lock on the
+kernel, taken on entry (interrupts, exceptions, system calls) and released on
+the way back to ring 3: one processor at a time in the kernel, programs on
+all of them. A GDT and a TSS per processor, the current process per
+processor; the lock is a ticket lock (first come, first served). Two
+different programs use two processors; the threads of one program do not,
+until there is TLB shootdown between processors (stage 4). **Off by
+default**: `smpprova -accendi` turns it on until the next reboot, `smp = 2`
+in `kernel.cfg` at every boot. `smpprova` measures the work done: in QEMU
+with KVM, 4284 rounds for one program on one processor, 4296 alone on two
+(no loss), 8152 for two together on two processors, 12638 for four together
+on four. With one processor nothing is switched on. **On the real PC**
+(Core 2 Quad, NVIDIA MCP73, 10 October): after `smpprova -accendi` two
+programs together do 2.04 times the work of one, four do 3.32; network, DNS
+and `netupdate` work with the processors running. A short telnet session:
+long use and ExWin are still to be tried.
+
 **0.245**: SATA disks behind an AHCI controller (`kernel/block/ahci.c`).
 Controllers that declare themselves AHCI are always used, and their disks take
 a place among `hd0`..`hd3` like the others: in QEMU the system installs to,
@@ -217,6 +234,12 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   boundary, and the wrong half was refilled. 0.004 moves the boundary by a
   quarter of a half and writes the counts of each playback to the kernel log
   (`dmesg hdaudio`). To be listened to again.
+- **The full-screen button.** In the title bar, between "minimise" and
+  "close", a third button makes the window fill the screen down to the
+  taskbar, and pressed again puts it back; Alt+F10 does the same. The window
+  server (`wserver` 0.011) does it for every resizable window, so no program
+  was touched. Trying it showed that the file manager, at every resize, moved
+  its two lists up over their headers: fixed.
 - **Downloaded tools are found without help.** `netupdate -check -yesall`
   installs the whole system, compilers included, in `/exos`; but it left the
   `PATH` of `/boot/kernel.cfg` alone, and `gcc` was "command not found" on a
@@ -245,7 +268,8 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   `exsuono.so` (`lib/exsuono`) does it, and any program can open it. For a
   sound after an action `exsuono_avvia_file("/exwin/sound/x.wav")` is enough,
   and it returns at once; the program manager uses it for the intro when the
-  desktop starts (`suono_avvio = no` in `pm.cfg` turns it off). Found on the
+  desktop starts; the checkbox "Suono all'avvio della scrivania" in Start >
+  Impostazioni turns it off. Found on the
   way: `audio` did not return to the prompt at the end of a track (it waited
   for the card to consume the last bytes, less than one block, which a card
   never takes) and kept the card busy; and in the toolkit a focused button

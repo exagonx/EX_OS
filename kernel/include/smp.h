@@ -60,6 +60,7 @@
                                  * messaggi, non esegue processi */
 #define SMP_CPU_MUTO        3   /* svegliato, non ha risposto entro la scadenza */
 #define SMP_CPU_LASCIATO    4   /* elencato ma non svegliato (vedi `motivo`) */
+#define SMP_CPU_LAVORA      5   /* esegue processi (tappa 3: smp = 2 in kernel.cfg) */
 
 /* Perche' i processori in piu' non sono stati svegliati (0 = lo sono stati,
  * o non ce ne sono). */
@@ -97,10 +98,60 @@ typedef struct {
     SmpCpu   cpu[SMP_CPU_MAX];
 } SmpInfo;
 
-/* Cerca i processori e, se `accendi` non e' zero, sveglia e parcheggia quelli
- * in piu'. Da chiamare una volta, a interrupt accesi (le attese contano i
- * tick) e prima che parta il primo processo. */
+/* Cerca i processori. `accendi`: 0 = li conta e basta; 1 = sveglia e
+ * parcheggia quelli in piu'; 2 = li sveglia e li mette a LAVORARE (tappa 3).
+ * Da chiamare una volta, a interrupt accesi (le attese contano i tick) e
+ * prima che parta il primo processo. */
 void           smp_init(int accendi);
+
+/* =============================================================================
+ * TAPPA 3 (0.246): UN LUCCHETTO SOLO SUL KERNEL
+ *
+ * Il kernel di EX-OS e' scritto per un processore: le sue strutture si
+ * proteggono spegnendo gli interrupt, e spegnerli su un processore non ferma
+ * gli altri. Riscriverlo con un lucchetto per struttura e' la tappa 4. Qui la
+ * regola e' una sola e si puo' verificare leggendo tre file:
+ *
+ *     NEL KERNEL C'E' UN PROCESSORE PER VOLTA.
+ *
+ * Il lucchetto si prende entrando nel kernel (interrupt, eccezione, chiamata
+ * di sistema: isr_stubs.asm) e si lascia TORNANDO IN RING 3. Chi cambia
+ * processo dentro il kernel se lo porta dietro: il processo che riparte era
+ * stato fermato dentro il kernel anche lui, e lo lascera' quando tornera' al
+ * suo programma. Chi non ha niente da fare lo lascia prima di fermarsi
+ * (bkl_ozio). I programmi, che sono il lavoro vero, girano in ring 3 senza
+ * lucchetto: due programmi, due processori.
+ *
+ * Che cosa NON da': due chiamate di sistema insieme, e due fili dello stesso
+ * programma insieme (vedi sched_puo_qui in sched.c). Un programma che passa
+ * il tempo nel kernel - a leggere il disco - non va piu' veloce.
+ *
+ * ! SI ACCENDE CON  smp = 2  IN kernel.cfg, E SOLO COSI'. Il predefinito
+ * resta 1 (svegliati e fermi) finche' non e' provato su piu' macchine vere:
+ * un errore qui non e' un programma che cade, e' una macchina che si ferma.
+ * ========================================================================== */
+extern volatile uint32_t g_smp_lavora;      /* definito in gdt.c */
+
+/* Su quale processore sto girando: 0 quello d'avvio. Il numero sta nel limite
+ * di un segmento della GDT di ogni processore (voce 7), e `lsl` lo legge
+ * senza toccare l'APIC. Con un processore solo non legge niente. */
+static inline uint32_t cpu_n(void)
+{
+    uint32_t n = 0;
+
+    if (!g_smp_lavora) return 0;
+    __asm__ volatile ("lsl %1, %0" : "+r"(n) : "r"((uint32_t)0x38));
+    return n & (SMP_CPU_MAX - 1);
+}
+
+/* Mette al lavoro, a macchina avviata, i processori parcheggiati. Rende
+ * quanti lavorano dopo. Vedi smp.c: e' il modo di provare senza `smp = 2`. */
+int  smp_accendi_lavoro(void);
+
+void bkl_entra(void);               /* entrando nel kernel (dagli stub) */
+void bkl_esci(const void *frame);   /* uscendone: lo lascia se si torna in ring 3 */
+void bkl_lascia(void);              /* lo lascia e basta: i primi ingressi in ring 3 */
+void bkl_ozio(void);                /* lo lascia chi sta per fermarsi con hlt */
 
 /* Cio' che smp_init() ha trovato. Mai NULL. */
 const SmpInfo *smp_info(void);

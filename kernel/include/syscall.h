@@ -68,6 +68,7 @@
 #define SYS_MEMINFO     187    /* stato della memoria per fascia (vedi MemInfo) */
 #define SYS_CPU_INFO    181    /* i processori trovati all'avvio (vedi SmpInfo in smp.h) */
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
+#define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
                                 * edx = 0 l'avvio, 1 gli ultimi. Rende i byte copiati. */
 #define SYS_PROCINFO    188    /* elenca i processi e i loro stack (vedi ProcInfo) */
@@ -1570,6 +1571,7 @@ int32_t sys_meminfo(InterruptFrame *f);
 int32_t sys_cpu_info(InterruptFrame *f);
 int32_t sys_klog(InterruptFrame *f);
 int32_t sys_ahci_passa(InterruptFrame *f);
+int32_t sys_smp_lavora(InterruptFrame *f);
 int32_t sys_procinfo(InterruptFrame *f);
 int32_t sys_diskinfo(InterruptFrame *f);
 int32_t sys_blkinfo(InterruptFrame *f);

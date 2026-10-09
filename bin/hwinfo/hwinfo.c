@@ -351,6 +351,7 @@ static void sezione_processori(void)
         case CPU_STATO_AVVIO:    st = "IN USO   - e' quello su cui gira EX-OS"; break;
         case CPU_STATO_FERMO:    st = "IN ATTESA - acceso, non esegue ancora processi"; break;
         case CPU_STATO_MUTO:     st = "MUTO     - svegliato, non ha risposto"; break;
+        case CPU_STATO_LAVORA:   st = "LAVORA   - esegue processi"; break;
         default:                 st = "NON SVEGLIATO"; break;
         }
         rap("  cpu %-2u APIC %-3u  %s\n", i, c->apic_id, st);

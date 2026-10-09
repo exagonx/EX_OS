@@ -12,6 +12,9 @@
 [BITS 32]
 
 ; Ridefiniamo correttamente:
+extern g_smp_lavora     ; piu' processori eseguono processi (gdt.c)
+extern bkl_lascia       ; lascia il lucchetto del kernel (smp.c)
+
 global context_switch
 context_switch:
     ; Leggi parametri PRIMA di modificare lo stack
@@ -37,9 +40,17 @@ context_switch:
 
     ; Cambia Page Directory se diversa da quella corrente
     ; Confronta con CR3 attuale
+    ; ! CON PIU' PROCESSORI CR3 SI RICARICA SEMPRE, anche se e' lo stesso.
+    ; Lo stesso spazio di indirizzamento puo' aver girato, nel frattempo, su
+    ; un altro processore che gli ha tolto una pagina: le traduzioni rimaste
+    ; qui nel TLB sarebbero di prima. Con un processore solo resta il
+    ; confronto di sempre.
     mov eax, cr3
+    cmp dword [g_smp_lavora], 0
+    jne .carica_cr3
     cmp eax, edx
     je  .no_cr3_switch
+.carica_cr3:
     mov cr3, edx            ; Carica nuova PD (invalida TLB)
 .no_cr3_switch:
 
@@ -77,6 +88,13 @@ context_switch:
 global proc_entry_stub_user
 proc_entry_stub_user:
     cli
+    ; Si va in ring 3 senza passare dall'uscita di uno stub: il lucchetto del
+    ; kernel si lascia qui (con un processore solo la chiamata torna subito).
+    push eax
+    push ecx
+    call bkl_lascia
+    pop ecx
+    pop eax
     mov edx, eax             ; EDX = entry point (libera EAX per il selettore)
 
     mov ax, 0x23             ; User data selector | RPL=3
@@ -131,6 +149,11 @@ sched_enter_usermode:
 
     ; Disabilita interrupt durante il setup
     cli
+    push eax
+    push ecx
+    call bkl_lascia         ; come in proc_entry_stub_user
+    pop ecx
+    pop eax
 
     ; Selettore segmento utente: GDT_USER_DATA_SEL | RPL3 = 0x23
     ; Selettore codice  utente: GDT_USER_CODE_SEL | RPL3 = 0x1B

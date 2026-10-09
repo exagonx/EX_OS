@@ -21,4 +21,8 @@ void gdt_set_kernel_stack(uint32_t stack_top);
  * processo che sta per girare. Zero per chi non ha variabili __thread. */
 void gdt_set_tls_base(uint32_t base);
 
+/* La GDT e il TSS del processore numero n (1..): li carica chi chiama. Vedi
+ * gdt.c, «una GDT e un TSS per processore». */
+void gdt_installa_cpu(uint32_t n);
+
 #endif

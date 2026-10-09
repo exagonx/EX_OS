@@ -137,6 +137,51 @@ funziona) o col comando <code>ahci</code>. Che cosa ha fatto il kernel lo dice
 <code>dmesg AHCI</code>.
 </p>
 
+<h2 id="usb">L'USB</h2>
+<p>
+L'USB sta fuori dal kernel, come ogni altro driver: un programma per ogni
+tipo di controller, e una parte comune (riconoscere il dispositivo, dargli
+un indirizzo, leggerne i descrittori, gli hub) che e' la stessa per tutti.
+</p>
+
+<table border="1">
+<tr><th>Driver</th><th>Controller</th><th>Dove si trova</th></tr>
+<tr><td><code>/dev/uhci.drv</code></td><td>UHCI, USB 1.1</td><td>le schede madri Intel e VIA</td></tr>
+<tr><td><code>/dev/ohci.drv</code></td><td>OHCI, USB 1.1</td><td>tutto il resto: NVIDIA, SiS, ALi, le schede PCI</td></tr>
+<tr><td><code>/dev/ehci.drv</code></td><td>EHCI, USB 2.0</td><td>accanto a uno dei due qui sopra, per i dispositivi veloci</td></tr>
+<tr><td><code>/dev/xhci.drv</code></td><td>xHCI, USB 3</td><td>le macchine recenti, dove puo' essere l'unico</td></tr>
+</table>
+
+<p>Che cosa si puo' attaccare:</p>
+
+<table border="1">
+<tr><th>Dispositivo</th><th>Come si usa</th></tr>
+<tr><td>chiavette e dischi USB</td><td>compaiono da soli sotto <code>/USB</code> (<code>/USB/HDD0p1</code> la prima partizione, <code>/USB/DRIVE0</code> una chiavetta senza tabella): li monta <code>automount</code>. Prima di toglierli: <code>eject</code></td></tr>
+<tr><td>lettori di schede, floppy USB</td><td>come le chiavette; un lettore vuoto non da' fastidio</td></tr>
+<tr><td>mouse e tastiere USB</td><td>col protocollo di avvio (quello che usa anche il BIOS): funzionano in console e in ExWin come quelli PS/2. Anche i ricevitori senza fili che fanno da tastiera e mouse insieme</td></tr>
+<tr><td>hub</td><td>solo dietro un controller UHCI, per ora: con OHCI, EHCI e xHCI il dispositivo va nelle porte della macchina</td></tr>
+</table>
+
+<p>
+All'avvio <code>/boot/avvio.sh</code> lancia <code>ehci.drv -avvio</code> e
+<code>ohci.drv -avvio</code>: quello che non trova il suo controller esce in
+silenzio, gli altri restano a guardare le porte, perche' una chiavetta di
+solito si infila dopo l'accensione. Su una macchina Intel con sole porte
+USB 1.1 va aggiunta a mano la riga <code>/dev/uhci.drv -avvio &amp;</code>;
+con un xHCI, <code>/dev/xhci.drv &amp;</code>. Per vedere che cosa c'e'
+sulle porte: <code>ohci.drv -d</code>, <code>xhci.drv -v</code>.
+</p>
+
+<p class="nota">
+<b>Che cosa non c'e'.</b> Niente audio, webcam, stampanti o adattatori di
+rete USB: solo memorie di massa e dispositivi di ingresso. Un controller
+OHCI oggi serve <i>o</i> mouse e tastiera <i>o</i> le chiavette, non le due
+cose insieme: se sulla stessa macchina c'e' anche un EHCI le chiavette
+passano da quello e il problema non si vede. Provato su hardware vero: EHCI
+con chiavette e OHCI con un ricevitore Logitech (tastiera e mouse) su una
+scheda NVIDIA MCP73; UHCI e xHCI in emulazione.
+</p>
+
 <h2 id="processori">Piu' di un processore</h2>
 
 <p>
@@ -148,11 +193,32 @@ a due processori degli anni Novanta (doppio Pentium, doppio Pentium Pro)
 il suo timer e il modo di ricevere messaggi dagli altri.
 </p>
 
+<p>
+Dal kernel 0.246 i processori in piu' possono <b>eseguire programmi</b>.
+Non lo fanno da soli: di serie restano accesi e in attesa, e la macchina va
+come con un processore. Si mettono al lavoro in due modi.
+</p>
+
+<table border="1">
+<tr><th>Come</th><th>Che cosa fa</th></tr>
+<tr><td><code>smpprova -accendi</code></td><td>da adesso e fino al riavvio (serve root). E' il modo di provare: se la macchina si fermasse, riavviandola torna com'era</td></tr>
+<tr><td><code>smp = 2</code> in <code>[kernel]</code> di <code>/boot/kernel.cfg</code></td><td>a ogni avvio. Si scrive dopo aver visto che il primo modo funziona su quella macchina</td></tr>
+</table>
+
+<p>
+<code>smpprova</code> senza argomenti misura se lavorano davvero: fa fare dei
+conti a un programma da solo, poi a due insieme, e confronta. Con un
+processore due programmi insieme fanno il lavoro di uno; con due ne fanno il
+doppio.
+</p>
+
 <p class="nota">
-<b>Per ora lavora un processore solo.</b> Gli altri sono accesi e in attesa:
-non eseguono programmi, e la macchina non va piu' veloce per il fatto di
-averli. E' la base su cui si costruisce il passo dopo, quello in cui
-cominciano a lavorare.
+<b>Che cosa va piu' veloce, e che cosa no.</b> Due programmi diversi girano
+su due processori insieme. Dentro il kernel entra un processore per volta:
+un programma che passa il tempo a leggere il disco o a parlare con la rete
+non guadagna. E i fili di uno stesso programma (un navigatore, per esempio)
+si alternano su un processore solo: usarne due insieme e' il passo dopo.
+Le periferiche restano tutte sul processore d'avvio.
 </p>
 
 <p>Che cosa ha trovato lo dice <code>hwinfo</code>:</p>
@@ -171,6 +237,7 @@ cominciano a lavorare.
 <tr><th>si legge</th><th>vuol dire</th></tr>
 <tr><td><code>IN USO</code></td><td>il processore da cui la macchina e' partita, e che fa tutto</td></tr>
 <tr><td><code>IN ATTESA</code></td><td>svegliato, ha risposto, ha il suo timer; non lavora ancora</td></tr>
+<tr><td><code>LAVORA</code></td><td>esegue programmi (dopo <code>smpprova -accendi</code>, o con <code>smp = 2</code>)</td></tr>
 <tr><td><code>MUTO</code></td><td>il BIOS lo elenca ma non ha risposto: zoccolo vuoto, o processore guasto</td></tr>
 <tr><td><code>NON SVEGLIATO</code></td><td>elencato e lasciato stare: sotto c'e' scritto perche'</td></tr>
 </table>

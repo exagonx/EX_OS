@@ -193,9 +193,16 @@ tabelle del BIOS (ACPI, oppure la tabella MultiProcessor delle schede a due
 processori), sveglia quelli in piu' e da' a ciascuno il suo timer. 0: li
 conta soltanto, senza scrivere in nessun registro.
 
-EX-OS LAVORA ANCORA CON UN PROCESSORE SOLO (kernel 0.238): gli altri sono
-accesi e in attesa, non eseguono programmi. Che cosa ha trovato lo dice
-`hwinfo`, nella sezione PROCESSORI.
+2 (dal kernel 0.246): i processori in piu' ESEGUONO PROGRAMMI. Due programmi
+diversi girano su due processori insieme; il kernel resta di un processore
+per volta, e i fili di uno stesso programma si alternano su uno solo. Con 1
+gli altri sono accesi e in attesa, e la macchina va come con un processore.
+Che cosa c'e' e in che stato lo dice `hwinfo`, nella sezione PROCESSORI.
+
+PRIMA DI SCRIVERE 2 QUI SI PROVA CON  smpprova -accendi : mette al lavoro i
+processori in attesa da quel momento e fino al riavvio. Se la macchina si
+ferma, riavviandola torna com'era; se va, `smpprova` da solo dice quanto
+lavoro fanno due programmi insieme rispetto a uno. Solo allora smp = 2.
 
 SI METTE A 0 SE L'AVVIO SI FERMA su una scheda con piu' processori: svegliarli
 e' il punto dove una tabella del BIOS sbagliata puo' bloccare la macchina.

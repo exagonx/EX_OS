@@ -161,8 +161,11 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
         }
         if (cfg_strcmp(key, "smp") == 0) {
             cfg->smp = 1;
-            if (value[0] >= '0' && value[0] <= '9' && cfg_atoi(value) == 0)
-                cfg->smp = 0;
+            if (value[0] >= '0' && value[0] <= '9') {
+                /* 0 = contati e basta, 1 = svegliati e fermi, 2 = lavorano. */
+                cfg->smp = (uint32_t)cfg_atoi(value);
+                if (cfg->smp > 2) cfg->smp = 2;
+            }
             return;
         }
         if (cfg_strcmp(key, "verboseboot") == 0) {

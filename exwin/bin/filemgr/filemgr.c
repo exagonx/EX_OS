@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.011"
+#define VERSIONE_APP "0.012"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -1785,14 +1785,19 @@ static void scegli_elenco(int apri)
  * ============================================================================= */
 static void disponi(int w, int h)
 {
-    int alt = h - MENU_H - 4 - BASSO;
+    /* ! SOTTO L'INTESTAZIONE, COME ALLA NASCITA. Qui mancava INTEST_H: al
+     * primo ridimensionamento le due liste salivano sopra «Cartelle» e sopra
+     * i pulsanti delle colonne, e non si poteva piu' ordinare. Si e' visto
+     * col pulsante «a tutto schermo» (10 ottobre 2026); con la presa
+     * nell'angolo succedeva da sempre. */
+    int alt = h - MENU_H - 4 - INTEST_H - BASSO;
 
     if (alt < 40) alt = 40;
 
-    ex_move(g_albero, 4, MENU_H + 4);
+    ex_move(g_albero, 4, MENU_H + 4 + INTEST_H);
     ex_resize(g_albero, ALBERO_W, alt);
 
-    ex_move(g_elenco, ALBERO_W + 10, MENU_H + 4);
+    ex_move(g_elenco, ALBERO_W + 10, MENU_H + 4 + INTEST_H);
     ex_resize(g_elenco, w - ALBERO_W - 14, alt);
 
     ex_move(g_stato, 6, h - 22);

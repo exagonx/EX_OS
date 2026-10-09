@@ -1242,6 +1242,7 @@ int meminfo(MemInfo *mi);
 #define CPU_STATO_FERMO     2   /* acceso, in attesa: riceve timer e messaggi */
 #define CPU_STATO_MUTO      3   /* svegliato, non ha risposto */
 #define CPU_STATO_LASCIATO  4   /* elencato, non svegliato (vedi motivo) */
+#define CPU_STATO_LAVORA    5   /* esegue processi (smp = 2 in kernel.cfg, dalla 0.246) */
 
 #define CPU_MOTIVO_NESSUNO  0
 #define CPU_MOTIVO_CFG      1   /* kernel.cfg: smp = 0 */
@@ -1278,6 +1279,7 @@ typedef struct {
  * ! Ogni chiamata manda anche un messaggio a ogni processore in attesa: chi
  * richiama poco dopo vede `messaggi` cresciuto di uno su ciascuno. */
 int cpu_info(CpuInfo *ci);
+int cpu_lavora(void);       /* mette al lavoro i processori parcheggiati (root) */
 
 /* Il registro dei messaggi del kernel (kernel 0.242): quel che ha detto
  * all'avvio (quale = 0, fino a 32 KB, mai sovrascritto) e gli ultimi messaggi

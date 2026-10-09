@@ -412,7 +412,7 @@ KernelConfig *cfg = cfg_load();
      * accesi, perche' le attese contano i tick, e prima del primo processo,
      * perche' l'APIC e' mappato solo nella directory del kernel. Su una
      * macchina con un processore non fa niente: vedi smp.h. */
-    smp_init(cfg->smp != 0);
+    smp_init((int)cfg->smp);
 
     /* =====================================================================
      * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.

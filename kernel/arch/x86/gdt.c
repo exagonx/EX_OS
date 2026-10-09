@@ -81,11 +81,41 @@ typedef struct PACKED {
 /* =============================================================================
  * Dati GDT (statici, allocati nel kernel .data)
  * ============================================================================= */
-#define GDT_ENTRIES 7
+/* =============================================================================
+ * ! UNA GDT E UN TSS PER PROCESSORE (tappa 3 dell'SMP, kernel 0.246)
+ *
+ * Due cose nella GDT sono «del processore che sta girando» e non della
+ * macchina: il TSS, da cui la CPU prende la pila del kernel quando arriva un
+ * interrupt in ring 3, e il descrittore del TLS, che punta al filo in
+ * esecuzione. Con due processori che eseguono due processi servono due
+ * copie. La numero 0 e' quella di sempre, del processore d'avvio; le altre
+ * le carica ogni processore in piu' quando comincia a lavorare.
+ *
+ * La voce 7 dice al processore CHI E': un segmento il cui LIMITE e' il suo
+ * numero. `lsl` lo legge in un'istruzione, senza toccare l'APIC (che in una
+ * macchina virtuale costa un'uscita verso l'ospite): vedi cpu_n() in smp.h.
+ * Su una macchina con un processore non la legge nessuno.
+ * ========================================================================== */
+#define GDT_ENTRIES 8
+#define GDT_CPU_MAX 16          /* come SMP_CPU_MAX in smp.h */
 
-static GDTDescriptor    gdt_table[GDT_ENTRIES] ALIGNED(8);
-static GDTRegister      gdt_reg;
-static TSS              kernel_tss ALIGNED(4);
+static GDTDescriptor    gdt_tabelle[GDT_CPU_MAX][GDT_ENTRIES] ALIGNED(8);
+static GDTRegister      gdt_registri[GDT_CPU_MAX];
+static TSS              gdt_tss[GDT_CPU_MAX] ALIGNED(4);
+#define gdt_table       (gdt_tabelle[0])
+#define gdt_reg         (gdt_registri[0])
+#define kernel_tss      (gdt_tss[0])
+
+volatile uint32_t g_smp_lavora = 0;     /* 1 = piu' processori eseguono processi */
+
+static inline uint32_t gdt_cpu_n(void)
+{
+    uint32_t n = 0;
+
+    if (!g_smp_lavora) return 0;
+    __asm__ volatile ("lsl %1, %0" : "+r"(n) : "r"((uint32_t)0x38));
+    return n & (GDT_CPU_MAX - 1);
+}
 
 /* =============================================================================
  * gdt_set_descriptor — Imposta un descrittore GDT
@@ -184,6 +214,10 @@ void gdt_install(void)
      */
     gdt_set_descriptor(6, 0x00000000, 0xFFFFFFFF, 0xF2, 0xCF);
 
+    /* 7: «chi sono». Un segmento dati del kernel, a byte, col limite uguale
+     * al numero del processore: 0 su quello d'avvio. Non lo carica nessuno. */
+    gdt_set_descriptor(7, 0x00000000, 0x00000000, 0x92, 0x40);
+
     uint32_t tss_base  = (uint32_t)&kernel_tss;
     uint32_t tss_limit = (uint32_t)sizeof(TSS) - 1;
     gdt_set_descriptor(5, tss_base, tss_limit, 0x89, 0x00);
@@ -221,7 +255,39 @@ void gdt_install(void)
  * ============================================================================= */
 void gdt_set_kernel_stack(uint32_t stack_top)
 {
-    kernel_tss.esp0 = stack_top;
+    gdt_tss[gdt_cpu_n()].esp0 = stack_top;
+}
+
+/* La GDT e il TSS del processore numero `n` (da 1 in su): una copia di quella
+ * d'avvio col suo TSS e il suo numero, caricata SU CHI CHIAMA. La chiama ogni
+ * processore in piu' prima di cominciare a lavorare. */
+void gdt_installa_cpu(uint32_t n)
+{
+    GDTDescriptor *t;
+    uint8_t  *b;
+    uint32_t  i, base;
+
+    if (n == 0 || n >= GDT_CPU_MAX) return;
+    t = gdt_tabelle[n];
+    for (i = 0; i < GDT_ENTRIES; i++) t[i] = gdt_tabelle[0][i];
+
+    b = (uint8_t *)&gdt_tss[n];
+    for (i = 0; i < sizeof(TSS); i++) b[i] = 0;
+    gdt_tss[n].ss0        = GDT_KERNEL_DATA_SEL;
+    gdt_tss[n].iomap_base = sizeof(TSS);
+
+    base = (uint32_t)&gdt_tss[n];
+    t[5].base_low    = (uint16_t)(base & 0xFFFF);
+    t[5].base_mid    = (uint8_t)((base >> 16) & 0xFF);
+    t[5].base_high   = (uint8_t)((base >> 24) & 0xFF);
+    t[5].access      = 0x89;                    /* TSS libero: `ltr` lo segna occupato */
+
+    t[7].limit_low   = (uint16_t)n;             /* chi sono */
+
+    gdt_registri[n].limit = (uint16_t)(sizeof(gdt_tabelle[n]) - 1);
+    gdt_registri[n].base  = (uint32_t)t;
+    gdt_flush((uint32_t)&gdt_registri[n]);
+    tss_flush(GDT_TSS_SEL);
 }
 
 /* =============================================================================
@@ -243,7 +309,9 @@ void gdt_set_tls_base(uint32_t base)
 {
     /* Riscrive solo i tre pezzi della base, lasciando access e granularita'
      * come li ha messi gdt_install. */
-    gdt_table[6].base_low    = (uint16_t)(base & 0xFFFF);
-    gdt_table[6].base_mid    = (uint8_t)((base >> 16) & 0xFF);
-    gdt_table[6].base_high   = (uint8_t)((base >> 24) & 0xFF);
+    GDTDescriptor *t = gdt_tabelle[gdt_cpu_n()];
+
+    t[6].base_low    = (uint16_t)(base & 0xFFFF);
+    t[6].base_mid    = (uint8_t)((base >> 16) & 0xFF);
+    t[6].base_high   = (uint8_t)((base >> 24) & 0xFF);
 }

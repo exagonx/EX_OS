@@ -666,6 +666,16 @@ questa macchina non ci sono mai stati (i componenti che chi ha installato non
 ha voluto: documentazione, applicazioni grafiche, compilatori).
 </p>
 
+<p class="nota">
+<b><code>-check -yesall</code> e' l'installazione completa dalla rete,
+compilatori compresi.</b> Gli strumenti (gcc, make, FreeBASIC) vanno in
+<code>/exos</code>; perche' <code>gcc</code> si trovi senza scrivere il
+percorso, a fine controllo <code>netupdate</code> aggiunge
+<code>/exos/bin</code> al <code>PATH</code> di <code>/boot/kernel.cfg</code>
+(lo fa <code>toolinst -c</code>, che lascia la copia di prima in
+<code>kernel.cfg.bak</code>). Vale dal riavvio successivo.
+</p>
+
 <p>
 ! <b>LE LIBRERIE VANNO PER PRIME, E SE NON ARRIVANO NON SI TOCCA NIENTE</b>
 (dalla 0.021). I programmi chiamano la libc <b>per nome</b>, e questo produce

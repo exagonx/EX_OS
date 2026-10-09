@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.010");
+EX_VERSIONE("wserver", "0.011");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -176,6 +176,10 @@ typedef struct {
     unsigned int ridotta;
     unsigned int passaggio;         /* WIN_MSG_PASSAGGIO: wants movement without buttons */
     unsigned int chiusa_chiesta;    /* a pop-up already told to close */
+    /* A tutto schermo (wserver 0.011): 1 = ingrandita, e dove stava e quanto
+     * era grande prima, per tornarci. Vedi massimizza(). */
+    unsigned int massima;
+    unsigned int prima_x, prima_y, prima_w, prima_h;
     /* Gli eventi che il client non ha ancora potuto ricevere (casella piena):
      * vedi metti_evento. */
     WinEvento    coda[CODA_EVENTI];
@@ -804,6 +808,29 @@ static int puo_ridursi(const Finestra *f)
            f->w >= 3 * BARRA_H;
 }
 
+/* =============================================================================
+ * Il pulsante «a tutto schermo» (wserver 0.011, 10 ottobre 2026)
+ *
+ * Chiesto dall'utente: fra il pulsante che riduce a icona e quello che
+ * chiude, uno che ingrandisce la finestra fino a riempire lo schermo, e
+ * premuto di nuovo la riporta dov'era e com'era.
+ *
+ * ! LO HA CHI HA GIA' LA PRESA NELL'ANGOLO, e nessun altro: WIN_ST_RIDIM e' la
+ * parola con cui un'applicazione dice «so rifare la mia disposizione a
+ * un'altra misura» (vedi win_proto.h). Ingrandire una finestra che non lo sa
+ * fare darebbe i suoi controlli in un angolo di un rettangolo grigio. Cosi'
+ * nessun programma va toccato: chi si ridimensiona si ingrandisce.
+ *
+ * Lo fa il server, come il trascinamento della presa: sposta, da' la zona
+ * nuova, lo dice al client con gli stessi due messaggi di sempre.
+ * ========================================================================== */
+static void massimizza(int idx);
+
+static int puo_ingrandirsi(const Finestra *f)
+{
+    return puo_ridursi(f) && (f->stile & WIN_ST_RIDIM) && f->w >= 5 * BARRA_H;
+}
+
 static void cornice(const Finestra *f, unsigned int attiva)
 {
     unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
@@ -851,13 +878,42 @@ static void cornice(const Finestra *f, unsigned int attiva)
         /* The minimize button, left of the close one: the same raised
          * square, with a short bar at the bottom — the «_» everyone knows. */
         if (puo_ridursi(f)) {
-            unsigned int cx = f->x + f->w - 2 * BARRA_H + 1;
+            /* Terzo da destra quando c'e' anche «a tutto schermo», che sta
+             * fra questo e la chiusura: riduci, ingrandisci, chiudi. */
+            unsigned int cx = f->x + f->w - (puo_ingrandirsi(f) ? 3 : 2) * BARRA_H + 1;
             unsigned int cy = ty + 2;
             unsigned int cl = BARRA_H - 4;
 
             riempi(cx, cy, cl, cl, C_TELAIO);
             rilievo(cx, cy, cl, cl);
             riempi(cx + 4, cy + cl - 6, cl - 8, 2, C_RIDUCI);
+        }
+
+        /* The maximize button, between the other two: a window with a thick top
+         * edge. When the window is already full screen, two smaller ones one
+         * over the other: «put it back». */
+        if (puo_ingrandirsi(f)) {
+            unsigned int cx = f->x + f->w - 2 * BARRA_H + 1;
+            unsigned int cy = ty + 2;
+            unsigned int cl = BARRA_H - 4;
+
+            riempi(cx, cy, cl, cl, C_TELAIO);
+            rilievo(cx, cy, cl, cl);
+            if (!f->massima) {
+                riempi(cx + 4, cy + 4, cl - 8, 2, C_RIDUCI);            /* sopra, spesso */
+                riempi(cx + 4, cy + cl - 5, cl - 8, 1, C_RIDUCI);
+                riempi(cx + 4, cy + 4, 1, cl - 8, C_RIDUCI);
+                riempi(cx + cl - 5, cy + 4, 1, cl - 8, C_RIDUCI);
+            } else {
+                unsigned int q = cl - 11;                               /* lato dei due riquadri */
+
+                riempi(cx + 7, cy + 3, q, 2, C_RIDUCI);                 /* quello dietro */
+                riempi(cx + 7 + q - 1, cy + 3, 1, q, C_RIDUCI);
+                riempi(cx + 4, cy + 6, q, 2, C_RIDUCI);                 /* quello davanti */
+                riempi(cx + 4, cy + 6 + q - 1, q, 1, C_RIDUCI);
+                riempi(cx + 4, cy + 6, 1, q, C_RIDUCI);
+                riempi(cx + 4 + q - 1, cy + 6, 1, q, C_RIDUCI);
+            }
         }
     }
 }
@@ -1404,7 +1460,7 @@ static void in_cima(int idx)
 
 /* Chi c'e' sotto il puntatore, dalla cima al fondo. -1 = nessuno.
  * `dove`: 0 = area del client, 1 = barra del titolo, 2 = pulsante chiudi,
- * 3 = presa, 4 = pulsante riduci. */
+ * 3 = presa, 4 = pulsante riduci, 5 = pulsante «a tutto schermo». */
 static int sotto(int x, int y, unsigned int *dove)
 {
     int k;
@@ -1438,8 +1494,10 @@ static int sotto(int x, int y, unsigned int *dove)
             *dove = 1;
             if ((f->stile & WIN_ST_CHIUDI) &&
                 x >= (int)(f->x + f->w - BARRA_H)) *dove = 2;
+            else if (puo_ingrandirsi(f) &&
+                     x >= (int)(f->x + f->w - 2 * BARRA_H)) *dove = 5;
             else if (puo_ridursi(f) &&
-                     x >= (int)(f->x + f->w - 2 * BARRA_H)) *dove = 4;
+                     x >= (int)(f->x + f->w - (puo_ingrandirsi(f) ? 3 : 2) * BARRA_H)) *dove = 4;
             return (int)g_ordine[k];
         }
     }
@@ -1694,6 +1752,17 @@ static void kbd_tasto(unsigned int k)
     if (g_n_ordine == 0) return;
     if (g_fuoco < 0 || !g_fin[g_fuoco].usata) fuoco_ricalcola();
     if (g_fuoco < 0) return;
+
+    /* Alt+F10: «a tutto schermo» e ritorno per la finestra col fuoco, lo
+     * stesso che fa il pulsante nella barra del titolo. E' la combinazione
+     * di sempre (CUA), e chi non ha il mouse non resta senza. Se la finestra
+     * non si puo' ingrandire il tasto prosegue verso il programma. */
+    if ((k & KBD_MOD_ALT) && !(k & KBD_MOD_CTRL) &&
+        (k & KBD_KEY_MASK) == KBD_K_F(10) && puo_ingrandirsi(&g_fin[g_fuoco]) &&
+        modale_di(g_fin[g_fuoco].pid) < 0) {
+        massimizza(g_fuoco);
+        return;
+    }
 
     /* ! I TASTI SEGUONO LA STESSA REGOLA DEI CLIC, e dimenticarlo sarebbe il
      * modo piu' facile di fare un modale finto: si blocca il mouse, si prova
@@ -2138,7 +2207,10 @@ static void mouse_agisci(void)
             manda_evento(&g_fin[idx], WIN_EV_CHIUDI, g_px, g_py, 0, 0);
         } else if (dove == 4) {
             riduci(idx);
+        } else if (dove == 5) {
+            massimizza(idx);
         } else if (dove == 3) {
+            g_fin[idx].massima = 0;     /* ridimensionata a mano: non e' piu' «a tutto schermo» */
             g_ridim = idx;
             g_rw = g_fin[idx].w;
             g_rh = g_fin[idx].h;
@@ -2146,6 +2218,7 @@ static void mouse_agisci(void)
             /* ! SOLO LA BARRA TRASCINA, e non tutta la finestra: trascinare
              * dall'area del client vorrebbe dire che un'applicazione non puo'
              * mai ricevere un clic. */
+            g_fin[idx].massima = 0;     /* spostata a mano: idem */
             g_trascino = idx;
             g_tr_dx = g_px - (int)g_fin[idx].x;
             g_tr_dy = g_py - (int)g_fin[idx].y;
@@ -2382,6 +2455,65 @@ static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
 
     dire_misura(f);
     sporca_finestra(f, f->x, f->y);
+}
+
+/* Quanto della parte bassa dello schermo e' della barra della scrivania: una
+ * finestra «sempre sopra» larga quanto lo schermo e appoggiata al fondo. Se
+ * non c'e' (nessun program manager), niente. */
+static unsigned int barra_in_fondo(void)
+{
+    unsigned int k, alta = 0;
+
+    for (k = 0; k < FINESTRE_MAX; k++) {
+        const Finestra *f = &g_fin[k];
+
+        if (!f->usata || !(f->stile & WIN_ST_VISIBILE) || !(f->stile & WIN_ST_SOPRA)) continue;
+        if (f->w + 2 < g_fb_w || f->y + f->h < g_fb_h || f->y >= g_fb_h) continue;
+        if (g_fb_h - f->y > alta) alta = g_fb_h - f->y;
+    }
+    return (alta < g_fb_h / 2) ? alta : 0;
+}
+
+/* Sposta la finestra in (nx, ny) e la porta a nw x nh, dicendolo al client. */
+static void metti_e_misura(int idx, unsigned int nx, unsigned int ny,
+                           unsigned int nw, unsigned int nh)
+{
+    Finestra  *f = &g_fin[idx];
+    WinRegione w;
+
+    sporca_finestra(f, f->x, f->y);         /* dove stava */
+    f->x = nx;
+    f->y = ny;
+    ridimensiona(idx, nw, nh);              /* dice anche la posizione nuova */
+    sporca_finestra(f, f->x, f->y);
+
+    memset(&w, 0, sizeof(w));
+    w.id = f->id; w.x = f->x; w.y = f->y;
+    (void)ipc_send(f->pid, WIN_MSG_POSTA, &w, sizeof(w));
+}
+
+static void massimizza(int idx)
+{
+    Finestra *f = &g_fin[idx];
+
+    if (idx < 0 || !f->usata || !puo_ingrandirsi(f)) return;
+
+    if (!f->massima) {
+        unsigned int giu = barra_in_fondo();
+        unsigned int nw = g_fb_w - 2 * BORDO;
+        unsigned int nh = g_fb_h - giu - BARRA_H - 2 * BORDO;
+
+        f->prima_x = f->x; f->prima_y = f->y;
+        f->prima_w = f->w; f->prima_h = f->h;
+        metti_e_misura(idx, BORDO, BARRA_H + BORDO, nw, nh);
+        /* Solo se la misura e' cambiata davvero: senza memoria per la zona
+         * nuova ridimensiona() lascia la finestra com'era. */
+        f->massima = (f->w == nw && f->h == nh) ? 1 : 0;
+    } else {
+        f->massima = 0;
+        metti_e_misura(idx, f->prima_x, f->prima_y, f->prima_w, f->prima_h);
+    }
+    sporca_barra(f);
 }
 
 static void distruggi(int idx)

@@ -22,6 +22,7 @@
 #include "paging.h"
 #include "kmalloc.h"
 #include "gdt.h"
+#include "smp.h"   /* cpu_n, il lucchetto del kernel: la tappa 3 */
 #include "idt.h"
 #include "isr.h"
 #include "vfs.h"   /* vfs_close: l'eseguibile aperto per il caricamento su richiesta */
@@ -33,11 +34,18 @@
 /* Tick counter globale (100Hz → 1 tick ogni 10ms) */
 volatile uint32_t g_ticks = 0;
 
-/* Processo correntemente in esecuzione */
-static Process *g_current = NULL;
-
-/* Task idle (eseguito quando nessun altro processo è READY) */
-static Process *g_idle_task = NULL;
+/* =============================================================================
+ * ! IL PROCESSO CORRENTE E L'OZIO SONO UNO PER PROCESSORE (0.246)
+ *
+ * g_current e g_idle_task restano i nomi che tutto questo file usa, e
+ * diventano «quello del processore su cui sto girando». Con un processore
+ * solo cpu_n() rende 0 senza toccare niente (un confronto), e non cambia
+ * nulla: e' la condizione che sta scritta in smp.h.
+ * ========================================================================== */
+static Process *g_corrente[SMP_CPU_MAX];
+static Process *g_ozio[SMP_CPU_MAX];
+#define g_current    (g_corrente[cpu_n()])
+#define g_idle_task  (g_ozio[cpu_n()])
 Process        *g_init_task = NULL;   /* reaper kernel task, adotta gli orfani */
 
 /* =============================================================================
@@ -312,6 +320,10 @@ static void str_copy(char *dst, const char *src, uint32_t max)
 static void idle_task_fn(void)
 {
     for (;;) {
+        /* Chi non ha niente da fare non tiene il kernel: con piu' processori
+         * il lucchetto si lascia PRIMA di fermarsi, o gli altri restano
+         * fuori finche' questo dorme. Con uno solo non fa niente. */
+        bkl_ozio();
         __asm__ volatile ("hlt"); /* Risparmia CPU */
     }
 }
@@ -464,6 +476,7 @@ Process *proc_create(const char *name, uint32_t entry_point,
 
     /* Nome */
     str_copy(proc->name, name, PROCESS_NAME_LEN);
+    proc->nel_kernel = is_kernel_task ? 1 : 0;
 
     /* Nessuna immagine su file finche' non ne carica una elf_load: -1 e
      * non 0, perche' 0 e' un handle VFS legittimo e chiuderlo per errore
@@ -694,6 +707,65 @@ void proc_set_ready(Process *proc)
  *   3. Avanza il puntatore della coda (round-robin)
  *   4. Se nessuno è READY, usa idle_task
  * ============================================================================= */
+/* =============================================================================
+ * Chi puo' girare su QUESTO processore (tappa 3 dell'SMP, 0.246)
+ *
+ * Con un processore solo: tutti, e la funzione e' un confronto. Con piu':
+ *
+ *   - l'ozio di un processore gira solo li' (cpu_fissa): e' la sua pila;
+ *   - i compiti del kernel girano solo sul processore d'avvio. Non escono mai
+ *     verso un programma, quindi terrebbero il lucchetto del kernel per tutto
+ *     il loro tempo: su un secondo processore non darebbero niente;
+ *   - ! DUE FILI DELLO STESSO SPAZIO DI INDIRIZZAMENTO NON GIRANO INSIEME.
+ *     Se uno toglie una pagina (munmap, mprotect, lo scambio) l'altro
+ *     processore ne ha ancora la traduzione nel TLB e continuerebbe a
+ *     scrivere in una pagina che non e' piu' sua. La cura giusta e' dire
+ *     all'altro processore di buttarla (un messaggio, e aspettare): e' la
+ *     tappa 4. Fin li' un programma a piu' fili usa un processore per volta,
+ *     e due programmi diversi ne usano due.
+ * ========================================================================== */
+/* Sta eseguendo, adesso, su un processore che non e' questo? */
+static int sched_gira_altrove(const Process *p)
+{
+    return g_smp_lavora && p->state == PROC_RUNNING && p->cpu != cpu_n() &&
+           g_corrente[p->cpu] == p;
+}
+
+static int sched_puo_qui(const Process *p)
+{
+    uint32_t me, c;
+
+    if (!g_smp_lavora) return 1;
+    me = cpu_n();
+    if (p->cpu_fissa) return (uint32_t)(p->cpu_fissa - 1) == me;
+    if (p->nel_kernel) return me == 0;
+    for (c = 0; c < SMP_CPU_MAX; c++) {
+        const Process *q = g_corrente[c];
+
+        if (c == me || q == NULL || q == p) continue;
+        if (q->state == PROC_RUNNING && !q->nel_kernel &&
+            q->page_directory == p->page_directory) return 0;
+    }
+    return 1;
+}
+
+/* Lo spazio di indirizzamento `pd` e' in uso, adesso, su un ALTRO processore?
+ * Lo chiede chi vorrebbe togliergli una pagina da fuori (lo scambio). */
+int sched_spazio_altrove(const void *pd)
+{
+    uint32_t me, c;
+
+    if (!g_smp_lavora) return 0;
+    me = cpu_n();
+    for (c = 0; c < SMP_CPU_MAX; c++) {
+        const Process *q = g_corrente[c];
+
+        if (c != me && q != NULL && q->state == PROC_RUNNING &&
+            (const void *)q->page_directory == pd) return 1;
+    }
+    return 0;
+}
+
 static Process *sched_pick_next(void)
 {
     int32_t prio;
@@ -705,7 +777,7 @@ static Process *sched_pick_next(void)
         /* Scansiona la coda circolare cercando un processo READY */
         Process *p = head;
         do {
-            if (p->state == PROC_READY) {
+            if (p->state == PROC_READY && sched_puo_qui(p)) {
                 /* Avanza la testa della coda (round-robin) */
                 g_run_queue[prio] = p->next;
                 return p;
@@ -733,6 +805,7 @@ static void sched_switch_to(Process *next)
     }
     next->state   = PROC_RUNNING;
     next->quantum = next->quantum_total;    /* Ricarica quantum */
+    next->cpu     = (uint8_t)cpu_n();
 
     g_current = next;
     g_switch_count++;
@@ -780,6 +853,119 @@ static void sched_switch_to(Process *next)
 /* Impostato da sched_stop(): il tick continua a contare ma non si
  * cambia più processo. Vedi sched_stop() per il perché. */
 static volatile int g_sched_stopped = 0;
+
+/* La parte del battito che vale per ogni processore: chi viene dopo. Sul
+ * processore d'avvio la chiama l'IRQ0 qui sotto, sugli altri il loro timer
+ * (sched_battito_cpu). */
+static void sched_battito_comune(void)
+{
+    /* Preemption: quantum esaurito o processo non più running.
+     * L'idle task non ha mai un vero "quantum" da rispettare: se e' in
+     * esecuzione, ad ogni tick verifichiamo se esiste un processo READY
+     * migliore e cediamo immediatamente. Senza questo, una volta che il
+     * quantum iniziale dell'idle si esauriva, la condizione
+     * "g_current != g_idle_task" bloccava per sempre qualunque ulteriore
+     * tentativo di scheduling, impedendo l'esecuzione di qualsiasi
+     * processo READY creato dopo l'avvio (es. la shell). */
+    if (g_current == g_idle_task) {
+        Process *next = sched_pick_next();
+        if (next != g_current) {
+            sched_switch_to(next);
+        }
+    } else if (g_current->quantum == 0) {
+        Process *next = sched_pick_next();
+        if (next != g_current) {
+            sched_switch_to(next);
+        } else {
+            /* Stesso processo: ricarica quantum e continua */
+            g_current->quantum = g_current->quantum_total;
+        }
+    }
+}
+
+/* =============================================================================
+ * Il battito di un processore IN PIU' (tappa 3 dell'SMP)
+ *
+ * Arriva dal timer del suo APIC, cento volte al secondo, col lucchetto del
+ * kernel gia' preso. Non conta il tempo (g_ticks e' del processore d'avvio,
+ * che ha il PIT) e non sveglia chi dorme: quello lo fa una volta sola l'IRQ0.
+ * Qui si consuma il quanto di chi gira su questo processore e si sceglie.
+ * ========================================================================== */
+void sched_battito_cpu(void)
+{
+    if (g_sched_stopped || !g_smp_lavora || g_current == NULL) return;
+
+    g_current->ticks_total++;
+    if (g_current->quantum > 0) g_current->quantum--;
+    sched_battito_comune();
+}
+
+/* =============================================================================
+ * Un processo ucciso mentre girava su un altro processore finisce da se'
+ *
+ * ! NON LO SI PUO' SMONTARE DA FUORI: sta eseguendo, in ring 3, su un altro
+ * processore, con le sue pagine e la sua pila. proc_kill e proc_gruppo_termina
+ * gli lasciano scritto «da_finire»; lui lo legge qui, alla prima uscita dal
+ * kernel (bkl_esci: al piu' tardi il suo prossimo battito, dieci millisecondi
+ * dopo), e fa a se stesso quel che loro avrebbero fatto. Non torna.
+ * ========================================================================== */
+void sched_fine_chiesta(void)
+{
+    Process *io = g_current;
+    uint8_t  come;
+
+    if (!g_smp_lavora || io == NULL || !io->da_finire) return;
+    come = io->da_finire;
+    io->da_finire = 0;
+
+    interrupts_disable();
+    klog(LOG_INFO, "SCHED: PID %u finisce (chiesto da un altro processore)", io->pid);
+    if (come == 1) {
+        proc_chiudi_fd(io);
+        g_proc_count--;
+    }
+    io->state     = PROC_ZOMBIE;
+    io->exit_code = 0;
+    runq_remove(io);
+    sched_switch_to(sched_pick_next());
+    for (;;) __asm__ volatile ("hlt");      /* uno zombie non viene piu' scelto */
+}
+
+/* =============================================================================
+ * L'ozio dei processori in piu': si prepara qui, lo abita chi arriva
+ *
+ * sched_cpu_prepara(n) la chiama il processore d'avvio prima di svegliare il
+ * numero n: crea il suo compito d'ozio, legato a quel processore, e ne rende
+ * la cima della pila. Poi quel processore, gia' su quella pila e con la sua
+ * GDT, chiama sched_cpu_entra(): da li' e' lui «l'ozio n», e non torna.
+ * ========================================================================== */
+uint32_t sched_cpu_prepara(uint32_t n)
+{
+    Process *o;
+
+    if (n == 0 || n >= SMP_CPU_MAX) return 0;
+    o = proc_create("ozio", (uint32_t)idle_task_fn, PRIO_IDLE, 1);
+    if (o == NULL) return 0;
+    interrupts_disable();
+    o->cpu_fissa = (uint8_t)(n + 1);
+    o->cpu       = (uint8_t)n;
+    o->state     = PROC_RUNNING;            /* sara' il corrente di quel processore */
+    g_ozio[n]     = o;
+    g_corrente[n] = o;
+    interrupts_enable();
+    return o->kernel_stack_top;
+}
+
+void sched_cpu_entra(void)
+{
+    /* ! GLI INTERRUPT SI ACCENDONO QUI: il processore arriva dal trampolino
+     * con gli interrupt spenti, e l'ozio e' un `hlt` che aspetta il battito.
+     * Senza questa riga si fermava per sempre al primo hlt - acceso, contato
+     * come «LAVORA», e senza mai prendere un processo. L'ha detto smpprova:
+     * due programmi insieme facevano il lavoro di uno. */
+    interrupts_enable();
+    idle_task_fn();
+}
 
 static void sched_irq0_handler(InterruptFrame *frame)
 {
@@ -870,28 +1056,7 @@ static void sched_irq0_handler(InterruptFrame *frame)
         g_current->quantum--;
     }
 
-    /* Preemption: quantum esaurito o processo non più running.
-     * L'idle task non ha mai un vero "quantum" da rispettare: se e' in
-     * esecuzione, ad ogni tick verifichiamo se esiste un processo READY
-     * migliore e cediamo immediatamente. Senza questo, una volta che il
-     * quantum iniziale dell'idle si esauriva, la condizione
-     * "g_current != g_idle_task" bloccava per sempre qualunque ulteriore
-     * tentativo di scheduling, impedendo l'esecuzione di qualsiasi
-     * processo READY creato dopo l'avvio (es. la shell). */
-    if (g_current == g_idle_task) {
-        Process *next = sched_pick_next();
-        if (next != g_current) {
-            sched_switch_to(next);
-        }
-    } else if (g_current->quantum == 0) {
-        Process *next = sched_pick_next();
-        if (next != g_current) {
-            sched_switch_to(next);
-        } else {
-            /* Stesso processo: ricarica quantum e continua */
-            g_current->quantum = g_current->quantum_total;
-        }
-    }
+    sched_battito_comune();
 }
 
 /* =============================================================================
@@ -907,6 +1072,17 @@ void sched_yield(void)
     next = sched_pick_next();
     if (next != g_current) {
         sched_switch_to(next);
+    } else {
+        /* ! CHI CEDE E NON HA A CHI CEDERE LASCIA PASSARE GLI ALTRI PROCESSORI
+         * (tappa 3 dell'SMP). Un'attesa fatta di sched_yield() - «finche' il
+         * driver non ha risposto, cedo» - con un processore solo funziona
+         * perche' cedere fa girare il driver. Con due il driver puo' star
+         * girando sull'altro: qui non c'e' nessuno a cui cedere, e lui per
+         * rispondere deve entrare nel kernel, che e' tenuto da chi lo
+         * aspetta. Si lascia il lucchetto e lo si riprende: e' a numeri,
+         * quindi chi aspettava passa prima. Con un processore non fa niente. */
+        bkl_lascia();
+        bkl_entra();
     }
     interrupts_enable();
 }
@@ -1556,6 +1732,7 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
 
         /* ! NON SI CHIUDONO I SUOI DESCRITTORI: sono quelli del gruppo, e chi
          * resta li sta ancora usando. Li chiude il capogruppo uscendo. */
+        if (sched_gira_altrove(p)) { p->da_finire = 2; continue; }
         p->state     = PROC_ZOMBIE;
         p->exit_code = 0;
         runq_remove(p);
@@ -1909,6 +2086,10 @@ void proc_kill(uint32_t pid)
             /* Anche qui, e per lo stesso motivo di proc_exit(): un
              * processo ucciso da un fault non passa da sys_exit, ed e'
              * proprio quello che lascerebbe una pipe aperta per sempre. */
+            if (sched_gira_altrove(&g_process_pool[i])) {
+                g_process_pool[i].da_finire = 1;    /* vedi sched_fine_chiesta */
+                return;
+            }
             proc_chiudi_fd(&g_process_pool[i]);
             g_process_pool[i].state = PROC_ZOMBIE;
             runq_remove(&g_process_pool[i]);
@@ -2185,6 +2366,13 @@ interrupts_enable();
      * esegue i context switch, il syscall gate gestisce le richieste ring3.
      * kernel_main() non riprende mai il controllo. */
     for (;;) {
+        /* ! QUESTO E' L'OZIO VERO DEL PROCESSORE D'AVVIO: chi ha chiamato
+         * sched_start() e' il compito «idle» stesso, e ci resta. Come in
+         * idle_task_fn, prima di fermarsi lascia il kernel agli altri
+         * processori: senza, lo teneva finche' non girava un programma, e un
+         * programma solo sul secondo processore restava fermo al suo battito
+         * ad aspettarlo (misurato: andava a un quinto). */
+        bkl_ozio();
         __asm__ volatile("hlt");
     }
 }

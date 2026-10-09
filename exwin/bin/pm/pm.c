@@ -39,7 +39,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.017"
+#define VERSIONE_APP "0.018"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -69,6 +69,7 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_SFONDO_SCEGLI 110
 #define ID_SFONDO_NIENTE 111
 #define ID_SFONDO_MODO   112     /* ..115: angolo, centro, allarga, ripeti */
+#define ID_SUONO_AVVIO   116     /* la spunta «Suono all'avvio» */
 
 /* La finestra che gestisce l'elenco. */
 #define ID_G_LISTA  1
@@ -1229,10 +1230,25 @@ static int g_sfondo_modo = EX_IMAGE_TOPLEFT;
 
 static const char *const MODI[4] = { "testo", "640x480", "800x600", "1024x768" };
 
+/* L'intro all'avvio: la variabile e chi la salva stanno piu' sotto, con lo
+ * sfondo, nello stesso file di configurazione. */
+static int      g_suono_avvio;
+static int      sfondo_salva(void);
+static ExWindow g_impost_suono = 0;
+
 static long impost_proc(ExWindow f, unsigned int msg,
                         unsigned int wp, long lp)
 {
-    if (msg == EXM_CLOSE) { ex_destroy(f); g_impost = g_impost_sfondo = 0; return 0; }
+    if (msg == EXM_CLOSE) { ex_destroy(f); g_impost = g_impost_sfondo = g_impost_suono = 0; return 0; }
+
+    /* ! L'INTRO SI SPEGNE DA QUI, non scrivendo un file a mano (10 ottobre
+     * 2026). L'utente: «va bene le prime volte, poi diventa pesante». Vale
+     * dal prossimo avvio della scrivania e si salva subito. */
+    if (msg == EXM_COMMAND && wp == ID_SUONO_AVVIO) {
+        g_suono_avvio = ex_is_checked(g_impost_suono);
+        if (!sfondo_salva()) log_seriale("pm: non riesco a salvare la scelta del suono d'avvio");
+        return 0;
+    }
 
     if (msg == EXM_COMMAND && wp == ID_SFONDO_SCEGLI) { sfondo_scegli(); return 0; }
     if (msg == EXM_COMMAND && wp == ID_SFONDO_NIENTE) { sfondo_niente(); return 0; }
@@ -1297,7 +1313,7 @@ static void impostazioni_apri(void)
 
     g_impost = ex_create("window", "Impostazioni",
                        EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
-                       EX_AUTO, EX_AUTO, 300, 316, 0, 0, impost_proc);
+                       EX_AUTO, EX_AUTO, 300, 352, 0, 0, impost_proc);
     if (!g_impost) return;
 
     ex_screen_size(&sw, &sh);
@@ -1327,6 +1343,12 @@ static void impostazioni_apri(void)
     for (i = 0; i < 4; i++)
         ex_create("button", DISPOSIZIONI_T[i], EX_CHILD, 12 + i * 70, 236, 64, 28,
                 g_impost, (unsigned int)(ID_SFONDO_MODO + i), 0);
+
+    /* The sound played when the desktop starts. */
+    ex_create("separator", "", EX_CHILD, 12, 276, 276, 2, g_impost, 0, 0);
+    g_impost_suono = ex_create("checkbox", "Suono all'avvio della scrivania", EX_CHILD,
+                               12, 288, 276, 20, g_impost, ID_SUONO_AVVIO, 0);
+    ex_set_checked(g_impost_suono, g_suono_avvio);
 
     ex_default_proc(g_impost, EXM_PAINT, 0, 0);
 }
@@ -1814,7 +1836,7 @@ static const char *g_sfondo = 0;
 
 /* L'intro all'avvio della scrivania (9 ottobre 2026): 1 = si suona. Si spegne
  * con  suono_avvio = no  in pm.cfg. */
-static int g_suono_avvio = 1;
+static int g_suono_avvio = 1;      /* declared above, with the Settings window */
 
 static void desk_disegna(void);      /* the icons: see @PM-DESKTOP below */
 

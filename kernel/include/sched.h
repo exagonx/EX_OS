@@ -796,6 +796,23 @@ typedef struct Process {
      * ========================================================================= */
     volatile uint32_t spazio_occupato;
 
+    /* =========================================================================
+     * PIU' PROCESSORI (tappa 3 dell'SMP, 0.246). In fondo, come sopra.
+     *   cpu         su quale processore sta girando; vale mentre e' RUNNING
+     *   cpu_fissa   0 = dove capita; n+1 = solo sul processore n (l'ozio di
+     *               ogni processore e' suo e di nessun altro)
+     *   nel_kernel  1 = e' un compito del kernel (ring 0): gira solo sul
+     *               processore d'avvio
+     *   da_finire   qualcuno l'ha ucciso mentre girava su un ALTRO processore:
+     *               non lo si puo' smontare da fuori, finisce lui alla prima
+     *               uscita dal kernel. 1 = come proc_kill, 2 = come un filo
+     *               che muore col suo gruppo
+     * ========================================================================= */
+    uint8_t  cpu;
+    uint8_t  cpu_fissa;
+    uint8_t  nel_kernel;
+    volatile uint8_t da_finire;
+
 } Process;
 
 /* =============================================================================
@@ -806,6 +823,13 @@ typedef struct Process {
 void     sched_init(void);
 void     sched_start(void);   /* sblocca IRQ0, non ritorna — chiamare a fine boot */
 void     sched_stop(void);    /* congela i context switch; g_ticks continua ad avanzare */
+
+/* Piu' processori (tappa 3 dell'SMP, sched.c). */
+void     sched_battito_cpu(void);           /* il timer di un processore in piu' */
+void     sched_fine_chiesta(void);          /* «da_finire», all'uscita dal kernel */
+uint32_t sched_cpu_prepara(uint32_t n);     /* l'ozio del processore n: rende la sua pila */
+void     sched_cpu_entra(void);             /* il processore n comincia a lavorare */
+int      sched_spazio_altrove(const void *pd);
 
 /* Gestione processi */
 Process *proc_create(const char *name, uint32_t entry_point,

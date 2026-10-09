@@ -3320,6 +3320,17 @@ int32_t sys_cpu_info(InterruptFrame *frame)
 
 /* I dischi all'AHCI per questa sessione: quel che fa `ahci = 1` in kernel.cfg,
  * chiesto a macchina accesa. Solo l'amministratore. Rende quanti sono passati. */
+/* I processori parcheggiati cominciano a eseguire processi, da adesso (solo
+ * root). Rende quanti lavorano; 0 se non ce ne sono. Vedi smp_accendi_lavoro. */
+int32_t sys_smp_lavora(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+
+    (void)frame;
+    if (self == NULL || self->uid != 0) return ERR(EPERM);
+    return (int32_t)smp_accendi_lavoro();
+}
+
 int32_t sys_ahci_passa(InterruptFrame *frame)
 {
     Process *self = proc_get_current();

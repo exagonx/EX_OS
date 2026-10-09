@@ -14,6 +14,9 @@
 extern isr_handler      ; Handler C in isr.c
 extern irq_handler      ; Handler C IRQ in isr.c
 extern syscall_handler  ; Handler C syscall in syscall/syscall.c
+extern bkl_entra        ; il lucchetto del kernel, con piu' processori (smp.c)
+extern bkl_esci
+extern smp_ap_irq       ; timer e messaggi dei processori in piu' (smp.c)
 
 ; =============================================================================
 ; Macro per stub senza error code (la CPU non lo pusha)
@@ -161,9 +164,14 @@ isr_common_stub:
 
     ; Chiama handler C: isr_handler(InterruptFrame *frame)
     ; ESP punta alla struttura InterruptFrame
+    call bkl_entra          ; piu' processori: nel kernel uno per volta (smp.h)
     push esp                ; Argomento: puntatore al frame
     call isr_handler
     add esp, 4              ; Pulisci argomento
+    cli                     ; da qui a iret non deve entrare nessuno
+    push esp
+    call bkl_esci           ; si lascia il kernel se si torna in ring 3
+    add esp, 4
 
     ; Ripristina DS
     pop eax
@@ -194,8 +202,13 @@ irq_common_stub:
     mov fs, ax
 
     ; Chiama handler C: irq_handler(InterruptFrame *frame)
+    call bkl_entra
     push esp
     call irq_handler
+    add esp, 4
+    cli
+    push esp
+    call bkl_esci
     add esp, 4
 
     pop eax
@@ -230,8 +243,13 @@ syscall_stub:
     mov fs, ax
 
     ; Chiama handler C syscall
+    call bkl_entra
     push esp
     call syscall_handler
+    add esp, 4
+    cli
+    push esp
+    call bkl_esci
     add esp, 4
 
     ; EAX dal frame contiene il valore di ritorno
@@ -248,4 +266,66 @@ syscall_stub:
     iret
 
 ; Marca stack come non-eseguibile
+; =============================================================================
+; Timer e messaggi dei processori in piu' (tappa 3 dell'SMP, kernel 0.246)
+;
+; Fino alla 0.245 un processore in piu' stava sempre fermo dentro il kernel, e
+; ai suoi due interrupt bastava salvare i registri. Adesso puo' arrivare mentre
+; esegue un programma: servono i segmenti del kernel, il telaio intero (lo
+; scheduler puo' cambiare processo qui dentro) e il lucchetto.
+; =============================================================================
+global smp_irq_battito
+smp_irq_battito:
+    push dword 0
+    push dword 0xF0         ; VETTORE_BATTITO
+    jmp smp_irq_comune
+
+global smp_irq_messaggio
+smp_irq_messaggio:
+    push dword 0
+    push dword 0xF1         ; VETTORE_MESSAGGIO
+    jmp smp_irq_comune
+
+smp_irq_comune:
+    pushad
+    mov ax, ds
+    push eax
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    cld
+
+    call bkl_entra
+    push esp
+    call smp_ap_irq
+    add esp, 4
+    cli
+    push esp
+    call bkl_esci
+    add esp, 4
+
+    pop eax
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    popad
+    add esp, 8
+    iret
+
+; smp_ap_salta(pila, funzione): il processore in piu' lascia la pila del
+; trampolino per quella del suo compito d'ozio e ci chiama `funzione`, che non
+; torna.
+global smp_ap_salta
+smp_ap_salta:
+    mov eax, [esp + 4]
+    mov ecx, [esp + 8]
+    mov esp, eax
+    xor ebp, ebp
+    call ecx
+.fermo:
+    cli
+    hlt
+    jmp .fermo
+
 section .note.GNU-stack noalloc noexec nowrite progbits

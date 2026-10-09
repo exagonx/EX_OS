@@ -32,6 +32,54 @@
 #include "browser_priv.h"
 #include "browser_estranei.h"
 
+/* =============================================================================
+ * Da dove si prende la figura di un <img> (10 ottobre 2026)
+ *
+ * ! `src` NON BASTA PIU' DA ANNI. Le pagine con molte figure le caricano «in
+ * ritardo»: in `src` non c'e' niente, o un segnaposto di un pixel scritto
+ * dentro la pagina (data:...), e l'indirizzo vero sta in `data-src`; uno
+ * script lo sposta in `src` quando la figura entra nello schermo. Quello
+ * script qui non gira (vuole IntersectionObserver), e il risultato era una
+ * pagina di anteprime tutta vuota: wallpapers.com e pixels.com, segnalate
+ * dall'utente - 159 figure su 271 nella prima, 227 su 244 nella seconda.
+ *
+ * Si fa quel che farebbe lo script, subito: se `src` manca o e' un
+ * segnaposto, vale `data-src` (o uno dei nomi che usano le librerie piu'
+ * diffuse); se non c'e' nemmeno quello, il primo indirizzo di `srcset`.
+ * ========================================================================== */
+static const char *img_sorgente(int v, char *buf, unsigned int max)
+{
+    static const char *const pigri[] = { "data-src", "data-lazy-src", "data-original",
+                                         "data-lazy", 0 };
+    const char *src = html_attr(&g_doc, v, "src");
+    const char *e;
+    int k;
+
+    if (src && src[0] && !(src[0] == 'd' && src[1] == 'a' && src[2] == 't' &&
+                           src[3] == 'a' && src[4] == ':')) return src;
+
+    for (k = 0; pigri[k]; k++) {
+        const char *q = html_attr(&g_doc, v, pigri[k]);
+
+        if (q && q[0]) return q;
+    }
+
+    /* srcset: «indirizzo misura, indirizzo misura...». Il primo e' il piu'
+     * piccolo, che per un'anteprima e' quello giusto. */
+    e = html_attr(&g_doc, v, "srcset");
+    if (!e || !e[0]) e = html_attr(&g_doc, v, "data-srcset");
+    if (e && e[0]) {
+        unsigned int n = 0;
+
+        while (*e == ' ' || *e == '\t' || *e == '\n') e++;
+        while (*e && *e != ' ' && *e != ',' && *e != '\t' && *e != '\n' && n + 1 < max)
+            buf[n++] = *e++;
+        buf[n] = 0;
+        if (n > 0) return buf;
+    }
+    return src;         /* il segnaposto, o niente */
+}
+
 /* Il testo che sta DENTRO un elemento, messo in fila.
  *
  * ! UN <button> NON HA `value`, HA UN CONTENUTO, e la stessa cosa vale per
@@ -504,7 +552,8 @@ static int est_misura(int v, VistaPezzo *p)
     }
 
     if (uguale(nome, "img")) {
-        const char *src = html_attr(&g_doc, v, "src");
+        static char da_elenco[NAV_URL_MAX];
+        const char *src = img_sorgente(v, da_elenco, sizeof(da_elenco));
         const char *alt;
         int         k = (src && src[0]) ? imm_indice(v, src) : -1;
 

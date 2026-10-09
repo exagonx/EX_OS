@@ -76,7 +76,8 @@ typedef struct {
     uint32_t    ata_dma;
 
     /* smp: 1 = i processori in piu' si svegliano e si parcheggiano
-     * (predefinito), 0 = si contano e basta. Vedi kernel/include/smp.h.
+     * (predefinito), 0 = si contano e basta, 2 = eseguono processi (tappa 3,
+     * dalla 0.246: da accendere apposta). Vedi kernel/include/smp.h.
      *
      * ! ESISTE PER LA SCHEDA CHE NON SI AVVIA: svegliare un processore vuol
      * dire scrivere nell'APIC locale e mandare un INIT, e su una macchina con

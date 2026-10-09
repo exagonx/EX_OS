@@ -1016,6 +1016,11 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
 
         if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
         if (p->page_directory == NULL) continue;
+        /* ! NON SI TOGLIE UNA PAGINA A CHI STA GIRANDO SU UN ALTRO PROCESSORE
+         * (tappa 3 dell'SMP): ne ha la traduzione nel suo TLB e continuerebbe
+         * a scriverci dopo che la pagina e' stata data a un altro. Si passa
+         * al processo dopo; con un processore solo non succede mai. */
+        if (sched_spazio_altrove(p->page_directory)) continue;
 
         for (pdi = PD_INDEX(USER_SPACE_BASE); pdi < 1024; pdi++) {
             PDE *pd = p->page_directory;

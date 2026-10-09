@@ -283,6 +283,7 @@ typedef struct {
 #define SYS_CPU_INFO    181
 #define SYS_KLOG         86
 #define SYS_AHCI_PASSA   85
+#define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_DISKINFO    189
 #define SYS_BLKINFO     190
@@ -7341,6 +7342,13 @@ unsigned int uptime_ms(void)
 int cpu_info(CpuInfo *ci)
 {
     return _syscall2(SYS_CPU_INFO, (uint32_t)ci, (uint32_t)sizeof(CpuInfo));
+}
+
+/* I processori in piu', parcheggiati, cominciano a eseguire programmi (solo
+ * root). Rende quanti lavorano dopo, 0 se non ce ne sono, o un -errno. */
+int cpu_lavora(void)
+{
+    return _syscall1(SYS_SMP_LAVORA, 0);
 }
 
 /* I dischi all'AHCI, per questa sessione. Quanti, o un -errno. */

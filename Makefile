@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := aggiungi dmesg ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume
 
@@ -3401,6 +3401,24 @@ $(DMESG_BIN): $(DMESG_SRC) $(DMESG_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) 
 .PHONY: dmesg
 dmesg: dirs $(DMESG_BIN)
 
+# --- /bin/smpprova (solo CD e supporto): i processori in piu' lavorano? ------
+SMPPROVA_SRC := bin/smpprova/smpprova.c
+SMPPROVA_BIN := $(BUILD_BIN_CD)/smpprova
+SMPPROVA_LD  := bin/smpprova/smpprova.ld
+
+$(SMPPROVA_BIN): $(SMPPROVA_SRC) $(SMPPROVA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/smpprova ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(SMPPROVA_SRC) -o $(BUILD_OBJ)/smpprova_main.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/smpprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SMPPROVA_LD) \
+	    $(BUILD_OBJ)/smpprova_start.o $(BUILD_OBJ)/smpprova_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] smpprova compilato: $@"
+
+.PHONY: smpprova
+smpprova: dirs $(SMPPROVA_BIN)
+
 # --- /bin/aggiungi (solo CD e supporto): copia driver e programmi dal --------
 # supporto fatto con `make support` al sistema installato. Vedi bin/aggiungi.
 AGGIUNGI_SRC := bin/aggiungi/aggiungi.c
@@ -5558,7 +5576,7 @@ SUPPORT_DIR := $(DIST_DIR)/support
 SUPPORT_ISO := $(DIST_DIR)/support.iso
 # ! `=` e non `:=`: DRIVER_SOLO_CD_OUT e' definita piu' in basso.
 SUPPORT_DRIVER     = $(DRIVER_SOLO_CD_OUT) $(UHCI_OUT) $(XHCI_OUT)
-SUPPORT_PROGRAMMI  = $(SHELL_BIN) $(DMESG_BIN) $(AHCI_CMD_BIN) $(AUTOMOUNT_BIN) $(BLKSCAN_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) $(PING_BIN) $(DHCP_BIN) \
+SUPPORT_PROGRAMMI  = $(SHELL_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(AUTOMOUNT_BIN) $(BLKSCAN_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) $(PING_BIN) $(DHCP_BIN) \
                      $(HOST_BIN) $(SCARICA_BIN) $(NETUPDATE_BIN) $(HWINFO_BIN)
 
 .PHONY: support
@@ -7263,7 +7281,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
-                  $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
+                  $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
