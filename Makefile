@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # =============================================================================
 PROGRAMMI_CD := aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exilla
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -2643,6 +2643,33 @@ $(EXVOLUME_BIN): $(EXVOLUME_SRC) $(EXVOLUME_LD) $(EXSUONO_STUB) $(EXSUONO_HDR) $
 
 .PHONY: exvolume
 exvolume: dirs $(EXVOLUME_BIN)
+
+# --- exilla: il lanciatore di Exilla, Firefox per EX-OS -----------------------
+#
+# ! NON VA IN /exwin/bin E NON VA SUL CD. Exilla e' un pacchetto del
+# repository (netupdate -install:exilla) e sta tutta in /exwin/app/exilla:
+# il lanciatore si costruisce in build/exilla, da dove tools/mknetinst.sh lo
+# prende insieme al navigatore e alle icone. Due stub: exwin ed exdlg.
+EXILLA_SRC := exwin/bin/exilla/exilla.c
+EXILLA_BIN := $(BUILD_DIR)/exilla/exilla
+EXILLA_LD  := exwin/bin/exilla/exilla.ld
+
+$(EXILLA_BIN): $(EXILLA_SRC) $(EXILLA_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(EXDLG_STUB) $(EXDLG_HDR) $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione exilla (lanciatore, per il pacchetto) ==="
+	@mkdir -p $(dir $(EXILLA_BIN)) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(EXILLA_SRC) -o $(BUILD_OBJ)/exilla_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/exilla_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/exilla_exdlg.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/exilla_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXILLA_LD) \
+	    $(BUILD_OBJ)/exilla_start.o $(BUILD_OBJ)/exilla_main.o \
+	    $(BUILD_OBJ)/exilla_exwin.o $(BUILD_OBJ)/exilla_exdlg.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exilla compilato: $@"
+
+.PHONY: exilla
+exilla: dirs $(EXILLA_BIN)
 
 # --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
 #
@@ -7726,7 +7753,7 @@ sdk-fresco: $(LIBC_PONTI_OBJ) $(LIBC_SO)
 	fi
 
 .PHONY: netinst
-netinst: iso-exos sdk-fresco
+netinst: iso-exos sdk-fresco $(EXILLA_BIN)
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh
 	@$(TOOLS_DIR)/mknetinst.sh
 

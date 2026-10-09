@@ -6316,3 +6316,16 @@ un programma: il primo lavoro e' tirarla fuori.
   c'e' nel PCB) e una chiamata per terminare un processo da un programma.
   Stato: DA FARE.
 
+
+@EXILLA-ISO-STRUMENTI EXILLA ANCHE SULLA ISO DEGLI STRUMENTI, ACCANTO A GCC (chiesto dall'utente il 9 ottobre 2026)
+  Exilla e' un pacchetto del repository (`netupdate -install:exilla`, in
+  /exwin/app/exilla). Deve stare anche sulla ISO degli strumenti (`make iso`,
+  quella di gcc), per chi non ha la rete o ha una linea lenta: sono 290 MB.
+  Da fare: un gruppo [exilla] nel catalogo del CD (tools/iso/strumenti.txt e'
+  quello che legge `toolinst`), con i file sul CD interi e non a pezzi;
+  `toolinst` oggi mette tutto sotto /exos, e questo gruppo va invece in
+  /exwin/app/exilla - serve una chiave per la destinazione; la voce nel menu
+  (categoria Internet) come la scrive netupdate, e il registro di netupdate
+  che dopo deve riconoscerla (`-registro:crea` la vede dalla `prova`, cosi'
+  `-check` la aggiorna dalla rete). Il CD passa da 150 a 440 MB.
+  Stato: DA FARE.

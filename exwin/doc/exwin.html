@@ -79,7 +79,7 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <tr><td><b>Terminale</b> <code>term</code></td>
     <td>una shell dentro una finestra, con il suo pty</td></tr>
 <tr><td><b>EXBrowser</b> <code>exbrowser</code></td>
-    <td>il browser &mdash; ha il <a href="exbrowser.html">suo manuale</a></td></tr>
+    <td>il browser (Avvio &gt; Internet) &mdash; ha il <a href="exbrowser.html">suo manuale</a></td></tr>
 <tr><td><b>Prova dei font</b> <code>fontprova</code></td>
     <td>disegna la stessa frase con ogni file di <code>/exwin/font</code>: e'
         il modo piu' rapido di sapere se un carattere si carica</td></tr>
@@ -91,6 +91,10 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <tr><td><b>Volume</b> <code>exvolume</code></td>
     <td>il volume di ogni uscita e ingresso, canale per canale &mdash; vedi
         <a href="#volume">qui sotto</a></td></tr>
+<tr><td><b>Exilla</b> <code>exilla</code></td>
+    <td>Firefox per EX-OS (Avvio &gt; Internet): non e' nel sistema di base,
+        e' un pacchetto che si installa con <code>netupdate</code> &mdash; vedi
+        <a href="#exilla">qui sotto</a></td></tr>
 <tr><td><b>EXKlondike</b> <code>exklondike</code></td>
     <td>il solitario classico (Avvio &gt; Giochi)</td></tr>
 <tr><td><b>EXSpider</b> <code>exspider</code></td>
@@ -138,6 +142,55 @@ L'intro che si sente all'accensione della scrivania e' il file
 togliere la spunta <b>Suono all'avvio della scrivania</b> in
 <b>Avvio &gt; Impostazioni...</b> (e' la riga <code>suono_avvio = no</code>
 di <code>pm.cfg</code>).
+</p>
+
+<h3 id="exilla">Exilla: Firefox per EX-OS</h3>
+
+<p>
+Exilla e' il navigatore Firefox costruito per EX-OS. E' per le macchine
+grandi: vuole almeno 512 MB di memoria (meglio 1 GB) e 300 MB di disco. Per
+quelle piccole il navigatore resta EXBrowser, che sta gia' nel sistema.
+</p>
+
+<p>
+Non sta nel sistema di base: pesa quasi trecento megabyte. E' un pacchetto
+del repository, come il compilatore, e si installa da una console con la rete
+accesa:
+</p>
+
+<pre>    netupdate -install:exilla</pre>
+
+<p>
+Finisce tutta in <code>/exwin/app/exilla</code>. I file grossi arrivano a
+pezzi da 16 MB e il comando dice a che pezzo e'; se la linea cade, ridando lo
+stesso comando si riprende dal pezzo che mancava, non da capo. Alla fine
+Exilla e' nel menu <b>Avvio &gt; Internet</b>, accanto a EXBrowser; da una
+console si apre con <code>/exwin/app/exilla/exilla</code>, anche con un
+indirizzo dietro. Segnalibri e cronologia stanno in
+<code>$HOME/.exilla</code>.
+</p>
+
+<p>
+Da li' in poi <code>netupdate -check</code> la tiene aggiornata insieme al
+resto. Su una macchina dove non e' installata <code>-check</code> non la
+porta, nemmeno con <code>-yesall</code>: va chiesta per nome. Si toglie con
+<code>netupdate -remove:exilla</code>, che cancella i file e la voce del menu
+(il profilo in <code>$HOME/.exilla</code> resta).
+</p>
+
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>netupdate -install:exilla</code></td><td>la scarica e la mette nel menu</td></tr>
+<tr><td><code>netupdate -remove:exilla</code></td><td>la toglie</td></tr>
+<tr><td><code>/exwin/app/exilla/exilla [indirizzo]</code></td><td>apre il navigatore</td></tr>
+<tr><td><code>/exwin/app/exilla/exilla -dove</code></td><td>dice se e' installata</td></tr>
+</table>
+
+<p class="nota">
+<b>Che cosa aspettarsi.</b> E' Firefox intero, in un processo solo: pagine
+vere, HTTPS, schede, menu. Si apre in una decina di secondi e la prima
+pagina dalla rete ne chiede altri venti. Mancano ancora i video, il suono
+nelle pagine e la stampa.
 </p>
 
 <h3 id="volume">Il pannello dei volumi</h3>

@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.026");
+EX_VERSIONE("netupdate", "0.027");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -384,6 +384,8 @@ static int comando_set(void)
 #define ETICH_MAX      48
 #define DICE_MAX       96
 #define PERC_MAX      256
+#define ELENCO_MAX     96
+#define MENU_MAX      200
 #define IMPR_MAX       72       /* 64 esadecimali, il terminatore e un margine */
 
 typedef struct {
@@ -405,6 +407,18 @@ typedef struct {
     int  n_vuole;
     long mbyte;
     int  sempre;
+
+    /* ! UN PACCHETTO PUO' AVERE L'ELENCO SUO (9 ottobre 2026: Exilla, 300
+     * MB). I suoi file non stanno in elenco.txt - li' c'e' cio' che `-check
+     * -yesall` porta su ogni macchina - ma in un file a parte, che si scarica
+     * solo se il pacchetto c'e' o lo si sta installando: vedi elenchi_aggiungi.
+     * `elimpronta` e' la sua sha256, scritta nel catalogo, che e' gia'
+     * verificato da versione.txt. */
+    char elenco[ELENCO_MAX];
+    char elimpronta[IMPR_MAX];
+    /* La voce nel menu di avvio della scrivania, scritta come una riga di
+     * /exwin/lib/applicazioni.txt: «Internet/Exilla | /percorso | /icona». */
+    char menu[MENU_MAX];
 
     long n_file;                /* righe `file` lette: solo nel registro      */
     long n_ignoti;              /* di quelle, quante senza impronta           */
@@ -503,6 +517,9 @@ static int blocchi_leggi(const char *percorso, Pacchetto *v, int max)
         if ((val = valore_se(r, "arcbyte"))  != NULL) { p->arcbyte = atol(val); continue; }
         if ((val = valore_se(r, "arcimpronta"))  != NULL) { copia_str(p->arcimpronta, val, IMPR_MAX); continue; }
         if ((val = valore_se(r, "arcsrotolato")) != NULL) { p->arcsrotolato = atol(val); continue; }
+        if ((val = valore_se(r, "elenco"))     != NULL) { copia_str(p->elenco, val, ELENCO_MAX); continue; }
+        if ((val = valore_se(r, "elimpronta")) != NULL) { copia_str(p->elimpronta, val, IMPR_MAX); continue; }
+        if ((val = valore_se(r, "menu"))       != NULL) { copia_str(p->menu, val, MENU_MAX); continue; }
         if ((val = valore_se(r, "sempre"))   != NULL) {
             p->sempre = (val[0] == 's' || val[0] == 'S' || val[0] == '1');
             continue;
@@ -867,6 +884,7 @@ static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
         t = strchr(p, '\t');       if (t == NULL) continue; *t = '\0'; sbyte    = t + 1;
         t = strchr(sbyte, '\t');   if (t == NULL) continue; *t = '\0'; impronta = t + 1;
         t = strchr(impronta, '\t');if (t == NULL) continue; *t = '\0'; pac      = t + 1;
+        t = strchr(pac, '\t');     if (t != NULL) *t = '\0';   /* la quinta colonna: pezzi= */
         pac = ripulisci(pac);
         if (strcmp(pac, id) != 0) continue;
 
@@ -989,10 +1007,22 @@ static int comando_registro_crea(const char *albero)
         /* ! `sempre` VA NEL REGISTRO, non solo nel catalogo: e' `-remove` a
          * doverlo sapere, e -remove non tocca la rete. */
         if (v[i].sempre)   fprintf(out, "sempre   = si\n");
+        /* E `menu` per la stessa ragione: la voce va tolta insieme ai file. */
+        if (v[i].menu[0])  fprintf(out, "menu     = %s\n", v[i].menu);
         for (k = 0; k < v[i].n_vuole; k++)
             fprintf(out, "vuole    = %s\n", v[i].vuole[k]);
 
         scritti = file_del_pacchetto(out, ele, v[i].id, &mancano, &diversi);
+        /* Un albero su un supporto (-registro:crea <albero>) ha l'elenco del
+         * pacchetto nel suo file, non cucito in fondo a elenco.txt come fa
+         * manifesto() con quello scaricato. */
+        if (scritti == 0 && mancano == 0 && v[i].elenco[0]) {
+            char suo[PERC_MAX];
+
+            unisci(suo, sizeof(suo), albero, v[i].elenco);
+            scritti = file_del_pacchetto(out, suo, v[i].id, &mancano, &diversi);
+            if (scritti < 0) scritti = 0;
+        }
         if (scritti < 0) {
             fclose(out);
             remove(REG_NEW);
@@ -1424,16 +1454,31 @@ static void crea_strada(const char *percorso)
 }
 
 /* Spezza una riga di elenco.txt. Rende 0 se non e' una riga buona. */
+/* ! LA QUINTA COLONNA, QUANDO C'E', DICE CHE IL FILE E' PUBBLICATO A PEZZI:
+ * «pezzi=16777216» vuol dire che sul server non c'e' `firefox` ma firefox.p000,
+ * .p001, ... ognuno di quei byte (l'ultimo quel che resta). Byte e impronta
+ * della riga restano quelli del file INTERO. Finisce qui, in una globale che
+ * vale per l'ultima riga letta: scarica_e_metti la guarda subito dopo. */
+static long g_riga_pezzo = 0;
+
 static int riga_elenco(char *riga, char **perc, long *byte,
                        char **impronta, char **pac)
 {
-    char *t;
+    char *t, *q;
 
+    g_riga_pezzo = 0;
     if (riga[0] == '#' || riga[0] == '\n' || riga[0] == '\0') return 0;
     *perc = riga;
     t = strchr(riga, '\t');      if (!t) return 0; *t = '\0'; *byte = atol(t + 1);
     t = strchr(t + 1, '\t');     if (!t) return 0; *impronta = t + 1;
-    t = strchr(t + 1, '\t');     if (!t) return 0; *t = '\0'; *pac = ripulisci(t + 1);
+    t = strchr(t + 1, '\t');     if (!t) return 0; *t = '\0';
+    q = strchr(t + 1, '\t');
+    if (q != NULL) {
+        *q = '\0';
+        if (strncmp(q + 1, "pezzi=", 6) == 0) g_riga_pezzo = atol(q + 7);
+        if (g_riga_pezzo < 65536) g_riga_pezzo = 0;     /* un numero assurdo */
+    }
+    *pac = ripulisci(t + 1);
     return (*perc)[0] != '\0';
 }
 
@@ -1508,10 +1553,20 @@ static int e_avvio(const char *percorso)
            strcmp(percorso, "boot/stage2.bin") == 0;
 }
 
+static int menu_e_quello(const char *impronta_server);
+
 static int verdetto(const char *percorso, const char *impronta_server)
 {
     const char *mia = registro_impronta(percorso);
     char        assoluto[PERC_MAX];
+
+    /* ! IL MENU CON DENTRO LE VOCI DEI PACCHETTI NON E' «CAMBIATO». Le ha
+     * scritte netupdate stesso (chiave `menu`), e senza questa riga ogni
+     * -check troverebbe applicazioni.txt diverso da quello del server, lo
+     * riscaricherebbe e ci rimetterebbe le voci: per sempre, a ogni giro. Si
+     * confronta il file SENZA quelle voci. */
+    if (strcmp(percorso, "exwin/lib/applicazioni.txt") == 0 &&
+        menu_e_quello(impronta_server)) return UGUALE;
 
     if (mia == NULL) {
         unisci(assoluto, sizeof(assoluto), "/", percorso);
@@ -1519,6 +1574,25 @@ static int verdetto(const char *percorso, const char *impronta_server)
     }
     if (mia[0] == '-' && mia[1] == '\0') return DA_VERIFICARE;
     return strcasecmp(mia, impronta_server) == 0 ? UGUALE : CAMBIATO;
+}
+
+/* Per -install: il file va scaricato? Un file che il registro non conosce ma
+ * che sul disco e' GIA' quello giusto - stessi byte, stessa impronta - non si
+ * riscarica: e' quel che resta di un'installazione caduta a meta', e per un
+ * pacchetto da trecento megabyte rifarlo tutto per l'ultimo file mancato
+ * vorrebbe dire non finire mai. */
+static int da_prendere(const char *percorso, long byte, const char *impronta_server)
+{
+    char assoluto[PERC_MAX], esa[65];
+    long dim = 0;
+    int  v = verdetto(percorso, impronta_server);
+
+    if (v == UGUALE) return 0;
+    if (v != SCONOSCIUTO) return 1;
+    unisci(assoluto, sizeof(assoluto), "/", percorso);
+    if (!esiste(assoluto, &dim) || dim != byte) return 1;
+    if (impronta_locale(assoluto, esa) != 0) return 1;
+    return strncasecmp(esa, impronta_server, 64) != 0;
 }
 
 static int chiedi_si(const char *domanda, int pred)
@@ -1544,6 +1618,24 @@ static int chiedi_si(const char *domanda, int pred)
  * cui la mappa dei settori verificata un attimo prima vale ancora dopo lo
  * scambio. Con una rename che copiasse, la verifica non varrebbe piu' niente.
  * --------------------------------------------------------------------------- */
+/* ! IN /exwin/app I PROGRAMMI SI RICONOSCONO GUARDANDOCI DENTRO (9 ottobre
+ * 2026). Li' un'applicazione e' una directory con tutto il suo - Exilla ha
+ * accanto a `firefox` i suoi .ini, le icone e due archivi da cinquanta
+ * megabyte - e «tutto 0755» sarebbe la regola di /bin applicata a file che
+ * programmi non sono. Quattro byte dicono se e' un ELF. */
+static int e_programma_app(const char *dest)
+{
+    unsigned char m[4];
+    int fd, n;
+
+    if (strncmp(dest, "/exwin/app/", 11) != 0) return 0;
+    fd = open(dest, O_RDONLY);
+    if (fd < 0) return 0;
+    n = (int)read(fd, m, 4);
+    close(fd);
+    return n == 4 && m[0] == 0x7F && m[1] == 'E' && m[2] == 'L' && m[3] == 'F';
+}
+
 static int sostituisci(const char *dest, const char *temp)
 {
     char vecchio[PERC_MAX];
@@ -1567,7 +1659,7 @@ static int sostituisci(const char *dest, const char *temp)
      *
      * Vedi e_programma() per quali file, e perche' la regola e' quella di
      * install e non una nuova. */
-    if (e_programma(dest[0] == '/' ? dest + 1 : dest))
+    if (e_programma(dest[0] == '/' ? dest + 1 : dest) || e_programma_app(dest))
         chmod(dest, 0755);   /* su FAT rende ENOSYS: pazienza, come in install */
 
     return 0;
@@ -1686,6 +1778,79 @@ static int fase_avvio(int kernel, int stage2)
  * riscarica niente, e in tutt'e due i casi senza un errore. Se non tornano, ci
  * si ferma qui, prima di guardare un solo file.
  * --------------------------------------------------------------------------- */
+/* -----------------------------------------------------------------------------
+ * elenchi_aggiungi — gli elenchi dei pacchetti che ne hanno uno loro
+ *
+ * ! SI CUCIONO IN FONDO A elenco.txt (la copia scaricata, in /tmp), e da li'
+ * in poi nessuno deve sapere che erano file diversi: -check, -install e il
+ * registro leggono un elenco solo, com'era prima.
+ *
+ * ! MA SOLO DI CHI C'E', O DI CHI SI STA INSTALLANDO (g_anche). E' tutto il
+ * senso di tenerli a parte: una macchina che Exilla non l'ha mai voluta non
+ * ne scarica nemmeno l'elenco, e `-check -yesall` non gliela porta.
+ *
+ * «C'e'» lo dice la `prova` del catalogo, come per il registro - e in piu' il
+ * registro stesso: un'installazione caduta a meta' ha i file piccoli e non
+ * ancora la prova, e deve poter essere ripresa da -check.
+ * --------------------------------------------------------------------------- */
+static char g_anche[ID_MAX] = "";
+
+static int nel_registro(const char *id)
+{
+    FILE *f = fopen(REG, "r");
+    char  riga[RIGA_MAX], cerco[ID_MAX + 4];
+    int   trovato = 0;
+
+    if (f == NULL) return 0;
+    snprintf(cerco, sizeof(cerco), "[%s]", id);
+    while (!trovato && fgets(riga, sizeof(riga), f) != NULL)
+        if (strncmp(riga, cerco, strlen(cerco)) == 0) trovato = 1;
+    fclose(f);
+    return trovato;
+}
+
+static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
+{
+    static Pacchetto v[PACCHETTI_MAX];
+    char   assoluto[PERC_MAX], suo[PERC_MAX];
+    int    n, i;
+
+    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    for (i = 0; i < n; i++) {
+        FILE *in, *out;
+        char  riga[RIGA_MAX];
+        int   c_e = 0;
+
+        if (v[i].elenco[0] == '\0') continue;
+        if (v[i].prova[0]) {
+            unisci(assoluto, sizeof(assoluto), "/", v[i].prova);
+            c_e = esiste(assoluto, NULL);
+        }
+        if (!c_e && strcmp(v[i].id, g_anche) != 0 && !nel_registro(v[i].id)) continue;
+
+        snprintf(suo, sizeof(suo), "%s/elenco-%s.txt", TMPDIR, v[i].id);
+        if (prendi_verifica_scrivi(c, v[i].elenco,
+                                   v[i].elimpronta[0] ? v[i].elimpronta : NULL,
+                                   suo) != 0) {
+            if (!g_zitto)
+                printf("  ! l'elenco di %s (%s) non e' arrivato.\n", v[i].id, v[i].elenco);
+            return -1;
+        }
+        in  = fopen(suo, "r");
+        out = fopen(ele, "a");
+        if (in == NULL || out == NULL) {
+            if (in)  fclose(in);
+            if (out) fclose(out);
+            return -1;
+        }
+        fputs("\n", out);
+        while (fgets(riga, sizeof(riga), in) != NULL) fputs(riga, out);
+        fclose(in);
+        fclose(out);
+    }
+    return 0;
+}
+
 static int manifesto(Config *c, char *ver, char *cat, char *ele,
                      char *versione, char *data)
 {
@@ -1752,6 +1917,7 @@ static int manifesto(Config *c, char *ver, char *cat, char *ele,
     }
     if (prendi_verifica_scrivi(c, "catalogo.txt", h_cat, cat) != 0) return 1;
     if (prendi_verifica_scrivi(c, "elenco.txt",   h_ele, ele) != 0) return 1;
+    if (elenchi_aggiungi(c, cat, ele) != 0) return 1;
 
     if (!g_zitto) printf("  server: sistema %s del %s\n", versione, data);
     return 0;
@@ -2049,6 +2215,129 @@ static int scarica_su_file(Config *c, const char *coda, const char *temp,
     return -1;
 }
 
+/* -----------------------------------------------------------------------------
+ * scarica_a_pezzi — un file che sul server e' <nome>.p000, .p001, ...
+ *
+ * ! TUTTI NELLO STESSO .new, UNO DOPO L'ALTRO, E L'IMPRONTA E' UNA SOLA: quella
+ * del file intero, che cresce pezzo dopo pezzo. Il file sul disco e' subito
+ * quello vero, non una directory di pezzi da ricucire - che vorrebbe dire lo
+ * spazio due volte, su un file da 190 MB.
+ *
+ * ! SI RIPRENDE DAL PEZZO, NON DAL BYTE. Un .new rimasto da un giro caduto
+ * vale fino all'ultimo confine di pezzo: da li' si riscrive. Il pezzo a meta'
+ * si rifa' da capo - sono al piu' sedici megabyte, e in cambio non serve
+ * chiedere un intervallo al server.
+ *
+ * ! L'IMPRONTA DI PRIMA SI TIENE DA PARTE A OGNI PEZZO: se il pezzo cade a
+ * meta', i suoi byte sono gia' entrati nel conto, e l'unico modo di toglierli
+ * e' ripartire dalla copia fatta prima di cominciarlo.
+ * --------------------------------------------------------------------------- */
+static int scarica_a_pezzi(Config *c, const char *coda, const char *temp,
+                           long atteso, const char *impronta, long pezzo)
+{
+    char        url[URL_MAX + PERC_MAX + 64], nome[PERC_MAX + 16], esa[65];
+    Sha256      sha;
+    ExHttpEsito e;
+    long        gia = 0, fatto;
+    int         k, n_pezzi = (int)((atteso + pezzo - 1) / pezzo), fd;
+
+    if (!esiste(temp, &gia) || gia < 0 || gia > atteso) gia = 0;
+    fatto = (gia / pezzo) * pezzo;
+
+    sha256_avvia(&sha);
+    if (fatto > 0) {
+        if (rimastica(temp, fatto, &sha) != 0) { fatto = 0; sha256_avvia(&sha); }
+        else printf("    riprendo dal pezzo %ld di %d\n", fatto / pezzo + 1, n_pezzi);
+    }
+    if (fatto == 0) {
+        fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC);
+        if (fd < 0) {
+            printf("  ! %s: non riesco ad aprirlo (%s)\n", temp, strerror(errno));
+            return -1;
+        }
+        close(fd);
+    }
+
+    for (k = (int)(fatto / pezzo); k < n_pezzi; k++) {
+        long fine = (long)(k + 1) * pezzo;
+        int  giro, arrivato = 0;
+
+        if (fine > atteso) fine = atteso;
+        snprintf(nome, sizeof(nome), "%s.p%03d", coda, k);
+        url_componi(url, sizeof(url), c, nome);
+
+        for (giro = 0; giro < RIPRESE_MAX && !arrivato; giro++) {
+            Posa q;
+            int  ok;
+
+            q.sha     = sha;            /* la copia: vedi sopra */
+            q.byte    = (long)k * pezzo;
+            q.guaio   = 0;
+            q.da      = 0;
+            q.e       = &e;
+            q.tradito = 0;
+            q.fd      = open(temp, O_WRONLY);
+            if (q.fd < 0 || lseek(q.fd, q.byte, SEEK_SET) != q.byte) {
+                if (q.fd >= 0) close(q.fd);
+                printf("  ! %s: non riesco a scriverci (%s)\n", temp, strerror(errno));
+                return -1;
+            }
+
+            exhttp_verso(posa_verso, &q);
+            ok = exhttp_prendi(url, g_buf, BUF_MAX, &e);
+            exhttp_verso(0, 0);         /* subito: e' un gancio globale */
+            gira_fine();
+            close(q.fd);
+
+            if (q.guaio) {
+                printf("  ! %s: la scrittura si e' fermata (%s). Disco pieno?\n",
+                       temp, strerror(errno));
+                return -1;              /* il .new resta: si riprende dal pezzo */
+            }
+            if (!ok) {
+                printf("  ! pezzo %d: %s\n", k + 1, e.errore[0] ? e.errore : "non riuscito");
+                continue;
+            }
+            if (e.codice != 200) {
+                printf("  ! %s: il server risponde %d\n", url, e.codice);
+                return -1;
+            }
+            if (q.byte != fine) {
+                printf("    pezzo %d: %ld byte invece di %ld, lo rifaccio\n",
+                       k + 1, q.byte - (long)k * pezzo, fine - (long)k * pezzo);
+                continue;
+            }
+            sha = q.sha;
+            arrivato = 1;
+        }
+        if (!arrivato) {
+            printf("  ! il pezzo %d di %d non e' arrivato in %d tentativi. Quel che\n",
+                   k + 1, n_pezzi, RIPRESE_MAX);
+            printf("    c'e' resta li': il prossimo giro riprende da questo pezzo.\n");
+            return -1;
+        }
+        printf("    pezzo %d di %d (%ld MB su %ld)\n", k + 1, n_pezzi,
+               fine / (1024 * 1024), atteso / (1024 * 1024));
+    }
+
+    sha256_fine_esa(&sha, esa);
+    if (impronta != NULL && strncmp(esa, impronta, 64) != 0) {
+        printf("  ! l'impronta del file ricucito non torna, NON lo installo\n");
+        remove(temp);
+        return -1;
+    }
+    return 0;
+}
+
+/* Uno o tanti pezzi: lo decide la riga dell'elenco appena letta. */
+static int scarica_come_va(Config *c, const char *coda, const char *temp,
+                           long atteso, const char *impronta)
+{
+    if (g_riga_pezzo > 0 && atteso > g_riga_pezzo)
+        return scarica_a_pezzi(c, coda, temp, atteso, impronta, g_riga_pezzo);
+    return scarica_su_file(c, coda, temp, atteso, impronta);
+}
+
 static int scarica_e_metti(Config *c, const char *p, long byte,
                            const char *impronta, int *kernel, int *stage2)
 {
@@ -2072,10 +2361,164 @@ static int scarica_e_metti(Config *c, const char *p, long byte,
 
     crea_strada(dest);
     snprintf(temp, sizeof(temp), "%s.new", dest);
-    if (scarica_su_file(c, coda, temp, byte, impronta) != 0) return -1;
+    if (scarica_come_va(c, coda, temp, byte, impronta) != 0) return -1;
     if (sostituisci(dest, temp) != 0) return -1;
     printf("  + %s (%ld byte)\n", p, byte);
     return 0;
+}
+
+/* =============================================================================
+ * LA VOCE NEL MENU DI AVVIO — chiave `menu` del catalogo (9 ottobre 2026)
+ *
+ * ! UN'APPLICAZIONE INSTALLATA CHE NON SI TROVA NEL MENU NON E' INSTALLATA,
+ * per chi usa la scrivania. La riga e' scritta nel catalogo cosi' come va in
+ * /exwin/lib/applicazioni.txt - «Internet/Exilla | /percorso | /icona» - e qui
+ * si aggiunge in fondo se non c'e' gia' una voce con quel percorso.
+ *
+ * ! SI RIMETTE DOPO OGNI -check, e non e' zelo: applicazioni.txt e' un file
+ * del sistema, e quando il sistema ne pubblica uno nuovo -check lo sostituisce
+ * - con le voci del sistema e senza quelle dei pacchetti. menu_allinea ripassa
+ * il catalogo e rimette quelle di chi e' installato.
+ * =========================================================================== */
+#define MENU_FILE  "/exwin/lib/applicazioni.txt"
+static char g_menu[16384];
+
+/* Il secondo campo di una riga «nome | percorso | icona», ripulito. */
+static int menu_percorso(const char *riga, char *out, int max)
+{
+    const char *a = strchr(riga, '|'), *b;
+    int n;
+
+    if (a == NULL) return 0;
+    a++;
+    while (*a == ' ' || *a == '\t') a++;
+    b = a;
+    while (*b && *b != '|' && *b != '\n' && *b != '\r') b++;
+    while (b > a && (b[-1] == ' ' || b[-1] == '\t')) b--;
+    n = (int)(b - a);
+    if (n <= 0 || n >= max) return 0;
+    memcpy(out, a, (size_t)n);
+    out[n] = '\0';
+    return 1;
+}
+
+static int menu_leggi(void)
+{
+    int fd = open(MENU_FILE, O_RDONLY), n = 0, r;
+
+    if (fd < 0) return -1;
+    while (n < (int)sizeof(g_menu) - 1 &&
+           (r = (int)read(fd, g_menu + n, sizeof(g_menu) - 1 - (unsigned int)n)) > 0) n += r;
+    close(fd);
+    g_menu[n] = '\0';
+    return n;
+}
+
+/* Riscrive il file senza le voci con quel percorso (togli = 1), o dice solo
+ * se una c'e' (togli = 0). Rende quante ne ha trovate. */
+static int menu_voci(const char *percorso, int togli)
+{
+    char *r = g_menu, *w = g_menu;
+    int   trovate = 0;
+
+    if (menu_leggi() < 0) return -1;
+    while (*r) {
+        char *fine = strchr(r, '\n');
+        char  suo[PERC_MAX];
+        int   lunga = fine ? (int)(fine - r) + 1 : (int)strlen(r);
+        int   e_lei;
+
+        e_lei = (r[0] != '#' && r[0] != '@' &&
+                 menu_percorso(r, suo, sizeof(suo)) && strcmp(suo, percorso) == 0);
+        if (e_lei) trovate++;
+        if (!(e_lei && togli)) { if (w != r) memmove(w, r, (size_t)lunga); w += lunga; }
+        r += lunga;
+    }
+    if (togli && trovate > 0) {
+        int fd = open(MENU_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+
+        if (fd < 0) return -1;
+        write(fd, g_menu, (unsigned int)(w - g_menu));
+        close(fd);
+    }
+    return trovate;
+}
+
+static void menu_metti(const char *riga)
+{
+    char percorso[PERC_MAX];
+    int  n, fd;
+
+    if (!menu_percorso(riga, percorso, sizeof(percorso))) return;
+    if (menu_voci(percorso, 0) != 0) return;        /* c'e' gia', o non c'e' il file */
+
+    n  = (int)strlen(g_menu);
+    fd = open(MENU_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) {
+        printf("  ! non riesco a scrivere %s: la voce nel menu manca\n", MENU_FILE);
+        return;
+    }
+    write(fd, g_menu, (unsigned int)n);
+    if (n > 0 && g_menu[n - 1] != '\n') write(fd, "\n", 1);
+    write(fd, riga, (unsigned int)strlen(riga));
+    write(fd, "\n", 1);
+    close(fd);
+    printf("  nel menu di avvio: %s\n", riga);
+}
+
+static void menu_togli(const char *riga)
+{
+    char percorso[PERC_MAX];
+
+    if (!menu_percorso(riga, percorso, sizeof(percorso))) return;
+    if (menu_voci(percorso, 1) > 0) printf("  tolta dal menu di avvio: %s\n", riga);
+}
+
+/* Il menu di questa macchina, tolte le voci dei pacchetti del catalogo, e'
+ * quello che il server pubblica? Non scrive niente: lavora sulla copia. */
+static int menu_e_quello(const char *impronta_server)
+{
+    static Pacchetto v[PACCHETTI_MAX];
+    static int       n = -1;
+    char  cat[PERC_MAX], suo[PERC_MAX], voce[PERC_MAX];
+    char *r, *w;
+    int   i;
+
+    if (n < 0) {
+        snprintf(cat, sizeof(cat), "%s/catalogo.txt", TMPDIR);
+        n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+        if (n < 0) n = 0;
+    }
+    if (menu_leggi() < 0) return 0;
+
+    r = w = g_menu;
+    while (*r) {
+        char *fine = strchr(r, '\n');
+        int   lunga = fine ? (int)(fine - r) + 1 : (int)strlen(r);
+        int   via = 0;
+
+        if (r[0] != '#' && r[0] != '@' && menu_percorso(r, suo, sizeof(suo)))
+            for (i = 0; i < n && !via; i++)
+                if (v[i].menu[0] && menu_percorso(v[i].menu, voce, sizeof(voce)) &&
+                    strcmp(voce, suo) == 0) via = 1;
+        if (!via) { if (w != r) memmove(w, r, (size_t)lunga); w += lunga; }
+        r += lunga;
+    }
+    return impronta_e((const unsigned char *)g_menu, (long)(w - g_menu), impronta_server);
+}
+
+/* Le voci di tutti i pacchetti del catalogo che su questa macchina ci sono. */
+static void menu_allinea(const char *cat)
+{
+    static Pacchetto v[PACCHETTI_MAX];
+    char   assoluto[PERC_MAX];
+    int    n = blocchi_leggi(cat, v, PACCHETTI_MAX), i;
+
+    for (i = 0; i < n; i++) {
+        if (v[i].menu[0] == '\0' || v[i].prova[0] == '\0') continue;
+        unisci(assoluto, sizeof(assoluto), "/", v[i].prova);
+        if (esiste(assoluto, NULL)) menu_metti(v[i].menu);
+    }
 }
 
 /* Toglie i «.old» del giro precedente. Si fa ADESSO e non allora: dopo un
@@ -2761,6 +3204,7 @@ static int comando_check(int senza_chiedere)
         printf("\nRiscrivo il registro, che adesso deve dire un'altra cosa.\n\n");
         comando_registro_crea(TMPDIR);
     }
+    menu_allinea(cat);
 
     if (kernel_nuovo || stage2_nuovo)
         printf("\n! IL KERNEL E' CAMBIATO: riavvia. Quello di prima e' in\n"
@@ -3268,9 +3712,11 @@ static int comando_install(const char *id)
     FILE      *f;
     int        n, nr, i, nscelti, nda = 0, gia = 0;
     long       n_file = 0, byte = 0, troppo_grossi = 0;
-    long       fatti = 0, falliti = 0, saltati = 0;
+    long       fatti = 0, falliti = 0, saltati = 0, gia_buoni = 0;
     int        kernel_nuovo = 0, stage2_nuovo = 0;
 
+    /* Se ha un elenco suo, manifesto() lo prende perche' glielo si dice qui. */
+    copia_str(g_anche, id, ID_MAX);
     if (manifesto(&c, ver, cat, ele, versione, data) != 0) return 1;
 
     n = blocchi_leggi(cat, v, PACCHETTI_MAX);
@@ -3332,7 +3778,7 @@ static int comando_install(const char *id)
 
         if (!riga_elenco(riga, &fp, &fb, &impronta, &pac)) continue;
         if (!fra(da_fare, nda, pac)) continue;
-        if (verdetto(fp, impronta) == UGUALE) continue;
+        if (!da_prendere(fp, fb, impronta)) continue;
         n_file++;
         byte += fb;
         /* ! NON E' PIU' UN TETTO, E' UN AVVISO DI TEMPO. Da quando il corpo
@@ -3401,7 +3847,7 @@ static int comando_install(const char *id)
 
             if (!riga_elenco(riga, &fp, &fb, &impronta, &pac)) continue;
             if (strcmp(pac, da_fare[i]) != 0) continue;
-            if (verdetto(fp, impronta) == UGUALE) continue;
+            if (!da_prendere(fp, fb, impronta)) { gia_buoni++; continue; }
 
             switch (scarica_e_metti(&c, fp, fb, impronta, &kernel_nuovo, &stage2_nuovo)) {
             case 0:  fatti++;   break;
@@ -3420,10 +3866,14 @@ static int comando_install(const char *id)
     if (saltati) printf(", %ld saltati perche' troppo grossi", saltati);
     printf(".\n");
 
-    if (fatti > 0) {
+    if (fatti > 0 || gia_buoni > 0) {
         printf("\nRiscrivo il registro.\n\n");
         comando_registro_crea(TMPDIR);
     }
+    menu_allinea(cat);
+    if (falliti)
+        printf("\n! NON E' FINITO. Ridai lo stesso comando: quel che e' arrivato\n"
+               "  resta, e si riprende da li'.\n");
     return (falliti || saltati) ? 1 : 0;
 }
 
@@ -3633,6 +4083,11 @@ static int comando_remove(const char *id)
      * `-check` lo dice al primo giro. */
     tolti = cancella_file(via, nvia, &non_tolti);
     if (tolti < 0) { printf("netupdate: il registro non si legge.\n"); return 1; }
+    for (i = 0; i < nvia; i++) {
+        Pacchetto *q = cerca(r, nr, via[i]);
+
+        if (q != NULL && q->menu[0]) menu_togli(q->menu);
+    }
 
     if (registro_togli(via, nvia) != 0) {
         printf("\n! %ld file cancellati, MA IL REGISTRO NON E' STATO RISCRITTO.\n",

@@ -45,6 +45,10 @@ for p in chown halt poweroff reboot whoami sh; do
     [ -f "$COPIA/build/bin/$p" ] && chmod -x "$COPIA/build/bin/$p"
 done
 
+# Exilla per `netinst`: la copia non ha cross_build, e tools/mknetinst.sh la
+# prende da qui.
+export EXILLA_DIST="$RADICE/cross_build/exilla-obj/gecko/dist/firefox"
+
 cd "$COPIA"
 [ $# -eq 0 ] && set -- iso-exos
 make -j"$(nproc)" "$@"

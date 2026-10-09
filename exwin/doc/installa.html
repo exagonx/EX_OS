@@ -676,6 +676,16 @@ percorso, a fine controllo <code>netupdate</code> aggiunge
 <code>kernel.cfg.bak</code>). Vale dal riavvio successivo.
 </p>
 
+<p class="nota">
+<b>Exilla (Firefox) resta fuori da <code>-yesall</code>, e si chiede per
+nome:</b> <code>netupdate -install:exilla</code>. Sono 290 MB, vanno in
+<code>/exwin/app/exilla</code>, e <code>netupdate</code> scrive la voce nel
+menu <b>Avvio &gt; Internet</b>. I file grossi arrivano a pezzi da 16 MB: se la
+linea cade, lo stesso comando riprende dal pezzo che mancava. Una volta
+installata, <code>-check</code> la aggiorna con il resto;
+<code>netupdate -remove:exilla</code> la toglie, voce del menu compresa.
+</p>
+
 <p>
 ! <b>LE LIBRERIE VANNO PER PRIME, E SE NON ARRIVANO NON SI TOCCA NIENTE</b>
 (dalla 0.021). I programmi chiamano la libc <b>per nome</b>, e questo produce

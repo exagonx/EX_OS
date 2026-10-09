@@ -234,6 +234,22 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   boundary, and the wrong half was refilled. 0.004 moves the boundary by a
   quarter of a half and writes the counts of each playback to the kernel log
   (`dmesg hdaudio`). To be listened to again.
+- **Exilla is a repository package (stage 8 of the Firefox port).**
+  `netupdate -install:exilla` downloads it to `/exwin/app/exilla` (browser,
+  launcher, icons: 290 MB) and writes its entry in the desktop menu, in the
+  new **Internet** category where EXBrowser has moved too;
+  `netupdate -remove:exilla` removes files and entry. `netupdate` 0.027: a
+  package may have its own file list (`pacchetti/exilla.txt`, so that
+  `-check -yesall` does not bring Exilla to machines that never asked for
+  it), files above 16 MB are published and downloaded in parts
+  (`firefox.p000`...) resuming from the missing part, and the catalogue key
+  `menu` becomes a line of `applicazioni.txt`. The program manager (0.019)
+  holds 48 entries instead of 16: the base system already filled them all.
+  `firefox` is published
+  stripped: 192 MB instead of 274. `make netinst` puts it in the repository
+  by itself; `exagonx/pubblica.sh` and `verifica.sh` know lists and parts.
+  Tried in QEMU against the repository built here (not the published one);
+  still to be tried on a real machine.
 - **EXBrowser: Yahoo's results in place, and Bing's open.** On Yahoo the
   results column ended up to the right of the tabs and past the edge: a block
   that does not fit beside a float now drops below it, and a `min-width`

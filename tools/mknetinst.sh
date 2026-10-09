@@ -248,6 +248,80 @@ for id in $(cut -f2 "$TEMP/mappa" | LC_ALL=C sort -u); do
         >> "$TEMP/archivi"
 done
 
+# --- Exilla: un pacchetto con l'ELENCO SUO e i file grossi A PEZZI -----------
+#
+# ! EXILLA (Firefox per EX-OS) E' UN PACCHETTO COME GLI ALTRI PER CHI LO
+# INSTALLA - `netupdate -install:exilla` - E NON LO E' PER CHI LO PUBBLICA, per
+# due ragioni che sono due numeri: pesa 300 MB contro i 12 del sistema, e uno
+# dei suoi file ne fa 190 da solo.
+#
+# ! I SUOI FILE NON STANNO IN elenco.txt, MA IN pacchetti/exilla.txt. Quel che
+# sta in elenco.txt e' cio' che `-check -yesall` porta su ogni macchina: con
+# Exilla li' dentro, aggiornare un portatile del 2004 vorrebbe dire scaricargli
+# trecento megabyte di un navigatore che non puo' far girare. Il catalogo dice
+# dove sta l'elenco del pacchetto (chiave `elenco`, con la sua impronta in
+# `elimpronta`); netupdate lo va a prendere solo se il pacchetto e' installato
+# o lo si sta installando, e da li' in poi lo tratta come le altre righe. Un
+# netupdate vecchio vede un pacchetto senza file e lo dice: non rompe niente.
+#
+# ! E I FILE SOPRA I 16 MB SI PUBBLICANO A PEZZI: firefox.p000, .p001, ...
+# Uno spazio web ha un tetto per file che non sta scritto da nessuna parte
+# finche' non lo si tocca, e una linea di casa che cade a meta' di 190 MB
+# ricomincia da un pezzo, non da capo. La riga dell'elenco porta l'impronta e
+# i byte del file INTERO - e' quello che finisce sul disco, ed e' quello che
+# -check confronta - piu' una quinta colonna, `pezzi=<byte>`: quanto e' lungo
+# ogni pezzo. netupdate li mette in fila nello stesso .new.
+#
+# ! firefox SI PUBBLICA SENZA SIMBOLI: 192 MB invece di 274. La copia con i
+# simboli resta in cross_build, dove servono (nm, objdump, addr2line).
+#
+# Da dove si prende: EXILLA_DIST, che tools/exilla/costruisci-privato.sh
+# esporta perche' la sua copia dell'albero non ha cross_build; altrimenti il
+# posto dove lo lascia tools/exilla/prova-gecko.sh. Se non c'e', il repository
+# si pubblica senza Exilla e lo dice.
+EXILLA_DIST="${EXILLA_DIST:-cross_build/exilla-obj/gecko/dist/firefox}"
+EXILLA_LANCIA=build/exilla/exilla
+EXILLA_ICONE=exwin/bin/exilla
+EXILLA_DOVE=exwin/app/exilla
+EXILLA_PEZZO=16777216
+EXILLA_CI_E=no
+EXILLA_MB=0
+SIS_MB=$(du -sm "$FUORI/file" | cut -f1)
+
+if [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
+    EXILLA_CI_E=si
+    E="$FUORI/file/$EXILLA_DOVE"
+    mkdir -p "$E" "$FUORI/pacchetti"
+
+    # firefox-bin e' una seconda copia di firefox che qui nessuno lancia;
+    # pingsender manda la telemetria, che e' spenta.
+    ( cd "$EXILLA_DIST" && find . -type f ! -name firefox ! -name firefox-bin \
+          ! -name pingsender -print0 | cpio -0 -pdm --quiet "$RADICE/$E" )
+    strip -o "$E/firefox" "$EXILLA_DIST/firefox"
+    cp "$EXILLA_LANCIA" "$E/exilla"
+    cp "$EXILLA_ICONE"/exilla_64.ico "$EXILLA_ICONE"/exilla_128.ico "$E/"
+
+    {
+        echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto[<TAB>pezzi=<byte per pezzo>]"
+        ( cd "$FUORI/file" && find "$EXILLA_DOVE" -type f -printf '%p\n' | LC_ALL=C sort ) \
+        | while IFS= read -r p; do
+            b=$(stat -c %s "$FUORI/file/$p")
+            h=$(sha256sum "$FUORI/file/$p" | cut -d' ' -f1)
+            if [ "$b" -gt "$EXILLA_PEZZO" ]; then
+                # split numera da 000 e non lascia l'intero: sul server ci
+                # vanno solo i pezzi.
+                split -b "$EXILLA_PEZZO" -d -a 3 "$FUORI/file/$p" "$FUORI/file/$p.p"
+                rm -f "$FUORI/file/$p"
+                printf '%s\t%s\t%s\texilla\tpezzi=%s\n' "$p" "$b" "$h" "$EXILLA_PEZZO"
+            else
+                printf '%s\t%s\t%s\texilla\n' "$p" "$b" "$h"
+            fi
+        done
+    } > "$FUORI/pacchetti/exilla.txt"
+    EXILLA_MB=$(awk -F'\t' '!/^#/ { s += $2 } END { printf "%d", (s + 1048575) / 1048576 }' \
+                "$FUORI/pacchetti/exilla.txt")
+fi
+
 # --- il catalogo ------------------------------------------------------------
 #
 # ! IL FORMATO E' QUELLO DI tools/iso/strumenti.txt, e non e' pigrizia: quel
@@ -305,7 +379,7 @@ CAT="$FUORI/catalogo.txt"
     echo "vuole  = avvio"
     echo "prova  = bin/sh"
     echo "sempre = si"
-    echo "mbyte  = $(du -sm "$FUORI/file" | cut -f1)"
+    echo "mbyte  = $SIS_MB"
     echo ""
     if [ "$STRUM_CI_SONO" = si ] && [ -f tools/iso/strumenti.txt ]; then
         echo "# --- gli strumenti di sviluppo, dal catalogo del CD ---"
@@ -343,6 +417,18 @@ CAT="$FUORI/catalogo.txt"
                 { print }
             '
     fi
+    if [ "$EXILLA_CI_E" = si ]; then
+        echo ""
+        echo "# --- Exilla: l'elenco dei suoi file sta a parte (vedi mknetinst.sh) ---"
+        echo "[exilla]"
+        echo "nome   = Exilla"
+        echo "dice   = Firefox per EX-OS: vuole 512 MB di memoria, meglio 1 GB"
+        echo "prova  = $EXILLA_DOVE/firefox"
+        echo "mbyte  = $EXILLA_MB"
+        echo "elenco = pacchetti/exilla.txt"
+        echo "elimpronta = $(sha256sum "$FUORI/pacchetti/exilla.txt" | cut -d' ' -f1)"
+        echo "menu   = Internet/Exilla (Firefox) | /$EXILLA_DOVE/exilla | /$EXILLA_DOVE/exilla_64.ico"
+    fi
 } > "$CAT"
 
 # --- l'elenco dei file ------------------------------------------------------
@@ -370,7 +456,7 @@ N_FILE=$(grep -vc '^#' "$ELE" || true)
 # catalogo che non possiede NESSUN file e' un errore che si vede solo cosi'
 # — vuol dire che i suoi `solo` non combaciano piu' con l'albero, e chi lo
 # installasse scaricherebbe zero file credendo di averlo installato.
-CONTI=$(grep -v '^#' "$ELE" | cut -f4 | LC_ALL=C sort | uniq -c | sort -rn)
+CONTI=$(cat "$ELE" "$FUORI"/pacchetti/*.txt 2>/dev/null | grep -v '^#' | cut -f4 | LC_ALL=C sort | uniq -c | sort -rn)
 
 # --- il file di versione ----------------------------------------------------
 #
@@ -383,7 +469,7 @@ CONTI=$(grep -v '^#' "$ELE" | cut -f4 | LC_ALL=C sort | uniq -c | sort -rn)
     echo "versione  = $VERSIONE"
     echo "data      = $DATA"
     echo "file      = $N_FILE"
-    echo "byte      = $(du -sb "$FUORI/file" | cut -f1)"
+    echo "byte      = $(grep -v "^#" "$ELE" | awk -F"\t" "{ s += \$2 } END { printf \"%d\", s }")"
     echo "catalogo  = $(sha256sum "$CAT" | cut -d' ' -f1)"
     echo "elenco    = $(sha256sum "$ELE" | cut -d' ' -f1)"
 } > "$FUORI/versione.txt"
@@ -437,6 +523,14 @@ if [ -s "$TEMP/archivi" ]; then
     while IFS='	' read -r id arcb arch srot; do
         echo "    $(printf '%-12s' "$id") $((arcb / 1024)) KB compresso, $((srot / 1024)) KB aperto"
     done < "$TEMP/archivi"
+fi
+if [ "$EXILLA_CI_E" = si ]; then
+    echo ""
+    echo "  Exilla: $EXILLA_MB MB, $(grep -vc '^#' "$FUORI/pacchetti/exilla.txt") file" \
+         "($(find "$FUORI/file/$EXILLA_DOVE" -name '*.p[0-9][0-9][0-9]' | wc -l) pezzi da $((EXILLA_PEZZO / 1048576)) MB)."
+    echo "    Si installa con:  netupdate -install:exilla"
+else
+    echo "     ! SENZA EXILLA: manca $EXILLA_DIST/firefox o $EXILLA_LANCIA."
 fi
 if [ "$STRUM_CI_SONO" != si ]; then
     echo "     ! SENZA GLI STRUMENTI: $STRUMENTI/exos/bin/gcc non c'e'."

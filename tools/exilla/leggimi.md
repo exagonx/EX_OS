@@ -507,6 +507,44 @@ Restano della tappa 7: i menu a comparsa e il ridimensionamento da riprovare
 uno per uno (il codice c'e'), gli errori di IndexedDB/SQLite sul profilo, la
 forma del puntatore, e quei 23 secondi.
 
+**10 ottobre 2026: la tappa 7 si chiude, e la 8 e' fatta - Exilla si installa.**
+
+Tappa 7, provato in QEMU col mouse e la tastiera: il clic sul pulsante del
+menu apre il menu dell'applicazione (una finestra a comparsa di 352x510), i
+suggerimenti compaiono passando sopra i pulsanti, Ctrl+T apre una scheda, e
+la finestra ha i tre pulsanti di ExWin (riduci, a tutto schermo, chiudi).
+Non provati: il menu del tasto destro, il trascinamento dell'angolo.
+
+Tappa 8, il pacchetto. Exilla e' un pacchetto del repository di netupdate:
+
+    make netinst                       # la mette in dist/netinst da solo
+    netupdate -install:exilla          # su EX-OS: finisce in /exwin/app/exilla
+
+`tools/mknetinst.sh` prende `cross_build/exilla-obj/gecko/dist/firefox`
+(senza `firefox-bin`, una seconda copia, ne' `pingsender`), toglie i simboli
+a `firefox` (192 MB invece di 274: la copia con i simboli resta qui, per nm e
+addr2line), aggiunge il lanciatore (`exwin/bin/exilla`, costruito in
+`build/exilla`) e le icone, e pubblica i file sopra i 16 MB a pezzi. L'elenco
+dei file sta in `pacchetti/exilla.txt` e non in `elenco.txt`: cosi' `-check
+-yesall` non la porta su chi non l'ha chiesta. La voce nel menu (Avvio >
+Internet) la scrive netupdate dalla chiave `menu` del catalogo.
+
+Il lanciatore prepara l'ambiente (un processo solo, il profilo in
+`$HOME/.exilla`, i caratteri di ExWin) e fa partire Firefox. Fino al 9
+ottobre c'era un'altra strada (`pacchetto.sh` + `exilla -installa` da una
+chiavetta, in `/exilla`): tolta, perche' il registro di netupdate non la
+conosceva. Da fare: Exilla anche sulla ISO degli strumenti
+(@EXILLA-ISO-STRUMENTI in in_lavorazione.txt).
+
+Provato in QEMU su un disco installato, contro il repository costruito qui
+(servito all'ospite da `tools/prova_netupdate_http.py`, senza aprire niente
+sulla macchina): `netupdate -install:exilla` porta i 12 file in una ventina
+di minuti, un pezzo troncato apposta viene rifatto, la voce compare in Avvio >
+Internet e da li' Firefox parte; `-check` la tiene, `-remove:exilla` la
+toglie. Non provato: il repository pubblicato e una macchina vera.
+
+![Exilla avviata dal suo lanciatore](tappa8-installata.png)
+
 ## 1. L'albero
 
 `/firefox-main/` (fuori da git, vedi `.gitignore`): **Firefox 158.0a1**, 4,9 GB.

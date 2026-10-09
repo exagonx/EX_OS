@@ -257,6 +257,21 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
   un quarto di meta' e scrive i conti di ogni riproduzione nel registro
   (`dmesg hdaudio`). Da riascoltare.
+- **Exilla e' un pacchetto del repository (tappa 8 del porting di Firefox).**
+  `netupdate -install:exilla` la scarica in `/exwin/app/exilla` (navigatore,
+  lanciatore, icone: 290 MB) e scrive la voce nel menu della scrivania, nella
+  nuova categoria **Internet** dove e' passato anche EXBrowser;
+  `netupdate -remove:exilla` toglie file e voce. `netupdate` 0.027: un
+  pacchetto puo' avere l'elenco dei file suo (`pacchetti/exilla.txt`, cosi'
+  `-check -yesall` non porta Exilla su chi non l'ha chiesta), i file sopra i
+  16 MB si pubblicano e si scaricano a pezzi (`firefox.p000`...) con ripresa
+  dal pezzo mancato, e la chiave `menu` del catalogo diventa una riga di
+  `applicazioni.txt`. Il program manager (0.019) tiene 48 voci invece di 16:
+  il sistema di base le riempiva gia' tutte. `firefox` e' pubblicato senza simboli: 192 MB invece di
+  274. `make netinst` la mette nel repository da solo; `exagonx/pubblica.sh` e
+  `verifica.sh` conoscono liste e pezzi. Provata in QEMU contro il repository
+  costruito qui (non contro quello pubblicato); su una macchina vera e' da
+  provare.
 - **EXBrowser: i risultati di Yahoo al loro posto, e quelli di Bing si
   aprono.** Su Yahoo la colonna dei risultati finiva a destra delle linguette
   e oltre il bordo: un blocco che non ci sta accanto a un galleggiante ora

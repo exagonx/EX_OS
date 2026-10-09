@@ -39,19 +39,23 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.018"
+#define VERSIONE_APP "0.019"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
 #define MENU_W      220
 #define VOCE_H      24
-#define APP_MAX     16
+/* ! ERANO 16, E IL SISTEMA DI BASE LE RIEMPIVA TUTTE (9 ottobre 2026): la
+ * diciassettesima - Exilla, aggiunta da netupdate - stava nel file e non
+ * compariva nel menu, senza un messaggio. 48 lascia posto ai pacchetti; gli
+ * identificatori delle voci (ID_VOCE + n) restano sotto ID_CAT. */
+#define APP_MAX     48
 
 #define ID_AVVIO    1
 #define ID_VOCE     100     /* ID_VOCE + n = la voce n del menu */
 /* ! LE CATEGORIE HANNO UNA FASCIA LORO, E LONTANA. ID_CAT + n non deve poter
  * cadere dentro ID_VOCE + n, o premere una categoria avvierebbe un programma:
- * sedici applicazioni al massimo (APP_MAX), quindi duecento e' fuori portata
+ * quarantotto applicazioni al massimo (APP_MAX), quindi duecento e' fuori portata
  * con margine. */
 #define ID_CAT      200     /* ID_CAT + n = la categoria n */
 #define ICONA_LATO   16     /* in una voce alta 24, con l'aria intorno */
@@ -225,7 +229,11 @@ static void applicazioni_leggi(const char *percorso)
             }
 
             if (riga[0] == '#' || riga[0] == '\0' || !barra) continue;
-            if (g_app_n >= APP_MAX) break;
+            if (g_app_n >= APP_MAX) {
+                log_seriale("pm: applicazioni.txt ha piu' voci di quante ne tengo: "
+                            "le ultime non sono nel menu\n");
+                break;
+            }
 
             *barra = '\0';
             p = barra + 1;
