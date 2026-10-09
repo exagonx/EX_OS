@@ -657,3 +657,26 @@ Exilla, una alla volta, ognuna con la sua prova.
 
 Sulla macchina di compilazione: il `mozconfig` di partenza, le patch e i
 comandi si scrivono qui, tappa per tappa, man mano che si fanno.
+
+**9 ottobre 2026: la barra di scorrimento si vede.** L'utente, da una macchina
+vera con Exilla installata dal repository: Google e i siti moderni
+funzionano; il caricamento e' lento; la barra laterale «ci clicco ed e' come
+se fosse li', ma resta invisibile».
+
+La barra era quella di Android (`ScrollbarDrawingAndroid`, scelta in
+`widget/Theme.cpp` per non dipendere da un tema di sistema): un pollice
+sottile pensato per uno schermo da toccare. In piu' i colori di ripiego di
+Gecko davano lo stesso bianco alla pista e al pollice. Ora e' quella classica
+(`ScrollbarDrawingWin`) con una freccia per capo, e
+`widget/exos/nsLookAndFeel.cpp` da' i grigi delle barre di ExWin. Provato in
+QEMU su una pagina lunga: pista, pollice e frecce si vedono.
+
+Due cose viste e NON risolte:
+- in una prova su tre i titoli (h1, h2) della pagina non sono stati disegnati,
+  pur essendoci lo spazio; nelle altre due si'. Non dipende da questa
+  modifica (la prima prova era con la barra nuova e i titoli c'erano): e' un
+  difetto intermittente da cercare, probabilmente nel caricamento dei font;
+- il «caricamento lento» sulla macchina vera non e' misurato. Due cause
+  probabili, tutte e due fuori da Firefox: il disco SATA letto in PIO (192 MB
+  di eseguibile caricati a richiesta), e la finestra di TCP da 4 KB, che
+  `ip.drv` 0.009 porta a 63.

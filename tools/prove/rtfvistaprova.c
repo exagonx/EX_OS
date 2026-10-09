@@ -67,7 +67,7 @@ unsigned int ex_clipboard_get(char *out, unsigned int max)
 /* --- la prova ------------------------------------------------------------ */
 static char          g_testo[65536];
 static ExRtfPezzo    g_pezzi[4096];
-static unsigned char g_all[4096];
+static ExRtfPar g_all[4096];
 static ExRtfRiga     g_righe[4096];
 static ExRtfDoc      d;
 static ExRtfVista    v;
@@ -182,13 +182,13 @@ int main(void)
     tasto(KBD_K_END, 1);
     tasto('\n', 1);
     scrivi("ab");
-    ok(d.par_n == 2 && d.allinea[1] == EXRTF_CENTRO && v.righe_n == 2 &&
+    ok(d.par_n == 2 && d.par[1].allinea == EXRTF_CENTRO && v.righe_n == 2 &&
        cursore_x() == x0 + (80 - 16) / 2 + 16, "Invio: il paragrafo nuovo resta centrato");
     exrtf_vista_allinea(&v, EXRTF_DESTRA);
-    ok(cursore_x() == x0 + 80 && d.allinea[0] == EXRTF_CENTRO, "a destra solo il secondo");
+    ok(cursore_x() == x0 + 80 && d.par[0].allinea == EXRTF_CENTRO, "a destra solo il secondo");
     tasto(KBD_K_HOME, 1);
     tasto('\b', 1);
-    ok(d.par_n == 1 && d.allinea[0] == EXRTF_CENTRO && strcmp(d.testo, "titoloab") == 0,
+    ok(d.par_n == 1 && d.par[0].allinea == EXRTF_CENTRO && strcmp(d.testo, "titoloab") == 0,
        "Indietro a inizio paragrafo: i due si uniscono, col primo allineamento");
 
     nuovo("aa bb cc dd ee ff", 110, 200);          /* 80 px: «aa bb cc » / «dd ee ff» */
@@ -234,6 +234,78 @@ int main(void)
         ok(v.prima == 36 && cursore_x() == x0, "in fondo: si vedono le ultime cinque (l'ultima vuota)");
         exrtf_vista_rotella(&v, -2);
         ok(v.prima == 30, "la rotella: tre righe a scatto");
+    }
+
+    printf("--- tabulazioni e rientri (9 ottobre 2026) ---\n");
+    nuovo("a\tb", 400, 100);
+    tasto(KBD_K_RIGHT, 2);
+    ok(cursore_x() == x0 + 48, "dopo la tabulazione: al primo arresto (mezzo pollice, 48 px)");
+    exrtf_vista_tab(&v, 1500, 1);
+    ok(cursore_x() == x0 + 100, "con un arresto a 1500 twips: a 100 px");
+    exrtf_vista_tab(&v, 1500, 0);
+    ok(cursore_x() == x0 + 48 && d.par[0].tab_n == 0, "tolto: torna quello di serie");
+    nuovo("aaaa\tb", 400, 100);
+    tasto(KBD_K_END, 1);
+    ok(cursore_x() == x0 + 48 + 8, "quattro lettere (32 px) e la tabulazione: ancora 48, poi la b");
+    nuovo("aaaaaa\tb", 400, 100);
+    tasto(KBD_K_END, 1);
+    ok(cursore_x() == x0 + 96 + 8, "sei lettere (48 px): la tabulazione va all'arresto DOPO");
+
+    nuovo("uno due tre quattro cinque sei", 110, 200);    /* 80 px utili */
+    exrtf_vista_par_cambia(&v, EXRTF_P_SIN, 300);           /* 20 px */
+    ok(v.righe[0].x0 == 20 && v.righe[0].util == 60 && cursore_x() == x0 + 20,
+       "rientro sinistro: la riga comincia e finisce prima");
+    exrtf_vista_par_cambia(&v, EXRTF_P_PRIMA, 240);         /* 16 px */
+    ok(v.righe[0].x0 == 36 && v.righe[1].x0 == 20, "rientro di prima riga: solo la prima");
+    exrtf_vista_par_cambia(&v, EXRTF_P_PRIMA, -300);
+    ok(v.righe[0].x0 == 0 && v.righe[1].x0 == 20, "rientro sporgente: la prima a sinistra delle altre");
+    exrtf_vista_par_cambia(&v, EXRTF_P_PRIMA, 0);
+    exrtf_vista_par_cambia(&v, EXRTF_P_SIN, 0);
+    exrtf_vista_par_cambia(&v, EXRTF_P_DES, 240);           /* 16 px: 64 utili = 8 lettere */
+    ok(v.righe[0].util == 64 && v.righe[0].fine == 8, "rientro destro: 'uno due ' e a capo");
+
+    nuovo("1.\ttesto", 400, 100);
+    exrtf_vista_par_cambia(&v, EXRTF_P_SIN, 600);           /* 40 px */
+    exrtf_vista_par_cambia(&v, EXRTF_P_PRIMA, -600);
+    tasto(KBD_K_RIGHT, 3);
+    ok(cursore_x() == x0 + 40, "sporgente: la tabulazione si ferma al rientro sinistro");
+
+    nuovo("a\nb", 400, 200);
+    exrtf_vista_par_cambia(&v, EXRTF_P_INTERLINEA, 200);
+    ok(v.righe[0].h == 40 && v.righe[1].y == 40 && v.righe[1].h == 20, "interlinea doppia: solo il paragrafo del cursore");
+    exrtf_vista_par_cambia(&v, EXRTF_P_SP_DOPO, 150);       /* 10 px */
+    ok(v.righe[1].y == 50, "spazio dopo il paragrafo");
+
+    printf("--- la pagina ---\n");
+    {
+        static char lungo[4000];
+        int cx, cw;
+
+        lungo[0] = 0;
+        for (i = 0; i < 100; i++) strcat(lungo, "riga\n");
+        nuovo(lungo, 900, 300);
+        exrtf_vista_modo(&v, 1);
+        exrtf_vista_colonna(&v, &cx, &cw);
+        ok(cw == 643 && v.righe[0].util == 643, "la colonna e' quella dell'A4 meno i margini: 643 px");
+        ok(cx == 100 + (900 - 14 - 794) / 2 + 76, "il foglio al centro, il testo dopo il margine sinistro");
+        ok(v.pagine == 3 && v.righe[48].salto && !v.righe[47].salto && v.righe[96].salto,
+           "48 righe da 20 px per pagina (971 px): tre pagine");
+        ok(v.righe[48].y == 48 * 20 + 14, "e fra una pagina e l'altra la fascia");
+        tasto(KBD_K_END | KBD_MOD_CTRL, 1);
+        ok(exrtf_vista_pagina_di(&v) == 3, "il cursore in fondo: pagina 3");
+        nuovo(lungo, 400, 300);                         /* piu' stretta del foglio */
+        v.pagina = 1;
+        exrtf_vista_modo(&v, 1);
+        exrtf_vista_colonna(&v, &cx, &cw);
+        ok(cx == 100 + 8 && v.sx == 0, "finestra piu' stretta della colonna: il testo parte da sinistra");
+        tasto(KBD_K_END, 1);
+        ok(v.sx == 0, "e la fine di una riga corta non fa scorrere di lato");
+        nuovo(lungo, 700, 300);
+        exrtf_vista_modo(&v, 1);
+        exrtf_vista_colonna(&v, &cx, &cw);
+        ok(cx == 100 + (700 - 14 - 643) / 2, "finestra fra colonna e foglio: la colonna al centro, i margini tagliati");
+        exrtf_vista_modo(&v, 0);
+        ok(v.pagine == 1 && v.righe[0].util == 700 - 16 - 14, "tornando alla larghezza della finestra");
     }
 
     if (g_no) mostra();

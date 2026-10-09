@@ -84,7 +84,7 @@
 
 /* +0.001 a ogni modifica: `ne2k.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ne2k.drv", "0.001");
+EX_VERSIONE("ne2k.drv", "0.002");
 
 /* =============================================================================
  * Registri DP8390. Gli offset 0x00-0x0F cambiano significato secondo la
@@ -195,12 +195,14 @@ static char          g_modello[32];
 static unsigned int  g_bus = 0xFFFFFFFF, g_slot, g_funzione;
 static NetContatori  g_cont;
 
-/* Coda dei frame ricevuti. Otto sono un compromesso: abbastanza per
- * assorbire una raffica mentre lo stack e' occupato, poco abbastanza da
- * non tenere 100 KB fermi. Quando e' piena si scarta il piu' VECCHIO —
+/* Coda dei frame ricevuti. Erano otto, «poco abbastanza da non tenere 100 KB
+ * fermi»: ma dal 9 ottobre 2026 la finestra di TCP e' di 63 KB (ip.drv 0.009)
+ * e le raffiche sono di una quarantina di frame - con otto posti se ne
+ * perdevano, e ogni perdita e' una ritrasmissione. La memoria della coda si
+ * tocca solo se la coda si riempie: finche' resta corta, resta sulla carta. Quando e' piena si scarta il piu' VECCHIO —
  * in rete un pacchetto vecchio vale meno di uno nuovo, e la ritrasmissione
  * di chi lo aspettava e' gia' partita. */
-#define CODA_FRAME 8
+#define CODA_FRAME 64      /* era 8: vedi ip.drv 0.009, la finestra di TCP a 63 KB */
 static struct {
     unsigned int  len;
     unsigned char dati[NET_FRAME_MAX];

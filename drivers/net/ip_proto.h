@@ -180,11 +180,11 @@ typedef struct {
      * arrivano interi e vengono buttati da NOI. Sono due, e sono diversi:
      *
      *   tcp_fuori_seq  arrivato con un numero di sequenza che non e' quello
-     *                  atteso. Non si tiene da parte niente (vedi piu' su):
-     *                  si scarta e si riconferma dove si era rimasti. Un solo
-     *                  pacchetto perso prima fa scartare TUTTI quelli gia' in
-     *                  volo dietro di lui — con una finestra larga sono dieci
-     *                  o piu', e li ritrasmette tutti il mittente
+     *                  atteso: un pacchetto prima di lui si e' perso, o ha
+     *                  preso un'altra strada. Dal 9 ottobre 2026 si tiene da
+     *                  parte (fino a otto tratti) e si riconferma dove si era
+     *                  rimasti; prima si scartava. Il numero resta il segno
+     *                  di quanto la strada consegna in disordine
      *   tcp_pieno      arrivato in ordine ma senza posto nel buffer: quello
      *                  si', e' la finestra che non basta
      *
@@ -271,16 +271,15 @@ typedef struct {
  * -----------------------------------------------------------------------------
  * ! COSA MANCA, DETTO SUBITO
  *
- *   - NIENTE RIORDINO. Un segmento che arriva fuori sequenza viene
- *     SCARTATO, non tenuto da parte: chi l'ha mandato lo ritrasmettera'.
- *     E' corretto ma non efficiente, e su una rete che perde molto si
- *     vede. Tenere i pezzi vuole una lista con le sue scadenze, ed e' il
- *     posto dove un TCP giovane prende i bug peggiori.
+ *   - IL RIORDINO C'E' DAL 9 OTTOBRE 2026 (ip.drv 0.009), ed e' piccolo:
+ *     fino a otto tratti arrivati in anticipo restano nel buffer di
+ *     ricezione, che e' diventato di 63 KB. Oltre, si scarta come prima.
  *   - NIENTE CONTROLLO DI CONGESTIONE. Non c'e' slow start, non c'e'
  *     congestion window: si manda quello che la finestra dell'altro
  *     consente. Su una rete locale non cambia niente; su Internet
  *     significa essere maleducati sotto perdita.
- *   - NIENTE SACK, niente window scaling, niente timestamp.
+ *   - NIENTE SACK, niente window scaling (la finestra si ferma a 63 KB),
+ *     niente timestamp.
  *   - RTO FISSO. Non si misura il tempo di andata e ritorno: si ritrasmette
  *     a intervalli raddoppianti da un valore di partenza. Misurarlo
  *     davvero (Karn, Jacobson) e' il passo successivo, non questo.

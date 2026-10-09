@@ -60,10 +60,92 @@ static ExFont font_di(const ExRtfStile *s)
 static unsigned int minimo(unsigned int a, unsigned int b) { return a < b ? a : b; }
 static unsigned int massimo(unsigned int a, unsigned int b) { return a > b ? a : b; }
 
+int exrtf_px(int twips)    { return twips >= 0 ? (twips + 7) / 15 : -((-twips + 7) / 15); }
+int exrtf_twips(int px)    { return px * 15; }
+
+#define FOGLIO_ARIA   10        /* grey left and right of the sheet */
+#define FOGLIO_FONDO  0x00909090
+#define SALTO_H       14        /* the band between two pages */
+
 static int utile(const ExRtfVista *v)           /* the width lines may take */
 {
-    int u = v->w - 2 * MARGINE - BARRA;
+    int u;
+
+    if (v->pagina) u = exrtf_px((int)exrtf_colonna(v->doc));
+    else           u = v->w - 2 * MARGINE - BARRA;
     return u < 16 ? 16 : u;
+}
+
+/* The sheet: where it starts in the window and how wide it is. In the
+ * window-wide layout the "sheet" is the whole view. */
+static void foglio(const ExRtfVista *v, int *fx, int *fw)
+{
+    int area = v->w - BARRA;
+
+    int col, ms;
+
+    if (!v->pagina) { *fx = v->x; *fw = area; return; }
+    *fw = exrtf_px((int)v->doc->carta_w);
+    col = exrtf_px((int)exrtf_colonna(v->doc));
+    ms  = exrtf_px((int)v->doc->marg_sin);
+    /* ! A WINDOW NARROWER THAN THE PAPER SHOWS THE TEXT, NOT THE MARGIN. The
+     * whole sheet when it fits; when it does not but the column does, the
+     * column in the middle and the paper's margins cut at the sides; only a
+     * window narrower than the column itself scrolls sideways. */
+    if (*fw + 2 * FOGLIO_ARIA <= area)  *fx = v->x + (area - *fw) / 2;
+    else if (col + 2 * MARGINE <= area) *fx = v->x + (area - col) / 2 - ms;
+    else                                *fx = v->x + MARGINE - ms - v->sx;
+}
+
+/* The x of the left margin of the text: the zero every line counts from. */
+static int col_x(const ExRtfVista *v)
+{
+    int fx, fw;
+
+    if (!v->pagina) return v->x + MARGINE;
+    foglio(v, &fx, &fw);
+    return fx + exrtf_px((int)v->doc->marg_sin);
+}
+
+void exrtf_vista_colonna(const ExRtfVista *v, int *x, int *w)
+{
+    *x = col_x(v);
+    *w = utile(v);
+}
+
+static const ExRtfPar *par_di(const ExRtfDoc *d, unsigned int par)
+{
+    static ExRtfPar base;
+
+    if (par < d->par_n) return &d->par[par];
+    exrtf_par_base(&base);
+    return &base;
+}
+
+/* The next tab stop after x (pixels from the left margin): the paragraph's
+ * own, then the default ones. With a hanging indent the left indent is a
+ * stop too - it is how "1.<tab>text" lines its text up. */
+static int tab_dopo(const ExRtfPar *P, int x)
+{
+    unsigned int i;
+    int passo = exrtf_px(EXRTF_TAB_PASSO), s;
+
+    if (P->prima < 0) {
+        s = exrtf_px(P->sin);
+        if (s > x) {
+            for (i = 0; i < P->tab_n; i++) {
+                int t = exrtf_px(P->tab[i]);
+                if (t > x && t < s) return t;
+            }
+            return s;
+        }
+    }
+    for (i = 0; i < P->tab_n; i++) {
+        int t = exrtf_px(P->tab[i]);
+        if (t > x) return t;
+    }
+    if (passo < 4) passo = 4;
+    return (x / passo + 1) * passo;
 }
 
 /* The next and previous character boundary (UTF-8). */
@@ -170,58 +252,106 @@ static void metrica(const ExRtfVista *v, unsigned int da, unsigned int a, int *h
     *base = su;
 }
 
-static void riga_aggiungi(ExRtfVista *v, unsigned int da, unsigned int a, int largo,
-                          unsigned int spazi, unsigned int allinea, int *y)
+static ExRtfRiga *riga_aggiungi(ExRtfVista *v, unsigned int da, unsigned int a, int largo,
+                                unsigned int spazi, unsigned int allinea, int *y)
 {
     ExRtfRiga *r;
 
-    if (v->righe_n >= v->righe_max) return;
+    if (v->righe_n >= v->righe_max) return 0;
     r = &v->righe[v->righe_n++];
     r->inizio = da;
     r->fine = a;
     r->largo = largo;
     r->spazi = spazi;
     r->allinea = (unsigned char)allinea;
+    r->salto = 0;
+    r->x0 = 0;
+    r->util = (short)utile(v);
+    r->par = 0;
+    r->giusto_da = da;
     metrica(v, da, a, &r->h, &r->base);
     r->y = *y;
     *y += r->h;
+    return r;
 }
 
+/* ! THE LAYOUT KNOWS INDENTS AND TAB STOPS (9 October 2026). Every line has
+ * its own start and its own width: the paragraph's left indent, plus the
+ * first-line indent on the first, up to the right indent. Inside a line the
+ * x is counted from the left margin, because that is where tab stops are
+ * measured from - on the ruler and in the file.
+ *
+ * ! A TAB IS A JUMP, NOT A LETTER: it takes the pen to the next stop. A stop
+ * past the end of the line sends the tab to the next line, unless it is the
+ * first thing on its line (or nothing would ever fit).
+ *
+ * ! A LINE WITH TABS IS JUSTIFIED ONLY AFTER ITS LAST TAB: stretching the
+ * spaces before a tab would move what the tab had just lined up. */
 void exrtf_vista_impagina(ExRtfVista *v)
 {
     const ExRtfDoc *d = v->doc;
     unsigned int pos = 0, par = 0;
-    int y = 0, largh = utile(v);
+    int y = 0, col = utile(v);
+    int pag_h = v->pagina ? exrtf_px((int)d->carta_h - (int)d->marg_su - (int)d->marg_giu) : 0;
+    int pag_y = 0;                  /* where the current page began */
 
     v->righe_n = 0;
+    v->pagine = 1;
     if (v->w <= 0) return;          /* not placed yet: exrtf_vista_posto lays out */
+    if (pag_h < 100) pag_h = v->pagina ? 100 : 0;
     for (;;) {
+        const ExRtfPar *P = par_di(d, par);
         unsigned int fp = pos, s;
-        unsigned int al;
+        unsigned int al = P->allinea;
+        int sin = exrtf_px(P->sin), des = exrtf_px(P->des), prima = exrtf_px(P->prima);
+        int limite = col - des;
+        int prima_riga = 1;
 
         while (fp < d->testo_n && d->testo[fp] != '\n') fp++;
-        al = par < d->par_n ? d->allinea[par] : EXRTF_SINISTRA;
+        if (limite < sin + 24) limite = sin + 24;       /* indents that eat the page */
+        if (limite > col && col > 24) limite = col;
+        y += exrtf_px(P->sp_prima);
 
         s = pos;
         do {
-            unsigned int i = s, spazi = 0, spazi_vis = 0;
-            int largo = 0, largo_vis = 0;
+            unsigned int i = s, spazi = 0, spazi_vis = 0, giusto_da = s;
+            int x0 = sin + (prima_riga ? prima : 0);
+            int x, x_vis;
+            int ha_tab = 0;
+            ExRtfRiga *r;
 
-            /* Words, each with the spaces after it, while they fit. */
+            if (x0 < 0) x0 = 0;
+            if (x0 > limite - 24) x0 = limite - 24;
+            x = x_vis = x0;
+
             while (i < fp) {
                 unsigned int j = i, k;
                 int ww;
 
-                while (j < fp && d->testo[j] != ' ') j++;
+                if (d->testo[i] == '\t') {
+                    int nx = tab_dopo(P, x);
+
+                    if (nx > limite) {
+                        if (i > s) break;       /* to the next line */
+                        nx = limite;
+                    }
+                    x = x_vis = nx;
+                    i++;
+                    ha_tab = 1;
+                    spazi = spazi_vis = 0;
+                    giusto_da = i;
+                    continue;
+                }
+                while (j < fp && d->testo[j] != ' ' && d->testo[j] != '\t') j++;
                 k = j;
                 while (k < fp && d->testo[k] == ' ') k++;
                 ww = misura(v, i, j);
-                if (largo + ww > largh) {
+                if (x + ww > limite) {
                     /* ! A WORD LONGER THAN THE LINE IS CUT BY LETTERS, and
                      * only when it is the first of its line: otherwise it
                      * goes whole to the next one. At least one letter stays,
                      * or a very narrow view would never end a line. */
-                    if (i == s) {
+                    if (i == s || (ha_tab && giusto_da == i && x0 + ww > limite)) {
                         unsigned int c = i;
                         int cw = 0;
 
@@ -229,28 +359,54 @@ void exrtf_vista_impagina(ExRtfVista *v)
                             unsigned int c2 = dopo(d, c);
                             int w2 = misura(v, c, c2);
 
-                            if (cw + w2 > largh && c > i) break;
+                            if (x + cw + w2 > limite && c > i) break;
                             cw += w2;
                             c = c2;
                         }
-                        largo_vis = cw;
-                        spazi_vis = 0;
+                        x_vis = x + cw;
+                        spazi_vis = spazi;
                         i = c;
                     }
                     break;
                 }
-                largo_vis = largo + ww;
+                x_vis = x + ww;
                 spazi_vis = spazi;
-                largo += ww + misura(v, j, k);
+                x += ww + misura(v, j, k);
                 spazi += k - j;
                 i = k;
             }
+            if (i == s && i < fp) i = dopo(d, i);       /* never an empty step */
+
             /* A paragraph's last line is never justified. */
-            riga_aggiungi(v, s, i, largo_vis, spazi_vis,
-                          (i >= fp && al == EXRTF_GIUSTO) ? EXRTF_SINISTRA : al, &y);
+            r = riga_aggiungi(v, s, i, x_vis - x0, spazi_vis,
+                              (i >= fp && al == EXRTF_GIUSTO) ? EXRTF_SINISTRA : al, &y);
+            if (r) {
+                r->x0 = (short)x0;
+                r->util = (short)(limite - x0);
+                r->par = par;
+                r->giusto_da = giusto_da;
+                if (P->interlinea > 100) {
+                    int piu = r->h * (int)(P->interlinea - 100) / 100;
+                    r->h += piu;
+                    y += piu;
+                }
+                /* The page: a line that does not fit goes to the next one,
+                 * after a band that shows where the paper ends. */
+                if (pag_h && r->y + r->h - pag_y > pag_h && r->y > pag_y) {
+                    int giu = SALTO_H;
+
+                    r->salto = 1;
+                    r->y += giu;
+                    y += giu;
+                    pag_y = r->y;
+                    v->pagine++;
+                }
+            }
             s = i;
+            prima_riga = 0;
         } while (s < fp);
 
+        y += exrtf_px(P->sp_dopo);
         if (fp >= d->testo_n) break;
         pos = fp + 1;
         par++;
@@ -295,6 +451,26 @@ static unsigned int prima_massima(const ExRtfVista *v)
     return k;
 }
 
+static int x_di(const ExRtfVista *v, unsigned int pos);
+
+/* A sheet wider than the window scrolls sideways with the caret. */
+static void segui_lato(ExRtfVista *v)
+{
+    int area = v->w - BARRA, fw, fx, x, max;
+
+    if (!v->pagina) { v->sx = 0; return; }
+    max = exrtf_px((int)exrtf_colonna(v->doc)) + 2 * MARGINE - area;
+    if (max <= 0) { v->sx = 0; return; }
+    if (v->sx > max) v->sx = max;
+    if (v->sx < 0) v->sx = 0;
+    foglio(v, &fx, &fw);
+    x = x_di(v, v->cur);
+    if (x < v->x + 12) v->sx -= v->x + 12 - x;
+    if (x > v->x + area - 16) v->sx += x - (v->x + area - 16);
+    if (v->sx > max) v->sx = max;
+    if (v->sx < 0) v->sx = 0;
+}
+
 /* Scrolls so that the caret's line is in sight. */
 static void segui(ExRtfVista *v)
 {
@@ -302,6 +478,7 @@ static void segui(ExRtfVista *v)
 
     if (r < v->prima) v->prima = r;
     while (v->prima < r && r >= v->prima + visibili_da(v, v->prima)) v->prima++;
+    segui_lato(v);
 }
 
 static void scorri_righe(ExRtfVista *v, int n)
@@ -330,7 +507,7 @@ static int pollice(const ExRtfVista *v, int *ty, int *th)
  * -------------------------------------------------------------------------- */
 static int x_riga(const ExRtfVista *v, const ExRtfRiga *r)
 {
-    int x = v->x + MARGINE, resto = utile(v) - r->largo;
+    int x = col_x(v) + r->x0, resto = r->util - r->largo;
 
     if (resto < 0) resto = 0;
     if (r->allinea == EXRTF_CENTRO) x += resto / 2;
@@ -342,13 +519,14 @@ static unsigned int frammenti(const ExRtfVista *v, const ExRtfRiga *r,
                               unsigned int sel_da, unsigned int sel_a)
 {
     const ExRtfDoc *d = v->doc;
+    const ExRtfPar *P = par_di(d, r->par);
     unsigned int n = 0, pos = r->inizio, k, contati = 0;
-    int x = x_riga(v, r);
+    int xr = x_riga(v, r), x = xr;
     int giusto = (r->allinea == EXRTF_GIUSTO && r->spazi > 0);
     int per = 0, resto = 0;
 
     if (giusto) {
-        int tot = utile(v) - r->largo;
+        int tot = r->util - r->largo;
         if (tot < 0) tot = 0;
         per = tot / (int)r->spazi;
         resto = tot % (int)r->spazi;
@@ -360,22 +538,46 @@ static unsigned int frammenti(const ExRtfVista *v, const ExRtfRiga *r,
         Fram *fr;
 
         if (e <= pos) { k++; continue; }
+        fr = &g_fr[n];
+        fr->st = &p->stile;
+        fr->f = font_di(fr->st);
+        fr->extra = 0;
+        if (d->testo[pos] == '\t') {
+            /* A tab is a fragment of its own, as wide as the jump. */
+            int rel = x - xr + r->x0, nx = tab_dopo(P, rel);
+
+            if (nx > r->x0 + r->util) nx = r->x0 + r->util;
+            if (nx < rel) nx = rel;
+            fr->da = pos;
+            fr->a = pos + 1;
+            fr->x = x;
+            fr->w = nx - rel;
+            n++;
+            x += fr->w;
+            pos++;
+            if (pos >= p->inizio + p->lung) k++;
+            continue;
+        }
+        {
+            unsigned int q = pos;
+            while (q < e && d->testo[q] != '\t') q++;
+            e = q;
+        }
         if (sel_da > pos && sel_da < e) e = sel_da;
         if (sel_a > pos && sel_a < e) e = sel_a;
-        if (giusto) {
+        if (giusto && pos >= r->giusto_da) {
             unsigned int q = pos;
             while (q < e && d->testo[q] != ' ') q++;
             if (q < e) e = q + 1;
+        } else if (giusto && r->giusto_da > pos && r->giusto_da < e) {
+            e = r->giusto_da;
         }
-        fr = &g_fr[n++];
+        n++;
         fr->da = pos;
         fr->a = e;
-        fr->st = &p->stile;
-        fr->f = font_di(fr->st);
         fr->x = x;
         fr->w = misura_font(fr->f, d->testo + pos, e - pos);
-        fr->extra = 0;
-        if (giusto && d->testo[e - 1] == ' ' && contati < r->spazi) {
+        if (giusto && pos >= r->giusto_da && d->testo[e - 1] == ' ' && contati < r->spazi) {
             fr->extra = per + ((int)contati < resto ? 1 : 0);
             contati++;
         }
@@ -392,7 +594,7 @@ static int x_di(const ExRtfVista *v, unsigned int pos)
     const ExRtfRiga *r;
     unsigned int n, i;
 
-    if (v->righe_n == 0) return v->x + MARGINE;
+    if (v->righe_n == 0) return col_x(v);
     r = &v->righe[riga_di(v, pos)];
     n = frammenti(v, r, 0, 0);
     for (i = 0; i < n; i++)
@@ -422,7 +624,8 @@ static unsigned int pos_in_riga(const ExRtfVista *v, unsigned int ri, int x)
             int x2;
 
             if (c2 > fr->a) c2 = fr->a;
-            x2 = fr->x + misura_font(fr->f, d->testo + fr->da, c2 - fr->da);
+            if (d->testo[fr->da] == '\t') x2 = fr->x + fr->w;      /* a tab is as wide as its jump */
+            else x2 = fr->x + misura_font(fr->f, d->testo + fr->da, c2 - fr->da);
             if (c2 == fr->a) x2 += fr->extra;
             if (x < (xc + x2) / 2) return c;
             c = c2;
@@ -463,6 +666,9 @@ void exrtf_vista_prepara(ExRtfVista *v, ExRtfDoc *d, ExRtfRiga *righe, unsigned 
     v->w = v->h = 0;
     v->fuoco = 1;
     v->trascina = 0;
+    v->sx = 0;
+    v->pagine = 1;
+    /* v->pagina is the program's choice and outlives a change of document. */
     exrtf_stile_base(&v->stile);
     exrtf_vista_nuovo(v);
 }
@@ -471,6 +677,7 @@ void exrtf_vista_nuovo(ExRtfVista *v)
 {
     v->cur = v->anc = 0;
     v->prima = 0;
+    v->sx = 0;
     v->x_voluta = -1;
     v->modificato = 0;
     if (v->doc->pezzi_n) exrtf_stile_a(v->doc, 0, &v->stile);
@@ -522,7 +729,17 @@ void exrtf_vista_disegna(ExRtfVista *v, ExWindow f)
     unsigned int i, rc = riga_di(v, v->cur);
     int y0, fondo = v->y + v->h;
 
-    ex_fill_rect(f, v->x, v->y, v->w - BARRA, v->h, EX_WHITE);
+    if (v->pagina) {
+        int fx, fw, a = v->x, b = v->x + v->w - BARRA;
+
+        foglio(v, &fx, &fw);
+        ex_fill_rect(f, v->x, v->y, v->w - BARRA, v->h, FOGLIO_FONDO);
+        if (fx > a) a = fx;
+        if (fx + fw < b) b = fx + fw;
+        if (b > a) ex_fill_rect(f, a, v->y, b - a, v->h, EX_WHITE);
+    } else {
+        ex_fill_rect(f, v->x, v->y, v->w - BARRA, v->h, EX_WHITE);
+    }
     if (v->righe_n == 0) return;
     y0 = v->y + CIMA - v->righe[v->prima].y;
 
@@ -532,15 +749,21 @@ void exrtf_vista_disegna(ExRtfVista *v, ExWindow f)
         unsigned int n, j;
 
         if (ly + r->h > fondo) break;
+        /* Where the paper ends: a grey band across the sheet. */
+        if (r->salto && i > v->prima && ly - SALTO_H >= v->y)
+            ex_fill_rect(f, v->x, ly - SALTO_H + 2, v->w - BARRA, SALTO_H - 4, FOGLIO_FONDO);
         n = frammenti(v, r, sel_da, sel_a);
         for (j = 0; j < n; j++) {
             const Fram *fr = &g_fr[j];
             int scelto = sel_da < sel_a && fr->da >= sel_da && fr->a <= sel_a;
             unsigned int col = scelto ? EX_WHITE : fr->st->colore;
 
+            /* Off the view sideways (a sheet wider than the window). */
+            if (fr->x + fr->w + fr->extra <= v->x || fr->x >= v->x + v->w - BARRA) continue;
             if (scelto) ex_fill_rect(f, fr->x, ly, fr->w + fr->extra, r->h, SEL_FONDO);
-            scrivi_pezzo(f, fr->f, fr->x, ly + r->base - ex_font_baseline(fr->f),
-                         d->testo + fr->da, fr->a - fr->da, col);
+            if (d->testo[fr->da] != '\t')
+                scrivi_pezzo(f, fr->f, fr->x, ly + r->base - ex_font_baseline(fr->f),
+                             d->testo + fr->da, fr->a - fr->da, col);
             if (fr->st->sottolineato)
                 ex_fill_rect(f, fr->x, ly + r->base + 1, fr->w + fr->extra, 1, col);
         }
@@ -735,10 +958,52 @@ void exrtf_vista_allinea(ExRtfVista *v, unsigned int al)
 
 const ExRtfStile *exrtf_vista_stile(const ExRtfVista *v) { return &v->stile; }
 
+const ExRtfPar *exrtf_vista_par(const ExRtfVista *v)
+{
+    return par_di(v->doc, exrtf_paragrafo(v->doc, minimo(v->cur, v->anc)));
+}
+
+void exrtf_vista_par_cambia(ExRtfVista *v, int cosa, int valore)
+{
+    exrtf_par_cambia(v->doc, minimo(v->cur, v->anc), massimo(v->cur, v->anc), cosa, valore);
+    v->modificato = 1;
+    exrtf_vista_impagina(v);
+    segui(v);
+}
+
+void exrtf_vista_tab(ExRtfVista *v, unsigned int twips, int metti)
+{
+    unsigned int da = minimo(v->cur, v->anc), a = massimo(v->cur, v->anc);
+
+    if (metti)          exrtf_tab_metti(v->doc, da, a, twips);
+    else if (twips)     exrtf_tab_togli(v->doc, da, a, twips);
+    else                exrtf_tab_via(v->doc, da, a);
+    v->modificato = 1;
+    exrtf_vista_impagina(v);
+    segui(v);
+}
+
+void exrtf_vista_modo(ExRtfVista *v, int pagina)
+{
+    v->pagina = pagina ? 1 : 0;
+    v->sx = 0;
+    if (v->doc) { exrtf_vista_impagina(v); segui(v); }
+}
+
+unsigned int exrtf_vista_pagina_di(const ExRtfVista *v)
+{
+    unsigned int r, i, p = 1;
+
+    if (v->righe_n == 0) return 1;
+    r = riga_di(v, v->cur);
+    for (i = 1; i <= r; i++) if (v->righe[i].salto) p++;
+    return p;
+}
+
 unsigned int exrtf_vista_allineamento(const ExRtfVista *v)
 {
     unsigned int p = exrtf_paragrafo(v->doc, minimo(v->cur, v->anc));
-    return p < v->doc->par_n ? v->doc->allinea[p] : EXRTF_SINISTRA;
+    return p < v->doc->par_n ? v->doc->par[p].allinea : EXRTF_SINISTRA;
 }
 
 /* --------------------------------------------------------------------------

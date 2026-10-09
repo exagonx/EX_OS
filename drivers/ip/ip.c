@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.008");
+EX_VERSIONE("ip.drv", "0.009");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -742,6 +742,35 @@ static int  prossimo_salto(const unsigned char *dest, unsigned char *hop);
  * concludere.
  * ============================================================================= */
 #define TCP_BUF        4096
+
+/* =============================================================================
+ * ! LA FINESTRA DI RICEZIONE E' DIVENTATA GRANDE (9 ottobre 2026), e la misura
+ * qui sopra resta vera: era fatta contro un server LOCALE, a ritardo zero, e
+ * li' la finestra non conta. Su Internet conta, ed e' aritmetica: l'altro puo'
+ * avere in volo al massimo una finestra per ogni andata e ritorno. Verso il
+ * repository (47 ms misurati) 4096 byte fanno 85 KB al secondo, qualunque sia
+ * la linea: l'utente, scaricando Exilla, «il download e' piuttosto lento».
+ * Con 64 KB il tetto sale a piu' di un megabyte al secondo.
+ *
+ * ! IL BUFFER GRANDE NON STA NELLA TABELLA: si prende alla prima volta che una
+ * connessione ne ha bisogno e resta suo. Ventiquattro connessioni per 64 KB
+ * sarebbero un mega e mezzo fermo anche su una macchina che ne apre una; cosi'
+ * si paga per quelle che si usano davvero. Se la memoria non c'e', la
+ * connessione lavora coi 4 KB di riserva che ha dentro, come prima.
+ *
+ * ! `-w <KB>` sceglie la misura (da 4 a 63): per una macchina piccola, o per
+ * una scheda che perde i pacchetti quando arrivano a raffiche.
+ *
+ * ! E CON LA FINESTRA LARGA SI TENGONO I PEZZI FUORI ORDINE. Prima si
+ * scartavano: con tre segmenti in volo costava poco, con quarantacinque un
+ * pacchetto perso farebbe rimandare tutti quelli dietro. Stanno gia' al loro
+ * posto nel buffer - oltre i byte buoni, alla distanza giusta - e una piccola
+ * lista dice quali tratti sono arrivati (TCP_FS). Quando arriva il pezzo che
+ * mancava, i tratti contigui diventano buoni senza copiare niente.
+ * ============================================================================= */
+#define TCP_RX_MAX     64512u  /* 63 KB: sotto i 65535 che il campo sa dire */
+#define TCP_FS         8       /* tratti fuori ordine tenuti da parte */
+static unsigned int g_rx_dim = TCP_RX_MAX;
 #define TCP_MSS        1400    /* sotto i 1460 tipici: lascia margine, e
                                   non frammentiamo comunque */
 #define TCP_RTO_MS     600     /* primo intervallo di ritrasmissione */
@@ -785,8 +814,16 @@ typedef struct {
 
     unsigned char tx[TCP_BUF];
     unsigned int  tx_len;        /* byte in coda, confermati compresi */
-    unsigned char rx[TCP_BUF];
+    unsigned char *rx;           /* vedi rx_cap(): grande, o la riserva */
+    unsigned int  rx_dim;
+    unsigned char rx_riserva[TCP_BUF];
     unsigned int  rx_len;
+    /* I tratti arrivati fuori ordine, in numeri di sequenza [da, a). */
+    struct { unsigned int da, a; } fs[TCP_FS];
+    unsigned int  fs_n;
+    /* Un FIN arrivato su uno di quei tratti: vale quando ci si arriva. */
+    unsigned int  fin_att;
+    int           fin_c;
     /* ! DOVE COMINCIANO I BYTE BUONI DENTRO rx. Fino all'8 settembre 2026 non
      * c'era: i dati stavano SEMPRE all'inizio, e ogni lettura ricopiava a mano
      * — un byte per volta — tutto quello che restava, cioe' un costo per
@@ -831,6 +868,8 @@ typedef struct {
 } Conn;
 
 static Conn         g_tcp[IP_TCP_CONNESSIONI];
+
+#include "tcp_rx.inc"
 static unsigned int g_tcp_porta = 49152;   /* fascia effimera, come UDP */
 
 /* Vero se a precede b nello spazio circolare dei numeri di sequenza. */
@@ -896,6 +935,8 @@ static int tcp_riprendi_orfane(void)
         c->stato      = S_LIBERA;
         c->rx_len     = 0;
         c->rx_off     = 0;
+        c->fs_n       = 0;
+        c->fin_c = 0;
         c->tx_len     = 0;
         c->attesa_pid = 0;
         c->porta_loc  = 0;
@@ -980,8 +1021,8 @@ static void tcp_manda(Conn *c, unsigned int flag,
     /* La finestra che annunciamo e' lo spazio libero nel buffer di
      * ricezione: dichiararne di piu' vorrebbe dire invitare l'altro a
      * mandare dati che poi butteremmo. */
-    metti16(seg + 14, TCP_BUF - c->rx_len);
-    c->fin_nostra = TCP_BUF - c->rx_len;
+    c->fin_nostra = rx_cap(c) - c->rx_len;
+    metti16(seg + 14, c->fin_nostra);
     /* Finestra zero: da qui il mittente smette, e riparte solo col proprio
      * timer. E' il costo vero di un buffer piccolo, ed e' quello che finora
      * nessuno aveva contato. */
@@ -1127,7 +1168,9 @@ static void tcp_consegna(Conn *c)
      * ogni lettura. */
     c->rx_off += n;
     c->rx_len -= n;
-    if (c->rx_len == 0) c->rx_off = 0;
+    /* (con dei tratti fuori ordine in attesa l'indice non si azzera: stanno
+     * a una distanza che si conta da qui) */
+    if (c->rx_len == 0 && c->fs_n == 0) c->rx_off = 0;
 
     /* =====================================================================
      * ! CHI SI LIBERA DEVE DIRLO, O L'ALTRO NON RIPARTE.
@@ -1154,7 +1197,7 @@ static void tcp_consegna(Conn *c)
      * Un ACK vuoto e' due decine di byte e porta la finestra nuova.
      * ================================================================== */
     if ((c->stato == S_APERTA || c->stato == S_FIN_MIO) &&
-        c->fin_nostra < TCP_BUF / 2 && TCP_BUF - c->rx_len >= TCP_BUF / 2) {
+        c->fin_nostra < rx_cap(c) / 2 && rx_cap(c) - c->rx_len >= rx_cap(c) / 2) {
         g_st.tcp_riaperture++;
         tcp_manda(c, TCP_ACK, NULL, 0);
     }
@@ -1233,6 +1276,8 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         nuova->proprietario = asc->proprietario;
         nuova->ascoltatore  = tcp_id(asc);
         nuova->rcv_nxt      = seq + 1u;
+        nuova->fs_n         = 0;
+        nuova->fin_c = 0;
         nuova->snd_una      = 1000u + (uptime_ms() & 0xFFFFu);
         nuova->snd_nxt      = nuova->snd_una;
         nuova->finestra     = finestra;
@@ -1301,15 +1346,13 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         /* Se il segmento portava gia' dei dati (succede: un cliente che
          * scrive subito), non si buttano. */
         if (n > 0 && seq == c->rcv_nxt) {
-            unsigned int q = (n < TCP_BUF - c->rx_len) ? n : TCP_BUF - c->rx_len;
+            unsigned int cap = rx_cap(c);
+            unsigned int q = (n < cap - c->rx_len) ? n : cap - c->rx_len;
 
             /* Lo spazio libero c'e' (q e' gia' capato al totale), ma puo'
              * essere in testa invece che in coda: allora si compatta UNA
              * volta, con memmove, invece di ricopiare a ogni lettura. */
-            if (c->rx_off > 0 && c->rx_off + c->rx_len + q > TCP_BUF) {
-                memmove(c->rx, c->rx + c->rx_off, c->rx_len);
-                c->rx_off = 0;
-            }
+            if (c->rx_off > 0 && c->rx_off + c->rx_len + q > cap) rx_compatta(c);
             memcpy(c->rx + c->rx_off + c->rx_len, seg + off, q);
             c->rx_len  += q;
             c->rcv_nxt += q;
@@ -1325,6 +1368,8 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         if (ack != c->snd_nxt) return;      /* non conferma il nostro SYN */
 
         c->rcv_nxt = seq + 1u;
+        c->fs_n    = 0;
+        c->fin_c = 0;
         c->snd_una = ack;
         c->stato   = S_APERTA;
         c->rto_scade = 0;
@@ -1345,38 +1390,32 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
 
     /* --- dati --- */
     if (n > 0) {
-        if (seq != c->rcv_nxt) {
-            /* ! FUORI SEQUENZA: SI SCARTA E SI RICONFERMA. Non si tiene
-             * da parte (vedi ip_proto.h). Il duplicato di ACK dice
-             * all'altro dove siamo rimasti, e lui ritrasmettera'.
-             *
-             * ! E SI CONTA, perche' e' uno scarto NOSTRO e per mesi e' stato
-             * invisibile. Un pacchetto perso prima fa finire qui tutti quelli
-             * che erano gia' in volo dietro di lui: con la finestra a 4 KB
-             * sono due o tre, a 16 KB sono dieci o piu', e li ritrasmette
-             * tutti il mittente. E' il moltiplicatore che trasforma poche
-             * perdite in un terzo di traffico in piu' — vedi @DIF-TCPBUF. */
+        /* ! FUORI SEQUENZA SI TIENE DA PARTE E SI RICONFERMA (vedi
+         * tcp_rx.inc). Il duplicato di ACK dice all'altro dove siamo rimasti
+         * - tre di fila gli fanno rimandare subito il pezzo che manca - e
+         * quando quello arriva, questi sono gia' qui.
+         *
+         * ! E SI CONTA ANCORA: il contatore dice quante volte la strada ha
+         * consegnato in disordine, che e' il segno di una perdita. */
+        switch (rx_dati(c, seq, seg + off, n)) {
+        case RX_TENUTO:
             g_st.tcp_fuori_seq++;
-            tcp_manda(c, TCP_ACK, NULL, 0);
-        } else if (c->rx_len + n > TCP_BUF) {
-            /* Il buffer e' pieno: non si conferma quello che non si puo'
-             * tenere, o l'altro lo considererebbe consegnato. */
+            if (flag & TCP_FIN) { c->fin_att = seq + n; c->fin_c = 1; }
+            break;
+        case RX_PIENO:
+            /* Non si conferma quello che non si puo' tenere, o l'altro lo
+             * considererebbe consegnato: l'ACK riporta rcv_nxt di prima. */
             g_st.tcp_pieno++;
-            tcp_manda(c, TCP_ACK, NULL, 0);
-        } else {
-            if (c->rx_off > 0 && c->rx_off + c->rx_len + n > TCP_BUF) {
-                memmove(c->rx, c->rx + c->rx_off, c->rx_len);
-                c->rx_off = 0;
-            }
-            memcpy(c->rx + c->rx_off + c->rx_len, seg + off, n);
-            c->rx_len  += n;
-            c->rcv_nxt += n;
-            tcp_manda(c, TCP_ACK, NULL, 0);
+            break;
+        default: break;
         }
+        tcp_manda(c, TCP_ACK, NULL, 0);
     }
 
     /* --- FIN --- */
-    if ((flag & TCP_FIN) && seq + n == c->rcv_nxt) {
+    if (((flag & TCP_FIN) && seq + n == c->rcv_nxt) ||
+        (c->fin_c && c->fin_att == c->rcv_nxt)) {
+        c->fin_c = 0;
         c->rcv_nxt++;
         tcp_manda(c, TCP_ACK, NULL, 0);
 
@@ -1737,6 +1776,8 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
     c->chiusa_cliente = 1;
     c->rx_len = 0;
     c->rx_off = 0;
+    c->fs_n   = 0;
+    c->fin_c = 0;
 
     if (c->stato == S_APERTA || c->stato == S_FIN_SUO) {
         /* Il FIN va DOPO i dati in coda: il suo numero di sequenza e'
@@ -2441,7 +2482,9 @@ static void uso(void)
     printf("uso: ip.drv [-a IND] [-m MASCHERA] [-g GATEWAY]\n");
     printf("     ip.drv -s        stampa la configurazione ed esce\n");
     printf("     ip.drv -i        dice se serve su questa macchina ed esce\n\n");
-    printf("     ip.drv -q        i valori della rete 'user' di QEMU\n\n");
+    printf("     ip.drv -q        i valori della rete 'user' di QEMU\n");
+    printf("     ip.drv -w KB     la finestra di ricezione di TCP (4..63, di serie 63):\n");
+    printf("                      piu' piccola per poca memoria o una scheda lenta\n\n");
     printf("! SENZA ARGOMENTI NON HA INDIRIZZO, ed e' apposta: glielo da'\n");
     printf("  /bin/dhcp, oppure -a. Un indirizzo predefinito che non\n");
     printf("  appartiene alla rete a cui si e' attaccati sembra una\n");
@@ -2506,7 +2549,14 @@ int main(int argc, char **argv)
             g_cfg.gateway[2] = 2;  g_cfg.gateway[3] = 2;
             continue;
         }
-        if (strcmp(argv[i], "-s") == 0) solo_stato = 1;
+        if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
+            /* la finestra di ricezione di TCP, in KB: vedi TCP_RX_MAX */
+            int kb = atoi(argv[++i]);
+
+            if (kb < 4) kb = 4;
+            g_rx_dim = (unsigned int)kb * 1024u;
+            if (g_rx_dim > TCP_RX_MAX) g_rx_dim = TCP_RX_MAX;
+        } else if (strcmp(argv[i], "-s") == 0) solo_stato = 1;
         else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
             if (!leggi_ip(argv[++i], g_cfg.ip)) { uso(); return 1; }
         } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {

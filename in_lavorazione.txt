@@ -6170,7 +6170,22 @@ un programma: il primo lavoro e' tirarla fuori.
   e si puo' fare per gradi; WRI e DOC sono binari, e leggerli viene prima di
   scriverli), e se il testo formattato vive nell'area di testo del toolkit o
   in un controllo nuovo.
-  Stato: DA FARE.
+  Stato: FATTO IN GRAN PARTE il 9 ottobre 2026 (exeditor 0.008, lib/exrtf).
+  1. Le due barre: quella dell'editor era un doppione di quella che l'area di
+     testo del toolkit ha avuto dopo. Tolta.
+  2. Nei documenti RTF: barra degli strumenti a icone (exwin/icon/strumenti,
+     disegnate da tools/exeditor-icone.py), righello in centimetri con i
+     rientri e le tabulazioni da trascinare, Formato > Paragrafo e Pagina,
+     vista pagina con i salti di pagina, menu Visualizza. Il modello ha
+     rientri, prima riga, tabulazioni, spazi e interlinea per paragrafo, e la
+     pagina; RTF li legge e li scrive.
+  3. Il vecchio DOC: Word 6 e 95 in LETTURA (lib/exrtf/doc95.c), salvati poi
+     come RTF. Provato su file scritti a mano da tools/prove/doc95-genera.py,
+     confrontando con quello che ne legge LibreOffice: NON su un file uscito
+     da un Word vero, che qui non c'era.
+  RESTA: WRI; scrivere il DOC; Word 97 e dopo (per quello l'utente ha indicato
+  il porting di LibreOffice); annulla e cerca nei documenti RTF; tabelle,
+  figure, intestazioni; la stampa; le tabulazioni centrate e a destra.
 
 @VOLUME-BARRA L'ICONA DEL VOLUME ACCANTO ALL'OROLOGIO (chiesto dall'utente l'8 ottobre 2026)
   Da fare dopo il lettore audio, parole dell'utente. Nella barra in basso,
@@ -6254,7 +6269,11 @@ un programma: il primo lavoro e' tirarla fuori.
   come sfondo: «c'e' un motivo?». Da guardare prima di rispondere: il formato
   che la scrivania sa leggere per lo sfondo, la misura, o il dialogo di
   scelta che non arriva a quella directory.
-  Stato: DA FARE (prima la diagnosi).
+  Stato: FATTO il 9 ottobre 2026 (exwin 0.017). La causa: ex_draw_image e
+  ex_draw_image_mode leggevano solo i primi 256 KB del file, e una foto
+  arrivava monca al decodificatore; Immagini la legge intera. Ora si legge
+  tutto il file (fino a 32 MB), e un BMP grande va in una pixmap sola.
+  Provato in QEMU con un JPEG da 430 KB e un BMP da 1,4 MB.
 
 @RISOLUZIONI LE RISOLUZIONI: QUELLE CHE LA SCHEDA HA, CON LA PROVA (chiesto dall'utente il 10 ottobre 2026)
   In Impostazioni si sceglie fra quattro modi fissi. Si vuole l'elenco dei
@@ -6274,7 +6293,11 @@ un programma: il primo lavoro e' tirarla fuori.
 @FM-DIVISORE FILE MANAGER: IL SEPARATORE FRA LE DUE AREE SI SPOSTA (chiesto dall'utente il 10 ottobre 2026)
   Non urgente. Le due aree devono potersi ridimensionare: il separatore
   centrale si trascina, allargando una e stringendo l'altra.
-  Stato: DA FARE.
+  Stato: FATTO il 9 ottobre 2026 (filemgr 0.013). La fessura fra le due
+  liste si trascina; l'intestazione delle colonne segue; minimo 100 pixel per
+  l'albero e 220 per l'elenco; la larghezza si salva in
+  $HOME/.exwin/config/filemgr.cfg (il salvataggio non e' stato provato: la
+  prova girava da CD). Il puntatore non cambia forma sopra la fessura.
 
 @FM-STRUMENTI FILE MANAGER: BARRA DEGLI STRUMENTI, VISTA A ICONE, IL TRASCINAMENTO SI VEDE (chiesto dall'utente il 10 ottobre 2026)
   Non urgente. Sotto la barra dei menu: copia, incolla, taglia, cancella,
@@ -6329,3 +6352,32 @@ un programma: il primo lavoro e' tirarla fuori.
   che dopo deve riconoscerla (`-registro:crea` la vede dalla `prova`, cosi'
   `-check` la aggiorna dalla rete). Il CD passa da 150 a 440 MB.
   Stato: DA FARE.
+
+@PANNELLO-VIDEO IL PANNELLO DI CONFIGURAZIONE A SCHEDE, E LA SCHEDA VIDEO VERA (chiesto dall'utente il 9 ottobre 2026; riunisce @RISOLUZIONI e @IMPOSTAZIONI-SCHEDE)
+  «Cosa importante». Il pannello del program manager con una scheda per
+  argomento (Sistema, Video, Settaggi). Nella scheda Video: la profondita' di
+  colore (16 colori, 256, 65 mila, 16 milioni), la risoluzione scelta da un
+  elenco con TUTTI i modi che la scheda offre (non quattro pulsanti), un
+  pulsante Prova che passa al modo e apre una finestra con un conto alla
+  rovescia di 30 secondi e i pulsanti Accetta e Annulla: a zero senza
+  risposta si annulla e si torna al modo di prima, senza salvare. Applica
+  conserva il modo. L'utente chiede di dire che cosa NON e' applicabile.
+  Guardato il 9 ottobre, prima di scrivere una riga:
+  - il modo video lo imposta Stage 2 (bootloader/stage2/loader.asm) col BIOS
+    in modo reale, prima del modo protetto; /dev/svga.drv scrive solo la
+    scelta per il prossimo avvio. A CALDO NON SI CAMBIA: servirebbe chiamare
+    il BIOS dal kernel (un monitor v86 o un salto in modo reale), che e' un
+    lavoro di kernel a se', o un driver nativo per ogni scheda.
+  - quindi la Prova «subito» oggi non si puo' fare. Si puo' fare la stessa
+    garanzia ATTRAVERSO UN RIAVVIO: si riavvia nel modo nuovo segnato «in
+    prova», la scrivania apre la finestra coi 30 secondi, e senza Accetta
+    rimette il modo di prima e riavvia da sola. Chi non vede niente perche'
+    il monitor non regge non deve fare nulla.
+  - l'elenco dei modi: Stage 2 li scorre gia' tutti (VBE 4F00/4F01) per
+    cercare quello chiesto; va fatto arrivare l'elenco al kernel e da li' al
+    pannello, e la scelta non dev'essere piu' un byte fra quattro.
+  - i colori: il server grafico scrive a 16, 24 e 32 bit (65 mila e 16
+    milioni), e Stage 2 sa gia' preferire i 16. I 16 e i 256 colori NON sono
+    applicabili senza riscrivere il server per una tavolozza: da scartare.
+  - le schede: il toolkit ha gia' il controllo "tab".
+  Stato: DA FARE (dopo exeditor, che e' in corso).

@@ -8224,7 +8224,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.016"
+#define EXWIN_VERSIONE "0.017"
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 
@@ -8977,7 +8977,8 @@ static int icona_decodifica(const unsigned char *d, unsigned int n,
         bit  = (unsigned int)d[28] | ((unsigned int)d[29] << 8);
 
         if (bit != 24 && bit != 32) return 0;
-        if (larg == 0 || alt == 0 || larg > 512 || alt > 512) return 0;
+        /* Erano 512: il tetto delle icone. Qui passano anche gli sfondi. */
+        if (larg == 0 || alt == 0 || larg > 4096 || alt > 4096) return 0;
 
         riga = ((larg * (bit / 8)) + 3u) & ~3u;
         if (off + riga * alt > n) return 0;
@@ -9022,14 +9023,46 @@ static int icona_decodifica(const unsigned char *d, unsigned int n,
     return 1;
 }
 
+/* ! UN'IMMAGINE SI LEGGE TUTTA, QUANTO E' LUNGA (9 ottobre 2026). Fino a ieri
+ * ex_draw_image e ex_draw_image_mode ne leggevano i primi 256 KB con una
+ * read sola: bastava alle icone e alle figure dei programmi, e una fotografia
+ * messa come sfondo - due, tre megabyte - arrivava al decodificatore monca.
+ * «Non si legge come immagine», diceva la scrivania, dello stesso file che
+ * Immagini apriva. Il tetto resta, ma e' quello di Immagini diviso due: 32 MB.
+ * Rende i byte (da liberare con free) e quanti sono; 0 se non si legge. */
+#define IMMAGINE_FILE_MAX (32u * 1024u * 1024u)
+static unsigned char *immagine_file(const char *percorso, unsigned int *quanti)
+{
+    unsigned char *d;
+    unsigned int   letti = 0;
+    long           lungo;
+    int            fd, n;
+
+    if (!percorso || !percorso[0]) return 0;
+    fd = open(percorso, O_RDONLY);
+    if (fd < 0) return 0;
+    lungo = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    if (lungo <= 0 || (unsigned long)lungo > IMMAGINE_FILE_MAX) { close(fd); return 0; }
+    d = (unsigned char *)malloc((unsigned int)lungo);
+    if (!d) { close(fd); return 0; }
+    while (letti < (unsigned int)lungo &&
+           (n = (int)read(fd, d + letti, (unsigned int)lungo - letti)) > 0)
+        letti += (unsigned int)n;
+    close(fd);
+    if (letti == 0) { free(d); return 0; }
+    *quanti = letti;
+    return d;
+}
+
 /* ex_draw_image_mode: il perche' sta in exwin.h. */
 int ex_draw_image_mode(ExWindow f, const char *percorso, int x, int y,
                         int w, int h, int modo, unsigned int sfondo)
 {
     unsigned char *d;
-    unsigned int   cap = 256u * 1024u;
+    unsigned int   n = 0;
     unsigned int  *px = 0, *out, iw = 0, ih = 0;
-    int            fd, n, i, j, ox = 0, oy = 0;
+    int            i, j, ox = 0, oy = 0;
 
     if (!percorso || w <= 0 || h <= 0) return 0;
     if (modo == EX_IMAGE_TOPLEFT) {
@@ -9037,14 +9070,9 @@ int ex_draw_image_mode(ExWindow f, const char *percorso, int x, int y,
         return ex_draw_image(f, percorso, x, y);
     }
 
-    fd = open(percorso, O_RDONLY);
-    if (fd < 0) return 0;
-    d = (unsigned char *)malloc(cap);
-    if (!d) { close(fd); return 0; }
-    n = (int)read(fd, d, cap);
-    close(fd);
-    if (n <= 0 || !icona_decodifica(d, (unsigned int)n, &px, &iw, &ih) ||
-        iw == 0 || ih == 0) {
+    d = immagine_file(percorso, &n);
+    if (!d) return 0;
+    if (!icona_decodifica(d, n, &px, &iw, &ih) || iw == 0 || ih == 0) {
         free(d);
         if (px) free(px);
         return 0;
@@ -9276,23 +9304,31 @@ void ex_icon_close(ExIcon ic)
 
 int ex_draw_image(ExWindow f, const char *percorso, int x, int y)
 {
-    int fd, n, k;
+    int k;
     unsigned char *d;
-    unsigned int cap = 256u * 1024u;
+    unsigned int n = 0;
 
-    fd = open(percorso, O_RDONLY);
-    if (fd < 0) return 0;
+    d = immagine_file(percorso, &n);
+    if (!d) return 0;
 
-    d = (unsigned char *)malloc(cap);
-    if (!d) { close(fd); return 0; }
+    /* ! UN BMP GRANDE VA IN UN COLPO SOLO. leggi_bmp lo disegna un punto per
+     * volta: va bene per una figura piccola, e per uno sfondo da 1024x768
+     * sono ottocentomila richieste al server. Sopra i 256 KB si decodifica in
+     * memoria e si manda una pixmap, come fa eximg con PNG e JPG. */
+    if (n > 256u * 1024u && d[0] == 'B' && d[1] == 'M') {
+        unsigned int *px = 0, w = 0, h = 0, i;
 
-    n = (int)read(fd, d, cap);
-    close(fd);
-
-    if (n <= 0) { free(d); return 0; }
+        if (icona_decodifica(d, n, &px, &w, &h)) {
+            for (i = 0; i < w * h; i++) px[i] &= 0xFFFFFF;
+            ex_pixmap(f, x, y, (int)w, (int)h, px, w);
+            free(px);
+            free(d);
+            return 1;
+        }
+    }
 
     for (k = 0; g_lettori[k]; k++)
-        if (g_lettori[k](f, d, (unsigned int)n, x, y)) { free(d); return 1; }
+        if (g_lettori[k](f, d, n, x, y)) { free(d); return 1; }
 
     free(d);
     return 0;

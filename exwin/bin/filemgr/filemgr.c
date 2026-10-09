@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.012"
+#define VERSIONE_APP "0.013"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -92,7 +92,16 @@ EX_VERSIONE("filemgr", VERSIONE_APP);
 #define FIN_H       440
 #define MENU_H      20
 #define BASSO       24
-#define ALBERO_W    210
+/* ! LA LARGHEZZA DELL'ALBERO E' UNA VARIABILE (9 ottobre 2026): il separatore
+ * fra le due aree si trascina. ALBERO_W resta il nome che tutto il file usa -
+ * intestazione compresa - cosi' chi sposta il separatore sposta anche quella.
+ * Si salva in $HOME/.exwin/config/filemgr.cfg. */
+#define ALBERO_W0     210
+#define ALBERO_W_MIN  100
+#define ELENCO_W_MIN  220
+#define SEPARA_W      6       /* la fessura fra le due liste: la presa */
+static int g_albero_w = ALBERO_W0;
+#define ALBERO_W    g_albero_w
 #define INTEST_H     18     /* la fascia dei pulsanti sopra le due aree */
 
 /* =============================================================================
@@ -1783,6 +1792,69 @@ static void scegli_elenco(int apri)
 /* =============================================================================
  * La disposizione, che cambia con la finestra
  * ============================================================================= */
+static int      g_fin_w = FIN_W, g_fin_h = FIN_H;   /* l'ultima misura nota */
+static int      g_separa = 0;                       /* 1 = lo si sta trascinando */
+static ExWindow g_et_cartelle;
+
+/* Dove sta scritta la larghezza scelta; fai = 1 crea le directory. */
+static int separatore_cfg(char *out, int max, int fai)
+{
+    const char *casa = getenv("HOME");
+    char d[PERC_MAX];
+
+    if (!casa || !casa[0] || strcmp(casa, "/") == 0) casa = "/root";
+    if (fai) {
+        snprintf(d, sizeof(d), "%s/.exwin", casa);        mkdir(d, 0700);
+        snprintf(d, sizeof(d), "%s/.exwin/config", casa); mkdir(d, 0700);
+    }
+    return snprintf(out, (size_t)max, "%s/.exwin/config/filemgr.cfg", casa) < max;
+}
+
+static void separatore_leggi(void)
+{
+    char p[PERC_MAX], t[128], *q;
+    int  fd, n;
+
+    if (!separatore_cfg(p, sizeof(p), 0)) return;
+    fd = open(p, O_RDONLY);
+    if (fd < 0) return;
+    n = (int)read(fd, t, sizeof(t) - 1);
+    close(fd);
+    if (n <= 0) return;
+    t[n] = '\0';
+    q = strstr(t, "albero");
+    if (!q || !(q = strchr(q, '='))) return;
+    n = atoi(q + 1);
+    if (n >= ALBERO_W_MIN && n <= 1600) g_albero_w = n;
+}
+
+static void separatore_salva(void)
+{
+    char p[PERC_MAX], t[96];
+    int  fd, n;
+
+    if (!separatore_cfg(p, sizeof(p), 1)) return;
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;         /* sistema in sola lettura: vale fino alla chiusura */
+    n = snprintf(t, sizeof(t), "# filemgr: lo riscrive il file manager.\nalbero = %d\n", g_albero_w);
+    write(fd, t, (unsigned int)n);
+    close(fd);
+}
+
+static void disponi(int w, int h);
+
+/* Il separatore a x (coordinate della finestra): tutto il resto segue. */
+static void separatore_metti(int x)
+{
+    int nuovo = x - 4 - SEPARA_W / 2;
+
+    if (nuovo > g_fin_w - 14 - ELENCO_W_MIN) nuovo = g_fin_w - 14 - ELENCO_W_MIN;
+    if (nuovo < ALBERO_W_MIN) nuovo = ALBERO_W_MIN;
+    if (nuovo == g_albero_w) return;
+    g_albero_w = nuovo;
+    disponi(g_fin_w, g_fin_h);
+}
+
 static void disponi(int w, int h)
 {
     /* ! SOTTO L'INTESTAZIONE, COME ALLA NASCITA. Qui mancava INTEST_H: al
@@ -1793,6 +1865,11 @@ static void disponi(int w, int h)
     int alt = h - MENU_H - 4 - INTEST_H - BASSO;
 
     if (alt < 40) alt = 40;
+    g_fin_w = w;
+    g_fin_h = h;
+    /* Una finestra stretta non deve lasciare l'elenco senza posto. */
+    if (g_albero_w > w - 14 - ELENCO_W_MIN) g_albero_w = w - 14 - ELENCO_W_MIN;
+    if (g_albero_w < ALBERO_W_MIN) g_albero_w = ALBERO_W_MIN;
 
     ex_move(g_albero, 4, MENU_H + 4 + INTEST_H);
     ex_resize(g_albero, ALBERO_W, alt);
@@ -1802,6 +1879,12 @@ static void disponi(int w, int h)
 
     ex_move(g_stato, 6, h - 22);
     ex_resize(g_stato, w - 12, 16);
+
+    /* L'intestazione sta sopra le colonne dell'elenco, e l'elenco si e'
+     * mosso: il margine «ricordato» si dimentica, cosi' si rimette. */
+    if (g_et_cartelle) ex_resize(g_et_cartelle, ALBERO_W - 8, 14);
+    g_int_margine = (unsigned int)-1;
+    intestazione_incolonna();
 }
 
 static void istruzioni(void)
@@ -2110,6 +2193,30 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         disponi(EX_X(lp), EX_Y(lp));
         break;
 
+    /* ! IL SEPARATORE: la fessura fra le due liste e' della finestra, non di
+     * un controllo, quindi il bottone premuto li' arriva qui. Finche' resta
+     * giu' i movimenti arrivano a chi l'ha ricevuto (vedi EXM_MOUSE_MOVE in
+     * exwin.h): si sposta mentre si trascina e si salva al rilascio. */
+    case EXM_MOUSE_DOWN:
+        if (EX_X(lp) >= 4 + ALBERO_W - 1 && EX_X(lp) <= 4 + ALBERO_W + SEPARA_W &&
+            EX_Y(lp) >= MENU_H) {
+            g_separa = 1;
+            return 0;
+        }
+        return ex_default_proc(f, msg, wp, lp);
+
+    case EXM_MOUSE_MOVE:
+        if (!g_separa) return ex_default_proc(f, msg, wp, lp);
+        separatore_metti(EX_X(lp));
+        break;
+
+    case EXM_MOUSE_UP:
+        if (!g_separa) return ex_default_proc(f, msg, wp, lp);
+        g_separa = 0;
+        separatore_metti(EX_X(lp));
+        separatore_salva();
+        break;
+
     case EXM_CLOSE:
         ex_quit(0);
         return 0;
@@ -2130,6 +2237,8 @@ int main(int argc, char **argv)
         strncpy(g_dir, argv[1], PERC_MAX - 1);
         g_dir[PERC_MAX - 1] = '\0';
     }
+
+    separatore_leggi();
 
     g_f = ex_create("window", "File manager",
                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
@@ -2171,7 +2280,7 @@ int main(int argc, char **argv)
          * che nomina: due serie di numeri si scollano alla prima modifica. */
         const int y = INT_Y;
 
-        ex_create("label", "Cartelle", EX_CHILD,
+        g_et_cartelle = ex_create("label", "Cartelle", EX_CHILD,
                 8, y + 2, ALBERO_W - 8, 14, g_f, 0, 0);
 
         g_int_nome = ex_create("button", "Nome", EX_CHILD,
@@ -2212,6 +2321,9 @@ int main(int argc, char **argv)
 
     g_stato = ex_create("label", "", EX_CHILD,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);
+    /* Una larghezza salvata diversa da quella di nascita: si rimette tutto
+     * al suo posto prima che la finestra si veda. */
+    if (g_albero_w != ALBERO_W0 && g_albero && g_elenco) disponi(FIN_W, FIN_H);
 
     /* La radice: il nodo senza nome, da cui discende ogni percorso. */
     memset(&g_nodo[0], 0, sizeof(Nodo));

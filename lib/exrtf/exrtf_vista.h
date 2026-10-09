@@ -53,6 +53,13 @@ typedef struct {
     unsigned int  spazi;            /* spaces inside, for a justified line */
     unsigned char allinea;          /* EXRTF_*: a paragraph's last line is
                                      * never justified */
+    unsigned char salto;            /* 1: this line starts a new page */
+    short         x0;               /* where the line starts, in pixels from
+                                     * the left margin (indent, first line) */
+    short         util;             /* the width it may take from there */
+    unsigned int  par;              /* its paragraph */
+    unsigned int  giusto_da;        /* a justified line stretches the spaces
+                                     * from here on (after its last tab) */
 } ExRtfRiga;
 
 typedef struct {
@@ -67,6 +74,15 @@ typedef struct {
     int          fuoco;             /* 1: draw the caret (the program says) */
     int          modificato;        /* the document changed since it was 0 */
     int          trascina;          /* the button is down in the text */
+    /* ! TWO WAYS TO LAY THE TEXT OUT (9 October 2026). pagina = 0: the lines
+     * are as wide as the window, as before. pagina = 1: as wide as the page
+     * of the document - paper less margins - on a white sheet over grey, so
+     * a line breaks where it will break on paper; a rule marks where a page
+     * ends. sx is how far the sheet is scrolled sideways when the window is
+     * narrower than it. pagine: how many pages (1 when pagina = 0). */
+    int          pagina;
+    int          sx;
+    unsigned int pagine;
 } ExRtfVista;
 
 /* The value that switches bold, italic or underline on or off (the state at
@@ -109,6 +125,28 @@ void exrtf_vista_allinea(ExRtfVista *v, unsigned int allineamento);
  * its paragraph. */
 const ExRtfStile *exrtf_vista_stile(const ExRtfVista *v);
 unsigned int      exrtf_vista_allineamento(const ExRtfVista *v);
+
+/* ---- for a ruler -----------------------------------------------------------
+ * Where the text column is in the window: the x of the left margin (the zero
+ * of the ruler) and its width in pixels. The paragraph of the caret. Pixels
+ * and twips: 15 twips to a pixel (96 dots per inch). */
+void exrtf_vista_colonna(const ExRtfVista *v, int *x, int *w);
+const ExRtfPar *exrtf_vista_par(const ExRtfVista *v);
+int  exrtf_px(int twips);
+int  exrtf_twips(int px);
+
+/* One thing of the paragraphs of the selection (EXRTF_P_*), in twips. */
+void exrtf_vista_par_cambia(ExRtfVista *v, int cosa, int valore);
+
+/* A tab stop at `twips` from the left margin: metti = 1 adds it, 0 removes
+ * the one nearest; twips = 0 with metti = 0 removes them all. */
+void exrtf_vista_tab(ExRtfVista *v, unsigned int twips, int metti);
+
+/* Page layout on or off; lays the lines out again. */
+void exrtf_vista_modo(ExRtfVista *v, int pagina);
+
+/* The page the caret is on, from 1. */
+unsigned int exrtf_vista_pagina_di(const ExRtfVista *v);
 
 /* The selection as plain text on the clipboard; cut also removes it. */
 int  exrtf_vista_copia(ExRtfVista *v);

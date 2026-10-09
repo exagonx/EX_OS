@@ -2711,7 +2711,7 @@ EDIT_BIN := $(BUILD_EXWIN_BIN)/exeditor
 EDIT_LD  := exwin/bin/exeditor/exeditor.ld
 # The RTF mode (@RTF, 30 September 2026): the model and the view, linked in
 # for now; they become a shared library when a second program wants them.
-EXRTF_SRC := lib/exrtf/rtf.c lib/exrtf/vista.c
+EXRTF_SRC := lib/exrtf/rtf.c lib/exrtf/vista.c lib/exrtf/doc95.c
 EXRTF_HDR := lib/exrtf/exrtf.h lib/exrtf/exrtf_vista.h
 
 $(EDIT_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
@@ -2722,13 +2722,14 @@ $(EDIT_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exrtf -I drivers/wserver -I drivers/kbd -c $(EDIT_SRC) -o $(BUILD_OBJ)/edit_main.o
 	$(CC) $(CFLAGS_USER) -I lib/exrtf -c lib/exrtf/rtf.c -o $(BUILD_OBJ)/edit_rtf.o
 	$(CC) $(CFLAGS_USER) -I lib/exrtf -I lib/exwin -I drivers/kbd -c lib/exrtf/vista.c -o $(BUILD_OBJ)/edit_vista.o
+	$(CC) $(CFLAGS_USER) -I lib/exrtf -c lib/exrtf/doc95.c -o $(BUILD_OBJ)/edit_doc95.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/edit_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/edit_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/edit_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/edit_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EDIT_LD) \
 	    $(BUILD_OBJ)/edit_start.o $(BUILD_OBJ)/edit_main.o \
-	    $(BUILD_OBJ)/edit_rtf.o $(BUILD_OBJ)/edit_vista.o \
+	    $(BUILD_OBJ)/edit_rtf.o $(BUILD_OBJ)/edit_vista.o $(BUILD_OBJ)/edit_doc95.o \
 	    $(BUILD_OBJ)/edit_exwin.o \
 	    $(BUILD_OBJ)/edit_exdlg.o $(BUILD_OBJ)/edit_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
@@ -4833,7 +4834,7 @@ IP_DRV_SRC := drivers/ip/ip.c
 IP_DRV_OUT := $(BUILD_DRIVERS_CD)/ip.drv
 IP_DRV_LD  := drivers/ip/ip.ld
 
-$(IP_DRV_OUT): $(IP_DRV_SRC) $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(IP_DRV_OUT): $(IP_DRV_SRC) drivers/ip/tcp_rx.inc $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione stack ring3 ip.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(IP_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ip_main.o

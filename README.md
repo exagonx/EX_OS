@@ -257,6 +257,30 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
   un quarto di meta' e scrive i conti di ogni riproduzione nel registro
   (`dmesg hdaudio`). Da riascoltare.
+- **Exilla: la barra di scorrimento si vede.** Era quella di Android, un
+  pollice sottile bianco su bianco: ora e' quella classica con le frecce e i
+  grigi di ExWin. Serve ripubblicare il pacchetto `exilla`.
+- **La rete non e' piu' frenata dalla finestra di TCP (`ip.drv` 0.009).** La
+  finestra di ricezione era di 4 KB: verso un server a 50 ms voleva dire al
+  massimo 80 KB/s, qualunque fosse la linea. Ora e' di 63 KB, presa solo dalle
+  connessioni che la usano, e i pacchetti arrivati in disordine si tengono da
+  parte invece di farseli rimandare. `ip.drv -w KB` la riduce. In QEMU un
+  megabyte passa da 3,6 a 0,3 secondi; il guadagno su una linea vera va
+  misurato sul PC con `scarica -i`.
+- **ExEditor scrive documenti (0.008).** Nei documenti RTF: barra degli
+  strumenti a icone, righello in centimetri con rientri e tabulazioni da
+  trascinare, Formato > Paragrafo e Pagina, interlinea, vista pagina con i
+  salti di pagina; il menu Visualizza accende e spegne barra, righello e
+  pagina. La libreria `exrtf` ha ora rientri, tabulazioni, spazi e formato
+  della carta, letti e scritti in RTF. I `.doc` di **Word 6 e 95** si aprono
+  (`lib/exrtf/doc95.c`) e si salvano come RTF; Word 97 e successivi no. Il
+  lettore dei .doc e' provato su file scritti a mano e confrontato con
+  LibreOffice, non su file di un Word vero. Tolta la seconda barra di
+  scorrimento in modalita' testo.
+- **Due ritocchi dalla coda.** Lo sfondo della scrivania accetta una
+  fotografia: il toolkit (0.017) leggeva solo i primi 256 KB del file, ora lo
+  legge tutto. Nel file manager (0.013) il separatore fra albero ed elenco si
+  trascina, e la larghezza resta in `$HOME/.exwin/config/filemgr.cfg`.
 - **Exilla e' un pacchetto del repository (tappa 8 del porting di Firefox).**
   `netupdate -install:exilla` la scarica in `/exwin/app/exilla` (navigatore,
   lanciatore, icone: 290 MB) e scrive la voce nel menu della scrivania, nella

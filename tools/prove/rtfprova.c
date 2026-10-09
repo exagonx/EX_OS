@@ -18,7 +18,7 @@
 
 static char          g_testo[1 << 20];
 static ExRtfPezzo    g_pezzi[20000];
-static unsigned char g_all[20000];
+static ExRtfPar g_all[20000];
 static char          g_out[1 << 20];
 static int g_no = 0, g_n = 0;
 
@@ -56,7 +56,7 @@ static void mostra(const ExRtfDoc *d)
                s->grassetto ? "B" : "", s->corsivo ? "I" : "", s->sottolineato ? "U" : "",
                s->colore, (int)d->pezzi[i].lung, d->testo + d->pezzi[i].inizio);
     }
-    for (i = 0; i < d->par_n; i++) printf("  paragrafo %u: allineamento %u\n", i, d->allinea[i]);
+    for (i = 0; i < d->par_n; i++) printf("  paragrafo %u: allineamento %u\n", i, d->par[i].allinea);
 }
 
 static const char *WORDPAD =
@@ -112,7 +112,7 @@ int main(int argc, char **argv)
     leggi(&d, WORDPAD);
     ok(strcmp(d.testo, "Titolo grassetto e corsivo\nrosso sottolineato poi Arial 14\nperch\xC3\xA8 caff\xC3\xA8\n") == 0,
        "il testo, con le lettere accentate da \\'e8 e da \\u232 (senza il ? di riserva)");
-    ok(d.par_n >= 3 && d.allinea[0] == EXRTF_CENTRO && d.allinea[1] == EXRTF_SINISTRA,
+    ok(d.par_n >= 3 && d.par[0].allinea == EXRTF_CENTRO && d.par[1].allinea == EXRTF_SINISTRA,
        "il primo paragrafo e' centrato, il secondo no (\\pard lo rimette)");
     s = stile_a(&d, (unsigned int)(strstr(d.testo, "grassetto") - d.testo));
     ok(s && s->grassetto && !s->corsivo && s->corpo == 11, "\\b: grassetto, corpo 11 da \\fs22");
@@ -131,7 +131,7 @@ int main(int argc, char **argv)
     leggi(&d, LIBRE);
     ok(strcmp(d.testo, "verde a destra\ngiustificato {graffe} e \\\n") == 0,
        "stylesheet e info saltati, \\{ \\} \\\\ letti");
-    ok(d.allinea[0] == EXRTF_DESTRA && d.allinea[1] == EXRTF_GIUSTO, "\\qr e \\qj");
+    ok(d.par[0].allinea == EXRTF_DESTRA && d.par[1].allinea == EXRTF_GIUSTO, "\\qr e \\qj");
     s = stile_a(&d, 0);
     ok(s && s->colore == 0x008000 && s->famiglia == EXRTF_SANS && s->corpo == 12,
        "\\cf2 verde, \\f3 sans, \\fs24 dentro un gruppo");
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
     {
         static char          t2[1 << 20];
         static ExRtfPezzo    p2[20000];
-        static unsigned char a2[20000];
+        static ExRtfPar a2[20000];
         int stessi = 1;
 
         exrtf_prepara(&e, t2, sizeof(t2), p2, 20000, a2, 20000);
@@ -156,10 +156,10 @@ int main(int argc, char **argv)
                 x->colore != y->colore || x->famiglia != y->famiglia) stessi = 0;
         }
         ok(stessi, "rileggendo, lo stesso stile carattere per carattere");
-        ok(e.allinea[0] == d.allinea[0] && e.allinea[1] == d.allinea[1], "e gli stessi allineamenti");
+        ok(e.par[0].allinea == d.par[0].allinea && e.par[1].allinea == d.par[1].allinea, "e gli stessi allineamenti");
     }
     {
-        ExRtfDoc v; static char t3[256]; static ExRtfPezzo p3[16]; static unsigned char a3[16];
+        ExRtfDoc v; static char t3[256]; static ExRtfPezzo p3[16]; static ExRtfPar a3[16];
         ExRtfStile st;
         exrtf_prepara(&v, t3, sizeof(t3), p3, 16, a3, 16);
         exrtf_stile_base(&st);
@@ -171,7 +171,7 @@ int main(int argc, char **argv)
 
     printf("--- modificare (tappa 2) ---\n");
     {
-        ExRtfDoc v; static char t4[256]; static ExRtfPezzo p4[32]; static unsigned char a4[16];
+        ExRtfDoc v; static char t4[256]; static ExRtfPezzo p4[32]; static ExRtfPar a4[16];
         ExRtfStile base, gr, x;
         int buoni = 1;
 
@@ -192,14 +192,14 @@ int main(int argc, char **argv)
 
         exrtf_allinea(&v, 0, 0, EXRTF_CENTRO);
         exrtf_inserisci(&v, 4, "\n", 1, &base);
-        ok(v.par_n == 2 && v.allinea[0] == EXRTF_CENTRO && v.allinea[1] == EXRTF_CENTRO,
+        ok(v.par_n == 2 && v.par[0].allinea == EXRTF_CENTRO && v.par[1].allinea == EXRTF_CENTRO,
            "a capo in un paragrafo centrato: due paragrafi centrati");
         exrtf_allinea(&v, 6, 6, EXRTF_DESTRA);
-        ok(v.allinea[0] == EXRTF_CENTRO && v.allinea[1] == EXRTF_DESTRA &&
+        ok(v.par[0].allinea == EXRTF_CENTRO && v.par[1].allinea == EXRTF_DESTRA &&
            exrtf_paragrafo(&v, 4) == 0 && exrtf_paragrafo(&v, 5) == 1,
            "allineare il secondo solo; il '\\n' sta nel paragrafo che chiude");
         exrtf_cancella(&v, 4, 5);
-        ok(v.par_n == 1 && v.allinea[0] == EXRTF_CENTRO && strcmp(v.testo, "ciao!mondo") == 0,
+        ok(v.par_n == 1 && v.par[0].allinea == EXRTF_CENTRO && strcmp(v.testo, "ciao!mondo") == 0,
            "togliere l'a capo: resta il primo allineamento");
 
         exrtf_cambia(&v, 2, 7, EXRTF_C_CORSIVO, 1);
@@ -235,13 +235,52 @@ int main(int argc, char **argv)
     }
     {
         /* full buffers: less is done, nothing breaks */
-        ExRtfDoc v; static char t5[8]; static ExRtfPezzo p5[4]; static unsigned char a5[2];
+        ExRtfDoc v; static char t5[8]; static ExRtfPezzo p5[4]; static ExRtfPar a5[2];
         ExRtfStile st;
         exrtf_prepara(&v, t5, sizeof(t5), p5, 4, a5, 2);
         exrtf_stile_base(&st);
         n = exrtf_inserisci(&v, 0, "a\nb\nc", 5, &st);
         ok(n == 3 && strcmp(v.testo, "a\nb") == 0 && v.par_n == 2 && v.troncato,
            "senza posto per un paragrafo in piu', il testo si ferma a quell'a capo");
+    }
+
+    printf("--- paragrafi: rientri, tabulazioni, pagina (9 ottobre 2026) ---\n");
+    {
+        ExRtfDoc e; static char t6[4096]; static ExRtfPezzo p6[64]; static ExRtfPar a6[16];
+        unsigned int n;
+
+        leggi(&d, "{\\rtf1\\paperw12240\\paperh15840\\margl1440\\margr1440 "
+                  "\\pard\\qj\\li720\\ri360\\fi-360\\tx1440\\tx2880\\sb120\\sa240\\sl360\\slmult1 uno\\par "
+                  "\\pard due\\tab tre}");
+        ok(d.par[0].sin == 720 && d.par[0].des == 360 && d.par[0].prima == -360 &&
+           d.par[0].allinea == EXRTF_GIUSTO, "\\li \\ri \\fi letti");
+        ok(d.par[0].tab_n == 2 && d.par[0].tab[0] == 1440 && d.par[0].tab[1] == 2880, "\\tx letti, in ordine");
+        ok(d.par[0].sp_prima == 120 && d.par[0].sp_dopo == 240 && d.par[0].interlinea == 150,
+           "\\sb \\sa e \\sl360 = una riga e mezza");
+        ok(d.par[1].sin == 0 && d.par[1].tab_n == 0 && d.par[1].interlinea == 0, "\\pard azzera il paragrafo dopo");
+        ok(d.carta_w == 12240 && d.marg_sin == 1440 && exrtf_colonna(&d) == 9360, "la pagina: Letter, colonna di 6,5 pollici");
+        ok(strcmp(d.testo, "uno\ndue\ttre") == 0, "e il testo, con la tabulazione");
+
+        n = exrtf_scrivi(&d, g_out, sizeof(g_out));
+        exrtf_prepara(&e, t6, sizeof(t6), p6, 64, a6, 16);
+        ok(n > 0 && exrtf_leggi(&e, g_out, n), "scritto e riletto");
+        ok(e.par[0].sin == 720 && e.par[0].des == 360 && e.par[0].prima == -360 &&
+           e.par[0].tab_n == 2 && e.par[0].tab[1] == 2880 && e.par[0].sp_dopo == 240 &&
+           e.par[0].interlinea == 150 && e.par[1].sin == 0 && e.carta_w == 12240 &&
+           e.marg_des == 1440, "e torna uguale: paragrafi e pagina");
+
+        exrtf_tab_metti(&e, 0, 0, 2000);
+        exrtf_tab_metti(&e, 0, 0, 2040);                /* too near the one just set */
+        exrtf_tab_metti(&e, 0, 0, 500);
+        ok(e.par[0].tab_n == 4 && e.par[0].tab[0] == 500 && e.par[0].tab[2] == 2000 &&
+           e.par[1].tab_n == 0, "una tabulazione in piu': in ordine, mai due vicine, solo in quel paragrafo");
+        ok(exrtf_tab_togli(&e, 0, 0, 1470) && e.par[0].tab_n == 3 && e.par[0].tab[1] == 2000,
+           "toglierne una: la piu' vicina al punto");
+        exrtf_par_cambia(&e, 0, e.testo_n, EXRTF_P_SIN, 30000);
+        ok(e.par[0].sin == 9360 - 360 - 720 && e.par[1].sin == 9360 - 720,
+           "un rientro oltre la pagina si ferma a un pollice dal bordo");
+        exrtf_par_cambia(&e, 0, 0, EXRTF_P_SIN, 0);
+        ok(e.par[0].sin == 0 && e.par[0].prima == 0, "senza rientro, la prima riga non puo' uscire a sinistra");
     }
 
     if (g_no) { printf("\n--- un RTF scritto:\n%s\n", g_out); }

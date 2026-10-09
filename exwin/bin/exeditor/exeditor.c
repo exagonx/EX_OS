@@ -34,11 +34,16 @@
 #include "exrtf_vista.h"
 
 /* +0.001 a ogni modifica: `exeditor -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.007"
+#define VERSIONE_APP "0.008"
 EX_VERSIONE("exeditor", VERSIONE_APP);
 
-#define FIN_W       640
-#define FIN_H       420
+/* ! LA FINESTRA NASCE LARGA QUANTO UNA COLONNA DI A4, se lo schermo lo
+ * permette (9 ottobre 2026): 700 pixel fanno stare i 643 del testo di una
+ * pagina coi suoi margini di 2 cm, e la barra degli strumenti intera. Su uno
+ * schermo da 640 resta quella di prima. Lo decide main(). */
+static int g_w0 = 640, g_h0 = 420;
+#define FIN_W       g_w0
+#define FIN_H       g_h0
 
 /* La barra dei menu occupa i primi 20 pixel; l'area comincia sotto. */
 #define MENU_H      20
@@ -46,7 +51,13 @@ EX_VERSIONE("exeditor", VERSIONE_APP);
 #define AREA_X      4
 #define AREA_Y      (MENU_H + SCHEDE_H + 4)
 #define BASSO       24          /* la riga di stato in fondo */
-#define BARRA_W     16          /* la barra di scorrimento a destra */
+/* ! LA BARRA DELL'EDITOR NON C'E' PIU' (9 ottobre 2026). L'utente: «a destra
+ * ci sono DUE barre di scorrimento, una accanto all'altra». Quella di qui era
+ * nata il 23 settembre, quando l'area di testo del toolkit non ne aveva; poi
+ * l'area ha avuto le sue (verticale e orizzontale) e questa e' rimasta
+ * accanto, a fare la stessa cosa. Resta quella dell'area, che e' di tutti i
+ * programmi; l'area prende la larghezza che la barra occupava. */
+#define BARRA_W     0
 
 #define PERC_MAX    192
 
@@ -91,6 +102,19 @@ EX_VERSIONE("exeditor", VERSIONE_APP);
 #define ID_M_G        50
 #define ID_M_C        51
 #define ID_M_S        52
+/* The paragraph and the page (9 October 2026): indent less and more, the two
+ * windows, line spacing, "no tab stops"; then what is shown. */
+#define ID_R_RM       53
+#define ID_R_RP       54
+#define ID_F_PAR      55
+#define ID_F_PAG      56
+#define ID_F_INT1     57
+#define ID_F_INT15    58
+#define ID_F_INT2     59
+#define ID_F_TABVIA   60
+#define ID_V_BARRA    61
+#define ID_V_RIGH     62
+#define ID_V_PAG      63
 
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
@@ -99,7 +123,7 @@ static char g_avviso[96] = "";
 static ExWindow g_f, g_area, g_stato, g_menu, g_barra, g_schede;
 
 /* The window's client size, for the RTF view that has no control to resize. */
-static int g_fw = FIN_W, g_fh = FIN_H;
+static int g_fw = 640, g_fh = 420;
 
 /* The chosen tab is a rich text document (@RTF): the view shows it instead of
  * the text area. See "RTF MODE" below. */
@@ -261,8 +285,13 @@ static void stato_aggiorna(void)
         const ExRtfDoc *d = g_vista.doc;
         unsigned int p = exrtf_paragrafo(d, g_vista.cur), a = exrtf_vista_allineamento(&g_vista);
 
-        sprintf(s, "%s%s  -  RTF  -  paragrafo %u/%u, %s%s",
-                g_vista.modificato ? "*" : "", nome, p + 1, d->par_n, AL[a < 4 ? a : 0],
+        char pag[32];
+
+        pag[0] = '\0';
+        if (g_vista.pagina)
+            snprintf(pag, sizeof(pag), "pag. %u/%u, ", exrtf_vista_pagina_di(&g_vista), g_vista.pagine);
+        sprintf(s, "%s%s  -  RTF  -  %sparagrafo %u/%u, %s%s",
+                g_vista.modificato ? "*" : "", nome, pag, p + 1, d->par_n, AL[a < 4 ? a : 0],
                 g_parziale ? "  [PARZIALE: non si salva]" : "");
     } else {
         ex_textarea_get_cursor(g_area, &r, &c);
@@ -342,7 +371,14 @@ static void istruzioni(void)
                   "Ctrl+H sostituisce.  Un file .rtf si apre in modalita' RTF "
                   "(anche File > Nuovo documento RTF): Ctrl+B, Ctrl+I, Ctrl+U e "
                   "la barra sopra il testo cambiano il carattere; si salva in "
-                  "RTF, e WordPad o LibreOffice lo aprono.");
+                  "RTF, e WordPad o LibreOffice lo aprono.  Sotto la barra "
+                  "degli strumenti c'e' il righello, in centimetri: i "
+                  "triangoli sono i rientri del paragrafo e si trascinano, "
+                  "un clic mette una tabulazione, trascinarla via la toglie.  "
+                  "Formato > Paragrafo e Formato > Pagina chiedono rientri, "
+                  "interlinea, carta e margini.  Visualizza accende e spegne "
+                  "barra, righello e vista pagina.  Un .doc di Word 6 o 95 "
+                  "si apre e si salva come RTF; quelli di Word 97 e dopo no.");
 }
 
 /* =============================================================================
@@ -524,6 +560,7 @@ typedef struct {
     /* A rich text document (@RTF) keeps its text in its own buffers the whole
      * time, and while it waits only the view's place is kept. */
     int          rtf;
+    int          da_doc;            /* read from a Word file: saved as RTF, elsewhere */
     ExRtfDoc     rd;
     unsigned int v_cur, v_anc, v_prima;
     ExRtfStile   v_stile;
@@ -561,9 +598,33 @@ static int g_attivo = 0;            /* quale, fra 0 e g_ndoc - 1 */
 #define RTF_BARRA_H  26
 
 static ExRtfRiga *g_righe = 0;
-static ExWindow g_rg, g_rc, g_rs, g_rfam, g_rcorpo, g_rcol;
-static ExWindow g_rsin, g_rcen, g_rdes, g_rgiu;
+static ExWindow g_rfam, g_rcorpo, g_rcol;
 static int        g_mod_visto = -1;     /* the "modified" the tab title shows */
+
+/* =============================================================================
+ * THE TWO BARS (9 October 2026, asked by the user: «la doppia barra, uno
+ * strumenti e l'altro righello e tabulazioni»)
+ *
+ * Under the tabs a rich text document has the TOOL bar - small pictures for
+ * new, open, save, the clipboard, bold italic underline, typeface size and
+ * colour, the four alignments, indent less and more - and under it the RULER,
+ * in centimetres, with the paragraph's indents and tab stops as marks that
+ * are dragged. Each can be switched off from the Visualizza menu, and the
+ * choice is kept in $HOME/.exwin/config/exeditor.cfg.
+ *
+ * ! THE BUTTONS ARE PLAIN BUTTONS, AND WHAT IS ON SHOWS UNDERNEATH. The
+ * toolkit has no button that stays pressed; a blue line under G, C, S and
+ * under the alignment in use says the same thing (barra_segni).
+ * ============================================================================= */
+#define RIGH_H       22
+enum { BT_NUOVO, BT_APRI, BT_SALVA, BT_TAGLIA, BT_COPIA, BT_INCOLLA,
+       BT_G, BT_C, BT_S, BT_SIN, BT_CEN, BT_DES, BT_GIU, BT_RM, BT_RP, BT_N };
+static ExWindow g_bt[BT_N];
+static int      g_bt_x[BT_N];
+static int      g_vedi_barra = 1, g_vedi_righello = 1, g_vedi_pagina = 1;
+static int      g_seg_g = -1, g_seg_c = -1, g_seg_s = -1, g_seg_al = -1;
+static void     righello_disegna(void);
+static void     barra_segni(void);
 
 static const unsigned int CORPI[] = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72 };
 #define CORPI_N   (sizeof(CORPI) / sizeof(CORPI[0]))
@@ -581,7 +642,7 @@ static int rtf_buffer(Doc *D)
 {
     char          *t = (char *)malloc(RTF_TESTO);
     ExRtfPezzo    *p = (ExRtfPezzo *)malloc(RTF_PEZZI * sizeof(ExRtfPezzo));
-    unsigned char *a = (unsigned char *)malloc(RTF_PAR);
+    ExRtfPar      *a = (ExRtfPar *)malloc(RTF_PAR * sizeof(ExRtfPar));
 
     if (!g_righe) g_righe = (ExRtfRiga *)malloc(RTF_RIGHE * sizeof(ExRtfRiga));
     if (!t || !p || !a || !g_righe) {
@@ -597,7 +658,7 @@ static void rtf_libera(Doc *D)
     if (!D->rtf) return;
     free(D->rd.testo);
     free(D->rd.pezzi);
-    free(D->rd.allinea);
+    free(D->rd.par);
     memset(&D->rd, 0, sizeof(D->rd));
     D->rtf = 0;
 }
@@ -606,7 +667,7 @@ static void rtf_libera(Doc *D)
 static void vista_rett(int *x, int *y, int *w, int *h)
 {
     *x = AREA_X;
-    *y = AREA_Y + RTF_BARRA_H;
+    *y = AREA_Y + (g_vedi_barra ? RTF_BARRA_H : 0) + (g_vedi_righello ? RIGH_H : 0);
     *w = g_fw - AREA_X * 2;
     *h = g_fh - *y - BASSO;
     if (*w < 60) *w = 60;
@@ -618,6 +679,7 @@ static void vista_collega(int i)
     Doc *D = &g_doc[i];
     int  x, y, w, h;
 
+    g_vista.pagina = g_vedi_pagina;
     exrtf_vista_prepara(&g_vista, &D->rd, g_righe, RTF_RIGHE);
     g_vista.stile      = D->v_stile;
     g_vista.modificato = D->modificato;
@@ -644,13 +706,16 @@ static int barra_rtf_segui(void)
 {
     const ExRtfStile *s;
     unsigned int      i, k = 0;
-    int               cambiato = 0;
+    int               cambiato = 0, al;
 
-    if (!g_rtf || !g_rg) return 0;
+    if (!g_rtf || !g_rfam) return 0;
     s = exrtf_vista_stile(&g_vista);
-    if (ex_is_checked(g_rg) != (int)s->grassetto)    { ex_set_checked(g_rg, s->grassetto);    cambiato = 1; }
-    if (ex_is_checked(g_rc) != (int)s->corsivo)      { ex_set_checked(g_rc, s->corsivo);      cambiato = 1; }
-    if (ex_is_checked(g_rs) != (int)s->sottolineato) { ex_set_checked(g_rs, s->sottolineato); cambiato = 1; }
+    al = (int)exrtf_vista_allineamento(&g_vista);
+    if (g_seg_g != (int)s->grassetto || g_seg_c != (int)s->corsivo ||
+        g_seg_s != (int)s->sottolineato || g_seg_al != al) {
+        g_seg_g = s->grassetto; g_seg_c = s->corsivo; g_seg_s = s->sottolineato; g_seg_al = al;
+        cambiato = 1;
+    }
     if (ex_item_get_selected(g_rfam) != s->famiglia)   { ex_item_select(g_rfam, s->famiglia); cambiato = 1; }
     for (i = 1; i < CORPI_N; i++) {
         unsigned int di = CORPI[i] > s->corpo ? CORPI[i] - s->corpo : s->corpo - CORPI[i];
@@ -663,23 +728,37 @@ static int barra_rtf_segui(void)
     return cambiato;
 }
 
+/* The blue line under what is on. Drawn after the window: the buttons are
+ * the toolkit's, the line is ours. */
+static void barra_segni(void)
+{
+    int i, y = AREA_Y + 2 + 21;
+
+    if (!g_rtf || !g_vedi_barra || !g_bt[BT_G]) return;
+    for (i = BT_G; i <= BT_GIU; i++) {
+        int acceso = i == BT_G ? g_seg_g == 1 : i == BT_C ? g_seg_c == 1 :
+                     i == BT_S ? g_seg_s == 1 : g_seg_al == i - BT_SIN;
+
+        ex_fill_rect(g_f, g_bt_x[i] + 2, y, 20, 2, acceso ? EX_BLUE : EX_GRAY);
+    }
+}
+
 /* Text area or view, and their bars; the keys go with them. */
 static void modo_mostra(void)
 {
-    ExWindow barra[10];
-    int        i;
+    int i, barra = g_rtf && g_vedi_barra;
 
-    barra[0] = g_rg;   barra[1] = g_rc;     barra[2] = g_rs;
-    barra[3] = g_rfam; barra[4] = g_rcorpo; barra[5] = g_rcol;
-    barra[6] = g_rsin; barra[7] = g_rcen;   barra[8] = g_rdes; barra[9] = g_rgiu;
     ex_show(g_area, !g_rtf);
     if (g_barra) ex_show(g_barra, !g_rtf);
-    for (i = 0; i < 10; i++) if (barra[i]) ex_show(barra[i], g_rtf);
+    for (i = 0; i < BT_N; i++) if (g_bt[i]) ex_show(g_bt[i], barra);
+    if (g_rfam)   ex_show(g_rfam, barra);
+    if (g_rcorpo) ex_show(g_rcorpo, barra);
+    if (g_rcol)   ex_show(g_rcol, barra);
     /* ! THE HIDDEN AREA MUST LOSE THE FOCUS, or the keys would go on being
      * typed into a text nobody sees. With no control focused they come to
      * this program, which gives them to the view. */
     ex_tab_content(g_f, g_rtf);           /* Tab is a letter of the text */
-    if (g_rtf) { ex_clear_focus(g_f); barra_rtf_segui(); }
+    if (g_rtf) { ex_clear_focus(g_f); g_seg_g = -1; barra_rtf_segui(); }
     else       ex_set_focus(g_area);
 }
 
@@ -688,6 +767,8 @@ static void vista_disegna_se(void)
     if (!g_rtf || !g_vista.doc) return;
     g_vista.fuoco = (ex_get_focus(g_f) == 0);
     exrtf_vista_disegna(&g_vista, g_f);
+    righello_disegna();
+    barra_segni();
 }
 
 static void stato_aggiorna(void);
@@ -723,7 +804,7 @@ static int rtf_diventa(int i)
         D->rtf = 1;
     } else {
         exrtf_prepara(&D->rd, D->rd.testo, D->rd.testo_max, D->rd.pezzi, D->rd.pezzi_max,
-                      D->rd.allinea, D->rd.par_max);
+                      D->rd.par, D->rd.par_max);
     }
     exrtf_stile_base(&D->v_stile);
     D->v_cur = D->v_anc = D->v_prima = 0;
@@ -743,6 +824,15 @@ static void rtf_nuovo_doc(void)
     if (rtf_diventa(g_attivo)) strcpy(g_avviso, "documento RTF nuovo");
 }
 
+static int e_ole(const char *b)
+{
+    static const unsigned char F[8] = { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
+    int i;
+
+    for (i = 0; i < 8; i++) if ((unsigned char)b[i] != F[i]) return 0;
+    return 1;
+}
+
 /* A file that begins "{\rtf" is rich text; one that is not there yet is, if
  * its name ends in .rtf. */
 static int e_file_rtf(const char *perc)
@@ -754,6 +844,9 @@ static int e_file_rtf(const char *perc)
     if (fd >= 0) {
         n = (int)read(fd, b, sizeof(b));
         close(fd);
+        /* ! AND A WORD FILE, by its first eight bytes (an OLE2 compound
+         * file): it opens as rich text too, read by lib/exrtf/doc95.c. */
+        if (n >= 8 && e_ole(b)) return 1;
         return n > 0 && exrtf_e_rtf(b, (unsigned int)n);
     }
     return l > 4 && perc[l - 4] == '.' &&
@@ -788,7 +881,33 @@ static int rtf_carica(const char *perc)
     close(fd);
 
     exrtf_prepara(&D->rd, D->rd.testo, D->rd.testo_max, D->rd.pezzi, D->rd.pezzi_max,
-                  D->rd.allinea, D->rd.par_max);
+                  D->rd.par, D->rd.par_max);
+    D->da_doc = 0;
+    if (k >= 8 && e_ole(b)) {
+        /* ! A WORD 6/95 FILE IS READ, NEVER WRITTEN. What was opened is saved
+         * as RTF, under another name: salva() asks for it (da_doc). A Word
+         * file this program cannot read opens EMPTY and cannot be saved over
+         * the original - the same rule as a file read in part. */
+        unsigned char *lav = (unsigned char *)malloc(k + 1);
+        int esito = lav ? exrtf_leggi_doc(&D->rd, (const unsigned char *)b, k, lav, k) : -3;
+
+        free(lav);
+        free(b);
+        if (esito == 1) {
+            D->da_doc = 1;
+            g_parziale = D->rd.troncato;
+            strcpy(g_avviso, "documento di Word 6/95: si salva come RTF");
+        } else {
+            g_parziale = 1;
+            strcpy(g_avviso, esito == -1 ? "e' un .doc di Word 97 o successivo: non lo so leggere" :
+                             esito == -2 ? "il documento e' cifrato: non lo so leggere" :
+                                           "non e' un documento di Word 6/95 che so leggere");
+        }
+        exrtf_vista_nuovo(&g_vista);
+        barra_rtf_segui();
+        g_mod_visto = -1;
+        return 1;
+    }
     exrtf_leggi(&D->rd, b, k);
     free(b);
     /* ! READ IN PART, NOT SAVED: the same rule as the text area. Saving what
@@ -803,9 +922,26 @@ static int rtf_carica(const char *perc)
 static int rtf_salva(void)
 {
     Doc         *D = &g_doc[g_attivo];
-    unsigned int max = D->rd.testo_n * 16 + D->rd.pezzi_n * 64 + 8192, n;
-    char        *b = (char *)malloc(max);
+    unsigned int max = D->rd.testo_n * 16 + D->rd.pezzi_n * 64 + D->rd.par_n * 96 + 8192, n;
+    char        *b;
     int          fd;
+
+    /* A document that came from a Word file: its name becomes .rtf and the
+     * place is asked, once. The .doc is never written over. */
+    if (D->da_doc) {
+        unsigned int l = (unsigned int)strlen(g_perc);
+        char nuovo[PERC_MAX];
+
+        strncpy(nuovo, g_perc, PERC_MAX - 1);
+        nuovo[PERC_MAX - 1] = '\0';
+        if (l > 4 && nuovo[l - 4] == '.') strcpy(nuovo + l - 4, ".rtf");
+        else if (l + 5 < PERC_MAX) strcat(nuovo, ".rtf");
+        if (!ex_dlg_salva(nuovo, PERC_MAX)) { strcpy(g_avviso, "salvataggio annullato"); return 0; }
+        strncpy(g_perc, nuovo, PERC_MAX - 1);
+        g_perc[PERC_MAX - 1] = '\0';
+        D->da_doc = 0;
+    }
+    b = (char *)malloc(max);
 
     if (!b) { strcpy(g_avviso, "memoria finita: non salvato"); return 0; }
     n = exrtf_scrivi(&D->rd, b, max);
@@ -825,6 +961,9 @@ static int rtf_salva(void)
     return 1;
 }
 
+static void paragrafo_apri(void);
+static void pagina_apri(void);
+
 /* A command of the format bar or of the Formato menu. */
 static void formato(unsigned int id, long lp)
 {
@@ -833,12 +972,23 @@ static void formato(unsigned int id, long lp)
         return;
     }
     switch (id) {
-    case ID_R_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, (unsigned int)ex_is_checked(g_rg)); break;
-    case ID_R_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, (unsigned int)ex_is_checked(g_rc)); break;
-    case ID_R_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, (unsigned int)ex_is_checked(g_rs)); break;
-    case ID_M_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, EXRTF_INVERTI); break;
-    case ID_M_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, EXRTF_INVERTI); break;
-    case ID_M_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, EXRTF_INVERTI); break;
+    case ID_R_G: case ID_M_G: exrtf_vista_cambia(&g_vista, EXRTF_C_GRASSETTO, EXRTF_INVERTI); break;
+    case ID_R_C: case ID_M_C: exrtf_vista_cambia(&g_vista, EXRTF_C_CORSIVO, EXRTF_INVERTI); break;
+    case ID_R_S: case ID_M_S: exrtf_vista_cambia(&g_vista, EXRTF_C_SOTTOLINEATO, EXRTF_INVERTI); break;
+    /* Indent less and more: a step of 1,25 cm, the default tab of Word. */
+    case ID_R_RM: case ID_R_RP: {
+        int sin = exrtf_vista_par(&g_vista)->sin, passo = 709;
+
+        sin = id == ID_R_RP ? (sin / passo + 1) * passo : ((sin + passo - 1) / passo - 1) * passo;
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_SIN, sin < 0 ? 0 : sin);
+        break;
+    }
+    case ID_F_INT1:  exrtf_vista_par_cambia(&g_vista, EXRTF_P_INTERLINEA, 100); break;
+    case ID_F_INT15: exrtf_vista_par_cambia(&g_vista, EXRTF_P_INTERLINEA, 150); break;
+    case ID_F_INT2:  exrtf_vista_par_cambia(&g_vista, EXRTF_P_INTERLINEA, 200); break;
+    case ID_F_TABVIA: exrtf_vista_tab(&g_vista, 0, 0); break;
+    case ID_F_PAR: paragrafo_apri(); return;
+    case ID_F_PAG: pagina_apri();    return;
     case ID_R_FAM:
         if (lp >= 0 && lp <= EXRTF_MONO) exrtf_vista_cambia(&g_vista, EXRTF_C_FAMIGLIA, (unsigned int)lp);
         break;
@@ -861,35 +1011,485 @@ static void formato(unsigned int id, long lp)
     barra_rtf_segui();
 }
 
-/* The format bar: B, I, U as switches (they show the style under the caret),
- * typeface, size, colour, and the four alignments. Hidden until a rich text
- * tab is chosen. */
+/* The tool bar. Hidden until a rich text tab is chosen. The pictures are in
+ * /exwin/icon/strumenti (tools/exeditor-icone.py draws them); without them
+ * the buttons carry a letter, so a system with no icons still works. */
 static void barra_rtf_crea(void)
 {
-    int y = AREA_Y + 2, i;
+    static const struct { unsigned int id; const char *icona; const char *lettera; } B[BT_N] = {
+        { ID_NUOVO_RTF, "nuovo", "N" },   { ID_APRI, "apri", "A" },       { ID_SALVA, "salva", "S" },
+        { ID_TAGLIA, "taglia", "X" },     { ID_COPIA, "copia", "C" },     { ID_INCOLLA, "incolla", "V" },
+        { ID_R_G, "grassetto", "G" },     { ID_R_C, "corsivo", "C" },     { ID_R_S, "sottolineato", "S" },
+        { ID_R_SIN, "sinistra", "<" },    { ID_R_CEN, "centro", "=" },    { ID_R_DES, "destra", ">" },
+        { ID_R_GIU, "giustifica", "#" },  { ID_R_RM, "rientro_meno", "-" }, { ID_R_RP, "rientro_piu", "+" }
+    };
+    int y = AREA_Y + 2, i, x = 4;
 
-    g_rg = ex_create("checkbox", "G", EX_CHILD, 4, y, 34, 20, g_f, ID_R_G, 0);
-    g_rc = ex_create("checkbox", "C", EX_CHILD, 40, y, 34, 20, g_f, ID_R_C, 0);
-    g_rs = ex_create("checkbox", "S", EX_CHILD, 76, y, 34, 20, g_f, ID_R_S, 0);
-    g_rfam = ex_create("combo", "", EX_CHILD, 116, y, 76, 20, g_f, ID_R_FAM, 0);
-    ex_item_add(g_rfam, "Serif");
-    ex_item_add(g_rfam, "Sans");
-    ex_item_add(g_rfam, "Mono");
-    g_rcorpo = ex_create("combo", "", EX_CHILD, 196, y, 52, 20, g_f, ID_R_CORPO, 0);
-    for (i = 0; i < (int)CORPI_N; i++) {
-        char t[8];
-        snprintf(t, sizeof(t), "%u", CORPI[i]);
-        ex_item_add(g_rcorpo, t);
+    for (i = 0; i < BT_N; i++) {
+        char   p[96];
+        ExIcon ic;
+
+        if (i == BT_TAGLIA || i == BT_G || i == BT_RM) x += 6;
+        if (i == BT_SIN) {
+            /* typeface, size, colour sit between the letters and the lines */
+            int k;
+
+            x += 6;
+            g_rfam = ex_create("combo", "", EX_CHILD, x, y, 72, 20, g_f, ID_R_FAM, 0);
+            ex_item_add(g_rfam, "Serif");
+            ex_item_add(g_rfam, "Sans");
+            ex_item_add(g_rfam, "Mono");
+            x += 74;
+            g_rcorpo = ex_create("combo", "", EX_CHILD, x, y, 46, 20, g_f, ID_R_CORPO, 0);
+            for (k = 0; k < (int)CORPI_N; k++) {
+                char t[8];
+                snprintf(t, sizeof(t), "%u", CORPI[k]);
+                ex_item_add(g_rcorpo, t);
+            }
+            x += 48;
+            g_rcol = ex_create("combo", "", EX_CHILD, x, y, 84, 20, g_f, ID_R_COLORE, 0);
+            for (k = 0; k < (int)COLORI_N; k++) ex_item_add(g_rcol, COLORE_NOME[k]);
+            x += 84 + 6;
+        }
+        snprintf(p, sizeof(p), "/exwin/icon/strumenti/%s.ico", B[i].icona);
+        ic = ex_icon_open(p);
+        g_bt[i] = ex_create("button", ic ? "" : B[i].lettera, EX_CHILD, x, y, 24, 20, g_f, B[i].id, 0);
+        if (ic && g_bt[i]) ex_set_icon(g_bt[i], ic, 16);
+        g_bt_x[i] = x;
+        x += 25;
     }
-    g_rcol = ex_create("combo", "", EX_CHILD, 252, y, 92, 20, g_f, ID_R_COLORE, 0);
-    for (i = 0; i < (int)COLORI_N; i++) ex_item_add(g_rcol, COLORE_NOME[i]);
-    g_rsin = ex_create("button", "Sin", EX_CHILD, 350, y, 40, 20, g_f, ID_R_SIN, 0);
-    g_rcen = ex_create("button", "Cen", EX_CHILD, 392, y, 40, 20, g_f, ID_R_CEN, 0);
-    g_rdes = ex_create("button", "Des", EX_CHILD, 434, y, 40, 20, g_f, ID_R_DES, 0);
-    g_rgiu = ex_create("button", "Giu", EX_CHILD, 476, y, 40, 20, g_f, ID_R_GIU, 0);
     ex_item_select(g_rfam, 0);
     ex_item_select(g_rcorpo, 4);                /* 12 */
     ex_item_select(g_rcol, 0);
+}
+
+/* =============================================================================
+ * THE RULER
+ *
+ * Centimetres from the left margin of the text, which is where the view says
+ * its column starts (exrtf_vista_colonna): in page layout the white part is
+ * the column and the grey the margins of the paper. On it, the paragraph of
+ * the caret:
+ *
+ *     a triangle pointing down, on top     the first line
+ *     a triangle pointing up, at the left  the left indent (moves both)
+ *     a triangle pointing up, at the right the right indent
+ *     a small L                            a tab stop
+ *
+ * ! THE MOUSE: a mark is dragged; a click on the empty part puts a tab stop
+ * there; a tab stop dragged off the ruler goes away, as in Word. Things snap
+ * to an eighth of a centimetre - a ruler that keeps 1,2496 cm is a ruler
+ * nobody can line two paragraphs up with.
+ * ============================================================================= */
+#define RG_NIENTE 0
+#define RG_PRIMA  1
+#define RG_SIN    2
+#define RG_DES    3
+#define RG_TAB    4
+static int          g_rg_cosa = RG_NIENTE;
+static unsigned int g_rg_tab = 0;       /* the stop being dragged, 0 = off the ruler */
+
+static void righello_rett(int *x, int *y, int *w, int *h)
+{
+    *x = AREA_X;
+    *y = AREA_Y + (g_vedi_barra ? RTF_BARRA_H : 0);
+    *w = g_fw - AREA_X * 2;
+    *h = RIGH_H;
+}
+
+static void tri_giu(int x, int y, unsigned int c)       /* point down, top at y */
+{
+    int i;
+    for (i = 0; i < 5; i++) ex_fill_rect(g_f, x - 4 + i, y + i, 9 - 2 * i, 1, c);
+}
+
+static void tri_su(int x, int y, unsigned int c)        /* point up, base at y + 4 */
+{
+    int i;
+    for (i = 0; i < 5; i++) ex_fill_rect(g_f, x - i, y + i, 2 * i + 1, 1, c);
+}
+
+static void righello_disegna(void)
+{
+    const ExRtfPar *P;
+    ExFont fo;
+    int    x, y, w, h, cx, cw, q, a, b;
+
+    if (!g_rtf || !g_vedi_righello || !g_vista.doc) return;
+    righello_rett(&x, &y, &w, &h);
+    exrtf_vista_colonna(&g_vista, &cx, &cw);
+    P = exrtf_vista_par(&g_vista);
+    fo = ex_font_find(EXRTF_SANS, 10, 0, 0);
+
+    ex_fill_rect(g_f, x, y, w, h, EX_GRAY);
+    ex_fill_rect(g_f, x, y + 3, w, h - 6, 0x00A8A8A8);
+    a = cx < x ? x : cx;
+    b = cx + cw > x + w ? x + w : cx + cw;
+    if (b > a) ex_fill_rect(g_f, a, y + 3, b - a, h - 6, EX_WHITE);
+
+    /* quarter centimetres: a number at each whole one */
+    for (q = 1; ; q++) {
+        int tx = cx + exrtf_px(q * EXRTF_CM / 4);
+
+        if (tx >= cx + cw || tx >= x + w) break;
+        if (tx < x) continue;
+        if (q % 4 == 0) {
+            char t[8];
+
+            snprintf(t, sizeof(t), "%d", q / 4);
+            ex_draw_text_font(g_f, fo, tx - ex_text_width(fo, t) / 2, y + 4, t, EX_DARK_GRAY);
+        } else if (q % 2 == 0) {
+            ex_fill_rect(g_f, tx, y + 8, 1, 6, EX_DARK_GRAY);
+        } else {
+            ex_fill_rect(g_f, tx, y + 10, 1, 2, EX_DARK_GRAY);
+        }
+    }
+
+    for (q = 0; q < (int)P->tab_n; q++) {
+        int tx = cx + exrtf_px(P->tab[q]);
+
+        if (tx < x || tx + 6 > x + w) continue;
+        ex_fill_rect(g_f, tx, y + h - 11, 2, 7, EX_BLACK);
+        ex_fill_rect(g_f, tx, y + h - 6, 6, 2, EX_BLACK);
+    }
+    q = cx + exrtf_px(P->sin + P->prima);
+    if (q >= x && q < x + w) tri_giu(q, y, EX_BLUE);
+    q = cx + exrtf_px(P->sin);
+    if (q >= x && q < x + w) tri_su(q, y + h - 5, EX_BLUE);
+    q = cx + cw - exrtf_px(P->des);
+    if (q >= x && q < x + w) tri_su(q, y + h - 5, EX_BLUE);
+}
+
+static int rg_vicino(int a, int b, int quanto) { return a - b <= quanto && b - a <= quanto; }
+
+/* The twips of a window x, snapped to an eighth of a centimetre. */
+static int rg_twips(int wx)
+{
+    int cx, cw, t;
+
+    exrtf_vista_colonna(&g_vista, &cx, &cw);
+    t = exrtf_twips(wx - cx);
+    if (t >= 0) t = (t + 35) / 71 * 71;
+    else        t = -((-t + 35) / 71 * 71);
+    return t;
+}
+
+static void righello_muovi(int wx, int wy)
+{
+    const ExRtfPar *P = exrtf_vista_par(&g_vista);
+    int x, y, w, h, t = rg_twips(wx);
+
+    righello_rett(&x, &y, &w, &h);
+    switch (g_rg_cosa) {
+    case RG_PRIMA: exrtf_vista_par_cambia(&g_vista, EXRTF_P_PRIMA, t - P->sin); break;
+    case RG_SIN:   exrtf_vista_par_cambia(&g_vista, EXRTF_P_SIN, t); break;
+    case RG_DES:   exrtf_vista_par_cambia(&g_vista, EXRTF_P_DES, (int)exrtf_colonna(g_vista.doc) - t); break;
+    case RG_TAB: {
+        int fuori = wy < y - 20 || wy > y + h + 20 || t <= 0 || t >= (int)exrtf_colonna(g_vista.doc);
+
+        if (g_rg_tab) exrtf_vista_tab(&g_vista, g_rg_tab, 0);
+        g_rg_tab = fuori ? 0 : (unsigned int)t;
+        if (g_rg_tab) exrtf_vista_tab(&g_vista, g_rg_tab, 1);
+        break;
+    }
+    default: break;
+    }
+}
+
+/* The button went down at (wx, wy). 1 if it was the ruler's. */
+static int righello_giu(int wx, int wy)
+{
+    const ExRtfPar *P;
+    int x, y, w, h, cx, cw, i, sopra;
+
+    if (!g_rtf || !g_vedi_righello || !g_vista.doc) return 0;
+    righello_rett(&x, &y, &w, &h);
+    if (wx < x || wx >= x + w || wy < y || wy >= y + h) return 0;
+    exrtf_vista_colonna(&g_vista, &cx, &cw);
+    P = exrtf_vista_par(&g_vista);
+    sopra = wy < y + h / 2;
+
+    g_rg_cosa = RG_NIENTE;
+    if (sopra && rg_vicino(wx, cx + exrtf_px(P->sin + P->prima), 5)) g_rg_cosa = RG_PRIMA;
+    else if (!sopra && rg_vicino(wx, cx + exrtf_px(P->sin), 5))      g_rg_cosa = RG_SIN;
+    else if (rg_vicino(wx, cx + cw - exrtf_px(P->des), 5))           g_rg_cosa = RG_DES;
+    else if (rg_vicino(wx, cx + exrtf_px(P->sin + P->prima), 5))     g_rg_cosa = RG_PRIMA;
+    else if (rg_vicino(wx, cx + exrtf_px(P->sin), 5))                g_rg_cosa = RG_SIN;
+    else {
+        for (i = 0; i < (int)P->tab_n; i++)
+            if (rg_vicino(wx, cx + exrtf_px(P->tab[i]) + 2, 5)) {
+                g_rg_cosa = RG_TAB;
+                g_rg_tab = P->tab[i];
+                return 1;
+            }
+        if (wx > cx && wx < cx + cw) {          /* a new stop, already in hand */
+            int t = rg_twips(wx);
+
+            if (t > 0) {
+                g_rg_cosa = RG_TAB;
+                g_rg_tab = (unsigned int)t;
+                exrtf_vista_tab(&g_vista, g_rg_tab, 1);
+            }
+        }
+    }
+    return 1;
+}
+
+/* =============================================================================
+ * THE TWO WINDOWS: Paragrafo and Pagina
+ *
+ * Lengths are typed in centimetres, with a comma or a point; space above and
+ * below a paragraph in points, as every word processor asks them.
+ * ============================================================================= */
+#define ID_D_OK   1
+#define ID_D_NO   2
+static ExWindow g_dp, g_dp_sin, g_dp_des, g_dp_prima, g_dp_sp, g_dp_sd, g_dp_int;
+static ExWindow g_dg, g_dg_formato, g_dg_verso, g_dg_m[4];
+
+static void cm_scrivi(char *out, unsigned int max, int twips)
+{
+    int c = twips * 100 / EXRTF_CM, n = c < 0 ? -c : c;
+
+    snprintf(out, max, "%s%d,%02d", c < 0 ? "-" : "", n / 100, n % 100);
+}
+
+/* "1,25" or "1.25" or "-0,5": twips. What is not a number is 0. */
+static int cm_leggi(const char *t)
+{
+    int segno = 1, intero = 0, cent = 0, cifre = 0;
+
+    if (!t) return 0;
+    while (*t == ' ') t++;
+    if (*t == '-') { segno = -1; t++; }
+    while (*t >= '0' && *t <= '9') { if (intero < 1000) intero = intero * 10 + (*t - '0'); t++; }
+    if (*t == ',' || *t == '.') {
+        t++;
+        while (*t >= '0' && *t <= '9') {
+            if (cifre < 2) { cent = cent * 10 + (*t - '0'); cifre++; }
+            t++;
+        }
+        if (cifre == 1) cent *= 10;
+    }
+    return segno * ((intero * 100 + cent) * EXRTF_CM / 100);
+}
+
+static int punti_leggi(const char *t) { return t ? atoi(t) * 20 : 0; }
+
+static ExWindow campo(ExWindow f, const char *etichetta, int y, const char *valore)
+{
+    ex_create("label", etichetta, EX_CHILD, 12, y + 4, 170, 16, f, 0, 0);
+    return ex_create("textbox", valore, EX_CHILD, 190, y, 80, 22, f, 0, 0);
+}
+
+static void finestra_via(ExWindow *f)
+{
+    if (*f) ex_destroy(*f);
+    *f = 0;
+    ridisegna();
+    if (g_rtf) ex_clear_focus(g_f);
+}
+
+static long paragrafo_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_CLOSE || (msg == EXM_COMMAND && wp == ID_D_NO)) { finestra_via(&g_dp); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_D_OK) {
+        static const int INT[3] = { 100, 150, 200 };
+        unsigned int k = ex_item_get_selected(g_dp_int);
+        int sin = cm_leggi(ex_get_text(g_dp_sin)), des = cm_leggi(ex_get_text(g_dp_des));
+        int prima = cm_leggi(ex_get_text(g_dp_prima));
+        int sp = punti_leggi(ex_get_text(g_dp_sp)), sd = punti_leggi(ex_get_text(g_dp_sd));
+
+        /* the left indent first: the first line is counted from it */
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_PRIMA, 0);
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_SIN, sin);
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_DES, des);
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_PRIMA, prima);
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_SP_PRIMA, sp);
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_SP_DOPO, sd);
+        exrtf_vista_par_cambia(&g_vista, EXRTF_P_INTERLINEA, INT[k < 3 ? k : 0]);
+        finestra_via(&g_dp);
+        return 0;
+    }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static void paragrafo_apri(void)
+{
+    const ExRtfPar *P = exrtf_vista_par(&g_vista);
+    char t[24];
+
+    if (g_dp) return;
+    g_dp = ex_create("window", "Paragrafo", EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
+                     EX_AUTO, EX_AUTO, 290, 230, 0, 0, paragrafo_proc);
+    if (!g_dp) return;
+    cm_scrivi(t, sizeof(t), P->sin);    g_dp_sin   = campo(g_dp, "Rientro sinistro (cm)", 10, t);
+    cm_scrivi(t, sizeof(t), P->des);    g_dp_des   = campo(g_dp, "Rientro destro (cm)", 38, t);
+    cm_scrivi(t, sizeof(t), P->prima);  g_dp_prima = campo(g_dp, "Prima riga (cm)", 66, t);
+    snprintf(t, sizeof(t), "%d", P->sp_prima / 20); g_dp_sp = campo(g_dp, "Spazio prima (punti)", 94, t);
+    snprintf(t, sizeof(t), "%d", P->sp_dopo / 20);  g_dp_sd = campo(g_dp, "Spazio dopo (punti)", 122, t);
+    ex_create("label", "Interlinea", EX_CHILD, 12, 154, 170, 16, g_dp, 0, 0);
+    g_dp_int = ex_create("combo", "", EX_CHILD, 190, 150, 80, 22, g_dp, 0, 0);
+    ex_item_add(g_dp_int, "Singola");
+    ex_item_add(g_dp_int, "1,5 righe");
+    ex_item_add(g_dp_int, "Doppia");
+    ex_item_select(g_dp_int, P->interlinea >= 175 ? 2 : P->interlinea > 100 ? 1 : 0);
+    ex_create("button", "Va bene", EX_CHILD, 74, 188, 90, 26, g_dp, ID_D_OK, 0);
+    ex_create("button", "Annulla", EX_CHILD, 180, 188, 90, 26, g_dp, ID_D_NO, 0);
+    ex_set_focus(g_dp_sin);
+    ex_default_proc(g_dp, EXM_PAINT, 0, 0);
+    ex_update(g_dp);
+}
+
+static const struct { const char *nome; unsigned int w, h; } CARTE[] = {
+    { "A4 (21 x 29,7 cm)", 11906, 16838 }, { "A5 (14,8 x 21 cm)", 8391, 11906 },
+    { "Letter (8,5 x 11 in)", 12240, 15840 }, { "Legal (8,5 x 14 in)", 12240, 20160 }
+};
+#define CARTE_N (sizeof(CARTE) / sizeof(CARTE[0]))
+
+static long pagina_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_CLOSE || (msg == EXM_COMMAND && wp == ID_D_NO)) { finestra_via(&g_dg); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_D_OK) {
+        ExRtfDoc    *d = g_vista.doc;
+        unsigned int k = ex_item_get_selected(g_dg_formato), steso = ex_item_get_selected(g_dg_verso);
+        int          m[4], i;
+
+        if (k >= CARTE_N) k = 0;
+        for (i = 0; i < 4; i++) {
+            m[i] = cm_leggi(ex_get_text(g_dg_m[i]));
+            if (m[i] < 0) m[i] = 0;
+            if (m[i] > 4000) m[i] = 4000;           /* seven centimetres */
+        }
+        d->carta_w = steso ? CARTE[k].h : CARTE[k].w;
+        d->carta_h = steso ? CARTE[k].w : CARTE[k].h;
+        d->marg_sin = (unsigned int)m[0]; d->marg_des = (unsigned int)m[1];
+        d->marg_su  = (unsigned int)m[2]; d->marg_giu = (unsigned int)m[3];
+        g_vista.modificato = 1;
+        exrtf_vista_impagina(&g_vista);
+        finestra_via(&g_dg);
+        return 0;
+    }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static void pagina_apri(void)
+{
+    static const char *const M[4] = { "Margine sinistro (cm)", "Margine destro (cm)",
+                                      "Margine in alto (cm)", "Margine in basso (cm)" };
+    const ExRtfDoc *d = g_vista.doc;
+    unsigned int    v[4], i, k = 0, steso = d->carta_w > d->carta_h;
+    unsigned int    lato_corto = steso ? d->carta_h : d->carta_w, lato_lungo = steso ? d->carta_w : d->carta_h;
+    char            t[24];
+
+    if (g_dg) return;
+    g_dg = ex_create("window", "Pagina", EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
+                     EX_AUTO, EX_AUTO, 290, 236, 0, 0, pagina_proc);
+    if (!g_dg) return;
+    for (i = 0; i < CARTE_N; i++) {
+        unsigned int dw = CARTE[i].w > lato_corto ? CARTE[i].w - lato_corto : lato_corto - CARTE[i].w;
+        unsigned int dh = CARTE[i].h > lato_lungo ? CARTE[i].h - lato_lungo : lato_lungo - CARTE[i].h;
+        if (dw < 60 && dh < 60) k = i;
+    }
+    ex_create("label", "Formato", EX_CHILD, 12, 14, 80, 16, g_dg, 0, 0);
+    g_dg_formato = ex_create("combo", "", EX_CHILD, 100, 10, 170, 22, g_dg, 0, 0);
+    for (i = 0; i < CARTE_N; i++) ex_item_add(g_dg_formato, CARTE[i].nome);
+    ex_item_select(g_dg_formato, k);
+    ex_create("label", "Verso", EX_CHILD, 12, 42, 80, 16, g_dg, 0, 0);
+    g_dg_verso = ex_create("combo", "", EX_CHILD, 100, 38, 170, 22, g_dg, 0, 0);
+    ex_item_add(g_dg_verso, "In piedi");
+    ex_item_add(g_dg_verso, "Steso");
+    ex_item_select(g_dg_verso, steso);
+    v[0] = d->marg_sin; v[1] = d->marg_des; v[2] = d->marg_su; v[3] = d->marg_giu;
+    for (i = 0; i < 4; i++) {
+        cm_scrivi(t, sizeof(t), (int)v[i]);
+        g_dg_m[i] = campo(g_dg, M[i], 70 + (int)i * 28, t);
+    }
+    ex_create("button", "Va bene", EX_CHILD, 74, 194, 90, 26, g_dg, ID_D_OK, 0);
+    ex_create("button", "Annulla", EX_CHILD, 180, 194, 90, 26, g_dg, ID_D_NO, 0);
+    ex_default_proc(g_dg, EXM_PAINT, 0, 0);
+    ex_update(g_dg);
+}
+
+/* What is shown, kept from one run to the next. */
+static int vedi_cfg(char *out, int max, int fai)
+{
+    const char *casa = getenv("HOME");
+    char d[PERC_MAX];
+
+    if (!casa || !casa[0] || strcmp(casa, "/") == 0) casa = "/root";
+    if (fai) {
+        snprintf(d, sizeof(d), "%s/.exwin", casa);        mkdir(d, 0700);
+        snprintf(d, sizeof(d), "%s/.exwin/config", casa); mkdir(d, 0700);
+    }
+    return snprintf(out, (size_t)max, "%s/.exwin/config/exeditor.cfg", casa) < max;
+}
+
+static int vedi_voce(const char *t, const char *chiave, int pred)
+{
+    const char *q = strstr(t, chiave);
+
+    if (!q || !(q = strchr(q, '='))) return pred;
+    q++;
+    while (*q == ' ') q++;
+    return *q == 's' || *q == 'S' || *q == '1';
+}
+
+static void vedi_leggi(void)
+{
+    char p[PERC_MAX], t[256];
+    int  fd, n;
+
+    if (!vedi_cfg(p, sizeof(p), 0)) return;
+    fd = open(p, O_RDONLY, 0);
+    if (fd < 0) return;
+    n = (int)read(fd, t, sizeof(t) - 1);
+    close(fd);
+    if (n <= 0) return;
+    t[n] = '\0';
+    g_vedi_barra    = vedi_voce(t, "barra", 1);
+    g_vedi_righello = vedi_voce(t, "righello", 1);
+    g_vedi_pagina   = vedi_voce(t, "pagina", 1);
+}
+
+static void vedi_salva(void)
+{
+    char p[PERC_MAX], t[160];
+    int  fd, n;
+
+    if (!vedi_cfg(p, sizeof(p), 1)) return;
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;         /* a read-only system: the choice lasts this run */
+    n = snprintf(t, sizeof(t), "# exeditor: lo riscrive il menu Visualizza.\n"
+                               "barra = %s\nrighello = %s\npagina = %s\n",
+                 g_vedi_barra ? "si" : "no", g_vedi_righello ? "si" : "no",
+                 g_vedi_pagina ? "si" : "no");
+    write(fd, t, (unsigned int)n);
+    close(fd);
+}
+
+static void vedi_segna(void)
+{
+    ex_menu_check(g_menu, ID_V_BARRA, g_vedi_barra);
+    ex_menu_check(g_menu, ID_V_RIGH, g_vedi_righello);
+    ex_menu_check(g_menu, ID_V_PAG, g_vedi_pagina);
+}
+
+/* A command of the Visualizza menu. */
+static void vedi(unsigned int id)
+{
+    if (id == ID_V_BARRA) g_vedi_barra = !g_vedi_barra;
+    if (id == ID_V_RIGH)  g_vedi_righello = !g_vedi_righello;
+    if (id == ID_V_PAG)   g_vedi_pagina = !g_vedi_pagina;
+    vedi_segna();
+    vedi_salva();
+    if (g_rtf) {
+        int x, y, w, h;
+
+        g_vista.pagina = g_vedi_pagina;
+        vista_rett(&x, &y, &w, &h);
+        exrtf_vista_posto(&g_vista, x, y, w, h);
+        modo_mostra();
+    }
 }
 
 static const char *base_nome(const char *p)
@@ -1359,6 +1959,7 @@ static void sostituisci(void)
 static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     unsigned int c;
+    int comando = (msg == EXM_COMMAND);
 
     switch (msg) {
     /* ! IL MENU E I PULSANTI ARRIVANO QUI ALLO STESSO MODO, con lo stesso id.
@@ -1370,10 +1971,11 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SALVA)     { salva();            break; }
         if (wp == ID_NUOVO)     { doc_nuovo();        break; }
         if (wp == ID_NUOVO_RTF) { rtf_nuovo_doc();    break; }
-        if ((wp >= ID_R_G && wp <= ID_R_GIU) || (wp >= ID_M_G && wp <= ID_M_S)) {
+        if (wp >= ID_R_G && wp <= ID_F_TABVIA) {
             formato(wp, lp);
             break;
         }
+        if (wp >= ID_V_BARRA && wp <= ID_V_PAG) { vedi(wp); break; }
         if (wp == ID_CHIUDI)    { doc_chiudi(g_attivo); break; }
         if (wp == ID_SCHEDE)    { doc_scegli((int)lp); break; }
         if (wp == ID_RICARICA)  {
@@ -1564,15 +2166,29 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 
     /* The mouse on the rich text view (@RTF). */
     case EXM_MOUSE_DOWN:
+        if (righello_giu(EX_X(lp), EX_Y(lp))) {
+            ex_clear_focus(g_f);
+            return vista_aggiorna();
+        }
         if (g_rtf && exrtf_vista_clic(&g_vista, EX_X(lp), EX_Y(lp), (wp & KBD_MOD_SHIFT) != 0)) {
             ex_clear_focus(g_f);
             return vista_aggiorna();
         }
         return ex_default_proc(f, msg, wp, lp);
     case EXM_MOUSE_MOVE:
+        if (g_rtf && g_rg_cosa != RG_NIENTE) {
+            righello_muovi(EX_X(lp), EX_Y(lp));
+            return vista_aggiorna();
+        }
         if (g_rtf && exrtf_vista_trascina(&g_vista, EX_X(lp), EX_Y(lp))) return vista_aggiorna();
         return ex_default_proc(f, msg, wp, lp);
     case EXM_MOUSE_UP:
+        if (g_rtf && g_rg_cosa != RG_NIENTE) {
+            righello_muovi(EX_X(lp), EX_Y(lp));
+            g_rg_cosa = RG_NIENTE;
+            g_rg_tab = 0;
+            return vista_aggiorna();
+        }
         if (g_rtf) exrtf_vista_su(&g_vista);
         return ex_default_proc(f, msg, wp, lp);
     case EXM_DOUBLE_CLICK:
@@ -1586,6 +2202,11 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return ex_default_proc(f, msg, wp, lp);
     }
 
+    /* ! AFTER A BUTTON OF THE TOOL BAR THE KEYS GO BACK TO THE TEXT: the
+     * button took the focus with the click, and the next letter typed would
+     * press it again instead of being written. Not while one of the two
+     * windows is open: the focus is theirs. */
+    if (comando && g_rtf && !g_dp && !g_dg) ex_clear_focus(g_f);
     ridisegna();
     return 0;
 }
@@ -1599,6 +2220,17 @@ int main(int argc, char **argv)
      * tu», ed e' cio' che permette di aprire due editor senza che il secondo
      * finisca esattamente sopra il primo; EX_RESIZABLE dice che la finestra si puo'
      * tirare per l'angolo, e impegna a rispondere a EXM_SIZE. */
+    vedi_leggi();
+    {
+        unsigned int sw = 0, sh = 0;
+
+        ex_screen_size(&sw, &sh);
+        if (sw >= 800) g_w0 = 700;
+        if (sh >= 600) g_h0 = 480;
+        g_fw = g_w0;
+        g_fh = g_h0;
+    }
+
     g_f = ex_create("window", "ExEditor",
                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
@@ -1646,6 +2278,21 @@ int main(int argc, char **argv)
     ex_menu_add_item(g_menu, "Formato", "Centra",               ID_R_CEN);
     ex_menu_add_item(g_menu, "Formato", "Allinea a destra",     ID_R_DES);
     ex_menu_add_item(g_menu, "Formato", "Giustifica",           ID_R_GIU);
+    ex_menu_add_item(g_menu, "Formato", "-",                    0);
+    ex_menu_add_item(g_menu, "Formato", "Riduci il rientro",    ID_R_RM);
+    ex_menu_add_item(g_menu, "Formato", "Aumenta il rientro",   ID_R_RP);
+    ex_menu_add_item(g_menu, "Formato/Interlinea", "Singola",   ID_F_INT1);
+    ex_menu_add_item(g_menu, "Formato/Interlinea", "1,5 righe", ID_F_INT15);
+    ex_menu_add_item(g_menu, "Formato/Interlinea", "Doppia",    ID_F_INT2);
+    ex_menu_add_item(g_menu, "Formato", "Togli le tabulazioni", ID_F_TABVIA);
+    ex_menu_add_item(g_menu, "Formato", "-",                    0);
+    ex_menu_add_item(g_menu, "Formato", "Paragrafo...",         ID_F_PAR);
+    ex_menu_add_item(g_menu, "Formato", "Pagina...",            ID_F_PAG);
+
+    ex_menu_add_item(g_menu, "Visualizza", "Barra degli strumenti", ID_V_BARRA);
+    ex_menu_add_item(g_menu, "Visualizza", "Righello",              ID_V_RIGH);
+    ex_menu_add_item(g_menu, "Visualizza", "Vista pagina",          ID_V_PAG);
+    vedi_segna();
 
     ex_menu_add_item(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);
@@ -1663,10 +2310,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* Piu' alta che larga: il toolkit la fa verticale da se'. */
-    g_barra = ex_create("scrollbar", "", EX_CHILD,
-                      FIN_W - AREA_X - BARRA_W, AREA_Y, BARRA_W,
-                      FIN_H - AREA_Y - BASSO, g_f, ID_BARRA, 0);
+    g_barra = 0;        /* vedi BARRA_W: la barra e' quella dell'area */
 
     g_stato = ex_create("label", "", EX_CHILD,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);

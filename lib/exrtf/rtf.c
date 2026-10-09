@@ -54,15 +54,37 @@ void exrtf_stile_base(ExRtfStile *s)
     s->font = 0;
 }
 
+void exrtf_par_base(ExRtfPar *p)
+{
+    unsigned int i;
+
+    p->allinea = EXRTF_SINISTRA;
+    p->tab_n = 0;
+    p->interlinea = 0;
+    p->riserva = 0;
+    p->sin = p->des = p->prima = 0;
+    p->sp_prima = p->sp_dopo = 0;
+    for (i = 0; i < EXRTF_TAB_MAX; i++) p->tab[i] = 0;
+}
+
+unsigned int exrtf_colonna(const ExRtfDoc *d)
+{
+    unsigned int m = d->marg_sin + d->marg_des;
+
+    return d->carta_w > m + 1440 ? d->carta_w - m : 1440;   /* never under an inch */
+}
+
 void exrtf_prepara(ExRtfDoc *d, char *testo, unsigned int testo_max,
                    ExRtfPezzo *pezzi, unsigned int pezzi_max,
-                   unsigned char *allinea, unsigned int par_max)
+                   ExRtfPar *par, unsigned int par_max)
 {
     d->testo = testo; d->testo_max = testo_max; d->testo_n = 0;
     if (testo_max) testo[0] = '\0';
     d->pezzi = pezzi; d->pezzi_max = pezzi_max; d->pezzi_n = 0;
-    d->allinea = allinea; d->par_max = par_max; d->par_n = 0;
-    if (par_max) { allinea[0] = EXRTF_SINISTRA; d->par_n = 1; }
+    d->par = par; d->par_max = par_max; d->par_n = 0;
+    if (par_max) { exrtf_par_base(&par[0]); d->par_n = 1; }
+    d->carta_w = 11906; d->carta_h = 16838;             /* A4 */
+    d->marg_sin = d->marg_des = d->marg_su = d->marg_giu = 1134;   /* 2 cm */
     d->font_n = 0;
     d->troncato = 0;
 }
@@ -90,7 +112,7 @@ void exrtf_aggiungi(ExRtfDoc *d, const char *t, unsigned int n, const ExRtfStile
         d->testo_n++;
         if (t[i] == '\n') {
             if (d->par_n < d->par_max) {
-                d->allinea[d->par_n] = d->allinea[d->par_n - 1];
+                d->par[d->par_n] = d->par[d->par_n - 1];
                 d->par_n++;
             } else d->troncato = 1;
         }
@@ -192,8 +214,8 @@ unsigned int exrtf_inserisci(ExRtfDoc *d, unsigned int pos, const char *t,
 
     /* The paragraph cut by the new lines: every piece keeps its alignment. */
     if (a_capo) {
-        for (i = d->par_n; i-- > par + 1; ) d->allinea[i + a_capo] = d->allinea[i];
-        for (i = 1; i <= a_capo; i++) d->allinea[par + i] = d->allinea[par];
+        for (i = d->par_n; i-- > par + 1; ) d->par[i + a_capo] = d->par[i];
+        for (i = 1; i <= a_capo; i++) d->par[par + i] = d->par[par];
         d->par_n += a_capo;
     }
     return n;
@@ -211,7 +233,7 @@ void exrtf_cancella(ExRtfDoc *d, unsigned int da, unsigned int a)
     for (i = da; i < a; i++) if (d->testo[i] == '\n') a_capo++;
     if (a_capo) {
         par = exrtf_paragrafo(d, da);
-        for (i = par + 1; i + a_capo < d->par_n; i++) d->allinea[i] = d->allinea[i + a_capo];
+        for (i = par + 1; i + a_capo < d->par_n; i++) d->par[i] = d->par[i + a_capo];
         d->par_n -= a_capo;
     }
 
@@ -298,7 +320,109 @@ void exrtf_allinea(ExRtfDoc *d, unsigned int da, unsigned int a, unsigned int al
     unsigned int p = exrtf_paragrafo(d, da), q = exrtf_paragrafo(d, a > da ? a - 1 : da);
 
     if (allineamento > EXRTF_GIUSTO) return;
-    for (; p <= q && p < d->par_n; p++) d->allinea[p] = (unsigned char)allineamento;
+    for (; p <= q && p < d->par_n; p++) d->par[p].allinea = (unsigned char)allineamento;
+}
+
+/* The paragraphs a range touches: first and last index. */
+static void par_fra(const ExRtfDoc *d, unsigned int da, unsigned int a,
+                    unsigned int *p, unsigned int *q)
+{
+    *p = exrtf_paragrafo(d, da);
+    *q = exrtf_paragrafo(d, a > da ? a - 1 : da);
+    if (*q >= d->par_n) *q = d->par_n ? d->par_n - 1 : 0;
+}
+
+void exrtf_par_cambia(ExRtfDoc *d, unsigned int da, unsigned int a, int cosa, int chiesto)
+{
+    unsigned int p, q;
+    int col = (int)exrtf_colonna(d);
+
+    par_fra(d, da, a, &p, &q);
+    for (; p <= q && p < d->par_n; p++) {
+        ExRtfPar *P = &d->par[p];
+        int valore = chiesto;       /* cut to fit THIS paragraph, not the next */
+
+        switch (cosa) {
+        case EXRTF_P_SIN:
+            if (valore < 0) valore = 0;
+            if (valore > col - P->des - 720) valore = col - P->des - 720;
+            if (valore < 0) valore = 0;
+            P->sin = (short)valore;
+            if (P->sin + P->prima < 0) P->prima = (short)-P->sin;
+            break;
+        case EXRTF_P_DES:
+            if (valore < 0) valore = 0;
+            if (valore > col - P->sin - 720) valore = col - P->sin - 720;
+            if (valore < 0) valore = 0;
+            P->des = (short)valore;
+            break;
+        case EXRTF_P_PRIMA:
+            if (P->sin + valore < 0) valore = -P->sin;
+            if (P->sin + valore > col - P->des - 720) valore = col - P->des - 720 - P->sin;
+            P->prima = (short)valore;
+            break;
+        case EXRTF_P_INTERLINEA:
+            P->interlinea = (unsigned char)(valore <= 100 ? 0 : valore > 250 ? 250 : valore);
+            break;
+        case EXRTF_P_SP_PRIMA: P->sp_prima = (unsigned short)(valore < 0 ? 0 : valore > 4000 ? 4000 : valore); break;
+        case EXRTF_P_SP_DOPO:  P->sp_dopo  = (unsigned short)(valore < 0 ? 0 : valore > 4000 ? 4000 : valore); break;
+        default: break;
+        }
+    }
+}
+
+static void tab_metti_uno(ExRtfPar *P, unsigned int twips)
+{
+    unsigned int i, k;
+
+    if (twips == 0 || twips > 30000) return;
+    for (i = 0; i < P->tab_n; i++) {
+        unsigned int t = P->tab[i];
+        if ((t > twips ? t - twips : twips - t) < EXRTF_TAB_VICINO) return;    /* one is there */
+    }
+    if (P->tab_n >= EXRTF_TAB_MAX) return;
+    for (i = 0; i < P->tab_n && P->tab[i] < twips; i++) ;
+    for (k = P->tab_n; k > i; k--) P->tab[k] = P->tab[k - 1];
+    P->tab[i] = (unsigned short)twips;
+    P->tab_n++;
+}
+
+void exrtf_tab_metti(ExRtfDoc *d, unsigned int da, unsigned int a, unsigned int twips)
+{
+    unsigned int p, q;
+
+    par_fra(d, da, a, &p, &q);
+    for (; p <= q && p < d->par_n; p++) tab_metti_uno(&d->par[p], twips);
+}
+
+int exrtf_tab_togli(ExRtfDoc *d, unsigned int da, unsigned int a, unsigned int twips)
+{
+    unsigned int p, q, i, k;
+    int tolti = 0;
+
+    par_fra(d, da, a, &p, &q);
+    for (; p <= q && p < d->par_n; p++) {
+        ExRtfPar *P = &d->par[p];
+
+        for (i = 0; i < P->tab_n; i++) {
+            unsigned int t = P->tab[i];
+            if ((t > twips ? t - twips : twips - t) < EXRTF_TAB_VICINO) {
+                for (k = i; k + 1 < P->tab_n; k++) P->tab[k] = P->tab[k + 1];
+                P->tab_n--;
+                tolti = 1;
+                break;
+            }
+        }
+    }
+    return tolti;
+}
+
+void exrtf_tab_via(ExRtfDoc *d, unsigned int da, unsigned int a)
+{
+    unsigned int p, q;
+
+    par_fra(d, da, a, &p, &q);
+    for (; p <= q && p < d->par_n; p++) d->par[p].tab_n = 0;
 }
 
 int exrtf_e_rtf(const char *t, unsigned int n)
@@ -509,11 +633,45 @@ static void parola(Lettore *L, const char *w, int ha_n, int n)
         s->st.colore = (n > 0 && (unsigned int)n < L->colori_n) ? L->colori[n] : 0;
         return;
     }
-    if (stesso(w, "pard")) { d->allinea[d->par_n - 1] = EXRTF_SINISTRA; return; }
-    if (stesso(w, "ql")) { d->allinea[d->par_n - 1] = EXRTF_SINISTRA; return; }
-    if (stesso(w, "qc")) { d->allinea[d->par_n - 1] = EXRTF_CENTRO;   return; }
-    if (stesso(w, "qr")) { d->allinea[d->par_n - 1] = EXRTF_DESTRA;   return; }
-    if (stesso(w, "qj")) { d->allinea[d->par_n - 1] = EXRTF_GIUSTO;   return; }
+    {
+        ExRtfPar *P = &d->par[d->par_n - 1];
+
+        if (stesso(w, "pard")) { exrtf_par_base(P); return; }
+        if (stesso(w, "ql")) { P->allinea = EXRTF_SINISTRA; return; }
+        if (stesso(w, "qc")) { P->allinea = EXRTF_CENTRO;   return; }
+        if (stesso(w, "qr")) { P->allinea = EXRTF_DESTRA;   return; }
+        if (stesso(w, "qj")) { P->allinea = EXRTF_GIUSTO;   return; }
+        /* Indents and stops. A file may say anything: what does not fit a
+         * page is cut here, so the layout never meets a negative width. */
+        if (ha_n && (stesso(w, "li") || stesso(w, "lin"))) { P->sin = (short)(n < 0 ? 0 : n > 20000 ? 20000 : n); return; }
+        if (ha_n && (stesso(w, "ri") || stesso(w, "rin"))) { P->des = (short)(n < 0 ? 0 : n > 20000 ? 20000 : n); return; }
+        if (ha_n && stesso(w, "fi")) { P->prima = (short)(n < -20000 ? -20000 : n > 20000 ? 20000 : n); return; }
+        if (ha_n && stesso(w, "sb")) { P->sp_prima = (unsigned short)(n < 0 ? 0 : n > 4000 ? 4000 : n); return; }
+        if (ha_n && stesso(w, "sa")) { P->sp_dopo  = (unsigned short)(n < 0 ? 0 : n > 4000 ? 4000 : n); return; }
+        if (ha_n && stesso(w, "sl")) {
+            /* \slN with \slmult1: N/240 lines. Without, an exact height in
+             * twips: read as a multiple of a 12 point line, which is what it
+             * nearly always is. */
+            int a = n < 0 ? -n : n, pc = a * 100 / 240;
+            P->interlinea = (unsigned char)(pc <= 110 ? 0 : pc > 250 ? 250 : pc);
+            return;
+        }
+        if (ha_n && stesso(w, "tx") && n > 0) {
+            if (P->tab_n < EXRTF_TAB_MAX && (P->tab_n == 0 || (int)P->tab[P->tab_n - 1] < n) && n < 30000)
+                P->tab[P->tab_n++] = (unsigned short)n;
+            return;
+        }
+    }
+    if (ha_n && n > 1440 && n < 40000) {
+        if (stesso(w, "paperw")) { d->carta_w = (unsigned int)n; return; }
+        if (stesso(w, "paperh")) { d->carta_h = (unsigned int)n; return; }
+    }
+    if (ha_n && n >= 0 && n < 8000) {
+        if (stesso(w, "margl")) { d->marg_sin = (unsigned int)n; return; }
+        if (stesso(w, "margr")) { d->marg_des = (unsigned int)n; return; }
+        if (stesso(w, "margt")) { d->marg_su  = (unsigned int)n; return; }
+        if (stesso(w, "margb")) { d->marg_giu = (unsigned int)n; return; }
+    }
     /* anything else: not part of the base mode, ignored */
 }
 
@@ -653,6 +811,14 @@ unsigned int exrtf_scrivi(const ExRtfDoc *d, char *out, unsigned int max)
         scrivi(&u, ";");
     }
     scrivi(&u, "}\n");
+    scrivi(&u, "\\paperw"); scrivi_num(&u, (int)d->carta_w);
+    scrivi(&u, "\\paperh"); scrivi_num(&u, (int)d->carta_h);
+    scrivi(&u, "\\margl");  scrivi_num(&u, (int)d->marg_sin);
+    scrivi(&u, "\\margr");  scrivi_num(&u, (int)d->marg_des);
+    scrivi(&u, "\\margt");  scrivi_num(&u, (int)d->marg_su);
+    scrivi(&u, "\\margb");  scrivi_num(&u, (int)d->marg_giu);
+    scrivi(&u, "\\deftab"); scrivi_num(&u, EXRTF_TAB_PASSO);
+    scrivi(&u, "\n");
 
     for (i = 0; i < d->pezzi_n; i++) {
         const ExRtfPezzo *p = &d->pezzi[i];
@@ -677,9 +843,25 @@ unsigned int exrtf_scrivi(const ExRtfDoc *d, char *out, unsigned int max)
             unsigned int  cp = c, l = 1;
 
             if (apri) {
-                static const char *Q[4] = { "\\ql ", "\\qc ", "\\qr ", "\\qj " };
-                unsigned int a = par < d->par_n ? d->allinea[par] : 0;
-                scrivi(&u, "\\pard"); scrivi(&u, Q[a < 4 ? a : 0]);
+                static const char *Q[4] = { "\\ql", "\\qc", "\\qr", "\\qj" };
+                ExRtfPar base;
+                const ExRtfPar *P;
+                unsigned int ti;
+
+                exrtf_par_base(&base);
+                P = par < d->par_n ? &d->par[par] : &base;
+                scrivi(&u, "\\pard"); scrivi(&u, Q[P->allinea < 4 ? P->allinea : 0]);
+                if (P->sin)   { scrivi(&u, "\\li"); scrivi_num(&u, P->sin); }
+                if (P->des)   { scrivi(&u, "\\ri"); scrivi_num(&u, P->des); }
+                if (P->prima) { scrivi(&u, "\\fi"); scrivi_num(&u, P->prima); }
+                if (P->sp_prima) { scrivi(&u, "\\sb"); scrivi_num(&u, P->sp_prima); }
+                if (P->sp_dopo)  { scrivi(&u, "\\sa"); scrivi_num(&u, P->sp_dopo); }
+                if (P->interlinea > 100) {
+                    scrivi(&u, "\\sl"); scrivi_num(&u, P->interlinea * 240 / 100);
+                    scrivi(&u, "\\slmult1");
+                }
+                for (ti = 0; ti < P->tab_n; ti++) { scrivi(&u, "\\tx"); scrivi_num(&u, P->tab[ti]); }
+                scrivi(&u, " ");
                 apri = 0;
             }
             if (c >= 0xF0 && j + 3 < fine + 3)      { cp = ((c & 7u) << 18) | ((d->testo[j+1] & 63u) << 12) | ((d->testo[j+2] & 63u) << 6) | (d->testo[j+3] & 63u); l = 4; }

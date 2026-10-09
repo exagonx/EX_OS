@@ -234,6 +234,46 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   boundary, and the wrong half was refilled. 0.004 moves the boundary by a
   quarter of a half and writes the counts of each playback to the kernel log
   (`dmesg hdaudio`). To be listened to again.
+- **Exilla: the scroll bar can be seen.** It was Android's, a thin thumb,
+  white on white: it is the classic one now, with arrows and ExWin's greys.
+  The `exilla` package has to be published again.
+- **The network is no longer held back by TCP's window (`ip.drv` 0.009).**
+  The receive window was 4 KB: towards a server 50 ms away that meant 80 KB/s
+  at most, whatever the line. It is 63 KB now, taken only by the connections
+  that use it, and segments arriving out of order are kept instead of being
+  asked again. `ip.drv -w KB` makes it smaller. In QEMU a megabyte goes from
+  3.6 to 0.3 seconds; the gain on a real line is to be measured on the PC
+  with `scarica -i`.
+- **ExEditor writes documents (0.008).** In RTF documents: a tool bar of
+  icons, a ruler in centimetres with indents and tab stops to drag, Formato >
+  Paragrafo and Pagina, line spacing, page layout with page breaks; the
+  Visualizza menu switches bar, ruler and page layout. The `exrtf` library
+  now has indents, tab stops, spacing and paper size, read and written in
+  RTF. **Word 6 and 95** `.doc` files open (`lib/exrtf/doc95.c`) and are
+  saved as RTF; Word 97 and later do not. The .doc reader was tried on
+  hand-written files and compared with LibreOffice, not on files from a real
+  Word. The second scroll bar in text mode is gone.
+- **Two small items from the queue.** The desktop background accepts a
+  photograph: the toolkit (0.017) read only the first 256 KB of the file, now
+  the whole of it. In the file manager (0.013) the splitter between tree and
+  list can be dragged, and the width is kept in
+  `$HOME/.exwin/config/filemgr.cfg`.
+- **Exilla is a repository package (stage 8 of the Firefox port).**
+  `netupdate -install:exilla` downloads it to `/exwin/app/exilla` (browser,
+  launcher, icons: 290 MB) and writes its entry in the desktop menu, in the
+  new **Internet** category where EXBrowser has moved too;
+  `netupdate -remove:exilla` removes files and entry. `netupdate` 0.027: a
+  package may have its own file list (`pacchetti/exilla.txt`, so that
+  `-check -yesall` does not bring Exilla to machines that never asked for
+  it), files above 16 MB are published and downloaded in parts
+  (`firefox.p000`...) resuming from the missing part, and the catalogue key
+  `menu` becomes a line of `applicazioni.txt`. The program manager (0.019)
+  holds 48 entries instead of 16: the base system already filled them all.
+  `firefox` is published
+  stripped: 192 MB instead of 274. `make netinst` puts it in the repository
+  by itself; `exagonx/pubblica.sh` and `verifica.sh` know lists and parts.
+  Tried in QEMU against the repository built here (not the published one);
+  still to be tried on a real machine.
 - **EXBrowser: Yahoo's results in place, and Bing's open.** On Yahoo the
   results column ended up to the right of the tabs and past the edge: a block
   that does not fit beside a float now drops below it, and a `min-width`

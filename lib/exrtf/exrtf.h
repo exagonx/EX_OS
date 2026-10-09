@@ -26,8 +26,9 @@
  * file is kept so that saving writes it back.
  *
  * ! WHAT IS READ AND WHAT IS SKIPPED. Read: \b \i \ul \ulnone \plain \f \fs
- * \cf \par \line \tab \pard \ql \qc \qr \qj, the font and colour tables, \'hh
- * (Windows-1252) and \uN (Unicode). Skipped whole, with their groups: \*
+ * \cf \par \line \tab \pard \ql \qc \qr \qj, \li \ri \fi \tx \sb \sa \sl, the
+ * page (\paperw \paperh \margl \margr \margt \margb), the font and colour
+ * tables, \'hh (Windows-1252) and \uN (Unicode). Skipped whole, with their groups: \*
  * destinations, \stylesheet, \info, \pict, \header, \footer, \object and
  * similar. A document with tables or pictures opens with their text and
  * without them — the "base" mode is declared, not discovered.
@@ -66,13 +67,45 @@ typedef struct {
     ExRtfStile   stile;
 } ExRtfPezzo;
 
+/* =============================================================================
+ * THE PARAGRAPH (9 October 2026: indents, tab stops, spacing)
+ *
+ * Until now a paragraph was one byte, its alignment. The user asked for the
+ * ruler of a word processor, and a ruler is the picture of these numbers.
+ * Lengths are in TWIPS, as in RTF and in Word (1440 to the inch, 567 to the
+ * centimetre): the file's own unit, so reading and writing lose nothing.
+ *
+ *   sin, des   the left and right indent, from the page margins;
+ *   prima      the first line, RELATIVE to sin: negative is a hanging indent;
+ *   tab[]      the tab stops, from the left margin, ascending; past the last
+ *              one the default stops go on (EXRTF_TAB_PASSO);
+ *   interlinea 0 or 100 single, 150, 200: per cent of the line's height;
+ *   sp_prima, sp_dopo   space above and below the paragraph.
+ * ============================================================================= */
+#define EXRTF_TAB_MAX    10
+#define EXRTF_TAB_PASSO  720        /* default tab stops: half an inch */
+#define EXRTF_CM         567        /* twips in a centimetre */
+
+typedef struct {
+    unsigned char  allinea;         /* EXRTF_SINISTRA.. */
+    unsigned char  tab_n;
+    unsigned char  interlinea;
+    unsigned char  riserva;
+    short          sin, des, prima;
+    unsigned short sp_prima, sp_dopo;
+    unsigned short tab[EXRTF_TAB_MAX];
+} ExRtfPar;
+
 typedef struct {
     char          *testo;           /* UTF-8, '\0'-terminated */
     unsigned int   testo_n, testo_max;
     ExRtfPezzo    *pezzi;
     unsigned int   pezzi_n, pezzi_max;
-    unsigned char *allinea;         /* one per paragraph */
+    ExRtfPar      *par;             /* one per paragraph */
     unsigned int   par_n, par_max;
+    /* The page, in twips: A4 with 2 cm margins until the file says otherwise. */
+    unsigned int   carta_w, carta_h;
+    unsigned int   marg_sin, marg_des, marg_su, marg_giu;
     char           font_nome[16][EXRTF_NOME_MAX];
     unsigned char  font_fam[16];
     unsigned int   font_n;
@@ -82,7 +115,10 @@ typedef struct {
 /* Hands the buffers in and empties the document. */
 void exrtf_prepara(ExRtfDoc *d, char *testo, unsigned int testo_max,
                    ExRtfPezzo *pezzi, unsigned int pezzi_max,
-                   unsigned char *allinea, unsigned int par_max);
+                   ExRtfPar *par, unsigned int par_max);
+
+/* A paragraph with nothing set: left, no indents, no stops, single spacing. */
+void exrtf_par_base(ExRtfPar *p);
 
 /* The default style: serif, 12 points, black, nothing on. */
 void exrtf_stile_base(ExRtfStile *s);
@@ -97,6 +133,13 @@ int  exrtf_leggi(ExRtfDoc *d, const char *rtf, unsigned int n);
 /* Writes RTF into out (at most max bytes, '\0'-terminated). Returns the
  * length, or 0 if it did not fit. */
 unsigned int exrtf_scrivi(const ExRtfDoc *d, char *out, unsigned int max);
+
+/* Reads a Word 6 or Word 95 .doc (lib/exrtf/doc95.c says what of it). `lavoro`
+ * is working memory as big as the file: the text stream is copied there.
+ * 1 = read; 0 = not such a file; -1 = Word 97 or later; -2 = encrypted;
+ * -3 = damaged. */
+int  exrtf_leggi_doc(ExRtfDoc *d, const unsigned char *file, unsigned int n,
+                     unsigned char *lavoro, unsigned int lavoro_max);
 
 /* 1 if the bytes look like RTF ("{\rtf"), to choose the mode on opening. */
 int  exrtf_e_rtf(const char *t, unsigned int n);
@@ -140,6 +183,28 @@ unsigned int exrtf_paragrafo(const ExRtfDoc *d, unsigned int pos);
 
 /* Sets the alignment of every paragraph from da to a. */
 void exrtf_allinea(ExRtfDoc *d, unsigned int da, unsigned int a, unsigned int allineamento);
+
+/* What exrtf_par_cambia changes, on every paragraph from da to a. Values in
+ * twips (EXRTF_P_INTERLINEA: per cent). Indents are kept inside the page. */
+#define EXRTF_P_SIN         1
+#define EXRTF_P_DES         2
+#define EXRTF_P_PRIMA       3
+#define EXRTF_P_INTERLINEA  4
+#define EXRTF_P_SP_PRIMA    5
+#define EXRTF_P_SP_DOPO     6
+
+void exrtf_par_cambia(ExRtfDoc *d, unsigned int da, unsigned int a, int cosa, int valore);
+
+/* Tab stops of the paragraphs from da to a: adds one at `twips` (kept in
+ * order, no two closer than EXRTF_TAB_VICINO), removes the one nearest to
+ * `twips` within that distance (1 if one was there), or removes them all. */
+#define EXRTF_TAB_VICINO  90
+void exrtf_tab_metti(ExRtfDoc *d, unsigned int da, unsigned int a, unsigned int twips);
+int  exrtf_tab_togli(ExRtfDoc *d, unsigned int da, unsigned int a, unsigned int twips);
+void exrtf_tab_via(ExRtfDoc *d, unsigned int da, unsigned int a);
+
+/* The width the text may take on the page, in twips. */
+unsigned int exrtf_colonna(const ExRtfDoc *d);
 
 #ifdef __cplusplus
 }

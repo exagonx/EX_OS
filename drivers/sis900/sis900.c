@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `sis900.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis900.drv", "0.017");
+EX_VERSIONE("sis900.drv", "0.018");
 
 #define SIS_VENDITORE   0x1039
 #define SIS_900         0x0900
@@ -511,7 +511,9 @@ static int           g_duplex = 1;     /* full duplex */
 static int           g_forza_duplex = -1;
 static int           g_forza_veloce = -1;
 
-#define CODA_N          16
+/* 64 dal 9 ottobre 2026: con la finestra di TCP a 63 KB (ip.drv 0.009) arrivano
+ * raffiche di una quarantina di frame, e una coda da 16 ne perdeva. */
+#define CODA_N          64
 static unsigned char g_coda[CODA_N][NET_FRAME_MAX];
 static unsigned int  g_coda_len[CODA_N];
 static int           g_coda_testa = 0, g_coda_conta = 0;

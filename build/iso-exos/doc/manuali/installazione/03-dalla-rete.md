@@ -85,6 +85,7 @@ netupdate -install:cpp           C++
 netupdate -install:ssl           OpenSSL
 netupdate -install:fb            FreeBASIC
 netupdate -install:nasm          nasm e ndisasm
+netupdate -install:exilla        Exilla: Firefox per EX-OS (290 MB)
 ```
 
 ! **`gcc` STA IN `base`, NON IN `build`.** È l'errore che viene naturale fare:
@@ -93,6 +94,15 @@ netupdate -install:nasm          nasm e ndisasm
 ! **E GLI STRUMENTI FINISCONO IN `/exos/bin`.** Se dopo averli installati un
   comando risponde «non trovato» ma il file c'è, è il PATH: vedi il
   [capitolo 5](05-quando-va-storto.md).
+
+! **EXILLA È UN PACCHETTO DIVERSO DAGLI ALTRI IN DUE COSE.** Finisce in
+  `/exwin/app/exilla` e `netupdate` le scrive la voce nel menu di avvio della
+  scrivania (**Avvio > Internet**), che `-remove:exilla` toglie. E `-check
+  -yesall` **non la porta** su una macchina che non ce l'ha: sono 290 MB di un
+  navigatore che vuole almeno 512 MB di memoria, e va chiesta per nome. Una
+  volta installata, `-check` la aggiorna come il resto. I suoi file grossi
+  arrivano a pezzi da 16 MB: se la linea cade, lo stesso comando riprende dal
+  pezzo che mancava.
 
 ---
 

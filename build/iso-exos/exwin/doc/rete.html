@@ -82,6 +82,30 @@ fatto login.
     nettest                       stato dell'interfaccia
     tcptest host porta            apre una connessione e riferisce</pre>
 
+<h2>Quanto va veloce, e che cosa la frena</h2>
+
+<p>
+Uno scaricamento non puo' andare piu' veloce di <i>una finestra di ricezione
+per ogni andata e ritorno</i>: e' la regola di TCP, non della linea. Fino a
+<code>ip.drv</code> 0.008 la finestra era di 4 KB, e verso un server a 50
+millisecondi questo voleva dire non piu' di 80 KB al secondo, anche su una
+fibra. Dalla 0.009 e' di 63 KB (il massimo senza l'opzione di scala), e i
+pacchetti che arrivano in disordine si tengono da parte invece di farseli
+rimandare.
+</p>
+
+<pre>    scarica -i &lt;indirizzo&gt;        dice quanti byte in quanto tempo
+    ipcfg                          i contatori: fuori sequenza, buffer pieno
+    /dev/ip.drv -w 16 &amp;            una finestra piu' piccola (da 4 a 63 KB)</pre>
+
+<p>
+<code>-w</code> serve a una macchina con poca memoria (ogni connessione aperta
+tiene un buffer grande quanto la finestra) o a una scheda che perde pacchetti
+quando arrivano a raffiche: lo dicono i contatori del driver, con
+<code>nettest -c</code>. Mancano ancora la scala della finestra (oltre i 63 KB)
+e il controllo di congestione.
+</p>
+
 <h2>Uscire</h2>
 
 <table border="1">

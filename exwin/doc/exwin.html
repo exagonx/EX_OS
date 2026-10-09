@@ -73,9 +73,12 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <table border="1">
 <tr><th>Programma</th><th>Che cosa fa</th></tr>
 <tr><td><b>File manager</b> <code>filemgr</code></td>
-    <td>sfoglia i volumi, copia, sposta, cancella, apre</td></tr>
-<tr><td><b>Editor</b> <code>edit</code></td>
-    <td>testo: apri, salva, annulla, taglia/copia/incolla</td></tr>
+    <td>sfoglia i volumi, copia, sposta, cancella, apre; il separatore fra
+        l'albero e l'elenco si trascina col mouse, e la larghezza resta salvata</td></tr>
+<tr><td><b>ExEditor</b> <code>exeditor</code></td>
+    <td>testo: apri, salva, annulla, taglia/copia/incolla; e i documenti
+        formattati (RTF, e i .doc di Word 6/95 in lettura) &mdash; vedi
+        <a href="#exeditor">qui sotto</a></td></tr>
 <tr><td><b>Terminale</b> <code>term</code></td>
     <td>una shell dentro una finestra, con il suo pty</td></tr>
 <tr><td><b>EXBrowser</b> <code>exbrowser</code></td>
@@ -104,6 +107,49 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <tr><td><b>EXGO</b> <code>exgo</code></td>
     <td>il go, contro il computer o in due</td></tr>
 </table>
+
+<h3 id="exeditor">ExEditor: i documenti formattati</h3>
+
+<p>
+Un file <code>.rtf</code>, o <b>File &gt; Nuovo documento RTF</b>, si apre in
+modalita' documento. Sotto le schede compaiono due barre:
+</p>
+
+<table border="1">
+<tr><th>Barra</th><th>Che cosa c'e'</th></tr>
+<tr><td>Strumenti</td>
+    <td>nuovo, apri, salva; taglia, copia, incolla; grassetto, corsivo,
+        sottolineato; carattere, corpo, colore; i quattro allineamenti;
+        rientro in meno e in piu'. Una riga blu sotto un pulsante dice che
+        e' acceso</td></tr>
+<tr><td>Righello</td>
+    <td>in centimetri dal margine sinistro. Il triangolo in alto e' la prima
+        riga, quelli in basso i rientri sinistro e destro: si trascinano. Un
+        clic nel righello mette una tabulazione (una L); trascinarla fuori
+        dal righello la toglie</td></tr>
+</table>
+
+<p>
+<b>Formato &gt; Paragrafo...</b> chiede rientri (in centimetri), spazio prima
+e dopo (in punti) e interlinea; <b>Formato &gt; Pagina...</b> il formato della
+carta (A4, A5, Letter, Legal), il verso e i quattro margini. Con
+<b>Visualizza &gt; Vista pagina</b> il testo va a capo dove andra' a capo sulla
+carta, su un foglio bianco, e una fascia grigia segna dove finisce una pagina;
+la riga di stato dice <code>pag. 2/5</code>. Dal menu <b>Visualizza</b> si
+spengono anche la barra e il righello; la scelta resta in
+<code>$HOME/.exwin/config/exeditor.cfg</code>.
+</p>
+
+<p class="nota">
+<b>I .doc di Word.</b> Un documento di <b>Word 6 o Word 95</b> si apre:
+testo, grassetto, corsivo, sottolineato, corpo, colore, allineamento, rientri,
+tabulazioni, interlinea, carta e margini, e gli stili per queste stesse cose.
+Non si riscrive in quel formato: <b>Salva</b> propone lo stesso nome con
+<code>.rtf</code>. Restano fuori note, intestazioni, figure e tabelle (di
+queste arriva il testo). Un .doc di <b>Word 97 o successivo</b> e' un altro
+formato: ExEditor lo dice e non lo apre. Nei documenti formattati mancano
+ancora Annulla e Cerca.
+</p>
 
 <h3 id="lettore">Il lettore audio</h3>
 
@@ -288,6 +334,12 @@ dicono come si dispone: <b>Angolo</b> (com'e', in alto a sinistra),
 <b>Centro</b>, <b>Allarga</b> (stirata a coprire tutto lo schermo) e
 <b>Ripeti</b> (a piastrelle). La scelta vale subito e si salva nel profilo, in
 <code>$HOME/.exwin/config/pm.cfg</code>: ogni utente ha la sua scrivania.
+</p>
+
+<p>
+Va bene anche una fotografia: il file puo' pesare fino a 32 MB. Fino alla
+versione 0.016 del toolkit un'immagine oltre i 256 KB veniva rifiutata con
+&laquo;non si legge come immagine&raquo;.
 </p>
 
 <h3>Il registro di sistema</h3>

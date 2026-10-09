@@ -45,12 +45,16 @@
 # una copia per ogni misura.
 
 File manager           | /exwin/bin/filemgr   | /exwin/icon/baseapp/filemgr_64.ico
-EXBrowser              | /exwin/bin/exbrowser | /exwin/icon/baseapp/exbrowser_64.ico
 Archivi                | /exwin/bin/archivi   | /exwin/icon/baseapp/archivi_64.ico
 Calctor                | /exwin/bin/calctor   | /exwin/icon/baseapp/calctor_64.ico
 Pennello               | /exwin/bin/pennello  | /exwin/icon/baseapp/pennello_64.ico
 Immagini               | /exwin/bin/immagini
 Lettore audio          | /exwin/bin/explayer  | /exwin/icon/baseapp/explayer_64.ico
+# ! INTERNET E' UNA CATEGORIA DAL 9 OTTOBRE 2026, e ci stanno i navigatori:
+# EXBrowser, che e' del sistema, ed Exilla (Firefox), che e' un pacchetto a
+# parte - la sua riga non e' scritta qui: la aggiunge `netupdate
+# -install:exilla` e la toglie `-remove:exilla`.
+Internet/EXBrowser     | /exwin/bin/exbrowser | /exwin/icon/baseapp/exbrowser_64.ico
 Strumenti/ExEditor     | /exwin/bin/exeditor  | /exwin/icon/baseapp/edit_64.ico
 Strumenti/Terminale    | /exwin/bin/term      | /exwin/icon/baseapp/term_64.ico
 Strumenti/EX-IDE       | /exwin/bin/exide     | /exwin/icon/baseapp/exide_64.ico
