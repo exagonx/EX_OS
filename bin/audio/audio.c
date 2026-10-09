@@ -55,7 +55,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `audio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("audio", "0.003");
+EX_VERSIONE("audio", "0.004");
 
 #define ATTESA_MS       2000
 
@@ -1151,7 +1151,9 @@ static void uso(void)
     printf("  -i -muto            come sopra, ma le prove non si sentono\n");
     printf("  -c                  rifa' il collaudo sul driver gia' attivo\n");
     printf("  -t                  la tabella delle schede riconosciute\n");
-    printf("  -v 0..100           il volume\n");
+    printf("  -v 0..100           il volume, tutte le uscite insieme\n");
+    printf("  -mix                le voci del mixer: ogni uscita e ingresso\n");
+    printf("  -mix N SIN DES      la voce N a quei due valori, 0..100\n");
     printf("  <file>.wav          suona un file WAV (PCM non compresso)\n");
     printf("  <file>.mp3          suona un file MP3\n");
     printf("  -w f.mp3 f.wav      converte un MP3 in WAV, senza suonarlo\n");
@@ -1194,6 +1196,48 @@ int main(int argc, char **argv)
         if (v.percento > 100) v.percento = 100;
         ipc_send((unsigned int)pid, AUDIO_MSG_VOLUME, &v, sizeof(v));
         printf("volume: %u\n", v.percento);
+        return 0;
+    }
+
+    /* Il mixer: `audio -mix` elenca le voci (ogni uscita e ogni ingresso, coi due
+     * canali), `audio -mix N SIN DES` porta la voce N a quei valori. E' quel che
+     * fa il pannello dei volumi di ExWin, da una console. */
+    if (strcmp(argv[1], "-mix") == 0) {
+        AudioMixVoce v;
+        unsigned int i, tot = 1;
+        int pid = audio_richiedi();
+
+        if (pid <= 0) return 1;
+        if (argc >= 5) {
+            memset(&v, 0, sizeof(v));
+            v.indice = (unsigned int)atoi(argv[2]);
+            v.sin    = (unsigned int)atoi(argv[3]);
+            v.des    = (unsigned int)atoi(argv[4]);
+            if (chiedi(pid, AUDIO_MSG_MIX_METTI, &v, sizeof(v),
+                       AUDIO_MSG_MIX_R, &v, sizeof(v), ATTESA_MS) != 0 ||
+                v.indice == 0xFFFFFFFFu) {
+                printf("audio: quella voce non c'e' (audio -mix le elenca)\n");
+                return 1;
+            }
+        } else if (argc != 2) {
+            printf("uso: audio -mix              elenca le voci\n");
+            printf("     audio -mix N SIN DES    porta la voce N a sinistra e destra, 0..100\n");
+            return 1;
+        }
+        printf("  n  tipo      sin  des  nome\n");
+        for (i = 0; i < tot; i++) {
+            memset(&v, 0, sizeof(v));
+            v.indice = i;
+            if (chiedi(pid, AUDIO_MSG_MIX_LEGGI, &v, sizeof(v),
+                       AUDIO_MSG_MIX_R, &v, sizeof(v), ATTESA_MS) != 0) {
+                printf("audio: il driver non ha le voci del mixer (e' di prima del 10 ottobre 2026)\n");
+                return 1;
+            }
+            tot = v.totale;
+            if (v.indice != i) break;
+            printf(" %2u  %-8s  %3u  %3u  %s\n", i,
+                   v.tipo == AUDIO_MIX_INGRESSO ? "ingresso" : "uscita", v.sin, v.des, v.nome);
+        }
         return 0;
     }
 

@@ -283,6 +283,8 @@ e non e' un errore da mostrare.
 <tr><td><code>exsuono_in_corso()</code></td><td>1 se sta suonando</td></tr>
 <tr><td><code>exsuono_volume(percento)</code></td><td>il volume della scheda, da 0 a 100</td></tr>
 <tr><td><code>exsuono_chiudi()</code></td><td>lascia il brano e la scheda</td></tr>
+<tr><td><code>exsuono_mix_leggi(i, &amp;v)</code></td><td>la voce numero <code>i</code> del mixer (nome, uscita o ingresso, sinistra e destra); rende quante voci ci sono. Non serve un brano aperto</td></tr>
+<tr><td><code>exsuono_mix_metti(i, sin, des, &amp;v)</code></td><td>porta la voce a quei due valori, 0..100, e in <code>v</code> la rid&agrave; com'e' rimasta davvero</td></tr>
 </table>
 
 <p>

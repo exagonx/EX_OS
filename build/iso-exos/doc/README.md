@@ -226,6 +226,32 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   campioni prodotti dentro EX-OS differiscono al piu' di 1 su 32768 da quelli
   dello stesso decodificatore sul PC di sviluppo, e somigliano al WAV
   originale per il 99,97%. L'ascolto sul PC vero e' da fare.
+- **HD Audio sui ponti nVidia** (`hdaudio.drv` 0.003). Sul PC di prova il
+  codec rispondeva, il collaudo passava e non si sentiva niente. Due cose: i
+  controller nVidia leggono la memoria del flusso senza guardare le cache del
+  processore finche' non si accendono tre bit nella loro configurazione PCI
+  (0x4C, 0x4D, 0x4E), e il driver ora lo fa; e il volume regolava solo il
+  canale sinistro, lasciando il destro com'era nato (muto, su un ALC888).
+  `hdaudio.drv -d 1` stampa tutto il codec - collegamenti, amplificatori,
+  prese, flussi - senza scrivere niente, anche col driver acceso; `-c 0`
+  lascia stare i bit nVidia, `-k N` sceglie il codec. Sul PC vero ora si
+  sente (10 ottobre). Restavano buchi e pezzi distorti a caso: all'interrupt
+  di fine meta' il contatore della posizione puo' essere ancora un pelo prima
+  del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
+  un quarto di meta' e scrive i conti di ogni riproduzione nel registro
+  (`dmesg hdaudio`). Da riascoltare.
+- **Il pannello dei volumi.** Nella barra, accanto all'orologio, c'e'
+  un'icona con l'altoparlante: un clic apre `exvolume`, con una riga per ogni
+  uscita e per ogni ingresso della scheda e due cursori per riga, canale
+  sinistro e destro (una spunta li lega). Le voci le dichiara il driver:
+  `hdaudio.drv` 0.005 da' a ogni presa d'uscita un convertitore suo, cosi' i
+  volumi sono davvero uno per presa, ed elenca come ingressi il microfono, la
+  linea e il CD che il codec sa mescolare nelle uscite (nascono a zero). Le
+  schede col solo volume generale hanno una voce, «Volume». Le scelte stanno
+  in `$HOME/.exwin/config/volume.cfg` e la scrivania le rimette a ogni avvio
+  (`exvolume -applica`); da console, `audio -mix`. In QEMU: una uscita,
+  sinistra a 0 e destra a 78, e nella registrazione il canale sinistro e'
+  muto. Le cinque uscite e gli ingressi dell'ALC888 sono da provare sul PC.
 - **Il lettore audio e la libreria del suono.** `explayer` (Avvio > Lettore
   audio, o un doppio clic su un `.wav` o un `.mp3` nel file manager) suona un
   elenco di brani: precedente, suona, pausa, ferma, successivo; una barra che

@@ -567,6 +567,46 @@ void exsuono_volume(unsigned int percento)
     ipc_send((unsigned int)pid, AUDIO_MSG_VOLUME, &v, sizeof(v));
 }
 
+/* Una domanda al driver sul mixer, senza toccare il brano aperto: il driver
+ * si cerca per nome ogni volta, perche' qui puo' non esserci niente di aperto. */
+static int mix_chiedi(unsigned int tipo, unsigned int indice, unsigned int sin,
+                      unsigned int des, ExSuonoVoce *v)
+{
+    static unsigned char buf[IPC_MSG_MAX_DATA];
+    AudioMixVoce m;
+    IpcMessage   meta;
+    Aspetto      a;
+    int pid = ipc_lookup(AUDIO_SERVIZIO);
+
+    if (pid <= 0) return EXSUONO_NO_SCHEDA;
+    memset(&m, 0, sizeof(m));
+    m.indice = indice; m.sin = sin; m.des = des;
+    if (ipc_send((unsigned int)pid, tipo, &m, sizeof(m)) < 0) return EXSUONO_NO_SCHEDA;
+    a.pid = pid; a.tipo = AUDIO_MSG_MIX_R;
+    /* Un driver di prima del 10 ottobre 2026 non risponde: mezzo secondo e via. */
+    if (ipc_scegli(filtro, &a, &meta, buf, sizeof(buf), 500) < 0) return EXSUONO_NO_SCHEDA;
+    if (meta.len < sizeof(m)) return EXSUONO_NO_SCHEDA;
+    memcpy(&m, buf, sizeof(m));
+    if (m.indice != indice) return EXSUONO_NO_FILE;         /* quella voce non c'e' */
+    if (v) {
+        v->tipo = m.tipo; v->sin = m.sin; v->des = m.des;
+        memcpy(v->nome, m.nome, sizeof(v->nome));
+        v->nome[sizeof(v->nome) - 1] = 0;
+    }
+    return (int)m.totale;
+}
+
+int exsuono_mix_leggi(unsigned int indice, ExSuonoVoce *v)
+{
+    return mix_chiedi(AUDIO_MSG_MIX_LEGGI, indice, 0, 0, v);
+}
+
+int exsuono_mix_metti(unsigned int indice, unsigned int sin, unsigned int des, ExSuonoVoce *v)
+{
+    return mix_chiedi(AUDIO_MSG_MIX_METTI, indice, sin > 100 ? 100 : sin,
+                      des > 100 ? 100 : des, v);
+}
+
 int exsuono_avvia_file(const char *file)
 {
     static const char *const dove[] = { "/bin/audio", "/cdrom/bin/audio" };

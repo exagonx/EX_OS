@@ -115,6 +115,15 @@ typedef struct {
      * risposto, <0 se no.
      * --------------------------------------------------------------------- */
     int (*midi_vivo)(void);
+
+    /* -------------------------------------------------------------------------
+     * Le voci del mixer (facoltativa: 0 = «ho solo il volume generale», e ci
+     * pensa il comune). Con scrivi = 0 riempie la voce numero v->indice; con
+     * scrivi = 1 la porta prima a v->sin e v->des e poi la riempie com'e'
+     * rimasta. Rende quante voci ci sono, <0 se quell'indice non esiste.
+     * Vedi AudioMixVoce in audio_proto.h.
+     * --------------------------------------------------------------------- */
+    int (*mix)(int scrivi, AudioMixVoce *v);
 } AudioDorso;
 
 /* Ogni driver definisce QUESTA, e null'altro di visibile da fuori. */

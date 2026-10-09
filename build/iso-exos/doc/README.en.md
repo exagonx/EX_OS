@@ -203,6 +203,32 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   broadcasts through (the DHCP offer was dropped); and short waits done with
   `usleep`, which stretched the power-up beyond ten seconds. `-p` tries it
   alone.
+- **HD Audio on nVidia bridges** (`hdaudio.drv` 0.003). On the test PC the
+  codec answered, the self-test passed and nothing was heard. Two things:
+  nVidia controllers read the stream memory without looking at the CPU
+  caches until three bits are set in their PCI configuration (0x4C, 0x4D,
+  0x4E), and the driver now sets them; and the volume set only the left
+  channel, leaving the right as it is born (muted, on an ALC888).
+  `hdaudio.drv -d 1` prints the whole codec - connections, amplifiers, pins,
+  streams - without writing anything, even while the driver runs; `-c 0`
+  leaves the nVidia bits alone, `-k N` picks the codec. On the real PC it is
+  now heard (10 October). Random gaps and distorted pieces remained: at the
+  end-of-half interrupt the position counter can still read just before the
+  boundary, and the wrong half was refilled. 0.004 moves the boundary by a
+  quarter of a half and writes the counts of each playback to the kernel log
+  (`dmesg hdaudio`). To be listened to again.
+- **The volume panel.** In the taskbar, next to the clock, there is a speaker
+  icon: a click opens `exvolume`, one row for every output and every input of
+  the card and two sliders per row, left and right channel (a checkbox links
+  them). The driver declares the entries: `hdaudio.drv` 0.005 gives each
+  output jack a converter of its own, so the volumes really are one per jack,
+  and lists as inputs the microphone, line and CD that the codec can mix into
+  the outputs (they start at zero). Cards with only a master volume have one
+  entry, "Volume". Choices live in `$HOME/.exwin/config/volume.cfg` and the
+  desktop restores them at every start (`exvolume -applica`); from a console,
+  `audio -mix`. In QEMU: one output, left at 0 and right at 78, and the left
+  channel of the recording is silent. The five outputs and the inputs of the
+  ALC888 are to be tried on the PC.
 - **The audio player and the sound library.** `explayer` (Start > Lettore
   audio, or a double click on a `.wav` or `.mp3` in the file manager) plays a
   list of tracks: previous, play, pause, stop, next; a bar that shows where

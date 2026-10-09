@@ -33,6 +33,8 @@ static const char *const g_nomi[] = {
     "exsuono_volume",
     "exsuono_avvia_file",
     "exsuono_ferma_file",
+    "exsuono_mix_leggi",
+    "exsuono_mix_metti",
 
     "__lib_avvio"
 };
@@ -50,6 +52,8 @@ static void *const g_indirizzi[] = {
     (void *)exsuono_volume,
     (void *)exsuono_avvia_file,
     (void *)exsuono_ferma_file,
+    (void *)exsuono_mix_leggi,
+    (void *)exsuono_mix_metti,
 
     (void *)__libc_ponti_avvia
 };

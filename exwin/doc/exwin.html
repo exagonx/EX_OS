@@ -88,6 +88,9 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <tr><td><b>Lettore audio</b> <code>explayer</code></td>
     <td>suona WAV e MP3 uno dopo l'altro &mdash; vedi
         <a href="#lettore">qui sotto</a></td></tr>
+<tr><td><b>Volume</b> <code>exvolume</code></td>
+    <td>il volume di ogni uscita e ingresso, canale per canale &mdash; vedi
+        <a href="#volume">qui sotto</a></td></tr>
 <tr><td><b>EXKlondike</b> <code>exklondike</code></td>
     <td>il solitario classico (Avvio &gt; Giochi)</td></tr>
 <tr><td><b>EXSpider</b> <code>exspider</code></td>
@@ -133,6 +136,38 @@ suona.
 L'intro che si sente all'accensione della scrivania e' il file
 <code>/exwin/sound/intro_exos_benvenuto10s.wav</code>. Per non sentirla:
 <code>suono_avvio = no</code> in <code>pm.cfg</code>.
+</p>
+
+<h3 id="volume">Il pannello dei volumi</h3>
+
+<p>
+Nella barra in basso, a sinistra dell'orologio, c'e' un pulsante con un
+altoparlante. Un clic apre il pannello dei volumi; lo stesso pannello e' nel
+menu <b>Avvio</b> alla voce <b>Volume</b>.
+</p>
+
+<table border="1">
+<tr><th>Che cosa</th><th>Che cosa fa</th></tr>
+<tr><td><b>Uscite</b></td><td>una riga per ogni presa da cui si ascolta: la linea dietro, le cuffie davanti, gli altoparlanti. Il nome dice che cos'e', dove sta e il colore del connettore</td></tr>
+<tr><td><b>Ingressi</b></td><td>microfono, linea in ingresso, CD: quanto di quella presa si sente nelle uscite. Nascono a zero</td></tr>
+<tr><td><b>S</b> e <b>D</b></td><td>i due cursori di ogni riga: canale sinistro e canale destro, da 0 (muto) a 100</td></tr>
+<tr><td><b>Sinistra e destra insieme</b></td><td>con la spunta i due cursori si muovono insieme; senza, ognuno per conto suo</td></tr>
+</table>
+
+<p>
+Dalla tastiera: <code>Tab</code> passa da un cursore al successivo, le frecce
+lo muovono di uno, <code>Home</code> e <code>Fine</code> lo portano a 0 e a
+100, <code>Esc</code> chiude. Le scelte si salvano da sole in
+<code>$HOME/.exwin/config/volume.cfg</code> e tornano a ogni avvio della
+scrivania.
+</p>
+
+<p class="nota">
+<b>Le righe le decide la scheda.</b> Su una scheda col solo volume generale
+ce n'e' una, &laquo;Volume&raquo;, e i due cursori vanno insieme comunque:
+il pannello mostra quel che la scheda ha fatto davvero. Da una console lo
+stesso elenco e' <code>audio -mix</code>, e
+<code>audio -mix N SIN DES</code> porta la voce N a quei due valori.
 </p>
 
 <h3 id="giochi">I giochi</h3>

@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.025");
+EX_VERSIONE("netupdate", "0.026");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -3678,6 +3678,70 @@ static void uso(void)
     printf("  %s  cosa c'e' installato, lo scrive netupdate\n", REG);
 }
 
+/* =============================================================================
+ * Gli strumenti scaricati devono anche TROVARSI (10 ottobre 2026)
+ *
+ * ! -check -yesall METTEVA gcc IN /exos E BASTA. I file arrivavano tutti, gcc
+ * chiamato col percorso intero compilava, e `gcc` da solo dava «comando non
+ * trovato»: il PATH di /boot/kernel.cfg, che e' di questa macchina e che per
+ * questo netupdate non sovrascrive mai, non conteneva /exos/bin. Segnalato
+ * dall'utente sul PC di prova, il cui kernel.cfg nasce da un dischetto con
+ * PATH = /bin:/dev.
+ *
+ * Non si riscrive qui: lo sa gia' fare `toolinst`, con la copia di sicurezza
+ * e la regola su dove mettere la voce (prima di quelle del CD). Lo si chiama
+ * con -c, «solo la configurazione», quando gli strumenti ci sono e il PATH
+ * non li nomina. Se va gia' bene non si tocca niente e non si dice niente.
+ * ========================================================================== */
+static void strumenti_nel_path(void)
+{
+    static char testo[8192];
+    char *p;
+    int   fd, n, stato = 0, pid;
+    char *av[3];
+
+    if (access("/exos/bin/gcc", F_OK) != 0) return;         /* niente strumenti */
+
+    fd = open("/boot/kernel.cfg", O_RDONLY);
+    if (fd < 0) return;
+    n = (int)read(fd, testo, sizeof(testo) - 1);
+    close(fd);
+    if (n <= 0) return;
+    testo[n] = 0;
+
+    /* Una riga PATH (non commentata) che nomina /exos/bin come voce sua, non
+     * come coda di /cdrom/exos/bin: allora e' a posto. */
+    for (p = testo; p && *p; ) {
+        char *fine = strchr(p, '\n'), *r = p, *q;
+
+        if (fine) *fine = 0;
+        while (*r == ' ' || *r == '\t') r++;
+        if ((r[0] == 'P' || r[0] == 'p') && (r[1] == 'A' || r[1] == 'a') &&
+            (r[2] == 'T' || r[2] == 't') && (r[3] == 'H' || r[3] == 'h')) {
+            for (q = strstr(r, "/exos/bin"); q; q = strstr(q + 1, "/exos/bin"))
+                if (q[-1] == ':' || q[-1] == ' ' || q[-1] == '=' || q[-1] == '\t') return;
+        }
+        p = fine ? fine + 1 : 0;
+    }
+
+    if (access("/bin/toolinst", F_OK) != 0) {
+        printf("\n! Gli strumenti sono in /exos ma il PATH non li nomina, e\n"
+               "  /bin/toolinst non c'e'. In [env] di /boot/kernel.cfg serve:\n"
+               "      PATH = /bin:/dev:/exos/bin\n");
+        return;
+    }
+    printf("\nGli strumenti (gcc, make...) sono in /exos ma il PATH non li\n"
+           "nomina: lo scrivo in /boot/kernel.cfg.\n");
+    av[0] = (char *)"/bin/toolinst";
+    av[1] = (char *)"-c";
+    av[2] = 0;
+    pid = spawn(av[0], av);
+    if (pid < 0) { printf("  ! /bin/toolinst non parte\n"); return; }
+    waitpid(pid, &stato, 0);
+    printf("! Vale dal prossimo riavvio. La configurazione di prima e' in\n"
+           "  /boot/kernel.cfg.bak.\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) { uso(); return 1; }
@@ -3711,13 +3775,21 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-repo") == 0)      return comando_repo(NULL);
 
     if (strcmp(argv[1], "-check") == 0) {
-        if (argc > 2 && strcmp(argv[2], "-yes") == 0)    return comando_check(1);
-        if (argc > 2 && strcmp(argv[2], "-yesall") == 0) return comando_check(2);
-        if (argc > 2) { uso(); return 2; }
-        return comando_check(0);
+        int r;
+
+        if (argc > 2 && strcmp(argv[2], "-yes") == 0)         r = comando_check(1);
+        else if (argc > 2 && strcmp(argv[2], "-yesall") == 0) r = comando_check(2);
+        else if (argc > 2) { uso(); return 2; }
+        else r = comando_check(0);
+        strumenti_nel_path();
+        return r;
     }
-    if (strcmp(argv[1], "-yes") == 0)    return comando_check(1);
-    if (strcmp(argv[1], "-yesall") == 0) return comando_check(2);
+    if (strcmp(argv[1], "-yes") == 0 || strcmp(argv[1], "-yesall") == 0) {
+        int r = comando_check(argv[1][4] == 'a' ? 2 : 1);
+
+        strumenti_nel_path();
+        return r;
+    }
 
     /* ! «guarda» E' UNA PAROLA RISERVATA DOPO I DUE PUNTI, come «crea» per
      * -registro e «list» per -install. */

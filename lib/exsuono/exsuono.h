@@ -84,6 +84,31 @@ int          exsuono_in_corso(void);
 /* Il volume della scheda, 0..100. */
 void         exsuono_volume(unsigned int percento);
 
+/* -----------------------------------------------------------------------------
+ * Il mixer (10 ottobre 2026): ogni uscita e ogni ingresso della scheda, coi
+ * due canali. Non serve avere un brano aperto.
+ *
+ * exsuono_mix_leggi(i, &v) riempie la voce numero i e rende quante voci ci
+ * sono in tutto (si comincia da 0 e si va avanti finche' i < quel numero);
+ * exsuono_mix_metti(i, sin, des, &v) la porta a quei due valori, 0..100, e
+ * in v (se non e' 0) la ridà com'e' rimasta DAVVERO: una scheda puo' non
+ * avere i canali separati. Rendono un numero negativo se la scheda non
+ * risponde o la voce non esiste. Una scheda semplice ha una voce sola,
+ * «Volume».
+ * --------------------------------------------------------------------------- */
+#define EXSUONO_USCITA    0
+#define EXSUONO_INGRESSO  1
+
+typedef struct {
+    unsigned int tipo;          /* EXSUONO_USCITA o EXSUONO_INGRESSO */
+    unsigned int sin, des;      /* 0..100; 0 = muto */
+    char         nome[40];
+} ExSuonoVoce;
+
+int          exsuono_mix_leggi(unsigned int indice, ExSuonoVoce *v);
+int          exsuono_mix_metti(unsigned int indice, unsigned int sin, unsigned int des,
+                               ExSuonoVoce *v);
+
 /* Fa suonare un file a un altro processo e torna subito. Rende il suo PID
  * (da dare a exsuono_ferma_file), o un valore negativo. */
 int          exsuono_avvia_file(const char *file);

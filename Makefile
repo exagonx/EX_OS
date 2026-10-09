@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # =============================================================================
 PROGRAMMI_CD := aggiungi dmesg ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -2618,6 +2618,32 @@ $(EXPLAYER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EXPLAYER_SRC) $(EXPLAYER_LD) $(EX
 .PHONY: explayer
 explayer: dirs $(EXPLAYER_BIN)
 
+# --- /exwin/bin/exvolume: il pannello dei volumi (10 ottobre 2026) ---
+#
+# Lo apre l'icona accanto all'orologio; `exvolume -applica` rimette i volumi
+# salvati, e lo lancia la scrivania. Due stub: exwin ed exsuono.
+EXVOLUME_SRC := exwin/bin/exvolume/exvolume.c
+EXVOLUME_BIN := $(BUILD_EXWIN_BIN)/exvolume
+EXVOLUME_LD  := exwin/bin/exvolume/exvolume.ld
+
+$(EXVOLUME_BIN): $(EXVOLUME_SRC) $(EXVOLUME_LD) $(EXSUONO_STUB) $(EXSUONO_HDR) $(EXSUONO_SO) \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/exvolume ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exsuono -I drivers/wserver -I drivers/kbd -c $(EXVOLUME_SRC) -o $(BUILD_OBJ)/exvolume_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/exvolume_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exsuono -c $(EXSUONO_STUB) -o $(BUILD_OBJ)/exvolume_suono.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/exvolume_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXVOLUME_LD) \
+	    $(BUILD_OBJ)/exvolume_start.o $(BUILD_OBJ)/exvolume_main.o \
+	    $(BUILD_OBJ)/exvolume_exwin.o $(BUILD_OBJ)/exvolume_suono.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exvolume compilato: $@"
+
+.PHONY: exvolume
+exvolume: dirs $(EXVOLUME_BIN)
+
 # --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
 #
 # Quattro programmi con la stessa forma, e quindi una regola sola. Dentro
@@ -2898,7 +2924,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
              $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
-             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(GIOCHI_BIN) \
+             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) $(EXSUONO_SO) \
              $(EXTTF_SO) \

@@ -39,7 +39,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.016"
+#define VERSIONE_APP "0.017"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -1543,7 +1543,9 @@ static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
  * ones are not shown (sixteen windows at 640 pixels).
  * ============================================================================= */
 #define VB_X0        76         /* after «Avvio» */
-#define VB_OROLOGIO 178         /* the clock, a process of its own, is here */
+#define VB_OROLOGIO 206         /* the clock, a process of its own, and the volume icon */
+#define VB_VOL_W     24         /* the volume icon, just left of the clock (178 pixels) */
+#define VB_VOL_X    ((int)g_sw - 178 - VB_VOL_W - 2)
 #define VB_MAX_W    160
 #define VB_MIN_W     28
 #define VB_ICONA     16
@@ -1660,6 +1662,56 @@ static void vb_disegna(ExWindow f)
     }
 }
 
+/* =============================================================================
+ * L'icona del volume, accanto all'orologio (10 ottobre 2026)
+ *
+ * Un altoparlante disegnato a rettangoli, in un pulsante della barra. Un clic
+ * apre il pannello dei volumi (/exwin/bin/exvolume), che si mette da solo li'
+ * sopra; se e' gia' aperto non se ne apre un altro. Chiesta dall'utente.
+ *
+ * ! IL PANNELLO E' UN PROGRAMMA A PARTE, come l'orologio, e per la stessa
+ * ragione: la scrivania non deve sapere niente di schede audio, e chi vuole
+ * lo apre anche dal menu o da una console.
+ * ========================================================================== */
+static int g_vol_pid = -1;
+
+static void vol_disegna(ExWindow f)
+{
+    int x = VB_VOL_X, y = 2, h = BARRA_H - 4, ax = x + 4, ay = y + 4, k;
+
+    ex_fill_rect(f, x, y, VB_VOL_W, h, EX_GRAY);
+    ex_draw_raised(f, x, y, VB_VOL_W, h);
+    ex_fill_rect(f, ax, ay + 5, 4, 6, EX_BLACK);                    /* il corpo */
+    for (k = 0; k < 5; k++)                                         /* il cono */
+        ex_fill_rect(f, ax + 4 + k, ay + 4 - k, 1, 8 + 2 * k, EX_BLACK);
+    ex_fill_rect(f, ax + 11, ay + 5, 1, 6, EX_BLACK);               /* le onde */
+    ex_fill_rect(f, ax + 13, ay + 3, 1, 10, EX_BLACK);
+    ex_fill_rect(f, ax + 15, ay + 1, 1, 14, EX_BLACK);
+}
+
+static int vol_sotto(int x, int y)
+{
+    return y >= 2 && y < BARRA_H - 2 && x >= VB_VOL_X && x < VB_VOL_X + VB_VOL_W;
+}
+
+static void vol_apri(void)
+{
+    static const char *const dove[] = { "/exwin/bin/exvolume", "/cdrom/exwin/bin/exvolume" };
+    int k, stato = 0;
+
+    /* Gia' aperto: waitpid senza aspettare dice 0 finche' il processo vive. */
+    if (g_vol_pid > 0 && waitpid(g_vol_pid, &stato, WNOHANG) == 0) return;
+    g_vol_pid = -1;
+    for (k = 0; k < 2 && g_vol_pid < 0; k++) {
+        char *av[2];
+
+        av[0] = (char *)dove[k];
+        av[1] = 0;
+        g_vol_pid = spawn_ex(av[0], av, environ, 0, 0);
+    }
+    if (g_vol_pid < 0) log_seriale("pm: il pannello dei volumi (exvolume) non parte");
+}
+
 static int vb_sotto(int x, int y)
 {
     int i;
@@ -1712,6 +1764,7 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
     if (msg == EXM_WINDOW_LIST) {
         vb_leggi();
         vb_disegna(f);
+        vol_disegna(f);
         ex_update(f);
         arr_controlla();            /* a shutdown in progress watches it too */
         return 0;
@@ -1721,12 +1774,14 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         int i = vb_sotto(EX_X(lp), EX_Y(lp));
 
         if (i >= 0) { ex_activate_window_id(g_vb[i].v.id); return 0; }
+        if (vol_sotto(EX_X(lp), EX_Y(lp))) { vol_apri(); return 0; }
     }
 
     if (msg == EXM_PAINT) {
         long r = ex_default_proc(f, msg, wp, lp);
 
         vb_disegna(f);
+        vol_disegna(f);
         ex_update(f);
         return r;
     }
@@ -2792,6 +2847,23 @@ int main(int argc, char **argv)
     ex_default_proc(g_barra, EXM_PAINT, 0, 0);
 
     printf("pm: scrivania attiva, %u applicazioni nel menu\n", g_app_n);
+
+    /* I volumi scelti l'ultima volta: il driver audio non li ricorda da un
+     * avvio all'altro, li rimette `exvolume -applica` leggendo il file di chi
+     * usa la macchina. Se non c'e' la scheda, o il file, non fa niente. */
+    {
+        static const char *const dove[] = { "/exwin/bin/exvolume", "/cdrom/exwin/bin/exvolume" };
+        int k, partito = 0;
+
+        for (k = 0; k < 2 && !partito; k++) {
+            char *av[3];
+
+            av[0] = (char *)dove[k];
+            av[1] = (char *)"-applica";
+            av[2] = 0;
+            if (spawn_ex(av[0], av, environ, 0, 0) >= 0) partito = 1;
+        }
+    }
 
     /* L'intro. La suona un altro processo (exsuono_avvia_file), quindi la
      * scrivania non aspetta e non ne risente; se la scheda audio non c'e', o

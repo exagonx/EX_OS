@@ -41,6 +41,8 @@ static struct {
     void (*volume)(unsigned int);
     int  (*avvia_file)(const char *);
     void (*ferma_file)(int);
+    int  (*mix_leggi)(unsigned int, ExSuonoVoce *);
+    int  (*mix_metti)(unsigned int, unsigned int, unsigned int, ExSuonoVoce *);
 } P;
 
 static int assicura(void)
@@ -64,6 +66,11 @@ static int assicura(void)
     P.volume     = (void (*)(unsigned int))exlib_simbolo(t, "exsuono_volume");
     P.avvia_file = (int (*)(const char *))exlib_simbolo(t, "exsuono_avvia_file");
     P.ferma_file = (void (*)(int))exlib_simbolo(t, "exsuono_ferma_file");
+    /* Il mixer e' del 10 ottobre 2026: su una exsuono.so di prima manca, e
+     * non per questo il resto si rifiuta. Le due funzioni rendono un errore. */
+    P.mix_leggi  = (int (*)(unsigned int, ExSuonoVoce *))exlib_simbolo(t, "exsuono_mix_leggi");
+    P.mix_metti  = (int (*)(unsigned int, unsigned int, unsigned int, ExSuonoVoce *))
+                   exlib_simbolo(t, "exsuono_mix_metti");
 
     /* Le dodici ci devono essere tutte: una libreria a meta' non si usa. */
     if (!P.durata || !P.apri || !P.chiudi || !P.suona || !P.pausa || !P.vai ||
@@ -93,3 +100,9 @@ int exsuono_avvia_file(const char *file)
 { return assicura() ? P.avvia_file(file) : EXSUONO_NO_FILE; }
 
 void exsuono_ferma_file(int pid)     { if (assicura()) P.ferma_file(pid); }
+
+int exsuono_mix_leggi(unsigned int i, ExSuonoVoce *v)
+{ return (assicura() && P.mix_leggi) ? P.mix_leggi(i, v) : EXSUONO_NO_SCHEDA; }
+
+int exsuono_mix_metti(unsigned int i, unsigned int sin, unsigned int des, ExSuonoVoce *v)
+{ return (assicura() && P.mix_metti) ? P.mix_metti(i, sin, des, v) : EXSUONO_NO_SCHEDA; }

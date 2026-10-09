@@ -59,3 +59,4 @@ Giochi/EXKlondike      | /exwin/bin/exklondike | /exwin/icon/baseapp/exklondike_
 Giochi/EXSpider        | /exwin/bin/exspider   | /exwin/icon/baseapp/exspider_64.ico
 Giochi/EXMajong        | /exwin/bin/exmajong   | /exwin/icon/baseapp/exmajong_64.ico
 Giochi/EXGO            | /exwin/bin/exgo       | /exwin/icon/baseapp/exgo_64.ico
+Volume                 | /exwin/bin/exvolume   | /exwin/icon/baseapp/explayer_64.ico

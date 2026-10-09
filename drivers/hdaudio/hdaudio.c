@@ -65,7 +65,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `hdaudio.drv -version` la stampa. */
-EX_VERSIONE("hdaudio.drv", "0.002");
+EX_VERSIONE("hdaudio.drv", "0.005");
 
 /* =============================================================================
  * I registri del controller (MMIO, BAR0)
@@ -166,6 +166,9 @@ static unsigned int  g_meta = 0;
 static unsigned int  g_suona = 0;
 
 static int g_forz_irq = -1;
+static int g_guarda    = 0;     /* -d 1: si legge e si stampa, non si scrive niente */
+static int g_coerenza  = 1;     /* -c 0: non si toccano i bit di coerenza nVidia */
+static int g_forz_codec = -1;   /* -k N: il codec all'indirizzo N, non il primo */
 
 /* =============================================================================
  * Accesso ai registri — sempre volatile, sempre della larghezza giusta
@@ -201,7 +204,12 @@ static int verbo(unsigned int nodo, unsigned int v, unsigned int dato,
 
     for (guard = 0; guard < 10000; guard++)
         if (!(r16(H_ICIS) & ICIS_BUSY)) break;
-    if (r16(H_ICIS) & ICIS_BUSY) return -1;
+    /* ! UN COMANDO RIMASTO SENZA RISPOSTA NON DEVE BLOCCARE TUTTI QUELLI DOPO.
+     * Il codec di QEMU a certe domande non risponde affatto, e «occupato»
+     * restava acceso per sempre: dopo un `-d 1` il driver non riusciva piu'
+     * a dare un verbo, nemmeno il volume. Se e' ancora occupato lo si spegne
+     * a mano e si va avanti: quel comando e' perso, il prossimo no. */
+    if (r16(H_ICIS) & ICIS_BUSY) w16(H_ICIS, 0);
 
     w16(H_ICIS, ICIS_VALIDO);       /* azzera «risposta valida» scrivendoci sopra */
     w32(H_ICOI, cmd);
@@ -214,11 +222,51 @@ static int verbo(unsigned int nodo, unsigned int v, unsigned int dato,
             return 0;
         }
     }
+    w16(H_ICIS, 0);         /* nessuna risposta: si libera il posto per il prossimo */
     return -1;
 }
 
 static unsigned int passi_amp(unsigned int nodo);
 static void         volume_su(unsigned int pct);
+
+/* =============================================================================
+ * Le voci del mixer (10 ottobre 2026): ogni presa d'uscita e ogni ingresso,
+ * coi suoi due canali
+ *
+ * Un'USCITA e' una presa con la sua strada fino a un convertitore; il suo
+ * volume sta nel primo nodo della strada che ha un amplificatore a passi
+ * (su un ALC888 il miscelatore davanti alla presa, sul codec di QEMU il
+ * convertitore). Perche' i volumi siano davvero uno per presa, ogni presa
+ * prende un convertitore suo finche' ce ne sono: vedi apri_strada().
+ *
+ * Un INGRESSO e' una presa (microfono, linea in, CD) che il codec sa
+ * mescolare nelle uscite: un ingresso del «miscelatore analogico», col suo
+ * amplificatore. Nasce a zero - muto - come lo lascia il codec.
+ * ========================================================================== */
+#define VOCI_MAX 16
+typedef struct {
+    unsigned char tipo;         /* AUDIO_MIX_* */
+    unsigned char presa;        /* il widget della presa */
+    unsigned char nodo;         /* dove sta il volume (0 = solo acceso/spento sulla presa) */
+    unsigned char ing;          /* ingresso: l'indice dentro `nodo` */
+    unsigned char passi;        /* quanti passi ha quell'amplificatore */
+    unsigned char presa_amp;    /* la presa ha un amplificatore d'uscita suo */
+    unsigned char sin, des;     /* 0..100 */
+    char          nome[40];
+} Voce;
+static Voce         g_voci[VOCI_MAX];
+static int          g_n_voci = 0;
+
+/* I miscelatori attraversati dalle strade d'uscita, e per ognuno l'ingresso
+ * da cui entra il miscelatore analogico: si apre quando un ingresso non e'
+ * a zero, si richiude quando lo sono tutti. */
+#define PONTI_MAX 8
+static unsigned char g_ponte_mix[PONTI_MAX], g_ponte_idx[PONTI_MAX];
+static int           g_n_ponti = 0;
+
+static unsigned int  g_strada_vol = 0;      /* lo riempie apri_strada() */
+static unsigned char g_strada_mix[8];
+static int           g_strada_n_mix = 0;
 
 static unsigned int parametro(unsigned int nodo, unsigned int p)
 {
@@ -270,7 +318,7 @@ static int connessioni(unsigned int n, unsigned int *v, int max)
 
 /* Dal nodo `n` all'indietro fino a un convertitore d'uscita, aprendo ogni
  * passo. Rende il convertitore raggiunto, 0 se da qui non ci si arriva. */
-static unsigned int apri_strada(unsigned int n, int prof)
+static unsigned int apri_strada(unsigned int n, int prof, int nuovi)
 {
     unsigned int cap  = parametro(n, P_CAP_WIDGET);
     unsigned int tipo = (cap >> W_TIPO_SH) & 0x0F;
@@ -278,7 +326,15 @@ static unsigned int apri_strada(unsigned int n, int prof)
     int k, i;
 
     if (tipo == W_USCITA) {
+        /* `nuovi`: un convertitore gia' dato a un'altra presa non vale. Cosi'
+         * ogni presa ha la sua strada e il suo volume, finche' ce ne sono. */
+        if (nuovi) {
+            unsigned int j;
+
+            for (j = 0; j < g_n_dac; j++) if (g_dacs[j] == n) return 0;
+        }
         verbo(n, V_SET_POWER, 0x00, 0);
+        if ((cap & 0x4) && ((parametro(n, P_AMP_USCITA) >> 8) & 0x7F)) g_strada_vol = n;
         return n;
     }
     if (prof > 5 || tipo == 0x1 || tipo > W_PRESA) return 0;   /* ne' ingressi ne' altro */
@@ -286,7 +342,7 @@ static unsigned int apri_strada(unsigned int n, int prof)
 
     k = connessioni(n, c, 16);
     for (i = 0; i < k; i++) {
-        unsigned int d = apri_strada(c[i], prof + 1);
+        unsigned int d = apri_strada(c[i], prof + 1, nuovi);
 
         if (!d) continue;
         verbo(n, V_SET_POWER, 0x00, 0);
@@ -296,6 +352,7 @@ static unsigned int apri_strada(unsigned int n, int prof)
             unsigned int zero = parametro(n, P_AMP_INGRESSO) & 0x7F;
 
             verbo(n, V_SET_AMP, 0x4000 | 0x2000 | 0x1000 | ((unsigned int)i << 8) | zero, 0);
+            if (g_strada_n_mix < 8) g_strada_mix[g_strada_n_mix++] = (unsigned char)n;
         } else if (k > 1) {
             verbo(n, V_SET_CONN_SEL, (unsigned int)i, 0);   /* un selettore, o una presa */
         }
@@ -305,10 +362,140 @@ static unsigned int apri_strada(unsigned int n, int prof)
             unsigned int zero = parametro(n, P_AMP_USCITA) & 0x7F;
 
             verbo(n, V_SET_AMP, 0x8000 | 0x2000 | 0x1000 | zero, 0);
+            /* Il piu' vicino alla presa che abbia dei passi: li' sta il volume. */
+            if ((parametro(n, P_AMP_USCITA) >> 8) & 0x7F) g_strada_vol = n;
         }
         return d;
     }
     return 0;
+}
+
+/* Il nome di una presa, dal suo «configuration default»: che cos'e', dove
+ * sta sulla macchina, di che colore e' il connettore. */
+static void nome_presa(char *out, unsigned int max, unsigned int cfg, int ingresso)
+{
+    static const char *colori[16] = { 0, "nera", "grigia", "blu", "verde", "rossa", "arancio",
+                                      "gialla", "viola", "rosa", 0, 0, 0, 0, "bianca", 0 };
+    unsigned int dev = (cfg >> 20) & 0xF, dove = (cfg >> 24) & 0x3F, col = (cfg >> 12) & 0xF;
+    const char *cosa, *posto = "";
+
+    switch (dev) {
+    case 0x0: cosa = "Linea";        break;
+    case 0x1: cosa = "Altoparlanti"; break;
+    case 0x2: cosa = "Cuffie";       break;
+    case 0x3: cosa = "CD";           break;
+    case 0x8: cosa = "Linea in";     break;
+    case 0x9: cosa = "Aux";          break;
+    case 0xA: cosa = "Microfono";    break;
+    default:  cosa = ingresso ? "Ingresso" : "Uscita"; break;
+    }
+    if ((dove & 0x30) == 0x10)     posto = " interno";
+    else if ((dove & 0x0F) == 0x1) posto = " dietro";
+    else if ((dove & 0x0F) == 0x2) posto = " davanti";
+
+    if (colori[col]) snprintf(out, max, "%s%s (%s)", cosa, posto, colori[col]);
+    else             snprintf(out, max, "%s%s", cosa, posto);
+}
+
+/* Porta al codec una voce com'e' scritta in g_voci. */
+static void voce_applica(const Voce *v)
+{
+    unsigned int gs = ((unsigned int)v->sin * v->passi) / 100u;
+    unsigned int gd = ((unsigned int)v->des * v->passi) / 100u;
+    unsigned int ms = v->sin ? 0 : 0x80, md = v->des ? 0 : 0x80;
+
+    if (v->tipo == AUDIO_MIX_USCITA) {
+        if (v->nodo && v->nodo != v->presa) {
+            verbo(v->nodo, V_SET_AMP, 0x8000 | 0x2000 | ms | gs, 0);
+            verbo(v->nodo, V_SET_AMP, 0x8000 | 0x1000 | md | gd, 0);
+            gs = gd = 0;                    /* la presa ha solo il muto */
+        }
+        if (!v->nodo) gs = gd = 0;
+        /* ! SOLO SE LA PRESA UN AMPLIFICATORE CE L'HA. Scrivere il verbo a un
+         * widget che non lo dichiara dovrebbe essere ignorato; il codec di
+         * QEMU invece lo applica al convertitore, e il volume appena messo
+         * tornava a zero. Non si mandano verbi a chi non li ha chiesti. */
+        if (v->presa_amp) {
+            verbo(v->presa, V_SET_AMP, 0x8000 | 0x2000 | ms | gs, 0);
+            verbo(v->presa, V_SET_AMP, 0x8000 | 0x1000 | md | gd, 0);
+        }
+    } else {
+        int k, aperto = 0;
+
+        verbo(v->nodo, V_SET_AMP, 0x4000 | 0x2000 | ((unsigned int)v->ing << 8) | ms | gs, 0);
+        verbo(v->nodo, V_SET_AMP, 0x4000 | 0x1000 | ((unsigned int)v->ing << 8) | md | gd, 0);
+        if (v->sin || v->des) {
+            /* La presa deve ascoltare: si ACCENDE l'ingresso lasciando il
+             * resto come l'ha messo il BIOS (la tensione del microfono). */
+            unsigned int ctl = 0;
+
+            if (verbo(v->presa, 0xF0700, 0, &ctl) == 0 && !(ctl & 0x20))
+                verbo(v->presa, V_SET_PIN_CTL, (ctl & 0xFF) | 0x20, 0);
+        }
+        /* Il ponte verso le uscite: aperto se almeno un ingresso non e' a zero. */
+        for (k = 0; k < g_n_voci; k++)
+            if (g_voci[k].tipo == AUDIO_MIX_INGRESSO && (g_voci[k].sin || g_voci[k].des)) aperto = 1;
+        for (k = 0; k < g_n_ponti; k++) {
+            unsigned int zero = parametro(g_ponte_mix[k], P_AMP_INGRESSO) & 0x7F;
+
+            verbo(g_ponte_mix[k], V_SET_AMP, 0x4000 | 0x2000 | 0x1000 |
+                  ((unsigned int)g_ponte_idx[k] << 8) | (aperto ? zero : 0x80), 0);
+        }
+    }
+}
+
+/* Gli ingressi che si possono sentire: per ogni miscelatore attraversato da
+ * un'uscita, i suoi ALTRI ingressi che sono a loro volta un miscelatore; e
+ * di quello, le prese che sanno entrare e che la scheda madre ha collegato. */
+static void trova_ingressi(void)
+{
+    int m;
+
+    for (m = 0; m < g_strada_n_mix; m++) {
+        unsigned int c[16], j;
+        int k = connessioni(g_strada_mix[m], c, 16);
+
+        for (j = 0; (int)j < k; j++) {
+            unsigned int b = c[j], cb[16], q;
+            int kb, gia = 0, x;
+
+            if (((parametro(b, P_CAP_WIDGET) >> W_TIPO_SH) & 0x0F) != 0x2) continue;
+            if (!(parametro(b, P_CAP_WIDGET) & 0x2)) continue;     /* senza amplificatori d'ingresso */
+            for (x = 0; x < g_n_ponti; x++)
+                if (g_ponte_mix[x] == g_strada_mix[m] && g_ponte_idx[x] == j) gia = 1;
+            if (!gia && g_n_ponti < PONTI_MAX) {
+                g_ponte_mix[g_n_ponti] = g_strada_mix[m];
+                g_ponte_idx[g_n_ponti] = (unsigned char)j;
+                g_n_ponti++;
+            }
+
+            kb = connessioni(b, cb, 16);
+            for (q = 0; (int)q < kb && g_n_voci < VOCI_MAX; q++) {
+                unsigned int pin = cb[q], cfg = 0, dev;
+                Voce *v;
+
+                if (((parametro(pin, P_CAP_WIDGET) >> W_TIPO_SH) & 0x0F) != W_PRESA) continue;
+                if (!(parametro(pin, P_CAP_PIN) & 0x20)) continue;         /* non sa entrare */
+                verbo(pin, P_CONFIG_DEF, 0, &cfg);
+                if (cfg == 0 || ((cfg >> 30) & 0x3) == 1) continue;        /* non collegata */
+                dev = (cfg >> 20) & 0xF;
+                if (dev != 0x3 && dev != 0x8 && dev != 0x9 && dev != 0xA) continue;
+                for (x = 0, gia = 0; x < g_n_voci; x++)
+                    if (g_voci[x].tipo == AUDIO_MIX_INGRESSO && g_voci[x].nodo == b &&
+                        g_voci[x].ing == q) gia = 1;
+                if (gia) continue;
+
+                v = &g_voci[g_n_voci++];
+                memset(v, 0, sizeof(*v));
+                v->tipo  = AUDIO_MIX_INGRESSO;
+                v->presa = (unsigned char)pin;
+                v->nodo  = (unsigned char)b;
+                v->ing   = (unsigned char)q;
+                v->passi = (unsigned char)((parametro(b, P_AMP_INGRESSO) >> 8) & 0x7F);
+                nome_presa(v->nome, sizeof(v->nome), cfg, 1);
+            }
+        }
+    }
 }
 
 static int trova_widget(void)
@@ -338,6 +525,7 @@ static int trova_widget(void)
     g_dac = g_presa = 0;
     g_n_dac = g_n_prese = 0;
     g_passi = 0x7F;
+    g_n_voci = g_n_ponti = g_strada_n_mix = 0;
 
     /* =========================================================================
      * ! SI APRE TUTTA LA STRADA, DALLA PRESA AL CONVERTITORE (9 ottobre 2026).
@@ -375,8 +563,28 @@ static int trova_widget(void)
         dev = (cfg >> 20) & 0xF;
         if (cfg != 0 && dev > 2) continue;
 
-        d = apri_strada(n, 0);
+        /* Prima un convertitore che nessun'altra presa ha gia'; se sono
+         * finiti, uno in comune: il suono arriva lo stesso, il volume e'
+         * quello della presa con cui lo divide. */
+        g_strada_vol = 0;
+        d = apri_strada(n, 0, 1);
+        if (!d) d = apri_strada(n, 0, 0);
         if (!d) continue;
+        if ((cap & 0x4) && ((parametro(n, P_AMP_USCITA) >> 8) & 0x7F) && !g_strada_vol)
+            g_strada_vol = n;                   /* il volume sta sulla presa stessa */
+
+        if (g_n_voci < VOCI_MAX) {
+            Voce *v = &g_voci[g_n_voci++];
+
+            memset(v, 0, sizeof(*v));
+            v->tipo  = AUDIO_MIX_USCITA;
+            v->presa = (unsigned char)n;
+            v->nodo  = (unsigned char)g_strada_vol;
+            v->presa_amp = (cap & 0x4) ? 1 : 0;
+            v->passi = g_strada_vol ? (unsigned char)((parametro(g_strada_vol, P_AMP_USCITA) >> 8) & 0x7F) : 0;
+            v->sin = v->des = (unsigned char)g_vol;
+            nome_presa(v->nome, sizeof(v->nome), cfg, 0);
+        }
 
         verbo(n, V_SET_PIN_CTL, (dev == 2) ? 0xC0 : 0x40, 0);   /* uscita; cuffie col loro amplificatore */
         verbo(n, V_SET_EAPD, 0x02, 0);
@@ -393,18 +601,23 @@ static int trova_widget(void)
     if (g_n_prese == 0 || g_n_dac == 0) return -1;
     g_dac   = g_dacs[0];
     g_presa = g_prese[0];
-    printf("hdaudio: %u prese d'uscita accese, %u convertitori\n", g_n_prese, g_n_dac);
+    trova_ingressi();
+    {
+        int k, ing = 0;
+
+        for (k = 0; k < g_n_voci; k++) if (g_voci[k].tipo == AUDIO_MIX_INGRESSO) ing++;
+        printf("hdaudio: %u prese d'uscita accese, %u convertitori, %d ingressi\n",
+               g_n_prese, g_n_dac, ing);
+    }
     return 0;
 }
 
-/* Volume: l'amplificatore di un widget si scrive con un verbo solo, e i bit
- * alti dicono a QUALE amplificatore — uscita o ingresso, sinistra o destra. */
-static void amp_uscita(unsigned int nodo, unsigned int guadagno, int muto)
-{
-    unsigned int v = 0x8000 | 0x4000 | 0x2000 |     /* uscita, sinistra+destra */
-                     (muto ? 0x0080 : 0) | (guadagno & 0x7F);
-    verbo(nodo, V_SET_AMP, v, 0);
-}
+/* ! IL VERBO DELL'AMPLIFICATORE: BIT 15 = USCITA, 14 = INGRESSO, 13 = SINISTRA,
+ * 12 = DESTRA, 8-11 l'indice dell'ingresso, 7 il muto, 0-6 il guadagno. Fino
+ * al 10 ottobre 2026 una funzione qui metteva 0x4000 dove serviva 0x1000: si
+ * regolava il canale sinistro e il DESTRO restava come nasce - muto, sulle
+ * prese di un ALC888. Ora i due canali si scrivono uno per volta, in
+ * voce_applica(). */
 
 /* =============================================================================
  * Quanto in alto puo' andare questo amplificatore — lo dice il codec
@@ -426,17 +639,45 @@ static unsigned int passi_amp(unsigned int nodo)
 
 static void volume_su(unsigned int pct)
 {
-    unsigned int g;
+    int k;
 
+    /* Il volume generale porta tutte le uscite a quel valore, i due canali
+     * insieme. Chi le vuole diverse usa le voci del mixer. */
     if (pct > 100) pct = 100;
-    g = (pct * g_passi) / 100;
-
-    {
-        unsigned int k;
-
-        for (k = 0; k < g_n_dac; k++)   amp_uscita(g_dacs[k],  g, pct == 0);
-        for (k = 0; k < g_n_prese; k++) amp_uscita(g_prese[k], g, pct == 0);
+    for (k = 0; k < g_n_voci; k++) {
+        if (g_voci[k].tipo != AUDIO_MIX_USCITA) continue;
+        g_voci[k].sin = g_voci[k].des = (unsigned char)pct;
+        voce_applica(&g_voci[k]);
     }
+}
+
+/* Le voci com'erano: dopo un'apertura, che rimette mano al codec. */
+static void voci_riapplica(void)
+{
+    int k;
+
+    for (k = 0; k < g_n_voci; k++) voce_applica(&g_voci[k]);
+}
+
+static int hd_mix(int scrivi, AudioMixVoce *v)
+{
+    Voce *q;
+
+    if (v->indice >= (unsigned int)g_n_voci) return -1;
+    q = &g_voci[v->indice];
+    if (scrivi) {
+        q->sin = (unsigned char)(v->sin > 100 ? 100 : v->sin);
+        q->des = (unsigned char)(v->des > 100 ? 100 : v->des);
+        /* Senza passi c'e' solo acceso e spento: lo si dice nella risposta. */
+        if (!q->passi) { if (q->sin) q->sin = 100; if (q->des) q->des = 100; }
+        voce_applica(q);
+    }
+    v->tipo = q->tipo;
+    v->sin  = q->sin;
+    v->des  = q->des;
+    memset(v->nome, 0, sizeof(v->nome));
+    strncpy(v->nome, q->nome, sizeof(v->nome) - 1);
+    return g_n_voci;
 }
 
 /* =============================================================================
@@ -535,6 +776,166 @@ static int prendi_memoria(void)
 /* =============================================================================
  * La sonda
  * ========================================================================== */
+/* =============================================================================
+ * ! I CONTROLLER NVIDIA VOGLIONO TRE BIT ACCESI, O IL SUONO E' SILENZIO
+ * (10 ottobre 2026)
+ *
+ * Sul PC di prova (nVidia MCP73, codec ALC888) tutto rispondeva: il codec, il
+ * collaudo, gli interrupt, il contatore della posizione che avanzava. E dalle
+ * casse niente. Sui ponti nVidia il controller HD Audio legge la memoria del
+ * flusso SENZA guardare le cache del processore, finche' non gli si dice di
+ * farlo: quel che prende dal nostro buffer non e' quel che ci abbiamo scritto
+ * un attimo prima. I bit stanno nello spazio di configurazione PCI, fuori
+ * dalla specifica HD Audio:
+ *     0x4C bit 0   coerenza dei flussi in uscita
+ *     0x4D bit 0   coerenza dei flussi in ingresso
+ *     0x4E bit 0-3 coerenza del canale dei comandi
+ * Lo fanno tutti i sistemi che hanno un driver per questi ponti; la prima
+ * regola di trova_controller() - «la sottoclasse basta» - resta vera per i
+ * registri, e questa e' l'eccezione che sta FUORI dai registri.
+ *
+ * Il server PCI non scrive la configurazione, e lo spiega in pci_proto.h:
+ * come ehci.drv, qui si aprono 0xCF8/0xCFC per conto proprio, per questi tre
+ * byte e basta. Il caso peggiore se il rimedio fosse sbagliato: il suono
+ * resta muto com'era. `-c 0` non li tocca, per provare la differenza.
+ * ========================================================================== */
+static unsigned int g_cfg_ind = 0;
+
+static int cfg_apri(const PciDispositivo *d)
+{
+    g_cfg_ind = 0x80000000u | ((unsigned int)d->bus << 16) |
+                ((unsigned int)d->slot << 11) | ((unsigned int)d->funzione << 8);
+    return ioport_bind(0xCF8, 8);
+}
+
+static unsigned int cfg_leggi(unsigned int off)
+{
+    unsigned int v = 0xFFFFFFFFu;
+
+    if (ioport_out32(0xCF8, g_cfg_ind | (off & 0xFC)) != 0) return 0xFFFFFFFFu;
+    if (ioport_in32(0xCFC, &v) != 0) return 0xFFFFFFFFu;
+    return v;
+}
+
+static void cfg_scrivi(unsigned int off, unsigned int val)
+{
+    if (ioport_out32(0xCF8, g_cfg_ind | (off & 0xFC)) != 0) return;
+    (void)ioport_out32(0xCFC, val);
+}
+
+#define NV_COERENZA 0x000F0101u     /* 0x4C bit 0, 0x4D bit 0, 0x4E bit 0-3 */
+
+static void nvidia_coerenza(const PciDispositivo *d)
+{
+    unsigned int prima, dopo;
+
+    if (d->venditore != 0x10DE || !g_coerenza) return;
+    if (cfg_apri(d) != 0) {
+        printf("hdaudio: ioport_bind(0xCF8) rifiutata, i bit di coerenza restano come sono\n");
+        return;
+    }
+    prima = cfg_leggi(0x4C);
+    if (prima == 0xFFFFFFFFu) return;
+    if ((prima & NV_COERENZA) != NV_COERENZA) cfg_scrivi(0x4C, prima | NV_COERENZA);
+    dopo = cfg_leggi(0x4C);
+    printf("hdaudio: nVidia, coerenza della memoria: 0x4C era %08x, ora %08x\n", prima, dopo);
+}
+
+/* =============================================================================
+ * -d 1: com'e' fatto il codec e in che stato e', SENZA SCRIVERE NIENTE
+ *
+ * Si puo' lanciare mentre il driver vero e' acceso: non azzera il controller,
+ * non accende widget, manda solo domande. E' quello che serve quando un codec
+ * «risponde ma non suona»: chi e' collegato a chi, quale amplificatore e'
+ * muto, quale presa e' accesa, che flusso ascolta ogni convertitore.
+ * ========================================================================== */
+static unsigned int chiedi_v(unsigned int nodo, unsigned int v, unsigned int dato)
+{
+    unsigned int r = 0;
+
+    if (verbo(nodo, v, dato, &r) < 0) return 0xFFFFFFFFu;
+    return r;
+}
+
+static void guarda_codec(unsigned int codec)
+{
+    static const char *tipi[16] = { "DAC", "ADC", "mix", "sel", "presa", "power",
+                                    "volume", "beep", "?", "?", "?", "?", "?", "?", "?", "vend" };
+    unsigned int nodi, primo, i, afg = 0;
+
+    g_codec = codec;
+    printf("codec %u: id %08x rev %08x\n", codec, parametro(0, P_VENDOR), parametro(0, 0x02));
+    nodi  = parametro(0, P_NODI);
+    primo = (nodi >> 16) & 0xFF;
+    nodi &= 0xFF;
+    for (i = 0; i < nodi; i++) {
+        unsigned int t = parametro(primo + i, P_TIPO_GRUPPO);
+
+        printf("  gruppo %02x tipo %02x\n", primo + i, t & 0xFF);
+        if ((t & 0x7F) == 0x01 && !afg) afg = primo + i;
+    }
+    if (!afg) { printf("  nessun gruppo audio\n"); return; }
+
+    printf("  afg %02x: power %08x gpio n %08x dati %08x maschera %08x dir %08x\n", afg,
+           chiedi_v(afg, 0xF0500, 0), parametro(afg, 0x11),
+           chiedi_v(afg, 0xF1500, 0), chiedi_v(afg, 0xF1600, 0), chiedi_v(afg, 0xF1700, 0));
+    printf("  afg amp usc %08x amp ing %08x\n", parametro(afg, P_AMP_USCITA), parametro(afg, P_AMP_INGRESSO));
+
+    nodi  = parametro(afg, P_NODI);
+    primo = (nodi >> 16) & 0xFF;
+    nodi &= 0xFF;
+    for (i = 0; i < nodi; i++) {
+        unsigned int n = primo + i, cap = parametro(n, P_CAP_WIDGET);
+        unsigned int tipo = (cap >> W_TIPO_SH) & 0x0F, c[16];
+        int k, j;
+
+        printf("%02x %-6s cap %08x pw %x", n, tipi[tipo], cap, chiedi_v(n, 0xF0500, 0) & 0xFF);
+        k = connessioni(n, c, 16);
+        if (k > 0) {
+            printf(" da");
+            for (j = 0; j < k; j++) printf(" %02x", c[j]);
+            if (k > 1 && tipo != 0x2) printf(" scelto %u", chiedi_v(n, 0xF0100, 0) & 0xFF);
+        }
+        printf("\n");
+        if (cap & 0x4)
+            printf("     amp usc cap %08x  S %02x D %02x\n", parametro(n, P_AMP_USCITA),
+                   chiedi_v(n, 0xB0000, 0x8000 | 0x2000) & 0xFF, chiedi_v(n, 0xB0000, 0x8000) & 0xFF);
+        if (cap & 0x2) {
+            printf("     amp ing cap %08x ", parametro(n, P_AMP_INGRESSO));
+            for (j = 0; j < (k > 0 ? k : 1) && j < 10; j++)
+                printf(" [%d] %02x/%02x", j, chiedi_v(n, 0xB0000, 0x2000 | (unsigned int)j) & 0xFF,
+                       chiedi_v(n, 0xB0000, (unsigned int)j) & 0xFF);
+            printf("\n");
+        }
+        if (tipo == W_PRESA)
+            printf("     presa cap %08x cfg %08x ctl %02x eapd %02x sente %08x\n", parametro(n, P_CAP_PIN),
+                   chiedi_v(n, P_CONFIG_DEF, 0), chiedi_v(n, 0xF0700, 0) & 0xFF,
+                   chiedi_v(n, 0xF0C00, 0) & 0xFF, chiedi_v(n, 0xF0900, 0));
+        if (tipo == W_USCITA)
+            printf("     flusso %02x formato %04x\n", chiedi_v(n, 0xF0600, 0) & 0xFF,
+                   chiedi_v(n, 0xA0000, 0) & 0xFFFF);
+    }
+}
+
+static void guarda_tutto(const PciDispositivo *d)
+{
+    unsigned int gcap = r16(H_GCAP), stati = r16(H_STATESTS), in_s = (gcap >> 8) & 0x0F, i;
+
+    printf("hdaudio -d: %04x:%04x  GCAP %04x GCTL %08x STATESTS %04x INTCTL %08x INTSTS %08x\n",
+           d->venditore, d->dispositivo, gcap, r32(H_GCTL), stati, r32(H_INTCTL), r32(0x24));
+    if (cfg_apri(d) == 0)
+        printf("  pci 0x04 %08x 0x44 %08x 0x4C %08x\n", cfg_leggi(0x04), cfg_leggi(0x44), cfg_leggi(0x4C));
+    g_sd = in_s;
+    printf("  flusso d'uscita %u: CTL %08x LPIB %08x CBL %08x LVI %04x FMT %04x BDL %08x\n", g_sd,
+           r32(sd(SD_CTL)), r32(sd(0x04)), r32(sd(SD_CBL)), r16(sd(SD_LVI)), r16(sd(SD_FMT)),
+           r32(sd(SD_BDLPL)));
+    /* STATESTS si azzera leggendolo su qualche controller: si provano tutti. */
+    for (i = 0; i < 4; i++) {
+        g_codec = i;
+        if (parametro(0, P_VENDOR) != 0 && parametro(0, P_VENDOR) != 0xFFFFFFFFu) guarda_codec(i);
+    }
+}
+
 static int hd_sonda(AudioInfo *info)
 {
     PciDispositivo d;
@@ -583,6 +984,10 @@ static int hd_sonda(AudioInfo *info)
     }
     g_reg = (volatile unsigned char *)m.virt;
 
+    if (g_guarda) { guarda_tutto(&d); exit(0); }
+
+    nvidia_coerenza(&d);
+
     /* --- fuori dal reset --- */
     w32(H_GCTL, 0);
     for (guard = 0; guard < 1000; guard++) { if (!(r32(H_GCTL) & GCTL_CRST)) break; usleep(100); }
@@ -604,6 +1009,7 @@ static int hd_sonda(AudioInfo *info)
         return -1;
     }
     for (i = 0; i < 15; i++) if (stati & (1u << i)) { g_codec = (unsigned int)i; break; }
+    if (g_forz_codec >= 0) g_codec = (unsigned int)g_forz_codec;
 
     gcap       = r16(H_GCAP);
     in_stream  = (gcap >> 8)  & 0x0F;
@@ -737,15 +1143,21 @@ static int hd_apri(AudioFormato *f, unsigned char **buf, unsigned int *byte)
         }
     }
 
-    volume_su(g_vol);
+    voci_riapplica();
 
     /* Gli interrupt del nostro flusso, e quelli globali. */
     w32(H_INTCTL, INTCTL_GIE | INTCTL_CIE | (1u << g_sd));
     return 0;
 }
 
+/* I conti di una riproduzione, scritti nel registro del kernel alla
+ * chiusura (dmesg hdaudio): servono a capire un suono che salta. */
+static unsigned int g_st_irq = 0, g_st_confine = 0, g_st_ritardo = 0, g_st_doppie = 0;
+static int          g_st_ultima = -1;
+
 static void hd_via(void)
 {
+    g_st_ultima = -1;
     w8(sd(SD_STS), SDSTS_BCIS | SDSTS_FIFOE | SDSTS_DESE);
     w32(sd(SD_CTL), (g_flusso << SDCTL_STRM_SH) |
                     SDCTL_RUN | SDCTL_IOCE | SDCTL_FEIE | SDCTL_DEIE);
@@ -760,7 +1172,20 @@ static void hd_ferma(void)
     w8(sd(SD_STS), SDSTS_BCIS | SDSTS_FIFOE | SDSTS_DESE);
 }
 
-static void hd_chiudi(void) { hd_ferma(); }
+static void hd_chiudi(void)
+{
+    hd_ferma();
+    if (g_st_irq) {
+        char r[160];
+
+        snprintf(r, sizeof(r), "hdaudio: %u interrupt, %u letti prima del confine, "
+                 "%u meta' saltate, ritardo massimo %u byte su %u",
+                 g_st_irq, g_st_confine, g_st_doppie, g_st_ritardo, g_meta);
+        log_seriale(r);
+    }
+    g_st_irq = g_st_confine = g_st_ritardo = g_st_doppie = 0;
+    g_st_ultima = -1;
+}
 
 /* =============================================================================
  * L'interrupt
@@ -782,7 +1207,32 @@ static int hd_irq(void)
      * per lo stesso motivo: una notifica persa sfaserebbe per sempre chi
      * conta da se'. */
     pos = r32(sd(SD_LPIB));
-    return (pos >= g_meta) ? 0 : 1;     /* legge la seconda -> e' libera la prima */
+
+    /* ! MA AL CONFINE LPIB PUO' ESSERE ANCORA UN PELO INDIETRO (10 ottobre
+     * 2026). L'interrupt dice «ho finito una meta'»; su un controller vero
+     * il contatore, letto subito dopo, puo' segnare ancora gli ultimi byte
+     * di quella meta', non i primi della successiva. Con la regola secca
+     * «pos >= meta» si riempiva allora la meta' SBAGLIATA: quella in cui la
+     * scheda stava entrando, e la meta' appena finita restava coi campioni
+     * vecchi. Sul PC vero (nVidia MCP73) erano buchi e pezzi ripetuti a
+     * caso; in QEMU, dove il contatore e' esatto, mai.
+     *
+     * Si sposta il confine indietro di un quarto di meta': una lettura fino
+     * a un quarto PRIMA del confine vale gia' come «finita», e resta buono
+     * un ritardo nel servirlo fino a tre quarti di meta'. */
+    {
+        unsigned int giro = g_meta * 2, q = g_meta / 4;
+        unsigned int spostato = (pos + q) % giro;
+        int libera = (spostato >= g_meta) ? 0 : 1;
+        unsigned int dentro = (spostato >= g_meta) ? spostato - g_meta : spostato;
+
+        g_st_irq++;
+        if (libera != ((pos >= g_meta) ? 0 : 1)) g_st_confine++;
+        if (dentro > q && dentro - q > g_st_ritardo) g_st_ritardo = dentro - q;
+        if (libera == g_st_ultima) g_st_doppie++;       /* la stessa due volte: una persa */
+        g_st_ultima = libera;
+        return libera;
+    }
 }
 
 static unsigned int hd_avanzamento(void)
@@ -824,6 +1274,9 @@ static int hd_opzione(const char *arg, const char *valore)
 {
     if (!valore) return -1;
     if (strcmp(arg, "-q") == 0) { g_forz_irq = (int)strtol(valore, 0, 0); return 0; }
+    if (strcmp(arg, "-d") == 0) { g_guarda = (int)strtol(valore, 0, 0); return 0; }
+    if (strcmp(arg, "-c") == 0) { g_coerenza = (int)strtol(valore, 0, 0); return 0; }
+    if (strcmp(arg, "-k") == 0) { g_forz_codec = (int)strtol(valore, 0, 0); return 0; }
     return -1;
 }
 
@@ -839,7 +1292,8 @@ static const AudioDorso g_dorso = {
     hd_avanzamento,
     hd_volume,
     hd_midi,
-    hd_midi_vivo
+    hd_midi_vivo,
+    hd_mix
 };
 
 const AudioDorso *audio_dorso_questo(void)

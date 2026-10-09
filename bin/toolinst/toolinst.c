@@ -73,7 +73,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("toolinst", "0.002");
+EX_VERSIONE("toolinst", "0.003");
 
 #define PERC_MAX   320
 #define BLOCCO     4096
@@ -1053,7 +1053,7 @@ static void chiedi_riga(const char *domanda, char *dst, int max)
 
 static void uso(void)
 {
-    printf("uso: toolinst [-a] [-n] [-y] [-g elenco] [-s sorgente]\n");
+    printf("uso: toolinst [-a] [-n] [-y] [-c] [-g elenco] [-s sorgente]\n");
     printf("              [-p prefisso] [-t tmpdir | -T] [radice]\n\n");
     printf("Installa gli strumenti di sviluppo del CD tools e li rende\n");
     printf("operativi: PATH e TMPDIR in kernel.cfg. Si raggiunge anche\n");
@@ -1061,6 +1061,8 @@ static void uso(void)
     printf("  -a            AGGIORNA: copia solo cio' che sul CD e' cambiato,\n");
     printf("                e prima lo elenca\n");
     printf("  -n            mostra cosa farebbe, non copia e non scrive\n");
+    printf("  -c            non copia niente: gli strumenti sono gia' in /exos\n");
+    printf("                (li ha messi netupdate), scrive solo PATH e TMPDIR\n");
     printf("  -y            non chiede niente (installa tutto quel che c'e')\n");
     printf("  -g a,b,c      installa questi gruppi e basta, senza chiedere\n");
     printf("  -s <dir>      dove sta l'albero `exos` (cercato in /cdrom, /)\n");
@@ -1099,10 +1101,11 @@ int main(int argc, char **argv)
     char albero[PERC_MAX], dest[PERC_MAX];
     char scelti[128] = "";
     char tmpdir[PERC_MAX] = "/tmp";
-    int  i, prefisso_dato = 0, senza_tmp = 0;
+    int  i, prefisso_dato = 0, senza_tmp = 0, solo_cfg = 0;
 
     for (i = 1; i < argc; i++) {
         if      (strcmp(argv[i], "-n") == 0) opt_n = 1;
+        else if (strcmp(argv[i], "-c") == 0) solo_cfg = 1;
         else if (strcmp(argv[i], "-y") == 0) opt_y = 1;
         else if (strcmp(argv[i], "-a") == 0) opt_a = 1;
         else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
@@ -1121,6 +1124,28 @@ int main(int argc, char **argv)
                    strcmp(argv[i], "--help") == 0) { uso(); return 0; }
         else if (argv[i][0] == '-') { uso(); return 1; }
         else strncpy(radice, argv[i], PERC_MAX - 1);
+    }
+
+    /* ── -c: gli strumenti ci sono gia', manca solo la configurazione ────
+     *
+     * ! ESISTE PERCHE' GLI STRUMENTI NON ARRIVANO SOLO DA QUI (10 ottobre
+     * 2026). `netupdate -check -yesall` li scarica dalla rete e li mette in
+     * /exos, file per file, ma il PATH non lo toccava: sul PC di prova gcc
+     * era sul disco, funzionava chiamato per intero, e `gcc` dava «comando
+     * non trovato». Scrivere PATH e TMPDIR e' un mestiere solo, ed e' questo:
+     * chi installa per un'altra strada chiama `toolinst -c` invece di
+     * rifarlo a modo suo. */
+    if (solo_cfg) {
+        char gcc[PERC_MAX];
+
+        unisci(gcc, radice, prefisso[0] == '/' ? prefisso + 1 : prefisso);
+        unisci(gcc, gcc, "bin");
+        unisci(gcc, gcc, "gcc");
+        if (access(gcc, F_OK) != 0) {
+            printf("toolinst -c: %s non c'e': niente da configurare.\n", gcc);
+            return 1;
+        }
+        return aggiorna_cfg(radice, prefisso, senza_tmp ? NULL : tmpdir) < 0 ? 1 : 0;
     }
 
     /* ── L'albero: dove prenderlo ──────────────────────────────────────── */

@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.024"
+#define VERSIONE_APP "0.025"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -4072,6 +4072,27 @@ static const char *binario(void)
     return g_prog_nome[0] ? g_prog_nome : "programma";
 }
 
+/* ! LA RADICE PREDEFINITA E' DOVE IL COMPILATORE C'E' (10 ottobre 2026).
+ * Nasceva fissa a /cdrom/exos, il CD degli strumenti: su una macchina che li
+ * ha sul disco - messi da `toolinst` o scaricati da `netupdate -check
+ * -yesall` - exide cercava gcc sul lettore e diceva che non c'era, e
+ * bisognava saperlo e correggere il campo a mano. Segnalato dall'utente.
+ * Il disco viene prima del CD: e' quello che resta quando il CD si toglie.
+ * Chi ha scritto un'altra radice nel campo non viene toccato. */
+static void cc_radice_scegli(void)
+{
+    static const char *const dove[] = { "/exos", "/cdrom/exos" };
+    char cc[PERC_MAX];
+    int  k;
+
+    sprintf(cc, "%s/bin/gcc", g_cc_radice);
+    if (strcmp(g_cc_radice, "/cdrom/exos") != 0 && access(cc, F_OK) == 0) return;
+    for (k = 0; k < 2; k++) {
+        sprintf(cc, "%s/bin/gcc", dove[k]);
+        if (access(cc, F_OK) == 0) { strcpy(g_cc_radice, dove[k]); return; }
+    }
+}
+
 /* Compone la riga di compilazione. Rende quanti caratteri ha scritto. */
 static unsigned int riga_compila(char *out, unsigned int max)
 {
@@ -5735,6 +5756,7 @@ int main(int argc, char **argv)
      * appena aperto disegnerebbe una finestra 0x0 senza titolo: si apre
      * SEMPRE su un disegno, anche quando non c'e' niente da salvare. */
     form_azzera(&g_form[0], "principale", "Finestra");
+    cc_radice_scegli();
 
     g_f = ex_create("window", "EX-IDE - nessun progetto",
                   EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE, 4, 24, 780, 486, 0, 0, proc);

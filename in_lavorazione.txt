@@ -6184,4 +6184,9 @@ un programma: il primo lavoro e' tirarla fuori.
   da console. Da decidere quando ci si mette; il primo passo utile da solo e'
   l'icona con il cursore del volume, e il volume ricordato in un file di
   configurazione.
-  Stato: DA FARE.
+  Stato: FATTO il 10 ottobre 2026 come pannello dei volumi (exvolume, icona
+  nella barra, voci del mixer nel protocollo audio, hdaudio.drv 0.005,
+  exsuono_mix_*). Non e' un equalizzatore a bande: l'utente ha poi precisato
+  «volume di ogni uscita e entrata e i canali destra e sinistra». Resta da
+  provare sul PC vero (cinque uscite e gli ingressi dell'ALC888); le voci per
+  sb, ac97 ed es1371 sono la sola «Volume» del codice comune.

@@ -1018,6 +1018,38 @@ int main(int argc, char **argv)
             break;
         }
 
+        case AUDIO_MSG_MIX_LEGGI:
+        case AUDIO_MSG_MIX_METTI: {
+            AudioMixVoce v;
+            int scrivi = (meta.tipo == AUDIO_MSG_MIX_METTI), tot;
+
+            memset(&v, 0, sizeof(v));
+            if (meta.len >= sizeof(v)) memcpy(&v, payload, sizeof(v));
+            if (v.sin > 100) v.sin = 100;
+            if (v.des > 100) v.des = 100;
+
+            if (D->mix) {
+                tot = D->mix(scrivi, &v);
+                if (tot < 0) { tot = D->mix(0, &v); v.indice = 0xFFFFFFFFu; }
+                v.totale = (tot > 0) ? (unsigned int)tot : 0;
+            } else {
+                /* Una scheda col solo volume generale: una voce, i due canali
+                 * insieme. Chi ne chiede uno piu' alto dell'altro ha il piu'
+                 * alto su tutti e due, e lo legge nella risposta. */
+                if (scrivi && v.indice == 0) {
+                    g_volume = (v.sin > v.des) ? v.sin : v.des;
+                    D->volume(g_volume);
+                }
+                if (v.indice != 0) v.indice = 0xFFFFFFFFu;
+                v.totale = 1;
+                v.tipo   = AUDIO_MIX_USCITA;
+                v.sin = v.des = g_volume;
+                strcpy(v.nome, "Volume");
+            }
+            ipc_send(meta.sender_pid, AUDIO_MSG_MIX_R, &v, sizeof(v));
+            break;
+        }
+
         case AUDIO_MSG_MIDI:
             if (meta.len > 0) midi_manda(payload, meta.len);
             break;

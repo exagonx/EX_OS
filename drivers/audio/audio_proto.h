@@ -92,12 +92,15 @@
 #define AUDIO_MSG_MIDI      0x0A07  /* byte MIDI grezzi, fino a IPC_MSG_MAX_DATA */
 #define AUDIO_MSG_STATO     0x0A08  /* «a che punto sei?»           (nessun dato) */
 #define AUDIO_MSG_PROVA     0x0A09  /* AudioProva: la prova di collaudo */
+#define AUDIO_MSG_MIX_LEGGI 0x0A0A  /* AudioMixVoce: «dimmi la voce .indice» */
+#define AUDIO_MSG_MIX_METTI 0x0A0B  /* AudioMixVoce: .indice, .sin, .des */
 
 /* Driver -> client */
 #define AUDIO_MSG_INFO_R    0x0A81  /* AudioInfo */
 #define AUDIO_MSG_ESITO     0x0A82  /* AudioEsito: risposta ad APRI e a PROVA */
 #define AUDIO_MSG_STATO_R   0x0A83  /* AudioStato */
 #define AUDIO_MSG_PROVA_R   0x0A84  /* AudioProvaEsito */
+#define AUDIO_MSG_MIX_R     0x0A85  /* AudioMixVoce: risposta a MIX_LEGGI e MIX_METTI */
 
 /* =============================================================================
  * COSA SA FARE UNA SCHEDA — i bit di AudioInfo.capacita
@@ -175,6 +178,35 @@ typedef struct {
 typedef struct {
     unsigned int percento;      /* 0..100 */
 } AudioVolume;
+
+/* =============================================================================
+ * AudioMixVoce — una voce del mixer: un'uscita o un ingresso, sinistra e destra
+ * (10 ottobre 2026)
+ *
+ * AUDIO_MSG_VOLUME e' UN volume per tutta la scheda. Una scheda vera ha piu'
+ * prese - la linea dietro, le cuffie davanti, il microfono, la linea in
+ * ingresso - e ognuna ha i suoi due canali. Il pannello dei volumi le chiede
+ * una per una: MIX_LEGGI con .indice da 0 finche' .indice < .totale; MIX_METTI
+ * con .indice, .sin e .des (0..100, 0 = muto). La risposta e' sempre la voce
+ * com'e' DOPO: una scheda puo' non avere i due canali separati, o i passi
+ * che servono, e chi disegna il cursore deve mostrare il vero.
+ *
+ * Un INGRESSO qui e' quanto di quella presa si sente nelle uscite (il
+ * microfono nelle casse): registrare non lo fa ancora nessun driver.
+ *
+ * Un driver che non sa niente di tutto questo ha comunque UNA voce, il volume
+ * generale: la da' il codice comune, e il pannello funziona con ogni scheda.
+ * ========================================================================== */
+#define AUDIO_MIX_USCITA    0
+#define AUDIO_MIX_INGRESSO  1
+
+typedef struct {
+    unsigned int indice;        /* quale voce: 0 .. totale-1 */
+    unsigned int totale;        /* quante ce ne sono (lo scrive il driver) */
+    unsigned int tipo;          /* AUDIO_MIX_* */
+    unsigned int sin, des;      /* 0..100 */
+    char         nome[40];      /* «Linea dietro (verde)», «Microfono davanti» */
+} AudioMixVoce;
 
 /* =============================================================================
  * AudioStato — a che punto e' la riproduzione
