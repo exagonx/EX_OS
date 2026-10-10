@@ -34,7 +34,7 @@ SALTA_DIR = ("./cross_build", "./firefox-main", "./build", "./dist", "./.git",
              "./tools/exwin-inglese", "./tools/locali/estranei/pristino")
 SALTA_FILE = {"./scambio.txt", "./in_lavorazione.txt", "./diario_browser.txt",
               "./RIPRENDERE.md", "./messaggio-commit.txt", "./README.md",
-              "./README.en.md"}
+              "./README.it.md"}
 EST = (".c", ".h", ".cpp", ".hpp", ".bi", ".bas", ".html", ".ld")
 
 def candidati():

@@ -1,4 +1,10 @@
-lib/exsuono/exsuono.c:35:10: fatal error: minimp3.h: File o directory non esistente
-   35 | #include "minimp3.h"
-      |          ^~~~~~~~~~~
-compilation terminated.
+lib/exsuono/exsuono.c: In function ‘scheda_apri’:
+lib/exsuono/exsuono.c:353:18: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  353 |     g_zona     = (void *)z.virt;
+      |                  ^
+lib/exsuono/exsuono.c:354:18: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  354 |     g_anello   = (AudioAnello *)z.virt;
+      |                  ^
+lib/exsuono/exsuono.c:355:18: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  355 |     g_dati     = (unsigned char *)z.virt + g_anello->dati_off;
+      |                  ^

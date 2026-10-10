@@ -149,7 +149,11 @@ int main(int argc, char **argv)
      * costruzione del kernel, che qui non c'e'. Stampare una stringa
      * inventata sarebbe peggio di uno spazio. */
     if (v) { printf("%s",   primo ? "" : " ");                  primo = 0; }
+#if defined(__x86_64__)
+    if (m) { printf("%s%s", primo ? "" : " ", "x86_64");        primo = 0; }
+#else
     if (m) { printf("%s%s", primo ? "" : " ", "i686");          primo = 0; }
+#endif
 
     printf("\n");
     return 0;

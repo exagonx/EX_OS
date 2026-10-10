@@ -47,8 +47,21 @@
 ; Dove finisce il volume, quanto e' grande, e da dove si passa.
 %define RDDEST  0x02000000  ; 32 MB: dentro la fascia che il kernel mappa
 %define RDSEG   0x8000      ; il rimbalzo, a 512 KB: sotto c'e' il kernel
+; La misura del dischetto, come in bootloader/stage1/boot.asm (-DDISCHETTO=288
+; per il 2,88 MB: 36 settori per traccia, l'area dei dati piu' avanti). Di
+; serie e' 1,44 MB e niente cambia.
+%ifndef DISCHETTO
+%define DISCHETTO 144
+%endif
+%if DISCHETTO = 288
+%define F_SPT   36
+%define F_DATA  39
+%else
+%define F_SPT   18
+%define F_DATA  33
+%endif
 %define RDTRACK 160         ; 80 cilindri x 2 testine
-%define RDSPT   18          ; settori per traccia
+%define RDSPT   F_SPT       ; settori per traccia
 %define RDBYTE  (RDTRACK * RDSPT * 512)
 
 ; -----------------------------------------------------------------------------
@@ -246,7 +259,7 @@ _start:
     mov  [kult], ax
     mov  word [kcnt], 1
 .krun:
-    cmp  word [kcnt], 18
+    cmp  word [kcnt], F_SPT
     jae  .krun_fine
     mov  ax, [kult]
     call fat_next               ; AX = il cluster dopo [kult]
@@ -262,9 +275,9 @@ _start:
     ; ---- LBA del primo settore, e CHS ----------------------------------
     mov  ax, [kprimo]
     sub  ax, 2
-    add  ax, 33                 ; LBA = (cluster - 2) + 33
+    add  ax, F_DATA               ; LBA = (cluster - 2) + 33
     xor  dx, dx
-    mov  cx, 18
+    mov  cx, F_SPT
     div  cx                     ; AX = lba/18, DX = settore 0-based
     mov  [ksett], dx            ; da qui in poi serve solo il resto
     xor  dx, dx
@@ -274,7 +287,7 @@ _start:
     mov  [ktesta], dx
 
     ; ---- primo limite: la fine della traccia ---------------------------
-    mov  ax, 18
+    mov  ax, F_SPT
     sub  ax, [ksett]
     cmp  ax, [kcnt]
     jae  .klim2
@@ -339,14 +352,14 @@ _start:
 .kvecchio:
     push ax
     sub  ax, 2
-    add  ax, 33            ; LBA = (cluster-2)+33
+    add  ax, F_DATA          ; LBA = (cluster-2)+33
     push ax
     push bx
     push cx
     push dx
     push es
     xor  dx, dx
-    mov  cx, 18
+    mov  cx, F_SPT
     div  cx
     inc  dx              ; DX = settore (1-based)
     mov  si, dx          ; salva il settore in SI (la prossima div lo
@@ -865,9 +878,18 @@ ramdisco:
     jz   .no                      ; 0 = non richiesto
 
     ; Da disco rigido non serve: quello il kernel lo legge da se'.
+    ; (Con RAMDISCO=2 invece si': e' una chiavetta, vedi .disco piu' sotto.)
     mov  al, [drv]
     cmp  al, 0x80
+%ifdef RAMDISCO
+%if RAMDISCO = 2
+    jae  .disco
+%else
     jae  .no
+%endif
+%else
+    jae  .no
+%endif
 
     ; ! LA MEMORIA SI CONTA PRIMA. Il volume va a 32 MB: su una macchina che
     ; ne ha meno si scriverebbe nel nulla, e il sintomo sarebbe una radice
@@ -998,6 +1020,221 @@ ramdisco:
     call print
 .no:
     ret
+
+%ifdef RAMDISCO
+%if RAMDISCO = 2
+; =============================================================================
+; IL VOLUME IN RAM DA UN DISCO — `RAMDISCO=2`, la chiavetta USB (10 ott. 2026)
+;
+; La stessa idea di qui sopra, per un supporto che il BIOS presenta come DISCO
+; (0x80): una chiavetta. Il kernel i dischi USB non li sa leggere finche' i
+; suoi driver non girano - e i driver stanno sul disco. Qui, finche' il BIOS
+; c'e', si copia in RAM la PARTIZIONE ATTIVA intera: un FAT piccolo con dentro
+; il sistema. Il kernel ci monta la radice, la shell parte, e sono poi i driver
+; USB caricati da li' a rendere visibile la chiavetta vera (in /USB).
+;
+; ! QUALE PARTIZIONE LO DICE LA TABELLA, NON UN NUMERO SCRITTO QUI: si legge il
+; settore 0 dell'unita' e si prende la voce marcata attiva (0x80) - la stessa
+; da cui l'MBR ha appena avviato. Niente da ricalcolare se la chiavetta viene
+; rifatta piu' grande o piu' piccola.
+;
+; ! AL PIU' RDMAXSET SETTORI (24 MB), e il limite non e' la memoria della
+; macchina - una macchina a 64 bit parte da 512 MB. E' che il volume sta a
+; 32 MB, dentro la fascia dei primi 64 MB che il kernel vede da OGNI processo,
+; e il resto della fascia serve al kernel. Una partizione piu' grande si
+; carica troncata: chi costruisce la chiavetta (tools/mkchiave.sh) la fa
+; della misura giusta.
+;
+; ! SI LEGGE CON INT 13h/42h, 64 settori per volta, nel rimbalzo a 512 KB, e
+; da li' si copia in alto col «modo reale grande» come per il dischetto.
+; =============================================================================
+%define RDMAXSET (24 * 2048)
+.disco:
+    mov  si, msg_rd
+    call print
+
+    ; --- il settore 0 dell'unita': la tabella delle partizioni ---------------
+    mov  dword [rdap_lba], 0
+    mov  word  [rdap_cnt], 1
+    call .leggi_dap
+    jc   .dguasto
+    push ds
+    mov  ax, RDSEG
+    mov  ds, ax
+    mov  si, 0x1BE
+    mov  cx, 4
+.dvoce:
+    cmp  byte [si], 0x80          ; attiva?
+    je   .dtrovata
+    add  si, 16
+    loop .dvoce
+    pop  ds
+    jmp  .dguasto
+.dtrovata:
+    mov  eax, [si + 8]            ; primo settore
+    mov  ebx, [si + 12]           ; quanti
+    pop  ds
+    mov  [rdap_lba], eax
+    cmp  ebx, RDMAXSET
+    jbe  .dmisura
+    mov  ebx, RDMAXSET
+.dmisura:
+    mov  [rdrest], ebx
+    mov  eax, ebx
+    shl  eax, 9
+    mov  [rdtot], eax
+
+    ; --- la memoria: 32 MB sotto il volume, il volume, e 4 MB sopra ---------
+    ; (mem_upper arriva al piu' a 63 MB anche su una macchina che ne ha
+    ; quattro giga: e' il numero del BIOS vecchio. Per questo il conto si fa
+    ; in modo che 24 MB di volume ci stiano.)
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  eax, [es:9]              ; KB di memoria estesa
+    pop  es
+    mov  edx, [rdtot]
+    shr  edx, 10
+    add  edx, 36 * 1024
+    cmp  eax, edx
+    jb   .pocamem
+
+    in   al, 0x92                 ; A20, come per il dischetto
+    or   al, 2
+    and  al, 0xFE
+    out  0x92, al
+    call gdt_prepara
+    mov  dword [rddst], RDDEST
+    mov  byte [rdpunti], 0
+
+.dgiro:
+    mov  ebx, [rdrest]
+    or   ebx, ebx
+    jz   .dfatto
+    movzx eax, word [rdpasso]
+    cmp  ebx, eax
+    jae  .dquanti
+    mov  eax, ebx
+.dquanti:
+    mov  [rdap_cnt], ax
+    call .leggi_dap
+    jnc  .dletta
+    ; ! NON TUTTI I BIOS LEGGONO 64 SETTORI IN UNA CHIAMATA da una chiavetta.
+    ; Se cinque tentativi non bastano si scende - 64, poi 8, poi UNO, che e'
+    ; il modo in cui questo stesso file legge il kernel e che funziona
+    ; ovunque - e si riprova lo stesso punto. Si rinuncia solo quando non si
+    ; legge nemmeno un settore. Una barra a schermo per ogni discesa.
+    cmp  word [rdpasso], 1
+    jbe  .dguasto
+    shr  word [rdpasso], 3
+    mov  al, '/'
+    call carattere
+    jmp  .dgiro
+.dletta:
+
+    inc  byte [rdpunti]           ; un punto ogni megabyte
+    test byte [rdpunti], 31
+    jnz  .dcopia
+    mov  al, '.'
+    call carattere
+.dcopia:
+    ; ! LA COPIA SI FA A INTERRUPT SPENTI, e il limite di ES si allarga QUI
+    ; dentro e non con unreal_es (che finisce con `sti`). Il limite a 4 GB
+    ; vive nella cache del segmento, e un interrupt servito dal BIOS in mezzo
+    ; alla copia puo' rimetterlo a 64 KB: il BIOS di una chiavetta lavora a
+    ; sua volta in modo protetto. Da li' `rep movsd` continua con un indirizzo
+    ; che ES non copre piu'. Visto il 10 ottobre 2026 con la prima versione:
+    ; un avvio su sette, a volte fermo, a volte con la radice letta sbagliata
+    ; («ELF: magic non valido» su /bin/sh). Trentadue KB per giro a interrupt
+    ; spenti sono microsecondi.
+    cli
+    lgdt [GDTB+0x1E]
+    mov  eax, cr0
+    or   al, 1
+    mov  cr0, eax
+    mov  ax, 0x08
+    mov  es, ax                   ; ES = 4 GB
+    mov  eax, cr0
+    and  al, 0xFE
+    mov  cr0, eax
+    mov  edi, [rddst]
+    movzx ecx, word [rdap_cnt]
+    shl  ecx, 7                   ; settori * 512 / 4
+    push ds
+    mov  ax, RDSEG
+    mov  ds, ax
+    xor  esi, esi
+    a32 rep movsd
+    pop  ds
+    sti
+
+    movzx eax, word [rdap_cnt]
+    sub  [rdrest], eax
+    add  [rdap_lba], eax
+    shl  eax, 9
+    add  [rddst], eax
+    jmp  .dgiro
+
+.dfatto:
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  dword [es:38], RDDEST
+    mov  eax, [rdtot]
+    mov  [es:42], eax
+    pop  es
+    mov  si, msg_rdok
+    call print
+    xor  ax, ax
+    mov  es, ax
+    ret
+
+; La lettura non e' riuscita: lo si lascia SCRITTO per il kernel (rd_addr a
+; zero, rd_byte a tutti uno), perche' il messaggio qui sotto sparisce appena
+; lo schermo passa in grafica e chi guarda vede solo «la shell non carica».
+.dguasto:
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  dword [es:38], 0
+    mov  dword [es:42], 0xFFFFFFFF
+    pop  es
+    jmp  .guasto
+
+; Legge [rdap_cnt] settori da [rdap_lba] nel rimbalzo. CF = non riuscita.
+;
+; ! SI RIPROVA, FINO A TRE VOLTE, rimettendo a posto l'unita' fra una e
+; l'altra: una lettura da una chiavetta attraverso il BIOS ogni tanto fallisce
+; senza che la chiavetta abbia niente (visto in QEMU: un avvio su otto si
+; fermava con «Lettura fallita» dopo qualche megabyte). E' la stessa cura che
+; leggi_tratto ha per il dischetto. Il pacchetto resta com'e': il BIOS non
+; deve toccarlo, ma il conto dei settori lo riscriviamo lo stesso a ogni giro.
+.leggi_dap:
+    mov  byte [rdprove], 3
+    mov  ax, [rdap_cnt]
+    mov  [rdcnt_s], ax
+.ld_prova:
+    mov  ax, [rdcnt_s]
+    mov  [rdap_cnt], ax
+    mov  ah, 0x42
+    mov  dl, [drv]
+    mov  si, rdap
+    int  0x13
+    jnc  .ld_ok
+    xor  ah, ah                   ; rimette a posto l'unita'
+    mov  dl, [drv]
+    int  0x13
+    dec  byte [rdprove]
+    jnz  .ld_prova
+    stc
+    ret
+.ld_ok:
+    mov  ax, [rdcnt_s]
+    mov  [rdap_cnt], ax
+    clc
+    ret
+%endif
+%endif
 
 ; Una riga a schermo. Stage 2 e' silenzioso di suo — un avvio riuscito non ha
 ; niente da dire — ma il caricamento del volume dura qualche secondo, e uno
@@ -1218,6 +1455,25 @@ rdflag    db RAMDISCO   ; 0 = niente, 1 = il volume si carica in RAM
 
 rdtrk     dw 0
 rdsett    db 1
+%if RAMDISCO = 2
+; Il pacchetto di INT 13h/42h per il volume letto da un disco (vedi .disco)
+rdap:
+    db   0x10
+    db   0
+rdap_cnt:
+    dw   1
+    dw   0                ; offset nel rimbalzo
+    dw   RDSEG            ; il rimbalzo, a 512 KB
+rdap_lba:
+    dd   0
+    dd   0
+rdrest    dd 0            ; settori ancora da leggere
+rdtot     dd 0            ; byte del volume
+rdpunti   db 0
+rdprove   db 0            ; tentativi rimasti per la lettura in corso
+rdpasso   dw 64           ; settori per chiamata: 64, poi 8, poi 1
+rdcnt_s   dw 0            ; i settori chiesti (il BIOS puo' riscrivere il conto)
+%endif
 
 ; Il tratto di kernel che si sta leggendo: primo cluster, ultimo, quanti
 ; settori, e il suo CHS.

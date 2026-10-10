@@ -29,7 +29,11 @@ case "$QUALE" in
     prove)  KERNEL=build-64/kernel.bin;        ISO=dist/exos64-prove.iso; ETICHETTA="EXOS64 PROVE" ;;
     *) echo "uso: $0 [intero|prove]" >&2; exit 2 ;;
 esac
-for f in build/stage1.bin build/stage2.bin "$KERNEL"; do
+# Stage 2 del CD: quello assemblato apposta da `make iso64` (senza volume in
+# RAM), non quello di build/, che dipende da cio' che si e' costruito per ultimo.
+STAGE2=build-64/avvio/stage2-cd.bin
+[ -f "$STAGE2" ] || STAGE2=build/stage2.bin
+for f in build/stage1.bin "$STAGE2" "$KERNEL"; do
     [ -f "$f" ] || { echo "mkiso64: manca $f" >&2; exit 1; }
 done
 
@@ -39,7 +43,7 @@ AVVIO=build-64/avvio/avvio-$QUALE.img
 dd if=/dev/zero of="$AVVIO" bs=512 count=2880 status=none
 mformat -f 1440 -v "EXOS64  " -i "$AVVIO" ::
 dd if=build/stage1.bin of="$AVVIO" bs=512 count=1 conv=notrunc status=none
-mcopy -i "$AVVIO" build/stage2.bin ::/LOADER.BIN
+mcopy -i "$AVVIO" "$STAGE2" ::/LOADER.BIN
 mcopy -i "$AVVIO" "$KERNEL" ::/KERNEL.BIN
 
 # --- il contenuto del CD: la radice che il kernel monta -------------------------
@@ -55,7 +59,7 @@ if [ "$QUALE" = "intero" ]; then
     # come sul CD a 32 bit: il kernel e il caricatore anche come file, perche'
     # `install` e `netupdate` li copiano da qui, non dall'immagine di avvio
     cp "$KERNEL" "$RADICE/KERNEL.BIN"
-    cp build/stage2.bin "$RADICE/LOADER.BIN"
+    cp "$STAGE2" "$RADICE/LOADER.BIN"
     # ! I DATI SONO GLI STESSI DEL CD A 32 BIT, e si prendono da li'
     # (build/iso-exos, fatto da `make iso-exos`): kernel.cfg, gli script di
     # avvio, i manuali, i caratteri, le icone, i certificati. Si copia tutto
@@ -79,6 +83,13 @@ if [ "$QUALE" = "intero" ]; then
     if [ -d build-64/bin ] && [ -f build-64/bin/sh ]; then
         cp build-64/bin/* "$RADICE/bin/"
     fi
+    # la scrivania: i programmi di ExWin e il server grafico (che si costruisce
+    # come un driver ma sta con loro, come sul CD a 32 bit)
+    if [ -d build-64/exwin/bin ]; then
+        mkdir -p "$RADICE/exwin/bin"
+        cp build-64/exwin/bin/* "$RADICE/exwin/bin/" 2>/dev/null || true
+        [ -f build-64/drivers/wserver.drv ] && cp build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
+    fi
     # i driver: in /dev (da dove kernel.cfg e i comandi li caricano) e in
     # /drivers (da dove `install` li copia), come sul CD a 32 bit
     if [ -d build-64/drivers ]; then
@@ -91,15 +102,11 @@ if [ "$QUALE" = "intero" ]; then
         cp build-64/prove/primo "$RADICE/bin/primo64"
         [ -f "$RADICE/bin/sh" ] || cp build-64/prove/primo "$RADICE/bin/sh"
     fi
-    # ! FINCHE' NON SI INSTALLA DA QUI QUESTO NON E' UN SISTEMA DA PUBBLICARE, e
-    # lo si scrive in un file che exagonx/repo-update.sh guarda prima di
-    # caricare sul server. Si toglie questa riga quando a 64 bit `install`
-    # e i driver sono provati (@EXOS-64).
-# EXOS64_SH=<programma> mette quel programma al posto di /bin/sh: serve alle
-    # prove, per avviare un programma senza passare dalla shell.
-    [ -z "${EXOS64_SH:-}" ] || cp "$EXOS64_SH" "$RADICE/bin/sh"
-        echo "il sistema a 64 bit non e' ancora installabile: vedi @EXOS-64 in in_lavorazione.txt" \
-        > build-64/NON-ANCORA-UN-SISTEMA.txt
+    # (Fino al 10 ottobre 2026 qui si lasciava build-64/NON-ANCORA-UN-SISTEMA.txt,
+    # che fermava exagonx/repo-update.sh -64 prima di pubblicare. Tolto quando
+    # il sistema a 64 bit si e' avviato sul PC vero e l'utente ha chiesto il
+    # repository: senza, netupdate non ha da dove prendere il resto.)
+    rm -f build-64/NON-ANCORA-UN-SISTEMA.txt
 fi
 
 python3 tools/mkiso.py "$ISO" --da "$RADICE" --avvio "$AVVIO" --etichetta "$ETICHETTA" > /dev/null

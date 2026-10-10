@@ -458,6 +458,22 @@ static void sporca_contorno(int x, int y, int w, int h)
  * ============================================================================= */
 static int g_mmx = 0;
 
+#if defined(__x86_64__)
+/* @EXOS-64: a 64 bit niente MMX scritto a mano. Le due routine qui sotto sono
+ * in C, e a compilarle con le istruzioni SSE2 - che ogni processore a 64 bit
+ * ha - ci pensa GCC. Si dichiara «c'e'» perche' il ramo veloce e' questo. */
+static int mmx_c_e(void) { return 1; }
+
+static void mmx_riempi32(unsigned int *d, unsigned int n, unsigned int c)
+{
+    while (n--) *d++ = c;
+}
+
+static void mmx_copia32(unsigned int *d, const unsigned int *s, unsigned int n)
+{
+    while (n--) *d++ = *s++;
+}
+#else
 static int mmx_c_e(void)
 {
     unsigned int a = 0, b = 0, c = 0, d = 0;
@@ -517,6 +533,7 @@ static void mmx_copia32(unsigned int *d, const unsigned int *s, unsigned int n)
 
     if (n & 1u) *d = *s;
 }
+#endif
 
 /* -----------------------------------------------------------------------------
  * Lo schermo, un pixel per volta

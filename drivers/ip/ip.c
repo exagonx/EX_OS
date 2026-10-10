@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.009");
+EX_VERSIONE("ip.drv", "0.010");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -916,6 +916,48 @@ static int pid_vivo(unsigned int pid)
     return 0;
 }
 
+/* =============================================================================
+ * A SLOT ITS OWNER HAS CLOSED IS TAKEN BACK WHEN THE TABLE IS FULL
+ * (10 October 2026)
+ *
+ * After the client closes, a connection stays in the table until the other
+ * side finishes too, for up to TCP_FIN2_MS (30 s). That is polite and it is
+ * right - unless every slot is in that state. `netupdate` fetching a whole
+ * system opens one connection per file: with a peer that is slow to send its
+ * FIN the 24 slots filled in a few seconds, and the next 140 files failed
+ * with -ENFILE ("non riesco a connettermi (-23)") while not one connection
+ * was really in use. Seen installing the 64-bit system from a local
+ * repository in QEMU.
+ *
+ * Nobody will ever read from those connections again: the owner said so by
+ * closing. So when a new connection finds the table full, the one that has
+ * been waiting longest is dropped. Only then - with free slots the wait goes
+ * on as before. Returns 1 if it freed a slot.
+ * ========================================================================== */
+static int tcp_reclaim_closed(void)
+{
+    int i, oldest = -1;
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
+        Conn *c = &g_tcp[i];
+
+        if (c->stato == S_LIBERA || !c->chiusa_cliente) continue;
+        if (oldest < 0 || (int)(c->fin2_scade - g_tcp[oldest].fin2_scade) < 0)
+            oldest = i;
+    }
+    if (oldest < 0) return 0;
+
+    g_tcp[oldest].stato      = S_LIBERA;
+    g_tcp[oldest].rx_len     = 0;
+    g_tcp[oldest].rx_off     = 0;
+    g_tcp[oldest].fs_n       = 0;
+    g_tcp[oldest].fin_c      = 0;
+    g_tcp[oldest].tx_len     = 0;
+    g_tcp[oldest].attesa_pid = 0;
+    g_tcp[oldest].porta_loc  = 0;
+    return 1;
+}
+
 /* Libera gli slot dei processi che non ci sono piu'. Rende quanti ne ha
  * ripresi. */
 static int tcp_riprendi_orfane(void)
@@ -1534,6 +1576,12 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
      * mentre la tabella e' piena di slot di processi che non esistono piu' e'
      * il modo in cui «riapri il browser e non naviga piu'» diventa permanente. */
     if (c == NULL && tcp_riprendi_orfane() > 0) {
+        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+            if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
+    }
+    /* Still full: take back a slot its owner has already closed (see
+     * tcp_reclaim_closed). */
+    if (c == NULL && tcp_reclaim_closed() > 0) {
         for (i = 0; i < IP_TCP_CONNESSIONI; i++)
             if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
     }

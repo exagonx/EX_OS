@@ -18,7 +18,3 @@ bin/audio/audio.c:849:14: warning: cast to pointer from integer of different siz
 bin/audio/audio.c:882:16: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   882 |     shm_chiudi((void *)z.virt);
       |                ^
-bin/audio/mp3.c:28:10: fatal error: minimp3.h: File o directory non esistente
-   28 | #include "minimp3.h"
-      |          ^~~~~~~~~~~
-compilation terminated.

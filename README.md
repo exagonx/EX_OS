@@ -1,1249 +1,1239 @@
 # EX-OS — Extensible Operating System
 
-**🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
+**🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Versione:** 0.248
-**Autore:** Graziano Falcone <exagonx@hotmail.com>
-**Licenza:** GNU General Public License v2 (GPL-2.0)
-**Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
+**Version:** 0.248
+**Author:** Graziano Falcone <exagonx@hotmail.com>
+**License:** GNU General Public License v2 (GPL-2.0)
+**Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
 
-*Le due versioni si aggiornano insieme: quello che c'è in una c'è
-nell'altra.*
-
----
-
-## Installare EX-OS
-
-La procedura passo passo, con un capitolo per supporto, sta in
-**[manuali/installazione/](manuali/installazione/00-indice.md)**:
-
-| | |
-|---|---|
-| [Da floppy](manuali/installazione/01-da-floppy.md) | anche con il lettore sull'USB |
-| [Da CD-ROM](manuali/installazione/02-da-cdrom.md) | con `cdinstall` a schermo intero |
-| [Dalla rete](manuali/installazione/03-dalla-rete.md) | per riempire e aggiornare un sistema gia' installato |
-| [Dopo l'installazione](manuali/installazione/04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto |
-| [Quando va storto](manuali/installazione/05-quando-va-storto.md) | gli errori veri, con la causa e il rimedio |
-| [Pubblicare il repository](manuali/installazione/06-pubblicare-il-repo.md) | per chi tiene il server degli aggiornamenti |
+*The two versions are kept in step: what is in one is in the other.*
 
 ---
 
-## Che cos'è EX-OS
+## What EX-OS is
 
-EX-OS è un sistema operativo baremetal scritto in C e ASM per architettura
-x86 32-bit. L'obiettivo è un sistema estensibile: il kernel è piccolo e
-read-only in RAM convenzionale, tutto il resto (driver, shell, programmi) gira
-in RAM estesa in spazio protetto.
+EX-OS is a baremetal operating system written in C and assembly for the x86
+32-bit architecture. The goal is an extensible system: the kernel is small and
+read-only in conventional RAM, everything else (drivers, shell, programs) runs
+in extended RAM in protected space.
 
-**Non è un sistema «da floppy»: il floppy è uno dei modi di avviarlo, non il
-posto dove vive.** Si parte da tre supporti, e sono tre sistemi con lo stesso
-kernel dentro:
+**It is not a "floppy OS": the floppy is one of the ways to boot it, not where
+it lives.** There are three boot media, and they are three systems with the
+same kernel inside:
 
-| supporto | che cosa c'è | come si fa |
+| medium | what is on it | how to build it |
 |---|---|---|
-| **floppy** 1.44MB FAT12 | il minimo per arrivare a una shell e installare | `make floppy` -> `dist/floppy.img` |
-| **CD** avviabile | il sistema **completo**: scrivania grafica, navigatore, rete, driver, font, documentazione | `make iso-exos` -> `dist/exos.iso` |
-| **disco rigido** FAT16/32 o ext2 | quello che l'installazione ci ha messo, ed è l'unico che si scrive | `install` (o `cdinstall` dal CD) |
+| **floppy** 1.44MB FAT12 | the minimum needed to reach a shell and install | `make floppy` -> `dist/floppy.img` |
+| bootable **CD** | the **complete** system: graphical desktop, browser, networking, drivers, fonts, documentation | `make iso-exos` -> `dist/exos.iso` |
+| **hard disk** FAT16/32 or ext2 | whatever the installer put there, and the only one you can write to | `install` (or `cdinstall` from the CD) |
 
-Il floppy è 1,44 MB che non crescono, e il kernel cresce a ogni cosa che
-impara: già dal 26 agosto 2026 l'installatore vero sta sul CD e sul floppy
-resta la parte congelata. **Il CD è il supporto di riferimento** — è da lì che
-si prova e si installa — e i CD/DVD si leggono comunque (ISO 9660 e Joliet)
-qualunque sia il supporto d'avvio.
+The floppy is 1.44MB that will not grow, and the kernel grows with everything
+it learns: since 26 August 2026 the real installer lives on the CD and only the
+frozen half stays on the floppy. **The CD is the reference medium** — it is
+what testing and installing start from — and CDs/DVDs are readable (ISO 9660
+and Joliet) whatever the boot medium is.
 
-Un crash di un driver o di un programma non può abbattere il sistema.
+A driver or a program crashing cannot bring the system down.
 
-### Il kernel è un **minikernel**
+### The kernel is a **minikernel**
 
-Non è un microkernel e non è monolitico, e vale la pena dire perché nessuna
-delle due parole va bene.
+It is not a microkernel and it is not monolithic, and it is worth saying
+why neither word fits.
 
-**Microkernel no**: dentro il kernel ci sono la memoria virtuale, lo
-scheduler, il VFS con FAT12/16/32, ext2 e ISO 9660, il caricatore ELF e la
-cache dei blocchi. Un microkernel vero quelli li mette fuori, e questo non
-lo fa — con 30 000 righe e 66 syscall sarebbe una descrizione lusinghiera e
-falsa.
+**Not a microkernel**: virtual memory, the scheduler, the VFS with
+FAT12/16/32, ext2 and ISO 9660, the ELF loader and the block cache all live
+inside the kernel. A real microkernel keeps those outside, and this one
+doesn't — at 30,000 lines and 66 system calls, the label would be
+flattering and false.
 
-**Monolitico no**: i driver di dispositivo — tastiera, floppy, PCI, NE2000,
-PCnet, tty, IP — sono **processi ring3**, eseguibili ELF come quelli di
-`/bin`, che parlano per IPC e non eseguono una sola istruzione
-privilegiata. Il kernel media ogni accesso all'hardware e controlla i
-permessi a ogni chiamata; un driver che muore lo si rilancia.
+**Not monolithic**: the device drivers — keyboard, floppy, PCI, NE2000,
+PCnet, tty, IP — are **ring3 processes**, ELF executables like the ones in
+`/bin`, talking over IPC and executing not one privileged instruction. The
+kernel mediates every hardware access and checks permissions on every call;
+a driver that dies gets restarted.
 
-«Monolitico ibrido» sarebbe corretto e non servirebbe a niente: è
-un'etichetta che descrive e basta. **Minikernel** dice la stessa cosa e in
-più contiene un impegno — *restare piccolo* — che è la ragione per cui
-questa architettura è stata scelta. Oggi il numero è:
+"Hybrid monolithic" would be accurate and useless: it is a label that only
+describes. **Minikernel** says the same thing and carries a commitment as
+well — *stay small* — which is the reason this architecture was chosen in
+the first place. Today the number is:
 
-    build/kernel.bin      184 KB      ~30 000 righe di C e ASM
+    build/kernel.bin      184 KB      ~30,000 lines of C and assembly
 
-Il numero è qui perché un impegno senza una misura è un'intenzione. Chi
-aggiunge codice al kernel dovrebbe prima chiedersi se non possa essere un
-processo ring3 — è quasi sempre la risposta giusta, ed è come sono nati
-tutti i driver.
+The number is here because a commitment without a measurement is an
+intention. Anyone adding code to the kernel should first ask whether it
+could be a ring3 process instead — it almost always can, and that is how
+every driver came about.
 
-**Da agosto 2026 EX-OS ospita codice di terzi, e da solo**: GNU binutils
-2.44 — `as` e `ld` — è compilato *per* EX-OS e ci gira dentro, e un
-programma assemblato e collegato qui è identico byte per byte a uno
-prodotto dal cross-compilatore su Linux.
+**Since August 2026 EX-OS hosts third-party code, and hosts it on its
+own**: GNU binutils 2.44 — `as` and `ld` — is compiled *for* EX-OS and runs
+inside it, and a program assembled and linked here is byte-for-byte
+identical to one produced by the cross-compiler on Linux.
 
-Dal 6 agosto **la catena è chiusa**: `gcc` gira dentro EX-OS, trova i
-propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
-`collect2` e `ld` fino a un eseguibile che parte. Lo stesso vale per
-**`g++`** — contenitori, `std::string` ed eccezioni comprese. Vedi
-[La catena di compilazione dentro EX-OS](#la-catena-di-compilazione-dentro-ex-os).
+Since 6 August **the chain is closed**: `gcc` runs inside EX-OS, finds its
+own headers with nobody telling it where, and chains cc1, `as`, `collect2`
+and `ld` by itself all the way to an executable that runs. The same holds
+for **`g++`** — containers, `std::string` and exceptions included. See
+[The compilation chain inside EX-OS](#the-compilation-chain-inside-ex-os).
 
 ---
 
-## Novità
+## What's new
 
-Le voci sono marcate **testato** quando il lavoro è stato verificato girando
-dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
-quella sull'hardware o sul caso reale — non è ancora stata fatta.
+Entries are marked **tested** when the work has been verified running inside
+EX-OS, **to be tested** when the code is there but the proof that counts —
+the one on real hardware or on the real case — has not been done yet.
 
-### ExWin: ogni controllo si nasconde e si spegne
+### ExWin: every control can be hidden and switched off
 
-**testato in QEMU** (`tools/prova_exwin_stato.sh`: il progetto si compila
-dentro EX-OS e si prova con la tastiera) — chiesto in correzioni.txt.
-`ex_set_visible(c, 0)` nasconde un controllo senza distruggerlo;
-`ex_set_enabled(c, 0)` lo lascia al suo posto, velato, con dentro quel che il
-programma ci mette, ma chi usa il programma non lo preme e non ci scrive.
-Valgono per ogni tipo di controllo; `ex_is_visible` ed `ex_is_enabled` dicono
-come sta. Prima un controllo spento si riconosceva solo se era un pulsante,
-una spunta o un radio. In exide sono due proprieta', `visibile` e `attivo`, e
-sulla maschera si distinguono a colpo d'occhio. Il manuale di EX-IDE le spiega
-in italiano e in inglese.
+**tested in QEMU** (`tools/prova_exwin_stato.sh`: the project is compiled
+inside EX-OS and tried with the keyboard) — asked in correzioni.txt.
+`ex_set_visible(c, 0)` hides a control without destroying it;
+`ex_set_enabled(c, 0)` leaves it in place, dimmed, showing whatever the program
+puts in it, but the user cannot press it or type in it. They work on every
+kind of control; `ex_is_visible` and `ex_is_enabled` say how it stands. Before,
+a disabled control could be told apart only if it was a button, a checkbox or
+a radio. In exide they are two properties, `visibile` and `attivo`, and on the
+form they can be told at a glance. The EX-IDE manual explains them in Italian
+and in English.
 
-**Sul mouse** (`tools/prova_exwin_sulmouse.sh`): con la proprieta' `sulmouse`
-un controllo ha un handler in piu', `<nome>_MouseOver()`, chiamato quando il
-puntatore gli arriva sopra; `ex_show_popup_pointer("testo", "0", "0", "0")`
-mostra un riquadro accanto al puntatore, coi colori di sfondo, scritta e bordo
-scritti come `"255,255,255"` o `"0"` per quelli predefiniti. Provandolo e'
-venuto fuori che nei programmi fatti con exide gli handler `_Changed` ed
-`_Enter` delle caselle di testo non venivano mai chiamati: ora si' (exwin.so
-0.015, exide 0.024; basta riaprire il progetto e salvarlo).
+**Mouse over** (`tools/prova_exwin_sulmouse.sh`): with the `sulmouse` property
+a control gets one more handler, `<Name>_MouseOver()`, called when the pointer
+arrives over it; `ex_show_popup_pointer("text", "0", "0", "0")` shows a box by
+the pointer, with background, text and border colours written as
+`"255,255,255"` or `"0"` for the defaults. Trying it showed that in programs
+made with exide the `_Changed` and `_Enter` handlers of text boxes were never
+called: now they are (exwin.so 0.015, exide 0.024; open the project and save
+it once).
 
-### Installare senza lettore CD: `make installa`, e la guida (kernel 0.240)
+### Installing without a CD drive: `make installa`, and the guide (kernel 0.240)
 
-**provato in QEMU; sul ferro e' in corso** — per un PC senza floppy ne' CD.
-`make installa` fa `dist/installa.img`: 1,44 MB che si caricano tutti in RAM
-(quindi partono da una chiavetta), con gli attrezzi del disco, la rete e
-`netupdate`. Si installa sul disco il sistema piccolo che sta girando, e da
-li' il resto arriva dalla rete. La guida passo passo e' in italiano e in
-inglese, pagina e testo: `exwin/doc/installa-usb.html`,
+**tried in QEMU; on hardware it is under way** — for a PC with neither floppy
+nor CD. `make installa` builds `dist/installa.img`: 1.44 MB loaded whole into
+RAM (so it boots from a stick), with the disk tools, the network and
+`netupdate`. The small running system is installed on the disk, and from
+there the rest comes from the network. The step-by-step guide is in Italian
+and in English, page and text: `exwin/doc/installa-usb.html`,
 `exwin/doc/installa-usb.en.html`, `INSTALLA-USB.txt`, `INSTALLA-USB.en.txt`
-(le genera `tools/doc-installa-usb.py`, da una sorgente sola).
+(generated by `tools/doc-installa-usb.py` from one source).
 
-Dalla prima prova sul PC vero: il disco SATA in modo nativo si riconosce, ma
-in DMA restava bloccato («timeout BSY»). Dalla 0.240 quei canali lavorano in
-PIO e un disco rimasto occupato viene resettato.
+From the first trial on the real PC: the SATA disk in native mode is found,
+but in DMA it stayed stuck («timeout BSY»). From 0.240 those channels work in
+PIO and a disk left busy is reset.
 
-**0.246**: i processori in piu' eseguono programmi (tappa 3 dell'SMP). Un
-lucchetto unico sul kernel, preso entrando (interrupt, eccezioni, chiamate di
-sistema) e lasciato tornando in ring 3: nel kernel c'e' un processore per
-volta, i programmi girano su tutti. GDT e TSS per processore, il processo
-corrente per processore; il lucchetto e' a numeri (chi arriva prima passa
-prima). Due programmi diversi usano due processori; i fili di uno stesso
-programma no, finche' non c'e' l'invalidazione del TLB fra processori (tappa
-4). **Resta spento di serie**: `smpprova -accendi` lo accende fino al
-riavvio, `smp = 2` in `kernel.cfg` a ogni avvio. `smpprova` misura il lavoro
-fatto: in QEMU con KVM, 4284 giri un programma su un processore, 4296 da
-solo su due (nessuna perdita), 8152 due insieme su due processori, 12638
-quattro insieme su quattro. Con un processore solo niente si accende.
-**Sul PC vero** (Core 2 Quad, NVIDIA MCP73, 10 ottobre): dopo `smpprova
--accendi` due programmi insieme fanno 2,04 volte il lavoro di uno, quattro
-3,32; rete, DNS e `netupdate` funzionano coi processori al lavoro. Una
-sessione breve da telnet: l'uso lungo e ExWin sono da provare.
+**0.246**: the extra processors run programs (SMP stage 3). One lock on the
+kernel, taken on entry (interrupts, exceptions, system calls) and released on
+the way back to ring 3: one processor at a time in the kernel, programs on
+all of them. A GDT and a TSS per processor, the current process per
+processor; the lock is a ticket lock (first come, first served). Two
+different programs use two processors; the threads of one program do not,
+until there is TLB shootdown between processors (stage 4). **Off by
+default**: `smpprova -accendi` turns it on until the next reboot, `smp = 2`
+in `kernel.cfg` at every boot. `smpprova` measures the work done: in QEMU
+with KVM, 4284 rounds for one program on one processor, 4296 alone on two
+(no loss), 8152 for two together on two processors, 12638 for four together
+on four. With one processor nothing is switched on. **On the real PC**
+(Core 2 Quad, NVIDIA MCP73, 10 October): after `smpprova -accendi` two
+programs together do 2.04 times the work of one, four do 3.32; network, DNS
+and `netupdate` work with the processors running. A short telnet session:
+long use and ExWin are still to be tried.
 
-**0.247**: scrivere su ext2 costa molti meno comandi di disco. Per ogni
-kilobyte aggiunto a un file il driver ne faceva nove (bitmap, descrittore,
-blocco azzerato, puntatori, dato): ora i blocchi si prendono a gruppi fino a
-64 con una sola scrittura della bitmap, un blocco di dati nuovo non si azzera
-sul disco se sta per essere scritto, e il blocco dei puntatori si scrive una
-volta per chiamata. Quando `write()` torna il disco e' coerente come prima.
-`netupdate` 0.028 scrive a pezzi da 64 KB invece che a ogni pacchetto.
-Provato in QEMU: Exilla (290 MB) si installa in 5 minuti invece di 9, il disco
-passa `e2fsck` di Linux e i file hanno le impronte giuste. Su un disco in PIO
-il guadagno dovrebbe essere maggiore: da misurare sul PC. Cancellare resta
-lento (un blocco per volta).
+**0.247**: writing to ext2 takes far fewer disk commands. For every
+kilobyte appended to a file the driver issued nine (bitmap, descriptor,
+zeroed block, pointers, data): blocks are now taken in groups of up to 64
+with one bitmap write, a new data block is not zeroed on disk if it is about
+to be written, and the pointer block is written once per call. When
+`write()` returns the disk is as consistent as before. `netupdate` 0.028
+writes in 64 KB pieces instead of at every packet. Tried in QEMU: Exilla
+(290 MB) installs in 5 minutes instead of 9, the disk passes Linux's
+`e2fsck` and the files have the right hashes. On a disk in PIO the gain
+should be larger: to be measured on the PC. Deleting is still slow (one
+block at a time).
 
-**0.248**: cancellare un file su ext2 non costa piu' cinque comandi di disco
-per kilobyte. La bitmap del gruppo resta in memoria mentre si liberano i
-blocchi di un file e si scrive una volta, col descrittore. In QEMU `rm` di 50
-MB passa da piu' di venti secondi a circa sei, e il disco passa `e2fsck`.
+**0.248**: deleting a file on ext2 no longer costs five disk commands per
+kilobyte. The group's bitmap stays in memory while a file's blocks are freed
+and is written once, with the descriptor. In QEMU `rm` of 50 MB goes from
+more than twenty seconds to about six, and the disk passes `e2fsck`.
 
-**0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
-I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono
-un posto fra `hd0`..`hd3` come gli altri: in QEMU il sistema si installa, legge,
-scrive e si avvia da un disco AHCI. Per i controller che offrono lo stesso
-disco due volte (i registri IDE e l'AHCI, come l'NVIDIA MCP73 del PC di prova,
-dove dai registri IDE funziona solo il PIO) il sistema parte come sempre e
-passa all'AHCI dopo: con `ahci = 1` in `/boot/kernel.cfg` a ogni avvio, o col
-comando `ahci` per la sola sessione in corso, che e' il modo di provarlo senza
-rischio. `ahci -m FILE` misura a quanti KB/s si legge un file. Confermato sul
-PC vero il 9 ottobre, al terzo tentativo: il disco passa all'AHCI e i 35 MB
-di `cc1` si leggono a 59 MB/s, contro i circa 3,4 MB/s del PIO. Su quel
-controller la porta non era mai stata usata in AHCI: accendendo il modo AHCI
-il link cade, e va ristabilito prima di poter leggere la firma del disco.
-`install` (0.006) riconosce da se' una macchina cosi': passa il disco all'AHCI
-prima di copiare e, solo se riesce, scrive `ahci = 1` nel `kernel.cfg`
-installato; su un sistema gia' installato lo fa `ahci -s`.
+**0.245**: SATA disks behind an AHCI controller (`kernel/block/ahci.c`).
+Controllers that declare themselves AHCI are always used, and their disks take
+a place among `hd0`..`hd3` like the others: in QEMU the system installs to,
+reads, writes and boots from an AHCI disk. For controllers that offer the same
+disk twice (IDE registers and AHCI, like the NVIDIA MCP73 of the test PC,
+where only PIO works through the IDE registers) the system starts as always
+and moves to AHCI afterwards: with `ahci = 1` in `/boot/kernel.cfg` at every
+boot, or with the command `ahci` for the current session only, which is the
+way to try it without risk. `ahci -m FILE` measures how many KB/s a file is
+read at. Confirmed on the real PC on 9 October, at the third attempt: the
+disk moves to AHCI and the 35 MB of `cc1` are read at 59 MB/s, against about
+3.4 MB/s in PIO. On that controller the port had never been used in AHCI:
+switching AHCI mode on drops the link, which has to be brought back before
+the disk's signature can be read. `install` (0.006) recognises such a machine
+by itself: it moves the disk to AHCI before copying and, only if that works,
+writes `ahci = 1` in the installed `kernel.cfg`; on an installed system
+`ahci -s` does it.
 
-**0.244**: uscendo dalla grafica la console di testo era piena di righe che
-sembravano guasti e non lo erano. Il diario dei programmi grafici (`SYS_LOG`:
-ogni foglio di stile caricato dal navigatore, ogni errore di uno script di una
-pagina) veniva scritto anche sulla console; ora va sulla seriale e nel
-registro che legge `dmesg`, e basta. Il navigatore usa quel diario al posto di
-`printf`. E «ENTROPIA: jitter...», che compare alla prima connessione cifrata
-su una macchina senza RDRAND, non e' piu' scritto come `[ERROR]`: e' la
-notizia che i bit casuali sono stati raccolti.
+**0.244**: on leaving the graphics the text console was full of lines that
+looked like faults and were not. The log of graphical programs (`SYS_LOG`:
+every style sheet the browser loads, every error of a page's script) was also
+written on the console; it now goes to the serial line and to the log `dmesg`
+reads, and nowhere else. The browser uses that log instead of `printf`. And
+"ENTROPIA: jitter...", which appears at the first encrypted connection on a
+machine without RDRAND, is no longer written as `[ERROR]`: it is the news that
+the random bits were gathered.
 
-**0.243**: la console in grafica era lenta sul PC vero. Misurato li' con
-`fbprova` (1024x768 a 32 bit, video integrato NVIDIA): leggere dalla memoria
-video va a 28 MB/s contro i 10.000 della RAM, e lo scorrimento copiava lo
-schermo su se stesso, cioe' lo rileggeva tutto a ogni riga: un decimo di
-secondo per riga. Ora lo scorrimento non legge mai dallo schermo: le celle
-stanno in RAM, e si ridisegnano solo quelle che dopo lo scorrimento mostrano
-un carattere diverso. In piu' `mtrr.c`, scritto a settembre e mai collegato
-per mancanza di una macchina su cui provarlo, adesso viene chiamato: dichiara
-la memoria video combinabile in scrittura, e rinuncia dicendolo (`dmesg MTRR`)
-se qualcosa non torna. In QEMU la console scorre giusta. Misurato sul PC dopo
-l'aggiornamento: `MTRR: framebuffer 0xd0000000, 4096 KB combinabili in
-scrittura`, e scrivere sullo schermo passa da 160-345 a 1335 MB/s.
+**0.243**: the graphics console was slow on the real PC. Measured there with
+`fbprova` (1024x768 at 32 bit, NVIDIA integrated video): reading from video
+memory runs at 28 MB/s against 10,000 for RAM, and scrolling copied the screen
+onto itself, that is, read all of it back at every line: a tenth of a second
+per line. Scrolling now never reads from the screen: the cells are in RAM, and
+only those that show a different character after the scroll are redrawn. Also
+`mtrr.c`, written in September and never connected for lack of a machine to
+try it on, is now called: it declares video memory write-combining, and gives
+up saying so (`dmesg MTRR`) if anything is off. In QEMU the console scrolls
+correctly. Measured on the PC after the update: `MTRR: framebuffer 0xd0000000,
+4096 KB combinabili in scrittura`, and writing to the screen goes from 160-345
+to 1335 MB/s.
 
-**0.242**: il kernel tiene un registro dei propri messaggi, e il nuovo comando
-`dmesg` lo legge: l'avvio (i primi 32 KB, mai sovrascritti) e gli ultimi
-messaggi, anche quelli che il livello di log nasconde a schermo.
-`dmesg PAROLA` mostra solo le righe che la contengono. Nasce dalle prove sul
-PC vero guidato via telnet: senza cavo seriale non c'era modo di sapere che
-cosa il kernel avesse detto all'accensione. Dalle stesse prove: la shell esce
-quando il suo ingresso finisce (ogni sessione telnet caduta lasciava una shell
-viva col suo pseudo-terminale, e alla quinta nessuno entrava piu');
-`nforce.drv` 0.006 trasmette (l'anello di trasmissione di 8 descrittori era
-troppo piccolo per la scheda: riceveva e non mandava niente; a 64 va, provato
-sul PC con `nforce.drv -p`); `audio -i` riconosce l'audio della MCP73 (codec
-ALC888); `netupdate -check -yes` e `-yesall` aggiornano senza chiedere.
+**0.242**: the kernel keeps a log of its own messages, and the new command
+`dmesg` reads it: the boot (the first 32 KB, never overwritten) and the latest
+messages, including those the log level hides on screen. `dmesg WORD` shows
+only the lines containing it. It comes from the trials on the real PC driven
+over telnet: without a serial cable there was no way to know what the kernel
+had said at power-on. From the same trials: the shell exits when its input
+ends (every dropped telnet session left a live shell holding its
+pseudo-terminal, and at the fifth nobody could log in); `nforce.drv` 0.006
+transmits (a transmit ring of 8 descriptors was too small for the card: it
+received and sent nothing; with 64 it works, tried on the PC with
+`nforce.drv -p`); `audio -i` recognises the MCP73 audio (ALC888 codec);
+`netupdate -check -yes` and `-yesall` update without asking.
 
-**0.241**: il sistema si installava, ma riavviando dal disco il kernel non
-trovava la sua radice. La cercava solo su `hd0`, e un disco SATA su un canale
-nativo sta nel primo posto libero, che puo' essere un altro. Ora guarda tutti
-i dischi: prima la partizione attiva di ognuno, poi la prima ext2 che trova.
-Per aggiornare un disco gia' installato: avvio dalla chiavetta nuova,
+**0.241**: the system installed, but on rebooting from the disk the kernel
+could not find its root. It looked on `hd0` only, and a SATA disk on a native
+channel sits in the first free place, which may be another. It now looks at
+every disk: first each one's active partition, then the first ext2 it finds.
+To update a disk already installed: boot from the new stick,
 `mount hdNp1 /disk`, `install -a /disk`.
 
-### Una scheda madre vera: disco SATA e rete NVIDIA (kernel 0.239)
+### A real motherboard: SATA disk and NVIDIA network (kernel 0.239)
 
-**da testare sul ferro: QEMU non emula ne' l'uno ne' l'altra** — dal referto
-di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
-- **Il disco SATA.** Il controller si presenta come IDE in *modo nativo*: i
-  registri non stanno a 0x1F0 e 0x170 ma dove dicono i suoi BAR. Il kernel
-  guardava solo i due posti di sempre e il disco non lo vedeva. Ora cerca sul
-  PCI i controller IDE, RAID e SATA che non sono in AHCI e ne aggiunge i
-  canali; i dischi trovati prendono i posti liberi fra `hd0` e `hd3`, cosi'
-  `disk`, `fdisk` e l'installatore non cambiano. I dischi di sempre restano
-  dov'erano (questo si' provato in QEMU).
-- **La rete.** `/dev/nforce.drv`, per l'Ethernet integrata nei chipset NVIDIA
-  nForce (MCP67, 73, 77, 79): registri in memoria, senza interrupt, col PHY
-  letto com'e'. `netdetect` la riconosce e lo avvia. Con `-d` stampa i
-  registri, il PHY e i conteggi del driver in servizio, con `-v` racconta
-  l'accensione. Confermato sulla scheda vera (MCP73) con la 0.008, l'8 ottobre:
-  all'avvio `dhcp` prende l'indirizzo e il gateway risponde al ping in 20 ms, a
-  1000 Mbit. I guasti erano tre: l'anello di trasmissione di 8 descrittori,
-  troppo piccolo per la scheda (non trasmetteva); il filtro per indirizzo, che
-  lasciava passare solo i broadcast (l'offerta DHCP veniva scartata); e le
-  attese brevi fatte con `usleep`, che allungavano l'accensione oltre i dieci
-  secondi. `-p` la prova da sola.
-- **MP3.** `audio brano.mp3` suona un MP3 e `audio -w brano.mp3 brano.wav` lo
-  converte in WAV. Il decodificatore e' `minimp3`, di dominio pubblico (CC0),
-  copiato cosi' com'e' in `lib/terze/minimp3` e compilato senza SIMD per il
-  Pentium MMX. Provato in QEMU convertendo l'intro di `exwin/sound`: i
-  campioni prodotti dentro EX-OS differiscono al piu' di 1 su 32768 da quelli
-  dello stesso decodificatore sul PC di sviluppo, e somigliano al WAV
-  originale per il 99,97%. L'ascolto sul PC vero e' da fare.
-- **HD Audio sui ponti nVidia** (`hdaudio.drv` 0.003). Sul PC di prova il
-  codec rispondeva, il collaudo passava e non si sentiva niente. Due cose: i
-  controller nVidia leggono la memoria del flusso senza guardare le cache del
-  processore finche' non si accendono tre bit nella loro configurazione PCI
-  (0x4C, 0x4D, 0x4E), e il driver ora lo fa; e il volume regolava solo il
-  canale sinistro, lasciando il destro com'era nato (muto, su un ALC888).
-  `hdaudio.drv -d 1` stampa tutto il codec - collegamenti, amplificatori,
-  prese, flussi - senza scrivere niente, anche col driver acceso; `-c 0`
-  lascia stare i bit nVidia, `-k N` sceglie il codec. Sul PC vero ora si
-  sente (10 ottobre). Restavano buchi e pezzi distorti a caso: all'interrupt
-  di fine meta' il contatore della posizione puo' essere ancora un pelo prima
-  del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
-  un quarto di meta' e scrive i conti di ogni riproduzione nel registro
-  (`dmesg hdaudio`). Da riascoltare.
-- **Le fondamenta per i 64 bit.** EX-OS avra' una versione a 64 bit accanto
-  a quella a 32, dallo stesso sorgente: `make ARCH=x86_64` (di serie `i386`,
-  e senza dirlo non cambia niente). Due repository, `netinst` e `netinst_64`:
-  `netupdate` 0.029 sa per quale macchina e' compilato, `versione.txt` dice
-  `arch`, e un repository dell'architettura sbagliata si rifiuta. Il piano a
-  tappe e' in `in_lavorazione.txt` (`@EXOS-64`). La prima tappa e' fatta: il
-  kernel arriva in modo a 64 bit in QEMU (`tools/prova_kernel64.sh`), col
-  caricatore di sempre; su un Pentium dice che i 64 bit non ci sono. Non e'
-  ancora un sistema. Seconda tappa a meta': tutto il kernel comune COMPILA a
-  64 bit (restano da riscrivere i sei file del processore), e a ogni passo il
-  kernel a 32 bit e' risultato identico istruzione per istruzione.
-  Terza tappa fatta: il kernel COMUNE gira a 64 bit. `make ARCH=x86_64
-  kernel64` compila gli stessi sorgenti del kernel a 32 bit, meno i tre file
-  del processore e piu' quelli di `kernel/arch/x86_64` (ingresso, segmenti,
-  interrupt, cambio di contesto, tabelle a quattro livelli), e in QEMU
-  arriva in fondo all'avvio - memoria, scheduler, chiamate di sistema, il
-  CD - e avvia in ring 3 un programma ELF64 che fa chiamate di
-  sistema, dorme e torna. Il kernel a 32 bit e' rimasto identico a ogni
-  passo. Non e' ancora un sistema: mancano la libc e i programmi (tappa 4),
-  e a 64 bit segnali, librerie condivise e driver non ci sono.
-  La versione a 64 bit non ha dischetti: `make iso64` fa il CD
-  (`dist/exos64.iso`), `make netinst64` il repository (`dist/netinst_64`),
-  `sudo make usb64 DISPOSITIVO=/dev/sdX` la chiavetta, `make tools64` dira'
-  il CD degli strumenti quando ci saranno.
-- **EX-OS a 64 bit: un sistema a riga di comando.** Quarta tappa fatta. La
-  libc, la shell, 78 comandi di `/bin` e 20 driver sono gli STESSI sorgenti
-  della versione a 32 bit compilati a 64 (`make utente64`), con la libc
-  collegata dentro ogni programma. Il CD `dist/exos64.iso` si avvia fino alla
-  shell con tastiera, mouse, PCI e rete (e1000, DHCP, ping), si installa su
-  disco con `install` e riparte dal disco. Segnali, fili e variabili
-  `__thread` funzionano a 64 bit. Provato in QEMU, non ancora su una
-  macchina vera. Mancano la scrivania ExWin, le librerie condivise, l'audio
-  e i compilatori. La versione a 32 bit e' rimasta identica, istruzione per
-  istruzione, nel kernel e in tutti i 181 sorgenti di libc, librerie e
-  comandi.
-- **Scrivania: memoria e avvio (pm 0.020).** Una voce di menu puo' dire
-  quanta memoria vuole (`ram=2048`) e il menu avvisa prima di avviarla su una
-  macchina che ne ha meno. Dal pannello Impostazioni si accendono e spengono
-  l'orologio e l'icona del volume nella barra.
-- **Exilla: la barra di scorrimento si vede.** Era quella di Android, un
-  pollice sottile bianco su bianco: ora e' quella classica con le frecce e i
-  grigi di ExWin. Serve ripubblicare il pacchetto `exilla`.
-- **La rete non e' piu' frenata dalla finestra di TCP (`ip.drv` 0.009).** La
-  finestra di ricezione era di 4 KB: verso un server a 50 ms voleva dire al
-  massimo 80 KB/s, qualunque fosse la linea. Ora e' di 63 KB, presa solo dalle
-  connessioni che la usano, e i pacchetti arrivati in disordine si tengono da
-  parte invece di farseli rimandare. `ip.drv -w KB` la riduce. In QEMU un
-  megabyte passa da 3,6 a 0,3 secondi; il guadagno su una linea vera va
-  misurato sul PC con `scarica -i`.
-- **ExEditor scrive documenti (0.008).** Nei documenti RTF: barra degli
-  strumenti a icone, righello in centimetri con rientri e tabulazioni da
-  trascinare, Formato > Paragrafo e Pagina, interlinea, vista pagina con i
-  salti di pagina; il menu Visualizza accende e spegne barra, righello e
-  pagina. La libreria `exrtf` ha ora rientri, tabulazioni, spazi e formato
-  della carta, letti e scritti in RTF. I `.doc` di **Word 6 e 95** si aprono
-  (`lib/exrtf/doc95.c`) e si salvano come RTF; Word 97 e successivi no. Il
-  lettore dei .doc e' provato su file scritti a mano e confrontato con
-  LibreOffice, non su file di un Word vero. Tolta la seconda barra di
-  scorrimento in modalita' testo.
-- **Due ritocchi dalla coda.** Lo sfondo della scrivania accetta una
-  fotografia: il toolkit (0.017) leggeva solo i primi 256 KB del file, ora lo
-  legge tutto. Nel file manager (0.013) il separatore fra albero ed elenco si
-  trascina, e la larghezza resta in `$HOME/.exwin/config/filemgr.cfg`.
-- **Exilla e' un pacchetto del repository (tappa 8 del porting di Firefox).**
-  `netupdate -install:exilla` la scarica in `/exwin/app/exilla` (navigatore,
-  lanciatore, icone: 290 MB) e scrive la voce nel menu della scrivania, nella
-  nuova categoria **Internet** dove e' passato anche EXBrowser;
-  `netupdate -remove:exilla` toglie file e voce. `netupdate` 0.027: un
-  pacchetto puo' avere l'elenco dei file suo (`pacchetti/exilla.txt`, cosi'
-  `-check -yesall` non porta Exilla su chi non l'ha chiesta), i file sopra i
-  16 MB si pubblicano e si scaricano a pezzi (`firefox.p000`...) con ripresa
-  dal pezzo mancato, e la chiave `menu` del catalogo diventa una riga di
-  `applicazioni.txt`. Il program manager (0.019) tiene 48 voci invece di 16:
-  il sistema di base le riempiva gia' tutte. `firefox` e' pubblicato senza simboli: 192 MB invece di
-  274. `make netinst` la mette nel repository da solo; `exagonx/pubblica.sh` e
-  `verifica.sh` conoscono liste e pezzi. Provata in QEMU contro il repository
-  costruito qui (non contro quello pubblicato); su una macchina vera e' da
-  provare.
-- **EXBrowser: i risultati di Yahoo al loro posto, e quelli di Bing si
-  aprono.** Su Yahoo la colonna dei risultati finiva a destra delle linguette
-  e oltre il bordo: un blocco che non ci sta accanto a un galleggiante ora
-  scende sotto, e un `min-width` piu' largo della finestra non fa piu'
-  uscire il blocco dalla pagina (lo scorrimento orizzontale non c'e': quel
-  che esce non si vede). Su Bing ogni risultato portava a una pagina bianca:
-  la pagina di passaggio reindirizza da `<body onload="...">`, e l'evento
-  `load` partiva dalla radice del documento senza mai incontrare il body.
-- **EXBrowser: le immagini di sfondo dei CSS.** Loghi e icone di gran parte
-  dei siti sono lo SFONDO di un elemento vuoto: `background-image` (anche
-  dentro `background`), con `background-repeat`, `-position`, `-size`, e
-  `height` / `min-height` che danno una misura al riquadro. L'indirizzo e'
-  relativo al foglio in cui sta scritto, non alla pagina. Su Yahoo compare il
-  logo. Due difetti trovati e corretti: un `;` dentro `url(data:...;base64,...)`
-  chiudeva la dichiarazione a meta' (il foglio di Yahoo passa da 2652 a 2856
-  regole lette), e una pagina con un temporizzatore perdeva TUTTO lo stile se
-  il ricalcolo scattava mentre si scaricava un'immagine. Non ancora: le
-  immagini `data:`, lo sfondo sugli elementi in linea.
-- **EXBrowser: le anteprime «in ritardo».** Le pagine piene di figure non
-  mettono piu' l'indirizzo in `src`: lo tengono in `data-src` e uno script lo
-  sposta quando la figura entra nello schermo. Quello script qui non gira, e
-  wallpapers.com e pixels.com restavano senza anteprime. Ora `<img>` prende
-  l'indirizzo da `data-src` (o `srcset`) quando `src` manca o e' un
-  segnaposto. Un pulsante fatto di una sola figura prende il nome dal suo
-  `alt`. Restano: gli sfondi CSS (il logo di Yahoo), il formato WebP, e
-  l'impaginazione di quelle pagine.
-- **Il pulsante «a tutto schermo».** Nella barra del titolo, fra «riduci a
-  icona» e «chiudi», un terzo pulsante porta la finestra a riempire lo
-  schermo fino alla barra della scrivania, e premuto di nuovo la rimette
-  dov'era; lo stesso fa Alt+F10. Lo fa il server a finestre (`wserver`
-  0.011) per ogni finestra ridimensionabile, quindi nessun programma e' stato
-  toccato. Provandolo si e' visto che il file manager, a ogni
-  ridimensionamento, faceva salire le due liste sopra le intestazioni:
-  corretto.
-- **Gli strumenti scaricati si trovano da soli.** `netupdate -check -yesall`
-  installa tutto il sistema, compilatori compresi, in `/exos`; ma il `PATH`
-  di `/boot/kernel.cfg` non lo toccava, e `gcc` dava «comando non trovato» su
-  una macchina che lo aveva sul disco. Ora a fine `-check`, se gli strumenti
-  ci sono e il PATH non li nomina, lo scrive `toolinst -c` (nuovo: solo la
-  configurazione, con la copia in `kernel.cfg.bak`); vale dal riavvio. E
-  exide (0.025) sceglie da solo la radice del compilatore: `/exos` se c'e',
-  altrimenti il CD - prima era fissa a `/cdrom/exos`.
-- **Il pannello dei volumi.** Nella barra, accanto all'orologio, c'e'
-  un'icona con l'altoparlante: un clic apre `exvolume`, con una riga per ogni
-  uscita e per ogni ingresso della scheda e due cursori per riga, canale
-  sinistro e destro (una spunta li lega). Le voci le dichiara il driver:
-  `hdaudio.drv` 0.005 da' a ogni presa d'uscita un convertitore suo, cosi' i
-  volumi sono davvero uno per presa, ed elenca come ingressi il microfono, la
-  linea e il CD che il codec sa mescolare nelle uscite (nascono a zero). Le
-  schede col solo volume generale hanno una voce, «Volume». Le scelte stanno
-  in `$HOME/.exwin/config/volume.cfg` e la scrivania le rimette a ogni avvio
-  (`exvolume -applica`); da console, `audio -mix`. In QEMU: una uscita,
-  sinistra a 0 e destra a 78, e nella registrazione il canale sinistro e'
-  muto. Le cinque uscite e gli ingressi dell'ALC888 sono da provare sul PC.
-- **Il lettore audio e la libreria del suono.** `explayer` (Avvio > Lettore
-  audio, o un doppio clic su un `.wav` o un `.mp3` nel file manager) suona un
-  elenco di brani: precedente, suona, pausa, ferma, successivo; una barra che
-  mostra dove si e' e che si trascina per andare a un punto qualunque; tre
-  contatori, il tempo trascorso, quello che resta e il totale dell'elenco. Il
-  suono non e' dentro il lettore: lo fa `exsuono.so` (`lib/exsuono`), che ogni
-  programma puo' aprire. Per chi vuole solo un suono dopo un'azione basta
-  `exsuono_avvia_file("/exwin/sound/x.wav")`, che torna subito; il program
-  manager la usa per l'intro all'accensione della scrivania; si spegne con
-  la spunta «Suono all'avvio della scrivania» in Avvio > Impostazioni. Trovati facendolo: `audio` non tornava al
-  prompt a fine brano (aspettava che la scheda consumasse gli ultimi byte,
-  meno di un blocco, che una scheda non prende mai) e teneva la scheda
-  occupata; e nel toolkit un pulsante col fuoco non si poteva premere dalla
-  tastiera in nessun programma: ora lo fa la barra spaziatrice (exwin.so
-  0.016). Provato in QEMU con l'HD Audio emulato, dalla tastiera. Sul PC
-  vero e' da ascoltare.
-- **Il menu di avvio dalla tastiera.** Il tasto Windows o Ctrl+Esc lo aprono
-  da qualunque finestra; frecce su e giu' per scegliere, destra (o Invio, o
-  spazio) per entrare in una categoria, sinistra o Esc per uscirne, Invio o
-  spazio per avviare, Esc per chiudere. Il tasto Windows e' un tasto nuovo
-  anche per il driver della tastiera (`KBD_K_WIN`). Provato in QEMU.
-- **Mouse e tastiera USB sui controller OHCI.** `ohci.drv` (0.003) sapeva solo
-  di chiavette, e un mouse USB e' a bassa velocita': su una scheda madre il cui
-  controller lento e' un OHCI (NVIDIA, SiS, ALi) non esisteva, e il sistema
-  cercava un mouse PS/2. Ora un HID «boot» viene riconosciuto e servito col
-  servizio `mouse` (o consegnando i tasti a `kbd`), come gia' faceva
-  `uhci.drv`. Provato in QEMU con un mouse USB su OHCI: `mouse -n 6` legge i
-  movimenti e il bottone; la tastiera USB e il PC vero sono da provare.
-- **Due schede di rete, un cavo.** `netdetect -c` sceglie la scheda che ha il
-  cavo: lo chiede ai driver con la nuova opzione `-l` (`nforce.drv`,
-  `rtl8169.drv`). Prima vinceva «quella aggiunta», anche senza cavo.
-- **Una seconda scheda di rete e il supporto.** `/dev/rtl8169.drv` (0.001) per
-  le Gigabit PCI Realtek RTL8169/8169S/8110S/8169SB/8169SC, scritto per la
-  scheda messa nel PC di prova; QEMU non la emula. Confermato sulla macchina
-  (RTL8169SC): `dhcp` prende l'indirizzo e `ping 8.8.8.8` risponde in 60 ms. `make support` crea `dist/support` e `dist/support.iso`:
-  driver e programmi da aggiungere a un sistema installato, da chiavetta o da
-  CD, col programma `aggiungi` che li copia senza chiedere e accende chiavette
-  e rete in `/boot/autoexec.sh`. Con due schede `netdetect -c` sceglie quella
-  aggiunta; `netdetect -c <parola>` sceglie a mano. Provato in QEMU dal disco
-  installato: dopo `aggiungi` e un riavvio la rete parte da sola (e1000).
-- **Le chiavette USB** su quel PC non venivano riconosciute: i driver EHCI
-  leggevano male i controller a 64 bit, e ora dicono per esteso che cosa
-  fallisce. Con la correzione il referto e' arrivato su chiavetta.
-- **Il dischetto della sonda** (`make sonda`) si costruiva piu': e' tornato a
-  fare solo la lettura dell'hardware, con 470 KB liberi per i referti.
+**to be tested on hardware: QEMU emulates neither** — from the report of a PC
+with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
+- **The SATA disk.** The controller shows up as IDE in *native mode*: its
+  registers are not at 0x1F0 and 0x170 but where its BARs say. The kernel
+  looked only at the two usual places and did not see the disk. It now looks
+  on the PCI bus for IDE, RAID and SATA controllers that are not in AHCI and
+  adds their channels; the disks found take the free places among `hd0` to
+  `hd3`, so `disk`, `fdisk` and the installer do not change. The usual disks
+  stay where they were (this one tried in QEMU).
+- **The network.** `/dev/nforce.drv`, for the Ethernet built into NVIDIA
+  nForce chipsets (MCP67, 73, 77, 79): registers in memory, no interrupt, the
+  PHY read as it is. `netdetect` recognises it and starts it. `-d` prints the
+  registers, the PHY and the counters of the running driver, `-v` tells the
+  power-up step by step. Confirmed on the real board (MCP73) with 0.008 on 8 October:
+  at boot `dhcp` gets the address and the gateway answers ping in 20 ms, at
+  1000 Mbit. There were three faults: the transmit ring of 8 descriptors, too
+  small for the card (it did not transmit); the address filter, which let only
+  broadcasts through (the DHCP offer was dropped); and short waits done with
+  `usleep`, which stretched the power-up beyond ten seconds. `-p` tries it
+  alone.
+- **HD Audio on nVidia bridges** (`hdaudio.drv` 0.003). On the test PC the
+  codec answered, the self-test passed and nothing was heard. Two things:
+  nVidia controllers read the stream memory without looking at the CPU
+  caches until three bits are set in their PCI configuration (0x4C, 0x4D,
+  0x4E), and the driver now sets them; and the volume set only the left
+  channel, leaving the right as it is born (muted, on an ALC888).
+  `hdaudio.drv -d 1` prints the whole codec - connections, amplifiers, pins,
+  streams - without writing anything, even while the driver runs; `-c 0`
+  leaves the nVidia bits alone, `-k N` picks the codec. On the real PC it is
+  now heard (10 October). Random gaps and distorted pieces remained: at the
+  end-of-half interrupt the position counter can still read just before the
+  boundary, and the wrong half was refilled. 0.004 moves the boundary by a
+  quarter of a half and writes the counts of each playback to the kernel log
+  (`dmesg hdaudio`). To be listened to again.
+- **Groundwork for 64 bit.** EX-OS will have a 64-bit version beside the
+  32-bit one, from the same source: `make ARCH=x86_64` (default `i386`, and
+  unless said nothing changes). Two repositories, `netinst` and `netinst_64`:
+  `netupdate` 0.029 knows which machine it was built for, `versione.txt` says
+  `arch`, and a repository for the other architecture is refused. The staged
+  plan is in `in_lavorazione.txt` (`@EXOS-64`). The first stage is done: the
+  kernel reaches 64-bit mode in QEMU (`tools/prova_kernel64.sh`), with the
+  same loader; on a Pentium it says there are no 64 bits. It is not a system
+  yet. Second stage half done: all the shared kernel COMPILES at 64 bit (the
+  six processor files remain to be rewritten), and at every step the 32-bit
+  kernel came out identical, instruction by instruction.
+  Third stage done: the SHARED kernel runs at 64 bit. `make ARCH=x86_64
+  kernel64` compiles the same sources as the 32-bit kernel, minus the three
+  processor files and plus those in `kernel/arch/x86_64` (entry, segments,
+  interrupts, context switch, four-level tables), and in QEMU it goes
+  through the whole start-up - memory, scheduler, system calls, the CD -
+  and starts in ring 3 an ELF64 program that makes system calls, sleeps and
+  comes back. The 32-bit kernel stayed identical at every step. It is not a
+  system yet: the libc and the programs are missing (stage 4), and at 64 bit
+  there are no signals, shared libraries or drivers.
+  The 64-bit version has no floppies: `make iso64` makes the CD
+  (`dist/exos64.iso`), `make netinst64` the repository (`dist/netinst_64`),
+  `sudo make usb64 DISPOSITIVO=/dev/sdX` the USB key, `make tools64` will
+  make the tools CD once they exist.
+- **The 64-bit USB key boots with its root in RAM (`make usb64`, and `make usb` at 32 bit).** A key
+  made like an installed disk booted and stayed without a shell: the kernel
+  reads ATA disks, not USB, and the USB drivers are on the disk it cannot
+  read. Now the key starts with a 1.44 MB floppy image (the shape of `make
+  installa`): the BIOS boots it as a floppy, the loader copies it into RAM
+  and the kernel mounts its root there; the USB drivers start from it, and
+  `fetta.drv` mounts on `/sistema` the rest of the key, where the whole
+  system is. The RAM root is lost at power-off. Tried in QEMU, not yet on a
+  real machine.
+- **64-bit EX-OS: a command-line system.** Fourth stage done. The libc, the
+  shell, 78 commands of `/bin` and 20 drivers are the SAME sources as the
+  32-bit version compiled at 64 (`make utente64`), with the libc linked into
+  each program. The CD `dist/exos64.iso` boots to the shell with keyboard,
+  mouse, PCI and network (e1000, DHCP, ping), installs to disk with
+  `install` and boots from the disk. Signals, threads and `__thread`
+  variables work at 64 bit. Tried in QEMU, not yet on a real machine. The
+  ExWin desktop is there too (19 programs and the graphic server, linked
+  statically) and so is the `netinst_64` repository. Sound, the compilers
+  and Exilla are still missing. The
+  32-bit version stayed identical, instruction by instruction, in the kernel
+  and in all 181 sources of libc, libraries and commands.
+- **Desktop: memory and start-up (pm 0.020).** A menu entry may say how much
+  memory it wants (`ram=2048`) and the menu warns before starting it on a
+  machine with less. The Settings window switches the clock and the volume
+  icon of the bar on and off.
+- **Exilla: the scroll bar can be seen.** It was Android's, a thin thumb,
+  white on white: it is the classic one now, with arrows and ExWin's greys.
+  The `exilla` package has to be published again.
+- **The network is no longer held back by TCP's window (`ip.drv` 0.009).**
+  The receive window was 4 KB: towards a server 50 ms away that meant 80 KB/s
+  at most, whatever the line. It is 63 KB now, taken only by the connections
+  that use it, and segments arriving out of order are kept instead of being
+  asked again. `ip.drv -w KB` makes it smaller. In QEMU a megabyte goes from
+  3.6 to 0.3 seconds; the gain on a real line is to be measured on the PC
+  with `scarica -i`.
+- **ExEditor writes documents (0.008).** In RTF documents: a tool bar of
+  icons, a ruler in centimetres with indents and tab stops to drag, Formato >
+  Paragrafo and Pagina, line spacing, page layout with page breaks; the
+  Visualizza menu switches bar, ruler and page layout. The `exrtf` library
+  now has indents, tab stops, spacing and paper size, read and written in
+  RTF. **Word 6 and 95** `.doc` files open (`lib/exrtf/doc95.c`) and are
+  saved as RTF; Word 97 and later do not. The .doc reader was tried on
+  hand-written files and compared with LibreOffice, not on files from a real
+  Word. The second scroll bar in text mode is gone.
+- **Two small items from the queue.** The desktop background accepts a
+  photograph: the toolkit (0.017) read only the first 256 KB of the file, now
+  the whole of it. In the file manager (0.013) the splitter between tree and
+  list can be dragged, and the width is kept in
+  `$HOME/.exwin/config/filemgr.cfg`.
+- **Exilla is a repository package (stage 8 of the Firefox port).**
+  `netupdate -install:exilla` downloads it to `/exwin/app/exilla` (browser,
+  launcher, icons: 290 MB) and writes its entry in the desktop menu, in the
+  new **Internet** category where EXBrowser has moved too;
+  `netupdate -remove:exilla` removes files and entry. `netupdate` 0.027: a
+  package may have its own file list (`pacchetti/exilla.txt`, so that
+  `-check -yesall` does not bring Exilla to machines that never asked for
+  it), files above 16 MB are published and downloaded in parts
+  (`firefox.p000`...) resuming from the missing part, and the catalogue key
+  `menu` becomes a line of `applicazioni.txt`. The program manager (0.019)
+  holds 48 entries instead of 16: the base system already filled them all.
+  `firefox` is published
+  stripped: 192 MB instead of 274. `make netinst` puts it in the repository
+  by itself; `exagonx/pubblica.sh` and `verifica.sh` know lists and parts.
+  Tried in QEMU against the repository built here (not the published one);
+  still to be tried on a real machine.
+- **EXBrowser: Yahoo's results in place, and Bing's open.** On Yahoo the
+  results column ended up to the right of the tabs and past the edge: a block
+  that does not fit beside a float now drops below it, and a `min-width`
+  wider than the window no longer pushes the block out of the page (there is
+  no horizontal scrolling: what goes out is not seen). On Bing every result
+  led to a blank page: the click-through page redirects from `<body
+  onload="...">`, and the `load` event started at the document root and
+  never met the body.
+- **EXBrowser: CSS background images.** Logos and icons of most sites are
+  the BACKGROUND of an empty element: `background-image` (also inside
+  `background`), with `background-repeat`, `-position`, `-size`, and `height`
+  / `min-height` giving the box a size. The address is relative to the sheet
+  it is written in, not to the page. Yahoo's logo now shows. Two faults found
+  and fixed: a `;` inside `url(data:...;base64,...)` ended the declaration
+  half-way (Yahoo's sheet goes from 2652 to 2856 rules read), and a page with
+  a timer lost ALL its style if the recalculation fired while an image was
+  downloading. Not yet: `data:` images, backgrounds on inline elements.
+- **EXBrowser: lazy-loaded thumbnails.** Image-heavy pages no longer put the
+  address in `src`: they keep it in `data-src` and a script moves it when the
+  picture scrolls into view. That script does not run here, and
+  wallpapers.com and pixels.com had no thumbnails. `<img>` now takes its
+  address from `data-src` (or `srcset`) when `src` is missing or a
+  placeholder. A button made of one picture is named after its `alt`. Still
+  open: CSS backgrounds (Yahoo's logo), the WebP format, and the layout of
+  those pages.
+- **The full-screen button.** In the title bar, between "minimise" and
+  "close", a third button makes the window fill the screen down to the
+  taskbar, and pressed again puts it back; Alt+F10 does the same. The window
+  server (`wserver` 0.011) does it for every resizable window, so no program
+  was touched. Trying it showed that the file manager, at every resize, moved
+  its two lists up over their headers: fixed.
+- **Downloaded tools are found without help.** `netupdate -check -yesall`
+  installs the whole system, compilers included, in `/exos`; but it left the
+  `PATH` of `/boot/kernel.cfg` alone, and `gcc` was "command not found" on a
+  machine that had it on disk. Now at the end of `-check`, if the tools are
+  there and the PATH does not name them, `toolinst -c` writes it (new:
+  configuration only, with a copy in `kernel.cfg.bak`); it takes effect at
+  the next boot. And exide (0.025) picks the compiler root by itself: `/exos`
+  if it is there, otherwise the CD - it was fixed at `/cdrom/exos`.
+- **The volume panel.** In the taskbar, next to the clock, there is a speaker
+  icon: a click opens `exvolume`, one row for every output and every input of
+  the card and two sliders per row, left and right channel (a checkbox links
+  them). The driver declares the entries: `hdaudio.drv` 0.005 gives each
+  output jack a converter of its own, so the volumes really are one per jack,
+  and lists as inputs the microphone, line and CD that the codec can mix into
+  the outputs (they start at zero). Cards with only a master volume have one
+  entry, "Volume". Choices live in `$HOME/.exwin/config/volume.cfg` and the
+  desktop restores them at every start (`exvolume -applica`); from a console,
+  `audio -mix`. In QEMU: one output, left at 0 and right at 78, and the left
+  channel of the recording is silent. The five outputs and the inputs of the
+  ALC888 are to be tried on the PC.
+- **The audio player and the sound library.** `explayer` (Start > Lettore
+  audio, or a double click on a `.wav` or `.mp3` in the file manager) plays a
+  list of tracks: previous, play, pause, stop, next; a bar that shows where
+  the track is and can be dragged to any point; three counters, time elapsed,
+  time left and the total of the list. The sound is not inside the player:
+  `exsuono.so` (`lib/exsuono`) does it, and any program can open it. For a
+  sound after an action `exsuono_avvia_file("/exwin/sound/x.wav")` is enough,
+  and it returns at once; the program manager uses it for the intro when the
+  desktop starts; the checkbox "Suono all'avvio della scrivania" in Start >
+  Impostazioni turns it off. Found on the
+  way: `audio` did not return to the prompt at the end of a track (it waited
+  for the card to consume the last bytes, less than one block, which a card
+  never takes) and kept the card busy; and in the toolkit a focused button
+  could not be pressed from the keyboard in any program: the space bar now
+  does it (exwin.so 0.016). Tried in QEMU with the emulated HD Audio, from
+  the keyboard. On the real PC it is still to be listened to.
+- **MP3.** `audio track.mp3` plays an MP3 and `audio -w track.mp3 track.wav`
+  converts it to WAV. The decoder is `minimp3`, public domain (CC0), copied
+  as it is into `lib/terze/minimp3` and built without SIMD for the Pentium
+  MMX. Tried in QEMU by converting the intro in `exwin/sound`: the samples
+  produced inside EX-OS differ by at most 1 in 32768 from those of the same
+  decoder on the development PC, and match the original WAV to 99.97%.
+  Listening on the real PC is still to be done.
+- **The start menu from the keyboard.** The Windows key or Ctrl+Esc open it
+  from any window; up and down arrows to choose, right (or Enter, or space) to
+  enter a category, left or Esc to leave it, Enter or space to start, Esc to
+  close. The Windows key is a new key for the keyboard driver too
+  (`KBD_K_WIN`). Tried in QEMU.
+- **USB mouse and keyboard on OHCI controllers.** `ohci.drv` (0.003) knew only
+  sticks, and a USB mouse is low speed: on a board whose slow controller is an
+  OHCI (NVIDIA, SiS, ALi) it did not exist, and the system looked for a PS/2
+  mouse. A "boot" HID is now recognised and served through the `mouse` service
+  (or by handing keys to `kbd`), as `uhci.drv` already did. Tried in QEMU with
+  a USB mouse on OHCI: `mouse -n 6` reads the movements and the button; the
+  USB keyboard and the real PC are still to be tried.
+- **Two network cards, one cable.** `netdetect -c` picks the card that has the
+  cable: it asks the drivers with the new option `-l` (`nforce.drv`,
+  `rtl8169.drv`). Before, "the added one" won, cable or not.
+- **A second network card and the support medium.** `/dev/rtl8169.drv` (0.001)
+  for the Realtek PCI Gigabit cards RTL8169/8169S/8110S/8169SB/8169SC, written
+  for the card put in the test PC; QEMU does not emulate it. Confirmed on the
+  machine (RTL8169SC): `dhcp` gets the address and `ping 8.8.8.8` answers in
+  60 ms. `make support` creates `dist/support` and
+  `dist/support.iso`: drivers and programs to add to an installed system, from
+  a stick or a CD, with the program `aggiungi`, which copies them without
+  asking and starts sticks and network in `/boot/autoexec.sh`. With two cards
+  `netdetect -c` picks the added one; `netdetect -c <word>` chooses by hand.
+  Tried in QEMU from the installed disk: after `aggiungi` and a reboot the
+  network starts by itself (e1000).
+- **USB sticks** were not recognised on that PC: the EHCI driver misread
+  64-bit controllers, and the drivers now say in full what fails. With the
+  fix the report came back on a stick.
+- **The probe floppy** (`make sonda`) no longer built: it is back to reading
+  the hardware only, with 470 KB free for reports.
 
-### Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)
+### More processors, stages 1 and 2 (kernel 0.237 and 0.238)
 
-**testato sul ferro** (Core 2 Quad Q9650, chipset NVIDIA MCP73: quattro
-processori trovati dall'ACPI, i tre in piu' col timer che cammina e i messaggi
-che arrivano) **e in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4
-processori, con ACPI e con la sola tabella MP, anche sotto KVM; Pentium e
-Pentium II emulati a due zoccoli) — all'avvio il kernel cerca i processori
-nelle tabelle ACPI (MADT) e, dove non ci sono, nella tabella MultiProcessor
-delle schede a due processori degli anni Novanta (doppio Pentium, doppio
-Pentium Pro). Quelli in piu' li sveglia uno alla volta e li porta in modo
-protetto con le tabelle del kernel (**0.237**). Ognuno accende il proprio APIC
-locale, ha un timer suo a 100 battiti al secondo e riceve i messaggi degli
-altri processori; l'APIC sta in una pagina che ogni processo vede, quindi
-anche una chiamata di sistema puo' mandarne uno (**0.238**).
+**tested on hardware** (Core 2 Quad Q9650, NVIDIA MCP73 chipset: four
+processors found from ACPI, the three extra ones with their timer running and
+messages arriving) **and in QEMU** (`tools/prova_smp.sh`: 1, 2 and 4
+processors, with ACPI and with the MP table alone, also under KVM; emulated
+two-socket Pentium and Pentium II) — at boot the kernel looks for the
+processors in the ACPI tables (MADT) and, where there are none, in the
+MultiProcessor table of the two-processor boards of the Nineties (dual
+Pentium, dual Pentium Pro). It wakes the extra ones one at a time and takes
+them to protected mode with the kernel's tables (**0.237**). Each one switches
+its own local APIC on, has a timer of its own at 100 beats a second and
+receives messages from the other processors; the APIC sits in a page every
+process sees, so a system call can send one too (**0.238**).
 
-`hwinfo` ha la sezione PROCESSORI: quanti, da quale tabella, e per ognuno se
-e' in uso, in attesa o muto; per quelli in attesa misura in mezzo secondo se
-il timer cammina e se i messaggi arrivano.
+`hwinfo` has a PROCESSORI section: how many, from which table, and for each
+one whether it is in use, waiting or silent; for the waiting ones it measures
+over half a second whether the timer runs and whether messages arrive.
 
-! **EX-OS lavora ancora con un processore solo.** Gli altri sono pronti ma
-non eseguono processi: e' la tappa 3, un lucchetto unico sul kernel, ed e' li'
-che arriva il guadagno. Poi i lucchetti piu' fini. Le periferiche restano sul
-PIC verso il processore d'avvio: l'I/O APIC serve a distribuirle, e si fara'
-dopo. Su una macchina con un processore — e su tutto cio' che non ha un APIC
-locale — non cambia niente: il kernel legge qualche byte del BIOS e prosegue.
+! **EX-OS still works with one processor.** The others are ready but run no
+processes: that is stage 3, one lock on the kernel, and it is where the gain
+comes. Then finer locks. Devices stay on the PIC towards the boot processor:
+the I/O APIC is for spreading them, and comes later. On a machine with one
+processor — and on anything without a local APIC — nothing changes: the
+kernel reads a few bytes of the BIOS and goes on.
 
-Se l'avvio si fermasse su una scheda con piu' processori: `smp = 0` in
-`/boot/kernel.cfg` li fa contare senza svegliarli.
+Should boot stop on a board with several processors: `smp = 0` in
+`/boot/kernel.cfg` makes the kernel count them without waking them.
 
-### exide: miniature, puntatore, codice non modale; e tiscali.it si apre
+### exide: miniatures, pointer, non-modal code; and tiscali.it opens
 
-**da testare sul ferro, provato in QEMU** — in exide il pannello degli
-strumenti mostra la miniatura di ogni controllo e una frase che lo descrive;
-posato un controllo il mouse torna puntatore; il doppio clic porta il cursore
-dentro la funzione; la finestra del sorgente non e' piu' modale. `make netinst`
-ora pubblica gli header di sviluppo aggiornati (dopo `netupdate` exide
-generava codice che non compilava). EXBrowser apre i siti che in TLS 1.2
-hanno solo RSA con AES-CBC, come www.tiscali.it.
+**to be tested on hardware, tested in QEMU** — in exide the tools panel shows
+a miniature of each control and a sentence describing it; after a control is
+placed the mouse goes back to the pointer; a double click puts the cursor
+inside the function; the source window is no longer modal. `make netinst`
+now publishes up-to-date development headers (after `netupdate` exide
+generated code that did not compile). EXBrowser opens sites that in TLS 1.2
+only have RSA with AES-CBC, such as www.tiscali.it.
 
-### Quattro giochi: EXKlondike, EXSpider, EXMajong, EXGO
+### Four games: EXKlondike, EXSpider, EXMajong, EXGO
 
-**da testare sul ferro, provato in QEMU** — nel menu Avvio > Giochi: il
-solitario classico, lo Spider a uno, due o quattro semi, il solitario con le
-tessere del mahjong (ogni partita si puo' vincere) e il go su 9x9, 13x13 o
-19x19 contro il computer o in due. Carte, tessere e pietre sono disegnate dal
-programma, ciascuno ha la sua icona, e le scelte e le partite vinte si
-ricordano nel profilo.
+**to be tested on hardware, tested in QEMU** — in Start > Giochi: the classic
+solitaire, Spider with one, two or four suits, the mahjong solitaire (every
+deal can be won) and go on 9x9, 13x13 or 19x19 against the computer or
+between two people. Cards, tiles and stones are drawn by program, each game
+has its own icon, and choices and games won are kept in the profile.
 
-### L'API di ExWin e' in inglese, ed exide e' coerente
+### The ExWin API is in English, and exide is consistent
 
-**da testare sul ferro, provato in QEMU** — funzioni, messaggi, stili e tipi
-di ExWin hanno nomi inglesi (`ex_create`, `ex_set_text`, `EXM_CLOSE`,
-`ExWindow`...); i nomi italiani restano come alias, e i programmi gia'
-compilati funzionano. In exide il nome di un controllo e' la variabile da
-usare nel codice (`Button1`, non piu' `h_Button1`), gli eventi sono
-`Button1_Click()` e simili, e i progetti vecchi si aprono e si compilano
-ancora. Tabella dei nomi in `tools/exwin-inglese/mappa.txt`.
+**to be tested on hardware, tested in QEMU** — ExWin's functions, messages,
+styles and types have English names (`ex_create`, `ex_set_text`,
+`EXM_CLOSE`, `ExWindow`...); the Italian names remain as aliases, and
+programs already compiled keep working. In exide a control's name is the
+variable to use in code (`Button1`, no longer `h_Button1`), events are
+`Button1_Click()` and the like, and old projects still open and build.
+Name table in `tools/exwin-inglese/mappa.txt`.
 
-### Firefox in una finestra di ExWin
+### Firefox in an ExWin window
 
-**testato in QEMU** (`tools/exilla/prova-finestra.sh`) — la settima tappa di
-Exilla: Firefox si apre in una finestra vera del server grafico, con le schede,
-la barra degli indirizzi e la pagina, e riceve mouse e tastiera. Per arrivarci
-EX-OS ha avuto una `malloc` nuova (liste dei blocchi liberi per taglia: la
-vecchia scorreva tutto lo heap a ogni chiamata), la pila allineata per il
-codice SSE, e wserver 0.009 che accetta i pixel da ogni filo del programma.
-Immagine in `tools/exilla/tappa7-finestra.png`.
+**tested in QEMU** (`tools/exilla/prova-finestra.sh`) — the seventh stage of
+Exilla: Firefox opens in a real window of the graphics server, with tabs, the
+address bar and the page, and receives mouse and keyboard. To get there EX-OS
+got a new `malloc` (free lists by size: the old one walked the whole heap on
+every call), a stack aligned for SSE code, and wserver 0.009, which accepts
+pixels from any thread of the program. Picture in
+`tools/exilla/tappa7-finestra.png`.
 
-### Firefox disegna la sua prima pagina dentro EX-OS
+### Firefox draws its first page inside EX-OS
 
-**testato in QEMU** (`tools/exilla/prova-gecko.sh`) — la sesta tappa di
-Exilla, il porting di Firefox: `firefox --headless --screenshot` apre una
-pagina locale e salva cio' che ha disegnato (testo, grassetto, corsivo,
-riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
-`tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
-in corso.
+**tested in QEMU** (`tools/exilla/prova-gecko.sh`) — the sixth stage of
+Exilla, the port of Firefox: `firefox --headless --screenshot` opens a local
+page and saves what it drew (text, bold, italic, coloured boxes, a line
+written by JavaScript). Diary and picture in `tools/exilla/leggimi.md`. The
+seventh stage — a real window in ExWin — is under way.
 
-### Kernel 0.228–0.236: quello che Firefox ha trovato
+### Kernel 0.228–0.236: what Firefox found
 
-**testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
-- **0.236**: la memoria anonima (`mmap`, `sbrk`) si da' al primo accesso e non
-  alla richiesta: Firefox scende da 405 a 300 MB. Due corse fra i fili di uno
-  stesso programma, che a Firefox facevano sparire uno stack una volta ogni
-  qualche avvio: la tabella delle pagine nuova si installa a interrupt spenti,
-  e due fili creati nello stesso momento non ricevono piu' lo stesso posto.
-  Nella libc `time()` e `clock_gettime()` leggono l'orologio CMOS una volta e
-  poi contano dal timer (Firefox chiede l'ora 1,7 milioni di volte in un
-  quarto d'ora: erano 209 secondi di accessi alle porte).
-  **I tempi veri di Firefox**, misurati dal suo avvio e non dall'accensione
-  della macchina (QEMU con KVM, 2 GB): finestra dopo 4 secondi, pagina
-  iniziale dopo 8, una pagina locale 0,1 secondi dopo Invio. I «65 secondi»
-  scritti qui sotto contavano anche l'avvio di EX-OS.
-- **0.235**: ext2 legge e scrive i blocchi contigui di un file in un comando
-  solo, e la cache dei settori (da 64 KB a 1 MB) tiene i metadati invece dei
-  dati: la finestra di Firefox arriva 10 secondi prima (a 65 secondi
-  dall'accensione invece di 75, in QEMU).
-- **0.234**: `mmap` con `MAP_FIXED` sopra pagine gia' mappate le libera
-  prima (restavano perse): serve al JIT di JavaScript di Firefox.
-- **0.233**: `ftruncate` su un file aperto e 256 file aperti nel sistema
-  (erano 64): i database SQLite di Firefox (anche in modalita' WAL).
-- **0.232**: 128 file aperti per processo (erano 32): Firefox ne apre di piu'
-  e non trovava i caratteri.
-- **0.231**: 128 fili per processo (erano 64) e 192 processi nel sistema:
-  Firefox con una finestra vera ne usa piu' di 63.
-- **0.230**: i fili di un processo avevano ciascuno una *copia* del confine
-  dello heap, e `sbrk`/`mmap` di fili diversi si davano gli stessi indirizzi.
-  Ora lo spazio degli indirizzi e' del processo. Una tabella delle pagine nata
-  da una mappatura `PROT_NONE` non resta piu' del kernel, e `PROT_NONE` riserva
-  lo spazio senza occupare RAM finche' `mprotect` non lo apre.
-- **0.229**: la pila del filo principale si riserva per 8 MB.
-- **0.228**: `fstat` dice l'identita' vera del file (SQLite ne ha bisogno).
-- Nella `libc.a`: `malloc` con lucchetto e allineata a 16, `arc4random`
-  (ChaCha20), `shm_open` piu' completa (anche `SHM_ANON`), `mmap` di un file,
-  `getpid` uguale in tutti i fili.
+**tested in QEMU** — fixes that matter to every program with threads:
+- **0.236**: anonymous memory (`mmap`, `sbrk`) is given on first access, not
+  on request: Firefox goes from 405 to 300 MB. Two races between the threads
+  of one program, which made a stack disappear under Firefox once every few
+  starts: a new page table is installed with interrupts off, and two threads
+  created at the same moment no longer get the same slot. In the libc
+  `time()` and `clock_gettime()` read the CMOS clock once and then count from
+  the timer (Firefox asks the time 1.7 million times in a quarter of an hour:
+  that was 209 seconds of port accesses).
+  **Firefox's real times**, measured from its own start and not from power-on
+  (QEMU with KVM, 2 GB): window after 4 seconds, start page after 8, a local
+  page 0.1 seconds after Enter. The «65 seconds» written below also counted
+  the boot of EX-OS.
+- **0.235**: ext2 reads and writes the contiguous blocks of a file in one
+  command, and the sector cache (from 64 KB to 1 MB) keeps the metadata
+  instead of the data: Firefox's window arrives 10 seconds earlier (65
+  seconds after power-on instead of 75, in QEMU).
+- **0.234**: `mmap` with `MAP_FIXED` over pages already mapped frees them
+  first (they were lost): Firefox's JavaScript JIT needs it.
+- **0.233**: `ftruncate` on an open file and 256 open files in the system
+  (was 64): Firefox's SQLite databases (WAL mode too).
+- **0.232**: 128 open files per process (was 32): Firefox opens more and
+  could not find its fonts.
+- **0.231**: 128 threads per process (was 64) and 192 processes in the
+  system: Firefox with a real window uses more than 63.
+- **0.230**: the threads of a process each had a *copy* of the heap
+  boundary, and `sbrk`/`mmap` from different threads handed out the same
+  addresses. The address space now belongs to the process. A page table born
+  from a `PROT_NONE` mapping no longer stays the kernel's, and `PROT_NONE`
+  reserves address space without using RAM until `mprotect` opens it.
+- **0.229**: the main thread's stack is reserved for 8 MB.
+- **0.228**: `fstat` gives the file's real identity (SQLite needs it).
+- In `libc.a`: `malloc` with a lock and 16-byte alignment, `arc4random`
+  (ChaCha20), a fuller `shm_open` (with `SHM_ANON`), `mmap` of a file,
+  `getpid` the same in every thread.
 
-### Il floppy ha di nuovo spazio
+### The floppy has room again
 
-**testato in QEMU** — `help` e `kbprova` (e `/boot/help.txt`) stanno ora solo
-sul CD: il floppy era sceso a 512 byte liberi e ne ha 64 KB. Dal floppy `help`
-mostra l'aiuto di riserva della shell; col CD montato c'e' `/cdrom/bin/help`.
-I floppy di diagnostica si portano dentro `kbprova` da soli.
+**tested in QEMU** — `help` and `kbprova` (and `/boot/help.txt`) now live on
+the CD only: the floppy was down to 512 free bytes and now has 64 KB. From
+the floppy, `help` shows the shell's fallback help; with the CD mounted there
+is `/cdrom/bin/help`. The diagnostic floppies carry `kbprova` themselves.
 
-### Selezionare e copiare il testo in EXBrowser
+### Selecting and copying text in EXBrowser
 
-**testato in QEMU** (`tools/prova_selezione.sh`) — si trascina col mouse sul
-testo della pagina, la scelta si colora di blu, Ctrl+C la copia e in ExEditor
-o in exide Ctrl+V la incolla. Ctrl+A sceglie tutta la pagina. Per farlo le
-coordinate del mouse fuori dalla finestra (a sinistra o in alto) arrivano
-negative anche alle applicazioni: prima diventavano numeri enormi.
+**tested in QEMU** (`tools/prova_selezione.sh`) — drag the mouse over the
+page's text, the selection turns blue, Ctrl+C copies it and Ctrl+V pastes it
+in ExEditor or exide. Ctrl+A selects the whole page. For this, mouse
+coordinates outside the window (left or above) now reach applications as
+negative numbers: before, they became huge ones.
 
-### Il puntatore sopra i collegamenti
+### The pointer over links
 
-**testato in QEMU** (`tools/prova_passaggio.sh`) — passando sopra un
-collegamento la barra di stato mostra dove porta, e la pagina riceve
-`onmouseover` e `onmouseout`. Il server grafico manda il movimento senza tasti
-solo alle finestre che lo chiedono (`ex_mouse_passaggio`), come la maschera
-degli eventi di X. I gestori scritti negli attributi (`onclick="..."`) sono
-funzioni vere: `this` è l'elemento e `return false` annulla il seguito.
+**tested in QEMU** (`tools/prova_passaggio.sh`) — over a link the status bar
+shows where it leads, and the page gets `onmouseover` and `onmouseout`. The
+window server sends button-less movement only to windows that ask for it
+(`ex_mouse_passaggio`), like X's event mask. Handlers written in attributes
+(`onclick="..."`) are real functions: `this` is the element and
+`return false` cancels what follows.
 
-### EXBrowser e Wikipedia
+### EXBrowser and Wikipedia
 
-**testato in QEMU** (`tools/prova_wiki.sh`) — su una voce lunga i collegamenti
-dopo il 2048esimo si disegnavano ma non si aprivano: ora sono 8192. Le
-immagini si scaricano quando stanno per entrare nella finestra, non tutte
-all'inizio (una voce di Wikipedia: da 49 a 7 secondi di rete). Restano da
-fare `display:grid`, `:has()`, il contenuto generato (`::before`) e i tempi di
-script e impaginazione.
+**tested in QEMU** (`tools/prova_wiki.sh`) — on a long article, links after
+the 2048th were drawn but did not open: the limit is now 8192. Images are
+fetched when they are about to enter the window, not all at the start (one
+Wikipedia article: network time from 49 to 7 seconds). Still to do:
+`display:grid`, `:has()`, generated content (`::before`) and the script and
+layout times.
 
-### JPEG progressivi
+### Progressive JPEG
 
-**testato sull'host** (`tools/prova_jpg.sh`, contro ImageMagick) — gli sfondi e
-le foto del web salvati in JPEG progressivo ora si aprono, nel navigatore,
-nel visualizzatore di immagini e come sfondo della scrivania.
+**tested on the host** (`tools/prova_jpg.sh`, against ImageMagick) —
+wallpapers and web photos saved as progressive JPEG now open, in the browser,
+the image viewer and as the desktop wallpaper.
 
-### ExEditor, menu a comparsa, schede
+### ExEditor, pop-up menus, tabs
 
-**testato in QEMU** (`tools/prova_menu_chiudi.sh`) — l'editor si chiama
-ExEditor (`/exwin/bin/exeditor`). Il menu del tasto destro si chiude con Esc o
-con un clic fuori, e la scrivania non diventa più grigia mentre è aperto. La
-X delle schede è un pulsante rosso.
+**tested in QEMU** (`tools/prova_menu_chiudi.sh`) — the editor is now called
+ExEditor (`/exwin/bin/exeditor`). The right-click menu closes with Esc or a
+click outside, and the desktop no longer turns grey while it is open. The
+tabs' X is a red button.
 
-### ExEditor scrive in RTF
+### ExEditor writes RTF
 
-**testato in QEMU** (`tools/prova_rtf.sh`) e sull'host (`rtfprova`,
-`rtfvistaprova`, e con LibreOffice) — un file `.rtf` si apre in ExEditor con
-i suoi stili, e File > «Nuovo documento RTF» ne crea uno vuoto. Sopra il
-testo c'è una barra di formato: grassetto, corsivo e sottolineato (che
-mostrano lo stile sotto il cursore), carattere, corpo, colore e i quattro
-allineamenti; ci sono anche il menu Formato e Ctrl+B, Ctrl+I, Ctrl+U. Si
-salva in RTF, e WordPad o LibreOffice lo aprono. Non ci sono ancora
-l'annullamento e la ricerca nei documenti RTF.
+**tested in QEMU** (`tools/prova_rtf.sh`) and on the host (`rtfprova`,
+`rtfvistaprova`, and with LibreOffice) — an `.rtf` file opens in ExEditor
+with its styles, and File > "Nuovo documento RTF" makes an empty one. Above
+the text there is a format bar: bold, italic and underline (showing the
+style under the caret), typeface, size, colour and the four alignments;
+there are also the Formato menu and Ctrl+B, Ctrl+I, Ctrl+U. It saves RTF,
+which WordPad and LibreOffice open. Undo and find are not there yet in RTF
+documents.
 
 ### exide
 
-**testato in QEMU** (`tools/prova_exide_autoaggiorna.sh`) — barre di
-scorrimento nel sorgente, tutte le finestre ridimensionabili, e la voce
-«Autoaggiorna Proprieta» (Strumenti), salvata nella configurazione: uscire
-da una casella applica la proprietà senza premere Applica. Il clic nella
-casella ora mette il cursore dove si clicca (prima exide le toglieva il
-fuoco), e un modulo più largo della tela non copre più le proprietà.
+**tested in QEMU** (`tools/prova_exide_autoaggiorna.sh`) — scroll bars in
+the source, every window resizable, and an "Autoaggiorna Proprieta" item
+(Strumenti) saved in its configuration: leaving a box applies the property
+without pressing Applica. A click in the box now puts the caret where it
+lands (exide used to take the focus away), and a form wider than the canvas
+no longer covers the properties.
 
-### Le cartelle del profilo
+### Profile folders
 
-**testato in QEMU** (`tools/prova_desktop.sh`) — alla prima accensione della
-scrivania il profilo ha le cartelle Documents, Images e Media, ciascuna con
-un collegamento sulla scrivania; cancellarlo toglie solo il collegamento, e
-lo dice.
+**tested in QEMU** (`tools/prova_desktop.sh`) — the first time the desktop
+starts, the profile gets the Documents, Images and Media folders, each with
+a link on the desktop; deleting the link removes only the link, and says so.
 
 ### toolinst
 
-**da testare** — `toolinst` rende eseguibili i programmi che installa: prima
-solo root poteva lanciare `gcc` o `fbc`.
+**to be tested** — `toolinst` makes the programs it installs executable:
+before, only root could run `gcc` or `fbc`.
 
-### `dlopen` e `dlsym`
+### `dlopen` and `dlsym`
 
-**testato in QEMU** (`tools/prova_dl.sh`, 11 su 11) — un programma collegato
-con la `libc.a` puo' aprire a richiesta una libreria di EX-OS per nome
-(`dlopen("exzip.so", ...)`), trovarne le funzioni con `dlsym` e chiamarle; se
-la libreria non c'e', `dlerror` dice perche'. Un `.so` ELF qualunque invece
-non si carica: le librerie di EX-OS hanno una tabella loro, e Firefox si
-collega statico. Con questo la prima tappa di Exilla (il sistema) e' fatta.
+**tested in QEMU** (`tools/prova_dl.sh`, 11 out of 11) - a program linked
+with `libc.a` can open an EX-OS library by name on demand
+(`dlopen("exzip.so", ...)`), find its functions with `dlsym` and call them;
+if the library is not there, `dlerror` says why. An arbitrary ELF `.so` is
+not loaded: EX-OS libraries have a table of their own, and Firefox links
+statically. With this the first stage of Exilla (the system) is done.
 
-### La memoria condivisa di POSIX
+### POSIX shared memory
 
-**testato in QEMU** (`tools/prova_shm.sh`, 16 su 16) — nella `libc.a` ci
-sono `shm_open`, `ftruncate` e `mmap` su quel descrittore, sopra le zone di
-memoria condivisa di EX-OS: due programmi aprono lo stesso nome e vedono le
-stesse pagine, anche con i nomi lunghi che usa Mozilla. Una zona non cresce
-dopo la nascita e `O_EXCL` non fa niente. Serve a Firefox (Exilla).
+**tested in QEMU** (`tools/prova_shm.sh`, 16 out of 16) - `libc.a` has
+`shm_open`, `ftruncate` and `mmap` on that descriptor, on top of the EX-OS
+shared memory zones: two programs open the same name and see the same
+pages, even with the long names Mozilla uses. A zone does not grow after it
+is born and `O_EXCL` does nothing. Firefox (Exilla) needs it.
 
-### La grafica non sfarfalla piu'
+### The graphics no longer flicker
 
-**testato in QEMU, da giudicare sul ferro** — lo sfarfallio si vedeva «in
-base al carico», peggio nei programmi grossi come EXBrowser. Le cause erano
-tre. Il server leggeva una finestra mentre il programma ci stava ancora
-disegnando: ora ogni finestra disegna in un buffer suo e al server arriva
-solo il rettangolo finito (il doppio buffer di Windows, il *commit* di
-Wayland). Il puntatore lampeggiava: il server compone in una copia dello
-schermo in RAM e poi la copia sullo schermo in un colpo (`exwin -noombra`
-per tornare indietro). E ogni messaggio gestito ridisegnava la finestra
-intera: la scrivania si ridipingeva ogni due secondi, EXBrowser rifaceva la
-pagina a ogni scatto della sveglia e a ogni movimento del mouse. Un
-programma ora puo' dire «non e' cambiato niente» (`EX_NON_RIDISEGNARE`).
-A scrivania ferma il server compone un fotogramma al minuto, prima due o
-tre al secondo; `exwin -conta` dice anche chi chiede gli aggiornamenti.
+**tested in QEMU, to be judged on real hardware** - the flicker came "with
+the load", worst in big programs like EXBrowser. There were three causes.
+The server read a window while the program was still drawing in it: now
+every window draws into a buffer of its own and the server only gets the
+finished rectangle (Windows' double buffering, Wayland's *commit*). The
+pointer blinked: the server composes into a copy of the screen in RAM and
+then copies it to the screen in one go (`exwin -noombra` goes back). And
+every handled message redrew the whole window: the desktop repainted every
+two seconds, EXBrowser redrew the page at every timer tick and every mouse
+move. A program can now say "nothing changed" (`EX_NON_RIDISEGNARE`). With
+the desktop idle the server composes one frame a minute, where it did two
+or three a second; `exwin -conta` also says who asks for updates.
 
-### I segnali arrivano davvero, e c'e' `mprotect`
+### Signals are really delivered, and there is `mprotect`
 
-**testato in QEMU** (`tools/prova_segnali.sh`, 23 su 23) — dal kernel 0.227
-un programma collegato con la `libc.a` puo' installare un gestore con
-`sigaction`: un puntatore sbagliato, un'istruzione non valida o una
-divisione per zero chiamano il gestore invece di chiudere il programma, con
-l'indirizzo e i registri, anche su una pila alternativa (`sigaltstack`); il
-gestore puo' cambiare i registri e il programma riparte da li'. `raise`,
-`kill` e `pthread_kill` arrivano al filo giusto, e ci sono `sigprocmask`,
-`sigsetjmp` e `siglongjmp`. `mprotect` rende una pagina di sola lettura o
-intoccabile. Serve a Firefox (Exilla). Nella `libc.so` del floppy non c'e'
-posto: li' `signal` e `raise` restano quelli di prima.
+**tested in QEMU** (`tools/prova_segnali.sh`, 23 out of 23) - since kernel
+0.227 a program linked with `libc.a` can install a handler with
+`sigaction`: a bad pointer, an invalid instruction or a division by zero
+call the handler instead of closing the program, with the address and the
+registers, on an alternate stack too (`sigaltstack`); the handler may change
+the registers and the program resumes from them. `raise`, `kill` and
+`pthread_kill` reach the right thread, and there are `sigprocmask`,
+`sigsetjmp` and `siglongjmp`. `mprotect` makes a page read-only or
+untouchable. Firefox (Exilla) needs it. The floppy's `libc.so` has no room:
+there `signal` and `raise` stay as they were.
 
-### I socket BSD
+### BSD sockets
 
-**testato in QEMU** (in C 23 su 23, in Rust 9 su 9) — nella `libc.a` ci sono
-`socket`, `connect`, `bind`, `listen`, `accept`, `send`, `recv`, `poll` sui
-socket e `getaddrinfo` con il DNS, sopra lo stack IP di EX-OS (kernel 0.226).
-Solo IPv4. Servono al software portato: Rust (`std::net`) e Firefox.
+**tested in QEMU** (in C 23 out of 23, in Rust 9 out of 9) - `libc.a` has
+`socket`, `connect`, `bind`, `listen`, `accept`, `send`, `recv`, `poll` on
+sockets and `getaddrinfo` with DNS, on top of the EX-OS IP stack (kernel
+0.226). IPv4 only. They are for ported software: Rust (`std::net`) and
+Firefox.
 
-### La `std` di Rust gira dentro EX-OS
+### Rust's `std` runs inside EX-OS
 
-**testato in QEMU** (`tools/rust-exos/prova-std.sh`, 29 su 29) — un
-programma Rust con la libreria standard vera, compilato da Linux, usa file,
-cartelle, tempo, fili, `Mutex`, `Condvar` e canali dentro EX-OS (kernel
-0.225). E' la seconda tappa di Exilla, il porting di Firefox.
+**tested in QEMU** (`tools/rust-exos/prova-std.sh`, 29 out of 29) - a Rust
+program with the real standard library, compiled on Linux, uses files,
+directories, time, threads, `Mutex`, `Condvar` and channels inside EX-OS
+(kernel 0.225). It is the second stage of Exilla, the Firefox port.
 
-### Il navigatore parte anche a 32 MB
+### The browser starts at 32 MB too
 
-**testato in QEMU** — a 32 MB EXBrowser ogni tanto non partiva («LIB:
-pagina non allocata»). Non era la memoria: due programmi che chiedevano
-insieme la stessa libreria condivisa si rubavano il posto nel caricatore
-del kernel, mentre il primo aspettava il disco. Il kernel 0.224 prenota il
-posto prima di leggere, e chi arriva dopo aspetta.
+**tested in QEMU** - at 32 MB EXBrowser sometimes did not start ("LIB:
+pagina non allocata"). It was not memory: two programs asking for the same
+shared library at the same time stole each other's slot in the kernel's
+loader while the first waited for the disk. Kernel 0.224 reserves the slot
+before reading, and whoever comes later waits.
 
-### ExJs ha le espressioni regolari
+### ExJs has regular expressions
 
-**testato in QEMU e sull'host** — il motore ExJs legge `/.../flag` e ha
-`RegExp`: classi, gruppi (anche con nome), alternanza, quantificatori avidi
-e pigri, riferimenti all'indietro, `(?=` e `(?!`, i flag g i m s y; e con
-loro `exec`, `test`, `replace` e `replaceAll` (con `$1`, `$<nome>` o una
-funzione), `split`, `match`, `matchAll`, `search`. Un'espressione che
-girerebbe per sempre si ferma con un errore invece di bloccare la pagina.
-Con le regexp il preludio del navigatore gira anche con ExJs. Manca il
-guardare indietro (`make prova-exjs`, 492 prove).
+**tested in QEMU and on the host** - the ExJs engine reads `/.../flags` and
+has `RegExp`: classes, groups (named too), alternation, greedy and lazy
+quantifiers, backreferences, `(?=` and `(?!`, the flags g i m s y; and with
+them `exec`, `test`, `replace` and `replaceAll` (with `$1`, `$<name>` or a
+function), `split`, `match`, `matchAll`, `search`. An expression that would
+run for ever stops with an error instead of freezing the page. With regular
+expressions the browser's prelude runs under ExJs too. Lookbehind is missing
+(`make prova-exjs`, 492 tests).
 
-### Le schede: nell'editor, in exide e nel navigatore
+### Tabs: in the editor, in exide and in the browser
 
-**testato in QEMU** — l'editor apre più file, uno per scheda (`edit a.txt
-b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab gira fra le schede, Ctrl+W chiude quella
-scelta e chiede se è modificata. In exide la finestra dei file del
-progetto tiene più sorgenti in schede. EXBrowser apre i collegamenti in una
-scheda nuova (`target="_blank"`, Ctrl+clic, Ctrl+T) o in una finestra nuova
-(Shift+clic, Ctrl+N, il tasto destro su un collegamento); le schede in
-sottofondo tengono l'indirizzo e si ricaricano quando si torna. La barra
-delle schede è un controllo del toolkit, a disposizione di ogni programma
-(`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+**tested in QEMU** - the editor opens several files, one per tab (`edit
+a.txt b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab moves between tabs, Ctrl+W closes
+the chosen one and asks if it was modified. In exide the project's file
+window keeps several sources in tabs. EXBrowser opens links in a new tab
+(`target="_blank"`, Ctrl+click, Ctrl+T) or in a new window (Shift+click,
+Ctrl+N, the right button on a link); background tabs keep their address and
+reload when you come back. The tab bar is a toolkit control, available to
+every program (`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
 `prova_nav_schede.sh`, `prova_nav_finestra.sh`).
 
-### ExJs legge il JavaScript di oggi
+### ExJs reads today's JavaScript
 
-**testato in QEMU e sull'host** — il motore ExJs (QuickJS resta il
-predefinito) legge `let` e `const`, le frecce, le classi con `extends` e
-`super`, i modelli `` `${}` ``, la destrutturazione, lo spread, `?.`, `??`,
-`**`, `for..of` e le etichette, e ha `Object`, `Array`, `Map`, `Set`,
-`call`/`apply`/`bind`, i metodi nuovi di vettori e stringhe, `toFixed` e
-le funzioni di `Math`. I numeri si scrivono come in ogni altro motore
-(`0.1 + 0.2` è `0.30000000000000004`, `1e21` è `1e+21`) e `for..in` dà le
-chiavi nell'ordine in cui sono nate. Mancano ancora le espressioni regolari
-e le Promise, e gli oggetti non si recuperano (`make prova-exjs`, 448 prove;
+**tested in QEMU and on the host** - the ExJs engine (QuickJS stays the
+default) reads `let` and `const`, arrows, classes with `extends` and
+`super`, `` `${}` `` templates, destructuring, spread, `?.`, `??`, `**`,
+`for..of` and labels, and has `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, the newer array and string methods, `toFixed` and the
+`Math` functions. Numbers print as in every other engine (`0.1 + 0.2` is
+`0.30000000000000004`, `1e21` is `1e+21`) and `for..in` gives keys in
+creation order. Regular expressions and Promises are still missing, and
+objects are not reclaimed (`make prova-exjs`, 448 tests;
 `tools/prova_es2015.sh`).
 
-### ExJs: `throw`, `try`, `switch` e i prototipi
+### ExJs: `throw`, `try`, `switch` and prototypes
 
-**testato sull'host** — il motore ExJs (QuickJS resta il predefinito) ha
-`throw`, `try`/`catch`/`finally` e `switch`; `new F()` eredita i metodi di
-`F.prototype`, e c'è `instanceof`. Ci sono `Error`, `TypeError`,
-`RangeError` e gli altri, e gli errori del motore stesso si prendono con un
-`catch`. Uno script fermato perché gira da troppo invece no. Leggere una
-proprietà di `undefined` rende ancora `undefined` invece di lanciare
-(`make prova-exjs`, 342 prove).
+**tested on the host** - the ExJs engine (QuickJS stays the default) has
+`throw`, `try`/`catch`/`finally` and `switch`; `new F()` inherits the
+methods of `F.prototype`, and `instanceof` works. `Error`, `TypeError`,
+`RangeError` and the others exist, and the engine's own errors can be caught.
+A script stopped for running too long cannot. Reading a property of
+`undefined` still gives `undefined` instead of throwing (`make prova-exjs`,
+342 tests).
 
-### Il tasto destro, il trascinare e le associazioni
+### The right button, dragging, and file associations
 
-**testato in QEMU** — il tasto destro apre un menu. Sulla scrivania: Nuova
-cartella, Nuovo file, Incolla, e su un'icona anche Apri, Rinomina, Copia,
-Taglia, Cancella. Nel file manager le stesse voci; lì si possono anche
-scegliere più righe (Ctrl+clic, Shift+clic) e trascinarle su una cartella a
-sinistra: una finestra chiede se copiarle, spostarle o lasciar perdere. Un
-file che non è un programma si apre col programma che gli spetta
-(`/exwin/lib/tipi.txt`): dal file manager, dalla scrivania e dalla shell, dove
-`nota.txt` apre l'editor (`tools/prova_tasto_destro.sh`; Ctrl e Shift col
-mouse in QEMU non si possono provare).
+**tested in QEMU** - the right button opens a menu. On the desktop: New
+folder, New file, Paste, and on an icon also Open, Rename, Copy, Cut, Delete.
+The file manager has the same items; there several rows can be chosen
+(Ctrl+click, Shift+click) and dragged onto a folder on the left: a window asks
+whether to copy them, move them or leave them. A file that is not a program
+opens with the program it belongs to (`/exwin/lib/tipi.txt`): from the file
+manager, the desktop and the shell, where `nota.txt` opens the editor
+(`tools/prova_tasto_destro.sh`; Ctrl and Shift with the mouse cannot be tested
+in QEMU).
 
-### Pennello scrive
+### Pennello writes
 
-**testato in QEMU** — Pennello ha lo strumento Testo (tasto T): un clic dove
-comincia la scritta, la si batte, ed entra nell'immagine col colore scelto; lo
-spessore ne decide la grandezza (12, 16, 24 o 36 pixel). Si annulla come ogni
-altro tratto (`tools/prova_pennello_testo.sh`).
+**tested in QEMU** — Pennello has a Text tool (key T): click where the text
+starts, type it, and it goes into the picture in the chosen colour; the width
+buttons choose its size (12, 16, 24 or 36 pixels). It is undone like any
+other stroke (`tools/prova_pennello_testo.sh`).
 
-### Pennello, il programma di disegno
+### Pennello, the paint program
 
-**testato in QEMU** — `/exwin/bin/pennello [file]`, nel menu Avvio: matita,
-pennello, gomma, spruzzo, riempimento, contagocce, linea, rettangolo ed
-ellisse (vuoti o pieni), quattro spessori, zoom da 1x a 8x, specchio,
-rotazione, inversione dei colori, cambio di dimensioni, **annulla e ripeti**.
-**Apre** BMP, PNG, JPG, GIF e ICO; **salva** in PNG e BMP — un JPG aperto e
-salvato lo dice prima e propone lo stesso nome in `.png`. Salva prima in una
-copia accanto e poi rinomina: un salvataggio fallito lascia il file vecchio.
+**tested in QEMU** — `/exwin/bin/pennello [file]`, in the Start menu: pencil,
+brush, eraser, spray, fill, colour picker, line, rectangle and ellipse (empty
+or full), four widths, zoom from 1x to 8x, mirror, rotate, invert colours,
+resize, **undo and redo**. It **opens** BMP, PNG, JPG, GIF and ICO and
+**saves** PNG and BMP — a JPG opened and saved says so first and offers the
+same name as `.png`. It writes a copy next to the file first and then
+renames it: a failed save leaves the old file in place.
 
-L'annullamento non fotografa l'immagine a ogni tratto: ogni operazione lascia
-in un deposito preso all'avvio (un quarto della memoria libera) solo il **rettangolo** che ha toccato, e annullare lo
-**scambia** con l'immagine — così lo stesso record è anche il «ripeti».
-I codificatori PNG e BMP sono nuovi (`lib/eximg/scrivi.c`), e eximg legge
-anche il BMP in tutte le sue forme (`lib/eximg/bmp.c`). Provato sull'host
-contro ImageMagick (`tools/prova_scrivi.sh`) e in QEMU disegnando col mouse
-(`tools/prova_pennello.sh`). L'icona è provvisoria.
+Undo does not photograph the picture at every stroke: each operation leaves
+only the **rectangle** it touched in a pool taken at start (a quarter of the free memory), and undoing **swaps** it
+with the picture — so the same record is also the redo. The PNG and BMP
+encoders are new (`lib/eximg/scrivi.c`), and eximg now reads BMP in all its
+forms (`lib/eximg/bmp.c`). Tested on the host against ImageMagick
+(`tools/prova_scrivi.sh`) and in QEMU by drawing with the mouse
+(`tools/prova_pennello.sh`). The icon is provisional.
 
-### EXBrowser dispone la pagina
+### EXBrowser lays out the page
 
-**testato in QEMU** — EXBrowser capisce il CSS che dispone la pagina e non la
-mette più tutta in colonna: `width`, `max-width` e `min-width` (anche in
-percentuale), `margin: auto` per centrare, `float` con il testo che scorre
-accanto, `display: inline-block` e `display: flex` in riga (con `flex-grow`,
-`flex-wrap`, `gap`, `justify-content` e `align-items`), `clear`,
-`position: relative`, e i testi nascosti fuori schermo che non si vedono più. Su
-Wikipedia il riquadro informativo sta a destra col testo accanto, e le voci
-lunghe non si fermano più a 1 MB: la pagina principale ne tiene 3. Corretto
-anche un difetto vecchio: il testo bianco usciva nero
-(`make prova-excss`, `tools/prova_disposizione.sh`).
+**tested in QEMU** — EXBrowser understands the CSS that lays out a page
+instead of putting everything in one column: `width`, `max-width` and
+`min-width` (percentages too), `margin: auto` to centre, `float` with text
+flowing beside it, `display: inline-block` and `display: flex` in a row (with
+`flex-grow`, `flex-wrap`, `gap`, `justify-content` and `align-items`),
+`clear`, `position: relative`, and off-screen hidden text no longer shows. On
+Wikipedia the infobox sits on the right with the text beside it, and long
+articles no longer stop at 1 MB: the main page holds 3. An old bug is
+fixed too: white text came out black (`make prova-excss`,
+`tools/prova_disposizione.sh`).
 
-### La ricerca di Wikipedia
+### Searching Wikipedia
 
-**testato in QEMU** — la casella di ricerca di Wikipedia si vede e si usa:
-«roma» + Invio apre la voce, «canale grande» + il pulsante Ricerca apre la
-pagina dei risultati. Il difetto era nel trasporto: gli indirizzi con un
-percorso oltre i 512 caratteri venivano troncati, e il foglio di stile di
-Wikipedia arrivava sbagliato. Adesso il tetto è 1024, e un indirizzo più lungo
-dà errore invece di chiedere un'altra cosa.
+**tested in QEMU** — Wikipedia's search box is shown and works: "roma" +
+Enter opens the article, "canale grande" + the Search button opens the
+results page. The bug was in the transport: URLs with a path over 512
+characters were cut, and Wikipedia's stylesheet arrived wrong. The limit is
+now 1024, and a longer URL gives an error instead of asking for something
+else.
 
-### Calctor da ufficio
+### Calctor as an adding machine
 
-**testato in QEMU** — con la casella Cronologia accesa Calctor diventa una
-calcolatrice da ufficio: il tasto = sparisce, + e - diventano due tasti alti e
-ognuno somma (o sottrae) al totale mostrandolo subito. `12 * 3 +` chiude il
-prodotto e somma 36; `+` di nuovo scrive il subtotale sul nastro.
+**tested in QEMU** — with the Cronologia box on, Calctor becomes an office
+adding machine: the = key goes away, + and - become two tall keys, and each
+adds (or subtracts) to the total and shows it at once. `12 * 3 +` finishes
+the product and adds 36; `+` again prints the subtotal on the tape.
 
-### La rotella del mouse
+### The mouse wheel
 
-**testato in QEMU** — la rotella scorre la pagina in EXBrowser e, in ogni
-programma di ExWin, le liste, le aree di testo e le barre di scorrimento che
-stanno sotto il puntatore: tre righe per scatto. Scorre quello che si guarda,
-non la finestra che ha il fuoco. Per ora vale per il mouse PS/2 (anche
-quello emulato da QEMU e da molti portatili); i mouse USB e seriali la
-rotella non la mandano ancora (`tools/prova_rotella.sh`).
+**tested in QEMU** — the wheel scrolls the page in EXBrowser and, in every
+ExWin program, the lists, text areas and scroll bars under the pointer: three
+lines per notch. It scrolls what you are looking at, not the window with the
+focus. For now it works with PS/2 mice (including the one QEMU emulates and
+many laptops); USB and serial mice do not send the wheel yet
+(`tools/prova_rotella.sh`).
 
-### Il mouse veloce non ferma più la scrivania
+### A fast mouse no longer freezes the desktop
 
-**testato in QEMU** — muovere il mouse in fretta mentre si disegnava in
-Pennello bloccava tutto ExWin. Erano due difetti: in Pennello il tracciatore
-di linee non arrivava mai in fondo su certi segmenti, e il server grafico,
-per consegnare un movimento a un programma che non legge, aspettava fino a
-dieci secondi. Adesso i movimenti del mouse si consegnano **senza aspettare**
-(kernel 0.223, `IPC_SENZA_ATTESA`): un programma appeso rallenta solo se
-stesso. Clic e tasti continuano ad arrivare tutti
+**tested in QEMU** — moving the mouse quickly while drawing in Pennello froze
+all of ExWin. Two bugs: Pennello's line routine never reached the end of some
+segments, and the window server, delivering a move to a program that was not
+reading, waited up to ten seconds. Mouse moves are now delivered **without
+waiting** (kernel 0.223, `IPC_SENZA_ATTESA`): a hung program only slows
+itself down. Clicks and keys still all arrive
 (`tools/prova_pennello_veloce.sh`, `tools/prova_linea.sh`).
 
-### gfedit: F5 e l'INPUT del BASIC
+### gfedit: F5 and BASIC INPUT
 
-**testato in QEMU** — un programma BASIC lanciato con F5 da gfedit ora mostra
-il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
-gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
+**tested in QEMU** — a BASIC program started with F5 from gfedit now shows
+the `INPUT` prompt and reads the keyboard: gfedit hands it the console while
+it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
 
-### ExJs: `Date` e `valueOf`
+### ExJs: `Date` and `valueOf`
 
-**testato in QEMU** — col motore ExJs c'è `Date`: `new Date()`, `Date.now()`,
-`Date.UTC`, `Date.parse`, i `get`/`set`, `toISOString`, `toString`,
-`toLocaleString` e `JSON.stringify` di una data. È tutta in UTC, perché EX-OS
-non ha fusi orari; l'ora la dà il navigatore. Gli oggetti nei conti passano
-da `valueOf`: la differenza fra due date è un numero, come misurano i tempi le
-pagine. Provato sull'host (`make prova-exjs`, 307 prove) e in EXBrowser coi
-due motori (`tools/prova_date.sh`).
+**tested in QEMU** — the ExJs engine has `Date`: `new Date()`, `Date.now()`,
+`Date.UTC`, `Date.parse`, the getters and setters, `toISOString`,
+`toString`, `toLocaleString` and `JSON.stringify` of a date. It is all UTC,
+since EX-OS has no time zones; the browser supplies the time. Objects in
+arithmetic go through `valueOf`: the difference between two dates is a
+number, which is how pages measure time. Tested on the host
+(`make prova-exjs`, 307 checks) and in EXBrowser with both engines
+(`tools/prova_date.sh`).
 
-### ExJs: `toString` implicito e `join` senza tetto
+### ExJs: implicit `toString` and `join` without a limit
 
-**testato sull'host** — col motore ExJs (QuickJS resta il predefinito)
-`String(oggetto)`, `'x' + oggetto` e `join` chiamano il `toString`
-dell'oggetto: `String(location)` è l'indirizzo. `join` non si ferma più a 511
-caratteri, e le prove scritte prima hanno trovato e fatto correggere tre
-difetti in più (vettori annidati, separatori lunghi, un vettore che contiene
-se stesso) (`make prova-exjs`, `make prova-exdom`).
+**tested on the host** — with the ExJs engine (QuickJS stays the default)
+`String(object)`, `'x' + object` and `join` call the object's `toString`:
+`String(location)` is the address. `join` no longer stops at 511 characters,
+and the tests written first found three more bugs that were fixed (nested
+arrays, long separators, an array containing itself) (`make prova-exjs`,
+`make prova-exdom`).
 
-### I moduli verso pagine locali, e il pulsante immagine
+### Forms to local pages, and the image button
 
-**testato in QEMU** — un indirizzo `file:` con una domanda (`pagina.html?x=1`)
-apre il file giusto invece di cercarne uno col punto interrogativo nel nome:
-un modulo GET verso una pagina locale adesso arriva, e la pagina legge
-`location.search`. E `<input type="image">` manda il punto cliccato invece di
-zero (`tools/prova_modulo_immagine.sh`).
+**tested in QEMU** — a `file:` address with a query (`page.html?x=1`) opens
+the right file instead of looking for one with the question mark in its name:
+a GET form sent to a local page now arrives, and the page reads
+`location.search`. And `<input type="image">` sends the clicked point instead
+of zero (`tools/prova_modulo_immagine.sh`).
 
-### Gli `onclick=` girano anche senza `<script>`
+### `onclick=` runs even without a `<script>`
 
-**testato in QEMU** — correzione di un difetto: il motore JavaScript si apriva
-solo davanti a uno `<script>`, quindi una pagina con i soli gestori negli
-attributi (`onclick=`, `onchange=`, `onload=`) non ne eseguiva nessuno
-(`tools/prova_onclick.sh`).
+**tested in QEMU** — a bug fix: the JavaScript engine was opened only for a
+`<script>`, so a page with nothing but inline handlers (`onclick=`,
+`onchange=`, `onload=`) ran none of them (`tools/prova_onclick.sh`).
 
-### Le GIF animate si muovono
+### Animated GIFs move
 
-**testato in QEMU** — in EXBrowser e nel visualizzatore Immagini. eximg compone
-i fotogrammi — posizione, trasparenza, smaltimento, il giro che ricomincia — e
-dice quanto deve restare ognuno; l'orologio resta di chi mostra l'immagine.
-Provato contro ImageMagick fotogramma per fotogramma (`tools/prova_gif.sh`) e
-fotografato mentre cambia (`tools/prova_gif_anima.sh`). La sveglia di ExWin fa
-al più cinque giri al secondo: una GIF molto veloce va più piano.
+**tested in QEMU** — in EXBrowser and in the Immagini viewer. eximg composes
+the frames — position, transparency, disposal, the loop starting again — and
+says how long each one stays; the clock belongs to whoever shows the picture.
+Tested against ImageMagick frame by frame (`tools/prova_gif.sh`) and
+photographed while it changes (`tools/prova_gif_anima.sh`). ExWin's wake-up
+runs at most five times a second: a very fast GIF runs slower.
 
-### Il clic nelle caselle delle pagine mette il cursore lì
+### A click in a page's text box puts the caret there
 
-**testato in QEMU** — prima un clic dentro una casella o un'area di una pagina
-le dava il fuoco e lasciava il cursore in fondo; adesso lo mette fra le due
-lettere più vicine al punto cliccato (`tools/prova_cursore.sh`).
+**tested in QEMU** — a click inside a page's text box or text area used to
+give it the focus and leave the caret at the end; now it goes between the two
+letters nearest to the click (`tools/prova_cursore.sh`).
 
-### EXBrowser capisce em, rem e %
+### EXBrowser understands em, rem and %
 
-**testato in QEMU** — `font-size: 1.5em`, `margin: 2em`, `padding: 0.5rem`,
-`font-size: 120%`, e le parole `small`, `large`, `larger`: prima le misure
-erano solo in pixel e tutto il resto si buttava. Una misura relativa si
-risolve alla fine della cascata — il corpo sul padre, il resto sul corpo
-dell'elemento — e la prova la misura in pixel sullo schermo
-(`tools/prova_bordi.sh`, `make prova-excss`). La % dei margini si prende
-ancora sulla larghezza della finestra.
+**tested in QEMU** — `font-size: 1.5em`, `margin: 2em`, `padding: 0.5rem`,
+`font-size: 120%`, and the keywords `small`, `large`, `larger`: until now
+lengths were pixels only and everything else was dropped. A relative length
+is resolved at the end of the cascade — font size against the parent, the
+rest against the element's own size — and the test measures it in pixels on
+screen (`tools/prova_bordi.sh`, `make prova-excss`). Percent margins are
+still taken on the window width.
 
-### EXBrowser disegna i bordi del CSS, e il padding
+### EXBrowser draws CSS borders, and padding
 
-**testato in QEMU** — `border`, `border-top` e gli altri lati, `border-width`,
-`border-style`, `border-color`, `padding` e la scorciatoia `margin` con da uno
-a quattro valori: i blocchi si disegnano col loro riquadro e il contenuto
-rientra. Prima i bordi c'erano solo per le tabelle con `border=`, e nessuna
-scorciatoia del CSS si leggeva — nemmeno `margin: 0 auto`. Restano i bordi
-degli elementi in linea e quelli CSS delle tabelle (`tools/prova_bordi.sh`,
-`make prova-excss`).
+**tested in QEMU** — `border`, `border-top` and the other sides,
+`border-width`, `border-style`, `border-color`, `padding` and the `margin`
+shorthand with one to four values: blocks are drawn with their box and the
+content is inset. Before, borders existed only for tables with `border=`, and
+no CSS shorthand was read at all — not even `margin: 0 auto`. Borders of
+inline elements and CSS borders of tables are still missing
+(`tools/prova_bordi.sh`, `make prova-excss`).
 
-### Immagini, il visualizzatore, e le PNG di ogni tipo
+### Immagini, the picture viewer, and PNGs of every kind
 
-**testato in QEMU** — `/exwin/bin/immagini [file]`, nel menu Avvio: adatta
-alla finestra le immagini grandi, «1» per il 100%, + e - dal 10% all'800%, e
-Pag giù / Pag su per passare alle altre immagini della cartella. Dal file
-manager ci si arriva col doppio clic: la regola sta in `/exwin/lib/tipi.txt`,
-**«queste estensioni si aprono con quel programma»**, un file del sistema e
-non del programma. Strada facendo il lettore PNG di eximg ha imparato **tutte
-le profondità (1, 2, 4, 16 bit) e l'interlacciamento Adam7**: prima leggeva
-solo gli 8 bit, e una PNG di un colore solo non si apriva. Provato contro
-ImageMagick su 92 file (`tools/prova_png.sh`) e in QEMU
-(`tools/prova_immagini.sh`).
+**tested in QEMU** — `/exwin/bin/immagini [file]`, in the Start menu: fits
+large pictures to the window, "1" for 100%, + and - from 10% to 800%, and
+PgDn / PgUp to move to the other pictures of the directory. From the file
+manager a double click gets there: the rule is in `/exwin/lib/tipi.txt`,
+**"these extensions open with that program"**, a file of the system and not
+of the program. Along the way eximg's PNG reader learned **every bit depth
+(1, 2, 4, 16) and Adam7 interlacing**: it used to read 8 bits only, and a
+one-colour PNG did not open. Tested against ImageMagick on 92 files
+(`tools/prova_png.sh`) and in QEMU (`tools/prova_immagini.sh`).
 
-### Ctrl+C sulla console di testo chiede, e poi ferma
+### Ctrl+C on the text console asks, then stops
 
-**testato in QEMU** — in modo riga, Ctrl+C chiede `[Ctrl+C] Fermo "textline"
-(PID 20)? s/n` e ferma il programma solo con «s». Al prompt svuota la riga e
-il prompt torna; un programma in modo crudo (gfedit) lo riceve come tasto.
-Chi fermare lo diceva già la shell: il kernel (0.221) adesso lo tiene per
-ogni console, e il driver della tastiera lo legge con `SYS_CONSOLE_CTRLC`
-(216). Con Ctrl+Alt+Canc, è il compito dei «tasti che fermano le cose»
-(`tools/prova_ctrlc.sh`, `tools/prova_tasti_sistema.sh`).
+**tested in QEMU** — in line mode Ctrl+C asks `[Ctrl+C] Fermo "textline"
+(PID 20)? s/n` and stops the program only on "s". At the prompt it empties
+the line and the prompt comes back; a program in raw mode (gfedit) gets it as
+a key. Who to stop was already said by the shell: the kernel (0.221) now keeps
+it per console, and the keyboard driver reads it with `SYS_CONSOLE_CTRLC`
+(216). Together with Ctrl+Alt+Del this completes the "keys that stop things"
+task (`tools/prova_ctrlc.sh`, `tools/prova_tasti_sistema.sh`).
 
-### La ricerca su Wikipedia, e le regole @media
+### Searching Wikipedia, and @media rules
 
-**testato in QEMU, sulla rete vera** — «Cerca non fa niente» non era la
-ricerca: era la tabella TCP di `ip.drv`, piena dopo una pagina di Wikipedia,
-con posti morti che non tornavano liberi. Adesso si liberano. EXBrowser valuta
-le regole `@media`, `@supports` e `@layer` invece di saltarle (erano 578 su
-964 nel foglio di Wikipedia), e con loro `visibility`, `:checked` e le
-`<label>`. La pagina resta in colonna: mancano `width`, `float`, `padding` e
-`flex`.
+**tested in QEMU, on the real network** — "Search does nothing" was not the
+search: it was the TCP table of `ip.drv`, full after one Wikipedia page, with
+dead slots that never came free. Now they do. EXBrowser evaluates `@media`,
+`@supports` and `@layer` rules instead of skipping them (578 out of 964 in
+Wikipedia's sheet), and with them `visibility`, `:checked` and `<label>`. The
+page is still laid out in one column: `width`, `float`, `padding` and `flex`
+are missing.
 
-### Calctor, la calcolatrice
+### Calctor, the calculator
 
-**testato in QEMU** — `/exwin/bin/calctor`: normale, scientifica e
-programmatore (32 bit in base 2, 8, 10 e 16), un display di quattro righe e
-la cronologia in una finestra sua, da salvare come testo. Si scrive
-un'espressione, con le precedenze: `2 + 3 * 4` fa 14. Strada facendo il
-toolkit ha preso le tendine laterali, `ex_abilita()` ed `ex_dlg_testo()`, e
-il tetto dei controlli per programma è passato da 64 — che faceva fallire
-`ex_crea` in silenzio — a 192 (`tools/prova_calctor.sh`).
+**tested in QEMU** — `/exwin/bin/calctor`: normal, scientific and programmer
+(32 bits in base 2, 8, 10 and 16), a four-line display and the tape in a
+window of its own, which can be saved as text. What you type is an
+expression, with precedence: `2 + 3 * 4` gives 14. Along the way the toolkit
+got side menus, `ex_abilita()` and `ex_dlg_testo()`, and the limit of
+controls per program went from 64 — which made `ex_crea` fail silently — to
+192 (`tools/prova_calctor.sh`).
 
-### La scrivania: la cartella del profilo, le unità, il registro
+### The desktop: the profile folder, the drives, the log
 
-**testato in QEMU** — a sinistra le icone di `$HOME/desktop` (un
-collegamento è un `.lnk` di testo), a destra ogni unità montata: pm se ne
-accorge da solo, anche di un `mount` fatto a mano. Lo sfondo si dispone
-(angolo, centro, allarga, ripeti). Il **Registro di sistema** non è più una
-schermata ma un anello di 32 KB nel kernel, con l'ora e il PID su ogni riga
+**tested in QEMU** — on the left the icons of `$HOME/desktop` (a shortcut is
+a text `.lnk`), on the right every mounted drive: pm notices by itself, even
+a `mount` typed by hand. The wallpaper can be placed (corner, centre,
+stretch, tile). The **System log** is no longer one screen but a 32 KB ring
+in the kernel, with the time and the PID on every line
 (`tools/prova_desktop.sh`, `tools/prova_registro.sh`).
 
-### L'editor cerca e sostituisce
+### The editor finds and replaces
 
-**testato in QEMU** — Cerca (Ctrl+F), F3 e Shift+F3 per il successivo e il
-precedente, Sostituisci una o tutte. Nel toolkit **Shift+Tab** adesso torna
-indietro davvero, e il pulsante che ha il fuoco si vede (`tools/prova_edit_cerca.sh`).
+**tested in QEMU** — Find (Ctrl+F), F3 and Shift+F3 for next and previous,
+Replace one or all. In the toolkit **Shift+Tab** now really goes back, and
+the focused button shows it (`tools/prova_edit_cerca.sh`).
 
-### Archivi apre i tar, e il file manager rinomina
+### Archivi opens tar files, and the file manager renames
 
-**testato in QEMU** — Archivi apre e crea `.tar` e `.tar.gz`, con lo stesso
-codice di `/bin/tar` (`lib/extar`, compilato dentro tutti e due). Nel file
-manager, **Rinomina** con F2 (`tools/prova_tar.sh`, `tools/prova_filemgr.sh`).
+**tested in QEMU** — Archivi opens and creates `.tar` and `.tar.gz` with the
+same code as `/bin/tar` (`lib/extar`, compiled into both). In the file
+manager, **Rename** with F2 (`tools/prova_tar.sh`, `tools/prova_filemgr.sh`).
 
-### `runbas`: i programmi QBASIC girano da soli
+### `runbas`: QBASIC programs run on their own
 
-**testato in QEMU** — `runbas mioprog.bas` esegue un programma con
-l'interprete di `gfbasic/`, e gfedit lo lancia con **F5**. Le funzioni
-matematiche che la libc non ha (SIN, EXP, ^...) sono quelle dell'x87
-(`tools/prova_runbas.sh`).
+**tested in QEMU** — `runbas myprog.bas` runs a program with the `gfbasic/`
+interpreter, and gfedit launches it with **F5**. The maths functions the libc
+lacks (SIN, EXP, ^...) are the x87's (`tools/prova_runbas.sh`).
 
-### I percorsi dei programmi in un file
+### Program paths in a file
 
-**da testare su un sistema installato** — `/boot/percorsi.txt`: la shell
-aggiunge in coda al PATH le directory che ci trova, e netupdate ci scrive le
-sue quando installa un pacchetto in un posto nuovo.
+**to be tested on an installed system** — `/boot/percorsi.txt`: the shell
+appends to the PATH the directories it finds there, and netupdate writes its
+own when it installs a package in a new place.
 
-### HTTPS: da 23 a 28 siti su 30 — AES-GCM, P-256 e TLS 1.2
+### HTTPS: from 23 to 28 sites out of 30 — AES-GCM, P-256 and TLS 1.2
 
-**testato in QEMU, sulla rete vera** — dei sette siti su trenta che non si
-aprivano, uno era la catena dei certificati (corretta stamattina) e gli altri
-erano il TLS. Il client adesso ha:
+**tested in QEMU, on the real network** — of the seven sites out of thirty
+that did not open, one was the certificate chain (fixed this morning) and the
+others were TLS. The client now has:
 
-- **AES-128-GCM** accanto a ChaCha20 (`lib/excrypt/gcm.c`, sopra l'AES del Wi-Fi);
-- lo scambio di chiavi su **P-256**, **a tempo costante** (`lib/excrypt/p256.c`,
-  e non `excurva`, che è per i soli numeri pubblici), chiesto dal server con
-  una **HelloRetryRequest** — che prima era un errore;
-- **TLS 1.2**, la metà moderna: ECDHE con AES-GCM o ChaCha20, firme RSA-PSS,
-  PKCS#1 v1.5 ed ECDSA, Extended Master Secret, e il controllo «DOWNGRD».
+- **AES-128-GCM** next to ChaCha20 (`lib/excrypt/gcm.c`, on top of the Wi-Fi's AES);
+- key exchange on **P-256**, **in constant time** (`lib/excrypt/p256.c`, not
+  `excurva`, which is for public numbers only), asked for by the server with a
+  **HelloRetryRequest** — which used to be an error;
+- **TLS 1.2**, the modern half: ECDHE with AES-GCM or ChaCha20, RSA-PSS,
+  PKCS#1 v1.5 and ECDSA signatures, Extended Master Secret, and the
+  "DOWNGRD" check.
 
-Poste, Corriere, Gazzetta e Istat si aprono. I due che restano (Stack Overflow
-ed eBay) aprono il TLS e poi rispondono 403: un blocco dei robot, loro.
-Provato sull'host (`tools/prova_gcm.sh`, `tools/prova_p256.sh`: migliaia di
-casi contro `cryptography` di Python) e contro `openssl s_server`
-(`make prova-cliente-tls`, 20 casi).
+Poste, Corriere, Gazzetta and Istat open. The two left (Stack Overflow and
+eBay) open TLS and then answer 403: a robot block of theirs. Tested on the
+host (`tools/prova_gcm.sh`, `tools/prova_p256.sh`: thousands of cases against
+Python's `cryptography`) and against `openssl s_server` (`make
+prova-cliente-tls`, 20 cases).
 
-### La finestra Download, nel toolkit
+### The Download window, in the toolkit
 
-**testato in QEMU** — gli scaricamenti di EXBrowser girano in un processo
-proprio (`scarica -avanza`), e il navigatore resta libero di navigare. La
-finestra **Download** si apre da sola, mostra percentuale, misura, velocità
-media e tempo che manca, si chiude senza fermare niente e torna da
-**Strumenti > Download**; **Ferma** cancella il file a metà. Sta nel toolkit
-(`lib/exdlg/scarichi.c`, con `ex_guarda_fd` in exwin), quindi la usa qualunque
-programma fatto con exide: vedi il manuale di exide, «Scaricare file»
+**tested in QEMU** — EXBrowser's downloads run in a process of their own
+(`scarica -avanza`), and the browser stays free to browse. The **Download**
+window opens by itself, shows percentage, size, average speed and time left,
+closes without stopping anything and comes back from **Strumenti > Download**;
+**Ferma** removes the half file. It lives in the toolkit
+(`lib/exdlg/scarichi.c`, with `ex_guarda_fd` in exwin), so any program made
+with exide can use it: see the exide manual, "Scaricare file"
 (`tools/prova_download.sh`).
 
-### EXBrowser chiede «apri o scarica», e Archivi prende le cartelle
+### EXBrowser asks "open or download", and Archivi takes directories
 
-**testato in QEMU** — un collegamento a un file che non è una pagina (uno ZIP,
-un programma, un'immagine) non viene più impaginato come spazzatura: EXBrowser
-chiede **Apri con Archivi** (o con l'editor), **Scarica** o **Annulla**. Se ne
-accorge dal nome, prima di scaricare, oppure dal `Content-Type` del server
-quando il nome non dice niente. Lo scaricamento va sul disco mentre arriva,
-senza il tetto di 1 MB delle pagine (`tools/prova_apri_scarica.sh`).
+**tested in QEMU** — a link to a file that is not a page (a ZIP, a program, an
+image) is no longer laid out as garbage: EXBrowser asks **Apri con Archivi**
+(or with the editor), **Scarica** or **Annulla**. It notices from the name,
+before downloading, or from the server's `Content-Type` when the name says
+nothing. The download goes to disk as it arrives, without the 1 MB ceiling of
+pages (`tools/prova_apri_scarica.sh`).
 
-In **Archivi** c'è **Comandi > Aggiungi cartella...**, e anche `zip archivio.zip
-cartella` prende l'albero intero: ogni cartella ha la sua voce `nome/`, così
-anche quelle vuote tornano fuori all'estrazione (`tools/prova_zip.sh`, passo 6).
+In **Archivi** there is **Comandi > Aggiungi cartella...**, and `zip
+archivio.zip cartella` takes the whole tree too: every directory has its own
+`name/` entry, so empty ones come back out on extraction (`tools/prova_zip.sh`,
+step 6).
 
-### Certificati: la catena si ferma alla prima radice, e se ne aggiungono
+### Certificates: the chain stops at the first root, and more can be added
 
-**testato in QEMU, sulla rete vera** — prima di cambiare qualcosa si è
-misurato (`tools/prova_certificati.sh`): su trenta siti comuni EX-OS ne apriva
-23, e **uno solo** era un problema di certificato. www.amazon.it manda in coda
-una copia *incrociata* della radice DigiCert, firmata da una vecchia VeriSign
-ritirata; `excert` pretendeva che l'ultimo anello mandato fosse firmato da una
-radice nostra, e la rifiutava. Adesso la catena si ferma alla prima radice del
-magazzino, come nei navigatori grandi: Amazon si apre.
+**tested in QEMU, on the real network** — before changing anything it was
+measured (`tools/prova_certificati.sh`): of thirty common sites EX-OS opened
+23, and **only one** was a certificate problem. www.amazon.it sends at the end
+a *cross-signed* copy of the DigiCert root, signed by an old, retired VeriSign
+root; `excert` required the last link sent to be signed by one of our roots,
+and refused it. Now the chain stops at the first root in the store, as the big
+browsers do: Amazon opens.
 
-Gli altri sei non erano certificati: tre server parlano solo TLS 1.2 (il
-nostro client solo 1.3), due non accettano ChaCha20 o x25519, uno blocca i
-robot. Sono scritti in `@EXBROWSER-CERT`.
+The other six were not certificates: three servers speak only TLS 1.2 (our
+client only 1.3), two do not accept ChaCha20 or x25519, one blocks robots.
+They are written down in `@EXBROWSER-CERT`.
 
-E si possono **aggiungere CA**: **File > Aggiungi un certificato...** in
-EXBrowser, da un indirizzo o da un file; si vede chi è e la sua impronta
-SHA-256 prima di dire «Mi fido». Finiscono in `$HOME/.app/exhttp/certi.pem` e
-valgono per ogni programma che apre `https`, `scarica` compreso — provato da
+And **CAs can be added**: **File > Aggiungi un certificato...** in EXBrowser,
+from an address or a file; who it is and its SHA-256 fingerprint are shown
+before saying "Mi fido". They go into `$HOME/.app/exhttp/certi.pem` and apply
+to every program that opens `https`, `scarica` included — tested by
 `tools/prova_certi_aggiunti.sh`.
 
-### Il navigatore si chiama EXBrowser
+### The browser is called EXBrowser
 
-**da testare** — `/exwin/bin/browser` diventa `/exwin/bin/exbrowser`, alla
-versione 0.003: il nome l'ha scelto chi lo usa, e cambia dappertutto dove è
-un nome e non una parola — il titolo della finestra, «Informazioni su», la
-voce del menu Avvio, l'icona (`exbrowser_64.ico`), il manuale
-(`/exwin/doc/exbrowser.html`) e i dati in `$HOME/.app/exbrowser/`.
+**to be tested** — `/exwin/bin/browser` becomes `/exwin/bin/exbrowser`, at
+version 0.003: the name was chosen by its user, and it changes everywhere it is
+a name rather than a word — the window title, "About", the Start menu entry,
+the icon (`exbrowser_64.ico`), the manual (`/exwin/doc/exbrowser.html`) and the
+data in `$HOME/.app/exbrowser/`.
 
-! **I DATI VECCHI SI SPOSTANO DA SOLI**: al primo avvio `$HOME/.app/browser/`
-diventa `$HOME/.app/exbrowser/`, con impostazioni, biscotti e cache. Se non si
-può — una casa su FAT, dove «exbrowser» non entra in 8.3 — si continua a usare
-quella vecchia e lo si dice: meglio un nome vecchio che ritrovarsi fuori da
-ogni sito.
+! **THE OLD DATA MOVES BY ITSELF**: at the first start `$HOME/.app/browser/`
+becomes `$HOME/.app/exbrowser/`, with settings, cookies and cache. If it
+cannot — a home on FAT, where "exbrowser" does not fit in 8.3 — the old one
+keeps being used, and it says so: an old name is better than being logged out
+of every site.
 
-### Le icone: un'API del toolkit, e il menu della scrivania che la usa
+### Icons: a toolkit API, and the desktop menu that uses it
 
-**testato in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
-stanno in `exwin.so`, cioè in ciò che ogni programma grafico collega già: le
-icone sono di tutti, non di un programma solo. Il peso vero — la decodifica di
-PNG, JPG e ICO — resta in `eximg.so`, che si apre solo davanti alla prima
-icona che non sia un BMP.
+**tested in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
+live in `exwin.so`, that is, in what every graphical program already links:
+icons belong to everybody, not to one program. The real weight — decoding PNG,
+JPG and ICO — stays in `eximg.so`, which is opened only in front of the first
+icon that is not a BMP.
 
-! **Un'icona non è un'immagine disegnata una volta**, ed è per questo che ha
-funzioni sue: un menu si ridisegna a ogni apertura, e con `ex_immagine()`
-sarebbero dieci letture di file e dieci decodifiche ogni volta. Si apre una
-volta, si tiene, e l'ultima resa (misura + sfondo) resta pronta.
+! **An icon is not an image drawn once**, which is why it has functions of its
+own: a menu is repainted every time it opens, and with `ex_immagine()` that
+would be ten file reads and ten decodes each time. It is opened once, kept, and
+the last rendering (size + background) stays ready.
 
-! **Il riduttore serviva davvero.** Le icone nascono a 64 e 128 pixel, una voce
-di menu è alta 24. Fa la **media** dei pixel che collassano in uno: prendere
-quello in mezzo, su un rimpicciolimento di quattro volte, butta quindici pixel
-su sedici e i bordi sottili spariscono a chiazze.
+! **The scaler really was needed.** Icons are born at 64 and 128 pixels, a menu
+entry is 24 tall. It **averages** the pixels that collapse into one: taking the
+middle one, on a four-times reduction, throws away fifteen pixels out of
+sixteen and thin edges disappear in patches.
 
-! **E `eximg` buttava l'alfa.** Nel codice c'era scritto: *«la maschera a 1 bit
-si salta... il giorno che [il server] saprà fondere, è lì che si andrà a
-prenderla»*. Quel giorno era questo — a fondere non è il server ma il toolkit —
-e senza alfa le icone uscivano come quadrati di puro sfondo: invisibili, cioè
-«non si caricano» mentre si stavano disegnando benissimo.
+! **And `eximg` was throwing the alpha away.** The code said so: *"the 1-bit
+mask is skipped... the day [the server] can blend, that is where it will be
+fetched from"*. That day was this one — what blends is not the server but the
+toolkit — and without alpha the icons came out as squares of pure background:
+invisible, that is, "they do not load" while they were being drawn perfectly,
+entirely transparent.
 
-Nel menu **Avvio**: icona prima del nome, e **categorie** che si aprono di
-fianco. Una barra nel nome basta a farne una — `Strumenti/Editor` — e non si
-dichiarano da nessun'altra parte.
+In the **Avvio** menu: the icon before the name, and **categories** that open
+to the side. A slash in the name is enough to make one — `Strumenti/Editor` —
+and they are declared nowhere else.
 
-### Gli archivi ZIP: una libreria, un comando e una finestra
+### ZIP archives: one library, one command and one window
 
-**testato in QEMU, e da un lettore estraneo** — `lib/exzip` sa di ZIP e non sa
-di finestre; `/bin/zip` e `/exwin/bin/archivi` chiamano le stesse nove
-funzioni.
-
-```
-zip a.zip uno.txt due.txt        crea
-zip -l a.zip                     elenca
-zip -x a.zip /disk/fuori         estrae
-```
-
-Scrive in «store» e legge anche **deflate**, perché il pezzo difficile c'era
-già: `lib/eximg/inflate.c` decodifica DEFLATE da mesi per PNG, GIF e i font.
-
-! **La prova che conta è quella di chi non ha scritto il formato**: l'archivio
-fatto da EX-OS lo apre `unzip -t` di Info-ZIP. Un archiviatore che rilegge i
-propri archivi prova soltanto di essere coerente con sé stesso.
-
-### Archivi: una tabella vera, e l'archivio che si costruisce da sé
-
-**testato in QEMU** — colonne **Nome** e **Percorso** separate, un clic
-sull'intestazione ordina (un altro rovescia), il bordo fra le intestazioni si
-trascina, la barra di scorrimento. Ogni file o cartella aggiunti rendono
-l'archivio subito completo: `lib/exzip` sa riaprire un archivio finito e
-aggiungerci (`ex_zip_riapri`). **Opzioni**: compressione (nessuna, veloce,
-normale, avanzata) ed estensione predefinita, in `/exwin/config/archivi.cfg`.
-
-### Ridurre a icona, e la barra dei programmi aperti
-
-**testato in QEMU** — ogni finestra ha il pulsante **«_»** accanto alla
-crocetta, e la barra in basso mostra i programmi aperti con la loro icona. Un
-clic su una voce riapre la finestra ridotta, esattamente dov'era e grande
-com'era, o porta davanti quella nascosta dietro le altre. L'elenco lo tiene il
-server a finestre e lo manda da sé alla barra; i programmi non hanno dovuto
-cambiare una riga. `tools/prova_riduci.sh` lo misura nei pixel.
-
-### tar, gzip e gunzip
-
-**testato in QEMU, e da lettori estranei** — un programma solo, `bin/tar/tar.c`,
-che risponde a tre nomi. È statico: il DEFLATE di `lib/exzip` e l'inflate di
-`lib/eximg` ci sono compilati dentro.
+**tested in QEMU, and by a foreign reader** — `lib/exzip` knows about ZIP and
+knows nothing about windows; `/bin/zip` and `/exwin/bin/archivi` call the same
+nine functions.
 
 ```
-tar czf a.tgz cartella           crea (z = gzip)
-tar tf a.tgz                     elenca
-tar xf a.tgz -C /disk/fuori      estrae (il gzip lo riconosce da sé)
+zip a.zip one.txt two.txt        create
+zip -l a.zip                     list
+zip -x a.zip /disk/out           extract
+```
+
+It writes "store" and also reads **deflate**, because the hard part was already
+there: `lib/eximg/inflate.c` has been decoding DEFLATE for months for PNG, GIF
+and the fonts.
+
+! **The test that counts is the one by whoever did not write the format**: the
+archive EX-OS makes is opened by Info-ZIP's `unzip -t`. An archiver that
+re-reads its own archives only proves it is consistent with itself.
+
+### Archivi: a real table, and an archive that builds itself
+
+**tested in QEMU** — separate **Nome** and **Percorso** columns, a click on
+a header sorts (another reverses), the borders between headers can be
+dragged, a scroll bar. Every file or directory added leaves the archive
+complete at once: `lib/exzip` can reopen a finished archive and add to it
+(`ex_zip_riapri`). **Opzioni**: compression (none, fast, normal, best) and
+default extension, in `/exwin/config/archivi.cfg`.
+
+### Minimize, and the taskbar of open programs
+
+**tested in QEMU** — every window has a **«_»** button next to the close
+button, and the bottom bar shows the open programs with their icon. A click
+on an entry restores a minimized window, exactly where it was and as large as
+it was, or brings forward one hidden behind the others. The window server
+keeps the list and sends it to the taskbar by itself; programs did not have
+to change a line. `tools/prova_riduci.sh` measures it in pixels.
+
+### tar, gzip and gunzip
+
+**tested in QEMU, and by outside readers** — one program, `bin/tar/tar.c`,
+answering to three names. It is static: the DEFLATE of `lib/exzip` and the
+inflate of `lib/eximg` are compiled into it.
+
+```
+tar czf a.tgz folder             create (z = gzip)
+tar tf a.tgz                     list
+tar xf a.tgz -C /disk/out        extract (gzip is recognised by itself)
 gzip file / gunzip file.gz
 ```
 
-Legge gli archivi di GNU tar anche con i nomi lunghi, nei formati GNU e pax.
-`tools/prova_tar.sh` fa aprire i suoi archivi a GNU tar, `gzip -t` e Python,
-e fa aprire a EX-OS quelli di GNU tar.
+It reads GNU tar archives with long names too, in GNU and pax format.
+`tools/prova_tar.sh` has its archives opened by GNU tar, `gzip -t` and
+Python, and has EX-OS open archives made by GNU tar.
 
-### La pagina d'accesso non si fa più coprire dai messaggi dell'avvio
+### The login page no longer gets covered by the boot messages
 
-**testato in QEMU su un disco installato** — `login` aspetta che la console
-taccia (fino a 1500 ms, misurati) prima di stampare la richiesta del nome, e
-intanto ascolta la tastiera: chi sta già battendo non aspetta niente.
+**tested in QEMU on an installed disk** — `login` waits for the console to go
+quiet (up to 1500 ms, measured) before printing the name prompt, and listens to
+the keyboard while it waits: whoever is already typing waits for nothing.
 
-! **La `waitpid` c'era, e aspettava la cosa sbagliata**: metà di
-`/boot/avvio.sh` sono righe che finiscono con `&`, e quei processi sono
-**nipoti** — figli della shell dello script. Quando `waitpid` torna sono vivi,
-hanno la console e non hanno ancora parlato.
+! **The `waitpid` was there, and it waited for the wrong thing**: half of
+`/boot/avvio.sh` is lines ending in `&`, and those processes are
+**grandchildren** — children of the script's shell. When `waitpid` returns they
+are alive, they hold the console and they have not spoken yet.
 
-### Il progetto nuovo di EX-IDE sceglie dove, e se lo ricorda
+### EX-IDE's new project picks where, and remembers it
 
-**testato in QEMU, su due avvii** — Ctrl+N apre il dialogo dei file con
-l'albero e il pulsante **«Nuova cartella (Ctrl+N)»**; la casa si chiede a
-`HOME` e l'ultima directory usata sta in `$HOME/.app/exide/`.
+**tested in QEMU, over two boots** — Ctrl+N opens the file dialog with the tree
+and the **"Nuova cartella (Ctrl+N)"** button; home is asked of `HOME` and the
+last directory used lives in `$HOME/.app/exide/`.
 
-! **Il pulsante sta nel dialogo, non nel programma**: `ex_dlg_salva` ce l'ha
-per tutti, e l'archiviatore ZIP — scritto poche ore dopo — se l'è trovato
-pronto senza fare niente.
+! **The button lives in the dialog, not in the program**: `ex_dlg_salva` has it
+for everyone, and the ZIP archiver — written a few hours later — found it ready
+without doing anything.
 
-### `wserver` usa il motore 2D dove c'è, e disegna da sé dove non c'è
+### `wserver` uses the 2D engine where there is one, and draws itself where there is not
 
-**testato in QEMU per il ramo software, sul ferro per il protocollo** — il
-server a finestre chiede i riempimenti grandi alla scheda quando c'è un motore
-2D, e li fa con MMX quando non c'è.
+**tested in QEMU for the software path, on the metal for the protocol** — the
+window server asks the card for large fills when a 2D engine is there, and does
+them with MMX when it is not.
 
-! **E non chiede privilegi: chiede un rettangolo.** Il motore si pilota con
-`mmio_map` e `ioport_bind`, che sono da driver. `wserver` quei privilegi li ha
-persi **apposta** il 19 agosto 2026: si chiamava `/dev/wserver.drv` solo per
-ottenere `mmio_map`, e quel nome teneva la grafica fuori dalla multiutenza —
-`/dev` è di root, quindi un utente normale non poteva eseguire il server.
-Rimetterlo fra i driver per andare più forte sarebbe tornare indietro di un
-mese, e per di più dando la capacità *larga* al posto di quella stretta.
+! **And it does not ask for privileges: it asks for a rectangle.** The engine is
+driven with `mmio_map` and `ioport_bind`, which are a driver's. `wserver` lost
+those privileges **on purpose** on 19 August 2026: it was called
+`/dev/wserver.drv` only to get `mmio_map`, and that name kept graphics out of
+multi-user — `/dev` is root's, so an ordinary user could not run the server.
+Putting it back among the drivers to go faster would be a month backwards, and
+would hand it the *wide* capability instead of the narrow one.
 
-Quindi un **servizio**, non una libreria:
+So a **service**, not a library:
 
 ```
-drivers/accel/accel_proto.h   il contratto, e non è di nessuno dei due
-sis.drv -2dservizio           registra 'accel2d': RIEMPI, COPIA, INFO
-sis.drv -2dchiedi             lo prova DA FUORI, come lo usa wserver
+drivers/accel/accel_proto.h   the contract, and it belongs to neither side
+sis.drv -2dservizio           registers 'accel2d': FILL, COPY, INFO
+sis.drv -2dchiedi             tests it FROM OUTSIDE, the way wserver uses it
 ```
 
-Lo accende `/boot/avvio.sh` (lo scrive `hwconfig`), perché è il sistema a poter
-eseguire `/dev`. Su una macchina che non sia una SiS il comando **esce in
-silenzio**: niente scheda, niente servizio, nessuna riga.
+`/boot/avvio.sh` starts it (written by `hwconfig`), because only the system can
+execute things in `/dev`. On a machine that is not a SiS the command **exits
+silently**: no card, no service, no line.
 
-! **Il ramo software è il ramo NORMALE, non un ripiego.** Su VESA, sul
-framebuffer generico e dentro QEMU nessuno registra il servizio, `ipc_lookup`
-non trova niente e si riempie con MMX a 377 MB/s — cioè al limite del bus per
-la scrittura. In QEMU la riga d'avvio dice esattamente questo:
+! **The software path is the NORMAL path, not a fallback.** On VESA, on the
+generic framebuffer and inside QEMU nobody registers the service, `ipc_lookup`
+finds nothing, and filling is done with MMX at 377 MB/s — the bus limit for
+writing. In QEMU the boot line says exactly that:
 
 ```
 wserver: nessun motore 2D, riempio da me con MMX
 ```
 
-! **Il protocollo passa operazioni, non pixel**, ed è ciò che lo rende
-sostenibile: un giro di IPC misurato sull'Acer — sfondo intero, 480000 pixel —
-sta **sotto il millisecondo**, e riempire lo schermo costa millisecondi.
+! **The protocol carries operations, not pixels**, which is what makes it
+affordable: one IPC round trip measured on the Acer — whole background, 480000
+pixels — is **under a millisecond**, and filling the screen costs milliseconds.
 
-! **E c'è una soglia, perché il motore risparmia metà del tempo, non tutto.**
-Il messaggio va pagato con *metà* del costo del rettangolo. A 4096 pixel il
-risparmio è 21 µs, meno del messaggio: sarebbe una perdita netta, ed era la
-soglia della prima stesura. A 32768 il risparmio è 165 µs, e lo sfondo intero
-ne vale 2500.
+! **And there is a threshold, because the engine saves half the time, not all
+of it.** The message must be paid for out of *half* the rectangle's cost. At
+4096 pixels the saving is 21 µs, less than the message: a net loss, and that was
+the first draft's threshold. At 32768 the saving is 165 µs, and the whole
+background is worth 2500.
 
-! **L'attesa della risposta usa `ipc_scegli`, non `ipc_recv_timeout`**, ed è la
-riga più importante del lavoro. La regola di quel server è scritta sopra
-`mouse_chiedi()`: «la mailbox la legge un posto solo». Una `recv` che prende
-qualunque messaggio si mangia le richieste dei client — è già successo, e il
-sintomo era «il server non risponde» una volta su tre. `ipc_scegli` filtra, e
-**mentre aspetta svuota** la coda del kernel sullo scaffale invece di lasciarla
-riempire: la mailbox è profonda quattro messaggi, e quando è piena ogni
-`ipc_send` verso il server fallisce — compresa la consegna di un tasto.
+! **Waiting for the reply uses `ipc_scegli`, not `ipc_recv_timeout`**, and that
+is the most important line of the work. This server's rule is written above
+`mouse_chiedi()`: «one place reads the mailbox». A `recv` that takes any message
+eats the clients' requests — it has happened, and the symptom was «the server
+does not answer», one time in three. `ipc_scegli` filters, and **while it waits
+it drains** the kernel queue onto the shelf instead of letting it fill: the
+mailbox is four messages deep, and when it is full every `ipc_send` towards the
+server fails — including the delivery of a keystroke.
 
-! **Quel che resta è una misura sola:** provare che `wserver` lo usa davvero
-sulla macchina vera. Il contatore `servite` in `AccInfo` esiste per questo.
-E il guadagno da aspettarsi è quello del **riempimento (1,9x)**, non quello
-della copia: nel compositore non c'è nessuna copia schermo→schermo, perché le
-zone dei client stanno in RAM di sistema. Il 14x si prende solo cambiando
-strategia di composizione.
+! **What is left is a single measurement:** proving that `wserver` really uses
+it on the real machine. The `servite` counter in `AccInfo` exists for that. And
+the gain to expect is the **fill one (1.9x)**, not the copy one: the compositor
+does no screen-to-screen copy, because the clients' areas live in system RAM.
+The 14x is only reachable by changing the compositing strategy.
 
-### Il motore 2D della SiS disegna: 14x sulla copia schermo→schermo
+### The SiS 2D engine draws: 14x on screen-to-screen copies
 
-**testato sulla macchina vera, da freddo** — l'acceleratore 2D della SiS 6330
-dell'Acer Aspire 3000 funziona. Dopo un riavvio pulito, senza nessun comando di
-accensione prima:
+**tested on the real machine, from cold** — the 2D accelerator of the Acer
+Aspire 3000's SiS 6330 works. After a clean reboot, with no bring-up command
+beforehand:
 
 ```
 sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
@@ -1256,92 +1246,95 @@ riempire                     377 MB/s    734 MB/s   1.9x
 copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
 ```
 
-! **La riga che conta è la seconda.** Riempire lo schermo la CPU lo fa già al
-limite del bus (vedi `fbprova` più sotto); copiare schermo su schermo le costa
-una **lettura** dal framebuffer, che su questa scheda va quattro volte e mezzo
-più piano di una scrittura. Il motore la fa dentro la scheda, senza far
-attraversare il bus ai pixel nemmeno una volta. È esattamente quel che fa il
-compositore quando sposta una finestra o fa scorrere un terminale.
+! **The line that counts is the second.** Filling the screen the CPU already
+does at the limit of the bus (see `fbprova` further down); copying screen to
+screen costs it a **read** from the framebuffer, which on this card is four and
+a half times slower than a write. The engine does it inside the card, without
+the pixels crossing the bus even once. That is exactly what the compositor does
+when it moves a window or scrolls a terminal.
 
-**Erano due bit, e la diagnosi li stampava dal primo giorno:**
+**It was two bits, and the diagnostic had been printing them from day one:**
 
-| registro | bit | nome in sisfb | cosa accende |
+| register | bit | name in sisfb | what it turns on |
 |---|---|---|---|
-| SR20 | 0x01 | `SIS_MEM_MAP_IO_ENABLE` | la finestra dei registri |
-| SR1E | 0x40 | `SIS_ENABLE_2D` | il motore |
+| SR20 | 0x01 | `SIS_MEM_MAP_IO_ENABLE` | the register window |
+| SR1E | 0x40 | `SIS_ENABLE_2D` | the engine |
 
-Il passo 4 di `-2ddiagnosi` mostrava «SR1E = 0x20, SR20 = 0xa0» da quando quel
-codice esiste, e quei numeri erano finiti nei referti fra i dati «stabiliti
-sulla macchina vera». Erano due **misure**, e nessuno le ha lette come due
-**mancanze** — mentre cinque spiegazioni venivano provate e chiuse.
+Step 4 of `-2ddiagnosi` showed «SR1E = 0x20, SR20 = 0xa0» for as long as that
+code has existed, and those numbers had ended up in the reports among the facts
+«established on the real machine». They were two **measurements**, and nobody
+read them as two **absences** — while five explanations were tried and closed.
 
-! **E l'ordine non è negoziabile**, perché il passo che mancava in mezzo è
-quello che bloccava la macchina:
+! **And the order is not negotiable**, because the step that was missing in the
+middle is the one that hung the machine:
 
 ```
-1. SR20 bit 0            apre la finestra
-2. Q_BASE_ADDR = base    DA DOVE il motore legge i comandi
-3. SR27 0x1F, SR26 0x01  soglia e RESET della coda
-4. WRITEPORT <- READPORT coda vuota
-5. SR1E bit 6            IL MOTORE, per ultimo
-6. SR26 = 0x22           coda in modo MMIO
+1. SR20 bit 0            open the window
+2. Q_BASE_ADDR = base    WHERE the engine reads its commands from
+3. SR27 0x1F, SR26 0x01  threshold and queue RESET
+4. WRITEPORT <- READPORT empty queue
+5. SR1E bit 6            THE ENGINE, last
+6. SR26 = 0x22           queue in MMIO mode
 ```
 
-Appena aperta la finestra `Q_BASE_ADDR` vale **zero**: accendere il motore lì
-vuol dire farlo partire a prendere comandi dall'indirizzo zero della memoria
-video e a scrivere dove quei comandi gli dicono — un bus master che va per
-conto suo. La macchina si ferma e non risponde più nemmeno al ping. È successo,
-una volta, ed è il motivo per cui il passo 2 adesso c'è.
+Right after the window opens `Q_BASE_ADDR` reads **zero**: turning the engine on
+there means starting it fetching commands from address zero of video memory and
+writing wherever those commands say — a bus master off on its own. The machine
+stops and no longer answers even a ping. It happened, once, and it is why step 2
+is there now.
 
-! **La base si calcola, non si sceglie**: `CR79` bit 7-4 danno i mega di memoria
-condivisa (64 sull'Acer) e la coda va negli ultimi 512 KB. Se quella misura non
-si riconosce, `sis2d_apri()` **rinuncia** e lascia il motore spento.
+! **The base is computed, not picked**: `CR79` bits 7-4 give the megabytes of
+shared memory (64 on the Acer) and the queue goes in the last 512 KB. If that
+measurement is not recognised, `sis2d_apri()` **gives up** and leaves the engine
+off.
 
-! **L'accensione la fa `sis2d_apri()`, e solo se serve** — cioè se `Q_STATUS`
-legge tutti uno. Se la finestra risponde già, qualcun altro l'ha accesa: rifare
-la sequenza vorrebbe dire resettare una coda che magari sta lavorando.
+! **The bring-up is done by `sis2d_apri()`, and only if needed** — that is, if
+`Q_STATUS` reads all ones. If the window already answers, somebody else turned
+it on: redoing the sequence would mean resetting a queue that may be working.
 
-! **`wserver` non lo usa ancora.** Il guadagno c'è e il compositore non lo
-prende: è il prossimo passo, e vive insieme al restringere le regioni sporche.
+! **`wserver` does not use it yet.** The gain is there and the compositor is not
+taking it: that is the next step, and it lives together with narrowing the dirty
+regions.
 
-### L'orologio si può rimettere: kernel 0.218 e `/bin/date`
+### The clock can be set: kernel 0.218 and `/bin/date`
 
-**testato sulla macchina vera** — da quando esiste, agosto 2026, l'orologio CMOS
-di EX-OS si **leggeva e basta**: c'era `SYS_TIME` e non c'era il suo gemello.
-Non era un buco teorico. L'Acer Aspire 3000 di prova segnava il **2005**, e ogni
-file che caricava su un server FTP arrivava datato «Feb 9 2005»: l'unico modo di
-rimetterlo era entrare nel BIOS.
+**tested on the real machine** — ever since it existed, August 2026, the EX-OS
+CMOS clock could only be **read**: there was `SYS_TIME` and no twin of it. That
+was not a theoretical hole. The Acer Aspire 3000 used for testing read **2005**,
+and every file it uploaded to an FTP server arrived dated «Feb 9 2005»: the only
+way to fix it was to enter the BIOS.
 
     date                        mercoledi' 16 settembre 2026, 16:09:20
     date -d                     2026-09-16
     date -t                     16:09:30
-    date -set-date:2026/09/16   la data  (serve root)
-    date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
+    date -set-date:2026/09/16   the date  (root only)
+    date -set-time:17:52:30     the time  (the seconds can be left out)
 
-`SYS_TIME_SET` (213) chiama `rtc_write()`, ed è **di root come `mount`**: chi
-sposta l'ora cambia la data di ogni file che chiunque altro scriverà, e con essa
-il giudizio di `netupdate -check` su che cosa è più recente.
+`SYS_TIME_SET` (213) calls `rtc_write()`, and it is **root's, like `mount`**:
+whoever moves the time changes the date of every file anybody else will write,
+and with it `netupdate -check`'s judgement about what is newer.
 
-! **La scrittura ha una trappola in più delle tre della lettura**: non si scrive
-mentre il chip conta. Se l'aggiornamento cade in mezzo ai sei registri, il chip
-riscrive sopra a metà di quel che si è appena messo. Il bit `SET` del registro B
-ferma il conteggio per la durata della scrittura.
+! **Writing has one trap more than the three of reading**: you do not write
+while the chip is counting. If the update falls in the middle of the six
+registers, the chip overwrites half of what you have just put there. The `SET`
+bit of register B stops the count for the duration of the write.
 
-! **Non c'è un comando `time`, ed è voluto**: su qualunque Unix `time comando`
-*misura* quanto ci mette un comando a girare. Spendere quel nome per stampare
-l'ora vorrebbe dire non averlo più il giorno in cui servirà. I dettagli — il
-formato che si conserva, il registro del secolo, il limite del 2099 — stanno
-in **[`date`](#date--che-ore-sono-e-rimetterle)**.
+! **There is no `time` command, and that is deliberate**: on any Unix `time
+command` *measures* how long a command takes to run. Spending that name on
+printing the clock would mean not having it the day it is needed. The details —
+the format that is preserved, the century register, the 2099 limit — are under
+**[`date`](#date--what-time-it-is-and-putting-it-right)**.
 
-Sul ferro: l'Acer è passato da giovedì 10 febbraio 2005 a mercoledì 16 settembre
-2026, scritto e riletto, e la data ha retto un ciclo di alimentazione.
+On the metal: the Acer went from Thursday 10 February 2005 to Wednesday 16
+September 2026, written and read back, and the date survived a power cycle.
 
-### `ls` nudo dice anche quando e che cosa
+### A bare `ls` also says when and what
 
-**testato in QEMU** — `ls` stampava due cose, il nome e la dimensione. La data
-c'era già, ma solo sotto `-d`, `-md` o `-l`, cioè solo per chi sapeva che
-esistevano; e il tipo si deduceva dalla barra finale del nome. Le due domande
-più comuni davanti a un elenco di file sono «di quando è?» e «è una cartella?».
+**tested in QEMU** — `ls` used to print two things, the name and the size. The
+date was already there, but only under `-d`, `-md` or `-l`, that is, only for
+whoever knew they existed; and the type had to be inferred from the trailing
+slash on the name. The two commonest questions in front of a list of files are
+«how old is it?» and «is it a folder?».
 
 ```
 ex-os:/> ls
@@ -1350,163 +1343,163 @@ data        ora    tipo    dimensione  nome
 2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
 ```
 
-! **E costa una `stat()` per voce**, che il modo nudo prima non faceva: su un
-floppy si sente. Per questo il vecchio comportamento non è sparito ma sta sotto
-**`-s`**, ed è il modo da usare su un disco lento o su una directory grande.
+! **And it costs one `stat()` per entry**, which the bare mode did not do
+before: on a floppy that is felt. So the old behaviour has not gone away, it
+lives under **`-s`**, and that is the mode to use on a slow disk or in a large
+directory.
 
-! **La data di creazione non c'è**, e non è una scelta: la voce di directory che
-FAT, ext2 e ISO 9660 consegnano al VFS tiene **una** coppia data/ora, e `struct
-stat` infatti pone `st_ctime` e `st_atime` uguali a `st_mtime`.
+! **There is no creation date**, and that is not a choice: the directory entry
+FAT, ext2 and ISO 9660 hand to the VFS keeps **one** date/time pair, and
+`struct stat` indeed sets `st_ctime` and `st_atime` equal to `st_mtime`.
 
-### Le chiavette USB si tolgono, non si strappano: `eject`
+### USB sticks get ejected, not yanked: `eject`
 
-**testato in QEMU, col giro intero** — `automount` le montava gia' da solo in
-`/USB/DRIVE0`; mancava il verso opposto. Il driver che serve un disco sta fermo
-dentro `blk_attendi()` e **non guarda piu' le porte**: sfilare la chiavetta
-lasciava un punto di montaggio che risponde errore, e rimetterla non produceva
-niente perche' nessuno stava guardando.
+**tested in QEMU, the whole round trip** — `automount` already mounted them by
+itself under `/USB/DRIVE0`; the other direction was missing. The driver serving
+a disk sits inside `blk_attendi()` and **stops watching the ports**: pulling the
+stick left a mount point answering errors, and putting it back produced nothing,
+because nobody was looking.
 
-    eject                  che cosa si puo' togliere
-    eject /USB/DRIVE0      smonta e ritira
+    eject                  what can be removed
+    eject /USB/DRIVE0      unmount and withdraw
 
-Smonta quel che ci sta sopra e poi **ritira** il dispositivo (syscall
-`SYS_BLK_ESPELLI`): l'attesa del driver rende `-ENODEV`, lui torna al ciclo
-delle porte, e la stessa chiavetta rimessa viene ripresa da capo. L'ordine non
-e' invertibile: un dispositivo ritirato mentre e' montato non sparisce, resta
-GUASTO — e infatti la syscall rifiuta con `-EBUSY`.
+It unmounts whatever sits on top and then **withdraws** the device
+(`SYS_BLK_ESPELLI`): the driver's wait returns `-ENODEV`, it goes back to the
+port loop, and the same stick put back in is picked up again. The order cannot
+be reversed: a device withdrawn while still mounted does not disappear, it stays
+FAULTY — which is why the syscall refuses with `-EBUSY`.
 
-! **E ha scoperto un difetto vecchio che non si poteva vedere prima**: la QH di
-controllo di `ehci` restava puntata sull'indirizzo della chiavetta precedente, e
-un dispositivo appena infilato risponde solo allo zero. Con una chiavetta sola
-per tutta la vita del processo non si notava; da quando il driver torna a
-guardare le porte, la seconda chiavetta e' la prima a pagarlo.
+! **And it uncovered an old defect that could not be seen before**: the `ehci`
+control QH was still pointing at the previous stick's address, and a
+freshly-plugged device answers only address zero. With one stick for the whole
+life of the process it never showed; now that the driver goes back to watching,
+the second stick is the first to pay for it.
 
-### Una sessione remota che non diventa sorda ne' muta: `telnetd` 0.008
+### A remote session that goes neither deaf nor mute: `telnetd` 0.008
 
-**testato sulla macchina vera** — due difetti diversi, tutti e due scoperti su
-un portatile dall'altra parte di una rete vera, nessuno dei due riproducibile in
-emulazione al primo colpo.
+**tested on the real machine** — two different defects, both found on a laptop
+at the other end of a real network, neither reproducible in emulation on the
+first try.
 
-*La sordita'*: mentre `tcp_scrivi()` aspettava il proprio esito, `attendi()`
-**buttava** i messaggi che non stava cercando — compresi i tasti battuti
-dall'altra parte. E lo stack consegna a chi ha prenotato **consumando la
-prenotazione**: buttata la consegna, la sessione non ne faceva mai piu' una. Il
-sintomo: l'invito compare e da li' in poi non risponde piu' niente.
+*The deafness*: while `tcp_scrivi()` waited for its own result, `attendi()`
+**threw away** the messages it was not looking for — including the keys typed at
+the other end. And the stack delivers to whoever booked, **consuming the
+booking**: with the delivery thrown away, the session never made another one.
+The symptom: the prompt appears and from then on nothing responds.
 
-*La muta*: `ipc_recv_timeout(..., 0)` non vuol dire «non aspettare», vuol dire
-**aspetta per sempre** — e la casella puo' essere vuota anche se la `poll` ha
-detto di si', perche' fra le due cose c'e' chi pesca. Il ciclo si fermava li',
-e siccome `telnetd` serve una sessione per volta, da quel momento la porta 23
-accettava le connessioni senza mandare un byte.
+*The muteness*: `ipc_recv_timeout(..., 0)` does not mean "do not wait", it means
+**wait forever** — and the mailbox can be empty even when `poll` said otherwise,
+because between the two there is someone else fishing. The loop stopped there,
+and since `telnetd` serves one session at a time, from that moment port 23
+accepted connections without sending a byte.
 
-### Un aggiornamento a meta' non deve lasciare una macchina morta
+### A half-finished update must not leave a dead machine
 
-**il guasto e' successo per davvero; la protezione e' scritta e da provare sul
-campo** — i programmi chiamano la libc **per nome**, e questo produce
-un'asimmetria che decide tutto:
+**the failure really happened; the protection is written and still to be proven
+in the field** — programs call the libc **by name**, and that produces an
+asymmetry that decides everything:
 
 | | |
 |---|---|
-| binario VECCHIO + libc NUOVA | funziona: i nomi vecchi ci sono ancora |
-| binario NUOVO + libc VECCHIA | **non parte niente**: ne manca uno |
+| OLD binary + NEW libc | works: the old names are still there |
+| NEW binary + OLD libc | **nothing starts**: one name is missing |
 
-Un aggiornamento interrotto fra i due lascia la macchina nel secondo caso: si
-accende, ha la rete a posto, e non ha un solo comando con cui rimediare —
-`scarica`, `dhcp`, `ipcfg`, `netupdate` rispondono tutti «la libreria condivisa
-non ha la funzione ...». Da qui tre cose:
+An update interrupted between the two leaves the machine in the second case: it
+boots, the network is fine, and there is not a single command left to fix it
+with — `scarica`, `dhcp`, `ipcfg`, `netupdate` all answer "the shared library
+does not have the function ...". Hence three things:
 
-- **`netupdate` 0.021**: due passate sull'elenco, prima le librerie condivise e
-  poi tutto il resto; e se una libreria **non arriva**, non si tocca piu' niente
-  e lo si dice. La macchina resta vecchia e viva.
-- **`/bin/soccorso`**: statico, con la libc compilata dentro come i driver,
-  quindi parte anche quando non parte nient'altro. Riporta a posto
-  `/lib/libc.so` prendendola dal server e verificando dimensione e impronta
-  mentre arriva.
-- **`dist/fixsys.img`** (`make fixsys`): un dischetto di soccorso avviabile con
-  `sh`, `install`, `mount`, `disk`, `cp`, la libc e i driver della tastiera. Si
-  costruisce con `RAMDISCO=1` perche' parte da un lettore USB, dove il BIOS sa
-  leggere e il kernel no.
+- **`netupdate` 0.021**: two passes over the list, shared libraries first and
+  everything else after; and if a library **does not arrive**, nothing else is
+  touched and it says so. The machine stays old and alive.
+- **`/bin/soccorso`**: static, with the libc compiled in like the drivers, so it
+  runs even when nothing else does. It puts `/lib/libc.so` back, taking it from
+  the server and checking size and hash as it streams.
+- **`dist/fixsys.img`** (`make fixsys`): a bootable rescue floppy with `sh`,
+  `install`, `mount`, `disk`, `cp`, the libc and the keyboard drivers. It is
+  built with `RAMDISCO=1` because it boots from a USB drive, where the BIOS can
+  read and the kernel cannot.
 
-### File grandi su linee che cadono: la ripresa
+### Big files over lines that drop: resuming
 
-**testato sulla macchina vera** — `cc1plus` fa trentasette megabyte, e a
-quaranta kilobyte al secondo sono un quarto d'ora di connessione aperta: cade
-piu' spesso di quanto non cada. Due misure sullo stesso file, 33.306.298 byte e
-poi 37.550.104: numeri diversi, quindi non un tetto ma una caduta.
+**tested on the real machine** — `cc1plus` is thirty-seven megabytes, and at
+forty kilobytes a second that is a quarter of an hour of open connection: it
+drops more often than not. Two measurements of the same file, 33,306,298 bytes
+and then 37,550,104: different numbers, so not a ceiling but a drop.
 
-Adesso `exhttp` dichiara un corpo piu' corto di quello promesso invece di
-renderlo come successo, e sa chiedere `Range: bytes=N-`; `netupdate` riprende il
-`.new` rimasto a meta' invece di ributtarlo, rimasticando l'impronta dei byte
-gia' scritti. E chi chiede un pezzo **controlla di riceverne uno**: un server
-che ignora `Range` risponde 200 con tutto il file, e accodarlo in fondo a mezzo
-file sarebbe peggio del guasto.
+Now `exhttp` declares a body shorter than promised instead of returning it as a
+success, and knows how to ask for `Range: bytes=N-`; `netupdate` resumes the
+half-finished `.new` instead of throwing it away, re-chewing the hash of the
+bytes already written. And whoever asks for a piece **checks that a piece is
+what arrives**: a server that ignores `Range` answers 200 with the whole file,
+and appending that to half a file would be worse than the original fault.
 
-### `ftpswap`: una directory e un server FTP, allineati
+### `ftpswap`: a directory and an FTP server, kept in step
 
-**provato su ferro vero il 16 settembre 2026** — `ftpswap /miadir` tiene allineata una
-directory con un server FTP: quel che nasce da una parte compare dall'altra,
-quel che muore da una parte muore dall'altra, e in caso di conflitto vince il
-piu' recente mentre il perdente si mette da parte come `<nome>.prima`.
+**tested on real hardware on 16 September 2026** — `ftpswap /mydir` keeps a directory in step
+with an FTP server: what is born on one side appears on the other, what dies on
+one side dies on the other, and on a conflict the newer one wins while the loser
+is kept aside as `<name>.prima`.
 
-Cinque prove sull'Acer, contro un server FTP vero: il `.cfg` chiesto e scritto
-a 0600 al primo giro, la struttura replicata nei due versi, un file cambiato
-sul server e riletto sulla macchina, un binario da 3000 byte andato e tornato
-**identico byte per byte**, la cancellazione che passa nei due sensi, e un
-conflitto vero col perdente ritrovato nel suo `.prima`.
+Five tests on the Acer against a real FTP server: the `.cfg` asked for and
+written 0600 on the first pass, the tree replicated both ways, a file changed
+on the server and read back on the machine, a 3000-byte binary that went there
+and back **byte for byte identical**, deletion propagating both ways, and a
+real conflict whose loser was found in its `.prima`.
 
-Il pezzo che decide tutto e' il **diario**: senza memoria, un file che c'e' da
-una parte sola e' sempre un file nuovo da copiare, e cancellare diventa
-impossibile. E il diario tiene le date di **tutt'e due** le parti, perche' su
-EX-OS `utime()` non cambia niente: un file appena scaricato ha la data di
-adesso, e confrontare i due orologi lo rimanderebbe su e giu' per sempre.
+The piece that decides everything is the **journal**: without memory, a file
+present on one side only is always a new file to copy, and deleting becomes
+impossible. And the journal keeps the dates of **both** sides, because on EX-OS
+`utime()` changes nothing: a freshly downloaded file carries today's date, and
+comparing the two clocks would send it up and down forever.
 
-Il client FTP e' finito in `lib/exftp` — MLSD, MDTM, MFMT, PASV e PORT — col
-precedente di `lib/exuser`: due programmi che parlano FTP sono due copie che
-divergono.
+The FTP client ended up in `lib/exftp` — MLSD, MDTM, MFMT, PASV and PORT — with
+`lib/exuser` as the precedent: two programs speaking FTP are two copies that
+drift apart.
 
-### NASM sul CD degli strumenti, e l'altra sintassi
+### NASM on the tools CD, and the other syntax
 
-**testato dentro EX-OS** — sul CD c'erano `as` e `ld`, cioè la catena che il
-compilatore usa senza che nessuno la guardi. Adesso c'è anche **NASM**, e non è
-un doppione: sono **due lingue**.
+**tested inside EX-OS** — the CD carried `as` and `ld`, that is the chain the
+compiler uses without anybody looking at it. Now it carries **NASM** too, and
+it is not a duplicate: they are **two languages**.
 
 | | `as` (GNU) | `nasm` |
 |---|---|---|
-| sintassi | AT&T | Intel |
-| fatta per | ricevere l'uscita di `gcc` | essere scritta da una persona |
+| syntax | AT&T | Intel |
+| made for | receiving `gcc`'s output | being written by a person |
 | | `movl $4, %eax` | `mov eax, 4` |
 | | `.ascii "..."` | `db "..."` |
 
-! **E soprattutto: questo è un sistema operativo.** Chi impara a scriverne uno
-comincia da sedici bit e da un settore di avvio, e quella roba è scritta in
-NASM nel novantanove per cento dei casi — compreso `boot/stage1.asm`, il
-settore di avvio di EX-OS stesso. Un sistema che sa compilarsi il C ma non sa
-assemblare un `org 0x7c00` è monco proprio nel punto in cui dovrebbe essere più
-forte.
+! **And above all: this is an operating system.** Whoever learns to write one
+starts from sixteen bits and a boot sector, and that stuff is written in NASM
+ninety-nine times out of a hundred — including `boot/stage1.asm`, EX-OS's own
+boot sector. A system that can compile its own C but cannot assemble an
+`org 0x7c00` is crippled exactly where it should be strongest.
 
-**È il porting più piccolo fatto finora — due righe — e il motivo si capisce
-guardando ciò che NASM *non* ha: un bersaglio.** I formati d'uscita (`elf32`,
-`bin`, `coff`, `macho`) li produce tutti sempre, e la scelta la fa chi lo usa
-con `-f`: non c'è niente da insegnargli su EX-OS, perché `nasm -f elf32` fa già
-esattamente ciò che il nostro `ld` sa collegare. Mancava solo che **girasse
-qui**:
+**It is the smallest port done so far — two lines — and the reason becomes
+clear by looking at what NASM does *not* have: a target.** It produces every
+output format (`elf32`, `bin`, `coff`, `macho`) always, and the choice is made
+by whoever runs it with `-f`: there is nothing to teach it about EX-OS, because
+`nasm -f elf32` already emits exactly what our `ld` links. All that was missing
+was for it to **run here**:
 
 ```
-autoconf/helpers/config.sub   'exos' fra i sistemi ammessi
-nasmlib/path.c                __exos__ fra quelli coi percorsi di Unix
+autoconf/helpers/config.sub   'exos' among the accepted systems
+nasmlib/path.c                __exos__ among those with Unix paths
 ```
 
-> La seconda si è presentata come un errore onesto e per fortuna rumoroso —
-> `path.c:204: 'separators' undeclared`. NASM sceglie lo stile dei percorsi dai
-> macro del compilatore, e per un sistema che non riconosce prende
-> `PATH_UNKNOWN`, dove `separators` non è definito affatto. **La riga giusta non
-> era far dire al nostro GCC di essere Unix** — non lo è — ma dire lì che EX-OS
-> ha i percorsi fatti come quelli di Unix: la barra come unico separatore,
-> nessun concetto di volume. È vero, e sta in una riga.
+> The second one showed up as an honest and, luckily, loud error —
+> `path.c:204: 'separators' undeclared`. NASM picks its path style from the
+> compiler's macros, and for a system it does not recognise it takes
+> `PATH_UNKNOWN`, where `separators` is not defined at all. **The right line was
+> not to make our GCC claim to be Unix** — it is not — but to say there that
+> EX-OS has Unix-shaped paths: the slash as the only separator, no notion of a
+> volume. That is true, and it fits in one line.
 
-**Le prove sono due perché dimostrano due cose diverse.** `prova-nasm.asm` è la
-gemella di `prova.s` (che è per `as`): la stessa identica cosa detta nelle due
-sintassi, che è il modo più corto di imparare la differenza.
+**There are two tests because they prove two different things.**
+`prova-nasm.asm` is the twin of `prova.s` (which is for `as`): the very same
+thing said in the two syntaxes, which is the shortest way to learn the
+difference.
 
 ```
 nasm -f elf32 /cdrom/prova-nasm.asm -o /prova-nasm.o
@@ -1515,9 +1508,9 @@ ld -o /prova-nasm /prova-nasm.o
 Assemblato con NASM dentro EX-OS.
 ```
 
-`prova-nasm16.asm` è quella che dimostra **perché** NASM sta sul CD: sedici
-bit, `org 0x7c00`, nessun linker e nessun sistema operativo sotto. Con
-`ndisasm` il giro torna indietro esatto:
+`prova-nasm16.asm` is the one that shows **why** NASM belongs on the CD:
+sixteen bits, `org 0x7c00`, no linker and no operating system underneath. With
+`ndisasm` the round trip comes back exact:
 
 ```
 nasm -f bin /cdrom/prova-nasm16.asm -o /avvio.bin
@@ -1525,703 +1518,695 @@ ndisasm -b 16 -o 0x7c00 /avvio.bin
 00007C0B  BE207C            mov si,0x7c20
 ```
 
-`0x7c20` e non `0x0020`: è `org` che ha fatto il suo mestiere, ed è la cosa che
-`ld` non può fare al posto tuo — lì non c'è nessun collegatore che metta le
-etichette al posto giusto. **`ndisasm` viene con lui** e vale il megabyte che
-occupa: dentro un sistema operativo serve la prima volta che si guarda un
-settore di avvio o il dump di un fault senza avere il sorgente sotto mano.
+`0x7c20` and not `0x0020`: that is `org` doing its job, and it is the thing
+`ld` cannot do for you — there is no linker there to put the labels in the
+right place. **`ndisasm` comes with it** and earns the megabyte it takes:
+inside an operating system it is needed the first time you look at a boot
+sector, or at the dump of a fault, without the source at hand.
 
-> **E un guasto trovato per strada: il CD non si costruiva più.** `make iso` si
-> ferma collegando `/bin/provassl` con `libcrypto.a(o_str.o): undefined
-> reference to 'errno'`, perché da oggi `errno` non è più un simbolo globale ma
-> una macro che chiama `__errno_dove()` — e `libcrypto.a` è stata costruita
-> prima. Lo diceva già `tools/ricostruisci-bersaglio.sh --verifica` a ogni
-> `make iso` («la libc è CAMBIATA dopo l'ultima ricostruzione»), ma come
-> *avviso*: quel controllo guarda le forme dei tipi, non i simboli. **libcrypto
-> è stata rifatta e il CD si costruisce di nuovo**; il resto del bersaglio —
-> cc1, as, ld, fbc, le librerie di calcolo — è ancora quello di prima, e sta in
-> `in_lavorazione.txt` come `@ABI-BERSAGLIO`.
+> **And a breakage found along the way: the CD would not build any more.**
+> `make iso` stops linking `/bin/provassl` with `libcrypto.a(o_str.o):
+> undefined reference to 'errno'`, because as of today `errno` is no longer a
+> global symbol but a macro calling `__errno_dove()` — and `libcrypto.a` was
+> built before that. `tools/ricostruisci-bersaglio.sh --verifica` was already
+> saying it at every `make iso` ("the libc has CHANGED since the last target
+> rebuild"), but as a *warning*: that check looks at the shapes of types, not at
+> symbols. **libcrypto has been rebuilt and the CD builds again**; the rest of
+> the target — cc1, as, ld, fbc, the arithmetic libraries — is still the old
+> one, and it is in `in_lavorazione.txt` as `@ABI-BERSAGLIO`.
 
-### La pila di un filo cresce su richiesta
+### A thread's stack grows on demand
 
-**testato** — un filo nasceva con 64 KB di RAM vera in mano: sedici pagine
-allocate e azzerate una per una, anche per un filo che di pila ne usa duecento
-byte. Non era una svista, era un prezzo pagato apposta, e il perché stava
-scritto nel codice: `page_fault_handler` sapeva far crescere **uno** stack —
-quello del PCB corrente — e davanti a una pagina mancante dentro la banda dei
-fili non sapeva **di chi** fosse.
+**tested** — a thread was born holding 64 KB of real RAM: sixteen pages
+allocated and zeroed one by one, even for a thread that uses two hundred bytes
+of stack. It was not an oversight, it was a price paid on purpose, and the
+reason was written in the code: `page_fault_handler` could grow **one** stack —
+the one in the current PCB — and faced with a missing page inside the thread
+band it could not tell **whose** it was.
 
-Adesso lo sa dire. Della piazzola si impegnano il blocco TLS e le prime otto
-pagine; il resto arriva quando il filo scende davvero, e si ferma sulla pagina
-di guardia sotto la piazzola. **Sette fili costano 980 KB invece di 1344**,
-cioè 140 a testa invece di 192 — e di quei 140, centoventotto sono lo stack di
-*kernel* del task, che con questo lavoro non c'entra: la pila utente è passata
-da 64 KB a 12.
+Now it can. Of a thread's slot only the TLS block and the first eight pages are
+committed; the rest arrives when the thread really goes down, and stops at the
+guard page below the slot. **Seven threads cost 980 KB instead of 1344**, that
+is 140 each instead of 192 — and of those 140, one hundred and twenty-eight are
+the task's *kernel* stack, which this work does not touch: the user stack went
+from 64 KB to 12.
 
-**La domanda vera non era «quanto», era «di chi».** I fili condividono la
-memoria, quindi a faultare dentro la pila di un filo può essere **qualcun
-altro**: un filo dichiara `char buf[16384]`, ne tocca solo la cima e ne passa
-il fondo a un compagno — o a una `read()`. Il fondo non è impegnato, il
-compagno ci scrive, e il fault arriva mentre gira lui; il suo ESP non dice
-niente su quell'indirizzo, perché sta in un'altra piazzola. Finché i 64 KB
-c'erano tutti il caso non esisteva. Per questo `pf_cresci_stack` è diventata
-due domande invece di una: **se** la crescita è legittima e **di chi** è la
-pila, poi `pf_cresci_pagine` impegna.
+**The real question was not «how much», it was «whose».** Threads share memory,
+so the one faulting inside a thread's stack may be **somebody else**: a thread
+declares `char buf[16384]`, touches only its top and hands the bottom to a
+companion — or to a `read()`. The bottom is not committed, the companion writes
+there, and the fault arrives while *it* is running; its ESP says nothing about
+that address, because it lives in another slot. As long as all 64 KB were
+committed the case did not exist. That is why `pf_cresci_stack` became two
+questions instead of one: **whether** the growth is legitimate and **whose**
+the stack is, and only then `pf_cresci_pagine` commits the pages.
 
-> **La condizione «vicino a ESP» lì non si applica, e non è una rinuncia:**
-> sarebbe un paragone fra due piazzole diverse, cioè un numero senza
-> significato. Al suo posto c'è un confine altrettanto stretto — l'indirizzo
-> deve cadere nella riserva di un filo **vivo** dello stesso gruppo — e fra una
-> piazzola e l'altra resta la guardia, che nessuna crescita può scavalcare.
+> **The «close to ESP» condition does not apply there, and it is not a
+> surrender:** it would compare two different slots, that is a number without
+> meaning. In its place there is an equally tight boundary — the address must
+> fall inside the reserve of a **live** thread of the same group — and between
+> one slot and the next the guard page remains, which no growth can step over.
 
-**Due difetti trovati leggendo quel che si stava per toccare**, tutt'e due in
+**Two defects found by reading what was about to be touched**, both in
 `proc_reap_zombie`:
 
-- **sedici pagine perse a ogni filo che finisce.** Le piazzole si riusano, ma
-  le pagine di un filo morto restavano mappate fino alla fine del *processo*:
-  il filo dopo prendeva lo stesso posto e ci si mappava sopra pagine nuove —
-  `paging_map_page` sovrascrive la voce senza dire niente — con i dati di
-  quello di prima sotto i piedi. Adesso la piazzola si smonta, e nella prova si
-  legge «riassorbiti tornano 980 KB su 980»;
-- **una page directory distrutta più di una volta.** Si libera «quando non
-  resta nessuno», e nessuno si contava con `proc_gruppo_vivi()`, che gli zombie
-  non li conta; ma quando il capogruppo esce i fili diventano zombie *tutti
-  insieme*, e ognuno veniva raccolto con lo stesso puntatore in mano. Il primo
-  distruggeva la directory, i successivi la ripercorrevano da liberata. **Non è
-  provato** che fosse la causa dei due difetti rari già aperti — il panic dentro
-  `kfree`, il driver che parte con lo stack a zero — ma la forma è quella: un
-  conto che arriva altrove e molto dopo.
+- **sixteen pages lost for every thread that ends.** Slots are reused, but the
+  pages of a dead thread stayed mapped until the end of the *process*: the next
+  thread took the same slot and new pages were mapped over them —
+  `paging_map_page` overwrites the entry silently — with the previous thread's
+  data underfoot. Now the slot is taken down, and the test reads "reaped, 980 KB
+  come back out of 980";
+- **a page directory destroyed more than once.** It is freed "when nobody is
+  left", and nobody was counted with `proc_gruppo_vivi()`, which does not count
+  zombies; but when the group leader exits the threads become zombies *all at
+  once*, and each was reaped holding the same pointer. The first destroyed the
+  directory, the following ones walked it after it had been freed. **It is not
+  proven** that this was the cause of the two rare defects already open — the
+  panic inside `kfree`, the driver starting with a zero stack — but the shape
+  is right: a bill that arrives elsewhere and much later.
 
-**Le prove sono due modi nuovi di `/bin/filiprova`,** e ognuna delle tre parti
-di `pila` fallisce da sola: quanto costa un filo (la riga di giudizio è a 160 KB
-— 128 di stack kernel più *o* 64 di piazzola tutta *o* 12 impegnati a poco a
-poco: un numero in mezzo non esiste), che poi cresca (quaranta chiamate da un
-kilobyte, cinque volte quel che gli è stato dato), e che cresca **per mano di un
-altro**. `sfonda` scende senza fine e pretende che a morire sia il filo, sulla
-guardia, con codice -11, mentre il processo resta vivo.
+**The tests are two new modes of `/bin/filiprova`,** and each of the three
+parts of `pila` fails on its own: what a thread costs (the judgment line is at
+160 KB — 128 of kernel stack plus *either* 64 of a fully committed slot *or* 12
+committed little by little: a number in between does not exist), that it then
+grows (forty calls of one kilobyte, five times what it was given), and that it
+grows **at somebody else's hand**. `sfonda` goes down without end and demands
+that the one who dies is the thread, on the guard page, with code -11, while
+the process stays alive.
 
-> **Nella terza parte il filo che aspetta non può chiamare niente.** Una `call`
-> scrive l'indirizzo di ritorno *sotto* l'ESP, e il fault che ne segue fa
-> impegnare tutto quel che sta fra lì e la parte già viva — cioè proprio il
-> pezzo che la prova vuole lasciare vuoto. Aspetta girando su una variabile
-> `volatile`. È anche la ragione per cui il caso è raro nella vita vera: i dati
-> vivi di un filo stanno sempre sopra il suo ESP, e sopra l'ESP è già tutto
-> impegnato.
+> **In the third part the waiting thread cannot call anything.** A `call`
+> writes the return address *below* ESP, and the fault that follows commits
+> everything between there and the part already live — that is, exactly the
+> piece the test wants to leave empty. It waits spinning on a `volatile`
+> variable. It is also why the case is rare in real life: a thread's live data
+> always sits above its own ESP, and above ESP everything is already committed.
 
-Restano dichiarati, e sono difetti veri usciti scrivendo la prova: **un filo che
-muore di page fault non porta via il processo** (muore lui, e il programma
-prosegue magari con un lucchetto preso da chi non c'è più), e **lo zombie di un
-filo che nessuno aspetta lo raccoglie la shell**, che torna al prompt con il
-programma ancora vivo.
+Two real defects, found while writing the test, stay declared: **a thread that
+dies of a page fault does not take the process with it** (it dies alone, and the
+program carries on, possibly with a lock held by someone who is no longer
+there), and **the zombie of a thread nobody is waiting for is reaped by the
+shell**, which returns to the prompt with the program still running.
 
-### La casella «Cerca», e due caselle nella stessa barra
+### The «Cerca» box, and two boxes in the same bar
 
-**testato, in rete, dentro EX-OS** — cercare si poteva già: `html.duckduckgo.com`
-risponde in HTML semplice e il navigatore lo mostra. Mancava la *comodità* — si
-scriveva l'indirizzo del motore a mano — e adesso c'è una casella **Cerca** a
-destra nella barra: parole, Invio, risultati.
+**tested, on the network, inside EX-OS** — searching already worked:
+`html.duckduckgo.com` answers in plain HTML and the browser renders it. What was
+missing was the *convenience* — you typed the engine's address by hand — and now
+there is a **Cerca** box on the right of the bar: words, Enter, results.
 
-I motori sono tre, e si scelgono in **File > Impostazioni**: **duckduckgo**
-(predefinito), **wikipedia**, **marginalia**. **Sono tre perché tre
-rispondono:** `google.com` manda novantamila byte, tre script e *zero*
-collegamenti di risultato dentro l'HTML — i risultati li costruisce il
-JavaScript, quindi non c'è browser senza JS che possa vederli — e Mojeek manda
-un Captcha. Metterli in elenco vorrebbe dire una voce che promette una ricerca
-e rende una pagina vuota.
+There are three engines, chosen in **File > Impostazioni**: **duckduckgo**
+(default), **wikipedia**, **marginalia**. **There are three because three
+answer:** `google.com` sends ninety thousand bytes, three scripts and *zero*
+result links inside the HTML — JavaScript builds the results, so no browser
+without JS can ever see them — and Mojeek sends a Captcha. Listing them would
+mean an entry that promises a search and returns an empty page.
 
-**Invio fa due cose diverse, e la differenza è il fuoco.** In una casella del
-toolkit Invio arriva all'applicazione come `EXM_TASTO` — la casella lo lascia
-passare apposta — ma il messaggio **non dice da quale casella arrivi**, e il
-fuoco lo sa solo il toolkit. Per questo è nata `ex_fuoco_chi()`, otto righe:
-l'alternativa era indovinarlo guardando quale testo è cambiato, cioè sbagliarlo
-il giorno che qualcuno cerca due volte la stessa cosa.
+**Enter does two different things, and the difference is the focus.** In a
+toolkit text box Enter reaches the application as `EXM_TASTO` — the box lets it
+through on purpose — but the message **does not say which box it came from**,
+and only the toolkit knows where the focus is. Hence `ex_fuoco_chi()`, eight
+lines: the alternative was guessing from which text had changed, that is,
+getting it wrong the day somebody searches for the same thing twice.
 
-> **E un difetto del toolkit che non mordeva finché le caselle erano larghe.**
-> Con la seconda casella l'indirizzo si è ristretto da 636 a 436 pixel, e alla
-> prima pagina lunga il difetto era in fotografia: l'indirizzo **scriveva sopra
-> l'etichetta «Cerca»**. `ex_scrivi` non taglia niente e `CL_TESTO` non lo
-> chiedeva a nessuno — non è un difetto nato oggi, è nato oggi il primo posto in
-> cui due controlli sono così vicini. Adesso si mostra la **coda** e non la
-> testa, perché in quella casella il cursore sta sempre in fondo: chi scrive
-> deve vedere quel che sta scrivendo, non l'inizio di un indirizzo che ha già
-> finito di battere.
+> **And a toolkit defect that did not bite while the boxes were wide.** With the
+> second box the address field shrank from 636 to 436 pixels, and on the first
+> long page the defect was there in the screenshot: the address was **writing
+> over the «Cerca» label**. `ex_scrivi` clips nothing and `CL_TESTO` never asked
+> it to — the defect is not new, what is new is the first place where two
+> controls sit that close. Now the box shows the **tail** and not the head,
+> because its cursor is always at the end: whoever is typing must see what they
+> are typing, not the beginning of an address they have already finished.
 
-### La directory è di tutti e due (e l'ambiente lo era già)
+### The working directory belongs to both (and the environment already did)
 
-**testato** — un `chdir` dentro un filo adesso lo vedono gli altri, ed è una
-riga: `filo->cwdt = capo->cwdt;` invece di copiare il percorso. **È lo stesso
-mestiere che fa `fdt` per i descrittori**, con lo stesso idioma: nel PCB c'è il
-campo `cwd` e c'è il puntatore `cwdt`, che per un processo punta al proprio
-campo e per un filo a quello del capogruppo. Tutto il kernel usa `cwdt` — sono
-cinque posti in croce — e **fra processi non cambia niente**: la directory
-resta una per ciascuno, ereditata dal padre a `spawn` come prima.
+**tested** — a `chdir` inside a thread is now seen by the others, and it is one
+line: `filo->cwdt = capo->cwdt;` instead of copying the path. **It is the same
+job `fdt` does for file descriptors**, with the same idiom: the PCB has the
+`cwd` field and the `cwdt` pointer, which for a process points at its own field
+and for a thread at the group leader's. The whole kernel uses `cwdt` — five
+places in all — and **nothing changes between processes**: the directory stays
+one per process, inherited from the parent at `spawn` as before.
 
-**Il motivo è lo stesso di quando la directory diventò una per processo, letto
-all'incontrario.** Allora il difetto era che `cd` dentro un programma spostava
-tutti gli altri; qui è che due fili **sono un programma solo**, e una funzione
-che entra in una directory, apre un file relativo e torna indietro fa la cosa
-giusta o quella sbagliata a seconda di quale filo la esegue — senza errore,
-aprendo un file nel posto sbagliato.
+**The reason is the same one that made the directory per-process, read
+backwards.** Back then the defect was that `cd` inside one program moved every
+other one; here it is that two threads **are one program**, and a function that
+steps into a directory, opens a relative file and steps back does the right
+thing or the wrong thing depending on which thread runs it — no error, just a
+file opened in the wrong place.
 
-**E l'ambiente non passa dal kernel: quello era da controllare, non da fare.**
-L'elenco diceva «cwd ed env sono copiati», e per `env` non era vero: `environ`
-sta nei dati di `libc.so`, che i fili condividono perché condividono la
-memoria, e il campo `env[]` del PCB non lo usa nessuno. Non c'era niente da
-aggiustare; c'era da *guardare*, che è un'altra cosa dal darlo per buono.
+**And the environment does not go through the kernel: that one was to be
+checked, not built.** The list said "cwd and env are copied", and for `env` it
+was not true: `environ` lives in `libc.so`'s data, which threads share because
+they share the memory, and the PCB's `env[]` field is used by nobody. There was
+nothing to fix; there was something to *look at*, which is not the same as
+assuming it.
 
-> **La prova guarda nei due versi, e uno solo non basterebbe.** Con la
-> directory copiata alla creazione, il verso «il principale si sposta e il filo
-> se ne accorge» passerebbe lo stesso ogni volta che il filo nasce *dopo* il
-> cambio: è il filo che si sposta e il principale che deve vederlo a dire
-> «condivisa» invece di «copiata al momento giusto». Rimessa la copia di prima
-> per un giro, falliscono tutt'e due i versi — e l'ambiente passa in tutt'e due
-> i casi, che è la conferma che quella metà non è mai stata un problema del
-> kernel.
+> **The test looks in both directions, and one alone would not do.** With the
+> directory copied at creation, the "the main thread moves and the thread
+> notices" direction would pass anyway whenever the thread is born *after* the
+> change: it is the thread moving and the main thread having to see it that
+> tells "shared" from "copied at the right moment". With the old copy put back
+> for one run, both directions fail — and the environment passes in both cases,
+> which confirms that half was never a kernel matter.
 
-### Fermare un filo è chiederglielo
+### Stopping a thread means asking it to
 
-**testato** — uccidere un filo si poteva già (il tid è un pid, e `kill`
-funziona), ma **non si deve**: un filo ucciso dove capita lascia i lucchetti
-presi, i file aperti a metà e le strutture come stavano, e dentro un processo
-solo quelle non sono le sue — sono **di tutti**. Adesso c'è il modo ordinato:
+**tested** — killing a thread was already possible (the tid is a pid, and
+`kill` works), but you **must not**: a thread killed wherever it happened to be
+leaves the locks taken, files half open and structures as they were, and inside
+a single process those are not its own — they belong to **everybody**. Now
+there is the orderly way:
 
 ```c
-while (!thread_devo_fermarmi()) { ...un pezzo di lavoro... }
-...lascia i lucchetti, chiudi quel che hai aperto...
+while (!thread_devo_fermarmi()) { ...a piece of work... }
+...release the locks, close what you opened...
 thread_esci(0);
 ```
 
-`thread_ferma(tid)` lascia un messaggio, `thread_devo_fermarmi()` lo legge dove
-il filo decide. **Il kernel fa solo le due cose che da fuori non si possono
-fare**: mettere il messaggio dove il filo lo troverà, e *scrollare* chi dorme —
-perché un filo addormentato non guarda niente.
+`thread_ferma(tid)` leaves a message, `thread_devo_fermarmi()` reads it where
+the thread decides. **The kernel only does the two things that cannot be done
+from outside**: putting the message where the thread will find it, and *shaking*
+whoever is asleep — because a sleeping thread looks at nothing.
 
-**Due parole nel PCB, e fanno due mestieri diversi.** `ferma` è il messaggio e
-resta: una richiesta letta una volta vale anche la seconda. `scuoti` è la
-scrollata e **si consuma**, e serve a chiudere l'unica finestra che questa cosa
-ha: fra il momento in cui il filo guarda e quello in cui si addormenta. Se la
-richiesta arriva lì in mezzo il filo dorme *dopo* aver guardato — la stessa
-corsa del risveglio perso, e la stessa cura: chi chiede lascia scritto che la
-prossima attesa non deve dormire, e `sys_attesa_dormi` lo trova dentro lo
-stesso `cli` che protegge il valore atteso. Una scrollata sola, non un «non
-dormire mai più»: un filo che sta uscendo ha ancora una pulizia da fare, e con
-ogni attesa che torna subito quella girerebbe a vuoto.
+**Two words in the PCB, doing two different jobs.** `ferma` is the message and
+it stays: a request read once is still true the second time. `scuoti` is the
+shake and it **is consumed**, and it closes the one window this thing has:
+between the moment the thread looks and the moment it falls asleep on a wait.
+If the request lands in there the thread sleeps *after* having looked — the
+same race as a lost wake-up, and the same cure: the asker leaves it written
+that the next wait must not sleep, and `sys_attesa_dormi` finds it inside the
+very `cli` that protects the expected value. One shake, not a "never sleep
+again": a thread on its way out still has cleaning up to do, and with every
+wait returning at once that cleanup would spin instead of sleeping.
 
-> **E la prova passava anche senza la cosa che doveva provare** — il difetto più
-> istruttivo della giornata, e stava *nella prova*. Tolta la scrollata dal
-> kernel per una riga, il caso che doveva colpire quella finestra passava lo
-> stesso: con un processore solo, creando un filo e fermandolo subito si finisce
-> sempre in uno dei due casi facili — o la richiesta arriva prima che il filo
-> abbia guardato, o a filo già addormentato. Il caso di mezzo dura poche
-> istruzioni e **a caso non ci si casca**. La cura è allargare la finestra a
-> comando invece di sperare: il filo, fra l'occhiata e il sonno, cede la CPU e
-> alza una bandierina, e chi comanda aspetta quella. Adesso venti corse costano
-> **60-180 ms** con la scrollata e **20200 senza** — venti scadenze da un
-> secondo, una per corsa — e la prova fallisce. Prima la differenza era di zero.
+> **And the test passed even without the thing it was supposed to prove** — the
+> most instructive defect of the day, and it was *in the test*. With the shake
+> taken out of the kernel for one line, the case meant to hit that window
+> passed all the same: on a single CPU, creating a thread and stopping it right
+> away always lands in one of the two easy cases — either the request arrives
+> before the thread has looked, or with the thread already asleep. The case in
+> between lasts a handful of instructions and **you never hit it by chance**.
+> The cure is to widen the window on command instead of hoping: between the
+> look and the sleep the thread yields the CPU and raises a flag, and the
+> caller waits for that flag. Twenty races now cost **60-180 ms** with the
+> shake and **20200 without** — twenty one-second deadlines, one per race — and
+> the test fails. Before, the difference was zero.
 
-**Quel che non fa, ed è scritto:** il filo si accorge solo dove guarda. Un
-`semaforo_prendi` senza scadenza non è un punto di controllo, e nemmeno una
-lettura da tastiera o da rete; chi vuole potersi fermare lì usa le varianti con
-scadenza. E la lettura del messaggio costa una chiamata di sistema: toglierla
-vorrebbe dire una parola di ABI dentro il blocco TLS, che è una decisione a
-senso unico e nessuno l'ha ancora misurata.
+**What it does not do, and it is written down:** the thread notices only where
+it looks. A `semaforo_prendi` with no deadline is not a cancellation point, and
+neither is a read from the keyboard or the network; whoever wants to be
+stoppable there uses the timed variants. And reading the message costs a system
+call: removing it would mean a word of ABI inside the TLS block, which is a
+one-way decision nobody has measured yet.
 
-### Le condizioni e i semafori, sopra l'attesa che dorme
+### Condition variables and semaphores, on top of the sleeping wait
 
-**testato** — l'attesa che dorme era il mattone; adesso ci sono le due cose che
-ci si costruiscono sopra, e sono **otto funzioni di libc, nessuna riga di
-kernel**: `condizione_aspetta` (con la variante a scadenza), `condizione_segnala`,
+**tested** — the sleeping wait was the brick; now the two things you build on
+top of it are there, and they are **eight libc functions, not one line of
+kernel**: `condizione_aspetta` (plus the timed variant), `condizione_segnala`,
 `condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
-`semaforo_lascia`. Tutt'e due i tipi sono **un intero**, come il lucchetto:
-`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — nessuna funzione di
-inizializzazione, che è l'unica forma che non si può dimenticare di chiamare.
+`semaforo_lascia`. Both types are **a plain int**, like the lock:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — no init function,
+which is the only shape you cannot forget to call.
 
-**Una condizione è un contatore di segnali, e basta.** Non tiene la lista di
-chi aspetta: quella è già nel kernel, ed è la coda di chi dorme su
-quell'indirizzo. Aspettare è tre righe — leggi il contatore, lascia il
-lucchetto, dormi su quel valore, riprendi il lucchetto — e **la prima è l'unica
-che conta**: fra il «lascia» e il «dormi» c'è una finestra in cui chi segnala
-può passare, e quel segnale arriverebbe prima che ci sia qualcuno da svegliare.
-Avendo letto il contatore *prima*, se qualcuno segnala lì in mezzo il valore
-non è più quello e non si dorme affatto. La finestra non si chiude: si rende
-innocua.
+**A condition variable is a counter of signals, and nothing else.** It does not
+hold the list of who is waiting: that is already in the kernel, and it is the
+queue of whoever sleeps on that address. Waiting is three lines — read the
+counter, release the lock, sleep on that value, take the lock back — and **the
+first one is the only one that matters**: between the release and the sleep
+there is a window a signaller can walk through, and that signal would arrive
+before there is anybody to wake. Having read the counter *first*, if somebody
+signals in there the value is no longer that one and you do not sleep at all.
+The window is not closed: it is made harmless.
 
-> **Perciò si aspetta dentro un `while`, mai dentro un `if`.** Il risveglio
-> dice «guarda di nuovo», non «adesso c'è»: può arrivare per un segnale, per
-> la scadenza, o perché un segnale era già passato. Chi controlla una volta
-> sola prima o poi prosegue con la condizione falsa, ed è il difetto che non si
-> riproduce.
+> **Which is why you wait inside a `while`, never inside an `if`.** Waking up
+> says "look again", not "it is here now": it can come from a signal, from the
+> deadline, or because a signal had already gone by. Whoever checks once will
+> eventually carry on with the condition false, and that is the defect that
+> does not reproduce.
 
-**Un semaforo non ha un padrone**, e non è una licenza: chi lascia può non
-essere chi ha preso, ed è esattamente ciò che serve fra un produttore e un
-consumatore, dove il posto libero lo consuma uno e lo restituisce l'altro. Una
-spesa è rimasta lì, scritta accanto al codice: chi lascia chiama la sveglia
-*sempre*, anche quando non dorme nessuno — il lucchetto quella spesa la evita
-col terzo stato, ma lì il numero *è* lo stato del lucchetto, mentre qui il
-contatore conta posti e non ha dove metterlo. La via c'è (un secondo campo
-«dormienti») e vuole un tipo nuovo nell'ABI: **non si paga un tipo nuovo per
-un'ottimizzazione che nessuno ha ancora misurato.**
+**A semaphore has no owner**, and that is not a licence: the one who releases
+need not be the one who took it, which is exactly what a producer and a
+consumer need — one consumes the free slot, the other gives it back. One cost
+was left in, written next to the code: releasing always calls the wake-up, even
+when nobody is asleep. The lock avoids that cost with its third state, but
+there the number *is* the state of the lock, while here the counter counts
+slots and has nowhere to put it. The way out exists (a second `dormienti`
+field) and wants a new type in the ABI: **you do not pay for a new type for an
+optimisation nobody has measured yet.**
 
-> **La prova è una coda di UN posto, e può fallire in tre modi diversi.** Mille
-> elementi fra un produttore e un consumatore: con dieci posti i due si
-> incrociano poco e la prova diventa quasi sequenziale, con uno solo ognuno dei
-> mille costringe l'altro ad aspettare. Si guarda la **somma** (perderne uno e
-> leggerne un altro due volte darebbe lo stesso numero di giri), i **giri a
-> vuoto** — e devono essere *zero*, non «pochi»: con un consumatore solo, chi si
-> sveglia trova sempre la roba — e il **cronometro**, che è il testimone dei
-> giri a vuoto. Dentro l'attesa c'è una scadenza di mezzo secondo che è una
-> *rete*, non un modo di funzionare: senza, un segnale perso sarebbe una
-> macchina ferma per sempre e la prova non fallirebbe, resterebbe lì. Mille
-> passaggi ne costano fra **20 e 60 ms** misurati, una sola scadenza ne
-> costerebbe 500: la riga di giudizio sta a 400, comoda sopra la misura e
-> ancora capace di distinguere.
+> **The test is a one-slot queue, and it can fail in three different ways.** A
+> thousand items between one producer and one consumer: with ten slots the two
+> barely interleave and the test becomes almost sequential, with one slot each
+> of the thousand items forces the other to wait. It watches the **sum**
+> (losing one and reading another twice would give the same number of rounds),
+> the **empty rounds** — and they must be *zero*, not "few": with a single
+> consumer, whoever wakes always finds the goods — and the **stopwatch**, which
+> is the witness for the empty rounds. Inside the wait there is a half-second
+> deadline that is a *net*, not a way of working: without it a lost signal
+> would be a machine stopped forever, and the test would not fail, it would
+> just sit there. A thousand hand-offs cost between **20 and 60 ms** measured,
+> one single deadline would cost 500: the judgement line sits at 400, well
+> above the measurement and still able to tell the two apart.
 
-### I fili: più flussi dentro lo stesso programma
+### Threads: several flows inside the same program
 
-**testato** — e la prova non è che il conto torni, è che **senza lucchetto non
-torna**:
+**tested** — and the proof is not that the count adds up, it is that **without
+the lock it does not**:
 
 ```
-filiprova: 4 fili, 20000 giri l'uno
-  col lucchetto   80000   atteso  80000   esatto
-  senza           20000   atteso  80000   perso per strada
-  scambi di mano  80000   i fili si alternano davvero
+filiprova: 4 threads, 20000 rounds each
+  with the lock   80000   expected  80000   exact
+  without         20000   expected  80000   lost on the way
+  hand-offs       80000   the threads really do interleave
 ```
 
-Sessantamila incrementi persi sono quattro flussi che si pestano i piedi sulla
-stessa memoria. Se i fili fossero finti — se `thread_crea` eseguisse la
-funzione dentro chi chiama — quel numero sarebbe 80000 come l'altro, e la prova
-sarebbe passata senza provare niente.
+Sixty thousand lost increments are four flows treading on each other in the
+same memory. If the threads were fake — if `thread_crea` ran the function
+inside the caller — that number would be 80000 like the other one, and the test
+would have passed without proving anything.
 
-**La differenza fra un processo e un filo è una riga: la page directory.**
-`proc_create` ne alloca una nuova, `proc_thread_crea` copia quella del
-capogruppo. Non c'è una riga dello scheduler che sia stata toccata: stessa run
-queue, stesso quanto, stesso `context_switch` — che riceveva già il CR3 come
-parametro. E `tgid` (il pid del primo del gruppo) vale `pid` per un processo
-normale, così tutto il kernel che non sa niente di fili continua a funzionare
-senza un solo `if`.
+**The difference between a process and a thread is one line: the page
+directory.** `proc_create` allocates a new one, `proc_thread_crea` copies the
+group leader's. Not one line of the scheduler was touched: same run queue, same
+quantum, same `context_switch` — which already took CR3 as a parameter. And
+`tgid` (the first member's pid) equals `pid` for a normal process, so all the
+kernel that knows nothing about threads keeps working without a single `if`.
 
-**I descrittori si condividono per puntatore, non per copia**: due fili che
-aprono e chiudono file devono vedere la stessa tabella. Nel PCB è comparso
-`fdt`, e le 153 occorrenze di `->fds[` nel kernel sono diventate `->fdt[` con
-una sostituzione meccanica — per un processo normale `fdt == fds` e non cambia
-niente.
+**File descriptors are shared by pointer, not by copy**: two threads opening
+and closing files must see the same table. The PCB gained `fdt`, and the 153
+occurrences of `->fds[` in the kernel became `->fdt[` with a mechanical
+substitution — for a normal process `fdt == fds` and nothing changes.
 
-**Lo stack no**: 64 KB per filo, in una banda riservata *a tutti* i processi
-all'avvio — anche a chi un filo non lo farà mai. Sono indirizzi, non pagine.
-L'alternativa (riservarla quando nasce il primo filo) vorrebbe dire abbassare
-il tetto dello heap sotto memoria che lo heap potrebbe già avere preso: o si
-rifiuta il filo, o gli si mette lo stack sopra la roba di qualcun altro.
+**Stacks are not shared**: 64 KB per thread, in a band reserved for *every*
+process at startup — even for one that will never make a thread. They are
+addresses, not pages. The alternative (reserving it when the first thread is
+born) would mean lowering the heap ceiling under memory the heap might already
+have taken: either you refuse the thread, or you put its stack on top of
+somebody else's data.
 
-> **Chi esce porta via il gruppo**, come `exit_group` su Linux e per la stessa
-> ragione: gli altri fili vivono nella memoria di questo processo, e lasciarli
-> correre mentre lo spazio di indirizzamento se ne va vuol dire codice che gira
-> sopra pagine liberate. Provato apposta: un programma che crea tre fili
-> infiniti ed esce senza aspettarli lascia la macchina sana e il prompt torna.
+> **Whoever exits takes the group with them**, like `exit_group` on Linux and
+> for the same reason: the other threads live in this process's memory, and
+> letting them run while the address space goes away means code running over
+> freed pages. Tested on purpose: a program that creates three endless threads
+> and exits without joining them leaves the machine healthy and the prompt
+> comes back.
 
-**Quel che non è per filo, ed è scritto invece che scoperto:** le variabili
-`__thread` e `errno` sono per *processo* — il blocco TLS è in comune. Darne uno
-per filo vuol dire copiarci l'immagine iniziale che sta nell'ELF; azzerarlo e
-basta farebbe partire a zero una variabile inizializzata a cinque, in silenzio.
-Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
-gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
-un futex è il passo dopo.
-
-
-**E poi il blocco TLS per filo.** Nella prima ora i fili condividevano quello
-del processo; nella seconda è stato tolto anche quel limite: **ogni filo ha il
-suo**, in cima al proprio stack — dove quelle pagine sono già mappate e nessun
-altro può arrivarci, che è anche dove lo mette glibc. L'immagine iniziale si
-**rilegge dal file**, non si copia da quella del capogruppo: copiare la sua
-vorrebbe dire far partire il filo con i valori *di adesso* di un altro flusso —
-un contatore a metà, un puntatore a un oggetto in uso. Nel PCB sono comparse le
-tre coordinate del `PT_TLS`, e l'eseguibile è già aperto per il caricamento su
-richiesta.
-
-> **La prova parte da sette, non da zero**, ed è l'unico modo di distinguere
-> «blocco copiato» da «blocco azzerato»: un blocco azzerato passa qualunque
-> prova che parta da zero. Ogni filo controlla di trovarci 7, ci scrive il suo
-> numero, cede la CPU due volte e ricontrolla; il filo principale, alla fine,
-> ritrova il suo 42 intatto. Resta fuori `errno`, che vive dentro `libc.so`
-> dove `__thread` non funziona — e adesso ha una strada scritta per smettere di
-> esserlo.
+**What is not per-thread, written down rather than discovered:** `__thread`
+variables and `errno` are per *process* — the TLS block is shared. Giving each
+thread its own means copying in the initial image from the ELF; zeroing it
+instead would start a variable initialised to five at zero, silently. Between a
+written limit and a wrong value there is no contest. And the lock spins yielding
+the CPU: fine for a short critical section, not for waiting — a futex is the
+next step.
 
 
-**E anche `errno` è per filo.** Dentro `libc.so` non si può scrivere
-`__thread` — manca il TLS dinamico — ma il thread pointer si può *leggere*:
-`%gs:0` contiene un numero diverso per ogni filo, buono come chiave in una
-tabellina di sedici posti, dove il posto si prende con `xchg` e non con «se è
-libero allora scrivilo». Per questo il blocco TLS ora si fa a *tutti* i
-processi, anche a quelli senza una sola variabile `__thread`: ridotto al solo
-TCB, otto byte in una pagina — senza, la base di quel descrittore vale zero e
-`movl %gs:0` non dà un valore sbagliato, dà un page fault all'indirizzo 0.
+**And then the per-thread TLS block.** In the first hour threads shared the
+process's one; in the second that limit went too: **each thread has its own**,
+at the top of its own stack — where those pages are already mapped and nobody
+else can reach, which is also where glibc puts it. The initial image is **read
+back from the file**, not copied from the leader's: copying that one would mean
+starting the thread with another flow's *current* values — a half-updated
+counter, a pointer to an object in use. The PCB gained the three `PT_TLS`
+coordinates, and the executable is already open for demand loading.
 
-> **Il difetto uscito da lì vale più della funzione.** Messa la tabella,
-> `close(999)` ha cominciato a rispondere `errno 0` su una chiamata che
-> fallisce di sicuro: **dentro `libc.c` la parola `errno` non è la macro**,
-> perché quel file non include `libc.h` — sta scritto in testa che si compila
-> senza `-I lib/include`. `err_posix` scriveva la variabile globale mentre il
-> programma leggeva il posto del suo filo. E la prova che l'ha trovato era
-> stata rifatta apposta: la prima versione faceva sbagliare il filo principale
-> con una chiamata che rispondeva zero, e zero non cambia mai — sarebbe passata
-> per sempre senza provare niente.
-
-**E il difetto più istruttivo: un task a metà che viene eseguito.** Aggiunto il
-TLS per filo, il programma di prova moriva *una volta su tre* con un page fault
-all'ingresso della funzione del filo. La diagnosi è arrivata in un giro solo
-facendo stampare i numeri: il filo andava in fault **prima che la sua riga di
-creazione fosse stampata**, col contesto che `proc_create` gli aveva costruito —
-ESP a zero. In mezzo c'era una `vfs_read`, cioè una chiamata **che può
-bloccare**: mentre il capogruppo aspettava il disco, lo scheduler metteva in
-esecuzione un filo non finito di costruire. La regola che ne esce vale per
-qualunque kernel: **fra la creazione di un task e il momento in cui è pronto
-non ci deve stare niente che possa bloccare.**
+> **The test starts from seven, not from zero**, which is the only way to tell
+> "block copied" from "block zeroed": a zeroed block passes any test that starts
+> at zero. Each thread checks it finds 7, writes its own number, yields twice
+> and checks again; the main thread, at the end, finds its 42 untouched. What is
+> left out is `errno`, which lives inside `libc.so` where `__thread` does not
+> work — and it now has a written way out.
 
 
-**E l'attesa che dorme davvero.** `attesa_dormi`/`attesa_sveglia`: un filo esce
-dalla coda dello scheduler e ci rientra quando qualcuno lo chiama — per
-l'**indirizzo** su cui si è fermato, non per il pid, ed è ciò che permette a un
-lucchetto di essere un intero e basta, senza doversi ricordare chi c'è in fila.
+**And `errno` is per-thread too.** Inside `libc.so` you cannot write
+`__thread` — there is no dynamic TLS — but the thread pointer can be *read*:
+`%gs:0` holds a different number for each thread, good as a key into a
+sixteen-slot table where the slot is claimed with `xchg` and not with "if it is
+free then write it". That is why the TLS block is now made for *every* process,
+even those without a single `__thread` variable: cut down to the TCB alone,
+eight bytes in a page — without it that descriptor's base is zero and
+`movl %gs:0` does not give a wrong value, it gives a page fault at address 0.
 
-**Il valore atteso chiude la corsa**, ed è la ragione per cui la chiamata ha tre
-argomenti invece di due: fra il momento in cui chi aspetta guarda il lucchetto e
-quello in cui si addormenta c'è una finestra, e una sveglia arrivata lì in mezzo
-si perderebbe — il filo dormirebbe per sempre. Il confronto lo fa il *kernel*, a
-interruzioni spente. E la pagina si tocca *prima* di spegnerle: leggere memoria
-utente può far scattare un page fault che vuole il disco, e un disco che si
-aspetta a interruzioni spente è una macchina ferma.
+> **The defect that came out of it is worth more than the feature.** With the
+> table in place, `close(999)` started answering `errno 0` on a call that
+> always fails: **inside `libc.c` the word `errno` is not the macro**, because
+> that file does not include `libc.h` — it says so at the top, it compiles
+> without `-I lib/include`. `err_posix` was writing the global while the
+> program read its thread's slot. And the test that caught it had been rewritten
+> on purpose: the first version made the main thread fail with a call that
+> answered zero, and zero never changes — it would have passed forever without
+> testing anything.
 
-**Il lucchetto ha tre stati** — libero, preso, preso-con-gente-che-dorme — e il
-terzo esiste per chi *lascia*: senza, dovrebbe chiamare la sveglia a ogni
-sblocco per il dubbio che qualcuno dorma. Con il 2, chi lasciando si ritrova in
-mano un 1 sa che non c'è nessuno: **senza contesa il lucchetto non costa nemmeno
-una chiamata di sistema.**
+**And the most instructive defect: a half-built task being run.** With
+per-thread TLS added, the test program died *one time in three* with a page
+fault at the entry of the thread function. The diagnosis came in a single run by
+printing the numbers: the thread faulted **before its own creation line was
+printed**, with the context `proc_create` had built for it — ESP at zero. In
+between there was a `vfs_read`, that is, a call **that can block**: while the
+group leader waited for the disk, the scheduler was running a thread that was
+not finished being built. The rule that follows holds for any kernel: **between
+creating a task and the moment it is ready there must be nothing that can
+block.**
 
-> **La prova è un cronometro, perché nient'altro distingue.** Un'attesa che gira
-> a vuoto e una che dorme, viste da fuori, fanno la stessa cosa. Servono due
-> misure con esiti opposti: senza nessuno che svegli, con scadenza 300 ms, è
-> tornata dopo **310 ms** — ha dormito; svegliata da un filo dopo 100 ms con la
-> scadenza a 2000, è tornata dopo **100 ms** — l'ha svegliata lui, non
-> l'orologio.
 
-### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
+**And the wait that really sleeps.** `attesa_dormi`/`attesa_sveglia`: a thread
+leaves the scheduler's queue and comes back when somebody calls it — by the
+**address** it stopped on, not by pid, which is what lets a lock be just an
+integer, with no queue of names to remember.
 
-**testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di
-stato dice «salvato», e il file riletto dalla shell la contiene. Era l'ultima
-voce dell'elenco di EX-IDE: il menu della finestra «Sorgente» prometteva
-Ctrl+S, Ctrl+C, Ctrl+V, Ctrl+X e Ctrl+F dal primo giorno, e non le aveva
-collegate nessuno.
+**The expected value closes the race**, and that is why the call takes three
+arguments instead of two: between the moment a waiter looks at the lock and the
+moment it falls asleep there is a window, and a wake-up arriving in there would
+be lost — the thread would sleep forever. The comparison is done by the
+*kernel*, with interrupts off. And the page is touched *before* turning them
+off: reading user memory can trigger a page fault that wants the disk, and a
+disk awaited with interrupts off is a stopped machine.
 
-**Il toolkit non le mangia, apposta.** In `exwin.c`, nel giro dei tasti: «per
-ogni altro controllo un Ctrl+lettera è una scorciatoia dell'applicazione e non
-deve essere mangiata» — l'unica eccezione è il terminale, dove Ctrl+C è il byte
-3 e deve arrivare al pty. I Ctrl arrivavano già; mancava che qualcuno li
-guardasse.
+**The lock has three states** — free, taken, taken-with-sleepers — and the third
+exists for whoever *releases*: without it they would have to call the wake on
+every unlock, just in case somebody is asleep. With the 2, a releaser holding a
+1 knows nobody is there: **with no contention the lock does not cost even one
+system call.**
 
-> **E quel che avevo scritto nel manuale era sbagliato.** Sotto «Area testo»
-> c'era «con cursore, selezione e appunti (Ctrl+C, Ctrl+V, Ctrl+X)», come se i
-> tasti li facesse il toolkit. Il toolkit dà le *funzioni* —
-> `ex_area_copia/taglia/incolla` — e lascia i tasti a chi scrive il programma.
-> La riga adesso lo dice, e dice anche come si fa: è esattamente ciò che serve a
-> chi con EX-IDE scrive un editor suo.
+> **The test is a stopwatch, because nothing else tells them apart.** A wait
+> that spins and one that sleeps look the same from outside. Two measurements
+> with opposite outcomes are needed: with nobody waking and a 300 ms deadline it
+> came back after **310 ms** — it slept; woken by a thread after 100 ms with the
+> deadline at 2000, it came back after **100 ms** — the thread woke it, not the
+> clock.
 
-**Il disegno si rifà a mano, da tastiera.** È la trappola di questo lavoro:
-premendo «Taglia» nel menu il toolkit ridisegna la finestra chiudendo la
-tendina, quindi il testo cambiato si vede; da tastiera non si chiude niente, e
-senza un `EXM_DISEGNA` esplicito il testo cambia e lo schermo resta com'era. Le
-due strade passano dalle stesse funzioni e non hanno lo stesso contorno.
+### The editor shortcuts, and something I had written wrong
 
-### Taglia e incolla: un controllo si sposta fra le maschere
+**tested** — a line typed in the editor and only Ctrl+S pressed: the status line
+says "saved", and the file read back from the shell contains it. It was the last
+item on EX-IDE's list: the "Source" window's menu had promised Ctrl+S, Ctrl+C,
+Ctrl+V, Ctrl+X and Ctrl+F since day one, and nobody had ever wired them.
 
-**testato** — copiato e incollato nella stessa maschera, e poi tagliato,
-cambiata maschera e incollato: il file del disegno mostra il controllo passato
-sotto l'altra finestra, stessa posizione e stesso nome. Era l'ultima voce grossa
-di EX-IDE, e la sua ragione vera non era copiare: era che un controllo messo
-sulla maschera sbagliata si poteva solo cancellare e rifare a mano di là.
+**The toolkit does not eat them, on purpose.** In `exwin.c`, in the key path:
+"for every other control a Ctrl+letter is an application shortcut and must not
+be eaten" — the only exception is the terminal, where Ctrl+C is byte 3 and must
+reach the pty. The Ctrls were already arriving; what was missing was someone
+looking at them.
 
-**Gli appunti del disegno non sono quelli di sistema.** Dentro c'è un
-*controllo*, non del testo: quelli di ExWin portano caratteri e li usano già gli
-editor per passarsi pezzi di sorgente. Infilarci un controllo vorrebbe dire
-inventare un formato testuale per un rettangolo e farlo rileggere anche a chi ci
-scrive dentro nel frattempo. Nella finestra principale Ctrl+C parla del disegno,
-che è quel che quella finestra è.
+> **And what I had written in the manual was wrong.** Under "Text area" it said
+> "with cursor, selection and clipboard (Ctrl+C, Ctrl+V, Ctrl+X)", as if the
+> keys were the toolkit's doing. The toolkit provides the *functions* —
+> `ex_area_copia/taglia/incolla` — and leaves the keys to whoever writes the
+> program. The line now says so, and says how it is done: exactly what someone
+> writing their own editor with EX-IDE needs.
 
-**Il nome e l'id non si copiano, si rifanno**: sono unici in tutto il progetto
-perché diventano `ID_...`, `h_...` e un nome di funzione dentro `finestra.h`,
-che è un file solo. Con una conseguenza gradevole che non era cercata —
-tagliando, il nome torna disponibile e il controllo se lo riprende: **uno
-spostamento non rinomina niente**.
+**The repaint is manual, from the keyboard.** That is this job's trap: pressing
+"Cut" in the menu makes the toolkit repaint the window as the dropdown closes,
+so the changed text shows; from the keyboard nothing closes, and without an
+explicit `EXM_DISEGNA` the text changes and the screen stays as it was. The two
+paths go through the same functions and do not have the same surroundings.
 
-**E il codice non si copia affatto.** L'handler dell'originale resta
-dell'originale; la copia avrà il suo, vuoto, al primo doppio clic. Copiare anche
-il corpo vorrebbe dire che exide scrive dentro `finestra.c` cose che non ha
-scritto nessuno — l'unica regola che questo programma non rompe mai.
+### Cut and paste: a control moves between forms
 
-> **Nella stessa maschera l'incollato si scosta di otto pixel, in un'altra no.**
-> Metterlo esattamente sopra l'originale lo nasconderebbe: si vedrebbe un
-> controllo e ce ne sarebbero due, e il clic prenderebbe sempre quello di sopra.
-> In un'altra maschera invece quel posto è libero, ed è esattamente dove lo si
-> vuole.
+**tested** — copied and pasted within the same form, then cut, form switched and
+pasted: the drawing file shows the control moved under the other window, same
+position and same name. It was the last big item left in EX-IDE, and its real
+reason was not copying: it was that a control placed on the wrong form could
+only be deleted and redone by hand over there.
 
-### Rifai: la stessa funzione con le due pile scambiate
+**The drawing clipboard is not the system one.** It holds a *control*, not text:
+ExWin's own clipboard carries characters and the editors already use it to pass
+pieces of source around. Putting a control in there would mean inventing a
+textual format for a rectangle and having it read back by whoever else writes
+into it meanwhile. In the main window Ctrl+C talks about the drawing, which is
+what that window is.
 
-**testato** — annullato, rifatto, e verificato il caso che conta di più: dopo un
-Annulla, una modifica nuova butta il ramo rifatto.
+**The name and the id are not copied, they are made anew**: they are unique
+across the whole project because they become `ID_...`, `h_...` and a function
+name inside `finestra.h`, which is a single file. With a pleasant consequence
+that was not aimed for — on a cut the name becomes free again and the control
+takes it back: **a move renames nothing**.
 
-**Quel che si annulla non si butta, si mette dall'altra parte.** Due pile invece
-di una, e *una funzione sola che le scambia*: `passo(da, verso)` prende il
-presente, lo mette nella pila `verso`, e rimette il disegno che stava in cima a
-`da`. Annulla è `passo(indietro, avanti)`, Rifai è `passo(avanti, indietro)` —
-due righe l'uno, e il giorno che si aggiunge un campo al disegno il posto in cui
-ricordarsene è uno. Per la stessa ragione la cattura e il ripristino sono
-diventati due funzioni invece delle tre `memcpy` copiate nei tre posti che le
-usano.
+**And the code is not copied at all.** The original's handler stays the
+original's; the copy will get its own, empty, on the first double click. Copying
+the body too would mean exide writing into `finestra.c` things nobody wrote —
+the one rule this program never breaks.
 
-**Una modifica nuova butta il ramo rifatto**, ed è l'unica regola che questa
-cosa deve avere: se dopo tre passi indietro si disegna qualcosa, quell'«avanti»
-è un futuro nato da un passato che non c'è più, e tenerlo vorrebbe dire un Rifai
-che riporta a un disegno mai esistito. Lo fanno tutti i programmi così, e la
-ragione è questa — non l'abitudine.
+> **Within the same form the pasted control shifts by eight pixels, in another
+> one it does not.** Placing it exactly over the original would hide it: you
+> would see one control and there would be two, and the click would always take
+> the top one. In another form that spot is free, and it is exactly where you
+> want it.
 
-> **La pila scorre quando è piena**, invece di rifiutare l'istante nuovo: il
-> passo più vecchio è quello che serve meno, e perdere il più *recente* vorrebbe
-> dire un Annulla che non annulla l'ultima cosa fatta. Costo misurato con
-> `size`: la BSS di exide passa da 140.384 a 261.888 byte — centoventuno
-> kilobyte, cioè la seconda pila di sedici istanti, memoria azzerata e non byte
-> nel binario.
+### Redo: the same function with the two stacks swapped
 
-### Si cerca davvero, e non serviva portare un browser
+**tested** — undone, redone, and the case that matters most verified: after an
+Undo, a new change discards the redo branch.
 
-**testato** — dal vivo, in HTTPS: `html.duckduckgo.com/html/?q=exos` si apre
-nel navigatore di EX-OS e mostra i risultati, con titoli, indirizzi e testi di
-anteprima.
+**What you undo is not thrown away, it is moved to the other side.** Two stacks
+instead of one, and *a single function that swaps them*: `passo(from, to)` takes
+the present, pushes it onto `to`, and restores the drawing on top of `from`.
+Undo is `passo(back, forward)`, Redo is `passo(forward, back)` — two lines each,
+and the day a field is added to the drawing there is one place to remember it.
+For the same reason capture and restore became two functions instead of the
+three `memcpy` blocks copied into the three places that use them.
 
-La domanda era se portare Firefox, o NetSurf, per poter cercare. La risposta è
-venuta da cinque richieste HTTP, non da un preventivo — una per motore, con
-l'User-Agent vero di EX-OS:
+**A new change discards the redo branch**, and that is the only rule this thing
+needs: if after three steps back you draw something, that "forward" is a future
+born of a past that no longer exists, and keeping it would mean a Redo that
+restores a drawing which never existed. Every program does it this way, and this
+is the reason — not habit.
 
-| motore | cosa risponde |
+> **The stack slides when full**, instead of refusing the new snapshot: the
+> oldest step is the one needed least, and losing the most *recent* one would
+> mean an Undo that does not undo the last thing done. Cost measured with
+> `size`: exide's BSS goes from 140,384 to 261,888 bytes — a hundred and
+> twenty-one kilobytes, the second stack of sixteen snapshots, zeroed memory and
+> not bytes in the binary.
+
+### Search actually works, and no browser port was needed
+
+**tested** — live, over HTTPS: `html.duckduckgo.com/html/?q=exos` opens in the
+EX-OS browser and shows the results, with titles, addresses and snippets.
+
+The question was whether to port Firefox, or NetSurf, in order to search. The
+answer came from five HTTP requests rather than an estimate — one per engine,
+with EX-OS's real User-Agent:
+
+| engine | what it answers |
 |---|---|
-| google.com/search | 200, 91.980 byte, **tre script e zero link di risultato**: i risultati li costruisce il JavaScript |
+| google.com/search | 200, 91,980 bytes, **three scripts and zero result links**: the results are built by JavaScript |
 | mojeek.com/search | 200, `<title>Captcha</title>` |
-| html.duckduckgo.com | 200, 33.784 byte, **dieci risultati in HTML semplice** |
-| marginalia, wikipedia | HTML semplice |
+| html.duckduckgo.com | 200, 33,784 bytes, **ten results in plain HTML** |
+| marginalia, wikipedia | plain HTML |
 
-**Quindi NetSurf non risolve Google, e non è colpa sua**: NetSurf non esegue
-JavaScript, e Google i risultati in HTML non li manda a nessuno. Portare un
-motore di terze parti — mesi per NetSurf, un secondo sistema operativo per
-Firefox, che senza thread e senza Rust non parte nemmeno — non avrebbe spostato
-di un millimetro il problema che si voleva risolvere.
+**So NetSurf does not solve Google, and that is not its fault**: NetSurf does
+not run JavaScript, and Google sends result HTML to nobody. Porting a
+third-party engine — months for NetSurf, a second operating system for Firefox,
+which without threads and without Rust does not even start — would not have
+moved the actual problem an inch.
 
-**Poi il difetto vero.** La pagina di DuckDuckGo arrivava (TLS a posto, `200,
-31671 byte, 738 nodi`) e lo schermo restava bianco. La riga di stato diceva
-anche «stile troncato», ed era lì la risposta: la stessa pagina salvata in
-locale *senza* foglio di stile si disegnava subito. **Il foglio di DuckDuckGo è
-105.607 byte e il tetto era 24.576**: il navigatore ne leggeva un quarto e si
-fermava a metà di una regola, e con mezzo foglio applicato la pagina spariva.
+**Then the real defect.** The DuckDuckGo page arrived (TLS fine, `200, 31671
+bytes, 738 nodes`) and the screen stayed blank. The status line also said "style
+truncated", and that was the answer: the same page saved locally *without* its
+stylesheet drew immediately. **DuckDuckGo's stylesheet is 105,607 bytes and the
+cap was 24,576**: the browser read a quarter of it and stopped halfway through a
+rule, and with half a stylesheet applied the page vanished.
 
-I tre numeri che servivano davvero — 1652 selettori, 2207 dichiarazioni, 105 KB
-— contro tetti di 600, 2000 e 24 KB. Alzati a 2400, 5000 e 160 KB: costano
-**284 kilobyte di BSS** su un programma che ne aveva già 5,2 MB, misurati con
-`size` e non stimati.
+The three numbers that actually mattered — 1652 selectors, 2207 declarations,
+105 KB — against caps of 600, 2000 and 24 KB. Raised to 2400, 5000 and 160 KB:
+they cost **284 kilobytes of BSS** on a program that already had 5.2 MB,
+measured with `size` rather than guessed.
 
-> **Si cerca dal proprio navigatore senza fingersi nessuno.** Non serviva
-> un'impronta identica a Chrome, né il jitter umano, né un motore di terze
-> parti: serviva un motore che risponde in HTML e un tetto alzato. E il terzo
-> risultato che DuckDuckGo ha restituito era `github.com/exagonx/EX_OS` — cioè
-> questo progetto.
+> **You can search from your own browser without impersonating anyone.** No
+> Chrome-identical fingerprint was needed, no human jitter, no third-party
+> engine: what was needed was an engine that answers in HTML, and a raised cap.
+> And the third result DuckDuckGo returned was `github.com/exagonx/EX_OS` —
+> this project.
 
-### L'impaginato esce da browser.c, e la prova è che non si vede
+### The layout leaves browser.c, and the proof is that you cannot see it
 
-**testato** — la stessa pagina fotografata prima e dopo: dieci righe di pixel
-diverse su seicento, dalla 582 alla 591, e sono **l'orologio** della barra in
-basso. Sopra, niente. Primo dei due passi verso una libreria di testo
-formattato: si spezza il file prima di spezzare la libreria.
+**tested** — the same page photographed before and after: ten rows of pixels
+differ out of six hundred, from 582 to 591, and they are **the clock** in the
+taskbar. Above that, nothing. First of the two steps towards a formatted-text
+library: split the file before splitting the library.
 
 ```
-browser.c            6749 -> 4824 righe
-browser_impagina.c        1836 righe   (l'impaginato, uscito da lì)
-browser_priv.h             222 righe   (la giuntura, che prima non c'era)
+browser.c            6749 -> 4824 lines
+browser_impagina.c        1836 lines   (the layout, moved out of it)
+browser_priv.h             222 lines   (the seam, which did not exist before)
 ```
 
-**Il taglio se l'è fatto dire dalla macchina.** Prima di spostare una riga ho
-fatto costruire la mappa del file — centotrentotto definizioni, chi chiama chi,
-chi tocca quali variabili globali — e il gruppo dell'impaginazione è venuto
-fuori da solo: ventotto funzioni, 1588 righe, *contigue*. A occhio, su seimila
-righe, non si vedeva.
+**The machine was asked where to cut.** Before moving a single line I had a map
+of the file built — a hundred and thirty-eight definitions, who calls whom, who
+touches which global — and the layout group fell out by itself: twenty-eight
+functions, 1588 lines, *contiguous*. By eye, over six thousand lines, it was
+not visible.
 
-E soprattutto è venuta fuori la misura del taglio, che era la domanda vera: 21
-variabili condivise, 11 funzioni chieste al navigatore e **3 sole offerte a
-lui**. Verso l'esterno l'impaginato è quasi chiuso; quel che lo tiene legato
-non sono le chiamate, sono le variabili — esattamente il genere di legame che
-non si vede finché tutto sta in un file solo.
+And above all it produced the measure of the cut, which was the real question:
+21 shared variables, 11 functions asked of the browser and **only 3 offered
+back**. Outwards the layout is nearly closed; what ties it down are not the
+calls but the variables — exactly the kind of tie you cannot see while
+everything lives in one file.
 
-> **Tre errori dello script, tutti dello stesso tipo.** Per una funzione
-> scritta su una riga sola la firma veniva tagliata all'*ultima* parentesi, che
-> sta dentro il corpo: nell'intestazione finiva una graffa aperta. Una
-> dichiarazione che finisce con un commento invece che col punto e virgola
-> faceva inghiottire la riga dopo. E i globali dichiarati più d'uno per riga non
-> venivano visti affatto. Ogni volta: rimetti il file com'era, correggi lo
-> *script*, rifai il taglio da capo — correggere il risultato invece dello
-> script avrebbe voluto dire un taglio che non si sa più rifare, e questo taglio
-> va rifatto il giorno del passo 2.
+> **Three script mistakes, all of the same kind.** For a one-line function the
+> signature was cut at the *last* parenthesis, which sits inside the body: an
+> open brace ended up in the header. A declaration ending in a comment instead
+> of a semicolon swallowed the next line. And globals declared several per line
+> were not seen at all. Every time: restore the file, fix the *script*, redo the
+> cut from scratch — fixing the output instead of the script would have meant a
+> cut nobody can reproduce, and this cut must be reproduced on the day of step 2.
 
-### Il manuale di EX-IDE diventa una pagina, con l'indice
+### The EX-IDE manual becomes a page, with an index
 
-**testato** — Aiuto > Manuale apre il navigatore su
-`/exwin/doc/exide.html`, e un clic sull'indice porta esattamente sul
-paragrafo. Ventimila byte, ventinove `id`, cinquantasei rimandi interni.
+**tested** — Help > Manual opens the browser on `/exwin/doc/exide.html`, and a
+click on the index lands exactly on the paragraph. Twenty thousand bytes,
+twenty-nine `id`s, fifty-six internal links.
 
-**Non si riscrive un visualizzatore**, è la stessa decisione con cui
-«Directory» non riscrive un file manager ma lancia `filemgr`: il navigatore
-c'è, impagina, colora, segue i link e lo fa già per le altre nove pagine della
-guida. Il manuale di EX-IDE è diventato la decima pagina di quell'insieme —
-stessa barra di navigazione, stesso foglio di stile, una riga nell'indice della
-documentazione — e le barre delle altre pagine ora lo nominano.
+**You do not rewrite a viewer**: it is the same decision by which "Directory"
+does not rewrite a file manager but launches `filemgr`. The browser is there,
+it lays out, colours and follows links, and already does so for the other nine
+pages of the guide. The EX-IDE manual has become the tenth page of that set —
+same navigation bar, same stylesheet, one row in the documentation index — and
+the other pages' bars now name it.
 
-**Gli esempi sono condivisi, ed è il motivo per cui serviva l'indice.** Lo
-scambio fra due caselle è un esempio di *Casella* tanto quanto di *Pulsante*;
-l'uscita con la conferma vale per *Spunta*, per *Pulsante* e per «come si
-esce». Ripeterlo sotto ognuno vorrebbe dire tre copie da tenere d'accordo;
-metterlo sotto uno solo vorrebbe dire che chi cerca l'altro non lo trova.
-Perciò gli esempi stanno tutti in fondo, con un `id` per uno, e **ogni
-strumento ci rimanda** — e ogni esempio dice per quali strumenti vale. È
-l'unica struttura in cui la stessa cosa è scritta una volta sola e si raggiunge
-da tutti i posti da cui la si cerca; senza il salto all'ancora sarebbe stata un
-elenco di titoli e «scorri finché non lo trovi».
+**The examples are shared, and that is why the index was needed.** Swapping two
+text boxes is as much a *Text box* example as a *Button* one; quitting with a
+confirmation counts for *Check*, for *Button* and for "how you quit". Repeating
+it under each would mean three copies to keep in agreement; putting it under
+only one would mean whoever looks for the other never finds it. So the examples
+all live at the end, one `id` each, and **every tool links to them** — and every
+example says which tools it covers. It is the only structure where the same
+thing is written once and reachable from every place you look for it; without
+anchor jumping it would have been a list of titles and "scroll until you find
+it".
 
-> **Il manuale dentro il programma è rimasto**, ed è la ragione per cui era
-> stato scritto: un manuale che sta in un file è un manuale che un giorno non
-> c'è — il componente `/exwin` non installato, un CD montato a metà, il solo
-> binario copiato. Adesso è la seconda scelta invece che l'unica, e la sua
-> prima riga dice dov'è quello buono. Ma sono due copie dello stesso testo e
-> prima o poi divergeranno: la strada, scritta fra le cose da fare, è
-> accorciare quella interna a un promemoria e lasciare alla pagina il testo
-> lungo.
+> **The in-program manual stayed**, and that is why it was written: a manual
+> that lives in a file is a manual that one day is not there — the `/exwin`
+> component not installed, a CD half mounted, only the binary copied. It is now
+> the second choice instead of the only one, and its first line says where the
+> good one is. But they are two copies of the same text and will drift: the way
+> out, written down among the open items, is to shorten the internal one to a
+> reminder and leave the long text to the page.
 
-**E il manuale interno è diventato un promemoria**, da 289 righe a 61: come si
-comincia, i quattro file, le finestre e la tavola degli strumenti coi loro
-eventi. Gli esempi, le proprietà una per una e il menu stanno solo nella
-pagina — sono la parte lunga, cioè quella che diverge per prima. Il binario di
-exide cala di undici kilobyte, e la prima riga del promemoria dice che se lo
-stai leggendo vuol dire che la pagina non c'era.
+**And the in-program manual became a reminder**, from 289 lines to 61: how to
+start, the four files, the windows and the table of tools with their events.
+The examples, the properties one by one and the menu live only in the page —
+they are the long part, the part that drifts first. The exide binary loses
+eleven kilobytes, and the reminder's first line says that if you are reading it
+the page was not there.
 
-### Le ancore: un link che porta a un punto della pagina
+### Anchors: a link that goes to a point in the page
 
-**testato** — quattro casi dentro EX-OS: un'ancora della stessa pagina, una che
-non esiste, un indirizzo con la coda scritto nella barra, e un link che cambia
-pagina *e* atterra sul paragrafo. Serviva alla documentazione: un manuale lungo
-con l'indice in cima, dove si preme una voce e ci si trova sulla spiegazione.
+**tested** — four cases inside EX-OS: an anchor in the same page, one that does
+not exist, an address with a fragment typed in the bar, and a link that changes
+page *and* lands on the paragraph. It was needed for the documentation: a long
+manual with an index at the top, where you press an entry and find yourself at
+the explanation.
 
-Il navigatore non ci andava, e lo diceva da mesi in un commento: «questo browser
-non sa ancora saltare a un punto dentro un documento; finché il salto non c'è,
-non fare niente è la risposta più onesta». Adesso il salto c'è.
+The browser did not go there, and had been saying so for months in a comment:
+"this browser cannot jump to a point inside a document yet; until the jump
+exists, doing nothing is the most honest answer". Now the jump exists.
 
-**Il pezzo da cui ripartire si trova dal nodo, non dal testo.** Ogni pezzo
-impaginato sa già da quale nodo del documento viene — un campo aggiunto a suo
-tempo per dire a uno script *dove* si è cliccato — quindi il salto è un giro
-sull'albero (l'elemento con quell'`id`, o un vecchio `<a name>`) e uno
-sull'impaginato, senza impaginare una seconda volta. Un'ancora della pagina
-corrente non ricarica niente: ricaricare per poi saltare vorrebbe dire un giro
-di rete, l'albero rifatto e i moduli riempiti a mano azzerati, tutto per
-muovere una barra di scorrimento.
+**The piece to restart from is found from the node, not from the text.** Every
+laid-out piece already knows which document node it came from — a field added
+back when a script needed to be told *where* a click landed — so the jump is
+one walk over the tree (the element with that `id`, or an old `<a name>`) and
+one over the layout, without laying the page out a second time. An anchor in
+the current page reloads nothing: reloading in order to jump would mean a
+network round trip, the tree rebuilt and hand-filled forms cleared, all to move
+a scrollbar.
 
-> **Il difetto ha richiesto una misura, non un'ipotesi.** Al primo giro il
-> salto atterrava due righe sotto il titolo: sembrava un margine sbagliato, o
-> la linea di base del carattere, o l'arrotondamento della riga — tre ipotesi
-> plausibili e tutte sbagliate. Invece di provarle ho fatto stampare i numeri
-> sulla riga di stato: `nodo 86, pezzo 152, y 870, scorri 0`. Il pezzo trovato
-> era giusto, era il titolo. **Le `y` dei pezzi sono già in coordinate della
-> finestra**, non del documento: l'impaginazione comincia sotto la barra
-> dell'indirizzo, quindi scorrendo alla `y` del pezzo quel pezzo finisce
-> *dietro* la barra e si vede la riga dopo. Con i numeri in mano ci sono voluti
-> due minuti.
+> **The defect needed a measurement, not a guess.** On the first run the jump
+> landed two lines below the heading: it looked like a wrong margin, or the
+> font baseline, or line rounding — three plausible guesses, all wrong. Instead
+> of trying them I printed the numbers on the status line: `node 86, piece 152,
+> y 870, scroll 0`. The piece found was the right one, it was the heading.
+> **A piece's `y` is already in window coordinates**, not document ones: layout
+> starts below the address bar, so scrolling to the piece's `y` puts that piece
+> *behind* the bar and you see the line after it. With the numbers in hand it
+> took two minutes.
 
-### Annulla: si fotografa tutto, non si registra cosa
+### Undo: photograph everything, do not record what changed
 
-**testato** — tre modifiche di tre tipi diversi, ognuna annullata, e alla fine
-il file del disegno riletto dalla shell **identico a quello di partenza**.
-Sedici passi indietro, con Ctrl+Z o Modifica > Annulla.
+**tested** — three edits of three different kinds, each undone, and at the end
+the drawing file read back from the shell **identical to the starting one**.
+Sixteen steps back, with Ctrl+Z or Edit > Undo.
 
-**Si fotografa il disegno intero prima di ogni modifica**, invece di registrare
-cosa è cambiato. L'alternativa vuol dire scrivere l'operazione inversa di
-ognuna — mettere un controllo, cancellarlo, spostarlo, ridimensionarlo,
-cambiargli una delle otto proprietà, cambiare una delle quattro della maschera,
-aggiungere una maschera, toglierne una che si porta via i suoi controlli: nove
-inverse, ognuna sbagliabile in un modo suo, e quelle sbagliate si scoprono un
-mese dopo. «Rimetti tutto com'era» non può sbagliare, è una copia. E il disegno
-è piccolo abbastanza perché sia sensato: sedici istanti stanno in un centinaio
-di kilobyte di memoria azzerata, che non finiscono nel binario.
+**The whole drawing is photographed before every change**, instead of recording
+what changed. The alternative means writing the inverse of each operation —
+placing a control, deleting it, moving it, resizing it, changing one of its
+eight properties, changing one of the form's four, adding a form, removing one
+that takes its controls with it: nine inverses, each wrong in its own way, and
+the wrong ones surface a month later. "Put everything back as it was" cannot be
+wrong: it is a copy. And the drawing is small enough for that to make sense:
+sixteen snapshots fit in about a hundred kilobytes of zeroed memory, which never
+reach the binary.
 
-**Una fotografia per trascinamento, e solo se qualcosa cambia davvero.** Un
-trascinamento manda decine di eventi: fotografando a ognuno, i sedici passi se
-li mangia un movimento solo e si torna indietro mezzo pixel per volta.
-Fotografando invece all'inizio del trascinamento, un clic che sceglie e basta
-lascerebbe un passo che non fa niente — e un Annulla che non fa niente è peggio
-di non averlo, perché chi lo preme crede che sia rotto. Si fotografa al primo
-cambiamento vero.
+**One photograph per drag, and only if something really changed.** A drag sends
+dozens of events: photographing each one, a single movement eats all sixteen
+steps and you go back half a pixel at a time. Photographing at the *start* of
+the drag instead, a click that only selects would leave a step that does
+nothing — and an Undo that does nothing is worse than no Undo, because whoever
+presses it thinks it is broken. The photograph is taken at the first real
+change.
 
-**E la storia non attraversa i progetti**: aprirne un altro e premere Annulla
-rimetterebbe sulla maschera i controlli di quello di prima, con i loro nomi e i
-loro id — un disegno mai esistito, pronto per essere salvato sopra quello vero.
+**And the history does not cross projects**: opening another one and pressing
+Undo would put the previous project's controls back on the form, with their
+names and their ids — a drawing that never existed, ready to be saved over the
+real one.
 
-> **Le scorciatoie erano etichette.** I menu promettevano Ctrl+N, Ctrl+O,
-> Ctrl+S e Ctrl+Q dal primo giorno e premerli non faceva niente: nessuno le
-> aveva mai collegate. Per Annulla la scorciatoia conta più che per gli altri —
-> si annulla subito dopo aver sbagliato, con la mano ancora sulla tastiera, non
-> aprendo un menu — e allora sono state collegate tutte insieme. Restano
-> etichette quelle della finestra «Sorgente», e adesso è scritto dove si tiene
-> quel che manca.
+> **The shortcuts were labels.** The menus had promised Ctrl+N, Ctrl+O, Ctrl+S
+> and Ctrl+Q since day one and pressing them did nothing: nobody had ever wired
+> them. For Undo the shortcut matters more than for the others — you undo right
+> after the mistake, hand still on the keyboard, not by opening a menu — so they
+> were all wired at once. The ones in the "Source" window are still labels, and
+> now that is written down where the missing things are kept.
 
-### Le maniglie si tirano, e il manuale spiega davvero
+### The handles can be pulled, and the manual actually explains
 
-**testato** — dentro EX-OS, tirando ogni tipo di maniglia e leggendo i numeri
-che finiscono nel file del disegno. I controlli si ridimensionano col mouse:
-le otto maniglie si disegnavano dal primo giorno e non servivano a niente.
+**tested** — inside EX-OS, pulling every kind of handle and reading back the
+numbers that end up in the drawing file. Controls can be resized with the
+mouse: the eight handles had been drawn since day one and were good for
+nothing.
 
-**Il problema non era tirarle, era prenderle.** Metà di ogni maniglia cade
-*dentro* il controllo, e il clic cercava prima il controllo — l'ordine
-naturale: così un clic sull'angolo cominciava uno spostamento e la maniglia non
-si prendeva mai. Ora le maniglie si guardano per prime. E il quadratino che si
-vede è 5 pixel — di più coprirebbe il controllo — mentre il bersaglio del mouse
-è 11: si mira al quadratino e si prende comunque.
+**The problem was not pulling them, it was grabbing them.** Half of every
+handle falls *inside* the control, and the click looked for the control first —
+the natural order: so a click on the corner started a move and the handle could
+never be taken. Handles are now looked at first. And the little square you see
+is 5 pixels — any bigger would cover the control — while the mouse target is
+11: you aim at the square and grab it anyway.
 
-**Si tira un bordo, non una misura.** Tirando la maniglia di sinistra cambiano
-`x` **e** larghezza insieme, perché il bordo destro non si deve muovere:
-cambiando la sola larghezza il controllo scivolerebbe a destra mentre lo si
-tira a sinistra. Lo stesso vale per i limiti — la misura minima ferma il bordo
-che si sta tirando, non accorcia dall'altra parte, o il controllo scapperebbe
-appena arrivato al minimo.
+**You pull an edge, not a size.** Pulling the left handle changes `x` **and**
+width together, because the right edge must not move: changing the width alone
+would make the control slide right while you drag it left. The same goes for
+the limits — the minimum size stops the edge being pulled instead of shortening
+from the other side, or the control would run away the moment it hit the
+minimum.
 
-**Il manuale dentro il programma è diventato un manuale.** Per ogni strumento
-dice a cosa serve, quali eventi ha e **con quali funzioni si comanda** da
-`finestra.c`: `ex_acceso`/`ex_accendi` per Spunta e Radio, i sei `ex_lista_*`,
-i sei `ex_voce_*` che Elenco e Linguette condividono, `ex_scorri_*`; più le
-proprietà una per una — cosa diventa ognuna nel codice generato — e due esempi
-completi. Uno c'era: due caselle che si scambiano il testo, ora con scritto
-perché la copia d'appoggio serve davvero (`ex_testo_prendi` rende un
-*puntatore* al testo del controllo, non una copia). L'altro mancava: **un
-pulsante che chiude la finestra**, che nella principale è `ex_esci(0)` e in una
-secondaria no — lì si chiama la procedura generata con `EXM_CHIUDI`, che
-distrugge la finestra *e* azzera gli handle dei suoi controlli.
+**The in-program manual became a manual.** For every tool it now says what it
+is for, which events it has and **which functions drive it** from `finestra.c`:
+`ex_acceso`/`ex_accendi` for Check and Radio, the six `ex_lista_*`, the six
+`ex_voce_*` that Combo and Tabs share, `ex_scorri_*`; plus the properties one
+by one — what each becomes in the generated code — and two complete examples.
+One was there: two boxes swapping their text, now with the reason the scratch
+copy is really needed (`ex_testo_prendi` returns a *pointer* into the control's
+text, not a copy). The other was missing: **a button that closes the window**,
+which in the main window is `ex_esci(0)` and in a secondary one is not — there
+you call the generated procedure with `EXM_CHIUDI`, which destroys the window
+*and* zeroes the handles of its controls.
 
-> **Un difetto vecchio, trovato scrivendone uno nuovo.** Aggiungendo il
-> ridisegno al ridimensionamento è saltato fuori che lo *spostamento* non ne
-> aveva mai avuto uno: trascinando un controllo cambiavano `x` e `y` e nessuno
-> ridisegnava la tela, così il controllo si vedeva saltare nel posto nuovo solo
-> quando qualcos'altro faceva ridisegnare la finestra. Adesso tutti e due i
-> trascinamenti finiscono con un ridisegno.
+> **An old defect, found while writing a new one.** Adding the repaint to the
+> resize turned up that *moving* had never had one: dragging a control changed
+> `x` and `y` and nobody repainted the canvas, so the control was seen jumping
+> to its new place only when something else caused the window to redraw. Both
+> drags now end with a repaint.
 
-### Più di una finestra: il disegnatore impara a contare
+### More than one window: the designer learns to count
 
-**testato** — dal disegno al programma che gira: due finestre disegnate,
-generate, compilate con GCC vero dentro EX-OS, e la seconda che si apre
-premendo un pulsante della prima. Un progetto di exide poteva disegnare **una
-finestra sola**; adesso ne disegna otto.
+**tested** — from the drawing to the running program: two windows drawn,
+generated, compiled with real GCC inside EX-OS, and the second one opening when
+a button on the first is pressed. An exide project could draw **one window
+only**; now it draws eight.
 
-**Il formato del disegno non è cambiato per fare posto.** Aveva già la forma
-giusta — una riga per la maschera, poi le righe dei suoi controlli — e bastava
-che le maschere potessero essere più d'una:
+**The drawing format did not change to make room.** It already had the right
+shape — one line for the form, then the lines of its controls — and all it took
+was letting there be more than one form:
 
 ```
 F principale 400 260 prg6
@@ -2230,1782 +2215,1761 @@ F finestra2 400 260 Finestra 2
 c spunta Spunta1 1003 76 124 140 20 0 Spunta1
 ```
 
-La riga vecchia si chiamava `f` e **si continua a leggerla**: non aveva il nome
-— non serviva, la maschera era una — e infilarne uno in mezzo avrebbe fatto
-leggere la prima parola del *titolo* come nome. Perciò la riga nuova ha una
-lettera sua. I progetti fatti prima si aprono senza accorgersi di niente.
+The old line was called `f` and **is still read**: it had no name — it did not
+need one, there was a single form — and slipping one in the middle would have
+made the first word of the *title* be read as the name. So the new line got a
+letter of its own. Projects made before open without noticing a thing.
 
-**La finestra principale tiene i nomi di sempre**, e le altre no: `g_form`,
-`finestra_crea()`, `finestra_proc()` contro `g_form_opzioni`, `opzioni_crea()`,
-`opzioni_proc()`. Sarebbe più simmetrico chiamarle tutte allo stesso modo, e
-**ogni progetto fatto prima di oggi smetterebbe di compilare**: il suo
-`finestra.c` — quello che l'IDE non riscrive mai — chiama `finestra_crea()` dal
-main. Le secondarie le apre il tuo codice, di solito dall'handler di un
-pulsante.
+**The main window keeps the names it always had**, and the others do not:
+`g_form`, `finestra_crea()`, `finestra_proc()` against `g_form_opzioni`,
+`opzioni_crea()`, `opzioni_proc()`. Naming them all alike would be more
+symmetric, and **every project made before today would stop compiling**: its
+`finestra.c` — the one the IDE never rewrites — calls `finestra_crea()` from
+main. Secondary windows are opened by your code, usually from a button handler.
 
-Tre dettagli che il generatore scrive e che chi scrive a mano dimentica:
-chiamare `<nome>_crea()` due volte **non apre due finestre** (un pulsante si
-preme più di una volta); chiudere una secondaria **non fa uscire dal
-programma**, esce solo la principale; e alla chiusura i puntatori ai suoi
-controlli **tornano a zero**, perché `ex_distruggi` porta via anche i figli e
-quei nomi punterebbero al vuoto.
+Three details the generator writes and a hand-writer forgets: calling
+`<nome>_crea()` twice **does not open two windows** (a button gets pressed more
+than once); closing a secondary window **does not quit the program**, only the
+main one does; and on closing, the pointers to its controls **go back to zero**,
+because `ex_distruggi` takes the children with it and those names would point
+at nothing.
 
-> **Una maschera per volta, e non un contenitore MDI — contro quel che avevo
-> scritto io stesso nell'elenco delle cose da fare.** L'MDI c'è nel toolkit
-> dal giorno prima ed era la strada segnata; a decidere sono stati i numeri: il
-> ripiano del disegnatore è 436x396 e una maschera nasce 400x260. Due finestre
-> di quella misura lì dentro si coprono quasi per intero — si passerebbe il
-> tempo a spostarle per vedere quella sotto, per guadagnare di vedere insieme
-> due cose su cui si lavora comunque una per volta. Resta la strada giusta il
-> giorno che la tela diventa grande, o che si vorrà trascinare un controllo da
-> una finestra all'altra.
+> **One form at a time, and not an MDI container — against what I had written
+> in the to-do list myself.** The MDI had been in the toolkit since the day
+> before and was the marked road; the numbers decided otherwise: the designer's
+> canvas is 436x396 and a form is born 400x260. Two windows that size in there
+> cover each other almost entirely — you would spend your time dragging them
+> apart to see the one underneath, to gain seeing at once two things you work on
+> one at a time anyway. It stays the right road the day the canvas grows, or the
+> day you want to drag a control from one window into another.
 
-### Salva con nome, Sostituisci, e un nome che restava indietro
+### Save as, Replace, and a name that lagged behind
 
-**testato** — dentro EX-OS, con il file riletto dalla shell prima e dopo,
-nello stesso giro di macchina. Le due voci che erano in cima all'elenco delle
-cose da fare di exide.
+**tested** — inside EX-OS, with the file read back from the shell before and
+after, in the same machine run. The two entries that were at the top of
+exide's to-do list.
 
-**«Salva con nome» copia l'albero, non rigenera il disegno.** Poteva voler
-dire due cose: rifare `finestra.dis`, `finestra.h` e `finestra_gen.c` dentro
-una directory nuova, oppure copiare tutto e continuare a lavorare sulla copia.
-La prima è più facile da scrivere e **butta via `finestra.c`**, che è l'unico
-dei quattro file che l'IDE non possiede: è quello dell'utente, quello in cui
-l'IDE aggiunge gli handler mancanti e non riscrive mai niente. Un «salva con
-nome» che perde il corpo delle funzioni non è un salvataggio. Si copia
-l'albero intero — `src/`, `inc/`, `lib/`, `bin/`, `obj/`, `progetto.txt`,
-`compila.sh` — dopo aver salvato gli editor aperti, e **l'originale resta
-intatto**: è una copia, non uno spostamento.
+**"Save as" copies the tree, it does not regenerate the drawing.** It could
+have meant two things: rebuilding `finestra.dis`, `finestra.h` and
+`finestra_gen.c` inside a new directory, or copying everything and carrying
+on in the copy. The first is easier to write and **throws away
+`finestra.c`**, the one file of the four the IDE does not own: it is the
+user's, the one where the IDE appends the missing handlers and never rewrites
+anything. A "save as" that loses the bodies of the functions is not a save.
+So the whole tree is copied — `src/`, `inc/`, `lib/`, `bin/`, `obj/`,
+`progetto.txt`, `compila.sh` — after saving any open editors, and **the
+original is left untouched**: it is a copy, not a move.
 
-**«Sostituisci» cambia una occorrenza per volta, come Cerca.** In un sorgente
-la stessa sequenza di caratteri sta dentro le stringhe, dentro i commenti e
-dentro i nomi: `msg` sta anche in `messaggio`. Un «sostituisci tutto» le
-cambia in silenzio tutte e tre, e chi lo lancia se ne accorge alla
-compilazione o dopo. C'è in tutt'e due gli editor — quello del sorgente e il
-file-editor — e nel toolkit è nato `ex_area_riga_metti()`, che riscrive una
-riga in mezzo al documento: sedici righe che passano da `area_tocca()`, così
-la catena del coloritore si invalida da lì in giù. Una primitiva del genere
-va nel toolkit proprio per questo: un'applicazione che riscrivesse la riga da
-fuori lascerebbe il colore vecchio, e solo qualche volta.
+**"Replace" changes one occurrence at a time, like Find.** In source code the
+same sequence of characters lives inside strings, inside comments and inside
+identifiers: `msg` is also part of `message`. A "replace all" changes all
+three silently, and whoever ran it finds out at compile time, or later. It is
+in both editors — the source one and the file editor — and in the toolkit
+`ex_area_riga_metti()` was born, which rewrites one line in the middle of the
+document: sixteen lines that go through `area_tocca()`, so the colouriser's
+state chain is invalidated from that row down. That is exactly why such a
+primitive belongs in the toolkit: an application rewriting the row from
+outside would leave the old colour behind, and only sometimes.
 
-**E poi la rilettura ha trovato quel che la prova felice non tocca.** Tre
-difetti, tutti nello stesso punto cieco — i percorsi in cui qualcosa va
-storto. Il più grave: **copiare un file su se stesso lo cancella, e la copia
-dice «riuscito»**. Non è un sospetto, sta in `kernel/fs/vfs.c`: l'apertura con
-`O_TRUNC` azzera il file senza guardare chi altro lo tiene aperto, quindi la
-lettura che segue trova zero byte, il ciclo non gira e la funzione riporta
-successo. Chi riscriveva nel campo del dialogo il percorso del progetto
-corrente si ritrovava ogni file a zero e la riga di stato che diceva
-«progetto copiato». Adesso il controllo c'è in due posti, e una directory dove
-c'è già un progetto non si sovrascrive in silenzio. Insieme a quello: nessun
-ritorno di `mkdir` o della copia veniva guardato — col disco in sola lettura
-exide si spostava comunque sulla directory nuova, che non esisteva. Ora c'è la
-stessa prova di scrittura di «Nuovo progetto», la copia conta i file che non
-sono arrivati, e **se ne manca uno solo l'IDE non si sposta**: mezza copia più
-un IDE che ci punta dentro vuol dire che il prossimo Salva la trasforma
-nell'originale.
+**And then rereading found what the happy path never touches.** Three defects,
+all in the same blind spot — the paths where something goes wrong. The worst:
+**copying a file onto itself deletes it, and the copy reports success**. Not a
+suspicion, it is in `kernel/fs/vfs.c`: opening with `O_TRUNC` empties the file
+without checking who else holds it open, so the read that follows finds zero
+bytes, the loop never runs, and the function returns success. Anyone typing
+the current project's path into the dialog field ended up with every file at
+zero and a status line saying "project copied". The check is now in two
+places, and a directory that already holds a project is not silently
+overwritten. Alongside it: no return value from `mkdir` or from the copy was
+ever checked — on a read-only disk exide moved to the new directory anyway,
+one that did not exist. Now there is the same write test "New project" uses,
+the copy counts the files that did not make it, and **if even one is missing
+the IDE does not move**: half a copy plus an IDE pointing into it means the
+next Save turns it into the original.
 
-> **Un difetto trovato dalla prova, non dalla rilettura del codice.**
-> `progetto.txt` viene copiato com'era, riga `nome = ...` compresa, e la
-> scheda del progetto la leggeva da lì: la directory era `prg6-copia` e la
-> scheda diceva ancora `prg6`, mentre il titolo della finestra — che il nome
-> lo ricava dalla directory — diceva quello giusto. Due posti che rispondono
-> alla stessa domanda in modo diverso; lo stesso sarebbe successo rinominando
-> la directory da fuori. La cura non è sincronizzarli: è toglierne uno. Adesso
-> il nome viene **sempre** dalla directory, e il file continua a scriverlo, così
-> il primo Salva lo rimette a posto da sé.
+> **A defect found by the test, not by rereading the code.** `progetto.txt`
+> is copied as it was, `nome = ...` line included, and the project card was
+> reading the name from there: the directory was `prg6-copia` while the card
+> still said `prg6` — and the window title, which derives the name from the
+> directory, said the right one. Two places answering the same question
+> differently; the same would have happened renaming the directory from
+> outside. The cure is not to keep them in sync: it is to remove one. The name
+> now **always** comes from the directory, and the file is still written, so
+> the first Save puts it right by itself.
 
-### Files e Directory: una finestra nuova, e una che non serviva scrivere
+### Files and Directory: one new window, and one that did not need writing
 
-**testato** — elenco, apertura, modifica, salvataggio, richiusura e verifica
-dal file vero, dentro EX-OS. Le ultime due voci del menu Strumenti che
-dicevano ancora «in arrivo»: con questo giro il menu è completo.
+**tested** — listing, opening, editing, saving, closing again, and checking
+against the real file, inside EX-OS. The last two Strumenti menu entries that
+still said "coming soon": with this round the menu is complete.
 
-**«Files» non è la finestra di «Sorgente»**, ed è una scelta e non una
-scorciatoia. «Sorgente» conosce esattamente tre nomi — `finestra.c`,
-`finestra_gen.c`, `finestra.h` — e mezzo programma è scritto sapendo che sono
-quelli; infilarci un quarto nome qualunque avrebbe voluto dire portare quella
-certezza dappertutto. Una finestra a parte, con Salva/Cerca/Chiudi e niente
-altro, costa meno e non rischia di rompere quella che già funziona.
+**"Files" is not the "Source" window**, and that is a choice, not a
+shortcut. "Source" knows exactly three names — `finestra.c`,
+`finestra_gen.c`, `finestra.h` — and half the program is written knowing they
+are those three; slipping in a fourth arbitrary name would have meant
+carrying that certainty everywhere. A separate window, with Save/Find/Close
+and nothing else, costs less and risks nothing to what already works.
 
-**È scoperta solo su `<progetto>/src`**, non su tutto l'albero: è l'unica
-lettura di «files» compatibile con «un doppio clic apre come sorgente» — un
-doppio clic su un `.o` dentro `obj/` non aprirebbe niente di leggibile. Il
-coloritore si decide dal nome (`.c`/`.h` prendono `ex_colora_c`, il resto
-niente) e **si spegne esplicitamente a ogni apertura**: la stessa area resta
-in vita da un file all'altro, e senza azzerarlo un `.txt` letto dopo un `.c`
-si vedrebbe colorato come se fosse C.
+**It is scoped to `<project>/src` only**, not the whole tree: it is the only
+reading of "files" compatible with "a double-click opens it as source" — a
+double-click on a `.o` inside `obj/` would open nothing readable. The
+colouriser is chosen from the name (`.c`/`.h` get `ex_colora_c`, everything
+else none) and is **explicitly turned off on every open**: the same area
+stays alive from one file to the next, and without resetting it a `.txt`
+read after a `.c` would appear coloured as if it were C.
 
-**«Directory» non riscrive un secondo file manager.** exide sa disegnare
-rettangoli e liste; non sa copiare, spostare o cancellare file in sicurezza —
-`filemgr` lo sa già fare, con la stessa struttura ad albero più elenco che
-questa voce promette fin dalla richiesta originale. Dodici righe cercano
-`filemgr` (prima in `/exwin/bin`, poi in `/cdrom/exwin/bin`) e lo lanciano con
-la directory del progetto come argomento — lo stesso che accetta già dal menu
-Applicazioni.
+**"Directory" does not rewrite a second file manager.** exide knows how to
+draw rectangles and lists; it does not know how to copy, move or delete files
+safely — `filemgr` already does, with the same tree-plus-list layout this
+entry has promised since the original request. Twelve lines look for
+`filemgr` (first in `/exwin/bin`, then `/cdrom/exwin/bin`) and launch it with
+the project directory as an argument — the same one it already accepts from
+the Applications menu.
 
-> **E la ricerca non si è riscritta una seconda volta.** Il file-editor voleva
-> anche lui un «Cerca», identico a quello già provato nella finestra
-> «Sorgente» — cambiava solo *quale* area e *quale* riga di stato usare.
-> `ed_cerca()` è diventata `area_cerca(area, stato)`, e l'originale resta un
-> involucro di una riga: due copie dello stesso ciclo sarebbero state due
-> copie da tenere d'accordo per lo stesso identico algoritmo.
+> **And search was not rewritten a second time.** The file editor wanted a
+> "Find" too, identical to the one already proven in the "Source" window —
+> only *which* area and *which* status line changed. `ed_cerca()` became
+> `area_cerca(area, status)`, and the original stayed a one-line wrapper: two
+> copies of the same loop would have been two copies to keep in step for the
+> exact same algorithm.
 
-### La scheda del progetto, e una riscrittura che non doveva esserci
+### The project card, and a rewrite that should not have happened
 
-**testato** — scritta, chiusa, riaperta: tutto tornava. E un difetto vero
-trovato provando esattamente questo.
+**tested** — written, closed, reopened: everything came back. And a real
+defect found by testing exactly that.
 
-**Rilegge lo stesso `progetto.txt` che il progetto già scrive alla nascita.**
-Non un secondo formato: cinque chiavi `chiave = valore` — nome, autore,
-versione, creato, descrizione — e in coda un marcatore `[nota]` dopo il quale
-tutto, righe vuote comprese, è il testo libero della nota.
+**It reads the same `progetto.txt` a project already writes at birth.** Not a
+second format: five `key = value` lines — name, author, version, created,
+description — followed by a `[nota]` marker after which everything, blank
+lines included, is the note's free text.
 
-**Il nome e la data di creazione non si editano**, e non è una dimenticanza:
-il nome viene dalla directory — riscriverlo qui non rinominerebbe niente — e
-la data di creazione, per definizione, non è correggibile senza smettere di
-essere vera. Sono etichette, non caselle. **Chiudere la finestra salva da
-solo**, come l'editor: è una scheda a basso rischio, e chiedere conferma per
-un'informazione a basso rischio è una domanda che si impara a schiacciare
-senza leggerla.
+**The name and creation date are not editable**, and that is not an
+oversight: the name comes from the directory — rewriting it here would not
+rename anything — and a creation date, by definition, cannot be corrected
+without ceasing to be true. They are labels, not boxes. **Closing the window
+saves on its own**, like the editor: it is a low-risk data card, and asking
+for confirmation on low-risk information is a question people learn to
+dismiss without reading.
 
-> **«Nuovo progetto» su una directory già esistente cancellava la scheda.**
-> Il disegno (`finestra.dis`) si apriva senza troncare — un file già presente
-> restava quello che era — ma `progetto.txt` si troncava sempre: la stessa
-> azione trattava due file dello stesso progetto in due modi diversi. Trovato
-> riavviando per provare la *riapertura* di un progetto, non solo il
-> salvataggio: il file sul disco era già corretto, verificato con `cat` prima
-> di riavviare — era il passo dopo, non il salvataggio, a riscriverlo sopra.
-> La cura: si controlla prima se il file c'è già, e si scrive solo se manca.
+> **"New project" pointed at an already-existing directory used to wipe the
+> card.** The drawing (`finestra.dis`) was opened without truncating — a file
+> already there stayed exactly what it was — but `progetto.txt` was always
+> truncated: the same action treated two files of the same project two
+> different ways. Found by restarting to test *reopening* a project, not just
+> saving: the file on disk was already correct, checked with `cat` before the
+> restart — it was the next step, not the save, overwriting it. The fix:
+> check first whether the file already exists, and write only when it is
+> missing.
 
-### La finestra del compilatore: GCC vero, dentro EX-OS, da un disegno
+### The compiler window: real GCC, inside EX-OS, from a drawing
 
-**testato** — un progetto vero, disegnato in exide, compilato con GCC del CD
-degli strumenti *dentro EX-OS*, collegato e **avviato nella scrivania**.
+**tested** — a real project, drawn in exide, compiled with GCC from the tools
+CD *inside EX-OS*, linked and **launched on the desktop**.
 
-**La riga di compilazione finisce in un file, e il file è il prodotto.**
-`compila.sh` sta nella directory del progetto, si legge, si corregge a mano e
-si lancia come qualunque altro script: il pulsante «Compila» non fa niente che
-non si potrebbe fare digitando. **L'uscita va in un file** (`obj/compila.log`),
-non in una pipe — che si rilegge con calma, ed è quel che serve a chi vuole
-rivedere l'errore.
+**The compile line ends up in a file, and the file is the product.**
+`compila.sh` lives in the project directory, can be read, hand-edited and run
+like any other script: the «Compila» button does nothing you could not do by
+typing. **Output goes to a file** (`obj/compila.log`), not a pipe — it can be
+reread at leisure, which is what someone reviewing an error needs.
 
-**Una libreria condivisa si collega con il suo stub**, non con un archivio: in
-EX-OS una `.so` non si linka, si compila dentro il programma un file di poche
-righe che risolve i nomi alla prima chiamata. La finestra Librerie sceglie
-quali stub entrano nella riga — `exwin` sempre, il resto a spunta.
+**A shared library links through its stub**, not an archive: in EX-OS a `.so`
+is never linked, a few lines get compiled into the program that resolve names
+on first call. The Libraries window picks which stubs join the command line —
+`exwin` always, the rest by checkbox.
 
-**E si aspetta senza morire**: cc1 pesa quaranta megabyte, e una finestra
-ferma per un minuto sembra piantata. Si guarda se il figlio è finito con
-`WNOHANG`, si smista un pugno di messaggi, si dorme un istante — la stessa
-forma dell'attesa di rete del navigatore — con un tetto di cinque minuti oltre
-il quale si smette di aspettare un compilatore impiccato.
+**And it waits without dying**: cc1 weighs forty megabytes, and a window
+frozen for a minute looks hung. It polls whether the child is done with
+`WNOHANG`, dispatches a handful of messages, sleeps an instant — the same
+shape as the browser's network wait — with a five-minute ceiling past which it
+stops waiting for a compiler that hanged.
 
-> **Due difetti trovati girando il compilatore vero, e nessuno si vedeva
-> leggendo il codice.** Le opzioni finivano tagliate a metà — la casella è un
-> controllo "testo" che tiene 63 caratteri, non i 160 del campo C che la
-> leggeva — e il taglio produceva un errore che non gli somigliava affatto:
-> `-fno-pie` mozzato a un trattino solitario, e per gcc un `-` da solo vuol
-> dire «leggi da stdin». La cura non è stata allargare la casella: è stata
-> **togliere** dalla casella quel che non doveva starci — i flag obbligatori
-> (`-ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie`) sono adesso
-> fissi nel programma, non modificabili per sbaglio. Il secondo: il figlio
-> compilava nella directory sbagliata — quella da cui era partito exide, in
-> sola lettura — perché `spawn_ex` eredita il *cwd* del padre e nessuno lo
-> cambiava prima di lanciarlo.
+> **Two defects found by running the real compiler, neither visible reading
+> the code.** Options came out truncated halfway — the field is a "testo"
+> control holding 63 characters, not the C buffer's 160 — and the cut
+> produced an error that looked nothing like its cause: `-fno-pie` mangled
+> into a lone dash, and to gcc a bare `-` means "read from stdin". The fix
+> was not widening the box: it was **removing** from the box what did not
+> belong there — the mandatory flags (`-ffreestanding -fno-builtin -nostdlib
+> -fno-pic -fno-pie`) are now fixed in the program, not editable by accident.
+> The second: the child compiled in the wrong directory — the one exide had
+> started from, read-only — because `spawn_ex` inherits the parent's *cwd*
+> and nothing changed it before launching.
 
-### Tre difetti visti usandolo, e nessuno stava dove sembrava
+### Three defects found by using it, and none was where it seemed
 
-**testato** — sul navigatore, su exide dal CD, e su un disco installato da zero.
+**tested** — on the browser, on exide booted from CD, and on a disk installed
+from scratch.
 
-**La tendina del menu spariva muovendo il mouse.** Non era il server: era
-l'ordine del disegno. La procedura di base disegna i controlli e *poi* la
-tendina, ma un'applicazione che disegna anche del proprio — il navigatore con la
-pagina, exide con la maschera — lo fa **dopo** aver chiamato la base, e ci passa
-sopra. Col mouse fermo non si notava: è il movimento che fa arrivare
-`EXM_MOUSE_MOSSO` e quindi un ridisegno. Ora la tendina si disegna dentro
-`ex_aggiorna()`, la riga con cui *chiunque* dice «ho finito, mostralo»: qualunque
-cosa si sia disegnata, la tendina viene dopo.
+**The menu drop-down vanished when the mouse moved.** It was not the server: it
+was the drawing order. The base procedure draws the controls and *then* the
+drop-down, but an application that also draws its own — the browser with the
+page, exide with the form — does so **after** calling the base, and paints over
+it. With the mouse still you never noticed: it is movement that delivers
+`EXM_MOUSE_MOSSO` and hence a repaint. The drop-down is now drawn inside
+`ex_aggiorna()`, the line with which *anyone* says "I am done drawing, show it":
+whatever was drawn, the drop-down comes after.
 
-**exide apriva l'editor vuoto.** «`mkdir` è fallito» non vuol dire «c'era già», e
-il programma ha creduto di sì dal primo giorno: avviando dal CD non si scrive da
-nessuna parte, la creazione del progetto falliva a ogni passo *in silenzio*, e
-l'editor si apriva su un file mai scritto. La prova che conta è **scrivere, non
-chiedere**: ora si prova, e se non riesce lo dice e si ferma — spiegando che
-serve un disco montato in lettura e scrittura.
+**exide opened an empty editor.** "`mkdir` failed" does not mean "it was already
+there", and the program believed it did from day one: booted from CD nothing is
+writable, project creation failed at every step *silently*, and the editor opened
+on a file that had never been written. The proof that counts is **writing, not
+asking**: now it tries, and if it fails it says so and stops — explaining that a
+read-write mounted disk is needed.
 
-**L'installatore chiedeva la lingua e lasciava la tastiera americana.** Il
-sistema installato parlava italiano e scriveva americano: le lettere al posto
-giusto e la punteggiatura no. Ora la tavola delle lingue ha una colonna per la
-disposizione — **la tastiera non è la lingua**, l'inglese si scrive su una `us` e
-domani qualcuno vorrà l'inglese su una `uk` — e `keymap` si *sovrascrive*, al
-contrario di ogni altra voce: quel valore non era la scelta di nessuno, era
-quello del supporto d'installazione copiato un momento prima.
+**The installer asked for the language and left the keyboard American.** The
+installed system spoke Italian and typed American: letters in the right place and
+punctuation not. The language table now has a column for the layout — **a
+keyboard is not a language**, English is typed on a `us` and tomorrow someone
+will want English on a `uk` — and `keymap` is *overwritten*, unlike every other
+setting: that value was nobody's choice, it was the installation medium's, copied
+a moment earlier.
 
-> **E la prova migliore è un errore di battitura.** Dal disco appena installato i
-> comandi del pilota escono storti: `keymap -p` diventa `keymap 'p`. Lo strumento
-> manda scancode americani — se la punteggiatura esce spostata, dentro c'è una
-> tastiera italiana.
+> **And the best proof is a typo.** From the freshly installed disk the driver's
+> commands come out crooked: `keymap -p` becomes `keymap 'p`. The tool sends
+> American scancodes — if the punctuation comes out shifted, there is an Italian
+> keyboard in there.
 
-### EX-IDE: si disegna una finestra, esce del C che gira
+### EX-IDE: draw a window, out comes C that runs
 
-**testato** — dal CD in QEMU con un disco ext2 montato, e la prova che conta non
-è una fotografia della maschera: è un binario da 18 KB, **generato dal disegno**,
-che si apre dentro EX-OS con i controlli dove li avevo messi col mouse.
+**tested** — from the CD in QEMU with an ext2 disk mounted, and the proof that
+counts is not a screenshot of the form: it is an 18 KB binary, **generated from
+the drawing**, that opens inside EX-OS with the controls where I had put them
+with the mouse.
 
 ```
-disegno -> finestra.dis -> finestra.h + finestra_gen.c -> gcc -> ld -> gira
+drawing -> finestra.dis -> finestra.h + finestra_gen.c -> gcc -> ld -> runs
 ```
 
-**Tre aree, come in Visual Basic**: a sinistra i quattordici strumenti del
-toolkit, in mezzo la maschera su cui si dispongono, a destra le proprietà di
-quello scelto. Doppio clic su un controllo e si apre l'editor **dentro la
-funzione che il suo evento chiamerà**.
+**Three panes, like Visual Basic**: the toolkit's fourteen tools on the left, the
+form in the middle, the selected control's properties on the right. Double-click
+a control and the editor opens **inside the function its event will call**.
 
-**Quattro file, e uno solo è tuo.**
+**Four files, and only one is yours.**
 
-| file | chi lo scrive |
+| file | who writes it |
 |---|---|
-| `finestra.dis` | solo exide: il disegno |
-| `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
-| `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
-| `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano e non riscrive mai quel che c'è |
-
-È il punto in cui VB6 si rompeva — un file solo, scritto a metà dal generatore e
-a metà a mano, e ogni rigenerazione era una scommessa. Qui il generato e lo
-scritto non si toccano mai.
-
-**La giuntura è l'id, e c'era già.** `ex_crea(..., padre, ID, 0)` dà a ogni
-controllo un numero e l'evento torna come `EXM_COMANDO` con quel numero dentro:
-nel disegno il pulsante *è* `ID_PULSANTE1`, nel sorgente c'è `case
-ID_PULSANTE1:`. exide è fattibile qui più che altrove perché ExWin era già fatto
-a forma di VB6.
-
-**E un difetto del toolkit, trovato perché serviva a lui.** Le liste e le aree
-non liberavano il loro posto alla distruzione: una finestra con dentro una lista,
-aperta e chiusa quattro volte, esauriva i quattro posti e alla quinta la lista
-non si apriva più — nessun errore, un elenco vuoto. Era lì da mesi e non l'aveva
-trovato nessuno, perché nessun programma apriva e chiudeva la stessa finestra
-abbastanza volte. Il primo è stato exide, il giorno in cui è nato.
-
-> **Il linker script è nato vuoto, e il collegamento è riuscito lo stesso.**
-> `open(f,'w').write(open(f).read()...)` tronca il file prima di leggerlo; `ld -T`
-> con uno script vuoto non protesta, butta via tutto e produce un ELF di 256 byte
-> senza segmenti. Il sintomo era «ELF load fallito» a runtime — che non somiglia
-> affatto alla sua causa.
-
-### Finestre dentro una finestra: il contenitore MDI
-
-**testato** — dal CD, in QEMU, con `winprova -m`: tre finestre in un contenitore,
-ognuna con la sua procedura, e ogni comando sulla seriale con il **nome della
-procedura** che l'ha ricevuto.
-
-**Una finestra figlia non è una finestra del server**, ed è la decisione da cui
-discende tutto il resto. Dargliene una vera vorrebbe dire una zona di memoria
-condivisa per ognuna, un giro di richieste a ogni apertura e — soprattutto —
-finestre che possono uscire dal contenitore, perché il server non sa che
-dovrebbero starci dentro. Qui la figlia è un *controllo*: pixel dentro la zona
-del padre, disegnati dalla libreria. Il prezzo è dichiarato — trascinandola si
-ferma al bordo — ed è esattamente quel che un MDI deve fare.
-
-**Il ritaglio, che in quattro mesi di toolkit non era mai servito.** Il disegno
-si ritagliava su una cosa sola: la zona di pixel della finestra di primo livello.
-Bastava, perché un controllo sta dove lo si è messo e non si muove. Una finestra
-MDI *si muove*, e un controllo più grande del suo client si disegnerebbe sopra il
-telaio — un difetto che si vede solo trascinando, cioè tardi. Ora ogni figlia si
-disegna due volte ritagliata: il telaio dentro il contenitore, il contenuto
-dentro la propria area del client. Costa un confronto per pixel quando è acceso,
-e **zero quando è spento** — cioè in ogni finestra che non usa l'MDI.
-
-**Attivare e poi fare è un gesto solo.** Cliccando un pulsante di una finestra
-dietro, quel pulsante si preme: la finestra viene davanti *e* il clic arriva dove
-è caduto.
-
-**I comandi vanno alla procedura della figlia**, non a quella dell'applicazione:
-è cio che rende l'MDI utile invece che decorativo. E se la figlia non ha una
-procedura vanno all'applicazione come sempre.
-
-**Chiudere una figlia non chiude il programma** — la distinzione sta dove finisce
-chi non gestisce la chiusura, altrimenti quel pulsante spegnerebbe l'applicazione
-intera al primo clic. E **Tab gira dentro la finestra attiva**: altrimenti si
-vedrebbe un cursore lampeggiare in una finestra che non si sta guardando.
-
-> **Per la seconda volta in un giorno l'occhio ha sbagliato.** Dopo F6 sembravano
-> attive due finestre; misurati i pixel, `(30,77,125)` e `(128,128,128)` — attiva
-> e inattiva, esatte. La regola, adesso che è costata due volte: una fotografia si
-> guarda per capire *dove* guardare, e poi si contano i pixel.
-
-### Il testo colorato, e una seconda area di testo che non è nata
-
-**testato** — dal CD, in QEMU, con `winprova -c`: un pezzo di C scelto per
-toccare ogni ruolo, e i colori verificati leggendo i **pixel** della fotografia,
-non guardandola.
-
-**La cosa più importante è quella che non si è scritta.** La strada ovvia era un
-controllo nuovo con dentro il suo cursore, la sua selezione, i suoi appunti, il
-suo clic che posiziona: mille righe già scritte una volta per l'area di testo, e
-la seconda copia sarebbe stata una copia da tenere d'accordo per sempre.
-`areacodice` **non è un controllo nuovo: è la stessa area con altri due numeri** —
-3000 righe da 240 colonne invece di 512 da 200, più un coloritore. La classe è la
-stessa, e da `ex_crea` in poi non c'è nessuna differenza: stesso disegno, stessi
-tasti, stesse `ex_area_*`.
-
-**Il coloritore sta in chi sa la lingua, non nel toolkit.** Il controllo sa
-*disegnare* del testo colorato; quali parole siano chiavi e dove finisca un
-commento lo sa chi scrive l'editor. Il gancio riceve una riga e riempie **un
-ruolo per carattere** — chiave, tipo, stringa, numero, commento, preprocessore,
-funzione — e i ruoli sono ruoli, non colori: la tavolozza è una tabella sola,
-quindi due editor non colorano le chiavi di due blu diversi.
-
-**E un commento a blocco attraversa le righe.** Il coloritore rende anche *come
-finisce* la riga, e il controllo tiene quello stato: un byte per riga. Si
-ricalcola solo da dove il testo è cambiato in giù — da capo a ogni ridisegno
-sarebbero tremila chiamate per ogni tasto premuto. Scrivendo `/*` a metà
-documento, le righe sotto diventano verdi mentre si batte.
-
-**Il cursore adesso si porta**, e prima si poteva solo leggere: `ex_area_vai` è
-quel che serve a una colonna che elenca le funzioni di un sorgente — cliccarci
-sopra e finire su quella riga, a metà altezza, con il contesto intorno.
-
-> **Un'ora persa a leggere una fotografia.** Le sonde dicevano «commento» e lo
-> schermo sembrava dire di no; il difetto è stato cercato in tre posti prima di
-> misurare i pixel del PPM e trovarci `(0,128,0)` — il verde della tavolozza. Le
-> righe erano verdi da sempre: a 800x600 rimpicciolito, il verde di un commento e
-> il blu di una parola chiave si somigliano. Una fotografia si guarda; i suoi
-> numeri si contano.
-
-### Il toolkit impara cinque controlli, e il posto dove si aggiungono
-
-**testato** — dal CD, in QEMU, con `winprova -n`: ogni comando finisce sulla
-seriale con l'id e il valore, che è un numero da confrontare e non un'impressione.
-
-**Mancavano, e la mancanza era già scritta nel codice.** Accanto alla finestra
-delle impostazioni del navigatore c'era: «nel toolkit una casella di spunta non
-c'è, e disegnarne una a mano qui dentro vorrebbe dire un controllo che vive in un
-programma solo». Per questo gli interruttori delle impostazioni sono pulsanti che
-cambiano scritta. Adesso ci sono: **`spunta`, `radio`, `scorrimento`, `combo` e
-`tab`**, e sono il primo passo verso `exide`, l'ambiente di sviluppo visuale.
-
-**L'orientamento della barra lo dice la forma**, non un bit di stile: più larga
-che alta è orizzontale, più alta che larga è verticale. Un bit in più si potrebbe
-mettere in disaccordo con la misura, e allora bisognerebbe decidere chi ha
-ragione.
-
-**Il gruppo di un radio sono i fratelli** — i controlli con lo stesso padre. Non
-c'è nessun gruppo da dichiarare: due gruppi di scelte si mettono dentro due
-`riquadro`, che è come si disegnano da sempre. La cornice che si vede *è* il
-gruppo che vale, quindi la regola visiva e quella logica non possono andare in
-disaccordo.
-
-**La spunta si arma premendo e scatta alzando il dito**, come un pulsante:
-scivolare via prima di alzarlo annulla. **La barra invece agisce subito** — una
-freccia tenuta premuta deve scorrere — e il suo trascinamento sveglia
-l'applicazione a ogni pixel, dove una lista trascinata dice «ho scelto» una volta
-sola: una barra trascinata *è* il documento che scorre.
-
-**E i sette posti da toccare per aggiungerne un altro** stanno scritti in un
-punto solo, sopra i numeri delle classi: il modo di sbagliare non è scrivere male
-un controllo, è dimenticarne uno — e accorgersene dal fatto che il controllo si
-vede ma non si clicca, o si clicca ma Tab non ci arriva.
-
-### La finestra resta viva mentre scarica, e la posta ha un padrone
-
-**testato** — dal CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108 nodi),
-una pagina locale con sei immagini ritardate di venti secondi l'una, e le prove
-sul banco (256 + 244 + 244 + 51, zero sbagliate).
-
-**Mentre si scaricava, la finestra era morta.** Chi legge dorme dentro la
-lettura, e mentre dorme il puntatore non si muove, la finestra non si ridisegna
-e nessun tasto arriva: su una pagina grande sono decine di secondi di schermo
-fermo. Adesso il trasporto sa fare una domanda che prima non sapeva fare —
-*quanti byte ci sono adesso?* — e quando la risposta è zero cede il turno a chi
-ospita. La risposta viene dallo stack (`IP_MSG_TCP_STATO`, che non prenota
-niente e non aspetta) e non da un tentativo di lettura con una scadenza corta:
-quello non distingue il timeout dall'errore e lascia una prenotazione pendente
-per ogni tentativo.
-
-**E così si può fermare.** `Esc` interrompe lo scaricamento e la pagina di prima
-resta dov'era; quel che era arrivato non si tiene, perché una pagina tagliata
-mostrata come intera è peggio di una pagina che non c'è. Prima non si poteva
-nemmeno offrirlo: mentre si scaricava, nessun tasto arrivava.
-
-**La stretta di mano cifrata dice a che punto è.** Sette passi — la chiave, il
-ServerHello, il segreto, i certificati, la firma, la catena, la fine — scritti
-nella riga di stato mentre passano. E misurata: la stretta costa **490 ms** in
-tutto (magazzino delle 150 CA 60 ms, DNS e connessione TCP 320 ms). I «venti
-secondi su un 386 emulato» stavano scritti in tre posti e non erano mai stati
-misurati.
-
-**La cassetta postale ha un padrone.** Un'applicazione grafica riceve nella
-stessa mailbox gli eventi del server a finestre *e* le risposte dello stack IP,
-e mentre si scarica ci sono due che aspettano: chi legge la rete e il ciclo dei
-messaggi. Ognuno scorreva la coda cercando il proprio e teneva in mano quel che
-era dell'altro per rimetterlo alla fine — e chi tiene in mano può lasciar
-cadere: lo scaffale dove si rimetteva aveva quattro posti, e nessuno guardava il
-`-1` di quando era pieno. Adesso c'è `ipc_scegli`: si passa un filtro che di
-ogni messaggio dice **è mio / è di un altro / non è di nessuno**, e quel che è di
-un altro **resta dov'è**. Non passa mai per le mani di chi non lo vuole, quindi
-non lo può perdere.
-
-> Lo scaffale conta i byte e non i messaggi, ed è la stessa memoria di prima —
-> sei kilobyte. Un clic del mouse sono venti byte: prima ne occupava uno dei
-> quattro posti, adesso ce ne stanno ventiquattro. E un messaggio «di un altro»
-> si **salta** invece di rimetterlo, il che toglie di mezzo la trappola che
-> teneva ferma la pompa dei messaggi ogni volta che lo stack aveva una risposta
-> da parte.
-
-**E la finestra di TCP non si riapriva.** Chi legge a scatti — invece di
-prenotare e dormire — lascia che il buffer di ricezione si riempia fra uno
-scatto e l'altro, e quattro kilobyte un mittente veloce li riempie in un
-istante. Lo stack annunciava lo spazio libero **solo dentro un ACK**, cioè solo
-all'arrivo di un segmento: quando poi il buffer si svuotava non aveva più modo
-di dirlo, e il server restava fermo ad aspettare noi. Il sintomo era una pagina
-`https` che non finiva mai di arrivare, e per un giorno è sembrato un difetto
-della cassetta postale. Adesso chi si libera lo dice: un ACK vuoto di venti
-byte, e la finestra riparte.
-
-### Il navigatore esegue JavaScript, e i motori sono due
-
-**testato** — 256 prove sul linguaggio, 244 sul ponte con ExJs e 244 con
-QuickJS, più quindici riquadri provati dentro EX-OS (al 29 settembre 2026
-sono 448 sul linguaggio e 264 sul ponte con ciascuno dei due motori).
-
-**Due motori, la stessa interfaccia.** `exjs.so` è scritto qui dentro;
-`quickjs.so` è QuickJS compilato per EX-OS. Si sceglie quale caricare, e il
-ponte con la pagina — `exdom.so` — è lo stesso per tutt'e due: le 244 prove
-girano identiche sull'uno e sull'altro, che è il modo di dire che
-l'interfaccia è davvero una.
-
-**Il DOM che serve a una pagina vera**: `document`, gli elementi, gli attributi,
-le classi, `innerHTML`, gli eventi con `addEventListener` e `preventDefault`, i
-moduli e il pulsante che li manda.
-
-**`XMLHttpRequest` e `fetch`**, sincroni e asincroni — e l'asincrono è vero: la
-richiesta parte, il resto dello script prosegue, e la risposta arriva quando il
-ciclo dei messaggi la consegna. L'**ordine** in cui le cose accadono è una delle
-quindici prove, perché è la parte che si sbaglia in silenzio.
-
-**Un difetto che non somigliava alla sua causa.** Due stub nello stesso processo
-possono scegliere due librerie diverse: il navigatore apriva un motore ed
-`exdom.so` l'altro, e nello stesso processo giravano due motori che non si
-vedevano. Il sintomo era un page fault dentro il primo con in mano un contesto
-costruito dal secondo. La risposta ring 3 non può darsela — non c'è modo di
-sapere quali pagine ti sono mappate senza provare a leggerle — e infatti la dà
-il caricatore, con `SYS_LIB_TROVA` (0.208): la tavola delle pagine del processo
-*è* l'elenco.
-
-### I biscotti, tutt'e due le metà
-
-**testato** — 51 prove sulla dispensa, più il giro completo contro un server di
-prova.
-
-Un cookie non è una stringa da rispedire: è una regola su **quale dominio** e
-**quale percorso**, con una scadenza. La dispensa tiene le regole, decide quali
-biscotti valgono per l'indirizzo che si sta aprendo, e li attacca alla richiesta
-— comprese quelle che partono dentro una redirezione, che è dove metà dei siti
-mette l'accesso. Si prova da sola, senza schermo e senza rete, perché le regole
-di corrispondenza si sbagliano in silenzio.
-
-> **La persistenza non è ancora provata dentro EX-OS**, solo sul banco: da CD non
-> si scrive, e il giro completo vuole un sistema installato.
-
-### Il suono: quattro schede e il MIDI
-
-**testato** — in QEMU, ascoltando il file che QEMU registra e non i contatori del
-driver.
-
-Quattro driver — SB16, AC'97, ES1370/ES1371 e HD Audio — dietro un protocollo
-solo, così un programma che suona non sa quale scheda c'è. Il MIDI sulle schede
-PCI si sente ed è intonato: è una tavola d'onde a otto seni, cioè un timbro solo
-— il cambio di strumento si ignora e la percussione non c'è. È dichiarato, ed è
-il punto da cui si riprende.
-
-> **Quel che non è mai girato è segnato dove comincia.** QEMU emula l'ES1370, non
-> l'ES1371: il convertitore di frequenza e il codec AC'97 dentro il driver
-> dell'ES1371 sono scritti sulla sequenza documentata e non sono mai stati
-> eseguiti, né su silicio né in emulazione. E la **registrazione non c'è**: tutti
-> e quattro sanno solo suonare.
-
-### Google non è un bersaglio del navigatore, e adesso si sa perché
-
-**testato** — misurato, e la strada è chiusa.
-
-`google.com` si apre e si vede. La pagina dei **risultati** no, e non è colpa del
-nostro JavaScript: con lo User-Agent di Lynx, di w3m o di MSIE 6 Google risponde
-«Aggiorna il browser», e con quello di un Firefox recente manda il suo controllo
-anti-robot offuscato. Non c'è una terza porta. Sta scritto qui perché una strada
-provata e chiusa vale quanto una funzione aggiunta: chi la riprova ci perde lo
-stesso tempo due volte.
-
-### La scrivania ha una console sua, si spegne, e parla la tua lingua
-
-**testato** — dal CD e su un disco ext2 installato da zero, in QEMU.
-
-**Le console diventano cinque.** Il server grafico se ne prendeva una delle
-quattro e chi lavorava in testo ne aveva tre senza averlo chiesto. Ora Alt+F1–F4
-restano di chi scrive e la grafica sta in fondo: digitando `exwin` lo schermo ci
-passa da solo, e quando la grafica si spegne torna alla console di partenza.
-
-**E la console della grafica esiste solo mentre la grafica c'è.** Finché il
-server non gira, Alt+F5 non fa niente — lì ci sarebbe uno schermo nero con una
-shell che nessuno guarda, e chi ci finisce non sa come tornare. Lo stato sta nel
-*kernel* e non nel server, così un server ucciso libera la console da solo.
-
-**`Esci` dal menu spegne la scrivania**, non solo il program manager. Alle
-applicazioni si *chiede*, non le si uccide: a ognuna arriva la stessa chiusura
-della crocetta, così chi ha da salvare fa in tempo; poi torna il modo testo.
-
-**L'installazione chiede la lingua** e la scrive in `kernel.cfg`. Il kernel non
-la usa per niente — tradurre è lavoro dei programmi — ma la conserva e la
-riconsegna come fa con `keymap`, così non ci sono due elenchi che divergono.
-
-**E in fondo propone `hwconfig`**, puntato al disco appena installato: il
-`kernel.cfg` copiato è quello del supporto d'installazione, e il primo avvio da
-disco è il momento peggiore per scoprire che manca il driver del controller.
-
-**La risoluzione si sceglie da Avvio > Impostazioni...** — il meccanismo c'era
-già tutto (`/dev/svga.drv` scrive la voce in `kernel.cfg` e un byte dentro Stage
-2); mancava la finestra. Si applica al riavvio, perché il modo video lo sceglie
-l'avvio col BIOS.
-
-**Copia e incolla dentro i campi di una pagina**, con tutt'e due gli standard:
-`Ctrl+C/X/V` e `Ctrl+Ins` / `Shift+Ins` / `Shift+Canc`. Gli appunti sono quelli
-di tutta la scrivania — la stessa memoria condivisa di `ex_area` — quindi si
-copia da un modulo e si incolla in un editor.
-
-### Il browser regge una pagina vera: impaginazione, immagini, caratteri, moduli
-
-**testato** — dal CD, in QEMU, sulla voce «Operating system» di Wikipedia (676
-KB) e su pagine costruite apposta.
-
-**La lentezza non era più la rete, era l'impaginazione.** A ogni immagine che
-arrivava si rifaceva l'impaginazione dell'intero documento. Quando l'`<img>`
-dichiara `width` e `height` la misura finale si sa prima di scaricare un byte:
-il posto si tiene subito, e quando l'immagine arriva ci entra senza spostare
-niente. Da 7,0 s a 3,3 s per dodici immagini; e la prova che il testo non si
-muove è pixel per pixel — **zero** pixel cambiati fuori dalla banda delle
-immagini.
-
-**L'arena non era piena di testo: era piena di attributi.** Misurata su quella
-voce: il testo dei nodi 71 KB (15%), i nomi dei tag 20 KB (4%), gli attributi
-386 KB (81%). Si troncava una pagina di 70 KB di parole perché non c'era posto
-per gli attributi. Alzata a 1 MB (e `ATTR_MAX` a 16000, perché quella voce ha
-~13.600 attributi), la pagina **non si tronca più**.
-
-**Quante immagini tenere lo decide la macchina**, non una costante: un
-sedicesimo della memoria libera letta con `meminfo()`. Un tetto fisso era avaro
-su un PC grande e causava `OUT OF MEMORY` su uno da 32 MB. E il posto si
-controlla *prima* di scaricare, così l'immagine che non ci sta non costa né
-rete né CPU.
-
-**`font-family` adesso si legge.** Prima ogni pagina usciva in serif e il
-monospazio arrivava solo dal tag `<pre>`. L'elenco si scorre e ci si ferma al
-primo nome riconosciuto — i nomi veri contano quanto le generiche, perché metà
-del web scrive `font-family: Courier New` e basta.
-
-**I caratteri che mancavano.** Liberation copre 2327 codici, DejaVu 5918: si
-ripiega **carattere per carattere** su DejaVu invece di sostituire il font, così
-il testo resta com'è e si riempiono solo i buchi. Greco, cirillico, ebraico e
-arabo si leggono. E le entità sopra il Latin-1 — `&#8212;`, le virgolette
-curve, i puntini — non diventano più `?`.
-
-**`colspan` e `rowspan`**, senza i quali ogni tabella con un'intestazione che
-scavalca due colonne mandava fuori posto tutte le celle dopo di lei.
-
-**E i moduli non ricevevano i tasti.** Non mancava il cursore: mancavano i
-tasti. Il fuoco restava alla barra dell'indirizzo — un controllo del toolkit —
-mentre i campi di una pagina sono rettangoli disegnati, che il fuoco non
-possono averlo. Si scriveva nella barra credendo di scrivere nel modulo. Ora il
-cursore si muove con frecce, Home, Fine e cancellazioni, e si inserisce in
-mezzo al testo.
-
-> **Un difetto del toolkit, non del browser:** quando una casella consumava un
-> tasto, `exwin` rifaceva sfondo e controlli *senza avvisare l'applicazione*,
-> per non svegliarla a ogni lettera. Giusto per una finestra di soli controlli;
-> per una che disegna anche del suo, quel disegno spariva a ogni tasto battuto.
-> Riguarda ogni programma che mescoli controlli e disegno proprio.
-
-### Utenti veri: due conti, `sudo`, e un recovery quando l'accesso è rotto
-
-**testato** — installazione da zero su ext2, i due conti chiesti e creati, poi
-avvio dal disco: `uid=1000(graziano)`, casa `/home/graziano` di sua proprietà.
-`sudo id` rende `uid=0(root)`, e dopo `exit` da `sudo -s` si torna a
-`uid=1000`.
-
-Prima i conti li creava `login` al primo avvio, e ne creava **uno solo**: root.
-Da lì in poi si lavorava sempre da amministratore, che è il modo in cui un
-errore qualunque diventa un danno qualunque. Adesso li chiede l'installatore —
-root per riparare, il tuo per lavorare — e chiede anche se il tuo deve poter
-fare le cose da root con la propria password.
+| `finestra.dis` | exide only: the drawing |
+| `finestra.h` | exide only: the ids, the handles, the prototypes |
+| `finestra_gen.c` | exide only: creates the controls and dispatches events |
+| `finestra.c` | **you only**: exide *adds* the handlers that are missing and never rewrites what is there |
+
+This is where VB6 broke — one file, half written by the generator and half by
+hand, and every regeneration was a gamble. Here the generated and the written
+never touch.
+
+**The joint is the id, and it was already there.** `ex_crea(..., parent, ID, 0)`
+gives every control a number and the event comes back as `EXM_COMANDO` carrying
+it: in the drawing the button *is* `ID_PULSANTE1`, in the source there is `case
+ID_PULSANTE1:`. exide is feasible here more than elsewhere because ExWin was
+already shaped like VB6.
+
+**And a toolkit defect, found because it needed it.** Lists and text areas did
+not release their slot when destroyed: a window containing a list, opened and
+closed four times, used up all four slots and on the fifth the list would not
+open — no error, just an empty box. It had been there for months and nobody had
+found it, because no program opened and closed the same window often enough. The
+first one to do so was exide, on the day it was born.
+
+> **The linker script was born empty, and the link succeeded anyway.**
+> `open(f,'w').write(open(f).read()...)` truncates the file before reading it;
+> `ld -T` with an empty script does not complain — it throws everything away and
+> produces a 256-byte ELF with no segments. The symptom was "ELF load failed" at
+> runtime, which looks nothing like its cause.
+
+### Windows inside a window: the MDI container
+
+**tested** — from the CD, in QEMU, with `winprova -m`: three windows in one
+container, each with its own procedure, and every command on the serial line with
+the **name of the procedure** that received it.
+
+**A child window is not a server window**, and everything else follows from that.
+Giving each one a real window would mean a shared memory zone apiece, a round of
+requests on every open, and — above all — windows that can leave the container,
+because the server does not know they should stay inside. Here a child is a
+*control*: pixels inside the parent's zone, drawn by the library. The price is
+stated — drag one and it stops at the edge — and that is exactly what an MDI is
+for.
+
+**Clipping, which four months of toolkit had never needed.** Drawing was clipped
+against one thing only: the top-level window's pixel zone. That was enough,
+because a control sits where you put it and does not move. An MDI window *moves*,
+and a control larger than its client area would draw over the frame — a defect
+you only see while dragging, which is to say late. Now every child is drawn
+clipped twice: its frame inside the container, its contents inside its own client
+area. It costs one comparison per pixel when on, and **nothing when off** — that
+is, in every window that does not use MDI.
+
+**Activate-then-act is a single gesture.** Click a button in a window that is
+behind, and that button is pressed: the window comes to the front *and* the click
+lands where it fell.
+
+**Commands go to the child's procedure**, not the application's: that is what
+makes MDI useful rather than decorative. And if the child has no procedure they
+go to the application as always.
+
+**Closing a child does not close the program** — the distinction lives where
+whoever does not handle the close ends up, or that button would shut the whole
+application down on the first click. And **Tab cycles inside the active window**:
+otherwise you would watch a cursor blink in a window you are not looking at.
+
+> **For the second time in one day the eye was wrong.** After F6 two windows
+> looked active; measured, the pixels were `(30,77,125)` and `(128,128,128)` —
+> active and inactive, exactly. The rule, now that it has cost twice: look at a
+> screenshot to work out *where* to look, then count the pixels.
+
+### Coloured text, and a second text area that was never born
+
+**tested** — from the CD, in QEMU, with `winprova -c`: a piece of C chosen to
+touch every role, and the colours checked by reading the **pixels** of the
+screenshot rather than looking at it.
+
+**The most important part is the part that was not written.** The obvious route
+was a new control with its own cursor, its own selection, its own clipboard, its
+own click-to-position: a thousand lines already written once for the text area,
+and the second copy would have been a copy to keep in step forever. `areacodice`
+**is not a new control: it is the same area with two different numbers** — 3000
+lines of 240 columns instead of 512 of 200, plus a colouriser. The class is the
+same, and past `ex_crea` there is no difference at all: same drawing, same keys,
+same `ex_area_*`.
+
+**The colouriser lives with whoever knows the language, not in the toolkit.** The
+control knows how to *draw* coloured text; which words are keywords and where a
+comment ends is known by whoever writes the editor. The hook receives a line and
+fills in **one role per character** — keyword, type, string, number, comment,
+preprocessor, function — and roles are roles, not colours: the palette is a
+single table, so two editors do not colour keywords two different blues.
+
+**And a block comment crosses lines.** The colouriser also returns *how the line
+ends*, and the control keeps that state: one byte per line. It is recomputed only
+from where the text changed downwards — from scratch on every repaint would be
+three thousand calls for every keystroke. Type `/*` halfway through a document
+and the lines below turn green as you type.
+
+**The cursor can now be moved**, where before it could only be read:
+`ex_area_vai` is what a column listing a source file's functions needs — click a
+name and land on that line, at mid-height, with its context around it.
+
+> **An hour lost reading a screenshot.** The probes said "comment" and the screen
+> seemed to disagree; the defect was hunted in three places before measuring the
+> PPM's pixels and finding `(0,128,0)` there — the palette's green. The lines had
+> been green all along: scaled down at 800x600, a comment's green and a keyword's
+> blue look alike. A screenshot is looked at; its numbers are counted.
+
+### The toolkit learns five controls, and where new ones go
+
+**tested** — from the CD, in QEMU, with `winprova -n`: every command lands on the
+serial line with its id and value, which is a number to compare rather than an
+impression.
+
+**They were missing, and the gap was already written in the code.** Next to the
+browser's settings window stood: "the toolkit has no check box, and drawing one
+by hand in here would mean a control that lives in a single program". That is why
+the settings switches are buttons that change their label. Now there are
+**`spunta`, `radio`, `scorrimento`, `combo` and `tab`** (check box, radio,
+scrollbar, drop-down and tab strip) — the first step towards `exide`, the visual
+development environment.
+
+**A scrollbar's orientation is told by its shape**, not by a style bit: wider
+than tall is horizontal, taller than wide is vertical. One more bit could
+disagree with the size, and then you would have to decide which of the two is
+right.
+
+**A radio's group is its siblings** — the controls with the same parent. There is
+no group to declare: two sets of choices go inside two `riquadro` frames, which
+is how they have always been drawn. The frame you see *is* the group that counts,
+so the visual rule and the logical rule cannot disagree.
+
+**A check box arms on press and fires on release**, like a button: sliding off
+before lifting cancels. **A scrollbar acts at once instead** — an arrow held down
+must scroll — and dragging its thumb wakes the application on every pixel, where
+a dragged list says "I chose" only once: a dragged scrollbar *is* the document
+scrolling.
+
+**And the seven places to touch when adding another one** are written down in a
+single spot, above the class numbers: the way to get this wrong is not writing a
+control badly, it is forgetting one of them — and finding out because the control
+draws but does not click, or clicks but Tab never reaches it.
+
+### The window stays alive while downloading, and the mailbox has an owner
+
+**tested** — from the CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108
+nodes), a local page with six images each delayed by twenty seconds, and the
+host test suites (256 + 244 + 244 + 51, zero failures).
+
+**While a page was downloading, the window was dead.** Whoever reads sleeps
+inside the read, and while it sleeps the pointer does not move, the window does
+not repaint and no key arrives: on a large page that is tens of seconds of a
+frozen screen. The transport can now ask a question it could not ask before —
+*how many bytes are there right now?* — and when the answer is zero it hands the
+turn back to its host. The answer comes from the stack (`IP_MSG_TCP_STATO`,
+which reserves nothing and waits for nothing) and not from a read attempt with a
+short deadline: that one cannot tell a timeout from an error, and leaves a
+pending reservation behind for every attempt.
+
+**And so it can be stopped.** `Esc` interrupts the download and the previous page
+stays where it was; what had already arrived is *not* kept, because a truncated
+page shown as a whole one is worse than no page at all. Before this, it could not
+even be offered: while downloading, no key arrived.
+
+**The encrypted handshake says where it has got to.** Seven steps — the key, the
+ServerHello, the secret, the certificates, the signature, the chain, the end —
+written into the status line as they go by. And measured: the handshake costs
+**490 ms** in total (the 150-certificate CA store 60 ms, DNS and the TCP
+connection 320 ms). The "twenty seconds on an emulated 386" was written in three
+places and had never been measured.
+
+**The mailbox has an owner.** A graphical application receives window-server
+events *and* IP stack replies in the same mailbox, and while a page downloads
+there are two waiters: the one reading the network and the message loop. Each
+scanned the queue looking for its own and *held* what belonged to the other, to
+put it back at the end — and whoever holds something can drop it: the shelf
+things were put back onto had four slots, and nobody looked at the `-1` for when
+it was full. Now there is `ipc_scegli`: you pass a filter that says, of every
+message, **mine / someone else's / nobody's**, and what belongs to someone else
+**stays where it is**. It never passes through the hands of whoever does not
+want it, so it cannot be lost.
+
+> The shelf counts bytes, not messages, in the same six kilobytes as before. A
+> mouse click is twenty bytes: it used to take one of the four slots, now
+> twenty-four of them fit. And a message belonging to someone else is **skipped**
+> rather than put back, which removes the trap that stalled the message pump
+> every time the IP stack had a reply set aside.
+
+**And the TCP window would not reopen.** Whoever reads in bursts — instead of
+reserving and sleeping — lets the receive buffer fill up between one burst and
+the next, and a fast sender fills four kilobytes in an instant. The stack
+advertised the free space **only inside an ACK**, that is, only when a segment
+arrived: when the buffer later drained it had no way left to say so, and the
+server sat waiting for us. The symptom was an `https` page that never finished
+arriving, and for a day it looked like a mailbox defect. Now whoever frees space
+says so: an empty twenty-byte ACK, and the flow restarts.
+
+### The browser runs JavaScript, and there are two engines
+
+**tested** — 256 tests on the language, 244 on the bridge with ExJs and 244 with
+QuickJS, plus fifteen panels exercised inside EX-OS (on 29 September 2026 they
+are 448 on the language and 264 on the bridge with each engine).
+
+**Two engines, one interface.** `exjs.so` is written here; `quickjs.so` is
+QuickJS compiled for EX-OS. You choose which one to load, and the bridge to the
+page — `exdom.so` — is the same for both: the 244 tests run identically on one
+and on the other, which is how you say the interface really is one.
+
+**The DOM a real page needs**: `document`, elements, attributes, classes,
+`innerHTML`, events with `addEventListener` and `preventDefault`, forms and the
+button that submits them.
+
+**`XMLHttpRequest` and `fetch`**, synchronous and asynchronous — and the
+asynchronous one is real: the request leaves, the rest of the script carries on,
+and the response arrives when the message loop delivers it. The **order** in
+which things happen is one of the fifteen panels, because it is the part that
+goes wrong silently.
+
+**A defect that did not look like its cause.** Two stubs in the same process can
+pick two different libraries: the browser opened one engine and `exdom.so` the
+other, and two engines that could not see each other were running in the same
+process. The symptom was a page fault inside the first one holding a context
+built by the second. Ring 3 cannot answer this by itself — there is no way to
+know which pages are mapped for you without trying to read them — so the loader
+answers it, with `SYS_LIB_TROVA` (0.208): the process page table *is* the list.
+
+### Cookies, both halves of them
+
+**tested** — 51 tests on the jar, plus the full round trip against a test server.
+
+A cookie is not a string to send back: it is a rule about **which domain** and
+**which path**, with an expiry. The jar keeps the rules, decides which cookies
+apply to the address being opened, and attaches them to the request — including
+requests that start inside a redirect, which is where half the web puts its
+login. It is tested on its own, with no screen and no network, because matching
+rules go wrong silently.
+
+> **Persistence is not yet tested inside EX-OS**, only on the host: nothing is
+> writable when booting from CD, and the full round trip needs an installed
+> system.
+
+### Sound: four cards and MIDI
+
+**tested** — in QEMU, by listening to the file QEMU records, not to the driver's
+own counters.
+
+Four drivers — SB16, AC'97, ES1370/ES1371 and HD Audio — behind a single
+protocol, so a program that plays sound does not know which card is there. MIDI
+on the PCI cards is audible and in tune: it is an eight-sine wavetable, that is,
+a single timbre — program change is ignored and there is no percussion. It is
+declared, and it is where the work resumes.
+
+> **What has never run is marked where it starts.** QEMU emulates the ES1370, not
+> the ES1371: the sample-rate converter and the AC'97 codec inside the ES1371
+> driver are written from the documented sequence and have never been executed,
+> on silicon or in emulation. And **recording does not exist**: all four know
+> only how to play.
+
+### Google is not a target for the browser, and now we know why
+
+**tested** — measured, and the road is closed.
+
+`google.com` opens and renders. The **results** page does not, and it is not our
+JavaScript's fault: with the User-Agent of Lynx, of w3m or of MSIE 6, Google
+answers "update your browser", and with that of a recent Firefox it sends its
+obfuscated anti-robot check. There is no third door. It is written down because
+a road tried and closed is worth as much as a feature added: whoever tries it
+again pays the same time twice.
+
+### The desktop has a console of its own, shuts down, and speaks your language
+
+**tested** — from the CD and on an ext2 disk installed from scratch, under QEMU.
+
+**Five consoles now.** The window server used to take one of the four, leaving
+whoever worked in text with three they never asked to give up. Alt+F1–F4 are now
+the text consoles and graphics lives at the end: typing `exwin` switches the
+screen there by itself, and returns to the starting console when graphics stops.
+
+**And the graphics console only exists while graphics does.** Until the server
+runs, Alt+F5 does nothing — there would be a black screen with a shell nobody is
+watching, and no obvious way back. The state lives in the *kernel*, not in the
+server, so a killed server frees the console on its own.
+
+**`Exit` from the menu shuts down the desktop**, not just the program manager.
+Applications are *asked*, not killed: each gets the same close event as the
+window's close box, so anyone with unsaved work has time; then text mode returns.
+
+**Install asks for the language** and writes it to `kernel.cfg`. The kernel never
+uses it — translating is the programs' job — but it keeps it and hands it back
+the way it does with `keymap`, so there are never two diverging lists.
+
+**And it offers `hwconfig` at the end**, pointed at the freshly installed disk:
+the copied `kernel.cfg` is the install medium's, and first boot from disk is the
+worst possible moment to discover the disk controller's driver is missing.
+
+**Resolution is chosen from Start > Settings** — the mechanism was already all
+there (`/dev/svga.drv` writes both the `kernel.cfg` entry and a byte inside Stage
+2); the window was what was missing. It applies on reboot, because the video mode
+is chosen at boot through the BIOS.
+
+**Copy and paste inside a page's form fields**, with both standards:
+`Ctrl+C/X/V` and `Ctrl+Ins` / `Shift+Ins` / `Shift+Del`. The clipboard is the
+whole desktop's — the same shared memory `ex_area` uses — so you can copy from a
+form and paste into an editor.
+
+### The browser holds a real page: layout, images, characters, forms
+
+**tested** — from the CD, under QEMU, on Wikipedia's "Operating system" article
+(676 KB) and on pages built for the purpose.
+
+**The slowness was no longer the network, it was layout.** Every image that
+arrived re-laid-out the whole document. When the `<img>` declares `width` and
+`height` the final size is known before a single byte is downloaded: the space
+is reserved right away, and the image drops into it without moving anything.
+From 7.0 s to 3.3 s for twelve images — and the proof that the text does not
+move is pixel by pixel: **zero** pixels changed outside the image band.
+
+**The arena was not full of text: it was full of attributes.** Measured on that
+article: node text 71 KB (15%), tag names 20 KB (4%), attributes 386 KB (81%).
+A page with 70 KB of words was being truncated because there was no room for
+the attributes. Raised to 1 MB — and `ATTR_MAX` to 16000, since that article
+has ~13,600 attributes — the page **is no longer truncated**.
+
+**How many images to keep is decided by the machine**, not by a constant: one
+sixteenth of the free memory, read with `meminfo()`. A fixed ceiling was stingy
+on a large PC and caused `OUT OF MEMORY` on a 32 MB one. And the room is
+checked *before* downloading, so an image that will not fit costs neither
+network nor CPU.
+
+**`font-family` is now read.** Before, every page came out in serif and
+monospace only ever arrived from the `<pre>` tag. The list is scanned and the
+first recognised name wins — real names count as much as the generic ones,
+because half the web just writes `font-family: Courier New`.
+
+**The characters that were missing.** Liberation covers 2327 codepoints, DejaVu
+5918: the fallback is **per character** onto DejaVu rather than replacing the
+font, so the text stays as it is and only the holes are filled. Greek,
+Cyrillic, Hebrew and Arabic render. And numeric entities above Latin-1 —
+`&#8212;`, curly quotes, ellipses — are no longer `?`.
+
+**`colspan` and `rowspan`**, without which any table with a heading spanning
+two columns pushed every cell after it out of place.
+
+**And forms were not receiving keystrokes.** The cursor was not what was
+missing: the *keys* were. Focus stayed on the address bar — a toolkit control —
+while a page's fields are drawn rectangles, which cannot hold focus. You typed
+into the address bar believing you were typing into the form. The cursor now
+moves with arrows, Home, End and deletions, and inserts mid-text.
+
+> **A toolkit defect, not a browser one:** when a text box consumed a key,
+> `exwin` repainted the background and the controls *without telling the
+> application*, so as not to wake it for every letter. Right for a window made
+> only of controls; for one that also draws its own content, that content
+> vanished on every keystroke. It affects any program mixing controls with its
+> own drawing.
+
+### Real users: two accounts, `sudo`, and a recovery when login is broken
+
+**tested** — install from scratch on ext2, both accounts asked for and created,
+then boot from the disk: `uid=1000(graziano)`, home `/home/graziano` owned by
+them. `sudo id` returns `uid=0(root)`, and after `exit` from `sudo -s` you are
+back to `uid=1000`.
+
+Accounts used to be created by `login` on first boot, and it created **one**:
+root. From there on you always worked as the administrator, which is how any
+mistake becomes any amount of damage. Now the installer asks for two — root to
+repair, yours to work — and also asks whether yours should be able to do root
+things with its own password.
 
 | | |
 |---|---|
-| `/boot/utenti` | `nome:uid:gid`, 0644 |
-| `/boot/ombra` | `nome:sale:impronta`, 0600 — SHA-256 di `sale:password` |
-| `/boot/amministratori` | un nome per riga, 0644 |
-| `lib/exuser` | leggere una password senza eco, verificarla, aggiungere un conto |
-| `bin/sudo` | il comando |
-| `SYS_SU` (254) | la capacità stretta: «diventa root SE sai la password» |
+| `/boot/utenti` | `name:uid:gid`, 0644 |
+| `/boot/ombra` | `name:salt:digest`, 0600 — SHA-256 of `salt:password` |
+| `/boot/amministratori` | one name per line, 0644 |
+| `lib/exuser` | read a password without echo, verify it, add an account |
+| `bin/sudo` | the command |
+| `SYS_SU` (254) | the narrow capability: «become root IF you know the password» |
 
-    sudo <comando> [argomenti]   esegue quel comando come root
-    sudo -s                      apre una shell di root
-    sudo                         non fa niente e stampa l'uso
+    sudo <command> [arguments]   runs that command as root
+    sudo -s                      opens a root shell
+    sudo                         does nothing and prints the usage
 
-! **ESEGUIRE UN COMANDO E APRIRE UNA SHELL NON SONO LA STESSA COSA DETTA IN DUE
-MODI.** Con `sudo comando` i poteri durano quanto il comando e finiscono da
-soli; con una shell durano finché qualcuno si ricorda di uscire. La seconda si
-ottiene — `-s` — ma bisogna **chiederla**: aprirla a chi ha battuto `sudo` e
-invio vorrebbe dire dare la più pericolosa delle due a chi non l'ha domandata.
+! **RUNNING A COMMAND AND OPENING A SHELL ARE NOT THE SAME THING SAID TWO
+WAYS.** With `sudo command` the powers last as long as the command and end by
+themselves; with a shell they last until somebody remembers to leave. The
+second one is available — `-s` — but it has to be **asked for**: opening it for
+someone who typed `sudo` and Enter would mean handing the more dangerous of the
+two to somebody who did not ask.
 
-! **IL PROGRAMMA `sudo` NON HA NESSUN POTERE**, ed è la parte che regge tutto
-il resto. Non è setuid — il bit setuid sui file in EX-OS non esiste, di
-proposito, perché renderebbe pericoloso ogni eseguibile che lo porta e non c'è
-modo di controllarli tutti — e non decide niente. Legge una password, la passa
-al kernel, e **decide il kernel**. Un `sudo` sostituito con un programma
-qualunque resta un programma qualunque.
+! **THE `sudo` PROGRAM HAS NO POWER OF ITS OWN**, and that is what holds up
+everything else. It is not setuid — the setuid bit on files does not exist in
+EX-OS, on purpose, because it would make every executable carrying it dangerous
+and there is no way to audit them all — and it decides nothing. It reads a
+password, hands it to the kernel, and **the kernel decides**. A `sudo` replaced
+with some other program is just some other program.
 
-! **LA VERIFICA STA NEL KERNEL PERCHÉ NON POTEVA STARE ALTROVE.**
-`/boot/ombra` è 0600 di root e deve restarlo: se fosse leggibile, chiunque si
-porterebbe via le impronte e le proverebbe con comodo su un'altra macchina.
-Quindi il confronto lo deve fare qualcuno che quel file lo può aprire. È lo
-stesso motivo per cui su Unix `su` è setuid root, e costa uno SHA-256 dentro il
-kernel.
+! **THE CHECK IS IN THE KERNEL BECAUSE IT COULD NOT BE ANYWHERE ELSE.**
+`/boot/ombra` is 0600 root and must stay that way: if it were readable, anyone
+could carry the digests off and try them at leisure on another machine. So the
+comparison has to be done by somebody who can open that file. It is the same
+reason `su` is setuid root on Unix, and it costs an SHA-256 inside the kernel.
 
-! **E IL KERNEL NON RIUSCIVA AD APRIRLO.** `SYS_SU` gira nel processo di chi
-chiama, uid 1000, e il VFS guardava le credenziali del **processo** invece di
-quelle di chi stava davvero leggendo. La riparazione è `vfs_open_autorita()`:
-non un bit dentro `flags` — arriverebbe da `sys_open`, cioè da un numero
-scelto dall'utente, e basterebbe indovinarlo per leggersi le password — e non
-uno stato globale, che varrebbe per **tutti** i processi finché è acceso,
-mentre il VFS qui dentro riscadenza. Il permesso viaggia come argomento e
-finisce con la chiamata.
+! **AND THE KERNEL COULD NOT OPEN IT.** `SYS_SU` runs in the caller's process,
+uid 1000, and the VFS was looking at the **process's** credentials instead of
+those of whoever was really reading. The fix is `vfs_open_autorita()`: not a
+bit inside `flags` — that would come from `sys_open`, that is from a number the
+user chooses, and guessing it would be enough to read the passwords — and not a
+global state either, which would hold for **every** process while it is on,
+while the VFS reschedules in here. The permission travels as an argument and
+ends with the call.
 
-! **E UNA CONSOLE CHE NON APRE `login` NON STA PROTEGGENDO NIENTE**: è una
-console il cui sistema di autenticazione è **corrotto**. Lasciarla chiusa non
-difende — chi ha la macchina davanti avvia da CD e monta il disco in trenta
-secondi — e toglie l'unico modo di ripararla da dentro. Si apre una shell di
-root, e lo dice a chiare lettere prima di aprirsi: «questa shell gira come root
-e NESSUNO ha fatto l'accesso». Non è un accesso: è una macchina rotta che si
-apre per essere riparata.
+! **AND A CONSOLE THAT CANNOT OPEN `login` IS NOT PROTECTING ANYTHING**: it is
+a console whose authentication is **corrupt**. Leaving it shut does not defend
+— whoever is standing at the machine boots from CD and mounts the disk in
+thirty seconds — and it removes the only way to repair it from the inside. A
+root shell opens, and says so plainly before it does: «this shell runs as root
+and NOBODY has logged in». It is not a login: it is a broken machine opening up
+to be repaired.
 
-### `ls -l`: i permessi e i proprietari si vedono
+### `ls -l`: permissions and owners are visible
 
-**testato** — e ha trovato due difetti, uno dei quali nel kernel.
+**tested** — and it found two defects, one of them in the kernel.
 
-! **UNA CHIAMATA IN PIÙ, NON UN CAMPO IN PIÙ A `Stat`.** Cambiare una struttura
-che i programmi si passano già vuol dire ricostruire tutto ciò che la usa, e
-`Stat` la usa chiunque apra un file. `st_uid` e `st_gid` restano a zero e
-continuano a dichiararlo; la verità la chiede chi la vuole, con `statperm()`
+! **ONE MORE CALL, NOT ONE MORE FIELD IN `Stat`.** Changing a structure that
+programs already pass around means rebuilding everything that uses it, and
+`Stat` is used by anyone who opens a file. `st_uid` and `st_gid` stay zero and
+keep saying so; the truth is asked for by whoever wants it, with `statperm()`
 (`SYS_STATPERM`, 253).
 
-! **I DATI C'ERANO GIÀ E NON USCIVANO**: `VfsStat` porta modo, uid e gid da
-quando ext2 ha imparato i proprietari, ma `sys_stat` non li copiava. Mancava il
-trasporto, non l'informazione.
+! **THE DATA WAS ALREADY THERE AND WAS NOT COMING OUT**: `VfsStat` has carried
+mode, uid and gid ever since ext2 learned about owners, but `sys_stat` was not
+copying them. What was missing was the transport, not the information.
 
-! **E `VfsStat` NON ERA INIZIALIZZATA.** Su un CD `ls -l` mostrava permessi
-diversi per ogni file e proprietari a cinque cifre: `stat_interno()` lasciava
-modo, uid e gid a quello che c'era nello stack: li scriveva solo il ramo ext2,
-mentre ISO 9660, il FAT12 del floppy e la radice non li toccavano affatto. E
-non era estetica: **`vfs_permesso()` decide con `st->modo`**, dove zero vuol
-dire «questo volume non ha proprietari, passa».
+! **AND `VfsStat` WAS NOT INITIALISED.** On a CD, `ls -l` showed different
+permissions for every file and five-digit owners: `stat_interno()` left mode,
+uid and gid at whatever was on the stack — only the ext2 branch wrote them,
+while ISO 9660, the floppy's FAT12 and the root did not touch them at all. And
+it was not cosmetic: **`vfs_permesso()` decides on `st->modo`**, where zero
+means «this volume has no owners, let it through».
 
-Su un volume senza proprietari `ls -l` scrive `?????????` e `-`, che è la
-verità: su FAT e su ISO 9660 il proprietario non esiste.
+On a volume without owners `ls -l` prints `?????????` and `-`, which is the
+truth: on FAT and on ISO 9660 the owner does not exist.
 
-### Lo schermo si ricompone solo dove è cambiato
+### The screen is recomposed only where it changed
 
-**testato** — misurato con una spia nel ciclo del compositore, non stimato:
+**tested** — measured with a temporary probe in the compositor loop, not
+estimated:
 
-    ricomposizioni durante il movimento del puntatore
-        29 da   260 pixel
-        17 da   240
-         2 da   117
-        39 da 480.000   (avvio, finestre nuove, pressioni di bottone)
+    recompositions while moving the pointer
+        29 of   260 pixels
+        17 of   240
+         2 of   117
+        39 of 480,000   (startup, new windows, button presses)
 
-cioè **260 pixel invece di 480.000** — circa 1850 volte meno — per il caso che
-si ripete a ogni movimento della mano.
+that is, **260 pixels instead of 480,000** — roughly 1850 times less — for the
+case that repeats with every movement of the hand.
 
-! **IL RITAGLIO STA NELLE DUE PRIMITIVE, NON NEI CHIAMANTI.** `px()` e
-`riempi()` sono le sole due strade per arrivare al framebuffer, quindi tutto
-ciò che disegna — cornici, prese, contorni, il puntatore — eredita il ritaglio
-senza sapere che esiste. Metterlo nei chiamanti vorrebbe dire ricordarselo a
-ogni funzione nuova, e prima o poi qualcuno non se lo ricorda.
+! **THE CLIPPING LIVES IN THE TWO PRIMITIVES, NOT IN THE CALLERS.** `px()` and
+`riempi()` are the only two roads to the framebuffer, so everything that draws
+— frames, grips, outlines, the pointer — inherits the clipping without knowing
+it exists. Putting it in the callers would mean remembering it in every new
+function, and sooner or later somebody does not.
 
-! **LA COPIA DELLA ZONA DEL CLIENT È L'ECCEZIONE**, e ce l'ha per forza: non
-passa dalle primitive apposta, perché va per righe intere con MMX ed è quello
-che la rende veloce. Lì il ritaglio si applica a mano.
+! **THE CLIENT-AREA COPY IS THE EXCEPTION**, and it has to be: it deliberately
+does not go through the primitives, because it works whole rows at a time with
+MMX and that is what makes it fast. There the clipping is applied by hand.
 
-! **IL PREDEFINITO È «TUTTO», E VA TENUTO COSÌ.** Una regione sporca sbagliata
-per difetto lascia pixel vecchi sullo schermo: un difetto che non si vede dove
-è stato fatto e che si manifesta come «ogni tanto resta un pezzo di finestra».
-Oggi si stringe **un caso solo**, il movimento del puntatore; gli altri undici
-dichiarano ancora tutto lo schermo, ed è dichiarato.
+! **THE DEFAULT IS «EVERYTHING», AND IT MUST STAY THAT WAY.** A dirty region
+that is wrong on the small side leaves old pixels on the screen: a defect that
+does not show where it was made and that turns up as «every so often a piece of
+a window stays behind». Today **one case** is narrowed, the pointer's movement;
+the other eleven still declare the whole screen, and that is stated.
 
-### Il browser: tabelle, elenchi, `<pre>` e i fogli di stile fino in fondo
+### The browser: tables, lists, `<pre>` and style sheets all the way
 
-**testato** — bordi destri identici su tutte le righe (232, 469, 753),
-distacchi di 8 px, somma 744 = la larghezza dell'area.
+**tested** — right-hand edges identical on every row (232, 469, 753), gaps of
+8 px, sum 744 = the width of the area.
 
-! **LA LARGHEZZA DI UNA COLONNA NON SI SA FINCHÉ NON SI È GUARDATO OGNI
-CONTENUTO DI QUELLA COLONNA**, ed è l'unico posto del browser che vuole **due**
-passate: il resto della pagina si impagina in avanti, una parola dopo l'altra,
-senza tornare indietro.
+! **A COLUMN'S WIDTH IS NOT KNOWN UNTIL EVERY CELL IN THAT COLUMN HAS BEEN
+LOOKED AT**, and it is the only place in the browser that wants **two** passes:
+the rest of the page lays out forwards, one word after another, without going
+back.
 
-! **E MENTRE SI MISURA NON SI ALLINEA.** È il difetto che hanno trovato i
-pixel: il foglio predefinito centra i `<th>`, quindi la passata di misura
-spingeva i pezzi in mezzo alla riga e la larghezza tornava «metà pagina»
-invece che «quanto la parola». L'allineamento decide **dove** mettere una riga,
-la misura chiede **quanto** occupa. Niente `colspan`/`rowspan`, niente bordi:
-dichiarato.
+! **AND WHILE MEASURING YOU DO NOT ALIGN.** That is the defect the pixels
+found: the default sheet centres `<th>`, so the measuring pass pushed the
+pieces into the middle of the row and the width came back as «half the page»
+instead of «as wide as the word». Alignment decides **where** to put a row,
+measuring asks **how much** it takes. No `colspan`/`rowspan`, no borders:
+stated.
 
-`<hr>` era solo un po' d'aria: adesso è una riga, disegnata come uno sfondo
-alto due pixel perché è esattamente ciò che è. `<ul>` e `<ol>` hanno il loro
-segno, e per `<ol>` il numero si conta **fra i fratelli** — due liste annidate
-si darebbero i numeri a vicenda.
+`<hr>` used to be just some air: now it is a line, drawn as a background two
+pixels tall because that is exactly what it is. `<ul>` and `<ol>` have their
+marker, and for `<ol>` the number is counted **among siblings** — two nested
+lists would hand each other their numbers.
 
-! **DENTRO `<pre>` GLI SPAZI E GLI A CAPO SONO IL CONTENUTO**, ed è tutta la
-ragione per cui quel tag esiste. La correzione andava in `exhtml.so`, non nel
-browser: chi analizza riduce a uno spazio qualunque sequenza di bianchi — che è
-la regola dell'HTML e va bene per tutto il resto — e ridurli lì vuol dire che
-nessun utilizzatore, per quanto attento, può più rimetterli. L'informazione è
-persa prima di arrivargli.
+! **INSIDE `<pre>`, SPACES AND NEWLINES ARE THE CONTENT**, and that is the
+whole reason the tag exists. The fix belonged in `exhtml.so`, not in the
+browser: the parser collapses any run of whitespace to a single space — which
+is the HTML rule and is right for everything else — and collapsing it there
+means no user of the library, however careful, can ever put it back. The
+information is lost before it reaches them.
 
-Dei fogli di stile si applicano adesso anche **allineamento, i quattro margini
-e il colore di sfondo**, che `excss.so` calcolava e il browser buttava via —
-tre proprietà su otto promesse dalla libreria e scartate da chi la usa, il tipo
-di divario che non dà nessun errore.
+From the style sheets, **alignment, the four margins and the background
+colour** are now applied as well; `excss.so` was computing them and the browser
+was throwing them away — three properties out of the eight the library promises,
+discarded by its user, the kind of gap that raises no error at all.
 
-! **L'ALLINEAMENTO NON SI PUÒ APPLICARE MENTRE SI SCRIVE**: per centrare
-bisogna sapere quanto è larga la riga, e lo si sa solo quando è finita. Si
-segna il primo pezzo, e al momento di andare a capo si spostano tutti quelli
-della riga.
+! **ALIGNMENT CANNOT BE APPLIED WHILE WRITING**: to centre something you need
+to know how wide the row is, and you only know that when it is finished. The
+first piece is marked, and at the line break every piece on that row is moved.
 
-! **UNO SFONDO NON È UN PEZZO, È CIÒ CHE STA SOTTO I PEZZI.** Vive in un elenco
-suo e si disegna prima di tutto il testo: metterlo fra i pezzi vorrebbe dire
-dipingere sopra le parole già scritte, perché l'ordine dei pezzi è quello del
-documento e non ha niente a che fare con la profondità.
+! **A BACKGROUND IS NOT A PIECE, IT IS WHAT LIES UNDER THE PIECES.** It lives
+in a list of its own and is drawn before all the text: putting it among the
+pieces would mean painting over words already written, because the order of the
+pieces is the document's and has nothing to do with depth.
 
-### «Informazioni su», e l'orologio che non spariva
+### «About», and the clock that was not disappearing
 
-**testato** — e la prima diagnosi era sbagliata, smentita da un A/B.
+**tested** — and the first diagnosis was wrong, disproved by an A/B.
 
-Ogni programma della scrivania — browser, file manager, editor — dice adesso
-nome, che cosa fa, l'autore e **la memoria che sta usando**: immagine
-(`_start`→`_bss_end`), heap (`sbrk(0)`) e pila. Dalla shell lo dice `ver`. Sta
-in `lib/exinfo`, perché quattro copie dello stesso riquadro divergono alla
-prima riga aggiunta.
+Every desktop program — browser, file manager, editor — now states its name,
+what it does, the author, and **the memory it is using**: image
+(`_start`→`_bss_end`), heap (`sbrk(0)`) and stack. From the shell, `ver` says
+it. It lives in `lib/exinfo`, because four copies of the same box diverge at
+the first line added.
 
-! **L'OROLOGIO NON SPARIVA AL PRIMO CLIC: ANDAVA SOTTO.** Avevo dato la colpa
-al ridisegno della finestra su qualunque messaggio non gestito, e l'A/B l'ha
-smentito — due esecuzioni identiche al pixel, con l'unica differenza nella
-cifra dell'ora. La causa vera era `in_cima()`, che rialzava una finestra già in
-cima: la barra è `WIN_ST_SOPRA`, e rialzarla la rimetteva **sotto** le altre
-dello stesso strato.
+! **THE CLOCK WAS NOT DISAPPEARING ON THE FIRST CLICK: IT WAS GOING UNDER.** I
+had blamed the window repaint on any unhandled message, and the A/B disproved
+it — two runs identical to the pixel, the only difference being the digit of
+the clock. The real cause was `in_cima()`, which re-raised a window that was
+already on top: the bar is `WIN_ST_SOPRA`, and re-raising it put it **below**
+the others in the same layer.
 
-### Un browser: dalla rete allo schermo
+### A browser: from the network to the screen
 
-**testato** — `http://www.google.com` rende 200 e 82550 byte; `http://example.com`
-si vede impaginato in `/exwin/bin/browser`, con il titolo in Liberation Sans
-Bold a 22 e il corpo in Serif a 15. E le **immagini della pagina si vedono**:
-una prova con tre PNG generati a mano dà 3000 pixel esatti per ciascuno dei tre
-colori attesi — cioè la misura naturale e quella dichiarata con `width`/`height`
-sono tutt'e due giuste al pixel.
+**tested** — `http://www.google.com` returns 200 and 82550 bytes;
+`http://example.com` renders laid out in `/exwin/bin/browser`, with the heading
+in Liberation Sans Bold at 22 and the body in Serif at 15. And the **page's
+images show up**: a run against three hand-generated PNGs gives exactly 3000
+pixels for each of the three expected colours — that is, both the natural size
+and the one declared with `width`/`height` are right to the pixel.
 
 | | |
 |---|---|
-| `lib/exhttp/http.c` | HTTP/1.1 senza rete: URL, richiesta, intestazioni, corpo «a pezzi» |
-| `lib/exhttp/exhttp.c` | il trasporto TCP, le redirezioni |
-| `lib/exhtml/html.c` | da testo ad albero — **`/exwin/lib/exhtml.so`**, a disposizione di ogni programma |
-| `bin/scarica` | prende una pagina e la stampa o la salva |
-| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento, immagini |
-| `lib/eximg/eximg.c` | PNG, JPG e ICO — aperta a richiesta, non collegata |
+| `lib/exhttp/http.c` | HTTP/1.1 without the network: URL, request, headers, chunked body |
+| `lib/exhttp/exhttp.c` | the TCP transport, redirects |
+| `lib/exhtml/html.c` | from text to tree — **`/exwin/lib/exhtml.so`**, available to any program |
+| `bin/scarica` | fetches a page and prints or saves it |
+| `exwin/bin/browser` | address bar, links, scrolling, images |
+| `lib/eximg/eximg.c` | PNG, JPG and ICO — opened on demand, not linked in |
 
-! **IL TRASPORTO È UN PARAMETRO, NON UNA COSA SAPUTA.** Oggi sotto l'HTTP c'è
-il TCP; domani, per `https://`, ci sarà il TLS. Se il codice aprisse la
-connessione da sé, quel giorno andrebbe riscritto — e sarebbe la seconda volta
-che si scrive «leggi le intestazioni, poi il corpo».
+! **THE TRANSPORT IS A PARAMETER, NOT SOMETHING KNOWN.** Today TCP sits under
+HTTP; tomorrow, for `https://`, TLS will. If this code opened the connection
+itself, that day it would have to be rewritten — and it would be the second
+time «read the headers, then the body» gets written.
 
-! **`chunked` NON È UN OPZIONALE.** Un server che non sa in anticipo quanto
-sarà lunga la risposta — cioè qualunque pagina generata al momento — non manda
-`Content-Length`: manda i pezzi. Senza saperli srotolare si vedrebbero i numeri
-esadecimali della lunghezza in mezzo al testo.
+! **`chunked` IS NOT OPTIONAL.** A server that does not know in advance how long
+the answer will be — that is, any page generated on the fly — does not send
+`Content-Length`: it sends chunks. Without unrolling them you would see the
+hexadecimal length numbers in the middle of the text.
 
-! **L'HTML NON È XML**, ed è tutta la difficoltà: i tag restano aperti, si
-chiudono nell'ordine sbagliato, ne mancano metà. `<ul><li>uno<li>due` sono due
-fratelli e non una scala; `<b><i>x</b>` chiude fino alla `<b>`; dentro
-`<script>` e `<style>` **non c'è markup**, o dal primo `a < b` del JavaScript in
-poi l'albero è spazzatura.
+! **HTML IS NOT XML**, and that is the whole difficulty: tags stay open, close in
+the wrong order, half of them are missing. `<ul><li>one<li>two` are two
+siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
+`<script>` and `<style>` there **is no markup**, or from the JavaScript's first
+`a < b` onwards the tree is garbage.
 
-! **`https://` FUNZIONA, E VERIFICA DAVVERO.** TLS 1.3 scritto qui dentro:
-X25519 per lo scambio di chiavi, ChaCha20-Poly1305 per i dati, la catena dei
-certificati controllata contro un magazzino di CA vere e il nome del sito
-confrontato col `subjectAltName`. Le firme si verificano in RSA-PSS **e in
-ECDSA su P-256 e P-384**, che e' cio' che serve per aprire i siti veri:
-wikipedia.org, news.ycombinator.com e github.com hanno solo certificati
-ellittici. Senza magazzino di CA non si apre niente: cifrare con chiunque
-risponda vuol dire cifrare con chi sta in mezzo, e la barra scriverebbe
-`https://` lo stesso.
+! **`https://` WORKS, AND ACTUALLY VERIFIES.** TLS 1.3 written here: X25519 for
+the key exchange, ChaCha20-Poly1305 for the data, the certificate chain checked
+against a store of real CAs and the site name matched against the
+`subjectAltName`. Signatures are verified in RSA-PSS **and in ECDSA over P-256
+and P-384**, which is what it takes to open real sites: wikipedia.org,
+news.ycombinator.com and github.com only have elliptic certificates. Without a
+CA store nothing opens: encrypting with whoever answers means encrypting with
+whoever is in the middle, and the bar would say `https://` all the same.
 
-! **I MODULI SI VEDONO, SI COMPILANO E SI MANDANO**: caselle di testo,
-password, spunte, scelte con l'elenco a tendina, pulsanti e aree di testo si
-disegnano come i controlli del sistema, prendono i tasti, e il pulsante manda
-davvero — **in GET e in POST**, con la codifica percento.
+! **FORMS ARE DRAWN, FILLED IN AND SUBMITTED**: text and password boxes, check
+boxes, selects with a drop-down list, buttons and text areas are drawn like the
+system's own controls, take keystrokes, and the button really submits — **over
+GET and POST**, percent-encoded.
 
-! **E LA CONNESSIONE SI RIUSA.** Su `https` la stretta di mano e' tutto il
-costo — chiave effimera, catena di certificati, firma — e una pagina con dieci
-immagini la pagava dieci volte. Adesso si riusa la connessione quando si sa
-dove finisce il corpo, si rispetta il `Connection: close` del server, e si
-riprova una volta se l'altra parte l'ha chiusa senza dirlo.
+! **AND THE CONNECTION IS REUSED.** Over `https` the handshake is the whole
+cost — ephemeral key, certificate chain, signature — and a page with ten images
+paid it ten times. Now the connection is kept when the end of the body is
+known, the server's `Connection: close` is honoured, and a request is retried
+once if the other side closed without saying so.
 
-! **E I COLORI SCRITTI NEGLI ATTRIBUTI CONTANO**: `bgcolor`, `text`, `align`.
-Mezzo web li usa ancora — la barra arancione di Hacker News e' un `bgcolor` su
-una `<table>` — e stanno al gradino piu' basso della cascata, sotto ogni regola
-di stile.
+! **AND COLOURS WRITTEN IN ATTRIBUTES COUNT**: `bgcolor`, `text`, `align`. Half
+the web still uses them — Hacker News's orange bar is a `bgcolor` on a
+`<table>` — and they sit at the lowest step of the cascade, below every style
+rule.
 
-! **E LE IMMAGINI SONO TRE FORMATI**: PNG, JPEG e GIF (primo fotogramma,
-trasparenza compresa).
+! **AND IMAGES COME IN THREE FORMATS**: PNG, JPEG and GIF (first frame,
+transparency included).
 
-! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
-le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
-arriva si reimpagina. Prenderle prima vorrebbe dire una finestra vuota finché
-l'ultima non risponde, e una che non risponde costa otto secondi da sé. Quella
-che non arriva lascia il posto al suo `alt`, che è il motivo per cui
-quell'attributo esiste.
+! **IMAGES COME AFTER THE TEXT.** The page is laid out and drawn with the words
+alone; only then is one image fetched at a time, and on each arrival the page is
+laid out again. Fetching them first would mean an empty window until the last
+one answers, and one that does not answer costs eight seconds by itself. One
+that never arrives leaves its place to its `alt`, which is what that attribute
+is for.
 
-! **E I PIXEL SONO DEL BROWSER, NON DEL DECODIFICATORE**: si decodifica, si
-copia nella misura con cui si disegnerà, e il bitmap naturale si restituisce
-subito. Tenerlo vorrebbe dire lasciar scegliere alla pagina quanta memoria
-prendere — 128 KB di PNG possono essere 4000×3000 pixel, cioè 48 MB su una
-macchina che ne ha 32. I tetti sono dichiarati: dodici immagini, 128 KB per
-file, 512 K pixel in tutto.
+! **AND THE PIXELS BELONG TO THE BROWSER, NOT TO THE DECODER**: it decodes,
+copies into the size it will be drawn at, and gives the natural bitmap straight
+back. Keeping it would mean letting the page choose how much memory to take —
+128 KB of PNG can be 4000×3000 pixels, that is 48 MB on a machine that has 32.
+The ceilings are declared: twelve images, 128 KB per file, 512 K pixels in all.
 
-! **I FOGLI DI STILE CI SONO, in `/exwin/lib/excss.so`**: `<style>`, `<link
-rel=stylesheet>` e l'attributo `style=`, con la cascata vera (origine,
-specificità, ordine). Selettori per tipo, classe, id, discendenza ed elenco;
-colori, corpi, grassetto, corsivo, `display:none`, allineamento e margini.
+! **STYLE SHEETS ARE THERE, in `/exwin/lib/excss.so`**: `<style>`, `<link
+rel=stylesheet>` and the `style=` attribute, with the real cascade (origin,
+specificity, order). Selectors by type, class, id, descendant and list; colors,
+sizes, bold, italic, `display:none`, alignment and margins.
 
-! **E QUELLO CHE NON SI SA LEGGERE SI SCARTA, NON SI INDOVINA**: `div > p` non
-diventa `div p`, un selettore troppo lungo si butta invece di essere accorciato
-— accorciarlo lo renderebbe più **largo** dell'originale — e `2em` si rifiuta
-invece di valere due pixel. Meno stile, mai stile sbagliato.
+! **AND WHAT CANNOT BE READ IS DISCARDED, NOT GUESSED**: `div > p` does not
+become `div p`, a selector longer than the ceiling is dropped rather than
+shortened — shortening it would make it **wider** than the original — and `2em`
+is refused rather than taken for two pixels. Less style, never wrong style.
 
-! **E I TAG DI ASPETTO SONO DIVENTATI REGOLE**: `h1`, `<b>`, `<i>`, `<strong>`,
-`<em>` e il colore dei collegamenti stanno in un foglio predefinito con
-l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
-erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
+! **AND THE APPEARANCE TAGS BECAME RULES**: `h1`, `<b>`, `<i>`, `<strong>`,
+`<em>` and the link color now live in a built-in sheet at the lowest cascade
+origin, so a page can override them. They used to be `if`s in the engine, and
+`<b>` and `<i>` were not there at all.
 
-Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative,
+What is **not** there, declared: JavaScript, `@media`, relative units,
 `colspan`/`rowspan`.
 
 
-### I font: TrueType, misurato contro FreeType
+### Fonts: TrueType, measured against FreeType
 
-**testato** — sei facce Liberation a sei corpi dentro EX-OS, e il
-rasterizzatore confrontato pixel per pixel con FreeType su 1460 glifi:
-**riquadro identico 1460 su 1460**, differenza media 0,94 livelli su 255.
-
-| | |
-|---|---|
-| `lib/exfont/exfont.c` | il formato bitmap EXFN, dentro `exwin.so` |
-| `lib/exfont/ttf.c` | il contenitore TrueType |
-| `lib/exfont/raster.c` | contorni → copertura, in interi 26.6 |
-| `exfont.so` | istanza, cache dei glifi, aperta a richiesta |
-
-! **`strlen(s) * 8` È IL CONTO DA TOGLIERE PRIMA CHE QUALCUNO NE SCRIVA UN
-ALTRO SOPRA.** È vero solo col font di sistema: un motore d'impaginazione nato
-su quel presupposto andrebbe riscritto il giorno che arriva un font
-proporzionale. Per questo i font sono arrivati **prima** del browser.
-
-! **L'ARITMETICA È INTERA.** Sul Pentium 133 dichiarato la virgola mobile è più
-lenta, ma soprattutto ogni processo che tocca l'FPU paga un salvataggio dello
-stato a ogni cambio — e disegnare testo è ciò che si fa di continuo.
-
-! **NON ESISTE LA DIVISIONE A 64 BIT** in una libreria di EX-OS: si collega
-senza libgcc, quindi `__divdi3` non c'è e il collegamento fallisce.
-
-! **IL CONFRONTO CON FreeType HA TROVATO UN DIFETTO CHE NESSUNA IPOTESI AVREBBE
-TROVATO.** Alla prima passata i riquadri identici erano il 95,4%, e i mancanti
-avevano una forma: a 16 pixel quasi ogni maiuscola veniva alta un pixel meno.
-La scala troncava invece di arrotondare — mezzo sessantaquattresimo perso che
-diventa un pixel intero.
-
-Cosa manca, dichiarato: hinting (per questo l'interfaccia usa ancora l'8x16),
-crenatura, legature, solo il piano base, CFF rifiutato apposta.
-
-
-### `rename` sostituisce la destinazione, come POSIX
-
-**testato** su ext2, FAT12 e FAT16.
-
-Fino alla 0.184 `rename()` rendeva `EEXIST` se la destinazione esisteva. Era una
-scelta dichiarata, e non reggeva:
-
-! **«CANCELLA PRIMA» NON È EQUIVALENTE.** Lo schema con cui si salva un file
-senza rischiare di perderlo è uno solo: scrivi accanto, poi **scambia**. Se lo
-scambio non sostituisce bisogna cancellare prima — e fra la cancellazione e lo
-scambio **il file non esiste**.
-
-! **E QUELLA FINESTRA SI CHIUDE SOLO NEL KERNEL.** `vfs_rename` tiene il
-lucchetto del filesystem per tutta l'operazione: nessun altro processo vede lo
-stato intermedio. In spazio utente quella garanzia non si può avere.
-
-! **LA SOSTITUZIONE STA NEL VFS, PRIMA DELLO SMISTAMENTO**, quindi vale per
-ext2, FAT12 e FAT16/32 senza che nessun driver la reimplementi. Regole POSIX sui
-tipi: directory solo su directory vuota, file solo su file. E
-`rename("x","x")` non fa niente — senza quel controllo la sostituzione
-**distruggerebbe x**.
-
-
-### La barra: l'ora, e le applicazioni che si aggiungono da sole
-
-**testato** — l'orologio avanza da solo (06:52 → 06:53 in 75 secondi); il menu
-«Applicazioni...» aggiunge, toglie e salva su ext2.
-
-! **I THREAD IN EX-OS NON ESISTONO**, e l'orologio è un **processo** a parte. E
-anche se ci fossero, qui un processo è meglio: un thread dentro il program
-manager ne condividerebbe la coda dei messaggi, quindi un program manager
-occupato sarebbe un orologio fermo.
-
-! **`ex_sveglia()` ED `EXM_TEMPO`**: senza, un'applicazione non può fare niente
-da sé — il ciclo dei messaggi dorme finché non arriva un evento. Non costa un
-giro in più: il `poll` ha già una scadenza di 200 ms.
-
-! **L'AVVIO AUTOMATICO È UNA DIRETTIVA, NON UN SEGNO SULLA VOCE.** Si può volere
-un programma che parte da solo e **non** compare nel menu — un pannello, un
-orologio — oppure una voce che non parte da sola.
-
-! **`ipc_rimetti()`**: la mailbox è una sola e i consumatori sono più d'uno. Chi
-aspetta una risposta dello stack IP scorre i messaggi e prima li **buttava** —
-in un browser sono i clic dell'utente. Ora si rimettono a posto, e **alla
-fine**: lo scaffale si serve prima della coda del kernel, quindi rimettere e
-rileggere subito renderebbe lo stesso messaggio all'infinito.
-
-
-### L'interfaccia grafica: un server a finestre in ring 3
+**tested** — six Liberation faces at six sizes inside EX-OS, and the rasterizer
+compared pixel by pixel with FreeType over 1460 glyphs: **bounding box
+identical 1460 out of 1460**, mean difference 0.94 levels out of 255.
 
 | | |
 |---|---|
-| `/exwin/bin/wserver` compone le finestre e muove il puntatore, **in ring 3 e senza privilegi** | testato |
-| Toolkit **ExWin** in stile Win32, con header per **C, C++ e FreeBASIC** | testato |
-| Controlli: finestra, pulsante, etichetta, casella di testo, riquadro, separatore, intestazione, terminale | testato |
-| `exwin` accende la grafica sulla **console 5**: con Alt+F5 ci si va, con Alt+F1 si torna alla shell | testato |
-| Una **shell dentro una finestra**, su due pipe | testato |
-| Sfondo da immagine: oggi BMP, e la tabella dei lettori è già quella giusta per JPG, PNG e ICO | testato |
+| `lib/exfont/exfont.c` | the EXFN bitmap format, inside `exwin.so` |
+| `lib/exfont/ttf.c` | the TrueType container |
+| `lib/exfont/raster.c` | outlines → coverage, in 26.6 integers |
+| `exfont.so` | instance, glyph cache, opened on demand |
 
-! **GIRA IN RING 3, ED È IL PUNTO.** Quando il server muore, muore lui: kernel,
-scheduler, console seriale e tastiera restano vivi, e lo schermo si rimette con
-`/bin/testo` — che si digita alla cieca ed è la rete di sicurezza costruita
-apposta *prima* di scrivere il server.
+! **`strlen(s) * 8` IS THE SUM TO REMOVE BEFORE SOMEONE WRITES ANOTHER ONE ON
+TOP OF IT.** It is true only with the system font: a layout engine born on that
+assumption would have to be rewritten the day a proportional font arrives. That
+is why fonts came **before** the browser.
 
-! **NON DISEGNA IL CONTENUTO DELLE FINESTRE, LO COMPONE.** Ogni finestra è una
-zona di memoria condivisa che il client riempie di pixel; il server ci mette
-bordo e barra del titolo, le impila e le copia nel framebuffer. Un client che
-sbaglia a disegnare rovina la propria finestra, non lo schermo. Ed è anche
-perché i decodificatori di immagini stanno nella libreria del client: un
-lettore JPG dentro il server sarebbe un difetto di **tutte** le applicazioni
-insieme.
+! **THE ARITHMETIC IS INTEGER.** On the declared Pentium 133 floating point is
+slower, but above all every process that touches the FPU pays a state save at
+every switch — and drawing text is what one does continuously.
 
-! **I CLIENT DISEGNANO SEMPRE IN ARGB A 32 BIT** e non sanno com'è fatto lo
-schermo. La conversione a 16, 24 o 32 bit sta in un posto solo. Un toolkit che
-dovesse conoscere il formato dello schermo avrebbe sei strade da provare invece
-di una.
+! **THERE IS NO 64-BIT DIVISION** in an EX-OS library: it links without libgcc,
+so `__divdi3` is not there and the link fails.
 
-### La scrivania: `/exwin`, barra delle applicazioni e menu di avvio
+! **THE COMPARISON WITH FreeType FOUND A DEFECT NO HYPOTHESIS WOULD HAVE
+FOUND.** On the first pass identical boxes were 95.4%, and the missing ones had
+a shape: at 16 pixels almost every capital came out one pixel shorter. The scale
+truncated instead of rounding — half a sixty-fourth lost that becomes a whole
+pixel.
+
+What is missing, declared: hinting (which is why the interface still uses the
+8x16), kerning, ligatures, basic plane only, CFF refused on purpose.
+
+
+### `rename` replaces the destination, like POSIX
+
+**tested** on ext2, FAT12 and FAT16.
+
+Up to 0.184 `rename()` returned `EEXIST` if the destination existed. It was a
+declared choice, and it did not hold:
+
+! **«DELETE FIRST» IS NOT EQUIVALENT.** There is only one scheme for saving a
+file without risking losing it: write alongside, then **swap**. If the swap does
+not replace, you have to delete first — and between the deletion and the swap
+**the file does not exist**.
+
+! **AND THAT WINDOW CAN ONLY BE CLOSED IN THE KERNEL.** `vfs_rename` holds the
+filesystem lock for the whole operation: no other process sees the intermediate
+state. In user space that guarantee cannot be had.
+
+! **THE REPLACEMENT LIVES IN THE VFS, BEFORE THE DISPATCH**, so it holds for
+ext2, FAT12 and FAT16/32 without any driver reimplementing it. POSIX rules on
+types: a directory only over an empty directory, a file only over a file. And
+`rename("x","x")` does nothing — without that check the replacement would
+**destroy x**.
+
+
+### The taskbar: the clock, and applications that add themselves
+
+**tested** — the clock advances on its own (06:52 → 06:53 in 75 seconds); the
+«Applicazioni...» menu adds, removes and saves on ext2.
+
+! **THREADS DO NOT EXIST IN EX-OS**, and the clock is a separate **process**.
+And even if they existed, here a process is better: a thread inside the program
+manager would share its message queue, so a busy program manager would be a
+stopped clock.
+
+! **`ex_sveglia()` AND `EXM_TEMPO`**: without them an application cannot do
+anything by itself — the message loop sleeps until an event arrives. It costs no
+extra round: the `poll` already has a 200 ms deadline.
+
+! **AUTOSTART IS A DIRECTIVE, NOT A MARK ON THE ENTRY.** One may want a program
+that starts on its own and does **not** appear in the menu — a panel, a clock —
+or an entry that does not start by itself.
+
+! **`ipc_rimetti()`**: the mailbox is one and the consumers are more than one.
+Whoever waits for an answer from the IP stack scans the messages and used to
+**throw away** the others — in a browser those are the user's clicks. Now they
+are put back, and **at the end**: the shelf is served before the kernel queue,
+so putting one back and re-reading immediately would return the same message
+forever.
+
+
+### The graphical interface: a window server in ring 3
 
 | | |
 |---|---|
-| `pm` — scrivania, barra in basso, pulsante **Avvio**, menu con le applicazioni; tasto destro per creare, rinominare, copiare e cancellare | testato |
-| Voci **Esci** (torna alla shell) e **Spegni** nel menu | testato |
-| `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — le applicazioni grafiche **non stanno in `/bin`** | testato |
-| L'elenco delle applicazioni è un **file di testo**, `/exwin/lib/applicazioni.txt` | testato |
-| `filemgr` — file manager: elenco che scorre, directory in cima, tasto destro, trascinare, apre ogni file col suo programma | testato |
-| `edit` — editor di testo: più file in schede, cerca e sostituisci, annulla, appunti, Ctrl+S, Ctrl+Q | testato |
+| `/exwin/bin/wserver` composes windows and moves the pointer, **in ring 3 and unprivileged** | tested |
+| **ExWin** toolkit, Win32-style, with headers for **C, C++ and FreeBASIC** | tested |
+| Controls: window, button, label, text box, group box, separator, header, terminal | tested |
+| `exwin` brings up graphics **on console 5**: Alt+F5 goes there, Alt+F1 comes back to the shell | tested |
+| A **shell inside a window**, over two pipes | tested |
+| Image backgrounds: BMP today, and the reader table is already the right shape for JPG, PNG and ICO | tested |
 
-! **LE APPLICAZIONI GRAFICHE NON STANNO IN `/bin`, ED È UNA DECISIONE.** I
-programmi di `/bin` si lanciano da una shell e parlano con un terminale; questi
-vogliono il server a finestre, e lanciati senza non fanno niente. Mescolarli
-vorrebbe dire un `ls /bin` in cui metà dei nomi non si può usare lì dove si sta
-guardando. Stessa ragione per cui i driver stanno in `/dev`.
+! **IT RUNS IN RING 3, AND THAT IS THE POINT.** When the server dies, only it
+dies: kernel, scheduler, serial console and keyboard stay alive, and the screen
+is restored with `/bin/testo` — which you type blind, and which was built as
+the safety net *before* the server was written.
 
-! **L'ELENCO È UN FILE, NON UNA TABELLA COMPILATA.** Aggiungere
-un'applicazione è una riga. Un elenco dentro il binario vorrebbe dire rifare il
-program manager per ogni applicazione nuova, e **chi installa un programma non
-ha i sorgenti**.
+! **IT DOES NOT DRAW WINDOW CONTENTS, IT COMPOSES THEM.** Every window is a
+shared memory zone the client fills with pixels; the server adds the border and
+the title bar, stacks them and copies them to the framebuffer. A client that
+draws badly ruins its own window, not the screen. It is also why image decoders
+live in the client library: a JPG reader inside the server would be a defect of
+**every** application at once.
 
-! **UN FILE PIÙ GRANDE DEI LIMITI L'EDITOR LO CARICA IN PARTE E BLOCCA IL
-SALVATAGGIO.** Salvare quello che si è letto vorrebbe dire cancellare il resto
-del file senza averlo mai mostrato: è il modo più silenzioso che un editor
-abbia di distruggere dei dati. Il limite — 512 righe, 200 colonne — è una
-conseguenza dell'allocatore a bump, dove `free()` non restituisce niente.
+! **CLIENTS ALWAYS DRAW IN 32-BIT ARGB** and know nothing about the screen. The
+conversion to 16, 24 or 32 bits lives in exactly one place. A toolkit that had
+to know the screen format would have six paths to try instead of one.
 
-### Le librerie condivise: `exwin.so`, `exdlg.so`, `libc.so`
+### The desktop: `/exwin`, taskbar and start menu
 
 | | |
 |---|---|
-| `SYS_LIB_APRI` (248): il kernel mappa una libreria **una volta** e la aggancia a chi la chiede | testato |
-| `.text`/`.rodata` **condivise** fra i processi; `.data`/`.bss` copia privata | testato |
-| Risoluzione **per nome**, non per posizione: si aggiorna la libreria senza ricompilare le applicazioni | testato |
-| `/lib/libc.so` — **322 funzioni**, usata da 39 programmi | testato |
-| `/exwin/lib/exwin.so` — il toolkit; `/exwin/lib/exdlg.so` — i dialoghi Apri/Salva | testato |
-| Gli header non cambiano di una riga, e nemmeno il sorgente delle applicazioni | testato |
+| `pm` — desktop, taskbar at the bottom, **Start** button, menu of applications; the right button creates, renames, copies and deletes | tested |
+| **Exit** (back to the shell) and **Shut down** entries in the menu | tested |
+| `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — graphical applications **do not live in `/bin`** | tested |
+| The application list is a **text file**, `/exwin/lib/applicazioni.txt` | tested |
+| `filemgr` — file manager: scrolling list, directories first, right button, drag and drop, opens every file with its program | tested |
+| `edit` — text editor: several files in tabs, find and replace, undo, clipboard, Ctrl+S, Ctrl+Q | tested |
+
+! **GRAPHICAL APPLICATIONS DO NOT LIVE IN `/bin`, AND THAT IS A DECISION.**
+Programs in `/bin` are launched from a shell and talk to a terminal; these want
+the window server, and launched without it they do nothing. Mixing them would
+mean an `ls /bin` where half the names cannot be used where you are looking.
+Same reason drivers live in `/dev`.
+
+! **THE LIST IS A FILE, NOT A COMPILED TABLE.** Adding an application is one
+line. A list inside the binary would mean rebuilding the program manager for
+every new application, and **whoever installs a program does not have the
+sources**.
+
+! **A FILE LARGER THAN THE LIMITS IS LOADED IN PART AND SAVING IS BLOCKED.**
+Saving what was read would mean erasing the rest of the file without ever
+having shown it: it is the quietest way an editor has of destroying data. The
+limit — 512 lines, 200 columns — follows from the bump allocator, where
+`free()` gives nothing back.
+
+### Shared libraries: `exwin.so`, `exdlg.so`, `libc.so`
+
+| | |
+|---|---|
+| `SYS_LIB_APRI` (248): the kernel maps a library **once** and attaches it to whoever asks | tested |
+| `.text`/`.rodata` **shared** across processes; `.data`/`.bss` a private copy | tested |
+| Resolution **by name**, not by position: update the library without recompiling applications | tested |
+| `/lib/libc.so` — **322 functions**, used by 39 programs | tested |
+| `/exwin/lib/exwin.so` — the toolkit; `/exwin/lib/exdlg.so` — the Open/Save dialogs | tested |
+| Headers do not change by a single line, and neither does application source | tested |
 
 ```
-    0x04000000 - 0x08000000   le librerie, una fetta da 1 MB a testa (64 in tutto)
-    0x08000000               i programmi
+    0x04000000   exwin.so    the toolkit
+    0x04400000   exdlg.so    the dialogs
+    0x04800000   libc.so     the C library
+    0x08000000   programs
 ```
 
-La mappa di chi occupa cosa **non e' scritta da nessuna parte**: la si legge
-dai file, perche' scritta a mano ha sbagliato tre volte.
+What it saved, measured:
 
-```
-    python3 tools/fette.py            la mappa vera, e dice se qualcosa si tocca
-    python3 tools/fette.py --libera   il prossimo indirizzo libero
-```
-
-Il risparmio, misurato:
-
-| | prima | dopo |
+| | before | after |
 |---|---|---|
-| `/bin` in tutto | 850.132 | **608.468** |
-| ISO di EX-OS | 4728 KB | **4252 KB** |
-| `libctest` (testo) | 64.861 | **33.312** |
-| applicazioni grafiche | ~37.000 | **~15.000** |
+| all of `/bin` | 850,132 | **608,468** |
+| EX-OS ISO | 4728 KB | **4252 KB** |
+| `libctest` (text) | 64,861 | **33,312** |
+| graphical applications | ~37,000 | **~15,000** |
 
-! **NON È COLLEGAMENTO DINAMICO VERO, ED È DELIBERATO.** Un `.so` con `ld.so`,
-codice PIC, GOT e PLT è la strada standard, ed è mesi di lavoro: caricatore ELF
-da riscrivere, un linker dinamico da scrivere, la libc ricompilata PIC. E ogni
-difetto lì dentro sarebbe un difetto di **tutte** le applicazioni insieme.
+! **THIS IS NOT REAL DYNAMIC LINKING, AND THAT IS DELIBERATE.** A `.so` with
+`ld.so`, PIC code, GOT and PLT is the standard road, and it is months of work:
+the ELF loader rewritten, a dynamic linker written, the libc rebuilt as PIC.
+And any defect in there would be a defect of **every** application at once.
 
-Qui la libreria è un ELF normalissimo — `ET_EXEC`, non PIC — collegato a un
-indirizzo **riservato**: sta sempre lì, quindi non c'è niente da rilocare e non
-serve nessuna GOT. Ciò che serviva davvero — aggiornare la libreria senza
-ricompilare le applicazioni — si ottiene con la risoluzione per nome.
+Here a library is a perfectly ordinary ELF — `ET_EXEC`, not PIC — linked at a
+**reserved** address: it is always there, so there is nothing to relocate and
+no GOT is needed. What was actually wanted — updating the library without
+recompiling applications — comes from resolution by name.
 
-! **L'ORDINE DELLA TABELLA NON È PARTE DELL'ABI.** Con una tabella posizionale,
-riordinare le voci romperebbe ogni applicazione già compilata e nessun errore
-lo direbbe: si chiamerebbe semplicemente la funzione sbagliata. Coi nomi si può
-aggiungere, riordinare e riscrivere il corpo di qualunque funzione. Solo
-**togliere** un nome rompe — ed è esattamente il patto di una DLL.
+! **THE ORDER OF THE TABLE IS NOT PART OF THE ABI.** With a positional table,
+reordering entries would break every already-compiled application and no error
+would say so: you would simply call the wrong function. With names you can add,
+reorder and rewrite the body of any function. Only **removing** a name breaks
+things — which is exactly the bargain a DLL makes.
 
-! **LE FUNZIONI SI PASSANO SENZA CONOSCERNE LA FIRMA.** Sono 322: scriverne i
-ponti in C vorrebbe dire copiare 322 firme, ognuna sbagliabile in silenzio. Un
-ponte in assembly è un `jmp` indiretto, che non tocca né gli argomenti né il
-valore di ritorno — `printf: ff 25 c4 25 00 08  jmp *0x80025c4`. È lo stesso
-mestiere di una PLT, e li genera `tools/genlibc.py` leggendo i simboli veri con
-`nm`.
+! **FUNCTIONS ARE FORWARDED WITHOUT KNOWING THEIR SIGNATURES.** There are 322
+of them: writing the thunks in C would mean copying 322 signatures, each one
+silently wrong-able. A thunk in assembly is an indirect `jmp` that touches
+neither the arguments nor the return value — `printf: ff 25 c4 25 00 08
+jmp *0x80025c4`. It is the same job a PLT does, and `tools/genlibc.py`
+generates them by reading the real symbols with `nm`.
 
-! **LE CINQUE VARIABILI GLOBALI NO.** `errno`, `stdin`, `stdout`, `stderr`,
-`environ`: un programma che scrive `errno = 0` scriverebbe nella **propria**
-copia mentre la libc legge la sua — due variabili con lo stesso nome, e nessun
-errore da nessuna parte. Si esporta l'indirizzo e l'header lo trasforma in una
-lettura: `#define errno (*__errno_dove())`. Il sorgente di chi le usa non
-cambia.
+! **THE FIVE GLOBAL VARIABLES CANNOT BE.** `errno`, `stdin`, `stdout`,
+`stderr`, `environ`: a program writing `errno = 0` would write into its **own**
+copy while the libc reads its own — two variables with the same name, and no
+error anywhere. The address is exported and the header turns the name into a
+read of it: `#define errno (*__errno_dove())`. Source using them does not
+change.
 
-! **E L'AVVIO NON SI PUÒ CONDIVIDERE.** `_libc_start` tocca `main`,
-`__init_array_*` e `__fini_array_*`, che appartengono al binario in cui si
-trovano. Dentro la libreria `main` non esisterebbe nemmeno, e i vettori
-sarebbero quelli della libreria — vuoti: i costruttori globali del programma
-non girerebbero mai, **e nessuno lo direbbe**.
+! **AND STARTUP CANNOT BE SHARED.** `_libc_start` touches `main`,
+`__init_array_*` and `__fini_array_*`, which belong to the binary they sit in.
+Inside the library `main` would not even exist, and the arrays would be the
+library's — empty: the program's global constructors would never run, **and
+nobody would say so**.
 
-! **`login` E `install` RESTANO STATICI**, ed è una decisione: sono i due
-programmi con cui si entra e con cui si ripara. Se `libc.so` mancasse o fosse
-rotta, un login collegato a lei renderebbe il sistema inaccessibile e non ci
-sarebbe modo di rimediare dall'interno.
+! **`login` AND `install` STAY STATIC**, and that is a decision: they are the
+two programs you get in with and repair with. If `libc.so` were missing or
+broken, a login linked against it would make the system unreachable with no way
+to fix it from inside.
 
-### L'installazione a componenti
-
-| | |
-|---|---|
-| `install` mostra i componenti trovati sul supporto e li chiede **uno per uno** | testato |
-| `install -m` sistema minimale, `install -t` tutto: nessuna domanda | testato |
-| `copia_albero()` segue le sottodirectory: un componente non è fatto di un livello solo | testato |
-
-! **IL SISTEMA MINIMALE È UN ELENCO CHIUSO; TUTTO IL RESTO È OPZIONALE.**
-`bin`, `boot`, `lib`, `dev`, `drivers` sono ciò senza cui EX-OS non parte.
-Qualunque **altra** directory nella radice del supporto è un componente, e
-l'installatore la trova da solo.
-
-È il contrario di un elenco scritto dentro l'installatore: aggiungere un
-pacchetto — oggi `/exwin`, domani quello che sarà — vuol dire **metterne la
-directory sul supporto, e basta**. Chi prepara un pacchetto non ha i sorgenti
-dell'installatore.
-
-! **LA SCELTA SI FA PRIMA DI SCRIVERE.** Chiedere «installo anche /exwin?» dopo
-aver già sostituito il kernel vorrebbe dire che rispondere «annulla» non
-annulla più niente.
-
-### Quattro difetti vecchi, e cosa hanno in comune
+### Installing by components
 
 | | |
 |---|---|
-| Il fuoco della tastiera non era il fuoco: la barra si prendeva ogni tasto | corretto |
-| La shell aveva perso redirezioni e ambiente per tre giorni, in silenzio | corretto |
-| `wserver.drv` non conosceva `-i`: la sonda lo **avviava** e l'installazione dal CD si fermava | corretto |
-| `cat` senza argomenti non leggeva `stdin`, quindi in una pipe non serviva a niente | corretto |
+| `install` shows the components found on the medium and asks about them **one by one** | tested |
+| `install -m` minimal system, `install -t` everything: no questions | tested |
+| `copia_albero()` follows subdirectories: a component is not one level deep | tested |
 
-! **IL FUOCO NON ERA IL FUOCO.** Il server mandava il tasto alla finestra
-disegnata per ultima. Vero finché l'ordine di disegno dipendeva solo da chi si
-era portato davanti; falso da quando esiste `WIN_ST_SOPRA`, che tiene la barra
-delle applicazioni sempre in cima. Da quel giorno **nessuna finestra poteva
-ricevere un tasto** col program manager acceso. Il difetto non era nell'editor
-che sembrava sordo, né in `WIN_ST_SOPRA`: era in una funzione che decideva
-**due** cose mentre il suo nome ne prometteva una.
+! **THE MINIMAL SYSTEM IS A CLOSED LIST; EVERYTHING ELSE IS OPTIONAL.** `bin`,
+`boot`, `lib`, `dev`, `drivers` are what EX-OS cannot start without. Any
+**other** directory in the root of the medium is a component, and the installer
+finds it by itself.
 
-! **UNA MAGIA PROTEGGE DAL DANNO, NON DALLO SFASAMENTO.** Di `SpawnExtra` — la
-struttura che attraversa la syscall `spawn` — c'erano **quattro copie**. Tre
-sono state aggiornate, la quarta (quella della shell) no. Il kernel ha fatto
-esattamente ciò per cui la magia esiste: non ha riconosciuto il blocco e l'ha
-**ignorato** invece di leggerlo storto. Ma «ignorato» vuol dire che per tre
-giorni `hello > file` stampava a video e lasciava il file a zero byte, **senza
-un messaggio**. Un silenzio non si nota.
+It is the opposite of a list written inside the installer: adding a package —
+`/exwin` today, whatever comes tomorrow — means **putting its directory on the
+medium, and nothing else**. Whoever prepares a package does not have the
+installer's sources.
 
-La correzione non è aggiornare la quarta copia: è **non averne quattro**.
-`lib/include/spawn_abi.h` è la definizione unica, e in fondo ha
+! **THE CHOICE IS MADE BEFORE ANYTHING IS WRITTEN.** Asking "shall I install
+/exwin too?" after the kernel has already been replaced would mean that
+answering "cancel" no longer cancels anything.
+
+### Four old defects, and what they have in common
+
+| | |
+|---|---|
+| Keyboard focus was not focus: the taskbar took every key | fixed |
+| The shell had lost redirections and environment for three days, silently | fixed |
+| `wserver.drv` did not know `-i`: the probe **started** it and installing from CD hung | fixed |
+| `cat` with no arguments did not read `stdin`, so in a pipe it was useless | fixed |
+
+! **FOCUS WAS NOT FOCUS.** The server sent the key to the last window drawn.
+True while draw order depended only on who had come to the front; false since
+`WIN_ST_SOPRA` exists, which keeps the taskbar permanently on top. From that
+day **no window could receive a key** while the program manager was running.
+The defect was neither in the editor that seemed deaf nor in `WIN_ST_SOPRA`: it
+was in a function that decided **two** things while its name promised one.
+
+! **A MAGIC NUMBER PROTECTS AGAINST DAMAGE, NOT AGAINST DRIFT.** Of
+`SpawnExtra` — the structure that crosses the `spawn` syscall — there were
+**four copies**. Three were updated, the fourth (the shell's) was not. The
+kernel did exactly what the magic exists for: it did not recognise the block
+and **ignored** it rather than reading it crooked. But "ignored" meant that for
+three days `hello > file` printed to the screen and left the file at zero
+bytes, **with no message**. Silence is not noticed.
+
+The fix is not to update the fourth copy: it is to **not have four**.
+`lib/include/spawn_abi.h` is the single definition, and at the bottom it has
 `typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 596) ? 1 : -1];`
-— un campo aggiunto senza cambiare la magia adesso ferma la **compilazione**.
+— a field added without changing the magic now stops the **build**.
 
-! **E SEI VOLTE «UN'USCITA CHE NON SA DI ESSERE SCADUTA».** Dipendenze finte
-del bersaglio floppy, `uhci.drv` mancante fra quelle dell'ISO, la risoluzione
-SVGA non prerequisito di Stage 2, le immagini che non dipendevano dal
-`Makefile`, e due volte una variabile del `Makefile` usata come prerequisito
-**prima** di essere definita — dove `make` la espande a stringa vuota. La
-seconda ha fatto credere che 294 prove girassero sulla libc condivisa mentre
-giravano su quella statica. **Un prerequisito scritto con una variabile vuota
-non è un prerequisito debole: non esiste, e nessuno lo dice.**
+! **AND SIX TIMES "AN OUTPUT THAT DOES NOT KNOW IT IS STALE".** Fake
+prerequisites on the floppy target, `uhci.drv` missing from the ISO's, the SVGA
+resolution not a prerequisite of Stage 2, the images not depending on the
+`Makefile`, and twice a `Makefile` variable used as a prerequisite **before**
+being defined — where `make` expands it to the empty string. The second one
+made 294 tests appear to run against the shared libc while they ran against the
+static one. **A prerequisite written with an empty variable is not a weak
+prerequisite: it does not exist, and nobody says so.**
 
-### Driver: li sceglie la macchina, non li copia in blocco
-
-| | |
-|---|---|
-| Convenzione `-i` comune a tutti i driver: sonda, riferisce, esce 0 se serve qui | testato |
-| `-i` **non tocca la periferica**: legge dal bus PCI e basta | testato |
-| Catalogo `/drivers` sul CD di EX-OS, separato dal `/dev` che serve ad avviarlo | testato |
-| `hwconfig -d <punto>`: sonda il catalogo e installa in `<punto>/dev` solo chi risponde | testato |
-| `install` chiama la selezione invece di riversare `/dev` sul disco | testato |
-| Prova incrociata su NE2000 e su AMD PCnet: ognuna installa solo il proprio driver | testato |
-
-Un disco installato si ritrova in `/dev` i driver che su **quella** macchina
-funzionano. Prima ci finiva tutto ciò che stava sul CD: il driver della scheda
-di rete che la macchina non ha, e `floppy.drv` — che è un modulo ET_DYN e che
-`spawn()` rifiuta, cioè un file che nessuno poteva caricare, installato a ogni
-installazione.
-
-Non esiste un elenco di driver da nessuna parte, ed è deliberato: un elenco
-sarebbe una seconda verità accanto al contenuto della directory, e le due
-divergono al primo driver aggiunto o tolto. La domanda si fa al driver, che è
-l'unico a sapersi rispondere.
-
-! Il punto in cui è più facile sbagliare, e su cui la prima versione ha
-sbagliato: `-i` girava su un sistema **acceso**, dove l'autoexec ha già avviato
-il driver giusto. Inizializzando la scheda per sondarla la si resettava sotto a
-chi la stava guidando, e il reset di una scheda occupata risponde con uno stato
-inatteso — così un driver dichiarava di non servire sulla macchina la cui
-scheda stava guidando in quel momento. Da qui la regola: si guarda, non si
-tocca.
-
-### Una shell più grande: modalità grafica VESA e `svga.drv`
+### Drivers: the machine picks them, they are not copied wholesale
 
 | | |
 |---|---|
-| 640×480 → **80×30**, 800×600 → **100×37**, 1024×768 → **128×48** caratteri | testato |
-| `/dev/svga.drv <modo>` sceglie la risoluzione, come `keymap` la disposizione | testato |
-| È un driver a tutti gli effetti: `hwconfig -d` lo installa da solo sul disco | testato |
-| Dice **forte** che serve un riavvio: la modalità la imposta Stage 2 | testato |
-| Predefinito: console di testo 80×25, sistema identico a prima | testato |
-| Ogni fallimento del sondaggio VBE ripiega sul testo, mai su uno schermo nero | testato |
-| Il kernel segnala se `kernel.cfg` e il bootloader non dicono la stessa cosa | testato |
+| A `-i` convention shared by every driver: probe, report, exit 0 if needed here | tested |
+| `-i` **does not touch the device**: it only reads from the PCI bus | tested |
+| A `/drivers` catalogue on the EX-OS CD, separate from the `/dev` that boots it | tested |
+| `hwconfig -d <mount>`: probes the catalogue, installs into `<mount>/dev` only what answers | tested |
+| `install` calls that selection instead of dumping `/dev` onto the disk | tested |
+| Cross-check on NE2000 and on AMD PCnet: each installs only its own driver | tested |
 
-! **Non è un driver, e non può esserlo.** Una modalità VESA si imposta con
-INT 10h — cioè con il BIOS, cioè in **modo reale**. Quando il kernel comincia
-a girare quella porta è già chiusa, e in ring3 non lo è mai stata. L'unico che
-può farlo è **Stage 2**, prima del passaggio a modo protetto, ed è lì che il
-sondaggio VBE vive: `bootloader/stage2/loader.asm`.
+An installed disk ends up with the drivers that work on **that** machine.
+Before, everything on the CD went across: the driver for the network card the
+machine does not have, and `floppy.drv` — an ET_DYN module that `spawn()`
+rejects, that is, a file nobody could load, installed on every installation.
 
-Il kernel riceve indirizzo, pitch, dimensioni e profondità in `BootInfo` e
-disegna la console nel framebuffer con il font 8×16 di
-`kernel/arch/x86/font8x16.c`. Il resto del file `vga.c` non se n'è accorto:
-tutta la console — scorrimento, parser ANSI, cinque console virtuali,
-cancellazioni — lavora sul proprio array di celle, e sono `riversa_cella()`,
-`riversa_tutto()` e il cursore a sapere dove finiscono davvero.
+There is no list of drivers anywhere, and that is deliberate: a list would be a
+second truth alongside the contents of the directory, and the two diverge the
+first time a driver is added or removed. The question goes to the driver, which
+is the only one able to answer it.
 
-**Come arriva la scelta fino al bootloader.** Stage 2 non ha un filesystem:
-riceve da Stage 1 una mappa di settori già pronta per il kernel, e da disco
-rigido nemmeno quella. Non può leggere `kernel.cfg`. Quindi `svga.drv` scrive in
-due posti — la voce in `kernel.cfg`, che è la configurazione, e un byte
-marcato dalla firma `SVGAMODE` dentro l'immagine di Stage 2, che il bootloader
-legge da sé stesso. Non sono due verità: il secondo lo scrive solo `svga.drv`, e
-il kernel li **confronta a ogni avvio** dicendolo se divergono. È lo stesso
-patto della mappa di settori che `install` scrive nel settore di avvio.
+! The easiest thing to get wrong here, and what the first version did get
+wrong: `-i` runs on a **running** system, where the autoexec has already
+started the right driver. Initialising the card in order to probe it reset it
+underneath whoever was driving it, and resetting a busy card answers with an
+unexpected status — so a driver declared itself unnecessary on the very machine
+whose card it was driving at that moment. Hence the rule: look, do not touch.
 
-Tre difetti veri incontrati costruendolo, tutti e tre silenziosi:
-
-- **Stage 2 non ci stava.** Il limite era 1280 byte — la GDT stava a `0x0A00` —
-  e ne usava già 1095. La GDT è stata spostata a `0xE400`: la conosce solo
-  quel file, che la scrive e la carica, ed era il rimedio che il commento sul
-  limite indicava già.
-- **Page fault a `0xfd00c000`.** Il framebuffer era mappato nella sola page
-  directory del kernel, ma la console scrive anche mentre gira un processo, e
-  in quel momento `CR3` è la sua.
-- **`PMM: pagina fuori range` a ogni processo che finiva.**
-  `paging_destroy_directory` trattava le entry del framebuffer come pagine
-  utente e le restituiva al PMM — che non sono RAM. Peggio: liberava la page
-  table condivisa, quindi il primo processo a morire avrebbe lasciato senza
-  schermo tutti gli altri.
-
-E uno di prestazioni: la prima versione ridisegnava 3700 celle a ogni
-scorrimento — mezzo milione di scritture in memoria video, che non passa dalla
-cache — e il sistema arrivava al prompt in decine di secondi. Ora fa scorrere
-il framebuffer con una copia sola e ridipinge la sola ultima riga.
-
-**Tre difetti chiusi mentre lo si provava sul disco installato**, che è il
-posto dove `svga.drv` serve davvero — dal CD non si può scrivere comunque:
-
-- `svga.drv` cercava `/boot/stage2`, ma `install` scrive **`/boot/stage2.bin`**:
-  rispondeva «non trovo l'immagine di Stage 2» esattamente sulla macchina in
-  cui doveva funzionare.
-- Il salvataggio si chiamava `kernel.cfg.bak` — due punti, nome 8.3 non
-  valido — quindi su FAT falliva con un errore che parla di nomi mentre
-  l'utente stava cambiando la risoluzione. Ora sostituisce l'estensione:
-  `kernel.bak`.
-- `hwconfig` riconosceva i driver confrontando `.drv` **distinguendo le
-  maiuscole**: su ISO 9660 con Joliet i nomi sono minuscoli, su FAT sono
-  `KBD.DRV`. Tutte le prove precedenti erano sul CD, quindi non si vedeva.
-
-E una regressione introdotta dalla sonda dei driver stessa: **installando dal
-floppy non veniva installato più nessun driver**, `kbd.drv` compreso, perché
-senza CD non esiste un catalogo — e il sistema installato ripiegava
-sull'handler IRQ1 dentro il kernel senza che niente lo spiegasse. Ora `/dev`
-del supporto in esecuzione è l'ultima voce del catalogo: è un catalogo
-legittimo, e i suoi driver vengono sondati come tutti gli altri.
-
-### Due immagini, e niente resta fuori
+### A bigger shell: VESA graphics mode and `svga.drv`
 
 | | |
 |---|---|
-| `make iso-tutte`: costruisce `dist/exos.iso` e `dist/exos-tools.iso` | testato |
-| Ogni programma dichiara la propria destinazione in `PROGRAMMI_FLOPPY` o `PROGRAMMI_CD` | testato |
-| `make verifica-programmi`: si ferma se un sorgente di `bin/` o `drivers/` resta fuori | testato |
-| Il cross `i386-exos` se lo mette nel PATH il Makefile, non chi lancia `make` | testato |
-| `bin/xcp` e `pcnet.drv`, che erano rimasti fuori, ora ci sono | testato |
+| 640×480 → **80×30**, 800×600 → **100×37**, 1024×768 → **128×48** characters | tested |
+| `/dev/svga.drv <mode>` picks the resolution, the way `keymap` picks the layout | tested |
+| It is a driver in full: `hwconfig -d` installs it onto the disk by itself | tested |
+| It says **loudly** that a reboot is needed: Stage 2 sets the mode | tested |
+| Default: 80×25 text console, system identical to before | tested |
+| Any VBE probe failure falls back to text, never to a black screen | tested |
+| The kernel reports it when `kernel.cfg` and the bootloader disagree | tested |
 
-Le due immagini rispondono a due domande diverse:
+! **It is not a driver, and it cannot be one.** Setting a VESA mode means
+INT 10h — that is, the BIOS, that is, **real mode**. By the time the kernel is
+running that door is already shut, and in ring3 it never was open. The only
+one who can do it is **Stage 2**, before the switch to protected mode, and
+that is where the VBE probe lives: `bootloader/stage2/loader.asm`.
 
-- **`dist/exos.iso`** — il **sistema**: kernel, comandi di base, rete (`ping`,
-  `ftp`, `telnet`, `dhcp`, `host`, `netdetect`…) e tutti i driver. È
-  avviabile, ed è un **superinsieme del floppy**, non un'altra cosa.
-- **`dist/exos-tools.iso`** — i **linguaggi**: `gcc`, `g++`, `cpp`, `cc1`,
-  `fbc`, `as`, `ld`, `nasm`, `ndisasm`, `make`, libstdc++, OpenSSL. 150 MB che
-  si installano a parte con `toolinst`.
-- **`dist/floppy.img`** — solo il **sistema di base**: avviarsi, preparare un
-  disco, installarsi, leggere e scrivere file. Quello che sta in 1.44 MB.
+The kernel receives address, pitch, dimensions and depth in `BootInfo` and
+draws the console into the framebuffer with the 8×16 font in
+`kernel/arch/x86/font8x16.c`. The rest of `vga.c` never noticed: the whole
+console — scrolling, ANSI parser, four virtual consoles, erasures — works on
+its own cell array, and it is `riversa_cella()`, `riversa_tutto()` and the
+cursor that know where those cells actually end up.
 
-! **Un sorgente che non è in nessuna lista non viene compilato e non finisce
-su nessuna immagine, e nessuno se ne accorge.** È successo per mesi con
-`bin/xcp/`: il sorgente c'era, la regola no, e il comando semplicemente non
-esisteva sulla macchina. `pcnet.drv` aveva il problema opposto e altrettanto
-silenzioso — una regola c'era, ma nessuna lista la nominava: si costruiva solo
-di rimbalzo, perché la ricetta della ISO lo citava fra le proprie prerequisite,
-e `make all` non lo faceva.
+**How the choice reaches the bootloader.** Stage 2 has no filesystem: Stage 1
+hands it a ready-made sector map for the kernel, and on a hard disk not even
+that. It cannot read `kernel.cfg`. So `svga.drv` writes in two places — the entry
+in `kernel.cfg`, which is the configuration, and a byte marked by the
+`SVGAMODE` signature inside the Stage 2 image, which the bootloader reads from
+itself. They are not two truths: only `svga.drv` writes the second, and the kernel
+**compares them on every boot** and says so if they diverge. It is the same
+bargain as the sector map `install` writes into the boot sector.
 
-`make verifica-programmi` chiude entrambi i casi, e lo fa **guardando il
-risultato invece di leggere il Makefile**: per ogni `bin/<nome>/` ci dev'essere
-un `build/bin/<nome>` o un `build/bin-cd/<nome>`, per ogni `drivers/<nome>/` un
-`.drv` — salvo le due eccezioni dichiarate (`net`, che sono solo header di
-protocollo, e `tty`, che è compilato dentro il kernel). Le due ISO lo eseguono
-da sole prima di costruirsi, come prerequisito d'ordine: se manca qualcosa la
-costruzione si ferma e dice quale nome aggiungere e a quale lista.
+Three real defects met while building it, all three silent:
 
-### Gli strumenti si installano da soli: `toolinst`
+- **Stage 2 did not fit.** The limit was 1280 bytes — the GDT sat at `0x0A00` —
+  and it already used 1095. The GDT moved to `0xE400`: only that file knows
+  it, writes it and loads it, and moving it was the remedy the size-limit
+  comment already pointed at.
+- **Page fault at `0xfd00c000`.** The framebuffer was mapped only in the
+  kernel page directory, but the console writes while a process is running
+  too, and at that moment `CR3` is that process's.
+- **`PMM: page out of range` on every process that exited.**
+  `paging_destroy_directory` treated the framebuffer entries as user pages and
+  returned them to the PMM — which are not RAM. Worse: it freed the shared
+  page table, so the first process to die would have left every other one
+  without a screen.
+
+And one of performance: the first version redrew 3700 cells on every scroll —
+half a million writes into video memory, which does not go through the cache —
+and the system reached the prompt in tens of seconds. Now it scrolls the
+framebuffer with a single copy and repaints only the last row.
+
+**Three defects closed while testing it on an installed disk**, which is where
+`svga.drv` is actually of use — from the CD you cannot write anyway:
+
+- `svga.drv` looked for `/boot/stage2`, but `install` writes **`/boot/stage2.bin`**:
+  it answered "Stage 2 image not found" on exactly the machine where it was
+  meant to work.
+- The backup was called `kernel.cfg.bak` — two dots, not a valid 8.3 name —
+  so on FAT it failed with an error about names while the user was changing
+  the resolution. It now replaces the extension: `kernel.bak`.
+- `hwconfig` recognised drivers by comparing `.drv` **case-sensitively**: on
+  ISO 9660 with Joliet the names are lowercase, on FAT they are `KBD.DRV`.
+  Every earlier test had been on the CD, so it never showed.
+
+And a regression introduced by the driver probe itself: **installing from the
+floppy no longer installed any driver at all**, `kbd.drv` included, because
+without a CD there is no catalogue — and the installed system fell back to the
+in-kernel IRQ1 handler with nothing to explain it. Now `/dev` of the running
+medium is the last entry of the catalogue: it is a legitimate catalogue, and
+its drivers get probed like all the others.
+
+### Two images, and nothing is left out
 
 | | |
 |---|---|
-| `toolinst [radice]`: copia l'albero `/exos` del CD tools sul disco | testato |
-| Sceglie per linguaggio: C obbligatorio, C++, FreeBASIC e OpenSSL a richiesta | testato |
-| Aggiunge `/exos/bin` alla voce `PATH` di `[env]` in `kernel.cfg` del bersaglio | testato |
-| `-n` conta file e byte senza scrivere niente; `-p` cambia il prefisso | testato |
-| Si ferma se il volume è in sola lettura o non è ext2 | testato |
+| `make iso-tutte`: builds `dist/exos.iso` and `dist/exos-tools.iso` | tested |
+| Every program declares its destination in `PROGRAMMI_FLOPPY` or `PROGRAMMI_CD` | tested |
+| `make verifica-programmi`: stops if a source under `bin/` or `drivers/` is left out | tested |
+| The `i386-exos` cross is put on PATH by the Makefile, not by whoever runs `make` | tested |
+| `bin/xcp` and `pcnet.drv`, which had been left out, are now in | tested |
 
-! **Copiare i binari in `/bin` e aggiungere una voce al PATH non funziona**, e
-questa è la cosa da sapere prima di ogni altra. Sia il driver di GCC sia `fbc`
-calcolano dove stanno le proprie cose da **dove sta il loro binario** —
-`<la mia directory>/..` — non dal PATH. Si legge nella traccia di `fbc -v`:
+The two images answer two different questions:
+
+- **`dist/exos.iso`** — the **system**: kernel, base commands, networking
+  (`ping`, `ftp`, `telnet`, `dhcp`, `host`, `netdetect`…) and every driver. It
+  is bootable, and it is a **superset of the floppy**, not a different thing.
+- **`dist/exos-tools.iso`** — the **languages**: `gcc`, `g++`, `cpp`, `cc1`,
+  `fbc`, `as`, `ld`, `nasm`, `ndisasm`, `make`, libstdc++, OpenSSL. 150 MB
+  installed separately with `toolinst`.
+- **`dist/floppy.img`** — the **base system** only: boot, prepare a disk,
+  install itself, read and write files. What fits in 1.44 MB.
+
+! **A source that is in no list is not compiled and lands on no image, and
+nobody notices.** That happened for months with `bin/xcp/`: the source was
+there, the rule was not, and the command simply did not exist on the machine.
+`pcnet.drv` had the opposite problem, equally silent — a rule existed, but no
+list named it: it got built only as a side effect, because the ISO recipe
+mentioned it among its own prerequisites, and `make all` did not build it.
+
+`make verifica-programmi` closes both cases, and it does so by **looking at the
+result rather than reading the Makefile**: for every `bin/<name>/` there must be
+a `build/bin/<name>` or a `build/bin-cd/<name>`, for every `drivers/<name>/` a
+`.drv` — except for the two declared exceptions (`net`, which is only protocol
+headers, and `tty`, which is compiled into the kernel). Both ISOs run it
+themselves before building, as an order-only prerequisite: if something is
+missing the build stops and says which name to add, and to which list.
+
+### The tools install themselves: `toolinst`
+
+| | |
+|---|---|
+| `toolinst [root]`: copies the tools CD's `/exos` tree onto the disk | tested |
+| Chooses by language: C mandatory, C++, FreeBASIC and OpenSSL on request | tested |
+| Adds `/exos/bin` to the `PATH` entry of `[env]` in the target's `kernel.cfg` | tested |
+| `-n` counts files and bytes without writing anything; `-p` changes the prefix | tested |
+| Stops if the volume is read-only or is not ext2 | tested |
+
+! **Copying the binaries into `/bin` and adding a PATH entry does not work**,
+and this is the thing to know before anything else. Both the GCC driver and
+`fbc` work out where their own parts live from **where their binary sits** —
+`<my directory>/..` — not from PATH. You can read it in the `fbc -v` trace:
 
 ```
 assembling: /cdrom/exos/bin/../bin/as --32 ...
             /cdrom/exos/bin/../lib/gcc/i386-exos/17.0.0/libgcc.a
 ```
 
-Da cui:
+Hence:
 
 ```
-/cdrom/bin/gcc -c prova.c        ->  cannot execute 'cc1'
-/cdrom/exos/bin/gcc -c prova.c   ->  compila
+/cdrom/bin/gcc -c test.c        ->  cannot execute 'cc1'
+/cdrom/exos/bin/gcc -c test.c   ->  compiles
 ```
 
-Stesso binario, stesso PATH, stessa riga di comando: cambia solo da dove è
-lanciato. Da `/bin/gcc` il prefisso diventa `/` e si cercano `/libexec/gcc/…`,
-`/lib/gcc/…`, `/include/freebasic`, che non esistono — e il messaggio che ne
-esce parla di header mancanti mentre il difetto è nel percorso. Perciò
-`toolinst` copia **l'albero intero conservandone la forma** e mette nel PATH la
-sua `bin`.
+Same binary, same PATH, same command line: only where it is launched from
+changes. From `/bin/gcc` the prefix becomes `/` and it looks for
+`/libexec/gcc/…`, `/lib/gcc/…`, `/include/freebasic`, which do not exist — and
+the message that comes out talks about missing headers while the fault is in
+the path. So `toolinst` copies **the whole tree, keeping its shape**, and puts
+its `bin` on the PATH.
 
-! **Il disco bersaglio dev'essere ext2.** Su FAT la scrittura dei nomi lunghi
-non c'è ancora, e l'albero è pieno di nomi che l'8.3 non regge
-(`bits/stdc++.h`, `libstdc++.a`): la copia riuscirebbe e il compilatore non
-troverebbe più i propri header, che sul disco ci sono con un altro nome.
-`toolinst` guarda il filesystem del montaggio e lo dice prima di cominciare,
-invece di lasciarlo scoprire a 50 MB di distanza.
+! **The target disk must be ext2.** Writing long names on FAT is not there
+yet, and the tree is full of names 8.3 cannot hold (`bits/stdc++.h`,
+`libstdc++.a`): the copy would succeed and the compiler would no longer find
+its own headers, which are on the disk under a different name. `toolinst` looks
+at the mount's filesystem and says so before starting, instead of letting you
+find out 50 MB later.
 
-I gruppi opzionali sono definiti dai percorsi da **saltare**, non da quelli da
-copiare: un file nuovo sul CD finisce sul disco insieme al resto, e l'unico
-modo di perderlo è averlo scritto nell'elenco delle esclusioni.
+The optional groups are defined by the paths to **skip**, not by the ones to
+copy: a new file on the CD lands on the disk along with everything else, and
+the only way to lose it is to have written it into the exclusion list.
 
-### Percorsi e messaggi: se ne dice uno solo, e vero
+### Paths and messages: say one thing, and say it true
 
 | | |
 |---|---|
-| Un comando inesistente stampa **un** messaggio, non uno per voce del `PATH` | testato |
-| `./mioprog` e `sotto/mioprog` si eseguono: il `PATH` vale solo per i nomi nudi | testato |
-| Un file che c'è e non è un ELF lo dice, invece di farsi passare per assente | testato |
-| FAT12 rifiuta i percorsi più profondi di un livello invece di appiattirli | testato |
-| `cp`: `-y`, conferma per file, `t` = tutti, avanzamento durante `-r` | testato |
+| A missing command prints **one** message, not one per `PATH` entry | tested |
+| `./myprog` and `sub/myprog` run: `PATH` applies to bare names only | tested |
+| A file that exists but is not an ELF says so, instead of posing as absent | tested |
+| FAT12 refuses paths deeper than one level instead of flattening them | tested |
+| `cp`: `-y`, per-file confirmation, `t` = all, progress during `-r` | tested |
 
-Erano quattro modi diversi di dare una risposta sbagliata con l'aria di darne
-una giusta.
+Four different ways of giving a wrong answer while looking like a right one.
 
-**Sei righe rosse per un comando battuto male.** La shell sondava il `PATH`
-chiamando `spawn()` su ogni voce e usando il fallimento come risposta; il
-kernel segnalava «file non trovato» come `LOG_ERROR`, che si stampa sempre
-qualunque sia `loglevel`. Ora la shell chiede *«c'è?»* con una `open` — come
-faceva già `spawn_cerca_path()` nella libc — e nel kernel un file assente non è
-più un errore: è la risposta a una domanda, e chi l'ha posta la riferisce.
+**Six red lines for one mistyped command.** The shell probed `PATH` by calling
+`spawn()` on every entry and using the failure as the answer; the kernel
+reported "file not found" as `LOG_ERROR`, which prints regardless of
+`loglevel`. Now the shell asks *"is it there?"* with an `open` — as
+`spawn_cerca_path()` in the libc already did — and in the kernel an absent file
+is no longer an error: it is the answer to a question, and whoever asked
+reports it.
 
-**`./mioprog` non partiva.** La scelta fra `PATH` e percorso diretto si faceva
-su `prog[0] != '/'`. La regola giusta è quella di `execvp`: si cerca nel `PATH`
-solo un nome **senza barre**. Con il controllo sul primo carattere `./mioprog`
-diventava `/bin/./mioprog` — e quando in `/bin` c'era un omonimo partiva
-**quell'altro**, senza che niente lo segnalasse.
+**`./myprog` would not start.** The choice between `PATH` and a direct path was
+made on `prog[0] != '/'`. The right rule is the `execvp` one: search `PATH`
+only for a name with **no slash** in it. With the first-character test
+`./myprog` became `/bin/./myprog` — and when `/bin` held a namesake, **that
+other one** ran, with nothing to say so.
 
-**`cat /bin/prove/t.txt` leggeva `/prove/t.txt`.** FAT12 costruiva la parte
-directory del percorso e poi ne teneva solo l'ultima componente, cercandola
-nella radice: qualunque prefisso inventato funzionava purché finisse col nome
-di una directory vera. Lo stesso vizio, in una variante diversa, faceva
-rispondere a `stat("/bin/hello")` con il `/hello` della radice — un altro file,
-di un'altra dimensione. Il driver resta a un livello solo, come prima; la
-differenza è che ora un percorso che non sa rappresentare dà «non trovato»
-invece di un file diverso da quello chiesto.
+**`cat /bin/test/t.txt` read `/test/t.txt`.** FAT12 built the directory part of
+the path and then kept only its last component, looking it up in the root: any
+made-up prefix worked as long as it ended with the name of a real directory.
+The same flaw, in a different guise, made `stat("/bin/hello")` answer with the
+root's `/hello` — a different file, of a different size. The driver still
+handles one level only, as before; the difference is that a path it cannot
+represent now yields "not found" instead of a file other than the one asked
+for.
 
-**`cp` non sovrascriveva.** Un file già presente faceva fallire la copia, e su
-un albero ricorsivo bastava un file in comune per costringere a rifare tutto a
-mano. Ora chiede — `s`, `n`, oppure `t` per tutti i prossimi — e `-y` risponde
-di sì a tutte in anticipo. Un file saltato non conta fra gli errori: la copia
-ha fatto quello che le è stato detto. Con `-r` ogni file viene stampato mentre
-lo si copia, perché su un floppy un albero di qualche decina di file sono
-minuti in cui prima non compariva niente, e un programma muto e un programma
-bloccato si somigliano troppo.
+**`cp` would not overwrite.** An existing file made the copy fail, and on a
+recursive tree a single shared file forced you to redo everything by hand. Now
+it asks — `s`, `n`, or `t` for all the remaining ones — and `-y` answers yes to
+all of them up front. A skipped file does not count as an error: the copy did
+what it was told. With `-r` every file is printed as it is copied, because on a
+floppy a tree of a few dozen files is minutes during which nothing used to
+appear, and a silent program and a stuck program look too much alike.
 
-### Rete — dal bus PCI a un client FTP
+### Networking — from the PCI bus to an FTP client
 
 | | |
 |---|---|
-| Enumerazione PCI in userspace (`/dev/pci.drv`, `netdetect`) | testato |
-| Driver NE2000 in ring3 (`/dev/ne2k.drv`, `nettest`) | testato |
-| ARP, IPv4, ICMP — `ping` | testato |
-| UDP | testato |
-| Client DHCP (`dhcp`) | testato |
-| Risolutore DNS in libc, record A (`host`) | testato |
-| TCP: apertura attiva, invio, ricezione, chiusura (`tcptest`) | testato |
-| Client FTP passivo, `get`/`put`/`ls`/`cd` (`ftp`) | testato |
-| Client Telnet interattivo con negoziazione delle opzioni (`telnet`) | testato |
-| Configurazione a mano e tabella ARP (`ipcfg`, `ipcfg -r`) | testato |
-| Rinnovo della concessione DHCP | da fare |
-| Riordino dei segmenti TCP fuori sequenza | da fare |
-| Driver PCnet (Am79C970/C973), bus master con DMA vero | testato |
-| `SYS_DMA_ALLOC`: memoria contigua per un bus master | testato |
+| PCI enumeration in userspace (`/dev/pci.drv`, `netdetect`) | tested |
+| NE2000 driver in ring3 (`/dev/ne2k.drv`, `nettest`) | tested |
+| ARP, IPv4, ICMP — `ping` | tested |
+| UDP | tested |
+| DHCP client (`dhcp`) | tested |
+| DNS resolver in libc, A records (`host`) | tested |
+| TCP: active open, send, receive, close (`tcptest`) | tested |
+| Passive-mode FTP client, `get`/`put`/`ls`/`cd` (`ftp`) | tested |
+| Interactive Telnet client with option negotiation (`telnet`) | tested |
+| Manual configuration and ARP table (`ipcfg`, `ipcfg -r`) | tested |
+| DHCP lease renewal | to do |
+| Reassembly of out-of-order TCP segments | to do |
+| PCnet driver (Am79C970/C973), a bus master with real DMA | tested |
+| `SYS_DMA_ALLOC`: contiguous memory for a bus master | tested |
 
-Ogni comando di rete, quando qualcosa manca, stampa **la catena completa** e
-**il prossimo comando da dare** invece del solo messaggio d'errore.
+When something is missing, every network command prints **the whole chain**
+and **the next command to type** instead of just an error message.
 
 ### CPU — SSE, SSE2, SSE3, MMX
 
 | | |
 |---|---|
-| Rilevamento capacità via CPUID, con la prova del bit ID in EFLAGS | testato |
-| Salvataggio dello stato: FXSAVE dove c'è, FNSAVE sulle CPU vecchie | testato |
-| Attivazione di CR4.OSFXSR / OSXMMEXCPT quando SSE è presente | testato |
-| MMX: nessun lavoro necessario, MM0-MM7 sono alias di ST0-ST7 | testato |
-| Esecuzione su 486 e Pentium MMX veri | da testare |
+| Feature detection via CPUID, with the EFLAGS ID-bit test first | tested |
+| State saving: FXSAVE where available, FNSAVE on old CPUs | tested |
+| Enabling CR4.OSFXSR / OSXMMEXCPT when SSE is present | tested |
+| MMX: no work needed, MM0-MM7 alias ST0-ST7 | tested |
+| Running on a real 486 and Pentium MMX | to be tested |
 
-Il percorso FNSAVE è quello che permette al kernel di girare su CPU senza
-SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
+The FNSAVE path is what lets the kernel run on CPUs without SSE; it was
+exercised by forcing the slow path in QEMU, not on a physical 486.
 
-### Filesystem
-
-| | |
-|---|---|
-| Avvio da CD: FAT12 non viene più sondata sul CD-ROM | testato |
-| Nomi lunghi VFAT in **lettura** su FAT16 e FAT32 | testato |
-| Data e ora reali dei file su FAT, ext2 e ISO 9660 | testato |
-| Timbratura di data e ora sui file creati su floppy | testato |
-| `mkfs` sceglie da solo FAT16 sotto i 2 GB, FAT32 sopra | testato |
-| Nomi lunghi VFAT in **scrittura** | da fare |
-
-### Shell e comandi
+### Filesystems
 
 | | |
 |---|---|
-| Cronologia comandi con le frecce su/giù | testato |
-| `/boot/autoexec.sh` eseguito da `/bin/sh` all'avvio | testato |
-| `ls`: `-h`, `-a`, `-d`, `-mc`, `-md`, `-p` | testato |
-| `install -a`: elenca i file cambiati e propone l'aggiornamento | testato |
-| `hwconfig`: analizza la macchina e scrive kernel.cfg e autoexec.sh | testato |
-| Disposizioni di tastiera: `us it fr de es uk`, con AltGr | `us`/`it` testate |
-| Argomenti con spazi fra virgolette (`cp "il mio file.txt"`) | testato |
-| `help helpconfig`: come si accendono i driver, con lo stato attuale | testato |
-| Backspace che non cancella più il prompt né lascia caratteri invisibili | testato |
-| `!silenced` negli script: nasconde i comandi, non il loro risultato | testato |
-| `source file.sh`, e i `.sh` eseguibili per nome | testato |
+| Booting from CD: FAT12 is no longer probed on the CD-ROM | tested |
+| VFAT long names, **reading**, on FAT16 and FAT32 | tested |
+| Real file dates and times on FAT, ext2 and ISO 9660 | tested |
+| Date and time stamped on files created on the floppy | tested |
+| `mkfs` picks FAT16 below 2 GB and FAT32 above, on its own | tested |
+| VFAT long names, **writing** | to do |
+
+### Shell and commands
+
+| | |
+|---|---|
+| Command history with the up/down arrow keys | tested |
+| `/boot/autoexec.sh` run by `/bin/sh` at startup | tested |
+| `ls`: `-h`, `-a`, `-d`, `-mc`, `-md`, `-p` | tested |
+| `install -a`: lists the changed files and offers to update them | tested |
+| `hwconfig`: analyses the machine and writes kernel.cfg and autoexec.sh | tested |
+| Keyboard layouts: `us it fr de es uk`, with AltGr | `us`/`it` tested |
+| Arguments with spaces between quotes (`cp "my file.txt"`) | tested |
+| `help helpconfig`: how to bring drivers up, with the current state | tested |
+| Backspace no longer eats the prompt nor leaves invisible characters | tested |
+| `!silenced` in scripts: hides the commands, not their output | tested |
+| `source file.sh`, and `.sh` files runnable by name | tested |
 
 ### libc
 
 | | |
 |---|---|
-| `printf` con `%f`, `%e`, `%g`: 18 cifre significative, arrotondamento pari | testato |
-| Costruttori globali `.init_array` e distruttori `.fini_array` | testato |
-| `realloc` che ingrandisce sul posto — prima non ingrandiva mai | testato |
-| `gettimeofday` monotòno, ancorato una volta sola all'orologio | testato |
-| `time_t` a 64 bit | testato |
-| I file temporanei seguono `TMPDIR`, non più solo la radice | testato |
-| Cache del disco da 128 settori: `cc1` da 19,61 s a 10,19 s | misurato |
-| 276 prove automatiche in `libctest` | testato |
+| `printf` with `%f`, `%e`, `%g`: 18 significant digits, round half to even | tested |
+| Global constructors `.init_array` and destructors `.fini_array` | tested |
+| `realloc` growing in place — before, it never grew | tested |
+| `gettimeofday` monotonic, anchored to the clock exactly once | tested |
+| 64-bit `time_t` | tested |
+| Temporary files follow `TMPDIR`, no longer only the root | tested |
+| 128-sector disk cache: `cc1` from 19.61 s to 10.19 s | measured |
+| 276 automated checks in `libctest` | tested |
 
-### Catena di compilazione
+### Compilation chain
 
 | | |
 |---|---|
-| `as` e `ld` (binutils 2.44) nativi | testato |
-| `cc1`: compila C e produce assembly dentro EX-OS | testato |
-| Runtime del bersaglio sul CD (`crt0.o`, `libc.a`, `libgcc.a`) | testato |
-| `as` + `ld` collegano un programma C vero con gli archivi | testato |
-| **`gcc` come programma di guida, che concatena cc1 → as → collect2 → ld** | **testato** |
-| **`gcc` trova gli header di sistema da solo, senza `-I`** | **testato** |
-| **`g++`: la stessa catena in C++, con libstdc++ ed eccezioni** | **testato** |
-| FreeBASIC: `fbc` trova i propri `.bi` da solo | testato |
-| FreeBASIC: link finale (fbc emette opzioni Linux) | da fare a mano |
-| TLS/SSL come libreria userspace (porting OpenSSL) | da fare |
+| Native `as` and `ld` (binutils 2.44) | tested |
+| `cc1`: compiles C and produces assembly inside EX-OS | tested |
+| Target runtime on the CD (`crt0.o`, `libc.a`, `libgcc.a`) | tested |
+| `as` + `ld` link a real C program together with the archives | tested |
+| **`gcc` as the driver, chaining cc1 → as → collect2 → ld** | **tested** |
+| **`gcc` finds the system headers on its own, with no `-I`** | **tested** |
+| **`g++`: the same chain in C++, with libstdc++ and exceptions** | **tested** |
+| FreeBASIC: `fbc` finds its own `.bi` files on its own | tested |
+| FreeBASIC: final link (fbc emits Linux options) | to do by hand |
+| TLS/SSL as a userspace library (OpenSSL port) | to do |
 
 ---
 
-## Struttura floppy
+## Floppy layout
 
 ```
 /
-├── LOADER.BIN       ← Stage 2: trova e carica il kernel via FAT12
+├── LOADER.BIN       ← Stage 2: finds and loads the kernel via FAT12
 ├── KERNEL.BIN       ← EX-OS Kernel
 ├── boot/
-│   └── kernel.cfg   ← Configurazione: env, shell, moduli
+│   └── kernel.cfg   ← Configuration: env, shell, modules
 ├── bin/
-│   ├── sh           ← Shell (ELF statico, primo processo)
-│   ├── login        ← L'accesso (ELF statico: è il programma con cui si entra)
-│   ├── sudo         ← Esegue un comando come root, se ne hai il diritto
-│   ├── ls           ← Elenco directory
-│   ├── hello        ← Programma di esempio
-│   ├── textline     ← Editor di testo lineare (stile edlin)
-│   ├── mkdir        ← Crea directory
-│   ├── rmdir        ← Cancella directory vuote
-│   ├── delete       ← Cancella file (con jolly ? e *)
-│   ├── rename       ← Cambia il nome di un file (non sposta: vedi sotto)
-│   └── chkdsk       ← Controlla e ripara un volume FAT12/16/32
-├── lib/             ← Shared libraries (Fase 4b)
+│   ├── sh           ← Shell (static ELF, first process)
+│   ├── login        ← The login (static ELF: it is the program you get in with)
+│   ├── sudo         ← Runs a command as root, if you are entitled to
+│   ├── ls           ← Directory listing
+│   ├── hello        ← Example program
+│   ├── textline     ← Line-oriented text editor (edlin style)
+│   ├── mkdir        ← Create a directory
+│   ├── rmdir        ← Remove empty directories
+│   ├── delete       ← Delete files (with ? and * wildcards)
+│   ├── rename       ← Change a file's name (does not move it: see below)
+│   └── chkdsk       ← Check and repair a FAT12/16/32 volume
+├── lib/             ← Shared libraries (Phase 4b)
 └── dev/
-    ├── kbd.drv      ← Driver tastiera PS/2 (processo ring3)
-    └── floppy.drv   ← Driver floppy controller (ancora ET_DYN, non caricato)
+    ├── kbd.drv      ← PS/2 keyboard driver (ring3 process)
+    └── floppy.drv   ← Floppy controller driver (still ET_DYN, not loaded)
 ```
 
-! `gfedit` **non sta sul floppy**: dal 16 settembre 2026 si costruisce solo
-per il CD. L'immagine da 1,44 MB era scesa a 3072 byte liberi e lui ne
-occupa 60236. E' rimasto `textline`, che ne occupa 18184 — ed e' il
-pavimento giusto, perche' `gfedit` senza `/dev/kbd.drv` rimanda a lui
-comunque. Sul CD e su ogni sistema installato c'e' come prima.
+! `gfedit` is **not on the floppy**: since 16 September 2026 it is built for
+the CD only. The 1.44 MB image was down to 3072 free bytes and gfedit takes
+60236. `textline` stayed, at 18184 bytes - and it is the right floor,
+because `gfedit` falls back to it anyway when `/dev/kbd.drv` is missing.
+On the CD and on every installed system it is there as before.
 
 
-Il TTY non compare in `/dev`: `drivers/tty/tty.c` è compilato **dentro** il
-kernel (possiede la VGA), e per l'input fa da client del servizio `kbd`.
+The TTY does not appear in `/dev`: `drivers/tty/tty.c` is compiled **into**
+the kernel (it owns the VGA), and for input it acts as a client of the `kbd`
+service.
 
-### Cosa va sul floppy, e cosa no
+### What goes on the floppy, and what does not
 
-Il floppy porta **il sistema**: avviarsi, preparare un disco, installarsi,
-leggere e scrivere file. Partizionatore (`fdisk`), formattatore (`mkfs`),
-controllore (`chkdsk`), montaggio, installatore, editor; il driver del
-floppy e quello della tastiera, che servono a partire.
+The floppy carries **the system**: booting, preparing a disk, installing
+itself, reading and writing files. Partitioner (`fdisk`), formatter
+(`mkfs`), checker (`chkdsk`), mounting, installer, editors; the floppy
+driver and the keyboard one, which are needed to start.
 
-! **I driver aggiuntivi non ci vanno.** Rete (`pci`, `ne2k`, `pcnet`,
-`ip`) e tutto ciò che verrà dopo stanno sul **CD di EX-OS**. Non è una
-preferenza: in 1.44 MB non ci stanno, e il modo in cui non ci stanno è il
-peggiore — `mcopy` fallisce a metà dell'elenco, l'immagine resta priva di
-qualche file scelto dall'ordine alfabetico, e il sistema si avvia fino al
-punto in cui gli serve quello che manca.
+! **The extra drivers do not go there.** Networking (`pci`, `ne2k`,
+`pcnet`, `ip`) and everything that comes later live on the **EX-OS CD**. It
+is not a preference: they do not fit in 1.44 MB, and the way they do not
+fit is the worst one — `mcopy` fails halfway through the list, the image
+ends up missing some file picked by alphabetical order, and the system
+boots as far as the point where it needs what is missing.
 
-Il CD-ROM **non ha un driver in `/dev`**: ATAPI e ISO 9660 stanno *dentro*
-il kernel, perché il kernel deve poterci montare la radice prima che
-esista un processo che possa servirla.
+The CD-ROM **has no driver in `/dev`**: ATAPI and ISO 9660 live *inside*
+the kernel, because the kernel must be able to mount the root from there
+before any process exists that could serve it.
 
 ```
-                    floppy    CD di EX-OS    CD strumenti
-sistema e shell       si          si              -
-fdisk, mkfs, chkdsk   si          si              -
-kbd.drv, floppy.drv   si          si              -
-driver di rete        NO          si              -
-ping, ftp, dhcp…      NO          si              -
-as, ld, cc1           NO          NO             si
+                    floppy    EX-OS CD    tools CD
+system and shell      yes        yes          -
+fdisk, mkfs, chkdsk   yes        yes          -
+kbd.drv, floppy.drv   yes        yes          -
+network drivers       NO         yes          -
+ping, ftp, dhcp…      NO         yes          -
+as, ld, cc1           NO         NO          yes
 ```
 
-`make verify` **controlla la regola** invece di fidarsi, e dice quanto
-spazio resta sul floppy — il numero che avvisa prima che l'immagine
-smetta di contenere tutto:
+`make verify` **checks the rule** instead of trusting it, and reports how
+much space is left on the floppy — the number that warns you before the
+image stops holding everything:
 
 ```
 [OK] nessun driver da CD sul floppy
                             629 760 bytes free
 ```
 
-Quello che in 1.44 MB non entra sta sul **CD degli strumenti**
-(`make iso`): `as`, `ld` e `cc1` nativi in `/bin`, gli header e il sorgente
-della libc in `/exos`, il runtime del bersaglio in `/exos/lib`, la
-documentazione in `/doc`.
+Whatever does not fit in 1.44 MB lives on the **tools CD** (`make iso`):
+native `as`, `ld` and `cc1` in `/bin`, the libc headers and source in
+`/exos`, the target runtime in `/exos/lib`, the documentation in `/doc`.
 
 ---
 
-## Prerequisiti (Debian 12)
+## Prerequisites (Debian 12)
 
 ```bash
-# 1. Installa il cross-compiler (tutto automatico, ~30 min):
+# 1. Install the cross-compiler (fully automatic, ~30 min):
 chmod +x tools/install_crosscompiler.sh
 ./tools/install_crosscompiler.sh
 
-# 2. Attiva nella sessione corrente:
+# 2. Enable it in the current session:
 export PATH="$HOME/opt/cross/bin:$PATH"
 
-# 3. Verifica:
-i686-elf-gcc --version   # deve stampare: i686-elf-gcc 13.2.0 ...
+# 3. Check:
+i686-elf-gcc --version   # must print: i686-elf-gcc 13.2.0 ...
 nasm --version           # nasm version 2.x
 mformat --version        # Mtools version ...
 ```
 
-Lo script `install_crosscompiler.sh` installa automaticamente:
-- Dipendenze Debian (`build-essential`, `nasm`, `mtools`, `qemu-system-i386`, ecc.)
-- `binutils 2.41` cross-compilato per target `i686-elf`
-- `GCC 13.2.0` cross-compilato per target `i686-elf` (solo linguaggio C)
-- Aggiunge `~/opt/cross/bin` al `~/.bashrc`
+The `install_crosscompiler.sh` script automatically installs:
+- Debian dependencies (`build-essential`, `nasm`, `mtools`, `qemu-system-i386`, etc.)
+- `binutils 2.41` cross-compiled for the `i686-elf` target
+- `GCC 13.2.0` cross-compiled for the `i686-elf` target (C language only)
+- Adds `~/opt/cross/bin` to `~/.bashrc`
 
 ---
 
-## Build e test
+## Build and test
 
 ```bash
-make all          # Compila tutto + crea dist/floppy.img
-make run          # Avvia con QEMU (32MB RAM)
-make iso          # CD degli strumenti (as, ld, header, doc)
-make run-iso      # QEMU con il CD montato su /cdrom
-make hd           # Disco rigido avviabile (formattato da EX-OS stesso)
-make run-hd       # QEMU dal disco, senza floppy
-make debug        # QEMU + GDB stub porta 1234
-make verify       # Verifica struttura floppy
-make clean        # Rimuove build/
-make distclean    # Rimuove build/ e dist/
+make all          # Build everything + create dist/floppy.img
+make run          # Boot under QEMU (32MB RAM)
+make iso          # Tools CD (as, ld, headers, docs)
+make run-iso      # QEMU with the CD mounted on /cdrom
+make hd           # Bootable hard disk (formatted by EX-OS itself)
+make run-hd       # QEMU from the disk, without a floppy
+make debug        # QEMU + GDB stub on port 1234
+make verify       # Check the floppy layout
+make clean        # Remove build/
+make distclean    # Remove build/ and dist/
 ```
 
-`make iso` include `as` e `ld` nativi se li trova in
-`$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); se non ci
-sono lo dice e fa il CD lo stesso. Come costruirli:
+`make iso` includes native `as` and `ld` if it finds them in
+`$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); if they are not
+there it says so and builds the CD anyway. How to build them:
 `tools/binutils-exos/leggimi.md`.
 
-### Log di boot completo via seriale
+### Full boot log over the serial port
 
-Il kernel specchia su COM1 (38400 8N1) tutto l'output che passa da
-`vga_putchar()`: `kprintf`, `klog`, eco tastiera e output dei processi. Serve
-perché lo schermo VGA è 80x25 e i messaggi di boot scorrono via.
+The kernel mirrors on COM1 (38400 8N1) all the output that goes through
+`vga_putchar()`: `kprintf`, `klog`, keyboard echo and process output. It is
+needed because the VGA screen is 80x25 and the boot messages scroll away.
 
 ```bash
 qemu-system-i386 -drive file=dist/floppy.img,format=raw,if=floppy \
   -m 32M -boot a -display none -serial file:/tmp/serial.txt -no-reboot
 ```
 
-### Scrivere l'immagine su un floppy fisico (da WSL)
+### Writing the image to a physical floppy (from WSL)
 
-Tre modi, stesso motore:
+Three ways, same engine:
 
 ```bash
-# da WSL
-./tools/write_floppy.sh              # dist/floppy.img su A:
+# from WSL
+./tools/write_floppy.sh              # dist/floppy.img to A:
 ./tools/write_floppy.sh -d B: -y
 ```
 
 ```powershell
-# da PowerShell
+# from PowerShell
 .\tools\write_floppy.ps1
 .\tools\write_floppy.ps1 -Drive B: -Yes
 ```
 
 ```bat
-REM da cmd.exe, o doppio clic da Esplora risorse
+REM from cmd.exe, or double-click from Explorer
 tools\write-floppy.cmd
 tools\write-floppy.cmd B:
 ```
 
-Non serve una console come Amministratore: lo script si rieleva da solo (UAC)
-in una finestra che resta aperta per mostrare l'esito.
+An Administrator console is not needed: the script elevates itself (UAC) in a
+window that stays open to show the outcome.
 
-WSL2 non vede i dischi fisici di Windows, quindi `dd` non serve: si passa da
-PowerShell, che blocca e smonta il volume, scrive il volume grezzo e
-**rilegge per verificare** byte per byte. Rifiuta le unità non rimovibili
-salvo `-Force`.
+WSL2 cannot see Windows physical disks, so `dd` is of no use: the job goes
+through PowerShell, which locks and dismounts the volume, writes the raw
+volume and **reads it back to verify** byte by byte. It refuses non-removable
+drives unless given `-Force`.
 
-> ! **Floppy USB**: il bootloader usa il BIOS (INT 13h) e funziona, ma il
-> kernel accede al controller floppy direttamente (porte 0x3F0-0x3F7, DMA,
-> IRQ6). Un floppy USB non è collegato a quel controller: il kernel parte ma
-> non riesce a leggere `/bin/sh`. Serve un drive floppy interno — vedi
-> `HANDOFF.md` per le alternative.
+> ! **USB floppy**: the bootloader goes through the BIOS (INT 13h) and works,
+> but the kernel talks to the floppy controller directly (ports 0x3F0-0x3F7,
+> DMA, IRQ6). A USB floppy is not attached to that controller: the kernel
+> starts but cannot read `/bin/sh`. An internal floppy drive is required —
+> see `HANDOFF.md` for the alternatives.
 
-**Nota toolchain**: il `Makefile` usa `gcc -m32` nativo, non il cross-compiler
-`i686-elf-*`. Lo script `tools/install_crosscompiler.sh` resta disponibile, ma
-la build non lo richiede (serve però `gcc-multilib`).
+**Toolchain note**: the `Makefile` uses the native `gcc -m32`, not the
+`i686-elf-*` cross-compiler. The `tools/install_crosscompiler.sh` script is
+still available, but the build does not require it (it does require
+`gcc-multilib`).
 
 ---
 
-## Architettura kernel
+## Kernel architecture
 
 ```
-RAM CONVENZIONALE < 1MB — Kernel EX-OS (read-only, piccolo)
+CONVENTIONAL RAM < 1MB — EX-OS kernel (read-only, small)
   GDT | IDT | ISR | VGA | PMM | Paging | Heap | Scheduler | Syscall
 
-RAM ESTESA > 1MB — Tutto il resto (protetto, isolato)
-  Driver ELF (/dev/)  — crash isolato, non tocca il kernel
-  Processi (/bin/)    — spazi di indirizzamento separati
-  Librerie (/lib/)    — shared, mappate in ogni processo
+EXTENDED RAM > 1MB — Everything else (protected, isolated)
+  ELF drivers (/dev/)  — isolated crash, does not touch the kernel
+  Processes (/bin/)    — separate address spaces
+  Libraries (/lib/)    — shared, mapped into every process
 ```
 
-### Le pagine di un programma arrivano quando servono
+### A program's pages arrive when they are needed
 
-Dalla 0.149 il caricatore ELF non copia i segmenti in RAM: annota dove
-vivono nel file, tiene l'eseguibile aperto e le pagine arrivano al primo
-accesso, dal gestore di page fault. Un binario con **8 MB di dati
-costanti** parte occupando 36 KB e sale a 8 MB solo se lo si legge tutto.
+Since 0.149 the ELF loader does not copy segments into RAM: it records where
+they live in the file, keeps the executable open, and the pages arrive on
+first access, from the page-fault handler. A binary with **8 MB of constant
+data** starts up occupying 36 KB and grows to 8 MB only if it is all read.
 
-Il costo di avvio non dipende piu' dalla dimensione del binario — che e'
-la condizione per far girare qui dentro un compilatore, dove `cc1` da solo
-sono decine di MB.
+Startup cost no longer depends on the size of the binary — which is the
+precondition for running a compiler in here, where `cc1` alone is tens of MB.
 
-I **driver** fanno eccezione e si caricano tutti in RAM: un driver che
-serve il filesystem, paginato da quel filesystem, dovrebbe servire la
-propria lettura mentre e' fermo ad aspettarla.
+**Drivers** are the exception and are loaded fully into RAM: a driver serving
+the filesystem, paged from that same filesystem, would have to serve its own
+read while stopped waiting for it.
 
-Conseguenza da sapere: **l'eseguibile resta aperto finche' il processo
-vive**, e le pagine caricate non vengono mai buttate via (manca lo
-sfratto, e con esso il file di scambio).
+A consequence worth knowing: **the executable stays open as long as the
+process lives**, and loaded pages are never thrown away (there is no
+eviction, and therefore no swap file).
 
-### Il thread pointer: variabili `__thread`
+### The thread pointer: `__thread` variables
 
-Dalla 0.154 il caricatore riconosce `PT_TLS` e ne fa una copia per
-processo, sotto la riserva dello stack con una pagina di guardia in mezzo.
-Il descrittore GDT numero 6 (selettore `0x33`, quello che i processi
-tengono in `GS`) è User Data con una **base che cambia**: lo scheduler la
-riscrive a ogni switch con il thread pointer del processo entrante.
+Since 0.154 the loader recognises `PT_TLS` and makes a per-process copy of
+it, below the stack reservation with a guard page in between. GDT descriptor
+number 6 (selector `0x33`, the one processes keep in `GS`) is User Data with
+a **base that changes**: the scheduler rewrites it at every switch with the
+incoming process's thread pointer.
 
-È il modello **local-exec**, quello dei binari statici: gli offset delle
-variabili li risolve `ld` al link, quindi a runtime non c'è niente da
-rilocare. Con base zero il descrittore è indistinguibile da `0x23`, perciò
-chi non usa `__thread` non paga niente.
+This is the **local-exec** model, the one static binaries use: variable
+offsets are resolved by `ld` at link time, so there is nothing to relocate at
+run time. With a zero base the descriptor is indistinguishable from `0x23`,
+so anyone not using `__thread` pays nothing.
 
-> ! Non c'è il TLS **dinamico** (`__tls_get_addr`, variabili
-> thread-local dentro una libreria condivisa): serve a chi carica codice a
-> runtime, e qui i binari sono statici.
+> ! There is no **dynamic** TLS (`__tls_get_addr`, thread-local variables
+> inside a shared library): that serves code loaded at run time, and here the
+> binaries are static.
 
-**E dal 4 settembre 2026 i fili ci sono, e il blocco TLS è di ciascuno.** Ogni
-filo ha il suo, in cima al proprio stack, con l'immagine iniziale **riletta
-dall'eseguibile** — copiare quella del capogruppo vorrebbe dire far partire il
-filo con i *valori di adesso* di un altro flusso. Anche `errno` è per filo:
-`__errno_dove()` legge il thread pointer da `%gs:0` e lo usa come chiave. È
-per questo che il blocco si fa **anche ai programmi senza variabili
-`__thread`**: senza, la base di quel descrittore varrebbe zero e quella
-lettura sarebbe un page fault all'indirizzo 0.
+**And since 4 September 2026 threads do exist, and the TLS block belongs to
+each of them.** Every thread has its own, at the top of its own stack, with the
+initial image **read again from the executable** — copying the group leader's
+would mean starting the thread with another flow's *current* values. `errno` is
+per thread too: `__errno_dove()` reads the thread pointer from `%gs:0` and uses
+it as a key. That is why the block is made **even for programs with no
+`__thread` variables**: without it the descriptor's base would be zero and that
+read would be a page fault at address 0.
 
-Perché farlo, se un processo ha un filo solo e una variabile `__thread` è
-una globale con un nome più lungo? Perché il modo in cui *mancava* era il
-peggiore possibile: la prova che ogni `configure` fa per il TLS è una
-**compilazione**, e il compilatore la supera sempre — sa emettere gli
-accessi via `%gs` da vent'anni, ed è il sistema a non avere dove puntarli.
-Nessun errore, nessun avviso, un binario che si costruisce benissimo e
-muore alla terza istruzione della prima funzione che chiama.
+Why do it, if a process has a single thread and a `__thread` variable is a
+global with a longer name? Because the way it was *missing* was the worst
+possible one: the test every `configure` runs for TLS is a **compilation**,
+and the compiler always passes it — it has known how to emit `%gs` accesses
+for twenty years, and it is the system that has nowhere to point them.
+No error, no warning, a binary that builds perfectly and dies at the third
+instruction of the first function it calls.
 
-### Lo spazio di un processo, e il tetto dello heap
+### A process's address space, and the heap ceiling
 
 ```
-0x08000000  testo, dati, bss del programma
-            heap ---->                             (sbrk, mmap senza MAP_FIXED)
-0xbff44000  heap_max — il tetto
-0xbff44000  pagina di guardia
-0xbff45000  banda degli stack dei fili — sette piazzole da 64 KB,
-            con una pagina di guardia fra l'una e l'altra
-0xbffbc000  pagina di guardia
-0xbffbd000  blocco TLS del processo, se il programma ne ha uno
-0xbffbe000  pagina di guardia
-0xbffbf000  riserva dello stack (256 KB)   <---- lo stack cresce all'ingiù
-0xbffff000  cima dello stack
+0x08000000  program text, data, bss
+            heap ---->                             (sbrk, mmap without MAP_FIXED)
+0xbff44000  heap_max — the ceiling
+0xbff44000  guard page
+0xbff45000  band of the thread stacks — seven 64 KB slots,
+            with a guard page between one and the next
+0xbffbc000  guard page
+0xbffbd000  the process's TLS block, if the program has one
+0xbffbe000  guard page
+0xbffbf000  stack reservation (256 KB)   <---- the stack grows downwards
+0xbffff000  top of the stack
 ```
 
-*(Gli indirizzi sono quelli di un programma con un blocco TLS di una pagina:
-un blocco più grande sposta all'ingiù tutto quel che gli sta sotto.)*
+*(The addresses are those of a program with a one-page TLS block: a larger
+block pushes everything below it further down.)*
 
-Lo heap comincia **subito dopo l'ultimo segmento caricato**, non a un
-indirizzo fisso. Dalla 0.156 ha anche un **tetto**: una pagina di guardia
-sotto il primo oggetto che c'è davvero — oggi la banda dei fili, e sotto di
-essa il blocco TLS e la riserva dello stack.
+The heap starts **right after the last loaded segment**, not at a fixed
+address. Since 0.156 it also has a **ceiling**: a guard page below the first
+object that is really there — today the thread band, and below it the TLS block
+and the stack reservation.
 
-! **LA BANDA SI RISERVA ALL'AVVIO, ANCHE A CHI NON FARÀ MAI UN FILO**, ed è la
-scelta che rende semplice tutto il resto: sono **indirizzi, non pagine** —
-mezzo megabyte in meno per uno heap che ne ha tre giga — mentre spostare il
-tetto dello heap quando nasce il primo filo vorrebbe dire abbassarlo sotto
-memoria che lo heap potrebbe **già** aver preso. O si rifiuta il filo, o si
-mette il suo stack sopra la roba di qualcun altro: il primo è un limite che
-salta fuori a caso, il secondo è memoria corrotta in silenzio.
+! **THE BAND IS RESERVED AT LOAD TIME, EVEN FOR A PROGRAM THAT WILL NEVER MAKE
+A THREAD**, and it is the choice that keeps everything else simple: they are
+**addresses, not pages** — half a megabyte less for a heap that has three
+gigabytes — whereas moving the heap ceiling when the first thread is born would
+mean lowering it below memory the heap may **already** have taken. Either you
+refuse the thread, or you put its stack on top of somebody else's things: the
+first is a limit that shows up at random, the second is silently corrupted
+memory.
 
-Prima non ce l'aveva, e l'unico limite era la RAM fisica. Sembra
-innocuo — la memoria finisce prima — ma sopra lo heap non c'è il vuoto, e
-`paging_map_page()` **sovrascrive una PTE già presente senza dire niente**.
+Before, it had none, and the only limit was physical RAM. That sounds
+harmless — memory runs out first — but above the heap there is no void, and
+`paging_map_page()` **overwrites an existing PTE without saying anything**.
 
-> ! Uno heap abbastanza grande avrebbe rimappato **il blocco TLS del
-> processo stesso** su pagine nuove azzerate: il thread pointer a zero, e
-> ogni variabile `__thread` a leggere memoria altrui. Senza un fault, senza
-> un log. Ora chi supera il confine si prende `ENOMEM`, che è un errore che
-> `malloc()` sa già trattare.
+> ! A large enough heap would have remapped **the process's own TLS block**
+> onto fresh zeroed pages: the thread pointer at zero, and every `__thread`
+> variable reading someone else's memory. Without a fault, without a log.
+> Now whoever crosses the boundary gets `ENOMEM`, which is an error
+> `malloc()` already knows how to handle.
 
-Il controllo sta **prima** di allocare, non dentro il ciclo: fermarsi a
-metà lascerebbe lo heap avanzato di un valore che il chiamante non ha mai
-visto. E `mmap` rispetta lo stesso confine, `MAP_FIXED` compreso — il
-blocco TLS e la riserva dello stack non sono roba che un processo possa
-farsi rimpiazzare, perché il kernel ci tiene degli invarianti sopra.
+The check comes **before** allocating, not inside the loop: stopping halfway
+would leave the heap advanced by an amount the caller never saw. And `mmap`
+honours the same boundary, `MAP_FIXED` included — the TLS block and the stack
+reservation are not things a process may have replaced, because the kernel
+holds invariants over them.
 
-### La fascia kernel, e la finestra di rimappatura
+### The kernel band, and the remapping window
 
-La page directory di un processo copia dalla PD del kernel solo le PDE
-**sotto `USER_SPACE_BASE` (64 MB)**. Quella fascia è l'unica memoria che il
-kernel può rileggere al proprio indirizzo fisico mentre gira un processo,
-ed è dove il PMM è obbligato a mettere ciò che il kernel indirizza così:
-heap di `kmalloc`, stack kernel dei processi, page directory e page table,
-immagini dei driver in corso di rilocazione (`pmm_alloc_page_kernel()`).
+A process's page directory copies from the kernel PD only the PDEs **below
+`USER_SPACE_BASE` (64 MB)**. That band is the only memory the kernel can read
+back at its own physical address while a process is running, and it is where
+the PMM is obliged to put whatever the kernel addresses that way: the
+`kmalloc` heap, the processes' kernel stacks, page directories and page
+tables, driver images being relocated (`pmm_alloc_page_kernel()`).
 
-Le pagine dei processi invece stanno **ovunque in RAM**: il kernel le tocca
-attraverso una pagina virtuale che ripunta al volo alla pagina fisica che
-gli serve — `paging_finestra_apri()`, il `kmap_atomic` dei kernel grandi
-ridotto all'osso. Senza, un processo poteva crescere solo finché il PMM
-consegnava pagine sotto la soglia: **4 MB, e poi kernel panic**, con
-qualunque quantità di RAM installata. Ora un processo arriva a occupare la
-RAM disponibile (provato: 300 MB su una macchina da 512).
+Process pages, on the other hand, live **anywhere in RAM**: the kernel
+touches them through one virtual page that is re-pointed on the fly at the
+physical page it needs — `paging_finestra_apri()`, the `kmap_atomic` of the
+big kernels boiled down to the bone. Without it, a process could only grow as
+long as the PMM handed out pages below the threshold: **4 MB, then a kernel
+panic**, with any amount of RAM installed. Now a process can grow to fill the
+available RAM (measured: 300 MB on a 512 MB machine).
 
 ---
 
-## Syscall interface (int 0x80, stile Linux)
+## Syscall interface (int 0x80, Linux style)
 
 | EAX | Syscall      | EBX        | ECX       | EDX     |
 |-----|--------------|------------|-----------|---------|
@@ -4016,7 +3980,7 @@ RAM disponibile (provato: 300 MB su una macchina da 512).
 |   6 | close        | fd         | —         | —       |
 |  11 | exec         | path*      | argv**    | envp**  |
 |  41 | dup          | fd         | —         | —       |
-|  63 | dup2         | vecchio    | nuovo     | —       |
+|  63 | dup2         | old        | new       | —       |
 |  55 | fcntl        | fd         | cmd       | arg     |
 |  20 | getpid       | —          | —         | —       |
 |  45 | sbrk         | increment  | —         | —       |
@@ -4033,457 +3997,459 @@ RAM disponibile (provato: 300 MB su una macchina da 512).
 | 185 | version      | buf*       | size      | —       |
 |  88 | reboot       | cmd        | —         | —       |
 
-`getenv` legge la configurazione di `/boot/kernel.cfg`: sia le variabili di
-`[env]` sia le opzioni scalari fuori da `[env]` come `verboseboot`. È il modo
-in cui un processo utente accede alla configurazione senza rileggersi il file.
+`getenv` reads the configuration in `/boot/kernel.cfg`: both the `[env]`
+variables and the scalar options outside `[env]` such as `verboseboot`. It is
+how a user process gets at the configuration without re-reading the file.
 
-`version` copia `g_os_version`, la variabile globale del kernel con nome,
-copyright, licenza e versione del sistema (`kernel/version.c`). La shell la
-espone con i comandi `ver` e `version`.
+`version` copies `g_os_version`, the kernel global holding the system's name,
+copyright, license and version (`kernel/version.c`). The shell exposes it
+through the `ver` and `version` commands.
 
-Wrapper libc: `getconf()`, `osversion()`, `verboseboot()`.
+libc wrappers: `getconf()`, `osversion()`, `verboseboot()`.
 
-`reboot` spegne, riavvia o ferma il sistema (`cmd` = 0 poweroff, 1 restart,
-2 halt). Sincronizza sempre il filesystem e ferma lo scheduler prima di
-agire — vedi sotto.
+`reboot` powers off, restarts or halts the system (`cmd` = 0 poweroff,
+1 restart, 2 halt). It always syncs the filesystem and stops the scheduler
+before acting — see below.
 
 
-### Le syscall aggiunte nella 0.184
+### Syscalls added in 0.184
 
-| EAX | Syscall       | EBX          | ECX       | EDX | A cosa serve |
-|-----|---------------|--------------|-----------|-----|--------------|
-| 246 | video_info    | `VideoInfo*` | —         | —   | dov'è il framebuffer e che forma ha |
-| 247 | log           | `const char*`| lunghezza | —   | una riga sul log del kernel, cioè sulla **seriale** |
-| 248 | lib_apri      | `const char*`| —         | —   | mappa una libreria condivisa e rende la sua tabella |
+| EAX | Syscall       | EBX          | ECX      | EDX | What it is for |
+|-----|---------------|--------------|----------|-----|----------------|
+| 246 | video_info    | `VideoInfo*` | —        | —   | where the framebuffer is and what shape it has |
+| 247 | log           | `const char*`| length   | —   | one line on the kernel log, i.e. on the **serial port** |
+| 248 | lib_apri      | `const char*`| —        | —   | map a shared library, return its export table |
 
-`log` non è un doppione di `printf`, e la differenza conta: `printf` scrive
-sulla console del processo, e se quella console non è quella a video il
-messaggio non lo legge nessuno — cioè esattamente il caso per cui esiste, un
-server grafico che gira su una console sua. Uno strumento cieco costa più del
-difetto che deve trovare.
+`log` is not a duplicate of `printf`, and the difference matters: `printf`
+writes to the process's console, and if that console is not the one on screen
+nobody reads the message — which is exactly the case it exists for, a graphical
+server running on a console of its own. A blind tool costs more than the defect
+it is meant to find.
 
-`lib_apri` rende un **indirizzo**, non una maniglia, e va bene che sia
-positivo: la fascia delle librerie è 0x04000000-0x08000000, quindi il valore
-non può mai essere confuso con un -errno. Quello che il chiamante vuole è
-proprio l'indirizzo da cui leggere i nomi.
+`lib_apri` returns an **address**, not a handle, and it is fine that it is
+positive: the library band is 0x04000000-0x08000000, so the value can never be
+confused with a negative errno. What the caller wants is precisely the address
+to read the names from.
 
-### Le syscall aggiunte dalla 0.185 alla 0.202
+### Syscalls added between 0.185 and 0.202
 
-| EAX | Syscall     | EBX           | ECX        | EDX | A cosa serve |
-|-----|-------------|---------------|------------|-----|--------------|
-| 249 | fb_map      | `void**`      | —          | —   | mappa il framebuffer: la capacità **stretta** che ha sostituito `mmio_map` per il server grafico |
-| 250 | interrompi  | pid           | segnale    | —   | Ctrl+C che morde: il segnale arriva al gruppo in primo piano |
-| 251 | pty_apri    | `int fd[2]`   | —          | —   | una coppia padrone/schiavo |
-| 252 | pty_ctl     | fd            | comando    | arg | misura della finestra, modo raw, gruppo in primo piano (sulla console: chi ferma Ctrl+C) |
-| 253 | statperm    | `const char*` | `StatPerm*`| —   | modo, uid e gid di un percorso **senza aprirlo** |
-| 254 | su          | `const char*` | password   | —   | «diventa root SE sai la password», e decide il kernel |
+| EAX | Syscall     | EBX           | ECX        | EDX | What it is for |
+|-----|-------------|---------------|------------|-----|----------------|
+| 249 | fb_map      | `void**`      | —          | —   | maps the framebuffer: the **narrow** capability that replaced `mmio_map` for the window server |
+| 250 | interrompi  | pid           | signal     | —   | Ctrl+C that bites: the signal reaches the foreground group |
+| 251 | pty_apri    | `int fd[2]`   | —          | —   | a master/slave pair |
+| 252 | pty_ctl     | fd            | command    | arg | window size, raw mode, foreground group (on the console: who Ctrl+C stops) |
+| 253 | statperm    | `const char*` | `StatPerm*`| —   | mode, uid and gid of a path **without opening it** |
+| 254 | su          | `const char*` | password   | —   | «become root IF you know the password», and the kernel decides |
 
-! **DUE CAPACITÀ STRETTE, E LO STESSO PRINCIPIO.** `fb_map` fa una cosa sola —
-mappare il framebuffer — dove `mmio_map` faceva «mappa qualunque indirizzo
-fisico», che a un server grafico non serve e a un programma ostile serve
-moltissimo. `su` fa una cosa sola — diventare root sapendo la password — dove
-il bit setuid sui file renderebbe pericoloso ogni eseguibile che lo porta. Un
-permesso che fa esattamente ciò che serve si può ragionare; uno che fa di più
-si può solo sperare che nessuno lo usi.
+! **TWO NARROW CAPABILITIES, AND THE SAME PRINCIPLE.** `fb_map` does one thing
+— map the framebuffer — where `mmio_map` did «map any physical address», which
+a window server does not need and a hostile program needs very much. `su` does
+one thing — become root knowing the password — where the setuid bit on files
+would make every executable carrying it dangerous. A permission that does
+exactly what is needed can be reasoned about; one that does more can only be
+hoped not to be used.
 
-### Le syscall aggiunte dalla 0.203 alla 0.208
+### Syscalls added between 0.203 and 0.208
 
-| EAX | Syscall          | A cosa serve |
-|-----|------------------|--------------|
-| 233 | console_grafica  | chi tiene la console della grafica, e quale sia — così Alt+Fn non porta su uno schermo nero da cui non si sa tornare, e un server ucciso libera la console da solo |
-| 238 | lib_trova        | «questa libreria ce l'ho già dentro?» — la risposta ring 3 non può darsela, e la tavola delle pagine del processo *è* l'elenco |
+| EAX | Syscall          | What it is for |
+|-----|------------------|----------------|
+| 233 | console_grafica  | who holds the graphics console, and which one it is — so Alt+Fn does not land on a black screen with no way back, and a killed server frees the console by itself |
+| 238 | lib_trova        | «do I already have this library inside me?» — ring 3 cannot answer that, and the process page table *is* the list |
 
-! **TUTT'E DUE SONO STATO CHE VIVE NEL KERNEL PERCHÉ DEVE SOPRAVVIVERE A CHI LO
-USA.** Una bandiera tenuta dal server grafico morirebbe con lui e lascerebbe la
-porta aperta su una stanza vuota; un elenco di librerie tenuto da uno stub non
-lo vedrebbe l'altro stub dello stesso processo — ed è esattamente il difetto da
-cui la 238 è nata, due motori JavaScript che giravano insieme senza vedersi.
+! **BOTH ARE STATE THAT LIVES IN THE KERNEL BECAUSE IT MUST OUTLIVE ITS USER.** A
+flag held by the window server would die with it and leave the door open onto an
+empty room; a list of libraries held by one stub would not be seen by the other
+stub in the same process — which is exactly the defect 238 was born from, two
+JavaScript engines running side by side without seeing each other.
 
-### Le syscall dei fili, dalla 0.208 alla 0.209
+### The thread syscalls, from 0.208 to 0.209
 
-| EAX | Syscall           | EBX        | ECX       | EDX | A cosa serve |
-|-----|-------------------|------------|-----------|-----|--------------|
-| 201 | thread_crea       | entry      | argomento | —   | un secondo flusso dentro lo stesso programma: rende il tid, che **è** un pid |
-| 202 | thread_esci       | codice     | —         | —   | esce dal filo, non dal processo; non ritorna |
-| 203 | thread_attendi    | tid        | `int*`    | —   | aspetta un filo del proprio gruppo e ne raccoglie il codice |
-| 204 | attesa_dormi      | indirizzo  | valore    | ms  | «dormi finché lì c'è ancora questo valore»: è su questa che stanno lucchetti, condizioni e semafori |
-| 205 | attesa_sveglia    | indirizzo  | quanti    | —   | sveglia chi dorme su quell'indirizzo (0 = tutti) |
-| 206 | thread_ferma      | tid        | —         | —   | **chiede** a un filo di fermarsi, e scrolla chi dorme |
-| 207 | thread_devo_fermarmi | —       | —         | —   | 1 se qualcuno l'ha chiesto: è il filo a scegliere dove guardare |
+| EAX | Syscall           | EBX        | ECX      | EDX | What it is for |
+|-----|-------------------|------------|----------|-----|----------------|
+| 201 | thread_crea       | entry      | argument | —   | a second flow inside the same program: returns the tid, which **is** a pid |
+| 202 | thread_esci       | code       | —        | —   | leaves the thread, not the process; does not return |
+| 203 | thread_attendi    | tid        | `int*`   | —   | waits for a thread of its own group and collects its code |
+| 204 | attesa_dormi      | address    | value    | ms  | "sleep while that address still holds this value": locks, condition variables and semaphores all stand on it |
+| 205 | attesa_sveglia    | address    | how many | —   | wakes those sleeping on that address (0 = all) |
+| 206 | thread_ferma      | tid        | —        | —   | **asks** a thread to stop, and shakes it if it is asleep |
+| 207 | thread_devo_fermarmi | —       | —        | —   | 1 if somebody asked: it is the thread that chooses where to look |
 
-! **UN FILO È UN TASK CHE CONDIVIDE LA PAGE DIRECTORY**, e per lo scheduler non
-c'è niente di nuovo: stessa run queue, stesso quanto, stesso `context_switch`.
-Condivide anche i descrittori e la directory di lavoro; ha di suo lo stack —
-una piazzola in una banda riservata sotto il TLS — e il proprio blocco TLS,
-`errno` compreso. Chi esce dal *processo* porta via tutti i fili.
+! **A THREAD IS A TASK THAT SHARES THE PAGE DIRECTORY**, and for the scheduler
+there is nothing new: same run queue, same quantum, same `context_switch`. It
+also shares the descriptors and the working directory; of its own it has the
+stack — a slot in a band reserved below the TLS — and its own TLS block,
+`errno` included. Whoever leaves the *process* takes every thread with them.
 
-! **FERMARE UN FILO È CHIEDERGLIELO, E NON È TIMIDEZZA.** Un filo interrotto
-dove capita lascerebbe i lucchetti presi e le strutture a metà, che dentro un
-processo solo sono quelle di tutti. Il kernel fa le due cose che da fuori non
-si possono fare: mette il messaggio nel PCB e **scrolla** chi dorme.
+! **STOPPING A THREAD MEANS ASKING IT, AND IT IS NOT TIMIDITY.** A thread
+interrupted wherever it happens to be would leave locks held and structures
+half-built, and inside a single process those belong to everybody. The kernel
+does the two things that cannot be done from outside: it puts the message in
+the PCB and **shakes** the sleeper awake.
 
-! **LE CONDIZIONI E I SEMAFORI NON SONO SYSCALL.** `condizione_aspetta`,
-`semaforo_prendi` e le altre sei stanno tutte nella libc, costruite sopra la
-204 e la 205: senza contesa non costano nemmeno una chiamata di sistema. Si
-aspetta **sempre** dentro un `while`, mai dentro un `if` — il risveglio dice
-«guarda di nuovo», non «adesso c'è».
+! **CONDITION VARIABLES AND SEMAPHORES ARE NOT SYSCALLS.**
+`condizione_aspetta`, `semaforo_prendi` and the other six all live in the libc,
+built on top of 204 and 205: with no contention they do not even cost a system
+call. You always wait inside a `while`, never inside an `if` — waking up says
+"look again", not "it is there now".
 
 ---
 
-## /bin/mkdir e /bin/rmdir
+## /bin/mkdir and /bin/rmdir
 
 ```
-mkdir <nome> [nome2 ...]    crea una o piu' directory
-rmdir <nome> [nome2 ...]    cancella una o piu' directory VUOTE
+mkdir <name> [name2 ...]    create one or more directories
+rmdir <name> [name2 ...]    remove one or more EMPTY directories
 ```
 
-Accettano percorsi assoluti o relativi alla directory corrente. **Solo
-directory nella root**: il driver FAT12 risolve i percorsi a un livello, quindi
-una directory annidata sarebbe corretta sul supporto ma irraggiungibile —
-entrambi rifiutano con un messaggio esplicito invece di creare o cancellare
-qualcosa di inutilizzabile.
+They accept absolute paths or paths relative to the current directory.
+**Root-level directories only**: the FAT12 driver resolves paths one level
+deep, so a nested directory would be correct on the medium but unreachable —
+both refuse with an explicit message instead of creating or deleting
+something unusable.
 
-`rmdir` rifiuta le directory non vuote, e non è una limitazione temporanea:
-senza cancellazione ricorsiva i file rimasti dentro diventerebbero
-irraggiungibili e i loro cluster resterebbero occupati per sempre. La root è
-protetta, e `rmdir` su un file viene rifiutato.
+`rmdir` refuses non-empty directories, and this is not a temporary
+limitation: without recursive deletion the files left inside would become
+unreachable and their clusters would stay allocated forever. The root is
+protected, and `rmdir` on a file is refused.
 
 ---
 
 ## /bin/delete
 
 ```
-delete <modello> [modello2 ...]
+delete <pattern> [pattern2 ...]
 
-  ?   un carattere qualsiasi
-  *   una sequenza qualsiasi di caratteri
+  ?   any single character
+  *   any sequence of characters
 ```
 
 ```
-delete nota.txt        un file preciso
-delete *               tutto il contenuto della directory corrente
-delete /temp/tmp*      i file che iniziano per "tmp" dentro /temp
-delete dati?.log       DATI1.LOG, DATI2.LOG, ...
-delete *.txt           per estensione
+delete note.txt        one specific file
+delete *               everything in the current directory
+delete /temp/tmp*      files starting with "tmp" inside /temp
+delete data?.log       DATA1.LOG, DATA2.LOG, ...
+delete *.txt           by extension
 ```
 
-L'espansione dei jolly la fa il programma, non il kernel né la shell — come in
-MS-DOS. Il confronto è insensibile al caso (FAT12 conserva i nomi in
-maiuscolo). Le directory vengono saltate: per quelle c'è `rmdir`.
+Wildcard expansion is done by the program, not by the kernel nor by the
+shell — as in MS-DOS. The comparison is case-insensitive (FAT12 keeps names
+in upper case). Directories are skipped: `rmdir` is there for those.
 
-`delete` lavora in due fasi: prima raccoglie tutti i nomi corrispondenti
-percorrendo l'intera directory, poi cancella. Non si può cancellare mentre si
-elenca — le entry liberate vengono saltate da `readdir` e le voci successive
-scalerebbero, facendo perdere file a ogni blocco.
+`delete` works in two passes: first it collects every matching name by
+walking the whole directory, then it deletes. You cannot delete while
+listing — freed entries are skipped by `readdir` and the following entries
+would shift down, losing a file per block.
 
-`delete *` chiede conferma quando i file sono più di uno, dicendo quanti e da
-dove. Un modello mirato come `tmp*` non la chiede.
+`delete *` asks for confirmation when more than one file matches, saying how
+many and from where. A targeted pattern such as `tmp*` does not ask.
 
 ---
 
 ## Job control: `&`, `jobs`, `fg`
 
 ```
-comando &     esegue in background e torna subito al prompt
-jobs          elenca i job ancora in esecuzione
-fg [n]        riporta in primo piano il job n (l'ultimo se omesso)
+command &     run in the background and return to the prompt at once
+jobs          list the jobs still running
+fg [n]        bring job n to the foreground (the last one if omitted)
 ```
 
-Un job terminato viene annunciato al prompt successivo — `[1] terminato: tsleep
-(codice 0)` — ed è anche il momento in cui il suo slot di processo viene
-liberato: un figlio resta `ZOMBIE` finché il padre non lo raccoglie (il reaper di
-init si occupa solo degli orfani).
+A finished job is announced at the next prompt — `[1] terminato: tsleep
+(codice 0)` — and that is also when its process slot is freed: a child stays
+`ZOMBIE` until the parent collects it (init's reaper only handles orphans).
 
-**Non c'è `bg`**, e non è una dimenticanza: `bg` riprende un processo *sospeso*, e
-per sospenderlo servirebbe un Ctrl+Z — cioè un segnale che fermi un processo e lo
-lasci ripartire, che EX-OS non ha (dalla 0.227 i segnali ci sono, ma SIGSTOP e
-SIGCONT no, e la shell non ne manda). Un job
-qui o gira o è finito, non esiste lo stato in mezzo.
+**There is no `bg`**, and that is not an oversight: `bg` resumes a
+*suspended* process, and suspending one would need a Ctrl+Z — that is,
+a signal that stops a process and lets it resume, which EX-OS does not have
+(signals exist since 0.227, but not SIGSTOP and SIGCONT, and the shell sends
+none). A job here is either running or finished;
+the state in between does not exist.
 
-**L'output si mescola.** Un job in background scrive sulla stessa console della
-shell, quindi le sue righe finiscono in mezzo al prompt e a ciò che stai
-digitando. È il comportamento di qualunque shell Unix; se il programma ha bisogno
-dello schermo tutto per sé, si lancia su un'altra console con Alt+Fn invece che
-con `&`.
+**Output gets mixed together.** A background job writes to the same console
+as the shell, so its lines land in the middle of the prompt and of what you
+are typing. That is the behaviour of any Unix shell; if a program needs the
+screen to itself, you start it on another console with Alt+Fn instead of
+with `&`.
 
-**L'input invece è protetto**, e serviva davvero. Il driver tastiera serve
-l'*ultimo* che ha chiesto una riga: senza difese, un job in background che legge
-`stdin` sostituirebbe la shell come lettore e il prompt non riceverebbe mai più
-un comando — la console morirebbe. Due meccanismi lo impediscono:
+**Input, on the other hand, is protected**, and it really was needed. The
+keyboard driver serves the *last* one who asked for a line: with no defence,
+a background job reading `stdin` would replace the shell as the reader and
+the prompt would never receive another command — the console would die. Two
+mechanisms prevent it:
 
-1. `sys_read` su `stdin` restituisce la **fine dell'input** a chi non è il
-   processo in primo piano della propria console. La shell dichiara il primo
-   piano con `SYS_CONSOLE_SETFG` (sé stessa al prompt, il figlio quando lo
-   aspetta). Unix qui userebbe `SIGTTIN`; senza quel segnale, l'EOF è l'unica risposta
-   possibile — ed è comunque vera, quel programma input non ne avrà mai.
-2. Chi prende la tastiera parlando **direttamente** al servizio `kbd` via IPC —
-   la modalità raw di `gfedit` — non passa da `sys_read`, quindi controlla da sé
-   `ConsoleInfo.fg` e si rifiuta di partire in background, spiegando perché.
+1. `sys_read` on `stdin` returns **end of input** to anyone who is not the
+   foreground process of its own console. The shell declares the foreground
+   with `SYS_CONSOLE_SETFG` (itself at the prompt, the child while waiting
+   for it). Unix would use `SIGTTIN` here; without that signal, EOF is the only
+   possible answer — and it is true anyway, that program will never get any
+   input.
+2. Whoever takes the keyboard by talking **directly** to the `kbd` service
+   over IPC — `gfedit`'s raw mode — does not go through `sys_read`, so it
+   checks `ConsoleInfo.fg` itself and refuses to start in the background,
+   explaining why.
 
-**Ctrl+C** (dal 28 settembre 2026, kernel 0.221). Sulla console di testo, in
-modo riga, chiede `[Ctrl+C] Fermo "textline" (PID 20)? s/n` e ferma il
-programma solo con «s»; al prompt svuota la riga. Chi fermare lo dice la
-shell con `pty_ctl(0, PTY_CTL_FG, pid)` — il figlio che aspetta, 0 al prompt —
-e non `SYS_CONSOLE_SETFG`, perché al prompt il primo piano è la shell stessa.
-Nel terminale in finestra Ctrl+C ferma subito, senza chiedere: lì lo gestisce
-la disciplina del pty, nel kernel.
+
+**Ctrl+C** (since 28 September 2026, kernel 0.221). On the text console, in
+line mode, it asks `[Ctrl+C] Fermo "textline" (PID 20)? s/n` and stops the
+program only on "s"; at the prompt it empties the line. Who to stop is said
+by the shell with `pty_ctl(0, PTY_CTL_FG, pid)` — the child it waits for, 0 at
+the prompt — and not by `SYS_CONSOLE_SETFG`, because at the prompt the
+foreground is the shell itself. In a window terminal Ctrl+C stops at once,
+without asking: there the pty's line discipline in the kernel handles it.
 
 ---
 
-## Console virtuali — Alt+F1 … Alt+F5
+## Virtual consoles — Alt+F1 … Alt+F5
 
-**Cinque** schermi indipendenti (`VGA_N_CONSOLE`), uno solo visibile per volta,
-ognuno con la propria shell — o il proprio `login` — avviata al boot.
-**Alt+F1..F5** commuta: il programma che stava girando non viene sospeso né
-chiuso, continua a lavorare e a disegnare nel proprio buffer, e si ritrova lo
-schermo intatto quando ci si torna sopra.
+**Five** independent screens (`VGA_N_CONSOLE`), only one visible at a time,
+each with its own shell — or its own `login` — started at boot. **Alt+F1..F5**
+switches: the program that was running is neither suspended nor closed, it
+keeps working and drawing into its own buffer, and finds the screen intact
+when you come back to it.
 
-È la risposta alla domanda "come lancio un'altra cosa senza chiudere questa":
-apri `gfedit` sulla console 2, premi Alt+F3, hai un prompt pulito, e Alt+F2 ti
-riporta all'editor esattamente dove l'avevi lasciato.
+It is the answer to "how do I start something else without closing this
+one": open `gfedit` on console 2, press Alt+F3, you get a clean prompt, and
+Alt+F2 takes you back to the editor exactly where you left it.
 
-! **La grafica vive sulla console 5.** `exwin` fa ripartire il server a
-finestre là sopra e lo dice all'avvio (`grafica accesa sulla console 5`): da
-una console di testo ci si va con **Alt+F5**, e con **Alt+F1** si torna alla
-shell. È anche il motivo per cui una prova che pilota la scrivania batte
-`Alt+F1` prima di lanciare un'applicazione e `Alt+F5` subito dopo.
+! **The graphics live on console 5.** `exwin` restarts the window server up
+there and says so at startup (`grafica accesa sulla console 5`): from a text
+console you get there with **Alt+F5**, and **Alt+F1** takes you back to the
+shell. It is also why a test driving the desktop presses `Alt+F1` before
+launching an application and `Alt+F5` right after.
 
 | | |
 |---|---|
-| Console 0 (Alt+F1) | è anche la console di **sistema**: i messaggi del kernel (`klog`) escono qui, accanto al prompt. Le altre restano pulite. |
-| Ereditarietà | un programma nasce sulla console del padre (`sys_spawn`), quindi resta dove è stato lanciato |
-| Tastiera | i tasti vanno **solo** alla console in primo piano; le shell delle altre restano ferme al proprio prompt con la richiesta di lettura pendente |
-| Modalità raw | è **per console**: mentre gfedit tiene la 2 in raw, la shell della 1 continua a ricevere righe intere con eco e Backspace |
+| Console 0 (Alt+F1) | is also the **system** console: kernel messages (`klog`) come out here, next to the prompt. The others stay clean. |
+| Inheritance | a program is born on its parent's console (`sys_spawn`), so it stays where it was started |
+| Keyboard | keys go **only** to the foreground console; the shells of the others stay at their prompt with the read request pending |
+| Raw mode | is **per console**: while gfedit holds 2 in raw mode, the shell on 1 keeps receiving whole lines with echo and Backspace |
 
-Alt+Fn è intercettato dal driver tastiera **prima** di qualunque altra
-elaborazione e non viene consegnato a nessuno: è un comando all'interfaccia, non
-input per il programma in esecuzione. Senza quella precedenza basterebbe un
-editor che usa Alt+F per il menu File per rendere impossibile cambiare schermo —
-cioè proprio nel caso in cui serve di più.
+Alt+Fn is intercepted by the keyboard driver **before** any other processing
+and is delivered to nobody: it is a command to the interface, not input for
+the running program. Without that precedence, an editor using Alt+F for its
+File menu would be enough to make switching screens impossible — that is,
+exactly in the case where you need it most.
 
-### Il Backspace e le colonne che non ci sono
+### Backspace and the columns that are not there
 
-La disciplina di riga «cooked» — quella che accumula i caratteri e li
-consegna su Invio — cancellava **una colonna per ogni carattere nel
-buffer**. Sembra ovvio e non lo è: i caratteri di controllo entrano nella
-riga ma non vengono ecoati (ESC ci va, `/bin/textline` lo usa per annullare
-una riga), e le frecce ci entrano come sequenza `ESC [ A`, di cui due byte
-su tre sono stampabili e nessuno dei tre è stato disegnato.
+The "cooked" line discipline — the one that accumulates characters and
+delivers them on Enter — used to erase **one column per character in the
+buffer**. That sounds obvious and is not: control characters go into the line
+but are not echoed (ESC does, `/bin/textline` uses it to cancel a line), and
+the arrow keys go in as the sequence `ESC [ A`, of which two bytes out of
+three are printable and none of the three was ever drawn.
 
-> ! Risultato: due ESC battuti per sbaglio, due Backspace, e le due
-> colonne cancellate erano **le ultime del prompt**. Nel registro seriale
-> si vedeva `^H ^H^H ^H` e l'asterisco di textline sparire.
+> ! The result: two ESC keys pressed by mistake, two Backspaces, and the two
+> columns erased were **the last ones of the prompt**. In the serial log you
+> could see `^H ^H^H ^H` and textline's asterisk disappearing.
 
-Ora ogni carattere del buffer porta con sé un bit — *questa l'ho disegnata
-io oppure no* — e il Backspace cancella una colonna solo se quella colonna
-è nostra. Il prompt è fuori portata per costruzione, non per un controllo
-in più. Nello stesso giro sono cadute due asimmetrie della stessa
-famiglia: a riga piena il carattere veniva ecoato ma non accumulato (si
-eseguiva meno di quello che si leggeva), e il tab veniva disegnato pur
-essendo impossibile da disfare — avanza fino alla prossima tabulazione,
-che dipende da dove comincia il prompt.
+Now every character in the buffer carries a bit with it — *did I draw this
+one or not* — and Backspace erases a column only if that column is ours. The
+prompt is out of reach by construction, not by one more check. Two
+asymmetries of the same family fell in the same pass: on a full line the
+character was echoed but not accumulated (you ran less than you read), and
+tab was drawn despite being impossible to undo — it advances to the next tab
+stop, which depends on where the prompt starts.
 
-**Arrivati al limite la riga si azzera del tutto.** Se non resta più
-niente di visibile, quello che eventualmente sopravvive nel buffer sono
-caratteri invisibili, pronti a finire dentro il comando successivo: chi
-cancella fino in fondo si aspetta una riga vuota e la trova vuota davvero.
+**On reaching the limit, the line is cleared entirely.** If nothing visible
+is left, whatever survives in the buffer is invisible characters, ready to
+end up inside the next command: whoever deletes all the way back expects an
+empty line and now finds it truly empty.
 
-Vale per `drivers/kbd/kbd.c` e per il TTY interno di ripiego
-(`drivers/tty/tty.c`). La modifica di riga della shell — quella con le
-frecce e la cronologia — non era coinvolta: lavora in raw e accetta solo
-caratteri stampabili.
+This applies to `drivers/kbd/kbd.c` and to the fallback in-kernel TTY
+(`drivers/tty/tty.c`). The shell's line editor — the one with the arrows and
+the history — was not involved: it works in raw mode and accepts printable
+characters only.
 
-Costo: 4 KB di BSS del kernel per console (il buffer di schermo) più un processo
-shell da ~14 KB. Il numero è `VGA_N_CONSOLE` in `kernel/include/vga.h`, e deve
-restare uguale a `KBD_N_CONSOLE` in `drivers/kbd/kbd_proto.h`.
-
----
-
-## Data e ora
-
-`time_now()` legge l'orologio CMOS della macchina (MC146818, porte 0x70/0x71) e
-restituisce data e ora vere — quelle che l'orologio a batteria continua a contare
-a macchina spenta. Da non confondere con `uptime_ms()`, che misura *durate* e non
-sa che ora sia.
-
-Ritorna `-ENODEV` se l'orologio non risponde o consegna una data impossibile
-(succede su hardware vecchio con la batteria del CMOS scarica): in quel caso il
-chiamante deve dire "ora ignota" invece di mostrare un orario inventato — gfedit
-scrive `--:--:--`.
-
-**E dal kernel 0.218 si può anche SCRIVERE**: `time_set()` (`SYS_TIME_SET`, 213)
-rimette l'orologio, è di root, e accetta gli anni dal 1980 al 2099. Il comando
-che la usa è `date`, con `-set-date:` e `-set-time:`; il perché di ogni scelta
-sta in **[`date`](#date--che-ore-sono-e-rimetterle)**. Fino ad allora l'orologio
-si leggeva e basta, e su una macchina con la data sbagliata non c'era modo di
-rimediare da dentro EX-OS.
-
-! In QEMU il RTC parte in **UTC**, non in ora locale. Per vedere l'ora del fuso
-serve `-rtc base=localtime` fra i `QEMU_FLAGS` del Makefile.
+Cost: 4 KB of kernel BSS per console (the screen buffer) plus a shell process
+of ~14 KB. The number is `VGA_N_CONSOLE` in `kernel/include/vga.h`, and it
+must stay equal to `KBD_N_CONSOLE` in `drivers/kbd/kbd_proto.h`.
 
 ---
 
-## /bin/textline — editor di testo lineare
+## Date and time
 
-Modello edlin: si opera per numero di riga, non con un cursore. Resta il modo
-più rapido di correggere una riga sola, e l'unico che funziona anche quando
-`/dev/kbd.drv` non è disponibile e la console è servita dalla tastiera
-in-kernel di ripiego.
+`time_now()` reads the machine's CMOS clock (MC146818, ports 0x70/0x71) and
+returns the real date and time — the ones the battery-backed clock keeps
+counting while the machine is off. Not to be confused with `uptime_ms()`,
+which measures *durations* and does not know what time it is.
 
-```
-textline <file>              apre il file per l'editing
-textline <file> -v           visualizza il contenuto
-textline <file> -vp          visualizza a pagine
-textline <file> -c:<file2>   copia <file> in <file2>
-```
+It returns `-ENODEV` if the clock does not answer or hands back an impossible
+date (which happens on old hardware with a flat CMOS battery): in that case
+the caller must say "time unknown" instead of showing an invented one —
+gfedit writes `--:--:--`.
 
-Comandi: `h`/`help`, `l`, `lNN`, `lNN,MM`, `lp…` (a pagine), `m`, `mNN`, `n`,
-`dNN`, `cNN,MM`, `w` (salva), `e` (salva ed esce), `q` (esce). ESC annulla la
-riga in inserimento e riporta al prompt.
+**And from kernel 0.218 it can also be WRITTEN**: `time_set()` (`SYS_TIME_SET`,
+213) puts the clock right, is root's, and accepts years from 1980 to 2099. The
+command that uses it is `date`, with `-set-date:` and `-set-time:`; the reason
+behind every choice is under
+**[`date`](#date--what-time-it-is-and-putting-it-right)**. Until then the clock
+could only be read, and on a machine with the wrong date there was no way to fix
+it from inside EX-OS.
+
+! In QEMU the RTC starts in **UTC**, not local time. To see the time in your
+timezone you need `-rtc base=localtime` among the Makefile's `QEMU_FLAGS`.
 
 ---
 
-## /bin/gfedit — editor a schermo intero
+## /bin/textline — line-oriented text editor
 
-Riscrittura per EX-OS di **GF_TEXTEDITOR**, l'editor ncurses+pthread dello
-stesso autore (sorgenti originali in `gftexteditor/`). Non è un porting: di
-ncurses, dei thread, di stdio POSIX e di una `free()` vera EX-OS non ha
-niente. Quello che resta uguale è il programma — menu a tendina in stile
-MS-DOS EDIT, otto aree aperte insieme, find/replace, annullamento,
-evidenziazione sintattica.
+The edlin model: you work by line number, not with a cursor. It is still the
+quickest way to fix a single line, and the only one that works even when
+`/dev/kbd.drv` is not available and the console is served by the fallback
+in-kernel keyboard.
 
 ```
-gfedit                apre un'area vuota
-gfedit <file> [...]   apre fino a 8 file
-gfedit -h             elenco delle scorciatoie
+textline <file>              open the file for editing
+textline <file> -v           show the contents
+textline <file> -vp          show them a page at a time
+textline <file> -c:<file2>   copy <file> to <file2>
+```
+
+Commands: `h`/`help`, `l`, `lNN`, `lNN,MM`, `lp…` (paged), `m`, `mNN`, `n`,
+`dNN`, `cNN,MM`, `w` (save), `e` (save and exit), `q` (quit). ESC cancels the
+line being inserted and returns to the prompt.
+
+---
+
+## /bin/gfedit — full-screen editor
+
+A rewrite for EX-OS of **GF_TEXTEDITOR**, the same author's ncurses+pthread
+editor (original sources in `gftexteditor/`). It is not a port: of ncurses,
+threads, POSIX stdio and a real `free()`, EX-OS has none. What stays the same
+is the program — MS-DOS EDIT style drop-down menus, eight areas open at once,
+find/replace, undo, syntax highlighting.
+
+```
+gfedit                open an empty area
+gfedit <file> [...]   open up to 8 files
+gfedit -h             list the shortcuts
 ```
 
 | | |
 |---|---|
-| Movimento | frecce, Home/Fine, Ctrl+Home/Fine, PagSu/PagGiu, Ctrl+G (vai a riga) |
-| Selezione | Shift+movimento, Ctrl+A, ESC per abbandonarla |
-| Modifica | Ins, Ctrl+Z, Ctrl+X/C/V |
-| File | Ctrl+N, Ctrl+O, F2 o Ctrl+S, Ctrl+W, Alt+X |
-| Ricerca | Ctrl+F, F3, Shift+F3, Ctrl+H |
-| Aree | F6, Shift+F6, Alt+1…Alt+8 |
-| Menu | F10 o ESC, oppure Alt+F M C O A |
+| Movement | arrows, Home/End, Ctrl+Home/End, PgUp/PgDn, Ctrl+G (go to line) |
+| Selection | Shift+movement, Ctrl+A, ESC to drop it |
+| Editing | Ins, Ctrl+Z, Ctrl+X/C/V |
+| Files | Ctrl+N, Ctrl+O, F2 or Ctrl+S, Ctrl+W, Alt+X |
+| Search | Ctrl+F, F3, Shift+F3, Ctrl+H |
+| Areas | F6, Shift+F6, Alt+1…Alt+8 |
+| Menu | F10 or ESC, or Alt+F M C O A |
 
-La barra di stato mostra l'ora del giorno vera, che **avanza da sola** anche a
-tastiera ferma: il ciclo principale non aspetta più un tasto all'infinito ma si
-risveglia ogni mezzo secondo (`ipc_recv_timeout`). Fra un risveglio e l'altro il
-processo è `BLOCKED` e non consuma un tick di CPU.
+The status bar shows the real time of day, which **advances on its own** even
+with the keyboard idle: the main loop no longer waits for a key forever but
+wakes up every half second (`ipc_recv_timeout`). Between two wake-ups the
+process is `BLOCKED` and does not consume a CPU tick.
 
-Linguaggi evidenziati: C, C++, BASIC, assembly, riconosciuti dall'estensione e
-cambiabili da *Opzioni → Linguaggio*.
+Highlighted languages: C, C++, BASIC, assembly, recognised by extension and
+changeable from *Options → Language*.
 
-**Limiti, e perché sono lì.** 512 righe per file, 200 caratteri per riga, 8
-aree. Le righe sono slot a lunghezza fissa perché la `free()` di EX-OS è un
-no-op dichiarato (allocatore a bump su `sbrk`): con stringhe riallocate ogni
-tasto premuto perderebbe per sempre la memoria della riga precedente. Un file
-più grande dei limiti viene caricato **in parte**, la barra di stato lo dice, e
-il salvataggio su quel file resta bloccato — per non cancellare la parte mai
-letta. *Salva con nome* su un file diverso è invece permesso.
+**Limits, and why they are there.** 512 lines per file, 200 characters per
+line, 8 areas. Lines are fixed-length slots because EX-OS's `free()` is a
+declared no-op (bump allocator over `sbrk`): with strings reallocated on
+every keystroke, the memory of the previous line would be lost forever. A
+file larger than the limits is loaded **in part**, the status bar says so,
+and saving over that file stays blocked — so as not to erase the part that
+was never read. *Save as* to a different file is allowed instead.
 
-**Serve `/dev/kbd.drv`.** Un editor a schermo intero ha bisogno dei tasti uno
-per uno, e la modalità raw vive nel driver tastiera. Senza quel servizio
-gfedit non parte e rimanda a textline, invece di mostrare un'interfaccia che
-non risponderebbe.
+**It needs `/dev/kbd.drv`.** A full-screen editor needs keys one at a time,
+and raw mode lives in the keyboard driver. Without that service gfedit does
+not start and points you at textline, instead of showing an interface that
+would not respond.
 
 ---
 
-## L'interfaccia grafica in pratica
+## The graphical interface in practice
 
 ```
-exwin                       accende la grafica sulla console 5
-                            Alt+F5 ci va, Alt+F1 torna alla shell
+exwin                       brings up graphics on console 5
+                            Alt+F5 goes there, Alt+F1 returns to the shell
 
-/exwin/bin/pm               la scrivania (la avvia exwin da sola)
-/exwin/bin/filemgr [DIR]    il file manager
-/exwin/bin/edit [FILE...]   l'editor di testo: un file per scheda
-/exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
-/exwin/bin/exbrowser [URL]  EXBrowser, il navigatore (un percorso assoluto diventa file:)
-/exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
-/exwin/bin/archivi [ARCH]   gli archivi ZIP, TAR e TAR.GZ: apre, estrae, crea
-/exwin/bin/calctor          la calcolatrice: normale, scientifica, programmatore
-/exwin/bin/pennello [FILE]  il programma di disegno: apre BMP PNG JPG GIF ICO, salva PNG e BMP
-/exwin/bin/immagini [FILE]  il visualizzatore di immagini, con lo zoom e la cartella
-/exwin/bin/fontprova        la prova dei font TrueType, fatta per essere vista
-/exwin/bin/orologio         data e ora nell'angolo della barra
+/exwin/bin/pm               the desktop (exwin starts it by itself)
+/exwin/bin/filemgr [DIR]    the file manager
+/exwin/bin/edit [FILE...]   the text editor: one file per tab
+/exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
+/exwin/bin/exbrowser [URL]  EXBrowser, the browser (an absolute path becomes a file:)
+/exwin/bin/exide [DIR]      the visual development environment
+/exwin/bin/archivi [ARCH]   ZIP, TAR and TAR.GZ archives: open, extract, create
+/exwin/bin/calctor          the calculator: normal, scientific, programmer
+/exwin/bin/pennello [FILE]  the paint program: opens BMP PNG JPG GIF ICO, saves PNG and BMP
+/exwin/bin/immagini [FILE]  the picture viewer, with zoom and the directory
+/exwin/bin/fontprova        the TrueType font test, made to be looked at
+/exwin/bin/orologio         date and time in the corner of the bar
 ```
 
-Avviata la grafica, la shell **resta viva sulla console 0**: si continua a
-lavorare da lì e con `Alt+F5` si passa alla scrivania.
+Once graphics are up, the shell **stays alive on console 0**: you keep working
+there and switch to the desktop with `Alt+F5`.
 
-**Dalla scrivania si aprono dal menu Avvio**, che legge le voci da
-`/exwin/lib/applicazioni.txt`. Una riga per applicazione, con un terzo campo
-**facoltativo** per l'icona:
+**From the desktop they open from the Avvio menu**, which reads its entries
+from `/exwin/lib/applicazioni.txt`. One line per application, with an
+**optional** third field for the icon:
 
 ```
-Nome mostrato          | /percorso/eseguibile | /percorso/icona.ico
+Displayed name         | /path/executable     | /path/icon.ico
 Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
 ```
 
-! **Una barra nel nome fa una categoria.** `Strumenti/Editor` è la voce
-«Editor» dentro «Strumenti»: nel menu le categorie stanno in cima e aprono un
-elenco **di fianco**, con le loro icone. Non si dichiarano da nessun'altra
-parte — esistono finché c'è una voce che le nomina.
+! **A slash in the name makes a category.** `Strumenti/Editor` is the entry
+"Editor" inside "Strumenti": in the menu, categories sit at the top and open a
+list **to the side**, with their icons. They are declared nowhere else — they
+exist as long as an entry names them.
 
-La voce **Applicazioni...** dello stesso menu aggiunge e toglie righe da quel
-file (e rimette al loro posto categoria e icona di ciò che non mostra), e la
-direttiva `@avvio <percorso>` dice quale programma parte da solo con la
-scrivania (è così che l'orologio si trova già lì).
+The **Applicazioni...** item of that same menu adds and removes lines from that
+file (putting back the category and icon of what it does not show), and the
+`@avvio <path>` directive says which program starts by itself with the desktop
+(that is how the clock is already there).
 
-! **AGGIUNGERE UN'APPLICAZIONE È UNA RIGA, NON UNA RICOMPILAZIONE**, e il file
-resta leggibile e modificabile a mano apposta: un file di configurazione che
-solo un programma sa scrivere è un file che non si può riparare quando quel
-programma non parte.
+! **ADDING AN APPLICATION IS ONE LINE, NOT A RECOMPILATION**, and the file
+stays readable and editable by hand on purpose: a configuration file only a
+program can write is a file you cannot repair when that program will not start.
 
-! **DALLA SHELL SI LANCIANO COL COMANDO, MA PRIMA DI COMMUTARE.** Battendo il
-comando *dopo* `Alt+F5` i tasti vanno al server grafico, non alla shell — e
-sembra che il sistema si sia bloccato. È la stessa separazione che rende
-possibile tutto il resto, vista dal lato scomodo.
+! **FROM THE SHELL YOU LAUNCH THEM WITH THE COMMAND, BUT BEFORE SWITCHING.**
+Typing the command *after* `Alt+F2` sends the keys to the graphical server, not
+to the shell — and it looks as if the system had frozen. It is the same
+separation that makes everything else possible, seen from the awkward side.
 
-### L'editor
+### The editor
 
-| tasto | cosa fa |
+| key | what it does |
 |---|---|
-| frecce, Home/End, PgSu/PgGiù | muovono il cursore |
-| Backspace, Canc | cancellano indietro e avanti |
-| Invio | spezza la riga |
-| clic del mouse | posiziona il cursore |
-| Shift + frecce, Ctrl+A | scelgono il testo |
-| Ctrl+X, Ctrl+C, Ctrl+V | tagliano, copiano, incollano |
-| Ctrl+Z | annulla (taglia, incolla, cancella) |
-| Ctrl+F, F3, Shift+F3, Ctrl+H | cerca, il successivo, il precedente, sostituisce |
-| Ctrl+N, Ctrl+O | un file nuovo, un file aperto: ognuno nella sua scheda |
-| Ctrl+Tab, Ctrl+Shift+Tab | la scheda dopo, quella prima |
-| Ctrl+W | chiude la scheda; se il file è modificato chiede |
-| Ctrl+S | salva; senza nome apre il dialogo **Salva con nome** |
-| Ctrl+Q | esce; se ci sono file modificati dice quanti e chiede |
+| arrows, Home/End, PgUp/PgDn | move the cursor |
+| Backspace, Delete | erase backwards and forwards |
+| Enter | splits the line |
+| mouse click | places the cursor |
+| Shift + arrows, Ctrl+A | select text |
+| Ctrl+X, Ctrl+C, Ctrl+V | cut, copy, paste |
+| Ctrl+Z | undo (cut, paste, delete) |
+| Ctrl+F, F3, Shift+F3, Ctrl+H | find, next, previous, replace |
+| Ctrl+N, Ctrl+O | a new file, an opened file: each in its own tab |
+| Ctrl+Tab, Ctrl+Shift+Tab | next tab, previous tab |
+| Ctrl+W | closes the tab; asks if the file was modified |
+| Ctrl+S | save; with no name it opens the **Save as** dialog |
+| Ctrl+Q | quit; if files were modified it says how many and asks |
 
-Le stesse cose stanno nei menu **File** e **Modifica**. «Apri» e «Salva con
-nome» stanno in `exdlg.so`, la libreria condivisa dei dialoghi, che usa anche
-il file manager. `edit a.txt b.txt` apre due schede.
+The same things are in the **File** and **Modifica** menus. "Open" and "Save
+as" live in `exdlg.so`, the shared dialog library, which the file manager uses
+too. `edit a.txt b.txt` opens two tabs.
 
-Manca, dichiarato: il **ripeti** dopo un annulla, e annullare la
-digitazione (si annullano i comandi che cambiano il testo, non i tasti
-battuti). Un file oltre le 512 righe si apre in parte e non si salva.
+Missing, and declared: **redo** after an undo, and undoing typing (the
+commands that change the text are undone, not the keys typed). A file over
+512 lines opens partially and is not saved.
 
-### Il file manager
+### The file manager
 
-Elenco che scorre, **directory in cima**, pulsanti `Su` e `Apri`, riga di
-stato col percorso. Frecce e Invio oltre al mouse. «Apri» su un file lo apre
-col programma che gli spetta (`/exwin/lib/tipi.txt`: le immagini con
-Immagini, gli archivi con Archivi, le pagine con EXBrowser, il resto con
-l'editor), cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
+Scrolling list, **directories first**, `Up` and `Open` buttons, a status line
+with the path. Arrows and Enter as well as the mouse. "Open" on a file opens it
+with the program it belongs to (`/exwin/lib/tipi.txt`: images with Immagini,
+archives with Archivi, pages with EXBrowser, everything else with the editor),
+looked for in `/exwin/bin` and then in `/cdrom/exwin/bin`.
 
-Il **tasto destro** apre un menu: Apri, Nuova cartella, Nuovo file,
-Rinomina, Copia, Taglia, Incolla, Cancella. Si scelgono **più righe** con
-Ctrl+clic e Shift+clic, o segnandole con la barra spaziatrice; trascinate su
-una cartella dell'albero a sinistra, una finestra chiede se copiarle,
-spostarle o lasciar perdere.
+The **right button** opens a menu: Open, New folder, New file, Rename, Copy,
+Cut, Paste, Delete. **Several rows** are chosen with Ctrl+click and
+Shift+click, or marked with the space bar; dragged onto a folder of the tree on
+the left, a window asks whether to copy them, move them or leave them.
 
-**Dal 16 settembre 2026 l'elenco ha quattro colonne e si ordina cliccando**
+**Since 16 September 2026 the list has four columns and sorts on a click**
 (`filemgr` 0.002):
 
 ```
@@ -4493,187 +4459,186 @@ Cartelle     |[Nome ^][Tipo][Dimensione][Data]
   + boot     | KERNEL.BIN  <FILE>    270376  2026-09-16 20:57
 ```
 
-Un clic sceglie la colonna, un secondo clic sulla stessa **rovescia il verso**,
-e la freccia nell'etichetta dice qual è: «per che cosa è ordinato» e «in che
-verso» sono due domande, e la seconda senza indizi si risponde indovinando. Il
-verso se lo ricorda **ogni colonna per conto suo** — chi ordina per data vuole
-il più recente in cima, chi ordina per nome vuole la A.
+One click picks the column, a second click on the same one **reverses the
+direction**, and the arrow in the label says which it is: «what is it sorted
+by» and «in which direction» are two questions, and without a hint the second
+one is answered by guessing. **Each column remembers its own direction** —
+sorting by date you want the newest on top, sorting by name you want the A.
 
-! **L'intestazione non è un controllo nuovo del toolkit**: sono quattro
-pulsanti allineati alle colonne, che escono dalle **stesse costanti** da cui
-esce la riga. È la stessa scelta dell'albero a sinistra, che è «una lista con
-dentro l'indentazione» e non un controllo albero. Scritte due volte, le
-larghezze si scollerebbero alla prima colonna allargata — e il sintomo sarebbe
-un'intestazione che indica la colonna sbagliata, cioè una bugia.
+! **The header is not a new toolkit control**: it is four buttons aligned to
+the columns, derived from the **same constants** the row is. It is the same
+choice as the tree on the left, which is «a list with indentation in it» and
+not a tree control. Written twice, the widths would drift apart the first time
+a column was widened — and the symptom would be a header pointing at the wrong
+column, which is a lie.
 
-! **LE DIRECTORY VENGONO PRIMA, E NON È ESTETICA:** in una directory con cento
-file, quelle in cui si vuole entrare sarebbero sparse in mezzo. Restano in cima
-**qualunque colonna si scelga**; l'unica che le mescola è «Tipo», dove
-separarle è esattamente quel che si è chiesto cliccando.
+! **DIRECTORIES COME FIRST, AND IT IS NOT COSMETIC:** in a directory with a
+hundred files, the ones you want to enter would be scattered among them. They
+stay on top **whichever column you pick**; the only one that mixes them is
+«Tipo», where separating them is exactly what the click asked for.
 
-! **Fra due directory non si ordina per dimensione.** La colonna mostra un
-trattino — il numero che i filesystem tengono lì è la misura della voce sul
-disco, non quanto pesa il contenuto — ma il numero c'è lo stesso, e ordinandoci
-sopra le cartelle uscivano in un ordine che chi guarda non può spiegare. Fra
-due trattini si ordina per nome, che è l'unica cosa che si vede.
+! **Two directories are not sorted by size.** The column shows a dash — the
+number filesystems keep there is the size of the entry on disk, not how much
+the contents weigh — but the number is there all the same, and sorting on it
+left the folders in an order the viewer cannot explain. Between two dashes they
+sort by name, which is the only thing on show.
 
-! **La data costa una `stat()` per voce**, che la voce di directory non porta.
-Qui il prezzo si può pagare: una directory si legge quando qualcuno ci entra,
-non in un ciclo. È la stessa data di `ls`, cioè quella di **modifica**: quella
-di creazione i filesystem non la tengono.
+! **The date costs one `stat()` per entry**, which the directory entry does not
+carry. Here the price can be paid: a directory is read when somebody enters it,
+not in a loop. It is the same date as `ls`, the **modification** one: the
+filesystems do not keep a creation date.
 
-### Il terminale in finestra
+### The terminal in a window
 
-`/exwin/bin/term` apre una shell dentro una finestra; `term /bin/gfedit` ci
-apre quel programma invece della shell. La finestra è un multiplo esatto della
-cella del font 8x16, perché il controllo «terminale» del toolkit calcola le
-colonne come larghezza/8 e le righe come altezza/16.
+`/exwin/bin/term` opens a shell inside a window; `term /bin/gfedit` opens that
+program there instead of the shell. The window is an exact multiple of the 8x16
+font cell, because the toolkit's "terminal" control computes columns as
+width/8 and rows as height/16.
 
-! **LA SHELL GIRA SU UNA PIPE, NON SUL `tty` DELLA CONSOLE**, ed è tutto il
-punto del terminale in finestra. Una shell che legge il descrittore 0 della
-console si contende la tastiera con chiunque altro stia su quella console;
-dietro una pipe quella domanda non esiste — i tasti li dà il server alla
-finestra col fuoco, e da lì vanno nella pipe di *quella* shell. È così che se
-ne possono aprire due senza che si disturbino.
+! **THE SHELL RUNS ON A PIPE, NOT ON THE CONSOLE'S `tty`**, and that is the
+whole point of a terminal in a window. A shell reading descriptor 0 of the
+console competes for the keyboard with anyone else on that console; behind a
+pipe that question does not exist — the server gives the keys to the focused
+window, and from there they go into *that* shell's pipe. That is how two of
+them can be open without disturbing each other.
 
-### EXBrowser, il navigatore
+### EXBrowser, the browser
 
-`/exwin/bin/exbrowser [URL]`. Senza argomento parte dalla pagina di casa; con un
-percorso assoluto (`exbrowser /exwin/doc/exbrowser.html`) lo trasforma in un
-`file:`, che è la sola forma che il resto del programma conosce.
+`/exwin/bin/exbrowser [URL]`. With no argument it starts from the home page;
+with an absolute path (`exbrowser /exwin/doc/exbrowser.html`) it turns it into a `file:`,
+which is the only form the rest of the program knows.
 
-Nella barra ci sono **due caselle**: l'indirizzo e **Cerca**, che compone da
-sola l'interrogazione del motore scelto in **File > Impostazioni**
-(duckduckgo, wikipedia, marginalia). Quel che sa fare la pagina — testo che si
-spezza e scorre, collegamenti, immagini, fogli di stile, tabelle, moduli,
-HTTPS, biscotti, JavaScript — sta nelle voci di «Novità» qui sopra, che sono
-il posto dove quel lavoro è raccontato per intero.
+The bar carries **two boxes**: the address and **Cerca**, which composes the
+query for the engine chosen in **File > Impostazioni** (duckduckgo, wikipedia,
+marginalia) by itself. What the page can do — text that wraps and scrolls,
+links, images, style sheets, tables, forms, HTTPS, cookies, JavaScript — is in
+the "What's new" entries above, which are where that work is told in full.
 
-| tasti | che cosa fanno |
+| keys | what they do |
 |---|---|
-| Ctrl+T, `target="_blank"`, `window.open()` | una scheda nuova |
-| Ctrl+clic su un collegamento | una scheda nuova, dietro |
-| Ctrl+N, Shift+clic | una finestra nuova (un secondo EXBrowser) |
-| tasto destro su un collegamento | Apri, in una scheda nuova, in una finestra nuova, Copia l'indirizzo |
-| Ctrl+Tab, Ctrl+W | la scheda dopo; chiude la scheda (l'ultima chiude la finestra) |
+| Ctrl+T, `target="_blank"`, `window.open()` | a new tab |
+| Ctrl+click on a link | a new tab, in the background |
+| Ctrl+N, Shift+click | a new window (a second EXBrowser) |
+| right button on a link | Open, in a new tab, in a new window, Copy the address |
+| Ctrl+Tab, Ctrl+W | next tab; closes the tab (the last one closes the window) |
 
-Le schede che non si guardano tengono l'indirizzo e la posizione, non la
-pagina: tornandoci la pagina si ricarica, dalla cache se c'è.
+Tabs you are not looking at keep their address and position, not the page:
+coming back reloads it, from the cache if it is there.
 
-### EX-IDE — l'ambiente di sviluppo visuale
+### EX-IDE — the visual development environment
 
-`/exwin/bin/exide [DIR]`. Con un argomento apre subito il progetto che sta in
-quella directory. Tre aree come in Visual Basic: a sinistra gli strumenti, in
-mezzo la maschera su cui si dispongono, a destra le proprietà di quello scelto;
-doppio clic su un controllo e si apre l'editor dentro la funzione che l'evento
-chiamerà.
+`/exwin/bin/exide [DIR]`. With an argument it opens the project living in that
+directory straight away. Three areas as in Visual Basic: the tools on the left,
+in the middle the form they are dropped onto, on the right the properties of
+the selected one; double-click a control and the editor opens inside the
+function its event will call.
 
-! **LA GIUNTURA FRA IL DISEGNO E IL CODICE È L'ID**, e c'era già: nel disegno
-il pulsante *è* `ID_PULSANTE1`, nel sorgente c'è `case ID_PULSANTE1:`. exide è
-fattibile qui più che altrove perché ExWin era già fatto a forma di VB6 — non
-c'è niente da inventare, c'è da *scrivere* quel che il disegno dice.
+! **THE JOINT BETWEEN THE DRAWING AND THE CODE IS THE ID**, and it was already
+there: in the drawing the button *is* `ID_PULSANTE1`, in the source there is
+`case ID_PULSANTE1:`. exide is feasible here more than elsewhere because ExWin
+was already shaped like VB6 — there is nothing to invent, there is what the
+drawing says to *write*.
 
-Un progetto sono quattro file, e la regola che decide se sopravvive è che il
-generato e lo scritto non si tocchino mai:
+A project is four files, and the rule that decides whether it survives is that
+the generated and the written never touch:
 
-| file | chi lo scrive |
+| file | who writes it |
 |---|---|
-| `finestra.dis` | solo exide: il disegno |
-| `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
-| `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
-| `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano, in fondo, e non riscrive mai quel che c'è |
+| `finestra.dis` | exide only: the drawing |
+| `finestra.h` | exide only: the ids, the pointers, the prototypes |
+| `finestra_gen.c` | exide only: creates the controls and dispatches the events |
+| `finestra.c` | **you only**: exide *adds* the missing handlers at the end, and never rewrites what is there |
 
-Gli altri sorgenti del progetto (`src/`) si aprono da **Strumenti > Files**, in
-una finestra con le **schede**: un file per scheda, «Apri...» o Ctrl+O per
-aggiungerne, e cambiando scheda il file si salva.
+The project's other sources (`src/`) open from **Strumenti > Files**, in a
+window with **tabs**: one file per tab, "Apri..." or Ctrl+O to add one, and
+switching tab saves the file.
 
-### La prova dei font
+### The font test
 
-`/exwin/bin/fontprova` disegna le stesse righe in TrueType a corpi diversi, ed
-è **fatta per essere fotografata**: le prove grafiche di questo sistema si
-misurano nei pixel. Il rasterizzatore è già confrontato con FreeType, ma quel
-confronto gira sull'host — dice che i glifi vengono giusti e non dice niente su
-`exfont.so` caricata a caldo, sulla cache, sulla fusione col fondo o sul fatto
-che i file dei font siano leggibili dal CD. Questa finestra prova il giro
-intero.
+`/exwin/bin/fontprova` draws the same lines in TrueType at different sizes, and
+is **made to be photographed**: this system's graphical tests are measured in
+pixels. The rasterizer has already been compared against FreeType, but that
+comparison runs on the host — it says the glyphs come out right and says
+nothing about `exfont.so` loaded at run time, about the cache, about blending
+with the background, or about the font files being readable from the CD. This
+window tests the whole round trip.
 
-! **IN CIMA C'È LA RIGA COL FONT DI SISTEMA, e serve da metro:** se il TrueType
-non si carica restano solo quella e le scritte di errore, e si capisce subito
-dove si è fermato invece di guardare una finestra vuota.
+! **THE TOP LINE USES THE SYSTEM FONT, AND IT IS THE YARDSTICK:** if TrueType
+does not load, only that line and the error messages remain, and you see at
+once where it stopped instead of staring at an empty window.
 
-### L'orologio
+### The clock
 
-`/exwin/bin/orologio` mette data e ora nell'angolo della barra, e sta **sopra a
-tutte** le finestre perché è un pezzo della barra. È un **processo a parte**, e
-non un filo dentro il program manager: quel che si vuole è che l'ora si
-aggiorni qualunque cosa faccia il resto del sistema, e un filo condividerebbe
-con lui la connessione al server e la coda dei messaggi — un program manager
-occupato sarebbe un orologio fermo.
+`/exwin/bin/orologio` puts date and time in the corner of the bar, and stays
+**above every** window because it is a piece of the bar. It is a **separate
+process**, not a thread inside the program manager: what you want is the time
+to keep up whatever the rest of the system is doing, and a thread would share
+the server connection and the message queue with it — a busy program manager
+would be a stopped clock.
 
-! **L'ORA È QUELLA UNIVERSALE**, e va detto invece di lasciarlo scoprire: la
-libc dichiara che `localtime()` è identica a `gmtime()`, perché questo sistema
-non sa in che fuso si trovi né ha un posto dove tenerlo. Un'ora locale
-inventata sarebbe peggio di quella universale, che almeno è vera.
+! **THE TIME IS UNIVERSAL TIME**, and that has to be said rather than left to
+be discovered: the libc declares `localtime()` identical to `gmtime()`, because
+this system does not know what zone it is in nor has anywhere to keep it. A
+made-up local time would be worse than universal time, which is at least true.
 
 ---
 
-## Inizializzare un disco rigido: /bin/fdisk e /bin/mkfs
+## Setting up a hard disk: /bin/fdisk and /bin/mkfs
 
-Il ciclo completo, da disco vergine a sistema avviabile:
+The full cycle, from a blank disk to a bootable system:
 
 ```
-disk                        cosa vede il sistema
-fdisk hd0                   crea le partizioni, marca attiva la prima
-mkfs -t ext2 -L exos hd0p1  ci scrive dentro un filesystem
-mount hd0p1 /disk           montalo
-install /disk               rendilo avviabile
+disk                        what the system can see
+fdisk hd0                   create the partitions, mark the first active
+mkfs -t ext2 -L exos hd0p1  write a filesystem into it
+mount hd0p1 /disk           mount it
+install /disk               make it bootable
 ```
 
-Poi si toglie il floppy e si riavvia. Funziona sia su **FAT16/FAT32** sia su
+Then remove the floppy and reboot. It works both on **FAT16/FAT32** and on
 **ext2**.
 
-### La mappa dei settori, e perché il kernel ne ha una lista
+### The sector map, and why the kernel keeps a list of it
 
-Il settore di avvio non sa leggere alcun filesystem: in 512 byte, tolti BPB e
-firma, non ci sta. Riceve LBA e lunghezza di Stage 2 e del kernel, e legge
-settori. È `install` — che gira *dentro* EX-OS, dove i driver ci sono già — a
-comporre quella mappa.
+The boot sector cannot read any filesystem: in 512 bytes, minus the BPB and
+the signature, there is no room. It is handed the LBA and length of Stage 2
+and of the kernel, and it reads sectors. It is `install` — which runs
+*inside* EX-OS, where the drivers already exist — that builds that map.
 
-! Il prezzo è lo stesso patto di LILO: **ricopiare kernel o Stage 2 obbliga a
-rilanciare `install`.**
+! The price is the same bargain LILO made: **copying a new kernel or Stage 2
+means running `install` again.**
 
-### `install` verifica prima di sostituire (dal 0.161)
+### `install` verifies before replacing (since 0.161)
 
-Rilanciarlo su un sistema già installato **riscrive ogni file**, kernel
-compreso, e rilegge ognuno per confrontarne la dimensione. Nel resoconto `+`
-è creato, `~` sostituito, `!` errore.
+Running it again on an already installed system **rewrites every file**, the
+kernel included, and reads each one back to compare its size. In the report
+`+` means created, `~` replaced, `!` error.
 
-Fino alla 0.147 i file già presenti venivano saltati: un aggiornamento
-copiava solo i file nuovi, lasciava il kernel vecchio e poi riscriveva la
-mappa dei settori *per quello* — il disco ripartiva con la versione di
-prima e l'installatore diceva «completata». Le directory continuano a non
-essere ricreate, e ciò che sul volume non fa parte del sistema resta dov'è:
-`install` aggiorna, non azzera.
+Up to 0.147 files already present were skipped: an update copied only the new
+files, left the old kernel in place and then rewrote the sector map *for
+that one* — the disk booted the previous version again and the installer said
+«completed». Directories are still not recreated, and whatever on the volume
+is not part of the system stays where it is: `install` updates, it does not
+wipe.
 
-**E fino alla 0.160 distruggeva prima di sapere se ce l'avrebbe fatta.**
-Apriva `/boot/kernel.bin` con `O_TRUNC`, ci scriveva il kernel nuovo, e
-*poi* chiedeva la mappa dei settori. Su FAT — dove la mappa ammette **un
-solo intervallo** — un kernel cresciuto di qualche KB non entrava più nel
-buco lasciato dal vecchio, finiva in due tratti, `bootinstall` rifiutava
-giustamente:
+**And up to 0.160 it destroyed before knowing whether it would succeed.** It
+opened `/boot/kernel.bin` with `O_TRUNC`, wrote the new kernel into it, and
+*then* asked for the sector map. On FAT — where the map allows **a single
+extent** — a kernel that had grown by a few KB no longer fitted in the hole
+left by the old one, ended up in two runs, and `bootinstall` rightly refused:
 
 ```
 ! installazione dell'avvio fallita: file frammentato (errore -29)
 ```
 
-…ma a quel punto il sistema che funzionava non c'era più, il settore di
-avvio puntava ancora alla mappa vecchia, e **il disco non ripartiva**. Su
-ext2 non si vedeva: lì la mappa regge 12 intervalli.
+…but by then the system that worked was gone, the boot sector still pointed
+at the old map, and **the disk would not boot**. On ext2 it did not show:
+there the map holds 12 extents.
 
-Ora i file nuovi si scrivono **con nomi temporanei mentre i vecchi sono
-ancora al loro posto** — quindi finiscono nella coda libera, contigua. Poi
-si chiede al kernel se sono mappabili. Solo se la risposta è sì si cancella
-e si rinomina:
+The new files are now written **under temporary names while the old ones are
+still in place** — so they land in the free tail, contiguous. Then the kernel
+is asked whether they are mappable. Only if the answer is yes are the old
+ones deleted and the new ones renamed:
 
 ```
 Avvio (scritti a parte e verificati prima di sostituire)
@@ -4682,30 +4647,30 @@ Avvio (scritti a parte e verificati prima di sostituire)
   ~ /disk/boot/kernel.bin  (verificato, poi sostituito)
 ```
 
-Lo scenario che distruggeva il disco ora **riesce**. Quando invece non si
-può fare, si legge `Il sistema gia' installato NON e' stato toccato` e il
-disco resta avviabile.
+The scenario that used to destroy the disk now **succeeds**. When it cannot
+be done, you read `Il sistema gia' installato NON e' stato toccato` and the
+disk stays bootable.
 
-> ! **È servita una primitiva che mancava.** Lo scambio non si poteva
-> fare: `rename()` era copia+cancella, quindi riallocava i blocchi e
-> mandava a monte la verifica appena fatta. Vedi *La rinomina che non
-> sposta i dati* più avanti.
+> ! **A missing primitive was needed.** The swap could not be done:
+> `rename()` was copy+delete, so it reallocated the blocks and threw away the
+> verification just performed. See *The rename that does not move the data*
+> further down.
 
-**`kernel.cfg` non si sovrascrive più.** È l'unico file dell'installatore
-che appartiene a chi usa il sistema e non al sistema: montaggi automatici,
-`verboseboot`, shell, variabili d'ambiente. Un aggiornamento non deve
-riportarli indietro in silenzio. Se manca si installa, se c'è si lascia e
-lo si dice.
+**`kernel.cfg` is no longer overwritten.** It is the one installer file that
+belongs to whoever uses the system rather than to the system: automatic
+mounts, `verboseboot`, shell, environment variables. An update must not put
+them back silently. If it is missing it gets installed, if it is there it is
+left alone and that is said out loud.
 
-### `install -a` — aggiornare invece di reinstallare
+### `install -a` — updating instead of reinstalling
 
 ```
 install -a /disk
 ```
 
-Confronta il volume montato con il supporto di avvio, **elenca cosa
-cambierebbe**, chiede conferma e solo allora scrive. `+` è un file che sul
-disco non c'è, `~` uno che c'è ma è diverso.
+It compares the mounted volume with the boot medium, **lists what would
+change**, asks for confirmation and only then writes. `+` is a file that is
+not on the disk, `~` one that is there but different.
 
 ```
 Confronto di /disk con il supporto di avvio
@@ -4718,53 +4683,54 @@ Confronto di /disk con il supporto di avvio
 Procedo? [si/no]
 ```
 
-L'elenco viene **prima** della domanda perché «aggiorno 3 file?» e «aggiorno
-47 file?» sono due decisioni diverse: un aggiornamento che tocca tutto quando
-ci si aspettava un ritocco è il momento in cui ci si accorge di aver montato
-il volume sbagliato.
+The list comes **before** the question because "update 3 files?" and "update
+47 files?" are two different decisions: an update that touches everything
+when you expected a small change is the moment you realise you mounted the
+wrong volume.
 
-> ! La regola è **«la sorgente è più nuova»**, non «le date sono diverse».
-> Copiare un file non ne conserva la data: la copia sul disco nasce con l'ora
-> corrente, quindi con la regola ingenua ogni file risulterebbe da aggiornare
-> a ogni esecuzione, per sempre, anche subito dopo averlo appena copiato.
+> ! The rule is **"the source is newer"**, not "the dates differ". Copying a
+> file does not preserve its date: the copy on the disk is born with the
+> current time, so under the naive rule every file would come out as needing
+> an update on every run, forever, even right after being copied.
 
-La dimensione si confronta **per prima**, ed è il controllo che conta di più:
-un file scritto a metà ha la stessa data e una dimensione diversa, e senza
-quel confronto il volume resta rotto senza che nessuno lo dica. Se una delle
-due date è zero — cioè «questo volume le date non le tiene» — si guarda solo
-la dimensione.
+Size is compared **first**, and it is the check that matters most: a
+half-written file has the same date and a different size, and without that
+comparison the volume stays broken with nobody saying so. If either date is
+zero — that is, "this volume does not keep dates" — only the size is looked
+at.
 
-Senza `-a`, `install` continua a fare l'installazione completa: riscrive
-tutto, che è quello che serve la prima volta e dopo un `mkfs`.
+Without `-a`, `install` still does the full installation: it rewrites
+everything, which is what you want the first time and after a `mkfs`.
 
-Per il kernel la mappa è una **lista** di intervalli, non uno solo. Su ext2 un
-file non è quasi mai contiguo, e non per frammentazione: il blocco di
-*puntatori* viene allocato in mezzo ai dati, perché serve prima del tredicesimo
-blocco. Un kernel da 147 KB appena copiato sta così:
+For the kernel the map is a **list** of extents, not a single one. On ext2 a
+file is almost never contiguous, and not because of fragmentation: the
+*pointer* block is allocated in the middle of the data, because it is needed
+before the thirteenth block. A freshly copied 147 KB kernel looks like this:
 
 ```
 (0-11):74-85, (IND):86, (12-144):87-219
 ```
 
-Stage 2 invece resta un intervallo solo: sta in ~1 KB, cioè dentro i 12 blocchi
-diretti, dove nessun indiretto si è ancora infilato — ed è il pezzo che va
-trovato da 512 byte di codice, quindi la sua mappa deve stare in sei byte.
+Stage 2, on the other hand, stays a single extent: it fits in ~1 KB, that is,
+within the 12 direct blocks, where no indirect has slipped in yet — and it is
+the piece that has to be found by 512 bytes of code, so its map must fit in
+six bytes.
 
-Su FAT la lista ha una voce sola: il formato è lo stesso per i due filesystem,
-così Stage 2 non deve sapere da dove sta caricando.
+On FAT the list has a single entry: the format is the same for both
+filesystems, so Stage 2 does not have to know what it is loading from.
 
-### `chkdsk` — controllo e riparazione di un volume FAT
+### `chkdsk` — checking and repairing a FAT volume
 
 ```
-chkdsk <partizione>       controlla e riferisce, non scrive un settore
-chkdsk -r <partizione>    controlla e corregge
+chkdsk <partition>       checks and reports, does not write a sector
+chkdsk -r <partition>    checks and repairs
 ```
 
-Controlla, in quest'ordine — ogni passo si fida solo di quelli già fatti:
-il BPB e la coerenza dei suoi numeri, le copie della FAT, le catene di
-cluster percorrendo tutte le directory (condivisi, catene fuori dal volume,
-anelli), la dimensione dichiarata di ogni file contro quella della sua
-catena, i nomi lunghi, `.` e `..`, e i cluster perduti.
+It checks, in this order — each step trusts only the ones already done: the
+BPB and the consistency of its numbers, the FAT copies, the cluster chains by
+walking every directory (shared clusters, chains outside the volume, loops),
+each file's declared size against that of its chain, the long names, `.` and
+`..`, and the lost clusters.
 
 ```
 tipo FAT32 — 130556 cluster da 8 settori, 2 FAT da 1021 settori
@@ -4773,190 +4739,191 @@ tipo FAT32 — 130556 cluster da 8 settori, 2 FAT da 1021 settori
 ! 3 cluster risultano occupati ma nessun file li nomina (12 KB)
 ```
 
-> ! **Lavora solo su una partizione smontata**, e non è un fastidio da
-> aggirare: sopra un volume montato c'è una cache write-back, metà delle
-> modifiche recenti sta in RAM. Un controllore che leggesse i settori
-> grezzi segnalerebbe incoerenze inventate, e riparando riscriverebbe
-> settori che il primo `sync` ricoprirebbe.
+> ! **It only works on an unmounted partition**, and that is not an
+> annoyance to work around: above a mounted volume there is a write-back
+> cache, and half of the recent changes are in RAM. A checker reading the raw
+> sectors would report invented inconsistencies, and while repairing would
+> rewrite sectors that the first `sync` would cover right back up.
 
-> ! **Senza `-r` non scrive un solo settore.** Un controllore che ripara
-> di sua iniziativa trasforma un volume danneggiato in un volume
-> danneggiato *diversamente*, senza che nessuno abbia visto com'era.
+> ! **Without `-r` it does not write a single sector.** A checker that
+> repairs on its own initiative turns a damaged volume into a *differently*
+> damaged volume, without anyone having seen what it looked like.
 
-Alcune scelte che non sono ovvie:
+A few choices that are not obvious:
 
-- **il tipo si ricava dal numero di cluster**, non dalla stringa
-  `"FAT16   "` nel settore di avvio: quella è decorativa e nessuno la
-  verifica mai, quindi su un volume malandato è proprio un campo di cui non
-  fidarsi;
-- **FAT12 si legge con due settori in mano**: una voce occupa dodici bit e
-  può cominciare nell'ultimo byte di un settore. In scrittura, se è a
-  cavallo, **rinuncia e lo dice** invece di scrivere mezzo valore — sarebbe
-  un danno nuovo causato dallo strumento che doveva ripararne uno;
-- **su FAT32 i quattro bit alti di una voce non sono nostri**: si
-  conservano;
-- **la dimensione si confronta con un intervallo**, non con un numero: un
-  file di N byte occupa `ceil(N/cluster)` cluster, e pretendere
-  l'uguaglianza esatta segnalerebbe come guasto quasi ogni file;
-- **i cluster condivisi non si riparano da soli**: quale dei due file abbia
-  diritto ai dati non è deducibile, e ripararli d'ufficio significherebbe
-  scegliere a caso quale rovinare;
-- **i perduti si liberano, non si raccolgono in `FOUND.000`**: sarebbe una
-  collezione di frammenti senza nome né struttura, che occupa lo stesso
-  spazio che si voleva recuperare.
+- **the type is derived from the cluster count**, not from the `"FAT16   "`
+  string in the boot sector: that one is decorative and nobody ever checks
+  it, so on a sick volume it is precisely the field not to trust;
+- **FAT12 is read with two sectors in hand**: an entry is twelve bits wide
+  and may start in the last byte of a sector. When writing, if it straddles
+  the boundary, it **gives up and says so** instead of writing half a value —
+  that would be fresh damage caused by the tool that was supposed to repair
+  some;
+- **on FAT32 the top four bits of an entry are not ours**: they are
+  preserved;
+- **size is compared against a range**, not against a number: a file of N
+  bytes occupies `ceil(N/cluster)` clusters, and demanding exact equality
+  would flag almost every file as broken;
+- **shared clusters are not repaired automatically**: which of the two files
+  is entitled to the data cannot be deduced, and repairing them by decree
+  would mean picking at random which one to ruin;
+- **lost clusters are freed, not collected into `FOUND.000`**: that would be
+  a collection of fragments with neither name nor structure, taking up the
+  very space you wanted to recover.
 
-Sui **nomi lunghi**: una fila di voci finte precede quella 8.3, in ordine
-rovesciato, legata a essa da un solo checksum.
+On **long names**: a row of fake entries precedes the 8.3 one, in reverse
+order, tied to it by a single checksum.
 
-> ! Chi rinomina toccando solo la voce 8.3 — e **`rename` di EX-OS fa
-> esattamente questo** — lascia il nome lungo a nominare un file che non è
-> più quello. Non è un caso di scuola: è un difetto che questo sistema sa
-> produrre, ed è il motivo per cui il controllo serve qui.
+> ! Whoever renames by touching only the 8.3 entry — and **EX-OS's `rename`
+> does exactly that** — leaves the long name naming a file that is no longer
+> the same one. It is not a textbook case: it is a defect this system knows
+> how to produce, and it is the reason the check belongs here.
 
-### I nomi si creano in minuscolo
+### Names are created in lower case
 
-Il kernel cerca `/bin/sh`, `/boot/kernel.cfg`, `/dev/kbd.drv`. Su FAT il caso
-non conta — il driver mette in maiuscolo sia ciò che scrive sia ciò che cerca —
-ma su **ext2 `BIN` e `bin` sono due directory diverse**, e un sistema installato
-in `BIN` non troverebbe la propria shell. `install` crea tutto in minuscolo,
-nomi dei file compresi.
+The kernel looks for `/bin/sh`, `/boot/kernel.cfg`, `/dev/kbd.drv`. On FAT
+case does not matter — the driver upper-cases both what it writes and what it
+looks for — but on **ext2 `BIN` and `bin` are two different directories**, and
+a system installed into `BIN` would not find its own shell. `install` creates
+everything in lower case, file names included.
 
-### /bin/fdisk — partizionatore MBR
-
-```
-fdisk            elenca i dischi
-fdisk hd0        apre la sessione sul disco 0
-
-  p  mostra tabella e spazio libero    a  commuta il flag avviabile
-  n  crea una partizione               w  SCRIVE (chiede conferma)
-  d  cancella una partizione           q  esce senza scrivere
-  t  cambia il tipo
-```
-
-**Niente tocca il disco fino a `w`.** Una tabella scritta un pezzo alla volta
-passa per stati in cui le partizioni si sovrappongono; se la macchina si
-spegne lì in mezzo, resta sbagliata.
-
-È un programma separato da `disk`, che resta in **sola lettura**: è il comando
-che si lancia senza pensarci su un disco a cui si tiene, e un programma che a
-seconda degli argomenti guarda *oppure* riscrive perde quella garanzia per
-tutti gli usi.
-
-Le **politiche** stanno in `fdisk` (allineamento a 1 MiB, primo settore utile
-2048, valori predefiniti). Le **regole** stanno nel kernel e non si aggirano:
-niente sovrapposizioni, niente partizioni oltre la fine del disco, niente
-scrittura su un disco GPT o su una partizione montata.
-
-Non gestisce le partizioni **logiche** e non scrive EBR: le mostra, ma la voce
-estesa che le contiene è bloccata — spostarla lascerebbe la loro catena viva
-sul disco e irraggiungibile.
-
-`fdisk` non formatta. Una partizione appena creata contiene i byte che c'erano
-prima in quei settori: non è vuota, è non inizializzata.
-
-### /bin/mkfs — formattatore FAT16/FAT32/ext2
+### /bin/fdisk — MBR partitioner
 
 ```
-mkfs -t fat32 -L ETICHETTA hd0p1
+fdisk            list the disks
+fdisk hd0        open a session on disk 0
+
+  p  show the table and the free space    a  toggle the bootable flag
+  n  create a partition                   w  WRITE (asks for confirmation)
+  d  delete a partition                   q  quit without writing
+  t  change the type
+```
+
+**Nothing touches the disk until `w`.** A table written a piece at a time
+passes through states in which the partitions overlap; if the machine dies in
+the middle, it stays wrong.
+
+It is a separate program from `disk`, which stays **read-only**: that is the
+command you run without thinking twice on a disk you care about, and a
+program that depending on its arguments either looks *or* rewrites loses that
+guarantee for every use.
+
+The **policies** live in `fdisk` (1 MiB alignment, first usable sector 2048,
+defaults). The **rules** live in the kernel and cannot be worked around: no
+overlaps, no partitions past the end of the disk, no writing to a GPT disk or
+to a mounted partition.
+
+It does not handle **logical** partitions and does not write EBRs: it shows
+them, but the extended entry containing them is locked — moving it would
+leave their chain alive on the disk and unreachable.
+
+`fdisk` does not format. A freshly created partition contains the bytes that
+were in those sectors before: it is not empty, it is uninitialised.
+
+### /bin/mkfs — FAT16/FAT32/ext2 formatter
+
+```
+mkfs -t fat32 -L LABEL hd0p1
 mkfs -t fat16 hd0p2
-mkfs -t ext2  -L dati hd0p3
+mkfs -t ext2  -L data hd0p3
 ```
 
-La partizione **non dev'essere montata**: sopra un volume montato c'è una
-cache write-back, e scriverci sotto significa che il primo `sync` ci ricopre i
-settori vecchi.
+The partition **must not be mounted**: above a mounted volume there is a
+write-back cache, and writing underneath it means the first `sync` will cover
+your work with the old sectors.
 
-Il numero che conta è il **conteggio dei cluster**, e `mkfs` lo mostra accanto
-alla soglia. Il tipo di un volume FAT non è scritto da nessuna parte: la
-stringa `"FAT16   "` nel settore di avvio è decorativa, e il tipo si deduce dal
-numero di cluster dell'area dati (< 4085 → FAT12, < 65525 → FAT16, oltre →
-FAT32). Un formattatore che sceglie male i settori per cluster produce un
-volume che *dice* FAT16 e *cade* nella banda FAT12, e nessuno se ne accorge
-finché i dati non sono già rovinati.
+The number that matters is the **cluster count**, and `mkfs` shows it next to
+the threshold. A FAT volume's type is not written anywhere: the `"FAT16   "`
+string in the boot sector is decorative, and the type is deduced from the
+cluster count of the data area (< 4085 → FAT12, < 65525 → FAT16, above →
+FAT32). A formatter that picks the sectors per cluster badly produces a
+volume that *says* FAT16 and *falls* into the FAT12 band, and nobody notices
+until the data is already ruined.
 
-Il settore di avvio vecchio viene azzerato **per primo** e quello nuovo scritto
-**per ultimo**: in mezzo il volume non è riconoscibile da nessuno. L'ordine
-opposto lascerebbe, su una formattazione interrotta, un settore di avvio che
-descrive il filesystem vecchio sopra tabelle FAT già azzerate — un volume che
-si monta, sembra funzionare e restituisce file vuoti.
+The old boot sector is zeroed **first** and the new one written **last**: in
+between, the volume is recognisable to nobody. The opposite order would
+leave, on an interrupted format, a boot sector describing the old filesystem
+on top of already-zeroed FAT tables — a volume that mounts, seems to work,
+and returns empty files.
 
-`mkfs` non tocca la tabella delle partizioni, e non per scelta: le syscall
-`SYS_BLKREAD`/`SYS_BLKWRITE` accettano solo nomi di **partizione**, e il
-settore 0 non appartiene a nessuna partizione. Non esiste una coppia
-(nome, LBA) che lo raggiunga. Se il byte di tipo nella tabella contraddice il
-filesystem creato, `mkfs` lo segnala e dice come correggerlo con `fdisk`.
+`mkfs` does not touch the partition table, and not by choice: the
+`SYS_BLKREAD`/`SYS_BLKWRITE` syscalls only accept **partition** names, and
+sector 0 belongs to no partition. There is no (name, LBA) pair that reaches
+it. If the type byte in the table contradicts the filesystem created, `mkfs`
+points it out and says how to fix it with `fdisk`.
 
-### ext2 — creazione e lettura
+### ext2 — creating and reading
 
-`mkfs -t ext2` crea un ext2 revisione 1 (`filetype`, `sparse_super`) con
-blocchi da 1024. È scritto **dalla specifica**, non portato da e2fsprogs né dal
-driver di Linux: quest'ultimo non è un modulo che legge ext2, è un modulo che
-*traduce* ext2 nel VFS di Linux, e portarlo significherebbe portare quel VFS.
+`mkfs -t ext2` creates a revision 1 ext2 (`filetype`, `sparse_super`) with
+1024-byte blocks. It is written **from the specification**, not ported from
+e2fsprogs nor from Linux's driver: the latter is not a module that reads
+ext2, it is a module that *translates* ext2 into Linux's VFS, and porting it
+would mean porting that VFS.
 
-`kernel/fs/ext2.c` lo legge **e lo scrive**: `mkdir`, `cp`, `delete`, `rmdir`.
-La lettura è stata scritta e verificata per prima, da sola — leggere richiede di
-capire il formato, scrivere richiede di non romperlo mai, e con un lettore già
-provato contro volumi fatti da `mke2fs` ogni errore di scrittura si vede subito
-per quello che è.
+`kernel/fs/ext2.c` reads it **and writes it**: `mkdir`, `cp`, `delete`,
+`rmdir`. Reading was written and verified first, on its own — reading
+requires understanding the format, writing requires never breaking it, and
+with a reader already tested against volumes made by `mke2fs` every write bug
+shows up immediately for what it is.
 
-### /bin/trunc — cambia la dimensione di un file
+### /bin/trunc — change a file's size
 
 ```
-trunc <file> <byte>     suffissi K e M ammessi
+trunc <file> <bytes>     K and M suffixes accepted
 ```
 
-**Allungare non occupa spazio** su ext2: lo spazio in mezzo diventa un *buco*
-che si legge come zeri, e i blocchi si materializzano solo quando ci si scrive.
-Un file portato a 2 MB così occupa un blocco solo. Su FAT il kernel alloca sul
-serio, perché FAT non sa rappresentare un buco.
+**Growing takes no space** on ext2: the space in between becomes a *hole*
+that reads as zeros, and the blocks materialise only when written to. A file
+grown to 2 MB this way occupies a single block. On FAT the kernel allocates
+for real, because FAT cannot represent a hole.
 
-**Accorciare è distruttivo e non chiede conferma**, per la stessa ragione per
-cui non la chiede `delete` su un nome preciso: chi scrive il nome di un file e
-un numero più piccolo della sua dimensione ha già detto cosa vuole. La conferma
-serve quando il comando fa più di quanto l'utente abbia nominato.
+**Shrinking is destructive and does not ask for confirmation**, for the same
+reason `delete` does not ask on an exact name: whoever types a file name and
+a number smaller than its size has already said what they want. Confirmation
+is for when the command does more than the user named.
 
-Sul floppy risponde `-38` (ENOSYS): `fat12.c` non ha un troncamento, ed è il
-driver del volume di avvio — la strada collaudata che non si tocca senza una
-ragione forte.
+On the floppy it answers `-38` (ENOSYS): `fat12.c` has no truncation, and it
+is the boot volume's driver — the proven road you do not touch without a
+strong reason.
 
-! ext2 non ha un giornale e questo driver non ne inventa uno: un'interruzione a
-metà di un'operazione può lasciare i contatori dei liberi indietro rispetto alle
-bitmap, ed è quello che serve `e2fsck`. Ciò che **non** può succedere è che un
-blocco risulti libero mentre è già in uso — le bitmap si scrivono sempre prima
-che il blocco venga consegnato.
+! ext2 has no journal and this driver does not invent one: an interruption
+in the middle of an operation can leave the free counters behind the bitmaps,
+and that is what `e2fsck` is for. What **cannot** happen is a block looking
+free while already in use — the bitmaps are always written before the block
+is handed out.
 
-**Nomi lunghi**: fino a 255 caratteri, il massimo di ext2. Non era solo la
-struttura `VfsDirEntry` da allargare — il nome attraversa sei tetti in fila
-(driver, VFS, ABI della syscall, lunghezza dei percorsi, argomenti di `spawn`,
-riga della tastiera) e alzarne uno solo avrebbe spostato il taglio di un passo.
-Un nome troncato non è un nome accorciato: è un nome che non apre niente.
+**Long names**: up to 255 characters, ext2's maximum. It was not just the
+`VfsDirEntry` structure that had to grow — a name crosses six ceilings in a
+row (driver, VFS, syscall ABI, path length, `spawn` arguments, keyboard line)
+and raising only one of them would have moved the cut by one step. A
+truncated name is not a shortened name: it is a name that opens nothing.
 
-Su FAT i nomi restano 8.3; il campo è largo per il filesystem più generoso.
-Sopra i 511 caratteri una riga di comando non si può digitare, ed è il limite di
-un singolo messaggio IPC fra tastiera e shell.
+On FAT names stay 8.3; the field is sized for the most generous filesystem.
+Above 511 characters a command line cannot be typed, and that is the limit of
+a single IPC message between the keyboard and the shell.
 
-Il driver legge e scrive anche i volumi fatti da `mke2fs`: la dimensione del blocco
-(1024/2048/4096), `s_first_data_block` (1 o 0 a seconda) e la dimensione
-dell'inode (128 o 256) vengono tutte dal superblocco, mai date per scontate.
+The driver reads and writes volumes made by `mke2fs` too: the block size
+(1024/2048/4096), `s_first_data_block` (1 or 0 depending) and the inode size
+(128 or 256) all come from the superblock, never taken for granted.
 
-Rifiuta invece di provarci quando trova una funzionalità **incompat** che non
-conosce — un volume ext4 con extent ha `i_block` che non contiene numeri di
-blocco, e leggerlo "come se" restituirebbe dati presi a caso dal disco senza
-che nulla lo segnali.
+It refuses to try, however, when it finds an **incompat** feature it does not
+know — an ext4 volume with extents has an `i_block` that does not contain
+block numbers, and reading it "as if" would return data picked at random from
+the disk with nothing flagging it.
 
 ---
 
-### `install -m` / `install -t` — minimale, oppure con i componenti
+### `install -m` / `install -t` — minimal, or with components
 
 ```
-install /disk          mostra i componenti e li chiede uno per uno
-install -m /disk       solo il sistema minimale, nessuna domanda
-install -t /disk       sistema e tutti i componenti, nessuna domanda
+install /disk          shows the components and asks about them one by one
+install -m /disk       minimal system only, no questions
+install -t /disk       system and every component, no questions
 ```
 
-L'installatore guarda la radice del supporto di avvio e chiama **sistema
-minimale** un elenco chiuso: `bin`, `boot`, `lib`, `dev`, `drivers`. Qualunque
-altra directory è un componente, e viene mostrata e chiesta:
+The installer looks at the root of the boot medium and calls **minimal system**
+a closed list: `bin`, `boot`, `lib`, `dev`, `drivers`. Any other directory is a
+component, and it is shown and asked about:
 
 ```
 ===============================================================
@@ -4979,116 +4946,119 @@ Uno per volta:
   /exwin ? [si/no] si
 ```
 
-! **AGGIUNGERE UN PACCHETTO NON RICHIEDE DI TOCCARE L'INSTALLATORE:** basta
-metterne la directory sul supporto. Un elenco scritto dentro `install` sarebbe
-una seconda verità accanto al contenuto della directory, e le due divergono al
-primo pacchetto aggiunto o tolto. **Chi prepara un pacchetto non ha i sorgenti
-dell'installatore.**
+! **ADDING A PACKAGE DOES NOT REQUIRE TOUCHING THE INSTALLER:** you put its
+directory on the medium, and that is all. A list written inside `install` would
+be a second truth beside the directory's contents, and the two diverge the
+first time a package is added or removed. **Whoever prepares a package does not
+have the installer's sources.**
 
-! **I COMPONENTI SI COPIANO CON TUTTI I LORO LIVELLI.** `/exwin` non contiene
-file, contiene `bin/ lib/ dev/`: copiarlo a un livello solo darebbe una
-directory vuota **e nessun errore**, cioè un'installazione che sembra riuscita.
+! **COMPONENTS ARE COPIED WITH ALL THEIR LEVELS.** `/exwin` contains no files,
+it contains `bin/ lib/ dev/`: copying it one level deep would give an empty
+directory **and no error**, that is, an installation that looks successful.
 
-! **E LA SCELTA SI FA PRIMA DI SCRIVERE**, non a metà strada: chiedere dopo aver
-sostituito il kernel vorrebbe dire che rispondere «annulla» non annulla più
-niente.
+! **AND THE CHOICE IS MADE BEFORE ANYTHING IS WRITTEN**, not halfway: asking
+after the kernel has been replaced would mean that answering "cancel" no longer
+cancels anything.
 
-Gli script che installano senza nessuno davanti — `tools/mkhd.sh` — usano `-t`.
-Senza il flag l'installatore si fermerebbe su una domanda a cui nessuno
-risponde, e la prova direbbe «l'installazione non è arrivata in fondo»: un
-messaggio che non somiglia alla sua causa.
+Scripts that install with nobody watching — `tools/mkhd.sh` — use `-t`. Without
+the flag the installer would stop on a question nobody answers, and the test
+would report "the installation did not get to the end": a message that does not
+resemble its cause.
 
 ---
 
-## La libc: da minimale a ospitata
+## The libc: from minimal to hosted
 
-Fino alla 0.145 `lib/libc.c` era una libreria da programma di servizio: `printf`,
-le syscall e poco altro. Da agosto 2026 è la base su cui si può portare del
-software scritto per un sistema POSIX — a cominciare da un compilatore.
+Up to 0.145 `lib/libc.c` was a utility-program library: `printf`, the
+syscalls and little else. Since August 2026 it is the base on which software
+written for a POSIX system can be ported — starting with a compiler.
 
-### L'allocatore, che è il pezzo che mancava davvero
+### The allocator, which is the piece that was really missing
 
-`free()` era una funzione **vuota**, con un TODO al posto del corpo, e `malloc()`
-chiamava `sbrk` a ogni allocazione. Per i programmi di `/bin` non si notava:
-allocano poche volte e poi escono. Per qualunque cosa lavori su una struttura ad
-albero — un parser, un compilatore — significava crescere fino a esaurire lo
-spazio senza aver mai tenuto in mano più di qualche KB. E `realloc()` copiava
-`size` byte da un blocco di cui non conosceva la dimensione: ingrandire leggeva
-**oltre la fine**.
+`free()` was an **empty** function, with a TODO where the body should be, and
+`malloc()` called `sbrk` on every allocation. For the programs in `/bin` it
+did not show: they allocate a few times and then exit. For anything working
+on a tree structure — a parser, a compiler — it meant growing until the space
+ran out without ever having held more than a few KB. And `realloc()` copied
+`size` bytes from a block whose size it did not know: growing read **past the
+end**.
 
-Ora i blocchi stanno in una lista in ordine di indirizzo, `free()` li rende
-riusabili e li **fonde** con i vicini liberi. La prova che conta sta in
-`/bin/libctest`: 2000 `malloc`/`free` in ciclo non fanno crescere l'heap di un
-byte.
+Now the blocks live in a list in address order, `free()` makes them reusable
+and **merges** them with free neighbours. The proof that counts is in
+`/bin/libctest`: 2000 `malloc`/`free` in a loop do not grow the heap by a
+single byte.
 
-### Stdio bufferizzato, con una politica diversa da Unix
+### Buffered stdio, with a different policy from Unix
 
-C'erano `printf` e `putchar` — e `putchar` faceva **una syscall per carattere**.
-Ora ci sono i `FILE*` (`fopen`, `fread`, `fwrite`, `fseek`, `ftell`, `fgets`,
-`fprintf`, …), e un solo formattatore serve `printf`, `fprintf`, `sprintf` e
-`snprintf`.
+There were `printf` and `putchar` — and `putchar` made **one syscall per
+character**. Now there are `FILE*`s (`fopen`, `fread`, `fwrite`, `fseek`,
+`ftell`, `fgets`, `fprintf`, …), and a single formatter serves `printf`,
+`fprintf`, `sprintf` and `snprintf`.
 
-I file su disco sono bufferizzati a 4 KB. `stdout` e `stderr` **no**: sono
-bufferizzati *dentro* la singola chiamata e svuotati alla sua fine. Non è il line
-buffering di Unix, ed è deliberato — con quello, il prompt della shell
-(`ex-os:/> `, senza newline) resterebbe nel buffer, e `gfedit` mostrerebbe
-l'ultima riga solo dopo il tasto successivo. Unix se la cava perché leggere da
-stdin svuota stdout; qui `gfedit` non legge da stdin, parla via IPC con il
-servizio `kbd`, quindi quella convenzione non lo salverebbe. Svuotare a fine
-chiamata elimina il problema e conserva quasi tutto il guadagno: un `printf`
-costa una syscall invece di ottanta.
+Files on disk are buffered at 4 KB. `stdout` and `stderr` are **not**: they
+are buffered *within* the single call and flushed at its end. This is not
+Unix's line buffering, and it is deliberate — with that, the shell prompt
+(`ex-os:/> `, with no newline) would stay in the buffer, and `gfedit` would
+show the last line only after the next keystroke. Unix gets away with it
+because reading from stdin flushes stdout; here `gfedit` does not read from
+stdin, it talks over IPC with the `kbd` service, so that convention would not
+save it. Flushing at the end of the call removes the problem and keeps almost
+all the gain: one `printf` costs one syscall instead of eighty.
 
-`exit()` svuota tutti i flussi: un programma che scrive un file e poi esce senza
-`fclose()` trova il file scritto, non monco.
+`exit()` flushes every stream: a program that writes a file and then exits
+without `fclose()` finds the file written, not truncated.
 
-### Il resto
+### The rest
 
-`setjmp`/`longjmp` (in assembly: sono esattamente i registri che il compilatore
-ha il permesso di riorganizzare), `errno` con `strerror`/`perror`, `strtol`,
-`strtoul`, `qsort`, `bsearch`, `strstr`, `strdup`, `strtok`, `memchr`, `ctype`,
-e i wrapper `lseek`/`stat`/`sbrk`.
+`setjmp`/`longjmp` (in assembly: they are exactly the registers the compiler
+is allowed to reshuffle), `errno` with `strerror`/`perror`, `strtol`,
+`strtoul`, `qsort`, `bsearch`, `strstr`, `strdup`, `strtok`, `memchr`,
+`ctype`, and the `lseek`/`stat`/`sbrk` wrappers.
 
-**`errno` si aggiunge, non sostituisce.** Le funzioni continuano a ritornare
-l'errore negativo (`-2` = ENOENT, `-30` = EROFS): `< 0` resta il test giusto in
-entrambe le convenzioni, e `-EIO` dice più di `-1`. Riscrivere ogni chiamante per
-guadagnare zero non aveva senso.
+**`errno` is an addition, not a replacement.** The functions still return the
+negative error (`-2` = ENOENT, `-30` = EROFS): `< 0` remains the right test
+under both conventions, and `-EIO` says more than `-1`. Rewriting every
+caller to gain nothing made no sense.
 
-Le syscall `stat` e `lseek(SEEK_END)` **rispondevano `ENOSYS`** — mai
-implementate, con un TODO dalla Fase 3. Senza di loro nessun `FILE*` può offrire
-`ftell()` sulla fine, cioè il modo con cui ogni programma misura un file prima di
-leggerlo. Ora passano dal VFS e valgono su ogni filesystem montato.
+The `stat` and `lseek(SEEK_END)` syscalls **used to answer `ENOSYS`** — never
+implemented, with a TODO since Phase 3. Without them no `FILE*` can offer
+`ftell()` at the end, which is how every program measures a file before
+reading it. Now they go through the VFS and work on every mounted
+filesystem.
 
-### Virgola mobile, e la FPU che il kernel ha dovuto accendere
+### Floating point, and the FPU the kernel had to switch on
 
-`strtod`, `strtof`, `strtold`, `ldexp`, `strtoll`, `strtoull`. Non è un lusso:
-un compilatore deve leggere i letterali numerici dei sorgenti che compila —
-`float x = 1.5;` passa da `strtod` — e una `strtod` che ritorna zero non dà un
-errore, dà un programma compilato con la costante sbagliata.
+`strtod`, `strtof`, `strtold`, `ldexp`, `strtoll`, `strtoull`. It is not a
+luxury: a compiler has to read the numeric literals of the sources it
+compiles — `float x = 1.5;` goes through `strtod` — and a `strtod` returning
+zero does not give an error, it gives a program compiled with the wrong
+constant.
 
-Da qui il **PASSO 7b** del kernel: la FPU x87 viene inizializzata e il suo stato
-(108 byte) salvato nel PCB a ogni cambio di contesto. Senza, due processi che
-fanno conti in virgola mobile si sovrascrivono i registri a vicenda.
+Hence the kernel's **STEP 7b**: the x87 FPU is initialised and its state
+(108 bytes) saved into the PCB at every context switch. Without it, two
+processes doing floating-point arithmetic overwrite each other's registers.
 
-! **`x == 0.025` può essere falso anche quando `x` è giusto.** Su x87 GCC valuta
-le costanti a 64 bit di mantissa, il `double` ne ha 53: il confronto avviene fra
-due numeri diversi per costruzione. Il valore atteso va messo in una variabile
-`double`, che forza l'arrotondamento.
+! **`x == 0.025` can be false even when `x` is right.** On x87 GCC evaluates
+constants with a 64-bit mantissa, while a `double` has 53: the comparison
+happens between two numbers that are different by construction. The expected
+value must be put in a `double` variable, which forces the rounding.
 
-### La libm: openlibm, e perché una di terzi
+### The libm: openlibm, and why a third-party one
 
-Fino ad agosto 2026 `<math.h>` dichiarava tre funzioni e diceva che una libm
-non c'era, con questa motivazione:
+Until August 2026 `<math.h>` declared three functions and said there was no
+libm, with this justification:
 
-> «una `sqrt` quasi giusta è peggio di nessuna `sqrt`: sbaglia in silenzio».
+> «a `sqrt` that is almost right is worse than no `sqrt` at all: it is wrong
+> in silence».
 
-**Il ragionamento non è cambiato — è cambiata la conseguenza.** La risposta
-coerente a "non so scrivere `sin` con l'errore giusto" non era scriverne una
-mediocre: era **portarne una vera**. Dietro i nomi c'è **openlibm 0.8.7**,
-cioè la `msun` di FreeBSD in versione autonoma (MIT/BSD), con trent'anni di
-correzioni sugli arrotondamenti e una directory `i387` che usa le istruzioni
-dell'x87 dove convengono. Si costruisce con
-`tools/openlibm-exos/prepara-libm.sh`; i sorgenti non stanno nel repository,
-come per GCC e binutils.
+**The reasoning has not changed — the consequence has.** The coherent answer
+to "I do not know how to write `sin` with the right error" was not to write a
+mediocre one: it was to **port a real one**. Behind the names is
+**openlibm 0.8.7**, that is, FreeBSD's `msun` in standalone form (MIT/BSD),
+with thirty years of rounding fixes and an `i387` directory that uses the x87
+instructions where they pay off. It is built with
+`tools/openlibm-exos/prepara-libm.sh`; the sources are not in the repository,
+as with GCC and binutils.
 
 ```
 ex-os:/> /cdrom/bin/provamat
@@ -5099,62 +5069,63 @@ atan2(1,1)=785 hypot(3,4)=5000 isnan(0/0.)=1
 sinf(pi/2)=1000  sinl(pi/2)=1000  exp2(10)=1024000
 ```
 
-I valori sono moltiplicati per mille e stampati come interi — la `printf`
-di EX-OS non formatta i `double`, e mostrarli in virgola mobile avrebbe
-provato la printf invece della libm. Quindi `atan2(1,1)` = 785 = 0,785 =
+The values are multiplied by a thousand and printed as integers — at the time
+EX-OS's `printf` did not format `double`s, and showing them in floating point
+would have tested printf instead of the libm. So `atan2(1,1)` = 785 = 0.785 =
 π/4.
 
-I 184 prototipi in `lib/include/math.h` sono **ricavati dai simboli davvero
-definiti in `libm.a`**, non copiati da uno standard: se una funzione è
-dichiarata lì, esiste.
+The 184 prototypes in `lib/include/math.h` are **derived from the symbols
+actually defined in `libm.a`**, not copied from a standard: if a function is
+declared there, it exists.
 
-> ! **Chi usa queste funzioni deve linkare `-lm`.** Le eccezioni sono
-> `sqrt`, `fabs`, `ldexp` e `frexp`, che stanno nella libc. `sqrt` è
-> `fsqrt` dell'x87, cioè **una delle cinque operazioni che l'IEEE 754
-> obbliga a essere correttamente arrotondate**: non c'è
-> un'approssimazione da giudicare, c'è un'istruzione da chiamare. La
-> definisce anche `libm.a`, ma vince sempre quella della libc — `libc.o`
-> entra comunque nel link (printf, crt0) e a quel punto il simbolo è già
-> risolto. Nessun "multiple definition", e `sqrt` si usa senza `-lm`.
+> ! **Whoever uses these functions must link `-lm`.** The exceptions are
+> `sqrt`, `fabs`, `ldexp` and `frexp`, which live in the libc. `sqrt` is the
+> x87's `fsqrt`, that is, **one of the five operations IEEE 754 requires to
+> be correctly rounded**: there is no approximation to judge, there is an
+> instruction to call. `libm.a` defines it too, but the libc one always wins
+> — `libc.o` enters the link anyway (printf, crt0) and by then the symbol is
+> already resolved. No "multiple definition", and `sqrt` is used without
+> `-lm`.
 
-Chi la chiede davvero è **libstdc++**: il suo `<cmath>` scrive `using
-::sin;` per circa centottanta nomi, e quei nomi devono esistere o la
-libreria non compila.
+The one that really asks for it is **libstdc++**: its `<cmath>` writes `using
+::sin;` for about a hundred and eighty names, and those names must exist or
+the library does not compile.
 
-### Allocazione allineata
+### Aligned allocation
 
-`memalign`, `aligned_alloc`, `posix_memalign`. Dal C++17 un tipo con
-allineamento superiore a quello naturale non passa più per `operator
-new(size_t)` ma per la variante allineata, che nella libstdc++ è un
-involucro attorno a `memalign()` — e se `memalign` non c'è, la libreria ne
-mette una che **ignora l'allineamento richiesto**.
+`memalign`, `aligned_alloc`, `posix_memalign`. Since C++17 a type with an
+alignment above the natural one no longer goes through `operator
+new(size_t)` but through the aligned variant, which in libstdc++ is a wrapper
+around `memalign()` — and if `memalign` is missing, the library supplies one
+that **ignores the requested alignment**.
 
-L'allineamento si ottiene ritagliando: si chiede a `malloc` un blocco
-abbastanza grande, poi lo si **spezza in due** mettendo una vera
-intestazione subito prima dell'indirizzo allineato, e la testa resta come
-blocco libero invece di essere sprecata.
+The alignment is obtained by cutting: a large enough block is asked of
+`malloc`, then it is **split in two** by putting a real header right before
+the aligned address, and the head stays as a free block instead of being
+wasted.
 
-> ! **Il puntatore restituito si libera con `free()`**, non con una free
-> speciale: per l'heap è un blocco come tutti gli altri, e la fusione con i
-> vicini funziona senza sapere nulla di tutto questo.
+> ! **The returned pointer is released with `free()`**, not with a special
+> free: to the heap it is a block like any other, and merging with the
+> neighbours works without knowing any of this.
 
-> ! `posix_memalign` **ritorna** il codice di errore e non lo mette in
-> `errno`. È l'eccezione della famiglia, ed è il modo classico di sbagliare
-> a usarla.
+> ! `posix_memalign` **returns** the error code and does not put it in
+> `errno`. It is the odd one out in the family, and it is the classic way to
+> use it wrong.
 
-### Lettura formattata, data e ora, stat
+### Formatted input, date and time, stat
 
-`sscanf`/`vsscanf` con larghezze, `%n`, soppressione e `%lf`. `time`,
-`localtime`, `gmtime`, `mktime`, `gettimeofday` sopra `SYS_TIME`, cioè
-l'orologio CMOS — senza fuso orario, perché il sistema non sa in quale si trova:
-`localtime` e `gmtime` danno la stessa ora. `stat`/`fstat` nella forma POSIX.
+`sscanf`/`vsscanf` with widths, `%n`, suppression and `%lf`. `time`,
+`localtime`, `gmtime`, `mktime`, `gettimeofday` on top of `SYS_TIME`, that is
+the CMOS clock — with no timezone, because the system does not know which one
+it is in: `localtime` and `gmtime` give the same time. `stat`/`fstat` in the
+POSIX form.
 
-### Processi: spawn con ambiente e redirezioni
+### Processes: spawn with environment and redirections
 
-`spawn()` lancia un programma e ritorna il PID; `waitpid()` ne raccoglie
-l'esito. Non c'è `fork()`, ed è una scelta: duplicare uno spazio di
-indirizzamento per buttarlo via alla `exec` successiva, su un sistema senza
-copy-on-write, sarebbe la cosa più costosa che si possa fare.
+`spawn()` starts a program and returns the PID; `waitpid()` collects its
+result. There is no `fork()`, and that is a choice: duplicating an address
+space only to throw it away at the following `exec`, on a system without
+copy-on-write, would be the most expensive thing one could do.
 
 ```c
 SpawnRedir r = { 1, O_WRONLY | O_CREAT | O_TRUNC, "/uscita.txt" };
@@ -5162,176 +5133,174 @@ int pid = spawn_ex("/bin/hello", argv, environ, &r, 1);
 waitpid(pid, &stato, 0);
 ```
 
-La redirezione è **per percorso**, non per descrittore già aperto del
-padre: il figlio apre il proprio file. Passare un fd significherebbe due
-processi sullo stesso handle VFS, cioè un conteggio di riferimenti che non
-c'è e una `close()` che sfila il file da sotto all'altro. Basta a un driver
-di compilatore; non basta alle pipe, che infatti non ci sono ancora.
+Redirection is **by path**, not by a descriptor the parent already has open:
+the child opens its own file. Passing an fd would mean two processes on the
+same VFS handle, that is, a reference count that does not exist and a
+`close()` that pulls the file out from under the other one. It is enough for
+a compiler driver; it is not enough for pipes, which indeed are not there
+yet.
 
-L'ambiente si eredita per copia (`environ`, `putenv`, `setenv`,
-`unsetenv`). `getenv()` ripiega sulla sezione `[env]` di `kernel.cfg` per
-le chiavi che non trova: senza quel ripiego il primo processo — che un
-padre non ce l'ha — resterebbe senza `PATH`.
+The environment is inherited by copy (`environ`, `putenv`, `setenv`,
+`unsetenv`). `getenv()` falls back to the `[env]` section of `kernel.cfg` for
+keys it does not find: without that fallback the first process — which has no
+parent — would be left without `PATH`.
 
-### Intestazioni con i nomi standard
+### Headers with the standard names
 
-`<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<ctype.h>`, `<errno.h>`, `<setjmp.h>`,
-`<unistd.h>`, `<stdint.h>`, `<inttypes.h>`, `<math.h>`, `<time.h>`, `<fcntl.h>`,
-`<assert.h>`, `<sys/stat.h>`, `<sys/time.h>` esistono e rimandano a `libc.h`
-(`<stdint.h>` no: i tipi li dichiara il compilatore, vedi
-`tools/gcc-exos/leggimi.md`). Sono facciate sottili di proposito:
-due elenchi della stessa funzione divergono, e la divergenza si manifesta come
-prototipo sbagliato — argomenti passati storti, non un errore di compilazione.
+`<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<ctype.h>`, `<errno.h>`,
+`<setjmp.h>`, `<unistd.h>`, `<stdint.h>`, `<inttypes.h>`, `<math.h>`,
+`<time.h>`, `<fcntl.h>`, `<assert.h>`, `<sys/stat.h>`, `<sys/time.h>` exist
+and defer to `libc.h` (`<stdint.h>` does not: the types are declared by the
+compiler, see `tools/gcc-exos/leggimi.md`). They are thin façades on purpose:
+two listings of the same function drift apart, and the drift shows up as a
+wrong prototype — arguments passed crooked, not a compile error.
 
-### Il costo, e come è stato riassorbito
+### The cost, and how it was absorbed
 
-Ogni programma di `/bin` compila la libc dentro di sé. Con lo stdio nuovo i
-binari erano raddoppiati (`ls`: 12 → 25 KB). `-ffunction-sections`
-`-fdata-sections` più `--gc-sections` al link buttano ciò che nessuno chiama:
-`ls` è tornato a **10 KB**, meno di prima che la libreria crescesse, e il floppy
-ha più spazio libero di quanto ne avesse all'inizio.
+Every program in `/bin` compiles the libc into itself. With the new stdio the
+binaries had doubled (`ls`: 12 → 25 KB). `-ffunction-sections`
+`-fdata-sections` plus `--gc-sections` at link time throw away what nobody
+calls: `ls` is back to **10 KB**, less than before the library grew, and the
+floppy has more free space than it had at the start.
 
 ```
-libctest       276 prove: allocatore (compresa l'allocazione allineata e
-                la crescita dello heap fino al rifiuto), formattazione,
-                flussi, salti non locali, conversioni, errno, virgola
-                mobile, sscanf, data e ora, stat, ambiente, directory,
-                temporanei, descrittori duplicati, variabili __thread,
-                interfacce per il codice di terzi, spawn con
-                redirezione — tutte dentro EX-OS
+libctest       276 checks: allocator (including aligned allocation and
+                growing the heap until refusal), formatting, streams,
+                non-local jumps, conversions, errno, floating point,
+                sscanf, date and time, stat, environment, directories,
+                temporaries, duplicated descriptors, __thread variables,
+                interfaces for third-party code, spawn with
+                redirection — all inside EX-OS
 ```
 
-### Le pipe
+### Pipes
 
-`pipe()` dà due descrittori collegati da un buffer circolare di 4 KB nel
-kernel. Le regole che contano sono tutte di confine:
+`pipe()` gives two descriptors joined by a 4 KB circular buffer in the
+kernel. The rules that matter are all about boundaries:
 
-> ! **Vuota con uno scrittore vivo = aspetta; vuota senza scrittori = 0.**
-> È tutta qui la ragione per cui il conteggio degli scrittori esiste: senza,
-> una pipe non è distinguibile da un blocco eterno. E scrivere quando non
-> c'è più nessun lettore dà `EPIPE`, non un'attesa.
+> ! **Empty with a live writer = wait; empty with no writers = 0.** That is
+> the whole reason the writer count exists: without it, a pipe is
+> indistinguishable from an eternal block. And writing when there is no
+> reader left gives `EPIPE`, not a wait.
 
-> ! **Niente `SIGPIPE`**: la pipe non manda segnali (quelli della 0.227 li
-> mandano solo i guasti e `kill`), quindi si vede solo il
-> valore di ritorno. Chi non guarda quello di `write()` non se ne accorge.
-> E **niente garanzia di atomicità**: la scrittura può essere parziale
-> anche sotto `PIPE_BUF`.
+> ! **No `SIGPIPE`**: a pipe sends no signals (those of 0.227 come only from
+> faults and `kill`), so only the return value is
+> visible. Whoever does not look at `write()`'s does not notice. And **no
+> atomicity guarantee**: a write can be partial even below `PIPE_BUF`.
 
-`FD_PIPE_R` e `FD_PIPE_W` sono due **tipi** di descrittore, non uno con un
-flag: la direzione non è un dettaglio, è ciò che decide se una `read`
-blocca o è un errore.
+`FD_PIPE_R` and `FD_PIPE_W` are two descriptor **types**, not one with a
+flag: the direction is not a detail, it is what decides whether a `read`
+blocks or is an error.
 
-Per collegare due processi serve passare un'estremità al figlio, e lo si fa
-con `SpawnRedir` a `percorso` NULL — l'**eredità dei descrittori**, che è la
-sola aggiunta che rende le pipe utili fuori da un singolo processo:
+Connecting two processes means handing one end to the child, and that is done
+with `SpawnRedir` with a NULL `percorso` — **descriptor inheritance**, which
+is the only addition that makes pipes useful outside a single process:
 
 ```c
 int p[2]; pipe(p);
-SpawnRedir a = { 1, 0, NULL, p[1] };   /* stdout del figlio = scrittura */
+SpawnRedir a = { 1, 0, NULL, p[1] };   /* the child's stdout = write end */
 spawn_ex("/bin/cmd", argv, environ, &a, 1);
-close(p[1]);                            /* ! indispensabile */
+close(p[1]);                            /* ! indispensable */
 ```
 
-> ! **Il padre deve chiudere l'estremità che ha passato.** Se non lo fa, la
-> pipe conta ancora uno scrittore vivo — lui — e chi legge aspetterà per
-> sempre. È l'errore classico con le pipe, e qui non c'è niente che lo
-> segnali.
+> ! **The parent must close the end it handed over.** If it does not, the
+> pipe still counts one live writer — itself — and the reader will wait
+> forever. It is the classic mistake with pipes, and here nothing flags it.
 
-**Un difetto di progetto che le pipe hanno fatto emergere.** I descrittori
-si chiudevano in `proc_reap_zombie()`, cioè quando il genitore chiama
-`waitpid()`. Con i soli file passava inosservato; con una pipe è uno
-stallo: il figlio esce, i suoi fd restano contati, il padre è bloccato
-nella `read` e non arriverà mai al `waitpid`. Due processi ad aspettarsi a
-vicenda, nessun errore. Ora si chiudono alla morte del processo — è il
-motivo per cui su Unix stanno in `do_exit()` e non in `wait()`: uno zombie
-non deve trattenere risorse di I/O, solo il proprio codice di uscita.
+**A design flaw that pipes brought to light.** Descriptors were closed in
+`proc_reap_zombie()`, that is, when the parent calls `waitpid()`. With files
+alone it went unnoticed; with a pipe it is a deadlock: the child exits, its
+fds stay counted, the parent is blocked in `read` and will never reach the
+`waitpid`. Two processes waiting for each other, no error. Now they are
+closed when the process dies — which is why on Unix they live in `do_exit()`
+and not in `wait()`: a zombie must not hold on to I/O resources, only to its
+own exit code.
 
-### La rinomina che non sposta i dati
+### The rename that does not move the data
 
-`rename()` era **copia+cancella**: costava quanto il file e **rialloca i
-blocchi**. Portava il nome di un'altra cosa, e la differenza non era
-accademica — è ciò che rendeva impossibile a `install` verificare la mappa
-dei settori del kernel prima di dargli il nome definitivo.
+`rename()` was **copy+delete**: it cost as much as the file and
+**reallocated the blocks**. It carried the name of something else, and the
+difference was not academic — it is what made it impossible for `install` to
+verify the kernel's sector map before giving it its final name.
 
-Dalla 0.161 è una syscall vera (`vfs_rename`, implementata su tutti e tre i
-driver: `fat.c`, `ext2.c`, `fat12.c`) che riscrive la voce di directory e
-basta. **I blocchi non si spostano**: è la garanzia su cui si regge
-l'installatore. C'è anche il comando:
+Since 0.161 it is a real syscall (`vfs_rename`, implemented on all three
+drivers: `fat.c`, `ext2.c`, `fat12.c`) that rewrites the directory entry and
+nothing else. **The blocks do not move**: it is the guarantee the installer
+rests on. There is a command too:
 
 ```
 ex-os:/> rename /r1.bin /r2.bin
 /r1.bin -> /r2.bin
 ```
 
-> ! **Si chiama `rename` e non `mv`, di proposito.** `mv` su Unix
-> rinomina *e sposta*, e quando sposta fra filesystem copia e cancella —
-> un'operazione completamente diversa sotto lo stesso nome. Qui i dati non
-> si muovono mai, e il nome dice cosa fa.
+> ! **It is called `rename` and not `mv`, on purpose.** `mv` on Unix renames
+> *and moves*, and when it moves across filesystems it copies and deletes — a
+> completely different operation under the same name. Here the data never
+> moves, and the name says what it does.
 
-> ! **Due differenze da POSIX, dichiarate:** solo nella **stessa
-> directory** (ENOSYS), e **non sostituisce** la destinazione (EEXIST).
-> Attraversare directory sarebbe una copia più una cancellazione;
-> sostituire vuol dire cancellare un file che il chiamante non ha nominato
-> come vittima.
+> ! **Two differences from POSIX, declared:** same **directory** only
+> (ENOSYS), and it **does not replace** the destination (EEXIST). Crossing
+> directories would be a copy plus a delete; replacing means deleting a file
+> the caller never named as the victim.
 
-In `ext2_rename` **si aggiunge prima e si toglie dopo**: in mezzo il file
-ha due nomi, che è riparabile; nell'ordine opposto non ne avrebbe nessuno e
-l'inode resterebbe allocato e irraggiungibile.
+In `ext2_rename` **the new entry is added first and the old one removed
+after**: in between the file has two names, which is repairable; the other
+way round it would have none and the inode would stay allocated and
+unreachable.
 
-> ! **`fat12.c` risponde in errno, gli altri due no.** Lì `-2` significa
-> `ENOENT`, in `fat.c` ed `ext2.c` significa «esiste già». Mescolare le due
-> convenzioni fa dire «esiste già» a una rinomina di un file inesistente —
-> ed è successo, alla prima prova con un nome sbagliato.
+> ! **`fat12.c` answers in errno, the other two do not.** There `-2` means
+> `ENOENT`, in `fat.c` and `ext2.c` it means «already exists». Mixing the two
+> conventions makes a rename of a non-existent file say «already exists» —
+> and it did, on the very first try with a wrong name.
 
 ### `getrusage`, `getpagesize`, `mmap`
 
-Le tre funzioni che GCC usa come programma ospite, ognuna con il proprio
-limite dichiarato.
+The three functions GCC uses as a hosted program, each with its own declared
+limit.
 
-> ! **`getrusage` non è una misura.** EX-OS non tiene contabilità per
-> processo: lo scheduler assegna quanti e non misura consumi. `ru_utime`
-> riporta il tempo **trascorso dall'avvio** — un limite superiore onesto —
-> e tutto il resto è zero. Chi ci costruisce sopra un profilo
-> (`gcc -ftime-report`) otterrà per ogni passaggio lo stesso tempo.
+> ! **`getrusage` is not a measurement.** EX-OS keeps no per-process
+> accounting: the scheduler hands out quanta and does not measure
+> consumption. `ru_utime` reports the time **elapsed since boot** — an honest
+> upper bound — and everything else is zero. Whoever builds a profile on top
+> of it (`gcc -ftime-report`) will get the same time for every pass.
 
-> ! **`mmap` mappa solo memoria anonima**: con `fd != -1` dà `ENODEV`.
-> Mappare un file richiederebbe le pagine sporche e il momento in cui
-> riscriverle; una mmap che finge consegnando zeri darebbe un programma che
-> legge dati sbagliati senza che niente lo segnali. E ritorna
-> **`MAP_FAILED`, non `NULL`**.
+> ! **`mmap` maps anonymous memory only**: with `fd != -1` it gives
+> `ENODEV`. Mapping a file would require dirty pages and a moment to write
+> them back; an mmap that pretends by handing out zeros would give a program
+> that reads wrong data with nothing flagging it. And it returns
+> **`MAP_FAILED`, not `NULL`**.
 
-`munmap` **riporta giù il confine** se la zona smappata era in cima: prima
-le pagine fisiche tornavano al PMM ma lo spazio di indirizzamento no, e il
-garbage collector di GCC fa quel ciclo migliaia di volte per file
-compilato.
+`munmap` **brings the boundary back down** if the unmapped area was at the
+top: before, the physical pages went back to the PMM but the address space
+did not, and GCC's garbage collector does that cycle thousands of times per
+compiled file.
 
-### Descrittori duplicati: `dup`, `dup2`, `fcntl`
+### Duplicated descriptors: `dup`, `dup2`, `fcntl`
 
-Dalla 0.151 gli handle aperti del VFS hanno un **conteggio dei
-riferimenti**: `close()` chiude davvero solo l'ultima volta. È ciò che
-rende possibile `dup()`, cioè tenere un file aperto oltre la `close()` di
-chi possedeva il descrittore originale — il gesto che fanno `ar`,
-`objcopy` e `arsup` di binutils.
+Since 0.151 the VFS's open handles have a **reference count**: `close()` only
+really closes on the last one. That is what makes `dup()` possible, that is,
+keeping a file open past the `close()` of whoever owned the original
+descriptor — the move `ar`, `objcopy` and binutils' `arsup` make.
 
-`dup2()` è anche l'unico modo di sostituire `stdin`/`stdout`/`stderr`:
-`close()` su 0, 1 e 2 è rifiutata apposta, perché lascerebbe il processo
-senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
+`dup2()` is also the only way to replace `stdin`/`stdout`/`stderr`: `close()`
+on 0, 1 and 2 is refused on purpose, because it would leave the process with
+no output, whereas whoever comes in through `dup2` already has the
+replacement in hand.
 
-> ! **I due descrittori condividono il file, non la posizione.** Su POSIX
-> una `read()` da uno dei due sposta anche l'altro; qui l'offset sta nel
-> descrittore del processo, non in un oggetto «file aperto» intermedio, e
-> ognuno tiene il suo. Chi legge da un fd duplicato faccia una `lseek()`
-> esplicita. È la prima cosa da sistemare il giorno che arriveranno le
-> pipe.
+> ! **The two descriptors share the file, not the position.** On POSIX a
+> `read()` from one moves the other too; here the offset lives in the
+> process's descriptor, not in an intermediate "open file" object, and each
+> keeps its own. Whoever reads from a duplicated fd should do an explicit
+> `lseek()`. It is the first thing to fix the day pipes arrive.
 
 ---
 
-## Scrivere una libreria condivisa
+## Writing a shared library
 
-Una libreria di EX-OS è un ELF normalissimo, collegato a un indirizzo
-riservato, il cui **punto d'ingresso non è codice**: è una tabella di nomi.
+An EX-OS library is a perfectly ordinary ELF, linked at a reserved address,
+whose **entry point is not code**: it is a table of names.
 
-**Il sorgente della libreria** dichiara cosa esporta:
+**The library source** declares what it exports:
 
 ```c
 #include "exlib.h"
@@ -5342,71 +5311,71 @@ static void *const dove[]       = { (void *)pippo, (void *)pluto };
 EXLIB_TESTA(mia_tabella, nomi, dove);
 ```
 
-**Il linker script** la mette alla base della sua fetta:
+**The linker script** puts it at the base of its slice:
 
 ```
 ENTRY(mia_tabella)
 
 SECTIONS
 {
-    . = 0x04C00000;             /* la prima fetta libera */
+    . = 0x04C00000;             /* the first free slice */
 
     .exlib_testa : { KEEP(*(.exlib_testa)) }
     .text        : { *(.text) *(.text.*) }
     .rodata      : { *(.rodata) *(.rodata.*) }
 
-    . = ALIGN(4096);            /* obbligatorio, vedi sotto */
+    . = ALIGN(4096);            /* mandatory, see below */
 
     .data : { *(.data) *(.data.*) }
     .bss  : { *(.bss) *(.bss.*) *(COMMON) }
 }
 ```
 
-**Chi la usa** chiede i nomi che gli servono:
+**Whoever uses it** asks for the names it needs:
 
 ```c
 const ExLibTesta *t = exlib_apri("/lib/mialib.so");
 void (*pippo)(void) = exlib_simbolo(t, "pippo");
 ```
 
-Nella pratica non lo fa a mano: si scrive uno **stub** — un file con le stesse
-funzioni della libreria, ognuna un ponte verso il puntatore risolto — e le
-applicazioni si collegano a quello. Il loro sorgente non cambia di una riga.
-Vedi `lib/exwin/exwin_stub.c` come modello.
+In practice you do not do this by hand: you write a **stub** — a file with the
+same functions as the library, each one a thunk to the resolved pointer — and
+applications link against that. Their source does not change by a single line.
+See `lib/exwin/exwin_stub.c` as the model.
 
-### Le tre regole che non si possono violare
+### The three rules you cannot break
 
-! **`. = ALIGN(4096)` PRIMA DI `.data`.** Il kernel condivide le pagine di sola
-lettura e ne dà una copia privata di quelle scrivibili, e lavora a **pagine
-intere**. Se la fine di `.rodata` e l'inizio di `.data` stessero nella stessa
-pagina, quella pagina sarebbe scrivibile — cioè copiata per ogni processo — e
-mezza `.rodata` smetterebbe di essere condivisa **senza che nessuno lo dica**.
+! **`. = ALIGN(4096)` BEFORE `.data`.** The kernel shares read-only pages and
+gives a private copy of writable ones, and it works in **whole pages**. If the
+end of `.rodata` and the start of `.data` sat in the same page, that page would
+be writable — that is, copied for every process — and half of `.rodata` would
+quietly stop being shared **with nobody saying so**.
 
-! **UNA FETTA PER LIBRERIA, ASSEGNATA IN UN POSTO SOLO.** La mappa sta in
-`lib/exwin/exwin.ld`. Due librerie alla stessa base si sovrascriverebbero
-dentro il processo che le usa tutt'e due.
+! **ONE SLICE PER LIBRARY, ASSIGNED IN ONE PLACE.** The map lives in
+`lib/exwin/exwin.ld`. Two libraries at the same base would overwrite each other
+inside the process that uses both.
 
-! **SI AGGIUNGE, NON SI TOGLIE.** Aggiungere funzioni, riordinarle e riscriverne
-il corpo è sempre lecito: le applicazioni già compilate continuano a
-funzionare. Togliere un nome le rompe — e lo dicono, con il nome che manca,
-invece di saltare nel vuoto.
+! **YOU ADD, YOU DO NOT REMOVE.** Adding functions, reordering them and
+rewriting their bodies is always allowed: already-compiled applications keep
+working. Removing a name breaks them — and they say so, naming the missing
+symbol, instead of jumping into nothing.
 
-### Se la libreria ne usa un'altra
+### If the library uses another library
 
-Un programma ha `_start`, e lì c'è un posto naturale in cui agganciare ciò che
-gli serve. **Una libreria non parte**: le sue funzioni vengono chiamate e
-basta. Se ha bisogno di altre librerie, esporta il nome facoltativo
-`__lib_avvio`: `exlib_apri()` lo cerca e lo chiama, ed è l'unico momento in cui
-si sa che la libreria è appena stata mappata.
+A program has `_start`, and there is a natural place there to attach what it
+needs. **A library does not start**: its functions are simply called. If it
+needs other libraries, it exports the optional name `__lib_avvio`:
+`exlib_apri()` looks it up and calls it, and that is the only moment at which
+the library is known to have just been mapped.
 
-È così che `exwin.so` ed `exdlg.so` usano `libc.so` senza portarsene dentro una
-copia.
+That is how `exwin.so` and `exdlg.so` use `libc.so` without carrying a copy of
+it inside.
 
 ---
 
-## La catena di compilazione dentro EX-OS
+## The compilation chain inside EX-OS
 
-### La catena intera, con un comando solo (6 agosto 2026)
+### The whole chain, in a single command (6 August 2026)
 
 ```
 ex-os:/> mount hd0p1 /src
@@ -5422,17 +5391,16 @@ La catena intera dentro EX-OS
 Compilato, assemblato e collegato qui dentro.
 ```
 
-`pg.c` è `tools/iso/prova-gcc.c`: `#include <stdio.h>` e `<string.h>`,
-`printf` con `%lld`, `memcpy` dalla libc, una divisione a 64 bit che chiama
-`__divdi3` in libgcc, una struttura restituita per valore. **I valori sono
-noti in anticipo** — 385 è la somma dei quadrati da 1 a 10 — perché un
-programma che stampa un numero senza che nessuno sappia quale fosse quello
-giusto è una prova che non prova niente.
+`pg.c` is `tools/iso/prova-gcc.c`: `#include <stdio.h>` and `<string.h>`,
+`printf` with `%lld`, `memcpy` from the libc, a 64-bit division that calls
+`__divdi3` in libgcc, a struct returned by value. **The values are known in
+advance** — 385 is the sum of squares from 1 to 10 — because a program that
+prints a number nobody knows the right value of proves nothing.
 
-Il driver ha lanciato da sé cc1, `as`, `collect2` e `ld`, e ha trovato gli
-header **senza un solo `-I`**.
+The driver ran cc1, `as`, `collect2` and `ld` by itself, and found the
+headers with **not one `-I`**.
 
-### E lo stesso in C++
+### And the same in C++
 
 ```
 ex-os:/src> /cdrom/exos/bin/g++ -O2 -o pp pp.cpp
@@ -5449,28 +5417,28 @@ La libreria standard del C++ dentro EX-OS
 La libreria standard risponde.
 ```
 
-Contenitori con `<algorithm>`, `std::string` (cioè `operator new` sopra la
-nostra `malloc`), polimorfismo con distruttore virtuale, e **le eccezioni**
-— compresa una lanciata da dentro libstdc++ e ripresa attraverso più
-livelli di stack, che è il pezzo che ha bisogno del maggior numero di cose
-funzionanti insieme.
+Containers with `<algorithm>`, `std::string` (that is, `operator new` on top
+of our `malloc`), polymorphism with a virtual destructor, and **exceptions**
+— including one thrown from inside libstdc++ and caught across several stack
+frames, which is the piece that needs the largest number of things working
+at once.
 
-! **Nessun `-B`, e fino al 6 agosto 2026 serviva.** I percorsi che GCC ha
-compilati dentro sono assoluti (`/exos/...`) e con il CD montato su
-`/cdrom` non combaciano: il driver deve *rilocarsi*, cioè ricalcolare il
-proprio prefisso da dove sta lui. Non ci riusciva, e il `-B` era la stampella.
+! **No `-B`, and until 6 August 2026 one was needed.** The paths GCC has
+compiled into it are absolute (`/exos/...`) and do not match with the CD
+mounted on `/cdrom`: the driver has to *relocate*, that is, recompute its
+own prefix from where it sits. It could not, and `-B` was the crutch.
 
-Ci riesce da quando l'ambiente arriva davvero al processo figlio — è
-`GCC_EXEC_PREFIX` a portare il prefisso rilocato, e `pex-exos.c` girava a
-`spawn_ex` un ambiente vuoto. Le altre quattro correzioni servivano allo
-stesso scopo: `..` che si risolve nei percorsi, `st_ino` che distingue le
-directory, `-1` invece di `-errno`, e gli argomenti che non vengono
-troncati. **Il `-B` è sparito come conseguenza, non come obiettivo.**
+It can now that the environment actually reaches the child process — it is
+`GCC_EXEC_PREFIX` that carries the relocated prefix, and `pex-exos.c` was
+handing `spawn_ex` an empty environment. The other four fixes served the
+same end: `..` resolving inside paths, `st_ino` telling directories apart,
+`-1` instead of `-errno`, and arguments no longer being truncated. **The
+`-B` disappeared as a consequence, not as a goal.**
 
-### L'albero `/exos`, e perché è fatto così
+### The `/exos` tree, and why it looks like this
 
-Non è una scelta di stile: è ciò che i binari cercano a runtime, e si legge
-da loro (`strings gcc/cc1 | grep /exos`).
+It is not a matter of taste: it is what the binaries look for at runtime,
+and it can be read off them (`strings gcc/cc1 | grep /exos`).
 
 ```
 /exos/bin/                            gcc, g++, cpp, fbc, nasm, ndisasm, make
@@ -5478,27 +5446,27 @@ da loro (`strings gcc/cc1 | grep /exos`).
 /exos/lib/gcc/i386-exos/17.0.0/       libgcc.a, crt*.o, include/
 /exos/lib/                            libc.a, libm.a, libstdc++.a, libcrypto.a
 /exos/lib/freebasic/linux-x86/        libfb.a, fbrt0.o
-/exos/include/                        la libc
+/exos/include/                        the libc
 /exos/include/c++/17.0.0/             libstdc++
-/exos/include/freebasic/              i .bi di FreeBASIC
-/exos/i386-exos/include/              la libc, dove cc1 la cerca da solo
+/exos/include/freebasic/              FreeBASIC's .bi files
+/exos/i386-exos/include/              the libc, where cc1 looks by itself
 /exos/i386-exos/bin/                  as, ld
 ```
 
-! **La libc sta in due posti e non è uno spreco.** In `/exos/include`
-perché è lì che la mette il prefisso; in `/exos/i386-exos/include` perché
-quello è `TOOL_INCLUDE_DIR` — «un altro posto dove potrebbero stare gli
-header del sistema bersaglio», `gcc/cppdefault.cc` — ed è l'unico dei due
-che la rilocazione con `-iprefix` sappia raggiungere.
+! **The libc lives in two places, and that is not waste.** In
+`/exos/include` because that is where the prefix puts it; in
+`/exos/i386-exos/include` because that one is `TOOL_INCLUDE_DIR` — "another
+place the target system's headers might be", `gcc/cppdefault.cc` — and it is
+the only one of the two that relocation via `-iprefix` can reach.
 
-! **FreeBASIC vuole la stessa struttura, e se la calcola da solo.** Il suo
-prefisso è la directory dell'eseguibile meno `bin`, ricalcolata a ogni
-avvio: da `/exos/bin/fbc` trova `include/freebasic` e
-`lib/freebasic/<target>` ovunque sia montato il CD — che è la cosa che a
-GCC riesce solo con `GCC_EXEC_PREFIX` o con `-B`.
+! **FreeBASIC wants the same structure, and works it out by itself.** Its
+prefix is the executable's directory minus `bin`, recomputed at every run:
+from `/exos/bin/fbc` it finds `include/freebasic` and
+`lib/freebasic/<target>` wherever the CD is mounted — which is what GCC can
+only manage with `GCC_EXEC_PREFIX` or `-B`.
 
-**GNU binutils 2.44 gira nativamente su EX-OS.** `as` e `ld` sono
-compilati **per** `i386-exos`, non per la macchina che li ha costruiti:
+**GNU binutils 2.44 runs natively on EX-OS.** `as` and `ld` are compiled
+**for** `i386-exos`, not for the machine that built them:
 
 ```
 ex-os:/> /cdrom/bin/as --version
@@ -5511,75 +5479,74 @@ ex-os:/> /prova
 Assemblato e collegato dentro EX-OS.
 ```
 
-L'oggetto prodotto qui dentro è **identico byte per byte** a quello che
-produce il cross su Linux. I due strumenti stanno sul CD degli strumenti
-(`make iso`, ~1,4 MB l'uno dopo lo strip); il sorgente di prova è
+The object produced in here is **byte-for-byte identical** to the one the
+cross toolchain produces on Linux. The two tools live on the tools CD
+(`make iso`, ~1.4 MB each after stripping); the test source is
 `/cdrom/prova.s`.
 
-### Perché è il collaudo che conta
+### Why it is the test that counts
 
-`libctest` chiama le funzioni che **sappiamo** di avere. binutils chiama
-quelle che gli servono, e non ha nessun riguardo: le ha chieste una alla
-volta, ognuna fermando la compilazione, e l'elenco è la misura di quanto
-mancava a una libc «ospitata» vera —
+`libctest` calls the functions we **know** we have. binutils calls the ones
+it needs, and it has no consideration whatsoever: it asked for them one at a
+time, each stopping the build, and the list is the measure of how far a real
+"hosted" libc still was —
 
 | | |
 |---|---|
-| processi | `dup`, `dup2`, `fcntl`, `_exit` |
-| file | `realpath`, `lstat`, `freopen`, `mktemp`, `pathconf`, `utime` |
-| stringhe | `strcasecmp`, `strncasecmp`, `strcoll`, `strpbrk` |
-| formato | `fscanf`, `scanf`, `strftime`, `asctime`, `ctime` |
-| numeri | `frexp`, `atof`, `fabs` |
-| caratteri larghi | `mbstowcs`, `mbrtowc`, `wcstombs` |
-| permessi (inerti) | `chmod`, `fchmod`, `umask` |
-| header | `<sys/types.h>` `<strings.h>` `<wchar.h>` `<sys/param.h>` `<limits.h>` `<memory.h>` `<utime.h>` |
+| processes | `dup`, `dup2`, `fcntl`, `_exit` |
+| files | `realpath`, `lstat`, `freopen`, `mktemp`, `pathconf`, `utime` |
+| strings | `strcasecmp`, `strncasecmp`, `strcoll`, `strpbrk` |
+| formatting | `fscanf`, `scanf`, `strftime`, `asctime`, `ctime` |
+| numbers | `frexp`, `atof`, `fabs` |
+| wide characters | `mbstowcs`, `mbrtowc`, `wcstombs` |
+| permissions (inert) | `chmod`, `fchmod`, `umask` |
+| headers | `<sys/types.h>` `<strings.h>` `<wchar.h>` `<sys/param.h>` `<limits.h>` `<memory.h>` `<utime.h>` |
 
-più due che non erano funzioni: **`EOF`** — il valore c'era dal principio,
-mancava il *nome*, e `safe-ctype.h` verifica di poter lavorare con
-`#if EOF != -1`, che senza la macro vede zero e conclude che la libc è
-sbagliata — e **`strerror` che tornava `const char *`**, più sicuro e
-incompatibile con la firma dello standard.
+plus two that were not functions: **`EOF`** — the value had been there from
+the start, the *name* was missing, and `safe-ctype.h` checks that it can
+work with `#if EOF != -1`, which without the macro sees zero and concludes
+the libc is wrong — and **`strerror` returning `const char *`**, safer and
+incompatible with the standard signature.
 
-### `pex-exos.c`: lanciare un programma senza `fork`
+### `pex-exos.c`: starting a program without `fork`
 
-`libiberty` compila sempre un `pex-*.c` — «lancia un programma e
-aspettalo» — e per tutto ciò che non è Windows o MSDOS sceglie
-`pex-unix.c`, costruito su `fork()`. EX-OS non ha `fork`, e non è una
-mancanza da colmare: duplicare uno spazio di indirizzamento per buttarlo
-via un'istruzione dopo è esattamente ciò che `spawn_ex()` evita.
+`libiberty` always compiles a `pex-*.c` — «start a program and wait for
+it» — and for everything that is neither Windows nor MSDOS it picks
+`pex-unix.c`, built on `fork()`. EX-OS has no `fork`, and that is not a gap
+to fill: duplicating an address space to throw it away one instruction later
+is exactly what `spawn_ex()` avoids.
 
-`tools/binutils-exos/pex-exos.c` è il rimpiazzo, modellato su
-`pex-msdos.c`: un «descrittore» è un indice in una tabella di **nomi**,
-perché è il nome ciò che serve a `spawn_ex`. I tre `NULL` nella tabella
-`funcs` (pipe, fdopenr, fdopenw) **sono la dichiarazione che questo
-sistema non ha pipe**, e `pex-common.c` se ne accorge da solo e passa alla
-modalità a file temporanei.
+`tools/binutils-exos/pex-exos.c` is the replacement, modelled on
+`pex-msdos.c`: a "descriptor" is an index into a table of **names**, because
+the name is what `spawn_ex` needs. The three `NULL`s in the `funcs` table
+(pipe, fdopenr, fdopenw) **are the declaration that this system has no
+pipes**, and `pex-common.c` notices by itself and switches to the temporary
+file mode.
 
-### Tre trappole, che costano un'ora a testa
+### Three traps, an hour each
 
-- **`-std=gnu17`.** GCC 17 compila in C23, dove una dichiarazione
-  implicita è un **errore**. binutils 2.44 presume l'indulgenza di C17.
-- **`export ac_cv_tls=`** (stringa vuota, non `none`). La prova che il
-  configure fa per le variabili thread-local è una **compilazione**:
-  `i386-exos-gcc` accetta `_Thread_local` senza fiatare, perché è il
-  compilatore a saper emettere gli accessi via `%gs` ed è il *sistema* a
-  non avere un thread pointer. Il risultato è un `as` che si compila
-  benissimo e muore alla terza istruzione di `bfd_init`. Con `none` la
-  macro non viene definita affatto e binutils non compila: serve
-  **definita a vuoto**.
-- **`sys-include`.** GCC installa un proprio `<limits.h>` e ne esistono
-  due versioni; quella che fa `#include_next` — cioè che prende anche la
-  nostra — viene generata solo se, al momento di costruire GCC, un
-  `limits.h` di sistema c'era già, e GCC lo cerca in
-  `$prefisso/i386-exos/sys-include`.
+- **`-std=gnu17`.** GCC 17 compiles in C23, where an implicit declaration is
+  an **error**. binutils 2.44 assumes C17's leniency.
+- **`export ac_cv_tls=`** (empty string, not `none`). The test configure runs
+  for thread-local variables is a **compilation**: `i386-exos-gcc` accepts
+  `_Thread_local` without a murmur, because it is the compiler that knows how
+  to emit the `%gs` accesses and the *system* that has no thread pointer. The
+  result is an `as` that builds perfectly and dies at the third instruction
+  of `bfd_init`. With `none` the macro is not defined at all and binutils
+  does not build: it must be **defined and empty**.
+- **`sys-include`.** GCC installs its own `<limits.h>` and two versions of it
+  exist; the one that does `#include_next` — that is, the one that also picks
+  up ours — is generated only if, at the time GCC was built, a system
+  `limits.h` was already there, and GCC looks for it in
+  `$prefix/i386-exos/sys-include`.
 
-Ricetta completa in **`tools/binutils-exos/leggimi.md`**.
+Full recipe in **`tools/binutils-exos/leggimi.md`**.
 
-### GMP, MPFR e MPC
+### GMP, MPFR and MPC
 
-Le tre librerie a cui `cc1` si linka girano anche loro dentro EX-OS — sono
-il codice di terzi più pesante che il sistema abbia ospitato, 4,6 MB di
-archivi di aritmetica a precisione arbitraria:
+The three libraries `cc1` links against run inside EX-OS too — they are the
+heaviest third-party code the system has hosted, 4.6 MB of arbitrary
+precision arithmetic archives:
 
 ```
 ex-os:/> /cdrom/bin/provamp
@@ -5590,21 +5557,22 @@ MPFR  pi     = 3.1415926535897932384626433832795028841971693993751e0
 MPC   sqrt(i)= (7.0710678118654752440e-1 7.0710678118654752440e-1)
 ```
 
-Costruirle è `tools/gcclibs-exos/prepara-gcclibs.sh`. Due cose non ovvie,
-entrambe documentate lì:
+Building them is `tools/gcclibs-exos/prepara-gcclibs.sh`. Two non-obvious
+things, both documented there:
 
-- **`CC_FOR_BUILD=gcc` esplicito.** GMP sceglie il compilatore per i propri
-  generatori di tabelle compilandone uno e *eseguendolo* — e la prova
-  riesce con il cross, perché un binario di EX-OS è un ELF32 statico che
-  Linux carica, con syscall che hanno i numeri di Linux. Parte, stampa,
-  sembra a posto; non combaciano `argc` e `argv`, e il generatore si
-  rifiuta di generare.
-- **`--host=i486-pc-exos`, non i386.** Non è un ripiego: 486 è il minimo
-  che EX-OS già richiede per conto suo (`invlpg` in `kernel/mm/paging.c`).
-  Con `i386` si finisce su un difetto di GCC 17 che emette `rolw $8, %eax`
-  — rotazione a 16 bit con il registro a 32 — e l'assemblatore rifiuta.
+- **an explicit `CC_FOR_BUILD=gcc`.** GMP picks the compiler for its own
+  table generators by compiling one and *running it* — and the test succeeds
+  with the cross compiler, because an EX-OS binary is a static ELF32 that
+  Linux loads, with syscalls that have Linux's numbers. It starts, it prints,
+  it looks fine; `argc` and `argv` do not line up, and the generator refuses
+  to generate.
+- **`--host=i486-pc-exos`, not i386.** It is not a fallback: 486 is the
+  minimum EX-OS already requires on its own account (`invlpg` in
+  `kernel/mm/paging.c`). With `i386` you land on a GCC 17 defect that emits
+  `rolw $8, %eax` — a 16-bit rotate with a 32-bit register — and the
+  assembler refuses it.
 
-### La libreria standard del C++ gira
+### The C++ standard library runs
 
 ```
 ex-os:/> /cdrom/bin/provacpp
@@ -5618,65 +5586,64 @@ La libreria standard del C++ dentro EX-OS
   out_of_range : presa da dentro la libreria
 ```
 
-**libstdc++ 25 MB e libsupc++ 1 MB** compilate per `i386-exos`. Il
-programma si costruisce con una riga sola, con `g++`, come su qualunque
-altro bersaglio:
+**libstdc++ 25 MB and libsupc++ 1 MB** compiled for `i386-exos`. The program
+is built with a single line, with `g++`, as on any other target:
 
 ```sh
 i386-exos-g++ -O2 -o provacpp prova-cpp.cpp
 ```
 
-> ! **Le eccezioni funzionano, e non era scontato.** Sono il pezzo che ha
-> bisogno di più cose insieme: `__cxa_throw`, lo svolgimento dello stack,
-> le tabelle `.eh_frame`, i descrittori di tipo. Lo svolgimento **legge a
-> runtime le tabelle prodotte dal collegatore e le percorre**: è l'unica
-> parte del C++ che pretende che il programma caricato in memoria sia
-> esattamente come il collegatore l'ha descritto — quindi è anche una prova
-> indiretta che il caricamento su richiesta di EX-OS è corretto.
+> ! **Exceptions work, and that was not a given.** They are the piece that
+> needs the most things at once: `__cxa_throw`, stack unwinding, the
+> `.eh_frame` tables, the type descriptors. Unwinding **reads the tables
+> produced by the linker at run time and walks them**: it is the only part of
+> C++ that demands the program loaded in memory be exactly as the linker
+> described it — so it is also indirect proof that EX-OS's on-demand loading
+> is correct.
 
-**La riga che mancava da sempre: `extern "C"`.** Nessuno degli header di
-EX-OS aveva la guardia `#ifdef __cplusplus`. Il C++ decora i nomi con i
-tipi degli argomenti — `printf` diventa `_Z6printfPKcz` — mentre `libc.a` è
-compilata da un compilatore C e dentro ha il nome nudo: **ogni programma
-C++ chiamava simboli che nell'archivio non esistono.**
+**The line that had always been missing: `extern "C"`.** None of the EX-OS
+headers had the `#ifdef __cplusplus` guard. C++ decorates names with the
+types of the arguments — `printf` becomes `_Z6printfPKcz` — while `libc.a` is
+compiled by a C compiler and holds the bare name inside: **every C++ program
+was calling symbols that do not exist in the archive.**
 
-Il sintomo era fuorviante, perché arrivava in compilazione e non al link:
-la libstdc++ dichiara alcune funzioni della libc con `extern "C"` esplicito,
-e il messaggio diceva `conflicting declaration of 'void* memalign(...)'
-with 'C' linkage` — cioè «questa dichiarazione è in conflitto con se
-stessa».
+The symptom was misleading, because it arrived at compile time and not at
+link time: libstdc++ declares some libc functions with an explicit
+`extern "C"`, and the message said `conflicting declaration of 'void*
+memalign(...)' with 'C' linkage` — that is, «this declaration conflicts with
+itself».
 
-### I nomi che servono a essere nominati
+### The names that are needed just to be named
 
-Perché la libstdc++ compili, la libc deve *dichiarare* molte cose che
-EX-OS non farà mai: 40 codici errno di rete e IPC, le costanti `DT_*` per
-FIFO, socket e collegamenti simbolici, i `S_IF*`/`S_IS*` corrispondenti.
+For libstdc++ to compile, the libc must *declare* many things EX-OS will
+never do: 40 network and IPC errno codes, the `DT_*` constants for FIFOs,
+sockets and symbolic links, and the matching `S_IF*`/`S_IS*`.
 
-> ! **Un nome mancante è un errore di compilazione, non un ramo morto.**
-> `<system_error>` costruisce `std::errc` da quell'elenco e `<filesystem>`
-> scrive `case DT_LNK:` in uno switch: serve la costante, non il
-> comportamento. Ritornare sempre 0 da `S_ISLNK()` è la risposta **giusta**
-> — su EX-OS un collegamento simbolico non esiste, quindi «questo file è un
-> collegamento?» ha davvero risposta no.
+> ! **A missing name is a compile error, not a dead branch.**
+> `<system_error>` builds `std::errc` from that list and `<filesystem>`
+> writes `case DT_LNK:` in a switch: it is the constant that is needed, not
+> the behaviour. Always returning 0 from `S_ISLNK()` is the **right** answer
+> — on EX-OS a symbolic link does not exist, so "is this file a link?" really
+> does answer no.
 
-I valori sono quelli di Linux e non vanno reinventati: il giorno che i
-collegamenti simbolici arrivassero, `S_IFLNK` dovrà valere `0120000` come
-ovunque.
+The values are Linux's and must not be reinvented: the day symbolic links
+arrive, `S_IFLNK` will have to be `0120000` as it is everywhere else.
 
-### Collegare un programma C vero, dentro EX-OS
+### Linking a real C program, inside EX-OS
 
-Il CD degli strumenti porta anche il **runtime del bersaglio** in
-`/exos/lib`: `crt0.o`, `crti/crtn/crtbegin/crtend.o`, `libc.a`, `libgcc.a`,
-`libm.a`. Sono oggetti `i386-exos` prodotti dal cross, quindi già codice di
-EX-OS: `ld` nativo li legge qui dentro come li legge il cross su Linux.
+The tools CD also carries the **target runtime** in `/exos/lib`: `crt0.o`,
+`crti/crtn/crtbegin/crtend.o`, `libc.a`, `libgcc.a`, `libm.a`. They are
+`i386-exos` objects produced by the cross toolchain, so already EX-OS code:
+the native `ld` reads them in here as the cross reads them on Linux.
 
-! **Senza questi il driver arriva a metà.** `gcc -c` ha bisogno solo di
-cpp, cc1 e as; `gcc -o programma` ha bisogno anche di crt0, `libgcc.a` e
-`libc.a` — e senza si ottiene un errore di `ld` su simboli che non
-c'entrano niente col sorgente che si stava compilando.
+! **Without them the driver only gets halfway.** `gcc -c` needs only cpp,
+cc1 and as; `gcc -o program` also needs crt0, `libgcc.a` and `libc.a` — and
+without them you get an `ld` error about symbols that have nothing to do
+with the source you were compiling.
 
-La prova è `prova-gcc.c`, sul CD insieme al suo assembly generato dal cross
-(che fa anche da termine di paragone per quello che `cc1` dovrà produrre):
+The test is `prova-gcc.c`, on the CD together with its cross-generated
+assembly (which also serves as the yardstick for what `cc1` will have to
+produce):
 
 ```
 ex-os:/> /cdrom/bin/as -o /pg.o /cdrom/prova-gcc.s
@@ -5692,319 +5659,317 @@ La catena intera dentro EX-OS
 Compilato, assemblato e collegato qui dentro.
 ```
 
-! **La divisione a 64 bit è lì apposta.** È una delle poche cose che il
-compilatore non sa fare con un'istruzione: chiama `__divdi3` in `libgcc.a`.
-Se libgcc non è stato collegato, il difetto si vede lì e solo lì. Gli altri
-due valori sono attesi e scritti nel sorgente — un programma che stampa un
-numero sbagliato senza che nessuno sappia quale fosse quello giusto è una
-prova che non prova niente.
+! **The 64-bit division is there on purpose.** It is one of the few things
+the compiler cannot do with a single instruction: it calls `__divdi3` in
+`libgcc.a`. If libgcc was not linked in, the defect shows there and only
+there. The other two values are expected and written in the source — a
+program printing a wrong number with nobody knowing what the right one was
+is a test that tests nothing.
 
-### `cc1` compila dentro EX-OS
+### `cc1` compiles inside EX-OS
 
-`as` traduce, `ld` collega, le tre librerie di calcolo ci sono, la libm c'è,
-**libstdc++ gira** — e **`cc1` compila**. Il compilatore C di GCC,
-costruito in canadian cross
-(`--build=x86_64-linux --host=i386-exos --target=i386-exos`), legge un
-sorgente C dentro EX-OS e ne produce l'assembly, che `as` e `ld`
-trasformano in un eseguibile.
+`as` translates, `ld` links, the three arithmetic libraries are there, the
+libm is there, **libstdc++ runs** — and **`cc1` compiles**. GCC's C compiler,
+built as a canadian cross
+(`--build=x86_64-linux --host=i386-exos --target=i386-exos`), reads a C
+source inside EX-OS and produces its assembly, which `as` and `ld` turn into
+an executable.
 
-**! Il binario va ricostruito.** La prova è stata fatta prima del
-passaggio a `time_t` a 64 bit; dopo quel cambiamento `cc1` è stato solo
-**rilinkato**, e gli oggetti già compilati continuavano a credere che
-`struct timeval` fosse di 8 byte mentre la libc nuova ne scrive 12 — pila
-corrotta, sistema fermo. È il promemoria che un cambio di ABI non si
-risolve con un link. La ricostruzione completa è **fatta** — il binario
-nuovo c'è — ma non è ancora stata riprovata dentro EX-OS: finché non lo
-sarà, la riga qui sopra dice «da riprovare» e non «testato».
+**! The binary has to be rebuilt.** The test was done before the move to a
+64-bit `time_t`; after that change `cc1` was only **relinked**, and the
+already-compiled objects went on believing `struct timeval` was 8 bytes while
+the new libc writes 12 — corrupted stack, system stopped. It is the reminder
+that an ABI change is not settled with a link. The full rebuild is **done**
+— the new binary is there — but it has not been retried inside EX-OS yet:
+until it has, the row above says «to be retried» and not «tested».
 
-Sono 41 MB di binario, e girano solo grazie al caricamento su richiesta
-(vedi *Le pagine di un programma arrivano quando servono*): il costo
-d'avvio non dipende dalla dimensione, e la memoria restituita al kernel
-tiene il resto sotto controllo.
+It is 41 MB of binary, and it runs only thanks to on-demand loading (see *A
+program's pages arrive when they are needed*): startup cost does not depend
+on the size, and the memory returned to the kernel keeps the rest in check.
 
-Arrivarci ha scoperto tre difetti nella libc, tutti invisibili ai
-programmi di EX-OS perché nessuno di loro fa quello che fa un compilatore:
+Getting there uncovered three defects in the libc, all invisible to EX-OS's
+own programs because none of them does what a compiler does:
 
 | | |
 |---|---|
-| `realloc` non ingrandiva **mai** sul posto | la fusione col blocco successivo rifiutava i blocchi non liberi — cioè esattamente il caso da gestire. Si vedeva come un salto a `0xa7a6a5a4`, che sono i byte di riempimento del test letti come puntatore |
-| i costruttori globali non venivano chiamati | `cc1` ha 57 voci in `.init_array`; la prima struttura usata era vuota |
-| `printf` con `%f` inventava cifre | oltre la diciottesima, e arrotondava 2,5 a 3 invece che a 2 |
+| `realloc` **never** grew in place | merging with the following block refused non-free blocks — which is exactly the case to handle. It showed up as a jump to `0xa7a6a5a4`, which is the test's own fill bytes read as a pointer |
+| global constructors were never called | `cc1` has 57 entries in `.init_array`; the first structure used was empty |
+| `printf` with `%f` invented digits | past the eighteenth, and it rounded 2.5 to 3 instead of to 2 |
 
-### Un binario di terzi porta dentro la libc del giorno in cui è stato collegato
+### A third-party binary carries the libc of the day it was linked
 
-Qui non ci sono librerie condivise: `as`, `ld` e `cc1` hanno **una copia
-della libc dentro di sé**, quella con cui sono stati collegati. Correggere
-`lib/libc.c` non li tocca. Sembra ovvio detto così, e non lo è affatto
-quando il difetto corretto è nell'allocatore.
+There are no shared libraries here: `as`, `ld` and `cc1` each hold **a copy
+of the libc inside them**, the one they were linked against. Fixing
+`lib/libc.c` does not touch them. Put like that it sounds obvious, and it is
+not obvious at all when the fixed defect is in the allocator.
 
-`ld` andava in page fault appena gli si davano degli archivi da collegare:
+`ld` page-faulted as soon as it was given archives to link:
 
 ```
 [FAULT] PID 9 '/cdrom/bin/ld': page fault a 0x00000005
         (protezione, scrittura, EIP=0x080d2e16)
 ```
 
-L'indirizzo si risolve sul binario non strippato, e non è codice di
-binutils:
+The address resolves on the unstripped binary, and it is not binutils code:
 
 ```
 EIP 0x080d2e16  ->  malloc + 0x116
 ```
 
-! **La conferma sta nella tabella dei simboli, non nel ragionamento.**
-Dentro `ld` c'era `heap_fondi_con_succ` e **non** `heap_assorbi_succ` —
-cioè la funzione che la correzione di `realloc` ha introdotto. Quel
-binario è del 2 agosto: si porta dentro la libc in cui `realloc` non
-ingrandiva **mai** sul posto, e il chiamante che credeva di avere più
-spazio scriveva oltre la fine. La corruzione non si vede dove nasce, si
-vede alla `malloc` successiva.
+! **The confirmation is in the symbol table, not in the reasoning.** Inside
+`ld` there was `heap_fondi_con_succ` and **not** `heap_assorbi_succ` — the
+function the `realloc` fix introduced. That binary is from 2 August: it
+carries the libc in which `realloc` **never** grew in place, and the caller
+that believed it had more room wrote past the end. The corruption does not
+show where it is caused, it shows at the next `malloc`.
 
-Collegare un solo `.o` passava: poco traffico di `realloc`. Con `libc.a` e
-`libgcc.a` da leggere, bfd fa crescere le tabelle dei simboli e arriva.
+Linking a single `.o` got through: little `realloc` traffic. With `libc.a`
+and `libgcc.a` to read, bfd grows its symbol tables and it gets there.
 
-#### Il ricollegamento da solo non basta, e crederlo costa un secondo difetto
+#### Relinking alone is not enough, and believing it costs a second defect
 
-La prima risposta è stata ricollegare `as` e `ld` contro la libc corretta,
-senza ricompilarli: l'allocatore è *implementazione*, l'ABI non cambia,
-quindi il relink dovrebbe bastare. `ld` ha smesso di andare in fault e ha
-collegato gli archivi. **E `as` ha cominciato a saltare a un indirizzo a
-caso** (`EIP=0x6a722690`, pagina assente).
+The first answer was to relink `as` and `ld` against the corrected libc
+without recompiling them: the allocator is *implementation*, the ABI does
+not change, so a relink ought to be enough. `ld` stopped faulting and linked
+the archives. **And `as` started jumping to a random address**
+(`EIP=0x6a722690`, page not present).
 
-Il ragionamento aveva una premessa non verificata: *fra il 2 agosto e oggi
-è cambiata solo l'implementazione*. Non è vero.
+The reasoning rested on an unverified premise: *between 2 August and today
+only the implementation changed*. It is not true.
 
 ```
-oggetti dei binutils   2 agosto    typedef long      time_t;
-libc di oggi                       typedef long long time_t;
+binutils objects   2 August    typedef long      time_t;
+today's libc                   typedef long long time_t;
 ```
 
-`struct stat` contiene **tre** campi `time_t`: è cresciuta di dodici byte
-e ha spostato tutti gli offset successivi. Un oggetto compilato con
-l'header vecchio la legge alla vecchia maniera mentre la libc nuova la
-scrive alla nuova — e quello che ne esce, se finisce in un puntatore a
-funzione, è esattamente un salto a `0x6a722690`.
+`struct stat` holds **three** `time_t` fields: it grew by twelve bytes and
+shifted every offset after them. An object compiled with the old header
+reads it the old way while the new libc writes it the new way — and what
+comes out, if it ends up in a function pointer, is exactly a jump to
+`0x6a722690`.
 
-> ! **È lo stesso difetto di `cc1`, non un altro.** Là l'avevo capito
-> subito perché il cambio di `time_t` era fresco; qui l'avevo dimenticato
-> e ho concluso «basta ricollegare» **prima** di verificarlo. La
-> ricostruzione completa dei binutils è l'unica risposta giusta, come per
-> `cc1`.
+> ! **It is the same defect as `cc1`'s, not another one.** There I caught it
+> at once because the `time_t` change was fresh; here I had forgotten it and
+> concluded «a relink is enough» **before** checking. A full rebuild of
+> binutils is the only right answer, as it was for `cc1`.
 
-> ! **`ld` ricollegato ha funzionato lo stesso**, e questa è la parte
-> istruttiva: nel percorso che collega archivi la `struct stat` sbagliata
-> non viene toccata. «Ha funzionato una volta» non è una prova di
-> correttezza — è una prova che quel percorso non passa di lì.
+> ! **The relinked `ld` worked anyway**, and that is the instructive part:
+> in the path that links archives the wrong `struct stat` is never touched.
+> «It worked once» is not proof of correctness — it is proof that that path
+> does not go through there.
 
-Regola generale, valida per qualunque cosa verrà portata qui dentro:
+A general rule, valid for anything that gets ported in here:
 
-| cos'è cambiato nella libc | cosa basta |
+| what changed in the libc | what is enough |
 |---|---|
-| solo `lib/libc.c` (implementazione) | ricollegare |
-| anche `lib/include/libc.h` (tipi, strutture) | **ricompilare tutto** |
+| only `lib/libc.c` (implementation) | relink |
+| also `lib/include/libc.h` (types, structures) | **recompile everything** |
 
-Il modo di accorgersi del primo caso è cercare nella tabella dei simboli
-una funzione che esiste solo dopo la correzione. Il modo di accorgersi del
-secondo è guardare `git diff` sull'header **prima** di decidere, che è
-esattamente il passo che qui è saltato.
+The way to spot the first case is to look in the symbol table for a function
+that only exists after the fix. The way to spot the second is to look at
+`git diff` on the header **before** deciding, which is exactly the step that
+was skipped here.
 
-**Cosa manca ancora:** il programma di guida `gcc`, quello che concatena
-`cc1 → as → ld` passando i file intermedi. Oggi i tre passi si danno a
-mano.
+**What is still missing:** the `gcc` driver program, the one that chains
+`cc1 → as → ld` passing the intermediate files along. Today the three steps
+are given by hand.
 
 ---
 
-## CD e DVD — driver ATAPI e ISO 9660
+## CDs and DVDs — ATAPI driver and ISO 9660
 
 ```
-disk                    il lettore compare come cd0
-mount cd0 /cdrom        montaggio manuale (sempre in sola lettura)
+disk                    the drive shows up as cd0
+mount cd0 /cdrom        manual mount (always read-only)
 ls /cdrom
-umount /cdrom           prima di espellere il disco
+umount /cdrom           before ejecting the disc
 ```
 
-E in `/boot/kernel.cfg`, per averlo **montato all'avvio**:
+And in `/boot/kernel.cfg`, to have it **mounted at boot**:
 
 ```ini
 [mount]
 /cdrom = cd0
 ```
 
-La riga è attiva nella configurazione predefinita, e può restarlo su qualunque
-macchina: un lettore vuoto — o assente — non produce un avviso, solo un
-"montaggio saltato" nel log. Un CD assente all'accensione è la condizione
-normale, non un problema, e segnalarlo come tale metterebbe una riga fra i
-*problemi durante l'inizializzazione* a ogni accensione.
+The line is active in the default configuration, and it can stay so on any
+machine: an empty — or absent — drive produces no warning, just a "mount
+skipped" in the log. A missing CD at power-on is the normal condition, not a
+problem, and reporting it as one would put a line among the *problems during
+initialisation* at every boot.
 
-### Le tre cose che un lettore non ha in comune con un disco
+### The three things a drive does not share with a disk
 
-**Il blocco è da 2048 byte, non da 512.** La traduzione sta in un punto solo,
-`kernel/block/blk.c`: il resto del sistema chiede settori da 512 come per
-qualunque disco. Le richieste allineate — cioè quasi tutte, perché ISO 9660
-lavora a blocchi — vanno dritte al dispositivo senza copie intermedie.
+**The block is 2048 bytes, not 512.** The translation lives in a single
+place, `kernel/block/blk.c`: the rest of the system asks for 512-byte sectors
+as it would for any disk. Aligned requests — that is, nearly all of them,
+because ISO 9660 works in blocks — go straight to the device with no
+intermediate copies.
 
-**La capacità appartiene al disco, non al lettore.** Un `cd0` con zero settori
-non è un lettore rotto: è un lettore vuoto, o che nessuno ha ancora sondato. La
-finestra viene riempita da `blk_supporto()` quando serve, e azzerata quando il
-disco esce.
+**The capacity belongs to the disc, not to the drive.** A `cd0` with zero
+sectors is not a broken drive: it is an empty one, or one nobody has probed
+yet. The field is filled in by `blk_supporto()` when needed, and cleared when
+the disc comes out.
 
-**Gli errori sono a due livelli.** Il bit ERR dice solo "CHECK CONDITION": il
-motivo sta nei dati di *sense*, che vanno chiesti con un secondo comando. Senza
-leggerli, «non c'è il disco», «il disco è appena stato cambiato» e «il disco è
-illeggibile» sono la stessa cosa — e le prime due non sono errori.
+**Errors come at two levels.** The ERR bit only says "CHECK CONDITION": the
+reason is in the *sense* data, which has to be asked for with a second
+command. Without reading it, «there is no disc», «the disc has just been
+changed» and «the disc is unreadable» are the same thing — and the first two
+are not errors.
 
-Un disco **inserito a sistema avviato** si monta senza riavviare. Un lettore
-appena rifornito però risponde ancora "supporto assente" per un comando o due, e
-in emulazione il vassoio resta *aperto*: il driver insiste qualche volta e lo
-chiude una volta sola, come fa Linux. La conseguenza va detta — montare su un
-lettore lasciato aperto e vuoto lo chiude.
+A disc **inserted with the system already running** mounts without a reboot.
+A freshly loaded drive, though, still answers "medium not present" for a
+command or two, and under emulation the tray stays *open*: the driver insists
+a few times and closes it once, as Linux does. The consequence must be said
+out loud — mounting on a drive left open and empty closes it.
 
-### ISO 9660, e perché Joliet vince quando c'è
+### ISO 9660, and why Joliet wins when it is there
 
-Un disco masterizzato con nomi lunghi contiene **due alberi completi**: quello
-ISO 9660, con i nomi maiuscoli, troncati e con il numero di versione
-(`LEGGIMI.TXT;1`), e quello Joliet, con i nomi veri in UCS-2. Non sono due viste
-della stessa struttura: sono due catene di directory separate che puntano agli
-stessi dati. `kernel/fs/iso9660.c` sceglie Joliet quando c'è, e dice quale ha
-scelto; senza, i nomi che si vedono non sono quelli che l'utente ha scritto.
+A disc burned with long names contains **two complete trees**: the ISO 9660
+one, with upper-case, truncated names carrying a version number
+(`LEGGIMI.TXT;1`), and the Joliet one, with the real names in UCS-2. They are
+not two views of the same structure: they are two separate directory chains
+pointing at the same data. `kernel/fs/iso9660.c` picks Joliet when it is
+there, and says which one it picked; without that, the names you see are not
+the ones the user wrote.
 
-Sui nomi ISO toglie il `;1` e il punto finale — sono formato, non nome — e li
-mostra in minuscolo; il confronto è insensibile alle maiuscole, altrimenti ciò
-che `ls` mostra non sarebbe digitabile.
+On ISO names it strips the `;1` and the trailing dot — those are format, not
+name — and shows them in lower case; the comparison is case-insensitive,
+otherwise what `ls` shows would not be typeable.
 
-**Sola lettura, e non per pigrizia**: ISO 9660 non ha bitmap di spazio libero né
-voci riutilizzabili. Non esiste "aggiungere un file", esiste rifare l'immagine.
-Ogni scrittura è respinta con `-30` (EROFS) prima di toccare il volume.
+**Read-only, and not out of laziness**: ISO 9660 has neither a free-space
+bitmap nor reusable entries. "Adding a file" does not exist; remaking the
+image does. Every write is refused with `-30` (EROFS) before the volume is
+touched.
 
-**Rock Ridge non è gestito** — l'estensione Unix annidata nei campi di sistema
-dei record. Un disco che la usa resta leggibile: si vedono i nomi ISO o Joliet,
-che ci sono comunque.
+**Rock Ridge is not handled** — the Unix extension nested in the records'
+system-use fields. A disc that uses it stays readable: you see the ISO or
+Joliet names, which are there anyway.
 
-### `make iso` — il CD degli strumenti
+### `make iso` — the tools CD
 
 ```bash
 make iso        # dist/exos-tools.iso
-make run-iso    # avvia QEMU con il CD già inserito
+make run-iso    # start QEMU with the CD already inserted
 ```
 
-Un secondo supporto, separato dal floppy e **non avviabile**: ci va ciò che in
-1.44 MB non entra e che non serve a tutti. Il floppy resta il supporto di avvio
-collaudato; gli strumenti cambiano spesso, pesano, e non devono poter rompere
-l'avvio.
+A second medium, separate from the floppy and **not bootable**: it holds what
+does not fit in 1.44 MB and what not everybody needs. The floppy stays the
+proven boot medium; the tools change often, they are heavy, and they must not
+be able to break booting.
 
-Il disco contiene oggi:
+The disc holds, today:
 
 ```
-/leggimi.txt          cos'è questo disco e come si monta
-/exos/include/        gli header della libc (stdio.h, stdlib.h, …)
-/exos/libc.c          la libc in un file solo
-/exos/start.S         il pezzo di avvio che chiama main()
-/doc/                 README, note sul kernel, licenza
-/bin/                 as, ld, cc1 e i programmi di prova
+/leggimi.txt          what this disc is and how to mount it
+/exos/include/        the libc headers (stdio.h, stdlib.h, …)
+/exos/libc.c          the libc in a single file
+/exos/start.S         the startup piece that calls main()
+/doc/                 README, kernel notes, license
+/bin/                 as, ld, cc1 and the test programs
 ```
 
-`/exos/` non è documentazione: è ciò che serve per **compilare su EX-OS**.
-`/bin` non è più vuota: ci stanno `as` e `ld` di binutils 2.44 e `cc1` di
-GCC, cioè la catena di compilazione vera — vedi
-[La catena di compilazione dentro EX-OS](#la-catena-di-compilazione-dentro-ex-os).
+`/exos/` is not documentation: it is what is needed to **compile on EX-OS**.
+`/bin` is no longer empty: it holds binutils 2.44's `as` and `ld` and GCC's
+`cc1`, that is, the real compilation chain — see
+[The compilation chain inside EX-OS](#the-compilation-chain-inside-ex-os).
 
-! Il CD è in sola lettura per costruzione, quindi header e librerie si leggono
-da lì ma **l'output di una compilazione deve andare altrove** — cioè su un EX-OS
-installato su ext2, o sul floppy.
+! The CD is read-only by construction, so headers and libraries are read
+from there but **the output of a compilation has to go somewhere else** —
+that is, to an EX-OS installed on ext2, or to the floppy.
 
-### Provare il driver senza masterizzare niente
+### Testing the driver without burning anything
 
-`tools/mkiso.py` genera anche un'immagine sintetica di collaudo, di cui si
-conosce ogni byte — utile proprio perché, quando il driver legge un nome
-sbagliato, si sa cosa c'era scritto:
+`tools/mkiso.py` also generates a synthetic test image whose every byte is
+known — useful precisely because, when the driver reads a wrong name, you
+know what was written there:
 
 ```bash
-python3 tools/mkiso.py /tmp/test.iso --prova                  # con Joliet
+python3 tools/mkiso.py /tmp/test.iso --prova                  # with Joliet
 python3 tools/mkiso.py /tmp/solo-iso.iso --prova --senza-joliet
 qemu-system-i386 -fda dist/floppy.img -m 32M -boot a -cdrom /tmp/test.iso
 ```
 
-Lo stesso strumento fa da masterizzatore per qualunque albero di directory:
+The same tool acts as a burner for any directory tree:
 
 ```bash
-python3 tools/mkiso.py /tmp/mio.iso --da /percorso/albero --etichetta "MIO CD"
+python3 tools/mkiso.py /tmp/mio.iso --da /path/to/tree --etichetta "MY CD"
 ```
 
-Costruisce **entrambi** gli alberi — nomi ISO 9660 8.3 maiuscoli con `;1` e nomi
-Joliet veri in UCS-2 — condividendo i blocchi dei file, e gestisce nomi lunghi,
-sottodirectory e collisioni del troncamento a 8.3 (due file distinti che
-diventassero lo stesso nome sarebbero un file perso in silenzio).
+It builds **both** trees — upper-case ISO 9660 8.3 names with `;1` and real
+Joliet names in UCS-2 — sharing the files' blocks, and it handles long names,
+subdirectories and 8.3 truncation collisions (two distinct files that ended
+up with the same name would be a file lost in silence).
 
 ---
 
-## Arresto e spegnimento
+## Halting and powering off
 
-| Comando shell | Effetto |
+| Shell command | Effect |
 |---|---|
-| `halt` | sincronizza il filesystem, ferma il sistema, **non** spegne |
-| `poweroff` / `shutdown` | sincronizza, conta 3 secondi, spegne l'hardware |
-| `reboot` | sincronizza e riavvia (reset via 8042, fallback triple fault) |
+| `halt` | syncs the filesystem, stops the system, does **not** power off |
+| `poweroff` / `shutdown` | syncs, counts 3 seconds, powers the hardware off |
+| `reboot` | syncs and restarts (reset via the 8042, triple-fault fallback) |
 
-Lo spegnimento hardware usa le porte ACPI note di QEMU (`0x604`), Bochs
-(`0xB004`) e VirtualBox (`0x4004`). **In emulazione la macchina si spegne
-davvero; su hardware reale con ogni probabilità no** — servirebbe un parser
-ACPI (FADT/DSDT) o APM via real mode, nessuno dei due ancora implementato. In
-quel caso il sistema resta fermo in stato sicuro con il messaggio "è ora
-sicuro spegnere il computer", come i PC pre-ATX.
+Hardware power-off uses the known ACPI ports of QEMU (`0x604`), Bochs
+(`0xB004`) and VirtualBox (`0x4004`). **Under emulation the machine really
+does power off; on real hardware most likely not** — that would need an ACPI
+parser (FADT/DSDT) or APM through real mode, neither of them implemented yet.
+In that case the system stays halted in a safe state with the message "it is
+now safe to turn off your computer", like pre-ATX PCs.
 
 ---
 
-## Identità e versione del sistema
+## System identity and version
 
-`kernel/include/version.h` è la **fonte unica di verità** per nome, versione,
-autore e licenza. Da lì derivano il banner di avvio, i comandi `ver`/`version`
-e `uname`, e le variabili `OSNAME`/`OSVER`/`AUTHOR` dell'ambiente — che il
-kernel inietta in `[env]` e che **non** vanno scritte in `kernel.cfg`.
+`kernel/include/version.h` is the **single source of truth** for the name,
+version, author and license. From it come the boot banner, the `ver`/`version`
+and `uname` commands, and the `OSNAME`/`OSVER`/`AUTHOR` environment
+variables — which the kernel injects into `[env]` and which must **not** be
+written in `kernel.cfg`.
 
 ```c
-#define EXOS_VERSION    "0.101"   /* +0.001 a ogni modifica del kernel */
+#define EXOS_VERSION    "0.101"   /* +0.001 at every kernel change */
 ```
 
-È una stringa e non un numero perché il kernel non usa la virgola mobile.
-L'incremento è manuale e deliberato.
+It is a string and not a number because the kernel does not use floating
+point. The increment is manual and deliberate.
 
-! **Anche la riga «Versione» in cima a questi due leggimi viene da lì**, e
-non è copiata a mano: `make leggimi-versione` la riscrive da `version.h`, e
-`make verify` fallisce se le due divergono. Un numero copiato invecchia il
-giorno dopo, e un leggimi che dichiara una versione sbagliata è peggio di
-uno che non la dichiara affatto.
+! **The «Version» line at the top of these two READMEs comes from there
+too**, and is not copied by hand: `make leggimi-versione` rewrites it from
+`version.h`, and `make verify` fails if the two disagree. A copied number
+goes stale the next day, and a README declaring a wrong version is worse
+than one not declaring it at all.
 
 ---
 
-## Avvio silenzioso
+## Quiet boot
 
 ```ini
 [kernel]
-verboseboot = 0    # 0 = solo output normale (default), 1 = log e banner
+verboseboot = 0    # 0 = normal output only (default), 1 = log and banner
 ```
 
-**Il default è `0` dalla 0.142** (prima era `1`): un sistema che si avvia
-mostra il proprio nome, non i propri passi di inizializzazione. Vale in tutti
-i casi dubbi — voce assente, file mancante, valore non numerico — e solo un
-numero diverso da zero fa parlare il sistema.
+**The default is `0` since 0.142** (it used to be `1`): a system that boots
+shows its name, not its initialisation steps. It applies in every doubtful
+case — missing entry, missing file, non-numeric value — and only a non-zero
+number makes the system talk.
 
-Con `0`: schermo pulito, una riga di identità, prompt. I messaggi dei PASSI
-1-13 vengono emessi lo stesso — sono stampati prima che il file di
-configurazione sia leggibile — e il kernel li cancella dallo schermo al
-PASSO 13c.
+With `0`: a clean screen, one identity line, a prompt. The messages of STEPS
+1-13 are emitted anyway — they are printed before the configuration file can
+be read — and the kernel clears them from the screen at STEP 13c.
 
-**Errori ed eventi inattesi restano sempre visibili**, in silenzioso come in
-verboso:
+**Errors and unexpected events always stay visible**, in quiet mode as in
+verbose:
 
-- un `LOG_ERROR` è stampato qualunque sia il livello di log, anche con
-  `loglevel = 0`;
-- ogni ERROR/WARN è registrato mentre viene emesso e **riproposto dopo la
-  pulizia dello schermo**, sotto l'intestazione `Avvio silenzioso: N
-  problema/i durante l'inizializzazione` — così cancellare il log di avvio
-  non cancella le prove di ciò che è andato storto;
-- se i problemi superano gli slot del registro, la ristampa lo dichiara
-  invece di troncare in silenzio;
-- la console seriale riceve comunque tutto, filtro incluso.
+- a `LOG_ERROR` is printed whatever the log level, even with `loglevel = 0`;
+- every ERROR/WARN is recorded as it is emitted and **shown again after the
+  screen is cleared**, under the heading `Avvio silenzioso: N problema/i
+  durante l'inizializzazione` — so clearing the boot log does not clear the
+  evidence of what went wrong;
+- if the problems exceed the log's slots, the reprint says so instead of
+  truncating in silence;
+- the serial console receives everything anyway, filter included.
 
 ```
 EX OS 0.101 (Extensible Operating System) - Copyright (C) 2025 Graziano Falcone - GPL 2.0
@@ -6017,9 +5982,9 @@ ex-os:/>
 
 ---
 
-## Interfaccia driver
+## Driver interface
 
-### Disposizione della tastiera: `keymap`
+### Keyboard layout: `keymap`
 
 ```ini
 [kernel]
@@ -6027,82 +5992,79 @@ keymap = it        # us it fr de es uk
 ```
 
 ```
-keymap            quale c'è adesso, e quali si possono avere
-keymap it         passa a quella italiana, subito
-keymap -p         stampa la riga da mettere in kernel.cfg
+keymap            which one is active, and which are available
+keymap it         switch to the Italian one, right now
+keymap -p         print the line to put in kernel.cfg
 ```
 
-La legge `/dev/kbd.drv` all'avvio, **prima di registrarsi** — cioè prima
-che qualcuno possa digitare: leggerla dopo lascerebbe una finestra in cui
-i primi tasti vengono tradotti con la disposizione sbagliata, e sono
-proprio quelli dell'autoexec. Un nome sconosciuto non ferma niente: il
-driver lo dice e tiene `us`, perché una tastiera muta per un refuso nella
-configurazione è un sistema che non si può usare nemmeno per correggere
-quel refuso.
+`/dev/kbd.drv` reads it at startup, **before registering** — that is,
+before anyone can type: reading it later would leave a window in which the
+first keys are translated with the wrong layout, and those are exactly the
+autoexec's. An unknown name stops nothing: the driver says so and keeps
+`us`, because a keyboard struck dumb by a typo in the configuration is a
+system you cannot even use to fix that typo.
 
-! **Ogni disposizione sono QUATTRO tabelle, non due**: normale, Shift,
-AltGr, AltGr+Shift. Sembra un lusso finché non si prova a scrivere una
-funzione — su una tastiera italiana le graffe stanno **solo** su
-AltGr+Shift:
+! **Each layout is FOUR tables, not two**: plain, Shift, AltGr,
+AltGr+Shift. It looks like a luxury until you try to write a function — on
+an Italian keyboard the braces are **only** on AltGr+Shift:
 
 ```
 @  AltGr+ò        [  AltGr+è        {  AltGr+Shift+è
 #  AltGr+à        ]  AltGr++        }  AltGr+Shift++
 ```
 
-Una disposizione che si ferma a tre tabelle dà una tastiera con cui non si
-può aprire un blocco, e questo sistema ci porta dentro un editor e un
-compilatore C.
+A layout that stops at three tables gives a keyboard that cannot open a
+block, and this system ships an editor and a C compiler.
 
-! **Le lettere accentate sono byte della code page 437**: la `à` è 0x85,
-non UTF-8. È l'unico byte che la VGA disegna. Conseguenza dichiarata: con
-quei byte finiscono anche nei nomi di file, e chi legge quei file su Linux
-vede caratteri diversi. Non è un difetto della tabella: è che EX-OS non ha
-una codifica di sistema, e sceglierne una è una decisione più grande di
-una disposizione di tastiera.
+! **Accented letters are code page 437 bytes**: `à` is 0x85, not UTF-8.
+It is the only byte the VGA draws. Declared consequence: those same bytes
+end up in file names, and whoever reads those files on Linux sees
+different characters. It is not a defect of the table: it is that EX-OS has
+no system encoding, and choosing one is a bigger decision than a keyboard
+layout.
 
-! **Non ci sono i tasti morti.** Su una francese o una tedesca `^` e `¨`
-scrivono sé stessi invece di aspettare la vocale. Farli funzionare vuol
-dire uno stato in più nel driver e una tabella di combinazioni per
-disposizione; per ora si dichiara che non ci sono, invece di farli
-sembrare rotti.
+! **There are no dead keys.** On a French or German keyboard `^` and `¨`
+write themselves instead of waiting for the vowel. Making them work means
+one more state in the driver and a combination table per layout; for now it
+is declared that they are absent, rather than made to look broken.
 
-**Due difetti trovati provandola**, entrambi lontani da dove li si
-cercava:
+**Two defects found by testing it**, both far from where they were looked
+for:
 
 | | |
 |---|---|
-| la shell buttava via gli accenti | `riga_modifica` accettava `k >= 32 && k < 127`, cioè «solo ASCII». Invisibile finché la tastiera è stata americana: con quella italiana la `ò` arrivava dal driver e la shell la scartava, e il tasto sembrava rotto |
-| AltGr non esisteva | `e0 38` finiva nel blocco dei tasti estesi — quello che consegna le sequenze ANSI dei cursori — e usciva dal suo `default: return` prima di arrivare al codice che lo gestiva. Il codice c'era ed era giusto: stava solo dopo |
+| the shell threw the accents away | `riga_modifica` accepted `k >= 32 && k < 127`, that is «ASCII only». Invisible for as long as the keyboard was American: with the Italian one the `ò` arrived from the driver and the shell dropped it, and the key looked broken |
+| AltGr did not exist | `e0 38` ended up in the extended-key block — the one that delivers the cursors' ANSI sequences — and left through its `default: return` before reaching the code that handled it. The code was there and it was right: it was just after |
 
-! **`us` e `it` sono verificate tasto per tasto** in QEMU, mandando il
-tasto *fisico* e guardando che carattere ne esce. Le altre sono scritte
-dalla disposizione nota e provate solo dove cambiano posizione rispetto a
-US: sono utilizzabili, ma chi ha quella tastiera davanti e trova un tasto
-sbagliato ha trovato un difetto vero, non un limite.
+! **`us` and `it` are verified key by key** in QEMU, by sending the
+*physical* key and looking at which character comes out. The others are
+written from the known layout and tested only where they move with respect
+to US: they are usable, but whoever has that keyboard in front of them and
+finds a wrong key has found a real defect, not a limitation.
 
-! **Se si sbaglia disposizione, la via d'uscita è il riavvio.** Non c'è un
-comando digitabile da tutte: fra QWERTY le lettere non si muovono, ma su
-AZERTY la `a` e la `m` cambiano posto e `keymap it` battuto alla cieca
-diventa `keyq,p`. Il cambio a caldo però **non è permanente**: si riavvia e
-torna quella di `kernel.cfg`. È il motivo per cui `keymap` non scrive su
-nessun file — a scriverlo è `hwconfig`, che conserva quella che trova.
+! **If you pick the wrong layout, the way out is a reboot.** There is no
+command typeable under all of them: among QWERTY variants the letters do
+not move, but on AZERTY `a` and `m` change place and `keymap it` typed
+blind comes out as `keyq,p`. The hot change, though, is **not permanent**:
+reboot and you get back the one in `kernel.cfg`. That is why `keymap`
+writes to no file — the one that writes it is `hwconfig`, which keeps
+whatever it finds.
 
-### `hwconfig` — configurare senza leggere niente
+### `hwconfig` — configuring without reading anything
 
 ```
-hwconfig            guarda, propone, chiede, scrive
-hwconfig -n         guarda e basta
-hwconfig /disco     configura il sistema installato lì dentro
+hwconfig            looks, proposes, asks, writes
+hwconfig -n         only looks
+hwconfig /disco     configures the system installed in there
 ```
 
-`kernel.cfg` si scrive a mano, e per scriverlo bisogna già sapere che i
-dischi si chiamano `hd0p1`, che i punti di montaggio non devono esistere,
-che i moduli sono processi ring3 e che l'ordine dei comandi di rete non è
-modificabile. Sono tutte cose vere, tutte documentate qui sopra, e tutte da
-leggere **prima** di poter accendere una macchina.
+`kernel.cfg` is written by hand, and to write it you already have to know
+that disks are called `hd0p1`, that mount points must not exist, that
+modules are ring3 processes and that the order of the network commands is
+not negotiable. All true, all documented above, and all to be read
+**before** you can bring a machine up.
 
-`hwconfig` le sa già:
+`hwconfig` knows it already:
 
 ```
 Cosa c'e' in questa macchina
@@ -6113,46 +6075,45 @@ Cosa c'e' in questa macchina
   rete       scheda Ethernet sul bus PCI — si accende all'avvio
 ```
 
-Poi mostra i due file che scriverebbe, per intero, e chiede. Il round trip
-è verificato: analizza, scrive, e la macchina riparte dal disco con la rete
-accesa **senza un solo `[WARN]`**.
+Then it shows the two files it would write, in full, and asks. The round
+trip is verified: it analyses, it writes, and the machine boots from the
+disk with the network up **without a single `[WARN]`**.
 
-! **I file di prima finiscono in `.bak`**, ed è ciò che rende la proposta
-accettabile: se la macchina non riparte, quello di prima è lì accanto.
+! **The previous files go to `.bak`**, and that is what makes the proposal
+acceptable: if the machine does not boot, the earlier one is right there.
 
-! **Il nuovo file è generato, non modificato.** Il `kernel.cfg` che viene
-col sistema è lungo duecento righe di spiegazioni; conservarle vorrebbe
-dire un parser INI che le rimette a posto, cioè un programma molto più
-grande e con molti più modi di sbagliare. Quello scritto qui è corto e
-sostituisce il precedente per intero — detto in chiaro **prima** di
-chiedere.
+! **The new file is generated, not edited.** The `kernel.cfg` that ships
+with the system is two hundred lines of explanation; keeping them would
+mean an INI parser that puts them back, that is, a much bigger program with
+many more ways to be wrong. What is written here is short and replaces the
+previous one entirely — said plainly **before** asking.
 
-Tre scelte che si vedono solo provandolo:
+Three choices that only show when you use it:
 
 | | |
 |---|---|
-| **non guarda quale scheda sia** | la tabella dei modelli sta in `netdetect`, e duplicarla darebbe due elenchi che divergono al primo driver nuovo. L'autoexec generato chiama `netdetect -c`, che quella tabella ce l'ha: a `hwconfig` serve sapere **se** c'è una scheda, non quale |
-| **il volume che sarà la radice non finisce in `[mount]`** | il kernel se ne accorgerebbe da solo («è già montato altrove»), ma è una riga che non serve dentro un file che qualcuno leggerà per capire la propria macchina |
-| **un'etichetta sfortunata non diventa un punto di montaggio** | un volume etichettato `boot` darebbe `/boot = hd0p1`, che il kernel rifiuta — un `[WARN]` a ogni accensione, e chi lo legge non ha motivo di sospettare l'etichetta del disco. In quel caso si ripiega su `/disco` |
+| **it does not look at which card it is** | the model table lives in `netdetect`, and duplicating it would give two lists that diverge at the first new driver. The generated autoexec calls `netdetect -c`, which has that table: `hwconfig` needs to know **whether** there is a card, not which one |
+| **the volume that will be the root does not go into `[mount]`** | the kernel would notice by itself («already mounted elsewhere»), but it is a line that serves no purpose inside a file someone will read to understand their own machine |
+| **an unlucky label does not become a mount point** | a volume labelled `boot` would give `/boot = hd0p1`, which the kernel refuses — a `[WARN]` at every power-on, and whoever reads it has no reason to suspect the disk label. In that case it falls back to `/disco` |
 
-Scrive anche `TMPDIR`, che non è un vezzo: `mkstemp` e il driver del
-compilatore ci mettono i file di passaggio, e senza finiscono nella radice
-— che avviando da CD è in sola lettura.
+It also writes `TMPDIR`, which is not a flourish: `mkstemp` and the
+compiler driver put their intermediate files there, and without it they end
+up in the root — which, booting from CD, is read-only.
 
-Sta **sul floppy**, con `fdisk` e `install`: serve proprio quando si prepara
-una macchina, cioè quando il CD magari non c'è ancora. Senza `/dev/pci.drv`
-configura montaggi e moduli e dice che la parte di rete non ha potuto
-verificarla.
+It lives **on the floppy**, with `fdisk` and `install`: it is needed exactly
+when preparing a machine, that is, when the CD may not be there yet. Without
+`/dev/pci.drv` it configures mounts and modules and says it could not check
+the network part.
 
-### `help helpconfig` — la procedura, e a che punto sei
+### `help helpconfig` — the procedure, and where you are in it
 
 ```
-help helpconfig     (oppure `helpconfig` da solo)
+help helpconfig     (or just `helpconfig`)
 ```
 
-Spiega come si accendono i driver — la catena di rete, la configurazione a
-mano, la diagnosi, l'autoexec — e **mostra lo stato attuale** chiedendo al
-registro IPC chi c'è già:
+It explains how to bring the drivers up — the network chain, manual
+configuration, diagnosis, the autoexec — and **shows the current state** by
+asking the IPC registry who is already there:
 
 ```
 A che punto sei adesso
@@ -6163,84 +6124,85 @@ A che punto sei adesso
   [ok]    tastiera         [modules] in /boot/kernel.cfg
 ```
 
-! **Lo stato è il motivo per cui esiste.** Un elenco di comandi da dare sta
-già in questo file; quello che al prompt non si sa è a che punto si è
-arrivati. Costa una syscall per servizio e trasforma «ecco la procedura» in
-«sei qui». L'esempio sopra è una macchina senza scheda di rete: il bus c'è,
-la scheda no, e non è un guasto da inseguire.
+! **The state is why it exists.** A list of commands to type is already in
+this file; what you do not know at the prompt is how far you have got. It
+costs one syscall per service and turns «here is the procedure» into «you
+are here». The example above is a machine with no network card: the bus is
+there, the card is not, and that is not a fault to chase.
 
-Il testo è più lungo di uno schermo da 25 righe e si ferma da solo; le pause
-stanno dove cambia argomento, non ogni N righe, perché una pagina
-interrotta a metà di un elenco è peggio di una più corta. `q` smette.
+The text is longer than a 25-line screen and stops on its own; the pauses
+sit where the subject changes, not every N lines, because a page cut in the
+middle of a list is worse than a shorter one. `q` stops.
 
-### Driver ring3 (modello attuale, da luglio 2026)
+### Ring3 drivers (current model, since July 2026)
 
-Un driver è un normale eseguibile ELF32 **ET_EXEC statico**, come i programmi
-di `/bin`. Non esegue istruzioni privilegiate: il kernel media ogni accesso
-all'hardware e verifica i permessi a ogni chiamata.
+A driver is an ordinary **static ET_EXEC** ELF32 executable, like the
+programs in `/bin`. It executes no privileged instructions: the kernel
+mediates every hardware access and checks the permissions on every call.
 
 ```c
 int main(void)
 {
-    ipc_register("kbd");            /* si fa trovare per nome    */
-    ioport_bind(0x60, 5);           /* whitelist porte I/O       */
-    irq_bind(1);                    /* IRQ -> messaggi IPC       */
+    ipc_register("kbd");            /* make itself findable by name */
+    ioport_bind(0x60, 5);           /* I/O port whitelist           */
+    irq_bind(1);                    /* IRQ -> IPC messages          */
 
     for (;;) {
         IpcMessage m;
         ipc_recv(&m, buf, sizeof buf);
 
         if (m.sender_pid == IPC_SENDER_KERNEL &&
-            m.type == IPC_TYPE_IRQ_NOTIFY) { /* interrupt hardware */ }
-        else                                 { /* richiesta client  */ }
+            m.type == IPC_TYPE_IRQ_NOTIFY) { /* hardware interrupt */ }
+        else                                 { /* client request    */ }
     }
 }
 ```
 
-I client trovano il servizio con `ipc_lookup("kbd")` e dialogano via
-`ipc_send`/`ipc_recv`. Riferimento completo: `drivers/kbd/kbd.c` e il
-protocollo in `drivers/kbd/kbd_proto.h`.
+Clients find the service with `ipc_lookup("kbd")` and talk to it over
+`ipc_send`/`ipc_recv`. Full reference: `drivers/kbd/kbd.c` and the protocol in
+`drivers/kbd/kbd_proto.h`.
 
-### Accessi I/O a 16 e 32 bit
+### 16- and 32-bit I/O accesses
 
-Oltre a `ioport_in`/`ioport_out`, che lavorano a byte, un driver ha:
+Besides `ioport_in`/`ioport_out`, which work a byte at a time, a driver has:
 
 ```c
-int ioport_in16 (unsigned int porta);                    /* 0..65535, o -errno */
-int ioport_out16(unsigned int porta, unsigned int val);
-int ioport_in32 (unsigned int porta, unsigned int *out); /* 0, o -errno        */
-int ioport_out32(unsigned int porta, unsigned int val);
+int ioport_in16 (unsigned int port);                    /* 0..65535, or -errno */
+int ioport_out16(unsigned int port, unsigned int val);
+int ioport_in32 (unsigned int port, unsigned int *out); /* 0, or -errno        */
+int ioport_out32(unsigned int port, unsigned int val);
 ```
 
-Non sono una comodità. Il registro CONFIG_ADDRESS del bus PCI (0xCF8) **deve**
-essere scritto con un singolo accesso a 32 bit: uno a byte o a word non viene
-riconosciuto dal ponte come ciclo di configurazione, e siccome 0xCF9 è il
-registro di reset di molti chipset, scriverlo a pezzi tende a riavviare la
-macchina.
+They are not a convenience. The PCI bus's CONFIG_ADDRESS register (0xCF8)
+**must** be written with a single 32-bit access: a byte or word one is not
+recognised by the bridge as a configuration cycle, and since 0xCF9 is the
+reset register of many chipsets, writing it in pieces tends to reboot the
+machine.
 
-! `ioport_in32` **non restituisce il valore letto**: `0xFFFFFFFF` («nessun
-dispositivo») come `int` sarebbe `-1`, indistinguibile da un errore. Il valore
-esce dal puntatore. `ioport_in16` non ha il problema e lo restituisce.
+! `ioport_in32` **does not return the value read**: `0xFFFFFFFF` («no
+device») as an `int` would be `-1`, indistinguishable from an error. The
+value comes out through the pointer. `ioport_in16` does not have the problem
+and returns it.
 
-La porta deve essere allineata all'ampiezza, altrimenti `-EINVAL`: un accesso
-disallineato viene spezzato dal chipset in due cicli e sul bus PCI il secondo
-non è più un ciclo di configurazione.
+The port must be aligned to the width, otherwise `-EINVAL`: a misaligned
+access is split by the chipset into two cycles, and on the PCI bus the second
+one is no longer a configuration cycle.
 
-### Il bus PCI: `/dev/pci.drv` e `/bin/netdetect`
+### The PCI bus: `/dev/pci.drv` and `/bin/netdetect`
 
-L'enumerazione PCI è un **processo ring3**, non codice del kernel: legge
-tabelle scritte da BIOS e firmware di terzi, e un ciclo che non termina su un
-ponte mal formato dev'essere un processo da rilanciare, non una macchina
-bloccata.
+PCI enumeration is a **ring3 process**, not kernel code: it reads tables
+written by third-party BIOSes and firmware, and a loop that does not
+terminate on a malformed bridge must be a process to restart, not a hung
+machine.
 
 ```
-/dev/pci.drv -l          elenca i dispositivi ed esce
-/dev/pci.drv &           registra il servizio "pci" e serve i client
-netdetect                schede di rete presenti e driver di ciascuna
-netdetect -t             tabella dei modelli riconosciuti
+/dev/pci.drv -l          list the devices and exit
+/dev/pci.drv &           register the "pci" service and serve clients
+netdetect                network cards present and each one's driver
+netdetect -t             table of recognised models
 ```
 
-Esempio (VirtualBox con la scheda predefinita):
+Example (VirtualBox with the default card):
 
 ```
 ex-os:/> /dev/pci.drv &
@@ -6252,52 +6214,52 @@ ex-os:/> netdetect
            driver: /dev/pcnet.drv
 ```
 
-Il protocollo è in `drivers/pci/pci_proto.h`. Il server espone lettura della
-configurazione e `PCI_MSG_ABILITA`/`DISABILITA` sui bit I/O, memoria e bus
-master; **non** una scrittura di configurazione generica, perché riprogrammare
-i BAR di un dispositivo che il kernel sta usando (per esempio il controller
-ATA) toglierebbe il disco da sotto i piedi a chi di quella scrittura non sa
-nulla.
+The protocol is in `drivers/pci/pci_proto.h`. The server exposes
+configuration reads and `PCI_MSG_ABILITA`/`DISABILITA` on the I/O, memory and
+bus-master bits; **not** a generic configuration write, because reprogramming
+the BARs of a device the kernel is using (the ATA controller, for instance)
+would pull the disk out from under someone who knows nothing about that
+write.
 
-Entrambi vivono **solo sul CD di EX-OS** (`make iso-exos`): il floppy serve ad
-avviare e a installare, e gli strumenti di rete senza i driver di rete — che
-sul floppy non ci starebbero — non servirebbero a niente una volta lì.
+Both live **only on the EX-OS CD** (`make iso-exos`): the floppy is there to
+boot and to install, and network tools without the network drivers — which
+would not fit on the floppy — would be of no use once there.
 
-### Interrupt: `irq_bind` e `irq_done` vanno in coppia
+### Interrupts: `irq_bind` and `irq_done` go in pairs
 
 ```c
-irq_bind(11);                    /* da qui gli IRQ arrivano come IPC */
+irq_bind(11);                    /* from here IRQs arrive as IPC */
 ...
-/* alla notifica: */
-servi_la_scheda();               /* azzera lo stato del dispositivo */
-irq_done(11);                    /* SOLO ADESSO si riapre la linea */
+/* on the notification: */
+servi_la_scheda();               /* clear the device's state     */
+irq_done(11);                    /* ONLY NOW is the line reopened */
 ```
 
-! `irq_done()` non è facoltativa. Il kernel **maschera** l'IRQ nel PIC
-prima di consegnare la notifica, e senza questa chiamata la linea resta
-chiusa: il driver riceve un interrupt e poi silenzio.
+! `irq_done()` is not optional. The kernel **masks** the IRQ in the PIC
+before delivering the notification, and without this call the line stays
+closed: the driver receives one interrupt and then silence.
 
-Il motivo è che un driver ring3 non gira dentro l'interrupt: fra la
-notifica e il momento in cui tocca la scheda passano dei tick. Su un IRQ
-**a livello** — tutti quelli PCI — il dispositivo tiene la linea alta
-finché non gli si azzera il registro di stato, quindi senza mascheramento
-l'interrupt riparte subito dopo l'`iret` e il processo driver non riceve
-mai la CPU per andare ad azzerarlo. La macchina si ferma, senza panic.
+The reason is that a ring3 driver does not run inside the interrupt: ticks
+pass between the notification and the moment it touches the card. On a
+**level**-triggered IRQ — all the PCI ones — the device holds the line high
+until its status register is cleared, so without masking the interrupt fires
+again right after the `iret` and the driver process never gets the CPU to go
+and clear it. The machine stops, without a panic.
 
-L'ordine conta: prima si serve il dispositivo, poi si riapre. Riaprire con
-la linea ancora alta rimette in piedi la tempesta.
+The order matters: serve the device first, then reopen. Reopening with the
+line still high brings the storm right back.
 
-### Rete: `/dev/ne2k.drv` e `/bin/nettest`
+### Networking: `/dev/ne2k.drv` and `/bin/nettest`
 
-Il primo driver di rete guida la famiglia NE2000/DP8390 — RTL8029 su PCI e
-cloni Winbond/VIA/KTI. Sta in userspace perché quella scheda **non fa DMA
-verso la memoria di sistema**: la RAM dei pacchetti è sulla scheda e ci si
-arriva da una porta di I/O, quindi il kernel non deve sapere niente di
-indirizzi fisici o pagine bloccate.
+The first network driver handles the NE2000/DP8390 family — RTL8029 on PCI
+and Winbond/VIA/KTI clones. It lives in userspace because that card **does no
+DMA into system memory**: the packet RAM is on the card and is reached
+through an I/O port, so the kernel need know nothing about physical addresses
+or locked pages.
 
 ```
 ex-os:/> /dev/pci.drv &
-ex-os:/> netdetect -c              # sceglie e avvia il driver giusto
+ex-os:/> netdetect -c              # picks and starts the right driver
 ex-os:/> nettest -a 10.0.2.2
 chi ha 10.0.2.2? lo chiede 52:54:00:12:34:56 (10.0.2.15)
 
@@ -6307,70 +6269,69 @@ chi ha 10.0.2.2? lo chiede 52:54:00:12:34:56 (10.0.2.15)
 Risposta ricevuta: 10.0.2.2 ha indirizzo 52:55:0a:00:02:02
 ```
 
-`nettest` usa **ARP e non ping** di proposito: ARP è il primo scambio
-possibile senza avere uno stack, e una risposta dimostra in un colpo solo
-che la scheda trasmette, che il frame arriva, che la scheda riceve e che
-la catena driver → IPC → programma consegna i byte giusti. Se ARP
-funziona, a `ping` manca solo software.
+`nettest` uses **ARP and not ping** on purpose: ARP is the first exchange
+possible without having a stack, and a reply proves in one shot that the card
+transmits, that the frame arrives, that the card receives and that the chain
+driver → IPC → program delivers the right bytes. If ARP works, all `ping`
+lacks is software.
 
-Il protocollo (`drivers/net/net_proto.h`) è quello di **ogni** driver di
-rete, non della NE2000: il PCnet parlerà la stessa lingua. Due scelte che
-valgono per tutti:
+The protocol (`drivers/net/net_proto.h`) is that of **every** network driver,
+not of the NE2000: the PCnet will speak the same language. Two choices that
+hold for all of them:
 
-- **Il driver non spinge mai un frame non richiesto.** `ipc_send` blocca
-  se la mailbox del destinatario è piena, e driver e stack che si spingono
-  dati a vicenda finiscono fermi ognuno dentro la propria `ipc_send`. Si
-  usa domanda e risposta (`NET_MSG_RICEVI`), come il driver di tastiera.
-- **Un battito ogni 250 ms.** `ipc_notify_irq` non blocca: se la mailbox
-  del driver è piena quando arriva l'interrupt, la notifica viene
-  scartata e la linea resterebbe mascherata per sempre. La scadenza
-  sull'attesa fa sì che una notifica persa costi un ritardo, non
-  un'interfaccia morta.
+- **The driver never pushes an unrequested frame.** `ipc_send` blocks if the
+  recipient's mailbox is full, and a driver and a stack pushing data at each
+  other end up stuck, each inside its own `ipc_send`. Request and reply is
+  used instead (`NET_MSG_RICEVI`), as with the keyboard driver.
+- **A heartbeat every 250 ms.** `ipc_notify_irq` does not block: if the
+  driver's mailbox is full when the interrupt arrives, the notification is
+  dropped and the line would stay masked forever. The timeout on the wait
+  makes a lost notification cost a delay, not a dead interface.
 
-! Una NE2000 **ISA** non si cerca da sola: per riconoscerla bisognerebbe
-scrivere sulla sua porta di reset, e se lì c'è un'altra scheda le si
-scrive addosso. Va dichiarata: `/dev/ne2k.drv -p 0x300 -q 3`.
+! An **ISA** NE2000 is not probed for on its own: recognising it would mean
+writing to its reset port, and if another card is there you write on top of
+it. It must be declared: `/dev/ne2k.drv -p 0x300 -q 3`.
 
-### Rete: `/dev/pcnet.drv` — la prima scheda che scrive in RAM da sola
+### Networking: `/dev/pcnet.drv` — the first card that writes to RAM by itself
 
-AMD PCnet-PCI II / FAST III (Am79C970, C970A, C971, C972, C973: sul bus si
-presentano tutte come `1022:2000`). Parla lo stesso protocollo del ne2k,
-quindi lo stack IP non sa quale delle due c'è sotto.
+AMD PCnet-PCI II / FAST III (Am79C970, C970A, C971, C972, C973: on the bus
+they all show up as `1022:2000`). It speaks the same protocol as the ne2k,
+so the IP stack does not know which of the two is underneath.
 
-! **La differenza con la NE2000 è tutto.** Quella tiene la memoria dei
-pacchetti *sulla scheda*, e ci si arriva da una porta di I/O: per questo è
-stato il primo driver: non chiedeva niente di nuovo al sistema. Il PCnet è
-un **bus master**: legge e scrive la RAM di sistema da solo, agli indirizzi
-**fisici** che gli si sono dati, senza passare dalla MMU.
+! **The difference from the NE2000 is everything.** That one keeps the
+packet memory *on the card*, reached through an I/O port: that is why it was
+the first driver — it asked the system for nothing new. The PCnet is a **bus
+master**: it reads and writes system RAM by itself, at the **physical**
+addresses it was given, without going through the MMU.
 
-Da qui due cose che prima non esistevano:
+Two things follow that did not exist before:
 
 | | |
 |---|---|
-| il bit **bus master** nel comando PCI | senza, il ponte blocca ogni ciclo che la scheda inizia. I registri si leggono e si scrivono benissimo — quelli passano da noi — ma la scheda non riesce nemmeno a leggere il proprio blocco di inizializzazione |
-| **`SYS_DMA_ALLOC`** | memoria fisicamente contigua di cui si conosca l'indirizzo fisico |
+| the **bus master** bit in the PCI command | without it the bridge blocks every cycle the card initiates. The registers read and write perfectly — those go through us — but the card cannot even read its own initialisation block |
+| **`SYS_DMA_ALLOC`** | physically contiguous memory whose physical address is known |
 
-> ! **Un indirizzo sbagliato qui non dà un errore.** Dare alla scheda un
-> indirizzo virtuale invece di uno fisico non produce un fault e non ferma
-> niente: produce una scheda che scrive pacchetti in un punto a caso della
-> memoria fisica. Su una macchina piccola quel punto è spesso il kernel, e
-> il sintomo arriva minuti dopo, altrove. È il motivo per cui `dma_alloc`
-> restituisce i due indirizzi separati e con nomi diversi — `virt` per il
-> processo, `fisico` per la scheda.
+> ! **A wrong address here does not give an error.** Giving the card a
+> virtual address instead of a physical one produces no fault and stops
+> nothing: it produces a card writing packets into a random point of
+> physical memory. On a small machine that point is often the kernel, and
+> the symptom arrives minutes later, elsewhere. That is why `dma_alloc`
+> returns the two addresses separately and under different names — `virt`
+> for the process, `fisico` for the card.
 
-`SYS_DMA_ALLOC` la può chiedere **solo chi ha già una finestra di porte
-I/O**. Non è una difesa rigorosa: è il modo di dire che serve ai driver.
-Memoria contigua e non liberabile è la risorsa più scarsa che ci sia, e il
-tetto è 64 pagine per processo.
+`SYS_DMA_ALLOC` can only be asked for by **someone who already holds an I/O
+port window**. It is not a rigorous defence: it is the way of saying this is
+for drivers. Contiguous, non-freeable memory is the scarcest resource there
+is, and the ceiling is 64 pages per process.
 
-Due trappole del formato, entrambe silenziose:
+Two traps in the format, both silent:
 
-- **BCNT è in complemento a due** su dodici bit, con i quattro bit sopra a
-  uno. Un buffer da 2048 byte si dichiara `(-2048) & 0xFFF | 0xF000`;
-  scriverci 2048 in chiaro dà una scheda che crede di avere un buffer di
-  2048 byte *negativi*.
-- **Il reset si fa in WIO**, prima del passaggio a 32 bit, perché
-  l'offset del registro di reset è diverso nei due modi.
+- **BCNT is two's complement** over twelve bits, with the four bits above it
+  set to ones. A 2048-byte buffer is declared as `(-2048) & 0xFFF | 0xF000`;
+  writing 2048 in plain gives a card that believes it has a buffer of 2048
+  *negative* bytes.
+- **The reset is done in WIO**, before the switch to 32-bit, because the
+  offset of the reset register differs between the two modes.
 
 ```
 ex-os:/> nettest -c
@@ -6380,32 +6341,32 @@ notifiche IRQ  7
 battiti        89
 ```
 
-! **`notifiche IRQ 7` su 7 frame è la riga che conta**, non `ricevuti 7`.
-Il driver guarda la scheda anche a ogni battito: senza quel numero, una
-rete che funziona con 250 ms di ritardo sarebbe indistinguibile da una che
-funziona. È lo stesso controllo che ha scoperto la cascata del PIC mai
-smascherata.
+! **`notifiche IRQ 7` against 7 frames is the line that counts**, not
+`ricevuti 7`. The driver looks at the card on every heartbeat too: without
+that number, a network working with 250 ms of delay would be
+indistinguishable from one that works. It is the same check that uncovered
+the never-unmasked PIC cascade.
 
-! **`-l` non sonda una scheda già guidata.** Per leggerne lo stato
-bisognerebbe resettarla, e se un altro processo la sta usando quel reset
-gli porta via la rete senza dare un errore a nessuno dei due. Se il
-servizio c'è già, `-l` lo *interroga*: la risposta viene da chi la scheda
-la sta usando davvero. È successo alla prima prova, e il sintomo era
-illeggibile — `CSR0 = 0x3b, atteso STOP`.
+! **`-l` does not probe a card someone else is driving.** Reading its state
+would mean resetting it, and if another process is using it that reset takes
+the network away without giving either of them an error. If the service is
+already there, `-l` *asks* it: the answer comes from whoever is actually
+using the card. It happened on the very first try, and the symptom was
+unreadable — `CSR0 = 0x3b, atteso STOP`.
 
-### Lo stack IPv4: `/dev/ip.drv`, `ping`, `ipcfg`
+### The IPv4 stack: `/dev/ip.drv`, `ping`, `ipcfg`
 
-ARP, IPv4 e ICMP stanno in un **processo a sé**, non nel driver:
+ARP, IPv4 and ICMP live in a **process of their own**, not in the driver:
 
 ```
-ping ──IPC──> ip.drv ──IPC──> ne2k.drv ──porte I/O──> scheda
+ping ──IPC──> ip.drv ──IPC──> ne2k.drv ──I/O ports──> card
 ```
 
-Tre ragioni, tutte pratiche: questi protocolli sono uguali su qualunque
-scheda (metterli nel driver vorrebbe dire riscriverli per la PCnet); lo
-stack ha dei **tempi** — scadenze ARP, attese di risposta — mentre il
-driver deve solo rispondere all'hardware; e se sbaglia lo stack si riavvia
-lo stack, mentre la scheda resta accesa e configurata.
+Three reasons, all practical: these protocols are the same on any card
+(putting them in the driver would mean rewriting them for the PCnet); the
+stack has **timing** — ARP expiry, waiting for replies — while the driver
+only has to answer the hardware; and if the stack gets it wrong you restart
+the stack, while the card stays powered up and configured.
 
 ```
 ex-os:/> /dev/pci.drv &
@@ -6425,85 +6386,85 @@ ex-os:/> ping 8.8.8.8 -n 3
 tempi: minimo 50 ms, medio 60 ms, massimo 70 ms
 ```
 
-`ipcfg` mostra indirizzo e **contatori**, `ipcfg -r` la tabella ARP.
-I contatori sono metà del programma: quando la rete non va, la domanda
-non è «va o non va» ma dove si ferma, e `IP ricevuti` a zero, `scartati`
-che salgono o `somme errate` che salgono indicano tre punti diversi.
+`ipcfg` shows the address and the **counters**, `ipcfg -r` the ARP table. The
+counters are half the program: when the network does not work, the question
+is not «does it work or not» but where it stops, and `IP ricevuti` at zero,
+`scartati` rising, or `somme errate` rising point at three different places.
 
-Cosa lo stack **non** fa, detto subito:
+What the stack does **not** do, said up front:
 
-- **non frammenta e non riassembla** — un datagramma più grande della MTU
-  viene rifiutato, uno in arrivo che è un frammento viene contato e
-  scartato;
-- **nessuna tabella di routing** — c'è una rete locale e un gateway;
-- **niente DHCP dentro lo stack** — l'indirizzo si dichiara (`ip.drv -a …
-  -m … -g …` o `ipcfg -a …`); a prenderlo da un server ci pensa il
-  programma `dhcp`, che sta sopra UDP come un client qualunque;
-- **una richiesta echo per volta** — `ping` è sequenziale per natura.
+- **it does not fragment and does not reassemble** — a datagram larger than
+  the MTU is refused, an incoming one that is a fragment is counted and
+  dropped;
+- **no routing table** — there is one local network and one gateway;
+- **no DHCP inside the stack** — the address is declared (`ip.drv -a … -m …
+  -g …` or `ipcfg -a …`); getting one from a server is the `dhcp` program's
+  job, and it sits on top of UDP like any other client;
+- **one echo request at a time** — `ping` is sequential by nature.
 
-! `ping` distingue **tre** esiti, non due: risposta ricevuta; nessuna
-risposta all'**ARP** (a quell'indirizzo non c'è nessuno — non si è nemmeno
-usciti dal cavo); nessuna risposta all'**echo** (il pacchetto è partito, il
-problema è più in là). Un unico «non raggiungibile» costringerebbe a
-rifare la diagnosi da capo ogni volta.
+! `ping` distinguishes **three** outcomes, not two: reply received; no
+answer to the **ARP** (there is nobody at that address — we did not even get
+out onto the wire); no answer to the **echo** (the packet left, the problem
+is further away). A single «unreachable» would force you to start the
+diagnosis over every time.
 
-! Un tempo di `<10 ms` non è uno zero: `uptime_ms()` conta i tick del PIT
-a 100 Hz, quindi avanza a scatti di 10 ms. Scrivere «0 ms» dichiarerebbe
-una precisione che non c'è.
+! A time of `<10 ms` is not a zero: `uptime_ms()` counts PIT ticks at
+100 Hz, so it advances in 10 ms steps. Writing «0 ms» would claim a precision
+that is not there.
 
-### Nomi lunghi su FAT (VFAT), in lettura
+### Long names on FAT (VFAT), reading
 
-Un FAT32 scritto da Linux o da Windows si legge con i nomi veri:
+A FAT32 written by Linux or by Windows is read with the real names:
 
 ```
 ex-os:/> ls /disco
 appunti di riunione.txt 19
 UnNomeMoltoLungoDavveroInterminabile.dati 19
 
-ex-os:/> cat "/disco/appunti di riunione.txt"     funziona
-ex-os:/> cat /disco/UNNOME~1.DAT                  funziona anche l'alias
+ex-os:/> cat "/disco/appunti di riunione.txt"     works
+ex-os:/> cat /disco/UNNOME~1.DAT                  the alias works too
 ```
 
-Funzionano **entrambe** le vie: il nome lungo e l'alias 8.3. Confrontare
-solo col lungo renderebbe impossibile aprire un file col suo alias corto,
-che è un nome legittimo e che i programmi vecchi usano.
+**Both** ways work: the long name and the 8.3 alias. Comparing against the
+long one only would make it impossible to open a file by its short alias,
+which is a legitimate name and the one old programs use.
 
-! **La somma di controllo non è facoltativa.** Ogni voce di nome lungo
-porta la somma del nome 8.3 a cui appartiene, e serve a riconoscere le
-catene **orfane**: un sistema che non conosce i nomi lunghi può cancellare
-la voce 8.3 lasciando indietro i suoi frammenti, e attaccarli al primo
-nome 8.3 che capita darebbe a un file il nome di un altro.
+! **The checksum is not optional.** Every long-name entry carries the
+checksum of the 8.3 name it belongs to, and it is there to spot **orphaned**
+chains: a system that does not know about long names can delete the 8.3 entry
+leaving its fragments behind, and attaching them to the first 8.3 name that
+comes along would give a file the name of another one.
 
-! **Solo lettura.** Creare un file con un nome lungo vorrebbe dire
-allocare più voci consecutive e inventare un alias 8.3 unico (`NOME~1`,
-`NOME~2`…): è un'altra cosa, e non c'è. Un file creato da EX-OS ha un nome
-8.3, e si vede.
+! **Reading only.** Creating a file with a long name would mean allocating
+several consecutive entries and inventing a unique 8.3 alias (`NOME~1`,
+`NOME~2`…): that is another thing, and it is not there. A file created by
+EX-OS has an 8.3 name, and it shows.
 
-! **Solo ASCII**: i caratteri sopra `0x7F` diventano `?`. EX-OS non ha una
-tabella di caratteri, e inventarne una qui vorrebbe dire scegliere una
-codifica per tutto il sistema.
+! **ASCII only**: characters above `0x7F` become `?`. EX-OS has no character
+table, and inventing one here would mean choosing an encoding for the whole
+system.
 
-### `mkfs` sceglie il filesystem dalla dimensione
+### `mkfs` picks the filesystem from the size
 
 ```
-mkfs hd0p1        fino a 2 GB → FAT16, oltre → FAT32
+mkfs hd0p1        up to 2 GB → FAT16, above → FAT32
 mkfs -t ext2 hd0p1
 ```
 
-Non è una soglia arbitraria: FAT16 arriva a **65524 cluster**, che con
-cluster da 32 KB fanno poco più di 2 GB. Sotto quella misura FAT16 è
-preferibile — tabella metà più piccola e root directory a dimensione
-fissa, cioè meno settori da leggere per fare la stessa cosa.
+It is not an arbitrary threshold: FAT16 reaches **65524 clusters**, which
+with 32 KB clusters is a little over 2 GB. Below that size FAT16 is
+preferable — a table half the size and a fixed-size root directory, that is,
+fewer sectors to read to do the same thing.
 
-! **ext2 non entra mai nella scelta automatica**: è un formato che si
-chiede, non uno in cui si finisce.
+! **ext2 never enters the automatic choice**: it is a format you ask for,
+not one you end up in.
 
-### UDP e DHCP
+### UDP and DHCP
 
-Lo stack fa anche UDP. Non ci sono prese né descrittori: si apre una
-**porta**, e da quel momento i datagrammi per quella porta sono di chi
-l'ha aperta. Basta a un client DHCP e a un futuro risolutore DNS; una vera
-API a prese si costruirà sopra questa, non al posto suo.
+The stack does UDP too. There are no sockets and no descriptors: you open a
+**port**, and from that moment the datagrams for that port belong to whoever
+opened it. It is enough for a DHCP client and for a future DNS resolver; a
+real socket API will be built on top of this one, not in its place.
 
 ```
 ex-os:/> dhcp
@@ -6519,32 +6480,32 @@ dhcp: offerta di 192.168.76.9: 192.168.76.30
 dhcp: configurato.
 ```
 
-`dhcp` è un **programma**, non un pezzo dello stack: DHCP sta sopra UDP
-come un client DNS, e un errore lì dentro fa fallire un comando invece di
-spegnere la rete. `dhcp -n` chiede e stampa senza applicare.
+`dhcp` is a **program**, not a piece of the stack: DHCP sits on top of UDP
+like a DNS client, and a bug in there makes one command fail instead of
+taking the network down. `dhcp -n` asks and prints without applying.
 
-! **Non rinnova la concessione.** Quando scade, va rilanciato. Il rinnovo
-vuole un processo che resti acceso a metà del tempo di scadenza, cioè un
-programma diverso da questo — che deve poter essere lanciato a mano e
-finire.
+! **It does not renew the lease.** When it expires, run it again. Renewal
+wants a process that stays alive until halfway through the lease time, that
+is, a different program from this one — which has to be startable by hand and
+to finish.
 
-! Un datagramma per una porta aperta ma senza nessuno in attesa viene
-**scartato e contato** (`ipcfg` lo mostra). UDP perde pacchetti per
-definizione, e una coda che cresce mentre nessuno legge è un modo lento di
-finire la memoria per colpa di chi manda. Chi aspetta un datagramma deve
-prenotarne la ricezione **prima** di mandare la richiesta.
+! A datagram for an open port with nobody waiting is **dropped and counted**
+(`ipcfg` shows it). UDP loses packets by definition, and a queue growing
+while nobody reads is a slow way of running out of memory at the sender's
+discretion. Whoever expects a datagram must post the receive **before**
+sending the request.
 
-### `printf` in virgola mobile
+### Floating-point `printf`
 
-`%f`, `%e`, `%g` e le loro maiuscole, con larghezza, precisione e flag.
-Prima consumavano l'argomento e stampavano `<float>`.
+`%f`, `%e`, `%g` and their upper-case forms, with width, precision and flags.
+They used to consume the argument and print `<float>`.
 
-! **Le cifre significative si fermano a 18, e oltre si stampano zeri.** È
-un numero **misurato**, non stimato: confrontando il motore con glibc su
-una dozzina di valori, fino a 18 non c'è una discordanza, a 19 compare la
-prima. Un `double` porta al massimo 17 cifre di informazione; quello che
-c'è oltre è l'espansione esatta del valore *binario*, che glibc stampa con
-un'aritmetica a precisione arbitraria e noi no:
+! **Significant digits stop at 18, and zeros are printed beyond.** It is a
+**measured** number, not an estimated one: comparing the engine with glibc
+over a dozen values, up to 18 there is not one disagreement, at 19 the first
+appears. A `double` carries at most 17 digits of information; what lies
+beyond is the exact expansion of the *binary* value, which glibc prints with
+arbitrary-precision arithmetic and we do not:
 
 ```
 printf("%.30f", 0.1)
@@ -6552,108 +6513,107 @@ printf("%.30f", 0.1)
   EX-OS  0.100000000000000000000000000000
 ```
 
-Le prime 17 cifre coincidono — è tutto ciò che `0.1` contiene.
+The first 17 digits agree — that is all `0.1` contains.
 
-! **L'arrotondamento è al pari**, come prescrive lo standard: `%.0f` di
-2.5 dà `2`, di 3.5 dà `4`. Con la regola ingenua («da 5 in su sale»),
-sommare una colonna di valori arrotondati accumula un errore che cresce
-col numero di righe.
+! **Rounding is to even**, as the standard prescribes: `%.0f` of 2.5 gives
+`2`, of 3.5 gives `4`. Under the naive rule («five and up goes up»), summing
+a column of rounded values accumulates an error that grows with the number of
+rows.
 
-**Su 399 confronti con glibc, 390 identici**; i 9 restanti compaiono solo
-chiedendo più di 18 cifre significative.
+**Out of 399 comparisons with glibc, 390 identical**; the remaining 9 appear
+only when asking for more than 18 significant digits.
 
-### ! `time_t` è a 64 bit
+### ! `time_t` is 64-bit
 
-Non solo per il 2038 — che pure è una scadenza da non scriversi in
-partenza nel 2026. Il difetto che l'ha reso urgente è aritmetico: GCC
-misura il tempo con
+Not only because of 2038 — which is anyway a deadline not to write into
+something that starts in 2026. The defect that made it urgent is arithmetic:
+GCC measures time with
 
 ```c
 now->wall = tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
 ```
 
-e con `tv_sec` a 32 bit quella moltiplicazione **trabocca prima di essere
-allargata**. Il rapporto dei tempi di `cc1` usciva con fasi da 18 miliardi
-di secondi. Non è codice di GCC da correggere: è codice giusto su un
-`time_t` giusto.
+and with a 32-bit `tv_sec` that multiplication **overflows before being
+widened**. `cc1`'s timing report came out with phases of 18 billion seconds.
+It is not GCC code to be fixed: it is correct code on a correct `time_t`.
 
-! E `gettimeofday` prende ora **secondi e microsecondi dalla stessa
-sorgente**. Prima i secondi venivano dall'orologio CMOS e i microsecondi
-dal contatore dei tick: due orologi indipendenti, e la coppia poteva
-**tornare indietro**. Un orologio che torna indietro non dà un errore, dà
-intervalli negativi a chi sottrae due istanti. Il prezzo dichiarato: se
-qualcuno corregge l'ora di sistema mentre un programma gira, `gettimeofday`
-non se ne accorge — un orologio che non torna mai indietro vale di più.
+! And `gettimeofday` now takes **seconds and microseconds from the same
+source**. Before, the seconds came from the CMOS clock and the microseconds
+from the tick counter: two independent clocks, and the pair could **go
+backwards**. A clock that goes backwards does not give an error, it gives
+negative intervals to whoever subtracts two instants. The declared price: if
+someone corrects the system time while a program is running, `gettimeofday`
+does not notice — a clock that never goes backwards is worth more.
 
-### La cache dei settori: il compilatore va il doppio
+### The sector cache: the compiler runs twice as fast
 
-Il disco rigido ha una cache di 128 settori (64 KB) in `kernel/block/blk.c`.
-Il guadagno, misurato cambiando **una sola costante** e ricostruendo:
+The hard disk has a 128-sector (64 KB) cache in `kernel/block/blk.c`. The
+gain, measured by changing **a single constant** and rebuilding:
 
-| `cc1` che compila | tempo |
+| `cc1` compiling | time |
 |---|---|
-| senza cache | **19,61 s** |
-| con cache | **10,19 s** |
+| without cache | **19.61 s** |
+| with cache | **10.19 s** |
 
-! **Sulla copia sequenziale da 35 MB non cambia niente** (~80-100 s in
-entrambi i casi), e la differenza spiega a cosa serve davvero una cache.
-Per arrivare a ogni pagina da 4 KB di un file grande, ext2 legge prima i
-**blocchi indiretti** che dicono dove sta quella pagina: richieste piccole
-e sempre le stesse, ed è lì che la cache toglie lavoro. I dati veri
-passano una volta sola e non hanno niente da riusare.
+! **On a sequential 35 MB copy it changes nothing** (~80-100 s either
+way), and that difference is what a cache is actually for. To reach each
+4 KB page of a large file, ext2 first reads the **indirect blocks** that
+say where that page lives: small requests, always the same ones, and that
+is the work the cache removes. The data itself passes once and has nothing
+to reuse.
 
-Ne segue una stranezza che sembra un errore di misura e non lo è: `cc1`
-**dal CD** girava più veloce dello stesso `cc1` dal disco rigido senza
-cache. Non perché il CD sia veloce — perché ISO 9660 non ha blocchi
-indiretti da inseguire e legge 2 KB per comando invece di 1 KB. Con la
-cache il disco rigido pareggia il CD.
+Hence an oddity that looks like a measurement error and is not: `cc1`
+**from the CD** ran faster than the same `cc1` from the hard disk without
+a cache. Not because the CD is fast — because ISO 9660 has no indirect
+blocks to chase and reads 2 KB per command instead of 1 KB. With the cache
+the hard disk draws level with the CD.
 
-Tre scelte, e il perché:
+Three decisions, and why:
 
-- **Solo richieste fino a 8 settori.** Una cache si rovina da sola: farci
-  passare i 34 MB di `cc1` sfratterebbe ogni settore utile per riempirla
-  di dati che nessuno rileggerà mai.
-- **Write-through, non write-back.** La scrittura va sul disco *subito*,
-  poi aggiorna la copia. Così `vfs_sync` continua a voler dire quello che
-  ha sempre voluto dire, e uno spegnimento brutale non perde niente che
-  non fosse già perso. Il write-back sarebbe più veloce e sarebbe **un'altra
-  promessa**.
-- **La chiave è (disco fisico, LBA assoluto)**, presa *dopo* la traduzione
-  di partizione: gli LBA relativi di due partizioni dello stesso disco si
-  sovrappongono, e usare quelli darebbe a una i settori dell'altra.
+- **Only requests up to 8 sectors.** A cache can ruin itself: pushing
+  `cc1`'s 34 MB through it would evict every useful sector to make room
+  for data nobody will ever read again.
+- **Write-through, not write-back.** A write goes to disk *immediately*,
+  then updates the copy. That way `vfs_sync` keeps meaning what it has
+  always meant, and a brutal power-off loses nothing that was not already
+  lost. Write-back would be faster and would be **a different promise**.
+- **The key is (physical disk, absolute LBA)**, taken *after* partition
+  translation: relative LBAs of two partitions on the same disk overlap,
+  and using those would hand one partition the other's sectors.
 
-! **Si svuota su `blk_rescan` e `blk_ripartiziona`.** Senza, dopo un
-`mkfs` si servirebbero i settori di prima, e il sintomo sarebbe «un
-filesystem corrotto appena creato».
+! **It is flushed on `blk_rescan` and `blk_ripartiziona`.** Without that,
+after a `mkfs` the old sectors would still be served, and the symptom
+would be "a freshly created filesystem is corrupt".
 
-### ! `rep insw` invece di 256 chiamate a settore
+### ! `rep insw` instead of 256 calls per sector
 
-Il trasferimento PIO di un settore era un ciclo C che chiamava `port_inw`
-**256 volte** — e `port_inw` è una funzione vera, non una macro: 256
-`call` e altrettante `ret`, più il montaggio a mano dei due byte di ogni
-parola. Duemila e passa istruzioni per 512 byte. Ora è **una** istruzione,
-in `ata.c` e in `atapi.c`.
+A sector's PIO transfer used to be a C loop calling `port_inw` **256
+times** — and `port_inw` is a real function, not a macro: 256 `call`s and
+as many `ret`s, plus assembling both bytes of every word by hand. Over two
+thousand instructions for 512 bytes. It is now **one** instruction, in
+`ata.c` and in `atapi.c`.
 
-! In ATAPI la via veloce vale **solo se la raffica ci sta nel buffer**:
-`rep insw` scrive e basta, non sa saltare i byte in eccesso, e una raffica
-va *sempre* consumata tutta o il canale resta inutilizzabile. Quando
-sborda si torna al ciclo lento.
+! In ATAPI the fast path applies **only if the burst fits the buffer**:
+`rep insw` just writes, it cannot skip the excess bytes, and a burst must
+*always* be consumed in full or the channel is left unusable. When it
+overflows, the slow loop takes over.
 
-! Da solo questo cambiamento **non si vede nelle misure**, ed è
-un'informazione utile: il costo del disco non è il trasferimento, sono i
-comandi. Quella copia da 35 MB sono ~17.000 comandi ATAPI più ~35.000 ATA,
-ognuno con la sua attesa di `BSY` e `DRQ`. La leva che manca è
-raggruppare le richieste contigue — e sarà anche ciò che renderà sensato
-il DMA bus-master, che oggi ridurrebbe il costo del pezzo che già non pesa.
+! On its own this change **does not show up in the measurements**, which
+is useful information: the cost of the disk is not the transfer, it is the
+commands. That 35 MB copy is ~17,000 ATAPI commands plus ~35,000 ATA ones,
+each with its own `BSY`/`DRQ` wait. The missing lever is coalescing
+contiguous requests — and that is also what will make bus-master DMA worth
+having, since today it would cut the cost of the part that already does
+not weigh.
 
-### `/boot/autoexec.sh` — comandi all'avvio
+### `/boot/autoexec.sh` — commands at startup
 
-Una riga = un comando, eseguito **esattamente come se fosse digitato**:
-stessi built-in, stesse virgolette, stesso `&` per il background. Le righe
-vuote e quelle che cominciano con `#` si saltano; una riga che comincia
-con `@` viene eseguita senza essere stampata, come nell'autoexec del DOS.
+One line = one command, executed **exactly as if it had been typed**: same
+built-ins, same quoting, same `&` for the background. Empty lines and lines
+starting with `#` are skipped; a line starting with `@` is executed without
+being printed, as in DOS's autoexec.
 
-Sul CD di EX-OS ce n'è uno che accende la rete da solo:
+On the EX-OS CD there is one that brings the network up by itself:
 
 ```
 autoexec> /dev/pci.drv &
@@ -6662,90 +6622,91 @@ autoexec> /dev/ip.drv &
 autoexec> dhcp
 ```
 
-Dopo l'avvio `ping` e `ftp` funzionano senza toccare niente.
+After booting, `ping` and `ftp` work without touching anything.
 
-! **Lo esegue solo la shell della PRIMA console.** EX-OS ne avvia una per
-ognuna delle cinque console virtuali: senza questo controllo l'autoexec
-girerebbe quattro volte, e per `/dev/pci.drv &` significherebbe quattro
-processi che si contendono lo stesso servizio.
+! **Only the FIRST console's shell runs it.** EX-OS starts one for each of
+the four virtual consoles: without this check the autoexec would run four
+times, and for `/dev/pci.drv &` that would mean four processes fighting over
+the same service.
 
-! **La via d'uscita esiste prima di servire.** Un autoexec con dentro un
-comando che si blocca renderebbe il sistema inutilizzabile, e il file per
-correggerlo sta sul supporto che non si raggiunge più. Quindi:
+! **The way out exists before it is needed.** An autoexec containing a
+command that hangs would make the system unusable, and the file to fix it is
+on the medium you can no longer reach. So:
 
 | | |
 |---|---|
-| `autoexec=0` in `kernel.cfg` | lo salta (il file si modifica da un'altra macchina) |
-| **Alt+F2, Alt+F3, Alt+F4** | danno sempre una shell pulita, anche mentre la prima è impegnata |
+| `autoexec=0` in `kernel.cfg` | skips it (the file is edited from another machine) |
+| **Alt+F2, Alt+F3, Alt+F4** | always give a clean shell, even while the first one is busy |
 
-Il secondo è quello che conta davvero: non richiede di poter modificare
-nulla.
+The second is the one that really counts: it does not require being able to
+modify anything.
 
-### `!silenced` — l'`echo off` degli script
-
-```
-!silenced      da qui in poi i comandi non si vedono piu'
-!verbose       si tornano a vedere
-@comando       zittisce UNA riga sola
-```
-
-! **Zittisce il comando, non il suo risultato**, ed è la distinzione che
-rende l'opzione utile: quello che un comando stampa è il motivo per cui lo
-si è messo nello script, mentre la riga di comando la si è già scritta.
-L'autoexec del CD comincia con `!silenced` e mostra solo l'indirizzo
-ottenuto, non i quattro comandi che sono serviti a ottenerlo.
-
-Vale **da dove sta in poi**, non per tutto il file: si può zittire la parte
-rumorosa e lasciar vedere quella che interessa. La riga della direttiva non
-si stampa mai.
-
-Gli script non sono più solo l'autoexec:
+### `!silenced` — the scripts' `echo off`
 
 ```
-source /prova.sh      esegue in QUESTA shell
-/prova.sh             lo stesso, per nome
+!silenced      from here on the commands are not shown
+!verbose       they are shown again
+@command       silences ONE line only
 ```
 
-! **`source` e non una spawn**: i comandi devono girare nella shell
-corrente, altrimenti un `cd` o un `export` dentro lo script sparirebbero
-insieme al processo figlio. Un nome che finisce in `.sh` si riconosce
-*prima* di provare a lanciarlo, non dopo che la spawn è fallita: la spawn
-fallisce per molti motivi, e trattarli tutti come «sarà uno script»
-trasforma un errore preciso in un secondo errore che parla d'altro.
+! **It silences the command, not its output**, and that is the distinction
+that makes the option useful: what a command prints is the reason it was put
+in the script, whereas the command line itself has already been written. The
+CD's autoexec starts with `!silenced` and shows only the address obtained,
+not the four commands it took to obtain it.
 
-### Cronologia dei comandi e modifica della riga
+It applies **from where it sits onwards**, not to the whole file: you can
+silence the noisy part and let the interesting one show. The directive line
+is never printed.
 
-Le frecce **su** e **giù** ripercorrono i comandi già dati (24 di
-cronologia); **sinistra**, **destra**, **Home**, **Fine**, **Backspace** e
-**Canc** modificano la riga in corso. `Ctrl+C` la abbandona.
+Scripts are no longer only the autoexec:
 
-! **La riga in corso non si perde.** Chi ha scritto mezzo comando e va a
-cercarne uno vecchio con la freccia in su la ritrova scendendo fino in
-fondo.
+```
+source /prova.sh      runs in THIS shell
+/prova.sh             the same, by name
+```
 
-Righe vuote e doppioni consecutivi non entrano in cronologia: chi ripete
-lo stesso comando dieci volte non vuole dieci voci da riattraversare.
+! **`source` and not a spawn**: the commands must run in the current shell,
+otherwise a `cd` or an `export` inside the script would vanish along with
+the child process. A name ending in `.sh` is recognised *before* trying to
+launch it, not after the spawn has failed: a spawn fails for many reasons,
+and treating them all as «it must be a script» turns a precise error into a
+second error that talks about something else.
 
-! **Serve la modalità raw della tastiera**, perché in cooked il driver
-assembla la riga e la consegna su Invio — le frecce non hanno modo di
-attraversare un flusso di testo. La shell prende quindi la disciplina di
-riga su di sé: eco, backspace, cursore.
+### Command history and line editing
 
-! **Se il servizio `kbd` non risponde si torna a leggere righe intere**:
-si perde la cronologia, non la shell. E il driver torna in cooked da solo
-ogni volta che un programma legge da stdin, quindi la modalità si
-riafferma a ogni prompt — il che la rende anche autoriparante.
+The **up** and **down** arrows walk back through the commands already given
+(24 of history); **left**, **right**, **Home**, **End**, **Backspace** and
+**Delete** edit the current line. `Ctrl+C` abandons it.
 
-! **Solo la console in primo piano** prende i tasti. Senza quel
-controllo tutte e quattro le shell si contendevano la tastiera, e quelle
-non visibili la riportavano in cooked togliendola a chi stava scrivendo.
+! **The line in progress is not lost.** Whoever has typed half a command and
+goes looking for an old one with the up arrow finds it again by coming all
+the way back down.
 
-! Il ridisegno usa **solo Backspace**, perché il TTY di EX-OS non ha un
-linguaggio di posizionamento del cursore. Conseguenza: su una riga più
-lunga della larghezza dello schermo la modifica si vede male — ma la riga
-resta corretta, e quello che si legge è ciò che verrà eseguito.
+Empty lines and consecutive duplicates do not enter the history: whoever
+repeats the same command ten times does not want ten entries to walk back
+through.
 
-### Nomi con spazi: le virgolette
+! **The keyboard's raw mode is needed**, because in cooked mode the driver
+assembles the line and delivers it on Enter — the arrows have no way of
+crossing a stream of text. So the shell takes the line discipline upon
+itself: echo, backspace, cursor.
+
+! **If the `kbd` service does not answer, it goes back to reading whole
+lines**: you lose the history, not the shell. And the driver returns to
+cooked by itself every time a program reads from stdin, so the mode is
+reasserted at every prompt — which also makes it self-repairing.
+
+! **Only the foreground console** gets the keys. Without that check all four
+shells fought over the keyboard, and the invisible ones put it back into
+cooked mode, taking it away from whoever was typing.
+
+! The redraw uses **Backspace only**, because EX-OS's TTY has no cursor
+positioning language. Consequence: on a line longer than the screen width the
+editing looks wrong — but the line stays correct, and what you read is what
+will be executed.
+
+### Names with spaces: quoting
 
 ```
 ex-os:/> cat "/disco/appunti di riunione.txt"
@@ -6754,27 +6715,27 @@ ex-os:/> cp '/disco/appunti di riunione.txt' /disco/copia.txt
 copiati 19 byte in /disco/copia.txt
 ```
 
-! **Apici singoli e doppi fanno la stessa cosa.** Su una shell Unix la
-differenza esiste perché fra virgolette doppie `$VAR` viene espansa e fra
-apici singoli no. Qui non c'è nessuna espansione — né di variabili né di
-caratteri jolly — quindi le due forme non avrebbero niente da
-distinguere. Accettarle entrambe e trattarle uguale è onesto; accettarne
-una sola costringerebbe a ricordare quale.
+! **Single and double quotes do the same thing.** On a Unix shell the
+difference exists because inside double quotes `$VAR` is expanded and inside
+single quotes it is not. Here there is no expansion at all — neither of
+variables nor of wildcards — so the two forms would have nothing to tell
+apart. Accepting both and treating them the same is honest; accepting only
+one would force you to remember which.
 
-Una virgoletta non chiusa viene **segnalata**: prima l'argomento si
-prendeva fino a fine riga in silenzio, e il comando falliva lamentando un
-file inesistente dal nome assurdo — il difetto era nella riga, non nel
-file. Lo stesso vale per gli argomenti oltre il sedicesimo, che prima
-sparivano senza dire niente.
+An unclosed quote is **reported**: before, the argument was taken to the end
+of the line in silence, and the command failed complaining about a
+non-existent file with an absurd name — the defect was in the line, not in
+the file. The same goes for arguments past the sixteenth, which used to
+disappear without a word.
 
-### `date` — che ore sono, e rimetterle
+### `date` — what time it is, and putting it right
 
 ```
-date                        giorno, data e ora per esteso
-date -d                     solo la data, 2026-09-16
-date -t                     solo l'ora, 17:52:31
-date -set-date:2026/09/16   rimette la data   (serve root)
-date -set-time:17:52:30     rimette l'ora     (serve root)
+date                        day, date and time in full
+date -d                     the date only, 2026-09-16
+date -t                     the time only, 17:52:31
+date -set-date:2026/09/16   sets the date   (root only)
+date -set-time:17:52:30     sets the time   (root only)
 ```
 
 ```
@@ -6784,74 +6745,75 @@ ex-os:/> date -set-time:10:11:12
 orologio rimesso: mercoledi' 16 settembre 2026, 10:11:12
 ```
 
-**L'orologio si può rimettere dal kernel 0.218, e prima no.** Da quando
-esiste — agosto 2026 — l'orologio CMOS di EX-OS si **leggeva e basta**: c'era
-`SYS_TIME` e non c'era il suo gemello. Non era un buco teorico: l'Acer Aspire
-3000 di prova segnava il **2005**, e ogni file che caricava su un server FTP
-arrivava datato «Feb 9 2005». L'unico modo di rimetterlo era entrare nel BIOS.
+**The clock can be set from kernel 0.218 on, and not before.** Ever since it
+existed — August 2026 — the EX-OS CMOS clock could only be **read**: there was
+`SYS_TIME` and no twin of it. That was not a theoretical hole: the Acer Aspire
+3000 used for testing read **2005**, and every file it uploaded to an FTP
+server arrived dated «Feb 9 2005». The only way to fix it was to enter the
+BIOS.
 
-Adesso c'è `SYS_TIME_SET` (213), che chiama `rtc_write()` in
+Now there is `SYS_TIME_SET` (213), which calls `rtc_write()` in
 `kernel/arch/x86/rtc.c`.
 
-! **È di root, come `mount`.** L'ora di sistema non è un'impostazione
-personale: chi la sposta cambia la data di ogni file che chiunque altro
-scriverà, e con essa il giudizio di `netupdate -check` su che cosa è più
-recente. Da un utente qualunque si passa da `sudo date ...`.
+! **It is root's, like `mount`.** The system time is not a personal setting:
+whoever moves it changes the date of every file anybody else will write, and
+with it `netupdate -check`'s judgement about what is newer. From an ordinary
+user you go through `sudo date ...`.
 
-! **La scrittura ha una trappola in più delle tre della lettura.** Non si
-scrive mentre il chip conta: se l'aggiornamento cade in mezzo ai sei registri,
-il chip riscrive sopra a metà di quel che si è appena messo, e si ottiene una
-data mezza vecchia e mezza nuova. Il bit `SET` del registro B ferma il
-conteggio per la durata della scrittura.
+! **Writing has one trap more than the three of reading.** You do not write
+while the chip is counting: if the update falls in the middle of the six
+registers, the chip overwrites half of what you have just put there, and you
+get a date half old and half new. The `SET` bit of register B stops the count
+for the duration of the write.
 
-! **E si scrive nel formato che c'è già** — BCD o binario, 12 o 24 ore, come
-dice il registro B. Cambiarlo sarebbe più comodo da programmare e romperebbe
-la lettura del BIOS, che quel formato lo conosce dall'accensione.
+! **And you write in the format that is already there** — BCD or binary, 12 or
+24 hours, as register B says. Changing it would be easier to program and would
+break the BIOS's own reading, which has known that format since power-on.
 
-! **Il registro del secolo si aggiorna solo dove c'è già.** `rtc_read` non lo
-legge affatto (usa la convenzione «sotto 70 = 2000+»), quindi per EX-OS
-sarebbe inutile; ma un BIOS che invece lo usa, e che lo trovasse fermo al 20
-mentre le due cifre dicono 26, ripartirebbe da un anno sbagliato. Si scrive
-0x32 **solo se quel che c'è dentro somiglia già a un secolo** (19 o 20): su una
-macchina dove quel registro serve ad altro, il controllo lo lascia in pace.
+! **The century register is updated only where it is already there.**
+`rtc_read` does not read it at all (it uses the «below 70 = 2000+» convention),
+so for EX-OS it would be useless; but a BIOS that does use it, finding it stuck
+at 20 while the two digits say 26, would restart from the wrong year. So 0x32
+is written **only if what is in it already looks like a century** (19 or 20):
+on a machine where that register serves another purpose, the check leaves it
+alone.
 
-! **L'anno sta fra 1980 e 2099**, mentre la lettura ne accetta fino al 2199.
-Il chip tiene DUE cifre, e la lettura le interpreta con quella convenzione:
-chiedere il 2150 vorrebbe dire rileggere il 2050 senza dirlo a nessuno, e un
-errore silenzioso è peggio di un rifiuto.
+! **The year is between 1980 and 2099**, while reading accepts up to 2199. The
+chip keeps TWO digits, and the read interprets them with that convention:
+asking for 2150 would mean reading back 2050 without telling anyone, and a
+silent error is worse than a refusal.
 
-! **Le due metà si rimettono separate.** Chi cambia solo l'ora — l'ora legale,
-o un orologio che ha derivato di due minuti — non deve ribattere anche la data,
-e soprattutto non deve rischiare di sbagliarla. I campi che non si toccano
-vengono riletti dall'orologio, perché `time_set()` vuole una `RtcTime` intera:
-il chip non ha un modo di scrivere «solo i minuti».
+! **The two halves are set separately.** Whoever changes only the time —
+daylight saving, or a clock that has drifted by two minutes — must not have to
+retype the date, and above all must not risk getting it wrong. The fields you
+do not touch are read back from the clock, because `time_set()` wants a whole
+`RtcTime`: the chip has no way of writing «the minutes only».
 
-! **Non c'è un comando `time`, ed è voluto.** Su qualunque sistema Unix `time
-comando` MISURA quanto ci mette un comando a girare. Spendere quel nome per
-stampare l'ora vorrebbe dire non averlo più il giorno in cui servirà davvero —
-e a quel punto o si rompe chi lo usa, o si sceglie un nome peggiore. Un binario
-solo dice tutt'e due le cose, e sul floppy ne costa uno invece di due: quando
-`date` è stato scritto, sul floppy restavano 63488 byte liberi e il più piccolo
-programma di EX-OS ne pesa 13,5 KB.
+! **There is no `time` command, and that is deliberate.** On any Unix system
+`time command` MEASURES how long a command takes to run. Spending that name on
+printing the clock would mean not having it the day it is really needed — and
+then either you break whoever uses it, or you pick a worse name. One binary
+says both things, and on the floppy it costs one instead of two: when `date`
+was written the floppy had 63488 bytes free and the smallest EX-OS program
+weighs 13.5 KB.
 
-! **Nessun fuso orario.** L'orologio della macchina è ora locale e il sistema
-non sa dove si trova: `localtime()` e `gmtime()` fanno la stessa identica cosa.
-I secondi contati dal 1970 sono letti su quel quadrante — buoni per misurare
-intervalli e datare un file, non confrontabili con l'istante di un'altra
-macchina.
+! **No time zone.** The machine's clock is local time and the system does not
+know where it is: `localtime()` and `gmtime()` do exactly the same thing. The
+seconds counted from 1970 are read off that dial — good for measuring intervals
+and dating a file, not comparable with an instant on another machine.
 
-### `ls` — modi di visualizzazione
+### `ls` — display modes
 
 ```
-ls -h              elenca tutte le opzioni
-ls                 data e ora, <DIR> o <FILE>, dimensione e nome
-ls -d              lo stesso: c'e' per chi lo ha nelle dita
-ls -s              solo nome e dimensione, senza interrogare i file
-ls -mc /bin        a colonne: solo i nomi, il piu' compatto
-ls -l              permessi, proprietario, gruppo, misura e data
-ls -md             come il modo normale, piu' gli attributi
-ls -a              mostra anche i nomi che cominciano con un punto
-ls -p              una pagina per volta (Invio avanza, q smette)
+ls -h              list every option
+ls                 date and time, <DIR> or <FILE>, size and name
+ls -d              the same: it is there for the fingers that know it
+ls -s              name and size only, without asking the files
+ls -mc /bin        columns: names only, the most compact
+ls -l              permissions, owner, group, size and date
+ls -md             like the normal mode, plus the attributes
+ls -a              also show names beginning with a dot
+ls -p              one page at a time (Enter advances, q stops)
 ```
 
 ```
@@ -6865,58 +6827,58 @@ data        ora    tipo    dimensione  nome
 2 file, 273007 byte    5 directory
 ```
 
-**Dal 16 settembre 2026 `ls` nudo dice anche QUANDO e CHE COSA.** Prima
-stampava due cose, il nome e la dimensione. La data c'era già — ma solo con
-`-d`, `-md` o `-l`, cioè solo per chi sapeva che esistevano; e il tipo si
-deduceva dalla barra finale del nome, che è una convenzione da conoscere. Le
-due domande più comuni davanti a un elenco di file sono «di quando è?» e «è
-una cartella?», e per tutt'e due la risposta era dietro un'opzione che nessuno
-batte.
+**Since 16 September 2026 a bare `ls` also says WHEN and WHAT.** It used to
+print two things, the name and the size. The date was already there — but only
+under `-d`, `-md` or `-l`, that is, only for whoever knew they existed; and the
+type had to be inferred from the trailing slash on the name, which is a
+convention you have to know. The two commonest questions in front of a list of
+files are «how old is it?» and «is it a folder?», and for both the answer sat
+behind an option nobody types.
 
-! **E costa una `stat()` per voce**, che il modo nudo prima non faceva. Su un
-floppy si sente, ed è esattamente per questo che `-s` esiste e non è un
-ripiego: è il modo da usare quando si vuole solo sapere quali nomi ci sono, su
-un disco lento o su una directory molto grande.
+! **And it costs one `stat()` per entry**, which the bare mode did not do
+before. On a floppy that is felt, and it is exactly why `-s` exists and is not
+a fallback: it is the mode to use when all you want is which names are there,
+on a slow disk or in a very large directory.
 
-! **La data è quella di MODIFICA, e quella di creazione non c'è.** Non è una
-scelta: la voce di directory che i tre filesystem consegnano al VFS tiene UNA
-coppia data/ora, e `struct stat` infatti pone `st_ctime` e `st_atime` uguali a
-`st_mtime`, dichiarandolo. Mostrare la stessa data sotto due intestazioni
-diverse sarebbe peggio che mostrarne una sola.
+! **The date is the MODIFICATION one, and there is no creation date.** That is
+not a choice: the directory entry the three filesystems hand to the VFS keeps
+ONE date/time pair, and `struct stat` indeed sets `st_ctime` and `st_atime`
+equal to `st_mtime`, and says so. Showing the same date under two different
+headings would be worse than showing one.
 
-! **Una directory non ha una dimensione da mostrare**, e adesso che la colonna
-accanto dice `<DIR>` non serve nemmeno scriverlo due volte. Il numero che i
-filesystem tengono lì è la misura della voce di directory sul disco — zero su
-FAT — non quanto pesa il contenuto. Un trattino dice «la domanda non si
-applica»; uno zero direbbe il falso.
+! **A directory has no size to show**, and now that the column next to it says
+`<DIR>` there is no need to say it twice. The number filesystems keep there is
+the size of the directory entry on disk — zero on FAT — not how much the
+contents weigh. A dash says «the question does not apply»; a zero would say
+something false.
 
-! **`-d` qui significa «dettagli»**, non quello che significa su Unix (dove
-`ls -d` mostra la directory invece del contenuto). È una scelta di questo
-progetto, e l'aiuto la dichiara perché nessuno la scopra per tentativi.
+! **Here `-d` means «details»**, not what it means on Unix (where `ls -d`
+shows the directory instead of its contents). It is this project's choice,
+and the help says so, so that nobody discovers it by trial and error.
 
-! Senza `-a` si nascondono i nomi che cominciano con un punto, `.` e `..`
-compresi. È un cambiamento rispetto a prima, quando venivano sempre
-mostrati. Su un CD `.` e `..` non compaiono comunque: ISO 9660 non li
-consegna (sono due record con nome `0x00` e `0x01`, e il driver li salta).
+! Without `-a`, names beginning with a dot are hidden, `.` and `..`
+included. It is a change from before, when they were always shown. On a CD
+`.` and `..` do not appear anyway: ISO 9660 does not deliver them (they are
+two records named `0x00` and `0x01`, and the driver skips them).
 
-! Il bit «nascosto» di FAT si **vede** con `-md` ma non nasconde niente.
-Guardarlo costerebbe una `statraw()` per ogni voce anche quando si
-stampano solo i nomi, e su un floppy si sente; a nascondere è il punto
-iniziale, che è la convenzione di tutti i filesystem che EX-OS monta.
+! FAT's «hidden» bit is **shown** with `-md` but hides nothing. Looking at
+it would cost one `statraw()` per entry even when only the names are being
+printed, and on a floppy that is felt; what hides is the leading dot, which
+is the convention of every filesystem EX-OS mounts.
 
-**Le date arrivano davvero dal filesystem** (kernel 0.168). Prima
-`sys_stat` scriveva zero e nessun programma poteva mostrarle. Ora:
+**The dates really do come from the filesystem** (kernel 0.168). Before,
+`sys_stat` wrote zero and no program could show them. Now:
 
 | | |
 |---|---|
-| FAT12 / FAT16 / FAT32 | il formato è quello nativo, nessuna conversione |
-| ext2 | da `i_mtime` (tempo Unix) al formato FAT |
-| ISO 9660 | dai sette byte del record di directory |
+| FAT12 / FAT16 / FAT32 | the format is the native one, no conversion |
+| ext2 | from `i_mtime` (Unix time) into the FAT format |
+| ISO 9660 | from the seven bytes of the directory record |
 
-! Una data **zero significa «questo volume non la tiene»** e i programmi
-stampano dei trattini: un 1980 inventato sembrerebbe una data vera. Il
-formato copre 1980-2107 — un file ext2 datato prima del 1980 esce senza
-data invece che con un anno sbagliato.
+! A zero date **means «this volume does not keep them»** and programs print
+dashes: an invented 1980 would look like a real date. The format covers
+1980-2107 — an ext2 file dated before 1980 comes out with no date rather than
+with a wrong year.
 
 ### TCP
 
@@ -6932,39 +6894,39 @@ Server: cloudflare
 --- ricevuti 408 byte ---
 ```
 
-DNS → ARP → IP → TCP, dati in entrambi i versi attraverso il NAT. (Il 403
-è HTTP: `GET / HTTP/1.0` senza `Host` viene rifiutato da Cloudflare. Il
-trasporto ha funzionato — quella risposta lo dimostra.)
+DNS → ARP → IP → TCP, data in both directions through the NAT. (The 403 is
+HTTP: `GET / HTTP/1.0` without a `Host` is refused by Cloudflare. The
+transport worked — that reply proves it.)
 
-! **Solo connessioni in uscita.** Manca il ramo `LISTEN`/`SYN_RECEIVED`
-della macchina a stati, che è circa metà del lavoro e serve a fare da
-**server**. Il primo cliente di questo TCP è un client FTP in modo
-**passivo** (`PASV`), che apre lui stesso anche la connessione dati; il
-modo attivo richiederebbe l'ascolto e non funziona comunque dietro un NAT.
-Si fa la metà che serve, e si dice che è metà.
+! **Outgoing connections only.** The `LISTEN`/`SYN_RECEIVED` branch of the
+state machine is missing, which is about half the work and is what it takes
+to be a **server**. This TCP's first customer is an FTP client in **passive**
+mode (`PASV`), which opens the data connection itself too; active mode would
+require listening and does not work behind a NAT anyway. You build the half
+that is needed, and you say it is a half.
 
-Cosa **non** fa, dichiarato in `drivers/net/ip_proto.h`:
+What it does **not** do, declared in `drivers/net/ip_proto.h`:
 
 | | |
 |---|---|
-| **niente riordino** | un segmento fuori sequenza si **scarta** e si riconferma: chi l'ha mandato lo ritrasmette. Corretto ma non efficiente — tenere i pezzi vuole una lista con le sue scadenze, ed è dove un TCP giovane prende i bug peggiori |
-| **niente controllo di congestione** | si manda quanto la finestra dell'altro consente. Su rete locale non cambia nulla; su Internet significa essere maleducati sotto perdita |
-| **RTO fisso** | non si misura il tempo di andata e ritorno: si raddoppia da 600 ms. Misurarlo davvero (Karn, Jacobson) è il passo dopo |
-| **niente SACK, window scaling, timestamp** | |
+| **no reordering** | an out-of-sequence segment is **dropped** and re-acknowledged: whoever sent it retransmits. Correct but not efficient — keeping the pieces wants a list with its own timers, and that is where a young TCP picks up its worst bugs |
+| **no congestion control** | as much is sent as the other side's window allows. On a local network it changes nothing; on the Internet it means being rude under loss |
+| **fixed RTO** | the round-trip time is not measured: it doubles from 600 ms. Measuring it properly (Karn, Jacobson) is the next step |
+| **no SACK, window scaling, timestamps** | |
 
-! **I numeri di sequenza si confrontano con la sottrazione, mai con `<`.**
-Sono a 32 bit e si avvolgono: `a < b` a cavallo dell'avvolgimento dà la
-risposta rovesciata, una volta ogni 4 GB trasmessi — cioè raramente, e
-sempre quando la connessione è carica.
+! **Sequence numbers are compared by subtraction, never with `<`.** They are
+32-bit and they wrap: `a < b` across the wrap gives the reversed answer, once
+every 4 GB transmitted — that is, rarely, and always when the connection is
+busy.
 
-! `IP_MSG_TCP_APRI` può rispondere **`-EAGAIN`**: significa che lo stack
-ha appena chiesto l'ARP del prossimo salto. Non è un fallimento, è «fra un
-istante». Infilare l'attesa dell'ARP dentro la macchina a stati di TCP
-vorrebbe dire due scadenze annidate sulla stessa connessione.
+! `IP_MSG_TCP_APRI` can answer **`-EAGAIN`**: it means the stack has just
+asked for the next hop's ARP. It is not a failure, it is «in a moment».
+Threading the ARP wait into TCP's state machine would mean two nested timers
+on the same connection.
 
-### `ftp` — client FTP
+### `ftp` — FTP client
 
-Sul CD di EX-OS, insieme agli altri strumenti di rete.
+On the EX-OS CD, along with the other network tools.
 
 ```
 ex-os:/> ftp 10.0.2.2 ls
@@ -6978,91 +6940,89 @@ ex-os:/> ftp 10.0.2.2 get grande.txt /disco/copia.bin
 4053 byte in '/disco/copia.bin'
 ```
 
-Senza comando si apre una riga di comando: `ls`, `cd`, `pwd`, `get`,
-`put`, `bye`.
+With no command it opens a command line: `ls`, `cd`, `pwd`, `get`, `put`,
+`bye`.
 
-! **Solo modo passivo (`PASV`).** In modo attivo è il *server* a
-ricollegarsi al client, che deve quindi mettersi in **ascolto** — e il TCP
-di EX-OS non sa farlo, di proposito. Non è un ripiego: il modo attivo non
-funziona comunque dietro un NAT, ed è per questo che ogni client serio usa
-`PASV` da vent'anni.
+! **Passive mode (`PASV`) only.** In active mode it is the *server* that
+connects back to the client, which therefore has to **listen** — and EX-OS's
+TCP cannot, on purpose. It is not a fallback: active mode does not work
+behind a NAT anyway, which is why every serious client has used `PASV` for
+twenty years.
 
-! **FTP manda la password in chiaro.** Non è un difetto del programma, è
-il protocollo: chiunque stia sul percorso legge utente e password così
-come sono. Il client lo dice all'accesso, una volta, invece di lasciarlo
-intendere. L'alternativa si chiamerà SFTP o FTPS quando ci sarà TLS — non
-«ftp con una toppa».
+! **FTP sends the password in the clear.** It is not a defect of the
+program, it is the protocol: anyone on the path reads the user and the
+password just as they are. The client says so at login, once, instead of
+leaving it to be inferred. The alternative will be called SFTP or FTPS when
+there is TLS — not «ftp with a patch».
 
-! Se il server annuncia in `PASV` un indirizzo diverso da quello a cui
-siamo connessi, il client **usa quello vero**: un server dietro NAT
-annuncia spesso il proprio indirizzo privato, che da fuori non è
-raggiungibile. La porta è l'informazione utile; l'indirizzo lo sappiamo
-già.
+! If the server announces in `PASV` an address different from the one we are
+connected to, the client **uses the real one**: a server behind a NAT often
+announces its private address, which is unreachable from outside. The port is
+the useful information; the address we already know.
 
-Per provarlo senza un server vero c'è `tools/ftpserver-prova.py` — ! che
-**non è un server FTP**: fa entrare chiunque e serve una directory sola,
-va lanciato su localhost per il tempo di una prova.
+To try it without a real server there is `tools/ftpserver-prova.py` — !
+which **is not an FTP server**: it lets anyone in and serves a single
+directory, and is meant to be run on localhost for the length of a test.
 
-### `telnet` — sessione interattiva
+### `telnet` — an interactive session
 
 ```
-telnet nome-o-indirizzo [porta]      si esce con Ctrl+]
+telnet name-or-address [port]        Ctrl+] to leave
 ```
 
-! **Telnet manda tutto in chiaro, password compresa.** Non è un difetto
-del programma, è il protocollo: chiunque stia sul percorso legge nome
-utente, password e tutto quello che si scrive dopo. Il client lo dice una
-volta all'avvio invece di lasciarlo intendere. L'alternativa si chiamerà
-SSH quando ci sarà TLS — non «telnet con una toppa».
+! **Telnet sends everything in the clear, password included.** It is not a
+defect of the program, it is the protocol: anyone on the path reads the
+user name, the password and everything typed afterwards. The client says so
+once at startup instead of leaving it to be inferred. The alternative will
+be called SSH when there is TLS — not «telnet with a patch».
 
-**Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()`, e i
-fili sono arrivati dopo questo programma, ma c'è una cosa migliore per questo
-caso: in EX-OS tutto passa dalla stessa cassetta postale. Si *prenota* una ricezione allo
-stack IP (`IP_MSG_TCP_RICEVI`), si *prenota* un tasto al servizio tastiera
-(`KBD_MSG_READKEY`), e poi si aspetta con un solo `ipc_recv_timeout()`
-guardando **chi** ha risposto. Le due prenotazioni si riarmano
-indipendentemente: se il server tace si continua a ricevere tasti, se
-nessuno digita si continua a ricevere dati.
+**How it listens to the network and the keyboard at once.** There is no
+`select()`, and threads arrived after this program, but there is something
+better for this case: in EX-OS everything comes through the same mailbox. You *book* a
+receive from the IP stack (`IP_MSG_TCP_RICEVI`), you *book* a key from the
+keyboard service (`KBD_MSG_READKEY`), and then you wait with a single
+`ipc_recv_timeout()` and look at **who** answered. The two bookings re-arm
+independently: if the server is quiet you keep receiving keys, if nobody
+types you keep receiving data.
 
-! **La scadenza serve anche quando non scade niente**: la modalità raw
-della tastiera se ne va da sola ogni volta che qualcun altro chiede una
-riga, e senza un risveglio periodico che la riafferma il programma
-resterebbe in attesa di un tasto che il driver non consegnerà mai.
+! **The timeout matters even when nothing times out**: the keyboard's raw
+mode goes away by itself whenever somebody else asks for a line, and
+without a periodic wake-up that reasserts it the program would sit waiting
+for a key the driver will never deliver.
 
-**La negoziazione delle opzioni non si può saltare.** Telnet intreccia ai
-dati dei comandi che cominciano con il byte 255 (IAC). Un client che li
-ignorasse stamperebbe caratteri di controllo e — molto peggio —
-lascerebbe il server ad *aspettare*: parecchi server non mandano nemmeno
-il `login:` finché non hanno finito di negoziare.
+**Option negotiation cannot be skipped.** Telnet interleaves commands
+starting with byte 255 (IAC) into the data. A client that ignored them
+would print control characters and — far worse — would leave the server
+*waiting*: many servers do not even send the `login:` until negotiation is
+done.
 
 | | |
 |---|---|
-| **rifiuta tutto quello che non sa fare** | al `DO` di un'opzione sconosciuta si risponde `WONT`, al `WILL` si risponde `DONT`. Il silenzio non è un rifiuto: è un server che aspetta |
-| **non risponde mai a una risposta** | due implementazioni educate che replicano sempre si rimpallano la stessa opzione all'infinito. Si tiene lo stato di ciò che si è già concesso |
-| accettate | `ECHO` e `SGA` dal server, `TTYPE` e `NAWS` verso il server |
-| `IAC IAC` | è un byte 255 nei dati, non un comando |
+| **refuse everything you cannot do** | to a `DO` for an unknown option answer `WONT`, to a `WILL` answer `DONT`. Silence is not a refusal: it is a server waiting |
+| **never answer an answer** | two polite implementations that always reply bounce the same option back and forth forever. The state of what has already been granted is kept |
+| accepted | `ECHO` and `SGA` from the server, `TTYPE` and `NAWS` towards it |
+| `IAC IAC` | is a 255 byte in the data, not a command |
 
-Lo stato del riconoscimento è **statico e non locale**, e conta: una
-sequenza IAC può essere spezzata fra due segmenti — TCP consegna byte,
-non messaggi — e uno stato azzerato a ogni chiamata farebbe stampare metà
-comando e rispondere all'altra metà come se fosse un comando diverso.
+The parser state is **static, not local**, and that matters: an IAC
+sequence can be split across two segments — TCP delivers bytes, not
+messages — and a state reset on every call would print half a command and
+answer the other half as if it were a different one.
 
-Due traduzioni della tastiera che non sono ovvie:
+Two keyboard translations that are not obvious:
 
-- **Invio è `CR LF`**, non un solo `LF`: il terminale virtuale di telnet
-  vuole che un CR sia sempre seguito da LF o NUL, e i server che applicano
-  la regola alla lettera con un LF solo non fanno niente.
-- **Backspace si manda come `0x7F`**, non come lo `0x08` che il tasto
-  produce qui: sui sistemi Unix il carattere di cancellazione predefinito
-  è DEL, e mandando `0x08` la riga non si accorcia e compare `^H` — che
-  sembra un difetto della tastiera mentre è una convenzione dall'altra
-  parte.
+- **Enter is `CR LF`**, not a bare `LF`: telnet's network virtual terminal
+  wants a CR always followed by LF or NUL, and servers that apply the rule
+  literally do nothing with a lone LF.
+- **Backspace is sent as `0x7F`**, not as the `0x08` the key produces here:
+  on Unix systems the default erase character is DEL, and sending `0x08`
+  leaves the line unchanged and prints `^H` — which looks like a keyboard
+  defect while it is a convention on the other side.
 
-Per provarlo senza esporre una shell c'è `tools/telnetserver-prova.py` —
-! che **non è un server telnet**: fa l'eco e risponde a comandi finti.
-Serve perché mettere in ascolto un `telnetd` vero, che dà una shell senza
-cifratura, sarebbe una pessima idea su qualunque macchina. La prova vista
-dal suo lato:
+To try it without exposing a shell there is `tools/telnetserver-prova.py` —
+! which **is not a telnet server**: it echoes and answers made-up
+commands. It exists because putting a real `telnetd`, which hands out a
+shell with no encryption, on a listening port would be a bad idea on any
+machine. The test as seen from its side:
 
 ```
   <- DO ECHO
@@ -7074,7 +7034,7 @@ dal suo lato:
   riga: 'ciao mondo'
 ```
 
-### Risoluzione dei nomi: `host`, e `ping` per nome
+### Name resolution: `host`, and `ping` by name
 
 ```
 ex-os:/> host one.one.one.one
@@ -7085,30 +7045,27 @@ ping www.google.com (142.251.151.119) con 32 byte di dati
   60 byte da 142.251.151.119: seq=1 ttl=255 tempo=50 ms
 ```
 
-Il risolutore è un **modulo** (`lib/dns.c`), compilato dentro i programmi
-che ne hanno bisogno — non un servizio e non parte dello stack. DNS sta
-sopra UDP esattamente come DHCP: un errore nell'analisi di una risposta
-scritta da un server sconosciuto deve far fallire un comando, non spegnere
-la rete. E non ha stato da conservare fra una chiamata e l'altra, quindi
-un processo dedicato costerebbe soltanto un'altra cosa da avviare e
-sorvegliare.
+The resolver is a **module** (`lib/dns.c`), compiled into the programs that
+need it — not a service and not part of the stack. DNS sits on top of UDP
+exactly as DHCP does: an error parsing a reply written by an unknown server
+must make one command fail, not take the network down. And it has no state to
+keep between calls, so a dedicated process would only cost one more thing to
+start and watch over.
 
-! **I puntatori di compressione dei nomi si seguono solo in lettura, con
-un tetto ai salti.** In una risposta DNS un nome può finire con un
-puntatore a un punto precedente del messaggio; quel puntatore lo scrive il
-server, e niente gli impedisce di farlo puntare a sé stesso. Per *saltare*
-un nome non si segue affatto — un puntatore chiude il nome, e la lunghezza
-è nota.
+! **Name-compression pointers are followed only when reading, with a cap on
+the hops.** In a DNS reply a name can end with a pointer to an earlier point
+in the message; that pointer is written by the server, and nothing stops it
+from pointing at itself. To *skip* a name it is not followed at all — a
+pointer ends the name, and the length is known.
 
-! `ping` stampa nome **e** indirizzo quando gli si dà un nome: senza,
-davanti a una risposta strana non si distingue un guasto del DNS da uno
-della rete.
+! `ping` prints the name **and** the address when given a name: without it,
+faced with a strange answer you cannot tell a DNS failure from a network one.
 
-`host` esiste per poter provare il risolutore da solo. Quando `ping nome`
-non funziona, la domanda è se sia rotto il ping o il DNS, e senza questo
-comando bisogna indovinare.
+`host` exists so the resolver can be tested on its own. When `ping name` does
+not work, the question is whether ping or DNS is broken, and without this
+command you have to guess.
 
-### Interfaccia `drv_*` (modello precedente, kernel-space)
+### The `drv_*` interface (previous model, kernel-space)
 
 ```c
 int  drv_init(void);
@@ -7118,104 +7075,105 @@ int  drv_ioctl(int cmd, void *arg);
 void drv_exit(void);
 ```
 
-Usata ancora da `drivers/tty/tty.c` (compilato dentro il kernel) e da
-`drivers/floppy/floppy.c` (modulo ET_DYN non più caricato). I moduli ET_DYN
-girano in ring0 e vanno riscritti contro il modello sopra.
+Still used by `drivers/tty/tty.c` (compiled into the kernel) and by
+`drivers/floppy/floppy.c` (an ET_DYN module no longer loaded). ET_DYN modules
+run in ring0 and have to be rewritten against the model above.
 
 ---
 
-## Piano di sviluppo (Strategia D Ibrida)
+## Development plan (Hybrid Strategy D)
 
-- [x] **Fase 1a** — Bootloader Stage1 + Stage2 + FAT12 read
-- [x] **Fase 1b** — Kernel entry, GDT, IDT, ISR, VGA, kprintf
-- [x] **Fase 1c** — Physical Memory Manager (E820 + bitmap)
-- [x] **Fase 1d** — Paginazione x86 + heap kernel (kmalloc)
-- [x] **Fase 2a** — Scheduler preemptive 100Hz + context switch
-- [x] **Fase 2b** — Syscall interface int 0x80
-- [x] **Fase 3**  — TTY driver + FAT12 R/W kernel + ELF loader
-- [x] **Fase 4**  — Shell utente + cfg reader
-- [~] **Fase 5**  — Driver in userspace (ring3): tastiera fatta, floppy da fare
-- [~] **Fase 6**  — Sistema ospitante: libc POSIX, `as`, `ld` e `cc1` nativi
-                    fatti; manca il programma di guida `gcc`
-- [~] **Fase 7**  — Rete: PCI, NE2000, ARP/IPv4/ICMP/UDP/TCP, DHCP, DNS e un
-                    client FTP fatti; TLS da fare
+- [x] **Phase 1a** — Bootloader Stage1 + Stage2 + FAT12 read
+- [x] **Phase 1b** — Kernel entry, GDT, IDT, ISR, VGA, kprintf
+- [x] **Phase 1c** — Physical Memory Manager (E820 + bitmap)
+- [x] **Phase 1d** — x86 paging + kernel heap (kmalloc)
+- [x] **Phase 2a** — Preemptive 100Hz scheduler + context switch
+- [x] **Phase 2b** — int 0x80 syscall interface
+- [x] **Phase 3**  — TTY driver + kernel FAT12 R/W + ELF loader
+- [x] **Phase 4**  — User shell + cfg reader
+- [~] **Phase 5**  — Userspace (ring3) drivers: keyboard done, floppy to do
+- [~] **Phase 6**  — Hosting system: POSIX libc, native `as`, `ld` and `cc1`
+                     done; the `gcc` driver program is missing
+- [~] **Phase 7**  — Networking: PCI, NE2000, ARP/IPv4/ICMP/UDP/TCP, DHCP, DNS
+                     and an FTP client done; TLS to do
 
-**Stato Fase 4 (luglio 2026)**: la shell parte come primo processo ring3, legge
-`/boot/kernel.cfg`, ed esegue programmi esterni (`hello`, `ls`, `cat`) come task
-separati con ritorno al prompt. Il deadlock del PIC che bloccava ogni programma
-lanciato dalla shell è risolto — vedi `HANDOFF.md`.
+**Phase 4 status (July 2026)**: the shell starts as the first ring3 process,
+reads `/boot/kernel.cfg`, and runs external programs (`hello`, `ls`, `cat`)
+as separate tasks returning to the prompt. The PIC deadlock that blocked
+every program started from the shell is fixed — see `HANDOFF.md`.
 
-**Stato Fase 5 (30 luglio 2026)**: `/dev/kbd.drv` è il **primo driver di EX-OS
-che gira davvero in ring3**. È un processo con la propria page directory che
-non esegue istruzioni privilegiate né chiama simboli del kernel: legge gli
-scancode con `SYS_IOPORT_IN`, riceve gli IRQ1 come messaggi IPC via
-`SYS_IRQ_BIND`, e consegna le righe digitate al TTY con `SYS_IPC_SEND`. Il TTY
-resta in-kernel per la VGA ma per l'input è un client del servizio.
+**Phase 5 status (30 July 2026)**: `/dev/kbd.drv` is the **first EX-OS driver
+that really runs in ring3**. It is a process with its own page directory that
+executes no privileged instructions and calls no kernel symbols: it reads
+scancodes with `SYS_IOPORT_IN`, receives IRQ1 as IPC messages via
+`SYS_IRQ_BIND`, and delivers the typed lines to the TTY with `SYS_IPC_SEND`.
+The TTY stays in-kernel for the VGA but for input it is a client of the
+service.
 
-Il driver floppy è ancora un modulo ET_DYN kernel-space e l'accesso al floppy
-resta servito dal FAT12/FDC interno al kernel. Analisi e passi necessari in
-`KERNEL_CORE_NOTES.md`, punto 5; dettagli di progetto e trappole in
+The floppy driver is still a kernel-space ET_DYN module and floppy access is
+still served by the kernel's internal FAT12/FDC. Analysis and the steps
+needed are in `KERNEL_CORE_NOTES.md`, point 5; design details and traps in
 `HANDOFF.md`.
 
-**Stato Fase 6 (2 agosto 2026)**: la libc è cresciuta fino a reggere codice
-scritto per POSIX, e la prova è che **binutils 2.44 gira dentro EX-OS**.
-Portarlo ha scoperto tre difetti del kernel che nessun programma di EX-OS
-poteva mostrare, perché tutti scrivevano un file dall'inizio alla fine:
+**Phase 6 status (2 August 2026)**: the libc has grown enough to carry code
+written for POSIX, and the proof is that **binutils 2.44 runs inside EX-OS**.
+Porting it uncovered three kernel defects that no EX-OS program could show,
+because all of them wrote a file from beginning to end:
 
-- i descrittori ancora aperti alla terminazione non li chiudeva nessuno —
-  uno slot VFS perso per file, ed `EMFILE` dopo 64 volte;
-- sul **floppy** la scrittura ignorava la posizione del descrittore e si
-  accodava sempre in fondo (su ext2 e FAT16/32 no: lì l'offset arrivava);
-- scrivere all'**inizio** di un settore lo azzerava per intero, cancellando
-  i byte che c'erano dietro.
+- descriptors still open at termination were closed by nobody — one VFS slot
+  lost per file, and `EMFILE` after 64 times;
+- on the **floppy**, writing ignored the descriptor's position and always
+  appended at the end (not on ext2 and FAT16/32: there the offset arrived);
+- writing at the **start** of a sector zeroed the whole of it, erasing the
+  bytes that were behind.
 
-Tutti e tre invisibili finché nessuno torna indietro in un file. Un
-qualunque scrittore di ELF lo fa.
+All three invisible as long as nobody goes back in a file. Any ELF writer
+does.
 
-**Stato Fase 6, seguito (agosto 2026)**: **`cc1` compila C dentro EX-OS** e produce
-assembly vero, che `as` e `ld` trasformano in un eseguibile. Arrivarci ha
-scoperto altri tre difetti, tutti nella libc e tutti invisibili ai programmi
-di EX-OS:
+**Phase 6 status, continued (August 2026)**: **`cc1` compiles C inside
+EX-OS** and produces real assembly, which `as` and `ld` turn into an
+executable. Getting there uncovered three more defects, all in the libc and
+all invisible to EX-OS's own programs:
 
-- `realloc` non ingrandiva **mai** sul posto — la fusione col blocco
-  successivo rifiutava i blocchi non liberi, cioè proprio il caso da gestire;
-- i costruttori globali di `.init_array` non li chiamava nessuno: le 57
-  voci di `cc1` non venivano eseguite e la prima struttura usata era vuota;
-- `printf` con `%f` inventava cifre oltre la diciottesima e arrotondava
-  2,5 a 3 invece che a 2.
+- `realloc` **never** grew in place — merging with the following block
+  refused non-free blocks, which is precisely the case to handle;
+- nobody called `.init_array`'s global constructors: `cc1`'s 57 entries were
+  not run and the first structure used was empty;
+- `printf` with `%f` invented digits past the eighteenth and rounded 2.5 to 3
+  instead of to 2.
 
-**Stato Fase 7 (agosto 2026)**: la rete parte dal bus e arriva a un
-trasferimento FTP verificato byte per byte. Il difetto che è costato di più
-non era nella rete: **la linea 2 del PIC — la cascata — non veniva mai
-smascherata**, quindi nessun IRQ da 8 a 15 poteva raggiungere la CPU. Si è
-visto perché il tempo di andata e ritorno di `ping` era *esattamente* il
-battito del driver: non stava rispondendo la rete, stava rispondendo il
-timer. I contatori `notifiche IRQ 0, battiti 131` lo hanno detto in chiaro.
+**Phase 7 status (August 2026)**: the network starts at the bus and reaches
+an FTP transfer verified byte for byte. The defect that cost the most was not
+in the network: **line 2 of the PIC — the cascade — was never unmasked**, so
+no IRQ from 8 to 15 could reach the CPU. It showed because `ping`'s
+round-trip time was *exactly* the driver's heartbeat: it was not the network
+answering, it was the timer. The counters `notifiche IRQ 0, battiti 131` said
+it in plain words.
 
-**Cosa manca ancora**, in ordine di quanto darà fastidio:
+**What is still missing**, in order of how much it will get in the way:
 
 | | |
 |---|---|
-| **`gcc` come programma di guida** | `cc1` compila e produce assembly, `as` e `ld` ci sono: manca chi li concatena passando i file intermedi |
-| **posizione condivisa fra fd duplicati** | `dup()` funziona, ma i due descrittori tengono ognuno il proprio offset |
-| **TCP fuori sequenza** | i segmenti arrivati in disordine si scartano invece di riordinarli, e l'RTO è fisso invece che misurato |
-| **DNS: solo record A** | i CNAME si saltano invece di seguirli; se la risposta non contiene già il record A finale, il nome non si risolve |
-| **rinnovo DHCP** | `dhcp` prende la concessione e finisce; il rinnovo vuole un processo che resti acceso |
-| **TLS** | senza cifratura non esistono HTTPS né SFTP; il primo passo è una sorgente di entropia, non il protocollo |
-| **exFAT** | ! non esiste come filesystem: prima va implementato, poi ha senso un chkdsk |
-| **`rename` fra directory** | oggi ENOSYS: sarebbe una copia più una cancellazione, cioè un'altra operazione |
-| **DMA per il disco** | oggi 0,75 MB/s in PIO |
+| **`gcc` as the driver program** | `cc1` compiles and produces assembly, `as` and `ld` are there: what is missing is whoever chains them, passing the intermediate files |
+| **shared position between duplicated fds** | `dup()` works, but the two descriptors each keep their own offset |
+| **out-of-order TCP** | segments arriving out of order are dropped instead of reordered, and the RTO is fixed rather than measured |
+| **DNS: A records only** | CNAMEs are skipped instead of followed; if the reply does not already contain the final A record, the name does not resolve |
+| **DHCP renewal** | `dhcp` takes the lease and finishes; renewal wants a process that stays alive |
+| **TLS** | without encryption there is no HTTPS and no SFTP; the first step is an entropy source, not the protocol |
+| **exFAT** | ! it does not exist as a filesystem: it has to be implemented first, and only then does a chkdsk make sense |
+| **`rename` across directories** | ENOSYS today: it would be a copy plus a delete, that is, another operation |
+| **DMA for the disk** | 0.75 MB/s in PIO today |
 
 ---
 
-## Licenza
+## License
 
-EX-OS è software libero: puoi ridistribuirlo e/o modificarlo
-secondo i termini della GNU General Public License versione 2
-pubblicata dalla Free Software Foundation.
+EX-OS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 2 as published by the Free
+Software Foundation.
 
-Vedi il file `LICENSE` per il testo completo.
+See the `LICENSE` file for the full text.
 
 ---
 
-*EX-OS — "Il sistema si estende, il kernel rimane piccolo."*
+*EX-OS — "The system extends, the kernel stays small."*

@@ -40,7 +40,7 @@ CF="-m64 -ffreestanding -fno-builtin -fstack-protector-strong -mstack-protector-
     -fno-pic -fno-pie -fno-asynchronous-unwind-tables -Wall -O2 -std=c11 -nostdlib \
     -ffunction-sections -fdata-sections"
 INC="-Ilib/include -Ilib"
-for d in lib/ex* drivers/* bin/gfedit; do [ -d "$d" ] && INC="$INC -I$d"; done
+for d in lib/ex* drivers/* bin/gfedit lib/terze/*; do [ -d "$d" ] && INC="$INC -I$d"; done
 LD="ld -m elf_x86_64 -nostdlib --gc-sections -z max-page-size=4096 -z noexecstack -T lib/programma64.ld"
 
 # --- 1. la libc e l'avvio ------------------------------------------------------
@@ -51,13 +51,16 @@ gcc -m64 -c lib/start.S -o "$LIBD/start.o" || exit 1
 # --- 2. le librerie del progetto, in un archivio --------------------------------
 rm -f "$LIBD/libexos.a"
 fatte=0; saltate=""
-for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c lib/ex*/*.c; do
+# (font8x16.c e' il carattere di sistema: sta col kernel, e a 32 bit entra in
+# exwin.so; qui entra nell'archivio)
+for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c lib/ex*/*.c; do
     # gli «stub» sono le controfigure di una libreria per chi a 32 bit la
     # carica condivisa: qui la libreria vera e' nell'archivio, e i due
     # insieme sarebbero due definizioni della stessa funzione
     case "$s" in *_stub.c) continue ;; esac
     o="$OGG/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
-    if gcc $CF $INC -I"$(dirname "$s")" -c "$s" -o "$o" > "$REG/$(basename "$o").log" 2>&1; then
+    piu=""; case "$s" in kernel/*) piu="-Ikernel/include -fno-stack-protector" ;; esac
+    if gcc $CF $INC $piu -I"$(dirname "$s")" -c "$s" -o "$o" > "$REG/$(basename "$o").log" 2>&1; then
         ar rc "$LIBD/libexos.a" "$o"; fatte=$((fatte + 1))
     else
         saltate="$saltate $s"
@@ -122,4 +125,30 @@ if [ $# -eq 0 ]; then
     done
     echo "driver: $dbene costruiti in $DRVD"
     [ -z "$dmale" ] || echo "  NON costruiti:$dmale   (registri in $REG/)"
+fi
+
+# --- 5. la scrivania: i programmi di ExWin ----------------------------------------
+# Stessa regola dei comandi (i .c della directory, l'avvio, la libc, l'archivio
+# delle librerie - dove stanno anche exwin, exdlg, exfont, eximg...), in
+# build-64/exwin/bin. Il server grafico e' un driver (drivers/wserver) e si
+# costruisce al passo 4.
+if [ $# -eq 0 ]; then
+    EXWD=$FUORI/exwin/bin
+    mkdir -p "$EXWD"
+    ebene=0; emale=""
+    for d in exwin/bin/*/; do
+        n=$(basename "$d")
+        ls exwin/bin/$n/*.c > /dev/null 2>&1 || continue
+        r="$REG/exwin-$n.log"; : > "$r"
+        ogg=""; ok=1
+        for s in exwin/bin/$n/*.c; do
+            o="$OGG/exwin_${n}_$(basename "$s" .c).o"
+            gcc $CF $INC -Iexwin/bin/$n -c "$s" -o "$o" >> "$r" 2>&1 || { ok=0; break; }
+            ogg="$ogg $o"
+        done
+        [ $ok -eq 1 ] && { $LD "$LIBD/start.o" $ogg "$LIBD/libc.o" "$LIBD/libexos.a" -o "$EXWD/$n" >> "$r" 2>&1 || ok=0; }
+        if [ $ok -eq 1 ]; then ebene=$((ebene + 1)); else emale="$emale $n"; rm -f "$EXWD/$n"; fi
+    done
+    echo "scrivania: $ebene programmi costruiti in $EXWD"
+    [ -z "$emale" ] || echo "  NON costruiti:$emale   (registri in $REG/)"
 fi

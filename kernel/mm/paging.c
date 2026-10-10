@@ -1762,6 +1762,30 @@ void page_fault_handler(InterruptFrame *frame)
             klog(LOG_ERROR, "PF:   pde 0x%08x%08x pte 0x%08x%08x rsp 0x%08x cr3 0x%08x",
                  (uint32_t)(pde >> 32), (uint32_t)pde, (uint32_t)(pte >> 32), (uint32_t)pte,
                  (uint32_t)FR_SP(frame), read_cr3());
+            /* Gli indirizzi INTERI (le righe sopra ne stampano 32 bit), il
+             * codice d'errore, e i byte dell'istruzione che ha fallito, letti
+             * dalla pagina fisica: dicono se il codice in memoria e' quello
+             * del file. Servito il 10 ottobre 2026 per ip.drv. */
+            {
+                uint64_t rip = FR_IP(frame);
+                paddr_t  fis = paging_get_physical(p->page_directory, (vaddr_t)rip);
+
+                klog(LOG_ERROR, "PF:   cr2 0x%08x%08x rip 0x%08x%08x err 0x%x rax 0x%08x%08x",
+                     (uint32_t)((uint64_t)fault_addr >> 32), (uint32_t)fault_addr,
+                     (uint32_t)(rip >> 32), (uint32_t)rip, (uint32_t)err,
+                     (uint32_t)(frame->rax >> 32), (uint32_t)frame->rax);
+                if (fis != 0 && (rip & 0xFFF) <= 0xFF0) {
+                    const uint8_t *b = (const uint8_t *)paging_finestra_apri(fis);
+                    uint8_t c[8]; int k;
+
+                    for (k = 0; k < 8; k++) c[k] = b[k];
+                    paging_finestra_chiudi();
+                    klog(LOG_ERROR, "PF:   codice a rip: %02x %02x %02x %02x %02x %02x %02x %02x (fisico 0x%08x)",
+                         c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], (uint32_t)fis);
+                } else {
+                    klog(LOG_ERROR, "PF:   la pagina di rip non e' mappata");
+                }
+            }
 #else
             PDE pde = p->page_directory[PD_INDEX(fault_addr)];
             uint32_t pte = ((pde & PG_PRESENT) && !(pde & PG_HUGE))

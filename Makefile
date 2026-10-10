@@ -90,7 +90,7 @@ ifeq ($(filter $(ARCH),i386 x86_64),)
 $(error ARCH=$(ARCH) non la conosco: i386 oppure x86_64)
 endif
 ifeq ($(ARCH),x86_64)
-ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 tools64 netinst64 pulisci64,$(or $(MAKECMDGOALS),all)),)
+ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 chiave64 tools64 netinst64 pulisci64,$(or $(MAKECMDGOALS),all)),)
 $(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: iso64 netinst64 tools64 kernel64 kernel64-prova kernel64-sondaggio arch-dice)
 endif
 endif
@@ -135,15 +135,45 @@ iso64:
 # La libc, i comandi di /bin e i driver a 64 bit: gli stessi sorgenti del
 # 32 bit, in build-64/bin e build-64/drivers. Lo script dice quanti ne ha
 # costruiti e quali no (vedi tools/costruisci-utente64.sh).
-# La chiavetta a 64 bit: lo stesso tools/mkusb.sh della versione a 32 bit
-# (stesse protezioni: il dispositivo va nominato, la conferma va battuta), che
-# installa da dist/exos64.iso. Senza gli strumenti di sviluppo, finche' non ci
-# sono.     sudo make usb64 DISPOSITIVO=/dev/sdX [MB=512]
-.PHONY: usb64
+# LA CHIAVETTA USB, a 32 e a 64 bit: `make usb` e `make usb64`.
+#
+#     make usb                                   dist/exos-usb.img    (32 bit)
+#     make usb64                                 dist/exos64-usb.img  (64 bit)
+#     sudo make usb[64] DISPOSITIVO=/dev/sdX     e la scrive (chiede «confirm»)
+#
+# ! E' UN'IMMAGINE DI DISCHETTO DA 2,88 MB CARICATA TUTTA IN RAM, per tutte e
+# due (l'utente, 10 ottobre 2026). L'avvio da USB di un disco installato non
+# procede su una macchina vera: il BIOS carica il kernel, e il kernel non sa
+# leggere la chiavetta finche' i driver USB non girano - e i driver stanno
+# sulla chiavetta. Il BIOS invece una chiavetta con dentro un dischetto la
+# avvia come un floppy, Stage 2 la copia in RAM, e da li' non serve piu'.
+# Dentro: installazione minimale, rete, netupdate, driver e supporto USB.
+# Provata dall'utente sul PC vero a 64 bit: si avvia e la shell funziona.
+#
+# I due caricatori si assemblano qui con DISCHETTO=288 (36 settori per traccia)
+# e RAMDISCO=1; quelli di serie in build/ non cambiano. A scrivere e'
+# tools/mkusb.sh, con i suoi controlli sul dispositivo.
+# (La vecchia chiavetta-disco installata da QEMU resta dentro tools/mkusb.sh,
+# senza una voce di make: e' quella che non parte.)
+USB_AVVIO = build-64/avvio
+define usb_caricatori
+	@mkdir -p $(USB_AVVIO)
+	$(AS) -f bin -DDISCHETTO=288 bootloader/stage1/boot.asm -o $(USB_AVVIO)/stage1-288.bin
+	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=1 -DDISCHETTO=288 $(STAGE2_ASM_SRC) -o $(USB_AVVIO)/stage2-rd1-288.bin
+	@chmod +x $(TOOLS_DIR)/mkchiave.sh $(TOOLS_DIR)/mkusb.sh
+endef
+
+.PHONY: usb64 chiave64
+chiave64: usb64
 usb64:
-	@[ -f dist/exos64.iso ] || { echo "manca dist/exos64.iso: prima 'make iso64'"; exit 1; }
-	@chmod +x $(TOOLS_DIR)/mkusb.sh
-	@EXOS_ARCH=x86_64 $(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)" $(or $(MB),512)
+	@[ -f build-64/kernel-intero.bin ] && [ -d build-64/iso-exos/bin ] || { echo "prima 'make iso64'"; exit 1; }
+	$(usb_caricatori)
+	@EXOS_ARCH=x86_64 $(TOOLS_DIR)/mkchiave.sh
+	@if [ -n "$(DISPOSITIVO)" ]; then \
+	    EXOS_ARCH=x86_64 EXOS_USB_IMMAGINE=dist/exos64-usb.img $(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)"; \
+	else \
+	    echo "Per scriverla:  sudo make usb64 DISPOSITIVO=/dev/sdX"; \
+	fi
 
 .PHONY: utente64
 utente64:
@@ -5376,6 +5406,12 @@ kernel64:
 	    -fno-asynchronous-unwind-tables -O2 -Wall -Wextra -c tools/prove64/primo.c -o $(K64_OUT)/prove/primo.o
 	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -z noexecstack -T tools/prove64/primo.ld \
 	    $(K64_OUT)/prove/primo.o -o $(K64_OUT)/prove/primo
+	@# ! IL CD HA IL SUO STAGE 2, assemblato qui senza volume in RAM: quello in
+	@# build/ cambia con cio' che si e' costruito per ultimo (`make installa` lo
+	@# lascia con RAMDISCO=1, e un CD avviato cosi' monta come radice la sua
+	@# immagine di avvio, dove /bin non c'e'. Successo il 10 ottobre 2026).
+	@mkdir -p build-64/avvio
+	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=0 $(STAGE2_ASM_SRC) -o build-64/avvio/stage2-cd.bin
 	@chmod +x tools/mkiso64.sh
 	@tools/mkiso64.sh intero
 	@echo "[OK] $(K64_OUT)/kernel-intero.bin ($$(stat -c%s $(K64_OUT)/kernel-intero.bin) byte)"
@@ -6078,7 +6114,7 @@ ISO_PROVE := $(filter-out %/prova-make,$(wildcard $(TOOLS_DIR)/iso/*)) \
 # ! UNA LISTA SOLA ANCHE PER I DOCUMENTI, usata sia qui che nella ricetta
 # che li copia. KERNEL_CORE_NOTES.md finiva in doc/ senza essere una
 # dipendenza, ed e' lo stesso modo di sbagliare in piccolo.
-ISO_DOC := README.md README.en.md KERNEL_CORE_NOTES.md gpl-2.0.txt \
+ISO_DOC := README.md README.it.md KERNEL_CORE_NOTES.md gpl-2.0.txt \
            INSTALLA-USB.txt INSTALLA-USB.en.txt
 
 # ! I MANUALI VIAGGIANO COL CD, E IL MOTIVO E' CHE SERVONO PROPRIO LI'. La
@@ -7637,7 +7673,7 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
              $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(PROVA_WAV) $(PROVA_MID) \
              $(WSERVER_OUT) \
-             $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
+             $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.it.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
              boot/telnetd.cfg \
              | verifica-programmi verifica-dipendenze-cd
@@ -7778,7 +7814,7 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	fi
 	@cp boot/avvio.sh $(ISOX_ROOT)/boot/avvio.sh
 	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh
-	@cp README.md README.en.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
+	@cp README.md README.it.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
 	@cp INSTALLA-USB.txt INSTALLA-USB.en.txt $(ISOX_ROOT)/doc/
 	@cp -r $(ISO_MANUALI) $(ISOX_ROOT)/doc/
 	@echo "     manuali: $$(find $(ISO_MANUALI) -name '*.md' | wc -l) capitoli in /doc/manuali"
@@ -7936,10 +7972,22 @@ $(HD_IMG):
 # NON fa parte di `make all`, per la stessa ragione del CD e del disco: dentro
 # c'e' un giro completo in QEMU, anzi due.
 # =============================================================================
+# ! DAL 10 OTTOBRE 2026 `make usb` NON FA PIU' IL DISCO INSTALLATO descritto
+# qui sopra, ma il dischetto da 2,88 MB in RAM (vedi in cima al file, accanto
+# a usb64): quella chiavetta-disco su una macchina vera non trova la radice.
+# Il contenuto e' quello di dist/installa.img, che deve esserci gia':
+# `make installa` non si lancia da qui perche' riassembla Stage 2 e il kernel
+# dentro build/, e non e' una cosa da fare di nascosto.
 .PHONY: usb
-usb: $(FLOPPY_IMG)
-	@chmod +x $(TOOLS_DIR)/mkusb.sh
-	@$(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)" $(MB)
+usb:
+	@[ -f $(INSTALLA_IMG) ] || { echo "manca $(INSTALLA_IMG): prima 'make installa'"; exit 1; }
+	$(usb_caricatori)
+	@EXOS_ARCH=i386 $(TOOLS_DIR)/mkchiave.sh
+	@if [ -n "$(DISPOSITIVO)" ]; then \
+	    EXOS_USB_IMMAGINE=dist/exos-usb.img $(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)"; \
+	else \
+	    echo "Per scriverla:  sudo make usb DISPOSITIVO=/dev/sdX"; \
+	fi
 
 # =============================================================================
 # netinst — IL SISTEMA DA PUBBLICARE SU UN SERVER
@@ -8094,7 +8142,7 @@ verify: $(FLOPPY_IMG)
 	echo "[OK] nessun driver da CD sul floppy"
 	@# La versione dichiarata nei leggimi deve essere quella di version.h.
 	@set -e; \
-	for f in README.md README.en.md; do \
+	for f in README.md README.it.md; do \
 	    d=$$(sed -n 's/^\*\*Versione\?:\*\* //p' $$f | head -1); \
 	    if [ "$$d" != "$(VERSIONE)" ]; then \
 	        echo "!! $$f dichiara la versione '$$d', version.h dice '$(VERSIONE)'"; \
@@ -8129,8 +8177,10 @@ VERSIONE := $(shell sed -n 's/^#define EXOS_VERSION *"\(.*\)".*/\1/p' kernel/inc
 
 .PHONY: leggimi-versione
 leggimi-versione:
-	@sed -i 's/^\*\*Versione:\*\* .*/**Versione:** $(VERSIONE)/' README.md
-	@sed -i 's/^\*\*Version:\*\* .*/**Version:** $(VERSIONE)/'   README.en.md
+	@# (dal 10 ottobre 2026 il leggimi principale, README.md, e' quello inglese;
+	@# l'italiano e' README.it.md)
+	@sed -i 's/^\*\*Version:\*\* .*/**Version:** $(VERSIONE)/'   README.md
+	@sed -i 's/^\*\*Versione:\*\* .*/**Versione:** $(VERSIONE)/' README.it.md
 	@echo "[OK] leggimi allineati alla versione $(VERSIONE)"
 
 # =============================================================================
@@ -8285,8 +8335,15 @@ help:
 	@echo "                      Per un PC senza lettore CD (va anche su chiavetta)"
 	@echo ""
 	@echo "Altri supporti e pubblicazione:"
-	@echo "  make usb DISPOSITIVO=/dev/sdX [MB=1024]"
-	@echo "                    — Chiavetta avviabile (LA FORMATTA: chiede conferma)"
+	@echo "  make usb          — Chiavetta USB avviabile a 32 bit, dist/exos-usb.img:"
+	@echo "                      un dischetto da 2,88 MB caricato tutto in RAM"
+	@echo "                      (installazione minimale, rete, USB). Vuole 'make installa'"
+	@echo "  make usb64        — La stessa a 64 bit, dist/exos64-usb.img. Vuole 'make iso64'"
+	@echo "  sudo make usb DISPOSITIVO=/dev/sdX      (oppure usb64)"
+	@echo "                    — La scrive sulla chiavetta (LA CANCELLA: chiede conferma)"
+	@echo "  make iso64        — Il CD del sistema a 64 bit, dist/exos64.iso"
+	@echo "  make netinst64    — Il repository a 64 bit per netupdate, dist/netinst_64"
+	@echo "  make tools64      — Il CD degli strumenti a 64 bit (non ci sono ancora)"
 	@echo "  make floppy-verboso"
 	@echo "                    — Floppy che mostra il log di avvio, dist/floppy-verboso.img"
 	@echo "  make diagnostic   — Floppy di diagnosi dist/diagnostic.img"

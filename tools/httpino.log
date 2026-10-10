@@ -112,3 +112,571 @@
   finito /versione.txt: 316 byte
 /versione.txt
   finito /versione.txt: 316 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 314 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 1670 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 24725 byte
+/netinst_64/file/bin/aggiungi
+  finito /netinst_64/file/bin/aggiungi: 37736 byte
+/netinst_64/file/bin/ahci
+  finito /netinst_64/file/bin/ahci: 37624 byte
+/netinst_64/file/bin/audio
+  finito /netinst_64/file/bin/audio: 77184 byte
+/netinst_64/file/bin/blkprova
+  finito /netinst_64/file/bin/blkprova: 27824 byte
+/netinst_64/file/bin/cdinstall
+  finito /netinst_64/file/bin/cdinstall: 41872 byte
+/netinst_64/file/bin/chkdsk
+  finito /netinst_64/file/bin/chkdsk: 55496 byte
+/netinst_64/file/bin/chmod
+  finito /netinst_64/file/bin/chmod: 33056 byte
+/netinst_64/file/bin/cmp
+  finito /netinst_64/file/bin/cmp: 23976 byte
+/netinst_64/file/bin/crypttest
+  finito /netinst_64/file/bin/crypttest: 46304 byte
+/netinst_64/file/bin/date
+  finito /netinst_64/file/bin/date: 27704 byte
+/netinst_64/file/bin/delete
+  finito /netinst_64/file/bin/delete: 33016 byte
+/netinst_64/file/bin/eject
+  finito /netinst_64/file/bin/eject: 23488 byte
+/netinst_64/file/bin/exwin
+  finito /netinst_64/file/bin/exwin: 23768 byte
+/netinst_64/file/bin/fdprova
+  finito /netinst_64/file/bin/fdprova: 28120 byte
+/netinst_64/file/bin/filiprova
+  finito /netinst_64/file/bin/filiprova: 47848 byte
+/netinst_64/file/bin/ftp
+  finito /netinst_64/file/bin/ftp: 42592 byte
+/netinst_64/file/bin/ftpswap
+  finito /netinst_64/file/bin/ftpswap: 64968 byte
+/netinst_64/file/bin/gfedit
+  finito /netinst_64/file/bin/gfedit: 82304 byte
+/netinst_64/file/bin/hello
+  finito /netinst_64/file/bin/hello: 9240 byte
+/netinst_64/file/bin/help
+  finito /netinst_64/file/bin/help: 37936 byte
+/netinst_64/file/bin/host
+  finito /netinst_64/file/bin/host: 28392 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 28616 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 29032 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 33792 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 38632 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 41904 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 24400 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 28960 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 38344 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 38408 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 24208 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 29304 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 28568 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 29424 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 68032 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 51264 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 42312 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 38640 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 19312 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 61312 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 43104 byte
+/netinst_64/file/exos/ssl/certi.pem
+  finito /netinst_64/file/exos/ssl/certi.pem: 224449 byte
+/netinst_64/file/exwin/bin/archivi
+  finito /netinst_64/file/exwin/bin/archivi: 178800 byte
+/netinst_64/file/exwin/bin/calctor
+  finito /netinst_64/file/exwin/bin/calctor: 157824 byte
+/netinst_64/file/exwin/bin/exbrowser
+  finito /netinst_64/file/exwin/bin/exbrowser: 647832 byte
+/netinst_64/file/exwin/icon/baseapp/exklondike_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exklondike_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exklondike_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exklondike_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/exmajong_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exmajong_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/explayer_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/explayer_128.ico: 65598 byte
+/netinst_64/file/exwin/icon/baseapp/explayer_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/explayer_64.ico: 16446 byte
+/netinst_64/file/exwin/icon/baseapp/exspider_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exspider_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exspider_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exspider_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/filemgr_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/filemgr_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/filemgr_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/filemgr_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/pennello_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/pennello_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/pennello_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/pennello_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/term_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/term_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/term_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/term_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/strumenti/apri.ico
+  finito /netinst_64/file/exwin/icon/strumenti/apri.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/centro.ico
+  finito /netinst_64/file/exwin/icon/strumenti/centro.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/copia.ico
+  finito /netinst_64/file/exwin/icon/strumenti/copia.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/corsivo.ico
+  finito /netinst_64/file/exwin/icon/strumenti/corsivo.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/destra.ico
+  finito /netinst_64/file/exwin/icon/strumenti/destra.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/giustifica.ico
+  finito /netinst_64/file/exwin/icon/strumenti/giustifica.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/grassetto.ico
+  finito /netinst_64/file/exwin/icon/strumenti/grassetto.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/incolla.ico
+  finito /netinst_64/file/exwin/icon/strumenti/incolla.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/rientro_meno.ico
+  finito /netinst_64/file/exwin/icon/strumenti/rientro_meno.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/salva.ico
+  finito /netinst_64/file/exwin/icon/strumenti/salva.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/sottolineato.ico
+  finito /netinst_64/file/exwin/icon/strumenti/sottolineato.ico: 4286 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 314 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 1670 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 24725 byte
+/netinst_64/file/bin/aggiungi
+  finito /netinst_64/file/bin/aggiungi: 37736 byte
+/netinst_64/file/bin/ahci
+  finito /netinst_64/file/bin/ahci: 37624 byte
+/netinst_64/file/bin/audio
+  finito /netinst_64/file/bin/audio: 77184 byte
+/netinst_64/file/bin/blkprova
+  finito /netinst_64/file/bin/blkprova: 27824 byte
+/netinst_64/file/bin/cdinstall
+  finito /netinst_64/file/bin/cdinstall: 41872 byte
+/netinst_64/file/bin/chkdsk
+  finito /netinst_64/file/bin/chkdsk: 55496 byte
+/netinst_64/file/bin/chmod
+  finito /netinst_64/file/bin/chmod: 33056 byte
+/netinst_64/file/bin/cmp
+  finito /netinst_64/file/bin/cmp: 23976 byte
+/netinst_64/file/bin/crypttest
+  finito /netinst_64/file/bin/crypttest: 46304 byte
+/netinst_64/file/bin/date
+  finito /netinst_64/file/bin/date: 27704 byte
+/netinst_64/file/bin/delete
+  finito /netinst_64/file/bin/delete: 33016 byte
+/netinst_64/file/bin/eject
+  finito /netinst_64/file/bin/eject: 23488 byte
+/netinst_64/file/bin/exwin
+  finito /netinst_64/file/bin/exwin: 23768 byte
+/netinst_64/file/bin/fdprova
+  finito /netinst_64/file/bin/fdprova: 28120 byte
+/netinst_64/file/bin/filiprova
+  finito /netinst_64/file/bin/filiprova: 47848 byte
+/netinst_64/file/bin/ftp
+  finito /netinst_64/file/bin/ftp: 42592 byte
+/netinst_64/file/bin/ftpswap
+  finito /netinst_64/file/bin/ftpswap: 64968 byte
+/netinst_64/file/bin/gfedit
+  finito /netinst_64/file/bin/gfedit: 82304 byte
+/netinst_64/file/bin/hello
+  finito /netinst_64/file/bin/hello: 9240 byte
+/netinst_64/file/bin/help
+  finito /netinst_64/file/bin/help: 37936 byte
+/netinst_64/file/bin/host
+  finito /netinst_64/file/bin/host: 28392 byte
+/netinst_64/file/bin/hwinfo
+  finito /netinst_64/file/bin/hwinfo: 54600 byte
+/netinst_64/file/bin/id
+  finito /netinst_64/file/bin/id: 29032 byte
+/netinst_64/file/bin/kbprova
+  finito /netinst_64/file/bin/kbprova: 28152 byte
+/netinst_64/file/bin/libctest
+  finito /netinst_64/file/bin/libctest: 109856 byte
+/netinst_64/file/bin/memprova
+  finito /netinst_64/file/bin/memprova: 28432 byte
+/netinst_64/file/bin/mkswap
+  finito /netinst_64/file/bin/mkswap: 23640 byte
+/netinst_64/file/bin/mouse
+  finito /netinst_64/file/bin/mouse: 23776 byte
+/netinst_64/file/bin/mv
+  finito /netinst_64/file/bin/mv: 37536 byte
+/netinst_64/file/bin/nettest
+  finito /netinst_64/file/bin/nettest: 28568 byte
+/netinst_64/file/bin/polltest
+  finito /netinst_64/file/bin/polltest: 37776 byte
+/netinst_64/file/bin/primo64
+  finito /netinst_64/file/bin/primo64: 9096 byte
+/netinst_64/file/bin/prova64
+  finito /netinst_64/file/bin/prova64: 42560 byte
+/netinst_64/file/bin/rename
+  finito /netinst_64/file/bin/rename: 23360 byte
+/netinst_64/file/bin/rmdir
+  finito /netinst_64/file/bin/rmdir: 23360 byte
+/netinst_64/file/bin/scarica
+  finito /netinst_64/file/bin/scarica: 121432 byte
+/netinst_64/file/bin/senderror
+  finito /netinst_64/file/bin/senderror: 116624 byte
+/netinst_64/file/bin/shmtest
+  finito /netinst_64/file/bin/shmtest: 23688 byte
+/netinst_64/file/bin/smpprova
+  finito /netinst_64/file/bin/smpprova: 23656 byte
+/netinst_64/file/bin/soccorso
+  finito /netinst_64/file/bin/soccorso: 51088 byte
+/netinst_64/file/bin/sshd
+  finito /netinst_64/file/bin/sshd: 64472 byte
+/netinst_64/file/bin/stack
+  finito /netinst_64/file/bin/stack: 19112 byte
+/netinst_64/file/bin/sudo
+  finito /netinst_64/file/bin/sudo: 38040 byte
+/netinst_64/file/bin/swaptest
+  finito /netinst_64/file/bin/swaptest: 23792 byte
+/netinst_64/file/bin/tar
+  finito /netinst_64/file/bin/tar: 61272 byte
+/netinst_64/file/bin/tcpserv
+  finito /netinst_64/file/bin/tcpserv: 24104 byte
+/netinst_64/file/bin/tcptest
+  finito /netinst_64/file/bin/tcptest: 32968 byte
+/netinst_64/file/bin/telnet
+  finito /netinst_64/file/bin/telnet: 33528 byte
+/netinst_64/file/bin/testo
+  finito /netinst_64/file/bin/testo: 19080 byte
+/netinst_64/file/bin/textline
+  finito /netinst_64/file/bin/textline: 37616 byte
+/netinst_64/file/bin/toolinst
+  finito /netinst_64/file/bin/toolinst: 55168 byte
+/netinst_64/file/bin/trunc
+  finito /netinst_64/file/bin/trunc: 23424 byte
+/netinst_64/file/bin/wifi
+  finito /netinst_64/file/bin/wifi: 33704 byte
+/netinst_64/file/bin/winprova
+  finito /netinst_64/file/bin/winprova: 123520 byte
+/netinst_64/file/bin/xcp
+  finito /netinst_64/file/bin/xcp: 37520 byte
+/netinst_64/file/bin/zip
+  finito /netinst_64/file/bin/zip: 60672 byte
+/netinst_64/file/boot/help.txt
+  finito /netinst_64/file/boot/help.txt: 31884 byte
+/netinst_64/file/boot/kernel.txt
+  finito /netinst_64/file/boot/kernel.txt: 22383 byte
+/netinst_64/file/boot/minimale.txt
+  finito /netinst_64/file/boot/minimale.txt: 533 byte
+/netinst_64/file/dev/cardbus.drv
+  finito /netinst_64/file/dev/cardbus.drv: 28616 byte
+/netinst_64/file/dev/fetta.drv
+  finito /netinst_64/file/dev/fetta.drv: 23928 byte
+/netinst_64/file/dev/mappa.drv
+  finito /netinst_64/file/dev/mappa.drv: 41904 byte
+/netinst_64/file/dev/mouseser.drv
+  finito /netinst_64/file/dev/mouseser.drv: 24400 byte
+/netinst_64/file/dev/ne2k.drv
+  finito /netinst_64/file/dev/ne2k.drv: 28960 byte
+/netinst_64/file/dev/pcnet.drv
+  finito /netinst_64/file/dev/pcnet.drv: 29304 byte
+/netinst_64/file/dev/ramdisk.drv
+  finito /netinst_64/file/dev/ramdisk.drv: 28568 byte
+/netinst_64/file/dev/sis900.drv
+  finito /netinst_64/file/dev/sis900.drv: 68032 byte
+/netinst_64/file/dev/sonda.drv
+  finito /netinst_64/file/dev/sonda.drv: 51264 byte
+/netinst_64/file/dev/svga.drv
+  finito /netinst_64/file/dev/svga.drv: 42312 byte
+/netinst_64/file/dev/vgaprova.drv
+  finito /netinst_64/file/dev/vgaprova.drv: 19312 byte
+/netinst_64/file/dev/wserver.drv
+  finito /netinst_64/file/dev/wserver.drv: 61312 byte
+/netinst_64/file/dev/xhci.drv
+  finito /netinst_64/file/dev/xhci.drv: 43104 byte
+/netinst_64/file/doc/HANDOFF.md
+  finito /netinst_64/file/doc/HANDOFF.md: 453152 byte
+/netinst_64/file/doc/INSTALLA-USB.en.txt
+  finito /netinst_64/file/doc/INSTALLA-USB.en.txt: 8824 byte
+/netinst_64/file/doc/INSTALLA-USB.txt
+  finito /netinst_64/file/doc/INSTALLA-USB.txt: 8837 byte
+/netinst_64/file/doc/KERNEL_CORE_NOTES.md
+  finito /netinst_64/file/doc/KERNEL_CORE_NOTES.md: 88807 byte
+/netinst_64/file/doc/README.en.md
+  finito /netinst_64/file/doc/README.en.md: 361188 byte
+/netinst_64/file/doc/README.md
+  finito /netinst_64/file/doc/README.md: 369024 byte
+/netinst_64/file/doc/gpl-2.0.txt
+  finito /netinst_64/file/doc/gpl-2.0.txt: 17984 byte
+/netinst_64/file/doc/leggimi.txt
+  finito /netinst_64/file/doc/leggimi.txt: 88 byte
+/netinst_64/file/doc/manuali/installazione/00-indice.md
+  finito /netinst_64/file/doc/manuali/installazione/00-indice.md: 2838 byte
+/netinst_64/file/doc/manuali/installazione/01-da-floppy.md
+  finito /netinst_64/file/doc/manuali/installazione/01-da-floppy.md: 4089 byte
+/netinst_64/file/doc/manuali/installazione/02-da-cdrom.md
+  finito /netinst_64/file/doc/manuali/installazione/02-da-cdrom.md: 2960 byte
+/netinst_64/file/doc/manuali/installazione/03-dalla-rete.md
+  finito /netinst_64/file/doc/manuali/installazione/03-dalla-rete.md: 4749 byte
+/netinst_64/file/doc/manuali/installazione/04-dopo-installazione.md
+  finito /netinst_64/file/doc/manuali/installazione/04-dopo-installazione.md: 4769 byte
+/netinst_64/file/doc/manuali/installazione/05-quando-va-storto.md
+  finito /netinst_64/file/doc/manuali/installazione/05-quando-va-storto.md: 6511 byte
+/netinst_64/file/doc/manuali/installazione/06-pubblicare-il-repo.md
+  finito /netinst_64/file/doc/manuali/installazione/06-pubblicare-il-repo.md: 4112 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 28616 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 29032 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 33792 byte
+/netinst_64/file/drivers/fetta.drv
+  finito /netinst_64/file/drivers/fetta.drv: 23928 byte
+/netinst_64/file/drivers/ip.drv
+  finito /netinst_64/file/drivers/ip.drv: 42104 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 38632 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 41904 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 24400 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 28960 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 38344 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 38408 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 24208 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 29304 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 28568 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 29424 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 68032 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 51264 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 42312 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 38640 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 19312 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 61312 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 43104 byte
+/netinst_64/file/exos/ssl/certi.pem
+  finito /netinst_64/file/exos/ssl/certi.pem: 224449 byte
+/netinst_64/file/exwin/bin/archivi
+  finito /netinst_64/file/exwin/bin/archivi: 178800 byte
+/netinst_64/file/exwin/bin/calctor
+  finito /netinst_64/file/exwin/bin/calctor: 157824 byte
+/netinst_64/file/exwin/bin/exbrowser
+  finito /netinst_64/file/exwin/bin/exbrowser: 647832 byte
+/netinst_64/file/exwin/bin/exeditor
+  finito /netinst_64/file/exwin/bin/exeditor: 214424 byte
+/netinst_64/file/exwin/bin/exgo
+  finito /netinst_64/file/exwin/bin/exgo: 137640 byte
+/netinst_64/file/exwin/bin/exide
+  finito /netinst_64/file/exwin/bin/exide: 222568 byte
+/netinst_64/file/exwin/bin/exilla
+  finito /netinst_64/file/exwin/bin/exilla: 114832 byte
+/netinst_64/file/exwin/bin/exklondike
+  finito /netinst_64/file/exwin/bin/exklondike: 138208 byte
+/netinst_64/file/exwin/bin/exmajong
+  finito /netinst_64/file/exwin/bin/exmajong: 138096 byte
+/netinst_64/file/exwin/bin/explayer
+  finito /netinst_64/file/exwin/bin/explayer: 155536 byte
+/netinst_64/file/exwin/bin/exspider
+  finito /netinst_64/file/exwin/bin/exspider: 138464 byte
+/netinst_64/file/exwin/bin/exvolume
+  finito /netinst_64/file/exwin/bin/exvolume: 114144 byte
+/netinst_64/file/exwin/bin/filemgr
+  finito /netinst_64/file/exwin/bin/filemgr: 160744 byte
+/netinst_64/file/exwin/bin/fontprova
+  finito /netinst_64/file/exwin/bin/fontprova: 113768 byte
+/netinst_64/file/exwin/bin/immagini
+  finito /netinst_64/file/exwin/bin/immagini: 137432 byte
+/netinst_64/file/exwin/bin/orologio
+  finito /netinst_64/file/exwin/bin/orologio: 109880 byte
+/netinst_64/file/exwin/bin/pennello
+  finito /netinst_64/file/exwin/bin/pennello: 170624 byte
+/netinst_64/file/exwin/bin/pm
+  finito /netinst_64/file/exwin/bin/pm: 174688 byte
+/netinst_64/file/exwin/bin/term
+  finito /netinst_64/file/exwin/bin/term: 109440 byte
+/netinst_64/file/exwin/bin/wserver
+  finito /netinst_64/file/exwin/bin/wserver: 61312 byte
+/netinst_64/file/exwin/doc/comandi.html
+  finito /netinst_64/file/exwin/doc/comandi.html: 9541 byte
+/netinst_64/file/exwin/doc/exbrowser.html
+  finito /netinst_64/file/exwin/doc/exbrowser.html: 31616 byte
+/netinst_64/file/exwin/doc/exide.html
+  finito /netinst_64/file/exwin/doc/exide.html: 44833 byte
+/netinst_64/file/exwin/doc/exwin.html
+  finito /netinst_64/file/exwin/doc/exwin.html: 22329 byte
+/netinst_64/file/exwin/doc/index.html
+  finito /netinst_64/file/exwin/doc/index.html: 6234 byte
+/netinst_64/file/exwin/doc/installa-usb.en.html
+  finito /netinst_64/file/exwin/doc/installa-usb.en.html: 8042 byte
+/netinst_64/file/exwin/doc/installa-usb.html
+  finito /netinst_64/file/exwin/doc/installa-usb.html: 8055 byte
+/netinst_64/file/exwin/doc/installa.html
+  finito /netinst_64/file/exwin/doc/installa.html: 33090 byte
+/netinst_64/file/exwin/doc/javascript.html
+  finito /netinst_64/file/exwin/doc/javascript.html: 7740 byte
+/netinst_64/file/exwin/doc/rete.html
+  finito /netinst_64/file/exwin/doc/rete.html: 7611 byte
+/netinst_64/file/exwin/doc/sistema.html
+  finito /netinst_64/file/exwin/doc/sistema.html: 14134 byte
+/netinst_64/file/exwin/doc/stile.css
+  finito /netinst_64/file/exwin/doc/stile.css: 1985 byte
+/netinst_64/file/exwin/doc/sviluppo.html
+  finito /netinst_64/file/exwin/doc/sviluppo.html: 12882 byte
+/netinst_64/file/exwin/font/AUTHORS
+  finito /netinst_64/file/exwin/font/AUTHORS: 379 byte
+/netinst_64/file/exwin/font/DejaVuSans.ttf
+  finito /netinst_64/file/exwin/font/DejaVuSans.ttf: 759720 byte
+/netinst_64/file/exwin/font/LICENSE
+  finito /netinst_64/file/exwin/font/LICENSE: 4414 byte
+/netinst_64/file/exwin/font/LICENSE.DejaVu
+  finito /netinst_64/file/exwin/font/LICENSE.DejaVu: 3859 byte
+/netinst_64/file/exwin/font/LiberationMono-Bold.ttf
+  finito /netinst_64/file/exwin/font/LiberationMono-Bold.ttf: 308068 byte
+/netinst_64/file/exwin/font/LiberationMono-BoldItalic.ttf
+  finito /netinst_64/file/exwin/font/LiberationMono-BoldItalic.ttf: 284184 byte
+/netinst_64/file/exwin/font/LiberationMono-Italic.ttf
+  finito /netinst_64/file/exwin/font/LiberationMono-Italic.ttf: 281608 byte
+/netinst_64/file/exwin/font/LiberationMono-Regular.ttf
+  finito /netinst_64/file/exwin/font/LiberationMono-Regular.ttf: 319624 byte
+/netinst_64/file/exwin/font/LiberationSans-Bold.ttf
+  finito /netinst_64/file/exwin/font/LiberationSans-Bold.ttf: 414568 byte
+/netinst_64/file/exwin/font/LiberationSans-BoldItalic.ttf
+  finito /netinst_64/file/exwin/font/LiberationSans-BoldItalic.ttf: 409108 byte
+/netinst_64/file/exwin/font/LiberationSans-Italic.ttf
+  finito /netinst_64/file/exwin/font/LiberationSans-Italic.ttf: 415920 byte
+/netinst_64/file/exwin/font/LiberationSans-Regular.ttf
+  finito /netinst_64/file/exwin/font/LiberationSans-Regular.ttf: 410820 byte
+/netinst_64/file/exwin/font/LiberationSerif-Bold.ttf
+  finito /netinst_64/file/exwin/font/LiberationSerif-Bold.ttf: 370196 byte
+/netinst_64/file/exwin/font/LiberationSerif-BoldItalic.ttf
+  finito /netinst_64/file/exwin/font/LiberationSerif-BoldItalic.ttf: 376892 byte
+/netinst_64/file/exwin/font/LiberationSerif-Italic.ttf
+  finito /netinst_64/file/exwin/font/LiberationSerif-Italic.ttf: 375760 byte
+/netinst_64/file/exwin/font/LiberationSerif-Regular.ttf
+  finito /netinst_64/file/exwin/font/LiberationSerif-Regular.ttf: 393692 byte
+/netinst_64/file/exwin/icon/baseapp/archivi_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/archivi_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/archivi_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/archivi_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/calctor_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/calctor_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/calctor_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/calctor_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/edit_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/edit_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/edit_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/edit_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/exbrowser_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exbrowser_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exbrowser_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exbrowser_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/exgo_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exgo_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exgo_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exgo_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/exide_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exide_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exide_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exide_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/exklondike_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exklondike_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exklondike_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exklondike_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/exmajong_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exmajong_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exmajong_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exmajong_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/explayer_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/explayer_128.ico: 65598 byte
+/netinst_64/file/exwin/icon/baseapp/explayer_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/explayer_64.ico: 16446 byte
+/netinst_64/file/exwin/icon/baseapp/exspider_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exspider_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/exspider_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/exspider_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/filemgr_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/filemgr_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/filemgr_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/filemgr_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/pennello_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/pennello_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/pennello_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/pennello_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/baseapp/term_128.ico
+  finito /netinst_64/file/exwin/icon/baseapp/term_128.ico: 67646 byte
+/netinst_64/file/exwin/icon/baseapp/term_64.ico
+  finito /netinst_64/file/exwin/icon/baseapp/term_64.ico: 16958 byte
+/netinst_64/file/exwin/icon/strumenti/apri.ico
+  finito /netinst_64/file/exwin/icon/strumenti/apri.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/centro.ico
+  finito /netinst_64/file/exwin/icon/strumenti/centro.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/copia.ico
+  finito /netinst_64/file/exwin/icon/strumenti/copia.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/corsivo.ico
+  finito /netinst_64/file/exwin/icon/strumenti/corsivo.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/destra.ico
+  finito /netinst_64/file/exwin/icon/strumenti/destra.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/giustifica.ico
+  finito /netinst_64/file/exwin/icon/strumenti/giustifica.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/grassetto.ico
+  finito /netinst_64/file/exwin/icon/strumenti/grassetto.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/incolla.ico
+  finito /netinst_64/file/exwin/icon/strumenti/incolla.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/nuovo.ico
+  finito /netinst_64/file/exwin/icon/strumenti/nuovo.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/rientro_meno.ico
+  finito /netinst_64/file/exwin/icon/strumenti/rientro_meno.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/rientro_piu.ico
+  finito /netinst_64/file/exwin/icon/strumenti/rientro_piu.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/salva.ico
+  finito /netinst_64/file/exwin/icon/strumenti/salva.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/sinistra.ico
+  finito /netinst_64/file/exwin/icon/strumenti/sinistra.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/sottolineato.ico
+  finito /netinst_64/file/exwin/icon/strumenti/sottolineato.ico: 4286 byte
+/netinst_64/file/exwin/icon/strumenti/taglia.ico
+  finito /netinst_64/file/exwin/icon/strumenti/taglia.ico: 4286 byte
+/netinst_64/file/exwin/lib/applicazioni.txt
+  finito /netinst_64/file/exwin/lib/applicazioni.txt: 4195 byte
+/netinst_64/file/exwin/lib/tipi.txt
+  finito /netinst_64/file/exwin/lib/tipi.txt: 965 byte
+/netinst_64/file/exwin/prova.ico
+  finito /netinst_64/file/exwin/prova.ico: 12046 byte
+/netinst_64/file/exwin/prova.jpg
+  finito /netinst_64/file/exwin/prova.jpg: 1130 byte
+/netinst_64/file/exwin/prova.png
+  finito /netinst_64/file/exwin/prova.png: 1625 byte
+/netinst_64/file/exwin/sound/intro_exos_benvenuto10s.mp3
+  finito /netinst_64/file/exwin/sound/intro_exos_benvenuto10s.mp3: 247217 byte
+/netinst_64/file/exwin/sound/intro_exos_benvenuto10s.wav
+  finito /netinst_64/file/exwin/sound/intro_exos_benvenuto10s.wav: 1769810 byte
+/netinst_64/file/suono/prova.mid
+  finito /netinst_64/file/suono/prova.mid: 72 byte
+/netinst_64/file/suono/prova.wav
+  finito /netinst_64/file/suono/prova.wav: 44144 byte

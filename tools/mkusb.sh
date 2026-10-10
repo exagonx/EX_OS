@@ -66,6 +66,17 @@ IMG="dischi/usb-${MB}.img"
 ARCH64=0
 [ "${EXOS_ARCH:-i386}" = "x86_64" ] && ARCH64=1
 
+# ! UN'IMMAGINE GIA' FATTA (EXOS_USB_IMMAGINE=<file>): lo script non costruisce
+# niente e fa solo la sua seconda meta' - i controlli sul dispositivo, la
+# conferma battuta a mano, la scrittura. La usa `make chiave64`, che l'immagine
+# la costruisce dall'host con tools/mkchiave.sh: le protezioni restano queste,
+# scritte una volta sola.
+PRONTA="${EXOS_USB_IMMAGINE:-}"
+if [ -n "$PRONTA" ]; then
+    [ -f "$PRONTA" ] || { echo "mkusb: manca l'immagine $PRONTA" >&2; exit 1; }
+    MB=$(( ($(stat -c%s "$PRONTA") + 1048575) / 1048576 ))
+fi
+
 CD_SISTEMA=dist/exos.iso
 CD_STRUMENTI=dist/exos-tools.iso
 FLOPPY=dist/floppy.img          # serve al secondo giro, per gli strumenti
@@ -242,6 +253,7 @@ echo ""
 # 4. L'IMMAGINE
 # =============================================================================
 
+if [ -z "$PRONTA" ]; then
 [ $ARCH64 -eq 1 ] || [ -f "$FLOPPY" ] || rifiuta "manca $FLOPPY." "Lancia prima 'make'."
 [ -f "$CD_SISTEMA" ] || rifiuta \
     "manca $CD_SISTEMA." \
@@ -374,6 +386,10 @@ grep -q "Fatto\. Al prossimo avvio" /tmp/exos-mkusb-2.log || {
 }
 echo "[OK] strumenti installati in /exos"
 fi      # ARCH64
+else
+    IMG="$PRONTA"
+    echo "=== immagine gia' pronta: $IMG (${MB} MB) ==="
+fi      # PRONTA
 
 # =============================================================================
 # 5. E ADESSO, IL MOMENTO PERICOLOSO: UNA RIGA SOLA
@@ -389,8 +405,8 @@ sync
 echo ""
 echo "[OK] $DISPOSITIVO e' pronto."
 echo ""
-echo "     Per entrare:  root / $PW_ROOT   oppure   $UTENTE / $PW_UTENTE"
-[ $ARCH64 -eq 1 ] || echo "     Il compilatore e' in /exos/bin/gcc, ed e' gia' nel PATH."
+[ -n "$PRONTA" ] || echo "     Per entrare:  root / $PW_ROOT   oppure   $UTENTE / $PW_UTENTE"
+[ $ARCH64 -eq 1 ] || [ -n "$PRONTA" ] || echo "     Il compilatore e' in /exos/bin/gcc, ed e' gia' nel PATH."
 echo ""
 # ! I BACKTICK QUI DENTRO SONO UN COMANDO, NON UNA CITAZIONE. La prima
 # versione di questa riga scriveva  «serve `MB=` piu\' grande»  e la shell ha

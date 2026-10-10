@@ -13,6 +13,28 @@
 ; COM1 (0x3F8, 115200 8N1) cosi' Stage 2 puo' usarla immediatamente per il
 ; debug.
 ; =============================================================================
+; ! LA MISURA DEL DISCHETTO SI SCEGLIE A COSTRUZIONE (10 ottobre 2026). Di serie
+; e' 1,44 MB e questo file si assembla identico a prima. Con -DDISCHETTO=288
+; e' un 2,88 MB: 36 settori per traccia, e una FAT piu' lunga (12 settori), il
+; che sposta la directory radice e l'area dei dati. I cluster restano di UN
+; settore - ne' qui ne' in Stage 2 c'e' il codice per cluster piu' grandi - e
+; la FAT12 non passa i 4084 cluster: del 2,88 se ne usano 2 MB (F_TOT), il
+; resto del supporto resta vuoto. Stage 2 (loader.asm) ha le stesse costanti.
+%ifndef DISCHETTO
+%define DISCHETTO 144
+%endif
+%if DISCHETTO = 288
+%define F_SPT   36
+%define F_SPF   12
+%define F_TOT   4123            ; 1 + 2*12 + 14 + 4084 cluster
+%else
+%define F_SPT   18
+%define F_SPF   9
+%define F_TOT   2880
+%endif
+%define F_ROOT  (1 + 2 * F_SPF)             ; 19 sul dischetto da 1,44
+%define F_DATA  (F_ROOT + 14)               ; 33
+
 [BITS 16]
 [ORG 0x7C00]
 
@@ -26,10 +48,10 @@
         dw 1            ; ReservedSectors
         db 2            ; NumberOfFATs
         dw 224          ; RootEntryCount
-        dw 2880         ; TotalSectors16
+        dw F_TOT        ; TotalSectors16
         db 0xF0         ; MediaType
-        dw 9            ; SectorsPerFAT
-        dw 18           ; SectorsPerTrack
+        dw F_SPF        ; SectorsPerFAT
+        dw F_SPT        ; SectorsPerTrack
         dw 2            ; NumberOfHeads
         dd 0            ; HiddenSectors
         dd 0            ; TotalSectors32
@@ -52,7 +74,7 @@ _start:
     mov  [drv], dl
 
     ; 1) Root dir a 0x7E00 (14 settori, LBA 19) — PRIMA
-    mov  ax, 19
+    mov  ax, F_ROOT
     mov  bx, 0x7E00
     mov  cx, 14
     call rsect
@@ -60,7 +82,7 @@ _start:
     ; 2) FAT1 a 0xA000 (9 settori, LBA 1) — DOPO, nessun overlap
     mov  ax, 1
     mov  bx, 0xA000
-    mov  cx, 9
+    mov  cx, F_SPF
     call rsect
 
     ; Cerca 'LOADER  BIN' nella root directory (224 entry da 32 byte)
@@ -97,7 +119,7 @@ _start:
     jb   .done
     push ax
     sub  ax, 2
-    add  ax, 33          ; LBA = (cluster-2) + 33  (data area FAT12 1.44MB)
+    add  ax, F_DATA      ; LBA = (cluster-2) + 33  (data area FAT12 1.44MB)
     mov  cx, 1
     call rsect           ; rsect (pusha/popa) ripristina BX al ritorno
     add  bx, 512         ; quindi il main loop avanza BX di 512 ogni cluster
@@ -156,7 +178,7 @@ rsect:
     push cx
     push ax
     xor  dx, dx
-    mov  cx, 18
+    mov  cx, F_SPT
     div  cx              ; AX = LBA/18 (traccia), DX = LBA%18
     inc  dx              ; DX = settore (1-based)
     mov  si, dx          ; salva il settore in SI (la prossima div lo

@@ -6632,7 +6632,124 @@ un programma: il primo lavoro e' tirarla fuori.
   un prodotto e nessuno la scrive su un supporto), poi il kernel monta il CD.
   Vuole un BIOS, o un UEFI con il modulo di compatibilita' (CSM): l'avvio
   UEFI puro non c'e' (era gia' fra le cose da decidere).
-  LA CHIAVETTA: `sudo make usb64 DISPOSITIVO=/dev/sdX [MB=512]`, cioe' lo
+  ! DECISO DALL'UTENTE (10 ottobre 2026, sera) E NON SI RIDISCUTE: sul PC vero
+  l'unita' USB non si monta, quindi NIENTE di cio' che serve puo' stare fuori
+  dal dischetto. Le sole due strade: un dischetto di avvio caricato tutto in
+  memoria, o la stessa immagine di dischetto sulla chiavetta. Sono una
+  immagine sola: `make chiave64` fa dist/exos64-floppy.img, 1,44 MB e niente
+  dopo - senza driver USB, senza fetta.drv, senza /sistema. Dentro: kernel a
+  64 bit, sh, disk fdisk mkfs install, la rete (nforce e1000 rtl8169 ip dhcp
+  netdetect ping), netupdate; 1,2 MB. Provato in QEMU dal lettore di floppy:
+  radice in RAM, DHCP. Il resto del sistema puo' arrivare solo dalla rete:
+  serve netinst_64 pubblicato (oggi repo-update.sh -64 si ferma prima).
+  POI, SEMPRE L'UTENTE: il dischetto da 2,88 MB (80x2x36), con installazione
+  minimale, rete, e driver e supporto USB (un driver di rete che manca si
+  prende da una chiavetta dopo l'installazione). Fatto: -DDISCHETTO=288 in
+  boot.asm e loader.asm (di serie identici a prima), FAT12 con FAT di 12
+  settori e cluster di UN settore, quindi 2 MB usabili sui 2,88 (4084
+  cluster: per usarli tutti servono cluster di due settori nei due
+  caricatori, non fatto). dist/exos64-floppy.img: 22 comandi, kbd pci ehci
+  ohci uhci nforce e1000 rtl8169 ip; 612 KB liberi. QEMU da un lettore 2,88:
+  radice in RAM, DHCP, ping, una chiavetta montata in /USB/DRIVE0.
+  CONFERMATO DALL'UTENTE sul PC vero: l'immagine da 2,88 a 64 bit si avvia
+  da chiavetta e la shell funziona. Aggiunti telnetd e login, avvio
+  silenzioso, l'indirizzo in fondo allo schermo.
+  LE VOCI DI MAKE (l'utente): `make usb64` (dist/exos64-usb.img; chiave64 ne
+  e' un altro nome) e `make usb` (dist/exos-usb.img, 32 bit: il contenuto di
+  dist/installa.img coi caricatori da 2,88, piu' telnetd e login; vuole
+  `make installa` prima). Tutte e due col dischetto in RAM; la vecchia
+  chiavetta-disco non ha piu' una voce. Sono in `make help`.
+  Quella a 32 bit: avviata in QEMU, non sul PC vero.
+  Il testo qui sotto descrive la forma con /sistema, che NON e' piu' quella.
+
+  LA CHIAVETTA, TERZA FORMA (superata): `make chiave64` faceva un
+  DISCHETTO IN RAM (10 ottobre 2026, sera). L'utente, dopo che anche la forma
+  qui sotto e' fallita sul PC vero («fallisce la lettura»): «ritorniamo
+  all'immagine floppy che carica interamente sulla RAM e da li' monta
+  l'unita' USB». E' la forma di dist/installa.img, che su quel PC si avvia.
+    - settori 0-2879: un dischetto FAT12 da 1,44 MB - settore di avvio del
+      floppy, Stage 2 con RAMDISCO=1 (build-64/avvio/stage2-rd1.bin), il
+      kernel a 64 bit, sh e undici comandi, kbd pci ehci ohci uhci fetta.
+      930 KB: resta mezzo mega. Il BIOS la avvia come floppy, Stage 2 la
+      copia in RAM una traccia per volta, radice su rd0.
+    - dal settore 2880: un FAT16 (etichetta EXOS64) con tutto l'albero del
+      CD a 64 bit. NIENTE tabella delle partizioni: con una tabella il BIOS
+      puo' non avviarla piu' come dischetto.
+    - drivers/fetta/fetta.c (nuovo, 0.001): un disco servito da un processo
+      che e' una FETTA di un altro. `fetta.drv cerca 2880 -aspetta 40
+      -monta /sistema` trova fra i dischi quello che al settore 2880 ha il
+      FAT con l'etichetta EXOS64 (il nome non e' prevedibile: con un lettore
+      di schede la chiavetta e' usb1), lo offre come fetta0 e lo monta.
+      PATH = /bin:/dev:/sistema/bin:/sistema/dev.
+  PROVATO in QEMU, col dischetto in un lettore di floppy emulato e l'immagine
+  intera come chiavetta USB (cosi' il BIOS avvia da un floppy, come sul PC):
+  radice su rd0 FAT12, uhci vede la chiavetta, fetta0 montato in /sistema,
+  prova64 da /sistema/bin, un file copiato su /sistema riletto uguale
+  dall'host.
+  NON PROVATO: il PC vero. E QEMU non avvia come floppy un'immagine senza
+  tabella messa su usb-storage: l'avvio «da chiavetta» vero e proprio l'ho
+  visto solo attraverso il lettore emulato.
+  DA SAPERE:
+    - la radice e' il dischetto in RAM: /dev e /bin hanno il minimo. Un
+      programma che cerca un driver in /dev (netdetect) non lo trova: prima
+      `cp /sistema/dev/<scheda>.drv /dev`.
+    - `install` installa cio' che sta nella radice, cioe' il minimo: per il
+      sistema intero su disco da questa chiavetta manca un passo (copiare
+      /sistema), non fatto.
+    - un file scritto su /sistema subito prima di `shutdown` e' arrivato
+      vuoto una volta (nome si', contenuto no); scritto e poi seguito da
+      altri comandi arriva intero. Non capito: la sincronizzazione finale
+      attraverso fetta.drv.
+  Nel kernel a 64 bit resta la riga «RD: volume in RAM INTEGRO / ROTTO»
+  (avvio64.c), che vale per un volume con la firma EXRD; il dischetto non
+  ce l'ha e non viene giudicato.
+
+  LA CHIAVETTA, SECONDA FORMA, FALLITA SUL PC VERO: la radice in una
+  partizione caricata da Stage 2 con INT 13h/42h (tools/mkchiave-disco.sh,
+  RAMDISCO=2). In QEMU funziona; sul PC dell'utente «fallisce la lettura».
+  Non so quale: quando l'utente ha detto di tornare al dischetto non ho
+  chiesto la riga. Resta nel repository, nessuna voce di make la usa. Il
+  testo qui sotto la descrive com'era. L'utente ha
+  provato quella di usb64 sulla macchina vera: «si avvia ma la shell non
+  carica» - e ha detto come farla: un ramdrive che carica un'immagine, e da
+  li' i driver USB per accedere alla chiavetta. E' fatta cosi':
+    - tools/mkchiave.sh la costruisce TUTTA DALL'HOST (niente installazione
+      in QEMU): MBR; Stage 2 al settore 8 e il kernel al settore 64, fuori
+      dalle partizioni; partizione 1 attiva, FAT16 da 16 MB, col sistema
+      (l'albero del CD senza exwin) e nel primo settore boothd con la mappa;
+      partizione 2 FAT, il resto, per i dati.
+    - Stage 2 con RAMDISCO=2 (loader.asm, .disco): da un'unita' 0x80 legge
+      la tabella, prende la partizione ATTIVA e la copia in RAM a 32 MB con
+      INT 13h/42h, 64 settori per volta. Al piu' 24 MB: il volume sta nella
+      fascia dei primi 64 MB. Quello di serie (RAMDISCO=0) e' IDENTICO byte
+      per byte a prima, controllato a ogni modifica.
+    - il kernel non cambia: monta rd0 (FAT16) come radice, come gia' faceva
+      per il dischetto in RAM.
+    - sulla chiavetta /boot/avvio.sh accende anche uhci.drv -avvio.
+    - `sudo make chiave64 DISPOSITIVO=/dev/sdX` la scrive passando da
+      tools/mkusb.sh (EXOS_USB_IMMAGINE): stesse protezioni, stessa conferma.
+  ! DUE DIFETTI DELLA PRIMA VERSIONE, trovati avviandola molte volte:
+    - la copia in memoria alta a interrupt ACCESI: un interrupt servito dal
+      BIOS a meta' rimette a 64 KB il limite di ES, e `rep movsd` prosegue
+      fuori. Un avvio su sette: fermo, o la radice letta sbagliata («ELF:
+      magic non valido» su /bin/sh). Ora si allarga ES e si copia a
+      interrupt spenti. ! IL DISCHETTO IN RAM (RAMDISCO=1) HA LO STESSO
+      DIFETTO in potenza - unreal_es finisce con sti - con una finestra piu'
+      corta (9 KB per traccia). Non toccato: e' un supporto provato, e
+      cambiarlo vuole una prova sua.
+    - una lettura dal BIOS che ogni tanto fallisce («Lettura fallita» dopo
+      qualche megabyte): ora si riprova fino a cinque volte.
+  PROVATO in QEMU con la chiavetta data come usb-storage: il volume caricato,
+  radice su rd0 FAT16, shell, bin/prova64 tutto giusto; uhci.drv vede la
+  chiavetta, automount monta /USB/HDD0p1 e /USB/HDD0p2, un file scritto in
+  HDD0p2 si rilegge dall'host dopo lo spegnimento.
+  NON PROVATO: una macchina vera, e li' contano due cose che QEMU non dice -
+  quanto ci mette il BIOS a leggere 16 MB da una chiavetta, e se il suo
+  INT 13h accetta 64 settori per chiamata.
+  ! LA RADICE IN RAM SI PERDE ALLO SPEGNIMENTO: cio' che deve restare va in
+  /USB/HDD0p2. `install` da li' su un disco vero funziona come dal CD.
+
+  LA CHIAVETTA DI PRIMA: `sudo make usb64 DISPOSITIVO=/dev/sdX [MB=512]`, cioe' lo
   stesso tools/mkusb.sh della versione a 32 bit con EXOS_ARCH=x86_64 - stesse
   protezioni, installa da dist/exos64.iso dentro QEMU e scrive alla fine.
   Senza gli strumenti di sviluppo, che a 64 bit non ci sono.
@@ -6711,6 +6828,41 @@ un programma: il primo lavoro e' tirarla fuori.
   piu' processori (uno solo). In libctest falliscono tre prove che non ho
   confrontato col 32 bit: «mmap di un file e' rifiutata», «sbrk rifiuta una
   richiesta piu' grande dello spazio», «lo heap torna dov'era».
+
+  ! APERTO, VISTO UNA VOLTA SOLA (10 ottobre 2026, QEMU, chiavetta a 64 bit):
+  ip.drv morto all'avvio per un errore di pagina a 0x...c0a4a7c3 con RIP su
+  `mov %rsi,%r13` - la seconda istruzione di _libc_start, che non tocca
+  memoria - in una pagina appena caricata dal file. Quattordici avvii di
+  seguito dopo: nessuno. Sospetto non provato: la pagina caricata a
+  richiesta non era quella del file. Il resoconto dell'errore di pagina a
+  64 bit ora stampa CR2 e RIP interi, il codice d'errore, RAX e i byte
+  dell'istruzione letti dalla pagina fisica (paging.c): la prossima volta
+  lo dice. Da ricordare se sul PC vero un programma muore «a caso».
+
+  TAPPA 5, IN PARTE (10 ottobre 2026, sera): LA SCRIVANIA E IL REPOSITORY.
+  `make utente64` costruisce anche ExWin - i 19 programmi di exwin/bin e il
+  server grafico - collegati staticamente come i comandi (80 comandi, 22
+  driver). Un solo motore JavaScript (ExJs: lib/exjs/exjs_fisso.c). `make
+  netinst64` fa dist/netinst_64 con dentro tutto: 249 file, 19 MB; il blocco
+  alla pubblicazione e' tolto. PROVATO in QEMU il giro che fara' l'utente:
+  chiavetta (dischetto 2,88 in RAM) -> install minimale su disco -> avvio
+  dal disco con la rete -> `netupdate -check -yesall` da netinst_64 (209
+  file, nessuno fallito) -> `exwin`: scrivania, menu Avvio, file manager.
+  Per arrivarci: hwconfig sulla chiavetta (senza, il disco installato non
+  accende la rete) e ip.drv 0.010 (tcp_reclaim_closed: a tabella piena si
+  riprende una connessione gia' chiusa dal programma).
+  DAL 10 OTTOBRE 2026 IL CODICE NUOVO, I COMMENTI E LA DOCUMENTAZIONE SONO IN
+  INGLESE (l'utente); README.md e' l'inglese, README.it.md l'italiano.
+  ANCORA DA FARE per «il repository completo» chiesto dall'utente, ognuno un
+  lavoro a se':
+    - compilatore incrociato x86_64-exos (binutils + gcc sull'host), poi
+      gcc / g++ / binutils / make NATIVI a 64 bit e il CD tools64;
+    - FreeBASIC a 64 bit (vuole il gcc di sopra);
+    - Exilla: Firefox ricostruito per x86_64-exos, con un bersaglio Rust
+      nuovo (ore di compilazione, e il collegamento da 4 GB);
+    - Rust nativo: EX-OS non l'ha mai avuto, nemmeno a 32 bit;
+    - audio e floppy (driver caricati da drvmgr: ELF64 in drvmgr/dynlink),
+      QuickJS, le librerie condivise vere.
 
   QUEL CHE MANCA DOPO LA TAPPA 4:
     - tappa 5: librerie condivise (lib.c, dynlink.c, drvmgr.c leggono solo

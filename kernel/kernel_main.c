@@ -380,6 +380,14 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
          * rd_addr vale zero e questa riga non fa niente. */
         if (info->rd_addr != 0 && info->rd_byte != 0)
             blk_registra_ram(info->rd_addr, info->rd_byte);
+#if defined(__x86_64__)
+        /* @EXOS-64: la chiavetta con la radice in RAM dice se il volume e'
+         * arrivato intero (kernel/arch/x86_64/avvio64.c). */
+        {
+            void rd_verifica(const BootInfo *info);
+            if (info->rd_addr != 0 || info->rd_byte == 0xFFFFFFFFu) rd_verifica(info);
+        }
+#endif
     }
 
     /* Lo strato di montaggio va PRIMA di chiunque apra un file: da qui in
