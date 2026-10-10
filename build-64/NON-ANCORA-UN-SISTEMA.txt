@@ -1,0 +1,1 @@
+il sistema a 64 bit non e' ancora installabile: /bin/sh e' tools/prove64/primo.c

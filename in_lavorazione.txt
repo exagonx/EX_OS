@@ -6460,7 +6460,8 @@ un programma: il primo lavoro e' tirarla fuori.
   4. La libc e la shell; poi i comandi di /bin e i driver ring 3.
   5. Le librerie condivise (una mappa di indirizzi nuova: oggi stanno a
      fette fisse sotto i 4 GB) e ExWin: la scrivania a 64 bit.
-  6. I supporti: ISO, installazione, netinst_64 pubblicato.
+  6. I supporti: ISO e chiavetta (NIENTE dischetti), installazione,
+     netinst_64 pubblicato.
   7. I compilatori nativi (gcc/binutils per x86_64-exos) e poi Exilla, che
      vuole anche la libreria standard di Rust per il bersaglio nuovo.
 
@@ -6591,10 +6592,10 @@ un programma: il primo lavoro e' tirarla fuori.
      PROVATO in QEMU (tools/prova_kernel64.sh, parte 3; 128 MB, un
      processore): il kernel passa tutti i passi di kernel_main - GDT, IDT,
      FPU (FXSAVE), pagine, paginazione, heap, scheduler, chiamate di
-     sistema, interrupt accesi, il dischetto letto (FAT12, IRQ 6), ATA,
-     ATAPI, VFS - e avvia /bin/sh, che su quel dischetto e'
+     sistema, interrupt accesi, ATA, ATAPI, il CD montato come radice
+     (ISO 9660) - e avvia /bin/sh, che su quel CD e'
      tools/prove64/primo.c: un ELF64 senza libc, caricato a pagine dal
-     dischetto (quindi l'errore di pagina a 64 bit lavora), in ring 3. Fa
+     CD (quindi l'errore di pagina a 64 bit lavora), in ring 3. Fa
      tre chiamate di sistema con int 0x80 (numero in RAX, argomenti in RBX
      RCX RDX: le macro FR_*), tiene R8 e R15 attraverso una chiamata, dorme
      200 ms e torna, esce. Segno: EXOS64-TAPPA3D-OK.
@@ -6604,6 +6605,33 @@ un programma: il primo lavoro e' tirarla fuori.
      programma insieme oltre alle cinque console.
      Visto e NON e' dei 64 bit: «MTRR: la fascia 1 non ha preso» compare
      anche col kernel a 32 bit sullo stesso processore emulato (-cpu qemu64).
+
+  I SUPPORTI A 64 BIT (deciso dall'utente il 10 ottobre 2026): «la versione a
+  64 bit crea solo iso e usbkey, niente floppy: sui nuovi pc il floppy non
+  esiste piu'». Le voci di make, gemelle di iso-exos / iso / netinst, si
+  chiamano senza ARCH:
+    make iso64       dist/exos64.iso - il CD del sistema, avviabile. Albero
+                     in build-64/iso-exos (lo stesso nome del 32 bit: e' da
+                     li' che mknetinst.sh prende). FATTO, e oggi contiene il
+                     kernel e il programma di prova: si riempie con le tappe.
+    make netinst64   dist/netinst_64 - il repository. FATTO (4 file oggi).
+    make tools64     il CD degli strumenti. Si FERMA e dice perche': vuole
+                     la libc a 64 bit (tappa 4) e x86_64-exos (tappa 7).
+  exagonx/repo-update.sh -64 chiama queste tre.
+  ! FINCHE' /bin/sh E' IL PROGRAMMA DI PROVA tools/mkiso64.sh lascia
+  build-64/NON-ANCORA-UN-SISTEMA.txt, e repo-update.sh -64 costruisce ma si
+  ferma PRIMA di pubblicare. Quella riga di mkiso64.sh si toglie il giorno
+  che c'e' la shell vera.
+  ! IL CD SI AVVIA COME QUELLO A 32 BIT: immagine di avvio El Torito di
+  1,44 MB con Stage 1, Stage 2 e il kernel (build-64/avvio/, interna: non e'
+  un prodotto e nessuno la scrive su un supporto), poi il kernel monta il CD.
+  Vuole un BIOS, o un UEFI con il modulo di compatibilita' (CSM): l'avvio
+  UEFI puro non c'e' (era gia' fra le cose da decidere).
+  LA CHIAVETTA non c'e' ancora, e non per scelta: a 32 bit tools/mkusb.sh la
+  fa installando DA DENTRO EX-OS (partizione, ext2, MBR, mappa dei settori
+  del kernel), cioe' vuole shell e `install` a 64 bit - dopo la tappa 4. Voce
+  prevista: make usb64 DISPOSITIVO=/dev/sdX.
+  Tolti: tools/mkfloppy64.sh, dist/floppy64.img, dist/floppy64-intero.img.
 
   QUEL CHE MANCA PER LA TAPPA 4 (libc, shell, /bin, driver in ring 3), cioe'
   cio' che il kernel a 64 bit ancora non sa fare per un programma vero:

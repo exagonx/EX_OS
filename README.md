@@ -290,10 +290,14 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del processore e piu' quelli di `kernel/arch/x86_64` (ingresso, segmenti,
   interrupt, cambio di contesto, tabelle a quattro livelli), e in QEMU
   arriva in fondo all'avvio - memoria, scheduler, chiamate di sistema, il
-  dischetto - e avvia in ring 3 un programma ELF64 che fa chiamate di
+  CD - e avvia in ring 3 un programma ELF64 che fa chiamate di
   sistema, dorme e torna. Il kernel a 32 bit e' rimasto identico a ogni
   passo. Non e' ancora un sistema: mancano la libc e i programmi (tappa 4),
   e a 64 bit segnali, librerie condivise e driver non ci sono.
+  La versione a 64 bit non ha dischetti: `make iso64` fa il CD
+  (`dist/exos64.iso`), `make netinst64` il repository (`dist/netinst_64`),
+  `make tools64` dira' il CD degli strumenti quando ci saranno. La chiavetta
+  arriva con l'installazione.
 - **Scrivania: memoria e avvio (pm 0.020).** Una voce di menu puo' dire
   quanta memoria vuole (`ram=2048`) e il menu avvisa prima di avviarla su una
   macchina che ne ha meno. Dal pannello Impostazioni si accendono e spengono

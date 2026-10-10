@@ -1,0 +1,2 @@
+EX-OS a 64 bit - EXOS64
+Non e' ancora un sistema: vedi @EXOS-64 in in_lavorazione.txt

@@ -266,11 +266,15 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   kernel64` compiles the same sources as the 32-bit kernel, minus the three
   processor files and plus those in `kernel/arch/x86_64` (entry, segments,
   interrupts, context switch, four-level tables), and in QEMU it goes
-  through the whole start-up - memory, scheduler, system calls, the floppy -
+  through the whole start-up - memory, scheduler, system calls, the CD -
   and starts in ring 3 an ELF64 program that makes system calls, sleeps and
   comes back. The 32-bit kernel stayed identical at every step. It is not a
   system yet: the libc and the programs are missing (stage 4), and at 64 bit
   there are no signals, shared libraries or drivers.
+  The 64-bit version has no floppies: `make iso64` makes the CD
+  (`dist/exos64.iso`), `make netinst64` the repository (`dist/netinst_64`),
+  `make tools64` will make the tools CD once they exist. The USB key comes
+  with the installer.
 - **Desktop: memory and start-up (pm 0.020).** A menu entry may say how much
   memory it wants (`ram=2048`) and the menu warns before starting it on a
   machine with less. The Settings window switches the clock and the volume

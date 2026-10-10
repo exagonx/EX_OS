@@ -15,7 +15,7 @@
  *   - R8..R15, tenuti attraverso una chiamata di sistema (il kernel li
  *     salva e li rimette: se uno torna cambiato, e' l'ingresso a sbagliare);
  *   - si ferma con sleep, cosi' passa per lo scheduler e ritorna.
- * Sul dischetto di prova si chiama /bin/sh, perche' e' quello che il kernel
+ * Sul CD a 64 bit (make iso64) si chiama /bin/sh, perche' e' quello che il kernel
  * avvia sulle console.
  * ============================================================================= */
 typedef unsigned long long u64;

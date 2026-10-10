@@ -8,7 +8,7 @@
 #     tools/prova_kernel64.sh
 #
 # Costruisce (make ARCH=x86_64 kernel64-prova) e avvia due volte lo stesso
-# dischetto, guardando la seriale:
+# CD, guardando la seriale:
 #
 #   1. su un processore a 64 bit (qemu-system-x86_64) il kernel deve dire di
 #      essere in modo a 64 bit e finire con «EXOS64-TAPPA1-OK»;
@@ -16,7 +16,7 @@
 #      non ci sono e fermarsi - non riavviarsi in silenzio.
 #
 # ! LA SECONDA PROVA CONTA QUANTO LA PRIMA: e' il caso di chi mette il
-# dischetto sbagliato nella macchina sbagliata.
+# CD sbagliato nella macchina sbagliata.
 # =============================================================================
 set -e
 cd "$(dirname "$0")/.."
@@ -25,8 +25,8 @@ make ARCH=x86_64 kernel64-prova > /tmp/exos-kernel64-make.log 2>&1 || {
 
 avvia() {   # $1 = emulatore, $2 = cpu, $3 = file della seriale
     rm -f "$3"
-    timeout 25 "$1" -cpu "$2" -m 128M -drive file=dist/floppy64.img,format=raw,if=floppy \
-        -boot a -display none -serial "file:$3" -no-reboot > /dev/null 2>&1 || true
+    timeout 25 "$1" -cpu "$2" -m 128M -cdrom dist/exos64-prove.iso \
+        -boot d -display none -serial "file:$3" -no-reboot > /dev/null 2>&1 || true
 }
 
 no=0
@@ -60,13 +60,13 @@ make ARCH=x86_64 kernel64 > /tmp/exos-kernel64-intero-make.log 2>&1 || {
     tail -15 /tmp/exos-kernel64-intero-make.log; exit 1; }
 rm -f /tmp/exos-kernel64-c.txt
 timeout 40 qemu-system-x86_64 -cpu qemu64 -m 128M \
-    -drive file=dist/floppy64-intero.img,format=raw,if=floppy -boot a -display none \
+    -cdrom dist/exos64.iso -boot d -display none \
     -serial file:/tmp/exos-kernel64-c.txt -no-reboot > /dev/null 2>&1 || true
 echo "=== 3. il kernel intero a 64 bit e il primo programma ==="
 tr -d '\r' < /tmp/exos-kernel64-c.txt | grep -a "Long Mode\|PASSO 10\] Sched\|PASSO 11\] Sys\|VFS: root" | sed 's/^/    /'
 tr -d '\r' < /tmp/exos-kernel64-c.txt | sed -n '/^primo64/,/EXOS64-TAPPA3D/p' | sed 's/^/    /'
 if grep -q "Long Mode a 64 bit" /tmp/exos-kernel64-c.txt && grep -q "VFS: root" /tmp/exos-kernel64-c.txt; then
-    echo "  [OK]  il kernel comune si avvia a 64 bit: memoria, scheduler, chiamate, dischetto"
+    echo "  [OK]  il kernel comune si avvia a 64 bit: memoria, scheduler, chiamate, CD"
 else
     echo "  [NO]  il kernel intero non e' arrivato al file system (seriale: /tmp/exos-kernel64-c.txt)"; no=1
 fi

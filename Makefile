@@ -90,8 +90,8 @@ ifeq ($(filter $(ARCH),i386 x86_64),)
 $(error ARCH=$(ARCH) non la conosco: i386 oppure x86_64)
 endif
 ifeq ($(ARCH),x86_64)
-ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 pulisci64,$(or $(MAKECMDGOALS),all)),)
-$(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: arch-dice kernel64-prova kernel64-sondaggio)
+ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 iso64 tools64 netinst64 pulisci64,$(or $(MAKECMDGOALS),all)),)
+$(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: iso64 netinst64 tools64 kernel64 kernel64-prova kernel64-sondaggio arch-dice)
 endif
 endif
 
@@ -105,6 +105,49 @@ endif
 arch-dice:
 	@echo "ARCH=$(ARCH)"
 
+# ==============================================================================
+# @EXOS-64 — I SUPPORTI DELLA VERSIONE A 64 BIT
+#
+#     make iso64        dist/exos64.iso     il CD del sistema, avviabile
+#     make tools64      (non ancora)        il CD degli strumenti
+#     make netinst64    dist/netinst_64/    il repository per netupdate
+#
+# Sono i tre gemelli di iso-exos, iso e netinst. Si chiamano senza ARCH: il
+# nome dice gia' per quale macchina, e ognuno rilancia make con ARCH=x86_64.
+# exagonx/repo-update.sh -64 chiama questi.
+#
+# ! NIENTE DISCHETTI A 64 BIT (l'utente, 10 ottobre 2026: sui PC nuovi il
+# lettore non c'e' piu'). I supporti sono il CD e la chiavetta; la chiavetta
+# si fa installando da dentro EX-OS (come tools/mkusb.sh a 32 bit), quindi
+# arriva quando a 64 bit ci sono la shell e `install`.
+#
+# ! OGGI iso64 FA UN CD CHE SI AVVIA E NON E' UN SISTEMA: dentro ci sono il
+# kernel a 64 bit e un programma di prova al posto della shell. Si riempie
+# tappa per tappa (@EXOS-64), e le voci restano queste.
+# ==============================================================================
+.PHONY: iso64 tools64 netinst64
+iso64:
+	@$(MAKE) --no-print-directory ARCH=x86_64 kernel64
+	@ls -la dist/exos64.iso
+
+netinst64: iso64
+	@chmod +x $(TOOLS_DIR)/mknetinst.sh
+	@ARCH=x86_64 $(TOOLS_DIR)/mknetinst.sh
+	@[ ! -f build-64/NON-ANCORA-UN-SISTEMA.txt ] || { echo ""; \
+	    echo "! dist/netinst_64 c'e', ma NON e' da pubblicare:"; \
+	    echo "  $$(cat build-64/NON-ANCORA-UN-SISTEMA.txt)"; }
+
+# ! tools64 SI FERMA E DICE PERCHE', invece di fare un CD vuoto con un nome
+# che promette un compilatore. Gli strumenti a 64 bit sono gcc, as, ld, make
+# ricompilati PER EX-OS a 64 bit: vogliono la libc a 64 bit (tappa 4) e un
+# compilatore incrociato x86_64-exos (tappa 7).
+tools64:
+	@echo "tools64: gli strumenti a 64 bit non ci sono ancora."
+	@echo "         Vogliono la libc a 64 bit (tappa 4 di @EXOS-64) e il compilatore"
+	@echo "         incrociato x86_64-exos (tappa 7). Fino ad allora non c'e' niente"
+	@echo "         da mettere su quel CD."
+	@exit 1
+
 # --- @EXOS-64, tappa 1: il kernel arriva in modo a 64 bit --------------------
 #
 # ! SI COMPILA COL gcc DELL'HOST, in -m64, come il kernel a 32 bit si compila
@@ -115,7 +158,7 @@ arch-dice:
 # Il caricatore e' quello a 32 bit, tale e quale (build/stage1.bin e
 # build/stage2.bin): vedi kernel/arch/x86_64/entry.asm.
 #
-#     make ARCH=x86_64 kernel64-prova     costruisce e fa dist/floppy64.img
+#     make ARCH=x86_64 kernel64-prova     costruisce e fa dist/exos64-prove.iso
 #     tools/prova_kernel64.sh             lo avvia in QEMU e guarda la seriale
 K64_DIR := kernel/arch/x86_64
 K64_OUT := build-64
@@ -147,12 +190,13 @@ kernel64-prova:
 	    $(K64_OUT)/colla64.o $(K64_OUT)/paging64.o $(K64_OUT)/isr64.o \
 	    $(patsubst %.c,$(K64_OUT)/%.o,$(notdir $(K64_COMUNI))) -o $(K64_OUT)/kernel.elf
 	objcopy -O binary $(K64_OUT)/kernel.elf $(K64_OUT)/kernel.bin
-	@chmod +x tools/mkfloppy64.sh
-	@tools/mkfloppy64.sh
-	@echo "[OK] $(K64_OUT)/kernel.bin ($$(stat -c%s $(K64_OUT)/kernel.bin) byte), dist/floppy64.img"
+	@# ! NIENTE DISCHETTI A 64 BIT: il supporto e' il CD (tools/mkiso64.sh)
+	@chmod +x tools/mkiso64.sh
+	@tools/mkiso64.sh prove
+	@echo "[OK] $(K64_OUT)/kernel.bin ($$(stat -c%s $(K64_OUT)/kernel.bin) byte)"
 
 pulisci64:
-	rm -rf $(K64_OUT) dist/floppy64.img
+	rm -rf $(K64_OUT) dist/exos64.iso dist/exos64-prove.iso
 
 # --- @EXOS-64, tappa 2: quanto manca al kernel comune per compilare a 64 bit --
 #
@@ -5269,9 +5313,9 @@ $(BUILD_KERNEL)/tty.o: drivers/tty/tty.c
 # file di kernel/arch/x86_64 che ne prendono il posto. tty.c e i due settori di
 # avvio incorporati come nel kernel a 32 bit.
 #
-# ! NON E' ANCORA IL KERNEL CHE SI AVVIA DAL DISCHETTO DI PROVA: quello resta
-# kernel64-prova (main64.c, le prove delle tappe) finche' questo non arriva a
-# un programma. Per questo esce in build-64/kernel-intero.*, non in kernel.bin.
+# Esce in build-64/kernel-intero.* e nel CD dist/exos64.iso (tools/mkiso64.sh);
+# kernel64-prova (main64.c, le prove delle tappe) resta col suo kernel.bin e il
+# suo CD, dist/exos64-prove.iso. A 64 bit non ci sono dischetti.
 # ==============================================================================
 K64I_OUT   := $(K64_OUT)/kernel
 K64I_INC   := -Ikernel/include -Ilib/include -Idrivers/tty -Idrivers/kbd
@@ -5311,9 +5355,9 @@ kernel64:
 	    -fno-asynchronous-unwind-tables -O2 -Wall -Wextra -c tools/prove64/primo.c -o $(K64_OUT)/prove/primo.o
 	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -z noexecstack -T tools/prove64/primo.ld \
 	    $(K64_OUT)/prove/primo.o -o $(K64_OUT)/prove/primo
-	@chmod +x tools/mkfloppy64.sh
-	@tools/mkfloppy64.sh intero
-	@echo "[OK] $(K64_OUT)/kernel-intero.bin ($$(stat -c%s $(K64_OUT)/kernel-intero.bin) byte), dist/floppy64-intero.img"
+	@chmod +x tools/mkiso64.sh
+	@tools/mkiso64.sh intero
+	@echo "[OK] $(K64_OUT)/kernel-intero.bin ($$(stat -c%s $(K64_OUT)/kernel-intero.bin) byte)"
 
 # FIX BUG #1: Due step distinti:
 #   1. Link ELF32 (kernel.elf) — per GDB, simboli di debug, analisi
