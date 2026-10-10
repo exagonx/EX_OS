@@ -80,7 +80,7 @@
 
 /* +0.001 a ogni modifica: `xhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("xhci.drv", "0.001");
+EX_VERSIONE("xhci.drv", "0.002");
 
 /* --- Registri di CAPACITA', dall'inizio della finestra -------------------- */
 #define C_CAPLENGTH     0x00    /* 8 bit: quanto sono lunghi questi registri */
@@ -268,6 +268,7 @@ static int g_kbd_pid = -1;
 
 /* Stato mouse consegnato ai client (stesso protocollo del PS/2) */
 static int          g_dx = 0, g_dy = 0;
+static int          g_dz = 0;           /* wheel notches not yet sent */
 static unsigned int g_bottoni = 0, g_novita = 0, g_attesa_pid = 0;
 
 /* -----------------------------------------------------------------------------
@@ -1655,11 +1656,11 @@ static void rispondi(unsigned int pid)
     s.bottoni = g_bottoni;
     s.presente = 1;
     s.persi = 0;
-    s.dz = 0;       /* in modo boot l'HID non porta la rotella */
+    s.dz = g_dz;    /* the wheel: see usb_mouse_wheel in usb_comune.c */
     s.modificatori = 0;
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
-    g_dx = 0; g_dy = 0; g_novita = 0;
+    g_dx = 0; g_dy = 0; g_dz = 0; g_novita = 0;
 }
 
 /* Il ciclo di servizio: si ascolta l'endpoint e si risponde ai client. */
@@ -1683,6 +1684,7 @@ static void servi(void)
 
         if (n >= 3 && usb_mouse_rapporto(rap, (unsigned int)n,
                                          &g_dx, &g_dy, &g_bottoni)) {
+            g_dz += usb_mouse_wheel(rap, (unsigned int)n);
             g_novita = 1;
             if (g_attesa_pid) {
                 unsigned int p = g_attesa_pid;

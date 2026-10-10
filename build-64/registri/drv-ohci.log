@@ -77,45 +77,45 @@ drivers/ohci/ohci.c: In function ‘int_arma’:
 drivers/ohci/ohci.c:182:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   182 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
       |                    ^
-drivers/ohci/ohci.c:696:32: note: in expansion of macro ‘VIRT’
-  696 |     volatile unsigned int *t = VIRT(H_TD(k));
+drivers/ohci/ohci.c:697:32: note: in expansion of macro ‘VIRT’
+  697 |     volatile unsigned int *t = VIRT(H_TD(k));
       |                                ^~~~
 drivers/ohci/ohci.c:182:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   182 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
       |                    ^
-drivers/ohci/ohci.c:697:32: note: in expansion of macro ‘VIRT’
-  697 |     volatile unsigned int *e = VIRT(H_ED(k));
+drivers/ohci/ohci.c:698:32: note: in expansion of macro ‘VIRT’
+  698 |     volatile unsigned int *e = VIRT(H_ED(k));
       |                                ^~~~
 drivers/ohci/ohci.c: In function ‘int_installa’:
 drivers/ohci/ohci.c:182:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   182 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
       |                    ^
-drivers/ohci/ohci.c:712:32: note: in expansion of macro ‘VIRT’
-  712 |     volatile unsigned int *h = VIRT(OFF_HCCA(g_corrente));
+drivers/ohci/ohci.c:713:32: note: in expansion of macro ‘VIRT’
+  713 |     volatile unsigned int *h = VIRT(OFF_HCCA(g_corrente));
       |                                ^~~~
 drivers/ohci/ohci.c:182:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   182 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
       |                    ^
-drivers/ohci/ohci.c:717:36: note: in expansion of macro ‘VIRT’
-  717 |         volatile unsigned int *e = VIRT(H_ED(k));
+drivers/ohci/ohci.c:718:36: note: in expansion of macro ‘VIRT’
+  718 |         volatile unsigned int *e = VIRT(H_ED(k));
       |                                    ^~~~
 drivers/ohci/ohci.c: In function ‘leggi_rapporto’:
 drivers/ohci/ohci.c:182:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   182 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
       |                    ^
-drivers/ohci/ohci.c:735:35: note: in expansion of macro ‘VIRT’
-  735 |     volatile unsigned int  *t   = VIRT(H_TD(k));
+drivers/ohci/ohci.c:736:35: note: in expansion of macro ‘VIRT’
+  736 |     volatile unsigned int  *t   = VIRT(H_TD(k));
       |                                   ^~~~
-drivers/ohci/ohci.c:736:35: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
-  736 |     volatile unsigned char *buf = (volatile unsigned char *)(g_dma_virt + H_BUF(k));
+drivers/ohci/ohci.c:737:35: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  737 |     volatile unsigned char *buf = (volatile unsigned char *)(g_dma_virt + H_BUF(k));
       |                                   ^
 drivers/ohci/ohci.c: In function ‘main’:
-drivers/ohci/ohci.c:1111:21: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
- 1111 |             g_reg = (volatile unsigned char *)m.virt;
+drivers/ohci/ohci.c:1113:21: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1113 |             g_reg = (volatile unsigned char *)m.virt;
       |                     ^
-drivers/ohci/ohci.c:1148:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
- 1148 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
+drivers/ohci/ohci.c:1150:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1150 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
       |            ^
-drivers/ohci/ohci.c:1161:26: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
- 1161 |         g_reg          = (volatile unsigned char *)m.virt;
+drivers/ohci/ohci.c:1163:26: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1163 |         g_reg          = (volatile unsigned char *)m.virt;
       |                          ^

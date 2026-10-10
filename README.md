@@ -5,7 +5,16 @@
 **Version:** 0.248
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
-**Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
+**Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
+**Boots from:** floppy, CD, hard disk or USB key (32 bit); CD or USB key (64 bit)
+
+> **Two architectures.** The 32-bit version is the complete one: system,
+> desktop, compilers, browser. The 64-bit version (`make iso64`, `make usb64`,
+> `make netinst64`) is younger: the same kernel sources, libc, 82 commands,
+> 27 drivers and the ExWin desktop run at 64 bit, it installs to disk and
+> updates from its own repository (`netinst_64`); it has no compilers, no
+> Exilla and one processor in use, and it has been tried in QEMU and booted
+> on one real PC, not installed there. See "Groundwork for 64 bit" below.
 
 *The two versions are kept in step: what is in one is in the other.*
 
@@ -6973,8 +6982,17 @@ telnet name-or-address [port]        Ctrl+] to leave
 ! **Telnet sends everything in the clear, password included.** It is not a
 defect of the program, it is the protocol: anyone on the path reads the
 user name, the password and everything typed afterwards. The client says so
-once at startup instead of leaving it to be inferred. The alternative will
-be called SSH when there is TLS — not «telnet with a patch».
+once at startup instead of leaving it to be inferred.
+
+! **There is an SSH server, `sshd` 0.001, and it is not yet proven.** It
+speaks SSH-2 with one algorithm per job - curve25519-sha256 for the key
+exchange, ssh-ed25519 for the server's identity, chacha20-poly1305 for the
+data - and its cryptography (`lib/excrypt`) is checked against the RFC test
+vectors. What has not been recorded anywhere is a session with a real
+OpenSSH client, which is the test its own source asks for. Until that is
+done, treat it as present but not demonstrated: do not expose it to a
+network you do not trust. `sshd -s`, like `telnetd -s`, gives a shell
+without going through the login.
 
 **How it listens to the network and the keyboard at once.** There is no
 `select()`, and threads arrived after this program, but there is something

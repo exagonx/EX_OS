@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.006");
+EX_VERSIONE("ohci.drv", "0.007");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00
@@ -666,6 +666,7 @@ static int massa_prepara(void)
  * chiavette veloci stanno sull'EHCI e non ne risentono.
  * ============================================================================= */
 static int          g_dx = 0, g_dy = 0;
+static int          g_dz = 0;           /* wheel notches not yet sent */
 static unsigned int g_bottoni = 0, g_novita = 0, g_attesa_pid = 0;
 
 /* ! PIU' DI UN'INTERFACCIA, E SERVONO TUTTE. Sul PC di prova c'e' un ricevitore
@@ -757,11 +758,11 @@ static void mouse_rispondi(unsigned int pid)
     s.bottoni = g_bottoni;
     s.presente = 1;
     s.persi = 0;
-    s.dz = 0;       /* in modo boot l'HID non porta la rotella */
+    s.dz = g_dz;    /* the wheel: see usb_mouse_wheel in usb_comune.c */
     s.modificatori = 0;
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
-    g_dx = 0; g_dy = 0; g_novita = 0;
+    g_dx = 0; g_dy = 0; g_dz = 0; g_novita = 0;
 }
 
 /* Se il dispositivo appena conosciuto e' un mouse, una tastiera, o tutti e
@@ -809,6 +810,7 @@ static int hid_servi(void)
             }
             if (c_e_mouse && n >= 3 &&
                 usb_mouse_rapporto(rap, (unsigned int)n, &g_dx, &g_dy, &g_bottoni)) {
+                g_dz += usb_mouse_wheel(rap, (unsigned int)n);
                 g_novita = 1;
                 if (g_attesa_pid) {
                     unsigned int p = g_attesa_pid;

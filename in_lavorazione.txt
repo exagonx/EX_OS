@@ -6876,3 +6876,71 @@ un programma: il primo lavoro e' tirarla fuori.
       4 GB, che e' dove stanno i programmi).
   Stato: IN CORSO (tappe 1-4 fatte: a 64 bit c'e' un sistema a riga di
   comando installabile; la prossima e' la 5, librerie condivise ed ExWin).
+
+@EXT4-MODULO  EXT3/EXT4 IN LETTURA NEL KERNEL, LA SCRITTURA IN UN MODULO
+(deciso con l'utente il 10 ottobre 2026; DA FARE, URGENTE ALLA RIPRESA insieme
+al porting di GCC e al resto di @EXOS-64)
+  L'idea dell'utente: non far crescere il kernel. ext4 e' retrocompatibile -
+  un driver ext4 legge anche ext2 ed ext3 - quindi non serve un secondo
+  driver: si estende kernel/fs/ext2.c. E la scrittura esce dal kernel.
+  1. LETTURA di ext3/ext4 in ext2.c: extent, descrittori di gruppo a 64 bit,
+     inode grandi; le directory indicizzate lette in modo lineare; il journal
+     ignorato su un volume smontato pulito. Un volume con funzioni che non si
+     conoscono si monta in SOLA LETTURA e lo si dice.
+  2. IL MECCANISMO, provato prima sul codice che funziona gia': nel VFS una
+     tabella di operazioni di scrittura (scrivere, creare, cancellare,
+     troncare, rinominare, mkdir) al posto delle chiamate dirette; il
+     rimontaggio da sola lettura a scrittura senza smontare; la scrittura
+     ext2 di oggi SPOSTATA in un modulo. Il kernel parte in sola lettura,
+     monta la radice, carica il modulo da una directory (/drivers) e rimonta.
+     Il kernel diventa piu' piccolo di oggi (conta per il dischetto a 32 bit).
+     Serve il caricatore di moduli: a 32 bit c'e' (quello di floppy.drv), a
+     64 bit va scritto (ELF64 in drvmgr.c / dynlink.c).
+     DA VERIFICARE PRIMA: che cosa scrive il sistema durante l'avvio, prima
+     del punto in cui il modulo e' caricato.
+  3. IL CONTROLLO DEL MODULO AL CARICAMENTO (chiesto dall'utente): lo SHA-256
+     del modulo scritto in coda al file alla costruzione, ricalcolato dal
+     kernel (sha256.c c'e' gia'); insieme, la versione del kernel per cui e'
+     compilato. Se uno dei due non torna: messaggio a schermo e nel registro
+     con atteso e trovato, il modulo NON si carica, il sistema resta in sola
+     lettura. L'utente puo' forzare con un comando esplicito che ripete
+     l'avviso e chiede la conferma scritta (come mkfs): la responsabilita' e'
+     sua. Mai «carica lo stesso» in automatico. Lo stesso controllo puo'
+     valere per ogni modulo e driver caricato all'avvio.
+     Limiti da dire: scopre la corruzione, non i difetti del codice ne' una
+     manomissione voluta (per quella servirebbe una firma).
+  4. SOLO DOPO: la scrittura ext4 dentro il modulo (allocazione a extent,
+     checksum dei metadati), e il journal - che e' il pezzo grosso.
+  mkfs continua a creare ext2, come oggi.
+  Domanda rimasta senza risposta: a che cosa serve ext4 all'utente - leggere
+  partizioni di Linux (basta il punto 1) o file grandi e robustezza per
+  EX-OS (servono 4 e il journal)?
+
+@RIPRESA-DOPO-IL-10-OTTOBRE  L'ORDINE DETTO DALL'UTENTE
+  Urgente: @EXT4-MODULO, e il «repository completo» a 64 bit - compilatore
+  incrociato x86_64-exos, gcc/g++/binutils/make nativi (make tools64),
+  FreeBASIC, Exilla, Rust, QuickJS (vedi @EXOS-64, «ANCORA DA FARE»).
+  L'utente NON installa il 64 bit su un PC vero finche' non ci sono tutti gli
+  strumenti: lo prova in emulatore.
+  Da provare con l'utente: la rotella del mouse USB sul PC vero (ohci 0.007).
+
+@README-SNELLI  I DUE README DA RIDURRE E RIORDINARE (chiesto dall'utente il
+10 ottobre 2026; DA FARE alla ripresa - non c'erano i token per farlo bene)
+  «Togliere descrizioni ripetitive e non piu' utili e ridurli organizzandoli
+  in maniera elegante e leggibile.» Oggi sono circa 7000 righe l'uno: novita'
+  accumulate versione per versione, spiegazioni ripetute, cose superate.
+  PROPOSTA (da confermare con l'utente prima di tagliare):
+    - README.md (inglese, quello di GitHub) e README.it.md: una pagina che si
+      legge - che cos'e' EX-OS, le due architetture e il loro stato, che cosa
+      c'e' dentro (kernel, driver, rete, ExWin, strumenti, Exilla), come si
+      costruisce (le voci di make che servono), come si prova e si installa,
+      i limiti dichiarati, dove sta il resto. Qualche centinaio di righe.
+    - la storia versione per versione in un file a parte (per esempio
+      doc/CHANGELOG.md e doc/CHANGELOG.it.md): spostata, non buttata.
+    - i particolari tecnici lunghi restano nei manuali (exwin/doc/*.html,
+      manuali/, boot/kernel.txt) e il README li indica.
+  DA NON ROMPERE: le righe «**Version:**» / «**Versione:**», che il Makefile
+  controlla (`make verifica`, `make leggimi-versione`); i due file restano
+  uno la traduzione dell'altro; cio' che i CD copiano in /doc (ISO_DOC).
+  Prima di cancellare qualcosa: controllare che sia davvero superato o
+  ripetuto altrove, e dirlo nel messaggio di commit.

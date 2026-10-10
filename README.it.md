@@ -5,7 +5,17 @@
 **Versione:** 0.248
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
-**Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
+**Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
+**Si avvia da:** floppy, CD, disco rigido o chiavetta USB (32 bit); CD o chiavetta USB (64 bit)
+
+> **Due architetture.** La versione a 32 bit è quella completa: sistema,
+> scrivania, compilatori, navigatore. Quella a 64 bit (`make iso64`,
+> `make usb64`, `make netinst64`) è più giovane: gli stessi sorgenti del
+> kernel, la libc, 82 comandi, 27 driver e la scrivania ExWin girano a 64 bit,
+> si installa su disco e si aggiorna dal suo repository (`netinst_64`); non ha
+> i compilatori né Exilla, usa un processore solo, ed è stata provata in QEMU
+> e avviata su un PC vero, non installata lì. Vedi «Le fondamenta per i 64
+> bit» più sotto.
 
 *Le due versioni si aggiornano insieme: quello che c'è in una c'è
 nell'altra.*
@@ -7024,6 +7034,15 @@ del programma, è il protocollo: chiunque stia sul percorso legge nome
 utente, password e tutto quello che si scrive dopo. Il client lo dice una
 volta all'avvio invece di lasciarlo intendere. L'alternativa si chiamerà
 SSH quando ci sarà TLS — non «telnet con una toppa».
+
+! **Un server SSH c'è, `sshd` 0.001, e non è ancora dimostrato.** Parla SSH-2
+con un algoritmo per mestiere - curve25519-sha256 per lo scambio delle chiavi,
+ssh-ed25519 per l'identità del server, chacha20-poly1305 per i dati - e la sua
+crittografia (`lib/excrypt`) è controllata contro i vettori degli RFC. Quello
+che non è scritto da nessuna parte è una sessione con un vero client OpenSSH,
+che è la prova che il suo stesso sorgente chiede. Finché non è fatta va
+considerato presente ma non dimostrato: non va esposto a una rete di cui non
+ci si fida. `sshd -s`, come `telnetd -s`, dà la shell senza passare dal login.
 
 **Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()`, e i
 fili sono arrivati dopo questo programma, ma c'è una cosa migliore per questo

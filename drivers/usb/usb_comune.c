@@ -408,6 +408,22 @@ int usb_mouse_rapporto(const unsigned char *r, unsigned int n,
     return 1;
 }
 
+/* The wheel of a USB mouse: notches since the last report, POSITIVE TOWARDS
+ * THE USER ("the page goes down"), the convention of MouseStato.dz.
+ *
+ * In boot protocol a mouse report is three bytes - buttons, X, Y - and has no
+ * wheel. But nearly every wheel mouse sends a fourth byte even then, and it
+ * is the wheel: the drivers ask for up to eight bytes, so when four or more
+ * arrive the fourth is read. HID counts a notch away from the user as
+ * positive, hence the minus. A mouse that really sends three bytes keeps
+ * giving 0, as before; one with another layout would need its report
+ * descriptor read, which nobody does yet. (10 October 2026) */
+int usb_mouse_wheel(const unsigned char *r, unsigned int n)
+{
+    if (n < 4) return 0;
+    return -(int)(signed char)r[3];
+}
+
 /* =============================================================================
  * LA TASTIERA — da uso HID a scancode del set 1
  *

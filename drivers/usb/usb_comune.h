@@ -208,6 +208,9 @@ int usb_hub_porta_pronta(UsbControllo ctl, unsigned int dev, unsigned int p,
  * parte sbagliata solo con i mouse USB. */
 int usb_mouse_rapporto(const unsigned char *r, unsigned int n,
                        int *dx, int *dy, unsigned int *bottoni);
+/* Wheel notches in this report, positive towards the user; 0 if the report
+ * has no fourth byte. */
+int usb_mouse_wheel(const unsigned char *r, unsigned int n);
 
 /* Il rapporto di una tastiera, tradotto in scancode del set 1 e mandato al
  * servizio `kbd_pid`.

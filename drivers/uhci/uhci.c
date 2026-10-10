@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("uhci.drv", "0.002");
+EX_VERSIONE("uhci.drv", "0.003");
 
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */
@@ -167,6 +167,7 @@ static unsigned int g_solo_massa = 0;
 
 /* Stato mouse consegnato ai client (stesso protocollo del PS/2) */
 static int          g_dx = 0, g_dy = 0;
+static int          g_dz = 0;           /* wheel notches not yet sent */
 static unsigned int g_bottoni = 0, g_novita = 0, g_attesa_pid = 0;
 
 /* -----------------------------------------------------------------------------
@@ -797,11 +798,11 @@ static void rispondi(unsigned int pid)
     s.bottoni = g_bottoni;
     s.presente = 1;
     s.persi = 0;
-    s.dz = 0;       /* in modo boot l'HID non porta la rotella */
+    s.dz = g_dz;    /* the wheel: see usb_mouse_wheel in usb_comune.c */
     s.modificatori = 0;
 
     if (ipc_send(pid, MOUSE_MSG_STATO, &s, sizeof(s)) < 0) return;
-    g_dx = 0; g_dy = 0; g_novita = 0;
+    g_dx = 0; g_dy = 0; g_dz = 0; g_novita = 0;
 }
 
 /* =============================================================================
@@ -1024,6 +1025,7 @@ int main(int argc, char **argv)
 
         if (n >= 3 && usb_mouse_rapporto(rap, (unsigned int)n,
                                         &g_dx, &g_dy, &g_bottoni)) {
+            g_dz += usb_mouse_wheel(rap, (unsigned int)n);
             g_novita = 1;
 
             if (g_attesa_pid) {
