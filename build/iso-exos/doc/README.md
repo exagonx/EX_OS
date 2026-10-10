@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.246
+**Versione:** 0.247
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -154,6 +154,18 @@ quattro insieme su quattro. Con un processore solo niente si accende.
 -accendi` due programmi insieme fanno 2,04 volte il lavoro di uno, quattro
 3,32; rete, DNS e `netupdate` funzionano coi processori al lavoro. Una
 sessione breve da telnet: l'uso lungo e ExWin sono da provare.
+
+**0.247**: scrivere su ext2 costa molti meno comandi di disco. Per ogni
+kilobyte aggiunto a un file il driver ne faceva nove (bitmap, descrittore,
+blocco azzerato, puntatori, dato): ora i blocchi si prendono a gruppi fino a
+64 con una sola scrittura della bitmap, un blocco di dati nuovo non si azzera
+sul disco se sta per essere scritto, e il blocco dei puntatori si scrive una
+volta per chiamata. Quando `write()` torna il disco e' coerente come prima.
+`netupdate` 0.028 scrive a pezzi da 64 KB invece che a ogni pacchetto.
+Provato in QEMU: Exilla (290 MB) si installa in 5 minuti invece di 9, il disco
+passa `e2fsck` di Linux e i file hanno le impronte giuste. Su un disco in PIO
+il guadagno dovrebbe essere maggiore: da misurare sul PC. Cancellare resta
+lento (un blocco per volta).
 
 **0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
 I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono

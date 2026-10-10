@@ -99,7 +99,7 @@ netupdate -install:exilla        Exilla: Firefox per EX-OS (290 MB)
   `/exwin/app/exilla` e `netupdate` le scrive la voce nel menu di avvio della
   scrivania (**Avvio > Internet**), che `-remove:exilla` toglie. E `-check
   -yesall` **non la porta** su una macchina che non ce l'ha: sono 290 MB di un
-  navigatore che vuole almeno 512 MB di memoria, e va chiesta per nome. Una
+  navigatore che vuole almeno 2 GB di memoria, e va chiesta per nome. Una
   volta installata, `-check` la aggiorna come il resto. I suoi file grossi
   arrivano a pezzi da 16 MB: se la linea cade, lo stesso comando riprende dal
   pezzo che mancava.

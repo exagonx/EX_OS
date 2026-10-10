@@ -502,3 +502,15 @@ __pycache__/
 # centinaia di MB costruiti da sorgenti di terzi: in git non ci vanno.
 # =============================================================================
 /cross_build/
+
+# La versione a 64 bit (ARCH=x86_64): build-64/ va in git come build/ (deciso
+# dall'utente il 10 ottobre 2026), e resta fuori SOLO cio' che resta fuori
+# anche da build/, per le stesse ragioni scritte piu' sopra: il compilatore
+# nativo (che si rifa' e pesa), i programmi di terzi e Wolfenstein 3D.
+/build-64/iso/exos/libexec/
+/build-64/iso/exos/lib/gcc/
+/build-64/iso/exos/x86_64-exos/
+/build-64/iso/exos/include/c++/
+/build-64/3papp/
+/build-64/obj/wolf3d_*.o
+/build-64/obj/wolf3d-gentabelle

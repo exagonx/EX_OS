@@ -265,7 +265,8 @@ int swap_init(const char *nome)
  * ========================================================================== */
 int swap_sfratta(void)
 {
-    uint32_t  frame = 0, virt = 0;
+    paddr_t   frame = 0;
+    vaddr_t   virt  = 0;
     PDE      *pd = NULL;
     int32_t   slot;
 

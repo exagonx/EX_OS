@@ -36,14 +36,14 @@
 
 #include "kernel.h"
 
-void *memcpy(void *dst, const void *src, uint32_t n)
+void *memcpy(void *dst, const void *src, size_t n)
 {
     uint8_t       *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
 
     /* A parole quando entrambi sono allineati: e' il caso normale, perche' chi
      * copia strutture copia cose allineate. */
-    if ((((uint32_t)d | (uint32_t)s) & 3u) == 0) {
+    if (((IN_NUMERO(d) | IN_NUMERO(s)) & 3u) == 0) {
         uint32_t       *dw = (uint32_t *)d;
         const uint32_t *sw = (const uint32_t *)s;
 
@@ -59,7 +59,7 @@ void *memcpy(void *dst, const void *src, uint32_t n)
 /* ! memmove DEVE FUNZIONARE ANCHE QUANDO LE DUE ZONE SI SOVRAPPONGONO, ed e'
  * l'unica differenza con memcpy: copiando in avanti su una sovrapposizione si
  * riscrivono i byte che non si sono ancora letti. */
-void *memmove(void *dst, const void *src, uint32_t n)
+void *memmove(void *dst, const void *src, size_t n)
 {
     uint8_t       *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
@@ -74,12 +74,12 @@ void *memmove(void *dst, const void *src, uint32_t n)
     return dst;
 }
 
-void *memset(void *dst, int c, uint32_t n)
+void *memset(void *dst, int c, size_t n)
 {
     uint8_t *d = (uint8_t *)dst;
     uint8_t  v = (uint8_t)c;
 
-    if ((((uint32_t)d) & 3u) == 0) {
+    if (((IN_NUMERO(d)) & 3u) == 0) {
         uint32_t  parola = ((uint32_t)v << 24) | ((uint32_t)v << 16) |
                            ((uint32_t)v << 8)  |  (uint32_t)v;
         uint32_t *dw = (uint32_t *)d;
@@ -92,7 +92,7 @@ void *memset(void *dst, int c, uint32_t n)
     return dst;
 }
 
-int memcmp(const void *a, const void *b, uint32_t n)
+int memcmp(const void *a, const void *b, size_t n)
 {
     const uint8_t *x = (const uint8_t *)a;
     const uint8_t *y = (const uint8_t *)b;

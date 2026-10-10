@@ -40,6 +40,12 @@
 # in cui si incontrano qui dentro, e non si dichiarano da nessun'altra parte:
 # esistono finche' c'e' una voce che le nomina.
 #
+# ! E UN QUARTO: QUANTA MEMORIA VUOLE, «ram=2048» (megabyte). Chi avvia la
+# voce su una macchina che ne ha meno viene avvisato prima, e decide lui.
+# Il terzo campo allora ci dev'essere, anche vuoto:
+#
+#   Nome | /percorso/eseguibile | /percorso/icona.ico | ram=2048
+#
 # Le icone di questo sistema sono a 64 e 128 pixel; il menu le rimpicciolisce
 # da se' a 16 (vedi ex_icona_disegna in lib/exwin/exwin.h), quindi non serve
 # una copia per ogni misura.

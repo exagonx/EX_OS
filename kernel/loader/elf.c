@@ -34,7 +34,7 @@
 /* =============================================================================
  * elf_verify_header — Controlla che l'ELF header sia valido per ExOS
  * ============================================================================= */
-static int elf_verify_header(const Elf32Header *hdr)
+static int elf_verify_header(const ElfHeader *hdr)
 {
     /* Magic number */
     if (hdr->e_ident[EI_MAG0] != ELF_MAGIC0 ||
@@ -46,8 +46,8 @@ static int elf_verify_header(const Elf32Header *hdr)
     }
 
     /* Classe 32-bit */
-    if (hdr->e_ident[EI_CLASS] != 1) {
-        klog(LOG_ERROR, "ELF: non e' ELF32 (class=%u)", hdr->e_ident[EI_CLASS]);
+    if (hdr->e_ident[EI_CLASS] != ELF_CLASSE) {
+        klog(LOG_ERROR, "ELF: non e' " ELF_NOME " (class=%u)", hdr->e_ident[EI_CLASS]);
         return -1;
     }
 
@@ -65,7 +65,7 @@ static int elf_verify_header(const Elf32Header *hdr)
     }
 
     /* Architettura i386 */
-    if (hdr->e_machine != EM_386) {
+    if (hdr->e_machine != ELF_MACCHINA) {
         klog(LOG_ERROR, "ELF: architettura non supportata (machine=%u)", hdr->e_machine);
         return -1;
     }
@@ -184,8 +184,8 @@ static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
                       int residente, uint32_t stack_extra)
 {
     int           handle;
-    Elf32Header   hdr;
-    Elf32Phdr    *phdrs = NULL;
+    ElfHeader   hdr;
+    ElfPhdr    *phdrs = NULL;
     uint8_t      *seg_buf = NULL;
     uint32_t      i;
     int           ret = -1;
@@ -256,7 +256,7 @@ if (handle < 0) {
      * Passo 2: Leggi e verifica ELF header
      * ========================================================================== */
 
-if (vfs_read(handle, &hdr, sizeof(Elf32Header), 0) != (int)sizeof(Elf32Header)) {
+if (vfs_read(handle, &hdr, sizeof(ElfHeader), 0) != (int)sizeof(ElfHeader)) {
         klog(LOG_ERROR, "ELF: impossibile leggere header");
         goto cleanup;
     }
@@ -269,8 +269,8 @@ klog(LOG_INFO, "ELF: header valido, entry=0x%08x, phnum=%u",
     /* ==========================================================================
      * Passo 3: Leggi tutti i Program Headers
      * ========================================================================== */
-    uint32_t phdrs_size = hdr.e_phnum * sizeof(Elf32Phdr);
-    phdrs = (Elf32Phdr *)kmalloc(phdrs_size);
+    uint32_t phdrs_size = hdr.e_phnum * sizeof(ElfPhdr);
+    phdrs = (ElfPhdr *)kmalloc(phdrs_size);
     if (!phdrs) {
         klog(LOG_ERROR, "ELF: OOM allocando program headers");
         goto cleanup;
@@ -312,7 +312,7 @@ seg_buf = (uint8_t *)kmalloc(PAGE_SIZE);
     }
 
 for (i = 0; i < hdr.e_phnum; i++) {
-        Elf32Phdr *ph = &phdrs[i];
+        ElfPhdr *ph = &phdrs[i];
 
         if (ph->p_type != PT_LOAD) continue;
         if (ph->p_memsz == 0)      continue;
@@ -325,6 +325,16 @@ for (i = 0; i < hdr.e_phnum; i++) {
             klog(LOG_ERROR, "ELF: segmento fuori spazio utente: 0x%08x", ph->p_vaddr);
             goto cleanup;
         }
+#if defined(__x86_64__)
+        /* @EXOS-64: i campi dell'ELF64 sono di otto byte e qui sotto si
+         * lavora a 32 (lo spazio dei programmi finisce a 3 GB): una misura
+         * che porta oltre verrebbe tagliata in silenzio. Si rifiuta prima. */
+        if (ph->p_memsz > USER_SPACE_END - ph->p_vaddr || ph->p_filesz > ph->p_memsz ||
+            ph->p_offset > 0xFFFFFFFFull - ph->p_filesz) {
+            klog(LOG_ERROR, "ELF: segmento %u con misure fuori dallo spazio utente", i);
+            goto cleanup;
+        }
+#endif
 
         /* Calcola pagine necessarie */
         uint32_t vstart  = ALIGN_DOWN(ph->p_vaddr, PAGE_SIZE);
@@ -553,7 +563,7 @@ if (n <= 0) {
      * corromperebbe le variabili in silenzio.
      * ========================================================================== */
     {
-        Elf32Phdr *tls = NULL;
+        ElfPhdr *tls = NULL;
 
         for (i = 0; i < hdr.e_phnum; i++) {
             if (phdrs[i].p_type == PT_TLS && phdrs[i].p_memsz != 0) {

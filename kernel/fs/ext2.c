@@ -637,6 +637,38 @@ static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
     return 0;
 }
 
+/* =============================================================================
+ * CANCELLARE COSTAVA CINQUE COMANDI DI DISCO PER KILOBYTE (10 ottobre 2026)
+ *
+ * Per ogni blocco liberato: leggi il descrittore, leggi la bitmap, scrivi la
+ * bitmap, rileggi e riscrivi il descrittore. Un file da 50 MB sono
+ * cinquantamila blocchi: `rm` ci metteva piu' di venti secondi anche su un
+ * disco emulato.
+ *
+ * Quando si libera un file INTERO (libera_tutti_i_blocchi) la bitmap del
+ * gruppo resta in memoria, in un buffer SUO (b_lib: vedi «perche' sono cinque
+ * e non uno»), e va sul disco quando si passa a un altro gruppo e alla fine,
+ * col descrittore aggiornato una volta sola. Come per la scrittura, tutto
+ * finisce prima che l'operazione torni.
+ * ============================================================================= */
+static uint8_t  b_lib[BLOCCO_MAX];      /* la bitmap del gruppo che si sta liberando */
+static int      g_lib_diff = 0;         /* 1: dentro libera_tutti_i_blocchi */
+static int      g_lib_valido = 0;
+static uint32_t g_lib_g = 0, g_lib_bmp = 0, g_lib_n = 0;
+
+static int lib_riversa(Ext2Mount *m)
+{
+    int r = 0;
+
+    if (g_lib_valido && g_lib_n > 0) {
+        if (scrivi_blocco(m, g_lib_bmp, b_lib) != 0) r = -1;
+        else if (desc_somma(m, g_lib_g, 12, (int)g_lib_n) != 0) r = -1;
+    }
+    g_lib_valido = 0;
+    g_lib_n = 0;
+    return r;
+}
+
 static int libera_blocco(Ext2Mount *m, uint32_t n)
 {
     uint32_t g, i, off, dblk, bmp;
@@ -645,6 +677,25 @@ static int libera_blocco(Ext2Mount *m, uint32_t n)
 
     g = (n - m->primo_dato) / m->blocchi_per_gruppo;
     i = (n - m->primo_dato) % m->blocchi_per_gruppo;
+
+    if (g_lib_diff) {
+        if (!g_lib_valido || g != g_lib_g) {
+            if (lib_riversa(m) != 0) return -1;
+            if (desc_carica(m, g, &off, &dblk) != 0) return -1;
+            g_lib_bmp = le32(b_desc + off + 0);
+            if (leggi_blocco(m, g_lib_bmp, b_lib) != 0) return -1;
+            g_lib_g = g;
+            g_lib_valido = 1;
+        }
+        if ((b_lib[i / 8u] & (1u << (i % 8u))) == 0) {
+            klog(LOG_WARN, "EXT2: blocco %u gia' libero: non lo libero due volte", n);
+            return 0;
+        }
+        b_lib[i / 8u] &= (uint8_t)~(1u << (i % 8u));
+        g_lib_n++;
+        m->blocchi_liberi++;
+        return 0;
+    }
 
     if (desc_carica(m, g, &off, &dblk) != 0) return -1;
     bmp = le32(b_desc + off + 0);
@@ -1002,6 +1053,12 @@ static int libera_tutti_i_blocchi(Ext2Mount *m, int mnt, uint8_t *inode)
 {
     uint32_t i, liberati = 0;
 
+    /* Vedi «CANCELLARE COSTAVA»: da qui a lib_riversa() la bitmap del gruppo
+     * sta in memoria. */
+    g_lib_diff = 1;
+    g_lib_valido = 0;
+    g_lib_n = 0;
+
     for (i = 0; i < 12u; i++) {
         uint32_t p = le32(inode + 40u + i * 4u);
         if (p != 0) libera_catena(m, mnt, p, 0, &liberati);
@@ -1010,6 +1067,9 @@ static int libera_tutti_i_blocchi(Ext2Mount *m, int mnt, uint8_t *inode)
     libera_catena(m, mnt, le32(inode + 40u + 12u * 4u), 1, &liberati);
     libera_catena(m, mnt, le32(inode + 40u + 13u * 4u), 2, &liberati);
     libera_catena(m, mnt, le32(inode + 40u + 14u * 4u), 3, &liberati);
+
+    lib_riversa(m);
+    g_lib_diff = 0;
 
     for (i = 0; i < 15u; i++) {
         inode[40u + i * 4u + 0] = 0; inode[40u + i * 4u + 1] = 0;

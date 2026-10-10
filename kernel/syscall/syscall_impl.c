@@ -289,7 +289,7 @@ static int32_t resolve_path(const char *in, char *out, uint32_t max)
  * ============================================================================= */
 int32_t sys_exit(InterruptFrame *frame)
 {
-    int32_t code = (int32_t)frame->ebx;
+    int32_t code = (int32_t)FR_A1(frame);
     klog(LOG_INFO, "SYSCALL exit(%d) PID=%u", code,
          proc_get_current()->pid);
 
@@ -334,9 +334,9 @@ int32_t sys_exit(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_read(InterruptFrame *frame)
 {
-    int32_t   fd    = (int32_t)frame->ebx;
-    char     *buf   = (char *)frame->ecx;
-    uint32_t  count = frame->edx;
+    int32_t   fd    = (int32_t)FR_A1(frame);
+    char     *buf   = (char *)FR_A2(frame);
+    uint32_t  count = FR_A3(frame);
     Process  *proc  = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD)                         return ERR(EBADF);
@@ -403,7 +403,7 @@ int32_t sys_read(InterruptFrame *frame)
         /* Il driver scrivera' dentro `buf`: le sue pagine devono essere
          * gia' in RAM, o il fault avverrebbe con il lucchetto del VFS in
          * mano. Vedi vm_precarica_utente(). */
-        vm_precarica_utente((uint32_t)buf, count);
+        vm_precarica_utente(IN_NUMERO(buf), count);
         int32_t n = vfs_read((int)proc->fdt[fd].inode, buf, count, proc->fdt[fd].offset);
         if (n >= 0) proc->fdt[fd].offset += (uint32_t)n;
         return n;
@@ -423,9 +423,9 @@ int32_t sys_read(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_write(InterruptFrame *frame)
 {
-    int32_t        fd    = (int32_t)frame->ebx;
-    const char    *buf   = (const char *)frame->ecx;
-    uint32_t       count = frame->edx;
+    int32_t        fd    = (int32_t)FR_A1(frame);
+    const char    *buf   = (const char *)FR_A2(frame);
+    uint32_t       count = FR_A3(frame);
     Process       *proc  = proc_get_current();
     uint32_t       i;
 
@@ -494,7 +494,7 @@ int32_t sys_write(InterruptFrame *frame)
 
         /* Stessa ragione di sys_read, dall'altro verso: il driver LEGGE
          * da `buf`, e una pagina assente farebbe faultare lui. */
-        vm_precarica_utente((uint32_t)buf, count);
+        vm_precarica_utente(IN_NUMERO(buf), count);
         int32_t n = vfs_write((int)proc->fdt[fd].inode, buf, count,
                               proc->fdt[fd].offset);
         if (n >= 0) proc->fdt[fd].offset += (uint32_t)n;
@@ -515,8 +515,8 @@ int32_t sys_write(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_open(InterruptFrame *frame)
 {
-    const char *path  = (const char *)frame->ebx;
-    uint32_t    flags = frame->ecx;
+    const char *path  = (const char *)FR_A1(frame);
+    uint32_t    flags = FR_A2(frame);
     Process    *proc  = proc_get_current();
     int         free_fd;
     int         inode;
@@ -550,7 +550,7 @@ int32_t sys_open(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_close(InterruptFrame *frame)
 {
-    int32_t  fd   = (int32_t)frame->ebx;
+    int32_t  fd   = (int32_t)FR_A1(frame);
     Process *proc = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD)          return ERR(EBADF);
@@ -665,7 +665,7 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
  * ============================================================================= */
 int32_t sys_pipe(InterruptFrame *frame)
 {
-    int32_t *ufd  = (int32_t *)frame->ebx;
+    int32_t *ufd  = (int32_t *)FR_A1(frame);
     Process *proc = proc_get_current();
     int      h, r = -1, w = -1;
 
@@ -712,7 +712,7 @@ int32_t sys_pipe(InterruptFrame *frame)
 int32_t sys_dup(InterruptFrame *frame)
 {
     Process *proc = proc_get_current();
-    int      fd   = (int)frame->ebx;
+    int      fd   = (int)FR_A1(frame);
     int      libero;
 
     if (fd < 0 || fd >= MAX_FD || proc->fdt[fd].type == FD_UNUSED)
@@ -728,15 +728,15 @@ int32_t sys_dup2(InterruptFrame *frame)
 {
     Process *proc = proc_get_current();
 
-    return fd_duplica(proc, (int)frame->ebx, (int)frame->ecx);
+    return fd_duplica(proc, (int)FR_A1(frame), (int)FR_A2(frame));
 }
 
 int32_t sys_fcntl(InterruptFrame *frame)
 {
     Process *proc = proc_get_current();
-    int      fd   = (int)frame->ebx;
-    uint32_t cmd  = frame->ecx;
-    uint32_t arg  = frame->edx;
+    int      fd   = (int)FR_A1(frame);
+    uint32_t cmd  = FR_A2(frame);
+    uint32_t arg  = FR_A3(frame);
 
     if (fd < 0 || fd >= MAX_FD || proc->fdt[fd].type == FD_UNUSED)
         return ERR(EBADF);
@@ -789,9 +789,9 @@ int32_t sys_fcntl(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_waitpid(InterruptFrame *frame)
 {
-    int32_t   pid_wait = (int32_t)frame->ebx;
-    int32_t  *status   = (int32_t *)frame->ecx;
-    uint32_t  options  = frame->edx;
+    int32_t   pid_wait = (int32_t)FR_A1(frame);
+    int32_t  *status   = (int32_t *)FR_A2(frame);
+    uint32_t  options  = FR_A3(frame);
     Process  *current  = proc_get_current();
     uint32_t  i;
 
@@ -868,8 +868,8 @@ int32_t sys_waitpid(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_thread_crea(InterruptFrame *frame)
 {
-    uint32_t entry = frame->ebx;
-    uint32_t arg   = frame->ecx;
+    uint32_t entry = FR_A1(frame);
+    uint32_t arg   = FR_A2(frame);
 
     /* ! LA PARTENZA DEVE STARE NELLO SPAZIO UTENTE, e si guarda qui: un
      * indirizzo kernel messo li' dentro sarebbe codice privilegiato eseguito
@@ -907,14 +907,14 @@ int32_t sys_thread_esci(InterruptFrame *frame)
 {
     /* proc_exit sa gia' distinguere: se chi esce e' un filo non porta via ne'
      * la memoria ne' i descrittori del gruppo. Non ritorna. */
-    proc_exit((int32_t)frame->ebx);
+    proc_exit((int32_t)FR_A1(frame));
     return 0;
 }
 
 int32_t sys_thread_attendi(InterruptFrame *frame)
 {
-    uint32_t  tid    = frame->ebx;
-    int32_t  *codice = (int32_t *)frame->ecx;
+    uint32_t  tid    = FR_A1(frame);
+    int32_t  *codice = (int32_t *)FR_A2(frame);
     Process  *self   = proc_get_current();
     uint32_t  i;
 
@@ -973,9 +973,9 @@ int32_t sys_thread_attendi(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_attesa_dormi(InterruptFrame *frame)
 {
-    uint32_t  dove   = frame->ebx;
-    int32_t   atteso = (int32_t)frame->ecx;
-    uint32_t  ms     = frame->edx;
+    uintptr_t dove   = FR_A1(frame);
+    int32_t   atteso = (int32_t)FR_A2(frame);
+    uint32_t  ms     = FR_A3(frame);
     Process  *self   = proc_get_current();
     int32_t   ora;
 
@@ -1014,8 +1014,8 @@ int32_t sys_attesa_dormi(InterruptFrame *frame)
 
 int32_t sys_attesa_sveglia(InterruptFrame *frame)
 {
-    uint32_t dove   = frame->ebx;
-    int32_t  quanti = (int32_t)frame->ecx;
+    uintptr_t dove  = FR_A1(frame);
+    int32_t  quanti = (int32_t)FR_A2(frame);
     int32_t  n;
 
     if (!syscall_verify_ptr((void *)dove, sizeof(int32_t))) return ERR(EFAULT);
@@ -1034,7 +1034,7 @@ int32_t sys_attesa_sveglia(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_thread_ferma(InterruptFrame *frame)
 {
-    uint32_t tid = frame->ebx;
+    uint32_t tid = FR_A1(frame);
     int32_t  r;
 
     interrupts_disable();
@@ -1069,7 +1069,7 @@ int32_t sys_thread_fermarsi(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_thread_stacca(InterruptFrame *frame)
 {
-    uint32_t tid = frame->ebx;
+    uint32_t tid = FR_A1(frame);
     int32_t  r;
 
     interrupts_disable();
@@ -1080,8 +1080,8 @@ int32_t sys_thread_stacca(InterruptFrame *frame)
 
 int32_t sys_thread_pila(InterruptFrame *frame)
 {
-    uint32_t  tid  = frame->ebx;
-    uint32_t *out  = (uint32_t *)frame->ecx;
+    uint32_t  tid  = FR_A1(frame);
+    uint32_t *out  = (uint32_t *)FR_A2(frame);
     Process  *self = proc_get_current();
     Process  *p;
 
@@ -1098,7 +1098,7 @@ int32_t sys_thread_pila(InterruptFrame *frame)
 /* SYS_PROC_GRUPPO (164): il tgid di un pid. Vedi syscall.h. */
 int32_t sys_proc_gruppo(InterruptFrame *frame)
 {
-    uint32_t pid = frame->ebx;
+    uint32_t pid = FR_A1(frame);
     Process *p   = pid ? proc_get_by_pid(pid) : proc_get_current();
 
     if (p == NULL) return ERR(ESRCH);
@@ -1117,7 +1117,7 @@ int32_t sys_proc_gruppo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_console_setfg(InterruptFrame *frame)
 {
-    uint32_t pid  = frame->ebx;
+    uint32_t pid  = FR_A1(frame);
     Process *proc = proc_get_current();
 
     sched_set_console_fg(proc->console, pid);
@@ -1177,7 +1177,7 @@ int32_t console_grafica_attuale(void)
  * ============================================================================= */
 int32_t sys_console_ctrlc(InterruptFrame *frame)
 {
-    uint32_t console = frame->ebx;
+    uint32_t console = FR_A1(frame);
     uint32_t pid;
     Process *self = proc_get_current();
     Process *p;
@@ -1196,7 +1196,7 @@ int32_t sys_console_ctrlc(InterruptFrame *frame)
 
 int32_t sys_console_grafica(InterruptFrame *frame)
 {
-    uint32_t azione = frame->ebx;
+    uint32_t azione = FR_A1(frame);
     Process *proc   = proc_get_current();
 
     /* Chi la teneva e' ancora vivo? Se no, la console e' libera. */
@@ -1232,8 +1232,8 @@ int32_t sys_console_grafica(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_console_testo(InterruptFrame *frame)
 {
-    char     *buf  = (char *)frame->ebx;
-    uint32_t  max  = frame->ecx;
+    char     *buf  = (char *)FR_A1(frame);
+    uint32_t  max  = FR_A2(frame);
     Process  *proc = proc_get_current();
     Process  *chi;
 
@@ -1251,8 +1251,8 @@ int32_t sys_console_testo(InterruptFrame *frame)
 /* SYS_CONSOLE_REGISTRO (215): the log ring, with the same rules as above. */
 int32_t sys_console_registro(InterruptFrame *frame)
 {
-    char     *buf  = (char *)frame->ebx;
-    uint32_t  max  = frame->ecx;
+    char     *buf  = (char *)FR_A1(frame);
+    uint32_t  max  = FR_A2(frame);
     Process  *proc = proc_get_current();
     Process  *chi;
 
@@ -1315,7 +1315,7 @@ int32_t sys_getppid(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_mmap(InterruptFrame *frame)
 {
-    MmapParams *p    = (MmapParams *)frame->ebx;
+    MmapParams *p    = (MmapParams *)FR_A1(frame);
     Process    *proc = proc_get_current();
     uint32_t    pages;
     uint32_t    vaddr;
@@ -1445,9 +1445,9 @@ int32_t sys_mmap(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_mprotect(InterruptFrame *frame)
 {
-    uint32_t addr = frame->ebx;
-    uint32_t len  = frame->ecx;
-    uint32_t prot = frame->edx;
+    uint32_t addr = FR_A1(frame);
+    uint32_t len  = FR_A2(frame);
+    uint32_t prot = FR_A3(frame);
     Process *proc = proc_get_current();
     uint32_t pages;
 
@@ -1471,8 +1471,8 @@ int32_t sys_mprotect(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_munmap(InterruptFrame *frame)
 {
-    uint32_t  addr   = frame->ebx & 0xFFFFF000;
-    uint32_t  length = frame->ecx;
+    uint32_t  addr   = FR_A1(frame) & 0xFFFFF000;
+    uint32_t  length = FR_A2(frame);
     Process  *proc   = proc_get_current();
     uint32_t  pages  = ALIGN_UP(length, PAGE_SIZE) / PAGE_SIZE;
     uint32_t  i;
@@ -1520,9 +1520,9 @@ int32_t sys_munmap(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ioctl(InterruptFrame *frame)
 {
-    int32_t  fd      = (int32_t)frame->ebx;
-    uint32_t request = frame->ecx;
-    uint32_t arg     = frame->edx;
+    int32_t  fd      = (int32_t)FR_A1(frame);
+    uint32_t  request = (uint32_t)FR_A2(frame);
+    uintptr_t arg     = FR_A3(frame);
     Process *proc    = proc_get_current();
     int      is_tty;
 
@@ -1615,7 +1615,7 @@ int32_t sys_ioctl(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_console_switch(InterruptFrame *frame)
 {
-    uint32_t n = frame->ebx;
+    uint32_t n = FR_A1(frame);
 
     if (vga_switch_console(n) != 0) return ERR(EINVAL);
     return 0;
@@ -1635,9 +1635,9 @@ int32_t sys_console_switch(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_console_write(InterruptFrame *frame)
 {
-    uint32_t    n     = frame->ebx;
-    const char *buf   = (const char *)frame->ecx;
-    uint32_t    count = frame->edx;
+    uint32_t    n     = FR_A1(frame);
+    const char *buf   = (const char *)FR_A2(frame);
+    uint32_t    count = FR_A3(frame);
     uint32_t    i;
 
     if (n >= VGA_N_CONSOLE)                  return ERR(EINVAL);
@@ -1655,7 +1655,7 @@ int32_t sys_console_write(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_console_info(InterruptFrame *frame)
 {
-    ConsoleInfo *out  = (ConsoleInfo *)frame->ebx;
+    ConsoleInfo *out  = (ConsoleInfo *)FR_A1(frame);
     Process     *proc = proc_get_current();
 
     if (!syscall_verify_ptr(out, sizeof(ConsoleInfo))) return ERR(EFAULT);
@@ -1679,7 +1679,7 @@ int32_t sys_console_info(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_exec(InterruptFrame *frame)
 {
-    const char  *path = (const char *)frame->ebx;
+    const char  *path = (const char *)FR_A1(frame);
     Process     *proc = proc_get_current();
     ElfLoadResult res;
     char         kpath[PERCORSO_MAX];
@@ -1958,9 +1958,9 @@ static int spawn_write_user(PDE *pd, uint32_t user_virt,
 
 int32_t sys_spawn(InterruptFrame *frame)
 {
-    const char  *path   = (const char *)frame->ebx;
-    uint32_t     argc   = frame->ecx;
-    char       **uargv  = (char **)frame->edx;
+    const char  *path   = (const char *)FR_A1(frame);
+    uint32_t     argc   = FR_A2(frame);
+    char       **uargv  = (char **)FR_A3(frame);
     Process     *parent = proc_get_current();
     ElfLoadResult res;
     char kpath[PERCORSO_MAX];
@@ -2043,7 +2043,7 @@ int32_t sys_spawn(InterruptFrame *frame)
      * programma compilato per la forma a tre argomenti ci lascia
      * spazzatura, e trattarla come una struttura significherebbe aprirgli
      * file a caso. Vedi il commento in syscall.h. */
-    SpawnExtra *uex = (SpawnExtra *)frame->esi;
+    SpawnExtra *uex = (SpawnExtra *)FR_A4(frame);
     SpawnExtra  kex;
     int         ha_extra = 0;
 
@@ -2580,7 +2580,7 @@ int32_t sys_sched_yield(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_sleep(InterruptFrame *frame)
 {
-    uint32_t ms = frame->ebx;
+    uint32_t ms = FR_A1(frame);
     sched_sleep(ms);
     return 0;
 }
@@ -2594,7 +2594,7 @@ int32_t sys_sleep(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_sbrk(InterruptFrame *frame)
 {
-    int32_t   incr = (int32_t)frame->ebx;
+    int32_t   incr = (int32_t)FR_A1(frame);
     Process  *proc = proc_get_current();
     uint32_t  old_end;
     uint32_t  pages, i, pg_flags;
@@ -2730,8 +2730,8 @@ int32_t sys_sbrk(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_getcwd(InterruptFrame *frame)
 {
-    char    *buf  = (char *)frame->ebx;
-    uint32_t size = frame->ecx;
+    char    *buf  = (char *)FR_A1(frame);
+    uint32_t size = FR_A2(frame);
     uint32_t len;
 
     if (!syscall_verify_ptr(buf, size)) return ERR(EFAULT);
@@ -2755,7 +2755,7 @@ int32_t sys_getcwd(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_chdir(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
+    const char *path = (const char *)FR_A1(frame);
 
     if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
 
@@ -2819,8 +2819,8 @@ static void stat_da_vfs(const VfsStat *vs, Stat *st);
  * ============================================================================= */
 int32_t sys_stat(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
-    Stat       *st   = (Stat *)frame->ecx;
+    const char *path = (const char *)FR_A1(frame);
+    Stat       *st   = (Stat *)FR_A2(frame);
     char        abs[PERCORSO_MAX];
     VfsStat     vs;
     int32_t     r;
@@ -2885,8 +2885,8 @@ static void stat_da_vfs(const VfsStat *vs, Stat *st)
  * ============================================================================= */
 int32_t sys_fstat(InterruptFrame *frame)
 {
-    int32_t  fd   = (int32_t)frame->ebx;
-    Stat    *st   = (Stat *)frame->ecx;
+    int32_t  fd   = (int32_t)FR_A1(frame);
+    Stat    *st   = (Stat *)FR_A2(frame);
     Process *proc = proc_get_current();
     VfsStat  vs;
     int32_t  r;
@@ -2915,8 +2915,8 @@ int32_t sys_fstat(InterruptFrame *frame)
  * apre una dozzina. */
 int32_t sys_ftruncate(InterruptFrame *frame)
 {
-    int32_t  fd   = (int32_t)frame->ebx;
-    uint32_t dim  = frame->ecx;
+    int32_t  fd   = (int32_t)FR_A1(frame);
+    uint32_t dim  = FR_A2(frame);
     Process *proc = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD)                 return ERR(EBADF);
@@ -2927,9 +2927,9 @@ int32_t sys_ftruncate(InterruptFrame *frame)
 
 int32_t sys_lseek(InterruptFrame *frame)
 {
-    int32_t  fd     = (int32_t)frame->ebx;
-    int32_t  offset = (int32_t)frame->ecx;
-    uint32_t whence = frame->edx;
+    int32_t  fd     = (int32_t)FR_A1(frame);
+    int32_t  offset = (int32_t)FR_A2(frame);
+    uint32_t whence = FR_A3(frame);
     Process *proc   = proc_get_current();
     uint32_t new_off;
 
@@ -3007,10 +3007,10 @@ int32_t sys_lseek(InterruptFrame *frame)
 
 int32_t sys_readdir(InterruptFrame *frame)
 {
-    const char *path        = (const char *)frame->ebx;
-    DirEntry   *user_buf    = (DirEntry *)frame->ecx;
-    uint32_t    max_entries = frame->edx;
-    uint32_t    start       = frame->esi;
+    const char *path        = (const char *)FR_A1(frame);
+    DirEntry   *user_buf    = (DirEntry *)FR_A2(frame);
+    uint32_t    max_entries = FR_A3(frame);
+    uint32_t    start       = FR_A4(frame);
     char        kpath[PERCORSO_MAX];
     VfsDirEntry ventries[READDIR_MAX_BATCH];
     uint32_t    fcount, cap, i;
@@ -3079,9 +3079,9 @@ int32_t sys_readdir(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_getenv(InterruptFrame *frame)
 {
-    const char *key  = (const char *)frame->ebx;
-    char       *buf  = (char *)frame->ecx;
-    uint32_t    size = frame->edx;
+    const char *key  = (const char *)FR_A1(frame);
+    char       *buf  = (char *)FR_A2(frame);
+    uint32_t    size = FR_A3(frame);
     const char *val;
     uint32_t    len;
 
@@ -3113,7 +3113,7 @@ int32_t sys_getenv(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_mkdir(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
+    const char *path = (const char *)FR_A1(frame);
     char        abs[PERCORSO_MAX];
     int         r;
 
@@ -3137,7 +3137,7 @@ int32_t sys_mkdir(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_rmdir(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
+    const char *path = (const char *)FR_A1(frame);
     char        abs[PERCORSO_MAX];
     int         r;
 
@@ -3162,7 +3162,7 @@ int32_t sys_rmdir(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_unlink(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
+    const char *path = (const char *)FR_A1(frame);
     char        abs[PERCORSO_MAX];
     int         r;
 
@@ -3190,8 +3190,8 @@ int32_t sys_unlink(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_rename(InterruptFrame *frame)
 {
-    const char *u_da = (const char *)frame->ebx;
-    const char *u_a  = (const char *)frame->ecx;
+    const char *u_da = (const char *)FR_A1(frame);
+    const char *u_a  = (const char *)FR_A2(frame);
     char        abs_da[PERCORSO_MAX], abs_a[PERCORSO_MAX];
     int         r;
 
@@ -3221,8 +3221,8 @@ int32_t sys_rename(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_version(InterruptFrame *frame)
 {
-    char    *buf  = (char *)frame->ebx;
-    uint32_t size = frame->ecx;
+    char    *buf  = (char *)FR_A1(frame);
+    uint32_t size = FR_A2(frame);
     uint32_t len;
 
     if (!syscall_verify_ptr(buf, size)) return ERR(EFAULT);
@@ -3299,8 +3299,8 @@ int32_t sys_uptime(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_cpu_info(InterruptFrame *frame)
 {
-    SmpInfo       *dst  = (SmpInfo *)frame->ebx;
-    uint32_t       size = frame->ecx;
+    SmpInfo       *dst  = (SmpInfo *)FR_A1(frame);
+    uint32_t       size = FR_A2(frame);
     const uint8_t *src  = (const uint8_t *)smp_info();
     uint32_t       i;
 
@@ -3337,28 +3337,28 @@ int32_t sys_ahci_passa(InterruptFrame *frame)
 
     if (self == NULL || self->uid != 0) return ERR(EPERM);
     /* ebx = 1: guardare e basta, i registri nel log (sola lettura). */
-    if (frame->ebx == 1) return (int32_t)ahci_guarda();
+    if (FR_A1(frame) == 1) return (int32_t)ahci_guarda();
     /* ebx = 2: solo la domanda «si puo'? e' gia' fatto?» (sola lettura). */
-    if (frame->ebx == 2) return (int32_t)ata_ahci_stato();
+    if (FR_A1(frame) == 2) return (int32_t)ata_ahci_stato();
     return (int32_t)ata_passa_ad_ahci();
 }
 
 /* Il registro dei messaggi del kernel, per `dmesg`. Vedi kprintf.c. */
 int32_t sys_klog(InterruptFrame *frame)
 {
-    char    *dst  = (char *)frame->ebx;
-    uint32_t size = frame->ecx;
+    char    *dst  = (char *)FR_A1(frame);
+    uint32_t size = FR_A2(frame);
 
     if (size == 0 || size > 65536u)     return ERR(EINVAL);
-    if (frame->edx > 1u)                return ERR(EINVAL);
+    if (FR_A3(frame) > 1u)                return ERR(EINVAL);
     if (!syscall_verify_ptr(dst, size)) return ERR(EFAULT);
-    return (int32_t)klog_copia(dst, size, (int)frame->edx);
+    return (int32_t)klog_copia(dst, size, (int)FR_A3(frame));
 }
 
 int32_t sys_meminfo(InterruptFrame *frame)
 {
-    MemInfo  *dst  = (MemInfo *)frame->ebx;
-    uint32_t  size = frame->ecx;
+    MemInfo  *dst  = (MemInfo *)FR_A1(frame);
+    uint32_t  size = FR_A2(frame);
     MemInfo   mi;
     uint32_t  tot, libere;
     uint32_t  ext_pagine, ext_max;
@@ -3426,10 +3426,10 @@ int32_t sys_meminfo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_procinfo(InterruptFrame *frame)
 {
-    ProcInfo *user_buf = (ProcInfo *)frame->ebx;
-    uint32_t  max      = frame->ecx;
-    uint32_t  start    = frame->edx;
-    uint32_t  size     = frame->esi;
+    ProcInfo *user_buf = (ProcInfo *)FR_A1(frame);
+    uint32_t  max      = FR_A2(frame);
+    uint32_t  start    = FR_A3(frame);
+    uint32_t  size     = FR_A4(frame);
 
     ProcInfo  batch[PROCINFO_MAX_BATCH];
     uint32_t  cap, i, visti = 0, scritti = 0;
@@ -3576,8 +3576,8 @@ static int su_amministratore(const char *nome)
 
 int32_t sys_su(InterruptFrame *frame)
 {
-    const char *nome = (const char *)frame->ebx;
-    const char *pass = (const char *)frame->ecx;
+    const char *nome = (const char *)FR_A1(frame);
+    const char *pass = (const char *)FR_A2(frame);
     Process    *self = proc_get_current();
 
     static char testo[SU_FILE_MAX];
@@ -3643,9 +3643,9 @@ int32_t sys_su(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_statperm(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
-    StatPerm   *out  = (StatPerm *)frame->ecx;
-    uint32_t    size = frame->edx;
+    const char *path = (const char *)FR_A1(frame);
+    StatPerm   *out  = (StatPerm *)FR_A2(frame);
+    uint32_t    size = FR_A3(frame);
     char        abs[PERCORSO_MAX];
     VfsStat     vs;
     int32_t     rc;
@@ -3687,9 +3687,9 @@ int32_t sys_statperm(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_diskinfo(InterruptFrame *frame)
 {
-    uint32_t          idx  = frame->ebx;
-    DiskInfo         *dst  = (DiskInfo *)frame->ecx;
-    uint32_t          size = frame->edx;
+    uint32_t          idx  = FR_A1(frame);
+    DiskInfo         *dst  = (DiskInfo *)FR_A2(frame);
+    uint32_t          size = FR_A3(frame);
     const AtaDevice  *d;
     TabellaPartizioni tab;
     DiskInfo          di;
@@ -3791,10 +3791,10 @@ int32_t sys_diskinfo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_blkinfo(InterruptFrame *frame)
 {
-    BlkInfo  *user_buf = (BlkInfo *)frame->ebx;
-    uint32_t  max      = frame->ecx;
-    uint32_t  start    = frame->edx;
-    uint32_t  size     = frame->esi;
+    BlkInfo  *user_buf = (BlkInfo *)FR_A1(frame);
+    uint32_t  max      = FR_A2(frame);
+    uint32_t  start    = FR_A3(frame);
+    uint32_t  size     = FR_A4(frame);
     BlkInfo   batch[8];
     uint32_t  cap, i, scritti = 0;
     int       tot;
@@ -3848,9 +3848,9 @@ int32_t sys_mount(InterruptFrame *frame)
 {
     if (!solo_root("mount")) return ERR(EPERM);
 
-    const char *dev   = (const char *)frame->ebx;
-    const char *punto = (const char *)frame->ecx;
-    uint32_t    flag  = frame->edx;
+    const char *dev   = (const char *)FR_A1(frame);
+    const char *punto = (const char *)FR_A2(frame);
+    uint32_t    flag  = FR_A3(frame);
     char kdev[BLKINFO_NOME_MAX], kpunto[MOUNTINFO_PUNTO_MAX];
 
     if (!syscall_verify_str(dev,   BLKINFO_NOME_MAX))   return ERR(EFAULT);
@@ -3877,7 +3877,7 @@ int32_t sys_umount(InterruptFrame *frame)
 {
     if (!solo_root("umount")) return ERR(EPERM);
 
-    const char *punto = (const char *)frame->ebx;
+    const char *punto = (const char *)FR_A1(frame);
     char kpunto[MOUNTINFO_PUNTO_MAX];
 
     if (!syscall_verify_str(punto, MOUNTINFO_PUNTO_MAX)) return ERR(EFAULT);
@@ -3894,10 +3894,10 @@ int32_t sys_umount(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_mountinfo(InterruptFrame *frame)
 {
-    MountInfo *user_buf = (MountInfo *)frame->ebx;
-    uint32_t   max      = frame->ecx;
-    uint32_t   start    = frame->edx;
-    uint32_t   size     = frame->esi;
+    MountInfo *user_buf = (MountInfo *)FR_A1(frame);
+    uint32_t   max      = FR_A2(frame);
+    uint32_t   start    = FR_A3(frame);
+    uint32_t   size     = FR_A4(frame);
     MountInfo  batch[4];
     uint32_t   cap, i, scritti = 0;
     int        tot;
@@ -3954,9 +3954,9 @@ int32_t sys_bootinstall(InterruptFrame *frame)
 {
     if (!solo_root("bootinstall")) return ERR(EPERM);
 
-    const char      *punto = (const char *)frame->ebx;
-    BootInstallInfo *uinfo = (BootInstallInfo *)frame->ecx;
-    uint32_t         size  = frame->edx;
+    const char      *punto = (const char *)FR_A1(frame);
+    BootInstallInfo *uinfo = (BootInstallInfo *)FR_A2(frame);
+    uint32_t         size  = FR_A3(frame);
     char             kpunto[MOUNTINFO_PUNTO_MAX];
     BootInstEsito    e;
     int32_t          r;
@@ -3976,15 +3976,15 @@ int32_t sys_bootinstall(InterruptFrame *frame)
      * accetta SOLO il valore 1 come "verifica", e qualunque altra cosa
      * vale "installa", che e' il comportamento di prima. */
     {
-        int verifica = (frame->esi == BOOTINST_VERIFICA) ? 1 : 0;
+        int verifica = (FR_A4(frame) == BOOTINST_VERIFICA) ? 1 : 0;
         const char *n_s2 = NULL, *n_k = NULL;
         char k_s2[64], k_k[64];
 
         /* ecx+edx sono gia' presi: i nomi alternativi viaggiano in EDI
          * come una coppia di stringhe consecutive, o NULL per i nomi
          * predefiniti. */
-        if (frame->edi != 0) {
-            const char *u = (const char *)frame->edi;
+        if (FR_A5(frame) != 0) {
+            const char *u = (const char *)FR_A5(frame);
             if (!syscall_verify_str(u, sizeof(k_s2))) return ERR(EFAULT);
             kstrcpy(k_s2, u, sizeof(k_s2));
             u += kstrlen(k_s2) + 1;
@@ -4036,9 +4036,9 @@ int32_t sys_partwrite(InterruptFrame *frame)
 {
     if (!solo_root("partwrite")) return ERR(EPERM);
 
-    uint32_t     disco = frame->ebx;
-    PartTabella *utab  = (PartTabella *)frame->ecx;
-    uint32_t     size  = frame->edx;
+    uint32_t     disco = FR_A1(frame);
+    PartTabella *utab  = (PartTabella *)FR_A2(frame);
+    uint32_t     size  = FR_A3(frame);
     PartTabella  ktab;
     Partizione   voci[PARTWRITE_MAX_VOCI];
     uint32_t     problemi = 0;
@@ -4152,10 +4152,10 @@ int32_t sys_blkread(InterruptFrame *frame)
 {
     if (!solo_root("blkread")) return ERR(EPERM);
 
-    const char *unome = (const char *)frame->ebx;
-    uint32_t    lba   = frame->ecx;
-    uint32_t    n     = frame->edx;
-    uint8_t    *ubuf  = (uint8_t *)frame->esi;
+    const char *unome = (const char *)FR_A1(frame);
+    uint32_t    lba   = FR_A2(frame);
+    uint32_t    n     = FR_A3(frame);
+    uint8_t    *ubuf  = (uint8_t *)FR_A4(frame);
     uint8_t     sett[512];
     int32_t     r;
     int         dev;
@@ -4182,10 +4182,10 @@ int32_t sys_blkwrite(InterruptFrame *frame)
 {
     if (!solo_root("blkwrite")) return ERR(EPERM);
 
-    const char *unome = (const char *)frame->ebx;
-    uint32_t    lba   = frame->ecx;
-    uint32_t    n     = frame->edx;
-    const uint8_t *ubuf = (const uint8_t *)frame->esi;
+    const char *unome = (const char *)FR_A1(frame);
+    uint32_t    lba   = FR_A2(frame);
+    uint32_t    n     = FR_A3(frame);
+    const uint8_t *ubuf = (const uint8_t *)FR_A4(frame);
     uint8_t     sett[512];
     int32_t     r;
     int         dev;
@@ -4222,8 +4222,8 @@ int32_t sys_blkwrite(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_truncate(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
-    uint32_t    dim  = frame->ecx;
+    const char *path = (const char *)FR_A1(frame);
+    uint32_t    dim  = FR_A2(frame);
     char        abs[PERCORSO_MAX];
     int         r;
 
@@ -4295,7 +4295,7 @@ int32_t sys_reboot(InterruptFrame *frame)
 {
     if (!puo_spegnere()) return ERR(EPERM);
 
-    uint32_t cmd  = frame->ebx;
+    uint32_t cmd  = FR_A1(frame);
     Process *self = proc_get_current();
 
     klog(LOG_INFO, "SYSCALL reboot(cmd=%u) richiesta da PID %u '%s'",
@@ -4324,10 +4324,10 @@ int32_t sys_reboot(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ipc_send(InterruptFrame *frame)
 {
-    uint32_t    dest_pid = frame->ebx;
-    uint32_t    type     = frame->ecx;
-    const void *data     = (const void *)frame->edx;
-    uint32_t    len       = frame->esi;
+    uint32_t    dest_pid = FR_A1(frame);
+    uint32_t    type     = FR_A2(frame);
+    const void *data     = (const void *)FR_A3(frame);
+    uint32_t    len       = FR_A4(frame);
 
     if (len > IPC_MSG_MAX_DATA) len = IPC_MSG_MAX_DATA;
 
@@ -4354,9 +4354,9 @@ int32_t sys_ipc_send(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ipc_recv(InterruptFrame *frame)
 {
-    IpcMessage *out_meta = (IpcMessage *)frame->ebx;
-    void       *buf      = (void *)frame->ecx;
-    uint32_t    buf_len  = frame->edx;
+    IpcMessage *out_meta = (IpcMessage *)FR_A1(frame);
+    void       *buf      = (void *)FR_A2(frame);
+    uint32_t    buf_len  = FR_A3(frame);
 
     /* =========================================================================
      * ! SI VERIFICA E SI COPIA SOLO L'INTESTAZIONE, NON TUTTA LA STRUTTURA.
@@ -4407,10 +4407,10 @@ int32_t sys_ipc_recv(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
 {
-    IpcMessage *out_meta   = (IpcMessage *)frame->ebx;
-    void       *buf        = (void *)frame->ecx;
-    uint32_t    buf_len    = frame->edx;
-    uint32_t    timeout_ms = frame->esi;
+    IpcMessage *out_meta   = (IpcMessage *)FR_A1(frame);
+    void       *buf        = (void *)FR_A2(frame);
+    uint32_t    buf_len    = FR_A3(frame);
+    uint32_t    timeout_ms = FR_A4(frame);
 
     /* Solo l'intestazione, come in sys_ipc_recv: il perché è là. */
     const uint32_t META_LEN = 3 * sizeof(uint32_t);
@@ -4442,7 +4442,7 @@ int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_time(InterruptFrame *frame)
 {
-    RtcTime *out = (RtcTime *)frame->ebx;
+    RtcTime *out = (RtcTime *)FR_A1(frame);
 
     if (!syscall_verify_ptr(out, sizeof(RtcTime))) return ERR(EFAULT);
 
@@ -4468,7 +4468,7 @@ int32_t sys_time(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_time_set(InterruptFrame *frame)
 {
-    const RtcTime *in = (const RtcTime *)frame->ebx;
+    const RtcTime *in = (const RtcTime *)FR_A1(frame);
     RtcTime t;
 
     if (!syscall_verify_ptr((void *)in, sizeof(RtcTime))) return ERR(EFAULT);
@@ -4507,7 +4507,7 @@ int32_t sys_time_set(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ipc_register(InterruptFrame *frame)
 {
-    const char *name = (const char *)frame->ebx;
+    const char *name = (const char *)FR_A1(frame);
 
     if (!syscall_verify_str(name, IPC_NAME_LEN)) return ERR(EFAULT);
 
@@ -4527,7 +4527,7 @@ int32_t sys_ipc_register(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ipc_lookup(InterruptFrame *frame)
 {
-    const char *name = (const char *)frame->ebx;
+    const char *name = (const char *)FR_A1(frame);
 
     if (!syscall_verify_str(name, IPC_NAME_LEN)) return ERR(EFAULT);
 
@@ -4546,7 +4546,7 @@ int32_t sys_ipc_lookup(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_irq_bind(InterruptFrame *frame)
 {
-    uint8_t irq = (uint8_t)frame->ebx;
+    uint8_t irq = (uint8_t)FR_A1(frame);
     uint32_t pid = proc_get_current()->pid;
 
     int32_t ret = irq_bind_process(irq, pid);
@@ -4640,8 +4640,8 @@ static int e_un_driver(Process *p, const char *chi)
  * ============================================================================= */
 int32_t sys_ioport_bind(InterruptFrame *frame)
 {
-    uint32_t base  = frame->ebx;
-    uint32_t count = frame->ecx;
+    uint32_t base  = FR_A1(frame);
+    uint32_t count = FR_A2(frame);
     Process *self  = proc_get_current();
     uint32_t i;
 
@@ -4703,7 +4703,7 @@ static int ioport_allowed(Process *p, uint16_t port)
  * ============================================================================= */
 int32_t sys_ioport_in(InterruptFrame *frame)
 {
-    uint16_t port = (uint16_t)frame->ebx;
+    uint16_t port = (uint16_t)FR_A1(frame);
     Process *self = proc_get_current();
 
     if (!ioport_allowed(self, port)) {
@@ -4724,8 +4724,8 @@ int32_t sys_ioport_in(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_ioport_out(InterruptFrame *frame)
 {
-    uint16_t port  = (uint16_t)frame->ebx;
-    uint8_t  value = (uint8_t)frame->ecx;
+    uint16_t port  = (uint16_t)FR_A1(frame);
+    uint8_t  value = (uint8_t)FR_A2(frame);
     Process *self  = proc_get_current();
 
     if (!ioport_allowed(self, port)) {
@@ -4787,7 +4787,7 @@ static int32_t ioport_prepara(uint32_t port, uint32_t ampiezza, const char *chi)
 /* ebx = porta. Ritorna 0..65535, oppure un errore negativo. */
 int32_t sys_ioport_in16(InterruptFrame *frame)
 {
-    uint32_t port = frame->ebx;
+    uint32_t port = FR_A1(frame);
     int32_t  err  = ioport_prepara(port, 2, "ioport_in16");
 
     if (err != 0) return err;
@@ -4797,11 +4797,11 @@ int32_t sys_ioport_in16(InterruptFrame *frame)
 /* ebx = porta, ecx = valore (0..65535) */
 int32_t sys_ioport_out16(InterruptFrame *frame)
 {
-    uint32_t port = frame->ebx;
+    uint32_t port = FR_A1(frame);
     int32_t  err  = ioport_prepara(port, 2, "ioport_out16");
 
     if (err != 0) return err;
-    port_outw((uint16_t)port, (uint16_t)frame->ecx);
+    port_outw((uint16_t)port, (uint16_t)FR_A2(frame));
     return 0;
 }
 
@@ -4811,8 +4811,8 @@ int32_t sys_ioport_out16(InterruptFrame *frame)
  * indistinguibile da -1. */
 int32_t sys_ioport_in32(InterruptFrame *frame)
 {
-    uint32_t  port = frame->ebx;
-    uint32_t *dst  = (uint32_t *)frame->ecx;
+    uint32_t  port = FR_A1(frame);
+    uint32_t *dst  = (uint32_t *)FR_A2(frame);
     int32_t   err  = ioport_prepara(port, 4, "ioport_in32");
 
     if (err != 0) return err;
@@ -4825,11 +4825,11 @@ int32_t sys_ioport_in32(InterruptFrame *frame)
 /* ebx = porta, ecx = valore a 32 bit */
 int32_t sys_ioport_out32(InterruptFrame *frame)
 {
-    uint32_t port = frame->ebx;
+    uint32_t port = FR_A1(frame);
     int32_t  err  = ioport_prepara(port, 4, "ioport_out32");
 
     if (err != 0) return err;
-    port_outl((uint16_t)port, frame->ecx);
+    port_outl((uint16_t)port, FR_A2(frame));
     return 0;
 }
 
@@ -4848,7 +4848,7 @@ int32_t sys_ioport_out32(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_irq_done(InterruptFrame *frame)
 {
-    return irq_done_process((uint8_t)frame->ebx, proc_get_current()->pid);
+    return irq_done_process((uint8_t)FR_A1(frame), proc_get_current()->pid);
 }
 
 /* =============================================================================
@@ -4866,8 +4866,8 @@ int32_t sys_fdprova(InterruptFrame *frame)
     if (self->uid != 0) return ERR(EPERM);
 
     {
-        FdPasso     *out = (FdPasso *)frame->ebx;
-        unsigned int max = frame->ecx;
+        FdPasso     *out = (FdPasso *)FR_A1(frame);
+        unsigned int max = FR_A2(frame);
 
         /* Con un buffer nullo la prova si fa lo stesso: la cronaca a schermo
          * e' meta' del valore, e chi la lancia a mano puo' non volere il log. */
@@ -4889,8 +4889,8 @@ int kbd_stato(FdPasso *out, unsigned int max);
 int32_t sys_kbprova(InterruptFrame *frame)
 {
     Process     *self = proc_get_current();
-    FdPasso     *out  = (FdPasso *)frame->ebx;
-    unsigned int max  = frame->ecx;
+    FdPasso     *out  = (FdPasso *)FR_A1(frame);
+    unsigned int max  = FR_A2(frame);
 
     if (self->uid != 0) return ERR(EPERM);
 
@@ -4899,7 +4899,7 @@ int32_t sys_kbprova(InterruptFrame *frame)
         if (!syscall_verify_ptr(out, max * sizeof(FdPasso))) return ERR(EFAULT);
     }
 
-        if (frame->edx == KBP_STATO) return (int32_t)kbd_stato(out, max);
+        if (FR_A3(frame) == KBP_STATO) return (int32_t)kbd_stato(out, max);
         return (int32_t)kbd_diagnostica(out, max);
 }
 
@@ -4908,7 +4908,7 @@ int32_t sys_kbprova(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_irq_unbind(InterruptFrame *frame)
 {
-    uint8_t  irq = (uint8_t)frame->ebx;
+    uint8_t  irq = (uint8_t)FR_A1(frame);
     uint32_t pid = proc_get_current()->pid;
 
     int32_t ret = irq_unbind_uno(irq, pid);
@@ -4927,8 +4927,8 @@ int32_t sys_irq_unbind(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_random(InterruptFrame *frame)
 {
-    uint8_t *buf = (uint8_t *)frame->ebx;
-    uint32_t len = frame->ecx;
+    uint8_t *buf = (uint8_t *)FR_A1(frame);
+    uint32_t len = FR_A2(frame);
     uint32_t fatti = 0;
 
     if (len == 0) return 0;
@@ -4964,7 +4964,7 @@ int32_t sys_random(InterruptFrame *frame)
 
 int32_t sys_dma_alloc(InterruptFrame *frame)
 {
-    DmaZona  *z    = (DmaZona *)frame->ebx;
+    DmaZona  *z    = (DmaZona *)FR_A1(frame);
     Process  *proc = proc_get_current();
     uint32_t  pagine, fisico, vaddr, i;
 
@@ -5064,7 +5064,7 @@ int32_t sys_modo_testo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_pty_apri(InterruptFrame *frame)
 {
-    int32_t *ufd  = (int32_t *)frame->ebx;
+    int32_t *ufd  = (int32_t *)FR_A1(frame);
     Process *proc = proc_get_current();
     int      h, hs, m = -1, sl = -1;
     int32_t  r;
@@ -5121,9 +5121,9 @@ int32_t sys_pty_apri(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_pty_ctl(InterruptFrame *frame)
 {
-    int32_t   fd  = (int32_t)frame->ebx;
-    uint32_t  cmd = frame->ecx;
-    uint32_t  arg = frame->edx;
+    int32_t   fd  = (int32_t)FR_A1(frame);
+    uint32_t  cmd = FR_A2(frame);
+    uint32_t  arg = FR_A3(frame);
     Process  *proc = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD) return ERR(EBADF);
@@ -5172,7 +5172,7 @@ int32_t sys_pty_ctl(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_interrompi(InterruptFrame *frame)
 {
-    uint32_t  pid  = frame->ebx;
+    uint32_t  pid  = FR_A1(frame);
     Process  *self = proc_get_current();
     Process  *p;
 
@@ -5274,7 +5274,7 @@ int32_t sys_fb_map(InterruptFrame *frame)
 
 int32_t sys_video_info(InterruptFrame *frame)
 {
-    VideoInfo *u = (VideoInfo *)frame->ebx;
+    VideoInfo *u = (VideoInfo *)FR_A1(frame);
     VideoInfo  v;
 
     if (!syscall_verify_ptr(u, sizeof(VideoInfo))) return ERR(EFAULT);
@@ -5290,8 +5290,8 @@ int32_t sys_video_info(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_log(InterruptFrame *frame)
 {
-    const char *u   = (const char *)frame->ebx;
-    uint32_t    len = frame->ecx;
+    const char *u   = (const char *)FR_A1(frame);
+    uint32_t    len = FR_A2(frame);
     Process    *self = proc_get_current();
     char        buf[SYS_LOG_MAX + 1];
     uint32_t    i;
@@ -5362,8 +5362,8 @@ int32_t sys_getuid(InterruptFrame *frame)
 int32_t sys_setuid(InterruptFrame *frame)
 {
     Process *self = proc_get_current();
-    uint32_t uid  = frame->ebx;
-    uint32_t gid  = frame->ecx;
+    uint32_t uid  = FR_A1(frame);
+    uint32_t gid  = FR_A2(frame);
 
     if (self == NULL) return ERR(ESRCH);
 
@@ -5388,24 +5388,24 @@ int32_t sys_setuid(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_chown(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
+    const char *path = (const char *)FR_A1(frame);
     char        abs[PERCORSO_MAX];
 
     if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
-    return (int32_t)vfs_chown(abs, frame->ecx, frame->edx);
+    return (int32_t)vfs_chown(abs, FR_A2(frame), FR_A3(frame));
 }
 
 int32_t sys_chmod(InterruptFrame *frame)
 {
-    const char *path = (const char *)frame->ebx;
+    const char *path = (const char *)FR_A1(frame);
     char        abs[PERCORSO_MAX];
 
     if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
-    return (int32_t)vfs_chmod(abs, frame->ecx);
+    return (int32_t)vfs_chmod(abs, FR_A2(frame));
 }
 
 /* =============================================================================
@@ -5417,7 +5417,7 @@ int32_t sys_chmod(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_lib_apri(InterruptFrame *frame)
 {
-    const char *u    = (const char *)frame->ebx;
+    const char *u    = (const char *)FR_A1(frame);
     Process    *self = proc_get_current();
     char        perc[128];
     uint32_t    i;
@@ -5450,7 +5450,7 @@ int32_t sys_lib_apri(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_lib_trova(InterruptFrame *frame)
 {
-    const char *u    = (const char *)frame->ebx;
+    const char *u    = (const char *)FR_A1(frame);
     Process    *self = proc_get_current();
     char        perc[128];
     uint32_t    i;
@@ -5641,9 +5641,9 @@ static void poll_disregistra(Process *self, struct pollfd *v, uint32_t n)
 
 int32_t sys_poll(InterruptFrame *frame)
 {
-    struct pollfd *u    = (struct pollfd *)frame->ebx;
-    uint32_t       n    = frame->ecx;
-    int32_t        ms   = (int32_t)frame->edx;
+    struct pollfd *u    = (struct pollfd *)FR_A1(frame);
+    uint32_t       n    = FR_A2(frame);
+    int32_t        ms   = (int32_t)FR_A3(frame);
     Process       *self = proc_get_current();
     struct pollfd  k[POLL_MAX];
     uint32_t       i, scadenza = 0;
@@ -5729,7 +5729,7 @@ int32_t sys_poll(InterruptFrame *frame)
  * ========================================================================== */
 int32_t sys_shm_apri(InterruptFrame *frame)
 {
-    ShmZona *u    = (ShmZona *)frame->ebx;
+    ShmZona *u    = (ShmZona *)FR_A1(frame);
     Process *proc = proc_get_current();
     char     nome[SHM_NOME_LEN];
     uint32_t virt = 0, byte = 0;
@@ -5756,7 +5756,7 @@ int32_t sys_shm_apri(InterruptFrame *frame)
 
 int32_t sys_shm_chiudi(InterruptFrame *frame)
 {
-    return shm_chiudi(proc_get_current(), frame->ebx);
+    return shm_chiudi(proc_get_current(), FR_A1(frame));
 }
 
 /* =============================================================================
@@ -5782,7 +5782,7 @@ int32_t sys_shm_chiudi(InterruptFrame *frame)
 
 int32_t sys_mmio_map(InterruptFrame *frame)
 {
-    MmioZona *z    = (MmioZona *)frame->ebx;
+    MmioZona *z    = (MmioZona *)FR_A1(frame);
     Process  *proc = proc_get_current();
     uint32_t  base, fine, dentro, pagine, vaddr, i, limite_ram;
 
@@ -5862,7 +5862,7 @@ static void kcopia_byte(uint8_t *dst, const uint8_t *src, uint32_t n)
 
 int32_t sys_blk_offri(InterruptFrame *frame)
 {
-    BlkOfferta *u    = (BlkOfferta *)frame->ebx;
+    BlkOfferta *u    = (BlkOfferta *)FR_A1(frame);
     Process    *self = proc_get_current();
     char        nome[BLKINFO_NOME_MAX];
     uint64_t    settori;
@@ -5886,8 +5886,8 @@ int32_t sys_blk_offri(InterruptFrame *frame)
 
 int32_t sys_blk_attendi(InterruptFrame *frame)
 {
-    BlkRichiesta *u    = (BlkRichiesta *)frame->ebx;
-    uint32_t      ms   = frame->ecx;
+    BlkRichiesta *u    = (BlkRichiesta *)FR_A1(frame);
+    uint32_t      ms   = FR_A2(frame);
     Process      *self = proc_get_current();
     uint32_t      op = 0, n = 0, quale = 0, max = 0;
     uint64_t      lba = 0;
@@ -5929,8 +5929,8 @@ int32_t sys_blk_attendi(InterruptFrame *frame)
 
 int32_t sys_blk_risposta(InterruptFrame *frame)
 {
-    BlkRichiesta *u     = (BlkRichiesta *)frame->ebx;
-    int32_t       esito = (int32_t)frame->ecx;
+    BlkRichiesta *u     = (BlkRichiesta *)FR_A1(frame);
+    int32_t       esito = (int32_t)FR_A2(frame);
     Process      *self  = proc_get_current();
     uint8_t      *dest;
     uint32_t      n, max;
@@ -5970,7 +5970,7 @@ int32_t sys_blk_risposta(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_blk_espelli(InterruptFrame *frame)
 {
-    const char   *unome = (const char *)frame->ebx;
+    const char   *unome = (const char *)FR_A1(frame);
     char          knome[BLKINFO_NOME_MAX];
     const BlkDev *d;
     int           dev, k, n;
@@ -6021,7 +6021,7 @@ int32_t sys_blk_espelli(InterruptFrame *frame)
 
 int32_t sys_blk_scansiona(InterruptFrame *frame)
 {
-    const char *unome = (const char *)frame->ebx;
+    const char *unome = (const char *)FR_A1(frame);
     char        knome[BLKINFO_NOME_MAX];
     int         dev;
 

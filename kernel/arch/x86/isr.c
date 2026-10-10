@@ -357,6 +357,34 @@ void irq_register_handler(uint8_t irq, isr_handler_fn handler)
 static void dump_registers(InterruptFrame *f)
 {
     kprintf("\n--- DUMP REGISTRI ---\n");
+#if defined(__x86_64__)
+    /* @EXOS-64: sedici registri di otto byte. kprintf scrive 32 bit alla
+     * volta, quindi ognuno e' in due meta'. */
+#define R64(v)  (uint32_t)((uint64_t)(v) >> 32), (uint32_t)(v)
+    kprintf("  RAX=%08x%08x  RBX=%08x%08x  RCX=%08x%08x\n", R64(f->rax), R64(f->rbx), R64(f->rcx));
+    kprintf("  RDX=%08x%08x  RSI=%08x%08x  RDI=%08x%08x\n", R64(f->rdx), R64(f->rsi), R64(f->rdi));
+    kprintf("  RBP=%08x%08x  R8 =%08x%08x  R9 =%08x%08x\n", R64(f->rbp), R64(f->r8),  R64(f->r9));
+    kprintf("  R10=%08x%08x  R11=%08x%08x  R12=%08x%08x\n", R64(f->r10), R64(f->r11), R64(f->r12));
+    kprintf("  R13=%08x%08x  R14=%08x%08x  R15=%08x%08x\n", R64(f->r13), R64(f->r14), R64(f->r15));
+    kprintf("  RIP=%08x%08x  CS =0x%04x  RFLAGS=0x%08x\n", R64(f->rip), (uint32_t)f->cs, (uint32_t)f->rflags);
+    kprintf("  RSP=%08x%08x  SS =0x%04x  ERR=0x%08x  INT=%d\n", R64(f->user_rsp), (uint32_t)f->user_ss,
+            (uint32_t)f->err_code, (uint32_t)f->int_no);
+    if (f->int_no == 14) {
+        vaddr_t cr2 = read_cr2();
+
+        kprintf("  CR2=%08x%08x  (indirizzo page fault)\n", R64(cr2));
+        kprintf("  PF flags: %s | %s | %s\n",
+                (f->err_code & 0x1) ? "protection" : "not-present",
+                (f->err_code & 0x2) ? "write" : "read",
+                (f->err_code & 0x4) ? "user" : "supervisor");
+    }
+    if (f->int_no == 13 && f->err_code != 0) {
+        kprintf("  GP selector: 0x%04x (TI=%d, RPL=%d)\n",
+                (uint32_t)(f->err_code & 0xFFFC), (int)((f->err_code >> 2) & 1),
+                (int)(f->err_code & 0x3));
+    }
+#undef R64
+#else
     kprintf("  EAX=0x%08x  EBX=0x%08x  ECX=0x%08x  EDX=0x%08x\n",
             f->eax, f->ebx, f->ecx, f->edx);
     kprintf("  ESI=0x%08x  EDI=0x%08x  EBP=0x%08x\n",
@@ -391,6 +419,7 @@ static void dump_registers(InterruptFrame *f)
                 (f->err_code >> 2) & 1,
                 f->err_code & 0x3);
     }
+#endif
     kprintf("---------------------\n");
 }
 
@@ -414,7 +443,7 @@ void isr_handler(InterruptFrame *frame)
     /* Eccezioni non fatali gestibili */
     if (int_no == 3) {
         /* Breakpoint: utile per debug */
-        klog(LOG_DEBUG, "INT3 Breakpoint a EIP=0x%x", frame->eip);
+        klog(LOG_DEBUG, "INT3 Breakpoint a EIP=0x%x", (uint32_t)FR_IP(frame));
         return;
     }
 
@@ -463,13 +492,13 @@ void isr_handler(InterruptFrame *frame)
         kprintf("\n[FAULT] PID %u '%s': eccezione %u (%s) a EIP=0x%08x "
                 "err=0x%08x - processo terminato\n",
                 p ? p->pid : 0, p ? p->name : "?", int_no, name,
-                frame->eip, frame->err_code);
+                (uint32_t)FR_IP(frame), (uint32_t)frame->err_code);
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
         klog(LOG_ERROR, "ISR: PID %u '%s' terminato da eccezione %u (%s) "
              "EIP=0x%08x err=0x%08x",
              p ? p->pid : 0, p ? p->name : "?", int_no, name,
-             frame->eip, frame->err_code);
+             (uint32_t)FR_IP(frame), (uint32_t)frame->err_code);
 
         /* proc_exit() non ritorna: fa il context switch verso il prossimo
          * processo pronto da qui stesso. */
@@ -485,8 +514,8 @@ void isr_handler(InterruptFrame *frame)
     kprintf("+==============================================+\n");
     kprintf("|  Vettore : %3d                               |\n", int_no);
     kprintf("|  Nome    : %-32s  |\n", name);
-    kprintf("|  EIP     : 0x%08x                    |\n", frame->eip);
-    kprintf("|  Errore  : 0x%08x                    |\n", frame->err_code);
+    kprintf("|  EIP     : 0x%08x                    |\n", (uint32_t)FR_IP(frame));
+    kprintf("|  Errore  : 0x%08x                    |\n", (uint32_t)frame->err_code);
     kprintf("+==============================================+\n");
 
     dump_registers(frame);
@@ -645,7 +674,7 @@ void irq_handler(InterruptFrame *frame)
         }
     } else {
         /* IRQ non gestito: log a livello debug (non panic) */
-        klog(LOG_DEBUG, "IRQ%d non gestito (vettore %d)", irq, frame->int_no);
+        klog(LOG_DEBUG, "IRQ%d non gestito (vettore %d)", irq, (uint32_t)frame->int_no);
     }
 }
 

@@ -262,10 +262,10 @@ static void scrivi_fascia(uint32_t n, uint32_t base, uint32_t misura,
                           uint32_t tipo, uint32_t maschera_alta)
 {
     uint32_t cr0, cr4 = 0, def_b, def_a;
-    uint32_t flags;
+    uintptr_t flags;        /* largo come la pila: vale a 32 e a 64 bit */
     int      pge;
 
-    __asm__ __volatile__("pushfl; popl %0" : "=r"(flags));
+    __asm__ __volatile__("pushf; pop %0" : "=r"(flags));
     __asm__ __volatile__("cli");
 
     cr0 = read_cr0();
@@ -291,7 +291,7 @@ static void scrivi_fascia(uint32_t n, uint32_t base, uint32_t misura,
     if (pge) write_cr4(cr4);
     write_cr0(cr0);
 
-    __asm__ __volatile__("pushl %0; popfl" : : "r"(flags));
+    __asm__ __volatile__("push %0; popf" : : "r"(flags));
 }
 
 /* =============================================================================

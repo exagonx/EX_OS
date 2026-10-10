@@ -140,7 +140,7 @@ typedef struct PACKED {
  * ============================================================================= */
 typedef struct {
     const char *name;
-    uint32_t    addr;
+    uintptr_t   addr;       /* un indirizzo del kernel: grande quanto un puntatore (@EXOS-64) */
 } KernelSymbol;
 
 /* Forward declarations per le funzioni kernel */
@@ -149,32 +149,32 @@ typedef struct {
 
 static const KernelSymbol g_kernel_symbols[] = {
     /* Output */
-    { "vga_putchar",           (uint32_t)vga_putchar           },
-    { "vga_puts",              (uint32_t)vga_puts              },
-    { "vga_setcolor",          (uint32_t)vga_setcolor          },
-    { "kprintf",               (uint32_t)kprintf               },
-    { "klog",                  (uint32_t)klog                  },
+    { "vga_putchar",           (uintptr_t)vga_putchar           },
+    { "vga_puts",              (uintptr_t)vga_puts              },
+    { "vga_setcolor",          (uintptr_t)vga_setcolor          },
+    { "kprintf",               (uintptr_t)kprintf               },
+    { "klog",                  (uintptr_t)klog                  },
     /* I/O porte */
-    { "port_inb",              (uint32_t)port_inb              },
-    { "port_outb",             (uint32_t)port_outb             },
-    { "port_inw",              (uint32_t)port_inw              },
-    { "port_outw",             (uint32_t)port_outw             },
-    { "io_delay",              (uint32_t)io_delay              },
+    { "port_inb",              (uintptr_t)port_inb              },
+    { "port_outb",             (uintptr_t)port_outb             },
+    { "port_inw",              (uintptr_t)port_inw              },
+    { "port_outw",             (uintptr_t)port_outw             },
+    { "io_delay",              (uintptr_t)io_delay              },
     /* Interrupt */
-    { "irq_register_handler",  (uint32_t)irq_register_handler  },
-    { "pic_mask_irq",          (uint32_t)pic_mask_irq          },
-    { "pic_unmask_irq",        (uint32_t)pic_unmask_irq        },
-    { "pic_send_eoi",          (uint32_t)pic_send_eoi          },
-    { "interrupts_enable",     (uint32_t)interrupts_enable     },
-    { "interrupts_disable",    (uint32_t)interrupts_disable    },
+    { "irq_register_handler",  (uintptr_t)irq_register_handler  },
+    { "pic_mask_irq",          (uintptr_t)pic_mask_irq          },
+    { "pic_unmask_irq",        (uintptr_t)pic_unmask_irq        },
+    { "pic_send_eoi",          (uintptr_t)pic_send_eoi          },
+    { "interrupts_enable",     (uintptr_t)interrupts_enable     },
+    { "interrupts_disable",    (uintptr_t)interrupts_disable    },
     /* Scheduler */
-    { "sched_block",           (uint32_t)sched_block           },
-    { "sched_unblock",         (uint32_t)sched_unblock         },
+    { "sched_block",           (uintptr_t)sched_block           },
+    { "sched_unblock",         (uintptr_t)sched_unblock         },
     /* Memoria */
-    { "kmalloc",               (uint32_t)kmalloc               },
-    { "kfree",                 (uint32_t)kfree                 },
-    { "pmm_alloc_page",        (uint32_t)pmm_alloc_page        },
-    { "pmm_free_page",         (uint32_t)pmm_free_page         },
+    { "kmalloc",               (uintptr_t)kmalloc               },
+    { "kfree",                 (uintptr_t)kfree                 },
+    { "pmm_alloc_page",        (uintptr_t)pmm_alloc_page        },
+    { "pmm_free_page",         (uintptr_t)pmm_free_page         },
     /* Sentinella */
     { NULL, 0 }
 };
@@ -307,7 +307,7 @@ static int drvmgr_load_driver(const char *name, const char *path,
         goto cleanup;
     }
 
-    load_base = (uint8_t *)phys_base;
+    load_base = (uint8_t *)DA_FISICO(phys_base);
 
     /* Azzera tutta la zona del driver */
     {
@@ -468,7 +468,7 @@ static int drvmgr_load_driver(const char *name, const char *path,
                     *patch = sym_addr + *patch;
                     break;
                 case DRV_R_386_PC32:
-                    *patch = sym_addr + *patch - (uint32_t)patch;
+                    *patch = sym_addr + *patch - IN_NUMERO(patch);
                     break;
                 case DRV_R_386_GLOB_DAT:
                 case DRV_R_386_JMP_SLOT:
@@ -500,15 +500,15 @@ static int drvmgr_load_driver(const char *name, const char *path,
                 uint32_t    saddr = phys_base + symtab[i].st_value;
 
                 if (drv_strcmp(sname, "drv_init")  == 0)
-                    entry->drv_init  = (DrvInitFn)saddr;
+                    entry->drv_init  = (DrvInitFn)(uintptr_t)saddr;
                 else if (drv_strcmp(sname, "drv_read")  == 0)
-                    entry->drv_read  = (DrvReadFn)saddr;
+                    entry->drv_read  = (DrvReadFn)(uintptr_t)saddr;
                 else if (drv_strcmp(sname, "drv_write") == 0)
-                    entry->drv_write = (DrvWriteFn)saddr;
+                    entry->drv_write = (DrvWriteFn)(uintptr_t)saddr;
                 else if (drv_strcmp(sname, "drv_ioctl") == 0)
-                    entry->drv_ioctl = (DrvIoctlFn)saddr;
+                    entry->drv_ioctl = (DrvIoctlFn)(uintptr_t)saddr;
                 else if (drv_strcmp(sname, "drv_exit")  == 0)
-                    entry->drv_exit  = (DrvExitFn)saddr;
+                    entry->drv_exit  = (DrvExitFn)(uintptr_t)saddr;
             }
         }
     }

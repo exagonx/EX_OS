@@ -15,8 +15,16 @@
 #include "kernel.h"
 #include "idt.h"
 
+#if defined(__x86_64__)
+/* @EXOS-64: a 64 bit le voci sono di otto byte e i livelli quattro. «PDE *»
+ * resta il nome di uno spazio di indirizzi (la' e' la PML4): fuori da
+ * paging.c / paging64.c e' una maniglia, nessuno ci guarda dentro. */
+typedef uint64_t PDE;
+typedef uint64_t PTE;
+#else
 typedef uint32_t PDE;
 typedef uint32_t PTE;
+#endif
 
 /* Flag pagine */
 #define PG_PRESENT      (1 << 0)
@@ -107,16 +115,16 @@ typedef uint32_t PTE;
 
 /* Punta la pagina fissa all'APIC locale di indirizzo fisico `phys` e rende
  * l'indirizzo virtuale a cui leggerlo. Una volta, all'avvio. */
-void    *paging_mappa_apic(uint32_t phys);
-void    *paging_mappa_mmio_basso(uint32_t virt, uint32_t phys, uint32_t pagine);
+void    *paging_mappa_apic(paddr_t phys);
+void    *paging_mappa_mmio_basso(vaddr_t virt, paddr_t phys, uint32_t pagine);
 
 /* Porta in RAM le pagine dell'eseguibile che coprono un buffer utente,
  * prima di consegnarlo a un driver. Vedi paging.c. */
-void     vm_precarica_utente(uint32_t addr, uint32_t len);
+void     vm_precarica_utente(vaddr_t addr, uint32_t len);
 
-void    *paging_finestra_apri(uint32_t phys);
+void    *paging_finestra_apri(paddr_t phys);
 void     paging_finestra_chiudi(void);
-void     paging_azzera_fisica(uint32_t phys);
+void     paging_azzera_fisica(paddr_t phys);
 
 void     paging_init(void);
 
@@ -127,18 +135,18 @@ int      paging_pse_attivo(void);
 
 /* Mappa il framebuffer VESA con identita' nella PD del kernel E lo annota,
  * cosi' ogni PD di processo creata dopo se lo ritrova. Vedi paging.c. */
-int      paging_mappa_framebuffer(uint32_t phys, uint32_t byte);
+int      paging_mappa_framebuffer(paddr_t phys, uint32_t byte);
 
 /* kernel/arch/x86/mtrr.c: dichiara combinabile in scrittura la memoria video.
  * 0 se da adesso lo e', -1 se ha rinunciato (e il log dice perche'). */
 int mtrr_framebuffer_wc(uint32_t base, uint32_t byte);
-int      paging_map_page(PDE *pd, uint32_t virt, uint32_t phys, uint32_t flags);
-void     paging_unmap_page(PDE *pd, uint32_t virt);
-uint32_t paging_get_physical(PDE *pd, uint32_t virt);
-int      paging_riserva(PDE *pd, uint32_t virt);
+int      paging_map_page(PDE *pd, vaddr_t virt, paddr_t phys, uint32_t flags);
+void     paging_unmap_page(PDE *pd, vaddr_t virt);
+paddr_t  paging_get_physical(PDE *pd, vaddr_t virt);
+int      paging_riserva(PDE *pd, vaddr_t virt);
 /* Promette la pagina `virt` con quei permessi (PG_USER, PG_WRITABLE): vedi
  * PG_PIGRA. Rende 0, o -1 se manca la memoria per la tabella. */
-int  paging_pigra(PDE *pd, uint32_t virt, uint32_t flags);
+int  paging_pigra(PDE *pd, vaddr_t virt, uint32_t flags);
 PDE     *paging_create_directory(void);
 void     paging_destroy_directory(PDE *pd);
 
@@ -155,8 +163,8 @@ void     paging_destroy_directory(PDE *pd);
  * paging_marca_swap  sostituisce la mappatura con il segnaposto dello slot,
  *                 conservando i permessi che la pagina aveva.
  * ========================================================================== */
-int      paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame);
-void     paging_marca_swap(PDE *pd, uint32_t virt, uint32_t slot);
+int      paging_vittima(PDE **out_pd, vaddr_t *out_virt, paddr_t *out_frame);
+void     paging_marca_swap(PDE *pd, vaddr_t virt, uint32_t slot);
 void     paging_switch(PDE *pd);
 PDE     *paging_get_kernel_directory(void);
 PDE     *paging_get_current_directory(void);
@@ -170,10 +178,10 @@ int      paging_proteggi(struct Process *p, uint32_t virt, uint32_t pagine,
                          uint32_t prot);
 /* 1 if the kernel may write [va, va+len) for process p: present (brought in
  * if it has to be), user and writable. For the signal frame. See paging.c. */
-int      paging_utente_pronta(struct Process *p, uint32_t va, uint32_t len);
+int      paging_utente_pronta(struct Process *p, vaddr_t va, uint32_t len);
 /* Da' subito la pagina promessa a `virt` del processo p, se e' una pigra
  * (PG_PIGRA): rende 1 se adesso c'e', 0 se non era una pigra o la memoria e'
  * finita. */
-int      paging_pigra_tocca(struct Process *p, uint32_t virt);
+int      paging_pigra_tocca(struct Process *p, vaddr_t virt);
 
 #endif /* PAGING_H */

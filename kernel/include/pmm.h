@@ -17,18 +17,18 @@
 #define PAGE_SIZE   4096
 
 void     pmm_init(BootInfo *info);
-uint32_t pmm_alloc_page(void);
-uint32_t pmm_alloc_pages(uint32_t count);
+paddr_t  pmm_alloc_page(void);
+paddr_t  pmm_alloc_pages(uint32_t count);
 
 /* Allocazione nella FASCIA KERNEL (sotto USER_SPACE_BASE): obbligatoria per
  * tutto cio' che il kernel raggiunge al proprio indirizzo FISICO — heap di
  * kmalloc, stack kernel, page directory e page table. Vedi il commento in
  * pmm.c. Per le pagine dell'utente si usa pmm_alloc_page(), che pesca da
  * tutta la RAM. */
-uint32_t pmm_alloc_page_kernel(void);
-uint32_t pmm_alloc_pages_kernel(uint32_t count);
-void     pmm_free_page(uint32_t addr);
-void     pmm_free_pages(uint32_t addr, uint32_t count);
+paddr_t  pmm_alloc_page_kernel(void);
+paddr_t  pmm_alloc_pages_kernel(uint32_t count);
+void     pmm_free_page(paddr_t addr);
+void     pmm_free_pages(paddr_t addr, uint32_t count);
 /* =============================================================================
  * CONTEGGIO DEI RIFERIMENTI — una pagina fisica con piu' di un proprietario
  *
@@ -58,13 +58,13 @@ void     pmm_free_pages(uint32_t addr, uint32_t count);
  * Chi libera NON deve sapere niente: pmm_free_page() cala il conteggio e
  * restituisce la pagina solo quando arriva all'ultimo proprietario.
  * ============================================================================= */
-int      pmm_ref_inc(uint32_t addr);
-uint32_t pmm_ref_count(uint32_t addr);
+int      pmm_ref_inc(paddr_t addr);
+uint32_t pmm_ref_count(paddr_t addr);
 
 uint32_t pmm_get_free_pages(void);
 uint32_t pmm_get_used_pages(void);
 uint32_t pmm_get_total_pages(void);
-int      pmm_is_page_free(uint32_t addr);
+int      pmm_is_page_free(paddr_t addr);
 void     pmm_dump(void);
 
 /* =============================================================================

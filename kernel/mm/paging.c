@@ -35,6 +35,16 @@
  * Bit  9-11: AVL               — uso OS
  * Bit 12-31: Page Table Base   — indirizzo fisico page table / 4096
  * ============================================================================= */
+#if !defined(__x86_64__)
+/* @EXOS-64 (10 ottobre 2026). QUESTO FILE E' IN DUE META'.
+ *   - LE TABELLE (da qui fino a paging_get_current_directory): la paginazione
+ *     a due livelli del processore a 32 bit. La versione a 64 bit ha le sue,
+ *     a quattro livelli, in kernel/arch/x86_64/paging64.c, dietro la stessa
+ *     interfaccia; questa meta' a 64 bit non si compila.
+ *   - LA POLITICA (dopo): l'errore di pagina, la pila che cresce, le pagine
+ *     dal file, lo scambio, mprotect. Non dipende dal processore ed e' la
+ *     STESSA per i due kernel: tocca le tabelle solo attraverso le macro
+ *     TAB_* definite al confine. */
 typedef uint32_t PDE;   /* Page Directory Entry */
 typedef uint32_t PTE;   /* Page Table Entry */
 
@@ -1114,6 +1124,46 @@ PDE *paging_get_current_directory(void)
 {
     return g_current_pd;
 }
+#endif /* !__x86_64__: fine della meta' delle tabelle */
+
+/* =============================================================================
+ * IL CONFINE: come la politica guarda dentro le tabelle
+ *
+ * ! DA QUI IN GIU' NIENTE INDICI SCRITTI A MANO. La politica chiede quattro
+ * cose alle tabelle, sempre partendo da uno spazio (pd) e da un indirizzo:
+ *
+ *   TAB_C_E(pd, v)      c'e' una tabella delle pagine per v?
+ *   TAB_GRANDE(pd, v)   li' c'e' una pagina grande (4 MB, o 2 MB a 64 bit)?
+ *   TAB_DI(pd, v)       la tabella delle pagine di v (solo se TAB_C_E)
+ *   NELLA_TAB(v)        l'indice di v dentro la sua tabella
+ *   TAB_SPEZZA(pd, v)   la pagina grande di v diventa una tabella; 0 = fatto
+ *
+ * A 32 bit sono le espressioni di sempre, parola per parola: il kernel a
+ * 32 bit compilato da questo file e' identico a prima, istruzione per
+ * istruzione (tools/kernel32-uguale.sh). A 64 bit scendono i quattro livelli
+ * di paging64.c.
+ * ========================================================================== */
+#if defined(__x86_64__)
+#define PG_HUGE                 (1 << 7)
+#define PG_ADDR(entry)          ((entry) & 0x000FFFFFFFFFF000ull)
+uint64_t paging64_voce_pd(PDE *pd, vaddr_t virt);       /* paging64.c */
+int      paging64_spezza(PDE *pd, vaddr_t virt);
+#define TAB_C_E(pd, v)          (paging64_voce_pd((pd), (v)) & PG_PRESENT)
+#define TAB_GRANDE(pd, v)       (paging64_voce_pd((pd), (v)) & PG_HUGE)
+#define TAB_DI(pd, v)           ((PTE *)DA_FISICO(PG_ADDR(paging64_voce_pd((pd), (v)))))
+#define NELLA_TAB(v)            (((v) >> 12) & 511)
+#define TAB_SPEZZA(pd, v)       paging64_spezza((pd), (v))
+#else
+#define TAB_C_E(pd, v)          ((pd)[PD_INDEX(v)] & PG_PRESENT)
+#define TAB_GRANDE(pd, v)       ((pd)[PD_INDEX(v)] & PG_HUGE)
+#define TAB_DI(pd, v)           ((PTE *)PG_ADDR((pd)[PD_INDEX(v)]))
+#define NELLA_TAB(v)            PT_INDEX(v)
+#define TAB_SPEZZA(pd, v)       spezza_4mb((pd), PD_INDEX(v))
+#endif
+/* l'indirizzo della pagina che contiene v */
+#define PAGINA_DI(v)            ((v) & ~(vaddr_t)0xFFF)
+
+static int pte_riservata(vaddr_t virt);
 
 /* =============================================================================
  * page_fault_handler — Handler per #PF Page Fault (INT 14)
@@ -1182,9 +1232,9 @@ PDE *paging_get_current_directory(void)
 /* Le pagine, una volta deciso CHE la crescita e' legittima e DI CHI e' lo
  * stack. `p` e' il proprietario della piazzola, che non e' per forza chi ha
  * fatto il fault: vedi pf_cresci_stack qui sotto. */
-static int pf_cresci_pagine(Process *p, uint32_t fault_addr, int from_user)
+static int pf_cresci_pagine(Process *p, vaddr_t fault_addr, int from_user)
 {
-    uint32_t pagina, ind;
+    vaddr_t pagina, ind;
 
     /* Impegna TUTTE le pagine da quella che ha faultato fino alla base
      * attuale, non solo quella. Un programma puo' scendere di parecchie
@@ -1192,10 +1242,10 @@ static int pf_cresci_pagine(Process *p, uint32_t fault_addr, int from_user)
      * lasciare buchi non mappati in mezzo significherebbe un fault per
      * ognuno, con il rischio che uno di essi arrivi in un contesto dove
      * non possiamo servirlo. Il ciclo e' limitato dalla riserva. */
-    pagina = fault_addr & 0xFFFFF000;
+    pagina = PAGINA_DI(fault_addr);
 
     for (ind = pagina; ind < p->user_stack_base; ind += PAGE_SIZE) {
-        uint32_t phys = pmm_alloc_page();
+        paddr_t phys = pmm_alloc_page();
 
         /* ! SE NON C'E' POSTO SE NE FA: e' tutto il senso della memoria
          * virtuale. Prima di questa riga «RAM esaurita» voleva dire che il
@@ -1242,7 +1292,7 @@ static int pf_cresci_pagine(Process *p, uint32_t fault_addr, int from_user)
 }
 
 static int pf_cresci_stack(Process *p, InterruptFrame *frame,
-                           uint32_t fault_addr, uint32_t err, int from_user)
+                           vaddr_t fault_addr, uint32_t err, int from_user)
 {
     Process *padrone;
 
@@ -1257,7 +1307,7 @@ static int pf_cresci_stack(Process *p, InterruptFrame *frame,
         /* 5: vicinanza a ESP, solo dove ESP e' davvero disponibile.
          * Nessun rischio di overflow nella somma: fault_addr e' gia' stato
          * confinato fra limit e base, entrambi ampiamente sotto 0xC0000000. */
-        if (from_user && fault_addr + USER_STACK_SLACK < frame->user_esp)
+        if (from_user && fault_addr + USER_STACK_SLACK < FR_SP(frame))
             return 0;
 
         return pf_cresci_pagine(p, fault_addr, from_user);
@@ -1340,11 +1390,12 @@ static Process *immagine_di(Process *p)
     return p;
 }
 
-static int pf_carica_da_file(Process *p, uint32_t fault_addr)
+static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
 {
-    uint32_t pagina = fault_addr & 0xFFFFF000;
+    vaddr_t  pagina = PAGINA_DI(fault_addr);
     ProcVma *v      = NULL;
-    uint32_t i, phys, letti = 0, da_leggere = 0, off_file = 0;
+    uint32_t i, letti = 0, da_leggere = 0, off_file = 0;
+    paddr_t  phys;
     uint8_t  buf[PAGE_SIZE];
 
     p = immagine_di(p);
@@ -1369,7 +1420,7 @@ static int pf_carica_da_file(Process *p, uint32_t fault_addr)
     }
 
     if (da_leggere > 0) {
-        uint32_t eflags;
+        uintptr_t eflags;       /* largo come la pila: vale a 32 e a 64 bit */
         int      n;
 
         __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
@@ -1435,18 +1486,18 @@ static int pf_carica_da_file(Process *p, uint32_t fault_addr)
  * il filesystem. Gli errori si ignorano di proposito — se la pagina non
  * si puo' caricare lo scoprira' l'accesso vero, con la sua diagnostica.
  * ============================================================================= */
-void vm_precarica_utente(uint32_t addr, uint32_t len)
+void vm_precarica_utente(vaddr_t addr, uint32_t len)
 {
     Process *io = proc_get_current();
     Process *p  = immagine_di(io);
-    uint32_t pag, fine;
+    vaddr_t  pag, fine;
 
     if (p == NULL || io == NULL || io->page_directory == NULL || len == 0) return;
 
     fine = addr + len;
     if (fine < addr) return;   /* somma che gira: non e' un buffer valido */
 
-    for (pag = addr & 0xFFFFF000; pag < fine; pag += PAGE_SIZE) {
+    for (pag = PAGINA_DI(addr); pag < fine; pag += PAGE_SIZE) {
         if (paging_get_physical(io->page_directory, pag) != 0) continue;
         /* ! ANCHE LE PAGINE PROMESSE (0.236), e per la stessa ragione di
          * quelle dell'eseguibile: darle da dentro un driver, col lucchetto
@@ -1461,6 +1512,7 @@ void vm_precarica_utente(uint32_t addr, uint32_t len)
 /* =============================================================================
  * LE PAGINE PIGRE — vedi PG_PIGRA in paging.h (kernel 0.236)
  * ============================================================================= */
+#if !defined(__x86_64__)      /* a 64 bit: paging64.c */
 int paging_pigra(PDE *pd, uint32_t virt, uint32_t flags)
 {
     PTE *pt;
@@ -1474,6 +1526,7 @@ int paging_pigra(PDE *pd, uint32_t virt, uint32_t flags)
     }
     return 0;
 }
+#endif
 
 /* La pagina promessa arriva: azzerata, coi permessi che la promessa portava.
  *
@@ -1485,9 +1538,12 @@ int paging_pigra(PDE *pd, uint32_t virt, uint32_t flags)
  * prosegue verso la sua diagnostica: il processo muore con «pagina assente»
  * su un indirizzo del suo heap. E' il prezzo dichiarato del dare la memoria
  * dopo — prima la stessa situazione era una mmap che rispondeva ENOMEM. */
-int paging_pigra_tocca(Process *p, uint32_t virt)
+int paging_pigra_tocca(Process *p, vaddr_t virt)
 {
-    uint32_t pagina = virt & 0xFFFFF000, pdi, pti, pte, fisico;
+    vaddr_t  pagina = PAGINA_DI(virt);
+    uint32_t pti;
+    PTE      pte;
+    paddr_t  fisico;
     PTE     *pt;
     PDE     *pd;
 
@@ -1495,10 +1551,9 @@ int paging_pigra_tocca(Process *p, uint32_t virt)
     if (pagina < USER_SPACE_BASE || pagina >= USER_SPACE_END) return 0;
 
     pd  = p->page_directory;
-    pdi = PD_INDEX(pagina);
-    pti = PT_INDEX(pagina);
-    if (!(pd[pdi] & PG_PRESENT) || (pd[pdi] & PG_HUGE)) return 0;
-    pt  = (PTE *)PG_ADDR(pd[pdi]);
+    pti = NELLA_TAB(pagina);
+    if (!TAB_C_E(pd, pagina) || TAB_GRANDE(pd, pagina)) return 0;
+    pt  = TAB_DI(pd, pagina);
     pte = pt[pti];
     if (!PTE_E_PIGRA(pte)) return 0;
 
@@ -1519,7 +1574,7 @@ int paging_pigra_tocca(Process *p, uint32_t virt)
         return (pt[pti] & PG_PRESENT) ? 1 : 0;
     }
 
-    pt[pti] = (fisico & 0xFFFFF000) | (pte & (PG_USER | PG_WRITABLE)) | PG_PRESENT;
+    pt[pti] = PG_ADDR(fisico) | (pte & (PG_USER | PG_WRITABLE)) | PG_PRESENT;
     __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
     return 1;
 }
@@ -1537,10 +1592,12 @@ int paging_pigra_tocca(Process *p, uint32_t virt)
  * Le due si distinguono per un bit — vedi PG_SWAP in swap.h — e senza quel bit
  * ogni puntatore sbagliato diventerebbe la lettura di uno slot a caso.
  * ========================================================================== */
-static int pf_torna_da_swap(Process *p, uint32_t addr)
+static int pf_torna_da_swap(Process *p, vaddr_t addr)
 {
-    uint32_t pagina = ALIGN_DOWN(addr, PAGE_SIZE);
-    uint32_t pdi, pti, pte, fisico;
+    vaddr_t  pagina = ALIGN_DOWN(addr, PAGE_SIZE);
+    uint32_t pti;
+    PTE      pte;
+    paddr_t  fisico;
     PTE     *pt;
     PDE     *pd;
 
@@ -1548,11 +1605,10 @@ static int pf_torna_da_swap(Process *p, uint32_t addr)
     if (pagina < USER_SPACE_BASE) return 0;
 
     pd  = p->page_directory;
-    pdi = PD_INDEX(pagina);
-    pti = PT_INDEX(pagina);
+    pti = NELLA_TAB(pagina);
 
-    if (!(pd[pdi] & PG_PRESENT)) return 0;
-    pt  = (PTE *)PG_ADDR(pd[pdi]);
+    if (!TAB_C_E(pd, pagina)) return 0;
+    pt  = TAB_DI(pd, pagina);
     pte = pt[pti];
 
     if (!SWAP_PTE_E_SWAP(pte)) return 0;
@@ -1578,7 +1634,7 @@ static int pf_torna_da_swap(Process *p, uint32_t addr)
     /* ! I PERMESSI ERANO NELLA PTE, e si rimettono da li'. Ricostruirli a
      * indovinare — «e' utente, sara' scrivibile» — vorrebbe dire restituire
      * scrivibile una pagina che era di sola lettura. */
-    pt[pti] = (fisico & 0xFFFFF000) | SWAP_PTE_FLAGS(pte);
+    pt[pti] = PG_ADDR(fisico) | SWAP_PTE_FLAGS(pte);
     __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
 
     /* ! LO SLOT SI MOLLA SOLO ADESSO, a pagina rimessa a posto: mollarlo prima
@@ -1593,7 +1649,7 @@ static int pf_torna_da_swap(Process *p, uint32_t addr)
 
 void page_fault_handler(InterruptFrame *frame)
 {
-    uint32_t fault_addr = read_cr2();
+    vaddr_t  fault_addr = read_cr2();
     uint32_t err        = frame->err_code;
 
     /* Decodifica error code:
@@ -1688,21 +1744,31 @@ void page_fault_handler(InterruptFrame *frame)
 
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_RED);
         kprintf("\n[FAULT] PID %u '%s': page fault a 0x%08x (%s, %s, EIP=0x%08x) - processo terminato\n",
-                p ? p->pid : 0, p ? p->name : "?", fault_addr, reason, access, frame->eip);
+                p ? p->pid : 0, p ? p->name : "?", fault_addr, reason, access, (uint32_t)FR_IP(frame));
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
         klog(LOG_ERROR, "PF: PID %u '%s' terminato per fault a 0x%08x EIP=0x%08x (%s/%s)",
-             p ? p->pid : 0, p ? p->name : "?", fault_addr, frame->eip, reason, access);
+             p ? p->pid : 0, p ? p->name : "?", fault_addr, (uint32_t)FR_IP(frame), reason, access);
         /* Le voci della directory e della tabella per l'indirizzo: dicono se la
          * pagina non c'e' mai stata (0), se e' una riserva o una pagina pigra,
          * o se qualcuno l'ha tolta. Il 7 ottobre 2026 e' stata la riga che ha
          * fatto trovare la corsa in paging_map_page. */
         if (p != NULL && p->page_directory != NULL) {
+#if defined(__x86_64__)
+            uint64_t pde = paging64_voce_pd(p->page_directory, fault_addr);
+            uint64_t pte = ((pde & PG_PRESENT) && !(pde & PG_HUGE))
+                         ? TAB_DI(p->page_directory, fault_addr)[NELLA_TAB(fault_addr)]
+                         : ~0ull;
+            klog(LOG_ERROR, "PF:   pde 0x%08x%08x pte 0x%08x%08x rsp 0x%08x cr3 0x%08x",
+                 (uint32_t)(pde >> 32), (uint32_t)pde, (uint32_t)(pte >> 32), (uint32_t)pte,
+                 (uint32_t)FR_SP(frame), read_cr3());
+#else
             PDE pde = p->page_directory[PD_INDEX(fault_addr)];
             uint32_t pte = ((pde & PG_PRESENT) && !(pde & PG_HUGE))
                          ? ((PTE *)PG_ADDR(pde))[PT_INDEX(fault_addr)] : 0xFFFFFFFFu;
             klog(LOG_ERROR, "PF:   pde 0x%08x pte 0x%08x esp 0x%08x cr3 0x%08x pd 0x%08x",
                  pde, pte, frame->user_esp, read_cr3(), (uint32_t)p->page_directory);
+#endif
         }
 
         /* =====================================================================
@@ -1766,16 +1832,16 @@ void page_fault_handler(InterruptFrame *frame)
     kprintf("|  Causa     : %-32s  |\n", reason);
     kprintf("|  Accesso   : %-32s  |\n", access);
     kprintf("|  Livello   : %-32s  |\n", ring);
-    kprintf("|  EIP       : 0x%08x                    |\n", frame->eip);
+    kprintf("|  EIP       : 0x%08x                    |\n", (uint32_t)FR_IP(frame));
     kprintf("|  Err code  : 0x%08x                    |\n", err);
     kprintf("+==============================================+\n");
 
     kpanic("Page Fault non gestito in ring0 a 0x%08x (EIP=0x%08x)",
-           fault_addr, frame->eip);
+           fault_addr, (uint32_t)FR_IP(frame));
 }
 
 /* La PTE di `virt` nel processo corrente e' un segnaposto PG_RISERVA? */
-static int pte_riservata(uint32_t virt)
+static int pte_riservata(vaddr_t virt)
 {
     Process *p = proc_get_current();
     PDE     *pd;
@@ -1783,9 +1849,9 @@ static int pte_riservata(uint32_t virt)
 
     if (p == NULL || p->page_directory == NULL) return 0;
     pd = p->page_directory;
-    if (!(pd[PD_INDEX(virt)] & PG_PRESENT) || (pd[PD_INDEX(virt)] & PG_HUGE)) return 0;
-    pt = (PTE *)PG_ADDR(pd[PD_INDEX(virt)]);
-    return PTE_E_RISERVA(pt[PT_INDEX(virt)]);
+    if (!TAB_C_E(pd, virt) || TAB_GRANDE(pd, virt)) return 0;
+    pt = TAB_DI(pd, virt);
+    return PTE_E_RISERVA(pt[NELLA_TAB(virt)]);
 }
 
 /* =============================================================================
@@ -1795,6 +1861,7 @@ static int pte_riservata(uint32_t virt)
  * per un istante (fisico 0, senza PG_USER: ring 3 non la puo' toccare) si
  * sostituisce subito col segnaposto. Rende 0, o -1 se manca la tabella.
  * ============================================================================= */
+#if !defined(__x86_64__)      /* a 64 bit: paging64.c */
 int paging_riserva(PDE *pd, uint32_t virt)
 {
     PTE *pt;
@@ -1808,6 +1875,7 @@ int paging_riserva(PDE *pd, uint32_t virt)
     }
     return 0;
 }
+#endif
 
 /* =============================================================================
  * paging_proteggi — mprotect(): change what ring 3 may do with its own pages
@@ -1849,8 +1917,9 @@ int paging_riserva(PDE *pd, uint32_t virt)
 int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
 {
     PDE     *pd;
-    uint32_t i, va, nuovi;
-    uint32_t ram = pmm_get_total_pages() * PAGE_SIZE;
+    uint32_t i, nuovi;
+    vaddr_t  va;
+    paddr_t  ram = (paddr_t)pmm_get_total_pages() * PAGE_SIZE;
 
     if (p == NULL || p->page_directory == NULL) return -EINVAL;
     pd = p->page_directory;
@@ -1858,17 +1927,16 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
     /* 1. Every page must be resident. */
     for (i = 0; i < pagine; i++) {
         PTE *pt;
-        uint32_t pdi, pti;
+        uint32_t pti;
 
         va  = virt + i * PAGE_SIZE;
-        pdi = PD_INDEX(va);
-        pti = PT_INDEX(va);
+        pti = NELLA_TAB(va);
 
-        if ((pd[pdi] & PG_PRESENT) && (pd[pdi] & PG_HUGE)) {
-            if (spezza_4mb(pd, pdi) != 0) return -ENOMEM;
+        if (TAB_C_E(pd, va) && TAB_GRANDE(pd, va)) {
+            if (TAB_SPEZZA(pd, va) != 0) return -ENOMEM;
         }
-        if (pd[pdi] & PG_PRESENT) {
-            pt = (PTE *)PG_ADDR(pd[pdi]);
+        if (TAB_C_E(pd, va)) {
+            pt = TAB_DI(pd, va);
             if (pt[pti] & PG_PRESENT) continue;
             if (SWAP_PTE_E_SWAP(pt[pti])) {
                 if (!pf_torna_da_swap(p, va)) return -ENOMEM;
@@ -1894,12 +1962,13 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
     /* 2. Check the whole range before changing any of it. */
     for (i = 0; i < pagine; i++) {
         PTE *pt;
-        uint32_t pte, frame;
+        PTE      pte;
+        paddr_t  frame;
 
         va = virt + i * PAGE_SIZE;
-        if (!(pd[PD_INDEX(va)] & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
-        pt  = (PTE *)PG_ADDR(pd[PD_INDEX(va)]);
-        pte = pt[PT_INDEX(va)];
+        if (!TAB_C_E(pd, va)) { interrupts_enable(); return -ENOMEM; }
+        pt  = TAB_DI(pd, va);
+        pte = pt[NELLA_TAB(va)];
         if (PTE_E_RISERVA(pte) || PTE_E_PIGRA(pte)) continue;   /* senza pagina: niente da controllare */
         if (!(pte & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
 
@@ -1916,13 +1985,13 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
         PTE *pt;
 
         va = virt + i * PAGE_SIZE;
-        pt = (PTE *)PG_ADDR(pd[PD_INDEX(va)]);
-        if (!(pt[PT_INDEX(va)] & PG_PRESENT)) {
+        pt = TAB_DI(pd, va);
+        if (!(pt[NELLA_TAB(va)] & PG_PRESENT)) {
             /* Senza pagina: PROT_NONE e' una riserva, il resto una promessa
              * coi permessi nuovi. */
-            pt[PT_INDEX(va)] = (nuovi & PG_USER) ? (PG_PIGRA | nuovi) : PG_RISERVA;
+            pt[NELLA_TAB(va)] = (nuovi & PG_USER) ? (PG_PIGRA | nuovi) : PG_RISERVA;
         } else
-        pt[PT_INDEX(va)] = (pt[PT_INDEX(va)] & ~(uint32_t)(PG_USER | PG_WRITABLE))
+        pt[NELLA_TAB(va)] = (pt[NELLA_TAB(va)] & ~(PTE)(PG_USER | PG_WRITABLE))
                            | nuovi;
         /* Threads share the directory, so "current" is enough: every thread
          * of this program runs on this same CR3. */
@@ -1950,24 +2019,24 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
  * — a panic. The most common reason to deliver SIGSEGV is a stack that has
  * run out, which is exactly the case where the write would land on nothing.
  * ============================================================================= */
-int paging_utente_pronta(Process *p, uint32_t va, uint32_t len)
+int paging_utente_pronta(Process *p, vaddr_t va, uint32_t len)
 {
-    uint32_t pagina, fine;
+    vaddr_t  pagina, fine;
 
     if (p == NULL || p->page_directory == NULL || len == 0) return 0;
     if (va < USER_SPACE_BASE || va + len < va || va + len > USER_SPACE_END)
         return 0;
 
     fine = va + len;
-    for (pagina = va & 0xFFFFF000; pagina < fine; pagina += PAGE_SIZE) {
+    for (pagina = PAGINA_DI(va); pagina < fine; pagina += PAGE_SIZE) {
         PDE *pd = p->page_directory;
         PTE *pt;
-        uint32_t pte = 0;
+        PTE  pte = 0;
 
-        if ((pd[PD_INDEX(pagina)] & PG_PRESENT) &&
-            !(pd[PD_INDEX(pagina)] & PG_HUGE)) {
-            pt  = (PTE *)PG_ADDR(pd[PD_INDEX(pagina)]);
-            pte = pt[PT_INDEX(pagina)];
+        if (TAB_C_E(pd, pagina) &&
+            !TAB_GRANDE(pd, pagina)) {
+            pt  = TAB_DI(pd, pagina);
+            pte = pt[NELLA_TAB(pagina)];
         }
 
         if (!(pte & PG_PRESENT)) {
@@ -1976,9 +2045,9 @@ int paging_utente_pronta(Process *p, uint32_t va, uint32_t len)
                    : (pf_cresci_stack(p, NULL, pagina, 0, 0) ||
                       pf_carica_da_file(p, pagina));
             if (!ok) return 0;
-            if (!(pd[PD_INDEX(pagina)] & PG_PRESENT)) return 0;
-            pt  = (PTE *)PG_ADDR(pd[PD_INDEX(pagina)]);
-            pte = pt[PT_INDEX(pagina)];
+            if (!TAB_C_E(pd, pagina)) return 0;
+            pt  = TAB_DI(pd, pagina);
+            pte = pt[NELLA_TAB(pagina)];
         }
 
         if ((pte & (PG_PRESENT | PG_USER | PG_WRITABLE)) !=

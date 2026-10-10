@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.247
+**Versione:** 0.248
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -167,6 +167,11 @@ passa `e2fsck` di Linux e i file hanno le impronte giuste. Su un disco in PIO
 il guadagno dovrebbe essere maggiore: da misurare sul PC. Cancellare resta
 lento (un blocco per volta).
 
+**0.248**: cancellare un file su ext2 non costa piu' cinque comandi di disco
+per kilobyte. La bitmap del gruppo resta in memoria mentre si liberano i
+blocchi di un file e si scrive una volta, col descrittore. In QEMU `rm` di 50
+MB passa da piu' di venti secondi a circa sei, e il disco passa `e2fsck`.
+
 **0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
 I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono
 un posto fra `hd0`..`hd3` come gli altri: in QEMU il sistema si installa, legge,
@@ -269,6 +274,30 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
   un quarto di meta' e scrive i conti di ogni riproduzione nel registro
   (`dmesg hdaudio`). Da riascoltare.
+- **Le fondamenta per i 64 bit.** EX-OS avra' una versione a 64 bit accanto
+  a quella a 32, dallo stesso sorgente: `make ARCH=x86_64` (di serie `i386`,
+  e senza dirlo non cambia niente). Due repository, `netinst` e `netinst_64`:
+  `netupdate` 0.029 sa per quale macchina e' compilato, `versione.txt` dice
+  `arch`, e un repository dell'architettura sbagliata si rifiuta. Il piano a
+  tappe e' in `in_lavorazione.txt` (`@EXOS-64`). La prima tappa e' fatta: il
+  kernel arriva in modo a 64 bit in QEMU (`tools/prova_kernel64.sh`), col
+  caricatore di sempre; su un Pentium dice che i 64 bit non ci sono. Non e'
+  ancora un sistema. Seconda tappa a meta': tutto il kernel comune COMPILA a
+  64 bit (restano da riscrivere i sei file del processore), e a ogni passo il
+  kernel a 32 bit e' risultato identico istruzione per istruzione.
+  Terza tappa fatta: il kernel COMUNE gira a 64 bit. `make ARCH=x86_64
+  kernel64` compila gli stessi sorgenti del kernel a 32 bit, meno i tre file
+  del processore e piu' quelli di `kernel/arch/x86_64` (ingresso, segmenti,
+  interrupt, cambio di contesto, tabelle a quattro livelli), e in QEMU
+  arriva in fondo all'avvio - memoria, scheduler, chiamate di sistema, il
+  dischetto - e avvia in ring 3 un programma ELF64 che fa chiamate di
+  sistema, dorme e torna. Il kernel a 32 bit e' rimasto identico a ogni
+  passo. Non e' ancora un sistema: mancano la libc e i programmi (tappa 4),
+  e a 64 bit segnali, librerie condivise e driver non ci sono.
+- **Scrivania: memoria e avvio (pm 0.020).** Una voce di menu puo' dire
+  quanta memoria vuole (`ram=2048`) e il menu avvisa prima di avviarla su una
+  macchina che ne ha meno. Dal pannello Impostazioni si accendono e spengono
+  l'orologio e l'icona del volume nella barra.
 - **Exilla: la barra di scorrimento si vede.** Era quella di Android, un
   pollice sottile bianco su bianco: ora e' quella classica con le frecce e i
   grigi di ExWin. Serve ripubblicare il pacchetto `exilla`.

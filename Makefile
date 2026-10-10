@@ -75,6 +75,121 @@ ASFLAGS_BIN   := -f bin
 ASFLAGS_ELF   := -f elf32 -g
 
 # --- Directory ----------------------------------------------------------------
+# =============================================================================
+# ! ARCH: PER QUALE MACCHINA SI COSTRUISCE (10 ottobre 2026)
+#
+# i386 (di serie) e' il sistema di sempre, e senza dire niente NON CAMBIA
+# NULLA: stesse directory, stessi comandi, stessi binari. x86_64 e' la
+# versione a 64 bit che nasce accanto, dallo stesso sorgente: avra' le sue
+# directory (build-64, dist/netinst_64) per non mescolare binari che non sono
+# intercambiabili. Oggi a 64 bit si costruisce solo cio' che e' gia' stato
+# portato: un bersaglio che non lo e' si ferma e lo dice (vedi `solo-i386`).
+# =============================================================================
+ARCH ?= i386
+ifeq ($(filter $(ARCH),i386 x86_64),)
+$(error ARCH=$(ARCH) non la conosco: i386 oppure x86_64)
+endif
+ifeq ($(ARCH),x86_64)
+ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 pulisci64,$(or $(MAKECMDGOALS),all)),)
+$(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: arch-dice kernel64-prova kernel64-sondaggio)
+endif
+endif
+
+# ! `make` DA SOLO DEVE RESTARE `make all`. I bersagli qui sotto stanno in cima
+# al file, e make prende come predefinito il PRIMO che incontra: senza questa
+# riga un `make` senza argomenti stamperebbe «ARCH=i386» e basta (successo
+# davvero, il 10 ottobre 2026, per dieci minuti).
+.DEFAULT_GOAL := all
+
+.PHONY: arch-dice
+arch-dice:
+	@echo "ARCH=$(ARCH)"
+
+# --- @EXOS-64, tappa 1: il kernel arriva in modo a 64 bit --------------------
+#
+# ! SI COMPILA COL gcc DELL'HOST, in -m64, come il kernel a 32 bit si compila
+# con -m32: non serve un compilatore incrociato. -mno-red-zone perche' un
+# interrupt scrive sotto la pila senza chiedere; -mgeneral-regs-only perche'
+# nel kernel i registri SSE non sono ancora salvati da nessuno.
+#
+# Il caricatore e' quello a 32 bit, tale e quale (build/stage1.bin e
+# build/stage2.bin): vedi kernel/arch/x86_64/entry.asm.
+#
+#     make ARCH=x86_64 kernel64-prova     costruisce e fa dist/floppy64.img
+#     tools/prova_kernel64.sh             lo avvia in QEMU e guarda la seriale
+K64_DIR := kernel/arch/x86_64
+K64_OUT := build-64
+K64_CFLAGS := -m64 -ffreestanding -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only \
+              -mcmodel=small -fno-stack-protector -fno-asynchronous-unwind-tables \
+              -O2 -Wall -Wextra -Wpointer-to-int-cast -Wint-to-pointer-cast
+
+K64_INC    := -Ikernel/include -Idrivers/tty -Idrivers/kbd -Idrivers/net
+K64_COMUNI := kernel/arch/x86/kprintf.c kernel/arch/x86/memfun.c kernel/mm/pmm.c kernel/mm/kmalloc.c
+
+.PHONY: kernel64-prova pulisci64
+kernel64-prova:
+	@echo "=== EX-OS a 64 bit, tappa 1: l'ingresso in long mode ==="
+	@[ -f build/stage1.bin ] && [ -f build/stage2.bin ] || \
+	    { echo "mancano build/stage1.bin e build/stage2.bin: prima 'make' (la versione a 32 bit)"; exit 1; }
+	@mkdir -p $(K64_OUT)
+	nasm -f elf64 $(K64_DIR)/entry.asm -o $(K64_OUT)/entry.o
+	nasm -f elf64 $(K64_DIR)/isr64.asm -o $(K64_OUT)/isr64.o
+	for f in main64 gdt64 idt64 colla64 paging64; do \
+	    gcc $(K64_CFLAGS) $(K64_INC) -c $(K64_DIR)/$$f.c -o $(K64_OUT)/$$f.o || exit 1; \
+	done
+	@# I file COMUNI, gli stessi del kernel a 32 bit: man mano che la versione
+	@# a 64 bit cresce, questa lista si allunga e colla64.c si accorcia.
+	for f in $(K64_COMUNI); do \
+	    gcc $(K64_CFLAGS) $(K64_INC) -c $$f -o $(K64_OUT)/$$(basename $$f .c).o || exit 1; \
+	done
+	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -T $(K64_DIR)/kernel64.ld \
+	    $(K64_OUT)/entry.o $(K64_OUT)/main64.o $(K64_OUT)/gdt64.o $(K64_OUT)/idt64.o \
+	    $(K64_OUT)/colla64.o $(K64_OUT)/paging64.o $(K64_OUT)/isr64.o \
+	    $(patsubst %.c,$(K64_OUT)/%.o,$(notdir $(K64_COMUNI))) -o $(K64_OUT)/kernel.elf
+	objcopy -O binary $(K64_OUT)/kernel.elf $(K64_OUT)/kernel.bin
+	@chmod +x tools/mkfloppy64.sh
+	@tools/mkfloppy64.sh
+	@echo "[OK] $(K64_OUT)/kernel.bin ($$(stat -c%s $(K64_OUT)/kernel.bin) byte), dist/floppy64.img"
+
+pulisci64:
+	rm -rf $(K64_OUT) dist/floppy64.img
+
+# --- @EXOS-64, tappa 2: quanto manca al kernel comune per compilare a 64 bit --
+#
+# Non costruisce niente: compila ogni sorgente del kernel a 64 bit SOLO per
+# sentire che cosa dice il compilatore, e fa il conto file per file. «errori»
+# sono le cose che non compilano; «indirizzi» sono i punti in cui un puntatore
+# passa per un intero di un'altra misura - a 32 bit innocui, a 64 un indirizzo
+# tagliato a meta'. La tappa e' finita quando le due colonne sono a zero per
+# tutto cio' che non sta in kernel/arch/x86 (quello si riscrive, non si pulisce).
+#
+#     make ARCH=x86_64 kernel64-sondaggio
+# ! I REGISTRI DEL CONTEGGIO NON STANNO IN build-64/, che va in git: stanno in
+# /tmp. Sono carta da buttare, si rifanno a ogni giro.
+K64_SONDA := /tmp/exos-sondaggio64
+# ! QUESTI NON SI PULISCONO, SI RISCRIVONO: sono il processore a 32 bit messo
+# per iscritto - le tabelle dei segmenti e degli interrupt, la paginazione a
+# due livelli, l'avvio degli altri processori. La versione a 64 bit avra' i
+# suoi in kernel/arch/x86_64, dietro le stesse interfacce (paging.h, idt.h...).
+K64_RISCRIVERE := kernel/arch/x86/gdt.c kernel/arch/x86/idt.c kernel/arch/x86/smp.c
+.PHONY: kernel64-sondaggio
+kernel64-sondaggio:
+	@mkdir -p $(K64_SONDA)
+	@te=0; ti=0; fe=0; \
+	for f in $$(find kernel -name '*.c' | grep -v arch/x86_64 | grep -v -x -F "$$(printf '%s\n' $(K64_RISCRIVERE))" | sort); do \
+	    o=$(K64_SONDA)/$$(echo $$f | tr '/' '_').log; \
+	    gcc $(K64_CFLAGS) -Ikernel/include -Ikernel -Idrivers/net -Idrivers -Idrivers/tty -Idrivers/kbd -Ilib/include \
+	        -c -o /dev/null $$f > $$o 2>&1; \
+	    e=$$(grep -c ' error: \| Error: ' $$o); \
+	    i=$$(grep -c 'pointer-to-int-cast\|int-to-pointer-cast\|incompatible-pointer-types' $$o); \
+	    [ $$e -gt 0 ] || [ $$i -gt 0 ] && printf '  %-34s errori %3d  indirizzi %3d\n' $$f $$e $$i; \
+	    te=$$((te + e)); ti=$$((ti + i)); [ $$e -gt 0 ] || [ $$i -gt 0 ] && fe=$$((fe + 1)); \
+	done; \
+	echo "  ---"; \
+	echo "  $$fe file da sistemare: $$te errori, $$ti indirizzi"; \
+	echo "  (fuori dal conto, da riscrivere per i 64 bit: $(K64_RISCRIVERE))"; \
+	echo "  (i particolari: $(K64_SONDA)/)"
+
 BUILD_DIR   := build
 DIST_DIR    := dist
 BOOT_DIR    := bootloader
@@ -5144,6 +5259,62 @@ $(BUILD_KERNEL)/tty.o: drivers/tty/tty.c
 
 -include $(BUILD_KERNEL)/tty.d
 
+# ==============================================================================
+# @EXOS-64, tappa 3d — IL KERNEL INTERO A 64 BIT
+#
+#     make ARCH=x86_64 kernel64
+#
+# Gli STESSI sorgenti del kernel a 32 bit (KERNEL_C_SRC, qui sopra) meno i tre
+# che sono il processore a 32 bit messo per iscritto (K64_RISCRIVERE), piu' i
+# file di kernel/arch/x86_64 che ne prendono il posto. tty.c e i due settori di
+# avvio incorporati come nel kernel a 32 bit.
+#
+# ! NON E' ANCORA IL KERNEL CHE SI AVVIA DAL DISCHETTO DI PROVA: quello resta
+# kernel64-prova (main64.c, le prove delle tappe) finche' questo non arriva a
+# un programma. Per questo esce in build-64/kernel-intero.*, non in kernel.bin.
+# ==============================================================================
+K64I_OUT   := $(K64_OUT)/kernel
+K64I_INC   := -Ikernel/include -Ilib/include -Idrivers/tty -Idrivers/kbd
+K64I_C     := $(filter-out $(K64_RISCRIVERE),$(KERNEL_C_SRC))
+K64I_ARCH  := gdt64 idt64 paging64 pagine64 cpu64 smp64 avvio64
+K64I_ASM   := entry isr64 cambio64
+K64I_OBJ   := $(patsubst %,$(K64I_OUT)/arch64/%.o,$(K64I_ASM) $(K64I_ARCH)) \
+              $(patsubst $(KERNEL_DIR)/%.c,$(K64I_OUT)/%.o,$(K64I_C)) \
+              $(K64I_OUT)/tty.o $(K64I_OUT)/mbr_bin.o $(K64I_OUT)/boothd_bin.o
+
+.PHONY: kernel64
+kernel64:
+	@echo "=== EX-OS a 64 bit: il kernel intero ==="
+	@[ -f build/boot/mbr_bin.c ] && [ -f build/boot/boothd_bin.c ] || \
+	    { echo "mancano i settori di avvio in build/boot: prima 'make' (la versione a 32 bit)"; exit 1; }
+	@mkdir -p $(K64I_OUT)/arch64
+	@for f in $(K64I_ASM); do \
+	    nasm -f elf64 $(K64_DIR)/$$f.asm -o $(K64I_OUT)/arch64/$$f.o || exit 1; \
+	done
+	@for f in $(K64I_ARCH); do \
+	    gcc $(K64_CFLAGS) -DK64_INTERO $(K64I_INC) -c $(K64_DIR)/$$f.c -o $(K64I_OUT)/arch64/$$f.o || exit 1; \
+	done
+	@for f in $(K64I_C); do \
+	    o=$(K64I_OUT)/$${f#$(KERNEL_DIR)/}; o=$${o%.c}.o; mkdir -p $$(dirname $$o); \
+	    gcc $(K64_CFLAGS) $(K64I_INC) -c $$f -o $$o || exit 1; \
+	done
+	@gcc $(K64_CFLAGS) $(K64I_INC) -c drivers/tty/tty.c -o $(K64I_OUT)/tty.o
+	@gcc $(K64_CFLAGS) $(K64I_INC) -c build/boot/mbr_bin.c -o $(K64I_OUT)/mbr_bin.o
+	@gcc $(K64_CFLAGS) $(K64I_INC) -c build/boot/boothd_bin.c -o $(K64I_OUT)/boothd_bin.o
+	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -z noexecstack -T $(K64_DIR)/kernel64.ld \
+	    $(K64I_OBJ) -o $(K64_OUT)/kernel-intero.elf
+	objcopy -O binary $(K64_OUT)/kernel-intero.elf $(K64_OUT)/kernel-intero.bin
+	@# Il primo programma a 64 bit (tools/prove64/primo.c): senza libc, che a
+	@# 64 bit non c'e' ancora. Sul dischetto di prova fa da /bin/sh.
+	@mkdir -p $(K64_OUT)/prove
+	gcc -m64 -ffreestanding -fno-pic -fno-pie -mgeneral-regs-only -fno-stack-protector \
+	    -fno-asynchronous-unwind-tables -O2 -Wall -Wextra -c tools/prove64/primo.c -o $(K64_OUT)/prove/primo.o
+	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -z noexecstack -T tools/prove64/primo.ld \
+	    $(K64_OUT)/prove/primo.o -o $(K64_OUT)/prove/primo
+	@chmod +x tools/mkfloppy64.sh
+	@tools/mkfloppy64.sh intero
+	@echo "[OK] $(K64_OUT)/kernel-intero.bin ($$(stat -c%s $(K64_OUT)/kernel-intero.bin) byte), dist/floppy64-intero.img"
+
 # FIX BUG #1: Due step distinti:
 #   1. Link ELF32 (kernel.elf) — per GDB, simboli di debug, analisi
 #   2. objcopy --output-target binary (kernel.bin) — flat binary per il boot
@@ -7756,7 +7927,7 @@ sdk-fresco: $(LIBC_PONTI_OBJ) $(LIBC_SO)
 .PHONY: netinst
 netinst: iso-exos sdk-fresco $(EXILLA_BIN)
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh
-	@$(TOOLS_DIR)/mknetinst.sh
+	@ARCH=$(ARCH) $(TOOLS_DIR)/mknetinst.sh
 
 # =============================================================================
 # netinst-img — IL FLOPPY DELLA RETE

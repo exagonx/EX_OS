@@ -191,7 +191,7 @@ static int canarino_rotto(KHeapBlock *b, const char *quando)
     klog(LOG_ERROR, "KHEAP: %s - il blocco 0x%08x (chiesti %u byte, blocco "
          "%u) e' stato scritto OLTRE LA FINE: al posto del canarino c'e' "
          "0x%08x. L'aveva allocato chi sta a 0x%08x (risolvilo con "
-         "build/kernel.elf).", quando, (uint32_t)(b + 1), b->chiesti, b->size,
+         "build/kernel.elf).", quando, (uint32_t)IN_NUMERO(b + 1), b->chiesti, b->size,
          *canarino_di(b), b->chi);
 
     /* ! SE QUESTA RIGA COMPARE, LA STRADA E' SEGNATA e non va ricostruita.
@@ -246,7 +246,7 @@ static KHeapRegion *regione_di(const void *p)
     KHeapRegion *r;
 
     for (r = g_regioni; r != NULL; r = r->next)
-        if ((uint32_t)p >= (uint32_t)r && (uint32_t)p < r->fine)
+        if (IN_NUMERO(p) >= IN_NUMERO(r) && IN_NUMERO(p) < r->fine)
             return r;
 
     return NULL;
@@ -265,8 +265,8 @@ static KHeapBlock *regione_primo(KHeapRegion *r)
  * fine di `r`. E' la domanda che va fatta PRIMA di leggere b->magic. */
 static inline int dentro_regione(KHeapRegion *r, KHeapBlock *b)
 {
-    return ((uint32_t)b >= (uint32_t)regione_primo(r) &&
-            (uint32_t)b + BLOCK_HEADER_SIZE <= r->fine);
+    return (IN_NUMERO(b) >= IN_NUMERO(regione_primo(r)) &&
+            IN_NUMERO(b) + BLOCK_HEADER_SIZE <= r->fine);
 }
 
 /* =============================================================================
@@ -307,7 +307,7 @@ static KHeapBlock *heap_expand(uint32_t pages)
         for (r = g_regioni; r != NULL; r = r->next) {
             if (r->fine == phys) {
                 r->fine    = phys + size_bytes;
-                new_block  = (KHeapBlock *)phys;
+                new_block  = (KHeapBlock *)DA_FISICO(phys);
                 new_block->size  = size_bytes - BLOCK_HEADER_SIZE;
                 new_block->magic = HEAP_MAGIC;
                 new_block->flags = BLOCK_FREE;
@@ -318,7 +318,7 @@ static KHeapBlock *heap_expand(uint32_t pages)
                 g_heap_end   = new_block;
 
                 klog(LOG_DEBUG, "KMALLOC: regione allungata a 0x%08x "
-                     "(+%u pagine, fine 0x%08x)", (uint32_t)r, pages, r->fine);
+                     "(+%u pagine, fine 0x%08x)", (uint32_t)IN_NUMERO(r), pages, r->fine);
                 return new_block;
             }
         }
@@ -329,7 +329,7 @@ static KHeapBlock *heap_expand(uint32_t pages)
      * multiplo di HEAP_ALIGN: l'allineamento dei blocchi resta quello che
      * sarebbe stato senza. */
     {
-        KHeapRegion *r = (KHeapRegion *)phys;
+        KHeapRegion *r = (KHeapRegion *)DA_FISICO(phys);
 
         r->fine   = phys + size_bytes;
         r->next   = g_regioni;
@@ -394,7 +394,7 @@ void kmalloc_init(void)
     klog(LOG_INFO, "KMALLOC: heap inizializzato (%u KB iniziali)",
          (heap_pages_initial * PAGE_SIZE) / 1024);
     klog(LOG_INFO, "KMALLOC: blocco iniziale a 0x%08x (%u byte payload)",
-         (uint32_t)first_block, first_block->size);
+         (uint32_t)IN_NUMERO(first_block), first_block->size);
 }
 
 /* =============================================================================
@@ -423,7 +423,7 @@ void *kmalloc(size_t size)
     block = g_free_list;
     while (block != NULL) {
         if (!block_valid(block)) {
-            kpanic("KMALLOC: heap corrotto! Magic errato a 0x%08x", (uint32_t)block);
+            kpanic("KMALLOC: heap corrotto! Magic errato a 0x%08x", (uint32_t)IN_NUMERO(block));
         }
 
         if (block->flags == BLOCK_FREE && block->size >= aligned_size) {
@@ -476,7 +476,7 @@ void *kmalloc(size_t size)
     g_alloc_count++;
 
     klog(LOG_DEBUG, "KMALLOC: allocati %u byte a 0x%08x (richiesti: %u)",
-         block->size, (uint32_t)(block + 1), size);
+         block->size, (uint32_t)IN_NUMERO(block + 1), size);
 
     /* Ritorna puntatore al payload (subito dopo l'header) */
     return (void *)(block + 1);
@@ -498,7 +498,7 @@ void *kmalloc_aligned(size_t size, size_t alignment)
     if (raw == NULL) return NULL;
 
     /* Calcola indirizzo allineato */
-    aligned = (uint8_t *)ALIGN_UP((uint32_t)(raw + sizeof(void *)), alignment);
+    aligned = (uint8_t *)ALIGN_UP(IN_NUMERO(raw + sizeof(void *)), alignment);
 
     /* Salva puntatore originale subito prima del blocco allineato */
     ptrref  = (void **)(aligned - sizeof(void *));
@@ -530,15 +530,15 @@ void kfree(void *ptr)
     regione = regione_di(block);
     if (regione == NULL) {
         kpanic("KFREE: 0x%08x non sta in nessuna regione dello heap",
-               (uint32_t)ptr);
+               (uint32_t)IN_NUMERO(ptr));
     }
 
     if (!block_valid(block)) {
-        kpanic("KFREE: puntatore non valido o heap corrotto: 0x%08x", (uint32_t)ptr);
+        kpanic("KFREE: puntatore non valido o heap corrotto: 0x%08x", (uint32_t)IN_NUMERO(ptr));
     }
 
     if (block->flags == BLOCK_FREE) {
-        klog(LOG_WARN, "KFREE: doppia liberazione a 0x%08x!", (uint32_t)ptr);
+        klog(LOG_WARN, "KFREE: doppia liberazione a 0x%08x!", (uint32_t)IN_NUMERO(ptr));
         return;
     }
 
@@ -551,7 +551,7 @@ void kfree(void *ptr)
     block->flags = BLOCK_FREE;
     g_free_count++;
 
-    klog(LOG_DEBUG, "KFREE: liberati %u byte da 0x%08x", block->size, (uint32_t)ptr);
+    klog(LOG_DEBUG, "KFREE: liberati %u byte da 0x%08x", block->size, (uint32_t)IN_NUMERO(ptr));
 
     /* Coalescenza con il blocco successivo fisicamente adiacente (forward).
      *
@@ -571,10 +571,10 @@ void kfree(void *ptr)
      * sbagliata resta, ed e' l'unico indizio di chi l'ha scritta. */
     next_phys = block_next_phys(block);
     if (!dentro_regione(regione, next_phys)) {
-        if ((uint32_t)next_phys > regione->fine) {
+        if (IN_NUMERO(next_phys) > regione->fine) {
             klog(LOG_ERROR, "KFREE: 0x%08x dice di essere lungo %u byte, ma la "
                  "sua regione 0x%08x-0x%08x finisce prima: intestazione rotta",
-                 (uint32_t)ptr, block->size, (uint32_t)regione, regione->fine);
+                 (uint32_t)IN_NUMERO(ptr), block->size, (uint32_t)IN_NUMERO(regione), regione->fine);
             g_intestazioni_rotte++;
         }
         g_stop_avanti++;
@@ -629,8 +629,8 @@ void kfree(void *ptr)
             if (!block_valid(scan)) {
                 klog(LOG_ERROR, "KMALLOC: firma rotta a 0x%08x nella regione "
                      "0x%08x-0x%08x (libero 0x%08x): niente coalescenza "
-                     "all'indietro", (uint32_t)scan, (uint32_t)regione,
-                     regione->fine, (uint32_t)ptr);
+                     "all'indietro", (uint32_t)IN_NUMERO(scan), (uint32_t)IN_NUMERO(regione),
+                     regione->fine, (uint32_t)IN_NUMERO(ptr));
                 break;
             }
 
@@ -698,17 +698,17 @@ uint32_t kmalloc_verifica(void)
             if (!block_valid(b)) {
                 klog(LOG_ERROR, "KHEAP: a 0x%08x, dentro la regione che "
                      "finisce a 0x%08x, non c'e' nessuna firma: la catena "
-                     "dei blocchi si e' rotta qui", (uint32_t)b, r->fine);
+                     "dei blocchi si e' rotta qui", (uint32_t)IN_NUMERO(b), r->fine);
                 guai++;
                 break;      /* da qui in poi non si sa piu' dove sono */
             }
 
             visti++;
 
-            if ((uint32_t)b + BLOCK_HEADER_SIZE + b->size > r->fine) {
+            if (IN_NUMERO(b) + BLOCK_HEADER_SIZE + b->size > r->fine) {
                 klog(LOG_ERROR, "KHEAP: il blocco 0x%08x dice di essere lungo "
                      "%u byte, ma la sua regione finisce a 0x%08x: "
-                     "intestazione rotta", (uint32_t)b, b->size, r->fine);
+                     "intestazione rotta", (uint32_t)IN_NUMERO(b), b->size, r->fine);
                 guai++;
                 break;
             }

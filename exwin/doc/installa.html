@@ -677,6 +677,19 @@ percorso, a fine controllo <code>netupdate</code> aggiunge
 </p>
 
 <p class="nota">
+<b>Un repository e' per UN'architettura.</b> EX-OS avra' una versione a 64
+bit accanto a quella a 32, e i programmi dell'una non girano sull'altra. I due
+repository stanno uno accanto all'altro sul server
+(<code>.../netinst</code> e <code>.../netinst_64</code>): l'indirizzo che si
+scrive con <code>netupdate -set</code> e' lo stesso, e la coda
+<code>_64</code> la aggiunge da se' il <code>netupdate</code> a 64 bit. Il
+file <code>versione.txt</code> dice per chi e' (<code>arch = i386</code>
+oppure <code>arch = x86_64</code>) e un repository dell'architettura
+sbagliata viene rifiutato prima di toccare qualunque cosa. Per passare da 32
+a 64 bit non basta aggiornare: serve una reinstallazione.
+</p>
+
+<p class="nota">
 <b>Exilla (Firefox) resta fuori da <code>-yesall</code>, e si chiede per
 nome:</b> <code>netupdate -install:exilla</code>. Sono 290 MB, vanno in
 <code>/exwin/app/exilla</code>, e <code>netupdate</code> scrive la voce nel

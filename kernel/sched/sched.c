@@ -139,7 +139,7 @@ static Process *pcb_alloc(void)
     uint32_t i, liberi = 0;
     Process *self = g_current;
     Process *preso = NULL;
-    uint32_t eflags;
+    uintptr_t eflags;       /* largo come la pila: vale a 32 e a 64 bit */
 
     /* Si preserva IF invece di riabilitarlo a forza: proc_create la chiamano
      * anche l'avvio e sys_spawn, e uno dei due potrebbe un giorno arrivare
@@ -420,13 +420,13 @@ static void init_reaper_task(void)
 #define PROC_STACK_OFF_EAX  11
 #define PROC_STACK_OFF_ECX  10
 
-void proc_set_entry(Process *proc, uint32_t entry_point, uint32_t user_stack_top)
+void proc_set_entry(Process *proc, vaddr_t entry_point, vaddr_t user_stack_top)
 {
     /* Lo stack costruito da proc_create ha, a partire da kernel_esp,
      * l'ordine: GS, FS, ES, DS, EDI, ESI, EBP, ESP(dummy), EBX, EDX,
      * ECX, EAX, EFLAGS, ret_addr — quindi EAX e' a sp[11] e ECX a
      * sp[10] a partire da kernel_esp. */
-    uint32_t *sp = (uint32_t *)proc->kernel_esp;
+    uintptr_t *sp = (uintptr_t *)proc->kernel_esp;
     sp[PROC_STACK_OFF_EAX] = entry_point;
     sp[PROC_STACK_OFF_ECX] = user_stack_top;
 
@@ -448,7 +448,7 @@ void proc_set_entry(Process *proc, uint32_t entry_point, uint32_t user_stack_top
      * contesto salvato qui sopra e non ha bisogno di un secondo posto. */
 }
 
-Process *proc_create(const char *name, uint32_t entry_point,
+Process *proc_create(const char *name, vaddr_t entry_point,
                      uint32_t priority, int is_kernel_task)
 {
     Process  *proc;
@@ -588,7 +588,13 @@ for (uint32_t pi = 0; pi < npages; pi++) {
      * questo processo, lui eseguirà il "ret" e tornerà a proc_entry_stub().
      * ========================================================================== */
 
-    uint32_t *sp = (uint32_t *)proc->kernel_stack_top;
+    /* ! @EXOS-64: LA FORMA DI QUESTA PILA VALE PER I DUE KERNEL. Sono
+     * quattordici parole larghe quanto un puntatore. A 32 bit le legge
+     * context_switch.asm (i quattro segmenti, popad, eflags, il ritorno); a
+     * 64 bit kernel/arch/x86_64/cambio64.asm le legge nello stesso ordine,
+     * con R12..R15 al posto dei quattro segmenti. Chi cambia una riga qui
+     * sotto la cambia per tutti e due: guardare quel file. */
+    uintptr_t *sp = (uintptr_t *)proc->kernel_stack_top;
 
     /* Uno dei due trampolini (vedi context_switch.asm) riceve l'entry
      * point in EAX e, per i processi utente, lo user_esp in ECX —
@@ -600,9 +606,9 @@ for (uint32_t pi = 0; pi < npages; pi++) {
      * codice utente ancora in ring0, con CPL/selettori/stack sbagliati. */
     extern void proc_entry_stub_user(void);
     extern void proc_entry_stub_kernel(void);
-    uint32_t stub_addr = is_kernel_task
-                        ? (uint32_t)proc_entry_stub_kernel
-                        : (uint32_t)proc_entry_stub_user;
+    uintptr_t stub_addr = is_kernel_task
+                        ? IN_NUMERO(proc_entry_stub_kernel)
+                        : IN_NUMERO(proc_entry_stub_user);
 
     /* Stack iniziale compatibile con context_switch:
      * context_switch fa: pop gs, pop fs, pop es, pop ds, popad, popfd, ret
@@ -639,7 +645,7 @@ for (uint32_t pi = 0; pi < npages; pi++) {
     *(--sp) = 0x00000000;               /* GS (pushato per ultimo, letto
                                             per primo da "pop gs") */
 
-    proc->kernel_esp = (uint32_t)sp;
+    proc->kernel_esp = IN_NUMERO(sp);
 
     /* File descriptors: 0=stdin, 1=stdout, 2=stderr vuoti per ora */
     proc->fdt[0].type = FD_STDIN;
@@ -842,7 +848,7 @@ static void sched_switch_to(Process *next)
     /* Context switch ASM: salva ESP di prev, carica ESP di next */
     context_switch(&prev->kernel_esp,
                     next->kernel_esp,
-                    (uint32_t)next->page_directory);
+                    (uint32_t)IN_NUMERO(next->page_directory));
 }
 
 /* =============================================================================
@@ -944,7 +950,7 @@ uint32_t sched_cpu_prepara(uint32_t n)
     Process *o;
 
     if (n == 0 || n >= SMP_CPU_MAX) return 0;
-    o = proc_create("ozio", (uint32_t)idle_task_fn, PRIO_IDLE, 1);
+    o = proc_create("ozio", IN_NUMERO(idle_task_fn), PRIO_IDLE, 1);
     if (o == NULL) return 0;
     interrupts_disable();
     o->cpu_fissa = (uint8_t)(n + 1);
@@ -2231,8 +2237,8 @@ klog(LOG_INFO, "SCHED: inizializzazione scheduler preemptive...");
         uint8_t *p;
 
         if (fis == 0) kpanic("SCHED: niente memoria per il pool dei processi");
-        g_process_pool = (Process *)fis;
-        p = (uint8_t *)fis;
+        g_process_pool = (Process *)DA_FISICO(fis);
+        p = (uint8_t *)DA_FISICO(fis);
         while (byte--) *p++ = 0;
         klog(LOG_INFO, "SCHED: pool di %u PCB a 0x%08x (%u KB)",
              (unsigned)MAX_PROCESSES, fis, pagine * 4);
@@ -2263,7 +2269,7 @@ g_ticks        = 0;
      * Crea il task idle (PID 0, priorità minima)
      * Eseguito quando nessun altro processo è READY.
      * ------------------------------------------------------------------------- */
-    g_idle_task = proc_create("idle", (uint32_t)idle_task_fn, PRIO_IDLE, 1);
+    g_idle_task = proc_create("idle", IN_NUMERO(idle_task_fn), PRIO_IDLE, 1);
 
 if (g_idle_task == NULL) {
         kpanic("SCHED: impossibile creare idle task!");
@@ -2280,7 +2286,7 @@ if (g_idle_task == NULL) {
      * Anche se avesse stessa priorita' di idle, basta che giri comunque
      * ogni pochi tick — basta PRIO_IDLE per i nostri scopi.
      * ------------------------------------------------------------------------- */
-    g_init_task = proc_create("init", (uint32_t)init_reaper_task, PRIO_IDLE, 1);
+    g_init_task = proc_create("init", IN_NUMERO(init_reaper_task), PRIO_IDLE, 1);
 
 if (g_init_task == NULL) {
         kpanic("SCHED: impossibile creare init task!");

@@ -38,6 +38,53 @@ void pic_unmask_irq(uint8_t irq);
  *   11. err_code (pushato dallo stub, ancora prima di int_no)
  *   12-14. eip, cs, eflags (pushati automaticamente dalla CPU)
  *   15-16. user_esp, user_ss (solo se transizione da ring3) */
+/* =============================================================================
+ * LO STATO SALVATO DI CHI E' STATO INTERROTTO, E COME LO SI LEGGE (@EXOS-64)
+ *
+ * La struttura e' del processore: a 32 bit ha eax, ebx...; a 64 ha rax, rbx,
+ * e otto registri in piu'. Ma il codice COMUNE - le chiamate di sistema, i
+ * segnali, la creazione dei processi - non vuole sapere come si chiamano i
+ * registri: vuole «il primo argomento», «dove riprende», «la sua pila».
+ *
+ * ! QUINDI IL CODICE COMUNE NON SCRIVE frame->ebx: SCRIVE FR_A1(frame). Le
+ * macro qui sotto dicono, per ogni macchina, in quale registro sta che cosa.
+ * La convenzione delle chiamate di sistema e' la stessa nelle due: il numero
+ * in A (eax/rax), gli argomenti in B, C, D, SI, DI, il risultato in A.
+ *
+ * A 32 bit le macro sono i campi di prima, lettera per lettera: il kernel
+ * compilato e' lo stesso (verificato confrontando le istruzioni di ogni
+ * oggetto prima e dopo, 10 ottobre 2026).
+ * ============================================================================= */
+#if defined(__x86_64__)
+
+typedef struct PACKED {
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
+    uint64_t int_no;
+    uint64_t err_code;
+    /* Messi dal processore: a 64 bit SEMPRE tutti e cinque, anche quando
+     * l'interrupt arriva in ring 0. */
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t user_rsp;
+    uint64_t user_ss;
+} InterruptFrame;
+
+#define FR_NUM(f)    ((f)->rax)
+#define FR_RET(f)    ((f)->rax)
+#define FR_A1(f)     ((f)->rbx)
+#define FR_A2(f)     ((f)->rcx)
+#define FR_A3(f)     ((f)->rdx)
+#define FR_A4(f)     ((f)->rsi)
+#define FR_A5(f)     ((f)->rdi)
+#define FR_BP(f)     ((f)->rbp)
+#define FR_IP(f)     ((f)->rip)
+#define FR_SP(f)     ((f)->user_rsp)
+#define FR_FLAGS(f)  ((f)->rflags)
+
+#else
+
 typedef struct PACKED {
     uint32_t ds;                                    /* salvato per ultimo */
     uint32_t edi, esi, ebp, esp_dummy;
@@ -52,5 +99,19 @@ typedef struct PACKED {
     uint32_t user_esp;
     uint32_t user_ss;
 } InterruptFrame;
+
+#define FR_NUM(f)    ((f)->eax)
+#define FR_RET(f)    ((f)->eax)
+#define FR_A1(f)     ((f)->ebx)
+#define FR_A2(f)     ((f)->ecx)
+#define FR_A3(f)     ((f)->edx)
+#define FR_A4(f)     ((f)->esi)
+#define FR_A5(f)     ((f)->edi)
+#define FR_BP(f)     ((f)->ebp)
+#define FR_IP(f)     ((f)->eip)
+#define FR_SP(f)     ((f)->user_esp)
+#define FR_FLAGS(f)  ((f)->eflags)
+
+#endif
 
 #endif /* IDT_H */

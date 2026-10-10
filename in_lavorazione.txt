@@ -6327,7 +6327,11 @@ un programma: il primo lavoro e' tirarla fuori.
   all'avvio della scrivania: l'orologio, l'icona del volume, il monitor di
   sistema (qui sotto), e quel che verra'. Oggi orologio e icona del volume
   sono fissi dentro pm.
-  Stato: DA FARE.
+  Stato: FATTO IN PARTE il 10 ottobre 2026 (pm 0.020): nel pannello
+  Impostazioni due spunte, «Orologio nella barra» e «Icona del volume nella
+  barra», salvate in pm.cfg per utente. L'icona compare e sparisce subito;
+  l'orologio dal prossimo avvio della scrivania. Resta: il monitor di sistema
+  quando ci sara', e la scheda «Sistema» (@IMPOSTAZIONI-SCHEDE).
 
 @MONITOR-SISTEMA L'ICONA DEL MONITOR DI SISTEMA, E IL SUO PANNELLO (chiesto dall'utente il 10 ottobre 2026)
   Un'icona nella barra, come quella del volume; il pannello mostra con dei
@@ -6391,4 +6395,230 @@ un programma: il primo lavoro e' tirarla fuori.
   alla voce) e chi avvisa (il lanciatore, o il program manager per tutti).
   Intanto: i manuali e il catalogo dicono «512 MB, meglio 1 GB» per Exilla, e
   vanno corretti a 2 GB.
-  Stato: DA FARE.
+  Stato: FATTO il 10 ottobre 2026 (pm 0.020, exilla 0.004). Il numero sta
+  nella voce di menu, quarto campo: «ram=2048». Il program manager avvisa
+  prima di avviare e chiede; chi e' stato avvisato li' non lo e' una seconda
+  volta dal programma (EXWIN_RAM_DETTO). netupdate porta il campo dalla
+  chiave `menu` del catalogo. Chi parte da una console, dal file manager o
+  da un'icona della scrivania non passa dal menu: li' avvisa solo il
+  programma che lo sa fare da se' (Exilla).
+
+@CODA-10-OTTOBRE LE COSE APERTE CHE NON ERANO SCRITTE QUI (10 ottobre 2026, elenco dato all'utente)
+  L'utente vuole svuotare la coda prima di cominciare GTK 3 e Qt. Oltre alle
+  voci qui sopra restavano aperte, e stavano solo nei riepiloghi:
+  - @EXT2-CANCELLA: liberare i blocchi un gruppo per volta. FATTO nel kernel
+    0.248 (vedi kernel/fs/ext2.c, «CANCELLARE COSTAVA»).
+  - @ATA-DMA-NFORCE: il disco SATA del PC di prova va in PIO (DMA spento il 7
+    ottobre, tentativo AHCI fallito il 9). Tocca il disco dell'utente: prima
+    solo lettura dei registri. DA FARE, non fra le piccole.
+  - @EXILLA-TITOLI: in una prova su tre i titoli della pagina non vengono
+    disegnati. E il caricamento lento sul PC vero non e' misurato. DA FARE.
+  - @TCP-SCALA: scala della finestra (oltre 63 KB) e controllo di
+    congestione in ip.drv. DA FARE.
+  - @SMP-4: i fili di uno stesso programma su piu' processori. DA FARE, e'
+    un progetto a se'.
+  - Da provare sul PC vero, dall'utente: il pulsante a tutto schermo, i
+    livelli del mixer, la velocita' di rete e disco dopo 0.247, un .doc di un
+    Word 6/95 vero.
+  Ordine concordato: prima le piccole (@EXT2-CANCELLA, @AVVISO-MEMORIA,
+  @AVVIO-SCRIVANIA), poi la scrivania (@PANNELLO-VIDEO, salvaschermo e blocco,
+  @MONITOR-SISTEMA, @FM-STRUMENTI, @SELEZIONE-MOUSE), poi i resti di EXBrowser
+  ed ExEditor e @EXILLA-ISO-STRUMENTI. Fuori dallo svuotamento, se l'utente
+  non dice altro: @VIDEO, @SMP-4, @ATA-DMA-NFORCE.
+  Stato: IN CORSO.
+
+@EXOS-64 EX-OS A 64 BIT, ACCANTO A QUELLO A 32 (deciso dall'utente il 10 ottobre 2026)
+  L'utente vuole portare GTK 3 e Qt, e prima chiede se conviene passare a 64
+  bit. Deciso: una seconda ARCHITETTURA nello stesso progetto, non una copia e
+  non una conversione - il Pentium MMX resta la base della versione a 32 bit.
+  I binari non sono intercambiabili: due repository (netinst e netinst_64).
+
+  FATTO il 10 ottobre (le fondamenta, senza toccare la versione a 32 bit):
+  - Makefile: ARCH ?= i386. Con ARCH=x86_64 un bersaglio non ancora portato
+    si ferma e lo dice; `make arch-dice`.
+  - netupdate 0.029: sa per quale macchina e' compilato; a 64 bit aggiunge
+    «_64» all'indirizzo che conosce; versione.txt porta «arch = ...» e un
+    repository dell'architettura sbagliata si rifiuta.
+  - tools/mknetinst.sh: ARCH sceglie build/ o build-64/ e dist/netinst o
+    dist/netinst_64, e scrive «arch» in versione.txt.
+  - exagonx (fuori da git): EXOS_ARCH in comune.sh mette «_64» a directory
+    sul server, indirizzo, albero locale e liste; repo-update.sh -64 / -32 /
+    -tutti.
+  - gitupdate.sh: dice il ramo prima di committare; -ramo; -porta (unisce
+    main nel ramo corrente).
+
+  LE TAPPE, nell'ordine:
+  1. Il kernel arriva in modo a 64 bit in QEMU e scrive sulla seriale:
+     kernel/arch/x86_64 (avvio, GDT, IDT, paginazione a 4 livelli), Stage 2
+     che sa entrare in long mode. Si compila col gcc dell'host (-m64), come
+     oggi il kernel a 32 si compila con -m32: non serve un compilatore nuovo.
+  2. Il kernel comune compila a 64 bit: la passata sui puntatori messi in
+     interi a 32 bit, sui `long`, sulle strutture condivise. Il compilatore
+     fa da guida (-Wpointer-to-int-cast, -Wint-to-pointer-cast).
+  3. Memoria, scheduler, chiamate di sistema, caricatore ELF64: il primo
+     programma in ring 3 (/bin/hello).
+  4. La libc e la shell; poi i comandi di /bin e i driver ring 3.
+  5. Le librerie condivise (una mappa di indirizzi nuova: oggi stanno a
+     fette fisse sotto i 4 GB) e ExWin: la scrivania a 64 bit.
+  6. I supporti: ISO, installazione, netinst_64 pubblicato.
+  7. I compilatori nativi (gcc/binutils per x86_64-exos) e poi Exilla, che
+     vuole anche la libreria standard di Rust per il bersaglio nuovo.
+
+  DA DECIDERE CON L'UTENTE:
+  - ramo o no. gitupdate.sh lo regge, ma il lavoro a 64 bit e' quasi tutto
+    in file NUOVI (arch/x86_64) e la pulizia del codice comune va provata
+    anche a 32: tenerlo in main, con ARCH che lo tiene spento, evita di
+    portare ogni correzione da un ramo all'altro.
+  - build-64/ va in git come build/, o resta fuori?
+  - l'avvio: BIOS come oggi; le macchine moderne partono solo da UEFI, ed e'
+    un lavoro a parte.
+  NON PREVISTO: far girare i programmi a 32 bit sul kernel a 64; passare da
+  32 a 64 con netupdate (serve una reinstallazione).
+  DECISO il 10 ottobre: resta tutto in MAIN, senza ramo; build-64/ va in
+  git come build/, con le stesse esclusioni di build/ e nessun'altra (i
+  registri del conteggio stanno in /tmp/exos-sondaggio64).
+
+  TAPPA 1 FATTA (10 ottobre): kernel/arch/x86_64/entry.asm, kernel64.ld,
+  main64.c. Il caricatore NON e' cambiato: Stage 2 lascia il processore a 32
+  bit a 0x100000, e il kernel a 64 bit comincia con venti istruzioni a 32 bit
+  che lo portano in long mode. `tools/prova_kernel64.sh`: su un processore a
+  64 bit scrive i registri di controllo e «EXOS64-TAPPA1-OK»; su un Pentium
+  dice che i 64 bit non ci sono e si ferma.
+
+  TAPPA 2, PRIMA META' FATTA (10 ottobre): il kernel comune COMPILA a 64
+  bit. `make ARCH=x86_64 kernel64-sondaggio` dice 0 errori e 0 indirizzi su
+  tutti i sorgenti tranne i sei che si riscrivono (K64_RISCRIVERE nel
+  Makefile: gdt, idt, isr, smp, memfun di arch/x86, e mm/paging.c).
+  - kernel.h: size_t, uintptr_t, ssize_t, ptrdiff_t seguono la macchina;
+    vaddr_t e paddr_t; DA_FISICO(n) e IN_NUMERO(p) per i passaggi fra numero
+    e puntatore, che cosi' si cercano con grep.
+  - idt.h: InterruptFrame per le due macchine e le macro FR_A1..FR_A5,
+    FR_RET, FR_IP, FR_SP, FR_FLAGS, FR_BP. Il codice comune non nomina piu'
+    i registri (217 punti nelle chiamate di sistema, 20 nei segnali).
+  - pmm.h e paging.h: gli indirizzi fisici sono paddr_t, i virtuali vaddr_t.
+  - A OGNI PASSO il kernel a 32 bit e' stato ricostruito e le istruzioni di
+    tutti i 56 oggetti confrontate con quelle di prima: identiche. E' il
+    controllo che permette di andare veloci, e va rifatto a ogni passo.
+
+  COMPILARE NON E' FUNZIONARE. Quel che resta della tappa 2, in ordine:
+  a. i punti segnati EXOS64-DAFARE nel sorgente: la pila iniziale di un
+     processo (sched.c), il contesto dei segnali (segnali.c);
+  b. i caricatori (loader/elf.c, dynlink.c, drvmgr.c) leggono ELF a 32 bit:
+     compilano, ma un programma a 64 bit e' ELF64 con altre rilocazioni;
+  c. le variabili che tengono un indirizzo e sono ancora uint32_t: il
+     compilatore non le segnala. Funzionano finche' tutto sta sotto i 4 GB,
+     ed e' cosi' che la versione a 64 bit nascera'; la memoria oltre i 4 GB
+     vuole che si cerchino (con -Wconversion, file per file);
+  d. le strutture condivise fra kernel e programmi (stat, MemInfo, i
+     messaggi IPC, SpawnExtra): la forma a 64 bit va decisa e inchiodata.
+  TAPPA 3, IN CORSO (10 ottobre). `tools/prova_kernel64.sh` la prova tutta.
+  3a FATTA - segmenti e interrupt: kernel/arch/x86_64/gdt64.c (GDT, TSS con
+     la pila di riserva per il doppio errore), isr64.asm (256 ingressi, la
+     pila e' un InterruptFrame di idt.h), idt64.c (tavola, PIC, orologio,
+     un'eccezione non gestita ferma e stampa tutti i registri e CR2). In
+     QEMU: int3 gestito e ripreso, 20 battiti a 100 Hz, un errore di pagina
+     intercettato con l'indirizzo giusto.
+  3b FATTA - i primi file COMUNI al lavoro: kprintf.c (klog), memfun.c,
+     pmm.c, kmalloc.c si collegano nel kernel a 64 bit senza una riga
+     diversa e funzionano (la mappa E820 letta, pagine prese e rese, uno
+     heap che cresce oltre una pagina e resta integro). Lista K64_COMUNI nel
+     Makefile; colla64.c tiene le controfigure di cio' che manca (console,
+     cli/sti) e deve accorciarsi fino a sparire.
+  3c FATTA (la meccanica) - la memoria: kernel/arch/x86_64/paging64.c dietro
+     paging.h, a quattro livelli. Lo STESSO disegno del kernel a 32 bit - i
+     primi 64 MB mappati su se stessi e condivisi da ogni processo (li'
+     stanno tutte le strutture del kernel: pmm_alloc_page_kernel), i
+     programmi da 64 MB in su, la «finestra» per toccare una pagina
+     qualunque. Cosi' la disposizione dei programmi e delle librerie
+     condivise resta quella di oggi, e la versione a 64 bit nasce sotto i
+     4 GB. La fascia sta nelle prime 32 voci della prima PD: i primi 4 MB a
+     pagine da 4 KB (finestra e APIC si cambiano una pagina alla volta, e
+     le due tabelle sono le stesse per tutti), il resto a pagine da 2 MB.
+     PDE e PTE sono di otto byte a 64 bit (paging.h); «PDE *» resta la
+     maniglia di uno spazio di indirizzi, la' e' la PML4.
+     C'e': finestra, APIC, MMIO basso, map/unmap/get_physical, riserva e
+     pagina pigra (il segno nella voce), spezzare un blocco da 2 MB, il
+     framebuffer, creare e distruggere lo spazio di un processo, il cambio
+     di spazio. Provato in QEMU (128 MB): una pagina mappata oltre i 512 GB
+     scritta e riletta dal suo indirizzo fisico, tolta da' errore di pagina
+     all'indirizzo giusto; la finestra; uno spazio di processo in cui si
+     entra e si esce, con la sua pagina utente, e distrutto rende tutte le
+     pagine (il conto delle libere torna uguale).
+     La POLITICA (page_fault_handler, la pila che cresce, le pagine dal
+     file, lo scambio, paging_proteggi, paging_utente_pronta) e' arrivata
+     con la 3d, e IL DEBITO E' PAGATO: non e' una seconda copia. E' la
+     seconda meta' di kernel/mm/paging.c, lo STESSO file per i due kernel;
+     guarda nelle tabelle solo attraverso cinque macro (TAB_C_E, TAB_GRANDE,
+     TAB_DI, NELLA_TAB, TAB_SPEZZA) che a 32 bit sono le espressioni di
+     prima, parola per parola, e a 64 scendono i quattro livelli. La meta'
+     delle tabelle a due livelli a 64 bit non si compila. Il kernel a 32 bit
+     compilato dal file riscritto e' IDENTICO a prima, istruzione per
+     istruzione. Solo le due funzioni che scorrono le tabelle per intero
+     (paging_vittima, paging_marca_swap) hanno una versione per architettura
+     (kernel/arch/x86_64/pagine64.c).
+     Trovato strada facendo: il sondaggio controllava solo la sintassi, e
+     quattro file comuni (vga.c, sched.c, fat12.c, mtrr.c) non si
+     ASSEMBLAVANO - «pushf; pop» in una variabile di 32 bit. La variabile e'
+     uintptr_t; il sondaggio adesso compila davvero. Kernel a 32 bit
+     identico.
+  3d FATTA - IL KERNEL COMUNE INTERO GIRA A 64 BIT, e avvia un programma.
+     `make ARCH=x86_64 kernel64` compila gli STESSI sorgenti del kernel a
+     32 bit (KERNEL_C_SRC) meno tre - gdt.c, idt.c, smp.c, il processore a
+     32 bit messo per iscritto - piu' kernel/arch/x86_64:
+       entry.asm    l'ingresso in long mode (tappa 1)
+       avvio64.c    PIC, orologio, e la chiamata a kernel_main
+       gdt64.c      GDT, TSS, l'interfaccia di gdt.h
+       idt64.c      IDT, PIC; smista a isr_handler / irq_handler /
+                    syscall_handler, che sono quelli COMUNI
+       isr64.asm    i 256 ingressi
+       cambio64.asm context_switch, i trampolini del primo avvio,
+                    sched_enter_usermode, pit_configure
+       cpu64.c      porte, CR0/2/3/4, CPUID, flag (a 32 bit: entry.asm)
+       paging64.c   le tabelle a quattro livelli (3c)
+       pagine64.c   la scelta della pagina da mandare sullo scambio
+       smp64.c      un processore solo: smp.h risponde il vero, il
+                    lucchetto del kernel non fa niente
+     Diventati COMUNI strada facendo, col kernel a 32 bit identico a ogni
+     passo: isr.c (gli interrupt; solo la stampa dei registri ha un #if),
+     la politica di paging.c (vedi 3c), elf.c (ElfHeader/ElfPhdr sono l'ELF
+     della macchina: ELF32 o ELF64, e quello dell'altra e' rifiutato).
+     ! LA PILA SALVATA DA context_switch HA LA STESSA FORMA nei due kernel,
+     quattordici parole: a 64 bit R12..R15 stanno nei quattro posti dei
+     segmenti. Cosi' proc_create (sched.c) e' una, senza #if.
+     ! FS E GS RESTANO NULLI nel kernel a 64 bit: la base di GS (la memoria
+     locale del filo) si scrive in un MSR, e caricare un selettore la
+     azzererebbe.
+     PROVATO in QEMU (tools/prova_kernel64.sh, parte 3; 128 MB, un
+     processore): il kernel passa tutti i passi di kernel_main - GDT, IDT,
+     FPU (FXSAVE), pagine, paginazione, heap, scheduler, chiamate di
+     sistema, interrupt accesi, il dischetto letto (FAT12, IRQ 6), ATA,
+     ATAPI, VFS - e avvia /bin/sh, che su quel dischetto e'
+     tools/prove64/primo.c: un ELF64 senza libc, caricato a pagine dal
+     dischetto (quindi l'errore di pagina a 64 bit lavora), in ring 3. Fa
+     tre chiamate di sistema con int 0x80 (numero in RAX, argomenti in RBX
+     RCX RDX: le macro FR_*), tiene R8 e R15 attraverso una chiamata, dorme
+     200 ms e torna, esce. Segno: EXOS64-TAPPA3D-OK.
+     NON PROVATO, e detto: una macchina vera (solo QEMU); lo scambio su
+     disco, mprotect e le pagine pigre a 64 bit (compilano, nessuno li ha
+     chiamati); la crescita della pila oltre la prima pagina; piu' di un
+     programma insieme oltre alle cinque console.
+     Visto e NON e' dei 64 bit: «MTRR: la fascia 1 non ha preso» compare
+     anche col kernel a 32 bit sullo stesso processore emulato (-cpu qemu64).
+
+  QUEL CHE MANCA PER LA TAPPA 4 (libc, shell, /bin, driver in ring 3), cioe'
+  cio' che il kernel a 64 bit ancora non sa fare per un programma vero:
+    - i SEGNALI: reg_salva / reg_rimetti in segnali.c a 64 bit fanno kpanic
+      (EXOS64-DAFARE): il contesto salvato sulla pila del programma;
+    - gli ARGOMENTI: argc/argv/envp sulla pila iniziale e le strutture di
+      spawn (lib/include/spawn_abi.h) hanno puntatori di 4 byte;
+    - le STRUTTURE condivise fra kernel e programmi (stat, dirent, MemInfo,
+      i messaggi IPC...): vanno guardate una per una, con le misure fisse;
+    - le chiamate che rendono un errore negativo: il valore torna in RAX da
+      un int32_t, da decidere e scrivere come si estende;
+    - la base TLS: FS o GS, la sceglie la libc (gdt_set_tls_base scrive GS);
+    - librerie condivise e driver: lib.c, dynlink.c, drvmgr.c leggono solo
+      ELF32 (tappa 5 e 4);
+    - variabili di indirizzo ancora uint32_t (giuste sotto i 4 GB);
+    - piu' processori: smp64.c dice uno.
+  Stato: IN CORSO (tappe 1, 2, 3 fatte: il kernel comune gira a 64 bit e
+  avvia un programma ELF64; la prossima e' la 4, la libc e la shell).

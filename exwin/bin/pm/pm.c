@@ -39,7 +39,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.019"
+#define VERSIONE_APP "0.020"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -74,6 +74,8 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_SFONDO_NIENTE 111
 #define ID_SFONDO_MODO   112     /* ..115: angolo, centro, allarga, ripeti */
 #define ID_SUONO_AVVIO   116     /* la spunta «Suono all'avvio» */
+#define ID_VEDI_OROLOGIO 117     /* @AVVIO-SCRIVANIA: l'orologio nella barra */
+#define ID_VEDI_VOLUME   118     /* e l'icona del volume */
 
 /* La finestra che gestisce l'elenco. */
 #define ID_G_LISTA  1
@@ -101,6 +103,13 @@ typedef struct {
     /* Vuota = la voce sta in cima al menu; piena = sta dentro quella
      * categoria, che nel menu si apre di lato. */
     char categoria[32];
+
+    /* ! QUANTA MEMORIA VUOLE, in megabyte; 0 = non lo dice (@AVVISO-MEMORIA,
+     * 10 ottobre 2026). E' il quarto campo della riga, «ram=2048»: chi
+     * avvia la voce su una macchina che ne ha meno viene avvisato PRIMA, e
+     * sceglie lui. L'utente: «un avviso per i programmi che richiedono piu'
+     * RAM di quanta ce n'e' fisicamente». */
+    unsigned int ram_mb;
 } App;
 
 static App          g_app[APP_MAX];
@@ -248,9 +257,22 @@ static void applicazioni_leggi(const char *percorso)
                 char *b2 = strchr(p, '|');
                 char *ico = 0;
 
+                unsigned int ram = 0;
+
                 if (b2) {
+                    char *b3;
+
                     *b2 = '\0';
                     ico = b2 + 1;
+                    /* il quarto campo, se c'e': ram=<megabyte> */
+                    b3 = strchr(ico, '|');
+                    if (b3) {
+                        char *q = b3 + 1;
+
+                        *b3 = '\0';
+                        while (*q == ' ' || *q == '\t') q++;
+                        if (strncmp(q, "ram=", 4) == 0) ram = (unsigned int)atoi(q + 4);
+                    }
                     while (*ico == ' ' || *ico == '\t') ico++;
                     taglia(ico);
                 }
@@ -284,6 +306,7 @@ static void applicazioni_leggi(const char *percorso)
                 strncpy(g_app[g_app_n].percorso, p, sizeof(g_app[0].percorso) - 1);
                 if (ico && ico[0])
                     strncpy(g_app[g_app_n].icona, ico, sizeof(g_app[0].icona) - 1);
+                g_app[g_app_n].ram_mb = ram;
                 g_app_n++;
             }
         }
@@ -365,23 +388,25 @@ static int applicazioni_scrivi(void)
     }
 
     for (i = 0; ok && i < g_app_n; i++) {
-        char r[160];
+        char r[260];
 
         /* ! SI RISCRIVE TUTTO QUEL CHE SI E' LETTO, categoria e icona
          * comprese: un file riscritto da questo programma che perdesse i
          * campi che non sa mostrare sarebbe un programma che cancella il
          * lavoro di chi ha scritto il file a mano. */
-        if (g_app[i].categoria[0] && g_app[i].icona[0])
-            sprintf(r, "%s/%s | %s | %s\n", g_app[i].categoria, g_app[i].nome,
-                    g_app[i].percorso, g_app[i].icona);
-        else if (g_app[i].categoria[0])
-            sprintf(r, "%s/%s | %s\n", g_app[i].categoria, g_app[i].nome,
-                    g_app[i].percorso);
-        else if (g_app[i].icona[0])
-            sprintf(r, "%s | %s | %s\n", g_app[i].nome, g_app[i].percorso,
-                    g_app[i].icona);
-        else
-            sprintf(r, "%s | %s\n", g_app[i].nome, g_app[i].percorso);
+        {
+            char nome[80], coda[32];
+
+            if (g_app[i].categoria[0]) snprintf(nome, sizeof(nome), "%s/%s", g_app[i].categoria, g_app[i].nome);
+            else                       snprintf(nome, sizeof(nome), "%s", g_app[i].nome);
+            coda[0] = '\0';
+            if (g_app[i].ram_mb) snprintf(coda, sizeof(coda), " | ram=%u", g_app[i].ram_mb);
+            /* il quarto campo vuole il terzo, anche vuoto */
+            if (g_app[i].icona[0] || g_app[i].ram_mb)
+                snprintf(r, sizeof(r), "%s | %s | %s%s\n", nome, g_app[i].percorso, g_app[i].icona, coda);
+            else
+                snprintf(r, sizeof(r), "%s | %s\n", nome, g_app[i].percorso);
+        }
         ok = scrivi_tutto(fd, r);
     }
 
@@ -1244,10 +1269,32 @@ static int      g_suono_avvio;
 static int      sfondo_salva(void);
 static ExWindow g_impost_suono = 0;
 
+/* ! CHE COSA PARTE CON LA SCRIVANIA SI SCEGLIE (@AVVIO-SCRIVANIA, 10 ottobre
+ * 2026). L'orologio e l'icona del volume erano fissi: l'utente vuole poterli
+ * accendere e spegnere dal pannello, come il suono d'avvio. Stanno nello
+ * stesso pm.cfg, per utente. L'icona del volume compare e sparisce subito;
+ * l'orologio e' un processo a parte e vale dal prossimo avvio della
+ * scrivania - e lo dice la finestra. */
+static int      g_vedi_orologio = 1, g_vedi_volume = 1;
+static ExWindow g_impost_orologio = 0, g_impost_volume = 0;
+static ExWindow g_barra_f = 0;      /* la barra, per ridisegnarla da qui */
+
 static long impost_proc(ExWindow f, unsigned int msg,
                         unsigned int wp, long lp)
 {
-    if (msg == EXM_CLOSE) { ex_destroy(f); g_impost = g_impost_sfondo = g_impost_suono = 0; return 0; }
+    if (msg == EXM_CLOSE) {
+        ex_destroy(f);
+        g_impost = g_impost_sfondo = g_impost_suono = g_impost_orologio = g_impost_volume = 0;
+        return 0;
+    }
+
+    if (msg == EXM_COMMAND && (wp == ID_VEDI_OROLOGIO || wp == ID_VEDI_VOLUME)) {
+        g_vedi_orologio = ex_is_checked(g_impost_orologio);
+        g_vedi_volume   = ex_is_checked(g_impost_volume);
+        if (!sfondo_salva()) log_seriale("pm: non riesco a salvare che cosa parte con la scrivania");
+        if (g_barra_f) ex_default_proc(g_barra_f, EXM_PAINT, 0, 0);     /* l'icona, subito */
+        return 0;
+    }
 
     /* ! L'INTRO SI SPEGNE DA QUI, non scrivendo un file a mano (10 ottobre
      * 2026). L'utente: «va bene le prime volte, poi diventa pesante». Vale
@@ -1321,7 +1368,7 @@ static void impostazioni_apri(void)
 
     g_impost = ex_create("window", "Impostazioni",
                        EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
-                       EX_AUTO, EX_AUTO, 300, 352, 0, 0, impost_proc);
+                       EX_AUTO, EX_AUTO, 300, 420, 0, 0, impost_proc);
     if (!g_impost) return;
 
     ex_screen_size(&sw, &sh);
@@ -1358,6 +1405,18 @@ static void impostazioni_apri(void)
                                12, 288, 276, 20, g_impost, ID_SUONO_AVVIO, 0);
     ex_set_checked(g_impost_suono, g_suono_avvio);
 
+    /* What starts with the desktop (@AVVIO-SCRIVANIA). */
+    g_impost_orologio = ex_create("checkbox", "Orologio nella barra", EX_CHILD,
+                                  12, 312, 276, 20, g_impost, ID_VEDI_OROLOGIO, 0);
+    ex_set_checked(g_impost_orologio, g_vedi_orologio);
+    g_impost_volume = ex_create("checkbox", "Icona del volume nella barra", EX_CHILD,
+                                12, 336, 276, 20, g_impost, ID_VEDI_VOLUME, 0);
+    ex_set_checked(g_impost_volume, g_vedi_volume);
+    ex_create("label", "L'orologio: dal prossimo avvio", EX_CHILD,
+            12, 362, 276, 16, g_impost, 0, 0);
+    ex_create("label", "della scrivania.", EX_CHILD,
+            12, 378, 276, 16, g_impost, 0, 0);
+
     ex_default_proc(g_impost, EXM_PAINT, 0, 0);
 }
 
@@ -1369,6 +1428,24 @@ static void avvia(unsigned int n)
 
     argv[0] = g_app[n].percorso;
     argv[1] = 0;
+
+    /* @AVVISO-MEMORIA: la soglia sta un decimo sotto quel che la voce chiede,
+     * perche' una macchina «da 2 GB» ne dichiara qualcuno in meno. Chi e'
+     * stato avvisato qui non deve esserlo una seconda volta dal programma:
+     * glielo dice EXWIN_RAM_DETTO. */
+    if (g_app[n].ram_mb) {
+        MemInfo mi;
+
+        if (meminfo(&mi) == 0 && mi.total_kb / 1024u < g_app[n].ram_mb - g_app[n].ram_mb / 10u) {
+            char t[280];
+
+            snprintf(t, sizeof(t), "Questa macchina ha %u MB di memoria. %s ne vuole almeno "
+                     "%u: con meno parte, ma e' lento e puo' fermarsi.",
+                     mi.total_kb / 1024u, g_app[n].nome, g_app[n].ram_mb);
+            if (!ex_dlg_conferma("Memoria", t, "Avvia lo stesso", "Annulla")) return;
+            setenv("EXWIN_RAM_DETTO", "1", 1);
+        }
+    }
 
     /* ! SE NON PARTE SI DICE, e non si resta zitti: un menu in cui premere una
      * voce non fa niente e non spiega niente e' peggio di un menu senza quella
@@ -1382,6 +1459,7 @@ static void avvia(unsigned int n)
         sprintf(m, "pm: non riesco ad avviare %s", argv[0]);
         log_seriale(m);
     }
+    unsetenv("EXWIN_RAM_DETTO");
 }
 
 /* Mette il fuoco sulla voce scelta del menu (lato = 0) o dell'elenco di lato. */
@@ -1710,6 +1788,7 @@ static void vol_disegna(ExWindow f)
     int x = VB_VOL_X, y = 2, h = BARRA_H - 4, ax = x + 4, ay = y + 4, k;
 
     ex_fill_rect(f, x, y, VB_VOL_W, h, EX_GRAY);
+    if (!g_vedi_volume) return;         /* spenta dal pannello: resta il grigio */
     ex_draw_raised(f, x, y, VB_VOL_W, h);
     ex_fill_rect(f, ax, ay + 5, 4, 6, EX_BLACK);                    /* il corpo */
     for (k = 0; k < 5; k++)                                         /* il cono */
@@ -1721,7 +1800,7 @@ static void vol_disegna(ExWindow f)
 
 static int vol_sotto(int x, int y)
 {
-    return y >= 2 && y < BARRA_H - 2 && x >= VB_VOL_X && x < VB_VOL_X + VB_VOL_W;
+    return g_vedi_volume && y >= 2 && y < BARRA_H - 2 && x >= VB_VOL_X && x < VB_VOL_X + VB_VOL_W;
 }
 
 static void vol_apri(void)
@@ -2651,6 +2730,14 @@ static void sfondo_leggi_cfg(void)
         for (p++; *p == ' ' || *p == '\t'; p++) ;
         g_suono_avvio = !(p[0] == 'n' && p[1] == 'o');
     }
+    if ((p = strstr(buf, "orologio")) && (p = strchr(p, '='))) {
+        for (p++; *p == ' ' || *p == '\t'; p++) ;
+        g_vedi_orologio = !(p[0] == 'n' && p[1] == 'o');
+    }
+    if ((p = strstr(buf, "icona_volume")) && (p = strchr(p, '='))) {
+        for (p++; *p == ' ' || *p == '\t'; p++) ;
+        g_vedi_volume = !(p[0] == 'n' && p[1] == 'o');
+    }
     p = strstr(buf, "sfondo");
     if (!p || !(p = strchr(p, '='))) return;
     p++;
@@ -2666,7 +2753,7 @@ static void sfondo_leggi_cfg(void)
 
 static int sfondo_salva(void)
 {
-    char t[220], dir[160], cfg[160];
+    char t[420], dir[160], cfg[160];
     int  fd, n;
     struct stat st;
 
@@ -2675,9 +2762,11 @@ static int sfondo_salva(void)
     fd = open(cfg, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return 0;
     n = snprintf(t, sizeof(t), "# pm: la scrivania. Lo riscrive Impostazioni.\n"
-                               "sfondo = %s\ndisposizione = %s\nsuono_avvio = %s\n",
+                               "sfondo = %s\ndisposizione = %s\nsuono_avvio = %s\n"
+                               "orologio = %s\nicona_volume = %s\n",
                  g_sfondo ? g_sfondo : "", DISPOSIZIONI[g_sfondo_modo],
-                 g_suono_avvio ? "si" : "no");
+                 g_suono_avvio ? "si" : "no", g_vedi_orologio ? "si" : "no",
+                 g_vedi_volume ? "si" : "no");
     if (write(fd, t, (unsigned int)n) != n) { close(fd); return 0; }
     close(fd);
     return 1;
@@ -2836,6 +2925,7 @@ int main(int argc, char **argv)
 
     /* From now on the server tells the taskbar which windows are open. */
     ex_track_windows(g_barra);
+    g_barra_f = g_barra;
     /* =====================================================================
      * ! L'ANGOLO DESTRO E' DELL'OROLOGIO, e l'orologio e' un PROCESSO A
      * PARTE. Qui c'era la scritta «EX-OS», che non diceva niente che non si
@@ -2858,6 +2948,9 @@ int main(int argc, char **argv)
             "/cdrom/exwin/bin/orologio"
         };
         int partito = 0, k;
+
+        /* (spento dal pannello: l'angolo resta vuoto, e non e' un guasto) */
+        if (!g_vedi_orologio) partito = 1;
 
         for (k = 0; k < 2 && !partito; k++) {
             char *av[2];

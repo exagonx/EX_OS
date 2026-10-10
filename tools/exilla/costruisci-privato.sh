@@ -30,7 +30,7 @@ mkdir -p "$COPIA"
 
 rsync -a --delete \
     --exclude=/firefox-main --exclude=/rust --exclude=/gcc --exclude=/dischi \
-    --exclude=/cross_build --exclude=/.git --exclude=/dist --exclude=/build \
+    --exclude=/cross_build --exclude=/.git --exclude=/dist --exclude=/build --exclude=/build-64 \
     ./ "$COPIA/"
 mkdir -p "$COPIA/dist" "$COPIA/build/bin"
 # ! I PROGRAMMI CHE L'ALBERO VERO NON HA PIU' IN build/bin SI TOLGONO DALLA COPIA

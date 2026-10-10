@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.247
+**Version:** 0.248
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -150,6 +150,11 @@ writes in 64 KB pieces instead of at every packet. Tried in QEMU: Exilla
 should be larger: to be measured on the PC. Deleting is still slow (one
 block at a time).
 
+**0.248**: deleting a file on ext2 no longer costs five disk commands per
+kilobyte. The group's bitmap stays in memory while a file's blocks are freed
+and is written once, with the descriptor. In QEMU `rm` of 50 MB goes from
+more than twenty seconds to about six, and the disk passes `e2fsck`.
+
 **0.245**: SATA disks behind an AHCI controller (`kernel/block/ahci.c`).
 Controllers that declare themselves AHCI are always used, and their disks take
 a place among `hd0`..`hd3` like the others: in QEMU the system installs to,
@@ -246,6 +251,30 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   boundary, and the wrong half was refilled. 0.004 moves the boundary by a
   quarter of a half and writes the counts of each playback to the kernel log
   (`dmesg hdaudio`). To be listened to again.
+- **Groundwork for 64 bit.** EX-OS will have a 64-bit version beside the
+  32-bit one, from the same source: `make ARCH=x86_64` (default `i386`, and
+  unless said nothing changes). Two repositories, `netinst` and `netinst_64`:
+  `netupdate` 0.029 knows which machine it was built for, `versione.txt` says
+  `arch`, and a repository for the other architecture is refused. The staged
+  plan is in `in_lavorazione.txt` (`@EXOS-64`). The first stage is done: the
+  kernel reaches 64-bit mode in QEMU (`tools/prova_kernel64.sh`), with the
+  same loader; on a Pentium it says there are no 64 bits. It is not a system
+  yet. Second stage half done: all the shared kernel COMPILES at 64 bit (the
+  six processor files remain to be rewritten), and at every step the 32-bit
+  kernel came out identical, instruction by instruction.
+  Third stage done: the SHARED kernel runs at 64 bit. `make ARCH=x86_64
+  kernel64` compiles the same sources as the 32-bit kernel, minus the three
+  processor files and plus those in `kernel/arch/x86_64` (entry, segments,
+  interrupts, context switch, four-level tables), and in QEMU it goes
+  through the whole start-up - memory, scheduler, system calls, the floppy -
+  and starts in ring 3 an ELF64 program that makes system calls, sleeps and
+  comes back. The 32-bit kernel stayed identical at every step. It is not a
+  system yet: the libc and the programs are missing (stage 4), and at 64 bit
+  there are no signals, shared libraries or drivers.
+- **Desktop: memory and start-up (pm 0.020).** A menu entry may say how much
+  memory it wants (`ram=2048`) and the menu warns before starting it on a
+  machine with less. The Settings window switches the clock and the volume
+  icon of the bar on and off.
 - **Exilla: the scroll bar can be seen.** It was Android's, a thin thumb,
   white on white: it is the classic one now, with arrows and ExWin's greys.
   The `exilla` package has to be published again.

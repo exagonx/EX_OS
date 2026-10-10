@@ -43,7 +43,50 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.028");
+EX_VERSIONE("netupdate", "0.029");
+
+/* =============================================================================
+ * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
+ *
+ * EX-OS avra' una versione a 64 bit accanto a quella a 32, dallo stesso
+ * sorgente. I binari non sono intercambiabili: un /bin/sh a 64 bit copiato su
+ * una macchina a 32 e' una macchina che non parte piu'. Quindi:
+ *
+ *   - il repository a 64 bit sta ACCANTO all'altro, con «_64» in coda al nome
+ *     (.../netinst e .../netinst_64). L'indirizzo scritto nella configurazione
+ *     resta quello che l'utente conosce: la coda la mette questo programma,
+ *     che sa per quale macchina e' stato compilato;
+ *   - versione.txt dice per chi e' («arch = i386» oppure «arch = x86_64»), e
+ *     un repository dell'architettura sbagliata SI RIFIUTA prima di guardare
+ *     qualunque altra cosa. Un repository che non lo dice e' di prima di
+ *     questa data, cioe' a 32 bit.
+ * ============================================================================= */
+#if defined(__x86_64__)
+#define NU_ARCH "x86_64"
+#define NU_CODA "_64"
+#else
+#define NU_ARCH "i386"
+#define NU_CODA ""
+#endif
+
+/* 0 se il repository (o l'albero) descritto da questo versione.txt e' per
+ * questa macchina; altrimenti lo dice e rende -1. */
+static int chiave_da_file(const char *percorso, const char *chiave,
+                          char *out, int max);
+static int g_zitto;
+static int arch_giusta(const char *ver)
+{
+    char arch[16];
+
+    if (chiave_da_file(ver, "arch", arch, sizeof(arch)) != 0) strcpy(arch, "i386");
+    if (strcmp(arch, NU_ARCH) == 0) return 0;
+    if (!g_zitto) {
+        printf("\n  ! QUESTO REPOSITORY E' PER UN'ALTRA MACCHINA: dice \"%s\", e\n", arch);
+        printf("    questo sistema e' %s. I programmi non sono intercambiabili:\n", NU_ARCH);
+        printf("    non tocco niente. Controlla l'indirizzo (netupdate -set).\n");
+    }
+    return -1;
+}
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -151,6 +194,16 @@ static int config_leggi(Config *c)
         /* ogni altra chiave: ignorata apposta, vedi sopra */
     }
     fclose(f);
+
+    /* La coda dell'architettura (vedi «DUE ARCHITETTURE»): a 32 bit e' vuota
+     * e qui non succede niente. */
+    if (NU_CODA[0]) {
+        size_t l = strlen(c->url), k = strlen(NU_CODA);
+
+        while (l > 0 && c->url[l - 1] == '/') c->url[--l] = '\0';
+        if ((l < k || strcmp(c->url + l - k, NU_CODA) != 0) && l + k < sizeof(c->url))
+            strcat(c->url, NU_CODA);
+    }
     return 1;
 }
 
@@ -934,6 +987,7 @@ static int comando_registro_crea(const char *albero)
     }
     if (chiave_da_file(ver, "data", data, sizeof(data)) != 0)
         copia_str(data, "?", sizeof(data));
+    if (arch_giusta(ver) != 0) return 1;
 
     n = blocchi_leggi(cat, v, PACCHETTI_MAX);
     if (n <= 0) {
@@ -1905,6 +1959,7 @@ static int manifesto(Config *c, char *ver, char *cat, char *ele,
     }
     if (chiave_da_file(ver, "data", data, 40) != 0)
         copia_str(data, "?", 40);
+    if (arch_giusta(ver) != 0) return 1;
 
     if (chiave_da_file(ver, "catalogo", h_cat, sizeof(h_cat)) != 0 ||
         chiave_da_file(ver, "elenco",   h_ele, sizeof(h_ele)) != 0) {

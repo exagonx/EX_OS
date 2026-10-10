@@ -90,6 +90,67 @@ typedef struct PACKED {
 } Elf32Phdr;
 
 /* Risultato del caricamento ELF */
+/* =============================================================================
+ * @EXOS-64 — L'ELF DELLA MACCHINA PER CUI IL KERNEL E' COMPILATO
+ *
+ * Il caricatore dei programmi (loader/elf.c) e' uno, e legge l'ELF nativo:
+ * ELF32 per i386 nel kernel a 32 bit, ELF64 per x86-64 in quello a 64. I due
+ * formati hanno gli stessi campi con gli stessi nomi; cambiano la larghezza
+ * (indirizzi e spostamenti di otto byte) e, nell'intestazione di programma,
+ * l'ORDINE: a 64 bit p_flags viene subito dopo p_type. Per questo sono due
+ * strutture e non una con i tipi allargati.
+ *
+ * elf.c usa ElfHeader e ElfPhdr e non sa quale delle due c'e' sotto. Un
+ * programma dell'altra architettura e' rifiutato all'intestazione, con un
+ * messaggio: ELF_CLASSE e ELF_MACCHINA sono i due numeri che lo dicono.
+ *
+ * ! Librerie condivise e driver (lib.c, dynlink.c, drvmgr.c) leggono ancora
+ * solo ELF32: a 64 bit rifiutano tutto, finche' non arriva la loro tappa.
+ * ========================================================================== */
+#define EM_X86_64       62  /* AMD x86-64 */
+
+typedef struct PACKED {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;     /* EM_X86_64 */
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;      /* 64 */
+    uint16_t e_phentsize;   /* 56 */
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} Elf64Header;
+
+typedef struct PACKED {
+    uint32_t p_type;
+    uint32_t p_flags;       /* qui, non in fondo come nell'ELF32 */
+    uint64_t p_offset;
+    uint64_t p_vaddr;
+    uint64_t p_paddr;
+    uint64_t p_filesz;
+    uint64_t p_memsz;
+    uint64_t p_align;
+} Elf64Phdr;
+
+#if defined(__x86_64__)
+typedef Elf64Header ElfHeader;
+typedef Elf64Phdr   ElfPhdr;
+#define ELF_CLASSE      2
+#define ELF_NOME        "ELF64"
+#define ELF_MACCHINA    EM_X86_64
+#else
+typedef Elf32Header ElfHeader;
+typedef Elf32Phdr   ElfPhdr;
+#define ELF_CLASSE      1
+#define ELF_NOME        "ELF32"
+#define ELF_MACCHINA    EM_386
+#endif
+
 typedef struct {
     uint32_t entry_point;       /* Indirizzo virtuale entry point */
     uint32_t user_stack_top;    /* Top stack utente (allineato 16 byte) */

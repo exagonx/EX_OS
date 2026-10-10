@@ -958,7 +958,7 @@ void vga_init_grafica(const BootInfo *info)
     (void)mtrr_framebuffer_wc(info->fb_addr, byte_tot);
     (void)a;
 
-    g_fb       = (uint8_t *)info->fb_addr;
+    g_fb       = (uint8_t *)(uintptr_t)info->fb_addr;
     g_fb_pitch = info->fb_pitch;
     g_fb_bpp   = info->fb_bpp;
     g_fb_w     = info->fb_width;
@@ -1013,7 +1013,7 @@ void vga_init_grafica(const BootInfo *info)
 void vga_ripristina_testo(void)
 {
     uint32_t n, i;
-    uint32_t eflags;
+    uintptr_t eflags;       /* largo come la pila: vale a 32 e a 64 bit */
 
     /* =====================================================================
      * ! DA QUI IN GIU' NON DEVE ENTRARE NESSUNO, e non e' prudenza: e' la

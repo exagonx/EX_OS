@@ -317,7 +317,7 @@ static int dl_apply_relocations(Process *proc, uint32_t base,
             continue;
         }
 
-        uint32_t *patch_ptr = (uint32_t *)phys_patch;
+        uint32_t *patch_ptr = (uint32_t *)DA_FISICO(phys_patch);
 
         /* Applica relocation in base al tipo */
         switch (r_type) {
@@ -353,8 +353,8 @@ static int dl_apply_relocations(Process *proc, uint32_t base,
                     uint32_t src_phys = paging_get_physical(
                                             proc->page_directory, sym_addr);
                     if (src_phys && sz > 0) {
-                        uint8_t *dst = (uint8_t *)phys_patch;
-                        uint8_t *src = (uint8_t *)src_phys;
+                        uint8_t *dst = (uint8_t *)DA_FISICO(phys_patch);
+                        uint8_t *src = (uint8_t *)DA_FISICO(src_phys);
                         while (sz--) *dst++ = *src++;
                     }
                 }
@@ -465,7 +465,7 @@ static int dl_load_so(const char *path, Process *proc,
 
             /* Azzera pagina */
             {
-                uint8_t *p = (uint8_t *)phys;
+                uint8_t *p = (uint8_t *)DA_FISICO(phys);
                 uint32_t n = PAGE_SIZE;
                 while (n--) *p++ = 0;
             }
@@ -500,7 +500,7 @@ static int dl_load_so(const char *path, Process *proc,
                     uint32_t take   = (uint32_t)n - written;
                     if (take > avail) take = avail;
 
-                    uint8_t *dst = (uint8_t *)(phys_dst - pg_off);
+                    uint8_t *dst = (uint8_t *)DA_FISICO(phys_dst - pg_off);
                     uint32_t k;
                     for (k = 0; k < take; k++) dst[pg_off + k] = seg_buf[written + k];
                     written += take;
@@ -578,7 +578,7 @@ static int dl_load_so(const char *path, Process *proc,
                 uint32_t sym_vaddr = dt_symtab + i * sizeof(Elf32_Sym);
                 uint32_t sym_phys  = paging_get_physical(proc->page_directory, sym_vaddr);
                 if (!sym_phys) break;
-                uint8_t *src = (uint8_t *)(sym_phys - (sym_vaddr & 0xFFF)) + (sym_vaddr & 0xFFF);
+                uint8_t *src = (uint8_t *)DA_FISICO(sym_phys - (sym_vaddr & 0xFFF)) + (sym_vaddr & 0xFFF);
                 uint8_t *dst = (uint8_t *)&symtab_copy[i];
                 uint32_t k;
                 for (k = 0; k < sizeof(Elf32_Sym); k++) dst[k] = src[k];
@@ -589,7 +589,7 @@ static int dl_load_so(const char *path, Process *proc,
                 uint32_t sa = dt_strtab + i;
                 uint32_t sp = paging_get_physical(proc->page_directory, sa);
                 if (!sp) break;
-                strtab_copy[i] = *(char *)(sp - (sa & 0xFFF) + (sa & 0xFFF));
+                strtab_copy[i] = *(char *)DA_FISICO(sp - (sa & 0xFFF) + (sa & 0xFFF));
             }
             strtab_copy[dt_strsz] = '\0';
         }
@@ -607,7 +607,7 @@ static int dl_load_so(const char *path, Process *proc,
                 uint32_t ra = dt_rel + i * sizeof(Elf32_Rel);
                 uint32_t rp = paging_get_physical(proc->page_directory, ra);
                 if (!rp) break;
-                uint8_t *src = (uint8_t *)(rp - (ra & 0xFFF)) + (ra & 0xFFF);
+                uint8_t *src = (uint8_t *)DA_FISICO(rp - (ra & 0xFFF)) + (ra & 0xFFF);
                 uint8_t *dst = (uint8_t *)&rel_buf[i];
                 uint32_t k;
                 for (k = 0; k < sizeof(Elf32_Rel); k++) dst[k] = src[k];
@@ -628,7 +628,7 @@ static int dl_load_so(const char *path, Process *proc,
                 uint32_t ra = dt_jmprel + i * sizeof(Elf32_Rel);
                 uint32_t rp = paging_get_physical(proc->page_directory, ra);
                 if (!rp) break;
-                uint8_t *src = (uint8_t *)(rp - (ra & 0xFFF)) + (ra & 0xFFF);
+                uint8_t *src = (uint8_t *)DA_FISICO(rp - (ra & 0xFFF)) + (ra & 0xFFF);
                 uint8_t *dst = (uint8_t *)&rel_buf[i];
                 uint32_t k;
                 for (k = 0; k < sizeof(Elf32_Rel); k++) dst[k] = src[k];

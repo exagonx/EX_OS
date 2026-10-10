@@ -23,10 +23,51 @@ typedef signed char         int8_t;
 typedef signed short        int16_t;
 typedef signed int          int32_t;
 typedef signed long long    int64_t;
+/* ! I TIPI CHE SEGUONO LA MACCHINA (@EXOS-64, 10 ottobre 2026). Una misura,
+ * un indirizzo scritto come numero, la distanza fra due puntatori: a 32 bit
+ * sono di 32 bit, a 64 di 64. Erano scritti come uint32_t e basta - giusto
+ * finche' la macchina era una sola. A 32 bit restano identici a prima.
+ *
+ * REGOLA per il codice comune: un indirizzo che passa per un numero e' un
+ * uintptr_t, MAI un uint32_t. uint32_t resta per cio' che e' di 32 bit per
+ * sua natura: un campo su disco, un registro, un numero di settore. */
+#if defined(__x86_64__)
+typedef uint64_t            size_t;
+typedef int64_t             ssize_t;
+typedef uint64_t            uintptr_t;
+typedef int64_t             ptrdiff_t;
+#else
 typedef uint32_t            size_t;
 typedef int32_t             ssize_t;
 typedef uint32_t            uintptr_t;
 typedef int32_t             ptrdiff_t;
+#endif
+
+/* ! UN INDIRIZZO FISICO E UNO VIRTUALE NON SONO LA STESSA COSA, e da oggi
+ * hanno due nomi (@EXOS-64). vaddr_t e' un indirizzo come lo vede un
+ * programma o il kernel: grande quanto un puntatore. paddr_t e' un indirizzo
+ * di RAM: a 64 bit e' di 64 bit - e' li' che stanno i gigabyte oltre il
+ * quarto. A 32 bit sono tutti e due uint32_t, come sono sempre stati.
+ *
+ * ! QUEL CHE RESTA DA FARE, DETTO SUBITO: molte variabili che tengono un
+ * indirizzo sono ancora uint32_t. A 32 bit e' giusto; a 64 funziona finche'
+ * tutto sta sotto i 4 GB, ed e' cosi' che la versione a 64 bit nascera'. Il
+ * passo dopo - la memoria oltre i 4 GB - vuole che si cerchino una per una. */
+typedef uintptr_t           vaddr_t;
+#if defined(__x86_64__)
+typedef uint64_t            paddr_t;
+#else
+typedef uint32_t            paddr_t;
+#endif
+
+/* ! DOVE UN INDIRIZZO FISICO VIENE USATO COME PUNTATORE, LO SI DICE. Il kernel
+ * lo fa spesso - «scrivo in questa pagina di RAM» - e funziona perche' la
+ * memoria bassa e' mappata su se stessa. Scritto come (uint8_t *)fis era
+ * invisibile; DA_FISICO(fis) si cerca con grep, e il giorno che la RAM oltre
+ * i 4 GB non sara' mappata su se stessa sono esattamente questi i punti da
+ * rivedere. IN_NUMERO fa il viaggio contrario: un puntatore come numero. */
+#define DA_FISICO(p)        ((void *)(uintptr_t)(p))
+#define IN_NUMERO(p)        ((uintptr_t)(p))
 
 #define NULL                ((void*)0)
 #define TRUE                1
@@ -242,7 +283,7 @@ uint32_t    cpuid_max(void);
 uint32_t    cpuid_edx1(void);
 uint32_t    cpuid_ecx1(void);
 void        write_cr4(uint32_t val);
-uint32_t    read_cr2(void);
+vaddr_t     read_cr2(void);     /* un indirizzo qualunque: a 64 bit non sta in 32 */
 uint32_t    read_cr3(void);
 void        write_cr3(uint32_t val);
 void        interrupts_enable(void);

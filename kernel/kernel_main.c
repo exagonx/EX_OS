@@ -108,7 +108,7 @@ static void verify_bootinfo(BootInfo *info)
  * ============================================================================= */
 static void print_system_info(BootInfo *info)
 {
-    uint32_t kernel_size = (uint32_t)&_kernel_end - (uint32_t)&_kernel_start;
+    uint32_t kernel_size = (uint32_t)(IN_NUMERO(&_kernel_end) - IN_NUMERO(&_kernel_start));
     uint32_t total_ram   = info->mem_lower + info->mem_upper;
 
     klog(LOG_INFO, "--- Informazioni Sistema ---");
@@ -119,8 +119,8 @@ static void print_system_info(BootInfo *info)
     klog(LOG_INFO, "  RAM totale    : %u KB (%u MB)",
          total_ram, total_ram / 1024);
     klog(LOG_INFO, "  Entry E820    : %u", info->e820_count);
-    klog(LOG_INFO, "  Kernel base   : 0x%08x", (uint32_t)&_kernel_start);
-    klog(LOG_INFO, "  Kernel end    : 0x%08x", (uint32_t)&_kernel_end);
+    klog(LOG_INFO, "  Kernel base   : 0x%08x", (uint32_t)IN_NUMERO(&_kernel_start));
+    klog(LOG_INFO, "  Kernel end    : 0x%08x", (uint32_t)IN_NUMERO(&_kernel_end));
     klog(LOG_INFO, "  Kernel size   : %u byte (%u KB)",
          kernel_size, kernel_size / 1024);
     /* Il framebuffer si dice SEMPRE, anche quando non c'e': "modo testo" e
@@ -136,7 +136,7 @@ static void print_system_info(BootInfo *info)
 
     /* Stampa mappa E820 se il livello di debug è sufficiente */
     if (info->e820_count > 0 && info->e820_addr != 0) {
-        E820Entry *map = (E820Entry *)info->e820_addr;
+        E820Entry *map = (E820Entry *)DA_FISICO(info->e820_addr);
         uint32_t   i;
 
         klog(LOG_DEBUG, "  Mappa E820:");
@@ -177,7 +177,11 @@ vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
      * PASSO 2: Banner
      * ========================================================================= */
     print_boot_banner();
+#if defined(__x86_64__)
+klog(LOG_INFO, "Kernel avviato in Long Mode a 64 bit");
+#else
 klog(LOG_INFO, "Kernel avviato in Protected Mode 32-bit");
+#endif
 /* =========================================================================
      * PASSO 3: Verifica BootInfo
      * Se Stage 2 non ha passato dati validi, panic immediato.

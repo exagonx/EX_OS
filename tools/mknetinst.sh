@@ -61,9 +61,21 @@ set -e
 RADICE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$RADICE"
 
-ALBERO=build/iso-exos          # il sistema, composto da `make iso-exos`
-STRUMENTI=build/iso            # il CD degli strumenti, composto da `make iso`
-FUORI=dist/netinst
+# ! DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026). ARCH dice per quale
+# macchina si pubblica: i386 (di serie: tutto resta com'era) oppure x86_64.
+# I binari non sono intercambiabili, quindi stanno in due alberi e in due
+# directory - dist/netinst e dist/netinst_64 - e versione.txt dice di chi e'
+# («arch = ...»): netupdate rifiuta un repository che non e' per la sua
+# macchina, e quello a 64 bit va a cercare da solo la directory con «_64».
+ARCH="${ARCH:-i386}"
+case "$ARCH" in
+    i386)   CODA="";    COSTR=build ;;
+    x86_64) CODA="_64"; COSTR=build-64 ;;
+    *) echo "mknetinst: ARCH=$ARCH non la conosco (i386 o x86_64)." >&2; exit 1 ;;
+esac
+ALBERO=$COSTR/iso-exos         # il sistema, composto da `make iso-exos`
+STRUMENTI=$COSTR/iso           # il CD degli strumenti, composto da `make iso`
+FUORI=dist/netinst$CODA
 
 VERSIONE=$(sed -n 's/^#define EXOS_VERSION *"\(.*\)".*/\1/p' kernel/include/version.h)
 DATA=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -77,7 +89,7 @@ DATA=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     exit 1
 }
 
-echo "=== dist/netinst: il sistema $VERSIONE da pubblicare ==="
+echo "=== $FUORI: il sistema $VERSIONE ($ARCH) da pubblicare ==="
 
 rm -rf "$FUORI"
 mkdir -p "$FUORI/file"
@@ -288,7 +300,8 @@ EXILLA_CI_E=no
 EXILLA_MB=0
 SIS_MB=$(du -sm "$FUORI/file" | cut -f1)
 
-if [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
+# (Exilla per ora esiste solo a 32 bit: e' il Firefox costruito per i386-exos.)
+if [ "$ARCH" = i386 ] && [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
     EXILLA_CI_E=si
     E="$FUORI/file/$EXILLA_DOVE"
     mkdir -p "$E" "$FUORI/pacchetti"
@@ -427,7 +440,7 @@ CAT="$FUORI/catalogo.txt"
         echo "mbyte  = $EXILLA_MB"
         echo "elenco = pacchetti/exilla.txt"
         echo "elimpronta = $(sha256sum "$FUORI/pacchetti/exilla.txt" | cut -d' ' -f1)"
-        echo "menu   = Internet/Exilla (Firefox) | /$EXILLA_DOVE/exilla | /$EXILLA_DOVE/exilla_64.ico"
+        echo "menu   = Internet/Exilla (Firefox) | /$EXILLA_DOVE/exilla | /$EXILLA_DOVE/exilla_64.ico | ram=2048"
     fi
 } > "$CAT"
 
@@ -467,6 +480,7 @@ CONTI=$(cat "$ELE" "$FUORI"/pacchetti/*.txt 2>/dev/null | grep -v '^#' | cut -f4
 {
     echo "# versione.txt — la prima cosa che netupdate legge"
     echo "versione  = $VERSIONE"
+    echo "arch      = $ARCH"
     echo "data      = $DATA"
     echo "file      = $N_FILE"
     echo "byte      = $(grep -v "^#" "$ELE" | awk -F"\t" "{ s += \$2 } END { printf \"%d\", s }")"

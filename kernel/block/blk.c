@@ -592,7 +592,7 @@ static void cache_init(void)
         klog(LOG_WARN, "BLK: niente memoria per la cache dei settori, si legge dal disco");
         return;
     }
-    g_cache = (VoceCache *)fis;
+    g_cache = (VoceCache *)(uintptr_t)fis;
     for (k = 0; k < CACHE_VOCI; k++) { g_cache[k].disco = -1; g_cache[k].dopo = -1; }
     klog(LOG_INFO, "BLK: cache di %u settori a 0x%08x", (unsigned)CACHE_VOCI, fis);
 }

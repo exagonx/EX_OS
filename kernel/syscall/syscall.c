@@ -19,7 +19,7 @@ static SyscallFn syscall_table[SYSCALL_COUNT];
 
 int syscall_verify_ptr(const void *ptr, uint32_t size)
 {
-    uint32_t addr = (uint32_t)ptr;
+    uintptr_t addr = (uintptr_t)ptr;
     if (ptr == NULL)                  return 0;
     if (addr < 0x1000)                return 0;
     if (addr >= USER_SPACE_END)       return 0;
@@ -33,7 +33,7 @@ int syscall_verify_str(const char *str, uint32_t max_len)
     uint32_t i;
     if (!syscall_verify_ptr(str, 1)) return 0;
     for (i = 0; i < max_len; i++) {
-        if ((uint32_t)(str + i) >= USER_SPACE_END) return 0;
+        if ((uintptr_t)(str + i) >= USER_SPACE_END) return 0;
         if (str[i] == '\0') return 1;
     }
     return 0;
@@ -41,22 +41,22 @@ int syscall_verify_str(const char *str, uint32_t max_len)
 
 void syscall_handler(InterruptFrame *frame)
 {
-    uint32_t num = frame->eax;
+    uint32_t num = FR_RET(frame);
     int32_t  ret;
 
     if (num >= SYSCALL_COUNT || syscall_table[num] == NULL) {
         klog(LOG_WARN, "SYSCALL: %u non implementata (PID %u)",
              num, proc_get_current() ? proc_get_current()->pid : 0);
-        frame->eax = (uint32_t)ERR(ENOSYS);
+        FR_RET(frame) = (uint32_t)ERR(ENOSYS);
         return;
     }
 
     klog(LOG_DEBUG, "SYSCALL: %u ebx=0x%x ecx=0x%x edx=0x%x PID=%u",
-         num, frame->ebx, frame->ecx, frame->edx,
+         num, FR_A1(frame), FR_A2(frame), FR_A3(frame),
          proc_get_current() ? proc_get_current()->pid : 0);
 
     ret = syscall_table[num](frame);
-    frame->eax = (uint32_t)ret;
+    FR_RET(frame) = (uint32_t)ret;
 
     /* =========================================================================
      * ! CHI E' STATO INTERROTTO MUORE QUI, E NON DOVE E' STATO INTERROTTO.

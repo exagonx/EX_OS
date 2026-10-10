@@ -35,7 +35,7 @@
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.003"
+#define VERSIONE_APP "0.004"
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
@@ -90,7 +90,10 @@ static int avvia(int argc, char **argv)
     {
         MemInfo mi;
 
-        if (meminfo(&mi) == 0 && mi.total_kb / 1024u < MEMORIA_MB - 200u) {
+        /* (chi parte dal menu e' gia' stato avvisato dal program manager,
+         * che legge «ram=2048» dalla voce: non lo si chiede due volte) */
+        if (!getenv("EXWIN_RAM_DETTO") &&
+            meminfo(&mi) == 0 && mi.total_kb / 1024u < MEMORIA_MB - 200u) {
             char t[260];
 
             snprintf(t, sizeof(t), "Questa macchina ha %u MB di memoria. Exilla (Firefox) ne "

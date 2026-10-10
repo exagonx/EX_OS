@@ -377,7 +377,7 @@ typedef struct Process {
 
     /* --- Contesto CPU --- */
     CpuContext      ctx;                    /* Stato registri salvato */
-    uint32_t        kernel_esp;             /* ESP kernel (per context switch) */
+    vaddr_t         kernel_esp;             /* ESP kernel (per context switch) */
 
     /* Stato del coprocessore x87 (agosto 2026).
      *
@@ -393,7 +393,7 @@ typedef struct Process {
 
     /* --- Stack --- */
     uint32_t        kernel_stack_base;      /* Indirizzo base stack kernel */
-    uint32_t        kernel_stack_top;       /* Top stack kernel */
+    vaddr_t         kernel_stack_top;       /* Top stack kernel */
     /* base = pagina piu' bassa ATTUALMENTE mappata; scende man mano che
      * lo stack cresce. limit = confine invalicabile della riserva: sotto
      * quello il fault non e' crescita ma esaurimento, e il processo va
@@ -832,9 +832,9 @@ void     sched_cpu_entra(void);             /* il processore n comincia a lavora
 int      sched_spazio_altrove(const void *pd);
 
 /* Gestione processi */
-Process *proc_create(const char *name, uint32_t entry_point,
+Process *proc_create(const char *name, vaddr_t entry_point,
                      uint32_t priority, int is_kernel_task);
-void     proc_set_entry(Process *proc, uint32_t entry_point, uint32_t user_stack_top);
+void     proc_set_entry(Process *proc, vaddr_t entry_point, vaddr_t user_stack_top);
 void     proc_exit(int32_t exit_code);
 
 /* Come proc_exit, ma per un GUASTO: porta via tutto il gruppo anche se a
@@ -928,9 +928,9 @@ void     sched_sleep(uint32_t ms);      /* Dorme per ms millisecondi */
 void     sched_dump(void);
 
 /* Funzione ASM context switch */
-extern void context_switch(uint32_t *old_esp, uint32_t new_esp,
+extern void context_switch(vaddr_t *old_esp, vaddr_t new_esp,
                             uint32_t new_cr3);
-extern void sched_enter_usermode(uint32_t entry, uint32_t user_esp);
+extern void sched_enter_usermode(vaddr_t entry, vaddr_t user_esp);
 extern void pit_configure(uint32_t frequency_hz);
 
 /* Tick counter globale (incrementato da IRQ0) */

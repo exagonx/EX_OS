@@ -160,7 +160,7 @@ void pmm_init(BootInfo *info)
         klog(LOG_WARN, "PMM: nessuna mappa E820, uso fallback: %u KB", 
              info->mem_lower + info->mem_upper);
     } else {
-        map = (E820Entry *)info->e820_addr;
+        map = (E820Entry *)DA_FISICO(info->e820_addr);
         for (i = 0; i < info->e820_count; i++) {
             /* Solo regioni usabili e con base < 4GB */
             if (map[i].type != E820_TYPE_USABLE) continue;
@@ -190,10 +190,10 @@ void pmm_init(BootInfo *info)
      * Il simbolo _kernel_end è definito nel linker script.
      * ------------------------------------------------------------------------- */
     extern uint32_t _kernel_end;
-    g_bitmap = (uint8_t *)ALIGN_UP((uint32_t)&_kernel_end, PAGE_SIZE);
+    g_bitmap = (uint8_t *)ALIGN_UP(IN_NUMERO(&_kernel_end), PAGE_SIZE);
 
     klog(LOG_INFO, "PMM: bitmap a 0x%08x (dimensione: %u byte)",
-         (uint32_t)g_bitmap, g_bitmap_size);
+         (uint32_t)IN_NUMERO(g_bitmap), g_bitmap_size);
 
     /* I riferimenti stanno subito dopo la bitmap: un byte per pagina. Su una
      * macchina da 64 MB sono 16 KB, e li paga anche chi la condivisione non la
@@ -204,7 +204,7 @@ void pmm_init(BootInfo *info)
     g_rif_size = ALIGN_UP(g_total_pages, PAGE_SIZE);
 
     klog(LOG_INFO, "PMM: riferimenti a 0x%08x (%u byte, 1 per pagina)",
-         (uint32_t)g_rif, g_rif_size);
+         (uint32_t)IN_NUMERO(g_rif), g_rif_size);
 
     /* -------------------------------------------------------------------------
      * Passo 3: Inizializza bitmap — TUTTO marcato come usato (sicuro di default)
@@ -228,7 +228,7 @@ void pmm_init(BootInfo *info)
      * Passo 4: Marca come libere SOLO le regioni E820 usabili
      * ------------------------------------------------------------------------- */
     if (info->e820_count > 0 && info->e820_addr != 0) {
-        map = (E820Entry *)info->e820_addr;
+        map = (E820Entry *)DA_FISICO(info->e820_addr);
         for (i = 0; i < info->e820_count; i++) {
             if (map[i].type  != E820_TYPE_USABLE) continue;
             if (map[i].base_high != 0)            continue; /* > 4GB */
@@ -263,12 +263,12 @@ void pmm_init(BootInfo *info)
     /* Kernel (da _kernel_start a fine bitmap) */
     {
         extern uint32_t _kernel_start;
-        uint32_t kernel_start = (uint32_t)&_kernel_start;
+        uint32_t kernel_start = (uint32_t)IN_NUMERO(&_kernel_start);
         /* ! FINO ALLA FINE DEI RIFERIMENTI, non della bitmap. Sono contigui e
          * vanno protetti insieme: lasciare fuori l'array dei riferimenti
          * vorrebbe dire che il PMM lo puo' consegnare a un processo, e i
          * conteggi comincerebbero a cambiare da soli. */
-        uint32_t riservato_fine = (uint32_t)g_rif + g_rif_size;
+        uint32_t riservato_fine = (uint32_t)IN_NUMERO(g_rif) + g_rif_size;
         pmm_mark_used(kernel_start, riservato_fine - kernel_start);
         klog(LOG_INFO, "PMM: kernel+bitmap+riferimenti protetti: 0x%08x - 0x%08x",
              kernel_start, riservato_fine);
@@ -338,7 +338,7 @@ void pmm_init(BootInfo *info)
  * Ritorna: indirizzo fisico della pagina (allineato a 4KB)
  *          0 se non ci sono pagine libere (OUT OF MEMORY)
  * ============================================================================= */
-uint32_t pmm_alloc_page(void)
+paddr_t pmm_alloc_page(void)
 {
     uint32_t i;
     uint32_t start;
@@ -421,7 +421,7 @@ static uint32_t pmm_limite_kernel(void)
     return (limite > g_total_pages) ? g_total_pages : limite;
 }
 
-uint32_t pmm_alloc_page_kernel(void)
+paddr_t pmm_alloc_page_kernel(void)
 {
     uint32_t limite = pmm_limite_kernel();
     uint32_t i;
@@ -456,7 +456,7 @@ uint32_t pmm_alloc_page_kernel(void)
     return 0;
 }
 
-uint32_t pmm_alloc_pages_kernel(uint32_t count)
+paddr_t pmm_alloc_pages_kernel(uint32_t count)
 {
     uint32_t limite = pmm_limite_kernel();
     uint32_t i, j, consecutive;
@@ -501,7 +501,7 @@ uint32_t pmm_alloc_pages_kernel(uint32_t count)
  *
  * Ritorna: indirizzo fisico prima pagina del blocco, 0 se fallito
  * ============================================================================= */
-uint32_t pmm_alloc_pages(uint32_t count)
+paddr_t pmm_alloc_pages(uint32_t count)
 {
     uint32_t i, j;
     uint32_t consecutive;
@@ -551,7 +551,7 @@ uint32_t pmm_alloc_pages(uint32_t count)
  *
  * addr: indirizzo fisico della pagina (DEVE essere allineato a 4KB)
  * ============================================================================= */
-void pmm_free_page(uint32_t addr)
+void pmm_free_page(paddr_t addr)
 {
     uint32_t page;
 
@@ -599,7 +599,7 @@ void pmm_free_page(uint32_t addr)
 /* =============================================================================
  * pmm_ref_inc / pmm_ref_count — vedi kernel/include/pmm.h
  * ============================================================================= */
-int pmm_ref_inc(uint32_t addr)
+int pmm_ref_inc(paddr_t addr)
 {
     uint32_t page;
 
@@ -640,7 +640,7 @@ int pmm_ref_inc(uint32_t addr)
     return 0;
 }
 
-uint32_t pmm_ref_count(uint32_t addr)
+uint32_t pmm_ref_count(paddr_t addr)
 {
     uint32_t page;
 
@@ -655,7 +655,7 @@ uint32_t pmm_ref_count(uint32_t addr)
 /* =============================================================================
  * pmm_free_pages — Libera N pagine fisiche contigue
  * ============================================================================= */
-void pmm_free_pages(uint32_t addr, uint32_t count)
+void pmm_free_pages(paddr_t addr, uint32_t count)
 {
     uint32_t i;
     for (i = 0; i < count; i++) {
@@ -673,7 +673,7 @@ uint32_t pmm_get_total_pages(void) { return g_total_pages; }
 /* =============================================================================
  * pmm_is_page_free — Controlla se una pagina è libera
  * ============================================================================= */
-int pmm_is_page_free(uint32_t addr)
+int pmm_is_page_free(paddr_t addr)
 {
     uint32_t page = addr_to_page(addr);
     if (page >= g_total_pages) return 0;
@@ -733,7 +733,7 @@ void pmm_dump(void)
          g_free_pages, (g_free_pages * PAGE_SIZE) / 1024);
     klog(LOG_DEBUG, "  Usate  : %u pagine (%u KB)",
          g_used_pages, (g_used_pages * PAGE_SIZE) / 1024);
-    klog(LOG_DEBUG, "  Bitmap : 0x%08x (%u byte)", (uint32_t)g_bitmap, g_bitmap_size);
+    klog(LOG_DEBUG, "  Bitmap : 0x%08x (%u byte)", (uint32_t)IN_NUMERO(g_bitmap), g_bitmap_size);
 
     /* Stampa i primi 8 blocchi liberi contigui */
     klog(LOG_DEBUG, "  Blocchi liberi (primi 8):");

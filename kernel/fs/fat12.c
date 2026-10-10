@@ -250,7 +250,7 @@ static void fdc_delay_ms(uint32_t ms)
 {
     uint32_t ticks_needed = (ms + 9) / 10;
     uint32_t target = g_ticks + ticks_needed;
-    uint32_t eflags;
+    uintptr_t eflags;      /* largo come la pila: «pop» lo vuole cosi' anche a 64 bit */
     int      need_sti;
 
     /* Se gli interrupt sono disabilitati (IF=0 in EFLAGS), hlt non
@@ -405,7 +405,7 @@ static void fdc_irq6_handler(InterruptFrame *frame)
  * successiva, che crederebbe completato un seek appena iniziato. */
 static void fdc_irq_clear(void)
 {
-    uint32_t eflags;
+    uintptr_t eflags;      /* largo come la pila: «pop» lo vuole cosi' anche a 64 bit */
 
     /* Preserva IF del chiamante invece di riabilitare incondizionatamente.
      * Oggi tutti i chiamanti girano a interrupt abilitati, ma un
@@ -423,7 +423,7 @@ static void fdc_irq_clear(void)
 static int fdc_wait_irq(uint32_t timeout_ms)
 {
     uint32_t target = g_ticks + (timeout_ms + 9) / 10;
-    uint32_t eflags;
+    uintptr_t eflags;      /* largo come la pila: «pop» lo vuole cosi' anche a 64 bit */
     int      caller_had_if;
     int      got;
 
@@ -1137,7 +1137,7 @@ static uint8_t g_dma_buf[BYTES_PER_SECTOR] __attribute__((aligned(512)));
  * ============================================================================= */
 static void fdc_dma_prepare(int write)
 {
-    uint32_t addr  = (uint32_t)g_dma_buf;   /* identità di mapping: virt = fis */
+    uint32_t addr  = (uint32_t)(uintptr_t)g_dma_buf;   /* identità di mapping: virt = fis */
     uint32_t count = BYTES_PER_SECTOR - 1;  /* il conteggio è "byte meno uno" */
 
     port_outb(DMA_MASK, DMA_CH2_MASK_ON);   /* canale fermo durante il setup */
