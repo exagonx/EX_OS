@@ -1,0 +1,4 @@
+lib/exsuono/exsuono.c:35:10: fatal error: minimp3.h: File o directory non esistente
+   35 | #include "minimp3.h"
+      |          ^~~~~~~~~~~
+compilation terminated.

@@ -105,11 +105,12 @@ void gdt_installa_cpu(uint32_t n) { (void)n; }
 
 /* La base della memoria locale del filo. A 32 bit e' un descrittore della GDT
  * raggiunto da GS; in long mode i descrittori non hanno base, e la base di FS
- * e di GS si scrive in un registro del processore (MSR). Si scrive quella di
- * GS, come a 32 bit.
- * EXOS64-DAFARE: la convenzione dei programmi a 64 bit (FS o GS) si decide
- * con la libc, tappa 4; e il valore va rimesso a ogni cambio di processo. */
+ * e di GS si scrive in un registro del processore (MSR).
+ * ! A 64 BIT E' FS, NON GS: e' la convenzione di x86-64, quella per cui GCC (e
+ * Rust, e ogni libreria portata) compila le variabili __thread come %fs:...
+ * La libc legge il puntatore del filo da %fs:0 (TP_LEGGI in lib/libc.c).
+ * Lo scheduler la riscrive a ogni cambio di processo. */
 void gdt_set_tls_base(uint32_t base)
 {
-    __asm__ volatile("wrmsr" : : "c"(0xC0000101u), "a"(base), "d"(0u));
+    __asm__ volatile("wrmsr" : : "c"(0xC0000100u), "a"(base), "d"(0u));
 }

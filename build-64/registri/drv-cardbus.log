@@ -1,0 +1,4 @@
+drivers/cardbus/cardbus.c: In function ‘guarda_slot’:
+drivers/cardbus/cardbus.c:359:9: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  359 |     s = (volatile unsigned int *)m.virt;
+      |         ^

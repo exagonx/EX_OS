@@ -1,0 +1,28 @@
+bin/memprova/memprova.c: In function ‘p_vecchia_confronta’:
+bin/memprova/memprova.c:332:3: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  332 |   for (i = 0; i < g_rip; i++) a += vecchia_memcmp(g_vd, g_vs, n); g_pozzo = a; }
+      |   ^~~
+bin/memprova/memprova.c:332:67: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  332 |   for (i = 0; i < g_rip; i++) a += vecchia_memcmp(g_vd, g_vs, n); g_pozzo = a; }
+      |                                                                   ^~~~~~~
+bin/memprova/memprova.c: In function ‘p_nuova_confronta’:
+bin/memprova/memprova.c:336:3: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  336 |   for (i = 0; i < g_rip; i++) a += memcmp(g_vd, g_vs, n); g_pozzo = a; }
+      |   ^~~
+bin/memprova/memprova.c:336:59: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  336 |   for (i = 0; i < g_rip; i++) a += memcmp(g_vd, g_vs, n); g_pozzo = a; }
+      |                                                           ^~~~~~~
+bin/memprova/memprova.c: In function ‘p_vecchia_lung’:
+bin/memprova/memprova.c:340:3: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  340 |   for (i = 0; i < g_rip; i++) a += (int)vecchia_strlen((char *)g_vd); g_pozzo = a; }
+      |   ^~~
+bin/memprova/memprova.c:340:71: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  340 |   for (i = 0; i < g_rip; i++) a += (int)vecchia_strlen((char *)g_vd); g_pozzo = a; }
+      |                                                                       ^~~~~~~
+bin/memprova/memprova.c: In function ‘p_nuova_lung’:
+bin/memprova/memprova.c:344:3: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  344 |   for (i = 0; i < g_rip; i++) a += (int)strlen((char *)g_vd); g_pozzo = a; }
+      |   ^~~
+bin/memprova/memprova.c:344:63: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  344 |   for (i = 0; i < g_rip; i++) a += (int)strlen((char *)g_vd); g_pozzo = a; }
+      |                                                               ^~~~~~~

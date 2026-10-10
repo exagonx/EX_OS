@@ -6612,41 +6612,115 @@ un programma: il primo lavoro e' tirarla fuori.
   chiamano senza ARCH:
     make iso64       dist/exos64.iso - il CD del sistema, avviabile. Albero
                      in build-64/iso-exos (lo stesso nome del 32 bit: e' da
-                     li' che mknetinst.sh prende). FATTO, e oggi contiene il
-                     kernel e il programma di prova: si riempie con le tappe.
+                     li' che mknetinst.sh prende). FATTO: kernel, shell, 78
+                     comandi, 20 driver, e i DATI del CD a 32 bit (cio' che
+                     in build/iso-exos non e' un programma: kernel.cfg, gli
+                     script di avvio, manuali, caratteri, certificati).
+    make utente64    la libc, i comandi e i driver (lo chiama iso64).
+    sudo make usb64 DISPOSITIVO=/dev/sdX   la chiavetta (vedi sotto).
     make netinst64   dist/netinst_64 - il repository. FATTO (4 file oggi).
     make tools64     il CD degli strumenti. Si FERMA e dice perche': vuole
                      la libc a 64 bit (tappa 4) e x86_64-exos (tappa 7).
   exagonx/repo-update.sh -64 chiama queste tre.
-  ! FINCHE' /bin/sh E' IL PROGRAMMA DI PROVA tools/mkiso64.sh lascia
-  build-64/NON-ANCORA-UN-SISTEMA.txt, e repo-update.sh -64 costruisce ma si
-  ferma PRIMA di pubblicare. Quella riga di mkiso64.sh si toglie il giorno
-  che c'e' la shell vera.
+  ! tools/mkiso64.sh LASCIA ANCORA build-64/NON-ANCORA-UN-SISTEMA.txt, e
+  repo-update.sh -64 costruisce ma si ferma PRIMA di pubblicare. La shell
+  vera adesso c'e'; la riga si toglie quando il sistema a 64 bit e' stato
+  provato su una macchina vera e netupdate a 64 bit contro il suo
+  repository - pubblicare e' l'unica cosa di tutto questo che non si disfa.
   ! IL CD SI AVVIA COME QUELLO A 32 BIT: immagine di avvio El Torito di
   1,44 MB con Stage 1, Stage 2 e il kernel (build-64/avvio/, interna: non e'
   un prodotto e nessuno la scrive su un supporto), poi il kernel monta il CD.
   Vuole un BIOS, o un UEFI con il modulo di compatibilita' (CSM): l'avvio
   UEFI puro non c'e' (era gia' fra le cose da decidere).
-  LA CHIAVETTA non c'e' ancora, e non per scelta: a 32 bit tools/mkusb.sh la
-  fa installando DA DENTRO EX-OS (partizione, ext2, MBR, mappa dei settori
-  del kernel), cioe' vuole shell e `install` a 64 bit - dopo la tappa 4. Voce
-  prevista: make usb64 DISPOSITIVO=/dev/sdX.
+  LA CHIAVETTA: `sudo make usb64 DISPOSITIVO=/dev/sdX [MB=512]`, cioe' lo
+  stesso tools/mkusb.sh della versione a 32 bit con EXOS_ARCH=x86_64 - stesse
+  protezioni, installa da dist/exos64.iso dentro QEMU e scrive alla fine.
+  Senza gli strumenti di sviluppo, che a 64 bit non ci sono.
+  ! PROVATO SOLO FIN DOVE SI PUO' SENZA UNA CHIAVETTA: lo script rifiuta
+  senza dispositivo, e l'installazione che fa (mkfs, install) e' quella
+  provata su dischi/hd64.img. In QEMU quell'immagine, data come CHIAVETTA
+  USB invece che come disco IDE, viene caricata dal BIOS ma il kernel non
+  trova la radice («su nessun disco hd0..hd3 c'e' una partizione»): il
+  kernel legge i dischi ATA, non l'USB. NON e' dei 64 bit: l'immagine
+  installata a 32 bit fa lo stesso, provato nello stesso modo. Quindi la
+  chiavetta fatta cosi' parte dove il disco USB si presenta come ATA, come
+  quella a 32 bit; per le altre serve la strada del volume in RAM
+  (netinst-usb), che a 64 bit non e' ancora fatta.
   Tolti: tools/mkfloppy64.sh, dist/floppy64.img, dist/floppy64-intero.img.
 
-  QUEL CHE MANCA PER LA TAPPA 4 (libc, shell, /bin, driver in ring 3), cioe'
-  cio' che il kernel a 64 bit ancora non sa fare per un programma vero:
-    - i SEGNALI: reg_salva / reg_rimetti in segnali.c a 64 bit fanno kpanic
-      (EXOS64-DAFARE): il contesto salvato sulla pila del programma;
-    - gli ARGOMENTI: argc/argv/envp sulla pila iniziale e le strutture di
-      spawn (lib/include/spawn_abi.h) hanno puntatori di 4 byte;
-    - le STRUTTURE condivise fra kernel e programmi (stat, dirent, MemInfo,
-      i messaggi IPC...): vanno guardate una per una, con le misure fisse;
-    - le chiamate che rendono un errore negativo: il valore torna in RAX da
-      un int32_t, da decidere e scrivere come si estende;
-    - la base TLS: FS o GS, la sceglie la libc (gdt_set_tls_base scrive GS);
-    - librerie condivise e driver: lib.c, dynlink.c, drvmgr.c leggono solo
-      ELF32 (tappa 5 e 4);
-    - variabili di indirizzo ancora uint32_t (giuste sotto i 4 GB);
-    - piu' processori: smp64.c dice uno.
-  Stato: IN CORSO (tappe 1, 2, 3 fatte: il kernel comune gira a 64 bit e
-  avvia un programma ELF64; la prossima e' la 4, la libc e la shell).
+  TAPPA 4 FATTA (10 ottobre 2026) - LIBC, SHELL, COMANDI, DRIVER: a 64 bit
+  c'e' un sistema a riga di comando che si avvia dal CD, si installa su
+  disco e riparte da li'.
+  COME SI COSTRUISCE: tools/costruisci-utente64.sh (make utente64) compila
+  gli STESSI sorgenti - lib/libc.c, lib/ex*, bin/*, drivers/* - in -m64, in
+  build-64/. Una regola sola per tutti: i .c della directory, l'avvio, la
+  libc, un archivio di tutte le librerie (--gc-sections toglie il resto),
+  un solo lib/programma64.ld. ! LA LIBC E' STATICA, dentro ogni programma:
+  quella condivisa (libc.so e i ponti) vuole lib.c a 64 bit, tappa 5.
+  Costruiti: 78 comandi su 82, 20 driver su 27, 83 sorgenti di libreria.
+  NON costruiti, e perche': audio, runbas, exsuono, exqjs (pezzi di terzi -
+  minimp3, il BASIC, QuickJS - che la regola generica non trova); fbprova,
+  winprova, wserver (assembly a 32 bit e la scrivania: tappa 5); ac97,
+  es1371, hdaudio, sb, floppy (driver-libreria caricati da drvmgr, che legge
+  solo ELF32); sis (un file in piu').
+  COSA E' CAMBIATO NEL CODICE COMUNE, col 32 bit identico a ogni passo
+  (tools/kernel32-uguale.sh per il kernel, tools/libc32-uguale.sh - nuovo -
+  per libc, librerie e comandi: 181 sorgenti):
+    - libc.c: gli argomenti delle chiamate di sistema sono uintptr_t (un
+      registro), e 96 puntatori che passavano per uint32_t sono stati
+      allargati nel punto esatto indicato dal compilatore; setjmp / longjmp /
+      sigsetjmp a 64 bit; il puntatore del filo letto da %fs:0 (a 32 bit
+      %gs:0); MMX a mano e atomiche a 64 bit solo a 32 bit; l'ingresso dei
+      segnali che salva lo stato con FXSAVE.
+    - bin/sh: lo stesso (31 puntatori, il suo start.S).
+    - kernel, sys_spawn: argv, envp e il telaio di _start scritti in
+      «parole» larghe quanto un puntatore; elf.c lascia quattro parole a
+      zero sotto la cima della pila.
+    - kernel, segnali: il contesto a 64 bit (i registri nell'ordine di
+      Linux x86-64, siginfo con si_addr a 16), la zona rossa di 128 byte
+      saltata, RAX rimesso intero al ritorno.
+    - kernel, fili: il primo argomento in RDI.
+    - la base TLS a 64 bit e' FS (convenzione di x86-64), non GS.
+    - i driver sono programmi: si costruiscono come i comandi.
+  TROVATI E CORRETTI, tutti errori che a 32 bit non esistono:
+    - un indirizzo reso da una chiamata di sistema in un int32_t e poi
+      convertito a puntatore prende il SEGNO sopra i 2 GB (sbrk, mmap, la
+      crescita dello heap di malloc): si converte passando da uint32_t;
+    - il blocco TLS va allineato come dice il segmento, non «a una parola»:
+      arrotondando a 8 una variabile __thread inizializzata a 41 valeva 0;
+    - sha256() dichiarata con `unsigned int` in due intestazioni e con
+      size_t nella libc.
+  NON ERA DEI 64 BIT, ma l'ho creduto per un'ora: senza kbd.drv il kernel
+  usa il gestore di tastiera interno, che ha UN solo lettore in attesa, e le
+  console avviate sono cinque - la riga battuta finiva alla shell di una
+  console non visibile. Col driver vero non succede.
+  PROVATO IN QEMU (tools/prova_kernel64.sh, parte 3, e a mano):
+    - avvio dal CD fino alla shell; kbd.drv (tastiera e mouse PS/2), pci,
+      e1000, ip, dhcp con indirizzo, ping 4 su 4;
+    - bin/prova64 (nuovo): argv, printf, malloc/realloc, setjmp, __thread,
+      un segnale preso e ripreso, un guasto di pagina preso con SA_SIGINFO
+      e siglongjmp, un filo con la sua copia di __thread, file, virgola
+      mobile - tutto giusto; bin/libctest: 261 prove passate;
+    - con 6 GB di RAM il kernel usa i 3 GB sotto i 4 GB e ignora il resto;
+    - INSTALLAZIONE: mkfs ext2, mount, `install` dal CD a 64 bit su un disco
+      da 256 MB, «Installazione completata»; riavvio DAL DISCO senza CD,
+      accesso come root, comandi, un file scritto, cp + cmp di un programma,
+      shutdown; e2fsck -fn dall'host non trova niente.
+  NON PROVATO: una macchina vera (lo fa l'utente con dist/exos64.iso);
+  netupdate a 64 bit contro un repository; USB e audio; lo scambio su disco;
+  piu' processori (uno solo). In libctest falliscono tre prove che non ho
+  confrontato col 32 bit: «mmap di un file e' rifiutata», «sbrk rifiuta una
+  richiesta piu' grande dello spazio», «lo heap torna dov'era».
+
+  QUEL CHE MANCA DOPO LA TAPPA 4:
+    - tappa 5: librerie condivise (lib.c, dynlink.c, drvmgr.c leggono solo
+      ELF32), ExWin e i suoi programmi, wserver;
+    - i driver-libreria (audio, floppy) e i pezzi di terzi;
+    - tappa 6: netinst_64 pubblicato, la chiavetta per le macchine dove
+      l'USB non si presenta come ATA;
+    - tappa 7: compilatori nativi, Exilla;
+    - piu' processori (smp64.c dice uno); l'avvio UEFI puro;
+    - variabili di indirizzo ancora uint32_t nel kernel (giuste sotto i
+      4 GB, che e' dove stanno i programmi).
+  Stato: IN CORSO (tappe 1-4 fatte: a 64 bit c'e' un sistema a riga di
+  comando installabile; la prossima e' la 5, librerie condivise ed ExWin).

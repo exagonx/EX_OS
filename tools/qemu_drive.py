@@ -208,7 +208,9 @@ def main():
                 "-device", dev]
 
     qemu = subprocess.Popen([
-        "qemu-system-i386",
+        # EXOS_QEMU sceglie l'emulatore: per EX-OS a 64 bit serve
+        # qemu-system-x86_64 (@EXOS-64). Di serie quello di sempre.
+        os.environ.get("EXOS_QEMU", "qemu-system-i386"),
     ] + supporto + [
         # EXOS_RAM: 32 MB bastano a tutto il sistema, ma non a caricare cc1
         # — che da solo pesa 40 MB. Il caricamento ELF e' a richiesta,

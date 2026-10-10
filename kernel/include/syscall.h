@@ -916,13 +916,26 @@ typedef struct {
 
 /* stack_t, Linux order. */
 typedef struct {
-    uint32_t sp;
-    int32_t  flag;
-    uint32_t dim;
+    uintptr_t sp;           /* larghi quanto un puntatore: e' lo stack_t della libc */
+    int32_t   flag;
+    uintptr_t dim;
 } SegPila;
 
 /* siginfo_t: 128 bytes like Linux i386, with the fields where Linux has them
  * (si_addr and si_pid both at offset 12). */
+#if defined(__x86_64__)
+/* @EXOS-64: tre interi, poi l'unione allineata a otto byte - si_addr (o
+ * si_pid e si_uid) sta a 16, come in Linux x86-64. 136 byte: quelli del
+ * siginfo_t di lib/include/libc.h compilato a 64 bit. */
+typedef struct {
+    int32_t  signo;
+    int32_t  errno_;
+    int32_t  codice;
+    int32_t  vuoto;
+    uint64_t indirizzo;     /* si_addr, or si_pid (low half) and si_uid */
+    uint32_t resto[28];
+} SegInfo;
+#else
 typedef struct {
     int32_t  signo;
     int32_t  errno_;
@@ -931,7 +944,51 @@ typedef struct {
     uint32_t uid;           /* si_uid */
     uint32_t resto[27];
 } SegInfo;
+#endif
 
+#if defined(__x86_64__)
+/* @EXOS-64. mcontext_t.gregs nell'ordine di Linux x86-64 (REG_R8...REG_CR2):
+ * un debugger o una libreria portata che legge gregs[REG_RIP] trova RIP.
+ * Gli ultimi due posti dell'elenco di Linux, la maschera di prima e CR2, qui
+ * hanno un nome loro (oldmask, cr2) e stanno subito dopo i ventuno registri:
+ * in memoria e' lo stesso elenco di ventitre' parole. */
+#define SEG_REG_R8     0
+#define SEG_REG_R9     1
+#define SEG_REG_R10    2
+#define SEG_REG_R11    3
+#define SEG_REG_R12    4
+#define SEG_REG_R13    5
+#define SEG_REG_R14    6
+#define SEG_REG_R15    7
+#define SEG_REG_RDI    8
+#define SEG_REG_RSI    9
+#define SEG_REG_RBP    10
+#define SEG_REG_RBX    11
+#define SEG_REG_RDX    12
+#define SEG_REG_RAX    13
+#define SEG_REG_RCX    14
+#define SEG_REG_RSP    15
+#define SEG_REG_RIP    16
+#define SEG_REG_EFL    17
+#define SEG_REG_CSGSFS 18
+#define SEG_REG_ERR    19
+#define SEG_REG_TRAPNO 20
+#define SEG_NREG       21
+#define SEG_REG_EAX    SEG_REG_RAX      /* il nome che usa il codice comune */
+
+typedef struct {
+    uint64_t flag;                  /* uc_flags */
+    uint64_t link;                  /* uc_link, always NULL */
+    SegPila  pila;                  /* uc_stack */
+    uint64_t gregs[SEG_NREG];       /* uc_mcontext.gregs[0..20] */
+    uint64_t oldmask;               /*   gregs[21] */
+    uint64_t cr2;                   /*   gregs[22] */
+    uint64_t fpregs;                /*   the libc fills it (FXSAVE, 512 bytes) */
+    uint64_t riservato[8];
+    uint32_t maschera;              /* uc_sigmask */
+    uint32_t vuoto;
+} SegContesto;
+#else
 /* mcontext_t.gregs: the index of each register is Linux's REG_* */
 #define SEG_REG_GS    0
 #define SEG_REG_FS    1
@@ -967,13 +1024,14 @@ typedef struct {
     uint32_t cr2;
     uint32_t maschera;              /* uc_sigmask */
 } SegContesto;
+#endif
 
 /* What the kernel puts on the user stack, 16-byte aligned, with ESP pointing
  * at `sig` and EIP at the libc dispatcher. */
 typedef struct {
     uint32_t    sig;
-    uint32_t    info;               /* &this->si */
-    uint32_t    contesto;           /* &this->uc */
+    uintptr_t   info;               /* &this->si */
+    uintptr_t   contesto;           /* &this->uc */
     uint32_t    riservato;
     SegInfo     si;
     SegContesto uc;

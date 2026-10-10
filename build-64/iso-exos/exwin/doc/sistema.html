@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Il sistema &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> &mdash; Il sistema |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="exide.html">EX-IDE</a> |
+<a href="exbrowser.html">EXBrowser</a>
+</p>
+
+<h1>Il sistema</h1>
+
+<h2>Un minikernel, e perche' non e' nessuna delle due parole solite</h2>
+
+<p>
+<b>Microkernel no</b>: dentro il kernel ci sono la memoria virtuale, lo
+scheduler, il VFS con FAT12/16/32, ext2 e ISO 9660, il caricatore ELF e la
+cache dei blocchi. Un microkernel vero quelli li mette fuori.
+</p>
+
+<p>
+<b>Monolitico no</b>: i driver di dispositivo &mdash; tastiera, floppy, PCI,
+schede di rete, tty, IP, mouse, USB, il server grafico &mdash; sono
+<b>processi ring3</b>, eseguibili ELF come quelli di <code>/bin</code>, che
+parlano per IPC e non eseguono una sola istruzione privilegiata. Il kernel
+media ogni accesso all'hardware e controlla i permessi a ogni chiamata.
+</p>
+
+<p class="nota">
+<b>Un driver che muore lo si rilancia.</b> E' la conseguenza pratica di quella
+scelta, ed e' anche il motivo per cui e' stata fatta: un difetto dentro il
+driver di rete non porta giu' la macchina.
+</p>
+
+<p>
+<b>Minikernel</b> dice le stesse due cose e in piu' contiene un impegno
+&mdash; <i>restare piccolo</i> &mdash; che si misura: circa 30 000 righe di C
+e assembly. Chi aggiunge codice al kernel dovrebbe prima chiedersi se non
+possa essere un processo ring3: e' quasi sempre la risposta giusta, ed e'
+come sono nati tutti i driver.
+</p>
+
+<h2>I filesystem</h2>
+
+<table border="1">
+<tr><th>Formato</th><th>Cosa si puo' fare</th></tr>
+<tr><td>FAT12</td><td>il floppy da 1,44 MB da cui il sistema parte</td></tr>
+<tr><td>FAT16 / FAT32</td><td>dischi rigidi, lettura e scrittura</td></tr>
+<tr><td>ext2</td><td>dischi rigidi: e' il formato consigliato per l'installazione</td></tr>
+<tr><td>ISO 9660</td><td>CD e DVD, in sola lettura, con i nomi lunghi (Joliet)</td></tr>
+</table>
+
+<p class="nota">
+<b>Su FAT i nomi lunghi sono in sola lettura.</b> Si leggono, ma un file
+creato li' torna in maiuscolo e in forma 8.3. Su ext2 i nomi restano come li
+hai scritti &mdash; e' il motivo per cui la shell distingue maiuscole e
+minuscole e su FAT serve <code>*.O</code> invece di <code>*.o</code>.
+</p>
+
+<h2>Le cinque console</h2>
+
+<pre>    Alt+F1 .. Alt+F4     quattro console di testo, ognuna con la sua shell
+    la quinta           la grafica</pre>
+
+<p>
+La tastiera va a quella visibile: un programma su una console nascosta resta
+fermo invece di rubare i tasti a chi sta scrivendo. Digitando <code>exwin</code>
+lo schermo passa da solo alla console grafica, e quando la grafica si spegne
+si torna a quella di partenza.
+</p>
+
+<p>
+Fino alla versione 0.206 le console erano quattro e il server grafico se ne
+prendeva una: chi lavorava in testo si ritrovava con tre console senza averlo
+chiesto.
+</p>
+
+<h2>La configurazione: <code>/boot/kernel.cfg</code></h2>
+
+<p>Formato INI, cinque sezioni:</p>
+
+<table border="1">
+<tr><th>Sezione</th><th>Che cosa ci sta</th></tr>
+<tr><td><code>[kernel]</code></td>
+    <td><code>loglevel</code>, <code>timer_hz</code>, <code>verboseboot</code>,
+        <code>keymap</code>, <code>lingua</code>, <code>swap</code>,
+        <code>atadma</code>, <code>smp</code></td></tr>
+<tr><td><code>[env]</code></td>
+    <td>le variabili d'ambiente iniziali: <code>PATH</code>,
+        <code>HOME</code>, <code>TERM</code></td></tr>
+<tr><td><code>[boot]</code></td>
+    <td>quale shell, quale <code>login</code>, quali moduli caricare</td></tr>
+<tr><td><code>[modules]</code></td>
+    <td>il percorso di ogni driver da caricare all'avvio</td></tr>
+<tr><td><code>[mount]</code></td>
+    <td>i montaggi automatici, per esempio <code>/cdrom = cd0</code></td></tr>
+</table>
+
+<p class="nota">
+<b>Il file ha un tetto di 8191 byte, e sforarlo si paga male.</b> Il kernel lo
+legge in un buffer da 8192 e si ferma li': le sezioni finali &mdash;
+<code>[modules]</code>, cioe' il driver di tastiera &mdash; spariscono, e la
+macchina si presenta <i>senza tastiera</i> senza che il collegamento sia
+ovvio. Per questo le spiegazioni non stanno la' dentro ma in
+<code>/boot/kernel.txt</code>, che il kernel non legge e puo' crescere quanto
+serve.
+</p>
+
+<p>
+<code>hwconfig</code> guarda la macchina e scrive <code>kernel.cfg</code> da
+solo, tenendo da parte una copia <code>.bak</code> di quello di prima:
+e' la via breve al posto di scriverlo a mano.
+</p>
+
+<h2 id="dischi">I dischi: IDE e AHCI</h2>
+<p>
+I dischi si chiamano <code>hd0</code>..<code>hd3</code>, qualunque sia la
+strada per arrivarci: i due canali IDE di sempre, i canali IDE «nativi» di un
+controller PCI, oppure un controller <b>AHCI</b> (dal kernel 0.245). Un
+controller che si dichiara AHCI si usa cosi' fin dall'avvio. Un controller
+che offre lo stesso disco sia dai registri IDE sia dall'AHCI parte dai primi
+e passa all'AHCI dopo, con <code>ahci = 1</code> in
+<code>/boot/kernel.cfg</code> (lo scrive <code>install</code> quando vede che
+funziona) o col comando <code>ahci</code>. Che cosa ha fatto il kernel lo dice
+<code>dmesg AHCI</code>.
+</p>
+
+<h2 id="usb">L'USB</h2>
+<p>
+L'USB sta fuori dal kernel, come ogni altro driver: un programma per ogni
+tipo di controller, e una parte comune (riconoscere il dispositivo, dargli
+un indirizzo, leggerne i descrittori, gli hub) che e' la stessa per tutti.
+</p>
+
+<table border="1">
+<tr><th>Driver</th><th>Controller</th><th>Dove si trova</th></tr>
+<tr><td><code>/dev/uhci.drv</code></td><td>UHCI, USB 1.1</td><td>le schede madri Intel e VIA</td></tr>
+<tr><td><code>/dev/ohci.drv</code></td><td>OHCI, USB 1.1</td><td>tutto il resto: NVIDIA, SiS, ALi, le schede PCI</td></tr>
+<tr><td><code>/dev/ehci.drv</code></td><td>EHCI, USB 2.0</td><td>accanto a uno dei due qui sopra, per i dispositivi veloci</td></tr>
+<tr><td><code>/dev/xhci.drv</code></td><td>xHCI, USB 3</td><td>le macchine recenti, dove puo' essere l'unico</td></tr>
+</table>
+
+<p>Che cosa si puo' attaccare:</p>
+
+<table border="1">
+<tr><th>Dispositivo</th><th>Come si usa</th></tr>
+<tr><td>chiavette e dischi USB</td><td>compaiono da soli sotto <code>/USB</code> (<code>/USB/HDD0p1</code> la prima partizione, <code>/USB/DRIVE0</code> una chiavetta senza tabella): li monta <code>automount</code>. Prima di toglierli: <code>eject</code></td></tr>
+<tr><td>lettori di schede, floppy USB</td><td>come le chiavette; un lettore vuoto non da' fastidio</td></tr>
+<tr><td>mouse e tastiere USB</td><td>col protocollo di avvio (quello che usa anche il BIOS): funzionano in console e in ExWin come quelli PS/2. Anche i ricevitori senza fili che fanno da tastiera e mouse insieme</td></tr>
+<tr><td>hub</td><td>solo dietro un controller UHCI, per ora: con OHCI, EHCI e xHCI il dispositivo va nelle porte della macchina</td></tr>
+</table>
+
+<p>
+All'avvio <code>/boot/avvio.sh</code> lancia <code>ehci.drv -avvio</code> e
+<code>ohci.drv -avvio</code>: quello che non trova il suo controller esce in
+silenzio, gli altri restano a guardare le porte, perche' una chiavetta di
+solito si infila dopo l'accensione. Su una macchina Intel con sole porte
+USB 1.1 va aggiunta a mano la riga <code>/dev/uhci.drv -avvio &amp;</code>;
+con un xHCI, <code>/dev/xhci.drv &amp;</code>. Per vedere che cosa c'e'
+sulle porte: <code>ohci.drv -d</code>, <code>xhci.drv -v</code>.
+</p>
+
+<p class="nota">
+<b>Che cosa non c'e'.</b> Niente audio, webcam, stampanti o adattatori di
+rete USB: solo memorie di massa e dispositivi di ingresso. Un controller
+OHCI oggi serve <i>o</i> mouse e tastiera <i>o</i> le chiavette, non le due
+cose insieme: se sulla stessa macchina c'e' anche un EHCI le chiavette
+passano da quello e il problema non si vede. Provato su hardware vero: EHCI
+con chiavette e OHCI con un ricevitore Logitech (tastiera e mouse) su una
+scheda NVIDIA MCP73; UHCI e xHCI in emulazione.
+</p>
+
+<h2 id="processori">Piu' di un processore</h2>
+
+<p>
+Dal kernel 0.237 EX-OS si accorge se la macchina ha piu' di un processore, o
+un processore a piu' nuclei. All'avvio li cerca nelle tabelle del BIOS &mdash;
+l'ACPI delle macchine dal 2000 in poi, la tabella MultiProcessor delle schede
+a due processori degli anni Novanta (doppio Pentium, doppio Pentium Pro)
+&mdash; sveglia quelli in piu' uno alla volta e, dalla 0.238, da' a ciascuno
+il suo timer e il modo di ricevere messaggi dagli altri.
+</p>
+
+<p>
+Dal kernel 0.246 i processori in piu' possono <b>eseguire programmi</b>.
+Non lo fanno da soli: di serie restano accesi e in attesa, e la macchina va
+come con un processore. Si mettono al lavoro in due modi.
+</p>
+
+<table border="1">
+<tr><th>Come</th><th>Che cosa fa</th></tr>
+<tr><td><code>smpprova -accendi</code></td><td>da adesso e fino al riavvio (serve root). E' il modo di provare: se la macchina si fermasse, riavviandola torna com'era</td></tr>
+<tr><td><code>smp = 2</code> in <code>[kernel]</code> di <code>/boot/kernel.cfg</code></td><td>a ogni avvio. Si scrive dopo aver visto che il primo modo funziona su quella macchina</td></tr>
+</table>
+
+<p>
+<code>smpprova</code> senza argomenti misura se lavorano davvero: fa fare dei
+conti a un programma da solo, poi a due insieme, e confronta. Con un
+processore due programmi insieme fanno il lavoro di uno; con due ne fanno il
+doppio.
+</p>
+
+<p class="nota">
+<b>Che cosa va piu' veloce, e che cosa no.</b> Due programmi diversi girano
+su due processori insieme. Dentro il kernel entra un processore per volta:
+un programma che passa il tempo a leggere il disco o a parlare con la rete
+non guadagna. E i fili di uno stesso programma (un navigatore, per esempio)
+si alternano su un processore solo: usarne due insieme e' il passo dopo.
+Le periferiche restano tutte sul processore d'avvio.
+</p>
+
+<p>Che cosa ha trovato lo dice <code>hwinfo</code>:</p>
+
+<pre>     PROCESSORI
+      trovati          2
+      elenco da        tabella MultiProcessor 1.4
+      APIC locale      0xfee00000
+
+      cpu 0  APIC 0    IN USO   - e' quello su cui gira EX-OS
+      cpu 1  APIC 1    IN ATTESA - acceso, non esegue ancora processi
+                       timer     50 battiti in 50 centesimi di secondo: CAMMINA
+                       messaggi  RICEVE (ricevuti finora: 1)</pre>
+
+<table border="1">
+<tr><th>si legge</th><th>vuol dire</th></tr>
+<tr><td><code>IN USO</code></td><td>il processore da cui la macchina e' partita, e che fa tutto</td></tr>
+<tr><td><code>IN ATTESA</code></td><td>svegliato, ha risposto, ha il suo timer; non lavora ancora</td></tr>
+<tr><td><code>LAVORA</code></td><td>esegue programmi (dopo <code>smpprova -accendi</code>, o con <code>smp = 2</code>)</td></tr>
+<tr><td><code>MUTO</code></td><td>il BIOS lo elenca ma non ha risposto: zoccolo vuoto, o processore guasto</td></tr>
+<tr><td><code>NON SVEGLIATO</code></td><td>elencato e lasciato stare: sotto c'e' scritto perche'</td></tr>
+</table>
+
+<p>
+Se su una scheda con piu' processori l'avvio si fermasse, in
+<code>/boot/kernel.cfg</code>, sezione <code>[kernel]</code>:
+</p>
+
+<pre>    smp = 0</pre>
+
+<p>
+e il kernel li conta senza svegliarli. Su una macchina con un processore solo
+niente di tutto questo succede, e la voce non fa differenza.
+</p>
+
+<h2>La memoria, e lo scambio</h2>
+
+<p>
+Il kernel sta in RAM convenzionale ed e' in sola lettura; tutto il resto
+&mdash; driver, shell, programmi &mdash; gira in RAM estesa, in spazio
+protetto, con la propria tabella delle pagine. Ogni programma ha uno heap che
+comincia sopra il suo ultimo segmento e un tetto dichiarato: sopra ci sono il
+blocco TLS e la riserva dello stack, e una pagina di guardia non mappata fra
+i due, cosi' che sfondare sia un errore e non una corruzione silenziosa.
+</p>
+
+<p>
+Da agosto 2026 c'e' la <b>memoria virtuale su partizione dedicata</b>: si
+prepara con <code>mkswap</code> e si dichiara in <code>kernel.cfg</code>:
+</p>
+
+<pre>    mkswap hd0p2
+
+    [kernel]
+    swap = hd0p2</pre>
+
+<p>
+All'avvio il kernel lo dice, e vale la pena leggerlo: dice quanti slot da
+4 KB ha trovato, cioe' quanta memoria in piu' ha davvero.
+</p>
+
+<h2>L'avvio, passo per passo</h2>
+
+<ol>
+<li>il settore di avvio carica <b>stage 2</b>;</li>
+<li>stage 2 passa in modo protetto, imposta il video (VESA, se la
+    configurazione lo dice) e carica <code>kernel.bin</code>;</li>
+<li>il kernel legge <code>/boot/kernel.cfg</code>, monta la radice, carica i
+    moduli della sezione <code>[modules]</code>;</li>
+<li>avvia <code>login</code>, che <b>prima</b> di chiedere chi sei esegue
+    <code>/boot/avvio.sh</code> da amministratore &mdash; li' dentro sta la
+    rete, che deve essere accesa anche per chi non ha ancora fatto
+    l'accesso;</li>
+<li>fatto l'accesso, la shell di chi e' entrato esegue il suo
+    <code>autoexec.sh</code>. Sono due file perche' sono due momenti e due
+    utenti diversi.</li>
+</ol>
+
+<p class="nota">
+<b>Il kernel si trova per mappa dei settori, non per nome.</b> Chi copia a
+mano un <code>kernel.bin</code> nuovo su un disco gia' installato deve
+rilanciare <code>install</code>: senza, il disco riparte con la versione di
+prima e nessuno dice niente.
+</p>
+
+<h2>Gli utenti</h2>
+
+<p>
+<code>login</code> chiede chi sei prima di consegnare la shell; gli utenti
+stanno in <code>/boot</code>. Ognuno ha il proprio <code>HOME</code>, e i
+programmi ci tengono i propri dati sotto <code>$HOME/.app/</code>: la cache
+del navigatore, per esempio, e' in <code>$HOME/.app/exbrowser/cache</code>.
+</p>
+
+<p class="nota">
+<b>Nessun programma scrive i propri dati in un percorso fisso.</b> Un
+programma che lo facesse funzionerebbe per il primo utente e sbaglierebbe per
+il secondo &mdash; o peggio, gli scriverebbe addosso.
+</p>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="comandi.html">La riga di comando &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

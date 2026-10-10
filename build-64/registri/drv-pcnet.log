@@ -1,0 +1,12 @@
+drivers/pcnet/pcnet.c: In function ‘desc’:
+drivers/pcnet/pcnet.c:247:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  247 |     return (volatile unsigned int *)(g_dma_virt + offset);
+      |            ^
+drivers/pcnet/pcnet.c: In function ‘buffer_virt’:
+drivers/pcnet/pcnet.c:252:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  252 |     return (unsigned char *)(g_dma_virt + OFF_BUFFER + indice * BUF_LEN);
+      |            ^
+drivers/pcnet/pcnet.c: In function ‘prepara_init_block’:
+drivers/pcnet/pcnet.c:342:35: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  342 |     volatile unsigned char  *b  = (volatile unsigned char *)(g_dma_virt + OFF_INIT);
+      |                                   ^

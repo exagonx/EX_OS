@@ -56,6 +56,12 @@ void syscall_handler(InterruptFrame *frame)
          proc_get_current() ? proc_get_current()->pid : 0);
 
     ret = syscall_table[num](frame);
+#if defined(__x86_64__)
+    /* @EXOS-64: il ritorno da un segnale ha gia' rimesso TUTTI i registri del
+     * programma interrotto, RAX compreso e intero (segnali.c): scriverci il
+     * «risultato», che e' di 32 bit, ne taglierebbe la meta' alta. */
+    if (num != SYS_SEG_RITORNO)
+#endif
     FR_RET(frame) = (uint32_t)ret;
 
     /* =========================================================================

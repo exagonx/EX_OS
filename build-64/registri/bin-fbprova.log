@@ -1,0 +1,5 @@
+bin/fbprova/fbprova.c: Assembler messages:
+bin/fbprova/fbprova.c:185: Error: incorrect register `%rdi' used with `l' suffix
+bin/fbprova/fbprova.c:186: Error: incorrect register `%rsi' used with `l' suffix
+bin/fbprova/fbprova.c:148: Error: incorrect register `%rdi' used with `l' suffix
+bin/fbprova/fbprova.c:118: Error: incorrect register `%rdi' used with `l' suffix

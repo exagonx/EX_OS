@@ -54,26 +54,38 @@ else
     echo "  [NO]  la paginazione a 64 bit non ha passato le prove"; no=1
 fi
 
-# --- 3. il kernel INTERO: gli stessi sorgenti del 32 bit, fino a un programma --
-make ARCH=x86_64 kernel64 > /tmp/exos-kernel64-intero-make.log 2>&1 || {
-    echo "la costruzione del kernel intero e' fallita: /tmp/exos-kernel64-intero-make.log"
+# --- 3. il SISTEMA a 64 bit: kernel intero, driver, shell, libc ----------------
+make iso64 > /tmp/exos-kernel64-intero-make.log 2>&1 || {
+    echo "la costruzione del sistema a 64 bit e' fallita: /tmp/exos-kernel64-intero-make.log"
     tail -15 /tmp/exos-kernel64-intero-make.log; exit 1; }
-rm -f /tmp/exos-kernel64-c.txt
-timeout 40 qemu-system-x86_64 -cpu qemu64 -m 128M \
-    -cdrom dist/exos64.iso -boot d -display none \
-    -serial file:/tmp/exos-kernel64-c.txt -no-reboot > /dev/null 2>&1 || true
-echo "=== 3. il kernel intero a 64 bit e il primo programma ==="
-tr -d '\r' < /tmp/exos-kernel64-c.txt | grep -a "Long Mode\|PASSO 10\] Sched\|PASSO 11\] Sys\|VFS: root" | sed 's/^/    /'
-tr -d '\r' < /tmp/exos-kernel64-c.txt | sed -n '/^primo64/,/EXOS64-TAPPA3D/p' | sed 's/^/    /'
-if grep -q "Long Mode a 64 bit" /tmp/exos-kernel64-c.txt && grep -q "VFS: root" /tmp/exos-kernel64-c.txt; then
-    echo "  [OK]  il kernel comune si avvia a 64 bit: memoria, scheduler, chiamate, CD"
+grep "costruiti\|NON costruiti\|non compilano" /tmp/exos-kernel64-intero-make.log | sed 's/^/    /'
+# Si avvia dal CD e si BATTONO i comandi nella shell (tools/prova64.sh): il
+# primo programma senza libc, e la prova della libc - segnali, fili, __thread,
+# setjmp, virgola mobile, file.
+tools/prova64.sh "primo64@~8" "prova64 uno due@~15" "ping 10.0.2.2@~15" > /tmp/exos-kernel64-c.out 2>&1
+tr -d '\r' < /tmp/exos/serial64.txt | sed 's/\x1b\[[0-9;]*m//g' > /tmp/exos-kernel64-c.txt
+echo "=== 3. il sistema a 64 bit: kernel intero, driver, shell, libc ==="
+grep -a "Long Mode\|VFS: root\|servizio 'rete0'\|dhcp: configurato\|ricevuti\|PROVA64-LIBC\|EXOS64-TAPPA3D\|SBAGLIATO" /tmp/exos-kernel64-c.txt | sed 's/^/    /'
+si() { grep -a -q "$1" /tmp/exos-kernel64-c.txt; }
+if si "Long Mode a 64 bit" && si "VFS: root"; then
+    echo "  [OK]  il kernel comune si avvia a 64 bit e monta il CD"
 else
     echo "  [NO]  il kernel intero non e' arrivato al file system (seriale: /tmp/exos-kernel64-c.txt)"; no=1
 fi
-if grep -q "EXOS64-TAPPA3D-OK" /tmp/exos-kernel64-c.txt && ! grep -q "KERNEL PANIC\|PAGE FAULT (KERNEL)" /tmp/exos-kernel64-c.txt; then
-    echo "  [OK]  un programma ELF64 gira in ring 3: chiamate di sistema, R8-R15, sleep"
+if si "EXOS64-TAPPA3D-OK"; then
+    echo "  [OK]  la shell avvia un programma ELF64 senza libc"
 else
     echo "  [NO]  il primo programma a 64 bit non ha finito bene"; no=1
+fi
+if si "PROVA64-LIBC-OK" && ! si "KERNEL PANIC\|PAGE FAULT (KERNEL)"; then
+    echo "  [OK]  la libc a 64 bit: argv, malloc, segnali, fili, __thread, file"
+else
+    echo "  [NO]  la prova della libc a 64 bit non e' passata"; no=1
+fi
+if si "4 inviati, 4 ricevuti"; then
+    echo "  [OK]  driver in ring 3 e rete: e1000, IP, DHCP, ping"
+else
+    echo "  [NO]  la rete a 64 bit non ha risposto al ping"; no=1
 fi
 
 avvia qemu-system-i386 pentium /tmp/exos-kernel64-b.txt

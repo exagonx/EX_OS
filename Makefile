@@ -90,7 +90,7 @@ ifeq ($(filter $(ARCH),i386 x86_64),)
 $(error ARCH=$(ARCH) non la conosco: i386 oppure x86_64)
 endif
 ifeq ($(ARCH),x86_64)
-ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 iso64 tools64 netinst64 pulisci64,$(or $(MAKECMDGOALS),all)),)
+ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 tools64 netinst64 pulisci64,$(or $(MAKECMDGOALS),all)),)
 $(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: iso64 netinst64 tools64 kernel64 kernel64-prova kernel64-sondaggio arch-dice)
 endif
 endif
@@ -121,14 +121,35 @@ arch-dice:
 # si fa installando da dentro EX-OS (come tools/mkusb.sh a 32 bit), quindi
 # arriva quando a 64 bit ci sono la shell e `install`.
 #
-# ! OGGI iso64 FA UN CD CHE SI AVVIA E NON E' UN SISTEMA: dentro ci sono il
-# kernel a 64 bit e un programma di prova al posto della shell. Si riempie
-# tappa per tappa (@EXOS-64), e le voci restano queste.
+# ! iso64 FA UN CD CHE SI AVVIA FINO ALLA SHELL, con i comandi, i driver e la
+# rete; non ha ancora la scrivania (ExWin) ne' i compilatori. Si riempie tappa
+# per tappa (@EXOS-64), e le voci restano queste.
 # ==============================================================================
 .PHONY: iso64 tools64 netinst64
 iso64:
+	@[ -d build/iso-exos ] || echo "! manca build/iso-exos: senza 'make iso-exos' il CD a 64 bit non avra' kernel.cfg, manuali e caratteri"
+	@$(MAKE) --no-print-directory ARCH=x86_64 utente64
 	@$(MAKE) --no-print-directory ARCH=x86_64 kernel64
 	@ls -la dist/exos64.iso
+
+# La libc, i comandi di /bin e i driver a 64 bit: gli stessi sorgenti del
+# 32 bit, in build-64/bin e build-64/drivers. Lo script dice quanti ne ha
+# costruiti e quali no (vedi tools/costruisci-utente64.sh).
+# La chiavetta a 64 bit: lo stesso tools/mkusb.sh della versione a 32 bit
+# (stesse protezioni: il dispositivo va nominato, la conferma va battuta), che
+# installa da dist/exos64.iso. Senza gli strumenti di sviluppo, finche' non ci
+# sono.     sudo make usb64 DISPOSITIVO=/dev/sdX [MB=512]
+.PHONY: usb64
+usb64:
+	@[ -f dist/exos64.iso ] || { echo "manca dist/exos64.iso: prima 'make iso64'"; exit 1; }
+	@chmod +x $(TOOLS_DIR)/mkusb.sh
+	@EXOS_ARCH=x86_64 $(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)" $(or $(MB),512)
+
+.PHONY: utente64
+utente64:
+	@echo "=== EX-OS a 64 bit: libc, comandi, driver ==="
+	@chmod +x $(TOOLS_DIR)/costruisci-utente64.sh
+	@$(TOOLS_DIR)/costruisci-utente64.sh
 
 netinst64: iso64
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh

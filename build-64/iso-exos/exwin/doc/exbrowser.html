@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Guida di EXBrowser &mdash; EX-OS</title>
+<!--
+  exwin/doc/exbrowser.html - EX-OS
+  Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+  SPDX-License-Identifier: GPL-2.0-or-later
+
+  ! SOLO ASCII IN QUESTO FILE, apostrofi al posto degli accenti. Non e' una
+  limitazione del browser - l'UTF-8 lo legge - ma la stessa regola che vale
+  per tutto il resto del sistema: un file che si puo' aprire anche con
+  `edit`, o guardare da una console in code page 437, resta leggibile
+  dovunque finisca.
+
+  ! ED E' SCRITTO NEL SOTTOINSIEME CHE QUESTO BROWSER SA IMPAGINARE, apposta.
+  La guida di un browser aperta da quel browser e' anche la sua prova: se un
+  giorno i titoli, gli elenchi o la tabella qui sotto si vedono male, il
+  difetto si presenta da solo invece di aspettare che qualcuno lo cerchi.
+-->
+<link rel="stylesheet" href="stile.css">
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="exide.html">EX-IDE</a> &mdash; EXBrowser
+</p>
+
+<h1>EXBrowser, il navigatore di EX-OS</h1>
+
+<p><b>Fino alla versione 0.002 si chiamava <code>browser</code></b>. Dalla
+0.003 il programma e' <code>/exwin/bin/exbrowser</code>, e i suoi dati stanno
+in <code>$HOME/.app/exbrowser/</code>. Chi aveva gia' impostazioni, biscotti e
+cache nella vecchia <code>$HOME/.app/browser/</code> non perde niente: al primo
+avvio EXBrowser la sposta da se' e lo dice.</p>
+
+<h2>L'aiuto in due minuti</h2>
+
+<table border="1">
+<tr><th>Voglio...</th><th>Come si fa</th></tr>
+<tr><td>aprire un sito</td>
+    <td>scrivi l'indirizzo in alto e premi <b>Invio</b></td></tr>
+<tr><td>cercare in rete</td>
+    <td>scrivi le parole nella casella <b>Cerca</b>, a destra della barra, e
+        premi <b>Invio</b></td></tr>
+<tr><td>aprire un file HTML del disco</td>
+    <td><b>File &gt; Apri...</b>, oppure <code>Ctrl+O</code></td></tr>
+<tr><td>salvare la pagina che sto guardando</td>
+    <td><b>File &gt; Salva con nome...</b>, oppure <code>Ctrl+S</code></td></tr>
+<tr><td>tornare indietro</td>
+    <td>il pulsante <b>&lt;</b> in alto a sinistra</td></tr>
+<tr><td>scorrere</td>
+    <td>frecce, <b>PagSu</b>/<b>PagGiu'</b>, <b>Inizio</b>/<b>Fine</b>, o la
+        barra a destra</td></tr>
+<tr><td>leggere la documentazione di EX-OS</td>
+    <td><b>Aiuto &gt; Guida di EXBrowser</b>, e da li' i collegamenti in
+        cima alla pagina</td></tr>
+<tr><td>tornare alla pagina iniziale</td>
+    <td><b>File &gt; Pagina iniziale</b>, oppure <code>Ctrl+H</code></td></tr>
+<tr><td>cambiare pagina iniziale, il motore di ricerca, o spegnere
+        JavaScript</td>
+    <td><b>File &gt; Impostazioni...</b></td></tr>
+<tr><td>uscire</td>
+    <td><b>File &gt; Esci</b>, oppure <code>Ctrl+Q</code></td></tr>
+</table>
+
+<h2>Il manuale</h2>
+
+<p>
+Un browser scritto dentro EX-OS, che non porta dentro niente di nessun altro:
+la rete e' <code>exhttp</code>, l'albero della pagina e' <code>exhtml</code>,
+i fogli di stile <code>excss</code>, le immagini <code>eximg</code>,
+JavaScript <code>exjs</code> con il ponte <code>exdom</code>, e i caratteri
+li misura e li disegna <code>exfont</code>.
+</p>
+
+<h2>Cercare</h2>
+
+<p>
+La casella <b>Cerca</b> sta a destra nella stessa barra dell'indirizzo: si
+scrivono le parole e si preme <b>Invio</b>. Il navigatore compone l'indirizzo
+del motore scelto e ci va &mdash; e' la stessa cosa che scriverlo a mano, senza
+scriverlo a mano. Le parole si codificano come quelle di un modulo, quindi
+<code>pane &amp; vino</code> arriva intero invece di diventare due campi.
+</p>
+
+<p class="nota">
+<b>Invio fa due cose diverse, e la differenza e' dove sta il cursore:</b> nella
+casella di sinistra apre l'indirizzo, in quella di destra cerca. Con
+<code>Tab</code> si passa da una all'altra.
+</p>
+
+<p>
+I motori sono tre, e si scelgono in <b>File &gt; Impostazioni...</b>:
+</p>
+
+<table border="1">
+<tr><th>Motore</th><th>Che cosa rende</th></tr>
+<tr><td><b>duckduckgo</b></td>
+    <td>quello predefinito. <code>html.duckduckgo.com</code> risponde in HTML
+        semplice &mdash; dieci risultati, nessuno script &mdash; ed e' il
+        motivo per cui e' il primo.</td></tr>
+<tr><td><b>wikipedia</b></td>
+    <td>cerca dentro Wikipedia in italiano, e su un titolo esatto ci porta
+        dritto.</td></tr>
+<tr><td><b>marginalia</b></td>
+    <td>un motore piccolo che indicizza pagine scritte a mano: risponde in
+        HTML semplice come DuckDuckGo, e trova cose diverse.</td></tr>
+</table>
+
+<p class="nota">
+<b>Google non c'e', e non e' una dimenticanza.</b> <code>google.com</code>
+risponde con novantamila byte, tre script e <i>zero</i> collegamenti di
+risultato dentro l'HTML: i risultati li costruisce il JavaScript, quindi non
+c'e' browser senza JS che possa vederli &mdash; nemmeno portandone uno di terze
+parti. Mojeek, provato lo stesso giorno, manda un Captcha. I tre qui sopra sono
+quelli che rispondono davvero.
+</p>
+
+<h2>Aprire una pagina</h2>
+
+<p>
+Si scrive l'indirizzo nella casella in alto e si preme <b>Invio</b>, oppure si
+preme <b>Vai</b>. Il pulsante <b>&lt;</b> torna alla pagina di prima.
+Tre schemi:
+</p>
+
+<table border="1">
+<tr><th>Schema</th><th>Esempio</th><th>Cosa fa</th></tr>
+<tr><td><code>http://</code></td><td><code>http://example.com/</code></td>
+    <td>in chiaro, porta 80</td></tr>
+<tr><td><code>https://</code></td><td><code>https://example.com/</code></td>
+    <td>TLS 1.3, o 1.2 per i server che non hanno altro, con il certificato
+        verificato davvero contro le CA di <code>/exos/ssl/certi.pem</code>
+        (e le tue, vedi <i>I certificati</i>)</td></tr>
+<tr><td><code>file://</code></td><td><code>file:///exwin/doc/exbrowser.html</code></td>
+    <td>un file di questo disco: nessuna rete, nessuna cache</td></tr>
+</table>
+
+<p>
+Un indirizzo senza schema si intende <code>http://</code>. Dalla riga di
+comando si puo' passare direttamente un percorso, e diventa un
+<code>file:</code>:
+</p>
+
+<pre>    exbrowser /exwin/doc/exbrowser.html
+    exbrowser https://example.com/</pre>
+
+<h2>I menu</h2>
+
+<h3>File</h3>
+<ul>
+<li><b>Apri...</b> (<code>Ctrl+O</code>) &mdash; sceglie un file HTML del disco
+    e lo apre. Da una pagina locale il dialogo riparte dalla sua directory.</li>
+<li><b>Pagina iniziale</b> (<code>Ctrl+H</code>) &mdash; torna alla pagina che
+    si apre all'avvio.</li>
+<li><b>Salva con nome...</b> (<code>Ctrl+S</code>) &mdash; scrive su disco
+    l'HTML della pagina aperta in questo momento.</li>
+<li><b>Impostazioni...</b> &mdash; la schermata qui sotto.</li>
+<li><b>Aggiungi un certificato...</b> &mdash; vedi <i>I certificati</i>, piu'
+    in basso.</li>
+<li><b>Esci</b> (<code>Ctrl+Q</code>) &mdash; chiude il navigatore. La
+    scrivania resta accesa.</li>
+</ul>
+
+<p class="nota">
+<b>Che cosa salva davvero</b> &mdash; i byte del documento <i>come sono
+arrivati</i>: non le immagini, non i fogli di stile esterni, non quello che
+uno script ha costruito dopo. E' l'originale, difetti compresi: riaprendolo da
+qui si rivede la stessa pagina soltanto se non aveva nulla di tutto cio'.
+</p>
+
+<h3>Aiuto</h3>
+<ul>
+<li><b>Guida di EXBrowser</b> &mdash; questa pagina, che sta in
+    <code>/exwin/doc/exbrowser.html</code> (o in <code>/cdrom/exwin/doc/</code>
+    avviando dal CD).</li>
+<li><b>Documentazione di EX-OS</b> &mdash; l'<a href="index.html">indice</a>
+    di tutte le pagine: il sistema, i comandi, l'installazione, la scrivania,
+    la rete, lo sviluppo.</li>
+<li><b>Informazioni su</b> &mdash; versione, autore, memoria usata, e la riga
+    dei <b>caratteri</b>: quante facce si sono aperte e quante sono ripiegate
+    sul font di sistema. Vedi la sezione <i>Quando il testo e' tutto di un
+    carattere solo</i>, piu' in basso.</li>
+</ul>
+
+<h2>Le impostazioni</h2>
+
+<p>
+<b>File &gt; Impostazioni...</b> apre una schermata con cinque cose. Si
+lavora su una copia: niente cambia finche' non si preme <b>Salva</b>.
+</p>
+
+<table border="1">
+<tr><th>Impostazione</th><th>Che cosa fa</th></tr>
+<tr><td><b>Pagina iniziale</b></td>
+    <td>l'indirizzo che si apre all'avvio e con <code>Ctrl+H</code>. Il
+        pulsante <b>Usa la pagina di adesso</b> ci mette quella che stai
+        guardando &mdash; nessuno ricopia a mano un indirizzo lungo.</td></tr>
+<tr><td><b>JavaScript</b></td>
+    <td>acceso o spento. Spento, il motore non si apre affatto: una pagina
+        senza script non paga mezzo megabyte e due librerie condivise per non
+        fare niente. Vale dalla pagina successiva.</td></tr>
+<tr><td><b>Motore</b></td>
+    <td><b>ExJs (66 KB)</b> oppure <b>QuickJS (594 KB)</b>. Il primo e' l'ES3
+        scritto dentro EX-OS: c'e' sempre, parte subito, e per una pagina con
+        uno script di dieci righe e' quello giusto. Il secondo e' il motore
+        completo &mdash; espressioni regolari, <code>Date</code>,
+        <code>try/catch</code>, ES2017 &mdash; e sta in
+        <code>/exwin/lib/quickjs.so</code>, che si puo' anche non aver
+        installato. Vale dalla pagina successiva.</td></tr>
+<tr><td><b>Cerca con</b></td>
+    <td>quale motore usa la casella <b>Cerca</b>:
+        <b>duckduckgo</b>, <b>wikipedia</b> o <b>marginalia</b>. Il pulsante
+        gira fra i tre e la scritta dice quello di adesso.</td></tr>
+<tr><td><b>Immagini</b></td>
+    <td>spente, al loro posto si legge il testo alternativo &mdash; che e'
+        esattamente cio' a cui l'attributo <code>alt</code> serve. Su una rete
+        lenta e' la differenza fra leggere e aspettare.</td></tr>
+<tr><td><b>Cache su disco</b></td>
+    <td>spenta vuol dire anche <i>non leggere</i>, non solo non scrivere: chi
+        la spegne lo fa perche' vuole la pagina di adesso.</td></tr>
+</table>
+
+<p class="nota">
+<b>Le impostazioni stanno in <code>$HOME/.app/exbrowser/impostazioni.txt</code></b>,
+non in un percorso fisso: un percorso fisso funziona per il primo utente e
+scrive addosso al secondo. E' testo, <code>chiave = valore</code>, e si puo'
+modificare a mano &mdash; un file di configurazione che solo il programma sa
+scrivere e' un file che non si puo' riparare quando quel programma non parte.
+Una chiave sconosciuta si salta in silenzio: e' cio' che permette alle opzioni
+future di aggiungersi senza rompere le versioni di prima.
+</p>
+
+<p>
+<b>La pagina iniziale predefinita e' questa documentazione</b>, non un
+indirizzo in rete: su una macchina appena installata, senza rete configurata,
+una pagina iniziale che non si apre sarebbe la prima cosa che il browser fa e
+la prima che sbaglia.
+</p>
+
+<h2>I tasti</h2>
+
+<table border="1">
+<tr><th>Tasto</th><th>Cosa fa</th></tr>
+<tr><td><code>Invio</code></td>
+    <td>nella casella dell'indirizzo va all'indirizzo scritto; in quella
+        <b>Cerca</b> cerca le parole scritte</td></tr>
+<tr><td><code>Tab</code></td><td>passa da una casella all'altra</td></tr>
+<tr><td><code>Su</code> / <code>Giu'</code></td><td>scorre di una riga</td></tr>
+<tr><td><code>PagSu</code> / <code>PagGiu'</code></td><td>scorre di una schermata</td></tr>
+<tr><td><code>Inizio</code> / <code>Fine</code></td><td>cima e fondo della pagina</td></tr>
+<tr><td><code>F10</code></td><td>apre i menu; le frecce li girano, Invio sceglie, Esc chiude</td></tr>
+<tr><td><code>Ctrl+O</code> <code>Ctrl+S</code> <code>Ctrl+Q</code></td>
+    <td>apri, salva, esci</td></tr>
+<tr><td><code>Ctrl+H</code></td><td>pagina iniziale</td></tr>
+</table>
+
+<p>
+Dentro una casella di un modulo i tasti sono suoi: le frecce muovono il
+cursore invece di scorrere la pagina, <code>Esc</code> o <code>Tab</code>
+riportano il fuoco alla barra dell'indirizzo. Gli appunti sono quelli di tutta
+la scrivania (<code>Ctrl+C</code>, <code>Ctrl+X</code>, <code>Ctrl+V</code>, e
+anche le combinazioni CUA con Ins e Canc): si copia da un modulo e si incolla
+nell'editor.
+</p>
+
+<h2>I moduli</h2>
+
+<p>
+Caselle di testo, aree, spunte, scelte esclusive, elenchi a tendina e pulsanti,
+piu' i campi <b>nascosti</b>, che non si vedono ma partono con gli altri &mdash;
+sono i gettoni di sicurezza e gli identificativi di sessione, cioe' meta' di
+quel che un modulo manda. L'invio va sia in <code>GET</code> sia in
+<code>POST</code>. <b>Invio</b> in una casella manda il modulo; dentro un'area
+va a capo, perche' un'area esiste per contenere piu' righe.
+</p>
+
+<p>
+<b>Il pulsante premuto fa parte dei campi</b>, e solo lui: e' cosi' che una
+pagina distingue due comandi con due pulsanti nello stesso modulo &mdash;
+<code>azione=salva</code> oppure <code>azione=cancella</code>, e il server
+guarda quale gli e' arrivato. L'<b>Invio</b> battuto in una casella si comporta
+come se si fosse premuto il primo pulsante d'invio, col suo nome.
+</p>
+
+<p class="nota">
+<b>«Azzera» azzera, e non manda.</b> Un <code>type="reset"</code> rimette i
+campi come stavano nella pagina; un <code>type="button"</code> non fa niente
+per conto suo &mdash; esiste per far girare uno script, e lo script il clic ce
+l'ha lo stesso. Un <code>type="image"</code> manda <code>nome.x</code> e
+<code>nome.y</code>, che qui valgono <b>zero</b>: si disegna come un pulsante e
+non come l'immagine cliccabile che dovrebbe essere, quindi un punto preciso non
+ce l'ha.
+</p>
+
+<h2>JavaScript</h2>
+
+<p>
+C'e', e questa e' la parte da leggere prima di stupirsi. Il motore e'
+<b>ExJs</b>, scritto per EX-OS: un ES3 utile &mdash; <code>var</code>,
+funzioni, chiusure, oggetti, prototipi, <code>Array</code>,
+<code>String</code>, <code>Math</code>, <code>JSON</code>,
+<code>setTimeout</code>, <code>setInterval</code> &mdash; con un ponte al
+documento (<code>document</code>, <code>getElementById</code>,
+<code>innerHTML</code>, <code>appendChild</code>, gli eventi con la
+propagazione completa e <code>preventDefault</code>). Gli script girano
+nell'ordine del documento; dopo ognuno, e dopo ogni clic, la pagina si rifa'
+se e' cambiata.
+</p>
+
+<p>
+Il ponte col documento sa anche <code>el.style</code> (che scrive
+nell'attributo <code>style</code>, quindi si <i>vede</i>),
+<code>querySelector</code> e <code>querySelectorAll</code>,
+<code>matches</code>, <code>closest</code>, <code>classList</code>,
+<code>dataset</code>, le proprieta' degli elementi
+(<code>img.src</code>, <code>a.href</code>, <code>input.value</code>),
+<code>location</code>, <code>navigator</code> e <code>document.cookie</code>.
+</p>
+
+<p class="nota">
+<b class="manca">Quello che a ExJs NON c'e', dichiarato:</b> espressioni
+regolari, <code>Date</code>, <code>try/catch</code> completo,
+<code>Function</code>, e tutto ES5 in avanti &mdash;
+<code>async</code>/<code>await</code>, <code>Proxy</code>, la
+destrutturazione, le classi. Non c'e' nemmeno un raccoglitore di memoria: il
+posto e' preparato, ma una pagina lasciata a mutare per ore consuma.
+</p>
+
+<h3>Chiedere alla rete: XMLHttpRequest e fetch</h3>
+
+<p>
+Ci sono tutt'e due, e passano da <code>exhttp</code> &mdash; quindi anche da
+<b>https</b>. Un indirizzo relativo si risolve rispetto alla pagina, come un
+collegamento; e da una pagina <code>file:</code> la rete e' il disco, cosi'
+una pagina locale puo' andarsi a prendere un altro file.
+<code>fetch</code> rende un oggetto con <code>then</code>,
+<code>catch</code> e <code>finally</code> che si incatena, e la risposta ha
+<code>ok</code>, <code>status</code>, <code>text()</code>,
+<code>json()</code> e <code>headers.get()</code>.
+</p>
+
+<p>
+<b>E sono asincrone davvero.</b> <code>send()</code> mette in coda e torna
+subito: il codice che sta <i>dopo</i> gira <i>prima</i> del gestore, come
+promette il DOM, e piu' richieste possono aspettare insieme. A mandarle avanti
+e' il ciclo dei messaggi del navigatore, una per giro. La forma
+<code>xhr.open(m, u, false)</code> resta sincera: la risposta c'e' quando
+<code>send()</code> ritorna, perche' e' quel che quella forma promette e c'e'
+del codice che ci conta.
+</p>
+
+<p>
+<b>E la finestra resta viva mentre scarica.</b> Fra un pezzo e l'altro il
+navigatore chiede alla rete se c'e' gia' qualcosa da leggere; finche' non c'e',
+si ridisegna e risponde al mouse invece di dormire. La riga di stato dice a che
+punto e' &mdash; <i>«immagine 3 di 6...»</i> &mdash; e la si vede cambiare.
+</p>
+
+<p class="nota">
+<b>Esc ferma lo scaricamento.</b> Quel che era arrivato non si tiene: una
+pagina tagliata mostrata come se fosse intera e' peggio di una pagina che non
+c'e'. Le immagini che mancano tornano al loro <code>alt</code>.
+</p>
+
+<p>
+<b>E aprire una connessione cifrata dice a che punto e'.</b> La riga di stato
+scrive i passi mentre li fa &mdash; <i>«concordo il segreto»</i>,
+<i>«controllo la firma»</i>, <i>«verifico la catena»</i> &mdash; e fra un passo
+e l'altro la finestra si ridisegna e <b>Esc</b> arriva. Su una macchina svelta
+passano in mezzo secondo e si fa in tempo appena a leggerli; su una lenta sono
+la differenza fra un programma che lavora e uno che sembra morto.
+</p>
+
+<p class="nota">
+<b class="manca">Quel che resta fermo:</b> dentro un singolo passo non si
+respira &mdash; un calcolo di chiave o una verifica di firma sono un blocco
+solo. Misurati dentro EX-OS verso google.com: magazzino delle CA 60 ms, DNS e
+connessione 320 ms, stretta di mano 490 ms. Meno di un secondo in tutto, e la
+stretta si paga <i>una volta per connessione</i> perche' la connessione si
+riusa.
+</p>
+
+<p class="nota">
+<b>E una cosa per volta.</b> Mentre si scarica, un collegamento o un modulo non
+partono: si sente dire <i>«sto ancora scaricando: Esc per fermare»</i>. Due
+richieste insieme vorrebbero dire due risposte nello stesso buffer.
+</p>
+
+<p class="nota">
+<b class="manca">Quello che manca alle richieste:</b> le intestazioni che si
+mandano. <code>setRequestHeader</code> si accetta e non fa niente, perche'
+<code>exhttp</code> costruisce la richiesta da se' e non ha dove infilarne una
+in piu'; rifiutarla fermerebbe ogni pagina che ne mette una. Di quelle che
+tornano se ne conosce una, il <code>Content-Type</code>: per tutte le altre
+<code>getResponseHeader</code> rende <code>null</code>. E con <b>ExJs</b> il
+tetto vero e' l'arena del motore, 96 KB: una risposta piu' grande diventa la
+stringa vuota.
+</p>
+
+<h3>I biscotti (i cookie)</h3>
+
+<p>
+Ci sono, e fanno tutt'e due i giri: quelli che il server manda con
+<code>Set-Cookie</code> tornano indietro nelle richieste dopo, comprese quelle
+di una redirezione; e uno script li legge e li scrive con
+<code>document.cookie</code>. Si rispettano dominio, percorso, scadenza,
+<code>Secure</code> &mdash; su una connessione in chiaro non parte &mdash; e
+<code>HttpOnly</code>, che li nasconde agli script: e' quel che impedisce a uno
+script di rubare una sessione.
+</p>
+
+<p>
+Quelli con una scadenza si scrivono in
+<code>$HOME/.app/exbrowser/biscotti.txt</code> e si ritrovano al riavvio; quelli
+<b>di sessione</b> no, e non e' una mancanza: un biscotto di sessione deve
+morire quando il navigatore si chiude, ed e' quel che promette al sito che lo
+ha messo. Il file e' leggibile e si puo' cancellare a mano.
+</p>
+
+<p class="nota">
+<b>Un sito non puo' mettere biscotti per un altro</b>, e il confronto fra
+domini si fa a etichette: <code>ex.os</code> vale per <code>www.ex.os</code> e
+non per <code>notex.os</code>, che gli somiglia soltanto. Lo stesso per i
+percorsi: <code>/conto</code> copre <code>/conto/estratto</code> e non
+<code>/contoltre</code>.
+</p>
+
+<h3>Due motori, e come si scambiano</h3>
+
+<p>
+Da <b>File &gt; Impostazioni</b> si sceglie <b>QuickJS</b> al posto di ExJs:
+espressioni regolari, <code>Date</code>, <code>try/catch</code>, le promesse e
+ES2017. E' il motore di Fabrice Bellard, adattato a EX-OS e messo sotto la
+stessa interfaccia.
+</p>
+
+<p class="nota">
+<b>Il ponte col documento non cambia.</b> Le stesse duecentoquarantaquattro prove del
+ponte passano con l'uno e con l'altro, e questa pagina rende un documento identico
+byte per byte in tutt'e due i casi. E' il motivo per cui il linguaggio,
+l'albero e il ponte sono tre librerie separate invece di una.
+</p>
+
+<p>
+<b>Aiuto &gt; Informazioni su</b> dice quale motore sta girando <i>davvero</i>:
+se si e' scelto QuickJS e <code>quickjs.so</code> non e' installata, il
+navigatore apre ExJs e va avanti invece di fermarsi &mdash; ma lo scrive.
+</p>
+
+<p>
+La pagina <a href="javascript.html">JavaScript, quindici cose alla volta</a>
+e' una prova che si guarda: se i quindici riquadri si riempiono, il motore
+funziona.
+</p>
+
+<h3>E i siti grandi?</h3>
+
+<p>
+<code>google.com</code> <b>si apre e si vede</b>: il logo, la casella di
+ricerca, il pulsante. La pagina dei <b>risultati</b> no, e vale la pena dire
+perche', perche' non e' il nostro JavaScript.
+</p>
+
+<p>
+Quella pagina ha tutto il contenuto dentro un <code>&lt;noscript&gt;</code>, e
+i risultati veri li costruisce uno script offuscato che e' il controllo
+anti&ndash;robot di Google: non si limita a disegnare la pagina, verifica di
+girare dentro un browser che riconosce. Chiedendo la stessa pagina con il nome
+di Lynx, di w3m o di Internet Explorer 6, Google risponde <i>&laquo;Aggiorna
+il browser&raquo;</i> e nessun risultato. Non c'e' una terza porta, e non ce
+l'hanno nemmeno Lynx e w3m, che sono programmi maturi da trent'anni.
+</p>
+
+<p class="nota">
+<b>Una pagina bianca lo dice.</b> Da quando <code>&lt;noscript&gt;</code> non
+si mostra piu' con gli script accesi &mdash; sta li' per chi il JavaScript non
+ce l'ha, e mostrarlo comunque vuol dire far vedere due volte la stessa cosa
+&mdash; un sito che si disegna tutto in JavaScript e non ci riesce lascia lo
+schermo vuoto. La riga di stato scrive allora
+<code>[vuota: la disegna JavaScript]</code>, cosi' non sembra un guasto del
+navigatore.
+</p>
+
+<h2>Le immagini</h2>
+
+<p>
+PNG, GIF, JPEG e ICO, decodificate da <code>eximg</code>. Il tetto ai pixel si
+sceglie all'avvio, guardando la memoria che c'e' davvero: le immagini che non
+ci stanno restano fuori e la barra di stato le conta. Una pagina si
+reimpagina a ogni immagine che arriva.
+</p>
+
+<h3>Le figure caricate in ritardo, e quelle di sfondo</h3>
+
+<p>
+Molte pagine non scrivono l'indirizzo di una figura in <code>src</code>: lo
+tengono in <code>data-src</code> e lo spostano con uno script quando la
+figura entra nello schermo. EXBrowser lo prende da li' subito, e in mancanza
+dal primo indirizzo di <code>srcset</code>.
+</p>
+
+<p>
+Dal 10 ottobre 2026 si vedono anche le <b>immagini di sfondo dei fogli di
+stile</b> &mdash; e' cosi' che la maggior parte dei siti disegna il proprio
+logo e le icone:
+</p>
+
+<table border="1">
+<tr><th>Proprieta'</th><th>Che cosa si capisce</th></tr>
+<tr><td><code>background-image</code>, e <code>url()</code> dentro <code>background</code></td><td>un indirizzo, relativo al foglio in cui sta scritto</td></tr>
+<tr><td><code>background-repeat</code></td><td><code>repeat</code>, <code>no-repeat</code>, <code>repeat-x</code>, <code>repeat-y</code></td></tr>
+<tr><td><code>background-position</code></td><td>pixel, percento, <code>left</code> <code>center</code> <code>right</code> <code>top</code> <code>bottom</code></td></tr>
+<tr><td><code>background-size</code></td><td><code>cover</code> e una larghezza in pixel o <code>100%</code>: la figura si porta a quella larghezza</td></tr>
+<tr><td><code>height</code>, <code>min-height</code></td><td>in pixel, <code>em</code>, <code>rem</code>: un riquadro vuoto con uno sfondo esiste solo se ha un'altezza</td></tr>
+</table>
+
+<p class="nota">
+<b>Che cosa manca.</b> Le immagini scritte dentro il foglio
+(<code>url(data:...)</code>) non si disegnano ancora. Lo sfondo si mette sui
+blocchi, non sulle parole in linea ne' sulle celle di tabella. Un testo
+nascosto con <code>text-indent</code> sotto il suo logo resta visibile sopra.
+Al piu' quarantotto sfondi per pagina.
+</p>
+
+<h2>La cache</h2>
+
+<p>
+Le pagine scaricate finiscono in una copia su disco, che sopravvive ai
+riavvii. Se la rete non risponde e la copia c'e', si vede quella &mdash; e la
+barra di stato scrive <b>copia locale: la rete non risponde</b>, perche' una
+pagina vecchia servita come se fosse di adesso e' peggio di un errore. I file
+locali non passano di qui, in nessuna delle due direzioni.
+</p>
+
+<h2>Quando il testo e' tutto di un carattere solo</h2>
+
+<p>
+Il navigatore sceglie faccia, corpo e famiglia da <code>font-size</code>,
+<code>font-weight</code>, <code>font-style</code> e <code>font-family</code>.
+Se il testo appare tutto con lo stesso carattere squadrato, quello e' il
+<b>font di sistema 8x16</b>, cioe' il ripiego: un file di carattere non si e'
+aperto. Il ripiego e' silenzioso apposta &mdash; una pagina brutta e' meglio
+di un browser che non parte &mdash; e per questo il conto sta in
+<b>Aiuto &gt; Informazioni su</b>.
+</p>
+
+<p>Dove guardare, in ordine:</p>
+
+<ul>
+<li><code>/exwin/font/</code> deve contenere i dodici file
+    <code>Liberation*.ttf</code>;</li>
+<li><code>/exwin/lib/exfont.so</code> e' la libreria che rasterizza il
+    TrueType: senza di lei nessun font si apre;</li>
+<li><code>fontprova</code> prova tutti i file della directory uno per uno e
+    dice quale non si carica.</li>
+</ul>
+
+<h2>I file che non sono pagine</h2>
+
+<p>
+Un collegamento a un <code>.zip</code>, a un programma, a un'immagine o a
+qualunque file che non sia una pagina non viene impaginato: EXBrowser chiede
+<b>che cosa farne</b>.
+</p>
+
+<ul>
+<li><b>Apri con Archivi</b> (per uno ZIP) o <b>Apri con l'editor</b> (per un
+    testo o un sorgente) &mdash; il file si scarica in
+    <code>$HOME/.app/exbrowser/scaricati/</code> e si apre col suo programma;</li>
+<li><b>Scarica</b> &mdash; si sceglie dove salvarlo, e parte nella finestra
+    <b>Download</b> (vedi sotto): si puo' continuare a navigare mentre
+    arriva, e il tetto di un megabyte delle pagine qui non vale;</li>
+<li><b>Annulla</b> &mdash; e' il pulsante che ha il fuoco: <code>Invio</code>
+    senza leggere non scarica niente.</li>
+</ul>
+
+<p>
+Se ne accorge in due modi: dal <b>nome</b> (<code>.../archivio.zip</code>), e
+allora chiede prima di scaricare; oppure, quando il nome non dice niente
+(<code>.../scarica?id=42</code>), dal <b>tipo</b> che dichiara il server
+(<code>application/zip</code>). Un file del disco (<code>file:</code>) che ha
+un programma si apre direttamente.
+</p>
+
+<h2>La finestra Download</h2>
+
+<p>
+Ogni scaricamento gira per conto suo, e la finestra <b>Download</b> si apre da
+sola quando ne parte uno. Per ognuno dice la percentuale, quanto e' arrivato su
+quanto, la <b>velocita' media</b> e il <b>tempo che manca</b>; alla fine, quanto
+ci ha messo e a che media.
+</p>
+
+<ul>
+<li>si puo' <b>spostare</b> accanto al navigatore, o <b>chiudere</b>: gli
+    scaricamenti vanno avanti lo stesso, e <b>Strumenti &gt; Download</b> la
+    riapre con lo stato di adesso;</li>
+<li><b>Ferma</b> (o <code>Canc</code> sulla riga scelta) interrompe e cancella il
+    file a meta'; <b>Apri la cartella</b> apre il file manager dove sta il file;
+    <b>Togli i finiti</b> pulisce l'elenco. <code>Esc</code> chiude la finestra;</li>
+<li>chiudendo EXBrowser la finestra se ne va con lui; se ci sono scaricamenti in
+    corso lo chiede prima, perche' uscendo si fermano.</li>
+</ul>
+
+<p class="nota">
+La percentuale c'e' quando il server dice quanto e' lungo il file
+(<code>Content-Length</code>). Quando non lo dice, la finestra scrive quanto e'
+arrivato e da quanto tempo, e non inventa un numero.
+</p>
+
+<h2>I certificati</h2>
+
+<p>
+Un sito <code>https</code> si apre se il suo certificato risale a una
+<b>CA di cui ci si fida</b>. Quelle del sistema stanno in
+<code>/exos/ssl/certi.pem</code>: sono le stesse di Debian, copiate a ogni
+costruzione del CD. Ce ne sono circa centocinquanta, e bastano per quasi tutto
+il web pubblico.
+</p>
+
+<p>
+Con <b>File &gt; Aggiungi un certificato...</b> se ne aggiungono altre: quella
+di un'azienda, di una scuola, di un apparato di casa. Si scrive un indirizzo
+(<code>http</code> o <code>https</code>) o il percorso di un file
+<code>.pem</code>, <code>.crt</code> o <code>.der</code>. Prima di chiedere
+conferma EXBrowser mostra chi e', chi l'ha emesso, fino a quando vale e
+l'<b>impronta SHA-256</b>: confrontala con quella pubblicata da chi la emette,
+perche' fidarsi di una CA vuol dire credere a <i>ogni</i> sito che firma.
+</p>
+
+<p>
+Le CA aggiunte stanno in <code>$HOME/.app/exhttp/certi.pem</code> e valgono per
+<b>ogni programma</b> che apre <code>https</code> per te &mdash; anche
+<code>scarica</code> e <code>netupdate</code> &mdash; dalla pagina successiva.
+Per toglierne una si toglie il suo blocco da quel file: ognuno comincia con una
+riga <code>#</code> che dice il suo nome.
+</p>
+
+<p class="nota">
+<b>Se un sito non si apre, di solito non e' il certificato.</b> Misurato su
+trenta siti comuni il 23 settembre 2026: la mattina se ne aprivano 23, e uno
+solo dei sette che mancavano era un problema di catena. Gli altri erano il TLS:
+server che parlano solo <b>TLS 1.2</b>, che vogliono <b>AES-GCM</b> o lo scambio
+di chiavi su <b>P-256</b>. Adesso EXBrowser sa tutte e tre le cose. La barra di
+stato distingue i casi: <i>la radice non e' nel magazzino</i> e' un certificato;
+<i>il server ha rifiutato</i> non lo e', e aggiungere una CA non lo aprirebbe.
+Un sito che risponde <b>403</b> ha aperto la connessione e poi ha deciso di non
+servire un programma che non riconosce: e' un blocco suo.
+</p>
+
+<h2>I limiti, dichiarati</h2>
+
+<ul>
+<li>la pagina scaricata: 1 MB &mdash; oltre si tronca e lo si dice;</li>
+<li>l'albero: 24000 nodi;</li>
+<li>i pezzi impaginati: 24000;</li>
+<li>la cronologia del pulsante <b>&lt;</b>: 32 pagine;</li>
+<li>i caratteri diversi aperti insieme: 24 combinazioni di faccia e corpo.</li>
+</ul>
+
+<p>
+Una pagina che sfora si vede a meta' e la barra di stato lo scrive. E' una
+scelta: un browser che cresce finche' la memoria finisce si ferma piu' tardi e
+molto peggio.
+</p>
+
+<h2>Il resto della documentazione di EX-OS</h2>
+
+<p>
+Queste pagine stanno accanto a questa, in <code>/exwin/doc/</code>, e si
+aprono con questo stesso navigatore.
+</p>
+
+<table border="1">
+<tr><th>Pagina</th><th>Che cosa racconta</th></tr>
+<tr><td><a href="index.html"><b>Indice</b></a></td>
+    <td>la porta d'ingresso, con anche la documentazione che non e' in
+        HTML: <code>help</code>, <code>/boot/kernel.txt</code>,
+        <code>/doc</code></td></tr>
+<tr><td><a href="sistema.html"><b>Il sistema</b></a></td>
+    <td>il minikernel, i driver che sono processi, i filesystem, le cinque
+        console, <code>kernel.cfg</code>, la memoria e lo scambio</td></tr>
+<tr><td><a href="comandi.html"><b>La riga di comando</b></a></td>
+    <td>la sintassi della shell e tutti i comandi per mestiere</td></tr>
+<tr><td><a href="installa.html"><b>Installare EX-OS</b></a></td>
+    <td>partizioni, formattazione, area di scambio, l'installatore, gli
+        aggiornamenti</td></tr>
+<tr><td><a href="exwin.html"><b>La scrivania</b></a></td>
+    <td>il server a finestre, le applicazioni, i caratteri, le librerie
+        condivise</td></tr>
+<tr><td><a href="rete.html"><b>La rete</b></a></td>
+    <td>schede, indirizzo, DHCP, DNS, i servizi in ascolto, il TLS 1.3</td></tr>
+<tr><td><a href="javascript.html"><b>JavaScript</b></a></td>
+    <td>quindici riquadri che si riempiono da soli: una spiegazione e una prova
+        del motore insieme</td></tr>
+<tr><td><a href="sviluppo.html"><b>Scrivere programmi</b></a></td>
+    <td>gcc dentro EX-OS, la libc, il formato dei programmi, le librerie
+        condivise, un'applicazione grafica dalla prima riga</td></tr>
+</table>
+
+<hr>
+
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a>
+</p>
+
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+Questa guida sta in <code>/exwin/doc/exbrowser.html</code>.
+</p>
+
+</body>
+</html>

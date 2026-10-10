@@ -296,8 +296,19 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   e a 64 bit segnali, librerie condivise e driver non ci sono.
   La versione a 64 bit non ha dischetti: `make iso64` fa il CD
   (`dist/exos64.iso`), `make netinst64` il repository (`dist/netinst_64`),
-  `make tools64` dira' il CD degli strumenti quando ci saranno. La chiavetta
-  arriva con l'installazione.
+  `sudo make usb64 DISPOSITIVO=/dev/sdX` la chiavetta, `make tools64` dira'
+  il CD degli strumenti quando ci saranno.
+- **EX-OS a 64 bit: un sistema a riga di comando.** Quarta tappa fatta. La
+  libc, la shell, 78 comandi di `/bin` e 20 driver sono gli STESSI sorgenti
+  della versione a 32 bit compilati a 64 (`make utente64`), con la libc
+  collegata dentro ogni programma. Il CD `dist/exos64.iso` si avvia fino alla
+  shell con tastiera, mouse, PCI e rete (e1000, DHCP, ping), si installa su
+  disco con `install` e riparte dal disco. Segnali, fili e variabili
+  `__thread` funzionano a 64 bit. Provato in QEMU, non ancora su una
+  macchina vera. Mancano la scrivania ExWin, le librerie condivise, l'audio
+  e i compilatori. La versione a 32 bit e' rimasta identica, istruzione per
+  istruzione, nel kernel e in tutti i 181 sorgenti di libc, librerie e
+  comandi.
 - **Scrivania: memoria e avvio (pm 0.020).** Una voce di menu puo' dire
   quanta memoria vuole (`ram=2048`) e il menu avvisa prima di avviarla su una
   macchina che ne ha meno. Dal pannello Impostazioni si accendono e spengono

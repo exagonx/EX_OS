@@ -1,0 +1,3 @@
+bin/sh/shell.c:439:13: warning: ‘canarino_avvia’ defined but not used [-Wunused-function]
+  439 | static void canarino_avvia(void)
+      |             ^~~~~~~~~~~~~~

@@ -1,0 +1,4 @@
+drivers/mappa/mappa.c: In function ‘dump_memoria’:
+drivers/mappa/mappa.c:406:11: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  406 |     reg = (volatile unsigned int *)m.virt;
+      |           ^

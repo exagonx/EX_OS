@@ -1,0 +1,52 @@
+drivers/ehci/ehci.c: In function ‘qtd’:
+drivers/ehci/ehci.c:159:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  159 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
+      |                    ^
+drivers/ehci/ehci.c:285:12: note: in expansion of macro ‘VIRT’
+  285 |     return VIRT(OFF_QTD + i * QTD_PASSO);
+      |            ^~~~
+drivers/ehci/ehci.c: In function ‘qh_prepara’:
+drivers/ehci/ehci.c:159:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  159 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
+      |                    ^
+drivers/ehci/ehci.c:314:32: note: in expansion of macro ‘VIRT’
+  314 |     volatile unsigned int *q = VIRT(off);
+      |                                ^~~~
+drivers/ehci/ehci.c: In function ‘esegui’:
+drivers/ehci/ehci.c:159:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  159 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
+      |                    ^
+drivers/ehci/ehci.c:371:32: note: in expansion of macro ‘VIRT’
+  371 |     volatile unsigned int *q = VIRT(qh_off);
+      |                                ^~~~
+drivers/ehci/ehci.c: In function ‘controllo’:
+drivers/ehci/ehci.c:426:33: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  426 |     volatile unsigned char *s = (volatile unsigned char *)(g_dma_virt + OFF_SETUP);
+      |                                 ^
+drivers/ehci/ehci.c:442:16: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  442 |         memcpy((void *)(g_dma_virt + OFF_BUF), dati, len);
+      |                ^
+drivers/ehci/ehci.c:462:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  462 |         memcpy(dati, (void *)(g_dma_virt + OFF_BUF), avuti);
+      |                      ^
+drivers/ehci/ehci.c: In function ‘bulk_ehci’:
+drivers/ehci/ehci.c:484:32: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  484 |     if (!in && len > 0) memcpy((void *)(g_dma_virt + OFF_BUF), dati, len);
+      |                                ^
+drivers/ehci/ehci.c:510:39: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  510 |     if (in && avuti > 0) memcpy(dati, (void *)(g_dma_virt + OFF_BUF), avuti);
+      |                                       ^
+drivers/ehci/ehci.c: In function ‘qh_indirizzo’:
+drivers/ehci/ehci.c:159:20: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  159 | #define VIRT(o)   ((volatile unsigned int *)(g_dma_virt + (o)))
+      |                    ^
+drivers/ehci/ehci.c:666:32: note: in expansion of macro ‘VIRT’
+  666 |     volatile unsigned int *q = VIRT(off);
+      |                                ^~~~
+drivers/ehci/ehci.c: In function ‘main’:
+drivers/ehci/ehci.c:986:14: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  986 |     g_mmio = (volatile unsigned char *)m.virt;
+      |              ^
+drivers/ehci/ehci.c:1008:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1008 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
+      |            ^

@@ -178,7 +178,13 @@ typedef struct {
  * ferma qui invece di lasciare in giro binari che non si capiscono fra loro.
  * L'array di misura negativa e' il modo che funziona anche senza C11.
  * --------------------------------------------------------------------------- */
+#if defined(__i386__)
 typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 604) ? 1 : -1];
+#endif
+/* (A 64 bit `envp` e' un puntatore di otto byte e le misure sono altre: quando
+ * la versione a 64 bit avra' i suoi programmi - @EXOS-64, tappa 3 - avra' qui
+ * i suoi due numeri, inchiodati allo stesso modo. Oggi non ne ha: non esiste
+ * ancora un binario a 64 bit con cui non capirsi.) */
 
 /* ! E LA FORMA VECCHIA E' «TUTTO CIO' CHE VIENE PRIMA DI uid», che e' l'unico
  * modo in cui una forma nuova puo' contenerne una vecchia: aggiungendo in
@@ -186,7 +192,9 @@ typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 604) ? 1 : -1];
  * il confine e i binari del 14 agosto verrebbero letti storti — riga per riga,
  * senza che niente lo dica. Questa asserzione lo trasforma in un errore del
  * compilatore. */
+#if defined(__i386__)
 typedef char spawn_abi_v1_in_fondo[
     (__builtin_offsetof(SpawnExtra, uid) == SPAWN_EXTRA_V1_BYTE) ? 1 : -1];
+#endif
 
 #endif /* SPAWN_ABI_H */

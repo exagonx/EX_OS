@@ -1,0 +1,8 @@
+lib/libc.c: In function ‘shmfd_forse_libera’:
+lib/libc.c:9125:17: warning: unused variable ‘r’ [-Wunused-variable]
+ 9125 |         int32_t r = _syscall2(SYS_MUNMAP, z->virt, (z->byte + 4095u) & ~4095u);
+      |                 ^
+lib/libc.c: At top level:
+lib/libc.c:1480:12: warning: ‘g_mem_mmx’ defined but not used [-Wunused-variable]
+ 1480 | static int g_mem_mmx = -1;
+      |            ^~~~~~~~~

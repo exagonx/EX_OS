@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>JavaScript &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<style>
+.riq    { background: #f2f2f2 }
+.acceso { background: #ffe08a }
+</style>
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+
+     ! QUESTA PAGINA E' ANCHE UNA PROVA, ed e' la stessa che gira sul banco
+     dell'host: tools/prove/sito/script.html. Se qui i quindici riquadri si
+     riempiono, il motore JavaScript dentro EX-OS fa quello che fa il banco —
+     e se non si riempiono, si vede QUALE dei quindici e' rimasto indietro. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="exbrowser.html">EXBrowser</a> &mdash; JavaScript
+</p>
+
+<h1>JavaScript, quindici cose alla volta</h1>
+
+<p>Ogni riquadro prova UNA cosa. Se un riquadro contiene ancora la scritta
+«non e' successo niente», quel pezzo del motore non ha funzionato.</p>
+
+<h2>1. Uno script scrive dentro un elemento</h2>
+<div id="uno" class="riq">non e' successo niente</div>
+
+<h2>2. Uno script costruisce dei nodi</h2>
+<ul id="due"><li>non e' successo niente</li></ul>
+
+<h2>3. Attributi e classi</h2>
+<div id="tre" class="riq">questo riquadro deve diventare giallo</div>
+
+<h2>4. Leggere la pagina</h2>
+<div id="quattro" class="riq">non e' successo niente</div>
+
+<h2>5. Un gestore scritto nell'attributo</h2>
+<div id="cinque" class="riq" onclick="cliccato('cinque')">premimi</div>
+
+<h2>6. addEventListener, e un collegamento che non si segue</h2>
+<p><a id="sei" href="/senza.html">questo collegamento NON deve portare via</a></p>
+<div id="sei_riq" class="riq">non e' stato premuto</div>
+
+<h2>7. setTimeout</h2>
+<div id="sette" class="riq">aspetta un secondo...</div>
+
+<h2>8. lo stile di un elemento</h2>
+<div id="otto" class="riq">questo riquadro deve diventare verde e grande</div>
+
+<h2>9. querySelector e querySelectorAll</h2>
+<div id="nove" class="riq">non e' successo niente</div>
+
+<h2>10. classList</h2>
+<div id="dieci" class="riq">questo riquadro deve diventare giallo</div>
+
+<h2>11. dataset e le proprieta' degli elementi</h2>
+<div id="undici" class="riq" data-colore-scelto="verde">non e' successo niente</div>
+
+<h2>12. location e navigator</h2>
+<div id="dodici" class="riq">non e' successo niente</div>
+
+<h2>13. XMLHttpRequest</h2>
+<div id="tredici" class="riq">non e' successo niente</div>
+
+<h2>14. fetch</h2>
+<div id="quattordici" class="riq">non e' successo niente</div>
+
+<h2>15. l'asincrono: chi arriva prima</h2>
+<div id="quindici" class="riq">non e' successo niente</div>
+
+<script>
+/* 1 — innerHTML */
+document.getElementById('uno').innerHTML =
+    'scritto da uno script, con del <b>neretto</b> dentro';
+
+/* 2 — createElement, createTextNode, appendChild */
+var u = document.getElementById('due');
+u.innerHTML = '';
+for (var i = 1; i <= 4; i++) {
+    var li = document.createElement('li');
+    li.appendChild(document.createTextNode('riga numero ' + i));
+    u.appendChild(li);
+}
+
+/* 3 — className e setAttribute */
+var t = document.getElementById('tre');
+t.className = 'riq acceso';
+t.setAttribute('title', 'un attributo messo da uno script');
+
+/* 4 — leggere l'albero */
+var q = document.getElementById('quattro');
+q.textContent = 'in questa pagina ci sono ' +
+    document.getElementsByTagName('div').length + ' div, ' +
+    document.getElementsByTagName('li').length + ' li e ' +
+    document.getElementsByClassName('riq').length + ' riquadri';
+
+/* 5 — il gestore che l'attributo chiama */
+function cliccato(chi) {
+    var e = document.getElementById(chi);
+    e.textContent = 'premuto! e event.type dice: ' + event.type;
+    e.className = 'riq acceso';
+}
+
+/* 6 — addEventListener e preventDefault */
+document.getElementById('sei').addEventListener('click', function (ev) {
+    ev.preventDefault();
+    var r = document.getElementById('sei_riq');
+    r.textContent = 'premuto, e il collegamento non e' + "'" + ' stato seguito';
+    r.className = 'riq acceso';
+});
+
+/* 7 — i tempi */
+setTimeout(function () {
+    var s = document.getElementById('sette');
+    s.textContent = 'e questo lo ha scritto un setTimeout';
+    s.className = 'riq acceso';
+}, 1000);
+
+/* 8 — el.style, che scrive nell'attributo `style` e quindi si VEDE */
+var o = document.getElementById('otto');
+o.style.backgroundColor = '#bfe3c0';
+o.style.fontSize = '20px';
+o.style.setProperty('color', '#1a4d1a');
+
+/* 9 — i selettori */
+var n = document.getElementById('nove');
+n.textContent = 'querySelectorAll(".riq") ne trova ' +
+    document.querySelectorAll('.riq').length +
+    ', querySelector("h2 + div") e' + "'" + ' un ' +
+    document.querySelector('h2 + div').tagName +
+    ', e closest("body") del primo li e' + "'" + ' ' +
+    document.querySelector('li').closest('body').tagName;
+
+/* 10 — classList */
+var d = document.getElementById('dieci');
+d.classList.add('acceso');
+d.classList.remove('riq');
+d.classList.toggle('riq', true);
+d.textContent = 'classi: ' + d.className +
+    ' (contains acceso: ' + d.classList.contains('acceso') + ')';
+
+/* 11 — dataset e attributi riflessi */
+var un = document.getElementById('undici');
+un.dataset.messoDaUnoScript = 'si';
+un.textContent = 'data-colore-scelto vale «' + un.dataset.coloreScelto +
+    '», e il primo collegamento della pagina punta a ' +
+    document.getElementsByTagName('a')[0].href;
+
+/* 12 — dove siamo e chi siamo */
+var dd = document.getElementById('dodici');
+dd.textContent = 'location.protocol ' + location.protocol +
+    ', location.pathname ' + location.pathname +
+    ', navigator.userAgent ' + navigator.userAgent;
+
+/* 13 — XMLHttpRequest: la pagina chiede se stessa */
+var x = new XMLHttpRequest();
+x.onload = function () {
+    document.getElementById('tredici').textContent =
+        'stato ' + this.status + ', ' + this.responseText.length +
+        ' byte, e dentro c' + "'" + 'e' + "'" + ' la parola «riquadro»: ' +
+        (this.responseText.indexOf('riquadro') >= 0);
+};
+x.onerror = function () {
+    document.getElementById('tredici').textContent =
+        'la richiesta non e' + "'" + ' partita (stato ' + this.status + ')';
+};
+x.open('GET', location.href);
+x.send();
+
+/* 14 — fetch: la stessa cosa con le promesse */
+fetch(location.href).then(function (r) {
+    document.getElementById('quattordici').textContent =
+        'ok ' + r.ok + ', stato ' + r.status + ', ';
+    return r.text();
+}).then(function (t) {
+    var q = document.getElementById('quattordici');
+    q.textContent = q.textContent + t.length + ' byte dal disco';
+}).catch(function (e) {
+    document.getElementById('quattordici').textContent =
+        'fetch ha detto di no: ' + e.message;
+});
+
+/* 15 — l'ordine, che e' la sola cosa che distingue l'asincrono dal sincrono:
+   il codice DOPO send() deve girare PRIMA del gestore. */
+var ordine = '';
+var xa = new XMLHttpRequest();
+xa.onload = function () {
+    ordine = ordine + 'B(risposta)';
+    document.getElementById('quindici').textContent =
+        'ordine: ' + ordine +
+        '   -> ' + (ordine.indexOf('A') < ordine.indexOf('B')
+                    ? 'giusto: send e' + "'" + ' tornata subito'
+                    : 'sbagliato: send ha aspettato');
+};
+xa.open('GET', location.href);
+xa.send();
+ordine = ordine + 'A(dopo send) ';
+
+console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
+</script>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="exbrowser.html">Il manuale di EXBrowser &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+Questa pagina e' la stessa del banco di prova
+(<code>tools/prove/sito/script.html</code>): se i quindici riquadri si riempiono,
+il motore fa dentro EX-OS quel che fa sull'host.
+</p>
+
+</body>
+</html>

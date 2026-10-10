@@ -101,7 +101,9 @@ proc_entry_stub_user:
     cli
     push rax
     push rcx
+    push rdi                ; il primo argomento di un filo: una chiamata al C lo perderebbe
     call bkl_lascia
+    pop  rdi
     pop  rcx
     pop  rax
     mov  dx, SEL_U_DATI

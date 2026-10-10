@@ -48,7 +48,7 @@
 extern "C" {
 #endif
 
-void sha256(const void *dati, unsigned int len, unsigned char out[32]);
+void sha256(const void *dati, __SIZE_TYPE__ len, unsigned char out[32]);   /* size_t, come in libc.h */
 
 #define EXTLS_IMPRONTA  32       /* SHA-256 */
 #define EXTLS_BLOCCO    64       /* il blocco di SHA-256, per HMAC */

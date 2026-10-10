@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>La rete &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> &mdash; Rete |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="exide.html">EX-IDE</a> |
+<a href="exbrowser.html">EXBrowser</a>
+</p>
+
+<h1>La rete</h1>
+
+<h2>Come e' fatta</h2>
+
+<p>
+Anche qui vale la regola del sistema: <b>lo stack di rete non e' nel
+kernel</b>. La scheda ha il suo driver e IP, TCP, UDP, ARP, ICMP e DNS
+stanno in <code>/dev/ip.drv</code>, che e' un processo ring3. Un difetto
+nello stack non porta giu' la macchina, e un driver che muore si rilancia.
+</p>
+
+<h3>Le schede riconosciute</h3>
+<table border="1">
+<tr><th>Driver</th><th>Scheda</th></tr>
+<tr><td><code>ne2k.drv</code></td><td>NE2000 e compatibili &mdash; ISA e PCI</td></tr>
+<tr><td><code>pcnet.drv</code></td><td>AMD PCnet &mdash; e' quella predefinita di VirtualBox</td></tr>
+<tr><td><code>e1000.drv</code></td><td>Intel PRO/1000 &mdash; l'altra scelta comune negli emulatori</td></tr>
+<tr><td><code>nforce.drv</code></td><td>l'Ethernet integrata nelle schede madri con chipset NVIDIA nForce
+    (MCP67, 73, 77, 79). <code>nforce.drv -d</code> stampa i registri, lo stato del PHY (link su o giu')
+    e i conteggi dei frame inviati e ricevuti dal driver in servizio,
+    <code>-v</code> racconta l'accensione, <code>-p</code> la prova da sola per cinque secondi
+    (trasmette, conta quel che arriva) senza togliere la rete a un'altra scheda</td></tr>
+<tr><td><code>rtl8169.drv</code></td><td>le Gigabit PCI di Realtek: RTL8169, 8169S, 8110S, 8169SB, 8169SC
+    (non le 8168/8111 su PCI Express). Stesse opzioni <code>-d</code> e <code>-v</code></td></tr>
+</table>
+
+<p>Con due schede <code>netdetect -c</code> sceglie quella che ha il cavo (lo chiede ai driver che
+sanno dirlo, con la loro opzione <code>-l</code>); se nessuna lo dice, quella aggiunta al posto di
+quella integrata; <code>netdetect -c rtl8169</code> sceglie a mano, con una parola
+del nome del driver.</p>
+
+<p>Un sistema appena installato dal dischetto ha pochi driver. Gli altri arrivano dal
+<strong>supporto</strong>: <code>make support</code> riempie <code>dist/support</code>
+(e ne fa <code>dist/support.iso</code>); il contenuto va su una chiavetta FAT32 o su un CD, e sul PC
+si lancia <code>/USB/HDD0p1/aggiungi</code> oppure <code>/cdrom/aggiungi</code>. Copia i driver in
+<code>/dev</code> e i programmi in <code>/bin</code> senza chiedere, e aggiunge a
+<code>/boot/autoexec.sh</code> le righe che accendono chiavette e rete se mancano: al riavvio
+la rete parte da sola.</p>
+
+<h2>Accenderla</h2>
+
+<pre>    netdetect                     quale scheda c'e' e che driver vuole
+    dhcp                          chiede un indirizzo alla rete e lo applica
+    ipcfg                         come sta adesso, coi contatori</pre>
+
+<p>
+Il driver giusto si carica dalla sezione <code>[modules]</code> di
+<code>/boot/kernel.cfg</code>, e ce lo scrive <code>hwconfig</code>
+guardando la macchina. Le righe che accendono la rete a ogni avvio stanno in
+<code>/boot/avvio.sh</code>, che <code>login</code> esegue da amministratore
+<i>prima</i> dell'accesso: la rete deve essere su anche per chi non ha ancora
+fatto login.
+</p>
+
+<h2>Provare che funziona</h2>
+
+<pre>    ping 10.0.2.2                 l'host, da dentro QEMU o VirtualBox
+    ping esempio.it -n 4          quante volte
+    host esempio.it               il nome in indirizzo, e viceversa
+    nettest                       stato dell'interfaccia
+    tcptest host porta            apre una connessione e riferisce</pre>
+
+<h2>Quanto va veloce, e che cosa la frena</h2>
+
+<p>
+Uno scaricamento non puo' andare piu' veloce di <i>una finestra di ricezione
+per ogni andata e ritorno</i>: e' la regola di TCP, non della linea. Fino a
+<code>ip.drv</code> 0.008 la finestra era di 4 KB, e verso un server a 50
+millisecondi questo voleva dire non piu' di 80 KB al secondo, anche su una
+fibra. Dalla 0.009 e' di 63 KB (il massimo senza l'opzione di scala), e i
+pacchetti che arrivano in disordine si tengono da parte invece di farseli
+rimandare.
+</p>
+
+<pre>    scarica -i &lt;indirizzo&gt;        dice quanti byte in quanto tempo
+    ipcfg                          i contatori: fuori sequenza, buffer pieno
+    /dev/ip.drv -w 16 &amp;            una finestra piu' piccola (da 4 a 63 KB)</pre>
+
+<p>
+<code>-w</code> serve a una macchina con poca memoria (ogni connessione aperta
+tiene un buffer grande quanto la finestra) o a una scheda che perde pacchetti
+quando arrivano a raffiche: lo dicono i contatori del driver, con
+<code>nettest -c</code>. Mancano ancora la scala della finestra (oltre i 63 KB)
+e il controllo di congestione.
+</p>
+
+<h2>Uscire</h2>
+
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>telnet host [porta]</code></td><td>una sessione su un'altra macchina</td></tr>
+<tr><td><code>ftp host</code></td><td>trasferimento file: dentro, <code>get</code> scarica e <code>put</code> invia</td></tr>
+<tr><td><code>scarica</code></td><td>prende un file da un indirizzo http</td></tr>
+<tr><td><code>exbrowser</code></td><td>EXBrowser, il navigatore, con http e https &mdash; vedi il <a href="exbrowser.html">manuale</a></td></tr>
+</table>
+
+<h2>Farsi trovare: i servizi</h2>
+
+<table border="1">
+<tr><th>Servizio</th><th>Che cos'e'</th></tr>
+<tr><td><code>telnetd</code></td>
+    <td>accetta sessioni in chiaro. Porta, shell, chi entra e da dove stanno
+        in <code>/boot/telnetd.cfg</code>.</td></tr>
+<tr><td><code>sshd</code></td>
+    <td>la stessa cosa <b>cifrata</b>, SSH-2: <code>curve25519-sha256</code>
+        per lo scambio, <code>ssh-ed25519</code> per l'identita' del server,
+        <code>chacha20-poly1305</code> per i dati. Sta sul CD.</td></tr>
+<tr><td><code>tcpserv</code></td><td>un servitore TCP minimo, per le prove</td></tr>
+</table>
+
+<p class="nota">
+<b><code>sshd</code> parla una lingua sola, e va detto perche'.</b> Un
+algoritmo per ogni mestiere, nessuna negoziazione: se il client non li sa, la
+connessione finisce li' con un messaggio chiaro. Offrire piu' scelte vorrebbe
+dire piu' codice di cui una parte non verrebbe mai eseguita &mdash; e un
+codice crittografico mai eseguito e' il posto peggiore dove tenere un
+difetto.
+</p>
+
+<h2>HTTPS: il TLS e' scritto qui dentro</h2>
+
+<p>
+<b>TLS 1.3</b>, con i certificati <b>verificati davvero</b>: catena, firme,
+date, nome dell'host. La matematica sta in librerie separate e provata contro
+i vettori degli RFC &mdash; interi lunghi, curve ellittiche, ASN.1, i
+certificati X.509.
+</p>
+
+<p>
+Il magazzino delle autorita' e' un file PEM:
+</p>
+
+<pre>    /exos/ssl/certi.pem            sul sistema installato
+    /cdrom/exos/ssl/certi.pem      avviando dal CD</pre>
+
+<p class="nota">
+<b>Senza magazzino, <code>https</code> non si apre &mdash; e non e' una
+limitazione da aggirare.</b> Un TLS che cifra con chiunque risponda cifra con
+chi sta in mezzo, e la barra dell'indirizzo scriverebbe
+<code>https://</code> lo stesso. Se manca, il navigatore lo dice invece di
+fingere.
+</p>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="sviluppo.html">Scrivere programmi &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

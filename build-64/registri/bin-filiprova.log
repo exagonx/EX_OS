@@ -1,0 +1,10 @@
+bin/filiprova/filiprova.c: In function ‘filo_sfonda’:
+bin/filiprova/filiprova.c:930:19: warning: variable ‘zavorra’ set but not used [-Wunused-but-set-variable]
+  930 |     volatile char zavorra[1024];
+      |                   ^~~~~~~
+bin/filiprova/filiprova.c:928:13: warning: infinite recursion detected [-Winfinite-recursion]
+  928 | static void filo_sfonda(void *arg)
+      |             ^~~~~~~~~~~
+bin/filiprova/filiprova.c:933:5: note: recursive call
+  933 |     filo_sfonda(arg);           /* senza fondo, e senza uscita */
+      |     ^~~~~~~~~~~~~~~~

@@ -1,0 +1,213 @@
+==============================================================================
+ EX-OS - INSTALLING EX-OS WITHOUT A CD DRIVE
+==============================================================================
+
+From a USB stick, with the rest of the system from the network. Kernel 0.245,
+9 October 2026.
+
+
+------------------------------------------------------------------------------
+WHAT IT IS FOR
+------------------------------------------------------------------------------
+
+This guide puts EX-OS on the hard disk of a PC that has neither a floppy drive
+nor a CD drive. The PC is booted from a USB stick holding a very small system
+(1.44 MB, loaded entirely into memory); with it the disk is prepared and a
+minimal system is installed, and from there the rest comes from the network.
+
+
+------------------------------------------------------------------------------
+WHAT YOU NEED
+------------------------------------------------------------------------------
+
+  - a PC with Linux and the EX-OS sources, to build the image;
+  - any USB stick: IT IS ERASED;
+  - the target PC, able to boot from USB;
+  - a network cable to a router that hands out addresses (DHCP);
+  - a server with the published system (the one made by ./exagonx/repo-
+    update.sh), for step 6.
+
+  ! The image takes 1.44 MB of the stick: the rest of its space is not used.
+    Keep another stick, formatted FAT32, if you want to take files away from
+    the PC.
+
+
+------------------------------------------------------------------------------
+1. BUILD THE IMAGE
+------------------------------------------------------------------------------
+
+On the Linux PC, in the source directory:
+
+    make installa
+
+This produces dist/installa.img. It holds the kernel, the shell, the disk
+tools (disk, fdisk, mkfs, install), the network (netdetect, the IP stack, dhcp
+and the nforce, e1000, ne2k and pcnet drivers) and netupdate.
+
+
+------------------------------------------------------------------------------
+2. WRITE IT TO THE STICK
+------------------------------------------------------------------------------
+
+Plug the stick in and see what it is called:
+
+    lsblk -d -o NAME,SIZE,RM,MODEL
+
+The stick is the line with RM = 1 and the right size, for example sdc. Then,
+with the real name in place of sdX:
+
+    sudo dd if=dist/installa.img of=/dev/sdX bs=512 conv=fsync
+    sync
+
+  ! WARNING: dd writes where it is told, without asking. A wrong name is
+    somebody else's disk erased. Check twice.
+
+
+------------------------------------------------------------------------------
+3. BOOT THE PC FROM THE STICK
+------------------------------------------------------------------------------
+
+Plug the stick into the target PC, switch it on and choose to boot from USB
+(usually F12, F8 or Esc at power-on, or the boot order in the BIOS).
+
+The boot lines scroll by, then the system starts USB and the network by itself
+and prints the instructions. Among the lines there must be:
+
+    VFS: root '/' sul volume in RAM (FAT12)
+
+  ! From this moment the system no longer needs the stick: everything is in
+    memory. What you write in / is gone at power-off.
+
+
+------------------------------------------------------------------------------
+4. PREPARE THE DISK
+------------------------------------------------------------------------------
+
+See which disks the kernel sees:
+
+    disk
+
+The hard disk is hd0, hd1, hd2 or hd3. The examples use hd0: use the name you
+see. Then create the partition:
+
+    fdisk hd0
+
+Inside fdisk the commands are letters. On an empty disk, in order: n creates a
+partition, t sets its type (83), a makes it bootable, p shows the result, w
+writes to the disk (it asks for confirmation), q quits. Nothing touches the
+disk before w.
+
+  ! WARNING: w erases the partition table that was there. If the disk holds
+    something you need, stop here.
+
+Format the partition and mount it:
+
+    mkfs -t ext2 -L exos hd0p1
+    mount hd0p1 /disk
+
+mkfs asks for confirmation: the answer is si (Italian for yes).
+
+
+------------------------------------------------------------------------------
+5. INSTALL
+------------------------------------------------------------------------------
+
+    install -t /disk
+
+The installer asks for the language, the root password, a user name with its
+password, and a few confirmations. It copies the running system to the disk
+and makes it bootable. At the end it says:
+
+If the disk controller can speak AHCI but the BIOS presents it as IDE, the
+installer says so in a section called Disco and moves to AHCI before copying:
+the copy is much faster, and it writes ahci = 1 in the installed kernel.cfg so
+that it happens at every boot. If the switch fails the disk stays as it was.
+
+    Installazione completata. Togli il floppy e riavvia.
+
+Shut down, remove the stick and switch on again: the PC boots from the disk.
+
+    shutdown
+
+
+------------------------------------------------------------------------------
+6. FROM THE DISK: THE NETWORK AND THE REST OF THE SYSTEM
+------------------------------------------------------------------------------
+
+The freshly installed system is small: it has the network and netupdate, not
+the graphics. The first time the network is started by hand, in this order:
+
+    /dev/pci.drv &
+    netdetect -c
+    /dev/ip.drv &
+    dhcp
+    ipcfg
+
+ipcfg shows the address obtained. If a link of the chain is missing, ipcfg
+says which one and what to type. Then:
+
+    netupdate
+
+The first time netupdate asks how to connect (http is the simple choice) and
+the server address without http://, for example example.org/exos/netinst. Then
+it downloads and installs the rest of the system.
+
+
+------------------------------------------------------------------------------
+IF SOMETHING GOES WRONG
+------------------------------------------------------------------------------
+
+  - The disk does not show in disk: the boot lines starting with ATA: are
+    needed. A SATA controller in AHCI mode is not handled yet: in the BIOS, if
+    there is a choice, pick IDE or Compatible.
+  - "ATA: DMA" or "timeout BSY" errors: kernel 0.239 gave them on SATA
+    controllers in native mode. From 0.240 those controllers work in PIO,
+    slower but without those errors: rebuild the image from updated sources.
+  - Installed, but on rebooting from the disk the system cannot find the disk:
+    this happened up to kernel 0.240, which looked for its root on hd0 only.
+    Rewrite the stick from updated sources, boot from it, then mount hd0p1
+    /disk (with the name you see in disk) and install -a /disk, which updates
+    the kernel on the disk.
+  - The network gets no address: netdetect says which card it sees and with
+    which driver. For an NVIDIA nForce, nforce.drv -d prints the registers,
+    the state of the PHY (link SU = up, GIU' = down) and the counts of frames
+    sent and received: those are the lines to send.
+  - To take a file away: plug in a FAT32 stick, ls /USB says what it is called
+    (usually HDD0p1), then cp /file /USB/HDD0p1/ and shutdown.
+  - The keyboard types wrong symbols: the image starts with the Italian
+    keyboard. keymap us changes it.
+
+
+------------------------------------------------------------------------------
+WHAT IS TESTED AND WHAT IS NOT
+------------------------------------------------------------------------------
+
+  - In QEMU: the whole procedure, from booting in memory to rebooting from the
+    disk, with an e1000 card and an IDE disk.
+  - On a real PC (NVIDIA MCP73, Core 2 Quad): booting from the stick, the SATA
+    disk, installing and starting from the disk; the network with an RTL8169SC
+    card added from the support medium. The built-in network (nforce 0.008)
+    gets its address at boot.
+
+
+------------------------------------------------------------------------------
+THE MISSING DRIVERS: THE SUPPORT MEDIUM
+------------------------------------------------------------------------------
+
+The floppy has no room for every driver, and the system it installs has few.
+The others are added afterwards from the support medium: on the development PC
+make support fills dist/support and also builds dist/support.iso.
+
+  - Copy the CONTENT of dist/support (aggiungi, dev, bin) to a FAT32 stick, or
+    burn dist/support.iso.
+  - On the PC, started from the disk. If the stick does not show up by itself
+    in ls /USB, three commands start it: /dev/pci.drv & then /dev/ehci.drv
+    -avvio & then automount &
+  - Run /USB/HDD0p1/aggiungi (or /cdrom/aggiungi from the CD). It copies the
+    drivers to /dev and the programs to /bin without asking, and adds to
+    /boot/autoexec.sh the lines that start sticks and network, if missing.
+  - shutdown, remove the medium, power on: netdetect -c finds the network card
+    and dhcp gets the address.
+  - With two network cards the added one wins, not the built-in one. netdetect
+    -c rtl8169 chooses by hand.
+

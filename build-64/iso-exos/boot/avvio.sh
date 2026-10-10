@@ -1,0 +1,136 @@
+# =============================================================================
+# /boot/avvio.sh — i comandi del SISTEMA, non di chi entra
+#
+# Lo esegue `login`, PRIMA dell'accesso, da root e sulla sola console 0, e
+# aspetta che finisca prima di mostrare il prompt.
+#
+# ! LE DUE PAROLE CHE LO DISTINGUONO DALL'AUTOEXEC SONO «PRIMA» E «ROOT».
+# L'autoexec lo esegue la shell della prima console: nasce a OGNI accesso e con
+# l'identita' di CHI ENTRA — quindi i driver si riaccendevano a ogni rientro, e
+# non si accendevano affatto se il primo a entrare non era root. Qui invece si
+# e' soli e si e' root, una volta per avvio.
+#
+# ! E L'ORDINE E' QUELLO DELLE RIGHE, che e' il motivo per cui la rete sta qui
+# e non in [modules] di kernel.cfg: le voci di [modules] il kernel le avvia
+# TUTTE INSIEME, e ognuna deve poi stare ad aspettare il proprio fornitore. Su
+# una macchina lenta quelle attese scadono e la rete resta spenta — il difetto
+# peggiore da cercare, perche' al riavvio dopo funziona.
+#
+# La sintassi e' quella dell'autoexec: una riga = un comando, '&' per il
+# background, '#' commento, '@' esegue una riga senza stamparla, !silenced e
+# !verbose accendono e spengono l'eco dei comandi.
+#
+# Se una riga qui dentro si blocca: Alt+F2 da' una shell pulita, e cancellare
+# questo file lo salta del tutto.
+#
+# Questo file sta sul CD di EX-OS, che e' di sola lettura: su un sistema
+# installato lo riscrive `hwconfig`, con il driver della scheda che c'e'.
+# =============================================================================
+
+!silenced
+
+echo Accendo la rete...
+
+# L'ordine non e' modificabile: ogni passo serve al successivo.
+# `netdetect -c` sceglie da solo il driver giusto per la scheda e aspetta
+# che registri il proprio servizio.
+/dev/pci.drv &
+netdetect -c
+/dev/ip.drv &
+
+# Un indirizzo dal DHCP, se c'e' un server. Senza, restano i valori
+# predefiniti dello stack e la rete locale funziona lo stesso.
+# Quello che stampa — l'indirizzo ottenuto — si vede: e' il risultato,
+# non il comando.
+dhcp
+
+echo Rete pronta: 'ipcfg' mostra la configurazione, 'ping' la prova.
+
+# La shell dalla rete, SE qualcuno l'ha chiesta.
+#
+# ! QUESTA RIGA NON APRE NIENTE DA SOLA, ed e' il motivo per cui puo' stare
+# qui su ogni macchina. Con -auto telnetd legge /boot/telnetd.cfg e guarda la
+# chiave `avvio`: se manca o dice «no» — il predefinito — esce senza stampare
+# una parola. Dice «login» e chiede nome e password; dice «root» e da' una
+# shell da amministratore a chiunque arrivi.
+#
+# ! E L'INTERRUTTORE STA NEL FILE E NON QUI PER UNA RAGIONE PRECISA: questo
+# script lo riscrive `hwconfig`, e una riga aggiunta a mano sparirebbe alla
+# prima configurazione dell'hardware. Il .cfg invece nessuno lo tocca.
+#
+# Si accende cosi', da root:   telnetd -h   spiega i valori.
+telnetd -auto &
+
+# Un'occhiata al server degli aggiornamenti. Non chiede niente, non installa
+# niente e NON STAMPA NIENTE se non c'e' niente da dire: fa qualcosa solo se
+# /boot/netupdate.cnf esiste e dice «automatico = si», e molla dopo cinque
+# secondi se il server non risponde. Si configura con `netupdate -set`.
+#
+# ! LA STESSA RIGA STA ANCHE DENTRO hwconfig (componi_avvio, in
+# bin/hwconfig/hwconfig.c): questo file ha DUE scrittori, e `hwconfig` lo
+# riscrive tutto. Chi cambia una riga qui la cambia anche li', o alla prima
+# configurazione dell'hardware sparisce senza che nessuno se ne accorga.
+netupdate -auto
+
+# =============================================================================
+# Le chiavette USB: i controller, e poi chi le monta
+#
+# ! I DRIVER SI LANCIANO TUTTI E DUE, SENZA CHIEDERSI QUALE SERVE. Con `-avvio`
+# quello che non trova il proprio controller esce in silenzio, quindi il costo
+# su una macchina che ce l'ha uno solo e' un processo che parte e finisce. La
+# scelta a monte — sondare e scrivere qui solo il driver giusto — sarebbe
+# sbagliata la prima volta che si infila una scheda USB in uno slot PCI.
+#
+# EHCI e' USB 2.0, OHCI e' USB 1.1 su tutto cio' che non e' Intel. Chi ha un
+# xHCI (USB 3) usa /dev/xhci.drv, che pero' serve anche mouse e tastiere e va
+# lanciato a mano se non lo si vuole occupato da un disco.
+#
+# ! ASPETTANO: all'accensione la chiavetta non c'e' quasi mai — si accende la
+# macchina e POI si infila. I driver restano a guardare le porte.
+/dev/ehci.drv -avvio &
+/dev/ohci.drv -avvio &
+
+# ! E L'UHCI? Non sta qui, e la ragione e' che quel driver ha due mestieri: su
+# una macchina Intel serve il MOUSE, ed e' quello che fa se lo si lancia senza
+# argomenti. Metterlo qui vorrebbe dire decidere per tutti che quella presa e'
+# di un disco. Chi ha una macchina Intel con solo USB 1.1 e vuole le chiavette
+# aggiunga a mano:
+#
+#     /dev/uhci.drv -avvio &
+#
+# che ignora mouse e tastiere e aspetta una chiavetta.
+
+# Il sorvegliante: guarda i dispositivi a blocchi, non l'USB, e monta quel che
+# compare. Una chiavetta senza tabella delle partizioni finisce in
+# /USB/DRIVE0; un disco partizionato in /USB/HDD0p1, /USB/HDD0p2, ...
+#
+# ! /USB DEVE ESISTERE, e sta gia' nelle immagini: il VFS monta su un nome che
+# non esiste ma la directory che lo contiene dev'esserci, e da CD non la si
+# puo' creare.
+automount &
+
+# =============================================================================
+# L'acceleratore 2D della scheda grafica, se ce l'ha
+#
+# ! ESCE DA SOLO SU OGNI MACCHINA CHE NON SIA QUESTA, in silenzio: niente SiS,
+# niente BAR, niente servizio, e nessuna riga. E' voluto - questo file gira su
+# tutte le macchine, e un messaggio rivolto a nessuno in mezzo alle righe
+# d'avvio e' peggio di nessun messaggio: si impara a non leggerle, e le righe
+# d'avvio che non si leggono sono il posto dove si nasconde il guasto vero.
+#
+# ! E SE NON PARTE NON SI ROMPE NIENTE: wserver cerca il servizio una volta
+# all'avvio, non lo trova, e riempie con le sue primitive MMX. Quello e' il
+# ramo NORMALE - su VESA, sul framebuffer generico e dentro QEMU e' l'unico che
+# esiste.
+#
+# ! VA QUI E NON DENTRO exwin, e la ragione e' dei permessi: /dev e' di root,
+# quindi un utente normale non puo' eseguire /dev/sis.drv. E' la stessa
+# barriera per cui il 19 agosto 2026 wserver ha smesso di chiamarsi
+# /dev/wserver.drv. Il servizio lo accende il SISTEMA, prima che qualcuno
+# entri; chi disegna non chiede privilegi, chiede un rettangolo.
+# =============================================================================
+/dev/sis.drv -2dservizio &
+
+# ! LE RIGHE QUI SOPRA STANNO ANCHE DENTRO hwconfig (componi_avvio, in
+# bin/hwconfig/hwconfig.c): questo file ha DUE scrittori. Chi ne cambia una
+# qui la cambia anche li', o alla prima configurazione dell'hardware sparisce.

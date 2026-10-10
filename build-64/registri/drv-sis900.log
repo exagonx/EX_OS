@@ -1,0 +1,8 @@
+drivers/sis900/sis900.c: In function ‘desc’:
+drivers/sis900/sis900.c:789:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  789 |     return (volatile unsigned int *)(g_dma_virt + base + i * 16);
+      |            ^
+drivers/sis900/sis900.c: In function ‘buffer_virt’:
+drivers/sis900/sis900.c:794:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  794 |     return (unsigned char *)(g_dma_virt + OFF_BUFFER + i * BUF_LEN);
+      |            ^

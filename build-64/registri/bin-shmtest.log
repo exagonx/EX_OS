@@ -1,0 +1,8 @@
+bin/shmtest/shmtest.c: In function ‘figlio’:
+bin/shmtest/shmtest.c:84:9: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+   84 |     p = (unsigned char *)z.virt;
+      |         ^
+bin/shmtest/shmtest.c: In function ‘padre’:
+bin/shmtest/shmtest.c:130:9: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  130 |     p = (unsigned char *)z.virt;
+      |         ^

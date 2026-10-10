@@ -1,0 +1,7 @@
+lib/exlib/exlib.c: In function ‘exlib_apri’:
+lib/exlib/exlib.c:50:32: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+   50 |     r = syscall1(SYS_LIB_APRI, (unsigned int)percorso);
+      |                                ^
+lib/exlib/exlib.c:53:9: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+   53 |     t = (const ExLibTesta *)(unsigned int)r;
+      |         ^

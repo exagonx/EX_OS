@@ -1,0 +1,216 @@
+==============================================================================
+ EX-OS - INSTALLARE EX-OS SENZA LETTORE CD
+==============================================================================
+
+Da una chiavetta USB, con il resto del sistema dalla rete. Kernel 0.245, 9
+ottobre 2026.
+
+
+------------------------------------------------------------------------------
+A COSA SERVE
+------------------------------------------------------------------------------
+
+Questa guida porta EX-OS sul disco rigido di un PC che non ha ne' lettore di
+floppy ne' lettore CD. Si avvia il PC da una chiavetta USB che contiene un
+sistema piccolissimo (1,44 MB, caricato tutto in memoria), con quello si
+prepara il disco e ci si installa un sistema minimo, e da li' il resto arriva
+dalla rete.
+
+
+------------------------------------------------------------------------------
+CHE COSA SERVE
+------------------------------------------------------------------------------
+
+  - un PC con Linux e i sorgenti di EX-OS, per costruire l'immagine;
+  - una chiavetta USB qualunque: VIENE CANCELLATA;
+  - il PC di destinazione, capace di avviarsi da USB;
+  - un cavo di rete verso un router che da' gli indirizzi (DHCP);
+  - un server con il sistema pubblicato (quello di ./exagonx/repo-update.sh),
+    per il passo 6.
+
+  ! Su una chiavetta l'immagine occupa 1,44 MB: il resto dello spazio non si
+    usa. Tenete un'altra chiavetta, formattata FAT32, se volete portarvi via
+    dei file dal PC.
+
+
+------------------------------------------------------------------------------
+1. COSTRUIRE L'IMMAGINE
+------------------------------------------------------------------------------
+
+Sul PC con Linux, nella directory dei sorgenti:
+
+    make installa
+
+Esce dist/installa.img. Dentro ci sono il kernel, la shell, gli attrezzi del
+disco (disk, fdisk, mkfs, install), la rete (netdetect, lo stack IP, dhcp e i
+driver nforce, e1000, ne2k, pcnet) e netupdate.
+
+
+------------------------------------------------------------------------------
+2. SCRIVERLA SULLA CHIAVETTA
+------------------------------------------------------------------------------
+
+Infilate la chiavetta e guardate come si chiama:
+
+    lsblk -d -o NAME,SIZE,RM,MODEL
+
+La chiavetta e' la riga con RM = 1 e la misura giusta, per esempio sdc. Poi,
+mettendo il nome vero al posto di sdX:
+
+    sudo dd if=dist/installa.img of=/dev/sdX bs=512 conv=fsync
+    sync
+
+  ! ATTENZIONE: dd scrive dove gli si dice, senza chiedere. Un nome sbagliato
+    e' il disco di qualcun altro cancellato. Controllate due volte.
+
+
+------------------------------------------------------------------------------
+3. AVVIARE IL PC DALLA CHIAVETTA
+------------------------------------------------------------------------------
+
+Infilate la chiavetta nel PC di destinazione, accendetelo e scegliete l'avvio
+da USB (di solito F12, F8 o Esc all'accensione, oppure dall'ordine di avvio
+nel BIOS).
+
+Scorrono le righe dell'avvio, poi il sistema accende da solo l'USB e la rete e
+stampa le istruzioni. In mezzo deve comparire:
+
+    VFS: root '/' sul volume in RAM (FAT12)
+
+  ! Da questo momento la chiavetta non serve piu' al sistema: tutto sta in
+    memoria. Quel che scrivete in / sparisce allo spegnimento.
+
+
+------------------------------------------------------------------------------
+4. PREPARARE IL DISCO
+------------------------------------------------------------------------------
+
+Guardate quali dischi vede il kernel:
+
+    disk
+
+Il disco rigido e' hd0, hd1, hd2 o hd3. Negli esempi e' hd0: usate il nome che
+vedete voi. Poi create la partizione:
+
+    fdisk hd0
+
+Dentro fdisk i comandi sono lettere. Su un disco vuoto, in ordine: n crea una
+partizione, t ne imposta il tipo (83), a la rende avviabile, p mostra il
+risultato, w scrive sul disco (chiede conferma), q esce. Niente tocca il disco
+prima di w.
+
+  ! ATTENZIONE: w cancella la tabella delle partizioni che c'era. Se sul disco
+    c'e' qualcosa che vi serve, fermatevi qui.
+
+Formattate la partizione e montatela:
+
+    mkfs -t ext2 -L exos hd0p1
+    mount hd0p1 /disk
+
+mkfs chiede conferma: si risponde si.
+
+
+------------------------------------------------------------------------------
+5. INSTALLARE
+------------------------------------------------------------------------------
+
+    install -t /disk
+
+L'installatore chiede la lingua, la password di root, un nome utente con la
+sua password, e qualche conferma. Copia sul disco il sistema che sta girando e
+lo rende avviabile. Alla fine dice:
+
+Se il controller del disco sa parlare AHCI ma il BIOS lo presenta come IDE,
+l'installatore lo dice in una sezione Disco e passa all'AHCI prima di copiare:
+la copia va molto piu' svelta, e nel kernel.cfg installato scrive ahci = 1
+perche' succeda a ogni avvio. Se il passaggio non riesce il disco resta
+com'era.
+
+    Installazione completata. Togli il floppy e riavvia.
+
+Spegnete, togliete la chiavetta e riaccendete: il PC parte dal disco.
+
+    shutdown
+
+
+------------------------------------------------------------------------------
+6. DAL DISCO: LA RETE E IL RESTO DEL SISTEMA
+------------------------------------------------------------------------------
+
+Il sistema appena installato e' piccolo: ha la rete e netupdate, non la
+grafica. La prima volta la rete si accende a mano, in quest'ordine:
+
+    /dev/pci.drv &
+    netdetect -c
+    /dev/ip.drv &
+    dhcp
+    ipcfg
+
+ipcfg mostra l'indirizzo preso. Se un anello manca, ipcfg dice quale e che
+cosa battere. Poi:
+
+    netupdate
+
+La prima volta netupdate chiede come collegarsi (http e' la scelta semplice) e
+l'indirizzo del server senza http://, per esempio esempio.org/exos/netinst.
+Poi scarica e installa il resto del sistema.
+
+
+------------------------------------------------------------------------------
+SE QUALCOSA NON VA
+------------------------------------------------------------------------------
+
+  - Il disco non compare in disk: servono le righe dell'avvio che cominciano
+    con ATA:. Un controller SATA in modo AHCI non e' ancora gestito: nel BIOS,
+    se c'e' la scelta, mettete IDE o Compatibile.
+  - Errori "ATA: DMA" o "timeout BSY": li dava il kernel 0.239 sui controller
+    SATA in modo nativo. Dalla 0.240 quei controller lavorano in PIO, piu'
+    lento ma senza quegli errori: rifate l'immagine con i sorgenti aggiornati.
+  - Installato, ma riavviando dal disco il sistema non trova il disco:
+    succedeva fino al kernel 0.240, che cercava la radice solo su hd0. Rifate
+    la chiavetta con i sorgenti aggiornati, avviate da li', poi mount hd0p1
+    /disk (col nome che vedete in disk) e install -a /disk, che aggiorna il
+    kernel sul disco.
+  - La rete non prende l'indirizzo: netdetect dice che scheda vede e con quale
+    driver. Per una NVIDIA nForce, nforce.drv -d stampa i registri, lo stato
+    del PHY (link SU o GIU') e i conteggi dei frame inviati e ricevuti: sono
+    le righe da mandare.
+  - Per portarsi via un file: infilate una chiavetta FAT32, ls /USB dice come
+    si chiama (di solito HDD0p1), poi cp /file /USB/HDD0p1/ e shutdown.
+  - La tastiera scrive segni sbagliati: il dischetto nasce con la tastiera
+    italiana. keymap us la cambia.
+
+
+------------------------------------------------------------------------------
+CHE COSA E' PROVATO E CHE COSA NO
+------------------------------------------------------------------------------
+
+  - In QEMU: tutta la procedura, dall'avvio in memoria al riavvio dal disco,
+    con una scheda e1000 e un disco IDE.
+  - Su un PC vero (NVIDIA MCP73, Core 2 Quad): l'avvio dalla chiavetta, il
+    disco SATA, l'installazione e l'avvio dal disco; la rete con una scheda
+    RTL8169SC aggiunta dal supporto. La rete integrata (nforce 0.008) prende
+    l'indirizzo all'avvio.
+
+
+------------------------------------------------------------------------------
+I DRIVER CHE MANCANO: IL SUPPORTO
+------------------------------------------------------------------------------
+
+Il dischetto non ha posto per tutti i driver, e il sistema che installa ne ha
+pochi. Gli altri si aggiungono dopo, dal supporto: sul PC di sviluppo make
+support riempie dist/support e ne fa anche dist/support.iso.
+
+  - Copiate il CONTENUTO di dist/support (aggiungi, dev, bin) su una chiavetta
+    FAT32, oppure masterizzate dist/support.iso.
+  - Sul PC, avviato dal disco. Se la chiavetta non compare da sola in ls /USB,
+    tre comandi la accendono: /dev/pci.drv & poi /dev/ehci.drv -avvio & poi
+    automount &
+  - Lanciate /USB/HDD0p1/aggiungi (o /cdrom/aggiungi dal CD). Copia i driver
+    in /dev e i programmi in /bin senza chiedere niente, e aggiunge a
+    /boot/autoexec.sh le righe che accendono chiavette e rete, se mancano.
+  - shutdown, togliete il supporto, riaccendete: netdetect -c trova la scheda
+    di rete e dhcp prende l'indirizzo.
+  - Con due schede di rete vince quella aggiunta, non quella integrata.
+    netdetect -c rtl8169 sceglie a mano.
+

@@ -601,12 +601,20 @@ struct sigaction {
 #define SIG_UNBLOCK  1
 #define SIG_SETMASK  2
 typedef struct { void *ss_sp; int ss_flags; size_t ss_size; } stack_t;
+#if defined(__x86_64__)
+typedef struct {            /* vedi lib/include/libc.h e kernel/include/syscall.h */
+    long long     gregs[23];
+    void         *fpregs;
+    unsigned long riservato[8];
+} mcontext_t;
+#else
 typedef struct {
     int           gregs[19];
     void         *fpregs;
     unsigned long oldmask;
     unsigned long cr2;
 } mcontext_t;
+#endif
 typedef struct ucontext_t {
     unsigned long      uc_flags;
     struct ucontext_t *uc_link;
@@ -614,9 +622,15 @@ typedef struct ucontext_t {
     mcontext_t         uc_mcontext;
     sigset_t           uc_sigmask;
 } ucontext_t;
+#if defined(__x86_64__)
+typedef unsigned long jmp_parola;
+typedef unsigned long sigjmp_buf[10];
+#else
+typedef unsigned int jmp_parola;
 typedef unsigned int sigjmp_buf[8];
+#endif
 int  sigprocmask(int come, const sigset_t *nuova, sigset_t *prima);
-void longjmp(unsigned int *env, int val) __attribute__((noreturn));
+void longjmp(jmp_parola *env, int val) __attribute__((noreturn));
 
 /* sysconf */
 #define _SC_ARG_MAX             0
@@ -1012,8 +1026,25 @@ typedef struct {
  * passare percorso, struttura, dimensione, modalita' e i nomi alternativi
  * — e non si e' voluto un numero di syscall nuovo per una variante che
  * cambia solo se scrive o no. */
-static inline int32_t _syscall5(uint32_t n, uint32_t a, uint32_t b, uint32_t c,
-                                uint32_t d, uint32_t e)
+/* ! @EXOS-64: GLI ARGOMENTI SONO LARGHI QUANTO UN REGISTRO (uintptr_t), non 32
+ * bit: quasi sempre uno di loro e' un puntatore. A 32 bit e' lo stesso tipo di
+ * prima; a 64 i registri sono RAX, RBX, RCX, RDX, RSI, RDI - gli stessi nomi
+ * allargati, ed e' cosi' che il kernel li legge (le macro FR_* di idt.h). Il
+ * risultato resta di 32 bit: e' un numero o un errore negativo, e le chiamate
+ * che rendono un indirizzo (sbrk, mmap) lo rendono sotto i 4 GB. */
+/* Il puntatore del filo (l'indirizzo del suo TCB, che il kernel scrive in
+ * testa al TCB stesso). A 32 bit si legge da %gs:0; a 64 da %fs:0, che e' la
+ * convenzione di x86-64 - quella per cui GCC compila le variabili __thread.
+ * Sta sotto i 4 GB in tutti e due i casi, e chi lo usa lo tiene in 32 bit. */
+#if defined(__x86_64__)
+#define TP_LEGGI(tp) do { uintptr_t tp__; \
+        __asm__ __volatile__("mov %%fs:0, %0" : "=r"(tp__)); (tp) = (unsigned int)tp__; } while (0)
+#else
+#define TP_LEGGI(tp) __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp))
+#endif
+
+static inline int32_t _syscall5(uint32_t n, uintptr_t a, uintptr_t b, uintptr_t c,
+                                uintptr_t d, uintptr_t e)
 {
     int32_t r;
     __asm__ volatile("int $0x80"
@@ -1023,7 +1054,7 @@ static inline int32_t _syscall5(uint32_t n, uint32_t a, uint32_t b, uint32_t c,
     return r;
 }
 
-static inline int32_t _syscall4(uint32_t n, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+static inline int32_t _syscall4(uint32_t n, uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d)
 {
     int32_t r;
     __asm__ volatile("int $0x80"
@@ -1033,7 +1064,7 @@ static inline int32_t _syscall4(uint32_t n, uint32_t a, uint32_t b, uint32_t c, 
     return r;
 }
 
-static inline int32_t _syscall3(uint32_t n, uint32_t a, uint32_t b, uint32_t c)
+static inline int32_t _syscall3(uint32_t n, uintptr_t a, uintptr_t b, uintptr_t c)
 {
     int32_t r;
     __asm__ volatile("int $0x80"
@@ -1043,12 +1074,12 @@ static inline int32_t _syscall3(uint32_t n, uint32_t a, uint32_t b, uint32_t c)
     return r;
 }
 
-static inline int32_t _syscall2(uint32_t n, uint32_t a, uint32_t b)
+static inline int32_t _syscall2(uint32_t n, uintptr_t a, uintptr_t b)
 {
     return _syscall3(n, a, b, 0);
 }
 
-static inline int32_t _syscall1(uint32_t n, uint32_t a)
+static inline int32_t _syscall1(uint32_t n, uintptr_t a)
 {
     return _syscall3(n, a, 0, 0);
 }
@@ -1448,6 +1479,14 @@ char *strrchr(const char *s, int c)
  * ripiego a byte per sempre su una macchina che MMX ce l'ha. */
 static int g_mem_mmx = -1;
 
+#if defined(__x86_64__)
+/* @EXOS-64: a 64 bit niente MMX a mano. Le due funzioni qui sotto sono scritte
+ * per i registri a 32 bit, e su un processore a 64 bit la copia a parole (di
+ * otto byte) fa gia' il lavoro. mem_ha_mmx dice di no e il resto non cambia. */
+static int  mem_ha_mmx(void) { return 0; }
+static void mem_copia_mmx(unsigned char *d, const unsigned char *s, unsigned int b) { (void)d; (void)s; (void)b; }
+static void mem_riempi_mmx(unsigned char *d, const unsigned long long *q, unsigned int b) { (void)d; (void)q; (void)b; }
+#else
 static int mem_ha_mmx(void)
 {
     unsigned int a, b, c, d;
@@ -1519,6 +1558,7 @@ static void mem_riempi_mmx(unsigned char *d, const unsigned long long *q,
         : "r"(q)
         : "memory", "cc");
 }
+#endif /* MMX */
 
 void *memset(void *dst, int c, size_t n)
 {
@@ -1753,7 +1793,7 @@ static int scarica(FILE *f)
 
     while (scritti < f->pos) {
         int32_t n = _syscall3(SYS_WRITE, (uint32_t)f->fd,
-                              (uint32_t)(f->buf + scritti),
+                              (uintptr_t)(f->buf + scritti),
                               (uint32_t)(f->pos - scritti));
         /* Una write parziale non e' un errore: si insiste. Una che ritorna
          * zero o meno lo e', e insistere sarebbe un ciclo infinito. */
@@ -1773,7 +1813,7 @@ static int riempi(FILE *f)
     if (f->pos < f->fine) return 0;
     if (!(f->flag & _F_LETT)) { f->flag |= _F_ERR; return -1; }
 
-    n = _syscall3(SYS_READ, (uint32_t)f->fd, (uint32_t)f->buf,
+    n = _syscall3(SYS_READ, (uint32_t)f->fd, (uintptr_t)f->buf,
                   (uint32_t)f->dim);
     if (n < 0)  { f->flag |= _F_ERR; return -1; }
     if (n == 0) { f->flag |= _F_EOF; return -1; }
@@ -2017,7 +2057,7 @@ FILE *fopen(const char *path, const char *modo)
         default:  return NULL;
     }
 
-    fd = _syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, 0);
+    fd = _syscall3(SYS_OPEN, (uintptr_t)path, (uint32_t)flags, 0);
     if (fd < 0) { errno = -fd; return NULL; }
 
     f = fdopen(fd, modo);
@@ -3713,7 +3753,7 @@ static Blocco *heap_estendi(size_t utile)
      * libera. Trovato dal banco di prova dell'allocatore (3 ottobre 2026). */
     if (base == 0 || (uint32_t)base >= 0xFFFFF001u) return NULL;
 
-    b = (Blocco *)(uintptr_t)base;
+    b = (Blocco *)(uintptr_t)(uint32_t)base;    /* non il segno: sopra i 2 GB base e' negativo */
     b->dim    = quanto - BLOCCO_HDR;
     b->libero = 1;
     b->succ   = NULL;
@@ -4558,7 +4598,7 @@ int open(const char *path, int flags, ...)
     }
     /* O_CLOEXEC e O_NOFOLLOW: vedi libc.h. Il kernel non li conosce. */
     flags &= ~(0x80000 | 0x20000);
-    return err_posix(_syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, 0));
+    return err_posix(_syscall3(SYS_OPEN, (uintptr_t)path, (uint32_t)flags, 0));
 }
 
 /* ! I SOCKET HANNO DESCRITTORI DA PRESA_BASE IN SU, e le funzioni dei
@@ -4669,7 +4709,7 @@ int fcntl(int fd, int cmd, ...)
      * descrittore pero' deve esistere. (@EXILLA-NSS, 30 settembre 2026) */
     if (cmd >= 5 && cmd <= 7) {
         if (_syscall3(SYS_FCNTL, (uint32_t)fd, 1u /* F_GETFD */, 0) < 0) { errno = EBADF; return -1; }
-        if (cmd == 5 && arg) *(short *)arg = 2;         /* l_type = F_UNLCK */
+        if (cmd == 5 && arg) *(short *)(uintptr_t)arg = 2;         /* l_type = F_UNLCK */
         return 0;
     }
     return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg));
@@ -4678,13 +4718,13 @@ int fcntl(int fd, int cmd, ...)
 ssize_t read(int fd, void *buf, size_t n)
 {
     if (E_PRESA(fd)) return recv(fd, buf, n, 0);
-    return err_posix(_syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, n));
+    return err_posix(_syscall3(SYS_READ, (uint32_t)fd, (uintptr_t)buf, n));
 }
 
 ssize_t write(int fd, const void *buf, size_t n)
 {
     if (E_PRESA(fd)) return send(fd, buf, n, 0);
-    return err_posix(_syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n));
+    return err_posix(_syscall3(SYS_WRITE, (uint32_t)fd, (uintptr_t)buf, n));
 }
 
 /* Il programma a cui appartiene `pid` (0 = chi chiama): il pid del capogruppo.
@@ -4731,7 +4771,7 @@ int getpid(void)
 int ioctl(int fd, unsigned int request, void *arg)
 {
     if (E_PRESA(fd)) return presa_ioctl(fd, request, arg);
-    return _syscall3(SYS_IOCTL, (uint32_t)fd, request, (uint32_t)arg);
+    return _syscall3(SYS_IOCTL, (uint32_t)fd, request, (uintptr_t)arg);
 }
 
 int tty_getsize(TtyWinSize *ws)
@@ -4751,12 +4791,12 @@ int tty_clear(void)
 
 int chdir(const char *path)
 {
-    return err_posix(_syscall1(SYS_CHDIR, (uint32_t)path));
+    return err_posix(_syscall1(SYS_CHDIR, (uintptr_t)path));
 }
 
 char *getcwd(char *buf, size_t size)
 {
-    int r = _syscall2(SYS_GETCWD, (uint32_t)buf, size);
+    int r = _syscall2(SYS_GETCWD, (uintptr_t)buf, size);
     return (r >= 0) ? buf : NULL;
 }
 
@@ -4875,7 +4915,7 @@ char *realpath(const char *path, char *resolved)
 
 int listdir_from(const char *path, DirEntry *buf, int max, int start)
 {
-    return _syscall4(SYS_READDIR, (uint32_t)path, (uint32_t)buf,
+    return _syscall4(SYS_READDIR, (uintptr_t)path, (uintptr_t)buf,
                      (uint32_t)max, (uint32_t)start);
 }
 
@@ -5045,8 +5085,8 @@ static int spawn_completo(const char *path, char *const argv[],
         ex.gid   = (gid != NULL) ? *gid : *uid;
     }
 
-    return err_posix(_syscall4(SYS_SPAWN, (uint32_t)path, (uint32_t)argc,
-                             (uint32_t)argv, (uint32_t)&ex));
+    return err_posix(_syscall4(SYS_SPAWN, (uintptr_t)path, (uint32_t)argc,
+                             (uintptr_t)argv, (uintptr_t)&ex));
 }
 
 int spawn_su_console(const char *path, char *const argv[], char *const envp[],
@@ -5077,7 +5117,7 @@ int spawn_utente(const char *path, char *const argv[], char *const envp[],
 int waitpid(int pid, int *stato, int opzioni)
 {
     return err_posix(_syscall3(SYS_WAITPID, (uint32_t)pid,
-                             (uint32_t)stato, (uint32_t)opzioni));
+                             (uintptr_t)stato, (uint32_t)opzioni));
 }
 
 /* =============================================================================
@@ -5087,7 +5127,7 @@ static void errno_posto_lascia(void);   /* piu' avanti, accanto a __errno_dove *
 
 int thread_crea(void (*fn)(void *), void *arg)
 {
-    return err_posix(_syscall2(SYS_THREAD_CREA, (uint32_t)fn, (uint32_t)arg));
+    return err_posix(_syscall2(SYS_THREAD_CREA, (uintptr_t)fn, (uintptr_t)arg));
 }
 
 void thread_esci(int codice)
@@ -5100,7 +5140,7 @@ void thread_esci(int codice)
 int thread_attendi(int tid, int *codice)
 {
     return err_posix(_syscall2(SYS_THREAD_ATTENDI, (uint32_t)tid,
-                               (uint32_t)codice));
+                               (uintptr_t)codice));
 }
 
 /* -----------------------------------------------------------------------------
@@ -5166,13 +5206,13 @@ static int mutex_cmpxchg(volatile int *dove, int atteso, int nuovo)
 
 int attesa_dormi(volatile int *dove, int atteso, unsigned int ms)
 {
-    return err_posix(_syscall3(SYS_ATTESA_DORMI, (uint32_t)dove,
+    return err_posix(_syscall3(SYS_ATTESA_DORMI, (uintptr_t)dove,
                                (uint32_t)atteso, ms));
 }
 
 int attesa_sveglia(volatile int *dove, int quanti)
 {
-    return err_posix(_syscall2(SYS_ATTESA_SVEGLIA, (uint32_t)dove,
+    return err_posix(_syscall2(SYS_ATTESA_SVEGLIA, (uintptr_t)dove,
                                (uint32_t)quanti));
 }
 
@@ -5432,7 +5472,7 @@ static void       (*g_chiavi_distr[P_CHIAVI])(void *);
 static unsigned int tp_mio(void)
 {
     unsigned int tp;
-    __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp));
+    TP_LEGGI(tp);
     return tp;
 }
 
@@ -5676,10 +5716,10 @@ int pthread_getattr_np(pthread_t t, pthread_attr_t *a)
 
     if (!a || !f) return EINVAL;
     memset(a, 0, sizeof(*a));
-    r = (int)_syscall2(SYS_THREAD_PILA, (uint32_t)f->tid, (uint32_t)pila);
+    r = (int)_syscall2(SYS_THREAD_PILA, (uint32_t)f->tid, (uintptr_t)pila);
     if (r < 0) return -r;
     a->staccato    = f->staccato;
-    a->pila_base   = (void *)pila[0];
+    a->pila_base   = (void *)(uintptr_t)pila[0];
     a->pila_misura = pila[1] - pila[0];
     a->pila        = a->pila_misura;
     return 0;
@@ -6399,12 +6439,12 @@ void *fb_map(void)
     int32_t r = _syscall1(SYS_FB_MAP, 0);
 
     if (r < 0) { errno = -r; return 0; }
-    return (void *)(unsigned int)r;
+    return (void *)(uintptr_t)(unsigned int)r;
 }
 
 int chmod(const char *path, mode_t modo)
 {
-    int32_t r = _syscall2(SYS_CHMOD, (uint32_t)path, (uint32_t)modo);
+    int32_t r = _syscall2(SYS_CHMOD, (uintptr_t)path, (uint32_t)modo);
 
     if (r < 0) { errno = -r; return -1; }
     return 0;
@@ -6586,6 +6626,7 @@ void __exos_segnale_esegui(SegTelaio *t, void *fpu)
 /* ESP -> SegTelaio (16-byte aligned by the kernel). 112 = 108 of FNSAVE
  * rounded to 16, so the call below happens with ESP aligned as the i386
  * ABI wants. */
+#if !defined(__x86_64__)
 __asm__(
 ".text\n"
 ".globl __exos_segnale_entra\n"
@@ -6607,6 +6648,35 @@ __asm__(
 "    hlt\n"                         /* never: seg_ritorno does not come back */
 ".size __exos_segnale_entra, .-__exos_segnale_entra\n"
 );
+#else
+/* @EXOS-64. RSP -> SegTelaio, allineato a 16 dal kernel (che ha gia' saltato
+ * la zona rossa di chi e' stato interrotto). Qui lo stato da mettere da parte
+ * e' quello di FXSAVE - x87 e SSE insieme, 512 byte, in un posto allineato a
+ * 16: il codice compilato per x86-64 usa i registri SSE ovunque, e un gestore
+ * che li sporca senza che nessuno li rimetta rompe il programma interrotto
+ * nel modo piu' difficile da ritrovare. RBX e R12 tengono il telaio e lo
+ * stato attraverso la chiamata (il C li conserva); i registri del programma
+ * li rimette poi il kernel dal contesto, tutti. */
+__asm__(
+".text\n"
+".globl __exos_segnale_entra\n"
+".type __exos_segnale_entra, @function\n"
+"__exos_segnale_entra:\n"
+"    movq  %rsp, %rbx\n"           /* rbx = the frame */
+"    subq  $512, %rsp\n"
+"    fxsave (%rsp)\n"
+"    movq  %rsp, %r12\n"           /* r12 = the FPU/SSE image */
+"    movq  %rbx, %rdi\n"
+"    movq  %r12, %rsi\n"
+"    call  __exos_segnale_esegui\n"
+"    fxrstor (%r12)\n"
+"    movq  16(%rbx), %rbx\n"       /* SegTelaio.contesto */
+"    movl  $167, %eax\n"           /* SYS_SEG_RITORNO */
+"    int   $0x80\n"
+"    hlt\n"
+".size __exos_segnale_entra, .-__exos_segnale_entra\n"
+);
+#endif
 extern void __exos_segnale_entra(void);
 
 int sigemptyset(sigset_t *s) { if (!s) { errno = EINVAL; return -1; } *s = 0; return 0; }
@@ -6732,6 +6802,34 @@ int raise(int sig)
 
 /* sigsetjmp saves the mask if asked, then becomes setjmp (a tail jump: the
  * return address and env are still where setjmp looks for them). */
+#if defined(__x86_64__)
+/* @EXOS-64: env in RDI, «salva la maschera» in ESI. Le prime otto parole sono
+ * il jmp_buf, la nona dice se la maschera c'e', la decima e' la maschera. */
+#define SJ_C_E      8
+#define SJ_MASCHERA 9
+__asm__(
+".text\n"
+".globl sigsetjmp\n"
+".type sigsetjmp, @function\n"
+"sigsetjmp:\n"
+"    movslq %esi, %rax\n"
+"    movq  %rax, 64(%rdi)\n"
+"    testl %esi, %esi\n"
+"    jz    1f\n"
+"    pushq %rbx\n"
+"    leaq  72(%rdi), %rdx\n"       /* &env[9] */
+"    movq  $0, (%rdx)\n"
+"    xorl  %ecx, %ecx\n"
+"    xorl  %ebx, %ebx\n"
+"    movl  $166, %eax\n"           /* SYS_SEG_MASCHERA: only read */
+"    int   $0x80\n"
+"    popq  %rbx\n"
+"1:  jmp   setjmp\n"
+".size sigsetjmp, .-sigsetjmp\n"
+);
+#else
+#define SJ_C_E      6
+#define SJ_MASCHERA 7
 __asm__(
 ".text\n"
 ".globl sigsetjmp\n"
@@ -6752,10 +6850,11 @@ __asm__(
 "1:  jmp   setjmp\n"
 ".size sigsetjmp, .-sigsetjmp\n"
 );
+#endif
 
 void siglongjmp(sigjmp_buf env, int val)
 {
-    if (env[6]) sigprocmask(SIG_SETMASK, (const sigset_t *)&env[7], NULL);
+    if (env[SJ_C_E]) sigprocmask(SIG_SETMASK, (const sigset_t *)&env[SJ_MASCHERA], NULL);
     longjmp(env, val);
 }
 
@@ -7148,7 +7247,7 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
         errno = (r != 0) ? -r : ENOMEM;
         return MAP_FAILED;
     }
-    return (void *)(uintptr_t)r;
+    return (void *)(uintptr_t)(uint32_t)r;      /* non il segno: vedi sbrk */
 }
 
 int munmap(void *addr, size_t lung)
@@ -7282,7 +7381,7 @@ int getegid(void) { return (int)_syscall1(SYS_GETUID, 0); }
  * --------------------------------------------------------------------------- */
 int chown(const char *percorso, unsigned int uid, unsigned int gid)
 {
-    int32_t r = _syscall3(SYS_CHOWN, (uint32_t)percorso, uid, gid);
+    int32_t r = _syscall3(SYS_CHOWN, (uintptr_t)percorso, uid, gid);
 
     if (r < 0) { errno = -r; return -1; }
     return 0;
@@ -7341,7 +7440,7 @@ unsigned int uptime_ms(void)
 /* I processori trovati all'avvio. Come meminfo: 0, o un -errno. */
 int cpu_info(CpuInfo *ci)
 {
-    return _syscall2(SYS_CPU_INFO, (uint32_t)ci, (uint32_t)sizeof(CpuInfo));
+    return _syscall2(SYS_CPU_INFO, (uintptr_t)ci, (uint32_t)sizeof(CpuInfo));
 }
 
 /* I processori in piu', parcheggiati, cominciano a eseguire programmi (solo
@@ -7372,19 +7471,19 @@ int ahci_stato(void)
 /* Il registro dei messaggi del kernel: quale = 0 l'avvio, 1 gli ultimi. */
 int klog_leggi(char *buf, unsigned int byte, int quale)
 {
-    return _syscall3(SYS_KLOG, (uint32_t)buf, (uint32_t)byte, (uint32_t)quale);
+    return _syscall3(SYS_KLOG, (uintptr_t)buf, (uint32_t)byte, (uint32_t)quale);
 }
 
 /* La sizeof viaggia con la chiamata: il kernel rifiuta se la sua copia
  * della struttura non ha la stessa dimensione. Vedi libc.h. */
 int meminfo(MemInfo *mi)
 {
-    return _syscall2(SYS_MEMINFO, (uint32_t)mi, (uint32_t)sizeof(MemInfo));
+    return _syscall2(SYS_MEMINFO, (uintptr_t)mi, (uint32_t)sizeof(MemInfo));
 }
 
 int procinfo(ProcInfo *buf, unsigned int max, unsigned int start)
 {
-    return _syscall4(SYS_PROCINFO, (uint32_t)buf, max, start,
+    return _syscall4(SYS_PROCINFO, (uintptr_t)buf, max, start,
                      (uint32_t)sizeof(ProcInfo));
 }
 
@@ -7392,7 +7491,7 @@ int procinfo(ProcInfo *buf, unsigned int max, unsigned int start)
  * questa copia di StatPerm e' andata fuori sincrono con la sua. */
 int statperm(const char *path, StatPerm *p)
 {
-    return _syscall3(SYS_STATPERM, (uint32_t)path, (uint32_t)p,
+    return _syscall3(SYS_STATPERM, (uintptr_t)path, (uintptr_t)p,
                      (uint32_t)sizeof(StatPerm));
 }
 
@@ -7401,7 +7500,7 @@ int statperm(const char *path, StatPerm *p)
 /* Il perche' della verifica nel kernel sta accanto alla dichiarazione. */
 int diventa_root(const char *nome, const char *password)
 {
-    return _syscall2(SYS_SU, (uint32_t)nome, (uint32_t)password);
+    return _syscall2(SYS_SU, (uintptr_t)nome, (uintptr_t)password);
 }
 
 int nome_utente(unsigned int uid, char *out, unsigned int max)
@@ -7445,34 +7544,34 @@ int nome_utente(unsigned int uid, char *out, unsigned int max)
 
 int diskinfo(unsigned int idx, DiskInfo *di)
 {
-    return _syscall3(SYS_DISKINFO, idx, (uint32_t)di, (uint32_t)sizeof(DiskInfo));
+    return _syscall3(SYS_DISKINFO, idx, (uintptr_t)di, (uint32_t)sizeof(DiskInfo));
 }
 
 int blkinfo(BlkInfo *buf, unsigned int max, unsigned int start)
 {
-    return _syscall4(SYS_BLKINFO, (uint32_t)buf, max, start,
+    return _syscall4(SYS_BLKINFO, (uintptr_t)buf, max, start,
                      (uint32_t)sizeof(BlkInfo));
 }
 
 int mount(const char *dev, const char *punto, unsigned int flag)
 {
-    return (int)_syscall3(SYS_MOUNT, (uint32_t)dev, (uint32_t)punto, flag);
+    return (int)_syscall3(SYS_MOUNT, (uintptr_t)dev, (uintptr_t)punto, flag);
 }
 
 int umount(const char *punto)
 {
-    return (int)_syscall1(SYS_UMOUNT, (uint32_t)punto);
+    return (int)_syscall1(SYS_UMOUNT, (uintptr_t)punto);
 }
 
 int mountinfo(MountInfo *buf, unsigned int max, unsigned int start)
 {
-    return _syscall4(SYS_MOUNTINFO, (uint32_t)buf, max, start,
+    return _syscall4(SYS_MOUNTINFO, (uintptr_t)buf, max, start,
                      (uint32_t)sizeof(MountInfo));
 }
 
 int bootinstall(const char *punto, BootInstallInfo *info)
 {
-    return (int)_syscall5(SYS_BOOTINSTALL, (uint32_t)punto, (uint32_t)info,
+    return (int)_syscall5(SYS_BOOTINSTALL, (uintptr_t)punto, (uintptr_t)info,
                           (uint32_t)sizeof(BootInstallInfo), 0, 0);
 }
 
@@ -7509,30 +7608,30 @@ int bootverify(const char *punto, const char *nome_s2, const char *nome_k,
     for (j = 0; nome_k[j] && i < sizeof(nomi) - 1; j++) nomi[i++] = nome_k[j];
     nomi[i] = '\0';
 
-    return (int)_syscall5(SYS_BOOTINSTALL, (uint32_t)punto, (uint32_t)info,
+    return (int)_syscall5(SYS_BOOTINSTALL, (uintptr_t)punto, (uintptr_t)info,
                           (uint32_t)sizeof(BootInstallInfo),
                           1u /* BOOTINST_VERIFICA */, (uint32_t)(uintptr_t)nomi);
 }
 
 int partwrite(unsigned int disco, PartTabella *tab)
 {
-    return (int)_syscall3(SYS_PARTWRITE, disco, (uint32_t)tab,
+    return (int)_syscall3(SYS_PARTWRITE, disco, (uintptr_t)tab,
                           (uint32_t)sizeof(PartTabella));
 }
 
 int blkread(const char *dev, unsigned int lba, unsigned int n, void *buf)
 {
-    return (int)_syscall4(SYS_BLKREAD, (uint32_t)dev, lba, n, (uint32_t)buf);
+    return (int)_syscall4(SYS_BLKREAD, (uintptr_t)dev, lba, n, (uintptr_t)buf);
 }
 
 int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf)
 {
-    return (int)_syscall4(SYS_BLKWRITE, (uint32_t)dev, lba, n, (uint32_t)buf);
+    return (int)_syscall4(SYS_BLKWRITE, (uintptr_t)dev, lba, n, (uintptr_t)buf);
 }
 
 int truncate(const char *path, unsigned int size)
 {
-    return (int)err_posix(_syscall2(SYS_TRUNCATE, (uint32_t)path, size));
+    return (int)err_posix(_syscall2(SYS_TRUNCATE, (uintptr_t)path, size));
 }
 
 /* =============================================================================
@@ -7542,7 +7641,7 @@ int ipc_send(unsigned int dest_pid, unsigned int tipo,
               const void *data, unsigned int len)
 {
     return (int)_syscall4(SYS_IPC_SEND, dest_pid, tipo,
-                           (uint32_t)data, len);
+                           (uintptr_t)data, len);
 }
 
 /* =============================================================================
@@ -7748,8 +7847,8 @@ int ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len)
     int r = scaffale_prendi(out_meta, buf, buf_len);
 
     if (r >= 0) return r;
-    return (int)_syscall3(SYS_IPC_RECV, (uint32_t)out_meta,
-                           (uint32_t)buf, buf_len);
+    return (int)_syscall3(SYS_IPC_RECV, (uintptr_t)out_meta,
+                           (uintptr_t)buf, buf_len);
 }
 
 int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
@@ -7760,8 +7859,8 @@ int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
     /* ! CIO' CHE E' GIA' SULLO SCAFFALE NON FA ASPETTARE, nemmeno con una
      * scadenza lunga: e' gia' arrivato. */
     if (r >= 0) return r;
-    return (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)out_meta,
-                           (uint32_t)buf, buf_len, timeout_ms);
+    return (int)_syscall4(SYS_IPC_RECV_TMO, (uintptr_t)out_meta,
+                           (uintptr_t)buf, buf_len, timeout_ms);
 }
 
 /* =============================================================================
@@ -7806,7 +7905,7 @@ static int c_e_posta(void)
     p.fd = POLL_FD_IPC;
     p.events = POLL_IN;
     p.revents = 0;
-    return (int)_syscall3(SYS_POLL, (uint32_t)&p, 1u, 0u) > 0;
+    return (int)_syscall3(SYS_POLL, (uintptr_t)&p, 1u, 0u) > 0;
 }
 
 int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
@@ -7859,8 +7958,8 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
             resta = ms - passati;
         }
 
-        r = (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)&meta,
-                           (uint32_t)posta, IPC_MSG_MAX_DATA, resta);
+        r = (int)_syscall4(SYS_IPC_RECV_TMO, (uintptr_t)&meta,
+                           (uintptr_t)posta, IPC_MSG_MAX_DATA, resta);
         if (r < 0) return r;
 
         {
@@ -7915,7 +8014,7 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
 
 int time_now(RtcTime *t)
 {
-    return (int)_syscall1(SYS_TIME, (uint32_t)t);
+    return (int)_syscall1(SYS_TIME, (uintptr_t)t);
 }
 
 /* Rimette l'orologio. Come time_now, rende 0 o un -errno: e' una chiamata
@@ -7924,7 +8023,7 @@ static int g_tod_pronto;    /* vedi tod_adesso(), piu' sotto */
 
 int time_set(const RtcTime *t)
 {
-    int r = (int)_syscall1(SYS_TIME_SET, (uint32_t)t);
+    int r = (int)_syscall1(SYS_TIME_SET, (uintptr_t)t);
 
     /* Chi ha appena rimesso l'orologio lo rilegge alla prossima domanda,
      * senza aspettare il minuto: e' l'unico che SA che e' cambiato. */
@@ -8581,12 +8680,12 @@ int console_switch(unsigned int n)
 
 int console_write(unsigned int n, const void *buf, unsigned int len)
 {
-    return (int)_syscall3(SYS_CONSOLE_WRITE, n, (uint32_t)buf, len);
+    return (int)_syscall3(SYS_CONSOLE_WRITE, n, (uintptr_t)buf, len);
 }
 
 int console_info(ConsoleInfo *ci)
 {
-    return (int)_syscall1(SYS_CONSOLE_INFO, (uint32_t)ci);
+    return (int)_syscall1(SYS_CONSOLE_INFO, (uintptr_t)ci);
 }
 
 int console_setfg(unsigned int pid)
@@ -8609,13 +8708,13 @@ int console_grafica(int azione)
 /* The text of the graphics console (@EXWIN-LOG): see libc.h. */
 int console_testo(char *buf, unsigned int max)
 {
-    return (int)_syscall2(SYS_CONSOLE_TESTO, (uint32_t)buf, (uint32_t)max);
+    return (int)_syscall2(SYS_CONSOLE_TESTO, (uintptr_t)buf, (uint32_t)max);
 }
 
 /* The log ring of the graphics console (@EXWIN-LOG): see libc.h. */
 int console_registro(char *buf, unsigned int max)
 {
-    return (int)_syscall2(SYS_CONSOLE_REGISTRO, (uint32_t)buf, (uint32_t)max);
+    return (int)_syscall2(SYS_CONSOLE_REGISTRO, (uintptr_t)buf, (uint32_t)max);
 }
 
 /* Who Ctrl+C stops on text console n (@TASTI-SISTEMA): see libc.h. */
@@ -8626,12 +8725,12 @@ int console_ctrlc(unsigned int n)
 
 int ipc_register(const char *name)
 {
-    return (int)_syscall1(SYS_IPC_REGISTER, (uint32_t)name);
+    return (int)_syscall1(SYS_IPC_REGISTER, (uintptr_t)name);
 }
 
 int ipc_lookup(const char *name)
 {
-    return (int)_syscall1(SYS_IPC_LOOKUP, (uint32_t)name);
+    return (int)_syscall1(SYS_IPC_LOOKUP, (uintptr_t)name);
 }
 
 /* =============================================================================
@@ -8701,7 +8800,7 @@ int ioport_out16(unsigned int port, unsigned int value)
 
 int ioport_in32(unsigned int port, unsigned int *out)
 {
-    return (int)_syscall2(SYS_IOPORT_IN32, port, (unsigned int)out);
+    return (int)_syscall2(SYS_IOPORT_IN32, port, (uintptr_t)out);
 }
 
 int ioport_out32(unsigned int port, unsigned int value)
@@ -8721,27 +8820,27 @@ int irq_unbind(unsigned int irq)
 
 int fdprova(FdPasso *passi, unsigned int max)
 {
-    return (int)_syscall3(SYS_FDPROVA, (unsigned int)passi, max, 0);
+    return (int)_syscall3(SYS_FDPROVA, (uintptr_t)passi, max, 0);
 }
 
 int kbprova(FdPasso *passi, unsigned int max)
 {
-    return (int)_syscall3(SYS_KBPROVA, (unsigned int)passi, max, 0);
+    return (int)_syscall3(SYS_KBPROVA, (uintptr_t)passi, max, 0);
 }
 
 int kbstato(FdPasso *passi, unsigned int max)
 {
-    return (int)_syscall3(SYS_KBPROVA, (unsigned int)passi, max, 1);
+    return (int)_syscall3(SYS_KBPROVA, (uintptr_t)passi, max, 1);
 }
 
 int dma_alloc(DmaZona *z)
 {
-    return (int)_syscall1(SYS_DMA_ALLOC, (unsigned int)z);
+    return (int)_syscall1(SYS_DMA_ALLOC, (uintptr_t)z);
 }
 
 int mmio_map(MmioZona *m)
 {
-    return (int)_syscall1(SYS_MMIO_MAP, (unsigned int)m);
+    return (int)_syscall1(SYS_MMIO_MAP, (uintptr_t)m);
 }
 
 /* --- Un disco servito da questo processo: vedi libc.h ----------------------
@@ -8770,28 +8869,28 @@ typedef struct {
 
 int blk_offri(BlkOfferta *o)
 {
-    return (int)_syscall1(SYS_BLK_OFFRI, (unsigned int)o);
+    return (int)_syscall1(SYS_BLK_OFFRI, (uintptr_t)o);
 }
 
 int blk_attendi(BlkRichiesta *r, unsigned int ms)
 {
-    return (int)_syscall2(SYS_BLK_ATTENDI, (unsigned int)r, ms);
+    return (int)_syscall2(SYS_BLK_ATTENDI, (uintptr_t)r, ms);
 }
 
 int blk_risposta(BlkRichiesta *r, int esito)
 {
-    return (int)_syscall2(SYS_BLK_RISPOSTA, (unsigned int)r,
+    return (int)_syscall2(SYS_BLK_RISPOSTA, (uintptr_t)r,
                           (unsigned int)esito);
 }
 
 int blk_scansiona(const char *nome)
 {
-    return (int)_syscall1(SYS_BLK_SCANSIONA, (unsigned int)nome);
+    return (int)_syscall1(SYS_BLK_SCANSIONA, (uintptr_t)nome);
 }
 
 int blk_espelli(const char *nome)
 {
-    return (int)_syscall1(SYS_BLK_ESPELLI, (unsigned int)nome);
+    return (int)_syscall1(SYS_BLK_ESPELLI, (uintptr_t)nome);
 }
 
 /* ! STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h e da libc.h, come
@@ -8808,7 +8907,7 @@ typedef struct {
 
 int video_info(VideoInfo *v)
 {
-    return (int)_syscall1(SYS_VIDEO_INFO, (unsigned int)v);
+    return (int)_syscall1(SYS_VIDEO_INFO, (uintptr_t)v);
 }
 
 /* Una riga sul log del kernel, cioe' sulla seriale. Vedi libc.h per il
@@ -8825,14 +8924,14 @@ int log_seriale(const char *s)
 
     if (s == 0) return 0;
     while (s[n] && n < 200u) n++;
-    return (int)_syscall2(SYS_LOG, (unsigned int)s, n);
+    return (int)_syscall2(SYS_LOG, (uintptr_t)s, n);
 }
 
 /* ! -1 E errno, non -errno (29 settembre 2026): come stat, era rimasta alla
  * convenzione vecchia. */
 static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout)
 {
-    return (int)err_posix(_syscall3(SYS_POLL, (unsigned int)fds, nfds,
+    return (int)err_posix(_syscall3(SYS_POLL, (uintptr_t)fds, nfds,
                                     (unsigned int)timeout));
 }
 
@@ -8928,12 +9027,12 @@ int modo_testo(void)
 
 int shm_apri(ShmZona *z)
 {
-    return (int)_syscall1(SYS_SHM_APRI, (unsigned int)z);
+    return (int)_syscall1(SYS_SHM_APRI, (uintptr_t)z);
 }
 
 int shm_chiudi(void *p)
 {
-    return (int)_syscall1(SYS_SHM_CHIUDI, (unsigned int)p);
+    return (int)_syscall1(SYS_SHM_CHIUDI, (uintptr_t)p);
 }
 
 #ifndef EXOS_LIBC_SO
@@ -9273,7 +9372,7 @@ static const DlTesta *dl_apri_uno(const char *percorso, int *esiste)
 
     if (r <= 0) return 0;
     *esiste = 1;
-    t = (const DlTesta *)(uintptr_t)r;
+    t = (const DlTesta *)(uintptr_t)(unsigned int)r;
     if (t->magia != DL_MAGIA || t->versione != DL_VERSIONE ||
         t->n == 0 || t->nomi == 0 || t->indirizzi == 0)
         return 0;
@@ -9371,7 +9470,7 @@ int interrompi(int pid)
 
 int pty_apri(int fd[2])
 {
-    return (int)_syscall1(SYS_PTY_APRI, (unsigned int)fd);
+    return (int)_syscall1(SYS_PTY_APRI, (uintptr_t)fd);
 }
 
 int pty_ctl(int fd, unsigned int cmd, unsigned int arg)
@@ -9404,7 +9503,7 @@ int getentropy(void *buf, size_t len)
     if (len > 256) { errno = EIO; return -1; }
 
     while (fatti < len) {
-        int n = (int)_syscall2(SYS_RANDOM, (unsigned int)(p + fatti),
+        int n = (int)_syscall2(SYS_RANDOM, (uintptr_t)(p + fatti),
                                (unsigned int)(len - fatti));
 
         if (n <= 0) {
@@ -9425,7 +9524,7 @@ ssize_t getrandom(void *buf, size_t len, unsigned int flags)
     int n;
 
     (void)flags;
-    n = (int)_syscall2(SYS_RANDOM, (unsigned int)buf, (unsigned int)len);
+    n = (int)_syscall2(SYS_RANDOM, (uintptr_t)buf, (unsigned int)len);
     if (n < 0) { errno = -n; return -1; }
     return (ssize_t)n;
 }
@@ -9644,17 +9743,17 @@ uint32_t arc4random_uniform(uint32_t limite)
 int mkdir(const char *path, mode_t modo)
 {
     (void)modo;
-    return (int)err_posix(_syscall1(SYS_MKDIR, (uint32_t)path));
+    return (int)err_posix(_syscall1(SYS_MKDIR, (uintptr_t)path));
 }
 
 int rmdir(const char *path)
 {
-    return (int)err_posix(_syscall1(SYS_RMDIR, (uint32_t)path));
+    return (int)err_posix(_syscall1(SYS_RMDIR, (uintptr_t)path));
 }
 
 int unlink(const char *path)
 {
-    return (int)err_posix(_syscall1(SYS_UNLINK, (uint32_t)path));
+    return (int)err_posix(_syscall1(SYS_UNLINK, (uintptr_t)path));
 }
 
 /* remove() e' unlink() con il nome che usa il C standard. Sui sistemi
@@ -9681,7 +9780,7 @@ int remove(const char *path)
  * ============================================================================= */
 int execv(const char *path, char *const argv[])
 {
-    return err_posix(_syscall3(SYS_EXEC, (uint32_t)path, (uint32_t)argv, 0));
+    return err_posix(_syscall3(SYS_EXEC, (uintptr_t)path, (uintptr_t)argv, 0));
 }
 
 int execvp(const char *file, char *const argv[])
@@ -9713,7 +9812,7 @@ int execvp(const char *file, char *const argv[])
 
 int getconf(const char *key, char *buf, size_t size)
 {
-    return (int)_syscall3(SYS_GETENV, (uint32_t)key, (uint32_t)buf,
+    return (int)_syscall3(SYS_GETENV, (uintptr_t)key, (uintptr_t)buf,
                           (uint32_t)size);
 }
 
@@ -9816,7 +9915,7 @@ int *__errno_dove(void)
     unsigned int tp;
     int          i;
 
-    __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp));
+    TP_LEGGI(tp);
     if (tp == 0) return &errno_condiviso;        /* nessun blocco: quello di scorta */
 
     for (i = 0; i < ERRNO_POSTI; i++)
@@ -9844,7 +9943,7 @@ static void errno_posto_lascia(void)
     unsigned int tp;
     int          i;
 
-    __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp));
+    TP_LEGGI(tp);
     if (tp == 0) return;
     for (i = 0; i < ERRNO_POSTI; i++)
         if ((unsigned int)g_errno_posti[i].tp == tp) {
@@ -10022,7 +10121,7 @@ int unsetenv(const char *nome)
 
 int osversion(char *buf, size_t size)
 {
-    return (int)_syscall2(SYS_VERSION, (uint32_t)buf, (uint32_t)size);
+    return (int)_syscall2(SYS_VERSION, (uintptr_t)buf, (uint32_t)size);
 }
 
 int verboseboot(void)
@@ -10060,7 +10159,7 @@ void *sbrk(int incr)
         errno = (r != 0) ? -r : 12 /* ENOMEM */;
         return (void *)-1;
     }
-    return (void *)(uintptr_t)r;
+    return (void *)(uintptr_t)(uint32_t)r;      /* non il segno: sopra i 2 GB r e' negativo */
 }
 
 long lseek(int fd, long offset, int whence)
@@ -10074,7 +10173,7 @@ long lseek(int fd, long offset, int whence)
 
 int statraw(const char *path, Stat *st)
 {
-    int32_t r = _syscall2(SYS_STAT, (uint32_t)path, (uint32_t)st);
+    int32_t r = _syscall2(SYS_STAT, (uintptr_t)path, (uintptr_t)st);
     if (r < 0) errno = -r;
     return (int)r;
 }
@@ -10203,7 +10302,7 @@ int fstat(int fd, struct stat *st)
     {
         Stat g;
 
-        if (_syscall2(SYS_FSTAT, (uint32_t)fd, (uint32_t)&g) == 0) {
+        if (_syscall2(SYS_FSTAT, (uint32_t)fd, (uintptr_t)&g) == 0) {
             stat_da_grezzo(&g, st);
             return 0;
         }
@@ -10266,6 +10365,44 @@ long fsize(int fd)
  * non salvano lo stato della FPU. jmp_buf e' di sei parole: chi lo
  * dichiara deve usare il tipo, non un array di interi scelto a occhio.
  * ============================================================================= */
+#if defined(__x86_64__)
+/* @EXOS-64: jmp_buf in RDI, il valore in ESI. Si salvano i registri che una
+ * funzione deve ritrovare (RBX, RBP, R12..R15), la pila e il ritorno. */
+__asm__(
+".text\n"
+".globl setjmp\n"
+".type setjmp, @function\n"
+"setjmp:\n"
+"    movq %rbx,  0(%rdi)\n"
+"    movq %rbp,  8(%rdi)\n"
+"    movq %r12, 16(%rdi)\n"
+"    movq %r13, 24(%rdi)\n"
+"    movq %r14, 32(%rdi)\n"
+"    movq %r15, 40(%rdi)\n"
+"    leaq 8(%rsp), %rax\n"      /* rsp come sara' DOPO il ret */
+"    movq %rax, 48(%rdi)\n"
+"    movq 0(%rsp), %rax\n"      /* indirizzo di ritorno */
+"    movq %rax, 56(%rdi)\n"
+"    xorl %eax, %eax\n"
+"    ret\n"
+".globl longjmp\n"
+".type longjmp, @function\n"
+"longjmp:\n"
+"    movl %esi, %eax\n"
+"    testl %eax, %eax\n"
+"    jnz 1f\n"
+"    movl $1, %eax\n"           /* longjmp(buf,0) deve valere 1 */
+"1:\n"
+"    movq  0(%rdi), %rbx\n"
+"    movq  8(%rdi), %rbp\n"
+"    movq 16(%rdi), %r12\n"
+"    movq 24(%rdi), %r13\n"
+"    movq 32(%rdi), %r14\n"
+"    movq 40(%rdi), %r15\n"
+"    movq 48(%rdi), %rsp\n"
+"    jmp *56(%rdi)\n"
+);
+#else
 __asm__(
 ".text\n"
 ".globl setjmp\n"
@@ -10299,6 +10436,7 @@ __asm__(
 "    movl 20(%edx), %ecx\n"
 "    jmp *%ecx\n"
 );
+#endif
 
 /* =============================================================================
  * ctype — classificazione dei caratteri
@@ -11819,6 +11957,7 @@ __attribute__((visibility("hidden"))) void __stack_chk_fail_local(void)
  * nessuno si e' messo in mezzo. Il nome e' dato con asm: con il nome vero GCC
  * le prenderebbe per le sue funzioni interne e protesterebbe per la firma.
  * ============================================================================= */
+#if !defined(__x86_64__)     /* a 64 bit sono un'istruzione, e GCC la scrive da solo */
 typedef unsigned long long u64_at;
 
 static u64_at cas8(volatile u64_at *p, u64_at atteso, u64_at nuovo)
@@ -11886,6 +12025,7 @@ AT_OP8(at_for8,  "__atomic_fetch_or_8",  vecchio | v, vecchio)
 AT_OP8(at_fxor8, "__atomic_fetch_xor_8", vecchio ^ v, vecchio)
 AT_OP8(at_addf8, "__atomic_add_fetch_8", vecchio + v, nuovo)
 AT_OP8(at_subf8, "__atomic_sub_fetch_8", vecchio - v, nuovo)
+#endif /* !__x86_64__ */
 
 /* =============================================================================
  * POSIX a meta' (vedi <unistd.h>)
@@ -11947,8 +12087,8 @@ int mkfifo(const char *p, unsigned int m)                   { (void)p; (void)m; 
  * ============================================================================= */
 int execve(const char *percorso, char *const argv[], char *const envp[])
 {
-    return err_posix(_syscall3(SYS_EXEC, (uint32_t)percorso, (uint32_t)argv,
-                               (uint32_t)envp));
+    return err_posix(_syscall3(SYS_EXEC, (uintptr_t)percorso, (uintptr_t)argv,
+                               (uintptr_t)envp));
 }
 
 struct utsname { char sysname[65], nodename[65], release[65], version[65], machine[65]; };

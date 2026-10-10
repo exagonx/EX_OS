@@ -1908,8 +1908,8 @@ int32_t sys_exec(InterruptFrame *frame)
 typedef struct {
     char     *kargv[MAX_SPAWN_ARGS + 1];
     char     *kenvp[MAX_SPAWN_ENV + 1];
-    uint32_t  arg_ptrs[MAX_SPAWN_ARGS + 1];
-    uint32_t  env_ptrs[MAX_SPAWN_ENV + 1];
+    uintptr_t arg_ptrs[MAX_SPAWN_ARGS + 1];    /* larghi come un puntatore del figlio */
+    uintptr_t env_ptrs[MAX_SPAWN_ENV + 1];
     char      arena[SPAWN_ARENA_BYTES];
 } SpawnBuf;
 
@@ -2322,9 +2322,9 @@ return ERR(ENOMEM); }
  * sintomo e' «stack non mappato per argv[n]» su una riga di comando lunga
  * — cioe' intermittente, e che accusa la paginazione. */
 uint32_t stack_serve = arena_uso
-                     + (real_argc + 1) * sizeof(uint32_t)
-                     + (real_envc + 1) * sizeof(uint32_t)
-                     + 16    /* frame C: ret fittizio, argc, argv, envp */
+                     + (real_argc + 1) * sizeof(uintptr_t)
+                     + (real_envc + 1) * sizeof(uintptr_t)
+                     + 4 * sizeof(uintptr_t) /* frame C: ret fittizio, argc, argv, envp */
                      + 32;   /* margine per i due allineamenti a 4 */
 
 int rc_elf = elf_load_argv(kpath, child, &res, stack_serve);
@@ -2369,8 +2369,8 @@ if (rc_elf != 0) {
      * CR3. Nessun rischio di interrupt nel mezzo di un cambio di PD. */
 
 uint32_t usp       = res.user_stack_top;
-    uint32_t *arg_ptrs = sb->arg_ptrs;
-    uint32_t *env_ptrs = sb->env_ptrs;
+    uintptr_t *arg_ptrs = sb->arg_ptrs;
+    uintptr_t *env_ptrs = sb->env_ptrs;
     uint32_t envv_uptr;
     PDE     *cpd       = child->page_directory;
 
@@ -2403,23 +2403,29 @@ uint32_t usp       = res.user_stack_top;
     }
     arg_ptrs[real_argc] = 0;
 
-    /* 2. Allineamento a 4 byte */
-    usp &= ~3u;
+    /* ! @EXOS-64: DA QUI LE MISURE SONO «UNA PAROLA», cioe' un puntatore del
+     * programma: 4 byte a 32 bit, 8 a 64. argv ed envp sono array di
+     * puntatori, e il telaio che _start legge e' fatto di quattro parole. A
+     * 32 bit i numeri sono quelli di sempre (4, 4, 16). */
+#define PAROLA  sizeof(uintptr_t)
+
+    /* 2. Allineamento a una parola */
+    usp &= ~(uint32_t)(PAROLA - 1);
 
     /* 3. Array di puntatori argv[] (NULL-terminato) */
-    usp -= (real_argc + 1) * sizeof(uint32_t);
+    usp -= (real_argc + 1) * PAROLA;
     uint32_t argv_uptr = usp;
     for (i = 0; i <= real_argc; i++) {
-        if (spawn_write_user(cpd, usp + i*4, &arg_ptrs[i], 4) != 0)
+        if (spawn_write_user(cpd, usp + i*PAROLA, &arg_ptrs[i], PAROLA) != 0)
             goto spawn_fail;
     }
 
     /* 3b. Array di puntatori envp[] (NULL-terminato) */
-    usp &= ~3u;
-    usp -= (real_envc + 1) * sizeof(uint32_t);
+    usp &= ~(uint32_t)(PAROLA - 1);
+    usp -= (real_envc + 1) * PAROLA;
     envv_uptr = usp;
     for (i = 0; i <= real_envc; i++) {
-        if (spawn_write_user(cpd, usp + i*4, &env_ptrs[i], 4) != 0)
+        if (spawn_write_user(cpd, usp + i*PAROLA, &env_ptrs[i], PAROLA) != 0)
             goto spawn_fail;
     }
 
@@ -2427,12 +2433,23 @@ uint32_t usp       = res.user_stack_top;
      *
      * Il terzo argomento e' nuovo (0.150) e non rompe niente: un _start
      * che ne legge due lo ignora. */
+#if defined(__x86_64__)
+    /* quattro parole di otto byte, e la pila allineata a 16 come l'ABI
+     * di x86-64 vuole all'ingresso (lo rifa' anche _start) */
+    usp &= ~15u;
+    usp -= 4 * PAROLA;
+    { uintptr_t t[4];
+      t[0] = 0; t[1] = real_argc; t[2] = argv_uptr; t[3] = envv_uptr;
+      spawn_write_user(cpd, usp, t, sizeof(t)); }
+#else
     usp -= 16;
     { uint32_t z = 0;
       spawn_write_user(cpd, usp+0,  &z,          4);
       spawn_write_user(cpd, usp+4,  &real_argc,  4);
       spawn_write_user(cpd, usp+8,  &argv_uptr,  4);
       spawn_write_user(cpd, usp+12, &envv_uptr,  4); }
+#endif
+#undef PAROLA
 
     /* --- Redirezioni: il figlio apre i propri file -------------------------
      *

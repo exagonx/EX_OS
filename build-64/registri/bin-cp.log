@@ -1,0 +1,9 @@
+In function ‘espandi_e_copia’,
+    inlined from ‘main’ at bin/cp/cp.c:557:27:
+bin/cp/cp.c:399:26: warning: writing 1 byte into a region of size 0 [-Wstringop-overflow=]
+  399 |             dir_apri[ld] = '\0';
+      |             ~~~~~~~~~~~~~^~~~~~
+bin/cp/cp.c: In function ‘main’:
+bin/cp/cp.c:371:20: note: at offset [-2147483648, -1] into destination object ‘dir_apri’ of size 320
+  371 |     char           dir_apri[PERCORSO_MAX];  /* per opendir */
+      |                    ^~~~~~~~

@@ -466,7 +466,11 @@
 #define EXOS_COPYRIGHT  "Copyright (C) 2025"
 
 /* Architettura di destinazione */
+#if defined(__x86_64__)
+#define EXOS_ARCH       "x86 64-bit"
+#else
 #define EXOS_ARCH       "x86 32-bit"
+#endif
 
 /* =============================================================================
  * g_os_version — la variabile globale richiesta.

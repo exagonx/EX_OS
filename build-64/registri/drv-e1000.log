@@ -1,0 +1,23 @@
+drivers/e1000/e1000.c: In function ‘rx_desc’:
+drivers/e1000/e1000.c:321:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  321 |     return (volatile unsigned char *)(g_dma_virt + OFF_RX_ANELLO + i * DESC_BYTE);
+      |            ^
+drivers/e1000/e1000.c: In function ‘tx_desc’:
+drivers/e1000/e1000.c:326:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  326 |     return (volatile unsigned char *)(g_dma_virt + OFF_TX_ANELLO + i * DESC_BYTE);
+      |            ^
+drivers/e1000/e1000.c: In function ‘rx_buf’:
+drivers/e1000/e1000.c:331:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  331 |     return (unsigned char *)(g_dma_virt + OFF_RX_BUF + i * BUF_LEN);
+      |            ^
+drivers/e1000/e1000.c: In function ‘tx_buf’:
+drivers/e1000/e1000.c:336:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  336 |     return (unsigned char *)(g_dma_virt + OFF_TX_BUF + i * BUF_LEN);
+      |            ^
+drivers/e1000/e1000.c: In function ‘main’:
+drivers/e1000/e1000.c:968:17: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  968 |         g_reg = (volatile unsigned char *)m.virt;
+      |                 ^
+drivers/e1000/e1000.c:1007:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1007 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
+      |            ^

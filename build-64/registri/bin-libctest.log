@@ -1,0 +1,7 @@
+bin/libctest/libctest.c: In function ‘prova_tls’:
+bin/libctest/libctest.c:1722:53: warning: the comparison will always evaluate as ‘true’ for the address of ‘tls_contatore’ will never be NULL [-Waddress]
+ 1722 |     esito("l'indirizzo non e' zero", &tls_contatore != NULL);
+      |                                                     ^~
+bin/libctest/libctest.c:1685:22: note: ‘tls_contatore’ declared here
+ 1685 | static __thread int  tls_contatore = 1234;
+      |                      ^~~~~~~~~~~~~

@@ -1,0 +1,13 @@
+bin/ftp/ftp.c: In function ‘risposta’:
+bin/ftp/ftp.c:265:70: warning: ‘codice[2]’ may be used uninitialized [-Wmaybe-uninitialized]
+  265 |     return (codice[0] - '0') * 100 + (codice[1] - '0') * 10 + (codice[2] - '0');
+      |                                                                ~~~~~~^~~
+bin/ftp/ftp.c:235:10: note: ‘codice[2]’ was declared here
+  235 |     char codice[4];
+      |          ^~~~~~
+bin/ftp/ftp.c:265:45: warning: ‘codice[1]’ may be used uninitialized [-Wmaybe-uninitialized]
+  265 |     return (codice[0] - '0') * 100 + (codice[1] - '0') * 10 + (codice[2] - '0');
+      |                                       ~~~~~~^~~
+bin/ftp/ftp.c:235:10: note: ‘codice[1]’ was declared here
+  235 |     char codice[4];
+      |          ^~~~~~

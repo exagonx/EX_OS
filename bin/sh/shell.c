@@ -61,6 +61,10 @@ typedef unsigned short  uint16_t;
 typedef unsigned char   uint8_t;
 typedef int             int32_t;
 typedef uint32_t        size_t;
+/* larghi quanto un puntatore: gli argomenti delle chiamate di sistema, che a
+ * 64 bit sono registri di otto byte (@EXOS-64) */
+typedef __UINTPTR_TYPE__ uintptr_t;
+typedef __INTPTR_TYPE__  intptr_t;
 #define NULL    ((void*)0)
 
 /* =============================================================================
@@ -152,7 +156,7 @@ typedef struct {
     uint32_t fg;
 } ConsoleInfo;
 
-static inline int32_t syscall1(uint32_t num, uint32_t a)
+static inline int32_t syscall1(uint32_t num, uintptr_t a)
 {
     int32_t ret;
     __asm__ volatile (
@@ -164,7 +168,7 @@ static inline int32_t syscall1(uint32_t num, uint32_t a)
     return ret;
 }
 
-static inline int32_t syscall2(uint32_t num, uint32_t a, uint32_t b)
+static inline int32_t syscall2(uint32_t num, uintptr_t a, uintptr_t b)
 {
     int32_t ret;
     __asm__ volatile (
@@ -176,7 +180,7 @@ static inline int32_t syscall2(uint32_t num, uint32_t a, uint32_t b)
     return ret;
 }
 
-static inline int32_t syscall3(uint32_t num, uint32_t a, uint32_t b, uint32_t c)
+static inline int32_t syscall3(uint32_t num, uintptr_t a, uintptr_t b, uintptr_t c)
 {
     int32_t ret;
     __asm__ volatile (
@@ -190,8 +194,8 @@ static inline int32_t syscall3(uint32_t num, uint32_t a, uint32_t b, uint32_t c)
 
 /* ESI come quarto argomento: e' la stessa convenzione di lib/libc.c, e la
  * usa SYS_IPC_RECV_TMO per la scadenza. */
-static inline int32_t syscall4(uint32_t num, uint32_t a, uint32_t b,
-                               uint32_t c, uint32_t d)
+static inline int32_t syscall4(uint32_t num, uintptr_t a, uintptr_t b,
+                               uintptr_t c, uintptr_t d)
 {
     int32_t ret;
     __asm__ volatile (
@@ -247,7 +251,7 @@ static void sh_exit(int code)
 
 static int sh_write(int fd, const char *buf, uint32_t n)
 {
-    return syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n);
+    return syscall3(SYS_WRITE, (uint32_t)fd, (uintptr_t)buf, n);
 }
 
 /* Messaggio IPC: solo l'intestazione, come in lib/include/libc.h — il
@@ -261,33 +265,33 @@ typedef struct {
 
 static int sh_ipc_lookup(const char *nome)
 {
-    return (int)syscall1(SYS_IPC_LOOKUP, (uint32_t)nome);
+    return (int)syscall1(SYS_IPC_LOOKUP, (uintptr_t)nome);
 }
 
 static int sh_ipc_send(int pid, uint32_t tipo, const void *dati, uint32_t len)
 {
     return (int)syscall4(SYS_IPC_SEND, (uint32_t)pid, tipo,
-                         (uint32_t)dati, len);
+                         (uintptr_t)dati, len);
 }
 
 static int sh_ipc_recv(ShIpcMsg *m, void *buf, uint32_t len, uint32_t ms)
 {
-    return (int)syscall4(SYS_IPC_RECV_TMO, (uint32_t)m, (uint32_t)buf, len, ms);
+    return (int)syscall4(SYS_IPC_RECV_TMO, (uintptr_t)m, (uintptr_t)buf, len, ms);
 }
 
 static int sh_console_info(ConsoleInfo *ci)
 {
-    return (int)syscall2(SYS_CONSOLE_INFO, (uint32_t)ci, (uint32_t)sizeof(*ci));
+    return (int)syscall2(SYS_CONSOLE_INFO, (uintptr_t)ci, (uint32_t)sizeof(*ci));
 }
 
 static int sh_read(int fd, char *buf, uint32_t n)
 {
-    return syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, n);
+    return syscall3(SYS_READ, (uint32_t)fd, (uintptr_t)buf, n);
 }
 
 static int sh_exec(const char *path)
 {
-    return syscall3(SYS_EXEC, (uint32_t)path, 0, 0);
+    return syscall3(SYS_EXEC, (uintptr_t)path, 0, 0);
 }
 
 /* ! LA FORMA A TRE ARGOMENTI NON C'E' PIU'. C'era `sh_spawn(path, argc,
@@ -309,7 +313,7 @@ static int sh_exec(const char *path)
  * o un errno negativo: -10 (ECHILD) se quel figlio non esiste piu'. */
 static int sh_waitpid(int pid, int32_t *status, uint32_t options)
 {
-    return syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)status, options);
+    return syscall3(SYS_WAITPID, (uint32_t)pid, (uintptr_t)status, options);
 }
 
 /* Dichiara chi possiede la tastiera su questa console. La shell la
@@ -456,7 +460,7 @@ void __stack_chk_fail(void)
 
 static int sh_open(const char *path, uint32_t flags)
 {
-    return syscall3(SYS_OPEN, (uint32_t)path, flags, 0666);
+    return syscall3(SYS_OPEN, (uintptr_t)path, flags, 0666);
 }
 
 static int sh_close(int fd)
@@ -476,7 +480,7 @@ static int sh_dup2(int vecchio, int nuovo)
 
 static int sh_pipe(int fd[2])
 {
-    return syscall1(SYS_PIPE, (uint32_t)fd);
+    return syscall1(SYS_PIPE, (uintptr_t)fd);
 }
 
 /* Come sh_spawn, ma con il blocco EXTRA in ESI: l'ambiente da passare al
@@ -484,8 +488,8 @@ static int sh_pipe(int fd[2])
 static int sh_spawn_ex(const char *path, int argc, char **argv,
                        SpawnExtra *extra)
 {
-    return syscall4(SYS_SPAWN, (uint32_t)path, (uint32_t)argc,
-                    (uint32_t)argv, (uint32_t)extra);
+    return syscall4(SYS_SPAWN, (uintptr_t)path, (uint32_t)argc,
+                    (uintptr_t)argv, (uintptr_t)extra);
 }
 
 /* =============================================================================
@@ -550,8 +554,8 @@ static ShDir *sh_opendir(const char *percorso)
      * «directory vuota» da «non e' una directory», e nel secondo caso lascia
      * il modello com'e' invece di farlo sparire. */
     {
-        int r = syscall4(SYS_READDIR, (uint32_t)g_dir.percorso,
-                         (uint32_t)g_dir.voci, SH_DIR_BLOCCO, 0);
+        int r = syscall4(SYS_READDIR, (uintptr_t)g_dir.percorso,
+                         (uintptr_t)g_dir.voci, SH_DIR_BLOCCO, 0);
 
         if (r < 0) return 0;
         g_dir.n = r;
@@ -568,8 +572,8 @@ static const char *sh_readdir(ShDir *d)
 
         if (d->finito) return 0;
 
-        r = syscall4(SYS_READDIR, (uint32_t)d->percorso,
-                     (uint32_t)d->voci, SH_DIR_BLOCCO, d->start);
+        r = syscall4(SYS_READDIR, (uintptr_t)d->percorso,
+                     (uintptr_t)d->voci, SH_DIR_BLOCCO, d->start);
         if (r <= 0) { d->finito = 1; return 0; }
 
         /* Meno voci di quante ne abbiamo chieste: era l'ultimo blocco. E'
@@ -586,26 +590,26 @@ static void sh_closedir(ShDir *d) { (void)d; }
 
 static int sh_chdir(const char *path)
 {
-    return syscall1(SYS_CHDIR, (uint32_t)path);
+    return syscall1(SYS_CHDIR, (uintptr_t)path);
 }
 
 /* Legge una variabile della sezione [env] di /boot/kernel.cfg.
  * Ritorna la lunghezza del valore, <0 se assente o buffer troppo piccolo. */
 static int sh_getenv_kernel(const char *key, char *buf, uint32_t size)
 {
-    return syscall3(SYS_GETENV, (uint32_t)key, (uint32_t)buf, size);
+    return syscall3(SYS_GETENV, (uintptr_t)key, (uintptr_t)buf, size);
 }
 
 /* Copia l'identità del sistema (g_os_version del kernel) in buf.
  * Ritorna la lunghezza, <0 su errore. */
 static int sh_version(char *buf, uint32_t size)
 {
-    return syscall2(SYS_VERSION, (uint32_t)buf, size);
+    return syscall2(SYS_VERSION, (uintptr_t)buf, size);
 }
 
 static int sh_getcwd(char *buf, uint32_t size)
 {
-    return syscall2(SYS_GETCWD, (uint32_t)buf, size);
+    return syscall2(SYS_GETCWD, (uintptr_t)buf, size);
 }
 
 static int sh_getpid(void)
@@ -640,8 +644,8 @@ typedef struct {
 
 static void sh_memoria(uint32_t *immagine, uint32_t *heap, uint32_t *pila)
 {
-    uint32_t base = (uint32_t)(void *)_start;
-    uint32_t fine = (uint32_t)&_bss_end;
+    uint32_t base = (uintptr_t)(void *)_start;
+    uint32_t fine = (uintptr_t)&_bss_end;
     uint32_t inizio, cima;
 
     *immagine = (fine > base) ? fine - base : 0;
@@ -663,7 +667,7 @@ static void sh_memoria(uint32_t *immagine, uint32_t *heap, uint32_t *pila)
          * «0 KB» — un numero plausibile e sbagliato, che e' il modo peggiore
          * di sbagliare. Visto perche' zero non e' un valore possibile: uno
          * stack toccato occupa almeno una pagina. */
-        while ((n = syscall4(SYS_PROCINFO, (uint32_t)v, 8, start,
+        while ((n = syscall4(SYS_PROCINFO, (uintptr_t)v, 8, start,
                              (uint32_t)sizeof(ShProcInfo))) > 0) {
             for (i = 0; i < n; i++) {
                 if (v[i].pid != mio) continue;
@@ -1832,7 +1836,7 @@ static void avvia_figlio(int pid, int background, const char *cmdline)
  * per il comando. */
 static int file_esiste(const char *path)
 {
-    int fd = syscall3(SYS_OPEN, (uint32_t)path, 0, 0);
+    int fd = syscall3(SYS_OPEN, (uintptr_t)path, 0, 0);
     if (fd < 0) return 0;
     syscall1(SYS_CLOSE, (uint32_t)fd);
     return 1;
@@ -2011,7 +2015,7 @@ static int tipi_programma_sh(const char *e, char *out, uint32_t max)
     uint32_t le = sh_strlen(e);
 
     if (!e[0]) return 0;
-    for (i = 0; i < 2 && fd < 0; i++) fd = syscall3(SYS_OPEN, (uint32_t)dove[i], 0, 0);
+    for (i = 0; i < 2 && fd < 0; i++) fd = syscall3(SYS_OPEN, (uintptr_t)dove[i], 0, 0);
     if (fd < 0) return 0;
     n = sh_read(fd, buf, sizeof(buf) - 1);
     syscall1(SYS_CLOSE, (uint32_t)fd);
@@ -2238,7 +2242,7 @@ static void cmd_cat(int argc, char *argv[])
         return;
     }
 
-    fd = syscall3(SYS_OPEN, (uint32_t)argv[1], 0, 0);
+    fd = syscall3(SYS_OPEN, (uintptr_t)argv[1], 0, 0);
     if (fd < 0) {
         print("cat: ");
         print(argv[1]);
@@ -3368,7 +3372,7 @@ static int stdin_e_console(void)
     unsigned short ws[4];
 
     return syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5413 /* TIOCGWINSZ */,
-                    (uint32_t)ws) == 0;
+                    (uintptr_t)ws) == 0;
 }
 
 static int riga_modifica_raw(char *buf, int max)
@@ -3669,7 +3673,7 @@ static int esegui_script(const char *nome, const char *etichetta,
         return 0;
     }
 
-    fd = syscall3(SYS_OPEN, (uint32_t)nome, 0, 0);
+    fd = syscall3(SYS_OPEN, (uintptr_t)nome, 0, 0);
     if (fd < 0) {
         /* Chi l'ha nominato deve sapere che non e' successo niente; per
          * l'autoexec e l'avvio, che si chiamano sempre, l'assenza e' il

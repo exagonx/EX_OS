@@ -64,7 +64,7 @@ extern "C" {
 #endif
 
 /* La fornisce la libc dentro EX-OS, OpenSSL nella prova sull'host. */
-void sha256(const void *dati, unsigned int len, unsigned char out[32]);
+void sha256(const void *dati, __SIZE_TYPE__ len, unsigned char out[32]);   /* size_t, come in libc.h */
 
 /* Perche' una catena e' stata rifiutata. Il numero si stampa: chi vede
  * «certificato scaduto» sa cosa fare, chi vede «non mi fido» no. */

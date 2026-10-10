@@ -1,0 +1,10 @@
+lib/exinfo/exinfo.c: In function ‘exinfo_memoria’:
+lib/exinfo/exinfo.c:52:25: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+   52 |     unsigned int base = (unsigned int)(void *)_start;
+      |                         ^
+lib/exinfo/exinfo.c:53:25: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+   53 |     unsigned int fine = (unsigned int)&_bss_end;
+      |                         ^
+lib/exinfo/exinfo.c:59:31: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+   59 |         unsigned int cima   = (unsigned int)sbrk(0);
+      |                               ^

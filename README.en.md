@@ -273,8 +273,18 @@ with an NVIDIA MCP73 chipset and a Core 2 Quad (`sonda/mb_oem_000`):
   there are no signals, shared libraries or drivers.
   The 64-bit version has no floppies: `make iso64` makes the CD
   (`dist/exos64.iso`), `make netinst64` the repository (`dist/netinst_64`),
-  `make tools64` will make the tools CD once they exist. The USB key comes
-  with the installer.
+  `sudo make usb64 DISPOSITIVO=/dev/sdX` the USB key, `make tools64` will
+  make the tools CD once they exist.
+- **64-bit EX-OS: a command-line system.** Fourth stage done. The libc, the
+  shell, 78 commands of `/bin` and 20 drivers are the SAME sources as the
+  32-bit version compiled at 64 (`make utente64`), with the libc linked into
+  each program. The CD `dist/exos64.iso` boots to the shell with keyboard,
+  mouse, PCI and network (e1000, DHCP, ping), installs to disk with
+  `install` and boots from the disk. Signals, threads and `__thread`
+  variables work at 64 bit. Tried in QEMU, not yet on a real machine. The
+  ExWin desktop, shared libraries, sound and the compilers are missing. The
+  32-bit version stayed identical, instruction by instruction, in the kernel
+  and in all 181 sources of libc, libraries and commands.
 - **Desktop: memory and start-up (pm 0.020).** A menu entry may say how much
   memory it wants (`ram=2048`) and the menu warns before starting it on a
   machine with less. The Settings window switches the clock and the volume

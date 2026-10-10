@@ -1,0 +1,1 @@
+ld: build-64/lib/libexos.a(lib_exwin_exwin.o):(.rodata.g_sistema+0x28): undefined reference to `font8x16'

@@ -1,0 +1,23 @@
+drivers/rtl8169/rtl8169.c: In function ‘rx_desc’:
+drivers/rtl8169/rtl8169.c:186:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  186 |     return (volatile unsigned int *)(g_dma_virt + OFF_RX_ANELLO + i * DESC_BYTE);
+      |            ^
+drivers/rtl8169/rtl8169.c: In function ‘tx_desc’:
+drivers/rtl8169/rtl8169.c:190:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  190 |     return (volatile unsigned int *)(g_dma_virt + OFF_TX_ANELLO + i * DESC_BYTE);
+      |            ^
+drivers/rtl8169/rtl8169.c: In function ‘rx_buf’:
+drivers/rtl8169/rtl8169.c:192:55: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  192 | static unsigned char *rx_buf(unsigned int i) { return (unsigned char *)(g_dma_virt + OFF_RX_BUF + i * BUF_LEN); }
+      |                                                       ^
+drivers/rtl8169/rtl8169.c: In function ‘tx_buf’:
+drivers/rtl8169/rtl8169.c:193:55: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  193 | static unsigned char *tx_buf(unsigned int i) { return (unsigned char *)(g_dma_virt + OFF_TX_BUF + i * BUF_LEN); }
+      |                                                       ^
+drivers/rtl8169/rtl8169.c: In function ‘main’:
+drivers/rtl8169/rtl8169.c:765:13: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  765 |     g_reg = (volatile unsigned char *)m.virt;
+      |             ^
+drivers/rtl8169/rtl8169.c:797:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  797 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
+      |            ^

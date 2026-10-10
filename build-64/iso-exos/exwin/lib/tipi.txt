@@ -1,0 +1,19 @@
+# /exwin/lib/tipi.txt — con che cosa si apre un file (@IMMAGINI, 28 settembre 2026)
+#
+# Una riga per programma: le estensioni (minuscole, separate da spazi), una
+# barra verticale, il programma. Il file manager lo legge al doppio clic su un
+# file; cio' che non e' elencato si apre con l'editor, com'e' sempre stato.
+#
+# ! E' UN FILE DEL SISTEMA, NON DI UN PROGRAMMA: la regola «questa estensione
+# si apre con quel programma» serve al file manager oggi, e domani alla
+# scrivania e al navigatore. Scritta dentro uno di loro, gli altri la
+# rifarebbero a modo loro.
+#
+# ! IL PROGRAMMA SI SCRIVE COME STA SU UN SISTEMA INSTALLATO (/exwin/bin/...):
+# avviando dal CD chi legge questo file lo cerca anche sotto /cdrom.
+
+bmp png jpg jpeg gif ico webp | /exwin/bin/immagini
+zip tar gz tgz            | /exwin/bin/archivi
+html htm                  | /exwin/bin/exbrowser
+wav mp3                   | /exwin/bin/explayer
+rtf doc                   | /exwin/bin/exeditor

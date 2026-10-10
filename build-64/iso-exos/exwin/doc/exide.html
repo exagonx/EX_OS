@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>EX-IDE &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti.
+     ! OGNI SEZIONE HA UN id, e l'indice qui sotto ci punta: e' il motivo per
+       cui questa pagina esiste come pagina invece che come finestrella di
+       testo dentro il programma. Aggiungendo una sezione, si aggiunge la voce
+       nell'indice - un indice che non nomina meta' della pagina e' peggio di
+       nessun indice. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="sviluppo.html">Sviluppo</a> &mdash; EX-IDE |
+<a href="exbrowser.html">EXBrowser</a>
+</p>
+
+<h1 id="cima">EX-IDE, l'ambiente di sviluppo visuale</h1>
+
+<p>
+Si disegna una finestra col mouse, si scrive il codice degli eventi, si
+compila e il programma gira. EX-IDE sta in <code>/exwin/bin/exide</code> e si
+apre anche dal menu Avvio.
+</p>
+
+<div class="nota">
+<p>
+<b>Da CD non si puo' scrivere.</b> Un ambiente di sviluppo ha bisogno di un
+posto dove salvare: si monta un disco in lettura e scrittura
+(<code>mount hd0p1 /disk</code>) e si crea il progetto dentro quello. Per
+COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
+</p>
+</div>
+
+<h2 id="indice">Indice</h2>
+
+<ul>
+<li><a href="#comincia">Come si fa un programma</a></li>
+<li><a href="#file">I quattro file, e quale e' tuo</a></li>
+<li><a href="#finestre">Piu' di una finestra</a></li>
+<li><a href="#proprieta">Le proprieta'</a></li>
+<li><a href="#visibile">Visibile e attivo</a>
+  (<a href="#visible-en">in English</a>)</li>
+<li><a href="#sulmouse">Sul mouse, e il riquadro accanto al puntatore</a>
+  (<a href="#mouseover-en">in English</a>)</li>
+<li><a href="#strumenti">Gli strumenti, uno per uno</a>
+  &mdash;
+  <a href="#pulsante">Pulsante</a>,
+  <a href="#etichetta">Etichetta</a>,
+  <a href="#casella">Casella testo</a>,
+  <a href="#spunta">Checkbox</a>,
+  <a href="#radio">Radio</a>,
+  <a href="#riquadro">Riquadro</a>,
+  <a href="#separatore">Separatore</a>,
+  <a href="#intestazione">Intestazione</a>,
+  <a href="#lista">Lista</a>,
+  <a href="#areatesto">Area testo</a>,
+  <a href="#areacodice">Area codice</a>,
+  <a href="#elenco">Elenco</a>,
+  <a href="#linguette">Linguette</a>,
+  <a href="#scorrimento">Scorrimento</a>,
+  <a href="#immagine">Immagine</a>
+</li>
+<li><a href="#icone">Le icone</a></li>
+<li><a href="#appunti">Copiare, tagliare, spostare un controllo</a></li>
+<li><a href="#esempi">Gli esempi</a>
+  &mdash;
+  <a href="#es-scambio">scambiare due caselle</a>,
+  <a href="#es-chiudi">chiudere la finestra</a>,
+  <a href="#es-spunta">uscire solo se la spunta e' accesa</a>,
+  <a href="#es-apri">aprire una seconda finestra</a>
+</li>
+<li><a href="#funzioni">Qualche funzione che vale per tutti</a></li>
+<li><a href="#menu">Il menu</a></li>
+<li><a href="#scaricare">Scaricare file, e altre funzioni della libreria</a></li>
+<li><a href="#limiti">Quel che non c'e'</a></li>
+</ul>
+
+<div class="nota">
+<p>
+<b>Gli esempi valgono per piu' di uno strumento.</b> Lo scambio fra due
+caselle e' un esempio di <a href="#casella">Casella testo</a> tanto quanto di
+<a href="#pulsante">Pulsante</a>; l'uscita con la conferma vale per
+<a href="#spunta">Checkbox</a>, Pulsante e per come si esce. Percio' stanno
+tutti insieme <a href="#esempi">in fondo</a>, e ogni strumento ci rimanda.
+</p>
+</div>
+
+<h2 id="comincia">Come si fa un programma</h2>
+
+<ol>
+<li><b>File &gt; Nuovo progetto</b>, e si da' una directory: exide ci crea
+dentro <code>src</code>, <code>inc</code>, <code>lib</code>, <code>bin</code>
+e <code>obj</code>, piu' <code>progetto.txt</code> con autore e data.</li>
+<li>Si sceglie uno <a href="#strumenti">strumento</a> nel pannello a sinistra
+&mdash; ogni riga ha la miniatura del controllo, e sotto l'elenco una frase
+dice che cos'e' &mdash; e si clicca sulla maschera: il controllo nasce li', con
+un nome e un id suoi. <b>Posato uno, il mouse torna puntatore</b> (la prima
+riga del pannello): i clic dopo scelgono e spostano quel che c'e' gia', e non
+mettono un altro controllo. Per metterne un secondo lo si sceglie di nuovo.</li>
+<li>Lo si sposta trascinandolo, e lo si RIDIMENSIONA tirando una delle otto
+maniglie nere che gli compaiono attorno quando e' scelto: gli angoli cambiano
+due lati insieme, quelle in mezzo ai bordi uno solo, e il bordo opposto non si
+muove.</li>
+<li>Le <a href="#proprieta">proprieta'</a> a destra dicono nome, testo,
+posizione, misura, id ed evento: si sceglie la riga, si scrive nella casella e
+si preme Applica.</li>
+<li><b>Doppio clic</b> sul controllo: si apre il sorgente con il cursore
+DENTRO la funzione che l'evento chiamera', dopo la <code>{</code> e prima
+della <code>}</code>, pronto per scrivere. Se la funzione non c'era, exide la
+aggiunge vuota. La finestra del sorgente resta in primo piano ma non blocca il
+disegnatore: si sposta, e sotto si possono scegliere gli altri controlli per
+leggerne il nome o il testo nelle proprieta'. Nasce in basso a sinistra, con
+una misura presa dallo schermo, cosi' le barre di scorrimento del codice
+restano sempre in vista. A ogni salvataggio del progetto quel che c'e' nell'editor
+viene salvato e ricaricato, cosi' gli handler nuovi compaiono da soli.</li>
+<li><b>File &gt; Salva</b> scrive <code>finestra.dis</code>,
+<code>finestra.h</code> e <code>finestra_gen.c</code>.</li>
+<li><b>Strumenti &gt; Compilatore</b>, e il pulsante Compila: esce il binario
+in <code>bin/</code>, e lo si lancia dalla shell o dal file manager.</li>
+</ol>
+
+<p>
+Sbagliato qualcosa? <b>Modifica &gt; Annulla</b> (Ctrl+Z) torna indietro fino
+a sedici passi, e vale per tutto: un controllo messo, cancellato, spostato,
+ridimensionato, una proprieta' cambiata, una finestra aggiunta o tolta.
+<b>Rifai</b> (Ctrl+Y) rimette quel che si e' annullato — ma una modifica nuova
+butta il ramo rifatto: se dopo tre passi indietro si disegna qualcosa, quel
+&laquo;avanti&raquo; e' un futuro che non c'e' piu'.
+</p>
+
+<h2 id="file">I quattro file, e quale e' tuo</h2>
+
+<table border="1">
+<tr><th>file</th><th>chi lo scrive</th></tr>
+<tr><td><code>src/finestra.dis</code></td>
+    <td>il disegno: lo legge e lo scrive <b>solo exide</b></td></tr>
+<tr><td><code>src/finestra.h</code></td>
+    <td>gli id, i puntatori ai controlli e i prototipi &mdash; <b>generato</b>,
+        si riscrive a ogni salvataggio</td></tr>
+<tr><td><code>src/finestra_gen.c</code></td>
+    <td>crea i controlli e smista gli eventi &mdash; <b>generato</b></td></tr>
+<tr><td><code>src/finestra.c</code></td>
+    <td><b>IL TUO.</b> exide ci AGGIUNGE in fondo gli handler che mancano e non
+        riscrive mai quel che c'e' gia'</td></tr>
+</table>
+
+<div class="nota">
+<p>
+E' la decisione che decide se il progetto sopravvive, ed e' il punto in cui
+Visual Basic si rompeva: <b>quel che e' generato e quel che e' scritto a mano
+stanno in file diversi</b>. Il tuo non viene mai riscritto &mdash; nemmeno
+l'handler di un controllo che hai cancellato dalla maschera: cancellare del
+codice scritto a mano perche' un rettangolo non c'e' piu' sarebbe la cosa
+peggiore che un generatore possa fare.
+</p>
+</div>
+
+<h2 id="finestre">Piu' di una finestra</h2>
+
+<p>
+Sopra la maschera c'e' l'elenco a discesa delle finestre del progetto, con
+<b>Nuova</b> e <b>Togli</b>: fino a otto. Si disegna una finestra per volta
+&mdash; si sceglie quale dall'elenco e la maschera cambia sotto.
+</p>
+
+<p>
+La finestra principale la apre il programma da solo. <b>Le altre le apri
+tu</b>, chiamando la loro <code>&lt;nome&gt;_create()</code> dal codice: vedi
+l'esempio <a href="#es-apri">aprire una seconda finestra</a>. Il nome della
+finestra (proprieta' <code>nome</code>, quando non c'e' nessun controllo
+scelto) e' quello che finisce dentro il nome della funzione: chiamandola
+&laquo;opzioni&raquo; diventa <code>opzioni_create()</code>.
+</p>
+
+<ul>
+<li>Chiamarla due volte <b>non apre due finestre</b>: se e' gia' aperta la
+ridisegna e basta.</li>
+<li>Chiudendola col suo pulsante <b>il programma NON esce</b> &mdash; esce solo
+chiudendo la principale &mdash; e i puntatori ai suoi controlli tornano a zero
+finche' non la si riapre.</li>
+<li>La principale tiene i nomi di sempre (<code>g_form</code>,
+<code>window_create()</code>): il suo nome nell'elenco e' solo un'etichetta per
+riconoscerla, e <code>finestra</code> non si puo' dare a un'altra.</li>
+</ul>
+
+<h2 id="proprieta">Le proprieta'</h2>
+
+<p>
+Si scelgono nell'elenco a destra, si scrive nella casella sotto e si preme
+Applica. Senza nessun controllo scelto &mdash; un clic sul vuoto della maschera
+&mdash; l'elenco diventa quello della <b>finestra</b>.
+</p>
+
+<h3>Di un controllo</h3>
+<table border="1">
+<tr><th>proprieta'</th><th>cosa diventa</th></tr>
+<tr><td><code>nome</code></td>
+    <td>il nome con cui il controllo si usa nel codice: una variabile
+        <code>ExWindow &lt;nome&gt;</code> in finestra.h (per esempio
+        <code>ex_set_text(TextBox1, "ciao")</code>), <code>ID_&lt;NOME&gt;</code>
+        fra i #define e <code>&lt;nome&gt;_&lt;evento&gt;()</code> come
+        handler (<code>Button1_Click()</code>). Solo lettere, cifre e
+        <code>_</code>: il resto viene sostituito, perche' e' un nome C; e non
+        puo' essere una parola del C o una funzione di libreria.
+        <br><small>Fino al 3 ottobre 2026 la variabile si chiamava
+        <code>h_&lt;nome&gt;</code>: finestra.h tiene quel nome come alias,
+        e il codice scritto allora compila ancora.</small></td></tr>
+<tr><td><code>testo</code></td>
+    <td>quel che ci si legge dentro (o accanto, per Checkbox e Radio). Lo cambia
+        anche <code>ex_set_text()</code> a programma acceso</td></tr>
+<tr><td><code>x</code>, <code>y</code></td>
+    <td>l'angolo in alto a sinistra, dentro la finestra</td></tr>
+<tr><td><code>larghezza</code>, <code>altezza</code></td>
+    <td>la misura. Minimo 8. Si cambiano anche tirando le maniglie</td></tr>
+<tr><td><code>id</code></td>
+    <td>il numero che arriva alla procedura quando l'evento scatta. exide ne
+        da' uno libero: cambiarlo serve solo se lo si vuole uguale a qualcosa
+        di gia' scritto</td></tr>
+<tr><td><code>evento</code></td>
+    <td>QUALE evento chiama il tuo handler, fra quelli che quel controllo ha.
+        Scriverne uno che non c'e' non fa niente, e lo dice</td></tr>
+<tr><td><code>icona</code></td>
+    <td>il percorso di un'icona da mostrare <b>prima della scritta</b>. La
+        usano il <a href="#pulsante">Pulsante</a> e
+        l'<a href="#etichetta">Etichetta</a>; gli altri controlli dicono
+        <code>(non ne ha)</code>. Si sceglie da <b>Strumenti &gt; Icona del
+        controllo...</b>, o si batte il percorso a mano. Vuota = nessuna.
+        Vedi <a href="#icone">Le icone</a></td></tr>
+<tr><td><code>visibile</code></td>
+    <td><code>si</code> o <code>no</code>. Con <code>no</code> il controllo
+        nasce nascosto: nel codice generato esce
+        <code>ex_set_visible(&lt;nome&gt;, 0)</code>. Vedi
+        <a href="#visibile">Visibile e attivo</a></td></tr>
+<tr><td><code>attivo</code></td>
+    <td><code>si</code> o <code>no</code>. Con <code>no</code> il controllo
+        nasce spento, cioe' in sola lettura per chi usa il programma: esce
+        <code>ex_set_enabled(&lt;nome&gt;, 0)</code></td></tr>
+<tr><td><code>sulmouse</code></td>
+    <td><code>si</code> o <code>no</code> (predefinito). Con <code>si</code> il
+        controllo ha un secondo handler, <code>&lt;nome&gt;_MouseOver()</code>,
+        chiamato quando il puntatore gli arriva sopra. Vedi
+        <a href="#sulmouse">Sul mouse</a></td></tr>
+</table>
+
+<h3>Della finestra</h3>
+<table border="1">
+<tr><th>proprieta'</th><th>cosa diventa</th></tr>
+<tr><td><code>nome</code></td>
+    <td><code>&lt;nome&gt;_create()</code> e <code>&lt;nome&gt;_proc()</code></td></tr>
+<tr><td><code>titolo</code></td>
+    <td>quel che si legge nella barra del titolo</td></tr>
+<tr><td><code>larghezza</code>, <code>altezza</code></td>
+    <td>la misura dell'AREA INTERNA: la barra e il bordo stanno fuori e li
+        aggiunge il sistema</td></tr>
+</table>
+
+<h2 id="strumenti">Gli strumenti, uno per uno</h2>
+
+<p>
+Per ognuno: a cosa serve, quali eventi ha (il primo e' quello con cui nasce) e
+con quali funzioni si comanda da dentro <code>finestra.c</code>.
+</p>
+
+<h3 id="pulsante">Pulsante</h3>
+<p>
+Si preme e chiama il suo handler. Puo' avere un'<a href="#icone">icona</a>
+prima della scritta. <b>Eventi:</b> Click, MouseOver.
+<code>ex_set_text</code>/<code>ex_get_text</code> per l'etichetta sopra.
+Il comando parte quando si ALZA il dito, non quando si preme: scivolare via
+prima di alzarlo annulla.
+Esempi: <a href="#es-scambio">scambiare due caselle</a>,
+<a href="#es-chiudi">chiudere la finestra</a>,
+<a href="#es-spunta">uscire con la conferma</a>,
+<a href="#es-apri">aprire una seconda finestra</a>.
+</p>
+
+<h3 id="etichetta">Etichetta</h3>
+<p>
+Testo e basta, non ci si scrive dentro. Puo' avere un'<a href="#icone">icona</a>
+prima del testo &mdash; ed e' cosi' che si mette un'immagine in una finestra
+solo per ornamento, o si fa un collegamento cliccabile (l'etichetta ha l'evento
+<i>Click</i>). <b>Eventi:</b> MouseOver, Click.
+<code>ex_set_text</code> per cambiarla a programma acceso.
+Esempio: <a href="#es-spunta">uscire con la conferma</a>, dove l'etichetta
+spiega perche' non e' successo niente.
+</p>
+
+<h3 id="casella">Casella testo</h3>
+<p>
+Una riga di testo modificabile. <b>Eventi:</b> Changed (a ogni tasto), Enter.
+<code>ex_get_text</code> per leggerla, <code>ex_set_text</code> per
+riempirla, <code>ex_set_focus</code> per portarci il cursore.
+<b>Tiene 63 caratteri</b>: per un testo lungo serve un'<a href="#areatesto">Area
+testo</a>.
+Esempio: <a href="#es-scambio">scambiare due caselle</a>.
+</p>
+
+<h3 id="spunta">Checkbox</h3>
+<p>
+Accesa o spenta, indipendente dalle altre. <b>Eventi:</b> Changed.
+<code>ex_is_checked(h)</code> rende 1 o 0, <code>ex_set_checked(h, 1)</code> la accende.
+Esempio: <a href="#es-spunta">uscire solo se la spunta e' accesa</a>.
+</p>
+
+<h3 id="radio">Radio</h3>
+<p>
+Una scelta fra fratelli: accenderne uno spegne gli altri <b>che hanno lo stesso
+padre</b>. Per due gruppi separati si mettono dentro due
+<a href="#riquadro">Riquadro</a> diversi. <b>Eventi:</b> Changed.
+Stesse funzioni della <a href="#spunta">Checkbox</a>.
+</p>
+
+<h3 id="riquadro">Riquadro</h3>
+<p>
+Una cornice con un titolo: raggruppa, e fa da padre ai controlli che ci stanno
+dentro &mdash; ed e' cosi' che si separano due gruppi di
+<a href="#radio">Radio</a>. Nessun evento.
+</p>
+
+<h3 id="separatore">Separatore</h3>
+<p>Una riga incisa, per dividere. Nessun evento.</p>
+
+<h3 id="intestazione">Intestazione</h3>
+<p>Una fascia col titolo, per intestare una zona. Nessun evento.</p>
+
+<h3 id="lista">Lista</h3>
+<p>
+Un elenco che scorre, con una riga scelta. <b>Eventi:</b> Selected, Opened (il
+doppio clic e l'Enter).
+<code>ex_list_clear</code>, <code>ex_list_add(h, "riga")</code>,
+<code>ex_list_count</code>, <code>ex_list_get_selected</code> (quale riga),
+<code>ex_list_select(h, i)</code>, <code>ex_list_text(h, i)</code>.
+</p>
+
+<h3 id="areatesto">Area testo</h3>
+<p>
+Testo su piu' righe, con cursore e selezione. <b>Eventi:</b> Changed.
+Gli appunti ci sono come FUNZIONI &mdash; <code>ex_textarea_copy</code>,
+<code>ex_textarea_cut</code>, <code>ex_textarea_paste</code> &mdash; ma
+<b>i tasti li colleghi tu</b>: il toolkit lascia passare ogni Ctrl+lettera
+all'applicazione, apposta, perche' una scorciatoia e' roba di chi scrive il
+programma. Negli editor di exide sono collegati (Ctrl+C, Ctrl+X, Ctrl+V,
+Ctrl+S, Ctrl+F): nel tuo programma si fa allo stesso modo, guardando
+<code>EXM_KEY</code> e <code>KBD_MOD_CTRL</code>.
+<code>ex_textarea_clear</code>, <code>ex_textarea_add_line(h, "riga")</code>,
+<code>ex_textarea_line_count</code>, <code>ex_textarea_line(h, i)</code>,
+<code>ex_textarea_set_line(h, i, "nuova")</code>,
+<code>ex_textarea_set_cursor(h, riga, colonna)</code> porta il cursore,
+<code>ex_textarea_is_modified</code> dice se si e' scritto dentro e
+<code>ex_textarea_set_unmodified</code> azzera quella risposta dopo un salva.
+<b>Due aree per programma al massimo.</b>
+</p>
+
+<h3 id="areacodice">Area codice</h3>
+<p>
+Come l'<a href="#areatesto">Area testo</a> ma piu' capiente, e si puo'
+colorare: <code>ex_textarea_set_highlighter(h, ex_highlight_c, 0)</code> accende la
+colorazione del C. <b>Eventi:</b> Changed.
+</p>
+
+<h3 id="elenco">Elenco</h3>
+<p>
+A discesa: si vede la scelta, si apre l'elenco. <b>Eventi:</b> Selected.
+<code>ex_items_clear</code>, <code>ex_item_add(h, "voce")</code>,
+<code>ex_items_count</code>, <code>ex_item_get_selected</code>,
+<code>ex_item_select(h, i)</code>, <code>ex_item_text(h, i)</code>.
+</p>
+
+<h3 id="linguette">Linguette</h3>
+<p>
+Una fila di tab, una scelta. <b>Stesse funzioni dell'<a href="#elenco">Elenco</a></b>
+(<code>ex_voce_*</code>): sono lo stesso elenco disegnato in un altro modo.
+<b>Eventi:</b> Selected. Il contenuto di ogni linguetta lo mostri tu, con
+<code>ex_show(h, 1)</code> e <code>ex_show(h, 0)</code> sui controlli.
+</p>
+
+<h3 id="scorrimento">Scorrimento</h3>
+<p>
+Una barra: <b>verticale o orizzontale secondo la forma</b> che le dai &mdash;
+piu' alta che larga viene verticale. <b>Eventi:</b> Scrolled (a ogni pixel,
+mentre si trascina).
+<code>ex_scroll_set_range(h, massimo, pagina)</code>,
+<code>ex_scroll_get_pos(h)</code>, <code>ex_scroll_set_pos(h, dove)</code>.
+</p>
+
+<h3 id="immagine">Immagine</h3>
+<p>
+Un'icona e basta: <b>ornamento</b>. Non si preme, non prende il fuoco e non ha
+eventi &mdash; sta li' e si fa guardare. Gli si da' la proprieta'
+<a href="#icone"><code>icona</code></a> e si tira il riquadro: l'immagine lo
+riempie, <b>quadrata e centrata</b>, perche' le icone sono quadrate e
+allargarle al rettangolo vorrebbe dire deformarle.
+</p>
+<p>
+! <b>Per una figura che si CLICCA non si usa questa</b>: si usa
+un'<a href="#etichetta">Etichetta</a> col testo vuoto e l'icona, che ha
+l'evento <i>Click</i>. Un'etichetta con icona ed evento Click <i>e'</i> un
+collegamento.
+</p>
+<p>
+Nel disegnatore un'Immagine senza icona si vede come un riquadro tratteggiato:
+senza, sarebbe un buco invisibile e non si riuscirebbe a sceglierla col mouse.
+</p>
+
+<h2 id="icone">Le icone</h2>
+
+<p>
+Un <b>Pulsante</b> e un'<b>Etichetta</b> possono mostrare un'icona prima della
+scritta; un'<a href="#immagine">Immagine</a> e' fatta solo di quella. Si
+sceglie il controllo, poi <b>Strumenti &gt; Icona del controllo...</b>: si apre
+il dialogo dei file, e il disegnatore mostra subito com'e' venuta.
+</p>
+
+<table border="1">
+<tr><th>controllo</th><th>dove va l'icona</th></tr>
+<tr><td>Pulsante</td><td>prima della scritta; il gruppo icona+testo si centra
+    insieme</td></tr>
+<tr><td>Etichetta</td><td>a sinistra, il testo la segue. Col testo vuoto e
+    l'evento Click diventa un <b>collegamento</b></td></tr>
+<tr><td>Immagine</td><td>e' tutto il controllo: quadrata e centrata nel
+    riquadro</td></tr>
+</table>
+
+<p>
+Il percorso si puo' anche battere a mano nella proprieta'
+<code>icona</code> &mdash; comodo per copiarlo da un altro controllo &mdash; e
+<b>svuotarla toglie l'icona</b>.
+</p>
+
+<h3>Dove stanno</h3>
+<p>
+Le icone di sistema sono in <code>/exwin/icon/baseapp/</code>, a 64 e 128 pixel
+(<code>edit_64.ico</code>, <code>filemgr_128.ico</code>...), ed e' li' che il
+dialogo si apre la prima volta. Vanno bene anche <b>PNG</b>, <b>JPG</b>,
+<b>GIF</b> e <b>BMP</b>: il formato si riconosce dai primi byte del file, non
+dall'estensione.
+</p>
+
+<p>
+! <b>Non serve una copia per ogni misura.</b> Il sistema rimpicciolisce l'icona
+da se', facendo la media dei pixel: un'icona da 64 dentro un pulsante alto 26
+diventa 20 pixel e si vede bene. Metterne una gia' piccola non fa guadagnare
+niente.
+</p>
+
+<h3>Che cosa esce nel codice</h3>
+<p>
+Per ogni controllo con un'icona, <code>finestra_gen.c</code> guadagna due
+righe subito dopo la sua <code>ex_create</code>:
+</p>
+
+<pre>
+    Button1 = ex_create("button", "Premimi", EX_CHILD,
+        20, 20, 130, 30, g_form, ID_BUTTON1, 0);
+    { ExIcon ic = ex_icon_open("/exwin/icon/baseapp/edit_64.ico");
+      ex_set_icon(Button1, ic, 0); }
+</pre>
+
+<p>
+Lo zero di <code>ex_set_icon</code> vuol dire <i>scegli tu la misura</i>:
+il controllo la prende dalla propria altezza. Un numero al suo posto la impone.
+</p>
+
+<p>
+! <b>Un'icona che manca non ferma il programma.</b>
+<code>ex_icon_open</code> rende 0 se il file non c'e' o non si decodifica, e
+<code>ex_set_icon</code> con 0 vuol dire semplicemente <i>nessuna icona</i>:
+il pulsante esce con la sola scritta. E' voluto &mdash; un programma copiato su
+una macchina dove quell'icona non e' stata installata deve partire lo stesso.
+</p>
+
+<h3>Le icone del pannello degli strumenti</h3>
+<p>
+Anche l'elenco degli strumenti, a sinistra, mostra un'icona davanti a ogni
+nome. Non c'e' niente da configurare: <b>il nome del file e' la classe del
+controllo</b>, dentro <code>/exwin/icon/strumenti/</code>.
+</p>
+
+<pre>
+/exwin/icon/strumenti/button.ico        davanti a "Pulsante"
+/exwin/icon/strumenti/textarea.ico      davanti a "Area testo"
+/exwin/icon/strumenti/image.ico         davanti a "Immagine"
+</pre>
+
+<p>
+Valgono anche i nomi di prima del 3 ottobre 2026 (<code>pulsante.ico</code>,
+<code>areatesto.ico</code>...): exide cerca prima il nome inglese, poi quello
+italiano.
+</p>
+
+<p>
+! <b>Aggiungere l'icona di uno strumento e' mettere un file, non ricompilare
+exide.</b> E se il file non c'e' la voce resta testo, com'e' sempre stata: il
+pannello funziona anche il giorno prima che le icone esistano.
+</p>
+
+<p>
+! <b>Se anche una sola voce ha l'icona, lo spazio lo lasciano tutte.</b>
+Indentare le sole righe che ce l'hanno darebbe un margine sinistro
+frastagliato, con le scritte che ballano da una riga all'altra. Vale per ogni
+elenco del sistema, non solo per questo.
+</p>
+
+<h3>Le stesse funzioni, dal tuo codice</h3>
+<p>
+Dentro <code>finestra.c</code> valgono le stesse, e servono a cambiare
+un'icona mentre il programma gira:
+</p>
+
+<pre>
+    ExIcon ic = ex_icon_open("/exwin/icon/baseapp/exbrowser_64.ico");
+    ex_set_icon(Button1, ic, 0);     /* 0 = anche per toglierla */
+</pre>
+
+<p>
+! <b>L'icona si apre una volta, non a ogni disegno.</b>
+<code>ex_icon_open</code> legge il file e lo tiene; chiamarla dentro un
+ridisegno vorrebbe dire rileggere il file ogni volta che la finestra si
+scopre. Si apre alla partenza &mdash; com'e' nel codice generato &mdash; e il
+numero che rende si conserva.
+</p>
+
+<h3>Nel file del disegno</h3>
+<p>
+In <code>finestra.dis</code> l'icona e' una riga <code>i</code> che segue il
+controllo:
+</p>
+
+<pre>
+c button Button1 1001 20 20 130 30 0 Premimi
+i /exwin/icon/baseapp/edit_64.ico
+</pre>
+
+<p>
+! <b>E' una riga a parte, non un campo in piu'</b>, perche' nella riga
+<code>c</code> il testo sta per ultimo e puo' contenere spazi: qualunque campo
+aggiunto prima di lui sposterebbe il testo di una parola, e ogni progetto
+fatto prima di oggi si aprirebbe con le scritte sbagliate. Un disegno senza
+righe <code>i</code> si legge esattamente come prima.
+</p>
+
+<h2 id="appunti">Copiare, tagliare, spostare un controllo</h2>
+
+<p>
+<b>Ctrl+C</b> copia il controllo scelto, <b>Ctrl+X</b> lo taglia, <b>Ctrl+V</b>
+lo incolla &mdash; e lo incolla <b>sempre nella maschera che si sta
+disegnando</b>. E' anche il modo di spostare un controllo da una finestra
+all'altra: taglia, cambia maschera dall'elenco in cima, incolla, ed e' li'.
+</p>
+
+<ul>
+<li>Incollando nella <b>stessa</b> maschera il controllo si scosta di qualche
+pixel, o coprirebbe l'originale: si vedrebbe un controllo e ce ne sarebbero
+due.</li>
+<li>Incollando in un'<b>altra</b> maschera la posizione si mantiene, perche' li'
+quel posto e' libero.</li>
+<li>Il <b>nome</b> e l'<b>id</b> non si copiano, si rifanno: sono unici in tutto
+il progetto perche' diventano <code>ID_...</code>, una variabile col nome del controllo e un nome
+di funzione dentro <code>finestra.h</code>, che e' un file solo.</li>
+<li>E il <b>codice non si copia</b>: l'handler dell'originale resta
+dell'originale, la copia avra' il suo &mdash; vuoto &mdash; al primo doppio
+clic. exide non scrive dentro <code>finestra.c</code> cose che non ha scritto
+nessuno.</li>
+</ul>
+
+<div class="nota">
+<p>
+Sono gli appunti <b>del disegno</b>, non quelli di sistema: dentro c'e' un
+controllo, non del testo. Il testo si copia dentro l'editor, che ha i suoi
+(Ctrl+C, Ctrl+V, Ctrl+X su un'<a href="#areatesto">Area testo</a>). Gli appunti
+del disegno restano pieni anche cambiando progetto: incollare crea un controllo
+NUOVO, quindi non ricostruisce niente che non sia mai esistito.
+</p>
+</div>
+
+<h2 id="esempi">Gli esempi</h2>
+
+<h3 id="es-scambio">Due caselle che si scambiano il testo</h3>
+<p>
+Vale per <a href="#casella">Casella testo</a> e per <a href="#pulsante">Pulsante</a>.
+Metti sulla maschera due Casella testo e un Pulsante, chiama le caselle TextBox1 e
+TextBox2, doppio clic sul pulsante e dentro <code>Button1_Click()</code>:
+</p>
+<pre>    char t[64];
+
+    strncpy(t, ex_get_text(TextBox1), sizeof(t) - 1);
+    t[sizeof(t) - 1] = 0;
+    ex_set_text(TextBox1, ex_get_text(TextBox2));
+    ex_set_text(TextBox2, t);
+    ex_default_proc(g_form, EXM_PAINT, 0, 0);</pre>
+<div class="nota">
+<p>
+<b>La copia in <code>t</code> serve davvero.</b> <code>ex_get_text</code>
+rende un puntatore AL TESTO DEL CONTROLLO, non una copia: scrivendo prima
+dentro TextBox1 si perderebbe quel che si voleva leggere, e le due caselle
+finirebbero uguali invece che scambiate.
+</p>
+<p>
+<b>E l'ultima riga ridisegna.</b> Cambiare il testo cambia il dato, non i
+pixel: senza quella riga le caselle restano come si vedevano finche'
+qualcos'altro non fa ridisegnare la finestra.
+</p>
+</div>
+
+<h3 id="es-chiudi">Un pulsante che chiude la finestra</h3>
+<p>
+Vale per <a href="#pulsante">Pulsante</a> e per
+<a href="#finestre">le finestre secondarie</a>. Nella finestra PRINCIPALE:
+</p>
+<pre>    ex_quit(0);</pre>
+<p>
+<code>ex_quit</code> fa finire il ciclo dei messaggi dentro il main e il
+programma esce &mdash; la stessa cosa che fa il pulsante di chiusura della
+barra del titolo. In una finestra SECONDARIA no: li' chiudere vuol dire far
+sparire quella finestra e basta. Si chiama la procedura generata, che sa gia'
+come si fa:
+</p>
+<pre>    /* dentro un handler della finestra &laquo;opzioni&raquo; */
+    opzioni_proc(g_form_opzioni, EXM_CLOSE, 0, 0);</pre>
+<p>
+Cosi' passa dalla stessa strada del pulsante di chiusura: distrugge la finestra
+E rimette a zero gli handle dei suoi controlli. Scrivere a mano
+<code>ex_destroy()</code> funzionerebbe a meta' &mdash; la finestra sparirebbe
+e <code>TextBox1</code> continuerebbe a puntare a un controllo che non c'e'
+piu'.
+</p>
+
+<h3 id="es-spunta">Si esce solo se la spunta e' accesa</h3>
+<p>
+Vale per tre strumenti insieme: la <a href="#spunta">Checkbox</a> che si legge,
+il <a href="#pulsante">Pulsante</a> che decide e l'<a href="#etichetta">Etichetta</a>
+che spiega perche' non e' successo niente. Metti una Checkbox (chiamala Conferma,
+testo &laquo;sono sicuro&raquo;), un'Etichetta (chiamala Avviso, testo vuoto) e
+un Pulsante (chiamalo Esci). Dentro <code>Esci_Click()</code>:
+</p>
+<pre>    if (!ex_is_checked(Conferma)) {
+        ex_set_text(Avviso, "spunta 'sono sicuro' per uscire");
+        ex_default_proc(g_form, EXM_PAINT, 0, 0);
+        return;
+    }
+    ex_quit(0);</pre>
+<div class="nota">
+<p>
+<code>ex_is_checked</code> si legge QUANDO SERVE: non si tiene una variabile che
+dica com'era la spunta &mdash; il controllo lo sa gia', e due posti che
+ricordano la stessa cosa prima o poi non sono piu' d'accordo.
+</p>
+<p>
+<b>E la spunta non ha bisogno di un handler per questo.</b> Il suo evento
+Changed serve a chi deve REAGIRE nel momento in cui si accende; qui non
+reagisce nessuno, si guarda dopo. Un handler vuoto in piu' e' codice che non fa
+niente e che il giorno dopo si legge chiedendosi cosa manca.
+</p>
+</div>
+
+<h3 id="es-apri">Un pulsante che apre una seconda finestra</h3>
+<p>
+Vale per <a href="#pulsante">Pulsante</a> e per
+<a href="#finestre">piu' di una finestra</a>. Fatta la finestra
+&laquo;finestra2&raquo; con Nuova, dentro <code>Button1_Click()</code>:
+</p>
+<pre>    finestra2_create();</pre>
+<p>
+Premendolo dieci volte la finestra resta una: se e' gia' aperta, quella
+chiamata la ridisegna e basta.
+</p>
+
+<h2 id="funzioni">Qualche funzione che vale per tutti</h2>
+
+<table border="1">
+<tr><th>funzione</th><th>cosa fa</th></tr>
+<tr><td><code>ex_set_visible(h, 0/1)</code></td><td>nascondi o mostra un controllo
+    (<a href="#visibile">Visibile e attivo</a>)</td></tr>
+<tr><td><code>ex_set_enabled(h, 0/1)</code></td><td>spegni o riaccendi un controllo:
+    spento si vede ma non si usa</td></tr>
+<tr><td><code>ex_is_visible(h)</code>, <code>ex_is_enabled(h)</code></td>
+    <td>1 o 0: come sta adesso</td></tr>
+<tr><td><code>ex_show_popup_pointer(testo, sfondo, scritta, bordo)</code></td>
+    <td>un riquadro col testo accanto al puntatore
+    (<a href="#sulmouse">Sul mouse</a>); <code>ex_hide_popup_pointer()</code> lo toglie</td></tr>
+<tr><td><code>ex_set_focus(h)</code></td><td>portagli il cursore della tastiera</td></tr>
+<tr><td><code>ex_move(h, x, y)</code></td><td>spostalo a programma acceso</td></tr>
+<tr><td><code>ex_resize(h, w, h)</code></td><td>cambiagli la misura</td></tr>
+<tr><td><code>ex_set_title(finestra, s)</code></td><td>cambia il titolo di una finestra</td></tr>
+<tr><td><code>ex_default_proc(finestra, EXM_PAINT, 0, 0)</code></td><td>ridisegna</td></tr>
+</table>
+
+<div class="nota">
+<p>
+<b>Cambiare un dato non ridisegna.</b> Le funzioni qui sopra cambiano quel che
+il controllo E'; i pixel si rifanno con l'ultima riga. E' il motivo per cui
+quasi tutti gli <a href="#esempi">esempi</a> finiscono cosi'.
+</p>
+</div>
+
+<h2 id="visibile">Visibile e attivo</h2>
+
+<p>
+Ogni controllo, di qualunque tipo, ha due interruttori. Nascono tutti e due
+accesi.
+</p>
+
+<table border="1">
+<tr><th></th><th>che cosa succede</th><th>dal codice</th><th>in exide</th></tr>
+<tr><td><b>visibile</b></td>
+    <td>Con 0 il controllo sparisce dalla finestra <b>senza essere
+        distrutto</b>: non si disegna, non riceve clic, il tasto Tab lo salta.
+        Il testo, le righe, la scelta che aveva restano; con 1 torna dov'era
+        e com'era</td>
+    <td><code>ex_set_visible(TextBox1, 0);</code><br>
+        <code>ex_set_visible(TextBox1, 1);</code><br>
+        <code>if (ex_is_visible(TextBox1)) ...</code></td>
+    <td>proprieta' <code>visibile</code>: <code>si</code> / <code>no</code></td></tr>
+<tr><td><b>attivo</b></td>
+    <td>Con 0 il controllo resta al suo posto, <b>velato</b>, e mostra quel
+        che il programma ci mette &mdash; ma chi usa il programma non lo
+        preme, non ci scrive, non gli da' il cursore. E' la sola lettura vista
+        dall'utente: il programma continua a cambiarlo con
+        <code>ex_set_text()</code> e le altre. Con 1 torna a rispondere</td>
+    <td><code>ex_set_enabled(TextBox1, 0);</code><br>
+        <code>ex_set_enabled(TextBox1, 1);</code><br>
+        <code>if (ex_is_enabled(TextBox1)) ...</code></td>
+    <td>proprieta' <code>attivo</code>: <code>si</code> / <code>no</code></td></tr>
+</table>
+
+<p>Un esempio: una casella che si puo' scrivere solo dopo aver messo la spunta,
+e un pulsante che compare solo quando c'e' qualcosa da inviare.</p>
+
+<pre>
+    void CheckBox1_Changed(void)
+    {
+        ex_set_enabled(TextBox1, ex_is_checked(CheckBox1));
+    }
+
+    void TextBox1_Changed(void)
+    {
+        ex_set_visible(Button1, ex_get_text(TextBox1)[0] != '\0');
+    }
+</pre>
+
+<div class="nota">
+<p>
+<b>Non serve ridisegnare.</b> Quando l'handler torna la finestra si ridisegna
+da se', come dopo <code>ex_set_text()</code>. Solo chi chiama queste funzioni
+fuori da un handler aggiunge
+<code>ex_default_proc(g_form, EXM_PAINT, 0, 0)</code>.
+</p>
+<p>
+<b>Sulla maschera di exide</b> un controllo con <code>attivo no</code> ha righe
+verticali, uno con <code>visibile no</code> una griglia. Si vedono tutti e
+due: un controllo che sparisse dal disegno non si potrebbe piu' scegliere per
+farlo tornare.
+</p>
+<p>
+<code>ex_show()</code> ed <code>ex_enable()</code>, che c'erano gia', sono gli
+stessi due interruttori sotto il nome di prima, e funzionano ancora. Con una
+<code>exwin.so</code> piu' vecchia della 0.014 un controllo spento non e'
+velato (tranne pulsante, checkbox e radio, che ingrigiscono la scritta).
+</p>
+</div>
+
+<h3 id="visible-en">In English: visible and enabled</h3>
+
+<p>
+Every control, of any kind, has two switches. Both start on.
+</p>
+
+<table border="1">
+<tr><th></th><th>what happens</th><th>from code</th><th>in exide</th></tr>
+<tr><td><b>visible</b></td>
+    <td>With 0 the control disappears from the window <b>without being
+        destroyed</b>: it is not drawn, gets no clicks, the Tab key skips it.
+        Its text, rows and selection stay; with 1 it comes back where and as
+        it was</td>
+    <td><code>ex_set_visible(TextBox1, 0);</code><br>
+        <code>ex_set_visible(TextBox1, 1);</code><br>
+        <code>if (ex_is_visible(TextBox1)) ...</code></td>
+    <td>property <code>visibile</code>: <code>si</code> / <code>no</code>
+        (<code>yes</code>, <code>true</code>, <code>1</code>, <code>false</code>,
+        <code>0</code> are accepted too)</td></tr>
+<tr><td><b>enabled</b></td>
+    <td>With 0 the control stays in place, <b>dimmed</b>, and shows whatever
+        the program puts in it &mdash; but the user cannot press it, type in
+        it or give it the keyboard focus. It is read-only as the user sees it:
+        the program still changes it with <code>ex_set_text()</code> and the
+        others. With 1 it answers again</td>
+    <td><code>ex_set_enabled(TextBox1, 0);</code><br>
+        <code>ex_set_enabled(TextBox1, 1);</code><br>
+        <code>if (ex_is_enabled(TextBox1)) ...</code></td>
+    <td>property <code>attivo</code>: <code>si</code> / <code>no</code></td></tr>
+</table>
+
+<p>
+No redraw is needed: when the handler returns the window draws itself again,
+as after <code>ex_set_text()</code>. On the exide form a control with
+<code>attivo no</code> shows vertical lines and one with
+<code>visibile no</code> a grid; both stay visible there, or they could not be
+selected again. <code>ex_show()</code> and <code>ex_enable()</code> are the
+same two switches under their older names and still work.
+</p>
+
+<h2 id="sulmouse">Sul mouse, e il riquadro accanto al puntatore</h2>
+
+<p>
+Ogni controllo puo' accorgersi che il puntatore gli e' arrivato sopra. Si
+mette a <code>si</code> la proprieta' <code>sulmouse</code>, si salva, e in
+<code>finestra.c</code> compare un handler in piu', accanto a quello
+dell'evento:
+</p>
+
+<pre>
+    /* TextBox1: MouseOver */
+    void TextBox1_MouseOver(void)
+    {
+        ex_show_popup_pointer("Scrivi qui il tuo nome", "0", "0", "0");
+    }
+</pre>
+
+<p>
+Viene chiamato <b>una volta, quando il puntatore arriva</b> sul controllo, non
+a ogni movimento. Dentro si fa quel che si vuole: cambiare un testo, accendere
+o spegnere un altro controllo (<a href="#visibile">visibile e attivo</a>),
+mostrare un aiuto.
+</p>
+
+<h3>ex_show_popup_pointer(testo, sfondo, scritta, bordo)</h3>
+
+<p>
+Mostra un riquadro col testo <b>accanto al puntatore</b>. I quattro argomenti
+sono stringhe:
+</p>
+
+<table border="1">
+<tr><th>argomento</th><th>che cos'e'</th><th>con <code>"0"</code></th></tr>
+<tr><td><code>testo</code></td>
+    <td>quel che si legge nel riquadro. Puo' andare a capo con
+        <code>\n</code>, fino a quattro righe</td><td>&mdash;</td></tr>
+<tr><td><code>sfondo</code></td>
+    <td>il colore del riquadro, <code>"rosso,verde,blu"</code> da 0 a 255: per
+        esempio <code>"255,255,255"</code> e' bianco</td>
+    <td>un giallo sbiadito, quasi beige, che non si confonde col bianco di una
+        casella</td></tr>
+<tr><td><code>scritta</code></td>
+    <td>il colore del testo, scritto allo stesso modo</td><td>nero</td></tr>
+<tr><td><code>bordo</code></td>
+    <td>il colore del filetto intorno</td><td>grigio scuro</td></tr>
+</table>
+
+<pre>
+    ex_show_popup_pointer("Attenzione:\nnon si torna indietro",
+                          "255,220,220", "128,0,0", "128,0,0");
+</pre>
+
+<div class="nota">
+<p>
+<b>Dove compare.</b> Sotto a destra del puntatore; se li' non ci sta si apre
+dalla parte opposta &mdash; a sinistra vicino al margine destro, sopra vicino
+al fondo. Sta dentro la finestra del programma.
+</p>
+<p>
+<b>Se ne va da solo</b> quando il puntatore passa a un altro controllo o esce
+dalla finestra, a un clic, a un tasto. Per toglierlo prima:
+<code>ex_hide_popup_pointer()</code>.
+</p>
+<p>
+<b>Sui controlli spenti non scatta</b>: un controllo con <code>attivo no</code>
+per il puntatore non c'e'. E serve <code>exwin.so</code> 0.015 o piu' nuova:
+con una piu' vecchia il programma gira, ma questi handler non vengono mai
+chiamati.
+</p>
+</div>
+
+<p>
+Il Pulsante e l'Etichetta hanno <code>MouseOver</code> anche nell'elenco
+dell'<code>evento</code>: scelto li', e' l'unico handler del controllo. Con
+<code>sulmouse</code> si hanno tutti e due, il clic e il passaggio.
+</p>
+
+<div class="nota">
+<p>
+<b>Cambiato dalla 0.024 di exide.</b> Prima un handler <code>_MouseOver</code>
+veniva chiamato al clic, e <code>_Changed</code> ed <code>_Enter</code> di una
+Casella testo (e <code>_Changed</code> di un'Area) non venivano chiamati mai.
+Adesso ognuno arriva quando dice il suo nome; basta riaprire il progetto e
+salvarlo, e <code>finestra_gen.c</code> si rifa'.
+</p>
+</div>
+
+<h3 id="mouseover-en">In English: mouse over, and the box by the pointer</h3>
+
+<p>
+Every control can notice the pointer arriving over it. Set its
+<code>sulmouse</code> property to <code>si</code>, save, and
+<code>finestra.c</code> gains one more handler,
+<code>&lt;Name&gt;_MouseOver()</code>, next to the one of its event. It is
+called <b>once, when the pointer arrives</b> on the control, not at every
+movement.
+</p>
+
+<p>
+<code>ex_show_popup_pointer(text, background, foreground, border)</code> shows
+a box with <code>text</code> <b>next to the pointer</b>. All four arguments
+are strings. <code>text</code> may hold up to four lines separated by
+<code>\n</code>. Each colour is <code>"red,green,blue"</code>, 0 to 255
+(<code>"255,255,255"</code> is white); <code>"0"</code> means the default: a
+pale, almost beige yellow background that cannot be mistaken for the white of
+a text box, black text, a dark grey border.
+</p>
+
+<pre>
+    void TextBox1_MouseOver(void)
+    {
+        ex_show_popup_pointer("this is a message inside a rectangle", "0", "0", "0");
+    }
+</pre>
+
+<p>
+The box opens below and to the right of the pointer, and on the opposite side
+when it would not fit there. It stays inside the program's window. It goes
+away by itself when the pointer moves to another control or leaves the
+window, at a click, at a key; <code>ex_hide_popup_pointer()</code> removes it
+at once. A disabled control does not fire it. It needs <code>exwin.so</code>
+0.015 or newer.
+</p>
+
+<p>
+Since exide 0.024 every handler is called when its name says: before, a
+<code>_MouseOver</code> handler fired on a click, and <code>_Changed</code>
+and <code>_Enter</code> of a text box never fired. Open the project and save
+it once to regenerate <code>finestra_gen.c</code>.
+</p>
+
+<h2 id="menu">Il menu</h2>
+
+<table border="1">
+<tr><th>menu</th><th>cosa c'e' dentro</th></tr>
+<tr><td><b>File</b></td>
+    <td>opera sul PROGETTO, non sul singolo sorgente: nuovo, apri, salva, salva
+        con nome (copia tutto l'albero in una directory nuova e ci si continua
+        a lavorare)</td></tr>
+<tr><td><b>Modifica</b></td>
+    <td><b>Annulla</b> (Ctrl+Z) torna indietro sul DISEGNO, fino a sedici
+        passi, e <b>Rifai</b> (Ctrl+Y) rimette quel che si e' annullato: una
+        modifica nuova butta il ramo rifatto. Copia (Ctrl+C), Taglia (Ctrl+X)
+        e Incolla (Ctrl+V) lavorano su un CONTROLLO (vedi
+        <a href="#appunti">spostare un controllo</a>). Le altre voci &mdash; copia, incolla, taglia, cancella, cerca,
+        sostituisci &mdash; lavorano DENTRO il sorgente</td></tr>
+<tr><td><b>Strumenti</b></td>
+    <td><b>Sorgente</b> l'editor sui tre file del disegno;
+        <b>Shell</b> una riga di comando nella directory del progetto;
+        <b>Compilatore</b> scrive src/compila.sh, lo lancia con GCC e mostra
+        quel che dice; <b>Librerie</b> quali librerie condivise aggiungere alla
+        riga di compilazione; <b>Files</b> i file di src/, e un doppio clic ne
+        apre uno in un editor a parte; <b>Directory</b> apre il file manager
+        sul progetto; <b>Progetto</b> la scheda con autore, versione e
+        nota</td></tr>
+<tr><td><b>Aiuto</b></td>
+    <td>questa pagina, e le informazioni sul programma</td></tr>
+</table>
+
+<h2 id="scaricare">Scaricare file, e altre funzioni della libreria</h2>
+
+<p>
+Le funzioni di questa sezione stanno nelle librerie del toolkit
+(<code>exwin.so</code> ed <code>exdlg.so</code>): le usa EXBrowser, e le puo'
+usare qualunque programma fatto con exide, scrivendole in
+<code>codice.c</code>. Il file <code>principale.c</code> include gia'
+<code>exwin.h</code>; per quelle di <code>exdlg</code> si aggiunge
+<code>#include "exdlg.h"</code>.
+</p>
+
+<h3>I download</h3>
+
+<p>
+Uno scaricamento gira in un processo suo (<code>/bin/scarica</code>), quindi il
+programma resta libero mentre il file arriva. La finestra <b>Download</b> si
+apre da sola alla partenza e mostra per ognuno percentuale, misura, velocita'
+media e tempo che manca; chiuderla non ferma niente, e si riapre quando serve.
+</p>
+
+<table border="1">
+<tr><th>funzione</th><th>cosa fa</th></tr>
+<tr><td><code>ex_scarico_avvia(url, file)</code></td>
+    <td>fa partire lo scaricamento e apre la finestra; rende un numero &gt;= 0,
+        o un <code>EX_SC_ERR_*</code> negativo</td></tr>
+<tr><td><code>ex_scarichi_finestra()</code></td><td>riapre la finestra (per una voce di menu)</td></tr>
+<tr><td><code>ex_scarico_info(n, &amp;s)</code></td>
+    <td>a che punto e': <code>s.stato</code>, <code>s.fatti</code>,
+        <code>s.attesi</code> (0 se il server non l'ha detto), <code>s.ms</code></td></tr>
+<tr><td><code>ex_scarico_ferma(n)</code></td><td>lo ferma e cancella il file a meta'</td></tr>
+<tr><td><code>ex_scarichi_alla_fine(f, dato)</code></td>
+    <td><code>f(dato, n, stato)</code> quando uno finisce</td></tr>
+<tr><td><code>ex_scarichi_in_corso()</code></td><td>quanti stanno scaricando</td></tr>
+<tr><td><code>ex_scarichi_ferma_tutti()</code></td>
+    <td><b>da chiamare prima di uscire</b>: gli scaricamenti sono processi a
+        parte e da soli andrebbero avanti</td></tr>
+</table>
+
+<pre>
+    #include "exdlg.h"
+
+    static void finito(void *dato, int n, int stato)
+    {
+        if (stato == EX_SC_FATTO) ex_dlg_avviso("Fatto", "Il file e' arrivato.");
+    }
+
+    /* al clic su un pulsante: */
+    ex_scarichi_alla_fine(finito, 0);
+    if (ex_scarico_avvia("http://esempio.it/archivio.zip", "/disco/archivio.zip") &lt; 0)
+        ex_dlg_avviso("Non parte", "Manca /bin/scarica, o sono gia' sedici.");
+</pre>
+
+<h3>Altre funzioni nuove</h3>
+
+<table border="1">
+<tr><th>funzione</th><th>cosa fa</th></tr>
+<tr><td><code>ex_dlg_scegli(titolo, testo, voci, n)</code></td>
+    <td>una domanda con da una a quattro risposte; rende il numero del
+        pulsante, o -1 per Esc. L'ultima voce e' quella prudente e ha il
+        fuoco</td></tr>
+<tr><td><code>ex_watch_fd(fd, f, dato)</code></td>
+    <td>il ciclo dei messaggi sorveglia una pipe e chiama <code>f(dato, fd)</code>
+        quando c'e' da leggere: per seguire un processo figlio senza fermare le
+        finestre. Con <code>f</code> a 0 smette</td></tr>
+<tr><td><code>ex_textarea_get_view(area, &amp;visibili)</code></td>
+    <td>la prima riga visibile di un'area di testo, e quante se ne vedono</td></tr>
+<tr><td><code>ex_textarea_scroll_to(area, riga)</code></td>
+    <td>fa partire la vista da quella riga senza spostare il cursore: e' quel
+        che serve a una barra di scorrimento accanto all'area</td></tr>
+</table>
+
+<div class="nota">
+<p>
+<b>Un programma nuovo sopra librerie vecchie parte lo stesso.</b> Queste
+funzioni sono facoltative: se la libreria installata e' di prima del 23
+settembre 2026 rendono un errore (<code>EX_SC_ERR_VECCHIA</code>, -2) invece di
+fermare il programma all'avvio.
+</p>
+</div>
+
+<h2 id="limiti">Quel che non c'e'</h2>
+
+<ul>
+<li class="manca">Le scorciatoie della finestra &laquo;Sorgente&raquo; sono
+etichette: nella finestra principale Ctrl+Z, Ctrl+N, Ctrl+O, Ctrl+S e Ctrl+Q
+funzionano, in quella dell'editor no.</li>
+</ul>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="sviluppo.html">&lt; Scrivere programmi</a> |
+<a href="#cima">Torna in cima</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

@@ -1,0 +1,11 @@
+lib/excss/css.c: In function ‘leggi_url’:
+lib/excss/css.c:651:16: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+  651 |         *out = (unsigned int)(dove + 4);
+      |                ^
+lib/excss/css.c:653:16: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+  653 |         *out = (unsigned int)(v + a);
+      |                ^
+lib/excss/css.c: In function ‘css_posa’:
+lib/excss/css.c:1417:43: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1417 |     case CSS_P_SFONDO_IMM: s->sf_url    = (const char *)val;            break;
+      |                                           ^

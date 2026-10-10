@@ -1998,7 +1998,9 @@ typedef struct {
     unsigned int console;
 } SpawnExtraV1;
 
+#if defined(__i386__)     /* la forma del 14 agosto esiste solo a 32 bit */
 typedef char spnz_misura[(sizeof(SpawnExtraV1) == 596) ? 1 : -1];
+#endif
 
 /* ! NON SI PUO' PASSARE DA spawn_ex(): manda sempre la forma di adesso, che e'
  * esattamente quella che questa prova NON deve mandare. Qui si chiama la

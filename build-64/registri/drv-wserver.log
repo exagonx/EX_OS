@@ -1,0 +1,28 @@
+drivers/wserver/wserver.c: In function ‘disegna_finestra’:
+drivers/wserver/wserver.c:1093:11: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1093 |     src = (const unsigned int *)f->zona_virt;
+      |           ^
+drivers/wserver/wserver.c: In function ‘crea’:
+drivers/wserver/wserver.c:2325:27: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 2325 |         unsigned int *p = (unsigned int *)z.virt;
+      |                           ^
+drivers/wserver/wserver.c: In function ‘ridimensiona’:
+drivers/wserver/wserver.c:2420:15: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 2420 |     nuovo   = (unsigned int *)z.virt;
+      |               ^
+drivers/wserver/wserver.c:2421:15: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 2421 |     vecchio = (unsigned int *)f->zona_virt;
+      |               ^
+drivers/wserver/wserver.c:2439:34: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 2439 |     if (f->zona_virt) shm_chiudi((void *)f->zona_virt);
+      |                                  ^
+drivers/wserver/wserver.c: In function ‘distruggi’:
+drivers/wserver/wserver.c:2529:42: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 2529 |     if (g_fin[idx].zona_virt) shm_chiudi((void *)g_fin[idx].zona_virt);
+      |                                          ^
+drivers/wserver/wserver.c: Assembler messages:
+drivers/wserver/wserver.c:484: Error: incorrect register `%rax' used with `l' suffix
+drivers/wserver/wserver.c:507: Error: incorrect register `%rdi' used with `l' suffix
+drivers/wserver/wserver.c:508: Error: incorrect register `%rsi' used with `l' suffix
+drivers/wserver/wserver.c:507: Error: incorrect register `%rax' used with `l' suffix
+drivers/wserver/wserver.c:508: Error: incorrect register `%rsi' used with `l' suffix

@@ -1,0 +1,23 @@
+drivers/nforce/nforce.c: In function ‘rx_desc’:
+drivers/nforce/nforce.c:281:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  281 |     return (volatile unsigned int *)(g_dma_virt + OFF_RX_ANELLO + i * DESC_BYTE);
+      |            ^
+drivers/nforce/nforce.c: In function ‘tx_desc’:
+drivers/nforce/nforce.c:285:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  285 |     return (volatile unsigned int *)(g_dma_virt + OFF_TX_ANELLO + i * DESC_BYTE);
+      |            ^
+drivers/nforce/nforce.c: In function ‘rx_buf’:
+drivers/nforce/nforce.c:287:55: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  287 | static unsigned char *rx_buf(unsigned int i) { return (unsigned char *)(g_dma_virt + OFF_RX_BUF + i * BUF_LEN); }
+      |                                                       ^
+drivers/nforce/nforce.c: In function ‘tx_buf’:
+drivers/nforce/nforce.c:288:55: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  288 | static unsigned char *tx_buf(unsigned int i) { return (unsigned char *)(g_dma_virt + OFF_TX_BUF + i * BUF_LEN); }
+      |                                                       ^
+drivers/nforce/nforce.c: In function ‘main’:
+drivers/nforce/nforce.c:1181:13: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1181 |     g_reg = (volatile unsigned char *)m.virt;
+      |             ^
+drivers/nforce/nforce.c:1223:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1223 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
+      |            ^

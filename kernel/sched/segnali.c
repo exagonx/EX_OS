@@ -149,16 +149,42 @@ static void reg_rimetti(InterruptFrame *frame, const SegContesto *c)
                       (c->gregs[SEG_REG_EFL] & EFL_UTENTE);
 }
 #else
+/* @EXOS-64: i sedici registri generali, RIP, i flag e la pila. Dei segmenti
+ * conta solo CS (in long mode gli altri non hanno base ne' limite). */
 static void reg_salva(const InterruptFrame *f, SegContesto *uc)
 {
-    (void)f; (void)uc;
-    kpanic("SEGNALI: il contesto a 64 bit non e' ancora scritto (EXOS64-DAFARE)");
+    uc->gregs[SEG_REG_R8]  = f->r8;   uc->gregs[SEG_REG_R9]  = f->r9;
+    uc->gregs[SEG_REG_R10] = f->r10;  uc->gregs[SEG_REG_R11] = f->r11;
+    uc->gregs[SEG_REG_R12] = f->r12;  uc->gregs[SEG_REG_R13] = f->r13;
+    uc->gregs[SEG_REG_R14] = f->r14;  uc->gregs[SEG_REG_R15] = f->r15;
+    uc->gregs[SEG_REG_RDI] = f->rdi;  uc->gregs[SEG_REG_RSI] = f->rsi;
+    uc->gregs[SEG_REG_RBP] = f->rbp;  uc->gregs[SEG_REG_RBX] = f->rbx;
+    uc->gregs[SEG_REG_RDX] = f->rdx;  uc->gregs[SEG_REG_RAX] = f->rax;
+    uc->gregs[SEG_REG_RCX] = f->rcx;  uc->gregs[SEG_REG_RSP] = f->user_rsp;
+    uc->gregs[SEG_REG_RIP] = f->rip;  uc->gregs[SEG_REG_EFL] = f->rflags;
+    uc->gregs[SEG_REG_CSGSFS] = f->cs & 0xFFFF;
+    uc->gregs[SEG_REG_ERR]    = f->err_code;
+    uc->gregs[SEG_REG_TRAPNO] = f->int_no;
 }
 
+/* ! RAX SI RIMETTE QUI, TUTTO: a 64 bit syscall_handler non scrive il
+ * risultato di seg_ritorno nel registro (vedi syscall.c), perche' un
+ * risultato e' di 32 bit e il registro interrotto ne ha 64. CS e SS non si
+ * toccano: restano quelli con cui il programma e' entrato nel kernel. */
 static void reg_rimetti(InterruptFrame *frame, const SegContesto *c)
 {
-    (void)frame; (void)c;
-    kpanic("SEGNALI: il contesto a 64 bit non e' ancora scritto (EXOS64-DAFARE)");
+    frame->r8  = c->gregs[SEG_REG_R8];   frame->r9  = c->gregs[SEG_REG_R9];
+    frame->r10 = c->gregs[SEG_REG_R10];  frame->r11 = c->gregs[SEG_REG_R11];
+    frame->r12 = c->gregs[SEG_REG_R12];  frame->r13 = c->gregs[SEG_REG_R13];
+    frame->r14 = c->gregs[SEG_REG_R14];  frame->r15 = c->gregs[SEG_REG_R15];
+    frame->rdi = c->gregs[SEG_REG_RDI];  frame->rsi = c->gregs[SEG_REG_RSI];
+    frame->rbp = c->gregs[SEG_REG_RBP];  frame->rbx = c->gregs[SEG_REG_RBX];
+    frame->rdx = c->gregs[SEG_REG_RDX];  frame->rax = c->gregs[SEG_REG_RAX];
+    frame->rcx = c->gregs[SEG_REG_RCX];
+    frame->rip      = c->gregs[SEG_REG_RIP];
+    frame->user_rsp = c->gregs[SEG_REG_RSP];
+    frame->rflags   = (frame->rflags & ~(uint64_t)EFL_UTENTE) |
+                      (c->gregs[SEG_REG_EFL] & EFL_UTENTE);
 }
 #endif
 
@@ -185,6 +211,12 @@ static int costruisci(Process *p, InterruptFrame *f, int sig,
         cima = p->seg_pila_base + p->seg_pila_dim;
     else
         cima = FR_SP(f);
+#if defined(__x86_64__)
+    /* ! LA ZONA ROSSA: l'ABI di x86-64 lascia a una funzione i 128 byte SOTTO
+     * la pila, senza che sposti RSP. Un telaio scritto li' sopra cancellerebbe
+     * le variabili locali di chi e' stato interrotto. Si salta. */
+    if (cima == FR_SP(f)) cima -= 128;
+#endif
 
     if (cima < sizeof(SegTelaio) + 16) return 0;
     dove = (cima - sizeof(SegTelaio)) & ~15u;

@@ -121,6 +121,10 @@ static void rap(const char *fmt, ...)
  * com'era, CPUID non c'e'. E' lo stesso controllo che fa la runtime di
  * FreeBASIC in x86/cpudetect.s, per la stessa ragione.
  * ========================================================================== */
+#if defined(__x86_64__)
+/* un processore a 64 bit CPUID ce l'ha per forza */
+static int cpuid_c_e(void) { return 1; }
+#else
 static int cpuid_c_e(void)
 {
     unsigned int prima, dopo;
@@ -142,6 +146,7 @@ static int cpuid_c_e(void)
 
     return ((prima ^ dopo) & 0x200000) != 0;
 }
+#endif
 
 static void cpuid(unsigned int foglia, unsigned int r[4])
 {

@@ -527,7 +527,9 @@ if (n <= 0) {
         proc->user_stack_base  = stack_base;
         proc->user_stack_top   = stack_top;
         proc->user_stack_limit = stack_limit;
-        result->user_stack_top = stack_top - 16;   /* Allineamento 16 byte */
+        /* quattro parole a zero sotto la cima: un programma avviato senza
+         * argomenti legge da li' argc, argv ed envp (16 byte a 32 bit, 32 a 64) */
+        result->user_stack_top = stack_top - 4 * sizeof(uintptr_t);
 
         klog(LOG_INFO, "ELF: stack utente 0x%08x - 0x%08x impegnato "
              "(%u KB, riserva fino a 0x%08x, %u KB)",
@@ -582,6 +584,12 @@ if (n <= 0) {
          * processo e' il prezzo di poter scrivere quella lettura senza un
          * «se». */
         {
+            /* ! L'ALLINEAMENTO E' QUELLO DEL SEGMENTO, NON «UNA PAROLA»: il
+             * collegatore ha gia' deciso che ogni variabile __thread sta a
+             * (tp - misura arrotondata a p_align + il suo posto), e il blocco
+             * va costruito con lo stesso conto o le variabili si leggono
+             * spostate. Provato a 64 bit con un segmento allineato a 4:
+             * arrotondando a 8 una variabile inizializzata a 41 valeva 0. */
             uint32_t align   = tls ? ((tls->p_align < 4) ? 4 : tls->p_align) : 4;
             uint32_t dim_tls = tls ? ALIGN_UP(tls->p_memsz, align) : 0;
             uint32_t totale  = ALIGN_UP(dim_tls + TLS_TCB_SIZE, PAGE_SIZE);

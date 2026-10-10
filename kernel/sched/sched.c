@@ -419,6 +419,7 @@ static void init_reaper_task(void)
  * lì per la derivazione completa dell'ordine. */
 #define PROC_STACK_OFF_EAX  11
 #define PROC_STACK_OFF_ECX  10
+#define PROC_STACK_OFF_EDI  4       /* a 64 bit: RDI, il primo argomento */
 
 void proc_set_entry(Process *proc, vaddr_t entry_point, vaddr_t user_stack_top)
 {
@@ -1627,6 +1628,12 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     }
 
     proc_set_entry(filo, entry, esp);
+#if defined(__x86_64__)
+    /* @EXOS-64: a 64 bit il primo argomento di una funzione non sta sulla pila
+     * ma in RDI. La pila salvata del filo ha un posto per lui (quello di EDI:
+     * vedi cambio64.asm), e il trampolino del primo avvio lo lascia com'e'. */
+    ((uintptr_t *)filo->kernel_esp)[PROC_STACK_OFF_EDI] = arg;
+#endif
     proc_set_ready(filo);
 
     klog(LOG_INFO, "SCHED: filo %u del gruppo %u, posto %u, stack 0x%08x-0x%08x "

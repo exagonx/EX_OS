@@ -1,0 +1,4 @@
+lib/exqjs/exqjs.c:73:10: fatal error: quickjs.h: File o directory non esistente
+   73 | #include "quickjs.h"
+      |          ^~~~~~~~~~~
+compilation terminated.

@@ -58,9 +58,26 @@ DISPOSITIVO="$1"
 MB="${2:-1024}"
 IMG="dischi/usb-${MB}.img"
 
+# ! LA VERSIONE A 64 BIT (make usb64, cioe' EXOS_ARCH=x86_64): stessa strada,
+# stesse protezioni. Cambiano il CD da cui si installa (dist/exos64.iso),
+# l'emulatore con cui lo si fa, e il terzo passo: gli strumenti di sviluppo a
+# 64 bit non esistono ancora (make tools64), quindi sulla chiavetta va il
+# sistema e basta. Niente dischetto: a 64 bit non c'e'.
+ARCH64=0
+[ "${EXOS_ARCH:-i386}" = "x86_64" ] && ARCH64=1
+
 CD_SISTEMA=dist/exos.iso
 CD_STRUMENTI=dist/exos-tools.iso
 FLOPPY=dist/floppy.img          # serve al secondo giro, per gli strumenti
+if [ $ARCH64 -eq 1 ]; then
+    IMG="dischi/usb64-${MB}.img"
+    CD_SISTEMA=dist/exos64.iso
+    export EXOS_QEMU=qemu-system-x86_64
+    export EXOS_RAM="${EXOS_RAM:-256M}"
+    CPU64="-cpu qemu64 "
+else
+    CPU64=""
+fi
 
 rifiuta() {
     echo "" >&2
@@ -225,12 +242,12 @@ echo ""
 # 4. L'IMMAGINE
 # =============================================================================
 
-[ -f "$FLOPPY" ] || rifiuta "manca $FLOPPY." "Lancia prima 'make'."
+[ $ARCH64 -eq 1 ] || [ -f "$FLOPPY" ] || rifiuta "manca $FLOPPY." "Lancia prima 'make'."
 [ -f "$CD_SISTEMA" ] || rifiuta \
     "manca $CD_SISTEMA." \
-    "Lancia prima 'make iso-exos': e' il CD da cui si installa, e da cui" \
-    "dipende QUANTI programmi finiscono sulla chiavetta."
-[ -f "$CD_STRUMENTI" ] || rifiuta \
+    "Lancia prima 'make iso-exos' (a 64 bit: 'make iso64'): e' il CD da cui" \
+    "si installa, e da cui dipende QUANTI programmi finiscono sulla chiavetta."
+[ $ARCH64 -eq 1 ] || [ -f "$CD_STRUMENTI" ] || rifiuta \
     "manca $CD_STRUMENTI." \
     "Lancia prima 'make iso' (e' il CD degli strumenti: gcc, as, ld, make)."
 
@@ -302,7 +319,7 @@ LINGUA="${EXOS_LINGUA:-1}"
 echo ""
 echo "=== 2/4  formattazione e sistema, DENTRO EX-OS (qualche minuto) ==="
 EXOS_ISTANZA=usb1 EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD_SISTEMA" \
-EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
+EXOS_QEMU_EXTRA="${CPU64}-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
         "mkfs -t ext2 -L exos hd0p1@4" \
         "si@240" \
@@ -324,6 +341,10 @@ grep -E "kernel: .* intervall|stage2: LBA" /tmp/exos-mkusb-1.log | sed 's/^ */  
 echo "[OK] sistema installato e avviabile"
 
 # --- gli strumenti ----------------------------------------------------------
+if [ $ARCH64 -eq 1 ]; then
+echo ""
+echo "=== 3/4  strumenti di sviluppo: a 64 bit non ci sono ancora, si salta ==="
+else
 echo ""
 echo "=== 3/4  strumenti di sviluppo dal CD (parecchi minuti) ==="
 EXOS_ISTANZA=usb2 EXOS_CDROM="$CD_STRUMENTI" EXOS_RAM=256M \
@@ -352,6 +373,7 @@ grep -q "Fatto\. Al prossimo avvio" /tmp/exos-mkusb-2.log || {
     exit 1
 }
 echo "[OK] strumenti installati in /exos"
+fi      # ARCH64
 
 # =============================================================================
 # 5. E ADESSO, IL MOMENTO PERICOLOSO: UNA RIGA SOLA
@@ -368,7 +390,7 @@ echo ""
 echo "[OK] $DISPOSITIVO e' pronto."
 echo ""
 echo "     Per entrare:  root / $PW_ROOT   oppure   $UTENTE / $PW_UTENTE"
-echo "     Il compilatore e' in /exos/bin/gcc, ed e' gia' nel PATH."
+[ $ARCH64 -eq 1 ] || echo "     Il compilatore e' in /exos/bin/gcc, ed e' gia' nel PATH."
 echo ""
 # ! I BACKTICK QUI DENTRO SONO UN COMANDO, NON UNA CITAZIONE. La prima
 # versione di questa riga scriveva  «serve `MB=` piu\' grande»  e la shell ha

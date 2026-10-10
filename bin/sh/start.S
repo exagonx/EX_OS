@@ -30,6 +30,22 @@
  *     [esp+12] = envp     (NULL se il padre non ha passato un ambiente)
  * ============================================================================= */
 
+#if defined(__x86_64__)
+/* @EXOS-64: quattro parole di otto byte sulla pila (ritorno finto, argc, argv,
+ * envp), e gli argomenti nei registri. Vedi lib/start.S. */
+.section .text
+.global _start
+.type   _start, @function
+_start:
+    movq   8(%rsp), %rdi     /* argc */
+    movq  16(%rsp), %rsi     /* argv */
+    movq  24(%rsp), %rdx     /* envp */
+    xorl  %ebp, %ebp
+    andq  $-16, %rsp
+    call  shell_main         /* non ritorna: chiama sh_exit() */
+    hlt
+.size _start, .-_start
+#else
 .section .text
 .global _start
 .type   _start, @function
@@ -52,4 +68,5 @@ _start:
 .size _start, .-_start
 
 /* Dice al linker che questo file non richiede uno stack eseguibile. */
+#endif
 .section .note.GNU-stack,"",@progbits

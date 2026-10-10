@@ -56,18 +56,49 @@ if [ "$QUALE" = "intero" ]; then
     # `install` e `netupdate` li copiano da qui, non dall'immagine di avvio
     cp "$KERNEL" "$RADICE/KERNEL.BIN"
     cp build/stage2.bin "$RADICE/LOADER.BIN"
-    if [ -f build-64/prove/primo ]; then
-        # il kernel avvia /bin/sh sulle console: per ora e' il programma di
-        # prova, l'unico a 64 bit che c'e'
-        mkdir -p "$RADICE/bin"
-        cp build-64/prove/primo "$RADICE/bin/sh"
+    # ! I DATI SONO GLI STESSI DEL CD A 32 BIT, e si prendono da li'
+    # (build/iso-exos, fatto da `make iso-exos`): kernel.cfg, gli script di
+    # avvio, i manuali, i caratteri, le icone, i certificati. Si copia tutto
+    # cio' che NON e' un programma - un programma si riconosce dai primi
+    # quattro byte, 0x7F 'E' 'L' 'F' - cosi' non c'e' un secondo elenco da
+    # tenere uguale: un file di dati nuovo sul CD a 32 bit arriva qui da solo.
+    # I programmi a 32 bit restano fuori: qui girerebbero solo per dire che
+    # non sono di questa macchina.
+    if [ -d build/iso-exos ]; then
+        (cd build/iso-exos && find . -type f ! -name KERNEL.BIN ! -name LOADER.BIN) | while read -r f; do
+            if [ "$(head -c 4 "build/iso-exos/$f" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+                mkdir -p "$RADICE/$(dirname "$f")"
+                cp "build/iso-exos/$f" "$RADICE/$f"
+            fi
+        done
+    else
+        echo "mkiso64: manca build/iso-exos (make iso-exos): il CD avra' solo i programmi" >&2
     fi
-    # ! FINCHE' /bin/sh E' IL PROGRAMMA DI PROVA QUESTO NON E' UN SISTEMA, e lo
-    # si scrive in un file che exagonx/repo-update.sh guarda prima di
-    # pubblicare: un repository a 64 bit con dentro un kernel e nient'altro
-    # non deve finire sul server per distrazione. Si toglie questa riga il
-    # giorno che la shell vera prende il posto di primo.c.
-    echo "il sistema a 64 bit non e' ancora installabile: /bin/sh e' tools/prove64/primo.c" \
+    mkdir -p "$RADICE/bin" "$RADICE/dev" "$RADICE/drivers"
+    # i comandi a 64 bit (tools/costruisci-utente64.sh), shell compresa
+    if [ -d build-64/bin ] && [ -f build-64/bin/sh ]; then
+        cp build-64/bin/* "$RADICE/bin/"
+    fi
+    # i driver: in /dev (da dove kernel.cfg e i comandi li caricano) e in
+    # /drivers (da dove `install` li copia), come sul CD a 32 bit
+    if [ -d build-64/drivers ]; then
+        cp build-64/drivers/*.drv "$RADICE/dev/" 2>/dev/null || true
+        cp build-64/drivers/*.drv "$RADICE/drivers/" 2>/dev/null || true
+    fi
+    # il primo programma a 64 bit resta, col suo nome: e' una prova che non
+    # dipende dalla libc. Se la shell non c'e' ancora, fa lui da /bin/sh.
+    if [ -f build-64/prove/primo ]; then
+        cp build-64/prove/primo "$RADICE/bin/primo64"
+        [ -f "$RADICE/bin/sh" ] || cp build-64/prove/primo "$RADICE/bin/sh"
+    fi
+    # ! FINCHE' NON SI INSTALLA DA QUI QUESTO NON E' UN SISTEMA DA PUBBLICARE, e
+    # lo si scrive in un file che exagonx/repo-update.sh guarda prima di
+    # caricare sul server. Si toglie questa riga quando a 64 bit `install`
+    # e i driver sono provati (@EXOS-64).
+# EXOS64_SH=<programma> mette quel programma al posto di /bin/sh: serve alle
+    # prove, per avviare un programma senza passare dalla shell.
+    [ -z "${EXOS64_SH:-}" ] || cp "$EXOS64_SH" "$RADICE/bin/sh"
+        echo "il sistema a 64 bit non e' ancora installabile: vedi @EXOS-64 in in_lavorazione.txt" \
         > build-64/NON-ANCORA-UN-SISTEMA.txt
 fi
 

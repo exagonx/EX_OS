@@ -561,7 +561,13 @@ int     toupper(int c);
  * Non salvano lo stato della FPU ne' una maschera di segnali: EX-OS non ha
  * segnali, e la FPU non e' conservata nel cambio di contesto.
  * ============================================================================= */
+#if defined(__x86_64__)
+/* @EXOS-64: otto parole di otto byte - RBX, RBP, R12..R15, RSP, RIP: i
+ * registri che una funzione deve ritrovare, la pila e dove si torna. */
+typedef unsigned long jmp_buf[8];
+#else
 typedef unsigned int jmp_buf[6];
+#endif
 
 int     setjmp(jmp_buf env);
 void    longjmp(jmp_buf env, int val) __attribute__((noreturn));
@@ -569,7 +575,11 @@ void    longjmp(jmp_buf env, int val) __attribute__((noreturn));
 /* sigsetjmp / siglongjmp: a jmp_buf, then "was the mask saved" and the mask.
  * The way out of a signal handler that does not return (libc.a only: see
  * the signals section). */
+#if defined(__x86_64__)
+typedef unsigned long sigjmp_buf[10];
+#else
 typedef unsigned int sigjmp_buf[8];
+#endif
 int     sigsetjmp(sigjmp_buf env, int salva_maschera);
 void    siglongjmp(sigjmp_buf env, int val) __attribute__((noreturn));
 
@@ -2453,6 +2463,23 @@ typedef struct {
  * uc_mcontext.gregs[REG_EIP] means what it means there. The handler may
  * change the registers: the interrupted code resumes from them.
  * ! DUPLICATED BY HAND from SegContesto in kernel/include/syscall.h. */
+#if defined(__x86_64__)
+/* @EXOS-64: l'ordine di Linux x86-64. ! COPIATO A MANO da SegContesto in
+ * kernel/include/syscall.h, come quello a 32 bit qui sotto. */
+enum {
+    REG_R8 = 0, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15,
+    REG_RDI, REG_RSI, REG_RBP, REG_RBX, REG_RDX, REG_RAX, REG_RCX, REG_RSP,
+    REG_RIP, REG_EFL, REG_CSGSFS, REG_ERR, REG_TRAPNO, REG_OLDMASK, REG_CR2
+};
+#define NGREG 23
+typedef long long greg_t;
+typedef greg_t gregset_t[NGREG];
+typedef struct {
+    gregset_t     gregs;
+    void         *fpregs;           /* the FPU and SSE state (FXSAVE, 512 bytes) */
+    unsigned long __riservato[8];
+} mcontext_t;
+#else
 enum {
     REG_GS = 0, REG_FS, REG_ES, REG_DS, REG_EDI, REG_ESI, REG_EBP, REG_ESP,
     REG_EBX, REG_EDX, REG_ECX, REG_EAX, REG_TRAPNO, REG_ERR, REG_EIP, REG_CS,
@@ -2467,6 +2494,7 @@ typedef struct {
     unsigned long oldmask;
     unsigned long cr2;
 } mcontext_t;
+#endif
 
 typedef struct ucontext_t {
     unsigned long      uc_flags;

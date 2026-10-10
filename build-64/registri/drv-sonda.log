@@ -1,0 +1,11 @@
+drivers/sonda/sonda.c: In function ‘dump_mmio’:
+drivers/sonda/sonda.c:813:11: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  813 |     reg = (volatile unsigned int *)m.virt;
+      |           ^
+drivers/sonda/sonda.c:916:11: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  916 |     reg = (volatile unsigned int *)m.virt;
+      |           ^
+drivers/sonda/sonda.c: In function ‘dump_rom’:
+drivers/sonda/sonda.c:1001:11: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 1001 |     rom = (volatile unsigned char *)m.virt;
+      |           ^

@@ -1,0 +1,4 @@
+bin/hello/hello.c: In function ‘hl_write’:
+bin/hello/hello.c:84:46: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+   84 |     return syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n);
+      |                                              ^

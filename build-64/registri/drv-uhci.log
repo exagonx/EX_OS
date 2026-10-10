@@ -1,0 +1,135 @@
+drivers/uhci/uhci.c: In function ‘td_scrivi’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:197:33: note: in expansion of macro ‘VIRT’
+  197 |     volatile unsigned int *td = VIRT(OFF_TD + i * 32);
+      |                                 ^~~~
+drivers/uhci/uhci.c: In function ‘esegui’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:233:33: note: in expansion of macro ‘VIRT’
+  233 |     volatile unsigned int *qh = VIRT(OFF_QH);
+      |                                 ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:234:33: note: in expansion of macro ‘VIRT’
+  234 |     volatile unsigned int *fl = VIRT(OFF_FRAME);
+      |                                 ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:246:41: note: in expansion of macro ‘VIRT’
+  246 |         volatile unsigned int *ultimo = VIRT(OFF_TD + (n_td - 1) * 32);
+      |                                         ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:257:37: note: in expansion of macro ‘VIRT’
+  257 |         volatile unsigned int *td = VIRT(OFF_TD + i * 32);
+      |                                     ^~~~
+drivers/uhci/uhci.c: In function ‘tdb_scrivi’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:282:33: note: in expansion of macro ‘VIRT’
+  282 |     volatile unsigned int *td = VIRT(OFF_TDB + i * 32);
+      |                                 ^~~~
+drivers/uhci/uhci.c: In function ‘tdb_avuti’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:293:22: note: in expansion of macro ‘VIRT’
+  293 |     unsigned int a = VIRT(OFF_TDB + i * 32)[1] & 0x7FF;
+      |                      ^~~~
+drivers/uhci/uhci.c: In function ‘esegui_bulk’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:302:33: note: in expansion of macro ‘VIRT’
+  302 |     volatile unsigned int *qh = VIRT(OFF_QHB);
+      |                                 ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:303:33: note: in expansion of macro ‘VIRT’
+  303 |     volatile unsigned int *fl = VIRT(OFF_FRAME);
+      |                                 ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:313:41: note: in expansion of macro ‘VIRT’
+  313 |         volatile unsigned int *ultimo = VIRT(OFF_TDB + (n_td - 1) * 32);
+      |                                         ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:321:41: note: in expansion of macro ‘VIRT’
+  321 |             volatile unsigned int *td = VIRT(OFF_TDB + i * 32);
+      |                                         ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:333:37: note: in expansion of macro ‘VIRT’
+  333 |         volatile unsigned int *td = VIRT(OFF_TDB + i * 32);
+      |                                     ^~~~
+drivers/uhci/uhci.c: In function ‘bulk_uhci’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:402:9: note: in expansion of macro ‘VIRT’
+  402 |         VIRT(OFF_TDB + (n - 1) * 32)[0] = TD_TERM;
+      |         ^~~~
+drivers/uhci/uhci.c:405:32: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  405 |     if (!in && len > 0) memcpy((void *)(g_dma_virt + OFF_BUFB), dati, len);
+      |                                ^
+drivers/uhci/uhci.c:411:39: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  411 |     if (in && avuti > 0) memcpy(dati, (void *)(g_dma_virt + OFF_BUFB), avuti);
+      |                                       ^
+drivers/uhci/uhci.c: In function ‘controllo’:
+drivers/uhci/uhci.c:430:37: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  430 |     volatile unsigned char *setup = (volatile unsigned char *)(g_dma_virt + OFF_BUF);
+      |                                     ^
+drivers/uhci/uhci.c: In function ‘hc_init’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:481:33: note: in expansion of macro ‘VIRT’
+  481 |     volatile unsigned int *fl = VIRT(OFF_FRAME);
+      |                                 ^~~~
+drivers/uhci/uhci.c: In function ‘int_arma’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:664:33: note: in expansion of macro ‘VIRT’
+  664 |     volatile unsigned int *td = VIRT(OFF_TDI);
+      |                                 ^~~~
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:665:33: note: in expansion of macro ‘VIRT’
+  665 |     volatile unsigned int *qh = VIRT(OFF_QHI);
+      |                                 ^~~~
+drivers/uhci/uhci.c: In function ‘int_installa’:
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:682:33: note: in expansion of macro ‘VIRT’
+  682 |     volatile unsigned int *fl = VIRT(OFF_FRAME);
+      |                                 ^~~~
+drivers/uhci/uhci.c: In function ‘leggi_rapporto’:
+drivers/uhci/uhci.c:693:35: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  693 |     volatile unsigned char *buf = (volatile unsigned char *)(g_dma_virt + OFF_BUFI);
+      |                                   ^
+drivers/uhci/uhci.c:149:22: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  149 | #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
+      |                      ^
+drivers/uhci/uhci.c:694:35: note: in expansion of macro ‘VIRT’
+  694 |     volatile unsigned int  *td  = VIRT(OFF_TDI);
+      |                                   ^~~~
+drivers/uhci/uhci.c: In function ‘main’:
+drivers/uhci/uhci.c:948:12: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  948 |     memset((void *)g_dma_virt, 0, DMA_BYTE);
+      |            ^
