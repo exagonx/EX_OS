@@ -40,7 +40,7 @@ CF="-m64 -ffreestanding -fno-builtin -fstack-protector-strong -mstack-protector-
     -fno-pic -fno-pie -fno-asynchronous-unwind-tables -Wall -O2 -std=c11 -nostdlib \
     -ffunction-sections -fdata-sections"
 INC="-Ilib/include -Ilib"
-for d in lib/ex* drivers/* bin/gfedit lib/terze/*; do [ -d "$d" ] && INC="$INC -I$d"; done
+for d in lib/ex* drivers/* bin/gfedit lib/terze/* gfbasic; do [ -d "$d" ] && INC="$INC -I$d"; done
 LD="ld -m elf_x86_64 -nostdlib --gc-sections -z max-page-size=4096 -z noexecstack -T lib/programma64.ld"
 
 # --- 1. la libc e l'avvio ------------------------------------------------------
@@ -50,14 +50,19 @@ gcc -m64 -c lib/start.S -o "$LIBD/start.o" || exit 1
 
 # --- 2. le librerie del progetto, in un archivio --------------------------------
 rm -f "$LIBD/libexos.a"
-fatte=0; saltate=""
+fatte=0; saltate=""; rimandate=""
 # (font8x16.c e' il carattere di sistema: sta col kernel, e a 32 bit entra in
 # exwin.so; qui entra nell'archivio)
-for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c lib/ex*/*.c; do
+# gfbasic/gf_basic.c is the BASIC interpreter `runbas` runs.
+for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c gfbasic/gf_basic.c lib/ex*/*.c; do
     # gli «stub» sono le controfigure di una libreria per chi a 32 bit la
     # carica condivisa: qui la libreria vera e' nell'archivio, e i due
     # insieme sarebbero due definizioni della stessa funzione
     case "$s" in *_stub.c) continue ;; esac
+    # QuickJS waits for the x86_64-exos toolchain: it needs a libm built for
+    # this target (openlibm), which the 32-bit build takes from the i386
+    # cross compiler. Said here instead of being counted as a failure.
+    case "$s" in lib/exqjs/*) rimandate="$rimandate $s(serve libm per x86_64-exos)"; continue ;; esac
     o="$OGG/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
     piu=""; case "$s" in kernel/*) piu="-Ikernel/include -fno-stack-protector" ;; esac
     if gcc $CF $INC $piu -I"$(dirname "$s")" -c "$s" -o "$o" > "$REG/$(basename "$o").log" 2>&1; then
@@ -67,7 +72,8 @@ for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c 
     fi
 done
 echo "librerie: $fatte sorgenti in $LIBD/libexos.a"
-[ -z "$saltate" ] || echo "  non compilano a 64 bit:$saltate"
+[ -z "$saltate" ]   || echo "  non compilano a 64 bit:$saltate"
+[ -z "$rimandate" ] || echo "  rimandate:$rimandate"
 
 # --- 3. i comandi ----------------------------------------------------------------
 if [ $# -gt 0 ]; then QUALI="$*"; else QUALI=$(ls bin); fi
@@ -105,7 +111,9 @@ if [ $# -eq 0 ]; then
     DRVD=$FUORI/drivers
     mkdir -p "$DRVD"
     rm -f "$LIBD/libusb.a"
-    for s in drivers/usb/*.c; do
+    # The code several drivers share goes in one archive: the USB core, the
+    # common half of the sound drivers (it holds their main), the SiS 2D part.
+    for s in drivers/usb/*.c drivers/audio/audio_comune.c drivers/sis/sis_2d.c; do
         o="$OGG/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
         gcc $CF $INC -c "$s" -o "$o" > "$REG/$(basename "$o").log" 2>&1 && ar rc "$LIBD/libusb.a" "$o"
     done
@@ -113,7 +121,11 @@ if [ $# -eq 0 ]; then
     for d in drivers/*/; do
         n=$(basename "$d")
         [ -f "drivers/$n/$n.c" ] || continue
-        case "$n" in tty|usb) continue ;; esac      # tty sta nel kernel, usb e' l'archivio
+        case "$n" in tty|usb|audio) continue ;; esac  # tty sta nel kernel, usb e audio sono l'archivio
+        # floppy.drv is a module the kernel loads into itself, for the floppy
+        # controller: the 64-bit version has no floppy medium and no such
+        # loader yet. Left out on purpose, not a failure.
+        case "$n" in floppy) continue ;; esac
         r="$REG/drv-$n.log"
         o="$OGG/drv_$n.o"
         if gcc $CF $INC -Idrivers/$n -c "drivers/$n/$n.c" -o "$o" > "$r" 2>&1 &&

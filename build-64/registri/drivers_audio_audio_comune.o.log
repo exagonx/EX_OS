@@ -1,0 +1,10 @@
+drivers/audio/audio_comune.c: In function ‘zona_apri’:
+drivers/audio/audio_comune.c:194:16: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  194 |     g_zona   = (void *)z.virt;
+      |                ^
+drivers/audio/audio_comune.c:195:16: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  195 |     g_anello = (AudioAnello *)z.virt;
+      |                ^
+drivers/audio/audio_comune.c:196:16: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+  196 |     g_dati   = (unsigned char *)z.virt + AUDIO_DATI_OFF;
+      |                ^

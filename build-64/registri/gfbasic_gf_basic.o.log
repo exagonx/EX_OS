@@ -1,0 +1,13 @@
+gfbasic/gf_basic.c: In function ‘call_builtin’:
+gfbasic/gf_basic.c:702:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  702 |         for (size_t k=0;s[k];k++) r[k]=(char)toupper((unsigned char)s[k]); r[strlen(s)]=0;
+      |         ^~~
+gfbasic/gf_basic.c:702:76: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  702 |         for (size_t k=0;s[k];k++) r[k]=(char)toupper((unsigned char)s[k]); r[strlen(s)]=0;
+      |                                                                            ^
+gfbasic/gf_basic.c:707:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  707 |         for (size_t k=0;s[k];k++) r[k]=(char)tolower((unsigned char)s[k]); r[strlen(s)]=0;
+      |         ^~~
+gfbasic/gf_basic.c:707:76: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  707 |         for (size_t k=0;s[k];k++) r[k]=(char)tolower((unsigned char)s[k]); r[strlen(s)]=0;
+      |                                                                            ^

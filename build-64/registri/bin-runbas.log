@@ -1,4 +1,0 @@
-bin/runbas/runbas.c:31:10: fatal error: gf_basic.h: File o directory non esistente
-   31 | #include "gf_basic.h"
-      |          ^~~~~~~~~~~~
-compilation terminated.

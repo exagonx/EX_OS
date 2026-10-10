@@ -2,5 +2,3 @@ drivers/es1371/es1371.c: In function ‘dma_alloc_buffer’:
 drivers/es1371/es1371.c:502:13: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
   502 |     g_buf = (unsigned char *)g_zona.virt;
       |             ^
-ld: build-64/lib/libc.o: in function `_libc_start':
-libc.c:(.text._libc_start+0xc8): undefined reference to `main'
