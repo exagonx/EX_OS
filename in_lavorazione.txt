@@ -6923,6 +6923,12 @@ al porting di GCC e al resto di @EXOS-64)
   L'utente NON installa il 64 bit su un PC vero finche' non ci sono tutti gli
   strumenti: lo prova in emulatore.
   Da provare con l'utente: la rotella del mouse USB sul PC vero (ohci 0.007).
+  ORDINE CONCORDATO (sessione breve dopo il 10 ottobre, nessun codice
+  toccato; l'utente: «benissimo»): si parte dal compilatore incrociato
+  x86_64-exos, che sblocca gcc nativo, tools64, FreeBASIC, Exilla e QuickJS;
+  mentre compila in background (nohup), il punto 1 di @EXT4-MODULO (la
+  lettura di ext3/ext4). La domanda su a che cosa serve ext4 e' stata
+  rifatta e NON ha avuto risposta: rifarla prima del punto 4 e del journal.
 
 @README-SNELLI  I DUE README DA RIDURRE E RIORDINARE (chiesto dall'utente il
 10 ottobre 2026; DA FARE alla ripresa - non c'erano i token per farlo bene)
