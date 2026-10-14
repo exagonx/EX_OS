@@ -230,25 +230,11 @@ MODIFICHE = [
     # Cosi' le due righe di make restano leggibili accanto all'originale, e
     # il giorno che EX-OS avesse una syscall per terminare un processo si
     # cambia questa funzione e basta.
-    (
-        "commands.c",
-        "EX-OS: nessun segnale da consegnare",
-        '#include "commands.h"\n',
-        '#include "commands.h"\n'
-        "\n"
-        "#ifdef __EXOS__\n"
-        "/* EX-OS: nessun segnale da consegnare a un altro processo, e nessuna\n"
-        "   syscall per terminarlo. A se' stessi ci si puo' mandare un segnale,\n"
-        "   ed e' raise().  */\n"
-        "static int kill (pid_t pid, int sig)\n"
-        "{\n"
-        "  if (pid == getpid ())\n"
-        "    return raise (sig);\n"
-        "  errno = ENOSYS;\n"
-        "  return -1;\n"
-        "}\n"
-        "#endif\n",
-    ),
+    # (2026-10-14) The kill() that stood here is gone: the EX-OS libc has
+    # had a real kill() since the signals were delivered (lib/libc.c), and a
+    # static one here no longer compiles next to its declaration ("static
+    # declaration of 'kill' follows non-static declaration"). make's two
+    # kill() calls now reach the libc.
 
     # --- arscan.c: <ar.h> non c'e', ma il formato si', ed e' quello -------
     #

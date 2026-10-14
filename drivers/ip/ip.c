@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.010");
+EX_VERSIONE("ip.drv", "0.011");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -2120,7 +2120,14 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
     /* ! UNA PORTA GIA' APERTA NON SI CONSEGNA DUE VOLTE. Senza questo
      * controllo due client si dividerebbero i datagrammi a caso, e il
      * secondo sembrerebbe funzionare a intermittenza. */
-    if (udp_cerca(porta) >= 0) { rispondi_esito(client, -EADDRINUSE); return; }
+    if ((i = udp_cerca(porta)) >= 0) {
+        /* (0.011) ...unless its owner is dead: then the port is free again.
+         * `dhcp` never closed port 68, and a second `dhcp` after the boot
+         * one always failed with EADDRINUSE - found while wifid had to get
+         * an address on the WiFi (2026-10-14). */
+        if (pid_vivo(g_udp[i].proprietario)) { rispondi_esito(client, -EADDRINUSE); return; }
+        g_udp[i].usata = 0;
+    }
 
     for (i = 0; i < UDP_PORTE; i++) if (!g_udp[i].usata) { libero = i; break; }
     /* ! LE PORTE UDP ORFANE SI RIPRENDONO DALLA TABELLA UDP. Fino alla 0.004
@@ -2277,6 +2284,10 @@ static void manda_tabella_arp(unsigned int client)
  * svelto: l'attesa finisce appena il servizio compare. */
 #define ATTESA_SCHEDA_MS  30000
 
+/* The card service ip.drv works on: "rete0" unless -l says otherwise (a
+ * machine whose only card is a WiFi radio starts on IP_LINK_WIFI). */
+static char g_link[IPC_NAME_LEN] = NET_SERVIZIO_0;
+
 static int aggancia_driver(void)
 {
     IpcMessage    meta;
@@ -2284,9 +2295,9 @@ static int aggancia_driver(void)
     NetStato      s;
     int           tentativi;
 
-    g_pid_rete = ipc_attendi(NET_SERVIZIO_0, ATTESA_SCHEDA_MS);
+    g_pid_rete = ipc_attendi(g_link, ATTESA_SCHEDA_MS);
     if (g_pid_rete <= 0) {
-        printf("ip: il servizio '%s' non e' attivo.\n", NET_SERVIZIO_0);
+        printf("ip: il servizio '%s' non e' attivo.\n", g_link);
         printf("    Avvia prima la scheda:  netdetect -c\n");
         return -1;
     }
@@ -2337,9 +2348,46 @@ static void servi(void)
                         memcpy(&e, payload, sizeof(e));
                         if (e.codice != 0) g_st.scartati++;
                     }
+                } else if (meta.tipo == NET_MSG_STATO && meta.len >= sizeof(NetStato)) {
+                    /* the answer of a card we have just moved to (IP_MSG_LINK) */
+                    NetStato s;
+
+                    memcpy(&s, payload, sizeof(s));
+                    memcpy(g_mac, s.mac, 6);
+                    memcpy(g_st.mac, s.mac, 6);
                 }
             } else {
                 switch (meta.tipo) {
+
+                case IP_MSG_LINK: {
+                    /* Another card, while running (2026-10-14, @WIFI). The
+                     * receive request pending at the old card is withdrawn,
+                     * the new one is asked who it is - its answer, the MAC,
+                     * arrives in this same loop - and the ARP table, which
+                     * described the other network, is emptied. */
+                    IpEsito es;
+                    char    nome[IPC_NAME_LEN];
+                    int     pid;
+                    unsigned int k;
+
+                    memset(nome, 0, sizeof(nome));
+                    memcpy(nome, payload, meta.len < sizeof(nome) - 1 ? meta.len : sizeof(nome) - 1);
+                    pid = ipc_lookup(nome);
+                    es.codice = -ENOENT;
+                    if (pid > 0) {
+                        if (g_ricevi_armato) ipc_send(g_pid_rete, NET_MSG_ANNULLA, NULL, 0);
+                        g_ricevi_armato = 0;
+                        g_pid_rete = pid;
+                        strcpy(g_link, nome);
+                        for (k = 0; k < IP_ARP_VOCI; k++) g_arp[k].usata = 0;
+                        ipc_send(g_pid_rete, NET_MSG_INFO, NULL, 0);
+                        riarma_ricezione();
+                        printf("ip: ora sulla scheda '%s'\n", nome);
+                        es.codice = 0;
+                    }
+                    ipc_send(meta.sender_pid, IP_MSG_ESITO, &es, sizeof(es));
+                    break;
+                }
 
                 case IP_MSG_CONFIG: {
                     IpEsito  es;
@@ -2529,7 +2577,9 @@ static void uso(void)
 {
     printf("uso: ip.drv [-a IND] [-m MASCHERA] [-g GATEWAY]\n");
     printf("     ip.drv -s        stampa la configurazione ed esce\n");
-    printf("     ip.drv -i        dice se serve su questa macchina ed esce\n\n");
+    printf("     ip.drv -i        dice se serve su questa macchina ed esce\n");
+    printf("     ip.drv -l NOME   parte sulla scheda NOME invece che su rete0\n");
+    printf("                      (una radio WiFi: wifi0)\n\n");
     printf("     ip.drv -q        i valori della rete 'user' di QEMU\n");
     printf("     ip.drv -w KB     la finestra di ricezione di TCP (4..63, di serie 63):\n");
     printf("                      piu' piccola per poca memoria o una scheda lenta\n\n");
@@ -2595,6 +2645,11 @@ int main(int argc, char **argv)
             g_cfg.ip[0] = 10; g_cfg.ip[1] = 0; g_cfg.ip[2] = 2; g_cfg.ip[3] = 15;
             g_cfg.gateway[0] = 10; g_cfg.gateway[1] = 0;
             g_cfg.gateway[2] = 2;  g_cfg.gateway[3] = 2;
+            continue;
+        }
+        if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            /* start on another card service (a WiFi link: IP_LINK_WIFI) */
+            strncpy(g_link, argv[++i], sizeof(g_link) - 1);
             continue;
         }
         if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {

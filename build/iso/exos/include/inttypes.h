@@ -136,8 +136,10 @@
  * decidere se `<inttypes.h>` e' conforme al C99, e una sola assenza fa
  * dichiarare non conforme l'header intero.
  * ============================================================================= */
-typedef long long           intmax_t;
-typedef unsigned long long  uintmax_t;
+/* i tipi del compilatore, come in <stdint.h>: a 32 bit sono long long, a
+ * 64 bit long - e due dichiarazioni diverse dello stesso nome non convivono */
+typedef __INTMAX_TYPE__      intmax_t;
+typedef __UINTMAX_TYPE__     uintmax_t;
 
 typedef struct { intmax_t quot; intmax_t rem; } imaxdiv_t;
 

@@ -3943,6 +3943,15 @@ static void disegna_oggetto_nudo(Oggetto *o)
         const char  *t = o->titolo;
         unsigned int n = (unsigned int)strlen(t), cur, vis, a = 0, b = 0;
         int          dentro = o->w - 6;      /* i 3 pixel di bordo, due volte */
+        char         maschera[TESTO_LEN];
+
+        /* EX_PASSWORD: everything below draws and measures asterisks, one per
+         * letter, so the caret and the selection fall in the same places */
+        if (o->stile & EX_PASSWORD) {
+            memset(maschera, '*', n);
+            maschera[n] = '\0';
+            t = maschera;
+        }
         int          fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
         int          sel;
         char         buf[TESTO_LEN];

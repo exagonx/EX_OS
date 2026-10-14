@@ -55,6 +55,7 @@
 #include "sched.h"
 #include "fat12.h"
 #include "power.h"
+#include "acpi.h"
 
 /* =============================================================================
  * Porte di spegnimento degli ambienti virtualizzati.
@@ -182,7 +183,8 @@ void power_off(void)
 
     kprintf("  Spegnimento hardware...\n");
     interrupts_disable();
-    power_try_off();
+    acpi_spegni();         /* a real PC: S5 through the FADT (kernel/arch/x86/acpi.c) */
+    power_try_off();       /* the emulators' fixed ports */
 
     /* Arrivati qui, nessun metodo di spegnimento ha funzionato: è il caso
      * atteso su hardware reale senza ACPI. Il sistema resta comunque in
@@ -249,6 +251,13 @@ void power_reboot(void)
 
     interrupts_disable();
 
+    /* ! FOUR WAYS, MOST RELIABLE FIRST (14 October 2026): the user's MCP77
+     * laptop "just hangs" on reboot. 0) the ACPI reset register, when the
+     * firmware declares one; 1) the keyboard controller, as before; 2) the
+     * chipset reset port 0xCF9 (2 = reset next, 6 = hard reset now), which
+     * Intel and NVIDIA chipsets have; 3) the triple fault. */
+    acpi_riavvia();
+
     /* Metodo 1: reset via 8042 */
     timeout = 100000;
     while ((port_inb(0x64) & 0x02) && timeout--) {
@@ -262,10 +271,18 @@ void power_reboot(void)
         __asm__ volatile ("pause" ::: "memory");
     }
 
-    /* Metodo 2: triple fault */
-    klog(LOG_WARN, "POWER: reset via 8042 non riuscito, provo triple fault");
+    /* Metodo 2: the chipset's reset port */
+    klog(LOG_WARN, "POWER: reset via 8042 non riuscito, provo la porta 0xCF9");
+    port_outb(0xCF9, 0x02);
+    for (timeout = 0; timeout < 100000; timeout++) __asm__ volatile ("pause" ::: "memory");
+    port_outb(0xCF9, 0x06);
+    for (timeout = 0; timeout < 1000000; timeout++) __asm__ volatile ("pause" ::: "memory");
+
+    /* Metodo 3: triple fault */
+    klog(LOG_WARN, "POWER: nemmeno la porta 0xCF9, provo triple fault");
     {
-        struct { uint16_t limit; uint32_t base; } __attribute__((packed))
+        /* uintptr_t: at 64 bit lidt reads a 10-byte descriptor */
+        struct { uint16_t limit; uintptr_t base; } __attribute__((packed))
             idt_nulla = { 0, 0 };
         __asm__ volatile ("lidt %0; int $0x03" :: "m"(idt_nulla));
     }

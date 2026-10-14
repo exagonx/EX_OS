@@ -25,6 +25,36 @@
  * ============================================================================= */
 
 #include "exjs.h"
+
+#if defined(__x86_64__)
+/* ! AT 64 BIT THE TWO ENGINES ARE ORDINARY ELF SHARED OBJECTS (14 October
+ * 2026), built by tools/costruisci-utente64.sh and opened by the libc's
+ * dlopen (lib/libc_dl.c); there are no EX-OS libraries at 64 bit. The rest
+ * of this file is the same: these few names stand in for exlib. And there is
+ * one stub per process - the libraries that call ExJs are in the program's
+ * archive, not in libraries of their own - so "already open by someone
+ * else" cannot happen. */
+#include "libc.h"
+typedef void ExLibTesta;
+static const ExLibTesta *exlib_apri_fra(const char *const *percorsi, int quanti)
+{
+    int i;
+    for (i = 0; i < quanti; i++) {
+        void *h = dlopen(percorsi[i], RTLD_NOW);
+        if (h) return h;
+    }
+    return 0;
+}
+#define exlib_simbolo(t, nome) dlsym((void *)(t), (nome))
+static int lib_gia_aperta(const char *percorso) { (void)percorso; return 0; }
+static void grida_e_muori(const char *s)
+{
+    const char *e = dlerror();
+    write(2, s, strlen(s));
+    if (e) { write(2, "      ", 6); write(2, e, strlen(e)); write(2, "\n", 1); }
+    _exit(1);
+}
+#else
 #include "exlib.h"
 
 #define SYS_WRITE       4
@@ -53,6 +83,7 @@ static void grida_e_muori(const char *s)
     __asm__ volatile ("int $0x80" :: "a"(SYS_EXIT), "b"(1) : "memory");
     for (;;) { }
 }
+#endif /* __x86_64__ */
 
 /* I due motori, e i due posti per ognuno: sul sistema installato e sul CD. */
 static const char *const g_dove_exjs[] = {

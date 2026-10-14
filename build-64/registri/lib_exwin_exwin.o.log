@@ -3,10 +3,10 @@ lib/exwin/exwin.c:454:17: warning: cast to pointer from integer of different siz
   454 |     g_appunti = (Appunti *)z.virt;
       |                 ^
 lib/exwin/exwin.c: In function ‘ex_create’:
-lib/exwin/exwin.c:5213:23: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
- 5213 |         o->zona     = (unsigned int *)z.virt;
+lib/exwin/exwin.c:5222:23: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 5222 |         o->zona     = (unsigned int *)z.virt;
       |                       ^
 lib/exwin/exwin.c: In function ‘rimappa’:
-lib/exwin/exwin.c:5518:23: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
- 5518 |         o->zona     = (unsigned int *)z.virt;
+lib/exwin/exwin.c:5527:23: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+ 5527 |         o->zona     = (unsigned int *)z.virt;
       |                       ^

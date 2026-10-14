@@ -534,6 +534,8 @@ void vfs_init(uint8_t boot_drive)
             g_mnt[0].mnt    = mnt;
             g_mnt[0].blkdev = ipart;
             v_copia(g_mnt[0].dev, d2 ? d2->nome : "hd0", BLK_NOME_MAX);
+            /* a root on ext3/ext4 starts read-only, like any other mount of it */
+            if (tipo == VFS_FS_EXT2 && ext2_sola_lettura(mnt)) g_mnt[0].sola_lettura = 1;
 
             if (tipo == VFS_FS_EXT2)
                 klog(LOG_INFO, "VFS: root '/' su %s (ext2, avvio da disco 0x%02x)",
@@ -739,6 +741,8 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
         if (mnt < 0) return ERR(EIO);
 
         g_mnt[slot].tipo = VFS_FS_EXT2;
+        /* ext3/ext4: readable, and written only by a later module (@EXT4-MODULO) */
+        if (ext2_sola_lettura(mnt)) sola_lettura = 1;
     } else {
         mnt = fat_mount(blkdev);
         if (mnt < 0) return ERR(EIO);

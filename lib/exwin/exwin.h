@@ -246,6 +246,9 @@ typedef long (*ExWindowProc)(ExWindow, unsigned int, unsigned int, long);
 /* A pop-up window (30 September 2026): a click anywhere outside it sends it
  * EXM_CLOSE (from wserver 0.008). ex_popup_menu uses it. */
 #define EX_POPUP     0x0400
+/* A "testo" (text box) that shows asterisks instead of what is typed: for
+ * passwords (2026-10-14, the WiFi panel). ex_get_text returns the real text. */
+#define EX_PASSWORD  0x0800
 
 /* --- I colori, in ARGB --------------------------------------------------- */
 #define EX_BLACK         0x00000000

@@ -1098,7 +1098,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.004"
+#define SH_VERSIONE  "0.005"
 
 #define MAX_LINE    512
 
@@ -1652,7 +1652,10 @@ static void cmd_sleep(int argc, char *argv[])
  * legge sostituirebbe la shell come lettore della tastiera e il prompt
  * non riceverebbe mai più una riga (vedi la guardia in sys_read).
  * ============================================================================= */
-#define JOBS_MAX    8
+/* 16, not 8: a boot script with the network, USB, telnetd, automount and
+ * wifid (@WIFI) starts nine jobs, and a script never reaches the prompt
+ * where finished ones are collected. */
+#define JOBS_MAX    16
 #define JOB_CMD_LEN 48
 
 typedef struct {

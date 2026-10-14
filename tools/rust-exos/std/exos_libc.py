@@ -78,8 +78,10 @@ def aggiungi_libc(libc_src):
                '        pub use self::exos::*;\n'
                '    } else if #[cfg(target_os = "nuttx")] {\n        mod nuttx;')
     os.makedirs(os.path.join(libc_src, "unix", "exos"), exist_ok=True)
+    # ! abi-exos.rs goes after it: the sizes and offsets the EX-OS C compilers
+    # give, as compile-time assertions (written by verifica-abi.py)
     scrivi(os.path.join(libc_src, "unix", "exos", "mod.rs"),
-           leggi(os.path.join(QUI, "libc-exos.rs")))
+           leggi(os.path.join(QUI, "libc-exos.rs")) + "\n" + leggi(os.path.join(QUI, "abi-exos.rs")))
     return regola(libc_src)
 
 

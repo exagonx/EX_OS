@@ -5376,6 +5376,14 @@ int32_t sys_getuid(InterruptFrame *frame)
     return self ? (int32_t)self->uid : ERR(ESRCH);
 }
 
+int32_t sys_proc_uid(InterruptFrame *frame)
+{
+    Process *p = proc_get_by_pid((uint32_t)FR_A1(frame));
+
+    if (p == NULL || p->state == PROC_UNUSED) return ERR(ESRCH);
+    return (int32_t)p->uid;
+}
+
 int32_t sys_setuid(InterruptFrame *frame)
 {
     Process *self = proc_get_current();

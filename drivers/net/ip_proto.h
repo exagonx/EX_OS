@@ -92,6 +92,16 @@
 #define IP_MSG_TCP_ASCOLTA 14  /* IpTcpAscolta -> IP_MSG_ESITO (id, o -errno) */
 #define IP_MSG_TCP_ACCETTA 15  /* IpTcpAccetta -> IP_MSG_ESITO (id, o -errno) */
 
+/* IP_MSG_LINK (ip.drv 0.010+, 2026-10-14): move the stack onto another card
+ * service while running. Payload: the service name, NUL-terminated (at most
+ * IPC_NAME_LEN bytes), e.g. "rete0" or the WiFi link "wifi0".
+ * -> IP_MSG_ESITO: 0, or -ENOENT if no such service is registered.
+ * The address configuration is NOT changed: who switches (wifid) gives the
+ * new one afterwards, with DHCP or IP_MSG_CONFIG. The ARP table is emptied,
+ * since it belonged to the other network. */
+#define IP_MSG_LINK       16
+#define IP_LINK_WIFI      "wifi0"    /* a WiFi driver: control AND link, one name */
+
 /* --- Risposte (stack -> client) ----------------------------------------- */
 #define IP_MSG_ESITO     128
 #define IP_MSG_STATO_R   129

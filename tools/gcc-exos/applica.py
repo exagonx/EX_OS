@@ -80,6 +80,32 @@ MODIFICHE = [
         '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/exos.h"\n'
         '\t;;',
     ),
+    # --- x86_64-exos (added 2026-10-14, @EXOS-64) ----------------------------
+    # The 64-bit target, next to x86_64-*-elf* as the 32-bit one sits next to
+    # i[34567]86-*-elf*. exos64.h comes last and sets the specs and types.
+    (
+        "gcc/config.gcc",
+        'x86_64-*-elf*)\n'
+        '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"\n'
+        '\t;;',
+        'x86_64-*-elf*)\n'
+        '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"\n'
+        '\t;;\n'
+        'x86_64-*-exos*)\n'
+        '\t# EX-OS, 64-bit: plain ELF with its own libc, see i386/exos64.h.\n'
+        '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h i386/exos64.h"\n'
+        '\t;;',
+    ),
+    (
+        "libgcc/config.host",
+        "x86_64-*-elf* | x86_64-*-rtems*)",
+        "x86_64-*-exos*)\n"
+        "\t# EX-OS 64-bit: as x86_64-*-elf*, with the crt files of i386-exos.\n"
+        "\textra_parts=\"$extra_parts crti.o crtbegin.o crtend.o crtn.o\"\n"
+        "\ttmake_file=\"$tmake_file i386/t-crtstuff t-crtstuff-pic t-libgcc-pic\"\n"
+        "\t;;\n"
+        "x86_64-*-elf* | x86_64-*-rtems*)",
+    ),
     (
         "libgcc/config.host",
         "i[34567]86-*-elf*)",
@@ -254,13 +280,10 @@ MODIFICHE = [
         "#include <sys/socket.h>\n"
         "#endif\n",
         "#elif defined(__exos__)\n"
-        "/* EX-OS non ha socket: si dichiara solo la struttura che serve a\n"
-        "   far compilare il resto del file.  Vedi tools/gcc-exos/applica.py.  */\n"
-        "#define AF_UNIX 1\n"
-        "struct sockaddr_un {\n"
-        "  unsigned short sun_family;\n"
-        "  char sun_path[108];\n"
-        "};\n"
+        "/* EX-OS: AF_UNIX and sockaddr_un come from its libc (BSD sockets,\n"
+        "   2026-09-29); socket() for AF_UNIX is refused, see below.  */\n"
+        "#include <sys/un.h>\n"
+        "#include <sys/socket.h>\n"
         "#else\n"
         "#include <sys/un.h>\n"
         "#include <sys/socket.h>\n"
@@ -357,6 +380,7 @@ MODIFICHE = [
 # scopre rotta sei mesi dopo.
 NUOVI = [
     ("exos.h", "gcc/config/i386/exos.h"),
+    ("exos64.h", "gcc/config/i386/exos64.h"),
     ("../binutils-exos/pex-exos.c", "libiberty/pex-exos.c"),
 ]
 

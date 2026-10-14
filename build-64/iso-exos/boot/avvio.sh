@@ -61,6 +61,12 @@ echo Rete pronta: 'ipcfg' mostra la configurazione, 'ping' la prova.
 # Si accende cosi', da root:   telnetd -h   spiega i valori.
 telnetd -auto &
 
+# The WiFi, IF root asked for it (`wifi -boot:on`, @WIFI). On its own this
+# line does nothing: wifid -auto reads /cfg/wifi/root.cfg and stays only if
+# the key `avvio` says "si"; otherwise it exits without a word. It waits
+# for the WiFi driver by itself, so the order with the lines above is free.
+wifid -auto &
+
 # Un'occhiata al server degli aggiornamenti. Non chiede niente, non installa
 # niente e NON STAMPA NIENTE se non c'e' niente da dire: fa qualcosa solo se
 # /boot/netupdate.cnf esiste e dice «automatico = si», e molla dopo cinque

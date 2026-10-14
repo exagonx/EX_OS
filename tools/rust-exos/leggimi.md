@@ -30,7 +30,15 @@ involucri, e questa ricetta.
 >
 >     tools/rust-exos/prova-std.sh
 >
-> Com'è fatto sta nel paragrafo del passo 3, più sotto. Il passo 2 (`libexos`)
+> Com'è fatto sta nel paragrafo del passo 3, più sotto.
+>
+> **At 64 bit (14 October 2026):** the target `x86_64-unknown-exos.json`, and
+> `EXOS_ARCH=x86_64 tools/rust-exos/prova-std.sh` builds and runs the same
+> test in the 64-bit system (29/29). `std/verifica-abi.py` writes
+> `std/abi-exos.rs`: the size, alignment and offsets of every struct of
+> `libc-exos.rs` as the C compilers see them at 32 and at 64 bit, as
+> compile-time assertions appended to the libc crate. Run it again after
+> changing a struct in `lib/include` or in `libc-exos.rs`. Il passo 2 (`libexos`)
 > resta da fare; il passo 4 non è più bloccato dai thread.
 
 ### Passo 0: cosa è cambiato rispetto al piano, provandolo

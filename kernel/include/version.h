@@ -455,7 +455,20 @@
  * processore, il processo corrente per processore. Il predefinito non cambia
  * (smp = 1: svegliati e fermi), e con un processore solo niente di tutto
  * questo si accende. Vedi kernel/include/smp.h. */
-#define EXOS_VERSION    "0.248"
+/* 0.248 -> 0.249: ext3 and ext4 are READ (kernel/fs/ext2.c): extent trees,
+ * 64-bit group descriptors, flex_bg, indexed directories read linearly. Such
+ * a volume is mounted read-only; plain ext2 is written as before. */
+/* 0.249 -> 0.250: SYS_PROC_UID, the uid of another process: a service
+ * learns who sent it a message (wifid, @WIFI). */
+/* 0.250 -> 0.251: ata_attendi_drq_muto looks at ERR/DF only once BSY is
+ * clear (a stale ERR under BSY made the boot-time partition table read
+ * fail on the MCP77 laptop: no hd2p1, no root); blk.c retries the table
+ * once and says so when it cannot read it. */
+/* 0.251 -> 0.252: kernel/arch/x86/acpi.c - shutdown turns a real PC off
+ * through ACPI S5 (FADT PM1a/PM1b, _S5_ from the DSDT, SMI_CMD/ACPI_ENABLE
+ * when needed); reboot tries the ACPI reset register, the 8042, the 0xCF9
+ * port, then the triple fault (now with a 10-byte descriptor at 64 bit). */
+#define EXOS_VERSION    "0.252"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

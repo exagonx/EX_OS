@@ -60,6 +60,16 @@
 %define F_SPT   18
 %define F_DATA  33
 %endif
+; ! G_SPT / G_TESTE: the geometry reads are done with. As a floppy they are the
+; floppy's constants; with GEOMETRIA_BIOS (the USB key images) they are what
+; the BIOS says when it boots the key as a HARD DISK - see geometria below.
+%ifdef GEOMETRIA_BIOS
+%define G_SPT   [g_spt]
+%define G_TESTE [g_teste]
+%else
+%define G_SPT   F_SPT
+%define G_TESTE 2
+%endif
 %define RDTRACK 160         ; 80 cilindri x 2 testine
 %define RDSPT   F_SPT       ; settori per traccia
 %define RDBYTE  (RDTRACK * RDSPT * 512)
@@ -100,6 +110,9 @@ _start:
     mov  dx, 0x3F8
     mov  al, 83
     out  dx, al
+%ifdef GEOMETRIA_BIOS
+    call geometria
+%endif
 
     ; =====================================================================
     ; AVVIO DA DISCO? — il bivio fra le due strade
@@ -119,6 +132,11 @@ _start:
     ; =====================================================================
     cmp  dword [0x7C00 + 0x1A0], 0x44485845     ; 'EXHD'
     jne  .da_floppy
+%ifdef GEOMETRIA_BIOS
+    ; Booted from an installed disk (its partition boot sector carries
+    ; 'EXHD'): there is nothing to copy into RAM - see ramdisco.
+    mov  byte [avvio_hd], 1
+%endif
 
     ; ---- 'D' = avvio da disco ------------------------------------------
     mov  dx, 0x3FD
@@ -277,17 +295,17 @@ _start:
     sub  ax, 2
     add  ax, F_DATA               ; LBA = (cluster - 2) + 33
     xor  dx, dx
-    mov  cx, F_SPT
+    mov  cx, G_SPT
     div  cx                     ; AX = lba/18, DX = settore 0-based
     mov  [ksett], dx            ; da qui in poi serve solo il resto
     xor  dx, dx
-    mov  cx, 2
+    mov  cx, G_TESTE
     div  cx                     ; AX = cilindro, DX = testina
     mov  [kcil], ax
     mov  [ktesta], dx
 
     ; ---- primo limite: la fine della traccia ---------------------------
-    mov  ax, F_SPT
+    mov  ax, G_SPT
     sub  ax, [ksett]
     cmp  ax, [kcnt]
     jae  .klim2
@@ -305,6 +323,26 @@ _start:
     mov  [kcnt], ax
 
 .kleggi:
+%ifdef GEOMETRIA_BIOS
+    cmp  byte [usa_lba], 0
+    je   .kchs
+    push bx
+    push es
+    mov  ax, [kseg]
+    mov  es, ax
+    mov  bx, [koff]
+    mov  ax, [kprimo]
+    sub  ax, 2
+    add  ax, F_DATA
+    mov  [l42_lba], ax
+    mov  al, byte [kcnt]
+    call leggi42
+    pop  es
+    pop  bx
+    jc   .halt
+    jmp  .kletto
+.kchs:
+%endif
     push bx
     push cx
     push dx
@@ -325,6 +363,7 @@ _start:
     pop  cx
     pop  bx
     jc   .halt
+.kletto:
 
     ; ---- avanza destinazione e catena ----------------------------------
     mov  ax, [kcnt]
@@ -884,6 +923,17 @@ ramdisco:
 %ifdef RAMDISCO
 %if RAMDISCO = 2
     jae  .disco
+%elifdef GEOMETRIA_BIOS
+    ; ! A USB KEY BOOTED AS A HARD DISK IS STILL A FLOPPY IMAGE TO COPY: the
+    ; kernel cannot read USB at boot, so "from a hard disk it is not needed"
+    ; was exactly wrong here - the copy was skipped and the root was looked
+    ; for on a device nobody could read (14 October 2026).
+    ; ! BUT NOT FROM AN INSTALLED DISK: `install` puts this same Stage 2 on
+    ; the disk, and there it copied the disk's first 2.88 MB into RAM (the
+    ; kernel found no FAT in it and went on to the disk - seen on the MCP77
+    ; laptop, the same evening). The 'EXHD' path sets avvio_hd.
+    cmp  byte [avvio_hd], 0
+    jne  .no
 %else
     jae  .no
 %endif
@@ -932,6 +982,21 @@ ramdisco:
     mov  ax, RDSEG
     mov  es, ax
     xor  bx, bx
+%ifdef GEOMETRIA_BIOS
+    ; The floppy track becomes an LBA, read with the BIOS geometry: as a
+    ; floppy it is one read as before, as a hard disk it is split where the
+    ; BIOS's tracks end.
+    mov  al, '.'
+    call carattere
+    mov  ax, [rdtrk]
+    mov  dx, RDSPT
+    mul  dx
+    mov  [rdlba], ax
+    call leggi_lba
+    jc   .guasto
+    xor  bx, bx
+    jmp  .letta
+%endif
 
     ; ! UN PUNTO PER TRACCIA, e non e' decorazione. Su un lettore USB la
     ; lettura del volume dura decine di secondi: senza un segno, lo schermo
@@ -1309,6 +1374,197 @@ numero:
     pop  ax
     ret
 
+%ifdef GEOMETRIA_BIOS
+; =============================================================================
+; geometria - how the BIOS presents the boot drive (14 October 2026)
+;
+; As a floppy (DL < 0x80) the floppy's numbers stay. As a hard disk the BIOS
+; is asked (INT 13h AH=08h) and the answer is written on screen, so a key
+; that does not boot tells which way the BIOS took it:
+;     Avvio: disco BIOS 128, 63 settori per traccia, 255 testine
+; =============================================================================
+geometria:
+    cmp  byte [drv], 0x80
+    jb   .g_floppy
+    ; ! LBA FIRST (see bootloader/stage1/boot.asm): the BIOS's CHS numbers
+    ; for a USB stick may not fit AH=08h at all (SeaBIOS: 72 sectors per
+    ; track, answered as 8).
+    pusha
+    mov  ah, 0x41
+    mov  bx, 0x55AA
+    mov  dl, [drv]
+    int  0x13
+    jc   .g_chs
+    cmp  bx, 0xAA55
+    jne  .g_chs
+    test cl, 1
+    jz   .g_chs
+    mov  byte [usa_lba], 1
+    popa
+    mov  si, msg_geo1
+    call print
+    xor  ax, ax
+    mov  al, [drv]
+    call numero
+    mov  si, msg_geolba
+    call print
+    ret
+.g_chs:
+    popa
+    push es
+    pusha
+    mov  ah, 0x08
+    mov  dl, [drv]
+    xor  di, di
+    mov  es, di
+    int  0x13
+    jc   .g_no
+    and  cx, 0x3F
+    jz   .g_no
+    mov  [g_spt], cx
+    mov  dl, dh
+    xor  dh, dh
+    inc  dx
+    mov  [g_teste], dx
+.g_no:
+    popa
+    pop  es
+    mov  si, msg_geo1
+    call print
+    xor  ax, ax
+    mov  al, [drv]
+    call numero
+    mov  si, msg_geo2
+    call print
+    mov  ax, [g_spt]
+    call numero
+    mov  si, msg_geo3
+    call print
+    mov  ax, [g_teste]
+    call numero
+    mov  si, msg_geo4
+    call print
+.g_floppy:
+    ret
+
+; leggi42 - AL sectors from LBA [l42_lba] into ES:BX with INT 13h AH=42h,
+; three tries with a reset in between. CF=1 = failed. Touches nothing else.
+leggi42:
+    pusha
+    xor  ah, ah
+    mov  [l42_n], ax
+    mov  [dapu_off], bx
+    mov  [dapu_seg], es
+    mov  ax, [l42_lba]
+    mov  [dapu_lba], ax
+    mov  di, 3
+.l42_prova:
+    mov  ax, [l42_n]
+    mov  [dapu_n], ax              ; a failed call may have changed it
+    mov  si, dapu
+    mov  ah, 0x42
+    mov  dl, [drv]
+    int  0x13
+    jnc  .l42_ok
+    xor  ah, ah
+    mov  dl, [drv]
+    int  0x13
+    dec  di
+    jnz  .l42_prova
+    popa
+    stc
+    ret
+.l42_ok:
+    popa
+    clc
+    ret
+
+; leggi_lba - RDSPT sectors from LBA [rdlba] into RDSEG:0, with the BIOS
+; geometry: one read per BIOS track piece, and one sector at a time once a
+; piece has failed (the 's' on screen, as in the floppy loop). CF=1 = failed.
+leggi_lba:
+    pusha
+    mov  word [rdfatti], 0
+.ll_giro:
+    mov  ax, [rdfatti]
+    cmp  ax, RDSPT
+    jae  .ll_ok
+    cmp  byte [usa_lba], 0
+    je   .ll_chs
+    add  ax, [rdlba]
+    mov  [l42_lba], ax
+    mov  cx, RDSPT
+    sub  cx, [rdfatti]
+    cmp  cx, 18                    ; at most 18 sectors per read: 64 at a time
+    jbe  .l4n                      ; failed on the real PC (10 October)
+    mov  cx, 18
+.l4n:
+    cmp  byte [rduno], 0
+    je   .l4t
+    mov  cx, 1
+.l4t:
+    mov  [rdquanti], cx
+    mov  bx, [rdfatti]
+    shl  bx, 9
+    mov  al, cl
+    call leggi42
+    jc   .ll_male
+    mov  ax, [rdquanti]
+    add  [rdfatti], ax
+    jmp  .ll_giro
+.ll_chs:
+    mov  ax, [rdfatti]
+    add  ax, [rdlba]               ; current LBA (< 5760)
+    xor  dx, dx
+    div  word [g_spt]              ; AX = BIOS track, DX = sector, 0-based
+    mov  si, dx
+    mov  cx, [g_spt]
+    sub  cx, dx                    ; sectors left in this BIOS track
+    mov  di, RDSPT
+    sub  di, [rdfatti]             ; sectors still wanted
+    cmp  cx, di
+    jbe  .ll_n
+    mov  cx, di
+.ll_n:
+    cmp  byte [rduno], 0
+    je   .ll_tanti
+    mov  cx, 1
+.ll_tanti:
+    mov  [rdquanti], cx
+    xor  dx, dx
+    div  word [g_teste]            ; AX = cylinder, DX = head
+    mov  ch, al
+    mov  cl, ah
+    shl  cl, 6                     ; cylinder bits 8-9
+    mov  bx, si
+    inc  bx
+    or   cl, bl                    ; sector, 1-based
+    mov  dh, dl
+    mov  bx, [rdfatti]
+    shl  bx, 9                     ; offset in the bounce buffer
+    mov  al, [rdquanti]
+    call leggi_tratto
+    jc   .ll_male
+    mov  ax, [rdquanti]
+    add  [rdfatti], ax
+    jmp  .ll_giro
+.ll_male:
+    cmp  byte [rduno], 0
+    jne  .ll_fallita
+    mov  byte [rduno], 1           ; from here on, one sector per read
+    mov  al, 's'
+    call carattere
+    jmp  .ll_giro
+.ll_fallita:
+    popa
+    stc
+    ret
+.ll_ok:
+    popa
+    clc
+    ret
+%endif
+
 ; Legge AL settori da CH/CL/DH in ES:BX, con tre tentativi e un reset del
 ; controller in mezzo. CF=1 se non ce l'ha fatta. Non tocca BX.
 leggi_tratto:
@@ -1514,6 +1770,28 @@ fbh   dw 0
 fbbpp db 0
 
 drv   db 0
+%ifdef GEOMETRIA_BIOS
+g_spt    dw F_SPT
+g_teste  dw 2
+rdlba    dw 0
+rdfatti  dw 0
+rdquanti dw 0
+rduno    db 0
+usa_lba  db 0
+avvio_hd db 0
+l42_lba  dw 0
+l42_n    dw 0
+dapu     db 16, 0
+dapu_n   dw 0
+dapu_off dw 0
+dapu_seg dw 0
+dapu_lba dd 0, 0
+msg_geolba db ', letture LBA', 13, 10, 0
+msg_geo1 db 'Avvio: disco BIOS ', 0
+msg_geo2 db ', ', 0
+msg_geo3 db ' settori per traccia, ', 0
+msg_geo4 db ' testine', 13, 10, 0
+%endif
 e8cnt dw 0
 ksiz  dd 0
 kseg  dw 0x1000

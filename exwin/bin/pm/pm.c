@@ -37,9 +37,10 @@
 #include "exinfo.h"
 #include "exsuono.h"
 #include "kbd_proto.h"
+#include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.020"
+#define VERSIONE_APP "0.021"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -1651,9 +1652,11 @@ static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
  * ones are not shown (sixteen windows at 640 pixels).
  * ============================================================================= */
 #define VB_X0        76         /* after «Avvio» */
-#define VB_OROLOGIO 206         /* the clock, a process of its own, and the volume icon */
+#define VB_OROLOGIO 232         /* the clock, a process of its own, the volume and WiFi icons */
 #define VB_VOL_W     24         /* the volume icon, just left of the clock (178 pixels) */
 #define VB_VOL_X    ((int)g_sw - 178 - VB_VOL_W - 2)
+#define VB_WIFI_W    24         /* the WiFi icon, just left of the volume (@WIFI) */
+#define VB_WIFI_X   (VB_VOL_X - VB_WIFI_W - 2)
 #define VB_MAX_W    160
 #define VB_MIN_W     28
 #define VB_ICONA     16
@@ -1821,6 +1824,164 @@ static void vol_apri(void)
     if (g_vol_pid < 0) log_seriale("pm: il pannello dei volumi (exvolume) non parte");
 }
 
+/* =============================================================================
+ * The WiFi icon, next to the volume (@WIFI, 2026-10-14)
+ *
+ * Asked by the user: the radio's signal, GRAY with an X when not connected,
+ * GREEN when connected; a click opens the panel (/exwin/bin/exwifi); every
+ * change shows a small box next to the icon that goes away by itself.
+ *
+ * ! pm ASKS, IT IS NOT TOLD. wifid could push events, but the ExWin message
+ * pump throws away whatever does not come from the window server (lib/exwin,
+ * filtro_finestra). So every two seconds pm asks wifid its state, with a short
+ * wait of its own, and notices the changes itself.
+ *
+ * The icon is there only if the machine has a WiFi driver ("wifi0") or a
+ * wifid: a desktop without a radio does not get an icon that never turns
+ * green. If the driver is there and no wifid runs, pm starts one - as the
+ * user of this session: that is the user's own WiFi manager, which is what the
+ * user asked for when root's start-up connection is off.
+ * ========================================================================== */
+#define WIFI_GIRO_MS   2000
+#define AVVISO_GIRI       3            /* the box stays for 3 rounds: 6 seconds */
+#define EX_GREEN_WIFI  0x0030A040
+
+static int        g_wifi_c_e = 0;      /* draw the icon at all            */
+static int        g_wifi_stato = -1;   /* WIFI_STATO_* last seen, -1 none  */
+static int        g_wifi_dbm = -100;
+static char       g_wifi_ssid[WIFI_SSID_MAX];
+static int        g_wifi_pid = -1;     /* the panel                        */
+static ExWindow   g_avviso = 0;
+static int        g_avviso_giri = 0;
+
+static void wifi_disegna(ExWindow f)
+{
+    int x = VB_WIFI_X, y = 2, h = BARRA_H - 4, k, livelli, colore;
+
+    ex_fill_rect(f, x, y, VB_WIFI_W, h, EX_GRAY);
+    if (!g_wifi_c_e) return;
+    ex_draw_raised(f, x, y, VB_WIFI_W, h);
+    if (g_wifi_stato == WIFI_STATO_CONNESSA) {
+        livelli = (g_wifi_dbm + 100) / 12;          /* -50 dBm or better: four bars */
+        if (livelli < 1) livelli = 1;
+        if (livelli > 4) livelli = 4;
+        colore = EX_GREEN_WIFI;
+    } else {
+        livelli = 4;
+        colore = EX_DARK_GRAY;
+    }
+    for (k = 0; k < 4; k++)                         /* four rising bars */
+        ex_fill_rect(f, x + 4 + k * 4, y + h - 5 - (k + 1) * 3, 3, (k + 1) * 3,
+                     k < livelli ? colore : EX_DARK_GRAY);
+    if (g_wifi_stato != WIFI_STATO_CONNESSA) {      /* the X */
+        for (k = 0; k < 7; k++) {
+            ex_fill_rect(f, x + 12 + k, y + 3 + k, 2, 1, EX_BLACK);
+            ex_fill_rect(f, x + 18 - k, y + 3 + k, 2, 1, EX_BLACK);
+        }
+    }
+}
+
+static int wifi_sotto(int x, int y)
+{
+    return g_wifi_c_e && y >= 2 && y < BARRA_H - 2 && x >= VB_WIFI_X && x < VB_WIFI_X + VB_WIFI_W;
+}
+
+static void wifi_apri(void)
+{
+    static const char *const dove[] = { "/exwin/bin/exwifi", "/cdrom/exwin/bin/exwifi" };
+    int k, stato = 0;
+
+    if (g_wifi_pid > 0 && waitpid(g_wifi_pid, &stato, WNOHANG) == 0) return;
+    g_wifi_pid = -1;
+    for (k = 0; k < 2 && g_wifi_pid < 0; k++) {
+        char *av[2];
+
+        av[0] = (char *)dove[k];
+        av[1] = 0;
+        g_wifi_pid = spawn_ex(av[0], av, environ, 0, 0);
+    }
+    if (g_wifi_pid < 0) log_seriale("pm: il pannello WiFi (exwifi) non parte");
+}
+
+/* The box next to the icon: a small window above the bar, closed after a few
+ * seconds by the same timer that asks wifid. */
+static void avviso(const char *testo)
+{
+    int w = 12 + ex_text_width(EX_FONT_SYSTEM, testo), x;
+
+    if (w > 400) w = 400;
+    x = VB_WIFI_X + VB_WIFI_W - w;
+    if (x < 2) x = 2;
+    if (g_avviso) { ex_destroy(g_avviso); g_avviso = 0; }
+    g_avviso = ex_create("window", "", EX_BORDER | EX_TOPMOST,
+                         x, (int)g_sh - BARRA_H - 26, w, 24, 0, 0, 0);
+    if (!g_avviso) return;
+    ex_create("label", testo, EX_CHILD, 4, 3, w - 8, 18, g_avviso, 0, 0);
+    /* ex_update only presents the buffer: with no procedure of its own the
+     * box is painted by the base here, or it shows up empty and grey. */
+    ex_default_proc(g_avviso, EXM_PAINT, 0, 0);
+    ex_update(g_avviso);
+    g_avviso_giri = AVVISO_GIRI;
+}
+
+typedef struct { int pid; } WifidAtteso;
+
+static int filtro_wifid(const IpcMessage *m, void *d)
+{
+    const WifidAtteso *x = (const WifidAtteso *)d;
+
+    if ((int)m->sender_pid != x->pid) return IPC_ALTRUI;
+    return m->tipo == WIFID_MSG_STATO_R ? IPC_MIO : IPC_BUTTA;
+}
+
+/* Every WIFI_GIRO_MS: is there a radio, what does wifid say, what changed */
+static void wifi_controlla(ExWindow barra)
+{
+    int        pid = ipc_lookup(WIFID_SERVIZIO), prima_c_e = g_wifi_c_e, prima = g_wifi_stato;
+    WifidStato s;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    IpcMessage meta;
+    WifidAtteso x;
+    char       t[96];
+
+    if (g_avviso && --g_avviso_giri <= 0) { ex_destroy(g_avviso); g_avviso = 0; }
+
+    if (pid <= 0) {
+        if (ipc_lookup(WIFI_SERVIZIO_0) > 0) {
+            char *av[2] = { "/bin/wifid", 0 };
+
+            spawn_ex(av[0], av, environ, 0, 0);     /* the user's own manager */
+        }
+        g_wifi_c_e = ipc_lookup(WIFI_SERVIZIO_0) > 0;
+        g_wifi_stato = -1;
+    } else {
+        x.pid = pid;
+        if (ipc_send((unsigned int)pid, WIFID_MSG_STATO, 0, 0) == 0 &&
+            ipc_scegli(filtro_wifid, &x, &meta, buf, sizeof(buf), 300) >= 0 &&
+            meta.len >= sizeof(s)) {
+            memcpy(&s, buf, sizeof(s));
+            g_wifi_c_e = s.scheda;
+            g_wifi_stato = s.scheda ? s.radio.stato : -1;
+            g_wifi_dbm = s.radio.potenza;
+            if (g_wifi_stato == WIFI_STATO_CONNESSA) {
+                if (prima != WIFI_STATO_CONNESSA || strcmp(g_wifi_ssid, s.radio.ssid) != 0) {
+                    snprintf(t, sizeof(t), "WiFi: connesso a %s", s.radio.ssid);
+                    if (prima != -1 || prima_c_e) avviso(t);
+                }
+                strncpy(g_wifi_ssid, s.radio.ssid, sizeof(g_wifi_ssid) - 1);
+            } else if (prima == WIFI_STATO_CONNESSA) {
+                snprintf(t, sizeof(t), "WiFi: %s %s", g_wifi_ssid,
+                         g_wifi_stato == WIFI_STATO_CADUTA ? "persa" : "staccata");
+                avviso(t);
+            }
+        }
+    }
+    if (g_wifi_c_e != prima_c_e || g_wifi_stato != prima) {
+        wifi_disegna(barra);
+        ex_update(barra);
+    }
+}
+
 static int vb_sotto(int x, int y)
 {
     int i;
@@ -1870,10 +2031,13 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
+    if (msg == EXM_TIMER) { wifi_controlla(f); return 0; }
+
     if (msg == EXM_WINDOW_LIST) {
         vb_leggi();
         vb_disegna(f);
         vol_disegna(f);
+        wifi_disegna(f);
         ex_update(f);
         arr_controlla();            /* a shutdown in progress watches it too */
         return 0;
@@ -1884,6 +2048,7 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 
         if (i >= 0) { ex_activate_window_id(g_vb[i].v.id); return 0; }
         if (vol_sotto(EX_X(lp), EX_Y(lp))) { vol_apri(); return 0; }
+        if (wifi_sotto(EX_X(lp), EX_Y(lp))) { wifi_apri(); return 0; }
     }
 
     if (msg == EXM_PAINT) {
@@ -1891,6 +2056,7 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 
         vb_disegna(f);
         vol_disegna(f);
+        wifi_disegna(f);
         ex_update(f);
         return r;
     }
@@ -2919,6 +3085,7 @@ int main(int argc, char **argv)
                       0, (int)g_sh - BARRA_H, (int)g_sw, BARRA_H,
                       0, 0, barra_proc);
     if (!g_barra) return 1;
+    ex_set_timer(g_barra, WIFI_GIRO_MS);       /* the WiFi icon asks wifid (@WIFI) */
 
     ex_create("button", "Avvio", EX_CHILD, 2, 2, 70, BARRA_H - 4,
             g_barra, ID_AVVIO, 0);

@@ -171,13 +171,19 @@ static JSClassID g_classe_eso;
  * ! E STA QUI E NON NELLA LIBC APPOSTA: e' un dettaglio di come si mette
  * insieme QUESTA libreria, non una funzione che manca al sistema. Il giorno
  * che qualcun altro chiedera' scalbn, si sposta.
+ *
+ * ! ONLY AT 32 BIT. At 64 bit quickjs.so is an ordinary ELF shared object
+ * with no libc inside (the libc comes from the program, lib/libc_dl.c), so
+ * openlibm's object brings ldexp and scalbn without clashing with anything.
  * ========================================================================== */
+#if !defined(__x86_64__)
 double ldexp(double x, int n);
 
 double scalbn(double x, int n)
 {
     return ldexp(x, n);
 }
+#endif
 
 /* =============================================================================
  * LA TABELLA DELLE MANIGLIE

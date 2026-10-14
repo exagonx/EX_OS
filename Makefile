@@ -153,22 +153,39 @@ iso64:
 # I due caricatori si assemblano qui con DISCHETTO=288 (36 settori per traccia)
 # e RAMDISCO=1; quelli di serie in build/ non cambiano. A scrivere e'
 # tools/mkusb.sh, con i suoi controlli sul dispositivo.
-# (La vecchia chiavetta-disco installata da QEMU resta dentro tools/mkusb.sh,
-# senza una voce di make: e' quella che non parte.)
+# ! REGOLA DELL'UTENTE (14 ottobre 2026): LE CHIAVETTE CARICANO L'IMMAGINE
+# TUTTA IN RAM, sempre. mkchiave.sh controlla il risultato e mkusb.sh rifiuta
+# di scrivere qualunque altra cosa (tools/verifica-chiave.sh: misura da
+# dischetto, settore di avvio, Stage 2 con RAMDISCO=1). La vecchia
+# chiavetta-disco installata da QEMU, quella che sul PC vero non partiva,
+# e' stata tolta da mkusb.sh.
 USB_AVVIO = build-64/avvio
 define usb_caricatori
 	@mkdir -p $(USB_AVVIO)
-	$(AS) -f bin -DDISCHETTO=288 bootloader/stage1/boot.asm -o $(USB_AVVIO)/stage1-288.bin
-	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=1 -DDISCHETTO=288 $(STAGE2_ASM_SRC) -o $(USB_AVVIO)/stage2-rd1-288.bin
+	$(AS) -f bin -DDISCHETTO=288 -DGEOMETRIA_BIOS bootloader/stage1/boot.asm -o $(USB_AVVIO)/stage1-288.bin
+	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=1 -DDISCHETTO=288 -DGEOMETRIA_BIOS $(STAGE2_ASM_SRC) -o $(USB_AVVIO)/stage2-rd1-288.bin
 	@chmod +x $(TOOLS_DIR)/mkchiave.sh $(TOOLS_DIR)/mkusb.sh
 endef
 
-.PHONY: usb64 chiave64
-chiave64: usb64
-usb64:
-	@[ -f build-64/kernel-intero.bin ] && [ -d build-64/iso-exos/bin ] || { echo "prima 'make iso64'"; exit 1; }
+.PHONY: usb64 chiave64 usb-caricatori
+usb-caricatori:
 	$(usb_caricatori)
-	@EXOS_ARCH=x86_64 $(TOOLS_DIR)/mkchiave.sh
+
+chiave64: usb64
+# ! DAL 14 OTTOBRE 2026 `make usb64` RICOSTRUISCE da se' kernel e programmi
+# a 64 bit (make iso64) prima di comporre il dischetto: l'immagine e' sempre
+# nuova. iso64 prende i file di dati da build/iso-exos: se manca, si fa prima.
+# ! SOTTO sudo LA COSTRUZIONE GIRA COME L'UTENTE (COME_UTENTE), e solo la
+# scrittura sulla chiavetta come root: `sudo make usb64 DISPOSITIVO=...`
+# lasciava in build-64/ file di root, e la costruzione dopo, senza sudo, non
+# poteva piu' riscriverli (14 ottobre 2026).
+COME_UTENTE = $(if $(SUDO_USER),sudo -u $(SUDO_USER) -H env PATH="$(PATH)")
+usb64:
+	@[ -d build/iso-exos ] || $(COME_UTENTE) $(MAKE) --no-print-directory iso-exos
+	@echo "=== make usb64: ricostruisco kernel e programmi a 64 bit ==="
+	@$(COME_UTENTE) $(MAKE) --no-print-directory iso64
+	@$(COME_UTENTE) $(MAKE) --no-print-directory usb-caricatori
+	@$(COME_UTENTE) env EXOS_ARCH=x86_64 $(TOOLS_DIR)/mkchiave.sh
 	@if [ -n "$(DISPOSITIVO)" ]; then \
 	    EXOS_ARCH=x86_64 EXOS_USB_IMMAGINE=dist/exos64-usb.img $(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)"; \
 	else \
@@ -188,16 +205,15 @@ netinst64: iso64
 	    echo "! dist/netinst_64 c'e', ma NON e' da pubblicare:"; \
 	    echo "  $$(cat build-64/NON-ANCORA-UN-SISTEMA.txt)"; }
 
-# ! tools64 SI FERMA E DICE PERCHE', invece di fare un CD vuoto con un nome
-# che promette un compilatore. Gli strumenti a 64 bit sono gcc, as, ld, make
-# ricompilati PER EX-OS a 64 bit: vogliono la libc a 64 bit (tappa 4) e un
-# compilatore incrociato x86_64-exos (tappa 7).
+# tools64: the native gcc, g++, binutils, make and nasm for EX-OS 64-bit, on
+# dist/exos64-tools.iso with the layout of the 32-bit tools CD (toolinst
+# installs it). They are built by tools/gcc-exos/cross64.sh - more than an
+# hour, so this target does not start it: it says so if they are missing.
 tools64:
-	@echo "tools64: gli strumenti a 64 bit non ci sono ancora."
-	@echo "         Vogliono la libc a 64 bit (tappa 4 di @EXOS-64) e il compilatore"
-	@echo "         incrociato x86_64-exos (tappa 7). Fino ad allora non c'e' niente"
-	@echo "         da mettere su quel CD."
-	@exit 1
+	@chmod +x $(TOOLS_DIR)/mktools64.sh
+	@$(TOOLS_DIR)/mktools64.sh || { \
+	    echo "tools64: build the toolchain first:"; \
+	    echo "    nohup tools/gcc-exos/cross64.sh > cross_build/cross64.log 2>&1 &"; exit 1; }
 
 # --- @EXOS-64, tappa 1: il kernel arriva in modo a 64 bit --------------------
 #
@@ -380,9 +396,9 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := wifid prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exilla
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -392,7 +408,7 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exht
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
 DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv nforce.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
@@ -1352,6 +1368,43 @@ $(MAPPA_OUT): $(MAPPA_SRC) $(MAPPA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) 
 
 .PHONY: mappa_drv
 mappa_drv: dirs $(MAPPA_OUT)
+
+# --- Three programs born for the 64-bit work, built at 32 bit too ------------
+# (2026-10-14) `make verifica-programmi` wants every source in bin/ and
+# drivers/ to produce something, and that is right: a program that exists in
+# one architecture only is a program nobody remembers to build. They use the
+# generic link script, lib/programma.ld.
+#   /bin/prova64    the libc self-test (bin/prova64): says the same at 32 bit
+#   /bin/sha256sum  the SHA-256 of files, in the format of GNU coreutils
+#   /dev/fetta.drv  a block device that is a slice of another one
+PROVA64_BIN   := $(BUILD_BIN_CD)/prova64
+SHA256SUM_BIN := $(BUILD_BIN_CD)/sha256sum
+FETTA_OUT     := $(BUILD_DRIVERS_CD)/fetta.drv
+
+# The fourth argument, when given, is "statica": the libc is compiled into
+# the program instead of reached through libc.so. prova64 needs it, because
+# signals live only in the static libc (see the signals section of
+# lib/libc.c) and that is half of what it tests.
+define PROGRAMMA_GENERICO_32
+$(1): $(2) lib/programma.ld $$(LIBC_HDR) $$(LIBC_SRC) $$(LIBC_PONTI_OBJ) $$(LIBC_SO) $$(LIBC_START) $$(SEGNO_FLAG)
+	@echo "=== Compilazione $$@ ==="
+	@mkdir -p $$(dir $(1)) $$(BUILD_OBJ)
+	$$(CC) $$(CFLAGS_USER) -I lib/include -I $$(dir $(2)) -c $(2) -o $$(BUILD_OBJ)/$(3)_main.o
+	$$(CC) -m32 -c $$(LIBC_START) -o $$(BUILD_OBJ)/$(3)_start.o
+	$(if $(4),$$(CC) $$(CFLAGS_USER) -c $$(LIBC_SRC) -o $$(BUILD_OBJ)/$(3)_libc.o)
+	$$(LD) -m $$(CROSS_LD_EMU) -nostdlib --gc-sections -T lib/programma.ld \
+	    $$(BUILD_OBJ)/$(3)_start.o $$(BUILD_OBJ)/$(3)_main.o \
+	    $(if $(4),$$(BUILD_OBJ)/$(3)_libc.o,$$(LIBC_PONTI_OBJ)) -o $$@
+	@echo "[OK] $$@"
+endef
+$(eval $(call PROGRAMMA_GENERICO_32,$(PROVA64_BIN),bin/prova64/prova64.c,prova64,statica))
+$(eval $(call PROGRAMMA_GENERICO_32,$(SHA256SUM_BIN),bin/sha256sum/sha256sum.c,sha256sum))
+$(eval $(call PROGRAMMA_GENERICO_32,$(FETTA_OUT),drivers/fetta/fetta.c,fetta))
+
+.PHONY: prova64 sha256sum fetta_drv
+prova64:   dirs $(PROVA64_BIN)
+sha256sum: dirs $(SHA256SUM_BIN)
+fetta_drv: dirs $(FETTA_OUT)
 
 # --- /dev/ramdisk.drv: un disco a blocchi tenuto in memoria ------------------
 #
@@ -2599,11 +2652,11 @@ PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
 
 $(PM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXDLG_STUB) $(EXSUONO_STUB) $(EXSUONO_HDR) $(EXLIB_SRC) $(EXLIB_HDR) \
-           $(EXWIN_HDR) $(WIN_PROTO) \
+           $(EXWIN_HDR) $(WIN_PROTO) drivers/net/wifid_proto.h drivers/net/wifi_proto.h \
            $(FONT_SRC) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/pm ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exsuono -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exsuono -I drivers/wserver -I drivers/kbd -I drivers/net -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/pm_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/pm_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/pm_info.o
@@ -2853,6 +2906,28 @@ $(EXVOLUME_BIN): $(EXVOLUME_SRC) $(EXVOLUME_LD) $(EXSUONO_STUB) $(EXSUONO_HDR) $
 
 .PHONY: exvolume
 exvolume: dirs $(EXVOLUME_BIN)
+
+# --- /exwin/bin/exwifi: the WiFi panel (@WIFI, 2026-10-14) ---------------------
+# Opened by the WiFi icon of the bar, like exvolume.
+EXWIFI_SRC := exwin/bin/exwifi/exwifi.c
+EXWIFI_BIN := $(BUILD_EXWIN_BIN)/exwifi
+
+$(EXWIFI_BIN): $(EXWIFI_SRC) lib/programma.ld $(WIFI_PROTO) $(WIFI_LIB) \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/exwifi ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -I drivers/net -c $(EXWIFI_SRC) -o $(BUILD_OBJ)/exwifi_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(WIFI_LIB) -o $(BUILD_OBJ)/exwifi_nomi.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/exwifi_exwin.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/exwifi_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T lib/programma.ld \
+	    $(BUILD_OBJ)/exwifi_start.o $(BUILD_OBJ)/exwifi_main.o $(BUILD_OBJ)/exwifi_nomi.o \
+	    $(BUILD_OBJ)/exwifi_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exwifi compilato: $@"
+
+.PHONY: exwifi
+exwifi: dirs $(EXWIFI_BIN)
 
 # --- exilla: il lanciatore di Exilla, Firefox per EX-OS -----------------------
 #
@@ -3162,7 +3237,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
              $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
-             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(GIOCHI_BIN) \
+             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(EXWIFI_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) $(EXSUONO_SO) \
              $(EXTTF_SO) \
@@ -3909,7 +3984,7 @@ nettest: dirs $(NETTEST_BIN)
 WIFI_SRC := bin/wifi/wifi.c
 WIFI_BIN := $(BUILD_BIN_CD)/wifi
 WIFI_LD  := bin/wifi/wifi.ld
-WIFI_PROTO := drivers/net/wifi_proto.h
+WIFI_PROTO := drivers/net/wifi_proto.h drivers/net/wifid_proto.h
 WIFI_LIB   := lib/wifi.c
 
 $(WIFI_BIN): $(WIFI_SRC) $(WIFI_LD) $(WIFI_PROTO) $(WIFI_LIB) \
@@ -3929,6 +4004,53 @@ $(WIFI_BIN): $(WIFI_SRC) $(WIFI_LD) $(WIFI_PROTO) $(WIFI_LIB) \
 
 .PHONY: wifi
 wifi: dirs $(WIFI_BIN)
+
+# --- @WIFI (2026-10-14): wifid, the simulated card, the desktop panel ---------
+# wifid keeps the saved networks encrypted (AES-GCM) and derives the WPA key
+# (PBKDF2-SHA1): lib/excrypt goes in, as in the programs that do TLS.
+WIFID_SRC := bin/wifid/wifid.c
+WIFID_BIN := $(BUILD_BIN_CD)/wifid
+WIFI_CRYPT := lib/excrypt/aes.c lib/excrypt/gcm.c lib/excrypt/sha1.c
+
+# The libc is compiled in (static), not reached through libc.so: wifid stops
+# a stale `dhcp &` with kill(), and signals live only in the static libc.
+$(WIFID_BIN): $(WIFID_SRC) $(WIFI_PROTO) $(WIFI_LIB) $(WIFI_CRYPT) lib/programma.ld \
+              $(LIBC_HDR) $(LIBC_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/wifid ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I lib/excrypt -c $(WIFID_SRC) -o $(BUILD_OBJ)/wifid_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(WIFI_LIB) -o $(BUILD_OBJ)/wifid_nomi.o
+	for f in $(WIFI_CRYPT); do $(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c $$f -o $(BUILD_OBJ)/wifid_$$(basename $$f .c).o || exit 1; done
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/wifid_start.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_OBJ)/wifid_libc.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T lib/programma.ld \
+	    $(BUILD_OBJ)/wifid_start.o $(BUILD_OBJ)/wifid_main.o $(BUILD_OBJ)/wifid_nomi.o \
+	    $(BUILD_OBJ)/wifid_aes.o $(BUILD_OBJ)/wifid_gcm.o $(BUILD_OBJ)/wifid_sha1.o \
+	    $(BUILD_OBJ)/wifid_libc.o -o $@
+	@echo "[OK] wifid compilato: $@"
+
+.PHONY: wifid
+wifid: dirs $(WIFID_BIN)
+
+# The simulated WiFi card for tests (drivers/wifisim): not started by anything.
+WIFISIM_SRC := drivers/wifisim/wifisim.c
+WIFISIM_OUT := $(BUILD_DRIVERS_CD)/wifisim.drv
+
+$(WIFISIM_OUT): $(WIFISIM_SRC) $(WIFI_PROTO) $(WIFI_LIB) lib/excrypt/sha1.c lib/programma.ld \
+                $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione wifisim.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I lib/excrypt -c $(WIFISIM_SRC) -o $(BUILD_OBJ)/wifisim_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(WIFI_LIB) -o $(BUILD_OBJ)/wifisim_nomi.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c lib/excrypt/sha1.c -o $(BUILD_OBJ)/wifisim_sha1.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/wifisim_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T lib/programma.ld \
+	    $(BUILD_OBJ)/wifisim_start.o $(BUILD_OBJ)/wifisim_main.o $(BUILD_OBJ)/wifisim_nomi.o \
+	    $(BUILD_OBJ)/wifisim_sha1.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] wifisim.drv compilato: $@"
+
+.PHONY: wifisim_drv
+wifisim_drv: dirs $(WIFISIM_OUT)
 
 # --- /bin/ping e /bin/ipcfg (solo CD) -----------------------------------------
 # Client sottili dello stack IP: non conoscono ICMP ne' ARP, mandano un
@@ -5302,6 +5424,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/loader/dynlink.c \
                   $(KERNEL_DIR)/loader/drvmgr.c \
                   $(KERNEL_DIR)/arch/x86/power.c \
+                  $(KERNEL_DIR)/arch/x86/acpi.c \
                   $(KERNEL_DIR)/version.c \
                   $(KERNEL_DIR)/kernel_main.c
 
@@ -5680,7 +5803,7 @@ SONDA_CONTENUTO := $(STAGE1_BIN) $(STAGE2_BIN) $(SONDA_OUT) \
     $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) \
     $(PING_BIN) $(DHCP_BIN) $(HOST_BIN) $(AUDIO_BIN) $(TELNETD_BIN) \
     $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) $(XHCI_OUT) \
-    $(EHCI_OUT) $(OHCI_OUT) $(SIS_OUT) $(MAPPA_OUT) \
+    $(EHCI_OUT) $(OHCI_OUT) $(SIS_OUT) $(MAPPA_OUT) $(FETTA_OUT) \
     $(SIS900_DRV_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) $(E1000_DRV_OUT) \
     $(NFORCE_DRV_OUT) \
     $(IP_DRV_OUT) $(AC97_DRV_OUT) $(CARDBUS_DRV_OUT)
@@ -7578,7 +7701,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # c'era perche' un elenco lungo scritto a mano e' il posto dove le cose si
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
-BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
+BINARI_SOLO_CD := $(WIFID_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
@@ -7607,7 +7730,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
 # finisca su un'immagine, cioe' la PRESENZA. Qui mancava la DIPENDENZA, e le
 # due cose si somigliano abbastanza da far credere di essere coperti.
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
-DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
+DRIVER_SOLO_CD_OUT := $(WIFISIM_OUT) $(FETTA_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
                       $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(RTL8169_DRV_OUT) \
                       $(IP_DRV_OUT) \
@@ -7975,14 +8098,18 @@ $(HD_IMG):
 # ! DAL 10 OTTOBRE 2026 `make usb` NON FA PIU' IL DISCO INSTALLATO descritto
 # qui sopra, ma il dischetto da 2,88 MB in RAM (vedi in cima al file, accanto
 # a usb64): quella chiavetta-disco su una macchina vera non trova la radice.
-# Il contenuto e' quello di dist/installa.img, che deve esserci gia':
-# `make installa` non si lancia da qui perche' riassembla Stage 2 e il kernel
-# dentro build/, e non e' una cosa da fare di nascosto.
+# Il contenuto e' quello di dist/installa.img.
+# ! DAL 14 OTTOBRE 2026 (l'utente: «ne crea una nuova che carica in
+# ramdrive») `make usb` RIFA' dist/installa.img da se', ogni volta, invece di
+# prendere quella che c'era. `make installa` riassembla Stage 2 e il kernel in
+# build/ con RAMDISCO=1, e lo si dice: la costruzione successiva lo nota dal
+# segno .ramdisco-N (STAGE2_RD_SEGNO) e li riassembla da sola.
 .PHONY: usb
 usb:
-	@[ -f $(INSTALLA_IMG) ] || { echo "manca $(INSTALLA_IMG): prima 'make installa'"; exit 1; }
-	$(usb_caricatori)
-	@EXOS_ARCH=i386 $(TOOLS_DIR)/mkchiave.sh
+	@echo "=== make usb: rifaccio dist/installa.img (Stage 2 e kernel con RAMDISCO=1) ==="
+	@$(COME_UTENTE) $(MAKE) --no-print-directory installa
+	@$(COME_UTENTE) $(MAKE) --no-print-directory usb-caricatori
+	@$(COME_UTENTE) env EXOS_ARCH=i386 $(TOOLS_DIR)/mkchiave.sh
 	@if [ -n "$(DISPOSITIVO)" ]; then \
 	    EXOS_USB_IMMAGINE=dist/exos-usb.img $(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)"; \
 	else \
@@ -8337,13 +8464,15 @@ help:
 	@echo "Altri supporti e pubblicazione:"
 	@echo "  make usb          — Chiavetta USB avviabile a 32 bit, dist/exos-usb.img:"
 	@echo "                      un dischetto da 2,88 MB caricato tutto in RAM"
-	@echo "                      (installazione minimale, rete, USB). Vuole 'make installa'"
-	@echo "  make usb64        — La stessa a 64 bit, dist/exos64-usb.img. Vuole 'make iso64'"
+	@echo "                      (installazione minimale, rete, USB). Rifa' da se' make installa"
+	@echo "  make usb64        — La stessa a 64 bit, dist/exos64-usb.img. Rifa' da se' make iso64"
 	@echo "  sudo make usb DISPOSITIVO=/dev/sdX      (oppure usb64)"
 	@echo "                    — La scrive sulla chiavetta (LA CANCELLA: chiede conferma)"
 	@echo "  make iso64        — Il CD del sistema a 64 bit, dist/exos64.iso"
 	@echo "  make netinst64    — Il repository a 64 bit per netupdate, dist/netinst_64"
-	@echo "  make tools64      — Il CD degli strumenti a 64 bit (non ci sono ancora)"
+	@echo "  make tools64      — Il CD degli strumenti a 64 bit, dist/exos64-tools.iso"
+	@echo "                      (gcc, g++, binutils, make, nasm). Vuole il compilatore"
+	@echo "                      incrociato: tools/gcc-exos/cross64.sh"
 	@echo "  make floppy-verboso"
 	@echo "                    — Floppy che mostra il log di avvio, dist/floppy-verboso.img"
 	@echo "  make diagnostic   — Floppy di diagnosi dist/diagnostic.img"
@@ -8351,6 +8480,17 @@ help:
 	@echo "  make netinst-img  — Il floppy della rete dist/netinst.img (non avviabile)"
 	@echo "  ./exagonx/repo-update.sh"
 	@echo "                    — Costruisce, compone netinst, pubblica e verifica"
+	@echo ""
+	@echo "In che ordine (non esiste 'make installa64': a 64 bit basta iso64):"
+	@echo "  chiavette:            make usb   /   make usb64"
+	@echo "                        (ognuna RIFA' da se' tutto quello che serve - make"
+	@echo "                        installa, make iso64 - e crea un'immagine nuova)"
+	@echo "  LE DUE CHIAVETTE (usb, usb64) SONO UN DISCHETTO DA 2,88 MB CARICATO"
+	@echo "  TUTTO IN RAM: dopo l'avvio non si legge piu' niente dall'USB."
+	@echo "  64 bit, repository:   make iso-exos  ->  make tools64  ->  make netinst64"
+	@echo "                        (netinst64 rifa' da se' iso64)"
+	@echo "                        ->  ./exagonx/repo-update.sh -64"
+	@echo "  poi, per scriverla:   sudo make usb64 DISPOSITIVO=/dev/sdX"
 	@echo ""
 	@echo "Test e debug:"
 	@echo "  make run          — Avvia con QEMU"

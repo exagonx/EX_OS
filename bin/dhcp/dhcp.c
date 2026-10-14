@@ -65,7 +65,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `dhcp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("dhcp", "0.002");
+EX_VERSIONE("dhcp", "0.003");
 
 /* Porte fissate dalla specifica: non si scelgono. */
 #define PORTA_CLIENT   68
@@ -533,6 +533,17 @@ static void sorveglia(const unsigned char *server, IpConfig *attuale)
     }
 }
 
+static int g_pid_ip_uscita = 0;
+
+static void porta_rendi(void)
+{
+    IpUdpApri a;
+
+    if (g_pid_ip_uscita <= 0) return;
+    a.porta = PORTA_CLIENT;
+    ipc_send((unsigned int)g_pid_ip_uscita, IP_MSG_UDP_CHIUDI, &a, sizeof(a));
+}
+
 int main(int argc, char **argv)
 {
     unsigned char risposta[600];
@@ -591,6 +602,10 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    /* (0.003) the port is given back at exit, on every path: a second dhcp
+     * found it taken for good (see udp_apri in drivers/ip/ip.c) */
+    g_pid_ip_uscita = pid_ip;
+    atexit(porta_rendi);
 
     /* Indirizzo a zero: vedi il commento di testa. */
     memset(&vuota, 0, sizeof(vuota));

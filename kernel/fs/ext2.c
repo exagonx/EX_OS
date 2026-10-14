@@ -82,6 +82,58 @@
 #define INCOMPAT_FILETYPE   0x0002u
 #define INCOMPAT_NOTI       INCOMPAT_FILETYPE
 
+/* =============================================================================
+ * EXT3 AND EXT4, READ ONLY (@EXT4-MODULO step 1, 2026-10-14)
+ *
+ * ext4 is backward compatible: a driver that reads ext4 also reads ext2 and
+ * ext3, so this file grows instead of getting a twin. What a volume made by
+ * Linux today needs, for READING:
+ *   - EXTENTS: a file's blocks are runs (start, length) in a small tree
+ *     whose root sits where i_block used to hold the pointers (extent_map);
+ *   - 64BIT: group descriptors are s_desc_size bytes, not 32;
+ *   - FLEX_BG: bitmaps and inode tables are elsewhere, but the descriptors
+ *     say where, and that is all reading uses;
+ *   - large inodes (256 bytes) were already handled;
+ *   - indexed directories (dir_index) are read linearly: the index lives
+ *     inside entries whose inode is 0 or whose length covers it, so a
+ *     plain scan skips it. Same for the checksum tail of each block.
+ *   - the journal (ext3) is ignored. A volume marked RECOVER was not
+ *     unmounted cleanly: what is in the journal is not replayed, so the
+ *     newest changes may be missing, and the log says so.
+ *
+ * ! ANY OF THESE MAKES THE MOUNT READ-ONLY. Writing ext4 means extent
+ * allocation and metadata checksums, writing ext3 means the journal; the
+ * plan is to do that in a module loaded after boot, not here (@EXT4-MODULO
+ * steps 2-4). A volume that is plain ext2 keeps being written as today.
+ *
+ * Still refused: COMPRESSION, JOURNAL_DEV (that is a journal, not a file
+ * system), META_BG (descriptors scattered over the disk), ENCRYPT, and any
+ * bit this list does not know. INLINE_DATA is accepted at mount, and a file
+ * whose data is inside its inode is refused when read, with a message.
+ * ============================================================================= */
+#define INCOMPAT_RECOVER    0x0004u
+#define INCOMPAT_EXTENTS    0x0040u
+#define INCOMPAT_64BIT      0x0080u
+#define INCOMPAT_MMP        0x0100u
+#define INCOMPAT_FLEX_BG    0x0200u
+#define INCOMPAT_EA_INODE   0x0400u
+#define INCOMPAT_CSUM_SEED  0x2000u
+#define INCOMPAT_LARGEDIR   0x4000u
+#define INCOMPAT_INLINE     0x8000u
+#define INCOMPAT_LETTURA    (INCOMPAT_FILETYPE | INCOMPAT_RECOVER | INCOMPAT_EXTENTS | \
+                             INCOMPAT_64BIT | INCOMPAT_MMP | INCOMPAT_FLEX_BG |       \
+                             INCOMPAT_EA_INODE | INCOMPAT_CSUM_SEED | INCOMPAT_LARGEDIR | \
+                             INCOMPAT_INLINE)
+
+#define COMPAT_HAS_JOURNAL  0x0004u
+#define RO_COMPAT_SPARSE    0x0001u
+#define RO_COMPAT_LARGEFILE 0x0002u
+#define RO_COMPAT_SCRITTURA (RO_COMPAT_SPARSE | RO_COMPAT_LARGEFILE)  /* what ext2 writing knows */
+
+#define INODE_FL_EXTENTS    0x00080000u     /* i_flags: i_block is an extent tree */
+#define INODE_FL_INLINE     0x10000000u     /* i_flags: the data is in the inode */
+#define EXTENT_MAGIC        0xF30Au
+
 /* i_mode: i quattro bit alti sono il tipo */
 #define MODE_TIPO           0xF000u
 #define MODE_DIR            0x4000u
@@ -135,6 +187,8 @@ typedef struct {
     uint32_t primo_inode;          /* s_first_ino: sotto sono riservati */
     uint32_t punt_per_blocco;      /* dim_blocco / 4 */
     uint32_t gdt_primo;            /* primo blocco della tabella descrittori */
+    uint32_t dim_desc;             /* bytes per group descriptor: 32, or s_desc_size (64BIT) */
+    uint8_t  sola_lettura;         /* ext3/ext4 features present: see EXT3 AND EXT4 above */
 
     char     etichetta[17];
 } Ext2Mount;
@@ -168,6 +222,7 @@ static Ext2Mount g_mnt[EXT2_MAX_MOUNT];
 static uint8_t  b_dati[BLOCCO_MAX];     /* dati di file, o blocco di directory */
 static uint8_t  b_ind [BLOCCO_MAX];     /* blocco di puntatori */
 static uint8_t  b_ino [BLOCCO_MAX];     /* blocco della tabella degli inode */
+static uint8_t  b_ext [BLOCCO_MAX];     /* a block of the extent tree (ext4) */
 static uint8_t  b_bmp [BLOCCO_MAX];     /* bitmap di blocchi o di inode */
 static uint8_t  b_desc[BLOCCO_MAX];     /* tabella dei descrittori di gruppo */
 
@@ -236,6 +291,20 @@ static Ext2Mount *prendi(int mnt)
     if (mnt < 0 || mnt >= EXT2_MAX_MOUNT) return NULL;
     if (!g_mnt[mnt].usato) return NULL;
     return &g_mnt[mnt];
+}
+
+/* The mount, for an operation that WRITES: NULL also when the volume is
+ * read-only (ext3/ext4 features). The VFS already refuses with EROFS; this
+ * is the second lock, for any path that reaches the driver directly. */
+static Ext2Mount *prendi_scrivibile(int mnt)
+{
+    Ext2Mount *m = prendi(mnt);
+
+    if (m != NULL && m->sola_lettura) {
+        klog(LOG_WARN, "EXT2: write refused, the volume is read-only (ext3/ext4)");
+        return NULL;
+    }
+    return m;
 }
 
 /* =============================================================================
@@ -335,8 +404,8 @@ static int leggi_inode(Ext2Mount *m, uint32_t numero, uint8_t *dst)
     if (gruppo >= m->n_gruppi) return -1;
 
     /* Il descrittore del gruppo: 32 byte, nella tabella dei descrittori. */
-    desc_blk = m->gdt_primo + (gruppo * 32u) / m->dim_blocco;
-    desc_off = (gruppo * 32u) % m->dim_blocco;
+    desc_blk = m->gdt_primo + (gruppo * m->dim_desc) / m->dim_blocco;
+    desc_off = (gruppo * m->dim_desc) % m->dim_blocco;
 
     if (leggi_blocco(m, desc_blk, b_desc) != 0) return -1;
     itab = le32(b_desc + desc_off + 8);
@@ -356,11 +425,77 @@ static int leggi_inode(Ext2Mount *m, uint32_t numero, uint8_t *dst)
  * blocco 0 non e' un blocco ma significa "qui ci sono zeri". Chi chiama
  * deve riempire di zeri, non leggere il blocco 0 — che e' il record di
  * avvio del volume. */
+/* =============================================================================
+ * extent_map — logical block n of a file whose i_block is an extent tree
+ *
+ * The tree: a 12-byte header (magic 0xF30A, entries, max, depth) followed
+ * by 12-byte entries. At depth 0 the entries are LEAVES: first logical
+ * block, length, physical start (48 bits). Above, they are INDEX entries:
+ * first logical block and the physical block of the node below. At each
+ * level the entry that matters is the last one whose first block is <= n.
+ *
+ * Returns 0 for a hole, for an extent marked "uninitialized" (allocated
+ * but never written: it reads as zeros, length above 32768), and for
+ * anything that does not look like a tree - a damaged node must not send
+ * a read to a random place of the disk. A physical block above 4 G blocks
+ * is refused the same way: this driver counts blocks in 32 bits.
+ * ============================================================================= */
+static uint32_t extent_map(Ext2Mount *m, const uint8_t *inode, uint32_t n)
+{
+    const uint8_t *nodo = inode + 40u;          /* the root, inside i_block */
+    uint32_t       spazio = 60u;                /* bytes available to this node */
+    uint32_t       livelli = 0;
+
+    for (;;) {
+        uint32_t voci, prof, i, scelta;
+
+        if (le16(nodo) != EXTENT_MAGIC) return 0;
+        voci = le16(nodo + 2);
+        prof = le16(nodo + 6);
+        if (voci == 0 || 12u + voci * 12u > spazio) return 0;
+
+        /* the last entry starting at or before n (entries are sorted) */
+        scelta = voci;
+        for (i = 0; i < voci; i++) {
+            if (le32(nodo + 12u + i * 12u) <= n) scelta = i;
+            else break;
+        }
+        if (scelta == voci) return 0;           /* n is before the first one: a hole */
+
+        {
+            const uint8_t *e = nodo + 12u + scelta * 12u;
+
+            if (prof == 0) {
+                uint32_t primo = le32(e);
+                uint32_t lung  = le16(e + 4);
+                uint32_t alto  = le16(e + 6);
+                uint32_t basso = le32(e + 8);
+
+                if (lung > 32768u) return 0;    /* uninitialized: zeros */
+                if (n - primo >= lung) return 0;
+                if (alto != 0) return 0;        /* beyond 32-bit block numbers */
+                return basso + (n - primo);
+            } else {
+                uint32_t foglia = le32(e + 4);
+                uint32_t alto   = le16(e + 8);
+
+                if (alto != 0 || foglia == 0) return 0;
+                if (++livelli > 5u) return 0;   /* ext4 trees are at most 5 deep */
+                if (leggi_blocco(m, foglia, b_ext) != 0) return 0;
+                nodo   = b_ext;
+                spazio = m->dim_blocco;
+            }
+        }
+    }
+}
+
 static uint32_t mappa_blocco(Ext2Mount *m, int mnt, const uint8_t *inode,
                              uint32_t n)
 {
     uint32_t ppb = m->punt_per_blocco;
     uint32_t p;
+
+    if (le32(inode + 32u) & INODE_FL_EXTENTS) return extent_map(m, inode, n);
 
     /* --- 12 blocchi diretti --- */
     if (n < 12u) return le32(inode + 40u + n * 4u);
@@ -433,8 +568,8 @@ static uint32_t mappa_blocco(Ext2Mount *m, int mnt, const uint8_t *inode,
 static int desc_carica(Ext2Mount *m, uint32_t g, uint32_t *off_out,
                        uint32_t *blk_out)
 {
-    uint32_t blk = m->gdt_primo + (g * 32u) / m->dim_blocco;
-    uint32_t off = (g * 32u) % m->dim_blocco;
+    uint32_t blk = m->gdt_primo + (g * m->dim_desc) / m->dim_blocco;
+    uint32_t off = (g * m->dim_desc) % m->dim_blocco;
 
     if (g >= m->n_gruppi) return -1;
     if (leggi_blocco(m, blk, b_desc) != 0) return -1;
@@ -1281,11 +1416,40 @@ int ext2_mount(int blkdev)
      * significato di campi che crediamo di saper leggere. Rifiutare e'
      * l'unica risposta corretta, e va DETTO quale bit ha fermato tutto,
      * altrimenti l'utente vede solo "non montabile". */
-    if (incompat & ~(uint32_t)INCOMPAT_NOTI) {
-        klog(LOG_ERROR, "EXT2: funzionalita' incompatibili 0x%x non gestite "
-                        "(ext3/ext4?): montaggio rifiutato",
-             incompat & ~(uint32_t)INCOMPAT_NOTI);
+    if (incompat & ~(uint32_t)INCOMPAT_LETTURA) {
+        klog(LOG_ERROR, "EXT2: incompatible features 0x%x not handled: mount refused",
+             incompat & ~(uint32_t)INCOMPAT_LETTURA);
         return -1;
+    }
+
+    /* 64BIT: descriptors of s_desc_size bytes, and block counts that may
+     * have a high half. A volume that needs it (above 16 TB with 4 KB
+     * blocks) is refused: this driver counts blocks in 32 bits. */
+    m->dim_desc = 32u;
+    if (incompat & INCOMPAT_64BIT) {
+        uint32_t dd = le16(sb + 254);
+
+        if (dd >= 64u && dd <= 1024u && (dd & (dd - 1u)) == 0) m->dim_desc = dd;
+        if (le32(sb + 0x150) != 0) {
+            klog(LOG_ERROR, "EXT2: more than 2^32 blocks: mount refused");
+            return -1;
+        }
+    }
+
+    {
+        uint32_t compat    = (rev >= 1u) ? le32(sb + 92)  : 0u;
+        uint32_t ro_compat = (rev >= 1u) ? le32(sb + 100) : 0u;
+
+        m->sola_lettura = (incompat & ~(uint32_t)INCOMPAT_NOTI) ||
+                          (ro_compat & ~(uint32_t)RO_COMPAT_SCRITTURA) ||
+                          (compat & COMPAT_HAS_JOURNAL);
+        if (m->sola_lettura)
+            klog(LOG_WARN, "EXT2: ext3/ext4 volume (compat 0x%x, incompat 0x%x, "
+                           "ro_compat 0x%x): mounted READ-ONLY",
+                 compat, incompat, ro_compat);
+        if (incompat & INCOMPAT_RECOVER)
+            klog(LOG_WARN, "EXT2: the volume was not unmounted cleanly and its "
+                           "journal is not replayed: the latest changes may be missing");
     }
 
     m->blkdev             = blkdev;
@@ -1339,6 +1503,14 @@ int ext2_mount(int blkdev)
          m->n_gruppi, m->etichetta);
 
     return slot;
+}
+
+/* 1 if the volume uses ext3/ext4 features this driver cannot write: the VFS
+ * mounts it read-only. */
+int ext2_sola_lettura(int mnt)
+{
+    Ext2Mount *m = prendi(mnt);
+    return m ? m->sola_lettura : 1;
 }
 
 int ext2_umount(int mnt)
@@ -1552,8 +1724,14 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
     ino = risolvi(m, mnt, percorso, inode);
     if (ino == 0) return -1;
     if ((le16(inode) & MODE_TIPO) != MODE_FILE) return -1;
+    if (le32(inode + 32u) & INODE_FL_INLINE) {
+        klog(LOG_WARN, "EXT2: '%s' keeps its data inside the inode (ext4 "
+                       "inline_data), which this driver does not read", percorso);
+        return -1;
+    }
 
     dim = le32(inode + 4);
+    if (le32(inode + 108u) != 0) dim = 0xFFFFFFFFu;  /* above 4 GB: the first 4 GB */
     if (offset >= dim) return 0;
     if (size > dim - offset) size = dim - offset;
 
@@ -1940,7 +2118,7 @@ static void inode_nuovo(uint8_t *inode, uint32_t modo, uint32_t link,
  * ============================================================================= */
 int ext2_chown(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     uint8_t    inode[128];
     uint32_t   ino;
 
@@ -1961,7 +2139,7 @@ int ext2_chown(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
  * file agli occhi di chiunque la legga dopo. */
 int ext2_chmod(int mnt, const char *percorso, uint32_t modo)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     uint8_t    inode[128];
     uint32_t   ino, vecchio;
 
@@ -1979,7 +2157,7 @@ int ext2_chmod(int mnt, const char *percorso, uint32_t modo)
 
 int ext2_create(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     char       padre[EXT2_PERCORSO_MAX];
     const char *nome;
     uint8_t    pino[128], nino[128];
@@ -2015,7 +2193,7 @@ int ext2_create(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 
 int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     char       padre[EXT2_PERCORSO_MAX];
     const char *nome;
     uint8_t    pino[128], nino[128];
@@ -2081,7 +2259,7 @@ int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 
 int ext2_unlink(int mnt, const char *percorso)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     char       padre[EXT2_PERCORSO_MAX];
     const char *nome;
     uint8_t    pino[128], vino[128];
@@ -2150,7 +2328,7 @@ int ext2_unlink(int mnt, const char *percorso)
  * ============================================================================= */
 int ext2_rename(int mnt, const char *da, const char *a)
 {
-    Ext2Mount  *m = prendi(mnt);
+    Ext2Mount  *m = prendi_scrivibile(mnt);
     char        pad_da[EXT2_PERCORSO_MAX], pad_a[EXT2_PERCORSO_MAX];
     const char *nom_da, *nom_a;
     uint8_t     pino[128], vino[128];
@@ -2190,7 +2368,7 @@ int ext2_rename(int mnt, const char *da, const char *a)
 
 int ext2_rmdir(int mnt, const char *percorso)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     char       padre[EXT2_PERCORSO_MAX];
     const char *nome;
     uint8_t    pino[128], dino[128];
@@ -2238,7 +2416,7 @@ int ext2_rmdir(int mnt, const char *percorso)
 int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
                uint32_t offset)
 {
-    Ext2Mount     *m = prendi(mnt);
+    Ext2Mount     *m = prendi_scrivibile(mnt);
     const uint8_t *src = (const uint8_t *)buf;
     uint8_t        inode[128];
     uint32_t       num, dim, scritti = 0, charge = 0, gruppo;
@@ -2371,7 +2549,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
 
 int ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim)
 {
-    Ext2Mount *m = prendi(mnt);
+    Ext2Mount *m = prendi_scrivibile(mnt);
     uint8_t    inode[128];
     uint32_t   num, dim, tenere, coda;
 

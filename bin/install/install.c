@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.006");
+EX_VERSIONE("install", "0.007");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -1424,11 +1424,25 @@ static int cfg_suggerisci(const char *nuovo, const char *vecchio)
  * come questa e' partita.
  * ============================================================================= */
 static int g_ahci_va = 0;       /* 1 = su questa macchina il disco lavora in AHCI */
+static int g_ahci_chiesto = 0;  /* -ahci: il passaggio l'ha chiesto chi installa */
 
+/* ! DAL 14 OTTOBRE 2026 IL PASSAGGIO SI FA SOLO CON -ahci. Fatto da solo,
+ * sul portatile dell'utente (NVIDIA MCP77) ha bloccato l'installazione; sul
+ * PC MCP73 il 9 ottobre aveva dato letture corrotte. Il passaggio all'AHCI
+ * non e' mai stato visto funzionare su una macchina vera: finche' non lo e',
+ * il disco resta come il kernel l'ha trovato (PIO, lento ma provato), e chi
+ * vuole provarlo lo chiede. */
 static void disco_in_ahci(void)
 {
     int s = ahci_stato();
 
+    if (s == 1 && !g_ahci_chiesto) {
+        printf("\nDisco\n");
+        printf("  il controller sa anche l'AHCI, ma resto com'e': il passaggio non e'\n");
+        printf("  ancora provato su una macchina vera (install -ahci per chiederlo)\n");
+        g_ahci_va = 0;
+        return;
+    }
     if (s == 1) {
         printf("\nDisco\n");
         printf("  il controller del disco sa parlare AHCI: ci passo adesso\n");
@@ -1817,8 +1831,10 @@ int main(int argc, char **argv)
      * Adesso qui si controlla solo che ci sia ALMENO un argomento: quanti
      * sono e se hanno senso lo decide il ciclo, che e' l'unico a saperlo. */
     if (argc < 2) {
-        printf("uso: install [-a|-m|-t] [-senza-conti] <punto di montaggio>\n");
+        printf("uso: install [-a|-m|-t] [-senza-conti] [-ahci] <punto di montaggio>\n");
         printf("     install -tools [opzioni] [punto di montaggio]\n\n");
+        printf("Con -ahci: passa il disco all'AHCI prima di copiare, se il\n");
+        printf("controller lo sa fare. NON PROVATO su macchine vere.\n\n");
         printf("Senza -a: installazione completa, riscrive tutto.\n");
         printf("Con  -a: aggiorna solo i file cambiati, e prima li elenca.\n");
         printf("Con  -m: sistema MINIMALE, nessun componente, non chiede.\n");
@@ -1862,6 +1878,7 @@ int main(int argc, char **argv)
 
         while (a < argc && argv[a][0] == '-') {
             if      (strcmp(argv[a], "-senza-conti") == 0) senza_conti = 1;
+            else if (strcmp(argv[a], "-ahci") == 0) g_ahci_chiesto = 1;
             else if (strcmp(argv[a], "-a") == 0) aggiorna  = 1;
             else if (strcmp(argv[a], "-m") == 0) modo_comp = 1;
             else if (strcmp(argv[a], "-t") == 0) modo_comp = 2;

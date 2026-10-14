@@ -102,7 +102,14 @@ static int registra_partizioni(int d, const AtaDevice *a)
     BlkDev           *b;
     int               p, n = 0;
 
-    if (mbr_leggi(d, &tab) != 0) return 0;
+    /* ! NOT IN SILENCE (14 October 2026): a table that cannot be read left
+     * the disk without partitions and nothing in the log said so - the
+     * installed system then "had no root". One retry, then a line. */
+    if (mbr_leggi(d, &tab) != 0 && mbr_leggi(d, &tab) != 0) {
+        klog(LOG_ERROR, "BLK: hd%d: la tabella delle partizioni non si legge: "
+                        "il disco resta senza partizioni", d);
+        return 0;
+    }
 
     /* Un disco GPT non ha partizioni MBR utilizzabili: registrare
      * finestre ricavate dall'MBR protettivo significherebbe offrire

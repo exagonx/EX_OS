@@ -685,6 +685,18 @@ int ata_attendi_drq_muto(int canale, uint32_t timeout_ms, uint8_t *stato_out)
 
         if (st == 0xFF) return -1;
 
+        /* ! WHILE BSY IS SET THE OTHER STATUS BITS MEAN NOTHING (ATA spec),
+         * and they are not always zero: on the user's MCP77 laptop the status
+         * read 0xd1 - BSY with an ERR left over from the READ NATIVE MAX the
+         * disk had just refused (error 0x04). Looking at ERR first, the next
+         * command - the boot-time read of the partition table - "failed" at
+         * its first status read, the disk was registered with no partitions
+         * and a system installed on it found no root (14 October 2026). */
+        if (st & ATA_SR_BSY) {
+            if (g_ticks >= scad) return -1;
+            continue;
+        }
+
         /* ERR e DF vanno controllati PRIMA di DRQ: un comando fallito
          * puo' non alzare mai DRQ, e aspettarlo significherebbe restare
          * fino al timeout invece di riportare subito l'errore vero. */

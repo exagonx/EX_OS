@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.248
+**Versione:** 0.252
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -12,8 +12,8 @@
 > scrivania, compilatori, navigatore. Quella a 64 bit (`make iso64`,
 > `make usb64`, `make netinst64`) è più giovane: gli stessi sorgenti del
 > kernel, la libc, 82 comandi, 27 driver e la scrivania ExWin girano a 64 bit,
-> si installa su disco e si aggiorna dal suo repository (`netinst_64`); non ha
-> i compilatori né Exilla, usa un processore solo, ed è stata provata in QEMU
+> si installa su disco e si aggiorna dal suo repository (`netinst_64`), con
+> GCC, G++, make e NASM (`make tools64`); non ha Exilla, usa un processore solo, ed è stata provata in QEMU
 > e avviata su un PC vero, non installata lì. Vedi «Le fondamenta per i 64
 > bit» più sotto.
 
@@ -111,6 +111,83 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Librerie: un caricatore dinamico vero, OpenSSL a 64 bit, iconv
+
+- **`dlopen` carica le librerie condivise ELF normali** (`lib/libc_dl.c`,
+  libc statica), a 32 e a 64 bit: le librerie che servono (DT_NEEDED, cercate
+  in `LD_LIBRARY_PATH`, DT_RUNPATH con `$ORIGIN`, `/lib`, `/exos/lib`...),
+  tutte le rilocazioni di una libreria PIC, costruttori e distruttori,
+  variabili `__thread` (un blocco per filo), `dlclose` che smappa, `dladdr`.
+  I programmi di EX-OS sono statici e non tengono una tabella dei simboli,
+  quindi la libc ne porta una sua: `lib/libc_esportati.h`, scritta da
+  `tools/libc-esportati.py`, da' a una libreria ogni funzione della libc del
+  programma che l'ha aperta; resta fuori dai programmi che non chiamano
+  `dlopen`. I compilatori incrociati ora accettano `gcc -fPIC -shared`
+  (`tools/gcc-exos/specs-condivise.sh`). `tools/prova-dl/prova-dl.sh`: 14 su
+  14 dentro EX-OS, a 64 e a 32 bit. Non gestiti: il modello TLS initial-exec
+  in una libreria (rifiutato con un messaggio) e il collegamento pigro (tutto
+  si collega al caricamento). E' il primo pezzo che serve a un `rustc` nativo
+  (le macro procedurali sono librerie condivise).
+- **QuickJS a 64 bit**, grazie a questo: come a 32 bit i due motori
+  JavaScript sono librerie, `/exwin/lib/exjs.so` e `/exwin/lib/quickjs.so`,
+  ora oggetti ELF normali che lo stub di ExJs apre con `dlopen`
+  (`tools/costruisci-utente64.sh`, passo 6). `tools/prova-dl/prova-js.sh`
+  esegue lo stesso script con i due dentro EX-OS 64 e ottiene la stessa
+  risposta. Non ancora provato nel navigatore a 64 bit.
+- **OpenSSL a 64 bit**: `EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh`.
+  Dentro EX-OS 64 `provatls www.example.com` fa una stretta di mano TLS 1.3
+  sulla rete di EX-OS, verifica il certificato e legge la pagina. libcrypto,
+  libssl, gli header e il magazzino delle CA sono su `dist/exos64-tools.iso` e
+  in `netinst_64`.
+- **`iconv`** nella libc statica: UTF-8/16/32, ASCII, Latin-1, Latin-9,
+  Windows-1252, CP437, con `//TRANSLIT` e `//IGNORE`.
+
+### WiFi: il comando `wifi` e l'icona accanto all'orologio (kernel 0.250)
+
+Il gestore della connessione e le sue due facce, a 32 e a 64 bit:
+
+- **`wifid`** (`bin/wifid`) e' l'unico processo che decide a quale rete si
+  aggancia la radio. Tiene le reti salvate, si collega all'avvio e di nuovo
+  dopo una caduta (la rete salvata piu' forte, o quella segnata come
+  predefinita), da' l'indirizzo a `ip.drv` (DHCP o statico, rete per rete) e,
+  quando la radio cade, riporta l'uscita sulla scheda Ethernet. Le password
+  non si conservano: tiene la chiave che ne deriva (PBKDF2), cifrata con
+  AES-256-GCM, un file di chiave per utente (`/cfg/wifi/root.*` per root,
+  `~/.exwin/config/wifi.*` per un utente).
+- **`wifi`** (`bin/wifi`): senza argomenti mostra lo stato, il segnale e la
+  velocita'; `wifi -config` apre un menu (reti che si sentono, rete nascosta
+  con tutti i campi, reti salvate, disconnetti, collegamento all'avvio);
+  `-showlist`, `-connect:SSID [-save] [-default]`, `-disconnect`,
+  `-forget:SSID`, `-default:SSID`, `-boot:on|off` fanno lo stesso da uno script.
+- **La scrivania**: un'icona accanto al volume, grigia con una X quando non
+  e' collegata, verde con le barre del segnale quando lo e'; un clic apre il
+  pannello (`exwin/bin/exwifi`) con l'elenco, il modulo (SSID, nascosta,
+  sicurezza, password, salva, predefinita, IP DHCP o statico) e
+  Disconnetti / Predefinita / Dimentica. Ogni cambiamento mostra un avviso
+  accanto all'icona che se ne va da solo.
+- **Chi cambia che cosa**: root puo' collegarsi all'avvio, prima di qualunque
+  login (`wifi -boot:on`); ogni utente usa poi quella connessione, e la
+  cambia solo root. Se root non l'ha accesa, ogni utente avvia e gestisce la
+  propria. Per sapere chi chiede, il kernel 0.250 aggiunge `proc_uid()`,
+  l'uid di un altro processo (un messaggio IPC non lo porta).
+- `ip.drv` 0.011 passa a un'altra scheda mentre gira (`IP_MSG_LINK`), e
+  `dhcp` 0.003 restituisce la sua porta all'uscita (un secondo `dhcp`
+  falliva). La shell tiene 16 lavori in background invece di 8: uno script
+  d'avvio con rete, USB, telnetd e `wifid` ne lancia nove.
+
+**Nessuna scheda WiFi vera ha ancora un driver.** Tutto quanto sopra e' stato
+provato in QEMU, a 32 e a 64 bit, con `wifisim.drv`, una scheda simulata con
+cinque reti (WPA2, aperta, WEP, nascosta) che porta i pacchetti sulla scheda
+Ethernet: elenco, password sbagliata rifiutata, WPA2 con DHCP e con indirizzo
+statico, rete nascosta, una caduta e il ricollegamento, predefinita e
+dimentica, collegamento all'avvio prima del login, un utente rifiutato quando
+cambia la rete di root, l'icona e il pannello. La sicurezza che tutti i driver
+useranno e' in `lib/exwifi`: le chiavi WPA/WPA2, lo scambio a quattro vie e
+quello della chiave di gruppo (lato client), CCMP, TKIP con Michael e WEP;
+`tools/prova_exwifi.sh` la controlla sull'host con i vettori di prova di IEEE
+802.11 e delle RFC (41 su 41). Nessun driver la usa ancora. Da fare: i driver
+per i chip veri, WPA3 e WPA2 Enterprise.
+
 ### ExWin: ogni controllo si nasconde e si spegne
 
 **testato in QEMU** (`tools/prova_exwin_stato.sh`: il progetto si compila
@@ -181,6 +258,43 @@ lento (un blocco per volta).
 per kilobyte. La bitmap del gruppo resta in memoria mentre si liberano i
 blocchi di un file e si scrive una volta, col descrittore. In QEMU `rm` di 50
 MB passa da piu' di venti secondi a circa sei, e il disco passa `e2fsck`.
+
+**0.249**: i volumi ext3 ed ext4 si **leggono**: alberi di extent,
+descrittori di gruppo a 64 bit, `flex_bg`, inode grandi, directory indicizzate
+(lette in modo lineare). Un volume cosi' si monta in **sola lettura** e il
+registro dice perche'; ext2 si scrive come prima. La scrittura di ext3/ext4 e'
+prevista in un modulo caricato dopo l'avvio. Non gestiti: `meta_bg`,
+cifratura, compressione, e i file con i dati dentro l'inode (`inline_data`),
+rifiutati con un messaggio. Provato in QEMU a 32 e a 64 bit su volumi fatti
+dal `mke2fs` di Linux (ext4 con blocchi da 1 KB e da 4 KB, ext3, ext2): un
+file da 5 MB, uno sparso e uno piccolo hanno lo stesso SHA-256 che sull'host,
+una directory di 400 file si elenca intera, e la scrittura viene rifiutata.
+Nuovo comando `sha256sum`.
+
+**0.250**: `proc_uid()`, l'uid di un altro processo, per il gestore del WiFi
+(vedi «WiFi» sopra). Il kernel a 32 bit e' cambiato solo nella tabella delle
+chiamate di sistema.
+
+**0.251**: un disco che mostra BSY insieme a un errore rimasto dal comando di
+prima (il portatile NVIDIA MCP77 dell'utente, dopo che rifiuta READ NATIVE
+MAX) non perde piu' le sue partizioni all'avvio: i bit di errore si leggono
+solo a BSY spento, come dice lo standard ATA, e una tabella delle partizioni
+che non si legge viene riprovata e scritta nel registro. Prima il sistema si
+installava e poi non trovava la radice. E per le chiavette USB (`make usb`,
+`make usb64`): quando il BIOS avvia la chiavetta come disco rigido, i
+caricatori la leggono per LBA e la copiano in RAM lo stesso - provato sul
+portatile, il cui BIOS fa proprio cosi'.
+
+**0.252**: `shutdown` spegne un PC vero. Finora si spegnevano solo gli
+emulatori (le loro porte fisse) e una macchina vera si fermava su «e' ora
+sicuro spegnere». `kernel/arch/x86/acpi.c` legge all'avvio le tabelle ACPI
+(RSDP, RSDT/XSDT, FADT e i valori di `_S5_` dalla DSDT) e scrive nel registro
+cio' che ha trovato - `dmesg` dice che cosa fara' lo spegnimento su quella
+macchina - e lo spegnimento scrive lo stato S5 sulle porte di gestione
+dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
+in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
+porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
+passa dall'ACPI); sul portatile dell'utente non ancora.
 
 **0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
 I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono
@@ -326,7 +440,14 @@ di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
   `__thread` funzionano a 64 bit. Provato in QEMU, non ancora su una
   macchina vera. C'e' anche la scrivania ExWin (19 programmi e il server
   grafico, collegati staticamente) e il repository `netinst_64`. Mancano
-  ancora l'audio, i compilatori ed Exilla. La versione a 32 bit e' rimasta identica, istruzione per
+  ancora l'audio, FreeBASIC, OpenSSL ed Exilla. Dalla 0.249 ci sono i
+  **compilatori**: `tools/gcc-exos/cross64.sh` costruisce il compilatore
+  incrociato `x86_64-exos` (GCC 17, binutils 2.44, C e C++ con libstdc++) e
+  i gcc, g++, binutils, GNU make e NASM nativi che girano su EX-OS; `make
+  tools64` li mette su `dist/exos64-tools.iso`, `toolinst` li installa e
+  `make netinst64` li pubblica. In QEMU un programma C e uno C++ (con le
+  eccezioni) si compilano e girano dentro EX-OS a 64 bit. La versione a 32
+  bit e' rimasta identica, istruzione per
   istruzione, nel kernel e in tutti i 181 sorgenti di libc, librerie e
   comandi.
 - **Scrivania: memoria e avvio (pm 0.020).** Una voce di menu puo' dire
@@ -724,6 +845,18 @@ Solo IPv4. Servono al software portato: Rust (`std::net`) e Firefox.
 programma Rust con la libreria standard vera, compilato da Linux, usa file,
 cartelle, tempo, fili, `Mutex`, `Condvar` e canali dentro EX-OS (kernel
 0.225). E' la seconda tappa di Exilla, il porting di Firefox.
+
+**Anche a 64 bit** (14 ottobre 2026): `EXOS_ARCH=x86_64 tools/rust-exos/prova-std.sh`
+costruisce lo stesso programma per il nuovo bersaglio `x86_64-unknown-exos`
+(`tools/rust-exos/x86_64-unknown-exos.json`, collegato con `x86_64-exos-gcc`) e
+lo esegue nel sistema a 64 bit: 29 su 29. Le strutture C che Rust ripete
+(`stat`, `pthread_*`, `sigaction`...) ora si controllano a ogni compilazione
+contro i compilatori C delle due architetture (`tools/rust-exos/std/verifica-abi.py`
+scrive i controlli; una misura o una posizione diversa ferma la compilazione).
+Ne ha trovate due: `pthread_attr_t` a 64 bit e' grande il doppio, e a
+`struct lconv` mancavano gli ultimi sei campi, anche a 32 bit. E' Rust come
+compilatore incrociato da Linux: un `rustc` che giri dentro EX-OS non c'e'
+ancora, ne' a 32 ne' a 64 bit.
 
 ### Il navigatore parte anche a 32 MB
 
@@ -3638,6 +3771,9 @@ bloccato si somigliano troppo.
 | Client FTP passivo, `get`/`put`/`ls`/`cd` (`ftp`) | testato |
 | Client Telnet interattivo con negoziazione delle opzioni (`telnet`) | testato |
 | Configurazione a mano e tabella ARP (`ipcfg`, `ipcfg -r`) | testato |
+| Gestore WiFi `wifid`, `wifi`, icona della scrivania (solo scheda simulata) | testato |
+| Sicurezza WPA/WPA2/WEP, `lib/exwifi` (vettori di prova sull'host) | testato |
+| Driver WiFi per chip veri | da fare |
 | Rinnovo della concessione DHCP | da fare |
 | Riordino dei segmenti TCP fuori sequenza | da fare |
 | Driver PCnet (Am79C970/C973), bus master con DMA vero | testato |

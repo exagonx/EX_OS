@@ -94,6 +94,9 @@ da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
 <tr><td><b>Volume</b> <code>exvolume</code></td>
     <td>il volume di ogni uscita e ingresso, canale per canale &mdash; vedi
         <a href="#volume">qui sotto</a></td></tr>
+<tr><td><b>WiFi</b> <code>exwifi</code></td>
+    <td>le reti senza fili: collegarsi, salvare, scegliere la predefinita
+        &mdash; vedi <a href="#wifi">qui sotto</a></td></tr>
 <tr><td><b>Exilla</b> <code>exilla</code></td>
     <td>Firefox per EX-OS (Avvio &gt; Internet): non e' nel sistema di base,
         e' un pacchetto che si installa con <code>netupdate</code> &mdash; vedi
@@ -269,6 +272,37 @@ ce n'e' una, &laquo;Volume&raquo;, e i due cursori vanno insieme comunque:
 il pannello mostra quel che la scheda ha fatto davvero. Da una console lo
 stesso elenco e' <code>audio -mix</code>, e
 <code>audio -mix N SIN DES</code> porta la voce N a quei due valori.
+</p>
+
+<h3 id="wifi">Il pannello WiFi</h3>
+
+<p>
+Se la macchina ha un driver WiFi, nella barra in basso, a sinistra del
+volume, c'e' l'icona della radio: <b>grigia con una X</b> quando non e'
+collegata, <b>verde con le barre del segnale</b> quando lo e'. Un clic apre il
+pannello (<code>exwifi</code>). Quando la connessione cambia (collegata,
+persa, staccata) accanto all'icona compare un avviso che si chiude da solo
+dopo qualche secondo.
+</p>
+
+<table border="1">
+<tr><th>Che cosa</th><th>Che cosa fa</th></tr>
+<tr><td><b>Lo stato</b>, in alto</td><td>la rete, il segnale in dBm, la velocita', la sicurezza e l'indirizzo</td></tr>
+<tr><td><b>Disconnetti</b></td><td>stacca la radio; la rete resta salvata</td></tr>
+<tr><td><b>Aggiorna</b></td><td>cerca di nuovo le reti</td></tr>
+<tr><td><b>Predefinita</b> / <b>Dimentica</b></td><td>sulla rete salvata scelta nell'elenco: la fa scegliere prima delle altre, oppure la toglie con la sua chiave</td></tr>
+<tr><td><b>L'elenco</b></td><td>le reti che si sentono, con le barre del segnale, la sicurezza e &laquo;salvata&raquo;; un clic riempie il modulo</td></tr>
+<tr><td><b>Rete (SSID)</b>, <b>Nascosta</b>, <b>Sicurezza</b>, <b>Password</b></td><td>per una rete nascosta si scrive tutto a mano e si mette la spunta</td></tr>
+<tr><td><b>Salva la rete</b>, <b>Rete predefinita</b></td><td>salvata, si ricollega da sola; fra le salvate vince la predefinita, altrimenti la piu' forte</td></tr>
+<tr><td><b>DHCP</b> / <b>IP statico</b></td><td>con l'IP statico si scrivono indirizzo, maschera, gateway e DNS</td></tr>
+<tr><td><b>Collegati all'avvio, prima del login</b></td><td>solo per root: la rete di sistema, che ogni utente usa e che cambia solo root</td></tr>
+</table>
+
+<p class="nota">
+<b>Le password non si conservano.</b> Si conserva la chiave che ne deriva,
+cifrata, in <code>$HOME/.exwin/config/wifi.cfg</code> e <code>wifi.key</code>
+(per root in <code>/cfg/wifi</code>). Da una console lo stesso lavoro lo fa
+<code>wifi</code>: vedi <a href="rete.html#wifi">La rete</a>.
 </p>
 
 <h3 id="giochi">I giochi</h3>

@@ -1,4 +1,4 @@
-//! Definitions for EX-OS (i686-unknown-exos).
+//! Definitions for EX-OS (i686-unknown-exos and x86_64-unknown-exos).
 //!
 //! tools/rust-exos/std/libc-exos.rs — copiato da tools/rust-exos/std/prepara.sh
 //! in `src/unix/exos/mod.rs` del crate `libc`. Copyright (C) 2026 Graziano
@@ -7,8 +7,9 @@
 //!
 //! ! OGNI NUMERO QUI DENTRO VIENE DA lib/include DI EX-OS, e se non combacia un
 //! programma Rust legge i campi spostati senza che nessun collegamento se ne
-//! accorga. Le misure si controllano con tools/rust-exos/std/verifica-abi.sh,
-//! che confronta questo file col compilatore C del bersaglio.
+//! accorga. Le misure si controllano con tools/rust-exos/std/verifica-abi.py,
+//! che le chiede ai compilatori C a 32 e a 64 bit e scrive abi-exos.rs: quel
+//! file viene accodato a questo, e una misura sbagliata ferma la compilazione.
 //!
 //! ! LE COSE CHE EX-OS NON HA sono dichiarate col valore che la libc da' davvero
 //! e non con uno inventato: O_EXCL e O_CLOEXEC valgono 0 (la libc li ignora,
@@ -93,8 +94,10 @@ s! {
     }
 
     // lib/include/pthread.h: le forme vere stanno la', qui solo la misura.
+    // an int and three words (size_t, a pointer, size_t): 16 bytes at 32
+    // bit, 32 at 64
     pub struct pthread_attr_t {
-        __val: [u32; 4],
+        __val: [usize; 4],
     }
     pub struct pthread_mutex_t {
         __val: [u32; 4],
@@ -184,6 +187,12 @@ s! {
         pub n_sep_by_space: c_char,
         pub p_sign_posn: c_char,
         pub n_sign_posn: c_char,
+        pub int_p_cs_precedes: c_char,
+        pub int_p_sep_by_space: c_char,
+        pub int_n_cs_precedes: c_char,
+        pub int_n_sep_by_space: c_char,
+        pub int_p_sign_posn: c_char,
+        pub int_n_sign_posn: c_char,
     }
 
     // I socket: nessuna funzione li usa ancora (vedi in testa).

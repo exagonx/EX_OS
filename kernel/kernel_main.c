@@ -10,6 +10,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "acpi.h"
 #include "vga.h"
 #include "gdt.h"
 #include "idt.h"
@@ -425,6 +426,10 @@ KernelConfig *cfg = cfg_load();
      * perche' l'APIC e' mappato solo nella directory del kernel. Su una
      * macchina con un processore non fa niente: vedi smp.h. */
     smp_init((int)cfg->smp);
+
+    /* The ACPI tables for shutdown and reboot: read now, with interrupts
+     * on, and logged - `dmesg` says what shutdown will do on this machine. */
+    acpi_init();
 
     /* =====================================================================
      * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.

@@ -17,6 +17,15 @@
  * dopo somiglia a una scheda. Quel «prima» non entra in net_proto.h, che
  * parla di frame e basta, ed e' il motivo per cui esiste questo file.
  *
+ * (2026-10-14, @WIFI) ONE SERVICE, NOT TWO: the driver registers only
+ * "wifi0", and answers there both this protocol and net_proto.h - the
+ * message numbers do not overlap (net_proto 1-6 and 128-131, this one 20-23
+ * and 148-151). The kernel gives a process ONE service name. It is not
+ * "rete0" either: a machine may have an Ethernet card too, and wifid moves
+ * ip.drv onto "wifi0" (IP_LINK_WIFI) when the radio is connected
+ * (IP_MSG_LINK). What the paragraphs below say of «rete0» is true of the
+ * link side of «wifi0».
+ *
  * ! IL DRIVER REGISTRA DUE SERVIZI, ED E' LA SCELTA CHE TIENE INSIEME TUTTO.
  * Come «rete0» parla net_proto.h e lo stack IP non sa nemmeno di avere sotto
  * una radio; come «wifi0» parla questo protocollo, e ci parla soltanto il
@@ -103,6 +112,15 @@ typedef struct {
 typedef struct {
     char ssid[WIFI_SSID_MAX];
     char parola[64];      /* vuota se la rete e' aperta */
+    /* --- added 2026-10-14 (@WIFI); a sender that fills only the two fields
+     * above gets what it got before: auth -1, nothing hidden, no key. --- */
+    int           auth;       /* WIFI_AUTH_*, or -1: as the beacon says. A HIDDEN
+                               * network announces nothing: it must be given */
+    int           nascosta;   /* 1: probe for this SSID, it is not in the beacons */
+    int           ha_psk;     /* 1: psk[] is the WPA key already derived */
+    unsigned char psk[32];    /* PBKDF2-SHA1(passphrase, SSID, 4096): wifid
+                               * keeps this, never the passphrase */
+    unsigned char bssid[6];   /* all zero: any access point of that SSID */
 } WifiConnetti;
 
 /* Lo stato del collegamento. */

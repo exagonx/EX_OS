@@ -61,7 +61,10 @@ D=build-64/drivers
 # chiavetta DOPO l'installazione.
 # ! DEI 2,88 SE NE USANO 2 MB: i caricatori leggono cluster di un settore, e
 # una FAT12 non passa i 4084 cluster. Vedi bootloader/stage1/boot.asm.
-COMANDI="sh ls cp rm mount mkdir shutdown keymap disk fdisk mkfs install automount blkscan dmesg mem uname netdetect ipcfg ping dhcp netupdate telnetd login hwconfig"
+# ahci (14 October 2026): `ahci -d` reads the disk controller's registers
+# WITHOUT touching anything - the first look at a machine whose controller
+# offers AHCI (the user's MCP77 laptop froze when install switched it).
+COMANDI="sh ls cp rm mount mkdir shutdown keymap disk fdisk mkfs install automount blkscan dmesg mem uname netdetect ipcfg ping dhcp netupdate telnetd login hwconfig ahci"
 DRIVER="kbd pci ehci ohci uhci nforce ip e1000 rtl8169"
 
 for f in "$STAGE1" "$STAGE2"; do
@@ -203,4 +206,7 @@ mkdir -p dist
 cp "$F" "$IMG"
 
 echo "mkchiave: $IMG (2,88 MB)"
-echo "          dischetto: $(mdir -i "$F" :: | tail -1 | sed 's/^ *//')"
+echo "          dischetto: $(mdir -i "$F" :: | grep free | sed 's/^ *//')"
+# The user's rule: a key image loads WHOLE INTO RAM. Checked on the result,
+# not assumed from the recipe (tools/verifica-chiave.sh).
+tools/verifica-chiave.sh "$IMG" || { rm -f "$IMG"; exit 1; }

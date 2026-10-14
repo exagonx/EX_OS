@@ -221,9 +221,13 @@ RIFATTE = [
         "\t\tcase FB_CPUFAMILY_ARM\n"
         "\t\t\tldcline += \"-m armelf_linux_eabi \"\n"
         "\t\tend select\n"
-        "\t'' EX-OS e' x86 a 32 bit e basta: niente select da fare.\n"
+        "\t'' EX-OS: x86 a 32 bit, e dal 14 ottobre 2026 anche x86_64.\n"
         "\tcase FB_COMPTARGET_EXOS\n"
-        "\t\tldcline += \"-m elf_i386 \"\n"
+        "\t\tif( fbGetCpuFamily( ) = FB_CPUFAMILY_X86_64 ) then\n"
+        "\t\t\tldcline += \"-m elf_x86_64 \"\n"
+        "\t\telse\n"
+        "\t\t\tldcline += \"-m elf_i386 \"\n"
+        "\t\tend if\n"
         "\tcase FB_COMPTARGET_DARWIN\n",
     ),
 

@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.002");
+EX_VERSIONE("hwconfig", "0.003");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -1144,6 +1144,13 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "# quando la si vorrebbe guardare. Cio' che serve a RIPARARE si\n"
             "# accende prima di cio' che puo' ROMPERE.\n"
             "telnetd -auto &\n", max - 1 - strlen(out));
+        strncat(out,
+            "\n"
+            "# The WiFi, IF root asked for it (`wifi -boot:on`, @WIFI). On its own this\n"
+            "# line does nothing: wifid -auto reads /cfg/wifi/root.cfg and stays only if\n"
+            "# the key `avvio` says \"si\"; otherwise it exits without a word. It waits\n"
+            "# for the WiFi driver by itself, so the order with the lines above is free.\n"
+            "wifid -auto &\n", max - 1 - strlen(out));
 
         strncat(out, riga, max - 1 - strlen(out));
     } else {

@@ -1079,6 +1079,9 @@ int        chown(const char *percorso, unsigned int uid, unsigned int gid);
  * e' riservata. Rende 0 con errno se non c'e' un framebuffer. */
 void      *fb_map(void);
 int        getuid(void);
+/* The uid of another process (kernel 0.250); -1 and ESRCH if there is none.
+ * A service uses it to know who sent a message: IPC does not carry it. */
+int        proc_uid(int pid);
 int        geteuid(void);
 int        getgid(void);
 int        getegid(void);
@@ -3338,12 +3341,15 @@ int     shm_open(const char *nome, int flag, mode_t modo);
 int     shm_unlink(const char *nome);
 int     ftruncate(int fd, off_t lung);
 
-/* dlopen & c. on EX-OS libraries — the ones with an ExLibTesta table
- * (lib/include/exlib.h) — libc.a only (@DLOPEN, 29 September 2026). A name
- * without '/' is looked for in $LD_LIBRARY_PATH, /lib, /exwin/lib and the
- * same under /cdrom. An ordinary ELF .so is NOT loaded (dlerror says so):
- * libxul is linked statically. dlclose keeps the library; dlsym on
- * dlopen(NULL) finds nothing; dladdr always says 0. */
+/* dlopen & c., libc.a only. Since 14 October 2026 ordinary ELF shared
+ * objects (gcc -fPIC, ld -shared) are loaded by lib/libc_dl.c: DT_NEEDED,
+ * every relocation of a PIC library, constructors, __thread variables
+ * (general-dynamic), dlclose that unmaps, dladdr on library addresses. A
+ * name without '/' is looked for in $LD_LIBRARY_PATH, DT_RUNPATH ($ORIGIN),
+ * /lib, /exos/lib, /exwin/lib and the same under /cdrom. A library finds the
+ * libc in the program through the libc's own table (lib/libc_esportati.h);
+ * dlsym(RTLD_DEFAULT) searches it too. EX-OS libraries (an ExLibTesta table,
+ * lib/include/exlib.h, @DLOPEN 29 September 2026) still open the old way. */
 #define RTLD_LAZY       0x0001
 #define RTLD_NOW        0x0002
 #define RTLD_NOLOAD     0x0004

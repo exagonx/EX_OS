@@ -90,6 +90,11 @@ if [ "$QUALE" = "intero" ]; then
         cp build-64/exwin/bin/* "$RADICE/exwin/bin/" 2>/dev/null || true
         [ -f build-64/drivers/wserver.drv ] && cp build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
     fi
+    # the shared objects (exjs.so, quickjs.so): ELF libraries for dlopen
+    if ls build-64/exwin/lib/*.so > /dev/null 2>&1; then
+        mkdir -p "$RADICE/exwin/lib"
+        cp build-64/exwin/lib/*.so "$RADICE/exwin/lib/"
+    fi
     # i driver: in /dev (da dove kernel.cfg e i comandi li caricano) e in
     # /drivers (da dove `install` li copia), come sul CD a 32 bit
     if [ -d build-64/drivers ]; then

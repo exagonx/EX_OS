@@ -65,7 +65,16 @@
 set -e
 
 SORGENTI="${SORGENTI:-$PWD/openssl}"
-BUILD="${BUILD:-$TC/openssl-build-exos}"
+# EXOS_ARCH=x86_64: the 64-bit EX-OS, built in openssl-build-exos64 with the
+# x86_64-exos cross compiler (target exos-x86_64 in 50-exos.conf)
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    BUILD="${BUILD:-$TC/openssl-build-exos64}"
+    BERSAGLIO=exos-x86_64; CC_ATTESO=x86_64-exos-gcc
+    export PATH="$TC/exos-cross64/bin:$PATH"
+else
+    BUILD="${BUILD:-$TC/openssl-build-exos}"
+    BERSAGLIO=exos-x86; CC_ATTESO=i386-exos-gcc
+fi
 PREFISSO="${PREFISSO:-$TC/exos-cross}"
 
 if [ ! -f "$SORGENTI/Configure" ]; then
@@ -75,8 +84,8 @@ if [ ! -f "$SORGENTI/Configure" ]; then
     exit 1
 fi
 
-if ! command -v i386-exos-gcc >/dev/null 2>&1; then
-    echo "i386-exos-gcc non e' nel PATH." >&2
+if ! command -v $CC_ATTESO >/dev/null 2>&1; then
+    echo "$CC_ATTESO non e' nel PATH." >&2
     echo "    export PATH=\"\$TC/exos-cross/bin:\$PATH\"" >&2
     exit 1
 fi
@@ -94,7 +103,7 @@ mkdir -p "$BUILD/apps/include"
 cd "$BUILD"
 
 echo "=== Configure ==="
-"$SORGENTI/Configure" exos-x86 \
+"$SORGENTI/Configure" $BERSAGLIO \
     --prefix=/exos --openssldir=/exos/ssl \
     --with-rand-seed=getrandom \
     no-sock no-dgram no-stdio no-posix-io no-threads \

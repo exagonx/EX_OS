@@ -6855,8 +6855,41 @@ un programma: il primo lavoro e' tirarla fuori.
   INGLESE (l'utente); README.md e' l'inglese, README.it.md l'italiano.
   ANCORA DA FARE per «il repository completo» chiesto dall'utente, ognuno un
   lavoro a se':
-    - compilatore incrociato x86_64-exos (binutils + gcc sull'host), poi
-      gcc / g++ / binutils / make NATIVI a 64 bit e il CD tools64;
+    - compilatore incrociato x86_64-exos: FATTO il 14 ottobre 2026 -
+      tools/gcc-exos/cross64.sh (binutils, sysroot, gcc C; poi libm, C++ e
+      libstdc++, GMP/MPFR/MPC e gli strumenti nativi), in
+      cross_build/exos-cross64. Bersaglio: tools/gcc-exos/exos64.h (tipi di
+      x86_64-linux, tabelle di unwind tenute) e le voci x86_64-exos di
+      applica.py di gcc e binutils. Un programma C compilato con
+      x86_64-exos-gcc gira sul sistema a 64 bit (argomenti, malloc, printf,
+      virgola mobile, __thread); e anche il C++ di x86_64-exos-g++ con
+      libstdc++: eccezioni prese, iostream, map, funzioni virtuali.
+      ! DUE COSE DIVERSE DAL 32 BIT, e tutte e due necessarie: a 64 bit le
+      eccezioni sono quelle DWARF (le tabelle di unwind restano, exos64.h),
+      quindi i programmi collegano crtbegin.o/crtend.o; e GCC va configurato
+      con --enable-initfini-array, perche' per un bersaglio che non e' Linux
+      indovina «no», e allora crtbegin registra le tabelle da .init - che
+      l'avvio di EX-OS non esegue (esegue .init_array). Il primo throw si
+      fermava su un ud2: l'unwinder non trovava nemmeno la propria cornice.
+      Gli strumenti nativi (gcc, g++, binutils, make, nasm) li costruisce lo
+      stesso script; tools/mktools64.sh (make tools64) li mette su
+      dist/exos64-tools.iso con la disposizione del CD degli strumenti a 32
+      bit e il suo stesso catalogo per toolinst. L'albero e' build-64/iso,
+      quindi `make netinst64` pubblica anche gli strumenti (1385 file,
+      209 MB; vuoti solo i pacchetti fb, fbsrc, ssl).
+      PROVATO in QEMU (14 ottobre): da un disco installato dal CD a 64 bit,
+      col CD degli strumenti nel lettore, /cdrom/exos/bin/gcc compila,
+      assembla e collega tools/iso/prova-gcc.c, e g++ prova-cpp.cpp
+      (vector, string, eccezioni, out_of_range dalla libreria); poi
+      `toolinst -y /` installa 1122 file (190 MB) e scrive PATH in
+      kernel.cfg; al riavvio gcc, g++, make 4.2, nasm 3.02 e la libm
+      (prova-mat.c) funzionano da /exos/bin; e2fsck pulito.
+      Trovati strada facendo e corretti: GCC nativo «unknown endianness»
+      (la prova di autoconf inciampa in un'intestazione: ac_cv_c_bigendian=no
+      esportato); sarif-sink.cc dichiarava sockaddr_un da se' e la libc
+      ormai l'ha (applica.py usa sys/un.h); il kill() finto della modifica di
+      make non compilava piu' accanto a quello vero della libc (tolto).
+      NON PROVATO: una macchina vera; toolinst di un solo gruppo.
     - FreeBASIC a 64 bit (vuole il gcc di sopra);
     - Exilla: Firefox ricostruito per x86_64-exos, con un bersaglio Rust
       nuovo (ore di compilazione, e il collegamento da 4 GB);
@@ -6887,6 +6920,18 @@ al porting di GCC e al resto di @EXOS-64)
      inode grandi; le directory indicizzate lette in modo lineare; il journal
      ignorato su un volume smontato pulito. Un volume con funzioni che non si
      conoscono si monta in SOLA LETTURA e lo si dice.
+     FATTO il 14 ottobre 2026, kernel 0.249: extent_map() in ext2.c,
+     descrittori da s_desc_size byte, montaggio in sola lettura (ext2_sola_
+     lettura, rispettata dal VFS anche per la radice; prendi_scrivibile()
+     come secondo lucchetto in ogni funzione che scrive). Rifiutati: meta_bg,
+     compressione, journal_dev, cifratura; inline_data rifiutato file per
+     file. Un volume RECOVER si legge e il registro avvisa che il journal non
+     e' stato rigiocato. File oltre 4 GB: si leggono i primi 4 GB.
+     PROVATO in QEMU a 32 e a 64 bit con volumi fatti dal mke2fs dell'host
+     (ext4 blocchi 1 KB e 4 KB, ext3, ext2): SHA-256 uguali all'host per un
+     file da 5 MB, uno sparso, uno piccolo; 400 file in una directory
+     indicizzata; scrittura rifiutata; ext2 resta scrivibile e passa e2fsck.
+     Nuovo comando bin/sha256sum (formato di coreutils) per il confronto.
   2. IL MECCANISMO, provato prima sul codice che funziona gia': nel VFS una
      tabella di operazioni di scrittura (scrivere, creare, cancellare,
      troncare, rinominare, mkdir) al posto delle chiamate dirette; il
@@ -6950,3 +6995,315 @@ al porting di GCC e al resto di @EXOS-64)
   uno la traduzione dell'altro; cio' che i CD copiano in /doc (ISO_DOC).
   Prima di cancellare qualcosa: controllare che sia davvero superato o
   ripetuto altrove, e dirlo nel messaggio di commit.
+
+@WIFI  IL GESTORE DELLE RETI SENZA FILI (chiesto dall'utente il 14 ottobre 2026)
+  RICHIESTA: uno strumento in due versioni, riga di comando ed ExWin, a 32 e a
+  64 bit. Elenco reti; collegarsi a una (password; WEP, WPA, WPA2...); reti
+  nascoste; reti salvate; rete predefinita; collegamento automatico all'avvio.
+    - `wifi` senza argomenti: stato, potenza del segnale, velocita'.
+      `wifi -config`: la schermata di configurazione.
+    - ExWin: un'icona nella barra accanto a volume e orologio (il segnale
+      radio: grigia/nera con una X da staccata, verde da collegata); un clic
+      apre il pannello - elenco reti, collegarsi, salvare come predefinita;
+      da collegata mostra lo stato, disconnetti, scegli un'altra rete. Gli
+      eventi (collegata, caduta...) in un riquadro accanto all'icona, che
+      sparisce da solo dopo qualche secondo.
+  DECISIONI DELL'UTENTE (risposte alle domande):
+    - IP per rete: DHCP oppure statico (indirizzo, maschera, gateway, DNS).
+    - Uscita: si usa la connessione che e' UP. Con Ethernet e WiFi tutte e
+      due su: prima una, e se il DNS non risponde l'altra. «Se non e'
+      fattibile facilmente si rimanda» -> RIMANDATO (vedi DA FARE).
+    - Reti salvate: si collega quella col segnale piu' forte; con l'opzione
+      «predefinita» se ne forza una.
+    - Riconnessione automatica, senza chiedere niente.
+    - Reti nascoste: un modulo con tutti i dati - SSID, password, tipo di
+      sicurezza, IP DHCP o manuale.
+    - DA FARE, non adesso: WPA3 (SAE) e WPA2 Enterprise (802.1X).
+    - Password salvate CIFRATE, un file per utente.
+    - root: in piu' puo' collegarsi all'AVVIO, prima del login, se lo
+      imposta. Un utente usa la connessione fatta da root; per cambiarla
+      deve avere i privilegi di root anche lui. Se root ha spento il
+      collegamento automatico all'avvio, ogni utente gestisce la propria
+      configurazione.
+  COME (deciso da me, da confermare guardando funzionare):
+    W1  il protocollo: drivers/net/wifi_proto.h allargato (sicurezza scelta a
+        mano per le nascoste, chiave PSK gia' derivata, BSSID). Un driver
+        wifi registra DUE servizi: «wifi0» (il controllo: cerca, aggancia) e
+        con lo STESSO nome «wifi0» anche il lato scheda (frame Ethernet: converte da e per
+        802.11 e cifra/decifra), cosi' ip.drv non sa che e' una radio.
+        ! CORRETTO: il kernel da' UN SOLO nome di servizio per processo, quindi
+        il driver registra solo «wifi0» e su quel nome parla sia
+        wifi_proto.h sia net_proto.h.
+    W2  il kernel: SYS_PROC_UID - di che utente e' un processo - perche' il
+        gestore sappia chi gli chiede di cambiare la rete di sistema. Una
+        chiamata nuova e non un campo in IpcMessage o in ProcInfo: quelle
+        strutture le copia il kernel per intero, e un programma costruito
+        prima (Exilla) riceverebbe piu' byte di quanti ne ha.
+    W3  wifid: il gestore, un processo. Legge le configurazioni, sceglie la
+        rete (predefinita, se no la piu' forte fra le salvate), si aggancia,
+        da' l'indirizzo (DHCP o statico) a ip.drv, guarda la connessione e
+        si riaggancia da solo; racconta gli eventi a chi li chiede (la
+        barra). Servizio «wifid». Lo avvia /boot/avvio.sh per root (prima
+        del login) se root lo ha chiesto; altrimenti lo avvia la sessione
+        dell'utente.
+        File: /cfg/wifi/root.cfg (root, letto prima del login) e
+        $HOME/.exwin/config/wifi.cfg (utente). Le parole cifrate con
+        AES-256-GCM (lib/excrypt; non ChaCha20 come scritto all'inizio) e una chiave per utente in un file
+        leggibile solo da lui (/cfg/wifi/root.key, $HOME/.exwin/config/
+        wifi.key). ! DA DIRE ALL'UTENTE: e' una cifratura che protegge da chi
+        legge il file di configurazione o il disco da un altro sistema senza
+        la chiave, non da root: chi puo' leggere la chiave legge la parola.
+        Si salva la PSK derivata (PBKDF2), non la parola in chiaro.
+    W4  `wifi` (riga di comando): stato senza argomenti; -config a schermo
+        (elenco, collegati, nascosta, salva, predefinita, dimentica,
+        all'avvio). Parla con wifid.
+    W5  ExWin: icona e riquadro degli avvisi in pm; il pannello e' un
+        programma a parte (exwin/bin/exwifi) come exvolume.
+    W6  la sicurezza vera, una volta per tutti i driver (lib/exwifi): PSK con
+        PBKDF2-SHA1, PRF, il 4-way handshake EAPOL, CCMP (AES-CCM), TKIP
+        (RC4+Michael), WEP. Provata sull'host coi vettori di prova di IEEE
+        802.11 e della RFC 3610.
+    W7  i driver delle schede vere: SERVONO I MODELLI (portatile AMD64 X2 con
+        WiFi interno; chiavetta USB WiFi per il PC a 32 bit). Chiesti
+        all'utente. QEMU non emula WiFi: si provano solo sulle macchine vere.
+    PROVA IN QEMU: un driver SIMULATO (drivers/wifisim) che risponde a
+    «wifi0» con reti finte e passa i frame alla scheda Ethernet emulata -
+    cosi' collegarsi «via WiFi» da' davvero DHCP e ping in QEMU.
+  DA FARE, RIMANDATO: due uscite insieme con la prova del DNS; WPA3;
+  WPA2 Enterprise; roaming fra access point della stessa rete; 5 GHz se il
+  chip li ha; il tasto/interruttore radio dei portatili (lo stato si', da
+  leggere dal driver).
+  Stato (14 ottobre 2026): W1-W5 FATTI e provati in QEMU a 32 e a 64 bit
+  con wifisim.drv. W6 FATTO come libreria: lib/exwifi (exwifi.h spiega
+  l'interfaccia) - wpa_pmk/prf/ptk, WpaSupplicante (messaggi 1-4 e chiave di
+  gruppo, WPA desc. 254 e RSN desc. 2, versioni 1 MD5/RC4 e 2 SHA1/AES-wrap,
+  replay e MIC controllati), CCMP, TKIP (mixing, Michael; -2 = contromisure,
+  le deve fare il driver/wifid), WEP. tools/prova_exwifi.sh: 41/41 sull'host
+  coi vettori IEEE 802.11 annesso M e RFC 1321/2202/3394. Compila a 32
+  (freestanding, nessun aiuto di libgcc) e a 64 bit. NESSUN driver la usa
+  ancora: wifisim confronta la PSK e non fa EAPOL; la si collega col primo
+  driver vero (W7), che aspetta i modelli dei chip.
+    Kernel 0.250 (SYS_PROC_UID, proc_uid() nella libc); ip.drv 0.011
+    (IP_MSG_LINK, -l NOME, la porta UDP di un morto si riprende); dhcp 0.003
+    (restituisce la porta 68); hwconfig 0.003 e boot/avvio.sh con
+    `wifid -auto &`; sh 0.005 (16 lavori in background: lo script d'avvio
+    con wifid ne lancia nove e la shell ne teneva 8 - «jobs: tabella
+    piena»); ExWin EX_PASSWORD; pm 0.021 (icona, avviso); exwifi 0.001.
+    A 32 bit wifid ha la libc STATICA: usa kill() per fermare un vecchio
+    `dhcp &`, e i segnali stanno solo nella libc statica.
+    Provato: elenco; password sbagliata rifiutata; WPA2 con DHCP e con IP
+    statico; rete nascosta dal menu; caduta (-cadi) con ritorno su rete0 e
+    ricollegamento; predefinita (vince sulla piu' forte, anche dopo un
+    riavvio); dimentica; collegamento all'avvio prima del login con un
+    utente normale che usa la rete e non la puo' cambiare; dalla scrivania
+    l'icona grigia/verde, il pannello, il collegamento e l'avviso che si
+    chiude da solo.
+    Non provato: un utente non root con il SUO wifid (root con avvio spento);
+    Predefinita/Dimentica dai pulsanti del pannello (provati da riga di
+    comando). Nessuna scheda vera.
+    ! Un disco installato PRIMA della 0.250 ha un /boot/avvio.sh scritto dal
+    vecchio hwconfig, senza `wifid -auto &`: si rifa' con hwconfig o si
+    aggiunge la riga a mano.
+
+=============================================================================
+@RUST-64 RUST A 64 BIT (chiesto dall'utente il 14 ottobre 2026)
+=============================================================================
+  RICHIESTA: dopo GCC, C++, make e NASM a 64 bit (fatti), Rust ed Exilla
+  anche per EX-OS a 64 bit; Rust nel netinst_64 e sul CD degli strumenti.
+  R64-1 FATTO (14/10): Rust INCROCIATO da Linux per x86_64-unknown-exos.
+    tools/rust-exos/x86_64-unknown-exos.json (statico, non PIE, modello
+    small: i programmi stanno a 0x08000000; SSE2 di serie; zona rossa SI':
+    il contesto dei segnali a 64 bit la salta). rustc-exos conosce i due
+    bersagli. EXOS_ARCH=x86_64 tools/rust-exos/prova-std.sh: 29/29 dentro
+    EX-OS 64 in QEMU; a 32 bit ancora 29/29.
+    std/verifica-abi.py -> std/abi-exos.rs: misure e posizioni di ogni
+    struttura di libc-exos.rs chieste ai compilatori C (i386 e x86_64,
+    quello di QUESTA macchina prima: quello condiviso puo' essere del PC
+    dell'altro profilo e qui non parte, GLIBC_2.38). Accodato al crate libc
+    da exos_libc.aggiungi_libc: una misura sbagliata FERMA la compilazione.
+    Trovati: pthread_attr_t (16 -> 32 byte a 64 bit) e struct lconv senza
+    gli ultimi sei campi (anche a 32 bit). Da rifare dopo ogni modifica a
+    una struttura in lib/include o in libc-exos.rs.
+    ! esegui-in-exos.sh ora accetta EXOS_ARCH=x86_64 (dist/exos64.iso).
+  R64-2 DA FARE: rustc e cargo che girano DENTRO EX-OS (anche a 32 bit non
+  c'e', @RUST-4). Quel che serve, in ordine:
+    a. UN CARICATORE DINAMICO VERO a 64 bit. rustc carica le macro
+       procedurali (serde_derive...) come librerie condivise PIC costruite
+       da lui stesso, e rustc stesso e' rustc + librustc_driver.so. Il
+       dlopen di oggi (32 bit) apre solo le librerie di EX-OS a indirizzo
+       fisso; a 64 bit non c'e' nemmeno quello. Va scritto: ELF64 ET_DYN,
+       rilocazioni RELATIVE/GLOB_DAT/JUMP_SLOT/64/TLS, simboli del programma
+       (--export-dynamic), dlopen/dlsym/dlclose. Utile anche a Exilla e a
+       tutto cio' che si porta dopo.
+    b. il bersaglio x86_64-unknown-exos DENTRO i sorgenti di rustc (un
+       compilatore ospite non puo' avere un bersaglio da .json), con
+       dynamic-linking per le macro procedurali.
+    c. LLVM incrociato con x86_64-exos-g++ (C++17 c'e'), poi rustc e cargo
+       con x.py, host = x86_64-unknown-exos. cargo vuole OpenSSL/curl per il
+       registro: OpenSSL a 64 bit non c'e' (pacchetto ssl vuoto in
+       netinst_64); senza, cargo lavora solo offline/vendored.
+    d. pacchetto per toolinst, mktools64.sh (CD strumenti) e netinst_64.
+  Exilla a 64 bit viene dopo R64-1 (gia' basta per costruirla da Linux) e
+  si avvantaggia di (a).
+
+=============================================================================
+@LIBRERIE-MANCANTI (chiesto dall'utente il 14 ottobre 2026: «procedi con le
+librerie mancanti»)
+=============================================================================
+  FATTO il 14/10, provato in QEMU:
+    - OpenSSL a 64 bit (exos-x86_64 in 50-exos.conf; EXOS_ARCH=x86_64
+      prepara-openssl.sh -> cross_build/openssl-build-exos64): provassl e
+      provatls (TLS 1.3 con www.example.com, certificato verificato) dentro
+      EX-OS 64; sul CD strumenti a 64 bit e quindi in netinst_64.
+    - iconv nella libc statica (lib/libc_iconv.c, lib/include/iconv.h).
+    - CARICATORE DINAMICO ELF (lib/libc_dl.c) a 32 e a 64 bit dietro
+      dlopen; la libc esporta se stessa (lib/libc_esportati.h, da RIFARE
+      con tools/libc-esportati.py quando si aggiunge una funzione alla
+      libc); gcc -shared con tools/gcc-exos/specs-condivise.sh (passo
+      `specs` di cross64.sh). tools/prova-dl/prova-dl.sh: 14/14 a 64 e 32.
+      Limiti: TLS initial-exec in una libreria rifiutato; niente lazy
+      binding; i blocchi TLS dei fili si liberano a thread_esci.
+    - QuickJS a 64 bit: exjs.so e quickjs.so ELF in build-64/exwin/lib,
+      lo stub di ExJs li apre con dlopen. tools/prova-dl/prova-js.sh: i due
+      motori danno la stessa risposta. NON provato nel navigatore a 64 bit.
+  DA FARE, in quest'ordine:
+    1. FreeBASIC a 64 bit (pacchetti fb/fbsrc vuoti in netinst_64): la
+       runtime di tools/freebasic-exos/exos e' C sopra la libc, senza
+       chiamate di sistema a mano. Serve: in bersaglio-exos-110.py
+       l'emulazione di ld secondo la CPU (oggi fissa elf_i386) e la
+       cartella della runtime exos-x86_64; un fbc dell'host che conosce
+       exos; libfb con x86_64-exos-gcc; fbc nativo da -gen gcc.
+    2. fork (nel kernel; EX-OS ha spawn). Da chiedere all'utente se serve
+       davvero e per che cosa prima di toccare il kernel.
+    3. il programma a 64 bit collegato dinamicamente (PT_INTERP, un ld.so)
+       se rustc nativo lo chiedera': oggi i .so si aprono da programmi
+       statici.
+
+=============================================================================
+@CHIAVETTA-14-OTT  LA CHIAVETTA A 64 BIT NON ARRIVA ALLA SHELL SUL PC VERO
+=============================================================================
+  L'utente (14/10, pomeriggio): con `sudo make usb64 DISPOSITIVO=/dev/sdc`
+  la chiavetta non carica la shell, «sembra che legga da USB invece che
+  dalla RAM». REGOLA DELL'UTENTE: le chiavette (make usb, usb64) caricano
+  l'immagine TUTTA IN RAM - ora imposto da tools/verifica-chiave.sh (in
+  mkchiave.sh e prima di ogni scrittura di mkusb.sh); tolta da mkusb.sh la
+  vecchia chiavetta-disco. make usb/usb64 rifanno da se' installa/iso64;
+  sotto sudo la costruzione gira come l'utente (COME_UTENTE nel Makefile).
+  FATTI ACCERTATI:
+    - /dev/sdc = Kingston DataTraveler G3 3,7 GB. Linux la vede «vfat FAT16
+      EXOS64 EA05-EDA7»: E' IL NOSTRO DISCHETTO (etichetta EXOS64 da
+      mkchiave.sh riga 88; FAT16 e' solo la classificazione di blkid).
+    - Stage 1 e Stage 2 invariati dal 10/10 (giorno in cui l'utente ha
+      confermato la chiavetta a 64 bit sul PC). Settore di avvio identico.
+      Nello Stage 2 cambia UN byte: SVGAMODO (oggi 2 = 800x600, da .svga del
+      28/09; la ricostruzione del 10/10 fuori dalla cartella ha 0 = testo).
+      Cambiano kernel 0.250 e tutti i programmi.
+    - Immagini di prova in dist/: prova-A-10ottobre.img (kernel e programmi
+      del 10/10, testo; ricostruita nel worktree git cross_build/chiave-10ott,
+      commit d76b0763 - si toglie con `git worktree remove`) e
+      prova-B-oggi-testo.img (oggi, testo). Tutte e due passano
+      verifica-chiave.sh.
+    - B scritta su /dev/sdc e VERIFICATA dall'utente con cmp: SCRITTA-BENE.
+      Prima, B «non era riconosciuta come avviabile»: forse scritta mentre
+      la chiavetta era montata dal desktop (Linux riscrive i primi settori).
+  DA SAPERE DALL'UTENTE (NON ancora risposto):
+    1. B, ora verificata: il BIOS la vede avviabile? con che nome nel menu
+       (USB-FDD / USB-HDD)? dove si ferma (ultima riga)?
+    2. A: e' partita?
+  Lettura: A si' e B si' -> la causa e' l'800x600 (la chiavetta deve partire
+  in testo sempre). A si' e B no -> kernel/programmi di oggi (confrontare).
+  Nessuna delle due -> BIOS o chiavetta.
+  ! NON proporre altre forme di avvio: l'utente le ha escluse.
+  TROVATO E CORRETTO (14/10, sera) - la causa piu' probabile, provata in QEMU:
+    un BIOS che avvia la chiavetta come DISCO RIGIDO (USB-HDD, DL=0x80;
+    molti BIOS lo fanno da soli per le chiavette grandi: la Kingston e' 3,7
+    GB) rompeva tutte e due i caricatori:
+      - Stage 1 e Stage 2 leggevano in CHS con la geometria del dischetto
+        (36 settori, 2 testine); e la geometria del BIOS non va meglio:
+        SeaBIOS dice 8 settori per traccia (72 non entra nei 6 bit di AH=08h)
+        e il settore 25 arrivava dal 217. Stage 1 non trovava LOADER.BIN e
+        si fermava sul suo hlt: «non avviabile» / schermo fermo.
+      - Stage 2 con DL >= 0x80 SALTAVA la copia in RAM («da disco rigido non
+        serve»): il kernel cercava la radice sulla chiavetta - «legge da USB».
+    Correzione, solo con l'opzione GEOMETRIA_BIOS (le due chiavette;
+    usb_caricatori nel Makefile): da disco rigido si legge per LBA (INT 13h
+    AH=42h, AH=41h per sapere se c'e'; al massimo 18 settori per lettura,
+    poi uno per volta), la copia in RAM si fa lo stesso, e Stage 2 scrive
+    «Avvio: disco BIOS 128, letture LBA» (o la geometria). Da dischetto
+    niente cambia. Senza l'opzione Stage 1 e Stage 2 si assemblano byte per
+    byte come prima (floppy, 1,44 in RAM, 2,88 in RAM, RAMDISCO=2).
+    QEMU: chiavetta a 64 e a 32 bit, come disco USB e come dischetto: radice
+    sul volume in RAM e shell, tutte e quattro. NON ancora provata sul PC.
+    Se sul PC compare «Avvio: disco BIOS 128» era proprio questo.
+  CONFERMATO SUL PC VERO (14/10 sera): la chiavetta a 64 bit parte; il log
+  del kernel dice «Avvio da disco (0x80)» - il BIOS la prende come disco,
+  la causa era quella. Radice sul volume in RAM, shell, rete (nforce, DHCP
+  192.168.0.183), telnet. E' il PORTATILE (MCP77), non il PC MCP73.
+
+=============================================================================
+@FB-64 FreeBASIC a 64 bit - fermo a meta' (14/10)
+=============================================================================
+  bersaglio-exos-110.py: l'emulazione di ld per exos ora segue la CPU
+  (elf_x86_64 / elf_i386). Copia patchata in cross_build/fb64/albero; li'
+  bin/fbc (host) conosce -target exos e con `-target exos -arch x86_64
+  -gen gcc` produce C (provato su un print). Per ricostruire il compilatore
+  serve: make compiler FBC="$PWD/bin/fbc-boot -i $PWD/inc".
+  Da fare: libfb con x86_64-exos-gcc (runtime tools/freebasic-exos/exos, C
+  sopra la libc), un programma incrociato provato in EX-OS 64, poi fbc
+  nativo da -gen gcc, poi mktools64.sh (gruppi fb/fbsrc) e netinst_64.
+
+@WIFI W7 - IL CHIP DEL PORTATILE (14/10): 168c:001c, Atheros AR242x /
+  AR5007EG, PCI Express (Linux: ath5k). Visto con netdetect sul portatile
+  MCP77 avviato dalla chiavetta a 64 bit (telnet 192.168.0.183). Manca
+  ancora il modello della chiavetta USB WiFi per il PC a 32 bit.
+
+@INSTALL-AHCI (14/10 sera) - sul portatile MCP77 `install /disk` diceva che il
+  controller sa l'AHCI e si BLOCCAVA: install passava il disco all'AHCI da
+  solo (disco_in_ahci, dal 9/10), il passaggio fallito sul MCP73 lo stesso
+  giorno e mai visto funzionare su una macchina vera. install 0.007 lo fa
+  solo con -ahci; senza, il disco resta in PIO (lento, provato). Il BIOS del
+  portatile non ha una voce AHCI: il controller la espone comunque.
+  DA FARE: @ATA-DMA-NFORCE vale anche qui - canali nativi in PIO, bus master
+  non usato. Prima solo letture di prova confrontate col PIO.
+
+@EXT4-MODULO - RISPOSTA DELL'UTENTE (14/10): «confermo ext4». La scrittura
+  su ext4 (journal compreso) e' voluta; mkfs -t ext4 non c'e' ancora. Viene
+  dopo l'installazione del portatile.
+  ahci -d SUL PORTATILE (14/10, sola lettura): PCI 0:9.0 10de:0ad0 classe
+  010185 (IDE, modo nativo), BAR5 c0004000, CAP e322ff01 (64 bit, NCQ, 32
+  slot, 2 porte, Gen2, SAM=0: sa anche il modo legacy), GHC 0 (AE spento:
+  il BIOS lo tiene in IDE, nessuna voce per cambiarlo), VS 1.2, PI 3; porta 0
+  SSTS 113 (1,5 Gb/s, il DVD), porta 1 SSTS 123 (3 Gb/s, il disco); SIG
+  ffffffff e TFD 80 su tutte e due (mai usate in AHCI).
+  PERCHE' SI E' BLOCCATO (dal codice, non ancora provato): kernel/block/
+  ahci.c aspetta contando g_ticks, ma la chiamata di sistema entra dalla
+  porta 0x80 di tipo interrupt (0xEE, IF=0) e nessuno riaccende gli
+  interrupt: i tick non avanzano, e un'attesa la cui condizione non arriva
+  (TFD che resta occupato dopo il reset del link, come qui) non finisce
+  MAI. DA FARE prima di riprovare: attese a tempo che non dipendano dagli
+  interrupt (TSC o letture contate) e, a vuoto, il ripristino dei registri.
+  Gli indirizzi dati al controller sono giusti anche a 64 bit (kernel a
+  0x100000, pagine identiche al fisico).
+
+@DISCO-SENZA-PARTIZIONI (14/10 sera, kernel 0.251) - sistema installato sul
+  portatile MCP77, avvio dal disco: «nessun floppy e nessun CD leggibile, la
+  root restera' vuota». Causa: il kernel non registrava hd2p1 (mount -r
+  hd2p1: «dispositivo inesistente»). All'avvio READ NATIVE MAX viene
+  rifiutato dal disco (errore 0x04); al comando dopo, la lettura dell'MBR,
+  lo stato vale 0xd1 = BSY + un ERR rimasto, e ata_attendi_drq_muto
+  guardava ERR prima di BSY -> «errore canale 3», tabella non letta,
+  disco senza partizioni, in silenzio. fdisk/disk piu' tardi la leggevano.
+  Corretto: ERR/DF solo a BSY spento (standard ATA); blk.c riprova la
+  tabella una volta e lo scrive nel registro se non ci riesce. Kernel a 32
+  bit: cambiano solo ata.o e blk.o. QEMU: la chiavetta registra hd0p1.
+  DA FARE SUL PORTATILE: nuova chiavetta, avvio, mount hd2p1 /disk,
+  install -a /disk (porta il kernel 0.251 sul disco), avvio dal disco.
+
+@SPEGNIMENTO-ACPI (14/10, kernel 0.252) - l'utente: reboot e shutdown si
+  bloccano sul portatile. Lo spegnimento su macchine vere non c'era mai
+  stato (solo porte degli emulatori). kernel/arch/x86/acpi.c: FADT, _S5_,
+  registro di reset; reboot: ACPI, 8042, 0xCF9, triple fault. QEMU ok.
+  DA PROVARE SUL PORTATILE: `dmesg` deve mostrare le righe «ACPI: FADT ...»
+  e «ACPI: S5 ...»; poi shutdown e reboot. L'utente da ora aggiorna il
+  portatile DALLA RETE: prima pubblica (./exagonx/repo-update.sh -64), poi
+  sul portatile netupdate (rifa' anche la mappa dei settori del kernel).

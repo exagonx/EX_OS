@@ -14,6 +14,9 @@
 # DISCO_MB la misura del disco di prova (32 se non detta).
 # AMBIENTE="VAR=valore ..." esporta quelle variabili prima di lanciarlo.
 #
+# EXOS_ARCH=x86_64 runs it in the 64-bit system (dist/exos64.iso,
+# qemu-system-x86_64): the binary must be an x86_64-exos one.
+#
 # Le cose temporanee stanno in cross_build/<macchina>/costruzione-prova (fuori
 # da MEGA). Con /dev/kvm scrivibile la macchina va con -enable-kvm.
 # =============================================================================
@@ -24,6 +27,12 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 D="$PWD/cross_build/$MACCHINA/costruzione-prova"
 CD="${CD_FORZATO:-$PWD/cross_build/$MACCHINA/costruzione-sistema/albero/dist/exos.iso}"
 [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
+CPU=""
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    CD="${CD_FORZATO:-$PWD/dist/exos64.iso}"
+    export EXOS_QEMU=qemu-system-x86_64
+    CPU="-cpu qemu64"
+fi
 IMG="$D/esegui-hd.img"
 NOME=$(basename "$BIN")
 mkdir -p "$D"
@@ -34,7 +43,7 @@ printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD"
-export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
+export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide"
 timeout 300 python3 tools/qemu_drive.py "mkfs -t ext2 -L prova hd0p1@4" "si@30" > "$D/esegui-0.log" 2>&1
 "$(command -v debugfs || echo /sbin/debugfs)" -w -R "write $BIN $NOME" \
     "$IMG?offset=1048576" > /dev/null 2>&1

@@ -73,6 +73,51 @@ _start:
     sti
     mov  [drv], dl
 
+%ifdef GEOMETRIA_BIOS
+    ; ! THE USB KEY BOOTED AS A HARD DISK (14 October 2026). A BIOS that
+    ; emulates a USB stick as a hard disk (USB-HDD: many do it for anything
+    ; above a few hundred MB) hands over DL = 0x80 and its own geometry,
+    ; typically 63 sectors and 255 heads - not the floppy's 36 and 2 written
+    ; in the BPB above. Reading with the floppy's numbers gives the wrong
+    ; sectors from the second track on, LOADER.BIN is never found and this
+    ; sector stops on its hlt without a word.
+    ; ! AND THE BIOS'S OWN CHS NUMBERS ARE NOT TO BE TRUSTED EITHER: SeaBIOS
+    ; took this 2.88 MB image as 72 sectors per track, which AH=08h cannot
+    ; express (6 bits): it answered 8, and sector 25 was read from 217. So,
+    ; from a hard disk, the reads are by LBA (INT 13h extensions, AH=42h, one
+    ; sector at a time - every BIOS that boots USB as a hard disk has them);
+    ; only if AH=41h says they are missing, CHS with the AH=08h geometry.
+    ; As a floppy (DL < 0x80) nothing changes. Only the USB key images are
+    ; assembled with GEOMETRIA_BIOS (Makefile, usb_caricatori).
+    test dl, 0x80
+    jz   .geo_fatta
+    mov  ah, 0x41
+    mov  bx, 0x55AA
+    int  0x13
+    jc   .geo_chs
+    cmp  bx, 0xAA55
+    jne  .geo_chs
+    test cl, 1           ; "fixed disk access" subset: AH=42h is there
+    jz   .geo_chs
+    mov  byte [usa_lba], 1
+    jmp  .geo_fatta
+.geo_chs:
+    mov  dl, [drv]
+    mov  ah, 0x08
+    int  0x13            ; CL[5:0] = sectors per track, DH = last head
+    jc   .geo_fatta      ; no answer: keep the floppy's numbers
+    and  cx, 0x3F
+    jz   .geo_fatta
+    mov  [g_spt], cx
+    mov  dl, dh
+    xor  dh, dh
+    inc  dx
+    mov  [g_teste], dx
+.geo_fatta:
+    xor  ax, ax          ; AH=08h may have changed ES (floppies return a table)
+    mov  es, ax
+%endif
+
     ; 1) Root dir a 0x7E00 (14 settori, LBA 19) — PRIMA
     mov  ax, F_ROOT
     mov  bx, 0x7E00
@@ -175,16 +220,45 @@ _start:
 rsect:
     pusha
 .rl:
+%ifdef GEOMETRIA_BIOS
+    cmp  byte [usa_lba], 0
+    je   .chs
+    push cx
+    push ax
+    mov  [dap_lba], ax
+    mov  [dap_off], bx
+    mov  si, dap
+    mov  ah, 0x42
+    mov  dl, [drv]
+    int  0x13
+    jc   halt
+    pop  ax
+    pop  cx
+    add  bx, 512
+    inc  ax
+    loop .rl
+    popa
+    ret
+.chs:
+%endif
     push cx
     push ax
     xor  dx, dx
+%ifdef GEOMETRIA_BIOS
+    mov  cx, [g_spt]
+%else
     mov  cx, F_SPT
+%endif
     div  cx              ; AX = LBA/18 (traccia), DX = LBA%18
     inc  dx              ; DX = settore (1-based)
     mov  si, dx          ; salva il settore in SI (la prossima div lo
                          ; sovrascriverebbe se restasse in DX/CX)
     xor  dx, dx
+%ifdef GEOMETRIA_BIOS
+    mov  cx, [g_teste]   ; (cylinder < 256: the image is 5760 sectors)
+%else
     mov  cx, 2
+%endif
     div  cx              ; AX = cilindro, DX = testina
     mov  ch, al          ; CH = cilindro
     mov  dh, dl          ; DH = testina
@@ -213,6 +287,17 @@ halt:
 
 fname  db 'LOADER  BIN'
 drv    db 0
+%ifdef GEOMETRIA_BIOS
+g_spt   dw F_SPT
+g_teste dw 2
+usa_lba db 0
+; the Disk Address Packet of AH=42h: 16 bytes, one sector, segment 0
+dap     db 16, 0
+        dw 1
+dap_off dw 0
+        dw 0
+dap_lba dd 0, 0
+%endif
 
 times 510-($ - $$) db 0
 dw 0xAA55

@@ -58,11 +58,14 @@ for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c 
     # gli «stub» sono le controfigure di una libreria per chi a 32 bit la
     # carica condivisa: qui la libreria vera e' nell'archivio, e i due
     # insieme sarebbero due definizioni della stessa funzione
-    case "$s" in *_stub.c) continue ;; esac
-    # QuickJS waits for the x86_64-exos toolchain: it needs a libm built for
-    # this target (openlibm), which the 32-bit build takes from the i386
-    # cross compiler. Said here instead of being counted as a failure.
-    case "$s" in lib/exqjs/*) rimandate="$rimandate $s(serve libm per x86_64-exos)"; continue ;; esac
+    # ! THE JAVASCRIPT ENGINES ARE SHARED OBJECTS (14 October 2026), as at 32
+    # bit: ExJs and QuickJS export the same names, so they cannot both be in
+    # the archive. They are built at step 6 as exjs.so and quickjs.so, and
+    # the archive gets the stub that opens one of them with dlopen
+    # (lib/libc_dl.c). exjs_fisso.c, the one-engine stand-in, is no longer
+    # used; exjs_esporta.c is the 32-bit EX-OS library table.
+    case "$s" in lib/exjs/exjs_stub.c) ;; *_stub.c) continue ;; esac
+    case "$s" in lib/exjs/exjs_stub.c) ;; lib/exjs/*|lib/exqjs/*) continue ;; esac
     o="$OGG/$(echo "$s" | tr '/' '_' | sed 's/\.c$/.o/')"
     piu=""; case "$s" in kernel/*) piu="-Ikernel/include -fno-stack-protector" ;; esac
     if gcc $CF $INC $piu -I"$(dirname "$s")" -c "$s" -o "$o" > "$REG/$(basename "$o").log" 2>&1; then
@@ -163,4 +166,44 @@ if [ $# -eq 0 ]; then
     done
     echo "scrivania: $ebene programmi costruiti in $EXWD"
     [ -z "$emale" ] || echo "  NON costruiti:$emale   (registri in $REG/)"
+fi
+
+# --- 6. the shared objects: the two JavaScript engines ------------------------------
+# Ordinary ELF .so files (-fPIC, ld -shared) for the libc's dlopen
+# (lib/libc_dl.c), in build-64/exwin/lib - where the 32-bit CD has its
+# exjs.so and quickjs.so. No libc inside: a library takes it from the program
+# that opens it (lib/libc_esportati.h). QuickJS carries openlibm (built PIC
+# by tools/gcc-exos/cross64.sh, step libm) and libgcc.
+if [ $# -eq 0 ]; then
+    SOD=$FUORI/exwin/lib
+    mkdir -p "$SOD"
+    CFPIC=$(echo "$CF" | sed 's/-fno-pic -fno-pie/-fPIC/; s/-fstack-protector-strong -mstack-protector-guard=global/-fno-stack-protector/')
+    LDSO="ld -m elf_x86_64 -shared --gc-sections -z max-page-size=4096 -z noexecstack"
+    ogg=""; ok=1; r="$REG/exjs.so.log"; : > "$r"
+    for s in lib/exjs/*.c; do
+        case "$s" in *_stub.c|*_fisso.c|*_esporta.c) continue ;; esac
+        o="$OGG/so_exjs_$(basename "$s" .c).o"
+        gcc $CFPIC -Ilib/include -Ilib/exjs -c "$s" -o "$o" >> "$r" 2>&1 || { ok=0; break; }
+        ogg="$ogg $o"
+    done
+    [ $ok -eq 1 ] && $LDSO -soname exjs.so -o "$SOD/exjs.so" $ogg >> "$r" 2>&1 && echo "librerie: $SOD/exjs.so" ||
+        echo "  exjs.so NON costruita ($r)"
+    LIBM64=cross_build/exos-cross64/x86_64-exos/lib/libm.a
+    LIBGCC64=$(ls cross_build/exos-cross64/lib/gcc/x86_64-exos/*/libgcc.a 2>/dev/null | head -1)
+    if [ -f quickjs/quickjs.c ] && grep -q __EXOS__ quickjs/cutils.h && [ -f "$LIBM64" ] && [ -f "$LIBGCC64" ]; then
+        ogg=""; ok=1; r="$REG/quickjs.so.log"; : > "$r"
+        for s in quickjs/quickjs.c quickjs/libregexp.c quickjs/libunicode.c quickjs/dtoa.c; do
+            o="$OGG/so_qjs_$(basename "$s" .c).o"
+            gcc $CFPIC -Os -nostdinc -D__EXOS__ -I "$(gcc -m64 -print-file-name=include)" \
+                -Ilib/include -Iquickjs -c "$s" -o "$o" >> "$r" 2>&1 || { ok=0; break; }
+            ogg="$ogg $o"
+        done
+        [ $ok -eq 1 ] && gcc $CFPIC -Os -Ilib/include -Ilib/exjs -Iquickjs -c lib/exqjs/exqjs.c \
+            -o "$OGG/so_qjs_exqjs.o" >> "$r" 2>&1 || ok=0
+        [ $ok -eq 1 ] && $LDSO -soname quickjs.so -o "$SOD/quickjs.so" "$OGG/so_qjs_exqjs.o" $ogg \
+            "$LIBM64" "$LIBGCC64" >> "$r" 2>&1 && echo "librerie: $SOD/quickjs.so" ||
+            echo "  quickjs.so NON costruita ($r)"
+    else
+        echo "  quickjs.so rimandata: servono quickjs/ (tools/quickjs-exos/applica.py) e la libm di cross64.sh"
+    fi
 fi

@@ -7,12 +7,24 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # =============================================================================
 #
-# Prepara una CHIAVETTA USB avviabile con sopra l'ambiente intero: il sistema,
-# i programmi, i driver e gli strumenti di sviluppo (gcc, as, ld, make, nasm,
-# le librerie).
+# SCRIVE SU UNA CHIAVETTA USB un'immagine di avvio GIA' FATTA, con i controlli
+# sul dispositivo e la conferma battuta a mano.
 #
-#     make usb DISPOSITIVO=/dev/sdX [MB=1024]
-#     tools/mkusb.sh /dev/sdX [MB]
+#     sudo make usb   DISPOSITIVO=/dev/sdX      (dist/exos-usb.img)
+#     sudo make usb64 DISPOSITIVO=/dev/sdX      (dist/exos64-usb.img)
+#     EXOS_USB_IMMAGINE=<img> tools/mkusb.sh /dev/sdX
+#
+# ! LA REGOLA DELL'UTENTE (14 ottobre 2026): OGNI chiavetta e' un dischetto
+# caricato TUTTO IN RAM da Stage 2 (RAMDISCO=1), e dopo l'avvio dall'USB non
+# si legge piu' niente. E' l'unica forma che parte sul PC vero. Prima di
+# scrivere, tools/verifica-chiave.sh apre l'immagine e lo controlla: misura
+# da dischetto, settore di avvio, Stage 2 con RAMDISCO=1. Altrimenti no.
+#
+# ! LA VECCHIA CHIAVETTA - un disco ext2 installato in QEMU e letto dall'USB
+# dopo l'avvio - QUI DENTRO NON C'E' PIU' (tolta il 14 ottobre 2026): sul PC
+# vero non partiva, e restando nello script la si poteva rifare per sbaglio.
+# Le note qui sotto sul perche' formattare da EX-OS valgono ancora per
+# tools/mkhd.sh, che fa i dischi di prova.
 #
 # ! LA CHIAVETTA VIENE FORMATTATA. Quel che c'e' sopra si perde: partizione,
 #   filesystem, file. Non esiste un modo gentile di farlo — serve una tabella
@@ -72,10 +84,16 @@ ARCH64=0
 # la costruisce dall'host con tools/mkchiave.sh: le protezioni restano queste,
 # scritte una volta sola.
 PRONTA="${EXOS_USB_IMMAGINE:-}"
-if [ -n "$PRONTA" ]; then
-    [ -f "$PRONTA" ] || { echo "mkusb: manca l'immagine $PRONTA" >&2; exit 1; }
-    MB=$(( ($(stat -c%s "$PRONTA") + 1048575) / 1048576 ))
+if [ -z "$PRONTA" ]; then
+    echo "mkusb: serve un'immagine gia' fatta (EXOS_USB_IMMAGINE=...)." >&2
+    echo "       Si fanno con  make usb  (32 bit) o  make usb64  (64 bit): un dischetto" >&2
+    echo "       da 2,88 MB caricato tutto in RAM. Per scriverla:" >&2
+    echo "         sudo make usb64 DISPOSITIVO=/dev/sdX" >&2
+    exit 1
 fi
+[ -f "$PRONTA" ] || { echo "mkusb: manca l'immagine $PRONTA" >&2; exit 1; }
+"$RADICE/tools/verifica-chiave.sh" "$PRONTA" || exit 1
+MB=$(( ($(stat -c%s "$PRONTA") + 1048575) / 1048576 ))
 
 CD_SISTEMA=dist/exos.iso
 CD_STRUMENTI=dist/exos-tools.iso
@@ -253,143 +271,8 @@ echo ""
 # 4. L'IMMAGINE
 # =============================================================================
 
-if [ -z "$PRONTA" ]; then
-[ $ARCH64 -eq 1 ] || [ -f "$FLOPPY" ] || rifiuta "manca $FLOPPY." "Lancia prima 'make'."
-[ -f "$CD_SISTEMA" ] || rifiuta \
-    "manca $CD_SISTEMA." \
-    "Lancia prima 'make iso-exos' (a 64 bit: 'make iso64'): e' il CD da cui" \
-    "si installa, e da cui dipende QUANTI programmi finiscono sulla chiavetta."
-[ $ARCH64 -eq 1 ] || [ -f "$CD_STRUMENTI" ] || rifiuta \
-    "manca $CD_STRUMENTI." \
-    "Lancia prima 'make iso' (e' il CD degli strumenti: gcc, as, ld, make)."
-
-SFDISK=$(command -v sfdisk || echo /usr/sbin/sfdisk)
-[ -x "$SFDISK" ] || rifiuta "sfdisk non trovato (pacchetto util-linux)."
-
-mkdir -p dischi
-echo "=== 1/4  immagine vuota e tabella delle partizioni (${MB} MB) ==="
-rm -f "$IMG"
-qemu-img create -f raw "$IMG" "${MB}M" > /dev/null
-
-# Una sola partizione primaria, tipo 83, attiva; inizio a 2048 come ogni
-# strumento moderno (allinea a 1 MB, cioe' a qualunque dimensione di blocco
-# fisico). Due partizioni servirebbero solo se un BIOS si rifiutasse di
-# avviare da qui, e quello si scopre provando.
-SETTORI=$(( MB * 1024 * 1024 / 512 - 2048 ))
-printf 'label: dos\nunit: sectors\n\nstart=2048, size=%s, type=83, bootable\n' \
-    "$SETTORI" | "$SFDISK" "$IMG" > /dev/null 2>&1
-echo "[OK] hd0p1, tipo 83, attiva"
-
-# --- il sistema -------------------------------------------------------------
-#
-# ! SI PARTE DAL CD DI SISTEMA, NON DAL FLOPPY, e questa riga e' costata una
-# chiavetta sbagliata. `install` copia IL SUPPORTO DA CUI SI E' AVVIATI: dal
-# floppy copia i 40 programmi che ci stanno in 1,44 MB, e la chiavetta usciva
-# senza rete (ping, dhcp, ftp, telnet), senza grafica (exwin e le sue
-# applicazioni) e senza netupdate — cioe' senza le cose per cui una chiavetta
-# serve. Dal CD ne copia 69, piu' l'ambiente grafico. Il difetto non si vedeva
-# alla costruzione: la chiavetta si avviava benissimo, e mancava solo tutto.
-#
-# ! DUE GIRI DI QEMU E NON UNO, ed e' voluto. `install` guarda cosa trova sul
-# supporto per proporre i componenti opzionali: col CD degli strumenti gia'
-# attaccato si troverebbe davanti un albero che non e' suo. Il sistema si
-# installa dal CD di sistema, gli strumenti dal loro CD, e ognuno vede solo il
-# proprio.
-# ! ALL'ULTIMA DOMANDA SI RISPONDE «no», E NON E' FRETTA. L'installatore
-# chiede se lanciare `hwconfig`, che guarda l'hardware e riscrive kernel.cfg
-# con i driver di QUESTA macchina. Su un disco fisso e' la cosa giusta; su una
-# CHIAVETTA e' il contrario esatto, perche' la macchina che la costruisce e'
-# QEMU e quella che la usera' e' un'altra. Scriverci dentro l'elenco dei driver
-# di QEMU vorrebbe dire consegnare una chiavetta configurata per un computer
-# che non esiste.
-#
-# Chi la usa lancia `hwconfig` al primo avvio sulla macchina vera: e' una riga,
-# ed e' l'unico posto da cui si vede l'hardware giusto.
-#
-# ! E SI MANDA DUE VOLTE, e non e' superstizione. Fra l'ultima
-# password e la domanda «lancio hwconfig?» ci sta la COPIA DI TUTTO IL SISTEMA,
-# che dura quanto dura: qui i tempi sono sleep fissi (vedi qemu_drive.py), non
-# attese di una scritta. La prima volta questa prova e' fallita proprio cosi' —
-# il «si» battuto mentre la copia era ancora in corso, la domanda comparsa
-# dopo, e la macchina rimasta ferma su di essa fino allo scadere del tempo, con
-# un errore che accusava l'installatore.
-#
-# Due «no» a distanza coprono tutt'e due i casi: se il primo viene raccolto
-# (type-ahead), il secondo finisce al prompt della shell e diventa un innocuo
-# «comando non trovato»; se il primo si perde, il secondo arriva a domanda
-# gia' fatta. E' brutto, ed e' meno brutto di un numero indovinato — che qui
-# e' gia' stato sbagliato due volte, in due modi diversi.
-#
-# ! IL RIMEDIO VERO NON E' QUESTO: e' che `install` prenda le risposte da un
-# file. Finche' non lo fa, ogni domanda nuova sfasa questa sequenza di uno —
-# e' gia' successo tre volte a tools/mkhd.sh, che porta le cicatrici scritte.
-UTENTE="${EXOS_UTENTE:-exos}"
-PW_ROOT="${EXOS_PW_ROOT:-root}"
-PW_UTENTE="${EXOS_PW_UTENTE:-exos}"
-LINGUA="${EXOS_LINGUA:-1}"
-
-echo ""
-echo "=== 2/4  formattazione e sistema, DENTRO EX-OS (qualche minuto) ==="
-EXOS_ISTANZA=usb1 EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD_SISTEMA" \
-EXOS_QEMU_EXTRA="${CPU64}-drive file=$IMG,format=raw,if=ide" \
-    python3 tools/qemu_drive.py \
-        "mkfs -t ext2 -L exos hd0p1@4" \
-        "si@240" \
-        "mount hd0p1 /disk@10" \
-        "install -t /disk@10" \
-        "$LINGUA@120" \
-        "$PW_ROOT@2" "$PW_ROOT@3" \
-        "$UTENTE@2" "$PW_UTENTE@2" "$PW_UTENTE@3" \
-        "no@240" "no@60" \
-    > /tmp/exos-mkusb-1.log 2>&1
-
-grep -q "Installazione completata" /tmp/exos-mkusb-1.log || {
-    echo "[ERRORE] il sistema non e' stato installato." >&2
-    echo "         registro: /tmp/exos-mkusb-1.log" >&2
-    tail -25 /tmp/exos-mkusb-1.log >&2
-    exit 1
-}
-grep -E "kernel: .* intervall|stage2: LBA" /tmp/exos-mkusb-1.log | sed 's/^ */  /' || true
-echo "[OK] sistema installato e avviabile"
-
-# --- gli strumenti ----------------------------------------------------------
-if [ $ARCH64 -eq 1 ]; then
-echo ""
-echo "=== 3/4  strumenti di sviluppo: a 64 bit non ci sono ancora, si salta ==="
-else
-echo ""
-echo "=== 3/4  strumenti di sviluppo dal CD (parecchi minuti) ==="
-EXOS_ISTANZA=usb2 EXOS_CDROM="$CD_STRUMENTI" EXOS_RAM=256M \
-EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide,index=0,media=disk" \
-    python3 tools/qemu_drive.py \
-        "mount hd0p1 /disco@12" \
-        "toolinst -y /disco@1800" \
-    > /tmp/exos-mkusb-2.log 2>&1
-
-# ! LA RIGA DEL SUCCESSO E' «Fatto. Al prossimo avvio...», e la si e' letta
-# nel sorgente di toolinst invece di indovinarla: un controllo che cerca una
-# parola che il programma non stampa mai fallisce SEMPRE, e allora si finisce
-# per toglierlo — cioe' per non controllare piu' niente.
-# ! E SI GUARDA ANCHE SE CI SONO STATI ERRORI: toolinst arriva in fondo lo
-# stesso e li conta, ma un compilatore installato a meta' non e' installato.
-if grep -q "Finito con .* errori" /tmp/exos-mkusb-2.log; then
-    echo "[ERRORE] toolinst e' arrivato in fondo ma con errori:" >&2
-    grep -E "errori" /tmp/exos-mkusb-2.log | sed 's/^/         /' >&2
-    echo "         registro: /tmp/exos-mkusb-2.log" >&2
-    exit 1
-fi
-grep -q "Fatto\. Al prossimo avvio" /tmp/exos-mkusb-2.log || {
-    echo "[ERRORE] gli strumenti non sono stati installati." >&2
-    echo "         registro: /tmp/exos-mkusb-2.log" >&2
-    tail -25 /tmp/exos-mkusb-2.log >&2
-    exit 1
-}
-echo "[OK] strumenti installati in /exos"
-fi      # ARCH64
-else
-    IMG="$PRONTA"
-    echo "=== immagine gia' pronta: $IMG (${MB} MB) ==="
-fi      # PRONTA
+IMG="$PRONTA"
+echo "=== immagine: $IMG (${MB} MB) ==="
 
 # =============================================================================
 # 5. E ADESSO, IL MOMENTO PERICOLOSO: UNA RIGA SOLA
@@ -405,14 +288,5 @@ sync
 echo ""
 echo "[OK] $DISPOSITIVO e' pronto."
 echo ""
-[ -n "$PRONTA" ] || echo "     Per entrare:  root / $PW_ROOT   oppure   $UTENTE / $PW_UTENTE"
-[ $ARCH64 -eq 1 ] || [ -n "$PRONTA" ] || echo "     Il compilatore e' in /exos/bin/gcc, ed e' gia' nel PATH."
-echo ""
-# ! I BACKTICK QUI DENTRO SONO UN COMANDO, NON UNA CITAZIONE. La prima
-# versione di questa riga scriveva  «serve `MB=` piu\' grande»  e la shell ha
-# eseguito `MB=` come comando, lasciando un buco nel messaggio: si legge «serve
-#  piu\' grande», che non vuol dire niente. Le virgolette semplici non bastano,
-# perche\' la stringa e\' fra doppi apici.
-echo "! LA CHIAVETTA E' GRANDE $GB GB MA LA PARTIZIONE E' ${MB} MB: il resto"
-echo "  non e' usato. Per prenderselo tutto serve MB= piu' grande, o far"
-echo "  crescere la partizione a mano — che EX-OS oggi non sa fare."
+echo "     All'avvio il dischetto si copia tutto in RAM: dopo, la chiavetta si puo'"
+echo "     anche togliere. Lo spazio oltre i primi 2,88 MB non si usa."

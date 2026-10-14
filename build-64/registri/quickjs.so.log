@@ -1,0 +1,119 @@
+quickjs/quickjs.c: In function ‘JS_ReadBigInt’:
+quickjs/quickjs.c:39623:22: warning: format ‘%lld’ expects argument of type ‘long long int’, but argument 3 has type ‘long int’ [-Wformat=]
+39623 |     bc_read_trace(s, "len=%" PRId64 "\n", (int64_t)len);
+      |                      ^~~~~~~              ~~~~~~~~~~~~
+      |                                           |
+      |                                           long int
+In file included from quickjs/quickjs.c:33:
+lib/include/inttypes.h:57:24: note: format string is defined here
+   57 | #define PRId64      "lld"
+quickjs/quickjs.c: In function ‘js_array_with’:
+quickjs/quickjs.c:43334:33: warning: format ‘%lld’ expects argument of type ‘long long int’, but argument 3 has type ‘int64_t’ {aka ‘long int’} [-Wformat=]
+43334 |         JS_ThrowRangeError(ctx, "invalid array index: %" PRId64, idx);
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~         ~~~
+      |                                                                  |
+      |                                                                  int64_t {aka long int}
+lib/include/inttypes.h:57:24: note: format string is defined here
+   57 | #define PRId64      "lld"
+quickjs/quickjs.c: In function ‘JS_ToBigIntBuf.constprop’:
+quickjs/quickjs.c:15864:12: warning: ‘p1’ may be used uninitialized [-Wmaybe-uninitialized]
+15864 |     return p1;
+      |            ^~
+quickjs/quickjs.c:15849:15: note: ‘p1’ was declared here
+15849 |     JSBigInt *p1;
+      |               ^~
+quickjs/quickjs.c: In function ‘js_compare_bigint’:
+quickjs/quickjs.c:15872:9: warning: ‘res’ may be used uninitialized [-Wmaybe-uninitialized]
+15872 |     int res, val, tag1, tag2;
+      |         ^~~
+quickjs/quickjs.c: In function ‘js_closure2’:
+quickjs/quickjs.c:17601:25: warning: ‘var_ref’ may be used uninitialized [-Wmaybe-uninitialized]
+17601 |             var_refs[i] = var_ref;
+      |             ~~~~~~~~~~~~^~~~~~~~~
+quickjs/quickjs.c:17581:23: note: ‘var_ref’ was declared here
+17581 |             JSVarRef *var_ref;
+      |                       ^~~~~~~
+In function ‘__JS_ToFloat64Free’,
+    inlined from ‘JS_ToFloat64Free’ at quickjs/quickjs.c:14068:16:
+quickjs/quickjs.c:14052:11: warning: ‘d’ may be used uninitialized [-Wmaybe-uninitialized]
+14052 |     *pres = NAN;
+quickjs/quickjs.c: In function ‘JS_ToFloat64Free’:
+quickjs/quickjs.c:14032:12: note: ‘d’ was declared here
+14032 |     double d;
+      |            ^
+quickjs/quickjs.c: In function ‘js_binary_arith_slow’:
+quickjs/quickjs.c:15552:18: warning: ‘dr’ may be used uninitialized [-Wmaybe-uninitialized]
+15552 |         sp[-2] = js_float64(dr);
+      |                  ^~~~~~~~~~~~~~
+quickjs/quickjs.c:15522:16: note: ‘dr’ was declared here
+15522 |         double dr;
+      |                ^~
+quickjs/quickjs.c:15520:18: warning: ‘r’ may be used uninitialized [-Wmaybe-uninitialized]
+15520 |         sp[-2] = JS_CompactBigInt(ctx, r);
+      |                  ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:15482:29: note: ‘r’ was declared here
+15482 |         JSBigInt *p1, *p2, *r;
+      |                             ^
+quickjs/quickjs.c:15479:18: warning: ‘v’ may be used uninitialized [-Wmaybe-uninitialized]
+15479 |         sp[-2] = js_int64(v);
+      |                  ^~~~~~~~~~~
+quickjs/quickjs.c:15442:17: note: ‘v’ was declared here
+15442 |         int64_t v;
+      |                 ^
+quickjs/quickjs.c:15420:27: warning: ‘v’ may be used uninitialized [-Wmaybe-uninitialized]
+15420 |             JSBigInt *r = js_bigint_new_di(ctx, v);
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:15386:21: note: ‘v’ was declared here
+15386 |         js_sdlimb_t v;
+      |                     ^
+quickjs/quickjs.c: In function ‘js_binary_logic_slow’:
+quickjs/quickjs.c:15836:18: warning: ‘r’ may be used uninitialized [-Wmaybe-uninitialized]
+15836 |         sp[-2] = js_int32(r);
+      |                  ^~~~~~~~~~~
+quickjs/quickjs.c:15685:22: note: ‘r’ was declared here
+15685 |     uint32_t v1, v2, r;
+      |                      ^
+quickjs/quickjs.c:15809:18: warning: ‘r’ may be used uninitialized [-Wmaybe-uninitialized]
+15809 |         sp[-2] = JS_CompactBigInt(ctx, r);
+      |                  ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:15763:29: note: ‘r’ was declared here
+15763 |         JSBigInt *p1, *p2, *r;
+      |                             ^
+quickjs/quickjs.c:15693:28: warning: ‘v’ may be used uninitialized [-Wmaybe-uninitialized]
+15693 |         js_slimb_t v1, v2, v;
+      |                            ^
+quickjs/quickjs.c: In function ‘js_unary_arith_slow’:
+quickjs/quickjs.c:15288:22: warning: ‘r’ may be used uninitialized [-Wmaybe-uninitialized]
+15288 |             sp[-1] = JS_CompactBigInt(ctx, r);
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:15259:23: note: ‘r’ was declared here
+15259 |             JSBigInt *r;
+      |                       ^
+quickjs/quickjs.c: In function ‘js_typed_array_sort’:
+quickjs/quickjs.c:61493:13: warning: ‘cmpfun’ may be used uninitialized [-Wmaybe-uninitialized]
+61493 |             rqsort(p->u.array.u.ptr, len, elt_size, cmpfun, &tsc);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:61358:11: note: ‘cmpfun’ was declared here
+61358 |     int (*cmpfun)(const void *a, const void *b, void *opaque);
+      |           ^~~~~~
+quickjs/quickjs.c: In function ‘js_define_var’:
+quickjs/quickjs.c:26505:9: warning: ‘var_def_type’ may be used uninitialized [-Wmaybe-uninitialized]
+26505 |     if (define_var(s, fd, name, var_def_type) < 0)
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:26465:18: note: ‘var_def_type’ was declared here
+26465 |     JSVarDefEnum var_def_type;
+      |                  ^~~~~~~~~~~~
+quickjs/quickjs.c: In function ‘js_parse_expr_binary’:
+quickjs/quickjs.c:28086:9: warning: ‘opcode’ may be used uninitialized [-Wmaybe-uninitialized]
+28086 |         emit_op(s, opcode);
+      |         ^~~~~~~~~~~~~~~~~~
+quickjs/quickjs.c:27931:13: note: ‘opcode’ was declared here
+27931 |     int op, opcode;
+      |             ^~~~~~
+quickjs/libunicode.c: In function ‘cr_op’:
+quickjs/libunicode.c:501:12: warning: ‘is_in’ may be used uninitialized [-Wmaybe-uninitialized]
+  501 |         if (is_in != (cr->len & 1)) {
+      |            ^
+quickjs/libunicode.c:458:23: note: ‘is_in’ was declared here
+  458 |     int a_idx, b_idx, is_in;
+      |                       ^~~~~

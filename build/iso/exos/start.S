@@ -18,6 +18,27 @@
  * _start (es. shell, hello) la sovrascrivono al link.
  */
 
+#if defined(__x86_64__)
+/* @EXOS-64. Il kernel lascia sulla pila quattro parole di otto byte: un
+ * ritorno finto, argc, argv, envp (sys_spawn; o quattro zeri per un programma
+ * avviato senza argomenti). A 64 bit gli argomenti di una funzione viaggiano
+ * nei registri: RDI, RSI, RDX. La pila si allinea a 16 prima della chiamata,
+ * come l'ABI vuole - il codice compilato per x86-64 usa SSE, e una pila
+ * storta li' e' un errore di protezione alla prima movaps. */
+.section .text
+.global _start
+.weak   _start
+.type   _start, @function
+_start:
+    movq   8(%rsp), %rdi     /* argc */
+    movq  16(%rsp), %rsi     /* argv */
+    movq  24(%rsp), %rdx     /* envp */
+    xorl  %ebp, %ebp
+    andq  $-16, %rsp
+    call  _libc_start        /* chiama main(argc, argv, envp) e poi exit() */
+    hlt                      /* non raggiunto */
+.size _start, .-_start
+#else
 .section .text
 .global _start
 .weak   _start
@@ -42,4 +63,5 @@ _start:
 .size _start, .-_start
 
 /* Indica al linker che questo file non richiede uno stack eseguibile */
+#endif
 .section .note.GNU-stack,"",@progbits

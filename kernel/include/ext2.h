@@ -67,6 +67,8 @@ typedef struct {
  * Ritorna un handle >= 0, o <0 se non e' un ext2 leggibile. */
 int  ext2_mount(int blkdev);
 int  ext2_umount(int mnt);
+/* 1 when the volume uses ext3/ext4 features: readable, not writable here. */
+int  ext2_sola_lettura(int mnt);
 
 /* Diagnostica del volume montato. */
 uint32_t    ext2_blocchi(int mnt);

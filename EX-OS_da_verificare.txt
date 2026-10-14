@@ -1,0 +1,169 @@
+EX-OS - COSE IMPORTANTI DA VERIFICARE
+Compilato l'11 ottobre 2026, dalle conversazioni sulla valutazione del sistema.
+[ ] = da fare   [x] = fatto
+Nota: le voci sono suggerimenti, non difetti accertati. Dove manca una misura, la prima cosa da fare e' misurare.
+
+
+=====================================================================
+1. ACCESSO AL DISCO E COME MIGLIORARLO
+=====================================================================
+Punto di partenza: da 0,3 a 3,6 MB/s con cache e DMA. Margine ancora grande.
+
+Misure (da tenere in uno script nel repository, da rifare dopo ogni modifica)
+[ ] Lettura sequenziale di un file grande con blocchi da 4 KB, 64 KB e 1 MB
+[ ] Scrittura sequenziale con gli stessi blocchi
+[ ] Copia di molti file piccoli (cartella con migliaia di file)
+[ ] Stesse prove su disco vero e in QEMU, annotando quale disco e quale controller
+[ ] Se la velocita' sale con i blocchi grandi: il problema e' il costo per richiesta
+[ ] Se la velocita' resta piatta: il problema e' nel driver o nel disco
+
+Possibili miglioramenti
+[ ] Richieste DMA piu' grandi e unione delle richieste adiacenti
+[ ] Read-ahead sulle letture sequenziali
+[ ] AHCI: comandi in coda (NCQ) invece di una richiesta per volta
+[ ] DMA con scatter-gather (piu' pezzi in un solo comando)
+[ ] IPC verso i moduli: piu' dati per messaggio, meno messaggi
+[ ] Cache dei settori: dimensione, e se tiene dati o solo metadati
+[ ] Scrittura write-back con scarico periodico (fsync deve restare affidabile)
+[ ] Cancellazione: oggi un blocco per volta, da rendere a gruppi
+
+
+=====================================================================
+2. FILESYSTEM (ext4 e altri)
+=====================================================================
+Lettura (nel kernel)
+[ ] Extent
+[ ] Directory indicizzate (htree)
+[ ] flex_bg
+[ ] Checksum dei metadati
+[ ] Dischi formattati da Linux con le opzioni di serie di oggi
+
+Scrittura e sicurezza (modulo a parte)
+[ ] Journal (jbd2): scrittura corretta e ripristino al montaggio dopo un crash
+[ ] fsync torna solo quando i dati sono davvero sul disco
+[ ] Crash forzato durante una copia grande, poi controllo con e2fsck di Linux
+[ ] Il modulo muore a meta' scrittura: viene rilanciato e il volume controllato prima del riuso
+[ ] mmap sui file (Firefox, MariaDB): pagine sporche che tornano al modulo, coerenza con il kernel
+[ ] Poca memoria: il modulo di scrittura non deve aver bisogno di memoria che non c'e' (riserva)
+[ ] Permessi, proprietario e attributi estesi: il kernel li controlla anche se il modulo ha un difetto?
+[ ] Costo dell'IPC su tanti file piccoli (database, compilazioni)
+
+Altri file system
+[ ] Per ognuno: lettura, scrittura, controllo di coerenza, comportamento dopo un crash
+
+
+=====================================================================
+3. STABILITA' DEL KERNEL SU LUNGHI AVVII
+=====================================================================
+Dato attuale: 3 settimane acceso con telnetd (carico leggero); 4 giorni su Pentium 166 MMX con 8 MB di RAM.
+
+[ ] Prova lunga sotto carico: ciclo di compilazione, copia di file, traffico di rete, per giorni
+[ ] Registrare la memoria libera (mem) a intervalli regolari su un file
+[ ] Dopo un ciclo completo di uso la memoria libera torna allo stesso valore? Se cala: perdita
+[ ] Perdite possibili nel kernel: kmalloc, tabelle delle pagine, caselle IPC, descrittori di file,
+    processi zombie non raccolti, pagine DMA
+[ ] Memoria residente dei processi di lunga durata (wserver, telnetd, driver in ring3, Firefox)
+[ ] Contatori che si azzerano: tick a 32 bit a 100 Hz = circa 497 giorni; orologi e timer simili
+[ ] dmesg: errori ripetuti anche se il sistema sembra funzionare
+[ ] Avviso della libc sulle perdite: controllare che compaia nei programmi di lunga durata
+[ ] Riavviare e rifare la prova su macchine diverse
+
+
+=====================================================================
+4. MEMORIA ESAURITA (OOM)
+=====================================================================
+Banco di prova comodo: il Pentium 166 con 8 MB.
+[ ] Programma che alloca fino all'esaurimento
+[ ] malloc restituisce NULL e il programma puo' gestirlo
+[ ] Il kernel termina solo quel processo, non tutto il sistema
+[ ] Driver in ring3 e wserver restano vivi
+[ ] Il sistema torna normale quando il processo muore
+[ ] Stessa prova con swap attivo e disattivo
+
+
+=====================================================================
+5. SMP E PRESTAZIONI
+=====================================================================
+[ ] Lucchetto unico sul kernel: misurare quanto limita MariaDB e Apache sotto carico
+[ ] Invalidazione del TLB tra processori (i fili dello stesso programma su piu' CPU)
+[ ] SMP spento di serie: decidere quando renderlo di serie
+[ ] Prove con Firefox su piu' CPU
+
+
+=====================================================================
+6. GRAFICA
+=====================================================================
+[ ] Backend di GTK e Qt per wserver
+[ ] Velocita' di disegno misurata su PC vero (la console grafica era lenta, versione 0.243)
+[ ] Firefox: tempi di avvio e di apertura pagine su hardware vero, non solo in QEMU
+[ ] exbrowser con i siti moderni in JavaScript
+
+
+=====================================================================
+7. RETE E CARICO
+=====================================================================
+[ ] Apache2: molte connessioni contemporanee
+[ ] Stack TCP sotto carico (perdita di pacchetti, connessioni lente)
+[ ] Telnet e SSH: sessioni lunghe e piu' sessioni insieme
+[ ] Aggiornamenti tramite repository: ripresa dopo interruzione, verifica dei file
+
+
+=====================================================================
+8. PORTING A 64 BIT
+=====================================================================
+[ ] Ingresso in long mode e paging a 4 livelli
+[ ] Mappa della RAM (E820) e gestione della memoria oltre i 4 GB
+[ ] GDT, IDT, TSS e frame degli interrupt a 64 bit
+[ ] ABI delle syscall e loader ELF64
+[ ] libc a 64 bit e compilatore a 64 bit (tools64)
+[ ] Driver: dma_alloc sotto i 4 GB per le schede con DMA a 32 bit
+[ ] Prova su hardware vero a 64 bit e con piu' di 4 GB di RAM
+[ ] Tag git sull'ultima versione a 32 bit funzionante
+[ ] Ogni fase testata prima di passare alla successiva
+
+
+=====================================================================
+9. PORTING DEI PROGRAMMI (GTK, Qt, MariaDB, LibreOffice, GIMP, Apache2, altri)
+=====================================================================
+[ ] Strato POSIX: pthread, dlopen, mmap, segnali, socket, poll/select, fork/exec
+[ ] Dipendenze: glib, cairo, pango, freetype, harfbuzz, fontconfig
+[ ] Strumenti di build: Python, CMake, Meson
+[ ] Obiettivo "basta compilare": elenco dei programmi che compilano senza correzioni
+[ ] Limite di indirizzi a 32 bit per LibreOffice, GIMP e MariaDB (da qui la priorita' del 64 bit)
+[ ] Gestore di pacchetti: aggiornamenti, rimozione, impronte dei file
+
+
+=====================================================================
+10. HARDWARE REALE
+=====================================================================
+Macchine gia' provate: Pentium II, Pentium 166 MMX (8 MB), portatile con SiS900, Core 2 Quad.
+[ ] Tabella delle macchine con: disco, rete, audio, scheda video, esito
+[ ] Audio (confermato) su piu' macchine
+[ ] AHCI e passaggio da PIO a DMA su dischi diversi
+[ ] Rete: ne2k, pcnet, e1000, rtl8169, sis900 con traffico lungo
+[ ] USB: UHCI, OHCI, EHCI, xHCI con dispositivi diversi
+[ ] Hardware moderno: WiFi, NVMe, gestione energetica (ACPI, sospensione)
+
+
+=====================================================================
+11. SICUREZZA
+=====================================================================
+[ ] Puntatori utente: test sui casi limite (indirizzi vicino alla fine dello spazio utente, overflow)
+[ ] Permessi su file e processi, sudo, login
+[ ] Isolamento dei moduli (driver, filesystem) se difettosi
+[ ] Aggiornamenti firmati
+[ ] Come si segnala e si corregge una vulnerabilita'
+
+
+=====================================================================
+12. DOCUMENTAZIONE E REPOSITORY
+=====================================================================
+[ ] Aggiornare README (dichiara circa 30.000 righe di kernel, misurate circa 35.500 di C)
+[ ] Spezzare syscall_impl.c (6.089 righe) per area
+[ ] Pubblicare la documentazione aggiornata su GitHub e rifare la valutazione
+[ ] Script di misura del disco e di stabilita' dentro il repository
+[ ] Commenti: una lingua sola per il codice nuovo
+[ ] HANDOFF.md con decisioni prese e problemi aperti, ad ogni fase
+
+
+Fine elenco.

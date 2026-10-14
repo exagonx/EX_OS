@@ -106,6 +106,35 @@ quando arrivano a raffiche: lo dicono i contatori del driver, con
 e il controllo di congestione.
 </p>
 
+<h2 id="wifi">Il WiFi</h2>
+
+<p>
+Le reti senza fili le gestisce <code>wifid</code>, che parte da solo quando
+serve: tiene le reti salvate, si collega (la predefinita, altrimenti la piu'
+forte), si ricollega dopo una caduta e, quando la radio cade, riporta
+l'uscita sulla scheda Ethernet. Dalla scrivania c'e' l'icona accanto al
+volume (vedi <a href="exwin.html#wifi">ExWin</a>); da una console:
+</p>
+
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>wifi</code></td><td>lo stato: rete, segnale, velocita', indirizzo</td></tr>
+<tr><td><code>wifi -config</code></td><td>un menu: reti disponibili, rete nascosta, reti salvate, disconnetti, collegamento all'avvio</td></tr>
+<tr><td><code>wifi -showlist</code></td><td>le reti che si sentono</td></tr>
+<tr><td><code>wifi -connect:SSID [-save] [-default]</code></td><td>si collega, chiede la password se serve; la salva, e come predefinita</td></tr>
+<tr><td><code>wifi -disconnect</code></td><td>si stacca</td></tr>
+<tr><td><code>wifi -forget:SSID</code>, <code>wifi -default:SSID</code></td><td>toglie una rete salvata; sceglie la predefinita (vuoto: nessuna)</td></tr>
+<tr><td><code>wifi -boot:on</code> / <code>-boot:off</code></td><td>solo root: collegarsi all'avvio, prima del login</td></tr>
+</table>
+
+<p class="nota">
+<b>Chi la cambia.</b> Se root ha acceso il collegamento all'avvio, la rete e'
+del sistema: ogni utente la usa, solo root la cambia. Altrimenti ogni utente
+avvia la propria. <b>Le schede vere non hanno ancora un driver</b>: per ora
+c'e' <code>wifisim.drv</code>, una scheda simulata con cinque reti, che serve
+a provare tutto il resto.
+</p>
+
 <h2>Uscire</h2>
 
 <table border="1">

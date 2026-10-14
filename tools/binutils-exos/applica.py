@@ -89,6 +89,26 @@ MODIFICHE = [
         "i[3-7]86-*-elf* | i[3-7]86-*-rtems* | i[3-7]86-*-genode* | i[3-7]86-*-exos*)\n",
     ),
 
+    # --- x86_64-exos (added 2026-10-14, @EXOS-64) ----------------------------
+    #
+    # The 64-bit target is the same idea as the 32-bit one: plain ELF, the
+    # system's own libc, no dynamic linker. bfd and ld take it exactly where
+    # they take x86_64-*-elf*. gas needs nothing: it matches on its CPU
+    # family, which for x86_64 is "i386", so the i386-*-exos* line above
+    # already covers it.
+    (
+        "bfd/config.bfd",
+        "x86_64-*-exos*",
+        "  x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-genode*)\n",
+        "  x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-genode* | x86_64-*-exos*)\n",
+    ),
+    (
+        "ld/configure.tgt",
+        "x86_64-*-exos*",
+        "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-genode*)\n",
+        "x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-genode* | x86_64-*-exos*)\n",
+    ),
+
     # --- pex-exos: come si lancia un programma senza fork ------------------
     #
     # Le quattro modifiche qui sopra riguardano il BERSAGLIO (che formato

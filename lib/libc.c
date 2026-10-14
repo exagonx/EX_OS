@@ -258,6 +258,7 @@ typedef struct {
  * qui sopra: libc.c non include quell'header. Sono quelli di Linux. */
 #define SYS_SETUID      23
 #define SYS_GETUID      24
+#define SYS_PROC_UID    25
 #define SYS_CHOWN      182
 #define SYS_CHMOD       15
 #define SYS_FB_MAP     249
@@ -463,6 +464,7 @@ typedef struct {
 #define ESRCH         3
 #define EINTR         4
 #define EIO           5
+#define E2BIG         7     /* iconv: no room left in the output */
 #define EBADF         9
 #define ECHILD       10
 #define EAGAIN       11
@@ -5130,9 +5132,16 @@ int thread_crea(void (*fn)(void *), void *arg)
     return err_posix(_syscall2(SYS_THREAD_CREA, (uintptr_t)fn, (uintptr_t)arg));
 }
 
+#ifndef EXOS_LIBC_SO
+void dl_tls_lascia(void);       /* lib/libc_dl.c: the thread's dlopen'ed TLS blocks */
+#endif
+
 void thread_esci(int codice)
 {
     errno_posto_lascia();
+#ifndef EXOS_LIBC_SO
+    dl_tls_lascia();
+#endif
     _syscall1(SYS_THREAD_ESCI, (uint32_t)codice);
     for (;;) { }                /* non ci si arriva */
 }
@@ -7355,6 +7364,7 @@ int usleep(unsigned int us)
  * quali diritti sto girando», e senza di lui distinguere due numeri sempre
  * uguali sarebbe fingere una cosa che non c'e'. */
 int getuid(void)  { return (int)_syscall1(SYS_GETUID, 0); }
+int proc_uid(int pid) { int r = (int)_syscall1(SYS_PROC_UID, (uintptr_t)pid); if (r < 0) { errno = -r; return -1; } return r; }
 int geteuid(void) { return (int)_syscall1(SYS_GETUID, 0); }
 int getgid(void)  { return (int)_syscall1(SYS_GETUID, 0); }
 int getegid(void) { return (int)_syscall1(SYS_GETUID, 0); }
@@ -9323,11 +9333,10 @@ static int shmfd_munmap(void *addr)
  * and carry on without it when it is not there — which is how Firefox uses
  * dlopen almost everywhere.
  *
- * ! NOT AN ELF LOADER. A library built by the cross compiler as an ordinary
- * .so (PIC, DT_NEEDED, relocations) is not loaded: dlopen says NULL and
- * dlerror says why. libxul is therefore linked statically into the program
- * (the choice written in tools/exilla/leggimi.md, stage 1); a real dynamic
- * loader is a job of its own.
+ * ! AND SINCE 14 OCTOBER 2026 ALSO AN ELF LOADER: an ordinary .so (PIC,
+ * DT_NEEDED, relocations) is loaded by lib/libc_dl.c, tried first; this
+ * ExLibTesta way is what is left for EX-OS libraries, which are ET_EXEC
+ * linked at their own address.
  *
  * ! THE SAME CODE AS lib/exlib/exlib.c, with other names: system programs
  * link libc.c AND exlib.c, and the same names twice would not link. The
@@ -9354,6 +9363,8 @@ static void dl_sbaglio(const char *cosa, const char *chi)
     snprintf(g_dl_testo, sizeof(g_dl_testo), "%s: %s", chi ? chi : "?", cosa);
     g_dl_errore = g_dl_testo;
 }
+
+#include "libc_dl.c"         /* ordinary ELF shared objects (14 October 2026) */
 
 static void *dl_cerca(const DlTesta *t, const char *nome)
 {
@@ -9400,6 +9411,22 @@ void *dlopen(const char *nome, int flag)
     (void)flag;                 /* RTLD_LAZY/NOW/GLOBAL: everything is bound */
     if (nome == 0) return (void *)&g_dl_programma;
 
+    /* An ordinary ELF shared object first (lib/libc_dl.c). An EX-OS library
+     * is an ET_EXEC linked at its own address: the loader leaves it to the
+     * way below, which asks the kernel to map it. */
+    {
+        DlModulo *m;
+
+        mutex_prendi(&g_dl_lucchetto);
+        g_dl_non_dyn = 0;
+        g_dl_errore = 0;
+        m = dl_carica(nome, 0, 0);
+        mutex_lascia(&g_dl_lucchetto);
+        if (m) return (void *)m;
+        if (!g_dl_non_dyn && g_dl_errore && !strstr(g_dl_errore, "not found")) return 0;
+        g_dl_errore = 0;
+    }
+
     if (strchr(nome, '/')) {
         t = dl_apri_uno(nome, &esiste);
     } else {
@@ -9430,21 +9457,36 @@ void *dlsym(void *h, const char *nome)
     void          *p;
 
     if (!nome) { dl_sbaglio("no symbol name", "dlsym"); return 0; }
+    if (t && t != (const DlTesta *)-1 && ((const DlModulo *)h)->magia == DL_MOD_MAGIA) {
+        p = dl_nel_grafo((DlModulo *)h, nome);
+        if (!p) dl_sbaglio("undefined symbol", nome);
+        return p;
+    }
     if (t == 0 || t == &g_dl_programma || t == (const DlTesta *)-1) {
-        dl_sbaglio("undefined symbol (a static program has no symbol table "
-                   "at run time)", nome);
-        return 0;
+        /* the global scope: the program's table, the libc's, the libraries */
+        DlModulo    *chi;
+        const DlSim *s = 0;
+
+        p = dl_globale(nome, &chi, &s);
+        if (!p) dl_sbaglio("undefined symbol", nome);
+        return p;
     }
     p = dl_cerca(t, nome);
     if (!p) dl_sbaglio("undefined symbol", nome);
     return p;
 }
 
-/* Libraries stay mapped until the program ends: the kernel shares them
- * between processes and has no per-process unload. POSIX allows it. */
+/* An ELF library (lib/libc_dl.c) is unmapped at its last dlclose, after its
+ * DT_FINI_ARRAY. EX-OS libraries stay mapped until the program ends: the
+ * kernel shares them between processes and has no per-process unload. */
 int dlclose(void *h)
 {
-    (void)h;
+    if (h && h != (void *)-1 && h != (void *)&g_dl_programma &&
+        ((const DlModulo *)h)->magia == DL_MOD_MAGIA) {
+        mutex_prendi(&g_dl_lucchetto);
+        dl_chiudi((DlModulo *)h);
+        mutex_lascia(&g_dl_lucchetto);
+    }
     return 0;
 }
 
@@ -9458,8 +9500,8 @@ char *dlerror(void)
 
 int dladdr(const void *indirizzo, void *info) /* Dl_info *, see libc.h */
 {
-    (void)indirizzo; (void)info;
-    return 0;                   /* "not found": no symbol tables at run time */
+    if (info && dl_addr_elf(indirizzo, (DlInfo *)info)) return 1;
+    return 0;                   /* not in an ELF library: the program keeps no symbol table */
 }
 #endif /* !EXOS_LIBC_SO */
 
@@ -14175,5 +14217,6 @@ struct hostent *gethostbyname(const char *nome)
 #endif /* !EXOS_LIBC_SO: i socket */
 
 #ifndef EXOS_LIBC_SO
+#include "libc_iconv.c"      /* iconv: for ported software, static libc only */
 #include "libc_avvio.c"
 #endif
