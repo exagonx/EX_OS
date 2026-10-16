@@ -7628,3 +7628,8 @@ librerie mancanti»)
   prova-fb64-nativo.sh (fbc nativo compila e il programma gira in EX-OS 64),
   mktools64.sh mette fbc/.bi/libfb sul CD strumenti 64. Manca: fbsrc a 64
   bit (sorgenti per ricostruire dentro EX-OS), prova sul portatile.
+@GCC-64-PORTATILE 16/10: gcc e g++ nativi provati sul portatile MCP77: con
+  -B/exos/lib/ compilano e girano (C e C++ con eccezioni). Senza, "cannot
+  find crt0.o": specs nativo con *cross_compile: 1. mktools64.sh ora mette
+  0 (provato in QEMU con il prefisso /disk). Dopo la pubblicazione:
+  rifare `gcc t.c -o t` e `g++ p.cpp -o p` in /root sul portatile SENZA -B.

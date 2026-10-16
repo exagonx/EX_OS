@@ -1,6 +1,6 @@
 --- a/ipc/chromium/src/third_party/libevent/exos/event2/event-config.h
 +++ b/ipc/chromium/src/third_party/libevent/exos/event2/event-config.h
-@@ -0,0 +1,586 @@
+@@ -0,0 +1,607 @@
 +/* EX-OS (Exilla): generated from linux/event2/event-config.h by the Exilla
 +   port (tools/exilla): no epoll, eventfd, timerfd, sendfile, splice; i386
 +   sizes with a 64-bit time_t. The poll and select backends do the work. */
@@ -482,29 +482,50 @@
 +#define EVENT__SIZEOF_INT 4
 +
 +/* The size of `long', as computed by sizeof. */
++#ifdef __LP64__
++/* 64-bit EX-OS (16 October 2026): LP64, as x86_64 Linux */
++#define EVENT__SIZEOF_LONG 8
++#else
 +#define EVENT__SIZEOF_LONG 4
++#endif
 +
 +/* The size of `long long', as computed by sizeof. */
 +#define EVENT__SIZEOF_LONG_LONG 8
 +
 +/* The size of `off_t', as computed by sizeof. */
++#ifdef __LP64__
++#define EVENT__SIZEOF_OFF_T 8
++#else
 +#define EVENT__SIZEOF_OFF_T 4
++#endif
 +
 +/* The size of `pthread_t', as computed by sizeof. */
++#ifdef __LP64__
++#define EVENT__SIZEOF_PTHREAD_T 8
++#else
 +#define EVENT__SIZEOF_PTHREAD_T 4
++#endif
 +
 +/* The size of `short', as computed by sizeof. */
 +#define EVENT__SIZEOF_SHORT 2
 +
 +/* The size of `size_t', as computed by sizeof. */
++#ifdef __LP64__
++#define EVENT__SIZEOF_SIZE_T 8
++#else
 +#define EVENT__SIZEOF_SIZE_T 4
++#endif
 +
 +/* The size of `time_t', as computed by sizeof. */
 +/* EX-OS: time_t e' long long dall'agosto 2026 (niente 2038). */
 +#define EVENT__SIZEOF_TIME_T 8
 +
 +/* The size of `void *', as computed by sizeof. */
++#ifdef __LP64__
++#define EVENT__SIZEOF_VOID_P 8
++#else
 +#define EVENT__SIZEOF_VOID_P 4
++#endif
 +
 +/* ------------------------------------------------------------------------ */
 +/* END MOZILLA NOTE                                                         */

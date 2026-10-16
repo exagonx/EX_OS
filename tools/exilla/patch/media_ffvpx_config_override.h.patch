@@ -1,0 +1,14 @@
+--- a/media/ffvpx/config_override.h
++++ b/media/ffvpx/config_override.h
+@@ -95,7 +95,10 @@
+ /**
+  * BSD / Solaris
+  **/
+-#if defined(XP_OPENBSD) || defined(XP_NETBSD) || defined(XP_FREEBSD) || defined(XP_SOLARIS)
++/* EX-OS has no getauxval nor <sys/auxv.h> (Exilla at 64 bit, 16 October
++ * 2026: the first build with the video decoders) */
++#if defined(XP_OPENBSD) || defined(XP_NETBSD) || defined(XP_FREEBSD) || defined(XP_SOLARIS) || \
++    defined(XP_EXOS)
+   #undef HAVE_GETAUXVAL
+   #define HAVE_GETAUXVAL 0
+ #endif

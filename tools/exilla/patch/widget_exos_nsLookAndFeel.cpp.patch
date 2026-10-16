@@ -1,6 +1,6 @@
 --- a/widget/exos/nsLookAndFeel.cpp
 +++ b/widget/exos/nsLookAndFeel.cpp
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,217 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -19,6 +19,28 @@
 +
 +nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
 +                                             nscolor& aResult) {
++  // ! THE SCROLLBAR HAS COLOURS OF ITS OWN (9 October 2026). The stand-in
++  // colours make track and thumb the same white: the bar was there, took
++  // clicks, and could not be seen - the user found it by clicking. These are
++  // the greys of ExWin's own scrollbars; in a dark scheme, lighter on dark.
++  const bool scuro = aScheme == ColorScheme::Dark;
++  switch (aID) {
++    case ColorID::ThemedScrollbar:
++    case ColorID::Scrollbar:
++      aResult = scuro ? NS_RGB(0x30, 0x30, 0x30) : NS_RGB(0xD8, 0xD8, 0xD8);
++      return NS_OK;
++    case ColorID::ThemedScrollbarThumb:
++      aResult = scuro ? NS_RGB(0x90, 0x90, 0x90) : NS_RGB(0x88, 0x88, 0x88);
++      return NS_OK;
++    case ColorID::ThemedScrollbarThumbHover:
++      aResult = scuro ? NS_RGB(0xA8, 0xA8, 0xA8) : NS_RGB(0x6C, 0x6C, 0x6C);
++      return NS_OK;
++    case ColorID::ThemedScrollbarThumbActive:
++      aResult = scuro ? NS_RGB(0xC0, 0xC0, 0xC0) : NS_RGB(0x50, 0x50, 0x50);
++      return NS_OK;
++    default:
++      break;
++  }
 +  aResult = GetStandinForNativeColor(aID, aScheme);
 +  return NS_OK;
 +}
@@ -59,7 +81,8 @@
 +      aResult = 0;
 +      break;
 +    case IntID::ScrollArrowStyle:
-+      aResult = eScrollArrow_None;
++      // One arrow at each end, as the scrollbars of ExWin have.
++      aResult = eScrollArrowStyle_Single;
 +      break;
 +    case IntID::ScrollButtonLeftMouseButtonAction:
 +      aResult = 0;

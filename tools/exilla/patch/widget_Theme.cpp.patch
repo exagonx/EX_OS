@@ -12,13 +12,17 @@
    return do_AddRef(new Theme(Theme::ScrollbarStyle()));
  }
  #endif
-@@ -1506,6 +1506,9 @@
+@@ -1506,6 +1506,13 @@
    return MakeUnique<ScrollbarDrawingGTK>();
  #elif ANDROID
    return MakeUnique<ScrollbarDrawingAndroid>();
 +#elif defined(XP_EXOS)
-+  // EX-OS: thin scrollbars that need no system theme, as on Android.
-+  return MakeUnique<ScrollbarDrawingAndroid>();
++  // EX-OS: the classic scrollbar, with its track and its arrows. Until 9
++  // October 2026 this was the Android one: a thin thumb meant for a touch
++  // screen, which on Android only shows while the page moves. Here it was
++  // never told to show: the user could click where the bar was and not see
++  // it. ScrollbarDrawingWin needs nothing from the system either.
++  return MakeUnique<ScrollbarDrawingWin>();
  #else
  #  error "Unknown platform, need scrollbar implementation."
  #endif

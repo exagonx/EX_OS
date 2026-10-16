@@ -93,6 +93,20 @@ cp "$E/bin/ld" "$E/$TARGET/bin/ld"
 G="$TC64/lib/gcc/$TARGET/$VER"
 cp -rp "$G/." "$E/lib/gcc/$TARGET/$VER/"
 rm -rf "$E/lib/gcc/$TARGET/$VER/plugin" "$E/lib/gcc/$TARGET/$VER/install-tools"
+# ! THE NATIVE gcc IS NOT A CROSS COMPILER (16 October 2026, on the MCP77
+# laptop): the specs file copied from the cross gcc says "*cross_compile: 1",
+# and with it gcc leaves <prefix>/lib out of its search paths - crt0.o and
+# libc.a, which live in /exos/lib, were "not found" by a gcc that otherwise
+# worked (-B/exos/lib/ made it link). With 0 gcc adds its standard startfile
+# prefix itself, worked out from where the binary is, so a tree moved
+# elsewhere (/cdrom/exos, a test disk) keeps working.
+python3 - "$E/lib/gcc/$TARGET/$VER/specs" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+assert "*cross_compile:\n1\n" in s, "specs without *cross_compile: 1"
+open(p, "w").write(s.replace("*cross_compile:\n1\n", "*cross_compile:\n0\n"))
+PY
 S="$TC64/$TARGET"
 for f in crt0.o libc.a libm.a libstdc++.a libsupc++.a libpthread.a libdl.a librt.a; do
     [ -f "$S/lib/$f" ] && cp -p "$S/lib/$f" "$E/lib/"

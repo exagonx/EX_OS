@@ -56,7 +56,7 @@ export EXOS_QEMU_EXTRA="$KVM -cpu qemu64 -drive file=$IMG,format=raw,if=ide"
 SER=/tmp/exos/serialfb64.txt
 rm -f "$SER"
 timeout 600 python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "export PATH=/disk/bin:/bin@1" \
-    "echo INIZIO-FB64@1" "gcc /disk/prova-gcc.c -o /disk/pg@60" "/disk/pg@5" "fbc -version@8" \
+    "echo INIZIO-FB64@1" "cd /disk@1" "gcc /disk/prova-gcc.c -o /disk/pg@60" "/disk/pg@5" "fbc -version@8" \
     "fbc /disk/prova64.bas -x /disk/p64@150" "/disk/p64@10" \
     "echo FINE-FB64@2" > "$D/qemu.log" 2>&1 || true
 tr -d '\r' < "$SER" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | \

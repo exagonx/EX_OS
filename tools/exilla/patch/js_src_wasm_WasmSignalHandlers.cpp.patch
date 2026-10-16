@@ -1,14 +1,21 @@
 --- a/js/src/wasm/WasmSignalHandlers.cpp
 +++ b/js/src/wasm/WasmSignalHandlers.cpp
-@@ -114,6 +114,11 @@
+@@ -114,6 +114,18 @@
  #      define R01_sig(p) ((p)->sc_frame.fixreg[1])
  #      define R32_sig(p) ((p)->sc_frame.srr0)
  #    endif
 +#  elif defined(XP_EXOS)
-+// EX-OS: ucontext_t is laid out as Linux i386 (lib/include/libc.h).
-+#    define EIP_sig(p) ((p)->uc_mcontext.gregs[REG_EIP])
-+#    define EBP_sig(p) ((p)->uc_mcontext.gregs[REG_EBP])
-+#    define ESP_sig(p) ((p)->uc_mcontext.gregs[REG_ESP])
++// EX-OS: ucontext_t is laid out as Linux i386, and at 64 bit as Linux
++// x86_64 (lib/include/libc.h).
++#    if defined(__x86_64__)
++#      define RIP_sig(p) ((p)->uc_mcontext.gregs[REG_RIP])
++#      define RSP_sig(p) ((p)->uc_mcontext.gregs[REG_RSP])
++#      define RBP_sig(p) ((p)->uc_mcontext.gregs[REG_RBP])
++#    else
++#      define EIP_sig(p) ((p)->uc_mcontext.gregs[REG_EIP])
++#      define EBP_sig(p) ((p)->uc_mcontext.gregs[REG_EBP])
++#      define ESP_sig(p) ((p)->uc_mcontext.gregs[REG_ESP])
++#    endif
  #  elif defined(__linux__) || defined(__sun)
  #    if defined(__linux__)
  #      define EIP_sig(p) ((p)->uc_mcontext.gregs[REG_EIP])

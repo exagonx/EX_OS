@@ -23,6 +23,18 @@
  *   textline <file> -vp          visualizza a pagine ed esce
  *   textline <file> -c:<file2>   copia <file> in <file2> ed esce
  *
+ * BACKSLASH COMMANDS (0.002, 16 October 2026) - a line that starts with `\`
+ * is a command, while writing (`n`) and at the `*` prompt alike. ESC cannot
+ * be typed over telnet, so `\end` is the way out of writing:
+ *   \end                    leave writing, back to the prompt
+ *   \copycols L-C1-C2       copy columns C1..C2 of line L (from 1, inclusive)
+ *   \copyline A[-B]         copy lines A..B (A alone: that line)
+ *   \paste                  insert what was copied as new lines at the
+ *                           writing point, which moves to the last of them
+ *   \deleteline A[-B]       delete lines A..B (A alone: that line)
+ *   \jump N                 writing continues after line N (0: at the top)
+ *   \\text                  a line that really starts with one backslash
+ *
  * COMANDI DELL'EDITOR — vedi cmd_help()
  *
  * ---------------------------------------------------------------------------
@@ -61,7 +73,7 @@
  * EX-OS non usa la virgola mobile.
  * ============================================================================= */
 #define TL_NAME     "Text Line"
-#define TL_VERSION  "0.001"
+#define TL_VERSION  "0.002"
 
 /* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' TL_VERSION qui sopra:
  * `textline -version` la stampa dall'avvio della libc (vedi EX_VERSIONE in
@@ -91,6 +103,12 @@ static int  g_count;                    /* righe usate */
 static int  g_cur;                      /* riga corrente, 1-based (0 = nessuna) */
 static char g_path[128];                /* file aperto */
 static int  g_dirty;                    /* modifiche non salvate */
+
+/* the backslash commands: the copy buffer, and where writing inserts (new
+ * lines go after line g_ins; 0 = at the top) */
+static char g_clip[MAX_LINES][MAX_LINE];
+static int  g_clip_n;
+static int  g_ins;
 
 /* =============================================================================
  * Utilità
@@ -352,6 +370,148 @@ static void show_range(int da, int a, int paginate)
 }
 
 /* =============================================================================
+ * Backslash commands (see the head of the file)
+ * ============================================================================= */
+
+/* "A" or "A-B" after the command name: 0 and *a, *b set, or -1 */
+static int bs_range(const char *p, int *a, int *b)
+{
+    while (*p == ' ') p++;
+    *a = parse_num(&p);
+    if (*a < 0) return -1;
+    *b = *a;
+    if (*p == '-') {
+        p++;
+        *b = parse_num(&p);
+        if (*b < 0) return -1;
+    }
+    while (*p == ' ') p++;
+    if (*p != '\0') return -1;
+    if (*a < 1 || *b < *a || *b > g_count) {
+        printf("textline: righe %d-%d fuori dal documento (1-%d)\n", *a, *b, g_count);
+        return -1;
+    }
+    return 0;
+}
+
+/* the name at the start of cmd, followed by the end or a space */
+static const char *bs_name(const char *cmd, const char *name)
+{
+    size_t n = strlen(name);
+
+    if (strncmp(cmd, name, n) != 0) return NULL;
+    if (cmd[n] != '\0' && cmd[n] != ' ') return NULL;
+    return cmd + n;
+}
+
+/* line: the whole input line, starting with '\'. writing: 1 inside `n`.
+ * Returns 1 for \end while writing, 0 otherwise. */
+static int bs_command(const char *line, int writing)
+{
+    const char *cmd = line + 1, *p;
+    int a, b, c1, c2, i;
+
+    if ((p = bs_name(cmd, "end")) != NULL) {
+        if (writing) return 1;
+        printf("textline: \\end serve durante la scrittura ('n')\n");
+        return 0;
+    }
+    if ((p = bs_name(cmd, "copyline")) != NULL) {
+        if (bs_range(p, &a, &b) != 0) {
+            printf("textline: sintassi \\copyline A oppure \\copyline A-B\n");
+            return 0;
+        }
+        g_clip_n = 0;
+        for (i = a; i <= b; i++) {
+            memcpy(g_clip[g_clip_n], g_text[i - 1], MAX_LINE);
+            g_clip_n++;
+        }
+        printf("textline: %d %s (%d-%d)\n", g_clip_n, g_clip_n == 1 ? "riga copiata" : "righe copiate", a, b);
+        return 0;
+    }
+    if ((p = bs_name(cmd, "copycols")) != NULL) {
+        int len, n;
+
+        while (*p == ' ') p++;
+        a = parse_num(&p);
+        if (a < 0 || *p++ != '-') goto copycols_sintassi;
+        c1 = parse_num(&p);
+        if (c1 < 0 || *p++ != '-') goto copycols_sintassi;
+        c2 = parse_num(&p);
+        while (*p == ' ') p++;
+        if (c2 < 0 || *p != '\0') goto copycols_sintassi;
+        if (a < 1 || a > g_count) {
+            printf("textline: riga %d inesistente (il file ha %d righe)\n", a, g_count);
+            return 0;
+        }
+        len = (int)strlen(g_text[a - 1]);
+        if (c1 < 1 || c2 < c1 || c1 > len) {
+            printf("textline: colonne %d-%d fuori dalla riga %d (lunga %d)\n", c1, c2, a, len);
+            return 0;
+        }
+        if (c2 > len) c2 = len;
+        n = c2 - c1 + 1;
+        memcpy(g_clip[0], g_text[a - 1] + c1 - 1, (size_t)n);
+        g_clip[0][n] = '\0';
+        g_clip_n = 1;
+        printf("textline: copiate le colonne %d-%d della riga %d: \"%s\"\n", c1, c2, a, g_clip[0]);
+        return 0;
+    copycols_sintassi:
+        printf("textline: sintassi \\copycols RIGA-COLINIZIO-COLFINE\n");
+        return 0;
+    }
+    if ((p = bs_name(cmd, "paste")) != NULL) {
+        int dove = writing ? g_ins : g_cur;
+
+        if (g_clip_n == 0) {
+            printf("textline: niente da incollare (\\copyline o \\copycols prima)\n");
+            return 0;
+        }
+        for (i = 0; i < g_clip_n; i++) {
+            if (line_insert(dove + 1, g_clip[i]) != 0) break;
+            dove++;
+        }
+        printf("textline: %d %s, ora alla riga %d\n", i, i == 1 ? "riga incollata" : "righe incollate", dove);
+        g_cur = dove;
+        if (writing) g_ins = dove;
+        return 0;
+    }
+    if ((p = bs_name(cmd, "deleteline")) != NULL) {
+        if (bs_range(p, &a, &b) != 0) {
+            printf("textline: sintassi \\deleteline A oppure \\deleteline A-B\n");
+            return 0;
+        }
+        for (i = b; i >= a; i--) line_delete(i);
+        /* the writing point keeps its place in what is left */
+        if (g_ins >= b) g_ins -= b - a + 1;
+        else if (g_ins >= a) g_ins = a - 1;
+        if (g_cur > g_count) g_cur = g_count;
+        printf("textline: righe %d-%d cancellate (%d righe in tutto)\n", a, b, g_count);
+        return 0;
+    }
+    if ((p = bs_name(cmd, "jump")) != NULL) {
+        while (*p == ' ') p++;
+        a = parse_num(&p);
+        while (*p == ' ') p++;
+        if (a < 0 || *p != '\0') {
+            printf("textline: sintassi \\jump RIGA\n");
+            return 0;
+        }
+        if (a > g_count) {
+            printf("textline: riga %d inesistente (il file ha %d righe)\n", a, g_count);
+            return 0;
+        }
+        g_ins = a;
+        g_cur = a;
+        if (a > 0) printf("%5d: %s\n", a, g_text[a - 1]);
+        printf("textline: si scrive dopo la riga %d\n", a);
+        return 0;
+    }
+    printf("textline: comando \\ sconosciuto - 'h' per l'elenco\n");
+    return 0;
+}
+
+/* =============================================================================
  * Comandi
  * ============================================================================= */
 
@@ -379,6 +539,16 @@ static void cmd_help(void)
     printf("\n");
     printf("  Durante l'inserimento di una riga, ESC annulla la riga e\n");
     printf("  riporta al prompt dei comandi.\n");
+    printf("\n");
+    printf("  COMANDI CON \\ (in scrittura e al prompt; da telnet ESC non c'e')\n");
+    printf("    \\end                 esce dalla scrittura e torna al prompt\n");
+    printf("    \\copycols R-C1-C2    copia dalla riga R le colonne da C1 a C2\n");
+    printf("    \\copyline A[-B]      copia le righe da A a B (solo A: una riga)\n");
+    printf("    \\paste               incolla come righe nuove nel punto di\n");
+    printf("                         scrittura, e si sposta sull'ultima\n");
+    printf("    \\deleteline A[-B]    cancella le righe da A a B (solo A: una)\n");
+    printf("    \\jump N              si scrive dopo la riga N (0: in cima)\n");
+    printf("    \\\\testo             una riga che comincia davvero con \\\n");
     printf("\n");
 }
 
@@ -414,17 +584,20 @@ static void cmd_modify(int n)
     g_dirty = 1;
 }
 
-/* Inserisce righe in coda finché l'utente non annulla con ESC. */
+/* Inserisce righe finché l'utente non annulla con ESC o scrive \end.
+ * 0.002: the lines go at the writing point (g_ins), at the end unless
+ * \jump moved it; a line starting with '\' is a backslash command. */
 static void cmd_new(void)
 {
     char buf[INBUF];
 
-    printf("Inserimento righe in coda. ESC per terminare.\n");
+    g_ins = g_count;
+    printf("Inserimento righe in coda. ESC o \\end per terminare, 'h' al prompt per i comandi \\.\n");
 
     for (;;) {
         int r;
 
-        printf("%5d> ", g_count + 1);
+        printf("%5d> ", g_ins + 1);
         r = read_line(buf, sizeof(buf));
 
         if (r == -1) {                 /* ESC: fine inserimento */
@@ -433,8 +606,13 @@ static void cmd_new(void)
         }
         if (r == -2) return;
 
-        if (line_insert(g_count + 1, buf) != 0) return;
-        g_cur = g_count;
+        if (buf[0] == '\\' && buf[1] != '\\') {
+            if (bs_command(buf, 1)) { printf("(fine inserimento)\n"); return; }
+            continue;
+        }
+        if (line_insert(g_ins + 1, buf[0] == '\\' ? buf + 1 : buf) != 0) return;
+        g_ins++;
+        g_cur = g_ins;
     }
 }
 
@@ -478,6 +656,9 @@ static int exec_command(const char *cmd)
     /* Salta spazi iniziali */
     while (*p == ' ' || *p == '\t') p++;
     if (*p == '\0') return 0;      /* riga vuota: nessuna azione */
+
+    /* the backslash commands work at the prompt too (0.002) */
+    if (*p == '\\') { bs_command(p, 0); return 0; }
 
     c = *p++;
 

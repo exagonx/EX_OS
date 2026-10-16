@@ -42,9 +42,17 @@
 #include "libc.h"
 #include "ip_proto.h"
 #include "rete.h"
+#include "extaskbar.h"
+
+/* (@EXTASKBAR, 0.010) the TELNET item of the status bar: "on" while
+ * listening, "cnn" while a session is open (one at a time), "off" when
+ * telnetd stops. extaskbar_voce sends only when the text changes, so "on"
+ * is repeated at every accept round: a bar started after telnetd learns it
+ * within ten seconds. */
+#define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.009");
+EX_VERSIONE("telnetd", "0.010");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -1046,6 +1054,7 @@ int main(int argc, char **argv)
     for (;;) {
         int id;
 
+        BARRA_TELNET("on");
         ac.id         = (unsigned int)asc;
         ac.timeout_ms = 10000;
 
@@ -1097,8 +1106,11 @@ int main(int argc, char **argv)
             }
         }
 
+        BARRA_TELNET("cnn");
         sessione(id, &cfg, con_login);
+        BARRA_TELNET("on");
     }
+    BARRA_TELNET("off");
 
     {
         IpTcpRif r;

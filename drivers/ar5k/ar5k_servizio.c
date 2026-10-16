@@ -49,6 +49,7 @@ int ar5k_ec_accendi(void);
 int ar5k_ec_svuota(void);
 int ar5k_ec_servi(void);
 void ar5k_spia(volatile void *registri, unsigned int sotto_id, int accesa);
+int  ar5k_ec_led_scrivi(int v);
 
 static WifiStato g_st;
 static int       g_ec;              /* 1: the HP laptop's EC is ours */
@@ -80,6 +81,33 @@ static void stato_fai(void)
     ar5k_conn_stato(&g_st);
 }
 
+/* =============================================================================
+ * The WiFi light, in the scheme the user asked for (16 October 2026), the
+ * one of other devices: off = radio off, orange = on and not connected,
+ * blinking = connecting (blue once the chip is awake), steady blue =
+ * connected. Measured with `ar5k.drv -led:ec` on the HP laptop: the EC's
+ * WLLD (EC byte 0x0A bits 2-3) gives 0 off, 1 steady, 2 and 3 blinking; the
+ * colour is the card's GPIO 3 - blue when the awake chip drives it low,
+ * orange when nobody drives it (the BIOS's state, the chip in reset between
+ * scans). The EC is written only when the value changes.
+ * ============================================================================= */
+static void spia(int stato)
+{
+    static int wlld_prima = -1;
+    int wlld, blu;
+
+    if (!g_ec) { ar5k_spia(g_registri, g_sotto, stato != WIFI_STATO_SPENTA); return; }
+    switch (stato) {
+    case WIFI_STATO_SPENTA:    wlld = 0; blu = 0; break;
+    case WIFI_STATO_AGGANCIA:
+    case WIFI_STATO_CHIAVI:    wlld = 2; blu = 1; break;
+    case WIFI_STATO_CONNESSA:  wlld = 1; blu = 1; break;
+    default:                   wlld = 1; blu = 0; break;   /* on, not connected */
+    }
+    ar5k_spia(g_registri, g_sotto, blu);
+    if (wlld != wlld_prima && ar5k_ec_led_scrivi(wlld) == 0) wlld_prima = wlld;
+}
+
 /* the radio's state from the EC, and the light to match it; the radio
  * switched off drops the connection */
 static void aggiorna_radio(void)
@@ -91,7 +119,7 @@ static void aggiorna_radio(void)
         g_caduta = 1;
     }
     stato_fai();
-    ar5k_spia(g_registri, g_sotto, !g_spenta);
+    spia(g_st.stato);
 }
 
 /* (@EXTASKBAR) the WiFi items of the status bar, once a second: state,
@@ -216,6 +244,7 @@ int ar5k_servi(volatile void *registri, unsigned int sotto_id, const unsigned ch
                 break;
             }
             g_st.stato = WIFI_STATO_AGGANCIA;
+            spia(WIFI_STATO_AGGANCIA);                  /* blinks while joining */
             perche[0] = 0;
             r = ar5k_conn_collega(registri, sotto_id, &c, perche, sizeof(perche));
             memset(&c, 0, sizeof(c));
