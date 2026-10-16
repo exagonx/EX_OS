@@ -16,10 +16,13 @@
  *
  * Dove finiscono le cose:
  *
- *     /USB/DRIVE0        una chiavetta senza tabella delle partizioni
- *     /USB/HDD0p1        la prima partizione del primo disco
- *     /USB/HDD0p2        la seconda
- *     /USB/HDD1p1        e il disco dopo ricomincia da capo
+ *     /USB/USB0          la prima chiavetta (o disco) infilata
+ *     /USB/USB1          la seconda, e cosi' via
+ *     /USB/USB0p2        una seconda partizione della prima, se ne ha
+ *
+ * (16 October 2026, the user: a stick showed up as /USB/HDD0p1 - most sticks
+ * carry a partition table - and should be USB0, USB1, USB2... one number per
+ * stick inserted. Until then: DRIVE<n> without a table, HDD<n>p<m> with one.)
  *
  * -----------------------------------------------------------------------------
  * ! NON SORVEGLIA L'USB: SORVEGLIA I DISPOSITIVI A BLOCCHI
@@ -42,14 +45,14 @@
  * lettori di dischetti USB lo sono sempre. La regola quindi non e' «se ha una
  * partizione sola», e':
  *
- *     nessuna tabella  ->  il volume e' tutto il dispositivo  ->  DRIVE<n>
- *     una tabella      ->  ogni partizione leggibile          ->  HDD<n>p<m>
+ *     nessuna tabella  ->  il volume e' tutto il dispositivo  ->  USB<n>
+ *     una tabella      ->  la prima partizione montata        ->  USB<n>
+ *                          le altre, se ce ne sono            ->  USB<n>p<m>
  *
- * ! E IL NUMERO SEGUE IL DISPOSITIVO, NON LA PARTIZIONE. «HDD0, HDD1, HDD2»
- * numerati per partizione funziona finche' i dischi sono uno: al secondo, le
- * partizioni dei due si mescolano nella stessa numerazione e non si sa piu' di
- * chi e' quale. HDD0p1 e' la stessa forma di hd0p1, che `disk` e `fdisk`
- * stampano gia'.
+ * ! E IL NUMERO SEGUE IL DISPOSITIVO, NON LA PARTIZIONE: numerate per
+ * partizione, quelle di due chiavette si mescolerebbero nella stessa
+ * numerazione e non si saprebbe piu' di chi e' quale. Il numero e' il primo
+ * libero: tolta USB0, la prossima chiavetta la riprende.
  *
  * -----------------------------------------------------------------------------
  * ! CIO' CHE NON SI SA LEGGERE SI SALTA IN SILENZIO
@@ -70,10 +73,11 @@
  * ============================================================================= */
 
 #include "libc.h"
+#include "extaskbar.h"
 
 /* +0.001 a ogni modifica: `automount -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("automount", "0.003");
+EX_VERSIONE("automount", "0.004");
 
 #define TIPO_PART     3
 #define TIPO_RING3    5
@@ -88,7 +92,7 @@ typedef struct {
     char nome[BLKINFO_NOME_MAX];              /* "usb0" */
     int  usato;
     int  visto;                               /* c'e' ancora in questo giro */
-    int  numero;                              /* il suo posto: DRIVE<n>/HDD<n> */
+    int  numero;                              /* il suo posto: USB<n> */
     int  n_punti;
     int  tentativi;                           /* riletture gia' fatte */
     char punto[MAX_MONTAGGI][32];
@@ -104,8 +108,8 @@ static void aiuto(void)
     printf("  automount &     resta a guardare (un giro al secondo)\n");
     printf("  automount -1    una passata sola\n");
     printf("  automount -v    dice anche quel che salta e perche'\n\n");
-    printf("  %s/DRIVE0   una chiavetta senza tabella delle partizioni\n", RADICE);
-    printf("  %s/HDD0p1   la prima partizione del primo disco\n", RADICE);
+    printf("  %s/USB0     la prima chiavetta, %s/USB1 la seconda...\n", RADICE, RADICE);
+    printf("  %s/USB0p2   una seconda partizione della prima, se ne ha\n", RADICE);
     printf("\nVa lanciato da root, come `mount`. Il posto giusto e'\n");
     printf("/boot/avvio.sh, dopo i driver: e' li' che sta la rete, e per la\n");
     printf("stessa ragione - la catena vuole un ordine.\n");
@@ -131,7 +135,7 @@ static int radice_pronta(void)
     return 0;
 }
 
-/* Il primo numero libero: due chiavette insieme fanno DRIVE0 e DRIVE1. */
+/* Il primo numero libero: due chiavette insieme fanno USB0 e USB1. */
 static int numero_libero(void)
 {
     int n, i;
@@ -151,6 +155,14 @@ static Seguito *trova(const char *nome)
     for (i = 0; i < MAX_SEGUITI; i++)
         if (g_seg[i].usato && strcmp(g_seg[i].nome, nome) == 0) return &g_seg[i];
     return NULL;
+}
+
+/* Where a partition goes: the first one mounted of a stick is USB<n> like a
+ * stick without a table, any other USB<n>p<its number>. */
+static void punto_partizione(char *punto, int max, const Seguito *s, const char *num)
+{
+    if (s->n_punti == 0) snprintf(punto, (size_t)max, "%s/USB%d", RADICE, s->numero);
+    else                 snprintf(punto, (size_t)max, "%s/USB%dp%s", RADICE, s->numero, num);
 }
 
 /* Monta `dev` su `punto` e se ci riesce lo annota. */
@@ -258,7 +270,7 @@ static void arrivato(const char *nome)
 
     if (n == 0) {
         /* Nessuna tabella: il volume e' tutto il dispositivo. */
-        snprintf(punto, sizeof(punto), "%s/DRIVE%d", RADICE, s->numero);
+        snprintf(punto, sizeof(punto), "%s/USB%d", RADICE, s->numero);
         monta(s, nome, punto);
     } else {
         /* ! L'ELENCO SI RILEGGE, e questa e' costata una prova. Le partizioni
@@ -275,8 +287,7 @@ static void arrivato(const char *nome)
             if (dopo[i].tipo != TIPO_PART) continue;
             if (strncmp(p, nome, l) != 0 || p[l] != 'p') continue;
 
-            snprintf(punto, sizeof(punto), "%s/HDD%dp%s", RADICE, s->numero,
-                     p + l + 1);
+            punto_partizione(punto, sizeof(punto), s, p + l + 1);
             monta(s, p, punto);
         }
     }
@@ -313,7 +324,7 @@ static void riprova(Seguito *s)
     }
 
     if (n == 0) {
-        snprintf(punto, sizeof(punto), "%s/DRIVE%d", RADICE, s->numero);
+        snprintf(punto, sizeof(punto), "%s/USB%d", RADICE, s->numero);
         monta(s, s->nome, punto);
     } else {
         quanti = elenco(dopo, 16);
@@ -325,8 +336,7 @@ static void riprova(Seguito *s)
             if (dopo[i].tipo != TIPO_PART) continue;
             if (strncmp(p, s->nome, l) != 0 || p[l] != 'p') continue;
 
-            snprintf(punto, sizeof(punto), "%s/HDD%dp%s", RADICE, s->numero,
-                     p + l + 1);
+            punto_partizione(punto, sizeof(punto), s, p + l + 1);
             monta(s, p, punto);
         }
     }
@@ -401,7 +411,7 @@ static void giro(void)
              * occupato apposta (o il prossimo dispositivo lo riuserebbe sotto
              * un montaggio aperto), quindi dall'elenco non se ne va. Ma li'
              * dentro non si legge piu' niente, e lasciarlo montato vuol dire
-             * un /USB/DRIVE0 che risponde «errore di I/O» per sempre. */
+             * un /USB/USB0 che risponde «errore di I/O» per sempre. */
             if (!b[i].guasto) s->visto = 1;
             else if (g_verboso) printf("automount: %s e' guasto\n", b[i].nome);
             continue;
@@ -424,6 +434,24 @@ static void giro(void)
             g_seg[i].n_punti == 0 && g_seg[i].tentativi > 0 &&
             g_seg[i].tentativi < TENTATIVI_MAX)
             riprova(&g_seg[i]);
+}
+
+/* (@EXTASKBAR, 16 October 2026) the USB item of the status bar: what is
+ * mounted right now - "USB0 Connected", "USBx2 mounted", "USB none" */
+static void voce_barra(void)
+{
+    char t[EXTB_VOCE_TESTO];
+    int  i, n = 0, primo = -1;
+
+    for (i = 0; i < MAX_SEGUITI; i++)
+        if (g_seg[i].usato && g_seg[i].visto && g_seg[i].n_punti > 0) {
+            if (primo < 0) primo = g_seg[i].numero;
+            n++;
+        }
+    if (n == 0)      strcpy(t, "USB none");
+    else if (n == 1) snprintf(t, sizeof(t), "USB%d Connected", primo);
+    else             snprintf(t, sizeof(t), "USBx%d mounted", n);   /* 15 columns: one left for the separator */
+    extaskbar_voce("USB", 15, t, 0);
 }
 
 int main(int argc, char **argv)
@@ -453,6 +481,7 @@ int main(int argc, char **argv)
 
     for (;;) {
         giro();
+        voce_barra();
         usleep(PERIODO_MS * 1000);
     }
 }

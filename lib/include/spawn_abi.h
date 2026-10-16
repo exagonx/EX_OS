@@ -106,6 +106,12 @@
  * ! SOLO root PUO' CHIEDERLO: vedi il commento sui campi, in fondo. */
 #define SPAWN_F_UTENTE       0x00000002u
 
+/* (16 October 2026, @EXTASKBAR) The child runs in the background - the
+ * shell's '&'. Its output, and its children's, goes to extaskbar while that
+ * collects it. A new bit in the current form 'SPO0': programs built before
+ * never set it, so nothing changes for them. */
+#define SPAWN_F_SOTTOFONDO   0x00000004u
+
 #define SPAWN_MAX_AZIONI     4
 #define SPAWN_RED_PATH_MAX   128
 

@@ -29,6 +29,14 @@
 
 !silenced
 
+# (Stessa riga in bin/hwconfig/hwconfig.c, l'altro scrittore di questo file.)
+# La barra di stato, SE root l'ha chiesta (`extaskbar -boot:on`). Da sola
+# questa riga non fa niente: extaskbar -auto legge /root/.config/extaskbar.cfg
+# e parte solo se `avvio = si`, altrimenti esce in silenzio. Sta PRIMA di
+# tutto il resto: cosi' anche i primi messaggi dei servizi lanciati qui sotto
+# con '&' vanno nei suoi log invece che sullo schermo.
+extaskbar -auto
+
 echo Accendo la rete...
 
 # L'ordine non e' modificabile: ogni passo serve al successivo.
@@ -107,8 +115,8 @@ netupdate -auto
 # che ignora mouse e tastiere e aspetta una chiavetta.
 
 # Il sorvegliante: guarda i dispositivi a blocchi, non l'USB, e monta quel che
-# compare. Una chiavetta senza tabella delle partizioni finisce in
-# /USB/DRIVE0; un disco partizionato in /USB/HDD0p1, /USB/HDD0p2, ...
+# compare. La prima chiavetta finisce in /USB/USB0, la seconda in /USB/USB1,
+# e cosi' via; un'altra partizione della stessa in /USB/USB0p2.
 #
 # ! /USB DEVE ESISTERE, e sta gia' nelle immagini: il VFS monta su un nome che
 # non esiste ma la directory che lo contiene dev'esserci, e da CD non la si

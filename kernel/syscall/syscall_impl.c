@@ -413,6 +413,165 @@ int32_t sys_read(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * @EXTASKBAR (0.255): the output of background services, kept for the bar
+ *
+ * The user (16 October 2026): what the services print in the background -
+ * WiFi, USB, automount - makes the command line unusable. While a collector
+ * (/bin/extaskbar) is registered and alive, what a process marked
+ * `sottofondo` writes on its console or terminal is put here instead, one
+ * record per write, and the collector reads it with EXTB_LEGGI. With no
+ * collector, or one that has died, nothing is captured: everything goes back
+ * to the screen, which is what the user asked for when the bar is not there.
+ *
+ * A plain buffer, records one after the other; full, the oldest go (counted
+ * in the next record's `persi`). Taken with interrupts off: writers are any
+ * process, at any time.
+ * ============================================================================= */
+#include "extaskbar_abi.h"
+
+static uint8_t  g_extb[EXTB_ANELLO_BYTE];
+static uint32_t g_extb_usati;
+static uint32_t g_extb_pid;             /* the collector, 0 = none */
+static uint32_t g_extb_persi;
+
+static void extb_sposta(uint8_t *d, const uint8_t *o, uint32_t n)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++) d[i] = o[i];        /* d < o always: forward is safe */
+}
+
+static int extb_raccoglitore_vivo(void)
+{
+    Process *r;
+
+    if (g_extb_pid == 0) return 0;
+    r = proc_get_by_pid(g_extb_pid);
+    if (r == NULL || r->state == PROC_UNUSED || r->state == PROC_ZOMBIE) {
+        g_extb_pid = 0;
+        g_extb_usati = 0;
+        return 0;
+    }
+    return 1;
+}
+
+static int extb_cattura(Process *p, const char *buf, uint32_t count)
+{
+    uintptr_t   eflags;
+    const char *nome, *s;
+    uint32_t    n, k, tot;
+
+    if (p == NULL || !p->sottofondo || count == 0) return 0;
+    if (p->pid == g_extb_pid || !extb_raccoglitore_vivo()) return 0;
+
+    /* the program's name: the last part of its path, without ".drv" */
+    for (nome = s = p->name; *s; s++) if (*s == '/') nome = s + 1;
+
+    __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+    __asm__ volatile ("cli");
+    while (count > 0) {
+        ExtbRecord r;
+
+        n = count > EXTB_TESTO_MAX ? EXTB_TESTO_MAX : count;
+        tot = (uint32_t)sizeof(r) + n;
+        while (g_extb_usati + tot > EXTB_ANELLO_BYTE && g_extb_usati > 0) {
+            const ExtbRecord *v = (const ExtbRecord *)g_extb;
+            uint32_t vn = (uint32_t)sizeof(*v) + v->len;
+
+            extb_sposta(g_extb, g_extb + vn, g_extb_usati - vn);
+            g_extb_usati -= vn;
+            g_extb_persi++;
+        }
+        r.pid   = p->pid;
+        r.len   = (unsigned short)n;
+        r.persi = (unsigned short)(g_extb_persi > 0xffff ? 0xffff : g_extb_persi);
+        g_extb_persi = 0;
+        for (k = 0; k < sizeof(r.nome) - 1 && nome[k] && !(nome[k] == '.' && nome[k + 1] == 'd'); k++)
+            r.nome[k] = nome[k];
+        for (; k < sizeof(r.nome); k++) r.nome[k] = 0;
+        extb_sposta(g_extb + g_extb_usati, (const uint8_t *)&r, sizeof(r));
+        extb_sposta(g_extb + g_extb_usati + sizeof(r), (const uint8_t *)buf, n);
+        g_extb_usati += tot;
+        buf += n;
+        count -= n;
+    }
+    if (eflags & (1u << 9)) __asm__ volatile ("sti");
+    return 1;
+}
+
+/* =============================================================================
+ * SYS_EXTASKBAR (26) -- ebx = op, ecx, edx (lib/include/extaskbar_abi.h)
+ * ============================================================================= */
+int32_t sys_extaskbar(InterruptFrame *frame)
+{
+    uint32_t  op = (uint32_t)FR_A1(frame);
+    uintptr_t a2 = (uintptr_t)FR_A2(frame);
+    uint32_t  a3 = (uint32_t)FR_A3(frame);
+    Process  *self = proc_get_current();
+    uintptr_t eflags;
+
+    if (self == NULL) return ERR(ESRCH);
+    switch (op) {
+    case EXTB_REGISTRA:
+        if (self->uid != 0) return ERR(EPERM);
+        if (extb_raccoglitore_vivo() && g_extb_pid != self->pid) return ERR(EBUSY);
+        g_extb_pid = self->pid;
+        g_extb_usati = 0;
+        g_extb_persi = 0;
+        self->sottofondo = 0;           /* its own output is never captured */
+        return 0;
+    case EXTB_LASCIA:
+        if (g_extb_pid != self->pid) return ERR(EPERM);
+        g_extb_pid = 0;
+        g_extb_usati = 0;
+        return 0;
+    case EXTB_LEGGI: {
+        uint8_t *dst = (uint8_t *)a2;
+        uint32_t dati = 0, vn;
+
+        if (g_extb_pid != self->pid) return ERR(EPERM);
+        if (!syscall_verify_ptr(dst, a3)) return ERR(EFAULT);
+        /* ! COPIED WITH INTERRUPTS ON into a kernel bounce, never straight
+         * from the ring while it may move: here the ring is only read and
+         * shifted with interrupts off, record by record. */
+        for (;;) {
+            static uint8_t rimbalzo[sizeof(ExtbRecord) + EXTB_TESTO_MAX];
+            uint32_t k;
+
+            __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+            __asm__ volatile ("cli");
+            if (g_extb_usati == 0) { if (eflags & (1u << 9)) __asm__ volatile ("sti"); break; }
+            vn = (uint32_t)sizeof(ExtbRecord) + ((const ExtbRecord *)g_extb)->len;
+            if (dati + vn > a3) { if (eflags & (1u << 9)) __asm__ volatile ("sti"); break; }
+            extb_sposta(rimbalzo, g_extb, vn);
+            extb_sposta(g_extb, g_extb + vn, g_extb_usati - vn);
+            g_extb_usati -= vn;
+            if (eflags & (1u << 9)) __asm__ volatile ("sti");
+            for (k = 0; k < vn; k++) dst[dati + k] = rimbalzo[k];
+            dati += vn;
+        }
+        return (int32_t)dati;
+    }
+    case EXTB_BARRA: {
+        static uint16_t celle[80];
+        uint32_t k;
+
+        if (self->uid != 0) return ERR(EPERM);
+        if (a3 > 80) a3 = 80;
+        if (a3 && !syscall_verify_ptr((const void *)a2, a3 * 2)) return ERR(EFAULT);
+        for (k = 0; k < a3; k++) celle[k] = ((const uint16_t *)a2)[k];
+        vga_barra(celle, a3);
+        return 0;
+    }
+    case EXTB_SOTTOFONDO:
+        self->sottofondo = a2 ? 1 : 0;
+        return 0;
+    default:
+        return ERR(EINVAL);
+    }
+}
+
+/* =============================================================================
  * SYS_WRITE (4) -- Scrive su un file descriptor
  *
  * ebx = fd
@@ -439,6 +598,7 @@ int32_t sys_write(InterruptFrame *frame)
      * quando l'utente ci torna sopra con Alt+Fn. */
     if (proc->fdt[fd].type == FD_STDOUT ||
         proc->fdt[fd].type == FD_STDERR) {
+        if (extb_cattura(proc, buf, count)) return (int32_t)count;
         for (i = 0; i < count; i++) {
             vga_putchar_su(proc->console, buf[i]);
         }
@@ -461,8 +621,10 @@ int32_t sys_write(InterruptFrame *frame)
      * di un programma, e non viene toccata da nessuno. */
     if (proc->fdt[fd].type == FD_PTY_M)
         return pty_scrivi_master((int)proc->fdt[fd].inode, buf, count);
-    if (proc->fdt[fd].type == FD_PTY_S)
+    if (proc->fdt[fd].type == FD_PTY_S) {
+        if (extb_cattura(proc, buf, count)) return (int32_t)count;
         return pty_scrivi_slave((int)proc->fdt[fd].inode, buf, count);
+    }
 
     /* file FAT12 */
     if (proc->fdt[fd].type == FD_FILE) {
@@ -2066,7 +2228,7 @@ int32_t sys_spawn(InterruptFrame *frame)
          * su un file: la scriveva a video. */
         if (magia == SPAWN_EXTRA_MAGIA) {
             quanti = sizeof(SpawnExtra);
-            noti   = SPAWN_F_CONSOLE | SPAWN_F_UTENTE;
+            noti   = SPAWN_F_CONSOLE | SPAWN_F_UTENTE | SPAWN_F_SOTTOFONDO;
         } else if (magia == SPAWN_EXTRA_MAGIA_V1) {
             quanti = SPAWN_EXTRA_V1_BYTE;
             noti   = SPAWN_F_V1;
@@ -2163,6 +2325,8 @@ return ERR(ENOMEM); }
      * continuare a lavorare — e a disegnare sul proprio schermo — mentre
      * l'utente e' passato altrove con Alt+Fn. */
     child->console = parent->console;
+    child->sottofondo = parent->sottofondo ||
+                        (ha_extra && (kex.flag & SPAWN_F_SOTTOFONDO) != 0);
 
     /* ! L'IDENTITA' SI EREDITA, e chi vuole cambiarla dev'essere gia' root. Un
      * processo non puo' decidere di nascere con un utente diverso dal proprio:
@@ -2556,6 +2720,22 @@ uint32_t usp       = res.user_stack_top;
             klog(LOG_INFO, "SYSCALL spawn: fd %u del figlio -> '%s'",
                  az->fd, abs);
         }
+    }
+
+    /* (@EXTASKBAR) A NEW SESSION IS NOT A BACKGROUND JOB, even when the
+     * one who opens it is: telnetd runs with '&', and the shell it starts on
+     * a pseudo-terminal must print to that terminal, not to extaskbar. So the
+     * inherited mark is dropped when the child gets a terminal its parent
+     * does not have - another pty, or another console - unless '&' asked for
+     * it explicitly. */
+    if (child->sottofondo && !(ha_extra && (kex.flag & SPAWN_F_SOTTOFONDO))) {
+        int nuovo = 0;
+
+        if (ha_extra && (kex.flag & SPAWN_F_CONSOLE)) nuovo = 1;
+        if (child->fdt[1].type == FD_PTY_S &&
+            !(parent->fdt[1].type == FD_PTY_S && parent->fdt[1].inode == child->fdt[1].inode))
+            nuovo = 1;
+        if (nuovo) child->sottofondo = 0;
     }
 
 proc_set_entry(child, res.entry_point, usp);

@@ -383,6 +383,22 @@ int usb_massa_servi(UsbMassa *m, const char *nome)
     o.byte_settore = 512;
     o.sola_lettura = 0;
 
+    /* ! THE NAME MAY BE TAKEN (16 October 2026): every controller driver asks
+     * for "usb0", so a second stick on another controller - one on OHCI, one
+     * on EHCI - was refused and never showed up. The first free number is
+     * taken - usb1, usb2... and automount mounts them as /USB/USB1, /USB/USB2.
+     * It is looked up first: offering a taken name makes the kernel log an
+     * error for what is a normal case. */
+    if (strncmp(nome, "usb", 3) == 0) {
+        BlkInfo b[16];
+        int     n = blkinfo(b, 16, 0), k, i, preso = 1;
+
+        for (k = 0; k < 8 && preso; k++) {
+            snprintf(o.nome, sizeof(o.nome), "usb%d", k);
+            for (preso = 0, i = 0; i < n; i++) if (strcmp(b[i].nome, o.nome) == 0) preso = 1;
+        }
+        nome = o.nome;
+    }
     rc = blk_offri(&o);
     if (rc < 0) {
         printf("massa: blk_offri('%s') ha risposto %d\n", nome, rc);

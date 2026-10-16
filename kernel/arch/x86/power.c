@@ -236,9 +236,18 @@ void power_halt(void)
  * il gestore del doppio fault, e si resetta. È brutale ma funziona
  * ovunque — è la rete di sicurezza dei bootloader.
  * ============================================================================= */
+/* About one microsecond per write to the POST port, as Linux's io_delay:
+ * a count of `pause` lasted under a millisecond on the laptop's Athlon, so
+ * every method was given no time before the next one started. */
+static void attesa_us(uint32_t us)
+{
+    while (us--) port_outb(0x80, 0);
+}
+
 void power_reboot(void)
 {
     uint32_t timeout;
+    int      i;
 
     interrupts_enable();
 
@@ -256,30 +265,43 @@ void power_reboot(void)
      * firmware declares one; 1) the keyboard controller, as before; 2) the
      * chipset reset port 0xCF9 (2 = reset next, 6 = hard reset now), which
      * Intel and NVIDIA chipsets have; 3) the triple fault. */
-    acpi_riavvia();
-
-    /* Metodo 1: reset via 8042 */
-    timeout = 100000;
-    while ((port_inb(0x64) & 0x02) && timeout--) {
-        /* attesa che il buffer di ingresso si liberi */
-    }
-    port_outb(0x64, 0xFE);
-
-    /* Il reset non è istantaneo: dai al chipset il tempo di agire prima
-     * di dichiararlo fallito. */
-    for (timeout = 0; timeout < 1000000; timeout++) {
-        __asm__ volatile ("pause" ::: "memory");
+    /* ! EACH STEP ON THE SCREEN (15 October 2026): the laptop stopped
+     * after "Sincronizzazione filesystem... ok" and the warnings went only
+     * to the log, so nobody could say which method had hung. */
+    if (acpi_ha_reset()) {
+        kprintf("  Riavvio: registro di reset ACPI\n");
+        acpi_riavvia();
+        attesa_us(500000);
     }
 
-    /* Metodo 2: the chipset's reset port */
-    klog(LOG_WARN, "POWER: reset via 8042 non riuscito, provo la porta 0xCF9");
+    /* ! 0xCF9 BEFORE THE 8042 (15 October 2026): on the MCP77 laptop the
+     * machine stopped for good right after "Riavvio: controller della
+     * tastiera (8042)" - most likely the BIOS's SMM handler that traps the
+     * keyboard ports for USB legacy emulation, which never returns once
+     * EX-OS owns the USB controllers. Where 0xCF9 does not exist the write
+     * is an unclaimed I/O cycle and nothing happens. */
+
+    /* Metodo 1: the chipset's reset port */
+    kprintf("  Riavvio: porta 0xCF9\n");
     port_outb(0xCF9, 0x02);
-    for (timeout = 0; timeout < 100000; timeout++) __asm__ volatile ("pause" ::: "memory");
+    attesa_us(50);
     port_outb(0xCF9, 0x06);
-    for (timeout = 0; timeout < 1000000; timeout++) __asm__ volatile ("pause" ::: "memory");
+    attesa_us(500000);
+
+    /* Metodo 2: reset via 8042, ten times as Linux does, each one shown */
+    kprintf("  Riavvio: controller della tastiera (8042)\n");
+    for (i = 0; i < 10; i++) {
+        timeout = 100000;
+        while ((port_inb(0x64) & 0x02) && timeout--) attesa_us(1);
+        kprintf("    tentativo %d: stato 0x%02x, mando 0xFE\n", i + 1, port_inb(0x64));
+        attesa_us(50);
+        port_outb(0x64, 0xFE);
+        attesa_us(50);
+    }
+    attesa_us(500000);
 
     /* Metodo 3: triple fault */
-    klog(LOG_WARN, "POWER: nemmeno la porta 0xCF9, provo triple fault");
+    kprintf("  Riavvio: triple fault\n");
     {
         /* uintptr_t: at 64 bit lidt reads a 10-byte descriptor */
         struct { uint16_t limit; uintptr_t base; } __attribute__((packed))

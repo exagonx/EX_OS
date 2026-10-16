@@ -12,7 +12,7 @@
  * eject — togliere una chiavetta invece di strapparla
  *
  *     eject                  dice che cosa si puo' togliere
- *     eject /USB/DRIVE0      smonta e ritira
+ *     eject /USB/USB0      smonta e ritira
  *     eject usb0             lo stesso, chiamandola per nome
  *
  * -----------------------------------------------------------------------------
@@ -22,7 +22,7 @@
  * momento NON GUARDA PIU' LE PORTE: e' scritto nero su bianco in cima ad
  * automount.c, «una chiavetta sfilata di brutto non sparisce». Quindi:
  *
- *   - `umount /USB/DRIVE0` libera il punto di montaggio, ma il dispositivo
+ *   - `umount /USB/USB0` libera il punto di montaggio, ma il dispositivo
  *     resta li' offerto da un driver che lo crede ancora infilato;
  *   - sfilare la chiavetta a quel punto non lo fa sparire: ogni accesso rende
  *     errore, e automount non ha niente da smontare perche' e' gia' smontato;
@@ -62,7 +62,7 @@ static void uso(void)
 {
     printf("eject - toglie una chiavetta USB come si deve\n\n");
     printf("  eject                  che cosa si puo' togliere\n");
-    printf("  eject /USB/DRIVE0      smonta e ritira, poi la si sfila\n");
+    printf("  eject /USB/USB0      smonta e ritira, poi la si sfila\n");
     printf("  eject usb0             lo stesso, per nome di dispositivo\n\n");
     printf("Smonta prima e ritira dopo: il driver torna a guardare le porte,\n");
     printf("quindi la stessa chiavetta rimessa viene ripresa da automount.\n");
@@ -73,7 +73,7 @@ static void uso(void)
  * IL NOME DEL SUPPORTO, non quello della finestra
  *
  * Una partizione si chiama «usb0p1»: il supporto sotto e' «usb0». Chi scrive
- * `eject /USB/HDD0p1` intende togliere la chiavetta, non smettere di vedere la
+ * `eject /USB/USB0` intende togliere la chiavetta, non smettere di vedere la
  * sua prima partizione — una finestra senza il supporto sotto non e' niente.
  *
  * ! IL TAGLIO E' SU «p» SEGUITA DA SOLE CIFRE, e non sulla prima «p» che

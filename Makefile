@@ -396,7 +396,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := wifid prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
@@ -408,10 +408,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exht
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv nforce.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
+DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -4032,6 +4032,24 @@ $(WIFID_BIN): $(WIFID_SRC) $(WIFI_PROTO) $(WIFI_LIB) $(WIFI_CRYPT) lib/programma
 .PHONY: wifid
 wifid: dirs $(WIFID_BIN)
 
+# --- @EXTASKBAR (2026-10-16): the text status bar and the services' logs -------
+EXTASKBAR_SRC := bin/extaskbar/extaskbar.c
+EXTASKBAR_BIN := $(BUILD_BIN_CD)/extaskbar
+
+$(EXTASKBAR_BIN): $(EXTASKBAR_SRC) lib/include/extaskbar_abi.h lib/programma.ld \
+              $(LIBC_HDR) $(LIBC_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/extaskbar ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(EXTASKBAR_SRC) -o $(BUILD_OBJ)/extaskbar_main.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/extaskbar_start.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_OBJ)/extaskbar_libc.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T lib/programma.ld \
+	    $(BUILD_OBJ)/extaskbar_start.o $(BUILD_OBJ)/extaskbar_main.o $(BUILD_OBJ)/extaskbar_libc.o -o $@
+	@echo "[OK] extaskbar compilato: $@"
+
+.PHONY: extaskbar
+extaskbar: dirs $(EXTASKBAR_BIN)
+
 # The simulated WiFi card for tests (drivers/wifisim): not started by anything.
 WIFISIM_SRC := drivers/wifisim/wifisim.c
 WIFISIM_OUT := $(BUILD_DRIVERS_CD)/wifisim.drv
@@ -5131,6 +5149,47 @@ $(NFORCE_DRV_OUT): $(NFORCE_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NFORCE_DRV_
 
 .PHONY: nforce_drv
 nforce_drv: dirs $(NFORCE_DRV_OUT)
+
+# --- ar5k.drv: the Atheros AR5xxx WiFi chips (AR5212 family), @WIFI W7 --------
+# First stage (15 October 2026): `ar5k.drv -i` wakes the chip, reads radio and
+# EEPROM and puts it back as found. Sequences from Linux's ath5k (ISC), see
+# the head of drivers/ar5k/ar5k.c. Tried on the user's laptop (AR2425).
+# Stage 2 adds ath5k's hardware code (drivers/ar5k/ath5k, Linux's files as
+# they are, GNU C, no warnings) with the compatibility headers of
+# drivers/ar5k/compat; the same list as tools/costruisci-utente64.sh.
+AR5K_DRV_SRC  := drivers/ar5k/ar5k.c
+# Stages 3-4 (16 October 2026): ar5k_conn.c joins open, WPA and WPA2 networks
+# with lib/exwifi (and the AES and SHA-1 of lib/excrypt) - at 64 bit those
+# come from libexos.a.
+AR5K_PIU_SRC  := drivers/ar5k/ar5k_scan.c drivers/ar5k/ar5k_radio.c drivers/ar5k/ar5k_servizio.c drivers/ar5k/ar5k_conn.c \
+                 drivers/ar5k/glue.c drivers/ar5k/glue_libero.c \
+                 lib/exwifi/exwifi.c lib/excrypt/aes.c lib/excrypt/sha1.c \
+                 $(wildcard drivers/ar5k/ath5k/*.c)
+AR5K_PIU_HDR  := lib/exwifi/exwifi.h lib/excrypt/excrypt.h $(wildcard drivers/ar5k/*.h drivers/ar5k/ath5k/*.h drivers/ar5k/compat/*.h drivers/ar5k/compat/*/*.h)
+AR5K_DRV_OUT  := $(BUILD_DRIVERS_CD)/ar5k.drv
+AR5K_DRV_LD   := drivers/ar5k/ar5k.ld
+
+$(AR5K_DRV_OUT): $(AR5K_DRV_SRC) $(AR5K_PIU_SRC) $(AR5K_PIU_HDR) $(PCI_DRV_PROTO) $(AR5K_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 ar5k.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)/ar5k
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(AR5K_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ar5k_main.o
+	for f in $(AR5K_PIU_SRC); do \
+	    $(CC) $(subst -std=c11,-std=gnu11,$(CFLAGS_USER)) -w -I drivers/ar5k/compat -I drivers/ar5k \
+	        -I drivers/ar5k/ath5k -I lib/include -I drivers/net -I lib/exwifi -I lib/excrypt \
+	        -c $$f -o $(BUILD_DRIVERS_CD)/ar5k/$$(basename $$f .c).o || exit 1; \
+	done
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/ar5k_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/ar5k_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(AR5K_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/ar5k_start.o \
+	    $(BUILD_DRIVERS_CD)/ar5k_main.o  \
+	    $(BUILD_DRIVERS_CD)/ar5k/*.o     \
+	    $(BUILD_DRIVERS_CD)/ar5k_libc.o  \
+	    -o $@
+	@echo "[OK] ar5k.drv compilato: $@"
+
+.PHONY: ar5k_drv
+ar5k_drv: dirs $(AR5K_DRV_OUT)
 
 # --- Driver ring3 rtl8169.drv: le Gigabit PCI Realtek RTL8169 (solo CD) -------
 #
@@ -7701,7 +7760,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # c'era perche' un elenco lungo scritto a mano e' il posto dove le cose si
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
-BINARI_SOLO_CD := $(WIFID_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
+BINARI_SOLO_CD := $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
@@ -7730,7 +7789,7 @@ BINARI_SOLO_CD := $(WIFID_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CRYPTTEST_BIN) 
 # finisca su un'immagine, cioe' la PRESENZA. Qui mancava la DIPENDENZA, e le
 # due cose si somigliano abbastanza da far credere di essere coperti.
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
-DRIVER_SOLO_CD_OUT := $(WIFISIM_OUT) $(FETTA_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
+DRIVER_SOLO_CD_OUT := $(AR5K_DRV_OUT) $(WIFISIM_OUT) $(FETTA_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
                       $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(RTL8169_DRV_OUT) \
                       $(IP_DRV_OUT) \

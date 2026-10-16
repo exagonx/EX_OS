@@ -185,6 +185,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
+  1  @GIT-COMPILATI   FATTO il 15/10 (build/, build-64/, .o); resta la domanda su dist/   !
   1  @EXWIN-VISIBILE  FATTO il 7/10: ex_set_visible/ex_set_enabled, velo, proprieta' e manuale   !
   1  @EXWIN-SULMOUSE  FATTO il 7/10: EXM_MOUSE_OVER, sulmouse, ex_show_popup_pointer; e Changed/Enter
   1  @USB             resta la prova su una chiavetta VERA: e' hardware, non lavoro
@@ -7307,3 +7308,323 @@ librerie mancanti»)
   e «ACPI: S5 ...»; poi shutdown e reboot. L'utente da ora aggiorna il
   portatile DALLA RETE: prima pubblica (./exagonx/repo-update.sh -64), poi
   sul portatile netupdate (rifa' anche la mappa dei settori del kernel).
+
+@WIFI W7 - IL DRIVER ATHEROS (15/10). Portatile MCP77: 07:00.0 168c:001c,
+  sottosistema HP 103c:137b, SREV 0xe2 = AR2425 "Swan", radio RF2425, PCI
+  Express, BAR0 0xc2000000 (64 bit), IRQ 10, MSI/MSI-X; il BIOS lo lascia in
+  reset (RESET_CTL 3). Ritratto (sola lettura) in /root/atheros.txt sul
+  portatile. Riferimento: ath5k di Linux 6.1 (ISC) in
+  cross_build/terze-parti/ath5k-6.1 (scaricato da github, v6.1).
+  drivers/ar5k/ar5k.c TAPPA 1: `ar5k.drv -i` sveglia, legge PHY, radio,
+  EEPROM (MAC) e rimette RESET_CTL e SLEEP_CTL come li ha trovati. Si
+  costruisce a 32 e 64 bit; arriva al portatile con netupdate dopo
+  ./exagonx/repo-update.sh -64. NON ancora provato sul portatile.
+  Tappe dopo: 2 radio/banda base 2,4 GHz e ricezione (scansione), 3
+  trasmissione e associazione aperta, 4 WPA/WPA2 con lib/exwifi, 5 il
+  servizio wifi0 (wifid, `wifi`, pannello).
+
+@GIT-COMPILATI  I FILE COMPILATI FUORI DA GIT (da correzioni.txt, 15 ottobre 2026, URGENTE)
+  L'utente: «Urgente mettere in git ignore tutti i file compilati e oggetto,
+  tanto su GitHub non servono a niente poiche' devono essere ricompilati».
+  Com'e' oggi (15/10): 3980 file costruiti sono tracciati - build/ 2712,
+  build-64/ 1263 (deciso il 10/10 di tenerlo «come build/»: decisione che
+  questa richiesta CAMBIA), gftexteditor/obj/linux/*.o, e in dist/ tre
+  immagini tenute APPOSTA (floppy.img, sonda.img, netinst.img: il
+  .gitignore spiega che servono a chi scarica da GitHub senza compilare).
+  DA FARE: .gitignore con /build/, /build-64/ e gli oggetti (*.o, */obj/),
+  poi `git rm -r --cached` di quei file (restano sul disco, escono solo dal
+  repository: il commit dopo li toglie da GitHub, la storia vecchia li ha
+  ancora). Da CHIEDERE all'utente prima: le tre immagini di dist/ escono
+  anche loro? E controllare che niente nel tree o negli script legga file
+  da build/ presi da git invece che costruiti (l'altro PC li riceve da
+  MEGA, non da git).
+  FATTO (15/10): .gitignore con /build/, /build-64/, *.o, gftexteditor/obj e
+  bin; `git rm -r --cached` di 3982 file (restano sul disco). Nessuno
+  script legge build/ da git. Conseguenza: non si potra' piu' ricomporre un
+  supporto vecchio dai binari di un commit (come la chiavetta del 10/10 il
+  14/10): andra' ricompilato. APERTO: le tre immagini di dist/ (floppy,
+  sonda, netinst) e i due .LOG tracciati in dist/ - chiesto all'utente.
+  TAPPA 1 PROVATA SUL PORTATILE (15/10): ar5k.drv -i -> sveglio e fuori dal
+  reset; PHY 0x70 (AR5K_SREV_PHY_2425); radio 0x00/0x00 (normale per
+  l'AR2425: ath5k lo riconosce come RF2425 dal PHY); EEPROM versione 5.3,
+  dominio 0x0067, MAC 00:26:5e:38:ff:83; la parola 0x3d vale 0 (ath5k la
+  legge e non la controlla mai); reset 0x3 e sonno 0x10000 rimessi come
+  trovati. netupdate -check:guarda: 1567 file uguali, 0 da aggiornare.
+  TAPPA 2 SCRITTA (15/10, NON ancora provata sul portatile): il codice
+  hardware di ath5k (attach, caps, desc, dma, eeprom, initvals, pcu, phy,
+  qcu, reset + ani.h, reg.h, rfbuffer.h, rfgain.h) copiato COM'E' in
+  drivers/ar5k/ath5k; i nomi di Linux che usa stanno in drivers/ar5k/compat
+  (compat.h + intestazioni finte linux/, net/, asm/), drivers/ar5k/ath.h
+  (ridotto) e reg.h (ath comune, copiato); glue.c e glue_libero.c danno le
+  poche funzioni di file non portati (srev, setbssidmask, printk; LED e
+  ANI vuoti). `ar5k.drv -s`: ath5k_hw_init, poi per i canali 1-13
+  ath5k_hw_reset, 32 descrittori di ricezione in memoria DMA, filtro
+  BCAST|BEACON|PROBEREQ, 150 ms d'ascolto; beacon e risposte di sonda ->
+  SSID, BSSID, canale, dBm (rssi + rumore), sicurezza. Non trasmette.
+  Alla fine reset e sonno rimessi come trovati. Costruzione: il caso ar5k
+  in costruisci-utente64.sh e la regola a 32 bit compilano tutti i file.
+  ! Riavvio forzato dell'host a meta' lavoro (15/10 mattina): nessun file
+  perso.
+
+@CONSOLE-LENTA  (segnalato dall'utente il 15 ottobre 2026, portatile MCP77, 64 bit)
+  Dopo ore di accensione la console "e' lenta", ma SOLO nella scrittura: in
+  modo intermittente un tasto compare subito, quello dopo dopo una pausa.
+  L'utente esclude hardware, kbd.drv e shell. Misurato da telnet lo stesso
+  giorno (portatile appena riavviato): echo 40 ms, avvio di un programma
+  40-80 ms, memoria usata 12 MB su 2,8 GB, registro del kernel pulito.
+  Una sorveglianza di 6 ore (ogni 2 minuti: tempi, memoria usata, lunghezza
+  del registro) e' partita alle 12:30 dal PC di sviluppo. Da guardare:
+  l'andamento della memoria usata (12044 -> 12568 KB in un'ora), e cosa sta
+  fra il tasto e lo schermo locale (tty, ridisegno della console grafica,
+  pianificatore) quando il sistema e' acceso da ore.
+
+@WIFI W7 - 15/10: la tappa 2 sul portatile. Primo -s: lentissimo (udelay =
+  usleep a 10 ms; ora TSC). Secondo -s: 13 canali resettati senza errori, 0
+  descrittori completati - il bus master PCI non era mai acceso. Corretto
+  (lo accende e lo rispegne), con diagnosi di CR/RXDP/filtro. Da provare.
+  15/10 terza prova: bus master era gia' acceso (0x0107), CR=RXE, RXDP
+  giusto, filtro 0xb7, DIAG 0: ancora 0 descrittori. Aggiunti contatori di
+  profilo (la radio sente energia?), RXDP/stato dopo l'ascolto, PISR,
+  GPIO dell'interruttore radio. Se i cicli rx/occupato sono 0: radio sorda
+  (interruttore WiFi dell'HP / W_DISABLE#?) - chiedere il LED.
+
+@SPEGNIMENTO-ACPI 15/10: reboot sul portatile si blocca dopo «Sincronizzazione
+  filesystem... ok». Nessun registro di reset ACPI. Kernel 0.253: attese vere
+  (porta 0x80), 8042 x10, una riga a schermo per metodo. Chiedere l'ultima
+  riga mostrata. Shutdown sul portatile: esito non ancora detto.
+@CONSOLE-LENTA 15/10 sorveglianza: memoria usata +12 KB per campione (una
+  sessione telnet con sh, hello, mem, dmesg) anche a registro pieno:
+  piccola perdita per sessione o per processo, da cercare (pty? pagine di
+  stack/TLS del processo?). Non spiega da sola la tastiera a scatti.
+@WIFI W7 15/10 quarta prova: sottosistema 103c:137b (HP Compaq C700 in led.c
+  di ath5k: LED GPIO 3 attivo a 0). Interruttore radio dall'EEPROM: GPIO 0,
+  polarita' 0, legge 0 = BLOCCATA. Contatori: cicli ~6,49 M/150 ms (44 MHz),
+  rx 0, occupato 0 su tutti i canali: radio spenta. Il tasto WiFi (10 minuti
+  di prove dell'utente) non cambia niente, luce sempre arancione: su questi
+  HP il tasto passa da ACPI/WMI (AML del firmware), che EX-OS non esegue.
+  Prossimo: `sonda.drv -acpi 0xafee49d3` sul portatile (cattura telnet ->
+  tools/acpi-da-testo.py -> iasl -d) e cercare nella DSDT/SSDT cosa accende
+  la WLAN (metodo WMI, campo dell'EC, GPIO del chipset MCP77).
+  iasl: cross_build/terze-parti/acpica-scarico/acpica-R2025_04_04/generate/unix/bin/iasl
+  Correzione: anche la FADT di QEMU e' revisione 1 senza registro di reset;
+  il riavvio 0.253 passa dall'8042 e in QEMU riavvia.
+  15/10 DSDT del portatile letta (copie in scratchpad, NON nel progetto: la
+  SLIC contiene dati della licenza Windows). Tasto -> EC query 0x10 -> _Q10:
+  WLSW (CMOS estesa 0xF6 bit 7) invertito, EC.WLON (RAM EC 0x71 bit 0) =
+  WLSW. WLIN = 0xF6 bit 0. LED: EC 0x0A bit 2-3 (WLLD). EX-OS non legge le
+  query dell'EC. ar5k.drv -radio (lettura) / -radio:on (scrive). Poi -s.
+  Dopo: le query dell'EC (comando 0x84) gestite da un servizio, cosi' il
+  tasto funziona davvero.
+@SPEGNIMENTO-ACPI 15/10 sera: 0.253 si blocca per sempre dentro il passo 8042
+  (mai arrivato a 0xCF9). Kernel 0.254: 0xCF9 prima dell'8042, una riga per
+  tentativo 8042. QEMU riavvia a 0xCF9. Da provare sul portatile.
+@WIFI W7: dopo un riavvio EC.WLON torna 0 (WLSW resta 1 in CMOS): serve
+  ar5k.drv -radio:on a ogni avvio (poi: farlo fare al servizio wifi0).
+  ar5k_conn.c (tappe 3-4) e' una bozza interrotta e troncata, non compilata.
+@SPEGNIMENTO-ACPI 15/10: reboot FUNZIONA sul portatile con 0.254 (porta 0xCF9).
+  Shutdown sul portatile: esito non ancora detto.
+@WIFI W7 15/10: spia WiFi = GPIO 3 della scheda, blu a 0 (come led.c di Linux).
+  Anche l'EC WLLD (0x0A bit 2-3) la comanda: 2 = blu lampeggiante. Il servizio
+  wifi0 (ar5k.drv senza opzioni) la tiene blu a radio accesa. Da provare:
+  servizio, wifi -showlist, tasto WiFi.
+@WIFI-TASTO (con molta calma, decisione dell'utente 15/10): il tasto WiFi del
+  portatile non e' indispensabile, la radio si gestisce da software. Visto:
+  il tasto NON genera query EC (in 60 s solo 0x40/0x48 della batteria) e il
+  BIOS non commuta WLON da solo. Ipotesi da verificare: codici della tastiera
+  PS/2 (servirebbe un registro dei codici insoliti in kbd.drv, solo estesi e
+  > 0x58, leggibile solo da root - scritto e tolto il 15/10 per non toccare
+  il dischetto). ACPI: nessun HPQ6001 ne' PNP0C32. USB EHCI 1: solo il
+  lettore di schede Realtek 0bda:0158.
+  Priorita' dell'utente: spia con colori coerenti (schema: spenta = radio
+  spenta, arancione = accesa non connessa, blu lampeggiante = in corso, blu
+  fisso = connessa; da fissare con ar5k.drv -led:ec) e WiFi che comunica.
+
+@RIPRESA-DOPO-IL-15-OTTOBRE  (l'utente chiude la sessione, 15/10 sera)
+  DA DOVE SI RIPARTE, nell'ordine dell'utente:
+  1. WiFi che COMUNICA: tappe 3-4 di @WIFI W7 in drivers/ar5k - associazione
+     (auth aperta + assoc con RSN WPA2-PSK/CCMP), handshake con lib/exwifi
+     (WpaSupplicante), CCMP in software, poi WIFI_MSG_CONNETTI nel servizio
+     (ar5k_servizio.c) e il lato net_proto.h (NET_MSG_INVIA/RICEVI) perche'
+     ip.drv e dhcp passino dalla radio. Rete di prova dell'utente: SSID
+     ExagonX.altervista.org (canale 11, WPA/WPA2-PSK). LA PASSWORD NON SI
+     SCRIVE MAI da nessuna parte: la chiede wifid / la console.
+     drivers/ar5k/ar5k_conn.c e' una bozza TRONCATA, non compilata: si puo'
+     buttare e riscrivere. API pronte: ar5k_hw.h (ar5k_apri/ar5k_chiudi/
+     ar5k_radio_e_led/ar5k_canale_g), TX ath5k: ath5k_hw_setup_tx_queue
+     (prima del reset), ah_setup_tx_desc 4 parole, set_txdp/start_tx_dma,
+     ah_proc_tx_desc; anello RX come base.c (descrittore auto-collegato,
+     non prendere quello puntato da RXDP); 1 Mbit/s = 0x1B; rs_datalen
+     comprende l'FCS.
+  2. Spia coerente (schema dell'utente: spenta = radio spenta, arancione =
+     accesa non connessa, blu lampeggiante = in corso, blu fisso =
+     connessa): far lanciare all'utente `/dev/ar5k.drv -led:ec` dalla
+     console PRIMA del servizio, leggere /root/ar5k-led.txt, poi mappare
+     in ar5k_spia (oggi: blu = radio accesa, arancione = spenta).
+  3. Avvio automatico di `ar5k.drv &` (hwconfig riconosce 168c:001c), o una
+     riga in /boot/autoexec.sh del portatile con l'ok dell'utente.
+  STATO SUL PORTATILE (192.168.0.183, kernel 0.254, telnetd a mano):
+  reboot FUNZIONA (0xCF9); shutdown non provato. ar5k.drv 131688 byte:
+  -i, -s, -radio, -radio:on, -led, -led:ec, -tasto, e senza opzioni il
+  servizio wifi0 (radio accesa dall'EC, wifi -showlist mostra le reti).
+  Il servizio va avviato a mano dopo ogni riavvio. La shell non ha kill:
+  un driver si ferma solo riavviando.
+  messaggio-commit.txt ha tutto dal 14/10 in poi, non ancora committato.
+
+@WIFI W7 16/10 (sessione dopo @RIPRESA-DOPO-IL-15-OTTOBRE): tappe 3-4 SCRITTE.
+  drivers/ar5k/ar5k_conn.c riscritto (la bozza troncata e' andata): ricerca
+  dell'SSID, autenticazione aperta, associazione con RSN/WPA, 4-way e gruppo
+  con lib/exwifi, CCMP/TKIP in software, lato net_proto.h del servizio wifi0.
+  Provato SOLO sull'host: tools/prova-ar5k/prova.sh 23/23 (chip e access
+  point finti). DA PROVARE sul portatile: l'utente pubblica
+  (./exagonx/repo-update.sh -64), io netupdate via telnet; poi alla console
+  del portatile l'utente: `/dev/ar5k.drv &`, `wifid &`,
+  `wifi -connect:ExagonX.altervista.org` (la password la scrive LUI); io
+  leggo /root/ar5k-conn.txt e `wifi` via telnet. Rischi noti sul ferro: la
+  coda di invio (TXDP/collegamento dei descrittori, mai usata prima), i
+  codici di velocita', la protezione ERP (niente CTS-to-self per ora), il
+  tempo di risposta al messaggio 1. Poi: spia (punto 2) e avvio (punto 3).
+@WIFI W7 16/10 prima prova sul portatile: auth, assoc, 4-way e chiave di
+  gruppo RIUSCITI con l'AP vero (cc:2d:21:ed:aa:d1, can. 11, CCMP/CCMP).
+  DHCP senza indirizzo. Causa probabile: cache delle chiavi del chip mai
+  azzerata (Linux la azzera: ath_hw_keyreset) -> i frame cifrati in arrivo
+  "decifrati" dal chip con roba vecchia. Ora azzerata in chip_apri; diario
+  dei primi 40 frame e contatori in /root/ar5k-conn.txt. Rete salvata in
+  /cfg/wifi/root.cfg: posso ricollegare io via telnet senza password (ma
+  quando wifid sposta ip.drv su wifi0 la sessione telnet via Ethernet cade:
+  e' proprio il limite "una rete sola" che l'utente vuole superare).
+  L'UTENTE (16/10): deve potersi collegare a due o piu' reti insieme ->
+  e' il "DA FARE, RIMANDATO: due uscite insieme" di @WIFI; ora richiesto.
+@WIFI W7 16/10 seconda prova: FUNZIONA. ar5k.drv con la cache delle chiavi
+  azzerata: DHCP 192.168.0.209 dalla radio, telnet via WiFi, ping gateway
+  (10 ms) e 8.8.8.8 (60 ms), DNS, wifi -showlist da collegata, 1 MB da
+  speedtest.tele2.net intero. Contatori: 0 non decifrati, 0 ripetuti, 0
+  invii falliti. LENTO: 1 MB in 21 s (~50 KB/s): il servizio guarda l'anello
+  ogni 10 ms (ipc_recv_timeout) e consegna un frame per RICEVI -> serve
+  l'interrupt del chip (ath5k_hw_set_imr RXOK/TXOK + notifica IRQ del
+  kernel, come e1000). Poi: spia, avvio automatico, due reti insieme.
+  ar5k ora non scrive piu' sulla console (solo /root/ar5k-conn.txt).
+@BARRA-DI-STATO (chiesta dall'utente 16/10): i messaggi dei servizi in
+  sottofondo (WiFi, USB/automount, ...) rendono inutilizzabile la riga di
+  comando. Vuole una barra testuale in alto o in basso con lo stato del
+  WiFi e degli altri servizi, e il verboso fuori dalla riga di comando.
+  Domande fatte all'utente: posizione, contenuto, dove va il verboso.
+@BARRA-DI-STATO - RISPOSTE DELL'UTENTE (16/10):
+  - barra sull'ULTIMA riga; colonne a larghezza FISSA, posto riservato:
+    "USB0 Connected"/"USB none" (15), "WIFI Connected" (15), "RX 00000000"
+    (12), "TX 00000000" (12), "FAIL 000000" (11), "LOST 000000" (11); poi
+    rete via cavo, orologio, batteria, telnetd e altri servizi.
+  - dettaglio di un servizio (es. WiFi): un RIQUADRO testuale che sale dalla
+    barra e mostra il dettaglio/log in tempo reale SOPRA la console senza
+    toccarla; chiuso il riquadro la console torna com'era.
+  - e' un gestore testuale parallelo alla console: ogni servizio gli manda
+    log e verboso; la barra si puo' NASCONDERE; se non e' attiva tutto torna
+    verboso sulla console come oggi.
+  FATTIBILITA' (guardato vga.c): ogni console ha gia' il suo buffer di celle
+  (riversa_tutto ridisegna da li'), quindi il riquadro si disegna sullo
+  schermo e si toglie ridisegnando; la barra = una riga tolta allo
+  scorrimento (g_righe - 1 per la console). Limite: 80 colonne in modo
+  testo, 100 a 800x600, 128 a 1024x768; le colonne chieste sono 76 + cavo,
+  ora, batteria, telnetd -> non stanno in 80/100. Chiesto all'utente.
+@EXTASKBAR (16/10, l'utente): la barra si chiama extaskbar, SOLO 80 colonne.
+  extaskbar -hide / -show / -menu (riquadri [x] per scegliere le voci, con
+  il contatore degli spazi liberi; impostazioni: memoria per log, 64 KB di
+  base) / -details (elenco dei servizi a sinistra, il log a destra in tempo
+  reale, opzione di salvarlo in /boot/<servizio>/log.txt, massimo 1024 KB:
+  oltre si tolgono le righe piu' vecchie; senza salvataggio resta in
+  memoria). Configurazione in $HOME/.config/extaskbar.cfg. Barra nascosta
+  = console pulita; extaskbar non attivo = tutto torna sulla console.
+  COME (deciso da me):
+   - kernel 0.255: l'ultima riga riservata alla barra (la console scorre
+     sopra, la misura del terminale la esclude); schermo alternativo
+     ESC[?1049h/l per console, cosi' -menu/-details coprono la console e
+     uscendo la rimettono com'era (vale anche via telnet, il terminale
+     dell'altro capo lo sa fare); l'uscita dei processi IN SOTTOFONDO
+     (lanciati con '&', flag ereditato dai figli: SPAWN_F_SOTTOFONDO dalla
+     shell) va in un anello del kernel invece che a video, ma solo finche'
+     un raccoglitore (extaskbar) e' registrato e vivo. Una syscall nuova.
+   - i comandi lanciati in primo piano scrivono come sempre.
+   - le voci della barra le mandano i servizi via IPC al servizio
+     "extaskbar" (lib/include/extaskbar.h, solo intestazione): ar5k e
+     wifisim (WIFI, RX, TX, FAIL, LOST), automount (USB); l'ora la fa la
+     barra; ETH, TELNET, BAT dopo (la batteria non ha ancora una fonte).
+@EXTASKBAR 16/10: FATTO e provato in QEMU 32/64 (kernel 0.255, sh 0.006,
+  extaskbar 0.001; voci da ar5k, wifisim, automount). Da fare: provarlo sul
+  portatile (pubblicazione dell'utente), il salvataggio in /boot/<serv>/log.txt,
+  -menu/-details via telnet; fonti per ETH (ip.drv), TELNET (telnetd), BAT
+  (EC/ACPI); avviarlo all'avvio PRIMA dei servizi (avvio.sh, con l'ok
+  dell'utente) cosi' anche i loro primi messaggi finiscono nei log.
+@EXTASKBAR avvio automatico (16/10, domanda dell'utente): come telnetd e
+  wifid. `extaskbar -auto` e' la prima riga di /boot/avvio.sh (e di
+  hwconfig 0.004, l'altro scrittore): parte solo se in
+  /root/.config/extaskbar.cfg c'e' `avvio = si`, altrimenti esce muto. Si
+  accende con `extaskbar -boot:on` (solo root) o con la casella "Parte da
+  sola all'avvio" in -menu. Provato in QEMU 64: l'avvio non cambia. Sul
+  portatile: dopo netupdate serve rifare avvio.sh (`hwconfig`, oppure
+  aggiungere la riga a mano). Limite: le righe di avvio.sh in PRIMO PIANO
+  (netdetect, dhcp, netupdate -auto, gli echo) scrivono ancora a video:
+  vanno nei log solo i lanci con '&'.
+@EXTASKBAR-DA-FARE (chieste dall'utente il 16/10, "cose da fare che sono
+  buone", NON urgenti):
+  - un'app ExWin che gestisce extaskbar in una finestra (voci, memoria per
+    log, avvio automatico, i log dei servizi come -details);
+  - servizi di misura che mandano voci alla barra e log: uso della RAM, della
+    CPU, per CORE (con SMP), accesso al DISCO (letture/scritture al secondo),
+    velocita' della rete (byte/s entrata e uscita per scheda), ecc.;
+  - le fonti che mancano: ETH (ip.drv), TELNET (telnetd), BAT (EC/ACPI);
+  - le righe in primo piano di avvio.sh nei log (oggi solo i lanci con '&').
+@USB-NOMI 16/10 (l'utente): chiavette in /USB/USB0, USB1... (automount 0.004);
+  usb_massa sceglie il primo usb<n> libero (prima due controller = un solo
+  disco). Provato in QEMU 32. DA FARE: piu' chiavette sullo STESSO controller
+  (ogni driver ne serve una sola: il primo dispositivo di massa che trova).
+
+@RIPRESA-DOPO-IL-16-OTTOBRE  (l'utente fa il clear, 16/10 sera)
+  STATO DI OGGI: WiFi Atheros FUNZIONA sul portatile (WPA2, DHCP, telnet,
+  ~50 KB/s); extaskbar (kernel 0.255) FUNZIONA "esattamente come chiesto"
+  (l'utente); chiavette /USB/USB0, USB1... provate in QEMU, da portare sul
+  portatile con la prossima pubblicazione (repo-update.sh -64 la fa
+  l'utente). messaggio-commit.txt ha tutto dal 14/10, NON committato.
+  ORDINE DI LAVORO DATO DALL'UTENTE: il porting a 64 bit di
+    1. Exilla (Firefox) a 64 bit - vedi @EXILLA, tools/exilla/ (claude-B
+       l'ha fatto a 32 bit; firefox-main/ e' suo: controllare scambio.txt e
+       ISTRUZIONI-SECONDO-PROFILO.md prima di toccarlo). Serve il bersaglio
+       Rust x86_64-unknown-exos (fatto, R64-1) dentro la build di Firefox,
+       il caricatore ELF64 (fatto: lib/libc_dl.c), OpenSSL/NSS a 64.
+    2. Rust: R64-2 di @RUST-64 - rustc e cargo NATIVI dentro EX-OS 64
+       (il caricatore dinamico ora c'e'; poi il bersaglio dentro i sorgenti di
+       rustc, LLVM incrociato, OpenSSL 64 per cargo - fatto).
+    3. gcc / g++ (cpp): i nativi a 64 bit ci sono gia' (0.249, provati in
+       QEMU da disco installato): resta da provarli sul portatile vero e da
+       vedere cosa manca (libstdc++ intera? cpp come comando a parte?).
+    4. FreeBASIC a 64 bit: @FB-64 (fermo a meta': libfb con x86_64-exos-gcc,
+       un programma incrociato in EX-OS 64, fbc nativo, mktools64.sh).
+  ALTRE COSE APERTE (non urgenti): WiFi lento (interrupt del chip), spia
+  WiFi e ar5k all'avvio, piu' reti insieme (domanda all'utente senza
+  risposta: cavo+WiFi o piu' WiFi?), @EXTASKBAR-DA-FARE (app ExWin, misure
+  RAM/CPU/core/disco/rete, ETH/TELNET/BAT), piu' chiavette sullo stesso
+  controller USB.
+
+@EXILLA-64 EXILLA (FIREFOX) A 64 BIT (ordine dell'utente del 16/10)
+  Tutto con EXOS_ARCH=x86_64 davanti agli script di tools/exilla; le cartelle
+  a 32 bit (exilla-obj/js, gecko, cross_build/<m>/exos-cross) non si toccano.
+  FATTO 16/10:
+    - EXOS_ARCH=x86_64 tools/rust-exos/std/installa-sysroot.sh: std Rust per
+      x86_64-unknown-exos nel nightly (44 librerie).
+    - js-costruisci.sh / gecko-costruisci.sh: compilatore x86_64-exos
+      (-march=x86-64), mozconfig-js64 e mozconfig-gecko64, oggetti in
+      exilla-obj/js64 e gecko64.
+    - lib/include/inttypes.h: a 64 bit PRI*64/MAX/PTR con "l" (int64_t e'
+      long): Gecko compila con -Werror=format.
+    - SpiderMonkey 64: costruito, prova-js.js 17/17 dentro EX-OS 64 (QEMU,
+      EXOS_RAM=2048, js ripulito 17 MB).
+    - Gecko 64: configure OK; la build si ferma su std::mutex (ICU): la
+      toolchain condivisa a 64 bit e' --disable-threads. EXOS_ARCH=x86_64
+      tools/exilla/gcc-fili.sh copia exos-cross64 in cross_build/<m>/ e ci
+      rifa GCC/libstdc++ con i fili (+ --enable-checking=release,
+      --enable-initfini-array). js/gecko-costruisci la preferiscono.
+  PROSSIMO: finita gcc-fili64, rifare js64 e gecko64 da zero con la nuova
+  toolchain (gli header di libstdc++ cambiano), poi il pacchetto exilla64
+  (le regole del 32 bit: tools/exilla/leggimi.md, tappa 8).
+@FB-64 16/10: FATTO. prepara-fb64.sh (libfb, prova, fbc nativo),
+  prova-fb64-nativo.sh (fbc nativo compila e il programma gira in EX-OS 64),
+  mktools64.sh mette fbc/.bi/libfb sul CD strumenti 64. Manca: fbsrc a 64
+  bit (sorgenti per ricostruire dentro EX-OS), prova sul portatile.

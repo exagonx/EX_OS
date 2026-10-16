@@ -229,6 +229,9 @@ void acpi_init(void)
     if (g_acpi.reset)
         klog(LOG_INFO, "ACPI: registro di reset nello spazio %u, 0x%x, valore 0x%02x",
              g_acpi.reset_spazio, (uint32_t)g_acpi.reset_ind, g_acpi.reset_val);
+    else
+        klog(LOG_INFO, "ACPI: nessun registro di reset (FADT revisione %u, %u byte, flag 0x%x, spazio %u)",
+             f[8], flen, flen >= 116 ? le32(f + 112) : 0u, flen >= 117 ? f[116] : 0u);
 }
 
 void acpi_spegni(void)
@@ -250,6 +253,8 @@ void acpi_spegni(void)
         port_outw((uint16_t)g_acpi.pm1b_cnt, (uint16_t)(g_acpi.slp_b | (1u << 13)));
     for (i = 0; i < 3000000u; i++) __asm__ volatile ("pause");
 }
+
+int acpi_ha_reset(void) { return g_acpi.reset; }
 
 void acpi_riavvia(void)
 {

@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.252
+**Versione:** 0.255
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -111,6 +111,72 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le chiavette sono `/USB/USB0`, `/USB/USB1`... — provato in QEMU
+
+Una chiavetta finisce sempre in `/USB/USB<n>`, un numero per ogni chiavetta
+infilata, il primo libero: prima era `/USB/DRIVE0` senza tabella delle
+partizioni e `/USB/HDD0p1` con la tabella (quasi tutte quelle formattate da
+Windows). Una seconda partizione della stessa e' `/USB/USB0p2`. E due
+chiavette su due controller diversi (OHCI ed EHCI) adesso compaiono tutte e
+due: ogni driver chiedeva il nome `usb0` e il secondo veniva rifiutato; il
+codice comune dei dischi USB (`drivers/usb/usb_massa.c`) ora prende il primo
+`usb<n>` libero. Provato in QEMU: una chiavetta partizionata e una intera
+insieme, `/USB/USB0` e `/USB/USB1` con i loro file, `eject` di una, la voce
+`USB` della barra. Resta una chiavetta per controller: due chiavette nelle
+porte dello stesso controller danno un disco solo.
+
+### La barra di stato: `extaskbar` (kernel 0.255) — provata in QEMU
+
+Quello che i servizi in sottofondo scrivono (WiFi, USB, rete, automount...)
+non deve piu' coprire la riga di comando. `extaskbar` mette una barra di
+testo sull'ultima riga dello schermo, 80 colonne, con voci a larghezza fissa:
+`USB0 Connected` / `USB none`, `WIFI Connected`, `RX 00000000`,
+`TX 00000000`, `FAIL 000000`, `LOST 000000`; disponibili anche `ETH`, l'ora,
+`BAT`, `TELNET`.
+
+- `extaskbar -show` la avvia, `-hide` nasconde la barra (i log si raccolgono
+  lo stesso e la console resta pulita), `-stop` la ferma e tutto torna sulla
+  console come prima.
+- `extaskbar -menu`: quali voci mostrare, con le caselle `[x]` e il conto
+  delle colonne libere - una voce che non ci sta viene rifiutata; le
+  modifiche valgono subito. E la memoria tenuta per ogni log (64 KB di base).
+- `extaskbar -details`: i servizi a sinistra, il log di quello scelto a
+  destra, in tempo reale, ogni riga con la sua ora; `f` lo tiene anche in
+  `/boot/<servizio>/log.txt`, mai oltre 1024 KB (le righe piu' vecchie se ne
+  vanno).
+- La configurazione sta in `$HOME/.config/extaskbar.cfg`. `extaskbar -boot:on`
+  (root, o la casella in `-menu`) la fa partire a ogni avvio: `extaskbar -auto`
+  e' la prima riga di `/boot/avvio.sh` e non fa niente finche' non e' accesa.
+- Come: quello che scrive un processo lanciato con `&` (e i suoi figli) va,
+  mentre `extaskbar` gira, in un anello del kernel invece che a video; i
+  comandi in primo piano scrivono come sempre, e una sessione aperta da
+  `telnetd` non e' un lavoro in sottofondo. I servizi mandano le loro voci con
+  `lib/include/extaskbar.h` (lo fanno il driver WiFi, `wifisim` e
+  `automount`). `-menu` e `-details` disegnano sullo schermo alternativo del
+  terminale (`ESC[?1049h`, nuovo nella console), quindi chiudendoli la console
+  mostra quello che c'era prima; funzionano anche via telnet.
+
+Provato in QEMU a 32 e a 64 bit: la barra, `ping &` raccolto e non a video,
+`-details`, `-menu` (una voce rifiutata quando non ci sta, una tolta e
+un'altra messa, applicato subito), `-hide`, `-stop` con l'uscita di nuovo a
+video, le voci WiFi della scheda simulata. Non ancora su una macchina vera; il
+salvataggio in `/boot/<servizio>/log.txt` non ancora provato (il CD e' in sola
+lettura).
+
+### WiFi: la prima scheda vera, Atheros AR2425 (`ar5k.drv`) — provato
+
+Sul portatile HP dell'utente (NVIDIA MCP77, Atheros AR2425, 168c:001c) EX-OS
+64 si collega alla rete di casa in WPA2 e prende l'indirizzo dal DHCP:
+telnet, ping al router e a Internet, DNS e uno scaricamento passano tutti
+dalla radio. `drivers/ar5k` usa il codice hardware di ath5k di Linux (licenza
+ISC) per il chip; associazione, scambio delle chiavi WPA/WPA2 (`lib/exwifi`)
+e CCMP/TKIP sono fatti in software. Reti aperte, WPA e WPA2 con password;
+WEP, Enterprise e WPA3 sono rifiutate dicendo perche'. La radio si accende
+dal controller del portatile. `tools/prova-ar5k/prova.sh` controlla il codice
+del collegamento sull'host contro un access point finto (23 su 23). Ancora
+lento (circa 50 KB/s: il driver guarda la scheda ogni 10 ms invece di usare
+il suo interrupt), e il driver va avviato a mano.
+
 ### Librerie: un caricatore dinamico vero, OpenSSL a 64 bit, iconv
 
 - **`dlopen` carica le librerie condivise ELF normali** (`lib/libc_dl.c`,
@@ -175,7 +241,7 @@ Il gestore della connessione e le sue due facce, a 32 e a 64 bit:
   falliva). La shell tiene 16 lavori in background invece di 8: uno script
   d'avvio con rete, USB, telnetd e `wifid` ne lancia nove.
 
-**Nessuna scheda WiFi vera ha ancora un driver.** Tutto quanto sopra e' stato
+**La prima scheda vera e' l'Atheros AR2425 (vedi sopra).** Tutto quanto sopra e' stato
 provato in QEMU, a 32 e a 64 bit, con `wifisim.drv`, una scheda simulata con
 cinque reti (WPA2, aperta, WEP, nascosta) che porta i pacchetti sulla scheda
 Ethernet: elenco, password sbagliata rifiutata, WPA2 con DHCP e con indirizzo
@@ -185,8 +251,8 @@ cambia la rete di root, l'icona e il pannello. La sicurezza che tutti i driver
 useranno e' in `lib/exwifi`: le chiavi WPA/WPA2, lo scambio a quattro vie e
 quello della chiave di gruppo (lato client), CCMP, TKIP con Michael e WEP;
 `tools/prova_exwifi.sh` la controlla sull'host con i vettori di prova di IEEE
-802.11 e delle RFC (41 su 41). Nessun driver la usa ancora. Da fare: i driver
-per i chip veri, WPA3 e WPA2 Enterprise.
+802.11 e delle RFC (41 su 41); la usa `ar5k.drv`. Da fare: altri chip, WPA3 e
+WPA2 Enterprise.
 
 ### ExWin: ogni controllo si nasconde e si spegne
 
@@ -295,6 +361,40 @@ dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
 in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**Strumenti a 64 bit, 16 ottobre 2026**: **FreeBASIC** 1.10.1 gira su EX-OS a
+64 bit. A 64 bit FreeBASIC non ha un generatore di assembly suo, quindi passa
+dal C (`-gen gcc`): `tools/freebasic-exos/prepara-fb64.sh` costruisce la
+runtime (libfb) con `x86_64-exos-gcc` e il `fbc` nativo, e `make tools64` li
+mette su `dist/exos64-tools.iso` (gruppo fb). In QEMU il `fbc` nativo compila
+un programma dentro EX-OS a 64 bit con gcc, as e ld nativi, e il programma
+gira (`tools/freebasic-exos/prova-fb64-nativo.sh`). Exilla a 64 bit e'
+cominciata: SpiderMonkey, il motore JavaScript di Firefox, si costruisce per
+`x86_64-unknown-exos` e passa i suoi 17 controlli dentro EX-OS a 64 bit; il
+browser intero e' in costruzione. Non ancora provato su una macchina vera.
+
+**0.255**: la barra di stato (`extaskbar`, sopra): l'ultima riga dello
+schermo puo' essere sua, le console hanno lo schermo alternativo
+(`ESC[?1049h/l`), e quello che scrivono i processi in sottofondo va in un
+anello che `extaskbar` raccoglie (`SYS_EXTASKBAR`), solo mentre gira. La shell
+segna i lavori con `&` (`SPAWN_F_SOTTOFONDO`) e ora azzera sempre i flag della
+spawn, che prima lasciava come li trovava sullo stack.
+
+**0.254**: sul portatile `reboot` si fermava poi per sempre dentro il passo
+del controller della tastiera. Ora la porta di reset del chipset 0xCF9 si
+prova prima (una scrittura su una porta che nessuno decodifica non fa
+niente), e ciascuno dei dieci tentativi sull'8042 stampa la sua riga. Non
+ancora provato sul portatile.
+
+**0.253**: sul portatile `reboot` si fermava subito dopo «Sincronizzazione
+filesystem... ok». Il suo firmware non dichiara un registro di reset ACPI, e
+le attese fra gli altri metodi erano cicli contati che sulla sua CPU duravano
+meno di un millisecondo. Ora ogni metodo aspetta circa mezzo secondo, misurato
+sulla porta di I/O 0x80 come fa Linux; il controller della tastiera riceve il
+comando di reset dieci volte; e ogni metodo stampa la propria riga sullo
+schermo («Riavvio: controller della tastiera (8042)», «Riavvio: porta 0xCF9»,
+«Riavvio: triple fault»), cosi' l'ultima riga mostrata dice quale la macchina
+non ha accettato. Non ancora provato sul portatile.
 
 **0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
 I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono

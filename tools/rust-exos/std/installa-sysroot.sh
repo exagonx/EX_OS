@@ -6,6 +6,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 #     tools/rust-exos/std/installa-sysroot.sh
+#     EXOS_ARCH=x86_64 tools/rust-exos/std/installa-sysroot.sh   (64-bit EX-OS)
 #
 # ! PERCHE' (30 settembre 2026, tappa 4 di Exilla): il sistema di costruzione
 # di Mozilla chiama cargo e rustc da se', senza -Z build-std. Allora la std
@@ -23,18 +24,22 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="$PWD/cross_build/$MACCHINA"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 PROXY_RUSTC="$HOME/.cargo/bin/rustc"
+# The target follows EXOS_ARCH, as in prova-std.sh (16 October 2026, Exilla
+# at 64 bit): the two sysroots live side by side in the same nightly.
+BERSAGLIO=i686-unknown-exos
+[ "$EXOS_ARCH" = x86_64 ] && BERSAGLIO=x86_64-unknown-exos
 
 # Da zero: una serie sola di librerie, tutte dello stesso giro.
-rm -rf "$B/costruzione-rust/i686-unknown-exos"
+rm -rf "$B/costruzione-rust/$BERSAGLIO"
 tools/rust-exos/prova-std.sh --solo-compila > "$B/installa-sysroot.log" 2>&1 || {
     tail -20 "$B/installa-sysroot.log"; exit 1; }
 
-SYS="$("$PROXY_RUSTC" +nightly --print sysroot)/lib/rustlib/i686-unknown-exos/lib"
+SYS="$("$PROXY_RUSTC" +nightly --print sysroot)/lib/rustlib/$BERSAGLIO/lib"
 rm -rf "$SYS"; mkdir -p "$SYS"
 n=0
 # ! LE .rmeta INSIEME ALLE .rlib: il cargo di adesso tiene i metadati completi
 # in un file a parte, e una .rlib da sola per rustc e' «only metadata stub».
-for r in $(find "$B/costruzione-rust/i686-unknown-exos/release/build" -name "*.rlib" -o -name "*.rmeta" | grep -v "/prova"); do
+for r in $(find "$B/costruzione-rust/$BERSAGLIO/release/build" -name "*.rlib" -o -name "*.rmeta" | grep -v "/prova"); do
     cp "$r" "$SYS/"; n=$((n + 1))
 done
 echo "sysroot: $n librerie in $SYS"

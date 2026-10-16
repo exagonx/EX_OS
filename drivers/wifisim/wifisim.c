@@ -34,6 +34,7 @@
  * pretend a radio is there; it is started by hand, or by a test.
  * ============================================================================= */
 #include "libc.h"
+#include "extaskbar.h"
 #include "net_proto.h"
 #include "ip_proto.h"
 #include "wifi_proto.h"
@@ -67,6 +68,25 @@ static int        g_lettore = 0;          /* who has a NET_MSG_RICEVI pending on
 static int        g_armato  = 0;          /* our own RICEVI pending at the Ethernet card */
 static NetStato   g_eth;                  /* the Ethernet card's identity (its MAC) */
 static WifiStato  g_st;
+static unsigned int g_rx, g_tx;           /* frames, for the status bar */
+
+/* (@EXTASKBAR) the same items as a real card: at most once a second */
+static void voci_barra(int subito)
+{
+    static unsigned int ultimo;
+    char x[EXTB_VOCE_TESTO];
+
+    if (!subito && ultimo && uptime_ms() - ultimo < 1000) return;
+    ultimo = uptime_ms();
+    if (!ultimo) ultimo = 1;
+    extaskbar_voce("WIFI", 15, g_st.stato == WIFI_STATO_CONNESSA ? "WIFI Connected" :
+                               g_st.stato == WIFI_STATO_CADUTA ? "WIFI lost" : "WIFI none",
+                   g_st.stato == WIFI_STATO_CADUTA);
+    snprintf(x, sizeof(x), "RX %08u", g_rx % 100000000u); extaskbar_voce("RX", 12, x, 0);
+    snprintf(x, sizeof(x), "TX %08u", g_tx % 100000000u); extaskbar_voce("TX", 12, x, 0);
+    extaskbar_voce("FAIL", 11, "FAIL 000000", 0);
+    extaskbar_voce("LOST", 11, "LOST 000000", 0);
+}
 
 static void stato_vuoto(void)
 {
@@ -179,7 +199,8 @@ static void servi(void)
     int           i;
 
     for (;;) {
-        if (ipc_recv(&meta, buf, sizeof(buf)) < 0) continue;
+        voci_barra(0);
+        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 1000) < 0) continue;
 
         /* a frame from the Ethernet card: to whoever waits on our link */
         if ((int)meta.sender_pid == g_pid_eth) {
@@ -188,6 +209,7 @@ static void servi(void)
                 if (g_st.stato == WIFI_STATO_CONNESSA && g_lettore) {
                     ipc_send((unsigned int)g_lettore, NET_MSG_FRAME, buf, meta.len);
                     g_st.byte_ricevuti += meta.len;
+                    g_rx++;
                     g_lettore = 0;
                 }
             }
@@ -247,6 +269,7 @@ static void servi(void)
                 break;
             }
             g_st.byte_inviati += meta.len;
+            g_tx++;
             ipc_send(g_pid_eth, NET_MSG_INVIA, buf, meta.len);
             e.codice = 0;                             /* the card answers to us: we say yes */
             ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));

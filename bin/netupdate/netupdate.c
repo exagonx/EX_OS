@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.029");
+EX_VERSIONE("netupdate", "0.030");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2822,6 +2822,10 @@ static int comando_permessi(void)
 typedef struct {
     long uguali, cambiati, verif, nuovi, scon, config;
     long byte_cambiati, byte_nuovi;
+    /* The machine's own files (e_configurazione) are few: their names are
+     * kept so the summary can say WHICH ones differ or are missing. */
+    char conf_nome[8][40];
+    char conf_manca[8];
 } Conti;
 
 static int guarda(Config *c, char *ver, char *cat, char *ele,
@@ -2879,8 +2883,19 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
         v = verdetto(p, impronta);
 
         if (v == UGUALE)         { k->uguali++; continue; }
+        /* The machine's own files first: a missing one (boot/telnetd.cfg on a
+         * disk installed from the 2.88 MB key) is never fetched by the update
+         * loop either, and counting it as "never installed" kept netupdate
+         * from ever saying the system was up to date. */
+        if (e_configurazione(p)) {
+            if (k->config < 8) {
+                snprintf(k->conf_nome[k->config], sizeof(k->conf_nome[0]), "%s", p);
+                k->conf_manca[k->config] = (v == MAI_INSTALLATO);
+            }
+            k->config++;
+            continue;
+        }
         if (v == MAI_INSTALLATO) { k->nuovi++; k->byte_nuovi += byte; continue; }
-        if (e_configurazione(p)) { k->config++; continue; }
 
         if (v == CAMBIATO)      k->cambiati++;
         if (v == DA_VERIFICARE) k->verif++;
@@ -2916,6 +2931,12 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
         printf("  NON tocco: %s di questa macchina (driver, tastiera,\n",
                k->config == 1 ? "e'" : "sono");
         printf("  montaggi). La fusione con quella nuova la sa fare `install`.\n");
+        {
+            long i;
+            for (i = 0; i < k->config && i < 8; i++)
+                printf("    %s%s\n", k->conf_nome[i],
+                       k->conf_manca[i] ? " (qui non c'e')" : "");
+        }
     }
     return 0;
 }

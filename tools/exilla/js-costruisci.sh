@@ -19,11 +19,21 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="$RADICE/cross_build/$MACCHINA"
 # EXILLA_MOZCONFIG sceglie un altro mozconfig: tools/exilla/gecko-costruisci.sh
 # lo usa per il browser (tappa 6).
-export MOZCONFIG="${EXILLA_MOZCONFIG:-$RADICE/tools/exilla/mozconfig-js}"
+# EXOS_ARCH=x86_64 (16 October 2026): Exilla for 64-bit EX-OS - the
+# x86_64-exos toolchain (tools/gcc-exos/cross64.sh), the Rust target
+# x86_64-unknown-exos (sysroot: EXOS_ARCH=x86_64 tools/rust-exos/std/
+# installa-sysroot.sh) and the *64 mozconfigs, objects in their own dirs.
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    export MOZCONFIG="${EXILLA_MOZCONFIG:-$RADICE/tools/exilla/mozconfig-js64}"
+else
+    export MOZCONFIG="${EXILLA_MOZCONFIG:-$RADICE/tools/exilla/mozconfig-js}"
+fi
 export MOZBUILD_STATE_PATH="$B/costruzione-mozbuild"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 # $CARGO_HOME/bin: cbindgen, installato con cargo install dentro il progetto
-export PATH="$B/exos-cross/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
+# at 64 bit this machine's threaded copy (EXOS_ARCH=x86_64 tools/exilla/
+# gcc-fili.sh) comes before the shared toolchain, as exos-cross does at 32
+export PATH="$B/exos-cross/bin:$B/exos-cross64/bin:$RADICE/cross_build/exos-cross64/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
 # Rust: il bersaglio i686-unknown-exos per nome (tools/rust-exos/rustc-exos), la
 # std nel sysroot del nightly (tools/rust-exos/std/installa-sysroot.sh).
 export RUSTUP_TOOLCHAIN=nightly
@@ -41,8 +51,13 @@ export RUST_TARGET_PATH="$RADICE/tools/rust-exos"
 # ! -D__unix__ -D__unix: il GCC di EX-OS non li predefinisce, e il codice di
 # terzi li usa per scegliere la strada POSIX (msgpack ridefiniva struct iovec).
 # Qui e non nel compilatore: i programmi di EX-OS non cambiano.
-CPU="-march=pentium-mmx -mtune=pentium-mmx -DEXOS_SOLO_POSIX -D__unix__=1 -D__unix=1"
-export CC="i386-exos-gcc $CPU" CXX="i386-exos-g++ $CPU" HOST_CC=gcc HOST_CXX=g++
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    CPU="-march=x86-64 -mtune=generic -DEXOS_SOLO_POSIX -D__unix__=1 -D__unix=1"
+    export CC="x86_64-exos-gcc $CPU" CXX="x86_64-exos-g++ $CPU" HOST_CC=gcc HOST_CXX=g++
+else
+    CPU="-march=pentium-mmx -mtune=pentium-mmx -DEXOS_SOLO_POSIX -D__unix__=1 -D__unix=1"
+    export CC="i386-exos-gcc $CPU" CXX="i386-exos-g++ $CPU" HOST_CC=gcc HOST_CXX=g++
+fi
 # mach vuole llvm-objdump per leggere le intestazioni dei binari di prova; quello
 # di Debian (LLVM 14) legge anche gli ELF i386 di EX-OS.
 export LLVM_OBJDUMP="${LLVM_OBJDUMP:-$(command -v llvm-objdump || command -v llvm-objdump-14)}"

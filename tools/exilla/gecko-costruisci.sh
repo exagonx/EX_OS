@@ -12,7 +12,11 @@
 # intero, oggetti in cross_build/exilla-obj/gecko.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
-export EXILLA_MOZCONFIG="$PWD/tools/exilla/mozconfig-gecko"
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    export EXILLA_MOZCONFIG="$PWD/tools/exilla/mozconfig-gecko64"
+else
+    export EXILLA_MOZCONFIG="$PWD/tools/exilla/mozconfig-gecko"
+fi
 # Node.js serve al browser per costruire (non gira dentro EX-OS): sta in
 # cross_build/<macchina>/costruzione-strumenti/node, scaricato da nodejs.org.
 export MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
@@ -25,7 +29,12 @@ export NODEJS="$PWD/cross_build/$MACCHINA/costruzione-strumenti/node/bin/node"
 # ! LA libc CON -idirafter, NON -isystem: gli header di clang (limits.h,
 # stdint.h) devono venire prima e passare ai nostri con #include_next. Il
 # nostro limits.h da solo non ha CHAR_BIT: se lo aspetta dal compilatore.
-I="$PWD/cross_build/$MACCHINA/exos-cross/i386-exos/include"
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    T=x86_64-exos; I="$PWD/cross_build/$MACCHINA/exos-cross64/$T/include"
+    [ -d "$I" ] || I="$PWD/cross_build/exos-cross64/$T/include"
+else
+    T=i386-exos;   I="$PWD/cross_build/$MACCHINA/exos-cross/$T/include"
+fi
 V=$(ls "$I/c++" | head -1)
-export BINDGEN_CFLAGS="-nostdlibinc -isystem $I/c++/$V -isystem $I/c++/$V/i386-exos -idirafter $I -D__exos__ -D__EXOS__ -D__ELF__ -D__unix__=1 -D__unix=1 -DEXOS_SOLO_POSIX"
+export BINDGEN_CFLAGS="-nostdlibinc -isystem $I/c++/$V -isystem $I/c++/$V/$T -idirafter $I -D__exos__ -D__EXOS__ -D__ELF__ -D__unix__=1 -D__unix=1 -DEXOS_SOLO_POSIX"
 exec tools/exilla/js-costruisci.sh "$@"

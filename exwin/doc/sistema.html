@@ -88,6 +88,206 @@ prendeva una: chi lavorava in testo si ritrovava con tre console senza averlo
 chiesto.
 </p>
 
+<h2 id="extaskbar">La barra di stato: <code>extaskbar</code></h2>
+
+<p>
+I servizi che girano in sottofondo &mdash; il WiFi, l'USB, la rete,
+<code>automount</code> &mdash; scrivono quello che fanno, e senza un posto
+dove metterlo lo scrivevano sulla console, in mezzo ai comandi di chi lavora.
+<code>extaskbar</code> (dal kernel 0.255) raccoglie quei messaggi in un log per
+servizio e mostra lo stato in una <b>barra di testo sull'ultima riga</b> dello
+schermo. La riga di comando resta pulita.
+</p>
+
+<pre>  ex-os:/&gt; _
+  USB0 Connected |WIFI Connected |RX 00000312 |TX 00000187 |FAIL 000000LOST 000000</pre>
+
+<h3>I comandi</h3>
+
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>extaskbar -show</code></td><td>mostra la barra; se il servizio non gira lo avvia</td></tr>
+<tr><td><code>extaskbar -hide</code></td><td>nasconde la barra. I log si raccolgono lo stesso: la console resta pulita</td></tr>
+<tr><td><code>extaskbar -stop</code></td><td>ferma il servizio: da quel momento i servizi tornano a scrivere sulla console, come prima</td></tr>
+<tr><td><code>extaskbar -menu</code></td><td>sceglie le voci della barra e le impostazioni (sotto)</td></tr>
+<tr><td><code>extaskbar -details</code></td><td>i log dei servizi, in tempo reale (sotto)</td></tr>
+<tr><td><code>extaskbar -boot:on</code> / <code>-boot:off</code></td><td>solo root: la barra parte da sola a ogni avvio, oppure no</td></tr>
+<tr><td><code>extaskbar -h</code></td><td>l'elenco delle opzioni</td></tr>
+</table>
+
+<p>
+La barra si vede sulle console di testo, non dentro la scrivania grafica. La
+console scorre sopra di lei, e i programmi a tutto schermo (<code>gfedit</code>,
+<code>help</code>...) ricevono un'altezza di una riga in meno: la barra non la
+coprono.
+</p>
+
+<h3>Le voci</h3>
+
+<p>
+La barra e' larga <b>80 colonne, sempre</b>, anche quando lo schermo ne ha di
+piu'. Ogni voce ha la sua larghezza, fissa, cosi' le voci non si spostano
+quando cambiano i numeri:
+</p>
+
+<table border="1">
+<tr><th>Voce</th><th>Colonne</th><th>Che cosa mostra</th><th>Chi la manda</th></tr>
+<tr><td><code>USB</code></td><td>15</td><td><code>USB none</code>, <code>USB0 Connected</code>, <code>USBx2 mounted</code> (due o piu')</td><td><code>automount</code></td></tr>
+<tr><td><code>WIFI</code></td><td>15</td><td><code>WIFI none</code>, <code>off</code>, <code>scanning</code>, <code>connecting</code>, <code>Connected</code>, <code>lost</code> (in rosso)</td><td>il driver della scheda WiFi</td></tr>
+<tr><td><code>RX</code></td><td>12</td><td>i pacchetti ricevuti dalla radio, <code>RX 00000000</code></td><td>il driver WiFi</td></tr>
+<tr><td><code>TX</code></td><td>12</td><td>i pacchetti inviati, <code>TX 00000000</code></td><td>il driver WiFi</td></tr>
+<tr><td><code>FAIL</code></td><td>11</td><td>gli invii non confermati dall'access point (in rosso se non sono zero)</td><td>il driver WiFi</td></tr>
+<tr><td><code>LOST</code></td><td>11</td><td>i pacchetti ricevuti e persi (non decifrati, danneggiati, coda piena)</td><td>il driver WiFi</td></tr>
+<tr><td><code>ORA</code></td><td>7</td><td>l'ora</td><td>la barra stessa</td></tr>
+<tr><td><code>ETH</code>, <code>BAT</code>, <code>TELNET</code></td><td>15, 10, 12</td><td>la rete via cavo, la batteria, le sessioni telnet</td><td><b>nessuno, per ora</b>: mostrano un testo fisso</td></tr>
+</table>
+
+<p>
+Di serie si vedono USB, WIFI, RX, TX, FAIL e LOST: 76 colonne. Una voce che
+nessun servizio ha ancora mandato mostra il suo testo di partenza
+(<code>USB none</code>, <code>RX 00000000</code>...).
+</p>
+
+<h3><code>extaskbar -menu</code>: le voci e le impostazioni</h3>
+
+<pre>  Spazi liberi sulla barra: 4 di 80 colonne
+
+  [x] USB       15 colonne  USB none
+  [x] WIFI      15 colonne  WIFI Connected
+  ...
+  [ ] ORA        7 colonne  18:42
+
+  Memoria per ogni log: 64 KB  (sinistra/destra)
+  [x] Parte da sola all'avvio</pre>
+
+<ul>
+<li><b>su/giu'</b> sceglie una riga, <b>spazio</b> (o Invio) mette e toglie la
+    <code>[x]</code>;</li>
+<li>il conto degli <b>spazi liberi</b> dice quante colonne restano: una voce
+    che non ci sta viene rifiutata, dicendo quante ne vuole e quante ne
+    restano &mdash; se ne toglie un'altra e la si rimette;</li>
+<li><b>sinistra/destra</b> sulla riga della memoria cambia quanto log si tiene
+    in memoria per ogni servizio (64 KB di base, da 8 a 1024);</li>
+<li>la casella <b>Parte da sola all'avvio</b> la cambia solo root;</li>
+<li><b>q</b> (o Esc) esce.</li>
+</ul>
+
+<p>
+Ogni modifica vale <b>subito</b>: la barra cambia mentre si sceglie, e la
+configurazione si salva da sola. Non c'e' un tasto per salvare.
+</p>
+
+<h3><code>extaskbar -details</code>: i log</h3>
+
+<p>
+A sinistra i servizi che hanno scritto qualcosa (il nome e' quello del
+programma: <code>ar5k</code>, <code>wifid</code>, <code>ip</code>,
+<code>dhcp</code>, <code>automount</code>...), a destra il log di quello
+scelto, con l'ora davanti a ogni riga e le righe nuove in fondo. Si aggiorna
+da solo ogni secondo.
+</p>
+
+<table border="1">
+<tr><th>Tasto</th><th>Che cosa fa</th></tr>
+<tr><td>su/giu'</td><td>sceglie il servizio</td></tr>
+<tr><td>PgSu/PgGiu</td><td>scorre il log</td></tr>
+<tr><td><b>f</b></td><td>tiene il log di quel servizio anche su file (vedi sotto); di nuovo <b>f</b> lo spegne. Un <code>*</code> accanto al nome dice che e' acceso</td></tr>
+<tr><td>q, Esc</td><td>esce</td></tr>
+</table>
+
+<p>
+<code>-menu</code> e <code>-details</code> <b>non toccano quello che c'e'
+sulla console</b>: disegnano sullo schermo alternativo del terminale e, quando
+si chiudono, la console torna esattamente com'era. Funzionano anche da una
+sessione telnet.
+</p>
+
+<h3>Dove stanno i log</h3>
+
+<ul>
+<li><b>In memoria</b>, sempre: i 64 KB piu' recenti di ogni servizio (o
+    quanto e' scritto nel menu). Quando sono pieni se ne vanno le righe piu'
+    vecchie. Si perdono fermando <code>extaskbar</code> o spegnendo.</li>
+<li><b>Su file</b>, per i servizi scelti con <b>f</b>:
+    <code>/boot/&lt;servizio&gt;/log.txt</code>, per esempio
+    <code>/boot/ar5k/log.txt</code>. Il file non supera mai i <b>1024 KB</b>:
+    oltre, si tolgono le righe piu' vecchie. Accendendolo, quello che era gia'
+    in memoria finisce subito nel file.</li>
+</ul>
+
+<h3>La configurazione: <code>$HOME/.config/extaskbar.cfg</code></h3>
+
+<p>
+La scrivono <code>-menu</code>, <code>-details</code> e <code>-boot:on</code>;
+si puo' anche scrivere a mano. Il servizio, che parte da root, usa quella di
+root: <code>/root/.config/extaskbar.cfg</code>.
+</p>
+
+<pre>  avvio = si
+  barra = si
+  memoria_kb = 64
+  voci = USB,WIFI,RX,TX,FAIL,LOST
+  salva = ar5k,automount</pre>
+
+<table border="1">
+<tr><th>Chiave</th><th>Che cosa vuol dire</th></tr>
+<tr><td><code>avvio</code></td><td><code>si</code>: parte a ogni avvio (vale solo quella di root)</td></tr>
+<tr><td><code>barra</code></td><td><code>no</code>: il servizio parte con la barra nascosta (raccoglie, ma non si vede)</td></tr>
+<tr><td><code>memoria_kb</code></td><td>KB di log in memoria per ogni servizio, da 4 a 1024</td></tr>
+<tr><td><code>voci</code></td><td>le voci della barra, in quest'ordine, separate da virgole</td></tr>
+<tr><td><code>salva</code></td><td>i servizi il cui log va anche in <code>/boot/&lt;servizio&gt;/log.txt</code></td></tr>
+</table>
+
+<h3>Farla partire all'avvio</h3>
+
+<pre>  extaskbar -boot:on        (da root, una volta sola)</pre>
+
+<p>
+La prima riga di <code>/boot/avvio.sh</code> e' <code>extaskbar -auto</code>.
+Da sola non fa niente: legge la configurazione di root e parte solo se c'e'
+<code>avvio = si</code>, altrimenti esce senza dire una parola &mdash; come
+<code>telnetd -auto</code> e <code>wifid -auto</code>. Sta prima di tutto il
+resto perche' cosi' anche i primi messaggi dei servizi avviati sotto finiscono
+nei log.
+</p>
+
+<p class="nota">
+<b>Un sistema installato prima del kernel 0.255</b> ha un
+<code>avvio.sh</code> senza quella riga, e <code>netupdate</code> non lo
+riscrive. La si mette rilanciando <code>hwconfig</code> (che riscrive tutto il
+file) oppure aggiungendo a mano, subito dopo <code>!silenced</code>, la riga
+<code>extaskbar -auto</code>.
+</p>
+
+<h3>Che cosa finisce nei log, e che cosa no</h3>
+
+<ul>
+<li><b>Ci finiscono</b> i programmi lanciati con <code>&amp;</code> e i loro
+    figli: i driver, <code>wifid</code>, <code>automount</code>,
+    <code>ping 10.0.2.2 &amp;</code>... &mdash; qualunque cosa sia in
+    sottofondo, da una console o da telnet.</li>
+<li><b>Non ci finiscono</b> i comandi in primo piano: quello che si batte al
+    prompt scrive sullo schermo, come sempre. Nemmeno una sessione aperta da
+    <code>telnetd</code>, che pure parte con <code>&amp;</code>: e' un
+    terminale nuovo, non un lavoro in sottofondo.</li>
+<li>Le righe di <code>/boot/avvio.sh</code> che girano in primo piano
+    (<code>netdetect</code>, <code>dhcp</code>, gli <code>echo</code>)
+    scrivono ancora sulla console.</li>
+<li>Quando <code>extaskbar</code> non gira &mdash; fermato con
+    <code>-stop</code>, o mai avviato &mdash; non si raccoglie niente e tutto
+    torna sullo schermo. Lo decide il kernel, che passa i messaggi a
+    <code>extaskbar</code> solo finche' e' vivo.</li>
+</ul>
+
+<p class="nota">
+<b>Come funziona, in breve.</b> La shell segna i lavori lanciati con
+<code>&amp;</code>; il kernel mette quello che scrivono in un anello di 64 KB
+invece che sullo schermo, finche' un raccoglitore e' registrato
+(<code>SYS_EXTASKBAR</code>); <code>extaskbar</code> lo svuota e lo divide per
+programma. Le voci della barra le mandano i servizi stessi: vedi
+<a href="sviluppo.html#barra">Un servizio sulla barra di stato</a>.
+</p>
+
 <h2>La configurazione: <code>/boot/kernel.cfg</code></h2>
 
 <p>Formato INI, cinque sezioni:</p>
@@ -157,7 +357,7 @@ un indirizzo, leggerne i descrittori, gli hub) che e' la stessa per tutti.
 
 <table border="1">
 <tr><th>Dispositivo</th><th>Come si usa</th></tr>
-<tr><td>chiavette e dischi USB</td><td>compaiono da soli sotto <code>/USB</code> (<code>/USB/HDD0p1</code> la prima partizione, <code>/USB/DRIVE0</code> una chiavetta senza tabella): li monta <code>automount</code>. Prima di toglierli: <code>eject</code></td></tr>
+<tr><td>chiavette e dischi USB</td><td>compaiono da soli sotto <code>/USB</code> (<code>/USB/USB0</code> la prima chiavetta, <code>/USB/USB1</code> la seconda, e cosi' via; una seconda partizione della stessa in <code>/USB/USB0p2</code>): li monta <code>automount</code>. Prima di toglierli: <code>eject</code></td></tr>
 <tr><td>lettori di schede, floppy USB</td><td>come le chiavette; un lettore vuoto non da' fastidio</td></tr>
 <tr><td>mouse e tastiere USB</td><td>col protocollo di avvio (quello che usa anche il BIOS): funzionano in console e in ExWin come quelli PS/2. Anche i ricevitori senza fili che fanno da tastiera e mouse insieme</td></tr>
 <tr><td>hub</td><td>solo dietro un controller UHCI, per ora: con OHCI, EHCI e xHCI il dispositivo va nelle porte della macchina</td></tr>
@@ -292,7 +492,8 @@ All'avvio il kernel lo dice, e vale la pena leggerlo: dice quanti slot da
 <li>avvia <code>login</code>, che <b>prima</b> di chiedere chi sei esegue
     <code>/boot/avvio.sh</code> da amministratore &mdash; li' dentro sta la
     rete, che deve essere accesa anche per chi non ha ancora fatto
-    l'accesso;</li>
+    l'accesso. La prima riga accende la <a href="#extaskbar">barra di
+    stato</a>, se root l'ha chiesto;</li>
 <li>fatto l'accesso, la shell di chi e' entrato esegue il suo
     <code>autoexec.sh</code>. Sono due file perche' sono due momenti e due
     utenti diversi.</li>

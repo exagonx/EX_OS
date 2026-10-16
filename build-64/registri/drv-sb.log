@@ -1,4 +1,0 @@
-drivers/sb/sb.c: In function ‘buffer_prendi’:
-drivers/sb/sb.c:397:17: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
-  397 |     g_buf     = (unsigned char *)(g_zona.virt + off);
-      |                 ^

@@ -514,3 +514,17 @@ __pycache__/
 /build-64/3papp/
 /build-64/obj/wolf3d_*.o
 /build-64/obj/wolf3d-gentabelle
+
+# =============================================================================
+# THE BUILD OUTPUTS STAY OUT OF GIT (the user, 15 October 2026, urgent: «on
+# GitHub they are of no use, they have to be compiled again»). Until then
+# build/ and build-64/ were tracked - build-64/ by a decision of 10 October
+# that this one replaces. They still exist on disk and still travel between
+# the two PCs through MEGA; git only stops carrying them. The old commits
+# keep them. dist/'s three floppy images keep their own exception above.
+# =============================================================================
+/build/
+/build-64/
+*.o
+/gftexteditor/obj/
+/gftexteditor/bin/

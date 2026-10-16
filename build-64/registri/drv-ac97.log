@@ -1,7 +1,0 @@
-drivers/ac97/ac97.c: In function ‘prendi_memoria’:
-drivers/ac97/ac97.c:343:17: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
-  343 |     g_bdl     = (unsigned int *)g_zona.virt;
-      |                 ^
-drivers/ac97/ac97.c:345:17: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
-  345 |     g_buf     = (unsigned char *)(g_zona.virt + ZONA_BYTE);
-      |                 ^

@@ -1512,6 +1512,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
      * di init, quando del gruppo non resta piu' nessuno vivo. */
     filo->ppid           = capo->pid;
     filo->console        = capo->console;
+    filo->sottofondo     = capo->sottofondo;
     filo->uid            = capo->uid;
     filo->gid            = capo->gid;
     filo->heap_start     = capo->heap_start;

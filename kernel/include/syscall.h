@@ -46,6 +46,8 @@
  * if there is none. A service learns from it who sent a message (IPC does
  * not say), e.g. wifid, which lets only root change the system's network. */
 #define SYS_PROC_UID    25
+/* SYS_EXTASKBAR (kernel 0.255) = 26: the status bar and the output of the
+ * background services - lib/include/extaskbar_abi.h. */
 #define SYS_CHOWN      182      /* ebx = percorso, ecx = uid, edx = gid */
 #define SYS_CHMOD       15      /* ebx = percorso, ecx = modo */
 #define SYS_SETUID      23      /* ebx = uid, ecx = gid. Solo da root */
@@ -1681,6 +1683,7 @@ int32_t sys_su(InterruptFrame *f);
 int32_t sys_fb_map(InterruptFrame *f);
 int32_t sys_getuid(InterruptFrame *f);
 int32_t sys_proc_uid(InterruptFrame *f);
+int32_t sys_extaskbar(InterruptFrame *f);
 int32_t sys_setuid(InterruptFrame *f);
 int32_t sys_chown(InterruptFrame *f);
 int32_t sys_chmod(InterruptFrame *f);

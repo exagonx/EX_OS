@@ -302,6 +302,51 @@ millisecondi di sonno. Il lettore audio (<code>exwin/bin/explayer</code>) e'
 l'esempio, in trecento righe.
 </p>
 
+<h2 id="barra">Un servizio sulla barra di stato</h2>
+
+<p>
+Un servizio non deve fare niente di speciale perche' i suoi messaggi
+finiscano nella <a href="sistema.html#extaskbar">barra di stato</a>: basta
+che stampi con <code>printf</code> e che lo si lanci con <code>&amp;</code>.
+Quando <code>extaskbar</code> gira, il kernel passa a lui quello che scrive un
+processo in sottofondo; quando non gira, lo scrive a video come sempre. Il log
+prende il nome dal programma (<code>/dev/ar5k.drv</code> &rarr;
+<code>ar5k</code>).
+</p>
+
+<p>
+Per avere <b>una voce sulla barra</b> si include un'intestazione, senza niente
+da collegare:
+</p>
+
+<pre>    #include "libc.h"
+    #include "extaskbar.h"          /* lib/include */
+
+    char t[EXTB_VOCE_TESTO];
+    snprintf(t, sizeof(t), "RX %08u", ricevuti);
+    extaskbar_voce("RX", 12, t, 0);           /* nome, colonne, testo, rosso? */</pre>
+
+<ul>
+<li>la <b>larghezza</b> comprende il separatore: un testo piu' corto lascia
+    l'ultima colonna alla barretta verticale che divide le voci, uno lungo quanto la
+    larghezza la occupa tutta;</li>
+<li>l'ultimo argomento a 1 mostra la voce in rosso (un errore, un
+    collegamento caduto);</li>
+<li><code>extaskbar_voce</code> manda solo quando il testo cambia, non aspetta
+    risposta e, se <code>extaskbar</code> non gira, non manda niente (riprova
+    a cercarlo ogni cinque secondi). La si puo' chiamare in un ciclo; una
+    volta al secondo basta;</li>
+<li>quali voci si vedono lo sceglie chi usa la macchina, con
+    <code>extaskbar -menu</code>: una voce nuova compare nel menu appena il
+    suo servizio la manda.</li>
+</ul>
+
+<p>
+I numeri e le strutture stanno in <code>lib/include/extaskbar_abi.h</code>.
+Chi li usa oggi: <code>drivers/ar5k</code> e <code>drivers/wifisim</code>
+(WIFI, RX, TX, FAIL, LOST), <code>bin/automount</code> (USB).
+</p>
+
 <hr>
 <p class="navi">
 <a href="index.html">Torna alla documentazione</a> |

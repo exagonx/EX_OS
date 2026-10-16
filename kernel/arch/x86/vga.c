@@ -64,6 +64,23 @@ static uint32_t g_cols   = 80;
 static uint32_t g_righe  = 25;
 static uint32_t g_totale = 80 * 25;
 
+/* =============================================================================
+ * THE STATUS BAR (@EXTASKBAR, 16 October 2026)
+ *
+ * When /bin/extaskbar shows its bar, the LAST line of the screen is the
+ * bar's and no console's: every console scrolls above it, a program asking
+ * the terminal's size gets one row less, and the bar is drawn on whichever
+ * text console is visible. Its 80 cells are the bar's own - it works in 80
+ * columns only, as the user asked; on a wider screen the rest of the line
+ * takes the colour of the bar's last cell. Hidden, the line goes back to the
+ * consoles, blank.
+ * ============================================================================= */
+static uint8_t  g_barra_on;
+static uint16_t g_barra[80];
+#define BARRA_COL   80u
+#define RIGHE_C     (g_righe - g_barra_on)          /* the rows a console uses */
+#define TOTALE_C    (RIGHE_C * g_cols)
+
 /* Porte hardware cursore VGA */
 #define VGA_CTRL_PORT   0x3D4   /* Control register index */
 #define VGA_DATA_PORT   0x3D5   /* Control register data */
@@ -98,6 +115,13 @@ typedef struct {
     uint8_t   param_count;
     uint8_t   cur_param_empty;
     uint8_t   privata;            /* '?' subito dopo il '[' */
+
+    /* The alternate screen (ESC[?1049h / l, also 47 and 1047): a full-screen
+     * program draws on a blank screen and, when it leaves, the console comes
+     * back as it was - extaskbar -menu and -details, which must not touch what
+     * is written on the console (@EXTASKBAR). */
+    uint16_t  alt[VGA_MAX_TOTAL];
+    uint8_t   alt_row, alt_col, alt_colore, alt_on;
 } Console;
 
 static Console  g_console[VGA_N_CONSOLE];
@@ -121,7 +145,7 @@ uint32_t vga_console_testo(uint32_t n, char *out, uint32_t max)
     c = &g_console[n];
 
     /* The last row that has something: rows below it are not sent. */
-    for (r = 0; r < g_righe; r++)
+    for (r = 0; r < RIGHE_C; r++)
         for (k = 0; k < g_cols; k++) {
             char ch = (char)(c->cella[r * g_cols + k] & 0xFF);
             if (ch != ' ' && ch != 0) { ultima = r + 1; break; }
@@ -227,7 +251,7 @@ void vga_registro_semina(uint32_t n)
     if (!g_reg_capo) reg_metti('\n');
     while (*s) reg_metti(*s++);
 
-    for (r = 0; r < g_righe; r++)
+    for (r = 0; r < RIGHE_C; r++)
         for (k = 0; k < g_cols; k++) {
             char ch = (char)(c->cella[r * g_cols + k] & 0xFF);
             if (ch != ' ' && ch != 0) { ultima = r + 1; break; }
@@ -481,9 +505,23 @@ static inline int e_visibile(const Console *c)
 
 static inline void riversa_cella(const Console *c, uint32_t i)
 {
-    if (!e_visibile(c) || i >= g_totale) return;
+    if (!e_visibile(c) || i >= TOTALE_C) return;
     if (g_fb) disegna_cella(i, c->cella[i]);
     else      vga_buf[i] = c->cella[i];
+}
+
+/* the bar's line, on the visible text console */
+static void barra_disegna(void)
+{
+    uint32_t k, base = (g_righe - 1) * g_cols;
+    uint16_t cella;
+
+    if (!g_barra_on) return;
+    for (k = 0; k < g_cols; k++) {
+        cella = k < BARRA_COL ? g_barra[k] : (uint16_t)((g_barra[BARRA_COL - 1] & 0xFF00) | ' ');
+        if (g_fb) disegna_cella(base + k, cella);
+        else      vga_buf[base + k] = cella;
+    }
 }
 
 static void riversa_tutto(const Console *c)
@@ -493,10 +531,11 @@ static void riversa_tutto(const Console *c)
     if (!e_visibile(c)) return;
     if (g_fb) {
         g_cur_disegnato = 0;   /* quello di prima e' stato ricoperto */
-        for (i = 0; i < g_totale; i++) disegna_cella(i, c->cella[i]);
+        for (i = 0; i < TOTALE_C; i++) disegna_cella(i, c->cella[i]);
     } else {
-        for (i = 0; i < g_totale; i++) vga_buf[i] = c->cella[i];
+        for (i = 0; i < TOTALE_C; i++) vga_buf[i] = c->cella[i];
     }
+    barra_disegna();
 }
 
 /* =============================================================================
@@ -556,7 +595,7 @@ static void erase_cells(Console *c, uint32_t da, uint32_t a)
 {
     uint16_t blank = vga_make_entry(' ', c->colore);
 
-    if (a > g_totale) a = g_totale;
+    if (a > TOTALE_C) a = TOTALE_C;
     while (da < a) c->cella[da++] = blank;
 
     riversa_tutto(c);
@@ -595,18 +634,18 @@ static void vga_scroll(Console *c)
      * ========================================================================= */
     if (disegna) disegna_cursore(c, 0);     /* finche' e' ancora al suo posto */
 
-    for (i = 0; i < (g_righe - 1) * g_cols; i++) {
+    for (i = 0; i < (RIGHE_C - 1) * g_cols; i++) {
         uint16_t sotto = c->cella[i + g_cols];
 
         if (disegna && c->cella[i] != sotto) disegna_cella(i, sotto);
         c->cella[i] = sotto;
     }
-    for (i = (g_righe - 1) * g_cols; i < g_totale; i++) {
+    for (i = (RIGHE_C - 1) * g_cols; i < TOTALE_C; i++) {
         if (disegna && c->cella[i] != blank) disegna_cella(i, blank);
         c->cella[i] = blank;
     }
 
-    c->row = g_righe - 1;
+    c->row = (uint8_t)(RIGHE_C - 1);
 
     if (!e_visibile(c)) return;
     if (g_fb) {
@@ -684,10 +723,29 @@ static void ansi_apply_csi(Console *c, char finale)
     int n;
 
     if (c->privata) {
-        /* Sequenze private DEC: qui serve solo il cursore. */
-        if ((finale == 'h' || finale == 'l') && ansi_param(c, 0, 0) == 25) {
+        /* Sequenze private DEC: il cursore, e lo schermo alternativo. */
+        int p = ansi_param(c, 0, 0);
+
+        if ((finale == 'h' || finale == 'l') && p == 25) {
             c->cursore_on = (finale == 'h');
             if (e_visibile(c)) cursore_hw(c->cursore_on);
+        }
+        if ((finale == 'h' || finale == 'l') && (p == 1049 || p == 1047 || p == 47)) {
+            uint32_t i;
+
+            if (finale == 'h' && !c->alt_on) {
+                for (i = 0; i < g_totale; i++) c->alt[i] = c->cella[i];
+                c->alt_row = c->row; c->alt_col = c->col; c->alt_colore = c->colore;
+                c->alt_on = 1;
+                erase_cells(c, 0, TOTALE_C);            /* draws it too */
+            } else if (finale == 'l' && c->alt_on) {
+                for (i = 0; i < g_totale; i++) c->cella[i] = c->alt[i];
+                c->row = c->alt_row; c->col = c->alt_col; c->colore = c->alt_colore;
+                if (c->row >= RIGHE_C) c->row = (uint8_t)(RIGHE_C - 1);
+                c->alt_on = 0;
+                riversa_tutto(c);
+                vga_update_cursor(c);
+            }
         }
         return;
     }
@@ -701,7 +759,7 @@ static void ansi_apply_csi(Console *c, char finale)
         case 'B':   /* CUD — giù */
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
             n += c->row;
-            c->row = (uint8_t)((n >= g_righe) ? (g_righe - 1) : n);
+            c->row = (uint8_t)((n >= RIGHE_C) ? (RIGHE_C - 1) : n);
             break;
 
         case 'C':   /* CUF — avanti */
@@ -725,7 +783,7 @@ static void ansi_apply_csi(Console *c, char finale)
              * Fuori schermo si aggancia al bordo invece di rifiutare: la
              * sequenza arriva da un programma utente, e un parametro
              * sbagliato non deve poter scrivere fuori dal buffer. */
-            if (riga > g_righe) riga = g_righe;
+            if (riga > RIGHE_C) riga = RIGHE_C;
             if (col  > g_cols) col  = g_cols;
             c->row = (uint8_t)(riga - 1);
             c->col = (uint8_t)(col - 1);
@@ -735,11 +793,11 @@ static void ansi_apply_csi(Console *c, char finale)
         case 'J': { /* ED — cancella nello schermo */
             uint32_t pos = (uint32_t)c->row * g_cols + c->col;
             switch (ansi_param(c, 0, 0)) {
-                case 0: erase_cells(c, pos, g_totale); break;
+                case 0: erase_cells(c, pos, TOTALE_C); break;
                 case 1: erase_cells(c, 0, pos + 1);     break;
                 case 2:
                 default:
-                    erase_cells(c, 0, g_totale);
+                    erase_cells(c, 0, TOTALE_C);
                     /* ESC[2J non muove il cursore: chi vuole anche
                      * l'angolo scrive ESC[2J ESC[H, come da standard. */
                     break;
@@ -873,7 +931,7 @@ static void putchar_su(Console *c, char ch)
     }
 
     /* Scrolla se necessario */
-    if (c->row >= g_righe) {
+    if (c->row >= RIGHE_C) {
         vga_scroll(c);
     }
 
@@ -980,6 +1038,7 @@ void vga_init_grafica(const BootInfo *info)
                 c->cella[i] = vga_make_entry(' ', c->colore);
             c->row = 0;
             c->col = 0;
+            c->alt_on = 0;          /* the saved screen had the old geometry */
         }
     }
 
@@ -1079,6 +1138,7 @@ void vga_ripristina_testo(void)
             c->cella[i] = vga_make_entry(' ', c->colore);
         c->row = 0;
         c->col = 0;
+        c->alt_on = 0;
     }
 
     {
@@ -1131,7 +1191,7 @@ void vga_puts_at(const char *s, uint8_t row, uint8_t col)
 {
     Console *c = SISTEMA;
 
-    while (*s && col < g_cols && row < g_righe) {
+    while (*s && col < g_cols && row < RIGHE_C) {
         uint32_t i = (uint32_t)row * g_cols + col;
         c->cella[i] = vga_make_entry(*s, c->colore);
         riversa_cella(c, i);
@@ -1149,7 +1209,7 @@ void vga_clear_su(uint32_t n)
     uint16_t blank = vga_make_entry(' ', c->colore);
     uint32_t i;
 
-    for (i = 0; i < g_totale; i++) c->cella[i] = blank;
+    for (i = 0; i < TOTALE_C; i++) c->cella[i] = blank;
 
     c->row = 0;
     c->col = 0;
@@ -1166,7 +1226,7 @@ void vga_gotoxy(uint8_t row, uint8_t col)
 {
     Console *c = SISTEMA;
 
-    if (row >= g_righe) row = g_righe - 1;
+    if (row >= RIGHE_C) row = (uint8_t)(RIGHE_C - 1);
     if (col >= g_cols) col = g_cols - 1;
 
     c->row = row;
@@ -1252,7 +1312,7 @@ void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
                    uint32_t *px_h)
 {
     if (colonne) *colonne = g_cols;
-    if (righe)   *righe   = g_righe;
+    if (righe)   *righe   = RIGHE_C;          /* the bar's line is not the terminal's */
 
     /* ! I PIXEL SONO QUELLI VERI SOLO IN GRAFICA. In modo testo il framebuffer
      * non c'e' e la misura in pixel di un carattere non e' una cosa che questo
@@ -1271,3 +1331,49 @@ void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
     if (h)     *h     = g_fb_h;
     if (bpp)   *bpp   = g_fb_bpp;
 }
+
+/* =============================================================================
+ * vga_barra — the status bar's line (@EXTASKBAR)
+ *
+ * n > 0: the bar shows these cells (character | attribute << 8, the first
+ * 80 at most; fewer are padded with blanks in the colour of the last one).
+ * n == 0: the bar goes and its line is given back to the consoles, blank.
+ * A console whose cursor is on the last line when the bar appears is
+ * scrolled up once, so that what is being typed is not covered.
+ * ============================================================================= */
+void vga_barra(const uint16_t *celle, uint32_t n)
+{
+    uint32_t k, i;
+    uint16_t riempi;
+
+    if (n == 0) {
+        if (!g_barra_on) return;
+        g_barra_on = 0;
+        for (k = 0; k < VGA_N_CONSOLE; k++) {
+            Console *c = &g_console[k];
+            uint16_t blank = vga_make_entry(' ', c->colore);
+
+            for (i = (g_righe - 1) * g_cols; i < g_totale; i++) c->cella[i] = blank;
+        }
+        riversa_tutto(cons(g_visibile));
+        return;
+    }
+    if (n > BARRA_COL) n = BARRA_COL;
+    riempi = (uint16_t)((celle[n - 1] & 0xFF00) | ' ');
+    for (k = 0; k < BARRA_COL; k++) g_barra[k] = k < n ? celle[k] : riempi;
+    if (!g_barra_on) {
+        g_barra_on = 1;
+        for (k = 0; k < VGA_N_CONSOLE; k++) {
+            Console *c = &g_console[k];
+
+            if (c->row >= RIGHE_C) vga_scroll(c);
+            if (c->alt_on && c->alt_row >= RIGHE_C) c->alt_row = (uint8_t)(RIGHE_C - 1);
+        }
+        riversa_tutto(cons(g_visibile));
+        vga_update_cursor(cons(g_visibile));
+        return;
+    }
+    if (e_visibile(cons(g_visibile))) barra_disegna();
+}
+
+int vga_barra_accesa(void) { return g_barra_on; }

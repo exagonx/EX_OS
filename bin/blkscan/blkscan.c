@@ -29,7 +29,7 @@
  * Quasi tutte sono un filesystem che comincia al settore 0 — i floppy USB lo
  * sono sempre. «zero partizioni» vuol dire che si monta com'e':
  *
- *     mount usb0 /USB/DRIVE0
+ *     mount usb0 /USB/USB0
  * ============================================================================= */
 
 #include "libc.h"

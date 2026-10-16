@@ -813,6 +813,11 @@ typedef struct Process {
     uint8_t  nel_kernel;
     volatile uint8_t da_finire;
 
+    /* @EXTASKBAR (0.255): started in the background ('&', SPAWN_F_SOTTOFONDO)
+     * or a child of such a process. What it writes on its console goes to
+     * the collector's ring while there is one (SYS_EXTASKBAR). */
+    uint8_t  sottofondo;
+
 } Process;
 
 /* =============================================================================

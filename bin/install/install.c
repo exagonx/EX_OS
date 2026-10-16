@@ -2056,7 +2056,7 @@ int main(int argc, char **argv)
     /* ! /USB VUOTA, E SERVE A `automount`. Il VFS monta su un nome che non
      * esiste, ma la directory che lo conterra' si': senza questa, la prima
      * chiavetta infilata su un sistema installato non si monta e l'errore
-     * (ENOENT su /USB/DRIVE0) manda a cercare il guasto nel driver USB. */
+     * (ENOENT su /USB/USB0) manda a cercare il guasto nel driver USB. */
     /* ! SI COMPONE IN `q`, NON IN `p`, ED E' LA CORREZIONE DEL 14 SETTEMBRE
      * 2026. `p` tiene <destinazione>/boot, e le due righe qui sotto —
      * aggiunte dopo, per creare /USB — ci scrivevano sopra. Da li' in giu'

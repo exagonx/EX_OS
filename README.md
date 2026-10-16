@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.252
+**Version:** 0.255
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -93,6 +93,70 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### USB sticks are `/USB/USB0`, `/USB/USB1`... — tested in QEMU
+
+A stick now always goes to `/USB/USB<n>`, one number per stick inserted, the
+first free one: before, it was `/USB/DRIVE0` without a partition table and
+`/USB/HDD0p1` with one (most sticks formatted by Windows). A second partition
+of the same stick is `/USB/USB0p2`. And two sticks on two different
+controllers (OHCI and EHCI) now both appear: every controller driver asked for
+the block device name `usb0`, and the second was refused; the shared mass
+storage code (`drivers/usb/usb_massa.c`) now takes the first free `usb<n>`.
+Tried in QEMU: a partitioned stick and a whole one at once, `/USB/USB0` and
+`/USB/USB1` with their files, `eject` of one, the bar's `USB` item. Still one
+stick per controller: two sticks in ports of the same controller give one disk.
+
+### The status bar: `extaskbar` (kernel 0.255) — tested in QEMU
+
+What background services print (WiFi, USB, the network, automount...) no
+longer has to cover the command line. `extaskbar` puts a text bar on the
+last line of the screen, 80 columns, with fixed-width items: `USB0
+Connected` / `USB none`, `WIFI Connected`, `RX 00000000`, `TX 00000000`,
+`FAIL 000000`, `LOST 000000`; also available: `ETH`, the time, `BAT`,
+`TELNET`.
+
+- `extaskbar -show` starts it, `-hide` hides the bar (the logs are still
+  collected and the console stays clean), `-stop` stops it and everything
+  goes back to the console as before.
+- `extaskbar -menu`: which items to show, with `[x]` boxes and the count of
+  the columns left - an item that does not fit is refused; changes apply at
+  once. Also the memory kept for each log (64 KB unless changed).
+- `extaskbar -details`: the services on the left, the chosen one's log on the
+  right, live, each line with its time; `f` also keeps it in
+  `/boot/<service>/log.txt`, never more than 1024 KB (the oldest lines go).
+- The settings are in `$HOME/.config/extaskbar.cfg`. `extaskbar -boot:on`
+  (root, or the box in `-menu`) starts it at every boot: `extaskbar -auto` is
+  the first line of `/boot/avvio.sh` and does nothing unless switched on.
+- How: what a process started with `&` (and its children) writes goes, while
+  `extaskbar` runs, to a ring in the kernel instead of the screen; the
+  commands typed in the foreground print as always, and a session opened by
+  `telnetd` is not a background job. The services send their items with
+  `lib/include/extaskbar.h` (the WiFi driver, `wifisim` and `automount` do).
+  `-menu` and `-details` draw on the terminal's alternate screen
+  (`ESC[?1049h`, new in the console), so when they close the console shows
+  what it showed before; they work over telnet as well.
+
+Tried in QEMU at 32 and 64 bit: the bar, `ping &` collected and not on the
+screen, `-details`, `-menu` (an item refused when it does not fit, one
+removed and another added, applied at once), `-hide`, `-stop` with the output
+back on the screen, the WiFi items of the simulated card. Not yet on a real
+machine; saving to `/boot/<service>/log.txt` not tried yet (the CD is
+read-only).
+
+### WiFi: the first real card, Atheros AR2425 (`ar5k.drv`) — tested
+
+On the user's HP laptop (NVIDIA MCP77, Atheros AR2425, 168c:001c) EX-OS 64
+joins the home network in WPA2 and gets its address by DHCP: telnet, ping
+to the router and to the Internet, DNS and a download all go over the radio.
+`drivers/ar5k` uses Linux's ath5k hardware code (ISC licence) for the chip;
+association, the WPA/WPA2 key handshakes (`lib/exwifi`) and CCMP/TKIP are
+done in software. Open, WPA and WPA2 networks with a password; WEP,
+Enterprise and WPA3 are refused with the reason. The radio is switched on
+through the laptop's embedded controller. `tools/prova-ar5k/prova.sh`
+checks the connection code on the host against a pretend access point (23
+of 23). Still slow (about 50 KB/s: the driver looks at the card every 10 ms
+instead of using its interrupt), and the driver has to be started by hand.
+
 ### Libraries: a real dynamic loader, OpenSSL at 64 bit, iconv
 
 - **`dlopen` loads ordinary ELF shared objects** (`lib/libc_dl.c`, static
@@ -157,7 +221,7 @@ The connection manager and its two faces, at 32 and at 64 bit:
   The shell keeps 16 background jobs instead of 8: a boot script with the
   network, USB, telnetd and `wifid` starts nine.
 
-**No real WiFi card has a driver yet.** Everything above was tried in QEMU, at
+**The first real card is the Atheros AR2425 (see above).** Everything above was tried in QEMU, at
 32 and 64 bit, with `wifisim.drv`, a simulated card with five networks (WPA2,
 open, WEP, hidden) that carries the frames over the Ethernet card: list,
 wrong password refused, WPA2 with DHCP and with a static address, hidden
@@ -166,8 +230,8 @@ before login, a user refused when changing root's network, the icon and the
 panel. The security every driver will share is in `lib/exwifi`: the WPA/WPA2
 keys, the 4-way and group key handshakes (client side), CCMP, TKIP with
 Michael, and WEP; `tools/prova_exwifi.sh` checks it on the host against the
-IEEE 802.11 and RFC test vectors (41 of 41). No driver uses it yet. To do: the
-drivers for real chips, WPA3 and WPA2 Enterprise.
+IEEE 802.11 and RFC test vectors (41 of 41); `ar5k.drv` uses it. To do: other
+chips, WPA3 and WPA2 Enterprise.
 
 ### ExWin: every control can be hidden and switched off
 
@@ -273,6 +337,39 @@ chipset to ACPI mode first if needed. `reboot` tries, in order, the ACPI reset
 register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
+
+**64-bit tools, 16 October 2026**: **FreeBASIC** 1.10.1 runs on 64-bit
+EX-OS. FreeBASIC has no assembly backend of its own at 64 bit, so it goes
+through C (`-gen gcc`): `tools/freebasic-exos/prepara-fb64.sh` builds the
+runtime (libfb) with `x86_64-exos-gcc` and the native `fbc`, and `make
+tools64` puts them on `dist/exos64-tools.iso` (fb group). In QEMU the native
+`fbc` compiles a program inside EX-OS 64-bit with the native gcc, as and ld,
+and the program runs (`tools/freebasic-exos/prova-fb64-nativo.sh`). Exilla at
+64 bit has started: SpiderMonkey, Firefox's JavaScript engine, builds for
+`x86_64-unknown-exos` and passes its 17 checks inside EX-OS 64-bit; the whole
+browser is being built. Not yet tried on a real machine.
+
+**0.255**: the status bar (`extaskbar`, above): the last line of the screen
+can belong to it, the consoles have the alternate screen (`ESC[?1049h/l`),
+and what background processes write goes to a ring that `extaskbar`
+collects (`SYS_EXTASKBAR`), only while it runs. The shell marks `&` jobs
+(`SPAWN_F_SOTTOFONDO`) and now always clears the spawn flags it used to leave
+as they were on the stack.
+
+**0.254**: on the laptop `reboot` then stopped for good inside the keyboard
+controller step. The chipset's reset port 0xCF9 is now tried before it (a
+write to a port nobody decodes does nothing), and each of the ten 8042
+attempts prints its line. Not yet tried on the laptop.
+
+**0.253**: `reboot` on the laptop stopped right after "Sincronizzazione
+filesystem... ok". Its firmware declares no ACPI reset register, and the waits
+between the other methods were counted loops that lasted under a millisecond
+on its CPU. Each method now waits about half a second, measured on the I/O
+port 0x80 as Linux does; the keyboard controller gets its reset command ten
+times; and each method prints its own line on the screen
+("Riavvio: controller della tastiera (8042)", "Riavvio: porta 0xCF9",
+"Riavvio: triple fault"), so the last line shown says which one the machine
+did not take. Not yet tried on the laptop.
 
 **0.245**: SATA disks behind an AHCI controller (`kernel/block/ahci.c`).
 Controllers that declare themselves AHCI are always used, and their disks take

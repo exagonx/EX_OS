@@ -980,6 +980,115 @@ static void dump_mmio(int accendi)
  * sonda di cui si possa dirlo con certezza: e' memoria di sola lettura, e
  * nessuno dei suoi byte e' un registro.
  * ========================================================================== */
+/* =============================================================================
+ * -acpi: the firmware's ACPI tables, printed in hex (15 October 2026)
+ *
+ * The MCP77 laptop's WiFi button does nothing under EX-OS: on HP machines of
+ * that age the button raises an ACPI event and the firmware's own AML (a WMI
+ * method) switches the card's radio on. To learn which register that AML
+ * writes, the DSDT and SSDTs are read here and disassembled on the host
+ * (iasl). Read only: see dump_acpi for where it starts. Each table is
+ * printed between "=== TABELLA" and "=== FINE" lines, 32 bytes per line, so
+ * a telnet capture rebuilds it byte for byte (tools/acpi-da-testo.py).
+ * ============================================================================= */
+static volatile unsigned char *acpi_mappa(unsigned int fisico, unsigned int byte)
+{
+    MmioZona m;
+
+    m.fisico = fisico;
+    m.byte   = byte;
+    m.virt   = 0;
+    if (mmio_map(&m) != 0) return 0;
+    return (volatile unsigned char *)(uintptr_t)m.virt;
+}
+
+static unsigned int acpi_le32(volatile const unsigned char *p)
+{
+    return (unsigned int)p[0] | ((unsigned int)p[1] << 8) |
+           ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
+static void acpi_stampa(unsigned int fisico)
+{
+    volatile unsigned char *h, *t;
+    unsigned int lun, i;
+
+    h = acpi_mappa(fisico, 36);
+    if (!h) { printf("=== ERRORE: 0x%08x non si legge\n", fisico); return; }
+    lun = acpi_le32(h + 4);
+    if (lun < 36 || lun > 0x100000u) {
+        printf("=== ERRORE: a 0x%08x lunghezza %u\n", fisico, lun);
+        return;
+    }
+    t = acpi_mappa(fisico, lun);
+    if (!t) { printf("=== ERRORE: 0x%08x, %u byte, non si legge\n", fisico, lun); return; }
+    printf("=== TABELLA %c%c%c%c 0x%08x %u\n", t[0], t[1], t[2], t[3], fisico, lun);
+    for (i = 0; i < lun; i++) {
+        printf("%02x", t[i]);
+        if ((i & 31) == 31 || i + 1 == lun) printf("\n");
+    }
+    printf("=== FINE\n");
+}
+
+/* A table header at p: four letters or digits, a sane length that fits in
+ * what is left, and a zero checksum. */
+static unsigned int acpi_valida(volatile const unsigned char *p, unsigned int resto)
+{
+    unsigned int k, lun;
+    unsigned char somma = 0;
+
+    for (k = 0; k < 4; k++)
+        if (!((p[k] >= 'A' && p[k] <= 'Z') || (p[k] >= '0' && p[k] <= '9'))) return 0;
+    lun = acpi_le32(p + 4);
+    if (lun < 36 || lun > resto) return 0;
+    for (k = 0; k < lun; k++) somma = (unsigned char)(somma + p[k]);
+    return somma == 0 ? lun : 0;
+}
+
+/* ! THE RSDP CANNOT BE READ FROM HERE: 0xE0000-0xFFFFF is below the end of
+ * RAM, and mmio_map refuses it (seen in QEMU). The tables themselves sit
+ * above RAM, so the starting point is the FADT the kernel logs at boot
+ * ("ACPI: FADT a 0x..."): its DSDT, then every valid table within 64 KB on
+ * either side - where firmware puts the SSDTs, next to the others. */
+static int dump_acpi(const char *da)
+{
+    volatile unsigned char *zona, *f;
+    unsigned int fadt, base, byte, i, lun, trovate = 0;
+
+    if (!da) {
+        printf("sonda: -acpi vuole l'indirizzo della FADT, che il kernel scrive\n");
+        printf("       all'avvio: dmesg, riga \"ACPI: FADT a 0x...\"\n");
+        return 1;
+    }
+    fadt = (unsigned int)strtoul(da, 0, 16);
+    f = acpi_mappa(fadt, 44);
+    if (!f || f[0] != 'F' || f[1] != 'A' || f[2] != 'C' || f[3] != 'P') {
+        printf("sonda: a 0x%08x non c'e' una FADT\n", fadt);
+        return 1;
+    }
+    acpi_stampa(fadt);
+    acpi_stampa(acpi_le32(f + 40));                         /* the DSDT */
+
+    /* the window: from the lower of FADT and DSDT, down in 4 KB steps while
+     * mmio_map allows it (it stops at the end of RAM), at most 64 KB; then up
+     * to 128 KB past it, narrowed until the mapping is accepted */
+    base = (fadt < acpi_le32(f + 40) ? fadt : acpi_le32(f + 40)) & ~0xFFFu;
+    for (i = 0; i < 16 && acpi_mappa(base - 0x1000u, 0x1000u); i++) base -= 0x1000u;
+    for (byte = 0x30000u, zona = 0; byte >= 0x1000u; byte /= 2)
+        if ((zona = acpi_mappa(base, byte)) != 0) break;
+    if (!zona) { printf("sonda: la zona attorno a 0x%08x non si legge\n", base); return 1; }
+    printf("=== ZONA 0x%08x %u\n", base, byte);
+    for (i = 0; i + 36 <= byte; i++) {
+        lun = acpi_valida(zona + i, byte - i);
+        if (!lun) continue;
+        if (base + i != fadt && base + i != acpi_le32(f + 40)) acpi_stampa(base + i);
+        trovate++;
+        i += lun - 1;
+    }
+    printf("=== FINITO (%u tabelle valide attorno alla FADT)\n", trovate);
+    return 0;
+}
+
 static int dump_rom(const char *perc)
 {
     MmioZona       m;
@@ -1115,6 +1224,10 @@ static void aiuto(void)
     printf("            trentadue o sessantaquattro kilobyte, e dentro ci\n");
     printf("            sono le tabelle di modalita' di QUESTA scheda: si\n");
     printf("            legge con tools/scava.py su Linux.\n");
+    printf("  -acpi IND stampa in esadecimale le tabelle ACPI (FADT a IND, DSDT,\n");
+    printf("            SSDT...); IND e' la FADT del registro (dmesg),\n");
+    printf("            da ricomporre sull'host con tools/acpi-da-testo.py.\n");
+    printf("            Sola lettura.\n");
     printf("  -mmio     aggiunge i registri in memoria, motore 2D compreso.\n");
     printf("            Non scrive niente, ma legge una finestra di cui non\n");
     printf("            abbiamo il documento: stessa prudenza.\n");
@@ -1152,6 +1265,7 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-ponte") == 0) { ponte = 1; continue; }
         if (strcmp(argv[i], "-mmio") == 0)  { mmio = 1; continue; }
         if (strcmp(argv[i], "-rom") == 0)   { rom = 1; continue; }
+        if (strcmp(argv[i], "-acpi") == 0)  return dump_acpi(i + 1 < argc ? argv[i + 1] : 0);
         if (strcmp(argv[i], "-motore") == 0) { mmio = 1; motore = 1; continue; }
         if (argv[i][0] == '-') {
             printf("sonda: opzione sconosciuta: %s\n", argv[i]);

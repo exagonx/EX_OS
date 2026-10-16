@@ -54,7 +54,7 @@ del nome del driver.</p>
 <p>Un sistema appena installato dal dischetto ha pochi driver. Gli altri arrivano dal
 <strong>supporto</strong>: <code>make support</code> riempie <code>dist/support</code>
 (e ne fa <code>dist/support.iso</code>); il contenuto va su una chiavetta FAT32 o su un CD, e sul PC
-si lancia <code>/USB/HDD0p1/aggiungi</code> oppure <code>/cdrom/aggiungi</code>. Copia i driver in
+si lancia <code>/USB/USB0/aggiungi</code> oppure <code>/cdrom/aggiungi</code>. Copia i driver in
 <code>/dev</code> e i programmi in <code>/bin</code> senza chiedere, e aggiunge a
 <code>/boot/autoexec.sh</code> le righe che accendono chiavette e rete se mancano: al riavvio
 la rete parte da sola.</p>
@@ -130,10 +130,58 @@ volume (vedi <a href="exwin.html#wifi">ExWin</a>); da una console:
 <p class="nota">
 <b>Chi la cambia.</b> Se root ha acceso il collegamento all'avvio, la rete e'
 del sistema: ogni utente la usa, solo root la cambia. Altrimenti ogni utente
-avvia la propria. <b>Le schede vere non hanno ancora un driver</b>: per ora
-c'e' <code>wifisim.drv</code>, una scheda simulata con cinque reti, che serve
-a provare tutto il resto.
+avvia la propria.
 </p>
+
+<h3 id="schede-wifi">Le schede</h3>
+
+<table border="1">
+<tr><th>Scheda</th><th>Driver</th><th>Stato</th></tr>
+<tr><td>Atheros AR2425 / AR5212 (PCI <code>168c:001c</code>), per esempio nei
+    portatili HP con chipset NVIDIA MCP77</td>
+    <td><code>/dev/ar5k.drv</code></td>
+    <td>provata su un portatile vero: WPA2, DHCP, telnet, ping, DNS,
+        scaricamenti</td></tr>
+<tr><td>una scheda simulata, con cinque reti finte</td>
+    <td><code>/dev/wifisim.drv</code></td>
+    <td>per le prove in QEMU: i pacchetti passano sulla scheda Ethernet</td></tr>
+</table>
+
+<p>Con la scheda Atheros, da root:</p>
+
+<pre>  /dev/ar5k.drv &amp;                       accende la radio e registra wifi0
+  wifid &amp;                               (se non e' gia' partito dall'avvio)
+  wifi -showlist                        le reti che si sentono
+  wifi -connect:NomeRete -save          chiede la password e si collega</pre>
+
+<ul>
+<li><b>Le reti</b>: aperte, WPA e WPA2 con password (PSK), cifratura CCMP o
+    TKIP, anche le reti miste WPA/WPA2 e quelle nascoste. WEP, WPA2
+    Enterprise, WPA3 e le reti che pretendono la protezione dei frame di
+    gestione (802.11w) vengono rifiutate, dicendo perche'.</li>
+<li><b>La password</b> non viene mai scritta da nessuna parte: la chiede
+    <code>wifi</code>, e <code>wifid</code> conserva solo la chiave derivata,
+    cifrata.</li>
+<li><b>La radio</b>: sui portatili HP la accende il driver attraverso il
+    controller del portatile, l'EC (dopo ogni avvio e' spenta). Il tasto WiFi del portatile
+    per ora non fa niente.</li>
+<li><b>Il registro</b> del collegamento &mdash; la rete trovata, autenticazione,
+    associazione, chiavi, i primi pacchetti uno per uno e ogni dieci secondi
+    i contatori &mdash; sta in <code>/root/ar5k-conn.txt</code>, mai sulla
+    console. Con la <a href="sistema.html#extaskbar">barra di stato</a> si
+    vedono in basso lo stato e i contatori (WIFI, RX, TX, FAIL, LOST), e i
+    messaggi del driver in <code>extaskbar -details</code>.</li>
+<li><b>La velocita'</b>: per ora bassa, circa 50 KB/s, perche' il driver
+    guarda la scheda ogni 10 ms invece di usare il suo interrupt. Per i file
+    grossi conviene il cavo.</li>
+<li><b>Una rete alla volta</b>: lo stack IP usa o il cavo o il WiFi
+    (<code>wifid</code> lo sposta). Collegarsi a piu' reti insieme e' da
+    fare.</li>
+<li>Il driver va avviato a mano dopo ogni accensione, oppure con una riga
+    <code>/dev/ar5k.drv &amp;</code> in <code>/boot/avvio.sh</code> &mdash; che
+    pero' sparisce se <code>hwconfig</code> riscrive il file: il riconoscimento
+    automatico della scheda e' ancora da fare.</li>
+</ul>
 
 <h2>Uscire</h2>
 

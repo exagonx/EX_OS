@@ -12,7 +12,7 @@
  * aggiungi — porta su un sistema installato i driver e i programmi del
  * supporto da cui viene lanciato (8 ottobre 2026)
  *
- *     /USB/HDD0p1/aggiungi        dalla chiavetta fatta con `make support`
+ *     /USB/USB0/aggiungi        dalla chiavetta fatta con `make support`
  *     /cdrom/aggiungi             o dal CD dist/support.iso
  *
  * Il supporto ha accanto a questo programma due directory: dev/ (i driver,

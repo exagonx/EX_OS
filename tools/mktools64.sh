@@ -131,13 +131,30 @@ else
     echo "mktools64: no 64-bit OpenSSL ($O): EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh" >&2
 fi
 
+# --- FreeBASIC, if tools/freebasic-exos/prepara-fb64.sh built it ----------------
+# (@FB-64, 16 October 2026) The layout of the 32-bit CD, under the target name
+# fbc composes itself: bin/fbc, include/freebasic, lib/freebasic/exos-x86_64.
+# At 64 bit fbc goes through C (-gen gcc), so it wants the gcc group as well.
+F=cross_build/fb64/fb-build-exos64
+if [ -x "$F/fbc" ] && [ -f "$F/libfb.a" ] && [ -f "$F/fbrt0.o" ]; then
+    put "$F/fbc" bin/fbc
+    mkdir -p "$E/include/freebasic" "$E/lib/freebasic/exos-x86_64"
+    cp -rp cross_build/fb64/albero/inc/. "$E/include/freebasic/"
+    cp -p "$F/libfb.a" "$F/fbrt0.o" "$E/lib/freebasic/exos-x86_64/"
+    [ -f "$F/fbextra.x" ] && cp -p "$F/fbextra.x" "$E/lib/freebasic/exos-x86_64/"
+    cp tools/freebasic-exos/prova64.bas "$OUT/prova-fb.bas"
+    echo "mktools64: FreeBASIC $("$F/../albero/bin/fbc" -version | sed -n 's/.*Version \([0-9.]*\).*/\1/p') - fbc, libfb, $(ls "$E/include/freebasic" | wc -l) voci di .bi"
+else
+    echo "mktools64: no 64-bit FreeBASIC ($F): tools/freebasic-exos/prepara-fb64.sh" >&2
+fi
+
 # --- the catalogue, the test sources, a note -------------------------------------
 cp tools/iso/strumenti.txt "$E/strumenti.txt"     # the Makefile copies it as it is too
 for f in tools/iso/prova-gcc.c tools/iso/prova-cpp.cpp tools/iso/prova-mat.c tools/iso/prova-make \
          tools/iso/prova-nasm.asm; do
     [ -f "$f" ] && cp "$f" "$OUT/"
 done
-printf 'EX-OS 64-bit tools: gcc and g++ %s, binutils 2.44, GNU make, NASM, OpenSSL.\r\nInstall them with  toolinst  (or install -tools).\r\n' "$VER" \
+printf 'EX-OS 64-bit tools: gcc and g++ %s, binutils 2.44, GNU make, NASM, OpenSSL, FreeBASIC.\r\nInstall them with  toolinst  (or install -tools).\r\n' "$VER" \
     > "$OUT/leggimi.txt"
 
 mkdir -p dist

@@ -1098,7 +1098,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.005"
+#define SH_VERSIONE  "0.006"
 
 #define MAX_LINE    512
 
@@ -2143,8 +2143,13 @@ static void run_program(const char *prog, int argc, char *argv[],
         solo_ambiente.magia    = SPAWN_EXTRA_MAGIA;
         solo_ambiente.envp     = env_vettore();
         solo_ambiente.n_azioni = 0;
+        solo_ambiente.flag     = 0;
         extra = &solo_ambiente;
     }
+    /* (@EXTASKBAR) a job started with '&' is a background one: while
+     * extaskbar runs, what it prints goes there instead of the screen */
+    if (background) extra->flag |= SPAWN_F_SOTTOFONDO;
+    else            extra->flag &= ~SPAWN_F_SOTTOFONDO;
 
     /* ! THE CONTENT IS LOOKED AT BEFORE THE SPAWN, not only after it fails:
      * the kernel's loader logs every non-ELF file it is handed as an error
@@ -2660,6 +2665,10 @@ static void redir_in_extra(const Redir *r, SpawnExtra *extra)
     extra->magia    = SPAWN_EXTRA_MAGIA;
     extra->envp     = env_vettore();
     extra->n_azioni = 0;
+    /* ! `flag` WAS NEVER WRITTEN until 16 October 2026: the stack's leftovers
+     * went to the kernel, which only ignores the bits the form does not
+     * know. SPAWN_F_SOTTOFONDO is set in run_program, for '&'. */
+    extra->flag     = 0;
 
     for (i = 0; i < 3; i++) {
         SpawnAzione *az;

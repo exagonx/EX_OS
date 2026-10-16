@@ -1,2 +1,0 @@
-fdprova -s
-kbprova -s

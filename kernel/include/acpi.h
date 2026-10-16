@@ -21,6 +21,7 @@ void acpi_spegni(void);
 
 /* The FADT reset register, when the firmware declares one. Returns only if
  * the machine did not reset. */
+int  acpi_ha_reset(void);     /* the FADT declares a reset register */
 void acpi_riavvia(void);
 
 #endif /* EXOS_ACPI_H */

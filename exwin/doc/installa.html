@@ -568,6 +568,7 @@ comando, come se fosse digitata.
 </p>
 
 <pre>    !silenced
+    extaskbar -auto
     echo Accendo la rete...
     /dev/pci.drv &amp;
     netdetect -c
@@ -598,6 +599,27 @@ dell'hardware &mdash; ed e' il motivo per cui gli interruttori stanno nei
 Lo esegue la shell di chi ha fatto l'accesso, a ogni accesso. Qui vanno le cose
 di chi USA la macchina: un programma da aprire, una variabile. La rete no: un
 utente normale un driver non lo carica.
+</p>
+
+<h3><code>$HOME/.config/extaskbar.cfg</code> &mdash; la barra di stato</h3>
+
+<p>
+La barra sull'ultima riga e i log dei servizi (kernel 0.255): quali voci
+mostrare, quanta memoria per log, quali log tenere su file, se partire
+all'avvio. La scrivono <code>extaskbar -menu</code>, <code>-details</code> e
+<code>-boot:on</code>; il servizio usa quella di root.
+</p>
+
+<pre>    avvio = si
+    barra = si
+    memoria_kb = 64
+    voci = USB,WIFI,RX,TX,FAIL,LOST
+    salva = ar5k</pre>
+
+<p>
+I log scelti per il file stanno in <code>/boot/&lt;servizio&gt;/log.txt</code>,
+al massimo 1024 KB ciascuno. Tutto in <a href="sistema.html#extaskbar">Il
+sistema &mdash; La barra di stato</a>.
 </p>
 
 <h3>Gli utenti</h3>
@@ -821,7 +843,7 @@ c'e' piu' e rimetterla non produce niente.
 </p>
 
 <pre>    eject                  che cosa si puo' togliere
-    eject /USB/DRIVE0      smonta e ritira</pre>
+    eject /USB/USB0      smonta e ritira</pre>
 
 <h2 id="supporti-creare">10. Creare i supporti</h2>
 

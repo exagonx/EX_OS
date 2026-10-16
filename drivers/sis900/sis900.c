@@ -1896,19 +1896,19 @@ static void ref_dove_finisce(const char *percorso)
      * ALTRE. Il punto di innesto lo crea mksonda.sh sul dischetto, e c'e'
      * anche quando non c'e' infilato niente: scriverci dentro riesce, e il
      * file finisce nella copia in memoria esattamente come in radice. La
-     * chiavetta e' /USB/DRIVE0, che compare solo quando automount l'ha
+     * chiavetta e' /USB/USB0 (DRIVE0 fino al 16/10/2026), che compare solo quando automount l'ha
      * montata — e se non c'e', open() fallisce e lo si sa subito.
      *
-     * Quindi il promemoria si salta solo per /USB/DRIVE..., non per /USB/. */
-    if (strncmp(percorso, "/USB/DRIVE", 10) == 0) return;
+     * Quindi il promemoria si salta solo per /USB/USB..., non per /USB/. */
+    if (strncmp(percorso, "/USB/USB", 8) == 0 || strncmp(percorso, "/USB/DRIVE", 10) == 0) return;
 
     printf("\n");
     printf("        ! LA RADICE E' IN RAM: questo file sparisce quando\n");
     printf("        spegni. Portatelo via prima:\n");
-    printf("          cp %s /USB/DRIVE0/\n", percorso);
+    printf("          cp %s /USB/USB0/\n", percorso);
     printf("\n");
     printf("        Oppure scrivilo subito sulla chiavetta:\n");
-    printf("          sis900.drv -debug /USB/DRIVE0/SIS900.TXT\n");
+    printf("          sis900.drv -debug /USB/USB0/SIS900.TXT\n");
 }
 
 /* Rende 0 se il file c'e', -errno se non si e' potuto scriverlo. */

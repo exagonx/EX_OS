@@ -93,6 +93,10 @@ void     vga_hw_modo3(void);
 void     vga_ripristina_testo(void);
 
 int      vga_switch_console(uint32_t n);
+
+/* @EXTASKBAR: the status bar on the last line (vga.c). n == 0 hides it. */
+void     vga_barra(const uint16_t *celle, uint32_t n);
+int      vga_barra_accesa(void);
 uint32_t vga_visible_console(void);
 
 /* The text of console n as lines: the character of every cell, trailing

@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.003");
+EX_VERSIONE("hwconfig", "0.004");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -1066,6 +1066,18 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "!silenced\n"
         "\n", max - 1);
 
+    /* (@EXTASKBAR, 16 October 2026) ! THE SAME LINES ARE IN boot/avvio.sh,
+     * the other writer of this file: change both. First of all, so that the
+     * services started below are collected from their first line. */
+    strncat(out,
+        "# La barra di stato, SE root l'ha chiesta (`extaskbar -boot:on`). Da sola\n"
+        "# questa riga non fa niente: extaskbar -auto legge /root/.config/extaskbar.cfg\n"
+        "# e parte solo se `avvio = si`, altrimenti esce in silenzio. Sta PRIMA di\n"
+        "# tutto il resto: cosi' anche i primi messaggi dei servizi lanciati qui sotto\n"
+        "# con '&' vanno nei suoi log invece che sullo schermo.\n"
+        "extaskbar -auto\n"
+        "\n", max - 1 - strlen(out));
+
     /* ! IL BUS PCI SERVE ANCHE SENZA RETE, da quando ci sono i driver USB:
      * e' il fornitore di tutti e due. Prima stava dentro il blocco della rete,
      * e su una macchina senza scheda i controller USB non trovavano nessuno a
@@ -1194,8 +1206,8 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# le chiavette aggiunga a mano:  /dev/uhci.drv -avvio &\n"
         "\n"
         "# Guarda i dispositivi a blocchi, non l'USB, e monta quel che compare:\n"
-        "# una chiavetta senza tabella in /USB/DRIVE0, un disco partizionato in\n"
-        "# /USB/HDD0p1, /USB/HDD0p2, ...\n"
+        "# la prima chiavetta in /USB/USB0, la seconda in /USB/USB1, e cosi' via;\n"
+        "# un'altra partizione della stessa in /USB/USB0p2.\n"
         "automount &\n"
         "\n"
         "# L'acceleratore 2D della scheda grafica, se ce l'ha. Esce da solo e in\n"

@@ -129,10 +129,24 @@ if [ $# -eq 0 ]; then
         # controller: the 64-bit version has no floppy medium and no such
         # loader yet. Left out on purpose, not a failure.
         case "$n" in floppy) continue ;; esac
-        r="$REG/drv-$n.log"
+        r="$REG/drv-$n.log"; : > "$r"
         o="$OGG/drv_$n.o"
-        if gcc $CF $INC -Idrivers/$n -c "drivers/$n/$n.c" -o "$o" > "$r" 2>&1 &&
-           $LD "$LIBD/start.o" "$o" "$LIBD/libc.o" "$LIBD/libusb.a" "$LIBD/libexos.a" -o "$DRVD/$n.drv" >> "$r" 2>&1; then
+        # A driver made of several files (15 October 2026): ar5k carries
+        # Linux's ath5k hardware code (drivers/ar5k/ath5k, ISC) with its own
+        # compatibility headers, built as GNU C and without warnings - the
+        # files are kept as Linux has them.
+        piu=""; piu_ok=1
+        case "$n" in
+        ar5k)
+            for s in drivers/ar5k/ar5k_scan.c drivers/ar5k/ar5k_radio.c drivers/ar5k/ar5k_servizio.c drivers/ar5k/ar5k_conn.c drivers/ar5k/glue.c drivers/ar5k/glue_libero.c drivers/ar5k/ath5k/*.c; do
+                oo="$OGG/drv_ar5k_$(basename "$s" .c).o"
+                gcc $(echo "$CF" | sed 's/-std=c11/-std=gnu11/; s/-Wall//') -w -Idrivers/ar5k/compat -Idrivers/ar5k \
+                    -Idrivers/ar5k/ath5k -Ilib/include -Idrivers/net -Ilib/exwifi -c "$s" -o "$oo" >> "$r" 2>&1 || piu_ok=0
+                piu="$piu $oo"
+            done ;;
+        esac
+        if [ $piu_ok -eq 1 ] && gcc $CF $INC -Idrivers/$n -c "drivers/$n/$n.c" -o "$o" >> "$r" 2>&1 &&
+           $LD "$LIBD/start.o" "$o" $piu "$LIBD/libc.o" "$LIBD/libusb.a" "$LIBD/libexos.a" -o "$DRVD/$n.drv" >> "$r" 2>&1; then
             dbene=$((dbene + 1))
         else
             dmale="$dmale $n"; rm -f "$DRVD/$n.drv"

@@ -1,2 +1,0 @@
-EX-OS 64-bit tools: gcc and g++ 17.0.0, binutils 2.44, GNU make, NASM, OpenSSL.
-Install them with  toolinst  (or install -tools).

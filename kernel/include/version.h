@@ -468,7 +468,18 @@
  * through ACPI S5 (FADT PM1a/PM1b, _S5_ from the DSDT, SMI_CMD/ACPI_ENABLE
  * when needed); reboot tries the ACPI reset register, the 8042, the 0xCF9
  * port, then the triple fault (now with a 10-byte descriptor at 64 bit). */
-#define EXOS_VERSION    "0.252"
+/* 0.252 -> 0.253: reboot on the laptop stopped after the filesystem sync.
+ * The waits between methods were counted `pause` loops (under a millisecond
+ * on an Athlon); now about 1 us per write to port 0x80, the 8042 pulse is
+ * sent ten times as Linux does, and each method prints its line on the
+ * screen. The ACPI log says why there is no reset register. */
+/* 0.253 -> 0.254: reboot tries the 0xCF9 port before the 8042 (the laptop
+ * stopped for good inside the 8042 step), and shows each 8042 attempt. */
+/* 0.254 -> 0.255: @EXTASKBAR - the last line of the screen can belong to a
+ * status bar (vga_barra), consoles have the alternate screen (ESC[?1049h/l),
+ * and what background processes ('&', SPAWN_F_SOTTOFONDO) write goes to a
+ * ring that /bin/extaskbar collects, while it runs (SYS_EXTASKBAR = 26). */
+#define EXOS_VERSION    "0.255"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

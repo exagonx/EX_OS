@@ -173,7 +173,7 @@ IF SOMETHING GOES WRONG
     the state of the PHY (link SU = up, GIU' = down) and the counts of frames
     sent and received: those are the lines to send.
   - To take a file away: plug in a FAT32 stick, ls /USB says what it is called
-    (usually HDD0p1), then cp /file /USB/HDD0p1/ and shutdown.
+    (usually USB0), then cp /file /USB/USB0/ and shutdown.
   - The keyboard types wrong symbols: the image starts with the Italian
     keyboard. keymap us changes it.
 
@@ -203,7 +203,7 @@ make support fills dist/support and also builds dist/support.iso.
   - On the PC, started from the disk. If the stick does not show up by itself
     in ls /USB, three commands start it: /dev/pci.drv & then /dev/ehci.drv
     -avvio & then automount &
-  - Run /USB/HDD0p1/aggiungi (or /cdrom/aggiungi from the CD). It copies the
+  - Run /USB/USB0/aggiungi (or /cdrom/aggiungi from the CD). It copies the
     drivers to /dev and the programs to /bin without asking, and adds to
     /boot/autoexec.sh the lines that start sticks and network, if missing.
   - shutdown, remove the medium, power on: netdetect -c finds the network card

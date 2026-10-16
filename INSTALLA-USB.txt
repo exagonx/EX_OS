@@ -176,7 +176,7 @@ SE QUALCOSA NON VA
     del PHY (link SU o GIU') e i conteggi dei frame inviati e ricevuti: sono
     le righe da mandare.
   - Per portarsi via un file: infilate una chiavetta FAT32, ls /USB dice come
-    si chiama (di solito HDD0p1), poi cp /file /USB/HDD0p1/ e shutdown.
+    si chiama (di solito USB0), poi cp /file /USB/USB0/ e shutdown.
   - La tastiera scrive segni sbagliati: il dischetto nasce con la tastiera
     italiana. keymap us la cambia.
 
@@ -206,7 +206,7 @@ support riempie dist/support e ne fa anche dist/support.iso.
   - Sul PC, avviato dal disco. Se la chiavetta non compare da sola in ls /USB,
     tre comandi la accendono: /dev/pci.drv & poi /dev/ehci.drv -avvio & poi
     automount &
-  - Lanciate /USB/HDD0p1/aggiungi (o /cdrom/aggiungi dal CD). Copia i driver
+  - Lanciate /USB/USB0/aggiungi (o /cdrom/aggiungi dal CD). Copia i driver
     in /dev e i programmi in /bin senza chiedere niente, e aggiunge a
     /boot/autoexec.sh le righe che accendono chiavette e rete, se mancano.
   - shutdown, togliete il supporto, riaccendete: netdetect -c trova la scheda

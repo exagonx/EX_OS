@@ -54,12 +54,24 @@
 #define PRIx32      "x"
 #define PRIX32      "X"
 
+#ifdef __LP64__
+/* 64-bit EX-OS: int64_t, intmax_t and intptr_t are long there (exos64.h,
+ * the x86_64-linux types), so "ll" would be the wrong length - GCC rejects
+ * it under -Werror=format, as Firefox builds. 16 October 2026. */
+#define PRId64      "ld"
+#define PRIi64      "li"
+#define PRIu64      "lu"
+#define PRIo64      "lo"
+#define PRIx64      "lx"
+#define PRIX64      "lX"
+#else
 #define PRId64      "lld"
 #define PRIi64      "lli"
 #define PRIu64      "llu"
 #define PRIo64      "llo"
 #define PRIx64      "llx"
 #define PRIX64      "llX"
+#endif
 
 /* --- least / fast: su i386 coincidono con quelle sopra ----------------------- */
 #define PRIdLEAST8  PRId8
@@ -89,6 +101,21 @@
 #define PRIxFAST64  PRIx64
 
 /* --- puntatori e tipi massimi ------------------------------------------------ */
+#ifdef __LP64__
+#define PRIdPTR     "ld"
+#define PRIiPTR     "li"
+#define PRIuPTR     "lu"
+#define PRIoPTR     "lo"
+#define PRIxPTR     "lx"
+#define PRIXPTR     "lX"
+
+#define PRIdMAX     "ld"
+#define PRIiMAX     "li"
+#define PRIuMAX     "lu"
+#define PRIoMAX     "lo"
+#define PRIxMAX     "lx"
+#define PRIXMAX     "lX"
+#else
 #define PRIdPTR     "d"
 #define PRIiPTR     "i"
 #define PRIuPTR     "u"
@@ -102,6 +129,7 @@
 #define PRIoMAX     "llo"
 #define PRIxMAX     "llx"
 #define PRIXMAX     "llX"
+#endif
 
 /* --- Lettura (sscanf) -------------------------------------------------------- */
 #define SCNd8       "hhd"
@@ -113,6 +141,17 @@
 #define SCNd32      "d"
 #define SCNu32      "u"
 #define SCNx32      "x"
+#ifdef __LP64__
+#define SCNd64      "ld"
+#define SCNu64      "lu"
+#define SCNx64      "lx"
+#define SCNdPTR     "ld"
+#define SCNuPTR     "lu"
+#define SCNxPTR     "lx"
+#define SCNdMAX     "ld"
+#define SCNuMAX     "lu"
+#define SCNxMAX     "lx"
+#else
 #define SCNd64      "lld"
 #define SCNu64      "llu"
 #define SCNx64      "llx"
@@ -122,6 +161,7 @@
 #define SCNdMAX     "lld"
 #define SCNuMAX     "llu"
 #define SCNxMAX     "llx"
+#endif
 
 /* =============================================================================
  * Gli interi piu' larghi della macchina
