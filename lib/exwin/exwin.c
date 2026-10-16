@@ -2895,6 +2895,35 @@ static int term_leggi(Terminale *t)
     return cambiato;
 }
 
+/* =============================================================================
+ * term_uscite — has a terminal's program ended? (16 October 2026)
+ *
+ * ! THE PROGRAM'S OWN END COUNTS, not only the end of the data. The user:
+ * `exit` in an ExWin terminal did not close its window. The end of data comes
+ * when nobody holds the pty's slave any more, and a job the shell started
+ * with '&' (its autoexec starts some) inherits it and outlives the shell. So
+ * when the program we started has ended, it is over: waitpid without
+ * waiting, on our own child. Called also when the message loop's poll times
+ * out - with the pty silent, nothing else would wake it. 1 if one ended.
+ * ============================================================================= */
+static int term_uscite(void)
+{
+    int j, st, uscito = 0;
+
+    for (j = 0; j < TERM_MAX; j++) {
+        Terminale *t = &g_term[j];
+
+        if (!t->usato || t->finito || t->pid <= 0) continue;
+        if (waitpid(t->pid, &st, WNOHANG) == t->pid) {
+            term_leggi(t);                  /* what it wrote last */
+            t->finito = 1;
+            t->pid    = 0;
+            uscito    = 1;
+        }
+    }
+    return uscito;
+}
+
 /* Un tasto dentro il terminale: eco nella griglia, e alla shell si manda solo
  * la riga finita. Rende 1 se il tasto e' stato consumato. */
 /* ! IL TASTO SI MANDA E BASTA, E QUESTA FUNZIONE E' DIVENTATA TRE RIGHE.
@@ -6978,7 +7007,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
 
                 if (poll(v, (unsigned int)nv, (bloccante && !gia) ? 200 : 0) <= 0
-                    && !gia) continue;
+                    && !gia && !term_uscite()) continue;
 
                 /* ! BY DESCRIPTOR, NOT BY POSITION: a function called here may
                  * remove itself (ex_watch_fd(fd, 0, 0) at the end of a
@@ -7008,6 +7037,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
                         if (!ridisegna_controllo(ogg(g_term[j].ogg)))
                             ex_default_proc(radice_h(g_term[j].ogg), EXM_PAINT, 0, 0);
                     }
+
+                    term_uscite();          /* the program's own end: see there */
 
                     /* ! E SE IL PROGRAMMA DENTRO E' USCITO, SI DICE — una
                      * volta sola. Si consegna come un messaggio normale, cosi'

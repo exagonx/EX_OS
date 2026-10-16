@@ -1016,7 +1016,7 @@ void vga_init_grafica(const BootInfo *info)
     (void)mtrr_framebuffer_wc(info->fb_addr, byte_tot);
     (void)a;
 
-    g_fb       = (uint8_t *)(uintptr_t)info->fb_addr;
+    g_fb       = (uint8_t *)paging_framebuffer_virt(info->fb_addr);
     g_fb_pitch = info->fb_pitch;
     g_fb_bpp   = info->fb_bpp;
     g_fb_w     = info->fb_width;

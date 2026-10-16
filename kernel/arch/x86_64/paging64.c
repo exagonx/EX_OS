@@ -91,8 +91,14 @@ static uint64_t k_pt_bassa[2][VOCI] ALIGNED(4096);  /* i primi 4 MB, a 4 KB */
 
 static PDE *g_corrente = NULL;
 
-/* dove sta il framebuffer, in voci di PD contate dall'indirizzo 0 */
-static uint32_t g_fb_da = 0, g_fb_a = 0;
+/* @EXOS64-SPAZIO: the kernel sees the framebuffer from FB_ALIAS + its
+ * physical address - the second PML4 entry (512 GB up), kernel-only, whose
+ * tables every process space shares by pointer, as it shares the fascia.
+ * Before, the framebuffer was copied into every process at its physical
+ * address, between 3 and 4 GB, which kept that gigabyte from the programs. */
+#define FB_SLOT         1u
+#define FB_ALIAS        ((uint64_t)FB_SLOT << 39)
+static int g_fb_alias;
 
 static inline uint64_t cr3_leggi(void)
 {
@@ -493,13 +499,21 @@ int paging_mappa_framebuffer(paddr_t phys, uint32_t byte)
         klog(LOG_ERROR, "PAGING: framebuffer oltre i 4 GB, non mappato");
         return -1;
     }
+    /* identity in the kernel's own space (as before), and the alias that
+     * every space shares */
     for (a = 0; a < byte; a += PAGE_SIZE) {
         if (paging_map_page(k_pml4, (vaddr_t)(phys + a), phys + a,
                             PG_PRESENT | PG_WRITABLE) != 0) return -1;
+        if (paging_map_page(k_pml4, (vaddr_t)(FB_ALIAS + phys + a), phys + a,
+                            PG_PRESENT | PG_WRITABLE) != 0) return -1;
     }
-    g_fb_da = (uint32_t)(phys / MB2);
-    g_fb_a  = (uint32_t)((phys + byte - 1) / MB2) + 1;
+    g_fb_alias = 1;
     return 0;
+}
+
+void *paging_framebuffer_virt(paddr_t phys)
+{
+    return (void *)(uintptr_t)(FB_ALIAS + phys);
 }
 
 /* -----------------------------------------------------------------------------
@@ -530,17 +544,9 @@ PDE *paging_create_directory(void)
 
     for (i = 0; i < FASCIA_VOCI; i++) pd[i] = K_PD(i);
 
-    /* il framebuffer, se c'e': le stesse tabelle del kernel, come a 32 bit */
-    for (i = g_fb_da; i < g_fb_a; i++) {
-        vaddr_t   v  = (vaddr_t)i * MB2;
-        uint64_t *v2 = voce_pd(pml4, v, 1);
-
-        if (v2 == NULL) {
-            paging_destroy_directory(pml4);
-            return NULL;
-        }
-        *v2 = K_PD(i);
-    }
+    /* the framebuffer's alias, if there is one: the kernel's own tables,
+     * shared by pointer (paging_destroy_directory leaves them alone) */
+    if (g_fb_alias && (k_pml4[FB_SLOT] & PG_PRESENT)) pml4[FB_SLOT] = k_pml4[FB_SLOT];
 
     klog(LOG_DEBUG, "PAGING: nuovo spazio di processo, PML4 a 0x%08x", (uint32_t)f4);
     return pml4;
@@ -548,7 +554,6 @@ PDE *paging_create_directory(void)
 
 void paging_destroy_directory(PDE *pml4)
 {
-    uint64_t ram = (uint64_t)pmm_get_total_pages() * PAGE_SIZE;
     uint32_t i4, i3, i2, i1;
 
     if (pml4 == NULL || pml4 == k_pml4) return;
@@ -557,6 +562,7 @@ void paging_destroy_directory(PDE *pml4)
         uint64_t *pdpt;
 
         if (!(pml4[i4] & PG_PRESENT)) continue;
+        if (i4 == FB_SLOT && g_fb_alias) continue;      /* the kernel's, shared */
         pdpt = TAB(pml4[i4]);
 
         for (i3 = 0; i3 < VOCI; i3++) {
@@ -568,14 +574,9 @@ void paging_destroy_directory(PDE *pml4)
             for (i2 = 0; i2 < VOCI; i2++) {
                 uint64_t *pt;
 
-                /* la fascia e il framebuffer sono tabelle del kernel: la
-                 * copia della voce se ne va con la PD, la tabella resta */
-                if (i4 == 0 && i3 < 4) {
-                    uint32_t g = i3 * VOCI + i2;
-
-                    if (g < FASCIA_VOCI) continue;
-                    if (g >= g_fb_da && g < g_fb_a) continue;
-                }
+                /* la fascia e' fatta di tabelle del kernel: la copia della
+                 * voce se ne va con la PD, la tabella resta */
+                if (i4 == 0 && i3 == 0 && i2 < FASCIA_VOCI) continue;
                 if (!(pd[i2] & PG_PRESENT) || (pd[i2] & PG_HUGE)) continue;
                 pt = TAB(pd[i2]);
 
@@ -588,8 +589,8 @@ void paging_destroy_directory(PDE *pml4)
                         uint64_t frame = PG_ADDR(pt[i1]);
 
                         /* fuori dalla RAM e' un dispositivo (MMIO), non
-                         * una pagina da rendere */
-                        if (frame >= ram) continue;
+                         * una pagina da rendere; la RAM oltre i 4 GB lo e' */
+                        if (!pmm_e_ram(frame)) continue;
                         pmm_free_page(frame);
                     }
                 }

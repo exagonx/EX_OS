@@ -64,6 +64,23 @@ uint32_t pmm_ref_count(paddr_t addr);
 uint32_t pmm_get_free_pages(void);
 uint32_t pmm_get_used_pages(void);
 uint32_t pmm_get_total_pages(void);
+
+/* The anonymous pages of programs (pmm.c, «RAM above 4 GB»). At 64 bit they
+ * come from the RAM above 4 GB while there is some, then from the rest; at
+ * 32 bit this is pmm_alloc_page. PMM_OLTRE_RAM(a): «a is not RAM» (a device,
+ * MMIO) - at 32 bit exactly the old test against the top of RAM. */
+#if defined(__x86_64__)
+paddr_t  pmm_alloc_page_utente(void);
+int      pmm_e_ram(paddr_t a);
+uint32_t pmm_alta_libere(void);
+uint32_t pmm_alta_totali(void);
+#define  PMM_OLTRE_RAM(a)       (!pmm_e_ram(a))
+#define  PMM_E_RAM_SOTTO(a, r)  pmm_e_ram(a)
+#else
+#define  pmm_alloc_page_utente  pmm_alloc_page
+#define  PMM_OLTRE_RAM(a)       ((a) >= pmm_get_total_pages() * PAGE_SIZE)
+#define  PMM_E_RAM_SOTTO(a, r)  ((a) < (r))
+#endif
 int      pmm_is_page_free(paddr_t addr);
 void     pmm_dump(void);
 

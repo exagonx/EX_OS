@@ -200,7 +200,17 @@ typedef struct PACKED {
  * per puntatore invece che copiate.
  * ============================================================================= */
 #define USER_SPACE_BASE     0x04000000  /* 64MB: inizio spazio utente */
+#if defined(__x86_64__)
+/* @EXOS64-SPAZIO, first step (16 October 2026): at 64 bit nothing of the
+ * kernel lives between 3 and 4 GB of a process's space any more - the
+ * framebuffer, the one thing that did, is seen by the kernel from above 4 GB
+ * (paging_framebuffer_virt, kernel/arch/x86_64/paging64.c). The programs get
+ * that gigabyte: stack, TLS and the heap's ceiling move up with this line.
+ * The last 64 KB stay unmapped, a guard against wrapping arithmetic. */
+#define USER_SPACE_END      0xFFFF0000  /* ~4GB: fine spazio utente */
+#else
 #define USER_SPACE_END      0xC0000000  /* 3GB: fine spazio utente */
+#endif
 
 /*
  * FIX BUG #3: BOOTINFO_PHYS_ADDR aggiornato da 0xB000 a 0xC000.

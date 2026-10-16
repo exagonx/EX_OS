@@ -479,7 +479,18 @@
  * status bar (vga_barra), consoles have the alternate screen (ESC[?1049h/l),
  * and what background processes ('&', SPAWN_F_SOTTOFONDO) write goes to a
  * ring that /bin/extaskbar collects, while it runs (SYS_EXTASKBAR = 26). */
-#define EXOS_VERSION    "0.255"
+/* 0.255 -> 0.256: @EXOS64-SPAZIO first step, 64 bit only: the framebuffer is
+ * seen by the kernel from above 4 GB (an alias every space shares), and a
+ * process's space ends just below 4 GB instead of 3: the heap's ceiling goes
+ * from about 2681 to 3705 MB. The 32-bit kernel is identical. */
+/* 0.256 -> 0.257: @EXOS64-SPAZIO step 2, 64 bit only: the RAM above 4 GB is a
+ * second pool of the PMM, given to the anonymous pages of programs
+ * (pmm_alloc_page_utente); everything else keeps the RAM below 4 GB. The
+ * 32-bit kernel is identical. */
+/* 0.257 -> 0.258: /dev/null, both architectures: a descriptor of type
+ * FD_NULL - open("/dev/null") and a spawn redirection to it give one; read
+ * returns end of file, write takes everything, poll says ready. */
+#define EXOS_VERSION    "0.258"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -311,7 +311,7 @@ static int dl_apply_relocations(Process *proc, uint32_t base,
         }
 
         /* Traduci indirizzo virtuale della patch → fisico */
-        uint32_t phys_patch = paging_get_physical(proc->page_directory, r_offset);
+        paddr_t phys_patch = paging_get_physical(proc->page_directory, r_offset);
         if (phys_patch == 0) {
             klog(LOG_ERROR, "DYNLINK: indirizzo relocation non mappato: 0x%08x", r_offset);
             continue;
@@ -350,7 +350,7 @@ static int dl_apply_relocations(Process *proc, uint32_t base,
                 if (sym_addr != 0 && symtab != NULL) {
                     Elf32_Sym *sym = &symtab[r_sym];
                     uint32_t sz = sym->st_size;
-                    uint32_t src_phys = paging_get_physical(
+                    paddr_t src_phys = paging_get_physical(
                                             proc->page_directory, sym_addr);
                     if (src_phys && sz > 0) {
                         uint8_t *dst = (uint8_t *)DA_FISICO(phys_patch);
@@ -491,7 +491,7 @@ static int dl_load_so(const char *path, Process *proc,
 
                 uint32_t written = 0;
                 while (written < (uint32_t)n) {
-                    uint32_t phys_dst = paging_get_physical(
+                    paddr_t phys_dst = paging_get_physical(
                                             proc->page_directory, vaddr + written);
                     if (phys_dst == 0) goto cleanup;
 
@@ -576,7 +576,7 @@ static int dl_load_so(const char *path, Process *proc,
             /* Copia dalle pagine mappate nel processo */
             for (i = 0; i < sym_count; i++) {
                 uint32_t sym_vaddr = dt_symtab + i * sizeof(Elf32_Sym);
-                uint32_t sym_phys  = paging_get_physical(proc->page_directory, sym_vaddr);
+                paddr_t sym_phys  = paging_get_physical(proc->page_directory, sym_vaddr);
                 if (!sym_phys) break;
                 uint8_t *src = (uint8_t *)DA_FISICO(sym_phys - (sym_vaddr & 0xFFF)) + (sym_vaddr & 0xFFF);
                 uint8_t *dst = (uint8_t *)&symtab_copy[i];
@@ -587,7 +587,7 @@ static int dl_load_so(const char *path, Process *proc,
             /* Copia strtab */
             for (i = 0; i < dt_strsz; i++) {
                 uint32_t sa = dt_strtab + i;
-                uint32_t sp = paging_get_physical(proc->page_directory, sa);
+                paddr_t sp = paging_get_physical(proc->page_directory, sa);
                 if (!sp) break;
                 strtab_copy[i] = *(char *)DA_FISICO(sp - (sa & 0xFFF) + (sa & 0xFFF));
             }
@@ -605,7 +605,7 @@ static int dl_load_so(const char *path, Process *proc,
             /* Copia dalla memoria processo */
             for (i = 0; i < rel_count; i++) {
                 uint32_t ra = dt_rel + i * sizeof(Elf32_Rel);
-                uint32_t rp = paging_get_physical(proc->page_directory, ra);
+                paddr_t rp = paging_get_physical(proc->page_directory, ra);
                 if (!rp) break;
                 uint8_t *src = (uint8_t *)DA_FISICO(rp - (ra & 0xFFF)) + (ra & 0xFFF);
                 uint8_t *dst = (uint8_t *)&rel_buf[i];
@@ -626,7 +626,7 @@ static int dl_load_so(const char *path, Process *proc,
         if (rel_buf) {
             for (i = 0; i < plt_count; i++) {
                 uint32_t ra = dt_jmprel + i * sizeof(Elf32_Rel);
-                uint32_t rp = paging_get_physical(proc->page_directory, ra);
+                paddr_t rp = paging_get_physical(proc->page_directory, ra);
                 if (!rp) break;
                 uint8_t *src = (uint8_t *)DA_FISICO(rp - (ra & 0xFFF)) + (ra & 0xFFF);
                 uint8_t *dst = (uint8_t *)&rel_buf[i];

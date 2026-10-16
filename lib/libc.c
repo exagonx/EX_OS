@@ -3532,8 +3532,13 @@ void quick_exit(int code)
  * di cadere — si scontrava con questa. Debole, vince la sua. */
 __attribute__((weak)) void abort(void)
 {
-    /* Causa un fault intenzionale */
-    exit(134);
+    /* ! _exit, NOT exit (16 October 2026): abort ends the process at once,
+     * without atexit handlers and global destructors (POSIX). With exit(),
+     * a program that aborts while holding a lock - Rust aborting in a panic,
+     * C++ in std::terminate - ran cleanup that waited on that same lock, and
+     * the process stayed blocked for ever (seen in 64-bit EX-OS). 134 is the
+     * code it always gave: 128 + SIGABRT. */
+    _exit(134);
 }
 
 /* =============================================================================

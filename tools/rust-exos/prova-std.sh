@@ -55,9 +55,14 @@ if [ "$(cat "$CARGO_TARGET_DIR/impronta-std" 2>/dev/null)" != "$IMPR" ]; then
     mkdir -p "$CARGO_TARGET_DIR"; echo "$IMPR" > "$CARGO_TARGET_DIR/impronta-std"
 fi
 
-(cd tools/rust-exos/prova-std && "$CARGO" +nightly build --release \
-    -Z build-std=std,panic_abort --target $BERSAGLIO) || exit 1
-BIN="$CARGO_TARGET_DIR/$BERSAGLIO/release/prova-std"
+# PROVA, STD, SEGNO (16 October 2026, native Rust): another test crate in
+# tools/rust-exos, the std parts it needs, the line that says it passed -
+# PROVA=prova-unwind STD=std,panic_unwind SEGNO="rust-unwind: 0 NO" tests
+# panic=unwind. Without them, the std test as always.
+PROVA="${PROVA:-prova-std}"
+(cd tools/rust-exos/$PROVA && "$CARGO" +nightly build --release \
+    -Z build-std=${STD:-std,panic_abort} --target $BERSAGLIO) || exit 1
+BIN="$CARGO_TARGET_DIR/$BERSAGLIO/release/$PROVA"
 
 # ! LA CPU DI BASE E' IL PENTIUM MMX (Makefile, CPU_BASE): niente SSE e niente
 # cmov. Le MMX ci sono, e la memcpy della libc le usa apposta; il codice Rust
@@ -75,5 +80,5 @@ fi
 
 uscita=$(SECONDI=15 tools/exilla/esegui-in-exos.sh "$BIN" uno due)
 echo "$uscita"
-echo "$uscita" | grep -q "rust-std: 0 NO" && { echo "=== [OK] la std di Rust gira dentro EX-OS ==="; exit 0; }
+echo "$uscita" | grep -q "${SEGNO:-rust-std: 0 NO}" && { echo "=== [OK] la std di Rust gira dentro EX-OS ==="; exit 0; }
 echo "=== [NO] ==="; exit 1

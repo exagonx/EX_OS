@@ -964,7 +964,7 @@ void paging_destroy_directory(PDE *pd)
                      * pmm_init(). Quando li' si prendeva il massimo su TUTTA
                      * la mappa E820, il tetto finiva sull'APIC e questa riga
                      * lasciava passare il framebuffer di VirtualBox. */
-                    if (frame >= pmm_get_total_pages() * PAGE_SIZE) continue;
+                    if (PMM_OLTRE_RAM(frame)) continue;
 
                     pmm_free_page(frame);
                 }
@@ -1051,7 +1051,7 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
 
                 /* Non e' RAM: e' il framebuffer o una finestra MMIO. Vedi la
                  * stessa domanda in paging_destroy_directory. */
-                if (frame >= pmm_get_total_pages() * PAGE_SIZE) continue;
+                if (PMM_OLTRE_RAM(frame)) continue;
 
                 /* Condivisa con qualcun altro: vedi sopra. */
                 if (pmm_ref_count(frame) != 1) continue;
@@ -1245,7 +1245,7 @@ static int pf_cresci_pagine(Process *p, vaddr_t fault_addr, int from_user)
     pagina = PAGINA_DI(fault_addr);
 
     for (ind = pagina; ind < p->user_stack_base; ind += PAGE_SIZE) {
-        paddr_t phys = pmm_alloc_page();
+        paddr_t phys = pmm_alloc_page_utente();
 
         /* ! SE NON C'E' POSTO SE NE FA: e' tutto il senso della memoria
          * virtuale. Prima di questa riga «RAM esaurita» voleva dire che il
@@ -1441,7 +1441,7 @@ static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
      * perderebbe la prima (e la sua pagina fisica, per sempre). */
     if (paging_get_physical(p->page_directory, pagina) != 0) return 1;
 
-    phys = pmm_alloc_page();
+    phys = pmm_alloc_page_utente();
     if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
     if (phys == 0) {
         klog(LOG_ERROR, "PF: RAM esaurita caricando 0x%08x per PID %u",
@@ -1557,7 +1557,7 @@ int paging_pigra_tocca(Process *p, vaddr_t virt)
     pte = pt[pti];
     if (!PTE_E_PIGRA(pte)) return 0;
 
-    fisico = pmm_alloc_page();
+    fisico = pmm_alloc_page_utente();
     if (fisico == 0 && swap_sfratta()) fisico = pmm_alloc_page();
     if (fisico == 0) {
         klog(LOG_ERROR, "PF: RAM esaurita dando la pagina 0x%08x a PID %u",
@@ -1945,6 +1945,7 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
     vaddr_t  va;
     paddr_t  ram = (paddr_t)pmm_get_total_pages() * PAGE_SIZE;
 
+    (void)ram;                  /* at 64 bit PMM_E_RAM_SOTTO asks the PMM */
     if (p == NULL || p->page_directory == NULL) return -EINVAL;
     pd = p->page_directory;
 
@@ -1998,7 +1999,7 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
 
         frame = PG_ADDR(pte);
         if ((nuovi & PG_WRITABLE) && !(pte & PG_WRITABLE) &&
-            frame < ram && pmm_ref_count(frame) != 1) {
+            PMM_E_RAM_SOTTO(frame, ram) && pmm_ref_count(frame) != 1) {
             interrupts_enable();
             return -EACCES;
         }

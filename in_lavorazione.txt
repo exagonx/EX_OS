@@ -7661,3 +7661,35 @@ librerie mancanti»)
   poi @EXOS64-SPAZIO. Rust nativo: sorgenti in
   cross_build/terze-parti/rust-src/rustc-nightly-src (commit d080e7dff, lo
   stesso del nightly di questa macchina).
+@EXOS64-SPAZIO 16/10: PASSO 1 FATTO (kernel 0.256): framebuffer visto dal
+  kernel da FB_ALIAS (voce 1 della PML4), USER_SPACE_END 0xFFFF0000 a 64 bit,
+  heap fino a 3705 MB. Prossimi: (2) syscall che rendono 64 bit e spazio
+  utente oltre i 4 GB; (3) PMM e RAM oltre i 4 GB (oggi il kernel vede solo
+  la RAM sotto i 4 GB: su 8 GB meta' resta inutilizzata).
+@EXOS64-SPAZIO 16/10: PASSO 2 FATTO (kernel 0.257): RAM oltre i 4 GB come
+  seconda riserva del PMM per le pagine anonime dei programmi
+  (pmm_alloc_page_utente). Provato con 6 GB in QEMU (memoria-alta.c 3500 MB
+  x3, nessuna perdita). Limiti: pagine alte non condivise e non mandate allo
+  swap; massimo 60 GB oltre i 4. PROSSIMO: passo 3, spazio utente oltre i
+  4 GB (syscall a 64 bit, MmioZona/DmaZona, libc).
+@RUST-64 R64-2 16/10 (Rust nativo, ordine dell'utente):
+  FATTO: panic=unwind su EX-OS 64 (prova-unwind 8/8; abort() -> _exit;
+  bersaglio x86_64 in unwind; personalita' GCC non piu' esclusa per exos).
+  Sorgenti di rustc: cross_build/terze-parti/rust-src/rustc-nightly-src
+  (commit d080e7dff = il nightly di questa macchina, LLVM 23).
+  PROSSIMI, in ordine:
+    a. FATTO 16/10 (kernel 0.258 /dev/null, os-exos/process.rs, 7/7). Era: std::process: la std usava process/unix/unsupported
+       (come NuttX) e Command::spawn fallisce; rustc deve lanciare gcc.
+       Scrivere il ramo exos sopra spawn_ex (args, env, SpawnRedir per
+       stdin/stdout/stderr su pipe, waitpid); current_dir non c'e' in
+       spawn_ex (serve? rustc non lo usa per il linker). Prova: Command che
+       lancia /bin/ls e legge l'output.
+    b. collegamento dinamico per le macro procedurali: bersaglio con
+       dynamic-linking, dylib PIC caricate da lib/libc_dl.c (dlopen gia' c'e'
+       a 64 bit); prova: un proc-macro cdylib caricato da un programma.
+    c. bersaglio x86_64-unknown-exos DENTRO compiler/rustc_target (spec da
+       tools/rust-exos/x86_64-unknown-exos.json) + la std di os-exos nei
+       sorgenti di library/.
+    d. LLVM per host x86_64-exos (cmake con x86_64-exos-g++ con i fili),
+       poi x.py: build=x86_64-unknown-linux-gnu host=target=x86_64-unknown-exos.
+    e. rustc + cargo dentro EX-OS 64 (QEMU), poi tools64/netinst64.

@@ -1,0 +1,8 @@
+# tools/rust-exos/prova-processi - std::process inside EX-OS (native rustc
+# runs the linker with it). Built by: PROVA=prova-processi
+#   STD=std,panic_unwind SEGNO="rust-processi: 0 NO" EXOS_ARCH=x86_64
+#   tools/rust-exos/prova-std.sh
+[package]
+name = "prova-processi"
+version = "0.1.0"
+edition = "2021"

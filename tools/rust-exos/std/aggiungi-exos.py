@@ -38,6 +38,16 @@ SALTA = {
     os.path.join(STD, "sys", "random", "mod.rs"),
     os.path.join(STD, "os", "mod.rs"),
     os.path.join(STD, "os", "unix", "mod.rs"),
+    # ! THE GCC PERSONALITY (16 October 2026, native Rust): NuttX is left out
+    # of sys/personality/gcc.rs, EX-OS must not be - it has libgcc's unwinder
+    # (the C++ exceptions use it), and panic=unwind without a personality is
+    # "unwinding panics are not supported without std". rustc unwinds.
+    os.path.join(STD, "sys", "personality", "mod.rs"),
+    # ! PROCESSES (16 October 2026): NuttX has no Command, EX-OS has one -
+    # sys/process/unix/exos.rs, below, on top of spawn_ex. So these two files
+    # keep NuttX alone in their "unsupported" lists.
+    os.path.join(STD, "sys", "process", "mod.rs"),
+    os.path.join(STD, "sys", "process", "unix", "mod.rs"),
 }
 print(f"libc: {aggiungi_libc(LIBC)} punti NuttX ora valgono anche per EX-OS")
 
@@ -118,6 +128,15 @@ cambia(ERR, '            any(target_os = "nuttx", target_os = "exos"),\n        
 cambia(ERR, '    #[cfg_attr(any(target_os = "solaris", target_os = "illumos"), link_name = "___errno")]',
        '    #[cfg_attr(target_os = "exos", link_name = "__errno_dove")]\n'
        '    #[cfg_attr(any(target_os = "solaris", target_os = "illumos"), link_name = "___errno")]')
+
+# std::process for EX-OS: its own backend, modelled on vxworks.rs (see the
+# head of os-exos/process.rs).
+scrivi(os.path.join(STD, "sys", "process", "unix", "exos.rs"),
+       leggi(os.path.join(QUI, "os-exos", "process.rs")))
+cambia(os.path.join(STD, "sys", "process", "unix", "mod.rs"),
+       '    target_os = "vxworks" => {\n        mod vxworks;\n        use vxworks as imp;\n    }\n',
+       '    target_os = "vxworks" => {\n        mod vxworks;\n        use vxworks as imp;\n    }\n'
+       '    target_os = "exos" => {\n        mod exos;\n        use exos as imp;\n    }\n')
 
 # L'elenco dei sistemi che la std conosce: senza, ogni programma dovrebbe
 # chiedere #![feature(restricted_std)].

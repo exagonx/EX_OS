@@ -332,6 +332,16 @@ int32_t sys_exit(InterruptFrame *frame)
  *
  * Ritorna: byte letti, o errore negativo
  * ============================================================================= */
+/* "/dev/null" after resolve_path: the null device (FD_NULL, sched.h) */
+static int e_dev_null(const char *p)
+{
+    static const char n[] = "/dev/null";
+    int i;
+
+    for (i = 0; n[i]; i++) if (p[i] != n[i]) return 0;
+    return p[i] == '\0';
+}
+
 int32_t sys_read(InterruptFrame *frame)
 {
     int32_t   fd    = (int32_t)FR_A1(frame);
@@ -342,6 +352,7 @@ int32_t sys_read(InterruptFrame *frame)
     if (fd < 0 || fd >= MAX_FD)                         return ERR(EBADF);
     if (!syscall_verify_ptr(buf, count))                 return ERR(EFAULT);
     if (proc->fdt[fd].type == FD_UNUSED)                return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_NULL)                  return 0;   /* end of file */
 
     /* stdin: tastiera, tramite il driver TTY compilato staticamente nel
      * kernel (drivers/tty/tty.c, inizializzato al PASSO 14 con
@@ -591,6 +602,7 @@ int32_t sys_write(InterruptFrame *frame)
     if (fd < 0 || fd >= MAX_FD)              return ERR(EBADF);
     if (!syscall_verify_ptr(buf, count))      return ERR(EFAULT);
     if (proc->fdt[fd].type == FD_UNUSED)     return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_NULL)       return (int32_t)count;   /* taken, kept nowhere */
 
     /* stdout / stderr: scrivi sulla console DEL PROCESSO, non su quella
      * visibile. Un programma che gira su una console nascosta continua a
@@ -692,6 +704,13 @@ int32_t sys_open(InterruptFrame *frame)
     {
         char abs[PERCORSO_MAX];
         if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+        if (e_dev_null(abs)) {
+            proc->fdt[free_fd].type   = FD_NULL;
+            proc->fdt[free_fd].flags  = flags;
+            proc->fdt[free_fd].offset = 0;
+            proc->fdt[free_fd].inode  = 0;
+            return free_fd;
+        }
         inode = vfs_open(abs, (uint32_t)flags);
     }
     if (inode < 0) return (int32_t)inode;  /* Propaga errore */
@@ -2704,6 +2723,14 @@ uint32_t usp       = res.user_stack_top;
                 goto spawn_fail;
             }
 
+            if (e_dev_null(abs)) {          /* `cmd > /dev/null` */
+                child->fdt[az->fd].type        = FD_NULL;
+                child->fdt[az->fd].flags       = az->flags;
+                child->fdt[az->fd].offset      = 0;
+                child->fdt[az->fd].inode       = 0;
+                child->fdt[az->fd].driver_data = NULL;
+                continue;
+            }
             h = vfs_open(abs, az->flags);
             if (h < 0) {
                 klog(LOG_ERROR, "SYSCALL spawn: redirezione di fd %u su '%s' "
@@ -3584,6 +3611,11 @@ int32_t sys_meminfo(InterruptFrame *frame)
     pmm_region_stat(0x00100000, ext_pagine * PAGE_SIZE, &tot, &libere);
     mi.ext_total_kb = tot * (PAGE_SIZE / 1024);
     mi.ext_free_kb  = libere * (PAGE_SIZE / 1024);
+#if defined(__x86_64__)
+    /* the RAM above 4 GB is extended memory too (pmm.c, @EXOS64-SPAZIO) */
+    mi.ext_total_kb += pmm_alta_totali() * (PAGE_SIZE / 1024);
+    mi.ext_free_kb  += pmm_alta_libere() * (PAGE_SIZE / 1024);
+#endif
 
     /* Espansa: non esiste su questo sistema, e non e' una lacuna.
      * Vedi il commento su MemInfo in kernel/include/syscall.h. */
@@ -3592,6 +3624,10 @@ int32_t sys_meminfo(InterruptFrame *frame)
 
     mi.total_kb  = pmm_get_total_pages() * (PAGE_SIZE / 1024);
     mi.free_kb   = pmm_get_free_pages()  * (PAGE_SIZE / 1024);
+#if defined(__x86_64__)
+    mi.total_kb += pmm_alta_totali() * (PAGE_SIZE / 1024);
+    mi.free_kb  += pmm_alta_libere() * (PAGE_SIZE / 1024);
+#endif
     mi.page_size = PAGE_SIZE;
 
     *dst = mi;
@@ -5759,6 +5795,10 @@ static int poll_guarda(Process *self, struct pollfd *v)
         case FD_PTY_M:
             if (pty_pronto_master((int)d->inode)) pronto |= POLLIN;
             pronto |= POLLOUT;
+            break;
+
+        case FD_NULL:                   /* end of file to read, room to write */
+            pronto |= POLLIN | POLLOUT;
             break;
 
         case FD_PTY_S:

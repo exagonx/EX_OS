@@ -1,0 +1,12 @@
+# tools/rust-exos/prova-unwind - panic=unwind on EX-OS, the first step of a
+# native rustc (rustc itself unwinds: FatalError is a panic it catches).
+# Built by: PROVA=prova-unwind STD=std,panic_unwind SEGNO="rust-unwind: 0 NO"
+#           EXOS_ARCH=x86_64 tools/rust-exos/prova-std.sh
+[package]
+name = "prova-unwind"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+panic = "unwind"
+opt-level = 2

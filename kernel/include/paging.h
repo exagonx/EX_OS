@@ -137,6 +137,15 @@ int      paging_pse_attivo(void);
  * cosi' ogni PD di processo creata dopo se lo ritrova. Vedi paging.c. */
 int      paging_mappa_framebuffer(paddr_t phys, uint32_t byte);
 
+/* Where the kernel reads and writes the framebuffer. At 32 bit its physical
+ * address (identity, as always); at 64 bit an alias above 4 GB shared by
+ * every address space, so that the processes' 3-4 GB is theirs. */
+#if defined(__x86_64__)
+void    *paging_framebuffer_virt(paddr_t phys);
+#else
+#define  paging_framebuffer_virt(phys)  ((void *)(uintptr_t)(phys))
+#endif
+
 /* kernel/arch/x86/mtrr.c: dichiara combinabile in scrittura la memoria video.
  * 0 se da adesso lo e', -1 se ha rinunciato (e il log dice perche'). */
 int mtrr_framebuffer_wc(uint32_t base, uint32_t byte);

@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.255
+**Versione:** 0.258
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -361,6 +361,41 @@ dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
 in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**0.258**: `/dev/null` esiste. Su EX-OS `/dev` e' la cartella dei driver sul
+disco, quindi un programma che apriva `/dev/null` riceveva un errore - in
+sola lettura, da un CD. Ora e' un dispositivo del kernel: in lettura da' fine
+file, in scrittura prende tutto e non tiene niente, a 32 e a 64 bit; anche
+`cmd > /dev/null` funziona come redirezione. Il software portato lo apre di
+continuo: `std::process` di Rust lo fa per ogni flusso da ignorare. Ed e'
+l'altra novita', per il Rust nativo in arrivo a 64 bit: `std::process::Command`
+funziona su EX-OS (sopra `spawn_ex`: ricerca nel PATH, pipe, ambiente,
+cartella di lavoro, codici d'uscita - 7 su 7 in QEMU), e cosi' `panic=unwind`
+(`catch_unwind`, `Drop` durante lo svolgimento, fili - 8 su 8). Inoltre
+`abort()` ora chiude subito il programma (`_exit`): eseguiva i gestori di
+uscita, e uno in attesa di un lucchetto tenuto da chi abortiva lo bloccava per
+sempre.
+
+**0.257** (solo 64 bit): si usa la RAM oltre i 4 GB. Finora il kernel a 64
+bit usava solo la RAM sotto i 4 GB: su una macchina con 8 GB meta' restava
+ferma, e anche una da 4 GB ne ha una parte sopra, spostata li' dal BIOS per
+far posto alle periferiche. Ora e' una seconda riserva del gestore della
+memoria fisica, data alle pagine dei programmi (heap, pila, mmap) quando le
+toccano; tabelle delle pagine, pile del kernel e buffer DMA restano nella RAM
+sotto i 4 GB, che le periferiche a 32 bit raggiungono. `mem` la conta. Provato
+in QEMU con 6 GB: un processo prende 3,5 GB, scrive e rilegge ogni pagina
+senza errori, tre volte di fila, e la memoria in uso dopo e' quella di prima;
+con 2 GB non cambia niente. Il kernel a 32 bit e' identico.
+
+**0.256** (solo 64 bit): un processo ha quasi 4 GB di spazio di indirizzi
+invece di 3. Il framebuffer, l'unica cosa del kernel che stava fra 3 e 4 GB di
+ogni processo, il kernel lo vede da sopra i 4 GB, attraverso un alias che
+tutti gli spazi condividono; lo spazio utente finisce appena sotto i 4 GB e il
+tetto dello heap passa da circa 2681 a 3705 MB. La memoria si prende sempre
+solo quando la si tocca. Provato in QEMU: Exilla nella sua finestra,
+l'autoverifica della libc, i fili C++. Il kernel a 32 bit e' identico,
+istruzione per istruzione. Prossimo passo: processi oltre i 4 GB e RAM oltre
+i 4 GB.
 
 **Strumenti a 64 bit, 16 ottobre 2026**: **FreeBASIC** 1.10.1 gira su EX-OS a
 64 bit. A 64 bit FreeBASIC non ha un generatore di assembly suo, quindi passa

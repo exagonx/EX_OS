@@ -116,6 +116,10 @@ static void pmm_mark_free(uint32_t base_addr, uint32_t length)
  * Chiamata da kernel_main() con la mappa E820 di Stage 2.
  * Dopo questa chiamata pmm_alloc_page() e pmm_free_page() sono utilizzabili.
  * ============================================================================= */
+#if defined(__x86_64__)
+static void alta_init(BootInfo *info);
+#endif
+
 void pmm_init(BootInfo *info)
 {
     E820Entry *map;
@@ -303,6 +307,10 @@ void pmm_init(BootInfo *info)
 
     g_last_alloc   = addr_to_page(0x00100000); /* Hint: inizia dalla RAM estesa */
     g_last_alloc_k = addr_to_page(0x00100000);
+
+#if defined(__x86_64__)
+    alta_init(info);
+#endif
 
     /* -------------------------------------------------------------------------
      * Passo 6: Statistiche finali
@@ -551,9 +559,152 @@ paddr_t pmm_alloc_pages(uint32_t count)
  *
  * addr: indirizzo fisico della pagina (DEVE essere allineato a 4KB)
  * ============================================================================= */
+#if defined(__x86_64__)
+/* =============================================================================
+ * RAM ABOVE 4 GB (64 bit only, @EXOS64-SPAZIO step 2, 16 October 2026)
+ *
+ * The pool above is the RAM below 4 GB, and much of the kernel relies on
+ * that: page tables and kernel stacks live in the fascia, DMA buffers must
+ * be reachable by 32-bit devices (DmaZona.fisico is 32 bits), the loaders
+ * keep frames in uint32_t, and g_total_pages answers «is this address RAM or
+ * a device?». So the RAM above 4 GB is a SECOND pool, given out by one call
+ * only - pmm_alloc_page_utente, for the anonymous pages of programs (heap,
+ * stack, mmap, file pages loaded on demand), which the kernel touches only
+ * through the window. Even a 4 GB machine has some RAM above 4 GB: the BIOS
+ * moves there what the PCI hole covers.
+ *
+ * One bit per page (1 = in use), in pages taken from the fascia. No
+ * reference counts: these pages are never shared (libraries and shm use the
+ * low pool), so pmm_ref_count says 1 and pmm_ref_inc refuses. The pages are
+ * not chosen for swapping either (paging_vittima looks below 4 GB): when the
+ * high pool is empty programs fall back to the low one, which swaps.
+ * At most ALTA_MAX_GB above 4 GB are used (a bitmap of 1 MB per 32 GB).
+ * ============================================================================= */
+#define GB4_          0x100000000ull
+#define ALTA_MAX_GB   60u
+static uint8_t  *g_alta;                /* the bitmap, in the fascia */
+static uint32_t  g_alta_pagine;         /* pages from 4 GB up the bitmap covers */
+static uint32_t  g_alta_libere, g_alta_ram;
+static uint32_t  g_alta_cursore;
+
+static void alta_init(BootInfo *info)
+{
+    /* ! THE E820 MAP IS COPIED FIRST: the bitmap's pages may be the very
+     * ones Stage 2 left the map in (it is RAM nobody protects), and filling
+     * the bitmap with 0xFF would wipe it. */
+    uint64_t   rb[16], re[16];
+    uint32_t   nr = 0;
+    E820Entry *map;
+    uint64_t   fine = GB4_, b, e, a, p;
+    uint32_t   i, byte, pagine_bitmap;
+    paddr_t    f;
+
+    if (info->e820_count == 0 || info->e820_addr == 0) return;
+    map = (E820Entry *)DA_FISICO(info->e820_addr);
+    for (i = 0; i < info->e820_count && nr < 16; i++) {
+        if (map[i].type != E820_TYPE_USABLE) continue;
+        b = ((uint64_t)map[i].base_high << 32) | map[i].base_low;
+        e = b + (((uint64_t)map[i].length_high << 32) | map[i].length_low);
+        if (e <= GB4_) continue;
+        if (b < GB4_) b = GB4_;
+        rb[nr] = b; re[nr] = e; nr++;
+        if (e > fine) fine = e;
+    }
+    if (nr == 0) {
+        klog(LOG_INFO, "PMM: nessuna RAM oltre i 4 GB");
+        return;
+    }
+    if (fine > GB4_ + (uint64_t)ALTA_MAX_GB * 0x40000000ull) {
+        klog(LOG_WARN, "PMM: RAM oltre i 4 GB fino a %u MB: ne uso %u GB",
+             (uint32_t)(fine >> 20), ALTA_MAX_GB);
+        fine = GB4_ + (uint64_t)ALTA_MAX_GB * 0x40000000ull;
+    }
+    g_alta_pagine = (uint32_t)((fine - GB4_) / PAGE_SIZE);
+    byte          = (g_alta_pagine + 7) / 8;
+    pagine_bitmap = (byte + PAGE_SIZE - 1) / PAGE_SIZE;
+    f = pmm_alloc_pages_kernel(pagine_bitmap);
+    if (f == 0) {
+        klog(LOG_ERROR, "PMM: niente posto per la bitmap della RAM alta (%u pagine)",
+             pagine_bitmap);
+        g_alta_pagine = 0;
+        return;
+    }
+    g_alta = (uint8_t *)DA_FISICO(f);
+    for (a = 0; a < (uint64_t)pagine_bitmap * PAGE_SIZE; a++) g_alta[a] = 0xFF;
+
+    for (i = 0; i < nr; i++) {
+        b = (rb[i] + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+        e = re[i] > fine ? fine : re[i];
+        for (p = b; p + PAGE_SIZE <= e; p += PAGE_SIZE) {
+            uint32_t k = (uint32_t)((p - GB4_) / PAGE_SIZE);
+
+            g_alta[k / 8] &= (uint8_t)~(1u << (k % 8));
+            g_alta_libere++;
+        }
+    }
+    g_alta_ram = g_alta_libere;
+    klog(LOG_INFO, "PMM: RAM oltre i 4 GB: %u MB in %u pagine (bitmap %u KB)",
+         g_alta_ram / 256, g_alta_ram, pagine_bitmap * 4);
+}
+
+static int alta_dentro(paddr_t a)
+{
+    return g_alta && a >= GB4_ && a < GB4_ + (uint64_t)g_alta_pagine * PAGE_SIZE;
+}
+
+paddr_t pmm_alloc_page_utente(void)
+{
+    uint32_t n, k;
+
+    if (g_alta_libere == 0) return pmm_alloc_page();
+    for (n = 0; n < g_alta_pagine; n++) {
+        k = g_alta_cursore++;
+        if (g_alta_cursore >= g_alta_pagine) g_alta_cursore = 0;
+        if ((g_alta[k / 8] & (1u << (k % 8))) == 0) {
+            g_alta[k / 8] |= (uint8_t)(1u << (k % 8));
+            g_alta_libere--;
+            return (paddr_t)(GB4_ + (uint64_t)k * PAGE_SIZE);
+        }
+    }
+    g_alta_libere = 0;                  /* the count was wrong: say it is empty */
+    return pmm_alloc_page();
+}
+
+static void alta_libera(paddr_t a)
+{
+    uint32_t k = (uint32_t)((a - GB4_) / PAGE_SIZE);
+
+    if ((g_alta[k / 8] & (1u << (k % 8))) == 0) {
+        klog(LOG_ERROR, "PMM: doppia liberazione della pagina alta 0x%x%08x",
+             (uint32_t)(a >> 32), (uint32_t)a);
+        return;
+    }
+    g_alta[k / 8] &= (uint8_t)~(1u << (k % 8));
+    g_alta_libere++;
+}
+
+int pmm_e_ram(paddr_t a)
+{
+    if (a < GB4_) return a < (paddr_t)g_total_pages * PAGE_SIZE;
+    return alta_dentro(a);
+}
+
+uint32_t pmm_alta_libere(void) { return g_alta_libere; }
+uint32_t pmm_alta_totali(void) { return g_alta_ram; }
+#endif
+
 void pmm_free_page(paddr_t addr)
 {
     uint32_t page;
+
+#if defined(__x86_64__)
+    if (addr >= GB4_) {
+        if (alta_dentro(addr)) alta_libera(addr);
+        else klog(LOG_ERROR, "PMM: liberata una pagina oltre la RAM: 0x%x%08x",
+                  (uint32_t)(addr >> 32), (uint32_t)addr);
+        return;
+    }
+#endif
 
     if (addr == 0) {
         klog(LOG_WARN, "PMM: tentativo di liberare pagina 0 (NULL)");
@@ -603,6 +754,12 @@ int pmm_ref_inc(paddr_t addr)
 {
     uint32_t page;
 
+#if defined(__x86_64__)
+    if (addr >= GB4_) {
+        klog(LOG_ERROR, "PMM: ref_inc su una pagina alta: quelle non si condividono");
+        return -1;
+    }
+#endif
     if (g_rif == NULL) return -1;
     if (addr % PAGE_SIZE != 0) {
         klog(LOG_ERROR, "PMM: ref_inc su indirizzo non allineato: 0x%08x", addr);
@@ -644,6 +801,9 @@ uint32_t pmm_ref_count(paddr_t addr)
 {
     uint32_t page;
 
+#if defined(__x86_64__)
+    if (addr >= GB4_) return alta_dentro(addr) ? 1u : 0u;   /* never shared */
+#endif
     if (g_rif == NULL) return 0;
     page = addr_to_page(addr);
     if (page >= g_total_pages)   return 0;

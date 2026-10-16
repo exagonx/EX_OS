@@ -299,6 +299,14 @@ typedef enum {
      * risponde all'eco di se stessa. `inode` porta l'handle del pty. */
     FD_PTY_M    = 8,    /* il capo di chi FA il terminale */
     FD_PTY_S    = 9,    /* il capo che la shell crede un terminale */
+
+    /* /dev/null (16 October 2026): reading gives end of file at once,
+     * writing takes everything and keeps nothing. Ported programs open it all
+     * the time - Rust's std::process does for every stream it is told to
+     * ignore, and output()/status() ignore stdin - and on EX-OS /dev is the
+     * drivers' directory on the disk, so open() failed (read-only on a CD).
+     * No state, nothing to count: copied to a child as it is. */
+    FD_NULL     = 10,
 } FDType;
 
 typedef struct {

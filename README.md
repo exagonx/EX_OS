@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.255
+**Version:** 0.258
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -337,6 +337,39 @@ chipset to ACPI mode first if needed. `reboot` tries, in order, the ACPI reset
 register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
+
+**0.258**: `/dev/null` exists. On EX-OS `/dev` is the drivers' directory on
+the disk, so a program opening `/dev/null` got an error - read-only, from a
+CD. It is now a device of the kernel: reading gives end of file, writing
+takes everything and keeps nothing, at 32 and at 64 bit; `cmd > /dev/null`
+works in a redirection too. Ported software opens it all the time: Rust's
+`std::process` does for every stream it is told to ignore. That is the other
+news, for the native Rust coming at 64 bit: `std::process::Command` works on
+EX-OS (a backend on `spawn_ex`: PATH lookup, pipes, environment, working
+directory, exit codes - 7 of 7 in QEMU), and so does `panic=unwind`
+(`catch_unwind`, `Drop` while unwinding, threads - 8 of 8). Also `abort()`
+now ends a program at once (`_exit`): it ran the exit handlers, and one
+waiting on a lock the aborting code held hung the program for ever.
+
+**0.257** (64 bit only): the RAM above 4 GB is used. Until now the 64-bit
+kernel used only the RAM below 4 GB - on an 8 GB machine half stayed idle, and
+even a 4 GB machine has a part above 4 GB, moved there by the BIOS to make room
+for the devices. It is now a second pool of the physical memory manager,
+given to programs' own pages (heap, stack, mmap) as they touch them; page
+tables, kernel stacks and DMA buffers keep the RAM below 4 GB, which 32-bit
+devices can reach. `mem` counts it. Tested in QEMU with 6 GB: one process takes
+3.5 GB, writes and reads back every page with no error, three times in a row,
+and the memory in use afterwards is what it was before; with 2 GB nothing
+changes. The 32-bit kernel is identical.
+
+**0.256** (64 bit only): a process gets almost 4 GB of address space instead
+of 3. The framebuffer, the one thing of the kernel that sat between 3 and 4 GB
+of every process, is seen by the kernel from above 4 GB, through an alias all
+address spaces share; the user space ends just below 4 GB, and the heap's
+ceiling goes from about 2681 to 3705 MB. Memory is still taken only when it
+is touched. Tested in QEMU: Exilla in its window, the libc self-test, C++
+threads. The 32-bit kernel is identical, instruction by instruction. Next:
+processes above 4 GB and RAM above 4 GB.
 
 **64-bit tools, 16 October 2026**: **FreeBASIC** 1.10.1 runs on 64-bit
 EX-OS. FreeBASIC has no assembly backend of its own at 64 bit, so it goes

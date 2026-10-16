@@ -1402,7 +1402,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
             klog(LOG_ERROR, "SCHED: memoria finita creando lo stack del filo");
             while (pg--) {
                 uint32_t v = prima + pg * PAGE_SIZE;
-                uint32_t f = paging_get_physical(capo->page_directory, v);
+                paddr_t f = paging_get_physical(capo->page_directory, v);
                 paging_unmap_page(capo->page_directory, v);
                 if (f) pmm_free_page(f);
             }
@@ -1559,7 +1559,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
 
             for (k = 0; k < capo->tls_filesz && k < TLS_MAX; k++) {
                 uint32_t va  = tbase + k;
-                uint32_t fis = paging_get_physical(capo->page_directory,
+                paddr_t fis = paging_get_physical(capo->page_directory,
                                                    va & ~(PAGE_SIZE - 1));
                 uint8_t *dst;
 
@@ -1572,7 +1572,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
 
         /* Il puntatore a se stesso in testa al TCB: %gs:0 legge questo. */
         {
-            uint32_t fis = paging_get_physical(capo->page_directory,
+            paddr_t fis = paging_get_physical(capo->page_directory,
                                                tp & ~(PAGE_SIZE - 1));
             uint32_t *tcb;
 
@@ -1614,7 +1614,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
      * fault che si vede, invece di proseguire dentro memoria a caso. */
     esp = (cima - 16) & ~15u;
     {
-        uint32_t fis  = paging_get_physical(capo->page_directory, esp - PAGE_SIZE);
+        paddr_t fis  = paging_get_physical(capo->page_directory, esp - PAGE_SIZE);
         uint32_t *pila;
         uint32_t off;
 
@@ -2007,7 +2007,7 @@ void proc_reap_zombie(Process *p)
 
         for (v = p->user_stack_limit;
              v < p->user_stack_limit + FILO_STACK_SIZE; v += PAGE_SIZE) {
-            uint32_t f = paging_get_physical(p->page_directory, v);
+            paddr_t f = paging_get_physical(p->page_directory, v);
 
             if (f == 0) continue;
             paging_unmap_page(p->page_directory, v);

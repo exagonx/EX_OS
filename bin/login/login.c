@@ -29,6 +29,12 @@
  * morta esattamente come prima — e stavolta senza nemmeno la shell. Ogni
  * errore qui dentro si riferisce e si ricomincia; nessuno rende da main().
  *
+ * ! EXCEPT ON A PTY (0.004, 16 October 2026): a remote session (telnetd runs
+ * login on a pseudo-terminal) ENDS when its shell does - `exit` over telnet
+ * must disconnect, and it used to bring back the login prompt. telnetd closes
+ * the connection when login exits. Three wrong logins end it too, as SSH
+ * does. On a console nothing changes.
+ *
  * -----------------------------------------------------------------------------
  * IL FILE DEGLI UTENTI
  *
@@ -77,7 +83,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.003");
+EX_VERSIONE("login", "0.004");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -591,6 +597,8 @@ int main(int argc, char **argv)
     avvio_di_sistema();
 
     for (;;) {
+        static int sbagliati;
+
         if (!exuser_c_e_qualcuno(0)) {
             crea_utente(1);           /* macchina nuova: non c'e' nessuno */
             continue;                 /* ora c'e': si passa dal login vero */
@@ -624,6 +632,9 @@ int main(int argc, char **argv)
                 }
                 printf("\n");
                 avvia_shell(nome, uid, gid);
+                /* A remote session is over with its shell: login exits and
+                 * telnetd closes the connection (see the head of the file). */
+                if (su_un_pty()) return 0;
                 /* La shell e' finita: si ricomincia. E' `exit` che torna
                  * al login, senza che nessuno lo tratti come un caso a
                  * parte. Vedi il commento in testa al file. */
@@ -640,6 +651,10 @@ int main(int argc, char **argv)
          * di password al minuto battendole da uno script. */
         printf("\n  Accesso non riuscito.\n");
         sleep(2);
+        if (su_un_pty() && ++sbagliati >= 3) {
+            printf("  Troppi tentativi: chiudo la connessione.\n");
+            return 1;
+        }
     }
 
     /* Non raggiunto: vedi "questo programma non deve uscire mai". */
