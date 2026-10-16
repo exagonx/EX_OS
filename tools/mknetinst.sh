@@ -293,6 +293,13 @@ done
 # si pubblica senza Exilla e lo dice.
 EXILLA_DIST="${EXILLA_DIST:-cross_build/exilla-obj/gecko/dist/firefox}"
 EXILLA_LANCIA=build/exilla/exilla
+# 64 bit (16 October 2026): the Firefox built for x86_64-exos (EXOS_ARCH=x86_64
+# tools/exilla/gecko-costruisci.sh, packaged by prova-gecko.sh) and the
+# launcher that make utente64 builds with the desktop
+if [ "$ARCH" = x86_64 ]; then
+    EXILLA_DIST="${EXILLA_DIST64:-cross_build/exilla-obj/gecko64/dist/firefox}"
+    EXILLA_LANCIA=build-64/exwin/bin/exilla
+fi
 EXILLA_ICONE=exwin/bin/exilla
 EXILLA_DOVE=exwin/app/exilla
 EXILLA_PEZZO=16777216
@@ -300,8 +307,7 @@ EXILLA_CI_E=no
 EXILLA_MB=0
 SIS_MB=$(du -sm "$FUORI/file" | cut -f1)
 
-# (Exilla per ora esiste solo a 32 bit: e' il Firefox costruito per i386-exos.)
-if [ "$ARCH" = i386 ] && [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
+if [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
     EXILLA_CI_E=si
     E="$FUORI/file/$EXILLA_DOVE"
     mkdir -p "$E" "$FUORI/pacchetti"

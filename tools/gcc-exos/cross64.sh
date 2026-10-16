@@ -153,7 +153,12 @@ libm)
     cp cross_build/openlibm-build-64/libopenlibm.a "$S/lib/libm.a"
     $TARGET-gcc -O2 -c tools/openlibm-exos/nearbyintl-exos.c -o cross_build/openlibm-build-64/nearbyintl-exos.o &&
         $TARGET-ar rcs "$S/lib/libm.a" cross_build/openlibm-build-64/nearbyintl-exos.o || fail "nearbyintl"
-    for f in sin cos exp log pow atan2 floor fmod hypot nearbyintl; do
+    # the six <fenv.h> functions openlibm's amd64 header keeps static inline
+    # (tools/openlibm-exos/fenv-amd64-exos.c; Exilla wanted fegetround)
+    $TARGET-gcc -O2 -I cross_build/openlibm-build-64/include -I cross_build/openlibm-build-64/src \
+        -c tools/openlibm-exos/fenv-amd64-exos.c -o cross_build/openlibm-build-64/fenv-amd64-exos.o &&
+        $TARGET-ar rcs "$S/lib/libm.a" cross_build/openlibm-build-64/fenv-amd64-exos.o || fail "fenv"
+    for f in sin cos exp log pow atan2 floor fmod hypot nearbyintl fegetround fesetround; do
         $TARGET-nm --defined-only "$S/lib/libm.a" | grep -qE " [TW] $f\$" || fail "libm.a lacks $f"
     done
     echo "[OK] libm.a: $(wc -c < "$S/lib/libm.a") bytes"

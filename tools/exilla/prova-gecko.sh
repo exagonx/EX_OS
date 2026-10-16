@@ -6,6 +6,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 #     tools/exilla/prova-gecko.sh            (dopo tools/exilla/gecko-costruisci.sh build)
+#     EXOS_ARCH=x86_64 tools/exilla/prova-gecko.sh   (Exilla at 64 bit: gecko64,
+#                                            dist/exos64.iso, qemu-system-x86_64)
 #
 # Impacchetta il browser (mach package: omni.ja e niente collegamenti
 # simbolici, che EX-OS non ha), lo mette su un disco ext2 insieme a una pagina
@@ -25,6 +27,12 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="$PWD/cross_build/$MACCHINA"
 O="$PWD/cross_build/exilla-obj/gecko"
 D="$B/costruzione-prova"
+SUFF=""
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    O="$PWD/cross_build/exilla-obj/gecko64"
+    D="$B/costruzione-prova64"
+    SUFF=64
+fi
 P="$O/dist/firefox"
 mkdir -p "$D" /tmp/exos
 
@@ -88,9 +96,15 @@ echo "disco: $MB MB, firefox $(du -sh "$S/firefox/firefox" | cut -f1)"
 # --- EX-OS ---------------------------------------------------------------------------
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$B/costruzione-sistema/albero/dist/exos.iso"; [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
-export EXOS_ISTANZA=gecko EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
-export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide"
-rm -f /tmp/exos/serialgecko.txt
+CPU=""
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    CD="$PWD/dist/exos64.iso"; CPU="-cpu qemu64"
+    export EXOS_QEMU=qemu-system-x86_64
+fi
+export EXOS_ISTANZA=gecko$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
+export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide"
+SER=/tmp/exos/serialgecko$SUFF.txt
+rm -f "$SER"
 # AMBIENTE="VAR=valore ..." aggiunge variabili (EXOS_MALLOC_CONTROLLA=1, ...).
 ESPORTA=()
 for v in $AMBIENTE; do ESPORTA+=("export $v@1"); done
@@ -100,7 +114,7 @@ timeout "${ATTESA:-1800}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "${E
     "/disk/firefox/firefox --headless -no-remote -profile /disk/profilo --window-size 800,600 --screenshot /disk/schermata.png file:///disk/prova.html@~${SECONDI:-900}" \
     "ls /disk@3" "echo FINE-GECKO@2" > "$D/gecko-1.log" 2>&1
 
-tr -d '\r' < /tmp/exos/serialgecko.txt | sed 's/\x1b\[[0-9;]*m//g' | grep -v ENTROPIA \
+tr -d '\r' < "$SER" | sed 's/\x1b\[[0-9;]*m//g' | grep -v ENTROPIA \
     | sed -n '/firefox --headless/,/FINE-GECKO/p' | tail -40
 
 rm -f "$D/schermata.png"
@@ -110,5 +124,5 @@ if [ -s "$D/schermata.png" ]; then
     echo "=== [OK] Gecko ha disegnato la pagina dentro EX-OS: $D/schermata.png ==="
     exit 0
 fi
-echo "=== [NO] nessuna schermata: vedi $D/gecko-1.log e /tmp/exos/serialgecko.txt ==="
+echo "=== [NO] nessuna schermata: vedi $D/gecko-1.log e $SER ==="
 exit 1

@@ -344,10 +344,18 @@ through C (`-gen gcc`): `tools/freebasic-exos/prepara-fb64.sh` builds the
 runtime (libfb) with `x86_64-exos-gcc` and the native `fbc`, and `make
 tools64` puts them on `dist/exos64-tools.iso` (fb group). In QEMU the native
 `fbc` compiles a program inside EX-OS 64-bit with the native gcc, as and ld,
-and the program runs (`tools/freebasic-exos/prova-fb64-nativo.sh`). Exilla at
-64 bit has started: SpiderMonkey, Firefox's JavaScript engine, builds for
-`x86_64-unknown-exos` and passes its 17 checks inside EX-OS 64-bit; the whole
-browser is being built. Not yet tried on a real machine.
+and the program runs (`tools/freebasic-exos/prova-fb64-nativo.sh`).
+**Exilla (Firefox) runs at 64 bit**: built for `x86_64-unknown-exos`
+(`EXOS_ARCH=x86_64 tools/exilla/gecko-costruisci.sh`), it opens its window in
+ExWin inside EX-OS 64-bit, draws the test page and opens a second one typed
+in the address bar (`EXOS_ARCH=x86_64 tools/exilla/prova-finestra.sh`, QEMU
+with 2 GB); `make netinst64` now carries the `exilla` package (306 MB). On the
+way: libstdc++ with threads for the 64-bit toolchain, the 64-bit format
+macros of `<inttypes.h>`, the six `<fenv.h>` functions openlibm's amd64 build
+does not export, and SpiderMonkey's JIT reservation cut to 140 MB - a 64-bit
+process on EX-OS still has the 32-bit address space (about 2.6 GB), to be
+widened. gcc and g++ were also tried on the real laptop. Not yet tried on a
+real machine: Exilla and FreeBASIC.
 
 **0.255**: the status bar (`extaskbar`, above): the last line of the screen
 can belong to it, the consoles have the alternate screen (`ESC[?1049h/l`),

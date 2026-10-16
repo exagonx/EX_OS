@@ -1,0 +1,15 @@
+--- a/js/src/jit/ProcessExecutableMemory.h
++++ b/js/src/jit/ProcessExecutableMemory.h
+@@ -16,7 +16,11 @@
+ 
+ // Limit on the number of bytes of executable memory to prevent JIT spraying
+ // attacks.
+-#if JS_BITS_PER_WORD == 32
++// EX-OS (Exilla at 64 bit, 16 October 2026): the 64-bit reservation of 2044 MB
++// takes most of a process's address space there (the heap and mmap share
++// about 2.6 GB below the stack), and Firefox ran out of memory seconds after
++// opening its window. 140 MB, as at 32 bit, is plenty of JIT code.
++#if JS_BITS_PER_WORD == 32 || defined(XP_EXOS)
+ static const size_t MaxCodeBytesPerProcess = 140 * 1024 * 1024;
+ #else
+ // This is the largest number which satisfies various alignment static

@@ -368,10 +368,19 @@ dal C (`-gen gcc`): `tools/freebasic-exos/prepara-fb64.sh` costruisce la
 runtime (libfb) con `x86_64-exos-gcc` e il `fbc` nativo, e `make tools64` li
 mette su `dist/exos64-tools.iso` (gruppo fb). In QEMU il `fbc` nativo compila
 un programma dentro EX-OS a 64 bit con gcc, as e ld nativi, e il programma
-gira (`tools/freebasic-exos/prova-fb64-nativo.sh`). Exilla a 64 bit e'
-cominciata: SpiderMonkey, il motore JavaScript di Firefox, si costruisce per
-`x86_64-unknown-exos` e passa i suoi 17 controlli dentro EX-OS a 64 bit; il
-browser intero e' in costruzione. Non ancora provato su una macchina vera.
+gira (`tools/freebasic-exos/prova-fb64-nativo.sh`). **Exilla (Firefox) gira
+a 64 bit**: costruita per `x86_64-unknown-exos`
+(`EXOS_ARCH=x86_64 tools/exilla/gecko-costruisci.sh`), apre la sua finestra in
+ExWin dentro EX-OS a 64 bit, disegna la pagina di prova e ne apre una seconda
+scritta nella barra degli indirizzi (`EXOS_ARCH=x86_64
+tools/exilla/prova-finestra.sh`, QEMU con 2 GB); `make netinst64` ora porta il
+pacchetto `exilla` (306 MB). Strada facendo: libstdc++ con i fili per la
+toolchain a 64 bit, le macro di formato a 64 bit di `<inttypes.h>`, le sei
+funzioni di `<fenv.h>` che openlibm per amd64 non esporta, e la riserva del
+JIT di SpiderMonkey ridotta a 140 MB: un processo a 64 bit su EX-OS ha ancora
+lo spazio di indirizzi del 32 bit (circa 2,6 GB), da allargare. gcc e g++
+sono stati provati anche sul portatile vero. Non ancora provati su una
+macchina vera: Exilla e FreeBASIC.
 
 **0.255**: la barra di stato (`extaskbar`, sopra): l'ultima riga dello
 schermo puo' essere sua, le console hanno lo schermo alternativo

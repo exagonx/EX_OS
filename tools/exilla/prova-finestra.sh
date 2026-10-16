@@ -6,6 +6,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 #     tools/exilla/prova-finestra.sh        (dopo tools/exilla/prova-gecko.sh)
+#     EXOS_ARCH=x86_64 tools/exilla/prova-finestra.sh   (Exilla at 64 bit)
 #
 # Usa il disco che prova-gecko.sh ha preparato (Firefox, i caratteri, la
 # pagina di prova), avvia EX-OS, accende ExWin e lancia Firefox SENZA
@@ -21,6 +22,8 @@ cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="$PWD/cross_build/$MACCHINA"
 D="$B/costruzione-prova"
+SUFF=""
+[ "$EXOS_ARCH" = x86_64 ] && { D="$B/costruzione-prova64"; SUFF=64; }
 F="$D/finestra"
 IMG="$D/gecko-hd.img"
 # ! IL DISCO SI RIFA SE FIREFOX E' PIU' NUOVO: prova-gecko.sh impacchetta e
@@ -29,6 +32,7 @@ IMG="$D/gecko-hd.img"
 # ! SI CONFRONTA COL PACCHETTO, NON COL DISCO: QEMU scrive sul disco a ogni
 # prova, e il disco risulterebbe sempre piu' nuovo di Firefox.
 O="$PWD/cross_build/exilla-obj/gecko"
+[ "$EXOS_ARCH" = x86_64 ] && O="$PWD/cross_build/exilla-obj/gecko64"
 if [ ! -f "$IMG" ] || [ "$O/dist/bin/firefox" -nt "$O/dist/firefox/firefox" ]; then
     tools/exilla/prova-gecko.sh > "$D/prova-gecko-da-finestra.log" 2>&1
     echo "prova-gecko (pacchetto e disco): $(tail -1 "$D/prova-gecko-da-finestra.log")"
@@ -36,19 +40,25 @@ fi
 [ -f "$IMG" ] || { echo "manca $IMG" >&2; exit 1; }
 # ! LE FOTO PASSANO DA /tmp/exos: il percorso del progetto contiene la «@»
 # dell'utente, e qemu_drive.py la prenderebbe per l'attesa («cmd@secondi»).
-T=/tmp/exos/finestra-foto
+T=/tmp/exos/finestra$SUFF-foto
 rm -rf "$F" "$T"; mkdir -p "$F" "$T"
 
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$B/costruzione-sistema/albero/dist/exos.iso"; [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
-export EXOS_ISTANZA=finestra EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
+CPU=""
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    CD="$PWD/dist/exos64.iso"; CPU="-cpu qemu64"
+    export EXOS_QEMU=qemu-system-x86_64
+fi
+export EXOS_ISTANZA=finestra$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
 # RETE=1: una scheda di rete (la rete «user» di QEMU, che esce su Internet
 # attraverso l'host) e, dentro EX-OS, driver, indirizzo e DNS prima di Firefox.
 # PAGINA=<indirizzo>: la pagina con cui Firefox parte (di solito con RETE=1).
 RETE_QEMU=""; [ -n "${RETE:-}" ] && RETE_QEMU="-netdev user,id=u0 -device e1000,netdev=u0"
 PAGINA="${PAGINA:-file:///disk/prova.html}"
-export EXOS_QEMU_EXTRA="$KVM -drive file=$IMG,format=raw,if=ide $RETE_QEMU"
-rm -f /tmp/exos/serialfinestra.txt
+export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide $RETE_QEMU"
+SER=/tmp/exos/serialfinestra$SUFF.txt
+rm -f "$SER"
 
 FOTO_OGNI="${FOTO_OGNI:-120}"
 FOTO_N="${FOTO_N:-5}"
@@ -112,9 +122,9 @@ for p in "$T"/*.ppm; do
     q="$F/$(basename "${p%.ppm}").png"
     python3 tools/ppm2png.py "$p" "$q" > /dev/null 2>&1 && rm -f "$p"
 done
-tr -d '\r' < /tmp/exos/serialfinestra.txt | sed 's/\x1b\[[0-9;]*m//g' | grep -av ENTROPIA \
+tr -d '\r' < "$SER" | sed 's/\x1b\[[0-9;]*m//g' | grep -av ENTROPIA \
     | grep -a "FAULT\|PF:\|Exilla\|exilla:\|firefox\|wserver\|MOZ_CRASH\|Assertion" | tail -40
-tr -d '\r' < /tmp/exos/serialfinestra.txt | sed 's/\x1b\[[0-9;]*m//g' | sed -n '/> stack/,/FINE-FINESTRA/p' | head -60
+tr -d '\r' < "$SER" | sed 's/\x1b\[[0-9;]*m//g' | sed -n '/> stack/,/FINE-FINESTRA/p' | head -60
 # ! I MILLISECONDI DEL DIARIO SONO DALL'ACCENSIONE DELLA MACCHINA, NON DAL LANCIO
 # DI FIREFOX. Il 7 ottobre 2026 «titolo (61480 ms)» e' stato letto per giorni
 # come «Firefox ci mette un minuto ad aprirsi»: 57 di quei secondi erano
@@ -123,7 +133,7 @@ tr -d '\r' < /tmp/exos/serialfinestra.txt | sed 's/\x1b\[[0-9;]*m//g' | sed -n '
 #   avvio   dal «born at» del processo al primo titolo e a quello definitivo;
 #   pagina  dal tasto Invio (evento tasto 0xa, ora del server) al titolo nuovo.
 echo "=== i tempi di Firefox (dal suo avvio, non dall'accensione) ==="
-tr -d '\r' < /tmp/exos/serialfinestra.txt | python3 -c '
+tr -d '\r' < "$SER" | python3 -c '
 import re, sys
 t = sys.stdin.read()
 nato = re.search(r"born at (\d+) ms", t)

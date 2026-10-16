@@ -7633,3 +7633,31 @@ librerie mancanti»)
   find crt0.o": specs nativo con *cross_compile: 1. mktools64.sh ora mette
   0 (provato in QEMU con il prefisso /disk). Dopo la pubblicazione:
   rifare `gcc t.c -o t` e `g++ p.cpp -o p` in /root sul portatile SENZA -B.
+
+@EXOS64-SPAZIO  (chiesto dall'utente il 16/10: «nei sistemi a 64 bit ci sono
+  almeno 4 GB, al minimo 2: gestire i processi dinamicamente in base alla
+  disponibilita' e all'esigenza»)
+  OGGI a 64 bit un processo ha lo spazio del 32 bit: USER_SPACE_BASE 64 MB,
+  USER_SPACE_END 0xC0000000, heap e mmap insieme sotto la pila (0xbfffc000),
+  tetto dello heap ~2,6 GB (kernel/loader/elf.c), campi uint32_t, chiamate
+  che rendono indirizzi a 32 bit (regola: «via uint32_t»). Exilla 64 ci ha
+  sbattuto contro (riserva JIT da 2 GB; ridotta a 140 MB per XP_EXOS).
+  DA FARE (solo a 64 bit, 32 bit identico):
+    1. spazio utente sopra i 4 GB: pila, heap, zona mmap in alto (tabelle a
+       4 livelli gia' presenti in paging64.c);
+    2. syscall che rendono indirizzi a 64 bit pieni (sbrk, mmap, mmio_map,
+       dma_alloc, shm...), campi del PCB in vaddr_t;
+    3. tetto per processo calcolato da RAM + swap della macchina (pagine gia'
+       su richiesta), non fisso.
+
+@EXILLA-64 16/10 pomeriggio: FUNZIONA in QEMU. Fermate superate: libevent
+  (misure LP64), WasmSignalHandlers (RIP/RSP/RBP), ffvpx (getauxval),
+  fegetround (tools/openlibm-exos/fenv-amd64-exos.c), riserva JIT 2044 MB ->
+  140 MB per XP_EXOS. prova-gecko.sh e prova-finestra.sh con EXOS_ARCH=x86_64:
+  schermata giusta, finestra in ExWin, seconda pagina dalla barra. mknetinst
+  fa il pacchetto exilla a 64 bit (306 MB). Mach con un agente nasconde i
+  messaggi di ld: registro completo in <objdir>/.mozbuild/logs/build/.
+  DA FARE: rete/HTTPS, uso lungo, pacchetto installato con netupdate, PC vero;
+  poi @EXOS64-SPAZIO. Rust nativo: sorgenti in
+  cross_build/terze-parti/rust-src/rustc-nightly-src (commit d080e7dff, lo
+  stesso del nightly di questa macchina).
