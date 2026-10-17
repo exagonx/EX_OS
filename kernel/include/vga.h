@@ -130,6 +130,14 @@ void     vga_registro_semina(uint32_t n);
 void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
                    uint32_t *px_h);
 
+/* The modes Stage 2 found (BootInfo modi_addr/modi_n), kept by vga_modi_prendi
+ * at boot; SYS_VIDEO_MODI reads them. Entries are VideoModo (syscall.h), 8
+ * bytes each. */
+#define VGA_MODI_MAX 48
+void     vga_modi_prendi(const BootInfo *info);
+uint32_t vga_modi_n(void);
+void     vga_modi_copia(void *dst, uint32_t n);
+
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp);
 

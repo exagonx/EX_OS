@@ -214,3 +214,20 @@ nota  = memoria al posto dei socket: /bin/provatls host e' l'esempio.
 nota  = Il magazzino delle CA e' /exos/ssl/certi.pem.
 nota  = RAND_bytes rifiuta su una macchina appena accesa: il serbatoio di
 nota  = entropia e' 32 byte e una sola chiamata lo svuota.
+
+
+[git]
+nome  = libgit2
+dice  = libgit2 1.9.6 (la libreria di git) e il suo comando git2 (solo 64 bit)
+prova = lib/libgit2.a
+vuole = ssl
+mbyte = 12
+solo  = lib/libgit2.a
+solo  = include/git2
+solo  = include/git2.h
+solo  = bin/git2
+
+nota  = gcc prog.c -lgit2 -lssl -lcrypto   (statico, come ogni programma)
+nota  = git2: init, clone, cat-file, hash-object, config, blame, index-pack.
+nota  = Clone via https con OpenSSL; niente ssh (manca libssh2 per EX-OS).
+nota  = Esempio: /cdrom/prova-git.c (o dove sta il CD degli strumenti).

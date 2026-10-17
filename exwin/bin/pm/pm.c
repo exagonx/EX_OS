@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.021"
+#define VERSIONE_APP "0.023"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -77,6 +77,14 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_SUONO_AVVIO   116     /* la spunta «Suono all'avvio» */
 #define ID_VEDI_OROLOGIO 117     /* @AVVIO-SCRIVANIA: l'orologio nella barra */
 #define ID_VEDI_VOLUME   118     /* e l'icona del volume */
+/* @PANNELLO-VIDEO (17 October 2026): the panel's tabs, and the Video tab */
+#define ID_IMP_SCHEDE    130
+#define ID_V_LISTA       131
+#define ID_V_PROVA       132
+#define ID_V_APPLICA     133
+/* the question after a trial reboot */
+#define ID_P_TIENI       140
+#define ID_P_TORNA       141
 
 /* La finestra che gestisce l'elenco. */
 #define ID_G_LISTA  1
@@ -1262,7 +1270,6 @@ static const char *const DISPOSIZIONI[4]   = { "angolo", "centro", "allarga", "r
 static const char *const DISPOSIZIONI_T[4] = { "Angolo", "Centro", "Allarga", "Ripeti" };
 static int g_sfondo_modo = EX_IMAGE_TOPLEFT;
 
-static const char *const MODI[4] = { "testo", "640x480", "800x600", "1024x768" };
 
 /* L'intro all'avvio: la variabile e chi la salva stanno piu' sotto, con lo
  * sfondo, nello stesso file di configurazione. */
@@ -1279,6 +1286,234 @@ static ExWindow g_impost_suono = 0;
 static int      g_vedi_orologio = 1, g_vedi_volume = 1;
 static ExWindow g_impost_orologio = 0, g_impost_volume = 0;
 static ExWindow g_barra_f = 0;      /* la barra, per ridisegnarla da qui */
+
+/* =============================================================================
+ * THE VIDEO TAB (@PANNELLO-VIDEO / @RISOLUZIONI, 17 October 2026)
+ *
+ * The user: the list of ALL the modes the card offers, not four buttons; a
+ * Test button with 30 seconds to accept or cancel, and back to the old mode
+ * without an answer; Apply to keep one. What cannot be done, said in the
+ * plan of 9 October: the mode is set by Stage 2 through the BIOS before the
+ * kernel runs, so a test is a REBOOT - `svga.drv -prova` keeps the old mode,
+ * this desktop asks at the next start (video_prova_chiedi), and the guard
+ * started by /boot/avvio.sh puts it back when nobody answers, the black
+ * screen included. 16 and 256 colours are not offered: the window server
+ * draws at 16, 24 and 32 bits only.
+ * ============================================================================= */
+#define IMP_W 340
+#define IMP_H 420
+#define SCH_MAX 16
+#define PROVA_F "/boot/svgaprov.cfg"
+#define VISTA_F "/boot/svgavist.cfg"
+
+static ExWindow g_sch[3][SCH_MAX];
+static int      g_sch_n[3];
+static ExWindow g_v_lista = 0;
+static VideoModo g_v[64];
+static int      g_v_n = 0, g_v_da_scheda = 0;
+
+static void metti(int scheda, ExWindow c)
+{
+    if (c && g_sch_n[scheda] < SCH_MAX) g_sch[scheda][g_sch_n[scheda]++] = c;
+}
+
+static void scheda_mostra(int n)
+{
+    int k, i;
+
+    for (k = 0; k < 3; k++)
+        for (i = 0; i < g_sch_n[k]; i++) ex_set_visible(g_sch[k][i], k == n);
+    if (g_impost) ex_default_proc(g_impost, EXM_PAINT, 0, 0);
+}
+
+/* The entries of the list: the card's modes, sorted, one per size and
+ * colour count (24 and 32 bits are the same "16 milioni" to whoever
+ * chooses: Stage 2 takes the deeper), then "testo". Without the card's list
+ * (the machine started in text mode) the four of always. */
+static int video_lista_fai(void)
+{
+    VideoModo m[64];
+    int       n = video_modi(m, 64), i, j, k = 0;
+
+    g_v_da_scheda = n > 0;
+    if (n <= 0) {
+        static const unsigned short d[3][2] = { { 640, 480 }, { 800, 600 }, { 1024, 768 } };
+
+        for (i = 0; i < 3; i++) {
+            g_v[k].larghezza = d[i][0]; g_v[k].altezza = d[i][1]; g_v[k].bit = 32; k++;
+        }
+    } else {
+        if (n > 64) n = 64;
+        for (i = 0; i < n; i++) {
+            int profondo = m[i].bit != 16, doppio = 0;
+
+            for (j = 0; j < k; j++)
+                if (g_v[j].larghezza == m[i].larghezza && g_v[j].altezza == m[i].altezza &&
+                    (g_v[j].bit != 16) == profondo) doppio = 1;
+            if (doppio || k >= 63) continue;
+            g_v[k++] = m[i];
+        }
+        for (i = 1; i < k; i++) {
+            VideoModo t = g_v[i];
+
+            j = i - 1;
+            while (j >= 0 && ((unsigned)g_v[j].larghezza * g_v[j].altezza >
+                              (unsigned)t.larghezza * t.altezza ||
+                              ((unsigned)g_v[j].larghezza * g_v[j].altezza ==
+                               (unsigned)t.larghezza * t.altezza && g_v[j].bit > t.bit))) {
+                g_v[j + 1] = g_v[j];
+                j--;
+            }
+            g_v[j + 1] = t;
+        }
+    }
+    memset(&g_v[k], 0, sizeof(g_v[k]));       /* "testo" */
+    return k + 1;
+}
+
+/* Runs svga.drv with these arguments and waits: its exit code, or -1. */
+static int svga_lancia(char **av)
+{
+    int pid = spawn_ex(av[0], av, environ, 0, 0), st = 0;
+
+    if (pid < 0) return -1;
+    waitpid(pid, &st, 0);
+    return st & 0xFF;
+}
+
+static void video_scegli(int prova)
+{
+    unsigned int s = ex_list_get_selected(g_v_lista);
+    char         nome[24], m[320];
+    char        *av[6];
+    int          n = 0, rc;
+
+    if (s >= (unsigned int)g_v_n) {
+        ex_dlg_avviso("Video", "Scegli prima un modo dalla lista.");
+        return;
+    }
+    if (g_v[s].larghezza == 0) strcpy(nome, "testo");
+    else snprintf(nome, sizeof(nome), "%ux%u", g_v[s].larghezza, g_v[s].altezza);
+
+    if (prova) {
+        if (g_v[s].larghezza == 0) {
+            ex_dlg_avviso("Video", "Il modo testo spegne la grafica: la scrivania non "
+                          "potrebbe chiedere conferma. Si sceglie con Applica.");
+            return;
+        }
+        snprintf(m, sizeof(m), "La macchina si riavvia adesso in %s, %s.\n\n"
+                 "Se si vede bene, conferma entro 30 secondi. Se lo schermo resta nero "
+                 "non toccare niente: torna da solo il modo di prima.", nome,
+                 g_v[s].bit == 16 ? "65 mila colori" : "16 milioni di colori");
+        if (!ex_dlg_conferma("Prova del modo video", m, "Riavvia e prova", "Annulla")) return;
+    }
+
+    av[n++] = (char *)"/dev/svga.drv";
+    if (prova) av[n++] = (char *)"-prova";
+    av[n++] = nome;
+    if (g_v[s].bit == 16) av[n++] = (char *)"-16";
+    av[n] = 0;
+    rc = svga_lancia(av);
+
+    /* ! THE REASON IS NOT GUESSED: the commonest is not the card but a
+     * system running from CD, where LOADER.BIN cannot be rewritten. */
+    if (rc != 0) {
+        snprintf(m, sizeof(m), "%s non e' stato impostato.\n\n"
+                 "Da CD non si puo': il file di avvio e' in sola lettura. Su un "
+                 "sistema installato, il motivo esatto e' sulla console di testo.", nome);
+        ex_dlg_avviso("Video", m);
+        return;
+    }
+    if (prova) { arresta(EXOS_RB_RESTART); return; }
+    snprintf(m, sizeof(m), "Risoluzione impostata su %s.\n\n"
+             "Arriva al PROSSIMO RIAVVIO: il modo video lo sceglie l'avvio, "
+             "prima che esista la scrivania.", nome);
+    ex_dlg_avviso("Video", m);
+}
+
+/* -----------------------------------------------------------------------------
+ * After a trial reboot: 30 seconds to keep the new mode
+ * --------------------------------------------------------------------------- */
+static ExWindow g_pv = 0, g_pv_conto = 0;
+static int      g_pv_resto = 30;
+
+static void prova_finisci(int tieni)
+{
+    char *av[3];
+
+    ex_set_timer(g_pv, 0);
+    av[0] = (char *)"/dev/svga.drv";
+    av[1] = (char *)(tieni ? "-conferma" : "-annulla");
+    av[2] = 0;
+    svga_lancia(av);
+    ex_destroy(g_pv);
+    g_pv = 0;
+    if (!tieni) arresta(EXOS_RB_RESTART);
+}
+
+static long prova_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_TIMER) {
+        char t[64];
+
+        if (--g_pv_resto <= 0) { prova_finisci(0); return 0; }
+        snprintf(t, sizeof(t), "Senza risposta torna il modo di prima fra %d s.", g_pv_resto);
+        ex_set_text(g_pv_conto, t);
+        return 0;
+    }
+    if (msg == EXM_COMMAND && wp == ID_P_TIENI) { prova_finisci(1); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_P_TORNA) { prova_finisci(0); return 0; }
+    if (msg == EXM_CLOSE) { prova_finisci(0); return 0; }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static void video_prova_chiedi(void)
+{
+    char         riga[96], nuovo[32] = "", t[96];
+    unsigned int sw = 0, sh = 0;
+    FILE        *f;
+    int          fd;
+
+    if (access(PROVA_F, F_OK) != 0) return;
+    /* the guard in avvio.sh now leaves the decision to this window */
+    fd = open(VISTA_F, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd >= 0) { write(fd, "vista\n", 6); close(fd); }
+
+    f = fopen(PROVA_F, "r");
+    if (f) {
+        while (fgets(riga, sizeof(riga), f)) {
+            if (strncmp(riga, "nuovo", 5) == 0 && strchr(riga, '=')) {
+                char *v = strchr(riga, '=') + 1;
+                size_t l;
+
+                while (*v == ' ') v++;
+                strncpy(nuovo, v, sizeof(nuovo) - 1);
+                l = strlen(nuovo);
+                while (l > 0 && (nuovo[l - 1] == '\n' || nuovo[l - 1] == '\r')) nuovo[--l] = 0;
+            }
+        }
+        fclose(f);
+    }
+    ex_screen_size(&sw, &sh);
+    g_pv = ex_create("window", "Nuovo modo video", EX_CAPTION | EX_BORDER | EX_TOPMOST,
+                     ((int)sw - 380) / 2, ((int)sh - 150) / 2, 380, 150, 0, 0, prova_proc);
+    if (!g_pv) { prova_finisci(1); return; }
+    snprintf(t, sizeof(t), "Prova: %ux%u. Si vede bene?", sw, sh);
+    ex_create("label", t, EX_CHILD, 12, 12, 356, 18, g_pv, 0, 0);
+    g_pv_resto = 30;
+    g_pv_conto = ex_create("label", "Senza risposta torna il modo di prima fra 30 s.",
+                           EX_CHILD, 12, 36, 356, 18, g_pv, 0, 0);
+    {
+        ExWindow b = ex_create("button", "Tieni questo modo", EX_CHILD, 12, 80, 170, 30,
+                               g_pv, ID_P_TIENI, 0);
+
+        ex_create("button", "Torna a prima", EX_CHILD, 198, 80, 170, 30, g_pv, ID_P_TORNA, 0);
+        /* Enter keeps it: whoever sees the screen can answer from the keyboard */
+        if (b) ex_set_focus(b);
+    }
+    ex_default_proc(g_pv, EXM_PAINT, 0, 0);
+    ex_set_timer(g_pv, 1000);
+}
 
 static long impost_proc(ExWindow f, unsigned int msg,
                         unsigned int wp, long lp)
@@ -1313,44 +1548,9 @@ static long impost_proc(ExWindow f, unsigned int msg,
         return 0;
     }
 
-    if (msg == EXM_COMMAND && wp >= ID_RIS && wp < ID_RIS + 4) {
-        const char *modo = MODI[wp - ID_RIS];
-        char       *av[3];
-        char        m[256];
-        int         pid, st = 0;
-
-        av[0] = "/dev/svga.drv";
-        av[1] = (char *)modo;
-        av[2] = 0;
-
-        pid = spawn_ex(av[0], av, environ, 0, 0);
-        if (pid < 0) {
-            sprintf(m, "Non riesco a lanciare %s.", av[0]);
-            ex_dlg_avviso("Risoluzione", m);
-            return 0;
-        }
-        waitpid(pid, &st, 0);
-
-        /* ! SI GUARDA COM'E' ANDATA. Una finestra che dice «fatto» comunque
-         * manderebbe l'utente a riavviare per niente.
-         *
-         * ! E NON SI INDOVINA IL PERCHE'. Il motivo piu' comune non e' la
-         * scheda: e' che il sistema gira da CD, e li' LOADER.BIN non si puo'
-         * riscrivere — `svga` dice «filesystem in sola lettura». Scrivere
-         * «la scheda non lo offre» manderebbe a cercare un difetto dove non
-         * c'e'. Il motivo esatto lo stampa svga sulla console di testo; qui
-         * si dicono i due casi veri e si rimanda li'. */
-        if (st != 0)
-            sprintf(m, "%s non e' stato impostato.\n\n"
-                       "Da CD non si puo': il file di avvio e' in sola "
-                       "lettura. Su un sistema installato, la scheda "
-                       "potrebbe non offrire quel modo.\n\n"
-                       "Il motivo esatto e' sulla console di testo.", modo);
-        else
-            sprintf(m, "Risoluzione impostata su %s.\n\n"
-                       "Arriva al PROSSIMO RIAVVIO: il modo video lo sceglie "
-                       "l'avvio, prima che esista la scrivania.", modo);
-        ex_dlg_avviso("Risoluzione", m);
+    if (msg == EXM_COMMAND && wp == ID_IMP_SCHEDE) { scheda_mostra((int)lp); return 0; }
+    if (msg == EXM_COMMAND && (wp == ID_V_PROVA || wp == ID_V_APPLICA)) {
+        video_scegli(wp == ID_V_PROVA);
         return 0;
     }
     return ex_default_proc(f, msg, wp, lp);
@@ -1361,63 +1561,95 @@ static void impostazioni_apri(void)
     unsigned int sw = 0, sh = 0;
     char         t[96];
     int          i;
+    ExWindow     c;
 
-    /* Gia' aperta: si rimette davanti facendola rivedere. Non c'e' un
-     * «portami in primo piano» nel toolkit, e ex_show basta: il server mette
-     * davanti cio' che torna visibile. */
+    /* Gia' aperta: si rimette davanti facendola rivedere. */
     if (g_impost) { ex_show(g_impost, 1); return; }
 
     g_impost = ex_create("window", "Impostazioni",
                        EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
-                       EX_AUTO, EX_AUTO, 300, 420, 0, 0, impost_proc);
+                       EX_AUTO, EX_AUTO, IMP_W, IMP_H, 0, 0, impost_proc);
     if (!g_impost) return;
+    memset(g_sch_n, 0, sizeof(g_sch_n));
 
+    /* ! THE PANEL HAS TABS (@PANNELLO-VIDEO, 17 October 2026): it had grown to
+     * a column of everything. Video, Scrivania, Sistema; each control
+     * belongs to one and is shown or hidden with it. */
+    c = ex_create("tab", "", EX_CHILD, 8, 6, IMP_W - 16, 24, g_impost, ID_IMP_SCHEDE, 0);
+    ex_items_as_tabs(c, 1);
+    ex_item_add(c, "Video");
+    ex_item_add(c, "Scrivania");
+    ex_item_add(c, "Sistema");
+
+    /* --- Video ------------------------------------------------------------ */
     ex_screen_size(&sw, &sh);
-    sprintf(t, "Risoluzione: adesso %ux%u", sw, sh);
-    ex_create("label", t, EX_CHILD, 12, 10, 276, 18, g_impost, 0, 0);
+    {
+        VideoInfo v;
 
-    ex_create("label", "Si applica al prossimo riavvio.", EX_CHILD,
-            12, 30, 276, 18, g_impost, 0, 0);
+        memset(&v, 0, sizeof(v));
+        video_info(&v);
+        sprintf(t, "Adesso: %ux%u, %s", sw, sh,
+                v.bit == 16 ? "65 mila colori (16 bit)" : "16 milioni di colori");
+    }
+    metti(0, ex_create("label", t, EX_CHILD, 12, 40, IMP_W - 24, 18, g_impost, 0, 0));
+    g_v_n = video_lista_fai();
+    metti(0, ex_create("label", g_v_da_scheda ? "I modi della scheda:" :
+                       "I modi di sempre (la lista della scheda arriva",
+                       EX_CHILD, 12, 62, IMP_W - 24, 18, g_impost, 0, 0));
+    if (!g_v_da_scheda)
+        metti(0, ex_create("label", "dopo un avvio in grafica):", EX_CHILD,
+                           12, 80, IMP_W - 24, 18, g_impost, 0, 0));
+    g_v_lista = ex_create("list", "", EX_CHILD, 12, g_v_da_scheda ? 82 : 100, IMP_W - 24,
+                          g_v_da_scheda ? 210 : 192, g_impost, ID_V_LISTA, 0);
+    metti(0, g_v_lista);
+    for (i = 0; i < g_v_n; i++) {
+        char r[64];
 
-    for (i = 0; i < 4; i++)
-        ex_create("button", MODI[i], EX_CHILD,
-                12 + (i % 2) * 140, 58 + (i / 2) * 34, 132, 28,
-                g_impost, (unsigned int)(ID_RIS + i), 0);
+        if (g_v[i].larghezza == 0) snprintf(r, sizeof(r), "testo (niente grafica)");
+        else snprintf(r, sizeof(r), "%ux%u   %s%s", g_v[i].larghezza, g_v[i].altezza,
+                      g_v[i].bit == 16 ? "65 mila colori" : "16 milioni di colori",
+                      g_v[i].larghezza == sw && g_v[i].altezza == sh ? "  (adesso)" : "");
+        ex_item_add(g_v_lista, r);
+    }
+    metti(0, ex_create("button", "Prova...", EX_CHILD, 12, 302, 150, 28, g_impost, ID_V_PROVA, 0));
+    metti(0, ex_create("button", "Applica", EX_CHILD, IMP_W - 162, 302, 150, 28,
+                       g_impost, ID_V_APPLICA, 0));
+    metti(0, ex_create("label", "Prova riavvia nel modo scelto e chiede conferma:", EX_CHILD,
+                       12, 340, IMP_W - 24, 16, g_impost, 0, 0));
+    metti(0, ex_create("label", "senza risposta in 30 s torna quello di prima.", EX_CHILD,
+                       12, 356, IMP_W - 24, 16, g_impost, 0, 0));
+    metti(0, ex_create("label", "Applica: dal prossimo avvio, senza prova.", EX_CHILD,
+                       12, 376, IMP_W - 24, 16, g_impost, 0, 0));
 
-    ex_create("label", "\"testo\" spegne la grafica all'avvio.", EX_CHILD,
-            12, 132, 276, 18, g_impost, 0, 0);
-
-    /* The desktop image (@PM-SFONDO): applied at once, kept for next time. */
-    ex_create("separator", "", EX_CHILD, 12, 160, 276, 2, g_impost, 0, 0);
-    g_impost_sfondo = ex_create("label", "", EX_CHILD, 12, 172, 276, 18,
-                              g_impost, 0, 0);
+    /* --- Scrivania: the desktop image (@PM-SFONDO) ---------------------------- */
+    g_impost_sfondo = ex_create("label", "", EX_CHILD, 12, 44, IMP_W - 24, 18, g_impost, 0, 0);
+    metti(1, g_impost_sfondo);
     sfondo_etichetta();
-    ex_create("button", "Scegli...", EX_CHILD, 12, 200, 132, 28,
-            g_impost, ID_SFONDO_SCEGLI, 0);
-    ex_create("button", "Nessuno", EX_CHILD, 152, 200, 132, 28,
-            g_impost, ID_SFONDO_NIENTE, 0);
+    metti(1, ex_create("button", "Scegli...", EX_CHILD, 12, 72, 150, 28,
+                       g_impost, ID_SFONDO_SCEGLI, 0));
+    metti(1, ex_create("button", "Nessuno", EX_CHILD, IMP_W - 162, 72, 150, 28,
+                       g_impost, ID_SFONDO_NIENTE, 0));
     for (i = 0; i < 4; i++)
-        ex_create("button", DISPOSIZIONI_T[i], EX_CHILD, 12 + i * 70, 236, 64, 28,
-                g_impost, (unsigned int)(ID_SFONDO_MODO + i), 0);
+        metti(1, ex_create("button", DISPOSIZIONI_T[i], EX_CHILD, 12 + i * 79, 110, 74, 28,
+                           g_impost, (unsigned int)(ID_SFONDO_MODO + i), 0));
 
-    /* The sound played when the desktop starts. */
-    ex_create("separator", "", EX_CHILD, 12, 276, 276, 2, g_impost, 0, 0);
+    /* --- Sistema: the start-up sound and what starts with the desktop -------- */
     g_impost_suono = ex_create("checkbox", "Suono all'avvio della scrivania", EX_CHILD,
-                               12, 288, 276, 20, g_impost, ID_SUONO_AVVIO, 0);
+                               12, 44, IMP_W - 24, 20, g_impost, ID_SUONO_AVVIO, 0);
+    metti(2, g_impost_suono);
     ex_set_checked(g_impost_suono, g_suono_avvio);
-
-    /* What starts with the desktop (@AVVIO-SCRIVANIA). */
     g_impost_orologio = ex_create("checkbox", "Orologio nella barra", EX_CHILD,
-                                  12, 312, 276, 20, g_impost, ID_VEDI_OROLOGIO, 0);
+                                  12, 68, IMP_W - 24, 20, g_impost, ID_VEDI_OROLOGIO, 0);
+    metti(2, g_impost_orologio);
     ex_set_checked(g_impost_orologio, g_vedi_orologio);
     g_impost_volume = ex_create("checkbox", "Icona del volume nella barra", EX_CHILD,
-                                12, 336, 276, 20, g_impost, ID_VEDI_VOLUME, 0);
+                                12, 92, IMP_W - 24, 20, g_impost, ID_VEDI_VOLUME, 0);
+    metti(2, g_impost_volume);
     ex_set_checked(g_impost_volume, g_vedi_volume);
-    ex_create("label", "L'orologio: dal prossimo avvio", EX_CHILD,
-            12, 362, 276, 16, g_impost, 0, 0);
-    ex_create("label", "della scrivania.", EX_CHILD,
-            12, 378, 276, 16, g_impost, 0, 0);
+    metti(2, ex_create("label", "L'orologio: dal prossimo avvio della scrivania.", EX_CHILD,
+                       12, 118, IMP_W - 24, 16, g_impost, 0, 0));
 
+    scheda_mostra(0);
     ex_default_proc(g_impost, EXM_PAINT, 0, 0);
 }
 
@@ -1455,7 +1687,10 @@ static void avvia(unsigned int n)
     /* ! L'AMBIENTE SI PASSA ANCHE QUI, ed e' l'ultimo anello: `envp` nullo
      * vuol dire ambiente VUOTO. Un'applicazione avviata dal menu deve sapere
      * dov'e' la casa di chi l'ha premuta, o si tiene i suoi file dove capita. */
-    if (spawn_ex(argv[0], argv, environ, 0, 0) < 0) {
+    /* A big program goes through the waiting box (ex_spawn_program,
+     * @ATTESA-CARICAMENTO): the person sees at once that the click worked. */
+    if (ex_spawn_program(argv[0], argv, strrchr(g_app[n].nome, '/') ?
+                         strrchr(g_app[n].nome, '/') + 1 : g_app[n].nome) < 0) {
         char m[160];
         sprintf(m, "pm: non riesco ad avviare %s", argv[0]);
         log_seriale(m);
@@ -3138,6 +3373,9 @@ int main(int argc, char **argv)
 
     printf("pm: scrivania attiva, %u applicazioni nel menu\n", g_app_n);
 
+    /* A video mode on trial (svga.drv -prova): 30 seconds to keep it. */
+    video_prova_chiedi();
+
     /* I volumi scelti l'ultima volta: il driver audio non li ricorda da un
      * avvio all'altro, li rimette `exvolume -applica` leggendo il file di chi
      * usa la macchina. Se non c'e' la scheda, o il file, non fa niente. */
@@ -3199,7 +3437,7 @@ int main(int argc, char **argv)
         av[0] = perc;
         av[1] = 0;
 
-        if (spawn_ex(av[0], av, environ, 0, 0) < 0) {
+        if (ex_spawn_program(av[0], av, 0) < 0) {
             char msg[160];
 
             sprintf(msg, "pm: avvio automatico fallito: %s", perc);

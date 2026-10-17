@@ -42,6 +42,12 @@
 %define VBEINFO 0xE000  ; VbeInfoBlock,  512 byte  -> 0xE200
 %define VBEMODE 0xE200  ; ModeInfoBlock, 256 byte  -> 0xE300
 %define GDTB    0xE400  ; GDT: 3 descrittori + puntatore
+; The modes the card offers, for the kernel and the Video panel (17 October
+; 2026, @RISOLUZIONI): up to MODI_MAX entries of 8 bytes - width, height
+; (words), bits per pixel, 0, the VBE mode number - after the E820 map
+; (which ends at 0xD280). BootInfo +46 says where, +50 how many.
+%define MODITAB 0xD400
+%define MODI_MAX 48
 
 ; --- Il disco in RAM -------------------------------------------------------
 ; Dove finisce il volume, quanto e' grande, e da dove si passa.
@@ -545,6 +551,8 @@ _start:
     mov  byte  [es:di+37], 0      ; fb_bpp
     mov  dword [es:di+38], 0      ; rd_addr: nessun disco in RAM
     mov  dword [es:di+42], 0      ; rd_byte
+    mov  dword [es:di+46], MODITAB ; modi_addr: the table of modes
+    mov  dword [es:di+50], 0      ; modi_n: none yet
     xor  ax, ax
     mov  es, ax
 
@@ -592,7 +600,7 @@ _start:
     mov  [want16], ah
     and  al, 0x7F
 
-    cmp  al, 3
+    cmp  al, 4                    ; 4 = svgacust: any mode the card lists
     ja   .novesa                  ; valore fuori tabella: idem
 
     ; Risoluzione voluta, dalla tabella (1=640x480 2=800x600 3=1024x768)
@@ -655,6 +663,7 @@ _start:
     jz   .mloop
     test ax, 0x0010
     jz   .mloop
+    call modo_annota              ; every usable mode goes in the table
 
     ; ! LA RISOLUZIONE SI CONFRONTA PRIMA DEL FRAMEBUFFER LINEARE, e l'ordine
     ; conta solo per una ragione: sapere PERCHE' si e' rinunciato. Scartando
@@ -734,12 +743,19 @@ _start:
     mov  [fbh], ax
     mov  ax, [mcur]
     mov  [mbest], ax
-    cmp  byte [want16], 0
-    jne  .fine_lista              ; con -16 il primo 16 trovato e' quello
-    cmp  byte [fbbpp], 32
-    jne  .mloop                   ; meglio di 32 non c'e': si smette di cercare
+    ; ! THE LIST IS READ TO ITS END (17 October 2026): it stopped at the
+    ; first 32 bpp (or 16 with -16), and the table of modes for the Video
+    ; panel came out cut. The choice is the same: with -16 only the first 16
+    ; is taken (.cand), otherwise only a deeper one replaces it (.piubit).
+    jmp  .mloop
 
 .fine_lista:
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    movzx eax, word [nmodi]
+    mov  dword [es:50], eax       ; modi_n
+    pop  es
     cmp  byte [fbbpp], 0
     je   .novesa                  ; nessun modo utilizzabile: resta il testo
     mov  ax, [mbest]
@@ -1682,6 +1698,42 @@ unreal_es:
 ; sapere DOVE scrivere. Un offset fisso dentro il binario cambierebbe a
 ; ogni riga aggiunta qui sopra, e il comando finirebbe a scrivere in mezzo
 ; al codice — su un file che serve ad avviare la macchina.
+; modo_annota: ES:0 is the ModeInfoBlock of mode [mcur], supported and
+; graphic. If it has a linear framebuffer and 16, 24 or 32 bpp it goes in
+; MODITAB (the first MODI_MAX). Registers and ES are kept.
+modo_annota:
+    push ax
+    push bx
+    mov  ax, [es:0]
+    test ax, 0x0080
+    jz   .esci
+    mov  al, [es:0x19]
+    cmp  al, 16
+    je   .ok
+    cmp  al, 24
+    je   .ok
+    cmp  al, 32
+    jne  .esci
+.ok:
+    mov  bx, [nmodi]
+    cmp  bx, MODI_MAX
+    jae  .esci
+    shl  bx, 3
+    mov  ax, [es:0x12]
+    mov  [bx+MODITAB], ax
+    mov  ax, [es:0x14]
+    mov  [bx+MODITAB+2], ax
+    mov  al, [es:0x19]
+    mov  [bx+MODITAB+4], al
+    mov  byte [bx+MODITAB+5], 0
+    mov  ax, [mcur]
+    mov  [bx+MODITAB+6], ax
+    inc  word [nmodi]
+.esci:
+    pop  bx
+    pop  ax
+    ret
+
 want16   db 0                 ; bit 7 del byte di modo: preferisci 16 bpp
 svgamagic db 'SVGAMODE'
 ; ! IL PREDEFINITO RESTA 0 = TESTO, e si sceglie a costruzione con
@@ -1700,6 +1752,11 @@ svgamodo  db SVGAMODO ; 0=testo 1=640x480 2=800x600 3=1024x768
 svgatab   dw 640, 480
           dw 800, 600
           dw 1024, 768
+; ! MODE 4: ANY RESOLUTION, written here by svga.drv (17 October 2026). It
+; follows the table so that the index arithmetic finds it, and its place -
+; signature + 21 - is part of the contract with svga.drv.
+svgacust  dw 0, 0
+nmodi     dw 0                ; entries in MODITAB
 
 ; ! LA FIRMA, come per SVGAMODE e per la stessa ragione: un offset fisso
 ; dentro il binario cambierebbe a ogni riga aggiunta qui sopra.

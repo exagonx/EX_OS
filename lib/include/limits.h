@@ -33,6 +33,9 @@
 #define OPEN_MAX         128    /* = MAX_FD in kernel/include/sched.h (0.232) */
 #define ARG_MAX        4096     /* argv + envp copiati sullo stack del figlio */
 #define _POSIX_ARG_MAX 4096     /* the POSIX minimum; = ARG_MAX here */
+#ifndef SSIZE_MAX
+#define SSIZE_MAX __PTRDIFF_MAX__  /* ssize_t is __PTRDIFF_TYPE__ (libc.h); libgit2 */
+#endif
 #define LINK_MAX          1     /* non ci sono collegamenti: ogni file ha un nome */
 #define PIPE_BUF       4096     /* dichiarato: le pipe non ci sono ancora */
 #define SYMLINK_MAX       0     /* nessun collegamento simbolico */

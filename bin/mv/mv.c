@@ -60,7 +60,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `mv -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("mv", "0.001");
+EX_VERSIONE("mv", "0.002");
 
 #define PERCORSO_MAX  320
 #define BLOCCO        4096
@@ -156,13 +156,17 @@ static int sposta(const char *da, const char *a)
         return -1;
     }
 
-    /* ! UNA DIRECTORY NON SI SPOSTA. Fra due directory diverse vorrebbe
-     * dire copiare un albero e cancellarlo, cioe' `xcp` piu' `rm -r`: due
-     * programmi che ci sono gia'. Farlo qui a meta' — riuscendo nello
-     * stesso posto e fallendo altrove — darebbe un comando che funziona o
-     * no a seconda di dove si trova. */
+    /* ! A DIRECTORY MOVES ONLY BY rename() (kernel 0.260, 17 October 2026:
+     * ext2 moves between directories). Copying a tree and deleting it is
+     * `xcp` plus `rm -r`, two programs that exist: when rename() cannot (two
+     * volumes, FAT, an older kernel) this says so and points there. */
     if (S_ISDIR(st.st_mode)) {
-        fprintf(stderr, "mv: %s e' una directory: usa `xcp` e poi `rm -r`\n", da);
+        if (rename(da, a) == 0) return 0;
+        if (errno == EINVAL)
+            fprintf(stderr, "mv: %s non puo' andare dentro se stessa\n", da);
+        else
+            fprintf(stderr, "mv: %s e' una directory e qui non si sposta (%s): usa `xcp` e poi `rm -r`\n",
+                    da, strerror(errno));
         g_errori = 1;
         return -1;
     }

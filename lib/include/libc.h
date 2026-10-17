@@ -2725,6 +2725,12 @@ int wait4(int pid, int *stato, int opzioni, struct rusage *uso);
  * and getsid() give its pid (getsid(0) = the caller's). For ported code. */
 int setsid(void);
 int getsid(int pid);
+int getpgid(int pid);        /* no process groups: the pid itself */
+
+/* sigpending: always the empty set (no syscall knows the pending ones yet);
+ * sigwait: ENOSYS. Static libc only, for ported code (libgit2). */
+int sigpending(sigset_t *s);
+int sigwait(const sigset_t *s, int *sig);
 #define CLOCKS_PER_SEC  100
 
 /* Come listdir, ma parte dalla 'start'-esima voce. Serve per percorrere
@@ -3227,6 +3233,19 @@ typedef struct {
 } VideoInfo;
 
 int     video_info(VideoInfo *v);
+
+/* video_modi — the video modes the card offers (kernel 0.261): at most `max`
+ * copied into v, the number known returned (0 when the system booted in
+ * text mode: Stage 2 reads the list only when asked for graphics). The same
+ * layout as kernel/include/syscall.h. */
+typedef struct {
+    unsigned short larghezza;
+    unsigned short altezza;
+    unsigned char  bit;
+    unsigned char  riserva;
+    unsigned short vbe;
+} VideoModo;
+int     video_modi(VideoModo *v, int max);
 
 /* =============================================================================
  * log_seriale — una riga che arriva anche se nessuno guarda la tua console
@@ -3858,7 +3877,7 @@ struct cmsghdr {
 #define CMSG_LEN(len)      (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 #define CMSG_FIRSTHDR(m)   ((size_t)(m)->msg_controllen >= sizeof(struct cmsghdr) \
                             ? (struct cmsghdr *)(m)->msg_control : (struct cmsghdr *)0)
-static inline struct cmsghdr *__exos_cmsg_nxthdr(struct msghdr *m, struct cmsghdr *c)
+static __inline__ struct cmsghdr *__exos_cmsg_nxthdr(struct msghdr *m, struct cmsghdr *c)
 {
     unsigned char *prossimo = (unsigned char *)c + CMSG_ALIGN(c->cmsg_len);
     unsigned char *fine = (unsigned char *)m->msg_control + m->msg_controllen;

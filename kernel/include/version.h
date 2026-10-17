@@ -493,7 +493,19 @@
 /* 0.258 -> 0.259: stat on ext2 and FAT no longer reports every file as
  * read-only (kernel/fs/vfs.c, stat_interno): the volume, the inode's write
  * bits or the FAT attribute decide. Found by rustc running on EX-OS. */
-#define EXOS_VERSION    "0.259"
+/* 0.259 -> 0.260: rename() moves between directories on ext2 (it was
+ * ENOSYS): libgit2 moves every object from .git/objects into a subdirectory.
+ * A directory moved gets its ".." rewritten and the link moves from the old
+ * parent to the new one; into itself is EINVAL. FAT still renames in place
+ * only. */
+/* 0.260 -> 0.261: SYS_VIDEO_MODI (27) - the video modes the card offers, as
+ * Stage 2 lists them at boot (BootInfo modi_addr/modi_n, a table at 0xD400),
+ * for svga.drv -lista and the Video panel (@RISOLUZIONI). Stage 2 also takes
+ * any resolution of that list (mode 4, written by svga.drv). */
+/* 0.261 -> 0.262: the shared-memory cap ("one whole screen") is counted at
+ * 4 bytes a pixel: on a 16-bit screen the window server's 32-bit windows
+ * did not fit and ExWin did not start (kernel/mm/shm.c). */
+#define EXOS_VERSION    "0.262"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

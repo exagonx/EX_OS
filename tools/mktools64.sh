@@ -145,6 +145,20 @@ else
     echo "mktools64: no 64-bit OpenSSL ($O): EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh" >&2
 fi
 
+# --- libgit2, if tools/libgit2-exos/costruisci.sh built it (17 October 2026) -----
+# The static library and its headers next to OpenSSL's, the git2 command and
+# the example: group [git] of the catalogue, which wants [ssl].
+G2=cross_build/libgit2-exos64
+if [ -f "$G2/lib/libgit2.a" ] && [ -f "$O/libssl.a" ]; then
+    cp -p "$G2/lib/libgit2.a" "$E/lib/"
+    cp -rp "$G2/include/git2.h" "$G2/include/git2" "$E/include/"
+    [ -x "$G2/bin/git2" ] && put "$G2/bin/git2" bin/git2
+    cp tools/libgit2-exos/prova-git.c "$OUT/prova-git.c"
+    echo "mktools64: libgit2 $(sed -n 's/^#define LIBGIT2_VERSION  *"\(.*\)"/\1/p' "$G2/include/git2/version.h") - libgit2.a, git2"
+else
+    echo "mktools64: no libgit2 ($G2): tools/libgit2-exos/costruisci.sh" >&2
+fi
+
 # --- FreeBASIC, if tools/freebasic-exos/prepara-fb64.sh built it ----------------
 # (@FB-64, 16 October 2026) The layout of the 32-bit CD, under the target name
 # fbc composes itself: bin/fbc, include/freebasic, lib/freebasic/exos-x86_64.

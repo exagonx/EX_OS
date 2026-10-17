@@ -1,0 +1,18 @@
+--- a/netwerk/protocol/http/nsHttpHandler.cpp
++++ b/netwerk/protocol/http/nsHttpHandler.cpp
+@@ -1222,6 +1222,15 @@
+   mOscpu.AssignLiteral("Linux armv81");
+ #elif defined(XP_IOS)
+   mOscpu.AssignLiteral("iPhone");
++#elif defined(XP_EXOS)
++  // EX-OS says what it is (the user, 17 October 2026): with "Linux" sites
++  // offered Linux downloads and Linux instructions. The X11 platform token
++  // stays: sites read it as "a desktop Unix", which EX-OS is.
++#  if defined(__x86_64__)
++  mOscpu.AssignLiteral("EX-OS x86_64");
++#  else
++  mOscpu.AssignLiteral("EX-OS i686");
++#  endif
+ #else
+   mOscpu.AssignLiteral("Linux x86_64");
+ #endif

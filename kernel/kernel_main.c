@@ -268,6 +268,7 @@ klog(LOG_INFO, "[PASSO 9] Paginazione OK (CR0.PG=1)");
      *
      * Senza modalita' grafica non fa niente e la console resta 80x25.
      * ===================================================================== */
+    vga_modi_prendi(info);      /* the modes Stage 2 found, for SYS_VIDEO_MODI */
     vga_init_grafica(info);
 
     klog(LOG_INFO, "[PASSO 9b] Inizializzazione heap kernel...");
@@ -445,12 +446,24 @@ KernelConfig *cfg = cfg_load();
      * ===================================================================== */
     if (cfg->svga[0] != '\0') {
         const char *reale = "testo";
+        char        wxh[16];
 
+        /* "WxH" for every mode (kernel 0.262: svga.drv now takes any mode
+         * the card lists; with three names the others read "(altra)"). */
         if (info->fb_addr != 0) {
-            if      (info->fb_width == 640)  reale = "640x480";
-            else if (info->fb_width == 800)  reale = "800x600";
-            else if (info->fb_width == 1024) reale = "1024x768";
-            else                             reale = "(altra)";
+            uint32_t v[2], k, p = 0;
+
+            v[0] = info->fb_width; v[1] = info->fb_height;
+            for (k = 0; k < 2; k++) {
+                char     c[6];
+                uint32_t n = v[k], q = 0;
+
+                do { c[q++] = (char)('0' + n % 10u); n /= 10u; } while (n && q < 5);
+                while (q) wxh[p++] = c[--q];
+                if (k == 0) wxh[p++] = 'x';
+            }
+            wxh[p] = '\0';
+            reale = wxh;
         }
         if (!str_equal(cfg->svga, reale)) {
             klog(LOG_WARN, "[PASSO 13b] kernel.cfg chiede svga=%s, l'avvio e' "

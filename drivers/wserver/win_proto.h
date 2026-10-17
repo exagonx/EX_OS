@@ -176,6 +176,16 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * ============================================================================= */
 #define WIN_MSG_PASSAGGIO   0x570D  /* WinRegione: id, x = 1 acceso / 0 spento */
 
+/* =============================================================================
+ * THE LIST ONCE, FOR WHOEVER ASKS — 17 October 2026 (@ATTESA-CARICAMENTO)
+ *
+ * WIN_MSG_ELENCO_UNA: the server answers WIN_MSG_ELENCATA once, to the
+ * sender only, and does not make it the subscriber: the taskbar keeps its
+ * WIN_MSG_ELENCO. /exwin/bin/attesa asks this twice a second to see when the
+ * program it started has opened its first window.
+ * ============================================================================= */
+#define WIN_MSG_ELENCO_UNA  0x570E  /* nessun corpo                          */
+
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */

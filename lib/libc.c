@@ -381,6 +381,7 @@ typedef struct {
 #define SYS_MODO_TESTO    245
 #define SYS_REBOOT        88
 #define SYS_VIDEO_INFO    246
+#define SYS_VIDEO_MODI    27
 #define SYS_LOG           247
 
 /* ! DEVE RESTARE IDENTICA a struct pollfd in kernel/include/syscall.h e in
@@ -8925,6 +8926,21 @@ int video_info(VideoInfo *v)
     return (int)_syscall1(SYS_VIDEO_INFO, (uintptr_t)v);
 }
 
+/* The modes the card offers (SYS_VIDEO_MODI, kernel 0.261). */
+typedef struct {
+    uint16_t larghezza, altezza;
+    uint8_t  bit, riserva;
+    uint16_t vbe;
+} VideoModo;
+
+int video_modi(VideoModo *v, int max)
+{
+    int32_t r = _syscall2(SYS_VIDEO_MODI, (uint32_t)(uintptr_t)v,
+                          (uint32_t)(max < 0 ? 0 : max));
+    if (r < 0) { errno = -r; return -1; }
+    return (int)r;
+}
+
 /* Una riga sul log del kernel, cioe' sulla seriale. Vedi libc.h per il
  * perche' non e' un doppione di printf. */
 /* Spegne, riavvia o ferma. Rende solo se il kernel ha rifiutato. */
@@ -14308,6 +14324,24 @@ int wait4(int pid, int *stato, int opzioni, struct rusage *uso)
 
 int setsid(void)        { return getpid(); }
 int getsid(int pid)     { return pid == 0 ? getpid() : pid; }
+int getpgid(int pid)    { return pid == 0 ? getpid() : pid; }   /* no groups: its own */
+
+/* ! NO SYSCALL TELLS THE PENDING SIGNALS, so sigpending says none and
+ * sigwait refuses (17 October 2026, libgit2's process.c). libgit2 asks only
+ * to consume a SIGPIPE it blocked around a write to a child's pipe; with
+ * "none pending" it never calls sigwait. A real one needs the kernel. */
+int sigpending(sigset_t *s)
+{
+    if (!s) { errno = EFAULT; return -1; }
+    *s = 0;
+    return 0;
+}
+
+int sigwait(const sigset_t *s, int *sig)
+{
+    (void)s; (void)sig;
+    return ENOSYS;              /* sigwait returns the error, not -1 */
+}
 
 static int statvfs_riempi(struct statvfs *v)
 {

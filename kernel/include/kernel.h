@@ -145,6 +145,13 @@ typedef struct PACKED {
      * ===================================================================== */
     uint32_t    rd_addr;        /* dove sta il volume, 0 = non c'e' */
     uint32_t    rd_byte;        /* quanto e' grande */
+
+    /* The modes the card offers (Stage 2, 17 October 2026, @RISOLUZIONI):
+     * modi_n entries of 8 bytes at modi_addr - width, height, bits per
+     * pixel, 0, VBE number. Filled only when Stage 2 was asked for graphics
+     * (it reads the list then); 0 entries otherwise. */
+    uint32_t    modi_addr;
+    uint32_t    modi_n;
 } BootInfo;
 
 #define BOOTINFO_MAGIC  0x4D594F53  /* "EXOS" */

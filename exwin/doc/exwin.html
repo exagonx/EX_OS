@@ -386,6 +386,19 @@ macchina che ne ha meno il menu avvisa prima di avviare, e si sceglie se
 andare avanti. Exilla lo dichiara: vuole 2 GB.
 </p>
 
+<p class="nota">
+<b>Programmi grossi: &laquo;caricamento in corso&raquo;.</b> Un programma il cui
+file pesa 8 MB o piu' (Exilla, per esempio) su una macchina datata ci mette
+a partire. Avviato dal menu, dalla scrivania, dal file manager o col comando
+<code>exilla</code>, compare subito un riquadro &laquo;<i>Nome</i> si sta
+caricando. Attendere, prego...&raquo; con una clessidra animata e i secondi
+passati; si chiude da solo quando appare la finestra del programma. Se il
+programma esce con un errore prima di aprirla, il riquadro lo dice e resta
+finche' non lo si chiude. Chiuderlo prima non ferma il programma. Il
+riquadro e' <code>/exwin/bin/attesa</code>, e si puo' usare anche a mano:
+<code>attesa -n Nome -- /percorso/programma argomenti</code>.
+</p>
+
 <p>
 Va bene anche una fotografia: il file puo' pesare fino a 32 MB. Fino alla
 versione 0.016 del toolkit un'immagine oltre i 256 KB veniva rifiutata con

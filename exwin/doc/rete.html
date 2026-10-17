@@ -216,10 +216,57 @@ avvia la propria.
 <table border="1">
 <tr><th>Comando</th><th>Che cosa fa</th></tr>
 <tr><td><code>telnet host [porta]</code></td><td>una sessione su un'altra macchina</td></tr>
-<tr><td><code>ftp host</code></td><td>trasferimento file: dentro, <code>get</code> scarica e <code>put</code> invia</td></tr>
+<tr><td><code>ftp [host]</code></td><td>trasferimento file, FTP e FTPS: la riga di comando <code>ftp&gt;</code> &mdash; vedi sotto</td></tr>
 <tr><td><code>scarica</code></td><td>prende un file da un indirizzo http</td></tr>
 <tr><td><code>exbrowser</code></td><td>EXBrowser, il navigatore, con http e https &mdash; vedi il <a href="exbrowser.html">manuale</a></td></tr>
 </table>
+
+<h3>FTP e FTPS: ftp</h3>
+
+<pre>    ftp                                la riga di comando ftp&gt;, ancora scollegata
+    ftp server [porta]                 si collega e chiede utente e password
+    ftp -tls server                    FTPS esplicito (AUTH TLS sulla 21)
+    ftp -tlsi server                   FTPS implicito (TLS subito, porta 990)
+    ftp server -u utente -w pw get f   un comando solo, poi esce (per gli script)</pre>
+
+<p>
+Dentro, <code>help</code> elenca tutti i comandi del client ftp classico:
+<code>open</code> (<code>open -tls</code>, <code>ftps</code>), <code>user</code>,
+<code>close</code>, <code>bye</code>; <code>pwd</code>, <code>cd</code>,
+<code>cdup</code>, <code>lcd</code>, <code>lpwd</code>; <code>ls</code>/<code>dir</code>,
+<code>nlist</code>, <code>mlsd</code>; <code>get</code>, <code>reget</code>
+(riprende uno scaricamento interrotto), <code>mget</code>, <code>put</code>,
+<code>reput</code>, <code>append</code>, <code>mput</code> (con <code>*</code> e
+<code>?</code>); <code>mkdir</code>, <code>rmdir</code>, <code>delete</code>,
+<code>mdelete</code>, <code>rename</code>, <code>size</code>, <code>modtime</code>,
+<code>chmod</code>; <code>binary</code>, <code>ascii</code> (converte i fine
+riga), <code>passive</code>/<code>active</code>, <code>prot P|C</code>,
+<code>prompt</code>, <code>hash</code>, <code>verbose</code>, <code>debug</code>,
+<code>status</code>, <code>rstatus</code>, <code>system</code>, <code>quote</code>,
+<code>site</code>, <code>rhelp</code>, e <code>!comando</code> per un comando di
+EX-OS senza uscire.
+</p>
+
+<p>
+La password si scrive senza che si veda e non resta in memoria. Su FTP in
+chiaro viaggia leggibile da chiunque stia sulla strada: <code>ftp</code> lo dice
+prima di chiederla e propone <code>open -tls</code>. Con FTPS comandi e dati sono
+cifrati (TLS 1.3, il certificato del server si controlla come per https).
+Il canale dati passivo usa sempre l'indirizzo del server a cui ci si e'
+collegati, anche se lui ne annuncia un altro (succede dietro un router).
+</p>
+
+<p>
+Limiti: solo TLS 1.3; un server che pretende che il canale dati riprenda la
+sessione TLS di quello dei comandi (vsftpd con <code>require_ssl_reuse</code>)
+rifiuta i trasferimenti, e la sua risposta compare cosi' com'e'. Niente SFTP
+(che e' un'altra cosa: SSH).
+</p>
+
+<p>
+Lo stesso client sta in una libreria, <code>lib/exftp</code>, usata anche da
+<code>ftpswap</code> e da <code>netspeed -makeserver</code>.
+</p>
 
 <h2>Farsi trovare: i servizi</h2>
 

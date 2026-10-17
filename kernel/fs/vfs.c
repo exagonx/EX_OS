@@ -1705,7 +1705,8 @@ static int vfs_rename_nl(const char *da, const char *a)
         r = fat_rename(g_mnt[im_da].mnt, int_da, int_a);
 
     if (r == -2) return ERR(EEXIST);
-    if (r == -3) return ERR(ENOSYS);   /* directory diverse */
+    if (r == -3) return ERR(ENOSYS);   /* directory diverse (FAT only, since 0.260) */
+    if (r == -4) return ERR(EINVAL);   /* a directory into itself */
     return (r != 0) ? ERR(EIO) : 0;
 }
 

@@ -362,7 +362,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog polltest toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -396,7 +396,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := polltest wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
@@ -1106,7 +1106,9 @@ shmtest: dirs $(SHMTEST_BIN)
 # prova che conta e' che il figlio veda il padre BLOCKED: senza quella, ogni
 # altra riga passerebbe identica anche con un'attesa attiva.
 POLLTEST_SRC := bin/polltest/polltest.c
-POLLTEST_BIN := $(BUILD_BIN)/polltest
+# CD only since 17 October 2026: the 32-bit floppy was full (svga.drv and
+# install grew), and a test of poll() is not needed to install.
+POLLTEST_BIN := $(BUILD_BIN_CD)/polltest
 POLLTEST_LD  := bin/polltest/polltest.ld
 
 $(POLLTEST_BIN): $(POLLTEST_SRC) $(POLLTEST_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
@@ -3138,6 +3140,29 @@ $(OROLOGIO_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(OROLOGIO_SRC) $(OROLOGIO_LD) $(EX
 .PHONY: orologio
 orologio: dirs $(OROLOGIO_BIN)
 
+# --- /exwin/bin/attesa: "loading, please wait" for big programs -------------
+# (17 October 2026, @ATTESA-CARICAMENTO) ex_spawn_program sends every program
+# file of 8 MB or more through it: a box with an animated hourglass that
+# starts the program and closes when its first window appears.
+ATTESA_SRC := exwin/bin/attesa/attesa.c
+ATTESA_BIN := $(BUILD_EXWIN_BIN)/attesa
+ATTESA_LD  := exwin/bin/attesa/attesa.ld
+
+$(ATTESA_BIN): $(ATTESA_SRC) $(ATTESA_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+               $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/attesa ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(ATTESA_SRC) -o $(BUILD_OBJ)/attesa_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/attesa_exwin.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/attesa_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(ATTESA_LD) \
+	    $(BUILD_OBJ)/attesa_start.o $(BUILD_OBJ)/attesa_main.o \
+	    $(BUILD_OBJ)/attesa_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] attesa compilato: $@"
+
+.PHONY: attesa
+attesa: dirs $(ATTESA_BIN)
+
 # --- /exwin/bin/exbrowser: mette insieme tutto -------------------------------
 #
 # ! SI CHIAMAVA /exwin/bin/browser FINO AL 23 SETTEMBRE 2026, e il nome l'ha
@@ -3236,7 +3261,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
-             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
+             $(OROLOGIO_BIN) $(ATTESA_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
              $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(EXWIFI_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) $(EXSUONO_SO) \
@@ -4327,22 +4352,32 @@ $(SSHD_BIN): $(SSHD_SRC) $(SSHD_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) \
 sshd: dirs $(SSHD_BIN)
 
 # --- /bin/ftp (solo CD) -------------------------------------------------------
-# Client FTP, modo PASSIVO soltanto: il modo attivo vuole che il client si
-# metta in ASCOLTO, e il nostro TCP non sa farlo (ne' funzionerebbe dietro
-# un NAT). Vedi drivers/net/ip_proto.h.
+# The ftp shell, FTP and FTPS (17 October 2026). The client is lib/exftp,
+# shared with ftpswap and netspeed; FTPS is exhttp's TLS, through the stub
+# (exhttp.so is loaded only when FTPS is used); exuser asks the password
+# without echo.
+EXFTP_SRC := lib/exftp/exftp.c
+EXFTP_HDR := lib/exftp/exftp.h
+
 FTP_SRC := bin/ftp/ftp.c
 FTP_BIN := $(BUILD_BIN_CD)/ftp
 FTP_LD  := bin/ftp/ftp.ld
 
-$(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(EXFTP_SRC) $(EXFTP_HDR) $(EXHTTP_STUB) $(EXHTTP_HDR) \
+            $(EXUSER_SRC) $(EXUSER_HDR) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) \
+            $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/ftp ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(FTP_SRC)  -o $(BUILD_OBJ)/ftp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I lib/exhttp -I lib/exuser -I drivers/net -I drivers/pci -c $(FTP_SRC)  -o $(BUILD_OBJ)/ftp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I lib/exhttp -I drivers/net -I drivers/pci -c $(EXFTP_SRC) -o $(BUILD_OBJ)/ftp_exftp.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/ftp_stub.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/ftp_exuser.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ftp_dns.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ftp_rete.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ftp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FTP_LD) \
-	    $(BUILD_OBJ)/ftp_start.o $(BUILD_OBJ)/ftp_main.o $(BUILD_OBJ)/ftp_dns.o \
+	    $(BUILD_OBJ)/ftp_start.o $(BUILD_OBJ)/ftp_main.o $(BUILD_OBJ)/ftp_exftp.o \
+	    $(BUILD_OBJ)/ftp_stub.o $(BUILD_OBJ)/ftp_exuser.o $(BUILD_OBJ)/ftp_dns.o \
 	    $(BUILD_OBJ)/ftp_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] ftp compilato: $@"
 
@@ -4350,11 +4385,9 @@ $(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $
 ftp: dirs $(FTP_BIN)
 
 # --- /bin/ftpswap (solo CD) ---------------------------------------------------
-# Tiene allineata una directory con un server FTP. Usa lib/exftp, che e' il
-# client FTP condiviso: bin/ftp ha ancora il suo, e passarcelo sopra e' un
-# lavoro a se' (vedi il commento in cima a lib/exftp/exftp.h).
-EXFTP_SRC := lib/exftp/exftp.c
-EXFTP_HDR := lib/exftp/exftp.h
+# Tiene allineata una directory con un server FTP. Usa lib/exftp, il client
+# FTP condiviso (con /bin/ftp e netspeed). Plain FTP only: no TLS function is
+# passed, so exhttp is not linked (exhttp.h is read for the transport type).
 
 FTPSWAP_SRC := bin/ftpswap/ftpswap.c
 FTPSWAP_BIN := $(BUILD_BIN_CD)/ftpswap
@@ -4365,8 +4398,8 @@ $(FTPSWAP_BIN): $(FTPSWAP_SRC) $(FTPSWAP_LD) $(EXFTP_SRC) $(EXFTP_HDR) $(IP_PROT
                 $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/ftpswap ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I drivers/net -I drivers/pci -c $(FTPSWAP_SRC) -o $(BUILD_OBJ)/ftpswap_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I drivers/net -I drivers/pci -c $(EXFTP_SRC)   -o $(BUILD_OBJ)/ftpswap_exftp.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I lib/exhttp -I drivers/net -I drivers/pci -c $(FTPSWAP_SRC) -o $(BUILD_OBJ)/ftpswap_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I lib/exhttp -I drivers/net -I drivers/pci -c $(EXFTP_SRC)   -o $(BUILD_OBJ)/ftpswap_exftp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ftpswap_dns.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ftpswap_rete.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ftpswap_start.o
@@ -4456,16 +4489,21 @@ NETSPEED_BIN := $(BUILD_BIN_CD)/netspeed
 NETSPEED_LD  := bin/netspeed/netspeed.ld
 
 $(NETSPEED_BIN): $(NETSPEED_SRC) $(NETSPEED_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) $(EXUSER_SRC) $(EXUSER_HDR) \
+                 $(EXFTP_SRC) $(EXFTP_HDR) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) \
                  $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/netspeed ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I lib/exuser -I drivers/net -c $(NETSPEED_SRC) -o $(BUILD_OBJ)/netspeed_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I lib/exftp -I lib/exuser -I drivers/net -c $(NETSPEED_SRC) -o $(BUILD_OBJ)/netspeed_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I lib/exhttp -I drivers/net -I drivers/pci -c $(EXFTP_SRC) -o $(BUILD_OBJ)/netspeed_exftp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/netspeed_stub.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/netspeed_exuser.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/netspeed_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/netspeed_rete.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/netspeed_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETSPEED_LD) \
 	    $(BUILD_OBJ)/netspeed_start.o $(BUILD_OBJ)/netspeed_main.o \
-	    $(BUILD_OBJ)/netspeed_stub.o $(BUILD_OBJ)/netspeed_exuser.o \
+	    $(BUILD_OBJ)/netspeed_exftp.o $(BUILD_OBJ)/netspeed_stub.o $(BUILD_OBJ)/netspeed_exuser.o \
+	    $(BUILD_OBJ)/netspeed_dns.o $(BUILD_OBJ)/netspeed_rete.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] netspeed compilato: $@"
 
@@ -5689,7 +5727,7 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
-                        $(HWINFO_BIN) $(CMP_BIN) $(POLLTEST_BIN) \
+                        $(HWINFO_BIN) $(CMP_BIN) \
                         $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(KEYMAP_BIN) \
                         $(TESTO_BIN) $(FDPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(DATE_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
                         $(SHUTDOWN_BIN) $(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt \
@@ -7790,7 +7828,7 @@ BINARI_SOLO_CD := $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) 
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
-                  $(SCARICA_BIN) $(SENDERROR_BIN) $(NETSPEED_BIN) \
+                  $(SCARICA_BIN) $(SENDERROR_BIN) $(NETSPEED_BIN) $(POLLTEST_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) $(SHMTEST_BIN) \

@@ -667,6 +667,25 @@ typedef struct {
 #define SYS_VIDEO_INFO    246   /* ebx = VideoInfo* */
 
 /* =============================================================================
+ * SYS_VIDEO_MODI (27) — the video modes the card offers (17 October 2026)
+ *
+ * The VBE list Stage 2 read at boot, only the usable ones (linear frame
+ * buffer, 16/24/32 bpp), as the card lists them: at most `max` copied into
+ * ebx, the number of modes known returned. 0 when Stage 2 did not look (text
+ * mode). For svga.drv -lista and the Video panel (@RISOLUZIONI): changing
+ * mode still goes through Stage 2 at the next boot.
+ * ========================================================================== */
+typedef struct {
+    uint16_t larghezza;
+    uint16_t altezza;
+    uint8_t  bit;           /* 16, 24 or 32 */
+    uint8_t  riserva;
+    uint16_t vbe;           /* the VBE mode number */
+} VideoModo;
+
+#define SYS_VIDEO_MODI    27    /* ebx = VideoModo*, ecx = max -> how many */
+
+/* =============================================================================
  * SYS_LOG (247) — una riga sul log del kernel, cioe' sulla SERIALE
  *
  * ! SERVE A CHI NON PUO' USARE printf, E NON E' UN DOPPIONE. printf scrive
@@ -1672,6 +1691,7 @@ int32_t sys_irq_bind(InterruptFrame *f);
 int32_t sys_poll(InterruptFrame *f);
 int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
+int32_t sys_video_modi(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);
 int32_t sys_lib_trova(InterruptFrame *f);

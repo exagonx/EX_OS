@@ -7734,8 +7734,8 @@ prova solo su macchina vera. Macchina dell'utente: scheda madre Core 2 Quad
 Q8600 a 64 bit con porta LPT. Da chiedere quando si parte: modo della porta nel
 BIOS (SPP/EPP/ECP), un disco Zip sacrificabile, 32 e 64 bit.
 
-@FTP-LIBRERIA (chiesto dall'utente il 17/10 mattina, DA FARE - prima l'utente
-azzera il contesto):
+@FTP-LIBRERIA (chiesto dall'utente il 17/10 mattina; punti 1-2 FATTI il 17/10,
+vedi @CODA-17-OTTOBRE; punto 3, il file manager, DA FARE):
   1. Il codice FTP/FTPS diventa una LIBRERIA (oggi sta dentro bin/netspeed:
      Ftp, ftp_riga/ftp_risposta/ftp_comando, PASV, STOR; il TLS e'
      exhttp_tls_sopra in lib/exhttp, TLS 1.3 soltanto, stato proprio per
@@ -7762,3 +7762,62 @@ temporaneo 1 MB casuale con tempo di scrittura su disco, POST una volta,
 ?download da' l'URL del file, N scaricamenti, 8 di base). PHP verificato con
 php CLI; -makeserver NON provato (serve un FTP vero: lo prova l'utente).
 tools/netinst/velocita tolto da netinst.
+
+@CODA-17-OTTOBRE (l'utente, 17/10 mattina, in quest'ordine; i test li fa lui):
+  1. @FTP-LIBRERIA punti 1-2: FATTO 17/10. lib/exftp riscritta (trasporti
+     ExHttpTrasporto con stato proprio per connessione, FTPS esplicito e
+     implicito via puntatore a exhttp_tls_sopra, EPSV/PASV/PORT, MLSD+LIST,
+     REST, APPE, ASCII con conversione, registro e avanzamento); /bin/ftp
+     0.002 shell completa (48 comandi); netspeed 0.003 la usa (il suo client
+     vecchio: exhttp_tcp ha UNO stato statico, la connessione dati prendeva
+     il posto di quella dei comandi); ftpswap invariato (solo FTP, non
+     riprovato). tools/prova_ftp.sh: 16/16 a 32 e 16/16 a 64 bit (server
+     Python tools/prova_ftp_server.py, CA di prova). Limite: niente ripresa
+     di sessione TLS (vsftpd require_ssl_reuse). Punto 3 (filemgr) DA FARE.
+  2. @LIBGIT2: FATTO 17/10 (64 bit). tools/libgit2-exos/costruisci.sh:
+     libgit2 1.9.6 statica nel sysroot x86_64-exos + git2, gruppo [git] del
+     CD strumenti 64. Serviti: kernel 0.260 (rename fra directory su ext2),
+     SSIZE_MAX, getpgid/sigpending/sigwait, __inline__ nei header (C90).
+     prova.sh 16/16 in QEMU; il repository passa git fsck vero. DA FARE: a 32
+     bit se serve; cargo che la usa (libgit2-sys con exos-compat.h).
+  3. @ATTESA-CARICAMENTO: FATTO 17/10. /exwin/bin/attesa (clessidra animata,
+     si chiude alla prima finestra del programma), ex_spawn_program per ogni
+     file >= 8 MB (menu, scrivania, file manager, exilla), WIN_MSG_ELENCO_UNA
+     nel server. tools/prova_attesa.sh in QEMU 32/64.
+  4. @EXILLA-NOME-SISTEMA: sorgenti FATTI 17/10 (user agent e
+     navigator.platform/oscpu = "EX-OS x86_64" / "EX-OS i686"); Firefox IN
+     COSTRUZIONE (32, poi 64: il 64 ricompila tutto il Rust, la std era
+     cambiata - target PIC). Poi: pacchetti netinst/netinst64 alla
+     pubblicazione.
+  5. @NVIDIA + @PANNELLO-VIDEO/@RISOLUZIONI. Parte video FATTA 17/10, IN
+     PROVA: Stage 2 raccoglie tutti i modi VBE usabili (tabella a 0xD400,
+     BootInfo +46/+50) e accetta qualunque modo (modo 4, svgacust a firma+21);
+     kernel 0.261 SYS_VIDEO_MODI (27); svga.drv 0.002 -lista, LxA qualsiasi,
+     -prova/-conferma/-annulla/-guardia; Impostazioni a schede (Video,
+     Scrivania, Sistema): lista dei modi, Prova (riavvia, 30 s per
+     confermare, senza risposta torna il modo di prima anche a schermo nero:
+     -guardia in avvio.sh, 120 s) e Applica. tools/prova_video.sh.
+     NVIDIA nativo DA FARE: chiedere all'utente quale macchina prima (PC
+     MCP73: GeForce 7100 10de:07e5, famiglia NV4x; portatile MCP77: GPU da
+     leggere, probabilmente GeForce 8200M G, famiglia G80) e cosa conta di
+     piu' (accelerazione 2D per wserver come @ACCEL-2D del SiS, o modi che
+     il VBE non ha - il pannello del portatile). Riferimento con licenza MIT:
+     xf86-video-nv (nv_hw.c modi NV4x, nv_xaa.c 2D, g80_* per G80).
+
+@EXT4-SCRITTURA (deciso con l'utente il 17/10 sera: PROSSIMO LAVORO, strada B)
+  Il piano completo di @EXT4-MODULO punti 2-3 (la scrittura in un modulo
+  caricato all'avvio, caricatore di moduli a 64 bit, controllo SHA-256 e
+  versione, rimontaggio sola lettura -> scrittura) PIU' la scrittura ext4
+  vera: extent (allocazione, crescita dell'albero), descrittori di gruppo a
+  64 bit, flex_bg, checksum metadata_csum (crc32c: inode, directory,
+  bitmap, descrittori, superblocco); journal lasciato intatto e vuoto (un
+  volume needs_recovery resta in sola lettura).
+  E IN PIU' (l'utente): mkfs e fdisk devono lavorare con ext2, ext3 ed ext4
+  (mkfs -t ext2|ext3|ext4; fdisk: tipi di partizione e cio' che serve per
+  crearle/riconoscerle).
+  ! Prove SOLO su immagini in QEMU, mai sui dischi dell'utente, finche'
+  e2fsck -fn dell'host non le da' pulite; confronto anche con il mount
+  di Linux in sola lettura (debugfs/e2fsck). Volumi di prova fatti da
+  mke2fs dell'host (ext4 1 KB e 4 KB, ext3) e da mkfs di EX-OS.
+  Budget dell'utente: limite settimanale all'80% il 17/10; stimato il
+  doppio della sola scrittura nel kernel - probabilmente su piu' sessioni.

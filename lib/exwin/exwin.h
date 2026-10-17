@@ -466,6 +466,15 @@ typedef struct {
 
 void        ex_track_windows(ExWindow f);
 int         ex_list_windows(ExWindowEntry *v, int max);
+/* The list ONCE, without taking the taskbar's subscription: f receives one
+ * EXM_WINDOW_LIST, then ex_list_windows reads it (17 October 2026). */
+void        ex_ask_windows(ExWindow f);
+
+/* Starts a program as spawn_ex does; a program file of 8 MB or more goes
+ * through /exwin/bin/attesa, the "loading, please wait" box with the
+ * hourglass that closes when the program's first window appears. `nome` is
+ * what the box calls it (0 = the file name). The pid started, or <0. */
+int         ex_spawn_program(const char *path, char *const argv[], const char *nome);
 void        ex_activate_window_id(unsigned int id);
 /* The same for one of this program's own windows, by handle: to the front,
  * with the keyboard focus (28 September 2026). A program that opens a side
@@ -1294,6 +1303,8 @@ void ex_screen_size(unsigned int *larghezza, unsigned int *altezza);
 #define ex_spegni_scrivania      ex_shutdown_desktop
 #define ex_finestre_segui        ex_track_windows
 #define ex_finestre_elenco       ex_list_windows
+#define ex_finestre_chiedi       ex_ask_windows
+#define ex_avvia_programma       ex_spawn_program
 #define ex_finestra_attiva       ex_activate_window_id
 #define ex_attiva                ex_activate
 #define ex_menu_comparsa         ex_popup_menu

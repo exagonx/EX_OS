@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.259
+**Versione:** 0.262
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -361,6 +361,20 @@ dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
 in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**0.260**: `rename()` sposta file e cartelle fra cartelle diverse su ext2
+(finora rinominava solo sul posto, e altrimenti rispondeva ENOSYS). Una
+cartella spostata riceve il suo `..` riscritto e il collegamento passa dal
+vecchio padre al nuovo; spostare una cartella dentro se stessa e' rifiutato.
+L'ha scoperto **libgit2 su EX-OS a 64 bit**: scrive ogni oggetto in un file
+temporaneo e lo sposta in `.git/objects/xx/`. libgit2 1.9.6 (con HTTPS via
+OpenSSL) ora si costruisce per EX-OS (`tools/libgit2-exos/costruisci.sh`) e,
+in QEMU, un programma di prova fa init, commit, status, log, branch, diff e
+un clone locale (16 su 16); il repository che scrive passa il `git fsck` vero.
+Nuovi anche: la libreria FTP/FTPS condivisa e `/bin/ftp` come shell ftp
+completa con FTPS (vedi il manuale della rete), e un riquadro «caricamento in
+corso, attendere» con la clessidra per ogni programma grosso. Su FAT si
+rinomina ancora solo sul posto.
 
 **0.259**: lo stat non dice piu' "sola lettura" per ogni file su ext2 e FAT,
 un residuo di quando quei filesystem non si scrivevano: i programmi vedevano

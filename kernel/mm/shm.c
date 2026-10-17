@@ -242,7 +242,13 @@ static uint32_t pagine_max(void)
     vga_info_fb(&fisico, &passo, &w, &h, &bpp);
     if (passo == 0 || h == 0) return SHM_PAGINE_MIN;
 
-    byte   = passo * h;
+    /* ! AT 4 BYTES A PIXEL, whatever the screen's depth (kernel 0.262): the
+     * window server keeps its windows at 32 bits and converts when it draws.
+     * Measured by the screen's own pitch, a 16-bit screen of 1024x768 gave a
+     * cap of 384 pages to a window of 768, and ExWin did not start (the
+     * Video panel's trial of 17 October 2026). */
+    byte   = w * 4u * h;
+    if (byte < passo * h) byte = passo * h;
     pagine = ALIGN_UP(byte, PAGE_SIZE) / PAGE_SIZE;
 
     return (pagine < SHM_PAGINE_MIN) ? SHM_PAGINE_MIN : pagine;

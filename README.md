@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.259
+**Version:** 0.262
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -337,6 +337,19 @@ chipset to ACPI mode first if needed. `reboot` tries, in order, the ACPI reset
 register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
+
+**0.260**: `rename()` moves files and directories between directories on
+ext2 (until now it renamed in place only and answered ENOSYS otherwise). A
+directory that moves gets its `..` rewritten and its link moves from the old
+parent to the new one; moving a directory into itself is refused. Found by
+**libgit2 on 64-bit EX-OS**: it writes every object to a temporary file and
+moves it into `.git/objects/xx/`. libgit2 1.9.6 (with HTTPS through OpenSSL)
+now builds for EX-OS (`tools/libgit2-exos/costruisci.sh`) and, in QEMU, a
+test program does init, commit, status, log, branch, diff and a local clone
+(16 of 16); the repository it writes passes the real `git fsck`. Also new:
+the shared FTP/FTPS library and `/bin/ftp` as a full ftp shell with FTPS
+(see the network manual), and a "loading, please wait" box with an hourglass
+for every big program. FAT still renames in place only.
 
 **0.259**: stat no longer reports every file on ext2 and FAT as read-only, a
 leftover from when those filesystems were not written: programs saw files

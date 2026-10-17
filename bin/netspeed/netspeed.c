@@ -39,7 +39,10 @@
  *
  * ! FTPS IS EXPLICIT (AUTH TLS on port 21), with PROT P: commands and data
  * are both encrypted, through exhttp's TLS (exhttp_tls_sopra). EX-OS speaks
- * TLS 1.3 only; a server that offers 1.2 alone gets a clear refusal.
+ * TLS 1.3 only; a server that offers 1.2 alone gets a clear refusal. The
+ * FTP client is lib/exftp (0.003; until 0.002 netspeed had its own, whose
+ * data connection reused exhttp_tcp's single static state and so took over
+ * the control connection's transport - -makeserver could not have worked).
  * ============================================================================= */
 #include "libc.h"
 
@@ -48,10 +51,11 @@
  * getting the data onto the disk. */
 extern int fsync(int fd) __attribute__((weak));
 #include "exhttp.h"
+#include "exftp.h"
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `netspeed -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netspeed", "0.002");
+EX_VERSIONE("netspeed", "0.003");
 
 #define CHIAVE      "exos"          /* the same as in the generated PHP */
 #define DATI_N      (1024u * 1024u) /* the test file: 1 MB */
@@ -86,19 +90,18 @@ static void velocita(char *s, unsigned int max, unsigned long n, unsigned long m
 /* One line from the keyboard, without the newline. 0 at end of input. */
 static int chiedi(const char *domanda, const char *pred, char *dst, unsigned int max)
 {
-    unsigned int n = 0;
-    char         c;
+    int n;
 
     printf("%s", domanda);
     if (pred && pred[0]) printf(" [%s]", pred);
     printf(": ");
     fflush(stdout);
-    while (read(0, &c, 1) == 1) {
-        if (c == '\r') continue;
-        if (c == '\n') break;
-        if (n + 1 < max) dst[n++] = c;
-    }
+    /* ! One read() for the whole line: the console drops what a 1-byte read
+     * leaves behind, and the newline never came (17/10/2026, ftp). */
+    n = (int)read(0, dst, max - 1);
+    if (n < 0) n = 0;
     dst[n] = 0;
+    while (n > 0 && (dst[n - 1] == '\n' || dst[n - 1] == '\r')) dst[--n] = 0;
     while (n > 0 && dst[n - 1] == ' ') dst[--n] = 0;
     if (n == 0 && pred) { strncpy(dst, pred, max - 1); dst[max - 1] = 0; }
     return 1;
@@ -276,151 +279,12 @@ static unsigned int php_genera(char *dst, unsigned int max, const char *sito, co
     return n;
 }
 
-/* =============================================================================
- * A small FTP client: commands on one connection, data on another (PASV)
- * ============================================================================= */
-typedef struct {
-    ExHttpTrasporto t;
-    char            host[128];
-    int             cifrato;        /* 1 after AUTH TLS */
-    unsigned char   buf[1024];
-    unsigned int    n;
-    char            ultima[256];    /* the last reply, for messages */
-} Ftp;
-
-/* One line of the reply, without CR LF. 0 if the connection gave nothing. */
-static int ftp_riga(Ftp *f, char *riga, unsigned int max)
+/* The FTP/FTPS dialogue is lib/exftp's (shared with /bin/ftp and ftpswap
+ * since 17 October 2026): what netspeed says of it is the '!' notes. */
+static void ftp_nota(void *dato, int verso, const char *riga)
 {
-    for (;;) {
-        unsigned int i;
-        int          r;
-
-        for (i = 0; i < f->n; i++) {
-            if (f->buf[i] == '\n') {
-                unsigned int k = i;
-
-                if (k > 0 && f->buf[k - 1] == '\r') k--;
-                if (k >= max) k = max - 1;
-                memcpy(riga, f->buf, k);
-                riga[k] = 0;
-                memmove(f->buf, f->buf + i + 1, f->n - i - 1);
-                f->n -= i + 1;
-                return 1;
-            }
-        }
-        if (f->n == sizeof(f->buf)) f->n = 0;     /* a line too long: dropped */
-        r = f->t.leggi(f->t.stato, f->buf + f->n, sizeof(f->buf) - f->n, 20000);
-        if (r <= 0) return 0;
-        f->n += (unsigned int)r;
-    }
-}
-
-/* The reply code (multi-line replies read to their end), 0 on silence. */
-static int ftp_risposta(Ftp *f)
-{
-    char riga[512];
-    int  codice;
-
-    if (!ftp_riga(f, riga, sizeof(riga))) return 0;
-    strncpy(f->ultima, riga, sizeof(f->ultima) - 1);
-    f->ultima[sizeof(f->ultima) - 1] = 0;
-    codice = atoi(riga);
-    if (strlen(riga) >= 4 && riga[3] == '-') {
-        char fine[5];
-
-        memcpy(fine, riga, 3);
-        fine[3] = ' ';
-        fine[4] = 0;
-        while (ftp_riga(f, riga, sizeof(riga))) {
-            if (strncmp(riga, fine, 4) == 0) {
-                strncpy(f->ultima, riga, sizeof(f->ultima) - 1);
-                break;
-            }
-        }
-    }
-    return codice;
-}
-
-static int scrivi_tutto(ExHttpTrasporto *t, const void *dati, unsigned int n)
-{
-    const unsigned char *p = (const unsigned char *)dati;
-
-    while (n > 0) {
-        int r = t->scrivi(t->stato, p, n);
-
-        if (r <= 0) return 0;
-        p += r;
-        n -= (unsigned int)r;
-    }
-    return 1;
-}
-
-/* Sends one command; the reply code. The line is wiped from the stack after
- * sending: for PASS it holds the password. */
-static int ftp_comando(Ftp *f, const char *cmd, const char *arg)
-{
-    char riga[512];
-
-    snprintf(riga, sizeof(riga), "%s%s%s\r\n", cmd, arg ? " " : "", arg ? arg : "");
-    if (!scrivi_tutto(&f->t, riga, (unsigned int)strlen(riga))) return 0;
-    memset(riga, 0, sizeof(riga));
-    return ftp_risposta(f);
-}
-
-/* PASV, then a data connection to the port it names - on the SAME host name:
- * the address in the reply is often a private one behind the server's NAT,
- * and FTPS checks the certificate against the name. */
-static int ftp_dati(Ftp *f, ExHttpTrasporto *d)
-{
-    const char  *p;
-    unsigned int v[6], k = 0;
-
-    if (ftp_comando(f, "PASV", 0) != 227) return 0;
-    p = strchr(f->ultima, '(');
-    if (!p) return 0;
-    p++;
-    while (k < 6 && *p) {
-        if (*p >= '0' && *p <= '9') {
-            v[k++] = (unsigned int)atoi(p);
-            while (*p >= '0' && *p <= '9') p++;
-        } else {
-            p++;
-        }
-    }
-    if (k < 6) return 0;
-    return exhttp_tcp(d, f->host, v[4] * 256u + v[5]);
-}
-
-/* Upload `dati` as `nome` in the current directory, in binary mode. */
-static int ftp_stor(Ftp *f, const char *nome, const char *dati, unsigned int n, char *errore, unsigned int emax)
-{
-    ExHttpTrasporto tcp, d;
-    int             r;
-
-    if (!ftp_dati(f, &tcp)) { snprintf(errore, emax, "PASV: %s", f->ultima); return 0; }
-    r = ftp_comando(f, "STOR", nome);
-    if (r != 150 && r != 125) {
-        tcp.chiudi(tcp.stato);
-        snprintf(errore, emax, "STOR: %s", f->ultima);
-        return 0;
-    }
-    if (f->cifrato) {
-        if (!exhttp_tls_sopra(&d, &tcp, f->host, errore, emax)) {
-            tcp.chiudi(tcp.stato);
-            return 0;
-        }
-    } else {
-        d = tcp;
-    }
-    if (!scrivi_tutto(&d, dati, n)) {
-        d.chiudi(d.stato);
-        snprintf(errore, emax, "la connessione dei dati si e' chiusa durante l'invio");
-        return 0;
-    }
-    d.chiudi(d.stato);
-    r = ftp_risposta(f);
-    if (r != 226 && r != 250) { snprintf(errore, emax, "dopo l'invio: %s", f->ultima); return 0; }
-    return 1;
+    (void)dato;
+    if (verso == '!') printf("  (%s)\n", riga);
 }
 
 /* =============================================================================
@@ -431,8 +295,8 @@ static char g_php[16384];
 static int fai_server(void)
 {
     char   tipo[16], server[160], utente[96], password[128], cartella[256], sito[URL_MAX];
-    char   data[32], errore[160], url[URL_MAX];
-    Ftp   *f;
+    char   data[32], url[URL_MAX];
+    ExFtp *f;
     char  *dp;
     unsigned int porta = 21, n;
     int    r, cifrato, i;
@@ -483,55 +347,40 @@ static int fai_server(void)
            cartella, utente);
     printf("Il punto di misura sara' %s (index.php, %u byte)\n\n", url, n);
 
-    f = (Ftp *)calloc(1, sizeof(*f));
+    f = (ExFtp *)calloc(1, sizeof(*f));
     if (!f) { memset(password, 0, sizeof(password)); return 1; }
-    strncpy(f->host, server, sizeof(f->host) - 1);
-    if (!exhttp_tcp(&f->t, server, porta)) {
-        printf("netspeed: non riesco a collegarmi a %s:%u\n", server, porta);
+    exftp_prepara(f);
+    f->tls      = exhttp_tls_sopra;
+    f->registro = ftp_nota;
+    r = exftp_connetti(f, server, porta, cifrato ? EXFTP_TLS : EXFTP_CHIARO);
+    if (r != 0) {
+        printf("netspeed: %s:%u: %s\n", server, porta, f->errore[0] ? f->errore : exftp_perche(r));
         memset(password, 0, sizeof(password));
+        free(f);
         return 1;
     }
-    r = ftp_risposta(f);
-    if (r != 220) { printf("netspeed: il server non si presenta come FTP: %s\n", f->ultima); goto fine; }
-    if (cifrato) {
-        ExHttpTrasporto tcp = f->t;
-
-        r = ftp_comando(f, "AUTH", "TLS");
-        if (r != 234) { printf("netspeed: il server non accetta FTPS (AUTH TLS): %s\n", f->ultima); goto fine; }
-        if (!exhttp_tls_sopra(&f->t, &tcp, server, errore, sizeof(errore))) {
-            printf("netspeed: TLS non riuscito: %s\n", errore);
-            tcp.chiudi(tcp.stato);
-            memset(password, 0, sizeof(password));
-            return 1;
-        }
-        f->cifrato = 1;
-        printf("  connessione cifrata (TLS 1.3)\n");
-    }
-    r = ftp_comando(f, "USER", utente);
-    if (r == 331) r = ftp_comando(f, "PASS", password);
+    if (cifrato) printf("  connessione cifrata (TLS 1.3)\n");
+    r = exftp_accedi(f, utente, password);
     memset(password, 0, sizeof(password));
-    if (r != 230 && r != 202) { printf("netspeed: accesso rifiutato: %s\n", f->ultima); goto fine; }
-    printf("  accesso come %s\n", utente);
-    if (ftp_comando(f, "TYPE", "I") != 200) { printf("netspeed: modo binario rifiutato: %s\n", f->ultima); goto fine; }
-    if (cifrato) {
-        ftp_comando(f, "PBSZ", "0");
-        if (ftp_comando(f, "PROT", "P") != 200) { printf("netspeed: PROT P rifiutato: %s\n", f->ultima); goto fine; }
-    }
-    if (cartella[0] && strcmp(cartella, "/") != 0 && ftp_comando(f, "CWD", cartella) != 250) {
-        printf("netspeed: la cartella %s non c'e': %s\n", cartella, f->ultima);
+    if (r != 0) { printf("netspeed: accesso rifiutato: %s\n", f->risposta); goto fine; }
+    printf("  accesso come %s%s\n", utente, f->prot_p ? ", dati cifrati" : "");
+    if (cartella[0] && strcmp(cartella, "/") != 0 && exftp_cd(f, cartella) != 0) {
+        printf("netspeed: la cartella %s non c'e': %s\n", cartella, f->risposta);
         goto fine;
     }
-    r = ftp_comando(f, "MKD", "netspeed");
-    if (r == 257) printf("  cartella netspeed creata\n");
-    else          printf("  cartella netspeed: %s\n", f->ultima);    /* most often: it exists */
-    if (ftp_comando(f, "CWD", "netspeed") != 250) { printf("netspeed: non entro in netspeed: %s\n", f->ultima); goto fine; }
-    if (!ftp_stor(f, "index.php", g_php, n, errore, sizeof(errore))) {
-        printf("netspeed: index.php non caricato: %s\n", errore);
+    r = exftp_mkd(f, "netspeed");
+    if (r == 0) printf("  cartella netspeed creata\n");
+    else        printf("  cartella netspeed: %s\n", f->risposta);    /* most often: it exists */
+    if (exftp_cd(f, "netspeed") != 0) { printf("netspeed: non entro in netspeed: %s\n", f->risposta); goto fine; }
+    r = exftp_carica_mem(f, g_php, n, "index.php");
+    if (r != 0) {
+        printf("netspeed: index.php non caricato: %s\n",
+               f->errore[0] ? f->errore : f->risposta[0] ? f->risposta : exftp_perche(r));
         goto fine;
     }
     printf("  index.php caricato (%u byte)\n", n);
-    ftp_comando(f, "QUIT", 0);
-    f->t.chiudi(f->t.stato);
+    exftp_chiudi(f);
+    free(f);
 
     /* The proof: the page answers as the script it is. */
     {
@@ -555,9 +404,8 @@ static int fai_server(void)
     return 0;
 
 fine:
-    memset(password, 0, sizeof(password));
-    ftp_comando(f, "QUIT", 0);
-    f->t.chiudi(f->t.stato);
+    exftp_chiudi(f);
+    free(f);
     return 1;
 }
 

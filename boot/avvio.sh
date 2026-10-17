@@ -37,6 +37,12 @@
 # con '&' vanno nei suoi log invece che sullo schermo.
 extaskbar -auto
 
+# (Same line in bin/hwconfig/hwconfig.c.) A video mode on trial (Impostazioni,
+# Video, Prova): if nobody confirms it within two minutes - the screen may
+# be black - svga.drv puts the old mode back and reboots. Without a trial it
+# exits at once.
+/dev/svga.drv -guardia &
+
 echo Accendo la rete...
 
 # L'ordine non e' modificabile: ogni passo serve al successivo.

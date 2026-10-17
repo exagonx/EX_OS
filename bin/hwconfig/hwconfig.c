@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.004");
+EX_VERSIONE("hwconfig", "0.005");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -1076,6 +1076,11 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# tutto il resto: cosi' anche i primi messaggi dei servizi lanciati qui sotto\n"
         "# con '&' vanno nei suoi log invece che sullo schermo.\n"
         "extaskbar -auto\n"
+        "\n"
+        "# A video mode on trial (Impostazioni, Video, Prova): if nobody confirms it\n"
+        "# within two minutes - the screen may be black - svga.drv puts the old mode\n"
+        "# back and reboots. Without a trial it exits at once.\n"
+        "/dev/svga.drv -guardia &\n"
         "\n", max - 1 - strlen(out));
 
     /* ! IL BUS PCI SERVE ANCHE SENZA RETE, da quando ci sono i driver USB:

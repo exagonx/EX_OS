@@ -1,5 +1,5 @@
 /* =============================================================================
- * bin/ftp/ftp.c
+ * bin/ftp/ftp.c — the ftp shell, FTP and FTPS
  * EX-OS — Extensible Operating System
  *
  * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
@@ -9,702 +9,971 @@
  * See the LICENSE file in the project root for the full license text.
  * =============================================================================
  *
- * Client FTP.
+ *     ftp                                  the ftp> prompt, not connected yet
+ *     ftp [-tls|-tlsi] SERVER [PORT]       connects, asks user and password
+ *     ftp SERVER -u USER [-w PASS] [-p PORT] [-a] [-v] [command ...]
  *
- *   ftp server                      entra e apre la riga di comando
- *   ftp server -u tizio -w segreto
- *   ftp server ls                   un comando solo, poi esce
- *   ftp server get remoto.txt
+ * With a command after the options, that command alone runs and ftp exits
+ * (the 0.001 behaviour, kept for scripts): `ftp server get file.txt`.
  *
- * Comandi: ls, cd, pwd, get, put, bye.
+ * The user (17 October 2026): typed alone, ftp opens a SHELL with every
+ * command of the classic ftp client, and FTPS. `help` lists them; the table
+ * `g_comandi` below is the list, with each command's help line.
  *
- * -----------------------------------------------------------------------------
- * ! SOLO MODO PASSIVO (PASV), E NON E' UNA SEMPLIFICAZIONE
+ * Everything that talks to the server is lib/exftp (shared with ftpswap,
+ * netspeed and the file manager); FTPS is exhttp's TLS (TLS 1.3), loaded at
+ * 32 bit from exhttp.so only when FTPS is used.
  *
- * FTP ha due modi di aprire la connessione dati. In modo ATTIVO e' il
- * SERVER a ricollegarsi al client, che quindi deve mettersi in ascolto —
- * e il TCP di EX-OS non sa farlo (vedi drivers/net/ip_proto.h: manca il
- * ramo LISTEN, di proposito). In modo PASSIVO e' il client ad aprire
- * anche la seconda connessione, ed e' l'unica cosa che sappiamo fare.
+ * ! PLAIN FTP SENDS THE PASSWORD IN CLEAR. It is the protocol, not this
+ * program: whoever is on the path reads user and password as they are. The
+ * program says so once, when a password is about to go out unencrypted,
+ * and offers `open -tls` (explicit FTPS, AUTH TLS) as the way out.
  *
- * Non e' un ripiego: il modo attivo non funziona comunque dietro un NAT,
- * ed e' per questo che ogni client serio usa PASV da vent'anni.
- *
- * -----------------------------------------------------------------------------
- * ! FTP MANDA LA PASSWORD IN CHIARO
- *
- * Non e' un difetto di questo programma: e' il protocollo. Chiunque stia
- * sul percorso legge utente e password cosi' come sono. Va usato su una
- * rete di cui ci si fida, o non va usato — e quando ci sara' TLS,
- * l'alternativa si chiamera' SFTP o FTPS, non "ftp con una toppa".
- *
- * Il programma lo dice all'accesso, una volta, invece di lasciarlo
- * intendere.
- *
- * -----------------------------------------------------------------------------
- * ! LE RISPOSTE FTP POSSONO ESSERE SU PIU' RIGHE
- *
- * "220-Benvenuto" seguito da altre righe e chiuso da "220 Pronto". La
- * regola e' il TRATTINO dopo il codice: finche' c'e', la risposta
- * continua. Leggere solo la prima riga significa trovarsi le righe
- * successive in testa alla risposta del comando DOPO, e da li' in avanti
- * ogni codice letto e' quello sbagliato.
+ * ! THE PASSWORD IS ASKED WITHOUT ECHO (exuser_leggi_password, console and
+ * pseudo-terminal alike) and wiped from memory once sent; -w on the command
+ * line exists for scripts, and a command line is visible to whoever lists
+ * the processes.
  * ============================================================================= */
-
 #include "libc.h"
-#include "ip_proto.h"
-#include "dns.h"
-#include "rete.h"
+#include "exftp.h"
+#include "exhttp.h"
+#include "exuser.h"
 
-/* +0.001 a ogni modifica: `ftp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ftp", "0.001");
+/* +0.001 at every change: `ftp -version` prints it. See EX_VERSIONE. */
+EX_VERSIONE("ftp", "0.002");
 
-#define BUF_CTRL   4096
-#define BUF_DATI   2048
+#define RIGA_MAX   1024
+#define ARGS_MAX   16
 
-static int ip_uguali_4(const unsigned char *a, const unsigned char *b)
-{
-    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
-}
-
-static int pid_ip = 0;
-static int ctrl   = 0;          /* id della connessione di controllo */
-
-/* Accumulatore della connessione di controllo: le risposte arrivano a
- * pezzi che non coincidono con le righe. */
-static char         g_acc[BUF_CTRL];
-static unsigned int g_acc_len = 0;
+static ExFtp g_f;
+static int   g_modo     = EXFTP_CHIARO;   /* how `open` connects by default */
+static int   g_chiedi   = 1;              /* `prompt`: ask in mget/mput/mdelete */
+static int   g_hash     = 0;              /* `hash`: a # every 8 KB */
+static int   g_debug    = 0;              /* `debug`: show the commands sent */
+static int   g_verboso  = 1;              /* `verbose`: show the replies */
+static long  g_hash_fatti;
+static unsigned long g_t0;
 
 /* =============================================================================
- * Dialogo con lo stack
+ * The log hook: what the user sees of the dialogue
  * ============================================================================= */
-static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
-                   unsigned int ms)
+static void registro(void *dato, int verso, const char *riga)
 {
-    IpcMessage meta;
-    int        i;
-
-    for (i = 0; i < 64; i++) {
-        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) return -1;
-        if ((int)meta.sender_pid != pid_ip) continue;
-        if (meta.tipo != tipo) continue;
-        if (len) *len = meta.len;
-        return 0;
-    }
-    return -1;
+    (void)dato;
+    if (verso == '<' && g_verboso) printf("%s\n", riga);
+    else if (verso == '>' && g_debug) printf("---> %s\n", riga);
+    else if (verso == '!' && (g_verboso || g_debug)) printf("(%s)\n", riga);
 }
 
-static int esito(unsigned int ms)
+static int avanza(void *dato, long fatti, long totale)
 {
-    unsigned char buf[IPC_MSG_MAX_DATA];
-    unsigned int  len;
-    IpEsito       e;
-
-    if (attendi(IP_MSG_ESITO, buf, &len, ms) != 0 || len < sizeof(e)) return -1;
-    memcpy(&e, buf, sizeof(e));
-    return e.codice;
-}
-
-/* Apre una connessione, ritentando su -EAGAIN (l'ARP non c'e' ancora). */
-static int apri(const unsigned char *ip, unsigned int porta)
-{
-    IpTcpApri a;
-    int       id = -1, giri;
-
-    memcpy(a.ip, ip, 4);
-    a.porta      = porta;
-    a.timeout_ms = 8000;
-
-    for (giri = 0; giri < 10; giri++) {
-        if (ipc_send(pid_ip, IP_MSG_TCP_APRI, &a, sizeof(a)) < 0) return -1;
-        id = esito(10000);
-        if (id != -EAGAIN) break;
-        usleep(200 * 1000);
-    }
-    return id;
-}
-
-static void chiudi(int id)
-{
-    IpTcpRif r;
-
-    if (id <= 0) return;
-    r.id = (unsigned int)id;
-    ipc_send(pid_ip, IP_MSG_TCP_CHIUDI, &r, sizeof(r));
-    esito(2000);
-}
-
-/* Legge un blocco da una connessione. Ritorna i byte letti, 0 se l'altro
- * ha chiuso, <0 su errore. */
-static int leggi(int id, unsigned char *dst, unsigned int max, unsigned int ms)
-{
-    unsigned char buf[IPC_MSG_MAX_DATA];
-    unsigned int  len;
-    IpTcpRif      r;
-    IpTcpDati     d;
-
-    r.id = (unsigned int)id;
-    if (ipc_send(pid_ip, IP_MSG_TCP_RICEVI, &r, sizeof(r)) < 0) return -1;
-    if (attendi(IP_MSG_TCP_DATI, buf, &len, ms) != 0) return -1;
-    if (len < sizeof(d)) return -1;
-
-    memcpy(&d, buf, sizeof(d));
-    if (d.len == 0) return 0;
-    if (d.len > max) d.len = max;
-
-    memcpy(dst, buf + sizeof(d), d.len);
-    return (int)d.len;
-}
-
-static int scrivi(int id, const unsigned char *src, unsigned int n)
-{
-    unsigned char msg[sizeof(IpTcpDati) + 1024];
-    IpTcpDati     d;
-    unsigned int  fatti = 0;
-
-    while (fatti < n) {
-        unsigned int q = n - fatti;
-        int          rc;
-
-        if (q > 1024u) q = 1024u;
-
-        d.id = (unsigned int)id;
-        d.len = q;
-        memcpy(msg, &d, sizeof(d));
-        memcpy(msg + sizeof(d), src + fatti, q);
-
-        if (ipc_send(pid_ip, IP_MSG_TCP_INVIA, msg, sizeof(d) + q) < 0) return -1;
-        rc = esito(8000);
-        if (rc < 0) return rc;
-
-        /* ! LO STACK PUO' ACCETTARNE MENO DI QUANTI GLIENE OFFRIAMO
-         * (buffer quasi pieno): il valore restituito e' quanti ne sono
-         * entrati davvero. Andare avanti come se li avesse presi tutti
-         * significherebbe saltare dei byte in mezzo al file. */
-        if (rc == 0) { usleep(50 * 1000); continue; }
-        fatti += (unsigned int)rc;
-    }
-    return (int)fatti;
-}
-
-/* =============================================================================
- * Righe e risposte della connessione di controllo
- * ============================================================================= */
-
-/* Estrae una riga dall'accumulatore. 1 se c'era, 0 se serve leggere. */
-static int riga_pronta(char *out, unsigned int max)
-{
-    unsigned int i, n;
-
-    for (i = 0; i < g_acc_len; i++) {
-        if (g_acc[i] != '\n') continue;
-
-        n = i;
-        if (n > 0 && g_acc[n - 1] == '\r') n--;
-        if (n > max - 1) n = max - 1;
-
-        memcpy(out, g_acc, n);
-        out[n] = '\0';
-
-        memmove(g_acc, g_acc + i + 1, g_acc_len - i - 1);
-        g_acc_len -= i + 1;
-        return 1;
-    }
-    return 0;
-}
-
-static int riga_ctrl(char *out, unsigned int max, unsigned int ms)
-{
-    while (!riga_pronta(out, max)) {
-        int n;
-
-        if (g_acc_len >= sizeof(g_acc)) return -1;   /* riga assurda */
-        n = leggi(ctrl, (unsigned char *)g_acc + g_acc_len,
-                  (unsigned int)(sizeof(g_acc) - g_acc_len), ms);
-        if (n <= 0) return -1;
-        g_acc_len += (unsigned int)n;
-    }
-    return 0;
-}
-
-/* Legge una risposta completa, righe di continuazione comprese.
- * Ritorna il codice numerico, <0 se non arriva. */
-static int risposta(int mostra)
-{
-    char riga[512];
-    char codice[4];
-    int  primo = 1, n;
-
-    codice[0] = '\0';
-
-    for (;;) {
-        if (riga_ctrl(riga, sizeof(riga), 10000) != 0) return -1;
-        if (mostra) printf("%s\n", riga);
-
-        n = (int)strlen(riga);
-        if (n < 4) continue;
-        if (riga[0] < '0' || riga[0] > '9') continue;   /* riga di testo */
-
-        if (primo) {
-            codice[0] = riga[0]; codice[1] = riga[1];
-            codice[2] = riga[2]; codice[3] = '\0';
-            primo = 0;
-            /* ! IL TRATTINO DICE CHE CONTINUA. Senza questo controllo la
-             * prima riga di un banner multiriga verrebbe presa per la
-             * risposta intera, e tutto il resto finirebbe in testa alla
-             * risposta del comando successivo. */
-            if (riga[3] == '-') continue;
-            break;
+    (void)dato; (void)totale;
+    if (g_hash) {
+        while (g_hash_fatti + 8192 <= fatti) {
+            printf("#");
+            g_hash_fatti += 8192;
         }
-
-        /* Fine: stesso codice seguito da uno spazio. */
-        if (riga[0] == codice[0] && riga[1] == codice[1] &&
-            riga[2] == codice[2] && riga[3] == ' ') break;
+        fflush(stdout);
     }
-
-    return (codice[0] - '0') * 100 + (codice[1] - '0') * 10 + (codice[2] - '0');
-}
-
-static int comando(const char *cmd, const char *arg, int mostra)
-{
-    char linea[600];
-    unsigned int n = 0, i;
-
-    for (i = 0; cmd[i] && n < sizeof(linea) - 4; i++) linea[n++] = cmd[i];
-    if (arg && arg[0]) {
-        linea[n++] = ' ';
-        for (i = 0; arg[i] && n < sizeof(linea) - 3; i++) linea[n++] = arg[i];
-    }
-    linea[n++] = '\r';
-    linea[n++] = '\n';
-
-    if (scrivi(ctrl, (const unsigned char *)linea, n) < 0) return -1;
-    return risposta(mostra);
-}
-
-/* =============================================================================
- * PASV
- *
- * La risposta e' "227 <testo> (h1,h2,h3,h4,p1,p2)". Si cercano sei numeri
- * dentro le parentesi: i primi quattro sono l'indirizzo, gli ultimi due la
- * porta in due byte (p1*256 + p2).
- *
- * ! SI CERCANO I NUMERI, NON SI SEGUE UN FORMATO. Il testo fra il codice
- * e la parentesi cambia da server a server ("Entering Passive Mode",
- * "=", tradotto in un'altra lingua): affidarsi alle parole vorrebbe dire
- * funzionare con un server e non con il successivo.
- * ============================================================================= */
-static int leggi_pasv(const char *riga, unsigned char *ip, unsigned int *porta)
-{
-    const char *p = riga;
-    unsigned int v[6];
-    int          i;
-
-    while (*p && *p != '(') p++;
-    if (*p != '(') return 0;
-    p++;
-
-    for (i = 0; i < 6; i++) {
-        unsigned int x = 0;
-        int          cifre = 0;
-
-        while (*p == ' ') p++;
-        while (*p >= '0' && *p <= '9') { x = x * 10u + (unsigned)(*p - '0'); p++; cifre++; }
-        if (cifre == 0 || x > 255u) return 0;
-        v[i] = x;
-        if (i < 5) {
-            while (*p == ' ') p++;
-            if (*p != ',') return 0;
-            p++;
-        }
-    }
-
-    ip[0] = (unsigned char)v[0]; ip[1] = (unsigned char)v[1];
-    ip[2] = (unsigned char)v[2]; ip[3] = (unsigned char)v[3];
-    *porta = v[4] * 256u + v[5];
     return 1;
 }
 
-/* Apre la connessione dati. Ritorna l'id, <0 in caso di errore.
- *
- * ! SI USA L'INDIRIZZO DEL SERVER DI CONTROLLO, NON QUELLO ANNUNCIATO
- * DAL PASV, quando i due differiscono. Un server dietro NAT annuncia
- * spesso il proprio indirizzo PRIVATO, che dal nostro lato non e'
- * raggiungibile: la porta e' l'informazione utile, l'indirizzo lo
- * sappiamo gia'. */
-static int apri_dati(const unsigned char *ip_server)
-{
-    char          riga[512];
-    unsigned char ip[4];
-    unsigned int  porta;
-    int           codice, id;
-
-    /* La risposta al PASV va letta riga per riga: ci serve il TESTO, non
-     * solo il codice. */
-    {
-        char linea[16];
-        unsigned int n = 0;
-        const char  *c = "PASV\r\n";
-
-        while (c[n]) { linea[n] = c[n]; n++; }
-        if (scrivi(ctrl, (const unsigned char *)linea, n) < 0) return -1;
-    }
-
-    if (riga_ctrl(riga, sizeof(riga), 10000) != 0) return -1;
-    codice = (riga[0] - '0') * 100 + (riga[1] - '0') * 10 + (riga[2] - '0');
-    if (codice != 227) {
-        printf("%s\n", riga);
-        return -1;
-    }
-
-    if (!leggi_pasv(riga, ip, &porta)) {
-        printf("ftp: risposta PASV incomprensibile:\n  %s\n", riga);
-        return -1;
-    }
-
-    if (!ip_uguali_4(ip, ip_server)) {
-        printf("  (il server annuncia %u.%u.%u.%u: uso il suo indirizzo vero)\n",
-               ip[0], ip[1], ip[2], ip[3]);
-        memcpy(ip, ip_server, 4);
-    }
-
-    id = apri(ip, porta);
-    if (id <= 0) printf("ftp: non riesco ad aprire la connessione dati (%d)\n", id);
-    return id;
-}
-
 /* =============================================================================
- * Comandi
+ * Small things
  * ============================================================================= */
-static unsigned char g_ip_server[4];
-
-/* ! UN CODICE 4xx O 5xx E' UN RIFIUTO, e va trattato come tale. La prima
- * versione controllava solo che comando() non tornasse un errore di
- * TRASPORTO: su un "550 file inesistente" proseguiva, apriva il file
- * locale, non leggeva niente e annunciava «0 byte» — cioe' dichiarava
- * riuscito un trasferimento mai avvenuto, lasciando in giro un file vuoto
- * al posto di quello vero. */
-static int rifiutato(int codice)
+/* ! ONE read() FOR THE WHOLE LINE, never a byte at a time: the console hands
+ * over a line per read and drops what does not fit, so a 1-byte loop got the
+ * first letter and never saw the newline (the first QEMU run, 17/10/2026). */
+static void leggi_riga(const char *domanda, char *dst, unsigned int max)
 {
-    return codice < 0 || codice >= 400;
+    int n;
+
+    printf("%s", domanda);
+    fflush(stdout);
+    n = (int)read(0, dst, max - 1);
+    if (n < 0) n = 0;
+    dst[n] = 0;
+    while (n > 0 && (dst[n - 1] == '\n' || dst[n - 1] == '\r')) dst[--n] = 0;
 }
 
-static int cmd_lista(const char *arg)
+static int si_no(const char *cosa, const char *nome)
 {
-    unsigned char blocco[BUF_DATI];
-    int           dati, n, totale = 0;
+    char r[16];
 
-    dati = apri_dati(g_ip_server);
-    if (dati <= 0) return 1;
-
-    if (rifiutato(comando("LIST", arg, 0))) { chiudi(dati); return 1; }
-
-    while ((n = leggi(dati, blocco, sizeof(blocco), 10000)) > 0) {
-        write(1, blocco, (unsigned int)n);
-        totale += n;
-    }
-    chiudi(dati);
-
-    risposta(0);        /* il "226 completato" della connessione di controllo */
-    if (totale == 0) printf("(directory vuota)\n");
-    return 0;
+    printf("%s %s? ", cosa, nome);
+    leggi_riga("", r, sizeof(r));
+    return r[0] != 'n' && r[0] != 'N';
 }
 
-static int cmd_get(const char *remoto, const char *locale)
-{
-    unsigned char blocco[BUF_DATI];
-    int           dati, n, fd, totale = 0;
-
-    if (locale == NULL || locale[0] == '\0') locale = remoto;
-
-    dati = apri_dati(g_ip_server);
-    if (dati <= 0) return 1;
-
-    if (rifiutato(comando("RETR", remoto, 1))) { chiudi(dati); return 1; }
-
-    fd = open(locale, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd < 0) {
-        printf("ftp: non riesco a creare '%s'\n", locale);
-        chiudi(dati);
-        return 1;
-    }
-
-    while ((n = leggi(dati, blocco, sizeof(blocco), 15000)) > 0) {
-        if (write(fd, blocco, (unsigned int)n) != n) {
-            printf("ftp: scrittura fallita su '%s'\n", locale);
-            break;
-        }
-        totale += n;
-    }
-
-    close(fd);
-    chiudi(dati);
-    risposta(1);
-
-    printf("%d byte in '%s'\n", totale, locale);
-    return 0;
-}
-
-static int cmd_put(const char *locale, const char *remoto)
-{
-    unsigned char blocco[BUF_DATI];
-    int           dati, fd, n, totale = 0;
-
-    if (remoto == NULL || remoto[0] == '\0') remoto = locale;
-
-    fd = open(locale, O_RDONLY);
-    if (fd < 0) { printf("ftp: '%s' non si apre\n", locale); return 1; }
-
-    dati = apri_dati(g_ip_server);
-    if (dati <= 0) { close(fd); return 1; }
-
-    if (rifiutato(comando("STOR", remoto, 1))) { close(fd); chiudi(dati); return 1; }
-
-    while ((n = (int)read(fd, blocco, sizeof(blocco))) > 0) {
-        if (scrivi(dati, blocco, (unsigned int)n) < 0) {
-            printf("ftp: invio interrotto\n");
-            break;
-        }
-        totale += n;
-    }
-
-    close(fd);
-    chiudi(dati);
-    risposta(1);
-
-    printf("%d byte mandati come '%s'\n", totale, remoto);
-    return 0;
-}
-
-/* =============================================================================
- * Riga di comando interattiva
- * ============================================================================= */
-static void aiuto(void)
-{
-    printf("  ls [percorso]      elenca\n");
-    printf("  cd percorso        cambia directory sul server\n");
-    printf("  pwd                dove siamo sul server\n");
-    printf("  get remoto [loc]   scarica\n");
-    printf("  put locale [rem]   invia\n");
-    printf("  mkdir directory    crea una directory sul server\n");
-    printf("  rmdir directory    la toglie (deve essere vuota)\n");
-    printf("  delete file        cancella un file sul server\n");
-    printf("  rename vec nuovo   rinomina\n");
-    printf("  binary | ascii     modo di trasferimento (parte in binario)\n");
-    printf("  size file          quanto e' grande\n");
-    printf("  syst               che sistema e'\n");
-    printf("  bye                chiude ed esce\n");
-}
-
-/* Spezza una riga in al massimo tre pezzi. Le virgolette le gestisce la
- * shell per gli argomenti del comando, non qui: dentro questa riga di
- * comando i nomi con spazi si passano interi come ultimo argomento. */
-static int pezzi(char *riga, char *out[], int max)
+/* Splits a line in words; "quoted words" keep their spaces. */
+static int pezzi(char *s, char **a, int max)
 {
     int n = 0;
-    char *p = riga;
 
-    while (*p && n < max) {
-        while (*p == ' ' || *p == '\t') p++;
-        if (!*p) break;
-        out[n++] = p;
-        while (*p && *p != ' ' && *p != '\t') p++;
-        if (*p) *p++ = '\0';
+    while (*s && n < max) {
+        while (*s == ' ' || *s == '\t') s++;
+        if (!*s) break;
+        if (*s == '"') {
+            a[n++] = ++s;
+            while (*s && *s != '"') s++;
+        } else {
+            a[n++] = s;
+            while (*s && *s != ' ' && *s != '\t') s++;
+        }
+        if (*s) *s++ = 0;
     }
     return n;
 }
 
+/* '*' and '?' wildcards, as mget/mput/mdelete take them. */
+static int combacia(const char *m, const char *s)
+{
+    for (; *m; m++, s++) {
+        if (*m == '*') {
+            while (m[1] == '*') m++;
+            if (!m[1]) return 1;
+            for (; *s; s++) if (combacia(m + 1, s)) return 1;
+            return 0;
+        }
+        if (!*s) return 0;
+        if (*m != '?' && *m != *s) return 0;
+    }
+    return *s == 0;
+}
+
+static int ha_jolly(const char *s) { return strchr(s, '*') || strchr(s, '?'); }
+
+static const char *base(const char *p)
+{
+    const char *b = strrchr(p, '/');
+
+    return b ? b + 1 : p;
+}
+
+static int collegato(void)
+{
+    if (g_f.aperto && g_f.dentro) return 1;
+    printf(g_f.aperto ? "Non sei entrato: `user NOME`.\n" : "Non collegato: `open SERVER`.\n");
+    return 0;
+}
+
+static void esito(int rc, const char *cosa)
+{
+    if (rc >= 0) return;
+    if (g_f.errore[0] && (rc == -EPROTO || rc == -EPROTONOSUPPORT || rc == -ENETDOWN || rc == -EHOSTUNREACH))
+        printf("%s: %s\n", cosa, g_f.errore);
+    else if (!g_verboso && g_f.risposta[0])
+        printf("%s: %s\n", cosa, g_f.risposta);
+    else if (!g_f.risposta[0] || rc == -ECONNRESET || rc == -ETIMEDOUT)
+        printf("%s: %s\n", cosa, exftp_perche(rc));
+}
+
+static void tempo_via(void) { g_t0 = uptime_ms(); g_hash_fatti = 0; }
+
+static void tempo_fine(const char *verbo, long byte)
+{
+    unsigned long ms = uptime_ms() - g_t0;
+
+    if (g_hash && g_hash_fatti > 0) printf("\n");
+    if (byte < 0) return;
+    if (ms == 0) ms = 1;
+    printf("%ld byte %s in %lu.%02lu s (%lu KB/s)\n", byte, verbo,
+           ms / 1000ul, (ms % 1000ul) / 10ul,
+           (unsigned long)byte / 1024ul * 1000ul / ms);
+}
+
+static long dim_locale(const char *p)
+{
+    struct stat st;
+
+    if (stat(p, &st) != 0) return -1;
+    return (long)st.st_size;
+}
+
 /* =============================================================================
- * I comandi che cambiano qualcosa sul server
- *
- * ! SI GUARDA IL CODICE DI RISPOSTA, non si stampa e basta. Un server che
- * rifiuta MKD risponde con un 5xx e una riga di testo: senza questo
- * controllo il programma direbbe «fatto» a un comando fallito, e chi lo
- * usa in uno script non avrebbe modo di accorgersene. La regola FTP e'
- * semplice — 2xx e' riuscito, 3xx vuole un seguito, 4xx e 5xx sono
- * fallimenti — e vale per tutti allo stesso modo.
+ * Connecting
  * ============================================================================= */
-static int riuscito(const char *cosa, int codice)
+static int accedi(const char *utente, const char *password)
 {
-    if (codice < 0) {
-        printf("ftp: %s: il server non risponde\n", cosa);
-        return -1;
+    char u[128], p[128];
+    int  rc;
+
+    if (!g_f.aperto) { printf("Non collegato.\n"); return 1; }
+    if (utente && utente[0]) {
+        strncpy(u, utente, sizeof(u) - 1);
+        u[sizeof(u) - 1] = 0;
+    } else {
+        char d[180];
+
+        snprintf(d, sizeof(d), "Utente (%s): ", g_f.host);
+        leggi_riga(d, u, sizeof(u));
+        if (!u[0]) strcpy(u, "anonymous");
     }
-    if (codice >= 200 && codice < 300) return 0;
 
-    /* Il testo del server e' gia' stato stampato da risposta(): qui si
-     * aggiunge solo la riga che dice CHE COSA non e' riuscito. */
-    printf("ftp: %s non riuscito (%d)\n", cosa, codice);
-    return -1;
-}
+    /* USER first: a server that wants no password says 230 already. */
+    rc = exftp_comando(&g_f, "USER", u);
+    if (rc == 331 || rc == 332) {
+        if (password) {
+            strncpy(p, password, sizeof(p) - 1);
+            p[sizeof(p) - 1] = 0;
+        } else if (strcmp(u, "anonymous") == 0 || strcmp(u, "ftp") == 0) {
+            strcpy(p, "exos@");
+        } else {
+            if (!g_f.cifrato)
+                printf("! FTP senza TLS: la password viaggia IN CHIARO (`open -tls` per FTPS).\n");
+            printf("Password: ");
+            fflush(stdout);
+            if (exuser_leggi_password(p, (int)sizeof(p)) < 0) {
+                leggi_riga("", p, sizeof(p));          /* no hidden input here */
+            }
+        }
+        rc = exftp_comando(&g_f, "PASS", p);
+        memset(p, 0, sizeof(p));
+    }
+    if (rc < 200 || rc >= 300) {
+        printf("Accesso non riuscito.\n");
+        return 1;
+    }
+    g_f.dentro = 1;
+    if (g_f.cifrato) {
+        exftp_comando(&g_f, "PBSZ", "0");
+        if (exftp_protezione(&g_f, 1) == 0) printf("Comandi e dati cifrati (TLS).\n");
+        else printf("! Il server rifiuta PROT P: i comandi sono cifrati, i dati no.\n");
+    }
+    exftp_binario(&g_f, 1);
+    {
+        char tipo[96];
 
-/* RENAME e' l'unico in due tempi: RNFR nomina l'originale e il server
- * risponde 350 «e adesso dimmi il nuovo»; RNTO lo completa.
- *
- * ! SE RNFR NON DA' 350 NON SI MANDA RNTO. Mandarlo lo stesso lascerebbe
- * il server con un rinomino a meta' — e su alcuni server il RNTO
- * successivo si attaccherebbe a un RNFR di prima, rinominando un file che
- * non c'entra. */
-static int cmd_rinomina(const char *da, const char *a)
-{
-    int c = comando("RNFR", da, 1);
-
-    if (c < 300 || c >= 400) return riuscito("rename", c);
-    return riuscito("rename", comando("RNTO", a, 1));
-}
-
-/* ! IL TIPO DI TRASFERIMENTO E' UNO STATO DEL SERVER, non un'opzione del
- * comando: vale finche' non lo si cambia. Il programma parte in binario
- * (vedi TYPE I dopo il login), che e' l'unica scelta sensata come
- * predefinita — in ASCII il server converte i fine riga, e un eseguibile
- * scaricato cosi' arriva corrotto in modo silenzioso.
- *
- * `ascii` serve per i file di testo scambiati con sistemi che hanno una
- * convenzione di riga diversa dalla nostra; per tutto il resto, binario. */
-static int cmd_tipo(const char *tipo, const char *nome)
-{
-    if (riuscito("type", comando("TYPE", tipo, 0)) != 0) return -1;
-    printf("modo di trasferimento: %s\n", nome);
+        if (exftp_comando(&g_f, "SYST", 0) == 215 && !g_verboso) {
+            strncpy(tipo, g_f.risposta + 4, sizeof(tipo) - 1);
+            tipo[sizeof(tipo) - 1] = 0;
+            printf("Sistema remoto: %s\n", tipo);
+        }
+    }
+    printf("Modo binario.\n");
     return 0;
 }
 
-static int esegui(int n, char *a[])
+static int apri(const char *host, const char *porta_s, int modo,
+                const char *utente, const char *password)
 {
+    unsigned int porta = porta_s ? (unsigned int)atoi(porta_s) : 0;
+    int          rc;
+
+    if (g_f.aperto) exftp_chiudi(&g_f);
+    printf("Collegamento a %s%s...\n", host,
+           modo == EXFTP_TLS ? " (FTPS, AUTH TLS)" : modo == EXFTP_TLS_IMPLICITO ? " (FTPS implicito)" : "");
+    rc = exftp_connetti(&g_f, host, porta, modo);
+    if (rc != 0) {
+        printf("ftp: %s: %s\n", host, g_f.errore[0] ? g_f.errore : exftp_perche(rc));
+        return 1;
+    }
+    printf("Collegato a %s:%u%s.\n", g_f.host, g_f.porta, g_f.cifrato ? ", cifrato" : "");
+    return accedi(utente, password);
+}
+
+/* =============================================================================
+ * Listings
+ * ============================================================================= */
+static int stampa_riga(void *dato, const char *r)
+{
+    FILE *out = (FILE *)dato;
+
+    if (out) fprintf(out, "%s\n", r);
+    else     printf("%s\n", r);
+    return 1;
+}
+
+static int elenca(const char *verbo, const char *dir, const char *file)
+{
+    FILE *out = 0;
+    int   rc;
+
+    if (!collegato()) return 1;
+    if (file && file[0] && strcmp(file, "-") != 0) {
+        out = fopen(file, "w");
+        if (!out) { printf("ftp: non riesco a scrivere %s\n", file); return 1; }
+    }
+    rc = exftp_righe(&g_f, verbo, dir, stampa_riga, out);
+    if (out) fclose(out);
+    esito(rc, verbo);
+    return rc < 0;
+}
+
+/* NLST matched against a pattern: the names, for mget and mdelete. */
+typedef struct {
+    const char *maschera;
+    char      (*nomi)[EXFTP_NOME_MAX];
+    int         n, max;
+} Raccolta;
+
+static int raccogli(void *dato, const char *r)
+{
+    Raccolta   *c = (Raccolta *)dato;
+    const char *b = base(r);
+
+    if (c->n >= c->max) return 0;
+    if (!combacia(c->maschera, b)) return 1;
+    strncpy(c->nomi[c->n], r, EXFTP_NOME_MAX - 1);
+    c->nomi[c->n][EXFTP_NOME_MAX - 1] = 0;
+    c->n++;
+    return 1;
+}
+
+/* The remote names a pattern covers; a name without wildcards is itself. */
+static int remoti(const char *m, char (*nomi)[EXFTP_NOME_MAX], int max)
+{
+    Raccolta    c;
+    const char *b;
+    char        dir[EXFTP_NOME_MAX];
+    int         rc;
+
+    if (!ha_jolly(m)) {
+        strncpy(nomi[0], m, EXFTP_NOME_MAX - 1);
+        nomi[0][EXFTP_NOME_MAX - 1] = 0;
+        return 1;
+    }
+    b = base(m);
+    dir[0] = 0;
+    if (b != m) {
+        unsigned int k = (unsigned int)(b - m);
+
+        if (k >= sizeof(dir)) k = sizeof(dir) - 1;
+        memcpy(dir, m, k);
+        dir[k] = 0;
+    }
+    c.maschera = b; c.nomi = nomi; c.n = 0; c.max = max;
+    rc = exftp_righe(&g_f, "NLST", dir, raccogli, &c);
+    if (rc < 0) { esito(rc, "NLST"); return 0; }
+    /* NLST answers bare names for the current directory: the dir goes back on. */
+    if (dir[0]) {
+        int i;
+
+        for (i = 0; i < c.n; i++) {
+            char t[EXFTP_NOME_MAX];
+
+            if (strchr(nomi[i], '/')) continue;
+            snprintf(t, sizeof(t), "%s%s", dir, nomi[i]);
+            strcpy(nomi[i], t);
+        }
+    }
+    return c.n;
+}
+
+/* =============================================================================
+ * Transfers
+ * ============================================================================= */
+static int prendi(const char *remoto, const char *locale, int riprendi)
+{
+    long dim;
+    int  rc;
+
+    if (!collegato()) return 1;
+    if (!locale || !locale[0]) locale = base(remoto);
+    g_f.riparti = 0;
+    if (riprendi) {
+        dim = dim_locale(locale);
+        if (dim > 0) {
+            long r = exftp_size(&g_f, remoto);
+
+            if (r >= 0 && r <= dim) { printf("%s e' gia' tutto qui.\n", locale); return 0; }
+            g_f.riparti = dim;
+            printf("Riprendo da %ld byte.\n", dim);
+        }
+    }
+    tempo_via();
+    rc = exftp_scarica(&g_f, remoto, locale);
+    if (rc != 0) {
+        if (g_hash && g_hash_fatti) printf("\n");
+        esito(rc, remoto);
+        return 1;
+    }
+    tempo_fine("ricevuti", dim_locale(locale));
+    return 0;
+}
+
+static int manda(const char *locale, const char *remoto, int accoda)
+{
+    long dim = dim_locale(locale);
+    int  rc;
+
+    if (!collegato()) return 1;
+    if (dim < 0) { printf("ftp: %s non c'e'.\n", locale); return 1; }
+    if (!remoto || !remoto[0]) remoto = base(locale);
+    g_f.riparti = 0;
+    if (accoda) {
+        long r = exftp_size(&g_f, remoto);
+
+        if (r >= dim) { printf("%s e' gia' tutto sul server.\n", remoto); return 0; }
+        if (r > 0) { g_f.riparti = r; printf("Riprendo da %ld byte.\n", r); }
+    }
+    tempo_via();
+    rc = exftp_carica(&g_f, locale, remoto);
+    if (rc != 0) {
+        if (g_hash && g_hash_fatti) printf("\n");
+        esito(rc, locale);
+        return 1;
+    }
+    tempo_fine("mandati", dim);
+    return 0;
+}
+
+#define TANTI 256
+static char g_nomi[TANTI][EXFTP_NOME_MAX];
+
+static int mget(int n, char **a)
+{
+    int i, k, quanti;
+
+    if (!collegato()) return 1;
+    for (i = 1; i < n; i++) {
+        quanti = remoti(a[i], g_nomi, TANTI);
+        if (quanti == 0) printf("%s: niente.\n", a[i]);
+        for (k = 0; k < quanti; k++) {
+            if (g_chiedi && !si_no("mget", g_nomi[k])) continue;
+            prendi(g_nomi[k], base(g_nomi[k]), 0);
+        }
+    }
+    return 0;
+}
+
+static int mdelete(int n, char **a)
+{
+    int i, k, quanti;
+
+    if (!collegato()) return 1;
+    for (i = 1; i < n; i++) {
+        quanti = remoti(a[i], g_nomi, TANTI);
+        for (k = 0; k < quanti; k++) {
+            if (g_chiedi && !si_no("mdelete", g_nomi[k])) continue;
+            esito(exftp_dele(&g_f, g_nomi[k]), g_nomi[k]);
+        }
+    }
+    return 0;
+}
+
+static int mput(int n, char **a)
+{
+    int i;
+
+    if (!collegato()) return 1;
+    for (i = 1; i < n; i++) {
+        char        dir[256];
+        const char *b = base(a[i]);
+        DIR        *d;
+        struct dirent *e;
+        int         trovati = 0;
+
+        if (!ha_jolly(a[i])) {
+            if (!g_chiedi || si_no("mput", a[i])) manda(a[i], base(a[i]), 0);
+            continue;
+        }
+        if (b == a[i]) strcpy(dir, ".");
+        else {
+            unsigned int k = (unsigned int)(b - a[i]);
+
+            if (k >= sizeof(dir)) k = sizeof(dir) - 1;
+            memcpy(dir, a[i], k);
+            dir[k] = 0;
+        }
+        d = opendir(dir);
+        if (!d) { printf("%s: cartella locale illeggibile.\n", dir); continue; }
+        while ((e = readdir(d)) != 0) {
+            char p[512];
+            struct stat st;
+
+            if (e->d_name[0] == '.' && (e->d_name[1] == 0 || (e->d_name[1] == '.' && e->d_name[2] == 0))) continue;
+            if (!combacia(b, e->d_name)) continue;
+            if (strcmp(dir, ".") == 0) snprintf(p, sizeof(p), "%s", e->d_name);
+            else                      snprintf(p, sizeof(p), "%s%s", dir, e->d_name);
+            if (stat(p, &st) != 0 || S_ISDIR(st.st_mode)) continue;
+            trovati++;
+            if (g_chiedi && !si_no("mput", p)) continue;
+            manda(p, e->d_name, 0);
+        }
+        closedir(d);
+        if (!trovati) printf("%s: niente.\n", a[i]);
+    }
+    return 0;
+}
+
+/* =============================================================================
+ * The commands
+ * ============================================================================= */
+static int stato(void)
+{
+    if (g_f.aperto)
+        printf("Collegato a %s:%u%s%s.\n", g_f.host, g_f.porta,
+               g_f.cifrato ? ", comandi cifrati" : ", in chiaro",
+               g_f.prot_p ? " e dati cifrati" : "");
+    else
+        printf("Non collegato.\n");
+    printf("Modo: %s; canale dati: %s; open: %s\n",
+           g_f.binario ? "binario" : "ascii", g_f.passiva ? "passivo" : "attivo",
+           g_modo == EXFTP_TLS ? "FTPS (AUTH TLS)" : g_modo == EXFTP_TLS_IMPLICITO ? "FTPS implicito" : "FTP");
+    printf("verbose %s, debug %s, hash %s, prompt %s\n",
+           g_verboso ? "si" : "no", g_debug ? "si" : "no",
+           g_hash ? "si" : "no", g_chiedi ? "si" : "no");
+    return 0;
+}
+
+static int aiuto(int n, char **a);
+
+typedef struct {
+    const char *nomi;          /* "get|recv": the first is the name shown */
+    const char *uso;
+    const char *cosa;
+    int (*fai)(int n, char **a);
+} Comando;
+
+static int c_open(int n, char **a)
+{
+    int         modo = g_modo, i = 1;
+    const char *host, *porta = 0;
+
+    for (; i < n && a[i][0] == '-'; i++) {
+        if (strcmp(a[i], "-tls") == 0)       modo = EXFTP_TLS;
+        else if (strcmp(a[i], "-tlsi") == 0) modo = EXFTP_TLS_IMPLICITO;
+        else if (strcmp(a[i], "-plain") == 0) modo = EXFTP_CHIARO;
+    }
+    if (i >= n) {
+        static char h[128];
+
+        leggi_riga("(a) ", h, sizeof(h));
+        if (!h[0]) return 1;
+        host = h;
+    } else {
+        host = a[i++];
+        if (i < n) porta = a[i];
+    }
+    return apri(host, porta, modo, 0, 0);
+}
+static int c_ftps(int n, char **a)
+{
+    char *b[ARGS_MAX + 1];
+    int   i;
+
+    b[0] = a[0];
+    b[1] = (char *)"-tls";
+    for (i = 1; i < n && i < ARGS_MAX; i++) b[i + 1] = a[i];
+    return c_open(i + 1, b);
+}
+static int c_user(int n, char **a)
+{
+    if (n < 2) { printf("uso: user NOME [PASSWORD]\n"); return 1; }
+    return accedi(a[1], n > 2 ? a[2] : 0);
+}
+static int c_close(int n, char **a) { (void)n; (void)a; exftp_chiudi(&g_f); return 0; }
+static int c_bye(int n, char **a)   { (void)n; (void)a; return -1; }
+static int c_pwd(int n, char **a)
+{
+    char d[EXFTP_NOME_MAX];
+    (void)n; (void)a;
+    if (!collegato()) return 1;
+    if (exftp_pwd(&g_f, d, sizeof(d)) == 0 && !g_verboso) printf("\"%s\"\n", d);
+    return 0;
+}
+static int c_cd(int n, char **a)
+{
+    if (!collegato()) return 1;
+    if (n > 1 && strcmp(a[1], "..") == 0) return exftp_cdup(&g_f) != 0;
+    return exftp_cd(&g_f, n > 1 ? a[1] : "/") != 0;
+}
+static int c_cdup(int n, char **a)  { (void)n; (void)a; if (!collegato()) return 1; return exftp_cdup(&g_f) != 0; }
+static int c_lcd(int n, char **a)
+{
+    char d[256];
+    const char *h = getenv("HOME");
+
+    if (chdir(n > 1 ? a[1] : (h && h[0] ? h : "/")) != 0) { printf("lcd: %s non c'e'.\n", a[1]); return 1; }
+    if (getcwd(d, sizeof(d))) printf("Cartella locale: %s\n", d);
+    return 0;
+}
+static int c_lpwd(int n, char **a)
+{
+    char d[256];
+    (void)n; (void)a;
+    if (getcwd(d, sizeof(d))) printf("Cartella locale: %s\n", d);
+    return 0;
+}
+static int c_ls(int n, char **a)    { return elenca("LIST", n > 1 ? a[1] : "", n > 2 ? a[2] : 0); }
+static int c_nlist(int n, char **a) { return elenca("NLST", n > 1 ? a[1] : "", n > 2 ? a[2] : 0); }
+static int c_mlsd(int n, char **a)  { return elenca("MLSD", n > 1 ? a[1] : "", n > 2 ? a[2] : 0); }
+static int c_get(int n, char **a)
+{
+    if (n < 2) { printf("uso: get REMOTO [LOCALE]\n"); return 1; }
+    return prendi(a[1], n > 2 ? a[2] : 0, 0);
+}
+static int c_reget(int n, char **a)
+{
+    if (n < 2) { printf("uso: reget REMOTO [LOCALE]\n"); return 1; }
+    return prendi(a[1], n > 2 ? a[2] : 0, 1);
+}
+static int c_put(int n, char **a)
+{
+    if (n < 2) { printf("uso: put LOCALE [REMOTO]\n"); return 1; }
+    return manda(a[1], n > 2 ? a[2] : 0, 0);
+}
+static int c_reput(int n, char **a)
+{
+    if (n < 2) { printf("uso: reput LOCALE [REMOTO]\n"); return 1; }
+    return manda(a[1], n > 2 ? a[2] : 0, 1);
+}
+static int c_append(int n, char **a)
+{
+    long dim;
+    int  rc;
+
+    if (n < 2) { printf("uso: append LOCALE [REMOTO]\n"); return 1; }
+    if (!collegato()) return 1;
+    dim = dim_locale(a[1]);
+    if (dim < 0) { printf("ftp: %s non c'e'.\n", a[1]); return 1; }
+    tempo_via();
+    rc = exftp_accoda(&g_f, a[1], n > 2 ? a[2] : base(a[1]));
+    esito(rc, a[1]);
+    if (rc == 0) tempo_fine("mandati", dim);
+    return rc != 0;
+}
+static int c_mkdir(int n, char **a)
+{
+    if (n < 2) { printf("uso: mkdir CARTELLA\n"); return 1; }
+    if (!collegato()) return 1;
+    return exftp_mkd(&g_f, a[1]) != 0;
+}
+static int c_rmdir(int n, char **a)
+{
+    if (n < 2) { printf("uso: rmdir CARTELLA\n"); return 1; }
+    if (!collegato()) return 1;
+    return exftp_rmd(&g_f, a[1]) != 0;
+}
+static int c_delete(int n, char **a)
+{
+    if (n < 2) { printf("uso: delete FILE\n"); return 1; }
+    if (!collegato()) return 1;
+    return exftp_dele(&g_f, a[1]) != 0;
+}
+static int c_rename(int n, char **a)
+{
+    if (n < 3) { printf("uso: rename VECCHIO NUOVO\n"); return 1; }
+    if (!collegato()) return 1;
+    return exftp_rinomina(&g_f, a[1], a[2]) != 0;
+}
+static int c_size(int n, char **a)
+{
+    long d;
+
+    if (n < 2) { printf("uso: size FILE\n"); return 1; }
+    if (!collegato()) return 1;
+    d = exftp_size(&g_f, a[1]);
+    if (d >= 0 && !g_verboso) printf("%s: %ld byte\n", a[1], d);
+    return d < 0;
+}
+static int c_modtime(int n, char **a)
+{
+    long       q;
+    time_t     t;
+    struct tm  tm;
+
+    if (n < 2) { printf("uso: modtime FILE\n"); return 1; }
+    if (!collegato()) return 1;
+    q = exftp_mdtm(&g_f, a[1]);
+    if (q < 0) return 1;
+    t = (time_t)q;
+    gmtime_r(&t, &tm);
+    printf("%s: %04d-%02d-%02d %02d:%02d:%02d UTC\n", a[1], tm.tm_year + 1900, tm.tm_mon + 1,
+           tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return 0;
+}
+static int c_chmod(int n, char **a)
+{
+    char arg[EXFTP_NOME_MAX + 16];
+
+    if (n < 3) { printf("uso: chmod MODO FILE\n"); return 1; }
+    if (!collegato()) return 1;
+    snprintf(arg, sizeof(arg), "CHMOD %s %s", a[1], a[2]);
+    return exftp_comando(&g_f, "SITE", arg) / 100 != 2;
+}
+static int c_binary(int n, char **a) { (void)n; (void)a; if (!collegato()) return 1; return exftp_binario(&g_f, 1) != 0; }
+static int c_ascii(int n, char **a)  { (void)n; (void)a; if (!collegato()) return 1; return exftp_binario(&g_f, 0) != 0; }
+static int c_type(int n, char **a)
+{
+    if (n < 2) { printf("Modo: %s\n", g_f.binario ? "binary" : "ascii"); return 0; }
+    if (strcmp(a[1], "binary") == 0 || strcmp(a[1], "image") == 0 || strcmp(a[1], "i") == 0) return c_binary(1, a);
+    if (strcmp(a[1], "ascii") == 0 || strcmp(a[1], "a") == 0) return c_ascii(1, a);
+    printf("type: binary oppure ascii\n");
+    return 1;
+}
+static int interruttore(int *v, int n, char **a, const char *nome)
+{
+    if (n > 1) *v = strcmp(a[1], "on") == 0 || strcmp(a[1], "si") == 0 || strcmp(a[1], "1") == 0;
+    else       *v = !*v;
+    printf("%s: %s\n", nome, *v ? "si" : "no");
+    return 0;
+}
+static int c_passive(int n, char **a)
+{
+    int v = g_f.passiva;
+
+    interruttore(&v, n, a, "Modo passivo");
+    exftp_passiva(&g_f, v);
+    return 0;
+}
+static int c_active(int n, char **a) { (void)n; (void)a; exftp_passiva(&g_f, 0); printf("Modo attivo (PORT).\n"); return 0; }
+static int c_prompt(int n, char **a)  { return interruttore(&g_chiedi, n, a, "Domande in mget/mput/mdelete"); }
+static int c_hash(int n, char **a)    { return interruttore(&g_hash, n, a, "Un # ogni 8 KB"); }
+static int c_verbose(int n, char **a) { return interruttore(&g_verboso, n, a, "Risposte del server"); }
+static int c_debug(int n, char **a)   { return interruttore(&g_debug, n, a, "Comandi mandati"); }
+static int c_status(int n, char **a)  { (void)n; (void)a; return stato(); }
+static int c_system(int n, char **a)  { (void)n; (void)a; if (!collegato()) return 1; return exftp_comando(&g_f, "SYST", 0) != 215; }
+static int c_noop(int n, char **a)    { (void)n; (void)a; if (!collegato()) return 1; return exftp_comando(&g_f, "NOOP", 0) != 200; }
+static int c_quote(int n, char **a)
+{
+    char arg[RIGA_MAX];
+    int  i, k = 0;
+
+    if (n < 2) { printf("uso: quote COMANDO [ARGOMENTI]\n"); return 1; }
+    if (!g_f.aperto) { printf("Non collegato.\n"); return 1; }
+    arg[0] = 0;
+    for (i = 2; i < n; i++) k += snprintf(arg + k, sizeof(arg) - (unsigned)k, "%s%s", i > 2 ? " " : "", a[i]);
+    if (strcasecmp(a[1], "PASS") == 0) { printf("quote: per la password c'e' `user`.\n"); return 1; }
+    return exftp_comando(&g_f, a[1], arg[0] ? arg : 0) < 0;
+}
+static int c_site(int n, char **a)
+{
+    char arg[RIGA_MAX];
+    int  i, k = 0;
+
+    if (n < 2) { printf("uso: site COMANDO\n"); return 1; }
+    if (!collegato()) return 1;
+    arg[0] = 0;
+    for (i = 1; i < n; i++) k += snprintf(arg + k, sizeof(arg) - (unsigned)k, "%s%s", i > 1 ? " " : "", a[i]);
+    return exftp_comando(&g_f, "SITE", arg) < 0;
+}
+static int c_rhelp(int n, char **a)
+{
+    int vecchio = g_verboso, rc;
+
+    if (!g_f.aperto) { printf("Non collegato.\n"); return 1; }
+    g_verboso = 1;
+    rc = exftp_comando(&g_f, "HELP", n > 1 ? a[1] : 0);
+    g_verboso = vecchio;
+    return rc < 0;
+}
+static int c_rstatus(int n, char **a)
+{
+    int vecchio = g_verboso, rc;
+
+    if (!g_f.aperto) { printf("Non collegato.\n"); return 1; }
+    g_verboso = 1;
+    rc = exftp_comando(&g_f, "STAT", n > 1 ? a[1] : 0);
+    g_verboso = vecchio;
+    return rc < 0;
+}
+static int c_prot(int n, char **a)
+{
+    if (!g_f.cifrato) { printf("prot: serve una connessione FTPS (`open -tls`).\n"); return 1; }
+    if (n < 2) { printf("Dati %s.\n", g_f.prot_p ? "cifrati (P)" : "in chiaro (C)"); return 0; }
+    return exftp_protezione(&g_f, a[1][0] == 'p' || a[1][0] == 'P') != 0;
+}
+static int c_tls(int n, char **a)
+{
+    if (n > 1) {
+        if (strcmp(a[1], "on") == 0 || strcmp(a[1], "explicit") == 0) g_modo = EXFTP_TLS;
+        else if (strcmp(a[1], "implicit") == 0) g_modo = EXFTP_TLS_IMPLICITO;
+        else g_modo = EXFTP_CHIARO;
+    } else {
+        g_modo = g_modo == EXFTP_CHIARO ? EXFTP_TLS : EXFTP_CHIARO;
+    }
+    printf("`open` usera': %s\n", g_modo == EXFTP_TLS ? "FTPS (AUTH TLS)" :
+           g_modo == EXFTP_TLS_IMPLICITO ? "FTPS implicito (porta 990)" : "FTP in chiaro");
+    return 0;
+}
+static int c_shell(int n, char **a)
+{
+    char riga[RIGA_MAX];
+    int  i, k = 0;
+
+    riga[0] = 0;
+    for (i = 1; i < n; i++) k += snprintf(riga + k, sizeof(riga) - (unsigned)k, "%s%s", i > 1 ? " " : "", a[i]);
+    return system(riga[0] ? riga : "/bin/sh");
+}
+
+static const Comando g_comandi[] = {
+    { "open|o",          "open [-tls|-tlsi] SERVER [PORTA]", "si collega (e chiede utente e password)", c_open },
+    { "ftps",            "ftps SERVER [PORTA]",       "come open -tls: FTPS esplicito",           c_ftps },
+    { "user",            "user NOME [PASSWORD]",      "entra con un altro utente",                c_user },
+    { "close|disconnect","close",                     "chiude la connessione, resta in ftp",       c_close },
+    { "bye|quit|exit",   "bye",                       "chiude ed esce",                            c_bye },
+    { "pwd",             "pwd",                       "la cartella sul server",                    c_pwd },
+    { "cd|cwd",          "cd CARTELLA",               "cambia cartella sul server",                c_cd },
+    { "cdup",            "cdup",                      "sale di una cartella sul server",           c_cdup },
+    { "lcd",             "lcd [CARTELLA]",            "cambia la cartella locale",                 c_lcd },
+    { "lpwd",            "lpwd",                      "la cartella locale",                        c_lpwd },
+    { "ls|dir",          "ls [CARTELLA] [FILE]",      "elenco (LIST); FILE per salvarlo",          c_ls },
+    { "nlist|nls",       "nlist [CARTELLA] [FILE]",   "solo i nomi (NLST)",                        c_nlist },
+    { "mlsd",            "mlsd [CARTELLA]",           "l'elenco per le macchine (MLSD)",           c_mlsd },
+    { "get|recv",        "get REMOTO [LOCALE]",       "scarica un file",                           c_get },
+    { "reget",           "reget REMOTO [LOCALE]",     "riprende uno scaricamento interrotto",      c_reget },
+    { "mget",            "mget MASCHERA ...",         "scarica piu' file (* e ?)",                 mget },
+    { "put|send",        "put LOCALE [REMOTO]",       "manda un file",                             c_put },
+    { "reput",           "reput LOCALE [REMOTO]",     "riprende un invio interrotto",              c_reput },
+    { "append",          "append LOCALE [REMOTO]",    "aggiunge in coda a un file remoto",         c_append },
+    { "mput",            "mput MASCHERA ...",         "manda piu' file (* e ?)",                   mput },
+    { "mkdir|mkd",       "mkdir CARTELLA",            "crea una cartella sul server",              c_mkdir },
+    { "rmdir|rmd",       "rmdir CARTELLA",            "toglie una cartella vuota",                 c_rmdir },
+    { "delete|del|rm",   "delete FILE",               "cancella un file sul server",               c_delete },
+    { "mdelete",         "mdelete MASCHERA ...",      "cancella piu' file",                        mdelete },
+    { "rename|ren",      "rename VECCHIO NUOVO",      "rinomina sul server",                       c_rename },
+    { "size",            "size FILE",                 "quanto e' grande",                          c_size },
+    { "modtime",         "modtime FILE",              "quando e' stato cambiato (UTC)",            c_modtime },
+    { "chmod",           "chmod MODO FILE",           "permessi (SITE CHMOD)",                     c_chmod },
+    { "binary|bin|image","binary",                    "modo binario (TYPE I)",                     c_binary },
+    { "ascii",           "ascii",                     "modo testo, converte i fine riga",          c_ascii },
+    { "type",            "type [binary|ascii]",       "mostra o cambia il modo",                   c_type },
+    { "passive|pasv",    "passive [on|off]",          "canale dati passivo (EPSV/PASV)",           c_passive },
+    { "active",          "active",                    "canale dati attivo (PORT)",                 c_active },
+    { "tls",             "tls [on|implicit|off]",     "come si collega `open`",                    c_tls },
+    { "prot",            "prot [P|C]",                "dati cifrati (P) o in chiaro (C)",          c_prot },
+    { "prompt",          "prompt [on|off]",           "domande in mget/mput/mdelete",              c_prompt },
+    { "hash",            "hash [on|off]",             "un # ogni 8 KB trasferiti",                 c_hash },
+    { "verbose",         "verbose [on|off]",          "mostra le risposte del server",             c_verbose },
+    { "debug",           "debug [on|off]",            "mostra i comandi mandati",                  c_debug },
+    { "status",          "status",                    "come stanno le cose",                       c_status },
+    { "rstatus",         "rstatus [FILE]",            "lo stato secondo il server (STAT)",         c_rstatus },
+    { "system|syst",     "system",                    "che sistema e' il server",                  c_system },
+    { "noop",            "noop",                      "tiene viva la connessione",                 c_noop },
+    { "quote|literal",   "quote COMANDO [ARG]",       "manda un comando FTP cosi' com'e'",         c_quote },
+    { "site",            "site COMANDO",              "un comando SITE del server",                c_site },
+    { "rhelp|remotehelp","rhelp [COMANDO]",           "l'aiuto del server",                        c_rhelp },
+    { "!",               "! [COMANDO]",               "un comando di EX-OS (senza: una shell)",    c_shell },
+    { "help|?",          "help [COMANDO]",            "questo elenco",                             aiuto },
+};
+#define N_COMANDI (int)(sizeof(g_comandi) / sizeof(g_comandi[0]))
+
+/* Is `nome` one of the names in "a|b|c"? */
+static int e_nome(const char *nomi, const char *nome)
+{
+    unsigned int l = (unsigned int)strlen(nome);
+
+    while (*nomi) {
+        const char *fine = strchr(nomi, '|');
+        unsigned int k = fine ? (unsigned int)(fine - nomi) : (unsigned int)strlen(nomi);
+
+        if (k == l && strncmp(nomi, nome, l) == 0) return 1;
+        if (!fine) break;
+        nomi = fine + 1;
+    }
+    return 0;
+}
+
+static int aiuto(int n, char **a)
+{
+    int i;
+
+    if (n > 1) {
+        for (i = 0; i < N_COMANDI; i++) {
+            if (e_nome(g_comandi[i].nomi, a[1])) {
+                printf("%-28s %s\n", g_comandi[i].uso, g_comandi[i].cosa);
+                if (strchr(g_comandi[i].nomi, '|')) printf("  (anche: %s)\n", g_comandi[i].nomi);
+                return 0;
+            }
+        }
+        printf("%s: comando sconosciuto.\n", a[1]);
+        return 1;
+    }
+    printf("Comandi (help COMANDO per uno solo):\n");
+    for (i = 0; i < N_COMANDI; i++)
+        printf("  %-28s %s\n", g_comandi[i].uso, g_comandi[i].cosa);
+    return 0;
+}
+
+/* -1 = leave ftp */
+static int esegui(int n, char **a)
+{
+    int i;
+
     if (n == 0) return 0;
+    if (a[0][0] == '!' && a[0][1]) {          /* "!ls" as well as "! ls" */
+        char *b[ARGS_MAX + 1];
 
-    if (strcmp(a[0], "ls") == 0)   return cmd_lista(n > 1 ? a[1] : "");
-    if (strcmp(a[0], "cd") == 0)   { comando("CWD", n > 1 ? a[1] : "/", 1); return 0; }
-    if (strcmp(a[0], "pwd") == 0)  { comando("PWD", "", 1); return 0; }
-    if (strcmp(a[0], "get") == 0) {
-        if (n < 2) { printf("uso: get remoto [locale]\n"); return 0; }
-        return cmd_get(a[1], n > 2 ? a[2] : NULL);
+        b[0] = (char *)"!";
+        b[1] = a[0] + 1;
+        for (i = 1; i < n && i < ARGS_MAX; i++) b[i + 1] = a[i];
+        return c_shell(i + 1, b);
     }
-    if (strcmp(a[0], "put") == 0) {
-        if (n < 2) { printf("uso: put locale [remoto]\n"); return 0; }
-        return cmd_put(a[1], n > 2 ? a[2] : NULL);
-    }
-    if (strcmp(a[0], "mkdir") == 0) {
-        if (n < 2) { printf("uso: mkdir directory\n"); return 0; }
-        riuscito("mkdir", comando("MKD", a[1], 1));
-        return 0;
-    }
-    if (strcmp(a[0], "rmdir") == 0) {
-        if (n < 2) { printf("uso: rmdir directory\n"); return 0; }
-        riuscito("rmdir", comando("RMD", a[1], 1));
-        return 0;
-    }
-    /* `delete` e `del`: il primo e' il nome storico dei client FTP, il
-     * secondo quello che viene in mente a chi arriva da EX-OS, dove il
-     * comando si chiama cosi'. */
-    if (strcmp(a[0], "delete") == 0 || strcmp(a[0], "del") == 0) {
-        if (n < 2) { printf("uso: delete file\n"); return 0; }
-        riuscito("delete", comando("DELE", a[1], 1));
-        return 0;
-    }
-    if (strcmp(a[0], "rename") == 0) {
-        if (n < 3) { printf("uso: rename vecchio nuovo\n"); return 0; }
-        cmd_rinomina(a[1], a[2]);
-        return 0;
-    }
-    if (strcmp(a[0], "binary") == 0 || strcmp(a[0], "bin") == 0) {
-        cmd_tipo("I", "binario");
-        return 0;
-    }
-    if (strcmp(a[0], "ascii") == 0) {
-        cmd_tipo("A", "testo (ASCII)");
-        return 0;
-    }
-    if (strcmp(a[0], "size") == 0) {
-        if (n < 2) { printf("uso: size file\n"); return 0; }
-        riuscito("size", comando("SIZE", a[1], 1));
-        return 0;
-    }
-    if (strcmp(a[0], "syst") == 0)  { comando("SYST", "", 1); return 0; }
-    if (strcmp(a[0], "noop") == 0)  { comando("NOOP", "", 1); return 0; }
-    if (strcmp(a[0], "help") == 0 || strcmp(a[0], "?") == 0) { aiuto(); return 0; }
-    if (strcmp(a[0], "bye") == 0 || strcmp(a[0], "quit") == 0) return -1;
+    for (i = 0; i < N_COMANDI; i++)
+        if (e_nome(g_comandi[i].nomi, a[0])) return g_comandi[i].fai(n, a);
+    printf("?Comando sconosciuto: %s (`help` li elenca)\n", a[0]);
+    return 1;
+}
 
-    printf("ftp: '%s' non lo conosco. `help` li elenca.\n", a[0]);
-    return 0;
+static void uso(void)
+{
+    printf("uso: ftp                          apre la riga di comando ftp>\n");
+    printf("     ftp [-tls|-tlsi] SERVER [PORTA]\n");
+    printf("     ftp SERVER [-u UTENTE] [-w PASSWORD] [-p PORTA] [-a] [-v] [COMANDO ...]\n\n");
+    printf("  -tls   FTPS esplicito (AUTH TLS sulla porta 21): comandi e dati cifrati\n");
+    printf("  -tlsi  FTPS implicito (TLS subito, porta 990)\n");
+    printf("  -a     canale dati attivo (PORT) invece che passivo\n");
+    printf("  -v     mostra anche i comandi mandati\n");
+    printf("Con un COMANDO dopo le opzioni esegue solo quello ed esce.\n");
 }
 
 int main(int argc, char **argv)
 {
-    char          riga[512];
-    char         *a[4];
-    const char   *utente = "anonymous";
-    const char   *chiave = "exos@";
-    const char   *porta_s = NULL;
-    int           i, primo_cmd = 0, rc;
-    unsigned int  porta = 21;
+    char        riga[RIGA_MAX];
+    char       *a[ARGS_MAX];
+    const char *host = 0, *porta = 0, *utente = 0, *chiave = 0;
+    int         i, primo_cmd = 0, rc = 0, modo = EXFTP_CHIARO, attivo = 0;
 
-    if (argc < 2) {
-        printf("uso: ftp SERVER [-u utente] [-w password] [-p porta] [comando ...]\n\n");
-        aiuto();
-        printf("\nSenza comando si apre una riga di comando.\n");
-        printf("Senza -u si entra come 'anonymous'.\n\n");
-        printf("ATTENZIONE: FTP manda la password IN CHIARO. Non e' un\n");
-        printf("difetto di questo programma, e' il protocollo.\n");
-        return 1;
-    }
+    exftp_prepara(&g_f);
+    g_f.tls           = exhttp_tls_sopra;
+    g_f.registro      = registro;
+    g_f.avanza        = avanza;
 
-    for (i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-u") == 0 && i + 1 < argc)      utente = argv[++i];
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { uso(); return 0; }
+        else if (strcmp(argv[i], "-tls") == 0)  modo = EXFTP_TLS;
+        else if (strcmp(argv[i], "-tlsi") == 0) modo = EXFTP_TLS_IMPLICITO;
+        else if (strcmp(argv[i], "-a") == 0)    attivo = 1;
+        else if (strcmp(argv[i], "-v") == 0)    g_debug = 1;
+        else if (strcmp(argv[i], "-u") == 0 && i + 1 < argc) utente = argv[++i];
         else if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) chiave = argv[++i];
-        else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) porta_s = argv[++i];
+        else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) porta  = argv[++i];
+        else if (!host) host = argv[i];
+        else if (!porta && argv[i][0] >= '0' && argv[i][0] <= '9' && !primo_cmd) porta = argv[i];
         else { primo_cmd = i; break; }
     }
-    if (porta_s) porta = (unsigned int)atoi(porta_s);
+    g_modo = modo;
+    if (attivo) exftp_passiva(&g_f, 0);
 
-    pid_ip = rete_richiedi(IP_SERVIZIO);
-    if (pid_ip <= 0) return 1;
+    if (host) {
+        rc = apri(host, porta, modo, utente, chiave);
+        if (primo_cmd > 0) {
+            int n = 0;
 
-    if (dns_risolvi(argv[1], g_ip_server) != 0) {
-        printf("ftp: non riesco a risolvere '%s'\n", argv[1]);
-        return 1;
+            if (rc == 0) {
+                for (i = primo_cmd; i < argc && n < ARGS_MAX; i++) a[n++] = argv[i];
+                rc = esegui(n, a);
+            }
+            exftp_chiudi(&g_f);
+            return rc < 0 ? 0 : rc;
+        }
+    } else {
+        printf("ftp di EX-OS: `open SERVER` (FTP) o `ftps SERVER` (FTPS), `help` per i comandi.\n");
     }
 
-    printf("connessione a %u.%u.%u.%u:%u ...\n",
-           g_ip_server[0], g_ip_server[1], g_ip_server[2], g_ip_server[3], porta);
-
-    ctrl = apri(g_ip_server, porta);
-    if (ctrl <= 0) {
-        printf("ftp: connessione fallita (%d)\n", ctrl);
-        return 1;
-    }
-
-    if (risposta(1) < 0) { printf("ftp: il server non saluta\n"); return 1; }
-
-    printf("\nATTENZIONE: la password viaggia IN CHIARO su questa rete.\n\n");
-
-    if (comando("USER", utente, 1) < 0) return 1;
-    comando("PASS", chiave, 1);
-    comando("TYPE", "I", 0);        /* binario: un file non e' testo */
-
-    if (primo_cmd > 0) {
-        int n = 0;
-
-        for (i = primo_cmd; i < argc && n < 3; i++) a[n++] = argv[i];
-        rc = esegui(n, a);
-        comando("QUIT", "", 0);
-        chiudi(ctrl);
-        return (rc < 0) ? 0 : rc;
-    }
-
-    printf("\n`help` elenca i comandi.\n");
     for (;;) {
         int n;
 
         printf("ftp> ");
+        fflush(stdout);
         n = (int)read(0, riga, sizeof(riga) - 1);
         if (n <= 0) break;
         riga[n] = '\0';
         while (n > 0 && (riga[n - 1] == '\n' || riga[n - 1] == '\r')) riga[--n] = '\0';
-
-        if (esegui(pezzi(riga, a, 3), a) < 0) break;
+        if (esegui(pezzi(riga, a, ARGS_MAX), a) < 0) break;
     }
-
-    comando("QUIT", "", 1);
-    chiudi(ctrl);
+    exftp_chiudi(&g_f);
     return 0;
 }

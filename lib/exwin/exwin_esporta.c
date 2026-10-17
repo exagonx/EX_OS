@@ -315,6 +315,8 @@ static const char *const g_nomi[] = {
     "ex_avvisa_cambi",
     "ex_riquadro_puntatore",
     "ex_riquadro_puntatore_via",
+    "ex_ask_windows",
+    "ex_spawn_program",
 };
 
 static void *const g_indirizzi[] = {
@@ -572,6 +574,8 @@ static void *const g_indirizzi[] = {
     (void *)ex_notify_changes,
     (void *)ex_show_popup_pointer,
     (void *)ex_hide_popup_pointer,
+    (void *)ex_ask_windows,
+    (void *)ex_spawn_program,
 };
 
 /* Se qualcuno aggiunge un nome e dimentica l'indirizzo (o viceversa), la

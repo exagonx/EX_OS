@@ -2895,6 +2895,15 @@ static int servi_messaggio(unsigned int ms)
         g_elenco_nuovo = 1;
         break;
 
+    case WIN_MSG_ELENCO_UNA: {
+        WinElenco el;
+
+        elenco_fai(&el);
+        ipc_send(meta.sender_pid, WIN_MSG_ELENCATA, &el,
+                 (unsigned int)(sizeof(el.n) + el.n * sizeof(WinVoce)));
+        break;
+    }
+
     case WIN_MSG_ATTIVA:
     case WIN_MSG_RIDUCI: {
         WinRegione *w = (WinRegione *)buf;

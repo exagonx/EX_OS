@@ -25,7 +25,7 @@
 
 #define EXTB_RICORDA 8
 
-static inline void extaskbar_voce(const char *nome, unsigned int larghezza,
+static __inline__ void extaskbar_voce(const char *nome, unsigned int larghezza,
                                   const char *testo, int attenzione)
 {
     static int          pid;

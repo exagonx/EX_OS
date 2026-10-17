@@ -2302,13 +2302,74 @@ int ext2_unlink(int mnt, const char *percorso)
     return super_aggiorna(m);
 }
 
+/* The ".." of directory `dino` (its first block, second entry) now names
+ * `padre`. 0, or -1. */
+static int dir_punta_padre(Ext2Mount *m, int mnt, const uint8_t *dino, uint32_t padre)
+{
+    uint32_t blk = mappa_blocco(m, mnt, dino, 0);
+    uint32_t p;
+
+    if (blk == 0 || leggi_blocco(m, blk, b_dati) != 0) return -1;
+    p = le16(b_dati + 4);                       /* past "." */
+    if (p < 12u || p + 12u > m->dim_blocco) return -1;
+    if (b_dati[p + 6] != 2 || b_dati[p + 8] != '.' || b_dati[p + 9] != '.') return -1;
+    p32(b_dati + p, padre);
+    return scrivi_blocco(m, blk, b_dati);
+}
+
+/* ext2_rename across two directories (see the comment below). */
+static int rinomina_altrove(Ext2Mount *m, int mnt, const char *da, const char *a,
+                            uint32_t pnum, uint8_t *pino, const char *nom_da, uint32_t len_da,
+                            uint32_t anum, uint8_t *aino, const char *nom_a, uint32_t len_a)
+{
+    uint8_t  vino[128];
+    uint32_t num, tipo, l;
+    int      e_dir;
+
+    if (cerca_voce(m, mnt, aino, nom_a, len_a) != 0) return -2;
+    num = cerca_voce(m, mnt, pino, nom_da, len_da);
+    if (num == 0) return -1;
+    if (leggi_inode(m, num, vino) != 0) return -1;
+    e_dir = (le16(vino) & MODE_TIPO) == MODE_DIR;
+    tipo  = e_dir ? DIRTIPO_DIR : DIRTIPO_FILE;
+
+    /* A directory cannot go inside itself: "a" into "a/b/c" would cut the
+     * whole subtree off the tree. The internal paths are normalised. */
+    if (e_dir) {
+        uint32_t k = 0;
+
+        while (da[k] && da[k] == a[k]) k++;
+        if (da[k] == '\0' && a[k] == '/') return -4;
+    }
+
+    if (dir_aggiungi(m, mnt, anum, aino, nom_a, len_a, num, tipo) != 0) return -1;
+    if (e_dir) {
+        if (dir_punta_padre(m, mnt, vino, anum) != 0) return -1;
+        p16(aino + 26, le16(aino + 26) + 1u);   /* the new parent gains ".." */
+    }
+    if (scrivi_inode(m, anum, aino) != 0) return -1;
+
+    if (dir_rimuovi(m, mnt, pino, nom_da, len_da) == 0) return -1;
+    if (e_dir) {
+        l = le16(pino + 26);
+        if (l > 0) l--;
+        p16(pino + 26, l);                      /* the old one loses it */
+    }
+    if (scrivi_inode(m, pnum, pino) != 0) return -1;
+    return super_aggiorna(m);
+}
+
 /* =============================================================================
  * ext2_rename — cambia il NOME di una voce, senza spostare i dati
  *
- * ! SOLO NELLA STESSA DIRECTORY (-3 altrimenti). Attraversare directory
- * significherebbe anche aggiornare ".." per le directory e il conteggio
- * dei collegamenti di due padri: piu' cose che devono riuscire tutte, in
- * un filesystem senza journal. Il caso che serve e' rinominare sul posto.
+ * ! ANCHE FRA DIRECTORY DIVERSE dal kernel 0.260 (17 October 2026). Until
+ * then it was -3: libgit2 writes every object to a temporary file in
+ * .git/objects and MOVES it into .git/objects/xx/, and every commit failed
+ * with ENOSYS. Moving a directory also rewrites its ".." and moves one link
+ * from the old parent to the new one; a directory cannot go inside itself
+ * (-4, EINVAL). The order is the same as below: the new name is written
+ * (and the new parent's inode) before the old name goes, so a crash in
+ * between leaves two names, never none.
  *
  * ! SI AGGIUNGE PRIMA E SI TOGLIE DOPO, e l'ordine e' l'unica cosa che
  * conta davvero qui. Fra le due operazioni il file ha DUE nomi: se la
@@ -2341,13 +2402,25 @@ int ext2_rename(int mnt, const char *da, const char *a)
     len_a  = separa(a,  pad_a,  EXT2_PERCORSO_MAX, &nom_a);
     if (len_da == 0 || len_a == 0) return -1;
 
-    for (i = 0; pad_da[i] || pad_a[i]; i++) {
-        if (pad_da[i] != pad_a[i]) return -3;
-    }
-
     pnum = risolvi(m, mnt, pad_da, pino);
     if (pnum == 0) return -1;
     if ((le16(pino) & MODE_TIPO) != MODE_DIR) return -1;
+
+    for (i = 0; pad_da[i] || pad_a[i]; i++) {
+        if (pad_da[i] != pad_a[i]) break;
+    }
+    if (pad_da[i] || pad_a[i]) {
+        uint8_t  aino[128];
+        uint32_t anum = risolvi(m, mnt, pad_a, aino);
+
+        if (anum == 0) return -1;
+        if ((le16(aino) & MODE_TIPO) != MODE_DIR) return -1;
+        /* Two spellings of the same directory: an ordinary rename, on ONE
+         * copy of its inode. */
+        if (anum != pnum) return rinomina_altrove(m, mnt, da, a, pnum, pino,
+                                                  nom_da, len_da, anum, aino,
+                                                  nom_a, len_a);
+    }
 
     /* La destinazione non deve esistere: chi vuole sostituire cancella
      * prima, cosi' la perdita e' una scelta e non un effetto collaterale. */

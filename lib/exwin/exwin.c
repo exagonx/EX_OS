@@ -992,6 +992,17 @@ void ex_track_windows(ExWindow f)
     ipc_send((unsigned int)g_server, WIN_MSG_ELENCO, 0, 0);
 }
 
+/* The list once (WIN_MSG_ELENCO_UNA): EXM_WINDOW_LIST to f, the taskbar's
+ * subscription untouched. 17 October 2026, for /exwin/bin/attesa. */
+static ExWindow g_chiede = 0;
+
+void ex_ask_windows(ExWindow f)
+{
+    g_chiede = f;
+    if (!server_trova()) return;
+    ipc_send((unsigned int)g_server, WIN_MSG_ELENCO_UNA, 0, 0);
+}
+
 int ex_list_windows(ExWindowEntry *v, int max)
 {
     int i, n = (int)g_el.n;
@@ -1111,6 +1122,50 @@ static int tipi_programma(const char *e, char *out, unsigned int max)
     return 0;
 }
 
+/* =============================================================================
+ * ex_spawn_program — start a program; a BIG one with "loading, please wait"
+ * (17 October 2026, @ATTESA-CARICAMENTO)
+ *
+ * The user: Firefox takes long to load on old machines; when it is clicked a
+ * box must say at once that it is loading, with an animated hourglass, and
+ * the same box serves every big program. A program file of EX_ATTESA_SOGLIA
+ * bytes or more is started by /exwin/bin/attesa, which shows that box, starts
+ * the program and closes when the program's first window appears (or the
+ * program ends). Smaller ones start directly: a box that flashes for a tenth
+ * of a second is worse than none. Returns the pid started (attesa's for a big
+ * one), or <0.
+ * ============================================================================= */
+#define EX_ATTESA_SOGLIA (8u * 1024u * 1024u)
+
+int ex_spawn_program(const char *path, char *const argv[], const char *nome)
+{
+    static const char *const attese[2] = { "/exwin/bin/attesa", "/cdrom/exwin/bin/attesa" };
+    struct stat st;
+    int         i;
+
+    if (!path || !argv) return -1;
+    if (stat(path, &st) == 0 && (unsigned long)st.st_size >= EX_ATTESA_SOGLIA) {
+        char *av[32];
+        int   n = 0, k;
+
+        av[n++] = 0;
+        if (nome && nome[0]) { av[n++] = (char *)"-n"; av[n++] = (char *)nome; }
+        av[n++] = (char *)"--";
+        av[n++] = (char *)path;
+        for (k = 1; argv[k] && n < 31; k++) av[n++] = argv[k];
+        av[n] = 0;
+        for (i = 0; i < 2; i++) {
+            int pid;
+
+            if (access(attese[i], F_OK) != 0) continue;
+            av[0] = (char *)attese[i];
+            pid = spawn_ex(av[0], av, environ, 0, 0);
+            if (pid >= 0) return pid;
+        }
+    }
+    return spawn_ex(path, argv, environ, 0, 0);
+}
+
 int ex_open_file(const char *percorso, char *prog, unsigned int max)
 {
     static char copia[256], p[200], dal_cd[216];
@@ -1138,7 +1193,7 @@ int ex_open_file(const char *percorso, char *prog, unsigned int max)
     argv[2] = 0;
     for (i = 0; i < 2; i++) {
         argv[0] = i ? dal_cd : p;
-        pid = spawn_ex(argv[0], argv, environ, 0, 0);
+        pid = ex_spawn_program(argv[0], argv, 0);
         if (pid >= 0) return pid;
     }
     return -1;
@@ -7123,10 +7178,13 @@ static int prendi_msg(ExMsg *m, int bloccante)
         }
 
         if (meta.tipo == WIN_MSG_ELENCATA) {
+            ExWindow a = g_segui ? g_segui : g_chiede;
+
             elenco_prendi(buf, meta.len);
-            if (!g_segui) continue;
+            if (!a) continue;
+            if (!g_segui) g_chiede = 0;
             g_el_nuovo  = 0;
-            m->finestra = g_segui;
+            m->finestra = a;
             m->msg      = EXM_WINDOW_LIST;
             m->wp       = 0;
             m->lp       = 0;
@@ -8272,7 +8330,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.017"
+#define EXWIN_VERSIONE "0.018"   /* 0.018: ex_ask_windows, ex_spawn_program */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

@@ -1,0 +1,16 @@
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -2066,6 +2066,13 @@
+   aPlatform.AssignLiteral("MacIntel");
+ #elif defined(ANDROID)
+   aPlatform.AssignLiteral("Linux armv81");
++#elif defined(XP_EXOS)
++  // The same name as the user agent's (nsHttpHandler.cpp): EX-OS, not Linux.
++#  if defined(__x86_64__)
++  aPlatform.AssignLiteral("EX-OS x86_64");
++#  else
++  aPlatform.AssignLiteral("EX-OS i686");
++#  endif
+ #else
+   aPlatform.AssignLiteral("Linux x86_64");
+ #endif

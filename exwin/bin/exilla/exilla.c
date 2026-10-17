@@ -35,7 +35,7 @@
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.004"
+#define VERSIONE_APP "0.005"
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
@@ -126,8 +126,11 @@ static int avvia(int argc, char **argv)
     av[n] = 0;
 
     /* Firefox parte come processo suo, con l'ambiente preparato qui sopra, e
-     * questo programma ha finito: e' una porta, non un guardiano. */
-    if (spawn_ex(FIREFOX, av, environ, 0, 0) < 0) {
+     * questo programma ha finito: e' una porta, non un guardiano.
+     * ! Through ex_spawn_program (17 October 2026): firefox is hundreds of
+     * megabytes, so the "loading, please wait" box with the hourglass shows
+     * at once and stays until Firefox's window appears. */
+    if (ex_spawn_program(FIREFOX, av, "Exilla") < 0) {
         dillo("Firefox non parte (memoria insufficiente, o il file e' rovinato: netupdate -check).");
         return 1;
     }

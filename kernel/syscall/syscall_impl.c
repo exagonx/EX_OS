@@ -5518,6 +5518,20 @@ int32_t sys_video_info(InterruptFrame *frame)
     return 0;
 }
 
+int32_t sys_video_modi(InterruptFrame *frame)
+{
+    VideoModo *u   = (VideoModo *)FR_A1(frame);
+    uint32_t   max = FR_A2(frame);
+    uint32_t   n   = vga_modi_n();
+
+    if (max > n) max = n;
+    if (max > 0) {
+        if (!syscall_verify_ptr(u, max * sizeof(VideoModo))) return ERR(EFAULT);
+        vga_modi_copia(u, max);
+    }
+    return (int32_t)n;
+}
+
 /* =============================================================================
  * SYS_LOG (247) — una riga sulla seriale. Il perche' sta in syscall.h.
  * ========================================================================== */

@@ -182,6 +182,8 @@ static struct {
     void         (*avvisa_cambi)(ExWindow, int);
     void         (*avviso)(const char *, const char *, const char *, const char *);
     void         (*avviso_via)(void);
+    void         (*chiedi_finestre)(ExWindow);                      /* optional: 17/10/2026 */
+    int          (*avvia_programma)(const char *, char *const *, const char *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -392,6 +394,9 @@ static void assicura(void)
     P.avviso          = (void (*)(const char *, const char *, const char *, const char *))
                         exlib_simbolo(t, "ex_show_popup_pointer");
     P.avviso_via      = (void (*)(void)) exlib_simbolo(t, "ex_hide_popup_pointer");
+    P.chiedi_finestre = (void (*)(ExWindow)) exlib_simbolo(t, "ex_ask_windows");
+    P.avvia_programma = (int (*)(const char *, char *const *, const char *))
+                        exlib_simbolo(t, "ex_spawn_program");
 
     P.pronto = 1;
 }
@@ -695,6 +700,24 @@ void ex_show_popup_pointer(const char *text, const char *background,
 { assicura(); if (P.avviso) P.avviso(text, background, foreground, border); }
 void ex_hide_popup_pointer(void)
 { assicura(); if (P.avviso_via) P.avviso_via(); }
+
+/* exwin.so of 17 October 2026. Over an older one: no list (the caller times
+ * out), and programs start directly, without the waiting box. (libc.h is not
+ * included here: the two names it would give, declared as libc.h has them -
+ * environ is libc.h's macro over __environ_dove();
+ * the redirection block is passed as 0, so its type does not matter.) */
+struct SpawnRedir;
+char ***__environ_dove(void);          /* what libc.h's `environ` reads */
+int spawn_ex(const char *path, char *const argv[], char *const envp[],
+             const struct SpawnRedir *redir, int n_redir);
+void ex_ask_windows(ExWindow f)
+{ assicura(); if (P.chiedi_finestre) P.chiedi_finestre(f); }
+int ex_spawn_program(const char *path, char *const argv[], const char *nome)
+{
+    assicura();
+    if (P.avvia_programma) return P.avvia_programma(path, argv, nome);
+    return spawn_ex(path, argv, *__environ_dove(), 0, 0);
+}
 
 /* Over an older exwin.so: the image as it is, in the corner. */
 int          ex_draw_image_mode(ExWindow f, const char *percorso, int x, int y,

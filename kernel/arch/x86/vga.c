@@ -1322,6 +1322,35 @@ void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
     if (px_h) *px_h = g_fb ? g_fb_h : (uint32_t)(g_righe * CELLA_H);
 }
 
+/* The modes Stage 2 listed (@RISOLUZIONI): copied at boot, before the low
+ * memory they sit in (0xD400) can be handed out. */
+static uint8_t  g_modi[VGA_MODI_MAX * 8];
+static uint32_t g_modi_n = 0;
+
+void vga_modi_prendi(const BootInfo *info)
+{
+    const uint8_t *src;
+    uint32_t       n, i;
+
+    if (info == NULL || info->modi_addr == 0) return;
+    n = info->modi_n;
+    if (n > VGA_MODI_MAX) n = VGA_MODI_MAX;
+    src = (const uint8_t *)DA_FISICO(info->modi_addr);
+    for (i = 0; i < n * 8u; i++) g_modi[i] = src[i];
+    g_modi_n = n;
+}
+
+uint32_t vga_modi_n(void) { return g_modi_n; }
+
+void vga_modi_copia(void *dst, uint32_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    uint32_t i;
+
+    if (n > g_modi_n) n = g_modi_n;
+    for (i = 0; i < n * 8u; i++) d[i] = g_modi[i];
+}
+
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp)
 {
