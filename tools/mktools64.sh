@@ -111,7 +111,7 @@ S="$TC64/$TARGET"
 for f in crt0.o libc.a libm.a libstdc++.a libsupc++.a libpthread.a libdl.a librt.a; do
     [ -f "$S/lib/$f" ] && cp -p "$S/lib/$f" "$E/lib/"
 done
-for f in crtbegin.o crtend.o crti.o crtn.o libgcc.a; do
+for f in crtbegin.o crtend.o crtbeginS.o crtendS.o crti.o crtn.o libgcc.a; do
     [ -f "$G/$f" ] && cp -p "$G/$f" "$E/lib/"
 done
 cp -rp "$S/include/." "$E/include/"
@@ -160,6 +160,24 @@ if [ -x "$F/fbc" ] && [ -f "$F/libfb.a" ] && [ -f "$F/fbrt0.o" ]; then
     echo "mktools64: FreeBASIC $("$F/../albero/bin/fbc" -version | sed -n 's/.*Version \([0-9.]*\).*/\1/p') - fbc, libfb, $(ls "$E/include/freebasic" | wc -l) voci di .bi"
 else
     echo "mktools64: no 64-bit FreeBASIC ($F): tools/freebasic-exos/prepara-fb64.sh" >&2
+fi
+
+# --- Rust, if tools/rust-exos/rustc-nativo/costruisci-exos.sh built it -----------
+# (@RUST-64, 17 October 2026) rustc for host x86_64-unknown-exos - one static
+# program, LLVM inside - and the std for the same target in the sysroot
+# layout rustc finds from where it runs: bin/rustc, lib/rustlib/<target>/lib.
+# It links with the gcc of this CD. The std files are those of x.py's stamp.
+RB="cross_build/$(hostname | tr 'A-Z' 'a-z')/rustc-build"
+RS="$RB/x86_64-unknown-linux-gnu/stage1-std/x86_64-unknown-exos/dist/.libstd-stamp"
+if [ -x "$RB/x86_64-unknown-exos/stage2/bin/rustc" ] && [ -f "$RS" ]; then
+    put "$RB/x86_64-unknown-exos/stage2/bin/rustc" bin/rustc
+    RL="$E/lib/rustlib/x86_64-unknown-exos/lib"
+    rm -rf "$RL"; mkdir -p "$RL"
+    tr '\0' '\n' < "$RS" | sed -n 's/^t//p' | grep -E '\.(rlib|rmeta)$' | while read -r f; do cp -p "$f" "$RL/"; done
+    cp tools/rust-exos/rustc-nativo/ciao.rs "$OUT/prova-rust.rs"
+    echo "mktools64: Rust $("$RB/x86_64-unknown-linux-gnu/stage1/bin/rustc" -V | cut -d' ' -f2) - rustc, std ($(ls "$RL" | wc -l) file)"
+else
+    echo "mktools64: no rustc for EX-OS ($RB): tools/rust-exos/rustc-nativo/costruisci-exos.sh" >&2
 fi
 
 # --- the catalogue, the test sources, a note -------------------------------------

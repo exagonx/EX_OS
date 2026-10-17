@@ -1,0 +1,13 @@
+# tools/rust-exos/prova-dylib - a Rust shared library loaded with dlopen on
+# EX-OS (@RUST-64 R64-2 step b: rustc loads procedural macros this way).
+# Built and run by tools/rust-exos/prova-dylib.sh.
+[package]
+name = "prova-dylib"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[profile.release]
+panic = "unwind"
+opt-level = 2

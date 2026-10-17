@@ -1264,7 +1264,12 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->dimensione   = e.dimensione;
         st->ident        = VFS_IDENT(im, e.inode + 1u);
         st->is_dir       = e.is_dir;
-        st->sola_lettura = 1;
+        /* ! NOT ALWAYS 1 (0.259, 17 October 2026): every ext2 file was
+         * reported read-only - from when ext2 was not written - so every
+         * program saw files without write bits, and rustc refused to
+         * link its own object files ("not writeable"). Read-only means
+         * the volume is, or no one may write the inode. */
+        st->sola_lettura = (g_mnt[im].sola_lettura || (e.modo & 0222u) == 0) ? 1 : 0;
         st->data         = e.data;
         st->ora          = e.ora;
         st->modo         = e.modo;
@@ -1276,7 +1281,9 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->dimensione   = e.dimensione;
         st->ident        = VFS_IDENT(im, e.primo_cluster + 1u);
         st->is_dir       = e.is_dir;
-        st->sola_lettura = 1;
+        /* 0.259: the volume or the entry's FAT read-only attribute, as on
+         * the floppy above - no longer always 1 (see the ext2 branch). */
+        st->sola_lettura = (g_mnt[im].sola_lettura || (e.attributi & 0x01u)) ? 1 : 0;
         st->data         = e.data;
         st->ora          = e.ora;
 

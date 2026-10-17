@@ -976,6 +976,74 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
     return 1;
 }
 
+/* =============================================================================
+ * exhttp_tls_sopra — TLS over a TCP transport the caller already opened
+ * (17 October 2026, FTPS in /bin/netspeed)
+ *
+ * ! ITS OWN STATE, NOT g_stato_tls. The https path keeps one connection at a
+ * time in a static; FTPS needs two at once - the commands, and the data
+ * connection opened while the commands are still up. Each call allocates a
+ * StatoTls and the transport's chiudi frees it.
+ *
+ * ! THE HANDSHAKE STARTS ON A CONNECTION THAT ALREADY TALKED in clear (FTP's
+ * AUTH TLS): nothing here opens or reads anything first. On failure the TCP
+ * transport is left as it was - closing it is the caller's business.
+ * ========================================================================== */
+static void tls_chiudi_proprio(void *stato)
+{
+    StatoTls *s = (StatoTls *)stato;
+
+    extls_chiudi(s->tls);
+    s->tcp.chiudi(s->tcp.stato);
+    free(s->tls);
+    free(s);
+}
+
+int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
+                     const char *host, char *errore, unsigned int max)
+{
+    StatoTls *s;
+    char      adesso[24];
+    int       r;
+
+    if (errore && max) errore[0] = 0;
+    if (!magazzino_carica()) {
+        if (errore && max) { strncpy(errore, g_tls_errore, max - 1); errore[max - 1] = 0; }
+        return 0;
+    }
+    s = (StatoTls *)calloc(1, sizeof(*s));
+    if (s) s->tls = malloc(extls_misura());
+    if (!s || !s->tls) {
+        free(s);
+        if (errore && max) { strncpy(errore, "non c'e' memoria per la connessione cifrata", max - 1); errore[max - 1] = 0; }
+        return 0;
+    }
+    s->tcp          = *tcp;
+    s->sotto.stato  = tcp->stato;
+    s->sotto.leggi  = tcp->leggi;
+    s->sotto.scrivi = tcp->scrivi;
+    adesso_in(adesso, sizeof(adesso));
+    r = extls_stretta(s->tls, &s->sotto, host, g_magazzino, adesso, casuale);
+    if (r != EXTLS_OK) {
+        if (errore && max) {
+            if (r == EXTLS_ERR_CERTIFICATO)
+                snprintf(errore, max, "%s: %s (anello %d)", extls_perche(r),
+                         excert_perche(extls_motivo(s->tls)), extls_anello(s->tls));
+            else
+                snprintf(errore, max, "%s", extls_perche(r));
+        }
+        free(s->tls);
+        free(s);
+        return 0;
+    }
+    t->stato  = s;
+    t->leggi  = tls_leggi;
+    t->quanti = tls_quanti;
+    t->scrivi = tls_scrivi;
+    t->chiudi = tls_chiudi_proprio;
+    return 1;
+}
+
 /* ! IL CORPO DI UN POST SI POSA QUI PRIMA DELLO SCAMBIO, e non passa per la
  * firma di exhttp_scambio: quella firma la usano `scarica`, il browser e le
  * immagini, e allargarla per un caso solo vorrebbe dire toccare tutti. Chi

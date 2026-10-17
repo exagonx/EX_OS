@@ -29,6 +29,17 @@ PROXY_RUSTC="$HOME/.cargo/bin/rustc"
 BERSAGLIO=i686-unknown-exos
 [ "$EXOS_ARCH" = x86_64 ] && BERSAGLIO=x86_64-unknown-exos
 
+# ! AT 64 BIT THE SYSROOT IS BUILT WITH panic=unwind (16 October 2026, native
+# Rust): prova-std's profile says abort, and a sysroot built that way refuses
+# every crate built with unwind - a proc-macro crate first of all ("requires
+# panic strategy abort"). An unwind std links into abort programs too, as in
+# every official toolchain, so Exilla's crates are not affected. The std
+# parts: STD (std,panic_abort,panic_unwind,proc_macro for a native rustc).
+if [ "$EXOS_ARCH" = x86_64 ]; then
+    export CARGO_PROFILE_RELEASE_PANIC=unwind
+    export STD="${STD:-std,panic_abort,panic_unwind,proc_macro}"
+fi
+
 # Da zero: una serie sola di librerie, tutte dello stesso giro.
 rm -rf "$B/costruzione-rust/$BERSAGLIO"
 tools/rust-exos/prova-std.sh --solo-compila > "$B/installa-sysroot.log" 2>&1 || {

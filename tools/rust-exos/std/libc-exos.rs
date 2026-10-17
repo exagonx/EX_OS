@@ -131,6 +131,21 @@ s! {
         pub pw_shell: *mut c_char,
     }
 
+    // siginfo_t as lib/include/libc.h has it (16 October 2026, jobserver in
+    // a native rustc): three ints, then a union of a pointer, pid/uid and 29
+    // ints - 128 bytes at 32 bit, 136 at 64 (the union is 8-aligned there).
+    pub struct siginfo_t {
+        pub si_signo: c_int,
+        pub si_errno: c_int,
+        pub si_code: c_int,
+        #[cfg(target_pointer_width = "64")]
+        __allinea: c_int,
+        #[cfg(target_pointer_width = "64")]
+        __campi: [u64; 15],
+        #[cfg(target_pointer_width = "32")]
+        __campi: [u32; 29],
+    }
+
     pub struct sigaction {
         pub sa_sigaction: crate::sighandler_t,
         pub sa_mask: sigset_t,
@@ -274,9 +289,10 @@ pub const RTLD_DEFAULT: *mut c_void = core::ptr::null_mut();
 
 pub const EXIT_SUCCESS: c_int = 0;
 pub const EXIT_FAILURE: c_int = 1;
-pub const STDIN_FILENO: c_int = 0;
-pub const STDOUT_FILENO: c_int = 1;
-pub const STDERR_FILENO: c_int = 2;
+// STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO come from the crate's common
+// unistd (new/nuttx, shared with EX-OS): defined here as well they were an
+// "ambiguous glob re-export" - a warning for the nightly, an error for a
+// rustc built from source (16 October 2026).
 
 // time.h
 pub const CLOCK_REALTIME: clockid_t = 0;
@@ -488,6 +504,7 @@ pub const _SC_HOST_NAME_MAX: c_int = 180;
 pub const PATH_MAX: c_int = 320;
 
 // signal.h: i numeri di Linux, quelli che EX-OS ha.
+pub const SA_SIGINFO: c_int = 0x00000004;
 pub const SIGHUP: c_int = 1;
 pub const SIGINT: c_int = 2;
 pub const SIGQUIT: c_int = 3;
@@ -578,13 +595,16 @@ pub const IPPROTO_ICMP: c_int = 1;
 pub const TCP_KEEPIDLE: c_int = 4;
 pub const TCP_KEEPINTVL: c_int = 5;
 pub const TCP_KEEPCNT: c_int = 6;
-pub const FIONREAD: c_int = 0x541B;
+pub const TIOCGWINSZ: c_uint = 0x5413;  // lib/include/sys/ioctl.h; struct winsize is unix-wide
+pub const FIONREAD: c_uint = 0x541B;   // the ioctl request type, as FIONBIO
 pub const FIONBIO: c_uint = 0x5421;
 pub const EAI_SYSTEM: c_int = -11;
 
 extern "C" {
     // ! errno e' per filo: lib/libc.c, __errno_dove.
     pub fn __errno_dove() -> *mut c_int;
+    // static libc only (lib/libc.c), like the signals
+    pub fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
 
     pub fn pthread_create(
         thread: *mut pthread_t,

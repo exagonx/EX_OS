@@ -106,6 +106,34 @@ quando arrivano a raffiche: lo dicono i contatori del driver, con
 e il controllo di congestione.
 </p>
 
+<h3>Misurarla: netspeed</h3>
+
+<pre>    netspeed                          le istruzioni
+    netspeed -makeserver              mette il punto di misura su un sito (FTP o FTPS)
+    netspeed -test                    1 MB su una volta, poi 8 volte giu'
+    netspeed -test:&lt;url&gt; -mb:16       un altro punto di misura, 16 scaricamenti</pre>
+
+<p>
+<code>-makeserver</code> chiede il tipo di accesso (ftp o ftps), il server,
+utente e password FTP (la password non si vede mentre si scrive), la
+cartella e il suo indirizzo web; crea <code>netspeed/</code> e ci carica, in
+modo binario, un <code>index.php</code> generato al momento, che a chi lo apre
+col browser spiega a cosa serve. Utente e password non si salvano: si tiene
+solo l'indirizzo, in <code>$HOME/.exwin/config/netspeed.cfg</code>. L'FTPS e'
+esplicito (AUTH TLS, comandi e dati cifrati) e vuole un server con TLS 1.3.
+</p>
+
+<p>
+<code>-test</code> crea un file temporaneo da 1 MB di dati casuali e dice
+quanto ci ha messo il disco a scriverlo; lo invia una volta con una POST,
+chiede allo script dove l'ha messo (<code>?download</code>) e lo riscarica
+N volte (<code>-mb:N</code>, 8 se manca; 16, 32, 64... per le linee
+asimmetriche), controllando ogni byte. Alla fine: disco, invio, ricezione
+media, migliore e peggiore, e quante volte la ricezione e' piu' veloce
+dell'invio. I tempi comprendono nome, connessione e HTTP, una connessione
+alla volta.
+</p>
+
 <h2 id="wifi">Il WiFi</h2>
 
 <p>

@@ -70,6 +70,11 @@ const _: () = {
     assert!(core::mem::offset_of!(passwd, pw_gecos) == 16, "passwd.pw_gecos: offset differs from C");
     assert!(core::mem::offset_of!(passwd, pw_dir) == 20, "passwd.pw_dir: offset differs from C");
     assert!(core::mem::offset_of!(passwd, pw_shell) == 24, "passwd.pw_shell: offset differs from C");
+    assert!(size_of::<siginfo_t>() == 128, "siginfo_t: size differs from C");
+    assert!(align_of::<siginfo_t>() == 4, "siginfo_t: alignment differs from C");
+    assert!(core::mem::offset_of!(siginfo_t, si_signo) == 0, "siginfo_t.si_signo: offset differs from C");
+    assert!(core::mem::offset_of!(siginfo_t, si_errno) == 4, "siginfo_t.si_errno: offset differs from C");
+    assert!(core::mem::offset_of!(siginfo_t, si_code) == 8, "siginfo_t.si_code: offset differs from C");
     assert!(size_of::<sigaction>() == 12, "sigaction: size differs from C");
     assert!(align_of::<sigaction>() == 4, "sigaction: alignment differs from C");
     assert!(core::mem::offset_of!(sigaction, sa_sigaction) == 0, "sigaction.sa_sigaction: offset differs from C");
@@ -238,6 +243,11 @@ const _: () = {
     assert!(core::mem::offset_of!(passwd, pw_gecos) == 24, "passwd.pw_gecos: offset differs from C");
     assert!(core::mem::offset_of!(passwd, pw_dir) == 32, "passwd.pw_dir: offset differs from C");
     assert!(core::mem::offset_of!(passwd, pw_shell) == 40, "passwd.pw_shell: offset differs from C");
+    assert!(size_of::<siginfo_t>() == 136, "siginfo_t: size differs from C");
+    assert!(align_of::<siginfo_t>() == 8, "siginfo_t: alignment differs from C");
+    assert!(core::mem::offset_of!(siginfo_t, si_signo) == 0, "siginfo_t.si_signo: offset differs from C");
+    assert!(core::mem::offset_of!(siginfo_t, si_errno) == 4, "siginfo_t.si_errno: offset differs from C");
+    assert!(core::mem::offset_of!(siginfo_t, si_code) == 8, "siginfo_t.si_code: offset differs from C");
     assert!(size_of::<sigaction>() == 16, "sigaction: size differs from C");
     assert!(align_of::<sigaction>() == 8, "sigaction: alignment differs from C");
     assert!(core::mem::offset_of!(sigaction, sa_sigaction) == 0, "sigaction.sa_sigaction: offset differs from C");

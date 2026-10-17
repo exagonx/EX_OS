@@ -1098,7 +1098,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.006"
+#define SH_VERSIONE  "0.007"
 
 #define MAX_LINE    512
 
@@ -3850,6 +3850,28 @@ static void esegui_autoexec(void)
 }
 
 /* =============================================================================
+ * esegui_autoexec_exwin — the shell's own settings in an ExWin terminal
+ * (0.007, 16 October 2026)
+ *
+ * ! ONLY /exwin/shell/autoexec.sh, NEVER THE SYSTEM'S. The user: a shell in an
+ * ExWin window must run the shell customisations and nothing else - the
+ * system's autoexec loads drivers that are already running. esegui_autoexec
+ * already refuses a pty; this one wants a pty AND the mark the ExWin terminal
+ * puts in its child's environment (EXWIN_TERMINALE, lib/exwin/exwin.c), so a
+ * telnet session does not run it. A missing file is the normal case.
+ * ============================================================================= */
+#define AUTOEXEC_EXWIN  "/exwin/shell/autoexec.sh"
+
+static void esegui_autoexec_exwin(void)
+{
+    const char *v = env_get("EXWIN_TERMINALE");
+
+    if (!v || !v[0]) return;
+    if (syscall3(SYS_PTY_CTL, 0, PTY_CTL_LEGGI_MISURA, 0) < 0) return;
+    esegui_script(AUTOEXEC_EXWIN, "autoexec", 0);
+}
+
+/* =============================================================================
  * shell_main — la shell, con i suoi argomenti
  *
  * La chiama _start in bin/sh/start.S, che è ciò che l'ELF loader salta.
@@ -3975,6 +3997,7 @@ int shell_main(int argc, char **argv, char **envp)
      * che stampano si legge sotto e non in mezzo. */
     esegui_avvio();
     esegui_autoexec();
+    esegui_autoexec_exwin();
 
     /* Loop principale della shell */
     for (;;) {

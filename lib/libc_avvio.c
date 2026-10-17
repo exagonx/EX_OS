@@ -273,6 +273,9 @@ void _libc_distruttori(void)
 }
 
 __attribute__((weak, noreturn))
+/* The program's own name, for dladdr (libc.c, dl_addr_programma). */
+char *__exos_argv0;
+
 void _libc_start(int argc, char **argv, char **envp)
 {
     /* ! PRIMA DI TUTTO IL RESTO. Con la libc condivisa, da qui in poi ogni
@@ -297,6 +300,9 @@ void _libc_start(int argc, char **argv, char **envp)
      * kernel — e in quel caso getenv() ripiega sulla sezione [env] di
      * /boot/kernel.cfg: vedi getenv(). */
     *__environ_dove() = envp;
+
+    /* The program's own name, for dladdr (libc.c, dl_addr_programma). */
+    __exos_argv0 = argc > 0 ? argv[0] : 0;
 
     /* ! DOPO environ E PRIMA DI main. Un costruttore globale puo'
      * chiamare getenv(); farlo girare prima che environ sia impostato

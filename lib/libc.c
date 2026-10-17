@@ -9503,10 +9503,74 @@ char *dlerror(void)
     return (char *)e;
 }
 
+/* =============================================================================
+ * The program itself, for dladdr (17 October 2026, rustc on EX-OS)
+ *
+ * ! rustc FINDS ITS SYSROOT WITH dladdr ON ONE OF ITS OWN FUNCTIONS, and took
+ * the file name to be the compiler's: <sysroot>/bin/rustc. dladdr answered
+ * only for the .so files libc_dl.c loaded, so rustc stopped at its first
+ * line ("Failed finding sysroot: dladdr failed"). An address inside the
+ * program (from 0x08000000, where every EX-OS program is linked, to _end)
+ * now gives the program's path, as glibc's dladdr does: argv[0] (saved by
+ * _libc_start, libc_avvio.c), made absolute with the current directory or
+ * looked up in PATH as the shell found it. No symbol name: the program
+ * keeps no symbol table at run time.
+ * ============================================================================= */
+extern char *__exos_argv0;          /* defined and set in libc_avvio.c */
+extern char _end[] __attribute__((weak));
+
+static char g_dl_eseguibile[320];
+
+static int dl_addr_programma(const void *indirizzo, DlInfo *info)
+{
+    uintptr_t   x = (uintptr_t)indirizzo;
+    const char *a = __exos_argv0;
+    struct stat st;
+
+    if (!a || !a[0]) return 0;
+    if (_end && (x < 0x08000000u || x >= (uintptr_t)_end)) return 0;
+    if (!g_dl_eseguibile[0]) {
+        if (a[0] == '/') {
+            strncpy(g_dl_eseguibile, a, sizeof(g_dl_eseguibile) - 1);
+        } else if (strchr(a, '/')) {
+            size_t n;
+
+            if (!getcwd(g_dl_eseguibile, sizeof(g_dl_eseguibile))) return 0;
+            n = strlen(g_dl_eseguibile);
+            if (n + strlen(a) + 2 >= sizeof(g_dl_eseguibile)) { g_dl_eseguibile[0] = 0; return 0; }
+            if (n > 1) g_dl_eseguibile[n++] = '/';
+            strcpy(g_dl_eseguibile + n, a);
+        } else {
+            const char *p = getenv("PATH");
+            char        cand[320];
+
+            while (p && *p && !g_dl_eseguibile[0]) {
+                const char *fine = strchr(p, ':');
+                size_t      n = fine ? (size_t)(fine - p) : strlen(p);
+
+                if (n > 0 && n + strlen(a) + 2 < sizeof(cand)) {
+                    memcpy(cand, p, n);
+                    cand[n] = '/';
+                    strcpy(cand + n + 1, a);
+                    if (stat(cand, &st) == 0) strcpy(g_dl_eseguibile, cand);
+                }
+                p = fine ? fine + 1 : 0;
+            }
+            if (!g_dl_eseguibile[0]) return 0;
+        }
+    }
+    info->dli_fname = g_dl_eseguibile;
+    info->dli_fbase = (void *)0x08000000u;
+    info->dli_sname = 0;
+    info->dli_saddr = 0;
+    return 1;
+}
+
 int dladdr(const void *indirizzo, void *info) /* Dl_info *, see libc.h */
 {
     if (info && dl_addr_elf(indirizzo, (DlInfo *)info)) return 1;
-    return 0;                   /* not in an ELF library: the program keeps no symbol table */
+    if (info && dl_addr_programma(indirizzo, (DlInfo *)info)) return 1;
+    return 0;
 }
 #endif /* !EXOS_LIBC_SO */
 
@@ -12122,6 +12186,7 @@ ssize_t readlink(const char *percorso, char *buf, size_t n)
 }
 
 int symlink(const char *b, const char *p)                  { (void)b; (void)p; errno = ENOSYS; return -1; }
+int link(const char *a, const char *b)                     { (void)a; (void)b; errno = ENOSYS; return -1; }
 int linkat(int a, const char *p1, int b, const char *p2, int f) { (void)a; (void)p1; (void)b; (void)p2; (void)f; errno = ENOSYS; return -1; }
 int lchown(const char *p, unsigned int u, unsigned int g)   { return chown(p, u, g); }
 int fchown(int fd, unsigned int u, unsigned int g)          { (void)fd; (void)u; (void)g; errno = ENOSYS; return -1; }
@@ -14222,6 +14287,54 @@ struct hostent *gethostbyname(const char *nome)
 #endif /* !EXOS_LIBC_SO: i socket */
 
 #ifndef EXOS_LIBC_SO
+/* =============================================================================
+ * For LLVM (16 October 2026, rustc for EX-OS): wait4, sessions, statvfs.
+ * Static libc only, like iconv: ported software links libc.a, and the
+ * floppy's libc.so has no room for what no EX-OS program calls.
+ * ============================================================================= */
+/* struct statvfs as include/sys/statvfs.h has it (libc.c does not include
+ * the public headers: it defines what it needs itself). */
+struct statvfs {
+    unsigned long f_bsize, f_frsize, f_blocks, f_bfree, f_bavail;
+    unsigned long f_files, f_ffree, f_favail, f_fsid, f_flag, f_namemax; /* f_flag = f_flags */
+    int           __riserva[6];
+};
+
+int wait4(int pid, int *stato, int opzioni, struct rusage *uso)
+{
+    if (uso) memset(uso, 0, sizeof(*uso));
+    return waitpid(pid, stato, opzioni);
+}
+
+int setsid(void)        { return getpid(); }
+int getsid(int pid)     { return pid == 0 ? getpid() : pid; }
+
+static int statvfs_riempi(struct statvfs *v)
+{
+    memset(v, 0, sizeof(*v));
+    v->f_bsize   = 4096;
+    v->f_frsize  = 4096;
+    v->f_flag    = 0x1000;              /* MNT_LOCAL: no network volumes */
+    v->f_namemax = 255;            /* NAME_MAX, ext2 */
+    return 0;
+}
+
+int statvfs(const char *percorso, struct statvfs *v)
+{
+    struct stat st;
+
+    if (stat(percorso, &st) < 0) return -1;
+    return statvfs_riempi(v);
+}
+
+int fstatvfs(int fd, struct statvfs *v)
+{
+    struct stat st;
+
+    if (fstat(fd, &st) < 0) return -1;
+    return statvfs_riempi(v);
+}
+
 #include "libc_iconv.c"      /* iconv: for ported software, static libc only */
 #include "libc_avvio.c"
 #endif

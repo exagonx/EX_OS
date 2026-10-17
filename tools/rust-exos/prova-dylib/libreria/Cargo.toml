@@ -1,0 +1,16 @@
+# The library side of tools/rust-exos/prova-dylib: a cdylib with its own copy
+# of the std, as a procedural macro has.
+[package]
+name = "libreria"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "prova_dylib"
+crate-type = ["cdylib"]
+
+[workspace]
+
+[profile.release]
+panic = "unwind"
+opt-level = 2

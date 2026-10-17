@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.258
+**Versione:** 0.259
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -361,6 +361,16 @@ dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
 in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**0.259**: lo stat non dice piu' "sola lettura" per ogni file su ext2 e FAT,
+un residuo di quando quei filesystem non si scrivevano: i programmi vedevano
+file senza permessi di scrittura. Ora decidono il volume, i permessi
+dell'inode o l'attributo FAT. L'ha scoperto la notizia del giorno: **il
+compilatore Rust gira su EX-OS a 64 bit**. `rustc` e' costruito per l'host
+`x86_64-unknown-exos` (un solo programma statico da 131 MB, con LLVM 23
+dentro) e, in QEMU, `rustc -O ciao.rs` compila un programma e lo collega col
+gcc nativo, e il programma gira (collezioni, fili, un panic preso, un
+processo figlio). Non ancora: cargo, il CD degli strumenti, una macchina vera.
 
 **0.258**: `/dev/null` esiste. Su EX-OS `/dev` e' la cartella dei driver sul
 disco, quindi un programma che apriva `/dev/null` riceveva un errore - in

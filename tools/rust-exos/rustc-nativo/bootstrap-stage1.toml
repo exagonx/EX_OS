@@ -1,0 +1,37 @@
+# tools/rust-exos/rustc-nativo/bootstrap-stage1.toml - x.py configuration for
+# step c's check: a stage-1 rustc for LINUX with x86_64-unknown-exos built in,
+# and the std for EX-OS built by it (no .json). LLVM comes from rust-lang's
+# CI for this commit. Paths are filled in by costruisci-stage1.sh.
+change-id = "ignore"
+
+[llvm]
+download-ci-llvm = true
+
+[build]
+build = "x86_64-unknown-linux-gnu"
+host = ["x86_64-unknown-linux-gnu"]
+target = ["x86_64-unknown-linux-gnu", "x86_64-unknown-exos"]
+build-dir = "@BUILD@"
+jobs = 3
+docs = false
+extended = false
+vendor = true
+
+[rust]
+channel = "nightly"
+download-rustc = false
+debug = false
+debuginfo-level = 0
+incremental = false
+lld = false
+# The EX-OS libc crate still has 29 warnings (unused items, ambiguous glob
+# re-exports): to clean up; until then they must not stop the build.
+deny-warnings = false
+llvm-tools = false
+
+[target.x86_64-unknown-exos]
+cc = "@TC64@/bin/x86_64-exos-gcc"
+cxx = "@TC64@/bin/x86_64-exos-g++"
+ar = "@TC64@/bin/x86_64-exos-ar"
+ranlib = "@TC64@/bin/x86_64-exos-ranlib"
+linker = "@TC64@/bin/x86_64-exos-gcc"

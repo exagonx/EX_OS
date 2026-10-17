@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.258
+**Version:** 0.259
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -337,6 +337,16 @@ chipset to ACPI mode first if needed. `reboot` tries, in order, the ACPI reset
 register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
+
+**0.259**: stat no longer reports every file on ext2 and FAT as read-only, a
+leftover from when those filesystems were not written: programs saw files
+without write bits. The volume, the inode's permissions or the FAT attribute
+now decide. Found by the news of the day: **the Rust compiler runs on 64-bit
+EX-OS**. `rustc` is cross-built for the host `x86_64-unknown-exos` (one
+static program of 131 MB, LLVM 23 inside) and, in QEMU, `rustc -O ciao.rs`
+compiles a program and links it with the native gcc, and the program runs
+(collections, threads, a caught panic, a child process). Not yet: cargo, the
+tools CD, a real machine.
 
 **0.258**: `/dev/null` exists. On EX-OS `/dev` is the drivers' directory on
 the disk, so a program opening `/dev/null` got an error - read-only, from a

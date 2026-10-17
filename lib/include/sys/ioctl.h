@@ -21,6 +21,16 @@
 extern "C" {
 #endif
 
+/* The terminal's size, Linux's request number: the kernel answers it on a
+ * terminal (kernel/syscall/syscall_impl.c), ENOTTY elsewhere. */
+#define TIOCGWINSZ 0x5413
+struct winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
+};
+
 #ifdef __cplusplus
 }
 #endif

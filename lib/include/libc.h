@@ -1325,6 +1325,9 @@ int ahci_stato(void);
  *   kstack_*      stack kernel: allocato per intero alla creazione e mai
  *                 cresciuto, li' la dimensione e' ancora fissa
  * ============================================================================= */
+/* ! HIDDEN FROM THIRD-PARTY CODE (EXOS_SOLO_POSIX): «ProcInfo» is also a
+ * struct of LLVM (lib/TargetParser/X86TargetParser.cpp, 16 October 2026). */
+#ifndef EXOS_SOLO_POSIX
 #define PROCINFO_NAME_MAX   32
 #define PROCINFO_MAX_BATCH  16   /* voci per chiamata */
 
@@ -1344,6 +1347,7 @@ typedef struct {
 /* Riempie fino a max voci partendo dalla start-esima (paginazione come
  * listdir_from). Ritorna quante ne ha scritte, 0 quando sono finite. */
 int procinfo(ProcInfo *buf, unsigned int max, unsigned int start);
+#endif /* !EXOS_SOLO_POSIX: ProcInfo */
 
 /* =============================================================================
  * Disco fisico e sua tabella delle partizioni. DUPLICATA A MANO in
@@ -2712,6 +2716,15 @@ struct rusage {
 };
 
 int getrusage(int chi, struct rusage *uso);
+
+/* wait4: waitpid with the child's resource use - EX-OS keeps none, so *uso
+ * comes back zeroed (16 October 2026, LLVM's Program.inc). */
+int wait4(int pid, int *stato, int opzioni, struct rusage *uso);
+
+/* Sessions: EX-OS has none. A process is the leader of its own: setsid()
+ * and getsid() give its pid (getsid(0) = the caller's). For ported code. */
+int setsid(void);
+int getsid(int pid);
 #define CLOCKS_PER_SEC  100
 
 /* Come listdir, ma parte dalla 'start'-esima voce. Serve per percorrere

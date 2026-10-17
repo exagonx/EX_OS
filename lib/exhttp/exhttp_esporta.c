@@ -63,6 +63,9 @@ static const char *const g_nomi[] = {
     "exhttp_attesi",
     "exhttp_intestazioni",
 
+    /* 17 October 2026: TLS over an open connection (FTPS, /bin/netspeed). */
+    "exhttp_tls_sopra",
+
     "__lib_avvio"
 };
 
@@ -84,6 +87,8 @@ static void *const g_indirizzi[] = {
     (void *)exhttp_certi_aggiungi,
     (void *)exhttp_attesi,
     (void *)exhttp_intestazioni,
+
+    (void *)exhttp_tls_sopra,
 
     (void *)__libc_ponti_avvia
 };

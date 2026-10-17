@@ -78,6 +78,12 @@ extern "C" {
 #define FP_SUBNORMAL    3
 #define FP_NORMAL       4
 
+/* What ilogb() returns for 0 and for NaN: openlibm's values (-INT_MAX and
+ * INT_MAX), which is where ilogb comes from. LLVM's APFloat wants the names
+ * (16 October 2026, rustc for EX-OS). */
+#define FP_ILOGB0       (-2147483647)
+#define FP_ILOGBNAN     2147483647
+
 #define fpclassify(x)   __builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, \
                                              FP_SUBNORMAL, FP_ZERO, (x))
 #define isfinite(x)     __builtin_isfinite(x)

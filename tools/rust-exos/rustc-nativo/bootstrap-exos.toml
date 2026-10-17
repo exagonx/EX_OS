@@ -1,0 +1,52 @@
+# tools/rust-exos/rustc-nativo/bootstrap-exos.toml - x.py configuration for
+# step d: rustc and its LLVM built to RUN on 64-bit EX-OS (host
+# x86_64-unknown-exos), cross-built from Linux. The Linux side (stage 1, its
+# LLVM built here too) is what builds it. Paths filled in by
+# costruisci-exos.sh. The C/C++ compiler is the x86_64-exos gcc WITH THREADS
+# (tools/exilla/gcc-fili.sh): LLVM uses std::thread.
+change-id = "ignore"
+
+[llvm]
+# ! NOT FROM CI (16 October 2026): rustc_llvm takes its component list from
+# the BUILD machine's llvm-config, and CI's has every architecture - the
+# EX-OS rustc would then want AArch64, ARM... from an LLVM that has only X86.
+# Both LLVMs are built here, X86 only.
+download-ci-llvm = false
+targets = "X86"
+experimental-targets = ""
+ninja = false
+static-libstdcpp = false
+link-jobs = 1
+assertions = false
+# Shared libraries of LLVM's tools (libRemarks.so, libLTO.so): rustc needs
+# none of them, and EX-OS programs are static - which also means no RPATH:
+# cmake's install step failed rewriting one that a static program never had.
+build-config = { LLVM_TOOL_REMARKS_SHLIB_BUILD = "OFF", LLVM_TOOL_LTO_BUILD = "OFF", CMAKE_SKIP_RPATH = "ON" }
+
+[build]
+build = "x86_64-unknown-linux-gnu"
+host = ["x86_64-unknown-exos"]
+target = ["x86_64-unknown-exos"]
+build-dir = "@BUILD@"
+jobs = 3
+docs = false
+extended = false
+vendor = true
+
+[rust]
+channel = "nightly"
+download-rustc = false
+debug = false
+debuginfo-level = 0
+incremental = false
+lld = false
+llvm-tools = false
+deny-warnings = false
+codegen-backends = ["llvm"]
+
+[target.x86_64-unknown-exos]
+cc = "@TCF@/bin/x86_64-exos-gcc"
+cxx = "@TCF@/bin/x86_64-exos-g++"
+ar = "@TCF@/bin/x86_64-exos-ar"
+ranlib = "@TCF@/bin/x86_64-exos-ranlib"
+linker = "@TCF@/bin/x86_64-exos-gcc"

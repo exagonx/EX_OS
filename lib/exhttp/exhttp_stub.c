@@ -57,6 +57,8 @@ static struct {
     int (*certi_aggiungi)(const unsigned char *, unsigned int);
     unsigned long (*attesi)(void);
     void (*intest)(const char *);      /* facoltativa (28 settembre 2026) */
+    int (*tls_sopra)(ExHttpTrasporto *, const ExHttpTrasporto *, const char *,
+                     char *, unsigned int);   /* optional (17 October 2026) */
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -108,6 +110,8 @@ static void assicura(void)
                        exlib_simbolo(t, "exhttp_certi_aggiungi");
     P.attesi = (unsigned long (*)(void))exlib_simbolo(t, "exhttp_attesi");
     P.intest = (void (*)(const char *))exlib_simbolo(t, "exhttp_intestazioni");
+    P.tls_sopra = (int (*)(ExHttpTrasporto *, const ExHttpTrasporto *, const char *,
+                           char *, unsigned int))exlib_simbolo(t, "exhttp_tls_sopra");
 
     P.pronto = 1;
 }
@@ -152,6 +156,22 @@ int exhttp_posta(const char *url, const char *corpo, unsigned char *buf,
 
 int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta)
 { assicura(); return P.tcp(t, host, porta); }
+
+/* Optional: an older exhttp.so has no FTPS, and says so. */
+int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
+                     const char *host, char *errore, unsigned int max)
+{
+    assicura();
+    if (P.tls_sopra) return P.tls_sopra(t, tcp, host, errore, max);
+    if (errore && max) {        /* no libc header here: copied by hand */
+        static const char m[] = "exhttp.so troppo vecchio: niente TLS sopra FTP";
+        unsigned int i;
+
+        for (i = 0; i + 1 < max && m[i]; i++) errore[i] = m[i];
+        errore[i] = 0;
+    }
+    return 0;
+}
 
 int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u, unsigned char *buf,
                    unsigned int max, ExHttpEsito *e, HttpRisposta *r)

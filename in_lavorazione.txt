@@ -7684,12 +7684,81 @@ librerie mancanti»)
        stdin/stdout/stderr su pipe, waitpid); current_dir non c'e' in
        spawn_ex (serve? rustc non lo usa per il linker). Prova: Command che
        lancia /bin/ls e legge l'output.
-    b. collegamento dinamico per le macro procedurali: bersaglio con
+    b. FATTO 16/10 sera (prova-dylib.sh 16/16: cdylib + vera proc-macro
+       caricate con dlopen in EX-OS 64; bersaglio PIC, TLS global-dynamic;
+       crtbeginS/crtendS di tools/gcc-exos/crtstuff-condivise.c registrano
+       le tabelle di unwind della .so; sysroot 64 in panic=unwind con
+       proc_macro). DA FARE sull'altro PC: specs-condivise.sh sul gcc
+       condiviso cross_build/exos-cross (qui non gira, GLIBC_2.38).
+       Exilla 64 da ricostruire una volta col bersaglio PIC e riprovare.
+       Era: collegamento dinamico per le macro procedurali: bersaglio con
        dynamic-linking, dylib PIC caricate da lib/libc_dl.c (dlopen gia' c'e'
        a 64 bit); prova: un proc-macro cdylib caricato da un programma.
-    c. bersaglio x86_64-unknown-exos DENTRO compiler/rustc_target (spec da
+    c. FATTO 16/10 notte: tools/rust-exos/rustc-nativo (applica.py,
+       prepara-sorgenti.sh, costruisci-stage1.sh); rustc stage1 costruito
+       compila per EX-OS senza .json, il programma gira in QEMU.
+       Era: bersaglio x86_64-unknown-exos DENTRO compiler/rustc_target (spec da
        tools/rust-exos/x86_64-unknown-exos.json) + la std di os-exos nei
        sorgenti di library/.
-    d. LLVM per host x86_64-exos (cmake con x86_64-exos-g++ con i fili),
+    d. IN CORSO 16-17/10 notte: costruisci-exos.sh (log
+       cross_build/<macchina>/rustc-exos.log). LLVM X86 per Linux: fatto.
+       LLVM per EX-OS: FATTO E INSTALLATO (libc completata: machine/endian.h,
+       sysexits.h, statvfs, wait4, setsid, FP_ILOGB*, winsize, link; ProcInfo
+       nascosto con EXOS_SOLO_POSIX). Poi: stage1 Linux ricostruito, std
+       EX-OS, rustc stage2 host x86_64-unknown-exos (qui i crate del
+       compilatore per EX-OS: aspettarsi errori di target_os).
+       Era: LLVM per host x86_64-exos (cmake con x86_64-exos-g++ con i fili),
        poi x.py: build=x86_64-unknown-linux-gnu host=target=x86_64-unknown-exos.
-    e. rustc + cargo dentro EX-OS 64 (QEMU), poi tools64/netinst64.
+    d. FATTO 17/10 mattina: rustc per host x86_64-unknown-exos costruito
+       (costruisci-exos.sh; patch in applica.py; kernel 0.259 stat).
+    e. rustc GIRA in EX-OS 64 (prova-nativo.sh: compila e collega ciao.rs,
+       NATIVO-OK; macro procedurali native MACRO-OK, panic di macro =
+       errore pulito). rustc+std sul CD strumenti 64 (gruppo [rust]),
+       quindi in netinst64 alla prossima pubblicazione.
+       DA FARE: cargo (curl/openssl/libgit2 per EX-OS, oppure --offline coi
+       vendor), provare l'installazione da toolinst/netupdate, PC vero.
+       Era: rustc + cargo dentro EX-OS 64 (QEMU), poi tools64/netinst64.
+
+@NETSPEED 16/10 notte (chiesto dall'utente: la rete sembra lenta): FATTO
+bin/netspeed + tools/netinst/velocita/index.php (pubblicato con netinst).
+Da provare dopo la pubblicazione: `netspeed` e `netspeed -n 16` sul portatile
+(cavo e WiFi).
+
+@ZIP-PARALLELO (chiesto dall'utente il 16/10 sera, PARCHEGGIATO: "non la si fa
+adesso, mi basta sapere che si puo' fare"). Driver per IOMEGA ZIP 100 su porta
+parallela. Fattibile: protocollo = Linux drivers/scsi/ppa.c (GPL-2): trasporto
+su LPT (0x378/0x278; nibble, PS/2 8 bit, EPP; sequenza di risveglio) + comandi
+SCSI gia' usati da usb_massa.c (INQUIRY, READ CAPACITY, READ/WRITE(10), TUR,
+eject) -> disco a blocchi come gli altri, automount. QEMU non emula lo Zip:
+prova solo su macchina vera. Macchina dell'utente: scheda madre Core 2 Quad
+Q8600 a 64 bit con porta LPT. Da chiedere quando si parte: modo della porta nel
+BIOS (SPP/EPP/ECP), un disco Zip sacrificabile, 32 e 64 bit.
+
+@FTP-LIBRERIA (chiesto dall'utente il 17/10 mattina, DA FARE - prima l'utente
+azzera il contesto):
+  1. Il codice FTP/FTPS diventa una LIBRERIA (oggi sta dentro bin/netspeed:
+     Ftp, ftp_riga/ftp_risposta/ftp_comando, PASV, STOR; il TLS e'
+     exhttp_tls_sopra in lib/exhttp, TLS 1.3 soltanto, stato proprio per
+     connessione), condivisa da /bin/ftp, netspeed e il file manager.
+  2. /bin/ftp: digitato da solo apre una SHELL ftp con i comandi classici
+     (open/connect, user, pass, pwd, cd, ls/dir, get, put, mget/mput, mkdir,
+     rmdir, delete, rename, binary/ascii, passive/pasv, status, close, exit/
+     bye/quit, help...) + FTPS (AUTH TLS, PBSZ 0, PROT P). Tutti i comandi
+     del client ftp classico.
+  3. ExWin: l'utente e' indeciso fra protocollo nel filemgr e programma
+     nuovo; preferenza espressa: con la libreria, nel FILEMGR un "Client
+     FTP" attivabile che crea una NUOVA AREA sotto le due di esplora file
+     (replica dell'area standard: albero a sinistra, file a destra, barra
+     URL sotto la barra dei menu, impostazioni), una FINESTRA AGGIUNTIVA con
+     il log dei comandi FTP, trascinamento col mouse dall'area locale a
+     quella FTP (e viceversa), creare/cancellare cartelle remote.
+  Credenziali: mai salvate in chiaro (come wifid: cifrate per utente se
+  l'utente vuole salvarle - da chiedere).
+
+@NETSPEED 17/10 (rifatto come chiesto dall'utente): netspeed (istruzioni),
+-makeserver (FTP/FTPS: genera netspeed/index.php e lo carica; salva solo
+l'URL in $HOME/.exwin/config/netspeed.cfg), -test[:url] -mb:N (file
+temporaneo 1 MB casuale con tempo di scrittura su disco, POST una volta,
+?download da' l'URL del file, N scaricamenti, 8 di base). PHP verificato con
+php CLI; -makeserver NON provato (serve un FTP vero: lo prova l'utente).
+tools/netinst/velocita tolto da netinst.

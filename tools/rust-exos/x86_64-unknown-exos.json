@@ -13,16 +13,18 @@
   "linker-flavor": "gnu-cc",
   "linker": "x86_64-exos-gcc",
   "panic-strategy": "unwind",
-  "relocation-model": "static",
+  "relocation-model": "pic",
   "code-model": "small",
   "position-independent-executables": false,
-  "dynamic-linking": false,
+  "dynamic-linking": true,
   "has-thread-local": true,
-  "tls-model": "local-exec",
+  "tls-model": "global-dynamic",
   "max-atomic-width": 64,
   "cpu": "x86-64",
   "stack-probes": {
     "kind": "inline"
   },
-  "no-default-libraries": false
+  "no-default-libraries": false,
+  "dll-prefix": "lib",
+  "dll-suffix": ".so"
 }

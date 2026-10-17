@@ -490,7 +490,10 @@
 /* 0.257 -> 0.258: /dev/null, both architectures: a descriptor of type
  * FD_NULL - open("/dev/null") and a spawn redirection to it give one; read
  * returns end of file, write takes everything, poll says ready. */
-#define EXOS_VERSION    "0.258"
+/* 0.258 -> 0.259: stat on ext2 and FAT no longer reports every file as
+ * read-only (kernel/fs/vfs.c, stat_interno): the volume, the inode's write
+ * bits or the FAT attribute decide. Found by rustc running on EX-OS. */
+#define EXOS_VERSION    "0.259"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -5157,7 +5157,15 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         pty_ctl(pin[0], PTY_CTL_MISURA,
                 ((unsigned int)t->righe << 16) | (unsigned int)t->cols);
 
-        t->pid = spawn_ex(sh_argv[0], sh_argv, 0, red, 3);
+        /* ! THE MARK FOR THE SHELL: with it, and only in here, sh runs
+         * /exwin/shell/autoexec.sh (the shell's customisations) - see
+         * esegui_autoexec_exwin in bin/sh/shell.c. Set around the call only.
+         * ! AND environ GOES TO THE CHILD: with envp = 0 the kernel gives it
+         * an EMPTY environment, not ours (kernel/syscall/syscall_impl.c), so
+         * the mark would never arrive - nor did HOME or USER until now. */
+        setenv("EXWIN_TERMINALE", "1", 1);
+        t->pid = spawn_ex(sh_argv[0], sh_argv, environ, red, 3);
+        unsetenv("EXWIN_TERMINALE");
 
         /* ! SI CHIUDE LO SLAVE, per la stessa ragione delle pipe: finche' lo
          * teniamo aperto noi, il pty conta un capo vivo dalla parte della

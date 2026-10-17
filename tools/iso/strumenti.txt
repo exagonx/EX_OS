@@ -183,6 +183,21 @@ nota  = (nasm -f bin) e si rilegge con `ndisasm -b 16 -o 0x7c00`.
 nota  = !! L'uscita va scritta fuori dal CD, che e' in sola lettura.
 
 
+[rust]
+nome  = Rust
+dice  = rustc e la std di Rust per x86_64-unknown-exos (solo 64 bit)
+prova = bin/rustc
+vuole = base
+mbyte = 190
+solo  = bin/rustc
+solo  = lib/rustlib
+
+nota  = `rustc -O prog.rs -o prog` compila e collega col gcc di questo CD.
+nota  = Macro procedurali comprese (--crate-type proc-macro, --extern).
+nota  = Non c'e' ancora cargo: le dipendenze si danno a mano con --extern.
+nota  = Esempio: /cdrom/prova-rust.rs (o dove sta il CD degli strumenti).
+
+
 [ssl]
 nome  = OpenSSL
 dice  = libcrypto, libssl e i loro header

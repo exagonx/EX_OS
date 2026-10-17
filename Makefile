@@ -396,7 +396,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
@@ -4446,6 +4446,32 @@ $(SENDERROR_BIN): $(SENDERROR_SRC) $(SENDERROR_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) 
 .PHONY: senderror
 senderror: dirs $(SENDERROR_BIN)
 
+# --- /bin/netspeed (solo CD) -------------------------------------------------
+# The network measured both ways (16-17 October 2026): -makeserver puts a
+# generated index.php on a web site by FTP/FTPS, -test measures against it.
+# Built as senderror, with the same exhttp stub, plus exuser for the hidden
+# FTP password.
+NETSPEED_SRC := bin/netspeed/netspeed.c
+NETSPEED_BIN := $(BUILD_BIN_CD)/netspeed
+NETSPEED_LD  := bin/netspeed/netspeed.ld
+
+$(NETSPEED_BIN): $(NETSPEED_SRC) $(NETSPEED_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) $(EXUSER_SRC) $(EXUSER_HDR) \
+                 $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/netspeed ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I lib/exuser -I drivers/net -c $(NETSPEED_SRC) -o $(BUILD_OBJ)/netspeed_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/netspeed_stub.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/netspeed_exuser.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/netspeed_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETSPEED_LD) \
+	    $(BUILD_OBJ)/netspeed_start.o $(BUILD_OBJ)/netspeed_main.o \
+	    $(BUILD_OBJ)/netspeed_stub.o $(BUILD_OBJ)/netspeed_exuser.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] netspeed compilato: $@"
+
+.PHONY: netspeed
+netspeed: dirs $(NETSPEED_BIN)
+
 SCARICA_BIN := $(BUILD_BIN_CD)/scarica
 SCARICA_LD  := bin/scarica/scarica.ld
 
@@ -7764,7 +7790,7 @@ BINARI_SOLO_CD := $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) 
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
-                  $(SCARICA_BIN) $(SENDERROR_BIN) \
+                  $(SCARICA_BIN) $(SENDERROR_BIN) $(NETSPEED_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) $(SHMTEST_BIN) \
@@ -7941,6 +7967,9 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@# La guida delle applicazioni grafiche: vedi EXWIN_DOC in testa.
 	@mkdir -p $(ISOX_ROOT)/exwin/doc
 	@cp $(EXWIN_DOC) $(ISOX_ROOT)/exwin/doc/ 2>/dev/null || true
+	@# The shell's customisations in an ExWin window (sh 0.007).
+	@mkdir -p $(ISOX_ROOT)/exwin/shell
+	@cp exwin/shell/autoexec.sh $(ISOX_ROOT)/exwin/shell/autoexec.sh
 	@# Le immagini di prova dei lettori: vedi PROVE_IMG_DIR.
 	@# I due file con cui si prova il suono. Stanno in /suono e non in
 	@# /exwin perche' non c'entrano con la grafica: li suona un comando di

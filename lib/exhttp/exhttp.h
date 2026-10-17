@@ -70,6 +70,15 @@ typedef struct {
  * passa dal DNS. */
 int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta);
 
+/* TLS 1.3 over `tcp`, a transport already open and maybe already used in
+ * clear (FTP's AUTH TLS). `host` is the name the certificate must carry.
+ * Rende 1 e riempie `t`; 0 on failure, with the reason in `errore` - and then
+ * `tcp` is still open and the caller closes it. Each call has its own state:
+ * several can be open at once (FTPS: commands and data). Added on
+ * 17 October 2026 for /bin/netspeed; optional in the 32-bit stub. */
+int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
+                     const char *host, char *errore, unsigned int max);
+
 /* -----------------------------------------------------------------------------
  * Scaricare
  * --------------------------------------------------------------------------- */

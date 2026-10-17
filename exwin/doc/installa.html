@@ -601,6 +601,17 @@ di chi USA la macchina: un programma da aprire, una variabile. La rete no: un
 utente normale un driver non lo carica.
 </p>
 
+<h3><code>/exwin/shell/autoexec.sh</code> &mdash; la shell nelle finestre</h3>
+
+<p>
+Lo esegue ogni shell che si apre in una finestra Terminale di ExWin, e solo
+li' (sh 0.007): non sulle console, non via telnet. Qui vanno le
+personalizzazioni della shell in finestra. In una finestra non si eseguono
+mai <code>/boot/autoexec.sh</code> ne' <code>/boot/avvio.sh</code>: accenderebbero
+driver gia' accesi. Stessa sintassi dell'autoexec; il file sul CD ha solo
+commenti. Scrivere <code>exit</code> chiude la finestra.
+</p>
+
 <h3><code>$HOME/.config/extaskbar.cfg</code> &mdash; la barra di stato</h3>
 
 <p>

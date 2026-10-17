@@ -51,6 +51,17 @@ SALTA = {
 }
 print(f"libc: {aggiungi_libc(LIBC)} punti NuttX ora valgono anche per EX-OS")
 
+# ! libm IS ASKED FOR (16 October 2026, rustc for EX-OS): with NuttX the crate
+# links nothing ("linked externally"); gcc adds -lc by itself but never -lm,
+# and LLVM - like any Rust program calling f64::sin - needs openlibm. EX-OS
+# gets a branch of its own before NuttX's.
+cambia(os.path.join(LIBC, "unix", "mod.rs"),
+       '    if #[cfg(any(\n        target_os = "l4re",\n        target_os = "espidf",\n',
+       '    if #[cfg(target_os = "exos")] {\n'
+       '        #[link(name = "m")]\n'
+       '        extern "C" {}\n'
+       '    } else if #[cfg(any(\n        target_os = "l4re",\n        target_os = "espidf",\n')
+
 # ! errno: il crate lo cerca per nome di funzione, e ogni sistema ha il suo. Il
 # nostro e' __errno_dove (lib/libc.c), lo stesso che usa la macro errno in C.
 # (lo aggancia la std, in sys/pal/unix/os.rs: vedi sotto)

@@ -13,6 +13,9 @@
 #   with -shared     ld -shared, no crt0/crtbegin/crtend and no -lc: the
 #                    library takes the libc from the program that opens it
 #                    (lib/libc_esportati.h), so it must not carry a copy;
+#                    crtbeginS.o first and crtendS.o last, built here from
+#                    tools/gcc-exos/crtstuff-condivise.c: they register the
+#                    library's unwind tables (16 October 2026, see there);
 #   without          exactly the built-in spec.
 #
 # ! COMPILE THE LIBRARY WITH -fPIC. Without it the objects carry absolute
@@ -22,6 +25,11 @@ GCC="${1:?usage: $0 <gcc>}"
 DIR=$("$GCC" -print-libgcc-file-name | xargs dirname)
 [ -d "$DIR" ] || { echo "specs-condivise: no library directory for $GCC" >&2; exit 1; }
 rm -f "$DIR/specs"
+# crtbeginS.o / crtendS.o: compiled by this very gcc (its -m and ABI), PIC.
+SORG="$(cd "$(dirname "$0")" && pwd)/crtstuff-condivise.c"
+"$GCC" -O2 -fPIC -fno-asynchronous-unwind-tables -DINIZIO -c "$SORG" -o "$DIR/crtbeginS.o" &&
+"$GCC" -O2 -fPIC -fno-asynchronous-unwind-tables -DFINE -c "$SORG" -o "$DIR/crtendS.o" ||
+    { echo "specs-condivise: crtbeginS.o/crtendS.o did not compile" >&2; exit 1; }
 "$GCC" -dumpspecs | python3 -c '
 import re, sys
 t = sys.stdin.read()
@@ -35,8 +43,8 @@ def link(v):
     emu = re.match(r"(-m \S+)", v).group(1)
     return "%{shared:" + emu + " -shared} %{!shared:" + v.strip() + "}"
 sezione("link", link)
-sezione("startfile", lambda v: "%{!shared:" + v + "}")
-sezione("endfile", lambda v: "%{!shared:" + v + "}")
+sezione("startfile", lambda v: "%{shared:crtbeginS.o%s} %{!shared:" + v + "}")
+sezione("endfile", lambda v: "%{shared:crtendS.o%s} %{!shared:" + v + "}")
 sezione("lib", lambda v: "%{!shared:" + v + "}")
 sys.stdout.write(t)
 ' > "$DIR/specs" || exit 1

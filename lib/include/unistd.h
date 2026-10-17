@@ -72,6 +72,7 @@ ssize_t pwrite(int fd, const void *buf, size_t n, off_t pos);
 int     fsync(int fd);
 ssize_t readlink(const char *percorso, char *buf, size_t n);
 int     symlink(const char *bersaglio, const char *percorso);
+int     link(const char *esistente, const char *nuovo);   /* ENOSYS: one name per file */
 int     linkat(int dfd1, const char *p1, int dfd2, const char *p2, int flag);
 int     lchown(const char *percorso, unsigned int uid, unsigned int gid);
 int     fchown(int fd, unsigned int uid, unsigned int gid);
