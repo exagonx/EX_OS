@@ -29,8 +29,8 @@ manca» apre quello.
 # 28 settembre 2026 — Pennello, e una cartella condivisa da due PC
 
 **La cartella del progetto adesso la usano due PC** attraverso MEGA: qui
-continua il sistema (claude-A), dall'altro PC un secondo profilo porta Firefox
-(Exilla, claude-B). Chi tocca che cosa si scrive in `scambio.txt`
+continua il sistema (profilo-A), dall'altro PC un secondo profilo porta Firefox
+(Exilla, profilo-B). Chi tocca che cosa si scrive in `scambio.txt`
 (PRENDO/LASCIO/CHIEDO); le regole per l'altro profilo sono in
 `ISTRUZIONI-SECONDO-PROFILO.md`. Tutto quel che si costruisce sta in
 `cross_build/`, una cartella per lavoro, e non piu' nella home.
@@ -202,7 +202,7 @@ ogni 50 ms. ! Tre volte un verdetto e' stato sbagliato prima di essere giusto
 (una raffica che non allargava niente, un rilevatore sulla tavolozza, un
 puntatore «arrivato» ma disegno fermo): la prova ha le sue note. ! wserver
 0.004 e il kernel 0.223 vanno aggiornati insieme (version.h, che aveva
-claude-B per @PTHREAD, era gia' stato rilasciato).
+profilo-B per @PTHREAD, era gia' stato rilasciato).
 
 **gfedit, F5: «non appare il prompt con INPUT»**. Il primo piano della console
 restava a gfedit, e l'INPUT del programma BASIC leggeva subito la fine
@@ -213,12 +213,12 @@ e INPUT senza F5.
 
 ! Visto strada facendo: gli script `tools/prova_*.sh` hanno i permessi
 `rw-------`, senza esecuzione: e' MEGA, che i bit di esecuzione non li porta
-(confermato da claude-B, che ci ha trovato anche la causa di @FLOPPY-PIENO).
+(confermato da profilo-B, che ci ha trovato anche la causa di @FLOPPY-PIENO).
 Si lanciano con `bash`.
 
 **Il floppy senza shell** (@FLOPPY-PIENO, chiuso). Il floppy del commit
 3896fc6 non aveva `/bin/sh`. mkfloppy.sh copiava solo i file col bit di
-esecuzione, e MEGA quel bit non lo porta (la causa l'ha trovata claude-B): su
+esecuzione, e MEGA quel bit non lo porta (la causa l'ha trovata profilo-B): su
 un PC entravano le copie-alias (whoami, chown, poweroff, reboot, halt: 68 KB) e
 il floppy traboccava, sull'altro restavano fuori insieme alla shell. Adesso si
 sceglie per contenuto (un ELF) e gli alias stanno solo sul CD
@@ -23369,7 +23369,7 @@ verificato: le prove girano a 32 MB.
 
 ---
 
-## 2026-09-28 23:39 — claude-B (Exilla), pausa
+## 2026-09-28 23:39 — profilo-B (Exilla), pausa
 Tappa 1 (fili POSIX) FATTA: kernel 0.222, prova-pthread 15/15. Tutto rilasciato
 in scambio.txt, testo pronto in messaggio-commit.txt (manca solo ./gitupdate.sh).
 Prossimo: Rust std (tools/rust-exos/leggimi.md passi 2-3), poi socket BSD.

@@ -15,8 +15,12 @@
 # non basta che apt dica di aver installato i pacchetti, deve compilare un
 # oggetto a 32 bit e collegarlo con l'emulazione elf_i386.
 #
-#     ./shell.sh                 INSTALLA TUTTO: sistema, prove e strumenti
-#     ./shell.sh --minimo        solo `make all` e `make run`, niente cross
+#     ./shell.sh                 INSTALLA TUTTO: sistema, prove, strumenti,
+#                                sviluppo (G++, Fortran, cmake...) e GUI
+#                                (GTK 3, GTK 4, Qt 5, Qt 6)
+#     ./shell.sh --senza-gui     tutto tranne GTK e Qt
+#     ./shell.sh --minimo        solo `make all` e `make run`: niente cross,
+#                                niente sviluppo extra, niente GUI
 #     ./shell.sh --controlla     non installa niente, dice solo cosa manca
 #
 # -----------------------------------------------------------------------------
@@ -46,6 +50,12 @@
 
 set -u
 
+# ! IL PATH DI `su` SENZA TRATTINO NON HA LE DIRECTORY sbin. Con `su` (e non
+# `su -`) l'ambiente dell'utente di partenza resta com'e': /sbin e /usr/sbin
+# non ci sono, e comandi come sfdisk, ldconfig o usermod sembrano "non
+# presenti" anche se sono installati. Si aggiungono qui, una volta per tutte.
+export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+
 # --- Colori -------------------------------------------------------------------
 if [ -t 1 ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -69,15 +79,20 @@ muori() { log_err "$1"; exit 1; }
 # venti minuti dopo, con un configure che si ferma su un header. Il gruppo
 # costa una manciata di pacchetti; chi non li vuole dice --minimo.
 VUOLE_STRUMENTI=1
+VUOLE_SVILUPPO=1   # suite GCC completa e strumenti di build (cmake, meson...)
+VUOLE_GUI=1        # GTK 3, GTK 4, Qt 5, Qt 6 (intestazioni, strumenti, esempi)
 SOLO_CONTROLLO=0
 
 for arg in "$@"; do
     case "$arg" in
-        --minimo|--base)     VUOLE_STRUMENTI=0 ;;
-        --strumenti|--tutto) VUOLE_STRUMENTI=1 ;;   # gia' il default: accettati
+        --minimo|--base)     VUOLE_STRUMENTI=0; VUOLE_SVILUPPO=0; VUOLE_GUI=0 ;;
+        --strumenti)         VUOLE_STRUMENTI=1 ;;   # gia' il default: accettato
+        --tutto)             VUOLE_STRUMENTI=1; VUOLE_SVILUPPO=1; VUOLE_GUI=1 ;;
+        --senza-gui)         VUOLE_GUI=0 ;;
+        --gui)               VUOLE_GUI=1 ;;         # gia' il default: accettato
         --controlla|-n)      SOLO_CONTROLLO=1 ;;
         --aiuto|-h|--help)
-            sed -n '13,20p' "$0" | sed 's/^# \?//'
+            sed -n '13,/^# -----/p' "$0" | sed '$d' | sed 's/^# \?//'
             exit 0 ;;
         *) muori "argomento sconosciuto: $arg (prova --aiuto)" ;;
     esac
@@ -93,8 +108,15 @@ echo ""
 # =============================================================================
 log_step "Controllo del sistema"
 
-[ "$(uname -s)" = "Linux" ] || muori "questo script e' per Linux"
+# ! $OSTYPE E $EUID SONO VARIABILI DI BASH, NON COMANDI. Per sapere su che
+# sistema si e' e chi si e' non servono uname e id: meno comandi da cui
+# dipende lo script, meno cose che possono mancare prima ancora di partire.
+case "${OSTYPE:-}" in
+    linux*) ;;
+    *) muori "questo script e' per Linux" ;;
+esac
 command -v apt-get >/dev/null 2>&1 || muori "apt-get non c'e': questo script e' per Debian e derivate"
+command -v dpkg    >/dev/null 2>&1 || muori "dpkg non c'e': questo script e' per Debian e derivate"
 
 if [ -r /etc/os-release ]; then
     . /etc/os-release
@@ -116,11 +138,70 @@ case "$ARCH" in
 esac
 
 # Chi lancia il comando: root direttamente, oppure sudo.
-if [ "$(id -u)" -eq 0 ]; then
+# Con --controlla non si installa niente, quindi non serve ne' root ne' sudo.
+if [ "$EUID" -eq 0 ]; then
+    SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+elif [ "$SOLO_CONTROLLO" -eq 1 ]; then
     SUDO=""
 else
-    command -v sudo >/dev/null 2>&1 || muori "non sei root e sudo non c'e'"
-    SUDO="sudo"
+    log_err "non sei root e sudo non c'e'. Due strade:"
+    log_err "  1) come root:   su -   e poi rilancia questo script"
+    log_err "  2) installa sudo:  su -c 'apt-get install -y sudo && usermod -aG sudo ${USER:-il_tuo_utente}'"
+    log_err "     poi esci e rientra (il gruppo si applica al nuovo accesso)"
+    exit 1
+fi
+
+# apt-get update una volta sola: serve prima di installare i comandi che
+# mancano allo script e poi prima dei pacchetti veri.
+export DEBIAN_FRONTEND=noninteractive
+APT_AGGIORNATO=0
+aggiorna_apt() {
+    [ "$APT_AGGIORNATO" -eq 1 ] && return 0
+    log_info "aggiornamento dell'elenco dei pacchetti..."
+    $SUDO apt-get update -qq || log_warn "apt-get update non e' riuscito: si prova lo stesso"
+    APT_AGGIORNATO=1
+}
+
+# =============================================================================
+# 1b. I comandi che LO SCRIPT STESSO usa
+# =============================================================================
+# ! PRIMA DI USARLI SI VERIFICA CHE CI SIANO. Su una Debian appena installata,
+# o in un contenitore, puo' mancare qualcosa che lo script da' per scontato
+# (mktemp, wc, tail, sed...). Senza questo controllo si scopre a meta'
+# dell'installazione, con un "comando non trovato" e un risultato a meta'.
+# Il formato e' comando:pacchetto, cioe' "quel comando lo da' quel pacchetto".
+# Non compaiono uname e id (qui sono sostituiti da $OSTYPE e $EUID di bash),
+# ne' sudo (controllato sopra), ne' dpkg e apt-get (se mancano non e' Debian).
+log_step "Comandi usati dallo script"
+
+CMD_SCRIPT="mktemp:coreutils wc:coreutils tail:coreutils head:coreutils basename:coreutils cat:coreutils rm:coreutils ls:coreutils sed:sed"
+MANCA_CMD=""
+MANCA_PKG=""
+for voce in $CMD_SCRIPT; do
+    c=${voce%%:*}
+    p=${voce##*:}
+    command -v "$c" >/dev/null 2>&1 && continue
+    log_warn "$c non trovato (lo fornisce: $p)"
+    MANCA_CMD="$MANCA_CMD $c"
+    case " $MANCA_PKG " in *" $p "*) ;; *) MANCA_PKG="$MANCA_PKG $p" ;; esac
+done
+
+if [ -z "$MANCA_CMD" ]; then
+    log_ok "tutti i comandi dello script sono presenti"
+elif [ "$SOLO_CONTROLLO" -eq 1 ]; then
+    muori "mancano:$MANCA_CMD — installa:$MANCA_PKG (sudo apt-get install$MANCA_PKG)"
+else
+    aggiorna_apt
+    log_info "installo:$MANCA_PKG"
+    $SUDO apt-get install -y -qq $MANCA_PKG >/dev/null 2>&1 \
+        || muori "installazione di$MANCA_PKG non riuscita: controlla la rete e i repository"
+    hash -r    # il PATH e' lo stesso ma bash ricorda cio' che non trovava
+    for c in $MANCA_CMD; do
+        command -v "$c" >/dev/null 2>&1 || muori "$c manca ancora dopo l'installazione di$MANCA_PKG"
+    done
+    log_ok "comandi mancanti installati:$MANCA_CMD"
 fi
 
 # =============================================================================
@@ -170,8 +251,38 @@ PKG_PROVE="qemu-system-x86 qemu-utils gdb"
 PKG_STRUMENTI="libgmp-dev libmpfr-dev libmpc-dev libisl-dev texinfo bison flex gawk perl \
 autoconf automake libtool pkg-config zlib1g-dev zip unzip git curl wget ca-certificates"
 
+# SVILUPPO — il resto della suite GCC e gli strumenti di compilazione:
+#   g++ gfortran      i front-end C++ e Fortran (g++ e' gia' in build-essential)
+#   g++-multilib      g++ -m32 su amd64 (solo li')
+#   cmake ninja-build meson   i sistemi di build che GTK 4 e Qt 6 si aspettano
+#   ccache            ricompilazioni veloci
+#   valgrind          perdite di memoria e accessi non validi
+# Altre librerie di sviluppo (SQLite, OpenSSL, MariaDB...) si aggiungono qui.
+PKG_SVILUPPO="g++ gfortran cmake ninja-build meson ccache valgrind"
+[ "$ARCH" = "amd64" ] && PKG_SVILUPPO="$PKG_SVILUPPO g++-multilib"
+
+# GTK — intestazioni, strumenti ed esempi:
+#   libgtk-3-dev libgtk-4-dev      GTK 3 e GTK 4 (portano GLib, Cairo, Pango)
+#   libadwaita-1-dev               libadwaita per GTK 4
+#   libgtksourceview-4-dev/-5-dev  il widget editor di codice per GTK 3 e GTK 4
+#   libgtkmm-3.0-dev/-4.0-dev      i binding C++
+#   gtk-3-examples gtk-4-examples  gtk3-demo, gtk4-demo: prova rapida che gira
+#   glade             il disegnatore di interfacce per GTK 3
+PKG_GTK="libgtk-3-dev libgtk-4-dev libadwaita-1-dev libgtksourceview-4-dev libgtksourceview-5-dev libgtkmm-3.0-dev libgtkmm-4.0-dev gtk-3-examples gtk-4-examples glade"
+
+# QT — Qt 6 e Qt 5, con gli strumenti (moc, uic, rcc, Designer, Linguist):
+#   qt6-base-dev qt6-base-dev-tools    Core, Gui, Widgets, Network, Sql
+#   qt6-tools-dev(-tools) qt6-l10n-tools   Designer, Linguist, lrelease
+#   qt6-declarative-dev   QML e Quick
+#   qt6-svg-dev qt6-multimedia-dev     SVG e audio/video
+#   qtcreator         l'IDE
+#   qtbase5-dev ecc.  la stessa cosa per Qt 5, che molti progetti usano ancora
+PKG_QT="qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools qt6-declarative-dev qt6-svg-dev qt6-multimedia-dev qtcreator qtbase5-dev qtbase5-dev-tools qttools5-dev qttools5-dev-tools qtdeclarative5-dev libqt5svg5-dev"
+
 PACCHETTI="$PKG_BASE $PKG_PROVE"
 [ "$VUOLE_STRUMENTI" -eq 1 ] && PACCHETTI="$PACCHETTI $PKG_STRUMENTI"
+[ "$VUOLE_SVILUPPO" -eq 1 ]  && PACCHETTI="$PACCHETTI $PKG_SVILUPPO"
+[ "$VUOLE_GUI" -eq 1 ]       && PACCHETTI="$PACCHETTI $PKG_GTK $PKG_QT"
 
 # =============================================================================
 # 3. Installazione
@@ -181,14 +292,13 @@ if [ "$SOLO_CONTROLLO" -eq 1 ]; then
 else
     log_step "Installazione dei pacchetti"
 
-    if [ "$VUOLE_STRUMENTI" -eq 1 ]; then
-        log_info "gruppi: sistema + prove + strumenti ($(echo $PACCHETTI | wc -w) pacchetti)"
-    else
-        log_info "gruppi: sistema + prove ($(echo $PACCHETTI | wc -w) pacchetti) — --minimo"
-    fi
+    GRUPPI="sistema + prove"
+    [ "$VUOLE_STRUMENTI" -eq 1 ] && GRUPPI="$GRUPPI + strumenti"
+    [ "$VUOLE_SVILUPPO" -eq 1 ]  && GRUPPI="$GRUPPI + sviluppo"
+    [ "$VUOLE_GUI" -eq 1 ]       && GRUPPI="$GRUPPI + GTK/Qt"
+    log_info "gruppi: $GRUPPI ($(echo $PACCHETTI | wc -w) pacchetti)"
 
-    log_info "aggiornamento dell'elenco dei pacchetti..."
-    $SUDO apt-get update -qq || log_warn "apt-get update non e' riuscito: si prova lo stesso"
+    aggiorna_apt
 
     # ! UN PACCHETTO PER VOLTA, E NON TUTTI INSIEME. Con una sola riga
     # apt-get -y, un nome sbagliato o assente su questa distribuzione fa
@@ -253,6 +363,7 @@ log_step "Verifica"
 
 GUAI=0            # cio' che ferma `make all`
 GUAI_STRUMENTI=0  # cio' che ferma solo il CD degli strumenti
+GUAI_SVIL=0       # cio' che manca di sviluppo e GUI: non ferma `make all`
 
 controlla() {  # controlla <comando> <pacchetto>
     if command -v "$1" >/dev/null 2>&1; then
@@ -298,7 +409,9 @@ cat > "$PROVA/p.c" <<'SORGENTE'
 void _start(void) { for (;;) { } }
 SORGENTE
 
-if gcc -m32 -march=pentium-mmx -ffreestanding -fno-builtin -fno-stack-protector \
+if ! command -v gcc >/dev/null 2>&1; then
+    log_warn "gcc assente: la prova di compilazione e' saltata"
+elif gcc -m32 -march=pentium-mmx -ffreestanding -fno-builtin -fno-stack-protector \
        -fno-pic -fno-pie -c "$PROVA/p.c" -o "$PROVA/p.o" 2> "$PROVA/cc.log"; then
     log_ok "gcc -m32 -march=pentium-mmx compila"
 else
@@ -309,7 +422,9 @@ else
 fi
 
 if [ -f "$PROVA/p.o" ]; then
-    if ld -m elf_i386 -nostdlib -e _start -Ttext 0x100000 \
+    if ! command -v ld >/dev/null 2>&1; then
+        log_warn "ld assente: la prova di collegamento e' saltata"
+    elif ld -m elf_i386 -nostdlib -e _start -Ttext 0x100000 \
           "$PROVA/p.o" -o "$PROVA/p.elf" 2> "$PROVA/ld.log"; then
         log_ok "ld -m elf_i386 collega"
     else
@@ -320,6 +435,7 @@ if [ -f "$PROVA/p.o" ]; then
 fi
 
 # nasm deve produrre sia il binario piatto (stage1) sia l'ELF32 (entry.asm).
+if command -v nasm >/dev/null 2>&1; then
 printf 'bits 16\norg 0x7c00\njmp $\n' > "$PROVA/s.asm"
 if nasm -f bin "$PROVA/s.asm" -o "$PROVA/s.bin" 2>/dev/null; then
     log_ok "nasm -f bin"
@@ -331,6 +447,9 @@ if nasm -f elf32 "$PROVA/e.asm" -o "$PROVA/e.o" 2>/dev/null; then
     log_ok "nasm -f elf32"
 else
     log_err "nasm -f elf32 non funziona"; GUAI=$((GUAI + 1))
+fi
+else
+    log_warn "nasm assente: le prove di assemblaggio sono saltate"
 fi
 
 # python3: gli script del progetto usano solo la libreria standard, ma
@@ -363,6 +482,72 @@ if [ "$VUOLE_STRUMENTI" -eq 1 ]; then
     done
 fi
 
+controlla_extra() {  # controlla_extra <comando> <pacchetto>: non ferma `make all`
+    if command -v "$1" >/dev/null 2>&1; then
+        log_ok "$1"
+    else
+        log_err "$1 manca — sudo apt install $2"
+        GUAI_SVIL=$((GUAI_SVIL + 1))
+    fi
+}
+
+# prova_pkg <modulo pkg-config> <nome> <pacchetto> <c|cxx> <sorgente>
+# ! COME PER IL SISTEMA, SI PROVA A COMPILARE E COLLEGARE davvero un programma
+# minimo: pkg-config puo' dire di si' e mancare un'intestazione o una libreria.
+prova_pkg() {
+    local mod=$1 nome=$2 pkg=$3 lang=$4 src=$5 cc=gcc ext=c extra=""
+    if ! pkg-config --exists "$mod" 2>/dev/null; then
+        log_err "$nome manca — sudo apt install $pkg"
+        GUAI_SVIL=$((GUAI_SVIL + 1))
+        return
+    fi
+    if [ "$lang" = "cxx" ]; then cc=g++; ext=cpp; extra="-fPIC"; fi
+    if ! command -v "$cc" >/dev/null 2>&1; then
+        log_err "$nome c'e' ma $cc manca — sudo apt install build-essential"
+        GUAI_SVIL=$((GUAI_SVIL + 1))
+        return
+    fi
+    printf '%s\n' "$src" > "$PROVA/gui.$ext"
+    if $cc $extra "$PROVA/gui.$ext" -o "$PROVA/gui.bin" $(pkg-config --cflags --libs "$mod") 2> "$PROVA/gui.log"; then
+        log_ok "$nome $(pkg-config --modversion "$mod") compila e collega"
+    else
+        log_err "$nome presente ma il programma di prova NON compila:"
+        sed 's/^/       /' "$PROVA/gui.log" | head -5 >&2
+        GUAI_SVIL=$((GUAI_SVIL + 1))
+    fi
+}
+
+if [ "$VUOLE_SVILUPPO" -eq 1 ]; then
+    echo ""
+    log_info "gruppo sviluppo (suite GCC e strumenti di build):"
+    for voce in g++:g++ gfortran:gfortran cmake:cmake ninja:ninja-build \
+                meson:meson ccache:ccache valgrind:valgrind pkg-config:pkg-config; do
+        controlla_extra "${voce%%:*}" "${voce##*:}"
+    done
+    # g++ -m32 non si prova a compilare: servirebbe libstdc++ a 32 bit anche
+    # per un programma vuoto, e non e' un requisito di `make all`.
+fi
+
+if [ "$VUOLE_GUI" -eq 1 ]; then
+    echo ""
+    log_info "gruppo GUI (GTK 3, GTK 4, Qt 6, Qt 5):"
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        log_err "pkg-config manca — sudo apt install pkg-config (serve per controllare GTK e Qt)"
+        GUAI_SVIL=$((GUAI_SVIL + 1))
+    else
+        SRC_GTK='#include <gtk/gtk.h>
+int main(void) { return gtk_get_major_version() ? 0 : 1; }'
+        SRC_QT='#include <QtCore/QCoreApplication>
+int main(int argc, char **argv) { QCoreApplication a(argc, argv); return 0; }'
+        prova_pkg gtk+-3.0 "GTK 3" libgtk-3-dev  c   "$SRC_GTK"
+        prova_pkg gtk4     "GTK 4" libgtk-4-dev  c   "$SRC_GTK"
+        prova_pkg Qt6Core  "Qt 6"  qt6-base-dev  cxx "$SRC_QT"
+        prova_pkg Qt5Core  "Qt 5"  qtbase5-dev   cxx "$SRC_QT"
+    fi
+    controlla_extra qtcreator qtcreator
+    controlla_extra glade     glade
+fi
+
 # =============================================================================
 # 5. Esito
 # =============================================================================
@@ -374,8 +559,15 @@ if [ "$GUAI" -eq 0 ] && [ "$GUAI_STRUMENTI" -gt 0 ]; then
     echo ""
 fi
 
+if [ "$GUAI" -eq 0 ] && [ "$GUAI_SVIL" -gt 0 ]; then
+    log_warn "$GUAI_SVIL controlli del gruppo sviluppo/GUI falliti."
+    log_warn "\`make all\` funziona lo stesso: mancano solo compilatori, strumenti"
+    log_warn "di build, GTK o Qt in piu'. Le righe in rosso qui sopra dicono quali."
+    echo ""
+fi
+
 if [ "$GUAI" -eq 0 ]; then
-    if [ "$GUAI_STRUMENTI" -eq 0 ]; then
+    if [ "$GUAI_STRUMENTI" -eq 0 ] && [ "$GUAI_SVIL" -eq 0 ]; then
         echo -e "${GREEN}Tutto a posto. Da qui:${NC}"
     else
         echo -e "${GREEN}Il sistema si costruisce. Da qui:${NC}"
@@ -386,6 +578,15 @@ if [ "$GUAI" -eq 0 ]; then
     echo "    make iso-tutte  le due ISO (sistema e strumenti)"
     echo "    make help       tutti i bersagli"
     echo ""
+    if [ "$VUOLE_GUI" -eq 1 ]; then
+        echo "Per compilare con le librerie grafiche:"
+        echo ""
+        echo "    gcc prog.c -o prog \$(pkg-config --cflags --libs gtk4)"
+        echo "    gcc prog.c -o prog \$(pkg-config --cflags --libs gtk+-3.0)"
+        echo "    g++ -fPIC prog.cpp -o prog \$(pkg-config --cflags --libs Qt6Widgets)"
+        echo "    qtcreator       l'IDE per Qt   |   glade   il disegnatore GTK 3"
+        echo ""
+    fi
     if [ "$VUOLE_STRUMENTI" -eq 0 ]; then
         echo "Hai chiesto --minimo: le dipendenze del cross-compilatore i386-exos"
         echo "NON sono installate, e senza quelle \`make iso\` non arriva in fondo."

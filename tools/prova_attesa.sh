@@ -17,7 +17,7 @@
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
-D="${1:-/tmp/claude-1004/attesa-$ARCH}"
+D="${1:-/tmp/exos-prove/attesa-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SFDISK=$(command -v sfdisk || echo /usr/sbin/sfdisk)

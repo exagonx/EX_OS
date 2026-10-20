@@ -81,6 +81,32 @@ if git diff --cached --quiet; then
     exit 0
 fi
 
+# ! NIENTE NOMI DI ASSISTENTI NEL REPOSITORY (21 ottobre 2026, richiesta
+# dell'utente, per i colleghi). Prima del commit si cercano le parole di
+# PAROLE in ogni file aggiunto o cambiato (anche binari: i metadati di un
+# audio contano) e nel messaggio; se ce n'e' una, ci si ferma e si dice dove.
+# Le parole sono spezzate apposta: scritte intere, questo script fermerebbe
+# se stesso. La cartella dell'assistente e continua.sh stanno in
+# .git/info/exclude, che resta su questa macchina.
+PAROLE=(-e "cl""aude" -e "anth""ropic")
+CAMBIATI=$(git diff --cached --name-only --diff-filter=ACMR)
+TROVATI=""
+if [ -n "$CAMBIATI" ]; then
+    TROVATI=$(printf '%s\n' "$CAMBIATI" | tr '\n' '\0' |
+              xargs -0 git grep --cached -i -l "${PAROLE[@]}" -- 2>/dev/null || true)
+fi
+NEL_MESSAGGIO=""
+[ -s "$MESSAGGIO" ] && grep -qi "${PAROLE[@]}" "$MESSAGGIO" && NEL_MESSAGGIO=1
+if [ -n "$TROVATI" ] || [ -n "$NEL_MESSAGGIO" ]; then
+    echo "! MI FERMO: nomi che non devono andare sul repository."
+    [ -n "$TROVATI" ] && printf '%s\n' "$TROVATI" | sed 's/^/    /'
+    [ -n "$NEL_MESSAGGIO" ] && echo "    $MESSAGGIO (il messaggio del commit)"
+    echo "  Toglili (o togli il file con: git rm --cached <file>) e rilancia."
+    # ! NIENTE git reset: con core.fileMode=false i +x degli script vivono
+    # solo nell'indice, e un reset li toglierebbe. Lo stage resta com'e'.
+    exit 1
+fi
+
 echo "============================================="
 echo " Ramo: $branch"
 echo "============================================="

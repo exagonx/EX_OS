@@ -25,7 +25,7 @@ manuali, siti semplici); Exilla serve dove serve un motore intero.
 
 Si lavora sul PC di compilazione (I5SVRDEB: Core i5, 4 core, 31 GB, Debian 12,
 glibc 2.36), mentre l'altro PC segue la coda: vedi
-`ISTRUZIONI-SECONDO-PROFILO.md` e `scambio.txt` (qui si firma **claude-B**).
+`ISTRUZIONI-SECONDO-PROFILO.md` e `scambio.txt` (qui si firma **profilo-B**).
 
 - **La toolchain condivisa non parte qui**: `cross_build/exos-cross` (GCC 17,
   C e C++, con libstdc++ per EX-OS) e' nata su Debian 13 e vuole GLIBC 2.38.

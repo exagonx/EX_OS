@@ -60,7 +60,9 @@ else
 fi
 # mach vuole llvm-objdump per leggere le intestazioni dei binari di prova; quello
 # di Debian (LLVM 14) legge anche gli ELF i386 di EX-OS.
-export LLVM_OBJDUMP="${LLVM_OBJDUMP:-$(command -v llvm-objdump || command -v llvm-objdump-14)}"
+# Without llvm installed on the host (Debian 13 on NASi5DEB, 19 October 2026)
+# Mozilla's own clang has one.
+export LLVM_OBJDUMP="${LLVM_OBJDUMP:-$(command -v llvm-objdump || command -v llvm-objdump-14 || echo "$B/costruzione-strumenti/mozclang/clang/bin/llvm-objdump")}"
 export MACH_NO_TERMINAL_FOOTER=1 MOZ_NOSPAM=1
 mkdir -p "$MOZBUILD_STATE_PATH" "$RADICE/cross_build/exilla-obj"
 cd firefox-main || exit 1

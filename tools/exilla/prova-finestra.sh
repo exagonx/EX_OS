@@ -54,6 +54,8 @@ export EXOS_ISTANZA=finestra$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${
 # RETE=1: una scheda di rete (la rete «user» di QEMU, che esce su Internet
 # attraverso l'host) e, dentro EX-OS, driver, indirizzo e DNS prima di Firefox.
 # PAGINA=<indirizzo>: la pagina con cui Firefox parte (di solito con RETE=1).
+# INDIRIZZO=<indirizzo>: what is typed in the address bar (19 October 2026:
+# the user saw typed addresses go nowhere); default the second test page.
 RETE_QEMU=""; [ -n "${RETE:-}" ] && RETE_QEMU="-netdev user,id=u0 -device e1000,netdev=u0"
 PAGINA="${PAGINA:-file:///disk/prova.html}"
 export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide $RETE_QEMU"
@@ -99,7 +101,7 @@ FOTO_N="${FOTO_N:-5}"
     for i in $(seq 1 7); do echo "mon:mouse_move 0 11@0"; done
     echo "mon:mouse_button 1;mouse_button 0@4"
     echo "foto:$T/barra.ppm@2"
-    echo "file:///disk/seconda.html@1"
+    echo "${INDIRIZZO:-file:///disk/seconda.html}@1"
     for i in $(seq 1 "${CAMPIONI_INVIO:-0}"); do echo "regs:$T/regs-invio.txt@0"; done
     echo "foto:$T/dopo-invio.ppm@20"
     echo "foto:$T/seconda.ppm@${ATTESA_PAGINA:-40}"

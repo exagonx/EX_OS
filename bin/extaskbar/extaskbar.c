@@ -36,7 +36,10 @@
 #include "kbd_proto.h"
 #include "extaskbar_abi.h"
 
-#define VERSIONE        "0.002"
+#define VERSIONE        "0.003"
+
+/* the build checks every tool for this line (verifica-versioni) */
+EX_VERSIONE("extaskbar", VERSIONE);
 #define COLONNE         80
 #define VOCI_MAX        24
 #define LOG_MAX         32

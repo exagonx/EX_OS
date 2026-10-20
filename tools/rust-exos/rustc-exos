@@ -19,6 +19,14 @@ export RUST_TARGET_PATH="$QUI${RUST_TARGET_PATH:+:$RUST_TARGET_PATH}"
 # file `+nightly`»). RUSTUP_HOME lo mettono gli script che ci chiamano.
 VERO="${RUSTC_VERO:-$(ls -d "${RUSTUP_HOME:-$HOME/.rustup}"/toolchains/nightly-*/bin/rustc 2>/dev/null | head -1)}"
 [ -x "$VERO" ] || { echo "rustc-exos: non trovo il rustc del nightly (RUSTUP_HOME?)" >&2; exit 1; }
+# ! panic_abort IS ALWAYS BUILT WITH -C panic=abort, as rustc's own bootstrap
+# shim does (19 October 2026). The 64-bit sysroot is built with panic=unwind
+# (installa-sysroot.sh), and that profile reached panic_abort too: Firefox,
+# which links with panic=abort, then stopped on "the crate `panic_abort` does
+# not have the panic strategy `abort`". The last -C panic wins.
+case " $* " in
+    *" --crate-name panic_abort "*) set -- "$@" -C panic=abort ;;
+esac
 case " $* " in
     *i686-unknown-exos*|*x86_64-unknown-exos*) exec "$VERO" -Zunstable-options "$@" ;;
 esac

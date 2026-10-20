@@ -14,7 +14,7 @@
 # Screenshots in DIR/*.png, serial logs in DIR.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
-D="${1:-/tmp/claude-1004/video}"
+D="${1:-/tmp/exos-prove/video}"
 mkdir -p "$D"
 IMG="$D/hd-video.img"
 export EXOS_ISTANZA=vid

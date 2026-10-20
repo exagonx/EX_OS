@@ -31,8 +31,24 @@ LIBC=$(ls -d "$CARGO_HOME"/registry/src/*/"libc-$VER" 2>/dev/null | head -1)
 if [ -z "$LIBC" ]; then
     # Il crate si scarica una volta sola: cargo fetch sul Cargo.lock della library.
     (cd "$SRC" && "$(dirname "$PROXY_RUSTC")/cargo" +nightly fetch >/dev/null 2>&1) || true
-    LIBC=$(ls -d "$CARGO_HOME"/registry/src/*/"libc-$VER" | head -1)
+    LIBC=$(ls -d "$CARGO_HOME"/registry/src/*/"libc-$VER" 2>/dev/null | head -1)
 fi
+if [ -z "$LIBC" ] && [ -n "$VER" ]; then
+    # cargo fetch only puts the .crate in registry/cache: on a new machine
+    # nothing has unpacked it yet (19 October 2026). Download it from
+    # crates.io, check it against the library's Cargo.lock, unpack it here.
+    SOMMA=$(grep -A3 '^name = "libc"$' "$SRC/Cargo.lock" | sed -n 's/^checksum = "\(.*\)"/\1/p')
+    mkdir -p "$B/costruzione-crate"
+    curl -sSfL -o "$B/costruzione-crate/libc-$VER.crate" "https://static.crates.io/crates/libc/libc-$VER.crate"
+    echo "$SOMMA  $B/costruzione-crate/libc-$VER.crate" | sha256sum -c --quiet
+    tar xzf "$B/costruzione-crate/libc-$VER.crate" -C "$B/costruzione-crate"
+    LIBC="$B/costruzione-crate/libc-$VER"
+fi
+# ! AN EMPTY LIBC MAKES THE rsync BELOW COPY "/" (19 October 2026, a new
+# machine whose cargo fetch failed: 39 GB of the whole disk before it was
+# stopped). Stop here instead.
+[ -n "$VER" ] && [ -n "$LIBC" ] && [ -d "$LIBC/src" ] || {
+    echo "manca il crate libc $VER nel registro di $CARGO_HOME (cargo fetch fallito?)" >&2; exit 1; }
 echo "std da $SRC"
 echo "libc $VER da $LIBC"
 

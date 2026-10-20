@@ -5645,7 +5645,7 @@ un programma: il primo lavoro e' tirarla fuori.
 
 ! @FLOPPY-PIENO UN «Disk full» SUL FLOPPY, VISTO UNA VOLTA (25 settembre 2026)
 
-  ! CHIUSO IL 28 SETTEMBRE 2026. La causa l'ha trovata claude-B: MEGA non
+  ! CHIUSO IL 28 SETTEMBRE 2026. La causa l'ha trovata profilo-B: MEGA non
     porta i bit di esecuzione, e mkfloppy.sh copiava solo i file con quel
     bit. Sui due PC lo stesso build/bin dava due floppy diversi: su uno
     entravano whoami, chown, poweroff, reboot e halt (copie di id, chmod e
@@ -5716,7 +5716,7 @@ un programma: il primo lavoro e' tirarla fuori.
   non dice da quale casella arrivi — per saperlo e' nato ex_fuoco_chi() nel
   toolkit.
 
-2026-09-28 16:03 claude-B — @PTHREAD FATTO e provato (tappa 1 di Exilla, kernel 0.222):
+2026-09-28 16:03 profilo-B — @PTHREAD FATTO e provato (tappa 1 di Exilla, kernel 0.222):
   pthread e semafori nella libc, fili staccati (syscall 217) e pila di un
   filo (218) nel kernel, MAX_PROCESSES 128, FILO_MAX 64, pila di un filo 2 MB
   di riserva. Prova: tools/exilla/prova-pthread.sh, 15 su 15.
@@ -5724,26 +5724,26 @@ un programma: il primo lavoro e' tirarla fuori.
   come rendere uguali i due floppy (es. mkfloppy.sh con un elenco esplicito
   invece del bit di esecuzione).
 
-2026-09-28 16:38 claude-A — Pennello non blocca piu' ExWin (linea() e IPC_SENZA_ATTESA,
+2026-09-28 16:38 profilo-A — Pennello non blocca piu' ExWin (linea() e IPC_SENZA_ATTESA,
   kernel 0.223, wserver 0.004: vedi @PAINT), gfedit mostra il prompt di
   INPUT con F5 (il figlio ha il primo piano della console), Date e valueOf
   in ExJs (@EXJS-LACUNE). ! MEGA NON PORTA I BIT DI ESECUZIONE, confermato
   anche qui: gli script nuovi di tools/ si lanciano con `bash`, non con ./.
 
-2026-09-29 16:49 claude-B — @RUST-STD FATTO e provato (kernel 0.225): la std di Rust gira
+2026-09-29 16:49 profilo-B — @RUST-STD FATTO e provato (kernel 0.225): la std di Rust gira
   dentro EX-OS, 29 su 29 (tools/rust-exos/prova-std.sh). Bersaglio unix che
   si comporta come NuttX; sorgenti in tools/rust-exos/std/. Sistemati nel
   sistema: timespec POSIX, stat/poll con -1 ed errno, mkdir ENOENT, libc.a
   della toolchain senza cmov, strerror_r. Prossimo: @SOCKET-BSD.
 
-2026-09-29 17:33 claude-B — @SOCKET-BSD FATTO e provato (kernel 0.226, ip.drv 0.005): i
+2026-09-29 17:33 profilo-B — @SOCKET-BSD FATTO e provato (kernel 0.226, ip.drv 0.005): i
   socket BSD nella libc.a sopra lo stack IP, getaddrinfo col DNS. Prove:
   tools/exilla/prova-socket.sh (C, 23/23), tools/rust-exos/prova-rete.sh
   (std::net, 9/9). Lo scaffale IPC ora e' per filo. Non nella libc.so
   (floppy pieno): se servissero a un programma dinamico, una socket.so sul CD.
 
-2026-09-29 18:29 claude-A — @SEGNALI FATTO e provato (kernel 0.227): la tappa 1 di Exilla
-  che claude-B aveva lasciato in coda, fatta da qui perche' lui e' fermo.
+2026-09-29 18:29 profilo-A — @SEGNALI FATTO e provato (kernel 0.227): la tappa 1 di Exilla
+  che profilo-B aveva lasciato in coda, fatta da qui perche' lui e' fermo.
   mprotect (SYS 125): PROT_NONE e' una pagina PRESENTE senza PG_USER, non una
   pagina assente (il non-presente ha gia' tre significati: mai mappata, swap,
   eseguibile); PROT_READ toglie PG_WRITABLE; un frame condiviso (codice di una
@@ -5769,7 +5769,7 @@ un programma: il primo lavoro e' tirarla fuori.
   preso a un ALTRO programma passa da proc_interrompi, quindi esce con 130.
   Prossimo della tappa 1: dlopen/dlsym (o libxul statica), shm_open.
 
-2026-09-29 claude-A — @GRAFICA-FLUIDA lo sfarfallio «in base al carico, peggio nei
+2026-09-29 profilo-A — @GRAFICA-FLUIDA lo sfarfallio «in base al carico, peggio nei
   programmi grossi come EXBrowser» (detto dall'utente). Tre cause, tre
   correzioni, sul modello di quel che Windows e Wayland hanno scritto:
   1. IL SERVER LEGGEVA LA FINESTRA MENTRE IL CLIENT CI DISEGNAVA. Il toolkit
@@ -5814,7 +5814,7 @@ un programma: il primo lavoro e' tirarla fuori.
   mprotect; sei avvii di fila per riprodurlo sono andati bene. Se ricompare:
   la seriale e' la traccia, e la domanda e' chi ha scritto quella PTE o PDE.
 
-2026-09-29 claude-A — @SHM-OPEN FATTO e provato (16/16): la memoria condivisa di
+2026-09-29 profilo-A — @SHM-OPEN FATTO e provato (16/16): la memoria condivisa di
   POSIX sopra le zone del kernel, nella sola libc.a, per Exilla. shm_open da'
   un descrittore da SHMFD_BASE (2048) in su — i socket stanno sotto, da 1024 —
   e si attacca alla zona se c'e'; se non c'e' la CREA ftruncate, primo momento
@@ -5833,9 +5833,9 @@ un programma: il primo lavoro e' tirarla fuori.
   tools/prova_shm.sh (tools/prove/shmprova.c), padre e figlio con un nome
   lungo come quelli di Mozilla; prova_segnali ancora 23/23.
   Resta della tappa 1: dlopen/dlsym (o libxul statica). ! libc-exos.rs (il
-  crate libc di Rust, di claude-B) non dichiara ancora shm_open e ftruncate.
+  crate libc di Rust, di profilo-B) non dichiara ancora shm_open e ftruncate.
 
-2026-09-29 claude-A — @DLOPEN FATTO e provato (11/11), e con lui la tappa 1 di Exilla.
+2026-09-29 profilo-A — @DLOPEN FATTO e provato (11/11), e con lui la tappa 1 di Exilla.
   dlopen, dlsym, dlclose, dlerror (e dladdr che dice 0) nella libc.a, sopra
   SYS_LIB_APRI e la tabella ExLibTesta delle librerie di EX-OS: le stesse
   verifiche di lib/exlib/exlib.c (magia, versione) e la stessa chiamata a
@@ -5851,11 +5851,11 @@ un programma: il primo lavoro e' tirarla fuori.
   exzip.so per nome, chiama ex_zip_apri su un file che non c'e' ed
   ex_zip_errore risponde «l'archivio non si apre» — cioe' la libreria gira
   davvero, ponti verso la libc compresi. Floppy invariato (6 KB liberi).
-  ! PER claude-B: tools/exilla/leggimi.md (paragrafo 3) elenca ancora dlopen,
+  ! PER profilo-B: tools/exilla/leggimi.md (paragrafo 3) elenca ancora dlopen,
   mmap/mprotect, i segnali e la memoria condivisa fra le cose che mancano; e
   libc-exos.rs non dichiara dlopen, shm_open, ftruncate, sigaction.
 
-2026-09-30 claude-A — @GRAFICA-FLUIDA, seguito: la scrivania diventava GRIGIA col tasto
+2026-09-30 profilo-A — @GRAFICA-FLUIDA, seguito: la scrivania diventava GRIGIA col tasto
   destro (segnalato dall'utente: «Nuova cartella» o «Nuovo file», e tutto il
   desktop grigio «come se la finestra si espandesse»). ex_menu_comparsa, alla
   chiusura, ridisegnava la finestra con ex_procedura_base, che la riempie di
@@ -5873,7 +5873,7 @@ un programma: il primo lavoro e' tirarla fuori.
   Poi vanno rifatte le tre aggiunte di @EXWIN-PASSAGGIO al server (win_proto.h
   le ha gia': WIN_MSG_PASSAGGIO e WIN_EV_USCITO).
 
-2026-09-30 claude-A — @EXWIN-PASSAGGIO e @NAV-WIKI (EXBrowser: collegamenti, Wikipedia)
+2026-09-30 profilo-A — @EXWIN-PASSAGGIO e @NAV-WIKI (EXBrowser: collegamenti, Wikipedia)
   - IL PASSAGGIO DEL MOUSE (Exilla tappa 3, e serve al navigatore). wserver
     0.008: WIN_MSG_PASSAGGIO chiede il movimento SENZA tasti, e WIN_EV_USCITO
     dice che il puntatore e' uscito; solo a chi lo chiede, come la maschera
@@ -5913,7 +5913,7 @@ un programma: il primo lavoro e' tirarla fuori.
     UNA connessione tenuta aperta per volta: it.wikipedia.org e
     upload.wikimedia.org si danno il cambio.
 
-2026-09-30 claude-A — richieste dell'utente di oggi, FATTE (provate come detto):
+2026-09-30 profilo-A — richieste dell'utente di oggi, FATTE (provate come detto):
   - IL MENU DEL TASTO DESTRO SI CHIUDE col clic fuori ed Esc (WIN_ST_COMPARSA:
     il server manda EXM_CHIUDI a una finestra a comparsa quando si preme fuori;
     EX_COMPARSA nel toolkit). tools/prova_menu_chiudi.sh 3/3.
@@ -5958,7 +5958,7 @@ un programma: il primo lavoro e' tirarla fuori.
      composti, ::before/::after, overflow e clip; e i tempi di script e
      impaginazione (7-8 s ciascuno in QEMU), da misurare con un profilo.
 
-2026-09-30 claude-A — @RTF tappa 1 FATTA: il modello e l'RTF (lib/exrtf/exrtf.h, rtf.c).
+2026-09-30 profilo-A — @RTF tappa 1 FATTA: il modello e l'RTF (lib/exrtf/exrtf.h, rtf.c).
   Il documento e' testo UTF-8 + pezzi con stile (famiglia serif/sans/mono col
   nome del carattere, corpo, grassetto, corsivo, sottolineato, colore) +
   allineamento per paragrafo. Il lettore capisce quel che WordPad e LibreOffice
@@ -5976,7 +5976,7 @@ un programma: il primo lavoro e' tirarla fuori.
   corpo, colore, allineamento, Ctrl+B/I/U; 4) la libreria in exrtf.so (o in
   exwin.so) quando l'editor la usa, e l'ISO.
 
-2026-09-30 claude-A — coda punti 2, 3, 4 FATTI, e i permessi di toolinst:
+2026-09-30 profilo-A — coda punti 2, 3, 4 FATTI, e i permessi di toolinst:
   - @NAV-SELEZIONE: in EXBrowser si trascina sul testo della pagina (non su
     un collegamento, che si segue), la scelta si disegna bianco su blu, Ctrl+C
     la copia negli appunti (parole separate da spazio, righe da a capo),
@@ -6016,7 +6016,7 @@ un programma: il primo lavoro e' tirarla fuori.
     installato i file vecchi restano 0644: si reinstalla il pacchetto, o
     chmod a mano da root.
 
-2026-09-30 13:24 claude-B — @EXILLA-JS (tappa 4 di Exilla) IN CORSO, fermato per riavvio:
+2026-09-30 13:24 profilo-B — @EXILLA-JS (tappa 4 di Exilla) IN CORSO, fermato per riavvio:
   - FATTO: la shell js di SpiderMonkey si costruisce per EX-OS
     (tools/exilla/js-costruisci.sh configure && ... build -j4; mozconfig in
     tools/exilla/mozconfig-js; oggetti in cross_build/exilla-obj/js) e GIRA
@@ -6030,11 +6030,11 @@ un programma: il primo lavoro e' tirarla fuori.
     classi, regex, BigInt, Promise, GC...); la prima prova falliva perche'
     ungetc teneva 1 carattere: corretto in libc.c (4), libc.a gia' rifatta;
     3) diario in tools/exilla/leggimi.md e messaggio-commit.txt.
-  - Cura vera da fare in libc.h (preso da claude-A): nascondere Mutex/
+  - Cura vera da fare in libc.h (preso da profilo-A): nascondere Mutex/
     Condizione/Semaforo a chi vuole solo POSIX; per ora js::Mutex nei file
     di SpiderMonkey (tools/exilla/qualifica-mutex.py).
 
-2026-09-30 claude-A — exide provato in QEMU, e @RTF tappe 2 e 3 FATTE:
+2026-09-30 profilo-A — exide provato in QEMU, e @RTF tappe 2 e 3 FATTE:
   - tools/prova_exide_autoaggiorna.sh (3/3): la voce si accende da tastiera
     (F10, frecce), impostazioni.txt dice «autoaggiorna = 1», al secondo
     avvio la spunta c'e' (le due foto differiscono solo per il segno, 16
@@ -6102,17 +6102,17 @@ un programma: il primo lavoro e' tirarla fuori.
   4. @NAV-HTML/@NAV-JS: quel che le pagine vere chiedono e manca, trovato
      guardando gli errori sulla seriale, non indovinato.
 
-2026-09-30 14:31 claude-B — @EXILLA-JS FATTO (tappa 4 di Exilla): SpiderMonkey gira dentro
+2026-09-30 14:31 profilo-B — @EXILLA-JS FATTO (tappa 4 di Exilla): SpiderMonkey gira dentro
   EX-OS, tools/exilla/prova-js.sh 17/17 sul kernel 0.227. Diario in
   tools/exilla/leggimi.md. Prossimo: libc.h (Mutex nascosto a chi vuole solo
   POSIX), poi tappa 5 (NSPR e NSS).
 
-2026-09-30 15:21 claude-B — @EXOS-SOLO-POSIX FATTO: con -DEXOS_SOLO_POSIX libc.h nasconde
+2026-09-30 15:21 profilo-B — @EXOS-SOLO-POSIX FATTO: con -DEXOS_SOLO_POSIX libc.h nasconde
   Mutex/Condizione/Semaforo (e le loro funzioni) al codice di terzi; Firefox
   compila senza patch su js::Mutex (15 patch in tools/exilla/patch/).
   prova-js 17/17, prova-pthread 15/15. Prossimo: tappa 5 (NSPR e NSS).
 
-2026-09-30 18:32 claude-B — @EXILLA-NSPR @EXILLA-NSS FATTO (tappa 5 di Exilla, kernel 0.228):
+2026-09-30 18:32 profilo-B — @EXILLA-NSPR @EXILLA-NSS FATTO (tappa 5 di Exilla, kernel 0.228):
   NSPR e NSS girano dentro EX-OS. prova-nspr 16/16; prova-nss: certutil fa il
   database SQLite, una chiave RSA e un certificato, tstclnt parla TLS 1.3 con
   l'host. Nel kernel SYS_FSTAT (108): fstat dava st_ino = 0 e SQLite credeva
@@ -6121,7 +6121,7 @@ un programma: il primo lavoro e' tirarla fuori.
   headless). ! Il kernel scrive «[ERROR] ENTROPIA: jitter ...» a ogni
   getentropy(): NSS lo chiama spesso, la console se ne riempie.
 
-2026-10-02 15:40 claude-B — @EXILLA-GECKO FATTO (tappa 6 di Exilla, kernel 0.230): Firefox
+2026-10-02 15:40 profilo-B — @EXILLA-GECKO FATTO (tappa 6 di Exilla, kernel 0.230): Firefox
   disegna una pagina dentro EX-OS. `firefox --headless --screenshot` carica
   un file locale e salva l'immagine (testo Liberation, grassetto, corsivo,
   monospazio, riquadri colorati, una riga scritta dal JavaScript):
@@ -6147,7 +6147,7 @@ un programma: il primo lavoro e' tirarla fuori.
   Prossimo: tappa 7 (widget/exos, la finestra vera in ExWin). Restano da
   guardare: IndexedDB «UnknownError», lo user agent che dice Linux.
 
-2026-10-02 17:40 claude-B — @FLOPPY-SPAZIO FATTO (chiesto dall'utente): help e kbprova
+2026-10-02 17:40 profilo-B — @FLOPPY-SPAZIO FATTO (chiesto dall'utente): help e kbprova
   passano dal floppy al CD, e con loro /boot/help.txt. Il floppy da 512 byte
   liberi a 64 KB. Dal floppy `help` da' l'aiuto di riserva della shell (dice
   dove sta quello vero); col CD montato trova /cdrom/bin/help, che legge
@@ -6155,7 +6155,7 @@ un programma: il primo lavoro e' tirarla fuori.
   kbprova da soli. ! build/bin/help e build/bin/kbprova sono stati tolti: ora
   si costruiscono in build/bin-cd. Provato in QEMU. Anche: verifica-ascii
   fermava make all (sei stringhe con « » o il trattino lungo, in tools/prove
-  di claude-A e in tools/exilla/prova-socket.c), sistemate.
+  di profilo-A e in tools/exilla/prova-socket.c), sistemate.
 
 @EXEDITOR-WRITE EXEDITOR COME IL «WRITE» DI WINDOWS 3 (chiesto dall'utente il 9 ottobre 2026)
   Urgenza ridotta. Due cose, viste dall'utente usando exeditor:
@@ -7584,7 +7584,7 @@ librerie mancanti»)
   portatile con la prossima pubblicazione (repo-update.sh -64 la fa
   l'utente). messaggio-commit.txt ha tutto dal 14/10, NON committato.
   ORDINE DI LAVORO DATO DALL'UTENTE: il porting a 64 bit di
-    1. Exilla (Firefox) a 64 bit - vedi @EXILLA, tools/exilla/ (claude-B
+    1. Exilla (Firefox) a 64 bit - vedi @EXILLA, tools/exilla/ (profilo-B
        l'ha fatto a 32 bit; firefox-main/ e' suo: controllare scambio.txt e
        ISTRUZIONI-SECONDO-PROFILO.md prima di toccarlo). Serve il bersaglio
        Rust x86_64-unknown-exos (fatto, R64-1) dentro la build di Firefox,
@@ -7821,3 +7821,199 @@ tools/netinst/velocita tolto da netinst.
   mke2fs dell'host (ext4 1 KB e 4 KB, ext3) e da mkfs di EX-OS.
   Budget dell'utente: limite settimanale all'80% il 17/10; stimato il
   doppio della sola scrittura nel kernel - probabilmente su piu' sessioni.
+
+@EXT4-RIFARE-0.263  IL LAVORO DELLA 0.263 E' PERSO: VA RIFATTO (19/10/2026, notte)
+  L'utente: «il lavoro della 0.263 e' andato perso, si trattava
+  dell'implementazione del file system ext3 e ext4 come modulo a parte, va
+  rifatto da dove e' possibile, il server procedera' con una nuova 0.263».
+  Sul server (netinst e netinst_64) c'e' una 0.263 pubblicata il 17/10 alle
+  14:25 da sorgenti MAI arrivati su GitHub (HEAD b08d3bad = kernel 0.262).
+  ! NON lanciare exagonx/repo-update.sh finche' la nuova 0.263 non e' fatta:
+  ripubblicherebbe la 0.262 sopra la 0.263 (e senza Exilla: su questo PC
+  cross_build/exilla-obj non c'e', MEGA la esclude).
+  COSA SI E' RECUPERATO, in cross_build/recupero-0.263/ (fuori da git):
+  elenchi del server, netinst*/dev/ext4.mod (32 e 64), bin/modulo (32 bit,
+  NON strippato: simboli leggibili), boot/kernel.bin, README pubblicati,
+  exwin/doc/*.html, boot/avvio.sh e minimale.txt della 0.263.
+  LA SPECIFICA e' il paragrafo «0.263» di file/doc/README.it.md pubblicato
+  (copiato in cross_build/recupero-0.263/netinst/doc/README.it.md): sono i
+  punti 2 e 3 di @EXT4-MODULO piu' netupdate 0.031. Ricavato dai binari:
+  - ext4.mod: ELF ET_DYN senza simboli, solo R_*_RELATIVE, ingresso =
+    e_entry, chiamato con un puntatore alla tabella del kernel (abi 1;
+    +0x08 klog(livello, fmt, ...); +0x14 cerca interfaccia per nome "ext2").
+    L'interfaccia ext2: [0] abi 1, [4] sizeof(Ext2Mount) = 100 (32 bit),
+    poi gli helper, a +0x50 registra(ops). ops = 11 voci: nome "ext4.mod"
+    + create chown chmod mkdir rmdir unlink rename write truncate sync.
+    Se abi o dimensione non tornano: messaggio «ext4.mod: the kernel's ext2
+    interface is not the one this module was built for (abi %u, Ext2Mount
+    %u bytes; expected %u, %u)» e ritorno -2.
+  - CODA del modulo, 64 byte: "EXOSMOD1" (8) + versione kernel "0.263" (16,
+    NUL) + arch "i386"/"x86_64" (8, NUL) + SHA-256 (32) di TUTTO cio' che
+    precede (ELF + magic + versione + arch). Verificato su ext4.mod 32 bit.
+  - bin/modulo: syscall 28 (SYS_VIDEO_MODI e' 27): modulo_kernel(op, a, b).
+    op 0 = elenco in buf da 512 byte, ritorna quanti; op 1 = carica(path,
+    forza 0/1). Errori: 74 = non corrisponde (versione o SHA-256), 17 = gia'
+    caricato, 8 = non e' un modulo / si e' rifiutato; solo root. Testi
+    esatti con `strings` sul binario. `-forza` chiede «SI» maiuscolo.
+  PIANO PER DOMANI (stesso ordine della 0.263 persa):
+  1. kernel/include/ext2_interno.h: Ext2Mount, stato condiviso (i buffer
+     b_* e la cache dell'indiretto: il modulo DEVE usare quelli del kernel,
+     o la lettura del kernel resta con un indiretto vecchio dopo una
+     scrittura), interfaccia e ops con abi.
+  2. kernel/loader/modulo.c (32 e 64 bit, ELF32/ELF64 con sole RELATIVE),
+     controllo coda + sha256.c, elenco moduli, SYS_MODULO 28.
+  3. ext2.c: la scrittura (righe ~540-1375 allocazione/potatura e ~1790-
+     2700 voci di directory e operazioni) esce in drivers/ext4/ (ext4.mod);
+     nel kernel restano stub che chiamano le ops, -1 senza modulo.
+  4. VFS: montaggio ext2 in sola lettura «per mancanza del modulo» (flag
+     distinto da -r e dalle funzioni ext3/4) e rimontaggio in scrittura
+     quando il modulo si registra; EXT2_MAX_MOUNT 2 -> 4.
+  5. kernel_main.c: caricare /dev/ext4.mod subito dopo vfs_init() (riga
+     ~402), prima di kernel.cfg. Messaggio a schermo col rimedio se manca.
+  6. bin/modulo, libc modulo_kernel(), install (copia il modulo col
+     kernel), floppy (boot/minimale.txt), CD 32/64, netinst.
+  7. netupdate 0.031 + colonna `essenziale` in elenco.txt da
+     tools/netinst/essenziali.txt (tools/mknetinst.sh).
+  8. tools/prova_modulo.sh e tools/prova_modulo_disco.sh (QEMU 32 e 64).
+  9. versioni +0.001, README, exwin/doc/sistema.html e comandi.html (testi
+     della 0.263 nei file recuperati), messaggio-commit.txt.
+  GIA' FATTO STANOTTE (fuori dal piano): exagonx/repo-update.sh -64
+  -verifynew leggeva ultimi-caricati.txt invece di ultimi-caricati_64.txt
+  (corretto). git: .git riclonata, core.fileMode false, +x di 158 script di
+  tools/ nell'indice (entra col prossimo gitupdate.sh, insieme a shell.sh).
+  ~/MEGA/.megaignore: tolta la regola -:.* (copia in
+  ~/megaignore-backup-2026-10-19).
+  ! LA HEAD DI GITHUB NON PASSA make all (provato, log in
+  cross_build/recupero-0.263/make-base-b08d3bad.log): verifica-versioni
+  (extaskbar e ar5k senza EX_VERSIONE) e verifica-ascii
+  (exwin/bin/attesa/attesa.c:245, «» in una stringa a schermo). Da
+  correggere per primi.
+
+@NETINST-SORGENTI  I SORGENTI NEL REPOSITORY DI NETUPDATE (19/10/2026)
+  L'utente: «d'ora in poi nel repository dovrai caricare anche i sorgenti
+  del sistema di base (quello che va su github in poche parole) oltre ai
+  binari, aggiungili a netinst/source con le differenze per 32 e 64».
+  Oggi make netinst pubblica solo binari, intestazioni e documentazione.
+  DA FARE: tools/mknetinst.sh (e netinst64) mette in dist/netinst*/source
+  i file tracciati da git (git ls-files: e' esattamente cio' che va su
+  GitHub, e .gitignore tiene gia' fuori password, terzi e compilati), con
+  le differenze 32/64 (da decidere con l'utente: albero intero in tutti e
+  due, oppure i file che cambiano marcati). Da chiarire: se vanno in
+  elenco.txt come pacchetto a parte (es. [sorgenti], non installato da
+  -check -yesall) e quanto pesano (~25 MB tracciati); pubblica.sh e
+  verifica.sh li vedono gia' se stanno nell'albero.
+
+@EXILLA-NOME-SISTEMA ANNULLATO (19/10/2026)
+  L'utente sospettava che il nome "EX-OS" al posto di "Linux" nel user agent
+  avesse rotto il browser («quando inserisco un url non va piu'») e ha
+  chiesto di tornare all'originale. Fatto: tolte da git le due patch
+  (tools/exilla/patch/dom_base_Navigator.cpp.patch e
+  netwerk_protocol_http_nsHttpHandler.cpp.patch).
+  ! MA LA MODIFICA NON E' MAI ARRIVATA NEL BROWSER: il firefox pubblicato a
+  64 bit (16/10 12:53 GMT, sha256 9c35a9eb...) contiene "Linux x86_64" e
+  nessun "EX-OS" (scaricato e cercato il 19/10); quello a 32 bit e' del 9/10.
+  Su questo PC firefox-main/ non ha XP_EXOS nei due file. Il guasto quindi
+  viene da altro, cambiato con l'aggiornamento 0.263 del 17/10: candidato
+  primo il kernel 0.263 senza /dev/ext4.mod (README: con un netupdate
+  vecchio, senza «si» agli essenziali, il disco parte in SOLA LETTURA e
+  Firefox non puo' scrivere profilo e cache); poi libc.so, il lanciatore
+  exilla 0.005 passato da attesa, i rename fra directory del kernel 0.260.
+  SULL'ALTRO PC (i5svrdeb): se firefox-main/dom/base/Navigator.cpp e
+  netwerk/protocol/http/nsHttpHandler.cpp hanno ancora il ramo XP_EXOS,
+  rimetterli da cross_build/i5svrdeb/firefox-originali/ prima di
+  ricostruire Firefox, poi tools/exilla/patch-crea.sh.
+
+@EXT4-RIFARE-0.263 - DECISIONE DELL'UTENTE (19/10/2026)
+  «Al reset di mercoledi' iniziero' l'implementazione di ext3 e ext4 con
+  modulo scrittura a parte, non considerare il server: quello verra'
+  sovrascritto in toto». Quindi: si parte da mercoledi' 21/10; il server
+  NON e' un vincolo (niente compatibilita' con la 0.263 pubblicata, ne' col
+  formato del suo ext4.mod: i binari in cross_build/recupero-0.263 restano
+  solo come riferimento). Superati gli avvisi «non lanciare repo-update.sh»
+  sopra: alla fine si ripubblica tutto, 32 e 64 bit.
+
+@EXILLA-SU-NASI5DEB (19/10/2026)
+  L'utente: «i5svrdeb non esiste piu', costruiscilo qua». Firefox (Exilla)
+  si costruisce ora su NASi5DEB (Debian 13, 4 core, 31 GB): tutto in
+  cross_build/nasi5deb (exos-cross copiata da i5svrdeb, exos-cross64 rifatta
+  con gcc-fili.sh, Rust nightly 1.101 del 15/10 in rust-macchina con le std
+  32/64, Node 22, clang di Mozilla 22.1.8, cbindgen 0.29.4). ~/.cargo e' un
+  collegamento a rust-macchina/cargo (gli script cercano ~/.cargo/bin).
+  Cosa e' servito:
+  - prepara.sh: senza il crate libc nel registro LIBC era vuota e
+    `rsync -a --delete "$LIBC/"` copiava "/" (39 GB, fermato e cancellato).
+    Ora lo scarica da crates.io con controllo sha256, e si ferma se manca.
+  - rustc-exos: panic_abort sempre con -C panic=abort (lo shim di bootstrap
+    fa lo stesso); con il sysroot 64 in unwind Firefox non collegava.
+  - firefox-main di questo PC era indietro di 4 patch (le 64 bit del
+    16-17/10: event-config.h di libevent, ProcessExecutableMemory.h,
+    WasmSignalHandlers.cpp, config_override.h di ffvpx): rimesse; ora tutte
+    le 383 di tools/exilla/patch sono applicate.
+  - fenv-amd64-exos.o aggiunto a mano a libm.a (condivisa e di questa
+    macchina): mancava fegetround al collegamento.
+  - js-costruisci.sh: llvm-objdump del clang di Mozilla se l'host non l'ha.
+  - prova-finestra.sh: INDIRIZZO= cio' che si scrive nella barra.
+  Prove (QEMU): prova-gecko 32 e 64 OK; prova-finestra con RETE=1,
+  PAGINA=https://example.com, INDIRIZZO=https://www.wikipedia.org: a 32 e 64
+  bit Wikipedia si apre (titolo 0,6-0,8 s dopo Invio). Il guasto «scrivo un
+  url e non va» NON si riproduce con questa build.
+  ! APERTO - LETTURA SBAGLIATA, 1 VOLTA SU 15: alla prima prova-gecko a 32
+  bit Firefox ha disegnato, al posto di /disk/prova.html, il contenuto di un
+  database SQLite del profilo ("CREATE TABLE sites (originAttributeSuffix,
+  siteHost, entryType, timeStamp...") - cioe' una read() di prova.html ha
+  reso blocchi di un file appena scritto. Il disco dopo era pulito (e2fsck)
+  e prova.html giusta: e' la cache/lettura del kernel, non la scrittura.
+  14 ripetizioni dopo (8 a 32 bit, 6 a 64) tutte giuste. Sospetto: una
+  corsa fra fili (uno scrive sqlite, un altro legge il file) nella cache dei
+  blocchi ext2. Da cercare con un programma di prova a piu' fili che scrive
+  file nuovi mentre rilegge e confronta file noti.
+  Quadratini al posto di cinese/giapponese/coreano: manca un font CJK.
+
+@CODA-20-10 (20/10/2026) - APPUNTI DELL'UTENTE, DA FARE QUANDO POSSIBILE
+  L'utente: «qua si stanno prendendo appunti da mettere in coda tra le cose
+  da fare se e' possibile farle». Nessuno di questi e' iniziato.
+
+  1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
+     soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):
+     a. FINESTRA DI INVIO: TCP_BUF 4096 = al massimo 4 KB in volo in uscita;
+        a 47 ms dal repository ~85 KB/s qualunque sia la linea. La ricezione
+        e' gia' a 63 KB dal 9/10 (TCP_RX_MAX, buffer preso solo da chi lo
+        usa): fare lo stesso per l'invio. Guadagno sicuro, cambio piccolo.
+        E' l'asimmetria che netspeed fa vedere.
+     b. WINDOW SCALING (RFC 7323): senza, la ricezione si ferma a 63 KB per
+        andata e ritorno (~1,3 MB/s a 47 ms). Serve per linee veloci.
+     c. WiFi ar5k ~50 KB/s: il servizio guarda l'anello ogni 10 ms e
+        consegna un frame per RICEVI -> interrupt del chip (vedi @WIFI W7).
+        Si prova solo sul portatile vero.
+     d. da misurare: il costo dei messaggi IPC programma <-> ip.drv <->
+        scheda, per pacchetto, su macchine lente.
+     ! MISURARE CON UN RITARDO VERO: un server sull'host a ritardo zero
+       (com'era la misura di settembre) non vede la finestra. Server con
+       40-50 ms aggiunti (tc netem richiede root: altrimenti un proxy in
+       python che ritarda) + netspeed + scarica -i; prima e dopo, prova in
+       tools/prova_*.sh.
+  2. @DISCO-VELOCE: misure del diario 4,5 MB/s (PIO) e 6,3 MB/s (DMA)
+     contro 80-150 di un disco vero. Prima misurare quanti settori chiede il
+     driver ATA per volta, poi letture a blocchi grandi. Si puo' fare
+     insieme a ext3/ext4 (@EXT4-RIFARE-0.263), che tocca lo stesso codice.
+  3. pubblica.sh: fermarsi con un messaggio chiaro se $ALBERO_LOCALE/file
+     e' vuota o mancano i file che elenco.txt dichiara. Il 20/10 dist/netinst
+     aveva file/ vuota e il contenuto un livello piu' su (alle 08:09, causa
+     ignota, nessuno script lo fa): pubblica.sh saltava i file in silenzio,
+     verifica.sh li rimetteva in lista, -ritenta girava all'infinito.
+     Rimedio di quel giorno: ./exagonx/repo-update.sh -32 -tutto (make
+     netinst rifa' l'albero da zero).
+  4. repo-update.sh -svuota: elencare i file del server che non sono nel
+     nuovo elenco e cancellarli dopo conferma (oggi lo script non cancella
+     mai niente; per sostituire tutto si svuota a mano via FTP).
+  5. Lettura sbagliata 1 volta su 15 (@EXILLA-SU-NASI5DEB): programma di
+     prova a piu' fili che scrive file nuovi mentre rilegge e confronta file
+     noti, a 32 e 64 bit.
+  6. Un font CJK per Exilla (oggi quadratini al posto di cinese, giapponese
+     e coreano).
+  7. Sorgenti del sistema di base in netinst/source (@NETINST-SORGENTI):
+     chiedere prima all'utente come mostrare le differenze 32/64 e se e' un
+     pacchetto a parte.
+  8. [rust] e [git] sul CD strumenti a 64 bit: i sorgenti
+     (cross_build/terze-parti/rust-src, libgit2) erano solo su i5svrdeb;
+     vanno riscaricati e rifatti qui (costruisci-exos.sh, libgit2-exos).

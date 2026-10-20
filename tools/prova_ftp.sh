@@ -24,7 +24,7 @@
 # ! NO pkill: the server is stopped by PID; qemu_drive cleans up after itself.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
-D="${1:-/tmp/claude-1004/ftpprova}"
+D="${1:-/tmp/exos-prove/ftpprova}"
 ARCH="${EXOS_ARCH:-i386}"
 mkdir -p "$D/www/sub"
 IMG="$D/prova-hd-$ARCH.img"

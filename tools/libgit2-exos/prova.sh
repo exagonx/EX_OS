@@ -10,7 +10,7 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 R=$PWD
-D=/tmp/claude-1004/git64
+D=/tmp/exos-prove/git64
 T=$D/albero
 rm -rf "$D"; mkdir -p "$T/bin" "$T/w"
 export PATH="$R/cross_build/exos-cross64/bin:$PATH"

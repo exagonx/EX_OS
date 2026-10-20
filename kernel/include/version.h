@@ -354,7 +354,7 @@
  * per i fili che nessuno aspetta, SYS_THREAD_PILA (218) per sapere dove sta la
  * pila di un filo; MAX_PROCESSES 64 -> 128, FILO_MAX 8 -> 64, la riserva di
  * pila di un filo 64 KB -> 2 MB (indirizzi, non RAM). */
-/* 0.222 -> 0.223: IPC_SENZA_ATTESA (28 settembre 2026, claude-A).
+/* 0.222 -> 0.223: IPC_SENZA_ATTESA (28 settembre 2026, profilo-A).
  *
  * Un bit nel tipo di ipc_send (kernel/include/ipc.h): su una casella piena
  * rende subito -EBUSY invece di riprovare per dieci secondi. Lo usa wserver
@@ -364,32 +364,32 @@
  * arriverebbe dentro il tipo e il client non riconoscerebbe i movimenti.
  */
 /* 0.223 -> 0.224: DUE PROCESSI CHE CARICANO INSIEME LA STESSA LIBRERIA
- * (29 settembre 2026, claude-A, @NAV-32MB). lib_apri segnava lo slot come
+ * (29 settembre 2026, profilo-A, @NAV-32MB). lib_apri segnava lo slot come
  * usato solo a lettura finita: chi arrivava mentre il primo aspettava il
  * disco prendeva lo stesso slot e lo ricominciava, e il primo moriva su
  * «LIB: pagina ... non allocata». Ora lo slot si prenota (LIB_IN_CARICO) e
  * il secondo aspetta; il buffer di lettura non e' piu' static. Vedi
  * kernel/loader/lib.c. */
 /* 0.224 -> 0.225: mkdir, rmdir e unlink rispondono ENOENT, ENOTDIR ed EISDIR
- * invece di EIO (29 settembre 2026, claude-B, @RUST-STD). Il ramo ext2 del VFS
+ * invece di EIO (29 settembre 2026, profilo-B, @RUST-STD). Il ramo ext2 del VFS
  * faceva di ogni errore «errore di I/O», anche del genitore che non c'e': la
  * std di Rust (create_dir_all, remove_file) non poteva distinguere. Vedi
  * modifica() in kernel/fs/vfs.c. */
 /* 0.225 -> 0.226: SYS_PROC_GRUPPO (164), il tgid di un pid (29 settembre 2026,
- * claude-B, @SOCKET-BSD). Lo stack IP assegna le connessioni al PROGRAMMA e non
+ * profilo-B, @SOCKET-BSD). Lo stack IP assegna le connessioni al PROGRAMMA e non
  * al filo che le ha aperte: con i socket BSD un filo apre e un altro legge. */
 /* 0.226 -> 0.227: SEGNALI CON LA CONSEGNA VERA E mprotect (29 settembre 2026,
- * claude-A, @SEGNALI, per Exilla). SYS_MPROTECT (125), SYS_SEG_AZIONE,
+ * profilo-A, @SEGNALI, per Exilla). SYS_MPROTECT (125), SYS_SEG_AZIONE,
  * _MASCHERA, _RITORNO, _PILA, _MANDA (165-169). Un'eccezione in ring 3 con un
  * gestore installato salta al gestore invece di uccidere; i segnali mandati
  * si consegnano all'uscita da una syscall. mmap onora PROT_NONE. Vedi
  * kernel/sched/segnali.c e paging_proteggi in kernel/mm/paging.c. */
 /* 0.227 -> 0.228: SYS_FSTAT (108), fstat di un descrittore aperto (30 settembre
- * 2026, claude-B, @EXILLA-NSS). fstat() dava st_ino = 0 e stat() l'identita'
+ * 2026, profilo-B, @EXILLA-NSS). fstat() dava st_ino = 0 e stat() l'identita'
  * vera: SQLite, che le confronta, credeva il file spostato e non ci scriveva
  * piu' («attempt to write a readonly database»). Vedi sys_fstat. */
 /* 0.228 -> 0.229: la pila del filo principale si riserva per 8 MB invece di
- * 256 KB (1 ottobre 2026, claude-B, @EXILLA-GECKO): Gecko ne da' 512 a
+ * 256 KB (1 ottobre 2026, profilo-B, @EXILLA-GECKO): Gecko ne da' 512 a
  * JavaScript. Vedi USER_STACK_MAX in kernel/include/sched.h. */
 /* 0.229 -> 0.230: lo spazio degli indirizzi e' del gruppo. I fili avevano
  * ciascuno una COPIA di heap_end, ferma alla nascita: sbrk e mmap di un filo

@@ -166,4 +166,11 @@ struct survey_info { int x; };
 static inline s32 sign_extend32(u32 v, int bit) { int s = 31 - bit; return (s32)(v << s) >> s; }
 static inline void eth_broadcast_addr(u8 *a) { memset(a, 0xff, ETH_ALEN); }
 
+/* ! ath5k.h names struct ath5k_hw in the prototype of _ath5k_printk before
+ * the struct exists (in Linux an earlier header has declared it). Without
+ * this line that prototype gets a struct of its own, and every call passes
+ * "an incompatible pointer": a warning up to GCC 13, an ERROR from GCC 14,
+ * which -w does not silence (found on Debian 13, 19 October 2026). */
+struct ath5k_hw;
+
 #endif /* AR5K_COMPAT_H */

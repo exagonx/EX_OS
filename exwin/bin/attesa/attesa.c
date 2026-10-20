@@ -39,7 +39,7 @@
 #include "libc.h"
 #include "exwin.h"
 
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("attesa", VERSIONE_APP);
 
 #define FIN_W      330
@@ -242,7 +242,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 static void uso(void)
 {
     printf("uso: attesa [-n NOME] [-s SECONDI] -- PROGRAMMA [ARGOMENTI...]\n");
-    printf("  mostra «caricamento in corso» con una clessidra, avvia PROGRAMMA e si\n");
+    printf("  mostra \"caricamento in corso\" con una clessidra, avvia PROGRAMMA e si\n");
     printf("  chiude quando compare la sua prima finestra (o dopo SECONDI, 300).\n");
 }
 

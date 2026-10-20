@@ -245,6 +245,9 @@ fi
 # Makefile le legge da qui per il suo controllo: un elenco solo.
 ALIAS_SOLO_CD="whoami chown poweroff reboot halt"
 
+STRIP_TMP=$(mktemp "${TMPDIR:-/tmp}/mkfloppy-strip.XXXXXX")
+trap 'rm -f "$STRIP_TMP"' EXIT
+
 if ls build/bin/* >/dev/null 2>&1; then
     log_info "Copia programmi in /bin/..."
     for prog in build/bin/*; do
@@ -276,7 +279,17 @@ if ls build/bin/* >/dev/null 2>&1; then
             *" $fname "*) log_info "  Saltato (alias, solo sul CD): $fname"; continue ;;
         esac
 
-        mcopy -i "$IMG" "$prog" "::/bin/$fname"
+        # ! SUL FLOPPY I PROGRAMMI VANNO SENZA SIMBOLI (19 ottobre 2026).
+        # La tabella dei simboli serve a nm e a gdb sull'host, non a EX-OS:
+        # il kernel non la legge per i programmi (i DRIVER si', drvmgr.c ci
+        # cerca drv_init: per questo /dev resta com'e'). Su /bin erano 65 KB,
+        # e senza quei byte diagnostic.img e floppy-verboso.img davano
+        # «Disk full». La copia in build/bin resta intera, per il debug.
+        if strip -o "$STRIP_TMP" "$prog" 2>/dev/null; then
+            mcopy -i "$IMG" "$STRIP_TMP" "::/bin/$fname"
+        else
+            mcopy -i "$IMG" "$prog" "::/bin/$fname"
+        fi
         log_ok "  Programma copiato: $fname"
     done
 else
@@ -288,7 +301,11 @@ fi
 # di floppy; compilarne uno secondo costerebbe lo stesso spazio più il
 # rischio che le due copie divergano.
 if [ -f build/bin/mount ]; then
-    mcopy -i "$IMG" build/bin/mount ::/bin/umount
+    if strip -o "$STRIP_TMP" build/bin/mount 2>/dev/null; then
+        mcopy -i "$IMG" "$STRIP_TMP" ::/bin/umount
+    else
+        mcopy -i "$IMG" build/bin/mount ::/bin/umount
+    fi
     log_ok "  Programma copiato: umount (stesso binario di mount)"
 fi
 

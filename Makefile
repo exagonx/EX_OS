@@ -1401,7 +1401,9 @@ $(1): $(2) lib/programma.ld $$(LIBC_HDR) $$(LIBC_SRC) $$(LIBC_PONTI_OBJ) $$(LIBC
 endef
 $(eval $(call PROGRAMMA_GENERICO_32,$(PROVA64_BIN),bin/prova64/prova64.c,prova64,statica))
 $(eval $(call PROGRAMMA_GENERICO_32,$(SHA256SUM_BIN),bin/sha256sum/sha256sum.c,sha256sum))
-$(eval $(call PROGRAMMA_GENERICO_32,$(FETTA_OUT),drivers/fetta/fetta.c,fetta))
+# ! STATICA come ogni .drv (verifica-statici): un driver di blocchi deve
+# partire anche quando libc.so non si legge.
+$(eval $(call PROGRAMMA_GENERICO_32,$(FETTA_OUT),drivers/fetta/fetta.c,fetta,statica))
 
 .PHONY: prova64 sha256sum fetta_drv
 prova64:   dirs $(PROVA64_BIN)
@@ -4080,16 +4082,18 @@ WIFISIM_SRC := drivers/wifisim/wifisim.c
 WIFISIM_OUT := $(BUILD_DRIVERS_CD)/wifisim.drv
 
 $(WIFISIM_OUT): $(WIFISIM_SRC) $(WIFI_PROTO) $(WIFI_LIB) lib/excrypt/sha1.c lib/programma.ld \
-                $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+                $(LIBC_HDR) $(LIBC_SRC) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione wifisim.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I lib/excrypt -c $(WIFISIM_SRC) -o $(BUILD_OBJ)/wifisim_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(WIFI_LIB) -o $(BUILD_OBJ)/wifisim_nomi.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c lib/excrypt/sha1.c -o $(BUILD_OBJ)/wifisim_sha1.o
 	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/wifisim_start.o
+	@# ! STATICO come ogni .drv (verifica-statici): la libc compilata dentro.
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_OBJ)/wifisim_libc.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T lib/programma.ld \
 	    $(BUILD_OBJ)/wifisim_start.o $(BUILD_OBJ)/wifisim_main.o $(BUILD_OBJ)/wifisim_nomi.o \
-	    $(BUILD_OBJ)/wifisim_sha1.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/wifisim_sha1.o $(BUILD_OBJ)/wifisim_libc.o -o $@
 	@echo "[OK] wifisim.drv compilato: $@"
 
 .PHONY: wifisim_drv

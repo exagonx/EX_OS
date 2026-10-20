@@ -15,5 +15,5 @@
 -:__pycache__
 -:*.swp
 -:*.swo
-# i permessi locali di Claude Code
+# i permessi locali dell'editor
 -:settings.local.json
