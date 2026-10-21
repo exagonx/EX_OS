@@ -173,6 +173,7 @@ static Ext2Mount *prendi_scrivibile(int mnt)
         klog(LOG_WARN, "EXT2: write refused, the volume is read-only (%s)",
              (m->sola_lettura & EXT2_RO_MODULO) ? "no write module" :
              (m->sola_lettura & EXT2_RO_GIORNALE) ? "journal not replayed" :
+             (m->sola_lettura & EXT2_RO_CHIESTO) ? "mounted read-only" :
                                                      "features not writable");
         return NULL;
     }
@@ -188,8 +189,11 @@ static int leggi_blocco(Ext2Mount *m, uint32_t n, void *dst)
         klog(LOG_ERROR, "EXT2: blocco %u fuori dal volume (%u)", n, m->n_blocchi);
         return -1;
     }
-    return blk_read(m->blkdev, (uint64_t)n * m->sett_per_blocco,
-                    m->sett_per_blocco, dst);
+    if (blk_read(m->blkdev, (uint64_t)n * m->sett_per_blocco,
+                 m->sett_per_blocco, dst) != 0) return -1;
+    if (g_ops != NULL && g_ops->giornale_leggi != NULL)
+        g_ops->giornale_leggi(m, n, 1u, dst);       /* ext3: see Ext2Ops */
+    return 0;
 }
 
 /* ! I DATI DI UN FILE A CORSE (0.235, @EXILLA-DISCO): n blocchi consecutivi
@@ -204,8 +208,11 @@ static int leggi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst)
         klog(LOG_ERROR, "EXT2: corsa %u+%u fuori dal volume (%u)", n, quanti, m->n_blocchi);
         return -1;
     }
-    return blk_read_diretto(m->blkdev, (uint64_t)n * m->sett_per_blocco,
-                            quanti * m->sett_per_blocco, dst);
+    if (blk_read_diretto(m->blkdev, (uint64_t)n * m->sett_per_blocco,
+                         quanti * m->sett_per_blocco, dst) != 0) return -1;
+    if (g_ops != NULL && g_ops->giornale_leggi != NULL)
+        g_ops->giornale_leggi(m, n, quanti, dst);
+    return 0;
 }
 
 static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
@@ -222,6 +229,12 @@ static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
      * il file finisce a puntare ai blocchi che aveva prima. */
     if (g_ind_num == n && !g_ind_sporco) g_ind_mnt = -1;
 
+    /* ext3: a metadata block goes into the open transaction, and reaches
+     * its place on the disk only after the commit (see Ext2Ops). */
+    if (g_ops != NULL && g_ops->giornale_scrivi != NULL) {
+        int r = g_ops->giornale_scrivi(m, n, src);
+        if (r <= 0) return r;
+    }
     return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco,
                      m->sett_per_blocco, src);
 }
@@ -243,6 +256,8 @@ static int scrivi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, const void *s
         }
         g_ind_mnt = -1;
     }
+    if (g_ops != NULL && g_ops->giornale_dati != NULL &&
+        g_ops->giornale_dati(m, n, quanti) != 0) return -1;
     return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco,
                      quanti * m->sett_per_blocco, src);
 }
@@ -255,6 +270,10 @@ static int ind_riversa(Ext2Mount *m)
     if (!g_ind_sporco) return 0;
     g_ind_sporco = 0;
     if (g_ind_mnt < 0) return -1;       /* non deve succedere: lo sporco e' sempre in cache */
+    if (g_ops != NULL && g_ops->giornale_scrivi != NULL) {
+        int r = g_ops->giornale_scrivi(m, g_ind_num, b_ind);
+        if (r <= 0) return r;
+    }
     return blk_write(m->blkdev, (uint64_t)g_ind_num * m->sett_per_blocco,
                      m->sett_per_blocco, b_ind);
 }
@@ -541,7 +560,9 @@ static void valuta(int mnt)
     Ext2Mount *m  = &g_mnt[mnt];
     uint8_t    ro = 0;
 
-    if (g_ops == NULL) {
+    if (m->ro_chiesto) {
+        ro = EXT2_RO_CHIESTO;
+    } else if (g_ops == NULL) {
         ro = EXT2_RO_MODULO;
     } else if ((m->compat & ~g_ops->compat) || (m->incompat & ~g_ops->incompat) ||
                (m->ro_compat & ~g_ops->ro_compat)) {
@@ -599,6 +620,11 @@ void ext2_rivaluta_montaggi(void)
  * Montaggio
  * ============================================================================= */
 int ext2_mount(int blkdev)
+{
+    return ext2_mount_come(blkdev, 0);
+}
+
+int ext2_mount_come(int blkdev, int ro_chiesto)
 {
     Ext2Mount *m = NULL;
     uint8_t    sb[1024];
@@ -705,6 +731,7 @@ int ext2_mount(int blkdev)
     for (i = 0; i < 16u; i++) m->etichetta[i] = (char)sb[120 + i];
     m->etichetta[16] = '\0';
 
+    m->ro_chiesto = ro_chiesto ? 1u : 0u;
     m->usato  = 1;
     g_ind_mnt = -1;
 

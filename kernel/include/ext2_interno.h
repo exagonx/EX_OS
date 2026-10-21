@@ -28,7 +28,7 @@
 #include "kernel.h"
 #include "ext2.h"
 
-#define EXT2_IF_ABI         3u          /* 3: Ext2Ops.chiudi (kernel 0.264) */
+#define EXT2_IF_ABI         4u          /* 4: the journal hooks (kernel 0.265) */
 #define EXT2_BLOCCO_MAX     4096u   /* the largest block this driver accepts */
 
 /* --- the on-disk format, as both halves need it ----------------------------- */
@@ -121,6 +121,9 @@ static inline void p32(uint8_t *p, uint32_t v)
 #define EXT2_RO_FUNZIONI    0x01u   /* features the write module cannot handle */
 #define EXT2_RO_MODULO      0x02u   /* no write module registered yet */
 #define EXT2_RO_GIORNALE    0x04u   /* journal needs recovery, not replayed */
+#define EXT2_RO_CHIESTO     0x08u   /* mount -r: the module is never asked, and
+                                       nothing - not even a journal replay -
+                                       writes the disk (kernel 0.265) */
 
 typedef struct {
     uint8_t  usato;
@@ -145,6 +148,7 @@ typedef struct {
     uint32_t incompat;             /* as read at mount: the module decides */
     uint32_t ro_compat;            /* from these what it can write */
     uint8_t  sola_lettura;         /* EXT2_RO_* bits; 0 = writable */
+    uint8_t  ro_chiesto;           /* 1: mounted with -r (EXT2_RO_CHIESTO) */
 
     char     etichetta[17];
 } Ext2Mount;
@@ -190,6 +194,22 @@ typedef struct {
      * module keeps between write()s - blocks set aside for a file being
      * appended to, the superblock's counters - goes to the disk here. */
     void (*chiudi)  (int mnt);
+
+    /* THE JOURNAL HOOKS (kernel 0.265, ext3). The kernel's block functions
+     * call them for every volume; the module answers at once for a volume
+     * it does not journal. NULL = no journal anywhere.
+     *   giornale_leggi   after a read of blocks n..n+quanti-1 into dst: the
+     *                    copies the open transaction holds go over it -
+     *                    a metadata block is on the disk only after commit;
+     *   giornale_scrivi  instead of writing metadata block n: 0 = it is in
+     *                    the transaction, 1 = not journaled (the kernel
+     *                    writes it), <0 = error;
+     *   giornale_dati    before a data run is written straight to the
+     *                    disk: if a block of it is in the transaction, the
+     *                    module commits first. 0 = go on, <0 = error. */
+    void (*giornale_leggi) (Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst);
+    int  (*giornale_scrivi)(Ext2Mount *m, uint32_t n, const void *src);
+    int  (*giornale_dati)  (Ext2Mount *m, uint32_t n, uint32_t quanti);
 } Ext2Ops;
 
 /* What the kernel gives the write module: found by name ("ext2") through

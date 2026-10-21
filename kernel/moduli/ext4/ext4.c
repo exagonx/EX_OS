@@ -12,7 +12,9 @@
  * registers the write operations. Here: the entry point, the checks that
  * the kernel is the one it was built for, and what it can write.
  *
- *     EXT4MOD_VERSIONE 0.002 (+0.001 a ogni modifica)
+ *     EXT4MOD_VERSIONE 0.003 (+0.001 a ogni modifica)
+ *     0.003: ext3 - the journal (giornale.c): replayed at mount, every
+ *            change to the metadata written there first (@EXT3-GIORNALE).
  *     0.002: the blocks set aside for a file being appended to stay between
  *            write()s; the superblock's counters are written when the file
  *            is closed (scrittura.c, «LA PRENOTAZIONE RESTA»).
@@ -20,7 +22,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.002"
+#define EXT4MOD_VERSIONE "0.003"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;
@@ -39,64 +41,97 @@ const Ext2Interfaccia *K  = NULL;
  *   DIR_INDEX              a directory with a hashed index loses it before it
  *                          is changed (the INDEX flag cleared: the blocks read
  *                          as an ordinary directory), as Linux does;
- *   SPARSE_SUPER2          only says where the backups are.
+ *   SPARSE_SUPER2          only says where the backups are;
+ *   HAS_JOURNAL            ext3: giornale.c writes it (0.003), and monta()
+ *                          refuses a journal it cannot write.
+ * And incompat RECOVER (needs_recovery): the journal is replayed at mount.
  * ============================================================================= */
 #define COMPAT_SCRIVE    (COMPAT_DIR_PREALLOC | COMPAT_IMAGIC | COMPAT_EXT_ATTR | \
-                          COMPAT_RESIZE_INODE | COMPAT_DIR_INDEX | COMPAT_SPARSE_SUPER2)
-#define INCOMPAT_SCRIVE  (INCOMPAT_FILETYPE)
+                          COMPAT_RESIZE_INODE | COMPAT_DIR_INDEX | COMPAT_SPARSE_SUPER2 | \
+                          COMPAT_HAS_JOURNAL)
+#define INCOMPAT_SCRIVE  (INCOMPAT_FILETYPE | INCOMPAT_RECOVER)
 #define RO_COMPAT_SCRIVE (RO_COMPAT_SPARSE | RO_COMPAT_LARGEFILE)
 
 static int monta(int mnt)
 {
-    (void)mnt;
-    return 0;
+    if (mnt < 0 || (uint32_t)mnt >= K->max_mount) return -1;
+    return giornale_monta(mnt);
 }
 
+/* Blocks set aside for an append go back first: their bitmap is a change
+ * like the others, and on ext3 it goes into the transaction committed here. */
 static int sincronizza(int mnt)
 {
     if (mnt < 0 || (uint32_t)mnt >= K->max_mount) return -1;
     prenotazione_chiudi();
+    if (giornale_commit(mnt) != 0) return -1;
     return blk_flush(K->mnt[mnt].blkdev);
 }
 
 static void smonta(int mnt)
 {
-    (void)mnt;
     prenotazione_chiudi();
+    giornale_smonta(mnt);
 }
 
 static void chiudi(int mnt)
 {
-    (void)mnt;
     prenotazione_chiudi();
+    giornale_commit(mnt);
 }
 
 /* Every operation but write() starts by giving back the blocks set aside
  * for an append: alloca_blocco would hand them to a directory, or truncate
- * would cut a file whose next blocks are still marked as its own. */
+ * would cut a file whose next blocks are still marked as its own.
+ * ! ON ext3 EACH ONE IS A TRANSACTION, committed before it returns: an
+ * operation that frees blocks must be on the disk before anything can
+ * write data into them (see giornale.c). write() alone leaves it open. */
+#define OPERAZIONE(mnt, chiamata)                                   \
+    do {                                                            \
+        int r_;                                                     \
+        prenotazione_chiudi();                                      \
+        if (giornale_inizio(mnt) != 0) return -1;                   \
+        r_ = (chiamata);                                            \
+        if (giornale_fine(mnt, 1) != 0) return -1;                  \
+        return r_;                                                  \
+    } while (0)
+
 static int op_create(int mnt, const char *p, uint32_t uid, uint32_t gid)
-{ prenotazione_chiudi(); return ext2_create(mnt, p, uid, gid); }
+{ OPERAZIONE(mnt, ext2_create(mnt, p, uid, gid)); }
 
 static int op_chown(int mnt, const char *p, uint32_t uid, uint32_t gid)
-{ prenotazione_chiudi(); return ext2_chown(mnt, p, uid, gid); }
+{ OPERAZIONE(mnt, ext2_chown(mnt, p, uid, gid)); }
 
 static int op_chmod(int mnt, const char *p, uint32_t modo)
-{ prenotazione_chiudi(); return ext2_chmod(mnt, p, modo); }
+{ OPERAZIONE(mnt, ext2_chmod(mnt, p, modo)); }
 
 static int op_mkdir(int mnt, const char *p, uint32_t uid, uint32_t gid)
-{ prenotazione_chiudi(); return ext2_mkdir(mnt, p, uid, gid); }
+{ OPERAZIONE(mnt, ext2_mkdir(mnt, p, uid, gid)); }
 
 static int op_rmdir(int mnt, const char *p)
-{ prenotazione_chiudi(); return ext2_rmdir(mnt, p); }
+{ OPERAZIONE(mnt, ext2_rmdir(mnt, p)); }
 
 static int op_unlink(int mnt, const char *p)
-{ prenotazione_chiudi(); return ext2_unlink(mnt, p); }
+{ OPERAZIONE(mnt, ext2_unlink(mnt, p)); }
 
 static int op_rename(int mnt, const char *da, const char *a)
-{ prenotazione_chiudi(); return ext2_rename(mnt, da, a); }
+{ OPERAZIONE(mnt, ext2_rename(mnt, da, a)); }
 
 static int op_truncate(int mnt, const char *p, uint32_t nuova_dim)
-{ prenotazione_chiudi(); return ext2_truncate(mnt, p, nuova_dim); }
+{ OPERAZIONE(mnt, ext2_truncate(mnt, p, nuova_dim)); }
+
+/* write(): the transaction stays open for the next one - committed at the
+ * file's close, when half full, after 5 seconds (giornale_fine). */
+static int op_write(int mnt, const char *p, const void *buf, uint32_t size,
+                    uint32_t offset)
+{
+    int r;
+
+    if (giornale_inizio(mnt) != 0) return -1;
+    r = ext2_write(mnt, p, buf, size, offset);
+    if (giornale_fine(mnt, 0) != 0) return -1;
+    return r;
+}
 
 static const Ext2Ops g_ops = {
     EXT2_IF_ABI,
@@ -113,10 +148,13 @@ static const Ext2Ops g_ops = {
     op_rmdir,
     op_unlink,
     op_rename,
-    ext2_write,
+    op_write,
     op_truncate,
     sincronizza,
     chiudi,
+    giornale_leggi,
+    giornale_scrivi,
+    giornale_dati,
 };
 
 /* =============================================================================
@@ -139,7 +177,7 @@ int modulo_ingresso(const ModuloKernel *k)
         return -2;
     }
 
-    klog(LOG_INFO, "ext4.mod %s: ext2 writing", EXT4MOD_VERSIONE);
+    klog(LOG_INFO, "ext4.mod %s: ext2 and ext3 writing", EXT4MOD_VERSIONE);
     return K->registra(&g_ops);
 }
 

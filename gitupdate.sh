@@ -107,6 +107,24 @@ if [ -n "$TROVATI" ] || [ -n "$NEL_MESSAGGIO" ]; then
     exit 1
 fi
 
+# ! NIENTE CHIAVI PRIVATE NEL REPOSITORY (21 ottobre 2026). Un ssh-keygen
+# lanciato dalla cartella del progetto ha lasciato grazianofalcone (privata)
+# e grazianofalcone.pub, e `git add .` li ha portati su GitHub. Si cerca
+# l'intestazione PEM/OpenSSH di una chiave privata in ogni file aggiunto o
+# cambiato; se c'e', ci si ferma e si dice dove.
+CHIAVI=""
+if [ -n "$CAMBIATI" ]; then
+    CHIAVI=$(printf '%s\n' "$CAMBIATI" | tr '\n' '\0' |
+             xargs -0 git grep --cached -l -E -e "-----BEGIN [A-Z ]*PRIVATE KEY-----" -- 2>/dev/null || true)
+fi
+if [ -n "$CHIAVI" ]; then
+    echo "! MI FERMO: chiavi private fra i file da committare."
+    printf '%s\n' "$CHIAVI" | sed 's/^/    /'
+    echo "  Toglile dallo stage (git rm --cached <file>), spostale fuori dal"
+    echo "  progetto (le chiavi SSH stanno in ~/.ssh) e rilancia."
+    exit 1
+fi
+
 echo "============================================="
 echo " Ramo: $branch"
 echo "============================================="

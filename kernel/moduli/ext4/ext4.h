@@ -70,6 +70,17 @@ int ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
  * counters, to the disk (scrittura.c, «LA PRENOTAZIONE RESTA»). */
 void prenotazione_chiudi(void);
 
+/* The ext3 journal (giornale.c). giornale_monta: 0 = writable, <0 =
+ * read-only; the others answer 0 at once for a volume with no journal. */
+int  giornale_monta  (int mnt);
+void giornale_smonta (int mnt);
+int  giornale_commit (int mnt);
+int  giornale_inizio (int mnt);
+int  giornale_fine   (int mnt, int subito);
+void giornale_leggi  (Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst);
+int  giornale_scrivi (Ext2Mount *m, uint32_t n, const void *src);
+int  giornale_dati   (Ext2Mount *m, uint32_t n, uint32_t quanti);
+
 /* gcc may turn a loop or a structure copy into a call to these: the module
  * has its own (ext4.c), since it can call nothing in the kernel by name. */
 void *memcpy(void *dst, const void *src, size_t n);

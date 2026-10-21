@@ -73,6 +73,10 @@ typedef struct {
 /* Monta il volume sul dispositivo a blocchi `blkdev`.
  * Ritorna un handle >= 0, o <0 se non e' un ext2 leggibile. */
 int  ext2_mount(int blkdev);
+/* The same, saying whether the user asked for read-only (mount -r): then
+ * the write module is never asked to open the volume, and no journal is
+ * replayed - nothing writes the disk (kernel 0.265). */
+int  ext2_mount_come(int blkdev, int ro_chiesto);
 int  ext2_umount(int mnt);
 /* 1 when the volume uses ext3/ext4 features: readable, not writable here. */
 int  ext2_sola_lettura(int mnt);

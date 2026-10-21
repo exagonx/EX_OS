@@ -1790,7 +1790,9 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
 
         for (k = 0; k < q; k++) b_dati[in + k] = src[scritti + k];
 
-        if (scrivi_blocco(m, blk, b_dati) != 0) break;
+        /* A file's DATA: straight to the disk, not into an ext3
+         * transaction (ordered mode, giornale.c) - scrivi_corsa of one. */
+        if (scrivi_corsa(m, blk, 1u, b_dati) != 0) break;
         scritti += q;
     }
 
@@ -1892,7 +1894,7 @@ int ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim)
             uint32_t k;
             if (leggi_blocco(m, blk, b_dati) != 0) return -1;
             for (k = coda; k < m->dim_blocco; k++) b_dati[k] = 0;
-            if (scrivi_blocco(m, blk, b_dati) != 0) return -1;
+            if (scrivi_corsa(m, blk, 1u, b_dati) != 0) return -1;     /* data */
         }
     }
 

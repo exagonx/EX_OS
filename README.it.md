@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.264
+**Versione:** 0.265
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -361,6 +361,28 @@ dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
 in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**0.265**: **ext3 si scrive**, con il suo giornale (`/dev/ext4.mod` 0.003,
+`kernel/moduli/ext4/giornale.c`). Ogni modifica ai metadati - bitmap,
+descrittori, inode, blocchi di puntatori, cartelle - va prima nel giornale
+come transazione intera e solo dopo al suo posto; i dati dei file vanno
+sul disco prima del commit (modo "ordered", quello di serie di ext3). Il
+formato del giornale e' quello di Linux (jbd2): un volume che EX-OS stava
+scrivendo quando e' mancata la corrente lo rimette a posto Linux, il suo
+`e2fsck` o EX-OS stesso. Al montaggio EX-OS riapplica un giornale lasciato
+da Linux (scansione, revoche, riapplicazione, come jbd2). `mount -r` non
+scrive niente, nemmeno per riapplicare il giornale. Una transazione si
+chiude alla fine di ogni operazione, alla chiusura di un file, a `sync`,
+allo smontaggio e dopo 5 secondi. Il kernel ha tre agganci nuovi
+nell'interfaccia di ext2 (ABI 4). Trovato provando: il CD a 64 bit non
+aveva `umount`. `tools/prova_ext3.sh` (QEMU, 32 e 64 bit, 27 su 27): un
+giornale scritto da debugfs con una revoca riapplicato come fa Linux,
+`mount -r` che lascia la partizione identica byte per byte, ext3 con
+blocchi da 4 KB e da 1 KB scritti (file identici, `e2fsck` pulito,
+needs_recovery spento), l'ultima transazione di EX-OS riapplicata da
+`e2fsck`, e un QEMU fermato senza `umount` che `e2fsck` rimette a posto
+senza perdere quel che era stato scritto. Prossimo passo: la scrittura di
+ext4 (extent, checksum dei metadati).
 
 **0.264**: il disco piu' veloce, senza perdere sicurezza. **Un lucchetto
 per il disco**: il controller, il suo buffer DMA e la cache dei settori non

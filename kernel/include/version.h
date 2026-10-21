@@ -513,7 +513,11 @@
  * buffer and sector cache had none - swap and the raw-sector syscalls
  * bypass the VFS lock), blk.c's read-ahead window for sequential file
  * reads, word copies in blk.c and ata.c (@DISCO-VELOCE). */
-#define EXOS_VERSION    "0.264"
+/* 0.264 -> 0.265: the journal hooks of the ext2 interface (EXT2_IF_ABI 4):
+ * block reads see the open transaction's copies, metadata writes go into it,
+ * a data run over a journaled block commits first - ext3 writing in
+ * /dev/ext4.mod 0.003 (@EXT3-GIORNALE). */
+#define EXOS_VERSION    "0.265"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

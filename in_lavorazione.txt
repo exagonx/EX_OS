@@ -8093,3 +8093,36 @@ tools/netinst/velocita tolto da netinst.
   dist/netinst/file/exwin/app/exilla appena creata (rifatto: riuscito).
   Sospetto MEGA che sincronizza dist/ mentre lo script la rifa'.
   Prossimo: fase B (ext3, giornale jbd2) nel modulo.
+
+@EXT3-GIORNALE  FASE B: ext3 SCRITTO, CON IL GIORNALE (21/10/2026, kernel 0.265,
+  ext4.mod 0.003)
+  kernel/moduli/ext4/giornale.c. Formato jbd2 di Linux (intestazioni
+  big-endian, magic 0xC03B3998, descrittore con un tag per blocco, copie,
+  commit), cosi' un volume interrotto lo ripara Linux, e2fsck o EX-OS.
+  - Al montaggio: giornale v1/v2 con REVOKE e 64BIT; rifiutati (sola
+    lettura, motivo nel registro) giornale esterno, checksum (CSUM_V2/V3,
+    CHECKSUM v1, ASYNC_COMMIT), fast commit, giornale in piu' di 32 pezzi.
+    needs_recovery + s_start != 0: riapplicazione in tre passate come jbd2
+    (scansione, revoche, riapplicazione). Poi giornale vuoto e
+    needs_recovery acceso finche' il volume e' montato in scrittura.
+  - Transazione: le scritture dei metadati non vanno sul disco
+    (scrivi_blocco del kernel -> giornale_scrivi), le letture vedono le
+    copie (giornale_leggi); i dati dei file vanno dritti (modo ordered).
+    Commit: flush, superblocco del giornale, descrittore, copie, flush,
+    commit, flush; poi le copie al loro posto, flush, giornale vuoto.
+    Ogni transazione parte da s_first: si riapplica solo l'ultima, niente
+    revoche da scrivere. Chiusa alla fine di ogni operazione che non e'
+    write(), alla close, a sync, allo smontaggio, a meta' piena, dopo 5 s.
+  - Kernel 0.265: tre agganci in Ext2Ops (EXT2_IF_ABI 4); `mount -r` arriva
+    al driver (ext2_mount_come, EXT2_RO_CHIESTO): il modulo non viene
+    nemmeno interpellato e nessun giornale si riapplica.
+  - Trovato provando: il CD a 64 bit NON AVEVA umount (mkiso64.sh non
+    copiava mount come umount). Corretto.
+  tools/prova_ext3.sh: 27 su 27 a 32 e a 64 bit. prova_modulo 22/22 e
+  19/19, prova_disco_veloce pulita. ext3 4 KB, QEMU 32 bit, 8 MB: scrittura
+  a pezzi da 4 KB 10,6 MB/s, da 64 KB 34 MB/s.
+  ! Limite noto: una write() che riempie la transazione la chiude a meta'
+  (al peggio blocchi segnati occupati e di nessuno, come ext2). Il
+  superblocco (contatori) si scrive fuori dal giornale: dopo un crash i
+  contatori li ricalcola e2fsck o Linux.
+  Prossimo: fase C, ext4 (extent, metadata_csum crc32c, flex_bg, 64bit).

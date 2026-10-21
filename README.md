@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.264
+**Version:** 0.265
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -337,6 +337,25 @@ chipset to ACPI mode first if needed. `reboot` tries, in order, the ACPI reset
 register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
+
+**0.265**: **ext3 is written**, with its journal (`/dev/ext4.mod` 0.003,
+`kernel/moduli/ext4/giornale.c`). Every change to the metadata - bitmaps,
+descriptors, inodes, pointer blocks, directories - goes to the journal first
+as a whole transaction and only then to its place; file data reaches the
+disk before the commit ("ordered" mode, ext3's default). The journal format
+is Linux's (jbd2): a volume EX-OS was writing when the power went is put
+right by Linux, its `e2fsck` or EX-OS itself. At mount EX-OS replays a
+journal left by Linux (scan, revoke, replay, as jbd2). `mount -r` writes
+nothing, not even to replay the journal. A transaction is committed at the
+end of every operation, at a file's close, at `sync`, at unmount and after 5
+seconds. The kernel has three new hooks in the ext2 interface (ABI 4).
+Found while testing: the 64-bit CD had no `umount`. `tools/prova_ext3.sh`
+(QEMU, 32 and 64 bit, 27 of 27): a journal written by debugfs with a revoke
+replayed as Linux does, `mount -r` leaving the partition identical byte for
+byte, ext3 with 4 KB and 1 KB blocks written (identical files, `e2fsck`
+clean, needs_recovery off), EX-OS's last transaction replayed by `e2fsck`,
+and a QEMU stopped without `umount` that `e2fsck` repairs without losing
+what had been written. Next: ext4 writing (extents, metadata checksums).
 
 **0.264**: a faster disk, without losing safety. **A disk lock**: the
 controller, its DMA buffer and the sector cache had none, and swap and the

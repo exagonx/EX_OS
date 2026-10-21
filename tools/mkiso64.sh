@@ -82,6 +82,10 @@ if [ "$QUALE" = "intero" ]; then
     # i comandi a 64 bit (tools/costruisci-utente64.sh), shell compresa
     if [ -d build-64/bin ] && [ -f build-64/bin/sh ]; then
         cp build-64/bin/* "$RADICE/bin/"
+        # one program for mount and umount, by argv[0] (as the 32-bit CD,
+        # Makefile iso-exos): without this copy the 64-bit system had no
+        # umount, and a volume was never unmounted cleanly
+        [ -f build-64/bin/mount ] && cp build-64/bin/mount "$RADICE/bin/umount"
     fi
     # la scrivania: i programmi di ExWin e il server grafico (che si costruisce
     # come un driver ma sta con loro, come sul CD a 32 bit)

@@ -747,7 +747,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
          * montaggio che accetta scritture per poi perderle. */
         sola_lettura = 1;
     } else if (vi.tipo == VOL_FS_EXT2) {
-        mnt = ext2_mount(blkdev);
+        mnt = ext2_mount_come(blkdev, chiesto);
         if (mnt < 0) return ERR(EIO);
 
         g_mnt[slot].tipo = VFS_FS_EXT2;
