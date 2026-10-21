@@ -8011,12 +8011,40 @@ tools/netinst/velocita tolto da netinst.
      noti, a 32 e 64 bit.
   6. Un font CJK per Exilla (oggi quadratini al posto di cinese, giapponese
      e coreano).
-  7. Sorgenti del sistema di base in netinst/source (@NETINST-SORGENTI):
-     chiedere prima all'utente come mostrare le differenze 32/64 e se e' un
-     pacchetto a parte.
+  7. Sorgenti del sistema di base (@NETINST-SORGENTI). L'utente (21/10):
+     una terza directory sul server, netinst_src, accanto a netinst e
+     netinst_64; `netupdate -install:sourcecode` li scarica; tar.gz, tre
+     archivi (solo 32, solo 64, in comune) - "se credi ci sia un'alternativa
+     migliore suggerisci".
+     Misurato sulla HEAD 55f228c0: 1710 file tracciati, 34 MB, un solo
+     `git archive` tar.gz = 12,7 MB. I file solo di un'architettura sono ~40
+     (kernel/arch/x86_64, *64.ld, mkiso64.sh...: ~390 KB, l'1%); la
+     differenza vera sta DENTRO i file comuni (#if, ARCH= nel Makefile) e
+     ogni architettura si costruisce dall'albero intero. Il nome non basta a
+     classificare (exwin/icon/*_64.ico sono icone da 64 pixel).
+     PROPOSTO all'utente: UN archivio per versione
+     (netinst_src/sorgenti-<versione>.tar.gz = git archive del commit, cioe'
+     esattamente GitHub) + un file con versione, commit e sha256; lo stesso
+     per netupdate a 32 e a 64 bit. L'utente: «procedi con un archivio
+     unico». FATTO 21/10, vedi @NETINST-SORGENTI-FATTO in fondo.
   8. [rust] e [git] sul CD strumenti a 64 bit: i sorgenti
      (cross_build/terze-parti/rust-src, libgit2) erano solo su i5svrdeb;
      vanno riscaricati e rifatti qui (costruisci-exos.sh, libgit2-exos).
+     (21/10: i sorgenti sono di nuovo qui, vedi @MEGA-IGNORE; resta da
+     ricostruire.)
+  STATO AL 21/10 POMERIGGIO: 7 FATTO (@NETINST-SORGENTI-FATTO); fatto
+  anche date -ntp (@DATE-NTP). Aggiunti:
+  9. /bin/sync non esiste (visto in @DATE-NTP): le prove lo mandano e
+     ricevono «comando non trovato». Un sync vero (SYS_SYNC? il VFS ha gia'
+     il sync dei filesystem e il giornale di ext3/ext4).
+  10. @HTACCESS-GZ: l'utente deve lanciare exagonx/repo-update.sh -src
+      -ritenta (carica il .htaccess con RemoveEncoding .gz) e verificare
+      che l'archivio torni di 12740505 byte; se Altervista ignora la regola,
+      rinominare in .tgz.bin. Poi controllare pacchetti/nasm.tar.gz a 32 bit.
+  NIENTE COMMESSO dal 55f228c0: netupdate 0.032, tar 0.004, archivi 0.008,
+  extar, date 0.002, mknetinstsrc.sh, prova_sorgenti.sh, prova_ntp.sh/.py,
+  Makefile (netinst-src, date con dns.c), README, installa.html. Va scritto
+  messaggio-commit.txt e lanciato ./gitupdate.sh (lo fa l'utente).
 
 @DISCO-VELOCE (21/10/2026) - kernel 0.264, ext4.mod 0.002
   L'utente: «riprendi il progetto ext3 ext4 con modulo a parte per la
@@ -8197,3 +8225,78 @@ tools/netinst/velocita tolto da netinst.
   ~40-50 MB/s.
   ! Non provato: un volume ext4 su una macchina vera, e un ext4 montato da
   Linux dopo che EX-OS l'ha scritto (solo e2fsck e debugfs).
+
+@NETINST-SORGENTI-FATTO  I SORGENTI IN .../netinst_src (21/10/2026, netupdate 0.032)
+  L'utente: un archivio unico (proposto al posto di 32/64/comune).
+  - tools/mknetinstsrc.sh, `make netinst-src` -> dist/netinst_src: stessa
+    forma degli altri due (versione.txt con arch = sorgenti, commit,
+    modifiche, archivio, cartella, aperto; catalogo.txt con [sourcecode];
+    elenco.txt; file/src/exos-<versione>.tar.gz). git archive con prefisso
+    exos-<versione>/; con l'albero sporco `git stash create` (i file
+    tracciati come sono, senza toccare indice e ramo) e modifiche = si.
+    Riproducibile. Sopra i 16 MB a pezzi come Exilla (SRC_PEZZO,
+    SRC_FUORI per la prova). Oggi 12,4 MB compressi, 34 MB aperti.
+  - netupdate 0.032 -install:sourcecode: indirizzo di -set senza la coda
+    _64 piu' _src; versione.txt (deve dire arch = sorgenti) ed elenco.txt
+    con impronta; percorsi solo sotto src/, niente ".."; se
+    /src/exos-<versione> c'e' gia' lo dice e si ferma; scarica con
+    scarica_come_va (ripresa, pezzi), apre con /bin/tar in
+    /src/.apro-<pid> e poi rename nella cartella vera (un'estrazione a
+    meta' non sembra mai riuscita); toglie l'archivio. Non entra nel
+    registro; -remove:sourcecode dice di usare rm -r. Avvisa: tar tiene in
+    memoria archivio + aperto (~47 MB).
+  - lib/extar: il bit di esecuzione dall'intestazione (x -> 0755, altrimenti
+    0644): gli script arrivavano 0644. tar 0.004, Archivi 0.008.
+  - exagonx (fuori da git; copia di prima nello scratchpad della sessione):
+    comune.sh EXOS_ARCH=src -> _src; repo-update.sh -src (niente
+    compilazione, make netinst-src, niente attesa di QEMU), -tutti = 32, 64,
+    poi sorgenti; pubblica.sh/verifica.sh: i pezzi anche in elenco.txt
+    (sul_server in comune.sh), prima solo in pacchetti/. LEGGIMI.md.
+  - tools/prova_sorgenti.sh (QEMU, disco installato dal CD, server via
+    guestfwd con url = 10.0.2.100/netinst): giro A archivio intero, giro B
+    tolto con rm -r e ripreso a pezzi da 4 MB; fuori: albero identico a
+    git archive (1710 file), script 0755, Makefile 0644, in /src solo la
+    cartella, e2fsck pulito. 17/17 a 32 e 17/17 a 64 bit.
+  ! Non provato: pubblicazione vera su Altervista (repo-update.sh -src).
+  ! Le versioni vecchie dell'archivio restano sul server (@CODA-20-10 p.4).
+
+@DATE-NTP  date -ntp: L'ORA DALLA RETE (21/10/2026, date 0.002)
+  L'utente: «serve una implementazione nel comando date aggiungi -npt che
+  andra' a controllare e sincronizzare ora e data tramite server npt».
+  - date -ntp / -npt [:SERVER[:PORTA]], predefinito pool.ntp.org. SNTP v4:
+    risposta valida solo se modo 4 e origin = il nostro transmit; stratum 0
+    (KoD) o LI=3 rifiutati; meta' del giro aggiunta; si scrive allo scatto
+    del secondo dopo (usleep). Senza root dice lo scarto e poi EPERM.
+  - FUSO: EX-OS non ha fusi, l'RTC e' locale. /boot/fuso.cfg (minuti,
+    legale = ue|no, server), scritto da date -fuso:+H[:MM][,ue|,no]; senza
+    file +1,ue (Italia) e lo dice ogni volta. Ora legale UE calcolata in UTC
+    (ultima domenica di marzo/ottobre 01:00 UTC) sull'istante scritto.
+  - Niente socket BSD (non sono nella libc.so, per il floppy): IPC con
+    ip.drv come lib/dns.c (IP_MSG_UDP_APRI/RICEVI/INVIA/CHIUDI) e
+    dns_risolvi; date collega lib/dns.c. date 18 -> 27 KB, floppy 28672
+    byte liberi. A 64 bit dns.c e' gia' in libexos.a.
+  - tools/prova_ntp.sh + tools/prova_ntp.py (server finto sull'host, 10.0.2.2
+    via rete user di QEMU): 8/8 a 32 e 8/8 a 64 bit, compreso pool.ntp.org
+    vero. -fuso: scrittura provata a mano su un disco installato (32 bit):
+    +5:30,no -> 15:30:01, +15 rifiutato, +1,ue -> 12:00:01 ora legale.
+  ! Visto: /bin/sync non esiste (le prove che lo mandano ricevono «comando
+    non trovato»; non fa danni, ma un sync vero servirebbe).
+  ! Non provato su una macchina vera.
+
+
+@HTACCESS-GZ  I .gz ARRIVAVANO DECOMPRESSI (21/10/2026)
+  L'utente: repo-update.sh ha dato un file diverso, -ritenta non trova
+  niente. Due cose:
+  - -ritenta senza -src guarda da-ritentare.txt (32 bit); quella dei
+    sorgenti e' da-ritentare_src.txt. Ora -ritenta, a lista vuota, dice
+    quali altre liste hanno file e con che opzione.
+  - IL FILE SUL SERVER ERA GIUSTO (ETag c26799 = 12740505 byte): Apache
+    serve i .gz con Content-Encoding: gzip e Cloudflare li decomprime a chi
+    non chiede gzip -> 35665920 byte, il tar aperto. Anche
+    pacchetti/nasm.tar.gz (561 KB -> 2,4 MB): gli archivi dei pacchetti non
+    sono MAI arrivati interi a netupdate (ripiego file per file in
+    silenzio). exagonx/htaccess: RemoveEncoding .gz .tgz + AddType
+    application/gzip. verifica.sh dice quando un .gz torna senza 1f 8b.
+  DA FARE dall'utente: exagonx/repo-update.sh -src -ritenta (carica anche
+  il .htaccess); i repository 32/64 lo prendono alla prossima
+  pubblicazione. Copia dell'htaccess di prima nello scratchpad.

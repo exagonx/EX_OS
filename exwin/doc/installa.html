@@ -744,6 +744,18 @@ installata, <code>-check</code> la aggiorna con il resto;
 <code>netupdate -remove:exilla</code> la toglie, voce del menu compresa.
 </p>
 
+<p class="nota">
+<b>I sorgenti di EX-OS si chiedono per nome anche loro:</b>
+<code>netupdate -install:sourcecode</code> (dalla 0.032). Stanno in un terzo
+repository accanto agli altri due, <code>.../netinst_src</code>, uguale per
+32 e 64 bit: un archivio di circa 12 MB, 34 MB una volta aperto, con i file
+che il progetto pubblica su GitHub. Vanno in
+<code>/src/exos-&lt;versione&gt;</code>; per aprirlo <code>tar</code> lo tiene
+in memoria, quindi servono una cinquantina di MB liberi. Non entrano nel
+registro: <code>-check</code> non li aggiorna, una versione nuova va in una
+cartella nuova e quella vecchia si toglie con <code>rm -r</code>.
+</p>
+
 <p>
 ! <b>LE LIBRERIE VANNO PER PRIME, E SE NON ARRIVANO NON SI TOCCA NIENTE</b>
 (dalla 0.021). I programmi chiamano la libc <b>per nome</b>, e questo produce

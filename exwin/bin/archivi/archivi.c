@@ -55,7 +55,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `archivi -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.007"
+#define VERSIONE_APP "0.008"
 EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define FIN_W       680

@@ -338,6 +338,29 @@ register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
 
+**date 0.002**: **the time from the network**. `date -ntp` (also `-npt`) asks
+`pool.ntp.org`, or `-ntp:SERVER[:PORT]`, and sets the clock on the tick of
+the next second, with half the network delay added (SNTP). NTP gives UTC and
+the machine's clock keeps local time: the zone in `/boot/fuso.cfg` converts
+it (`date -fuso:+1,ue`: hours from UTC, minutes allowed, `ue` for European
+summer time, decided on the UTC instant); without the file Italy is assumed
+and the command says so. An answer that is not ours, a Kiss-o'-Death or a
+silent server leave the clock alone; without root it shows how far ahead or
+behind the clock is. It talks to the stack over IPC like `host` (BSD sockets
+are not in the shared libc), so it stays on the floppy (28 KB free).
+`tools/prova_ntp.sh`: summer, winter, both changes of the hour, Kiss-o'-Death,
+a silent server and the real `pool.ntp.org`, at 32 and 64 bit.
+
+**netupdate 0.032**: **the sources from the repository**. Next to
+`.../netinst` and `.../netinst_64` there is `.../netinst_src`
+(`make netinst-src`): one archive for 32 and 64 bit with the files git
+tracks - what goes to GitHub. `netupdate -install:sourcecode` downloads it
+(in 16 MB pieces when needed, resuming), checks its hash and opens it in
+`/src/exos-<version>`; a new version goes into a new directory, and the
+sources stay out of the register (`-check` leaves them alone). `tar` (0.004)
+and Archivi restore the execute bit written in the archive: scripts came out
+0644. `tools/prova_sorgenti.sh` (QEMU, a disk installed from the CD).
+
 **0.265, ext4.mod 0.004**: **ext4 is written** - the volumes today's
 `mke2fs -t ext4` makes, with metadata_csum, 64bit, flex_bg, orphan_file and
 groups left uninitialised. The extent tree is written
@@ -1697,6 +1720,8 @@ way to fix it was to enter the BIOS.
     date -t                     16:09:30
     date -set-date:2026/09/16   the date  (root only)
     date -set-time:17:52:30     the time  (the seconds can be left out)
+    date -ntp[:SERVER[:PORT]]   the time from the network, NTP (root; also -npt)
+    date -fuso[:+1,ue]          the zone that turns NTP's UTC into local time
 
 `SYS_TIME_SET` (213) calls `rtc_write()`, and it is **root's, like `mount`**:
 whoever moves the time changes the date of every file anybody else will write,
@@ -7127,6 +7152,8 @@ date -d                     the date only, 2026-09-16
 date -t                     the time only, 17:52:31
 date -set-date:2026/09/16   sets the date   (root only)
 date -set-time:17:52:30     sets the time   (root only)
+date -ntp                   the time from pool.ntp.org   (root only)
+date -fuso:+1,ue            the zone for -ntp: Italy (/boot/fuso.cfg)
 ```
 
 ```

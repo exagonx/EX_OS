@@ -362,6 +362,29 @@ in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
 
+**date 0.002**: **l'ora dalla rete**. `date -ntp` (anche `-npt`) chiede l'ora
+a `pool.ntp.org`, o a `-ntp:SERVER[:PORTA]`, e rimette l'orologio allo scatto
+del secondo, con il ritardo della rete diviso a meta' (SNTP). NTP da' l'ora
+UTC e l'orologio della macchina e' in ora locale: la conversione la fa il
+fuso di `/boot/fuso.cfg` (`date -fuso:+1,ue`, ore da UTC anche con i minuti,
+`ue` per l'ora legale europea, calcolata sull'istante UTC), e senza il file
+vale l'Italia e il comando lo dice. Una risposta che non e' la nostra, un
+«Kiss-o'-Death» o un server muto non toccano l'orologio; senza essere root si
+vede di quanto e' avanti o indietro. Passa dallo stack per IPC come `host`
+(i socket BSD non sono nella libc condivisa), quindi resta sul dischetto
+(28 KB liberi). `tools/prova_ntp.sh`: estate, inverno, i due cambi dell'ora,
+Kiss-o'-Death, server muto e `pool.ntp.org` vero, a 32 e 64 bit.
+
+**netupdate 0.032**: **i sorgenti dal repository**. Accanto a
+`.../netinst` e `.../netinst_64` c'e' `.../netinst_src` (`make netinst-src`):
+un archivio solo, per 32 e 64 bit, con i file che git traccia - quello che va
+su GitHub. `netupdate -install:sourcecode` lo scarica (a pezzi da 16 MB
+quando serve, con la ripresa), controlla l'impronta e lo apre in
+`/src/exos-<versione>`; una versione nuova va in una cartella nuova, e i
+sorgenti non entrano nel registro (`-check` non li tocca). `tar` (0.004) e
+Archivi rimettono il bit di esecuzione scritto nell'archivio: gli script
+arrivavano 0644. `tools/prova_sorgenti.sh` (QEMU, disco installato dal CD).
+
 **0.265, ext4.mod 0.004**: **ext4 si scrive** - i volumi che fa oggi
 `mke2fs -t ext4`, con metadata_csum, 64bit, flex_bg, orphan_file e gruppi
 lasciati da inizializzare. Si scrive l'albero degli extent
@@ -1736,6 +1759,8 @@ rimetterlo era entrare nel BIOS.
     date -t                     16:09:30
     date -set-date:2026/09/16   la data  (serve root)
     date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
+    date -ntp[:SERVER[:PORTA]]  l'ora dalla rete, NTP (serve root; anche -npt)
+    date -fuso[:+1,ue]          il fuso con cui l'ora UTC di NTP diventa locale
 
 `SYS_TIME_SET` (213) chiama `rtc_write()`, ed è **di root come `mount`**: chi
 sposta l'ora cambia la data di ogni file che chiunque altro scriverà, e con essa
@@ -7197,6 +7222,8 @@ date -d                     solo la data, 2026-09-16
 date -t                     solo l'ora, 17:52:31
 date -set-date:2026/09/16   rimette la data   (serve root)
 date -set-time:17:52:30     rimette l'ora     (serve root)
+date -ntp                   l'ora da pool.ntp.org   (serve root)
+date -fuso:+1,ue            il fuso per -ntp: Italia (/boot/fuso.cfg)
 ```
 
 ```

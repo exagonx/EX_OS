@@ -30,7 +30,7 @@
 #include "extar.h"
 
 /* +0.001 a ogni modifica: `tar -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("tar", "0.003");
+EX_VERSIONE("tar", "0.004");
 
 #define PERC_MAX 512
 

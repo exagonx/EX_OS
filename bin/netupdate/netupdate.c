@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.031");
+EX_VERSIONE("netupdate", "0.032");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -3774,6 +3774,7 @@ static int comando_install_list(const char *pezzo)
     }
     printf("\n  %d pacchett%s. Per installarne uno:  netupdate -install:<nome>\n",
            mostrati, mostrati == 1 ? "o" : "i");
+    printf("  E i sorgenti del sistema:            netupdate -install:sourcecode\n");
     return 0;
 }
 
@@ -3828,6 +3829,213 @@ static int prova_archivio(Config *c, Pacchetto *q, long *fatti, long *falliti)
         return -1;
     }
     return 1;
+}
+
+/* =============================================================================
+ * -install:sourcecode — I SORGENTI DEL SISTEMA (21 ottobre 2026)
+ *
+ * Stanno in un terzo repository accanto ai due dei binari: .../netinst,
+ * .../netinst_64 e .../netinst_src. Lo fa `make netinst-src`
+ * (tools/mknetinstsrc.sh): un archivio solo, git archive di cio' che va su
+ * GitHub, per tutt'e due le architetture. Qui si scarica, si controlla e si
+ * apre in /src/exos-<versione>.
+ *
+ * ! NON E' UN PACCHETTO DEL CATALOGO, ED E' VOLUTO. Il catalogo e' di un
+ * repository di binari, e un repository e' di UNA macchina: i sorgenti sono
+ * gli stessi per le due, e metterli in tutt'e due vorrebbe dire pubblicarli
+ * due volte. E non entrano nel registro: -check non li deve aggiornare (chi
+ * li ha scaricati ci lavora sopra), e una versione nuova va in una cartella
+ * nuova accanto alla vecchia, che resta finche' non la toglie chi l'ha voluta.
+ *
+ * ! SI APRE IN UNA CARTELLA D'APPOGGIO E POI SI SPOSTA. Un'estrazione caduta
+ * a meta' (disco pieno, memoria) lasciata in /src/exos-<versione> sembrerebbe
+ * un'installazione riuscita - e al giro dopo «ci sono gia'». Cosi' quel nome
+ * c'e' solo quando dentro c'e' tutto.
+ *
+ * ! L'APRE /bin/tar, NON QUESTO PROGRAMMA. lib/extar sa gia' fare tutto
+ * (pax, nomi lunghi, il bit di esecuzione), e compilarlo qui dentro vorrebbe
+ * dire anche deflate.c, su un programma che sta sul dischetto della rete.
+ * Come extar, tar apre l'archivio in memoria: compresso piu' aperto, oggi una
+ * cinquantina di MB, e si dice prima.
+ * ============================================================================= */
+#define SRC_CODA  "_src"
+#define SRC_DIR   "/src"
+#define SRC_TAR   "/bin/tar"
+
+static int comando_sorgenti(void)
+{
+    Config c;
+    char   ver[PERC_MAX], ele[PERC_MAX], riga[RIGA_MAX];
+    char   versione[16], data[40], arch[16], h_ele[72], commit[48], modifiche[8];
+    char   cartella[PERC_MAX / 2], aperto_s[24], perc[PERC_MAX / 2], impronta[IMPR_MAX];
+    char   dest[PERC_MAX], archivio[PERC_MAX], temp[PERC_MAX + 8], coda[PERC_MAX + 8];
+    char   appoggio[PERC_MAX], dentro[PERC_MAX], pidtxt[16];
+    char  *av[6];
+    long   byte = 0, aperto = 0, pezzo = 0;
+    int    trovata = 0, pid, stato = 0;
+    size_t l, k;
+    FILE  *f;
+
+    if (!config_leggi(&c)) {
+        printf("netupdate: non so da dove aggiornare (%s non c'e').\n\n", CNF);
+        printf("  Prima:  netupdate -set\n");
+        return 1;
+    }
+    if (strcasecmp(c.tipo, "HTTP") != 0) {
+        printf("netupdate: la configurazione dice %s, e oggi so fare solo HTTP.\n", c.tipo);
+        return 1;
+    }
+
+    /* L'indirizzo dei sorgenti: quello di sempre, senza la coda della
+     * macchina (config_leggi l'ha appena messa) e con «_src». */
+    l = strlen(c.url);
+    while (l > 0 && c.url[l - 1] == '/') c.url[--l] = '\0';
+    k = strlen(NU_CODA);
+    if (k > 0 && l >= k && strcmp(c.url + l - k, NU_CODA) == 0) c.url[l -= k] = '\0';
+    if (l + strlen(SRC_CODA) >= sizeof(c.url)) {
+        printf("netupdate: l'indirizzo e' troppo lungo.\n");
+        return 1;
+    }
+    strcat(c.url, SRC_CODA);
+
+    mkdir("/tmp", 0755);
+    mkdir(TMPDIR, 0755);
+    snprintf(ver, sizeof(ver), "%s/src-versione.txt", TMPDIR);
+    snprintf(ele, sizeof(ele), "%s/src-elenco.txt",   TMPDIR);
+
+    printf("Guardo http://%s\n\n", c.url);
+    if (prendi_verifica_scrivi(&c, "versione.txt", NULL, ver) != 0) {
+        printf("\n  Non ho potuto leggere versione.txt: il server forse non\n");
+        printf("  pubblica i sorgenti (make netinst-src).\n");
+        return 1;
+    }
+    if (chiave_da_file(ver, "versione", versione, sizeof(versione)) != 0 ||
+        chiave_da_file(ver, "arch", arch, sizeof(arch)) != 0 ||
+        strcmp(arch, "sorgenti") != 0) {
+        printf("  ! http://%s non e' un repository di sorgenti\n", c.url);
+        printf("    (versione.txt non dice \"arch = sorgenti\").\n");
+        return 1;
+    }
+    if (chiave_da_file(ver, "elenco", h_ele, sizeof(h_ele)) != 0) {
+        printf("  ! versione.txt non porta l'impronta di elenco.txt: mi fermo.\n");
+        return 1;
+    }
+    if (prendi_verifica_scrivi(&c, "elenco.txt", h_ele, ele) != 0) return 1;
+
+    if (chiave_da_file(ver, "data", data, sizeof(data)) != 0) copia_str(data, "?", sizeof(data));
+    if (chiave_da_file(ver, "commit", commit, sizeof(commit)) != 0) copia_str(commit, "?", sizeof(commit));
+    if (chiave_da_file(ver, "modifiche", modifiche, sizeof(modifiche)) != 0) modifiche[0] = '\0';
+    if (chiave_da_file(ver, "aperto", aperto_s, sizeof(aperto_s)) == 0) aperto = atol(aperto_s);
+    if (chiave_da_file(ver, "cartella", cartella, sizeof(cartella)) != 0)
+        snprintf(cartella, sizeof(cartella), "src/exos-%s", versione);
+
+    f = fopen(ele, "r");
+    if (f == NULL) { printf("netupdate: %s sparito\n", ele); return 1; }
+    while (!trovata && fgets(riga, sizeof(riga), f) != NULL) {
+        char *fp, *imp, *pac;
+        long  fb;
+
+        if (!riga_elenco(riga, &fp, &fb, &imp, &pac)) continue;
+        if (strcmp(pac, "sourcecode") != 0) continue;
+        copia_str(perc, fp, sizeof(perc));
+        copia_str(impronta, ripulisci(imp), sizeof(impronta));
+        byte    = fb;
+        pezzo   = g_riga_pezzo;
+        trovata = 1;
+    }
+    fclose(f);
+
+    /* ! I DUE PERCORSI DAL SERVER STANNO SOTTO /src, O NIENTE: sono nomi
+     * scritti da altri, e uno con «..» scriverebbe dove vuole. */
+    if (!trovata || byte <= 0 || strncmp(perc, "src/", 4) != 0 ||
+        strncmp(cartella, "src/", 4) != 0 || strstr(perc, "..") || strstr(cartella, "..") ||
+        strchr(cartella + 4, '/') != NULL) {
+        printf("  ! elenco.txt non nomina un archivio di sorgenti sotto src/.\n");
+        return 1;
+    }
+
+    unisci(dest, sizeof(dest), "/", cartella);
+    unisci(archivio, sizeof(archivio), "/", perc);
+
+    printf("  sorgenti di EX-OS %s del %s\n", versione, data);
+    printf("  commit %s%s\n", commit,
+           strcmp(modifiche, "si") == 0 ? " (piu' modifiche non ancora commesse)" : "");
+
+    if (esiste(dest, NULL)) {
+        printf("\nCi sono gia': %s.\n", dest);
+        printf("Per riscaricarli, prima toglila:  rm -r %s\n", dest);
+        return 0;
+    }
+    if (access(SRC_TAR, X_OK) != 0) {
+        printf("\n  ! per aprirli serve %s, e qui non c'e'. Lo porta\n", SRC_TAR);
+        printf("    netupdate -check -yesall (e' del sistema di base).\n");
+        return 1;
+    }
+
+    printf("\n  %ld KB da scaricare, %ld MB aperti, in %s/\n",
+           (byte + 1023) / 1024, (aperto + 1048575) / 1048576, dest);
+    printf("  Per aprirlo, tar lo tiene in memoria: circa %ld MB.\n",
+           (byte + aperto + 1048575) / 1048576);
+    if (!chiedi_si("Procedo?", 1)) {
+        printf("\nNon ho toccato niente.\n");
+        return 0;
+    }
+
+    /* --- lo scaricamento: come ogni altro file, con la ripresa ------------- */
+    mkdir(SRC_DIR, 0755);
+    crea_strada(archivio);
+    snprintf(temp, sizeof(temp), "%s.new", archivio);
+    snprintf(coda, sizeof(coda), "file/%s", perc);
+    printf("\nScarico\n");
+    g_riga_pezzo = pezzo;
+    if (scarica_come_va(&c, coda, temp, byte, impronta) != 0) return 1;
+    remove(archivio);
+    if (rename(temp, archivio) != 0) {
+        printf("  ! %s: non riesco a rinominarlo (%s)\n", temp, strerror(errno));
+        return 1;
+    }
+    printf("  + %s (%ld byte, impronta giusta)\n", archivio, byte);
+
+    /* --- l'apertura, in disparte ------------------------------------------- */
+    snprintf(pidtxt, sizeof(pidtxt), "%d", getpid());
+    snprintf(appoggio, sizeof(appoggio), "%s/.apro-%s", SRC_DIR, pidtxt);
+    if (mkdir(appoggio, 0755) != 0) {
+        printf("  ! non riesco a creare %s (%s)\n", appoggio, strerror(errno));
+        return 1;
+    }
+    printf("\nApro %s\n", archivio);
+    av[0] = (char *)SRC_TAR;
+    av[1] = (char *)"xf";
+    av[2] = archivio;
+    av[3] = (char *)"-C";
+    av[4] = appoggio;
+    av[5] = 0;
+    pid = spawn(av[0], av);
+    if (pid < 0) {
+        printf("  ! %s non parte\n", SRC_TAR);
+        return 1;
+    }
+    waitpid(pid, &stato, 0);
+
+    snprintf(dentro, sizeof(dentro), "%s/%s", appoggio, cartella + 4);
+    if (WEXITSTATUS(stato) != 0 || !esiste(dentro, NULL)) {
+        printf("\n  ! tar non ha aperto tutto (uscita %d). Quel che e' uscito\n",
+               WEXITSTATUS(stato));
+        printf("    e' in %s; l'archivio resta in %s.\n", appoggio, archivio);
+        printf("    Spazio sul disco o memoria? Per riprovare:\n");
+        printf("        rm -r %s\n        netupdate -install:sourcecode\n", appoggio);
+        return 1;
+    }
+    if (rename(dentro, dest) != 0) {
+        printf("\n  ! aperti, ma non riesco a spostarli in %s (%s).\n", dest, strerror(errno));
+        printf("    Sono in %s.\n", dentro);
+        return 1;
+    }
+    rmdir(appoggio);
+    remove(archivio);       /* aperto e spostato: non serve piu' */
+
+    printf("\nI sorgenti di EX-OS %s sono in %s/\n", versione, dest);
+    return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -4259,6 +4467,8 @@ static void uso(void)
     printf("     netupdate -install:list <pezzo>    le app il cui nome lo contiene\n");
     printf("     netupdate -install:<app>           l'app e cio' che le serve\n");
     printf("     netupdate -remove:<app>            l'app e le librerie di nessun altro\n");
+    printf("     netupdate -install:sourcecode      i sorgenti del sistema, in\n");
+    printf("                                        %s/exos-<versione>/\n", SRC_DIR);
     printf("\n");
     printf("Due file, e sono cose diverse:\n");
     printf("  %s  da dove ci si aggiorna, lo scrive -set\n", CNF);
@@ -4396,10 +4606,12 @@ int main(int argc, char **argv)
 
         /* ! «list» E' UNA PAROLA RISERVATA DOPO I DUE PUNTI, come «crea» per
          * -registro. Sta scritto qui perche' chi un giorno pubblichera' un
-         * pacchetto che si chiama «list» sappia dove sbatte. */
+         * pacchetto che si chiama «list» sappia dove sbatte. E dal 21
+         * ottobre 2026 anche «sourcecode»: i sorgenti, da .../netinst_src. */
         if (strcmp(coda, "list") == 0)
             return comando_install_list(argc > 2 ? argv[2] : "");
         if (coda[0] == '\0') { uso(); return 1; }
+        if (strcmp(coda, "sourcecode") == 0) return comando_sorgenti();
         {
             int rc = comando_install(coda);
             if (rc == 0) percorsi_segna();
@@ -4411,6 +4623,12 @@ int main(int argc, char **argv)
         const char *coda = argv[1] + 8;
 
         if (coda[0] == '\0') { uso(); return 1; }
+        if (strcmp(coda, "sourcecode") == 0) {
+            /* Non sono nel registro (vedi comando_sorgenti): si tolgono a mano. */
+            printf("netupdate: i sorgenti non sono nel registro. Stanno in\n");
+            printf("           %s/exos-<versione>/ e si tolgono con rm -r.\n", SRC_DIR);
+            return 1;
+        }
         return comando_remove(coda);
     }
 

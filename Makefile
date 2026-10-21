@@ -90,7 +90,7 @@ ifeq ($(filter $(ARCH),i386 x86_64),)
 $(error ARCH=$(ARCH) non la conosco: i386 oppure x86_64)
 endif
 ifeq ($(ARCH),x86_64)
-ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 chiave64 tools64 netinst64 pulisci64,$(or $(MAKECMDGOALS),all)),)
+ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 chiave64 tools64 netinst64 netinst-src pulisci64,$(or $(MAKECMDGOALS),all)),)
 $(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: iso64 netinst64 tools64 kernel64 kernel64-prova kernel64-sondaggio arch-dice)
 endif
 endif
@@ -3607,13 +3607,17 @@ DATE_SRC := bin/date/date.c
 DATE_BIN := $(BUILD_BIN)/date
 DATE_LD  := bin/date/date.ld
 
-$(DATE_BIN): $(DATE_SRC) $(DATE_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+# ! DAL 21 OTTOBRE 2026 ANCHE lib/dns.c, per `date -ntp`: il nome del server e
+# la domanda UDP passano dallo stack per IPC come in host e dhcp (i socket BSD
+# non sono nella libc.so, apposta). Sul floppy la rete non c'e' e -ntp lo dice.
+$(DATE_BIN): $(DATE_SRC) $(DATE_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/date ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -c $(DATE_SRC) -o $(BUILD_OBJ)/date_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(DATE_SRC) -o $(BUILD_OBJ)/date_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(DNS_SRC)  -o $(BUILD_OBJ)/date_dns.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/date_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DATE_LD) \
-	    $(BUILD_OBJ)/date_start.o $(BUILD_OBJ)/date_main.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/date_start.o $(BUILD_OBJ)/date_main.o $(BUILD_OBJ)/date_dns.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] date compilato: $@"
 
 # ! `date_prog` E NON `date`, per la stessa ragione di `uname_prog`: un bersaglio
@@ -8378,6 +8382,18 @@ netinst: iso-exos sdk-fresco $(EXILLA_BIN)
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh
 	@ARCH=$(ARCH) $(TOOLS_DIR)/mknetinst.sh
 
+# netinst-src — I SORGENTI, ACCANTO AI DUE REPOSITORY DEI BINARI
+#
+#     make netinst-src  -> dist/netinst_src/   (netupdate -install:sourcecode)
+#
+# Un archivio solo per 32 e 64 bit, git archive dei file tracciati: quello che
+# va su GitHub. Non compila niente e non dipende da niente. Vedi
+# tools/mknetinstsrc.sh.
+.PHONY: netinst-src
+netinst-src:
+	@chmod +x $(TOOLS_DIR)/mknetinstsrc.sh
+	@$(TOOLS_DIR)/mknetinstsrc.sh
+
 # =============================================================================
 # netinst-img — IL FLOPPY DELLA RETE
 #
@@ -8686,6 +8702,7 @@ help:
 	@echo "                    — Floppy che mostra il log di avvio, dist/floppy-verboso.img"
 	@echo "  make diagnostic   — Floppy di diagnosi dist/diagnostic.img"
 	@echo "  make netinst      — L'albero per netupdate, dist/netinst (header freschi)"
+	@echo "  make netinst-src  — I sorgenti per netupdate -install:sourcecode, dist/netinst_src"
 	@echo "  make netinst-img  — Il floppy della rete dist/netinst.img (non avviabile)"
 	@echo "  ./exagonx/repo-update.sh"
 	@echo "                    — Costruisce, compone netinst, pubblica e verifica"

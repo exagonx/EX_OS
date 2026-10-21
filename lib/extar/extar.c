@@ -31,6 +31,7 @@ typedef struct {
     unsigned long dim;
     long          dati;         /* where the data starts in the buffer */
     unsigned long mtime;
+    unsigned int  modo;         /* the permission bits of the header */
     char          tipo;
 } Voce;
 
@@ -375,6 +376,7 @@ static int indicizza(ExTar *t)
         v->dati  = i;
         v->tipo  = tipo;
         v->mtime = ottale(h + 136, 12);
+        v->modo  = (unsigned int)ottale(h + 100, 8) & 0777;
         i += arrotonda(dim);
         t->fine = i;
         if (v->nome[0] && strcmp(v->nome, ".") != 0) t->nv++;
@@ -508,6 +510,12 @@ int ex_tar_estrai(ExTar *t, unsigned int i, const char *dove)
         ok = fd >= 0 && scrivi_tutto(fd, t->d + v->dati, (unsigned int)v->dim);
         if (fd >= 0) close(fd);
         if (!ok) { errore("il file non si scrive"); return 0; }
+        /* ! THE EXECUTE BIT COMES FROM THE HEADER (21 October 2026): every
+         * file came out 0644, and the scripts of the EX-OS sources
+         * (netupdate -install:sourcecode) arrived not executable. Only the
+         * x bits decide: 0755 or the 0644 above, never a mode wider than
+         * the archive's or one that hides the file from its owner. */
+        if (v->modo & 0111) chmod(dest, 0755);
         return 1;
     }
     errore("tipo di voce non supportato (collegamento o dispositivo)");
