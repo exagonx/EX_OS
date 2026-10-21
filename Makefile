@@ -5491,7 +5491,8 @@ $(STAGE2_BIN): $(STAGE2_ASM_SRC) $(STAGE2_SVGA_SEGNO) $(STAGE2_RD_SEGNO) $(SEGNO
 # =============================================================================
 BUILD_MODULI  := $(BUILD_DIR)/moduli
 MOD_EXT4_SRC  := kernel/moduli/ext4/ext4.c kernel/moduli/ext4/scrittura.c \
-                 kernel/moduli/ext4/giornale.c
+                 kernel/moduli/ext4/giornale.c kernel/moduli/ext4/somme.c \
+                 kernel/moduli/ext4/estesi.c
 MOD_EXT4_DEP  := $(MOD_EXT4_SRC) kernel/moduli/ext4/ext4.h kernel/include/ext2_interno.h \
                  kernel/include/ext2.h kernel/include/modulo.h kernel/include/kernel.h \
                  kernel/include/version.h tools/modulo-coda.py

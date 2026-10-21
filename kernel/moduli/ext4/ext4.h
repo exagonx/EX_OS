@@ -81,6 +81,56 @@ void giornale_leggi  (Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst);
 int  giornale_scrivi (Ext2Mount *m, uint32_t n, const void *src);
 int  giornale_dati   (Ext2Mount *m, uint32_t n, uint32_t quanti);
 
+/* What ext4 asks of a volume, read at mount (somme.c, vol_monta). */
+typedef struct {
+    uint8_t  estesi;            /* INCOMPAT_EXTENTS: new files get an extent tree */
+    uint8_t  meta_csum;         /* RO_COMPAT_METADATA_CSUM: everything is summed */
+    uint8_t  gdt_csum;          /* RO_COMPAT_GDT_CSUM (uninit_bg): descriptors, crc16 */
+    uint8_t  dir_nlink;         /* RO_COMPAT_DIR_NLINK: a crowded directory says 1 */
+    uint32_t seme;              /* the checksum seed */
+    uint8_t  uuid[16];
+    uint32_t extra_isize;       /* for a new inode: s_want_extra_isize, or 32 */
+    uint32_t gdt_riservati;     /* s_reserved_gdt_blocks (resize_inode) */
+    uint32_t backup[2];         /* s_backup_bgs (sparse_super2) */
+} Ext4Vol;
+
+extern Ext4Vol g_vol[EXT2_MAX_MOUNT];
+
+/* The checksums (somme.c). */
+int      vol_monta      (int mnt);
+Ext4Vol *vol_di         (const Ext2Mount *m);
+uint32_t crc32c_grezzo  (uint32_t crc, const void *dati, uint32_t n);
+void     somma_super    (Ext2Mount *m, uint8_t *sb);
+void     somma_desc     (Ext2Mount *m, uint32_t g, uint8_t *d);
+void     somma_bitmap   (Ext2Mount *m, uint8_t *d, int inode, const uint8_t *bmp);
+uint32_t seme_inode     (Ext2Mount *m, uint32_t num, const uint8_t *inode);
+void     somma_inode    (Ext2Mount *m, uint32_t num, uint8_t *ino);
+void     somma_estesi   (Ext2Mount *m, uint32_t num, const uint8_t *inode, uint8_t *blocco);
+uint32_t dir_fine       (Ext2Mount *m);
+int      dir_coda       (Ext2Mount *m, uint8_t *b);
+int      somma_dir      (Ext2Mount *m, uint32_t num, const uint8_t *inode, uint8_t *b);
+void     somma_attributi(Ext2Mount *m, uint32_t blk, uint8_t *b);
+
+/* The superblock through the journal (giornale.c): `sb` is its 1024 bytes. */
+int super_leggi (Ext2Mount *m, uint8_t *sb);
+int super_scrivi(Ext2Mount *m, const uint8_t *sb);
+int giornale_attivo(int mnt);
+
+/* The extent tree (estesi.c). */
+uint32_t est_mappa_o_alloca(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode,
+                            uint32_t n, uint32_t pref, uint32_t *charge);
+int      est_pota          (Ext2Mount *m, uint32_t num, uint8_t *inode, uint32_t primo,
+                            uint32_t *liberati);
+void     est_radice_vuota  (uint8_t *inode);
+void     est_dimentica     (void);
+void     est_dimentica_blocco(uint32_t n);
+
+/* What estesi.c takes from scrittura.c. `dato`: the block is a file's data
+ * (zeroed on the disk unless ext2_write is about to cover it); 0 = a block of
+ * the tree, written whole by its caller. */
+uint32_t alloca_blocco_per(Ext2Mount *m, uint32_t pref, int dato);
+int      libera_blocco    (Ext2Mount *m, uint32_t n);
+
 /* gcc may turn a loop or a structure copy into a call to these: the module
  * has its own (ext4.c), since it can call nothing in the kernel by name. */
 void *memcpy(void *dst, const void *src, size_t n);

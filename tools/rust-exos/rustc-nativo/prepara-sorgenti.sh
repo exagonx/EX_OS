@@ -22,6 +22,13 @@ set -e
 cd "$(dirname "$0")/../../.."
 RADICE="$PWD"
 T="${RUSTC_SORGENTI:-$RADICE/cross_build/terze-parti/rust-src/rustc-nightly-src}"
+# ! ONLY THE TARBALL TRAVELS (MEGA, .megaignore): the tree is 4.5 GB in
+# 357,000 files and comes back from rustc-nightly-src.tar.xz, the nightly's
+# own (static.rust-lang.org/dist/2026-10-15/, sha256 next to it).
+A="$(dirname "$T")/rustc-nightly-src.tar.xz"
+if [ ! -f "$T/x.py" ] && [ -f "$A" ]; then
+    (cd "$(dirname "$A")" && sha256sum -c "$(basename "$A").sha256" && tar xf "$(basename "$A")")
+fi
 [ -f "$T/x.py" ] || { echo "no rustc sources in $T" >&2; exit 1; }
 
 [ -d "$T/library.orig" ] || cp -a "$T/library" "$T/library.orig"

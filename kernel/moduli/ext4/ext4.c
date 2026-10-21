@@ -12,7 +12,12 @@
  * registers the write operations. Here: the entry point, the checks that
  * the kernel is the one it was built for, and what it can write.
  *
- *     EXT4MOD_VERSIONE 0.003 (+0.001 a ogni modifica)
+ *     EXT4MOD_VERSIONE 0.004 (+0.001 a ogni modifica)
+ *     0.004: ext4 - extents (estesi.c), metadata_csum and uninit_bg
+ *            (somme.c), 64-byte descriptors, flex_bg, groups never
+ *            initialised, extra_isize, dir_nlink, the journal's CSUM_V3;
+ *            the superblock goes through the journal and a long write()
+ *            is cut into transactions of its own (@EXT4-SCRITTURA).
  *     0.003: ext3 - the journal (giornale.c): replayed at mount, every
  *            change to the metadata written there first (@EXT3-GIORNALE).
  *     0.002: the blocks set aside for a file being appended to stay between
@@ -22,7 +27,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.003"
+#define EXT4MOD_VERSIONE "0.004"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;
@@ -43,18 +48,33 @@ const Ext2Interfaccia *K  = NULL;
  *                          as an ordinary directory), as Linux does;
  *   SPARSE_SUPER2          only says where the backups are;
  *   HAS_JOURNAL            ext3: giornale.c writes it (0.003), and monta()
- *                          refuses a journal it cannot write.
+ *                          refuses a journal it cannot write;
+ *   ORPHAN_FILE            ext4's list of files deleted while open: this
+ *                          module never puts one there, and a volume whose
+ *                          list is not empty (ro_compat ORPHAN_PRESENT) stays
+ *                          read-only - nothing below lets that bit through.
  * And incompat RECOVER (needs_recovery): the journal is replayed at mount.
+ *
+ * ext4 (0.004): EXTENTS (estesi.c), 64BIT (with fewer than 2^32 blocks: the
+ * kernel refuses more), FLEX_BG (bitmaps and tables of a group elsewhere:
+ * every address is read from the descriptor), CSUM_SEED; ro_compat
+ * HUGE_FILE (an inode marked huge_file is not written), GDT_CSUM,
+ * METADATA_CSUM (somme.c), DIR_NLINK, EXTRA_ISIZE. Not: inline data,
+ * bigalloc, quota, encryption, casefold, large directories, MMP, meta_bg.
  * ============================================================================= */
 #define COMPAT_SCRIVE    (COMPAT_DIR_PREALLOC | COMPAT_IMAGIC | COMPAT_EXT_ATTR | \
                           COMPAT_RESIZE_INODE | COMPAT_DIR_INDEX | COMPAT_SPARSE_SUPER2 | \
-                          COMPAT_HAS_JOURNAL)
-#define INCOMPAT_SCRIVE  (INCOMPAT_FILETYPE | INCOMPAT_RECOVER)
-#define RO_COMPAT_SCRIVE (RO_COMPAT_SPARSE | RO_COMPAT_LARGEFILE)
+                          COMPAT_HAS_JOURNAL | COMPAT_ORPHAN_FILE)
+#define INCOMPAT_SCRIVE  (INCOMPAT_FILETYPE | INCOMPAT_RECOVER | INCOMPAT_EXTENTS | \
+                          INCOMPAT_64BIT | INCOMPAT_FLEX_BG | INCOMPAT_CSUM_SEED)
+#define RO_COMPAT_SCRIVE (RO_COMPAT_SPARSE | RO_COMPAT_LARGEFILE | RO_COMPAT_HUGE_FILE | \
+                          RO_COMPAT_GDT_CSUM | RO_COMPAT_DIR_NLINK | \
+                          RO_COMPAT_EXTRA_ISIZE | RO_COMPAT_METADATA_CSUM)
 
 static int monta(int mnt)
 {
     if (mnt < 0 || (uint32_t)mnt >= K->max_mount) return -1;
+    if (vol_monta(mnt) != 0) return -1;
     return giornale_monta(mnt);
 }
 
@@ -121,16 +141,38 @@ static int op_truncate(int mnt, const char *p, uint32_t nuova_dim)
 { OPERAZIONE(mnt, ext2_truncate(mnt, p, nuova_dim)); }
 
 /* write(): the transaction stays open for the next one - committed at the
- * file's close, when half full, after 5 seconds (giornale_fine). */
+ * file's close, when half full, after 5 seconds (giornale_fine).
+ *
+ * ! ON A JOURNAL, IN PIECES OF PEZZO_GIORNALE (0.004). A write() of many
+ * megabytes changed more metadata than one transaction holds, and the
+ * journal committed in the middle of it - a crash between two such commits
+ * left blocks marked used and owned by nobody. Each piece is one ext2_write
+ * now, and giornale_inizio before it makes room (committing what is there):
+ * every transaction holds whole pieces. 256 KB change at most a dozen
+ * blocks of metadata (bitmaps, descriptors, pointer or extent blocks, the
+ * inode, the superblock), well inside GIO_RISERVA. */
+#define PEZZO_GIORNALE 262144u
+
 static int op_write(int mnt, const char *p, const void *buf, uint32_t size,
                     uint32_t offset)
 {
-    int r;
+    uint32_t fatti = 0;
+    int      r;
 
-    if (giornale_inizio(mnt) != 0) return -1;
-    r = ext2_write(mnt, p, buf, size, offset);
-    if (giornale_fine(mnt, 0) != 0) return -1;
-    return r;
+    if (!giornale_attivo(mnt)) return ext2_write(mnt, p, buf, size, offset);
+
+    do {
+        uint32_t q = size - fatti;
+
+        if (q > PEZZO_GIORNALE) q = PEZZO_GIORNALE;
+        if (giornale_inizio(mnt) != 0) return fatti ? (int)fatti : -1;
+        r = ext2_write(mnt, p, (const uint8_t *)buf + fatti, q, offset + fatti);
+        if (giornale_fine(mnt, 0) != 0) return -1;
+        if (r <= 0) return fatti ? (int)fatti : r;
+        fatti += (uint32_t)r;
+        if ((uint32_t)r < q) break;
+    } while (fatti < size);
+    return (int)fatti;
 }
 
 static const Ext2Ops g_ops = {
@@ -177,7 +219,7 @@ int modulo_ingresso(const ModuloKernel *k)
         return -2;
     }
 
-    klog(LOG_INFO, "ext4.mod %s: ext2 and ext3 writing", EXT4MOD_VERSIONE);
+    klog(LOG_INFO, "ext4.mod %s: ext2, ext3 and ext4 writing", EXT4MOD_VERSIONE);
     return K->registra(&g_ops);
 }
 

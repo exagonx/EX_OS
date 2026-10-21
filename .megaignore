@@ -17,3 +17,33 @@
 -:*.swo
 # i permessi locali dell'editor
 -:settings.local.json
+
+# ! TUTTO CIO' CHE UNA COMPILAZIONE PRODUCE E RIFA (l'utente, 21 ottobre 2026:
+# oltre 70 GB caricati che non servono a nulla, anche per ripristinare,
+# perche' la compilazione va comunque rifatta da zero). Restano sincronizzati
+# i SORGENTI: gcc/, firefox-main/ (Exilla, con tools/exilla/patch), openssl/,
+# nasm/, freebasic/, la userland GNU, cross_build/exos-native/ (binutils,
+# gmp, mpfr, mpc, openlibm), cross_build/terze-parti/ (rustc-nightly-src con
+# LLVM e libgit2 in vendor/, acpica, ath5k, minimp3) e le toolchain gia'
+# installate (cross_build/<macchina>/exos-cross*), che non sono intermedi.
+# -dp: = una cartella, per percorso a partire da qui.
+# gli oggetti di EX-OS (make, make ARCH=x86_64) e i dischi delle prove
+-dp:build
+-dp:build-64
+-dp:dischi
+# le cartelle di compilazione di gcc, binutils, openssl, openlibm, FreeBASIC, libgit2
+-dp:cross_build/gcc-build*
+-dp:cross_build/binutils-build*
+-dp:cross_build/openssl-build-*
+-dp:cross_build/openlibm-build-*
+-dp:cross_build/fb-build-*
+-dp:cross_build/libgit2-build-*
+-dp:cross_build/exos-native/build-*
+-dp:cross_build/exos-native64/build-*
+# rustc compilato da x.py (cross_build/<macchina>/rustc-build)
+-dp:cross_build/*/rustc-build
+# i file oggetto, dovunque (anche dentro gli alberi di FreeBASIC e acpica)
+-f:*.o
+# i sorgenti di rustc ESTRATTI (4,5 GB in 357.000 file): viaggia il tarball
+# rustc-nightly-src.tar.xz accanto, da cui prepara-sorgenti.sh li riestrae
+-dp:cross_build/terze-parti/rust-src/rustc-nightly-src

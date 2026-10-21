@@ -40,6 +40,9 @@ SYSROOT=$TC/exos-cross64/x86_64-exos
 O=$TC/openssl-build-exos64
 export PATH="$TC/exos-cross64/bin:$PATH"
 
+# the rustc sources come back from their tarball (see prepara-sorgenti.sh)
+A=$TC/terze-parti/rust-src/rustc-nightly-src.tar.xz
+[ -d "$SRC" ] || [ -d "$VEND" ] || [ ! -f "$A" ] || (cd "$(dirname "$A")" && tar xf "$(basename "$A")")
 [ -d "$SRC" ] || { [ -d "$VEND" ] || { echo "manca $VEND"; exit 1; }; cp -r "$VEND" "$SRC"; }
 [ -f "$O/libssl.a" ] || { echo "manca OpenSSL a 64 bit: EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh"; exit 1; }
 

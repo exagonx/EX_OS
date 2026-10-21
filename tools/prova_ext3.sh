@@ -99,7 +99,7 @@ timeout 1800 python3 tools/qemu_drive.py "${passi[@]}" > "$D/a.log" 2>&1
 cp "/tmp/exos/seriale3$ARCH.txt" "$D/a-seriale.txt" 2>/dev/null
 L=$(tr -d '\r' < "$D/a.log")
 
-tr -d '\r' < "$D/a-seriale.txt" | grep -q "ext4.mod 0.0[0-9]*: ext2 and ext3 writing" \
+tr -d '\r' < "$D/a-seriale.txt" | grep -q "ext4.mod 0.0[0-9]*: ext2,* ext3\( and ext4\)* writing\|ext4.mod 0.0[0-9]*: ext2 and ext3 writing" \
     && ok "ext4.mod caricato, scrive ext2 ed ext3" || no "il modulo non dice ext3 (vedi $D/a-seriale.txt)"
 grep -A3 "cat /q/vittima.txt" <<<"$L" | grep -q "contenuto A vecchio" \
     && ok "mount -r: niente ripristino, si legge il vecchio contenuto" \

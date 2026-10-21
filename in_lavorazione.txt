@@ -8126,3 +8126,74 @@ tools/netinst/velocita tolto da netinst.
   superblocco (contatori) si scrive fuori dal giornale: dopo un crash i
   contatori li ricalcola e2fsck o Linux.
   Prossimo: fase C, ext4 (extent, metadata_csum crc32c, flex_bg, 64bit).
+
+@MEGA-IGNORE  (21/10/2026) L'utente: su MEGA si erano caricati piu' di 70 GB di
+  file intermedi delle compilazioni, inutili anche per ripristinare (la
+  compilazione va rifatta da zero); vanno esclusi, e devono esserci i
+  sorgenti di tutto (Exilla, gcc, il resto) per ricompilare.
+  .megaignore del progetto: esclusi build/, build-64/, dischi/, le cartelle
+  di compilazione in cross_build (gcc-build*, binutils-build*,
+  openssl-build-*, openlibm-build-*, fb-build-*, libgit2-build-*,
+  exos-native*/build-*, <macchina>/rustc-build) e i *.o dovunque.
+  exilla-obj (76 GB) e costruzione-* erano gia' esclusi: se sono sul cloud
+  ci sono finiti prima della regola, e vanno cancellati DAL CLOUD a mano
+  (MEGA non toglie dal cloud cio' che si mette in ignore).
+  Sorgenti verificati: gcc/, firefox-main/ (+ tools/exilla/patch), openssl/,
+  nasm/, freebasic/, la userland GNU, cross_build/exos-native (binutils
+  2.44, gmp, mpfr, mpc, openlibm), terze-parti (acpica, ath5k, minimp3).
+  MANCAVANO cross_build/terze-parti/rust-src/rustc-nightly-src (rustc con
+  LLVM e libgit2 in vendor/) e terze-parti/libgit2-1.9.6: riscaricato
+  rustc-nightly-src.tar.xz della nightly 2026-10-15 (commit 7df81381d,
+  quella di rust-macchina; sha256 verificato), libgit2 ricopiata da vendor/.
+  Su MEGA viaggia il TARBALL (263 MB); l'albero estratto (4,5 GB, 357.000
+  file) e' escluso, e prepara-sorgenti.sh e libgit2-exos/costruisci.sh lo
+  riestraggono se manca. Le toolchain installate (cross_build/<macchina>/
+  exos-cross*) restano sincronizzate: sono il risultato, non intermedi.
+
+@EXT4-SCRITTURA  FASE C: ext4 SCRITTO, E I DUE LIMITI DI ext3 TOLTI
+  (21/10/2026, ext4.mod 0.004, kernel 0.265 invariato)
+  L'utente: "procedi con ext4 e poi risolvi i limiti noti".
+  - kernel/moduli/ext4/somme.c: crc32c (senza inversione finale, come
+    ext4_chksum) e crc16. Checksum di superblocco, descrittori (crc32c con
+    metadata_csum, crc16 con uninit_bg), bitmap (nel descrittore), inode
+    (lo/hi), nodi dell'albero degli extent, coda da 12 byte delle cartelle,
+    blocchi di attributi. Seme dall'uuid o s_checksum_seed. Al montaggio un
+    superblocco col checksum sbagliato = sola lettura.
+  - kernel/moduli/ext4/estesi.c: mappa con allocazione sull'albero degli
+    extent (l'extent prima si allunga, oppure se ne inserisce uno; nodo
+    pieno diviso, foglia piena in fondo -> foglia nuova, radice piena ->
+    l'albero cresce di un livello; indice = primo blocco del figlio) e
+    potatura da un blocco logico in poi. Extent "unwritten" (fallocate):
+    scrittura rifiutata.
+  - scrittura.c: descrittori da 64 byte (contatori a 32 bit), gruppi
+    BLOCK_UNINIT/INODE_UNINIT (bitmap costruita come ext4_init_*_bitmap,
+    bg_itable_unused), inode nuovo scritto intero (extra_isize, crtime),
+    file e cartelle nuovi con extent, cartella htree su metadata_csum: ogni
+    blocco riceve la coda prima di togliere l'indice, dir_nlink, huge_file
+    rifiutato. Maschere: + EXTENTS, 64BIT, FLEX_BG, CSUM_SEED, ORPHAN_FILE,
+    HUGE_FILE, GDT_CSUM, DIR_NLINK, EXTRA_ISIZE, METADATA_CSUM.
+  - giornale.c: CSUM_V3 (superblocco del giornale, coda del descrittore,
+    tag da 16 byte con il checksum di ogni copia, commit); in
+    riapplicazione un descrittore o commit col checksum sbagliato chiude
+    la scansione, una copia sbagliata = sola lettura. Blocco 0 ammesso
+    con blocchi > 1 KB (Linux mette nel giornale il superblocco).
+  - LIMITE (a) TOLTO: con il giornale una write() si fa a pezzi da 256 KB
+    (ext4.c), ognuno dentro una transazione: non si chiude piu' a meta'.
+    Se succedesse lo stesso, il registro lo dice una volta.
+  - LIMITE (b) TOLTO: il superblocco passa dal giornale (super_leggi /
+    super_scrivi), con il checksum. needs_recovery resta fuori: si accende
+    prima della prima transazione e si spegne dopo l'ultima.
+  tools/prova_ext4.sh (+ tools/prove/estesi.c): quattro ext4 fatti da
+  Linux (4 KB con htree; 1 KB senza flex_bg e con pochi inode, cosi' EX-OS
+  usa gruppi BLOCK_UNINIT e INODE_UNINIT e un albero di extent profondo 2;
+  giornale CSUM_V3 di debugfs con revoca; uninit_bg senza 64bit):
+  49 su 49 a 32 e a 64 bit. prova_ext3 27/27 a 32 e 64 bit, prova_modulo
+  21/21 e 18/18 (l'ext4 di Linux ora si scrive: al posto di "identica e
+  mkdir rifiutato" il controllo e' e2fsck pulito dopo il mkdir),
+  prova_disco_veloce pulita a 32 e 64 bit, prova_modulo_disco 8/8 (cercava
+  ancora la frase "ext2 writing" del modulo 0.002; dist/netinst rifatto con
+  make netinst perche' il modulo riportato da netupdate fosse quello nuovo).
+  ext4 4 KB, QEMU 32 bit, 4 MB: scrittura a pezzi da 4 KB ~12 MB/s, da 64 KB
+  ~40-50 MB/s.
+  ! Non provato: un volume ext4 su una macchina vera, e un ext4 montato da
+  Linux dopo che EX-OS l'ha scritto (solo e2fsck e debugfs).

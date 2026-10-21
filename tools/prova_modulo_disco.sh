@@ -56,7 +56,7 @@ if disco "$A" floppy "$D/a-install.log"; then
         "echo scritto-da-exos > /scritto.txt@3" "cat /scritto.txt@2" \
         > "$D/a.log" 2>&1
     cp /tmp/exos/serialmda.txt "$D/a-seriale.txt" 2>/dev/null
-    pulito "$D/a-seriale.txt" | grep -q "ext4.mod 0.0[0-9]*: ext2 writing" \
+    pulito "$D/a-seriale.txt" | grep -q "ext4.mod 0.0[0-9]*: ext2[ ,]" \
         && si "il kernel ha caricato /dev/ext4.mod dal disco" \
         || no "il modulo non si e' caricato (vedi $D/a-seriale.txt)"
     pulito "$D/a.log" | grep -q "^scritto-da-exos" \

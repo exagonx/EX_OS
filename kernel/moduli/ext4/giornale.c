@@ -37,19 +37,27 @@
  *     empty again (s_start = 0).
  * A transaction is committed at the end of every operation that is not a
  * write(), at a file's close, at sync and unmount, when it is half full,
- * and after 5 seconds; a write() of many megabytes may commit in the middle
- * (the transaction is full): a crash between two such commits leaves at
- * most blocks marked used and owned by nobody, the same as ext2.
+ * and after 5 seconds. A write() of many megabytes is cut by ext4.c into
+ * pieces of 256 KB, each one whole inside a transaction (0.004): it can no
+ * longer commit half of its changes. The superblock, too, is journaled
+ * (0.004, super_scrivi): its counters change with the bitmaps they count.
  *
  * ! EVERY TRANSACTION STARTS AT s_first. The journal is emptied at every
  * checkpoint, so only the LAST committed transaction can ever be replayed
  * and no revoke records are needed: a block freed and reused for data after
  * that transaction cannot be overwritten by an older copy of it.
  *
+ * CHECKSUMS (CSUM_V3, 0.004): on an ext4 with metadata_csum Linux turns
+ * them on in the journal too - a crc32c in the journal superblock, in every
+ * descriptor block (a tail), for every block a transaction carries (in its
+ * tag, of 16 bytes then) and in the commit block. Written as jbd2 writes
+ * them; at replay a descriptor or commit block whose sum is wrong ends the
+ * scan there (that transaction did not finish), as in jbd2.
+ *
  * WHAT IS REFUSED (the volume stays read-only, with the reason in the log):
- * an external journal, a journal with checksums (CSUM_V2/V3, the v1
- * CHECKSUM, ASYNC_COMMIT - ext4's metadata_csum territory), fast commits,
- * a journal in more than GIO_CORSE pieces, a replay that does not fit.
+ * an external journal, the older checksums (the v1 CHECKSUM, CSUM_V2,
+ * ASYNC_COMMIT), fast commits, a journal in more than GIO_CORSE pieces, a
+ * replay that does not fit.
  * ============================================================================= */
 
 #include "ext4.h"
@@ -63,7 +71,9 @@
 
 #define GIO_INC_REVOCA      0x01u
 #define GIO_INC_64BIT       0x02u
-#define GIO_INC_NOTI        (GIO_INC_REVOCA | GIO_INC_64BIT)
+#define GIO_INC_CSUM_V3     0x10u
+#define GIO_INC_NOTI        (GIO_INC_REVOCA | GIO_INC_64BIT | GIO_INC_CSUM_V3)
+#define GIO_CRC32C          4u          /* s_checksum_type */
 
 #define TAG_ESCAPE          0x01u
 #define TAG_STESSO_UUID     0x02u
@@ -86,8 +96,11 @@ typedef struct {
     uint32_t  maxlen, primo;            /* s_maxlen, s_first */
     uint32_t  seq;                      /* the next transaction's number */
     uint32_t  incompat;
-    uint32_t  tag;                      /* bytes per descriptor tag: 8 or 12 */
+    uint32_t  tag;                      /* bytes per descriptor tag: 8, 12 or 16 */
     uint8_t   uuid[16];
+    int       somme;                    /* CSUM_V3 */
+    uint32_t  seme;                     /* crc32c(~0, uuid): every sum starts here */
+    int       avvisato;                 /* "full in the middle" said once */
 
     Corsa     corse[GIO_CORSE];
     uint32_t  n_corse;
@@ -159,19 +172,34 @@ static int gio_leggi(Ext2Mount *m, const Giornale *g, uint32_t log, void *dst)
     return blk_read(m->blkdev, (uint64_t)f * m->sett_per_blocco, m->sett_per_blocco, dst);
 }
 
+/* The journal superblock's sum (jbd2_superblock_csum): over its 1024 bytes
+ * with s_checksum (0xFC) zero. */
+static uint32_t somma_jsb(const uint8_t *jsb)
+{
+    static const uint8_t zeri[4] = { 0, 0, 0, 0 };
+    uint32_t c = crc32c_grezzo(~0u, jsb, 0xFCu);
+
+    c = crc32c_grezzo(c, zeri, 4);
+    return crc32c_grezzo(c, jsb + 0x100, 1024u - 0x100u);
+}
+
 static int gio_scrivi(Ext2Mount *m, const Giornale *g, uint32_t log, const void *src)
 {
     uint32_t f = fisico(g, log);
+
+    if (log == 0 && g->somme) pbe32((uint8_t *)src + 0xFC, somma_jsb((const uint8_t *)src));
 
     if (f == 0) return -1;
     return blk_write(m->blkdev, (uint64_t)f * m->sett_per_blocco, m->sett_per_blocco, src);
 }
 
 /* A block of the volume, straight to the disk: replay and checkpoint. Not
- * scrivi_blocco - that would hand it back to the transaction. */
+ * scrivi_blocco - that would hand it back to the transaction.
+ * ! BLOCK 0 IS LEGAL ABOVE 1 KB BLOCKS: it holds the superblock (at byte
+ * 1024), and Linux journals it - so does this module (super_scrivi). */
 static int al_suo_posto(Ext2Mount *m, uint32_t n, const void *src)
 {
-    if (n == 0 || n >= m->n_blocchi) {
+    if ((n == 0 && m->dim_blocco == 1024u) || n >= m->n_blocchi) {
         klog(LOG_ERROR, "ext3: journal block for %u, outside the volume (%u)",
              n, m->n_blocchi);
         return -1;
@@ -191,8 +219,8 @@ static uint32_t avanti(const Giornale *g, uint32_t log)
 /* --- the volume's superblock: the RECOVER flag -------------------------------
  * needs_recovery (INCOMPAT_RECOVER) is set while EX-OS has the volume open
  * for writing, as Linux does: whoever finds it set knows the journal may
- * hold a transaction to replay. Raw sectors (offset 1024), as super_aggiorna
- * in scrittura.c: the superblock is not journaled here. */
+ * hold a transaction to replay. Raw sectors (offset 1024), OUTSIDE any
+ * transaction: it is set before the first one and cleared after the last. */
 static int segna_recover(Ext2Mount *m, int acceso)
 {
     uint8_t  sb[1024];
@@ -202,6 +230,7 @@ static int segna_recover(Ext2Mount *m, int acceso)
     inc = le32(sb + 96);
     inc = acceso ? (inc | INCOMPAT_RECOVER) : (inc & ~INCOMPAT_RECOVER);
     p32(sb + 96, inc);
+    somma_super(m, sb);
     if (blk_write(m->blkdev, SUPER_OFFSET / 512u, 2u, sb) != 0) return -1;
     m->incompat = inc;
     return blk_flush(m->blkdev);
@@ -219,6 +248,38 @@ static int segna_recover(Ext2Mount *m, int acceso)
  *   REPLAY  every tagged block of every committed transaction, in order,
  *           to its place - unescaped if its first word was the magic.
  * ============================================================================= */
+/* --- the CSUM_V3 sums (fs/jbd2: *_csum_set) ----------------------------- */
+static uint32_t somma_blocco(const Giornale *g, const uint8_t *b, uint32_t n, uint32_t buco)
+{
+    static const uint8_t zeri[4] = { 0, 0, 0, 0 };
+    uint32_t c = crc32c_grezzo(g->seme, b, buco);
+
+    c = crc32c_grezzo(c, zeri, 4);
+    return crc32c_grezzo(c, b + buco + 4u, n - buco - 4u);
+}
+
+/* A commit block: h_chksum_type and _size (0x0C, 0x0D) and h_chksum[0]
+ * (0x10) count as zero. */
+static uint32_t somma_commit(const Giornale *g, const uint8_t *b, uint32_t n)
+{
+    static const uint8_t zeri[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    uint32_t c = crc32c_grezzo(g->seme, b, 0x0Cu);
+
+    c = crc32c_grezzo(c, zeri, 2);
+    c = crc32c_grezzo(c, b + 0x0E, 2);
+    c = crc32c_grezzo(c, zeri, 4);
+    return crc32c_grezzo(c, b + 0x14, n - 0x14u);
+}
+
+/* A block the transaction carries, as written in the journal (escaped). */
+static uint32_t somma_copia(const Giornale *g, uint32_t seq, const uint8_t *b, uint32_t n)
+{
+    uint8_t s[4];
+
+    pbe32(s, seq);
+    return crc32c_grezzo(crc32c_grezzo(g->seme, s, 4), b, n);
+}
+
 enum { PASSO_SCAN, PASSO_REVOCA, PASSO_RIPRISTINO };
 
 typedef struct { uint32_t blk, seq; } Revoca;
@@ -270,8 +331,15 @@ static int passo(Ext2Mount *m, Giornale *g, int quale, uint32_t inizio,
 
         if (tipo == GIO_DESCRITTORE) {
             uint32_t off = 12, qui = avanti(g, pos);
+            uint32_t lim = m->dim_blocco - (g->somme ? 4u : 0u);
 
-            while (off + g->tag <= m->dim_blocco) {
+            if (g->somme && be32(b + m->dim_blocco - 4u) !=
+                            somma_blocco(g, b, m->dim_blocco, m->dim_blocco - 4u)) {
+                klog(LOG_WARN, "ext3: transaction %u: its descriptor's checksum is "
+                               "wrong: the journal ends there", seq);
+                break;
+            }
+            while (off + g->tag <= lim) {
                 uint32_t blk   = be32(b + off);
                 uint32_t flags = be16(b + off + 6);
 
@@ -281,6 +349,11 @@ static int passo(Ext2Mount *m, Giornale *g, int quale, uint32_t inizio,
                 }
                 if (quale == PASSO_RIPRISTINO && !revocato(blk, seq)) {
                     if (gio_leggi(m, g, qui, dato) != 0) return -1;
+                    if (g->somme && be32(b + off + 12) != somma_copia(g, seq, dato, m->dim_blocco)) {
+                        klog(LOG_ERROR, "ext3: transaction %u: block %u has a wrong "
+                                        "checksum in the journal", seq, blk);
+                        return -1;
+                    }
                     if (flags & TAG_ESCAPE) pbe32(dato, GIO_MAGIA);
                     if (al_suo_posto(m, blk, dato) != 0) return -1;
                     (*copie)++;
@@ -294,6 +367,11 @@ static int passo(Ext2Mount *m, Giornale *g, int quale, uint32_t inizio,
             continue;
         }
         if (tipo == GIO_COMMIT) {
+            if (g->somme && be32(b + 0x10) != somma_commit(g, b, m->dim_blocco)) {
+                klog(LOG_WARN, "ext3: transaction %u: its commit block's checksum is "
+                               "wrong: not committed", seq);
+                break;
+            }
             seq++;
             pos = avanti(g, pos);
             continue;
@@ -301,6 +379,8 @@ static int passo(Ext2Mount *m, Giornale *g, int quale, uint32_t inizio,
         if (tipo == GIO_REVOCA) {
             if (quale == PASSO_REVOCA) {
                 uint32_t usati = be32(b + 12), off = 16;
+
+                if (g->somme && usati > m->dim_blocco - 4u) usati = m->dim_blocco - 4u;
                 uint32_t dim = (g->incompat & GIO_INC_64BIT) ? 8u : 4u;
 
                 if (usati > m->dim_blocco) usati = m->dim_blocco;
@@ -450,8 +530,17 @@ int giornale_monta(int mnt)
         }
         g->incompat = inc;
         memcpy(g->uuid, g->jsb + 0x30, 16);
+        if (inc & GIO_INC_CSUM_V3) {
+            if (g->jsb[0x50] != GIO_CRC32C || be32(g->jsb + 0xFC) != somma_jsb(g->jsb)) {
+                klog(LOG_ERROR, "ext3: '%s': the journal superblock's checksum is "
+                                "wrong (or not crc32c): read-only", m->etichetta);
+                goto no;
+            }
+            g->somme = 1;
+            g->seme  = crc32c_grezzo(~0u, g->uuid, 16);
+        }
     }
-    g->tag = (g->incompat & GIO_INC_64BIT) ? 12u : 8u;
+    g->tag = g->somme ? 16u : (g->incompat & GIO_INC_64BIT) ? 12u : 8u;
 
     for (i = 0; i < g->maxlen; i++) {
         uint32_t f = mappa_blocco(m, mnt, ino, i);
@@ -475,7 +564,7 @@ int giornale_monta(int mnt)
 
     /* --- room for one transaction: one descriptor block's tags, the memory
      * set aside, and the journal itself (descriptor + copies + commit) ---- */
-    per_desc = (m->dim_blocco - 12u - 16u) / g->tag;
+    per_desc = (m->dim_blocco - 12u - 16u - (g->somme ? 4u : 0u)) / g->tag;
     g->max_slot = GIO_BYTE / m->dim_blocco;
     if (g->max_slot > per_desc) g->max_slot = per_desc;
     if (g->max_slot > g->maxlen - g->primo - 2u) g->max_slot = g->maxlen - g->primo - 2u;
@@ -501,6 +590,7 @@ int giornale_monta(int mnt)
         }
         contatori_rileggi(m);
         g_ind_mnt = -1;                     /* a pointer block may have changed */
+        est_dimentica();                    /* and an extent node */
         g->seq = fine + 1u;                 /* jbd2: past the last one replayed */
     }
 
@@ -550,9 +640,27 @@ static int commit(Ext2Mount *m, Giornale *g)
         if (be32(c) == GIO_MAGIA) flags |= TAG_ESCAPE;
         pbe32(d + off, g->slot_blk[i]);
         pbe16(d + off + 6, flags);
+        if (g->somme) {
+            /* the sum of the copy as it goes into the journal: escaped */
+            uint32_t sc;
+
+            if (flags & TAG_ESCAPE) {
+                static const uint8_t zeri[4] = { 0, 0, 0, 0 };
+                uint8_t sq[4];
+
+                pbe32(sq, S);
+                sc = crc32c_grezzo(crc32c_grezzo(g->seme, sq, 4), zeri, 4);
+                sc = crc32c_grezzo(sc, c + 4, m->dim_blocco - 4u);
+            } else {
+                sc = somma_copia(g, S, c, m->dim_blocco);
+            }
+            pbe32(d + off + 12, sc);
+        }
         off += g->tag;
         if (i == 0) { memcpy(d + off, g->uuid, 16); off += 16; }
     }
+    if (g->somme)
+        pbe32(d + m->dim_blocco - 4u, somma_blocco(g, d, m->dim_blocco, m->dim_blocco - 4u));
     log = g->primo;
     if (gio_scrivi(m, g, log, d) != 0) goto guasto;
 
@@ -575,6 +683,7 @@ static int commit(Ext2Mount *m, Giornale *g)
     memset(d, 0, m->dim_blocco);
     pbe32(d, GIO_MAGIA); pbe32(d + 4, GIO_COMMIT); pbe32(d + 8, S);
     pbe32(d + 0x34, unix_ora_corrente());           /* h_commit_sec, low half */
+    if (g->somme) pbe32(d + 0x10, somma_commit(g, d, m->dim_blocco));
     log = avanti(g, log);
     if (gio_scrivi(m, g, log, d) != 0 || blk_flush(m->blkdev) != 0) goto guasto;
 
@@ -673,7 +782,14 @@ int giornale_scrivi(Ext2Mount *m, uint32_t n, const void *src)
         }
     /* Full in the middle of an operation (a long write()): commit what is
      * there - see the head of the file - and start again. */
-    if (g->n_slot >= g->max_slot && commit(m, g) != 0) return -1;
+    if (g->n_slot >= g->max_slot) {
+        if (!g->avvisato) {
+            g->avvisato = 1;
+            klog(LOG_WARN, "ext3: '%s': a transaction filled up in the middle of an "
+                           "operation: committed there", m->etichetta);
+        }
+        if (commit(m, g) != 0) return -1;
+    }
     if (g->n_slot == 0) g->aperto = unix_ora_corrente();
     g->slot_blk[g->n_slot] = n;
     memcpy(g->slot_dati + g->n_slot * m->dim_blocco, src, m->dim_blocco);
@@ -695,4 +811,50 @@ int giornale_dati(Ext2Mount *m, uint32_t n, uint32_t quanti)
             return commit(m, g);
         }
     return 0;
+}
+
+/* =============================================================================
+ * THE SUPERBLOCK THROUGH THE JOURNAL (0.004)
+ *
+ * Its block is 1 with 1 KB blocks (the superblock is the whole block) and 0
+ * otherwise (the superblock is its bytes 1024-2047). The kernel's block
+ * functions refuse block 0, so it is read and written here: read from the
+ * disk with the transaction's copy over it, written into the transaction -
+ * or straight to the disk on ext2.
+ * ============================================================================= */
+static uint8_t b_super[BLOCCO_MAX];
+
+static uint32_t super_blocco(const Ext2Mount *m)
+{
+    return (m->dim_blocco == 1024u) ? 1u : 0u;
+}
+
+int super_leggi(Ext2Mount *m, uint8_t *sb)
+{
+    uint32_t n = super_blocco(m);
+
+    if (blk_read(m->blkdev, (uint64_t)n * m->sett_per_blocco, m->sett_per_blocco,
+                 b_super) != 0) return -1;
+    giornale_leggi(m, n, 1u, b_super);
+    memcpy(sb, b_super + (n ? 0u : SUPER_OFFSET), 1024);
+    return 0;
+}
+
+int super_scrivi(Ext2Mount *m, const uint8_t *sb)
+{
+    uint32_t n = super_blocco(m);
+    int      r;
+
+    if (blk_read(m->blkdev, (uint64_t)n * m->sett_per_blocco, m->sett_per_blocco,
+                 b_super) != 0) return -1;
+    giornale_leggi(m, n, 1u, b_super);
+    memcpy(b_super + (n ? 0u : SUPER_OFFSET), sb, 1024);
+    r = giornale_scrivi(m, n, b_super);
+    if (r != 1) return r;
+    return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco, m->sett_per_blocco, b_super);
+}
+
+int giornale_attivo(int mnt)
+{
+    return mnt >= 0 && mnt < EXT2_MAX_MOUNT && g_gio[mnt] != NULL;
 }

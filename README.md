@@ -338,6 +338,30 @@ register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
 
+**0.265, ext4.mod 0.004**: **ext4 is written** - the volumes today's
+`mke2fs -t ext4` makes, with metadata_csum, 64bit, flex_bg, orphan_file and
+groups left uninitialised. The extent tree is written
+(`kernel/moduli/ext4/estesi.c`: an extent grows, a new one goes in, a full
+node splits, a full root moves into a block of its own; truncation cuts the
+tree), and every piece of metadata carries its checksum as Linux computes it
+(`somme.c`: crc32c of the superblock, descriptors, bitmaps, inodes, extent
+blocks, the 12-byte tail of every directory block, attribute blocks; crc16
+descriptors for uninit_bg). A group never initialised gets its bitmap built
+at the first allocation, as Linux does; a new inode is written whole, with
+its extra space and creation time; an indexed directory on metadata_csum
+gets a checksum tail in every block before its index is dropped. The journal
+writes and replays Linux's checksums too (CSUM_V3). The two known limits of
+ext3 are gone: a long `write()` is cut into pieces of 256 KB, each inside a
+transaction of its own, and the superblock goes through the journal.
+`tools/prova_ext4.sh` (QEMU, with `tools/prove/estesi.c`): four ext4 made by
+Linux - 4 KB blocks with a hashed directory, 1 KB blocks without flex_bg
+where EX-OS fills uninitialised groups and grows an extent tree two levels
+deep, a checksummed journal left by debugfs with a revoke, uninit_bg without
+64bit - written, cut and grown back, every file identical byte for byte,
+`e2fsck` clean, EX-OS's checksummed transaction replayed by `e2fsck`, a
+crash repaired. Still read-only: inline data, bigalloc, quota, encryption,
+casefold, a volume with orphans pending.
+
 **0.265**: **ext3 is written**, with its journal (`/dev/ext4.mod` 0.003,
 `kernel/moduli/ext4/giornale.c`). Every change to the metadata - bitmaps,
 descriptors, inodes, pointer blocks, directories - goes to the journal first
@@ -355,7 +379,7 @@ replayed as Linux does, `mount -r` leaving the partition identical byte for
 byte, ext3 with 4 KB and 1 KB blocks written (identical files, `e2fsck`
 clean, needs_recovery off), EX-OS's last transaction replayed by `e2fsck`,
 and a QEMU stopped without `umount` that `e2fsck` repairs without losing
-what had been written. Next: ext4 writing (extents, metadata checksums).
+what had been written. Next: ext4 writing (extents, metadata checksums) - done, see above.
 
 **0.264**: a faster disk, without losing safety. **A disk lock**: the
 controller, its DMA buffer and the sector cache had none, and swap and the

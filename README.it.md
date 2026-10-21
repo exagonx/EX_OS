@@ -362,6 +362,32 @@ in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
 
+**0.265, ext4.mod 0.004**: **ext4 si scrive** - i volumi che fa oggi
+`mke2fs -t ext4`, con metadata_csum, 64bit, flex_bg, orphan_file e gruppi
+lasciati da inizializzare. Si scrive l'albero degli extent
+(`kernel/moduli/ext4/estesi.c`: un extent si allunga, uno nuovo si
+inserisce, un nodo pieno si divide, una radice piena passa in un blocco suo;
+il troncamento taglia l'albero), e ogni metadato porta il suo checksum
+calcolato come lo calcola Linux (`somme.c`: crc32c di superblocco,
+descrittori, bitmap, inode, blocchi degli extent, la coda da 12 byte di ogni
+blocco di cartella, blocchi di attributi; descrittori in crc16 per
+uninit_bg). Un gruppo mai inizializzato riceve la sua bitmap alla prima
+allocazione, come fa Linux; un inode nuovo si scrive intero, con lo spazio
+esteso e la data di nascita; una cartella con indice su metadata_csum riceve
+la coda col checksum in ogni blocco prima di perdere l'indice. Anche il
+giornale scrive e riapplica i checksum di Linux (CSUM_V3). I due limiti noti
+di ext3 non ci sono piu': una `write()` lunga si fa a pezzi da 256 KB,
+ognuno dentro una transazione sua, e il superblocco passa dal giornale.
+`tools/prova_ext4.sh` (QEMU, con `tools/prove/estesi.c`): quattro ext4 fatti
+da Linux - blocchi da 4 KB con una cartella indicizzata, blocchi da 1 KB
+senza flex_bg dove EX-OS riempie gruppi mai inizializzati e fa crescere un
+albero di extent di due livelli, un giornale con checksum lasciato da
+debugfs con una revoca, uninit_bg senza 64bit - scritti, tagliati e
+ricresciuti, ogni file identico byte per byte, `e2fsck` pulito, la
+transazione di EX-OS con i checksum riapplicata da `e2fsck`, un crash
+rimesso a posto. Restano in sola lettura: inline data, bigalloc, quote,
+cifratura, casefold, un volume con file orfani da sistemare.
+
 **0.265**: **ext3 si scrive**, con il suo giornale (`/dev/ext4.mod` 0.003,
 `kernel/moduli/ext4/giornale.c`). Ogni modifica ai metadati - bitmap,
 descrittori, inode, blocchi di puntatori, cartelle - va prima nel giornale
@@ -382,7 +408,7 @@ blocchi da 4 KB e da 1 KB scritti (file identici, `e2fsck` pulito,
 needs_recovery spento), l'ultima transazione di EX-OS riapplicata da
 `e2fsck`, e un QEMU fermato senza `umount` che `e2fsck` rimette a posto
 senza perdere quel che era stato scritto. Prossimo passo: la scrittura di
-ext4 (extent, checksum dei metadati).
+ext4 (extent, checksum dei metadati) - fatta, vedi sopra.
 
 **0.264**: il disco piu' veloce, senza perdere sicurezza. **Un lucchetto
 per il disco**: il controller, il suo buffer DMA e la cache dei settori non

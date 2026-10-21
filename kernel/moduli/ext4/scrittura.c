@@ -179,52 +179,6 @@ static int desc_carica(Ext2Mount *m, uint32_t g, uint32_t *off_out,
     return 0;
 }
 
-/* Somma `d` (con segno) a un contatore a 16 bit del descrittore di gruppo
- * e lo riscrive. `campo` e' l'offset dentro la voce: 12 blocchi liberi,
- * 14 inode liberi, 16 directory. */
-static int desc_somma(Ext2Mount *m, uint32_t g, uint32_t campo, int d)
-{
-    uint32_t off, blk, v;
-
-    if (desc_carica(m, g, &off, &blk) != 0) return -1;
-
-    v = le16(b_desc + off + campo);
-    if (d < 0 && v < (uint32_t)(-d)) {
-        klog(LOG_ERROR, "EXT2: contatore del gruppo %u sotto zero: volume "
-                        "incoerente, operazione annullata", g);
-        return -1;
-    }
-    v = (uint32_t)((int)v + d);
-
-    b_desc[off + campo]     = (uint8_t)v;
-    b_desc[off + campo + 1] = (uint8_t)(v >> 8);
-
-    return scrivi_blocco(m, blk, b_desc);
-}
-
-/* Riscrive i due contatori del superblocco. Il superblocco sta all'offset
- * 1024 del volume, che con blocchi da 1024 e' il blocco 1 e con blocchi
- * piu' grandi e' DENTRO il blocco 0: si lavora sui settori, non sui
- * blocchi, cosi' il caso non si pone. */
-static int super_aggiorna(Ext2Mount *m)
-{
-    uint8_t sb[1024];
-
-    if (blk_read(m->blkdev, SUPER_OFFSET / 512u, 2u, sb) != 0) return -1;
-
-    sb[12] = (uint8_t)m->blocchi_liberi;
-    sb[13] = (uint8_t)(m->blocchi_liberi >> 8);
-    sb[14] = (uint8_t)(m->blocchi_liberi >> 16);
-    sb[15] = (uint8_t)(m->blocchi_liberi >> 24);
-
-    sb[16] = (uint8_t)m->inode_liberi;
-    sb[17] = (uint8_t)(m->inode_liberi >> 8);
-    sb[18] = (uint8_t)(m->inode_liberi >> 16);
-    sb[19] = (uint8_t)(m->inode_liberi >> 24);
-
-    return blk_write(m->blkdev, SUPER_OFFSET / 512u, 2u, sb);
-}
-
 /* Quanti blocchi ha davvero il gruppo `g`: l'ultimo puo' essere corto. */
 static uint32_t blocchi_nel_gruppo(Ext2Mount *m, uint32_t g)
 {
@@ -234,6 +188,179 @@ static uint32_t blocchi_nel_gruppo(Ext2Mount *m, uint32_t g)
     if (primo >= m->n_blocchi) return 0;
     resto = m->n_blocchi - primo;
     return (resto > m->blocchi_per_gruppo) ? m->blocchi_per_gruppo : resto;
+}
+
+/* A counter of the descriptor: 16 bits, 32 with the 64-byte descriptors of
+ * 64bit (the high half at `hi`). */
+static uint32_t desc_campo(Ext2Mount *m, const uint8_t *d, uint32_t lo, uint32_t hi)
+{
+    uint32_t v = le16(d + lo);
+
+    if (m->dim_desc >= 64u) v |= (uint32_t)le16(d + hi) << 16;
+    return v;
+}
+
+static void desc_metti(Ext2Mount *m, uint8_t *d, uint32_t lo, uint32_t hi, uint32_t v)
+{
+    p16(d + lo, v & 0xFFFFu);
+    if (m->dim_desc >= 64u) p16(d + hi, v >> 16);
+}
+
+#define BG_INODE_UNINIT     0x0001u     /* bg_flags: the inode bitmap was never written */
+#define BG_BLOCK_UNINIT     0x0002u     /* bg_flags: the block bitmap was never written */
+
+/* Somma i tre delta (con segno) ai contatori del gruppo `g` - blocchi
+ * liberi, inode liberi, directory - e lo riscrive. Con ext4 anche:
+ *   bmp_blocchi / bmp_inode  la bitmap appena scritta: il suo checksum va
+ *                            nel descrittore, e il gruppo non e' piu' UNINIT;
+ *   inode_usato              l'indice+1 dell'inode appena preso: la parte
+ *                            della tabella mai usata (bg_itable_unused) si
+ *                            accorcia se lo comprende;
+ * e il checksum del descrittore stesso. */
+static int desc_aggiorna(Ext2Mount *m, uint32_t g, int d_blocchi, int d_inode, int d_dir,
+                         const uint8_t *bmp_blocchi, const uint8_t *bmp_inode,
+                         uint32_t inode_usato)
+{
+    static const uint32_t lo[3] = { 12u, 14u, 16u }, hi[3] = { 0x2Cu, 0x2Eu, 0x30u };
+    Ext4Vol  *vol = vol_di(m);
+    int       delta[3];
+    uint32_t  off, blk, i, v;
+    uint8_t  *d;
+
+    delta[0] = d_blocchi; delta[1] = d_inode; delta[2] = d_dir;
+    if (desc_carica(m, g, &off, &blk) != 0) return -1;
+    d = b_desc + off;
+
+    for (i = 0; i < 3u; i++) {
+        if (delta[i] == 0) continue;
+        v = desc_campo(m, d, lo[i], hi[i]);
+        if (delta[i] < 0 && v < (uint32_t)(-delta[i])) {
+            klog(LOG_ERROR, "EXT2: contatore del gruppo %u sotto zero: volume "
+                            "incoerente, operazione annullata", g);
+            return -1;
+        }
+        desc_metti(m, d, lo[i], hi[i], (uint32_t)((int)v + delta[i]));
+    }
+    if (bmp_blocchi) {
+        p16(d + 0x12, le16(d + 0x12) & ~BG_BLOCK_UNINIT);
+        somma_bitmap(m, d, 0, bmp_blocchi);
+    }
+    if (bmp_inode) {
+        p16(d + 0x12, le16(d + 0x12) & ~BG_INODE_UNINIT);
+        somma_bitmap(m, d, 1, bmp_inode);
+    }
+    if (inode_usato && vol && (vol->meta_csum || vol->gdt_csum)) {
+        v = desc_campo(m, d, 0x1Cu, 0x32u);
+        if (v > m->inode_per_gruppo) v = m->inode_per_gruppo;
+        if (m->inode_per_gruppo - v < inode_usato)
+            desc_metti(m, d, 0x1Cu, 0x32u, m->inode_per_gruppo - inode_usato);
+    }
+    somma_desc(m, g, d);
+    return scrivi_blocco(m, blk, b_desc);
+}
+
+/* =============================================================================
+ * I GRUPPI MAI TOCCATI (ext4: uninit_bg, metadata_csum)
+ *
+ * mke2fs lascia BLOCK_UNINIT e INODE_UNINIT sui gruppi vuoti e non scrive le
+ * loro bitmap: sul disco li' c'e' quel che c'era. Chi alloca per primo in un
+ * gruppo cosi' ne COSTRUISCE la bitmap come fa Linux (ext4_init_block_bitmap,
+ * ext4_init_inode_bitmap): occupati il superblocco di riserva e i descrittori
+ * se il gruppo ne ha una copia, le bitmap e la tabella degli inode del gruppo
+ * se stanno dentro di lui (con flex_bg stanno di solito altrove), e i bit
+ * oltre la fine del gruppo. Scritta la bitmap, desc_aggiorna toglie il flag.
+ * ============================================================================= */
+static void bit_segna(uint8_t *b, uint32_t i)
+{
+    b[i / 8u] |= (uint8_t)(1u << (i % 8u));
+}
+
+static int ha_superblocco(Ext2Mount *m, uint32_t g)
+{
+    Ext4Vol *v = vol_di(m);
+    uint32_t base;
+
+    if (g == 0) return 1;
+    if (m->compat & COMPAT_SPARSE_SUPER2) return v && (g == v->backup[0] || g == v->backup[1]);
+    if (!(m->ro_compat & RO_COMPAT_SPARSE) || g == 1u) return 1;
+    for (base = 3u; base <= 7u; base += 2u) {
+        uint64_t x = base;
+
+        while (x < g) x *= base;
+        if (x == g) return 1;
+    }
+    return 0;
+}
+
+static int con_flag(Ext2Mount *m)
+{
+    Ext4Vol *v = vol_di(m);
+
+    return v && (v->meta_csum || v->gdt_csum);
+}
+
+/* La bitmap dei blocchi del gruppo `g` in `b`, e il suo blocco in *bmp. */
+static int bitmap_blocchi(Ext2Mount *m, uint32_t g, uint8_t *b, uint32_t *bmp)
+{
+    uint32_t off, dblk, inizio, i, k, x, tab;
+    const uint8_t *d;
+
+    if (desc_carica(m, g, &off, &dblk) != 0) return -1;
+    d = b_desc + off;
+    *bmp = le32(d + 0);
+    if (m->dim_desc >= 64u && (le32(d + 0x20) | le32(d + 0x24) | le32(d + 0x28)) != 0)
+        return -1;                              /* beyond 2^32: not this driver */
+    if (!(le16(d + 0x12) & BG_BLOCK_UNINIT) || !con_flag(m)) return leggi_blocco(m, *bmp, b);
+
+    memset(b, 0, m->dim_blocco);
+    inizio = m->primo_dato + g * m->blocchi_per_gruppo;
+    if (ha_superblocco(m, g)) {
+        Ext4Vol *v = vol_di(m);
+        uint32_t n = 1u + (m->n_gruppi * m->dim_desc + m->dim_blocco - 1u) / m->dim_blocco +
+                     (v ? v->gdt_riservati : 0u);
+
+        for (i = 0; i < n && i < m->blocchi_per_gruppo; i++) bit_segna(b, i);
+    }
+    tab = (m->inode_per_gruppo * m->dim_inode + m->dim_blocco - 1u) / m->dim_blocco;
+    for (k = 0; k < 2u; k++) {
+        x = le32(d + k * 4u);
+        if (x >= inizio && x - inizio < m->blocchi_per_gruppo) bit_segna(b, x - inizio);
+    }
+    x = le32(d + 8);
+    for (k = 0; k < tab; k++)
+        if (x + k >= inizio && x + k - inizio < m->blocchi_per_gruppo) bit_segna(b, x + k - inizio);
+    for (i = blocchi_nel_gruppo(m, g); i < m->dim_blocco * 8u; i++) bit_segna(b, i);
+    return 0;
+}
+
+/* La bitmap degli inode del gruppo `g` in `b`, e il suo blocco in *bmp. */
+static int bitmap_inode(Ext2Mount *m, uint32_t g, uint8_t *b, uint32_t *bmp)
+{
+    uint32_t off, dblk, i;
+    const uint8_t *d;
+
+    if (desc_carica(m, g, &off, &dblk) != 0) return -1;
+    d = b_desc + off;
+    *bmp = le32(d + 4);
+    if (!(le16(d + 0x12) & BG_INODE_UNINIT) || !con_flag(m)) return leggi_blocco(m, *bmp, b);
+
+    memset(b, 0, m->dim_blocco);
+    for (i = m->inode_per_gruppo; i < m->dim_blocco * 8u; i++) bit_segna(b, i);
+    return 0;
+}
+
+/* Riscrive i due contatori del superblocco. Su ext3/ext4 il superblocco
+ * passa dal giornale come ogni altro metadato (super_leggi/super_scrivi in
+ * giornale.c, modulo 0.004), col suo checksum se il volume ne ha. */
+static int super_aggiorna(Ext2Mount *m)
+{
+    uint8_t sb[1024];
+
+    if (super_leggi(m, sb) != 0) return -1;
+    p32(sb + 12, m->blocchi_liberi);
+    p32(sb + 16, m->inode_liberi);
+    somma_super(m, sb);
+    return super_scrivi(m, sb);
 }
 
 /* Primo bit a zero in b_bmp fra 0 e `limite`. `limite` e' esclusivo.
@@ -273,10 +400,8 @@ static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
         g = (pref + giro) % m->n_gruppi;
 
         if (desc_carica(m, g, &off, &dblk) != 0) return;
-        if (le16(b_desc + off + 12) == 0) continue;
-
-        bmp = le32(b_desc + off + 0);
-        if (leggi_blocco(m, bmp, b_bmp) != 0) return;
+        if (desc_campo(m, b_desc + off, 12u, 0x2Cu) == 0) continue;
+        if (bitmap_blocchi(m, g, b_bmp, &bmp) != 0) return;
 
         lim = blocchi_nel_gruppo(m, g);
         i   = primo_libero(lim);
@@ -287,7 +412,7 @@ static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
             b_bmp[(i + k) / 8u] |= (uint8_t)(1u << ((i + k) % 8u));
 
         if (scrivi_blocco(m, bmp, b_bmp) != 0) return;
-        if (desc_somma(m, g, 12, -(int)k) != 0) return;
+        if (desc_aggiorna(m, g, -(int)k, 0, 0, b_bmp, NULL, 0) != 0) return;
         m->blocchi_liberi -= k;
 
         g_pre_primo = m->primo_dato + g * m->blocchi_per_gruppo + i;
@@ -296,7 +421,6 @@ static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
     }
 }
 
-static int libera_blocco(Ext2Mount *m, uint32_t n);
 
 /* I prenotati che nessuno ha usato tornano liberi. Sono consecutivi e in un
  * gruppo solo (prenota non esce dal gruppo): una lettura e una scrittura
@@ -305,23 +429,21 @@ static int libera_blocco(Ext2Mount *m, uint32_t n);
  * dati - e il superblocco si riscrive comunque con quel che si sa. */
 static void prenotati_rilascia(Ext2Mount *m)
 {
-    uint32_t g, i, k, off, dblk, bmp, liberati = 0;
+    uint32_t g, i, k, bmp, liberati = 0;
 
     if (g_pre_n > 0 && g_pre_primo >= m->primo_dato) {
         g = (g_pre_primo - m->primo_dato) / m->blocchi_per_gruppo;
         i = (g_pre_primo - m->primo_dato) % m->blocchi_per_gruppo;
 
-        if (i + g_pre_n <= m->blocchi_per_gruppo &&
-            desc_carica(m, g, &off, &dblk) == 0) {
-            bmp = le32(b_desc + off + 0);
-            if (leggi_blocco(m, bmp, b_bmp) == 0) {
+        if (i + g_pre_n <= m->blocchi_per_gruppo) {
+            if (bitmap_blocchi(m, g, b_bmp, &bmp) == 0) {
                 for (k = i; k < i + g_pre_n; k++)
                     if (b_bmp[k / 8u] & (1u << (k % 8u))) {
                         b_bmp[k / 8u] &= (uint8_t)~(1u << (k % 8u));
                         liberati++;
                     }
                 if (liberati > 0 && scrivi_blocco(m, bmp, b_bmp) == 0 &&
-                    desc_somma(m, g, 12, (int)liberati) == 0)
+                    desc_aggiorna(m, g, (int)liberati, 0, 0, b_bmp, NULL, 0) == 0)
                     m->blocchi_liberi += liberati;
             }
         }
@@ -373,10 +495,8 @@ static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
         g = (pref + giro) % m->n_gruppi;
 
         if (desc_carica(m, g, &off, &dblk) != 0) return 0;
-        if (le16(b_desc + off + 12) == 0) continue;     /* gruppo pieno */
-
-        bmp = le32(b_desc + off + 0);
-        if (leggi_blocco(m, bmp, b_bmp) != 0) return 0;
+        if (desc_campo(m, b_desc + off, 12u, 0x2Cu) == 0) continue;     /* gruppo pieno */
+        if (bitmap_blocchi(m, g, b_bmp, &bmp) != 0) return 0;
 
         lim = blocchi_nel_gruppo(m, g);
         i   = primo_libero(lim);
@@ -394,7 +514,7 @@ static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
         b_bmp[i / 8u] |= (uint8_t)(1u << (i % 8u));
         if (scrivi_blocco(m, bmp, b_bmp) != 0) return 0;
 
-        if (desc_somma(m, g, 12, -1) != 0) return 0;
+        if (desc_aggiorna(m, g, -1, 0, 0, b_bmp, NULL, 0) != 0) return 0;
         m->blocchi_liberi--;
 
         n = m->primo_dato + g * m->blocchi_per_gruppo + i;
@@ -440,18 +560,19 @@ static int lib_riversa(Ext2Mount *m)
 
     if (g_lib_valido && g_lib_n > 0) {
         if (scrivi_blocco(m, g_lib_bmp, b_lib) != 0) r = -1;
-        else if (desc_somma(m, g_lib_g, 12, (int)g_lib_n) != 0) r = -1;
+        else if (desc_aggiorna(m, g_lib_g, (int)g_lib_n, 0, 0, b_lib, NULL, 0) != 0) r = -1;
     }
     g_lib_valido = 0;
     g_lib_n = 0;
     return r;
 }
 
-static int libera_blocco(Ext2Mount *m, uint32_t n)
+int libera_blocco(Ext2Mount *m, uint32_t n)
 {
-    uint32_t g, i, off, dblk, bmp;
+    uint32_t g, i, bmp;
 
     if (n < m->primo_dato || n >= m->n_blocchi) return -1;
+    est_dimentica_blocco(n);
 
     g = (n - m->primo_dato) / m->blocchi_per_gruppo;
     i = (n - m->primo_dato) % m->blocchi_per_gruppo;
@@ -459,9 +580,7 @@ static int libera_blocco(Ext2Mount *m, uint32_t n)
     if (g_lib_diff) {
         if (!g_lib_valido || g != g_lib_g) {
             if (lib_riversa(m) != 0) return -1;
-            if (desc_carica(m, g, &off, &dblk) != 0) return -1;
-            g_lib_bmp = le32(b_desc + off + 0);
-            if (leggi_blocco(m, g_lib_bmp, b_lib) != 0) return -1;
+            if (bitmap_blocchi(m, g, b_lib, &g_lib_bmp) != 0) return -1;
             g_lib_g = g;
             g_lib_valido = 1;
         }
@@ -475,10 +594,7 @@ static int libera_blocco(Ext2Mount *m, uint32_t n)
         return 0;
     }
 
-    if (desc_carica(m, g, &off, &dblk) != 0) return -1;
-    bmp = le32(b_desc + off + 0);
-
-    if (leggi_blocco(m, bmp, b_bmp) != 0) return -1;
+    if (bitmap_blocchi(m, g, b_bmp, &bmp) != 0) return -1;
 
     /* Liberare due volte lo stesso blocco lo farebbe contare due volte fra
      * i liberi, e da li' in poi l'allocatore consegnerebbe lo stesso
@@ -491,7 +607,7 @@ static int libera_blocco(Ext2Mount *m, uint32_t n)
     b_bmp[i / 8u] &= (uint8_t)~(1u << (i % 8u));
     if (scrivi_blocco(m, bmp, b_bmp) != 0) return -1;
 
-    if (desc_somma(m, g, 12, +1) != 0) return -1;
+    if (desc_aggiorna(m, g, +1, 0, 0, b_bmp, NULL, 0) != 0) return -1;
     m->blocchi_liberi++;
     return 0;
 }
@@ -508,10 +624,8 @@ static uint32_t alloca_inode(Ext2Mount *m, uint32_t pref, int is_dir)
         g = (pref + giro) % m->n_gruppi;
 
         if (desc_carica(m, g, &off, &dblk) != 0) return 0;
-        if (le16(b_desc + off + 14) == 0) continue;
-
-        bmp = le32(b_desc + off + 4);
-        if (leggi_blocco(m, bmp, b_bmp) != 0) return 0;
+        if (desc_campo(m, b_desc + off, 14u, 0x2Eu) == 0) continue;
+        if (bitmap_inode(m, g, b_bmp, &bmp) != 0) return 0;
 
         i = primo_libero(m->inode_per_gruppo);
         if (i >= m->inode_per_gruppo) continue;
@@ -527,8 +641,7 @@ static uint32_t alloca_inode(Ext2Mount *m, uint32_t pref, int is_dir)
         b_bmp[i / 8u] |= (uint8_t)(1u << (i % 8u));
         if (scrivi_blocco(m, bmp, b_bmp) != 0) return 0;
 
-        if (desc_somma(m, g, 14, -1) != 0) return 0;
-        if (is_dir && desc_somma(m, g, 16, +1) != 0) return 0;
+        if (desc_aggiorna(m, g, 0, -1, is_dir ? 1 : 0, NULL, b_bmp, i + 1u) != 0) return 0;
         m->inode_liberi--;
 
         return n;
@@ -539,17 +652,14 @@ static uint32_t alloca_inode(Ext2Mount *m, uint32_t pref, int is_dir)
 
 static int libera_inode(Ext2Mount *m, uint32_t n, int era_dir)
 {
-    uint32_t g, i, off, dblk, bmp;
+    uint32_t g, i, bmp;
 
     if (n == 0 || n > m->n_inode) return -1;
 
     g = (n - 1u) / m->inode_per_gruppo;
     i = (n - 1u) % m->inode_per_gruppo;
 
-    if (desc_carica(m, g, &off, &dblk) != 0) return -1;
-    bmp = le32(b_desc + off + 4);
-
-    if (leggi_blocco(m, bmp, b_bmp) != 0) return -1;
+    if (bitmap_inode(m, g, b_bmp, &bmp) != 0) return -1;
 
     if ((b_bmp[i / 8u] & (1u << (i % 8u))) == 0) {
         klog(LOG_WARN, "EXT2: inode %u gia' libero", n);
@@ -559,8 +669,7 @@ static int libera_inode(Ext2Mount *m, uint32_t n, int era_dir)
     b_bmp[i / 8u] &= (uint8_t)~(1u << (i % 8u));
     if (scrivi_blocco(m, bmp, b_bmp) != 0) return -1;
 
-    if (desc_somma(m, g, 14, +1) != 0) return -1;
-    if (era_dir && desc_somma(m, g, 16, -1) != 0) return -1;
+    if (desc_aggiorna(m, g, 0, +1, era_dir ? -1 : 0, NULL, b_bmp, 0) != 0) return -1;
     m->inode_liberi++;
     return 0;
 }
@@ -568,10 +677,19 @@ static int libera_inode(Ext2Mount *m, uint32_t n, int era_dir)
 /* Riscrive i 128 byte dell'inode `numero`. Lettura-modifica-scrittura del
  * blocco che lo contiene: su un volume con inode da 256 byte i 128 che non
  * tocchiamo appartengono comunque a quell'inode (marche temporali fini,
- * attributi estesi) e azzerarli lo danneggerebbe. */
+ * attributi estesi) e azzerarli lo danneggerebbe.
+ *
+ * ! UN INODE NUOVO (g_inode_nuovo) SI SCRIVE INTERO: i byte oltre i 128
+ * possono essere di un file cancellato, o mai azzerati (ext4 lascia la
+ * tabella da azzerare a dopo, lazy_itable_init). Si azzerano, e prendono
+ * i_extra_isize e la data di nascita (i_crtime) come su Linux. Poi, su
+ * metadata_csum, il checksum dell'inode intero. */
+static int g_inode_nuovo = 0;
+
 static int scrivi_inode(Ext2Mount *m, uint32_t numero, const uint8_t *src)
 {
     uint32_t gruppo, indice, off, dblk, itab, blk, ioff, i;
+    Ext4Vol *v = vol_di(m);
 
     if (numero == 0 || numero > m->n_inode) return -1;
 
@@ -587,7 +705,26 @@ static int scrivi_inode(Ext2Mount *m, uint32_t numero, const uint8_t *src)
     if (leggi_blocco(m, blk, b_ino) != 0) return -1;
     for (i = 0; i < 128u; i++) b_ino[ioff + i] = src[i];
 
+    if (g_inode_nuovo && m->dim_inode > 128u) {
+        memset(b_ino + ioff + 128u, 0, m->dim_inode - 128u);
+        if (v && v->extra_isize >= 4u) {
+            p16(b_ino + ioff + 0x80, v->extra_isize);
+            if (v->extra_isize >= 0x14u) p32(b_ino + ioff + 0x90, le32(src + 12));
+        }
+    }
+    somma_inode(m, numero, b_ino + ioff);
+
     return scrivi_blocco(m, blk, b_ino);
+}
+
+static int scrivi_inode_nuovo(Ext2Mount *m, uint32_t numero, const uint8_t *src)
+{
+    int r;
+
+    g_inode_nuovo = 1;
+    r = scrivi_inode(m, numero, src);
+    g_inode_nuovo = 0;
+    return r;
 }
 
 /* =============================================================================
@@ -661,11 +798,25 @@ static uint32_t inode_punt_o_alloca(Ext2Mount *m, uint8_t *inode, uint32_t i,
 
 static int g_dati_zero = 1;     /* 0 dentro ext2_write: vedi «SCRIVERE COSTAVA» */
 
-static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint8_t *inode,
+uint32_t alloca_blocco_per(Ext2Mount *m, uint32_t pref, int dato)
+{
+    uint32_t r;
+
+    g_zero = dato ? g_dati_zero : 0;
+    r = alloca_blocco(m, pref);
+    g_zero = 1;
+    return r;
+}
+
+static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode,
                                uint32_t n, uint32_t pref, uint32_t *charge)
 {
     uint32_t ppb = m->punt_per_blocco;
     uint32_t l1, l2, r;
+
+    /* ext4: the extent tree (estesi.c) */
+    if (le32(inode + 32) & INODE_FL_EXTENTS)
+        return est_mappa_o_alloca(m, mnt, num, inode, n, pref, charge);
 
     /* ! L'ULTIMO PASSO E' IL BLOCCO DI DATI, gli altri sono blocchi di
      * puntatori: solo il primo puo' nascere senza essere azzerato sul disco.
@@ -763,15 +914,33 @@ static int libera_attributi(Ext2Mount *m, uint8_t *inode)
     n = le32(blocco + 4);
     if (n > 1u) {
         p32(blocco + 4, n - 1u);
+        somma_attributi(m, b, blocco);
         return scrivi_blocco(m, b, blocco);
     }
     return libera_blocco(m, b);
 }
 
-static int libera_tutti_i_blocchi(Ext2Mount *m, int mnt, uint8_t *inode)
+static int libera_tutti_i_blocchi(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode)
 {
     uint32_t i, liberati = 0;
     uint32_t ea = le32(inode + 104) ? m->dim_blocco / 512u : 0u;
+
+    /* ext4: the extent tree, in the same batch as below */
+    if (le32(inode + 32) & INODE_FL_EXTENTS) {
+        int r;
+
+        g_lib_diff = 1;
+        g_lib_valido = 0;
+        g_lib_n = 0;
+        r = est_pota(m, num, inode, 0, &liberati);
+        if (lib_riversa(m) != 0) r = -1;
+        g_lib_diff = 0;
+        libera_attributi(m, inode);
+        est_radice_vuota(inode);
+        p32(inode + 28, 0);
+        p32(inode + 4, 0);
+        return r;
+    }
 
     /* ! i_block HOLDS BLOCK NUMBERS ONLY WHEN THE INODE HAS DATA BLOCKS.
      * A fast symbolic link keeps its target there (up to 60 characters),
@@ -911,7 +1080,7 @@ static int pota_indiretto(Ext2Mount *m, int mnt, uint32_t blk, int livello,
 
 /* Libera tutti i blocchi dell'inode dal blocco logico `primo` in poi.
  * Aggiorna i_block e i_blocks; NON tocca i_size, che e' del chiamante. */
-static int pota_inode(Ext2Mount *m, int mnt, uint8_t *inode, uint32_t primo)
+static int pota_inode(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode, uint32_t primo)
 {
     uint32_t ppb = m->punt_per_blocco;
     uint32_t liberati = 0;
@@ -922,6 +1091,20 @@ static int pota_inode(Ext2Mount *m, int mnt, uint8_t *inode, uint32_t primo)
     uint32_t base3 = base2 + ppb * ppb;
     int      idx, liv;
     uint32_t basi[3];
+
+    /* ext4: the extent tree, the bitmaps in one batch (see «CANCELLARE») */
+    if (le32(inode + 32) & INODE_FL_EXTENTS) {
+        int r;
+
+        g_lib_diff = 1;
+        g_lib_valido = 0;
+        g_lib_n = 0;
+        r = est_pota(m, num, inode, primo, &liberati);
+        if (lib_riversa(m) != 0) r = -1;
+        g_lib_diff = 0;
+        if (r != 0) return -1;
+        goto conta;
+    }
 
     /* --- i dodici diretti --- */
     for (i = primo; i < 12u; i++) {
@@ -958,6 +1141,7 @@ static int pota_inode(Ext2Mount *m, int mnt, uint8_t *inode, uint32_t primo)
         }
     }
 
+conta:
     /* i_blocks e' in unita' da 512 byte e comprende gli indiretti: la
      * sottrazione usa lo stesso conteggio che l'allocazione ha sommato,
      * indiretti inclusi, altrimenti il numero deriva a ogni troncamento. */
@@ -1014,13 +1198,38 @@ static uint32_t voce_lunghezza(uint32_t len)
  * crash in between leaves a plain directory with the old entries, which is
  * a valid volume.
  * ============================================================================= */
-static int dir_togli_indice(Ext2Mount *m, uint32_t dir_num, uint8_t *dir_inode)
+/* A directory block to the disk: on metadata_csum with its tail and sum. */
+static int dir_scrivi(Ext2Mount *m, uint32_t num, const uint8_t *inode, uint32_t blk,
+                      uint8_t *b)
+{
+    if (somma_dir(m, num, inode, b) != 0) return -1;
+    return scrivi_blocco(m, blk, b);
+}
+
+/* ! ON metadata_csum THE INDEX BLOCKS HAVE NO DIRECTORY TAIL - theirs is a
+ * dx tail - and as plain blocks Linux would refuse them ("directory block
+ * failed checksum"). Each block gets one (dir_coda: the root's ".." and an
+ * inner node's empty entry have room for it) and its sum, in the same
+ * transaction as the flag. */
+static int dir_togli_indice(Ext2Mount *m, int mnt, uint32_t dir_num, uint8_t *dir_inode)
 {
     uint32_t fl = le32(dir_inode + 32);
+    Ext4Vol *v = vol_di(m);
 
     if (!(fl & INODE_FL_INDEX)) return 0;
     p32(dir_inode + 32, fl & ~INODE_FL_INDEX);
     klog(LOG_INFO, "EXT2: directory %u loses its hashed index (it is changed)", dir_num);
+    if (v && v->meta_csum) {
+        uint32_t off, dim = le32(dir_inode + 4);
+
+        for (off = 0; off < dim; off += m->dim_blocco) {
+            uint32_t blk = mappa_blocco(m, mnt, dir_inode, off / m->dim_blocco);
+
+            if (blk == 0) continue;
+            if (leggi_blocco(m, blk, b_dati) != 0) return -1;
+            if (dir_scrivi(m, dir_num, dir_inode, blk, b_dati) != 0) return -1;
+        }
+    }
     return scrivi_inode(m, dir_num, dir_inode);
 }
 
@@ -1032,9 +1241,10 @@ static int dir_aggiungi(Ext2Mount *m, int mnt, uint32_t dir_num,
 {
     uint32_t dim     = le32(dir_inode + 4);
     uint32_t serve   = voce_lunghezza(len);
+    uint32_t fine    = dir_fine(m);     /* the entries end here: see dir_coda */
     uint32_t off, k;
 
-    if (dir_togli_indice(m, dir_num, dir_inode) != 0) return -1;
+    if (dir_togli_indice(m, mnt, dir_num, dir_inode) != 0) return -1;
 
     for (off = 0; off < dim; off += m->dim_blocco) {
         uint32_t blk = mappa_blocco(m, mnt, dir_inode, off / m->dim_blocco);
@@ -1042,14 +1252,15 @@ static int dir_aggiungi(Ext2Mount *m, int mnt, uint32_t dir_num,
 
         if (blk == 0) continue;
         if (leggi_blocco(m, blk, b_dati) != 0) return -1;
+        if (dir_coda(m, b_dati) != 0) continue;
 
-        while (p < m->dim_blocco) {
+        while (p < fine) {
             uint32_t vino = le32(b_dati + p);
             uint32_t rec  = le16(b_dati + p + 4);
             uint32_t vlen = b_dati[p + 6];
             uint32_t usato;
 
-            if (rec < 8u || p + rec > m->dim_blocco) break;
+            if (rec < 8u || p + rec > fine) break;
 
             /* Una voce con inode 0 e' spazio libero per intero; una voce
              * viva occupa solo i propri byte e il resto del suo rec_len e'
@@ -1068,7 +1279,7 @@ static int dir_aggiungi(Ext2Mount *m, int mnt, uint32_t dir_num,
                 for (k = 0; k < len; k++)
                     b_dati[nuovo + 8 + k] = (uint8_t)nome[k];
 
-                return scrivi_blocco(m, blk, b_dati);
+                return dir_scrivi(m, dir_num, dir_inode, blk, b_dati);
             }
 
             p += rec;
@@ -1081,7 +1292,7 @@ static int dir_aggiungi(Ext2Mount *m, int mnt, uint32_t dir_num,
      * non la somma delle voci. */
     {
         uint32_t charge = 0;
-        uint32_t nuovo_blk = mappa_o_alloca(m, mnt, dir_inode,
+        uint32_t nuovo_blk = mappa_o_alloca(m, mnt, dir_num, dir_inode,
                                             dim / m->dim_blocco,
                                             (dir_num - 1u) / m->inode_per_gruppo,
                                             &charge);
@@ -1097,7 +1308,7 @@ static int dir_aggiungi(Ext2Mount *m, int mnt, uint32_t dir_num,
         b_dati[7] = (uint8_t)tipo;
         for (k = 0; k < len; k++) b_dati[8 + k] = (uint8_t)nome[k];
 
-        if (scrivi_blocco(m, nuovo_blk, b_dati) != 0) return -1;
+        if (dir_scrivi(m, dir_num, dir_inode, nuovo_blk, b_dati) != 0) return -1;
 
         p32(dir_inode + 4, dim + m->dim_blocco);
         blocchi = le32(dir_inode + 28) + charge * (m->dim_blocco / 512u);
@@ -1117,9 +1328,10 @@ static uint32_t dir_rimuovi(Ext2Mount *m, int mnt, uint32_t dir_num,
                             uint8_t *dir_inode, const char *nome, uint32_t len)
 {
     uint32_t dim = le32(dir_inode + 4);
+    uint32_t fine = dir_fine(m);
     uint32_t off;
 
-    if (dir_togli_indice(m, dir_num, dir_inode) != 0) return 0;
+    if (dir_togli_indice(m, mnt, dir_num, dir_inode) != 0) return 0;
 
     for (off = 0; off < dim; off += m->dim_blocco) {
         uint32_t blk  = mappa_blocco(m, mnt, dir_inode, off / m->dim_blocco);
@@ -1128,13 +1340,14 @@ static uint32_t dir_rimuovi(Ext2Mount *m, int mnt, uint32_t dir_num,
 
         if (blk == 0) continue;
         if (leggi_blocco(m, blk, b_dati) != 0) return 0;
+        if (dir_coda(m, b_dati) != 0) continue;
 
-        while (p < m->dim_blocco) {
+        while (p < fine) {
             uint32_t vino = le32(b_dati + p);
             uint32_t rec  = le16(b_dati + p + 4);
             uint32_t vlen = b_dati[p + 6];
 
-            if (rec < 8u || p + rec > m->dim_blocco) break;
+            if (rec < 8u || p + rec > fine) break;
 
             if (vino != 0 && nome_uguale(b_dati + p + 8, vlen, nome, len)) {
                 if (prec == 0xFFFFFFFFu) {
@@ -1142,7 +1355,7 @@ static uint32_t dir_rimuovi(Ext2Mount *m, int mnt, uint32_t dir_num,
                 } else {
                     p16(b_dati + prec + 4, le16(b_dati + prec + 4) + rec);
                 }
-                if (scrivi_blocco(m, blk, b_dati) != 0) return 0;
+                if (dir_scrivi(m, dir_num, dir_inode, blk, b_dati) != 0) return 0;
                 return vino;
             }
 
@@ -1355,7 +1568,8 @@ int ext2_create(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
      * non ci sara' una umask — che e' proprio il meccanismo con cui si cambia
      * questa scelta senza toccare il codice. */
     inode_nuovo(nino, MODE_FILE | 0644u, 1, 0, 0, uid, gid);
-    if (scrivi_inode(m, num, nino) != 0) { libera_inode(m, num, 0); return -1; }
+    if (vol_di(m)->estesi) est_radice_vuota(nino);
+    if (scrivi_inode_nuovo(m, num, nino) != 0) { libera_inode(m, num, 0); return -1; }
 
     if (dir_aggiungi(m, mnt, pnum, pino, nome, len, num, DIRTIPO_FILE) != 0) {
         /* La voce non c'e': l'inode allocato non lo raggiunge nessuno, e
@@ -1367,6 +1581,31 @@ int ext2_create(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 
     if (scrivi_inode(m, pnum, pino) != 0) return -1;
     return super_aggiorna(m);
+}
+
+/* =============================================================================
+ * dir_nlink (ext4): a directory's link count is "." + its name + one ".."
+ * per subdirectory, and at 65000 it would overflow. Linux then writes 1 -
+ * "more than it can count" - and never touches it again; here the same.
+ * ============================================================================= */
+static void link_piu(Ext2Mount *m, uint8_t *dino)
+{
+    Ext4Vol *v = vol_di(m);
+    uint32_t l = le16(dino + 26);
+
+    if (v && v->dir_nlink && (l == 1u || l >= 64999u)) l = 1u;
+    else l++;
+    p16(dino + 26, l);
+}
+
+static void link_meno(Ext2Mount *m, uint8_t *dino)
+{
+    Ext4Vol *v = vol_di(m);
+    uint32_t l = le16(dino + 26);
+
+    if (v && v->dir_nlink && l == 1u) return;
+    if (l > 0) l--;
+    p16(dino + 26, l);
 }
 
 int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
@@ -1402,11 +1641,6 @@ int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
     b_dati[18] = 2; b_dati[19] = DIRTIPO_DIR;
     b_dati[20] = '.'; b_dati[21] = '.';
 
-    if (scrivi_blocco(m, blk, b_dati) != 0) {
-        libera_blocco(m, blk); libera_inode(m, num, 1);
-        return -1;
-    }
-
     /* DUE collegamenti: il nome nel padre e il "." dentro di se'. */
     /* ! 0755 SU UNA DIRECTORY, e la differenza con 0644 di un file conta: il
      * bit x su una directory non vuol dire «eseguibile», vuol dire
@@ -1414,9 +1648,24 @@ int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
      * un file che gli appartiene. */
     inode_nuovo(nino, MODE_DIR | 0755u, 2, m->dim_blocco, m->dim_blocco / 512u,
                 uid, gid);
-    p32(nino + 40, blk);
+    if (vol_di(m)->estesi) {
+        /* ext4: one extent, {0, 1, blk} */
+        est_radice_vuota(nino);
+        p16(nino + 42, 1u);
+        p32(nino + 52, 0);
+        p16(nino + 56, 1u);
+        p32(nino + 60, blk);
+    } else {
+        p32(nino + 40, blk);
+    }
 
-    if (scrivi_inode(m, num, nino) != 0) {
+    /* the block is summed with the new inode's seed (its number, generation 0) */
+    if (dir_scrivi(m, num, nino, blk, b_dati) != 0) {
+        libera_blocco(m, blk); libera_inode(m, num, 1);
+        return -1;
+    }
+
+    if (scrivi_inode_nuovo(m, num, nino) != 0) {
         libera_blocco(m, blk); libera_inode(m, num, 1);
         return -1;
     }
@@ -1429,7 +1678,7 @@ int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
     /* Il padre guadagna un collegamento: il ".." della directory nuova
      * punta a lui. Dimenticarlo fa segnalare a e2fsck un conteggio
      * sbagliato su OGNI directory che contenga sottodirectory. */
-    p16(pino + 26, le16(pino + 26) + 1u);
+    link_piu(m, pino);
     if (scrivi_inode(m, pnum, pino) != 0) return -1;
 
     return super_aggiorna(m);
@@ -1469,7 +1718,7 @@ int ext2_unlink(int mnt, const char *percorso)
     p16(vino + 26, link);
 
     if (link == 0) {
-        libera_tutti_i_blocchi(m, mnt, vino);
+        libera_tutti_i_blocchi(m, mnt, num, vino);
         p32(vino + 20, dtime_di(m->n_inode));    /* i_dtime: vedi sopra */
         if (scrivi_inode(m, num, vino) != 0) return -1;
         if (libera_inode(m, num, 0) != 0) return -1;
@@ -1482,7 +1731,8 @@ int ext2_unlink(int mnt, const char *percorso)
 
 /* The ".." of directory `dino` (its first block, second entry) now names
  * `padre`. 0, or -1. */
-static int dir_punta_padre(Ext2Mount *m, int mnt, const uint8_t *dino, uint32_t padre)
+static int dir_punta_padre(Ext2Mount *m, int mnt, uint32_t num, const uint8_t *dino,
+                           uint32_t padre)
 {
     uint32_t blk = mappa_blocco(m, mnt, dino, 0);
     uint32_t p;
@@ -1492,7 +1742,7 @@ static int dir_punta_padre(Ext2Mount *m, int mnt, const uint8_t *dino, uint32_t 
     if (p < 12u || p + 12u > m->dim_blocco) return -1;
     if (b_dati[p + 6] != 2 || b_dati[p + 8] != '.' || b_dati[p + 9] != '.') return -1;
     p32(b_dati + p, padre);
-    return scrivi_blocco(m, blk, b_dati);
+    return dir_scrivi(m, num, dino, blk, b_dati);
 }
 
 /* ext2_rename across two directories (see the comment below). */
@@ -1501,7 +1751,7 @@ static int rinomina_altrove(Ext2Mount *m, int mnt, const char *da, const char *a
                             uint32_t anum, uint8_t *aino, const char *nom_a, uint32_t len_a)
 {
     uint8_t  vino[128];
-    uint32_t num, tipo, l;
+    uint32_t num, tipo;
     int      e_dir;
 
     if (cerca_voce(m, mnt, aino, nom_a, len_a) != 0) return -2;
@@ -1522,17 +1772,13 @@ static int rinomina_altrove(Ext2Mount *m, int mnt, const char *da, const char *a
 
     if (dir_aggiungi(m, mnt, anum, aino, nom_a, len_a, num, tipo) != 0) return -1;
     if (e_dir) {
-        if (dir_punta_padre(m, mnt, vino, anum) != 0) return -1;
-        p16(aino + 26, le16(aino + 26) + 1u);   /* the new parent gains ".." */
+        if (dir_punta_padre(m, mnt, num, vino, anum) != 0) return -1;
+        link_piu(m, aino);                      /* the new parent gains ".." */
     }
     if (scrivi_inode(m, anum, aino) != 0) return -1;
 
     if (dir_rimuovi(m, mnt, pnum, pino, nom_da, len_da) == 0) return -1;
-    if (e_dir) {
-        l = le16(pino + 26);
-        if (l > 0) l--;
-        p16(pino + 26, l);                      /* the old one loses it */
-    }
+    if (e_dir) link_meno(m, pino);              /* the old one loses it */
     if (scrivi_inode(m, pnum, pino) != 0) return -1;
     return super_aggiorna(m);
 }
@@ -1646,7 +1892,7 @@ int ext2_rmdir(int mnt, const char *percorso)
 
     if (dir_rimuovi(m, mnt, pnum, pino, nome, len) == 0) return -1;
 
-    libera_tutti_i_blocchi(m, mnt, dino);
+    libera_tutti_i_blocchi(m, mnt, num, dino);
     p16(dino + 26, 0);
     p32(dino + 20, dtime_di(m->n_inode));       /* i_dtime: vedi sopra */
     if (scrivi_inode(m, num, dino) != 0) return -1;
@@ -1654,11 +1900,7 @@ int ext2_rmdir(int mnt, const char *percorso)
 
     /* Il padre perde il collegamento che era il ".." della directory
      * cancellata. */
-    {
-        uint32_t l = le16(pino + 26);
-        if (l > 0) l--;
-        p16(pino + 26, l);
-    }
+    link_meno(m, pino);
     if (scrivi_inode(m, pnum, pino) != 0) return -1;
 
     return super_aggiorna(m);
@@ -1676,8 +1918,12 @@ static int dimensione_scrivibile(Ext2Mount *m, const uint8_t *inode, uint64_t fi
 {
     uint64_t max = (m->ro_compat & RO_COMPAT_LARGEFILE) ? 0xFFFFFFFFull : 0x7FFFFFFFull;
 
-    if (le32(inode + 108) != 0) {
+    if (le32(inode + 108) != 0 || le16(inode + 0x74) != 0) {
         klog(LOG_WARN, "EXT2: a file above 4 GB is not written by this driver");
+        return 0;
+    }
+    if (le32(inode + 32) & 0x00040000u) {       /* EXT4_HUGE_FILE_FL: i_blocks in blocks */
+        klog(LOG_WARN, "ext4: a huge_file inode is not written by this driver");
         return 0;
     }
     if (fine > max) {
@@ -1753,7 +1999,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
 
         if (q > size - scritti) q = size - scritti;
 
-        blk = mappa_o_alloca(m, mnt, inode, log, gruppo, &charge);
+        blk = mappa_o_alloca(m, mnt, num, inode, log, gruppo, &charge);
         if (blk == 0) break;                    /* volume pieno */
         nuovo = (charge != prima);              /* nato adesso: sul disco non e' azzerato */
 
@@ -1764,7 +2010,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
 
             if (max > CORSA_MAX) max = CORSA_MAX;
             while (n < max) {
-                uint32_t b2 = mappa_o_alloca(m, mnt, inode, log + n, gruppo, &charge);
+                uint32_t b2 = mappa_o_alloca(m, mnt, num, inode, log + n, gruppo, &charge);
                 if (b2 != blk + n) {
                     /* Allocato (o gia' li') ma non contiguo: lo scrivera'
                      * il giro dopo, che lo ritrova nella mappa. */
@@ -1880,7 +2126,7 @@ int ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim)
      * libererebbe un blocco ancora dentro il file. */
     tenere = (nuova_dim + m->dim_blocco - 1u) / m->dim_blocco;
 
-    if (pota_inode(m, mnt, inode, tenere) != 0) return -1;
+    if (pota_inode(m, mnt, num, inode, tenere) != 0) return -1;
 
     /* La CODA dell'ultimo blocco che resta va azzerata. Quei byte sono
      * oltre i_size e nessuno li legge — finche' il file non viene
