@@ -497,8 +497,12 @@ __pycache__/
 # con la cartella del progetto. La REGOLA: sorgenti e strumenti restano in
 # questa directory, anche se git li ignora (SVILUPPO.md, sezione 1). Sono
 # centinaia di MB costruiti da sorgenti di terzi: in git non ci vanno.
+#
+# ! DAL 21 OTTOBRE 2026 E' UN LINK a ~/cross_build, fuori da MEGA (vedi
+# .megaignore): senza barra finale, perche' «/cross_build/» vale solo per
+# una cartella vera e il link compariva fra i file nuovi.
 # =============================================================================
-/cross_build/
+/cross_build
 
 # La versione a 64 bit (ARCH=x86_64): build-64/ va in git come build/ (deciso
 # dall'utente il 10 ottobre 2026), e resta fuori SOLO cio' che resta fuori

@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.032");
+EX_VERSIONE("netupdate", "0.033");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -3862,6 +3862,20 @@ static int prova_archivio(Config *c, Pacchetto *q, long *fatti, long *falliti)
 #define SRC_DIR   "/src"
 #define SRC_TAR   "/bin/tar"
 
+/* ! SUL SERVER GLI ARCHIVI SI CHIAMANO .tar_gz (21 ottobre 2026). Un .gz
+ * Altervista lo serve con Content-Encoding: gzip, e Cloudflare a chi non
+ * chiede gzip - noi - lo manda DECOMPRESSO: l'impronta non torna mai.
+ * tools/mknetinstsrc.sh e mknetinst.sh pubblicano «_gz» al posto di «.gz»;
+ * qui, sul disco, il nome torna quello vero. tar lo apre dal contenuto, ma
+ * chi guarda in /src deve vedere un .tar.gz. */
+static void nome_sul_disco(char *p)
+{
+    size_t l = strlen(p);
+
+    if (l > 4 && strcmp(p + l - 4, "_tgz") == 0) p[l - 4] = '.';
+    else if (l > 3 && strcmp(p + l - 3, "_gz") == 0) p[l - 3] = '.';
+}
+
 static int comando_sorgenti(void)
 {
     Config c;
@@ -3956,6 +3970,7 @@ static int comando_sorgenti(void)
 
     unisci(dest, sizeof(dest), "/", cartella);
     unisci(archivio, sizeof(archivio), "/", perc);
+    nome_sul_disco(archivio);       /* il server dice .tar_gz, qui .tar.gz */
 
     printf("  sorgenti di EX-OS %s del %s\n", versione, data);
     printf("  commit %s%s\n", commit,

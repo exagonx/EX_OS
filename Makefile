@@ -953,10 +953,10 @@ FDISK_SRC  := bin/fdisk/fdisk.c
 FDISK_BIN  := $(BUILD_BIN)/fdisk
 FDISK_LD   := bin/fdisk/fdisk.ld
 
-$(FDISK_BIN): $(FDISK_SRC) $(FDISK_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(FDISK_BIN): $(FDISK_SRC) drivers/kbd/kbd_proto.h $(FDISK_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/fdisk ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -c $(FDISK_SRC) -o $(BUILD_OBJ)/fdisk_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(FDISK_SRC) -o $(BUILD_OBJ)/fdisk_main.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/fdisk_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FDISK_LD) \
 	    $(BUILD_OBJ)/fdisk_start.o $(BUILD_OBJ)/fdisk_main.o $(LIBC_PONTI_OBJ) -o $@

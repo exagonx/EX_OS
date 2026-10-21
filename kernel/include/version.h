@@ -517,7 +517,10 @@
  * block reads see the open transaction's copies, metadata writes go into it,
  * a data run over a journaled block commits first - ext3 writing in
  * /dev/ext4.mod 0.003 (@EXT3-GIORNALE). */
-#define EXOS_VERSION    "0.265"
+/* 0.265 -> 0.266: AHCI waits timed with the TSC, not g_ticks: the switch
+ * comes from a syscall with interrupts off, the timer stood still and a
+ * wait that never came true hung the machine (kernel/block/ahci.c). */
+#define EXOS_VERSION    "0.266"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

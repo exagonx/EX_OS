@@ -39,7 +39,7 @@
 #include "libc.h"
 #include "exwin.h"
 
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("attesa", VERSIONE_APP);
 
 #define FIN_W      330
@@ -173,20 +173,64 @@ static void disegna_testo(void)
 /* =============================================================================
  * Watching the program
  * ============================================================================= */
+static void diario(const char *riga);
+
 static void fine(void)
 {
+    char r[64];
+
+    snprintf(r, sizeof(r), "[%u s] chiusa\n", (uptime_ms() - g_t0) / 1000u);
+    diario(r);
     ex_set_timer(g_f, 0);
     ex_quit(0);
 }
 
-/* 1 if the child has a window in the server's list. */
+/* 1 if the child has a window in the server's list.
+ * ! THE WINDOW'S pid IS THE THREAD'S, NOT THE PROGRAM'S (0.003, 21 October
+ * 2026). The server records whoever sent WIN_MSG_CREA, and on EX-OS a
+ * thread has a pid of its own: on the laptop Firefox's window appeared and
+ * the box stayed for the full 300 seconds. A window counts as the child's
+ * when its pid's group (proc_gruppo, the tgid) is the child. */
+/* ! AND WHAT IT SAW GOES IN /tmp/attesa.txt (0.003): every list whose size
+ * changed - seconds, the child, each window's id, pid, group and title -
+ * and why the box closed. One line per change, a few lines per start: it
+ * is the answer the next time a box does not close. */
+static int g_ultimo_n = -1;
+
+static void diario(const char *riga)
+{
+    int fd;
+
+    mkdir("/tmp", 0777);
+    fd = open("/tmp/attesa.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+    if (fd < 0) return;
+    write(fd, riga, strlen(riga));
+    close(fd);
+}
+
 static int ha_finestra(void)
 {
     ExWindowEntry v[24];
     int           n = ex_list_windows(v, 24), i;
 
-    for (i = 0; i < n && i < 24; i++)
+    if (n != g_ultimo_n) {
+        char r[128];
+
+        g_ultimo_n = n;
+        snprintf(r, sizeof(r), "[%u s] %s pid %d: %d finestre\n",
+                 (uptime_ms() - g_t0) / 1000u, g_nome, g_figlio, n);
+        diario(r);
+        for (i = 0; i < n && i < 24; i++) {
+            snprintf(r, sizeof(r), "  id %u pid %u gruppo %d \"%.40s\"\n", v[i].id,
+                     v[i].pid, proc_gruppo((int)v[i].pid), v[i].title);
+            diario(r);
+        }
+    }
+    for (i = 0; i < n && i < 24; i++) {
         if ((int)v[i].pid == g_figlio) return 1;
+        if (proc_gruppo((int)v[i].pid) == g_figlio) return 1;
+    }
     return 0;
 }
 

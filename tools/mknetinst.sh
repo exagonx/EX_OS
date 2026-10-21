@@ -228,6 +228,11 @@ awk -v R="$TEMP/regole" -v S="$TEMP/sistema" -v AVVIO="$AVVIO" '
 # aggiornano FILE PER FILE, perche' `-check` deve poter scaricare i due che
 # sono cambiati e non i centosettanta che ci sono.
 ARC_TETTO=1572864          # 1,5 MB: sta comodo nel buffer di netupdate
+# ! .tar_gz E NON .tar.gz (21 ottobre 2026): un .gz Altervista lo serve con
+# Content-Encoding: gzip e Cloudflare lo consegna DECOMPRESSO a chi non chiede
+# gzip (nasm.tar.gz 561 KB -> 2,4 MB), l'impronta non torna e netupdate
+# ripiegava in silenzio sul file per file. netupdate apre l'archivio in
+# memoria dal contenuto: il nome non conta. Vedi tools/mknetinstsrc.sh.
 mkdir -p "$FUORI/pacchetti"
 : > "$TEMP/archivi"
 
@@ -241,22 +246,22 @@ for id in $(cut -f2 "$TEMP/mappa" | LC_ALL=C sort -u); do
     # un'intestazione da 512 byte letta in ottale, e deve restare tale. Se un
     # percorso non ci sta, tar lo dice e l'archivio non si pubblica — meglio
     # un pacchetto senza archivio che un archivio che il lettore non sa aprire.
-    if ! tar --format=ustar -czf "$FUORI/pacchetti/$id.tar.gz" \
+    if ! tar --format=ustar -czf "$FUORI/pacchetti/$id.tar_gz" \
              -C "$FUORI/file" -T "$TEMP/lista" 2>/dev/null; then
-        rm -f "$FUORI/pacchetti/$id.tar.gz"
+        rm -f "$FUORI/pacchetti/$id.tar_gz"
         echo "     ! $id: tar non riesce a fare l'archivio (percorsi troppo lunghi?)"
         continue
     fi
 
-    arcb=$(stat -c %s "$FUORI/pacchetti/$id.tar.gz")
+    arcb=$(stat -c %s "$FUORI/pacchetti/$id.tar_gz")
     if [ "$arcb" -gt "$ARC_TETTO" ]; then
-        rm -f "$FUORI/pacchetti/$id.tar.gz"
+        rm -f "$FUORI/pacchetti/$id.tar_gz"
         continue                    # troppo grosso: resta il file per file
     fi
     srot=$(while IFS= read -r f; do stat -c %s "$FUORI/file/$f"; done < "$TEMP/lista" \
            | awk '{ s += $1 } END { print s + 0 }')
     printf '%s\t%s\t%s\t%s\n' "$id" "$arcb" \
-        "$(sha256sum "$FUORI/pacchetti/$id.tar.gz" | cut -d' ' -f1)" "$srot" \
+        "$(sha256sum "$FUORI/pacchetti/$id.tar_gz" | cut -d' ' -f1)" "$srot" \
         >> "$TEMP/archivi"
 done
 
@@ -369,7 +374,7 @@ CAT="$FUORI/catalogo.txt"
     echo "# DISCO, senza la barra davanti: la stessa forma di elenco.txt."
     echo "#"
     echo "# Un pacchetto che ha anche un ARCHIVIO porta quattro chiavi in piu':"
-    echo "#   archivio      dove sta il tar.gz, sotto la radice del server"
+    echo "#   archivio      dove sta il tar.gz (.tar_gz), sotto la radice del server"
     echo "#   arcbyte       quanto pesa compresso"
     echo "#   arcimpronta   la sua sha256"
     echo "#   arcsrotolato  quanto occupa aperto: chi lo apre deve sapere"
@@ -426,7 +431,7 @@ CAT="$FUORI/catalogo.txt"
                     id = $0; gsub(/[][]/, "", id)
                     if (id in arc) {
                         split(arc[id], c, "\t")
-                        print "archivio = pacchetti/" id ".tar.gz"
+                        print "archivio = pacchetti/" id ".tar_gz"
                         print "arcbyte  = " c[1]
                         print "arcimpronta = " c[2]
                         print "arcsrotolato = " c[3]

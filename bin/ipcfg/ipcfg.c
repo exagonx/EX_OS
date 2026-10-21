@@ -42,7 +42,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `ipcfg -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ipcfg", "0.002");
+EX_VERSIONE("ipcfg", "0.003");
 
 static int pid_ip = 0;
 
@@ -166,6 +166,25 @@ int main(int argc, char **argv)
     if (argc == 1) return mostra_stato();
     if (argc == 2 && strcmp(argv[1], "-r") == 0) return mostra_arp();
 
+    /* -l: lo stack su un'altra scheda (21 ottobre 2026). Lo faceva solo
+     * wifid, e solo quando la radio cade: con la WiFi agganciata il cavo non
+     * si poteva piu' usare ne' provare. L'indirizzo resta quello che era: se
+     * sulla nuova rete ne serve un altro, dhcp o -a. */
+    if (argc == 3 && strcmp(argv[1], "-l") == 0) {
+        if (ipc_send(pid_ip, IP_MSG_LINK, argv[2], (unsigned int)strlen(argv[2]) + 1) < 0) return 1;
+        if (attendi(IP_MSG_ESITO, buf, &len) != 0 || len < sizeof(e)) {
+            printf("ipcfg: lo stack non ha confermato.\n");
+            return 1;
+        }
+        memcpy(&e, buf, sizeof(e));
+        if (e.codice != 0) {
+            printf("ipcfg: '%s' rifiutata (%d): il servizio c'e'?\n", argv[2], e.codice);
+            return 1;
+        }
+        printf("ipcfg: lo stack ora usa '%s'\n", argv[2]);
+        return 0;
+    }
+
     /* Si parte dalla configurazione ATTUALE e si cambiano solo i campi
      * indicati: `ipcfg -g 1.2.3.4` non deve azzerare l'indirizzo solo
      * perché non è stato ripetuto sulla riga di comando. */
@@ -191,6 +210,7 @@ int main(int argc, char **argv)
             printf("uso: ipcfg                     indirizzo e contatori\n");
             printf("     ipcfg -a IND [-m MASC] [-g GW]   cambia la configurazione\n");
             printf("     ipcfg -r                  tabella ARP\n");
+            printf("     ipcfg -l SCHEDA           lo stack su un'altra scheda (rete0, wifi0)\n");
             return 1;
         }
     }

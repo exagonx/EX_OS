@@ -34,7 +34,10 @@
  *
  * Everything said is written to /root/ar5k-conn.txt only - nothing on the
  * console, which the service shares with the person typing - so it can be
- * read over telnet or with `cat` when wanted. The
+ * read over telnet or with `cat` when wanted. ! APPENDED, with the uptime on
+ * every line (21 October 2026): rewritten at each connection, the reason of
+ * a drop vanished a few seconds later, when wifid joined again. Past 512 KB
+ * the file starts over. The
  * password, the PMK and the keys are never printed nor written.
  * ============================================================================= */
 #include "ar5k_hw.h"
@@ -147,7 +150,7 @@ static void dire(const char *fmt, ...)
     va_end(a);
     /* the console only when there is no file: the frame log and the counters
      * made the command line unusable (the user, 16 October 2026) */
-    if (g_reg) { fputs(t, g_reg); fflush(g_reg); }
+    if (g_reg) { fprintf(g_reg, "[%7u.%01u] %s", uptime_ms() / 1000, (uptime_ms() / 100) % 10, t); fflush(g_reg); }
     else if (g_eco) printf("ar5k: %s", t);
 }
 
@@ -860,7 +863,11 @@ int ar5k_conn_collega(volatile void *registri, unsigned int sotto_id, const Wifi
                                dire("%s\n", perche); r = (codice); goto fuori; } while (0)
 
     ar5k_conn_stacca();
-    g_reg = fopen(REGISTRO, "w");
+    {
+        struct stat st;
+
+        g_reg = fopen(REGISTRO, (stat(REGISTRO, &st) == 0 && st.st_size > 524288) ? "w" : "a");
+    }
     k->registri = registri;
     k->sotto = sotto_id;
     for (k->ssid_n = 0; k->ssid_n < 32 && c->ssid[k->ssid_n]; k->ssid_n++) ;

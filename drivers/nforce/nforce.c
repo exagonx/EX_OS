@@ -31,14 +31,21 @@
  *     trasmettere. Il formato e' il terzo dei tre che il chip conosce (16
  *     byte: indirizzo alto, indirizzo basso, VLAN, flag e lunghezza): e'
  *     quello che un MCP73 usa di suo. La meta' alta resta zero: siamo a 32 bit.
- *   - Niente interrupt: si guarda la scheda ogni PERIODO_MS e dopo ogni
- *     richiesta. L'IRQ di questa scheda (7, sulla macchina del referto) e'
- *     condiviso col controller USB, e un driver in ring 3 che si contende un
- *     IRQ alla prima uscita e' un guasto in piu' da distinguere dagli altri.
+ *   - Gli interrupt di ricezione, da 0.010 (21 ottobre 2026). Prima si
+ *     guardava la scheda solo ogni PERIODO_MS: sul portatile MCP77 un frame
+ *     aspettava fino a 20 ms, il ping in LAN faceva 15-38 ms e uno
+ *     scaricamento su una 100 Mbit andava a 107 KB/s. L'IRQ (7 sul portatile)
+ *     e' condiviso con l'USB, ma ehci e ohci tengono spenti i loro interrupt
+ *     e il kernel serve le linee condivise (isr.c). Se irq_bind non riesce si
+ *     resta come prima, a guardare ogni PERIODO_MS; `-q` lo chiede apposta.
+ *     Il giro a tempo resta anche con l'IRQ: un interrupt perso non ferma
+ *     la rete.
  *   - Il PHY non si resetta: si legge com'e'. Il BIOS lo lascia acceso e con
  *     la negoziazione fatta; se il link non c'e' la si fa ripartire, e basta.
  *     Su questi chipset puo' esserci un'unita' di gestione che usa lo stesso
  *     PHY, e resettarglielo sotto e' il modo sicuro di perdere il link.
+ *   - Se il PHY non risponde il MAC va a 100 Mbit full duplex (0.013,
+ *     vedi VEL_SENZA_PHY); `-velocita:` impone un modo in ogni caso.
  *   - Si riceve in modo promiscuo: il filtro lo fa ip.drv, che guarda
  *     l'indirizzo di ogni frame comunque. Un filtro sbagliato qui sarebbe un
  *     «non riceve niente» indistinguibile da dieci altre cause.
@@ -49,7 +56,7 @@
 #include "net_proto.h"
 
 /* +0.001 a ogni modifica: `nforce.drv -version` la stampa. */
-EX_VERSIONE("nforce.drv", "0.009");
+EX_VERSIONE("nforce.drv", "0.013");
 
 #define NV_VENDITORE      0x10DE
 #define NV_MMIO_BYTE      0x1000u
@@ -101,6 +108,15 @@ EX_VERSIONE("nforce.drv", "0.009");
 #define R_ALIMENTAZIONE2  0x600
 
 #define IRQ_TUTTE         0x83FFu
+/* Le cause che accendiamo: errore in ricezione, frame ricevuto, anello pieno
+ * (i bit 0, 1, 2 di forcedeth). La trasmissione non serve: il descrittore
+ * libero si guarda quando si manda il frame dopo. */
+#define IRQ_RICEZIONE     0x0007u
+
+/* Senza attesa: un tentativo solo, se la cassetta e' piena (kernel ipc.h). */
+#ifndef IPC_SENZA_ATTESA
+#define IPC_SENZA_ATTESA  0x80000000u
+#endif
 
 #define MAC_RESET_SU      0x0F3u
 #define MISC1_FORZA       0x3B0F3Cu
@@ -130,6 +146,8 @@ EX_VERSIONE("nforce.drv", "0.009");
 #define VEL_10            1000u
 #define VEL_100           100u
 #define VEL_1000          50u
+/* In Mbit, non un valore di registro: dove va il MAC se il PHY non risponde. */
+#define VEL_SENZA_PHY     100u
 #define SETUP5_BIT31      0x80000000u
 #define SOGLIA_PREDEF     0x1E08000u
 #define SOGLIA_1000       0xFE08000u
@@ -187,10 +205,18 @@ EX_VERSIONE("nforce.drv", "0.009");
  * descrittori la scheda riceveva e non trasmetteva MAI: i descrittori
  * restavano «da mandare» e dhcp non aveva risposta. Dichiarandone 64, sul PC
  * di prova (MCP73), partono. 64 e' anche il minimo che il driver di
- * riferimento accetta; quello di ricezione, a 32, funziona. */
-#define RX_N              32
+ * riferimento accetta; quello di ricezione, a 32, funziona.
+ *
+ * ! MA A 32 PERDE LE RAFFICHE (21 ottobre 2026, misurato sul portatile
+ * MCP77 con raffiche UDP da questo PC): 20 frame di fila arrivano tutti, 40
+ * ne perdono il 6%, e il driver ne smaltisce circa 3600 al secondo. TCP con
+ * la finestra da 63 KB manda raffiche da ~45 segmenti: ogni raffica perdeva
+ * la coda, e lo scaricamento in LAN stava a 160 KB/s fra ritrasmissioni e
+ * attese. 96 posti; i buffer da 1536 (quanto la scheda accetta) perche'
+ * tutto stia nelle 64 pagine di dma_alloc (DMA_PAGINE_MAX). */
+#define RX_N              96
 #define TX_N              64
-#define BUF_LEN           2048
+#define BUF_LEN           1536
 #define RX_CHIEDI         1536        /* quanto diciamo alla scheda di accettare */
 
 #define OFF_RX_ANELLO     0
@@ -200,7 +226,7 @@ EX_VERSIONE("nforce.drv", "0.009");
 #define DMA_BYTE          (OFF_TX_BUF + TX_N * BUF_LEN)
 
 #define PERIODO_MS        20
-#define CODA_N            64
+#define CODA_N            128
 
 /* I modelli: tutti i numeri che la stessa famiglia di chipset usa per la sua
  * Ethernet. Provato (dal referto) c'e' solo 0x07DC; gli altri hanno gli
@@ -240,14 +266,18 @@ static unsigned int   g_phy = 0;            /* l'indirizzo del PHY sul filo MII 
 static int            g_phy_trovato = 0;
 static unsigned int   g_vel = 10;           /* 10, 100, 1000 */
 static int            g_pieno = 0;          /* full duplex */
+static unsigned int   g_imp_vel = 0;        /* -velocita: (0 = come dice il PHY) */
+static int            g_imp_pieno = 0;
 static int            g_link = 0;
-static unsigned int   g_battiti_link = 0;
 
 static NetContatori   g_cont;
 static int            g_verboso = 0;
 static unsigned int   g_per_noi = 0;        /* frame arrivati al nostro indirizzo */
 static int            g_phy_realtek = 0;    /* -r */
 static int            g_senza_reset = 0;    /* -n */
+static int            g_senza_irq = 0;      /* -q */
+static int            g_con_irq = 0;        /* irq_bind riuscita */
+static unsigned int   g_ultimo_link = 0;    /* uptime dell'ultimo sguardo al link */
 
 /* -w e -y: scritture in piu', fatte a scheda pronta e prima di avviarla.
  * Servono a provare un valore da lontano senza rifare il driver. */
@@ -363,10 +393,12 @@ static int phy_cerca(void)
 }
 
 /* Legge dal PHY velocita' e duplex e li dice al MAC. Rende 1 se il link c'e'. */
+static void mac_velocita(unsigned int vel, int pieno);
+
 static int link_aggiorna(void)
 {
     int bmsr, annuncio, compagno, c1000, s1000;
-    unsigned int vel = 10, phyreg, rinvio;
+    unsigned int vel = 10;
     int pieno = 0, link;
 
     if (!g_phy_trovato) return 0;
@@ -391,8 +423,24 @@ static int link_aggiorna(void)
         else                                     { vel = 10;  pieno = 0; }
     }
 
+    if (link && g_imp_vel) { vel = g_imp_vel; pieno = g_imp_pieno; }
+
     if (link == g_link && vel == g_vel && pieno == g_pieno) return link;
     g_link = link; g_vel = vel; g_pieno = pieno;
+
+    mac_velocita(vel, pieno);
+
+    printf("nforce: link %s", link ? "SU" : "GIU'");
+    if (link) printf(", %u Mbit %s duplex", vel, pieno ? "full" : "half");
+    printf("\n");
+    return link;
+}
+
+/* Il MAC alla velocita' e al duplex del link. A parte da link_aggiorna perche'
+ * la usa anche -forza, che la impone senza leggere il PHY. */
+static void mac_velocita(unsigned int vel, int pieno)
+{
+    unsigned int phyreg, rinvio;
 
     phyreg = reg_leggi(R_PHY_INTERF) & ~(PHY_MEZZO | PHY_100 | PHY_1000);
     if (!pieno)           phyreg |= PHY_MEZZO;
@@ -415,11 +463,6 @@ static int link_aggiorna(void)
     spingi();
     reg_scrivi(R_VELOCITA, VEL_FORZA | (vel == 1000 ? VEL_1000 : vel == 100 ? VEL_100 : VEL_10));
     spingi();
-
-    printf("nforce: link %s", link ? "SU" : "GIU'");
-    if (link) printf(", %u Mbit %s duplex", vel, pieno ? "full" : "half");
-    printf("\n");
-    return link;
 }
 
 /* -----------------------------------------------------------------------------
@@ -591,8 +634,22 @@ static int inizializza_scheda(void)
     spingi();
 
     if (phy_cerca() != 0) {
-        printf("nforce: nessun PHY risponde sul filo di gestione: la scheda "
-               "non puo' avere un link\n");
+        /* ! SENZA PHY NON SI RESTA A 10 HALF (21 ottobre 2026). Sul portatile
+         * MCP77 nessuno dei 32 indirizzi risponde (lo stato MII torna con il
+         * bit di errore, con e senza il semaforo dell'unita' di gestione), ma
+         * il PHY c'e' e negozia da se': con lo switch a 100 full e il MAC a
+         * 10 half ogni ACK in uscita era una «collisione». Misurato, 1 MB:
+         * 10 half 11,4 s e +57 errori in ricezione; 100 full 1,5 s e +1.
+         * Con uno switch qualsiasi di oggi l'altro capo e' 100 full; per un
+         * hub o un apparecchio a 10 Mbit c'e' -velocita:. */
+        unsigned int vel = g_imp_vel ? g_imp_vel : VEL_SENZA_PHY;
+        int pieno = g_imp_vel ? g_imp_pieno : 1;
+
+        mac_velocita(vel, pieno);
+        g_vel = vel; g_pieno = pieno;
+        printf("nforce: il PHY non risponde sul filo di gestione: MAC a %u Mbit "
+               "%s duplex%s\n", vel, pieno ? "full" : "half",
+               g_imp_vel ? " (-velocita:)" : "");
     } else {
         int bmsr;
 
@@ -778,20 +835,33 @@ static void servi_scheda(void)
     svuota_rx();
 
     /* Il link si riguarda ogni secondo: un cavo staccato e riattaccato puo'
-     * tornare a un'altra velocita', e il MAC la vuole sapere. */
-    if (++g_battiti_link >= 1000 / PERIODO_MS) {
-        g_battiti_link = 0;
+     * tornare a un'altra velocita', e il MAC la vuole sapere. ! A TEMPO, NON
+     * A GIRI: con gli interrupt i giri sono migliaia al secondo. */
+    if (uptime_ms() - g_ultimo_link >= 1000u) {
+        g_ultimo_link = uptime_ms();
         reg_scrivi(R_MII_STATO, MII_ST_TUTTO);
         link_aggiorna();
     }
 }
 
+/* ! SENZA ATTESA (0.010). La cassetta di ip.drv tiene quattro messaggi; se
+ * e' piena ipc_send normale dorme a passi di 5 ms, e intanto la scheda non e'
+ * servita. Un frame che non entra resta in coda, e la richiesta resta
+ * aperta: parte all'interrupt dopo o al giro a tempo. */
+/* ! UNO PER RICHIESTA, E NON DI PIU' (21 ottobre 2026). Provato a darne due
+ * per volta (0.011): ip.drv a ogni frame rimanda una NET_MSG_RICEVI, le
+ * richieste riempivano la cassetta di questo driver (quattro posti), e
+ * ipc_send di ip.drv, trovandola piena, dorme 5 ms prima di riprovare.
+ * Misurato sul portatile: la scheda riceveva tutto, ma a ip.drv arrivavano
+ * ~550 frame al secondo invece di ~3600. Uno per richiesta tiene in pari le
+ * due cassette. */
 static void consegna(void)
 {
     if (g_lettore_pid == 0 || g_coda_conta == 0) return;
 
-    ipc_send(g_lettore_pid, NET_MSG_FRAME,
-             g_coda[g_coda_testa], g_coda_len[g_coda_testa]);
+    if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
+                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) < 0)
+        return;
     g_coda_testa = (g_coda_testa + 1) % CODA_N;
     g_coda_conta--;
     g_lettore_pid = 0;
@@ -942,6 +1012,51 @@ static void stampa_phy(void)
            (bmcr >= 0 && (bmcr & BMCR_ISOLATO)) ? ", PHY ISOLATO" : "");
 }
 
+/* -m: perche' il PHY non risponde (21 ottobre 2026). Sul portatile MCP77 il
+ * servizio non trova il PHY, il MAC resta a 10 Mbit half duplex e lo switch
+ * negozia per conto suo: errori e 150 KB/s su una 100 Mbit. Su questi
+ * chipset (forcedeth: DEV_HAS_MGMT_UNIT) il PHY e' conteso con l'unita' di
+ * gestione e si parla dopo aver preso il SEMAFORO in TX_CONTROLLO: bit
+ * 8-11 di chi gestisce (liberi = 0), 12-15 dell'ospite (preso = 0xF).
+ * Qui si guarda soltanto: prima senza semaforo, poi con, e lo si rende. */
+#define TXC_SEMA_GEST     0x00000F00u
+#define TXC_SEMA_OSPITE   0x0000F000u
+
+static void prova_mii(void)
+{
+    unsigned int tx = reg_leggi(R_TX_CONTROLLO), t;
+    int preso = 0;
+
+    printf("nforce -m: tx controllo %08x, mii stato %08x, mii controllo %08x, "
+           "mii velocita' %08x, adattatore %08x\n", tx, reg_leggi(R_MII_STATO),
+           reg_leggi(R_MII_CONTROLLO), reg_leggi(R_MII_VELOCITA), reg_leggi(R_ADATTATORE));
+    printf("  1. senza semaforo: ");
+    g_phy_trovato = 0;
+    if (phy_cerca() == 0) printf("PHY all'indirizzo %u\n", g_phy);
+    else printf("nessuno (mii stato ora %08x)\n", reg_leggi(R_MII_STATO));
+
+    for (t = 0; t < 10 && (reg_leggi(R_TX_CONTROLLO) & TXC_SEMA_GEST); t++) usleep(500000);
+    for (t = 0; t < 2 && !preso; t++) {
+        tx = reg_leggi(R_TX_CONTROLLO);
+        reg_scrivi(R_TX_CONTROLLO, tx | TXC_SEMA_OSPITE);
+        tx = reg_leggi(R_TX_CONTROLLO);
+        if ((tx & TXC_SEMA_OSPITE) == TXC_SEMA_OSPITE && !(tx & TXC_SEMA_GEST)) preso = 1;
+        else usleep(5000);
+    }
+    printf("  2. semaforo %s (tx controllo %08x): ", preso ? "preso" : "NON preso", tx);
+    g_phy_trovato = 0;
+    if (phy_cerca() == 0) printf("PHY all'indirizzo %u\n", g_phy);
+    else printf("nessuno (mii stato ora %08x)\n", reg_leggi(R_MII_STATO));
+    if (g_phy_trovato) stampa_phy();
+    /* ! IN DUE SCRITTURE: tolti e rimessi nella stessa (fino a 0.012) i bit
+     * del semaforo restavano a 0xF, e il semaforo restava preso. */
+    if (preso) {
+        reg_scrivi(R_TX_CONTROLLO, reg_leggi(R_TX_CONTROLLO) & ~TXC_SEMA_OSPITE);
+        reg_scrivi(R_TX_CONTROLLO, reg_leggi(R_TX_CONTROLLO) | TXC_OSPITE);
+    }
+    printf("  tx controllo alla fine %08x\n", reg_leggi(R_TX_CONTROLLO));
+}
+
 /* I conteggi del driver che sta girando, se ce n'e' uno: dicono se i frame
  * escono (inviati), se ne arrivano (ricevuti), e dove si perdono. */
 static void stampa_conteggi(void)
@@ -1042,8 +1157,8 @@ static void prova_da_sola(void)
 static void stampa_stato(void)
 {
     printf("nforce: %s (%04x:%04x)\n", g_modello, NV_VENDITORE, g_dispositivo);
-    printf("        %02x:%02x.%u  registri 0x%08x  IRQ %u (non usato: si guarda ogni %d ms)\n",
-           g_bus, g_slot, g_funzione, g_mmio_fis, g_irq, PERIODO_MS);
+    printf("        %02x:%02x.%u  registri 0x%08x  IRQ %u\n",
+           g_bus, g_slot, g_funzione, g_mmio_fis, g_irq);
     printf("        MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
            g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
     printf("        DMA %u byte: virt 0x%x, fisico 0x%x; anelli %d RX, %d TX\n",
@@ -1064,6 +1179,17 @@ static void servi(void)
         if (r < 0) {
             g_cont.battiti++;
             servi_scheda();
+            if (g_con_irq) irq_done(g_irq);
+            consegna();
+            continue;
+        }
+
+        /* Lo stato si azzera in servi_scheda, PRIMA di irq_done: la linea e'
+         * a livello, e riaperta con la causa ancora accesa ripartirebbe. */
+        if (meta.sender_pid == IPC_SENDER_KERNEL && meta.tipo == IPC_TYPE_IRQ_NOTIFY) {
+            g_cont.notifiche_irq++;
+            servi_scheda();
+            irq_done(g_irq);
             consegna();
             continue;
         }
@@ -1090,6 +1216,10 @@ static void servi(void)
 
             e.codice = trasmetti(payload, meta.len);
             ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            /* Chi trasmette (un ACK) di solito aspetta una risposta: guardare
+             * l'anello costa poco, e il frame non aspetta il giro. */
+            svuota_rx();
+            consegna();
             break;
         }
 
@@ -1123,6 +1253,13 @@ static void uso(void)
     printf("                     5 secondi senza mettersi in servizio\n");
     printf("  -r                 prepara il PHY Realtek RTL8211B prima di negoziare\n");
     printf("  -n                 non resetta il MAC\n");
+    printf("  -m                 perche' il PHY non risponde: lo cerca senza e con\n");
+    printf("                     il semaforo dell'unita' di gestione, e lo rende\n");
+    printf("  -forza:100f        impone al MAC del servizio 10/100/1000, f(ull)/h(alf)\n");
+    printf("  -per:N             con -forza: dopo N secondi rimette com'era\n");
+    printf("  -velocita:100f     impone al MAC 10/100/1000, f(ull)/h(alf), anche\n");
+    printf("                     contro il PHY; senza PHY si va a 100 full\n");
+    printf("  -q                 niente interrupt: guarda la scheda ogni %d ms\n", PERIODO_MS);
     printf("  -w REG=VAL         scrive un registro (esadecimali) prima di avviare\n");
     printf("  -y REG=VAL         scrive un registro del PHY (esadecimali)\n");
 }
@@ -1130,6 +1267,8 @@ static void uso(void)
 int main(int argc, char **argv)
 {
     int sonda = 0, registri = 0, prova = 0, solo_link = 0, i, rc;
+    unsigned int forza_vel = 0, forza_sec = 0;
+    int forza_pieno = 0;
     DmaZona z;
     MmioZona m;
 
@@ -1141,6 +1280,20 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "-l") == 0) solo_link = 1;
         else if (strcmp(argv[i], "-r") == 0) g_phy_realtek = 1;
         else if (strcmp(argv[i], "-n") == 0) g_senza_reset = 1;
+        else if (strcmp(argv[i], "-q") == 0) g_senza_irq = 1;
+        else if (strcmp(argv[i], "-m") == 0) registri = 2;
+        else if (strncmp(argv[i], "-forza:", 7) == 0) {
+            forza_vel = (unsigned int)atoi(argv[i] + 7);
+            forza_pieno = strchr(argv[i] + 7, 'f') != NULL;
+            if (forza_vel != 10 && forza_vel != 100 && forza_vel != 1000) { uso(); return 2; }
+            registri = 3;
+        }
+        else if (strncmp(argv[i], "-velocita:", 10) == 0) {
+            g_imp_vel   = (unsigned int)atoi(argv[i] + 10);
+            g_imp_pieno = strchr(argv[i] + 10, 'f') != NULL;
+            if (g_imp_vel != 10 && g_imp_vel != 100 && g_imp_vel != 1000) { uso(); return 2; }
+        }
+        else if (strncmp(argv[i], "-per:", 5) == 0) forza_sec = (unsigned int)atoi(argv[i] + 5);
         else if ((strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "-y") == 0) && i + 1 < argc) {
             int   phy = argv[i][1] == 'y';
             char *u = strchr(argv[i + 1], '=');
@@ -1192,6 +1345,33 @@ int main(int argc, char **argv)
         return rc;
     }
 
+    if (registri == 2) {
+        prova_mii();
+        return 0;
+    }
+    /* -forza: il MAC del servizio che gira, a una velocita' scelta a mano.
+     * Per provare quale combacia col link quando il PHY non si legge. */
+    /* Con -per:N si rimette tutto com'era dopo N secondi: se la velocita'
+     * scelta non e' quella del link, la rete torna da sola. */
+    if (registri == 3) {
+        static const unsigned int quali[] = { R_PHY_INTERF, R_TX_RINVIO, R_SLOT,
+                                              R_TX_SOGLIA, R_MISC1, R_VELOCITA };
+        unsigned int prima[6], k;
+
+        for (k = 0; k < 6; k++) prima[k] = reg_leggi(quali[k]);
+        printf("nforce: prima: velocita' %08x misc1 %08x phy %08x\n",
+               prima[5], prima[4], prima[0]);
+        mac_velocita(forza_vel, forza_pieno);
+        printf("nforce: dopo:  velocita' %08x misc1 %08x phy %08x (%u Mbit %s)\n",
+               reg_leggi(R_VELOCITA), reg_leggi(R_MISC1), reg_leggi(R_PHY_INTERF),
+               forza_vel, forza_pieno ? "full" : "half");
+        if (forza_sec) {
+            usleep(forza_sec * 1000000u);
+            for (k = 0; k < 6; k++) { reg_scrivi(quali[k], prima[k]); spingi(); }
+            printf("nforce: dopo %u s, rimesso com'era\n", forza_sec);
+        }
+        return 0;
+    }
     if (registri) {
         printf("nforce: %s, registri a 0x%08x, cosi' come sono adesso\n",
                g_modello, g_mmio_fis);
@@ -1242,6 +1422,21 @@ int main(int argc, char **argv)
         return 1;
     }
     printf("nforce: servizio '%s' attivo\n", NET_SERVIZIO_0);
+
+    /* Gli interrupt per ultimi, a servizio registrato: una notifica che
+     * arrivasse prima troverebbe un driver che non la legge. */
+    if (!g_senza_irq && g_irq > 0 && g_irq < 16) {
+        rc = irq_bind(g_irq);
+        if (rc == 0) {
+            g_con_irq = 1;
+            reg_scrivi(R_IRQ_STATO, IRQ_TUTTE);
+            reg_scrivi(R_IRQ_MASCHERA, IRQ_RICEZIONE);
+            printf("nforce: interrupt sull'IRQ %u\n", g_irq);
+        } else {
+            printf("nforce: irq_bind(%u) fallita (%d): guardo ogni %d ms\n",
+                   g_irq, rc, PERIODO_MS);
+        }
+    }
 
     servi();
     return 0;

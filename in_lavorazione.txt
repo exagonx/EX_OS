@@ -7973,6 +7973,20 @@ tools/netinst/velocita tolto da netinst.
   L'utente: «qua si stanno prendendo appunti da mettere in coda tra le cose
   da fare se e' possibile farle». Nessuno di questi e' iniziato.
 
+  !!! IMPORTANTE (21/10/2026, l'utente) - NESSUN NOME DELL'ASSISTENTE IA,
+  DA NESSUNA PARTE: ne' il nome dell'assistente, ne' quello del suo
+  strumento da terminale, ne' quello dell'azienda, ne' varianti (attaccate,
+  con trattini, maiuscole). Vale per sorgenti, commenti, script, documenti,
+  README, questo file, nomi di file e cartelle, metadati, messaggio-commit.txt
+  (niente righe di attribuzione «Co-Authored-By»). Un filtro blocca i
+  caricamenti se le legge: gitupdate.sh (PAROLE, «MI FERMO: nomi che non
+  devono andare sul repository»). Le parole nel filtro sono spezzate apposta.
+
+  !!! NEL DUBBIO SI CHIEDE (21/10/2026, l'utente): quando c'e' un dubbio,
+  spiegare la problematica e chiedere all'utente come operare, invece di
+  proporre un tentativo dopo l'altro. Caso: i .gz decompressi da Cloudflare;
+  la soluzione (rinominare sul server) l'ha data l'utente.
+
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):
      a. FINESTRA DI INVIO: TCP_BUF 4096 = al massimo 4 KB in volo in uscita;
@@ -8041,10 +8055,75 @@ tools/netinst/velocita tolto da netinst.
       -ritenta (carica il .htaccess con RemoveEncoding .gz) e verificare
       che l'archivio torni di 12740505 byte; se Altervista ignora la regola,
       rinominare in .tgz.bin. Poi controllare pacchetti/nasm.tar.gz a 32 bit.
-  NIENTE COMMESSO dal 55f228c0: netupdate 0.032, tar 0.004, archivi 0.008,
-  extar, date 0.002, mknetinstsrc.sh, prova_sorgenti.sh, prova_ntp.sh/.py,
-  Makefile (netinst-src, date con dns.c), README, installa.html. Va scritto
-  messaggio-commit.txt e lanciato ./gitupdate.sh (lo fa l'utente).
+      (21/10 sera: RemoveEncoding ignorato da Altervista; risolto con i nomi
+      .tar_gz sul server, netupdate 0.033 li rinomina .tar.gz in locale.)
+  11. MESSAGGI DI ASSENZA ALL'AVVIO (l'utente, 21/10): «massa: il supporto
+      non diventa pronto» (drivers/usb/usb_massa.c:243) e «ehci: aspetto una
+      chiavetta.» (drivers/ehci/ehci.c:940) coprono la schermata di login.
+      Dire che una cosa NON c'e' solo se richiesto o con il verbose (-v);
+      vale per tutti i messaggi «manca/non c'e'» dei driver avviati da
+      avvio.sh con -avvio.
+  12. Comando `kill` (proposto, da confermare): la libc ha kill(), la shell
+      no; servirebbe a far ripartire un driver (nforce, ar5k) senza
+      riavviare la macchina. Attenzione al bus master: fermare la scheda
+      prima (PCI_MSG_DISABILITA), poi ipcfg -l rete0 per ricollegare ip.drv.
+  COMMESSO in 9d873db1: netupdate 0.032, tar 0.004, archivi 0.008, extar,
+  date 0.002, mknetinstsrc.sh, prova_sorgenti.sh, prova_ntp.sh/.py,
+  Makefile, README, installa.html.
+  13. @NFORCE-DUPLEX (21/10 notte) - FATTO nforce 0.013, da provare dopo
+      l'aggiornamento. Sul portatile MCP77 il PHY non risponde su nessuno
+      dei 32 indirizzi MII (errore, con e senza semaforo); il MAC restava a
+      10 half contro uno switch a 100 full. Misurato con -forza (1 MB):
+      10 half 11,4 s, +57 errori rx; 100 full 1,5 s, +1. Ora senza PHY il
+      MAC va a 100 full; -velocita:10h|10f|100h|100f lo impone (anche con
+      il PHY). Scelta dell'utente («opzione b, piu' avanti si vedra'»).
+      Corretto anche -m, che lasciava preso il semaforo.
+      RESTA: a. perche' il PHY non risponde: il nostro accesso MII e' uguale
+      a forcedeth di Linux. Prova decisiva: Linux live sul portatile,
+      dmesg | grep forcedeth, ethtool eth0 / ethtool -d eth0.
+      b. anche a 100 full il PC ritrasmette ~20% dei segmenti e in ip.drv
+      salgono «TCP fuori sequenza» e «scartati»: perdite dentro il
+      portatile. c. RTT ~10 ms in LAN = un battito dello scheduler fra
+      frame e ACK. d. correzione automatica (scendere a 100h/10h se gli
+      errori rx salgono a 100 full): proposta, non fatta.
+  14. SCHEDA GRAFICA: e' la prossima cosa (l'utente, 21/10 notte). Sul
+      portatile: risoluzione piu' alta e modi 16:9. Primo passo:
+      svga.drv -lista sul portatile (i modi VBE che il BIOS NVIDIA offre).
+  15. EXILLA SUL PORTATILE (l'utente, 21/10 notte):
+      a. la finestra di caricamento (attesa) non si chiude quando Firefox
+         ha aperto la sua finestra. attesa confronta il pid della finestra
+         con quello del figlio (ha_finestra): da vedere che pid ha la
+         finestra di Firefox (un filo con un pid suo?).
+      b. lento: e' il PC o si puo' migliorare? Da misurare: il disco (PIO
+         1,5-5 MB/s fino a 0.265; con 0.266 c'e' l'AHCI, verificare che lo
+         usi), la memoria libera.
+      c. «Firefox usa il file di paging se la RAM non basta?» Lo scambio
+         c'e' (kernel/include/swap.h) ma e' su PARTIZIONE (mkswap + riga
+         swap in kernel.cfg), non un file; mai provato su una macchina
+         vera ne' a 64 bit. Verificare se il portatile ha la partizione.
+  16. FDISK A SCHERMO (l'utente, 21/10 notte): creazione e gestione delle
+      partizioni in modo grafico (testo a schermo intero), opzioni scelte
+      con i tasti freccia. Nella scelta del tipo un ELENCO di tutti i tipi
+      che servono (oggi si propone solo 0x0C FAT32 e il resto va scritto in
+      esadecimale; nome_tipo() conosce gia' 0x82 «swap Linux» e altri, ma
+      l'utente non lo vede): almeno 0x82 swap, 0x83 Linux (ext2/3/4),
+      0x0C/0x0B FAT32, 0x0E/0x06/0x04/0x01 FAT16/12, 0x07 NTFS/exFAT,
+      0x05/0x0F estesa, 0xEF EFI. Tenere la riga di comando per gli script.
+      FATTO fdisk 0.004 (l'utente: «procedi, e' indispensabile»): sulla
+      console la tabella a schermo intero (partizioni e spazi liberi,
+      su/giu' la riga, sinistra/destra l'azione: Nuova Cancella Tipo Avvio
+      Azzera Scrivi Esci), il tipo da un elenco di 10 con l'uso accanto +
+      «Altro» in esadecimale; conferme che partono dal No. Via telnet (pty),
+      con -t o senza 'kbd': la sessione a righe, che ora stampa lo stesso
+      elenco dei tipi. Provato in QEMU a 32 bit (disco vuoto da 200 MB:
+      Nuova, tutto lo spazio, 82, Scrivi, Si' -> sfdisk dell'host: type=82,
+      2048+407552). Floppy: 8192 byte liberi. Compila a 64 bit.
+  17. ATTESA CHE NON SI CHIUDE (l'utente: «da fare subito»): attesa 0.003
+      riconosce la finestra anche dal GRUPPO del pid (proc_gruppo): il
+      server registra il pid del filo che crea la finestra. Ipotesi NON
+      verificata (nsWindow crea la finestra dal filo principale, in teoria):
+      per questo attesa scrive in /tmp/attesa.txt cosa vede (finestre, pid,
+      gruppo, titolo) e quando si chiude. Leggerlo dopo la prima prova.
 
 @DISCO-VELOCE (21/10/2026) - kernel 0.264, ext4.mod 0.002
   L'utente: «riprendi il progetto ext3 ext4 con modulo a parte per la

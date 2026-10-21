@@ -17,7 +17,7 @@
 #       versione.txt     versione, commit, data, l'impronta degli altri due
 #       catalogo.txt     un pacchetto solo: [sourcecode]
 #       elenco.txt       una riga: l'archivio, byte, impronta
-#       file/src/exos-<versione>.tar.gz     (o .p000, .p001... sopra i 16 MB)
+#       file/src/exos-<versione>.tar_gz     (o .p000, .p001... sopra i 16 MB)
 #
 # Su EX-OS:  netupdate -install:sourcecode   ->  /src/exos-<versione>/
 #
@@ -76,14 +76,22 @@ ALBERO=$(git stash create 2>/dev/null || true)
 if [ -n "$ALBERO" ]; then MODIFICHE=si; else MODIFICHE=no; ALBERO=$TESTA; fi
 
 NOME="exos-$VERSIONE"
-PERC="src/$NOME.tar.gz"           # sul disco di EX-OS, come in elenco.txt
+# ! SUL SERVER .tar_gz, NON .tar.gz (21 ottobre 2026). Altervista serve un
+# .gz con Content-Encoding: gzip («compresso per il viaggio»), e Cloudflare a
+# chi non chiede gzip lo manda DECOMPRESSO: 12,7 MB diventavano il tar aperto
+# da 35 MB, e l'impronta non tornava mai. RemoveEncoding nel .htaccess non
+# basta (provato: ignorato). Con «tar_gz» Apache non vede nessuna estensione
+# di codifica e i byte arrivano come sono. netupdate lo rinomina .tar.gz sul
+# disco; tar lo riconosce dal contenuto, quindi anche un netupdate 0.032 lo
+# apre.
+PERC="src/$NOME.tar_gz"           # sul server, come in elenco.txt
 
 echo "=== $FUORI: i sorgenti di EX-OS $VERSIONE ==="
 
 rm -rf "$FUORI"
 mkdir -p "$FUORI/file/src"
 
-git archive --format=tar.gz --prefix="$NOME/" -o "$FUORI/file/$PERC" "$ALBERO"
+git archive --format=tar.gz --prefix="$NOME/" "$ALBERO" > "$FUORI/file/$PERC"
 
 BYTE=$(stat -c %s "$FUORI/file/$PERC")
 IMPR=$(sha256sum "$FUORI/file/$PERC" | cut -d' ' -f1)

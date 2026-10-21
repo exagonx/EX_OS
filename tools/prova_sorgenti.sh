@@ -45,7 +45,7 @@ NOME="exos-$VER"
 N_PEZZI=$(ls "$D/srv-b/netinst_src/file/src/" | grep -c '\.p[0-9][0-9][0-9]$')
 [ "$N_PEZZI" -ge 2 ] && si "l'albero B e' a pezzi: $N_PEZZI" || no "l'albero B non e' a pezzi"
 mkdir -p "$D/atteso"
-tar -xzf "$D/srv-a/netinst_src/file/src/$NOME.tar.gz" -C "$D/atteso"
+tar -xzf "$D/srv-a/netinst_src/file/src/$NOME.tar_gz" -C "$D/atteso"
 
 # --- the disk ------------------------------------------------------------------
 echo "=== 1. disco installato dal CD ($ARCH) ==="

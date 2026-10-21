@@ -41,7 +41,7 @@
 
 #include "kernel.h"
 #include "paging.h"
-#include "sched.h"      /* g_ticks */
+#include "tsc.h"
 #include "ahci.h"
 
 /* Due pagine: 0x100 di registri generali piu' 0x80 per porta, fino a 32. */
@@ -143,15 +143,40 @@ static void pci32_scrivi(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t off,
     port_outl(0xCFC, v);
 }
 
+/* -----------------------------------------------------------------------------
+ * ! IL TEMPO NON SI CONTA CON g_ticks (21 ottobre 2026). Il passaggio
+ * all'AHCI arriva da una chiamata di sistema, che entra con gli interrupt
+ * spenti: il timer non avanza, e un'attesa la cui condizione non arriva mai
+ * (il TFD che resta occupato dopo il reset del link, visto sul portatile
+ * MCP77 il 14 ottobre) non finiva MAI - la macchina ferma. Il cronometro usa
+ * il TSC; senza, conta letture della porta 0x80 (~1 us l'una), come le
+ * attese di ata.c.
+ * --------------------------------------------------------------------------- */
+typedef struct { uint64_t t0; uint32_t giri; } Cronometro;
+
+static void crono_via(Cronometro *c)
+{
+    c->giri = 0;
+    c->t0   = tsc_c_e() ? tsc_leggi() : 0;
+}
+
+static uint32_t crono_ms(Cronometro *c)
+{
+    if (tsc_c_e()) return tsc_us(tsc_leggi() - c->t0) / 1000u;
+    (void)port_inb(0x80);
+    return ++c->giri / 1000u;
+}
+
 /* Aspetta che (registro & maschera) valga `atteso`. 0 se e' successo. */
 static int aspetta(volatile uint8_t *b, uint32_t off, uint32_t maschera,
                    uint32_t atteso, uint32_t ms)
 {
-    uint32_t fine = g_ticks + (ms + 9u) / 10u + 1u;
+    Cronometro c;
 
+    crono_via(&c);
     for (;;) {
         if ((rl(b, off) & maschera) == atteso) return 0;
-        if (g_ticks >= fine) return -1;
+        if (crono_ms(&c) > ms) return -1;
         __asm__ volatile ("pause");
     }
 }
@@ -206,8 +231,9 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
     wl(p, P_CI, 1u);
 
     {
-        uint32_t fine = g_ticks + (TMO_CMD_MS + 9u) / 10u + 1u;
+        Cronometro c;
 
+        crono_via(&c);
         for (;;) {
             if (rl(p, P_IS) & IS_TFES) {
                 klog(LOG_ERROR, "AHCI: il disco rifiuta il comando %02x a lba=%u "
@@ -222,7 +248,7 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
                 return -1;
             }
             if (!(rl(p, P_CI) & 1u)) break;
-            if (g_ticks >= fine) {
+            if (crono_ms(&c) > TMO_CMD_MS) {
                 klog(LOG_ERROR, "AHCI: comando %02x a lba=%u senza risposta dopo %u ms "
                      "(CI %08x, IS %08x, TFD %08x)", cmd, (uint32_t)lba, TMO_CMD_MS,
                      rl(p, P_CI), rl(p, P_IS), rl(p, P_TFD));
@@ -272,11 +298,11 @@ static int porta_prepara(AhciDisco *d, volatile uint8_t *p)
      * da adesso. Si rifa' il reset del link e si aspetta quel messaggio. */
     if (FORZA_RESET_LINK || (ssts & 0x0Fu) != 3u ||
         rl(p, P_SIG) == 0xFFFFFFFFu || (rl(p, P_TFD) & 0x88u)) {
-        uint32_t fine;
+        Cronometro c;
 
         wl(p, P_SCTL, (rl(p, P_SCTL) & ~0x0Fu) | 1u);       /* DET = 1: reset */
-        fine = g_ticks + 2u;
-        while (g_ticks < fine) __asm__ volatile ("pause");  /* almeno 1 ms */
+        crono_via(&c);
+        while (crono_ms(&c) < 2u) __asm__ volatile ("pause");  /* almeno 1 ms */
         wl(p, P_SCTL, rl(p, P_SCTL) & ~0x0Fu);              /* DET = 0: via */
 
         /* Il link torna su: un disco che deve anche rimettersi a girare ci
@@ -643,8 +669,8 @@ int ahci_rw(int k, uint64_t lba, uint32_t n, void *buf, int scrivi)
         if (!d->lba48 && ora > 255) { ora = 255; byte = ora * 512u; }
 
         /* Un comando per volta: il buffer di rimbalzo e lo slot 0 sono uno
-         * solo. Gli interrupt restano accesi, come nel driver IDE: le
-         * scadenze si misurano con g_ticks, che cammina col timer. */
+         * solo. Le scadenze le misura il cronometro (TSC), non g_ticks:
+         * vedi crono_ms. */
         if (scrivi) for (i = 0; i < byte; i++) g_rimbalzo[i] = p[i];
         r = comando(d, cmd, lba, ora, byte, scrivi);
         if (r == 0 && !scrivi) for (i = 0; i < byte; i++) p[i] = g_rimbalzo[i];
