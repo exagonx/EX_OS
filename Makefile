@@ -396,7 +396,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := polltest wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := polltest modulo wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
@@ -1123,6 +1123,27 @@ $(POLLTEST_BIN): $(POLLTEST_SRC) $(POLLTEST_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(
 
 .PHONY: polltest
 polltest: dirs $(POLLTEST_BIN)
+
+# --- /bin/modulo: i moduli del kernel (0.263) ---------------------------------
+#
+# Elenca i moduli caricati e ne carica uno (SYS_MODULO). Solo CD: il kernel
+# carica /dev/ext4.mod da solo all'avvio, e per installare non serve.
+MODULO_SRC := bin/modulo/modulo.c
+MODULO_BIN := $(BUILD_BIN_CD)/modulo
+MODULO_LD  := bin/modulo/modulo.ld
+
+$(MODULO_BIN): $(MODULO_SRC) $(MODULO_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/modulo ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(MODULO_SRC) -o $(BUILD_OBJ)/modulo_main.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/modulo_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MODULO_LD) \
+	    $(BUILD_OBJ)/modulo_start.o $(BUILD_OBJ)/modulo_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] modulo compilato: $@"
+
+.PHONY: modulo
+modulo: dirs $(MODULO_BIN)
 
 # --- /bin/toolinst: installa gli strumenti del CD tools ----------------------
 #
@@ -5319,7 +5340,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # costruire apposta in quel momento, si costruirebbe da un albero diverso da
 # quello che ha prodotto il floppy che non parte — cioe' si proverebbe
 # un'altra cosa. Costa una copia di 1.4 MB e due mcopy.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-ascii verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy diagnostic floppy-verboso
+all: dirs stage1 stage2 kernel moduli $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-ascii verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy diagnostic floppy-verboso
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -5453,6 +5474,49 @@ $(STAGE2_BIN): $(STAGE2_ASM_SRC) $(STAGE2_SVGA_SEGNO) $(STAGE2_RD_SEGNO) $(SEGNO
 	@SIZE=$$(stat -c%s $@); echo "[..] Stage 2: $$SIZE byte"
 
 # =============================================================================
+# I MODULI DEL KERNEL (kernel 0.263) — /dev/ext4.mod
+#
+# Codice che gira DENTRO il kernel ma sta in un file: kernel/loader/modulo.c
+# lo carica all'avvio, subito dopo la radice. Il primo e' la scrittura di
+# ext2/ext3/ext4 (kernel/moduli/ext4/). Un modulo e' un oggetto condiviso
+# ELF con sole rilocazioni RELATIVE (-fPIC, -Bsymbolic, --no-undefined: un
+# nome del kernel chiamato direttamente fa fallire QUI il collegamento, non
+# l'avvio). tools/modulo-coda.py controlla le rilocazioni e aggiunge la coda
+# con la versione del kernel e lo SHA-256: il modulo vale solo per il kernel
+# costruito con lui, e i due si rifanno insieme.
+#
+# -z max-page-size=16 e -z noseparate-code: il caricatore mette il modulo in
+# memoria sua, di seguito; i segmenti allineati alla pagina facevano 22 KB
+# invece di 15, cioe' 7 KB del floppy in zeri.
+# =============================================================================
+BUILD_MODULI  := $(BUILD_DIR)/moduli
+MOD_EXT4_SRC  := kernel/moduli/ext4/ext4.c kernel/moduli/ext4/scrittura.c
+MOD_EXT4_DEP  := $(MOD_EXT4_SRC) kernel/moduli/ext4/ext4.h kernel/include/ext2_interno.h \
+                 kernel/include/ext2.h kernel/include/modulo.h kernel/include/kernel.h \
+                 kernel/include/version.h tools/modulo-coda.py
+MOD_EXT4_OUT  := $(BUILD_MODULI)/ext4.mod
+MOD_CFLAGS    := -ffreestanding -fno-builtin -fno-stack-protector -fPIC -fvisibility=hidden \
+                 -fno-tree-loop-distribute-patterns -fno-asynchronous-unwind-tables \
+                 -Wall -Wextra -O2 -std=c11 -I kernel/include -I lib/include
+MOD_LDFLAGS   := -shared -Bsymbolic --no-undefined -z text -z norelro -z noseparate-code \
+                 -z max-page-size=16 -z noexecstack --hash-style=sysv --build-id=none -s \
+                 -e modulo_ingresso -nostdlib
+MOD_VERSIONE   = $(shell sed -n 's/^#define EXOS_VERSION *"\(.*\)".*/\1/p' kernel/include/version.h)
+
+$(MOD_EXT4_OUT): $(MOD_EXT4_DEP) $(SEGNO_FLAG)
+	@echo "=== Modulo del kernel: ext4.mod (32 bit) ==="
+	@mkdir -p $(BUILD_MODULI)/ext4
+	@for f in $(MOD_EXT4_SRC); do \
+	    $(CC) -m32 $(CPU_BASE) $(MOD_CFLAGS) -c $$f -o $(BUILD_MODULI)/ext4/$$(basename $$f .c).o || exit 1; \
+	done
+	$(LD) -m $(CROSS_LD_EMU) $(MOD_LDFLAGS) $(BUILD_MODULI)/ext4/*.o -o $(BUILD_MODULI)/ext4/ext4.so
+	@strip -R .comment $(BUILD_MODULI)/ext4/ext4.so
+	@python3 tools/modulo-coda.py $(BUILD_MODULI)/ext4/ext4.so $@ $(MOD_VERSIONE) i386
+
+.PHONY: moduli
+moduli: dirs $(MOD_EXT4_OUT)
+
+# =============================================================================
 # FASE 1b — KERNEL BASE
 # =============================================================================
 
@@ -5550,6 +5614,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/loader/lib.c \
                   $(KERNEL_DIR)/loader/dynlink.c \
                   $(KERNEL_DIR)/loader/drvmgr.c \
+                  $(KERNEL_DIR)/loader/modulo.c \
                   $(KERNEL_DIR)/arch/x86/power.c \
                   $(KERNEL_DIR)/arch/x86/acpi.c \
                   $(KERNEL_DIR)/version.c \
@@ -5649,6 +5714,15 @@ kernel64:
 	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -z noexecstack -T $(K64_DIR)/kernel64.ld \
 	    $(K64I_OBJ) -o $(K64_OUT)/kernel-intero.elf
 	objcopy -O binary $(K64_OUT)/kernel-intero.elf $(K64_OUT)/kernel-intero.bin
+	@# Il modulo che scrive ext2/3/4, per QUESTO kernel (vedi «I MODULI DEL KERNEL»).
+	@mkdir -p $(K64_OUT)/moduli/ext4
+	@for f in $(MOD_EXT4_SRC); do \
+	    gcc -m64 -mno-red-zone -mgeneral-regs-only -mcmodel=small $(MOD_CFLAGS) \
+	        -c $$f -o $(K64_OUT)/moduli/ext4/$$(basename $$f .c).o || exit 1; \
+	done
+	ld -m elf_x86_64 $(MOD_LDFLAGS) $(K64_OUT)/moduli/ext4/*.o -o $(K64_OUT)/moduli/ext4/ext4.so
+	@strip -R .comment $(K64_OUT)/moduli/ext4/ext4.so
+	@python3 tools/modulo-coda.py $(K64_OUT)/moduli/ext4/ext4.so $(K64_OUT)/moduli/ext4.mod $(MOD_VERSIONE) x86_64
 	@# Il primo programma a 64 bit (tools/prove64/primo.c): senza libc, che a
 	@# 64 bit non c'e' ancora. Sul dischetto di prova fa da /bin/sh.
 	@mkdir -p $(K64_OUT)/prove
@@ -5855,7 +5929,7 @@ fixsys:
 	@echo "     stage2 appena costruito:  $$(md5sum $(STAGE2_BIN) | cut -c1-32)"
 	@echo "     (se i due numeri non combaciano, il volume in RAM non c'e')"
 
-$(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) \
+$(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(MOD_EXT4_OUT) \
                $(PROGRAMMI_FLOPPY_OUT) \
                boot/kernel.cfg boot/kernel.txt \
                $(TOOLS_DIR)/mkfloppy.sh \
@@ -7832,7 +7906,7 @@ BINARI_SOLO_CD := $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) 
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
-                  $(SCARICA_BIN) $(SENDERROR_BIN) $(NETSPEED_BIN) $(POLLTEST_BIN) \
+                  $(SCARICA_BIN) $(SENDERROR_BIN) $(NETSPEED_BIN) $(POLLTEST_BIN) $(MODULO_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) $(SHMTEST_BIN) \
@@ -7916,7 +7990,7 @@ verifica-dipendenze-cd:
 	fi; \
 	echo "[OK] ogni programma del CD e' fra le dipendenze dell'ISO"
 
-$(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
+$(ISOX_IMG): Makefile $(FLOPPY_IMG) $(MOD_EXT4_OUT) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_DOC) \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_TIPI) $(EXWIN_ICONE) $(EXWIN_SUONI) \
@@ -7959,6 +8033,9 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@cp $(BUILD_BIN_CD)/* $(ISOX_ROOT)/bin/ 2>/dev/null || true
 	@cp $(BUILD_LIB)/* $(ISOX_ROOT)/lib/ 2>/dev/null || true
 	@cp $(BUILD_DRIVERS)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
+	@# il modulo che scrive ext2/3/4: senza, la radice di un disco installato
+	@# da qui partirebbe in sola lettura (kernel 0.263)
+	@cp $(MOD_EXT4_OUT) $(ISOX_ROOT)/dev/
 	@# I driver che sul floppy non ci stanno (o non ci servono): il CD è
 	@# la loro unica destinazione, vedi BUILD_DRIVERS_CD in testa.
 	@cp $(BUILD_DRIVERS_CD)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true

@@ -110,8 +110,24 @@ static int          g_n = 0;
  * buttato (vedi la terza regola in testa al file). `letti` riceve i byte
  * effettivamente CONSEGNATI al chiamante, mai piu' di `max`.
  * ============================================================================= */
+static int atapi_comando_nl(int indice, const uint8_t *cdb, void *buf,
+                            uint32_t max, uint32_t *letti, uint32_t timeout_ms);
+
+/* Every packet command goes through here: the drive shares its channel's
+ * registers with the disks, under the disk lock (ata.h, 0.264). */
 static int atapi_comando(int indice, const uint8_t *cdb, void *buf,
                          uint32_t max, uint32_t *letti, uint32_t timeout_ms)
+{
+    int r;
+
+    ata_prendi();
+    r = atapi_comando_nl(indice, cdb, buf, max, letti, timeout_ms);
+    ata_lascia();
+    return r;
+}
+
+static int atapi_comando_nl(int indice, const uint8_t *cdb, void *buf,
+                            uint32_t max, uint32_t *letti, uint32_t timeout_ms)
 {
     const AtaDevice *d = ata_get_device(indice);
     uint8_t         *p = (uint8_t *)buf;

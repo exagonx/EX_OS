@@ -3247,6 +3247,15 @@ typedef struct {
 } VideoModo;
 int     video_modi(VideoModo *v, int max);
 
+/* modulo_kernel — kernel modules (kernel 0.263, SYS_MODULO 28).
+ *   modulo_kernel(0, (uintptr_t)buf, size)   the loaded modules' names, one
+ *                                            per line; returns how many
+ *   modulo_kernel(1, (uintptr_t)path, forza) loads one (root only); forza = 1
+ *                                            skips version, arch and SHA-256
+ * -1 with errno: EBADMSG (not built for this kernel, or damaged), EEXIST
+ * (already loaded), ENOEXEC (not a module, or it refused), EPERM, ENOENT. */
+int     modulo_kernel(int op, uintptr_t a, uintptr_t b);
+
 /* =============================================================================
  * log_seriale — una riga che arriva anche se nessuno guarda la tua console
  *

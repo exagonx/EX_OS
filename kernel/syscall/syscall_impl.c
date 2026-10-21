@@ -43,6 +43,7 @@ extern void vga_putchar(char c);
 #include "blkr3.h"
 #include "fat.h"
 #include "vfs.h"
+#include "modulo.h"
 #include "bootinst.h"
 #include "rtc.h"       /* RtcTime, rtc_read: data e ora (SYS_TIME) */
 #include "vga.h"       /* VGA_N_CONSOLE e le console virtuali */
@@ -5530,6 +5531,43 @@ int32_t sys_video_modi(InterruptFrame *frame)
         vga_modi_copia(u, max);
     }
     return (int32_t)n;
+}
+
+/* =============================================================================
+ * SYS_MODULO (28) — list or load kernel modules. See syscall.h and modulo.h.
+ * ========================================================================== */
+int32_t sys_modulo(InterruptFrame *frame)
+{
+    uint32_t op   = FR_A1(frame);
+    Process *self = proc_get_current();
+
+    if (op == 0) {
+        char    *u   = (char *)FR_A2(frame);
+        uint32_t max = FR_A3(frame);
+        char     buf[MODULO_MAX * (MODULO_NOME_MAX + 32) + 1];
+        uint32_t i;
+        int      n;
+
+        if (max > sizeof(buf)) max = sizeof(buf);
+        if (max == 0) return ERR(EINVAL);
+        if (!syscall_verify_ptr(u, max)) return ERR(EFAULT);
+        n = modulo_elenco(buf, max);
+        if (n < 0) return n;
+        for (i = 0; i < max; i++) { u[i] = buf[i]; if (buf[i] == '\0') break; }
+        return n;
+    }
+
+    if (op == 1) {
+        const char *path = (const char *)FR_A2(frame);
+        char        abs[PERCORSO_MAX];
+
+        if (self == NULL || self->uid != 0) return ERR(EPERM);
+        if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+        if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+        return modulo_carica(abs, FR_A3(frame) != 0);
+    }
+
+    return ERR(EINVAL);
 }
 
 /* =============================================================================

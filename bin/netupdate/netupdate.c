@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.030");
+EX_VERSIONE("netupdate", "0.031");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -1515,22 +1515,38 @@ static void crea_strada(const char *percorso)
  * vale per l'ultima riga letta: scarica_e_metti la guarda subito dopo. */
 static long g_riga_pezzo = 0;
 
+/* "essenziale" in a later column (netupdate 0.031, kernel 0.263): a system
+ * component the machine cannot do without - the kernel, its modules, libc,
+ * sh... A missing one is not "never installed by choice": it travels with
+ * the changed files, -yes included. Older netupdates ignore the column. */
+static int g_riga_essenziale = 0;
+
 static int riga_elenco(char *riga, char **perc, long *byte,
                        char **impronta, char **pac)
 {
     char *t, *q;
 
     g_riga_pezzo = 0;
+    g_riga_essenziale = 0;
     if (riga[0] == '#' || riga[0] == '\n' || riga[0] == '\0') return 0;
     *perc = riga;
     t = strchr(riga, '\t');      if (!t) return 0; *t = '\0'; *byte = atol(t + 1);
     t = strchr(t + 1, '\t');     if (!t) return 0; *impronta = t + 1;
     t = strchr(t + 1, '\t');     if (!t) return 0; *t = '\0';
     q = strchr(t + 1, '\t');
-    if (q != NULL) {
-        *q = '\0';
-        if (strncmp(q + 1, "pezzi=", 6) == 0) g_riga_pezzo = atol(q + 7);
-        if (g_riga_pezzo < 65536) g_riga_pezzo = 0;     /* un numero assurdo */
+    if (q != NULL) *q = '\0';
+    while (q != NULL) {                    /* the extra columns, any order */
+        char *c = q + 1;
+
+        q = strchr(c, '\t');
+        if (q != NULL) *q = '\0';
+        if (strncmp(c, "pezzi=", 6) == 0) {
+            g_riga_pezzo = atol(c + 6);
+            if (g_riga_pezzo < 65536) g_riga_pezzo = 0; /* un numero assurdo */
+        } else if (strncmp(c, "essenziale", 10) == 0 &&
+                   (c[10] == '\0' || c[10] == '\r' || c[10] == '\n')) {
+            g_riga_essenziale = 1;
+        }
     }
     *pac = ripulisci(t + 1);
     return (*perc)[0] != '\0';
@@ -2821,6 +2837,7 @@ static int comando_permessi(void)
  * ============================================================================= */
 typedef struct {
     long uguali, cambiati, verif, nuovi, scon, config;
+    long essenziali;        /* missing, marked essenziale: in cambiati too */
     long byte_cambiati, byte_nuovi;
     /* The machine's own files (e_configurazione) are few: their names are
      * kept so the summary can say WHICH ones differ or are missing. */
@@ -2895,9 +2912,12 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
             k->config++;
             continue;
         }
-        if (v == MAI_INSTALLATO) { k->nuovi++; k->byte_nuovi += byte; continue; }
+        if (v == MAI_INSTALLATO && !g_riga_essenziale) {
+            k->nuovi++; k->byte_nuovi += byte; continue;
+        }
 
-        if (v == CAMBIATO)      k->cambiati++;
+        if (v == MAI_INSTALLATO) k->essenziali++;
+        if (v == CAMBIATO || v == MAI_INSTALLATO) k->cambiati++;
         if (v == DA_VERIFICARE) k->verif++;
         if (v == SCONOSCIUTO)   k->scon++;
         k->byte_cambiati += byte;
@@ -2905,6 +2925,7 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
         if (g_zitto) continue;
         if (mostrati < 12) {
             printf("    %s%s (%ld byte)\n", p,
+                   v == MAI_INSTALLATO ? " [manca: e' essenziale]" :
                    v == DA_VERIFICARE ? " [da verificare]" :
                    v == SCONOSCIUTO   ? " [il registro non lo conosce]" : "",
                    byte);
@@ -2921,6 +2942,8 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
            (k->byte_cambiati + 1023) / 1024);
     if (k->verif) printf(",\n  di cui %ld da verificare (impronta sconosciuta)", k->verif);
     if (k->scon)  printf(",\n  e %ld che il registro non conosce", k->scon);
+    if (k->essenziali)
+        printf(",\n  e %ld componenti di sistema che qui MANCANO", k->essenziali);
     printf(".\n");
     if (k->nuovi)
         printf("  E %ld file che qui non ci sono MAI STATI (%ld KB).\n",
@@ -3263,8 +3286,8 @@ static int comando_check(int senza_chiedere)
 
             if (v == UGUALE) continue;
             if (e_configurazione(p)) continue;      /* e' di questa macchina */
-            if (v == MAI_INSTALLATO && !fai_nuovi) continue;
-            if (v != MAI_INSTALLATO && !fai_cambiati) continue;
+            if (v == MAI_INSTALLATO && !g_riga_essenziale && !fai_nuovi) continue;
+            if ((v != MAI_INSTALLATO || g_riga_essenziale) && !fai_cambiati) continue;
 
             switch (scarica_e_metti(&c, p, byte, impronta,
                                     &kernel_nuovo, &stage2_nuovo)) {

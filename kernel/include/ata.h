@@ -108,6 +108,22 @@ int  ata_write(int indice, uint64_t lba, uint32_t n, const void *buf);
 int  ata_flush(int indice);
 
 /* =============================================================================
+ * THE DISK LOCK (kernel 0.264, @DISCO-VELOCE)
+ *
+ * One holder at a time for the IDE/AHCI controllers, their single DMA
+ * bounce buffer and blk.c's sector cache. The VFS lock does not cover them:
+ * swap (kernel/mm/swap.c) and the raw-sector syscalls reach blk.c without
+ * it, and the kernel preempts kernel code - two commands interleaved on one
+ * channel, or a cache filled with sectors a writer had just replaced.
+ *
+ * Re-entrant for the same process: blk.c takes it around cache + ata_read,
+ * ata_read takes it again. Waiters sleep, as on the VFS lock. ata_read/
+ * ata_write/ata_flush and the ATAPI commands take it by themselves.
+ * ============================================================================= */
+void ata_prendi(void);
+void ata_lascia(void);
+
+/* =============================================================================
  * IL BUS CONDIVISO CON I LETTORI OTTICI
  *
  * Da qui in giu' c'e' cio' che kernel/block/atapi.c usa di ata.c. Un

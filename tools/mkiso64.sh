@@ -101,6 +101,9 @@ if [ "$QUALE" = "intero" ]; then
         cp build-64/drivers/*.drv "$RADICE/dev/" 2>/dev/null || true
         cp build-64/drivers/*.drv "$RADICE/drivers/" 2>/dev/null || true
     fi
+    # il modulo che scrive ext2/3/4 (kernel 0.263): in /dev, dove il kernel
+    # lo cerca all'avvio e da dove `install` lo copia insieme al kernel
+    [ -f build-64/moduli/ext4.mod ] && cp build-64/moduli/ext4.mod "$RADICE/dev/"
     # il primo programma a 64 bit resta, col suo nome: e' una prova che non
     # dipende dalla libc. Se la shell non c'e' ancora, fa lui da /bin/sh.
     if [ -f build-64/prove/primo ]; then

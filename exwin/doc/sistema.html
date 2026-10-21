@@ -58,7 +58,7 @@ come sono nati tutti i driver.
 <tr><th>Formato</th><th>Cosa si puo' fare</th></tr>
 <tr><td>FAT12</td><td>il floppy da 1,44 MB da cui il sistema parte</td></tr>
 <tr><td>FAT16 / FAT32</td><td>dischi rigidi, lettura e scrittura</td></tr>
-<tr><td>ext2</td><td>dischi rigidi: e' il formato consigliato per l'installazione</td></tr>
+<tr><td>ext2</td><td>dischi rigidi: e' il formato consigliato per l'installazione. Dal kernel 0.263 la scrittura sta nel modulo <code>/dev/ext4.mod</code>: senza, il volume si monta in sola lettura. ext3 ed ext4 si leggono e per ora non si scrivono</td></tr>
 <tr><td>ext3 / ext4</td><td>dal kernel 0.249: lettura (anche i volumi fatti da Linux), montati in sola lettura</td></tr>
 <tr><td>ISO 9660</td><td>CD e DVD, in sola lettura, con i nomi lunghi (Joliet)</td></tr>
 </table>

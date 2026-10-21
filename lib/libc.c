@@ -382,6 +382,7 @@ typedef struct {
 #define SYS_REBOOT        88
 #define SYS_VIDEO_INFO    246
 #define SYS_VIDEO_MODI    27
+#define SYS_MODULO        28
 #define SYS_LOG           247
 
 /* ! DEVE RESTARE IDENTICA a struct pollfd in kernel/include/syscall.h e in
@@ -8937,6 +8938,15 @@ int video_modi(VideoModo *v, int max)
 {
     int32_t r = _syscall2(SYS_VIDEO_MODI, (uint32_t)(uintptr_t)v,
                           (uint32_t)(max < 0 ? 0 : max));
+    if (r < 0) { errno = -r; return -1; }
+    return (int)r;
+}
+
+/* Kernel modules (SYS_MODULO, kernel 0.263): op 0 lists into a (b bytes),
+ * op 1 loads the file a (b = 1: without the version and SHA-256 checks). */
+int modulo_kernel(int op, uintptr_t a, uintptr_t b)
+{
+    int32_t r = _syscall3(SYS_MODULO, (uint32_t)op, a, b);
     if (r < 0) { errno = -r; return -1; }
     return (int)r;
 }

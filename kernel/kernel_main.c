@@ -22,6 +22,7 @@
 #include "paging.h"
 #include "swap.h"
 #include "kmalloc.h"
+#include "modulo.h"
 #include "sched.h"
 #include "syscall.h"
 #include "fat12.h"
@@ -400,6 +401,17 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
      * Riceve il drive di avvio perche' e' lui a decidere che cosa sia la
      * root: il floppy (drive < 0x80) o la partizione attiva del disco. */
     vfs_init(info->boot_drive);
+
+    /* =========================================================================
+     * PASSO 13a: il modulo che SCRIVE ext2/ext3/ext4 (kernel 0.263)
+     *
+     * ! SUBITO DOPO LA RADICE, prima di ogni altra cosa che possa scrivere:
+     * fino a qui una radice ext2 e' in sola lettura, e diventa scrivibile
+     * quando /dev/ext4.mod si registra. Se manca o non corrisponde a questo
+     * kernel il sistema parte lo stesso, in sola lettura, e lo schermo dice
+     * cosa fare. Vedi kernel/loader/modulo.c.
+     * ========================================================================= */
+    modulo_avvio();
 
     /* =========================================================================
      * PASSO 13b: Lettura configurazione /boot/kernel.cfg

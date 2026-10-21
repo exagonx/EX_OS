@@ -111,6 +111,13 @@ static void v_copia(char *dst, const char *src, uint32_t max)
 
 static VfsMount g_mnt[VFS_MAX_MOUNT];
 
+/* Read-only because whoever mounted it ASKED (mount -r), as opposed to
+ * read-only because the driver cannot write it yet. Only the second kind is
+ * lifted when the ext2 write module registers (vfs_ext2_rivaluta). Kept
+ * here and not in VfsMount, whose layout is the one the mount listing
+ * hands out. */
+static uint8_t g_ro_chiesto[VFS_MAX_MOUNT];
+
 typedef struct {
     uint8_t  usato;
     /* Quanti descrittori di processo puntano a questo slot.
@@ -534,7 +541,10 @@ void vfs_init(uint8_t boot_drive)
             g_mnt[0].mnt    = mnt;
             g_mnt[0].blkdev = ipart;
             v_copia(g_mnt[0].dev, d2 ? d2->nome : "hd0", BLK_NOME_MAX);
-            /* a root on ext3/ext4 starts read-only, like any other mount of it */
+            /* ! AN ext2 ROOT STARTS READ-ONLY (kernel 0.263): the writing is
+             * /dev/ext4.mod, loaded right after this (modulo_avvio), and
+             * vfs_ext2_rivaluta() lifts it when the module registers. */
+            g_ro_chiesto[0] = 0;
             if (tipo == VFS_FS_EXT2 && ext2_sola_lettura(mnt)) g_mnt[0].sola_lettura = 1;
 
             if (tipo == VFS_FS_EXT2)
@@ -648,7 +658,7 @@ const VfsMount *vfs_get(int i)
 
 static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 {
-    int        blkdev, slot = -1, i, mnt;
+    int        blkdev, slot = -1, i, mnt, chiesto = sola_lettura ? 1 : 0;
     VolumeInfo vi;
     VfsStat    st;
 
@@ -741,7 +751,8 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
         if (mnt < 0) return ERR(EIO);
 
         g_mnt[slot].tipo = VFS_FS_EXT2;
-        /* ext3/ext4: readable, and written only by a later module (@EXT4-MODULO) */
+        /* Read-only until /dev/ext4.mod registers, and for features it
+         * cannot write (kernel 0.263, kernel/fs/ext2.c valuta()). */
         if (ext2_sola_lettura(mnt)) sola_lettura = 1;
     } else {
         mnt = fat_mount(blkdev);
@@ -759,6 +770,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
     g_mnt[slot].usato        = 1;
     v_copia(g_mnt[slot].punto, punto, VFS_PUNTO_MAX);
     g_mnt[slot].sola_lettura = sola_lettura ? 1 : 0;
+    g_ro_chiesto[slot]       = (uint8_t)chiesto;
     g_mnt[slot].mnt          = mnt;
     g_mnt[slot].blkdev       = blkdev;
     v_copia(g_mnt[slot].dev, dev, BLK_NOME_MAX);
@@ -1121,6 +1133,11 @@ static int vfs_close_nl(int h)
 
     if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
         fat12_close(g_file[h].h12);
+
+    /* ext2 keeps blocks set aside for a file being appended to, and the
+     * superblock's counters, until the file is closed (0.264). */
+    if (g_mnt[g_file[h].im].tipo == VFS_FS_EXT2)
+        ext2_chiudi(g_mnt[g_file[h].im].mnt);
 
     g_file[h].usato = 0;
     g_file[h].rif   = 0;
@@ -2020,4 +2037,35 @@ int vfs_ftruncate(int h, uint32_t nuova_dim)
 void vfs_sync(void)
 {
     fs_prendi_n("sync"); vfs_sync_nl(); fs_rilascia();
+}
+
+/* =============================================================================
+ * vfs_ext2_rivaluta — the ext2 write module has registered (kernel 0.263)
+ *
+ * Every ext2 mount that is read-only only because the driver could not write
+ * it becomes writable if ext2 now says it can; one mounted with -r stays as
+ * it was asked. Called by kernel/fs/ext2.c when the module registers, with
+ * the lock taken HERE: the module's monta() may read the disk, and no other
+ * operation may be using ext2's buffers meanwhile.
+ * ============================================================================= */
+void ext2_rivaluta_montaggi(void);
+
+void vfs_ext2_rivaluta(void)
+{
+    int i;
+
+    fs_prendi_n("ext2-modulo");
+    ext2_rivaluta_montaggi();
+
+    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+        uint8_t ro;
+
+        if (!g_mnt[i].usato || g_mnt[i].tipo != VFS_FS_EXT2) continue;
+        ro = (g_ro_chiesto[i] || ext2_sola_lettura(g_mnt[i].mnt)) ? 1 : 0;
+        if (ro != g_mnt[i].sola_lettura)
+            klog(LOG_INFO, "VFS: %s (%s) is now %s", g_mnt[i].punto, g_mnt[i].dev,
+                 ro ? "read-only" : "read/write");
+        g_mnt[i].sola_lettura = ro;
+    }
+    fs_rilascia();
 }

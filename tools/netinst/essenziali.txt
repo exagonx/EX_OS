@@ -1,0 +1,19 @@
+# =============================================================================
+# tools/netinst/essenziali.txt — the system's components (netupdate 0.031)
+#
+# One shell pattern per line, on the path the file has on the disk (no
+# leading slash). tools/mknetinst.sh ends the elenco.txt line of every file
+# that matches with the column `essenziale`: a machine missing one gets it
+# together with the changed files, `-check -yes` included, instead of seeing
+# it as an optional file "never installed". Keep it short: what the machine
+# cannot boot, log in or update itself without.
+# =============================================================================
+boot/kernel.bin
+boot/stage2.bin
+dev/*.mod
+lib/libc.so
+bin/sh
+bin/login
+bin/mount
+bin/install
+bin/netupdate

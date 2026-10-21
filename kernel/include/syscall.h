@@ -686,6 +686,19 @@ typedef struct {
 #define SYS_VIDEO_MODI    27    /* ebx = VideoModo*, ecx = max -> how many */
 
 /* =============================================================================
+ * SYS_MODULO (28) — kernel modules (kernel 0.263, kernel/loader/modulo.c)
+ *
+ *   ebx = 0  list:  ecx = char *buf, edx = size; the names of the loaded
+ *                   modules, one per line; returns how many.
+ *   ebx = 1  load:  ecx = path, edx = 1 to skip version, arch and SHA-256
+ *                   (never the ELF checks). Root only. 0, or -EBADMSG (74:
+ *                   not built for this kernel, or damaged), -EEXIST (17:
+ *                   one with that name is loaded), -ENOEXEC (8: not a
+ *                   module, or it refused to start), -ENOENT, -EPERM.
+ * ========================================================================== */
+#define SYS_MODULO        28
+
+/* =============================================================================
  * SYS_LOG (247) — una riga sul log del kernel, cioe' sulla SERIALE
  *
  * ! SERVE A CHI NON PUO' USARE printf, E NON E' UN DOPPIONE. printf scrive
@@ -1692,6 +1705,7 @@ int32_t sys_poll(InterruptFrame *f);
 int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_video_modi(InterruptFrame *f);
+int32_t sys_modulo(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);
 int32_t sys_lib_trova(InterruptFrame *f);

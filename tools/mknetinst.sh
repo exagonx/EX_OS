@@ -456,14 +456,30 @@ CAT="$FUORI/catalogo.txt"
 # distinguere uno scaricamento riuscito da uno interrotto a meta'. Senza, un
 # file troncato ha la data giusta e la dimensione sbagliata, e la volta dopo
 # non viene riscaricato perche' «c'e' gia'».
+#
+# ! LA COLONNA `essenziale` (netupdate 0.031, kernel 0.263). I file che
+# corrispondono a tools/netinst/essenziali.txt - kernel, secondo stadio, ogni
+# dev/*.mod, libc, sh, login, mount, install, netupdate - finiscono con una
+# quinta colonna: a una macchina che non li ha arrivano con i file cambiati,
+# anche con `-check -yes`. Senza, il kernel 0.263 arrivava senza il suo modulo
+# (un file «mai installato», quindi facoltativo) e il disco partiva in sola
+# lettura. I netupdate piu' vecchi ignorano la colonna.
+ESS=$(grep -v '^#' tools/netinst/essenziali.txt | grep -v '^[[:space:]]*$' || true)
+set -f                  # the patterns are for `case`, not for the shell here
 {
-    echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto"
+    echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto[<TAB>essenziale]"
     while IFS='	' read -r p pac; do
         b=$(stat -c %s "$FUORI/file/$p")
         h=$(sha256sum "$FUORI/file/$p" | cut -d' ' -f1)
-        printf '%s\t%s\t%s\t%s\n' "$p" "$b" "$h" "$pac"
+        e=""
+        for m in $ESS; do
+            # shellcheck disable=SC2254
+            case "$p" in $m) e="	essenziale"; break ;; esac
+        done
+        printf '%s\t%s\t%s\t%s%s\n' "$p" "$b" "$h" "$pac" "$e"
     done < "$TEMP/mappa"
 } > "$ELE"
+set +f
 
 # Se nessun pacchetto ha meritato un archivio, la directory non ci va: una
 # directory vuota su un server e' una domanda a cui nessuno sa rispondere.

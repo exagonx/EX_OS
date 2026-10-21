@@ -8017,3 +8017,79 @@ tools/netinst/velocita tolto da netinst.
   8. [rust] e [git] sul CD strumenti a 64 bit: i sorgenti
      (cross_build/terze-parti/rust-src, libgit2) erano solo su i5svrdeb;
      vanno riscaricati e rifatti qui (costruisci-exos.sh, libgit2-exos).
+
+@DISCO-VELOCE (21/10/2026) - kernel 0.264, ext4.mod 0.002
+  L'utente: «riprendi il progetto ext3 ext4 con modulo a parte per la
+  scrittura ... fai anche delle indagini per migliorare la velocita' di
+  accesso ai dati sul disco mantenendo la sicurezza».
+  Misura: tools/prova_disco_veloce.sh (QEMU, IDE, p1 ext2 blocchi 4 KB, p2
+  blocchi 1 KB; tools/prove/discovel.c scrive 16 MB, rilegge controllando
+  ogni byte, riscrive sul posto un pezzo su sette e ricontrolla, poi legge
+  un file da 32 MB; e2fsck alla fine). Prima -> dopo, 32 bit, MB/s:
+                             blocchi 4 KB        blocchi 1 KB
+    scrittura a pezzi 4 KB    5,5 -> 14,4          6,2 -> 11,2
+    scrittura a pezzi 64 KB  19,7 -> 30,9         12,0 -> 15,9
+    lettura a pezzi 4 KB     20,6 -> 63,0         31,8 -> 81,9
+    lettura a pezzi 1 MB     72,8 -> 172,5        68,3 -> 117,0
+  64 bit: 6,2 -> 16,2 / 25,6 -> 43,1 / 22,0 -> 74,5 / 79,9 -> 218,5 (4 KB).
+  (Le "letture" delle prove di scrittura contano anche il controllo byte
+  per byte; la seconda, dopo la riscrittura, ha una divisione per byte.)
+  COSA E' CAMBIATO:
+  1. SICUREZZA - IL LUCCHETTO DEL DISCO (ata_prendi/ata_lascia, ata.h):
+     controller IDE/AHCI, buffer DMA unico e cache dei settori di blk.c
+     non avevano lucchetto. Il VFS serializza i filesystem, ma lo swap
+     (mm/swap.c) e le syscall dei settori grezzi arrivano a blk.c senza, e
+     il kernel cambia processo anche in modo kernel: due comandi intrecciati
+     sullo stesso canale, o la cache riempita con settori appena riscritti
+     da un altro. Rientrante per lo stesso processo (blk -> ata), chi
+     aspetta dorme come sul lucchetto del VFS; oltre due livelli lo dice
+     nel log (un fault dentro un'operazione di disco). Anche ATAPI (stessi
+     canali) e mbr.c ci passano. Una scrittura fallita toglie dalla cache
+     i settori toccati (prima restava la copia vecchia).
+     ! NON spiega la lettura sbagliata 1 volta su 15 di Firefox
+     (@EXILLA-SU-NASI5DEB): i fault sulle pagine dei file passano da
+     vfs_read, quindi dal lucchetto del VFS. Resta aperta (@CODA-20-10 p.5).
+  2. LETTURA ANTICIPATA (blk.c, «THE READ-AHEAD WINDOW»): una lettura
+     diretta (dati dei file) che parte dove e' finita la precedente sullo
+     stesso disco legge 128 KB in un comando; le successive escono dalla
+     finestra. Mai oltre la partizione; blk_write e cache_svuota la buttano
+     quando la toccano. Un lettore a salti non paga niente.
+  3. COPIE A PAROLE (rep movsl) in blk.c e ata.c: il buffer DMA si copiava
+     un byte per giro.
+  4. SCRITTURE PICCOLE (modulo 0.002, scrittura.c «LA PRENOTAZIONE RESTA»):
+     una write() in coda al file prenota 128 KB di blocchi (gia' segnati
+     nella bitmap e nel descrittore) e quelli non usati restano per la
+     write() dopo dello stesso file; i contatori del superblocco si scrivono
+     alla chiusura. Tornano liberi alla chiusura del file (Ext2Ops.chiudi,
+     EXT2_IF_ABI 3, chiamata da vfs_close sull'ultimo descrittore), prima di
+     ogni altra operazione (gli op_* di ext4.c), a una write() su un altro
+     file, al sync e allo smontaggio. Uno spegnimento a meta' lascia al
+     massimo quei blocchi occupati e di nessuno: e2fsck li ritrova, nessun
+     file e' toccato. Inode e dati restano scritti a ogni write().
+  Prove: prova_disco_veloce 32/64 (nessun byte sbagliato, e2fsck pulito);
+  prova_modulo 32/64: 22/22 e 19/19 con kernel 0.264 e modulo 0.002.
+  PROSSIMI PASSI POSSIBILI (non fatti): DMA oltre 64 KB per comando (PRD
+  multipli, buffer da pmm_alloc_pages_kernel); non rifare risolvi() del
+  percorso a ogni read() (l'inode in memoria con un contatore di
+  generazione delle scritture); extent_map che rende la lunghezza della
+  corsa invece di un blocco. Poi la fase B (ext3: giornale) e C (ext4:
+  extent, checksum) della scrittura.
+
+@EXT4-RIFARE-0.263 - PIANO CHIUSO (21/10/2026)
+  Punti 6-9 fatti. netupdate 0.031: colonna `essenziale` in elenco.txt
+  (tools/netinst/essenziali.txt, scritta da tools/mknetinst.sh): un
+  componente di sistema mancante arriva con i file cambiati, anche con
+  -check -yes. Le colonne in piu' si leggono in qualunque ordine (pezzi=,
+  essenziale). tools/prova_modulo_disco.sh (32 bit): 8 su 8 - disco
+  installato dal dischetto che parte, carica il modulo e scrive la radice;
+  disco installato dal CD senza ext4.mod, uname e registro: -check -yes
+  riporta il modulo identico e lascia fuori uname; e2fsck pulito.
+  ! Nella prova: il disco installato ha la tastiera italiana (keymap us
+  prima dei comandi), e le variabili esportate per una corsa QEMU non
+  devono arrivare a mkhd.sh (EXOS_MARCA faceva scadere l'installazione).
+  README 0.264 (paragrafi 0.263 e 0.264), sistema.html, comandi.html,
+  installa.html. messaggio-commit.txt pronto.
+  Visto una volta: mknetinst.sh si e' fermato su un cp in
+  dist/netinst/file/exwin/app/exilla appena creata (rifatto: riuscito).
+  Sospetto MEGA che sincronizza dist/ mentre lo script la rifa'.
+  Prossimo: fase B (ext3, giornale jbd2) nel modulo.

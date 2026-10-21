@@ -22,6 +22,13 @@
  * scrivono sempre prima che il blocco venga consegnato.
  *
  * Le scelte e le trappole del formato stanno in kernel/fs/ext2.c.
+ *
+ * ! DAL KERNEL 0.263 LA SCRITTURA E' UN MODULO, /dev/ext4.mod
+ * (kernel/moduli/ext4/): le funzioni di scrittura qui sotto controllano che
+ * il volume sia scrivibile e chiamano il modulo; senza modulo ogni volume
+ * ext2/3/4 e' in sola lettura. Quello che lettura e modulo condividono sta
+ * in ext2_interno.h. EXT2_MAX_MOUNT e' 4 (era 2): un disco con piu'
+ * partizioni ext2 oltre alla radice.
  * ============================================================================= */
 
 #ifndef EXT2_H
@@ -29,7 +36,7 @@
 
 #include "kernel.h"
 
-#define EXT2_MAX_MOUNT      2
+#define EXT2_MAX_MOUNT      4
 #define EXT2_NOME_MAX       256     /* 255 caratteri + NUL: il massimo di ext2 */
 #define EXT2_PERCORSO_MAX   320
 
@@ -134,6 +141,9 @@ int  ext2_write   (int mnt, const char *percorso, const void *buf,
                    uint32_t size, uint32_t offset);
 int  ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
 int  ext2_sync    (int mnt);
+/* The last descriptor of a file on this volume was closed (vfs.c): the
+ * write module puts back what it kept for the next write() (0.264). */
+void ext2_chiudi  (int mnt);
 
 /* =============================================================================
  * La mappa dei settori di un file, per chi non sa leggere un filesystem

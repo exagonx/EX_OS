@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.262
+**Version:** 0.264
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -337,6 +337,54 @@ chipset to ACPI mode first if needed. `reboot` tries, in order, the ACPI reset
 register, the keyboard controller, the chipset's 0xCF9 port and a triple
 fault. Tried in QEMU (the shutdown goes through ACPI); on the user's laptop
 not yet.
+
+**0.264**: a faster disk, without losing safety. **A disk lock**: the
+controller, its DMA buffer and the sector cache had none, and swap and the
+raw-sector calls run outside the VFS lock, so two commands could interleave
+on one channel or the cache take back old data; now one at a time, CD
+included, and a failed write drops the sectors it touched from the cache.
+**Read-ahead** of 128 KB, only when a read goes on from where the last one
+ended and never past the partition; every write throws it away. Word copies
+instead of byte copies. In the module (ext4.mod 0.002) a file being
+appended to keeps 128 KB of blocks reserved between write()s and the
+superblock counters are written at close; the blocks left over are freed at
+close, sync, unmount and before any other operation. In QEMU, ext2 with
+4 KB blocks, 32 bit: writing in 4 KB pieces from 5.5 to 14.4 MB/s, in 64 KB
+pieces from 19.7 to 30.9; reading in 4 KB pieces from 20.6 to 63.0, in 1 MB
+pieces from 72.8 to 172.5 (up to 218 at 64 bit).
+`tools/prova_disco_veloce.sh` checks every byte read back, also after an
+in-place rewrite, and runs `e2fsck` at the end.
+
+**0.263**: **kernel modules**, and the first one is ext2 writing. Reading
+ext2/ext3/ext4 stays in the kernel; the code that writes left the kernel and
+is `/dev/ext4.mod`, which the kernel loads at boot right after mounting the
+root (`kernel/loader/modulo.c`, the same loader at 32 and 64 bit: an ELF
+shared object with RELATIVE relocations only). The build appends to the
+module the kernel version it is made for, the architecture and its SHA-256;
+if they do not match the module is **not** loaded, the screen and the log
+say what was expected, and ext2 volumes stay **read-only** (ext3/ext4 are
+anyway, for now). `modulo` lists the loaded modules; `modulo carica -forza
+FILE` loads one anyway, after the warning and a typed `SI` - never
+automatically. An ext2 root starts read-only and becomes writable when the
+module registers. `install` copies the module with the kernel, and the
+floppy, the CDs and netinst carry it. ext2 takes four mounts instead of two.
+`tools/prova_modulo.sh` (QEMU, 32 and 64 bit): EX-OS formats and writes an
+ext2 (mkdir, cp, mv, rm, rmdir, indexed directories; identical files,
+`e2fsck` clean), a damaged module or one made for another version is
+refused, an ext4 made by Linux is read and not written.
+`tools/prova_modulo_disco.sh`: a disk installed from the floppy boots, its
+root becomes writable and is written. **netupdate 0.031: system
+components.** An `elenco.txt` line can end with the column `essenziale`;
+`tools/mknetinst.sh` writes it for the files matching
+`tools/netinst/essenziali.txt` (kernel, second stage, every `dev/*.mod`,
+libc, sh, login, mount, install, netupdate). A machine missing one gets it
+with the changed files, `-check -yes` included, instead of it being an
+optional file "never installed". Older netupdates ignore the column: **when
+updating to 0.263 answer "si" to "Installo anche quelli?" or use
+`-yesall`**, otherwise the new kernel arrives without its module and the
+disk boots read-only (the kernel says so on screen, with the remedy). Next:
+the ext3 journal, then ext4 writing (extents, metadata checksums) in the
+module.
 
 **0.260**: `rename()` moves files and directories between directories on
 ext2 (until now it renamed in place only and answered ENOSYS otherwise). A

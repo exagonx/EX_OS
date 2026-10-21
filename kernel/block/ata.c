@@ -197,8 +197,16 @@ typedef struct {
 /* Il kernel non ha una memcpy comune: blk.c se ne scrive una uguale a questa,
  * poche righe accanto. Copiarla e' meno peggio che inventare qui una
  * dipendenza che nessuno degli altri driver di blocco ha. */
+/* ! A WORD AT A TIME (0.264): a byte loop moved the 64 KB of every DMA
+ * transfer one byte per iteration, twice per byte read from the disk (here
+ * and in blk.c). Transfers are whole sectors; the tail loop is for safety. */
 static void dma_copia(uint8_t *dst, const uint8_t *src, uint32_t n)
 {
+    uintptr_t parole = n / 4u;
+
+    __asm__ __volatile__("rep movsl"
+                         : "+D"(dst), "+S"(src), "+c"(parole) : : "memory");
+    n &= 3u;
     while (n--) *dst++ = *src++;
 }
 
@@ -1367,19 +1375,122 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
     return 0;
 }
 
+/* =============================================================================
+ * THE DISK LOCK - see ata.h. Modelled on the VFS lock (kernel/fs/vfs.c,
+ * fs_prendi_n): the holder is a PID, waiters are blocked (not spinning: an
+ * idle-priority holder would never run again), the idle task yields, and
+ * outside a process (the boot) there is nobody to wait for.
+ *
+ * ! RE-ENTRANT, AND SAID WHEN IT GOES DEEPER THAN EXPECTED. blk.c -> ata is
+ * two levels. A third means the holder came back to the disk from inside a
+ * disk operation - a page fault on a buffer being filled, which would then
+ * reuse the bounce buffer under the copy still in progress. Blocking there
+ * would hang the process for ever; it goes on, and the log says it once.
+ * ============================================================================= */
+#define DISCO_SENZA_PROCESSO 0xFFFFFFFFu
+
+static uint32_t g_disco_detentore = 0;      /* 0 = free */
+static uint32_t g_disco_livelli   = 0;
+static uint32_t g_disco_attesa[MAX_PROCESSES];
+static uint32_t g_disco_n_attesa  = 0;
+static int      g_disco_detto     = 0;
+
+void ata_prendi(void)
+{
+    Process *p  = proc_get_current();
+    uint32_t io = (p != NULL) ? p->pid : DISCO_SENZA_PROCESSO;
+
+    for (;;) {
+        interrupts_disable();
+
+        if (g_disco_detentore == 0 || g_disco_detentore == io) {
+            g_disco_detentore = io;
+            g_disco_livelli++;
+            interrupts_enable();
+            if (g_disco_livelli > 2u && !g_disco_detto) {
+                g_disco_detto = 1;
+                klog(LOG_WARN, "ATA: disk lock taken %u levels deep by pid %u "
+                               "(a fault inside a disk operation?)",
+                     g_disco_livelli, io);
+            }
+            return;
+        }
+
+        if (p == NULL) { interrupts_enable(); return; }
+
+        if (p->priority == PRIO_IDLE) {
+            interrupts_enable();
+            sched_yield();
+            continue;
+        }
+
+        if (g_disco_n_attesa < MAX_PROCESSES)
+            g_disco_attesa[g_disco_n_attesa++] = io;
+        sched_block(PROC_BLOCKED);
+    }
+}
+
+void ata_lascia(void)
+{
+    Process *p  = proc_get_current();
+    uint32_t io = (p != NULL) ? p->pid : DISCO_SENZA_PROCESSO;
+    uint32_t i, n;
+
+    interrupts_disable();
+
+    /* The boot's unlocked path above took nothing: nothing to give back. */
+    if (g_disco_detentore != io || g_disco_livelli == 0) {
+        interrupts_enable();
+        return;
+    }
+    if (--g_disco_livelli > 0) {
+        interrupts_enable();
+        return;
+    }
+
+    g_disco_detentore = 0;
+    n = g_disco_n_attesa;
+    g_disco_n_attesa = 0;
+    for (i = 0; i < n; i++) sched_unblock_locked(g_disco_attesa[i]);
+
+    interrupts_enable();
+}
+
 int ata_read(int indice, uint64_t lba, uint32_t n, void *buf)
 {
-    return ata_rw(indice, lba, n, buf, 0);
+    int r;
+
+    ata_prendi();
+    r = ata_rw(indice, lba, n, buf, 0);
+    ata_lascia();
+    return r;
 }
 
 int ata_write(int indice, uint64_t lba, uint32_t n, const void *buf)
 {
+    int r;
+
     /* Il cast toglie il const: ata_rw non modifica il buffer quando
      * scrivi != 0, ma condividere una sola funzione vale il cast. */
-    return ata_rw(indice, lba, n, (void *)buf, 1);
+    ata_prendi();
+    r = ata_rw(indice, lba, n, (void *)buf, 1);
+    ata_lascia();
+    return r;
 }
 
+static int ata_flush_nl(int indice);
+
 int ata_flush(int indice)
+{
+    int r;
+
+    ata_prendi();
+    r = ata_flush_nl(indice);
+    ata_lascia();
+    return r;
+}
+
+static int ata_flush_nl(int indice)
 {
     const AtaDevice *d = ata_get_device(indice);
     uint16_t io;

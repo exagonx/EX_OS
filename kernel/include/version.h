@@ -505,7 +505,15 @@
 /* 0.261 -> 0.262: the shared-memory cap ("one whole screen") is counted at
  * 4 bytes a pixel: on a 16-bit screen the window server's 32-bit windows
  * did not fit and ExWin did not start (kernel/mm/shm.c). */
-#define EXOS_VERSION    "0.262"
+/* 0.262 -> 0.263: kernel modules (kernel/loader/modulo.c, SYS_MODULO 28),
+ * and ext2/ext3/ext4 WRITING moved out of the kernel into the first one,
+ * /dev/ext4.mod (kernel/moduli/ext4/), loaded right after the root is
+ * mounted; without it every ext2 volume is read-only. EXT2_MAX_MOUNT 4. */
+/* 0.263 -> 0.264: the disk lock (ata_prendi/ata_lascia: controllers, DMA
+ * buffer and sector cache had none - swap and the raw-sector syscalls
+ * bypass the VFS lock), blk.c's read-ahead window for sequential file
+ * reads, word copies in blk.c and ata.c (@DISCO-VELOCE). */
+#define EXOS_VERSION    "0.264"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

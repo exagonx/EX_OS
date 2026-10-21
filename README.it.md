@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.262
+**Versione:** 0.264
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -361,6 +361,56 @@ dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
 in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
 porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
 passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**0.264**: il disco piu' veloce, senza perdere sicurezza. **Un lucchetto
+per il disco**: il controller, il suo buffer DMA e la cache dei settori non
+ne avevano, e lo swap e le chiamate sui settori grezzi passano fuori dal
+lucchetto del VFS, quindi due comandi potevano incrociarsi sullo stesso
+canale o la cache riprendersi dati vecchi; ora passa uno alla volta, CD
+compreso, e una scrittura fallita toglie dalla cache i settori toccati.
+**Lettura anticipata** da 128 KB, solo quando la lettura prosegue da dove
+era finita e mai oltre la partizione; ogni scrittura la butta via. Copie a
+parole invece che byte per byte. Nel modulo (ext4.mod 0.002) chi scrive in
+coda a un file si tiene da parte 128 KB di blocchi fra una write() e
+l'altra e i contatori del superblocco si scrivono alla chiusura; i blocchi
+avanzati tornano liberi alla chiusura, al sync, allo smontaggio e prima di
+ogni altra operazione. In QEMU, ext2 con blocchi da 4 KB, 32 bit: scrittura
+a pezzi da 4 KB da 5,5 a 14,4 MB/s, da 64 KB da 19,7 a 30,9; lettura a
+pezzi da 4 KB da 20,6 a 63,0, da 1 MB da 72,8 a 172,5 (a 64 bit fino a 218).
+`tools/prova_disco_veloce.sh` controlla ogni byte riletto, anche dopo una
+riscrittura sul posto, e `e2fsck` alla fine.
+
+**0.263**: i **moduli del kernel**, e il primo e' la scrittura di ext2. La
+lettura di ext2/ext3/ext4 resta nel kernel; il codice che scrive e' uscito
+dal kernel ed e' `/dev/ext4.mod`, che il kernel carica all'avvio subito
+dopo aver montato la radice (`kernel/loader/modulo.c`, lo stesso caricatore
+a 32 e a 64 bit: un oggetto ELF condiviso con sole rilocazioni RELATIVE).
+La costruzione aggiunge in coda al modulo la versione del kernel per cui e'
+fatto, l'architettura e lo SHA-256; se non tornano il modulo **non** si
+carica, lo schermo e il registro dicono che cosa ci si aspettava, e i
+volumi ext2 restano in **sola lettura** (ext3/ext4 lo sono comunque, per
+ora). `modulo` elenca i moduli caricati; `modulo carica -forza FILE` ne
+carica uno lo stesso, dopo l'avviso e un `SI` scritto - mai in automatico.
+Una radice ext2 parte in sola lettura e diventa scrivibile quando il modulo
+si registra. `install` copia il modulo insieme al kernel, e il dischetto, i
+CD e netinst lo portano. ext2 accetta quattro montaggi invece di due.
+`tools/prova_modulo.sh` (QEMU, 32 e 64 bit): EX-OS formatta e scrive un
+ext2 (mkdir, cp, mv, rm, rmdir, cartelle con indice; file identici, `e2fsck`
+pulito), un modulo danneggiato o fatto per un'altra versione e' rifiutato,
+un ext4 fatto da Linux si legge e non si scrive. `tools/prova_modulo_disco.sh`:
+un disco installato dal dischetto parte, la radice diventa scrivibile e ci
+si scrive. **netupdate 0.031: i componenti di sistema.** Una riga di
+`elenco.txt` puo' finire con la colonna `essenziale`; `tools/mknetinst.sh`
+la scrive per i file che corrispondono a `tools/netinst/essenziali.txt`
+(kernel, secondo stadio, ogni `dev/*.mod`, libc, sh, login, mount, install,
+netupdate). A una macchina che non ne ha uno arriva insieme ai file
+cambiati, anche con `-check -yes`, invece di essere un file "mai
+installato" facoltativo. I netupdate piu' vecchi ignorano la colonna:
+**per l'aggiornamento alla 0.263 rispondete "si" a "Installo anche
+quelli?" oppure usate `-yesall`**, altrimenti il kernel nuovo arriva senza
+il suo modulo e il disco parte in sola lettura (il kernel lo dice a
+schermo, con il rimedio). Prossimi passi: il giornale di ext3, poi la
+scrittura di ext4 (extent, checksum dei metadati) dentro il modulo.
 
 **0.260**: `rename()` sposta file e cartelle fra cartelle diverse su ext2
 (finora rinominava solo sul posto, e altrimenti rispondeva ENOSYS). Una

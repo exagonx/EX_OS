@@ -480,8 +480,16 @@ static int traduci(int i, uint64_t lba, uint32_t n, uint64_t *assoluto)
 
 static uint8_t g_cd_buf[ATAPI_DIM_BLOCCO];
 
+/* A word at a time (0.264): every sector served from the cache, the
+ * read-ahead window or a CD block crosses this. Callers copy whole sectors;
+ * the tail loop is for safety. */
 static void copia(uint8_t *dst, const uint8_t *src, uint32_t n)
 {
+    uintptr_t parole = n / 4u;
+
+    __asm__ __volatile__("rep movsl"
+                         : "+D"(dst), "+S"(src), "+c"(parole) : : "memory");
+    n &= 3u;
     while (n--) *dst++ = *src++;
 }
 
@@ -581,6 +589,40 @@ static int        g_secchio[CACHE_SECCHI];
 static uint32_t   g_cache_orologio = 0;
 static int        g_cache_pronta   = 0;     /* 1 = provata (anche se spenta) */
 
+/* =============================================================================
+ * THE READ-AHEAD WINDOW (0.264, @DISCO-VELOCE)
+ *
+ * A program reading a file 4 KB at a time cost one ATA command per read():
+ * 20 MB/s in QEMU where 1 MB reads gave 72. When a direct read (a file's
+ * data, blk_read_diretto) starts exactly where the previous one ended on
+ * the same disk, AVANTI_SETT sectors are read in one command into the
+ * window, and the next reads are served from it.
+ *
+ *   - only for a sequence: a random reader pays nothing more;
+ *   - never past the end of the partition the request came through;
+ *   - coherent: blk_write drops the window when it touches it (a failed
+ *     write too), cache_svuota drops it with the cache. Data are never
+ *     served from it after the disk under them changed through blk.c;
+ *   - one window, under the disk lock (ata_prendi): two readers taking
+ *     turns simply refill it, as without it.
+ * ============================================================================= */
+#define AVANTI_SETT 256u        /* 128 KB */
+
+static uint8_t  *g_av            = NULL;
+static int       g_av_disco      = -1;      /* -1 = the window holds nothing */
+static uint64_t  g_av_lba        = 0;
+static uint32_t  g_av_n          = 0;
+static int       g_av_ult_disco  = -1;      /* where the last direct read ended */
+static uint64_t  g_av_ult_fine   = 0;
+
+static void avanti_scarta(int disco, uint64_t lba, uint32_t n)
+{
+    if (g_av_disco < 0) return;
+    if (disco >= 0 && g_av_disco != disco) return;
+    if (n != 0 && (lba >= g_av_lba + g_av_n || lba + n <= g_av_lba)) return;
+    g_av_disco = -1;
+}
+
 static uint32_t secchio(int disco, uint64_t lba)
 {
     return ((uint32_t)lba ^ ((uint32_t)(lba >> 32) * 31u) ^ ((uint32_t)disco << 9)) &
@@ -602,6 +644,9 @@ static void cache_init(void)
     g_cache = (VoceCache *)(uintptr_t)fis;
     for (k = 0; k < CACHE_VOCI; k++) { g_cache[k].disco = -1; g_cache[k].dopo = -1; }
     klog(LOG_INFO, "BLK: cache di %u settori a 0x%08x", (unsigned)CACHE_VOCI, fis);
+
+    fis = pmm_alloc_pages_kernel((AVANTI_SETT * 512u) / 4096u);
+    if (fis != 0) g_av = (uint8_t *)(uintptr_t)fis;
 }
 
 static VoceCache *cache_trova(int disco, uint64_t lba)
@@ -666,9 +711,76 @@ static void cache_svuota(int disco)
 {
     int k;
 
-    if (!g_cache) return;
-    for (k = 0; k < CACHE_VOCI; k++)
-        if (g_cache[k].disco >= 0 && (disco < 0 || g_cache[k].disco == disco)) cache_stacca(k);
+    ata_prendi();
+    avanti_scarta(disco, 0, 0);
+    if (g_cache)
+        for (k = 0; k < CACHE_VOCI; k++)
+            if (g_cache[k].disco >= 0 && (disco < 0 || g_cache[k].disco == disco))
+                cache_stacca(k);
+    ata_lascia();
+}
+
+/* A direct read through the read-ahead window (see above). `fine` is the
+ * first absolute sector past the partition. Under the disk lock. */
+static int leggi_avanti(int disco, uint64_t abs, uint32_t n, uint8_t *buf,
+                        uint64_t fine)
+{
+    int      seguito = (g_av_ult_disco == disco && abs == g_av_ult_fine);
+    uint32_t quanti;
+
+    g_av_ult_disco = disco;
+    g_av_ult_fine  = abs + n;
+
+    if (g_av_disco == disco && abs >= g_av_lba && abs + n <= g_av_lba + g_av_n) {
+        copia(buf, g_av + (uint32_t)(abs - g_av_lba) * 512u, n * 512u);
+        return 0;
+    }
+    if (g_av == NULL || !seguito || n > AVANTI_SETT / 2u)
+        return ata_read(disco, abs, n, buf);
+
+    quanti = AVANTI_SETT;
+    if (abs + quanti > fine) quanti = (uint32_t)(fine - abs);
+    g_av_disco = -1;
+    if (quanti < n || ata_read(disco, abs, quanti, g_av) != 0)
+        return ata_read(disco, abs, n, buf);      /* the plain read says what failed */
+    g_av_disco = disco;
+    g_av_lba   = abs;
+    g_av_n     = quanti;
+    copia(buf, g_av, n * 512u);
+    return 0;
+}
+
+/* The ATA part of leggi(), under the disk lock: the cache, the window and
+ * the controller change together or not at all. */
+static int leggi_ata(const BlkDev *b, uint64_t abs, uint32_t n, void *buf,
+                     int usa_cache)
+{
+    uint32_t k;
+
+    if (!g_cache_pronta) cache_init();
+
+    if (usa_cache && g_cache && n <= CACHE_MAX_N) {
+        uint8_t *p = (uint8_t *)buf;
+        uint32_t tutti = 1;
+
+        for (k = 0; k < n; k++) {
+            VoceCache *v = cache_trova(b->disco, abs + k);
+            if (v == NULL) { tutti = 0; break; }
+            copia(p + k * 512u, v->dati, 512u);
+            v->uso = ++g_cache_orologio;
+        }
+        if (tutti) return 0;
+
+        /* Anche un solo settore mancante costa comunque un comando: tanto
+         * vale rileggere tutta la corsa in una volta e riempire la cache
+         * con tutto quello che passa. */
+        if (ata_read(b->disco, abs, n, buf) != 0) return -1;
+        for (k = 0; k < n; k++) cache_metti(b->disco, abs + k, p + k * 512u);
+        return 0;
+    }
+
+    if (!usa_cache) return leggi_avanti(b->disco, abs, n, (uint8_t *)buf, b->primo + b->settori);
+    return ata_read(b->disco, abs, n, buf);
 }
 
 static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
@@ -689,7 +801,14 @@ static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
 
     if (traduci(i, lba, n, &abs) != 0) return -1;
 
-    if (b->tipo == BLK_TIPO_CDROM) return cd_read(b, abs, n, (uint8_t *)buf);
+    if (b->tipo == BLK_TIPO_CDROM) {
+        int r;
+
+        ata_prendi();                   /* g_cd_buf is one */
+        r = cd_read(b, abs, n, (uint8_t *)buf);
+        ata_lascia();
+        return r;
+    }
 
     /* ! NIENTE CACHE PER UN DISCO SERVITO DA UN PROCESSO, e non e' una
      * dimenticanza: la cache di questo file e' indicizzata sul numero di
@@ -722,30 +841,16 @@ static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
         return 0;
     }
 
-    /* --- la cache, solo per le richieste piccole: vedi il commento sopra --- */
-    if (!g_cache_pronta) cache_init();
+    /* --- la cache, solo per le richieste piccole: vedi il commento sopra;
+     * i dati dei file dalla finestra di lettura anticipata --- */
+    {
+        int r;
 
-    if (usa_cache && g_cache && n <= CACHE_MAX_N) {
-        uint8_t *p = (uint8_t *)buf;
-        uint32_t tutti = 1;
-
-        for (k = 0; k < n; k++) {
-            VoceCache *v = cache_trova(b->disco, abs + k);
-            if (v == NULL) { tutti = 0; break; }
-            copia(p + k * 512u, v->dati, 512u);
-            v->uso = ++g_cache_orologio;
-        }
-        if (tutti) return 0;
-
-        /* Anche un solo settore mancante costa comunque un comando: tanto
-         * vale rileggere tutta la corsa in una volta e riempire la cache
-         * con tutto quello che passa. */
-        if (ata_read(b->disco, abs, n, buf) != 0) return -1;
-        for (k = 0; k < n; k++) cache_metti(b->disco, abs + k, p + k * 512u);
-        return 0;
+        ata_prendi();
+        r = leggi_ata(b, abs, n, buf, usa_cache);
+        ata_lascia();
+        return r;
     }
-
-    return ata_read(b->disco, abs, n, buf);
 }
 
 int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
@@ -996,7 +1101,21 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
     if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
         return blkr3_write((int)b->padre, abs, n, buf);
 
-    if (ata_write(b->disco, abs, n, buf) != 0) return -1;
+    /* ! UNDER THE DISK LOCK FROM THE COMMAND TO THE CACHE (0.264): a reader
+     * between the two would put the old sectors back in the cache. A failed
+     * write drops what the cache and the window hold of those sectors: the
+     * disk may have taken part of it, and no copy is known to be right. */
+    ata_prendi();
+    avanti_scarta(b->disco, abs, n);
+    if (ata_write(b->disco, abs, n, buf) != 0) {
+        if (g_cache)
+            for (k = 0; k < n; k++) {
+                VoceCache *v = cache_trova(b->disco, abs + k);
+                if (v != NULL) cache_stacca((int)(v - g_cache));
+            }
+        ata_lascia();
+        return -1;
+    }
 
     /* Write-through: la copia in cache si aggiorna DOPO che il disco ha
      * accettato. Si aggiorna solo cio' che era gia' in cache — una
@@ -1015,6 +1134,7 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
             }
         }
     }
+    ata_lascia();
     return 0;
 }
 

@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.007");
+EX_VERSIONE("install", "0.008");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -2115,6 +2115,24 @@ int main(int argc, char **argv)
     if (sostituisci(p, "stage2") < 0 || sostituisci(p, "kernel") < 0) {
         printf("\nInstallazione interrotta durante la sostituzione.\n");
         return 1;
+    }
+
+    /* ! IL MODULO VA COL KERNEL (kernel 0.263). /dev/ext4.mod e' la
+     * scrittura di ext2, costruita per QUEL kernel: un kernel nuovo con il
+     * modulo vecchio lo rifiuta, e il disco parte in sola lettura. Si copia
+     * qui, subito dopo il kernel, anche aggiornando: il resto di /dev passa
+     * dalla scelta dei driver, che un modulo non lo conosce. */
+    {
+        char m[PERC_MAX];
+
+        unisci(m, argv[1], "dev");
+        crea_dir(m);
+        unisci(m, m, "ext4.mod");
+        if (copia("/dev/ext4.mod", m) < 0) {
+            printf("\n  ! /dev/ext4.mod non c'e' su questo supporto: il disco\n");
+            printf("    partira' in SOLA LETTURA finche' non lo si copia in /dev\n");
+            printf("    (dal CD, o con netupdate -check -yesall).\n");
+        }
     }
 
     /* kernel.cfg: se manca si installa, se c'e' si FONDE. Il perche' della

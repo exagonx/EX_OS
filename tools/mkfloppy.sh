@@ -239,6 +239,18 @@ else
     log_warn "Nessun driver trovato in build/drivers/ — /dev/ sarà vuota"
 fi
 
+# ! I MODULI DEL KERNEL (0.263) stanno in /dev accanto ai driver: senza
+# /dev/ext4.mod il kernel non scrive su ext2, e un dischetto da cui si
+# installa deve poterlo copiare sul disco insieme al kernel.
+if ls build/moduli/*.mod >/dev/null 2>&1; then
+    for mod in build/moduli/*.mod; do
+        mcopy -i "$IMG" "$mod" "::/dev/$(basename "$mod")"
+        log_ok "  Modulo del kernel copiato: $(basename "$mod")"
+    done
+else
+    log_err "Manca build/moduli/ext4.mod: senza, i dischi ext2 restano in sola lettura (make moduli)"
+fi
+
 # --- Copia eventuali programmi già compilati ----------------------------------
 
 # Le copie-alias che sul floppy non vanno (vedi il ciclo qui sotto). Il

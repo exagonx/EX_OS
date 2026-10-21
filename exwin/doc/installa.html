@@ -700,6 +700,18 @@ ha voluto: documentazione, applicazioni grafiche, compilatori).
 </p>
 
 <p class="nota">
+<b>I componenti di sistema arrivano comunque</b> (netupdate 0.031): il kernel,
+il secondo stadio, i moduli in <code>/dev/*.mod</code>, la libc,
+<code>sh</code>, <code>login</code>, <code>mount</code>, <code>install</code> e
+<code>netupdate</code> sono segnati <code>essenziale</code> nell'elenco del
+server. Se qui ne manca uno, si scarica insieme ai file cambiati, anche con
+<code>-check -yes</code>. Un netupdate piu' vecchio della 0.031 non lo sa: per
+passare alla 0.263 rispondete "si" a "Installo anche quelli?" oppure usate
+<code>-yesall</code>, o il kernel nuovo arriva senza <code>/dev/ext4.mod</code>
+e il disco parte in sola lettura.
+</p>
+
+<p class="nota">
 <b><code>-check -yesall</code> e' l'installazione completa dalla rete,
 compilatori compresi.</b> Gli strumenti (gcc, make, FreeBASIC) vanno in
 <code>/exos</code>; perche' <code>gcc</code> si trovi senza scrivere il
