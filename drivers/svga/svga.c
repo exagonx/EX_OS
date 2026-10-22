@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `svga.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("svga.drv", "0.003");
+EX_VERSIONE("svga.drv", "0.004");
 
 #define PERC_MAX  256
 #define S2_MAX    65536
@@ -730,11 +730,11 @@ static void guardia_in_avvio(void)
     if (fd < 0) return;
     {
         const char *r = "\n# A video mode on trial goes back by itself if nobody confirms it.\n"
-                        "/dev/svga.drv -guardia &\n";
+                        "svga.drv -guardia &\n";
         write(fd, r, (unsigned int)strlen(r));
     }
     close(fd);
-    printf("  aggiunta a /boot/avvio.sh la riga `/dev/svga.drv -guardia &`\n");
+    printf("  aggiunta a /boot/avvio.sh la riga `svga.drv -guardia &`\n");
 }
 
 static int annulla(void)

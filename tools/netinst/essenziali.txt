@@ -10,6 +10,7 @@
 # =============================================================================
 boot/kernel.bin
 boot/stage2.bin
+boot/rdboot.lz4
 dev/*.mod
 lib/libc.so
 bin/sh

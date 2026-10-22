@@ -8208,11 +8208,116 @@ tools/netinst/velocita tolto da netinst.
         umount hd2p1     la radice torna il solo ramdisk: fdisk e
                          bootinstall sul disco senza partizioni montate
         system -load     rimonta e riparte dalle configurazioni
+      PASSO 1 FATTO (kernel 0.269, 22/10 sera): tools/mkrdboot.sh fa
+      build/rdboot.img e build-64/rdboot.img, ext2 da 4 MB (l'utente: ext2
+      e non FAT, per nomi, proprietari e permessi; prima prova era FAT)
+      con /rdboot/{bin,dev,lib,etc,tmp} = il floppy, driver kbd pci svga
+      mouseser uhci ohci ehci xhci, ext4.mod, somma EXRD. bootinstall
+      scrive la mappa di /boot/rdboot.img (fino a 64 intervalli) nella
+      tabella 'RDMAPPA' allineata a 512 byte dentro Stage 2 (vuota se il
+      file non c'e'); Stage 2 (rdboot_carica, solo da disco 'EXHD') la
+      carica a 32 MB e mette rd_tipo='RDBT' in BootInfo (+58); il kernel
+      la registra come "rdb0" e NON come radice. Prova:
+      tools/prova_rdboot.sh (disco FAT32, avvio da CD + avvioprova, poi
+      dal disco, mount rdb0 /r): 32 e 64 bit OK, somma INTEGRO a 64.
+      Stage 2 ora 4494 byte: sul floppy restano 2 KB.
+      PASSO 1b FATTO (stesso kernel 0.269; l'utente: Â«un unico file
+      compresso da caricare in RAMÂ»): tools/lz4exos.py (scritto qui: il PC
+      non ha ne' lz4 ne' il modulo Python) fa rdboot.lz4 = 'EXLZ' + misura
+      + blocco LZ4 + somma dei byte, e verifica da se' decomprimendo; 4 MB
+      -> 457 KB (32) e 534 KB (64). bootinstall mappa /boot/rdboot.lz4 (o
+      .img in chiaro); Stage 2 lo porta a 32 MB com'e' (chiede 56 MB); il
+      kernel (kernel/boot/rdlz4.c, rd_decomprimi prima di pmm_init) lo
+      espande a 40 MB (RD_ESPANSO; ora 6 MB, vedi sotto) controllando ogni accesso e la somma.
+      prova_rdboot.sh: anche un byte rovinato nel .lz4 -> Â«ROTTOÂ», e il
+      sistema parte senza. 32 e 64 OK.
+      RDBOOT.LZ4 dal floppy e dalla chiavetta: FATTO (vedi sotto, FLOPPY
+      NUOVO), da Stage 2 col BIOS come KERNEL.BIN.
+      PASSO 2 FATTO a 64 bit (stesso 0.269): vfs_monta_base() monta la
+      directory /rdboot di rdb0 su /rdboot (montaggio di SOTTOALBERO,
+      g_sotto in vfs.c); `umount /` rimette come radice il volume base
+      intero (se sul disco non c'e' niente di aperto), `mount hd0p1 /`
+      rimette il disco sopra (i file aperti dalla radice-base passano allo
+      slot di /rdboot); /rdboot non si smonta ne' si cancella.
+      prova_rdboot.sh fase 3 (shell e kbd da /rdboot via kernel.cfg): OK.
+      FLOPPY NUOVO E 16 MB FATTI (stesso 0.269, scelte dell'utente 22/10):
+      - sul floppy solo LOADER.BIN, KERNEL.BIN, RDBOOT.LZ4, /boot/KERNEL.CFG
+        (shell, login e kbd su /rdboot, /rdboot/bin primo nel PATH),
+        KERNEL.TXT e /USB: 634 KB liberi (tools/mkfloppy.sh). Il Â«Disk fullÂ»
+        a 32 bit e' sparito; diagnostic.img e floppy-verboso si rifanno;
+      - Stage 2 ricava la mappa dalla catena FAT12 di /RDBOOT.LZ4 (floppy,
+        CD per emulazione, chiavetta) e legge in CHS fino a fine traccia
+        (o 42h dove c'e'). Il CD a 32 e a 64 bit ora carica anche lui la base;
+      - memoria: compresso a 10 MB, espanso a 6 MB (al piu' 4 MB), volume
+        intero di ramdisco a 12 MB (prima 32): QEMU con 16 MB parte a 32
+        bit dal floppy (5,7 MB liberi) e a 64 dal CD (4,8 MB liberi).
+        pmm_init rifiuta la base se la bitmap ci arrivasse sopra;
+      - BootInfo: rb_firma 'RDBT' / rb_addr / rb_byte a +58/+62/+66, a
+        parte da rd_addr: dal floppy USB ci sono tutti e due (rd0 e rdb0);
+      - libc.so cercata anche in /rdboot/lib (libc_ponti.c, dlopen), ext4.mod
+        in /rdboot/dev (modulo_avvio);
+      - Makefile: build/rdboot.lz4 (+ rdboot.lista) dipende da cio' da cui
+        dipendeva il floppy; il manifesto del minimale del CD e' l'elenco
+        di rdboot; il CD ha anche /boot/rdboot.lz4. kernel64 fa
+        build-64/rdboot.lz4 e mkiso64.sh lo mette sul floppy di avvio e su
+        /boot del CD.
+      prova_rdboot.sh 32 e 64: tutte le fasi OK (anche il passo 2 a 32).
+      ! RESTA DA FARE: (a) `install` dal floppy nuovo si ferma e dice di
+      usare il CD o netupdate (copiava da /bin, che li' non c'e'): passo 6;
+      (b) hwconfig/svga che scrivono kernel.cfg sul floppy aggiungono driver
+      con percorsi /dev/...: FATTO nel passo 3; (c) da floppy la radice e' il FAT12
+      del dischetto (scrivibile), la base resta su /rdboot.
       PASSI: 1 archivio rdboot dal Makefile (32 e 64) caricato da Stage 2;
       2 VFS: radice ramdisk, montaggio sopra / e ritorno; 3 avvio: driver
       da /rdboot, poi il disco, poi le sue configurazioni; 4 ps, kill, chi
       usa un montaggio; 5 system -unload/-load; 6 netupdate e install per
       l'archivio.
+      CONTROLLO AUTOMATICO DOPO UNO SPEGNIMENTO ANOMALO (l'utente, 22/10):
+      prima di montare la partizione di sistema dal ramdisk, se il volume
+      non e' stato smontato pulito si controlla e si corregge da solo.
+      Serve: (a) il segno Â«sporcoÂ»: su ext2 s_state (1 pulito) si azzera
+      al montaggio in scrittura e si rimette allo smontaggio/spegnimento,
+      come Linux; su FAT il bit di Â«volume sporcoÂ» nella FAT[1]; oggi il
+      kernel non li tocca; (b) un controllore ext2 (chkdsk oggi e' solo
+      FAT): almeno bitmap, conteggi, inode orfani, voci di directory
+      rotte; (c) fra le correzioni, i ~EXVnnnn.DEL della voce 20 si
+      cancellano. Va nel passo 3 (avvio), dopo il passo 2.
+      PASSO 3 FATTO (stesso 0.269; scelte dell'utente 22/10: base prima,
+      poi disco; PATH che comprende /rdboot e le altre directory; da un
+      disco installato i driver si caricano DAL DISCO):
+      - avvio da disco con la base in RAM: il kernel monta il disco, ne
+        legge kernel.cfg, poi lo toglie da / (vfs_sistema_rimanda); i
+        driver partono da /rdboot (o aspettano il disco: «arriva col disco
+        di sistema»); il compito del kernel «sistema» (kernel_main.c,
+        compito_sistema) dopo sched_start: se il disco era sporco lancia
+        /rdboot/bin/chkdsk -r sul disco smontato (spawn_dal_kernel in
+        syscall_impl.c), poi lo rimonta su /, avvia i driver mancanti dal
+        disco, i montaggi automatici e le shell. Se il disco non si monta:
+        shell da /rdboot e un messaggio;
+      - ext2 «sporco»: s_state si azzera al montaggio in scrittura e si
+        rimette a «pulito» allo smontaggio e allo spegnimento
+        (vfs_spegnimento in power_sync); non su RAM ne' su metadata_csum;
+      - PATH: kernel.cfg puo' non nominare /rdboot, cfg.c aggiunge in
+        coda /rdboot/bin:/rdboot/dev; hwconfig (0.006), svga.drv (0.004) e
+        boot/avvio.sh scrivono i driver per nome, non con /dev/...;
+      - chkdsk 0.002: -r lasciava LIBERI i blocchi per crescere della
+        tabella dei gruppi (resize_inode, 256 per gruppo su 64 MB) e il
+        riempimento delle bitmap: il primo file scritto dopo finiva sopra
+        l'inode 7. Ora li segna, e percorre anche gli altri inode riservati
+        (journal di ext3);
+      - netupdate 0.034: un boot/rdboot.lz4 nuovo fa riscrivere l'avvio
+        come il kernel; e' tra gli essenziali; `netupdate -avvio` riscrive
+        solo l'avvio (settore, kernel, mappa della base), senza rete.
+        ! DAL 0.268 SERVONO DUE GIRI: il primo netupdate gira sul kernel
+        vecchio, il cui bootinstall non scrive la mappa della base (la
+        macchina parte col 0.269 senza base, e va bene); dopo il riavvio
+        `netupdate -avvio` (o un altro -check) la scrive, e al riavvio
+        dopo c'e' la base.
+      Prova: tools/prova_sistema.sh (disco ext2: dal CD, dal disco, QEMU
+      spento di colpo -> «not clean» -> chkdsk -r e disco su / ->
+      poweroff -> «clean» -> e2fsck -fn senza errori): 32 e 64 OK.
+      ! RESTA: i ~EXVnnnn.DEL non si cancellano ancora dopo il controllo;
+      il bit «sporco» di FAT non si usa (solo ext2).
   15. EXILLA SUL PORTATILE (l'utente, 21/10 notte):
       a. la finestra di caricamento (attesa) non si chiude quando Firefox
          ha aperto la sua finestra. attesa confronta il pid della finestra

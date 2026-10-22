@@ -528,7 +528,24 @@
  * the open handles along, unlink or rename-over of an open file hides it as
  * ~EXVnnnn.DEL until the last close (kernel/fs/vfs.c). netupdate replacing
  * itself read pages of the new binary and died (tools/prova_aperti.sh). */
-#define EXOS_VERSION    "0.268"
+/* 0.268 -> 0.269: the base system, rdboot.lz4 (@RDBOOT steps 1, 1b, 2):
+ * an ext2 volume holding only /rdboot, LZ4-compressed ('EXLZ',
+ * tools/lz4exos.py). From a disk bootinstall writes its sector map into the
+ * 'RDMAPPA' table inside Stage 2; from a floppy or CD Stage 2 builds the map
+ * from the FAT12 chain of /RDBOOT.LZ4. Stage 2 loads it to 10 MB, the kernel
+ * expands it to 6 MB before the PMM (kernel/boot/rdlz4.c) - a 16 MB machine
+ * boots - and registers it as "rdb0" (BootInfo rb_firma/rb_addr/rb_byte, apart
+ * from the whole-medium rd0). The VFS mounts it on /rdboot; `umount /` leaves
+ * it as the root, `mount dev /` puts a disk back over it. The floppy now
+ * carries only LOADER.BIN, KERNEL.BIN, RDBOOT.LZ4 and kernel.cfg pointing at
+ * /rdboot; libc.so and ext4.mod are also looked for in /rdboot
+ * (tools/prova_rdboot.sh). Step 3: booting from a disk with the base in RAM,
+ * the disk is read for kernel.cfg and taken off /; drivers start from
+ * /rdboot, and the kernel task "sistema" runs /rdboot/bin/chkdsk -r on the
+ * unmounted disk if it was not unmounted clean (ext2 s_state, cleared on a
+ * read/write mount and set again on umount and power off), mounts it back
+ * on / and starts what was missing from it (tools/prova_sistema.sh). */
+#define EXOS_VERSION    "0.269"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

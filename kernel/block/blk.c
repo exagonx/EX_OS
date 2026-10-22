@@ -29,7 +29,9 @@ static BlkDev g_dev[BLK_MAX_DEV];
 
 /* Dove sta il volume in RAM. Uno solo: ce n'e' uno per avvio, e mettere qui
  * un array vorrebbe dire far finta che un giorno ce ne saranno due. */
-static uint32_t g_ram_base = 0;
+/* Where each RAM volume lives, by device index: there can be two - the
+ * whole boot medium (rd0) and the base system (rdb0, @RDBOOT). */
+static uint32_t g_ram_base[BLK_MAX_DEV];
 static int    g_n = 0;
 
 /* Dichiarata qui perche' la usano blk_rescan() e blk_ripartiziona(), che
@@ -819,11 +821,12 @@ static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
     if (b->tipo == BLK_TIPO_RING3) return blkr3_read(i, abs, n, buf);
 
     /* ! IL VOLUME IN RAM SI LEGGE CON UNA COPIA E BASTA, e si puo' perche' il
-     * kernel mappa per identita' i primi 64 MB (vedi PSE in paging.c): quello
-     * sta a 32, quindi l'indirizzo fisico E' l'indirizzo che si scrive. Il
+     * kernel mappa per identita' i primi 64 MB (vedi PSE in paging.c): quelli
+     * stanno a 6 e a 12 MB (@RDBOOT), quindi l'indirizzo fisico E' l'indirizzo
+     * che si scrive. Il
      * giorno che lo si spostasse piu' in alto, qui servirebbe una finestra. */
     if (b->tipo == BLK_TIPO_RAM) {
-        copia((uint8_t *)buf, (const uint8_t *)(g_ram_base + abs * 512u),
+        copia((uint8_t *)buf, (const uint8_t *)DA_FISICO(g_ram_base[i] + (uint32_t)abs * 512u),
               n * 512u);
         return 0;
     }
@@ -871,7 +874,7 @@ int blk_read_diretto(int i, uint64_t lba, uint32_t n, void *buf)
  * I dispositivi serviti da un processo — vedi blkr3.c
  * ============================================================================= */
 
-int blk_registra_ram(uint32_t fisico, uint32_t byte)
+int blk_registra_ram(uint32_t fisico, uint32_t byte, const char *nome)
 {
     BlkDev *b;
 
@@ -880,7 +883,7 @@ int blk_registra_ram(uint32_t fisico, uint32_t byte)
     b = nuovo();
     if (b == NULL) return -1;
 
-    nome_copia(b->nome, "rd0");
+    nome_copia(b->nome, nome);
     b->usato        = 1;
     b->tipo         = BLK_TIPO_RAM;
     b->disco        = 0;
@@ -890,7 +893,7 @@ int blk_registra_ram(uint32_t fisico, uint32_t byte)
     b->primo        = 0;
     b->settori      = byte / 512;
 
-    g_ram_base = fisico;
+    g_ram_base[b - g_dev] = fisico;
 
     klog(LOG_INFO, "BLK: volume in RAM a 0x%08x, %u settori",
          fisico, (uint32_t)b->settori);
@@ -1093,7 +1096,7 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
     if (b->tipo == BLK_TIPO_RING3) return blkr3_write(i, abs, n, buf);
 
     if (b->tipo == BLK_TIPO_RAM) {
-        copia((uint8_t *)(g_ram_base + abs * 512u), (const uint8_t *)buf,
+        copia((uint8_t *)DA_FISICO(g_ram_base[i] + (uint32_t)abs * 512u), (const uint8_t *)buf,
               n * 512u);
         return 0;
     }

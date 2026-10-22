@@ -3916,15 +3916,17 @@ DIAGNOSTIC_IMG := $(DIST_DIR)/diagnostic.img
 $(DIAGNOSTIC_IMG): $(FLOPPY_IMG) $(KBPROVA_BIN)
 	@echo "=== Creazione floppy di diagnostica: $@ ==="
 	@cp $(FLOPPY_IMG) $@
-	@# kbprova non sta sul floppy normale (2 ottobre 2026): qui si'.
+	@# kbprova non sta sul floppy normale (2 ottobre 2026): qui si'. E il
+	@# floppy normale /bin non ce l'ha piu' (@RDBOOT): la si crea.
+	@mmd -i $@ ::/bin 2>/dev/null || true
 	@mcopy -o -i $@ $(KBPROVA_BIN) ::/bin/kbprova
 	@rm -rf $(BUILD_DIR)/diag && mkdir -p $(BUILD_DIR)/diag
 	@mtype -i $@ ::/boot/kernel.cfg > $(BUILD_DIR)/diag/kernel.cfg
 	@sed -i -e 's/^verboseboot = 0/verboseboot = 1/' \
 	        -e 's/^loglevel    = 3/loglevel    = 2/' \
-	        -e 's|^login     = /bin/login|# login spento: la tastiera puo essere il guasto\n# login   = /bin/login|' \
+	        -e 's|^login     = \(.*\)/bin/login|# login spento: la tastiera puo essere il guasto\n# login   = \1/bin/login|' \
 	        -e 's|^modules     = kbd.*|modules     =|' \
-	        -e 's|^kbd         = /dev/kbd.drv|# kbd non si carica: kbprova legge l'"'"'8042 a tappeto\n# kbd       = /dev/kbd.drv|' \
+	        -e 's|^kbd         = \(.*\)/dev/kbd.drv|# kbd non si carica: kbprova legge l'"'"'8042 a tappeto\n# kbd       = \1/dev/kbd.drv|' \
 	        $(BUILD_DIR)/diag/kernel.cfg
 	@mcopy -o -i $@ $(BUILD_DIR)/diag/kernel.cfg ::/boot/kernel.cfg
 	@printf 'fdprova -s\nkbprova -s\n' > $(BUILD_DIR)/diag/autoexec.sh
@@ -3956,6 +3958,7 @@ FLOPPY_VERBOSO_IMG := $(DIST_DIR)/floppy-verboso.img
 $(FLOPPY_VERBOSO_IMG): $(FLOPPY_IMG) $(KBPROVA_BIN)
 	@echo "=== Creazione floppy verboso: $@ ==="
 	@cp $(FLOPPY_IMG) $@
+	@mmd -i $@ ::/bin 2>/dev/null || true
 	@mcopy -o -i $@ $(KBPROVA_BIN) ::/bin/kbprova
 	@rm -rf $(BUILD_DIR)/verboso && mkdir -p $(BUILD_DIR)/verboso
 	@mtype -i $@ ::/boot/kernel.cfg > $(BUILD_DIR)/verboso/kernel.cfg
@@ -5607,6 +5610,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/fs/iso9660.c \
                   $(KERNEL_DIR)/fs/vfs.c \
                   $(KERNEL_DIR)/boot/bootinst.c \
+                  $(KERNEL_DIR)/boot/rdlz4.c \
                   $(KERNEL_DIR)/block/ata.c \
                   $(KERNEL_DIR)/block/ahci.c \
                   $(KERNEL_DIR)/block/atapi.c \
@@ -5742,6 +5746,9 @@ kernel64:
 	@# immagine di avvio, dove /bin non c'e'. Successo il 10 ottobre 2026).
 	@mkdir -p build-64/avvio
 	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=0 $(STAGE2_ASM_SRC) -o build-64/avvio/stage2-cd.bin
+	@# Il sistema di base a 64 bit (@RDBOOT): i comandi di build-64/bin.
+	@chmod +x $(TOOLS_DIR)/mkrdboot.sh
+	@$(TOOLS_DIR)/mkrdboot.sh x86_64 build-64/rdboot.img
 	@chmod +x tools/mkiso64.sh
 	@tools/mkiso64.sh intero
 	@echo "[OK] $(K64_OUT)/kernel-intero.bin ($$(stat -c%s $(K64_OUT)/kernel-intero.bin) byte)"
@@ -5935,11 +5942,35 @@ fixsys:
 	@echo "     stage2 appena costruito:  $$(md5sum $(STAGE2_BIN) | cut -c1-32)"
 	@echo "     (se i due numeri non combaciano, il volume in RAM non c'e')"
 
-$(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(MOD_EXT4_OUT) \
-               $(PROGRAMMI_FLOPPY_OUT) \
+# =============================================================================
+# IL SISTEMA DI BASE, rdboot (@RDBOOT, 22 ottobre 2026)
+#
+# Un volume ext2 da 4 MB con dentro solo /rdboot: i programmi che stavano sul
+# dischetto, i driver per partire, libc.so e ext4.mod. tools/mkrdboot.sh lo
+# costruisce e lo comprime (rdboot.lz4, tools/lz4exos.py) e scrive accanto
+# l'elenco dei file (rdboot.lista, il manifesto del minimale del CD).
+#
+# ! DIPENDE DA CIO' DA CUI DIPENDEVA IL DISCHETTO: e' quello che il dischetto
+# portava. Il dischetto adesso dipende da questo.
+# =============================================================================
+RDBOOT_IMG   := $(BUILD_DIR)/rdboot.img
+RDBOOT_LZ4   := $(BUILD_DIR)/rdboot.lz4
+RDBOOT_LISTA := $(BUILD_DIR)/rdboot.lista
+
+$(RDBOOT_LZ4): Makefile $(PROGRAMMI_FLOPPY_OUT) $(MOD_EXT4_OUT) $(EHCI_OUT) $(OHCI_OUT) \
+               $(TOOLS_DIR)/mkrdboot.sh $(TOOLS_DIR)/lz4exos.py \
+               | dirs verifica-dipendenze-floppy
+	@echo "=== Il sistema di base: $(RDBOOT_LZ4) ==="
+	@chmod +x $(TOOLS_DIR)/mkrdboot.sh
+	@$(TOOLS_DIR)/mkrdboot.sh i386 $(RDBOOT_IMG)
+
+.PHONY: rdboot
+rdboot: $(RDBOOT_LZ4)
+
+$(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(RDBOOT_LZ4) \
                boot/kernel.cfg boot/kernel.txt \
                $(TOOLS_DIR)/mkfloppy.sh \
-               | dirs verifica-dipendenze-floppy
+               | dirs
 	@echo "=== Creazione Immagine Floppy FAT12 1.44MB ==="
 	@chmod +x $(TOOLS_DIR)/mkfloppy.sh
 	@$(TOOLS_DIR)/mkfloppy.sh
@@ -7996,7 +8027,7 @@ verifica-dipendenze-cd:
 	fi; \
 	echo "[OK] ogni programma del CD e' fra le dipendenze dell'ISO"
 
-$(ISOX_IMG): Makefile $(FLOPPY_IMG) $(MOD_EXT4_OUT) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
+$(ISOX_IMG): Makefile $(FLOPPY_IMG) $(RDBOOT_LZ4) $(MOD_EXT4_OUT) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_DOC) \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_TIPI) $(EXWIN_ICONE) $(EXWIN_SUONI) \
@@ -8030,8 +8061,13 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) $(MOD_EXT4_OUT) boot/autoexec.sh boot/avvio.
 	@# VERITA', e divergerebbe dal floppy al primo programma aggiunto o tolto.
 	@# Questo invece e' il floppy stesso, letto.
 	@# =====================================================================
-	@mdir -i $(FLOPPY_IMG) -b -/ :: 2>/dev/null | grep -v '/$$' | \
-	    sed 's|^::/||' | tr 'A-Z' 'a-z' | sort > $(ISOX_ROOT)/boot/minimale.txt || true
+	@# ! E DAL 22 OTTOBRE 2026 IL FLOPPY PORTA SOLO L'AVVIO (@RDBOOT): i
+	@# programmi e i driver del minimale stanno in rdboot, e il suo elenco
+	@# (rdboot.lista, scritto da tools/mkrdboot.sh) si aggiunge qui.
+	@{ mdir -i $(FLOPPY_IMG) -b -/ :: 2>/dev/null | grep -v '/$$' | \
+	    sed 's|^::/||' | tr 'A-Z' 'a-z'; cat $(RDBOOT_LISTA); } | sort -u \
+	    > $(ISOX_ROOT)/boot/minimale.txt || true
+	@cp $(RDBOOT_LZ4) $(ISOX_ROOT)/boot/rdboot.lz4
 	@echo "     manifesto del minimale: $$(grep -c '' $(ISOX_ROOT)/boot/minimale.txt) file"
 	@cp $(BUILD_BIN)/* $(ISOX_ROOT)/bin/ 2>/dev/null || true
 	@cp $(BUILD_BIN)/mount $(ISOX_ROOT)/bin/umount 2>/dev/null || true

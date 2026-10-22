@@ -64,7 +64,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `chkdsk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("chkdsk", "0.001");
+EX_VERSIONE("chkdsk", "0.002");
 
 #define SETT            512u
 #define MAX_PROF        16      /* annidamento massimo delle directory */
@@ -1074,6 +1074,7 @@ static unsigned int e2_liberi_b, e2_liberi_i, e2_primo_dato;
 static unsigned int e2_b_per_gruppo, e2_i_per_gruppo, e2_dim_inode;
 static unsigned int e2_n_gruppi, e2_incompat, e2_primo_inode;
 static unsigned int e2_desc_blocco, e2_desc_quanti, e2_sparse;
+static unsigned int e2_gdt_riserva;     /* resize_inode: s_reserved_gdt_blocks */
 
 /* ! QUANTE VOLTE NON SI E' POTUTO SAPERE. Ogni lettura fallita, ogni
  * blocco fuori scala, ogni funzionalita' non capita lo incrementa â€” e con
@@ -1221,6 +1222,11 @@ static int e2_apri(void)
     /* sparse_super: se c'e', le copie di riserva stanno solo in alcuni
      * gruppi invece che in tutti. Vedi gruppo_ha_backup(). */
     e2_sparse = (rev >= 1u) ? (le32(sb + 100) & 0x0001u) : 0u;
+
+    /* resize_inode (compat 0x0010): dopo i descrittori, in ogni gruppo che
+     * ne ha la copia, ci sono blocchi tenuti da parte per farli crescere.
+     * Vedi «I BLOCCHI PER CRESCERE» dove si segnano i metadati. */
+    e2_gdt_riserva = (rev >= 1u && (le32(sb + 92) & 0x0010u)) ? le16(sb + 206) : 0u;
 
     printf("  ext2 - %u blocchi da %u byte, %u inode, %u grupp%s\n",
            e2_n_blocchi, e2_dim_blocco, e2_n_inode, e2_n_gruppi,
@@ -1975,6 +1981,9 @@ static int e2_ripara_bitmap(void)
             if (e2_bit(e2_blocchi_usati, blocco)) e2_segna(bm, i);
             else                                   lib_b++;
         }
+        /* ! OLTRE L'ULTIMO DEL GRUPPO I BIT VALGONO 1, in tutt'e due le
+         * bitmap: e2fsck lo chiama «padding» e lo vuole cosi'. */
+        for (i = e2_b_per_gruppo; i < e2_dim_blocco * 8u; i++) e2_segna(bm, i);
         if (e2_scrivi_blocco(b_bm, bm) == 0) scritte++;
 
         /* --- bitmap degli inode --- */
@@ -1995,6 +2004,7 @@ static int e2_ripara_bitmap(void)
                 lib_i++;
             }
         }
+        for (i = e2_i_per_gruppo; i < e2_dim_blocco * 8u; i++) e2_segna(bm, i);
         if (e2_scrivi_blocco(i_bm, bm) == 0) scritte++;
 
         /* --- i conteggi del descrittore --- */
@@ -2235,13 +2245,23 @@ static void e2_controlla(void)
         for (b = 0; b < e2_desc_quanti; b++)
             e2_usa_blocco(e2_desc_blocco + b, 0);
 
+        /* ! I BLOCCHI PER CRESCERE (22 ottobre 2026). mke2fs mette di serie
+         * resize_inode: dopo i descrittori ci sono s_reserved_gdt_blocks
+         * blocchi vuoti, in ogni gruppo con la copia, e li tiene l'inode 7.
+         * Non segnati qui, `chkdsk -r` li dichiarava LIBERI (256 per gruppo
+         * su un disco da 64 MB) e il primo file scritto dopo ci finiva
+         * sopra: l'inode 7 punta li', e e2fsck trova blocchi di due padroni.
+         * Visto quando il controllo e' diventato automatico all'avvio. */
+        for (b = 0; b < e2_gdt_riserva; b++)
+            e2_usa_blocco(e2_desc_blocco + e2_desc_quanti + b, 0);
+
         for (g = 0; g < e2_n_gruppi; g++) {
             unsigned int off = g * 32u, tab, k;
 
             /* ...e le copie di riserva, dove ci sono. */
             if (g > 0 && gruppo_ha_backup(g)) {
                 unsigned int base = e2_primo_dato + g * e2_b_per_gruppo;
-                for (k = 0; k < e2_desc_quanti + 1u; k++)
+                for (k = 0; k < e2_desc_quanti + 1u + e2_gdt_riserva; k++)
                     e2_usa_blocco(base + k, 0);
             }
 
@@ -2295,6 +2315,23 @@ static void e2_controlla(void)
         } else {
             printf("  ! l'inode 1 non si legge\n");
             problemi++;
+        }
+    }
+
+    /* ! GLI ALTRI INODE RISERVATI HANNO BLOCCHI LORO, e nessuna directory li
+     * nomina: il journal di ext3 (inode 8), per esempio, che un volume ext3
+     * senza bit incompatibili porta con se'. Si percorrono come l'inode 1.
+     * Il 7 (resize_inode) no: i blocchi a cui punta sono quelli per crescere,
+     * gia' segnati sopra; resta da segnare il suo doppio indiretto. */
+    {
+        unsigned char ib[128];
+        unsigned int  num;
+
+        for (num = 3u; num < e2_primo_inode && num <= e2_n_inode; num++) {
+            if (e2_leggi_inode(num, ib) != 0) continue;
+            e2_segna(e2_inode_visti, num);
+            if (num == 7u) e2_usa_blocco(le32(ib + 40 + 13 * 4), 7u);
+            else           e2_percorri_blocchi(ib, num);
         }
     }
 

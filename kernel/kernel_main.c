@@ -10,6 +10,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "rdlz4.h"
 #include "acpi.h"
 #include "vga.h"
 #include "gdt.h"
@@ -161,343 +162,145 @@ static void print_system_info(BootInfo *info)
 }
 
 /* =============================================================================
- * kernel_main — Entry point C del kernel
- * Riceve BootInfo* passata da Stage 2 tramite stack/entry.asm
+ * PASSO 14b, in una funzione (@RDBOOT passo 3): all'avvio (dopo_disco = 0) e,
+ * con il disco di sistema rimandato, di nuovo dal compito «sistema»
+ * (dopo_disco = 1) per i driver che la base non aveva. Rende 1 se e' partito
+ * il driver della tastiera.
  * ============================================================================= */
-void kernel_main(BootInfo *info)
+static int     g_rimandato = 0;               /* il disco di sistema e' rimandato */
+static uint8_t g_drv_avviato[CFG_MAX_MODULES];
+
+/* "/rdboot" + percorso */
+static void unisci_base(char *dst, uint32_t cap, const char *percorso)
 {
-    /* Checkpoint 3: kernel_main raggiunta */
-/* =========================================================================
-     * PASSO 1: VGA init
-     * Prima cosa assoluta: output video. Senza questo non possiamo
-     * stampare nulla e i bug sono invisibili.
-     * ========================================================================= */
-    vga_init();
-vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    static const char base[] = "/rdboot";
+    uint32_t i = 0, j = 0;
 
-    /* =========================================================================
-     * PASSO 2: Banner
-     * ========================================================================= */
-    print_boot_banner();
-#if defined(__x86_64__)
-klog(LOG_INFO, "Kernel avviato in Long Mode a 64 bit");
-#else
-klog(LOG_INFO, "Kernel avviato in Protected Mode 32-bit");
-#endif
-/* =========================================================================
-     * PASSO 3: Verifica BootInfo
-     * Se Stage 2 non ha passato dati validi, panic immediato.
-     * ========================================================================= */
-    verify_bootinfo(info);
-/* =========================================================================
-     * PASSO 4: Informazioni sistema
-     * ========================================================================= */
-    print_system_info(info);
-/* =========================================================================
-     * PASSO 5: GDT definitiva
-     * Sostituisce la GDT minimale installata da Stage 2.
-     * Installa: null, kernel code/data, user code/data, TSS.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 5] Installazione GDT...");
-    gdt_install();
-klog(LOG_INFO, "[PASSO 5] GDT OK");
+    while (base[j] && i + 1 < cap) dst[i++] = base[j++];
+    j = 0;
+    while (percorso[j] && i + 1 < cap) dst[i++] = percorso[j++];
+    dst[i] = '\0';
+}
 
-    /* =========================================================================
-     * PASSO 6: IDT — Interrupt Descriptor Table
-     * Rimappa PIC, installa 256 gate, prepara handler per eccezioni e IRQ.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 6] Installazione IDT...");
-    idt_install();
-klog(LOG_INFO, "[PASSO 6] IDT OK");
+static int avvia_driver(KernelConfig *cfg, int dopo_disco)
+{
+    klog(LOG_INFO, "[PASSO 14b] Caricamento driver come processi ring3...");
+    int kbd_drv_loaded = 0;
 
-    /* =========================================================================
-     * PASSO 7: ISR — Interrupt Service Routines
-     * Inizializza tabella handler, maschera tutti gli IRQ.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 7] Installazione ISR...");
-    isr_install();
-klog(LOG_INFO, "[PASSO 7] ISR OK");
-
-    /* =========================================================================
-     * PASSO 7b: FPU — coprocessore matematico x87
-     *
-     * Dopo l'IDT e non prima: il rilevamento imposta CR0.NE=1, cioe' "gli
-     * errori di virgola mobile arrivano come eccezione #MF", e #MF ha
-     * senso solo con un gate installato.
-     *
-     * E' un passo "b" per non rinumerare i tredici che seguono, che
-     * compaiono nei log e nella documentazione.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 7b] Inizializzazione FPU x87...");
-    fpu_init();
-
-    /* Dopo fpu_init, che e' chi interroga la CPU: entropia_init ha
-     * bisogno di sapere se c'e' RDRAND, e quel bit lo scopre CPUID. */
-    entropia_init();
-
-    /* Anche questa dopo fpu_init, per lo stesso motivo: il bit del TSC lo
-     * legge CPUID. E' qui e non piu' avanti perche' misura per 50 ms col PIT a
-     * polling, e prima che gli interrupt siano attivi nessuno la disturba. */
-    tsc_init();
-klog(LOG_INFO, "[PASSO 7b] FPU %s", fpu_present() ? "OK" : "ASSENTE (x87 disabilitata)");
-
-    /* =========================================================================
-     * PASSO 8: Memory Manager (PLACEHOLDER — Fase 1c)
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 8] Inizializzazione Physical Memory Manager...");
-    pmm_init(info);
-klog(LOG_INFO, "[PASSO 8] PMM OK - %u pagine libere (%u MB)",
-         pmm_get_free_pages(),
-         (pmm_get_free_pages() * PAGE_SIZE) / (1024*1024));
-
-    /* =========================================================================
-     * PASSO 9: Paginazione (PLACEHOLDER — Fase 1d)
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 9] Inizializzazione paginazione...");
-    isr_register_handler(14, page_fault_handler);   /* Registra handler #PF */
-    paging_init();
-klog(LOG_INFO, "[PASSO 9] Paginazione OK (CR0.PG=1)");
-
-    /* =====================================================================
-     * PASSO 9a: console grafica, se Stage 2 ha impostato una modalita' VESA
-     *
-     * ! QUI E NON PRIMA. Il framebuffer sta fuori dalla RAM e va mappato,
-     * quindi serve la paginazione appena accesa al passo precedente. E qui
-     * e non dopo: da questo punto in avanti ogni klog dei passi successivi
-     * si vede a schermo invece di finire in una memoria video che non si
-     * sta guardando.
-     *
-     * Senza modalita' grafica non fa niente e la console resta 80x25.
-     * ===================================================================== */
-    vga_modi_prendi(info);      /* the modes Stage 2 found, for SYS_VIDEO_MODI */
-    vga_init_grafica(info);
-
-    klog(LOG_INFO, "[PASSO 9b] Inizializzazione heap kernel...");
-    kmalloc_init();
-kmalloc_stats();
-    klog(LOG_INFO, "[PASSO 9b] Heap kernel OK");
-
-/* =========================================================================
-     * PASSO 10: Scheduler (PLACEHOLDER — Fase 2a)
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 10] Inizializzazione scheduler preemptive...");
-    sched_init();
-
-klog(LOG_INFO, "[PASSO 10] Scheduler OK (100Hz, round-robin, %d livelli priorita')",
-         PRIO_MAX + 1);
-
-    /* =========================================================================
-     * PASSO 11: Syscall interface (PLACEHOLDER — Fase 2b)
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 11] Inizializzazione syscall interface (int 0x80)...");
-    syscall_init();
-
-klog(LOG_INFO, "[PASSO 11] Syscall OK");
-
-    /* =========================================================================
-     * PASSO 12: Abilita interrupt
-     * SOLO DOPO che GDT, IDT e ISR sono installati e funzionanti.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 12] Abilitazione interrupt...");
-    interrupts_enable();
-
-/* =========================================================================
-     * PASSO 13: Driver, filesystem, shell (PLACEHOLDER — Fasi 3-5)
-     * ========================================================================= */
-    /* =========================================================================
-     * PASSO 13: FAT12 kernel driver
-     * ========================================================================= */
-    /* Solo se si e' avviati DA floppy.
-     *
-     * Sondare l'FDC quando non c'e' un floppy non e' gratis: il driver
-     * ritenta cinque volte con attese reali, e produce dodici righe di
-     * ERROR/WARN a ogni avvio da disco. Chi legge quel log vede un
-     * sistema che sembra rotto mentre sta funzionando — e il rumore
-     * costante e' il modo migliore per non accorgersi dell'errore vero,
-     * il giorno che arriva.
-     *
-     * Conseguenza da sapere: avviando da disco il floppy NON e'
-     * raggiungibile. Montarlo richiedera' di separare "inizializza l'FDC"
-     * da "monta la root", che oggi fat12_init fa insieme. */
-    if (info->boot_drive < 0x80) {
-        /* ! SI SONDA, NON SI INIZIALIZZA A FORZA. Il fallimento qui NON e'
-         * un guasto: e' il segnale che vfs_init() usa per montare il CD
-         * come radice (dietro l'emulazione floppy di El Torito non c'e'
-         * nessun controller). Trattarlo come un errore riempiva il
-         * registro di un avvio riuscito di righe rosse — vedi il commento
-         * su g_sondaggio in kernel/fs/fat12.c.
-         *
-         * Se la sonda riesce, il driver E' gia' inizializzato: non si
-         * richiama fat12_init, che rifarebbe il reset del controller. */
-        klog(LOG_INFO, "[PASSO 13] Sondaggio del floppy...");
-        if (fat12_sonda(info->boot_drive) != 0) {
-            klog(LOG_INFO, "[PASSO 13] nessun floppy: si prosegue senza");
-        } else {
-            klog(LOG_INFO, "[PASSO 13] FAT12 OK (drive=0x%02x)", info->boot_drive);
-        }
-    } else {
-        klog(LOG_INFO, "[PASSO 13] Avvio da disco (0x%02x): FDC non sondato",
-             info->boot_drive);
-    }
-
-    /* =========================================================================
-     * PASSO 13a: Rilevamento dischi ATA/IDE
-     *
-     * ! ORDINE CAMBIATO nella 0.134, e non e' un riordino cosmetico.
-     *
-     * Prima questo passo veniva DOPO vfs_init(), perche' la root era per
-     * forza il floppy e i dischi non servivano ad avviare. Da quando si
-     * puo' avviare DA disco, vfs_init() deve poter montare come root una
-     * partizione ATA — e per farlo i dispositivi a blocchi devono gia'
-     * esistere.
-     *
-     * Un fallimento non e' fatale: un sistema senza dischi rigidi si
-     * avvia esattamente come prima. Le attese del driver usano g_ticks,
-     * quindi questo passo deve stare dopo l'abilitazione degli interrupt
-     * (PASSO 12), come FAT12.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 13a] Rilevamento dischi ATA/IDE...");
+    if (dopo_disco)
+        klog(LOG_INFO, "[PASSO 14b] Driver che mancavano, dal disco di sistema...");
     {
-        int n_dischi = ata_init();
-        int n_cd;
+        uint32_t di;
+        for (di = 0; di < CFG_MAX_MODULES; di++) {
+            if (cfg->modules[di].name[0] == '\0') break;  /* fine elenco */
+            if (g_drv_avviato[di]) continue;     /* gia' partito dalla base */
 
-        klog(LOG_INFO, "[PASSO 13a] ATA: %d disco/dischi rigidi", n_dischi);
+            /* ! IL PERCORSO DEL DISCO, O LA COPIA DEL SISTEMA DI BASE
+             * (@RDBOOT passo 3). Con il disco rimandato la radice e' la base,
+             * e "/dev/kbd.drv" vuol dire /rdboot/dev/kbd.drv. Un driver che
+             * la base non ha aspetta il disco: lo avvia il compito «sistema»
+             * quando l'ha montato. */
+            const char *percorso = cfg->modules[di].path;
+            char        alt[CFG_PATH_LEN + 8];
 
-        /* I lettori ottici li ha gia' RICONOSCIUTI ata_init: qui si
-         * prendono in carico. Non si sonda il vassoio — un lettore con un
-         * disco dentro puo' metterci secondi a dichiararsi pronto, e
-         * pagarli a ogni avvio per un supporto che magari nessuno legge
-         * non ha senso. Vedi atapi_init(). */
-        n_cd = atapi_init();
-        if (n_cd > 0)
-            klog(LOG_INFO, "[PASSO 13a] ATAPI: %d lettore/i CD-DVD", n_cd);
+            if (!dopo_disco && g_rimandato) {
+                VfsStat st;
 
-        /* Il livello a blocchi va DOPO ata_init e atapi_init (legge le
-         * tabelle delle partizioni e registra i lettori) e dopo
-         * fat12_init (registra fd0). */
-        blk_init();
-
-        /* ! IL VOLUME IN RAM SI REGISTRA QUI, dopo gli altri: e' un
-         * dispositivo a blocchi come loro, e diventa la radice solo se
-         * vfs_init lo trova (kernel/fs/vfs.c). Su una macchina normale
-         * rd_addr vale zero e questa riga non fa niente. */
-        if (info->rd_addr != 0 && info->rd_byte != 0)
-            blk_registra_ram(info->rd_addr, info->rd_byte);
-#if defined(__x86_64__)
-        /* @EXOS-64: la chiavetta con la radice in RAM dice se il volume e'
-         * arrivato intero (kernel/arch/x86_64/avvio64.c). */
-        {
-            void rd_verifica(const BootInfo *info);
-            if (info->rd_addr != 0 || info->rd_byte == 0xFFFFFFFFu) rd_verifica(info);
-        }
-#endif
-    }
-
-    /* Lo strato di montaggio va PRIMA di chiunque apra un file: da qui in
-     * poi le syscall, la configurazione e il caricatore ELF passano da
-     * vfs_*, e senza la tabella inizializzata ogni percorso risulterebbe
-     * "non trovato" — compreso /bin/sh.
-     *
-     * Riceve il drive di avvio perche' e' lui a decidere che cosa sia la
-     * root: il floppy (drive < 0x80) o la partizione attiva del disco. */
-    vfs_init(info->boot_drive);
-
-    /* =========================================================================
-     * PASSO 13a: il modulo che SCRIVE ext2/ext3/ext4 (kernel 0.263)
-     *
-     * ! SUBITO DOPO LA RADICE, prima di ogni altra cosa che possa scrivere:
-     * fino a qui una radice ext2 e' in sola lettura, e diventa scrivibile
-     * quando /dev/ext4.mod si registra. Se manca o non corrisponde a questo
-     * kernel il sistema parte lo stesso, in sola lettura, e lo schermo dice
-     * cosa fare. Vedi kernel/loader/modulo.c.
-     * ========================================================================= */
-    modulo_avvio();
-
-    /* =========================================================================
-     * PASSO 13b: Lettura configurazione /boot/kernel.cfg
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 13b] Lettura /boot/kernel.cfg...");
-
-KernelConfig *cfg = cfg_load();
-    klog(LOG_INFO, "[PASSO 13b] Configurazione caricata");
-
-    /* ! IL PIO PER SCELTA, E SOLO DA QUI IN AVANTI. `atadma = 0` chiede di
-     * leggere il disco un settore per volta: serve a chi sta recuperando dati
-     * da un supporto con dei settori andati, dove un DMA che il disco non
-     * porta a termine costa otto secondi di attesa per blocco. Non puo' valere
-     * prima: questo file lo si e' appena letto DAL disco. Vedi ata_dma_spegni()
-     * e cfg.h. */
-    if (cfg->ata_dma == 0) ata_dma_spegni();
-
-    /* `ahci = 1`: il disco gia' visto dai registri IDE passa all'AHCI. Qui e
-     * non prima, per la stessa ragione di atadma: kernel.cfg sta sul disco. */
-    if (cfg->ahci) (void)ata_passa_ad_ahci();
-
-    /* ! I PROCESSORI IN PIU' SI CERCANO QUI: dopo kernel.cfg, perche' e' li'
-     * che sta scritto se svegliarli (smp = 0 li conta e basta), a interrupt
-     * accesi, perche' le attese contano i tick, e prima del primo processo,
-     * perche' l'APIC e' mappato solo nella directory del kernel. Su una
-     * macchina con un processore non fa niente: vedi smp.h. */
-    smp_init((int)cfg->smp);
-
-    /* The ACPI tables for shutdown and reboot: read now, with interrupts
-     * on, and logged - `dmesg` says what shutdown will do on this machine. */
-    acpi_init();
-
-    /* =====================================================================
-     * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.
-     *
-     * ! QUI NON SI IMPOSTA NIENTE, SI CONFRONTA E BASTA. La modalita'
-     * grafica la decide Stage 2 leggendo un proprio byte interno, perche' e'
-     * l'ultimo a girare in modo reale — da qui il BIOS non e' piu'
-     * raggiungibile. /dev/svga.drv scrive tutti e due, e questo controllo esiste
-     * per il caso in cui non l'abbia fatto: un bootloader aggiornato senza
-     * toccare kernel.cfg, o un kernel.cfg modificato a mano. Una macchina
-     * che si avvia in una risoluzione che nessun file dichiara e' proprio
-     * cio' che non deve succedere in silenzio.
-     * ===================================================================== */
-    if (cfg->svga[0] != '\0') {
-        const char *reale = "testo";
-        char        wxh[16];
-
-        /* "WxH" for every mode (kernel 0.262: svga.drv now takes any mode
-         * the card lists; with three names the others read "(altra)"). */
-        if (info->fb_addr != 0) {
-            uint32_t v[2], k, p = 0;
-
-            v[0] = info->fb_width; v[1] = info->fb_height;
-            for (k = 0; k < 2; k++) {
-                char     c[6];
-                uint32_t n = v[k], q = 0;
-
-                do { c[q++] = (char)('0' + n % 10u); n /= 10u; } while (n && q < 5);
-                while (q) wxh[p++] = c[--q];
-                if (k == 0) wxh[p++] = 'x';
+                if (vfs_stat(percorso, &st) != 0) {
+                    unisci_base(alt, sizeof(alt), percorso);
+                    if (vfs_stat(alt, &st) != 0) {
+                        klog(LOG_INFO, "[PASSO 14b] Driver '%s': '%s' arriva col "
+                             "disco di sistema", cfg->modules[di].name, percorso);
+                        continue;
+                    }
+                    percorso = alt;
+                }
             }
-            wxh[p] = '\0';
-            reale = wxh;
-        }
-        if (!str_equal(cfg->svga, reale)) {
-            klog(LOG_WARN, "[PASSO 13b] kernel.cfg chiede svga=%s, l'avvio e' "
-                           "partito in %s", cfg->svga, reale);
-            klog(LOG_WARN, "            Il kernel non puo' cambiarla: la "
-                           "imposta Stage 2. Allinea con  svga %s", cfg->svga);
+
+            Process *drv_proc = proc_create(cfg->modules[di].name, 0,
+                                             PRIO_HIGH, 0);
+            if (drv_proc == NULL) {
+                klog(LOG_ERROR, "[PASSO 14b] Impossibile creare processo per driver '%s'",
+                     cfg->modules[di].name);
+                continue;
+            }
+
+            /* Adozione da parte di init.
+             *
+             * proc_create assegna come ppid il processo corrente, che qui
+             * è il task idle: idle non muore mai e non chiama mai
+             * waitpid(), quindi un driver che si schianta resterebbe
+             * ZOMBIE per sempre. init_reaper_task() raccoglie solo gli
+             * zombie con ppid == PID di init, e proc_exit() ri-genitorializza
+             * a init solo gli orfani il cui padre è già morto — condizione
+             * che con idle come padre non si verifica mai.
+             *
+             * Assegnando init come genitore fin da subito, la morte di un
+             * driver libera davvero PCB, page directory, stack kernel e —
+             * cosa che qui conta di più — il claim sull'IRQ e il nome IPC
+             * registrato (proc_reap_zombie chiama irq_unbind_process e
+             * ipc_cleanup_process). Senza questo, dopo un crash del driver
+             * tastiera nessun altro processo potrebbe più registrarsi con
+             * quel nome di servizio né rivendicare IRQ1. */
+            if (g_init_task != NULL) {
+                drv_proc->ppid = g_init_task->pid;
+            }
+
+            ElfLoadResult drv_res;
+            /* RESIDENTE, non su richiesta: un driver che serve il
+             * filesystem e che venisse paginato da quel filesystem
+             * dovrebbe servire la propria lettura mentre e' fermo ad
+             * aspettarla. Vedi elf.c. */
+            int rc_drv = elf_load_residente(percorso, drv_proc,
+                                            &drv_res);
+            if (rc_drv == 0) {
+                proc_set_entry(drv_proc, drv_res.entry_point, drv_res.user_stack_top);
+                proc_set_ready(drv_proc);
+                g_drv_avviato[di] = 1;
+                klog(LOG_INFO, "[PASSO 14b] Driver '%s' (%s) avviato: PID=%u entry=0x%08x",
+                     cfg->modules[di].name, percorso,
+                     drv_proc->pid, drv_res.entry_point);
+                if (str_equal(cfg->modules[di].name, KBD_SERVICE_NAME)) {
+                    kbd_drv_loaded = 1;
+                }
+            } else {
+                /* Il codice va detto qui per la stessa ragione del PASSO 15:
+                 * un driver assente da' err=-2 (ENOENT), che elf_carica non
+                 * stampa piu' a LOG_ERROR. Senza, resterebbe un «saltato»
+                 * senza motivo. */
+                klog(LOG_WARN, "[PASSO 14b] Driver '%s': '%s' non caricato - "
+                     "saltato (err=%d)",
+                     cfg->modules[di].name, percorso, rc_drv);
+                /* Il PCB era stato creato solo per dare a elf_load una page
+                 * directory su cui mappare il driver: su fallimento va
+                 * rilasciato COMPLETAMENTE, non solo marcato ZOMBIE.
+                 *
+                 * LEAK RISOLTO (luglio 2026): qui c'era il solo
+                 * proc_kill(), che porta il processo a ZOMBIE. Nessuno
+                 * poteva poi raccoglierlo: il reaper (init_reaper_task)
+                 * raccoglie esclusivamente gli zombie con ppid == PID di
+                 * init, mentre questi hanno come ppid il task che girava
+                 * durante il boot (idle), che non chiama mai waitpid().
+                 * Ogni driver mancante lasciava così, per sempre: uno slot
+                 * del pool PCB, una page directory e le pagine dello stack
+                 * kernel. Reap diretto sicuro: il processo è stato creato
+                 * BLOCKED e non è mai stato eseguito, quindi non è
+                 * g_current (precondizione di proc_reap_zombie). */
+                proc_kill(drv_proc->pid);
+                proc_reap_zombie(drv_proc);
+            }
         }
     }
+    klog(LOG_INFO, "[PASSO 14b] Caricamento driver completato");
+    return kbd_drv_loaded;
+}
 
-    /* =========================================================================
-     * PASSO 13d: montaggi automatici dalla sezione [mount]
-     *
-     * Qui e non prima: servono i dispositivi (13a) E il file di
-     * configurazione (13b), che a sua volta si legge dal floppy.
-     *
-     * UN MONTAGGIO CHE FALLISCE NON FERMA L'AVVIO. E' una decisione, non
-     * una svista: il disco elencato qui puo' essere stato tolto,
-     * ripartizionato o formattato altrove, e nessuna di queste cose deve
-     * rendere il sistema non avviabile. Si segnala e si prosegue —
-     * l'alternativa, un kpanic, renderebbe un floppy di avvio funzionante
-     * inutilizzabile per colpa di un disco che non serve ad avviare.
-     * ========================================================================= */
+/* =============================================================================
+ * PASSO 13d, in una funzione: all'avvio, o dal compito «sistema» dopo aver
+ * montato il disco (@RDBOOT passo 3), perche' i punti stanno sul disco.
+ * ============================================================================= */
+static void montaggi_automatici(KernelConfig *cfg)
+{
     if (cfg->mount_count > 0) {
         uint32_t i, fatti = 0, saltati = 0;
 
@@ -576,238 +379,14 @@ KernelConfig *cfg = cfg_load();
         klog(LOG_INFO, "[PASSO 13d] %u montaggi su %u riusciti (%u saltati)",
              fatti, cfg->mount_count, saltati);
     }
+}
 
-    /* =========================================================================
-     * PASSO 13e: l'area di scambio
-     *
-     * ! DOPO I MONTAGGI E NON PRIMA, e non e' per simmetria: l'area si nomina
-     * come un dispositivo a blocchi ("hd0p2"), quindi i dischi devono essere
-     * gia' stati riconosciuti — cioe' dopo blk_init. Metterla prima vorrebbe
-     * dire cercare una partizione che ancora non esiste per nessuno.
-     *
-     * ! E SE NON C'E' NON SUCCEDE NIENTE. Senza `swap` in kernel.cfg, o con
-     * una partizione senza firma, il sistema parte come e' sempre partito: la
-     * memoria virtuale e' un di piu', non un requisito, e un kernel che si
-     * rifiutasse di avviarsi senza swap sarebbe inutilizzabile proprio sulle
-     * macchine piccole per cui lo swap serve.
-     * ===================================================================== */
-    if (cfg->swap[0] != '\0') {
-        if (swap_init(cfg->swap) != 0)
-            klog(LOG_WARN, "[PASSO 13e] '%s' non e' utilizzabile come area di "
-                 "scambio: si va avanti senza", cfg->swap);
-    }
-
-    /* =========================================================================
-     * PASSO 13c: applica verboseboot
-     *
-     * Con verboseboot=0 il sistema deve mostrare "solo l'output normale".
-     * Servono due cose distinte, perché il rumore ha due sorgenti:
-     *
-     *  1. i messaggi FUTURI — dal PASSO 14 in poi e per tutta la vita del
-     *     sistema, compresi quelli emessi quando la shell lancia un
-     *     comando (`SYSCALL spawn`, `ELF: caricamento...`). Si zittiscono
-     *     abbassando il livello di log a WARN: informativi e debug spariscono,
-     *     avvisi ed errori NO. Un boot muto che nasconde un fallimento
-     *     sarebbe peggio di un boot rumoroso, e la console seriale
-     *     continua comunque a ricevere tutto (vga.c la specchia a monte
-     *     del filtro di livello).
-     *
-     *  2. i messaggi GIÀ STAMPATI — PASSI 1-13, emessi prima che questa
-     *     configurazione fosse leggibile (vedi il commento su
-     *     print_boot_banner). Non si possono sopprimere a posteriori:
-     *     si cancella lo schermo. È il motivo per cui questo passo esiste
-     *     come punto separato invece di essere una riga dentro cfg_load.
-     *
-     *  3. i PROBLEMI già accaduti — che la pulizia dello schermo
-     *     cancellerebbe insieme al resto. Sono la cosa che NON deve
-     *     sparire: un driver non caricato, un timeout dell'FDC, il
-     *     ripiego sulla tastiera in-kernel. klog() li registra sempre in
-     *     un ring apposito (vedi kprintf.c), e qui vengono riproposti
-     *     dopo la pulizia.
-     *
-     * Il nome del sistema resta visibile su una riga: verboseboot spegne
-     * la diagnostica, non l'identità di ciò che si è avviato.
-     *
-     * Nota: il livello si abbassa a WARN, non a ERROR. Un avviso segnala
-     * un evento inatteso da cui il sistema si è ripreso — esattamente ciò
-     * che l'utente vuole vedere anche in un avvio silenzioso. Gli ERROR
-     * sono comunque incondizionati: klog() li stampa qualunque sia il
-     * livello (vedi il commento sopra klog in kprintf.c).
-     * ========================================================================= */
-    if (!cfg->verbose_boot) {
-        uint32_t problems = klog_problem_count();
-
-        klog_set_level(LOG_WARN);
-        vga_clear();
-
-        vga_setcolor(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-        kprintf("%s\n\n", g_os_version_short);
-        vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
-        if (problems > 0) {
-            vga_setcolor(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-            kprintf("  Avvio silenzioso: %u problema/i durante l'inizializzazione\n",
-                    problems);
-            vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-            klog_replay_problems();
-            kprintf("\n");
-        }
-    }
-
-    /* =========================================================================
-     * PASSO 14: TTY driver (tastiera + VGA)
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 14] Inizializzazione driver TTY...");
-    {
-        if (drv_init() != 0) {
-            klog(LOG_WARN, "[PASSO 14] TTY init fallita");
-        } else {
-            klog(LOG_INFO, "[PASSO 14] TTY OK (output VGA)");
-        }
-    }
-    /* La tastiera NON è ancora attiva: drv_init() non registra più
-     * l'handler IRQ1, perché la scelta fra driver ring3 e percorso
-     * in-kernel dipende dall'esito del PASSO 14b (vedi sotto). */
-
-    /* =========================================================================
-     * PASSO 15: Avvia shell come primo processo utente
-     * Il percorso viene letto da kernel.cfg [boot] shell=...
-     * ========================================================================= */
-    /* =========================================================================
-     * PASSO 14b: Driver — caricati come processi ring3 autonomi, non più
-     * come moduli in kernel space. Ogni driver gira nel proprio spazio
-     * di indirizzi, isolato dal kernel e dagli altri processi: un bug in
-     * un driver può al più terminare quel processo (via #GP/#PF ->
-     * proc_exit), mai corrompere il kernel o un altro driver. Il driver
-     * stesso, appena avviato, chiama ipc_register(nome) per farsi
-     * trovare dai client tramite sys_ipc_lookup — il kernel qui si
-     * limita a caricarlo ed eseguirlo, senza conoscerne l'API interna.
-     * ========================================================================= */
-    klog(LOG_INFO, "[PASSO 14b] Caricamento driver come processi ring3...");
-    int kbd_drv_loaded = 0;
-    {
-        uint32_t di;
-        for (di = 0; di < CFG_MAX_MODULES; di++) {
-            if (cfg->modules[di].name[0] == '\0') break;  /* fine elenco */
-
-            Process *drv_proc = proc_create(cfg->modules[di].name, 0,
-                                             PRIO_HIGH, 0);
-            if (drv_proc == NULL) {
-                klog(LOG_ERROR, "[PASSO 14b] Impossibile creare processo per driver '%s'",
-                     cfg->modules[di].name);
-                continue;
-            }
-
-            /* Adozione da parte di init.
-             *
-             * proc_create assegna come ppid il processo corrente, che qui
-             * è il task idle: idle non muore mai e non chiama mai
-             * waitpid(), quindi un driver che si schianta resterebbe
-             * ZOMBIE per sempre. init_reaper_task() raccoglie solo gli
-             * zombie con ppid == PID di init, e proc_exit() ri-genitorializza
-             * a init solo gli orfani il cui padre è già morto — condizione
-             * che con idle come padre non si verifica mai.
-             *
-             * Assegnando init come genitore fin da subito, la morte di un
-             * driver libera davvero PCB, page directory, stack kernel e —
-             * cosa che qui conta di più — il claim sull'IRQ e il nome IPC
-             * registrato (proc_reap_zombie chiama irq_unbind_process e
-             * ipc_cleanup_process). Senza questo, dopo un crash del driver
-             * tastiera nessun altro processo potrebbe più registrarsi con
-             * quel nome di servizio né rivendicare IRQ1. */
-            if (g_init_task != NULL) {
-                drv_proc->ppid = g_init_task->pid;
-            }
-
-            ElfLoadResult drv_res;
-            /* RESIDENTE, non su richiesta: un driver che serve il
-             * filesystem e che venisse paginato da quel filesystem
-             * dovrebbe servire la propria lettura mentre e' fermo ad
-             * aspettarla. Vedi elf.c. */
-            int rc_drv = elf_load_residente(cfg->modules[di].path, drv_proc,
-                                            &drv_res);
-            if (rc_drv == 0) {
-                proc_set_entry(drv_proc, drv_res.entry_point, drv_res.user_stack_top);
-                proc_set_ready(drv_proc);
-                klog(LOG_INFO, "[PASSO 14b] Driver '%s' (%s) avviato: PID=%u entry=0x%08x",
-                     cfg->modules[di].name, cfg->modules[di].path,
-                     drv_proc->pid, drv_res.entry_point);
-                if (str_equal(cfg->modules[di].name, KBD_SERVICE_NAME)) {
-                    kbd_drv_loaded = 1;
-                }
-            } else {
-                /* Il codice va detto qui per la stessa ragione del PASSO 15:
-                 * un driver assente da' err=-2 (ENOENT), che elf_carica non
-                 * stampa piu' a LOG_ERROR. Senza, resterebbe un «saltato»
-                 * senza motivo. */
-                klog(LOG_WARN, "[PASSO 14b] Driver '%s': '%s' non caricato - "
-                     "saltato (err=%d)",
-                     cfg->modules[di].name, cfg->modules[di].path, rc_drv);
-                /* Il PCB era stato creato solo per dare a elf_load una page
-                 * directory su cui mappare il driver: su fallimento va
-                 * rilasciato COMPLETAMENTE, non solo marcato ZOMBIE.
-                 *
-                 * LEAK RISOLTO (luglio 2026): qui c'era il solo
-                 * proc_kill(), che porta il processo a ZOMBIE. Nessuno
-                 * poteva poi raccoglierlo: il reaper (init_reaper_task)
-                 * raccoglie esclusivamente gli zombie con ppid == PID di
-                 * init, mentre questi hanno come ppid il task che girava
-                 * durante il boot (idle), che non chiama mai waitpid().
-                 * Ogni driver mancante lasciava così, per sempre: uno slot
-                 * del pool PCB, una page directory e le pagine dello stack
-                 * kernel. Reap diretto sicuro: il processo è stato creato
-                 * BLOCKED e non è mai stato eseguito, quindi non è
-                 * g_current (precondizione di proc_reap_zombie). */
-                proc_kill(drv_proc->pid);
-                proc_reap_zombie(drv_proc);
-            }
-        }
-    }
-    klog(LOG_INFO, "[PASSO 14b] Caricamento driver completato");
-
-    /* =========================================================================
-     * PASSO 14c: sorgente dell'input del TTY
-     *
-     * Ora si sa se /dev/kbd.drv è stato caricato, quindi si può decidere
-     * chi possiede la tastiera. Le due strade si escludono a vicenda:
-     * irq_handler() (kernel/arch/x86/isr.c) consulta prima la tabella
-     * degli handler kernel e solo se è vuota consegna la notifica IPC al
-     * processo che ha rivendicato l'IRQ. Registrare l'handler interno
-     * "per sicurezza" significherebbe quindi affamare il driver ring3.
-     *
-     * Attenzione: qui il driver è solo READY, non ha ancora eseguito una
-     * singola istruzione — la sua ipc_register() avverrà più tardi. Il
-     * TTY lo cerca pigramente al primo read() e riprova per qualche
-     * decimo di secondo (vedi tty_read_ipc), quindi non serve
-     * sincronizzarsi qui.
-     * ========================================================================= */
-    if (kbd_drv_loaded) {
-        tty_set_input_source(TTY_INPUT_IPC);
-        klog(LOG_INFO, "[PASSO 14c] Tastiera: driver ring3 '%s'", KBD_SERVICE_NAME);
-    } else {
-        tty_set_input_source(TTY_INPUT_INTERNAL);
-        klog(LOG_WARN, "[PASSO 14c] Tastiera: driver ring3 assente, "
-             "ripiego sull'handler IRQ1 in-kernel");
-    }
-
-    /* =========================================================================
-     * PASSO 15: una shell per CONSOLE VIRTUALE
-     *
-     * Erano una sola, e la console pure. Con VGA_N_CONSOLE schermi
-     * indipendenti ne serve una per ciascuno: e' il modello di Linux
-     * (una getty per terminale) ed e' cio' che rende utile Alt+Fn —
-     * passare alla console 2 deve dare un prompt pronto, non uno schermo
-     * vuoto che non risponde.
-     *
-     * La console 0 e' anche quella di SISTEMA, dove il kernel stampa i
-     * propri messaggi: la sua shell li vede scorrere accanto al prompt,
-     * esattamente come prima che esistessero le altre.
-     *
-     * Se il caricamento di una fallisce non si abortisce il resto: una
-     * console senza shell e' uno schermo inerte, quattro console senza
-     * shell sono un sistema morto. Con almeno una viva si puo' ancora
-     * lavorare e capire cosa e' andato storto.
-     * ========================================================================= */
+/* =============================================================================
+ * PASSO 15, in una funzione: all'avvio, o dal compito «sistema» quando il
+ * disco di sistema e' montato (@RDBOOT passo 3).
+ * ============================================================================= */
+static void avvia_shell(KernelConfig *cfg)
+{
     klog(LOG_INFO, "[PASSO 15] Avvio di %u shell (una per console): %s",
          (unsigned)VGA_N_CONSOLE, cfg->shell_path);
     {
@@ -995,6 +574,613 @@ KernelConfig *cfg = cfg_load();
             klog(LOG_ERROR, "[PASSO 15] Nessuna shell avviata - "
                  "il sistema resta senza console");
         }
+    }
+}
+
+/* =============================================================================
+ * IL COMPITO «sistema» (@RDBOOT passo 3, 22 ottobre 2026)
+ *
+ * All'avvio da disco con il sistema di base in RAM, kernel_main ha tolto il
+ * disco di sistema da sotto / (vfs_sistema_rimanda) e ha avviato i driver
+ * dalla base. Qui, con lo scheduler gia' partito:
+ *
+ *   1. se il disco era stato lasciato sporco, /rdboot/bin/chkdsk -r sulla
+ *      partizione, NON montata - l'unico modo in cui chkdsk lavora - e lo si
+ *      aspetta;
+ *   2. la partizione torna su /, sopra la base;
+ *   3. i driver di kernel.cfg che la base non aveva, i montaggi di [mount];
+ *   4. le shell (o login), come prima.
+ *
+ * ! SE IL DISCO NON TORNA SU, si resta sul sistema di base e lo si dice a
+ * schermo: le shell partono da /rdboot, senza login (la base non ha utenti),
+ * e chkdsk e mount sono li' per rimediare a mano.
+ * ============================================================================= */
+static KernelConfig *g_cfg_sistema = NULL;
+
+static void scrivi_console0(const char *m)
+{
+    while (*m) vga_putchar_su(0, *m++);
+}
+
+static void compito_sistema(void)
+{
+    KernelConfig *cfg = g_cfg_sistema;
+    const char   *dev = vfs_sistema_dev();
+    int           r;
+
+    if (cfg == NULL || dev == NULL) proc_exit(1);
+
+    if (vfs_sistema_sporco()) {
+        const char *argv[3];
+        Process    *p;
+
+        scrivi_console0("\n  Il disco di sistema non e' stato chiuso bene: lo controllo "
+                        "(chkdsk -r).\n\n");
+        argv[0] = "chkdsk"; argv[1] = "-r"; argv[2] = dev;
+        p = spawn_dal_kernel("/rdboot/bin/chkdsk", argv, 3, 0);
+        if (p == NULL) {
+            klog(LOG_ERROR, "SISTEMA: /rdboot/bin/chkdsk non parte: monto %s "
+                 "senza controllo", dev);
+        } else {
+            uint32_t pid = p->pid;
+
+            while (p->pid == pid && p->state != PROC_ZOMBIE) sched_sleep(5);
+            klog(LOG_WARN, "SISTEMA: chkdsk -r %s finito (codice %d)", dev,
+                 (int)p->exit_code);
+            proc_reap_zombie(p);
+        }
+    }
+
+    r = vfs_mount(dev, "/", 0);
+    if (r != 0) {
+        klog(LOG_ERROR, "SISTEMA: %s non torna su / (errore %d): resto sul "
+             "sistema di base", dev, r);
+        scrivi_console0("\n  Il disco di sistema non si monta: sei sul sistema di base\n"
+                        "  (/rdboot). Prova: chkdsk -r <partizione>, poi\n"
+                        "  mount <partizione> /\n\n");
+        {
+            static const char sh[] = "/rdboot/bin/sh";
+            uint32_t i;
+
+            for (i = 0; sh[i]; i++) cfg->shell_path[i] = sh[i];
+            cfg->shell_path[i] = '\0';
+        }
+        avvia_shell(cfg);
+        proc_exit(1);
+    }
+
+    (void)avvia_driver(cfg, 1);
+    montaggi_automatici(cfg);
+    avvia_shell(cfg);
+    proc_exit(0);
+}
+
+/* =============================================================================
+ * kernel_main — Entry point C del kernel
+ * Riceve BootInfo* passata da Stage 2 tramite stack/entry.asm
+ * ============================================================================= */
+void kernel_main(BootInfo *info)
+{
+    /* Checkpoint 3: kernel_main raggiunta */
+/* =========================================================================
+     * PASSO 1: VGA init
+     * Prima cosa assoluta: output video. Senza questo non possiamo
+     * stampare nulla e i bug sono invisibili.
+     * ========================================================================= */
+    vga_init();
+vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    /* =========================================================================
+     * PASSO 2: Banner
+     * ========================================================================= */
+    print_boot_banner();
+#if defined(__x86_64__)
+klog(LOG_INFO, "Kernel avviato in Long Mode a 64 bit");
+#else
+klog(LOG_INFO, "Kernel avviato in Protected Mode 32-bit");
+#endif
+/* =========================================================================
+     * PASSO 3: Verifica BootInfo
+     * Se Stage 2 non ha passato dati validi, panic immediato.
+     * ========================================================================= */
+    verify_bootinfo(info);
+/* =========================================================================
+     * PASSO 4: Informazioni sistema
+     * ========================================================================= */
+    print_system_info(info);
+/* =========================================================================
+     * PASSO 5: GDT definitiva
+     * Sostituisce la GDT minimale installata da Stage 2.
+     * Installa: null, kernel code/data, user code/data, TSS.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 5] Installazione GDT...");
+    gdt_install();
+klog(LOG_INFO, "[PASSO 5] GDT OK");
+
+    /* =========================================================================
+     * PASSO 6: IDT — Interrupt Descriptor Table
+     * Rimappa PIC, installa 256 gate, prepara handler per eccezioni e IRQ.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 6] Installazione IDT...");
+    idt_install();
+klog(LOG_INFO, "[PASSO 6] IDT OK");
+
+    /* =========================================================================
+     * PASSO 7: ISR — Interrupt Service Routines
+     * Inizializza tabella handler, maschera tutti gli IRQ.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 7] Installazione ISR...");
+    isr_install();
+klog(LOG_INFO, "[PASSO 7] ISR OK");
+
+    /* =========================================================================
+     * PASSO 7b: FPU — coprocessore matematico x87
+     *
+     * Dopo l'IDT e non prima: il rilevamento imposta CR0.NE=1, cioe' "gli
+     * errori di virgola mobile arrivano come eccezione #MF", e #MF ha
+     * senso solo con un gate installato.
+     *
+     * E' un passo "b" per non rinumerare i tredici che seguono, che
+     * compaiono nei log e nella documentazione.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 7b] Inizializzazione FPU x87...");
+    fpu_init();
+
+    /* Dopo fpu_init, che e' chi interroga la CPU: entropia_init ha
+     * bisogno di sapere se c'e' RDRAND, e quel bit lo scopre CPUID. */
+    entropia_init();
+
+    /* Anche questa dopo fpu_init, per lo stesso motivo: il bit del TSC lo
+     * legge CPUID. E' qui e non piu' avanti perche' misura per 50 ms col PIT a
+     * polling, e prima che gli interrupt siano attivi nessuno la disturba. */
+    tsc_init();
+klog(LOG_INFO, "[PASSO 7b] FPU %s", fpu_present() ? "OK" : "ASSENTE (x87 disabilitata)");
+
+    /* =========================================================================
+     * PASSO 8: Memory Manager (PLACEHOLDER — Fase 1c)
+     * ========================================================================= */
+    /* ! IL SISTEMA DI BASE COMPRESSO SI ESPANDE QUI, PRIMA DEL PMM
+     * (@RDBOOT 1b): pmm_init protegge la memoria che BootInfo nomina, e
+     * dopo questa riga BootInfo nomina il volume espanso. */
+    rd_decomprimi(info);
+
+    klog(LOG_INFO, "[PASSO 8] Inizializzazione Physical Memory Manager...");
+    pmm_init(info);
+klog(LOG_INFO, "[PASSO 8] PMM OK - %u pagine libere (%u MB)",
+         pmm_get_free_pages(),
+         (pmm_get_free_pages() * PAGE_SIZE) / (1024*1024));
+
+    /* =========================================================================
+     * PASSO 9: Paginazione (PLACEHOLDER — Fase 1d)
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 9] Inizializzazione paginazione...");
+    isr_register_handler(14, page_fault_handler);   /* Registra handler #PF */
+    paging_init();
+klog(LOG_INFO, "[PASSO 9] Paginazione OK (CR0.PG=1)");
+
+    /* =====================================================================
+     * PASSO 9a: console grafica, se Stage 2 ha impostato una modalita' VESA
+     *
+     * ! QUI E NON PRIMA. Il framebuffer sta fuori dalla RAM e va mappato,
+     * quindi serve la paginazione appena accesa al passo precedente. E qui
+     * e non dopo: da questo punto in avanti ogni klog dei passi successivi
+     * si vede a schermo invece di finire in una memoria video che non si
+     * sta guardando.
+     *
+     * Senza modalita' grafica non fa niente e la console resta 80x25.
+     * ===================================================================== */
+    vga_modi_prendi(info);      /* the modes Stage 2 found, for SYS_VIDEO_MODI */
+    vga_init_grafica(info);
+
+    klog(LOG_INFO, "[PASSO 9b] Inizializzazione heap kernel...");
+    kmalloc_init();
+kmalloc_stats();
+    klog(LOG_INFO, "[PASSO 9b] Heap kernel OK");
+
+/* =========================================================================
+     * PASSO 10: Scheduler (PLACEHOLDER — Fase 2a)
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 10] Inizializzazione scheduler preemptive...");
+    sched_init();
+
+klog(LOG_INFO, "[PASSO 10] Scheduler OK (100Hz, round-robin, %d livelli priorita')",
+         PRIO_MAX + 1);
+
+    /* =========================================================================
+     * PASSO 11: Syscall interface (PLACEHOLDER — Fase 2b)
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 11] Inizializzazione syscall interface (int 0x80)...");
+    syscall_init();
+
+klog(LOG_INFO, "[PASSO 11] Syscall OK");
+
+    /* =========================================================================
+     * PASSO 12: Abilita interrupt
+     * SOLO DOPO che GDT, IDT e ISR sono installati e funzionanti.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 12] Abilitazione interrupt...");
+    interrupts_enable();
+
+/* =========================================================================
+     * PASSO 13: Driver, filesystem, shell (PLACEHOLDER — Fasi 3-5)
+     * ========================================================================= */
+    /* =========================================================================
+     * PASSO 13: FAT12 kernel driver
+     * ========================================================================= */
+    /* Solo se si e' avviati DA floppy.
+     *
+     * Sondare l'FDC quando non c'e' un floppy non e' gratis: il driver
+     * ritenta cinque volte con attese reali, e produce dodici righe di
+     * ERROR/WARN a ogni avvio da disco. Chi legge quel log vede un
+     * sistema che sembra rotto mentre sta funzionando — e il rumore
+     * costante e' il modo migliore per non accorgersi dell'errore vero,
+     * il giorno che arriva.
+     *
+     * Conseguenza da sapere: avviando da disco il floppy NON e'
+     * raggiungibile. Montarlo richiedera' di separare "inizializza l'FDC"
+     * da "monta la root", che oggi fat12_init fa insieme. */
+    if (info->boot_drive < 0x80) {
+        /* ! SI SONDA, NON SI INIZIALIZZA A FORZA. Il fallimento qui NON e'
+         * un guasto: e' il segnale che vfs_init() usa per montare il CD
+         * come radice (dietro l'emulazione floppy di El Torito non c'e'
+         * nessun controller). Trattarlo come un errore riempiva il
+         * registro di un avvio riuscito di righe rosse — vedi il commento
+         * su g_sondaggio in kernel/fs/fat12.c.
+         *
+         * Se la sonda riesce, il driver E' gia' inizializzato: non si
+         * richiama fat12_init, che rifarebbe il reset del controller. */
+        klog(LOG_INFO, "[PASSO 13] Sondaggio del floppy...");
+        if (fat12_sonda(info->boot_drive) != 0) {
+            klog(LOG_INFO, "[PASSO 13] nessun floppy: si prosegue senza");
+        } else {
+            klog(LOG_INFO, "[PASSO 13] FAT12 OK (drive=0x%02x)", info->boot_drive);
+        }
+    } else {
+        klog(LOG_INFO, "[PASSO 13] Avvio da disco (0x%02x): FDC non sondato",
+             info->boot_drive);
+    }
+
+    /* =========================================================================
+     * PASSO 13a: Rilevamento dischi ATA/IDE
+     *
+     * ! ORDINE CAMBIATO nella 0.134, e non e' un riordino cosmetico.
+     *
+     * Prima questo passo veniva DOPO vfs_init(), perche' la root era per
+     * forza il floppy e i dischi non servivano ad avviare. Da quando si
+     * puo' avviare DA disco, vfs_init() deve poter montare come root una
+     * partizione ATA — e per farlo i dispositivi a blocchi devono gia'
+     * esistere.
+     *
+     * Un fallimento non e' fatale: un sistema senza dischi rigidi si
+     * avvia esattamente come prima. Le attese del driver usano g_ticks,
+     * quindi questo passo deve stare dopo l'abilitazione degli interrupt
+     * (PASSO 12), come FAT12.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 13a] Rilevamento dischi ATA/IDE...");
+    {
+        int n_dischi = ata_init();
+        int n_cd;
+
+        klog(LOG_INFO, "[PASSO 13a] ATA: %d disco/dischi rigidi", n_dischi);
+
+        /* I lettori ottici li ha gia' RICONOSCIUTI ata_init: qui si
+         * prendono in carico. Non si sonda il vassoio — un lettore con un
+         * disco dentro puo' metterci secondi a dichiararsi pronto, e
+         * pagarli a ogni avvio per un supporto che magari nessuno legge
+         * non ha senso. Vedi atapi_init(). */
+        n_cd = atapi_init();
+        if (n_cd > 0)
+            klog(LOG_INFO, "[PASSO 13a] ATAPI: %d lettore/i CD-DVD", n_cd);
+
+        /* Il livello a blocchi va DOPO ata_init e atapi_init (legge le
+         * tabelle delle partizioni e registra i lettori) e dopo
+         * fat12_init (registra fd0). */
+        blk_init();
+
+        /* ! IL VOLUME IN RAM SI REGISTRA QUI, dopo gli altri: e' un
+         * dispositivo a blocchi come loro, e diventa la radice solo se
+         * vfs_init lo trova (kernel/fs/vfs.c). Su una macchina normale
+         * rd_addr vale zero e questa riga non fa niente. */
+        if (info->rd_addr != 0 && info->rd_byte != 0)
+            blk_registra_ram(info->rd_addr, info->rd_byte, "rd0");
+        /* ! E IL SISTEMA DI BASE (@RDBOOT) E' UN ALTRO, "rdb0": vfs_init
+         * monta come radice "rd0", rdb0 va su /rdboot (vfs_monta_base).
+         * Dal floppy USB ci sono tutti e due. */
+        if (info->rb_firma == RB_FIRMA && info->rb_addr != 0 && info->rb_byte != 0)
+            blk_registra_ram(info->rb_addr, info->rb_byte, "rdb0");
+#if defined(__x86_64__)
+        /* @EXOS-64: la chiavetta con la radice in RAM dice se il volume e'
+         * arrivato intero (kernel/arch/x86_64/avvio64.c). */
+        {
+            void rd_verifica(const BootInfo *info);
+            if (info->rd_addr != 0 || info->rd_byte == 0xFFFFFFFFu) rd_verifica(info);
+        }
+#endif
+    }
+
+    /* Lo strato di montaggio va PRIMA di chiunque apra un file: da qui in
+     * poi le syscall, la configurazione e il caricatore ELF passano da
+     * vfs_*, e senza la tabella inizializzata ogni percorso risulterebbe
+     * "non trovato" — compreso /bin/sh.
+     *
+     * Riceve il drive di avvio perche' e' lui a decidere che cosa sia la
+     * root: il floppy (drive < 0x80) o la partizione attiva del disco. */
+    vfs_init(info->boot_drive);
+
+    /* Il sistema di base, se Stage 2 l'ha caricato (@RDBOOT passo 2). */
+    vfs_monta_base();
+
+    /* =========================================================================
+     * PASSO 13a: il modulo che SCRIVE ext2/ext3/ext4 (kernel 0.263)
+     *
+     * ! SUBITO DOPO LA RADICE, prima di ogni altra cosa che possa scrivere:
+     * fino a qui una radice ext2 e' in sola lettura, e diventa scrivibile
+     * quando /dev/ext4.mod si registra. Se manca o non corrisponde a questo
+     * kernel il sistema parte lo stesso, in sola lettura, e lo schermo dice
+     * cosa fare. Vedi kernel/loader/modulo.c.
+     * ========================================================================= */
+    modulo_avvio();
+
+    /* =========================================================================
+     * PASSO 13b: Lettura configurazione /boot/kernel.cfg
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 13b] Lettura /boot/kernel.cfg...");
+
+KernelConfig *cfg = cfg_load();
+    klog(LOG_INFO, "[PASSO 13b] Configurazione caricata");
+
+    /* ! IL PIO PER SCELTA, E SOLO DA QUI IN AVANTI. `atadma = 0` chiede di
+     * leggere il disco un settore per volta: serve a chi sta recuperando dati
+     * da un supporto con dei settori andati, dove un DMA che il disco non
+     * porta a termine costa otto secondi di attesa per blocco. Non puo' valere
+     * prima: questo file lo si e' appena letto DAL disco. Vedi ata_dma_spegni()
+     * e cfg.h. */
+    if (cfg->ata_dma == 0) ata_dma_spegni();
+
+    /* `ahci = 1`: il disco gia' visto dai registri IDE passa all'AHCI. Qui e
+     * non prima, per la stessa ragione di atadma: kernel.cfg sta sul disco. */
+    if (cfg->ahci) (void)ata_passa_ad_ahci();
+
+    /* ! I PROCESSORI IN PIU' SI CERCANO QUI: dopo kernel.cfg, perche' e' li'
+     * che sta scritto se svegliarli (smp = 0 li conta e basta), a interrupt
+     * accesi, perche' le attese contano i tick, e prima del primo processo,
+     * perche' l'APIC e' mappato solo nella directory del kernel. Su una
+     * macchina con un processore non fa niente: vedi smp.h. */
+    smp_init((int)cfg->smp);
+
+    /* The ACPI tables for shutdown and reboot: read now, with interrupts
+     * on, and logged - `dmesg` says what shutdown will do on this machine. */
+    acpi_init();
+
+    /* =====================================================================
+     * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.
+     *
+     * ! QUI NON SI IMPOSTA NIENTE, SI CONFRONTA E BASTA. La modalita'
+     * grafica la decide Stage 2 leggendo un proprio byte interno, perche' e'
+     * l'ultimo a girare in modo reale — da qui il BIOS non e' piu'
+     * raggiungibile. /dev/svga.drv scrive tutti e due, e questo controllo esiste
+     * per il caso in cui non l'abbia fatto: un bootloader aggiornato senza
+     * toccare kernel.cfg, o un kernel.cfg modificato a mano. Una macchina
+     * che si avvia in una risoluzione che nessun file dichiara e' proprio
+     * cio' che non deve succedere in silenzio.
+     * ===================================================================== */
+    if (cfg->svga[0] != '\0') {
+        const char *reale = "testo";
+        char        wxh[16];
+
+        /* "WxH" for every mode (kernel 0.262: svga.drv now takes any mode
+         * the card lists; with three names the others read "(altra)"). */
+        if (info->fb_addr != 0) {
+            uint32_t v[2], k, p = 0;
+
+            v[0] = info->fb_width; v[1] = info->fb_height;
+            for (k = 0; k < 2; k++) {
+                char     c[6];
+                uint32_t n = v[k], q = 0;
+
+                do { c[q++] = (char)('0' + n % 10u); n /= 10u; } while (n && q < 5);
+                while (q) wxh[p++] = c[--q];
+                if (k == 0) wxh[p++] = 'x';
+            }
+            wxh[p] = '\0';
+            reale = wxh;
+        }
+        if (!str_equal(cfg->svga, reale)) {
+            klog(LOG_WARN, "[PASSO 13b] kernel.cfg chiede svga=%s, l'avvio e' "
+                           "partito in %s", cfg->svga, reale);
+            klog(LOG_WARN, "            Il kernel non puo' cambiarla: la "
+                           "imposta Stage 2. Allinea con  svga %s", cfg->svga);
+        }
+    }
+
+    /* =========================================================================
+     * PASSO 13d: montaggi automatici dalla sezione [mount]
+     *
+     * Qui e non prima: servono i dispositivi (13a) E il file di
+     * configurazione (13b), che a sua volta si legge dal floppy.
+     *
+     * UN MONTAGGIO CHE FALLISCE NON FERMA L'AVVIO. E' una decisione, non
+     * una svista: il disco elencato qui puo' essere stato tolto,
+     * ripartizionato o formattato altrove, e nessuna di queste cose deve
+     * rendere il sistema non avviabile. Si segnala e si prosegue —
+     * l'alternativa, un kpanic, renderebbe un floppy di avvio funzionante
+     * inutilizzabile per colpa di un disco che non serve ad avviare.
+     * ========================================================================= */
+    /* ! CON IL DISCO DI SISTEMA RIMANDATO (@RDBOOT passo 3) i montaggi li fa
+     * il compito «sistema», dopo averlo rimontato: i punti stanno sul disco. */
+    g_rimandato = (vfs_sistema_rimanda() == 0);
+    if (g_rimandato)
+        klog(LOG_WARN, "[PASSO 13d] il disco di sistema %s si monta dopo l'avvio, "
+             "dal sistema di base", vfs_sistema_dev());
+    else
+        montaggi_automatici(cfg);
+
+    /* =========================================================================
+     * PASSO 13e: l'area di scambio
+     *
+     * ! DOPO I MONTAGGI E NON PRIMA, e non e' per simmetria: l'area si nomina
+     * come un dispositivo a blocchi ("hd0p2"), quindi i dischi devono essere
+     * gia' stati riconosciuti — cioe' dopo blk_init. Metterla prima vorrebbe
+     * dire cercare una partizione che ancora non esiste per nessuno.
+     *
+     * ! E SE NON C'E' NON SUCCEDE NIENTE. Senza `swap` in kernel.cfg, o con
+     * una partizione senza firma, il sistema parte come e' sempre partito: la
+     * memoria virtuale e' un di piu', non un requisito, e un kernel che si
+     * rifiutasse di avviarsi senza swap sarebbe inutilizzabile proprio sulle
+     * macchine piccole per cui lo swap serve.
+     * ===================================================================== */
+    if (cfg->swap[0] != '\0') {
+        if (swap_init(cfg->swap) != 0)
+            klog(LOG_WARN, "[PASSO 13e] '%s' non e' utilizzabile come area di "
+                 "scambio: si va avanti senza", cfg->swap);
+    }
+
+    /* =========================================================================
+     * PASSO 13c: applica verboseboot
+     *
+     * Con verboseboot=0 il sistema deve mostrare "solo l'output normale".
+     * Servono due cose distinte, perché il rumore ha due sorgenti:
+     *
+     *  1. i messaggi FUTURI — dal PASSO 14 in poi e per tutta la vita del
+     *     sistema, compresi quelli emessi quando la shell lancia un
+     *     comando (`SYSCALL spawn`, `ELF: caricamento...`). Si zittiscono
+     *     abbassando il livello di log a WARN: informativi e debug spariscono,
+     *     avvisi ed errori NO. Un boot muto che nasconde un fallimento
+     *     sarebbe peggio di un boot rumoroso, e la console seriale
+     *     continua comunque a ricevere tutto (vga.c la specchia a monte
+     *     del filtro di livello).
+     *
+     *  2. i messaggi GIÀ STAMPATI — PASSI 1-13, emessi prima che questa
+     *     configurazione fosse leggibile (vedi il commento su
+     *     print_boot_banner). Non si possono sopprimere a posteriori:
+     *     si cancella lo schermo. È il motivo per cui questo passo esiste
+     *     come punto separato invece di essere una riga dentro cfg_load.
+     *
+     *  3. i PROBLEMI già accaduti — che la pulizia dello schermo
+     *     cancellerebbe insieme al resto. Sono la cosa che NON deve
+     *     sparire: un driver non caricato, un timeout dell'FDC, il
+     *     ripiego sulla tastiera in-kernel. klog() li registra sempre in
+     *     un ring apposito (vedi kprintf.c), e qui vengono riproposti
+     *     dopo la pulizia.
+     *
+     * Il nome del sistema resta visibile su una riga: verboseboot spegne
+     * la diagnostica, non l'identità di ciò che si è avviato.
+     *
+     * Nota: il livello si abbassa a WARN, non a ERROR. Un avviso segnala
+     * un evento inatteso da cui il sistema si è ripreso — esattamente ciò
+     * che l'utente vuole vedere anche in un avvio silenzioso. Gli ERROR
+     * sono comunque incondizionati: klog() li stampa qualunque sia il
+     * livello (vedi il commento sopra klog in kprintf.c).
+     * ========================================================================= */
+    if (!cfg->verbose_boot) {
+        uint32_t problems = klog_problem_count();
+
+        klog_set_level(LOG_WARN);
+        vga_clear();
+
+        vga_setcolor(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        kprintf("%s\n\n", g_os_version_short);
+        vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+        if (problems > 0) {
+            vga_setcolor(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+            kprintf("  Avvio silenzioso: %u problema/i durante l'inizializzazione\n",
+                    problems);
+            vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            klog_replay_problems();
+            kprintf("\n");
+        }
+    }
+
+    /* =========================================================================
+     * PASSO 14: TTY driver (tastiera + VGA)
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 14] Inizializzazione driver TTY...");
+    {
+        if (drv_init() != 0) {
+            klog(LOG_WARN, "[PASSO 14] TTY init fallita");
+        } else {
+            klog(LOG_INFO, "[PASSO 14] TTY OK (output VGA)");
+        }
+    }
+    /* La tastiera NON è ancora attiva: drv_init() non registra più
+     * l'handler IRQ1, perché la scelta fra driver ring3 e percorso
+     * in-kernel dipende dall'esito del PASSO 14b (vedi sotto). */
+
+    /* =========================================================================
+     * PASSO 15: Avvia shell come primo processo utente
+     * Il percorso viene letto da kernel.cfg [boot] shell=...
+     * ========================================================================= */
+    /* =========================================================================
+     * PASSO 14b: Driver — caricati come processi ring3 autonomi, non più
+     * come moduli in kernel space. Ogni driver gira nel proprio spazio
+     * di indirizzi, isolato dal kernel e dagli altri processi: un bug in
+     * un driver può al più terminare quel processo (via #GP/#PF ->
+     * proc_exit), mai corrompere il kernel o un altro driver. Il driver
+     * stesso, appena avviato, chiama ipc_register(nome) per farsi
+     * trovare dai client tramite sys_ipc_lookup — il kernel qui si
+     * limita a caricarlo ed eseguirlo, senza conoscerne l'API interna.
+     * ========================================================================= */
+    int kbd_drv_loaded = avvia_driver(cfg, 0);
+
+    /* =========================================================================
+     * PASSO 14c: sorgente dell'input del TTY
+     *
+     * Ora si sa se /dev/kbd.drv è stato caricato, quindi si può decidere
+     * chi possiede la tastiera. Le due strade si escludono a vicenda:
+     * irq_handler() (kernel/arch/x86/isr.c) consulta prima la tabella
+     * degli handler kernel e solo se è vuota consegna la notifica IPC al
+     * processo che ha rivendicato l'IRQ. Registrare l'handler interno
+     * "per sicurezza" significherebbe quindi affamare il driver ring3.
+     *
+     * Attenzione: qui il driver è solo READY, non ha ancora eseguito una
+     * singola istruzione — la sua ipc_register() avverrà più tardi. Il
+     * TTY lo cerca pigramente al primo read() e riprova per qualche
+     * decimo di secondo (vedi tty_read_ipc), quindi non serve
+     * sincronizzarsi qui.
+     * ========================================================================= */
+    if (kbd_drv_loaded) {
+        tty_set_input_source(TTY_INPUT_IPC);
+        klog(LOG_INFO, "[PASSO 14c] Tastiera: driver ring3 '%s'", KBD_SERVICE_NAME);
+    } else {
+        tty_set_input_source(TTY_INPUT_INTERNAL);
+        klog(LOG_WARN, "[PASSO 14c] Tastiera: driver ring3 assente, "
+             "ripiego sull'handler IRQ1 in-kernel");
+    }
+
+    /* =========================================================================
+     * PASSO 15: una shell per CONSOLE VIRTUALE
+     *
+     * Erano una sola, e la console pure. Con VGA_N_CONSOLE schermi
+     * indipendenti ne serve una per ciascuno: e' il modello di Linux
+     * (una getty per terminale) ed e' cio' che rende utile Alt+Fn —
+     * passare alla console 2 deve dare un prompt pronto, non uno schermo
+     * vuoto che non risponde.
+     *
+     * La console 0 e' anche quella di SISTEMA, dove il kernel stampa i
+     * propri messaggi: la sua shell li vede scorrere accanto al prompt,
+     * esattamente come prima che esistessero le altre.
+     *
+     * Se il caricamento di una fallisce non si abortisce il resto: una
+     * console senza shell e' uno schermo inerte, quattro console senza
+     * shell sono un sistema morto. Con almeno una viva si puo' ancora
+     * lavorare e capire cosa e' andato storto.
+     * ========================================================================= */
+    if (g_rimandato) {
+        /* Il resto lo fa il compito «sistema», a scheduler partito. */
+        Process *t = proc_create("sistema", IN_NUMERO(compito_sistema), PRIO_NORMAL, 1);
+
+        if (t == NULL) {
+            klog(LOG_ERROR, "[PASSO 15] il compito \"sistema\" non si crea: parto "
+                 "dal sistema di base");
+            g_rimandato = 0;
+            avvia_shell(cfg);
+        } else {
+            g_cfg_sistema = cfg;
+            if (g_init_task != NULL) t->ppid = g_init_task->pid;
+        }
+    } else {
+        avvia_shell(cfg);
     }
 
     /* Il pipeline proc_create+elf_load+proc_set_entry+proc_set_ready è

@@ -45,6 +45,11 @@ mformat -f 1440 -v "EXOS64  " -i "$AVVIO" ::
 dd if=build/stage1.bin of="$AVVIO" bs=512 count=1 conv=notrunc status=none
 mcopy -i "$AVVIO" "$STAGE2" ::/LOADER.BIN
 mcopy -i "$AVVIO" "$KERNEL" ::/KERNEL.BIN
+# Il sistema di base (@RDBOOT): Stage 2 lo porta in RAM anche dal CD, e il
+# kernel lo monta su /rdboot. Solo sul CD intero.
+if [ "$QUALE" = "intero" ] && [ -f build-64/rdboot.lz4 ]; then
+    mcopy -i "$AVVIO" build-64/rdboot.lz4 ::/RDBOOT.LZ4
+fi
 
 # --- il contenuto del CD: la radice che il kernel monta -------------------------
 # ! PER IL SISTEMA L'ALBERO E' build-64/iso-exos, lo stesso nome di quello a
@@ -79,6 +84,13 @@ if [ "$QUALE" = "intero" ]; then
         echo "mkiso64: manca build/iso-exos (make iso-exos): il CD avra' solo i programmi" >&2
     fi
     mkdir -p "$RADICE/bin" "$RADICE/dev" "$RADICE/drivers"
+    if [ -f build-64/rdboot.lz4 ]; then
+        mkdir -p "$RADICE/boot"
+        cp build-64/rdboot.lz4 "$RADICE/boot/rdboot.lz4"
+        # il minimale a 64 bit e' il sistema di base a 64 bit
+        { printf 'kernel.bin\nloader.bin\nrdboot.lz4\nboot/kernel.cfg\nboot/kernel.txt\n'
+          cat build-64/rdboot.lista; } | sort -u > "$RADICE/boot/minimale.txt"
+    fi
     # i comandi a 64 bit (tools/costruisci-utente64.sh), shell compresa
     if [ -d build-64/bin ] && [ -f build-64/bin/sh ]; then
         cp build-64/bin/* "$RADICE/bin/"

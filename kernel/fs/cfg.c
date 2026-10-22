@@ -35,6 +35,7 @@
 static void cfg_env_set_identity(KernelConfig *cfg, const char *key,
                                   const char *value);
 static void cfg_apply_identity(KernelConfig *cfg);
+static void cfg_path_base(KernelConfig *c);
 
 /* =============================================================================
  * Stato configurazione globale
@@ -392,6 +393,8 @@ KernelConfig *cfg_load(void)
      * cfg_env_set_identity per il perché. */
     cfg_apply_identity(&g_config);
 
+    cfg_path_base(&g_config);
+
     g_config_loaded = 1;
 
     /* Log della configurazione caricata */
@@ -412,6 +415,40 @@ KernelConfig *cfg_load(void)
     }
 
     return &g_config;
+}
+
+/* =============================================================================
+ * cfg_path_base — /rdboot/bin e /rdboot/dev in fondo al PATH (@RDBOOT passo 3)
+ *
+ * ! IN FONDO, NON IN CIMA: su un disco installato vince il programma del
+ * disco, che netupdate tiene aggiornato; quello del sistema di base serve
+ * quando il disco non ce l'ha o non c'e' (smontato, o avvio da floppy). Un
+ * kernel.cfg che /rdboot lo nomina gia' (quello del dischetto) resta com'e'.
+ * ============================================================================= */
+static void cfg_path_base(KernelConfig *c)
+{
+    static const char coda[] = ":/rdboot/bin:/rdboot/dev";
+    VfsStat  st;
+    uint32_t i, j, n;
+
+    if (vfs_stat("/rdboot/bin", &st) != 0) return;
+    for (i = 0; i < c->env_count; i++) {
+        char *v = c->env[i].value;
+
+        if (c->env[i].key[0] != 'P' || c->env[i].key[1] != 'A' ||
+            c->env[i].key[2] != 'T' || c->env[i].key[3] != 'H' ||
+            c->env[i].key[4] != '\0') continue;
+        for (n = 0; v[n]; n++)
+            if (v[n] == '/' && v[n + 1] == 'r' && v[n + 2] == 'd' && v[n + 3] == 'b' &&
+                v[n + 4] == 'o' && v[n + 5] == 'o' && v[n + 6] == 't') return;
+        if (n + sizeof(coda) > CFG_PATH_LEN) {
+            klog(LOG_WARN, "CFG: PATH troppo lungo per aggiungere /rdboot");
+            return;
+        }
+        for (j = 0; coda[j]; j++) v[n + j] = coda[j];
+        v[n + j] = '\0';
+        return;
+    }
 }
 
 /* =============================================================================

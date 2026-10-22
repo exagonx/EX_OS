@@ -157,7 +157,20 @@ typedef struct PACKED {
      * of a VidInfoBoot, 0 if Stage 2 did not look. A Stage 2 older than this
      * does not write the field: the magic is what proves it. */
     uint32_t    vid_addr;
+
+    /* The base system, rdboot.lz4 (Stage 2, @RDBOOT, 22 October 2026): the
+     * block device "rdb0", mounted on /rdboot - NEVER the root. Valid only
+     * when rb_firma == RB_FIRMA: a Stage 2 older than this leaves whatever
+     * was there. Separate from rd_addr because both can be there: from a USB
+     * floppy the whole medium is the root (rd0) AND the base comes with it.
+     * Stage 2 puts the file as it is; rd_decomprimi (kernel/boot/rdlz4.c)
+     * expands it and rewrites rb_addr/rb_byte for the expanded volume. */
+    uint32_t    rb_firma;
+    uint32_t    rb_addr;
+    uint32_t    rb_byte;
 } BootInfo;
+
+#define RB_FIRMA 0x54424452   /* "RDBT" */
 
 #define VIDINFO_MAGIC  0x49444956   /* "VIDI" */
 

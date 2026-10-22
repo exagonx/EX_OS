@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.008");
+EX_VERSIONE("install", "0.009");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -1816,6 +1816,18 @@ int main(int argc, char **argv)
 
     if (argc >= 2 && strcmp(argv[1], "-tools") == 0)
         return installa_strumenti(argc, argv);
+
+    /* ! DAL DISCHETTO NUOVO NON SI INSTALLA, ANCORA (@RDBOOT, 22 ottobre
+     * 2026). Il dischetto porta solo l'avvio: i programmi stanno in /rdboot,
+     * e questa versione copia da /bin, /lib e /dev. Copiare un disco vuoto e
+     * dire «fatto» sarebbe peggio che fermarsi: lo si dice, con il rimedio.
+     * Installare dal sistema di base e' il passo 6 della voce 22. */
+    if (access("/bin/sh", F_OK) != 0 && access("/rdboot/bin/sh", F_OK) == 0) {
+        printf("install: questo supporto ha solo il sistema di base (/rdboot),\n");
+        printf("         da cui non so ancora installare. Si installa dal CD\n");
+        printf("         (avvio dal CD, poi install) o con netupdate.\n");
+        return 1;
+    }
 
     /* ! IL TETTO A TRE ARGOMENTI L'HO LASCIATO INDIETRO, ed e' costata una
      * prova. Quando le opzioni erano alternative fra loro ne arrivava al

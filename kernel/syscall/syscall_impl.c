@@ -6381,3 +6381,86 @@ int32_t sys_shm_chiudi_gruppo(InterruptFrame *f) { return con_lo_spazio(sys_shm_
 int32_t sys_dma_alloc_gruppo(InterruptFrame *f)  { return con_lo_spazio(sys_dma_alloc, f); }
 int32_t sys_fb_map_gruppo(InterruptFrame *f)     { return con_lo_spazio(sys_fb_map, f); }
 int32_t sys_mmio_map_gruppo(InterruptFrame *f)   { return con_lo_spazio(sys_mmio_map, f); }
+
+/* =============================================================================
+ * spawn_dal_kernel — un programma lanciato dal kernel, con i suoi argomenti
+ * (@RDBOOT passo 3, 22 ottobre 2026)
+ *
+ * Serve al compito «sistema» (kernel/kernel_main.c), che all'avvio da disco
+ * lancia /rdboot/bin/chkdsk sulla partizione di sistema prima di montarla.
+ * E' la parte di sys_spawn che costruisce argc/argv sullo stack del figlio,
+ * senza ambiente e senza redirezioni: il figlio scrive sulla console
+ * `console`, nasce root (uid del kernel) e figlio del chiamante, che lo deve
+ * aspettare e raccogliere. Rende il processo GIA' PRONTO, o NULL.
+ * ============================================================================= */
+Process *spawn_dal_kernel(const char *path, const char *const *argv,
+                          uint32_t argc, uint32_t console)
+{
+    Process      *p;
+    ElfLoadResult res;
+    uint32_t      i, usp, argv_uptr, envv_uptr, serve = 64;
+    uintptr_t     ptr[9];
+
+    if (argc == 0 || argc > 8) return NULL;
+    for (i = 0; i < argc; i++) {
+        uint32_t len = 0;
+        while (argv[i][len]) len++;
+        serve += len + 1 + sizeof(uintptr_t);
+    }
+
+    p = proc_create(path, 0, PRIO_NORMAL, 0);
+    if (p == NULL) return NULL;
+    p->console = console;
+
+    if (elf_load_argv(path, p, &res, serve) != 0) {
+        proc_kill(p->pid);
+        proc_reap_zombie(p);
+        return NULL;
+    }
+
+    usp = res.user_stack_top;
+    for (i = 0; i < argc; i++) {
+        uint32_t len = 0;
+        while (argv[i][len]) len++;
+        len++;
+        usp -= len;
+        if (spawn_write_user(p->page_directory, usp, argv[i], len) != 0) goto rotto;
+        ptr[i] = usp;
+    }
+    ptr[argc] = 0;
+
+#define PAROLA  sizeof(uintptr_t)
+    usp &= ~(uint32_t)(PAROLA - 1);
+    usp -= (argc + 1) * PAROLA;
+    argv_uptr = usp;
+    for (i = 0; i <= argc; i++)
+        if (spawn_write_user(p->page_directory, usp + i * PAROLA, &ptr[i], PAROLA) != 0)
+            goto rotto;
+    usp -= PAROLA;                       /* envp[] = { NULL } */
+    envv_uptr = usp;
+    { uintptr_t z = 0;
+      if (spawn_write_user(p->page_directory, usp, &z, PAROLA) != 0) goto rotto; }
+#if defined(__x86_64__)
+    usp &= ~15u;
+    usp -= 4 * PAROLA;
+    { uintptr_t t[4];
+      t[0] = 0; t[1] = argc; t[2] = argv_uptr; t[3] = envv_uptr;
+      if (spawn_write_user(p->page_directory, usp, t, sizeof(t)) != 0) goto rotto; }
+#else
+    usp -= 16;
+    { uint32_t t[4];
+      t[0] = 0; t[1] = argc; t[2] = argv_uptr; t[3] = envv_uptr;
+      if (spawn_write_user(p->page_directory, usp, t, sizeof(t)) != 0) goto rotto; }
+#endif
+#undef PAROLA
+
+    proc_set_entry(p, res.entry_point, usp);
+    proc_set_ready(p);
+    return p;
+
+rotto:
+    klog(LOG_ERROR, "SPAWN: '%s' dal kernel: stack non mappato per gli argomenti", path);
+    proc_kill(p->pid);
+    proc_reap_zombie(p);
+    return NULL;
+}

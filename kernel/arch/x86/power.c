@@ -51,6 +51,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "vfs.h"
 #include "vga.h"
 #include "sched.h"
 #include "fat12.h"
@@ -97,6 +98,9 @@ static void power_sync(void)
     int r;
 
     kprintf("  Sincronizzazione filesystem...");
+    /* Tutti i volumi, e i dischi ext2 segnati «puliti» (@RDBOOT passo 3):
+     * all'avvio dopo, chi li trova sporchi sa che si e' spento male. */
+    vfs_spegnimento();
     r = fat12_sync();
     if (r == 0) {
         kprintf(" ok\n");

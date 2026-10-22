@@ -162,7 +162,9 @@ int  blk_scansiona(int i);
 
 /* Registra il volume che Stage 2 ha lasciato in memoria. Rende l'indice del
  * dispositivo ("rd0"), o <0. La chiama blk_init() leggendo BootInfo. */
-int  blk_registra_ram(uint32_t fisico, uint32_t byte);
+/* `nome`: "rd0" for the boot medium copied into RAM (it becomes the root),
+ * "rdb0" for the base system /boot/rdboot.img (@RDBOOT). */
+int  blk_registra_ram(uint32_t fisico, uint32_t byte, const char *nome);
 
 /* =============================================================================
  * Conteggio degli usi — chi sta usando questo dispositivo

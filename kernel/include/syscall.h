@@ -1636,6 +1636,12 @@ void    syscall_handler(InterruptFrame *frame);
 /* Implementazioni singole syscall (definite in syscall_impl.c) */
 int32_t sys_exit(InterruptFrame *f);
 int32_t sys_spawn(InterruptFrame *f);
+/* A program started by the kernel itself, with arguments (@RDBOOT step 3):
+ * ready to run, child of the caller, on `console`. NULL if it does not load.
+ * kernel/syscall/syscall_impl.c. */
+struct Process;
+struct Process *spawn_dal_kernel(const char *path, const char *const *argv,
+                                 uint32_t argc, uint32_t console);
 int32_t sys_read(InterruptFrame *f);
 int32_t sys_write(InterruptFrame *f);
 int32_t sys_open(InterruptFrame *f);

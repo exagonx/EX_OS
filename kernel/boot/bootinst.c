@@ -86,6 +86,14 @@ extern const unsigned int  boot_hd_bin_len;
  * spazio che il settore di avvio riserva alla lista. */
 #define K_MAX_EXT     12
 
+/* La mappa di /boot/rdboot.img (@RDBOOT, 22 ottobre 2026): non sta nel
+ * settore di avvio, che e' pieno, ma in una tabella DENTRO Stage 2, allineata
+ * a 512 byte cosi' che stia in un settore solo. Contratto con `rdmappa` in
+ * bootloader/stage2/loader.asm: 'RDMAPPA\0', byte del file (32 bit), quante
+ * voci (16 bit), poi RD_MAX_EXT voci {LBA assoluto 32, settori 16}. */
+#define RD_FIRMA      "RDMAPPA"
+#define RD_MAX_EXT    64
+
 #define BPB_INIZIO    3
 #define BPB_FINE      90               /* [3, 90) */
 #define MBR_CODICE    446
@@ -195,6 +203,8 @@ int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
     uint32_t        s2_rel, s2_cnt, k_byte;
     uint32_t        k_lba[K_MAX_EXT], k_cnt[K_MAX_EXT], k_next = 0;
     uint32_t        k_tot = 0;
+    uint32_t        rd_lba[RD_MAX_EXT], rd_cnt[RD_MAX_EXT], rd_n = 0, rd_byte = 0;
+    char            p_rd[64];
     uint8_t         sett[512];
     uint8_t         bpb[BPB_FINE - BPB_INIZIO];
 
@@ -306,6 +316,51 @@ int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
         }
     }
 
+    /* --- 2b. l'archivio del sistema di base, se c'e' ------------------
+     *
+     * ! E' FACOLTATIVO, e la sua assenza non e' un errore: un disco
+     * installato prima del ramdisk non ce l'ha e deve partire come prima.
+     * Ma la tabella in Stage 2 si scrive LO STESSO, vuota: uno Stage 2
+     * nuovo porta la tabella che aveva chi l'ha costruito, cioe' nessuna. */
+    if (e_ext2) {
+        Ext2DirEntry e;
+
+        /* Il compresso (passo 1b) prima, poi quello in chiaro. */
+        unisci_in(p_rd, sizeof(p_rd), "/boot/", "rdboot.lz4");
+        if (ext2_stat(fsmnt, p_rd, &e) != 0 || e.is_dir)
+            unisci_in(p_rd, sizeof(p_rd), "/boot/", "rdboot.img");
+        if (ext2_stat(fsmnt, p_rd, &e) == 0 && !e.is_dir) {
+            int r = ext2_estensioni(fsmnt, p_rd, rd_lba, rd_cnt, RD_MAX_EXT, &rd_n);
+
+            if (r == -2) {
+                klog(LOG_ERROR, "INSTALL: %s e' spezzato in piu' di "
+                                "%d intervalli", p_rd, RD_MAX_EXT);
+                return ERR(ESPIPE);
+            }
+            if (r != 0) return ERR(EIO);
+            rd_byte = e.dimensione;
+        }
+    } else {
+        FatDirEntry e;
+
+        maiuscolo_in(p_rd, sizeof(p_rd), "/BOOT/", "rdboot.lz4");
+        if (fat_stat(fsmnt, p_rd, &e) != 0 || e.is_dir)
+            maiuscolo_in(p_rd, sizeof(p_rd), "/BOOT/", "rdboot.img");
+        if (fat_stat(fsmnt, p_rd, &e) == 0 && !e.is_dir) {
+            uint32_t rel, nsett;
+            int r = fat_estensione(fsmnt, p_rd, &rel, &nsett);
+
+            if (r == -2) { klog(LOG_ERROR, "INSTALL: %s e' frammentato", p_rd); return ERR(ESPIPE); }
+            if (r != 0)  return ERR(EIO);
+            rd_lba[0] = rel; rd_cnt[0] = nsett; rd_n = 1;
+            rd_byte = e.dimensione;
+        }
+    }
+    for (i = 0; i < (int)rd_n; i++) {
+        if (rd_cnt[i] == 0 || rd_cnt[i] > 0xFFFF) return ERR(EFBIG);
+        rd_lba[i] += (uint32_t)part->primo;
+    }
+
     /* I conteggi viaggiano in campi a 16 bit del settore di avvio.
      * Accorgersene qui e' meglio che vedere un troncamento silenzioso
      * all'avvio. */
@@ -339,9 +394,43 @@ int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
      * cancellato quello che funzionava. */
     if (solo_verifica) {
         klog(LOG_INFO, "INSTALL (verifica): stage2 LBA %u x%u, kernel %u "
-             "settori in %u intervalli - niente scritto",
-             esito->s2_lba, s2_cnt, k_tot, k_next);
+             "settori in %u intervalli, rdboot %u byte in %u - niente scritto",
+             esito->s2_lba, s2_cnt, k_tot, k_next, rd_byte, rd_n);
         return 0;
+    }
+
+    /* --- 2c. la tabella di rdboot dentro Stage 2 ----------------------
+     *
+     * ! PRIMA del settore di avvio, che e' cio' che rende valido il resto:
+     * se la macchina si spegne qui, il settore di avvio vecchio carica uno
+     * Stage 2 che conosce gia' l'archivio, o non lo conosce - parte in
+     * tutti e due i casi. Si scrive sui settori di Stage 2 appena mappati,
+     * cercando la firma settore per settore. */
+    {
+        uint32_t k, s2_base = esito->s2_lba - (uint32_t)part->primo;
+        int      trovata = 0;
+
+        for (k = 0; k < s2_cnt && !trovata; k++) {
+            if (blk_read(vm->blkdev, s2_base + k, 1, sett) != 0) return ERR(EIO);
+            if (sett[0] != 'R' || sett[1] != 'D' || sett[2] != 'M' || sett[3] != 'A' ||
+                sett[4] != 'P' || sett[5] != 'P' || sett[6] != 'A' || sett[7] != 0) continue;
+            trovata = 1;
+            metti32(sett + 8, rd_byte);
+            metti16(sett + 12, rd_n);
+            for (i = 0; i < RD_MAX_EXT; i++) {
+                metti32(sett + 14 + i * 6, i < (int)rd_n ? rd_lba[i] : 0);
+                metti16(sett + 18 + i * 6, i < (int)rd_n ? rd_cnt[i] : 0);
+            }
+            if (blk_write(vm->blkdev, s2_base + k, 1, sett) != 0) return ERR(EIO);
+        }
+        if (!trovata && rd_n > 0) {
+            klog(LOG_ERROR, "INSTALL: c'e' /boot/rdboot.img ma questo Stage 2 non ha "
+                            "la tabella '%s': e' troppo vecchio", RD_FIRMA);
+            return ERR(EINVAL);
+        }
+        if (trovata)
+            klog(LOG_INFO, "INSTALL: rdboot %u byte in %u intervall%s",
+                 rd_byte, rd_n, rd_n == 1 ? "o" : "i");
     }
 
     /* --- 3. settore di avvio della partizione --- */

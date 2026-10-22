@@ -57,8 +57,11 @@ static unsigned int impronta(const char *s)
     return h;
 }
 
+/* ! /rdboot/lib DOPO /lib (@RDBOOT): avviando dal floppy la radice non ha
+ * piu' /lib, e la libc sta solo nel sistema di base. */
 static const char *const g_dove[] = {
     "/lib/libc.so",
+    "/rdboot/lib/libc.so",
     "/cdrom/lib/libc.so",
     "/exwin/lib/libc.so"
 };

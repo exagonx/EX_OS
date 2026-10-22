@@ -41,16 +41,16 @@ extaskbar -auto
 # Video, Prova): if nobody confirms it within two minutes - the screen may
 # be black - svga.drv puts the old mode back and reboots. Without a trial it
 # exits at once.
-/dev/svga.drv -guardia &
+svga.drv -guardia &
 
 echo Accendo la rete...
 
 # L'ordine non e' modificabile: ogni passo serve al successivo.
 # `netdetect -c` sceglie da solo il driver giusto per la scheda e aspetta
 # che registri il proprio servizio.
-/dev/pci.drv &
+pci.drv &
 netdetect -c
-/dev/ip.drv &
+ip.drv &
 
 # Un indirizzo dal DHCP, se c'e' un server. Senza, restano i valori
 # predefiniti dello stack e la rete locale funziona lo stesso.
@@ -107,8 +107,8 @@ netupdate -auto
 #
 # ! ASPETTANO: all'accensione la chiavetta non c'e' quasi mai — si accende la
 # macchina e POI si infila. I driver restano a guardare le porte.
-/dev/ehci.drv -avvio &
-/dev/ohci.drv -avvio &
+ehci.drv -avvio &
+ohci.drv -avvio &
 
 # ! E L'UHCI? Non sta qui, e la ragione e' che quel driver ha due mestieri: su
 # una macchina Intel serve il MOUSE, ed e' quello che fa se lo si lancia senza
@@ -149,7 +149,7 @@ automount &
 # /dev/wserver.drv. Il servizio lo accende il SISTEMA, prima che qualcuno
 # entri; chi disegna non chiede privilegi, chiede un rettangolo.
 # =============================================================================
-/dev/sis.drv -2dservizio &
+sis.drv -2dservizio &
 
 # ! LE RIGHE QUI SOPRA STANNO ANCHE DENTRO hwconfig (componi_avvio, in
 # bin/hwconfig/hwconfig.c): questo file ha DUE scrittori. Chi ne cambia una

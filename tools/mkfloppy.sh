@@ -19,6 +19,7 @@ LOADER="build/stage2.bin"       # Stage 2 loader
 KERNEL="build/kernel.bin"       # Kernel binario
 KERNEL_CFG="boot/kernel.cfg"    # File di configurazione kernel
 KERNEL_TXT="boot/kernel.txt"    # Spiegazione delle voci del .cfg (non letto dal kernel)
+RDBOOT="build/rdboot.lz4"       # Il sistema di base (tools/mkrdboot.sh), @RDBOOT
 
 # Dimensione floppy 1.44MB in byte (512 * 2880 settori)
 FLOPPY_SIZE=1474560
@@ -70,6 +71,7 @@ check_file "$LOADER"
 
 # Il kernel è obbligatorio
 check_file "$KERNEL"
+check_file "$RDBOOT"
 
 # Verifica dimensione boot sector: DEVE essere esattamente 512 byte
 STAGE1_SIZE=$(stat -c%s "$BOOT_SECTOR")
@@ -85,14 +87,16 @@ log_info "Controllo dimensioni file..."
 
 KERNEL_SIZE=$(stat -c%s "$KERNEL")
 LOADER_SIZE=$(stat -c%s "$LOADER")
+RDBOOT_SIZE=$(stat -c%s "$RDBOOT")
 
 log_info "  stage1.bin : $STAGE1_SIZE byte (512 byte esatti)"
 log_info "  stage2.bin : $LOADER_SIZE byte"
 log_info "  kernel.bin : $KERNEL_SIZE byte"
+log_info "  rdboot.lz4 : $RDBOOT_SIZE byte"
 
 # Spazio disponibile su FAT12 1.44MB (circa 1.38MB usabili dopo FAT+root dir)
 USABLE=1406976
-USED=$((LOADER_SIZE + KERNEL_SIZE))
+USED=$((LOADER_SIZE + KERNEL_SIZE + RDBOOT_SIZE))
 
 if [ "$USED" -gt "$USABLE" ]; then
     log_err "File troppo grandi per il floppy! Usato: $USED byte, Disponibile: $USABLE byte"
@@ -177,20 +181,21 @@ fi
 
 # --- Crea struttura directory sul floppy --------------------------------------
 
+# =============================================================================
+# ! IL DISCHETTO PORTA SOLO L'AVVIO (@RDBOOT, 22 ottobre 2026). Programmi,
+# driver, libc e ext4.mod stanno nel sistema di base, RDBOOT.LZ4: Stage 2 lo
+# porta in RAM, il kernel lo espande e lo monta su /rdboot. Prima qui si
+# copiavano tutti e il kernel a 32 bit non ci stava piu' («Disk full»).
+#
+# ! IL kernel.cfg DEL DISCHETTO NON E' QUELLO DEL CD: shell, login e driver
+# puntano a /rdboot, e /rdboot/bin viene prima nel PATH. Lo stesso dischetto
+# fa da immagine El Torito del CD, ma li' la radice e' il CD e la
+# configurazione e' quella del CD (boot/kernel.cfg cosi' com'e').
+# =============================================================================
 log_info "Creazione struttura directory..."
-
 mmd -i "$IMG" ::/boot  2>/dev/null || log_warn "Directory /boot già esistente"
-mmd -i "$IMG" ::/bin   2>/dev/null || log_warn "Directory /bin già esistente"
-mmd -i "$IMG" ::/lib   2>/dev/null || log_warn "Directory /lib già esistente"
-mmd -i "$IMG" ::/dev   2>/dev/null || log_warn "Directory /dev già esistente"
-# ! /USB vuota: e' la directory su cui automount monta le chiavette.
-# Il VFS monta su un nome che non esiste, ma il suo contenitore deve
-# esserci - e su un supporto in sola lettura non si puo' creare dopo.
 mmd -i "$IMG" ::/USB   2>/dev/null || log_warn "Directory /USB già esistente"
-
-log_ok "Directory create: /boot /bin /lib /dev /USB"
-
-# --- Copia file nella root ----------------------------------------------------
+log_ok "Directory create: /boot /USB"
 
 log_info "Copia Stage 2 (LOADER.BIN) nella root..."
 mcopy -i "$IMG" "$LOADER" ::/LOADER.BIN
@@ -200,20 +205,24 @@ log_info "Copia Kernel (KERNEL.BIN) nella root..."
 mcopy -i "$IMG" "$KERNEL" ::/KERNEL.BIN
 log_ok "KERNEL.BIN copiato"
 
-# --- Copia file di configurazione ---------------------------------------------
+log_info "Copia del sistema di base (RDBOOT.LZ4) nella root..."
+mcopy -i "$IMG" "$RDBOOT" ::/RDBOOT.LZ4
+log_ok "RDBOOT.LZ4 copiato"
 
 if [ -f "$KERNEL_CFG" ]; then
-    log_info "Copia kernel.cfg in /boot/..."
-    mcopy -i "$IMG" "$KERNEL_CFG" ::/boot/KERNEL.CFG
+    log_info "kernel.cfg con i percorsi di /rdboot in /boot/..."
+    CFG_TMP=$(mktemp "${TMPDIR:-/tmp}/mkfloppy-cfg.XXXXXX")
+    trap 'rm -f "$CFG_TMP"' EXIT
+    sed -e 's|^\([A-Za-z_]* *= *\)/bin/|\1/rdboot/bin/|' \
+        -e 's|^\([A-Za-z_]* *= *\)/dev/|\1/rdboot/dev/|' \
+        -e 's|^\(PATH *= *\)|\1/rdboot/bin:/rdboot/dev:|' "$KERNEL_CFG" > "$CFG_TMP"
+    grep -q '^shell *= */rdboot/bin/sh' "$CFG_TMP" || log_err "kernel.cfg: la shell non punta a /rdboot/bin/sh"
+    mcopy -i "$IMG" "$CFG_TMP" ::/boot/KERNEL.CFG
     log_ok "KERNEL.CFG copiato in /boot/"
 else
-    log_warn "kernel.cfg non trovato ($KERNEL_CFG) — sarà aggiunto in seguito"
+    log_err "kernel.cfg non trovato ($KERNEL_CFG): senza, il kernel cerca /bin/sh, che qui non c'e'"
 fi
 
-# kernel.txt spiega ogni voce del .cfg. Il kernel NON lo legge: sta sul
-# floppy perché la spiegazione serve sulla macchina dove si modifica il
-# file, non sul computer di chi l'ha compilato. È anche la ragione per cui
-# il .cfg può restare corto — vedi il tetto di 8191 byte in cfg.c.
 if [ -f "$KERNEL_TXT" ]; then
     log_info "Copia kernel.txt in /boot/..."
     mcopy -i "$IMG" "$KERNEL_TXT" ::/boot/KERNEL.TXT
@@ -221,120 +230,6 @@ if [ -f "$KERNEL_TXT" ]; then
 else
     log_warn "kernel.txt non trovato ($KERNEL_TXT) — /boot resta senza spiegazioni"
 fi
-
-# ! help.txt NON VA SUL FLOPPY dal 2 ottobre 2026: lo legge solo /bin/help,
-# che sta sul CD insieme a lui (decisione dell'utente, il floppy era pieno).
-# Senza /bin/help la shell mostra il suo aiuto di riserva.
-
-# --- Copia eventuali driver già compilati -------------------------------------
-
-if ls build/drivers/*.drv >/dev/null 2>&1; then
-    log_info "Copia driver ELF in /dev/..."
-    for drv in build/drivers/*.drv; do
-        fname=$(basename "$drv")
-        mcopy -i "$IMG" "$drv" "::/dev/$fname"
-        log_ok "  Driver copiato: $fname"
-    done
-else
-    log_warn "Nessun driver trovato in build/drivers/ — /dev/ sarà vuota"
-fi
-
-# ! I MODULI DEL KERNEL (0.263) stanno in /dev accanto ai driver: senza
-# /dev/ext4.mod il kernel non scrive su ext2, e un dischetto da cui si
-# installa deve poterlo copiare sul disco insieme al kernel.
-if ls build/moduli/*.mod >/dev/null 2>&1; then
-    for mod in build/moduli/*.mod; do
-        mcopy -i "$IMG" "$mod" "::/dev/$(basename "$mod")"
-        log_ok "  Modulo del kernel copiato: $(basename "$mod")"
-    done
-else
-    log_err "Manca build/moduli/ext4.mod: senza, i dischi ext2 restano in sola lettura (make moduli)"
-fi
-
-# --- Copia eventuali programmi già compilati ----------------------------------
-
-# Le copie-alias che sul floppy non vanno (vedi il ciclo qui sotto). Il
-# Makefile le legge da qui per il suo controllo: un elenco solo.
-ALIAS_SOLO_CD="whoami chown poweroff reboot halt"
-
-STRIP_TMP=$(mktemp "${TMPDIR:-/tmp}/mkfloppy-strip.XXXXXX")
-trap 'rm -f "$STRIP_TMP"' EXIT
-
-if ls build/bin/* >/dev/null 2>&1; then
-    log_info "Copia programmi in /bin/..."
-    for prog in build/bin/*; do
-        fname=$(basename "$prog")
-
-        # Copiare tutto ciò che si trova qui dentro è sbagliato: file
-        # intermedi rimasti da build precedenti (.o, .d) finivano sul
-        # floppy come se fossero programmi — 82 KB su 1.44 MB, cioè il 6%
-        # dello spazio, occupati da roba non eseguibile. Si copia solo ciò
-        # che è un eseguibile.
-        case "$fname" in
-            *.o|*.d|*.a|*.so) log_info "  Saltato (non eseguibile): $fname"; continue ;;
-        esac
-        # ! UN PROGRAMMA SI RICONOSCE DAL CONTENUTO, NON DAL BIT DI
-        # ESECUZIONE (@FLOPPY-PIENO, 28 settembre 2026). Il progetto passa da
-        # un PC all'altro con MEGA, che quel bit non lo porta: lo stesso
-        # build/bin dava due floppy diversi a seconda di chi lanciava make, e
-        # su uno dei due mancava /bin/sh — la shell che il kernel avvia.
-        # Un eseguibile di EX-OS e' un ELF: si guardano i primi quattro byte.
-        [ "$(head -c 4 "$prog" | od -An -c | tr -d ' ')" = '177ELF' ] || \
-            { log_info "  Saltato (non e' un ELF): $fname"; continue; }
-        # ! GLI ALIAS STANNO SOLO SUL CD. whoami e' id, chown e' chmod,
-        # poweroff/reboot/halt sono shutdown: copie dello stesso binario che
-        # guardano argv[0], 68 KB in tutto, e sul floppy non ci stanno. La
-        # shell li trova lo stesso (alias_di in bin/sh/shell.c: lancia
-        # l'originale col nome chiesto), e poweroff, reboot e halt per lei
-        # sono comandi interni.
-        case " $ALIAS_SOLO_CD " in
-            *" $fname "*) log_info "  Saltato (alias, solo sul CD): $fname"; continue ;;
-        esac
-
-        # ! SUL FLOPPY I PROGRAMMI VANNO SENZA SIMBOLI (19 ottobre 2026).
-        # La tabella dei simboli serve a nm e a gdb sull'host, non a EX-OS:
-        # il kernel non la legge per i programmi (i DRIVER si', drvmgr.c ci
-        # cerca drv_init: per questo /dev resta com'e'). Su /bin erano 65 KB,
-        # e senza quei byte diagnostic.img e floppy-verboso.img davano
-        # «Disk full». La copia in build/bin resta intera, per il debug.
-        if strip -o "$STRIP_TMP" "$prog" 2>/dev/null; then
-            mcopy -i "$IMG" "$STRIP_TMP" "::/bin/$fname"
-        else
-            mcopy -i "$IMG" "$prog" "::/bin/$fname"
-        fi
-        log_ok "  Programma copiato: $fname"
-    done
-else
-    log_warn "Nessun programma trovato in build/bin/ — /bin/ sarà vuota"
-fi
-
-# /bin/umount è lo stesso binario di /bin/mount: il programma guarda argv[0]
-# e smonta se è stato invocato come 'umount'. Copiarlo due volte costa ~12 KB
-# di floppy; compilarne uno secondo costerebbe lo stesso spazio più il
-# rischio che le due copie divergano.
-if [ -f build/bin/mount ]; then
-    if strip -o "$STRIP_TMP" build/bin/mount 2>/dev/null; then
-        mcopy -i "$IMG" "$STRIP_TMP" ::/bin/umount
-    else
-        mcopy -i "$IMG" build/bin/mount ::/bin/umount
-    fi
-    log_ok "  Programma copiato: umount (stesso binario di mount)"
-fi
-
-# --- Copia eventuali shared libraries -----------------------------------------
-
-if ls build/lib/*.so >/dev/null 2>&1; then
-    log_info "Copia librerie in /lib/..."
-    for lib in build/lib/*.so; do
-        fname=$(basename "$lib")
-        mcopy -i "$IMG" "$lib" "::/lib/$fname"
-        log_ok "  Libreria copiata: $fname"
-    done
-else
-    log_warn "Nessuna libreria trovata in build/lib/ — /lib/ sarà vuota"
-fi
-
-# --- Verifica finale contenuto floppy -----------------------------------------
 
 log_info "Contenuto floppy finale:"
 echo "-------------------------------------------"

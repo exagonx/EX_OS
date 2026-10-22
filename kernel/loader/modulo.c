@@ -447,6 +447,9 @@ void modulo_avvio(void)
 {
     int r = modulo_carica("/dev/ext4.mod", 0);
 
+    /* ! E DAL SISTEMA DI BASE (@RDBOOT) se la radice non ce l'ha: avviando
+     * dal floppy sulla radice ci sono solo il kernel e la configurazione. */
+    if (r == -2) r = modulo_carica("/rdboot/dev/ext4.mod", 0);
     if (r == 0) return;
     if (r == -2)
         klog(LOG_ERROR, "MODULO: /dev/ext4.mod is missing: ext2/ext3/ext4 disks "

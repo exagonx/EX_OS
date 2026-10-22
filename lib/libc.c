@@ -9502,7 +9502,7 @@ static const DlTesta g_dl_programma = { 0, 0, 0, 0, 0 };
 void *dlopen(const char *nome, int flag)
 {
     static const char *const dove[] = {
-        "/lib/", "/exwin/lib/", "/cdrom/lib/", "/cdrom/exwin/lib/", 0
+        "/lib/", "/rdboot/lib/", "/exwin/lib/", "/cdrom/lib/", "/cdrom/exwin/lib/", 0
     };
     const DlTesta *t = 0;
     int            esiste = 0, i;

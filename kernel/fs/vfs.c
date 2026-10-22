@@ -111,12 +111,98 @@ static void v_copia(char *dst, const char *src, uint32_t max)
 
 static VfsMount g_mnt[VFS_MAX_MOUNT];
 
+/* =============================================================================
+ * IL SISTEMA DI BASE: /rdboot, e la radice che c'e' sotto il disco
+ * (@RDBOOT passo 2, 22 ottobre 2026)
+ *
+ * Il volume "rdb0" (Stage 2 l'ha caricato da /boot/rdboot.lz4) contiene / e
+ * /rdboot, e dentro /rdboot il sistema di base. Due cose ne seguono:
+ *
+ *   - CON IL DISCO COME RADICE, /rdboot e' un montaggio di un SOTTOALBERO: il
+ *     punto "/rdboot" porta alla directory /rdboot del volume, non alla sua
+ *     radice (g_sotto). Cosi' /rdboot/bin e' lo stesso percorso con o senza
+ *     disco;
+ *
+ *   - IL DISCO SI PUO' TOGLIERE DA SOTTO /: `umount /` rimette come radice il
+ *     volume intero (g_base), se nessuno ha file aperti sul disco; `mount
+ *     <disco> /` lo rimette sopra. E' cio' che serve a fdisk e a un controllo
+ *     del disco di sistema, con la macchina accesa.
+ *
+ * ! g_sotto STA FUORI DA VfsMount, come g_ro_chiesto: la struttura e' quella
+ * che `mount` elenca, e non cambia per un campo che serve solo qui.
+ * ============================================================================= */
+static char g_sotto[VFS_MAX_MOUNT][VFS_PUNTO_MAX];
+static int  g_base = -1;     /* lo slot di /rdboot, -1 = nessun sistema di base */
+
+/* Vero se lo slot 0 (la radice) e' il sistema di base e non un disco. */
+static int radice_e_base(void)
+{
+    return g_base >= 0 && g_mnt[0].usato && g_mnt[0].blkdev == g_mnt[g_base].blkdev;
+}
+
 /* Read-only because whoever mounted it ASKED (mount -r), as opposed to
  * read-only because the driver cannot write it yet. Only the second kind is
  * lifted when the ext2 write module registers (vfs_ext2_rivaluta). Kept
  * here and not in VfsMount, whose layout is the one the mount listing
  * hands out. */
 static uint8_t g_ro_chiesto[VFS_MAX_MOUNT];
+
+/* =============================================================================
+ * IL SEGNO «SPORCO» DI UN VOLUME ext2 (@RDBOOT passo 3, 22 ottobre 2026)
+ *
+ * ! E' IL CAMPO s_state DEL SUPERBLOCCO, come in Linux: il bit 1 vuol dire
+ * «smontato pulito». Si spegne quando un volume ext2 di un DISCO diventa
+ * scrivibile e si riaccende allo smontaggio e allo spegnimento. Chi lo trova
+ * spento all'avvio sa che l'ultima volta la macchina e' caduta con il volume
+ * aperto in scrittura, e la partizione di sistema passa da chkdsk prima di
+ * essere montata (il compito «sistema» in kernel/kernel_main.c).
+ *
+ * ! SI SCRIVE A FILESYSTEM FERMO: prima del montaggio (o prima che il modulo
+ * di scrittura lo riprenda in mano) e dopo lo smontaggio o l'ultima
+ * sincronizzazione. Il modulo ext4 i contatori del superblocco li aggiorna
+ * rileggendolo dal disco, quindi il campo resta com'e'. Un volume con le
+ * somme dei metadati (metadata_csum) non si tocca: il superblocco ha una sua
+ * somma, e cambiarne un byte lo renderebbe illeggibile a Linux.
+ *
+ * ! I VOLUMI IN RAM NO: sparire con la corrente e' il loro patto.
+ * ============================================================================= */
+static uint8_t g_segnato[VFS_MAX_MOUNT];   /* questo slot l'abbiamo segnato sporco */
+static uint8_t g_e2_sett[512];
+
+/* 1 = pulito, 0 = sporco, -1 = non e' ext2 o non si legge. Lascia in
+ * g_e2_sett il settore 2 della partizione (i byte 1024..1535). */
+static int e2_stato(int blkdev)
+{
+    if (blkdev < 0 || blk_read(blkdev, 2, 1, g_e2_sett) != 0) return -1;
+    if (g_e2_sett[56] != 0x53 || g_e2_sett[57] != 0xEF) return -1;
+    return (g_e2_sett[58] & 1) ? 1 : 0;
+}
+
+/* Rende 1 se il segno e' stato scritto (o c'era gia'), 0 se il volume non si
+ * segna. */
+static int e2_segna(int blkdev, int pulito)
+{
+    const BlkDev *b = blk_get(blkdev);
+    int           st;
+
+    if (b == NULL || b->tipo == BLK_TIPO_RAM || b->sola_lettura) return 0;
+    st = e2_stato(blkdev);
+    if (st < 0) return 0;
+    if (g_e2_sett[100 + 1] & 0x04) return 0;      /* ro_compat 0x400 */
+    if (st == pulito) return 1;
+    if (pulito) g_e2_sett[58] |= 1;
+    else        g_e2_sett[58] &= (uint8_t)~1u;
+    if (blk_write(blkdev, 2, 1, g_e2_sett) != 0) {
+        klog(LOG_WARN, "VFS: %s: il segno %s non si scrive", b->nome,
+             pulito ? "\"pulito\"" : "\"in uso\"");
+        return 0;
+    }
+    return 1;
+}
+
+/* Il disco di sistema rimandato a dopo l'avvio (vfs_sistema_rimanda). */
+static char g_sist_dev[BLK_NOME_MAX];
+static int  g_sist_sporco = 0;     /* trovato sporco quando lo si e' scelto */
 
 typedef struct {
     uint8_t  usato;
@@ -325,8 +411,17 @@ static int instrada(const char *abs, char *interno, uint32_t max)
         uint32_t l = lunghezza_prefisso(&g_mnt[migliore]);
         const char *resto = abs + l;
 
-        if (resto[0] == '\0') v_copia(interno, "/", max);
-        else                  v_copia(interno, resto, max);
+        if (g_sotto[migliore][0]) {
+            /* Un sottoalbero: "/rdboot/bin" -> "/rdboot" + "/bin". */
+            uint32_t ls = v_len(g_sotto[migliore]);
+
+            v_copia(interno, g_sotto[migliore], max);
+            if (resto[0] != '\0' && ls < max) v_copia(interno + ls, resto, max - ls);
+        } else if (resto[0] == '\0') {
+            v_copia(interno, "/", max);
+        } else {
+            v_copia(interno, resto, max);
+        }
     }
 
     return migliore;
@@ -550,6 +645,14 @@ void vfs_init(uint8_t boot_drive)
             g_ro_chiesto[0] = 0;
             if (tipo == VFS_FS_EXT2 && ext2_sola_lettura(mnt)) g_mnt[0].sola_lettura = 1;
 
+            /* ! COM'ERA STATO LASCIATO, letto ADESSO: fra un istante il
+             * modulo di scrittura lo segnera' «in uso» (vfs_ext2_rivaluta),
+             * e dopo non si saprebbe piu' (@RDBOOT passo 3). */
+            g_sist_sporco = (tipo == VFS_FS_EXT2 && e2_stato(ipart) == 0);
+            if (g_sist_sporco)
+                klog(LOG_WARN, "VFS: %s non e' stato smontato pulito (spegnimento "
+                               "brusco?)", g_mnt[0].dev);
+
             if (tipo == VFS_FS_EXT2)
                 klog(LOG_INFO, "VFS: root '/' su %s (ext2, avvio da disco 0x%02x)",
                      g_mnt[0].dev, boot_drive);
@@ -670,15 +773,18 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
     if (v_len(punto) >= VFS_PUNTO_MAX) return ERR(EINVAL);
 
     /* La root e' il floppy e resta tale (punto 1). */
-    if (punto[1] == '\0') return ERR(EBUSY);
+    /* "/" si monta solo quando la radice e' il sistema di base: il disco
+     * torna sopra (vfs_rimonta_radice, piu' sotto). */
+    if (punto[1] == '\0' && !radice_e_base()) return ERR(EBUSY);
 
     /* Uno slash finale ("/disk/") darebbe un punto che non combacia mai
      * con se stesso: meglio rifiutarlo che accettarlo e non funzionare. */
-    if (punto[v_len(punto) - 1] == '/') return ERR(EINVAL);
+    if (punto[1] != '\0' && punto[v_len(punto) - 1] == '/') return ERR(EINVAL);
 
     for (i = 0; i < VFS_MAX_MOUNT; i++) {
         if (!g_mnt[i].usato) { if (slot < 0) slot = i; continue; }
-        if (v_uguale(g_mnt[i].punto, punto)) return ERR(EBUSY);
+        if (v_uguale(g_mnt[i].punto, punto) && !(i == 0 && punto[1] == '\0'))
+            return ERR(EBUSY);
         if (v_uguale(g_mnt[i].dev,   dev))   return ERR(EBUSY);
     }
     if (slot < 0) return ERR(EMFILE);
@@ -702,7 +808,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 
     /* Il nome non deve esistere gia' (punto 4): montarci sopra
      * nasconderebbe dei file senza dirlo. */
-    if (vfs_stat_nl(punto, &st) == 0) {
+    if (punto[1] != '\0' && vfs_stat_nl(punto, &st) == 0) {
         klog(LOG_ERROR, "VFS: '%s' esiste gia': montaggio rifiutato", punto);
         return ERR(EEXIST);
     }
@@ -750,8 +856,18 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
          * montaggio che accetta scritture per poi perderle. */
         sola_lettura = 1;
     } else if (vi.tipo == VOL_FS_EXT2) {
+        int segnato = 0;
+
+        /* ! IL SEGNO PRIMA DEL MONTAGGIO: il modulo legge il superblocco
+         * montando, e da li' in poi e' suo. Se poi resta in sola lettura
+         * (manca il modulo), allo smontaggio torna pulito. */
+        if (!chiesto) segnato = e2_segna(blkdev, 0);
         mnt = ext2_mount_come(blkdev, chiesto);
-        if (mnt < 0) return ERR(EIO);
+        if (mnt < 0) {
+            if (segnato) e2_segna(blkdev, 1);
+            return ERR(EIO);
+        }
+        g_segnato[slot] = (uint8_t)segnato;
 
         g_mnt[slot].tipo = VFS_FS_EXT2;
         /* Read-only until /dev/ext4.mod registers, and for features it
@@ -763,6 +879,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 
         g_mnt[slot].tipo = VFS_FS_FAT;
     }
+    if (g_mnt[slot].tipo != VFS_FS_EXT2) g_segnato[slot] = 0;
 
     /* Dichiara al livello a blocchi che questo dispositivo e' in uso: da
      * qui in poi blk_rescan() rifiutera' di rileggere la tabella del suo
@@ -777,6 +894,28 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
     g_mnt[slot].mnt          = mnt;
     g_mnt[slot].blkdev       = blkdev;
     v_copia(g_mnt[slot].dev, dev, BLK_NOME_MAX);
+    g_sotto[slot][0] = '\0';
+
+    /* ! IL DISCO TORNA SOPRA LA BASE (@RDBOOT passo 2). Montato in uno slot
+     * qualunque, ora prende lo slot 0, quello della radice. I file aperti
+     * attraverso la radice-base passano allo slot di /rdboot: e' lo stesso
+     * volume e il loro `interno` e' gia' un percorso di quel volume, quindi
+     * continuano a leggere quel che leggevano. */
+    if (punto[1] == '\0') {
+        int k;
+
+        for (k = 0; k < VFS_MAX_OPEN; k++)
+            if (g_file[k].usato && g_file[k].im == 0) g_file[k].im = g_base;
+        blk_rilascia(g_mnt[0].blkdev);          /* la radice-base non c'e' piu' */
+        g_mnt[0]        = g_mnt[slot];
+        g_ro_chiesto[0] = g_ro_chiesto[slot];
+        g_segnato[0]    = g_segnato[slot];
+        g_segnato[slot] = 0;
+        g_sotto[0][0]   = '\0';
+        g_mnt[slot].usato = 0;
+        slot = 0;
+        klog(LOG_WARN, "VFS: %s e' di nuovo la radice, sopra il sistema di base", dev);
+    }
 
     if (g_mnt[slot].tipo == VFS_FS_ISO)
         klog(LOG_INFO, "VFS: montato %s su %s (ISO 9660%s, sola lettura): '%s'",
@@ -801,7 +940,13 @@ static int vfs_umount_nl(const char *punto)
         if (!g_mnt[i].usato) continue;
         if (!v_uguale(g_mnt[i].punto, punto)) continue;
 
-        if (i == 0) return ERR(EBUSY);   /* la root non si smonta */
+        /* /rdboot e' il sistema di base: e' cio' che resta quando il disco
+         * se ne va, e non se ne va lui. */
+        if (i == g_base) return ERR(EBUSY);
+
+        /* La radice si smonta solo se sotto c'e' il sistema di base, e non
+         * se la radice E' gia' il sistema di base. */
+        if (i == 0 && (g_base < 0 || radice_e_base())) return ERR(EBUSY);
 
         /* Un file ancora aperto su questo montaggio significa che qualcuno
          * ha in mano un handle che diventerebbe un riferimento a un
@@ -814,9 +959,26 @@ static int vfs_umount_nl(const char *punto)
         else if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_umount(g_mnt[i].mnt);
         else                                   fat_umount (g_mnt[i].mnt);
 
+        /* Smontato: il volume e' di nuovo coerente sul disco. */
+        if (g_segnato[i]) { e2_segna(g_mnt[i].blkdev, 1); g_segnato[i] = 0; }
+
         if (g_mnt[i].blkdev >= 0) blk_rilascia(g_mnt[i].blkdev);
         g_mnt[i].usato = 0;
         klog(LOG_INFO, "VFS: smontato %s", punto);
+
+        /* ! E LA RADICE TORNA IL SISTEMA DI BASE: il volume intero, con
+         * /rdboot dentro, nello slot 0. Lo stesso montaggio di /rdboot (un
+         * handle ext2 solo), visto da un'altra altezza. */
+        if (i == 0) {
+            g_mnt[0]          = g_mnt[g_base];
+            v_copia(g_mnt[0].punto, "/", VFS_PUNTO_MAX);
+            g_ro_chiesto[0]   = g_ro_chiesto[g_base];
+            g_segnato[0]      = 0;
+            g_sotto[0][0]     = '\0';
+            blk_acquisisci(g_mnt[0].blkdev);
+            klog(LOG_WARN, "VFS: la radice e' il sistema di base (%s): il disco "
+                           "di sistema si puo' modificare", g_mnt[0].dev);
+        }
         return 0;
     }
 
@@ -831,6 +993,13 @@ static int vfs_umount_nl(const char *punto)
 static int e_radice(const char *interno)
 {
     return interno[0] == '/' && interno[1] == '\0';
+}
+
+/* Come e_radice, ma vale anche per la cima di un sottoalbero montato:
+ * /rdboot non si cancella ne' si rinomina, come la radice di un montaggio. */
+static int e_radice_di(int im, const char *interno)
+{
+    return e_radice(interno) || (g_sotto[im][0] && v_uguale(interno, g_sotto[im]));
 }
 
 /* Rilascia lo slot prenotato da vfs_open e riporta l'errore al chiamante.
@@ -1506,6 +1675,9 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
 
         if (!g_mnt[i].usato || i == im) continue;
         if (!e_figlio(g_mnt[i].punto, abs, &nome)) continue;
+        /* Con la base come radice /rdboot e' gia' una directory vera della
+         * radice: elencarla anche come montaggio la mostrerebbe due volte. */
+        if (i == g_base && radice_e_base()) continue;
 
         k_punti++;
         if (saltati < start) { saltati++; continue; }
@@ -1646,7 +1818,7 @@ static int modifica(const char *abs, int quale)
     if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);   /* vedi vfs_write */
 
     /* La radice di un montaggio non si crea ne' si cancella. */
-    if (e_radice(interno)) return ERR(EBUSY);
+    if (e_radice_di(im, interno)) return ERR(EBUSY);
 
     /* ! CREARE, CANCELLARE E FARE UNA DIRECTORY CAMBIANO L'ELENCO DEL PADRE,
      * non il file: il permesso che conta e' scrivere nel CONTENITORE. E' anche
@@ -1821,7 +1993,7 @@ static int vfs_rename_nl(const char *da, const char *a)
 
     if (g_mnt[im_da].sola_lettura)          return ERR(EROFS);
     if (g_mnt[im_da].tipo == VFS_FS_ISO)    return ERR(EROFS);
-    if (e_radice(int_da) || e_radice(int_a)) return ERR(EBUSY);
+    if (e_radice_di(im_da, int_da) || e_radice_di(im_a, int_a)) return ERR(EBUSY);
 
     /* =====================================================================
      * La destinazione: si toglie di mezzo, con le regole di POSIX.
@@ -1966,6 +2138,99 @@ static void vfs_sync_nl(void)
 int vfs_mount(const char *dev, const char *punto, int sola_lettura)
 {
     int r; fs_prendi_n("mount"); r = vfs_mount_nl(dev, punto, sola_lettura); fs_rilascia(); return r;
+}
+
+/* =============================================================================
+ * vfs_monta_base — il sistema di base su /rdboot (@RDBOOT passo 2)
+ *
+ * Dopo vfs_init: se Stage 2 ha caricato rdboot (il dispositivo "rdb0"), lo
+ * si monta come sottoalbero su /rdboot. Rende 0, o un errno negativo se non
+ * c'e' o non si monta: in quel caso il sistema va avanti come prima.
+ * ============================================================================= */
+static int vfs_monta_base_nl(void)
+{
+    int        ird = blk_trova("rdb0"), slot = -1, i, mnt;
+    VolumeInfo vi;
+
+    if (ird < 0) return ERR(ENOENT);
+    if (vol_identifica(ird, &vi) != 0 || vi.tipo != VOL_FS_EXT2) {
+        klog(LOG_ERROR, "VFS: rdb0 non e' un volume ext2: niente /rdboot");
+        return ERR(EINVAL);
+    }
+    for (i = 1; i < VFS_MAX_MOUNT; i++) if (!g_mnt[i].usato) { slot = i; break; }
+    if (slot < 0) return ERR(EMFILE);
+
+    mnt = ext2_mount_come(ird, 0);
+    if (mnt < 0) return ERR(EIO);
+    blk_acquisisci(ird);
+
+    g_mnt[slot].usato        = 1;
+    v_copia(g_mnt[slot].punto, "/rdboot", VFS_PUNTO_MAX);
+    g_mnt[slot].tipo         = VFS_FS_EXT2;
+    g_mnt[slot].sola_lettura = ext2_sola_lettura(mnt) ? 1 : 0;
+    g_ro_chiesto[slot]       = 0;
+    g_mnt[slot].mnt          = mnt;
+    g_mnt[slot].blkdev       = ird;
+    v_copia(g_mnt[slot].dev, "rdb0", BLK_NOME_MAX);
+    v_copia(g_sotto[slot], "/rdboot", VFS_PUNTO_MAX);
+    g_base = slot;
+
+    klog(LOG_WARN, "VFS: sistema di base su /rdboot (rdb0, ext2)");
+    return 0;
+}
+
+/* =============================================================================
+ * vfs_sistema_rimanda — il disco di sistema si toglie da sotto / (@RDBOOT 3)
+ *
+ * All'avvio da disco con il sistema di base in RAM, vfs_init ha montato la
+ * partizione di sistema (serve a leggere kernel.cfg e /dev/ext4.mod). Qui la
+ * si smonta subito e la radice diventa la base: il compito «sistema» la
+ * controlla (chkdsk, se era sporca) e la rimonta su / dopo che lo scheduler
+ * e' partito. Rende 0 se rimandato, un errno negativo se no (nessuna base,
+ * o la radice non e' una partizione di un disco): allora si parte come prima.
+ * ============================================================================= */
+int vfs_sistema_rimanda(void)
+{
+    const BlkDev *b;
+    int           r;
+
+    fs_prendi_n("sistema");
+    if (g_base < 0 || !g_mnt[0].usato || radice_e_base()) { fs_rilascia(); return ERR(ENOENT); }
+    b = blk_get(g_mnt[0].blkdev);
+    if (b == NULL || b->tipo != BLK_TIPO_PART) { fs_rilascia(); return ERR(ENOENT); }
+    v_copia(g_sist_dev, g_mnt[0].dev, BLK_NOME_MAX);
+    r = vfs_umount_nl("/");
+    if (r != 0) g_sist_dev[0] = '\0';
+    fs_rilascia();
+    return r;
+}
+
+const char *vfs_sistema_dev(void)    { return g_sist_dev[0] ? g_sist_dev : NULL; }
+int         vfs_sistema_sporco(void) { return g_sist_sporco; }
+
+/* =============================================================================
+ * vfs_spegnimento — tutto su disco, e i volumi segnati «puliti»
+ *
+ * Da power_sync (kernel/arch/x86/power.c), prima di fermare lo scheduler.
+ * Dopo questo non scrive piu' nessuno: il segno «pulito» resta vero.
+ * ============================================================================= */
+void vfs_spegnimento(void)
+{
+    int i;
+
+    fs_prendi_n("spegnimento");
+    vfs_sync_nl();
+    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+        if (!g_mnt[i].usato || !g_segnato[i]) continue;
+        if (e2_segna(g_mnt[i].blkdev, 1)) blk_flush(g_mnt[i].blkdev);
+        g_segnato[i] = 0;
+    }
+    fs_rilascia();
+}
+
+int vfs_monta_base(void)
+{
+    int r; fs_prendi_n("base"); r = vfs_monta_base_nl(); fs_rilascia(); return r;
 }
 
 int vfs_umount(const char *punto)
@@ -2125,6 +2390,9 @@ int vfs_chmod(const char *abs, uint32_t modo)
 
 int vfs_radice_ext2(void)
 {
+    /* Il sistema di base e' ext2 ma non ha utenti: e' un ripiego, come il
+     * floppy, e li' si entra senza password (@RDBOOT passo 3). */
+    if (radice_e_base()) return 0;
     return g_mnt[0].usato && g_mnt[0].tipo == VFS_FS_EXT2;
 }
 
@@ -2208,6 +2476,14 @@ void vfs_ext2_rivaluta(void)
     int i;
 
     fs_prendi_n("ext2-modulo");
+    /* ! IL SEGNO «IN USO» PRIMA che il modulo li prenda in mano: quelli che
+     * restano in sola lettura tornano «puliti» allo smontaggio. */
+    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+        if (!g_mnt[i].usato || g_mnt[i].tipo != VFS_FS_EXT2) continue;
+        if (g_ro_chiesto[i] || g_segnato[i] || !g_mnt[i].sola_lettura) continue;
+        if (i == 0 && radice_e_base()) continue;
+        g_segnato[i] = (uint8_t)e2_segna(g_mnt[i].blkdev, 0);
+    }
     ext2_rivaluta_montaggi();
 
     for (i = 0; i < VFS_MAX_MOUNT; i++) {

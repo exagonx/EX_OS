@@ -57,7 +57,13 @@
 
 ; --- Il disco in RAM -------------------------------------------------------
 ; Dove finisce il volume, quanto e' grande, e da dove si passa.
-%define RDDEST  0x02000000  ; 32 MB: dentro la fascia che il kernel mappa
+; ! 12 MB E NON PIU' 32 (@RDBOOT, 22 ottobre 2026): una macchina da 16 MB deve
+; partire. Sotto stanno il sistema di base compresso (RBDEST, 10 MB) e quello
+; espanso dal kernel (RD_ESPANSO in kernel/include/rdlz4.h, 6 MB).
+%define RDDEST  0x00C00000  ; 12 MB, al piu' 2,88 MB: fino a 15 MB
+%define RBDEST  0x00A00000  ; 10 MB: rdboot.lz4 cosi' com'e'
+%define RBMAX   (RDDEST - RBDEST)   ; 2 MB: oltre toccherebbe il volume intero
+%define RDM_MAX 64          ; le voci di rdmappa (RD_MAX_EXT in bootinst.c)
 %define RDSEG   0x8000      ; il rimbalzo, a 512 KB: sotto c'e' il kernel
 ; La misura del dischetto, come in bootloader/stage1/boot.asm (-DDISCHETTO=288
 ; per il 2,88 MB: 36 settori per traccia, l'area dei dati piu' avanti). Di
@@ -144,6 +150,7 @@ _start:
     ; =====================================================================
     cmp  dword [0x7C00 + 0x1A0], 0x44485845     ; 'EXHD'
     jne  .da_floppy
+    mov  byte [da_disco], 1           ; per rdboot_carica, piu' sotto
 %ifdef GEOMETRIA_BIOS
     ; Booted from an installed disk (its partition boot sector carries
     ; 'EXHD'): there is nothing to copy into RAM - see ramdisco.
@@ -560,11 +567,17 @@ _start:
     mov  dword [es:di+46], MODITAB ; modi_addr: the table of modes
     mov  dword [es:di+50], 0      ; modi_n: none yet
     mov  dword [es:di+54], 0      ; vid_addr: nothing read yet
+    mov  dword [es:di+58], 0      ; rb_firma: niente sistema di base (ancora)
+    mov  dword [es:di+62], 0      ; rb_addr
+    mov  dword [es:di+66], 0      ; rb_byte
     xor  ax, ax
     mov  es, ax
 
     ; ---- Il volume in RAM, se qualcuno l'ha chiesto --------------------
     call ramdisco
+
+    ; ---- Il sistema di base, se il disco ne ha uno ----------------------
+    call rdboot_carica
 
     ; =====================================================================
     ; MODALITA' GRAFICA VESA — l'unico posto da cui si puo' fare
@@ -974,7 +987,7 @@ ramdisco:
     mov  es, ax
     mov  eax, [es:9]
     pop  es
-    cmp  eax, 40 * 1024           ; servono ~34 MB, se ne chiedono 41
+    cmp  eax, 14 * 1024           ; finisce a 15 MB: ne servono 14 oltre il primo
     jb   .pocamem
 
     mov  si, msg_rd
@@ -1658,6 +1671,301 @@ carattere:
     pop  ax
     ret
 
+; =============================================================================
+; IL SISTEMA DI BASE: rdboot.lz4 in RAM (@RDBOOT, 22 ottobre 2026)
+;
+; ! DUE STRADE PER LA STESSA MAPPA. La mappa e' `rdmappa` in fondo al file:
+;   - da DISCO (`da_disco`) la scrive bootinstall (kernel/boot/bootinst.c)
+;     quando installa l'avvio: il settore di avvio della partizione e' pieno
+;     e il sistema di base su ext2 e' spezzato in parecchi tratti;
+;   - da FLOPPY, da CD (l'emulazione floppy di El Torito) e da chiavetta la
+;     si ricava qui, dalla catena FAT12 di /RDBOOT.LZ4 (rdboot_dal_fat): la
+;     directory radice e la FAT le ha gia' in memoria Stage 1.
+; Zero voci = il supporto non ne ha uno, e si parte come prima.
+;
+; ! DAL FLOPPY E' IL SISTEMA, NON UN DI PIU'. Il dischetto porta solo
+; LOADER.BIN, KERNEL.BIN, RDBOOT.LZ4 e /boot/KERNEL.CFG: programmi e driver
+; stanno in /rdboot (tools/mkfloppy.sh). Con il volume intero in RAM
+; (ramdisco) le due cose convivono: il volume e' rd_addr, questo rb_addr.
+;
+; ! COMPRESSO O NO, QUI NON IMPORTA: si porta in memoria il file com'e', a
+; RBDEST (10 MB). Se e' 'EXLZ' lo espande il kernel a 6 MB
+; (kernel/boot/rdlz4.c), che ha lo spazio e il tempo che qui non ci sono.
+;
+; ! LA STESSA STRADA DELLA CHIAVETTA: si legge nel rimbalzo a 512 KB - da
+; disco INT 13h/42h al piu' 64 settori per volta, dal floppy INT 13h/02h al
+; piu' fino alla fine della traccia - poi si copia in alto col modo reale
+; grande A INTERRUPT SPENTI (il perche' e' accanto a .dcopia). Il kernel lo
+; trova da BootInfo: rb_firma 'RDBT', rb_addr, rb_byte.
+;
+; ! SE NON SI LEGGE, SI PARTE SENZA, e lo si dice a schermo: da disco il
+; sistema c'e' ancora tutto; dal floppy si arriva a un kernel senza shell,
+; che lo scrive.
+; =============================================================================
+rdboot_carica:
+    mov  byte [rb_lba], 1
+    cmp  byte [da_disco], 0
+    jne  .mappa
+    mov  byte [rb_lba], 0
+%ifdef GEOMETRIA_BIOS
+    mov  al, [usa_lba]            ; la chiavetta letta come disco: LBA se c'e'
+    mov  [rb_lba], al
+%endif
+    call rdboot_dal_fat
+    jc   .no
+.mappa:
+    cmp  word [rdm_n], 0
+    je   .no
+
+    ; ! LA MISURA E LA MEMORIA SI CONTANO PRIMA. Il file va a RBDEST e non
+    ; deve arrivare al volume intero (RDDEST); e deve finire dentro la RAM
+    ; che c'e': mem_upper e' in KB oltre il primo MB.
+    mov  eax, [rdm_byte]
+    cmp  eax, RBMAX
+    ja   .pocamem
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  eax, [es:9]              ; KB oltre il primo MB
+    pop  es
+    shl  eax, 10
+    add  eax, 0x100000            ; dove finisce la RAM
+    mov  edx, [rdm_byte]
+    add  edx, RBDEST              ; dove finirebbe il file
+    cmp  eax, edx
+    jb   .pocamem
+
+    mov  si, msg_rdb
+    call print
+
+    in   al, 0x92                 ; A20
+    or   al, 2
+    and  al, 0xFE
+    out  0x92, al
+    call gdt_prepara
+    mov  dword [rbdst], RBDEST
+    mov  word [rbidx], 0
+
+.voce:
+    mov  ax, [rbidx]
+    cmp  ax, [rdm_n]
+    jae  .fatto
+    mov  bx, 6
+    mul  bx
+    mov  si, rdm_ext
+    add  si, ax
+    mov  eax, [si]
+    mov  [rbdap_lba], eax
+    movzx eax, word [si + 4]
+    mov  [rbrest], eax
+    inc  word [rbidx]
+
+.pezzo:
+    mov  eax, [rbrest]
+    or   eax, eax
+    jz   .voce
+    cmp  eax, 64
+    jbe  .quanti
+    mov  eax, 64
+.quanti:
+    mov  [rbcnt], ax
+    cmp  byte [rb_lba], 0
+    jne  .lba
+    ; CHS: non oltre la fine della traccia, che una lettura non attraversa
+    mov  eax, [rbdap_lba]
+    xor  edx, edx
+    mov  cx, G_SPT
+    movzx ecx, cx
+    div  ecx                      ; EAX = traccia, EDX = settore da 0
+    mov  ax, G_SPT
+    sub  ax, dx
+    cmp  ax, [rbcnt]
+    jae  .lba
+    mov  [rbcnt], ax
+.lba:
+    mov  byte [rbprove], 3
+.prova:
+    call rb_leggi
+    jnc  .letta
+    xor  ah, ah                   ; rimette a posto l'unita' e riprova
+    mov  dl, [drv]
+    int  0x13
+    dec  byte [rbprove]
+    jnz  .prova
+    mov  si, msg_rdbno
+    call print
+    ret
+
+.letta:
+    cli
+    lgdt [GDTB+0x1E]
+    mov  eax, cr0
+    or   al, 1
+    mov  cr0, eax
+    mov  ax, 0x08
+    mov  es, ax                   ; ES = 4 GB
+    mov  eax, cr0
+    and  al, 0xFE
+    mov  cr0, eax
+    mov  edi, [rbdst]
+    movzx ecx, word [rbcnt]
+    shl  ecx, 7                   ; settori * 512 / 4
+    push ds
+    mov  ax, RDSEG
+    mov  ds, ax
+    xor  esi, esi
+    a32 rep movsd
+    pop  ds
+    xor  ax, ax
+    mov  es, ax
+    sti
+
+    movzx eax, word [rbcnt]
+    sub  [rbrest], eax
+    add  [rbdap_lba], eax
+    shl  eax, 9
+    add  [rbdst], eax
+    jmp  .pezzo
+
+.fatto:
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  dword [es:58], 0x54424452   ; 'RDBT'
+    mov  dword [es:62], RBDEST
+    mov  eax, [rdm_byte]
+    mov  [es:66], eax
+    pop  es
+    mov  si, msg_rdbok
+    call print
+.no:
+    ret
+.pocamem:
+    mov  si, msg_rdbmem
+    call print
+    ret
+
+; rb_leggi - [rbcnt] settori dal LBA [rbdap_lba] nel rimbalzo RDSEG:0, un
+; tentativo. Con [rb_lba] INT 13h/42h, senza INT 13h/02h con la geometria
+; del dischetto (o quella del BIOS, GEOMETRIA_BIOS). CF=1 = fallita.
+rb_leggi:
+    pusha
+    push es
+    cmp  byte [rb_lba], 0
+    je   .chs
+    mov  ax, [rbcnt]
+    mov  [rbdap_cnt], ax          ; il BIOS puo' riscriverlo: si rimette
+    mov  ah, 0x42
+    mov  dl, [drv]
+    mov  si, rbdap
+    int  0x13
+    jmp  .fine
+.chs:
+    mov  eax, [rbdap_lba]
+    xor  edx, edx
+    mov  cx, G_SPT
+    movzx ecx, cx
+    div  ecx                      ; EAX = traccia, EDX = settore da 0
+    mov  bx, dx
+    inc  bx                       ; BX = settore da 1
+    xor  edx, edx
+    mov  cx, G_TESTE
+    movzx ecx, cx
+    div  ecx                      ; EAX = cilindro, EDX = testina
+    mov  ch, al
+    mov  cl, ah
+    shl  cl, 6                    ; bit 8-9 del cilindro
+    or   cl, bl
+    mov  dh, dl
+    mov  dl, [drv]
+    mov  ax, RDSEG
+    mov  es, ax
+    xor  bx, bx
+    mov  ah, 0x02
+    mov  al, [rbcnt]
+    int  0x13
+.fine:
+    pop  es
+    popa
+    ret
+
+; rdboot_dal_fat - riempie rdmappa dalla catena FAT12 di RDBOOT.LZ4 nella
+; directory radice (0x7E00) e nella FAT (FAT) che Stage 1 ha caricato. I
+; cluster consecutivi diventano una voce sola. CF=1 = non c'e', o la catena
+; e' rotta o troppo spezzata: in quel caso rdm_n resta 0.
+rdboot_dal_fat:
+    pusha
+    cld
+    mov  di, 0x7E00
+    mov  cx, 224
+.cerca:
+    mov  al, [di]
+    test al, al
+    jz   .non
+    cmp  al, 0xE5
+    je   .salta
+    test byte [di+11], 0x18       ; non etichette e non directory
+    jnz  .salta
+    push cx
+    push di
+    mov  si, rbnome
+    mov  cx, 11
+    repe cmpsb
+    pop  di
+    pop  cx
+    jz   .trovato
+.salta:
+    add  di, 32
+    loop .cerca
+.non:
+    mov  word [rdm_n], 0
+    popa
+    stc
+    ret
+
+.trovato:
+    mov  eax, [di+28]
+    or   eax, eax
+    jz   .non
+    mov  [rdm_byte], eax
+    mov  word [rdm_n], 0
+    mov  ax, [di+26]              ; primo cluster
+    mov  bx, rdm_ext - 6          ; l'ultima voce scritta
+    mov  bp, 6000                 ; una catena che gira in tondo finisce qui
+.giro:
+    cmp  ax, 0xFF8
+    jae  .fine
+    cmp  ax, 2
+    jb   .non
+    dec  bp
+    jz   .non
+    mov  dx, ax
+    sub  dx, 2
+    add  dx, F_DATA               ; LBA del cluster (un settore)
+    cmp  word [rdm_n], 0
+    je   .nuova
+    mov  cx, [bx]
+    add  cx, [bx+4]
+    cmp  cx, dx                   ; continua la voce precedente?
+    jne  .nuova
+    inc  word [bx+4]
+    jmp  .avanti
+.nuova:
+    cmp  word [rdm_n], RDM_MAX
+    jae  .non
+    add  bx, 6
+    mov  [bx], dx
+    mov  word [bx+2], 0
+    mov  word [bx+4], 1
+    inc  word [rdm_n]
+.avanti:
+    call fat_next
+    jmp  .giro
+.fine:
+    popa
+    clc
+    ret
+
 ; Costruisce la GDT a GDTB. Serve al modo reale grande, e la rifara' anche il
 ; passaggio a modo protetto piu' sotto: farla due volte non costa niente e
 ; toglie di mezzo la dipendenza fra i due pezzi.
@@ -1937,6 +2245,29 @@ msg_rd    db 'Carico il volume in RAM...', 13, 10, 0
 msg_rdok  db 'Volume in RAM: la radice non dipende piu dal lettore.', 13, 10, 0
 msg_rderr db 'Lettura fallita: niente disco in RAM.', 13, 10, 0
 msg_rdmem db 'Memoria insufficiente per il disco in RAM.', 13, 10, 0
+msg_rdb    db 'Carico il sistema di base...', 13, 10, 0
+msg_rdbok  db 'Sistema di base in RAM.', 13, 10, 0
+msg_rdbno  db 'rdboot illeggibile: parto senza.', 13, 10, 0
+msg_rdbmem db 'Memoria insufficiente per rdboot: parto senza.', 13, 10, 0
+
+da_disco  db 0            ; 1 = avvio dal settore 'EXHD' di un disco
+rb_lba    db 0            ; 1 = rdboot si legge con INT 13h/42h
+rbnome    db 'RDBOOT  LZ4'
+rbidx     dw 0            ; la voce di rdmappa che si sta leggendo
+rbrest    dd 0            ; settori ancora da leggere nella voce
+rbdst     dd 0            ; dove va il prossimo pezzo
+rbcnt     dw 0            ; settori del pezzo
+rbprove   db 0
+rbdap:                    ; il pacchetto di INT 13h/42h
+    db   0x10
+    db   0
+rbdap_cnt:
+    dw   0
+    dw   0                ; offset nel rimbalzo
+    dw   RDSEG
+rbdap_lba:
+    dd   0
+    dd   0
 
 vwant dw 0
 hwant dw 0
@@ -2067,6 +2398,15 @@ pm32_entry:
 ; Il margine ora e' di ~28 KB. Se un giorno servisse superarlo, si sposta
 ; PIU' IN ALTO il caricamento del kernel (0x10000), non questo limite.
 ; =============================================================================
+; ! LA TABELLA DI rdboot, ALLINEATA A 512 BYTE nel file: bootinstall la cerca
+; all'inizio di un settore di Stage 2 e la riscrive li', un settore solo.
+; Contratto con kernel/boot/bootinst.c (RD_FIRMA, RD_MAX_EXT): RDM_MAX in testa.
+    times (512 - (($ - $$) % 512)) % 512 db 0
+rdmappa   db 'RDMAPPA', 0
+rdm_byte  dd 0            ; byte di /boot/rdboot.img
+rdm_n     dw 0            ; quante voci valgono (0 = nessun archivio)
+rdm_ext   times RDM_MAX * 6 db 0   ; {LBA assoluto 32 bit, settori 16 bit}
+
 %if ($ - $$) > (0x7C00 - 0x0500)
   %error "Stage2 supera 0x7700 byte: il codice invaderebbe la mappa dei settori a 0x7C00"
 %endif

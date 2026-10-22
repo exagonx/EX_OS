@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.033");
+EX_VERSIONE("netupdate", "0.034");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -1623,6 +1623,21 @@ static int e_avvio(const char *percorso)
            strcmp(percorso, "boot/stage2.bin") == 0;
 }
 
+/* ! IL SISTEMA DI BASE NON E' UN FILE COME GLI ALTRI (@RDBOOT, kernel 0.269).
+ * Stage 2 lo carica dai settori scritti in una sua tabella, e un rdboot.lz4
+ * nuovo sta su settori nuovi: finche' bootinstall non riscrive la tabella,
+ * Stage 2 legge quelli vecchi, la somma non torna e la macchina parte SENZA
+ * il sistema di base (parte, ma col disco su / dall'inizio). Il file si
+ * sostituisce come tutti gli altri - non serve a bootverify - e poi si
+ * riscrive l'avvio. Su un kernel prima del 0.269 bootinstall la tabella non
+ * la scrive: ci pensa il giro dopo, o `netupdate -avvio`. */
+static int g_rdboot_nuovo;
+
+static int e_rdboot(const char *percorso)
+{
+    return strcmp(percorso, "boot/rdboot.lz4") == 0;
+}
+
 static int menu_e_quello(const char *impronta_server);
 
 static int verdetto(const char *percorso, const char *impronta_server)
@@ -1801,6 +1816,7 @@ static int fase_avvio(int kernel, int stage2)
     int r;
 
     printf("\nL'avvio\n");
+    if (!kernel && !stage2) printf("  = riscrivo la mappa: settore di avvio, kernel, sistema di base\n");
 
     if (stage2) porta_modo_video();
 
@@ -1832,7 +1848,7 @@ static int fase_avvio(int kernel, int stage2)
     }
     printf("  = settore di avvio riscritto: kernel a LBA %u, %u settori\n",
            info.k_lba, info.k_cnt);
-    printf("  = il kernel di prima resta in /boot/kernel.bin.old\n");
+    if (kernel) printf("  = il kernel di prima resta in /boot/kernel.bin.old\n");
     return 0;
 }
 
@@ -2467,6 +2483,7 @@ static int scarica_e_metti(Config *c, const char *p, long byte,
     snprintf(temp, sizeof(temp), "%s.new", dest);
     if (scarica_come_va(c, coda, temp, byte, impronta) != 0) return -1;
     if (sostituisci(dest, temp) != 0) return -1;
+    if (e_rdboot(p)) g_rdboot_nuovo = 1;
     printf("  + %s (%ld byte)\n", p, byte);
     return 0;
 }
@@ -3324,6 +3341,9 @@ static int comando_check(int senza_chiedere)
     if (kernel_nuovo || stage2_nuovo) {
         if (fase_avvio(kernel_nuovo, stage2_nuovo) == 0) fatti += kernel_nuovo + stage2_nuovo;
         else falliti += kernel_nuovo + stage2_nuovo;
+    } else if (g_rdboot_nuovo) {
+        /* rdboot.lz4 e' gia' contato tra i fatti: qui solo la mappa. */
+        if (fase_avvio(0, 0) != 0) falliti++;
     }
 
     /* --- 7. il registro dice la verita' di adesso ------------------------- */
@@ -3341,6 +3361,8 @@ static int comando_check(int senza_chiedere)
     if (kernel_nuovo || stage2_nuovo)
         printf("\n! IL KERNEL E' CAMBIATO: riavvia. Quello di prima e' in\n"
                "  /boot/kernel.bin.old, e il settore di avvio punta al nuovo.\n");
+    else if (g_rdboot_nuovo)
+        printf("\n! IL SISTEMA DI BASE E' CAMBIATO: vale dal prossimo riavvio.\n");
     else if (fatti > 0)
         printf("\n! I programmi gia' in esecuzione stanno ancora usando i file\n"
                "  di prima, che sono li' col nome .old. Riavvia quando puoi:\n"
@@ -4214,7 +4236,7 @@ static int comando_install(const char *id)
         fclose(f);
     }
 
-    if (kernel_nuovo || stage2_nuovo) fase_avvio(kernel_nuovo, stage2_nuovo);
+    if (kernel_nuovo || stage2_nuovo || g_rdboot_nuovo) fase_avvio(kernel_nuovo, stage2_nuovo);
 
     printf("\n%ld file installati", fatti);
     if (falliti) printf(", %ld non riusciti", falliti);
@@ -4474,6 +4496,10 @@ static void uso(void)
     printf("     netupdate -check:guarda            lo stesso, senza toccare niente\n");
     printf("     netupdate -auto                    l'occhiata dell'avvio: zitta,\n");
     printf("                                        e solo se automatico = si\n");
+    printf("     netupdate -avvio                   riscrive solo l'avvio (settore,\n");
+    printf("                                        kernel, sistema di base), senza\n");
+    printf("                                        rete: dopo un aggiornamento dal\n");
+    printf("                                        kernel 0.268 o prima, al riavvio\n");
     printf("     netupdate -permessi                rimette il bit di esecuzione\n");
     printf("                                        a quel che e' gia' installato\n");
     printf("     netupdate -registro                cosa c'e' installato qui\n");
@@ -4608,6 +4634,12 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-check:guarda") == 0) return comando_check_guarda();
 
     if (strcmp(argv[1], "-auto") == 0) return comando_auto();
+
+    /* ! IL GIRO DOPO, SENZA RETE. L'aggiornamento al 0.269 lo fa netupdate
+     * mentre gira il kernel di prima, il cui bootinstall non conosce
+     * /boot/rdboot.lz4: la mappa la scrive questo, dal kernel nuovo. Rifa'
+     * con i file che ci sono: bootverify, poi bootinstall. */
+    if (strcmp(argv[1], "-avvio") == 0) return fase_avvio(0, 0) == 0 ? 0 : 1;
 
     if (strcmp(argv[1], "-permessi") == 0)
         {

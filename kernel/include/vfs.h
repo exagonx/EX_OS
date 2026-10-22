@@ -144,6 +144,22 @@ typedef struct {
  * Va chiamata dopo fat12_init() E dopo blk_init(). */
 void vfs_init(uint8_t boot_drive);
 
+/* The base system (@RDBOOT step 2): if Stage 2 loaded rdboot ("rdb0"), mount
+ * its /rdboot directory on /rdboot. From then on `umount /` puts the whole
+ * base volume back as the root (if nothing is open on the disk) and
+ * `mount <dev> /` puts a disk on top again. 0, or a negative errno when
+ * there is no base: the system goes on as before. */
+int vfs_monta_base(void);
+
+/* @RDBOOT step 3: the system partition taken out from under / at boot (the
+ * base becomes the root; the "sistema" task checks and remounts it), its
+ * name, whether it was found not cleanly unmounted, and the shutdown sync
+ * that marks every ext2 volume clean. */
+int         vfs_sistema_rimanda(void);
+const char *vfs_sistema_dev(void);
+int         vfs_sistema_sporco(void);
+void        vfs_spegnimento(void);
+
 /* `dev` e' un nome del livello a blocchi ("hd0p1"), `punto` un percorso
  * assoluto ("/disk"). Con `sola_lettura` a 1 il montaggio rifiuta ogni
  * modifica anche se il driver saprebbe scrivere. Ritorna 0, o un errno

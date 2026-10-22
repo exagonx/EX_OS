@@ -210,6 +210,19 @@ void pmm_init(BootInfo *info)
     klog(LOG_INFO, "PMM: riferimenti a 0x%08x (%u byte, 1 per pagina)",
          (uint32_t)IN_NUMERO(g_rif), g_rif_size);
 
+    /* ! IL SISTEMA DI BASE STA A 6 MB (@RDBOOT, RD_ESPANSO in rdlz4.h), e la
+     * bitmap con i riferimenti cresce con la RAM: su 4 GB arriva sopra i 3,5
+     * MB. Se un kernel piu' grosso ce la portasse sopra, il primo passo qui
+     * sotto lo azzererebbe; meglio partire senza, e dirlo. */
+    if (info != NULL && info->rb_firma == RB_FIRMA && info->rb_addr != 0 &&
+        (uint32_t)IN_NUMERO(g_rif) + g_rif_size > info->rb_addr) {
+        klog(LOG_ERROR, "PMM: la bitmap arriva a 0x%08x, sopra il sistema di base "
+                        "a 0x%08x: parto senza", (uint32_t)IN_NUMERO(g_rif) + g_rif_size,
+                        info->rb_addr);
+        info->rb_addr = 0;
+        info->rb_byte = 0;
+    }
+
     /* -------------------------------------------------------------------------
      * Passo 3: Inizializza bitmap — TUTTO marcato come usato (sicuro di default)
      * ------------------------------------------------------------------------- */
@@ -298,6 +311,12 @@ void pmm_init(BootInfo *info)
         pmm_mark_used(info->rd_addr, info->rd_byte);
         klog(LOG_INFO, "PMM: volume in RAM protetto: 0x%08x - 0x%08x",
              info->rd_addr, info->rd_addr + info->rd_byte);
+    }
+    if (info != NULL && info->rb_firma == RB_FIRMA && info->rb_addr != 0 &&
+        info->rb_byte != 0) {
+        pmm_mark_used(info->rb_addr, info->rb_byte);
+        klog(LOG_INFO, "PMM: sistema di base protetto: 0x%08x - 0x%08x",
+             info->rb_addr, info->rb_addr + info->rb_byte);
     }
 
     /* La pagina della finestra di rimappatura fisica non deve essere

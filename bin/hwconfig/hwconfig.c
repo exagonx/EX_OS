@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.005");
+EX_VERSIONE("hwconfig", "0.006");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -319,9 +319,11 @@ static void cerca_rete(void)
          * significa solo che la parte di rete non si puo' configurare. */
         char *argv[2];
 
-        argv[0] = "/dev/pci.drv";
+        /* ! E DAL FLOPPY STA NEL SISTEMA DI BASE (@RDBOOT): /dev li' non c'e'. */
+        argv[0] = access("/dev/pci.drv", F_OK) == 0 ? "/dev/pci.drv"
+                                                    : "/rdboot/dev/pci.drv";
         argv[1] = NULL;
-        if (spawn("/dev/pci.drv", argv) > 0) {
+        if (spawn(argv[0], argv) > 0) {
             for (i = 0; i < 20; i++) {
                 usleep(100 * 1000);
                 pid = ipc_lookup(PCI_SERVIZIO);
@@ -1080,16 +1082,19 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# A video mode on trial (Impostazioni, Video, Prova): if nobody confirms it\n"
         "# within two minutes - the screen may be black - svga.drv puts the old mode\n"
         "# back and reboots. Without a trial it exits at once.\n"
-        "/dev/svga.drv -guardia &\n"
+        "svga.drv -guardia &\n"
         "\n", max - 1 - strlen(out));
 
+    /* ! I DRIVER PER NOME, NON PER PERCORSO (@RDBOOT passo 3): la shell li
+     * cerca nel PATH, che ha /dev e /rdboot/dev. Avviando dal floppy /dev non
+     * c'e', e un «/dev/pci.drv» scritto qui non partiva. */
     /* ! IL BUS PCI SERVE ANCHE SENZA RETE, da quando ci sono i driver USB:
      * e' il fornitore di tutti e due. Prima stava dentro il blocco della rete,
      * e su una macchina senza scheda i controller USB non trovavano nessuno a
      * cui chiedere dove sono i loro registri. */
     strncat(out,
         "# Il bus PCI: lo chiedono sia le schede di rete sia i controller USB.\n"
-        "/dev/pci.drv &\n"
+        "pci.drv &\n"
         "\n", max - 1 - strlen(out));
 
     if (g_t.rete && g_t.rete_driver[0]) {
@@ -1100,7 +1105,7 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "# ognuno aspetta che il precedente abbia registrato il proprio\n"
             "# servizio. Il PCI e' gia' partito qui sopra.\n"
             "%s &\n"
-            "/dev/ip.drv &\n"
+            "ip.drv &\n"
             "\n"
             "# Un indirizzo dal DHCP, se c'e' un server. Senza, l'indirizzo si\n"
             "# mette a mano:  ipcfg -a 192.168.1.10 -m 255.255.255.0 -g ...\n"
@@ -1118,7 +1123,8 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "# Fa qualcosa solo se /boot/netupdate.cnf dice \"automatico = si\",\n"
             "# e molla dopo cinque secondi se il server non risponde.\n"
             "netupdate -auto\n",
-            g_t.rete_driver);
+            strrchr(g_t.rete_driver, '/') ? strrchr(g_t.rete_driver, '/') + 1
+                                          : g_t.rete_driver);
 
         /* ! QUESTA RIGA STA ANCHE IN boot/avvio.sh, che e' il gemello di
          * questa funzione: il file ha due scrittori, e chi ne cambia uno
@@ -1203,8 +1209,8 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# Con -avvio quello che non trova il suo controller esce in silenzio,\n"
         "# e restano a guardare le porte: all'accensione la chiavetta non c'e'\n"
         "# quasi mai - si accende la macchina e POI si infila.\n"
-        "/dev/ehci.drv -avvio &\n"
-        "/dev/ohci.drv -avvio &\n"
+        "ehci.drv -avvio &\n"
+        "ohci.drv -avvio &\n"
         "\n"
         "# L'UHCI non sta qui: quel driver ha due mestieri, e senza argomenti\n"
         "# serve il MOUSE. Chi ha una macchina Intel con solo USB 1.1 e vuole\n"
@@ -1223,7 +1229,7 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# l'unico che esiste.\n"
         "# Va qui e non dentro exwin perche' /dev e' di root: un utente normale\n"
         "# non puo' eseguire /dev/sis.drv. Il servizio lo accende il SISTEMA.\n"
-        "/dev/sis.drv -2dservizio &\n"
+        "sis.drv -2dservizio &\n"
         "\n"
         "@echo Sistema pronto.\n", max - 1 - strlen(out));
 }
