@@ -16,6 +16,10 @@
 # ! THE PASV ADDRESS IS A WRONG ONE ON PURPOSE (192.168.77.77): a server
 # behind NAT does that, and the client must use the control connection's
 # address. Every line received is logged to stdout, PASS masked.
+#
+# ! PROVA_FTP_RIUSO=1 MAKES IT vsftpd (22 October 2026): a data connection
+# whose TLS session is not a resumption of the control one is refused, as
+# require_ssl_reuse=YES does. Either way the log says "dati ripresi: si/no".
 # =============================================================================
 import os, socket, ssl, sys, threading, time, stat as st
 
@@ -24,6 +28,7 @@ PORTA = int(sys.argv[2])
 CERT = sys.argv[3] if len(sys.argv) > 3 else None
 CHIAVE = sys.argv[4] if len(sys.argv) > 4 else None
 IMPLICITA = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+RIUSO = os.environ.get("PROVA_FTP_RIUSO") == "1"
 
 ctx = None
 if CERT:
@@ -85,6 +90,10 @@ class Sessione(threading.Thread):
             raise OSError("no data connection")
         if self.prot_p:
             c = ctx.wrap_socket(c, server_side=True)
+            log("! dati ripresi:", "si" if c.session_reused else "no")
+            if RIUSO and not c.session_reused:
+                c.close()
+                raise OSError("SSL connection failed: session reuse required")
         return c
 
     def elenco_unix(self, nome, v):

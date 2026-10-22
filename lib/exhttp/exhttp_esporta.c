@@ -66,6 +66,10 @@ static const char *const g_nomi[] = {
     /* 17 October 2026: TLS over an open connection (FTPS, /bin/netspeed). */
     "exhttp_tls_sopra",
 
+    /* 22 October 2026: the certificate seen, and accepting it (FTPS). */
+    "exhttp_tls_impronta",
+    "exhttp_tls_fidati",
+
     "__lib_avvio"
 };
 
@@ -89,6 +93,9 @@ static void *const g_indirizzi[] = {
     (void *)exhttp_intestazioni,
 
     (void *)exhttp_tls_sopra,
+
+    (void *)exhttp_tls_impronta,
+    (void *)exhttp_tls_fidati,
 
     (void *)__libc_ponti_avvia
 };

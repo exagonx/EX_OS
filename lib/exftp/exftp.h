@@ -45,12 +45,13 @@
  * program that never speaks FTPS (ftpswap) does not have to link the whole
  * of exhttp and its certificate store: it passes 0 and gets plain FTP.
  *
- * ! WHAT THE TLS UNDERNEATH CANNOT DO, said here because it is where a
- * failure will be looked up: exhttp's TLS is 1.3 only, and it does not
- * resume sessions. A server that requires the data connection to reuse the
- * control connection's TLS session (vsftpd's require_ssl_reuse=YES, the
- * default there) refuses the data channel with a 522/425: the reply is put
- * in `risposta` as the server wrote it.
+ * ! THE DATA CONNECTION RESUMES THE CONTROL ONE (since 22 October 2026).
+ * vsftpd's require_ssl_reuse=YES, the default there, refuses a data channel
+ * that does not reuse the control connection's TLS session (522/425).
+ * exhttp_tls_sopra keeps the session tickets per host and offers one to the
+ * next connection: that is the reuse, in TLS 1.3. Resumption works on 1.3
+ * only; a 1.2 server still gets a full handshake on the data channel. A
+ * refusal is put in `risposta` as the server wrote it.
  *
  * ! FTP DATES ARE UTC and are returned as time_t untouched. EX-OS does not
  * know its time zone (localtime and gmtime are the same function, libc.h),

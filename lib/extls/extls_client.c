@@ -318,6 +318,20 @@ typedef struct {
     int           leggo_pronta; /* the read keys wait for the server's CCS */
     unsigned char sh_random[32];
 
+    /* La ripresa e il certificato gia' visto (vedi extls.h). */
+    const ExTlsSessione *offerta;   /* il biglietto offerto in questa stretta */
+    const char   *alpn;             /* vedi ExTlsOpzioni */
+    unsigned int  offerta_eta;      /* la sua eta', in ms */
+    int           ripresa;          /* il server ha accettato la PSK */
+    unsigned char res_master[EXTLS_IMPRONTA];
+    int           res_ok;
+    ExTlsSessione bigl[EXTLS_BIGLIETTI_N];
+    unsigned int  bigl_n;
+    unsigned char foglia[EXTLS_IMPRONTA];   /* SHA-256 del certificato del sito */
+    int           foglia_ok;
+    unsigned char fidata[EXTLS_IMPRONTA];
+    int           fidata_ok;
+
     int chiuso;
     unsigned int allarme;   /* l'ultimo codice di allarme ricevuto */
     int          ultimo;    /* l'ultimo errore, per chi legge dopo la stretta */
@@ -882,7 +896,7 @@ static int manda_hello(Tls *t, const char *host, int secondo,
                        unsigned int gruppo,
                        const unsigned char *pubblica, unsigned int pub_n)
 {
-    unsigned char c[1024];
+    unsigned char c[1024 + EXTLS_BIGLIETTO_MAX + 64];
     unsigned int  i = 0, ext_inizio, ext_n;
     unsigned int  hl = lung(host);
 
@@ -996,11 +1010,75 @@ static int manda_hello(Tls *t, const char *host, int secondo,
 
     /* ALPN (16): http/1.1 — il browser parla quello, e dirlo evita che un
      * server moderno risponda in HTTP/2, che qui non si saprebbe leggere. */
-    metti16(c + i, 16); i += 2;
-    metti16(c + i, 11); i += 2;
-    metti16(c + i, 9);  i += 2;
-    c[i++] = 8;
-    bcopia(c + i, "http/1.1", 8); i += 8;
+    {
+        const char  *pr = t->alpn ? t->alpn : "http/1.1";
+        unsigned int pl = lung(pr);
+
+        if (pl > 0 && pl < 64) {
+            metti16(c + i, 16); i += 2;
+            metti16(c + i, pl + 3); i += 2;
+            metti16(c + i, pl + 1); i += 2;
+            c[i++] = (unsigned char)pl;
+            bcopia(c + i, pr, pl); i += pl;
+        }
+    }
+
+    /* La ripresa (RFC 8446, 4.2.9 e 4.2.11): psk_key_exchange_modes dice che
+     * la PSK va insieme a una chiave nuova (psk_dhe_ke) — senza, chi ruba un
+     * biglietto legge tutto quello che segue. */
+    if (t->offerta) {
+        const ExTlsSessione *o = t->offerta;
+        unsigned int tronco, salva_n, eta = t->offerta_eta + o->eta_aggiunta;
+        unsigned char primo[EXTLS_IMPRONTA], chiave_b[EXTLS_IMPRONTA];
+        unsigned char chiave_f[EXTLS_IMPRONTA], impronta[EXTLS_IMPRONTA];
+        unsigned char testa[4];
+        int r;
+
+        metti16(c + i, 45); i += 2;
+        metti16(c + i, 2);  i += 2;
+        c[i++] = 1; c[i++] = 1;
+
+        /* ! pre_shared_key E' PER FORZA L'ULTIMA, e non per stile: il binder
+         * firma il ClientHello fino a qui, e il server lo rifiuta altrove. */
+        metti16(c + i, 41); i += 2;
+        metti16(c + i, 2 + 2 + o->biglietto_n + 4 + 2 + 1 + EXTLS_IMPRONTA); i += 2;
+        metti16(c + i, 2 + o->biglietto_n + 4); i += 2;
+        metti16(c + i, o->biglietto_n); i += 2;
+        bcopia(c + i, o->biglietto, o->biglietto_n); i += o->biglietto_n;
+        c[i++] = (unsigned char)(eta >> 24); c[i++] = (unsigned char)(eta >> 16);
+        c[i++] = (unsigned char)(eta >> 8);  c[i++] = (unsigned char)eta;
+        tronco = i;
+        metti16(c + i, 1 + EXTLS_IMPRONTA); i += 2;
+        c[i++] = EXTLS_IMPRONTA;
+        i += EXTLS_IMPRONTA;                    /* il binder, qui sotto */
+
+        ext_n = i - ext_inizio - 2;
+        metti16(c + ext_inizio, ext_n);
+
+        /* ! IL BINDER SI CALCOLA SUL ClientHello TRONCATO, ma con la
+         * lunghezza INTERA nella testata: la trascrizione fin qui (vuota, o
+         * il HelloRetryRequest), piu' il messaggio fino agli identificativi.
+         * Si appoggia in coda alla trascrizione e si toglie subito. */
+        testa[0] = 1;
+        testa[1] = (unsigned char)(i >> 16);
+        testa[2] = (unsigned char)(i >> 8);
+        testa[3] = (unsigned char)i;
+        salva_n = t->trascr_n;
+        r = trascr_aggiungi(t, testa, 4);
+        if (r == EXTLS_OK) r = trascr_aggiungi(t, c, tronco);
+        if (r != EXTLS_OK) { t->trascr_n = salva_n; return r; }
+        sha256(t->trascr, t->trascr_n, impronta);
+        t->trascr_n = salva_n;
+
+        bzero_(chiave_b, sizeof(chiave_b));
+        extls_hkdf_extract(0, 0, o->psk, EXTLS_IMPRONTA, primo);
+        sha256("", 0, chiave_f);
+        derive_secret(primo, "res binder", chiave_f, chiave_b);
+        extls_expand_label(chiave_b, "finished", 0, 0, chiave_f, EXTLS_IMPRONTA);
+        extls_hmac(chiave_f, EXTLS_IMPRONTA, impronta, EXTLS_IMPRONTA,
+                   c + i - EXTLS_IMPRONTA);
+        return hs_manda(t, 1, c, i);
+    }
 
     ext_n = i - ext_inizio - 2;
     metti16(c + ext_inizio, ext_n);
@@ -1077,6 +1155,9 @@ static int leggi_hello(Tls *t, const unsigned char *p, unsigned int n,
             bcopia(altrui, p + i + 4, kn);
             *altrui_n = kn;
             visto_chiave = 1;
+        } else if (tipo == 41 && !*hrr) {       /* pre_shared_key: the identity chosen */
+            if (len != 2 || !t->offerta || be16(p + i) != 0) return EXTLS_ERR_PROTOCOLLO;
+            t->ripresa = 1;
         } else if (tipo == 44 && *hrr) {        /* cookie, to echo */
             if (len < 2 || be16(p + i) + 2 != len || len - 2 > COOKIE_MAX)
                 return EXTLS_ERR_PROTOCOLLO;
@@ -1110,7 +1191,7 @@ static int leggi_hello(Tls *t, const unsigned char *p, unsigned int n,
  * ========================================================================== */
 static int leggi_certificati(const unsigned char *p, unsigned int n,
                              ExCert *catena, unsigned int max,
-                             unsigned int *quanti)
+                             unsigned int *quanti, unsigned char foglia[EXTLS_IMPRONTA])
 {
     unsigned int i = 0, lista, fine;
 
@@ -1129,6 +1210,7 @@ static int leggi_certificati(const unsigned char *p, unsigned int n,
         i += 3;
         if (i + len > fine) return EXTLS_ERR_PROTOCOLLO;
 
+        if (*quanti == 0) sha256(p + i, len, foglia);
         if (excert_analizza(p + i, len, &catena[*quanti]) != 0)
             return EXTLS_ERR_CERTIFICATO;
         (*quanti)++;
@@ -1176,6 +1258,18 @@ static void contesto_firma(const unsigned char impronta[EXTLS_IMPRONTA],
     *n = 98 + EXTLS_IMPRONTA;
 }
 
+/* Il certificato del sito e' quello che la persona ha accettato? Confronto
+ * senza uscire al primo byte diverso: non e' un segreto, ma non costa niente. */
+static int foglia_fidata(const Tls *t)
+{
+    unsigned char diff = 0;
+    unsigned int  k;
+
+    if (!t->fidata_ok || !t->foglia_ok) return 0;
+    for (k = 0; k < EXTLS_IMPRONTA; k++) diff |= (unsigned char)(t->foglia[k] ^ t->fidata[k]);
+    return diff == 0;
+}
+
 /* =============================================================================
  * La stretta di mano
  * ========================================================================== */
@@ -1215,7 +1309,7 @@ static void prf12(const unsigned char *segreto, unsigned int segreto_n,
  * and the per-entry extensions that 1.3 added. */
 static int leggi_certificati12(const unsigned char *p, unsigned int n,
                                ExCert *catena, unsigned int max,
-                               unsigned int *quanti)
+                               unsigned int *quanti, unsigned char foglia[EXTLS_IMPRONTA])
 {
     unsigned int i = 3, fine;
 
@@ -1229,6 +1323,7 @@ static int leggi_certificati12(const unsigned char *p, unsigned int n,
 
         i += 3;
         if (i + len > fine) return EXTLS_ERR_PROTOCOLLO;
+        if (*quanti == 0) sha256(p + i, len, foglia);
         if (excert_analizza(p + i, len, &catena[*quanti]) != 0)
             return EXTLS_ERR_CERTIFICATO;
         (*quanti)++;
@@ -1292,8 +1387,9 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
         if (r != EXTLS_OK) return r;
 
         if (tipo == 11) {                       /* Certificate */
-            r = leggi_certificati12(corpo, n, catena, 8, &quanti);
+            r = leggi_certificati12(corpo, n, catena, 8, &quanti, t->foglia);
             if (r != EXTLS_OK) return r;
+            t->foglia_ok = 1;
             visto_cert = 1;
             if (!passo(EXTLS_P_CERTIFICATI)) return EXTLS_ERR_RETE;
             continue;
@@ -1338,11 +1434,13 @@ static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
 
     /* --- the certificate is for THIS site, and comes from a real CA ------- */
     if (!passo(EXTLS_P_CATENA)) return EXTLS_ERR_RETE;
-    r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello,
-                             passo_anello, 0);
-    if (r == EXCERT_ANNULLATO) return EXTLS_ERR_RETE;
-    if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
-    if (excert_nome_combacia(&catena[0], host) != EXCERT_OK) return EXTLS_ERR_NOME;
+    if (!foglia_fidata(t)) {
+        r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello,
+                                 passo_anello, 0);
+        if (r == EXCERT_ANNULLATO) return EXTLS_ERR_RETE;
+        if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
+        if (excert_nome_combacia(&catena[0], host) != EXCERT_OK) return EXTLS_ERR_NOME;
+    }
 
     /* --- RSA key transport: 48 random bytes, encrypted for the server ---- */
     if (rsa) {
@@ -1515,6 +1613,14 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
                   const ExMagazzino *magazzino, const char *adesso,
                   void (*casuale)(unsigned char *, unsigned int))
 {
+    return extls_stretta_con(opaco, sotto, host, magazzino, adesso, casuale, 0);
+}
+
+int extls_stretta_con(void *opaco, const ExTlsSotto *sotto, const char *host,
+                      const ExMagazzino *magazzino, const char *adesso,
+                      void (*casuale)(unsigned char *, unsigned int),
+                      const ExTlsOpzioni *o)
+{
     Tls *t = (Tls *)opaco;
     unsigned char privata[32], pubblica[32], altrui[65], condiviso[32];
     unsigned int  altrui_n = 0;
@@ -1528,6 +1634,9 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     ExCert        catena[8];
     unsigned int  quanti = 0;
     int           r;
+    int           chiesto_cert = 0;         /* il server ha chiesto il nostro */
+    unsigned char chiesto_ctx[256];
+    unsigned int  chiesto_ctx_n = 0;
 
     if (!t || !sotto || !host || !magazzino || !casuale) return EXTLS_ERR_USO;
 
@@ -1535,6 +1644,16 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     t->sotto   = sotto;
     t->casuale = casuale;
     bzero_(zeri, sizeof(zeri));
+    if (o) t->alpn = o->alpn;
+    if (o && o->fidata) {
+        bcopia(t->fidata, o->fidata, EXTLS_IMPRONTA);
+        t->fidata_ok = 1;
+    }
+    if (o && o->riprendi && o->riprendi->biglietto_n > 0
+          && o->riprendi->biglietto_n <= EXTLS_BIGLIETTO_MAX) {
+        t->offerta     = o->riprendi;
+        t->offerta_eta = o->eta_ms;
+    }
 
     /* --- la nostra meta' dello scambio ----------------------------------- */
     if (!passo(EXTLS_P_CHIAVE)) return EXTLS_ERR_RETE;
@@ -1623,7 +1742,9 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     if (!passo(EXTLS_P_SEGRETO)) return EXTLS_ERR_RETE;
 
     /* --- il calendario delle chiavi, primo giro --------------------------- */
-    extls_hkdf_extract(0, 0, zeri, EXTLS_IMPRONTA, primo);
+    /* Il primo segreto: dalla PSK se il server l'ha accettata, da zeri se no. */
+    if (t->ripresa) extls_hkdf_extract(0, 0, t->offerta->psk, EXTLS_IMPRONTA, primo);
+    else            extls_hkdf_extract(0, 0, zeri, EXTLS_IMPRONTA, primo);
     sha256("", 0, impronta);
     derive_secret(primo, "derived", impronta, derivato);
     extls_hkdf_extract(derivato, EXTLS_IMPRONTA, condiviso, 32, stretta);
@@ -1656,15 +1777,24 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
             if (tipo == 8) continue;            /* EncryptedExtensions */
 
             if (tipo == 13) {
-                /* ! UNA RICHIESTA DI CERTIFICATO NON SI PUO' SODDISFARE, e
-                 * proseguire in silenzio darebbe un errore piu' avanti che
-                 * parla d'altro. */
-                return EXTLS_ERR_CERTIFICATO;
+                /* ! LA RICHIESTA DI CERTIFICATO HA UNA RISPOSTA: un
+                 * Certificate VUOTO prima del nostro Finished (RFC 8446,
+                 * 4.4.2). Qui c'era un rifiuto, e il vsftpd di casa — che
+                 * chiede il certificato di serie, ssl_request_cert=YES, senza
+                 * pretenderlo — non si apriva. Chi lo PRETENDE risponde con
+                 * un allarme, e quello si legge. */
+                if (n < 1 || 1u + corpo[0] > n) return EXTLS_ERR_PROTOCOLLO;
+                chiesto_ctx_n = corpo[0];
+                bcopia(chiesto_ctx, corpo + 1, chiesto_ctx_n);
+                chiesto_cert = 1;
+                continue;
             }
 
             if (tipo == 11) {                   /* Certificate */
-                r = leggi_certificati(corpo, n, catena, 8, &quanti);
+                if (t->ripresa) return EXTLS_ERR_PROTOCOLLO;
+                r = leggi_certificati(corpo, n, catena, 8, &quanti, t->foglia);
                 if (r != EXTLS_OK) return r;
+                t->foglia_ok = 1;
 
                 /* L'impronta va presa ADESSO: la firma e' su tutto quello che
                  * si e' detto FINO AL certificato compreso, non oltre. */
@@ -1751,7 +1881,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
                 unsigned char chiave_f[EXTLS_IMPRONTA], atteso[EXTLS_IMPRONTA];
                 unsigned int  k;
 
-                if (!visto_cert || !visto_firma) return EXTLS_ERR_PROTOCOLLO;
+                if (!t->ripresa && (!visto_cert || !visto_firma)) return EXTLS_ERR_PROTOCOLLO;
 
                 /* L'impronta su cui si calcola il Finished del server e'
                  * quella di tutto FUORCHE' il Finished stesso: si scala
@@ -1785,6 +1915,10 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
      * schiacciarli tutti in «certificato non verificabile» manda a cercare il
      * difetto nel posto sbagliato. Il codice resta leggibile con
      * extls_motivo(). */
+    /* ! UNA RIPRESA NON HA CATENA: il server ha dimostrato di avere la chiave
+     * di una connessione gia' verificata. E il certificato gia' visto non la
+     * chiede (vedi extls.h): la firma qui sopra c'e' stata lo stesso. */
+    if (t->ripresa || foglia_fidata(t)) goto catena_fatta;
     if (!passo(EXTLS_P_CATENA)) return EXTLS_ERR_RETE;
     r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello,
                              passo_anello, 0);
@@ -1799,6 +1933,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
 
     if (excert_nome_combacia(&catena[0], host) != EXCERT_OK)
         return EXTLS_ERR_NOME;
+catena_fatta:
 
     /* --- la nostra risposta ---------------------------------------------- */
     trascr_impronta(t, impronta);               /* fino al Finished del server */
@@ -1816,9 +1951,26 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
 
     {
         unsigned char chiave_f[EXTLS_IMPRONTA], mio[EXTLS_IMPRONTA];
+        unsigned char fin[EXTLS_IMPRONTA];
+
+        /* ! IL Certificate VUOTO ENTRA NELLA TRASCRIZIONE del nostro
+         * Finished, ma NON in quella delle chiavi dei dati, che si ferma al
+         * Finished del server: per questo `impronta` resta com'e' e il
+         * Finished si calcola su `fin`. */
+        bcopia(fin, impronta, EXTLS_IMPRONTA);
+        if (chiesto_cert) {
+            unsigned char vuoto[256 + 4];
+
+            vuoto[0] = (unsigned char)chiesto_ctx_n;
+            bcopia(vuoto + 1, chiesto_ctx, chiesto_ctx_n);
+            vuoto[1 + chiesto_ctx_n] = vuoto[2 + chiesto_ctx_n] = vuoto[3 + chiesto_ctx_n] = 0;
+            r = hs_manda(t, 11, vuoto, chiesto_ctx_n + 4);
+            if (r != EXTLS_OK) return r;
+            trascr_impronta(t, fin);
+        }
 
         extls_expand_label(c_hs, "finished", 0, 0, chiave_f, EXTLS_IMPRONTA);
-        extls_hmac(chiave_f, EXTLS_IMPRONTA, impronta, EXTLS_IMPRONTA, mio);
+        extls_hmac(chiave_f, EXTLS_IMPRONTA, fin, EXTLS_IMPRONTA, mio);
 
         r = hs_manda(t, 20, mio, EXTLS_IMPRONTA);
         if (r != EXTLS_OK) return r;
@@ -1831,6 +1983,12 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
 
     derive_secret(padrone, "c ap traffic", impronta, t->c_app);
     derive_secret(padrone, "s ap traffic", impronta, t->s_app);
+
+    /* Il segreto di ripresa: sulla trascrizione fino al NOSTRO Finished,
+     * che hs_manda ha appena aggiunto. Da qui vengono le PSK dei biglietti. */
+    trascr_impronta(t, impronta);
+    derive_secret(padrone, "res master", impronta, t->res_master);
+    t->res_ok = 1;
 
     chiavi_da(t, t->c_app, &t->scrivo);
     chiavi_da(t, t->s_app, &t->leggo);
@@ -1850,6 +2008,77 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
 /* =============================================================================
  * Dopo la stretta
  * ========================================================================== */
+
+/* I NewSessionTicket di un record (RFC 8446, 4.6.1). Ogni biglietto porta la
+ * sua PSK: HKDF-Expand-Label(res_master, "resumption", nonce). Pieni, si
+ * butta il piu' vecchio. Un messaggio a cavallo di due record non si tiene:
+ * un biglietto perso costa solo una stretta intera. */
+static void biglietti(Tls *t)
+{
+    const unsigned char *p = t->bin + AVANTI + t->pos;
+    unsigned int n = t->fine - t->pos, i = 0;
+
+    if (!t->res_ok) return;
+    while (i + 4 <= n) {
+        unsigned int len = ((unsigned int)p[i+1] << 16) | be16(p + i + 2);
+        const unsigned char *m = p + i + 4;
+        unsigned int k, nonce_n, bigl_n;
+        ExTlsSessione *s;
+
+        if (i + 4 + len > n) return;
+        i += 4 + len;
+        if (p[i - 4 - len] != 4 || len < 4 + 4 + 1) continue;
+        nonce_n = m[8];
+        if (9 + nonce_n + 2 > len) continue;
+        bigl_n = be16(m + 9 + nonce_n);
+        if (bigl_n == 0 || bigl_n > EXTLS_BIGLIETTO_MAX
+            || 9 + nonce_n + 2 + bigl_n > len) continue;
+
+        if (t->bigl_n == EXTLS_BIGLIETTI_N) {
+            for (k = 1; k < EXTLS_BIGLIETTI_N; k++) t->bigl[k - 1] = t->bigl[k];
+            t->bigl_n--;
+        }
+        s = &t->bigl[t->bigl_n++];
+        s->durata_s     = ((unsigned int)be16(m) << 16) | be16(m + 2);
+        s->eta_aggiunta = ((unsigned int)be16(m + 4) << 16) | be16(m + 6);
+        extls_expand_label(t->res_master, "resumption", m + 9, nonce_n,
+                           s->psk, EXTLS_IMPRONTA);
+        bcopia(s->biglietto, m + 9 + nonce_n + 2, bigl_n);
+        s->biglietto_n = bigl_n;
+    }
+}
+
+/* Il biglietto piu' vecchio fra quelli ricevuti, tolto dalla lista: 1 se
+ * c'era, 0 se no. Ognuno vale per una ripresa (OpenSSL li usa una volta). */
+int extls_biglietto_prendi(void *opaco, ExTlsSessione *s)
+{
+    Tls *t = (Tls *)opaco;
+    unsigned int k;
+
+    if (!t || !s || t->bigl_n == 0) return 0;
+    *s = t->bigl[0];
+    for (k = 1; k < t->bigl_n; k++) t->bigl[k - 1] = t->bigl[k];
+    t->bigl_n--;
+    return 1;
+}
+
+int extls_ripresa(void *opaco)
+{
+    Tls *t = (Tls *)opaco;
+    return t ? t->ripresa : 0;
+}
+
+/* SHA-256 del certificato del sito, come arrivato: 0 se c'e', -1 se no (una
+ * ripresa non ne porta). */
+int extls_impronta_sito(void *opaco, unsigned char out[EXTLS_IMPRONTA])
+{
+    Tls *t = (Tls *)opaco;
+
+    if (!t || !out || !t->foglia_ok) return -1;
+    bcopia(out, t->foglia, EXTLS_IMPRONTA);
+    return 0;
+}
+
 int extls_leggi(void *opaco, unsigned char *dst, unsigned int max,
                 unsigned int ms)
 {
@@ -1878,7 +2107,9 @@ int extls_leggi(void *opaco, unsigned char *dst, unsigned int max,
          * connessione piu' in fretta la prossima volta, e questo cliente non
          * la raccoglie. Trattarli come dati darebbe byte a caso dentro una
          * pagina HTML. */
-        if (t->tipo == 22) { t->pos = t->fine = 0; continue; }
+        /* Dal 22 ottobre 2026 i biglietti si TENGONO (vedi extls.h): il
+         * server FTPS vuole che la connessione dei dati riprenda questa. */
+        if (t->tipo == 22) { biglietti(t); t->pos = t->fine = 0; continue; }
         if (t->tipo == 20) { t->pos = t->fine = 0; continue; }
         if (t->tipo != 23) { t->ultimo = EXTLS_ERR_PROTOCOLLO; return -1; }
     }

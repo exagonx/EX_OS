@@ -177,6 +177,70 @@ int extls_stretta(void *t, const ExTlsSotto *sotto, const char *host,
                   void (*casuale)(unsigned char *, unsigned int));
 
 /* =============================================================================
+ * LA RIPRESA E IL CERTIFICATO GIA' VISTO (22 ottobre 2026, FTPS)
+ *
+ * L'utente: il server FTP vero non ha un certificato di una CA, e vsftpd -
+ * di serie, require_ssl_reuse=YES - vuole che la connessione dei dati
+ * RIPRENDA la sessione TLS dei comandi. Due cose che il cliente non faceva.
+ *
+ * ! LA RIPRESA E' QUELLA DI TLS 1.3 (RFC 8446, 2.2 e 4.6.1): dopo la stretta
+ * il server manda uno o piu' NewSessionTicket; da ognuno, col segreto di
+ * ripresa di QUESTA connessione, viene una chiave condivisa (PSK). La
+ * prossima stretta la offre (pre_shared_key, psk_dhe_ke: con lo scambio
+ * X25519 lo stesso, cioe' sempre con segretezza in avanti) e un server che
+ * la accetta non manda certificato ne' firma: chi ha la chiave e' lo stesso
+ * server di prima, gia' verificato. Un server che non la accetta fa la
+ * stretta intera, e si verifica tutto come sempre.
+ *
+ * ! IL CERTIFICATO GIA' VISTO NON E' «CIFRA E FIDATI». E' l'impronta SHA-256
+ * di UN certificato che la persona ha guardato e accettato (come la chiave
+ * di un server ssh): se il server presenta proprio quello, catena e nome non
+ * si chiedono; la FIRMA della stretta si verifica lo stesso, quindi chi non
+ * ha la chiave privata di quel certificato non passa. Un certificato diverso
+ * - anche di un attaccante con una CA vera - non c'entra con l'impronta, e
+ * si verifica come sempre. La decisione e il file stanno in chi ospita
+ * (exhttp): qui dentro c'e' solo il confronto.
+ * ============================================================================= */
+#define EXTLS_BIGLIETTO_MAX  1024
+#define EXTLS_BIGLIETTI_N       4    /* quanti se ne tengono per connessione */
+
+typedef struct {
+    unsigned char psk[EXTLS_IMPRONTA];
+    unsigned char biglietto[EXTLS_BIGLIETTO_MAX];
+    unsigned int  biglietto_n;
+    unsigned int  eta_aggiunta;      /* ticket_age_add */
+    unsigned int  durata_s;          /* ticket_lifetime */
+} ExTlsSessione;
+
+typedef struct {
+    const unsigned char *fidata;     /* EXTLS_IMPRONTA byte, o 0 */
+    const ExTlsSessione *riprendi;   /* un biglietto da offrire, o 0 */
+    unsigned int         eta_ms;     /* da quanto c'e' quel biglietto */
+    /* ALPN: 0 = "http/1.1" (il browser), "" = nessuno, o il protocollo.
+     * ! vsftpd 3.0.5 RIFIUTA (allarme 120) un ALPN che non sia "ftp": con
+     * http/1.1 l'FTPS di casa non si apriva nemmeno. */
+    const char          *alpn;
+} ExTlsOpzioni;
+
+/* extls_stretta con le opzioni (o = 0 e' extls_stretta). */
+int extls_stretta_con(void *t, const ExTlsSotto *sotto, const char *host,
+                      const ExMagazzino *magazzino, const char *adesso,
+                      void (*casuale)(unsigned char *, unsigned int),
+                      const ExTlsOpzioni *o);
+
+/* Il piu' vecchio dei biglietti arrivati e non ancora presi: 1 se ce n'era
+ * uno (e da adesso e' di chi l'ha preso), 0 se no. I biglietti arrivano
+ * leggendo (extls_leggi), in mezzo ai dati. */
+int extls_biglietto_prendi(void *t, ExTlsSessione *s);
+
+/* 1 se la stretta appena fatta e' una ripresa. */
+int extls_ripresa(void *t);
+
+/* L'impronta SHA-256 del certificato del sito (il DER intero), dopo una
+ * stretta riuscita o rifiutata per il certificato. 1 se c'e'. */
+int extls_impronta_sito(void *t, unsigned char out[EXTLS_IMPRONTA]);
+
+/* =============================================================================
  * A CHE PUNTO E' LA STRETTA
  *
  * ! LA STRETTA E' LUNGA, E CHI ASPETTA NON SA PERCHE'. Su una macchina lenta

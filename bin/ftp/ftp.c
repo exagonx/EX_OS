@@ -29,6 +29,13 @@
  * program says so once, when a password is about to go out unencrypted,
  * and offers `open -tls` (explicit FTPS, AUTH TLS) as the way out.
  *
+ * ! A CERTIFICATE THAT CANNOT BE VERIFIED IS SHOWN, NOT SWALLOWED (22 October
+ * 2026). A home server (vsftpd) has a self-signed certificate under a name
+ * that is not its address. ftp shows its SHA-256 and asks; accepted, it goes
+ * in $HOME/.app/exhttp/fidati.txt for that host, and from then on that
+ * certificate - and only that one - passes. A different one is asked again:
+ * that is the moment someone is in the middle.
+ *
  * ! THE PASSWORD IS ASKED WITHOUT ECHO (exuser_leggi_password, console and
  * pseudo-terminal alike) and wiped from memory once sent; -w on the command
  * line exists for scripts, and a command line is visible to whoever lists
@@ -40,7 +47,7 @@
 #include "exuser.h"
 
 /* +0.001 at every change: `ftp -version` prints it. See EX_VERSIONE. */
-EX_VERSIONE("ftp", "0.002");
+EX_VERSIONE("ftp", "0.003");
 
 #define RIGA_MAX   1024
 #define ARGS_MAX   16
@@ -264,6 +271,27 @@ static int apri(const char *host, const char *porta_s, int modo,
     printf("Collegamento a %s%s...\n", host,
            modo == EXFTP_TLS ? " (FTPS, AUTH TLS)" : modo == EXFTP_TLS_IMPLICITO ? " (FTPS implicito)" : "");
     rc = exftp_connetti(&g_f, host, porta, modo);
+    if (rc != 0 && modo != EXFTP_CHIARO && strstr(g_f.errore, "certificat")) {
+        char hex[2 * 32 + 1], r[16];
+        int  k;
+
+        if (exhttp_tls_impronta(hex, sizeof(hex))) {
+            printf("ftp: %s: %s\n", host, g_f.errore);
+            printf("Il certificato non e' firmato da un'autorita' conosciuta, o porta un\n"
+                   "altro nome. Controllate l'impronta SHA-256 sul server\n"
+                   "(openssl x509 -in CERT -noout -fingerprint -sha256):\n  ");
+            for (k = 0; hex[k]; k += 2)
+                printf("%c%c%s", toupper((unsigned char)hex[k]),
+                       toupper((unsigned char)hex[k + 1]), hex[k + 2] ? ":" : "\n");
+            leggi_riga("Accettarlo e ricordarlo per questo server? (si/no): ", r, sizeof(r));
+            if (r[0] != 's' && r[0] != 'S') return 1;
+            if (!exhttp_tls_fidati(host, hex)) {
+                printf("ftp: non riesco a scrivere $HOME/.app/exhttp/fidati.txt\n");
+                return 1;
+            }
+            rc = exftp_connetti(&g_f, host, porta, modo);
+        }
+    }
     if (rc != 0) {
         printf("ftp: %s: %s\n", host, g_f.errore[0] ? g_f.errore : exftp_perche(rc));
         return 1;

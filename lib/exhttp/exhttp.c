@@ -463,6 +463,7 @@ typedef struct {
     void            *tls;
     ExHttpTrasporto  tcp;
     ExTlsSotto       sotto;     /* quello che extls tiene per riferimento */
+    char             host[128]; /* per i biglietti; vuoto sulla via https */
 } StatoTls;
 
 static StatoTls g_stato_tls;
@@ -491,22 +492,28 @@ static void casuale(unsigned char *b, unsigned int n)
  * ============================================================================= */
 #define CERTI_MIEI_MAX  (256 * 1024)
 
-/* $HOME/.app/exhttp/certi.pem in `p`, creando le directory se `crea`. */
-static int certi_miei_percorso(char *p, unsigned int max, int crea)
+/* $HOME/.app/exhttp/<nome> in `p`, creando le directory se `crea`. */
+static int miei_percorso(char *p, unsigned int max, int crea, const char *nome)
 {
     const char *casa = getenv("HOME");
     int         i;
 
-    if (!casa || !casa[0] || strlen(casa) + 32 >= max) return 0;
+    if (!casa || !casa[0] || strlen(casa) + 16 + strlen(nome) >= max) return 0;
     strcpy(p, casa);
     i = (int)strlen(p);
     while (i > 0 && p[i - 1] == '/') p[--i] = '\0';
     strcat(p, "/.app");
     if (crea && mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
-    strcat(p, "/exhttp");
+    strcat(p, "/exhttp/");
     if (crea && mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
-    strcat(p, "/certi.pem");
+    if (strlen(p) + strlen(nome) >= max) return 0;
+    strcat(p, nome);
     return 1;
+}
+
+static int certi_miei_percorso(char *p, unsigned int max, int crea)
+{
+    return miei_percorso(p, max, crea, "certi.pem");
 }
 
 static int magazzino_carica(void)
@@ -778,10 +785,133 @@ int exhttp_certi_aggiungi(const unsigned char *dati, unsigned int n)
     return aggiunti;
 }
 
+/* =============================================================================
+ * I BIGLIETTI E I CERTIFICATI GIA' VISTI — 22 ottobre 2026 (FTPS su vsftpd)
+ *
+ * ! vsftpd VUOLE CHE LA CONNESSIONE DEI DATI RIPRENDA QUELLA DEI COMANDI
+ * (require_ssl_reuse, acceso di serie): chi non lo fa riceve «522 SSL
+ * connection failed: session reuse required». Allora i biglietti che il
+ * server manda si raccolgono qui, per nome, e si offrono alla connessione
+ * successiva verso lo stesso nome. Il piu' recente non ancora usato; se sono
+ * finiti, il piu' recente gia' usato (OpenSSL di solito li accetta ancora).
+ *
+ * Solo la via exhttp_tls_sopra: la via https non li raccoglie, e una stretta
+ * intera non le costa niente di diverso da prima.
+ * ========================================================================== */
+#define BIGLIETTI_TENUTI  8
+
+typedef struct {
+    char          host[128];
+    ExTlsSessione s;
+    unsigned int  quando_ms;
+    int           usato;
+} Biglietto;
+
+static Biglietto g_bigl[BIGLIETTI_TENUTI];
+static char      g_impronta[2 * EXTLS_IMPRONTA + 1];   /* l'ultimo certificato visto */
+
+static void biglietti_raccogli(StatoTls *s)
+{
+    ExTlsSessione n;
+
+    if (!s->host[0]) return;
+    while (extls_biglietto_prendi(s->tls, &n)) {
+        unsigned int k, posto = 0;
+
+        /* il posto: uno vuoto, se no il piu' vecchio */
+        for (k = 0; k < BIGLIETTI_TENUTI; k++) {
+            if (!g_bigl[k].host[0]) { posto = k; break; }
+            if (g_bigl[k].quando_ms < g_bigl[posto].quando_ms) posto = k;
+        }
+        strcpy(g_bigl[posto].host, s->host);
+        g_bigl[posto].s         = n;
+        g_bigl[posto].quando_ms = uptime_ms();
+        g_bigl[posto].usato     = 0;
+    }
+}
+
+static Biglietto *biglietto_per(const char *host)
+{
+    Biglietto   *meglio = 0;
+    unsigned int k;
+
+    for (k = 0; k < BIGLIETTI_TENUTI; k++) {
+        Biglietto *b = &g_bigl[k];
+
+        if (strcmp(b->host, host) != 0) continue;
+        if (uptime_ms() - b->quando_ms >= b->s.durata_s * 1000U) continue;
+        if (!meglio || (meglio->usato && !b->usato)
+            || (meglio->usato == b->usato && b->quando_ms > meglio->quando_ms))
+            meglio = b;
+    }
+    return meglio;
+}
+
+/* $HOME/.app/exhttp/fidati.txt: righe «nome impronta», una per certificato
+ * accettato a mano. L'impronta e' lo SHA-256 del certificato, in esadecimale. */
+static int fidata_per(const char *host, unsigned char out[EXTLS_IMPRONTA])
+{
+    char  perc[160], riga[256];
+    FILE *f;
+    int   trovata = 0;
+
+    if (!miei_percorso(perc, sizeof(perc), 0, "fidati.txt")) return 0;
+    f = fopen(perc, "r");
+    if (!f) return 0;
+    while (!trovata && fgets(riga, sizeof(riga), f)) {
+        char *sp = strchr(riga, ' ');
+        unsigned int k;
+
+        if (riga[0] == '#' || !sp) continue;
+        *sp++ = 0;
+        if (strcmp(riga, host) != 0) continue;
+        for (k = 0; k < EXTLS_IMPRONTA; k++) {
+            unsigned int v;
+            if (!isxdigit((unsigned char)sp[2*k]) || !isxdigit((unsigned char)sp[2*k+1])) break;
+            sscanf(sp + 2*k, "%2x", &v);
+            out[k] = (unsigned char)v;
+        }
+        trovata = (k == EXTLS_IMPRONTA);
+    }
+    fclose(f);
+    return trovata;
+}
+
+int exhttp_tls_impronta(char *hex, unsigned int max)
+{
+    if (!hex || max == 0) return 0;
+    hex[0] = 0;
+    if (!g_impronta[0] || max <= strlen(g_impronta)) return 0;
+    strcpy(hex, g_impronta);
+    return 1;
+}
+
+int exhttp_tls_fidati(const char *host, const char *hex)
+{
+    char perc[160], riga[256];
+    int  fd, k;
+
+    if (!host || !host[0] || strlen(host) > 120 || strchr(host, ' ') || !hex) return 0;
+    for (k = 0; k < 2 * EXTLS_IMPRONTA; k++)
+        if (!isxdigit((unsigned char)hex[k])) return 0;
+    if (hex[k]) return 0;
+    if (!miei_percorso(perc, sizeof(perc), 1, "fidati.txt")) return 0;
+    fd = open(perc, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return 0;
+    snprintf(riga, sizeof(riga), "%s %s\n", host, hex);
+    k = (int)write(fd, riga, strlen(riga)) == (int)strlen(riga);
+    close(fd);
+    return k;
+}
+
 static int tls_leggi(void *stato, unsigned char *dst, unsigned int max,
                      unsigned int ms)
 {
-    return extls_leggi(((StatoTls *)stato)->tls, dst, max, ms);
+    StatoTls *s = (StatoTls *)stato;
+    int       n = extls_leggi(s->tls, dst, max, ms);
+
+    biglietti_raccogli(s);
+    return n;
 }
 
 static int tls_scrivi(void *stato, const unsigned char *src, unsigned int n)
@@ -993,6 +1123,7 @@ static void tls_chiudi_proprio(void *stato)
 {
     StatoTls *s = (StatoTls *)stato;
 
+    biglietti_raccogli(s);
     extls_chiudi(s->tls);
     s->tcp.chiudi(s->tcp.stato);
     free(s->tls);
@@ -1022,8 +1153,27 @@ int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
     s->sotto.stato  = tcp->stato;
     s->sotto.leggi  = tcp->leggi;
     s->sotto.scrivi = tcp->scrivi;
+    strncpy(s->host, host, sizeof(s->host) - 1);
     adesso_in(adesso, sizeof(adesso));
-    r = extls_stretta(s->tls, &s->sotto, host, g_magazzino, adesso, casuale);
+    {
+        ExTlsOpzioni  o;
+        unsigned char fidata[EXTLS_IMPRONTA], imp[EXTLS_IMPRONTA];
+        Biglietto    *b = biglietto_per(host);
+        unsigned int  k;
+
+        memset(&o, 0, sizeof(o));
+        o.alpn = "ftp";             /* solo FTPS passa di qui: vedi extls.h */
+        if (fidata_per(host, fidata)) o.fidata = fidata;
+        if (b) {
+            o.riprendi = &b->s;
+            o.eta_ms   = (unsigned int)(uptime_ms() - b->quando_ms);
+            b->usato   = 1;
+        }
+        r = extls_stretta_con(s->tls, &s->sotto, host, g_magazzino, adesso, casuale, &o);
+        if (extls_impronta_sito(s->tls, imp) == 0)
+            for (k = 0; k < EXTLS_IMPRONTA; k++)
+                snprintf(g_impronta + 2 * k, 3, "%02x", imp[k]);
+    }
     if (r != EXTLS_OK) {
         if (errore && max) {
             if (r == EXTLS_ERR_CERTIFICATO)

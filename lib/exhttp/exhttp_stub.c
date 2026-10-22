@@ -59,6 +59,8 @@ static struct {
     void (*intest)(const char *);      /* facoltativa (28 settembre 2026) */
     int (*tls_sopra)(ExHttpTrasporto *, const ExHttpTrasporto *, const char *,
                      char *, unsigned int);   /* optional (17 October 2026) */
+    int (*tls_impronta)(char *, unsigned int);        /* optional (22 October 2026) */
+    int (*tls_fidati)(const char *, const char *);    /* optional (22 October 2026) */
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -112,6 +114,8 @@ static void assicura(void)
     P.intest = (void (*)(const char *))exlib_simbolo(t, "exhttp_intestazioni");
     P.tls_sopra = (int (*)(ExHttpTrasporto *, const ExHttpTrasporto *, const char *,
                            char *, unsigned int))exlib_simbolo(t, "exhttp_tls_sopra");
+    P.tls_impronta = (int (*)(char *, unsigned int))exlib_simbolo(t, "exhttp_tls_impronta");
+    P.tls_fidati = (int (*)(const char *, const char *))exlib_simbolo(t, "exhttp_tls_fidati");
 
     P.pronto = 1;
 }
@@ -171,6 +175,20 @@ int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
         errore[i] = 0;
     }
     return 0;
+}
+
+int exhttp_tls_impronta(char *hex, unsigned int max)
+{
+    assicura();
+    if (P.tls_impronta) return P.tls_impronta(hex, max);
+    if (hex && max) hex[0] = 0;
+    return 0;
+}
+
+int exhttp_tls_fidati(const char *host, const char *hex)
+{
+    assicura();
+    return P.tls_fidati ? P.tls_fidati(host, hex) : 0;
 }
 
 int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u, unsigned char *buf,

@@ -36,7 +36,7 @@
 
 #include "extls.h"
 
-void sha256(const void *dati, unsigned int len, unsigned char out[32])
+void sha256(const void *dati, size_t len, unsigned char out[32])
 {
     SHA256((const unsigned char *)dati, len, out);
 }
@@ -74,33 +74,16 @@ static char   pem[1024 * 1024];
 static unsigned char der[1024 * 1024];
 static ExMagazzino magazzino;
 
-int main(int argc, char **argv)
+/* Una connessione: stretta, GET, lettura fino alla chiusura. `o` porta il
+ * biglietto da offrire e l'impronta fidata; `preso`, se non nullo, riceve un
+ * biglietto di questa connessione per la prossima. */
+static int giro(char **argv, const ExTlsOpzioni *o, ExTlsSessione *preso)
 {
     ExTlsSotto sotto;
     void      *tls;
     int        fd, n, ricevuti = 0, r;
     struct sockaddr_in a;
     char       richiesta[512];
-
-    if (argc < 5) {
-        fprintf(stderr, "uso: clientprova HOST PORTA NOME ca.pem\n");
-        return 2;
-    }
-
-    /* --- il magazzino ---------------------------------------------------- */
-    {
-        FILE *f = fopen(argv[4], "rb");
-        size_t letti;
-
-        if (!f) { perror(argv[4]); return 2; }
-        letti = fread(pem, 1, sizeof(pem), f);
-        fclose(f);
-
-        r = extls_magazzino_pem(&magazzino, pem, (unsigned int)letti,
-                                der, sizeof(der), 0);
-        printf("magazzino: %d certificati\n", r);
-        if (r < 0) return 2;
-    }
 
     /* --- il socket -------------------------------------------------------- */
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -138,7 +121,18 @@ int main(int argc, char **argv)
                 g->tm_year + 1900, g->tm_mon + 1, g->tm_mday,
                 g->tm_hour, g->tm_min, g->tm_sec);
 
-        r = extls_stretta(tls, &sotto, argv[3], &magazzino, adesso, casuale);
+        r = extls_stretta_con(tls, &sotto, argv[3], &magazzino, adesso, casuale, o);
+    }
+
+    {
+        unsigned char imp[EXTLS_IMPRONTA];
+        int k;
+
+        if (extls_impronta_sito(tls, imp) == 0) {
+            printf("impronta: ");
+            for (k = 0; k < EXTLS_IMPRONTA; k++) printf("%02x", imp[k]);
+            printf("\n");
+        }
     }
 
     if (r != EXTLS_OK) {
@@ -148,7 +142,7 @@ int main(int argc, char **argv)
         printf("\n");
         return 1;
     }
-    printf("stretta: riuscita\n");
+    printf("stretta: riuscita%s\n", extls_ripresa(tls) ? " (ripresa)" : "");
 
     sprintf(richiesta,
             "GET / HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", argv[3]);
@@ -175,8 +169,64 @@ int main(int argc, char **argv)
         printf(" [interrotto: %s]", extls_perche(extls_ultimo(tls)));
     if (extls_allarme(tls)) printf(" [allarme %u]", extls_allarme(tls));
     printf("\n");
+    if (preso) printf("biglietto: %s\n", extls_biglietto_prendi(tls, preso) ? "si" : "no");
     extls_chiudi(tls);
     close(fd);
+    free(tls);
 
     return ricevuti > 0 ? 0 : 1;
+}
+
+/* Gli argomenti dopo ca.pem:
+ *   -fidata HEX   l'impronta SHA-256 del certificato gia' accettato
+ *   -riprendi     due connessioni: la seconda riprende la prima
+ *   -alpn P       il protocollo ALPN ("" = nessuno; senza, http/1.1) */
+int main(int argc, char **argv)
+{
+    static unsigned char fidata[EXTLS_IMPRONTA];
+    static ExTlsSessione sessione;
+    ExTlsOpzioni o;
+    int          r, k, riprendi = 0;
+
+    if (argc < 5) {
+        fprintf(stderr, "uso: clientprova HOST PORTA NOME ca.pem [-fidata HEX] [-riprendi] [-alpn P]\n");
+        return 2;
+    }
+    memset(&o, 0, sizeof(o));
+    for (k = 5; k < argc; k++) {
+        if (!strcmp(argv[k], "-riprendi")) riprendi = 1;
+        else if (!strcmp(argv[k], "-alpn") && k + 1 < argc) o.alpn = argv[++k];
+        else if (!strcmp(argv[k], "-fidata") && k + 1 < argc) {
+            const char *h = argv[++k];
+            int j;
+            for (j = 0; j < EXTLS_IMPRONTA && h[2*j] && h[2*j+1]; j++) {
+                unsigned int v;
+                sscanf(h + 2*j, "%2x", &v);
+                fidata[j] = (unsigned char)v;
+            }
+            o.fidata = fidata;
+        }
+    }
+
+    /* --- il magazzino ---------------------------------------------------- */
+    {
+        FILE *f = fopen(argv[4], "rb");
+        size_t letti;
+
+        if (!f) { perror(argv[4]); return 2; }
+        letti = fread(pem, 1, sizeof(pem), f);
+        fclose(f);
+
+        r = extls_magazzino_pem(&magazzino, pem, (unsigned int)letti,
+                                der, sizeof(der), 0);
+        printf("magazzino: %d certificati\n", r);
+        if (r < 0) return 2;
+    }
+
+    r = giro(argv, &o, riprendi ? &sessione : 0);
+    if (r != 0 || !riprendi) return r;
+    if (sessione.biglietto_n == 0) return 1;
+    o.riprendi = &sessione;
+    o.eta_ms   = 100;
+    return giro(argv, &o, 0);
 }

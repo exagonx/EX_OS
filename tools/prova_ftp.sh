@@ -20,6 +20,10 @@
 #   4. `open -tlsi 10.0.2.2 2990`: implicit FTPS;
 #   5. netspeed -makeserver over FTPS (the page check fails: no PHP here;
 #      what counts is index.php arriving on the server).
+#   6. like the home vsftpd (22 October 2026): a SELF-SIGNED certificate
+#      (CN=myserver) on 2122, and data connections refused unless they
+#      resume the control session. ftp shows the fingerprint, "si" accepts
+#      it; a second `ftps` must not ask again.
 #
 # ! NO pkill: the server is stopped by PID; qemu_drive cleans up after itself.
 # =============================================================================
@@ -42,6 +46,11 @@ if [ ! -f "$D/sito.pem" ]; then
     openssl x509 -req -in "$D/sito.csr" -CA "$D/ca.pem" -CAkey "$D/ca.key" \
         -CAcreateserial -days 30 -sha256 -extfile "$D/sito.ext" -out "$D/sito.pem" 2>/dev/null
 fi
+if [ ! -f "$D/auto.pem" ]; then
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$D/auto.key" -out "$D/auto.pem" \
+        -subj "/CN=myserver" -days 30 2>/dev/null
+fi
+IMPRONTA=$(openssl x509 -in "$D/auto.pem" -noout -fingerprint -sha256 | sed 's/.*=//')
 rm -rf "$D/www"; mkdir -p "$D/www/sub"
 cp "$D/ca.pem" "$D/www/ca.pem"
 echo "ciao dal server" > "$D/www/leggimi.txt"
@@ -54,6 +63,8 @@ SHA=$(sha256sum "$D/www/grande.bin" | cut -c1-16)
 
 python3 tools/prova_ftp_server.py "$D/www" 2121 "$D/sito.pem" "$D/sito.key" 2990 > "$D/server-$ARCH.log" 2>&1 &
 P_FTP=$!
+PROVA_FTP_RIUSO=1 python3 tools/prova_ftp_server.py "$D/www" 2122 "$D/auto.pem" "$D/auto.key" > "$D/server-riuso-$ARCH.log" 2>&1 &
+P_RIUSO=$!
 sleep 1
 
 # --- EX-OS ------------------------------------------------------------------------
@@ -88,10 +99,15 @@ EXOS_QEMU_EXTRA="$CPU -drive file=$IMG,format=raw,if=ide -netdev user,id=n1,host
     "ls sub@15" "get grande.bin tls.bin@25" "!sha256sum tls.bin@6" "put tls.bin su-tls.bin@25" "status@3" "bye@4" \
     "echo PASSO4@1" "ftp -tlsi 10.0.2.2 2990 -u prova -w segreta size grande.bin@25" \
     "echo PASSO5@1" "netspeed -makeserver@3" "ftps@2" "10.0.2.2:2121@2" "prova@2" "segreta@2" "/@2" \
-    "http://10.0.2.2:8099@40" "echo FINE@2" > "$D/exos-$ARCH.log" 2>&1
+    "http://10.0.2.2:8099@40" \
+    "echo PASSO6@1" "ftp@3" "ftps 10.0.2.2 2122@20" "si@20" "prova@3" "segreta@8" \
+    "get grande.bin auto.bin@25" "!sha256sum auto.bin@6" "ls@15" "bye@4" \
+    "ftp -tls 10.0.2.2 2122 -u prova -w segreta size grande.bin@25" \
+    "!cat /disk/casa/.app/exhttp/fidati.txt@3" \
+    "echo FINE@2" > "$D/exos-$ARCH.log" 2>&1
 
-kill $P_FTP 2>/dev/null
-wait $P_FTP 2>/dev/null
+kill $P_FTP $P_RIUSO 2>/dev/null
+wait $P_FTP $P_RIUSO 2>/dev/null
 
 # --- the result ---------------------------------------------------------------------
 L=$(sed 's/\x1b\[[0-9;]*m//g' "$D/exos-$ARCH.log" | tr -d '\000')
@@ -116,6 +132,11 @@ sez PASSO3 PASSO4 | grep -aq "cifrat";                      controlla "3: FTPS e
 cmp -s "$D/www/grande.bin" "$D/www/su-tls.bin";              controlla "3: put su TLS (file uguale sul server)" $?
 sez PASSO4 PASSO5 | grep -aq "213 300000";                  controlla "4: FTPS implicito (990-style)" $?
 grep -q "EX-OS netspeed" "$D/www/netspeed/index.php" 2>/dev/null; controlla "5: netspeed -makeserver carica index.php via FTPS" $?
+sez PASSO6 FINE | grep -aq "$IMPRONTA";                     controlla "6: l'impronta mostrata e' quella del certificato" $?
+[ "$(sez PASSO6 FINE | grep -a "auto.bin" | grep -ac "$SHA")" -ge 1 ]; controlla "6: get con dati che riprendono la sessione, sha256 uguale" $?
+! grep -aq "dati ripresi: no" "$D/server-riuso-$ARCH.log" && grep -aq "dati ripresi: si" "$D/server-riuso-$ARCH.log"; controlla "6: ogni connessione dati ha ripreso la sessione" $?
+[ "$(sez PASSO6 FINE | grep -ac "Accettarlo")" = 1 ];        controlla "6: la seconda volta non chiede" $?
+sez PASSO6 FINE | grep -aq "213 300000";                    controlla "6: la seconda volta funziona (size)" $?
 echo "  registri: $D/exos-$ARCH.log  $D/server-$ARCH.log"
 echo "ESITO $ARCH: $([ $esito = 0 ] && echo BUONO || echo "qualcosa non va")"
 exit $esito

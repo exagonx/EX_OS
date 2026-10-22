@@ -79,6 +79,20 @@ int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta);
 int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
                      const char *host, char *errore, unsigned int max);
 
+/* 22 October 2026, FTPS on a server with a self-signed certificate.
+ * exhttp_tls_sopra keeps the session tickets per host and offers one to the
+ * next connection to the same host (vsftpd's require_ssl_reuse), and accepts
+ * a certificate whose SHA-256 is in $HOME/.app/exhttp/fidati.txt for that
+ * host, whatever its chain and name.
+ *
+ * exhttp_tls_impronta: the SHA-256 (64 hex digits) of the certificate of the
+ * last exhttp_tls_sopra, refused or not — to show it before accepting it.
+ * Rende 1 se c'e'.
+ * exhttp_tls_fidati: adds «host hex» to fidati.txt. Rende 1 se scritto.
+ * Both optional in the 32-bit stub. */
+int exhttp_tls_impronta(char *hex, unsigned int max);
+int exhttp_tls_fidati(const char *host, const char *hex);
+
 /* -----------------------------------------------------------------------------
  * Scaricare
  * --------------------------------------------------------------------------- */

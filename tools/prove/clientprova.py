@@ -293,6 +293,71 @@ def main():
     v12("1.2: AES-128-CBC senza Extended Master Secret", "srv.pem", "srv.key",
         "AES128-SHA", (), ambiente=amb)
 
+    # ---- FTPS contro vsftpd (22 ottobre 2026) ------------------------------
+    # ! IL SERVER DI CASA HA UN CERTIFICATO AUTOFIRMATO (CN=myserver) e vuole
+    # che la connessione dei dati RIPRENDA quella di controllo. Quindi: la
+    # ripresa con un biglietto, e il certificato accettato per impronta — che
+    # deve valere SOLO per quell'impronta.
+    def cli(p, *altro):
+        r = subprocess.run([ESE, "127.0.0.1", str(p), "prova.exos", "ca.pem"] + list(altro),
+                           cwd=BANCO, capture_output=True, text=True, timeout=60)
+        return r.returncode, r.stdout + r.stderr
+
+    def ripresa(p):
+        rc, out = cli(p, "-riprendi")
+        esito("1.3: la seconda connessione riprende la prima (biglietto)",
+              rc == 0 and "stretta: riuscita (ripresa)" in out
+              and out.count("HTTP/1.0 200") == 2, out.strip())
+    con_server("srv.pem", "srv.key", ripresa)
+    con_server("srv.pem", "srv.key", ripresa, cifrari="TLS_AES_128_GCM_SHA256")
+
+    sh("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+       "-keyout", "auto.key", "-out", "auto.pem", "-days", "365",
+       "-subj", "/CN=myserver")
+    der = subprocess.run(["openssl", "x509", "-in", "auto.pem", "-outform", "DER"],
+                         cwd=BANCO, capture_output=True).stdout
+    import hashlib
+    giusta = hashlib.sha256(der).hexdigest()
+    sbagliata = ("00" if giusta[:2] != "00" else "11") + giusta[2:]
+
+    def autofirmato(p):
+        rc, out = cli(p)
+        esito("autofirmato senza impronta: rifiutato, e l'impronta e' quella vera",
+              rc != 0 and ("impronta: " + giusta) in out, out.strip())
+        rc, out = cli(p, "-fidata", sbagliata)
+        esito("autofirmato con l'impronta sbagliata: rifiutato",
+              rc != 0 and "stretta: riuscita" not in out, out.strip())
+        rc, out = cli(p, "-fidata", giusta)
+        esito("autofirmato con l'impronta accettata: riesce",
+              rc == 0 and "HTTP/1.0 200" in out, out.strip())
+        rc, out = cli(p, "-fidata", giusta, "-riprendi")
+        esito("autofirmato accettato, poi ripresa (come vsftpd)",
+              rc == 0 and "(ripresa)" in out, out.strip())
+    con_server("auto.pem", "auto.key", autofirmato)
+
+    def autofirmato12(p):
+        rc, out = cliente_auto12(p, sbagliata)
+        esito("1.2 autofirmato con l'impronta sbagliata: rifiutato",
+              rc != 0 and "stretta: riuscita" not in out, out.strip())
+        rc, out = cliente_auto12(p, giusta)
+        esito("1.2 autofirmato con l'impronta accettata: riesce",
+              rc == 0 and "HTTP/1.0 200" in out, out.strip())
+    cliente_auto12 = lambda p, h: cli(p, "-fidata", h)
+    p = porta_libera()
+    srv = subprocess.Popen(
+        ["openssl", "s_server", "-accept", str(p), "-cert", "auto.pem", "-key", "auto.key",
+         "-tls1_2", "-cipher", "ECDHE-RSA-AES128-GCM-SHA256", "-www", "-quiet"],
+        cwd=BANCO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            try:
+                socket.create_connection(("127.0.0.1", p), 0.2).close(); break
+            except OSError:
+                time.sleep(0.1)
+        autofirmato12(p)
+    finally:
+        srv.terminate(); srv.wait()
+
     print("\n%d prove superate, %d fallite" % (passate, fallite))
     shutil.rmtree(BANCO, ignore_errors=True)
     return 1 if fallite else 0

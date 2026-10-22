@@ -8124,6 +8124,27 @@ tools/netinst/velocita tolto da netinst.
       verificata (nsWindow crea la finestra dal filo principale, in teoria):
       per questo attesa scrive in /tmp/attesa.txt cosa vede (finestre, pid,
       gruppo, titolo) e quando si chiude. Leggerlo dopo la prima prova.
+  18. FTPS VERSO vsftpd DI CASA (l'utente, 22/10: «fai B direttamente il
+      server vero non rilascia certificati in https»). 192.168.0.30: AUTH TLS
+      obbligatorio, TLS 1.3, certificato autofirmato CN=myserver,
+      require_ssl_reuse=YES. FATTO:
+      - lib/extls: ripresa TLS 1.3 con biglietto (NewSessionTicket tenuti,
+        pre_shared_key + binder, psk_dhe_ke) e certificato fidato per
+        impronta SHA-256 (salta catena e nome, la firma si verifica sempre),
+        anche in 1.2. API nuove: extls_stretta_con, extls_biglietto_prendi,
+        extls_ripresa, extls_impronta_sito.
+      - lib/exhttp: exhttp_tls_sopra tiene 8 biglietti per nome e li offre
+        alla connessione successiva; $HOME/.app/exhttp/fidati.txt («nome
+        impronta»); exhttp_tls_impronta, exhttp_tls_fidati (facoltative
+        nello stub a 32 bit).
+      - ftp 0.003: certificato non verificabile -> mostra l'impronta,
+        «si» la salva e ricollega.
+      - prove: tools/prove/clientprova.py 31/31 (8 nuove: ripresa,
+        autofirmato giusto/sbagliato/assente, 1.2); tools/prova_ftp.sh
+        passo 6 (server di prova che rifiuta i dati senza ripresa):
+        21/21 a 32 e a 64 bit.
+      DA FARE: prova vera contro 192.168.0.30 sul portatile (serve la
+      password dell'utente ftp: la scrive l'utente).
 
 @DISCO-VELOCE (21/10/2026) - kernel 0.264, ext4.mod 0.002
   L'utente: «riprendi il progetto ext3 ext4 con modulo a parte per la
