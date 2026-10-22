@@ -686,6 +686,31 @@ typedef struct {
 #define SYS_VIDEO_MODI    27    /* ebx = VideoModo*, ecx = max -> how many */
 
 /* =============================================================================
+ * SYS_VIDEO_SCHEDA (29) — which card and which screen (22 October 2026)
+ *
+ * What Stage 2 read with the BIOS at boot: the names the video BIOS gives of
+ * itself and the screen's EDID (the panel's real resolution, which the VBE
+ * modes may not have: the NVIDIA laptop lists 1280x720 on a 1366x768 panel).
+ * Copies the 304 bytes into ebx; returns 1, or 0 when Stage 2 did not look
+ * (text mode, or a Stage 2 older than this) - then ebx is left alone.
+ * ========================================================================== */
+typedef struct {
+    uint32_t magic;
+    uint8_t  edid_ok;
+    uint8_t  riserva;
+    uint16_t vbe_versione;
+    uint16_t memoria_64k;
+    uint8_t  riserva2[6];
+    char     fornitore[48];
+    char     prodotto[48];
+    char     revisione[16];
+    char     oem[48];
+    uint8_t  edid[128];
+} VideoScheda;
+
+#define SYS_VIDEO_SCHEDA  29    /* ebx = VideoScheda* -> 1, or 0 */
+
+/* =============================================================================
  * SYS_MODULO (28) — kernel modules (kernel 0.263, kernel/loader/modulo.c)
  *
  *   ebx = 0  list:  ecx = char *buf, edx = size; the names of the loaded
@@ -1705,6 +1730,7 @@ int32_t sys_poll(InterruptFrame *f);
 int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_video_modi(InterruptFrame *f);
+int32_t sys_video_scheda(InterruptFrame *f);
 int32_t sys_modulo(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);

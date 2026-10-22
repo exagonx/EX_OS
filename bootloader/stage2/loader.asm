@@ -48,6 +48,12 @@
 ; (which ends at 0xD280). BootInfo +46 says where, +50 how many.
 %define MODITAB 0xD400
 %define MODI_MAX 48
+; Which card and which screen (22 October 2026, @SCHEDA-VIDEO): the strings
+; the video BIOS gives of itself and the screen's EDID, for svga.drv -lista
+; and the Video panel. 304 bytes after the modes (0xD400 + 48*8 = 0xD580);
+; BootInfo +54 says where. Layout in kernel/include/kernel.h (VidInfoBoot).
+%define VIDINFO 0xD600
+%define VIDINFO_N 304
 
 ; --- Il disco in RAM -------------------------------------------------------
 ; Dove finisce il volume, quanto e' grande, e da dove si passa.
@@ -553,6 +559,7 @@ _start:
     mov  dword [es:di+42], 0      ; rd_byte
     mov  dword [es:di+46], MODITAB ; modi_addr: the table of modes
     mov  dword [es:di+50], 0      ; modi_n: none yet
+    mov  dword [es:di+54], 0      ; vid_addr: nothing read yet
     xor  ax, ax
     mov  es, ax
 
@@ -629,6 +636,8 @@ _start:
     mov  [mlseg], ax
     mov  ax, [es:14]
     mov  [mloff], ax
+
+    call vid_leggi                ; which card, which screen: see VIDINFO
 
 .mloop:
     push ds
@@ -1732,6 +1741,121 @@ modo_annota:
 .esci:
     pop  bx
     pop  ax
+    ret
+
+; -----------------------------------------------------------------------------
+; vid_leggi — the card's names and the screen's EDID into VIDINFO (22 October
+; 2026). Called with the VbeInfoBlock just filled; keeps every register.
+;
+; ! THE MODES DO NOT SAY WHICH SCREEN IS ATTACHED. The laptop's NVIDIA BIOS
+; lists 1280x720 at most and its panel is 1366x768: only the EDID (VBE 4F15,
+; the DDC of the screen) says what the panel really is. A BIOS that cannot
+; read it answers something other than 004Fh, and then edid_ok stays 0.
+;
+; ! THE EXTENDED NAMES EXIST FROM VBE 2.0 ON: on a 1.x card the pointers at
+; +16h..+1Eh are not filled, and following them would copy whatever is there.
+; -----------------------------------------------------------------------------
+vid_leggi:
+    push es
+    pusha
+    xor  ax, ax
+    mov  es, ax
+    mov  di, VIDINFO
+    mov  cx, VIDINFO_N / 2
+    rep  stosw
+    mov  dword [es:VIDINFO], 'VIDI'
+
+    mov  ax, VBEINFO >> 4
+    mov  es, ax
+    mov  ax, [es:4]               ; VbeVersion
+    mov  bx, [es:18]              ; TotalMemory, in 64 KB
+    xor  dx, dx
+    mov  es, dx
+    mov  [es:VIDINFO+6], ax
+    mov  [es:VIDINFO+8], bx
+
+    mov  bx, 6                    ; OemStringPtr: every VBE has it
+    mov  di, VIDINFO+128
+    mov  cx, 47
+    call vid_str
+    cmp  ax, 0x0200
+    jb   .edid
+    mov  bx, 0x16                 ; OemVendorNamePtr
+    mov  di, VIDINFO+16
+    mov  cx, 47
+    call vid_str
+    mov  bx, 0x1A                 ; OemProductNamePtr
+    mov  di, VIDINFO+64
+    mov  cx, 47
+    call vid_str
+    mov  bx, 0x1E                 ; OemProductRevPtr
+    mov  di, VIDINFO+112
+    mov  cx, 15
+    call vid_str
+
+.edid:
+    xor  ax, ax
+    mov  es, ax
+    mov  di, VIDINFO+176
+    mov  ax, 0x4F15               ; VBE/DDC
+    mov  bl, 1                    ; read EDID
+    xor  cx, cx                   ; controller 0
+    xor  dx, dx                   ; block 0
+    int  0x10
+    cmp  ax, 0x004F
+    jne  .fine
+    xor  ax, ax
+    mov  es, ax
+    ; the EDID header, 00 FF FF FF FF FF FF 00: anything else is not one
+    cmp  dword [es:VIDINFO+176], 0xFFFFFF00
+    jne  .fine
+    cmp  dword [es:VIDINFO+180], 0x00FFFFFF
+    jne  .fine
+    mov  byte [es:VIDINFO+4], 1   ; edid_ok
+
+.fine:
+    xor  ax, ax
+    mov  es, ax
+    mov  dword [es:BINFO+54], VIDINFO
+    popa
+    pop  es
+    ret
+
+; vid_str — copies the string at the FAR pointer at VbeInfoBlock+BX into
+; 0:DI, at most CX characters, then a 0. Unprintable bytes become '?'.
+; Keeps every register.
+vid_str:
+    pusha
+    push ds
+    push es
+    mov  ax, VBEINFO >> 4
+    mov  es, ax
+    mov  si, [es:bx]
+    mov  ax, [es:bx+2]
+    xor  dx, dx
+    mov  es, dx
+    mov  dx, ax
+    or   dx, si
+    jz   .zero                    ; a null pointer: nothing to copy
+    mov  ds, ax
+.car:
+    lodsb
+    or   al, al
+    jz   .zero
+    cmp  al, 0x20
+    jb   .strano
+    cmp  al, 0x7E
+    jbe  .metti
+.strano:
+    mov  al, '?'
+.metti:
+    stosb
+    loop .car
+.zero:
+    mov  byte [es:di], 0
+    pop  es
+    pop  ds
+    popa
     ret
 
 want16   db 0                 ; bit 7 del byte di modo: preferisci 16 bpp

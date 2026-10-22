@@ -3247,6 +3247,38 @@ typedef struct {
 } VideoModo;
 int     video_modi(VideoModo *v, int max);
 
+/* video_scheda — which card and which screen (kernel 0.267): what Stage 2
+ * read with the BIOS at boot - the names the video BIOS gives of itself and
+ * the screen's EDID. Rende 1 e riempie s; 0 when Stage 2 did not look (text
+ * mode, or an older Stage 2). The same layout as kernel/include/syscall.h. */
+typedef struct {
+    unsigned int   magic;
+    unsigned char  edid_ok;         /* 1 = edid[] holds the screen's EDID */
+    unsigned char  riserva;
+    unsigned short vbe_versione;    /* 0x0300 = VBE 3.0 */
+    unsigned short memoria_64k;     /* video memory, in 64 KB */
+    unsigned char  riserva2[6];
+    char           fornitore[48];   /* e.g. "NVIDIA Corporation" */
+    char           prodotto[48];    /* e.g. "MCP77 / MCP78 - mcp77-..." */
+    char           revisione[16];
+    char           oem[48];
+    unsigned char  edid[128];
+} VideoScheda;
+int     video_scheda(VideoScheda *s);
+
+/* video_schermo — the screen, from the EDID in s: the native resolution
+ * (the first detailed timing, 0x0 if none), the size in cm, the PNP maker
+ * (3 letters), the model number and the name. Rende 1, 0 without a valid
+ * EDID (and then m is all zeros). */
+typedef struct {
+    unsigned int   larghezza, altezza;
+    unsigned int   cm_largo, cm_alto;
+    char           fabbricante[4];
+    unsigned short modello;
+    char           nome[14];
+} VideoSchermo;
+int     video_schermo(const VideoScheda *s, VideoSchermo *m);
+
 /* modulo_kernel — kernel modules (kernel 0.263, SYS_MODULO 28).
  *   modulo_kernel(0, (uintptr_t)buf, size)   the loaded modules' names, one
  *                                            per line; returns how many

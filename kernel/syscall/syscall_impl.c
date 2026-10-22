@@ -5533,6 +5533,20 @@ int32_t sys_video_modi(InterruptFrame *frame)
     return (int32_t)n;
 }
 
+/* SYS_VIDEO_SCHEDA (29): the card and the screen. See syscall.h. */
+int32_t sys_video_scheda(InterruptFrame *frame)
+{
+    typedef char stessa_misura[(sizeof(VideoScheda) == sizeof(VidInfoBoot) &&
+                                sizeof(VidInfoBoot) == 304) ? 1 : -1];
+    VideoScheda *u = (VideoScheda *)FR_A1(frame);
+    VideoScheda  k;
+
+    if (!vga_scheda_copia(&k)) return 0;
+    if (!syscall_verify_ptr(u, sizeof(*u))) return ERR(EFAULT);
+    *u = k;
+    return 1;
+}
+
 /* =============================================================================
  * SYS_MODULO (28) — list or load kernel modules. See syscall.h and modulo.h.
  * ========================================================================== */

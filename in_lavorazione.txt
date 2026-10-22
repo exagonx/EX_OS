@@ -8089,6 +8089,54 @@ tools/netinst/velocita tolto da netinst.
   14. SCHEDA GRAFICA: e' la prossima cosa (l'utente, 21/10 notte). Sul
       portatile: risoluzione piu' alta e modi 16:9. Primo passo:
       svga.drv -lista sul portatile (i modi VBE che il BIOS NVIDIA offre).
+      22/10: GPU 10de:0845 GeForce 8200M G (G80/NV50), HP 103c:360a,
+      pannello 1366x768 (detto dall'utente). VBE: fino a 1024x768 a 16/32
+      bit piu' 1280x720 a 32 bit; il nativo NON c'e'. Scelta dell'utente:
+      1280x720 subito (svga.drv -prova 1280x720, da confermare dopo il
+      riavvio). Il nativo 1366x768 vorrebbe un driver del display NV50
+      (riferimento MIT: xf86-video-nv g80_*), lavoro grande: non deciso.
+      L'UTENTE (22/10): «nel pannello di configurazione di exwin non
+      appaiono le risoluzioni supportate dalla scheda grafica, ricordati di
+      implementare il riconoscimento della scheda grafica e inserire quelle
+      risoluzioni». pm (Impostazioni, scheda Video) chiama gia' video_modi
+      come svga.drv -lista, che sul portatile i modi li vede: capire perche'
+      il pannello no (versione di pm sul portatile? video_modi a 64 bit da
+      pm?). E mostrare nel pannello anche quale scheda e' (PCI 10de:0845,
+      GeForce 8200M G).
+      PASSO 1 FATTO (22/10, @SCHEDA-VIDEO), deciso con l'utente:
+      - IL GUASTO DEL PANNELLO: pm aggiungeva i modi con ex_item_add (per
+        schede e tendine), che su una "list" non aggiunge niente: «I modi
+        della scheda:» sopra un riquadro vuoto. Ora ex_list_add. Finestra
+        Impostazioni allargata (IMP_W 340 -> 470); «(adesso)» guarda anche
+        i bit. pm 0.024.
+      - Stage 2 legge con il BIOS i nomi della scheda (VbeInfoBlock: OEM,
+        fornitore, prodotto, revisione) e l'EDID dello schermo (VBE 4F15):
+        VIDINFO a 0xD600, BootInfo +54 vid_addr. Kernel 0.267:
+        SYS_VIDEO_SCHEDA (29). libc: video_scheda(), video_schermo()
+        (risoluzione nativa = primo timing dettagliato, nome, cm, sigla).
+      - svga.drv 0.003 -lista e il pannello mostrano scheda e schermo, e
+        -lista dice se il nativo NON e' fra i modi del BIOS.
+      - libc: tolto il troncamento a 32 bit dei puntatori in 9 chiamate
+        (pipe, rename, sigaction, sigaltstack, mprotect, mmap, munmap,
+        video_modi, dlopen): innocuo finche' i programmi stanno sotto i
+        4 GB, sbagliato comunque.
+      Provato in QEMU: 64 bit con EDID 1366x768 (pannello e -lista, il
+      nativo segnalato come assente), 32 bit con EDID 1280x800. DA FARE:
+      sul portatile dopo il netupdate (kernel + stage2 nuovi: li porta
+      netupdate con bootverify): vedere se il BIOS NVIDIA sa leggere l'EDID
+      del pannello LVDS. Poi il passo 2 (driver del display NV50) solo se
+      l'utente lo conferma.
+      VISTO al riavvio in prova: «Video: 1280x720 32 bpp» e console 128x45,
+      ma il kernel avverte «kernel.cfg chiede svga=1024x768, l'avvio e'
+      partito in 1280x720» mentre /boot/kernel.cfg dice 1280x720: il
+      kernel legge una copia vecchia di kernel.cfg? (mappa di settori
+      fatta all'installazione e file riscritto altrove?) DA CAPIRE.
+  19. MESSAGGI SOPRA IL LOGIN (l'utente, 22/10): «al login dopo qualche
+      secondo viene sovrascritto da messaggi come il supporto non diventa
+      pronto, ehci: aspetto una chiavetta». Messaggi dei driver USB/disco
+      che arrivano sulla console dopo che login ha disegnato la richiesta:
+      vanno nel registro (dmesg) e non sullo schermo, o almeno non mentre
+      login aspetta.
   15. EXILLA SUL PORTATILE (l'utente, 21/10 notte):
       a. la finestra di caricamento (attesa) non si chiude quando Firefox
          ha aperto la sua finestra. attesa confronta il pid della finestra

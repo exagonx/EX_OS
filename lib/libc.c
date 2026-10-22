@@ -383,6 +383,7 @@ typedef struct {
 #define SYS_VIDEO_INFO    246
 #define SYS_VIDEO_MODI    27
 #define SYS_MODULO        28
+#define SYS_VIDEO_SCHEDA  29
 #define SYS_LOG           247
 
 /* ! DEVE RESTARE IDENTICA a struct pollfd in kernel/include/syscall.h e in
@@ -4965,7 +4966,7 @@ int pipe(int fd[2])
 
     if (fd == NULL) { errno = EFAULT; return -1; }
 
-    r = _syscall1(SYS_PIPE, (uint32_t)(uintptr_t)fd);
+    r = _syscall1(SYS_PIPE, (uintptr_t)fd);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
@@ -6521,7 +6522,7 @@ int rename(const char *da, const char *a)
 
     if (da == NULL || a == NULL) { errno = EINVAL; return -1; }
 
-    r = _syscall2(SYS_RENAME, (uint32_t)(uintptr_t)da, (uint32_t)(uintptr_t)a);
+    r = _syscall2(SYS_RENAME, (uintptr_t)da, (uintptr_t)a);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
@@ -6740,7 +6741,7 @@ int sigaction(int sig, const struct sigaction *nuova, struct sigaction *prima)
         struct sigaction vecchia = g_azioni[sig];
 
         g_azioni[sig] = *nuova;
-        r = _syscall3(SYS_SEG_AZIONE, (uint32_t)sig, (uint32_t)(uintptr_t)&k, 0);
+        r = _syscall3(SYS_SEG_AZIONE, (uint32_t)sig, (uintptr_t)&k, 0);
         if (r < 0) {
             g_azioni[sig] = vecchia;
             errno = -r;
@@ -6767,15 +6768,15 @@ void (*signal(int sig, void (*gestore)(int)))(int)
 int sigprocmask(int come, const sigset_t *nuova, sigset_t *prima)
 {
     int32_t r = _syscall3(SYS_SEG_MASCHERA, (uint32_t)come,
-                          (uint32_t)(uintptr_t)nuova, (uint32_t)(uintptr_t)prima);
+                          (uintptr_t)nuova, (uintptr_t)prima);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
 
 int sigaltstack(const stack_t *nuova, stack_t *prima)
 {
-    int32_t r = _syscall2(SYS_SEG_PILA, (uint32_t)(uintptr_t)nuova,
-                          (uint32_t)(uintptr_t)prima);
+    int32_t r = _syscall2(SYS_SEG_PILA, (uintptr_t)nuova,
+                          (uintptr_t)prima);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
@@ -6879,7 +6880,7 @@ void siglongjmp(sigjmp_buf env, int val)
  * (29 September 2026, "Disk full" copying libc.so). */
 int mprotect(void *addr, size_t lung, int prot)
 {
-    int32_t r = _syscall3(SYS_MPROTECT, (uint32_t)(uintptr_t)addr,
+    int32_t r = _syscall3(SYS_MPROTECT, (uintptr_t)addr,
                           (uint32_t)lung, (uint32_t)prot);
     mm_dice("mprotect", (uint32_t)(uintptr_t)addr, (uint32_t)lung, (uint32_t)prot, r);
     if (r < 0) { errno = -r; return -1; }
@@ -7256,7 +7257,7 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
     p.fd     = -1;
     p.offset = (uint32_t)off;
 
-    r = _syscall1(SYS_MMAP, (uint32_t)(uintptr_t)&p);
+    r = _syscall1(SYS_MMAP, (uintptr_t)&p);
     mm_dice("mmap", p.addr, p.length, p.prot | (p.flags << 8), r);
     /* Un indirizzo oltre i 2 GB e' negativo come int: errore e' -4095..-1. */
     if (r == 0 || (uint32_t)r >= 0xFFFFF001u) {
@@ -7279,7 +7280,7 @@ int munmap(void *addr, size_t lung)
     }
     (void)mappe_riscrivi(addr, lung, 1);
 #endif
-    r = _syscall2(SYS_MUNMAP, (uint32_t)(uintptr_t)addr,
+    r = _syscall2(SYS_MUNMAP, (uintptr_t)addr,
                           (uint32_t)lung);
     mm_dice("munmap", (uint32_t)(uintptr_t)addr, (uint32_t)lung, 0, r);
     if (r < 0) { errno = -r; return -1; }
@@ -7627,7 +7628,7 @@ int bootverify(const char *punto, const char *nome_s2, const char *nome_k,
 
     return (int)_syscall5(SYS_BOOTINSTALL, (uintptr_t)punto, (uintptr_t)info,
                           (uint32_t)sizeof(BootInstallInfo),
-                          1u /* BOOTINST_VERIFICA */, (uint32_t)(uintptr_t)nomi);
+                          1u /* BOOTINST_VERIFICA */, (uintptr_t)nomi);
 }
 
 int partwrite(unsigned int disco, PartTabella *tab)
@@ -8936,10 +8937,78 @@ typedef struct {
 
 int video_modi(VideoModo *v, int max)
 {
-    int32_t r = _syscall2(SYS_VIDEO_MODI, (uint32_t)(uintptr_t)v,
+    int32_t r = _syscall2(SYS_VIDEO_MODI, (uintptr_t)v,
                           (uint32_t)(max < 0 ? 0 : max));
     if (r < 0) { errno = -r; return -1; }
     return (int)r;
+}
+
+/* Which card and which screen (SYS_VIDEO_SCHEDA, kernel 0.267). The same
+ * layout as kernel/include/syscall.h and lib/include/libc.h. */
+typedef struct {
+    uint32_t magic;
+    uint8_t  edid_ok, riserva;
+    uint16_t vbe_versione, memoria_64k;
+    uint8_t  riserva2[6];
+    char     fornitore[48], prodotto[48], revisione[16], oem[48];
+    uint8_t  edid[128];
+} VideoScheda;
+
+typedef struct {
+    unsigned int   larghezza, altezza;
+    unsigned int   cm_largo, cm_alto;
+    char           fabbricante[4];
+    unsigned short modello;
+    char           nome[14];
+} VideoSchermo;
+
+int video_scheda(VideoScheda *s)
+{
+    int32_t r = _syscall1(SYS_VIDEO_SCHEDA, (uintptr_t)s);
+    if (r < 0) { errno = -r; return -1; }
+    return (int)r;
+}
+
+/* ! THE NATIVE MODE IS THE FIRST DETAILED TIMING, and the EDID standard
+ * says so (1.3: "preferred timing mode"): a panel puts its own resolution
+ * there. The block's checksum is checked first - a DDC read that went wrong
+ * gives bytes that look like an EDID header and nothing more. */
+int video_schermo(const VideoScheda *s, VideoSchermo *m)
+{
+    const uint8_t *e;
+    unsigned int   k, somma = 0;
+
+    if (!s || !m) return 0;
+    for (k = 0; k < sizeof(*m); k++) ((char *)m)[k] = 0;
+    if (!s->edid_ok) return 0;
+    e = s->edid;
+    for (k = 0; k < 128; k++) somma += e[k];
+    if ((somma & 0xFF) != 0) return 0;
+
+    m->fabbricante[0] = (char)('A' - 1 + ((e[8] >> 2) & 0x1F));
+    m->fabbricante[1] = (char)('A' - 1 + (((e[8] & 3) << 3) | (e[9] >> 5)));
+    m->fabbricante[2] = (char)('A' - 1 + (e[9] & 0x1F));
+    m->modello  = (unsigned short)(e[10] | (e[11] << 8));
+    m->cm_largo = e[21];
+    m->cm_alto  = e[22];
+
+    for (k = 0; k < 4; k++) {
+        const uint8_t *d = e + 54 + 18 * k;
+
+        if (d[0] | d[1]) {                      /* a detailed timing */
+            if (m->larghezza == 0) {
+                m->larghezza = d[2] | ((unsigned int)(d[4] & 0xF0) << 4);
+                m->altezza   = d[5] | ((unsigned int)(d[7] & 0xF0) << 4);
+            }
+        } else if (d[3] == 0xFC && m->nome[0] == 0) {   /* the monitor's name */
+            unsigned int j;
+
+            for (j = 0; j < 13 && d[5 + j] != 0x0A && d[5 + j] != 0; j++)
+                m->nome[j] = (d[5 + j] >= 0x20 && d[5 + j] < 0x7F) ? (char)d[5 + j] : '?';
+            while (j > 0 && m->nome[j - 1] == ' ') m->nome[--j] = 0;
+        }
+    }
+    return 1;
 }
 
 /* Kernel modules (SYS_MODULO, kernel 0.263): op 0 lists into a (b bytes),
@@ -9409,7 +9478,7 @@ static void *dl_cerca(const DlTesta *t, const char *nome)
 /* The table, or 0; *esiste says whether the file could be mapped at all. */
 static const DlTesta *dl_apri_uno(const char *percorso, int *esiste)
 {
-    int            r = (int)_syscall1(SYS_LIB_APRI_DL, (uint32_t)(uintptr_t)percorso);
+    int            r = (int)_syscall1(SYS_LIB_APRI_DL, (uintptr_t)percorso);
     const DlTesta *t;
 
     if (r <= 0) return 0;

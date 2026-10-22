@@ -152,7 +152,31 @@ typedef struct PACKED {
      * (it reads the list then); 0 entries otherwise. */
     uint32_t    modi_addr;
     uint32_t    modi_n;
+
+    /* Which card and which screen (Stage 2, 22 October 2026): the address
+     * of a VidInfoBoot, 0 if Stage 2 did not look. A Stage 2 older than this
+     * does not write the field: the magic is what proves it. */
+    uint32_t    vid_addr;
 } BootInfo;
+
+#define VIDINFO_MAGIC  0x49444956   /* "VIDI" */
+
+/* What Stage 2 read with the BIOS: the strings of the video BIOS (VBE
+ * VbeInfoBlock) and the screen's EDID (VBE 4F15). 304 bytes, the layout of
+ * VIDINFO in bootloader/stage2/loader.asm and of VideoScheda in syscall.h. */
+typedef struct PACKED {
+    uint32_t    magic;          /* VIDINFO_MAGIC */
+    uint8_t     edid_ok;        /* 1 = edid[] is a valid EDID block 0 */
+    uint8_t     riserva;
+    uint16_t    vbe_versione;   /* 0x0300 = VBE 3.0 */
+    uint16_t    memoria_64k;    /* video memory, in 64 KB */
+    uint8_t     riserva2[6];
+    char        fornitore[48];  /* OemVendorName (VBE 2.0+) */
+    char        prodotto[48];   /* OemProductName */
+    char        revisione[16];  /* OemProductRev */
+    char        oem[48];        /* OemString (every VBE) */
+    uint8_t     edid[128];
+} VidInfoBoot;
 
 #define BOOTINFO_MAGIC  0x4D594F53  /* "EXOS" */
 

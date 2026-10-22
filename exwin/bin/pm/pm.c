@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.023"
+#define VERSIONE_APP "0.024"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -1300,7 +1300,7 @@ static ExWindow g_barra_f = 0;      /* la barra, per ridisegnarla da qui */
  * screen included. 16 and 256 colours are not offered: the window server
  * draws at 16, 24 and 32 bits only.
  * ============================================================================= */
-#define IMP_W 340
+#define IMP_W 470
 #define IMP_H 420
 #define SCH_MAX 16
 #define PROVA_F "/boot/svgaprov.cfg"
@@ -1560,7 +1560,7 @@ static void impostazioni_apri(void)
 {
     unsigned int sw = 0, sh = 0;
     char         t[96];
-    int          i;
+    int          i, adesso16 = 0;
     ExWindow     c;
 
     /* Gia' aperta: si rimette davanti facendola rivedere. */
@@ -1588,19 +1588,46 @@ static void impostazioni_apri(void)
 
         memset(&v, 0, sizeof(v));
         video_info(&v);
+        adesso16 = v.bit == 16;
         sprintf(t, "Adesso: %ux%u, %s", sw, sh,
                 v.bit == 16 ? "65 mila colori (16 bit)" : "16 milioni di colori");
     }
     metti(0, ex_create("label", t, EX_CHILD, 12, 40, IMP_W - 24, 18, g_impost, 0, 0));
+
+    /* Which card and which screen (kernel 0.267, @SCHEDA-VIDEO): the user
+     * asked to see them here. The screen's native resolution comes from its
+     * EDID and may be missing from the card's modes (the NVIDIA laptop:
+     * 1366x768 panel, 1280x720 at most from the BIOS) - then it is said. */
+    {
+        VideoScheda  sc;
+        VideoSchermo sm;
+        char         a[160], b[160];
+
+        if (video_scheda(&sc) == 1) {
+            snprintf(a, sizeof(a), "Scheda: %s%s%s", sc.fornitore[0] ? sc.fornitore : sc.oem,
+                     sc.prodotto[0] ? " - " : "", sc.prodotto);
+            if (video_schermo(&sc, &sm) && sm.larghezza)
+                snprintf(b, sizeof(b), "Schermo: %s%s%s, nativo %ux%u", sm.nome,
+                         sm.nome[0] ? " " : "", sm.fabbricante, sm.larghezza, sm.altezza);
+            else
+                snprintf(b, sizeof(b), "Schermo: il BIOS non ne sa leggere i dati (EDID)");
+        } else {
+            snprintf(a, sizeof(a), "Scheda: non letta all'avvio");
+            b[0] = 0;
+        }
+        metti(0, ex_create("label", a, EX_CHILD, 12, 58, IMP_W - 24, 18, g_impost, 0, 0));
+        metti(0, ex_create("label", b, EX_CHILD, 12, 76, IMP_W - 24, 18, g_impost, 0, 0));
+    }
+
     g_v_n = video_lista_fai();
     metti(0, ex_create("label", g_v_da_scheda ? "I modi della scheda:" :
                        "I modi di sempre (la lista della scheda arriva",
-                       EX_CHILD, 12, 62, IMP_W - 24, 18, g_impost, 0, 0));
+                       EX_CHILD, 12, 98, IMP_W - 24, 18, g_impost, 0, 0));
     if (!g_v_da_scheda)
         metti(0, ex_create("label", "dopo un avvio in grafica):", EX_CHILD,
-                           12, 80, IMP_W - 24, 18, g_impost, 0, 0));
-    g_v_lista = ex_create("list", "", EX_CHILD, 12, g_v_da_scheda ? 82 : 100, IMP_W - 24,
-                          g_v_da_scheda ? 210 : 192, g_impost, ID_V_LISTA, 0);
+                           12, 116, IMP_W - 24, 18, g_impost, 0, 0));
+    g_v_lista = ex_create("list", "", EX_CHILD, 12, g_v_da_scheda ? 118 : 136, IMP_W - 24,
+                          g_v_da_scheda ? 174 : 156, g_impost, ID_V_LISTA, 0);
     metti(0, g_v_lista);
     for (i = 0; i < g_v_n; i++) {
         char r[64];
@@ -1608,8 +1635,12 @@ static void impostazioni_apri(void)
         if (g_v[i].larghezza == 0) snprintf(r, sizeof(r), "testo (niente grafica)");
         else snprintf(r, sizeof(r), "%ux%u   %s%s", g_v[i].larghezza, g_v[i].altezza,
                       g_v[i].bit == 16 ? "65 mila colori" : "16 milioni di colori",
-                      g_v[i].larghezza == sw && g_v[i].altezza == sh ? "  (adesso)" : "");
-        ex_item_add(g_v_lista, r);
+                      g_v[i].larghezza == sw && g_v[i].altezza == sh &&
+                      (g_v[i].bit == 16) == adesso16 ? "  (adesso)" : "");
+        /* ! ex_list_add, NOT ex_item_add: that one is for tabs and combo
+         * boxes, and on a list it adds nothing and says nothing - the panel
+         * read «I modi della scheda:» over an empty box (22 October 2026). */
+        ex_list_add(g_v_lista, r);
     }
     metti(0, ex_create("button", "Prova...", EX_CHILD, 12, 302, 150, 28, g_impost, ID_V_PROVA, 0));
     metti(0, ex_create("button", "Applica", EX_CHILD, IMP_W - 162, 302, 150, 28,

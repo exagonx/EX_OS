@@ -520,7 +520,11 @@
 /* 0.265 -> 0.266: AHCI waits timed with the TSC, not g_ticks: the switch
  * comes from a syscall with interrupts off, the timer stood still and a
  * wait that never came true hung the machine (kernel/block/ahci.c). */
-#define EXOS_VERSION    "0.266"
+/* 0.266 -> 0.267: SYS_VIDEO_SCHEDA (29), which card and which screen: the
+ * video BIOS's names and the screen's EDID, read by Stage 2 (BootInfo
+ * vid_addr, VIDINFO at 0xD600) - for svga.drv -lista and the Video panel
+ * (@SCHEDA-VIDEO). */
+#define EXOS_VERSION    "0.267"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

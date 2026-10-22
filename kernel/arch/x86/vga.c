@@ -1326,6 +1326,8 @@ void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
  * memory they sit in (0xD400) can be handed out. */
 static uint8_t  g_modi[VGA_MODI_MAX * 8];
 static uint32_t g_modi_n = 0;
+static uint8_t  g_scheda[sizeof(VidInfoBoot)];
+static int      g_scheda_ok = 0;
 
 void vga_modi_prendi(const BootInfo *info)
 {
@@ -1338,6 +1340,30 @@ void vga_modi_prendi(const BootInfo *info)
     src = (const uint8_t *)DA_FISICO(info->modi_addr);
     for (i = 0; i < n * 8u; i++) g_modi[i] = src[i];
     g_modi_n = n;
+
+    /* ! THE ADDRESS IS CHECKED BEFORE IT IS FOLLOWED: a Stage 2 older than
+     * 22 October 2026 never wrote vid_addr, and the field holds whatever
+     * was at 0xC036. Only the one place Stage 2 uses, then the magic. */
+    if (info->vid_addr == 0xD600u) {
+        const VidInfoBoot *v = (const VidInfoBoot *)DA_FISICO(info->vid_addr);
+
+        if (v->magic == VIDINFO_MAGIC) {
+            const uint8_t *s = (const uint8_t *)v;
+
+            for (i = 0; i < sizeof(VidInfoBoot); i++) g_scheda[i] = s[i];
+            g_scheda_ok = 1;
+        }
+    }
+}
+
+int vga_scheda_copia(void *dst)
+{
+    uint8_t *d = (uint8_t *)dst;
+    uint32_t i;
+
+    if (!g_scheda_ok) return 0;
+    for (i = 0; i < sizeof(VidInfoBoot); i++) d[i] = g_scheda[i];
+    return 1;
 }
 
 uint32_t vga_modi_n(void) { return g_modi_n; }

@@ -137,6 +137,9 @@ void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
 void     vga_modi_prendi(const BootInfo *info);
 uint32_t vga_modi_n(void);
 void     vga_modi_copia(void *dst, uint32_t n);
+/* The card and the screen (BootInfo vid_addr), kept the same way; 1 if
+ * there, and then 304 bytes copied into dst. */
+int      vga_scheda_copia(void *dst);
 
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp);

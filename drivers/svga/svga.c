@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `svga.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("svga.drv", "0.002");
+EX_VERSIONE("svga.drv", "0.003");
 
 #define PERC_MAX  256
 #define S2_MAX    65536
@@ -469,6 +469,35 @@ static int offerto(unsigned int w, unsigned int h, int sedici)
     return 0;
 }
 
+/* Which card and which screen (kernel 0.267, @SCHEDA-VIDEO): what Stage 2
+ * read from the video BIOS and from the screen's EDID. Nothing when Stage 2
+ * did not look (text mode, older kernel or Stage 2). */
+static void scheda_e_schermo(int n)
+{
+    VideoScheda  sc;
+    VideoSchermo sm;
+    int          i, nativo = 0;
+
+    if (video_scheda(&sc) != 1) return;
+    printf("Scheda:   %s%s%s", sc.fornitore[0] ? sc.fornitore : sc.oem,
+           sc.prodotto[0] ? " - " : "", sc.prodotto);
+    if (sc.revisione[0]) printf(" (%s)", sc.revisione);
+    printf("\n          VBE %u.%u, %u MB di memoria video\n", sc.vbe_versione >> 8,
+           sc.vbe_versione & 0xFF, (sc.memoria_64k + 15u) / 16u);
+    if (!video_schermo(&sc, &sm)) {
+        printf("Schermo:  il BIOS non sa leggerne i dati (EDID)\n\n");
+        return;
+    }
+    printf("Schermo:  %s%s%s, %u x %u cm\n", sm.nome[0] ? sm.nome : "",
+           sm.nome[0] ? " " : "", sm.fabbricante, sm.cm_largo, sm.cm_alto);
+    if (sm.larghezza == 0) { printf("\n"); return; }
+    for (i = 0; i < n; i++)
+        if (g_modi[i].larghezza == sm.larghezza && g_modi[i].altezza == sm.altezza) nativo = 1;
+    printf("          risoluzione nativa %ux%u%s\n\n", sm.larghezza, sm.altezza,
+           nativo ? "" : " - NON fra i modi del BIOS: il pannello\n"
+                         "          ingrandisce quelli che ci sono");
+}
+
 static void lista(void)
 {
     VideoInfo v;
@@ -482,6 +511,7 @@ static void lista(void)
         printf("      Prima `/dev/svga.drv 800x600`, un riavvio, poi di nuovo -lista.\n");
         return;
     }
+    scheda_e_schermo(n);
     printf("I modi che la scheda offre (VBE, framebuffer lineare):\n\n");
     for (i = 0; i < n; i++) {
         int adesso = v.larghezza == g_modi[i].larghezza && v.altezza == g_modi[i].altezza &&
