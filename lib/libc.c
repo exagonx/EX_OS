@@ -286,6 +286,7 @@ typedef struct {
 #define SYS_AHCI_PASSA   85
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
+#define SYS_PROC_USO    180
 #define SYS_DISKINFO    189
 #define SYS_BLKINFO     190
 #define SYS_MOUNT       191
@@ -695,6 +696,19 @@ typedef struct {
     unsigned int kstack_base;
     unsigned int kstack_top;
 } ProcInfo;
+
+/* Chi usa un montaggio — deve restare identico a kernel/include/syscall.h
+ * (ProcUso) e a lib/include/libc.h. */
+typedef struct {
+    unsigned int pid;
+    unsigned int ppid;
+    unsigned int state;
+    unsigned int uid;
+    unsigned int perche;
+    unsigned int n_file;
+    char         name[PROCINFO_NAME_MAX];
+    char         punto_prog[24];
+} ProcUso;
 
 /* Proprietario e permessi — deve restare identico a kernel/include/syscall.h
  * (StatPerm) e a lib/include/libc.h: attraversa l'ABI della syscall, e la
@@ -6574,6 +6588,20 @@ int raise(int sig)
     return 0;
 }
 
+/* ! MANDARE UN SEGNALE PERO' SI PUO', anche da qui (22 ottobre 2026, /bin/kill
+ * nel sistema di base): e' una chiamata al kernel e non chiede niente ai
+ * gestori di chi la fa. Chi lo riceve lo tratta con la sua libc - un processo
+ * qualunque, per SIGKILL e SIGTERM, muore. Stessa funzione di libc.a. */
+int kill(int pid, int sig)
+{
+    int32_t r;
+
+    if (pid <= 0) { errno = (pid == 0 || pid == -1) ? EPERM : ESRCH; return -1; }
+    r = _syscall2(SYS_SEG_MANDA, (uint32_t)pid, (uint32_t)sig);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
 #else /* libc.a: signals delivered by the kernel */
 /* =============================================================================
  * SIGNALS, DELIVERED BY THE KERNEL (kernel 0.227, @SEGNALI)
@@ -7503,6 +7531,12 @@ int procinfo(ProcInfo *buf, unsigned int max, unsigned int start)
 {
     return _syscall4(SYS_PROCINFO, (uintptr_t)buf, max, start,
                      (uint32_t)sizeof(ProcInfo));
+}
+
+int proc_uso(ProcUso *buf, unsigned int max, unsigned int start, const char *punto)
+{
+    return (int)_syscall5(SYS_PROC_USO, (uintptr_t)buf, max, start,
+                          (uintptr_t)punto, (uint32_t)sizeof(ProcUso));
 }
 
 /* La misura viaggia con la chiamata: e' cosi' che il kernel si accorge se

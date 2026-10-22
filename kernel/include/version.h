@@ -545,7 +545,13 @@
  * unmounted disk if it was not unmounted clean (ext2 s_state, cleared on a
  * read/write mount and set again on umount and power off), mounts it back
  * on / and starts what was missing from it (tools/prova_sistema.sh). */
-#define EXOS_VERSION    "0.269"
+/* 0.269 -> 0.270: who uses a mount (@RDBOOT step 4). SYS_PROC_USO (180) lists
+ * the processes with uid, open files and the mount their program comes from,
+ * or, given a mount point, only those that use it and how: the program, open
+ * files, the current directory (vfs_punto_di_handle/_percorso). New programs
+ * ps and kill in the base system; umount says who holds a busy volume
+ * (tools/prova_uso.sh). */
+#define EXOS_VERSION    "0.270"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

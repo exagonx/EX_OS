@@ -1408,6 +1408,44 @@ typedef struct {
     uint32_t kstack_top;
 } ProcInfo;
 
+/* =============================================================================
+ * Chi usa un montaggio (per sys_proc_uso, @RDBOOT passo 4, 22 ottobre 2026)
+ *
+ * ! UNA STRUTTURA NUOVA E NON ProcInfo ALLUNGATA. ProcInfo la controllano per
+ * misura (quarto argomento) programmi gia' compilati - stack, wifid, pm, la
+ * shell - e cambiarla li romperebbe tutti al primo aggiornamento del kernel.
+ * DUPLICATA A MANO in lib/include/libc.h: deve restare identica.
+ *
+ * Senza un punto si hanno TUTTI i processi (non i fili: un filo condivide
+ * file e cartella col capogruppo e lo ripeterebbe); con un punto, solo quelli
+ * che lo usano, e `perche'` dice come:
+ *   PROCUSO_PROGRAMMA  l'eseguibile sta li' ed e' tenuto aperto (exe_handle)
+ *   PROCUSO_FILE       ha dei file aperti li' (n_file dice quanti)
+ *   PROCUSO_CARTELLA   la sua directory corrente e' li'
+ * I primi due fanno rispondere EBUSY a umount; il terzo no, ma il processo si
+ * ritroverebbe in una directory che non c'e' piu'.
+ * punto_prog e' il montaggio del suo eseguibile, "" per chi non ne ha uno su
+ * file (task del kernel, driver caricati in RAM).
+ * ============================================================================= */
+#define SYS_PROC_USO        180  /* ebx = ProcUso*, ecx = max, edx = da quale,
+                                  * esi = punto o 0, edi = sizeof(ProcUso)
+                                  * -> voci scritte, 0 = finito */
+#define PROCUSO_PUNTO_MAX   24   /* = MOUNTINFO_PUNTO_MAX */
+#define PROCUSO_PROGRAMMA   1u
+#define PROCUSO_FILE        2u
+#define PROCUSO_CARTELLA    4u
+
+typedef struct {
+    uint32_t pid;
+    uint32_t ppid;
+    uint32_t state;          /* come ProcInfo */
+    uint32_t uid;
+    uint32_t perche;         /* PROCUSO_*: solo quando si chiede un punto */
+    uint32_t n_file;         /* file aperti: su quel punto, o in tutto */
+    char     name[PROCINFO_NAME_MAX];
+    char     punto_prog[PROCUSO_PUNTO_MAX];
+} ProcUso;
+
 
 /* =============================================================================
  * Disco fisico e sua tabella delle partizioni (per sys_diskinfo)
@@ -1700,6 +1738,7 @@ int32_t sys_klog(InterruptFrame *f);
 int32_t sys_ahci_passa(InterruptFrame *f);
 int32_t sys_smp_lavora(InterruptFrame *f);
 int32_t sys_procinfo(InterruptFrame *f);
+int32_t sys_proc_uso(InterruptFrame *f);
 int32_t sys_diskinfo(InterruptFrame *f);
 int32_t sys_blkinfo(InterruptFrame *f);
 int32_t sys_mount(InterruptFrame *f);

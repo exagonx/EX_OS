@@ -7987,6 +7987,18 @@ tools/netinst/velocita tolto da netinst.
   proporre un tentativo dopo l'altro. Caso: i .gz decompressi da Cloudflare;
   la soluzione (rinominare sul server) l'ha data l'utente.
 
+  23. LA PROSSIMA COSA DA FARE, dopo il passo 4 del ramdisk (l'utente,
+      22/10 notte), sul portatile Compaq Presario CQ60 (vedi voce 14):
+      a. la risoluzione nuova che compare nel pannello Video si vede, ma
+         NON e' la nativa del display: il pannello e' 1366x768. Capire cosa
+         offre davvero (EDID letto da Stage 2? modi VBE del BIOS NVIDIA:
+         fino a 1024x768 e 1280x720, il nativo non c'era) e arrivare a
+         1366x768 - se il BIOS non lo da', e' il driver del display NV50
+         (voce 14, passo 2), da decidere con l'utente;
+      b. nel pannello (pm, Impostazioni, scheda Video) l'elenco dei modi
+         va fatto scorrere col SOLO MOUSE: barra di scorrimento con i
+         pulsanti freccia alle estremita' (oggi non si puo').
+
   1. @RETE-VELOCE - Â«rete lan e accesso al disco non sono molto performanti,
      soprattutto la reteÂ». Analisi fatta (drivers/ip/ip.c, diario):
      a. FINESTRA DI INVIO: TCP_BUF 4096 = al massimo 4 KB in volo in uscita;
@@ -8063,7 +8075,9 @@ tools/netinst/velocita tolto da netinst.
       Dire che una cosa NON c'e' solo se richiesto o con il verbose (-v);
       vale per tutti i messaggi Â«manca/non c'e'Â» dei driver avviati da
       avvio.sh con -avvio.
-  12. Comando `kill` (proposto, da confermare): la libc ha kill(), la shell
+  12. Comando `kill`: FATTO nel kernel 0.270 (voce 22, passo 4), /bin/kill
+      nel sistema di base. Resta la parte sui driver qui sotto.
+      (era: proposto, da confermare): la libc ha kill(), la shell
       no; servirebbe a far ripartire un driver (nforce, ar5k) senza
       riavviare la macchina. Attenzione al bus master: fermare la scheda
       prima (PCI_MSG_DISABILITA), poi ipcfg -l rete0 per ricollegare ip.drv.
@@ -8318,6 +8332,24 @@ tools/netinst/velocita tolto da netinst.
       poweroff -> «clean» -> e2fsck -fn senza errori): 32 e 64 OK.
       ! RESTA: i ~EXVnnnn.DEL non si cancellano ancora dopo il controllo;
       il bit «sporco» di FAT non si usa (solo ext2).
+      PASSO 4 FATTO (kernel 0.270, 22/10 notte; scelte dell'utente: umount
+      dice chi usa + `ps -m`; programmi in /rdboot/bin; ps vede tutto, kill
+      solo i propri processi, root tutti):
+      - SYS_PROC_USO (180, sys_proc_uso in syscall_impl.c): per ogni
+        processo (non i fili) pid, padre, stato, uid, file aperti e il
+        montaggio del suo eseguibile; con un punto solo chi lo usa e come
+        (il programma, file aperti, la directory corrente). Il VFS risponde
+        col punto (vfs_punto_di_handle/_percorso), come decide umount.
+        libc proc_uso(); ProcInfo NON cambiata (la controllano per misura
+        programmi gia' compilati);
+      - /bin/ps 0.001 (ps, ps -m <punto>), /bin/kill 0.001 (TERM di serie,
+        -9, -KILL...; EPERM/ESRCH a parole): nel sistema di base;
+      - libc.so: kill() anche li' (prima solo in libc.a);
+      - mount 0.002: umount occupato elenca chi lo usa; uno zombie tiene il
+        programma finche' il padre non lo raccoglie, e lo si dice.
+      Prova: tools/prova_uso.sh (usoprova tiene /a, ps, ps -m, umount
+      occupato, kill, umount riesce): 32 e 64 OK; prova_rdboot e
+      prova_sistema rifatte, OK.
   15. EXILLA SUL PORTATILE (l'utente, 21/10 notte):
       a. la finestra di caricamento (attesa) non si chiude quando Firefox
          ha aperto la sua finestra. attesa confronta il pid della finestra

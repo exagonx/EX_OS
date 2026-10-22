@@ -26,7 +26,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `mount -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("mount", "0.001");
+EX_VERSIONE("mount", "0.002");
 
 /* Gli stessi errno del kernel (kernel/include/syscall.h): la syscall
  * ritorna il valore negato. */
@@ -89,6 +89,33 @@ static void elenca(void)
     if (n < 0) printf("mount: impossibile leggere i montaggi (errore %d)\n", n);
 }
 
+/* ! «OCCUPATO» DA SOLO NON BASTA (@RDBOOT passo 4, 22 ottobre 2026): chi
+ * vuole smontare deve sapere CHI tiene il volume, per chiuderlo o spostarlo.
+ * Stessa domanda di `ps -m <punto>`; questo processo non si elenca, gli
+ * altri si'. Su un kernel prima del 0.270 la chiamata non c'e' e si tace. */
+static void chi_usa(const char *punto)
+{
+    ProcUso      v[PROCINFO_MAX_BATCH];
+    unsigned int start = 0, io = (unsigned int)getpid(), tot = 0;
+    int          n, i;
+
+    while ((n = proc_uso(v, PROCINFO_MAX_BATCH, start, punto)) > 0) {
+        for (i = 0; i < n; i++) {
+            if (v[i].pid == io) continue;
+            if (tot++ == 0) printf("  lo usano:\n");
+            printf("    %-6u%-14s", v[i].pid, v[i].name);
+            if (v[i].perche & PROCUSO_PROGRAMMA) printf("il programma ");
+            if (v[i].perche & PROCUSO_FILE)
+                printf("%u file apert%s ", v[i].n_file, v[i].n_file == 1 ? "o" : "i");
+            if (v[i].perche & PROCUSO_CARTELLA)  printf("la directory corrente");
+            if (v[i].state == 4) printf("(terminato: aspetta che il padre lo raccolga)");
+            printf("\n");
+        }
+        start += (unsigned int)n;
+    }
+    if (tot) printf("  chiudili (kill <pid>) e riprova; `ps -m %s` li rielenca\n", punto);
+}
+
 static int e_umount(const char *nome)
 {
     const char *b = nome;
@@ -115,6 +142,7 @@ int main(int argc, char **argv)
         r = umount(argv[1]);
         if (r != 0) {
             printf("umount: %s: %s (errore %d)\n", argv[1], spiega(r), r);
+            if (-r == E_BUSY) chi_usa(argv[1]);
             return 1;
         }
         printf("smontato %s\n", argv[1]);

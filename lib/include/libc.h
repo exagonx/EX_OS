@@ -1347,6 +1347,29 @@ typedef struct {
 /* Riempie fino a max voci partendo dalla start-esima (paginazione come
  * listdir_from). Ritorna quante ne ha scritte, 0 quando sono finite. */
 int procinfo(ProcInfo *buf, unsigned int max, unsigned int start);
+
+/* I processi con utente, file aperti e montaggio del programma; con `punto`
+ * (es. "/" o "/disk") solo quelli che lo usano, e `perche` dice come
+ * (@RDBOOT passo 4). DUPLICATA A MANO da kernel/include/syscall.h: deve
+ * restare identica, la misura viaggia con la chiamata. Paginazione come
+ * procinfo; punto NULL = tutti. */
+#define PROCUSO_PUNTO_MAX   24
+#define PROCUSO_PROGRAMMA   1u    /* il suo eseguibile sta li' (aperto)     */
+#define PROCUSO_FILE        2u    /* ha file aperti li'                     */
+#define PROCUSO_CARTELLA    4u    /* la sua directory corrente e' li'       */
+
+typedef struct {
+    unsigned int pid;
+    unsigned int ppid;
+    unsigned int state;     /* come ProcInfo */
+    unsigned int uid;
+    unsigned int perche;    /* PROCUSO_*: solo con un punto */
+    unsigned int n_file;    /* file aperti: su quel punto, o in tutto */
+    char         name[PROCINFO_NAME_MAX];
+    char         punto_prog[PROCUSO_PUNTO_MAX];  /* "" = in RAM */
+} ProcUso;
+
+int proc_uso(ProcUso *buf, unsigned int max, unsigned int start, const char *punto);
 #endif /* !EXOS_SOLO_POSIX: ProcInfo */
 
 /* =============================================================================

@@ -167,6 +167,11 @@ void        vfs_spegnimento(void);
 int  vfs_mount(const char *dev, const char *punto, int sola_lettura);
 int  vfs_umount(const char *punto);
 
+/* Il punto di montaggio di un file aperto, o di un percorso (il montaggio
+ * col prefisso piu' lungo). 0, o -1. Per chi usa un montaggio (`ps -m`). */
+int  vfs_punto_di_handle(int h, char *punto, uint32_t max);
+int  vfs_punto_di_percorso(const char *abs, char *punto, uint32_t max);
+
 int  vfs_conta(void);
 const VfsMount *vfs_get(int i);
 

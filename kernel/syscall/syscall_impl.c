@@ -3711,6 +3711,106 @@ int32_t sys_procinfo(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_PROC_USO (180) -- i processi, e chi usa un montaggio (@RDBOOT passo 4)
+ *
+ * ebx = ProcUso*, ecx = max, edx = da quale (paginazione come procinfo),
+ * esi = punto di montaggio o 0, edi = sizeof(ProcUso) visto dal chiamante.
+ *
+ * ! SI CONFRONTANO I PUNTI, COME FA umount. vfs_umount_nl rifiuta se un file
+ * aperto sta nello slot del montaggio; qui si chiede al VFS il punto di ogni
+ * handle (vfs_punto_di_handle), cosi' la risposta e' la stessa domanda:
+ * «cosa impedisce a umount di riuscire», piu' la directory corrente, che non
+ * lo impedisce ma che dopo non porterebbe da nessuna parte.
+ *
+ * ! L'INDICE CONTA SOLO LE VOCI CHE SI CONSEGNANO: con un punto, solo chi lo
+ * usa. Un elenco che cambia fra un blocco e l'altro puo' saltare o ripetere
+ * un processo, come procinfo: e' una fotografia, non una transazione.
+ * ============================================================================= */
+static int stesso_punto(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+int32_t sys_proc_uso(InterruptFrame *frame)
+{
+    ProcUso    *user_buf = (ProcUso *)FR_A1(frame);
+    uint32_t    max      = FR_A2(frame);
+    uint32_t    start    = FR_A3(frame);
+    const char *upunto   = (const char *)FR_A4(frame);
+    uint32_t    size     = FR_A5(frame);
+
+    ProcUso  batch[PROCINFO_MAX_BATCH];
+    char     punto[PROCUSO_PUNTO_MAX], qui[PROCUSO_PUNTO_MAX];
+    uint32_t cap, i, visti = 0, scritti = 0;
+
+    if (size != sizeof(ProcUso)) return ERR(EINVAL);
+    if (max == 0)                return ERR(EINVAL);
+
+    punto[0] = '\0';
+    if (upunto != NULL) {
+        uint32_t l;
+
+        if (!syscall_verify_str(upunto, PROCUSO_PUNTO_MAX)) return ERR(EFAULT);
+        kstrcpy(punto, upunto, sizeof(punto));
+        /* "/disk/" e "/disk" sono lo stesso montaggio */
+        l = kstrlen(punto);
+        while (l > 1 && punto[l - 1] == '/') punto[--l] = '\0';
+        if (punto[0] != '/') return ERR(EINVAL);
+    }
+
+    cap = max;
+    if (cap > PROCINFO_MAX_BATCH) cap = PROCINFO_MAX_BATCH;
+    if (!syscall_verify_ptr(user_buf, sizeof(ProcUso) * cap)) return ERR(EFAULT);
+
+    for (i = 0; i < MAX_PROCESSES && scritti < cap; i++) {
+        Process  *p = &g_process_pool[i];
+        ProcUso   v;
+        uint32_t  n, fd;
+
+        if (p->state == PROC_UNUSED) continue;
+        if (p->tgid != p->pid) continue;          /* un filo: lo dice il capogruppo */
+
+        for (n = 0; n < sizeof(v); n++) ((uint8_t *)&v)[n] = 0;
+        v.pid   = p->pid;
+        v.ppid  = p->ppid;
+        v.state = (uint32_t)p->state;
+        v.uid   = p->uid;
+        for (n = 0; n < PROCINFO_NAME_MAX - 1 && p->name[n]; n++) v.name[n] = p->name[n];
+
+        if (p->exe_handle >= 0 &&
+            vfs_punto_di_handle(p->exe_handle, qui, sizeof(qui)) == 0) {
+            kstrcpy(v.punto_prog, qui, sizeof(v.punto_prog));
+            if (punto[0] && stesso_punto(qui, punto)) v.perche |= PROCUSO_PROGRAMMA;
+        }
+
+        if (p->fdt != NULL && p->state != PROC_ZOMBIE) {
+            for (fd = 0; fd < MAX_FD; fd++) {
+                if (p->fdt[fd].type != FD_FILE) continue;
+                if (!punto[0]) { v.n_file++; continue; }
+                if (vfs_punto_di_handle((int)p->fdt[fd].inode, qui, sizeof(qui)) == 0 &&
+                    stesso_punto(qui, punto)) {
+                    v.perche |= PROCUSO_FILE;
+                    v.n_file++;
+                }
+            }
+        }
+
+        if (punto[0] && p->cwdt != NULL && p->cwdt[0] == '/' &&
+            vfs_punto_di_percorso(p->cwdt, qui, sizeof(qui)) == 0 &&
+            stesso_punto(qui, punto))
+            v.perche |= PROCUSO_CARTELLA;
+
+        if (punto[0] && v.perche == 0) continue;
+        if (visti++ < start) continue;
+        batch[scritti++] = v;
+    }
+
+    for (i = 0; i < scritti; i++) user_buf[i] = batch[i];
+    return (int32_t)scritti;
+}
+
+/* =============================================================================
  * SYS_SU (254) -- diventare root provando di sapere una password
  *
  * Il perche' sta in kernel/include/syscall.h. Qui c'e' solo come si verifica.

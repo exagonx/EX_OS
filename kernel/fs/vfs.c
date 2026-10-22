@@ -2239,6 +2239,43 @@ int vfs_umount(const char *punto)
 }
 
 /* =============================================================================
+ * SU QUALE MONTAGGIO STA — per `ps` e per chi usa un montaggio (@RDBOOT
+ * passo 4, 22 ottobre 2026)
+ *
+ * ! SI RISPONDE COL PUNTO, NON CON L'INDICE DELLO SLOT. Lo slot di un file
+ * aperto puo' cambiare sotto i piedi (la radice che torna il sistema di base
+ * sposta gli aperti nello slot di /rdboot) e fuori dal VFS non vuol dire
+ * niente; il punto e' cio' che l'utente scrive a `umount`, ed e' cio' con cui
+ * vfs_umount_nl decide se un file aperto lo blocca (stesso slot = stesso
+ * punto).
+ * ============================================================================= */
+int vfs_punto_di_handle(int h, char *punto, uint32_t max)
+{
+    int r = -1;
+
+    fs_prendi_n("punto");
+    if (h >= 0 && h < VFS_MAX_OPEN && g_file[h].usato &&
+        g_file[h].im >= 0 && g_mnt[g_file[h].im].usato) {
+        v_copia(punto, g_mnt[g_file[h].im].punto, max);
+        r = 0;
+    }
+    fs_rilascia();
+    return r;
+}
+
+int vfs_punto_di_percorso(const char *abs, char *punto, uint32_t max)
+{
+    char interno[VFS_PATH_MAX];
+    int  im;
+
+    fs_prendi_n("punto");
+    im = instrada(abs, interno, sizeof(interno));
+    if (im >= 0) v_copia(punto, g_mnt[im].punto, max);
+    fs_rilascia();
+    return im >= 0 ? 0 : -1;
+}
+
+/* =============================================================================
  * vfs_radice_ext2 — la radice e' un filesystem con proprietari e permessi?
  *
  * ! E' LA DOMANDA CHE DECIDE SE IL LOGIN E' OBBLIGATORIO. Avviando da floppy o
