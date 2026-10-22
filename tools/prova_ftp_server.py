@@ -19,7 +19,8 @@
 #
 # ! PROVA_FTP_RIUSO=1 MAKES IT vsftpd (22 October 2026): a data connection
 # whose TLS session is not a resumption of the control one is refused, as
-# require_ssl_reuse=YES does. Either way the log says "dati ripresi: si/no".
+# require_ssl_reuse=YES does, and the client certificate is asked for
+# (ssl_request_cert=YES). Either way the log says "dati ripresi: si/no".
 # =============================================================================
 import os, socket, ssl, sys, threading, time, stat as st
 
@@ -35,6 +36,10 @@ if CERT:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     ctx.load_cert_chain(CERT, CHIAVE)
+    if RIUSO:
+        # e come vsftpd chiede il certificato del cliente senza pretenderlo
+        ctx.verify_mode = ssl.CERT_OPTIONAL
+        ctx.load_verify_locations(CERT)
 
 
 def log(*a):

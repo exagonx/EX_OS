@@ -47,7 +47,7 @@
 #include "exuser.h"
 
 /* +0.001 at every change: `ftp -version` prints it. See EX_VERSIONE. */
-EX_VERSIONE("ftp", "0.003");
+EX_VERSIONE("ftp", "0.004");
 
 #define RIGA_MAX   1024
 #define ARGS_MAX   16
@@ -200,6 +200,22 @@ static long dim_locale(const char *p)
 /* =============================================================================
  * Connecting
  * ============================================================================= */
+static int apri(const char *host, const char *porta_s, int modo,
+                const char *utente, const char *password);
+
+/* Does the server's reply speak of encryption? vsftpd: «530 Non-anonymous
+ * sessions must use encryption.»; others say SSL or TLS. */
+static int parla_di_cifra(const char *r)
+{
+    static const char *const parole[] = { "encrypt", "ssl", "tls", "cifr" };
+    unsigned int k;
+
+    for (; *r; r++)
+        for (k = 0; k < sizeof(parole) / sizeof(parole[0]); k++)
+            if (strncasecmp(r, parole[k], strlen(parole[k])) == 0) return 1;
+    return 0;
+}
+
 static int accedi(const char *utente, const char *password)
 {
     char u[128], p[128];
@@ -219,6 +235,24 @@ static int accedi(const char *utente, const char *password)
 
     /* USER first: a server that wants no password says 230 already. */
     rc = exftp_comando(&g_f, "USER", u);
+
+    /* ! THE SERVER THAT WANTS FTPS SAYS SO AT USER, before the password:
+     * vsftpd with force_local_logins_ssl answers 530 there. The user asked
+     * (22 October 2026) that ftp then goes over to -tls by itself — and
+     * it can, without a password having gone out in clear. Once only: on
+     * the new connection g_f.cifrato is set. */
+    if (rc == 530 && !g_f.cifrato && parla_di_cifra(g_f.risposta)) {
+        char h[sizeof(g_f.host)], ps[12];
+
+        printf("Il server accetta questo utente solo su una connessione cifrata:\n"
+               "ricollego in FTPS (come `open -tls`).\n");
+        strcpy(h, g_f.host);
+        snprintf(ps, sizeof(ps), "%u", g_f.porta);
+        return apri(h, ps, EXFTP_TLS, u, password);
+    }
+    if (rc == 530 && g_f.cifrato && parla_di_cifra(g_f.risposta))
+        printf("! Il server non accetta questo utente su una connessione cifrata:\n"
+               "  provate `open` senza -tls (la password viaggerebbe in chiaro).\n");
     if (rc == 331 || rc == 332) {
         if (password) {
             strncpy(p, password, sizeof(p) - 1);

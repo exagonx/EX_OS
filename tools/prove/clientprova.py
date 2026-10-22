@@ -311,6 +311,21 @@ def main():
     con_server("srv.pem", "srv.key", ripresa)
     con_server("srv.pem", "srv.key", ripresa, cifrari="TLS_AES_128_GCM_SHA256")
 
+    def senza_alpn(p):
+        rc, out = cli(p, "-alpn", "ftp", "-riprendi")
+        esito("1.3: ALPN \"ftp\" (vsftpd 3.0.5 rifiuta http/1.1) e ripresa",
+              rc == 0 and "(ripresa)" in out, out.strip())
+    con_server("srv.pem", "srv.key", senza_alpn, altro=("-alpn", "ftp"))
+
+    # ! vsftpd CHIEDE IL CERTIFICATO DEL CLIENTE senza pretenderlo
+    # (ssl_request_cert=YES): si risponde con un Certificate vuoto, e il
+    # Finished deve contarlo. Prima la stretta si fermava qui.
+    def chiede_cert(p):
+        rc, out = cli(p, "-riprendi")
+        esito("1.3: il server chiede il certificato del cliente (Certificate vuoto)",
+              rc == 0 and "(ripresa)" in out, out.strip())
+    con_server("srv.pem", "srv.key", chiede_cert, altro=("-verify", "1"))
+
     sh("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
        "-keyout", "auto.key", "-out", "auto.pem", "-days", "365",
        "-subj", "/CN=myserver")

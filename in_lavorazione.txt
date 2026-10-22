@@ -8143,8 +8143,26 @@ tools/netinst/velocita tolto da netinst.
         autofirmato giusto/sbagliato/assente, 1.2); tools/prova_ftp.sh
         passo 6 (server di prova che rifiuta i dati senza ripresa):
         21/21 a 32 e a 64 bit.
-      DA FARE: prova vera contro 192.168.0.30 sul portatile (serve la
-      password dell'utente ftp: la scrive l'utente).
+      PROVA VERA (portatile, /tmp/ftp nuovo): due difetti che il banco non
+      vedeva, corretti in extls: (1) l'ALPN «http/1.1» -> vsftpd 3.0.5
+      allarme 120; ora ExTlsOpzioni.alpn, exhttp_tls_sopra manda «ftp»;
+      (2) vsftpd CHIEDE il certificato del cliente (ssl_request_cert): si
+      rifiutava, ora si risponde con un Certificate vuoto. vsftpd accetta
+      solo P-256 (si passa dal HelloRetryRequest, gia' fatto). Dal PC:
+      stretta + biglietto + ripresa con il vsftpd vero riuscite; dal
+      portatile: impronta 33:75:35:45:...:DD:D4 uguale a quella del server,
+      accettata (/root/.app/exhttp/fidati.txt), la seconda volta non chiede,
+      comandi cifrati TLS 1.3. clientprova 33/33.
+      22/10 mattina, PROVA COMPLETA dal portatile con l'utente di prova
+      dell'utente: login 230, PROT P, ls, put di 166000 byte, get, sha256
+      uguale, delete. Ogni connessione dati accettata da vsftpd (quindi
+      ripresa). Lento: put 75 KB/s, get 284 KB/s (da guardare con 13b).
+      ftp 0.004 (l'utente: «dove indica che l'utente e' stato rifiutato
+      dovresti implementare di usare -tls»): se il server risponde 530 a
+      USER parlando di cifratura (vsftpd: «Non-anonymous sessions must use
+      encryption»), ftp si ricollega da solo in FTPS con lo stesso utente;
+      la password non e' ancora partita. Provato sul portatile: shell e
+      comando singolo.
 
 @DISCO-VELOCE (21/10/2026) - kernel 0.264, ext4.mod 0.002
   L'utente: «riprendi il progetto ext3 ext4 con modulo a parte per la
