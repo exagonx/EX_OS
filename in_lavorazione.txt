@@ -8137,6 +8137,82 @@ tools/netinst/velocita tolto da netinst.
       che arrivano sulla console dopo che login ha disegnato la richiesta:
       vanno nel registro (dmesg) e non sullo schermo, o almeno non mentre
       login aspetta.
+  20. UN PROGRAMMA AGGIORNATO MENTRE GIRA LEGGE IL FILE NUOVO (22/10,
+      netupdate 0.033 verso kernel 0.267 sul portatile a 64 bit): nella
+      fase «L'avvio» netupdate ha stampato frasi che non esistono nel
+      sorgente («le nuove non sono mappabili (errore 134452992)», «settore
+      di avvio NON riscritto (errore 634)» e subito dopo «il kernel di
+      prima resta in .old») ed e' morto con page fault a 0x35,
+      EIP 0x0800c352 (cmp byte [edx],0: una %s con un puntatore sbagliato).
+      CAUSA: VfsFile (kernel/fs/vfs.c) tiene solo il PERCORSO (interno) e
+      ogni ext2_read cerca il file per nome. sostituisci() rinomina
+      /bin/netupdate in .old e mette il nuovo al suo posto: le pagine non
+      ancora caricate (pf_carica_da_file, exe_handle) arrivano dal file
+      NUOVO, a offset di un altro binario. Il commento in netupdate.c
+      («il vecchio si rinomina, non si cancella») presuppone un handle che
+      segue il file, che non c'e'. Vale per ogni programma in esecuzione
+      aggiornato (sh, wserver, pm...).
+      Esito di questa volta: il settore di avvio ERA stato riscritto (il
+      riavvio e' partito con 0.267; bootverify: stage2 LBA 920078 x7,
+      kernel 634 settori in 4 intervalli). Il 634 dell'«errore» era
+      k_cnt.
+      DUE STRADE, DA SCEGLIERE CON L'UTENTE:
+        A. vfs_rename aggiorna `interno` degli handle aperti sul nome di
+           partenza; unlink/rename che sovrascrive un file aperto ->
+           rifiutato (ETXTBSY). Piccola, copre lo schema di netupdate.
+        B. handle ext2 per numero di inode, come Unix. Completa, tocca il
+           modulo ext2 (VIA_MODULO) e il percorso di lettura.
+      Consigliata A subito e B in coda.
+      FATTO A (kernel 0.268, l'utente: «procedi con i vari punti»), alla
+      maniera della «silly rename» di NFS: vfs_rename porta con se' gli
+      handle aperti (anche dentro una directory rinominata); unlink o
+      rinomina SOPRA un file aperto lo rinomina in ~EXVnnnn.DEL nella
+      stessa directory e lo cancella all'ultima chiusura (VfsFile.orfano).
+      Prova: tools/prova_aperti.sh (tools/prove/apertiprova.c), ext2 e
+      FAT32, 32 e 64 bit: 5/5 con 0.268; col kernel di prima 4 casi su 5
+      falliscono, fra cui «la seconda meta' viene dal file nuovo». DA FARE:
+      un ~EXV rimasto da uno spegnimento si toglie a mano; ripulirli al
+      montaggio. B (handle per inode) resta in coda.
+  21. TELNET: SESSIONE APPESA SE IL PROGRAMMA E' RIFIUTATO (22/10): un
+      binario a 32 bit lanciato su kernel a 64 («ELF: non e' ELF64
+      (class=1)», spawn err=-1) lascia la sessione telnet aperta e il pty
+      occupato; dopo quattro volte telnetd rifiuta tutti («non c'e' un
+      pseudo-terminale libero») fino al riavvio. E non c'e' `ps`/`kill`
+      per liberarli dalla console: servono tutti e due.
+  22. SISTEMA DI BASE IN RAMDISK (l'utente, 22/10): l'avvio carica UN
+      archivio (~1 MB, oggi «quel che entra nel floppy») in un ramdisk che
+      fa da radice: kernel, sh/login/mount, driver e moduli che servono a
+      raggiungere i dischi (ATA, AHCI, USB/EHCI/OHCI/UHCI/XHCI, FAT, ext2,
+      ext4...). Poi si cerca la partizione di sistema (floppy, USB, IDE,
+      AHCI, SATA, SAS, SCSI...) e la si monta SULLA RADICE, non in
+      /floppy o /hdd: una fusione (union) di ramdisk e disco, da cui si
+      caricano i driver e i moduli non indispensabili. Lo scopo: poter
+      smontare il disco di sistema (aggiornamenti, controlli), un solo
+      file da mappare per l'avvio, lo stesso avvio da qualunque supporto.
+      Base gia' presente: BootInfo rd_addr/rd_byte, blk_registra_ram, la
+      radice FAT in RAM della chiavetta 64 bit (vfs.c «IL VOLUME IN RAM
+      VIENE PRIMA DI TUTTO»). Da decidere con l'utente: chi vince fra
+      ramdisk e disco quando un file c'e' in tutti e due, dove vanno le
+      scritture, come si cancella un file del ramdisk. NON sostituisce la
+      voce 20: i programmi caricati dal disco (exwin, Exilla) restano
+      esposti alla rinomina sotto i piedi.
+      DECISO CON L'UTENTE (22/10 sera), al posto della fusione vera:
+      il ramdisk contiene SOLO / e /rdboot; in /rdboot/bin, /rdboot/dev,
+      /rdboot/etc, /rdboot/tmp... i file che oggi stanno sul floppy. La
+      partizione di sistema si monta SU / e copre il ramdisk, /rdboot resta
+      visibile (montaggio piu' lungo); sul disco /bin /dev /etc /tmp ecc.
+      con i programmi in piu' E una copia di quelli del ramdisk. Shell e
+      login in /rdboot, cosi' sopravvivono a:
+        system -unload   chiude i programmi partiti dal disco, swap via,
+                         cache scaricata, cwd delle shell in /rdboot
+        umount hd2p1     la radice torna il solo ramdisk: fdisk e
+                         bootinstall sul disco senza partizioni montate
+        system -load     rimonta e riparte dalle configurazioni
+      PASSI: 1 archivio rdboot dal Makefile (32 e 64) caricato da Stage 2;
+      2 VFS: radice ramdisk, montaggio sopra / e ritorno; 3 avvio: driver
+      da /rdboot, poi il disco, poi le sue configurazioni; 4 ps, kill, chi
+      usa un montaggio; 5 system -unload/-load; 6 netupdate e install per
+      l'archivio.
   15. EXILLA SUL PORTATILE (l'utente, 21/10 notte):
       a. la finestra di caricamento (attesa) non si chiude quando Firefox
          ha aperto la sua finestra. attesa confronta il pid della finestra

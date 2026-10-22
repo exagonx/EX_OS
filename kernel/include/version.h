@@ -524,7 +524,11 @@
  * video BIOS's names and the screen's EDID, read by Stage 2 (BootInfo
  * vid_addr, VIDINFO at 0xD600) - for svga.drv -lista and the Video panel
  * (@SCHEDA-VIDEO). */
-#define EXOS_VERSION    "0.267"
+/* 0.267 -> 0.268: an open file follows the file, not its name: rename moves
+ * the open handles along, unlink or rename-over of an open file hides it as
+ * ~EXVnnnn.DEL until the last close (kernel/fs/vfs.c). netupdate replacing
+ * itself read pages of the new binary and died (tools/prova_aperti.sh). */
+#define EXOS_VERSION    "0.268"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

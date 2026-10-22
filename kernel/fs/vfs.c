@@ -134,6 +134,9 @@ typedef struct {
     int      im;                     /* indice nella tabella di montaggio */
     int      h12;                    /* handle fat12.c, -1 sugli altri */
     char     interno[VFS_PATH_MAX];  /* percorso dentro il filesystem */
+    /* 1 = cancellato mentre era aperto: ha un nome nascosto (vedi
+     * nascondi_aperto) e se ne va del tutto all'ultima chiusura. */
+    uint8_t  orfano;
 } VfsFile;
 
 static VfsFile g_file[VFS_MAX_OPEN];
@@ -843,6 +846,134 @@ static int apri_fallito(int slot, int err)
     return err;
 }
 
+/* =============================================================================
+ * I FILE APERTI SEGUONO IL FILE, NON IL NOME (22 ottobre 2026)
+ *
+ * ! UN HANDLE QUI E' UN PERCORSO (`interno`), e ogni lettura cerca il file per
+ * nome. Finche' nessuno toccava i nomi dei file aperti non si vedeva; ma il
+ * caricatore ELF pagina SU RICHIESTA dal file del programma, che resta aperto
+ * per tutta la sua vita (exe_handle), e netupdate aggiorna i programmi con
+ * «rinomina il vecchio in .old, metti il nuovo al suo posto». Dopo lo scambio
+ * le pagine che /bin/netupdate non aveva ancora letto arrivavano dal file
+ * NUOVO, a offset di un altro binario: sul portatile ha stampato frasi che
+ * nel sorgente non ci sono ed e' morto con un page fault a 0x35, in mezzo
+ * alla riscrittura del settore di avvio.
+ *
+ * Le due regole sono quelle di Unix, ottenute senza inode:
+ *
+ *   - RINOMINARE un file aperto porta con se' i suoi handle (segui_rinomina),
+ *     anche quelli dentro una directory rinominata;
+ *
+ *   - CANCELLARE un file aperto, o sovrascriverlo con una rinomina, non lo
+ *     toglie subito: gli da' un nome nascosto nella stessa directory
+ *     (nascondi_aperto) e lo cancella quando si chiude l'ultimo handle
+ *     (vfs_close_nl). E' la «silly rename» di NFS.
+ *
+ * ! IL FLOPPY DI AVVIO (fat12.c) NE RESTA FUORI: i suoi handle sono del
+ * driver, non percorsi, e non hanno il problema.
+ * ============================================================================= */
+static int stesso_file(int i, int im, const char *interno)
+{
+    return g_file[i].usato && g_file[i].im == im && v_uguale(g_file[i].interno, interno);
+}
+
+static int aperti_su(int im, const char *interno)
+{
+    int i, n = 0;
+
+    for (i = 0; i < VFS_MAX_OPEN; i++)
+        if (stesso_file(i, im, interno)) n++;
+    return n;
+}
+
+static void segui_rinomina(int im, const char *da, const char *a)
+{
+    uint32_t nd = v_len(da), na = v_len(a), resto;
+    int      i;
+
+    for (i = 0; i < VFS_MAX_OPEN; i++) {
+        char *p = g_file[i].interno;
+
+        if (!g_file[i].usato || g_file[i].im != im) continue;
+        if (v_uguale(p, da)) {
+            v_copia(p, a, VFS_PATH_MAX);
+            continue;
+        }
+        /* Un file dentro la directory rinominata: cambia il prefisso. */
+        {
+            uint32_t k;
+
+            for (k = 0; k < nd && p[k] == da[k]; k++) ;
+            if (k != nd || p[nd] != '/') continue;
+        }
+        resto = v_len(p + nd);
+        if (na + resto >= VFS_PATH_MAX) continue;   /* non ci sta: resta dov'era */
+        {
+            char nuovo[VFS_PATH_MAX];
+
+            v_copia(nuovo, a, VFS_PATH_MAX);
+            v_copia(nuovo + na, p + nd, VFS_PATH_MAX - na);
+            v_copia(p, nuovo, VFS_PATH_MAX);
+        }
+    }
+}
+
+static int esiste_interno(int im, const char *interno)
+{
+    if (g_mnt[im].tipo == VFS_FS_EXT2) {
+        Ext2DirEntry e;
+        return ext2_stat(g_mnt[im].mnt, interno, &e) == 0;
+    } else {
+        FatDirEntry e;
+        return fat_stat(g_mnt[im].mnt, interno, &e) == 0;
+    }
+}
+
+/* ! IL NOME NASCOSTO E' 8.3 («~EXV0001.DEL»), perche' deve valere anche su
+ * FAT. Resta nella STESSA directory: e' una rinomina, i blocchi non si
+ * muovono. Se la macchina si spegne prima della chiusura, il file resta li'
+ * con quel nome: occupa spazio ma non fa danni, e si riconosce. */
+static int nascondi_aperto(int im, const char *interno)
+{
+    static uint32_t prossimo = 1;
+    char     nascosto[VFS_PATH_MAX];
+    uint32_t dir = 0, k, tentativi;
+    int      i, r;
+
+    for (k = 0; interno[k]; k++) if (interno[k] == '/') dir = k + 1;
+    if (dir + 13 >= VFS_PATH_MAX) return ERR(EINVAL);
+
+    for (tentativi = 0; tentativi < 10000; tentativi++) {
+        uint32_t n = prossimo++ % 10000;
+
+        for (k = 0; k < dir; k++) nascosto[k] = interno[k];
+        nascosto[k++] = '~'; nascosto[k++] = 'E'; nascosto[k++] = 'X'; nascosto[k++] = 'V';
+        nascosto[k++] = (char)('0' + n / 1000);
+        nascosto[k++] = (char)('0' + n / 100 % 10);
+        nascosto[k++] = (char)('0' + n / 10 % 10);
+        nascosto[k++] = (char)('0' + n % 10);
+        nascosto[k++] = '.'; nascosto[k++] = 'D'; nascosto[k++] = 'E'; nascosto[k++] = 'L';
+        nascosto[k] = '\0';
+        if (!esiste_interno(im, nascosto)) break;
+    }
+    if (tentativi == 10000) return ERR(EEXIST);
+
+    if (g_mnt[im].tipo == VFS_FS_EXT2)
+        r = ext2_rename(g_mnt[im].mnt, interno, nascosto);
+    else
+        r = fat_rename(g_mnt[im].mnt, interno, nascosto);
+    if (r != 0) return ERR(EIO);
+
+    for (i = 0; i < VFS_MAX_OPEN; i++)
+        if (stesso_file(i, im, interno)) {
+            v_copia(g_file[i].interno, nascosto, VFS_PATH_MAX);
+            g_file[i].orfano = 1;
+        }
+    klog(LOG_INFO, "VFS: %s e' aperto: resta come %s fino all'ultima chiusura",
+         interno, nascosto);
+    return 0;
+}
+
 
 /* =============================================================================
  * vfs_permesso — l'unico posto in cui si decide se qualcuno puo'
@@ -1010,6 +1141,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     g_file[slot].rif   = 1;
     g_file[slot].im    = im;
     g_file[slot].h12   = -1;
+    g_file[slot].orfano = 0;
     v_copia(g_file[slot].interno, interno, VFS_PATH_MAX);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
@@ -1141,6 +1273,20 @@ static int vfs_close_nl(int h)
 
     g_file[h].usato = 0;
     g_file[h].rif   = 0;
+
+    /* Cancellato mentre era aperto (nascondi_aperto): se questo era l'ultimo
+     * handle sul file, adesso se ne va davvero. */
+    if (g_file[h].orfano) {
+        int im = g_file[h].im;
+
+        g_file[h].orfano = 0;
+        if (aperti_su(im, g_file[h].interno) == 0) {
+            if (g_mnt[im].tipo == VFS_FS_EXT2)
+                ext2_unlink(g_mnt[im].mnt, g_file[h].interno);
+            else
+                fat_unlink(g_mnt[im].mnt, g_file[h].interno);
+        }
+    }
     return 0;
 }
 
@@ -1539,6 +1685,10 @@ static int modifica(const char *abs, int quale)
         }
     }
 
+    /* Un file aperto non si toglie da sotto chi lo usa: vedi nascondi_aperto. */
+    if (quale == 2 && g_mnt[im].tipo != VFS_FS_FAT12FD && aperti_su(im, interno) > 0)
+        return nascondi_aperto(im, interno);
+
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         if (quale == 0) return fat12_mkdir(interno);
         if (quale == 1) return fat12_rmdir(interno);
@@ -1724,7 +1874,10 @@ static int vfs_rename_nl(const char *da, const char *a)
     if (r == -2) return ERR(EEXIST);
     if (r == -3) return ERR(ENOSYS);   /* directory diverse (FAT only, since 0.260) */
     if (r == -4) return ERR(EINVAL);   /* a directory into itself */
-    return (r != 0) ? ERR(EIO) : 0;
+    if (r != 0)  return ERR(EIO);
+
+    segui_rinomina(im_da, int_da, int_a);
+    return 0;
 }
 
 int vfs_rename(const char *da, const char *a)
