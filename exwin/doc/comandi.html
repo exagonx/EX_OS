@@ -91,7 +91,8 @@ lo fa <code>echo</code>, non la shell.
 <table border="1">
 <tr><th>Comando</th><th>Che cosa fa</th></tr>
 <tr><td><code>disk</code></td><td>elenca dischi e partizioni, e dice cosa <b>non</b> torna: firme mancanti, partizioni sovrapposte, catene logiche rotte</td></tr>
-<tr><td><code>fdisk</code></td><td>crea e cancella partizioni (interattivo). Non tocca i dischi GPT</td></tr>
+<tr><td><code>fdisk</code></td><td>crea e cancella partizioni: a schermo intero sulla console (frecce), a righe via
+    telnet. Non tocca i dischi GPT. Per il disco di sistema: prima <code>system -unload</code></td></tr>
 <tr><td><code>mkfs</code></td><td>formatta: <code>-t fat16|fat32|ext2</code>, <code>-L etichetta</code></td></tr>
 <tr><td><code>mkswap</code></td><td>prepara una partizione di scambio</td></tr>
 <tr><td><code>mount</code> <code>umount</code></td><td>monta e smonta; il punto di montaggio lo crea il VFS</td></tr>
@@ -105,7 +106,19 @@ lo fa <code>echo</code>, non la shell.
 <tr><th>Comando</th><th>Che cosa fa</th></tr>
 <tr><td><code>uname</code> <code>ver</code></td><td>la versione del sistema</td></tr>
 <tr><td><code>mem</code></td><td>la memoria: quanta c'e', quanta se ne usa</td></tr>
-<tr><td><code>stack</code> <code>ps</code></td><td>i processi vivi</td></tr>
+<tr><td><code>stack</code></td><td>i processi vivi, con stack e heap</td></tr>
+<tr><td><code>ps</code></td><td>i processi: padre, utente, stato, file aperti, da quale montaggio viene il programma.
+    <code>ps -m /</code> dice chi usa un montaggio e come (kernel 0.270)</td></tr>
+<tr><td><code>kill</code></td><td>chiude un processo: <code>kill PID</code> chiede (TERM), <code>kill -9 PID</code> impone.
+    Un utente chiude solo i propri processi, root tutti</td></tr>
+<tr><td><code>system</code></td><td>toglie e rimette il disco di sistema a macchina accesa (kernel 0.274):
+    <code>-unload</code>, <code>-load [-check]</code>, <code>-status</code>. Vedi
+    <a href="sistema.html#base">Il sistema di base</a></td></tr>
+<tr><td><code>usb</code></td><td>le porte USB: <code>-status</code>, <code>-unplug</code>, <code>-refresh</code></td></tr>
+<tr><td><code>nv50.drv</code></td><td>NVIDIA G80 (Compaq CQ60): il pannello alla risoluzione nativa. <code>-nativo</code>,
+    <code>-install</code>/<code>-remove</code> per l'avvio, <code>-stato</code>; il motore 2D
+    (in prova): <code>-2dprova</code>, <code>-2dmisura</code>, <code>-2dservizio</code>. Vedi
+    <a href="sistema.html#video">La scheda video</a></td></tr>
 <tr><td><code>jobs</code> <code>fg</code></td><td>i comandi in secondo piano, e come riprenderli</td></tr>
 <tr><td><code>env</code> <code>export</code></td><td>le variabili d'ambiente</td></tr>
 <tr><td><code>source</code> <code>exec</code></td><td>esegue uno script nella shell di adesso, sostituisce la shell</td></tr>

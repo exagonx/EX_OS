@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `svga.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("svga.drv", "0.004");
+EX_VERSIONE("svga.drv", "0.005");
 
 #define PERC_MAX  256
 #define S2_MAX    65536
@@ -318,6 +318,12 @@ static int scrivi_cfg(const char *valore)
             fatto = 1;
             continue;
         }
+        /* ! LE ALTRE VOCI svga SI TOLGONO (23 ottobre 2026). Il CQ60 ne aveva
+         * cinque di fila in [kernel], alternate fra 1024x768 e 1280x720:
+         * questo programma cambiava la prima, il kernel ne leggeva un'altra,
+         * e a ogni avvio diceva che kernel.cfg e Stage 2 non andavano
+         * d'accordo. Una voce sola, quella appena scritta. */
+        if (in_kernel && fatto && riga[k] != '#' && riga_e_svga(riga)) continue;
 
         o += snprintf(nuovo + o, CFG_MAX - o, "%s\n", riga);
         if (o >= CFG_MAX - RIGA_MAX) {

@@ -29,7 +29,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `ps -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ps", "0.001");
+EX_VERSIONE("ps", "0.002");
 
 #define BLOCCO PROCINFO_MAX_BATCH
 
@@ -74,7 +74,7 @@ int main(int argc, char **argv)
     }
 
     if (punto)
-        printf("%-6s%-10s%-14s%s\n", "PID", "UTENTE", "NOME", "USA " );
+        printf("%-6s%-10s%-20s%s\n", "PID", "UTENTE", "NOME", "USA " );
     else
         printf("%-6s%-6s%-10s%-8s%-5s%-9s%s\n",
                "PID", "PADRE", "UTENTE", "STATO", "FILE", "DA", "NOME");
@@ -85,7 +85,7 @@ int main(int argc, char **argv)
 
             utente_di(q->uid, u, sizeof(u));
             if (punto) {
-                printf("%-6u%-10s%-14s", q->pid, u, q->name);
+                printf("%-6u%-10s%-19s ", q->pid, u, q->name);   /* a space even after a long name */
                 if (q->perche & PROCUSO_PROGRAMMA) printf("il programma ");
                 if (q->perche & PROCUSO_FILE)
                     printf("%u file apert%s ", q->n_file, q->n_file == 1 ? "o" : "i");

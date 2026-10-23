@@ -83,7 +83,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.004");
+EX_VERSIONE("login", "0.005");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -358,7 +358,20 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
      * comunque l'identita': una strada sola vale piu' di un caso in meno da
      * eseguire, ed e' proprio il caso particolare — «se uid != 0» — che aveva
      * tenuto nascosto il difetto di prima. */
-    pid = spawn_utente(g_shell, argv, environ, uid, gid);
+    /* ! THE BASE SYSTEM'S COPY FIRST (@RDBOOT step 5, 23 October 2026):
+     * /rdboot/bin/sh rather than /bin/sh, as the kernel does with login. A
+     * shell from the disk keeps the system disk busy; `system -unload`
+     * would close it, and with it the session that asked for the unload. */
+    {
+        static char base[160];
+        struct stat st;
+
+        if (g_shell[0] == '/' && strncmp(g_shell, "/rdboot/", 8) != 0) {
+            snprintf(base, sizeof(base), "/rdboot%s", g_shell);
+            if (stat(base, &st) == 0) argv[0] = base;
+        }
+    }
+    pid = spawn_utente(argv[0], argv, environ, uid, gid);
     if (pid < 0) {
         printf("login: %s non si avvia come %s (%s)\n",
                g_shell, utente, strerror(errno));

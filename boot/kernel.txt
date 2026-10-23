@@ -158,6 +158,14 @@ partito davvero, e se non combaciano lo dice. Sono due cose diverse - cosa
 e' scritto e cosa e' successo - e un disallineamento vuol dire che qualcuno
 ha modificato il file senza riavviare.
 
+UNA VOCE SOLA. Con due o piu' righe svga il kernel ne legge una e svga.drv
+fino alla 0.004 ne cambiava un'altra: l'avviso tornava a ogni avvio. Da
+svga.drv 0.005 la riscrittura lascia una riga sola.
+
+Sulle NVIDIA G80 (Compaq CQ60) nv50.drv porta poi il pannello alla sua
+risoluzione nativa partendo da questo modo: questa voce resta quella del
+BIOS (per esempio 1024x768). Vedi `help nv50.drv`.
+
 -------------------------------------------------------------------------------
 atadma = 1                (commentata per default)
 -------------------------------------------------------------------------------
@@ -276,6 +284,11 @@ shell = /bin/sh
 -------------------------------------------------------------------------------
 
 Il primo programma utente, lanciato quando il sistema e' pronto.
+
+CON IL SISTEMA DI BASE (/rdboot, kernel 0.269 e seguenti) il kernel lancia
+la copia della base se c'e': /rdboot/bin/sh al posto di /bin/sh, e lo
+stesso per login (kernel 0.274). E' lo stesso programma; cosi' le console
+non dipendono dal disco di sistema, che `system -unload` puo' togliere.
 
 -------------------------------------------------------------------------------
 login = /bin/login            (commentata per default)

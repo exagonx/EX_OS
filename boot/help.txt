@@ -300,11 +300,77 @@ aspetta un po'
 [pid]
 dice il PID del processo corrente
 
-[stack ps]
-elenca i processi
+[stack]
+elenca i processi, con stack e heap
 
-Per ognuno: PID, nome, stato e la memoria che occupa. E' il `ps` di
-EX-OS, e il nome viene dal fatto che mostra anche stack e heap.
+Per ognuno: PID, nome, stato e la memoria che occupa.
+
+[ps]
+i processi, e chi usa un montaggio
+
+  ps                    tutti: pid, padre, utente, stato, file aperti,
+                        da quale montaggio viene il programma
+  ps -m /               chi usa "/": il programma, file aperti, la
+                        directory corrente
+
+Sta nel sistema di base (/rdboot/bin): c'e' anche a disco tolto.
+
+[kill]
+chiude un processo
+
+  kill 25               chiede di chiudersi (TERM)
+  kill -9 25            chiude subito, senza chiedere
+
+Un utente chiude solo i propri processi, root tutti.
+
+[system]
+togliere e rimettere il disco di sistema a macchina accesa
+
+  system -status                chi fa da radice: il disco o la base
+  system -unload                chiude i programmi partiti dal disco
+                                e lo smonta: / torna il sistema di
+                                base (/rdboot). -yes non chiede
+  system -load                  lo rimonta su / e riaccende driver,
+                                montaggi e /boot/avvio.sh
+  system -load -check hd0p1     prima lo controlla (chkdsk -r)
+
+A disco tolto si puo' ripartizionare (fdisk) o controllare
+(chkdsk -r) la partizione di sistema. La rete e le sessioni telnet
+cadono: partono dal disco. Restano tastiera, console e i programmi
+della base. Serve un avvio con il sistema di base: se /rdboot non
+c'e', una volta `netupdate -avvio` e un riavvio.
+
+[usb]
+le porte USB: cosa c'e', togliere, riprendere
+
+  usb -status           i dispositivi su ogni controller
+  usb -unplug           ferma una chiavetta prima di toglierla
+  usb -refresh          riguarda le porte
+
+[nv50.drv]
+il pannello alla risoluzione nativa sulle NVIDIA G80 (CQ60)
+
+  nv50.drv -stato       il display com'e' (sola lettura)
+  nv50.drv -nativo      pannello e console a 1366x768 nativi
+  nv50.drv -install     a ogni avvio (blocco in /boot/avvio.sh)
+  nv50.drv -remove      toglie il blocco
+  nv50.drv -2dprova     motore 2D: disegna, rilegge, dice se e' giusto
+  nv50.drv -2dmisura    processore contro motore, in MB/s
+  nv50.drv -2dservizio &   il motore offerto alla scrivania
+
+Non sostituisce svga.drv: parte dal modo VESA che svga.drv sceglie
+e porta il pannello al nativo. Su un'altra macchina esce zitto.
+Il motore 2D vuole prima -nativo. In prova: non e' ancora in -install.
+
+[driver -install]
+far partire un driver a ogni avvio
+
+  <driver> -install     scrive in /boot/avvio.sh il suo blocco
+  <driver> -remove      lo toglie
+
+Il blocco comincia con "# -install <driver>" e finisce alla prima
+riga vuota. hwconfig, che riscrive avvio.sh per intero, lo riporta
+avanti. Oggi lo ha nv50.drv; gli altri driver si aggiungono man mano.
 
 [mem]
 quanta memoria c'e' e quanta se ne usa
@@ -399,6 +465,9 @@ crea e cancella partizioni
 Interattivo. Non tocca i dischi GPT: la loro tabella MBR e' protettiva
 e riscriverla renderebbe il disco irraggiungibile.
 
+Il disco di sistema non si ripartiziona mentre e' montato: prima
+`system -unload`, poi fdisk, poi `system -load` (vedi `help system`).
+
 [mkfs]
 formatta una partizione
 
@@ -431,6 +500,11 @@ controlla un filesystem
 
   chkdsk hd0p1                     guarda e riferisce
   chkdsk -r hd0p1                  ripara quello che sa riparare
+
+La riparazione vuole il volume NON montato. Per la partizione di
+sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
+`system -load -check`. Dopo uno spegnimento brusco lo fa da solo
+l'avvio, prima di montarla.
 
 [install]
 installa EX-OS su un disco, o gli strumenti dal CD

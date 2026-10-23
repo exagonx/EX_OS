@@ -19,14 +19,16 @@ Per aggiungerne altri dopo: `login -a`.
 
 ## 4.2 La rete all'avvio
 
-`/boot/autoexec.sh` è una riga per comando, come se le battessi tu.
+La rete si accende da `/boot/avvio.sh`, che `login` esegue **da root, una
+volta, prima di chiedere chi sei**: così c'è anche per chi non ha ancora
+fatto l'accesso. Lo scrive `hwconfig` con il driver della scheda che trova.
+`/boot/autoexec.sh` resta per i comandi di chi entra.
 
 ```
-/dev/pci.drv &
+pci.drv &
 netdetect -c
-/dev/ip.drv &
+ip.drv &
 dhcp
-ipcfg
 ```
 
 ! **L'ORDINE NON E' UNA FORMALITA'.** `pci.drv` è il fornitore di tutti: senza,
@@ -48,6 +50,11 @@ telnetd &          chiede utente e password
 telnetd -s &       dà una shell da amministratore SENZA password
 ```
 
+Per averla a ogni avvio non si tocca nessuno script: in `/boot/avvio.sh` c'è
+già la riga `telnetd -auto &`, che legge `/boot/telnetd.cfg` e parte solo se
+la chiave `avvio` dice `login` (chiede la password) o `root` (non la
+chiede). `telnetd -h` spiega i valori.
+
 ! **`-s` E' UNA PORTA APERTA, E VA SCELTO SAPENDOLO.** Su una rete di casa, per
   provare i driver di una macchina in un'altra stanza, è esattamente quel che
   serve. Su qualunque altra rete è una porta aperta. E telnet è in chiaro
@@ -56,12 +63,9 @@ telnetd -s &       dà una shell da amministratore SENZA password
   Ora che hai i conti veri, `telnetd &` senza `-s` costa una digitazione in
   più e chiude la porta.
 
-Per averlo a ogni avvio, aggiungi la riga a `/boot/autoexec.sh`.
-
-! **ATTENZIONE: `autoexec.sh` FA PARTE DEL PACCHETTO `sistema`**, quindi
-  `netupdate` te lo può risostituire. Se un giorno la shell remota sparisce
-  dall'avvio senza che tu abbia toccato niente, guarda se accanto c'è un
-  `autoexec.sh.old`.
+! **`avvio.sh` LO RISCRIVE `hwconfig`**, per intero: una riga aggiunta a
+  mano sparisce alla configurazione dopo. Per questo telnetd ha il suo file
+  di configurazione, e i driver hanno `-install` (vedi 4.9).
 
 ---
 
@@ -115,6 +119,39 @@ veloce non conviene, e infatti il predefinito resta 32.
 
 L'altra leva è la risoluzione: 640x480 sposta il 36% in meno di 800x600.
 
+### Il pannello alla risoluzione nativa (NVIDIA G80, Compaq CQ60)
+
+Il BIOS video di alcuni portatili non offre la risoluzione del pannello: il
+CQ60 ha un pannello 1366x768 e il BIOS si ferma a 1280x720, che il pannello
+allarga e sfoca. `nv50.drv` programma da sé il display della scheda:
+
+```
+nv50.drv -stato          com'è adesso (non tocca niente)
+nv50.drv -nativo         pannello e console a 1366x768 adesso
+nv50.drv -install        a ogni avvio; -remove lo toglie
+```
+
+! **NON SOSTITUISCE `svga.drv`**: parte dal modo VESA che `svga.drv` ha
+  scelto (va bene 1024x768). Su una macchina con un'altra scheda o un altro
+  pannello `-avvio` esce senza dire niente.
+
+! **VA FATTO PRIMA DELLA SCRIVANIA**: con ExWin acceso il kernel rifiuta il
+  cambio. Da `-install` in poi succede da sé, prima del prompt.
+
+La console arriva a 170 colonne per 48 righe.
+
+Il motore 2D della scheda (riempimenti e copie fatti dalla GPU) è in prova,
+e vuole il pannello già nativo:
+
+```
+nv50.drv -2dprova        accende il motore, disegna, rilegge: «giusto» o MALE
+nv50.drv -2dmisura       processore contro motore, in MB/s
+nv50.drv -2dservizio &   il motore offerto alla scrivania (accel2d)
+```
+
+Finché le prove non sono passate sul portatile non entra in `-install`, e
+la scrivania a 1366x768 disegna con il processore.
+
 ### Se resta in testo dopo il riavvio
 
 Non è un guasto silenzioso: **Stage 2 dice perché**, con una riga che comincia
@@ -159,3 +196,57 @@ Un mouse **seriale** è invece hardware separato, e ha il suo driver:
 /dev/mouseser.drv com1      COM1
 /dev/mouseser.drv -i        dice solo se la UART c'e'
 ```
+
+---
+
+## 4.8 Il disco di sistema a macchina accesa
+
+Dal kernel 0.269 il sistema parte da un **sistema di base** in memoria
+(`/rdboot`: shell, login, `mount`, `ps`, `kill`, `fdisk`, `chkdsk`,
+`system`, i driver dei dischi) e monta il disco di sistema **sopra** `/`.
+Il disco si può quindi togliere e rimettere senza riavviare:
+
+```
+system -status               chi fa da radice
+system -unload               chiude chi usa il disco e lo smonta
+fdisk hd0                    ripartizionare il disco di sistema
+chkdsk -r hd0p1              o controllarlo
+system -load                 lo rimette e riaccende rete, telnetd, ...
+system -load -check hd0p1    lo controlla prima di rimontarlo
+```
+
+! **`-unload` CHIUDE TUTTO CIO' CHE PARTE DAL DISCO**: la rete, telnetd, la
+  scrivania, la barra di stato. Prima elenca e chiede; restano tastiera e
+  console. Da una sessione telnet si chiude anche la sessione: meglio dalla
+  tastiera, o tutto in una riga
+  (`system -unload -yes; chkdsk -r hd0p1; system -load`).
+
+! **DOPO UNO SPEGNIMENTO BRUSCO** l'avvio trova il disco segnato «in uso»,
+  lo controlla con `chkdsk -r` mentre è smontato, e poi lo monta. Lo dice a
+  schermo; i dettagli con `dmesg SISTEMA`.
+
+! **SE `/rdboot` NON C'E'** la macchina è stata aggiornata da un kernel 0.268
+  o prima: vedi [3.4b](03-dalla-rete.md).
+
+Chi tiene occupato un montaggio lo dicono `ps -m /` e `umount`, quando
+rifiuta.
+
+---
+
+## 4.9 I driver all'avvio: `-install`
+
+Un driver si fa partire a ogni avvio **con il driver stesso**, non
+scrivendo a mano negli script:
+
+```
+nv50.drv -install            scrive il suo blocco in /boot/avvio.sh
+nv50.drv -remove             lo toglie
+```
+
+Il blocco comincia con `# -install <driver>` e finisce alla prima riga
+vuota; `hwconfig`, che riscrive `avvio.sh`, lo riporta avanti. Oggi lo ha
+`nv50.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
+vecchio modo: la riga in `avvio.sh` (che `hwconfig` riscrive) o la voce in
+`[modules]` di `kernel.cfg` per ciò che deve esserci prima di tutto, come la
+tastiera.
+

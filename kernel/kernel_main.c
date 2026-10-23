@@ -170,6 +170,16 @@ static void print_system_info(BootInfo *info)
 static int     g_rimandato = 0;               /* il disco di sistema e' rimandato */
 static uint8_t g_drv_avviato[CFG_MAX_MODULES];
 
+/* 0 if the path already starts with /rdboot/ */
+static int kstrncmp_rd(const char *p)
+{
+    static const char rd[] = "/rdboot/";
+    uint32_t i;
+
+    for (i = 0; rd[i]; i++) if (p[i] != rd[i]) return 1;
+    return 0;
+}
+
 /* "/rdboot" + percorso */
 static void unisci_base(char *dst, uint32_t cap, const char *percorso)
 {
@@ -442,6 +452,19 @@ static void avvia_shell(KernelConfig *cfg)
             const char *avviare = (cfg->login_path[0] && vfs_radice_ext2())
                                   ? cfg->login_path
                                   : cfg->shell_path;
+            /* ! THE BASE SYSTEM'S COPY FIRST (@RDBOOT step 5, 23 October 2026):
+             * /rdboot/bin/login rather than /bin/login. The disk's copy would
+             * keep the system disk busy, and `system -unload` would have to
+             * close every console to take it away; the base's survives, and
+             * the program is the same. */
+            static char base_sh[CFG_PATH_LEN + 8];
+            VfsStat     st_base;
+            int         era_login = (avviare != cfg->shell_path);
+
+            if (avviare[0] == '/' && kstrncmp_rd(avviare) != 0) {
+                unisci_base(base_sh, sizeof(base_sh), avviare);
+                if (vfs_stat(base_sh, &st_base) == 0) avviare = base_sh;
+            }
             int rc_shell = elf_load(avviare, shell_proc, &elf_res);
 
             /* =================================================================
@@ -464,7 +487,7 @@ static void avvia_shell(KernelConfig *cfg)
              * Makefile): e' il programma con cui si ripara, quindi non deve
              * dipendere da niente che possa essere rotto a sua volta.
              * ================================================================= */
-            if (rc_shell != 0 && avviare != cfg->shell_path) {
+            if (rc_shell != 0 && era_login) {
                 klog(LOG_ERROR, "[PASSO 15] Console %u: '%s' non si carica "
                      "(err=%d) - apro un recovery come root", n, avviare,
                      rc_shell);

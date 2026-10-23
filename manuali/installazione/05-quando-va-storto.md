@@ -195,3 +195,41 @@ FAT: catena ciclica in una directory (cluster N), mi fermo
 
 ! **NESSUN FILESYSTEM DEVE POTER FERMARE LA MACCHINA**, per malmesso che sia.
   Un supporto che arriva da fuori non è un dato fidato.
+
+---
+
+## `umount /` o `system -unload`: «occupato»
+
+Qualcuno usa ancora il disco. Chi, lo dice
+
+```
+ps -m /
+```
+
+per ogni processo: il programma (sta sul disco), file aperti, la directory
+corrente. La directory corrente da sola non blocca: `system -unload` sposta
+in `/` chi stava in una directory che la base non ha. Un programma partito
+dal disco sì, finché gira.
+
+! **FINO AL KERNEL 0.273 ANCHE UN PROGRAMMA GIA' FINITO TENEVA IL DISCO**: un
+  processo terminato resta «zombie» finché il padre non lo raccoglie, e
+  intanto teneva aperto il proprio programma. Dal 0.274 il programma si
+  chiude subito, e gli zombie il cui padre è morto li raccoglie `init`.
+
+! **E `system` STESSO, SE PARTE DA `/bin`**: il PATH mette `/bin` prima di
+  `/rdboot/bin`. Lo sa, e si rilancia da solo dalla copia della base.
+
+---
+
+## Ogni avvio dice che `kernel.cfg` e stage 2 non vanno d'accordo sulla risoluzione
+
+Guarda la sezione `[kernel]` di `/boot/kernel.cfg`: se ci sono **più righe
+`svga =`**, il kernel ne legge una e `svga.drv` ne cambiava un'altra. È
+successo sul Compaq CQ60, con cinque righe alternate. Da `svga.drv` 0.005
+basta rilanciare
+
+```
+svga.drv 1024x768        (o il modo che vuoi)
+```
+
+e ne resta una sola. Poi `reboot`.

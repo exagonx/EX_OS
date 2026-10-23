@@ -8077,6 +8077,44 @@ tools/netinst/velocita tolto da netinst.
       deve esserci prima di tutto, come kbd/pci/uhci senza 8042), con
       -remove per toglierlo.
 
+  25. EXWIN A SCATTI SUL CQ60 (l'utente, 23/10): "il 2D che con Linux e
+      windows e' fluido con exwin opera a scatti, non e' piu' una questione
+      di risoluzione ma una mancanza del driver". Vero: wserver compone con
+      la CPU (MMX) in un buffer ombra e copia i rettangoli sporchi nella
+      memoria video; l'acceleratore (g_acc) c'e' solo per la SiS. Sul
+      portatile la scrittura combinata e' attiva (dmesg MTRR: 0xd0800000,
+      8 MB), quindi non e' quello. Serve l'acceleratore 2D della G80 (classe
+      0x502d) come servizio, sul modello di sis.drv -2dservizio: canale del
+      display gia' preso; mancano memoria virtuale della scheda (la G80 la
+      vuole sempre), un canale di comandi (RAMIN/RAMFC, push buffer), e
+      l'avvio di PGRAPH con il suo contesto (nouveau: nv50 grctx). Lavoro
+      lungo, a passi: 1 misurare dove va il tempo (composizione o copia),
+      2 canale + riempimento rettangoli, 3 copie (spostare finestre,
+      scorrere), 4 wserver che lo usa come g_acc.
+      ! REGOLA DELL'UTENTE (23/10): "ogni volta che viene sviluppato un
+      driver dedicato questo venisse sfruttato interamente come per sis,
+      altrimenti non ha senso, tanto vale rimanere alla svga.drv se serve
+      solo la risoluzione elaborata da MMX". Quindi questa voce e' il
+      seguito obbligato di nv50.drv, non un'aggiunta facoltativa.
+      PASSI 2 E 3 SCRITTI (23/10, nv50.drv 0.006, da provare sul
+      portatile): G80InitHW di xf86-video-nv (MIT) porta un canale solo
+      senza memoria virtuale ne' grctx: oggetti a mano in PRAMIN (0x6420
+      nullo, 0x6440 push buffer, 0x6460 la 0x502d, 0x6480 VRAM - sulle
+      integrate 0xaa/0xac con l'indirizzo fisico della RAM rubata
+      0x100E10 -, 0x64a0 notifica), push buffer a 16MB-0xe000, PUT
+      0xC02040, fine lavoro con la notifica in PRAMIN 0x11008.
+      -2dprova (riempie, copia, copia sovrapposta, RILEGGE), -2dmisura
+      (CPU via fb_map: riempire, ombra->schermo, leggere; motore: riempire,
+      copiare), -2dservizio (accel2d come sis). Prima di azzerare la
+      finestra PRAMIN si controlla che 0x1700 guardi l'ultimo mega, sopra
+      i nostri 16 MB: altrimenti ci si ferma e si stampano i numeri.
+      ! NOTA PER IL PASSO 4: wserver con l'ombra in RAM NON usa g_acc
+      (riempie in RAM, dove il motore non arriva). Il guadagno vero e' il
+      modello di EXA: le finestre in memoria video e la composizione con
+      copie del motore (spostare una finestra = una copia, niente CPU);
+      la CPU scrive solo quel che il client aggiorna. Si decide coi numeri
+      di -2dmisura: se ombra->schermo e' lenta, e' li' che va il tempo.
+
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):
      a. FINESTRA DI INVIO: TCP_BUF 4096 = al massimo 4 KB in volo in uscita;
@@ -8441,6 +8479,18 @@ tools/netinst/velocita tolto da netinst.
       Prova: tools/prova_uso.sh (usoprova tiene /a, ps, ps -m, umount
       occupato, kill, umount riesce): 32 e 64 OK; prova_rdboot e
       prova_sistema rifatte, OK.
+      PASSO 5 FATTO (kernel 0.274, 23/10): /bin/system 0.001 (-status,
+      -unload [-yes], -load [-check] [part]) toglie e rimette il disco di
+      sistema a macchina accesa. -unload: chi lo usa, TERM, 5 s, KILL,
+      umount /; -load: monta, avvia i [modules] che mancano, i [mount],
+      riesegue /boot/avvio.sh con /rdboot/bin/sh. Se gira dal disco si
+      riesegue da /rdboot/bin/system. Nel kernel: init raccoglie gli
+      zombie orfani e libera presto l'eseguibile dello zombie; dopo
+      umount / chi era in una directory sparita va in /; exec ora passa
+      argv/envp (prima li ignorava); login e shell preferiscono le copie
+      in /rdboot. Prova: tools/prova_system.sh 32 e 64 OK; regressioni
+      rdboot, sistema, uso, usb OK. Manuali: sistema.html #base,
+      04-dopo-installazione 4.8.
   15. EXILLA SUL PORTATILE (l'utente, 21/10 notte):
       a. la finestra di caricamento (attesa) non si chiude quando Firefox
          ha aperto la sua finestra. attesa confronta il pid della finestra

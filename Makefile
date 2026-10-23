@@ -362,7 +362,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_prog usb_prog disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_prog usb_prog system_prog disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -910,6 +910,25 @@ $(KILL_BIN): $(KILL_SRC) $(KILL_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(L
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(KILL_LD) \
 	    $(BUILD_OBJ)/kill_start.o $(BUILD_OBJ)/kill_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] kill compilato: $@"
+
+# --- Programma utente /bin/system (@RDBOOT passo 5) -----------------------------
+# Toglie e rimette il disco di sistema a macchina accesa (-unload, -load). Sta
+# nel sistema di base: dal disco si chiuderebbe da solo.
+SYSTEM_SRC := bin/system/system.c
+SYSTEM_BIN := $(BUILD_BIN)/system
+SYSTEM_LD  := bin/system/system.ld
+
+$(SYSTEM_BIN): $(SYSTEM_SRC) $(SYSTEM_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/system ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(SYSTEM_SRC) -o $(BUILD_OBJ)/system_main.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/system_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SYSTEM_LD) \
+	    $(BUILD_OBJ)/system_start.o $(BUILD_OBJ)/system_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] system compilato: $@"
+
+.PHONY: system_prog
+system_prog: dirs $(SYSTEM_BIN)
 
 # --- Programma utente /bin/usb ------------------------------------------------
 # Le porte USB chieste ai driver (sportelli usb.*), togliere e riprendere una
@@ -5304,10 +5323,10 @@ NV50_DRV_SRC  := drivers/nv50/nv50.c
 NV50_DRV_OUT  := $(BUILD_DRIVERS_CD)/nv50.drv
 NV50_DRV_LD   := drivers/nv50/nv50.ld
 
-$(NV50_DRV_OUT): $(NV50_DRV_SRC) $(PCI_DRV_PROTO) $(NV50_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(NV50_DRV_OUT): $(NV50_DRV_SRC) $(PCI_DRV_PROTO) drivers/accel/accel_proto.h $(NV50_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione driver ring3 nv50.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(NV50_DRV_SRC) -o $(BUILD_DRIVERS_CD)/nv50_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/accel -c $(NV50_DRV_SRC) -o $(BUILD_DRIVERS_CD)/nv50_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/nv50_libc.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/nv50_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NV50_DRV_LD) \
@@ -5887,7 +5906,7 @@ $(KERNEL_BIN): $(KERNEL_ELF) $(SEGNO_FLAG)
 # aggiunto solo alla prima si costruisce e non entra mai in un floppy nuovo.
 # La guardia `verifica-dipendenze-floppy` qui sotto confronta le due.
 PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
-                        $(STACK_BIN) $(PS_BIN) $(KILL_BIN) $(USB_BIN) $(DISK_BIN) $(FDISK_BIN) \
+                        $(STACK_BIN) $(PS_BIN) $(KILL_BIN) $(USB_BIN) $(SYSTEM_BIN) $(DISK_BIN) $(FDISK_BIN) \
                         $(MKFS_BIN) $(MKSWAP_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) \

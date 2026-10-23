@@ -370,7 +370,11 @@ silenzio, gli altri restano a guardare le porte, perche' una chiavetta di
 solito si infila dopo l'accensione. Su una macchina Intel con sole porte
 USB 1.1 va aggiunta a mano la riga <code>/dev/uhci.drv -avvio &amp;</code>;
 con un xHCI, <code>/dev/xhci.drv &amp;</code>. Per vedere che cosa c'e'
-sulle porte: <code>ohci.drv -d</code>, <code>xhci.drv -v</code>.
+sulle porte: <code>usb -status</code> (dal kernel 0.271), oppure
+<code>ohci.drv -d</code>, <code>xhci.drv -v</code>. <code>usb -unplug</code>
+ferma una chiavetta prima di toglierla, <code>usb -refresh</code> riguarda
+le porte. All'avvio i driver USB tacciono, a meno di
+<code>verboseboot = 1</code>.
 </p>
 
 <p class="nota">
@@ -481,14 +485,21 @@ All'avvio il kernel lo dice, e vale la pena leggerlo: dice quanti slot da
 4 KB ha trovato, cioe' quanta memoria in piu' ha davvero.
 </p>
 
-<h2>L'avvio, passo per passo</h2>
+<h2 id="avvio">L'avvio, passo per passo</h2>
 
 <ol>
 <li>il settore di avvio carica <b>stage 2</b>;</li>
 <li>stage 2 passa in modo protetto, imposta il video (VESA, se la
-    configurazione lo dice) e carica <code>kernel.bin</code>;</li>
-<li>il kernel legge <code>/boot/kernel.cfg</code>, monta la radice, carica i
-    moduli della sezione <code>[modules]</code>;</li>
+    configurazione lo dice) e carica <code>kernel.bin</code> e il
+    <a href="#base">sistema di base</a>, <code>/boot/rdboot.lz4</code>;</li>
+<li>il kernel espande il sistema di base in memoria e lo monta su
+    <code>/rdboot</code>; legge <code>/boot/kernel.cfg</code> dal disco, poi
+    toglie il disco da sotto <code>/</code> e avvia i driver di
+    <code>[modules]</code> dalla base;</li>
+<li>se il disco di sistema non era stato chiuso bene (spegnimento brusco) lo
+    controlla e lo ripara (<code>/rdboot/bin/chkdsk -r</code>) mentre e'
+    smontato; poi lo rimonta su <code>/</code>, avvia i driver che la base
+    non ha e i montaggi di <code>[mount]</code>;</li>
 <li>avvia <code>login</code>, che <b>prima</b> di chiedere chi sei esegue
     <code>/boot/avvio.sh</code> da amministratore &mdash; li' dentro sta la
     rete, che deve essere accesa anche per chi non ha ancora fatto
@@ -504,6 +515,151 @@ All'avvio il kernel lo dice, e vale la pena leggerlo: dice quanti slot da
 mano un <code>kernel.bin</code> nuovo su un disco gia' installato deve
 rilanciare <code>install</code>: senza, il disco riparte con la versione di
 prima e nessuno dice niente.
+</p>
+
+<h2 id="base">Il sistema di base in memoria, e il disco di sistema</h2>
+
+<p>
+Dal kernel 0.269 l'avvio carica, oltre al kernel, un archivio compresso
+(<code>/boot/rdboot.lz4</code>, circa mezzo MB) con il <b>sistema di base</b>:
+shell, <code>login</code>, <code>mount</code>, <code>ps</code>,
+<code>kill</code>, <code>fdisk</code>, <code>chkdsk</code>,
+<code>system</code>, la libreria C e i driver che servono a raggiungere i
+dischi (tastiera, PCI, IDE/AHCI, USB). Sta in memoria e si vede in
+<code>/rdboot</code>; il disco di sistema si monta <b>sopra</b>
+<code>/</code>. Il PATH comprende <code>/rdboot/bin</code> e
+<code>/rdboot/dev</code> anche se <code>kernel.cfg</code> non li nomina.
+</p>
+
+<p>
+Il login e la shell delle console sono <b>quelli della base</b>
+(<code>/rdboot/bin/login</code>, <code>/rdboot/bin/sh</code>) anche se
+<code>kernel.cfg</code> dice <code>/bin/login</code>: sono lo stesso
+programma, e cosi' le console sopravvivono quando il disco se ne va.
+</p>
+
+<h3>Togliere e rimettere il disco: <code>system</code></h3>
+
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>system -status</code></td><td>chi fa da radice: il disco o la base</td></tr>
+<tr><td><code>system -unload</code></td><td>elenca i programmi partiti dal disco (o che ci tengono file aperti), chiede conferma
+    (<code>-yes</code> no), li chiude &mdash; prima chiedendo, dopo cinque secondi senza chiedere &mdash; e smonta il
+    disco: <code>/</code> torna il sistema di base. Chi stava in una directory che la base non ha finisce in <code>/</code></td></tr>
+<tr><td><code>system -load</code></td><td>rimonta su <code>/</code> la partizione di prima, avvia i driver di
+    <code>[modules]</code> che non girano, i montaggi di <code>[mount]</code> e <code>/boot/avvio.sh</code> (rete, telnetd,
+    il pannello nativo...)</td></tr>
+<tr><td><code>system -load -check hd0p1</code></td><td>prima la controlla con <code>chkdsk -r</code></td></tr>
+</table>
+
+<p>
+A disco tolto si puo' <b>ripartizionare il disco di sistema</b> o
+controllarlo:
+</p>
+<pre>
+system -unload
+fdisk hd0              (oppure: chkdsk -r hd0p1)
+system -load
+</pre>
+
+<p class="nota">
+<b>Chi cade.</b> Tutto cio' che parte dal disco: la rete, telnetd (una
+sessione telnet si chiude), la scrivania, <code>extaskbar</code>, i driver
+installati sul disco. Restano tastiera, console e i programmi della base.
+<code>system -load</code> li riaccende con <code>/boot/avvio.sh</code>.
+Lanciato da una sessione telnet, <code>system -unload</code> chiude anche la
+sessione: va fatto dalla tastiera, o in un comando solo
+(<code>system -unload -yes; fdisk ...; system -load</code>).
+</p>
+
+<p class="nota">
+<b>Su un sistema aggiornato dal kernel 0.268 o prima</b> il sistema di base
+non c'e' ancora: <code>netupdate -avvio</code> riscrive l'avvio, e al
+riavvio dopo compare <code>/rdboot</code>. Senza, <code>system</code> dice
+che il disco non si puo' togliere.
+</p>
+
+<h3>Dopo uno spegnimento brusco</h3>
+<p>
+Una partizione ext2 montata in scrittura e' segnata &laquo;in uso&raquo; e
+torna &laquo;pulita&raquo; quando si smonta o si spegne con
+<code>poweroff</code>. Se all'avvio la si trova &laquo;in uso&raquo;,
+l'avvio la controlla e la ripara da solo prima di montarla, e lo dice a
+schermo. Il risultato sta in <code>dmesg SISTEMA</code>.
+</p>
+
+<h2 id="driver">I driver all'avvio: <code>-install</code></h2>
+
+<p>
+Un driver puo' partire all'avvio da due posti:
+</p>
+<table border="1">
+<tr><th>Dove</th><th>Quando si usa</th></tr>
+<tr><td><code>[modules]</code> di <code>/boot/kernel.cfg</code></td><td>li avvia il kernel, tutti insieme, prima di
+    tutto il resto: la tastiera, e sulle macchine senza tastiera PS/2 il PCI e l'USB</td></tr>
+<tr><td><code>/boot/avvio.sh</code></td><td>lo esegue <code>login</code>, da root, prima di chiedere chi sei, una riga dopo
+    l'altra: tutto cio' che vuole un ordine (PCI, scheda di rete, IP, DHCP) e i servizi</td></tr>
+</table>
+
+<p>
+<b>Ogni driver ha (o avra') <code>-install</code> e <code>-remove</code></b>:
+il primo scrive le righe che lo fanno partire, il secondo le toglie.
+In <code>/boot/avvio.sh</code> le righe stanno in un blocco:
+</p>
+<pre>
+# -install nv50.drv
+# (i commenti del driver)
+nv50.drv -avvio
+</pre>
+<p>
+che finisce alla prima riga vuota e va prima di
+<code>@echo Sistema pronto.</code>. <code>hwconfig</code> riscrive
+<code>avvio.sh</code> per intero ma questi blocchi li riporta avanti: un
+driver installato non sparisce alla configurazione dopo. Per i programmi:
+<code>avvio_blocco()</code> e <code>avvio_ha_riga()</code> della libreria C.
+</p>
+
+<h2 id="video">La scheda video</h2>
+
+<table border="1">
+<tr><th>Driver</th><th>Che cosa fa</th></tr>
+<tr><td><code>svga.drv</code></td><td>sceglie la risoluzione: la imposta stage 2 col BIOS (VESA) all'accensione, quindi
+    serve un riavvio. Vale per tutte le schede</td></tr>
+<tr><td><code>sis.drv</code></td><td>SiS 6330/M760: rimette il testo da modo protetto e accende l'acceleratore 2D che
+    la scrivania usa (<code>sis.drv -2dservizio</code>, in <code>avvio.sh</code>)</td></tr>
+<tr><td><code>nv50.drv</code></td><td>NVIDIA G80 e seguenti (GeForce 8000M/9000M, MCP77/79): porta il pannello alla
+    risoluzione nativa, che il BIOS video non offre (Compaq CQ60: 1366x768, il BIOS si ferma a 1280x720).
+    <code>-nativo</code> lo fa subito, <code>-install</code> a ogni avvio, <code>-stato</code> legge e basta</td></tr>
+</table>
+
+<p>
+<code>nv50.drv</code> e <code>sis.drv</code> <b>non sostituiscono</b>
+<code>svga.drv</code>: partono dal modo che lui ha scelto. Il kernel passa
+la console al framebuffer nuovo senza riavvio (chiamata
+<code>video_cambia</code>, solo un driver da root, rifiutata se la scrivania
+e' accesa). La console arriva a 170 colonne per 48 righe (1366x768, caratteri
+8x16).
+</p>
+
+<p class="nota">
+<b>L'accelerazione 2D della NVIDIA e' in prova</b> (<code>nv50.drv</code>
+0.006). Il motore 2D della scheda (classe 0x502d, la stessa che usava il
+driver <code>nv</code> di X) si accende con un canale solo e un push buffer
+in cima alla memoria video, dopo <code>-nativo</code>:
+<code>-2dprova</code> riempie e copia rettangoli e li rilegge,
+<code>-2dmisura</code> mette a confronto processore e motore,
+<code>-2dservizio &amp;</code> offre il motore alla scrivania col nome
+<code>accel2d</code>, come <code>sis.drv</code>. Finche' le prove sul
+portatile non sono passate non entra in <code>-install</code>, e la
+scrivania disegna con il processore (MMX), come con VESA.
+</p>
+
+<p class="nota">
+<b>Una voce <code>svga</code> sola.</b> Se <code>[kernel]</code> ne ha piu'
+d'una (e' capitato), il kernel ne legge una e <code>svga.drv</code> ne
+cambiava un'altra: a ogni avvio l'avviso che kernel.cfg e stage 2 non vanno
+d'accordo. Da <code>svga.drv</code> 0.005 la riscrittura lascia una voce
+sola: basta rilanciare <code>svga.drv &lt;modo&gt;</code>.
 </p>
 
 <h2>Gli utenti</h2>

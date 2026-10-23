@@ -45,9 +45,10 @@
  * ============================================================================= */
 #include "libc.h"
 #include "pci_proto.h"
+#include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.004");
+EX_VERSIONE("nv50.drv", "0.006");
 
 #define NV_VENDITORE   0x10DE
 
@@ -56,18 +57,26 @@ EX_VERSIONE("nv50.drv", "0.004");
 typedef struct {
     unsigned int base, byte;
     volatile unsigned int *v;
+    int          d2;                /* 1 = solo per il motore 2D (mappa_2d) */
 } Finestra;
 
 static Finestra g_fin[] = {
-    { 0x000000, 0x1000, 0 },        /* PMC: il chip */
-    { 0x00E000, 0x1000, 0 },        /* PBUS: gli I2C, per l'EDID (passo dopo) */
-    { 0x100000, 0x1000, 0 },        /* PFB: quanta memoria video */
-    { 0x610000, 0x2000, 0 },        /* il display: stato, comandi, metodi */
-    { 0x614000, 0x1000, 0 },        /* gli orologi delle teste e dei SOR */
-    { 0x616000, 0x1000, 0 },        /* le capacita' delle teste */
-    { 0x619000, 0x1000, 0 },        /* la VGA ereditata */
-    { 0x61A000, 0x2000, 0 },        /* i DAC */
-    { 0x61C000, 0x2000, 0 },        /* i SOR: LVDS e digitali */
+    { 0x000000, 0x1000, 0, 0 },     /* PMC: il chip */
+    { 0x00E000, 0x1000, 0, 0 },     /* PBUS: gli I2C, per l'EDID (passo dopo) */
+    { 0x100000, 0x1000, 0, 0 },     /* PFB: quanta memoria video */
+    { 0x610000, 0x2000, 0, 0 },     /* il display: stato, comandi, metodi */
+    { 0x614000, 0x1000, 0, 0 },     /* gli orologi delle teste e dei SOR */
+    { 0x616000, 0x1000, 0, 0 },     /* le capacita' delle teste */
+    { 0x619000, 0x1000, 0, 0 },     /* la VGA ereditata */
+    { 0x61A000, 0x2000, 0, 0 },     /* i DAC */
+    { 0x61C000, 0x2000, 0, 0 },     /* i SOR: LVDS e digitali */
+    /* Il motore 2D (G80InitHW): si mappano solo per -2d... */
+    { 0x001000, 0x1000, 0, 1 },     /* 0x1700: dove guarda la finestra PRAMIN */
+    { 0x002000, 0x1000, 0, 1 },     /* PFIFO: interruzioni, tabella dei canali */
+    { 0x003000, 0x1000, 0, 1 },     /* PFIFO: il canale del push buffer */
+    { 0x400000, 0x8000, 0, 1 },     /* PGRAPH */
+    { 0x700000, 0x100000, 0, 1 },   /* la finestra PRAMIN: oggetti e hash */
+    { 0xC02000, 0x1000, 0, 1 },     /* PUT e GET del canale */
 };
 #define N_FIN (sizeof(g_fin) / sizeof(g_fin[0]))
 
@@ -163,13 +172,15 @@ static int trova_scheda(PciDispositivo *d)
     return 0;
 }
 
-static int mappa(void)
+static int mappa(int d2)
 {
     unsigned int i;
 
     for (i = 0; i < N_FIN; i++) {
         MmioZona m;
         int      rc;
+
+        if (g_fin[i].d2 != d2 || g_fin[i].v) continue;
 
         m.fisico = g_bar0 + g_fin[i].base;
         m.byte   = g_fin[i].byte;
@@ -567,22 +578,37 @@ static void motivo(void)
 
 /* motivo_si: 1 = -prova (il motivo, la console resta dov'era), 0 = -nativo
  * (framebuffer nero, e la console del kernel ci passa sopra). */
-static int prova(int motivo_si)
+/* La memoria video: quanta (g80_driver.c: in KB, meno un mega che tiene il
+ * chip) e mappata dalla BAR1. Ne usiamo i primi 16 MB: il framebuffer a 8 MB,
+ * e in cima il push buffer del motore 2D, la tavolozza e il cursore. */
+static int memoria(void)
 {
-    unsigned int tmp = rd(0x10020C), lut, i;
-    unsigned int tempi[4];
+    unsigned int tmp = rd(0x10020C);
     MmioZona     m;
 
-    /* g80_driver.c: la memoria video in KB, meno un mega che tiene il chip. */
+    if (g_vram) return 0;
     g_vram_kb = (tmp >> 10 | (tmp & 1) << 22);
-    if (g_vram_kb <= 1024) { printf("nv50: memoria video sconosciuta (0x%08x)\n", tmp); return 1; }
+    if (g_vram_kb <= 1024) { printf("nv50: memoria video sconosciuta (0x%08x)\n", tmp); return -1; }
     g_vram_kb -= 1024;
     if (g_vram_kb > 16384) g_vram_kb = 16384;
     TRACCIA("nv50: memoria video %u KB usabili (0x10020C = 0x%08x)\n", g_vram_kb, tmp);
-    if (FB_OFFSET + FB_PITCH * FB_H > g_vram_kb * 1024 - 0x6000) {
-        printf("nv50: il framebuffer di prova non ci sta\n");
-        return 1;
+    if (FB_OFFSET + FB_PITCH * FB_H > g_vram_kb * 1024 - 0xe000) {
+        printf("nv50: il framebuffer non ci sta\n");
+        return -1;
     }
+    m.fisico = g_bar1;
+    m.byte   = g_vram_kb * 1024;
+    if (mmio_map(&m) != 0) { printf("nv50: mmio_map della memoria video rifiutata\n"); return -1; }
+    g_vram = (volatile unsigned char *)(unsigned long)m.virt;
+    return 0;
+}
+
+static int prova(int motivo_si)
+{
+    unsigned int lut, i;
+    unsigned int tempi[4];
+
+    if (memoria() != 0) return 1;
 
     /* I tempi del pannello, come li ha lasciati il BIOS (in uso). */
     if ((rd(0x610050) & 3) != 2) { TRACCIA("nv50: il pannello non e' sulla testa 0: mi fermo\n"); return 1; }
@@ -595,11 +621,6 @@ static int prova(int motivo_si)
         TRACCIA("nv50: il pannello non e' a %ux%u: mi fermo\n", FB_W, FB_H);
         return 1;
     }
-
-    m.fisico = g_bar1;
-    m.byte   = g_vram_kb * 1024;
-    if (mmio_map(&m) != 0) { printf("nv50: mmio_map della memoria video rifiutata\n"); return 1; }
-    g_vram = (volatile unsigned char *)(unsigned long)m.virt;
 
     lut = g_vram_kb * 1024 - 0x5000;          /* testa 0 */
     TRACCIA("nv50: framebuffer a 0x%x, tavolozza a 0x%x\n", FB_OFFSET, lut);
@@ -700,6 +721,601 @@ static int prova(int motivo_si)
     return g_scadute ? 2 : 0;
 }
 
+/* =============================================================================
+ * IL MOTORE 2D (voce 25 della coda, 23 ottobre 2026)
+ *
+ * ! UN DRIVER DEDICATO CHE DA' SOLO LA RISOLUZIONE NON HA SENSO: per quella
+ * basterebbe svga.drv. Il pannello nativo e' il passo 1; questo e' il passo che
+ * fa lavorare la scheda: riempimenti e copie schermo -> schermo fatti dal
+ * motore 2D della G80 (la classe 0x502d), offerti a wserver col protocollo di
+ * drivers/accel/accel_proto.h, come fa sis.drv per la SiS.
+ *
+ * ! LA FONTE E' xf86-video-nv (g80_driver.c G80InitHW, g80_dma.c, g80_xaa.c,
+ * g80_exa.c), di NVIDIA, licenza MIT. Il motore non si pilota per registri:
+ * gli si scrive un PUSH BUFFER in memoria video (parole «metodo, quanti dati»
+ * seguite dai dati) e gli si dice fin dove leggere (PUT, 0xC02040). Lui legge
+ * e avanza GET (0xC02044). G80InitHW prepara da zero un canale solo, con i suoi
+ * oggetti nella memoria d'istanza (PRAMIN, vista da 0x700000):
+ *
+ *     0x6420  oggetto nullo
+ *     0x6440  contesto DMA del push buffer (VRAM, in cima ai 16 MB usati)
+ *     0x6460  l'oggetto 2D, classe 0x502d
+ *     0x6480  contesto DMA di tutta la VRAM: le superfici sorgente e destino
+ *     0x64a0  contesto DMA in PRAMIN 0x11000: la notifica di fine lavoro
+ *
+ * e una tabella hash a 0x710000 che da' a ognuno il nome 0x8000001x con cui il
+ * push buffer lo chiama.
+ *
+ * ! LA MEMORIA, IN CIMA AI 16 MB CHE USIAMO (V = 16 MB):
+ *
+ *     V - 0xe000 .. V - 0x6000   il push buffer (32 KB)
+ *     V - 0x5000                 la tavolozza della testa 0 (prova())
+ *     V - 0x4000                 il cursore (spento)
+ *     0x800000 ..                il framebuffer 1366x768, pitch 5632
+ *
+ * ! E LA PRIMA RIGA DI G80InitHW AZZERA LA FINESTRA PRAMIN fino a «table1»
+ * (dove il BIOS tiene le sue tabelle). Si fa solo se la finestra guarda
+ * DAVVERO l'ultimo mega della memoria video, lontano dai nostri 16 MB: lo dice
+ * 0x1700. Se non e' cosi' ci si ferma e si stampano i numeri, invece di
+ * azzerare un mega di memoria che potrebbe essere il framebuffer.
+ *
+ * ! QEMU NON HA UNA G80: questa parte si prova solo sul portatile, con
+ * `nv50.drv -2dprova`, che disegna, RILEGGE e dice se e' venuto giusto.
+ * ============================================================================= */
+#define RISERVATA   0xe000u         /* G80_RESERVED_VIDMEM */
+#define SALTA       8u              /* SKIPS: le prime parole del push buffer */
+#define FMT_24      0xe6u           /* X8R8G8B8: profondita' 24 a 32 bit */
+
+static volatile unsigned int *g_dma;
+static unsigned int g_put, g_cur, g_libere, g_max;
+static unsigned int g_arch;
+static int g_2d_scadute;
+
+static void barriera(void) { __sync_synchronize(); }
+
+/* G80DmaWait: aspetta che nel push buffer ci siano `n` parole libere. Quando
+ * la fine del buffer e' vicina si torna all'inizio con un salto (0x20000000)
+ * e si aspetta che il motore ci arrivi. Ogni attesa ha una scadenza. */
+static int dma_aspetta(unsigned int n)
+{
+    unsigned int t0 = uptime_ms();
+
+    n++;
+    while (g_libere < n) {
+        unsigned int get = rd(0xC02044) >> 2;
+
+        if (g_put >= get) {
+            g_libere = g_max - g_cur;
+            if (g_libere < n) {
+                g_dma[g_cur++] = 0x20000000;        /* salta all'inizio */
+                barriera();
+                if (get <= SALTA) {
+                    if (g_put <= SALTA) wr(0xC02040, (SALTA + 1) << 2);
+                    do {
+                        get = rd(0xC02044) >> 2;
+                        if (uptime_ms() - t0 > 1000) goto scaduta;
+                    } while (get <= SALTA);
+                }
+                wr(0xC02040, SALTA << 2);
+                g_cur = g_put = SALTA;
+                g_libere = get - (SALTA + 1);
+            }
+        } else
+            g_libere = get - g_cur - 1;
+        if (uptime_ms() - t0 > 1000) goto scaduta;
+    }
+    return 0;
+scaduta:
+    printf("nv50: ! il motore non legge il push buffer (GET 0x%x, PUT 0x%x)\n",
+           rd(0xC02044), rd(0xC02040));
+    g_2d_scadute++;
+    return -1;
+}
+
+/* G80DmaStart + G80DmaNext: un metodo e i suoi dati, in un colpo. */
+static void M(unsigned int metodo, unsigned int n, const unsigned int *dati)
+{
+    unsigned int i;
+
+    if (g_libere <= n && dma_aspetta(n) != 0) return;
+    g_dma[g_cur++] = (n << 18) | metodo;
+    for (i = 0; i < n; i++) g_dma[g_cur++] = dati[i];
+    g_libere -= n + 1;
+}
+
+static void M1(unsigned int metodo, unsigned int dato) { M(metodo, 1, &dato); }
+
+/* G80DmaKickoff: «leggi fin qui». La barriera prima, perche' la memoria
+ * video e' mappata con le scritture combinate: il push buffer deve essere
+ * arrivato davvero prima che il motore vada a leggerlo. */
+static void parti(void)
+{
+    if (g_cur != g_put) {
+        barriera();
+        g_put = g_cur;
+        wr(0xC02040, g_put << 2);
+    }
+}
+
+/* G80Sync: una notifica in coda, e si aspetta che il motore la scriva (azzera
+ * la mezza parola alta di PRAMIN 0x11008). Quando torna, tutto quel che c'era
+ * prima nel push buffer e' gia' disegnato. */
+static int aspetta_motore(void)
+{
+    volatile unsigned short *n = (volatile unsigned short *)reg_di(0x711008) + 1;
+    unsigned int t0 = uptime_ms();
+
+    M1(0x104, 0);
+    M1(0x100, 0);
+    *n = 0x8000;
+    parti();
+    while (*n)
+        if (uptime_ms() - t0 > 500) {
+            printf("nv50: ! il motore non ha finito in 500 ms: GET 0x%x PUT 0x%x,\n"
+                   "      PFIFO 0x2100 = 0x%08x, PGRAPH 0x400100 = 0x%08x 0x400108 = 0x%08x\n"
+                   "      0x400700 (occupato) = 0x%08x\n",
+                   rd(0xC02044), rd(0xC02040), rd(0x2100), rd(0x400100),
+                   rd(0x400108), rd(0x400700));
+            g_2d_scadute++;
+            return -1;
+        }
+    return 0;
+}
+
+/* La superficie (sorgente e destino) e' sempre lo schermo. */
+static void superficie(unsigned int metodo_fmt, unsigned int metodo_forma)
+{
+    unsigned int f[2] = { FMT_24, 1 };
+    unsigned int s[5] = { FB_PITCH, FB_W, FB_H, 0, FB_OFFSET };
+
+    M(metodo_fmt, 2, f);
+    M(metodo_forma, 5, s);
+}
+
+/* -----------------------------------------------------------------------------
+ * motore_accendi — G80InitHW per l'architettura del portatile, con i controlli
+ * prima. Rende 0 se il motore e' pronto.
+ * --------------------------------------------------------------------------- */
+static int motore_accendi(int verboso)
+{
+    unsigned int tmp, ram, pramin, t1, v, i;
+    VideoInfo    vi;
+
+    if (mappa(1) != 0 || memoria() != 0) return -1;
+    tmp    = rd(0x10020C);
+    g_arch = (rd(0) >> 20) & 0x1ff;
+    ram    = (tmp >> 10 | (tmp & 1) << 22);         /* KB, tutta */
+    pramin = rd(0x1700) << 16;
+    t1     = rd(0x619F04) >> 8;
+    t1     = 0x800000 - (t1 ? (ram << 10) - (t1 << 16) : 0x10000);
+
+    if (verboso) {
+        printf("nv50: architettura 0x%02x, memoria video %u KB\n", g_arch, ram);
+        printf("nv50: PRAMIN a 0x%08x (0x1700 = 0x%08x), table1 a 0x%06x (0x619F04 = 0x%08x)\n",
+               pramin, rd(0x1700), t1, rd(0x619F04));
+        printf("nv50: memoria rubata: base 0x%08x, misura 0x%08x (0x100E10/14)\n",
+               rd(0x100E10) << 12, rd(0x100E14) << 12);
+    }
+
+    /* ! IL FRAMEBUFFER DEVE ESSERE IL NOSTRO: le superfici del motore sono
+     * quelle di prova() (8 MB, pitch 5632). Col modo del BIOS il motore
+     * disegnerebbe dove nessuno guarda. */
+    if (video_info(&vi) != 0 || vi.fisico != g_bar1 + FB_OFFSET ||
+        vi.larghezza != FB_W || vi.altezza != FB_H || vi.bit != 32) {
+        if (verboso)
+            printf("nv50: lo schermo non e' il nostro %ux%u: prima  nv50.drv -nativo\n",
+                   FB_W, FB_H);
+        return -1;
+    }
+    if (g_arch < 0x50 || g_arch > 0xac) {
+        if (verboso) printf("nv50: architettura 0x%02x: non e' una G80/G9x/MCP7x\n", g_arch);
+        return -1;
+    }
+    /* ! LA FINESTRA PRAMIN DEVE GUARDARE L'ULTIMO MEGA, sopra i nostri 16 MB,
+     * e table1 deve stare dentro la finestra: altrimenti l'azzeramento qui
+     * sotto toccherebbe memoria che non e' sua. */
+    if (pramin < 16u * 1024 * 1024 || pramin + 0x100000 > (ram << 10) ||
+        t1 <= 0x720000 || t1 > 0x800000) {
+        printf("nv50: la finestra PRAMIN non e' dove me l'aspetto (0x%08x, table1 0x%06x):\n"
+               "      non azzero niente e il motore resta spento.\n", pramin, t1);
+        return -1;
+    }
+
+    /* --- G80InitHW, riga per riga --- */
+    for (v = 0x700000; v < t1; v += 4) wr(v, 0);
+
+    wr(0x000200, 0xffff00ff);
+    wr(0x000200, 0xffffffff);
+    wr(0x002100, 0xffffffff);
+    wr(0x00250c, 0x6f3cfc34);
+    wr(0x400804, 0xc0000000);
+    wr(0x406800, 0xc0000000);
+    wr(0x400c04, 0xc0000000);
+    wr(0x401800, 0xc0000000);
+    wr(0x405018, 0xc0000000);
+    wr(0x402000, 0xc0000000);
+    wr(0x400108, 0xffffffff);
+    wr(0x400100, 0xffffffff);
+
+    if (g_arch != 0x50) {
+        wr(0x700000, 0x00000001);
+        wr(0x700004, pramin + 0x00200);
+        wr(0x700020, 0x00190002);
+        wr(0x700024, pramin + 0x7ffff);
+        wr(0x700028, pramin + 0x20000);
+        wr(0x700034, 0x00010000);
+    } else {
+        wr(0x700200, 0x00190002);
+        wr(0x700204, pramin + 0x7ffff);
+        wr(0x700208, pramin + 0x20000);
+        wr(0x700214, 0x00010000);
+    }
+
+    wr(0x710004, 0x00100642);
+    wr(0x710008, 0x80000011);
+    wr(0x71000c, 0x00000644);
+    wr(0x710010, 0x80000012);
+    wr(0x710014, 0x00100646);
+    wr(0x710018, 0x80000013);
+    wr(0x71001c, 0x00100648);
+    wr(0x710020, 0x80000014);
+    wr(0x710024, 0x0000064a);
+    wr(0x706420, 0x00190030);
+    wr(0x706434, 0x00010000);
+    wr(0x706440, 0x0019003d);
+    wr(0x706444, (g_vram_kb << 10) - 0x4001);
+    wr(0x706448, (g_vram_kb << 10) - RISERVATA);
+    wr(0x706454, 0x00010000);
+    wr(0x706460, 0x0000502d);
+    wr(0x706474, 0x00010000);
+    if (g_arch == 0xaa || g_arch == 0xac) {
+        /* ! LE INTEGRATE (MCP77/79): la «VRAM» e' RAM rubata, e il contesto
+         * DMA la indica col suo indirizzo fisico. */
+        unsigned long long base  = (unsigned long long)rd(0x100E10) << 12;
+        unsigned long long misura = (unsigned long long)rd(0x100E14) << 12;
+        unsigned long long lim   = base + misura - RISERVATA;
+
+        wr(0x706480, 0x1a003d);
+        wr(0x706484, (unsigned int)lim);
+        wr(0x706488, (unsigned int)base);
+        wr(0x70648c, (unsigned int)(base >> 32) | ((unsigned int)(lim >> 8) & 0xff000000u));
+    } else {
+        wr(0x706480, 0x0019003d);
+        wr(0x706484, (g_vram_kb << 10) - RISERVATA);
+        wr(0x706494, 0x00010000);
+    }
+    wr(0x7064a0, 0x0019003d);
+    wr(0x7064a4, pramin + 0x1100f);
+    wr(0x7064a8, pramin + 0x11000);
+    wr(0x7064b4, 0x00010000);
+
+    if (g_arch != 0x50) wr(0x002604, 0x80000002 | (pramin >> 8));
+    else                wr(0x002604, 0x80000000 | (pramin >> 12));
+
+    wr(0x003224, 0x000f0078);
+    wr(0x00322c, 0x00000644);
+    wr(0x003234, RISERVATA - 0x6001);
+    wr(0x003254, 0x00000001);
+    wr(0x002210, 0x1c001000);
+
+    if (g_arch != 0x50) {
+        wr(0x00340c, (pramin + 0x1000) >> 10);
+        wr(0x003410, (pramin >> 12));
+    }
+
+    wr(0x400824, 0x00004000);
+    wr(0x400784, 0x80000000 | (pramin >> 12));
+    wr(0x400320, 0x00000004);
+    wr(0x40032C, 0x80000000 | (pramin >> 12));
+    wr(0x400500, 0x00010001);
+    wr(0x003250, 0x00000001);
+    wr(0x003200, 0x00000001);
+    wr(0x003220, 0x00001001);
+    wr(0x003204, 0x00010001);
+
+    g_dma = (volatile unsigned int *)(g_vram + (g_vram_kb << 10) - RISERVATA);
+    for (i = 0; i < SALTA; i++) g_dma[i] = 0;
+    g_put = 0;
+    g_cur = SALTA;
+    g_max = (RISERVATA - 0x6000) / 4 - 2;
+    g_libere = g_max - g_cur;
+
+    M1(0x000, 0x80000012);                          /* l'oggetto 2D */
+    {
+        unsigned int d[3] = { 0x80000014, 0x80000013, 0x80000013 };
+        M(0x180, 3, d);                             /* notifica, sorgente, destino */
+    }
+    superficie(0x200, 0x214);
+    superficie(0x230, 0x244);
+    M1(0x260, 1);
+    M1(0x290, 1);
+    M1(0x29c, 0);
+    {
+        unsigned int d[2] = { 2, 1 };
+        M(0x2e8, 2, d);
+    }
+    M1(0x584, FMT_24);
+    M1(0x58c, 0x111);
+    M1(0x804, FMT_24);
+    {
+        unsigned int c[4] = { 0, 0, FB_W, FB_H };   /* il ritaglio: lo schermo */
+        M(0x280, 4, c);
+    }
+    {
+        unsigned int p[4] = { ~0u, ~0u, ~0u, ~0u };  /* G80SetPattern: tutto pieno */
+        M(0x2f0, 4, p);
+    }
+    M1(0x2a0, 0xCC);                                /* GXcopy: rops[3] | >> 4 */
+
+    if (aspetta_motore() != 0) {
+        printf("nv50: il motore 2D non risponde dopo l'accensione.\n");
+        return -1;
+    }
+    if (verboso) printf("nv50: motore 2D acceso, push buffer a 0x%x\n",
+                        (g_vram_kb << 10) - RISERVATA);
+    return 0;
+}
+
+/* Un rettangolo pieno (G80SetupForSolidFill + G80SubsequentFillRect). */
+static int motore_riempi(unsigned int x, unsigned int y, unsigned int w,
+                         unsigned int h, unsigned int colore)
+{
+    unsigned int r[4];
+
+    if (x >= FB_W || y >= FB_H || w == 0 || h == 0) return 0;
+    if (x + w > FB_W) w = FB_W - x;
+    if (y + h > FB_H) h = FB_H - y;
+    M1(0x2ac, 4);
+    M1(0x580, 4);
+    M1(0x588, colore & 0xFFFFFFu);
+    r[0] = x; r[1] = y; r[2] = x + w; r[3] = y + h;
+    M(0x600, 4, r);
+    return aspetta_motore();
+}
+
+/* Una copia schermo -> schermo (G80SubsequentScreenToScreenCopy). */
+static int motore_copia(unsigned int sx, unsigned int sy, unsigned int dx,
+                        unsigned int dy, unsigned int w, unsigned int h)
+{
+    unsigned int b[12];
+
+    if (sx >= FB_W || sy >= FB_H || dx >= FB_W || dy >= FB_H || !w || !h) return 0;
+    if (sx + w > FB_W) w = FB_W - sx;
+    if (dx + w > FB_W) w = FB_W - dx;
+    if (sy + h > FB_H) h = FB_H - sy;
+    if (dy + h > FB_H) h = FB_H - dy;
+    M1(0x2ac, 3);
+    M1(0x110, 0);
+    b[0] = dx; b[1] = dy; b[2] = w; b[3] = h;
+    b[4] = 0;  b[5] = 1;  b[6] = 0; b[7] = 1;
+    b[8] = 0;  b[9] = sx; b[10] = 0; b[11] = sy;
+    M(0x8b0, 12, b);
+    return aspetta_motore();
+}
+
+/* -----------------------------------------------------------------------------
+ * -2dprova: disegna col motore e RILEGGE dal framebuffer
+ * --------------------------------------------------------------------------- */
+static volatile unsigned int *pixel(unsigned int x, unsigned int y)
+{
+    return (volatile unsigned int *)(g_vram + FB_OFFSET + y * FB_PITCH + x * 4);
+}
+
+static int controlla(const char *cosa, unsigned int x, unsigned int y,
+                     unsigned int w, unsigned int h, unsigned int voluto)
+{
+    unsigned int i, j, male = 0;
+
+    for (j = y; j < y + h; j += (h > 8 ? h / 8 : 1))
+        for (i = x; i < x + w; i += (w > 8 ? w / 8 : 1)) {
+            unsigned int c = *pixel(i, j) & 0xFFFFFFu;
+
+            if (c != voluto) {
+                if (male++ < 3)
+                    printf("  MALE: %s in (%u,%u): 0x%06x, ci voleva 0x%06x\n",
+                           cosa, i, j, c, voluto);
+            }
+        }
+    /* E il bordo esterno non va toccato: il pixel subito a destra e sotto. */
+    if (x + w < FB_W && (*pixel(x + w, y) & 0xFFFFFFu) == voluto) {
+        printf("  MALE: %s esce a destra (%u,%u)\n", cosa, x + w, y);
+        male++;
+    }
+    if (y + h < FB_H && (*pixel(x, y + h) & 0xFFFFFFu) == voluto) {
+        printf("  MALE: %s esce sotto (%u,%u)\n", cosa, x, y + h);
+        male++;
+    }
+    printf("  %-34s %s\n", cosa, male ? "MALE" : "giusto");
+    return male ? 1 : 0;
+}
+
+static int prova_2d(void)
+{
+    int e = 0;
+    unsigned int t0;
+
+    printf("\nnv50: prove del motore (si disegna in alto a sinistra, poi si rimette nero)\n");
+
+    /* 1. riempimento */
+    *pixel(300, 100) = 0x123456;
+    if (motore_riempi(100, 50, 200, 50, 0xFF0000) != 0) return 1;
+    e += controlla("riempimento rosso 200x50", 100, 50, 200, 50, 0xFF0000);
+
+    /* 2. un altro colore sopra */
+    if (motore_riempi(150, 60, 40, 20, 0x00FF00) != 0) return 1;
+    e += controlla("riempimento verde 40x20", 150, 60, 40, 20, 0x00FF00);
+
+    /* 3. copia: il rettangolo rosso con dentro il verde, piu' in basso */
+    if (motore_copia(100, 50, 400, 150, 200, 50) != 0) return 1;
+    e += controlla("copia: il rosso arriva", 400, 150, 40, 10, 0xFF0000);
+    e += controlla("copia: il verde arriva", 450, 160, 40, 20, 0x00FF00);
+
+    /* 4. copia che si sovrappone (lo scorrimento di un terminale): giu' di 10 */
+    if (motore_copia(400, 150, 400, 160, 200, 50) != 0) return 1;
+    e += controlla("copia sovrapposta: verde in basso", 450, 170, 40, 20, 0x00FF00);
+
+    /* 5. la velocita', a occhio: 100 riempimenti di mezzo schermo */
+    t0 = uptime_ms();
+    {
+        unsigned int i;
+        for (i = 0; i < 100; i++)
+            if (motore_riempi(0, 0, FB_W, FB_H / 2, i & 1 ? 0x000040 : 0x400000) != 0) return 1;
+    }
+    printf("  100 riempimenti di %ux%u           %u ms\n", FB_W, FB_H / 2, uptime_ms() - t0);
+
+    motore_riempi(0, 0, FB_W, FB_H, 0);
+    printf("\nnv50: %s%s\n", e ? "il motore disegna, ma non giusto (vedi MALE sopra)"
+                               : "il motore 2D disegna giusto",
+           g_2d_scadute ? " (con attese scadute)" : "");
+    return e || g_2d_scadute ? 2 : 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * -2dmisura: la CPU (come la usa wserver) contro il motore, sugli stessi pixel
+ *
+ * ! LA PRIMA DOMANDA E' DOVE SE NE VA IL TEMPO DI wserver. Compone in un'ombra
+ * in RAM e copia sullo schermo (mostra()): se quella copia e' lenta, e' li'
+ * che la scrivania va a scatti, e il motore puo' aiutare solo se l'ombra si
+ * sposta in memoria video. Per questo si misurano anche la scrittura e la
+ * lettura della CPU attraverso fb_map, la stessa mappa di wserver.
+ * --------------------------------------------------------------------------- */
+#define MS_MINIMI 400u
+
+static unsigned long mbs(unsigned int byte_giro, unsigned int giri, unsigned int ms)
+{
+    unsigned long kib = (unsigned long)(byte_giro >> 10) * giri;
+
+    if (!ms || !kib) return 0;
+    return (kib * 125u / 128u) / ms;
+}
+
+static int misura_2d(void)
+{
+    unsigned char *fb = (unsigned char *)fb_map();
+    unsigned int  *ombra;
+    unsigned int   w = FB_W, h = FB_H / 2, byte = FB_W * 4 * (FB_H / 2);
+    unsigned int   inizio, ms, giri, i, j;
+    volatile unsigned int somma = 0;
+
+    if (fb == 0) { printf("nv50: fb_map rifiutata (errno %d)\n", errno); return 1; }
+    ombra = (unsigned int *)malloc(FB_PITCH * h);
+    if (ombra == 0) { printf("nv50: niente memoria per l'ombra\n"); return 1; }
+    for (i = 0; i < FB_PITCH * h / 4; i++) ombra[i] = i * 2654435761u;
+
+    printf("\nnv50: %ux%u a 32 bit, %u KB per operazione\n\n", w, h, byte / 1024);
+    printf("  operazione                          MB/s\n");
+    printf("  --------------------------------- --------\n");
+
+#define GIRA(nome, corpo) do { \
+        inizio = uptime_ms(); giri = 0; \
+        do { corpo; giri++; ms = uptime_ms() - inizio; } while (ms < MS_MINIMI); \
+        printf("  %-33s %8lu\n", nome, mbs(byte, giri, ms)); } while (0)
+
+    GIRA("CPU: riempire lo schermo", {
+        for (j = 0; j < h; j++) {
+            unsigned int *p = (unsigned int *)(fb + j * FB_PITCH);
+            for (i = 0; i < w; i++) p[i] = giri;
+        } });
+    GIRA("CPU: ombra in RAM -> schermo", {
+        for (j = 0; j < h; j++)
+            memcpy(fb + j * FB_PITCH, (unsigned char *)ombra + j * FB_PITCH, w * 4);
+        });
+    GIRA("CPU: leggere lo schermo", {
+        for (j = 0; j < h; j++) {
+            const volatile unsigned int *p = (const unsigned int *)(fb + j * FB_PITCH);
+            for (i = 0; i < w; i++) somma += p[i];
+        } });
+    GIRA("CPU: riempire la RAM", {
+        for (j = 0; j < h; j++) {
+            unsigned int *p = (unsigned int *)((unsigned char *)ombra + j * FB_PITCH);
+            for (i = 0; i < w; i++) p[i] = giri;
+        } });
+    GIRA("motore: riempire lo schermo",
+         { if (motore_riempi(0, 0, w, h, giri * 0x010101u) != 0) break; });
+    GIRA("motore: copiare schermo -> schermo",
+         { if (motore_copia(0, 0, 0, h, w, h) != 0) break; });
+#undef GIRA
+
+    motore_riempi(0, 0, FB_W, FB_H, 0);
+    printf("\n  Il tempo di wserver per un fotogramma intero e' circa:\n"
+           "  comporre in RAM + copiare l'ombra sullo schermo (seconda riga).\n");
+    if (g_2d_scadute) printf("\n  ! %d attese scadute: i numeri del motore non valgono.\n",
+                             g_2d_scadute);
+    free(ombra);
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * -2dservizio: il motore offerto a wserver (accel_proto.h), come sis.drv
+ *
+ * ! SI ESCE IN SILENZIO DOVE IL MOTORE NON C'E' (altra scheda, schermo non
+ * nativo): wserver non trova il servizio e disegna da se', che e' il caso
+ * normale. E non si risponde mai «fatto» senza aver fatto: l'esito e' quello
+ * di aspetta_motore().
+ * --------------------------------------------------------------------------- */
+static int servizio_2d(void)
+{
+    IpcMessage    meta;
+    unsigned char buf[64];
+    unsigned int  servite = 0;
+
+    if (ipc_lookup(ACC_SERVIZIO) > 0) {
+        printf("nv50: c'e' gia' un acceleratore '%s' acceso\n", ACC_SERVIZIO);
+        return 1;
+    }
+    if (motore_accendi(0) != 0) return g_zitto ? 0 : 1;
+    if (ipc_register(ACC_SERVIZIO) < 0) {
+        printf("nv50: il nome '%s' e' gia' preso\n", ACC_SERVIZIO);
+        return 1;
+    }
+    printf("nv50: servizio '%s' attivo - %ux%u a 32 bit\n", ACC_SERVIZIO, FB_W, FB_H);
+
+    for (;;) {
+        int n = ipc_recv(&meta, buf, sizeof(buf));
+
+        if (n < 0) continue;
+        switch (meta.tipo) {
+        case ACC_MSG_RIEMPI: {
+            AccRiempi r;
+            AccEsito  e;
+
+            if (meta.len < sizeof(r)) break;
+            memcpy(&r, buf, sizeof(r));
+            e.esito = motore_riempi(r.x, r.y, r.w, r.h, r.colore) ? -EIO : 0;
+            if (e.esito == 0) servite++;
+            ipc_send(meta.sender_pid, ACC_MSG_ESITO, &e, sizeof(e));
+            break;
+        }
+        case ACC_MSG_COPIA: {
+            AccCopia c;
+            AccEsito e;
+
+            if (meta.len < sizeof(c)) break;
+            memcpy(&c, buf, sizeof(c));
+            e.esito = motore_copia(c.sx, c.sy, c.dx, c.dy, c.w, c.h) ? -EIO : 0;
+            if (e.esito == 0) servite++;
+            ipc_send(meta.sender_pid, ACC_MSG_ESITO, &e, sizeof(e));
+            break;
+        }
+        case ACC_MSG_INFO: {
+            AccInfo i;
+
+            memset(&i, 0, sizeof(i));
+            i.larghezza = FB_W;
+            i.altezza   = FB_H;
+            i.bit       = 32;
+            i.passo     = FB_PITCH;
+            i.servite   = servite;
+            strcpy(i.nome, "nv50");
+            ipc_send(meta.sender_pid, ACC_MSG_INFO_R, &i, sizeof(i));
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
 static void uso(void)
 {
     printf("uso: nv50.drv -stato      il display com'e' adesso: teste, pannello,\n");
@@ -714,6 +1330,11 @@ static void uso(void)
     printf("                          /boot/avvio.sh (-remove lo toglie)\n");
     printf("     nv50.drv -avvio      -nativo zitto, quello di /boot/avvio.sh: su una\n");
     printf("                          macchina senza questa scheda esce e basta\n");
+    printf("     nv50.drv -2dprova    accende il motore 2D, disegna, rilegge e dice\n");
+    printf("                          se e' giusto (dopo -nativo)\n");
+    printf("     nv50.drv -2dmisura   CPU contro motore: scrivere, leggere, copiare\n");
+    printf("     nv50.drv -2dservizio il motore offerto a wserver ('%s'): resta\n", ACC_SERVIZIO);
+    printf("                          acceso, va lanciato con &\n");
 }
 
 /* =============================================================================
@@ -771,8 +1392,10 @@ int main(int argc, char **argv)
     if (argc >= 2 && strcmp(argv[1], "-install") == 0) return installa(0);
     if (argc >= 2 && strcmp(argv[1], "-remove") == 0)  return installa(1);
     if (argc >= 2 && strcmp(argv[1], "-avvio") == 0) { g_zitto = 1; argv[1] = "-nativo"; }
+    if (argc >= 2 && strcmp(argv[1], "-2dservizio") == 0) g_zitto = 1;
     if (argc < 2 || (strcmp(argv[1], "-stato") != 0 && strcmp(argv[1], "-tutto") != 0 &&
-                     strcmp(argv[1], "-prova") != 0 && strcmp(argv[1], "-nativo") != 0)) {
+                     strcmp(argv[1], "-prova") != 0 && strcmp(argv[1], "-nativo") != 0 &&
+                     strncmp(argv[1], "-2d", 3) != 0)) {
         uso();
         return argc < 2 ? 1 : (strcmp(argv[1], "-h") == 0 ? 0 : 1);
     }
@@ -784,7 +1407,34 @@ int main(int argc, char **argv)
     g_bar1 = d.bar[1];
     TRACCIA("Scheda: %04x:%04x in %02x:%02x.%x, registri a 0x%08x, memoria video a 0x%08x\n",
            d.venditore, d.dispositivo, d.bus, d.slot, d.funzione, d.bar[0], d.bar[1]);
-    if (mappa() != 0) return 1;
+    if (mappa(0) != 0) return 1;
+
+    /* ! -avvio DUE VOLTE NON RIFA IL PANNELLO. `system -load` riesegue
+     * /boot/avvio.sh, e il pannello e' gia' nativo dalla prima: il kernel
+     * disegna gia' nel nostro framebuffer, e riprogrammare il display
+     * darebbe solo un lampo nero e la console da rifare. */
+    if (strncmp(argv[1], "-2d", 3) == 0) {
+        if (getuid() != 0) { printf("nv50: %s solo da root\n", argv[1]); return 1; }
+        if (strcmp(argv[1], "-2dservizio") == 0) return servizio_2d();
+        if (strcmp(argv[1], "-2dprova") != 0 && strcmp(argv[1], "-2dmisura") != 0) {
+            uso();
+            return 1;
+        }
+        if (ipc_lookup(ACC_SERVIZIO) > 0) {
+            printf("nv50: il servizio '%s' e' acceso e usa il motore: non lo\n"
+                   "      riaccendo sotto di lui.\n", ACC_SERVIZIO);
+            return 1;
+        }
+        if (motore_accendi(1) != 0) return 1;
+        return strcmp(argv[1], "-2dprova") == 0 ? prova_2d() : misura_2d();
+    }
+    if (g_zitto) {
+        VideoInfo v;
+
+        if (video_info(&v) == 0 && v.fisico == g_bar1 + FB_OFFSET &&
+            v.larghezza == FB_W && v.altezza == FB_H)
+            return 0;
+    }
     if (prova_si) {
         if (getuid() != 0) { printf("nv50: %s solo da root\n", argv[1]); return 1; }
         return prova(prova_si == 1);

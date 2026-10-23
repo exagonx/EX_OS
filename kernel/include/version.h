@@ -566,7 +566,14 @@
 /* 0.272 -> 0.273: the console goes up to 170 columns (VGA_MAX_COLS, was
  * 128): the CQ60 panel at its native 1366x768 is 170, and with 128 the text
  * stopped at 1024 pixels. 160 KB of cells for five consoles. */
-#define EXOS_VERSION    "0.273"
+/* 0.273 -> 0.274: the system disk comes off and back with the machine on
+ * (@RDBOOT step 5, /rdboot/bin/system -unload / -load). For it: console
+ * login and shell are the base system's copies (/rdboot/bin, kernel and
+ * login 0.005); `umount /` moves to "/" the processes whose directory the
+ * base does not have; init reaps a zombie whose parent died after it, and
+ * closes a zombie's program at once (a zombie kept its mount busy until
+ * reaped); SYS_EXEC passes argv and envp (it ignored them). */
+#define EXOS_VERSION    "0.274"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

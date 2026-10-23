@@ -116,7 +116,30 @@ boot/kernel.cfg        quali driver caricare, che tastiera, che montaggi
 
 `netupdate` lo lascia stare apposta. `install` invece lo sa **fondere**. Se
 una voce nuova deve arrivarti — per esempio una riga del PATH — o la
-aggiungi a mano, o passi da `install`.
+aggiungi a mano, o passi da `install`. Lo stesso vale per
+`boot/avvio.sh`, `boot/autoexec.sh` e `boot/telnetd.cfg`: `-check` li
+elenca come «di configurazione» e non li tocca.
+
+---
+
+## 3.4b Dopo l'aggiornamento: l'avvio e il sistema di base
+
+Dal kernel 0.269 l'avvio carica anche il **sistema di base**
+(`/boot/rdboot.lz4`, vedi [4.8](04-dopo-installazione.md#48-il-disco-di-sistema-a-macchina-accesa)).
+`netupdate` riscrive l'avvio da solo quando arriva un kernel o un
+`rdboot.lz4` nuovo, con una sola eccezione:
+
+! **DA UN KERNEL 0.268 O PRIMA SERVONO DUE GIRI.** Il primo `netupdate` gira
+  sul kernel vecchio, che non sa scrivere la mappa del sistema di base: la
+  macchina riparte col kernel nuovo ma senza `/rdboot`. Poi, una volta:
+
+```
+netupdate -avvio          riscrive solo l'avvio, senza rete
+reboot
+```
+
+  e da lì in poi `/rdboot` c'è. Si controlla con `mount`: deve esserci la
+  riga `/rdboot  rdb0`.
 
 ---
 

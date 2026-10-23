@@ -10188,7 +10188,8 @@ int remove(const char *path)
  * ============================================================================= */
 int execv(const char *path, char *const argv[])
 {
-    return err_posix(_syscall3(SYS_EXEC, (uintptr_t)path, (uintptr_t)argv, 0));
+    /* the environment goes along, as POSIX wants (kernel 0.274 reads it) */
+    return err_posix(_syscall3(SYS_EXEC, (uintptr_t)path, (uintptr_t)argv, (uintptr_t)environ));
 }
 
 int execvp(const char *file, char *const argv[])

@@ -1859,11 +1859,13 @@ int32_t sys_console_info(InterruptFrame *frame)
  * Sostituisce il processo corrente con il nuovo programma.
  * (Fase 4: ELF loader -- per ora placeholder funzionale)
  * ============================================================================= */
+/* The argv/envp copy and the stack frame of sys_spawn, below: SpawnBuf,
+ * spawn_arena_dup, spawn_write_user and the limits are defined there. */
+static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp);
+
 int32_t sys_exec(InterruptFrame *frame)
 {
     const char  *path = (const char *)FR_A1(frame);
-    Process     *proc = proc_get_current();
-    ElfLoadResult res;
     char         kpath[PERCORSO_MAX];
 
     if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
@@ -1887,63 +1889,7 @@ int32_t sys_exec(InterruptFrame *frame)
         kstrcpy(kpath, abs, sizeof(kpath));
     }
 
-    klog(LOG_INFO, "SYSCALL exec('%s') PID=%u", kpath, proc->pid);
-
-    /* Crea una nuova Page Directory per il processo */
-    PDE *new_pd = paging_create_directory();
-    if (!new_pd) return ERR(ENOMEM);
-
-    /* Salva la vecchia PD per eventuale rollback */
-    PDE *old_pd = proc->page_directory;
-
-    /* Imposta la nuova PD e attiva il mapping */
-    proc->page_directory = new_pd;
-    paging_switch(new_pd);
-
-    /* Carica il binario ELF (usa kpath, valido in qualunque PD perché
-     * vive nello stack della funzione kernel, mappato identicamente da
-     * tutte le page directory). */
-    int rc_elf = elf_load(kpath, proc, &res);
-    if (rc_elf != 0) {
-        /* Errore: ripristina vecchia PD */
-        paging_destroy_directory(new_pd);
-        proc->page_directory = old_pd;
-        paging_switch(old_pd);
-        /* Stessa distinzione di sys_spawn: «non c'e'» e' una risposta,
-         * non un guasto — e chi ha chiesto la riceve e la riferisce. */
-        klog(rc_elf == ERR(ENOENT) ? LOG_INFO : LOG_ERROR,
-             "SYSCALL exec: ELF load fallito per '%s' (err=%d)", kpath, rc_elf);
-        /* Stessi tre motivi di sys_spawn: vedi il commento la'. */
-        if (rc_elf == ERR(ENOENT)) return ERR(ENOENT);
-        if (rc_elf == ERR(EACCES)) return ERR(EACCES);
-        return ERR(ENOEXEC);
-    }
-
-    /* Libera la vecchia PD (non serve più) */
-    if (old_pd != paging_get_kernel_directory()) {
-        paging_destroy_directory(old_pd);
-    }
-
-    /* ! LE ZONE CONDIVISE NON SOPRAVVIVONO A UN exec, e vanno chiuse QUI.
-     *
-     * L'immagine di prima non c'e' piu' e la nuova non ha nessuna di quelle
-     * mappature: le pagine le ha gia' mollate paging_destroy_directory poco
-     * sopra, passando dal PMM. Ma il PCB continuerebbe a dire che questo
-     * processo tiene aperte quelle zone — con indirizzi che nella page
-     * directory nuova non vogliono dire niente. La zona resterebbe viva per un
-     * utente che non la vede, e il suo nome occupato fino alla morte del
-     * processo. Si passa `smonta = 0` perche' non c'e' piu' niente da
-     * smontare. */
-    shm_cleanup_process(proc);
-
-    klog(LOG_INFO, "SYSCALL exec: salto a entry=0x%08x stack=0x%08x",
-         res.entry_point, res.user_stack_top);
-
-    /* Salta al nuovo programma in ring3 -- non ritorna */
-    sched_enter_usermode(res.entry_point, res.user_stack_top);
-
-    /* Non raggiunto */
-    return 0;
+    return exec_con_argv(kpath, (char **)FR_A2(frame), (char **)FR_A3(frame));
 }
 
 /* =============================================================================
@@ -2135,6 +2081,144 @@ static int spawn_write_user(PDE *pd, uint32_t user_virt,
         user_virt += chunk;
         len      -= chunk;
     }
+    return 0;
+}
+
+/* =============================================================================
+ * exec_con_argv — SYS_EXEC with its arguments (23 October 2026)
+ *
+ * ! UNTIL TODAY exec IGNORED argv AND envp: the new program started with
+ * argc = 0 and whatever the stack held. Nobody had noticed because nothing
+ * used exec - the shell spawns. `system -unload` re-executes itself from the
+ * base system (/rdboot/bin/system) to let go of the disk, and came back up
+ * printing its usage: no arguments.
+ *
+ * Same steps as sys_spawn: copy argv and envp into kernel space BEFORE the
+ * old page directory goes (they live in it), load the program asking for
+ * the stack they need, then write strings, the two arrays and the C frame
+ * on the new stack. envp NULL = no environment (libc's execv passes
+ * `environ`).
+ * ============================================================================= */
+static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
+{
+    Process      *proc = proc_get_current();
+    ElfLoadResult res;
+    SpawnBuf     *sb = (SpawnBuf *)kmalloc(sizeof(SpawnBuf));
+    uint32_t      argc = 0, envc = 0, uso = 0, i, usp, argv_u, envv_u, serve;
+    PDE          *new_pd, *old_pd;
+    int           rc_elf;
+
+    if (sb == NULL) return ERR(ENOMEM);
+
+    if (uargv != NULL) {
+        while (argc < MAX_SPAWN_ARGS) {
+            const char *ua;
+
+            if (!syscall_verify_ptr(&uargv[argc], sizeof(char *))) { kfree(sb); return ERR(EFAULT); }
+            ua = uargv[argc];
+            if (ua == NULL) break;
+            if (!syscall_verify_str(ua, MAX_ARG_LEN)) { kfree(sb); return ERR(EFAULT); }
+            sb->kargv[argc] = spawn_arena_dup(sb->arena, &uso, ua);
+            if (sb->kargv[argc] == NULL) { kfree(sb); return ERR(E2BIG); }
+            argc++;
+        }
+    }
+    if (argc == 0) {
+        const char *bn = kpath, *q;
+
+        for (q = kpath; *q; q++) if (*q == '/') bn = q + 1;
+        sb->kargv[0] = spawn_arena_dup(sb->arena, &uso, bn);
+        if (sb->kargv[0] == NULL) { kfree(sb); return ERR(E2BIG); }
+        argc = 1;
+    }
+    sb->kargv[argc] = NULL;
+    if (uenvp != NULL) {
+        while (envc < MAX_SPAWN_ENV) {
+            const char *ue;
+
+            if (!syscall_verify_ptr(&uenvp[envc], sizeof(char *))) break;
+            ue = uenvp[envc];
+            if (ue == NULL || !syscall_verify_str(ue, MAX_ARG_LEN)) break;
+            sb->kenvp[envc] = spawn_arena_dup(sb->arena, &uso, ue);
+            if (sb->kenvp[envc] == NULL) break;
+            envc++;
+        }
+    }
+    sb->kenvp[envc] = NULL;
+
+    klog(LOG_INFO, "SYSCALL exec('%s') PID=%u, %u argomenti", kpath, proc->pid, argc);
+
+    new_pd = paging_create_directory();
+    if (!new_pd) { kfree(sb); return ERR(ENOMEM); }
+    old_pd = proc->page_directory;
+    proc->page_directory = new_pd;
+    paging_switch(new_pd);
+
+    /* the same count as sys_spawn's stack_serve */
+    serve = uso + (argc + 1) * sizeof(uintptr_t) + (envc + 1) * sizeof(uintptr_t)
+          + 4 * sizeof(uintptr_t) + 32;
+    rc_elf = elf_load_argv(kpath, proc, &res, serve);
+    if (rc_elf != 0) {
+        paging_destroy_directory(new_pd);
+        proc->page_directory = old_pd;
+        paging_switch(old_pd);
+        kfree(sb);
+        klog(rc_elf == ERR(ENOENT) ? LOG_INFO : LOG_ERROR,
+             "SYSCALL exec: ELF load fallito per '%s' (err=%d)", kpath, rc_elf);
+        if (rc_elf == ERR(ENOENT)) return ERR(ENOENT);
+        if (rc_elf == ERR(EACCES)) return ERR(EACCES);
+        return ERR(ENOEXEC);
+    }
+    if (old_pd != paging_get_kernel_directory()) paging_destroy_directory(old_pd);
+    shm_cleanup_process(proc);
+
+#define PAROLA  sizeof(uintptr_t)
+    usp = res.user_stack_top;
+    for (i = 0; i < envc; i++) {
+        uint32_t len = 0;
+
+        while (sb->kenvp[i][len]) len++;
+        usp -= ++len;
+        spawn_write_user(new_pd, usp, sb->kenvp[i], len);
+        sb->env_ptrs[i] = usp;
+    }
+    sb->env_ptrs[envc] = 0;
+    for (i = 0; i < argc; i++) {
+        uint32_t len = 0;
+
+        while (sb->kargv[i][len]) len++;
+        usp -= ++len;
+        spawn_write_user(new_pd, usp, sb->kargv[i], len);
+        sb->arg_ptrs[i] = usp;
+    }
+    sb->arg_ptrs[argc] = 0;
+    usp &= ~(uint32_t)(PAROLA - 1);
+    usp -= (argc + 1) * PAROLA;
+    argv_u = usp;
+    for (i = 0; i <= argc; i++) spawn_write_user(new_pd, usp + i * PAROLA, &sb->arg_ptrs[i], PAROLA);
+    usp &= ~(uint32_t)(PAROLA - 1);
+    usp -= (envc + 1) * PAROLA;
+    envv_u = usp;
+    for (i = 0; i <= envc; i++) spawn_write_user(new_pd, usp + i * PAROLA, &sb->env_ptrs[i], PAROLA);
+#if defined(__x86_64__)
+    usp &= ~15u;
+    usp -= 4 * PAROLA;
+    { uintptr_t t[4];
+      t[0] = 0; t[1] = argc; t[2] = argv_u; t[3] = envv_u;
+      spawn_write_user(new_pd, usp, t, sizeof(t)); }
+#else
+    usp -= 16;
+    { uint32_t z = 0;
+      spawn_write_user(new_pd, usp + 0,  &z,      4);
+      spawn_write_user(new_pd, usp + 4,  &argc,   4);
+      spawn_write_user(new_pd, usp + 8,  &argv_u, 4);
+      spawn_write_user(new_pd, usp + 12, &envv_u, 4); }
+#endif
+#undef PAROLA
+    kfree(sb);
+
+    klog(LOG_INFO, "SYSCALL exec: salto a entry=0x%08x stack=0x%08x", res.entry_point, usp);
+    sched_enter_usermode(res.entry_point, usp);
     return 0;
 }
 
@@ -4218,7 +4302,31 @@ int32_t sys_umount(InterruptFrame *frame)
     kstrcpy(kpunto, punto, sizeof(kpunto));
 
     klog(LOG_INFO, "SYSCALL umount('%s')", kpunto);
-    return vfs_umount(kpunto);
+    {
+        int r = vfs_umount(kpunto);
+
+        /* ! THE CURRENT DIRECTORIES THAT WERE ON THE DISK (@RDBOOT step 5,
+         * 23 October 2026). `umount /` puts the base system back as the root;
+         * a shell whose directory was /root, which the base does not have,
+         * would be left in a directory that no longer exists, and every
+         * relative path would fail. Those go to "/". A directory the base
+         * also has (/, /rdboot/...) stays as it is. */
+        if (r == 0 && kpunto[0] == '/' && kpunto[1] == '\0') {
+            uint32_t i;
+
+            for (i = 0; i < MAX_PROCESSES; i++) {
+                Process *p = &g_process_pool[i];
+                VfsStat  st;
+
+                if (p->state == PROC_UNUSED || p->cwd[0] == '\0') continue;
+                if (vfs_stat(p->cwd, &st) == 0) continue;
+                klog(LOG_INFO, "SYSCALL umount('/'): PID %u era in %s, ora in /",
+                     p->pid, p->cwd);
+                p->cwd[0] = '/'; p->cwd[1] = '\0';
+            }
+        }
+        return r;
+    }
 }
 
 /* =============================================================================

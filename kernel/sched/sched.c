@@ -350,6 +350,18 @@ static void idle_task_fn(void)
  *    casi in cui proc_exit e' gia' avvenuto prima che init fosse in
  *    esecuzione), non solo su segnale.
  * ============================================================================= */
+/* 1 if a process with this pid exists and has not exited */
+static int padre_vivo(uint32_t pid)
+{
+    uint32_t j;
+
+    for (j = 0; j < MAX_PROCESSES; j++)
+        if (g_process_pool[j].pid == pid && g_process_pool[j].state != PROC_UNUSED &&
+            g_process_pool[j].state != PROC_ZOMBIE)
+            return 1;
+    return 0;
+}
+
 static void init_reaper_task(void)
 {
     uint32_t i;
@@ -360,6 +372,21 @@ static void init_reaper_task(void)
             Process *p = &g_process_pool[i];
 
             if (p->state != PROC_ZOMBIE) continue;
+
+            /* ! A ZOMBIE NO LONGER NEEDS ITS PROGRAM (23 October 2026). The
+             * executable stays open for loading on demand (exe_handle), and
+             * proc_reap_zombie closed it only when the parent collected the
+             * child - a shell does that at its next prompt, a service maybe
+             * never. Meanwhile the program held its mount busy: `system
+             * -unload` found a program that had exited, and the disk would
+             * not come off. A zombie never runs again, so it never faults
+             * again; once no thread of its group is alive either, the file
+             * goes now. proc_reap_zombie finds exe_handle = -1 and skips it. */
+            if (p->exe_handle >= 0 && p->tgid == p->pid && proc_gruppo_vivi(p->tgid) == 0) {
+                vfs_close(p->exe_handle);
+                p->exe_handle = -1;
+                p->n_vma = 0;
+            }
 
             /* ! E ANCHE I FILI DI UN GRUPPO CHE NON C'E' PIU'. Un filo non e'
              * figlio di nessuno fuori dal suo gruppo (vedi proc_thread_crea e
@@ -372,6 +399,17 @@ static void init_reaper_task(void)
             if (p->ppid == g_init_task->pid) {
                 klog(LOG_DEBUG, "INIT: riassorbo orfano PID %u ('%s')",
                      p->pid, p->name);
+                proc_reap_zombie(p);
+            } else if (p->tgid == p->pid && p->ppid != 0 && !padre_vivo(p->ppid)) {
+                /* ! THE PARENT DIED AFTER THE CHILD (23 October 2026). proc_exit
+                 * hands a child to init only if its parent is ALREADY dead when
+                 * the child exits; a zombie whose parent dies later kept a ppid
+                 * nobody answers to, forever - and a zombie keeps its program
+                 * open, so `umount /` (system -unload) could never succeed. The
+                 * CQ60 had two: telnetd and sis.drv, children of the "sistema"
+                 * task that had exited. */
+                klog(LOG_DEBUG, "INIT: riassorbo PID %u ('%s'), il padre %u non c'e' piu'",
+                     p->pid, p->name, p->ppid);
                 proc_reap_zombie(p);
             } else if (p->tgid != p->pid && proc_gruppo_vivi(p->tgid) == 0) {
                 klog(LOG_DEBUG, "INIT: riassorbo il filo %u di '%s', gruppo %u "
