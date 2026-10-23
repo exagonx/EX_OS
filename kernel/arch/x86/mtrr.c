@@ -33,13 +33,18 @@
  * differenza fra un'interfaccia che scatta e una che no.
  *
  * -----------------------------------------------------------------------------
- * ! PERCHE' GLI MTRR E NON IL PAT
+ * ! GLI MTRR, E DAL KERNEL 0.275 ANCHE IL PAT (24 ottobre 2026)
  *
- * Il PAT permetterebbe di dire «questa pagina e' WC» senza toccare registri
- * globali, e sarebbe piu' fine. Ma il tipo che vale e' la COMBINAZIONE dei due,
- * e nella tabella di Intel (SDM, «Effective Memory Type») MTRR=UC insieme a
- * PAT=WC da' UC: il PAT non puo' ammorbidire quel che l'MTRR ha dichiarato
- * incacheabile. Chi comanda qui e' l'MTRR, e quindi e' li' che si scrive.
+ * Qui c'era scritto che MTRR=UC insieme a PAT=WC da' UC. E' SBAGLIATO: nella
+ * tabella di Intel (SDM vol. 3, «Effective Memory Type», e AMD APM vol. 2
+ * uguale) una pagina PAT=WC e' WC qualunque cosa dica l'MTRR. E' il PAT=UC-
+ * quello che l'MTRR puo' trasformare. Ed e' il PAT che usa Linux.
+ *
+ * Misurato sul Compaq CQ60 (nv50.drv -2dmisura, 23 ottobre 2026): con la
+ * fascia MTRR WC dichiarata e confermata, la CPU scriveva nel framebuffer a
+ * 45 MB/s e leggeva a 3 — numeri da UC. Uno schermo 1366x768 costava 90 ms:
+ * la scrivania a scatti. Il PAT lo rende WC senza dipendere da come il BIOS
+ * ha disposto le sue fasce. La fascia MTRR resta: dove il PAT non c'e'.
  *
  * -----------------------------------------------------------------------------
  * ! UNA SOLA FASCIA, E SI RINUNCIA INVECE DI ARRANGIARSI
@@ -280,9 +285,11 @@ static void scrivi_fascia(uint32_t n, uint32_t base, uint32_t misura,
     msr_leggi(MSR_MTRR_DEF_TYPE, &def_b, &def_a);
     msr_scrivi(MSR_MTRR_DEF_TYPE, def_b & ~DEF_ABILITATI, def_a);
 
+    /* misura 0 = la fascia si spegne (maschera senza il bit V) */
     msr_scrivi(MSR_MTRR_PHYSBASE0 + n * 2u, (base & 0xFFFFF000u) | tipo, 0u);
     msr_scrivi(MSR_MTRR_PHYSMASK0 + n * 2u,
-               ((~(misura - 1u)) & 0xFFFFF000u) | MASK_VALIDA, maschera_alta);
+               misura ? (((~(misura - 1u)) & 0xFFFFF000u) | MASK_VALIDA) : 0u,
+               misura ? maschera_alta : 0u);
 
     msr_scrivi(MSR_MTRR_DEF_TYPE, def_b | DEF_ABILITATI, def_a);
 
@@ -292,6 +299,74 @@ static void scrivi_fascia(uint32_t n, uint32_t base, uint32_t misura,
     write_cr0(cr0);
 
     __asm__ __volatile__("push %0; popf" : : "r"(flags));
+}
+
+/* =============================================================================
+ * IL PAT: la voce 1 (PWT=1, PCD=0, PAT=0) da WT a WC
+ *
+ * ! SI CAMBIA SOLO LA VOCE 1. Le voci che il kernel usa restano quelle di
+ * accensione: 0 = WB (le pagine normali), 3 = UC (PCD|PWT, i registri delle
+ * periferiche). PWT da solo non lo usa nessuno: e' il posto libero.
+ *
+ * ! E VA FATTO SU OGNI PROCESSORE, con la stessa sequenza degli MTRR (cache
+ * spenta, wbinvd, TLB svuotato): due processori con PAT diversi vedrebbero
+ * la stessa pagina come WC l'uno e WT l'altro. Per questo pat_flag_wc() dice
+ * «pronto» solo dopo il BSP, e smp_ap_entra() lo rifa' su ogni AP.
+ * ========================================================================== */
+#define MSR_PAT        0x277u
+#define PAT_WC         0x01u
+
+static int g_pat_wc = 0;
+
+void pat_imposta(void)
+{
+    uint32_t a, b, c, d, lo, hi, nuovo, cr0, cr4;
+    uintptr_t flags;
+    int pge;
+
+    cpuid_di(0u, &a, &b, &c, &d);
+    if (a < 1u) return;
+    cpuid_di(1u, &a, &b, &c, &d);
+    if (!(d & (1u << 16))) {
+        if (!g_pat_wc) klog(LOG_INFO, "PAT: la CPU non lo ha, decide l'MTRR");
+        return;
+    }
+
+    msr_leggi(MSR_PAT, &lo, &hi);
+    nuovo = (lo & ~0x0000FF00u) | (PAT_WC << 8);
+    if (nuovo != lo) {
+        __asm__ __volatile__("pushf; pop %0" : "=r"(flags));
+        __asm__ __volatile__("cli");
+        cr0 = read_cr0();
+        write_cr0((cr0 | CR0_CD) & ~CR0_NW);
+        __asm__ __volatile__("wbinvd");
+        cr4 = read_cr4();
+        pge = (cr4 & CR4_PGE_BIT) != 0;
+        if (pge) write_cr4(cr4 & ~CR4_PGE_BIT);
+        write_cr3(read_cr3());
+
+        msr_scrivi(MSR_PAT, nuovo, hi);
+
+        __asm__ __volatile__("wbinvd");
+        write_cr3(read_cr3());
+        if (pge) write_cr4(cr4);
+        write_cr0(cr0);
+        __asm__ __volatile__("push %0; popf" : : "r"(flags));
+    }
+
+    msr_leggi(MSR_PAT, &lo, &hi);
+    if (((lo >> 8) & 0xFFu) == PAT_WC) {
+        if (!g_pat_wc)
+            klog(LOG_INFO, "PAT: voce 1 = WC (0x%08x%08x): il framebuffer "
+                           "si mappa combinabile in scrittura", hi, lo);
+        g_pat_wc = 1;
+    } else
+        klog(LOG_WARN, "PAT: la voce 1 non ha preso (0x%08x%08x)", hi, lo);
+}
+
+uint32_t pat_flag_wc(void)
+{
+    return g_pat_wc ? (1u << 3) : 0u;       /* PWT: la voce 1 */
 }
 
 /* =============================================================================
@@ -312,6 +387,10 @@ int mtrr_framebuffer_wc(uint32_t base, uint32_t byte)
         klog(LOG_INFO, "MTRR: la CPU non li ha, il framebuffer resta com'e'");
         return -1;
     }
+
+    /* La tabella com'e', ogni volta: e' il documento che spiega perche' lo
+     * schermo va piano (vedi il CQ60 in testa al file). */
+    mtrr_racconta();
 
     msr_leggi(MSR_MTRRCAP, &cap_b, &cap_a);
     msr_leggi(MSR_MTRR_DEF_TYPE, &def_b, &def_a);
@@ -380,8 +459,16 @@ int mtrr_framebuffer_wc(uint32_t base, uint32_t byte)
     scrivi_fascia((uint32_t)n, base, misura, MTRR_TIPO_WC, alta);
 
     if (tipo_di(base) != (int)MTRR_TIPO_WC) {
-        klog(LOG_ERROR, "MTRR: la fascia %d non ha preso: il framebuffer "
-                        "resta UC", n);
+        /* ! Una fascia del BIOS (UC) copre gia' l'intervallo e vince lei:
+         * la nostra non serve a niente, e si toglie invece di lasciarla li'
+         * a occupare un posto. Col PAT pronto non e' nemmeno un problema. */
+        scrivi_fascia((uint32_t)n, 0u, 0u, MTRR_TIPO_UC, 0u);
+        if (g_pat_wc)
+            klog(LOG_INFO, "MTRR: una fascia del BIOS tiene 0x%08x UC; vale il "
+                           "PAT, che lo fa WC", base);
+        else
+            klog(LOG_ERROR, "MTRR: la fascia %d non ha preso: il framebuffer "
+                            "resta UC", n);
         return -1;
     }
 

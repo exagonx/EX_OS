@@ -5696,9 +5696,10 @@ int32_t sys_fb_map(InterruptFrame *frame)
         pagine > (proc->heap_max - vaddr) / PAGE_SIZE) return ERR(ENOMEM);
 
     for (i = 0; i < pagine; i++) {
+        /* pat_flag_wc(): combinabile in scrittura (vedi mtrr.c, il PAT) */
         if (paging_map_page(proc->page_directory, vaddr + i * PAGE_SIZE,
                             base + i * PAGE_SIZE,
-                            PG_PRESENT | PG_USER | PG_WRITABLE) != 0) {
+                            PG_PRESENT | PG_USER | PG_WRITABLE | pat_flag_wc()) != 0) {
             uint32_t j;
             for (j = 0; j < i; j++)
                 paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);

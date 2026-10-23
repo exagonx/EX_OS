@@ -149,6 +149,14 @@ void    *paging_framebuffer_virt(paddr_t phys);
 /* kernel/arch/x86/mtrr.c: dichiara combinabile in scrittura la memoria video.
  * 0 se da adesso lo e', -1 se ha rinunciato (e il log dice perche'). */
 int mtrr_framebuffer_wc(uint32_t base, uint32_t byte);
+
+/* kernel/arch/x86/mtrr.c: il PAT con la voce 1 a WC (PWT=1, PCD=0 = WC).
+ * pat_imposta() va chiamata su OGNI processore (il PAT e' per processore):
+ * dal BSP prima di mappare il framebuffer, da ogni AP quando entra.
+ * pat_flag_wc() rende i bit da mettere nella PTE del framebuffer: PG_WRITE_THRU
+ * se il PAT e' pronto, 0 altrimenti (e allora decide l'MTRR, come prima). */
+void     pat_imposta(void);
+uint32_t pat_flag_wc(void);
 int      paging_map_page(PDE *pd, vaddr_t virt, paddr_t phys, uint32_t flags);
 void     paging_unmap_page(PDE *pd, vaddr_t virt);
 paddr_t  paging_get_physical(PDE *pd, vaddr_t virt);

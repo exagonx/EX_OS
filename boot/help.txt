@@ -468,6 +468,9 @@ e riscriverla renderebbe il disco irraggiungibile.
 Il disco di sistema non si ripartiziona mentre e' montato: prima
 `system -unload`, poi fdisk, poi `system -load` (vedi `help system`).
 
+Area di scambio: primaria di tipo 82, poi `mkswap hd0p2` e in
+/boot/kernel.cfg [kernel]  swap = hd0p2 ; vale dal riavvio, max 4 GB.
+
 [mkfs]
 formatta una partizione
 

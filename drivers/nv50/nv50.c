@@ -48,7 +48,7 @@
 #include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.006");
+EX_VERSIONE("nv50.drv", "0.007");
 
 #define NV_VENDITORE   0x10DE
 
@@ -1101,8 +1101,11 @@ static volatile unsigned int *pixel(unsigned int x, unsigned int y)
     return (volatile unsigned int *)(g_vram + FB_OFFSET + y * FB_PITCH + x * 4);
 }
 
+/* bordi: 1 = il rettangolo e' tutto quello che c'e' di quel colore, e il
+ * pixel subito fuori non deve esserlo; 0 = e' un pezzo di uno piu' grande. */
 static int controlla(const char *cosa, unsigned int x, unsigned int y,
-                     unsigned int w, unsigned int h, unsigned int voluto)
+                     unsigned int w, unsigned int h, unsigned int voluto,
+                     int bordi)
 {
     unsigned int i, j, male = 0;
 
@@ -1117,11 +1120,11 @@ static int controlla(const char *cosa, unsigned int x, unsigned int y,
             }
         }
     /* E il bordo esterno non va toccato: il pixel subito a destra e sotto. */
-    if (x + w < FB_W && (*pixel(x + w, y) & 0xFFFFFFu) == voluto) {
+    if (bordi && x + w < FB_W && (*pixel(x + w, y) & 0xFFFFFFu) == voluto) {
         printf("  MALE: %s esce a destra (%u,%u)\n", cosa, x + w, y);
         male++;
     }
-    if (y + h < FB_H && (*pixel(x, y + h) & 0xFFFFFFu) == voluto) {
+    if (bordi && y + h < FB_H && (*pixel(x, y + h) & 0xFFFFFFu) == voluto) {
         printf("  MALE: %s esce sotto (%u,%u)\n", cosa, x, y + h);
         male++;
     }
@@ -1139,20 +1142,20 @@ static int prova_2d(void)
     /* 1. riempimento */
     *pixel(300, 100) = 0x123456;
     if (motore_riempi(100, 50, 200, 50, 0xFF0000) != 0) return 1;
-    e += controlla("riempimento rosso 200x50", 100, 50, 200, 50, 0xFF0000);
+    e += controlla("riempimento rosso 200x50", 100, 50, 200, 50, 0xFF0000, 1);
 
     /* 2. un altro colore sopra */
     if (motore_riempi(150, 60, 40, 20, 0x00FF00) != 0) return 1;
-    e += controlla("riempimento verde 40x20", 150, 60, 40, 20, 0x00FF00);
+    e += controlla("riempimento verde 40x20", 150, 60, 40, 20, 0x00FF00, 1);
 
     /* 3. copia: il rettangolo rosso con dentro il verde, piu' in basso */
     if (motore_copia(100, 50, 400, 150, 200, 50) != 0) return 1;
-    e += controlla("copia: il rosso arriva", 400, 150, 40, 10, 0xFF0000);
-    e += controlla("copia: il verde arriva", 450, 160, 40, 20, 0x00FF00);
+    e += controlla("copia: il rosso arriva", 400, 150, 40, 10, 0xFF0000, 0);
+    e += controlla("copia: il verde arriva", 450, 160, 40, 20, 0x00FF00, 1);
 
     /* 4. copia che si sovrappone (lo scorrimento di un terminale): giu' di 10 */
     if (motore_copia(400, 150, 400, 160, 200, 50) != 0) return 1;
-    e += controlla("copia sovrapposta: verde in basso", 450, 170, 40, 20, 0x00FF00);
+    e += controlla("copia sovrapposta: verde in basso", 450, 170, 40, 20, 0x00FF00, 0);
 
     /* 5. la velocita', a occhio: 100 riempimenti di mezzo schermo */
     t0 = uptime_ms();

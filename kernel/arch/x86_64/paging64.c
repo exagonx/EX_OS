@@ -503,9 +503,9 @@ int paging_mappa_framebuffer(paddr_t phys, uint32_t byte)
      * every space shares */
     for (a = 0; a < byte; a += PAGE_SIZE) {
         if (paging_map_page(k_pml4, (vaddr_t)(phys + a), phys + a,
-                            PG_PRESENT | PG_WRITABLE) != 0) return -1;
+                            PG_PRESENT | PG_WRITABLE | pat_flag_wc()) != 0) return -1;
         if (paging_map_page(k_pml4, (vaddr_t)(FB_ALIAS + phys + a), phys + a,
-                            PG_PRESENT | PG_WRITABLE) != 0) return -1;
+                            PG_PRESENT | PG_WRITABLE | pat_flag_wc()) != 0) return -1;
     }
     g_fb_alias = 1;
     return 0;

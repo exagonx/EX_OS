@@ -573,7 +573,13 @@
  * base does not have; init reaps a zombie whose parent died after it, and
  * closes a zombie's program at once (a zombie kept its mount busy until
  * reaped); SYS_EXEC passes argv and envp (it ignored them). */
-#define EXOS_VERSION    "0.274"
+/* 0.274 -> 0.275: the framebuffer is write-combining through the PAT (entry
+ * 1, PWT alone, set to WC on every CPU: mtrr.c pat_imposta). On the CQ60 the
+ * MTRR range alone left the CPU writing the screen at 45 MB/s (nv50.drv
+ * -2dmisura), 90 ms for one 1366x768 frame: the choppy desktop. The old note
+ * in mtrr.c («MTRR UC + PAT WC = UC») was wrong: PAT WC is WC. The MTRR
+ * table is now written to the log every time a framebuffer is set up. */
+#define EXOS_VERSION    "0.275"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

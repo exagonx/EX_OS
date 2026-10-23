@@ -848,7 +848,7 @@ int paging_mappa_framebuffer(uint32_t phys, uint32_t byte)
 
     for (a = 0; a < byte; a += PAGE_SIZE) {
         if (paging_map_page(kernel_page_directory, phys + a, phys + a,
-                            PG_PRESENT | PG_WRITABLE) != 0) return -1;
+                            PG_PRESENT | PG_WRITABLE | pat_flag_wc()) != 0) return -1;
     }
 
     g_fb_pde_da = PD_INDEX(phys);

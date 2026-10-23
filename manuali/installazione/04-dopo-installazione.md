@@ -231,6 +231,35 @@ system -load -check hd0p1    lo controlla prima di rimontarlo
 Chi tiene occupato un montaggio lo dicono `ps -m /` e `umount`, quando
 rifiuta.
 
+### L'area di scambio (swap) su una macchina già installata
+
+L'area di scambio è una partizione **primaria di tipo 0x82** sullo stesso
+disco o su un altro. Sul disco di sistema va creata a disco tolto, **dalla
+tastiera** (non da telnet: `-unload` chiude anche telnetd):
+
+```
+system -unload               chiude chi usa il disco e lo smonta
+fdisk hd0                    spazio libero -> nuova primaria, tipo 82
+                             (scambio), poi scrivi ed esci
+mkswap hd0p2                 la firma dell'area (chiede conferma)
+system -load                 rimette il disco
+```
+
+Poi in `/boot/kernel.cfg`, nella sezione `[kernel]`:
+
+```
+swap = hd0p2
+```
+
+e si riavvia: l'area si accende **solo all'avvio**, e il kernel scrive
+quanti slot da 4 KB ha trovato (`dmesg SWAP`).
+
+! **NON PIU' DI 4 GB**: il kernel conta al massimo 2^20 pagine da 4 KB.
+  Una partizione più grande funziona, ma il di più resta inutilizzato.
+
+! I nomi `hd0` e `hd0p2` sono quelli di esempio: il disco giusto lo dice
+  `system -status` (il disco di sistema) e `disk` (le partizioni).
+
 ---
 
 ## 4.9 I driver all'avvio: `-install`

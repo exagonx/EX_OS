@@ -8114,6 +8114,44 @@ tools/netinst/velocita tolto da netinst.
       copie del motore (spostare una finestra = una copia, niente CPU);
       la CPU scrive solo quel che il client aggiorna. Si decide coi numeri
       di -2dmisura: se ombra->schermo e' lenta, e' li' che va il tempo.
+      PROVATO SUL PORTATILE (23/10 notte, 0.274): il motore 2D DISEGNA
+      GIUSTO (riempimenti, copie, copia sovrapposta; l'unico MALE era la
+      prova, corretta in nv50.drv 0.007). PRAMIN a 0x0ff00000, RAM rubata
+      0xb0000000 256 MB, arch 0xaa. -2dmisura (MB/s): CPU riempie lo
+      schermo 45, ombra->schermo 46, legge 3, riempie la RAM 1605; motore
+      riempie 855, copia 73. LA CAUSA DEGLI SCATTI: la CPU scrive il
+      framebuffer a velocita' da UC (un 1366x768 = 90 ms) nonostante la
+      fascia MTRR WC. Kernel 0.275: PAT voce 1 = WC (PWT), framebuffer e
+      fb_map mappati WC. In QEMU il BIOS ha una fascia UC che copre il
+      framebuffer e la nostra MTRR non prendeva: il PAT la scavalca.
+      DA FARE: rimisurare -2dmisura col 0.275; poi decidere il passo 4
+      (wserver: riempimenti al motore anche con l'ombra? finestre in
+      VRAM?). La copia del motore a 73 MB/s e' lenta: capire perche'
+      (0x8b0 e' il blit con scala; provare altri metodi).
+
+  26. FIREFOX (EXILLA) SUL CQ60 CON LO SWAP - DA FARE A CONTESTO PULITO
+      (l'utente, 24/10): "sto provando programmi grossi come firefox per
+      vedere se funziona ora che c'e' la memoria virtuale, comunque la
+      finestra di caricamento con la clessidra animata resta in primo
+      piano anche dopo aver mostrato la finestra di firefox, e firefox non
+      apre nessuna pagina neanche quella di configurazione: bisogna
+      scoprire se dipende dalla poca RAM, che comunque lo swap dovrebbe
+      compensare anche se rallenta, oppure c'e' un errore nel porting".
+      Stato al 24/10: portatile 64 bit, kernel 0.274, RAM ~2,8 GB, swap
+      hd2p2 attivo (dmesg SWAP: 1048575 slot, 4095 MB). Due difetti:
+      a. la finestra di caricamento (clessidra animata) resta SOPRA la
+         finestra di Firefox gia' comparsa: chi la apre (exwin/lanciatore)
+         non la chiude o non la porta sotto quando l'applicazione mostra
+         la sua prima finestra;
+      b. Firefox non carica nessuna pagina, nemmeno about:config: capire
+         se e' memoria (guardare `mem`, dmesg SWAP/PF, processi uccisi per
+         memoria, mmap rifiutate) o il porting (i processi figli di
+         Firefox - content process, IPC, fili -; dmesg dei loro errori;
+         prima prova la stessa cosa in QEMU con RAM larga, cosi' si separa
+         la memoria dal porting).
+      Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
+      gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
+      per i dmesg.
 
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):

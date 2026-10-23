@@ -585,6 +585,10 @@ static void smp_ap_entra(void)
 {
     uint32_t a = 0, b = 0, c = 0, d = 0;
 
+    /* Il PAT e' per processore: questo deve vedere il framebuffer WC come il
+     * BSP (mtrr.c, pat_imposta). */
+    pat_imposta();
+
     cpuid(1, &a, &b, &c, &d);
     g_ap_voce->firma    = a;
     g_ap_voce->capacita = d;

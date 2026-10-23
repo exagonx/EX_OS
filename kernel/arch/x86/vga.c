@@ -1008,6 +1008,7 @@ void vga_init_grafica(const BootInfo *info)
     /* Mappatura identita' del framebuffer. Scrittura sì, utente no: in
      * ring3 non deve essere raggiungibile, come non lo e' 0xB8000. */
     byte_tot = info->fb_pitch * info->fb_height;
+    pat_imposta();      /* prima della mappa: la PTE prende pat_flag_wc() */
     if (paging_mappa_framebuffer(info->fb_addr, byte_tot) != 0) {
         klog(LOG_ERROR, "VGA: framebuffer 0x%08x non mappabile - "
                         "resto in modo testo", info->fb_addr);
