@@ -408,10 +408,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exht
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv nv50_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
+DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv nv50.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -5297,6 +5297,29 @@ $(NFORCE_DRV_OUT): $(NFORCE_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NFORCE_DRV_
 .PHONY: nforce_drv
 nforce_drv: dirs $(NFORCE_DRV_OUT)
 
+# --- nv50.drv: il display delle NVIDIA G80 e seguenti (voce 23, solo CD) --------
+# Passo 1 (23 ottobre 2026): -stato legge come il BIOS ha lasciato il display
+# (teste, pannello, framebuffer, scala). QEMU non ha NVIDIA: solo sul ferro.
+NV50_DRV_SRC  := drivers/nv50/nv50.c
+NV50_DRV_OUT  := $(BUILD_DRIVERS_CD)/nv50.drv
+NV50_DRV_LD   := drivers/nv50/nv50.ld
+
+$(NV50_DRV_OUT): $(NV50_DRV_SRC) $(PCI_DRV_PROTO) $(NV50_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 nv50.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(NV50_DRV_SRC) -o $(BUILD_DRIVERS_CD)/nv50_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/nv50_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/nv50_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NV50_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/nv50_start.o \
+	    $(BUILD_DRIVERS_CD)/nv50_main.o  \
+	    $(BUILD_DRIVERS_CD)/nv50_libc.o  \
+	    -o $@
+	@echo "[OK] nv50.drv compilato: $@"
+
+.PHONY: nv50_drv
+nv50_drv: dirs $(NV50_DRV_OUT)
+
 # --- ar5k.drv: the Atheros AR5xxx WiFi chips (AR5212 family), @WIFI W7 --------
 # First stage (15 October 2026): `ar5k.drv -i` wakes the chip, reads radio and
 # EEPROM and puts it back as found. Sequences from Linux's ath5k (ISC), see
@@ -8021,7 +8044,7 @@ BINARI_SOLO_CD := $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) 
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(AR5K_DRV_OUT) $(WIFISIM_OUT) $(FETTA_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
-                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(RTL8169_DRV_OUT) \
+                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(NV50_DRV_OUT) $(RTL8169_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
                       $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \

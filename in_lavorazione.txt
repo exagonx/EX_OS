@@ -7998,6 +7998,49 @@ tools/netinst/velocita tolto da netinst.
       b. nel pannello (pm, Impostazioni, scheda Video) l'elenco dei modi
          va fatto scorrere col SOLO MOUSE: barra di scorrimento con i
          pulsanti freccia alle estremita' (oggi non si puo').
+      23/10: b FATTA (exwin 0.019): ogni "list" del toolkit ha la barra
+      di scorrimento quando le righe non ci stanno (frecce, gola, cursore
+      da trascinare; muove la vista, non la scelta). Provata in QEMU nel
+      pannello Video. a: il BIOS del portatile (svga.drv -lista via
+      telnet) da' al massimo 1280x720 e non legge l'EDID. Scelta
+      dell'utente: DRIVER NV50. Riferimenti (MIT): xf86-video-nv
+      g80_display.c/g80_sor.c (metodi 0x800.. delle teste mandati per
+      registri 0x610300/0x610304, nativa del pannello letta da 0x610050 e
+      0x610B4C) e nouveau g84.c (da dove si rilegge ogni metodo: preparato
+      e, +4, in uso; testa 1 a +0x540). Idea: i tempi del pannello li
+      lascia il BIOS (nativi), si cambiano solo framebuffer 0x868/0x86C,
+      vista 0x8C8 e scala 0x8A4/0x8D8/0x8DC, poi 0x80. PASSO 1 FATTO:
+      drivers/nv50/nv50.c, `nv50.drv -stato` (e -tutto) SOLO LETTURA, sul
+      CD. DA FARE: lanciarlo sul portatile e leggere cosa ha lasciato il
+      BIOS; poi passo 2 (cambiare il modo) e il kernel che prende il
+      framebuffer nuovo (misura e pitch) senza riavviare.
+      23/10 sera, nv50.drv -tutto SUL PORTATILE (kernel 0.271):
+      chip 0x0aa280a2 (architettura 0xaa = MCP77/78), registri 0xc1000000,
+      memoria video 0xd0000000. LVDS sulla TESTA 0. Uscita 0x8D8 =
+      0x03000556 = 1366x768: la nativa e' confermata. Orologio 69300 kHz,
+      totale 1480x780 (0x814 0x030c05c8), 0x818 0x0004001f, 0x81c
+      0x00090041, 0x820 0x03090597, 0x824 0x01900490, dither 0x11.
+      MA i metodi del framebuffer (0x860-0x86C, 0x874), della vista (0x8C8)
+      e della scala sono A ZERO, 0x610300 = 0, 0x610024 = 0x100,
+      0x610200 = 0x48070008: il BIOS mostra il modo VBE dalla strada VGA
+      ereditata, non dal canale principale del display. Quindi il passo 2
+      non e' "cambiare quattro metodi": e' la presa del display intera di
+      G80DispInit (spegnere la VGA, 0x610024 bit 0x100 e 0x6194E8;
+      riaprire il canale 0x610200 = 0x1000b03, 0x610300 = 1) e un modo
+      completo sulla testa 0 con i tempi qui sopra, il SOR dell'LVDS, la
+      LUT in fondo alla memoria video, il contesto DMA (0x610380..) e il
+      PLL nel supervisore 2. I tempi li ha gia' calcolati il BIOS: si
+      riusano. SOR0 0x61C004 = 1 (acceso).
+      PASSO 2 SCRITTO (nv50.drv 0.002, -prova, scelta dell'utente: prova a
+      parte prima del kernel): prende il display (PreInit, DispInit),
+      testa 0 coi tempi del BIOS, framebuffer 1366x768 pitch 5632 a 8 MB
+      in VRAM (la console scrive ancora a 0 col pitch vecchio), tavolozza
+      identita' in fondo alla VRAM, SOR0 sulla testa 0, scala spenta, PLL
+      nel supervisore 2 (calcolato: 69300 kHz esatti, A 44/3 B 14/5 P 4).
+      Disegna cornice, barre, griglia e diagonali; stampa ogni comando;
+      ogni attesa scade. DA PROVARE sul portatile (lo schermo di prima
+      torna solo col riavvio). Poi: il kernel che passa al framebuffer
+      nuovo (misura, pitch, offset) senza riavviare.
 
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):

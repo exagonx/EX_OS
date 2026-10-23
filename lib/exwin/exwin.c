@@ -2725,6 +2725,10 @@ static void disegna_oggetto(Oggetto *o);
 static void area_barre_disegna(const Oggetto *o, Area *A, int x, int y);
 static int  g_area_barra = 0;       /* 1 vertical, 2 horizontal: a thumb dragged */
 static int  g_area_presa = 0;       /* where the thumb was taken */
+/* The scroll bar of a list (23 October 2026): see lista_barra_clic. */
+static void lista_barra_disegna(const Oggetto *o, Lista *L, int x, int y);
+static int  g_lista_barra = 0;      /* 1: a list's thumb is being dragged */
+static int  g_lista_presa = 0;
 static void disegna_figli(ExWindow padre);
 
 static int ridisegna_controllo(Oggetto *o)
@@ -4269,8 +4273,9 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
             if (v == L->sel || (L->multi && v < L->n && L->segni[v])) {
                 fondo = col_fuoco ? EX_BLUE : EX_DARK_GRAY;
-                ex_fill_rect(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
-                          fondo);
+                ex_fill_rect(o->padre, x + 2, ry - 1,
+                             o->w - 4 - (L->n > L->righe ? AREA_BARRA : 0),
+                             LISTA_RIGA_H, fondo);
             }
 
             /* ! L'ICONA SI FONDE SUL FONDO DELLA RIGA, non sul bianco della
@@ -4285,6 +4290,8 @@ static void disegna_oggetto_nudo(Oggetto *o)
                       &L->voci[v * LISTA_TESTO_MAX],
                       (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_WHITE : EX_BLACK);
         }
+        /* Dopo le righe: un testo lungo passa sotto la barra, non sopra. */
+        lista_barra_disegna(o, L, x, y);
         break;
     }
 
@@ -5887,6 +5894,76 @@ static int lista_colonna(Oggetto *co, int x)
     return (c < 0) ? 0 : c;
 }
 
+/* =============================================================================
+ * LA BARRA DI SCORRIMENTO DI UNA LISTA (23 ottobre 2026, l'utente: nel
+ * pannello Video «non si puo' scorrere usando il solo mouse»)
+ *
+ * ! C'E' SOLO QUANDO LE RIGHE NON CI STANNO, al contrario dell'area di testo
+ * che la tiene sempre: li' comparire mentre si scrive farebbe saltare le
+ * colonne sotto il cursore, qui le righe le mette il programma e non chi
+ * guarda. Una lista che ci sta tutta resta com'era, larga quanto prima.
+ *
+ * Muove la VISTA (primo), non la scelta, come la rotella: le frecce di una
+ * riga, la gola di una pagina, il cursore trascinandolo. La geometria e il
+ * disegno sono quelli delle barre dell'area (barra_geo, barra_disegna).
+ * ============================================================================= */
+static unsigned int lista_barra_max(const Lista *L)
+{
+    return (L && L->n > L->righe) ? L->n - L->righe : 0;
+}
+
+static void lista_barra_disegna(const Oggetto *o, Lista *L, int x, int y)
+{
+    if (!L || L->n <= L->righe) return;
+    barra_disegna(o->padre, x + o->w - AREA_BARRA - 1, y + 1, o->h - 2, AREA_BARRA, 0,
+                  lista_barra_max(L), L->righe, L->primo);
+}
+
+/* Un clic sulla barra: 1 se era li' (la vista si e' mossa, o si e' preso il
+ * cursore), e allora non sceglie nessuna riga. */
+static int lista_barra_clic(Oggetto *co, int x, int y)
+{
+    Lista *L = lista_di(co);
+    int    ox, oy, pos, lun, gola, cp, cl;
+    unsigned int massimo;
+
+    if (!L || L->n <= L->righe) return 0;
+    origine(co, &ox, &oy);
+    if (x - (ox + co->x) < co->w - AREA_BARRA - 1) return 0;
+
+    pos = y - (oy + co->y) - 1;
+    lun = co->h - 2;
+    massimo = lista_barra_max(L);
+    barra_geo(lun, AREA_BARRA, massimo, L->righe, L->primo, &gola, &cp, &cl);
+
+    if (pos < AREA_BARRA)                   L->primo = L->primo ? L->primo - 1 : 0;
+    else if (pos >= lun - AREA_BARRA)       L->primo++;
+    else if (pos < AREA_BARRA + cp)         L->primo = L->primo > L->righe ? L->primo - L->righe : 0;
+    else if (pos >= AREA_BARRA + cp + cl)   L->primo += L->righe;
+    else { g_lista_barra = 1; g_lista_presa = pos - AREA_BARRA - cp; }
+    if (L->primo > massimo) L->primo = massimo;
+    return 1;
+}
+
+/* Il cursore trascinato: la vista segue il puntatore. */
+static void lista_barra_trascina(Oggetto *co, int y)
+{
+    Lista *L = lista_di(co);
+    int    ox, oy, gola, cp, cl, libero, nuovo;
+    unsigned int massimo;
+
+    if (!L || !g_lista_barra) return;
+    origine(co, &ox, &oy);
+    massimo = lista_barra_max(L);
+    barra_geo(co->h - 2, AREA_BARRA, massimo, L->righe, L->primo, &gola, &cp, &cl);
+    libero = gola - cl;
+    if (libero <= 0 || massimo == 0) { L->primo = 0; return; }
+    nuovo = y - (oy + co->y) - 1 - AREA_BARRA - g_lista_presa;
+    if (nuovo < 0) nuovo = 0;
+    if (nuovo > libero) nuovo = libero;
+    L->primo = (unsigned int)((long)nuovo * (long)massimo / libero);
+}
+
 /* ! QUEL CHE SI VEDE SI PUO' TOCCARE, E QUEL CHE E' COPERTO NO. Un controllo
  * dentro una finestra MDI si raggiunge solo se QUELLA finestra e' quella davanti
  * nel punto in cui si e' cliccato, e solo dentro la sua area del client: un
@@ -7433,6 +7510,11 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 if (!ridisegna_controllo(co)) ridisegna_finestra(f);
                 continue;
             }
+            if (co && co->classe == CL_LISTA && g_lista_barra) {
+                lista_barra_trascina(co, (int)e.y);
+                if (!ridisegna_controllo(co)) ridisegna_finestra(f);
+                continue;
+            }
             if (co && co->classe == CL_LISTA) {
                 /* ! FUORI DALLA LISTA LA SCELTA NON SI MUOVE (29 settembre
                  * 2026): chi trascina via delle righe — verso una cartella
@@ -7453,6 +7535,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
         case WIN_EV_MOUSE_SU: {
             g_area_barra = 0;                   /* a thumb, if one was held */
+            g_lista_barra = 0;
             g_mdi_trascina = 0;
             /* =================================================================
              * ! QUI PARTE IL COMANDO, ed e' il rilascio a farlo partire.
@@ -7771,6 +7854,13 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
             if (co && co->classe == CL_LISTA) {
                 Lista *L;
+
+                /* Sulla barra si scorre: nessuna riga scelta, niente comando. */
+                if (lista_barra_clic(co, (int)e.x, (int)e.y)) {
+                    g_trascinato = c;
+                    if (!ridisegna_controllo(co)) ridisegna_finestra(f);
+                    continue;
+                }
 
                 lista_punta(co, (int)e.y);
                 g_trascinato = c;
@@ -8330,7 +8420,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.018"   /* 0.018: ex_ask_windows, ex_spawn_program */
+#define EXWIN_VERSIONE "0.019"   /* 0.019: la barra di scorrimento delle liste */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 
