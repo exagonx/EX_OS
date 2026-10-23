@@ -8075,6 +8075,19 @@ tools/netinst/velocita tolto da netinst.
       Dire che una cosa NON c'e' solo se richiesto o con il verbose (-v);
       vale per tutti i messaggi «manca/non c'e'» dei driver avviati da
       avvio.sh con -avvio.
+      FATTO nel kernel 0.271 (23/10): i due messaggi escono solo col
+      verbose (verboseboot o -v, usb_chiacchiera in usb_comune.c). Nuovo
+      comando /bin/usb nel sistema di base: -status (anche -showstatus o
+      senza niente) chiede ai driver lo stato delle porte (sportelli
+      usb.uhci/ohci/ehci/xhci, drivers/usb/usb_sportello.h); -unplug
+      [usb0|/USB/USB0] smonta, ritira e dice che si puo' staccare; -refresh
+      fa riguardare ai driver le porte occupate e non servite, cosi' una
+      chiavetta tolta e lasciata infilata torna e automount la rimonta.
+      Per farlo il kernel tiene i nomi IPC in una tabella sola (128 voci):
+      prima un processo aveva un nome solo e un driver col mouse perdeva
+      lo sportello. Corretto anche mkiso64.sh: il CD a 64 bit non aveva
+      /USB (automount usciva). Prova: tools/prova_usb.sh, 32 e 64 bit.
+      xHCI non riguarda le porte (-refresh non lo tocca): guarda una volta.
   12. Comando `kill`: FATTO nel kernel 0.270 (voce 22, passo 4), /bin/kill
       nel sistema di base. Resta la parte sui driver qui sotto.
       (era: proposto, da confermare): la libc ha kill(), la shell

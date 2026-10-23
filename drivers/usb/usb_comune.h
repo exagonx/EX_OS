@@ -221,4 +221,48 @@ int usb_mouse_wheel(const unsigned char *r, unsigned int n);
  * all'infinito l'ultimo tasto. */
 void usb_tastiera_rapporto(const unsigned char *r, int kbd_pid);
 
+/* -----------------------------------------------------------------------------
+ * Lo sportello: cosa c'e' sulle porte, per /bin/usb (vedi usb_sportello.h)
+ *
+ * Il driver dice cosa vede con usb_porta(); lo sportello tiene la tabella e
+ * risponde. ! LA PORTA «CORRENTE» E' QUELLA CHE IL DRIVER STA GUARDANDO, e la
+ * si fissa prima di enumerarla: cosi' usb_massa.c - che di porte non sa
+ * niente - puo' dire «non diventa pronta», «servita come usb1», «espulsa»
+ * della porta giusta senza che ogni driver glielo passi.
+ * --------------------------------------------------------------------------- */
+#include "usb_sportello.h"
+
+/* Apre lo sportello «usb.<chi>» (o «usb.<chi>2»...). `controller` e `porte`
+ * sono quel che il driver guida. */
+void usb_sportello_apri(const char *chi, unsigned int controller, unsigned int porte);
+
+/* Cambia lo stato della porta (ctl, porta da 0) e la fa corrente. Uno stato
+ * VUOTA dimentica anche dispositivo e nome. */
+void usb_porta(unsigned int ctl, unsigned int porta, unsigned int stato);
+
+/* Sulla porta corrente: lo stato, il dispositivo, il nome e il blk. */
+void usb_porta_stato(unsigned int stato);
+void usb_porta_dispositivo(const UsbDispositivo *d);
+void usb_porta_nomi(const char *nome, const char *blk);
+
+/* Lo stato attuale di una porta (USB_P_*). */
+unsigned int usb_porta_vale(unsigned int ctl, unsigned int porta);
+
+/* Guarda la casella fino a `ms` (IPC_SUBITO = solo quel che c'e') e risponde
+ * ai messaggi dello sportello; gli altri restano dove sono. Rende 1 se e'
+ * arrivato un «riprova»: chi chiama toglie il segno alle porte occupate che
+ * non stanno servendo niente. */
+int  usb_sportello_guarda(unsigned int ms);
+
+/* Per chi ha gia' in mano un messaggio (i cicli del mouse): se e' dello
+ * sportello risponde e rende 1, altrimenti 0. Un «riprova» ricevuto qui si
+ * ritrova con usb_sportello_riprova(). */
+int  usb_sportello_rispondi(const IpcMessage *meta);
+int  usb_sportello_riprova(void);
+
+/* I messaggi «di routine» (aspetto una chiavetta, non diventa pronta) solo
+ * con -v o con verboseboot = 1: a ogni avvio non dicono niente di nuovo, e
+ * lo stato lo dice `usb -status`. */
+int  usb_chiacchiera(unsigned int verboso);
+
 #endif /* USB_COMUNE_H */

@@ -80,7 +80,7 @@
 
 /* +0.001 a ogni modifica: `xhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("xhci.drv", "0.002");
+EX_VERSIONE("xhci.drv", "0.003");
 
 /* --- Registri di CAPACITA', dall'inizio della finestra -------------------- */
 #define C_CAPLENGTH     0x00    /* 8 bit: quanto sono lunghi questi registri */
@@ -1678,7 +1678,10 @@ static void servi(void)
         n = int_leggi(rap, sizeof(rap), 10);
 
         if (g_dev.proto == USB_PROTO_TASTIERA) {
+            static unsigned int giri;
+
             if (n >= 8) usb_tastiera_rapporto(rap, g_kbd_pid);
+            if (++giri % 20 == 0) usb_sportello_guarda(IPC_SUBITO);   /* ~200 ms */
             continue;
         }
 
@@ -1703,6 +1706,8 @@ static void servi(void)
 
             if (!attendi || g_novita) rispondi(meta.sender_pid);
             else                      g_attesa_pid = meta.sender_pid;
+        } else {
+            usb_sportello_rispondi(&meta);   /* usb -status */
         }
     }
 }
@@ -1876,6 +1881,12 @@ int main(int argc, char **argv)
 
         XhciPosto dove;
 
+        /* Lo sportello per `usb -status`. ! xHCI QUI GUARDA UNA VOLTA SOLA,
+         * all'avvio: `usb -refresh` non ha porte da riguardare. */
+        usb_sportello_apri("xhci", 1, g_porte);
+        usb_porta(0, p, USB_P_COLLEGATA);
+        usb_porta_stato(USB_P_ERRORE);         /* finche' non si arriva in fondo */
+
         if (!porta_reset(p)) return 1;
         if (!enable_slot()) return 1;
         if (g_verboso) printf("xhci: alloggiamento %u per la porta %u\n", g_slot, p);
@@ -1888,6 +1899,8 @@ int main(int argc, char **argv)
 
         if (!indirizza(&dove)) return 1;
         if (!conosci(vel)) return 1;
+        usb_porta_dispositivo(&g_dev);
+        usb_porta_stato(USB_P_COLLEGATA);
 
         if (g_dev.classe == USB_CLASSE_HUB) {
             if (!dietro_hub(p, vel)) return 1;
@@ -1923,6 +1936,7 @@ int main(int argc, char **argv)
 
     /* La prima lettura si mette in coda adesso: da qui in poi ce n'e' sempre
      * una in attesa, e il ciclo la rimette appena ne consuma una. */
+    usb_porta_stato(g_dev.proto == USB_PROTO_TASTIERA ? USB_P_TASTIERA : USB_P_MOUSE);
     int_arma();
     servi();
     return 0;

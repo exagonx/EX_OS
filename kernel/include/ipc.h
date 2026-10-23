@@ -55,7 +55,8 @@ int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
                          uint32_t timeout_ms);
 
 /* Registra il processo chiamante come fornitore del servizio 'name'.
- * Un solo processo alla volta può registrare un dato nome. */
+ * Un solo processo alla volta può registrare un dato nome; uno stesso
+ * processo può registrarne più d'uno (IPC_NOMI_MAX in tutto il sistema). */
 int32_t ipc_register(const char *name);
 
 /* Cerca il PID del processo che ha registrato 'name'.

@@ -516,3 +516,160 @@ void usb_tastiera_rapporto(const unsigned char *r, int kbd_pid)
     if (n > 0 && kbd_pid >= 0)
         ipc_send((unsigned int)kbd_pid, KBD_MSG_SCANCODE, out, n);
 }
+
+/* =============================================================================
+ * LO SPORTELLO (23 ottobre 2026) — vedi usb_sportello.h
+ *
+ * ! LA TABELLA TIENE LE PORTE CHE HANNO QUALCOSA DA DIRE, non tutte: un
+ * driver OHCI con quattro controller da quindici porte ne avrebbe sessanta,
+ * quasi tutte vuote. Una porta che torna vuota libera la sua voce; quelle
+ * che non ci sono nella risposta, /bin/usb le dice vuote.
+ * ============================================================================= */
+static UsbStato     g_sp;
+static int          g_sp_corrente = -1;
+static int          g_sp_riprova  = 0;
+static int          g_sp_aperto   = 0;
+
+void usb_sportello_apri(const char *chi, unsigned int controller, unsigned int porte)
+{
+    char nome[IPC_NAME_LEN];
+    int  k;
+
+    memset(&g_sp, 0, sizeof(g_sp));
+    strncpy(g_sp.chi, chi, sizeof(g_sp.chi) - 1);
+    g_sp.controller = controller;
+    g_sp.porte      = porte;
+
+    /* ! DUE DRIVER DELLO STESSO TIPO NON SI RUBANO IL NOME: il secondo
+     * prende «usb.ehci2». ipc_register rifiuta un nome gia' preso. */
+    for (k = 1; k <= 4; k++) {
+        if (k == 1) snprintf(nome, sizeof(nome), "%s%s", USB_SPORTELLO_PREFISSO, chi);
+        else        snprintf(nome, sizeof(nome), "%s%s%d", USB_SPORTELLO_PREFISSO, chi, k);
+        if (ipc_register(nome) == 0) { g_sp_aperto = 1; return; }
+    }
+}
+
+static int sp_voce(unsigned int ctl, unsigned int porta, int crea)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_sp.n; i++)
+        if (g_sp.p[i].ctl == ctl && g_sp.p[i].porta == porta + 1) return (int)i;
+    if (!crea || g_sp.n >= USB_SPORTELLO_PORTE) return -1;
+    memset(&g_sp.p[g_sp.n], 0, sizeof(g_sp.p[0]));
+    g_sp.p[g_sp.n].ctl   = (unsigned char)ctl;
+    g_sp.p[g_sp.n].porta = (unsigned char)(porta + 1);
+    return (int)g_sp.n++;
+}
+
+void usb_porta(unsigned int ctl, unsigned int porta, unsigned int stato)
+{
+    int i;
+
+    if (stato == USB_P_VUOTA) {
+        /* La voce se ne va: l'ultima prende il suo posto. */
+        i = sp_voce(ctl, porta, 0);
+        if (i >= 0) {
+            g_sp.p[i] = g_sp.p[g_sp.n - 1];
+            g_sp.n--;
+        }
+        g_sp_corrente = -1;
+        return;
+    }
+    i = sp_voce(ctl, porta, 1);
+    g_sp_corrente = i;
+    if (i >= 0) g_sp.p[i].stato = (unsigned char)stato;
+}
+
+unsigned int usb_porta_vale(unsigned int ctl, unsigned int porta)
+{
+    int i = sp_voce(ctl, porta, 0);
+
+    return i < 0 ? USB_P_VUOTA : g_sp.p[i].stato;
+}
+
+void usb_porta_stato(unsigned int stato)
+{
+    if (g_sp_corrente >= 0) g_sp.p[g_sp_corrente].stato = (unsigned char)stato;
+}
+
+void usb_porta_dispositivo(const UsbDispositivo *d)
+{
+    UsbPortaStato *p;
+
+    if (g_sp_corrente < 0 || d == NULL) return;
+    p = &g_sp.p[g_sp_corrente];
+    p->classe    = (unsigned char)d->classe;
+    p->venditore = (unsigned short)d->venditore;
+    p->prodotto  = (unsigned short)d->prodotto;
+}
+
+void usb_porta_nomi(const char *nome, const char *blk)
+{
+    UsbPortaStato *p;
+
+    if (g_sp_corrente < 0) return;
+    p = &g_sp.p[g_sp_corrente];
+    if (nome) { strncpy(p->nome, nome, sizeof(p->nome) - 1); p->nome[sizeof(p->nome) - 1] = 0; }
+    if (blk)  { strncpy(p->blk,  blk,  sizeof(p->blk)  - 1); p->blk[sizeof(p->blk) - 1]  = 0; }
+}
+
+int usb_sportello_rispondi(const IpcMessage *meta)
+{
+    if (meta->tipo == USB_MSG_STATO) {
+        ipc_send(meta->sender_pid, USB_MSG_STATO_R, &g_sp, sizeof(g_sp));
+        return 1;
+    }
+    if (meta->tipo == USB_MSG_RIPROVA) {
+        unsigned int i, quante = 0;
+
+        for (i = 0; i < g_sp.n; i++)
+            if (g_sp.p[i].stato != USB_P_MASSA && g_sp.p[i].stato != USB_P_MOUSE &&
+                g_sp.p[i].stato != USB_P_TASTIERA) quante++;
+        ipc_send(meta->sender_pid, USB_MSG_RIPROVA_R, &quante, sizeof(quante));
+        g_sp_riprova = 1;
+        return 1;
+    }
+    return 0;
+}
+
+int usb_sportello_riprova(void)
+{
+    int r = g_sp_riprova;
+
+    g_sp_riprova = 0;
+    return r;
+}
+
+static int sp_filtro(const IpcMessage *meta, void *dato)
+{
+    (void)dato;
+    return (meta->tipo == USB_MSG_STATO || meta->tipo == USB_MSG_RIPROVA)
+           ? IPC_MIO : IPC_ALTRUI;
+}
+
+int usb_sportello_guarda(unsigned int ms)
+{
+    IpcMessage meta;
+
+    if (!g_sp_aperto) {
+        if (ms != IPC_SUBITO) usleep(ms * 1000);
+        return 0;
+    }
+    /* Uno alla volta, finche' ce ne sono: la prima attesa e' quella chiesta,
+     * le altre non aspettano. */
+    while (ipc_scegli(sp_filtro, NULL, &meta, NULL, 0, ms) >= 0) {
+        usb_sportello_rispondi(&meta);
+        ms = IPC_SUBITO;
+    }
+    return usb_sportello_riprova();
+}
+
+int usb_chiacchiera(unsigned int verboso)
+{
+    static int vb = -1;
+
+    if (verboso) return 1;
+    if (vb < 0) vb = verboseboot();
+    return vb;
+}

@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("uhci.drv", "0.003");
+EX_VERSIONE("uhci.drv", "0.004");
 
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */
@@ -156,6 +156,7 @@ static unsigned int g_dev_ep     = 0;   /* endpoint di interruzione IN */
 static unsigned int g_dev_maxp   = 8;
 static unsigned int g_dev_proto  = 0;   /* USB_PROTO_MOUSE o _TASTIERA */
 static UsbDispositivo g_dev;            /* cio' che la meta' comune ha letto */
+static unsigned int   g_giri;           /* giri a vuoto della tastiera: lo sportello */
 static unsigned int g_ep_toggle  = 0;
 
 /* Il dispositivo trovato e' una memoria di massa, non un HID. */
@@ -876,6 +877,7 @@ static void aspetta_e_servi(void)
                 if (assenze[p] >= ASSENZE_PER_SCOLLEGATA) {
                     provata[p]  = 0;
                     inserita[p] = 0;
+                    usb_porta(0, p, USB_P_VUOTA);
                 }
                 continue;
             }
@@ -889,20 +891,30 @@ static void aspetta_e_servi(void)
             g_massa = 0;
             g_rumore = inserita[p] || g_verboso;
 
-            if (!porta_reset(p)) continue;
-            if (!enumera(p, addr)) continue;
+            usb_porta(0, p, USB_P_COLLEGATA);
+            if (!porta_reset(p) || !enumera(p, addr)) {
+                usb_porta_stato(USB_P_ERRORE);
+                continue;
+            }
+            usb_porta_dispositivo(&g_dev);
             addr++;
 
             /* Se torna, e' stata espulsa: si continua a guardare le porte.
              * Vedi il commento in ehci.c. */
             if (g_massa && massa_prepara()) continue;
+            if (usb_porta_vale(0, p) == USB_P_COLLEGATA) usb_porta_stato(USB_P_ALTRO);
         }
 
-        if (!detto) {
+        /* Solo con -v o verboseboot = 1: vedi ehci.c. */
+        if (!detto && usb_chiacchiera(g_verboso))
             printf("uhci: aspetto una chiavetta.\n");
-            detto = 1;
+        detto = 1;
+
+        /* Lo sportello, e un «riprova» che riguarda le porte occupate. */
+        if (usb_sportello_guarda(1000)) {
+            for (p = 0; p < 2; p++)
+                if (usb_porta_vale(0, p) != USB_P_VUOTA) { provata[p] = 0; inserita[p] = 1; }
         }
-        usleep(1000000);
     }
 }
 
@@ -953,14 +965,21 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    usb_sportello_apri("uhci", 1, 2);
+
     {
         unsigned int p, addr = 1, trovati = 0;
 
         if (g_solo_massa) { aspetta_e_servi(); return 0; }  /* non torna */
 
         for (p = 0; p < 2; p++) {
-            if (!porta_reset(p)) continue;
+            usb_porta(0, p, USB_P_COLLEGATA);
+            if (!porta_reset(p)) { usb_porta(0, p, USB_P_VUOTA); continue; }
             if (enumera(p, addr)) {
+                usb_porta_dispositivo(&g_dev);
+                usb_porta_stato(g_massa ? USB_P_COLLEGATA
+                                : g_dev_proto == USB_PROTO_MOUSE ? USB_P_MOUSE
+                                : USB_P_TASTIERA);
                 /* Una chiavetta si serve qui dentro e non si torna piu'. */
                 if (g_massa && massa_prepara()) return 0;
                 if (g_massa) return 1;
@@ -972,6 +991,7 @@ int main(int argc, char **argv)
                 addr++;
                 break;      /* un dispositivo per volta, per ora */
             }
+            usb_porta_stato(USB_P_ERRORE);
         }
 
         if (!trovati) {
@@ -1018,8 +1038,10 @@ int main(int argc, char **argv)
 
         if (g_dev_proto == USB_PROTO_TASTIERA) {
             if (n >= 8) usb_tastiera_rapporto(rap, g_kbd_pid);
-            /* La tastiera non ha client propri: si torna subito a guardare. */
+            /* La tastiera non ha client propri: si torna subito a guardare.
+             * Lo sportello ogni ~200 ms. */
             usleep(1000);
+            if (++g_giri % 200 == 0) usb_sportello_guarda(IPC_SUBITO);
             continue;
         }
 
@@ -1045,6 +1067,8 @@ int main(int argc, char **argv)
 
             if (!attendi || g_novita) rispondi(meta.sender_pid);
             else                      g_attesa_pid = meta.sender_pid;
+        } else {
+            usb_sportello_rispondi(&meta);   /* usb -status */
         }
     }
 }

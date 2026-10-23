@@ -240,7 +240,13 @@ int usb_massa_pronta(UsbMassa *m)
         usleep(200000);
     }
 
-    printf("massa: il supporto non diventa pronto\n");
+    /* ! SOLO SE SI CHIEDE DI PARLARE (23 ottobre 2026, l'utente: lo vedeva a
+     * ogni avvio). Un lettore di schede vuoto risponde cosi' per sempre, e
+     * dirlo a ogni accensione non aggiunge niente: lo stato resta sulla porta,
+     * e `usb -status` lo mostra. */
+    usb_porta_stato(USB_P_NON_PRONTA);
+    if (usb_chiacchiera(m->verboso))
+        printf("massa: il supporto non diventa pronto\n");
     return 0;
 }
 
@@ -264,6 +270,7 @@ int usb_massa_nome(UsbMassa *m, char *nome, unsigned int max)
     }
     while (j > 0 && nome[j - 1] == ' ') j--;
     nome[j] = '\0';
+    usb_porta_nomi(nome, NULL);
     return 1;
 }
 
@@ -405,6 +412,9 @@ int usb_massa_servi(UsbMassa *m, const char *nome)
         return 0;
     }
 
+    usb_porta_stato(USB_P_MASSA);
+    usb_porta_nomi(NULL, nome);
+
     printf("massa: %s offerto, %u settori (%u MB)\n",
            nome, m->settori, m->settori / 2048);
     printf("       blkscan %s   e poi   mount %s <punto>\n", nome, nome);
@@ -413,7 +423,11 @@ int usb_massa_servi(UsbMassa *m, const char *nome)
     r.dati_max = sizeof(buf);
 
     for (;;) {
-        rc = blk_attendi(&r, 0);
+        /* ! UN SECONDO, NON PER SEMPRE: mentre serve la chiavetta il driver
+         * deve poter rispondere a `usb -status`, e la sua casella si guarda
+         * solo fra una richiesta e l'altra. */
+        rc = blk_attendi(&r, 1000);
+        if (rc == -ETIMEDOUT) { usb_sportello_guarda(IPC_SUBITO); continue; }
         if (rc == -EINTR) continue;
 
         /* =================================================================
@@ -430,6 +444,8 @@ int usb_massa_servi(UsbMassa *m, const char *nome)
          * porta, svuotata e riempita, e' un inserimento nuovo.
          * ================================================================= */
         if (rc == -ENODEV) {
+            usb_porta_stato(USB_P_ESPULSA);
+            usb_porta_nomi(NULL, "");
             printf("massa: %s e' stato espulso: la chiavetta si puo' togliere.\n",
                    nome);
             return 1;

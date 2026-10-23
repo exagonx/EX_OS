@@ -57,6 +57,7 @@
 #define IPC_MSG_MAX_DATA    1536    /* payload max — copre un frame Ethernet */
 #define IPC_MAILBOX_DEPTH   4       /* messaggi in coda per processo */
 #define IPC_NAME_LEN        16      /* nome servizio, es. "tty", "floppy" */
+#define IPC_NOMI_MAX        128     /* nomi registrati in tutto il sistema */
 
 typedef struct IpcMessage {
     uint32_t sender_pid;
@@ -728,7 +729,8 @@ typedef struct Process {
     uint32_t        ipc_head;               /* prossimo slot da leggere */
     uint32_t        ipc_tail;               /* prossimo slot da scrivere */
     uint32_t        ipc_count;              /* messaggi attualmente in coda */
-    char            ipc_service_name[IPC_NAME_LEN]; /* nome registrato (vuoto se nessuno) */
+    /* I nomi dei servizi non stanno qui ma in una tabella sola del kernel
+     * (kernel/ipc/ipc.c, g_nomi): un processo ne puo' tenere piu' d'uno. */
 
     /* --- I/O porte: whitelist kernel-mediata per driver ring3 ---
      *

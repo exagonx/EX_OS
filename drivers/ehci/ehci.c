@@ -79,7 +79,7 @@
 
 /* +0.001 a ogni modifica: `ehci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ehci.drv", "0.002");
+EX_VERSIONE("ehci.drv", "0.003");
 
 /* --- Registri di capacita' (all'inizio della finestra) --------------------- */
 #define C_CAPLENGTH   0x00      /* byte 0 = lunghezza, byte 2-3 = versione */
@@ -905,6 +905,7 @@ static void aspetta_e_servi(const char *chi)
                 if (assenze[p] >= ASSENZE_PER_SCOLLEGATA) {
                     provata[p]  = 0;
                     inserita[p] = 0;
+                    usb_porta(0, p, USB_P_VUOTA);
                 }
                 continue;
             }
@@ -917,8 +918,12 @@ static void aspetta_e_servi(const char *chi)
 
             g_rumore = inserita[p] || g_verboso;
 
-            if (!porta_prepara(p)) continue;
-            if (!conosci()) continue;
+            usb_porta(0, p, USB_P_COLLEGATA);
+            if (!porta_prepara(p) || !conosci()) {
+                usb_porta_stato(USB_P_ERRORE);
+                continue;
+            }
+            usb_porta_dispositivo(&g_dev);
 
             /* ! SE TORNA, LA CHIAVETTA E' STATA ESPULSA, e non si esce dal
              * driver: si torna a guardare le porte. La porta resta segnata
@@ -928,6 +933,10 @@ static void aspetta_e_servi(const char *chi)
              * segno e il reinserimento e' un inserimento nuovo. */
             if (massa_prepara()) continue;
 
+            /* Tornata senza servire: o non e' una memoria di massa (lo stato
+             * e' ancora «collegata»), o usb_massa.c ha gia' detto perche'. */
+            if (usb_porta_vale(0, p) == USB_P_COLLEGATA) usb_porta_stato(USB_P_ALTRO);
+
             if (g_rumore) {
                 printf("%s: sulla porta %u non c'e' una memoria di massa.\n",
                        chi, p + 1);
@@ -936,11 +945,21 @@ static void aspetta_e_servi(const char *chi)
             }
         }
 
-        if (!detto) {
+        /* ! A OGNI AVVIO, SENZA NIENTE DI NUOVO DA DIRE (23 ottobre 2026,
+         * l'utente): solo con -v o verboseboot = 1. `usb -status` lo dice. */
+        if (!detto && usb_chiacchiera(g_verboso)) {
             printf("%s: aspetto una chiavetta.\n", chi);
-            detto = 1;
         }
-        usleep(1000000);
+        detto = 1;
+
+        /* Il secondo d'attesa e' anche il momento di rispondere allo
+         * sportello. Un «riprova» (usb -refresh) toglie il segno alle porte
+         * occupate: quella con una chiavetta espulsa e lasciata infilata si
+         * riprende senza staccarla. */
+        if (usb_sportello_guarda(1000)) {
+            for (p = 0; p < g_porte && p < 16; p++)
+                if (usb_porta_vale(0, p) != USB_P_VUOTA) { provata[p] = 0; inserita[p] = 1; }
+        }
     }
 }
 
@@ -995,6 +1014,7 @@ int main(int argc, char **argv)
 
     printf("ehci: versione %x, %u porte, registri operativi a +0x%x\n",
            (rd32(g_mmio, C_CAPLENGTH) >> 16) & 0xFFFF, g_porte, caplen);
+    usb_sportello_apri("ehci", 1, g_porte);
 
     if (!prendi_dal_bios()) return 1;
 

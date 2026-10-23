@@ -551,7 +551,13 @@
  * files, the current directory (vfs_punto_di_handle/_percorso). New programs
  * ps and kill in the base system; umount says who holds a busy volume
  * (tools/prova_uso.sh). */
-#define EXOS_VERSION    "0.270"
+/* 0.270 -> 0.271: more than one IPC name per process. The names are in a
+ * single kernel table (ipc.c, g_nomi, IPC_NOMI_MAX = 128) instead of one
+ * field per process, which a second ipc_register overwrote: a USB driver
+ * serving a mouse became "mouse" and lost its "usb.<driver>" window. New
+ * command usb (-status, -unplug, -refresh) talks to those windows; the USB
+ * drivers keep quiet at boot unless verbose (tools/prova_usb.sh). */
+#define EXOS_VERSION    "0.271"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

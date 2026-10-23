@@ -80,6 +80,12 @@ if [ "$QUALE" = "intero" ]; then
                 cp "build/iso-exos/$f" "$RADICE/$f"
             fi
         done
+        # ! E LE DIRECTORY VUOTE: il ciclo qui sopra copia file, e /USB e'
+        # vuota per forza (automount ci monta le chiavette, e da CD non la
+        # puo' creare). Senza questa riga a 64 bit automount usciva subito.
+        (cd build/iso-exos && find . -mindepth 1 -type d -empty) | while read -r d; do
+            mkdir -p "$RADICE/$d"
+        done
     else
         echo "mkiso64: manca build/iso-exos (make iso-exos): il CD avra' solo i programmi" >&2
     fi

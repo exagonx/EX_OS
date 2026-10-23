@@ -362,7 +362,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_prog disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_prog usb_prog disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog toolinst login sudo keymap libc testo fdprova mouse_prog kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -910,6 +910,22 @@ $(KILL_BIN): $(KILL_SRC) $(KILL_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(L
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(KILL_LD) \
 	    $(BUILD_OBJ)/kill_start.o $(BUILD_OBJ)/kill_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] kill compilato: $@"
+
+# --- Programma utente /bin/usb ------------------------------------------------
+# Le porte USB chieste ai driver (sportelli usb.*), togliere e riprendere una
+# chiavetta. Nel sistema di base, accanto a ps e kill.
+USB_SRC := bin/usb/usb.c
+USB_BIN := $(BUILD_BIN)/usb
+USB_LD  := bin/usb/usb.ld
+
+$(USB_BIN): $(USB_SRC) $(USB_LD) drivers/usb/usb_sportello.h $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/usb ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(USB_SRC) -o $(BUILD_OBJ)/usb_main.o
+	$(CC) -m32 -c $(LIBC_START)                       -o $(BUILD_OBJ)/usb_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(USB_LD) \
+	    $(BUILD_OBJ)/usb_start.o $(BUILD_OBJ)/usb_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] usb compilato: $@"
 
 # --- Programma utente /bin/libctest -------------------------------------------
 # Prova la libc DENTRO EX-OS: allocatore, flussi bufferizzati, printf,
@@ -4620,6 +4636,9 @@ stack: dirs $(STACK_BIN)
 ps_prog: dirs $(PS_BIN)
 kill_prog: dirs $(KILL_BIN)
 
+.PHONY: usb_prog
+usb_prog: dirs $(USB_BIN)
+
 .PHONY: mem
 mem: dirs $(MEM_BIN)
 
@@ -5845,7 +5864,7 @@ $(KERNEL_BIN): $(KERNEL_ELF) $(SEGNO_FLAG)
 # aggiunto solo alla prima si costruisce e non entra mai in un floppy nuovo.
 # La guardia `verifica-dipendenze-floppy` qui sotto confronta le due.
 PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
-                        $(STACK_BIN) $(PS_BIN) $(KILL_BIN) $(DISK_BIN) $(FDISK_BIN) \
+                        $(STACK_BIN) $(PS_BIN) $(KILL_BIN) $(USB_BIN) $(DISK_BIN) $(FDISK_BIN) \
                         $(MKFS_BIN) $(MKSWAP_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) \

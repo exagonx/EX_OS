@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.007");
+EX_VERSIONE("ohci.drv", "0.008");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00
@@ -795,11 +795,15 @@ static int hid_servi(void)
     }
 
     int_installa();
+    /* Cosa E' il dispositivo, anche se il servizio 'mouse' era gia' preso. */
+    for (k = 0; k < g_n_hid && g_hid[k].proto == USB_PROTO_TASTIERA; k++) { }
+    usb_porta_stato(k < g_n_hid ? USB_P_MOUSE : USB_P_TASTIERA);
 
     for (;;) {
         IpcMessage    meta;
         unsigned char payload[64];
         unsigned char rap[8];
+        static unsigned int giri;
 
         for (k = 0; k < g_n_hid; k++) {
             int n = leggi_rapporto(k, rap, sizeof(rap));
@@ -821,7 +825,12 @@ static int hid_servi(void)
             }
         }
 
-        if (!c_e_mouse) { usleep(1000); continue; }
+        if (!c_e_mouse) {
+            usleep(1000);
+            /* Solo la tastiera: lo sportello si guarda ogni ~200 ms. */
+            if (++giri % 200 == 0) usb_sportello_guarda(IPC_SUBITO);
+            continue;
+        }
 
         /* Un battito: con una tastiera accanto non si puo' restare di piu'
          * senza guardarla. */
@@ -834,6 +843,8 @@ static int hid_servi(void)
                 memcpy(&attendi, payload, sizeof(unsigned int));
             if (!attendi || g_novita) mouse_rispondi(meta.sender_pid);
             else                      g_attesa_pid = meta.sender_pid;
+        } else {
+            usb_sportello_rispondi(&meta);   /* usb -status */
         }
     }
 }
@@ -1003,6 +1014,7 @@ static void aspetta_e_servi(const char *chi)
                     if (assenze[c][p] >= ASSENZE_PER_SCOLLEGATA) {
                         provata[c][p]  = 0;   /* si potra' riguardare */
                         inserita[c][p] = 0;
+                        usb_porta((unsigned int)c, p, USB_P_VUOTA);
                     }
                     continue;
                 }
@@ -1020,8 +1032,12 @@ static void aspetta_e_servi(const char *chi)
                 g_rumore = inserita[c][p] || g_verboso;
 
                 g_porta = p;
-                if (!porta_prepara(p)) continue;
-                if (!conosci()) continue;
+                usb_porta((unsigned int)c, p, USB_P_COLLEGATA);
+                if (!porta_prepara(p) || !conosci()) {
+                    usb_porta_stato(USB_P_ERRORE);
+                    continue;
+                }
+                usb_porta_dispositivo(&g_dev);
 
                 /* ! PRIMA MOUSE E TASTIERA, SU TUTTE LE PORTE; LE MEMORIE
                  * DOPO (9 ottobre 2026). Questo driver serve un dispositivo
@@ -1047,12 +1063,18 @@ static void aspetta_e_servi(const char *chi)
                 g_porta    = p;
                 g_rumore   = rumore_dopo[c][p];
 
-                if (!porta_prepara(p)) continue;
-                if (!conosci()) continue;
+                usb_porta((unsigned int)c, p, USB_P_COLLEGATA);
+                if (!porta_prepara(p) || !conosci()) {
+                    usb_porta_stato(USB_P_ERRORE);
+                    continue;
+                }
 
                 /* Se torna, e' stata espulsa: si torna a guardare le porte.
                  * Vedi il commento uguale in ehci.c. */
                 if (massa_prepara()) continue;
+
+                if (usb_porta_vale((unsigned int)c, p) == USB_P_COLLEGATA)
+                    usb_porta_stato(USB_P_ALTRO);
 
                 if (g_rumore)
                     printf("%s: controller %d porta %u: non e' una memoria "
@@ -1060,12 +1082,22 @@ static void aspetta_e_servi(const char *chi)
             }
         }
 
-        if (!detto) {
+        /* Solo con -v o verboseboot = 1: vedi ehci.c. */
+        if (!detto && usb_chiacchiera(g_verboso))
             printf("%s: aspetto una chiavetta su %d controller.\n",
                    chi, g_n_ohci);
-            detto = 1;
+        detto = 1;
+
+        /* Il secondo d'attesa e' anche quello dello sportello; un «riprova»
+         * riguarda le porte occupate (vedi ehci.c). */
+        if (usb_sportello_guarda(1000)) {
+            for (c = 0; c < g_n_ohci; c++)
+                for (p = 0; p < 16; p++)
+                    if (usb_porta_vale((unsigned int)c, p) != USB_P_VUOTA) {
+                        provata[c][p]  = 0;
+                        inserita[c][p] = 1;
+                    }
         }
-        usleep(1000000);
     }
 }
 
@@ -1177,6 +1209,12 @@ int main(int argc, char **argv)
         printf("ohci: controller %d acceso, %u porte\n", i + 1, g_porte);
     }
 
+    {
+        unsigned int tot = 0;
+
+        for (i = 0; i < g_n_ohci; i++) tot += g_ohci[i].porte;
+        usb_sportello_apri("ohci", (unsigned int)g_n_ohci, tot);
+    }
     aspetta_e_servi("ohci");
     return 0;                  /* non ci si arriva: vedi aspetta_e_servi */
 }

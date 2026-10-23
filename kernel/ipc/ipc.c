@@ -248,7 +248,43 @@ int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
 
 /* =============================================================================
  * ipc_register / ipc_lookup — registro nomi servizi
+ *
+ * ! UNA TABELLA SOLA, NON UN NOME PER PROCESSO, dal 23 ottobre 2026. Fino
+ * alla 0.270 ogni processo aveva un campo ipc_service_name e un secondo
+ * ipc_register lo sovrascriveva: un driver USB che apre lo sportello
+ * «usb.ohci» e poi serve un mouse diventava «mouse» e lo sportello spariva
+ * (usb -status non lo vedeva più). Un driver può servire più periferiche,
+ * e ognuna può volere il suo nome: il limite giusto è sul totale, non sul
+ * processo. 128 voci da 20 byte sono 2.5 KB; un campo per processo con lo
+ * stesso margine occuperebbe quasi 200 volte tanto, quasi tutto vuoto.
  * ============================================================================= */
+typedef struct {
+    uint32_t pid;                   /* 0 = voce libera */
+    char     nome[IPC_NAME_LEN];
+} IpcNome;
+
+static IpcNome g_nomi[IPC_NOMI_MAX];
+
+static int nome_uguale(const char *a, const char *b)
+{
+    for (uint32_t j = 0; j < IPC_NAME_LEN; j++) {
+        if (a[j] != b[j]) return 0;
+        if (a[j] == '\0') return 1;
+    }
+    return 1;
+}
+
+/* La voce è di un processo vivo? Quella di un processo morto e non ancora
+ * raccolto (zombie) non vale più: il nome si può riprendere. */
+static int voce_viva(const IpcNome *v)
+{
+    Process *p;
+
+    if (v->pid == 0) return 0;
+    p = proc_get_by_pid(v->pid);
+    return p != NULL && p->state != PROC_UNUSED && p->state != PROC_ZOMBIE;
+}
+
 int32_t ipc_register(const char *name)
 {
     if (name == NULL || name[0] == '\0') return ERR(EINVAL);
@@ -260,17 +296,8 @@ int32_t ipc_register(const char *name)
     interrupts_disable();
 
     /* Rifiuta se il nome è già registrato da un processo vivo */
-    for (uint32_t i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
-        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
-        if (p->ipc_service_name[0] == '\0') continue;
-
-        uint32_t j = 0;
-        while (j < IPC_NAME_LEN && p->ipc_service_name[j] == name[j]) {
-            if (name[j] == '\0') break;
-            j++;
-        }
-        if (p->ipc_service_name[j] == name[j]) {  /* uguali fino al terminatore */
+    for (uint32_t i = 0; i < IPC_NOMI_MAX; i++) {
+        if (voce_viva(&g_nomi[i]) && nome_uguale(g_nomi[i].nome, name)) {
             interrupts_enable();
             return ERR(EEXIST);
         }
@@ -315,9 +342,21 @@ int32_t ipc_register(const char *name)
         }
     }
 
-    for (uint32_t i = 0; i < IPC_NAME_LEN; i++) {
-        self->ipc_service_name[i] = name[i];
-        if (name[i] == '\0') break;
+    /* Una voce libera, o di un processo che non c'è più. */
+    uint32_t i;
+    for (i = 0; i < IPC_NOMI_MAX; i++)
+        if (!voce_viva(&g_nomi[i])) break;
+    if (i == IPC_NOMI_MAX) {
+        interrupts_enable();
+        klog(LOG_WARN, "ipc_register('%s'): tabella dei nomi piena (%u)",
+             name, (unsigned)IPC_NOMI_MAX);
+        return ERR(ENOSPC);
+    }
+
+    g_nomi[i].pid = self ? self->pid : 0;
+    for (uint32_t k = 0; k < IPC_NAME_LEN; k++) {
+        g_nomi[i].nome[k] = name[k];
+        if (name[k] == '\0') break;
     }
 
     interrupts_enable();
@@ -330,18 +369,9 @@ int32_t ipc_lookup(const char *name)
 
     interrupts_disable();
 
-    for (uint32_t i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
-        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
-        if (p->ipc_service_name[0] == '\0') continue;
-
-        uint32_t j = 0;
-        while (j < IPC_NAME_LEN && p->ipc_service_name[j] == name[j]) {
-            if (name[j] == '\0') break;
-            j++;
-        }
-        if (p->ipc_service_name[j] == name[j]) {
-            uint32_t pid = p->pid;
+    for (uint32_t i = 0; i < IPC_NOMI_MAX; i++) {
+        if (voce_viva(&g_nomi[i]) && nome_uguale(g_nomi[i].nome, name)) {
+            uint32_t pid = g_nomi[i].pid;
             interrupts_enable();
             return (int32_t)pid;
         }
@@ -361,11 +391,12 @@ void ipc_cleanup_process(uint32_t pid)
     for (uint32_t i = 0; i < MAX_PROCESSES; i++) {
         Process *p = &g_process_pool[i];
         if (p->pid == pid) {
-            p->ipc_service_name[0] = '\0';
             p->ipc_head = p->ipc_tail = p->ipc_count = 0;
             break;
         }
     }
+    for (uint32_t i = 0; i < IPC_NOMI_MAX; i++)
+        if (g_nomi[i].pid == pid) g_nomi[i].pid = 0;
 
     interrupts_enable();
 }
