@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.006");
+EX_VERSIONE("hwconfig", "0.007");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -1042,6 +1042,55 @@ static int c_e_automount(const char *radice)
     return (stat(p, &st) == 0);
 }
 
+/* (23 ottobre 2026) I blocchi che un driver ha scritto con `-install` (vedi
+ * avvio_blocco in lib/libc.c): cominciano con `# -install <nome>` e finiscono
+ * alla prima riga vuota. ! SI RIPORTANO AVANTI TALI E QUALI, ed e' il patto:
+ * questa funzione riscrive avvio.sh per intero, e senza questo un driver
+ * installato sparirebbe alla prima configurazione dell'hardware. Un
+ * `pci.drv &` dentro un blocco si salta se qui sopra c'e' gia' (la rete): due
+ * servizi PCI non stanno insieme. Poi la riga che chiude il file. */
+static void chiudi_avvio(char *out, unsigned int max, const char *radice)
+{
+    char  p[PERC_MAX];
+    char *b, *t;
+    int   fd, dentro = 0;
+    long  n;
+
+    unisci(p, radice[0] ? radice : "", "boot");
+    unisci(p, p, "avvio.sh");
+    fd = open(p, O_RDONLY);
+    b  = fd >= 0 ? malloc(64 * 1024 + 1) : NULL;
+    if (b) {
+        n = read(fd, b, 64 * 1024);
+        if (n < 0) n = 0;
+        b[n] = '\0';
+        for (t = b; *t; ) {
+            char        *f = t;
+            unsigned int l;
+            char         riga[512];
+
+            while (*f && *f != '\n') f++;
+            l = (unsigned int)(f - t);
+            if (strncmp(t, "# -install ", 11) == 0) {
+                dentro = 1;
+                strncat(out, "\n", max - 1 - strlen(out));
+            } else if (l == 0 || strncmp(t, "@echo Sistema pronto", 20) == 0)
+                dentro = 0;
+            if (dentro && l < sizeof(riga) - 1 &&
+                !((strncmp(t, "pci.drv", 7) == 0 || strncmp(t, "/dev/pci.drv", 12) == 0) &&
+                  (strstr(out, "\npci.drv") != NULL || strstr(out, "\n/dev/pci.drv") != NULL))) {
+                memcpy(riga, t, l);
+                riga[l] = '\n'; riga[l + 1] = '\0';
+                strncat(out, riga, max - 1 - strlen(out));
+            }
+            t = *f ? f + 1 : f;
+        }
+        free(b);
+    }
+    if (fd >= 0) close(fd);
+    strncat(out, "\n@echo Sistema pronto.\n", max - 1 - strlen(out));
+}
+
 static void componi_avvio(char *out, unsigned int max, const char *radice)
 {
     /* ! LA RIGA E' PIU' LUNGA DEL PARAGRAFO CHE CI SI ASPETTA, ed e' il motivo
@@ -1197,8 +1246,8 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         strncat(out,
             "\n"
             "# Niente montaggio automatico delle chiavette: su questo sistema\n"
-            "# non c'e' /bin/automount. Sta sul CD di EX-OS.\n"
-            "@echo Sistema pronto.\n", max - 1 - strlen(out));
+            "# non c'e' /bin/automount. Sta sul CD di EX-OS.\n", max - 1 - strlen(out));
+        chiudi_avvio(out, max, radice);
         return;
     }
 
@@ -1229,9 +1278,8 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# l'unico che esiste.\n"
         "# Va qui e non dentro exwin perche' /dev e' di root: un utente normale\n"
         "# non puo' eseguire /dev/sis.drv. Il servizio lo accende il SISTEMA.\n"
-        "sis.drv -2dservizio &\n"
-        "\n"
-        "@echo Sistema pronto.\n", max - 1 - strlen(out));
+        "sis.drv -2dservizio &\n", max - 1 - strlen(out));
+    chiudi_avvio(out, max, radice);
 }
 
 static void componi_autoexec(char *out, unsigned int max)
@@ -1694,7 +1742,7 @@ int main(int argc, char **argv)
 {
     static char cfg[4096];
     static char aut[2048];
-    static char avv[4096];
+    static char avv[8192];
     char        radice[PERC_MAX] = "";
     char        p_cfg[PERC_MAX], p_aut[PERC_MAX], p_avv[PERC_MAX], boot[PERC_MAX];
     int         solo_guarda = 0, solo_driver = 0, senza_chiedere = 0, i;

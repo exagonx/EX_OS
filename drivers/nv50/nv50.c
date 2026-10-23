@@ -47,7 +47,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.003");
+EX_VERSIONE("nv50.drv", "0.004");
 
 #define NV_VENDITORE   0x10DE
 
@@ -72,6 +72,12 @@ static Finestra g_fin[] = {
 #define N_FIN (sizeof(g_fin) / sizeof(g_fin[0]))
 
 static unsigned int g_bar0, g_bar1;
+
+/* -avvio: ZITTO. Gira da /boot/avvio.sh a ogni accensione, e su ogni macchina
+ * che non e' il portatile per cui e' scritto (altra scheda, altro pannello)
+ * deve uscire senza una parola. Restano gli errori veri e la riga finale. */
+static int g_zitto;
+#define TRACCIA(...)  do { if (!g_zitto) printf(__VA_ARGS__); } while (0)
 
 static volatile unsigned int *reg_di(unsigned int reg)
 {
@@ -144,7 +150,7 @@ static int trova_scheda(PciDispositivo *d)
             if (n != 1 || d->venditore == NV_VENDITORE) break;
         }
         if (n != 1) {
-            printf("nv50: nessuna scheda video NVIDIA su questa macchina\n");
+            TRACCIA("nv50: nessuna scheda video NVIDIA su questa macchina\n");
             return -1;
         }
     }
@@ -422,7 +428,7 @@ static void imposta_pll(void)
     wr(0x614108, hi);
     wr(0x614200, 0);
     wr(0x614300, 0x70000 | (g_pclk > 165000 ? 0x101 : 0));
-    printf("nv50:   PLL testa 0 per %u kHz: A %d/%d, B %d/%d, P %d -> 0x%08x 0x%08x\n",
+    TRACCIA("nv50:   PLL testa 0 per %u kHz: A %d/%d, B %d/%d, P %d -> 0x%08x 0x%08x\n",
            g_pclk, na, ma, nb, mb, p, lo, hi);
 }
 
@@ -433,7 +439,7 @@ static void C(unsigned int metodo, unsigned int dato)
 {
     unsigned int t0 = uptime_ms();
 
-    printf("nv50:   C(0x%04x, 0x%08x)\n", metodo, dato);
+    TRACCIA("nv50:   C(0x%04x, 0x%08x)\n", metodo, dato);
     wr(0x610304, dato);
     wr(0x610300, metodo | 0x80010001);
     while (rd(0x610300) & 0x80000000) {
@@ -441,7 +447,7 @@ static void C(unsigned int metodo, unsigned int dato)
 
         if (s & 1) super = 1; else if (s & 2) super = 2; else if (s & 4) super = 3;
         if (super) {
-            printf("nv50:   supervisore %u (0x610024 = 0x%08x)\n", super, rd(0x610024));
+            TRACCIA("nv50:   supervisore %u (0x610024 = 0x%08x)\n", super, rd(0x610024));
             if (super == 2 && (rd(0x614200) & 0xc0) == 0x80) imposta_pll();
             wr(0x610024, 8u << super);
             wr(0x610030, 0x80000000);
@@ -488,13 +494,13 @@ static int prendi_display(void)
     unsigned int val, t0;
 
     if (rd(0x610024) & 0x100) {
-        printf("nv50: spengo la VGA ereditata\n");
+        TRACCIA("nv50: spengo la VGA ereditata\n");
         wr(0x610024, 0x100);
         wr(0x6194E8, rd(0x6194E8) & ~1u);
         aspetta(0x6194E8, 2, 0, 1000, "la VGA si spegne");
     }
 
-    printf("nv50: apro il canale del display\n");
+    TRACCIA("nv50: apro il canale del display\n");
     wr(0x610200, 0x2b00);
     t0 = uptime_ms();
     do {
@@ -572,21 +578,21 @@ static int prova(int motivo_si)
     if (g_vram_kb <= 1024) { printf("nv50: memoria video sconosciuta (0x%08x)\n", tmp); return 1; }
     g_vram_kb -= 1024;
     if (g_vram_kb > 16384) g_vram_kb = 16384;
-    printf("nv50: memoria video %u KB usabili (0x10020C = 0x%08x)\n", g_vram_kb, tmp);
+    TRACCIA("nv50: memoria video %u KB usabili (0x10020C = 0x%08x)\n", g_vram_kb, tmp);
     if (FB_OFFSET + FB_PITCH * FB_H > g_vram_kb * 1024 - 0x6000) {
         printf("nv50: il framebuffer di prova non ci sta\n");
         return 1;
     }
 
     /* I tempi del pannello, come li ha lasciati il BIOS (in uso). */
-    if ((rd(0x610050) & 3) != 2) { printf("nv50: il pannello non e' sulla testa 0: mi fermo\n"); return 1; }
+    if ((rd(0x610050) & 3) != 2) { TRACCIA("nv50: il pannello non e' sulla testa 0: mi fermo\n"); return 1; }
     g_pclk = rd(0x610AD4) & 0x3fffff;
     tempi[0] = rd(0x610AFC); tempi[1] = rd(0x610B04);
     tempi[2] = rd(0x610AEC); tempi[3] = rd(0x610AF4);
-    printf("nv50: tempi del BIOS: %u kHz, 0x%08x 0x%08x 0x%08x 0x%08x, uscita 0x%08x\n",
+    TRACCIA("nv50: tempi del BIOS: %u kHz, 0x%08x 0x%08x 0x%08x 0x%08x, uscita 0x%08x\n",
            g_pclk, tempi[0], tempi[1], tempi[2], tempi[3], rd(0x610B4C));
     if (g_pclk == 0 || rd(0x610B4C) != (FB_H << 16 | FB_W)) {
-        printf("nv50: il pannello non e' a %ux%u: mi fermo\n", FB_W, FB_H);
+        TRACCIA("nv50: il pannello non e' a %ux%u: mi fermo\n", FB_W, FB_H);
         return 1;
     }
 
@@ -596,7 +602,7 @@ static int prova(int motivo_si)
     g_vram = (volatile unsigned char *)(unsigned long)m.virt;
 
     lut = g_vram_kb * 1024 - 0x5000;          /* testa 0 */
-    printf("nv50: framebuffer a 0x%x, tavolozza a 0x%x\n", FB_OFFSET, lut);
+    TRACCIA("nv50: framebuffer a 0x%x, tavolozza a 0x%x\n", FB_OFFSET, lut);
     if (motivo_si) motivo();
     else {
         unsigned int y;
@@ -627,7 +633,7 @@ static int prova(int motivo_si)
                    errno == 16 ? ", la scrivania tiene la grafica: chiudila" : "");
             return 1;
         }
-        printf("nv50: la console del kernel e' passata a %ux%u\n", FB_W, FB_H);
+        TRACCIA("nv50: la console del kernel e' passata a %ux%u\n", FB_W, FB_H);
     }
 
     preinit();
@@ -704,6 +710,57 @@ static void uso(void)
     printf("                          prima torna solo riavviando.\n");
     printf("     nv50.drv -nativo     come -prova, ma la console del kernel passa al\n");
     printf("                          pannello nativo (prima della scrivania)\n");
+    printf("     nv50.drv -install    -nativo a ogni accensione: scrive il blocco in\n");
+    printf("                          /boot/avvio.sh (-remove lo toglie)\n");
+    printf("     nv50.drv -avvio      -nativo zitto, quello di /boot/avvio.sh: su una\n");
+    printf("                          macchina senza questa scheda esce e basta\n");
+}
+
+/* =============================================================================
+ * -install / -remove: il blocco in /boot/avvio.sh (avvio_blocco, libc)
+ *
+ * ! NON E' svga.drv E NON LO SOSTITUISCE. svga.drv sceglie il modo VESA che
+ * Stage 2 accende col BIOS; questo driver arriva DOPO, a sistema avviato, e
+ * porta il pannello al nativo partendo da quel modo. E' un modulo in piu',
+ * come sis.drv: dove la scheda non c'e' esce, e resta il modo di svga.drv.
+ *
+ * ! IN PRIMO PIANO, SENZA '&': avvio.sh lo aspetta, e il prompt e la
+ * scrivania arrivano dopo, gia' sul framebuffer nuovo. Con la scrivania
+ * accesa il kernel direbbe di no (EBUSY). Il servizio PCI serve per trovare
+ * la scheda: se avvio.sh non lo accende gia' (la catena della rete), lo si
+ * accende nel blocco.
+ * ============================================================================= */
+static int installa(int togli)
+{
+    char righe[512];
+    int  rc = 0;
+
+    if (getuid() != 0) { printf("nv50: -install e -remove solo da root\n"); return 1; }
+    if (togli) rc = avvio_blocco("nv50.drv", NULL);
+    else {
+        int pci;
+
+        /* ! IL BLOCCO VECCHIO SI TOGLIE PRIMA DI GUARDARE: il pci.drv che ci
+         * sta dentro e' il nostro, e non dice che la rete lo accende gia'. */
+        if (avvio_blocco("nv50.drv", NULL) < 0) rc = -1;
+        /* ! CON E SENZA /dev/: hwconfig scrive `pci.drv &`, gli avvio.sh piu'
+         * vecchi `/dev/pci.drv &` (il portatile). */
+        pci = avvio_ha_riga("pci.drv") || avvio_ha_riga("/dev/pci.drv");
+        snprintf(righe, sizeof(righe),
+                 "# Il pannello a %ux%u nativi, prima del prompt e della scrivania.\n"
+                 "# Esce zitto dove la scheda non e' una NVIDIA G80 con questo\n"
+                 "# pannello. `nv50.drv -remove` toglie questo blocco.\n"
+                 "%s"
+                 "nv50.drv -avvio\n", FB_W, FB_H, pci ? "" : "pci.drv &\n");
+        if (rc == 0) rc = avvio_blocco("nv50.drv", righe);
+    }
+    if (rc < 0) { printf("nv50: non riesco a scrivere /boot/avvio.sh (errno %d)\n", errno); return 1; }
+    if (togli)
+        printf(rc ? "nv50: tolto da /boot/avvio.sh: al prossimo avvio resta il modo di svga.drv\n"
+                  : "nv50: in /boot/avvio.sh non c'era\n");
+    else
+        printf("nv50: in /boot/avvio.sh: al prossimo avvio il pannello va a %ux%u\n", FB_W, FB_H);
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -711,6 +768,9 @@ int main(int argc, char **argv)
     PciDispositivo d;
     int tutto, prova_si;
 
+    if (argc >= 2 && strcmp(argv[1], "-install") == 0) return installa(0);
+    if (argc >= 2 && strcmp(argv[1], "-remove") == 0)  return installa(1);
+    if (argc >= 2 && strcmp(argv[1], "-avvio") == 0) { g_zitto = 1; argv[1] = "-nativo"; }
     if (argc < 2 || (strcmp(argv[1], "-stato") != 0 && strcmp(argv[1], "-tutto") != 0 &&
                      strcmp(argv[1], "-prova") != 0 && strcmp(argv[1], "-nativo") != 0)) {
         uso();
@@ -719,10 +779,10 @@ int main(int argc, char **argv)
     tutto    = strcmp(argv[1], "-tutto") == 0;
     prova_si = strcmp(argv[1], "-prova") == 0 ? 1 : strcmp(argv[1], "-nativo") == 0 ? 2 : 0;
 
-    if (trova_scheda(&d) != 0) return 1;
+    if (trova_scheda(&d) != 0) return g_zitto ? 0 : 1;
     g_bar0 = d.bar[0];
     g_bar1 = d.bar[1];
-    printf("Scheda: %04x:%04x in %02x:%02x.%x, registri a 0x%08x, memoria video a 0x%08x\n",
+    TRACCIA("Scheda: %04x:%04x in %02x:%02x.%x, registri a 0x%08x, memoria video a 0x%08x\n",
            d.venditore, d.dispositivo, d.bus, d.slot, d.funzione, d.bar[0], d.bar[1]);
     if (mappa() != 0) return 1;
     if (prova_si) {

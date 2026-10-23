@@ -3316,6 +3316,15 @@ typedef struct {
 } VideoCambio;
 int     video_cambia(const VideoCambio *v);
 
+/* avvio_blocco — `<driver> -install` / `-remove`: the driver's block in
+ * /boot/avvio.sh, headed `# -install <name>` and ending at the first blank
+ * line, so that hwconfig carries it over when it rewrites the file. righe =
+ * the block's lines (comments and commands), NULL removes it. Placed before
+ * `@echo Sistema pronto.`, or at the end. 1 written, 0 nothing to change, -1
+ * with errno. avvio_ha_riga: 1 if a line of avvio.sh starts with inizio. */
+int     avvio_blocco(const char *nome, const char *righe);
+int     avvio_ha_riga(const char *inizio);
+
 /* modulo_kernel — kernel modules (kernel 0.263, SYS_MODULO 28).
  *   modulo_kernel(0, (uintptr_t)buf, size)   the loaded modules' names, one
  *                                            per line; returns how many

@@ -8053,8 +8053,29 @@ tools/netinst/velocita tolto da netinst.
       voci del framebuffer vanno a tutti i processi. nv50.drv -nativo: come
       -prova ma framebuffer nero, prima chiede al kernel e solo se dice si'
       tocca la scheda. DA PROVARE sul portatile (prima della scrivania).
-      Restano: attivarlo all'avvio (riga in avvio.sh o voce kernel.cfg?) e
-      VGA_MAX_COLS 128 (a 1366 servono 170 colonne).
+      23/10 19:10 PROVATO SUL PORTATILE: RIUSCITO (foto/20261023_191018.jpg).
+      Supervisori 1-2-3, nessuna attesa scaduta, console nitida a 1366x768
+      su 48 righe; il testo e la barra di stato arrivano a 1024 px (128
+      colonne), il resto del pannello e' nero come previsto.
+      PASSO 4 (23/10 sera, kernel 0.273, nv50.drv 0.004, hwconfig 0.007):
+      l'utente: "alza a 170 colonne" -> VGA_MAX_COLS 170. E "ogni driver
+      deve avere l'opzione -install" -> nv50.drv -install scrive in
+      /boot/avvio.sh il blocco `# -install nv50.drv` (pci.drv & se manca,
+      poi nv50.drv -avvio in primo piano), -remove lo toglie, -avvio e'
+      -nativo zitto (esce senza parole su altre macchine). Funzione comune
+      in libc: avvio_blocco / avvio_ha_riga. hwconfig riporta avanti i
+      blocchi `# -install` quando riscrive avvio.sh. NON sostituisce
+      svga.drv: e' un modulo in piu' come sis.drv, parte dal modo VESA che
+      svga.drv sceglie. DA PROVARE sul portatile: nv50.drv -install,
+      riavvio, testo su tutta la larghezza; poi la scrivania a 1366x768.
+
+  24. OGNI DRIVER HA -install (l'utente, 23/10): "ogni driver deve avere
+      l'opzione -install dove modifica il file di configurazione apposito
+      per caricarsi all'avvio". Fatto per nv50.drv (voce 23, avvio_blocco
+      in libc). Da fare per gli altri driver, ognuno nel suo file giusto
+      (avvio.sh per chi vuole un ordine, [modules] di kernel.cfg per chi
+      deve esserci prima di tutto, come kbd/pci/uhci senza 8042), con
+      -remove per toglierlo.
 
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):

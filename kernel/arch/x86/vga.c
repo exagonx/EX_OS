@@ -55,8 +55,10 @@
  * modalita' grafica VESA le decide la risoluzione: 640x480 da' 80x30,
  * 800x600 da' 100x37, 1024x768 da' 128x48 — con il font 8x16 di
  * font8x16.c. E' tutto il punto di avere una modalita' grafica: piu'
- * testo, non testo piu' grande. */
-#define VGA_MAX_COLS    128
+ * testo, non testo piu' grande.
+ * 170 e non 128 dal 23 ottobre 2026: il pannello del CQ60 a 1366x768 nativi
+ * (nv50.drv) sono 170 colonne, e con 128 il testo si fermava a 1024 pixel. */
+#define VGA_MAX_COLS    170
 #define VGA_MAX_ROWS    48
 #define VGA_MAX_TOTAL   (VGA_MAX_COLS * VGA_MAX_ROWS)
 
@@ -95,8 +97,9 @@ typedef enum { ANSI_NONE, ANSI_ESC, ANSI_CSI } AnsiState;
 typedef struct {
     /* Dimensionato al MASSIMO, non alla risoluzione corrente: la memoria
      * delle console si alloca una volta sola, all'avvio, prima che si sappia
-     * quale modalita' verra' impostata. 128*48*2 byte per console, 49 KB in
-     * tutto per quattro: il prezzo di non avere un allocatore qui dentro. */
+     * quale modalita' verra' impostata. 170*48*2 byte per console, due volte
+     * (cella e alt), 160 KB in tutto per cinque: il prezzo di non avere un
+     * allocatore qui dentro. */
     uint16_t  cella[VGA_MAX_TOTAL];
     uint8_t   row, col;
     uint8_t   colore;

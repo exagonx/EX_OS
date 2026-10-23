@@ -6542,6 +6542,160 @@ int rename(const char *da, const char *a)
     return 0;
 }
 
+/* =============================================================================
+ * avvio_blocco / avvio_ha_riga — `<driver> -install` e `-remove` (23 ottobre
+ * 2026)
+ *
+ * Ogni driver ha `-install`: scrive in /boot/avvio.sh le righe che lo fanno
+ * partire a ogni accensione, e `-remove` le toglie. Le righe stanno in un
+ * BLOCCO con un'intestazione fissa:
+ *
+ *     # -install nv50.drv
+ *     # (i commenti del driver)
+ *     nv50.drv -avvio
+ *
+ * che finisce alla prima riga vuota. ! L'INTESTAZIONE E' IL PATTO CON hwconfig:
+ * hwconfig riscrive avvio.sh per intero, e i blocchi che cominciano cosi' li
+ * riporta avanti tali e quali (riporta_install, bin/hwconfig/hwconfig.c).
+ * Senza, un driver installato sparirebbe alla prima configurazione
+ * dell'hardware, e nessuno collegherebbe le due cose.
+ *
+ * Il blocco va prima di `@echo Sistema pronto.` se c'e', se no in fondo. Lo si
+ * scrive in un file a parte e poi si sostituisce: un avvio.sh troncato a meta'
+ * da una corrente che manca e' una macchina che non si accende piu' bene.
+ * ============================================================================= */
+#define AVVIO_SH        "/boot/avvio.sh"
+#define AVVIO_MAX       (64u * 1024u)
+
+/* il testo di avvio.sh, terminato da '\0'; NULL se non si legge */
+static char *avvio_leggi(unsigned int *n)
+{
+    int   fd = open(AVVIO_SH, O_RDONLY);
+    char *b;
+    long  r;
+
+    if (fd < 0) return NULL;
+    b = malloc(AVVIO_MAX + 1);
+    if (!b) { close(fd); errno = ENOMEM; return NULL; }
+    r = read(fd, b, AVVIO_MAX);
+    close(fd);
+    if (r < 0) { free(b); return NULL; }
+    b[r] = '\0';
+    *n = (unsigned int)r;
+    return b;
+}
+
+/* 1 se la riga che comincia in t e' l'intestazione del blocco di nome */
+static int avvio_e_intestazione(const char *t, const char *nome)
+{
+    unsigned int l = (unsigned int)strlen(nome);
+
+    if (strncmp(t, "# -install ", 11) != 0 || strncmp(t + 11, nome, l) != 0) return 0;
+    return t[11 + l] == '\n' || t[11 + l] == '\0' || t[11 + l] == ' ' || t[11 + l] == ':';
+}
+
+int avvio_ha_riga(const char *inizio)
+{
+    unsigned int n, l = (unsigned int)strlen(inizio);
+    char *b = avvio_leggi(&n), *t;
+    int   si = 0;
+
+    if (!b) return 0;
+    for (t = b; *t; ) {
+        if (strncmp(t, inizio, l) == 0) { si = 1; break; }
+        while (*t && *t != '\n') t++;
+        if (*t) t++;
+    }
+    free(b);
+    return si;
+}
+
+int avvio_blocco(const char *nome, const char *righe)
+{
+    unsigned int n, da = 0, a = 0, dove, k;
+    char *b, *nuovo, *t;
+    int   c_era = 0, fd;
+    long  w;
+
+    if (nome == NULL || nome[0] == '\0') { errno = EINVAL; return -1; }
+    b = avvio_leggi(&n);
+    if (!b) return -1;
+
+    /* il blocco di adesso: [da, a), con la riga vuota che lo precede */
+    for (t = b; *t; ) {
+        if (avvio_e_intestazione(t, nome)) {
+            char *f = t;
+
+            while (*f && *f != '\n') {              /* fino alla riga vuota */
+                while (*f && *f != '\n') f++;
+                if (*f) f++;
+                if (*f == '\n' || strncmp(f, "@echo Sistema pronto", 20) == 0) break;
+            }
+            da = (unsigned int)(t - b);
+            a  = (unsigned int)(f - b);
+            if (da >= 2 && b[da - 1] == '\n' && b[da - 2] == '\n') da--;
+            c_era = 1;
+            break;
+        }
+        while (*t && *t != '\n') t++;
+        if (*t) t++;
+    }
+    if (!c_era && righe == NULL) { free(b); return 0; }
+
+    nuovo = malloc(AVVIO_MAX + 1);
+    if (!nuovo) { free(b); errno = ENOMEM; return -1; }
+
+    /* senza il blocco vecchio */
+    k = 0;
+    memcpy(nuovo, b, c_era ? da : n);
+    k = c_era ? da : n;
+    if (c_era) { memcpy(nuovo + k, b + a, n - a); k += n - a; }
+    nuovo[k] = '\0';
+
+    if (righe != NULL) {
+        char         blocco[2048];
+        unsigned int lb;
+
+        snprintf(blocco, sizeof(blocco), "\n# -install %s\n%s", nome, righe);
+        lb = (unsigned int)strlen(blocco);
+        if (lb && blocco[lb - 1] != '\n' && lb + 1 < sizeof(blocco)) { blocco[lb++] = '\n'; blocco[lb] = '\0'; }
+        if (k + lb + 1 > AVVIO_MAX) { free(b); free(nuovo); errno = E2BIG; return -1; }
+
+        /* prima dell'ultimo `@echo Sistema pronto.`, se c'e' */
+        dove = k;
+        for (t = nuovo; *t; ) {
+            if (strncmp(t, "@echo Sistema pronto", 20) == 0) dove = (unsigned int)(t - nuovo);
+            while (*t && *t != '\n') t++;
+            if (*t) t++;
+        }
+        if (dove == k && k > 0 && nuovo[k - 1] != '\n') { nuovo[k++] = '\n'; nuovo[k] = '\0'; dove = k; }
+        /* il blocco comincia con '\n': prima di @echo si lascia anche dopo una
+         * riga vuota, perche' la fine del blocco sia una riga vuota */
+        memmove(nuovo + dove + lb + (dove < k ? 1 : 0), nuovo + dove, k - dove + 1);
+        memcpy(nuovo + dove, blocco, lb);
+        if (dove < k) nuovo[dove + lb] = '\n';
+        k += lb + (dove < k ? 1 : 0);
+        /* due righe vuote di fila dove il blocco si e' appoggiato: una */
+        if (dove >= 1 && nuovo[dove - 1] == '\n' && dove >= 2 && nuovo[dove - 2] == '\n') {
+            memmove(nuovo + dove - 1, nuovo + dove, k - dove + 1);
+            k--;
+        }
+    }
+
+    if (k == n && memcmp(nuovo, b, n) == 0) { free(b); free(nuovo); return 0; }
+    free(b);
+
+    unlink(AVVIO_SH ".nuovo");
+    fd = open(AVVIO_SH ".nuovo", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { free(nuovo); return -1; }
+    w = write(fd, nuovo, k);
+    close(fd);
+    free(nuovo);
+    if (w != (long)k) { unlink(AVVIO_SH ".nuovo"); errno = EIO; return -1; }
+    if (unlink(AVVIO_SH) != 0 || rename(AVVIO_SH ".nuovo", AVVIO_SH) != 0) return -1;
+    return 1;
+}
+
 #ifdef EXOS_LIBC_SO
 /* =============================================================================
  * Segnali: ci sono i nomi, non c'e' la consegna

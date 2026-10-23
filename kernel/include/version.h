@@ -563,7 +563,10 @@
  * framebuffer and redraws the consoles; at 32 bit paging_mappa_framebuffer
  * copies the new PDEs into every process. nv50.drv -nativo uses it to put
  * the CQ60 panel at its native 1366x768. */
-#define EXOS_VERSION    "0.272"
+/* 0.272 -> 0.273: the console goes up to 170 columns (VGA_MAX_COLS, was
+ * 128): the CQ60 panel at its native 1366x768 is 170, and with 128 the text
+ * stopped at 1024 pixels. 160 KB of cells for five consoles. */
+#define EXOS_VERSION    "0.273"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
