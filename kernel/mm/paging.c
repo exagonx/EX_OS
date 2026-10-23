@@ -853,6 +853,26 @@ int paging_mappa_framebuffer(uint32_t phys, uint32_t byte)
 
     g_fb_pde_da = PD_INDEX(phys);
     g_fb_pde_a  = PD_INDEX(phys + byte - 1) + 1;
+
+    /* ! E I PROCESSI CHE CI SONO GIA' (SYS_VIDEO_CAMBIA, 23 ottobre 2026). Le
+     * voci del framebuffer ogni processo se le copia quando nasce (qui sotto,
+     * paging_create_directory). All'avvio non c'e' nessuno e basta cosi'; un
+     * framebuffer che cambia DOPO, con un processo in piu' per ogni console,
+     * sta su voci che loro non hanno - e il kernel che scrive sulla console
+     * dalla loro syscall prenderebbe un page fault. Si danno a tutti. */
+    if (g_process_pool) {
+        uint32_t p, i;
+
+        for (p = 0; p < MAX_PROCESSES; p++) {
+            Process *pr = &g_process_pool[p];
+
+            if (pr->state == PROC_UNUSED || pr->page_directory == NULL ||
+                pr->page_directory == kernel_page_directory) continue;
+            for (i = g_fb_pde_da; i < g_fb_pde_a; i++)
+                pr->page_directory[i] = kernel_page_directory[i];
+        }
+        if (g_paging_enabled) write_cr3(read_cr3());
+    }
     return 0;
 }
 

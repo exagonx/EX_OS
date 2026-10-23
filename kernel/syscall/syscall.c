@@ -208,6 +208,7 @@ void syscall_init(void)
     syscall_table[SYS_VIDEO_INFO]   = sys_video_info;
     syscall_table[SYS_VIDEO_MODI]   = sys_video_modi;
     syscall_table[SYS_VIDEO_SCHEDA] = sys_video_scheda;
+    syscall_table[SYS_VIDEO_CAMBIA] = sys_video_cambia;
     syscall_table[SYS_MODULO]       = sys_modulo;
     syscall_table[SYS_LOG]          = sys_log;
     syscall_table[SYS_LIB_APRI]     = sys_lib_apri;

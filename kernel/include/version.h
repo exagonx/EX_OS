@@ -557,7 +557,13 @@
  * serving a mouse became "mouse" and lost its "usb.<driver>" window. New
  * command usb (-status, -unplug, -refresh) talks to those windows; the USB
  * drivers keep quiet at boot unless verbose (tools/prova_usb.sh). */
-#define EXOS_VERSION    "0.271"
+/* 0.271 -> 0.272: the kernel console can move to another framebuffer
+ * without a reboot. New SYS_VIDEO_CAMBIA (30, root and a driver only,
+ * refused while the desktop holds the graphics): vga_cambia_fb remaps the
+ * framebuffer and redraws the consoles; at 32 bit paging_mappa_framebuffer
+ * copies the new PDEs into every process. nv50.drv -nativo uses it to put
+ * the CQ60 panel at its native 1366x768. */
+#define EXOS_VERSION    "0.272"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -47,7 +47,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.002");
+EX_VERSIONE("nv50.drv", "0.003");
 
 #define NV_VENDITORE   0x10DE
 
@@ -559,7 +559,9 @@ static void motivo(void)
     }
 }
 
-static int prova(void)
+/* motivo_si: 1 = -prova (il motivo, la console resta dov'era), 0 = -nativo
+ * (framebuffer nero, e la console del kernel ci passa sopra). */
+static int prova(int motivo_si)
 {
     unsigned int tmp = rd(0x10020C), lut, i;
     unsigned int tempi[4];
@@ -594,9 +596,39 @@ static int prova(void)
     g_vram = (volatile unsigned char *)(unsigned long)m.virt;
 
     lut = g_vram_kb * 1024 - 0x5000;          /* testa 0 */
-    printf("nv50: motivo a 0x%x, tavolozza a 0x%x\n", FB_OFFSET, lut);
-    motivo();
+    printf("nv50: framebuffer a 0x%x, tavolozza a 0x%x\n", FB_OFFSET, lut);
+    if (motivo_si) motivo();
+    else {
+        unsigned int y;
+
+        for (y = 0; y < FB_H; y++) {
+            volatile unsigned int *r = (volatile unsigned int *)(g_vram + FB_OFFSET + y * FB_PITCH);
+            unsigned int x;
+
+            for (x = 0; x < FB_PITCH / 4; x++) r[x] = 0;
+        }
+    }
     tavolozza(lut);
+
+    /* ! -nativo: PRIMA SI CHIEDE AL KERNEL, POI SI TOCCA LA SCHEDA. Se il
+     * kernel dice di no (la scrivania tiene la grafica: -EBUSY) ci si ferma
+     * qui, e lo schermo e' ancora quello del BIOS. Nell'ordine inverso il
+     * pannello mostrerebbe un framebuffer in cui nessuno disegna. Nel mezzo,
+     * per un istante, la console scrive in un framebuffer che il pannello
+     * non mostra ancora: si vede quando la scheda ci passa. */
+    if (!motivo_si) {
+        VideoCambio v;
+
+        v.fisico = g_bar1 + FB_OFFSET;
+        v.larghezza = FB_W; v.altezza = FB_H; v.passo = FB_PITCH; v.bit = 32;
+        if (video_cambia(&v) != 0) {
+            printf("nv50: il kernel non passa al framebuffer nuovo (errno %d%s):\n"
+                   "      non tocco la scheda.\n", errno,
+                   errno == 16 ? ", la scrivania tiene la grafica: chiudila" : "");
+            return 1;
+        }
+        printf("nv50: la console del kernel e' passata a %ux%u\n", FB_W, FB_H);
+    }
 
     preinit();
     if (prendi_display() != 0) return 1;
@@ -651,10 +683,14 @@ static int prova(void)
     C(0x0C40, 0); C(0x0C44, 0); C(0x0C5C, 0); C(0x0C74, 0); C(0x0C9C, 0);
     C(0x0080, 0);
 
-    printf("\nnv50: fatto%s. Sul pannello: cornice bianca intera, barre di\n",
-           g_scadute ? " (con attese scadute, vedi sopra)" : "");
-    printf("      colore in alto, griglia in basso, due diagonali arancio.\n");
-    printf("      Lo schermo di prima torna solo riavviando.\n");
+    if (motivo_si) {
+        printf("\nnv50: fatto%s. Sul pannello: cornice bianca intera, barre di\n",
+               g_scadute ? " (con attese scadute, vedi sopra)" : "");
+        printf("      colore in alto, griglia in basso, due diagonali arancio.\n");
+        printf("      Lo schermo di prima torna solo riavviando.\n");
+    } else
+        printf("\nnv50: pannello a %ux%u nativi%s.\n", FB_W, FB_H,
+               g_scadute ? " (con attese scadute, vedi sopra)" : "");
     return g_scadute ? 2 : 0;
 }
 
@@ -666,6 +702,8 @@ static void uso(void)
     printf("     nv50.drv -prova      prende il display e accende il pannello a\n");
     printf("                          %ux%u con un motivo di prova. Lo schermo di\n", FB_W, FB_H);
     printf("                          prima torna solo riavviando.\n");
+    printf("     nv50.drv -nativo     come -prova, ma la console del kernel passa al\n");
+    printf("                          pannello nativo (prima della scrivania)\n");
 }
 
 int main(int argc, char **argv)
@@ -674,12 +712,12 @@ int main(int argc, char **argv)
     int tutto, prova_si;
 
     if (argc < 2 || (strcmp(argv[1], "-stato") != 0 && strcmp(argv[1], "-tutto") != 0 &&
-                     strcmp(argv[1], "-prova") != 0)) {
+                     strcmp(argv[1], "-prova") != 0 && strcmp(argv[1], "-nativo") != 0)) {
         uso();
         return argc < 2 ? 1 : (strcmp(argv[1], "-h") == 0 ? 0 : 1);
     }
     tutto    = strcmp(argv[1], "-tutto") == 0;
-    prova_si = strcmp(argv[1], "-prova") == 0;
+    prova_si = strcmp(argv[1], "-prova") == 0 ? 1 : strcmp(argv[1], "-nativo") == 0 ? 2 : 0;
 
     if (trova_scheda(&d) != 0) return 1;
     g_bar0 = d.bar[0];
@@ -688,8 +726,8 @@ int main(int argc, char **argv)
            d.venditore, d.dispositivo, d.bus, d.slot, d.funzione, d.bar[0], d.bar[1]);
     if (mappa() != 0) return 1;
     if (prova_si) {
-        if (getuid() != 0) { printf("nv50: -prova solo da root\n"); return 1; }
-        return prova();
+        if (getuid() != 0) { printf("nv50: %s solo da root\n", argv[1]); return 1; }
+        return prova(prova_si == 1);
     }
     return stato(tutto);
 }

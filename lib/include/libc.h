@@ -3302,6 +3302,20 @@ typedef struct {
 } VideoSchermo;
 int     video_schermo(const VideoScheda *s, VideoSchermo *m);
 
+/* video_cambia — the framebuffer moved (SYS_VIDEO_CAMBIA 30, kernel 0.272):
+ * a card driver that switched the mode itself (nv50.drv) tells the kernel
+ * where the new framebuffer is and its shape; the console is redone on it,
+ * and video_info / fb_map give the new one from then on. Root and a .drv
+ * only. 0, or -1 with errno: EPERM, EINVAL, EBUSY (the desktop holds the
+ * graphics), EIO (could not be mapped: the old one stays). */
+typedef struct {
+    unsigned int fisico;        /* physical address */
+    unsigned int larghezza, altezza;
+    unsigned int passo;         /* bytes per line */
+    unsigned int bit;           /* 16, 24 or 32 */
+} VideoCambio;
+int     video_cambia(const VideoCambio *v);
+
 /* modulo_kernel — kernel modules (kernel 0.263, SYS_MODULO 28).
  *   modulo_kernel(0, (uintptr_t)buf, size)   the loaded modules' names, one
  *                                            per line; returns how many

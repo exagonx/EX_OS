@@ -8041,6 +8041,20 @@ tools/netinst/velocita tolto da netinst.
       ogni attesa scade. DA PROVARE sul portatile (lo schermo di prima
       torna solo col riavvio). Poi: il kernel che passa al framebuffer
       nuovo (misura, pitch, offset) senza riavviare.
+      23/10 15:15 PROVATO SUL PORTATILE: RIUSCITO (foto/20261023_151543.jpg).
+      Nessuna attesa scaduta, supervisori 1-2-3, PLL 0x0003002c 0x4005000e.
+      Il pannello mostra il motivo a 1366x768 NATIVI: barre, griglia da
+      100 px (13,66 colonne), diagonali dritte da angolo ad angolo, cornice
+      sul filo, nessuna scala. 0x10020C = 0x10000000 (256 MB: integrata),
+      usati i primi 16 MB, tavolozza a 0xffb000: va bene.
+      PASSO 3 (kernel 0.272, nv50.drv 0.003): nuova SYS_VIDEO_CAMBIA (30),
+      solo root e solo un driver, rifiutata (EBUSY) se la scrivania tiene
+      la grafica. vga_cambia_fb rimappa e ridisegna le console; a 32 bit le
+      voci del framebuffer vanno a tutti i processi. nv50.drv -nativo: come
+      -prova ma framebuffer nero, prima chiede al kernel e solo se dice si'
+      tocca la scheda. DA PROVARE sul portatile (prima della scrivania).
+      Restano: attivarlo all'avvio (riga in avvio.sh o voce kernel.cfg?) e
+      VGA_MAX_COLS 128 (a 1366 servono 170 colonne).
 
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):

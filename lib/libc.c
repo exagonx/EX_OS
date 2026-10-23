@@ -385,6 +385,7 @@ typedef struct {
 #define SYS_VIDEO_MODI    27
 #define SYS_MODULO        28
 #define SYS_VIDEO_SCHEDA  29
+#define SYS_VIDEO_CAMBIA  30
 #define SYS_LOG           247
 
 /* ! DEVE RESTARE IDENTICA a struct pollfd in kernel/include/syscall.h e in
@@ -8995,6 +8996,19 @@ typedef struct {
     unsigned short modello;
     char           nome[14];
 } VideoSchermo;
+
+/* The framebuffer moved (SYS_VIDEO_CAMBIA, kernel 0.272). Same layout as
+ * kernel/include/syscall.h and lib/include/libc.h. */
+typedef struct {
+    uint32_t fisico, larghezza, altezza, passo, bit;
+} VideoCambio;
+
+int video_cambia(const VideoCambio *v)
+{
+    int32_t r = _syscall1(SYS_VIDEO_CAMBIA, (uintptr_t)v);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
 
 int video_scheda(VideoScheda *s)
 {

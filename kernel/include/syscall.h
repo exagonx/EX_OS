@@ -711,6 +711,30 @@ typedef struct {
 #define SYS_VIDEO_SCHEDA  29    /* ebx = VideoScheda* -> 1, or 0 */
 
 /* =============================================================================
+ * SYS_VIDEO_CAMBIA (30) — il framebuffer si e' spostato (23 ottobre 2026)
+ *
+ * Fino a qui il modo video lo sceglieva solo Stage 2, col BIOS, all'avvio. Un
+ * driver della scheda (drivers/nv50: il pannello 1366x768 che il BIOS NVIDIA
+ * non offre) accende un modo suo, con un framebuffer suo, e lo dice al kernel
+ * con questa: la console si rifa' sulla misura nuova, e video_info / fb_map
+ * da li' in poi rendono quello nuovo.
+ *
+ * ! SOLO root, E SOLO DA UN .drv: dire al kernel di disegnare a un indirizzo
+ * fisico e' come mapparlo. L'indirizzo deve stare sopra la RAM, come per
+ * mmio_map. -EBUSY se la scrivania tiene la grafica: ha mappato il
+ * framebuffer di prima e continuerebbe a disegnarci.
+ * ========================================================================== */
+typedef struct {
+    uint32_t fisico;        /* indirizzo fisico del framebuffer nuovo */
+    uint32_t larghezza;     /* pixel */
+    uint32_t altezza;
+    uint32_t passo;         /* byte per riga */
+    uint32_t bit;           /* 16, 24 o 32 */
+} VideoCambio;
+
+#define SYS_VIDEO_CAMBIA  30    /* ebx = const VideoCambio* -> 0, or -errno */
+
+/* =============================================================================
  * SYS_MODULO (28) — kernel modules (kernel 0.263, kernel/loader/modulo.c)
  *
  *   ebx = 0  list:  ecx = char *buf, edx = size; the names of the loaded
@@ -1776,6 +1800,7 @@ int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_video_modi(InterruptFrame *f);
 int32_t sys_video_scheda(InterruptFrame *f);
+int32_t sys_video_cambia(InterruptFrame *f);
 int32_t sys_modulo(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);

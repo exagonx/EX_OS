@@ -141,6 +141,12 @@ void     vga_modi_copia(void *dst, uint32_t n);
  * there, and then 304 bytes copied into dst. */
 int      vga_scheda_copia(void *dst);
 
+/* Il framebuffer si e' spostato (SYS_VIDEO_CAMBIA): si mappa quello nuovo e
+ * la console si rifa' sulla sua misura. 0, o -1 se non si e' potuto (e allora
+ * resta quello di prima). */
+int  vga_cambia_fb(uint32_t fisico, uint32_t w, uint32_t h, uint32_t pitch,
+                   uint32_t bpp);
+
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp);
 

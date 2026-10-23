@@ -1048,6 +1048,44 @@ void vga_init_grafica(const BootInfo *info)
 }
 
 /* =============================================================================
+ * vga_cambia_fb — il framebuffer si e' spostato (SYS_VIDEO_CAMBIA, 23 ottobre
+ * 2026)
+ *
+ * Un driver della scheda ha acceso un modo suo (nv50.drv: 1366x768 sul pannello
+ * del portatile, dove il BIOS dava 1280x720) e qui si passa a disegnare li'.
+ * E' vga_init_grafica con un BootInfo fatto apposta: la stessa mappatura, la
+ * stessa misura delle console, la stessa ripartenza pulita delle celle.
+ *
+ * ! A INTERRUPT CHIUSI, per la ragione scritta per esteso in
+ * vga_ripristina_testo: fra il cambio dei numeri e il ridisegno chi scrive
+ * sulla console disegnerebbe col passo vecchio dentro il framebuffer nuovo.
+ * ============================================================================= */
+int vga_cambia_fb(uint32_t fisico, uint32_t w, uint32_t h, uint32_t pitch,
+                  uint32_t bpp)
+{
+    BootInfo  b;
+    uint8_t  *p = (uint8_t *)&b;
+    uint32_t  i;
+    uintptr_t eflags;
+
+    for (i = 0; i < sizeof(b); i++) p[i] = 0;
+    b.fb_addr   = fisico;
+    b.fb_pitch  = pitch;
+    b.fb_width  = (uint16_t)w;
+    b.fb_height = (uint16_t)h;
+    b.fb_bpp    = (uint8_t)bpp;
+
+    __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+    __asm__ volatile ("cli");
+    g_cur_disegnato = 0;        /* il cursore salvato era nel framebuffer di prima */
+    vga_init_grafica(&b);
+    if (eflags & 0x200) __asm__ volatile ("sti");
+
+    return (g_fb == (uint8_t *)paging_framebuffer_virt(fisico) && g_fb_w == w &&
+            g_fb_h == h && g_fb_pitch == pitch) ? 0 : -1;
+}
+
+/* =============================================================================
  * vga_ripristina_testo — rimette lo schermo, e funziona anche se il server
  * grafico e' morto
  *

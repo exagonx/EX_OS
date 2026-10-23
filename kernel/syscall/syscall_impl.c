@@ -5648,6 +5648,42 @@ int32_t sys_video_scheda(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_VIDEO_CAMBIA (30) — il framebuffer si e' spostato. Vedi syscall.h.
+ * ========================================================================== */
+int32_t sys_video_cambia(InterruptFrame *frame)
+{
+    const VideoCambio *u = (const VideoCambio *)FR_A1(frame);
+    Process           *proc = proc_get_current();
+    VideoCambio        v;
+    uint32_t           limite_ram;
+
+    if (proc == NULL) return ERR(ESRCH);
+    if (!syscall_verify_ptr(u, sizeof(*u))) return ERR(EFAULT);
+    v = *u;
+    if (proc->uid != 0 || !e_un_driver(proc, "video_cambia")) return ERR(EPERM);
+
+    if (v.bit != 16 && v.bit != 24 && v.bit != 32) return ERR(EINVAL);
+    if (v.larghezza < 320 || v.altezza < 200 || v.larghezza > 4096 || v.altezza > 4096)
+        return ERR(EINVAL);
+    if (v.passo < v.larghezza * (v.bit / 8) || v.passo > 65536) return ERR(EINVAL);
+    if (v.fisico == 0 || v.fisico + v.passo * v.altezza < v.fisico) return ERR(EINVAL);
+
+    limite_ram = pmm_get_total_pages() * PAGE_SIZE;
+    if (v.fisico < limite_ram) {
+        klog(LOG_WARN, "SYSCALL video_cambia: PID %u chiede 0x%08x, che e' RAM - rifiutato",
+             proc->pid, v.fisico);
+        return ERR(EPERM);
+    }
+    if (console_grafica_attuale() >= 0) return ERR(EBUSY);
+
+    if (vga_cambia_fb(v.fisico, v.larghezza, v.altezza, v.passo, v.bit) != 0)
+        return ERR(EIO);
+    klog(LOG_INFO, "SYSCALL video_cambia: PID %u, framebuffer 0x%08x %ux%u, passo %u, %u bit",
+         proc->pid, v.fisico, v.larghezza, v.altezza, v.passo, v.bit);
+    return 0;
+}
+
+/* =============================================================================
  * SYS_MODULO (28) — list or load kernel modules. See syscall.h and modulo.h.
  * ========================================================================== */
 int32_t sys_modulo(InterruptFrame *frame)
