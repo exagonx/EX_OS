@@ -39,7 +39,7 @@
 #include "libc.h"
 #include "exwin.h"
 
-#define VERSIONE_APP "0.003"
+#define VERSIONE_APP "0.004"
 EX_VERSIONE("attesa", VERSIONE_APP);
 
 #define FIN_W      330
@@ -182,6 +182,12 @@ static void fine(void)
     snprintf(r, sizeof(r), "[%u s] chiusa\n", (uptime_ms() - g_t0) / 1000u);
     diario(r);
     ex_set_timer(g_f, 0);
+    /* ! THE BOX IS TAKEN DOWN HERE, NOT LEFT TO THE SERVER (0.004, 24 October
+     * 2026). The server removes a dead client's windows once a second, and
+     * only when the process list fits its table: with Firefox's 150 threads
+     * it did not (wserver 0.011), and the box stayed for minutes after this
+     * line had been written. */
+    ex_destroy(g_f);
     ex_quit(0);
 }
 

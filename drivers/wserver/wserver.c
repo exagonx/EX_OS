@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.011");
+EX_VERSIONE("wserver", "0.012");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -2589,12 +2589,18 @@ static void distruggi(int idx)
  * cui non ci si fida, si non pulisce.
  * --------------------------------------------------------------------------- */
 #define PROC_ZOMBIE     4
-#define PID_TRACCIATI   64
+/* ! MORE THAN THE KERNEL'S PROCESS TABLE (MAX_PROCESSES, 192 today), NOT
+ * 64 (24 October 2026). Every thread is a pid: Firefox starts some 150, the
+ * list overflowed, and by the rule above nothing was collected - the
+ * "loading" box, whose process had exited, stayed on the screen, movable
+ * and focusable, for the 3-4 minutes until Firefox's threads dropped below
+ * 64. */
+#define PID_TRACCIATI   512
 
 static void raccogli_morti(void)
 {
     ProcInfo     v[PROCINFO_MAX_BATCH];
-    unsigned int vivi[PID_TRACCIATI];
+    static unsigned int vivi[PID_TRACCIATI];   /* 2 KB: not on the stack */
     unsigned int n_vivi = 0, start = 0;
     int n, i, k;
 

@@ -8169,10 +8169,22 @@ tools/netinst/velocita tolto da netinst.
       con PG_FISSA non si sfrattano mai. Sul CQ60 col 0.274: `swaptest 2000`
       giusto (stava in RAM); una richiesta singola sopra i 2 GB la rifiuta
       sbrk (incremento int32_t), limite della libc, non dello swap.
-      PROSSIMO: 0.276 sul portatile, Firefox con `mem` a fianco; se si
-      chiude ancora, NON riavviare e leggere `dmesg -u`.
-      Da fare: (1) il server o l'attesa ridisegnino lo sfondo della finestra
-      nuova (o l'attesa resti finche' l'applicazione disegna); (2) misurare
+      0.276 SUL CQ60 (24/10, prova dal vivo via telnet): Firefox ~350 MB,
+      swap mai toccato (la RAM basta). LA CLESSIDRA (foto/20261024_114123.jpg):
+      NON era un'immagine vecchia ma la finestra vera di attesa, spostabile,
+      col processo gia' uscito: wserver raccogli_morti teneva 64 pid vivi e,
+      se erano di piu', non toglieva niente per prudenza; Firefox ha ~150
+      fili, ognuno un pid -> la finestra restava finche' i fili non
+      scendevano sotto 64 (3-4 minuti). Corretto: wserver 0.012 (512 pid),
+      attesa 0.004 distrugge la sua finestra da se' prima di uscire.
+      Console (foto/20261024_114358.jpg): Firefox prova a lanciare il
+      processo «socket» e quello delle schede (GeckoChildProcessHost.cpp:841,
+      Failed to launch ... subprocess), Region.sys.mjs va in TIMEOUT, e
+      Tabbrowser.sys.mjs:6718 «browser.contentWindow is null». Le pagine poi
+      si aprono, ma questi tentativi e timeout sono candidati per la lentezza
+      dell'avvio: capire perche' con MOZ_FORCE_DISABLE_E10S=1 tenta ancora
+      i processi figli, e spegnere Region/rete all'avvio.
+      Da fare: misurare
       dove vanno i 107 + 60 s: lettura su richiesta del firefox da 220 MB e
       degli omni.ja dal disco, sqlite del profilo, CPU.
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
