@@ -261,3 +261,27 @@ crea uno nuovo (si perdono segnalibri e cronologia):
 ```
 mv /root/.exilla/profilo /root/.exilla/profilo-vecchio
 ```
+
+È quello che è successo sul portatile di prova il 24 ottobre 2026: con un
+profilo rovinato Firefox partiva ma non apriva nessuna pagina (nel registro
+`NetworkError` e `database disk image is malformed`); con il profilo nuovo
+si è aperto anche Gmail.
+
+**Le impostazioni con la sola colonna di sinistra** (la casella «Cerca» e
+niente al centro) erano un difetto di Exilla, corretto il 24 ottobre 2026:
+la pagina cercava l'impostazione «browser predefinito», che esiste solo sui
+sistemi dove Firefox può diventarlo, e si fermava. Si corregge con
+`netupdate -install:exilla`.
+
+**Firefox si chiude da solo dopo un po'**, e sulla console compare
+`[FAULT] ... firefox: page fault a 0x00000000`: se nel registro, poco prima,
+c'è `ShmSegmentsWriter failed to allocate chunk`, Firefox aveva finito le
+zone di memoria condivisa che la libc gli concedeva (128, troppo poche per
+una pagina pesante come Gmail tenuta aperta mezz'ora). Dal 24 ottobre 2026
+sono 1024, e se finissero ancora il registro lo dice con una riga
+`libc: shm_open: le zone di memoria condivisa ... sono finite`.
+`netupdate -install:exilla` porta il Firefox con la libc nuova.
+
+**Lo swap a zero non è un guasto.** `mem` mostra lo scambio inutilizzato
+finché la RAM basta: Firefox occupa qualche centinaio di MB, e su una
+macchina da 3 GB non ce n'è bisogno.

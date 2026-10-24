@@ -8241,6 +8241,58 @@ tools/netinst/velocita tolto da netinst.
       risposta arriva; confrontare col Firefox del 19/10 che stamattina sul
       CQ60 la apriva: cross_build/i5svrdeb/firefox-originali o il pacchetto
       vecchio). Poi profilo nuovo sul CQ60.
+      SERA 24/10 (2), QEMU 64 bit con RETE=1, quattro prove:
+      - google.it bianca UNA volta su quattro (la prima, con MOZ_LOG): la
+        connessione TCP si apre, Firefox scrive il ClientHello, per 10 s
+        non arriva niente, Google chiude (POLLHUP) -> 0x80004005 e nessuna
+        pagina d'errore. Nelle altre tre (anche con MOZ_LOG e la cattura
+        PCAP=) google.it e google.com si aprono; la cattura riuscita mostra
+        890 KB senza perdite. Raro, non e' il guasto del CQ60.
+      - about:preferences si apre (0,46 s dopo Invio).
+      - lanciato come exilla (LANCIATORE="/exwin/bin/attesa --",
+        EXWIN_LOG su file): google.it si apre. Il lancio non c'entra.
+      - "Failed to launch tab subprocess" e "RemoteWebNavigation ...
+        remoteTab is null" sul CQ60 vengono da BackgroundPageThumbs (crea
+        sempre un <browser remote="true"> per le miniature; il profilo del
+        CQ60 ha una cronologia, quello di prova no): rumore, non la causa.
+      - libmozsqlite3.so.so: storage/mozStorageConnection.cpp carica le
+        estensioni sqlite con dlopen; tocca solo i suggerimenti della barra.
+      CQ60 dal vivo (telnet): Firefox vivo, riceve i tasti, ma dopo Invio
+      su www.google.it nessun titolo; NetworkError e HTTP request timeout
+      gia' all'avvio (in QEMU nessuno). Dalla shell `scarica
+      https://www.google.it` riesce in 1,3 s: la rete c'e'. Swap a 0 con
+      2,4 GB liberi: giusto, non serve. Resta il PROFILO VECCHIO
+      (database rovinati dal vecchio pread): Firefox rilanciato via telnet
+      con HOME=/root/casa2 (profilo nuovo). ! Lanciato in sottofondo dalla
+      sessione telnet tiene occupato telnetd (una sessione sola) finche'
+      Firefox non esce.
+      prova-finestra.sh: PCAP=file (cattura della rete di QEMU) e
+      LANCIATORE= (Firefox lanciato come lo lancia exilla).
+      RISOLTO SUL CQ60 (24/10 sera): l'utente ha tolto il profilo, Firefox
+      apre i siti e Gmail. Causa: PROFILO rovinato dal vecchio pread.
+      Poi due difetti nuovi, corretti e provati in QEMU 32 e 64 bit:
+      a. IMPOSTAZIONI solo con la colonna di sinistra: main.js registra
+         browser.shell.checkDefaultBrowser solo con HAVE_SHELL_SERVICE, ma
+         l'impostazione "alwaysCheckDefault" la usa sempre: eccezione,
+         main.js si ferma, gMainPane non esiste. Patch
+         browser_components_preferences_main.js.patch (preferenza sempre
+         registrata). Ora "Account and sync" e il resto si vedono.
+      b. FIREFOX CHIUSO dopo 36 min di Gmail: "ShmSegmentsWriter failed to
+         allocate chunk", panico Rust in WebRender -> MOZ_CRASH (page fault
+         a 0, rip in RustMozCrash). La libc dava 128 zone SHM_ANON per
+         processo (SHMFD_MAX), una congelabile ne prende due descrittori.
+         libc: SHMFD_MAX 1024 (descrittori 2048..3071) e una riga su stderr
+         quando finiscono. libc.a delle toolchain rifatte, Firefox 32/64
+         ricollegato e reimpacchettato.
+      ! `gecko-costruisci.sh build faster` ha rilanciato configure dal
+        percorso del collegamento cross_build e azzerato config.statusd
+        (396 substs a null): link e package fallivano. Rimesso con
+        PartialConfigEnvironment.write_vars dal config.status (vedi memoria).
+      prova-gecko.sh e prova-finestra.sh reimpacchettano se QUALUNQUE file di
+      dist/bin e' piu' nuovo del pacchetto (prima solo il binario: un cambio
+      JS non entrava nella prova).
+      Da fare: mknetinst + pubblicazione di exilla, netupdate
+      -install:exilla sul CQ60, Gmail aperto a lungo.
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
       gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
       per i dmesg.

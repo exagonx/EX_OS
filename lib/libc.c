@@ -4790,8 +4790,14 @@ int open(const char *path, int flags, ...)
  * September 2026): a socket is below it, a zone above. */
 #define SHMFD_BASE      2048
 /* 128 e non 16 (2 ottobre 2026): Gecko ne tiene aperte decine insieme, e
- * con SHM_ANON non costano zone del kernel. */
-#define SHMFD_MAX       128
+ * con SHM_ANON non costano zone del kernel.
+ * ! 1024 AND NOT 128 (24 October 2026): every decoded image and every
+ * WebRender chunk of Exilla is one SHM_ANON zone, a freezable one takes two
+ * descriptors, and after 36 minutes of Gmail on the CQ60 they were all taken:
+ * "ShmSegmentsWriter failed to allocate chunk", a Rust panic in WebRender and
+ * MOZ_CRASH (page fault at 0). Descriptors 2048..3071: nothing else lives
+ * there. */
+#define SHMFD_MAX       1024
 #ifdef EXOS_LIBC_SO
 #define E_PRESA(fd)     0               /* nella libc.so i socket non ci sono */
 #define E_SHMFD(fd)     0
@@ -9607,13 +9613,25 @@ static void shmfd_forse_libera(ShmZonaP *z)
     memset(z, 0, sizeof(*z));
 }
 
+/* ! THE END OF THE TABLE IS SAID, once, on stderr: the program only sees
+ * EMFILE, and Firefox turned it into "failed to allocate chunk" and a crash
+ * that pointed anywhere but here. */
+static void shmfd_finite(void)
+{
+    static int detto;
+    static const char m[] = "libc: shm_open: le zone di memoria condivisa "
+                            "di questo processo sono finite (SHMFD_MAX)\n";
+
+    if (!detto) { detto = 1; write(2, m, sizeof(m) - 1); }
+}
+
 /* Un descrittore nuovo sulla zona `zi`. */
 static int shmfd_nuovo(int zi)
 {
     int i;
 
     for (i = 0; i < SHMFD_MAX && g_shmfd[i]; i++) ;
-    if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
+    if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
     g_shmfd[i] = zi + 1;
     g_shmzona[zi].descrittori++;
     return SHMFD_BASE + i;
@@ -9646,7 +9664,7 @@ int shm_open(const char *nome, int flag, mode_t modo)
      * ftruncate, come per le altre. */
     if (nome == SHM_ANON) {
         for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
-        if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
+        if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
         memset(&g_shmzona[i], 0, sizeof(g_shmzona[i]));
         g_shmzona[i].usato   = 1;
         g_shmzona[i].privata = 1;
@@ -9662,7 +9680,7 @@ int shm_open(const char *nome, int flag, mode_t modo)
             return shmfd_nuovo(i);
 
     for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
-    if (i == SHMFD_MAX) { errno = EMFILE; return -1; }
+    if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
     z = &g_shmzona[i];
 
     memset(&q, 0, sizeof(q));

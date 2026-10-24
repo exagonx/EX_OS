@@ -33,7 +33,7 @@ IMG="$D/gecko-hd.img"
 # prova, e il disco risulterebbe sempre piu' nuovo di Firefox.
 O="$PWD/cross_build/exilla-obj/gecko"
 [ "$EXOS_ARCH" = x86_64 ] && O="$PWD/cross_build/exilla-obj/gecko64"
-if [ ! -f "$IMG" ] || [ "$O/dist/bin/firefox" -nt "$O/dist/firefox/firefox" ]; then
+if [ ! -f "$IMG" ] || [ -n "$(find -L "$O/dist/bin" -newer "$O/dist/firefox/firefox" -type f -print -quit 2>/dev/null)" ]; then
     tools/exilla/prova-gecko.sh > "$D/prova-gecko-da-finestra.log" 2>&1
     echo "prova-gecko (pacchetto e disco): $(tail -1 "$D/prova-gecko-da-finestra.log")"
 fi
@@ -57,6 +57,9 @@ export EXOS_ISTANZA=finestra$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${
 # INDIRIZZO=<indirizzo>: what is typed in the address bar (19 October 2026:
 # the user saw typed addresses go nowhere); default the second test page.
 RETE_QEMU=""; [ -n "${RETE:-}" ] && RETE_QEMU="-netdev user,id=u0 -device e1000,netdev=u0"
+# PCAP=<file>: with RETE=1, everything on the wire goes into that file too
+# (what the network stack of EX-OS really sent and received).
+[ -n "${RETE:-}" ] && [ -n "${PCAP:-}" ] && RETE_QEMU="$RETE_QEMU -object filter-dump,id=d0,netdev=u0,file=$PCAP"
 PAGINA="${PAGINA:-file:///disk/prova.html}"
 export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide $RETE_QEMU"
 SER=/tmp/exos/serialfinestra$SUFF.txt
@@ -77,7 +80,10 @@ FOTO_N="${FOTO_N:-5}"
     fi
     echo "exwin@14"
     echo "key:alt-f1@2"
-    echo "/disk/firefox/firefox -no-remote -profile /disk/profilo $PAGINA &@3"
+    # LANCIATORE="/exwin/bin/attesa --": Firefox started the way exilla starts
+    # it on the real machine (with AMBIENTE="EXWIN_LOG=/disk/firefox.log" its
+    # output goes to that file, as with exilla 0.006).
+    echo "${LANCIATORE:+$LANCIATORE }/disk/firefox/firefox -no-remote -profile /disk/profilo $PAGINA &@3"
     echo "key:alt-f5@3"
     # CAMPIONI_AVVIO=n: n campioni della CPU, uno ogni mezzo secondo, MENTRE
     # Firefox parte: dicono dove passa il tempo dell'avvio (7 ottobre 2026).

@@ -36,7 +36,10 @@ fi
 P="$O/dist/firefox"
 mkdir -p "$D" /tmp/exos
 
-if [ ! -x "$P/firefox" ] || [ "$O/dist/bin/firefox" -nt "$P/firefox" ]; then
+# ! ANY FILE NEWER THAN THE PACKAGE, not only the binary: a front-end change
+# (`build faster`, JavaScript in omni.ja) leaves the binary alone, and on 24
+# October 2026 the test ran the old main.js without saying so.
+if [ ! -x "$P/firefox" ] || [ -n "$(find -L "$O/dist/bin" -newer "$P/firefox" -type f -print -quit 2>/dev/null)" ]; then
     tools/exilla/gecko-costruisci.sh package > "$D/gecko-package.log" 2>&1 || {
         echo "mach package fallito: $D/gecko-package.log" >&2; exit 1; }
 fi

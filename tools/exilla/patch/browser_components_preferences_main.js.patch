@@ -1,0 +1,18 @@
+--- a/browser/components/preferences/main.js
++++ b/browser/components/preferences/main.js
+@@ -132,11 +132,10 @@
+   },
+ ]);
+ 
+-if (AppConstants.HAVE_SHELL_SERVICE) {
+-  Preferences.addAll([
+-    { id: "browser.shell.checkDefaultBrowser", type: "bool" },
+-  ]);
+-}
++// Registered even without a shell service (EX-OS): the "alwaysCheckDefault"
++// setting below names it on every platform, and an unregistered pref throws
++// and stops this script, leaving the main pane empty.
++Preferences.addAll([{ id: "browser.shell.checkDefaultBrowser", type: "bool" }]);
+ 
+ Preferences.addSetting({
+   id: "privateBrowsingAutoStart",
