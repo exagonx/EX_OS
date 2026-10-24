@@ -155,6 +155,8 @@ void syscall_init(void)
     syscall_table[SYS_FSTAT]       = sys_fstat;
     syscall_table[SYS_FTRUNCATE]   = sys_ftruncate;
     syscall_table[SYS_LSEEK]       = sys_lseek;
+    syscall_table[SYS_PREAD]       = sys_pread;
+    syscall_table[SYS_PWRITE]      = sys_pwrite;
     syscall_table[SYS_READDIR]     = sys_readdir;
     syscall_table[SYS_GETENV]      = sys_getenv;
     syscall_table[SYS_MKDIR]       = sys_mkdir;

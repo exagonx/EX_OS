@@ -25,6 +25,8 @@
 #define SYS_OPEN        5
 #define SYS_CLOSE       6
 #define SYS_WAITPID     7
+#define SYS_PREAD       8      /* fd, buf, n, pos: at a position, the file's stays */
+#define SYS_PWRITE      9
 #define SYS_GETPID      20
 #define SYS_GETPPID     64
 
@@ -1756,6 +1758,8 @@ int32_t sys_stat(InterruptFrame *f);
 int32_t sys_fstat(InterruptFrame *f);
 int32_t sys_ftruncate(InterruptFrame *f);
 int32_t sys_lseek(InterruptFrame *f);
+int32_t sys_pread(InterruptFrame *f);
+int32_t sys_pwrite(InterruptFrame *f);
 int32_t sys_readdir(InterruptFrame *f);
 int32_t sys_getenv(InterruptFrame *f);
 int32_t sys_mkdir(InterruptFrame *f);

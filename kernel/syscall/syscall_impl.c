@@ -343,6 +343,42 @@ static int e_dev_null(const char *p)
     return p[i] == '\0';
 }
 
+/* =============================================================================
+ * THE POSITION OF A FILE, ONE THREAD AT A TIME (24 October 2026)
+ *
+ * See posizione_di in sched.h. Whoever finds it taken yields the CPU and
+ * looks again: the holder is in a disk operation of a few milliseconds, and
+ * a second thread on the same descriptor is the rare case. Re-entrant for the
+ * same pid (a page fault inside the read cannot come back here, but cheap to
+ * allow). Only FD_FILE has a position.
+ * ============================================================================= */
+static int fd_posizione_prendi(FileDescriptor *d)
+{
+    Process  *io = proc_get_current();
+    uint32_t  me = (io != NULL) ? io->pid : 0xFFFFFFFFu;
+
+    for (;;) {
+        uintptr_t fl;
+
+        __asm__ volatile ("pushf; pop %0; cli" : "=r"(fl) : : "memory");
+        if (d->posizione_di == 0 || d->posizione_di == me) {
+            int mio = (d->posizione_di == me);
+
+            d->posizione_di = me;
+            if (fl & 0x200u) __asm__ volatile ("sti" : : : "memory");
+            return mio;             /* 1: it was already ours, do not let go */
+        }
+        if (fl & 0x200u) __asm__ volatile ("sti" : : : "memory");
+        if (io == NULL) return 1;   /* no process: nothing to wait for */
+        sched_yield();
+    }
+}
+
+static void fd_posizione_lascia(FileDescriptor *d, int era_mio)
+{
+    if (!era_mio) d->posizione_di = 0;
+}
+
 int32_t sys_read(InterruptFrame *frame)
 {
     int32_t   fd    = (int32_t)FR_A1(frame);
@@ -416,9 +452,15 @@ int32_t sys_read(InterruptFrame *frame)
          * gia' in RAM, o il fault avverrebbe con il lucchetto del VFS in
          * mano. Vedi vm_precarica_utente(). */
         vm_precarica_utente(IN_NUMERO(buf), count);
-        int32_t n = vfs_read((int)proc->fdt[fd].inode, buf, count, proc->fdt[fd].offset);
-        if (n >= 0) proc->fdt[fd].offset += (uint32_t)n;
-        return n;
+        {
+            FileDescriptor *d   = &proc->fdt[fd];
+            int             mio = fd_posizione_prendi(d);
+            int32_t         n   = vfs_read((int)d->inode, buf, count, d->offset);
+
+            if (n >= 0) d->offset += (uint32_t)n;
+            fd_posizione_lascia(d, mio);
+            return n;
+        }
     }
 
     return ERR(EBADF);
@@ -660,20 +702,26 @@ int32_t sys_write(InterruptFrame *frame)
          * quando i due capitano insieme, cioe' di rado e senza un motivo
          * visibile.
          * ===================================================================== */
-        if (proc->fdt[fd].flags & O_APPEND) {
-            VfsStat st;
-
-            if (vfs_fstat((int)proc->fdt[fd].inode, &st) == 0)
-                proc->fdt[fd].offset = st.dimensione;
-        }
-
         /* Stessa ragione di sys_read, dall'altro verso: il driver LEGGE
          * da `buf`, e una pagina assente farebbe faultare lui. */
         vm_precarica_utente(IN_NUMERO(buf), count);
-        int32_t n = vfs_write((int)proc->fdt[fd].inode, buf, count,
-                              proc->fdt[fd].offset);
-        if (n >= 0) proc->fdt[fd].offset += (uint32_t)n;
-        return n;
+        {
+            FileDescriptor *d   = &proc->fdt[fd];
+            int             mio = fd_posizione_prendi(d);
+            int32_t         n;
+
+            /* the end is read under the position lock: two threads appending
+             * would otherwise both write at the same old end */
+            if (d->flags & O_APPEND) {
+                VfsStat st;
+
+                if (vfs_fstat((int)d->inode, &st) == 0) d->offset = st.dimensione;
+            }
+            n = vfs_write((int)d->inode, buf, count, d->offset);
+            if (n >= 0) d->offset += (uint32_t)n;
+            fd_posizione_lascia(d, mio);
+            return n;
+        }
     }
 
     return ERR(EBADF);
@@ -3234,7 +3282,7 @@ int32_t sys_ftruncate(InterruptFrame *frame)
     return (int32_t)vfs_ftruncate((int)proc->fdt[fd].inode, dim);
 }
 
-int32_t sys_lseek(InterruptFrame *frame)
+static int32_t lseek_dentro(InterruptFrame *frame)
 {
     int32_t  fd     = (int32_t)FR_A1(frame);
     int32_t  offset = (int32_t)FR_A2(frame);
@@ -3283,6 +3331,58 @@ int32_t sys_lseek(InterruptFrame *frame)
     proc->fdt[fd].offset = new_off;
     return (int32_t)new_off;
 }
+
+/* SEEK_CUR and SEEK_END read the position and write it back: under the
+ * position lock, like read and write (see fd_posizione_prendi). */
+int32_t sys_lseek(InterruptFrame *frame)
+{
+    int32_t  fd   = (int32_t)FR_A1(frame);
+    Process *proc = proc_get_current();
+    int32_t  r;
+    int      mio;
+
+    if (fd < 0 || fd >= MAX_FD || proc->fdt[fd].type != FD_FILE) return lseek_dentro(frame);
+    mio = fd_posizione_prendi(&proc->fdt[fd]);
+    r = lseek_dentro(frame);
+    fd_posizione_lascia(&proc->fdt[fd], mio);
+    return r;
+}
+
+/* =============================================================================
+ * SYS_PREAD (8) / SYS_PWRITE (9) — at a position, without moving the file's
+ * (24 October 2026)
+ *
+ * ebx = fd, ecx = buffer, edx = bytes, esi = position. Return the bytes, or
+ * a negative error. Only files (ESPIPE otherwise, as POSIX says).
+ *
+ * ! UNTIL TODAY THE LIBC MADE pread OUT OF lseek + read + lseek, and the
+ * position is the GROUP's: two threads of one program reading the same
+ * descriptor at the same time read each other's place. On the CQ60 Firefox's
+ * fonts came back as «Unable to load glyph: 20» (bytes from elsewhere in the
+ * file: no text on the screen), and logins.db as «file is not a database»;
+ * and it is the «wrong read once in fifteen» of 19 October. Here the
+ * position is not touched at all: vfs_read takes it as an argument.
+ * ============================================================================= */
+static int32_t a_posizione(InterruptFrame *frame, int scrivi)
+{
+    int32_t   fd    = (int32_t)FR_A1(frame);
+    void     *buf   = (void *)FR_A2(frame);
+    uint32_t  count = FR_A3(frame);
+    uint32_t  pos   = (uint32_t)FR_A4(frame);
+    Process  *proc  = proc_get_current();
+
+    if (fd < 0 || fd >= MAX_FD)              return ERR(EBADF);
+    if (!syscall_verify_ptr(buf, count))      return ERR(EFAULT);
+    if (proc->fdt[fd].type == FD_UNUSED)     return ERR(EBADF);
+    if (proc->fdt[fd].type != FD_FILE)       return ERR(ESPIPE);
+
+    vm_precarica_utente(IN_NUMERO(buf), count);
+    return scrivi ? vfs_write((int)proc->fdt[fd].inode, buf, count, pos)
+                  : vfs_read((int)proc->fdt[fd].inode, buf, count, pos);
+}
+
+int32_t sys_pread(InterruptFrame *frame)  { return a_posizione(frame, 0); }
+int32_t sys_pwrite(InterruptFrame *frame) { return a_posizione(frame, 1); }
 
 /* =============================================================================
  * SYS_READDIR (141) -- Elenca il contenuto di una directory

@@ -278,6 +278,20 @@ int     ferror(FILE *f);
 void    clearerr(FILE *f);
 int     fileno(FILE *f);
 
+/* The stream lock (kernel 0.277): every function above takes it by itself;
+ * flockfile keeps it across several calls, so a line printed by one thread
+ * does not get mixed with another's. Recursive. The _unlocked forms are for
+ * whoever already holds it. */
+void    flockfile(FILE *f);
+int     ftrylockfile(FILE *f);      /* 0 = taken, else busy */
+void    funlockfile(FILE *f);
+int     fgetc_unlocked(FILE *f);
+int     getc_unlocked(FILE *f);
+int     getchar_unlocked(void);
+int     fputc_unlocked(int c, FILE *f);
+int     putc_unlocked(int c, FILE *f);
+int     putchar_unlocked(int c);
+
 /* =============================================================================
  * fpos_t, fgetpos, fsetpos — la posizione come oggetto opaco
  *

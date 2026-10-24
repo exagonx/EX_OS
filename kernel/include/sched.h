@@ -316,6 +316,13 @@ typedef struct {
     uint32_t    offset;         /* Posizione corrente nel file */
     uint32_t    inode;          /* Numero cluster FAT12 o ID device */
     void       *driver_data;    /* Dati privati del driver */
+    /* ! WHO IS MOVING `offset` NOW (pid, 0 = nobody; 24 October 2026). The
+     * table is the group's: every thread of a program reads and moves the
+     * same position, and read = «take offset, read (sleeps on the disk), add
+     * what was read». Two threads in there together read the same bytes, or
+     * one lost the other's step. sys_read, sys_write and sys_lseek hold it
+     * for their whole operation (fd_posizione_prendi). */
+    volatile uint32_t posizione_di;
 } FileDescriptor;
 
 /* =============================================================================

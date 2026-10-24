@@ -593,7 +593,16 @@
  * killed its process at once instead of waiting for the other CPU (kbd, at
  * 64 bit). Pages a device uses (dma_alloc, mmio_map, framebuffer) carry
  * PG_FISSA and are never evicted. */
-#define EXOS_VERSION    "0.276"
+/* 0.276 -> 0.277: SYS_PREAD (8) and SYS_PWRITE (9), reading and writing at a
+ * given position without touching the descriptor's offset. libc did them as
+ * lseek + read + lseek, and threads share the descriptor table: two threads
+ * reading the same file read each other's spot. On the CQ60 Firefox showed
+ * no text ("Unable to load glyph", "logins.db: file is not a database"): its
+ * font files were mapped by pread from many threads at once. read, write and
+ * lseek on a file now hold the descriptor's position (posizione_di) while
+ * they move it, so the offset cannot go back after two concurrent reads.
+ * In libc the stdio streams got their lock (flockfile, recursive). */
+#define EXOS_VERSION    "0.277"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

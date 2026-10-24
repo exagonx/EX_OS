@@ -232,6 +232,8 @@ typedef struct {
 #define SYS_WRITE       4
 #define SYS_OPEN        5
 #define SYS_CLOSE       6
+#define SYS_PREAD       8
+#define SYS_PWRITE      9
 #define SYS_SPAWN        2
 #define SYS_WAITPID      7
 /* I fili (4 settembre 2026): stessi numeri di kernel/include/syscall.h. */
@@ -1765,6 +1767,10 @@ struct _FILE {
      * senza i primi due caratteri. La glibc ne tiene di piu'; qui quattro. */
     int             rimessi;    /* quanti ce ne sono in pila */
     unsigned char   pila[4];    /* l'ultimo rimesso e' il primo a uscire */
+    /* The stream lock (24 October 2026): see flockfile below. */
+    volatile int    lucch;      /* the three-state futex, 0 = free     */
+    unsigned int    padrone;    /* thread holding it, 0 = nobody       */
+    int             conta;      /* how many times it holds it          */
 };
 
 #define STDIN_BUF_SIZE  512     /* quanto una riga del driver kbd */
@@ -1790,20 +1796,90 @@ FILE *stderr = &f_stderr;
 static FILE *flussi[MAX_FLUSSI];
 static int   n_flussi = 0;
 
+/* =============================================================================
+ * ! EVERY STREAM HAS ITS LOCK (24 October 2026, kernel 0.277).
+ *
+ * It had none: buffer, position and flags were moved by whoever called, and
+ * two threads printing on stderr together - Gecko logs from dozens - could
+ * write the same byte of the buffer, or empty it twice. POSIX wants every
+ * stdio function to behave as if it took flockfile() on its stream, and lets
+ * a program hold it across several calls to keep its lines whole.
+ *
+ * ! THE LOCK IS RECURSIVE, because the public functions call each other
+ * (fread uses fgetc, vfscanf uses ftell, fread and fseek) and a program may
+ * call fprintf while holding flockfile. The holder is the thread pointer, read
+ * from %gs/%fs without a system call; only a task without a TCB pays getpid.
+ *
+ * ! THE LIST LOCK IS NEVER TAKEN WHILE HOLDING A STREAM: fclose and freopen
+ * let their stream go before touching the list, fflush(NULL) takes the list
+ * first and then each stream. One order only, or two threads deadlock.
+ * ============================================================================= */
+void mutex_prendi(volatile int *m);
+void mutex_lascia(volatile int *m);
+int  mutex_prova(volatile int *m);
+static int filo_id(void);
+static volatile int g_flussi_m = 0;
+
+static unsigned int flusso_chi(void)
+{
+    unsigned int tp;
+
+    TP_LEGGI(tp);
+    return tp ? tp : (unsigned int)filo_id();
+}
+
+void flockfile(FILE *f)
+{
+    unsigned int io;
+
+    if (f == NULL) return;
+    io = flusso_chi();
+    if (f->padrone == io) { f->conta++; return; }
+    mutex_prendi(&f->lucch);
+    f->padrone = io;
+    f->conta   = 1;
+}
+
+int ftrylockfile(FILE *f)
+{
+    unsigned int io;
+
+    if (f == NULL) return -1;
+    io = flusso_chi();
+    if (f->padrone == io) { f->conta++; return 0; }
+    if (!mutex_prova(&f->lucch)) return -1;
+    f->padrone = io;
+    f->conta   = 1;
+    return 0;
+}
+
+void funlockfile(FILE *f)
+{
+    if (f == NULL || f->conta <= 0) return;
+    if (--f->conta > 0) return;
+    f->padrone = 0;
+    mutex_lascia(&f->lucch);
+}
+
 static void registra_flusso(FILE *f)
 {
+    mutex_prendi(&g_flussi_m);
     if (n_flussi < MAX_FLUSSI) flussi[n_flussi++] = f;
+    mutex_lascia(&g_flussi_m);
 }
 
 static void dimentica_flusso(FILE *f)
 {
     int i;
+
+    mutex_prendi(&g_flussi_m);
     for (i = 0; i < n_flussi; i++) {
         if (flussi[i] == f) {
             flussi[i] = flussi[--n_flussi];
-            return;
+            break;
         }
     }
+    mutex_lascia(&g_flussi_m);
 }
 
 /* Scrive sul descrittore tutto cio' che il buffer ha accumulato. */
@@ -1879,12 +1955,27 @@ int fputc(int c, FILE *f)
     int r;
 
     if (f == NULL) return -1;
+    flockfile(f);
     r = mette(f, (unsigned char)c);
     auto_scarica(f);
+    funlockfile(f);
     return r;
 }
 
 int putc(int c, FILE *f) { return fputc(c, f); }
+
+/* The _unlocked forms: for whoever already holds flockfile. */
+int fputc_unlocked(int c, FILE *f)
+{
+    int r;
+
+    if (f == NULL) return -1;
+    r = mette(f, (unsigned char)c);
+    auto_scarica(f);
+    return r;
+}
+int putc_unlocked(int c, FILE *f) { return fputc_unlocked(c, f); }
+int putchar_unlocked(int c) { return fputc_unlocked(c, stdout); }
 
 int putchar(int c)
 {
@@ -1896,11 +1987,13 @@ int fputs(const char *s, FILE *f)
     int n = 0;
 
     if (s == NULL || f == NULL) return -1;
+    flockfile(f);
     while (*s) {
-        if (mette(f, (unsigned char)*s++) < 0) { auto_scarica(f); return -1; }
+        if (mette(f, (unsigned char)*s++) < 0) { n = -1; break; }
         n++;
     }
     auto_scarica(f);
+    funlockfile(f);
     return n;
 }
 
@@ -1910,9 +2003,11 @@ int puts(const char *s)
 
     if (s == NULL) s = "(null)";
     n = 0;
+    flockfile(stdout);
     while (s[n]) { if (mette(stdout, (unsigned char)s[n]) < 0) break; n++; }
     mette(stdout, '\n');
     auto_scarica(stdout);
+    funlockfile(stdout);
     return n;
 }
 
@@ -1924,14 +2019,17 @@ size_t fwrite(const void *ptr, size_t dim, size_t n, FILE *f)
     if (ptr == NULL || f == NULL || dim == 0 || n == 0) return 0;
 
     tot = dim * n;
+    flockfile(f);
     for (i = 0; i < tot; i++) {
         if (mette(f, p[i]) < 0) break;
     }
     auto_scarica(f);
+    funlockfile(f);
     return i / dim;
 }
 
-int fgetc(FILE *f)
+/* fgetc without the lock: fread, fgets and gets take it once outside. */
+int fgetc_unlocked(FILE *f)
 {
     if (f == NULL) return -1;
 
@@ -1941,6 +2039,19 @@ int fgetc(FILE *f)
     if (riempi(f) != 0) return -1;
 
     return (int)f->buf[f->pos++];
+}
+int getc_unlocked(FILE *f) { return fgetc_unlocked(f); }
+int getchar_unlocked(void) { return fgetc_unlocked(stdin); }
+
+int fgetc(FILE *f)
+{
+    int c;
+
+    if (f == NULL) return -1;
+    flockfile(f);
+    c = fgetc_unlocked(f);
+    funlockfile(f);
+    return c;
 }
 
 int getc(FILE *f) { return fgetc(f); }
@@ -1953,9 +2064,12 @@ int getchar(void)
 int ungetc(int c, FILE *f)
 {
     /* Fino a quattro caratteri: vedi struct _FILE. */
-    if (f == NULL || c < 0 || f->rimessi >= 4) return -1;
+    if (f == NULL || c < 0) return -1;
+    flockfile(f);
+    if (f->rimessi >= 4) { funlockfile(f); return -1; }
     f->pila[f->rimessi++] = (unsigned char)c;
     f->flag &= ~(unsigned)_F_EOF;
+    funlockfile(f);
     return c;
 }
 
@@ -1967,11 +2081,13 @@ size_t fread(void *ptr, size_t dim, size_t n, FILE *f)
     if (ptr == NULL || f == NULL || dim == 0 || n == 0) return 0;
 
     tot = dim * n;
+    flockfile(f);
     while (i < tot) {
-        int c = fgetc(f);
+        int c = fgetc_unlocked(f);
         if (c < 0) break;
         p[i++] = (unsigned char)c;
     }
+    funlockfile(f);
     return i / dim;
 }
 
@@ -1981,12 +2097,14 @@ char *fgets(char *buf, int max, FILE *f)
 
     if (buf == NULL || max <= 0 || f == NULL) return NULL;
 
+    flockfile(f);
     while (i < max - 1) {
-        c = fgetc(f);
+        c = fgetc_unlocked(f);
         if (c < 0) break;
         buf[i++] = (char)c;
         if (c == '\n') break;
     }
+    funlockfile(f);
 
     buf[i] = '\0';
     return (i > 0) ? buf : NULL;
@@ -2002,9 +2120,11 @@ char *gets(char *buf, int max)
 
     if (buf == NULL || max <= 0) return NULL;
 
-    while (i < max - 1 && (c = fgetc(stdin)) >= 0 && c != '\n') {
+    flockfile(stdin);
+    while (i < max - 1 && (c = fgetc_unlocked(stdin)) >= 0 && c != '\n') {
         buf[i++] = (char)c;
     }
+    funlockfile(stdin);
     buf[i] = '\0';
     return (i > 0) ? buf : NULL;
 }
@@ -2015,20 +2135,32 @@ int fflush(FILE *f)
 
     /* fflush(NULL) svuota tutto, come da C standard. */
     if (f == NULL) {
-        if (scarica(stdout) != 0) r = -1;
-        if (scarica(stderr) != 0) r = -1;
-        for (i = 0; i < n_flussi; i++) {
-            if (scarica(flussi[i]) != 0) r = -1;
+        mutex_prendi(&g_flussi_m);
+        for (i = -2; i < n_flussi; i++) {
+            FILE *g = i == -2 ? stdout : i == -1 ? stderr : flussi[i];
+            flockfile(g);
+            if (scarica(g) != 0) r = -1;
+            funlockfile(g);
         }
+        mutex_lascia(&g_flussi_m);
         return r;
     }
 
-    return scarica(f);
+    flockfile(f);
+    r = scarica(f);
+    funlockfile(f);
+    return r;
 }
 
 int feof(FILE *f)      { return (f && (f->flag & _F_EOF))  ? 1 : 0; }
 int ferror(FILE *f)    { return (f && (f->flag & _F_ERR))  ? 1 : 0; }
-void clearerr(FILE *f) { if (f) f->flag &= ~(unsigned)(_F_EOF | _F_ERR); }
+void clearerr(FILE *f)
+{
+    if (!f) return;
+    flockfile(f);
+    f->flag &= ~(unsigned)(_F_EOF | _F_ERR);
+    funlockfile(f);
+}
 int fileno(FILE *f)    { return f ? f->fd : -1; }
 
 FILE *fdopen(int fd, const char *modo)
@@ -2049,6 +2181,9 @@ FILE *fdopen(int fd, const char *modo)
     f->fine    = 0;
     f->rimessi = 0;
     f->flag    = _F_MIO;
+    f->lucch   = 0;         /* malloc does not clear it */
+    f->padrone = 0;
+    f->conta   = 0;
 
     if (modo[0] == 'r') f->flag |= _F_LETT  | (modo[1] == '+' ? _F_SCRIT : 0);
     if (modo[0] == 'w') f->flag |= _F_SCRIT | (modo[1] == '+' ? _F_LETT  : 0);
@@ -2114,13 +2249,17 @@ FILE *freopen(const char *path, const char *modo, FILE *f)
     /* Quel che era in sospeso va fuori PRIMA di perdere il descrittore:
      * riaprire un flusso non e' un motivo per buttare via cio' che ci si
      * era scritto dentro. */
+    flockfile(f);
     scarica(f);
-    if (path == NULL) return NULL;   /* la variante POSIX "cambia i modi" no */
+    if (path == NULL) { funlockfile(f); return NULL; }   /* la variante POSIX "cambia i modi" no */
 
     if (f->fd > 2) _syscall1(SYS_CLOSE, (uint32_t)f->fd);
 
+    /* fopen registers the new stream in the list: not while holding f. */
+    funlockfile(f);
     nuovo = fopen(path, modo);
     if (nuovo == NULL) return NULL;
+    flockfile(f);
 
     /* Si copia il contenuto e si getta il guscio: quello che il chiamante
      * ha in mano e' `f`, e deve restare valido. Il buffer vecchio resta
@@ -2130,6 +2269,7 @@ FILE *freopen(const char *path, const char *modo, FILE *f)
     f->pos     = 0;
     f->fine    = 0;
     f->rimessi = 0;
+    funlockfile(f);
 
     dimentica_flusso(nuovo);
     free(nuovo->buf);
@@ -2144,6 +2284,7 @@ int fclose(FILE *f)
 
     if (f == NULL) return -1;
 
+    flockfile(f);
     if (scarica(f) != 0) r = -1;
 
     /* =====================================================================
@@ -2171,6 +2312,7 @@ int fclose(FILE *f)
     if (f->fd > 2) {
         if (_syscall1(SYS_CLOSE, (uint32_t)f->fd) < 0) r = -1;
     }
+    funlockfile(f);         /* before the list: see flockfile */
 
     dimentica_flusso(f);
 
@@ -2184,20 +2326,23 @@ int fclose(FILE *f)
 long ftell(FILE *f)
 {
     int32_t k;
+    long    dove;
 
     if (f == NULL) return -1;
 
+    flockfile(f);
     k = _syscall3(SYS_LSEEK, (uint32_t)f->fd, 0, 1);   /* SEEK_CUR */
-    if (k < 0) { errno = -k; return -1; }
+    if (k < 0) { funlockfile(f); errno = -k; return -1; }
 
     /* Il descrittore e' avanti rispetto alla posizione logica di quanto
      * resta nel buffer di lettura, e indietro di quanto e' accumulato nel
      * buffer di scrittura. Restituire la posizione del kernel senza questa
      * correzione e' l'errore che fa scrivere gli indici sbagliati in ogni
      * formato di file che li contiene. */
-    if (f->flag & _F_INSCRIT) return (long)k + (long)f->pos;
-
-    return (long)k - (long)(f->fine - f->pos) - f->rimessi;
+    if (f->flag & _F_INSCRIT) dove = (long)k + (long)f->pos;
+    else dove = (long)k - (long)(f->fine - f->pos) - f->rimessi;
+    funlockfile(f);
+    return dove;
 }
 
 int fseek(FILE *f, long off, int whence)
@@ -2206,8 +2351,9 @@ int fseek(FILE *f, long off, int whence)
 
     if (f == NULL) return -1;
 
+    flockfile(f);
     if (f->flag & _F_INSCRIT) {
-        if (scarica(f) != 0) return -1;
+        if (scarica(f) != 0) { funlockfile(f); return -1; }
         f->flag &= ~(unsigned)_F_INSCRIT;
     } else if (whence == 1 /* SEEK_CUR */) {
         /* Stessa correzione di ftell: uno spostamento RELATIVO deve
@@ -2221,14 +2367,17 @@ int fseek(FILE *f, long off, int whence)
     f->flag &= ~(unsigned)_F_EOF;
 
     r = _syscall3(SYS_LSEEK, (uint32_t)f->fd, (uint32_t)off, (uint32_t)whence);
+    funlockfile(f);
     if (r < 0) { errno = -r; return -1; }
     return 0;
 }
 
 void rewind(FILE *f)
 {
+    flockfile(f);
     fseek(f, 0, 0);
     clearerr(f);
+    funlockfile(f);
 }
 
 /* =============================================================================
@@ -2977,8 +3126,10 @@ int vfprintf(FILE *f, const char *fmt, __builtin_va_list args)
     if (f == NULL || fmt == NULL) return -1;
 
     u.f = f; u.buf = NULL; u.max = 0; u.n = 0;
+    flockfile(f);
     n = formatta(&u, fmt, args);
     auto_scarica(f);
+    funlockfile(f);
     return n;
 }
 
@@ -3348,16 +3499,18 @@ int vfscanf(FILE *f, const char *fmt, __builtin_va_list args)
 
     if (f == NULL || fmt == NULL) return EOF;
 
+    flockfile(f);
     partenza = ftell(f);
 
     if (partenza < 0) {
         /* Non posizionabile: una riga, e quella e'. */
-        if (fgets(buf, sizeof(buf), f) == NULL) return EOF;
+        if (fgets(buf, sizeof(buf), f) == NULL) { funlockfile(f); return EOF; }
+        funlockfile(f);
         return scan_stringa(buf, fmt, args, NULL);
     }
 
     letti = fread(buf, 1, sizeof(buf) - 1, f);
-    if (letti == 0) return EOF;
+    if (letti == 0) { funlockfile(f); return EOF; }
     buf[letti] = '\0';
 
     n = scan_stringa(buf, fmt, args, &fine);
@@ -3365,6 +3518,7 @@ int vfscanf(FILE *f, const char *fmt, __builtin_va_list args)
     /* Il flusso torna dove la scansione si e' fermata: quello che lo
      * scanner non ha guardato deve restare da leggere. */
     fseek(f, partenza + (long)(fine - buf), SEEK_SET);
+    funlockfile(f);
     return n;
 }
 
@@ -11738,12 +11892,16 @@ int strerror_r(int err, char *buf, size_t n)
 
 void perror(const char *msg)
 {
+    const char *e = strerror(errno);
+
+    flockfile(stderr);              /* one line, not four pieces */
     if (msg != NULL && msg[0] != '\0') {
         fputs(msg, stderr);
         fputs(": ", stderr);
     }
-    fputs(strerror(errno), stderr);
+    fputs(e, stderr);
     fputc('\n', stderr);
+    funlockfile(stderr);
 }
 
 /* =============================================================================
@@ -12455,25 +12613,42 @@ int getppid(void)
     return (int)_syscall1(SYS_GETPPID, 0);
 }
 
+/* ! pread AND pwrite ARE ONE SYSCALL EACH (kernel 0.277, 24 October 2026).
+ * They were lseek + read + lseek, and the position belongs to every thread of
+ * the program: two threads reading one descriptor at once read each other's
+ * place. Firefox (fonts, SQLite, the cache) got bytes from elsewhere in the
+ * file - text that did not appear, «file is not a database». On an older
+ * kernel (ENOSYS) the old way is kept, under one lock for the whole libc so
+ * at least two pread do not cross. */
+static volatile int g_pread_m = 0;
+
 ssize_t pread(int fd, void *buf, size_t n, long pos)
 {
-    long    prima = lseek(fd, 0, 1);            /* SEEK_CUR */
-    ssize_t r;
+    int32_t r = _syscall4(SYS_PREAD, (uint32_t)fd, (uintptr_t)buf, (uint32_t)n, (uint32_t)pos);
+    long    prima;
 
-    if (prima < 0 || lseek(fd, pos, 0) < 0) return -1;
+    if (r != -38) return err_posix(r);          /* -ENOSYS: a kernel before 0.277 */
+    mutex_prendi(&g_pread_m);
+    prima = lseek(fd, 0, 1);                    /* SEEK_CUR */
+    if (prima < 0 || lseek(fd, pos, 0) < 0) { mutex_lascia(&g_pread_m); return -1; }
     r = read(fd, buf, n);
     lseek(fd, prima, 0);
+    mutex_lascia(&g_pread_m);
     return r;
 }
 
 ssize_t pwrite(int fd, const void *buf, size_t n, long pos)
 {
-    long    prima = lseek(fd, 0, 1);
-    ssize_t r;
+    int32_t r = _syscall4(SYS_PWRITE, (uint32_t)fd, (uintptr_t)buf, (uint32_t)n, (uint32_t)pos);
+    long    prima;
 
-    if (prima < 0 || lseek(fd, pos, 0) < 0) return -1;
+    if (r != -38) return err_posix(r);
+    mutex_prendi(&g_pread_m);
+    prima = lseek(fd, 0, 1);
+    if (prima < 0 || lseek(fd, pos, 0) < 0) { mutex_lascia(&g_pread_m); return -1; }
     r = write(fd, buf, n);
     lseek(fd, prima, 0);
+    mutex_lascia(&g_pread_m);
     return r;
 }
 
@@ -12667,10 +12842,14 @@ wint_t fputwc(wchar_t c, FILE *f)
 
 int fputws(const wchar_t *s, FILE *f)
 {
+    int r = 0;
+
+    flockfile(f);
     for (; *s; s++) {
-        if (fputwc(*s, f) == WEOF) return -1;
+        if (fputwc(*s, f) == WEOF) { r = -1; break; }
     }
-    return 0;
+    funlockfile(f);
+    return r;
 }
 
 /* =============================================================================
@@ -12708,12 +12887,14 @@ wchar_t *fgetws(wchar_t *s, int n, FILE *f)
     int i = 0;
 
     if (n <= 0) return 0;
+    flockfile(f);
     while (i < n - 1) {
         wint_t c = fgetwc(f);
         if (c == WEOF) break;
         s[i++] = (wchar_t)c;
         if (c == L'\n') break;
     }
+    funlockfile(f);
     if (i == 0) return 0;
     s[i] = 0;
     return s;

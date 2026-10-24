@@ -8187,6 +8187,28 @@ tools/netinst/velocita tolto da netinst.
       Da fare: misurare
       dove vanno i 107 + 60 s: lettura su richiesta del firefox da 220 MB e
       degli omni.ja dal disco, sqlite del profilo, CPU.
+      TESTO MANCANTE (foto/20261024_1217*.jpg, 122013.jpg): «Unable to load
+      glyph: 20», «logins.db: file is not a database», font giusti sul disco.
+      Causa: pread della libc = lseek+read+lseek su un descrittore che tutti
+      i fili condividono. Kernel 0.277: SYS_PREAD (8) / SYS_PWRITE (9);
+      read/write/lseek tengono la posizione mentre la spostano; libc: i FILE
+      con lucchetto (flockfile, ricorsivo). Mutex/cond/rwlock/once/semafori
+      erano gia' veri (futex a tre stati, dorme nel kernel). Prova:
+      tools/prova_fili.sh (con la libc vecchia: pread 7 sbagliate su 84118, 9 righe rotte).
+      Firefox 32/64 ricollegato con la libc.a nuova, da pubblicare e provare
+      sul CQ60: il testo deve vedersi.
+      CONSOLE INONDATA (foto/20261024_131803.jpg, Firefox vecchio sul CQ60):
+      migliaia di «console.warn: services.settings: Could not determine
+      network status ... lazy.gNetworkLinkService is undefined». EX-OS non ha
+      il servizio @mozilla.org/network/network-link-service;1 (Linux usa
+      netlink): Utils.isOffline (services/settings/Utils.sys.mjs:218) lancia
+      a ogni get() di RemoteSettingsClient e scrive un avviso; poi va avanti
+      come «in linea», quindi niente di rotto. Ma ogni riga scorre la console
+      grafica, e scrivere sul terminale e' sincrono: candidato per la
+      lentezza. Proposte (da decidere con l'utente): (a) exilla lancia
+      firefox con stdout/stderr su un file di log invece che sulla console;
+      (b) patch a Utils.sys.mjs: servizio assente = rete su, in silenzio
+      (rifare omni.ja e il pacchetto).
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
       gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
       per i dmesg.

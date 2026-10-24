@@ -2308,6 +2308,54 @@ system call.**
 > deadline at 2000, it came back after **100 ms** — the thread woke it, not the
 > clock.
 
+### Threads reading the same file: a real `pread` and locked streams (0.277)
+
+**tested at 32 and 64 bit** with `tools/prova_fili.sh`, which puts the threads
+of one program on the same file and on the same `FILE`:
+
+```
+FILI pread 0 giri 101824      8 threads, random pread on one descriptor, 3 s
+FILI posizione 0 letti 1048576 su 1048576, pezzi storti 0
+FILI pwrite 0                4 threads, pwrite on different words
+FILI stdio 0 righe 12000 rotte 0
+FILI mutex 0                 8 threads, 20000 rounds each under pthread_mutex
+```
+
+**And the same test with the old libc** (`PROVA_CFLAGS=-L<dir with the old libc.a>`)
+fails, as it must: `FILI pread 7 giri 84118` and `FILI stdio 1 righe 12019
+rotte 9`. A test that passes with the fault proves nothing: the first version
+lasted less than one scheduler quantum, the threads never crossed, and it
+passed with both.
+
+**Firefox showed the fault on the CQ60: pages with no text.** The log said
+"Unable to load glyph" and "logins.db: file is not a database", with the font
+files right on disk (same sha256). libc did `pread` as `lseek` + `read` +
+`lseek`, and **threads share the descriptor table**, so the position too: two
+threads reading the same file at once move the position under each other and
+take home the bytes of the wrong place. Firefox maps its fonts by reading them
+with `pread` from several threads.
+
+**`pread` and `pwrite` are now kernel calls** (`SYS_PREAD` 8, `SYS_PWRITE` 9):
+they read and write at the given spot without touching the descriptor's
+position. A new libc on an old kernel gets `ENOSYS` and falls back to the old
+way, under its own lock. And **`read`, `write` and `lseek` on a file hold the
+position while they move it** (`posizione_di` in the descriptor): before, two
+`read`s at once could read the same piece and move the position backwards.
+
+**The stdio streams have a lock** (`flockfile`, `funlockfile`, `ftrylockfile`
+and the `_unlocked` forms). They had none: two threads writing on `stderr`
+together could write the same byte of the buffer or flush it twice. Every
+function takes it by itself, once per call; whoever wants one whole line out of
+several calls holds `flockfile`. It is **recursive**, and the holder is known
+by its thread pointer, read from `%gs`/`%fs` with no system call.
+
+> **What was already there, and stays:** `pthread_mutex`, conditions,
+> reader/writer locks, `pthread_once` and semaphores sit on the three-state
+> lock that sleeps in the kernel (`SYS_ATTESA_DORMI`/`SYS_ATTESA_SVEGLIA`);
+> `malloc`, `errno` (per thread) and the mapping table had theirs. For a
+> program's own atomic variables EX-OS's GCC has `<stdatomic.h>` and the
+> `__atomic_*` builtins, which become `lock` instructions: no libc needed.
+
 ### The editor shortcuts, and something I had written wrong
 
 **tested** — a line typed in the editor and only Ctrl+S pressed: the status line

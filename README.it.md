@@ -2348,6 +2348,57 @@ una chiamata di sistema.**
 > scadenza a 2000, è tornata dopo **100 ms** — l'ha svegliata lui, non
 > l'orologio.
 
+### Fili che leggono lo stesso file: `pread` vero e i flussi col lucchetto (0.277)
+
+**testato a 32 e 64 bit** con `tools/prova_fili.sh`, che mette insieme sullo
+stesso file e sullo stesso `FILE` i fili di un programma solo:
+
+```
+FILI pread 0 giri 101824      8 fili, pread a caso sullo stesso descrittore, 3 s
+FILI posizione 0 letti 1048576 su 1048576, pezzi storti 0
+FILI pwrite 0                4 fili, pwrite su parole diverse
+FILI stdio 0 righe 12000 rotte 0
+FILI mutex 0                 8 fili, 20000 giri l'uno sotto pthread_mutex
+```
+
+**E la stessa prova con la libc di prima** (`PROVA_CFLAGS=-L<dir con la libc.a vecchia>`)
+sbaglia, che è quel che deve fare: `FILI pread 7 giri 84118` e `FILI stdio 1
+righe 12019 rotte 9`. Una prova che passa anche col guasto non prova niente:
+la prima versione durava meno di un quanto dello scheduler, i fili non si
+incrociavano mai e passava con tutte e due.
+
+**Il guasto l'ha mostrato Firefox sul CQ60: pagine senza testo.** Nel log
+«Unable to load glyph» e «logins.db: file is not a database», con i file dei
+caratteri giusti sul disco (sha256 uguale). La libc faceva `pread` come
+`lseek` + `read` + `lseek`, e **i fili condividono la tabella dei
+descrittori**, quindi anche la posizione: se due fili leggono lo stesso file
+insieme, uno sposta la posizione mentre l'altro legge, e si portano a casa i
+byte del posto sbagliato. Firefox mappa i caratteri leggendoli con `pread` da
+più fili.
+
+**Adesso `pread` e `pwrite` sono chiamate del kernel** (`SYS_PREAD` 8,
+`SYS_PWRITE` 9): leggono e scrivono al punto chiesto senza toccare la posizione
+del descrittore. Una libc nuova su un kernel vecchio riceve `ENOSYS` e torna al
+modo di prima, sotto un lucchetto suo. E **`read`, `write` e `lseek` su un file
+tengono la posizione mentre la spostano** (`posizione_di` nel descrittore):
+prima due `read` insieme potevano leggere lo stesso pezzo, e la posizione
+tornare indietro.
+
+**I flussi della stdio hanno il lucchetto** (`flockfile`, `funlockfile`,
+`ftrylockfile`, e le forme `_unlocked`). Prima non ce l'avevano: due fili che
+scrivono su `stderr` insieme potevano scrivere lo stesso byte del buffer o
+svuotarlo due volte. Ogni funzione lo prende da sola, una volta per chiamata;
+chi vuole una riga intera da più chiamate tiene `flockfile`. È **ricorsivo** e
+il padrone si riconosce dal thread pointer, letto da `%gs`/`%fs` senza
+chiamate di sistema.
+
+> **Che cosa c'era già, e resta com'era:** `pthread_mutex`, le condizioni, i
+> lucchetti lettori/scrittori, `pthread_once` e i semafori stanno sul lucchetto
+> a tre stati che dorme nel kernel (`SYS_ATTESA_DORMI`/`SYS_ATTESA_SVEGLIA`);
+> `malloc`, `errno` (per filo) e la tabella delle mappe avevano il loro.
+> Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
+> le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
+
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 
 **testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di
