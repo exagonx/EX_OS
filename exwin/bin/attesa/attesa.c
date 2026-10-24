@@ -31,6 +31,14 @@
  * file of 8 MB or more through it - the menu (pm), files opened from the
  * file manager and the desktop, the exilla launcher.
  *
+ * ! EXWIN_LOG=FILE SENDS THE PROGRAM'S OUTPUT TO FILE (24 October 2026,
+ * attesa 0.005): stdout and stderr both, one shared descriptor, so the lines
+ * stay in order. Started from the desktop, a program writes on the text
+ * console, which nobody sees and which is slow to scroll; on the real
+ * machine Firefox's messages were only readable from photos of the screen.
+ * The exilla launcher sets it to ~/.exilla/firefox.log. An older attesa
+ * ignores the variable and the program writes on the console as before.
+ *
  * ! THE HOURGLASS IS DRAWN WITH RECTANGLES, a row at a time: the toolkit has
  * no polygons. Two triangles of glass, the sand of the top one going down
  * while the bottom one fills, a thin stream between them; at the end of each
@@ -39,7 +47,7 @@
 #include "libc.h"
 #include "exwin.h"
 
-#define VERSIONE_APP "0.004"
+#define VERSIONE_APP "0.005"
 EX_VERSIONE("attesa", VERSIONE_APP);
 
 #define FIN_W      330
@@ -296,6 +304,23 @@ static void uso(void)
     printf("  chiude quando compare la sua prima finestra (o dopo SECONDI, 300).\n");
 }
 
+/* spawn_ex with stdout and stderr on EXWIN_LOG, if it is set and opens. */
+static int avvia(char **prog)
+{
+    const char *log = getenv("EXWIN_LOG");
+    SpawnRedir  r[2];
+    int         fd, pid;
+
+    if (!log || !log[0]) return spawn_ex(prog[0], prog, environ, 0, 0);
+    fd = open(log, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0600);
+    if (fd < 0) return spawn_ex(prog[0], prog, environ, 0, 0);
+    r[0].fd = 1; r[0].flags = 0; r[0].percorso = NULL; r[0].fd_padre = fd;
+    r[1].fd = 2; r[1].flags = 0; r[1].percorso = NULL; r[1].fd_padre = fd;
+    pid = spawn_ex(prog[0], prog, environ, r, 2);
+    close(fd);                  /* the child holds its own reference */
+    return pid;
+}
+
 int main(int argc, char **argv)
 {
     ExMsg        m;
@@ -329,14 +354,14 @@ int main(int argc, char **argv)
     ex_screen_size(&sw, &sh);
     if (sw == 0) {
         /* no desktop: nothing to show, the program starts as it would */
-        return spawn_ex(prog[0], prog, environ, 0, 0) < 0 ? 1 : 0;
+        return avvia(prog) < 0 ? 1 : 0;
     }
 
     snprintf(titolo, sizeof(titolo), "Avvio di %s", g_nome);
     g_f = ex_create("window", titolo, EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST,
                     ((int)sw - FIN_W) / 2, ((int)sh - FIN_H) / 2 - 40,
                     FIN_W, FIN_H, 0, 0, proc);
-    if (!g_f) return spawn_ex(prog[0], prog, environ, 0, 0) < 0 ? 1 : 0;
+    if (!g_f) return avvia(prog) < 0 ? 1 : 0;
 
     g_t0 = uptime_ms();
     proc(g_f, EXM_PAINT, 0, 0);
@@ -344,7 +369,7 @@ int main(int argc, char **argv)
     /* ! THE BOX FIRST, THE PROGRAM AFTER: the point is that something is on
      * the screen at once, before the system starts reading a file of
      * hundreds of megabytes. */
-    g_figlio = spawn_ex(prog[0], prog, environ, 0, 0);
+    g_figlio = avvia(prog);
     if (g_figlio < 0) {
         snprintf(g_riga3, sizeof(g_riga3), "Il file non si avvia (%d).", g_figlio);
         g_finito = 1;

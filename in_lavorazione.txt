@@ -7973,6 +7973,14 @@ tools/netinst/velocita tolto da netinst.
   L'utente: «qua si stanno prendendo appunti da mettere in coda tra le cose
   da fare se e' possibile farle». Nessuno di questi e' iniziato.
 
+  !!! ORDINE DECISO (24/10/2026, l'utente): «sistemiamo firefox e poi si
+  passa all'accelerazione 2d hardware per sis nvidia e come regola
+  fondamentale per tutte le schede grafiche che la supportano». Prima la
+  voce 26 (Firefox sul CQ60: 0.277 col testo, console inondata, lentezza
+  dell'avvio), poi il 2D hardware di sis e nv50 USATO DAVVERO da wserver
+  (oggi con l'ombra in RAM non passa mai da g_acc), e da li' regola per
+  ogni driver video che ha un motore 2D.
+
   !!! IMPORTANTE (21/10/2026, l'utente) - NESSUN NOME DELL'ASSISTENTE IA,
   DA NESSUNA PARTE: ne' il nome dell'assistente, ne' quello del suo
   strumento da terminale, ne' quello dell'azienda, ne' varianti (attaccate,
@@ -8209,6 +8217,16 @@ tools/netinst/velocita tolto da netinst.
       firefox con stdout/stderr su un file di log invece che sulla console;
       (b) patch a Utils.sys.mjs: servizio assente = rete su, in silenzio
       (rifare omni.ja e il pacchetto).
+      AREA BIANCA (24/10 pomeriggio, CQ60 ancora col kernel 0.276 e il
+      Firefox vecchio): finestra aperta, contenuto bianco, nessuna pagina,
+      nemmeno about:config; foto 150321: «RenderCompositorSWGL failed
+      mapping default framebuffer, no dt», «HTTP request timeout»; il kernel
+      non segnala niente; Firefox cancella formhistory.sqlite (rovinato). In
+      QEMU a 64 bit col 0.277 e il Firefox ricollegato (prova-finestra.sh)
+      tutto va: pagina, barra, seconda pagina 0,13 s dopo Invio. Da provare
+      sul CQ60 dopo la pubblicazione; se resta bianca, profilo nuovo.
+      LOG DALLA MACCHINA VERA: exilla 0.006 + attesa 0.005 -> EXWIN_LOG =
+      ~/.exilla/firefox.log (e .1), EXILLA_DIAG=1; via telnet `cat`.
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
       gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
       per i dmesg.

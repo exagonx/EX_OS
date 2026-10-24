@@ -233,3 +233,31 @@ svga.drv 1024x768        (o il modo che vuoi)
 ```
 
 e ne resta una sola. Poi `reboot`.
+
+## Exilla (Firefox): la finestra resta bianca, o le pagine non si aprono
+
+**Prima leggi cosa dice Firefox.** Da `exilla` 0.006 (con `attesa` 0.005) i
+suoi messaggi non vanno più sulla console di testo — dove nessuno li legge e
+dove ogni riga rallenta Firefox — ma in un file:
+
+```
+cat /root/.exilla/firefox.log       questo avvio
+cat /root/.exilla/firefox.log.1     quello prima, utile dopo un riavvio
+```
+
+Si leggono anche da un'altra macchina, con `telnet`, mentre Firefox gira. Le
+righe `exilla: ...` sono il diario della finestra (creazione, misura, la
+memoria condivisa con il server a finestre); `console.error` e
+`JavaScript error` vengono da Firefox stesso.
+
+**Con un kernel prima del 0.277 il testo può mancare** e le pagine restare
+bianche: due fili di Firefox che leggevano lo stesso file si spostavano la
+posizione a vicenda, e i caratteri e i database del profilo arrivavano
+sbagliati. `netupdate -check -yesall` e `netupdate -install:exilla` portano il
+kernel e il Firefox corretti. Se dopo l'aggiornamento resta bianca, il
+profilo può essere stato rovinato da quelle letture: spostalo e Firefox ne
+crea uno nuovo (si perdono segnalibri e cronologia):
+
+```
+mv /root/.exilla/profilo /root/.exilla/profilo-vecchio
+```

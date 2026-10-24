@@ -29,13 +29,21 @@
  *   - EXILLA_FONTS: dove stanno i caratteri (quelli di ExWin);
  *   - -no-remote: non cercare un Firefox gia' aperto a cui passare la pagina.
  * Sbagliarne una da' una finestra che non si apre e nessun messaggio.
+ *
+ * ! FIREFOX SCRIVE IN ~/.exilla/firefox.log (24 October 2026, 0.006), not on
+ * the text console: there nobody reads it, it is slow to scroll, and on the
+ * real machine its messages could only be photographed. The previous run's
+ * log stays as firefox.log.1, so after a crash and a restart it is still
+ * there. EXILLA_DIAG=1 (the window diary of widget/exos) is on by default:
+ * in a file it costs nothing. Read it over telnet with `cat`; EXWIN_LOG set
+ * by hand (even empty) wins. The log is written by attesa 0.005 and later.
  * ============================================================================= */
 
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.005"
+#define VERSIONE_APP "0.006"
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
@@ -114,6 +122,16 @@ static int avvia(int argc, char **argv)
     snprintf(profilo, sizeof(profilo), "%s/.exilla/profilo", casa);
     mkdir(profilo, 0700);
 
+    if (!getenv("EXWIN_LOG")) {
+        static char log[300], prima[310];
+
+        snprintf(log, sizeof(log), "%s/.exilla/firefox.log", casa);
+        snprintf(prima, sizeof(prima), "%s.1", log);
+        unlink(prima);
+        rename(log, prima);
+        setenv("EXWIN_LOG", log, 1);
+    }
+    setenv("EXILLA_DIAG", "1", 0);
     setenv("MOZ_FORCE_DISABLE_E10S", "1", 1);
     setenv("EXILLA_FONTS", "/exwin/font", 0);
     setenv("LANG", "it_IT.UTF-8", 0);
@@ -152,6 +170,7 @@ int main(int argc, char **argv)
         printf("uso: exilla [indirizzo]        apre Exilla (Firefox per EX-OS)\n");
         printf("     (EXILLA_DIR=/altro/posto la cerca li')\n");
         printf("     exilla -dove              dice se e' installata\n");
+        printf("     i messaggi di Firefox: ~/.exilla/firefox.log (quello di prima: .1)\n");
         return 0;
     }
     if (argc >= 2 && strcmp(argv[1], "-dove") == 0) {
