@@ -8227,6 +8227,20 @@ tools/netinst/velocita tolto da netinst.
       sul CQ60 dopo la pubblicazione; se resta bianca, profilo nuovo.
       LOG DALLA MACCHINA VERA: exilla 0.006 + attesa 0.005 -> EXWIN_LOG =
       ~/.exilla/firefox.log (e .1), EXILLA_DIAG=1; via telnet `cat`.
+      SERA 24/10, CQ60 COL 0.277 PUBBLICATO: ancora bianca. Il log dice:
+      finestra 1229x691 poi Resize 1362x744, una volta «no dt», «database
+      disk image is malformed», «remoteTab is null» (RemoteWebNavigation),
+      «NetworkError», «HTTP request timeout», «nss_rs::freebl failed to
+      load libfreebl3.so»; dopo Invio su www.google.it NESSUN titolo nuovo.
+      RIPRODOTTO IN QEMU 64 bit con RETE=1 (prova-finestra.sh, PAGINA=
+      https://www.google.it): la scheda google.it resta BIANCA, «Not
+      Secure», titolo «Nightly"; nella stessa sessione www.wikipedia.org si
+      apre giusta (0,67 s dopo Invio). Quindi non e' (solo) il profilo:
+      certe pagine non arrivano. Prossimo: capire google.it in QEMU (MOZ_LOG
+      nsHttp:5,nsSocketTransport:5 su file, rete dell'host per vedere se la
+      risposta arriva; confrontare col Firefox del 19/10 che stamattina sul
+      CQ60 la apriva: cross_build/i5svrdeb/firefox-originali o il pacchetto
+      vecchio). Poi profilo nuovo sul CQ60.
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
       gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
       per i dmesg.
