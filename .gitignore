@@ -529,3 +529,5 @@ __pycache__/
 *.o
 /gftexteditor/obj/
 /gftexteditor/bin/
+# photos of the screens of real machines: kept locally, not published
+/foto/
