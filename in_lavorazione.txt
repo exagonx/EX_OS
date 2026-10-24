@@ -8149,6 +8149,32 @@ tools/netinst/velocita tolto da netinst.
          Firefox - content process, IPC, fili -; dmesg dei loro errori;
          prima prova la stessa cosa in QEMU con RAM larga, cosi' si separa
          la memoria dal porting).
+      RISPOSTA (24/10, prova dal vivo sul CQ60, kernel 0.274): NON e' rotto,
+      e' LENTO. Finestra di Firefox a 105-107 s (come il 21/10 col 0.266:
+      nessuna regressione), poi ~1 minuto senza disegnare; dopo, www.google.it
+      si apre. /tmp/attesa.txt: l'attesa si CHIUDE quando compare la finestra
+      "Nightly"; la clessidra che resta e' l'immagine vecchia sullo schermo,
+      perche' Firefox non ha ancora disegnato la sua finestra. Installazione
+      verificata (omni.ja e browser/omni.ja con lo sha256 del pacchetto;
+      omni.ja.new da 11 MB del 21/10 e' un avanzo da togliere).
+      SWAP (24/10, kernel 0.276): `mem` mostra l'area (dimensione, in uso,
+      pagine andate e tornate dall'avvio). La prova tools/prova_swapmem.sh
+      ha mostrato che lo swap NON funzionava: a 32 bit panico al primo
+      sfratto (paging_vittima leggeva una voce da 4 MB come tabella), a 64
+      bit memoria rovinata dopo gli sfratti (pagina scritta ancora mappata,
+      un buffer solo senza lucchetto fra sfratti e rientri, il padrone che
+      muore nel frattempo) e processi uccisi quando l'altro processore
+      teneva le pagine (kbd). Corretto: ora 32 e 64 bit passano (swaptest
+      singolo e due insieme, nessun processo morto); DMA/MMIO/framebuffer
+      con PG_FISSA non si sfrattano mai. Sul CQ60 col 0.274: `swaptest 2000`
+      giusto (stava in RAM); una richiesta singola sopra i 2 GB la rifiuta
+      sbrk (incremento int32_t), limite della libc, non dello swap.
+      PROSSIMO: 0.276 sul portatile, Firefox con `mem` a fianco; se si
+      chiude ancora, NON riavviare e leggere `dmesg -u`.
+      Da fare: (1) il server o l'attesa ridisegnino lo sfondo della finestra
+      nuova (o l'attesa resti finche' l'applicazione disegna); (2) misurare
+      dove vanno i 107 + 60 s: lettura su richiesta del firefox da 220 MB e
+      degli omni.ja dal disco, sqlite del profilo, CPU.
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
       gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
       per i dmesg.

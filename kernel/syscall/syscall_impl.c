@@ -3672,7 +3672,7 @@ int32_t sys_meminfo(InterruptFrame *frame)
     uint32_t  tot, libere;
     uint32_t  ext_pagine, ext_max;
 
-    if (size != sizeof(MemInfo))          return ERR(EINVAL);
+    if (size != sizeof(MemInfo) && size != MEMINFO_SIZE_V1) return ERR(EINVAL);
     if (!syscall_verify_ptr(dst, size))   return ERR(EFAULT);
 
     /* Convenzionale: 0x00000-0x9FFFF (640 KB) */
@@ -3715,7 +3715,23 @@ int32_t sys_meminfo(InterruptFrame *frame)
 #endif
     mi.page_size = PAGE_SIZE;
 
-    *dst = mi;
+    {
+        uint32_t slot, usati;
+
+        swap_conta(&slot, &usati);
+        mi.swap_total_kb = slot  * (PAGE_SIZE / 1024);
+        mi.swap_used_kb  = usati * (PAGE_SIZE / 1024);
+        swap_traffico(&mi.swap_out, &mi.swap_in);
+    }
+
+    /* a program built before 0.276 gets the first eleven fields only */
+    {
+        const uint8_t *s = (const uint8_t *)&mi;
+        uint8_t       *d = (uint8_t *)dst;
+        uint32_t       i;
+
+        for (i = 0; i < size; i++) d[i] = s[i];
+    }
     return 0;
 }
 
@@ -5442,7 +5458,7 @@ int32_t sys_dma_alloc(InterruptFrame *frame)
         if (paging_map_page(proc->page_directory,
                             vaddr + i * PAGE_SIZE,
                             fisico + i * PAGE_SIZE,
-                            PG_PRESENT | PG_USER | PG_WRITABLE) != 0) {
+                            PG_PRESENT | PG_USER | PG_WRITABLE | PG_FISSA) != 0) {
             uint32_t j;
             for (j = 0; j < i; j++)
                 paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
@@ -5699,7 +5715,7 @@ int32_t sys_fb_map(InterruptFrame *frame)
         /* pat_flag_wc(): combinabile in scrittura (vedi mtrr.c, il PAT) */
         if (paging_map_page(proc->page_directory, vaddr + i * PAGE_SIZE,
                             base + i * PAGE_SIZE,
-                            PG_PRESENT | PG_USER | PG_WRITABLE | pat_flag_wc()) != 0) {
+                            PG_PRESENT | PG_USER | PG_WRITABLE | PG_FISSA | pat_flag_wc()) != 0) {
             uint32_t j;
             for (j = 0; j < i; j++)
                 paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
@@ -6384,7 +6400,7 @@ int32_t sys_mmio_map(InterruptFrame *frame)
         if (paging_map_page(proc->page_directory,
                             vaddr + i * PAGE_SIZE,
                             base + i * PAGE_SIZE,
-                            PG_PRESENT | PG_USER | PG_WRITABLE |
+                            PG_PRESENT | PG_USER | PG_WRITABLE | PG_FISSA |
                             PG_CACHE_DIS | PG_WRITE_THRU) != 0) {
             uint32_t j;
             for (j = 0; j < i; j++)

@@ -73,6 +73,19 @@ typedef uint32_t PTE;
 #define PTE_E_PIGRA(pte)    (((pte) & (PG_PRESENT | (1u << 9) | PG_RISERVA | PG_PIGRA)) == PG_PIGRA)
 
 /* =============================================================================
+ * PG_FISSA — a PRESENT page a device reads or writes (24 October 2026)
+ *
+ * Bit 9 of a present PTE (on a missing one it is PG_SWAP: the two never meet,
+ * PG_SWAP counts only with Present at zero). dma_alloc, mmio_map and the
+ * framebuffer map with it, and paging_vittima never picks such a page.
+ *
+ * ! A DMA BUFFER HAS ONE OWNER like any heap page, and the swap took it: the
+ * card went on writing into a frame the PMM had already given to someone
+ * else. The ownership count cannot tell the two apart; this bit can.
+ * ========================================================================== */
+#define PG_FISSA        (1u << 9)
+
+/* =============================================================================
  * FINESTRA DI RIMAPPATURA FISICA
  *
  * Una pagina virtuale sola, dentro la fascia mappata in OGNI page
@@ -182,6 +195,11 @@ void     paging_destroy_directory(PDE *pd);
  * ========================================================================== */
 int      paging_vittima(PDE **out_pd, vaddr_t *out_virt, paddr_t *out_frame);
 void     paging_marca_swap(PDE *pd, vaddr_t virt, uint32_t slot);
+/* The PTE of `virt` in `pd` as it is (0 if no table covers it), and writing
+ * it back with the TLB told when `pd` is the one loaded: swap.c checks that
+ * the page it took is still where it left it, and puts it back. */
+uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt);
+void     paging_pte_scrivi(PDE *pd, vaddr_t virt, uintptr_t valore);
 void     paging_switch(PDE *pd);
 PDE     *paging_get_kernel_directory(void);
 PDE     *paging_get_current_directory(void);

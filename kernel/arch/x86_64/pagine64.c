@@ -55,6 +55,7 @@ int paging_vittima(PDE **out_pd, vaddr_t *out_virt, paddr_t *out_frame)
 
         if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
         if (p->page_directory == NULL) continue;
+        if (p->page_directory == paging_get_kernel_directory()) continue;
         /* uno spazio in uso su un altro processore non si tocca: la' la
          * pagina puo' essere letta mentre la si manda via */
         if (sched_spazio_altrove(p->page_directory)) continue;
@@ -74,6 +75,7 @@ int paging_vittima(PDE **out_pd, vaddr_t *out_virt, paddr_t *out_frame)
 
                 if (!(pte & PG_PRESENT)) continue;
                 if (!(pte & PG_USER))    continue;
+                if (pte & PG_FISSA)      continue;         /* un dispositivo la usa */
 
                 frame = PG_ADDR(pte);
                 if (frame >= ram) continue;                 /* un dispositivo, non RAM */
@@ -104,5 +106,21 @@ void paging_marca_swap(PDE *pd, vaddr_t virt, uint32_t slot)
     if (pte == NULL) return;
     *pte = SWAP_PTE(slot, *pte);
 
+    if (proc_get_current() != NULL && proc_get_current()->page_directory == pd) tlb_via(virt);
+}
+
+uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt)
+{
+    PTE *pte = paging64_pte(pd, virt);
+
+    return (pte != NULL) ? *pte : 0;
+}
+
+void paging_pte_scrivi(PDE *pd, vaddr_t virt, uintptr_t valore)
+{
+    PTE *pte = paging64_pte(pd, virt);
+
+    if (pte == NULL) return;
+    *pte = valore;
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd) tlb_via(virt);
 }

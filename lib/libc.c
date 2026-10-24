@@ -668,6 +668,8 @@ typedef struct {
     unsigned int ems_total_kb,  ems_free_kb;
     unsigned int total_kb,      free_kb;
     unsigned int page_size;
+    unsigned int swap_total_kb, swap_used_kb;   /* kernel 0.276 */
+    unsigned int swap_out, swap_in;
 } MemInfo;
 
 /* I processori: copia di CpuInfo in lib/include/libc.h, che e' la copia di
@@ -7679,7 +7681,16 @@ int klog_leggi(char *buf, unsigned int byte, int quale)
  * della struttura non ha la stessa dimensione. Vedi libc.h. */
 int meminfo(MemInfo *mi)
 {
-    return _syscall2(SYS_MEMINFO, (uintptr_t)mi, (uint32_t)sizeof(MemInfo));
+    int rc = _syscall2(SYS_MEMINFO, (uintptr_t)mi, (uint32_t)sizeof(MemInfo));
+
+    /* ! A KERNEL BEFORE 0.276 KNOWS ONLY THE ELEVEN FIELDS without the swap
+     * ones, and refuses the new size with EINVAL: ask again with the old one
+     * and say "no swap". */
+    if (rc == -22 && mi) {
+        rc = _syscall2(SYS_MEMINFO, (uintptr_t)mi, (uint32_t)(11 * sizeof(unsigned int)));
+        mi->swap_total_kb = mi->swap_used_kb = mi->swap_out = mi->swap_in = 0;
+    }
+    return rc;
 }
 
 int procinfo(ProcInfo *buf, unsigned int max, unsigned int start)

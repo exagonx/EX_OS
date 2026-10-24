@@ -254,6 +254,12 @@ swap = hd0p2
 e si riavvia: l'area si accende **solo all'avvio**, e il kernel scrive
 quanti slot da 4 KB ha trovato (`dmesg SWAP`).
 
+Se e quanto viene usata lo dice `mem`, nella riga **scambio (swap)**
+sotto il totale: la dimensione, quanto c'è sopra adesso e quante pagine
+sono andate sul disco e tornate in RAM dall'avvio. Finché la RAM basta i
+due contatori restano a zero: l'area entra in gioco solo quando la
+memoria finisce.
+
 ! **NON PIU' DI 4 GB**: il kernel conta al massimo 2^20 pagine da 4 KB.
   Una partizione più grande funziona, ma il di più resta inutilizzato.
 

@@ -14,6 +14,9 @@
  *   mem       tabella per fascia, valori in KB
  *   mem -b    valori in byte
  *
+ * Under the table the swap area (0.002, kernel 0.276): its size, what is
+ * on it now, and how many pages went out and came back since boot.
+ *
  * I dati vengono da SYS_MEMINFO, che li ricava interrogando la bitmap del
  * PMM: sono la situazione reale della memoria fisica, non una stima.
  *
@@ -30,7 +33,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `mem -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("mem", "0.001");
+EX_VERSIONE("mem", "0.002");
 
 /* Barra di occupazione: mostra a colpo d'occhio quale fascia è satura,
  * cosa che tre numeri in fila non comunicano altrettanto bene. */
@@ -77,7 +80,9 @@ static void riga(const char *nome, unsigned int tot, unsigned int libera,
         return;
     }
 
-    printf("%10u %10u %10u  ", tot * mult, usata * mult, libera * mult);
+    /* in bytes a 4 GB swap area does not fit 32 bits */
+    printf("%10llu %10llu %10llu  ", (unsigned long long)tot * mult,
+           (unsigned long long)usata * mult, (unsigned long long)libera * mult);
     stampa_barra(usata, tot);
     printf("  %s\n", unita);
 }
@@ -122,6 +127,18 @@ int main(int argc, char **argv)
 
     printf("----------------------------------------------------------------------------\n");
     riga("TOTALE",        mi.total_kb,      mi.free_kb,      mult, unita);
+
+    /* ! THE SWAP AREA IS NOT RAM, so it goes under the total and not in it.
+     * The two counters say what the slots in use cannot: whether the area
+     * was ever used, even if what went there has been freed since. */
+    if (mi.swap_total_kb != 0) {
+        riga("scambio (swap)", mi.swap_total_kb, mi.swap_total_kb - mi.swap_used_kb, mult, unita);
+        printf("  pagine da 4 KB mandate sul disco dall'avvio: %u, tornate in RAM: %u\n",
+               mi.swap_out, mi.swap_in);
+    } else {
+        printf("%-14s nessuna area attiva (partizione 0x82, mkswap, e in\n", "scambio (swap)");
+        printf("%-14s /boot/kernel.cfg [kernel] swap = hdXpY; vale dal riavvio)\n", "");
+    }
 
     printf("\n");
     printf("convenzionale = sotto 640 KB   superiore = 640 KB-1 MB (BIOS, video)\n");

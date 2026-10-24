@@ -1231,6 +1231,10 @@ typedef struct {
     unsigned int ems_total_kb,  ems_free_kb;
     unsigned int total_kb,      free_kb;
     unsigned int page_size;
+    /* from kernel 0.276: the swap area, all 0 without one (or on an older
+     * kernel: meminfo() then asks with the old size) */
+    unsigned int swap_total_kb, swap_used_kb;   /* the area, KB in use     */
+    unsigned int swap_out, swap_in;             /* pages out / back since boot */
 } MemInfo;
 
 /* Riempie *mi. Ritorna 0, o un valore negativo in caso di errore. */

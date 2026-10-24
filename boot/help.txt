@@ -376,6 +376,8 @@ avanti. Oggi lo ha nv50.drv; gli altri driver si aggiungono man mano.
 quanta memoria c'e' e quanta se ne usa
 
 Convenzionale, superiore ed estesa, con il totale in pagine.
+Sotto, l'area di scambio: quanta, quanta in uso, e quante pagine
+sono andate sul disco e tornate dall'avvio (`mem -b` in byte).
 
 [date]
 che giorno e' e che ore sono - e, da root, rimetterli

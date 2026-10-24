@@ -579,7 +579,21 @@
  * -2dmisura), 90 ms for one 1366x768 frame: the choppy desktop. The old note
  * in mtrr.c («MTRR UC + PAT WC = UC») was wrong: PAT WC is WC. The MTRR
  * table is now written to the log every time a framebuffer is set up. */
-#define EXOS_VERSION    "0.275"
+/* 0.275 -> 0.276: SYS_MEMINFO tells the swap area too: size, KB in use and
+ * pages written out / read back since boot (swap_traffico). MemInfo grows by
+ * four fields at the end; the old size (MEMINFO_SIZE_V1) is still accepted,
+ * so programs built before keep working. `mem` 0.002 prints it: on the CQ60
+ * nothing said whether Firefox ever reached the swap.
+ * And the swap works again, at 32 and 64 bit (tools/prova_swapmem.sh): at 32
+ * bit paging_vittima read a 4 MB directory entry as a table (kernel panic at
+ * the first eviction); at both the page was written while still mapped (its
+ * owner's writes during the disk wait were lost), the one bounce buffer was
+ * shared by concurrent evictions and swap-ins with no lock (now the disk
+ * lock), the owner could die meanwhile, and a fault with nothing to evict
+ * killed its process at once instead of waiting for the other CPU (kbd, at
+ * 64 bit). Pages a device uses (dma_alloc, mmio_map, framebuffer) carry
+ * PG_FISSA and are never evicted. */
+#define EXOS_VERSION    "0.276"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

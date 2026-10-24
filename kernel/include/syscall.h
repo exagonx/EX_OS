@@ -1392,7 +1392,14 @@ typedef struct {
     uint32_t ems_total_kb,  ems_free_kb;    /* espansa: sempre 0, v. sopra */
     uint32_t total_kb,      free_kb;        /* complessivi               */
     uint32_t page_size;                     /* granularita' del PMM      */
+    /* --- from kernel 0.276: the swap area (all 0 without one) --- */
+    uint32_t swap_total_kb, swap_used_kb;   /* the area, slots in use    */
+    uint32_t swap_out, swap_in;             /* pages out / back, since boot */
 } MemInfo;
+
+/* ! THE OLD SIZE IS STILL ACCEPTED: programs built before 0.276 ask with
+ * the eleven fields above the swap ones, and get those (sys_meminfo). */
+#define MEMINFO_SIZE_V1  (11u * sizeof(uint32_t))
 
 /* =============================================================================
  * Descrizione di un processo e dei suoi stack (per sys_procinfo)

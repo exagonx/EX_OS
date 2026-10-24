@@ -122,6 +122,9 @@ int  swap_attivo(void);
 /* Quanti slot in tutto e quanti occupati: per `mem` e per il log. */
 void swap_conta(uint32_t *totali, uint32_t *usati);
 
+/* Pages written to the area and read back from it since boot. */
+void swap_traffico(uint32_t *scritte, uint32_t *lette);
+
 /* Prende uno slot libero. Rende il numero, oppure -1 se sono finiti. */
 int32_t swap_slot_prendi(void);
 

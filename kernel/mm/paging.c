@@ -14,6 +14,7 @@
 #include "fpu.h"   /* cpu_capacita(): il bit PSE lo scopre CPUID */
 #include "pmm.h"
 #include "swap.h"   /* SWAP_PTE: il segnaposto di una pagina che se n'e' andata */
+#include "ata.h"    /* ata_prendi: the swap bounce buffer is the disk lock's */
 #include "paging.h"
 #include "idt.h"
 #include "sched.h"
@@ -1025,6 +1026,12 @@ void paging_destroy_directory(PDE *pd)
  *
  * ! E NON SI GUARDA SOTTO USER_SPACE_BASE. Li' c'e' la meta' kernel, che e'
  * la STESSA in ogni processo: sfrattarla vorrebbe dire toglierla a tutti.
+ *
+ * ! NE' DENTRO UNA VOCE DA 4 MB (24 October 2026). A PSE entry has no table
+ * under it: reading its address as one walked physical memory that is not
+ * mapped, and the kernel stopped on «page fault in ring0 at 0x04000000» at
+ * the first eviction. The 64-bit walk already skipped them.
+ * ! NOR A PAGE WITH PG_FISSA: a device is using it (see paging.h).
  * ========================================================================== */
 static uint32_t g_giro_proc = 0;
 
@@ -1046,6 +1053,7 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
 
         if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
         if (p->page_directory == NULL) continue;
+        if (p->page_directory == kernel_page_directory) continue;
         /* ! NON SI TOGLIE UNA PAGINA A CHI STA GIRANDO SU UN ALTRO PROCESSORE
          * (tappa 3 dell'SMP): ne ha la traduzione nel suo TLB e continuerebbe
          * a scriverci dopo che la pagina e' stata data a un altro. Si passa
@@ -1057,7 +1065,7 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
             PTE *pt;
             uint32_t pti;
 
-            if (!(pd[pdi] & PG_PRESENT)) continue;
+            if (!(pd[pdi] & PG_PRESENT) || (pd[pdi] & PG_HUGE)) continue;
             pt = (PTE *)PG_ADDR(pd[pdi]);
 
             for (pti = 0; pti < 1024; pti++) {
@@ -1066,6 +1074,7 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
 
                 if (!(pte & PG_PRESENT)) continue;
                 if (!(pte & PG_USER))    continue;
+                if (pte & PG_FISSA)      continue;
 
                 frame = PG_ADDR(pte);
 
@@ -1111,6 +1120,24 @@ void paging_marca_swap(PDE *pd, uint32_t virt, uint32_t slot)
     /* ! IL TLB TIENE ANCORA LA TRADUZIONE VECCHIA, e senza questa riga la CPU
      * continuerebbe a scrivere nella pagina fisica che stiamo per restituire
      * al PMM — cioe' dentro la memoria del prossimo che la ricevera'. */
+    if (proc_get_current() != NULL && proc_get_current()->page_directory == pd)
+        __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+}
+
+uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt)
+{
+    uint32_t pdi = PD_INDEX(virt);
+
+    if (pd == NULL || !(pd[pdi] & PG_PRESENT) || (pd[pdi] & PG_HUGE)) return 0;
+    return ((PTE *)PG_ADDR(pd[pdi]))[PT_INDEX(virt)];
+}
+
+void paging_pte_scrivi(PDE *pd, vaddr_t virt, uintptr_t valore)
+{
+    uint32_t pdi = PD_INDEX(virt);
+
+    if (pd == NULL || !(pd[pdi] & PG_PRESENT) || (pd[pdi] & PG_HUGE)) return;
+    ((PTE *)PG_ADDR(pd[pdi]))[PT_INDEX(virt)] = (PTE)valore;
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd)
         __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
 }
@@ -1182,6 +1209,30 @@ int      paging64_spezza(PDE *pd, vaddr_t virt);
 #endif
 /* l'indirizzo della pagina che contiene v */
 #define PAGINA_DI(v)            ((v) & ~(vaddr_t)0xFFF)
+
+/* =============================================================================
+ * pagina_utente — a page for a program's fault, making room if need be
+ *
+ * ! «NOTHING TO EVICT» CAN BE A MOMENT, NOT A STATE (24 October 2026). With
+ * more than one CPU the program that owns most of the memory is often running
+ * on the other one, and paging_vittima rightly leaves its pages alone. The
+ * fault used to give up at once and its owner died - kbd, in QEMU at 64 bit,
+ * right after swaptest had filled the RAM. Now it waits a little (up to about
+ * a second) and tries again: the other CPU changes process every tick.
+ * ========================================================================== */
+static paddr_t pagina_utente(void)
+{
+    paddr_t  f = pmm_alloc_page_utente();
+    uint32_t giri;
+
+    for (giri = 0; f == 0 && giri < 100; giri++) {
+        if (swap_sfratta()) { f = pmm_alloc_page(); continue; }
+        if (!swap_attivo()) break;
+        sched_sleep(10);
+        f = pmm_alloc_page_utente();
+    }
+    return f;
+}
 
 static int pte_riservata(vaddr_t virt);
 
@@ -1265,13 +1316,11 @@ static int pf_cresci_pagine(Process *p, vaddr_t fault_addr, int from_user)
     pagina = PAGINA_DI(fault_addr);
 
     for (ind = pagina; ind < p->user_stack_base; ind += PAGE_SIZE) {
-        paddr_t phys = pmm_alloc_page_utente();
-
         /* ! SE NON C'E' POSTO SE NE FA: e' tutto il senso della memoria
          * virtuale. Prima di questa riga «RAM esaurita» voleva dire che il
          * processo moriva; adesso vuol dire che non c'era nemmeno una
          * pagina da mandare via, che e' un'altra cosa e molto piu' rara. */
-        if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
+        paddr_t phys = pagina_utente();
 
         if (phys == 0) {
             /* Memoria esaurita: non e' un errore del programma, ma non
@@ -1461,8 +1510,7 @@ static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
      * perderebbe la prima (e la sua pagina fisica, per sempre). */
     if (paging_get_physical(p->page_directory, pagina) != 0) return 1;
 
-    phys = pmm_alloc_page_utente();
-    if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
+    phys = pagina_utente();
     if (phys == 0) {
         klog(LOG_ERROR, "PF: RAM esaurita caricando 0x%08x per PID %u",
              pagina, p->pid);
@@ -1577,8 +1625,7 @@ int paging_pigra_tocca(Process *p, vaddr_t virt)
     pte = pt[pti];
     if (!PTE_E_PIGRA(pte)) return 0;
 
-    fisico = pmm_alloc_page_utente();
-    if (fisico == 0 && swap_sfratta()) fisico = pmm_alloc_page();
+    fisico = pagina_utente();
     if (fisico == 0) {
         klog(LOG_ERROR, "PF: RAM esaurita dando la pagina 0x%08x a PID %u",
              pagina, p->pid);
@@ -1638,17 +1685,34 @@ static int pf_torna_da_swap(Process *p, vaddr_t addr)
      * momento in cui un'altra pagina puo' dover uscire per far entrare questa.
      * Sfrattare per rientrare non e' un giro a vuoto: la pagina che esce e'
      * quella che nessuno tocca, questa e' quella che serve adesso. */
-    fisico = pmm_alloc_page();
-    if (fisico == 0 && swap_sfratta()) fisico = pmm_alloc_page();
+    fisico = pagina_utente();
     if (fisico == 0) {
         klog(LOG_ERROR, "PF: RAM esaurita rileggendo 0x%08x per PID %u",
              pagina, p->pid);
         return 0;
     }
 
-    if (swap_leggi(SWAP_PTE_SLOT(pte), fisico) != 0) {
+    /* ! UNDER THE DISK LOCK, AND THE PTE LOOKED AT AGAIN (24 October 2026).
+     * swap_leggi uses the kernel's one bounce buffer, which an eviction fills
+     * too; and while the allocation above evicted, or this read slept,
+     * another thread of the same program may have faulted on the same page
+     * and brought it back already - reading the slot a second time released
+     * it twice («slot mollato due volte») and mapped a stale copy over the
+     * live one. */
+    ata_prendi();
+    if (pt[pti] != pte) {
+        PTE ora = pt[pti];
+
+        ata_lascia();
         pmm_free_page(fisico);
-        return 0;
+        return (ora & PG_PRESENT) ? 1 : 0;
+    }
+    if (swap_leggi(SWAP_PTE_SLOT(pte), fisico) != 0 || pt[pti] != pte) {
+        PTE ora = pt[pti];
+
+        ata_lascia();
+        pmm_free_page(fisico);
+        return (ora & PG_PRESENT) ? 1 : 0;
     }
 
     /* ! I PERMESSI ERANO NELLA PTE, e si rimettono da li'. Ricostruirli a
@@ -1661,6 +1725,7 @@ static int pf_torna_da_swap(Process *p, vaddr_t addr)
      * della lettura vorrebbe dire che uno sfratto in mezzo puo' prenderselo e
      * scriverci sopra cio' che stiamo per leggere. */
     swap_slot_molla(SWAP_PTE_SLOT(pte));
+    ata_lascia();
 
     klog(LOG_DEBUG, "PF: PID %u, 0x%08x rientrata dallo slot %u",
          p->pid, pagina, SWAP_PTE_SLOT(pte));

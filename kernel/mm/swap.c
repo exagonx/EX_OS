@@ -23,6 +23,7 @@
 #include "paging.h"
 #include "sched.h"
 #include "kmalloc.h"
+#include "ata.h"
 
 static int         g_dev = -1;      /* indice del dispositivo a blocchi */
 static SwapTesta   g_testa;
@@ -50,6 +51,15 @@ static uint32_t    g_prossimo = 0;  /* da dove ricominciare a cercare */
  * questa funzione viene chiamata.
  * ========================================================================== */
 static uint8_t g_rimbalzo[PAGE_SIZE];
+
+/* Pages written to and read back from the area since boot, for `mem`
+ * (24 October 2026): the used slots say how much is out NOW, these say
+ * whether the area was ever touched - a program that swapped and then
+ * freed its memory leaves no used slot behind. */
+static uint32_t g_scritte = 0, g_lette = 0;
+
+static uintptr_t irq_spegni(void);
+static void      irq_rimetti(uintptr_t f);
 
 /* Il kernel non ha una libreria di stringhe: ogni file si tiene i due aiuti
  * che gli servono, come fanno kernel/mm/shm.c e kernel/loader/lib.c. */
@@ -82,11 +92,19 @@ void swap_conta(uint32_t *totali, uint32_t *usati)
     if (usati)  *usati  = swap_attivo() ? g_usati : 0;
 }
 
+void swap_traffico(uint32_t *scritte, uint32_t *lette)
+{
+    if (scritte) *scritte = g_scritte;
+    if (lette)   *lette   = g_lette;
+}
+
 int32_t swap_slot_prendi(void)
 {
-    uint32_t i, n;
+    uint32_t  i, n;
+    uintptr_t fl;
 
     if (!swap_attivo()) return -1;
+    fl = irq_spegni();
 
     /* Si riparte da dove si era arrivati invece che da capo: cercare sempre
      * dall'inizio rende O(n) ogni presa quando l'area e' quasi piena, e
@@ -97,16 +115,22 @@ int32_t swap_slot_prendi(void)
             BIT_SET(i);
             g_usati++;
             g_prossimo = (i + 1) % g_testa.slot;
+            irq_rimetti(fl);
             return (int32_t)i;
         }
     }
+    irq_rimetti(fl);
     return -1;
 }
 
 void swap_slot_molla(uint32_t slot)
 {
+    uintptr_t fl;
+
     if (!swap_attivo() || slot >= g_testa.slot) return;
+    fl = irq_spegni();
     if (!BIT_TEST(slot)) {
+        irq_rimetti(fl);
         /* ! MOLLARE DUE VOLTE LO STESSO SLOT NON E' UN DETTAGLIO: la seconda
          * pagina che lo prende scrive sopra la prima, e chi rilegge la prima
          * si ritrova la memoria di qualcun altro. Si dice, invece di
@@ -116,6 +140,7 @@ void swap_slot_molla(uint32_t slot)
     }
     BIT_CLR(slot);
     if (g_usati) g_usati--;
+    irq_rimetti(fl);
 }
 
 /* --- le due mezze operazioni ------------------------------------------------ */
@@ -124,25 +149,61 @@ static uint64_t lba_di(uint32_t slot)
     return (uint64_t)g_testa.primo + (uint64_t)slot * SWAP_SETTORI_SLOT;
 }
 
-int swap_scrivi(uint32_t slot, uint32_t fisico)
+/* Interrupts off and back as they were: the slot list and the PTEs are
+ * changed by the exit of a process too (paging_destroy_directory). */
+static uintptr_t irq_spegni(void)
+{
+    uintptr_t f;
+
+    __asm__ volatile ("pushf; pop %0; cli" : "=r"(f) : : "memory");
+    return f;
+}
+
+static void irq_rimetti(uintptr_t f)
+{
+    if (f & 0x200u) __asm__ volatile ("sti" : : : "memory");
+}
+
+/* 1 if some live process still has this address space */
+static int spazio_vivo(PDE *pd)
 {
     uint32_t i;
 
-    if (!swap_attivo() || slot >= g_testa.slot) return -1;
+    for (i = 0; i < MAX_PROCESSES; i++)
+        if (g_process_pool[i].state != PROC_UNUSED && g_process_pool[i].state != PROC_ZOMBIE &&
+            g_process_pool[i].page_directory == pd)
+            return 1;
+    return 0;
+}
 
-    {
-        const uint8_t *p = (const uint8_t *)paging_finestra_apri(fisico);
-        for (i = 0; i < PAGE_SIZE; i++) g_rimbalzo[i] = p[i];
-        paging_finestra_chiudi();
-    }
+static void copia_in_rimbalzo(paddr_t fisico)
+{
+    const uint8_t *p = (const uint8_t *)paging_finestra_apri(fisico);
+    uint32_t       i;
 
+    for (i = 0; i < PAGE_SIZE; i++) g_rimbalzo[i] = p[i];
+    paging_finestra_chiudi();
+}
+
+static int scrivi_rimbalzo(uint32_t slot)
+{
     if (blk_write(g_dev, lba_di(slot), SWAP_SETTORI_SLOT, g_rimbalzo) < 0) {
         klog(LOG_ERROR, "SWAP: scrittura dello slot %u fallita", slot);
         return -1;
     }
+    g_scritte++;
     return 0;
 }
 
+/* ! THE CALLER HOLDS THE DISK LOCK (ata_prendi): g_rimbalzo is shared. */
+int swap_scrivi(uint32_t slot, uint32_t fisico)
+{
+    if (!swap_attivo() || slot >= g_testa.slot) return -1;
+    copia_in_rimbalzo(fisico);
+    return scrivi_rimbalzo(slot);
+}
+
+/* ! THE CALLER HOLDS THE DISK LOCK (ata_prendi): g_rimbalzo is shared. */
 int swap_leggi(uint32_t slot, uint32_t fisico)
 {
     uint32_t i;
@@ -153,6 +214,7 @@ int swap_leggi(uint32_t slot, uint32_t fisico)
         klog(LOG_ERROR, "SWAP: lettura dello slot %u fallita", slot);
         return -1;
     }
+    g_lette++;
 
     {
         uint8_t *p = (uint8_t *)paging_finestra_apri(fisico);
@@ -269,8 +331,18 @@ int swap_sfratta(void)
     vaddr_t   virt  = 0;
     PDE      *pd = NULL;
     int32_t   slot;
+    uintptr_t prima, segno, fl;
 
     if (!swap_attivo()) return 0;
+
+    /* ! THE DISK LOCK FOR THE WHOLE EVICTION (24 October 2026), and not only
+     * around the write. g_rimbalzo is one buffer for the whole kernel: two
+     * evictions - or an eviction and a page coming back, swap_leggi - that
+     * slept on the disk one after the other wrote each other's page into
+     * their slot. The lock is re-entrant (blk_write takes it again) and its
+     * waiters sleep. */
+    ata_prendi();
+    fl = irq_spegni();
 
     /* ! I DUE MODI DI NON RIUSCIRCI SI DICONO, E UNA VOLTA SOLA. Sono due
      * situazioni opposte — «non c'e' niente da mandare via» e «non c'e' piu'
@@ -284,6 +356,8 @@ int swap_sfratta(void)
      * dietro tutto il resto del registro. */
     if (!paging_vittima(&pd, &virt, &frame)) {
         static int detto = 0;
+        irq_rimetti(fl);
+        ata_lascia();
         if (!detto) {
             detto = 1;
             klog(LOG_WARN, "SWAP: nessuna pagina da mandare via (tutte "
@@ -295,6 +369,8 @@ int swap_sfratta(void)
     slot = swap_slot_prendi();
     if (slot < 0) {
         static int pieno = 0;
+        irq_rimetti(fl);
+        ata_lascia();
         if (!pieno) {
             pieno = 1;
             klog(LOG_WARN, "SWAP: area piena, %u slot tutti occupati",
@@ -303,15 +379,44 @@ int swap_sfratta(void)
         return 0;
     }
 
-    if (swap_scrivi((uint32_t)slot, frame) != 0) {
+    /* ! FIRST THE PAGE COMES OFF, THEN IT IS COPIED (24 October 2026). Until
+     * today it was written while still mapped, and unmapped after: the disk
+     * write sleeps, the owner ran meanwhile, and what it wrote in those
+     * milliseconds was lost - the swap kept the old copy. With interrupts
+     * off from the choice to here nobody on this CPU can touch it; another
+     * CPU is checked AFTER the PTE changed: one that loads this space from
+     * now on sees the page missing, one that already had it is caught here. */
+    prima = paging_pte_leggi(pd, virt);
+    paging_marca_swap(pd, virt, (uint32_t)slot);
+    segno = paging_pte_leggi(pd, virt);
+    if (sched_spazio_altrove(pd)) {
+        paging_pte_scrivi(pd, virt, prima);
         swap_slot_molla((uint32_t)slot);
+        irq_rimetti(fl);
+        ata_lascia();
         return 0;
     }
+    copia_in_rimbalzo(frame);
+    irq_rimetti(fl);
 
-    /* ! PRIMA SI SCRIVE, POI SI STACCA. L'ordine inverso lascerebbe una
-     * finestra in cui la pagina non e' ne' in RAM ne' sul disco, e in quella
-     * finestra un fault la rileggerebbe piena di niente. */
-    paging_marca_swap(pd, virt, (uint32_t)slot);
+    /* the frame is nobody's now: the PTE speaks of the slot */
+    if (scrivi_rimbalzo((uint32_t)slot) != 0) {
+        /* ! THE OWNER MAY HAVE DIED WHILE THE DISK WORKED. Its tables are
+         * gone then, and its exit already let go of the slot: the PTE is
+         * written back only if the space is still alive and still says
+         * «that slot». */
+        fl = irq_spegni();
+        if (spazio_vivo(pd) && paging_pte_leggi(pd, virt) == segno) {
+            paging_pte_scrivi(pd, virt, prima);
+            swap_slot_molla((uint32_t)slot);
+            frame = 0;
+        }
+        irq_rimetti(fl);
+        if (frame) pmm_free_page(frame);
+        ata_lascia();
+        return 0;
+    }
+    ata_lascia();
     pmm_free_page(frame);
 
     klog(LOG_DEBUG, "SWAP: pagina 0x%08x -> slot %d", virt, slot);

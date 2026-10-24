@@ -1407,7 +1407,10 @@ void ata_prendi(void)
             g_disco_detentore = io;
             g_disco_livelli++;
             interrupts_enable();
-            if (g_disco_livelli > 2u && !g_disco_detto) {
+            /* three is normal since 24 October 2026: a page coming back
+             * from the swap holds it around blk_read, which takes it around
+             * ata_read */
+            if (g_disco_livelli > 3u && !g_disco_detto) {
                 g_disco_detto = 1;
                 klog(LOG_WARN, "ATA: disk lock taken %u levels deep by pid %u "
                                "(a fault inside a disk operation?)",
