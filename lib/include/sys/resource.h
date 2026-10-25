@@ -12,8 +12,9 @@
  * <sys/resource.h> — i limiti di un processo (@EXILLA-JS, 30 settembre 2026).
  *
  * ! EX-OS NON HA LIMITI DA IMPOSTARE: getrlimit dice quelli che ci sono per
- * costruzione (la pila principale e' la riserva di 256 KB, i descrittori sono
- * 32, lo spazio di indirizzamento non ha un tetto da chiedere), setrlimit
+ * costruzione (la pila principale 8 MB, USER_STACK_MAX; i descrittori 128,
+ * MAX_FD, i socket a parte; lo spazio di indirizzamento non ha un tetto da
+ * chiedere), setrlimit
  * accetta solo di lasciarli come sono. getrusage sta gia' in libc.h.
  * ============================================================================= */
 #ifndef EXOS_SYS_RESOURCE_H

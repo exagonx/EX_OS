@@ -66,6 +66,7 @@ typedef unsigned int        nlink_t;
 typedef unsigned int        blksize_t;
 typedef unsigned int        blkcnt_t;
 typedef unsigned int        useconds_t;
+typedef long                suseconds_t;  /* struct timeval's tv_usec (MariaDB) */
 /* EX-OS non ha utenti ne' gruppi: questi due esistono perche' struct stat
  * ha i campi (a zero) e chi li stampa deve poterli dichiarare. */
 typedef unsigned int        uid_t;
@@ -222,6 +223,7 @@ typedef struct _FILE FILE;
 #define FILENAME_MAX    256
 #define L_tmpnam        64
 #define TMP_MAX         32      /* tentativi di mkstemp prima di arrendersi */
+#define P_tmpdir        "/tmp"  /* where tmpnam and the like put files (MariaDB) */
 
 /* =============================================================================
  * ! LE CINQUE VARIABILI GLOBALI SI RAGGIUNGONO CON UN INDIRIZZO, non con un
@@ -615,6 +617,10 @@ int     chdir(const char *path);
  * getconf(). */
 int     execv (const char *path, char *const argv[]);
 int     execvp(const char *file, char *const argv[]);
+/* The list forms, terminated by a null pointer: at most 64 arguments
+ * (E2BIG beyond); the environment goes along as with execv. */
+int     execl (const char *path, const char *arg, ...);
+int     execlp(const char *file, const char *arg, ...);
 
 /* =============================================================================
  * Controllo del terminale
@@ -1084,6 +1090,23 @@ int        clock_getres(clockid_t orologio, struct timespec *ts);
  * cambia utente senza che esista il bit setuid sui file. Rende 0, o -1 con
  * errno EPERM. */
 int        setuid(unsigned int uid);
+/* setgid: the group as the kernel keeps it (25 October 2026, MariaDB's
+ * --user). Asking for the group one already has succeeds for anybody; another
+ * group only for root, with SYS_SETUID, which keeps the uid. setgroups and
+ * initgroups have no supplementary groups to set: they succeed for root (the
+ * list is empty anyway) and give EPERM otherwise, like Linux. */
+int        setgid(unsigned int gid);
+int        setgroups(size_t n, const unsigned int *gruppi);
+/* setreuid/setregid: -1 leaves a part as it is. Real and effective are one
+ * number here (see getuid), so asking for two different ones is EINVAL; one
+ * of them is setuid/setgid. */
+int        setreuid(uid_t reale, uid_t effettivo);
+int        setregid(gid_t reale, gid_t effettivo);
+int        initgroups(const char *utente, unsigned int gid);
+/* getlogin: the user of the session, from $USER ("utente" without it); the
+ * _r form copies it and gives ERANGE if it does not fit. */
+char      *getlogin(void);
+int        getlogin_r(char *buf, size_t dim);
 /* Consegna un file a un altro utente. Solo root; su FAT rende -1 con ENOSYS
  * invece di fingere. */
 int        chown(const char *percorso, unsigned int uid, unsigned int gid);
@@ -2777,10 +2800,15 @@ int getpgid(int pid);        /* no process groups: the pid itself */
 int getpgrp(void);           /* the same: getpid() */
 int setpgid(int pid, int pgid); /* only to its own group: 0, else EPERM */
 
-/* sigpending: always the empty set (no syscall knows the pending ones yet);
- * sigwait: ENOSYS. Static libc only, for ported code (libgit2). */
+/* sigpending: always the empty set (no syscall knows the pending ones yet).
+ * sigwait, sigtimedwait, sigwaitinfo, sigsuspend: real since kernel 0.279
+ * (MariaDB); a signal another program sends and the target blocks stays
+ * pending for them. Static libc only. */
 int sigpending(sigset_t *s);
 int sigwait(const sigset_t *s, int *sig);
+int sigtimedwait(const sigset_t *s, siginfo_t *info, const struct timespec *t);
+int sigwaitinfo(const sigset_t *s, siginfo_t *info);
+int sigsuspend(const sigset_t *maschera);
 #define CLOCKS_PER_SEC  100
 
 /* Come listdir, ma parte dalla 'start'-esima voce. Serve per percorrere
@@ -3622,6 +3650,12 @@ int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
 #define POLLERR     0x0008      /* errore: solo in uscita */
 #define POLLHUP     0x0010      /* l'altro capo se n'e' andato: solo in uscita */
 #define POLLNVAL    0x0020      /* descrittore non valido: solo in uscita */
+/* The XPG names (MariaDB's vio). Normal data is the only data there is, so
+ * RDNORM/WRNORM are IN/OUT themselves; the "band" ones are never reported. */
+#define POLLRDNORM  POLLIN
+#define POLLWRNORM  POLLOUT
+#define POLLRDBAND  0x0080
+#define POLLWRBAND  0x0200
 
 struct pollfd {
     int   fd;
@@ -3934,6 +3968,24 @@ struct sockaddr_in {
 
 struct in6_addr { unsigned char s6_addr[16]; };
 
+/* The address tests of RFC 3493 (MariaDB's vio normalizes ::ffff:a.b.c.d to
+ * a.b.c.d). Byte by byte: they hold for any alignment and byte order. */
+#define EXOS_IN6_ZERI(a, n) \
+    (__builtin_memcmp((a)->s6_addr, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", (n)) == 0)
+#define IN6_IS_ADDR_UNSPECIFIED(a) EXOS_IN6_ZERI(a, 16)
+#define IN6_IS_ADDR_LOOPBACK(a) \
+    (EXOS_IN6_ZERI(a, 15) && (a)->s6_addr[15] == 1)
+#define IN6_IS_ADDR_V4MAPPED(a) \
+    (EXOS_IN6_ZERI(a, 10) && (a)->s6_addr[10] == 0xff && (a)->s6_addr[11] == 0xff)
+#define IN6_IS_ADDR_V4COMPAT(a) \
+    (EXOS_IN6_ZERI(a, 12) && !EXOS_IN6_ZERI(a, 16) && \
+     !IN6_IS_ADDR_LOOPBACK(a))
+#define IN6_IS_ADDR_MULTICAST(a) ((a)->s6_addr[0] == 0xff)
+#define IN6_IS_ADDR_LINKLOCAL(a) \
+    ((a)->s6_addr[0] == 0xfe && ((a)->s6_addr[1] & 0xc0) == 0x80)
+#define IN6_IS_ADDR_SITELOCAL(a) \
+    ((a)->s6_addr[0] == 0xfe && ((a)->s6_addr[1] & 0xc0) == 0xc0)
+
 struct sockaddr_in6 {
     sa_family_t     sin6_family;
     in_port_t       sin6_port;
@@ -4042,6 +4094,9 @@ char          *inet_ntoa(struct in_addr a);    /* buffer statico, come ovunque *
 #define NI_MAXSERV      32
 #define NI_NUMERICHOST  1
 #define NI_NUMERICSERV  2
+#define NI_NOFQDN       4
+#define NI_NAMEREQD     8       /* a name or EAI_NONAME: always EAI_NONAME here */
+#define NI_DGRAM        16
 
 #define EAI_BADFLAGS    (-1)
 #define EAI_NONAME      (-2)

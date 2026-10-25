@@ -2400,6 +2400,46 @@ chiamate di sistema.
 > Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
 > le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
 
+### MariaDB 11.8 LTS gira in EX-OS (0.279)
+
+**provato a 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
+--bootstrap` crea le tabelle di sistema, il server parte e ascolta su
+`127.0.0.1:3306`, il client `mariadb` crea una tabella InnoDB, ci mette tre
+righe, annulla una cancellazione col rollback, e `mariadb-admin shutdown`
+ferma il server pulito; dopo, Linux trova sul disco `ibdata1` e il `.ibd`
+della tabella.
+
+MariaDB 11.8.10, il ramo stabile a lungo termine, da `mariadb-server/` (clone
+del repository ufficiale, seguito con `git pull`), costruito da
+`tools/mariadb-exos/costruisci.sh` sulle librerie vere di EX-OS: ncurses,
+zlib, bzip2, xz, lz4, zstd, PCRE2, fmt e OpenSSL 4.1.0. Tutto statico
+(`mariadbd` e' 27 MB senza simboli); il server ascolta solo in TCP, perche'
+EX-OS non ha i socket AF_UNIX. `innodb_buffer_pool_size_max` va dato: per
+difetto InnoDB riserva 8 TB di indirizzi a 64 bit, e un programma di EX-OS ne
+ha 3 GB. Ancora no: il servizio che lo accende prima del login, il CD degli
+strumenti e netinst, i 32 bit. I dettagli sono in `tools/mariadb-exos/leggimi.md`.
+
+Cosa e' servito in EX-OS:
+
+- **kernel 0.279, i segnali.** `sigwait`, `sigtimedwait`, `sigwaitinfo`
+  (`SYS_SEG_ATTENDI`) e `sigsuspend` (`SYS_SEG_SOSPENDI`). Un segnale con
+  l'azione predefinita mandato a un programma che lo blocca ora resta in
+  attesa, come dice POSIX, invece di terminare il programma: e' cosi' che un
+  server blocca SIGTERM in tutti i fili e lo aspetta in uno
+  (`tools/prova_sigwait.sh`, 32 e 64 bit, anche da un altro processo).
+- **kernel 0.279, `open` di una directory.** `open(dir, O_RDONLY)` da' un
+  descrittore invece di EISDIR: `fstat`, `fsync`, `dup` e `close` funzionano,
+  `read` rende EISDIR, chiedere di scrivere rende EISDIR. Aria e InnoDB
+  aprono la cartella dei dati per rendere durevole un file nuovo. Una
+  directory aperta con `O_TRUNC` veniva troncata prima di essere rifiutata.
+- **libc:** `setgid`, `setreuid`/`setregid`, `setgroups`/`initgroups`,
+  `execl`/`execlp`, `getpwent`, `getlogin`, `IN6_IS_ADDR_*`, `NI_NAMEREQD`,
+  `POLLRDNORM` e compagni, `<netinet/ip.h>`, `<netinet/in_systm.h>`,
+  `<sys/poll.h>`, i tipi BSD (`u_char`, `uint`...); `getrlimit` dice 128
+  descrittori (diceva ancora 32, da prima del kernel 0.232); `fscanf`
+  lasciava `feof` spento alla fine del file, perche' il suo `fseek` indietro
+  lo cancellava.
+
 ### OpenSSL 4.1.0 con socket e fili, e 127.0.0.1
 
 **provato a 32 e 64 bit in QEMU** (`tools/prova_openssl.sh`, con la rete di

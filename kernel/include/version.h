@@ -630,7 +630,19 @@
  * (a program with no __thread); the 64-bit GCC took it as proof that tls was
  * not NULL, dropped the "tls ? : 0" above it, and tls_off/tls_filesz came
  * from address 0: every pthread_create of such a 64-bit program failed with
- * EIO ("non riesco a leggere l'immagine TLS per il filo"). */
+ * EIO ("non riesco a leggere l'immagine TLS per il filo").
+ * Signals (segnali.c, for MariaDB's signal thread and readline): sigwait
+ * (SYS_SEG_ATTENDI 171) takes a pending signal of the set or sleeps until
+ * one comes, with an optional timeout (sigtimedwait); sigsuspend
+ * (SYS_SEG_SOSPENDI 172) swaps the mask until a handler has run. A signal
+ * with the default action sent to a program whose thread blocks it now stays
+ * pending, as POSIX wants, instead of ending the program: that is how a
+ * server blocks SIGTERM in every thread and waits for it in one.
+ * vfs.c: open(dir, O_RDONLY) gives a descriptor (VfsFile.cartella) instead of
+ * EISDIR, as POSIX lets it: fstat, dup, close and fsync work, read and
+ * ftruncate give EISDIR, write EBADF, any write or create flag EISDIR
+ * (MariaDB opens its data directory to fsync it). On ext2 and FAT a
+ * directory opened with O_TRUNC was truncated before being refused. */
 #define EXOS_VERSION    "0.279"
 
 /* Autore e contatto */

@@ -253,6 +253,8 @@ typedef struct {
 #define SYS_SEG_RITORNO     167
 #define SYS_SEG_PILA        168
 #define SYS_SEG_MANDA       169
+#define SYS_SEG_ATTENDI     171     /* sigwait (kernel 0.279) */
+#define SYS_SEG_SOSPENDI    172     /* sigsuspend */
 #define SYS_THREAD_FERMARSI 207
 #define SYS_GETPID      20
 #define SYS_GETPPID     64
@@ -3500,7 +3502,7 @@ int vfscanf(FILE *f, const char *fmt, __builtin_va_list args)
     const char *fine = buf;
     long        partenza;
     size_t      letti;
-    int         n;
+    int         n, finito;
 
     if (f == NULL || fmt == NULL) return EOF;
 
@@ -3517,12 +3519,22 @@ int vfscanf(FILE *f, const char *fmt, __builtin_va_list args)
     letti = fread(buf, 1, sizeof(buf) - 1, f);
     if (letti == 0) { funlockfile(f); return EOF; }
     buf[letti] = '\0';
+    finito = feof(f);
 
     n = scan_stringa(buf, fmt, args, &fine);
+    /* EOF from the scanner: the window ran out before the first conversion,
+     * so all it held was blanks, and they are consumed */
+    if (n == EOF) fine = buf + letti;
 
     /* Il flusso torna dove la scansione si e' fermata: quello che lo
      * scanner non ha guardato deve restare da leggere. */
     fseek(f, partenza + (long)(fine - buf), SEEK_SET);
+    /* ! fseek clears the end-of-file indicator, which fread had set: if the
+     * scan used up the window and the window was the end of the file, the
+     * file is at its end and feof must say so. InnoDB reads ib_buffer_pool
+     * with `while (fscanf(f, "%u,%u", ...) == 2)` and takes !feof(f) after
+     * the loop for a parse error (25 October 2026). */
+    if (finito && fine == buf + letti) f->flag |= _F_EOF;
     funlockfile(f);
     return n;
 }
@@ -7766,6 +7778,77 @@ int setuid(unsigned int uid)
     return 0;
 }
 
+/* setgid & c.: see lib/include/libc.h. getgid() reads the uid (there is one
+ * number per user), so the group already held is the uid. */
+int setgid(unsigned int gid)
+{
+    int32_t r;
+
+    if (gid == (unsigned int)getgid()) return 0;
+    r = _syscall2(SYS_SETUID, (uint32_t)getuid(), gid);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+int setgroups(size_t n, const unsigned int *gruppi)
+{
+    (void)n; (void)gruppi;
+    if (getuid() != 0) { errno = EPERM; return -1; }
+    return 0;
+}
+
+/* the one id that a (real, effective) pair asks for, or -2 for two */
+static int id_unico(int reale, int effettivo, int ora)
+{
+    if (reale == -1 && effettivo == -1) return ora;
+    if (reale == -1) return effettivo;
+    if (effettivo == -1 || effettivo == reale) return reale;
+    return -2;
+}
+
+int setreuid(uid_t reale, uid_t effettivo)
+{
+    int id = id_unico((int)reale, (int)effettivo, getuid());
+
+    if (id == -2) { errno = EINVAL; return -1; }
+    if (id == getuid()) return 0;
+    return setuid((unsigned int)id);
+}
+
+int setregid(gid_t reale, gid_t effettivo)
+{
+    int id = id_unico((int)reale, (int)effettivo, getgid());
+
+    if (id == -2) { errno = EINVAL; return -1; }
+    return setgid((unsigned int)id);
+}
+
+int initgroups(const char *utente, unsigned int gid)
+{
+    (void)utente; (void)gid;
+    return setgroups(0, 0);
+}
+
+int getlogin_r(char *buf, size_t dim)
+{
+    const char *u = getenv("USER");
+    size_t n;
+
+    if (u == NULL || *u == 0) u = "utente";
+    n = strlen(u);
+    if (n + 1 > dim) return ERANGE;
+    memcpy(buf, u, n + 1);
+    return 0;
+}
+
+char *getlogin(void)
+{
+    static char nome[64];
+
+    if (getlogin_r(nome, sizeof nome) != 0) { errno = ERANGE; return NULL; }
+    return nome;
+}
+
 int nanosleep(const struct timespec *req, struct timespec *rem)
 {
     unsigned long long ms;
@@ -10419,6 +10502,47 @@ int execvp(const char *file, char *const argv[])
     return -2;      /* -ENOENT: nessuna directory di ricerca lo contiene */
 }
 
+/* execl, execlp: the list into a vector, then execv/execvp (64 at most). */
+#define EXECL_MAX 64
+static int lista_argv(const char *arg, __builtin_va_list ap, char **v)
+{
+    int n = 0;
+
+    v[n++] = (char *)arg;
+    while (arg != NULL) {
+        if (n >= EXECL_MAX) return -1;
+        arg = __builtin_va_arg(ap, const char *);
+        v[n++] = (char *)arg;
+    }
+    return 0;
+}
+
+int execl(const char *path, const char *arg, ...)
+{
+    char *v[EXECL_MAX + 1];
+    __builtin_va_list ap;
+    int r;
+
+    __builtin_va_start(ap, arg);
+    r = lista_argv(arg, ap, v);
+    __builtin_va_end(ap);
+    if (r < 0) { errno = E2BIG; return -1; }
+    return execv(path, v);
+}
+
+int execlp(const char *file, const char *arg, ...)
+{
+    char *v[EXECL_MAX + 1];
+    __builtin_va_list ap;
+    int r;
+
+    __builtin_va_start(ap, arg);
+    r = lista_argv(arg, ap, v);
+    __builtin_va_end(ap);
+    if (r < 0) { errno = E2BIG; return -1; }
+    return execvp(file, v);
+}
+
 int getconf(const char *key, char *buf, size_t size)
 {
     return (int)_syscall3(SYS_GETENV, (uintptr_t)key, (uintptr_t)buf,
@@ -12533,7 +12657,7 @@ int getrlimit(int risorsa, struct rlimit *r)
     if (!r) { errno = EFAULT; return -1; }
     switch (risorsa) {
     case 3:  r->rlim_cur = r->rlim_max = 8ul * 1024 * 1024; return 0;   /* RLIMIT_STACK: USER_STACK_MAX (0.229) */
-    case 7:  r->rlim_cur = r->rlim_max = 32ul;     return 0;   /* RLIMIT_NOFILE: MAX_FD */
+    case 7:  r->rlim_cur = r->rlim_max = 128ul;    return 0;   /* RLIMIT_NOFILE: MAX_FD (kernel 0.232; it said 32 until 25/10/2026) */
     case 0: case 1: case 2: case 4: case 5: case 6: case 8: case 9:
         r->rlim_cur = r->rlim_max = ~0ul;                      /* RLIM_INFINITY */
         return 0;
@@ -13375,25 +13499,88 @@ int dl_iterate_phdr(int (*f)(struct dl_phdr_info *, size_t, void *), void *dato)
     return 0;
 }
 
-/* <pwd.h>: una voce sola, fatta con l'ambiente (vedi lib/include/pwd.h). */
+/* <pwd.h> and <grp.h>: the users of /boot/utenti, `nome:uid:gid` (the file
+ * lib/exuser writes and login reads), 25 October 2026: before, one entry
+ * made from the environment, and MariaDB's --user=mysql found nobody. Each
+ * user's group has the user's name. Without the file (a system started from
+ * the CD) the one entry from the environment is still the answer: $USER,
+ * $HOME, getuid(). Homes as login makes them: /root, /home/<name>; the
+ * caller's own entry takes $HOME when it is set. */
 struct passwd {
     char *pw_name; char *pw_passwd; uid_t pw_uid; gid_t pw_gid;
     char *pw_gecos; char *pw_dir; char *pw_shell;
 };
 
-static void voce_utente(struct passwd *pw, char *nome, char *casa)
+#define UTENTI_FILE "/boot/utenti"
+
+typedef struct { char nome[64]; unsigned int uid, gid; } VoceUtente;
+
+/* The n-th valid line of /boot/utenti: 1, 0 past the last, -1 no file. */
+static int utente_n(int n, VoceUtente *v)
+{
+    FILE *f = fopen(UTENTI_FILE, "r");
+    char  riga[160];
+    int   i = 0;
+
+    if (!f) return -1;
+    while (fgets(riga, sizeof riga, f)) {
+        char *a = strchr(riga, ':'), *b = a ? strchr(a + 1, ':') : NULL;
+
+        if (!b || a == riga || (size_t)(a - riga) >= sizeof v->nome) continue;
+        if (i++ < n) continue;
+        memcpy(v->nome, riga, (size_t)(a - riga));
+        v->nome[a - riga] = 0;
+        v->uid = (unsigned int)strtoul(a + 1, NULL, 10);
+        v->gid = (unsigned int)strtoul(b + 1, NULL, 10);
+        fclose(f);
+        return 1;
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Fills pw, with its strings in nome[64] and casa[256]; v NULL = the entry
+ * from the environment. */
+static void voce_utente(struct passwd *pw, char *nome, char *casa, const VoceUtente *v)
 {
     const char *u = getenv("USER"), *h = getenv("HOME");
 
-    strncpy(nome, u && *u ? u : "utente", 63); nome[63] = 0;
-    strncpy(casa, h && *h ? h : "/", 255);     casa[255] = 0;
+    if (v) {
+        strcpy(nome, v->nome);
+        if (v->uid == (unsigned int)getuid() && h && *h) { strncpy(casa, h, 255); casa[255] = 0; }
+        else if (v->uid == 0) strcpy(casa, "/root");
+        else snprintf(casa, 256, "/home/%s", v->nome);
+        pw->pw_uid = (uid_t)v->uid;
+        pw->pw_gid = (gid_t)v->gid;
+    } else {
+        strncpy(nome, u && *u ? u : "utente", 63); nome[63] = 0;
+        strncpy(casa, h && *h ? h : "/", 255);     casa[255] = 0;
+        pw->pw_uid = (uid_t)getuid();
+        pw->pw_gid = (gid_t)getgid();
+    }
     pw->pw_name = nome;
     pw->pw_passwd = (char *)"x";
-    pw->pw_uid = (uid_t)getuid();
-    pw->pw_gid = (gid_t)getgid();
     pw->pw_gecos = nome;
     pw->pw_dir = casa;
     pw->pw_shell = (char *)"/bin/sh";
+}
+
+/* By name (nome != NULL) or by uid: 1 found, 0 not. */
+static int cerca_utente(const char *nome, uid_t uid, struct passwd *pw,
+                        char *bnome, char *bcasa)
+{
+    VoceUtente v;
+    int        n, r;
+
+    for (n = 0; (r = utente_n(n, &v)) == 1; n++) {
+        if (nome ? strcmp(nome, v.nome) == 0 : v.uid == (unsigned int)uid) {
+            voce_utente(pw, bnome, bcasa, &v);
+            return 1;
+        }
+    }
+    if (r == 0) return 0;                       /* the file, and not in it */
+    voce_utente(pw, bnome, bcasa, NULL);        /* no file: the old answer */
+    return nome ? strcmp(nome, pw->pw_name) == 0 : 1;
 }
 
 struct passwd *getpwuid(uid_t uid)
@@ -13401,60 +13588,84 @@ struct passwd *getpwuid(uid_t uid)
     static struct passwd pw;
     static char nome[64], casa[256];
 
-    (void)uid;
-    voce_utente(&pw, nome, casa);
-    return &pw;
+    return cerca_utente(NULL, uid, &pw, nome, casa) ? &pw : 0;
 }
 
 struct passwd *getpwnam(const char *nome)
 {
-    struct passwd *pw = getpwuid(0);
-    return strcmp(nome, pw->pw_name) == 0 ? pw : 0;
+    static struct passwd pw;
+    static char n[64], casa[256];
+
+    return nome && cerca_utente(nome, 0, &pw, n, casa) ? &pw : 0;
 }
 
 int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t dim, struct passwd **ris)
 {
-    (void)uid;
     *ris = 0;
     if (dim < 64 + 256) return ERANGE;
-    voce_utente(pw, buf, buf + 64);
-    *ris = pw;
+    if (cerca_utente(NULL, uid, pw, buf, buf + 64)) *ris = pw;
     return 0;
 }
 
 int getpwnam_r(const char *nome, struct passwd *pw, char *buf, size_t dim, struct passwd **ris)
 {
-    int r = getpwuid_r(0, pw, buf, dim, ris);
-
-    if (r == 0 && strcmp(nome, pw->pw_name) != 0) *ris = 0;
-    return r;
+    *ris = 0;
+    if (dim < 64 + 256) return ERANGE;
+    if (nome && cerca_utente(nome, 0, pw, buf, buf + 64)) *ris = pw;
+    return 0;
 }
 
-/* <grp.h>: un gruppo solo, col nome dell'utente (vedi l'header). */
+static int g_pwent_n;       /* the next entry getpwent gives */
+
+struct passwd *getpwent(void)
+{
+    static struct passwd pw;
+    static char nome[64], casa[256];
+    VoceUtente v;
+    int        r = utente_n(g_pwent_n, &v);
+
+    if (r == 0 || (r < 0 && g_pwent_n > 0)) return 0;
+    g_pwent_n++;
+    voce_utente(&pw, nome, casa, r > 0 ? &v : NULL);
+    return &pw;
+}
+
+void setpwent(void) { g_pwent_n = 0; }
+void endpwent(void) { g_pwent_n = 0; }
+
+/* <grp.h>: each user's group, with the user's name and no other member
+ * (see the header); without /boot/utenti, the caller's only. */
 struct group { char *gr_name; char *gr_passwd; gid_t gr_gid; char **gr_mem; };
 
-struct group *getgrgid(gid_t gid)
+static struct group *gruppo_di(const char *nome, gid_t gid)
 {
     static struct group gr;
-    static char nome[64];
+    static char  n[64];
     static char *membri[1];
-    const char *u = getenv("USER");
+    VoceUtente   v;
+    int          i, r;
+    const char  *u = getenv("USER");
 
-    if (gid != (gid_t)getgid()) return 0;
-    strncpy(nome, u && *u ? u : "utente", 63); nome[63] = 0;
-    gr.gr_name = nome;
+    for (i = 0; (r = utente_n(i, &v)) == 1; i++)
+        if (nome ? strcmp(nome, v.nome) == 0 : v.gid == (unsigned int)gid) break;
+    if (r == 0) return 0;
+    if (r == 1) {
+        strcpy(n, v.nome);
+        gr.gr_gid = (gid_t)v.gid;
+    } else {
+        strncpy(n, u && *u ? u : "utente", 63); n[63] = 0;
+        gr.gr_gid = (gid_t)getgid();
+        if (nome ? strcmp(nome, n) != 0 : gid != gr.gr_gid) return 0;
+    }
+    gr.gr_name = n;
     gr.gr_passwd = (char *)"x";
-    gr.gr_gid = gid;
     membri[0] = 0;
     gr.gr_mem = membri;
     return &gr;
 }
 
-struct group *getgrnam(const char *nome)
-{
-    struct group *gr = getgrgid((gid_t)getgid());
-    return (gr && strcmp(nome, gr->gr_name) == 0) ? gr : 0;
-}
+struct group *getgrgid(gid_t gid)        { return gruppo_di(NULL, gid); }
+struct group *getgrnam(const char *nome) { return nome ? gruppo_di(nome, 0) : 0; }
 
 /* Nessun gruppo supplementare. */
 int getgroups(int dim, gid_t elenco[]) { (void)dim; (void)elenco; return 0; }
@@ -14934,8 +15145,10 @@ int getnameinfo(const struct sockaddr *a, unsigned int len, char *host,
     unsigned char ip[4];
     unsigned int  porta;
 
-    (void)flag;       /* solo numerico: non c'e' la ricerca inversa */
+    /* solo numerico: non c'e' la ricerca inversa, quindi chi pretende un
+     * nome (NI_NAMEREQD, 8) riceve EAI_NONAME, come per un indirizzo senza */
     if (indirizzo_in(a, len, ip, &porta) < 0) return -6;
+    if ((flag & 8) && host && hlen) return -2;
     if (host && hlen && !inet_ntop(S_AF_INET, ip, host, hlen)) return -11;
     if (serv && slen) snprintf(serv, slen, "%u", porta);
     return 0;
@@ -15018,10 +15231,8 @@ int setpgid(int pid, int pgid)
     return -1;
 }
 
-/* ! NO SYSCALL TELLS THE PENDING SIGNALS, so sigpending says none and
- * sigwait refuses (17 October 2026, libgit2's process.c). libgit2 asks only
- * to consume a SIGPIPE it blocked around a write to a child's pipe; with
- * "none pending" it never calls sigwait. A real one needs the kernel. */
+/* ! NO SYSCALL TELLS THE PENDING SIGNALS, so sigpending says none (17
+ * October 2026, libgit2's process.c, which only asks before a sigwait). */
 int sigpending(sigset_t *s)
 {
     if (!s) { errno = EFAULT; return -1; }
@@ -15029,10 +15240,65 @@ int sigpending(sigset_t *s)
     return 0;
 }
 
+/* sigwait and its family (kernel 0.279, SYS_SEG_ATTENDI; 25 October 2026,
+ * MariaDB's signal thread): the signal is taken, not delivered — the caller
+ * blocks it. ms 0xFFFFFFFF waits for ever. Returns the signal or -errno. */
+static int seg_attendi(const sigset_t *s, unsigned int ms)
+{
+    uint32_t m;
+    int32_t  preso = 0, r;
+
+    if (!s) return -EINVAL;
+    m = (uint32_t)*s;
+    r = _syscall3(SYS_SEG_ATTENDI, (uintptr_t)&m, ms, (uintptr_t)&preso);
+    return r < 0 ? r : preso;
+}
+
 int sigwait(const sigset_t *s, int *sig)
 {
-    (void)s; (void)sig;
-    return ENOSYS;              /* sigwait returns the error, not -1 */
+    int r = seg_attendi(s, 0xFFFFFFFFu);
+
+    if (r < 0) return -r;           /* sigwait returns the error, not -1 */
+    if (sig) *sig = r;
+    return 0;
+}
+
+int sigtimedwait(const sigset_t *s, siginfo_t *info, const struct timespec *t)
+{
+    unsigned int ms = 0xFFFFFFFFu;
+    int          r;
+
+    if (t) {
+        long long v = (long long)t->tv_sec * 1000 + t->tv_nsec / 1000000;
+        ms = v <= 0 ? 0 : (v >= 0xFFFFFFFELL ? 0xFFFFFFFEu : (unsigned int)v);
+    }
+    r = seg_attendi(s, ms);
+    if (r < 0) { errno = -r; return -1; }
+    if (info) {
+        memset(info, 0, sizeof(*info));
+        info->si_signo = r;
+        info->si_code  = 0;          /* SI_USER */
+    }
+    return r;
+}
+
+int sigwaitinfo(const sigset_t *s, siginfo_t *info)
+{
+    return sigtimedwait(s, info, NULL);
+}
+
+/* sigsuspend: always -1 with EINTR, after the handler of the signal that
+ * woke it has run (with the old mask back) */
+int sigsuspend(const sigset_t *maschera)
+{
+    uint32_t m;
+    int32_t  r;
+
+    if (!maschera) { errno = EFAULT; return -1; }
+    m = (uint32_t)*maschera;
+    r = _syscall1(SYS_SEG_SOSPENDI, (uintptr_t)&m);
+    errno = r < 0 ? -r : EINTR;
+    return -1;
 }
 
 static int statvfs_riempi(struct statvfs *v)

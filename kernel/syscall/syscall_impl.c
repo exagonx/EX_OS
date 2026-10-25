@@ -4914,6 +4914,14 @@ int32_t sys_reboot(InterruptFrame *frame)
 
     klog(LOG_INFO, "SYSCALL reboot(cmd=%u) richiesta da PID %u '%s'",
          cmd, self ? self->pid : 0, self ? self->name : "?");
+    if (cmd != EXOS_RB_POWEROFF && cmd != EXOS_RB_RESTART && cmd != EXOS_RB_HALT)
+        return ERR(EINVAL);
+
+    /* ! THE PROGRAMS FIRST, THEN THE DISKS (0.279): a service such as MariaDB
+     * writes its buffers when it gets SIGTERM, and those writes must be on
+     * the disk before power_sync. Up to 30 seconds, then it goes on anyway:
+     * a program that does not end must not keep the machine on. */
+    segnali_arresto(30000);
 
     switch (cmd) {
         case EXOS_RB_POWEROFF: power_off();    /* non ritorna */
@@ -6097,6 +6105,23 @@ int32_t sys_setuid(InterruptFrame *frame)
      * non esiste nemmeno il caso legittimo in cui servirebbe risalire. */
     if (self->uid != 0) return ERR(EPERM);
 
+    /* ! THE WHOLE PROGRAM, NOT THE THREAD (0.279): each thread has its own
+     * Process, and POSIX setuid changes the process. MariaDB drops to its
+     * user with threads already running; those threads stayed root, and the
+     * files they created were root's. */
+    {
+        int i;
+
+        interrupts_disable();
+        for (i = 0; i < MAX_PROCESSES; i++) {
+            Process *q = &g_process_pool[i];
+
+            if (q->state == PROC_UNUSED || q->tgid != self->tgid) continue;
+            q->uid = uid;
+            q->gid = gid;
+        }
+        interrupts_enable();
+    }
     self->uid = uid;
     self->gid = gid;
 

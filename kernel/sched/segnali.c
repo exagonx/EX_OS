@@ -52,6 +52,19 @@
  *     so the exit code is 130 whatever the signal.
  *   - One bit per signal: two sends before a delivery are one signal, as
  *     POSIX allows for non-realtime signals.
+ *
+ * SIGWAIT AND SIGSUSPEND (0.279, for MariaDB, whose signal thread waits for
+ * SIGTERM and SIGHUP with sigwait while every thread blocks them)
+ *
+ *   - A thread asleep in sigwait (seg_attesi) gets a signal of its set sent
+ *     to ANY thread of its program, and wakes; sigwait also takes what is
+ *     pending on the group leader, where kill(pid) lands.
+ *   - A signal that another program sends and the target thread BLOCKS stays
+ *     pending, as POSIX says, instead of going the Ctrl+C way: the program
+ *     takes it with sigwait when it wants to.
+ *   - sigsuspend sleeps with a mask until a signal it lets through is
+ *     pending; the handler's context holds the OLD mask (seg_salvata), so
+ *     sigreturn puts it back.
  * ============================================================================= */
 
 #include "kernel.h"
@@ -62,6 +75,7 @@
 
 #define BIT(s)      (1u << (s))
 #define SIGKILL_    9
+#define SIGTERM_    15
 #define SIGSTOP_    19
 #define SIGCHLD_    17
 #define SIGCONT_    18
@@ -81,6 +95,22 @@ static Process *capo_di(Process *p)
         if (c != NULL) return c;
     }
     return p;
+}
+
+/* A thread of p's program asleep in sigwait for sig, or NULL. Under cli. */
+static Process *chi_attende(Process *p, int sig)
+{
+    uint32_t gruppo = p->tgid ? p->tgid : p->pid;
+    uint32_t i;
+
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        Process *q = &g_process_pool[i];
+
+        if (q->state == PROC_UNUSED || q->state == PROC_ZOMBIE) continue;
+        if ((q->tgid ? q->tgid : q->pid) != gruppo) continue;
+        if (q->seg_attesi & BIT(sig)) return q;
+    }
+    return NULL;
 }
 
 static int predefinito_ignora(int sig)
@@ -245,8 +275,9 @@ static int costruisci(Process *p, InterruptFrame *f, int sig,
 
     reg_salva(f, &t.uc);
     t.uc.cr2      = (f->int_no == 14) ? indirizzo : 0;
-    t.uc.maschera = p->seg_bloccati;
-    t.uc.oldmask  = p->seg_bloccati;
+    t.uc.maschera = p->seg_sospeso ? p->seg_salvata : p->seg_bloccati;
+    t.uc.oldmask  = t.uc.maschera;
+    p->seg_sospeso = 0;
 
     /* The page directory is this thread's: the frame lands in its memory. */
     __builtin_memcpy((void *)(uintptr_t)dove, &t, sizeof(t));
@@ -326,6 +357,12 @@ void segnali_consegna(InterruptFrame *f)
              p->pid, p->name, sig);
         vfs_sync();
         proc_esci_fatale(128 + sig);
+    }
+    /* sigsuspend woken by a signal that was ignored after all: its mask goes
+     * back here, as a handler's sigreturn would have done */
+    if (p->seg_sospeso) {
+        p->seg_bloccati = p->seg_salvata;
+        p->seg_sospeso  = 0;
     }
 }
 
@@ -473,13 +510,14 @@ int32_t sys_seg_pila(InterruptFrame *frame)
     return 0;
 }
 
+static int32_t manda(Process *self, Process *p, int sig);
+
 int32_t sys_seg_manda(InterruptFrame *frame)
 {
     uint32_t pid  = FR_A1(frame);
     int      sig  = (int)FR_A2(frame);
     Process *self = proc_get_current();
-    Process *p, *capo;
-    uint32_t tipo;
+    Process *p;
 
     if (self == NULL) return ERR(ESRCH);
     if (sig < 0 || sig >= 32) return ERR(EINVAL);
@@ -492,6 +530,31 @@ int32_t sys_seg_manda(InterruptFrame *frame)
         if (self->uid != 0 && self->uid != p->uid) return ERR(EPERM);
     }
     if (sig == 0) return 0;
+    return manda(self, p, sig);
+}
+
+/* The delivery of sys_seg_manda, once the sender may send: also what the
+ * shutdown uses (segnali_arresto). */
+static int32_t manda(Process *self, Process *p, int sig)
+{
+    Process *capo;
+    uint32_t tipo;
+
+    /* a thread of that program asleep in sigwait for it: the signal is its */
+    if (sig != SIGKILL_) {
+        Process *q;
+
+        interrupts_disable();
+        q = chi_attende(p, sig);
+        if (q != NULL) {
+            q->seg_pendenti |= BIT(sig);
+            q->seg_attesi = 0;
+            if (q->state == PROC_BLOCKED) sched_unblock_locked(q->pid);
+            interrupts_enable();
+            return 0;
+        }
+        interrupts_enable();
+    }
 
     capo = capo_di(p);
     tipo = (capo && sig != SIGKILL_) ? (capo->seg_flag[sig] & SEG_TIPO)
@@ -503,10 +566,176 @@ int32_t sys_seg_manda(InterruptFrame *frame)
     /* Another program that does not catch it: the only way to stop it
      * safely today is the Ctrl+C one. See the head of this file. */
     if (tipo == SEG_PREDEFINITO && p->tgid != self->tgid) {
+        /* ...unless that thread blocks it: then it stays pending, for a
+         * sigwait to take (POSIX). SIGKILL cannot be blocked. */
+        if (p->seg_bloccati & BIT(sig)) {
+            p->seg_pendenti |= BIT(sig);
+            return 0;
+        }
         proc_interrompi(p->pid);
         return 0;
     }
 
+    interrupts_disable();
     p->seg_pendenti |= BIT(sig);
+    /* asleep in sigsuspend with this signal let through: it wakes */
+    if (p->seg_sospeso && !(p->seg_bloccati & BIT(sig)) && p->state == PROC_BLOCKED)
+        sched_unblock_locked(p->pid);
+    interrupts_enable();
     return 0;
+}
+
+/* =============================================================================
+ * segnali_arresto — the programs are told before the machine goes off
+ *
+ * shutdown, reboot and halt call it (sys_reboot) before the filesystems are
+ * synced: SIGTERM to every program, then up to `ms` milliseconds for them to
+ * end. A program that does not catch SIGTERM ends at once, as it would have
+ * anyway; one that does (MariaDB: InnoDB writes its buffers and closes its
+ * log) gets the time to finish, and the disks are synced after it.
+ *
+ * ! NOT TO THE DRIVERS, which the sync itself needs (the disk is a driver in
+ * ring 3), not to init (pid 1), not to kernel tasks, and not to the program
+ * that asked to shut down, which is waiting in here. Threads are not counted
+ * on their own: the signal goes to the program, the leader stands for it.
+ *
+ * Returns how many are still alive when the time is up; their names are
+ * printed, and the shutdown goes on without them.
+ * ============================================================================= */
+static int arresto_bersaglio(const Process *q, const Process *self)
+{
+    if (q->state == PROC_UNUSED || q->state == PROC_ZOMBIE) return 0;
+    if (q->tgid != q->pid || q->pid <= 1)                    return 0;
+    if (q->nel_kernel || q->is_driver)                       return 0;
+    return q->tgid != self->tgid;
+}
+
+int segnali_arresto(uint32_t ms)
+{
+    static uint32_t pid_di[MAX_PROCESSES];      /* 0 = not signalled */
+    Process        *self = proc_get_current();
+    uint32_t        scade = g_ticks + ms / 10 + 1;
+    int             i, vivi, mandati = 0;
+
+    if (self == NULL) return 0;
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        Process *q = &g_process_pool[i];
+
+        pid_di[i] = 0;
+        if (!arresto_bersaglio(q, self)) continue;
+        pid_di[i] = q->pid;
+        mandati++;
+        manda(self, q, SIGTERM_);
+    }
+    if (mandati == 0) return 0;
+    kprintf("\n  Chiudo i programmi (%d): ", mandati);
+    for (;;) {
+        vivi = 0;
+        for (i = 0; i < MAX_PROCESSES; i++) {
+            Process *q = &g_process_pool[i];
+
+            if (pid_di[i] == 0) continue;
+            /* gone, or the slot already holds another process */
+            if (q->pid != pid_di[i] || q->state == PROC_UNUSED || q->state == PROC_ZOMBIE)
+                pid_di[i] = 0;
+            else
+                vivi++;
+        }
+        if (vivi == 0 || (int32_t)(g_ticks - scade) >= 0) break;
+        sched_sleep(100);
+    }
+    if (vivi == 0) { kprintf("fatto.\n"); return 0; }
+    kprintf("%d non si sono chiusi in %u s:", vivi, ms / 1000);
+    for (i = 0; i < MAX_PROCESSES; i++)
+        if (pid_di[i]) kprintf(" %s", g_process_pool[i].name);
+    kprintf("\n");
+    return vivi;
+}
+
+/* =============================================================================
+ * sigwait — SYS_SEG_ATTENDI
+ *
+ * The signal is taken from this thread's pending set or from the leader's
+ * (kill(pid) lands there), never delivered: that is the point of sigwait.
+ * The check and the going to sleep are under one cli, so a signal sent in
+ * between finds seg_attesi already set (sys_seg_manda) or is already pending.
+ * ============================================================================= */
+int32_t sys_seg_attendi(InterruptFrame *frame)
+{
+    const uint32_t *insieme = (const uint32_t *)FR_A1(frame);
+    uint32_t        ms      = FR_A2(frame);
+    int32_t        *preso   = (int32_t *)FR_A3(frame);
+    Process        *self    = proc_get_current();
+    Process        *capo;
+    uint32_t        voluti, pronti, scade;
+    int             sig;
+
+    if (self == NULL) return ERR(ESRCH);
+    if (!syscall_verify_ptr(insieme, sizeof(uint32_t))) return ERR(EFAULT);
+    if (preso != NULL && !syscall_verify_ptr(preso, sizeof(int32_t))) return ERR(EFAULT);
+    voluti = *insieme & ~NON_BLOCCABILI & ~1u;
+    if (voluti == 0) return ERR(EINVAL);
+    scade = (ms == 0xFFFFFFFFu) ? 0 : g_ticks + ms / 10 + 1;
+
+    for (;;) {
+        interrupts_disable();
+        capo   = capo_di(self);
+        pronti = self->seg_pendenti & voluti;
+        if (pronti == 0 && capo != NULL && capo != self)
+            pronti = capo->seg_pendenti & voluti;
+        if (pronti != 0) {
+            for (sig = 1; sig < 32 && !(pronti & BIT(sig)); sig++) ;
+            if (self->seg_pendenti & BIT(sig)) self->seg_pendenti &= ~BIT(sig);
+            else                               capo->seg_pendenti &= ~BIT(sig);
+            self->seg_attesi = 0;
+            interrupts_enable();
+            if (preso != NULL) *preso = sig;
+            return 0;
+        }
+        if (self->interrotto) {
+            self->seg_attesi = 0;
+            interrupts_enable();
+            return ERR(EINTR);
+        }
+        if (ms == 0 || (scade != 0 && (int32_t)(g_ticks - scade) >= 0)) {
+            self->seg_attesi = 0;
+            interrupts_enable();
+            return ERR(EAGAIN);
+        }
+        self->seg_attesi  = voluti;
+        self->block_until = scade;
+        sched_block(PROC_BLOCKED);          /* turns interrupts back on */
+        self->seg_attesi  = 0;
+        self->block_until = 0;
+    }
+}
+
+/* =============================================================================
+ * sigsuspend — SYS_SEG_SOSPENDI
+ *
+ * Sleeps with the given mask until a signal it lets through is pending, then
+ * returns -EINTR; on the way out segnali_consegna runs the handler with the
+ * old mask in its context (seg_salvata), or puts the old mask back itself.
+ * ============================================================================= */
+int32_t sys_seg_sospendi(InterruptFrame *frame)
+{
+    const uint32_t *m    = (const uint32_t *)FR_A1(frame);
+    Process        *self = proc_get_current();
+    uint32_t        nuova;
+
+    if (self == NULL) return ERR(ESRCH);
+    if (!syscall_verify_ptr(m, sizeof(uint32_t))) return ERR(EFAULT);
+    nuova = *m & ~NON_BLOCCABILI;
+
+    interrupts_disable();
+    self->seg_salvata = self->seg_bloccati;
+    self->seg_bloccati = nuova;
+    self->seg_sospeso = 1;
+    while ((self->seg_pendenti & ~self->seg_bloccati) == 0 && !self->interrotto) {
+        self->block_until = 0;
+        sched_block(PROC_BLOCKED);
+        interrupts_disable();
+    }
+    interrupts_enable();
+    return ERR(EINTR);
 }

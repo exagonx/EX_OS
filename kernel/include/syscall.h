@@ -975,6 +975,15 @@ typedef struct {
 #define SYS_SEG_RITORNO     167
 #define SYS_SEG_PILA        168
 #define SYS_SEG_MANDA       169
+/* (0.279, MariaDB) seg_attendi: sigwait/sigtimedwait. ebx = const uint32_t *
+ *               set, ecx = milliseconds (0 = only look, 0xFFFFFFFF = for
+ *               ever), edx = int32_t * the signal taken. 0, -EAGAIN (time
+ *               up), -EINTR, -EINVAL (empty set).
+ * seg_sospendi: sigsuspend. ebx = const uint32_t * the mask to wait with.
+ *               Always -EINTR, once a signal it lets through has come; its
+ *               handler runs with that mask and the old one comes back. */
+#define SYS_SEG_ATTENDI     171
+#define SYS_SEG_SOSPENDI    172
 
 /* SegAzione.tipo */
 #define SEG_PREDEFINITO     0       /* SIG_DFL */
@@ -1745,10 +1754,15 @@ int32_t sys_seg_maschera(InterruptFrame *f);
 int32_t sys_seg_ritorno(InterruptFrame *f);
 int32_t sys_seg_pila(InterruptFrame *f);
 int32_t sys_seg_manda(InterruptFrame *f);
+int32_t sys_seg_attendi(InterruptFrame *f);
+int32_t sys_seg_sospendi(InterruptFrame *f);
 /* The two ways in: a fault in ring 3 (1 = the handler will run, 0 = kill as
  * before) and the pending signals on the way out of a syscall. */
 int     segnali_fault(InterruptFrame *f, int sig, int32_t codice, uint32_t indirizzo);
 void    segnali_consegna(InterruptFrame *f);
+/* SIGTERM to every program but drivers and init before the machine goes off,
+ * then up to `ms` for them to end; how many did not (sys_reboot, 0.279). */
+int     segnali_arresto(uint32_t ms);
 int32_t sys_munmap(InterruptFrame *f);
 int32_t sys_ioctl(InterruptFrame *f);
 int32_t sys_exec(InterruptFrame *f);

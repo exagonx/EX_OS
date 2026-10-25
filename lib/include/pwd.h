@@ -8,10 +8,12 @@
  *
  * <pwd.h> — l'utente, come lo chiede il codice POSIX.
  *
- * EX-OS non ha un file degli utenti da consultare: la risposta e' una sola
- * voce, fatta con l'ambiente di chi chiede — il nome da $USER, la casa da
- * $HOME, l'uid da getuid(). Gecko la usa per trovare la casa (il profilo).
- * Solo in libc.a.
+ * Gli utenti sono quelli di /boot/utenti (nome:uid:gid, lo stesso file di
+ * login e di lib/exuser; dal 25 ottobre 2026, per l'utente mysql di
+ * MariaDB). La casa e' /root o /home/<nome>; quella di chi chiede e' $HOME.
+ * Senza il file (il sistema avviato dal CD) la risposta e' una voce sola,
+ * fatta con l'ambiente: il nome da $USER, la casa da $HOME, l'uid da
+ * getuid(). Gecko la usa per trovare la casa (il profilo). Solo in libc.a.
  * ============================================================================= */
 
 #ifndef EXOS_PWD_H
@@ -39,6 +41,11 @@ int getpwuid_r(uid_t uid, struct passwd *pw, char *buf, size_t dim,
                struct passwd **risultato);
 int getpwnam_r(const char *nome, struct passwd *pw, char *buf, size_t dim,
                struct passwd **risultato);
+/* The whole list is the one entry: getpwent gives it once, then NULL until
+ * setpwent starts over (MariaDB's user lookup). */
+struct passwd *getpwent(void);
+void setpwent(void);
+void endpwent(void);
 
 #ifdef __cplusplus
 }

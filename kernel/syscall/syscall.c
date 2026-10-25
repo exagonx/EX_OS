@@ -143,6 +143,8 @@ void syscall_init(void)
     syscall_table[SYS_SEG_RITORNO]  = sys_seg_ritorno;
     syscall_table[SYS_SEG_PILA]     = sys_seg_pila;
     syscall_table[SYS_SEG_MANDA]    = sys_seg_manda;
+    syscall_table[SYS_SEG_ATTENDI]  = sys_seg_attendi;
+    syscall_table[SYS_SEG_SOSPENDI] = sys_seg_sospendi;
     syscall_table[SYS_MUNMAP]      = sys_munmap_gruppo;
     syscall_table[SYS_IOCTL]       = sys_ioctl;
     syscall_table[SYS_EXEC]        = sys_exec;

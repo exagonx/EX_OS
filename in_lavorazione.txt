@@ -8389,7 +8389,28 @@ tools/netinst/velocita tolto da netinst.
       verificato, openssl dgst/genpkey/req (Linux verifica), s_client.
       RESTA: una connessione a una porta chiusa non riceve RST (ip.drv non
       ne manda): il client aspetta la scadenza invece di ECONNREFUSED.
-      PROSSIMO: d) MariaDB 11.8.
+      25/10 d) MARIADB 11.8.10 GIRA IN EX-OS A 64 BIT (tools/prova_mariadb.sh):
+      mariadbd --bootstrap crea le tabelle di sistema (bootstrap.sql fatto
+      come mariadb-install-db, che e' uno script di shell), il server ascolta
+      su 127.0.0.1:3306, il client crea una tabella InnoDB, 3 righe, rollback,
+      mariadb-admin shutdown ferma pulito. Per arrivarci: kernel 0.279 con
+      sigwait/sigtimedwait/sigsuspend (SYS_SEG_ATTENDI 171, SYS_SEG_SOSPENDI
+      172; un segnale bloccato resta in attesa invece di terminare il
+      programma; tools/prova_sigwait.sh a 32 e 64) e open(dir, O_RDONLY)
+      (scelta dell'utente: nel kernel, VfsFile.cartella); libc: setgid,
+      setreuid/setregid, setgroups/initgroups, execl/execlp, getpwent,
+      getlogin, IN6_IS_ADDR_*, NI_NAMEREQD, POLLRDNORM & c., netinet/ip.h,
+      netinet/in_systm.h, sys/poll.h, tipi BSD, ULLONG_MAX in C++,
+      RLIMIT_NOFILE 128 (diceva 32), fscanf lascia feof alla fine del file;
+      costruisci.sh: DISABLE_SHARED + patch/libmariadb-senza-so.diff, niente
+      thread pool, feedback, socket UNIX, link.h; -fcommon (readline e
+      ncurses definiscono entrambe PC/BC/UP); pkg-config spento anche nel
+      file toolchain (make rilanciava cmake e prendeva /usr/include).
+      Configurazione obbligatoria: innodb_buffer_pool_size_max (8 TB di
+      indirizzi per difetto a 64 bit). Dettagli: tools/mariadb-exos/leggimi.md.
+      PROSSIMO: il servizio (programma con -install/-remove, my.cnf, datadir,
+      log), l'arresto dei servizi allo spegnimento (SIGTERM e attesa), ISO
+      strumenti e netinst, poi i 32 bit. RESTA: socket AF_UNIX in EX-OS.
 
   30. FATTO 25/10 (kernel 0.279, tools/prova_termios.sh a 32 e 64 bit,
       prova_telnet/ctrlc/ssh di nuovo a posto): termios Linux sul pty e

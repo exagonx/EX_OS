@@ -223,6 +223,11 @@ typedef struct {
     /* 1 = cancellato mentre era aperto: ha un nome nascosto (vedi
      * nascondi_aperto) e se ne va del tutto all'ultima chiusura. */
     uint8_t  orfano;
+    /* 1 = a directory, opened read-only (kernel 0.279, MariaDB): POSIX lets
+     * open(dir, O_RDONLY) give a descriptor, and programs use it for fstat,
+     * fsync of the directory after creating a file in it, fchdir. read and
+     * ftruncate give EISDIR, write EBADF; the rest is the same as a file. */
+    uint8_t  cartella;
 } VfsFile;
 
 static VfsFile g_file[VFS_MAX_OPEN];
@@ -1240,6 +1245,16 @@ static int permesso_sul_padre(const char *abs, uint32_t voluto)
  * entrasse in quella finestra si troverebbe root senza averlo chiesto. Il
  * permesso viaggia come argomento, e finisce quando finisce la chiamata.
  * ============================================================================= */
+/* A directory found by open: a descriptor if nothing asks to write or create
+ * (see VfsFile.cartella), EISDIR otherwise. */
+#define VFS_FLAG_SCRITTURA (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)
+static int apri_cartella(int slot, uint32_t flags)
+{
+    if (flags & VFS_FLAG_SCRITTURA) return apri_fallito(slot, ERR(EISDIR));
+    g_file[slot].cartella = 1;
+    return slot;
+}
+
 static int apri_nl(const char *abs, uint32_t flags, int autorita)
 {
     char interno[VFS_PATH_MAX];
@@ -1311,6 +1326,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     g_file[slot].im    = im;
     g_file[slot].h12   = -1;
     g_file[slot].orfano = 0;
+    g_file[slot].cartella = 0;
     v_copia(g_file[slot].interno, interno, VFS_PATH_MAX);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
@@ -1325,7 +1341,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
          * ci si arriva solo in lettura. */
         if (iso_stat(g_mnt[im].mnt, interno, &e) != 0)
             return apri_fallito(slot, ERR(ENOENT));
-        if (e.is_dir) return apri_fallito(slot, ERR(EISDIR));
+        if (e.is_dir) return apri_cartella(slot, flags);
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
 
@@ -1339,12 +1355,16 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
             }
             if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
+        } else if (e.is_dir) {
+            /* before O_TRUNC: until 0.279 a directory opened with O_TRUNC
+             * was truncated first and refused after */
+            return apri_cartella(slot, flags);
         } else if (flags & O_TRUNC) {
             if (ext2_truncate(g_mnt[im].mnt, interno, 0) != 0)
                 return apri_fallito(slot, ERR(EIO));
         }
 
-        if (e.is_dir) return apri_fallito(slot, ERR(EISDIR));
+        if (e.is_dir) return apri_cartella(slot, flags);
     } else {
         FatDirEntry e;
 
@@ -1357,12 +1377,14 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
             }
             if (fat_stat(g_mnt[im].mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
+        } else if (e.is_dir) {
+            return apri_cartella(slot, flags);      /* before O_TRUNC, as ext2 */
         } else if (flags & O_TRUNC) {
             if (fat_truncate(g_mnt[im].mnt, interno, 0) != 0)
                 return apri_fallito(slot, ERR(EIO));
         }
 
-        if (e.is_dir) return apri_fallito(slot, ERR(EISDIR));
+        if (e.is_dir) return apri_cartella(slot, flags);
     }
 
     return slot;
@@ -1371,6 +1393,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
 static int vfs_read_nl(int h, void *buf, uint32_t size, uint32_t offset)
 {
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (g_file[h].cartella) return ERR(EISDIR);   /* readdir reads directories */
 
     if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
         return fat12_read(g_file[h].h12, buf, size, offset);
@@ -1396,6 +1419,7 @@ static int vfs_write_nl(int h, const void *buf, uint32_t size, uint32_t offset)
     int im;
 
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (g_file[h].cartella) return ERR(EBADF);    /* opened read-only, always */
     im = g_file[h].im;
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
 
@@ -2103,6 +2127,7 @@ static int vfs_ftruncate_nl(int h, uint32_t nuova_dim)
     int im;
 
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (g_file[h].cartella) return ERR(EISDIR);
     im = g_file[h].im;
     if (g_mnt[im].sola_lettura || g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) return ERR(ENOSYS);

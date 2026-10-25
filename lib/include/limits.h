@@ -40,5 +40,19 @@
 #define PIPE_BUF       4096     /* dichiarato: le pipe non ci sono ancora */
 #define SYMLINK_MAX       0     /* nessun collegamento simbolico */
 #define HOST_NAME_MAX    64
+#define _POSIX_PATH_MAX 256     /* the POSIX minimum, not PATH_MAX (MariaDB) */
+
+/* GCC's own <limits.h> gives the long long limits only to C99 and C++11 with
+ * __STDC_VERSION__/__cplusplus checks that an older -std leaves out; MariaDB's
+ * C++ uses ULLONG_MAX with whatever it gets. Same values as the compiler's. */
+#ifndef LLONG_MAX
+#define LLONG_MAX   __LONG_LONG_MAX__
+#endif
+#ifndef LLONG_MIN
+#define LLONG_MIN   (-LLONG_MAX - 1LL)
+#endif
+#ifndef ULLONG_MAX
+#define ULLONG_MAX  (LLONG_MAX * 2ULL + 1ULL)
+#endif
 
 #endif /* EXOS_LIMITS_H */

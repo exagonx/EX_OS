@@ -1021,6 +1021,29 @@ static void prova_sscanf(void)
     esito("sscanf non combacia", sscanf("abc", "%d", &a) == 0);
     esito("sscanf ingresso finito", sscanf("", "%d", &a) == -1);
 
+    /* fscanf to the end of a file: feof must be true after the last record
+     * (InnoDB's ib_buffer_pool; vfscanf's fseek used to clear it). */
+    {
+        const char *nome = "/fscanf.tmp";
+        FILE       *f = fopen(nome, "w");
+        int         righe = 0;
+
+        /* only where a file can be written: on a read-only / the stdio
+         * section already says that fopen fails */
+        if (f) {
+            fputs("1,2\n3,4\n", f); fclose(f);
+            f = fopen(nome, "r");
+            if (f) {
+                while (fscanf(f, "%u,%u", &u, (unsigned *)&a) == 2) righe++;
+                esito("fscanf fino in fondo: feof", righe == 2 && feof(f) && !ferror(f));
+                fclose(f);
+            } else {
+                esito("fscanf fino in fondo: feof", 0);
+            }
+            unlink(nome);
+        }
+    }
+
     /* Il tempo. Non si puo' provare CHE ora sia, ma si puo' provare che
      * la conversione avanti e indietro sia coerente — che e' l'unico
      * modo in cui l'aritmetica delle date puo' sbagliare. */
@@ -1150,6 +1173,26 @@ static void prova_directory(void)
         unlink(tmp);
     }
     esito("opendir su un nome assente fallisce", opendir("/nonesiste") == NULL);
+
+    /* Kernel 0.279: open(dir, O_RDONLY) gives a descriptor, as POSIX says;
+     * MariaDB opens its data directory to fsync it (fsync is in libc.a, which
+     * checks the descriptor with fcntl). Writing is refused. */
+    {
+        struct stat st;
+        char        c;
+        int         fd = open("/bin", O_RDONLY);
+
+        esito("open di una directory in lettura", fd >= 0);
+        if (fd >= 0) {
+            esito("fstat la dice directory", fstat(fd, &st) == 0 && S_ISDIR(st.st_mode));
+            esito("read su una directory: EISDIR", read(fd, &c, 1) < 0 && errno == EISDIR);
+            esito("close della directory", close(fd) == 0);
+        }
+        /* EROFS when / is the CD: the volume is said before the file */
+        fd = open("/bin", O_WRONLY);
+        esito("open di una directory in scrittura: EISDIR", fd < 0 && (errno == EISDIR || errno == EROFS));
+        if (fd >= 0) close(fd);
+    }
 }
 
 /* =============================================================================

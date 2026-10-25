@@ -32,4 +32,18 @@
  * possono contraddirlo. */
 #include <stdint.h>
 
+/* The BSD names, which glibc gives here too (__USE_MISC): MariaDB's
+ * safe_process and mariadb_rpl.c write uint and u_char with nothing else. */
+typedef unsigned char       u_char;
+typedef unsigned short      u_short;
+typedef unsigned int        u_int;
+typedef unsigned long       u_long;
+typedef unsigned short      ushort;
+typedef unsigned int        uint;
+typedef unsigned long       ulong;
+typedef uint8_t             u_int8_t;
+typedef uint16_t            u_int16_t;
+typedef uint32_t            u_int32_t;
+typedef uint64_t            u_int64_t;
+
 #endif /* EXOS_SYS_TYPES_H */

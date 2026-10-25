@@ -664,6 +664,9 @@ typedef struct Process {
     uint32_t        seg_pendenti;           /* raised, not delivered yet */
     uint32_t        seg_pila_base;          /* sigaltstack, 0 = none */
     uint32_t        seg_pila_dim;
+    uint32_t        seg_attesi;             /* asleep in sigwait for these, 0 = not */
+    uint32_t        seg_sospeso;            /* in sigsuspend: seg_salvata comes back */
+    uint32_t        seg_salvata;            /*   after the handler (see segnali.c) */
 
 /* =============================================================================
  * La directory corrente — UNA PER PROCESSO

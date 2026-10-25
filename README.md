@@ -2357,6 +2357,44 @@ by its thread pointer, read from `%gs`/`%fs` with no system call.
 > program's own atomic variables EX-OS's GCC has `<stdatomic.h>` and the
 > `__atomic_*` builtins, which become `lock` instructions: no libc needed.
 
+### MariaDB 11.8 LTS runs in EX-OS (0.279)
+
+**tested at 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
+--bootstrap` makes the system tables, the server starts and listens on
+`127.0.0.1:3306`, the `mariadb` client creates an InnoDB table, puts three
+rows in, rolls a delete back, and `mariadb-admin shutdown` stops the server
+cleanly; Linux finds `ibdata1` and the table's `.ibd` on the disk afterwards.
+
+MariaDB 11.8.10, the stable long-term branch, from `mariadb-server/` (a clone
+of the official repository, followed with `git pull`), built by
+`tools/mariadb-exos/costruisci.sh` on the real EX-OS libraries: ncurses,
+zlib, bzip2, xz, lz4, zstd, PCRE2, fmt and OpenSSL 4.1.0. Everything is
+static (`mariadbd` is 27 MB stripped); the server listens on TCP only,
+because EX-OS has no AF_UNIX sockets. `innodb_buffer_pool_size_max` must be
+given: by default InnoDB reserves 8 TB of addresses at 64 bit, and an EX-OS
+program has 3 GB. Not yet: the service that starts it before login, the
+tools CD and netinst, 32 bit. The details are in `tools/mariadb-exos/leggimi.md`.
+
+What it needed in EX-OS:
+
+- **kernel 0.279, signals.** `sigwait`, `sigtimedwait`, `sigwaitinfo`
+  (`SYS_SEG_ATTENDI`) and `sigsuspend` (`SYS_SEG_SOSPENDI`). A signal with the
+  default action sent to a program that blocks it now stays pending, as POSIX
+  says, instead of ending the program: that is how a server blocks SIGTERM in
+  every thread and waits for it in one (`tools/prova_sigwait.sh`, 32 and 64
+  bit, also from another process).
+- **kernel 0.279, `open` of a directory.** `open(dir, O_RDONLY)` gives a
+  descriptor instead of EISDIR: `fstat`, `fsync`, `dup` and `close` work,
+  `read` gives EISDIR, asking to write gives EISDIR. Aria and InnoDB open the
+  data directory to make a new file durable. A directory opened with
+  `O_TRUNC` used to be truncated before being refused.
+- **libc:** `setgid`, `setreuid`/`setregid`, `setgroups`/`initgroups`,
+  `execl`/`execlp`, `getpwent`, `getlogin`, `IN6_IS_ADDR_*`, `NI_NAMEREQD`,
+  `POLLRDNORM` and its siblings, `<netinet/ip.h>`, `<netinet/in_systm.h>`,
+  `<sys/poll.h>`, the BSD types (`u_char`, `uint`...); `getrlimit` says 128
+  descriptors (it still said 32, from before kernel 0.232); `fscanf` left
+  `feof` off at the end of a file, because its `fseek` back cleared it.
+
 ### OpenSSL 4.1.0 with sockets and threads, and 127.0.0.1
 
 **tested at 32 and 64 bit in QEMU** (`tools/prova_openssl.sh`, with the QEMU

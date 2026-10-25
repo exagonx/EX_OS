@@ -8,9 +8,9 @@
  *
  * <grp.h> — i gruppi, come li chiede il codice POSIX.
  *
- * Come <pwd.h>: nessun file dei gruppi, una voce sola. getgrgid(getgid())
- * risponde un gruppo che ha il nome dell'utente ($USER) e nessun altro
- * membro; ogni altra domanda risponde NULL. Solo in libc.a.
+ * Nessun file dei gruppi: ogni utente di /boot/utenti (vedi <pwd.h>) ha un
+ * gruppo col suo nome e il suo gid, e nessun altro membro. Senza il file,
+ * solo getgrgid(getgid()), col nome di $USER. Solo in libc.a.
  * ============================================================================= */
 
 #ifndef EXOS_GRP_H

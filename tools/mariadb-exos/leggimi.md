@@ -14,12 +14,15 @@ una volta configurato, e da li' vive da solo.
 - **Dove va**: sorgenti e compilati sulla ISO degli strumenti; il servizio nel
   repository di `netupdate`, a 64 bit e a 32 se si riesce.
 
-> **Stato al 25 ottobre 2026: scelto il ramo 11.8 LTS; prima di MariaDB le
-> librerie che usa sono diventate librerie vere di EX-OS** (ncurses, zlib,
-> bzip2, xz, lz4, zstd, PCRE2, fmt, OpenSSL 4.1.0 con socket e fili: ognuna
-> nel suo `tools/<nome>-exos/`, nei sysroot, a 32 e 64 bit). `costruisci.sh`
-> va portato su quelle (le tappe pcre2 e termcap spariscono). Il loopback e
-> `select` con i socket ci sono (punti 3 e 5 qui sotto).
+> **Stato al 25 ottobre 2026: MariaDB 11.8.10 si compila tutto a 64 bit**
+> (`mariadbd` statico, 27 MB senza simboli, il client `mariadb`,
+> `mariadb-admin`, `mariadb-dump` e gli altri) sulle librerie vere di EX-OS
+> (ncurses, zlib, bzip2, xz, lz4, zstd, PCRE2, fmt, OpenSSL 4.1.0). **In
+> QEMU `mariadbd --bootstrap` crea le tabelle di sistema** e il server
+> ascolta su 127.0.0.1:3306 (`tools/prova_mariadb.sh`). Per arrivarci:
+> `sigwait`/`sigsuspend` nel kernel, `open` di una directory, il limite dei
+> descrittori giusto (128), `fscanf` che lascia `feof` alla fine del file, e
+> le funzioni e intestazioni elencate in "Cosa e' servito" qui sotto.
 
 ## Quale versione
 
@@ -95,9 +98,10 @@ BSD, `poll`, `fcntl`, `flock`, `fsync`, `pread`/`pwrite` veri (kernel
 
 **Manca, e va fatto in EX-OS prima o durante il porting:**
 
-1. **`sigwait` non c'e'** (la libc rende `ENOSYS`). MariaDB ha un filo che
-   aspetta SIGTERM, SIGHUP e SIGQUIT con `sigwait` (`sql/mysqld.cc`,
-   `my_sigwait`): e' cosi' che si ferma pulito. Serve un `sigwait` vero.
+1. **`sigwait`. FATTO 25/10 (kernel 0.279):** `SYS_SEG_ATTENDI` (sigwait,
+   sigtimedwait, sigwaitinfo) e `SYS_SEG_SOSPENDI` (sigsuspend); un segnale
+   con l'azione predefinita mandato a un programma che lo blocca resta in
+   attesa invece di terminarlo. Provato con `tools/prova_sigwait.sh`.
 2. **Lo spegnimento non avvisa nessuno.** `shutdown`/`reboot` sincronizzano
    i dischi e spengono (`kernel/arch/x86/power.c`), senza dire ai servizi di
    chiudere. InnoDB a ogni avvio farebbe il recupero dopo un crollo. Serve
@@ -121,6 +125,28 @@ BSD, `poll`, `fcntl`, `flock`, `fsync`, `pread`/`pwrite` veri (kernel
 5. **`select` con i socket. FATTO 25/10:** `fd_set` arriva a 1088
    descrittori, i socket (da 1024) compresi (`openssl s_client` lo usa).
    MariaDB usa comunque `poll` dove c'e' (`HAVE_POLL`).
+
+## Cosa e' servito (25/10)
+
+- **libc**: `setgid`, `setreuid`/`setregid`, `setgroups`/`initgroups`,
+  `execl`/`execlp`, `getpwent`/`setpwent`/`endpwent`, `getlogin`/`_r`,
+  `IN6_IS_ADDR_*`, `NI_NAMEREQD` (sempre `EAI_NONAME`: non c'e' la ricerca
+  inversa), `POLLRDNORM` & c., `P_tmpdir`, `suseconds_t`, i tipi BSD in
+  `<sys/types.h>`, `ULLONG_MAX` in C++, `_POSIX_PATH_MAX`; intestazioni
+  `netinet/ip.h`, `netinet/in_systm.h`, `sys/poll.h`; `RLIMIT_NOFILE` 128
+  (diceva 32, valore di prima della 0.232); `fscanf` lasciava `feof` spento
+  dopo l'ultimo dato (InnoDB legge cosi' `ib_buffer_pool`).
+- **kernel 0.279**: i segnali (punto 1) e `open(dir, O_RDONLY)`, che Aria e
+  InnoDB usano per l'fsync della cartella dei dati.
+- **in `costruisci.sh`**: `DISABLE_SHARED` (niente `.so`; i plugin del
+  client dentro la libreria, `CLIENT_PLUGIN_*=STATIC`), la patch
+  `patch/libmariadb-senza-so.diff` (libmariadb faceva la `.so` comunque),
+  niente thread pool (vuole epoll), niente plugin feedback, niente socket
+  UNIX (`HAVE_SYS_UN_H` vuoto: il server ascolta solo in TCP), niente
+  `link.h`, `-fcommon` per `PC`/`BC`/`UP` di readline contro ncurses,
+  pkg-config spento anche nel file toolchain.
+- **da configurare**: `innodb_buffer_pool_size_max` (InnoDB riserva 8 TB di
+  indirizzi a 64 bit, un programma di EX-OS ne ha 3 GB).
 
 ## Il servizio
 
