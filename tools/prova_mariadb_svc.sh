@@ -118,6 +118,7 @@ controlla() {   # $1 what, $2 command that must succeed
 }
 S2="$D/2-seriale.txt"; S3="$D/3-seriale.txt"
 controlla "-install: le tabelle di sistema"       "grep -aq 'tabelle di sistema' '$S2' && ! grep -aq 'bootstrap non e. riuscito' '$S2'"
+controlla "-install: il certificato TLS"         "grep -aq 'certificato TLS in' '$S2'"
 controlla "-install: il server pronto"            "grep -aq 'MariaDB pronto su 127.0.0.1:3306' '$S2'"
 controlla "il blocco in /boot/avvio.sh"           "grep -q 'mariadb-svc -avvia' '$D/avvio.sh' && grep -q '^ip.drv &' '$D/avvio.sh'"
 controlla "ip.drv senza scheda: solo 127.0.0.1"   "grep -aq 'solo 127.0.0.1' '$S3'"

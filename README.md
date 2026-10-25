@@ -2378,7 +2378,9 @@ in `/exos/mariadb`, the clients and `mariadb-svc` in `/exos/bin`,
 now (about 500 MB per architecture for MariaDB alone).
 
 **The service:** `mariadb-svc -install` (as root) makes the user `mysql`,
-`/etc/my.cnf`, the system tables in `/var/lib/mysql`, and a block in
+`/etc/my.cnf`, the system tables in `/var/lib/mysql`, the server's TLS
+certificate (once: MariaDB 11.8 would make a 4096-bit RSA key at every start,
+minutes on a slow CPU), and a block in
 `/boot/avvio.sh`: the server starts at every boot, before the login, and the
 shutdown closes it (manual 4.10). The details are in
 `tools/mariadb-exos/leggimi.md`.

@@ -167,7 +167,13 @@ BSD, `poll`, `fcntl`, `flock`, `fsync`, `pread`/`pwrite` veri (kernel
   share/bootstrap.sql` (quello che farebbe `mariadb-install-db`, che e' uno
   script di shell); il blocco `mariadb-svc` in `/boot/avvio.sh`
   (`avvio_blocco`) con `ip.drv &` se manca; accende `ip.drv` se non gira, poi
-  il server.
+  il server. Prima di `/etc/my.cnf` crea il certificato TLS (0.002): chiave
+  EC P-256 e certificato autofirmato con la libcrypto di EX-OS,
+  `server-cert.pem`/`server-key.pem` in `/var/lib/mysql`, `ssl-cert` e
+  `ssl-key` in my.cnf solo se i file ci sono (un ssl-cert che manca ferma il
+  server). Senza, MariaDB 11.8 genera una RSA da 4096 bit a ogni avvio
+  (`vio_keygen` in `vio/viosslfactories.c`): in QEMU a 32 bit 21 s una volta,
+  136 s un'altra, e `-install` scadeva.
 - `-avvia`: aspetta `ip.drv` (127.0.0.1 sta dentro di lui), lancia
   `mariadbd --defaults-file=/etc/my.cnf` e aspetta «ready for connections» nel
   registro (non una connect: una porta chiusa non riceve RST da ip.drv).

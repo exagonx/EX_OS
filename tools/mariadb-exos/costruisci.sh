@@ -267,9 +267,9 @@ tappa_installa() {
     # the client library: C programs talk to the server with -lmariadbclient
     cp -p "$M/lib/libmariadbclient.a" "$D/lib/"
     cp -rp "$M/include/mysql" "$D/include/"
-    # the service
+    # the service (libcrypto: the TLS certificate it makes at -install)
     $T-gcc $MARCH -O2 -Wall -static -o "$D/bin/mariadb-svc" "$R/tools/mariadb-exos/mariadb-svc.c" \
-        > "$B/mariadb-svc.log" 2>&1 || { cat "$B/mariadb-svc.log"; exit 1; }
+        -lcrypto -lpthread > "$B/mariadb-svc.log" 2>&1 || { cat "$B/mariadb-svc.log"; exit 1; }
     $T-strip "$D/bin/mariadb-svc"
     # the sources: the archive and everything this directory adds to it
     cp -p "$ARCHIVIO" "$ARCHIVIO".asc "$D/src/mariadb/"

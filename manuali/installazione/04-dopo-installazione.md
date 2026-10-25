@@ -325,8 +325,11 @@ mariadb-svc -install          una volta, da root
 
 `-install` crea l'utente `mysql` (senza password: nessuno entra come
 `mysql`), scrive `/etc/my.cnf`, crea le tabelle di sistema in
-`/var/lib/mysql` (un minuto o due), mette il suo blocco in `/boot/avvio.sh` e
-accende il server. Da quel momento MariaDB parte **a ogni avvio, prima del
+`/var/lib/mysql` (un minuto o due), crea il certificato TLS del server (una
+chiave EC P-256, valida 10 anni), mette il suo blocco in `/boot/avvio.sh` e
+accende il server. Il certificato si fa una volta sola: senza, MariaDB 11.8
+ne genererebbe uno RSA da 4096 bit a ogni avvio, e su una macchina lenta
+vuol dire da venti secondi a qualche minuto di attesa ogni volta. Da quel momento MariaDB parte **a ogni avvio, prima del
 login**, e allo spegnimento si chiude da solo: il kernel manda SIGTERM a ogni
 programma e aspetta fino a 30 secondi prima di fermare i dischi.
 

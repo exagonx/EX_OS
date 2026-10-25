@@ -2423,7 +2423,9 @@ in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`,
 e' un DVD (circa 500 MB per architettura solo per MariaDB).
 
 **Il servizio:** `mariadb-svc -install` (da root) crea l'utente `mysql`,
-`/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql` e un blocco in
+`/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql`, il certificato
+TLS del server (una volta sola: MariaDB 11.8 farebbe una chiave RSA da 4096
+bit a ogni avvio, minuti su una CPU lenta) e un blocco in
 `/boot/avvio.sh`: il server parte a ogni avvio, prima del login, e lo
 spegnimento lo chiude (manuale 4.10). I dettagli sono in
 `tools/mariadb-exos/leggimi.md`.

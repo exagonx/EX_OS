@@ -27,6 +27,9 @@
  *
  * The user mysql has a line in /boot/utenti and none in /boot/ombra: it
  * owns the data, and nobody can log in as mysql.
+ *
+ * -install also makes the TLS certificate (server-cert.pem, server-key.pem
+ * in the data directory, EC P-256): see g_conf_tls.
  * ============================================================================= */
 #include <libc.h>
 #include <stdio.h>
@@ -42,8 +45,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <openssl/evp.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
+#include <openssl/rand.h>
 
-EX_VERSIONE("mariadb-svc", "0.001");
+EX_VERSIONE("mariadb-svc", "0.002");
 
 #define BASE        "/exos/mariadb"
 #define MARIADBD    BASE "/bin/mariadbd"
@@ -59,6 +66,8 @@ EX_VERSIONE("mariadb-svc", "0.001");
 #define UTENTE      "mysql"
 #define PORTA       3306
 #define BLOCCO      "mariadb-svc"
+#define CERT        DATI "/server-cert.pem"
+#define CHIAVE      DATI "/server-key.pem"
 
 /* ! THE SIZES ARE EX-OS'S, NOT MARIADB'S DEFAULTS: 24 TCP connections in the
  * whole system and 64 sockets per program (ip.drv), 128 descriptors per
@@ -89,7 +98,19 @@ static const char *const g_conf =
     "# InnoDB reserves address space for the largest pool it may grow to:\n"
     "# 8 TB by default at 64 bit, and an EX-OS program has 3 GB.\n"
     "innodb_buffer_pool_size_max = 256M\n"
-    "innodb_log_file_size        = 32M\n"
+    "innodb_log_file_size        = 32M\n";
+
+/* ! THE TLS CERTIFICATE IS MADE ONCE, BY -install (mariadb-svc 0.002): left
+ * alone, MariaDB 11.8 makes a 4096-bit RSA key at every start
+ * (vio_keygen), 20 s to minutes on a slow CPU, at random; -install timed
+ * out on it. Written only when the files are there: an ssl-cert that does
+ * not exist stops the server ("Failed to setup SSL"). */
+static const char *const g_conf_tls =
+    "# TLS: made once by -install (an EC P-256 key, valid 10 years)\n"
+    "ssl-cert                    = " CERT "\n"
+    "ssl-key                     = " CHIAVE "\n";
+
+static const char *const g_conf_client =
     "\n"
     "[client]\n"
     "host                        = 127.0.0.1\n"
@@ -337,6 +358,63 @@ static unsigned int utente_mysql(void)
     return uid;
 }
 
+/* An EC P-256 key and a self-signed certificate for the server, with the
+ * libcrypto of EX-OS. RAND may refuse on a machine just switched on (a small
+ * entropy pool): a few tries, then without (the server makes its own). */
+static int certificato(unsigned int uid)
+{
+    EVP_PKEY      *k = NULL;
+    X509          *x = NULL;
+    X509_NAME     *n;
+    unsigned char  sn[8];
+    FILE          *f;
+    int            i, ok = 0;
+
+    if (esiste(CERT) && esiste(CHIAVE)) return 1;
+    for (i = 0; i < 10 && !k; i++) {
+        k = EVP_EC_gen("P-256");
+        if (!k) dormi_ms(1000);
+    }
+    if (!k || RAND_bytes(sn, sizeof sn) != 1 || !(x = X509_new())) goto fine;
+    sn[0] &= 0x7F;                                     /* a positive serial */
+    X509_set_version(x, X509_VERSION_3);
+    ASN1_INTEGER_set_uint64(X509_get_serialNumber(x),
+        ((uint64_t)sn[0] << 56) | ((uint64_t)sn[1] << 48) | ((uint64_t)sn[2] << 40) |
+        ((uint64_t)sn[3] << 32) | ((uint64_t)sn[4] << 24) | ((uint64_t)sn[5] << 16) |
+        ((uint64_t)sn[6] << 8) | sn[7]);
+    X509_gmtime_adj(X509_getm_notBefore(x), 0);
+    X509_gmtime_adj(X509_getm_notAfter(x), 10L * 365 * 24 * 3600);
+    X509_set_pubkey(x, k);
+    /* a name of its own: OpenSSL 4 gives the certificate's one as const */
+    if (!(n = X509_NAME_new())) goto fine;
+    X509_NAME_add_entry_by_txt(n, "O", MBSTRING_ASC, (const unsigned char *)"EX-OS", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(n, "CN", MBSTRING_ASC, (const unsigned char *)"MariaDB server", -1, -1, 0);
+    X509_set_subject_name(x, n);
+    X509_set_issuer_name(x, n);
+    X509_NAME_free(n);
+    if (!X509_sign(x, k, EVP_sha256())) goto fine;
+    if (!(f = fopen(CHIAVE, "w"))) goto fine;
+    ok = PEM_write_PrivateKey(f, k, NULL, NULL, 0, NULL, NULL);
+    fclose(f);
+    if (ok && (f = fopen(CERT, "w"))) {
+        ok = PEM_write_X509(f, x);
+        fclose(f);
+    } else {
+        ok = 0;
+    }
+    if (ok) {
+        chmod(CHIAVE, 0600);
+        if (chown(CHIAVE, uid, uid) != 0 || chown(CERT, uid, uid) != 0) ok = 0;
+    }
+    if (!ok) { unlink(CHIAVE); unlink(CERT); }
+fine:
+    X509_free(x);
+    EVP_PKEY_free(k);
+    if (ok) printf("  certificato TLS in " CERT "\n");
+    else    printf("  ! certificato TLS non fatto: MariaDB ne fara' uno lento a ogni avvio\n");
+    return ok;
+}
+
 static int installa(void)
 {
     unsigned int uid;
@@ -353,8 +431,13 @@ static int installa(void)
     if (cartella("/etc", 0) || cartella(DATI, uid) || cartella(TMP, uid) || cartella(LOGDIR, uid))
         return 1;
     if (!esiste(CONF)) {
+        int   tls = certificato(uid);
         FILE *f = fopen(CONF, "w");
-        if (!f || fputs(g_conf, f) < 0) { printf("mariadb-svc: non riesco a scrivere " CONF "\n"); if (f) fclose(f); return 1; }
+        if (!f || fputs(g_conf, f) < 0 || (tls && fputs(g_conf_tls, f) < 0) || fputs(g_conf_client, f) < 0) {
+            printf("mariadb-svc: non riesco a scrivere " CONF "\n");
+            if (f) fclose(f);
+            return 1;
+        }
         fclose(f);
         printf("  " CONF " scritto\n");
     } else {
