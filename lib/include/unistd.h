@@ -67,8 +67,10 @@ pid_t   fork(void);
  * cambiati per descrittore, chroot e le FIFO con nome non esistono: ENOSYS
  * o, per readlink su un file che non e' un link, EINVAL — come vuole POSIX. */
 pid_t   getppid(void);
-ssize_t pread(int fd, void *buf, size_t n, off_t pos);
-ssize_t pwrite(int fd, const void *buf, size_t n, off_t pos);
+ssize_t pread(int fd, void *buf, size_t n, off_t pos) EXOS_LFS(pread);
+ssize_t pwrite(int fd, const void *buf, size_t n, off_t pos) EXOS_LFS(pwrite);
+ssize_t pread64(int fd, void *buf, size_t n, off64_t pos);
+ssize_t pwrite64(int fd, const void *buf, size_t n, off64_t pos);
 int     fsync(int fd);
 ssize_t readlink(const char *percorso, char *buf, size_t n);
 int     symlink(const char *bersaglio, const char *percorso);

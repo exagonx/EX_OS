@@ -26,32 +26,24 @@ IMG="$D/hd.img"
 OFF="$IMG?offset=1048576"
 SBIN=/usr/sbin
 if [ "$ARCH" = x86_64 ]; then
-    ISO=dist/exos64.iso; BIT=64; STRIP=cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip
+    ISO=dist/exos64.iso; BIT=64
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=1024M EXTRA="-cpu qemu64"
 else
-    ISO=dist/exos.iso; BIT=32; STRIP=cross_build/nasi5deb/exos-cross/bin/i386-exos-strip
+    ISO=dist/exos.iso; BIT=32
     export EXOS_RAM=1024M EXTRA=""
 fi
-M=cross_build/mariadb-exos$BIT/exos/mariadb
+E=cross_build/mariadb-exos$BIT/exos
+M=$E/mariadb
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
 [ -x "$M/bin/mariadbd" ] || { echo "manca $M: tools/mariadb-exos/costruisci.sh" >&2; exit 1; }
 T="$D/albero"
 mkdir -p "$T/bin" "$T/share" "$T/dati" "$T/tmp"
-for p in mariadbd mariadb mariadb-admin; do
-    $STRIP -o "$T/bin/$p" "$M/bin/$p" || exit 1
-done
+# already stripped by costruisci.sh (installa)
+cp "$M/bin/mariadbd" "$E/bin/mariadb" "$E/bin/mariadb-admin" "$T/bin/"
 cp -r "$M/share/charsets" "$M/share/english" "$T/share/"
-# what mariadb-install-db pipes into mariadbd --bootstrap (cat_sql), with
-# its cross-bootstrap filter: no root@<this host>, the name is not known
-{
-    echo "create database if not exists mysql;"
-    echo "use mysql;"
-    echo "SET @auth_root_socket=NULL;"
-    for f in mariadb_system_tables mariadb_performance_tables mariadb_system_tables_data \
-             fill_help_tables maria_add_gis_sp_bootstrap mariadb_sys_schema mariadb_test_db; do
-        cat "$M/share/$f.sql"
-    done
-} | sed -e '/@current_hostname/d' > "$T/bootstrap.sql"
+# what mariadb-install-db would pipe into mariadbd --bootstrap: costruisci.sh
+# writes it, mariadb-svc -install uses it
+cp "$M/share/bootstrap.sql" "$T/bootstrap.sql"
 cat > "$T/prova.sql" <<'EOF'
 select concat('MARIADB versione ', version()) as r;
 create database prova;
@@ -93,7 +85,7 @@ controlla() {   # $1 what, $2 command that must succeed
     if eval "$2" > /dev/null 2>&1; then echo "  ok  $1"; else echo "  [NO] $1"; esito=1; fi
 }
 grep -a "^MARIADB " "$S" | sort -u | sed 's/^/  /'
-controlla "versione 11.8"                  "grep -aq '^MARIADB versione 11\.8' '$S'"
+controlla "versione 11.8.9"                "grep -aq '^MARIADB versione 11\.8\.9' '$S'"
 controlla "3 righe nella tabella"          "grep -aq '^MARIADB righe 3' '$S'"
 controlla "tabella InnoDB"                 "grep -aq '^MARIADB motore InnoDB' '$S'"
 controlla "il rollback rimette le righe"   "grep -aq '^MARIADB dopo il rollback EX-OS,MariaDB,InnoDB' '$S'"

@@ -64,6 +64,7 @@ typedef __UINTPTR_TYPE__    uintptr_t;
  * funzioni definite in questo file; gli altri stanno solo nell'header. */
 typedef int                 pid_t;
 typedef long                off_t;
+typedef long long           off64_t;   /* the *64 functions (see libc.h, off_t) */
 typedef unsigned int        mode_t;
 /* ! Gli altri tipi di POSIX che compaiono in `struct stat`. Duplicati da
  * lib/include/libc.h e devono restare identici: quella struttura la
@@ -501,6 +502,14 @@ typedef struct {
 #define EILSEQ       84
 #define EDOM         33
 #define EOVERFLOW    75
+#define EFBIG        27
+
+/* ! A POSITION THE KERNEL CANNOT HOLD IS REFUSED, NOT CUT (25 October
+ * 2026): the syscalls take 32 bits, and at 64 bit a long of 3 GB arrived as
+ * a negative number or as another position (ftruncate to 3 GB changed the
+ * file). FUORI_32 is never true at 32 bit, where a long is the kernel's. */
+#define FUORI_32(x)  ((long)(x) > 2147483647L || (long)(x) < -2147483647L)
+
 #define ERANGE       34
 #define ETIMEDOUT   110
 
@@ -1033,6 +1042,22 @@ struct stat {
     uid_t           st_uid;
     gid_t           st_gid;
     off_t           st_size;
+    blksize_t       st_blksize;
+    blkcnt_t        st_blocks;
+    time_t          st_atime;
+    time_t          st_mtime;
+    time_t          st_ctime;
+};
+
+/* struct stat with a 64-bit st_size: stat64 & c. (lib/include/exos_stat.h) */
+struct stat64 {
+    dev_t           st_dev;
+    ino_t           st_ino;
+    mode_t          st_mode;
+    nlink_t         st_nlink;
+    uid_t           st_uid;
+    gid_t           st_gid;
+    off64_t         st_size;
     blksize_t       st_blksize;
     blkcnt_t        st_blocks;
     time_t          st_atime;
@@ -8100,6 +8125,7 @@ int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf)
 
 int truncate(const char *path, unsigned int size)
 {
+    if (size > 2147483647u) { errno = EFBIG; return -1; }
     return (int)err_posix(_syscall2(SYS_TRUNCATE, (uintptr_t)path, size));
 }
 
@@ -9813,6 +9839,7 @@ int ftruncate(int fd, off_t lung)
         /* Un file: il kernel lo sa fare dal 0.233 (SYS_FTRUNCATE). */
         if (E_SHMFD(fd)) { errno = EBADF; return -1; }
         if (lung < 0)    { errno = EINVAL; return -1; }
+        if (FUORI_32(lung)) { errno = EFBIG; return -1; }
         return (int)err_posix(_syscall2(SYS_FTRUNCATE, (uint32_t)fd, (uint32_t)lung));
     }
     if (lung < 0) { errno = EINVAL; return -1; }
@@ -10898,6 +10925,7 @@ void *sbrk(int incr)
 long lseek(int fd, long offset, int whence)
 {
     if (E_PRESA(fd)) { errno = 29; return -1; }   /* ESPIPE: un socket non ha posizione */
+    if (FUORI_32(offset)) { errno = EOVERFLOW; return -1; }
     int32_t r = _syscall3(SYS_LSEEK, (uint32_t)fd, (uint32_t)offset,
                           (uint32_t)whence);
     if (r < 0) { errno = -r; return -1; }
@@ -12783,9 +12811,12 @@ static volatile int g_pread_m = 0;
 
 ssize_t pread(int fd, void *buf, size_t n, long pos)
 {
-    int32_t r = _syscall4(SYS_PREAD, (uint32_t)fd, (uintptr_t)buf, (uint32_t)n, (uint32_t)pos);
+    int32_t r;
     long    prima;
 
+    if (pos < 0) { errno = EINVAL; return -1; }
+    if (FUORI_32(pos)) return 0;                /* past any file: the end */
+    r = _syscall4(SYS_PREAD, (uint32_t)fd, (uintptr_t)buf, (uint32_t)n, (uint32_t)pos);
     if (r != -38) return err_posix(r);          /* -ENOSYS: a kernel before 0.277 */
     mutex_prendi(&g_pread_m);
     prima = lseek(fd, 0, 1);                    /* SEEK_CUR */
@@ -12798,9 +12829,12 @@ ssize_t pread(int fd, void *buf, size_t n, long pos)
 
 ssize_t pwrite(int fd, const void *buf, size_t n, long pos)
 {
-    int32_t r = _syscall4(SYS_PWRITE, (uint32_t)fd, (uintptr_t)buf, (uint32_t)n, (uint32_t)pos);
+    int32_t r;
     long    prima;
 
+    if (pos < 0) { errno = EINVAL; return -1; }
+    if (FUORI_32(pos)) { errno = EFBIG; return -1; }
+    r = _syscall4(SYS_PWRITE, (uint32_t)fd, (uintptr_t)buf, (uint32_t)n, (uint32_t)pos);
     if (r != -38) return err_posix(r);
     mutex_prendi(&g_pread_m);
     prima = lseek(fd, 0, 1);
@@ -15325,6 +15359,116 @@ int fstatvfs(int fd, struct statvfs *v)
 
     if (fstat(fd, &st) < 0) return -1;
     return statvfs_riempi(v);
+}
+
+/* -----------------------------------------------------------------------------
+ * The *64 functions (25 October 2026, MariaDB at 32 bit): what lseek, pread,
+ * pwrite, ftruncate, truncate, fseeko, ftello, mmap, stat, lstat and fstat
+ * are in a program compiled with _FILE_OFFSET_BITS=64 (EXOS_LFS in libc.h).
+ * ! THE KERNEL KEEPS 2 GB PER FILE (32-bit positions in the VFS, on both
+ * architectures): a position it cannot hold is refused here, never cut. A
+ * read there finds the end of the file (no file is that long), a write or
+ * a size there is EFBIG, a seek EOVERFLOW (POSIX's answer when the result
+ * does not fit; here it is the kernel that does not fit it). At 64 bit a
+ * long holds anything the kernel can answer and nothing is refused here.
+ * ----------------------------------------------------------------------------- */
+#define POS_MAX64   2147483647LL        /* what the kernel's int32 holds */
+
+static int pos_va(off64_t pos)
+{
+    return pos >= 0 && pos <= POS_MAX64;
+}
+
+off64_t lseek64(int fd, off64_t off, int da)
+{
+    if (off > POS_MAX64 || off < -POS_MAX64) { errno = EOVERFLOW; return -1; }
+    return lseek(fd, (long)off, da);
+}
+
+ssize_t pread64(int fd, void *buf, size_t n, off64_t pos)
+{
+    if (pos < 0) { errno = EINVAL; return -1; }
+    if (!pos_va(pos)) return 0;
+    if ((off64_t)n > POS_MAX64 - pos) n = (size_t)(POS_MAX64 - pos);
+    return pread(fd, buf, n, (long)pos);
+}
+
+ssize_t pwrite64(int fd, const void *buf, size_t n, off64_t pos)
+{
+    if (pos < 0) { errno = EINVAL; return -1; }
+    if (!pos_va(pos) || (off64_t)n > POS_MAX64 - pos) { errno = EFBIG; return -1; }
+    return pwrite(fd, buf, n, (long)pos);
+}
+
+int ftruncate64(int fd, off64_t lung)
+{
+    if (lung < 0) { errno = EINVAL; return -1; }
+    if (!pos_va(lung)) { errno = EFBIG; return -1; }
+    return ftruncate(fd, (off_t)lung);
+}
+
+int truncate64(const char *path, off64_t lung)
+{
+    if (lung < 0) { errno = EINVAL; return -1; }
+    if (!pos_va(lung)) { errno = EFBIG; return -1; }
+    return truncate(path, (unsigned int)lung);
+}
+
+off64_t ftello64(FILE *f)
+{
+    return (off64_t)ftell(f);
+}
+
+int fseeko64(FILE *f, off64_t off, int da)
+{
+    if (off > POS_MAX64 || off < -POS_MAX64) { errno = EOVERFLOW; return -1; }
+    return fseek(f, (long)off, da);
+}
+
+void *mmap64(void *addr, size_t lung, int prot, int flags, int fd, off64_t off)
+{
+    if (off < 0 || (fd >= 0 && !(flags & MAP_ANONYMOUS) && !pos_va(off))) {
+        errno = EINVAL;
+        return MAP_FAILED;
+    }
+    return mmap(addr, lung, prot, flags, fd, (long)off);
+}
+
+static void stat_a_64(const struct stat *s, struct stat64 *d)
+{
+    d->st_dev     = s->st_dev;
+    d->st_ino     = s->st_ino;
+    d->st_mode    = s->st_mode;
+    d->st_nlink   = s->st_nlink;
+    d->st_uid     = s->st_uid;
+    d->st_gid     = s->st_gid;
+    d->st_size    = (off64_t)s->st_size;
+    d->st_blksize = s->st_blksize;
+    d->st_blocks  = s->st_blocks;
+    d->st_atime   = s->st_atime;
+    d->st_mtime   = s->st_mtime;
+    d->st_ctime   = s->st_ctime;
+}
+
+int stat64(const char *path, struct stat64 *st)
+{
+    struct stat s;
+    if (stat(path, &s) < 0) return -1;
+    stat_a_64(&s, st);
+    return 0;
+}
+
+int lstat64(const char *path, struct stat64 *st)
+{
+    return stat64(path, st);
+}
+
+int fstat64(int fd, struct stat64 *st)
+{
+    struct stat s;
+    if (fstat(fd, &s) < 0) return -1;
+    stat_a_64(&s, st);
+    return 0;
 }
 
 #include "libc_getopt.c"     /* getopt, getopt_long: static libc only */

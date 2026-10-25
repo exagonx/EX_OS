@@ -30,4 +30,22 @@ struct stat {
     time_t          st_ctime;   /* = st_mtime */
 };
 
+/* The same with a 64-bit st_size: stat64() and the others fill it; with
+ * _FILE_OFFSET_BITS=64 on the 32-bit system struct stat is laid out the
+ * same (off_t is 64 bits there), and stat() is stat64(). */
+struct stat64 {
+    dev_t           st_dev;
+    ino_t           st_ino;
+    mode_t          st_mode;
+    nlink_t         st_nlink;
+    uid_t           st_uid;
+    gid_t           st_gid;
+    off64_t         st_size;
+    blksize_t       st_blksize;
+    blkcnt_t        st_blocks;
+    time_t          st_atime;
+    time_t          st_mtime;
+    time_t          st_ctime;
+};
+
 #endif /* EXOS_STAT_H */

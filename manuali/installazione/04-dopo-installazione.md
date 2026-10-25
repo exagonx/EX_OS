@@ -91,7 +91,12 @@ netupdate -install:zlib       e bzip2, xz, lz4, zstd, pcre2, fmt: le
                               librerie (con i programmi xz, zstd...)
 netupdate -install:ssl        OpenSSL 4.1.0: libssl, libcrypto e il
                               programma openssl
+netupdate -install:mariadb    MariaDB 11.8.9: il server SQL, i client
+                              e il servizio (vedi 4.10)
 ```
+
+Gli strumenti stanno su un DVD, non più su un CD: con MariaDB (circa 500 MB
+per architettura, sorgenti compresi) non entrano più in 700 MB.
 
 Finiscono in `/exos/bin`, che dalla versione 0.217 è nel PATH predefinito.
 
@@ -308,4 +313,52 @@ vuota; `hwconfig`, che riscrive `avvio.sh`, lo riporta avanti. Oggi lo ha
 vecchio modo: la riga in `avvio.sh` (che `hwconfig` riscrive) o la voce in
 `[modules]` di `kernel.cfg` per ciò che deve esserci prima di tutto, come la
 tastiera.
+
+---
+
+## 4.10 Il server MariaDB
+
+```
+netupdate -install:mariadb    (o il gruppo [mariadb] del DVD degli strumenti)
+mariadb-svc -install          una volta, da root
+```
+
+`-install` crea l'utente `mysql` (senza password: nessuno entra come
+`mysql`), scrive `/etc/my.cnf`, crea le tabelle di sistema in
+`/var/lib/mysql` (un minuto o due), mette il suo blocco in `/boot/avvio.sh` e
+accende il server. Da quel momento MariaDB parte **a ogni avvio, prima del
+login**, e allo spegnimento si chiude da solo: il kernel manda SIGTERM a ogni
+programma e aspetta fino a 30 secondi prima di fermare i dischi.
+
+```
+mariadb -u root               il client (legge [client] in /etc/my.cnf)
+mariadb-svc -stato            gira? risponde?
+mariadb-svc -ferma            lo ferma e aspetta che abbia chiuso
+mariadb-svc -avvia            lo riaccende
+mariadb-svc -remove           lo toglie dall'avvio (dati e my.cnf restano)
+```
+
+! **SOLO TCP, SOLO DA QUESTA MACCHINA.** EX-OS non ha i socket AF_UNIX: il
+  server ascolta su `127.0.0.1:3306`, e i client ci vanno da soli. Funziona
+  anche senza scheda di rete: dalla versione 0.014 `ip.drv` resta acceso con
+  il solo 127.0.0.1 quando non trova la scheda. Per aprirlo alla rete si
+  cambia `bind-address` in `/etc/my.cnf`, e prima si mette una password.
+
+! **root@localhost NON HA PASSWORD** all'inizio, come dopo
+  `mariadb-install-db`. Mettila:
+
+  ```
+  mariadb -u root -e "ALTER USER root@localhost IDENTIFIED BY '...'"
+  ```
+
+Il registro è `/var/log/mariadb/mariadb.log`; quello che `mariadbd` stampa da
+sé va in `/var/log/mariadb/mariadbd.out`. Le misure in `/etc/my.cnf` sono
+quelle di EX-OS: 16 connessioni, un buffer pool di 64 MB che può crescere
+fino a 256 (InnoDB riserva in anticipo lo spazio di indirizzi per il massimo,
+e un programma di EX-OS ne ha 3 GB).
+
+! **UN FILE ARRIVA A 2 GB**, su tutte e due le architetture: è un limite del
+  kernel di oggi. Oltre, la libc rifiuta la scrittura (EFBIG, «file troppo
+  grande») invece di scrivere in un punto sbagliato del file. Tienilo
+  presente per `ibdata1` e per le tabelle grandi.
 

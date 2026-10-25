@@ -58,7 +58,27 @@ typedef __UINTPTR_TYPE__    uintptr_t;
  * file: renderebbe solo silenziosa la troncatura al confine col kernel.
  * ============================================================================= */
 typedef int                 pid_t;
+/* ! _FILE_OFFSET_BITS=64 ON THE 32-BIT SYSTEM (25 October 2026, MariaDB):
+ * as with glibc, a program compiled with it gets a 64-bit off_t, and
+ * lseek, pread, pwrite, ftruncate, truncate, fseeko, ftello, mmap, stat,
+ * lstat and fstat become their *64 versions (EXOS_LFS: the same name in
+ * the source, another symbol in libc.a). Programs compiled without it keep
+ * the long they always had, and the libc.so of /bin does not change.
+ * ! THE KERNEL IS STILL AT 2 GB PER FILE, on both architectures (positions
+ * are 32 bits in the VFS): the *64 functions refuse beyond (EFBIG writing,
+ * EOVERFLOW seeking, end of file reading). The type is ready for the day
+ * the kernel goes past it; a program compiled today will not need to be
+ * compiled again (voce in the queue). At 64 bit off_t is a long anyway:
+ * the *64 names exist there too, as the same functions. */
+#if defined(_FILE_OFFSET_BITS) && _FILE_OFFSET_BITS == 64 && !defined(__x86_64__)
+#define EXOS_OFF64          1
+#define EXOS_LFS(nome)      __asm__(#nome "64")
+typedef long long           off_t;
+#else
+#define EXOS_LFS(nome)
 typedef long                off_t;
+#endif
+typedef long long           off64_t;
 typedef unsigned int        mode_t;
 typedef unsigned int        dev_t;
 typedef unsigned int        ino_t;
@@ -307,10 +327,12 @@ typedef long fpos_t;
 int     fgetpos(FILE *f, fpos_t *pos);
 int     fsetpos(FILE *f, const fpos_t *pos);
 
-/* ftello, fseeko: ftell e fseek con off_t, che qui e' un long anche lui.
- * Solo in libc.a. */
-off_t   ftello(FILE *f);
-int     fseeko(FILE *f, off_t off, int da);
+/* ftello, fseeko: ftell e fseek con off_t (a long, or 64 bits with
+ * _FILE_OFFSET_BITS=64 on the 32-bit system: see off_t). Solo in libc.a. */
+off_t   ftello(FILE *f) EXOS_LFS(ftello);
+int     fseeko(FILE *f, off_t off, int da) EXOS_LFS(fseeko);
+off64_t ftello64(FILE *f);
+int     fseeko64(FILE *f, off64_t off, int da);
 
 /* =============================================================================
  * setbuf, setvbuf — ! CI SONO MA NON CAMBIANO NIENTE
@@ -1644,7 +1666,12 @@ int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf)
  * -38 (ENOSYS) sul floppy: fat12.c non ha un troncamento. -30 (EROFS) su
  * un montaggio in sola lettura, -21 (EISDIR) su una directory.
  * ============================================================================= */
+#ifdef EXOS_OFF64
+int truncate(const char *path, off_t size) EXOS_LFS(truncate);
+#else
 int truncate(const char *path, unsigned int size);
+#endif
+int truncate64(const char *path, off64_t size);
 
 
 
@@ -1840,7 +1867,8 @@ struct stat;
 #endif
 
 void   *sbrk(int incr);      /* cima dell'heap; ritorna la posizione VECCHIA */
-long    lseek(int fd, long offset, int whence);
+off_t   lseek(int fd, off_t offset, int whence) EXOS_LFS(lseek);
+off64_t lseek64(int fd, off64_t offset, int whence);
 
 /* =============================================================================
  * Proprietario e permessi — StatPerm
@@ -1926,10 +1954,10 @@ int     chmod(const char *path, mode_t modo);
 int     fchmod(int fd, mode_t modo);
 mode_t  umask(mode_t maschera);
 
-int     stat(const char *path, struct stat *st);
+int     stat(const char *path, struct stat *st) EXOS_LFS(stat);
 /* Identica a stat: EX-OS non ha collegamenti simbolici, quindi non c'e'
  * niente da non seguire. C'e' perche' il codice di terzi la nomina. */
-int     lstat(const char *path, struct stat *st);
+int     lstat(const char *path, struct stat *st) EXOS_LFS(lstat);
 int     statraw(const char *path, Stat *st);
 
 /* fstat() lavora su un file APERTO. Per un file la risposta e' quella di
@@ -1937,7 +1965,13 @@ int     statraw(const char *path, Stat *st);
  * dal kernel (SYS_FSTAT, dal 0.228). Per console e pipe, e su un kernel
  * piu' vecchio, c'e' solo la dimensione: st_mode dice "file regolare",
  * st_ino e i tempi valgono zero. */
-int     fstat(int fd, struct stat *st);
+int     fstat(int fd, struct stat *st) EXOS_LFS(fstat);
+/* the same with a 64-bit st_size (struct stat64, exos_stat.h): what stat,
+ * lstat, fstat are with _FILE_OFFSET_BITS=64 on the 32-bit system */
+struct stat64;
+int     stat64(const char *path, struct stat64 *st);
+int     lstat64(const char *path, struct stat64 *st);
+int     fstat64(int fd, struct stat64 *st);
 /* Dimensione di un file APERTO, lasciando la posizione dov'era.
  * Non c'e' una syscall fstat: si compone di due lseek. */
 long    fsize(int fd);
@@ -2714,7 +2748,8 @@ int     getpagesize(void);
 #define MAP_NORESERVE   0x4000
 #define MAP_FAILED      ((void *)-1)
 
-void   *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off);
+void   *mmap(void *addr, size_t lung, int prot, int flags, int fd, off_t off) EXOS_LFS(mmap);
+void   *mmap64(void *addr, size_t lung, int prot, int flags, int fd, off64_t off);
 int     munmap(void *addr, size_t lung);
 /* Kernel 0.227, libc.a only (the floppy's libc.so has no room). PROT_NONE
  * is a page ring 3 cannot touch, PROT_EXEC is PROT_READ (no NX without PAE). A frame shared with other processes (library
@@ -3513,7 +3548,8 @@ int     shm_chiudi(void *p);
  * descriptors: files have truncate(path). */
 int     shm_open(const char *nome, int flag, mode_t modo);
 int     shm_unlink(const char *nome);
-int     ftruncate(int fd, off_t lung);
+int     ftruncate(int fd, off_t lung) EXOS_LFS(ftruncate);
+int     ftruncate64(int fd, off64_t lung);
 
 /* dlopen & c., libc.a only. Since 14 October 2026 ordinary ELF shared
  * objects (gcc -fPIC, ld -shared) are loaded by lib/libc_dl.c: DT_NEEDED,

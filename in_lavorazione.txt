@@ -8411,6 +8411,37 @@ tools/netinst/velocita tolto da netinst.
       PROSSIMO: il servizio (programma con -install/-remove, my.cnf, datadir,
       log), l'arresto dei servizi allo spegnimento (SIGTERM e attesa), ISO
       strumenti e netinst, poi i 32 bit. RESTA: socket AF_UNIX in EX-OS.
+      25/10 e) MARIADB 11.8.9 A 32 E 64 BIT, IL SERVIZIO, IL GRUPPO [mariadb].
+      Scelte dell'utente: l'ultima versione pubblicata 11.8.9 (archivio
+      ufficiale, firma GPG, in cross_build/terze-parti/mariadb; il clone
+      mariadb-server/ non serve piu'); tutto il gruppo sulla ISO strumenti,
+      che diventa un DVD (oltre 4 GB si smista su piu' ISO); ip.drv senza
+      scheda resta col solo loopback; file a 64 bit: prima l'ABI, poi il
+      kernel (voce 31). FATTO: costruisci.sh dall'archivio (tappe sorgente e
+      installa, 32 bit con la CPU base), mariadb-svc (-install, -avvia,
+      -ferma, -stato, -remove), ip.drv 0.014, libc _FILE_OFFSET_BITS=64 sul
+      32 bit (le *64, tools/prova_lfs.sh) e il rifiuto oltre 2 GB a 64 bit
+      (lseek/pwrite/ftruncate tagliavano la posizione). Provato:
+      prova_mariadb a 32 e 64, prova_mariadb_svc (32 bit, disco installato
+      SENZA scheda: -install, pronto prima del login al riavvio, la riga
+      resta, lo spegnimento chiude mariadbd, «Shutdown complete», niente
+      recupero). RESTA: una porta chiusa non riceve RST da ip.drv; socket
+      AF_UNIX; mariadb-svc a 64 bit su un disco installato (mkhd.sh installa
+      solo il 32 bit); le ISO strumenti col gruppo da rifare e provare con
+      netupdate -install:mariadb.
+
+  31. FILE OLTRE 2 GB NEL KERNEL (l'utente, 25/10: «prima l'ABI, poi il
+      kernel»). Oggi su ENTRAMBE le architetture un file arriva a 2 GB:
+      posizione del descrittore uint32 (sched.h), vfs_read/vfs_write con
+      offset uint32, lseek che rende un int32, VfsStat.dimensione uint32,
+      ext2 senza i_size_high (RO_COMPAT_LARGE_FILE), FAT fino a 4 GB. La
+      libc e' gia' pronta: off_t a 64 bit con _FILE_OFFSET_BITS=64 sul 32
+      bit, le *64 rifiutano oltre 2 GB (POS_MAX64 in lib/libc.c) - quando il
+      kernel cresce si cambia li' e i programmi (MariaDB) non si ricompilano.
+      Da fare: posizioni a 64 bit nel VFS e nei descrittori, syscall con
+      posizione in due registri sul 32 bit (lseek64, pread64, pwrite64,
+      ftruncate64, fstat con dimensione a 64), ext2 i_size_high, FAT a 4 GB.
+      Tocca i filesystem: va provato a fondo in QEMU prima del ferro.
 
   30. FATTO 25/10 (kernel 0.279, tools/prova_termios.sh a 32 e 64 bit,
       prova_telnet/ctrlc/ssh di nuovo a posto): termios Linux sul pty e

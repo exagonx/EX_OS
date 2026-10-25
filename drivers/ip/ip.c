@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.013");
+EX_VERSIONE("ip.drv", "0.014");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -360,7 +360,7 @@ static void manda_frame(const unsigned char *f, unsigned int len)
         g_loop_n++;
         return;
     }
-    if (ipc_send(g_pid_rete, NET_MSG_INVIA, f, len) < 0)
+    if (g_pid_rete <= 0 || ipc_send(g_pid_rete, NET_MSG_INVIA, f, len) < 0)
         g_st.scartati++;
 }
 
@@ -385,7 +385,7 @@ static void loop_svuota(void)
 
 static void riarma_ricezione(void)
 {
-    if (g_ricevi_armato) return;
+    if (g_ricevi_armato || g_pid_rete <= 0) return;
     if (ipc_send(g_pid_rete, NET_MSG_RICEVI, NULL, 0) == 0)
         g_ricevi_armato = 1;
 }
@@ -2384,8 +2384,12 @@ static void manda_tabella_arp(unsigned int client)
  * tempo ai due che lo precedono di accendersi in fila. Chi lo lancia a mano
  * dopo `netdetect -c` trova il servizio gia' registrato e non aspetta niente.
  *
- * Lo stack senza scheda non ha nessun ripiego: esce. E un driver uscito
- * all'avvio non lo rilancia nessuno. */
+ * ! WITHOUT A CARD IT STAYS, WITH 127.0.0.1 ONLY (0.014, 25 October 2026):
+ * it used to end here, and with it the loopback, which lives in this
+ * program; a machine without a network could not reach its own MariaDB
+ * (mariadb-svc). g_pid_rete stays 0: frames for elsewhere are dropped, the
+ * loopback queue works as always, and a card that arrives later is taken
+ * with IP_MSG_LINK like a WiFi radio. */
 /* ! TRENTA SECONDI, NON DIECI (8 ottobre 2026): una scheda vera puo' metterci
  * a negoziare il link, e chi aspetta poco lascia la macchina senza rete per
  * un driver che sarebbe arrivato un attimo dopo. Non costa niente a chi e'
@@ -2405,9 +2409,10 @@ static int aggancia_driver(void)
 
     g_pid_rete = ipc_attendi(g_link, ATTESA_SCHEDA_MS);
     if (g_pid_rete <= 0) {
-        printf("ip: il servizio '%s' non e' attivo.\n", g_link);
-        printf("    Avvia prima la scheda:  netdetect -c\n");
-        return -1;
+        g_pid_rete = 0;
+        printf("ip: nessuna scheda di rete ('%s' non e' attivo): solo 127.0.0.1.\n", g_link);
+        printf("    Per la rete:  netdetect -c, poi riavvia ip.drv\n");
+        return 0;
     }
 
     if (ipc_send(g_pid_rete, NET_MSG_INFO, NULL, 0) < 0) return -1;
@@ -2442,7 +2447,7 @@ static void servi(void)
         int r = ipc_recv_timeout(&meta, payload, sizeof(payload), GIRO_MS);
 
         if (r == 0) {
-            if ((int)meta.sender_pid == g_pid_rete) {
+            if (g_pid_rete > 0 && (int)meta.sender_pid == g_pid_rete) {
                 if (meta.tipo == NET_MSG_FRAME) {
                     /* Prima si riarma, poi si guarda: vedi il commento di
                      * testa sul perché l'ordine conta. */

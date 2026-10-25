@@ -2402,22 +2402,31 @@ chiamate di sistema.
 
 ### MariaDB 11.8 LTS gira in EX-OS (0.279)
 
-**provato a 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
+**provato a 32 e 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
 --bootstrap` crea le tabelle di sistema, il server parte e ascolta su
 `127.0.0.1:3306`, il client `mariadb` crea una tabella InnoDB, ci mette tre
 righe, annulla una cancellazione col rollback, e `mariadb-admin shutdown`
 ferma il server pulito; dopo, Linux trova sul disco `ibdata1` e il `.ibd`
 della tabella.
 
-MariaDB 11.8.10, il ramo stabile a lungo termine, da `mariadb-server/` (clone
-del repository ufficiale, seguito con `git pull`), costruito da
+MariaDB **11.8.9**, l'ultima versione del ramo stabile a lungo termine
+(l'archivio ufficiale, firma GPG verificata, in
+`cross_build/terze-parti/mariadb`), costruito da
 `tools/mariadb-exos/costruisci.sh` sulle librerie vere di EX-OS: ncurses,
 zlib, bzip2, xz, lz4, zstd, PCRE2, fmt e OpenSSL 4.1.0. Tutto statico
 (`mariadbd` e' 27 MB senza simboli); il server ascolta solo in TCP, perche'
 EX-OS non ha i socket AF_UNIX. `innodb_buffer_pool_size_max` va dato: per
 difetto InnoDB riserva 8 TB di indirizzi a 64 bit, e un programma di EX-OS ne
-ha 3 GB. Ancora no: il servizio che lo accende prima del login, il CD degli
-strumenti e netinst, i 32 bit. I dettagli sono in `tools/mariadb-exos/leggimi.md`.
+ha 3 GB. Gruppo `[mariadb]` della ISO degli strumenti e di netinst: il server
+in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`,
+`libmariadbclient.a` e `<mysql/*.h>`, i sorgenti. La ISO degli strumenti ora
+e' un DVD (circa 500 MB per architettura solo per MariaDB).
+
+**Il servizio:** `mariadb-svc -install` (da root) crea l'utente `mysql`,
+`/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql` e un blocco in
+`/boot/avvio.sh`: il server parte a ogni avvio, prima del login, e lo
+spegnimento lo chiude (manuale 4.10). I dettagli sono in
+`tools/mariadb-exos/leggimi.md`.
 
 Cosa e' servito in EX-OS:
 
@@ -2439,6 +2448,26 @@ Cosa e' servito in EX-OS:
   descrittori (diceva ancora 32, da prima del kernel 0.232); `fscanf`
   lasciava `feof` spento alla fine del file, perche' il suo `fseek` indietro
   lo cancellava.
+- **libc, `_FILE_OFFSET_BITS=64` sul sistema a 32 bit.** Come con glibc, un
+  programma compilato cosi' (MariaDB lo e') ha un `off_t` a 64 bit, e
+  `lseek`, `pread`, `pwrite`, `ftruncate`, `truncate`, `fseeko`/`ftello`,
+  `mmap`, `stat`/`lstat`/`fstat` diventano le loro versioni `*64` di
+  `libc.a`; i programmi compilati senza non cambiano. Il kernel tiene ancora
+  2 GB per file su entrambe le architetture: oltre, la libc rifiuta (EFBIG,
+  EOVERFLOW, fine del file) invece di tagliare la posizione. A 64 bit
+  `lseek`, `pwrite` e `ftruncate` passavano al kernel una posizione di 3 GB
+  tagliata a 32 bit (un `ftruncate` a 3 GB cambiava il file): ora rifiutano
+  anche li' (`tools/prova_lfs.sh`, 32 e 64 bit).
+- **ip.drv 0.014, 127.0.0.1 senza scheda.** Il loopback sta dentro
+  `ip.drv`, che senza scheda di rete usciva: una macchina senza rete non
+  raggiungeva il proprio server. Ora resta acceso con il solo 127.0.0.1; una
+  scheda che arriva dopo la prende come prima.
+- **kernel 0.279, lo spegnimento.** Prima di spegnere o riavviare il kernel
+  manda SIGTERM a ogni programma che non e' un driver e aspetta fino a 30 s,
+  cosi' `mariadbd` chiude InnoDB prima che i dischi si sincronizzino;
+  `setuid` cambia tutti i fili del programma, non solo chi chiama
+  (`mariadbd` scende a `mysql` con i fili gia' partiti). `getpwnam` e
+  compagni della libc leggono `/boot/utenti`.
 
 ### OpenSSL 4.1.0 con socket e fili, e 127.0.0.1
 

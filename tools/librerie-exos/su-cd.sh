@@ -19,7 +19,8 @@
 #     prova-librerie.cpp               the example (tools/prove/libreprova.cpp)
 #
 # One group per library in tools/iso/strumenti.txt: [zlib] [bzip2] [xz]
-# [lz4] [zstd] [pcre2] [fmt], and [ssl] for OpenSSL (tools/openssl-exos:
+# [lz4] [zstd] [pcre2] [fmt], [mariadb] (tools/mariadb-exos: also exos/mariadb,
+# the server and its share), and [ssl] for OpenSSL (tools/openssl-exos:
 # the Makefile and mktools64.sh also build provassl and provatls with it). A library not built is said on stderr, and the
 # CD is made without it. ncurses has its own (tools/ncurses-exos/su-cd.sh):
 # its terminfo and its links need more care.
@@ -36,7 +37,7 @@ esac
 [ -x "$STRIP" ] || STRIP=strip
 E="$CD/exos"
 fatte=""
-for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl; do
+for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb; do
     N=cross_build/$NOME-exos$BIT/exos
     if [ ! -d "$N/lib" ]; then
         echo "     $NOME assente: tools/$NOME-exos/costruisci.sh $BIT" >&2
@@ -51,6 +52,10 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl; do
         for b in "$N"/bin/*; do
             "$STRIP" -o "$E/bin/$(basename "$b")" "$b" && chmod 755 "$E/bin/$(basename "$b")"
         done
+    fi
+    if [ -d "$N/mariadb" ]; then
+        rm -rf "$E/mariadb"
+        cp -rp "$N/mariadb" "$E/"
     fi
     rm -rf "$E/src/$NOME"
     cp -rp "$N/src/$NOME" "$E/src/"

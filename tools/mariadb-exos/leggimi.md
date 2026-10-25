@@ -3,23 +3,30 @@
 Il server SQL di EX-OS: MariaDB, portato. Parte prima del login e della shell,
 una volta configurato, e da li' vive da solo.
 
-- **I sorgenti**: `mariadb-server/` nella radice del progetto, clone di
-  https://github.com/MariaDB/server. Fuori dalla cronologia di EX-OS
-  (`.gitignore`), dentro MEGA e dentro `backup.sh` con la sua `.git`.
-- **Al passo con l'ufficiale**: `git -C mariadb-server pull`, poi si
-  riapplicano le nostre patch e si ricompila. Le modifiche di EX-OS **non** si
-  scrivono dentro l'albero: stanno qui, in `tools/mariadb-exos/patch/`, con lo
-  script che le riapplica (come `tools/exilla/`).
+- **I sorgenti**: l'ultima versione pubblicata, **11.8.9** (scelta
+  dell'utente il 25/10: una versione uscita, non la testa del ramo 11.8):
+  `mariadb-11.8.9.tar.gz` e la sua `.asc` da
+  https://archive.mariadb.org/mariadb-11.8.9/source/, firma verificata
+  (MariaDB Signing Key 177F4010FE56CA3336300305F1656F24C74CD1D8), in
+  `cross_build/terze-parti/mariadb`. `costruisci.sh` lo estrae in
+  `cross_build/costruzione-mariadb-src`. Il clone `mariadb-server/` della
+  radice (11.8.9 + 300 commit, si chiamava 11.8.10) non serve piu'.
+- **Una versione nuova**: `VER` in `costruisci.sh`, l'archivio accanto al
+  vecchio; le cartelle di compilazione ripartono da sole. Le modifiche di
+  EX-OS **non** si scrivono dentro l'albero: stanno qui, in
+  `tools/mariadb-exos/patch/`, e le applica `costruisci.sh`.
 - **La licenza**: GPL 2, come EX-OS.
 - **Dove va**: sorgenti e compilati sulla ISO degli strumenti; il servizio nel
   repository di `netupdate`, a 64 bit e a 32 se si riesce.
 
-> **Stato al 25 ottobre 2026: MariaDB 11.8.10 si compila tutto a 64 bit**
+> **Stato al 25 ottobre 2026: MariaDB 11.8.9 gira a 32 e 64 bit**
 > (`mariadbd` statico, 27 MB senza simboli, il client `mariadb`,
 > `mariadb-admin`, `mariadb-dump` e gli altri) sulle librerie vere di EX-OS
 > (ncurses, zlib, bzip2, xz, lz4, zstd, PCRE2, fmt, OpenSSL 4.1.0). **In
 > QEMU `mariadbd --bootstrap` crea le tabelle di sistema** e il server
-> ascolta su 127.0.0.1:3306 (`tools/prova_mariadb.sh`). Per arrivarci:
+> ascolta su 127.0.0.1:3306 (`tools/prova_mariadb.sh`, 32 e 64 bit). Il
+> servizio e' `mariadb-svc` (sotto, "Il servizio"); gruppo `[mariadb]` della
+> ISO degli strumenti. A 32 bit serviva `_FILE_OFFSET_BITS=64` nella libc. Per arrivarci:
 > `sigwait`/`sigsuspend` nel kernel, `open` di una directory, il limite dei
 > descrittori giusto (128), `fscanf` che lascia `feof` alla fine del file, e
 > le funzioni e intestazioni elencate in "Cosa e' servito" qui sotto.
@@ -36,10 +43,9 @@ una volta configurato, e da li' vive da solo.
 | 13.0 | 13.0.2  | stable |
 | 13.1 | 13.1.2  | gamma |
 
-Per un servizio che deve stare in piedi da solo serve un ramo **stabile**,
-seguito con `git pull` su quel ramo (riceve le correzioni, non le novita'
-che rompono). **DA DECIDERE con l'utente** quale (`git -C mariadb-server
-switch <ramo>`).
+Per un servizio che deve stare in piedi da solo serve un ramo **stabile**.
+**DECISO (25/10):** 11.8 LTS, e di quel ramo l'ultima versione pubblicata,
+11.8.9, dall'archivio ufficiale firmato.
 
 ## Sottomoduli
 
@@ -150,17 +156,29 @@ BSD, `poll`, `fcntl`, `flock`, `fsync`, `pread`/`pwrite` veri (kernel
 
 ## Il servizio
 
-Prima del login e della shell, senza nessuno davanti:
+`mariadb-svc.c` (in questa cartella; `costruisci.sh installa` lo compila in
+`/exos/bin`). Scelte dell'utente, 25/10: nome `mariadb-svc`, `/etc/my.cnf` e
+`/var/lib/mysql`, utente `mysql` dedicato.
 
-- un programma di EX-OS che lo accende e lo spegne (`mariadb-svc`, nome da
-  decidere) con `-install`/`-remove`, che scrivono e tolgono il blocco in
-  `/boot/avvio.sh` (`avvio_blocco` della libc, come `nv50.drv`), dopo la
-  rete;
-- `mariadbd` in sottofondo, come utente suo (`mysql`), non root;
-- i messaggi in un file di log (`log_error`), non sulla console;
-- la prima configurazione: `mariadb-install-db` crea il datadir e le tabelle
-  di sistema; il file di configurazione in `/etc` o `/boot` (da decidere);
-- l'arresto pulito allo spegnimento (punto 2 sopra).
+- `-install` (root): l'utente `mysql` in `/boot/utenti` (uid libero fra 100
+  e 999, nessuna riga in `/boot/ombra`: nessuno entra come mysql),
+  `/etc/my.cnf` se manca, `/var/lib/mysql`, `/var/lib/mysql-tmp`,
+  `/var/log/mariadb`; le tabelle di sistema con `mariadbd --bootstrap <
+  share/bootstrap.sql` (quello che farebbe `mariadb-install-db`, che e' uno
+  script di shell); il blocco `mariadb-svc` in `/boot/avvio.sh`
+  (`avvio_blocco`) con `ip.drv &` se manca; accende `ip.drv` se non gira, poi
+  il server.
+- `-avvia`: aspetta `ip.drv` (127.0.0.1 sta dentro di lui), lancia
+  `mariadbd --defaults-file=/etc/my.cnf` e aspetta «ready for connections» nel
+  registro (non una connect: una porta chiusa non riceve RST da ip.drv).
+- `-ferma`: SIGTERM al pid di `mariadbd.pid`, aspetta fino a 120 s.
+- `-stato`, `-remove` (dati e my.cnf restano).
+- Lo spegnimento: il kernel (0.279, `segnali_arresto`) manda SIGTERM a ogni
+  programma e aspetta fino a 30 s prima di sincronizzare i dischi.
+- Senza scheda di rete `ip.drv` (0.014) resta acceso col solo 127.0.0.1.
+
+Prova: `tools/prova_mariadb_svc.sh` (32 bit, disco installato da
+`tools/mkhd.sh` senza scheda di rete).
 
 ## Tappe
 

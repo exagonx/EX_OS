@@ -642,7 +642,13 @@
  * EISDIR, as POSIX lets it: fstat, dup, close and fsync work, read and
  * ftruncate give EISDIR, write EBADF, any write or create flag EISDIR
  * (MariaDB opens its data directory to fsync it). On ext2 and FAT a
- * directory opened with O_TRUNC was truncated before being refused. */
+ * directory opened with O_TRUNC was truncated before being refused.
+ * Shutdown (segnali_arresto, called by sys_reboot before power off or
+ * restart): SIGTERM to every program that is not a driver nor the caller,
+ * and up to 30 s for them to end, so a server (mariadbd) closes its files
+ * before the disks are synced; the console says who did not end in time.
+ * setuid/setgid change every thread of the program, not only the caller:
+ * mariadbd drops to the user mysql after it has started its threads. */
 #define EXOS_VERSION    "0.279"
 
 /* Autore e contatto */

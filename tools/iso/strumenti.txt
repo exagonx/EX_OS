@@ -407,3 +407,34 @@ solo  = src/fmt
 
 nota  = g++ prog.cpp -lfmt   (oppure -DFMT_HEADER_ONLY senza -lfmt)
 nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[mariadb]
+nome  = MariaDB
+dice  = MariaDB 11.8.9 LTS: il server SQL, i client, libmariadbclient e il servizio mariadb-svc
+prova = mariadb/bin/mariadbd
+vuole = base
+mbyte = 500
+solo  = mariadb
+solo  = bin/mariadb
+solo  = bin/mariadb-admin
+solo  = bin/mariadb-binlog
+solo  = bin/mariadb-check
+solo  = bin/mariadb-conv
+solo  = bin/mariadb-dump
+solo  = bin/mariadb-import
+solo  = bin/mariadb-show
+solo  = bin/mariadb-slap
+solo  = bin/mariadb-tzinfo-to-sql
+solo  = bin/mariadb-upgrade
+solo  = bin/mariadb-svc
+solo  = lib/libmariadbclient.a
+solo  = include/mysql
+solo  = i386-exos/include/mysql
+solo  = src/mariadb
+
+nota  = Il server parte a ogni avvio, prima del login:  mariadb-svc -install
+nota  = (utente mysql, /etc/my.cnf, /var/lib/mysql, un blocco in /boot/avvio.sh).
+nota  = Solo TCP su 127.0.0.1:3306 (EX-OS non ha i socket AF_UNIX): mariadb -u root
+nota  = root@localhost non ha password all'inizio; mettila con ALTER USER.
+nota  = gcc prog.c -lmariadbclient -lssl -lcrypto -lz   (le API di <mysql/mysql.h>)

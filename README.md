@@ -2359,21 +2359,29 @@ by its thread pointer, read from `%gs`/`%fs` with no system call.
 
 ### MariaDB 11.8 LTS runs in EX-OS (0.279)
 
-**tested at 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
+**tested at 32 and 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
 --bootstrap` makes the system tables, the server starts and listens on
 `127.0.0.1:3306`, the `mariadb` client creates an InnoDB table, puts three
 rows in, rolls a delete back, and `mariadb-admin shutdown` stops the server
 cleanly; Linux finds `ibdata1` and the table's `.ibd` on the disk afterwards.
 
-MariaDB 11.8.10, the stable long-term branch, from `mariadb-server/` (a clone
-of the official repository, followed with `git pull`), built by
-`tools/mariadb-exos/costruisci.sh` on the real EX-OS libraries: ncurses,
-zlib, bzip2, xz, lz4, zstd, PCRE2, fmt and OpenSSL 4.1.0. Everything is
-static (`mariadbd` is 27 MB stripped); the server listens on TCP only,
+MariaDB **11.8.9**, the latest release of the stable long-term branch (the
+official archive, GPG signature checked, in `cross_build/terze-parti/mariadb`),
+built by `tools/mariadb-exos/costruisci.sh` on the real EX-OS libraries:
+ncurses, zlib, bzip2, xz, lz4, zstd, PCRE2, fmt and OpenSSL 4.1.0. Everything
+is static (`mariadbd` is 27 MB stripped); the server listens on TCP only,
 because EX-OS has no AF_UNIX sockets. `innodb_buffer_pool_size_max` must be
 given: by default InnoDB reserves 8 TB of addresses at 64 bit, and an EX-OS
-program has 3 GB. Not yet: the service that starts it before login, the
-tools CD and netinst, 32 bit. The details are in `tools/mariadb-exos/leggimi.md`.
+program has 3 GB. Group `[mariadb]` of the tools ISO and netinst: the server
+in `/exos/mariadb`, the clients and `mariadb-svc` in `/exos/bin`,
+`libmariadbclient.a` and `<mysql/*.h>`, the sources. The tools ISO is a DVD
+now (about 500 MB per architecture for MariaDB alone).
+
+**The service:** `mariadb-svc -install` (as root) makes the user `mysql`,
+`/etc/my.cnf`, the system tables in `/var/lib/mysql`, and a block in
+`/boot/avvio.sh`: the server starts at every boot, before the login, and the
+shutdown closes it (manual 4.10). The details are in
+`tools/mariadb-exos/leggimi.md`.
 
 What it needed in EX-OS:
 
@@ -2394,6 +2402,26 @@ What it needed in EX-OS:
   `<sys/poll.h>`, the BSD types (`u_char`, `uint`...); `getrlimit` says 128
   descriptors (it still said 32, from before kernel 0.232); `fscanf` left
   `feof` off at the end of a file, because its `fseek` back cleared it.
+- **libc, `_FILE_OFFSET_BITS=64` on the 32-bit system.** As with glibc, a
+  program compiled with it (MariaDB is) gets a 64-bit `off_t`, and `lseek`,
+  `pread`, `pwrite`, `ftruncate`, `truncate`, `fseeko`/`ftello`, `mmap`,
+  `stat`/`lstat`/`fstat` become their `*64` versions in `libc.a`; programs
+  compiled without it do not change. The kernel still holds 2 GB per file
+  on both architectures: past it the libc refuses (EFBIG, EOVERFLOW, end of
+  file) instead of cutting the position. At 64 bit `lseek`, `pwrite` and
+  `ftruncate` used to pass a 3 GB position to the kernel cut to 32 bits (an
+  `ftruncate` to 3 GB changed the file): refused now too
+  (`tools/prova_lfs.sh`, 32 and 64 bit).
+- **ip.drv 0.014, 127.0.0.1 without a card.** The loopback lives in
+  `ip.drv`, which used to end when it found no network card: a machine
+  without a network could not reach its own server. Now it stays with
+  127.0.0.1 alone; a card arriving later is taken as before.
+- **kernel 0.279, shutdown.** Before power off or restart the kernel sends
+  SIGTERM to every program that is not a driver and waits up to 30 s, so
+  `mariadbd` closes InnoDB before the disks are synced; `setuid` changes
+  every thread of the program, not only the caller (`mariadbd` drops to
+  `mysql` with its threads already running). The libc's `getpwnam` &c.
+  read `/boot/utenti`.
 
 ### OpenSSL 4.1.0 with sockets and threads, and 127.0.0.1
 

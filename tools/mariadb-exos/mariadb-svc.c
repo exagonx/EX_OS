@@ -246,6 +246,13 @@ static int avvia(void)
         printf("mariadb-svc: manca la configurazione: prima `mariadb-svc -install`\n");
         return 1;
     }
+    /* ! ip.drv FIRST: 127.0.0.1 is inside it. At boot it is started a line
+     * earlier and waits up to 30 s for a card before it stays with the
+     * loopback alone (ip.drv 0.014); mariadbd would fail its bind before. */
+    if (ipc_attendi("ip", 40000) <= 0) {
+        printf("mariadb-svc: ip.drv non gira, e 127.0.0.1 sta dentro di lui: `ip.drv &`\n");
+        return 1;
+    }
     da = fine_registro();
     pid = lancia(NULL, NULL, NULL);
     if (pid < 0) { printf("mariadb-svc: non parte " MARIADBD " (%s)\n", strerror(-pid)); return 1; }
@@ -367,7 +374,8 @@ static int installa(void)
     }
 
     /* ! ip.drv EVEN WITHOUT A NETWORK: 127.0.0.1 is inside it (the loopback
-     * of ip.drv 0.013); hwconfig writes `ip.drv &` where there is a card. */
+     * of ip.drv 0.013), and without a card it stays with that alone (0.014);
+     * hwconfig writes `ip.drv &` where there is a card. */
     snprintf(righe, sizeof righe, "# MariaDB, 127.0.0.1:%d (" CONF ")\n%s" "/exos/bin/mariadb-svc -avvia\n",
              PORTA, (avvio_ha_riga("ip.drv") || avvio_ha_riga("/dev/ip.drv")) ? "" : "ip.drv &\n");
     if (avvio_blocco(BLOCCO, NULL) < 0 || avvio_blocco(BLOCCO, righe) < 0) {
@@ -375,6 +383,11 @@ static int installa(void)
         return 1;
     }
     printf("  /boot/avvio.sh: il server parte a ogni avvio\n");
+    if (ipc_lookup("ip") <= 0) {
+        char *av[2] = { (char *)"/dev/ip.drv", NULL };
+        if (spawn(av[0], av) < 0) printf("mariadb-svc: non parte /dev/ip.drv\n");
+        else printf("  ip.drv acceso (127.0.0.1)\n");
+    }
     return avvia();
 }
 
