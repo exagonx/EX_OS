@@ -1083,6 +1083,12 @@ int32_t sys_waitpid(InterruptFrame *frame)
         if (options & WNOHANG)      return 0;
 
         sched_block(PROC_BLOCKED);
+        /* ! INTERRUPTED, IT DOES NOT GO BACK TO WAIT (25 October 2026), as in
+         * pipe_leggi: the exit happens on the way out of the syscall, and a
+         * waitpid that blocked again never got there. telnetd interrupted the
+         * shell of a session whose client had left, the shell was waiting for
+         * gfedit, and both stayed alive holding a pty. */
+        if (proc_interrotto()) return ERR(EINTR);
         /* Svegliato da proc_exit di un figlio → riprova */
     }
 }
@@ -1181,6 +1187,7 @@ int32_t sys_thread_attendi(InterruptFrame *frame)
          * svegliato da nessuno — resterebbe bloccato con il filo gia' morto. */
         filo->ppid = self->pid;
         sched_block(PROC_BLOCKED);
+        if (proc_interrotto()) return ERR(EINTR);   /* see sys_waitpid */
     }
 }
 

@@ -2399,6 +2399,46 @@ chiamate di sistema.
 > Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
 > le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
 
+### Una sessione telnet che non torna, e lo schermo della NVIDIA integrata (0.278)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd ucciso e
+rilanciato, un programma dell'altra architettura, una sessione lasciata a metà
+dentro `gfedit`), e i numeri dello schermo **misurati sul CQ60**.
+
+**Sul CQ60 la porta 23 si apriva e non tornava un byte, nemmeno dopo `kill` e
+un `telnetd` nuovo.** Serviva riavviare. Tre difetti in fila:
+
+- un programma a 32 bit sul kernel a 64 è `ENOEXEC`, e la shell (0.008)
+  mandava ogni `ENOEXEC` al programma associato al file: `gfedit`. `gfedit`
+  legge la tastiera della macchina, non la sessione, e la sessione restava
+  lì. Adesso la shell dice **«e' un programma a 32 bit, questo sistema e' a
+  64»** (o il contrario) e va avanti;
+- quando il client se ne va `telnetd` interrompe la shell della sessione; ma
+  `waitpid`, svegliata, **tornava ad aspettare** il figlio, e la shell non
+  arrivava mai all'uscita che il kernel fa sulla via del ritorno dalla
+  chiamata. Adesso `waitpid` e `thread_attendi` rendono `EINTR` a un processo
+  interrotto, come facevano già pipe, IPC e pty. `telnetd` (0.011) raccoglie
+  anche la shell, che restava zombie;
+- l'ascoltatore del `telnetd` ucciso **restava sulla porta 23 in `ip.drv`**:
+  accettava ogni connessione senza nessuno dietro e respingeva il `telnetd`
+  nuovo (`EADDRINUSE`). `ip.drv` (0.012) libera la porta di un programma
+  morto, sia quando qualcuno chiede di ascoltare sia all'arrivo di un SYN.
+
+**La NVIDIA integrata scriveva lo schermo a 47 MB/s.** Sulle MCP77/79 la
+«memoria video» è RAM messa da parte dal BIOS, e attraverso la BAR1 della
+scheda ogni pixel fa CPU -> scheda -> RAM: la scrittura combinata (0.275) non
+cambiava niente. `nv50.drv` 0.008 dà al kernel l'indirizzo di quella RAM, che
+il kernel mappa a scrittura combinata come ogni framebuffer:
+
+```
+                               BAR1     RAM rubata
+CPU riempie lo schermo           47       4167   MB/s
+ombra in RAM -> schermo          47       1475
+CPU legge lo schermo              4         82
+```
+
+Un fotogramma intero della scrivania a 1366x768 passa da circa 90 ms a circa 3.
+
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 
 **testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di

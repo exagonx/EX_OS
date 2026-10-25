@@ -8136,6 +8136,16 @@ tools/netinst/velocita tolto da netinst.
       (wserver: riempimenti al motore anche con l'ombra? finestre in
       VRAM?). La copia del motore a 73 MB/s e' lenta: capire perche'
       (0x8b0 e' il blit con scala; provare altri metodi).
+      25/10 MISURATO SUL CQ60 (0.277, via telnet): col PAT nulla cambia,
+      CPU->schermo 47 MB/s, lettura 4. La strada lenta e' la BAR1: sulle
+      integrate (0xaa/0xac) la VRAM e' RAM rubata (0x100E10: 0xb0000000) e
+      ogni pixel fa CPU -> scheda -> RAM. nv50.drv 0.008: video_cambia col
+      fisico RAM rubata + 0x800000 (fb_fisico), il kernel lo mappa WC.
+      Rimisurato: CPU riempie lo schermo 4167, ombra->schermo 1475, legge
+      82 (prima 47/47/4): un fotogramma 1366x768 da 90 ms a ~3 ms. Il motore
+      riempie 1000, copia 82 (resta lenta: da capire, contesto DMA 0x1a003d
+      verso RAM con snoop?). DA FARE: nv50.drv 0.008 sul portatile
+      (netupdate), la scrivania a 1366x768 a confronto, poi il passo 4.
 
   26. FIREFOX (EXILLA) SUL CQ60 CON LO SWAP - DA FARE A CONTESTO PULITO
       (l'utente, 24/10): "sto provando programmi grossi come firefox per
@@ -8296,6 +8306,26 @@ tools/netinst/velocita tolto da netinst.
       Vedi la voce 15 (Exilla sul portatile) e la memoria «Firefox si costruisce qui»:
       gli strumenti stanno in cross_build/nasi5deb. telnetd sul portatile
       per i dmesg.
+
+  27. FIREFOX LENTO A PARTIRE E SCRIVANIA A SCATTI MENTRE CARICA (l'utente,
+      25/10): «firefox e' lento a caricare in memoria 106 secondi, su linux
+      e windows 10 i tempi sono sotto i 10 secondi sullo stesso hardware,
+      cosa serve per migliorare, anche perche' durante il caricamento tutta
+      l'interfaccia inizia a muoversi a scatti come se la cpu facesse il
+      100% del lavoro». Dieci volte piu' lento dello stesso ferro.
+      Primi indizi (25/10, dmesg del CQ60 col 0.277):
+      a. «SMP: a 64 bit un processore solo, per ora (EXOS64-DAFARE)»
+         (kernel/arch/x86_64/smp64.c): il CQ60 gira a 64 bit su UN core.
+         Firefox (~150 fili) e wserver si dividono quel core: la scrivania
+         a scatti durante il caricamento viene da qui, e parte della
+         lentezza.
+      b. il disco: la lettura su richiesta del binario da 220 MB e degli
+         omni.ja (pagina per pagina? quanta lettura anticipata?), sqlite
+         del profilo.
+      c. la CPU spesa dove non serve (mmap/munmap, fili che aspettano a
+         giro, il lucchetto del VFS: @CODA-20-10 p.5).
+      Da fare: misurare prima di cambiare (secondi di disco contro secondi
+      di CPU), poi l'SMP a 64 bit, che serve comunque.
 
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):
@@ -8504,6 +8534,23 @@ tools/netinst/velocita tolto da netinst.
       occupato; dopo quattro volte telnetd rifiuta tutti («non c'e' un
       pseudo-terminale libero») fino al riavvio. E non c'e' `ps`/`kill`
       per liberarli dalla console: servono tutti e due.
+      RISOLTO 25/10 (kernel 0.278, sh 0.008, telnetd 0.011, ip.drv 0.012):
+      a. sh: un ELF rifiutato (ENOEXEC) andava ad apri_associato -> gfedit,
+         che legge la tastiera della macchina (kbd), non il pty: sessione
+         ferma. Ora «e' un programma a 32 bit, questo sistema e' a 64».
+      b. kernel: waitpid/thread_attendi tornavano a bloccarsi dopo
+         interrompi: la shell della sessione non usciva mai. Ora EINTR.
+      c. telnetd raccoglie la shell interrotta (prima restava zombie).
+      d. ip.drv: l'ascoltatore di un telnetd ucciso restava sulla porta 23,
+         accettava i SYN (porta aperta, zero byte) e dava EADDRINUSE al
+         telnetd nuovo: ecco perche' kill + rilancio non bastava. Ora un
+         ascoltatore di un processo morto si libera (tcp_ascolta e SYN).
+      Provato in QEMU a 32 e 64 bit (prova_telnet.sh, kill e rilancio,
+      programma dell'altra architettura, gfedit staccato).
+      APERTO: un figlio che non legge il pty (gfedit) sopravvive alla
+      sessione e tiene il pty; decidere con l'utente se telnetd alla fine
+      della sessione interrompe tutti i discendenti (come SIGHUP su Unix,
+      ma uccide anche i lavori lanciati con & dalla sessione).
   22. SISTEMA DI BASE IN RAMDISK (l'utente, 22/10): l'avvio carica UN
       archivio (~1 MB, oggi «quel che entra nel floppy») in un ramdisk che
       fa da radice: kernel, sh/login/mount, driver e moduli che servono a

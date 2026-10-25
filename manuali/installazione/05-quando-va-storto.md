@@ -171,6 +171,31 @@ avanzava comunque. Corretto in `telnetd` 0.004: `telnetd -version`.
 
 ---
 
+## La porta 23 si apre ma telnet non scrive niente, nemmeno dopo `kill`
+
+Sintomo: il client si collega e non riceve un byte; uccidere `telnetd` e
+rilanciarlo non cambia niente («non posso ascoltare sulla porta 23 (-98)»),
+serve riavviare.
+
+Erano tre difetti in fila, corretti nel kernel 0.278, `ip.drv` 0.012,
+`sh` 0.008 e `telnetd` 0.011:
+
+- un programma per l'altra architettura (32 bit su un sistema a 64, o il
+  contrario) veniva aperto con `gfedit`, che legge la tastiera della
+  macchina e non la sessione: la sessione restava ferma lì. Ora la shell
+  dice «e' un programma a 32 bit, questo sistema e' a 64»;
+- la shell interrotta da `telnetd` quando il client se ne va non usciva se
+  stava aspettando un comando, e teneva il terminale della sessione;
+- la porta di un `telnetd` ucciso restava intestata a lui in `ip.drv`:
+  accettava le connessioni senza nessuno dietro e respingeva il `telnetd`
+  nuovo. Ora una porta di un programma morto si libera.
+
+! Un programma lanciato dalla sessione che **non** legge la sessione
+  (`gfedit`, per dirne uno) resta vivo dopo che il client se n'è andato:
+  si ferma con `ps` e `kill`.
+
+---
+
 ## Il ping non risponde ma la porta risponde
 
 Se `ping` è muto **e** una connessione TCP riesce, la macchina **non è morta**:

@@ -602,7 +602,12 @@
  * lseek on a file now hold the descriptor's position (posizione_di) while
  * they move it, so the offset cannot go back after two concurrent reads.
  * In libc the stdio streams got their lock (flockfile, recursive). */
-#define EXOS_VERSION    "0.277"
+/* 0.277 -> 0.278: waitpid and thread_attendi return EINTR to an interrupted
+ * process instead of blocking again, so it reaches the exit on the way out of
+ * the syscall. telnetd interrupted the shell of a session whose client had
+ * left; the shell was waiting for a child (gfedit, opened on a 32-bit program
+ * the 64-bit kernel refused) and both stayed alive with the session's pty. */
+#define EXOS_VERSION    "0.278"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

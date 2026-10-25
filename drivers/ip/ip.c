@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.011");
+EX_VERSIONE("ip.drv", "0.012");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -1299,6 +1299,16 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
                 break;
             }
 
+        /* ! A LISTENER WHOSE PROGRAM IS DEAD ANSWERS NOBODY (25 October
+         * 2026). telnetd killed on the CQ60 left its port 23 here: every SYN
+         * got a connection that no one would ever accept, the client saw the
+         * port open and not one byte, and the new telnetd could not listen.
+         * A SYN is rare enough to ask who is alive. */
+        if (asc != NULL && !pid_vivo(asc->proprietario)) {
+            tcp_riprendi_orfane();
+            asc = NULL;
+        }
+
         if (asc == NULL) { g_st.scartati++; return; }
 
         for (i = 0; i < IP_TCP_CONNESSIONI; i++)
@@ -1670,8 +1680,13 @@ static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
     /* ! DUE ASCOLTATORI SULLA STESSA PORTA NON POSSONO ESISTERE, e il secondo
      * deve saperlo: senza questo controllo il SYN andrebbe al primo che si
      * trova scorrendo la tabella, cioe' a caso. */
+    /* ! BUT A DEAD OWNER DOES NOT HOLD THE PORT: a telnetd killed and run
+     * again found its own old listener and went away with EADDRINUSE. */
     for (i = 0; i < IP_TCP_CONNESSIONI; i++)
         if (g_tcp[i].stato == S_ASCOLTA && g_tcp[i].porta_loc == a->porta) {
+            if (!pid_vivo(g_tcp[i].proprietario) && tcp_riprendi_orfane() > 0 &&
+                g_tcp[i].stato == S_LIBERA)
+                continue;
             rispondi_esito(cliente, -EADDRINUSE);
             return;
         }

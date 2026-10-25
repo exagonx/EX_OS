@@ -140,6 +140,13 @@ nv50.drv -install        a ogni avvio; -remove lo toglie
 
 La console arriva a 170 colonne per 48 righe.
 
+! **SULLE INTEGRATE LO SCHERMO STA IN RAM** (MCP77/79, come il CQ60): la
+  «memoria video» è RAM che il BIOS ha messo da parte, e da `nv50.drv` 0.008
+  console e scrivania la scrivono lì direttamente invece che attraverso la
+  scheda. Sul CQ60 il processore scrive lo schermo a circa 4000 MB/s invece
+  di 47: un fotogramma intero passa da 90 ms a 3. `-nativo` dice
+  l'indirizzo («framebuffer a 0xb0800000»).
+
 Il motore 2D della scheda (riempimenti e copie fatti dalla GPU) è in prova,
 e vuole il pannello già nativo:
 

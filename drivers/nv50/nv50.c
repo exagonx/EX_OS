@@ -48,7 +48,7 @@
 #include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.007");
+EX_VERSIONE("nv50.drv", "0.008");
 
 #define NV_VENDITORE   0x10DE
 
@@ -353,6 +353,40 @@ static int stato(int tutto)
 #define FB_H        768u
 #define FB_PITCH    5632u           /* 1366*4 = 5464, arrotondato a 256 */
 
+/* =============================================================================
+ * fb_fisico — where the CPU writes the framebuffer (25 October 2026)
+ *
+ * ! ON THE INTEGRATED ONES (0xaa/0xac, MCP77/79) THE BAR1 IS A DETOUR. Their
+ * "VRAM" is RAM stolen by the BIOS (0x100E10: base), and through the BAR1
+ * every pixel goes CPU -> card -> RAM. Measured on the CQ60 with -2dmisura:
+ * through the BAR1 the CPU writes 47 MB/s and reads 4 even write-combining
+ * (kernel 0.275 PAT); the same pixels at stolen base + offset, uncached, 115
+ * and 82. A 1366x768 frame through the BAR1 is 90 ms: the desktop in jerks.
+ * So the kernel (console, fb_map, wserver) gets the RAM address, and maps it
+ * write-combining like any framebuffer. The display and the 2D engine keep
+ * seeing VRAM offsets: nothing changes for them.
+ *
+ * ! THE BAR1 ADDRESS STAYS VALID as "ours" (fb_nostro): a kernel already
+ * moved by an older nv50.drv must not look like a foreign mode.
+ * ============================================================================= */
+static int integrata(void)
+{
+    unsigned int a = (rd(0) >> 20) & 0x1ff;
+
+    return a == 0xaa || a == 0xac;
+}
+
+static unsigned int fb_fisico(void)
+{
+    if (integrata() && rd(0x100E10) != 0) return (rd(0x100E10) << 12) + FB_OFFSET;
+    return g_bar1 + FB_OFFSET;
+}
+
+static int fb_nostro(unsigned int fisico)
+{
+    return fisico == fb_fisico() || fisico == g_bar1 + FB_OFFSET;
+}
+
 static unsigned int g_vram_kb;      /* xf86-video-nv: videoRam, in KB */
 static volatile unsigned char *g_vram;
 static int g_scadute;
@@ -646,7 +680,7 @@ static int prova(int motivo_si)
     if (!motivo_si) {
         VideoCambio v;
 
-        v.fisico = g_bar1 + FB_OFFSET;
+        v.fisico = fb_fisico();
         v.larghezza = FB_W; v.altezza = FB_H; v.passo = FB_PITCH; v.bit = 32;
         if (video_cambia(&v) != 0) {
             printf("nv50: il kernel non passa al framebuffer nuovo (errno %d%s):\n"
@@ -654,7 +688,8 @@ static int prova(int motivo_si)
                    errno == 16 ? ", la scrivania tiene la grafica: chiudila" : "");
             return 1;
         }
-        TRACCIA("nv50: la console del kernel e' passata a %ux%u\n", FB_W, FB_H);
+        TRACCIA("nv50: la console del kernel e' passata a %ux%u, framebuffer a 0x%08x\n",
+                FB_W, FB_H, v.fisico);
     }
 
     preinit();
@@ -900,7 +935,7 @@ static int motore_accendi(int verboso)
     /* ! IL FRAMEBUFFER DEVE ESSERE IL NOSTRO: le superfici del motore sono
      * quelle di prova() (8 MB, pitch 5632). Col modo del BIOS il motore
      * disegnerebbe dove nessuno guarda. */
-    if (video_info(&vi) != 0 || vi.fisico != g_bar1 + FB_OFFSET ||
+    if (video_info(&vi) != 0 || !fb_nostro(vi.fisico) ||
         vi.larghezza != FB_W || vi.altezza != FB_H || vi.bit != 32) {
         if (verboso)
             printf("nv50: lo schermo non e' il nostro %ux%u: prima  nv50.drv -nativo\n",
@@ -1237,6 +1272,41 @@ static int misura_2d(void)
          { if (motore_riempi(0, 0, w, h, giri * 0x010101u) != 0) break; });
     GIRA("motore: copiare schermo -> schermo",
          { if (motore_copia(0, 0, 0, h, w, h) != 0) break; });
+
+    /* ! ON THE INTEGRATED ONES (0xaa/0xac) THE "VRAM" IS RAM, and the BAR1 is
+     * a detour: the CPU writes to the card, the card writes back to RAM. The
+     * same pixels are at stolen base + offset; mmio_map gives them uncached,
+     * which is enough to see whether the screen is there and whether the
+     * road is faster. */
+    if (g_arch == 0xaa || g_arch == 0xac) {
+        MmioZona      m;
+        unsigned char *rb;
+        volatile unsigned int *f0 = (volatile unsigned int *)fb;
+
+        m.fisico = (rd(0x100E10) << 12) + FB_OFFSET;
+        m.byte   = FB_PITCH * h;
+        if (mmio_map(&m) != 0) {
+            printf("  RAM rubata: mmio_map(0x%08x) rifiutata (errno %d)\n", m.fisico, errno);
+        } else {
+            rb = (unsigned char *)(unsigned long)m.virt;
+            *(volatile unsigned int *)rb = 0x00123456u;
+            *(volatile unsigned int *)(rb + FB_PITCH * 7 + 40) = 0x00654321u;
+            printf("  RAM rubata 0x%08x: %s (0x%08x 0x%08x)\n", m.fisico,
+                   (f0[0] == 0x00123456u && f0[FB_PITCH / 4 * 7 + 10] == 0x00654321u)
+                       ? "e' lo schermo" : "NON e' lo schermo",
+                   f0[0], f0[FB_PITCH / 4 * 7 + 10]);
+            GIRA("CPU: riempire la RAM rubata (UC)", {
+                for (j = 0; j < h; j++) {
+                    unsigned int *p = (unsigned int *)(rb + j * FB_PITCH);
+                    for (i = 0; i < w; i++) p[i] = giri;
+                } });
+            GIRA("CPU: leggere la RAM rubata (UC)", {
+                for (j = 0; j < h; j++) {
+                    const volatile unsigned int *p = (const unsigned int *)(rb + j * FB_PITCH);
+                    for (i = 0; i < w; i++) somma += p[i];
+                } });
+        }
+    }
 #undef GIRA
 
     motore_riempi(0, 0, FB_W, FB_H, 0);
@@ -1434,7 +1504,7 @@ int main(int argc, char **argv)
     if (g_zitto) {
         VideoInfo v;
 
-        if (video_info(&v) == 0 && v.fisico == g_bar1 + FB_OFFSET &&
+        if (video_info(&v) == 0 && v.fisico == fb_fisico() &&
             v.larghezza == FB_W && v.altezza == FB_H)
             return 0;
     }

@@ -1098,7 +1098,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.007"
+#define SH_VERSIONE  "0.008"
 
 #define MAX_LINE    512
 
@@ -1936,6 +1936,20 @@ static int cerca_nel_path(const char *prog, char *dst, uint32_t dim)
  * quando esiste `sh -c`: chi chiama system() distingue cosi' un comando
  * che non c'e' (127) da un comando che c'e' e non parte (126) da un
  * comando partito e finito male (il suo codice). */
+/* The ELF class of a file: 1 = 32 bit, 2 = 64 bit, 0 = not an ELF or not
+ * readable. */
+static int classe_elf(const char *path)
+{
+    unsigned char m[5];
+    int fd = sh_open(path, 0), n;
+
+    if (fd < 0) return 0;
+    n = sh_read(fd, m, 5);
+    sh_close(fd);
+    if (n != 5 || m[0] != 0x7F || m[1] != 'E' || m[2] != 'L' || m[3] != 'F') return 0;
+    return m[4];
+}
+
 static void spiega_avvio_fallito(const char *path, int err)
 {
     if (err == -SH_ENOENT) {
@@ -1954,6 +1968,10 @@ static void spiega_avvio_fallito(const char *path, int err)
         printerr(": non hai il permesso di eseguirlo");
         print("      Se il file e' tuo:  chmod 755 ");
         printerr(path);
+    } else if (err == -SH_ENOEXEC && classe_elf(path) == 1 && sizeof(void *) == 8) {
+        printerr(": e' un programma a 32 bit, questo sistema e' a 64");
+    } else if (err == -SH_ENOEXEC && classe_elf(path) == 2 && sizeof(void *) == 4) {
+        printerr(": e' un programma a 64 bit, questo sistema e' a 32");
     } else {
         printerr(err == -SH_ENOEXEC ? ": non e' un programma eseguibile"
                                     : ": impossibile avviarlo");
@@ -2177,8 +2195,14 @@ static void run_program(const char *prog, int argc, char *argv[],
     }
 
     /* ! UN FILE CHE NON E' UN PROGRAMMA SI APRE COL SUO (29 settembre 2026,
-     * @ASSOCIAZIONI): `nota.txt` battuto alla shell apre l'editor. */
-    if (pid == -SH_ENOEXEC && apri_associato(da_lanciare, background, cmdline, extra, pid_out))
+     * @ASSOCIAZIONI): `nota.txt` battuto alla shell apre l'editor.
+     * ! BUT NOT AN ELF THE KERNEL REFUSED (25 October 2026): a 32-bit program
+     * on the 64-bit kernel is ENOEXEC too, and it went to gfedit. In a telnet
+     * session gfedit reads the machine's own keyboard, never the pty: the
+     * session stayed stuck in it and kept a pty when the client left. A
+     * non-ELF was already sent to its program before the spawn. */
+    if (pid == -SH_ENOEXEC && classe_elf(da_lanciare) == 0 &&
+        apri_associato(da_lanciare, background, cmdline, extra, pid_out))
         return;
 
     /* Il file c'era e lo spawn e' fallito lo stesso: il motivo e' un

@@ -2356,6 +2356,46 @@ by its thread pointer, read from `%gs`/`%fs` with no system call.
 > program's own atomic variables EX-OS's GCC has `<stdatomic.h>` and the
 > `__atomic_*` builtins, which become `lock` instructions: no libc needed.
 
+### A telnet session that will not come back, and the screen of the integrated NVIDIA (0.278)
+
+**tested at 32 and 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd killed
+and run again, a program of the other architecture, a session left in the
+middle of `gfedit`), and the screen numbers **measured on the CQ60**.
+
+**On the CQ60 port 23 opened and no byte came back, even after `kill` and a
+new `telnetd`.** It took a reboot. Three faults in a row:
+
+- a 32-bit program on the 64-bit kernel is `ENOEXEC`, and the shell (0.008)
+  sent every `ENOEXEC` to the program associated with the file — `gfedit`.
+  `gfedit` reads the machine's own keyboard, not the session, so the session
+  sat in it. Now the shell says **"e' un programma a 32 bit, questo sistema
+  e' a 64"** (or the other way round) and goes on;
+- when the client leaves, `telnetd` interrupts the session's shell; but
+  `waitpid`, woken, **went back to waiting** for the child, and the shell
+  never reached the exit on the way out of the system call. Now `waitpid` and
+  `thread_attendi` return `EINTR` to an interrupted process, as pipes, IPC
+  and the pty already did. `telnetd` (0.011) also collects the shell, which
+  stayed a zombie;
+- the killed `telnetd`'s listener **stayed on port 23 in `ip.drv`**: it
+  accepted every connection with nobody behind it and refused the new
+  `telnetd` (`EADDRINUSE`). `ip.drv` (0.012) frees a port whose program is
+  dead, both when someone asks to listen and when a SYN arrives.
+
+**The integrated NVIDIA wrote its screen at 47 MB/s.** On the MCP77/79 the
+"video memory" is RAM the BIOS set aside, and through the card's BAR1 every
+pixel goes CPU -> card -> RAM: write-combining (0.275) changed nothing.
+`nv50.drv` 0.008 hands the kernel the address of that RAM instead, which the
+kernel maps write-combining like any framebuffer:
+
+```
+                               BAR1     stolen RAM
+CPU fills the screen             47       4167   MB/s
+shadow in RAM -> screen          47       1475
+CPU reads the screen              4         82
+```
+
+A full 1366x768 frame of the desktop goes from about 90 ms to about 3.
+
 ### The editor shortcuts, and something I had written wrong
 
 **tested** — a line typed in the editor and only Ctrl+S pressed: the status line

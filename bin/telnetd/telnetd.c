@@ -52,7 +52,7 @@
 #define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.010");
+EX_VERSIONE("telnetd", "0.011");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -973,6 +973,21 @@ static void sessione(int id, const Config *cfg, int con_login)
      * senza questo, resterebbe attaccato a un pty che non ha piu' nessuno
      * dall'altra parte — un processo per ogni sessione finita male. */
     interrompi(figlio);
+
+    /* ! AND IT IS COLLECTED (25 October 2026): since kernel 0.278 an
+     * interrupted shell really exits, and nobody else waits for it — it
+     * stayed a zombie for the life of telnetd. A shell that does not go
+     * within two seconds is left to init, not waited for forever. */
+    {
+        int st, giri;
+
+        for (giri = 0; giri < 40; giri++) {
+            int w = waitpid(figlio, &st, WNOHANG);
+
+            if (w == figlio || w < 0) break;
+            usleep(50000);
+        }
+    }
 
     close(fd[0]);
     ipc_send(pid_ip, IP_MSG_TCP_CHIUDI, &r, sizeof(r));
