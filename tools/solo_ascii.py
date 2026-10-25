@@ -38,7 +38,9 @@ SALTA = ("gcc/", "coreutils/", "rust/", "FreeBASIC", "openssl/", "quickjs/",
          # Exilla: i sorgenti di Firefox (27 settembre 2026). Con loro
          # dentro `make all` si fermava su 60 stringhe che su uno schermo
          # di EX-OS non passeranno mai.
-         "firefox-main/", "gnu/", "gfbasic/")
+         "firefox-main/", "gnu/", "gfbasic/",
+         # MariaDB (25 October 2026): its sql/authors.h stopped `make all`.
+         "mariadb-server/")
 
 def spoglia(testo):
     """Toglie commenti e caratteri, lascia le stringhe al loro posto."""

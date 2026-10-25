@@ -8327,6 +8327,106 @@ tools/netinst/velocita tolto da netinst.
       Da fare: misurare prima di cambiare (secondi di disco contro secondi
       di CPU), poi l'SMP a 64 bit, che serve comunque.
 
+  28. MARIADB, IL SERVER SQL (l'utente, 25/10): «mi serve un server SQL»;
+      sorgenti in mariadb-server/ (clone di github.com/MariaDB/server, in
+      .gitignore, su MEGA e in backup.sh con la .git), tenuti al passo con
+      l'ufficiale; sorgenti e compilati sulla ISO degli strumenti, servizio
+      su netinst a 64 bit e a 32 se si riesce. «E' un servizio che parte
+      prima del login e della shell una volta configurato, quindi deve
+      essere autonomo». ANALISI FATTA: tools/mariadb-exos/leggimi.md.
+      DA DECIDERE: il ramo stabile (main e' 13.2 alpha). Mancano in EX-OS:
+      sigwait (ENOSYS), arresto dei servizi allo spegnimento, prova del
+      127.0.0.1; limiti: 24 connessioni TCP di sistema, 128 fd per processo.
+      25/10 SCELTO 11.8 LTS (ramo 11.8, git pull lo segue), libmariadb
+      inizializzato, strumenti dell'host fatti (costruzione-mariadb-host),
+      tools/mariadb-exos/costruisci.sh a tappe. L'UTENTE: prima di MariaDB
+      vanno portate in EX-OS TUTTE le librerie che usa, come librerie vere a
+      32 e 64 bit (servono anche ad altro), ultima versione pubblica,
+      sorgenti su ISO strumenti e netinst 32/64. Ordine deciso:
+        a) TERMIOS VERO (voce 30) - senza, curses non e' usabile;
+        b) ncurses 6.6 (firma GPG verificata, terze-parti/ncurses), terminfo
+           "vga" per la console (TERM=vga);
+        c) PCRE2 10.49, zlib, libfmt 12.2 (intestazioni), zstd, xz/lzma,
+           bzip2, lz4; OpenSSL gia' c'e' (va nei sysroot);
+        d) poi MariaDB (la tappa configura si era fermata su Curses).
+      Archivi gia' scaricati: terze-parti/mariadb/{pcre2-10.49,fmt-12.2.0}.zip
+      (MD5 come nei cmake di MariaDB).
+      25/10 FATTI a) e b): termios vero (voce 30) e ncurses 6.6 a 32 e 64
+      bit (tools/ncurses-exos/costruisci.sh: libncurses, panel, menu, form,
+      ncurses++, terminfo con la voce "vga", tic/tput/infocmp; nei quattro
+      sysroot; su entrambi i CD degli strumenti con i sorgenti, gruppo
+      [curses], quindi anche nei netinst). Provata in QEMU a 32 e 64 bit
+      (tools/prova_curses.sh): riquadri, inverso, colori, deleteln,
+      finestre, tasti F1/Canc/PagGiu'/frecce; e COMPILATA DENTRO EX-OS col
+      gcc del CD strumenti. Per farla: getopt/getopt_long, getpgrp,
+      ttyname nella libc; la console impara ICH DCH ECH IL DL CHA VPA
+      DECSTBM RI ESC7/8 SGR7 (vga.c) e F1-F12/Ins/Canc/PagSu/PagGiu' in
+      modo grezzo (kbd.c). RESTA: ncursesw (la wide) aspetta l'UTF-8 nella
+      libc (wchar_t oggi e' Latin-1, manca wcwidth); SIGWINCH non c'e'
+      (una finestra telnet ridimensionata non lo dice al programma).
+      25/10 FATTO c): zlib 1.3.2, bzip2 1.0.8, xz 5.8.4, lz4 1.10.0, zstd
+      1.5.7, PCRE2 10.49, fmt 12.2.0 a 32 e 64 bit, ognuna col suo
+      tools/<nome>-exos/costruisci.sh (comune in tools/librerie-exos),
+      archivi verificati in terze-parti/, nei sysroot, sui due CD con i
+      sorgenti (gruppi [zlib] [bzip2] [xz] [lz4] [zstd] [pcre2] [fmt]).
+      Provate in QEMU (tools/prova_librerie.sh): andata e ritorno di ogni
+      compressore, programmi xz/zstd/bzip2/lz4 scambiano file con Linux,
+      PCRE2 e POSIX, fmt. fmt 12.2.0 a 32 bit: patch PR #4813 di monte.
+      Trovati strada facendo: pthread_create falliva a 64 bit in ogni
+      programma senza TLS (klog in kernel/loader/elf.c leggeva tls NULL, il
+      compilatore toglieva i controlli: corretto), O_NOCTTY e fchown nella
+      libc. RESTA: PCRE2 senza JIT.
+      25/10 OPENSSL (l'utente: rifarlo, ultima versione pubblica): 4.1.0
+      del 23/10, firma GPG, tools/openssl-exos/costruisci.sh a 32 e 64 con
+      socket, pthread e il programma openssl (via prepara-openssl.sh e lo
+      snapshot no-sock no-threads); libgit2 ricostruita (exos-compat.h
+      senza ASN1_STRING_length_ex). Per farlo: ip.drv 0.013 col LOOPBACK
+      (127.x e il proprio indirizzo non escono dalla scheda: coda interna),
+      libc: select con fd_set da 1088 (i socket stanno da 1024), getsockname
+      con l'indirizzo di bind, connect a 0.0.0.0 -> 127.0.0.1,
+      getservbyname/port, setpgid. Provato (tools/prova_openssl.sh, 32 e 64):
+      4 fili, TLS su 127.0.0.1 server+client, TLS 1.3 a www.example.com
+      verificato, openssl dgst/genpkey/req (Linux verifica), s_client.
+      RESTA: una connessione a una porta chiusa non riceve RST (ip.drv non
+      ne manda): il client aspetta la scadenza invece di ECONNREFUSED.
+      PROSSIMO: d) MariaDB 11.8.
+
+  30. FATTO 25/10 (kernel 0.279, tools/prova_termios.sh a 32 e 64 bit,
+      prova_telnet/ctrlc/ssh di nuovo a posto): termios Linux sul pty e
+      sulla console (kbd.drv a byte, SYS_CONSOLE_PRONTO per poll), la shell
+      rimette i modi prima del prompt. Il testo sotto e' com'era.
+      TERMIOS (25/10, prerequisito di ncurses e della readline): oggi
+      tcgetattr/tcsetattr rendono ENOTTY. Pty (kernel/ipc/pty.c): ha gia'
+      PTY_CANONICO/PTY_ECO e la misura; mancano ISIG, ICRNL, VMIN/VTIME,
+      TCGETS/TCSETS e TIOCGWINSZ/TIOCSWINSZ nell'ioctl (oggi solo FD_STDIN,
+      e fisso 80x25). Console: la disciplina sta in kbd.drv (READLINE a
+      righe, raw = codici KBD_K_* via IPC): serve un modo a byte con
+      eco/ISIG/ICRNL scelti dal termios. DIFETTO TROVATO: poll() su stdin
+      della console guarda g_input_buf del tty interno, vuoto quando c'e'
+      kbd.drv -> non dice mai pronto. Prove: QEMU 32 e 64, console e telnet.
+
+  29. L'AMBIENTE DA ZERO (l'utente, 25/10): «servono tutti i sorgenti, cosi'
+      che su un nuovo sistema possa ricostruirsi partendo dalla presenza di
+      solo gcc di base». FATTO backup.sh: archivia anche la cartella vera di
+      cross_build (e' un collegamento) con i soli sorgenti di terzi (binutils,
+      gmp, mpfr, mpc, openlibm, acpica, ath5k, libgit2, minimp3, rustc) e
+      niente compilati/toolchain installate/dischi delle prove; corretto un
+      difetto vecchio: "build" senza barra escludeva anche firefox-main/build,
+      xpcom/build, gcc/libgo/go/go/build e le build/ di Rust (sorgenti).
+      DA FARE: il Makefile NON crea l'ambiente (toolchain i386/x86_64-exos,
+      binutils, nativi, Rust, OpenSSL, FreeBASIC...): oggi sono script
+      separati lanciati a mano (tools/binutils-exos, tools/gcc-exos/
+      prepara-cross.sh e cross64.sh, tools/exilla/...). Serve un comando unico
+      (es. `make ambiente`) che li chiama in ordine dai sorgenti dell'archivio.
+      FATTO 25/10 (�assicurati che il makefile avvisa di ogni parte
+      mancante suggerendo quale comando o script eseguire�): tools/ambiente.sh,
+      un elenco unico di parti con prova e rimedio; il Makefile lo chiama
+      all'inizio di all, iso, iso-exos, iso64, utente64, kernel64, tools64,
+      netinst, netinst64, usb, usb64 (manca un pezzo indispensabile: si ferma
+      prima di compilare); `make ambiente-stato` elenca tutto;
+      `tools/ambiente.sh -per toolchain` per ricostruire i compilatori. Il
+      futuro `make ambiente` puo' partire da li'.
+
   1. @RETE-VELOCE - «rete lan e accesso al disco non sono molto performanti,
      soprattutto la rete». Analisi fatta (drivers/ip/ip.c, diario):
      a. FINESTRA DI INVIO: TCP_BUF 4096 = al massimo 4 KB in volo in uscita;

@@ -6,22 +6,15 @@
  *   has no special files). Adding the field would change the struct that
  *   the 32-bit libc.so fills for programs already built; st_dev is always 0,
  *   which is what st_rdev would say. Used once, in index.c.
- * - The EX-OS OpenSSL is 4.1 built with no-deprecated: SSL_get_peer_certificate
- *   is SSL_get1_peer_certificate (libgit2 frees the certificate it gets, so
- *   "get1" is right) and ASN1_STRING_length is ASN1_STRING_length_ex.
+ * - SSL_get_peer_certificate is SSL_get1_peer_certificate (libgit2 frees the
+ *   certificate it gets, so "get1" is right): the old name is deprecated.
+ *   (Until 25 October 2026 ASN1_STRING_length went to ASN1_STRING_length_ex
+ *   too: that was the development snapshot of OpenSSL; 4.1.0, built by
+ *   tools/openssl-exos/costruisci.sh with the deprecated calls in, has the
+ *   old ASN1_STRING_length and no _ex.)
  * ============================================================================= */
 #ifndef EXOS_LIBGIT2_COMPAT_H
 #define EXOS_LIBGIT2_COMPAT_H
 #define st_rdev st_dev
 #define SSL_get_peer_certificate SSL_get1_peer_certificate
-/* The header still declares ASN1_STRING_length (only the library lacks it),
- * so the NAME is redirected to an inline of ours: the header's declaration
- * then redeclares it, with the same type, and keeps it internal. */
-struct asn1_string_st;
-__SIZE_TYPE__ ASN1_STRING_length_ex(const struct asn1_string_st *x);
-static __inline__ int exos_asn1_string_length(const struct asn1_string_st *x)
-{
-    return (int)ASN1_STRING_length_ex(x);
-}
-#define ASN1_STRING_length exos_asn1_string_length
 #endif

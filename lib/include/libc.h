@@ -1182,6 +1182,10 @@ int console_registro(char *buf, unsigned int max);
  * keyboard driver's question (@TASTI-SISTEMA, 28 September 2026). A negative
  * error on a kernel older than 0.221. */
 int console_ctrlc(unsigned int n);
+/* The keyboard driver tells the kernel how many bytes a read on text
+ * console n would find now, so that poll() on the console works (kernel
+ * 0.279). Root only. */
+int console_pronto(unsigned int n, unsigned int quanti);
 int console_write(unsigned int n, const void *buf, unsigned int len);
 
 /* =============================================================================
@@ -1632,7 +1636,10 @@ int truncate(const char *path, unsigned int size);
 #define O_NONBLOCK  0x800
 /* Accettati e tolti dalla libc prima del kernel (i numeri di Linux):
  * O_CLOEXEC perche' EX-OS non ha exec che erediti i descrittori, O_NOFOLLOW
- * perche' non ci sono collegamenti simbolici da non seguire. */
+ * perche' non ci sono collegamenti simbolici da non seguire, O_NOCTTY
+ * perche' aprire un terminale non lo fa mai diventare quello di controllo
+ * (non ci sono sessioni: vedi setsid). */
+#define O_NOCTTY    0x100
 #define O_NOFOLLOW  0x20000
 #define O_CLOEXEC   0x80000
 #define O_ACCMODE   3
@@ -2767,6 +2774,8 @@ int wait4(int pid, int *stato, int opzioni, struct rusage *uso);
 int setsid(void);
 int getsid(int pid);
 int getpgid(int pid);        /* no process groups: the pid itself */
+int getpgrp(void);           /* the same: getpid() */
+int setpgid(int pid, int pgid); /* only to its own group: 0, else EPERM */
 
 /* sigpending: always the empty set (no syscall knows the pending ones yet);
  * sigwait: ENOSYS. Static libc only, for ported code (libgit2). */
@@ -3599,7 +3608,7 @@ int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
  * select() c'e' per i programmi che la usano gia', ed e' scritta SOPRA poll()
  * dentro la libc: nel kernel l'attesa su piu' sorgenti e' una sola, perche'
  * scriverla due volte vuol dire sbagliarla due volte. Le sue maschere non
- * possono nominare FD_IPC — un fd_set arriva a 32 bit e FD_IPC (= MAX_FD, 128) ne sta fuori.
+ * possono nominare FD_IPC (= MAX_FD, 128), che non e' un descrittore vero.
  *
  * STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h e ripetuta in
  * lib/libc.c, che non include questo file: TRE copie, tutte identiche.
@@ -3622,14 +3631,18 @@ struct pollfd {
 
 int     poll(struct pollfd *fds, unsigned int nfds, int timeout);
 
-/* fd_set: una maschera a 32 bit, uno per descrittore. MAX_FD del kernel e'
- * 32, quindi ci sta tutto. Definizione ripetuta in lib/libc.c. */
-#define FD_SETSIZE  32
-typedef struct { unsigned int bit; } fd_set;
-#define FD_ZERO(s)      ((s)->bit = 0u)
-#define FD_SET(f, s)    ((s)->bit |=  (1u << (f)))
-#define FD_CLR(f, s)    ((s)->bit &= ~(1u << (f)))
-#define FD_ISSET(f, s)  ((((s)->bit) >> (f)) & 1u)
+/* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
+ * openssl program's s_client): the files (MAX_FD, 128) and the sockets, whose
+ * descriptors start at 1024 (PRESA_BASE, 64 of them). Until then it was one
+ * 32-bit word, which named neither. select() reads and writes only the words
+ * below nfds, so a program built with the old one-word fd_set (nfds <= 32)
+ * still works with the new libc.so. Definition repeated in lib/libc.c. */
+#define FD_SETSIZE  1088
+typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
+#define FD_ZERO(s)      ((void)__builtin_memset((s), 0, sizeof(fd_set)))
+#define FD_SET(f, s)    ((s)->bit[(unsigned int)(f) / 32u] |=  (1u << ((unsigned int)(f) % 32u)))
+#define FD_CLR(f, s)    ((s)->bit[(unsigned int)(f) / 32u] &= ~(1u << ((unsigned int)(f) % 32u)))
+#define FD_ISSET(f, s)  (((s)->bit[(unsigned int)(f) / 32u] >> ((unsigned int)(f) % 32u)) & 1u)
 
 int     select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
                struct timeval *scadenza);

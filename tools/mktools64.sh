@@ -119,30 +119,26 @@ if [ -d "$S/include/c++" ]; then :; elif [ -d "$TC64/include/c++" ]; then
     cp -rp "$TC64/include/c++" "$E/include/"
 fi
 
-# --- OpenSSL, if tools/openssl-exos/prepara-openssl.sh built it at 64 bit -------
-# (EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh, then make
-# build_libs in cross_build/openssl-build-exos64). The same layout as the
+# --- OpenSSL, if tools/openssl-exos/costruisci.sh built it at 64 bit -------------
+# (tools/openssl-exos/costruisci.sh 64, which also leaves the archives and
+# include/ in cross_build/openssl-build-exos64). The same layout as the
 # 32-bit CD: the archives in /exos/lib, the headers, the CA store, and the two
 # test programs in /bin.
 O=cross_build/openssl-build-exos64
 if [ -f "$O/libcrypto.a" ] && [ -f "$O/libssl.a" ]; then
     cp -p "$O/libcrypto.a" "$O/libssl.a" "$E/lib/"
     mkdir -p "$E/include/openssl" "$E/ssl" "$OUT/bin"
-    # the source headers first, then the generated ones over them; -f and
-    # u+w because the source tree's headers are read-only
-    cp -r openssl/include/openssl/. "$E/include/openssl/"
-    chmod -R u+w "$E/include/openssl"
     cp -rf "$O/include/openssl/." "$E/include/openssl/"
     [ -f /etc/ssl/certs/ca-certificates.crt ] && cp /etc/ssl/certs/ca-certificates.crt "$E/ssl/certi.pem"
     CC64="$TC64/bin/$TARGET-gcc"
-    "$CC64" -O2 -I "$O/include" -I openssl/include -o "$OUT/bin/provassl" tools/iso/prova-ssl.c \
+    "$CC64" -O2 -I "$O/include" -o "$OUT/bin/provassl" tools/iso/prova-ssl.c \
         "$O/libcrypto.a" && "$STRIP" "$OUT/bin/provassl"
-    "$CC64" -O2 -I drivers/net -I drivers/pci -I "$O/include" -I openssl/include \
+    "$CC64" -O2 -I drivers/net -I drivers/pci -I "$O/include" \
         -o "$OUT/bin/provatls" tools/iso/prova-tls.c lib/rete.c lib/dns.c \
         "$O/libssl.a" "$O/libcrypto.a" && "$STRIP" "$OUT/bin/provatls"
-    echo "mktools64: OpenSSL $(sed -n 's/^MAJOR=//p' openssl/VERSION.dat).$(sed -n 's/^MINOR=//p' openssl/VERSION.dat) - libcrypto, libssl, provassl, provatls"
+    echo "mktools64: OpenSSL $(sed -n 's/^VER=//p' tools/openssl-exos/costruisci.sh) - libcrypto, libssl, provassl, provatls"
 else
-    echo "mktools64: no 64-bit OpenSSL ($O): EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh" >&2
+    echo "mktools64: no 64-bit OpenSSL ($O): tools/openssl-exos/costruisci.sh 64" >&2
 fi
 
 # --- libgit2, if tools/libgit2-exos/costruisci.sh built it (17 October 2026) -----
@@ -158,6 +154,13 @@ if [ -f "$G2/lib/libgit2.a" ] && [ -f "$O/libssl.a" ]; then
 else
     echo "mktools64: no libgit2 ($G2): tools/libgit2-exos/costruisci.sh" >&2
 fi
+
+# --- ncurses, if tools/ncurses-exos/costruisci.sh built it (25 October 2026) ------
+# Group [curses]: the libraries, headers, terminfo, tic/tput..., the sources.
+# The same script as the 32-bit CD (make iso).
+sh tools/ncurses-exos/su-cd.sh "$OUT" 64 | sed 's/^ *//; s/^/mktools64: /'
+# and zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}: tools/librerie-exos/su-cd.sh
+sh tools/librerie-exos/su-cd.sh "$OUT" 64 | sed 's/^ *//; s/^/mktools64: /'
 
 # --- FreeBASIC, if tools/freebasic-exos/prepara-fb64.sh built it ----------------
 # (@FB-64, 16 October 2026) The layout of the 32-bit CD, under the target name

@@ -269,6 +269,18 @@ typedef struct {
     /* Client in attesa di una RIGA (0 = nessuno) */
     unsigned reader_pid;
     unsigned reader_max;
+    unsigned reader_subito;     /* KBD_T_SUBITO: answer even with nothing */
+
+    /* =====================================================================
+     * THE TERMIOS OF THIS CONSOLE (kernel 0.279), as far as it concerns the
+     * line discipline: KBD_T_* bits and VMIN. 0 is the old behaviour, a line
+     * with echo. With KBD_T_BYTE every key goes to the ring as soon as it is
+     * typed — the line buffer stays empty, Backspace is a byte like any
+     * other — and a reader is served when VMIN bytes are there. The kernel
+     * sends it with every read and at every tcsetattr (KBD_MSG_SETTERM).
+     * ===================================================================== */
+    unsigned term;
+    unsigned tmin;
 
     /* =====================================================================
      * Modalità raw — vedi il commento esteso in kbd_proto.h
@@ -529,23 +541,90 @@ static unsigned ring_take_line(ConsoleIn *c, char *out, unsigned max)
     return n;
 }
 
+/* Bytes for a reader in KBD_T_BYTE mode: no line, no terminator. What does
+ * not fit is lost, as in ring_put_line: a key typed into a full ring. */
+static void ring_put_bytes(ConsoleIn *c, const char *s, unsigned len)
+{
+    unsigned i;
+
+    for (i = 0; i < len && c->rcount < KBD_RING_SIZE; i++) {
+        c->ring[c->rtail] = s[i];
+        c->rtail = (c->rtail + 1) % KBD_RING_SIZE;
+        c->rcount++;
+    }
+}
+
+static unsigned ring_take_bytes(ConsoleIn *c, char *out, unsigned max)
+{
+    unsigned n = 0;
+
+    while (c->rcount > 0 && n < max) {
+        out[n++] = c->ring[c->rhead];
+        c->rhead = (c->rhead + 1) % KBD_RING_SIZE;
+        c->rcount--;
+    }
+    return n;
+}
+
+/* Tell the kernel how many bytes a read on console n would find now, for
+ * poll() (kernel 0.279): in line mode, a whole line or nothing. */
+static void segnala_pronto(unsigned n)
+{
+    ConsoleIn *c = &g_c[n];
+    unsigned   quanti;
+
+    if (c->term & KBD_T_BYTE) quanti = c->rcount;
+    else                      quanti = c->rlines ? c->rcount : 0;
+    console_pronto(n, quanti);
+}
+
+/* The modes change (tcsetattr, or a read that brings different ones).
+ * ! TO BYTES, THE HALF LINE IS HANDED OVER: it was typed, and a program that
+ * switches mode between two keys must not lose it. BACK TO LINES, the bytes
+ * nobody read are dropped: they were keys for the program that just left
+ * raw mode, not the start of a command. */
+static void imposta_term(unsigned n, unsigned modi, unsigned min)
+{
+    ConsoleIn *c = &g_c[n];
+    unsigned   era = c->term;
+
+    modi &= ~KBD_T_SUBITO;
+    if (!(era & KBD_T_BYTE) && (modi & KBD_T_BYTE)) {
+        ring_put_bytes(c, c->line, c->line_len);
+        c->line_len = 0;
+        c->line_col = 0;
+    } else if ((era & KBD_T_BYTE) && !(modi & KBD_T_BYTE)) {
+        c->rhead = c->rtail = c->rcount = c->rlines = 0;
+    }
+    c->term = modi;
+    c->tmin = min;
+}
+
 /* =============================================================================
  * try_serve_reader — consegna una riga al client in attesa su una
  * console, se ce n'è una pronta. Chiamata sia quando arriva una
  * richiesta (potrebbe esserci già type-ahead in coda) sia quando una
  * riga si completa (il client potrebbe essere già in attesa da prima).
  * ============================================================================= */
-static void try_serve_reader(unsigned n)
+static void servi_lettore(unsigned n)
 {
     ConsoleIn *c = &g_c[n];
     char       out[KBD_LINE_MAX];
     unsigned   max = c->reader_max;
     unsigned   len;
 
-    if (c->reader_pid == 0 || c->rlines == 0) return;
-
+    if (c->reader_pid == 0) return;
     if (max > sizeof(out)) max = sizeof(out);
-    len = ring_take_line(c, out, max);
+
+    if (c->term & KBD_T_BYTE) {
+        unsigned serve = c->tmin ? c->tmin : 1;
+        if (serve > max) serve = max;
+        if (c->rcount < serve && !c->reader_subito) return;
+        len = ring_take_bytes(c, out, max);
+    } else {
+        if (c->rlines == 0 && !c->reader_subito) return;
+        len = ring_take_line(c, out, max);
+    }
 
     if (ipc_send(c->reader_pid, KBD_MSG_LINE, out, len) < 0) {
         /* Client sparito fra la richiesta e la risposta (terminato, o
@@ -554,6 +633,15 @@ static void try_serve_reader(unsigned n)
         printf("kbd: consegna a PID %u fallita, client sparito\n", c->reader_pid);
     }
     c->reader_pid = 0;
+}
+
+/* ! AFTER EVERY CHANCE TO SERVE, THE KERNEL HEARS WHAT IS LEFT, reader or
+ * not: a program in poll() has no read pending, and it is exactly the one
+ * that must learn that a key arrived. */
+static void try_serve_reader(unsigned n)
+{
+    servi_lettore(n);
+    segnala_pronto(n);
 }
 
 /* =============================================================================
@@ -820,6 +908,18 @@ static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
 
     if (sc >= 128) return;
 
+    /* F1..F12 in termios byte mode, as the Linux console sends them */
+    if ((c->term & KBD_T_BYTE) && kbd_func_key(sc)) {
+        static const char *const fn[12] = {
+            "\x1B[[A", "\x1B[[B", "\x1B[[C", "\x1B[[D", "\x1B[[E",
+            "\x1B[17~", "\x1B[18~", "\x1B[19~", "\x1B[20~", "\x1B[21~",
+            "\x1B[23~", "\x1B[24~"
+        };
+        const char *t = fn[kbd_func_key(sc) - KBD_K_F1];
+        ring_put_bytes(c, t, strlen(t));
+        return;
+    }
+
     ascii = traduci(sc);
     if (g_caps && ascii >= 'a' && ascii <= 'z')      ascii = (char)(ascii - 32);
     else if (g_caps && ascii >= 'A' && ascii <= 'Z') ascii = (char)(ascii + 32);
@@ -1078,6 +1178,19 @@ static void kbd_process_scancode(unsigned char sc)
 
         if (c->raw) { kbd_raw_scancode(sc, 1); return; }
 
+        /* termios without ICANON: also the keys a line has no use for, as
+         * the Linux console sends them (the "vga" terminfo entry says so) */
+        if (c->term & KBD_T_BYTE) {
+            const char *t = 0;
+            switch (sc) {
+                case 0x52: t = "\x1B[2~"; break;    /* Insert */
+                case 0x53: t = "\x1B[3~"; break;    /* Delete */
+                case 0x49: t = "\x1B[5~"; break;    /* Page Up */
+                case 0x51: t = "\x1B[6~"; break;    /* Page Down */
+            }
+            if (t) { ring_put_bytes(c, t, 4); return; }
+        }
+
         seq[0] = '\x1B';
         seq[1] = '[';
         switch (sc) {
@@ -1088,6 +1201,10 @@ static void kbd_process_scancode(unsigned char sc)
             case 0x47: seq[2] = 'H'; break;   /* Home */
             case 0x4F: seq[2] = 'F'; break;   /* End */
             default:   return;                /* tasto esteso non mappato */
+        }
+        if (c->term & KBD_T_BYTE) {          /* termios: straight to the reader */
+            ring_put_bytes(c, seq, 3);
+            return;
         }
         if (c->line_len + 3 < KBD_LINE_MAX) {
             c->vis[c->line_len]  = 0;
@@ -1119,6 +1236,18 @@ static void kbd_process_scancode(unsigned char sc)
 
     if (sc >= 128) return;
 
+    /* F1..F12 in termios byte mode, as the Linux console sends them */
+    if ((c->term & KBD_T_BYTE) && kbd_func_key(sc)) {
+        static const char *const fn[12] = {
+            "\x1B[[A", "\x1B[[B", "\x1B[[C", "\x1B[[D", "\x1B[[E",
+            "\x1B[17~", "\x1B[18~", "\x1B[19~", "\x1B[20~", "\x1B[21~",
+            "\x1B[23~", "\x1B[24~"
+        };
+        const char *t = fn[kbd_func_key(sc) - KBD_K_F1];
+        ring_put_bytes(c, t, strlen(t));
+        return;
+    }
+
     ascii = traduci(sc);
 
     /* CapsLock inverte il caso delle sole lettere */
@@ -1130,6 +1259,26 @@ static void kbd_process_scancode(unsigned char sc)
     else if (g_ctrl && ascii >= 'A' && ascii <= 'Z') ascii = (char)(ascii - 'A' + 1);
 
     if (ascii == 0) return;
+
+    /* =====================================================================
+     * TERMIOS WITHOUT ICANON (kernel 0.279): the key is a byte for the
+     * program, now. No line, no Backspace editing; Ctrl+C still asks unless
+     * ISIG is off; Enter is LF, or CR without ICRNL; the echo only with ECHO.
+     * ===================================================================== */
+    if (c->term & KBD_T_BYTE) {
+        if (!(c->term & KBD_T_NOSIG)) {
+            if (ctrl_c_risposta(ascii)) return;
+            if (ascii == 3) { ctrl_c(c); return; }
+        }
+        if (ascii == '\n' || ascii == '\r')
+            ascii = (c->term & KBD_T_NOCRNL) ? '\r' : '\n';
+        ring_put_bytes(c, &ascii, 1);
+        if (!(c->term & KBD_T_NOECO)) {
+            if (ascii == '\n' || ascii == '\r') echo_char('\n');
+            else if (eco_visibile(ascii))       echo_char(ascii);
+        }
+        return;
+    }
 
     /* Ctrl+C: see ctrl_c(). First the answer to a question already asked. */
     if (ctrl_c_risposta(ascii)) return;
@@ -1144,7 +1293,7 @@ static void kbd_process_scancode(unsigned char sc)
         if (c->line_len > 0) {
             if (c->vis[--c->line_len]) {
                 c->line_col--;
-                echo("\b \b", 3);
+                if (!(c->term & KBD_T_NOECO)) echo("\b \b", 3);
             }
         }
 
@@ -1162,7 +1311,7 @@ static void kbd_process_scancode(unsigned char sc)
     }
 
     if (ascii == '\n' || ascii == '\r') {
-        echo_char('\n');
+        echo_char('\n');           /* the newline even without ECHO (ECHONL) */
         ring_put_line(c, c->line, c->line_len);
         c->line_len = 0;
         c->line_col = 0;
@@ -1181,7 +1330,8 @@ static void kbd_process_scancode(unsigned char sc)
 
     if (c->vis[c->line_len - 1]) {
         c->line_col++;
-        echo_char(ascii);
+        /* termios without ECHO (a password): the key counts, it is not shown */
+        if (!(c->term & KBD_T_NOECO)) echo_char(ascii);
     }
 }
 
@@ -2112,16 +2262,32 @@ int main(int argc, char **argv)
             continue;
         }
 
+        if (meta.tipo == KBD_MSG_SETTERM) {
+            KbdSetTerm t;
+            if (meta.len < sizeof(t)) continue;
+            memcpy(&t, payload, sizeof(t));
+            if (t.console >= KBD_N_CONSOLE) continue;
+            imposta_term(t.console, t.modi, t.min);
+            try_serve_reader(t.console);
+            continue;
+        }
+
         if (meta.tipo == KBD_MSG_READLINE) {
-            KbdReadLine r;
+            KbdReadLineT r;
 
             r.max     = KBD_LINE_MAX;
             r.console = 0;
+            r.modi    = 0;
+            r.min     = 1;
 
             if (meta.len >= sizeof(unsigned)) {
                 memcpy(&r.max, payload, sizeof(unsigned));
                 if (meta.len >= sizeof(KbdReadLine)) {
                     memcpy(&r.console, payload + sizeof(unsigned), sizeof(unsigned));
+                }
+                if (meta.len >= sizeof(KbdReadLineT)) {
+                    memcpy(&r.modi, payload + 2 * sizeof(unsigned), sizeof(unsigned));
+                    memcpy(&r.min,  payload + 3 * sizeof(unsigned), sizeof(unsigned));
                 }
             }
             if (r.max == 0 || r.max > KBD_LINE_MAX) r.max = KBD_LINE_MAX;
@@ -2150,8 +2316,22 @@ int main(int argc, char **argv)
                        "quella di PID %u\n",
                        r.console, meta.sender_pid, g_c[r.console].reader_pid);
             }
-            g_c[r.console].reader_pid = meta.sender_pid;
-            g_c[r.console].reader_max = r.max;
+            /* The modes come with the request: a kbd.drv started after the
+             * program set them still learns them here. */
+            if ((g_c[r.console].term ^ r.modi) & ~KBD_T_SUBITO || g_c[r.console].tmin != r.min)
+                imposta_term(r.console, r.modi, r.min);
+
+            /* ! «ANSWER NOW» FROM A CONSOLE THAT IS NOT IN FRONT IS ANSWERED
+             * NOW, EMPTY: it is not served until it comes to the front, and a
+             * VMIN=0 read must not wait for that. */
+            if ((r.modi & KBD_T_SUBITO) && r.console != g_attiva) {
+                ipc_send(meta.sender_pid, KBD_MSG_LINE, "", 0);
+                continue;
+            }
+
+            g_c[r.console].reader_pid    = meta.sender_pid;
+            g_c[r.console].reader_max    = r.max;
+            g_c[r.console].reader_subito = (r.modi & KBD_T_SUBITO) != 0;
 
             /* Potrebbe esserci già type-ahead pronto: non aspettare un
              * altro tasto per consegnarlo. Ma solo se e' la console in

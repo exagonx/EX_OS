@@ -37,9 +37,11 @@
  * libstdc++ dichiara <math.h> non conforme e rinuncia a mettere in std::
  * decine di funzioni. Vedi lib/include/math.h. */
 #include "math.h"
+#include "termios.h"
+#include "poll.h"
 
 /* +0.001 a ogni modifica: `libctest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("libctest", "0.001");
+EX_VERSIONE("libctest", "0.002");
 
 static int passati = 0;
 static int falliti = 0;
@@ -2309,6 +2311,89 @@ static void filo_uscita(void *a)
     thread_esci(0);
 }
 
+/* termios on a pty (kernel 0.279). libctest runs on the SHARED libc, which
+ * (like the floppy) leaves tcgetattr and company to libc.a: here they are
+ * the ioctl they are made of. */
+#define tc_leggi(fd, t)       ioctl((fd), 0x5401, (t))
+#define tc_scrivi(fd, c, t)   ioctl((fd), 0x5402 + (c), (void *)(t))
+static void crudo(struct termios *t)
+{
+    t->c_iflag &= ~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+    t->c_oflag &= ~(tcflag_t)OPOST;
+    t->c_lflag &= ~(tcflag_t)(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+    t->c_cc[VMIN] = 1; t->c_cc[VTIME] = 0;
+}
+static int pronto(int fd, int ms)
+{
+    struct pollfd p;
+    p.fd = fd; p.events = POLLIN; p.revents = 0;
+    return poll(&p, 1, ms) == 1 && (p.revents & POLLIN);
+}
+
+static void prova_termios(void)
+{
+    int  fd[2], n;
+    char buf[64];
+    struct termios t, salvato;
+    unsigned short ws[4];
+
+    printf("\nTermios:\n");
+    if (pty_apri(fd) != 0) { esito("pty_apri() riesce", 0); return; }
+
+    esito("TCGETS sullo slave riesce", tc_leggi(fd[1], &t) == 0);
+    esito("i modi di partenza: ICANON ECHO ISIG, ICRNL, OPOST ONLCR",
+          (t.c_lflag & (ICANON | ECHO | ISIG)) == (ICANON | ECHO | ISIG) &&
+          (t.c_iflag & ICRNL) && (t.c_oflag & (OPOST | ONLCR)) == (OPOST | ONLCR));
+    salvato = t;
+    esito("isatty dello slave e' vero", isatty(fd[1]) == 1);
+    pty_ctl(fd[0], PTY_CTL_MISURA, (30u << 16) | 100u);
+    esito("TIOCGWINSZ da' la misura del pty",
+          ioctl(fd[1], 0x5413, ws) == 0 && ws[0] == 30 && ws[1] == 100);
+
+    write(fd[1], "a\n", 2);
+    n = (int)read(fd[0], buf, sizeof(buf));
+    esito("ONLCR: il programma scrive LF, il terminale riceve CR LF",
+          n == 3 && memcmp(buf, "a\r\n", 3) == 0);
+
+    write(fd[0], "q\r", 2);
+    n = (int)read(fd[1], buf, sizeof(buf));
+    esito("ICRNL: l'Invio (CR) arriva come LF", n == 2 && memcmp(buf, "q\n", 2) == 0);
+    while (pronto(fd[0], 50)) read(fd[0], buf, sizeof(buf));     /* the echo */
+
+    crudo(&t);
+    esito("TCSETS in modo grezzo riesce", tc_scrivi(fd[1], TCSANOW, &t) == 0);
+    write(fd[0], "\r", 1);
+    n = (int)read(fd[1], buf, sizeof(buf));
+    esito("in grezzo il CR arriva come CR, subito", n == 1 && buf[0] == '\r');
+    esito("e senza eco", !pronto(fd[0], 100));
+    write(fd[0], "\003", 1);
+    n = (int)read(fd[1], buf, sizeof(buf));
+    esito("senza ISIG Ctrl+C e' il byte 3", n == 1 && buf[0] == 3);
+    write(fd[1], "b\n", 2);
+    n = (int)read(fd[0], buf, sizeof(buf));
+    esito("senza OPOST il LF esce nudo", n == 2 && memcmp(buf, "b\n", 2) == 0);
+
+    t.c_cc[VMIN] = 0; t.c_cc[VTIME] = 0;
+    tc_scrivi(fd[1], TCSANOW, &t);
+    esito("VMIN=0 VTIME=0: read rende 0 subito", read(fd[1], buf, sizeof(buf)) == 0);
+    t.c_cc[VTIME] = 2;
+    tc_scrivi(fd[1], TCSANOW, &t);
+    {
+        unsigned int prima = uptime_ms();
+        n = (int)read(fd[1], buf, sizeof(buf));
+        esito("VMIN=0 VTIME=2: read rende 0 dopo circa 200 ms",
+              n == 0 && uptime_ms() - prima >= 150 && uptime_ms() - prima < 1000);
+    }
+
+    esito("si rimettono i modi salvati", tc_scrivi(fd[1], TCSAFLUSH, &salvato) == 0);
+    write(fd[0], "z\n", 2);
+    n = (int)read(fd[1], buf, sizeof(buf));
+    esito("e si torna alle righe", n == 2 && memcmp(buf, "z\n", 2) == 0);
+
+    close(fd[0]);
+    close(fd[1]);
+}
+
 static void prova_pty(void)
 {
     int  fd[2];
@@ -2344,8 +2429,10 @@ static void prova_pty(void)
      * faceva: l'eco di «c» e dell'Invio era ancora nel tubo di ritorno, e il
      * confronto trovava «c\nci» al posto di «ciao». Non era il pty a
      * sbagliare — era la prova a credere che il master fosse vuoto. */
+    /* From kernel 0.279 the echo of the newline is CR LF (OPOST+ONLCR). */
     n = read(fd[0], buf, sizeof(buf));
-    esito("l'eco dell'Invio era li' e si legge", n == 2);
+    esito("l'eco dell'Invio era li' e si legge, CR LF",
+          n == 3 && buf[1] == '\r' && buf[2] == '\n');
 
     /* 4. Quello che lo slave scrive esce dal master senza essere toccato. */
     write(fd[1], "ciao", 4);
@@ -2471,6 +2558,7 @@ int main(int argc, char **argv)
     prova_pipe();
     prova_interruzione();
     prova_pty();
+    prova_termios();
 
     printf("\n%d prove superate, %d fallite\n", passati, falliti);
     return (falliti == 0) ? 0 : 1;

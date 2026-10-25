@@ -18,6 +18,7 @@
 #include "tty.h"
 #include "kbd_proto.h"
 #include "syscall.h"   /* EINTR: una lettura interrotta lo rende */
+#include "pty.h"       /* PtyTermios: the console keeps one too (0.279) */
 
 /* =============================================================================
  * Due sorgenti di input, una sola interfaccia
@@ -74,6 +75,9 @@ static volatile RingBuf g_input_buf;
 
 /* PID del processo in attesa di input (per unblock dopo IRQ1) */
 static volatile uint32_t g_waiting_pid = 0;
+/* kbd.drv: how many bytes a read on each console would find (0.279, for
+ * poll); see tty_console_dati. */
+static volatile uint32_t g_con_dati[VGA_N_CONSOLE];
 
 /* =============================================================================
  * Line editing buffer (line discipline "cooked")
@@ -378,8 +382,12 @@ int drv_init(void)
 /* =============================================================================
  * Per poll() — vedi il commento in drivers/tty/tty.h
  * ========================================================================== */
-int tty_input_pronto_locked(void)
+int tty_input_pronto_locked(uint32_t console)
 {
+    /* With kbd.drv the bytes wait there; it tells how many (0.279). */
+    if (g_input_src == TTY_INPUT_IPC)
+        return console < VGA_N_CONSOLE && g_con_dati[console] != 0;
+
     /* ! SI GUARDA IL RING BUFFER, NON IL BUFFER DI RIGA. In modo «cooked» i
      * caratteri digitati restano nell'editor di riga finche' non si batte
      * Invio, e solo allora la riga finisce qui dentro. E' esattamente cio'
@@ -595,10 +603,92 @@ static void tty_forse_torna_al_driver(void)
     tty_set_input_source(TTY_INPUT_IPC);
 }
 
-static int tty_read_ipc(char *dst, uint32_t n)
+/* =============================================================================
+ * THE TERMIOS OF THE TEXT CONSOLES (kernel 0.279)
+ *
+ * ! THE LINE DISCIPLINE OF A CONSOLE LIVES IN kbd.drv, not here: the kernel
+ * keeps the termios (one per console, the same PtyTermios as a pty) and
+ * tells kbd.drv the part it needs — bytes or lines, echo, Ctrl+C, CR to LF,
+ * VMIN — with every read (KbdReadLineT) and at every tcsetattr
+ * (KBD_MSG_SETTERM). VTIME is done here, with "answer now" requests, and
+ * OPOST+ONLCR by the VGA (vga_lf_nudo).
+ * ============================================================================= */
+static PtyTermios g_con_t[VGA_N_CONSOLE];
+static int        g_con_t_pronto = 0;
+
+static void con_t_iniz(void)
+{
+    uint32_t i;
+
+    if (g_con_t_pronto) return;
+    for (i = 0; i < VGA_N_CONSOLE; i++) {
+        PtyTermios *t = &g_con_t[i];
+        uint32_t j;
+        for (j = 0; j < PTY_NCCS; j++) t->c_cc[j] = 0;
+        t->c_iflag = T_ICRNL;
+        t->c_oflag = T_OPOST | T_ONLCR;
+        t->c_cflag = 0x00BF;
+        t->c_lflag = T_ISIG | T_ICANON | T_ECHO | T_ECHOE | T_ECHOK;
+        t->c_cc[T_VINTR] = 3;  t->c_cc[1] = 28;  t->c_cc[T_VERASE] = 8;
+        t->c_cc[T_VKILL] = 21; t->c_cc[T_VEOF] = 4; t->c_cc[T_VMIN] = 1;
+        t->c_cc[10] = 26;
+    }
+    g_con_t_pronto = 1;
+}
+
+static uint32_t con_modi(const PtyTermios *t)
+{
+    uint32_t m = 0;
+
+    if (!(t->c_lflag & T_ICANON)) m |= KBD_T_BYTE;
+    if (!(t->c_lflag & T_ECHO))   m |= KBD_T_NOECO;
+    if (!(t->c_lflag & T_ISIG))   m |= KBD_T_NOSIG;
+    if (!(t->c_iflag & T_ICRNL))  m |= KBD_T_NOCRNL;
+    return m;
+}
+
+void tty_termios_leggi(uint32_t console, PtyTermios *out)
+{
+    con_t_iniz();
+    if (console >= VGA_N_CONSOLE) console = 0;
+    *out = g_con_t[console];
+}
+
+void tty_termios_scrivi(uint32_t console, const PtyTermios *t)
+{
+    KbdSetTerm m;
+
+    con_t_iniz();
+    if (console >= VGA_N_CONSOLE) return;
+    g_con_t[console] = *t;
+    vga_lf_nudo(console, (t->c_oflag & (T_OPOST | T_ONLCR)) != (T_OPOST | T_ONLCR));
+
+    /* The keys typed from now on follow the new modes at once. A full
+     * mailbox is no harm: the next read brings the modes again. */
+    if (g_input_src == TTY_INPUT_IPC && g_kbd_pid) {
+        m.console = console;
+        m.modi    = con_modi(t);
+        m.min     = t->c_cc[T_VMIN];
+        ipc_send(g_kbd_pid, KBD_MSG_SETTERM, &m, sizeof(m));
+    }
+}
+
+/* kbd.drv says how many bytes a read on that console would find now
+ * (SYS_CONSOLE_PRONTO): what poll() asks. */
+void tty_console_dati(uint32_t console, uint32_t quanti)
+{
+    if (console >= VGA_N_CONSOLE) return;
+    g_con_dati[console] = quanti;
+    if (quanti && g_waiting_pid) {
+        sched_unblock(g_waiting_pid);
+        g_waiting_pid = 0;
+    }
+}
+
+static int tty_chiedi_kbd(char *dst, uint32_t n, uint32_t modi, uint32_t min)
 {
     IpcMessage meta;
-    KbdReadLine richiesta;
+    KbdReadLineT richiesta;
     int32_t    r;
 
     if (proc_get_current() == NULL) {
@@ -634,6 +724,8 @@ static int tty_read_ipc(char *dst, uint32_t n)
 
     richiesta.max = n;
     if (richiesta.max > KBD_LINE_MAX) richiesta.max = KBD_LINE_MAX;
+    richiesta.modi = modi;
+    richiesta.min  = min;
 
     /* La console di chi ha chiamato read(0), non quella visibile: il
      * driver deve sapere a quale schermo appartiene questa richiesta,
@@ -707,6 +799,52 @@ static int tty_read_ipc(char *dst, uint32_t n)
         klog(LOG_WARN, "TTY: messaggio inatteso in attesa di una riga "
              "(type=%u da PID %u), ignorato", meta.tipo, meta.sender_pid);
     }
+}
+
+/* =============================================================================
+ * tty_read_ipc — a read on the console, with the console's termios
+ *
+ *   ICANON           a line (as always)
+ *   VMIN>0 VTIME=0   kbd.drv answers when VMIN bytes are there
+ *   VMIN=0 VTIME=0   "answer now": what is there, 0 if nothing
+ *   VMIN=0 VTIME>0   "answer now" every 10 ms, until a byte or VTIME
+ *   VMIN>0 VTIME>0   the first byte without limit, then "answer now" until
+ *                    VMIN or VTIME of silence
+ * ============================================================================= */
+static int tty_read_ipc(char *dst, uint32_t n)
+{
+    Process   *cur = proc_get_current();
+    PtyTermios t;
+    uint32_t   modi, vmin, decimi, avuti, inizio;
+    int        r;
+
+    tty_termios_leggi(cur ? cur->console : 0, &t);
+    modi = con_modi(&t);
+    if (!(modi & KBD_T_BYTE)) return tty_chiedi_kbd(dst, n, modi, 1);
+
+    vmin   = t.c_cc[T_VMIN];
+    decimi = t.c_cc[T_VTIME];
+    if (vmin > n) vmin = n;
+
+    if (decimi == 0)
+        return tty_chiedi_kbd(dst, n, vmin ? modi : (modi | KBD_T_SUBITO), vmin);
+
+    avuti = 0;
+    if (vmin > 0) {
+        r = tty_chiedi_kbd(dst, n, modi, 1);
+        if (r <= 0) return r;
+        avuti = (uint32_t)r;
+    }
+    inizio = g_ticks;
+    while (avuti < (vmin ? vmin : 1)) {
+        r = tty_chiedi_kbd(dst + avuti, n - avuti, modi | KBD_T_SUBITO, 0);
+        if (r < 0) return avuti ? (int)avuti : r;
+        if (r > 0) { avuti += (uint32_t)r; inizio = g_ticks; continue; }
+        if (g_ticks - inizio >= decimi * 10u) break;
+        sched_sleep(10);
+        if (proc_interrotto()) return avuti ? (int)avuti : -EINTR;
+    }
+    return (int)avuti;
 }
 
 /* =============================================================================

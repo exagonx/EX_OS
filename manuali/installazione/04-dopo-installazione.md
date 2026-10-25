@@ -41,6 +41,12 @@ dhcp
   primo piano blocca finché l'indirizzo non c'è. Con `dhcp -r &` la riga dopo
   parte subito e vince la corsa una volta su due.
 
+La macchina raggiunge sé stessa su `127.0.0.1` (`localhost`) e sul proprio
+indirizzo, da `ip.drv` 0.013: un programma si collega a un server che gira
+sulla stessa macchina (MariaDB, un `openssl s_server`) senza passare dalla
+scheda di rete. Serve comunque che `ip.drv` sia avviato, cioè una scheda
+riconosciuta.
+
 ---
 
 ## 4.3 La shell remota
@@ -67,6 +73,12 @@ chiede). `telnetd -h` spiega i valori.
   mano sparisce alla configurazione dopo. Per questo telnetd ha il suo file
   di configurazione, e i driver hanno `-install` (vedi 4.9).
 
+Dalla versione 0.279 la sessione telnet è un terminale vero, come la console:
+i programmi che chiedono il modo grezzo (editor, ncurses) ricevono i tasti
+uno per uno, e la misura della finestra è quella del tuo client telnet.
+Se un programma si chiude male e lascia il terminale senza eco, basta
+tornare al prompt: la shell rimette i modi normali da sola.
+
 ---
 
 ## 4.4 Gli strumenti
@@ -74,6 +86,11 @@ chiede). `telnetd -h` spiega i valori.
 ```
 netupdate -install:base       gcc e la catena del C
 netupdate -install:build      make e i binutils
+netupdate -install:curses     ncurses: curses, terminfo, tic, tput
+netupdate -install:zlib       e bzip2, xz, lz4, zstd, pcre2, fmt: le
+                              librerie (con i programmi xz, zstd...)
+netupdate -install:ssl        OpenSSL 4.1.0: libssl, libcrypto e il
+                              programma openssl
 ```
 
 Finiscono in `/exos/bin`, che dalla versione 0.217 è nel PATH predefinito.

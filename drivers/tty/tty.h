@@ -13,6 +13,7 @@
 #define TTY_H
 
 #include "kernel.h"
+#include "pty.h"       /* PtyTermios */
 
 /* ioctl comandi TTY */
 #define TTY_IOCTL_GETSIZE    0x01
@@ -73,7 +74,13 @@ void tty_set_input_source(int src);
  * di primo piano ce n'e' uno. tty_attesa_registra_locked rende 0 se il posto
  * e' di qualcun altro, e chi chiama deve ripiegare invece di rubarglielo.
  * ============================================================================= */
-int  tty_input_pronto_locked(void);
+int  tty_input_pronto_locked(uint32_t console);
+
+/* The termios of a text console (kernel 0.279): see tty.c. PtyTermios is in
+ * kernel/include/pty.h. */
+void tty_termios_leggi(uint32_t console, PtyTermios *out);
+void tty_termios_scrivi(uint32_t console, const PtyTermios *t);
+void tty_console_dati(uint32_t console, uint32_t quanti);
 int  tty_attesa_registra_locked(unsigned int pid);
 void tty_attesa_togli_locked(unsigned int pid);
 

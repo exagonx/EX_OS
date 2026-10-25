@@ -52,7 +52,7 @@
 #define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.011");
+EX_VERSIONE("telnetd", "0.012");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -477,6 +477,12 @@ static int tcp_scrivi(int id, const unsigned char *d, unsigned int n)
  * ! IL BUFFER E' IL DOPPIO, perche' il caso peggiore lo e': un'uscita fatta di
  * soli LF, o di soli 255, raddoppia esattamente.
  *
+ * ! FROM 0.012 (kernel 0.279, termios) THE LF IS NOT TURNED INTO CR LF HERE:
+ * the pty does it (OPOST+ONLCR), and only while the program wants it. A
+ * full-screen program switches ONLCR off and moves the cursor down with a
+ * bare LF; doing it here broke that, and this side could not know. The CR
+ * LF the pty sends falls in the case just below (CR followed by LF).
+ *
  * ! UN CR IN FONDO AL PEZZO SI TRATTA COME CR DA SOLO, e si puo': se il LF che
  * lo seguiva arriva nella lettura dopo, il client vede CR NUL LF invece di
  * CR LF — e il NUL nell'NVT non fa niente. Si vede la stessa cosa. Tenere uno
@@ -491,10 +497,7 @@ static int nvt_scrivi(int id, const unsigned char *d, unsigned int n)
     for (i = 0; i < n; i++) {
         unsigned char c = d[i];
 
-        if (c == '\n') {
-            fuori[k++] = '\r';
-            fuori[k++] = '\n';
-        } else if (c == '\r') {
+        if (c == '\r') {
             fuori[k++] = '\r';
             if (i + 1 < n && d[i + 1] == '\n') { fuori[k++] = '\n'; i++; }
             else                                 fuori[k++] = '\0';
@@ -535,8 +538,11 @@ static unsigned int filtra(int id, int pty, const unsigned char *d, unsigned int
          * in piu' — e con NUL, un byte zero all'inizio della riga SEGUENTE. Il
          * sintomo era «comando non trovato: id» su un id battuto giusto, con
          * un carattere invisibile attaccato. */
+        /* ! FROM 0.012 THE CR GOES TO THE PTY AS CR: the pty makes it a LF
+         * (ICRNL), unless the program switched that off and wants the CR
+         * itself, as ncurses in raw mode does to tell Enter from Ctrl+J. */
         if (d[i] == '\r') {
-            fuori[k++] = '\n';
+            fuori[k++] = '\r';
             i++;
             if (i < n && (d[i] == '\n' || d[i] == '\0')) i++;
             continue;
@@ -881,12 +887,27 @@ static void sessione(int id, const Config *cfg, int con_login)
 
         /* Dal programma verso la rete.
          *
-         * ! SI LEGGONO AL PIU' 512 BYTE PERCHE' LA TRADUZIONE PUO' RADDOPPIARLI
+         * ! SI LEGGONO AL PIU' 512 BYTE (511 + 1, see below) PERCHE' LA TRADUZIONE PUO' RADDOPPIARLI
          * e il buffer di nvt_scrivi e' 1024. Chiedere di piu' vorrebbe dire
          * scrivere fuori da quel buffer nel caso peggiore, che non e' raro:
          * un'uscita fatta di righe corte e' quasi tutta capi riga. */
         if (v[0].revents & POLLIN) {
-            int n = (int)read(fd[0], buf, 512);
+            int n = (int)read(fd[0], buf, 511);
+
+            /* ! A CR AT THE END OF THE PIECE TAKES ITS LF ALONG (0.012). The
+             * pty writes the CR LF of ONLCR in one go, so when a read stops
+             * between the two the LF is already waiting: one byte more keeps
+             * the pair together. Sent apart they became CR NUL, then a bare
+             * LF (prova_telnet.sh counted one in 27 KB). 511 + 1 doubled
+             * still fits nvt_scrivi's 1024. */
+            if (n > 0 && buf[n - 1] == '\r') {
+                struct pollfd ancora;
+                ancora.fd = fd[0]; ancora.events = POLLIN; ancora.revents = 0;
+                if (poll(&ancora, 1, 0) == 1 && (ancora.revents & POLLIN)) {
+                    int m = (int)read(fd[0], buf + n, 1);
+                    if (m > 0) n += m;
+                }
+            }
 
             if (n > 0) {
                 if (nvt_scrivi(id, buf, (unsigned int)n) != 0) break;

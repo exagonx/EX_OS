@@ -21,9 +21,19 @@
 extern "C" {
 #endif
 
-/* The terminal's size, Linux's request number: the kernel answers it on a
- * terminal (kernel/syscall/syscall_impl.c), ENOTTY elsewhere. */
+/* The terminal's requests, Linux's numbers (kernel 0.279): the kernel
+ * answers them on the console and on a pty (kernel/syscall/syscall_impl.c),
+ * ENOTTY elsewhere. TCGETS/TCSETS* take a struct termios (<termios.h>),
+ * TIOCSWINSZ is a no-op on the console. */
+#ifndef TCGETS
+#define TCGETS     0x5401
+#define TCSETS     0x5402
+#define TCSETSW    0x5403
+#define TCSETSF    0x5404
+#define TCFLSH     0x540B
+#endif
 #define TIOCGWINSZ 0x5413
+#define TIOCSWINSZ 0x5414
 struct winsize {
     unsigned short ws_row;
     unsigned short ws_col;

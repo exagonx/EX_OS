@@ -93,6 +93,7 @@ void     vga_hw_modo3(void);
 void     vga_ripristina_testo(void);
 
 int      vga_switch_console(uint32_t n);
+void     vga_lf_nudo(uint32_t n, int si);   /* termios ONLCR off (0.279) */
 
 /* @EXTASKBAR: the status bar on the last line (vga.c). n == 0 hides it. */
 void     vga_barra(const uint16_t *celle, uint32_t n);

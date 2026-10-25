@@ -200,18 +200,24 @@ nota  = Esempio: /cdrom/prova-rust.rs (o dove sta il CD degli strumenti).
 
 [ssl]
 nome  = OpenSSL
-dice  = libcrypto, libssl e i loro header
+dice  = OpenSSL 4.1.0: libcrypto, libssl, i loro header e il programma openssl
 prova = lib/libcrypto.a
 vuole = base
-mbyte = 10
+mbyte = 16
 solo  = lib/libcrypto.a
 solo  = lib/libssl.a
 solo  = include/openssl
+solo  = i386-exos/include/openssl
+solo  = bin/openssl
 solo  = ssl
+solo  = src/openssl
 
-nota  = TLS 1.3 con libssl sopra lo stack IP di EX-OS, con due BIO di
-nota  = memoria al posto dei socket: /bin/provatls host e' l'esempio.
-nota  = Il magazzino delle CA e' /exos/ssl/certi.pem.
+nota  = gcc prog.c -lssl -lcrypto   (con i socket e i fili: SSL_set_fd va)
+nota  = openssl: s_client, req, x509, dgst, enc, rand, genpkey...
+nota  = TLS 1.3 anche con due BIO di memoria al posto dei socket:
+nota  = /bin/provatls host e' l'esempio.
+nota  = Il magazzino delle CA e' /exos/ssl/certi.pem (openssl s_client
+nota  = -CAfile /exos/ssl/certi.pem).
 nota  = RAND_bytes rifiuta su una macchina appena accesa: il serbatoio di
 nota  = entropia e' 32 byte e una sola chiamata lo svuota.
 
@@ -231,3 +237,173 @@ nota  = gcc prog.c -lgit2 -lssl -lcrypto   (statico, come ogni programma)
 nota  = git2: init, clone, cat-file, hash-object, config, blame, index-pack.
 nota  = Clone via https con OpenSSL; niente ssh (manca libssh2 per EX-OS).
 nota  = Esempio: /cdrom/prova-git.c (o dove sta il CD degli strumenti).
+
+
+[curses]
+nome  = ncurses
+dice  = ncurses 6.6: curses, panel, menu, form, la terminfo, tic e tput
+prova = lib/libncurses.a
+vuole = base
+mbyte = 6
+solo  = lib/libncurses.a
+solo  = lib/libcurses.a
+solo  = lib/libpanel.a
+solo  = lib/libmenu.a
+solo  = lib/libform.a
+solo  = lib/libncurses++.a
+file  = curses.h
+file  = ncurses.h
+file  = ncurses_dll.h
+file  = term.h
+file  = term_entry.h
+file  = termcap.h
+file  = unctrl.h
+file  = panel.h
+file  = menu.h
+file  = form.h
+file  = eti.h
+file  = etip.h
+file  = cursesapp.h
+file  = cursesf.h
+file  = cursesm.h
+file  = cursesp.h
+file  = cursesw.h
+file  = cursslk.h
+solo  = share/terminfo
+solo  = src/ncurses
+solo  = bin/tic
+solo  = bin/infocmp
+solo  = bin/toe
+solo  = bin/tput
+solo  = bin/tset
+solo  = bin/reset
+solo  = bin/clear
+solo  = bin/tabs
+
+nota  = gcc prog.c -lncurses   (statico, come ogni programma; -lpanel,
+nota  = -lmenu, -lform prima di -lncurses se servono)
+nota  = La console e' TERM=vga; via telnet vale il TERM del client. Le voci
+nota  = vga, linux, xterm, vt100, screen sono anche dentro la libreria.
+nota  = Esempio: /cdrom/prova-curses.c (o dove sta il CD degli strumenti).
+
+[zlib]
+nome  = zlib
+dice  = zlib 1.3.2: deflate, gzip (-lz)
+prova = lib/libz.a
+vuole = base
+mbyte = 1
+solo  = lib/libz.a
+file  = zconf.h
+file  = zlib.h
+solo  = src/zlib
+
+nota  = gcc prog.c -lz
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[bzip2]
+nome  = bzip2
+dice  = bzip2 1.0.8: libbz2 e i programmi bzip2, bzip2recover
+prova = lib/libbz2.a
+vuole = base
+mbyte = 1
+solo  = lib/libbz2.a
+file  = bzlib.h
+solo  = bin/bzip2
+solo  = bin/bzip2recover
+solo  = src/bzip2
+
+nota  = gcc prog.c -lbz2
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[xz]
+nome  = XZ Utils
+dice  = xz 5.8.4: liblzma e i programmi xz, xzdec, lzmadec, lzmainfo
+prova = lib/liblzma.a
+vuole = base
+mbyte = 2
+solo  = lib/liblzma.a
+solo  = include/lzma
+solo  = i386-exos/include/lzma
+file  = lzma.h
+solo  = bin/lzmadec
+solo  = bin/lzmainfo
+solo  = bin/xz
+solo  = bin/xzdec
+solo  = src/xz
+
+nota  = gcc prog.c -llzma
+nota  = xz -T usa i fili (POSIX threads).
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[lz4]
+nome  = LZ4
+dice  = lz4 1.10.0: liblz4 e il programma lz4
+prova = lib/liblz4.a
+vuole = base
+mbyte = 1
+solo  = lib/liblz4.a
+file  = lz4.h
+file  = lz4frame.h
+file  = lz4hc.h
+solo  = bin/lz4
+solo  = src/lz4
+
+nota  = gcc prog.c -llz4
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[zstd]
+nome  = Zstandard
+dice  = zstd 1.5.7: libzstd e il programma zstd
+prova = lib/libzstd.a
+vuole = base
+mbyte = 2
+solo  = lib/libzstd.a
+file  = zdict.h
+file  = zstd.h
+file  = zstd_errors.h
+solo  = bin/zstd
+solo  = src/zstd
+
+nota  = gcc prog.c -lzstd
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[pcre2]
+nome  = PCRE2
+dice  = PCRE2 10.49: espressioni regolari di Perl, pcre2grep, pcre2test
+prova = lib/libpcre2-8.a
+vuole = base
+mbyte = 3
+solo  = lib/libpcre2-16.a
+solo  = lib/libpcre2-32.a
+solo  = lib/libpcre2-8.a
+solo  = lib/libpcre2-posix.a
+file  = pcre2.h
+file  = pcre2posix.h
+solo  = bin/pcre2grep
+solo  = bin/pcre2test
+solo  = src/pcre2
+
+nota  = gcc prog.c -lpcre2-8   (-lpcre2-posix -lpcre2-8 per regcomp/regexec)
+nota  = Senza JIT: interpreta, con gli stessi risultati.
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
+
+
+[fmt]
+nome  = {fmt}
+dice  = {fmt} 12.2.0: la formattazione C++ (header e libfmt)
+prova = lib/libfmt.a
+vuole = cpp
+mbyte = 2
+solo  = lib/libfmt-c.a
+solo  = lib/libfmt.a
+solo  = include/fmt
+solo  = i386-exos/include/fmt
+solo  = src/fmt
+
+nota  = g++ prog.cpp -lfmt   (oppure -DFMT_HEADER_ONLY senza -lfmt)
+nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).

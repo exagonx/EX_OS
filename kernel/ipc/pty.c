@@ -43,7 +43,7 @@ typedef struct {
     uint8_t  riga[PTY_RIGA_MAX];
     uint32_t riga_n;
 
-    uint32_t modo;
+    PtyTermios t;               /* the modes: see pty.h */
     uint32_t pid_fg;            /* chi interrompe Ctrl+C, 0 = nessuno */
     uint32_t righe, colonne;
 
@@ -111,9 +111,15 @@ static uint32_t prendi(uint8_t *buf, uint32_t *testa, uint32_t *quanti,
     return presi;
 }
 
+/* ! THE ECHO GOES THROUGH THE OUTPUT PROCESSING TOO (ONLCR), as on every
+ * Unix: until termios the newline became CR LF in telnetd, which could not
+ * know whether a program had switched that off. */
 static void eco(Pty *p, uint8_t c)
 {
-    if (p->modo & PTY_ECO) metti(p->out, &p->out_testa, &p->out_quanti, c);
+    if (!(p->t.c_lflag & T_ECHO)) return;
+    if (c == '\n' && (p->t.c_oflag & (T_OPOST | T_ONLCR)) == (T_OPOST | T_ONLCR))
+        metti(p->out, &p->out_testa, &p->out_quanti, '\r');
+    metti(p->out, &p->out_testa, &p->out_quanti, c);
 }
 
 static void eco_str(Pty *p, const char *s)
@@ -137,64 +143,85 @@ static void consegna_riga(Pty *p)
  * --------------------------------------------------------------------------- */
 static void disciplina(Pty *p, uint8_t c)
 {
-    if (!(p->modo & PTY_CANONICO)) {
-        metti(p->in, &p->in_testa, &p->in_quanti, c);
-        eco(p, c);
-        return;
-    }
+    const uint8_t *cc = p->t.c_cc;
 
-    switch (c) {
+    /* --- input processing: what the termios says a byte becomes --- */
+    if (p->t.c_iflag & T_ISTRIP) c &= 0x7F;
+    if (c == '\r') {
+        if (p->t.c_iflag & T_IGNCR) return;
+        if (p->t.c_iflag & T_ICRNL) c = '\n';
+    } else if (c == '\n' && (p->t.c_iflag & T_INLCR)) {
+        c = '\r';
+    }
 
     /* ! Ctrl+C NON E' UN CARATTERE DA CONSEGNARE, ED E' TUTTO IL PUNTO DI
      * QUESTO LAVORO. Finora arrivava allo slave come il byte 3, cioe' come una
      * lettera qualunque che nessuno guardava. Adesso interrompe chi sta in
      * primo piano — e se nessuno si e' dichiarato tale, non fa niente: meglio
-     * un Ctrl+C che non morde di un Ctrl+C che ammazza la shell. */
-    case 3:
+     * un Ctrl+C che non morde di un Ctrl+C che ammazza la shell.
+     * ! WITH ISIG ONLY: a program that switched it off (an editor, ncurses in
+     * raw mode) wants the 3 as a key. */
+    if ((p->t.c_lflag & T_ISIG) && cc[T_VINTR] && c == cc[T_VINTR]) {
         eco_str(p, "^C\n");
-        p->riga_n = 0;
+        if (!(p->t.c_lflag & T_NOFLSH)) { p->riga_n = 0; p->in_quanti = 0; }
         if (p->pid_fg) proc_interrompi_locked(p->pid_fg);   /* siamo col cli */
-        break;
+        return;
+    }
+
+    if (!(p->t.c_lflag & T_ICANON)) {
+        metti(p->in, &p->in_testa, &p->in_quanti, c);
+        eco(p, c);
+        return;
+    }
 
     /* ! Ctrl+D VALE SOLO A RIGA VUOTA, come su ogni Unix. A meta' riga
      * significherebbe «finisci qui» su qualcosa che l'utente sta ancora
      * scrivendo, ed e' il modo piu' facile di perdere una riga battuta. */
-    case 4:
+    if (cc[T_VEOF] && c == cc[T_VEOF]) {
         if (p->riga_n == 0) {
             p->fine_dati = 1;
             if (p->pid_att_in) { sched_unblock_locked(p->pid_att_in); p->pid_att_in = 0; }
         }
-        break;
+        return;
+    }
 
-    case '\b':
-    case 127:
-        /* ! CANCELLARE E' TRE CARATTERI, NON UNO: indietro, uno spazio sopra
-         * quello che c'era, indietro di nuovo. Mandare solo il Backspace
-         * sposta il cursore e lascia la lettera dov'era. */
+    /* ! CANCELLARE E' TRE CARATTERI, NON UNO: indietro, uno spazio sopra
+     * quello che c'era, indietro di nuovo. Mandare solo il Backspace
+     * sposta il cursore e lascia la lettera dov'era. Both DEL (the VERASE
+     * of an xterm) and Backspace erase, whatever VERASE says: a terminal
+     * that sends the other one must not leave the user without a way to
+     * correct. */
+    if (c == '\b' || c == 127 || (cc[T_VERASE] && c == cc[T_VERASE])) {
         if (p->riga_n > 0) {
             p->riga_n--;
-            eco_str(p, "\b \b");
+            if (p->t.c_lflag & T_ECHOE) eco_str(p, "\b \b");
         }
-        break;
+        return;
+    }
 
-    case '\r':
-    case '\n':
+    /* Ctrl+U: the whole line. */
+    if (cc[T_VKILL] && c == cc[T_VKILL]) {
+        while (p->riga_n > 0) {
+            p->riga_n--;
+            if (p->t.c_lflag & T_ECHOK) eco_str(p, "\b \b");
+        }
+        return;
+    }
+
+    if (c == '\n') {
         if (p->riga_n < PTY_RIGA_MAX) p->riga[p->riga_n++] = '\n';
         eco(p, '\n');
         consegna_riga(p);
-        break;
+        return;
+    }
 
-    default:
-        /* ! I TASTI SPECIALI NON ENTRANO IN UNA RIGA DI TESTO. Frecce e
-         * compagnia arrivano qui come codici oltre il byte: infilarli nella
-         * riga darebbe una stringa con dentro valori che non si stampano. */
-        if (c >= 0x20 && c < 0x7F) {
-            if (p->riga_n < PTY_RIGA_MAX - 1) {
-                p->riga[p->riga_n++] = c;
-                eco(p, c);
-            }
+    /* ! I TASTI SPECIALI NON ENTRANO IN UNA RIGA DI TESTO: the control
+     * characters stay out. Bytes from 0x80 go in: they are UTF-8. */
+    if (c >= 0x20 && c != 0x7F) {
+        if (p->riga_n < PTY_RIGA_MAX - 1) {
+            p->riga[p->riga_n++] = c;
+            eco(p, c);
         }
-        break;
     }
 }
 
@@ -210,7 +237,18 @@ int32_t pty_apri(int *master, int *slave)
 
         memset(&g_pty[i], 0, sizeof(Pty));
         g_pty[i].usata   = 1;
-        g_pty[i].modo    = PTY_CANONICO | PTY_ECO;
+        /* The modes of a fresh terminal on any Unix ("stty sane"). */
+        g_pty[i].t.c_iflag = T_ICRNL;
+        g_pty[i].t.c_oflag = T_OPOST | T_ONLCR;
+        g_pty[i].t.c_cflag = 0x00BF;        /* B38400 | CS8 | CREAD */
+        g_pty[i].t.c_lflag = T_ISIG | T_ICANON | T_ECHO | T_ECHOE | T_ECHOK;
+        g_pty[i].t.c_cc[T_VINTR]  = 3;
+        g_pty[i].t.c_cc[1]        = 28;     /* VQUIT */
+        g_pty[i].t.c_cc[T_VERASE] = 127;
+        g_pty[i].t.c_cc[T_VKILL]  = 21;
+        g_pty[i].t.c_cc[T_VEOF]   = 4;
+        g_pty[i].t.c_cc[T_VMIN]   = 1;
+        g_pty[i].t.c_cc[10]       = 26;     /* VSUSP */
         g_pty[i].righe   = 25;
         g_pty[i].colonne = 80;
         g_pty[i].master_aperti = 1;
@@ -377,8 +415,17 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
             return scritti ? (int32_t)scritti : ERR(EPIPE);
         }
 
-        while (scritti < n && p->out_quanti < PTY_DIM)
+        /* ! OPOST+ONLCR: the newline becomes CR LF here, and only when the
+         * modes say so. A full-screen program switches it off and moves the
+         * cursor down with a bare LF; when telnetd did it, it could not. */
+        while (scritti < n && p->out_quanti < PTY_DIM) {
+            if (src[scritti] == '\n' &&
+                (p->t.c_oflag & (T_OPOST | T_ONLCR)) == (T_OPOST | T_ONLCR)) {
+                if (p->out_quanti > PTY_DIM - 2) break;
+                metti(p->out, &p->out_testa, &p->out_quanti, '\r');
+            }
             metti(p->out, &p->out_testa, &p->out_quanti, src[scritti++]);
+        }
 
         /* ! SI SVEGLIA IL LETTORE PRIMA DI ANDARE A DORMIRE, sempre: e' lui
          * che fara' il posto che stiamo per aspettare. */
@@ -404,37 +451,86 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
     }
 }
 
+/* =============================================================================
+ * pty_leggi_slave — and, without ICANON, VMIN and VTIME
+ *
+ *   VMIN>0 VTIME=0   wait until VMIN bytes (at most n) are there
+ *   VMIN=0 VTIME=0   what is there, now; 0 if nothing
+ *   VMIN=0 VTIME>0   wait for one byte at most VTIME tenths of a second
+ *   VMIN>0 VTIME>0   the first byte without limit, then VTIME between bytes
+ *
+ * ! THE TIMED WAITS LOOK EVERY 10 MS instead of arming a timer: the pty has
+ * one waiter field per direction, and a sleeping reader that a writer also
+ * wakes would need both. Ten milliseconds is one tick; an ESC alone and the
+ * start of an arrow key are told apart by tens of them (ncurses: ESCDELAY).
+ * ========================================================================== */
 int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
 {
     uint8_t  appoggio[PTY_DIM];
     uint8_t *dst = (uint8_t *)buf;
     Pty     *p;
-    uint32_t presi, i;
+    uint32_t presi, i, serve = 1, decimi = 0, inizio = 0, visti = 0;
+    int      partito = 0;           /* the VMIN=0 timer is running */
+    int      canonico;
 
     if (n == 0) return 0;
     if (n > PTY_DIM) n = PTY_DIM;
 
+    interrupts_disable();
+    p = pty_da_handle(h);
+    if (!p) { interrupts_enable(); return ERR(EBADF); }
+    canonico = (p->t.c_lflag & T_ICANON) != 0;
+    if (!canonico) {
+        serve  = p->t.c_cc[T_VMIN];
+        decimi = p->t.c_cc[T_VTIME];
+        if (serve > n) serve = n;
+    }
+    interrupts_enable();
+
     for (;;) {
         Process *cur;
+        int      a_tempo = 0;       /* 1: look again in a tick */
 
         interrupts_disable();
         p = pty_da_handle(h);
         if (!p) { interrupts_enable(); return ERR(EBADF); }
 
-        if (p->in_quanti > 0) break;
+        if (canonico || (serve > 0 && decimi == 0)) {
+            if (p->in_quanti >= (canonico ? 1u : serve)) break;
+        } else if (serve == 0 && decimi == 0) {
+            break;                                      /* what is there */
+        } else if (serve == 0) {                        /* one byte, timed */
+            if (p->in_quanti > 0) break;
+            if (!partito) { inizio = g_ticks; partito = 1; }
+            if (g_ticks - inizio >= decimi * 10u) break;
+            a_tempo = 1;
+        } else {                                        /* VTIME between bytes */
+            if (p->in_quanti >= serve) break;
+            if (p->in_quanti > 0) {
+                if (p->in_quanti != visti) { visti = p->in_quanti; inizio = g_ticks; }
+                if (g_ticks - inizio >= decimi * 10u) break;
+                a_tempo = 1;
+            }
+        }
 
         /* Fine dei dati: Ctrl+D, o il master se n'e' andato. */
-        if (p->fine_dati || p->master_aperti == 0) {
+        if (p->in_quanti == 0 && (p->fine_dati || p->master_aperti == 0)) {
             p->fine_dati = 0;
             interrupts_enable();
             return 0;
         }
+        if (p->in_quanti > 0 && p->master_aperti == 0) break;
 
         cur = proc_get_current();
         if (!cur) { interrupts_enable(); return ERR(EAGAIN); }
 
-        p->pid_att_in = cur->pid;
-        sched_block(PROC_BLOCKED);
+        if (a_tempo) {
+            interrupts_enable();
+            sched_sleep(10);
+        } else {
+            p->pid_att_in = cur->pid;
+            sched_block(PROC_BLOCKED);
+        }
 
         /* Vedi pipe_leggi: chi e' stato interrotto non torna ad aspettare. */
         if (proc_interrotto()) return ERR(EINTR);
@@ -507,7 +603,12 @@ int32_t pty_ctl(int h, uint32_t cmd, uint32_t arg)
         return 0;
 
     case PTY_CTL_MODO:
-        p->modo = arg & (PTY_CANONICO | PTY_ECO);
+        /* ! THE OLD RAW MODE LET Ctrl+C THROUGH AS A BYTE, and its users
+         * (extaskbar, exuser's password prompt) count on it: without
+         * PTY_CANONICO, ISIG goes too. tcsetattr is the way to choose. */
+        p->t.c_lflag &= ~(uint32_t)(T_ICANON | T_ECHO | T_ISIG);
+        if (arg & PTY_CANONICO) p->t.c_lflag |= T_ICANON | T_ISIG;
+        if (arg & PTY_ECO)      p->t.c_lflag |= T_ECHO;
         /* ! PASSANDO A GREZZO SI BUTTA LA RIGA A META'. Tenerla vorrebbe dire
          * consegnarla piu' tardi in un modo in cui nessuno la sta aspettando:
          * chi cambia modo lo fa perche' vuole i tasti da adesso. */
@@ -525,6 +626,67 @@ int32_t pty_ctl(int h, uint32_t cmd, uint32_t arg)
     default:
         return ERR(EINVAL);
     }
+}
+
+/* -----------------------------------------------------------------------------
+ * pty_ioctl — the termios and the window size, from either end
+ * --------------------------------------------------------------------------- */
+int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
+{
+    Pty *p;
+    int32_t r = 0;
+
+    interrupts_disable();
+    p = pty_da_handle(h);
+    if (!p) { interrupts_enable(); return ERR(EBADF); }
+
+    switch (req) {
+    case PTY_TCGETS:
+        *(PtyTermios *)arg = p->t;
+        break;
+
+    case PTY_TCSETSF:                       /* flush the input, then set */
+        p->in_quanti = 0; p->riga_n = 0; p->fine_dati = 0;
+        /* fall through */
+    case PTY_TCSETS:
+    case PTY_TCSETSW: {                     /* the output is never held */
+        uint32_t era = p->t.c_lflag & T_ICANON;
+        p->t = *(const PtyTermios *)arg;
+        /* ! LEAVING CANONICAL MODE, THE HALF LINE IS GIVEN, not thrown away
+         * as PTY_CTL_MODO does: POSIX keeps it, and a readline that switches
+         * mode between two keys would otherwise lose what was typed ahead. */
+        if (era && !(p->t.c_lflag & T_ICANON)) consegna_riga(p);
+        if (p->in_quanti && p->pid_att_in) {
+            sched_unblock_locked(p->pid_att_in);
+            p->pid_att_in = 0;
+        }
+        break;
+    }
+
+    case PTY_TCFLSH:                        /* 0 input, 1 output, 2 both */
+        if (arg == 0 || arg == 2) { p->in_quanti = 0; p->riga_n = 0; }
+        if (arg == 1 || arg == 2) p->out_quanti = 0;
+        break;
+
+    case PTY_TIOCGWINSZ: {
+        uint16_t *w = (uint16_t *)arg;
+        w[0] = (uint16_t)p->righe; w[1] = (uint16_t)p->colonne;
+        w[2] = (uint16_t)(p->colonne * 8); w[3] = (uint16_t)(p->righe * 16);
+        break;
+    }
+
+    case PTY_TIOCSWINSZ: {
+        const uint16_t *w = (const uint16_t *)arg;
+        if (w[0]) p->righe = w[0];
+        if (w[1]) p->colonne = w[1];
+        break;
+    }
+
+    default:
+        r = ERR(ENOTTY);
+    }
+    interrupts_enable();
+    return r;
 }
 
 /* -----------------------------------------------------------------------------
@@ -561,6 +723,14 @@ int pty_pronto_slave(int h)
     Pty *p = pty_da_handle(h);
 
     if (!p) return 1;                       /* sparito: pronto a fallire */
+    /* ! WITHOUT ICANON AND WITHOUT VTIME, READY MEANS VMIN BYTES, as Linux
+     * says: a read would not return before, and poll() must not promise
+     * what read() will not keep. With VTIME the read returns less after the
+     * timer, so one byte is ready. */
+    if (!(p->t.c_lflag & T_ICANON) && p->t.c_cc[T_VMIN] > 1 && !p->t.c_cc[T_VTIME] &&
+        p->in_quanti > 0 && p->in_quanti < p->t.c_cc[T_VMIN] &&
+        !p->fine_dati && p->master_aperti)
+        return 0;
     return (p->in_quanti > 0 || p->fine_dati || p->master_aperti == 0);
 }
 

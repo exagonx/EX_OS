@@ -44,13 +44,13 @@ export PATH="$TC/exos-cross64/bin:$PATH"
 A=$TC/terze-parti/rust-src/rustc-nightly-src.tar.xz
 [ -d "$SRC" ] || [ -d "$VEND" ] || [ ! -f "$A" ] || (cd "$(dirname "$A")" && tar xf "$(basename "$A")")
 [ -d "$SRC" ] || { [ -d "$VEND" ] || { echo "manca $VEND"; exit 1; }; cp -r "$VEND" "$SRC"; }
-[ -f "$O/libssl.a" ] || { echo "manca OpenSSL a 64 bit: EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh"; exit 1; }
+[ -f "$O/libssl.a" ] || { echo "manca OpenSSL a 64 bit: tools/openssl-exos/costruisci.sh 64"; exit 1; }
 
 mkdir -p "$B" "$OUT"
-# OpenSSL's headers in one directory: the source ones, then the generated.
+# OpenSSL's headers: tools/openssl-exos/costruisci.sh installs them all
+# (the generated ones included) in $O/include
+rm -rf "$B/ssl-include"
 mkdir -p "$B/ssl-include/openssl"
-cp -r "$R/openssl/include/openssl/." "$B/ssl-include/openssl/"
-chmod -R u+w "$B/ssl-include"
 cp -rf "$O/include/openssl/." "$B/ssl-include/openssl/"
 
 cat > "$B/exos64.cmake" <<EOF

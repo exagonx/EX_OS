@@ -90,7 +90,7 @@ ifeq ($(filter $(ARCH),i386 x86_64),)
 $(error ARCH=$(ARCH) non la conosco: i386 oppure x86_64)
 endif
 ifeq ($(ARCH),x86_64)
-ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 chiave64 tools64 netinst64 netinst-src pulisci64,$(or $(MAKECMDGOALS),all)),)
+ifneq ($(filter-out arch-dice kernel64-prova kernel64-sondaggio kernel64 utente64 iso64 usb64 chiave64 tools64 netinst64 netinst-src pulisci64 ambiente-stato,$(or $(MAKECMDGOALS),all)),)
 $(error ARCH=x86_64: questo bersaglio non e' ancora portato a 64 bit. Quelli che ci sono: iso64 netinst64 tools64 kernel64 kernel64-prova kernel64-sondaggio arch-dice)
 endif
 endif
@@ -100,6 +100,23 @@ endif
 # riga un `make` senza argomenti stamperebbe «ARCH=i386» e basta (successo
 # davvero, il 10 ottobre 2026, per dieci minuti).
 .DEFAULT_GOAL := all
+
+# ! WHAT IS MISSING IS SAID BEFORE STARTING, WITH THE COMMAND THAT FIXES IT
+# (25 October 2026, the user: «make sure the Makefile warns about every
+# missing part, suggesting which command or script to run»). The list of
+# parts, their tests and their remedies is ONE: tools/ambiente.sh. Here it is
+# asked about the targets on the command line (`make` alone is `make all`):
+# an indispensable part missing stops make before the first compilation
+# instead of an hour later; an optional one is a warning, and the target goes
+# on as before. Once per command: the sub-makes inherit AMBIENTE_VISTO.
+# `make ambiente-stato` lists every part, present or not.
+AMBIENTE_BERSAGLI := all iso iso-exos iso64 utente64 kernel64 tools64 netinst netinst64 usb usb64
+ifndef AMBIENTE_VISTO
+$(foreach b,$(filter $(AMBIENTE_BERSAGLI),$(or $(MAKECMDGOALS),all)),\
+  $(if $(filter 0,$(shell bash tools/ambiente.sh -per $(b) >&2; echo $$?)),,\
+    $(error 'make $(b)': mancano parti indispensabili, i rimedi sono qui sopra (tutto l'elenco: make ambiente-stato))))
+export AMBIENTE_VISTO := 1
+endif
 
 .PHONY: arch-dice
 arch-dice:
@@ -2137,9 +2154,10 @@ $(EXQJS_SO): $(EXQJS_SRC) $(EXJS_HDR) $(EXJS_ESPORTA) $(EXQJS_LD) \
 	    echo "     python3 tools/quickjs-exos/applica.py $(QUICKJS_DIR)"; exit 1; fi
 	@if [ ! -f "$(EXQJS_LIBM)" ]; then \
 	    echo "   manca openlibm per il bersaglio ($(EXQJS_LIBM)):"; \
-	    echo "   vedi tools/openlibm-exos/"; exit 1; fi
+	    echo "   rimedio: tools/ricostruisci-bersaglio.sh libm"; exit 1; fi
 	@if [ ! -f "$(EXQJS_LIBGCC)" ]; then \
-	    echo "   manca libgcc del cross-compilatore i386-exos"; exit 1; fi
+	    echo "   manca libgcc del cross-compilatore i386-exos"; \
+	    echo "   rimedio: tools/ricostruisci-bersaglio.sh libgcc"; exit 1; fi
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
 	@for f in $(QJS_SRC); do \
 	    n=$$(basename $$f .c); \
@@ -6416,7 +6434,8 @@ EXOS_CROSS ?= $(call dentro,exos-cross)
 # i386-exos-, che nessun programma di sistema usa.
 export PATH := $(EXOS_CROSS)/bin:$(PATH)
 
-# Dove prepara-openssl.sh ha lasciato libcrypto.a.
+# Where tools/openssl-exos/costruisci.sh leaves libcrypto.a, libssl.a and
+# include/ (OpenSSL 4.1.0, all its headers: the generated ones included).
 OPENSSL_BUILD ?= $(call dentro,openssl-build-exos)
 # GNU make per EX-OS: lo costruisce tools/make-exos/prepara-make.sh
 MAKE_NATIVO   ?= $(call dentro,exos-native)/build-make
@@ -6706,6 +6725,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	    echo "     runtime del bersaglio da $$R: $$(ls $(ISO_ROOT)/exos/lib | tr '\n' ' ')"; \
 	else \
 	    echo "     runtime del bersaglio assente: /exos/lib vuota, gcc potra' solo compilare (-c)"; \
+	    echo "     rimedio: tools/ricostruisci-bersaglio.sh libgcc e tools/ricostruisci-bersaglio.sh libm"; \
 	fi
 	@# ! LA STESSA VARIABILE CHE STA FRA LE PREREQUISITE. Scritti due volte,
 	@# i due elenchi divergono: e' cosi' che KERNEL_CORE_NOTES.md e' finito
@@ -6769,7 +6789,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	        rm -f $(ISO_ROOT)/bin/provamp.tmp && \
 	        echo "     provamp: GMP + MPFR + MPC"; \
 	    else \
-	        echo "     GMP/MPFR/MPC assenti dal sysroot: niente provamp"; \
+	        echo "     GMP/MPFR/MPC assenti dal sysroot: niente provamp (rimedio: tools/ricostruisci-bersaglio.sh gcclibs)"; \
 	    fi; \
 	    if [ -f $(CROSS_SYSROOT)/lib/libm.a ] && command -v i386-exos-gcc >/dev/null 2>&1; then \
 	        i386-exos-gcc -O2 -o $(ISO_ROOT)/bin/provamat.tmp \
@@ -6778,7 +6798,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	        rm -f $(ISO_ROOT)/bin/provamat.tmp && \
 	        echo "     provamat: openlibm"; \
 	    else \
-	        echo "     libm assente dal sysroot: niente provamat"; \
+	        echo "     libm assente dal sysroot: niente provamat (rimedio: tools/ricostruisci-bersaglio.sh libm)"; \
 	    fi; \
 	    if [ -f $(CROSS_SYSROOT)/lib/libstdc++.a ] && command -v i386-exos-g++ >/dev/null 2>&1; then \
 	        i386-exos-g++ -O2 -o $(ISO_ROOT)/bin/provacpp.tmp \
@@ -6787,12 +6807,13 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	        rm -f $(ISO_ROOT)/bin/provacpp.tmp && \
 	        echo "     provacpp: libstdc++ (contenitori, string, eccezioni)"; \
 	    else \
-	        echo "     libstdc++ assente dal sysroot: niente provacpp"; \
+	        echo "     libstdc++ assente dal sysroot: niente provacpp (rimedio: tools/ricostruisci-bersaglio.sh libgcc)"; \
 	    fi; \
 	else \
 	    printf 'Qui arrivera il compilatore: vedi /leggimi.txt\n' \
 	        > $(ISO_ROOT)/bin/leggimi.txt; \
 	    echo "     binutils nativi assenti ($(BINUTILS_NATIVI)): CD senza /bin"; \
+	    echo "     rimedio: tools/ricostruisci-bersaglio.sh binutils"; \
 	fi
 	@# --- GCC nativo: cc1, il driver e il preprocessore ---------------------
 	@# Stessa regola dei binutils: non stanno nel repository, si copiano da
@@ -6974,16 +6995,15 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	        cp "$(OPENSSL_BUILD)/libssl.a" $(ISO_ROOT)/exos/lib/; \
 	    mkdir -p $(ISO_ROOT)/exos/include/openssl; \
 	    cp -r "$(OPENSSL_BUILD)/include/openssl/." $(ISO_ROOT)/exos/include/openssl/ 2>/dev/null || true; \
-	    cp -r openssl/include/openssl/. $(ISO_ROOT)/exos/include/openssl/ 2>/dev/null || true; \
 	    if command -v i386-exos-gcc >/dev/null 2>&1; then \
-	        i386-exos-gcc -O2 -I "$(OPENSSL_BUILD)/include" -I openssl/include \
+	        i386-exos-gcc -O2 -I "$(OPENSSL_BUILD)/include" \
 	            -o $(ISO_ROOT)/bin/provassl $(TOOLS_DIR)/iso/prova-ssl.c \
 	            "$(OPENSSL_BUILD)/libcrypto.a" 2>/dev/null && \
 	        i386-exos-strip $(ISO_ROOT)/bin/provassl && \
 	        echo "     OpenSSL: libcrypto.a e /bin/provassl ($$(du -h $(ISO_ROOT)/bin/provassl | cut -f1))"; \
 	    fi; \
 	else \
-	    echo "     OpenSSL assente: si costruisce con tools/openssl-exos/prepara-openssl.sh"; \
+	    echo "     OpenSSL assente: si costruisce con tools/openssl-exos/costruisci.sh 32"; \
 	fi
 	@# --- provatls: un handshake TLS vero, dentro EX-OS -------------------
 	@#
@@ -7001,7 +7021,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	        [ -f "$$f" ] && cp "$$f" $(ISO_ROOT)/exos/ssl/certi.pem && break; \
 	    done; \
 	    i386-exos-gcc -O2 -I drivers/net -I drivers/pci \
-	        -I "$(OPENSSL_BUILD)/include" -I openssl/include \
+	        -I "$(OPENSSL_BUILD)/include" \
 	        -o $(ISO_ROOT)/bin/provatls $(TOOLS_DIR)/iso/prova-tls.c \
 	        lib/rete.c lib/dns.c \
 	        "$(OPENSSL_BUILD)/libssl.a" "$(OPENSSL_BUILD)/libcrypto.a" \
@@ -7009,6 +7029,15 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	    i386-exos-strip $(ISO_ROOT)/bin/provatls && \
 	    echo "     TLS: libssl.a e /bin/provatls ($$(du -h $(ISO_ROOT)/bin/provatls | cut -f1))$$([ -f $(ISO_ROOT)/exos/ssl/certi.pem ] && echo ', magazzino CA')"; \
 	fi
+	@# --- ncurses: la libreria curses, la terminfo, tic/tput, i sorgenti --
+	@# Gruppo [curses] del catalogo. Lo stesso script del CD a 64 bit
+	@# (tools/mktools64.sh); se tools/ncurses-exos/costruisci.sh non e'
+	@# stato lanciato, il CD si fa lo stesso e lo dice.
+	@sh $(TOOLS_DIR)/ncurses-exos/su-cd.sh $(ISO_ROOT) 32
+	@# E le librerie di tools/<nome>-exos (zlib, bzip2, xz, lz4, zstd, PCRE2,
+	@# {fmt}, e di OpenSSL il programma openssl e i sorgenti), un gruppo del
+	@# catalogo ciascuna, con i sorgenti.
+	@sh $(TOOLS_DIR)/librerie-exos/su-cd.sh $(ISO_ROOT) 32
 	@# --- FreeBASIC: il compilatore e la sua runtime ----------------------
 	@# Stessa regola di GCC, binutils e OpenSSL: non sta nel repository, si
 	@# copia da dove l'ha lasciato tools/freebasic-exos/prepara-fb.sh, e se
@@ -7174,6 +7203,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	F="$(FB_SORGENTI_CD)"; \
 	if [ ! -d "$$F" ]; then \
 	    echo "     sorgenti FreeBASIC assenti ($$F): niente /freebasic"; \
+	    echo "     rimedio: ripristinare FreeBASIC-1.10.1-source-bootstrap/ dall'archivio di backup.sh"; \
 	elif [ ! -f "$$F/makefile" ] || [ ! -d "$$F/src/compiler" ] || \
 	     [ ! -d "$$F/src/rtlib" ]; then \
 	    echo "     !  $$F NON e' un albero di sorgenti:"; \
@@ -8765,6 +8795,10 @@ config: boot/kernel.cfg
 # =============================================================================
 
 .PHONY: help
+.PHONY: ambiente-stato
+ambiente-stato:
+	@bash tools/ambiente.sh
+
 help:
 	@echo ""
 	@echo "EX-OS — Sistema Operativo x86 32-bit"
@@ -8776,6 +8810,7 @@ help:
 	@echo "  make stage2       — Solo Stage 2 (loader FAT12)"
 	@echo "  make kernel       — Kernel ELF + flat binary"
 	@echo "  make floppy       — Solo immagine floppy"
+	@echo "  make ambiente-stato — Cosa serve per costruire, cosa manca e il comando che lo fa"
 	@echo ""
 	@echo "Supporti:"
 	@echo "  make iso-tutte    — LE DUE ISO COMPLETE (exos.iso + exos-tools.iso)"

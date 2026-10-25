@@ -1,0 +1,46 @@
+# =============================================================================
+# tools/ncurses-exos/exos.ti — the terminfo entry of the EX-OS console
+#
+# Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# TERM=vga on the console (kernel.cfg). Every capability here is a sequence
+# kernel/arch/x86/vga.c really carries out (tools/prova_termios.sh reads the
+# screen back to prove it), and every key one drivers/kbd/kbd.c really sends
+# in termios byte mode. Nothing borrowed from "linux" that the console does
+# not do: a wrong capability is worse than a missing one, curses believes it.
+#
+#   - no xenl: writing the last column moves the cursor to the next row at
+#     once (and scrolls at the bottom), as on a PC console;
+#   - cub1 is ESC[D and not ^H: a backspace on this console also erases;
+#   - cud1 is ESC[B and not ^J: with OPOST+ONLCR a LF also goes to column 0;
+#   - acsc: the font is CP437 (kernel/arch/x86/font8x16.c), so the line
+#     drawing characters are plain bytes, with no smacs/rmacs, as ibmpc3;
+#   - lines and columns come from TIOCGWINSZ (100x37 in QEMU, more on a
+#     wide screen): cols and lines here are only the text-mode fallback.
+#
+# tools/ncurses-exos/costruisci.sh appends it to ncurses' terminfo.src: it
+# goes in /exos/share/terminfo and among the entries built into the library
+# (--with-fallbacks), so curses works with no database on the disk.
+# =============================================================================
+vga|EX-OS console,
+	am, bce, msgr,
+	colors#8, cols#80, it#8, lines#25, pairs#64,
+	acsc=+\020\,\021-\030.^Y0\333`\004a\261f\370g\361h\260i\316j\331k\277l\332m\300n\305o~p\304q\304r\304s_t\303u\264v\301w\302x\263y\363z\362{\343|\330}\234~\376,
+	bel=^G, bold=\E[1m, civis=\E[?25l, clear=\E[H\E[2J,
+	cnorm=\E[?25h, cr=\r, csr=\E[%i%p1%d;%p2%dr,
+	cub=\E[%p1%dD, cub1=\E[D, cud=\E[%p1%dB, cud1=\E[B,
+	cuf=\E[%p1%dC, cuf1=\E[C, cup=\E[%i%p1%d;%p2%dH,
+	cuu=\E[%p1%dA, cuu1=\E[A, dch=\E[%p1%dP, dch1=\E[P,
+	dl=\E[%p1%dM, dl1=\E[M, ech=\E[%p1%dX, ed=\E[J, el=\E[K,
+	el1=\E[1K, home=\E[H, hpa=\E[%i%p1%dG, ht=^I,
+	ich=\E[%p1%d@, il=\E[%p1%dL, il1=\E[L, ind=\n, nel=\r\n,
+	op=\E[39;49m, rc=\E8, rev=\E[7m, ri=\EM, rmcup=\E[?1049l,
+	rmso=\E[27m, sc=\E7, setab=\E[4%p1%dm, setaf=\E[3%p1%dm,
+	sgr=\E[0%?%p1%p3%|%t;7%;%?%p6%t;1%;m,
+	sgr0=\E[0m, smcup=\E[?1049h, smso=\E[7m, vpa=\E[%i%p1%dd,
+	kbs=^H, kcub1=\E[D, kcud1=\E[B, kcuf1=\E[C, kcuu1=\E[A,
+	kdch1=\E[3~, kend=\E[F, kf1=\E[[A, kf10=\E[21~,
+	kf11=\E[23~, kf12=\E[24~, kf2=\E[[B, kf3=\E[[C,
+	kf4=\E[[D, kf5=\E[[E, kf6=\E[17~, kf7=\E[18~, kf8=\E[19~,
+	kf9=\E[20~, khome=\E[H, kich1=\E[2~, knp=\E[6~, kpp=\E[5~,

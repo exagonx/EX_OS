@@ -60,6 +60,55 @@
 #define PTY_CTL_MISURA  3       /* arg = (righe << 16) | colonne            */
 #define PTY_CTL_LEGGI_MISURA 4  /* rende (righe << 16) | colonne            */
 
+/* -----------------------------------------------------------------------------
+ * TERMIOS (25 October 2026, prerequisite of ncurses and of the line editors)
+ *
+ * ! THE LAYOUT IS THE ONE OF lib/include/termios.h, and the flag values are
+ * Linux's: four 32-bit flag words and NCCS control characters. tcgetattr and
+ * tcsetattr in the libc are ioctl(TCGETS/TCSETS) with this structure, copied
+ * as it is. PTY_CTL_MODO stays, as the short way to say ICANON and ECHO.
+ *
+ * What the discipline honours: ICRNL INLCR IGNCR ISTRIP in input, OPOST+ONLCR
+ * in output (and on the echo), ICANON ECHO ECHOE ECHOK ISIG NOFLSH, and the
+ * characters VINTR VEOF VERASE VKILL VMIN VTIME. The rest is kept and given
+ * back, so a program that saves and restores the modes gets what it set.
+ * --------------------------------------------------------------------------- */
+#define PTY_NCCS        20
+typedef struct {
+    uint32_t c_iflag, c_oflag, c_cflag, c_lflag;
+    uint8_t  c_cc[PTY_NCCS];
+} PtyTermios;
+
+#define PTY_TCGETS      0x5401
+#define PTY_TCSETS      0x5402
+#define PTY_TCSETSW     0x5403
+#define PTY_TCSETSF     0x5404
+#define PTY_TCFLSH      0x540B
+#define PTY_TIOCGWINSZ  0x5413
+#define PTY_TIOCSWINSZ  0x5414
+
+#define T_ISTRIP  0x0020
+#define T_INLCR   0x0040
+#define T_IGNCR   0x0080
+#define T_ICRNL   0x0100
+#define T_OPOST   0x0001
+#define T_ONLCR   0x0004
+#define T_ISIG    0x0001
+#define T_ICANON  0x0002
+#define T_ECHO    0x0008
+#define T_ECHOE   0x0010
+#define T_ECHOK   0x0020
+#define T_NOFLSH  0x0080
+#define T_VINTR   0
+#define T_VERASE  2
+#define T_VKILL   3
+#define T_VEOF    4
+#define T_VTIME   5
+#define T_VMIN    6
+
+/* ioctl on either end. `buf` is already checked by the caller. */
+int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg);
+
 /* Crea una coppia. Rende 0 e riempie i due handle, o un errno negativo. */
 int32_t pty_apri(int *master, int *slave);
 

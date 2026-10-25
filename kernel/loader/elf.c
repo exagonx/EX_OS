@@ -683,10 +683,20 @@ if (n <= 0) {
             proc->tls_filesz = tls ? tls->p_filesz  : 0;
             proc->tls_dim    = dim_tls;
 
+            /* ! tls CAN BE NULL HERE (a program with no __thread gets the
+             * TCB alone, see above), and reading tls->p_memsz anyway was not
+             * a harmless log line (25 October 2026): the compiler takes the
+             * dereference as proof that tls is not NULL and drops the
+             * "tls ? ... : 0" just above. The 64-bit GCC did: tls_off and
+             * tls_filesz came from address 0 (the BIOS vectors, 0xF000xxxx),
+             * and every pthread_create of a program with no TLS failed with
+             * EIO, trying to read an image that does not exist. */
             klog(LOG_INFO, "ELF: TLS 0x%08x-0x%08x, tp=0x%08x "
                  "(memsz=%u filesz=%u align=%u)",
                  base, base + totale, tp,
-                 tls->p_memsz, tls->p_filesz, tls->p_align);
+                 tls ? (uint32_t)tls->p_memsz : 0u,
+                 tls ? (uint32_t)tls->p_filesz : 0u,
+                 tls ? (uint32_t)tls->p_align : 0u);
         }
     }
 

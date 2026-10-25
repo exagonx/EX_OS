@@ -180,7 +180,8 @@ instead of using its interrupt), and the driver has to be started by hand.
   (`tools/costruisci-utente64.sh`, step 6). `tools/prova-dl/prova-js.sh`
   runs the same script on both inside EX-OS 64 and gets the same answer. Not
   yet tried in the browser at 64 bit.
-- **OpenSSL at 64 bit**: `EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh`.
+- **OpenSSL at 64 bit**: `tools/openssl-exos/costruisci.sh 64` (since 0.279
+  OpenSSL 4.1.0 with sockets and threads, see above).
   Inside EX-OS 64, `provatls www.example.com` makes a TLS 1.3 handshake over
   the EX-OS network, verifies the certificate and reads the page. libcrypto,
   libssl, the headers and the CA store are on `dist/exos64-tools.iso` and in
@@ -2356,6 +2357,144 @@ by its thread pointer, read from `%gs`/`%fs` with no system call.
 > program's own atomic variables EX-OS's GCC has `<stdatomic.h>` and the
 > `__atomic_*` builtins, which become `lock` instructions: no libc needed.
 
+### OpenSSL 4.1.0 with sockets and threads, and 127.0.0.1
+
+**tested at 32 and 64 bit in QEMU** (`tools/prova_openssl.sh`, with the QEMU
+network): four threads hash, encrypt and make `SSL_CTX`s at once; a TLS
+server and a client in one program talk over `127.0.0.1` (`SSL_set_fd` on
+an accepted socket, as MariaDB does); TLS 1.3 to `www.example.com:443` on a
+real socket, the certificate verified; the `openssl` program computes the
+same SHA-256 as Linux, makes an Ed25519 key and a certificate that Linux's
+`openssl verify` accepts, and `openssl s_client` connects and verifies.
+
+Until now EX-OS had a snapshot of OpenSSL's development branch built with
+`no-sock no-threads`: TLS only through two memory BIOs (`provatls`). MariaDB
+needs sockets and locks, and the rule is the latest public release: now it
+is OpenSSL **4.1.0** (23 October 2026, GPG signature checked), built by
+`tools/openssl-exos/costruisci.sh` like the other libraries, with sockets,
+pthreads and the `openssl` program; sources on both tools CDs, group
+`[ssl]`, so in netinst too. `provatls`, `provassl` and libgit2 are rebuilt
+on it (`tools/openssl-exos/prepara-openssl.sh` is gone).
+
+What it needed elsewhere:
+
+- **ip.drv 0.013, loopback.** A frame for this machine (127.x.x.x or its own
+  address) went to the network card and was lost: no program could reach a
+  server on the same machine. Now it waits in a queue inside ip.drv and
+  comes back in as if it had arrived; no ARP, the source address is the
+  destination itself, and 127.x.x.x from the wire is dropped.
+- **libc:** `select()` sees sockets and every file (`fd_set` grew from one
+  32-bit word to 1088 descriptors; a program built with the old one still
+  works with the new `libc.so`, because only the words below `nfds` are
+  touched); `getsockname` gives the address `bind` was given; `connect` to
+  `0.0.0.0` goes to `127.0.0.1` as on Linux; `getservbyname`/`getservbyport`
+  (with `mysql` 3306 in the table); `setpgid` to the process's own group.
+
+### Seven libraries as real EX-OS libraries: zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}
+
+**tested at 32 and 64 bit in QEMU** (`tools/prova_librerie.sh`): one
+program (`tools/prove/libreprova.cpp`) packs and unpacks 64 KB with each
+compressor, matches with PCRE2 (and its POSIX `regcomp`/`regexec`), formats
+with fmt; then `xz`, `zstd`, `bzip2` and `lz4` compress a file inside EX-OS
+that Linux unpacks, and unpack archives Linux made — compared byte by byte.
+
+The libraries MariaDB needs, ported first and on their own because others
+will need them too (the rule: every dependency becomes a real library before
+the program that wants it). Each is the latest public release, its archive
+checked (GPG signature, or the published sha256) and kept in
+`cross_build/terze-parti/`; each has its `tools/<name>-exos/costruisci.sh`
+(the shared part in `tools/librerie-exos/comune.sh`), builds at 32 and 64
+bit, goes into the cross sysroots (`-lz`, `-lbz2`, `-llzma`, `-llz4`,
+`-lzstd`, `-lpcre2-8`, `-lfmt`) and onto both tools CDs with its sources,
+one catalogue group each (`[zlib]` `[bzip2]` `[xz]` `[lz4]` `[zstd]`
+`[pcre2]` `[fmt]`), so into netinst as well:
+
+| library | version | programs |
+|---|---|---|
+| zlib | 1.3.2 | |
+| bzip2 | 1.0.8 | bzip2, bzip2recover |
+| XZ Utils (liblzma) | 5.8.4 | xz, xzdec, lzmadec, lzmainfo |
+| LZ4 | 1.10.0 | lz4 |
+| Zstandard | 1.5.7 | zstd |
+| PCRE2 | 10.49 (8, 16, 32 bit, POSIX) | pcre2grep, pcre2test |
+| {fmt} | 12.2.0 (headers and libfmt) | |
+
+- {fmt} 12.2.0 does not build for any 32-bit target (its own issues #4811,
+  #4886): the fix merged upstream (pull request #4813) is applied until a
+  release carries it;
+- PCRE2 without the JIT for now (same results, interpreted);
+- the libc gained `O_NOCTTY`, and `fchown` to the owner `stat` already
+  reports succeeds (xz said "Cannot set the file owner").
+
+**And a kernel fault the 64-bit xz found:** every `pthread_create` of a
+64-bit program with no `__thread` variables failed (`EIO`, "non riesco a
+leggere l'immagine TLS per il filo"). A log line in the ELF loader read the
+TLS segment even when there was none; the compiler took that as proof the
+pointer was not NULL and dropped the checks above it, so the thread image
+came from address 0. Fixed in `kernel/loader/elf.c`.
+
+### ncurses 6.6: full-screen programs on the console and over telnet
+
+**tested at 32 and 64 bit in QEMU** (`tools/prova_curses.sh`): a curses
+program draws boxes, reverse video, colours, deletes a line, opens a window,
+and reads Up, F1, Delete and Page Down as `KEY_UP`, `KEY_F(1)`, `KEY_DC`,
+`KEY_NPAGE`; the screen is read back exactly from QEMU
+(`tools/schermo_testo.py` matches every cell with the console's own glyphs).
+**And the same program compiled inside EX-OS** with the tools CD's `gcc
+-lncurses` does the same.
+
+The real curses library, the first of the libraries MariaDB needs that are
+useful to everything else as well: `libncurses.a` (`-lcurses` too),
+`libpanel`, `libmenu`, `libform`, `libncurses++`, the headers, the terminfo
+database, and `tic`, `infocmp`, `toe`, `tput`, `tset`, `reset`, `clear`,
+`tabs`. Built from the upstream 6.6 release (signature checked) by
+`tools/ncurses-exos/costruisci.sh`; in the cross toolchains' sysroots, and
+on both tools CDs with its sources (group `[curses]`), so in the netinst
+repositories too.
+
+- the console is `TERM=vga`, and it has its own terminfo entry
+  (`tools/ncurses-exos/exos.ti`): only what `vga.c` really does. For it the
+  console learnt the sequences curses relies on: insert and delete
+  characters and lines, erase characters, column and row, a scrolling
+  region, reverse index, saving the cursor, reverse video. In raw mode the
+  keyboard also sends F1-F12, Insert, Delete, Page Up and Page Down;
+- `vga`, `linux`, `xterm`, `xterm-256color`, `vt100`, `vt220`, `ansi`,
+  `screen` and `dumb` are compiled into the library: curses works on a
+  system with no terminfo on its disk;
+- the libc gained what ncurses asked for: `getopt`, `getopt_long`
+  (`<getopt.h>`), `getpgrp`, `ttyname`, and the terminal `ioctl` numbers in
+  `<sys/ioctl.h>`.
+
+Not yet: `ncursesw`, the wide-character library, which waits for UTF-8 in
+the libc (its `wchar_t` is Latin-1 today); and `SIGWINCH`, so a resized
+telnet window is not noticed by a running program.
+
+### A real terminal: termios on the console and in telnet (0.279)
+
+**tested at 32 and 64 bit in QEMU** (`tools/prova_termios.sh`: libctest and
+`tools/prove/termiosprova.c` with `tcgetattr`/`tcsetattr`/`cfmakeraw` from
+libc.a, keys typed on the console in raw mode; `prova_telnet`, `prova_ctrlc`,
+`prova_ssh` again).
+
+Until now a terminal had two modes, "lines with echo" and "raw", and no
+`struct termios`: `tcsetattr` did nothing. Editors, `less`, `top`, and above
+all **ncurses** (the next port, which MariaDB's client and many other
+programs need) cannot work like that. Now both terminals keep a Linux
+`struct termios` (same values, same `ioctl`: `TCGETS`, `TCSETS`, `TCSETSW`,
+`TCSETSF`, `TCFLSH`, `TIOCGWINSZ`, `TIOCSWINSZ`):
+
+- **in a telnet session** (pty): `ICANON`, `ECHO`, `ECHOE`, `ECHOK`, `ISIG`,
+  `ICRNL`/`INLCR`/`IGNCR`, `OPOST`+`ONLCR`, `VMIN`/`VTIME`. `isatty()` is
+  true, and `TIOCGWINSZ` gives the client's window size;
+- **on the console**, one per virtual console: with `ICANON` off the keyboard
+  driver hands over keys one by one instead of lines, an arrow as its whole
+  `ESC [ A`, Enter as CR, `^C` as a byte when `ISIG` is off, no echo when
+  `ECHO` is off; `poll()` on stdin wakes as soon as a key is pressed.
+  `TIOCGWINSZ` gives the real size (100x37 in QEMU), not 80x25.
+
+A program that leaves the terminal raw and dies does not leave a deaf
+shell: the shell (0.009) puts sane modes back before every prompt.
+
 ### A telnet session that will not come back, and the screen of the integrated NVIDIA (0.278)
 
 **tested at 32 and 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd killed
@@ -4159,7 +4298,7 @@ exercised by forcing the slow path in QEMU, not on a physical 486.
 | **`g++`: the same chain in C++, with libstdc++ and exceptions** | **tested** |
 | FreeBASIC: `fbc` finds its own `.bi` files on its own | tested |
 | FreeBASIC: final link (fbc emits Linux options) | to do by hand |
-| TLS/SSL as a userspace library (OpenSSL port) | to do |
+| TLS/SSL as a userspace library (OpenSSL 4.1.0, `openssl` program) | tested |
 
 ---
 
@@ -4270,6 +4409,7 @@ The `install_crosscompiler.sh` script automatically installs:
 ## Build and test
 
 ```bash
+make ambiente-stato  # What the build needs, what is missing, the command that makes it
 make all          # Build everything + create dist/floppy.img
 make run          # Boot under QEMU (32MB RAM)
 make iso          # Tools CD (as, ld, headers, docs)
@@ -4286,6 +4426,17 @@ make distclean    # Remove build/ and dist/
 `$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); if they are not
 there it says so and builds the CD anyway. How to build them:
 `tools/binutils-exos/leggimi.md`.
+
+**Missing parts are said before starting.** `all`, `iso`, `iso-exos`,
+`iso64`, `utente64`, `kernel64`, `tools64`, `netinst`, `netinst64`, `usb`
+and `usb64` first ask `tools/ambiente.sh` what they use: a missing
+indispensable part (the cross compiler, libgcc, nasm, gcc -m32...) stops make
+before the first compilation, with the command that fixes it
+(`sudo apt install ...`, `tools/ricostruisci-bersaglio.sh libm`,
+`tools/gcc-exos/cross64.sh`...); a missing optional one is a warning, and the
+target builds a smaller result. `tools/ambiente.sh -per toolchain` checks
+what rebuilding the compilers from the sources needs. A new part goes in
+that one list, not in the recipe that uses it.
 
 ### Full boot log over the serial port
 

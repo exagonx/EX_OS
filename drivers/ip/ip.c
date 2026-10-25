@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.012");
+EX_VERSIONE("ip.drv", "0.013");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -213,6 +213,45 @@ static int e_broadcast(const unsigned char *ip)
     return 1;
 }
 
+/* =============================================================================
+ * Loopback (0.013, 25 October 2026: MariaDB, and any server its own
+ * clients reach on 127.0.0.1)
+ *
+ * A frame for this machine - 127.x.x.x, or our own address - does not go to
+ * the card (which would send it on the wire, or drop it): it waits in
+ * g_loop, and servi() feeds it back to tratta_frame() as if it had arrived,
+ * after the message that produced it. A queue and not a direct call: the
+ * answer to a SYN is sent from inside tratta_tcp, and calling tratta_frame
+ * from manda_frame would nest one connection's handling inside the other's.
+ *
+ * To 127.x.x.x the source address is the destination itself, so both ends
+ * see the same address (the connection table matches on it), and no ARP is
+ * asked: the MAC is ours. 127.x.x.x from the card is dropped, as every
+ * system does: only the queue may bring it.
+ * ============================================================================= */
+#define LOOP_FRAME 32
+static unsigned char g_loop[LOOP_FRAME][NET_FRAME_MAX];
+static unsigned int  g_loop_len[LOOP_FRAME];
+static unsigned int  g_loop_testa, g_loop_n;
+static int           g_da_loop;          /* tratta_frame on a queued frame */
+
+static int e_loopback(const unsigned char *ip)
+{
+    return ip[0] == 127;
+}
+
+/* 127.x.x.x, or the address this machine has */
+static int e_nostro(const unsigned char *ip)
+{
+    return e_loopback(ip) || (!ip_nullo(g_cfg.ip) && ip_uguali(ip, g_cfg.ip));
+}
+
+/* the source address of what goes to dest */
+static const unsigned char *sorgente_per(const unsigned char *dest)
+{
+    return e_loopback(dest) ? dest : g_cfg.ip;
+}
+
 static void metti16(unsigned char *p, unsigned int v)
 {
     p[0] = (unsigned char)((v >> 8) & 0xFF);
@@ -305,10 +344,43 @@ static void arp_registra(const unsigned char *ip, const unsigned char *mac)
  * o rimandare tutto quello che nel frattempo è arrivato — vedi il commento
  * di testa.
  * ============================================================================= */
+static void tratta_frame(const unsigned char *f, unsigned int len);
+
 static void manda_frame(const unsigned char *f, unsigned int len)
 {
+    /* for this machine: into the loopback queue (see g_loop). Full: dropped
+     * and counted, TCP sends it again */
+    if (len >= 14 + 20 && f[12] == 0x08 && f[13] == 0x00 && e_nostro(f + 30)) {
+        unsigned int k;
+
+        if (g_loop_n == LOOP_FRAME) { g_st.scartati++; return; }
+        k = (g_loop_testa + g_loop_n) % LOOP_FRAME;
+        memcpy(g_loop[k], f, len);
+        g_loop_len[k] = len;
+        g_loop_n++;
+        return;
+    }
     if (ipc_send(g_pid_rete, NET_MSG_INVIA, f, len) < 0)
         g_st.scartati++;
+}
+
+/* the queued frames, in order; what they produce is queued again and
+ * handled in the same call (a bound, so a pair of programs bouncing packets
+ * cannot keep the loop from the card and the clocks) */
+static void loop_svuota(void)
+{
+    unsigned char f[NET_FRAME_MAX];
+    unsigned int  giri = 0, len;
+
+    while (g_loop_n > 0 && giri++ < 4 * LOOP_FRAME) {
+        len = g_loop_len[g_loop_testa];
+        memcpy(f, g_loop[g_loop_testa], len);
+        g_loop_testa = (g_loop_testa + 1) % LOOP_FRAME;
+        g_loop_n--;
+        g_da_loop = 1;
+        tratta_frame(f, len);
+        g_da_loop = 0;
+    }
 }
 
 static void riarma_ricezione(void)
@@ -420,7 +492,7 @@ static unsigned int componi_ip(unsigned char *f, const unsigned char *mac_dest,
     f[22] = IP_TTL_USCITA;
     f[23] = (unsigned char)protocollo;
     metti16(f + 24, 0);               /* somma di controllo: dopo */
-    memcpy(f + 26, g_cfg.ip, 4);
+    memcpy(f + 26, sorgente_per(ip_dest), 4);
     memcpy(f + 30, ip_dest, 4);
 
     /* La somma dell'intestazione IP copre SOLO l'intestazione, e va
@@ -612,7 +684,7 @@ static int udp_manda(const unsigned char *mac_dest, const unsigned char *ip_dest
     metti16(udp + 6, 0);
     if (n) memcpy(udp + 8, dati, n);
 
-    metti16(udp + 6, somma_udp(g_cfg.ip, ip_dest, udp, 8 + n));
+    metti16(udp + 6, somma_udp(sorgente_per(ip_dest), ip_dest, udp, 8 + n));
 
     len = componi_ip(f, mac_dest, ip_dest, IP_PROTO_UDP, udp, 8 + n);
     if (len == 0) return -EMSGSIZE;
@@ -1075,7 +1147,7 @@ static void tcp_manda(Conn *c, unsigned int flag,
     if (n) memcpy(seg + 20, dati, n);
     tot = 20u + n;
 
-    metti16(seg + 16, pseudo_somma(g_cfg.ip, c->ip, IP_PROTO_TCP, seg, tot));
+    metti16(seg + 16, pseudo_somma(sorgente_per(c->ip), c->ip, IP_PROTO_TCP, seg, tot));
 
     len = componi_ip(f, c->mac, c->ip, IP_PROTO_TCP, seg, tot);
     if (len == 0) return;
@@ -1597,6 +1669,14 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
     }
     if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
 
+    /* this machine: no route, no ARP, our own MAC (see g_loop) */
+    if (e_nostro(a->ip)) {
+        static VoceArp noi;
+
+        memcpy(noi.mac, g_mac, 6);
+        v = &noi;
+        goto ha_mac;
+    }
     if (prossimo_salto(a->ip, hop) != 0) {
         rispondi_esito(cliente, -ENETUNREACH);
         return;
@@ -1615,6 +1695,7 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
         return;
     }
 
+ha_mac:
     memset(c, 0, sizeof(*c));
     memcpy(c->ip, a->ip, 4);
     memcpy(c->mac, v->mac, 6);
@@ -1907,7 +1988,13 @@ static void tratta_ip(const unsigned char *f, unsigned int len)
     /* Per noi, oppure a tutti. Il secondo caso non e' una concessione: un
      * client DHCP non ha ancora un indirizzo, e la risposta del server
      * arriva percio' in broadcast. */
-    if (!ip_uguali(ip + 16, g_cfg.ip) && !e_broadcast(ip + 16)) {
+    if (!ip_uguali(ip + 16, g_cfg.ip) && !e_broadcast(ip + 16) &&
+        !(g_da_loop && e_loopback(ip + 16))) {
+        g_st.scartati++;
+        return;
+    }
+    /* 127.x.x.x only from the loopback queue, never from the wire */
+    if (!g_da_loop && (e_loopback(ip + 12) || e_loopback(ip + 16))) {
         g_st.scartati++;
         return;
     }
@@ -2207,6 +2294,12 @@ static void udp_invia(unsigned int client, const unsigned char *payload,
         rispondi_esito(client,
                        udp_manda(tutti, inv.ip, inv.porta_locale,
                                  inv.porta, payload + sizeof(inv), n));
+        return;
+    }
+
+    if (e_nostro(inv.ip)) {
+        rispondi_esito(client, udp_manda(g_mac, inv.ip, inv.porta_locale,
+                                         inv.porta, payload + sizeof(inv), n));
         return;
     }
 
@@ -2532,6 +2625,9 @@ static void servi(void)
                 }
             }
         }
+
+        /* what this message sent to this machine (see g_loop) */
+        loop_svuota();
 
         controlla_scadenze();
 

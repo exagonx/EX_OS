@@ -44,6 +44,19 @@ struct protoent {
 };
 struct protoent *getprotobyname(const char *nome);
 struct protoent *getprotobynumber(int numero);
+
+/* getservbyname/getservbyport (25 October 2026, OpenSSL 4.1): there is no
+ * /etc/services, the libc knows the common ones (http, https, ftp, ssh,
+ * telnet, domain, smtp, pop3, imap, ntp, mysql) for any protocol. s_port in
+ * network order, as everywhere. */
+struct servent {
+    char  *s_name;
+    char **s_aliases;
+    int    s_port;
+    char  *s_proto;
+};
+struct servent  *getservbyname(const char *nome, const char *proto);
+struct servent  *getservbyport(int porta, const char *proto);
 #ifdef __cplusplus
 }
 #endif

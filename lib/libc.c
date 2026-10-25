@@ -404,14 +404,18 @@ struct pollfd {
 #define POLL_IN       0x0001
 #define POLL_OUT      0x0004
 
-/* fd_set: una maschera a 32 bit, uno per descrittore. MAX_FD del kernel e' 32,
- * quindi ci sta tutto. Definizione ripetuta in lib/include/libc.h. */
-#define FD_SETSIZE  32
-typedef struct { unsigned int bit; } fd_set;
-#define FD_ZERO(s)      ((s)->bit = 0u)
-#define FD_SET(f, s)    ((s)->bit |=  (1u << (f)))
-#define FD_CLR(f, s)    ((s)->bit &= ~(1u << (f)))
-#define FD_ISSET(f, s)  ((((s)->bit) >> (f)) & 1u)
+/* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
+ * openssl program's s_client): the files (MAX_FD, 128) and the sockets, whose
+ * descriptors start at 1024 (PRESA_BASE, 64 of them). Until then it was one
+ * 32-bit word, which named neither. select() reads and writes only the words
+ * below nfds, so a program built with the old one-word fd_set (nfds <= 32)
+ * still works with the new libc.so. Definition repeated in lib/include/libc.h. */
+#define FD_SETSIZE  1088
+typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
+#define FD_ZERO(s)      ((void)__builtin_memset((s), 0, sizeof(fd_set)))
+#define FD_SET(f, s)    ((s)->bit[(unsigned int)(f) / 32u] |=  (1u << ((unsigned int)(f) % 32u)))
+#define FD_CLR(f, s)    ((s)->bit[(unsigned int)(f) / 32u] &= ~(1u << ((unsigned int)(f) % 32u)))
+#define FD_ISSET(f, s)  (((s)->bit[(unsigned int)(f) / 32u] >> ((unsigned int)(f) % 32u)) & 1u)
 
 #define SYS_IPC_RECV_TMO  228
 #define SYS_TIME           13
@@ -424,6 +428,7 @@ typedef struct { unsigned int bit; } fd_set;
 #define SYS_CONSOLE_TESTO  214
 #define SYS_CONSOLE_REGISTRO 215
 #define SYS_CONSOLE_CTRLC  216
+#define SYS_CONSOLE_PRONTO 170
 #define SYS_IOCTL         54
 #define SYS_DUP           41
 #define SYS_DUP2          63
@@ -4777,8 +4782,8 @@ int open(const char *path, int flags, ...)
         (void)__builtin_va_arg(args, int);   /* mode_t, ignorato */
         __builtin_va_end(args);
     }
-    /* O_CLOEXEC e O_NOFOLLOW: vedi libc.h. Il kernel non li conosce. */
-    flags &= ~(0x80000 | 0x20000);
+    /* O_CLOEXEC, O_NOFOLLOW e O_NOCTTY: vedi libc.h. Il kernel non li conosce. */
+    flags &= ~(0x80000 | 0x20000 | 0x100);
     return err_posix(_syscall3(SYS_OPEN, (uintptr_t)path, (uint32_t)flags, 0));
 }
 
@@ -4958,7 +4963,10 @@ int getpid(void)
 int ioctl(int fd, unsigned int request, void *arg)
 {
     if (E_PRESA(fd)) return presa_ioctl(fd, request, arg);
-    return _syscall3(SYS_IOCTL, (uint32_t)fd, request, (uintptr_t)arg);
+    /* ! -1 AND errno, AS POSIX SAYS (25 October 2026). Until termios this gave
+     * the kernel's -ENOTTY as it was, and errno stayed whatever it was: every
+     * caller only looked at «< 0», but tcgetattr must say ENOTTY. */
+    return err_posix(_syscall3(SYS_IOCTL, (uint32_t)fd, request, (uintptr_t)arg));
 }
 
 int tty_getsize(TtyWinSize *ws)
@@ -9101,6 +9109,12 @@ int console_ctrlc(unsigned int n)
     return (int)_syscall1(SYS_CONSOLE_CTRLC, n);
 }
 
+/* kbd.drv: a read on text console n would find `quanti` bytes (0.279). */
+int console_pronto(unsigned int n, unsigned int quanti)
+{
+    return (int)_syscall2(SYS_CONSOLE_PRONTO, n, quanti);
+}
+
 int ipc_register(const char *name)
 {
     return (int)_syscall1(SYS_IPC_REGISTER, (uintptr_t)name);
@@ -9441,11 +9455,10 @@ int poll(struct pollfd *fds, unsigned int nfds, int timeout)
  * perduto, e la seconda si scopre mesi dopo. Nel kernel c'e' solo poll();
  * questa traduce le maschere di bit e richiama quella.
  *
- * ! LE MASCHERE DI select() ARRIVANO A 32 DESCRITTORI e non oltre — fd_set e'
- * un unsigned int. Su EX-OS MAX_FD e' 32, quindi non ci si perde niente. La
- * mailbox IPC NON si puo' nominare qui: e' il numero 32, cioe' il primo che
- * una maschera a 32 bit non ha. Chi deve aspettare anche i messaggi usa
- * poll(), che e' anche il motivo per cui questa e' la forma vecchia.
+ * ! THE MASKS REACH FD_SETSIZE (1088): files and sockets (poll_misto sorts
+ * them out). The IPC mailbox (FD_IPC) cannot be named here: whoever must wait
+ * for messages too uses poll(), which is also why this is the old form.
+ * Only the words below nfds are read and written: see fd_set.
  *
  * `nfds` e' il piu' alto descrittore piu' uno, come su POSIX. Le maschere
  * vengono RISCRITTE con cio' che e' pronto, e questo e' il difetto storico di
@@ -9454,18 +9467,20 @@ int poll(struct pollfd *fds, unsigned int nfds, int timeout)
 int select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
            struct timeval *scadenza)
 {
-    struct pollfd v[32];
-    unsigned int  n = 0;
+    struct pollfd v[64];
+    unsigned int  n = 0, parole;
     int           i, rc, ms;
-    int           mappa[32];
+    int           mappa[64];
 
-    if (nfds < 0 || nfds > 32) { errno = EINVAL; return -1; }
+    if (nfds < 0 || nfds > FD_SETSIZE) { errno = EINVAL; return -1; }
+    parole = ((unsigned int)nfds + 31u) / 32u;
 
     for (i = 0; i < nfds; i++) {
         short ev = 0;
         if (leggere  && FD_ISSET(i, leggere))  ev |= POLL_IN;
         if (scrivere && FD_ISSET(i, scrivere)) ev |= POLL_OUT;
         if (ev == 0) continue;
+        if (n == 64) { errno = EINVAL; return -1; }
 
         v[n].fd      = i;
         v[n].events  = ev;
@@ -9489,9 +9504,11 @@ int select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
     rc = poll(v, n, ms);
     if (rc < 0) return -1;                  /* errno l'ha gia' messo poll */
 
-    if (leggere)   FD_ZERO(leggere);
-    if (scrivere)  FD_ZERO(scrivere);
-    if (eccezioni) FD_ZERO(eccezioni);
+    for (i = 0; i < (int)parole; i++) {
+        if (leggere)   leggere->bit[i] = 0u;
+        if (scrivere)  scrivere->bit[i] = 0u;
+        if (eccezioni) eccezioni->bit[i] = 0u;
+    }
 
     {
         int pronti = 0;
@@ -12691,7 +12708,20 @@ int symlink(const char *b, const char *p)                  { (void)b; (void)p; e
 int link(const char *a, const char *b)                     { (void)a; (void)b; errno = ENOSYS; return -1; }
 int linkat(int a, const char *p1, int b, const char *p2, int f) { (void)a; (void)p1; (void)b; (void)p2; (void)f; errno = ENOSYS; return -1; }
 int lchown(const char *p, unsigned int u, unsigned int g)   { return chown(p, u, g); }
-int fchown(int fd, unsigned int u, unsigned int g)          { (void)fd; (void)u; (void)g; errno = ENOSYS; return -1; }
+/* ! fstat says owner 0:0 for every file (see stat_da_grezzo): giving a file
+ * that same owner changes nothing anyone can see, and succeeds. It is what
+ * xz, tar and cp -p do to keep the owner of what they copy (25 October 2026:
+ * "xz: Cannot set the file owner"). Any other owner needs a path: ENOSYS. */
+int fchown(int fd, unsigned int u, unsigned int g)
+{
+    struct stat st;
+
+    if (fstat(fd, &st) != 0) return -1;
+    if ((u == (unsigned int)-1 || u == st.st_uid) && (g == (unsigned int)-1 || g == st.st_gid))
+        return 0;
+    errno = ENOSYS;
+    return -1;
+}
 int chroot(const char *p)                                   { (void)p; errno = ENOSYS; return -1; }
 int mkfifo(const char *p, unsigned int m)                   { (void)p; (void)m; errno = ENOSYS; return -1; }
 
@@ -12799,9 +12829,121 @@ void syslog(int priorita, const char *fmt, ...)
 
 void closelog(void) { g_syslog_nome[0] = '\0'; }
 
-struct termios;
-int tcgetattr(int fd, struct termios *t)             { (void)fd; (void)t; errno = ENOTTY; return -1; }
-int tcsetattr(int fd, int c, const struct termios *t) { (void)fd; (void)c; (void)t; errno = ENOTTY; return -1; }
+/* =============================================================================
+ * termios — the modes of a terminal, from kernel 0.279 (see <termios.h>)
+ *
+ * ! THE STRUCTURE TRAVELS AS IT IS: the kernel keeps the same four words and
+ * NCCS bytes (PtyTermios in kernel/include/pty.h), with Linux's values.
+ * ! ON AN OLDER KERNEL the ioctl says ENOTTY or ENOSYS, and so does
+ * tcgetattr: «not a terminal», which is what the callers already handled.
+ * The speeds are a convention: a pty has none, and B38400 is what it says.
+ * ============================================================================= */
+/* ! REPEATED BY HAND, as the rest of this file does (see the head): they
+ * must match lib/include/termios.h and PtyTermios in kernel/include/pty.h. */
+typedef unsigned int  tcflag_t;
+typedef unsigned char cc_t;
+typedef unsigned int  speed_t;
+struct termios { tcflag_t c_iflag, c_oflag, c_cflag, c_lflag; cc_t c_cc[20]; };
+#define TCSANOW   0
+#define TCSAFLUSH 2
+#define TCIFLUSH  0
+#define TCIOFLUSH 2
+#define VTIME     5
+#define VMIN      6
+#define IGNBRK  0x0001
+#define BRKINT  0x0002
+#define PARMRK  0x0008
+#define ISTRIP  0x0020
+#define INLCR   0x0040
+#define IGNCR   0x0080
+#define ICRNL   0x0100
+#define IXON    0x0400
+#define OPOST   0x0001
+#define CBAUD   0x100F
+#define CSIZE   0x0030
+#define CS8     0x0030
+#define PARENB  0x0100
+#define ISIG    0x0001
+#define ICANON  0x0002
+#define ECHO    0x0008
+#define ECHONL  0x0040
+#define IEXTEN  0x8000
+int isatty(int fd);
+
+int tcgetattr(int fd, struct termios *t)
+{
+    int r = ioctl(fd, 0x5401 /* TCGETS */, t);
+    if (r < 0 && errno == ENOSYS) errno = ENOTTY;
+    return r < 0 ? -1 : 0;
+}
+
+int tcsetattr(int fd, int come, const struct termios *t)
+{
+    int r;
+    if (come < TCSANOW || come > TCSAFLUSH) { errno = EINVAL; return -1; }
+    r = ioctl(fd, 0x5402 + (unsigned)come /* TCSETS, TCSETSW, TCSETSF */, (void *)t);
+    if (r < 0 && errno == ENOSYS) errno = ENOTTY;
+    return r < 0 ? -1 : 0;
+}
+
+int tcflush(int fd, int coda)
+{
+    if (coda < TCIFLUSH || coda > TCIOFLUSH) { errno = EINVAL; return -1; }
+    return ioctl(fd, 0x540B /* TCFLSH */, (void *)(uintptr_t)coda) < 0 ? -1 : 0;
+}
+
+/* Nothing waits in a pty or on the console: what is written is gone. */
+int tcdrain(int fd)                 { return isatty(fd) ? 0 : -1; }
+int tcflow(int fd, int azione)      { (void)azione; return isatty(fd) ? 0 : -1; }
+int tcsendbreak(int fd, int durata) { (void)durata; return isatty(fd) ? 0 : -1; }
+
+void cfmakeraw(struct termios *t)
+{
+    t->c_iflag &= ~(tcflag_t)(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+    t->c_oflag &= ~(tcflag_t)OPOST;
+    t->c_lflag &= ~(tcflag_t)(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+    t->c_cflag &= ~(tcflag_t)(CSIZE | PARENB);
+    t->c_cflag |= CS8;
+    t->c_cc[VMIN]  = 1;
+    t->c_cc[VTIME] = 0;
+}
+
+speed_t cfgetispeed(const struct termios *t) { return t->c_cflag & CBAUD; }
+speed_t cfgetospeed(const struct termios *t) { return t->c_cflag & CBAUD; }
+int cfsetospeed(struct termios *t, speed_t v)
+{
+    if (v & ~(speed_t)CBAUD) { errno = EINVAL; return -1; }
+    t->c_cflag = (t->c_cflag & ~(tcflag_t)CBAUD) | v;
+    return 0;
+}
+int cfsetispeed(struct termios *t, speed_t v) { return v ? cfsetospeed(t, v) : 0; }
+int cfsetspeed(struct termios *t, speed_t v)  { return cfsetospeed(t, v); }
+
+/* ! NO PROCESS GROUPS ON EX-OS: the foreground of a terminal is the pid
+ * pty_ctl(PTY_CTL_FG) named. These answer with the caller, which is what a
+ * program that asks «am I in the foreground?» needs to go on. */
+int tcgetpgrp(int fd) { return isatty(fd) ? getpid() : -1; }
+int tcsetpgrp(int fd, int pgrp) { (void)pgrp; return isatty(fd) ? 0 : -1; }
+int tcgetsid(int fd)  { return isatty(fd) ? getpid() : -1; }
+
+/* ! NO /dev/tty* FILES ON EX-OS: a terminal has no name in the file system.
+ * ttyname says "/dev/tty" (POSIX's name for "my terminal") for any terminal
+ * and ENOTTY otherwise: tset and reset only ask whether fd is a real one. */
+int ttyname_r(int fd, char *buf, size_t n)
+{
+    if (!isatty(fd)) return ENOTTY;
+    if (n < 9) return ERANGE;
+    memcpy(buf, "/dev/tty", 9);
+    return 0;
+}
+char *ttyname(int fd)
+{
+    static char nome[16];
+    int e = ttyname_r(fd, nome, sizeof nome);
+
+    if (e) { errno = e; return NULL; }
+    return nome;
+}
 
 /* fork: EX-OS non ce l'ha (vedi <unistd.h>). */
 int fork(void)
@@ -13511,6 +13653,7 @@ typedef struct {
     unsigned int  id;            /* connessione o ascoltatore dello stack, 0 = nessuno */
     int           ascolta;
     unsigned int  porta_loc;     /* legata con bind, o data dallo stack */
+    unsigned char ip_loc[4];     /* the address given to bind (getsockname) */
     int           udp_aperta;    /* la porta UDP e' stata aperta nello stack */
     int           udp_prenotata; /* c'e' una UDP_RICEVI in volo */
     unsigned char ip_rem[4];
@@ -13727,6 +13870,7 @@ int bind(int fd, const struct sockaddr *a, unsigned int len)
     if (r < 0) return presa_errore(r);
     if (p->porta_loc != 0 || p->udp_aperta) return presa_errore(EINVAL);
     p->porta_loc = porta;
+    memcpy(p->ip_loc, ip, 4);
     if (p->tipo == S_SOCK_DGRAM) {
         r = udp_apri(p);
         if (r < 0) { p->porta_loc = 0; return presa_errore(r); }
@@ -13781,6 +13925,8 @@ int connect(int fd, const struct sockaddr *a, unsigned int len)
         return 0;
     }
     if (p->connesso || p->ascolta) return presa_errore(E_ISCONN);
+    /* 0.0.0.0 is this machine, as on Linux (ip.drv answers on 127.0.0.1) */
+    if ((ip[0] | ip[1] | ip[2] | ip[3]) == 0) { ip[0] = 127; ip[3] = 1; }
 
     memcpy(ap.ip, ip, 4);
     ap.porta      = porta;
@@ -14346,7 +14492,12 @@ int getsockname(int fd, struct sockaddr *a, unsigned int *len)
     unsigned char ip[4] = { 0, 0, 0, 0 };
 
     if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
-    if (p->connesso) ip_locale(ip);
+    /* connected: to 127.x the stack used that same address as the source
+     * (ip.drv 0.013), elsewhere the machine's; not connected: what bind
+     * was given (0.0.0.0, 127.0.0.1...) */
+    if (p->connesso && p->ip_rem[0] == 127) memcpy(ip, p->ip_rem, 4);
+    else if (p->connesso) ip_locale(ip);
+    else memcpy(ip, p->ip_loc, 4);
     scrivi_in(a, len, ip, p->porta_loc);
     return 0;
 }
@@ -14637,13 +14788,16 @@ static int dns_chiedi(const char *nome, unsigned char ip[4])
     return esito;
 }
 
+/* the services EX-OS knows by name (there is no /etc/services): getaddrinfo
+ * and getservbyname/getservbyport read the same table */
+static const struct { const char *nome; int porta; } g_servizi[] = {
+    { "http", 80 }, { "https", 443 }, { "ftp", 21 }, { "ssh", 22 },
+    { "telnet", 23 }, { "domain", 53 }, { "smtp", 25 }, { "pop3", 110 },
+    { "imap", 143 }, { "ntp", 123 }, { "mysql", 3306 },
+};
+
 static int servizio_porta(const char *s, int solo_numeri)
 {
-    static const struct { const char *nome; int porta; } noti[] = {
-        { "http", 80 }, { "https", 443 }, { "ftp", 21 }, { "ssh", 22 },
-        { "telnet", 23 }, { "domain", 53 }, { "smtp", 25 }, { "pop3", 110 },
-        { "imap", 143 }, { "ntp", 123 },
-    };
     unsigned int i;
     char        *fine;
     long         v;
@@ -14652,9 +14806,42 @@ static int servizio_porta(const char *s, int solo_numeri)
     v = strtol(s, &fine, 10);
     if (*fine == '\0') return (v >= 0 && v <= 65535) ? (int)v : -1;
     if (solo_numeri) return -1;
-    for (i = 0; i < sizeof(noti) / sizeof(noti[0]); i++)
-        if (strcmp(s, noti[i].nome) == 0) return noti[i].porta;
+    for (i = 0; i < sizeof(g_servizi) / sizeof(g_servizi[0]); i++)
+        if (strcmp(s, g_servizi[i].nome) == 0) return g_servizi[i].porta;
     return -1;
+}
+
+struct servent { char *s_name; char **s_aliases; int s_port; char *s_proto; };
+
+/* getservbyname/getservbyport (OpenSSL's BIO_lookup without getaddrinfo):
+ * the table above, any protocol; static, not reentrant, as in every libc.
+ * s_port is in network order. */
+static struct servent *servizio(const char *nome, int porta, const char *proto)
+{
+    static char          *niente[1] = { 0 };
+    static char           p_tcp[] = "tcp", p_udp[] = "udp";
+    static struct servent se;
+    unsigned int i;
+
+    for (i = 0; i < sizeof(g_servizi) / sizeof(g_servizi[0]); i++)
+        if (nome ? strcmp(nome, g_servizi[i].nome) == 0 : porta == g_servizi[i].porta) {
+            se.s_name = (char *)g_servizi[i].nome;
+            se.s_aliases = niente;
+            se.s_port = (int)htons((unsigned short)g_servizi[i].porta);
+            se.s_proto = (proto && strcmp(proto, "udp") == 0) ? p_udp : p_tcp;
+            return &se;
+        }
+    return NULL;
+}
+
+struct servent *getservbyname(const char *nome, const char *proto)
+{
+    return nome ? servizio(nome, -1, proto) : NULL;
+}
+
+struct servent *getservbyport(int porta, const char *proto)
+{
+    return servizio(NULL, ntohs((unsigned short)porta), proto);
 }
 
 void freeaddrinfo(struct addrinfo *ai);
@@ -14817,6 +15004,19 @@ int wait4(int pid, int *stato, int opzioni, struct rusage *uso)
 int setsid(void)        { return getpid(); }
 int getsid(int pid)     { return pid == 0 ? getpid() : pid; }
 int getpgid(int pid)    { return pid == 0 ? getpid() : pid; }   /* no groups: its own */
+int getpgrp(void)       { return getpid(); }                    /* the same, POSIX form */
+/* setpgid: every process already leads its own group, so making it so
+ * (setpgid(0, 0), setpgid(pid, pid): what the openssl program's server mode
+ * does) succeeds; joining another group cannot be done */
+int setpgid(int pid, int pgid)
+{
+    int me = getpid();
+    if (pid == 0) pid = me;
+    if (pgid == 0) pgid = pid;
+    if (pgid == pid) return 0;
+    errno = EPERM;
+    return -1;
+}
 
 /* ! NO SYSCALL TELLS THE PENDING SIGNALS, so sigpending says none and
  * sigwait refuses (17 October 2026, libgit2's process.c). libgit2 asks only
@@ -14861,6 +15061,7 @@ int fstatvfs(int fd, struct statvfs *v)
     return statvfs_riempi(v);
 }
 
+#include "libc_getopt.c"     /* getopt, getopt_long: static libc only */
 #include "libc_iconv.c"      /* iconv: for ported software, static libc only */
 #include "libc_avvio.c"
 #endif

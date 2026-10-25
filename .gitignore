@@ -490,6 +490,20 @@ __pycache__/
 /firefox-main/
 
 # =============================================================================
+# MARIADB — the sources of the MariaDB server (mariadb-server, 25 October 2026)
+#
+# The SQL server for EX-OS: sources and binaries go on the tools ISO, and
+# netinst at 64 bit and at 32 if it can be done.
+# A git clone of https://github.com/MariaDB/server, kept in step with upstream
+# (git pull) so that the EX-OS build follows their releases. Their tree, under
+# GPL 2: out of our history like firefox-main. What WE change goes in
+# tools/mariadb-exos/, with the recipe to apply it to a clean tree.
+#
+# ! ANCHORED TO THE ROOT, like all the others.
+# =============================================================================
+/mariadb-server/
+
+# =============================================================================
 # cross_build/ — la toolchain incrociata e le costruzioni di terzi (27 set 2026)
 #
 # exos-cross, exos-native (binutils, make, nasm, sorgenti gcc), openssl-build-

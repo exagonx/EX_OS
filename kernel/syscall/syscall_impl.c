@@ -1768,6 +1768,21 @@ int32_t sys_ioctl(InterruptFrame *frame)
     if (fd < 0 || fd >= MAX_FD)          return ERR(EBADF);
     if (proc->fdt[fd].type == FD_UNUSED) return ERR(EBADF);
 
+    /* ! A PSEUDO-TERMINAL IS A TERMINAL (25 October 2026, termios): its
+     * modes and its size are the pty's, from either end. Until today every
+     * ioctl on it said ENOTTY, so isatty() was false in a telnet session. */
+    if (proc->fdt[fd].type == FD_PTY_S || proc->fdt[fd].type == FD_PTY_M) {
+        uint32_t dim = 0;
+        switch (request) {
+            case PTY_TCGETS: case PTY_TCSETS: case PTY_TCSETSW: case PTY_TCSETSF:
+                dim = sizeof(PtyTermios); break;
+            case PTY_TIOCGWINSZ: case PTY_TIOCSWINSZ:
+                dim = 8; break;
+        }
+        if (dim && !syscall_verify_ptr((void *)arg, dim)) return ERR(EFAULT);
+        return pty_ioctl((int)proc->fdt[fd].inode, request, arg);
+    }
+
     /* I tre descrittori standard sono tutti la console: non c'è ancora
      * un concetto di terminale distinto dal TTY del kernel. */
     is_tty = (proc->fdt[fd].type == FD_STDIN  ||
@@ -1781,14 +1796,32 @@ int32_t sys_ioctl(InterruptFrame *frame)
 
     /* TIOCGWINSZ di Linux, tenuta perché qualcuno potrebbe già usarla.
      * La forma nativa è TTY_IOCTL_GETSIZE qui sotto. */
+    /* ! THE CONSOLE'S TERMIOS (kernel 0.279): kept by the TTY, applied by
+     * kbd.drv (the line discipline) and the VGA (ONLCR). See tty.c. */
+    switch (request) {
+        case PTY_TCGETS:
+            if (!syscall_verify_ptr((void *)arg, sizeof(PtyTermios))) return ERR(EFAULT);
+            tty_termios_leggi(proc->console, (PtyTermios *)arg);
+            return 0;
+        case PTY_TCSETS: case PTY_TCSETSW: case PTY_TCSETSF:
+            if (!syscall_verify_ptr((void *)arg, sizeof(PtyTermios))) return ERR(EFAULT);
+            tty_termios_scrivi(proc->console, (const PtyTermios *)arg);
+            return 0;
+        case PTY_TCFLSH:
+            return 0;       /* the keys wait in kbd.drv; nothing held here */
+        case PTY_TIOCSWINSZ:
+            return 0;       /* the console's size is the screen's */
+        default:
+            break;
+    }
+
+    /* ! THE REAL SIZE, NOT 80x25 (25 October 2026): the fixed numbers were
+     * right in text mode only, and wrong on the CQ60's 170x48 console. It
+     * is the same answer as TTY_IOCTL_GETSIZE below, which asks the VGA;
+     * the two structures have the same four fields in the same order. */
     if (request == 0x5413) {
-        uint16_t *winsize = (uint16_t *)arg;
-        if (!syscall_verify_ptr(winsize, 8)) return ERR(EFAULT);
-        winsize[0] = 25;   /* ws_row */
-        winsize[1] = 80;   /* ws_col */
-        winsize[2] = 640;  /* ws_xpixel */
-        winsize[3] = 400;  /* ws_ypixel */
-        return 0;
+        if (!syscall_verify_ptr((void *)arg, sizeof(TtyWinSize))) return ERR(EFAULT);
+        return drv_ioctl(TTY_IOCTL_GETSIZE, (void *)arg) == 0 ? 0 : ERR(EINVAL);
     }
 
     /* =====================================================================
@@ -1855,6 +1888,22 @@ int32_t sys_console_switch(InterruptFrame *frame)
     uint32_t n = FR_A1(frame);
 
     if (vga_switch_console(n) != 0) return ERR(EINVAL);
+    return 0;
+}
+
+/* =============================================================================
+ * SYS_CONSOLE_PRONTO (170) -- kbd.drv: on console ebx a read finds ecx bytes
+ *
+ * ! WITHOUT IT poll() ON THE CONSOLE NEVER SAID «READY» (until 0.279): it
+ * looked at the TTY's own ring, which stays empty while kbd.drv serves the
+ * keyboard. Only root tells: it is the keyboard driver's word.
+ * ============================================================================= */
+int32_t sys_console_pronto(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+
+    if (proc->uid != 0) return ERR(EPERM);
+    tty_console_dati(FR_A1(frame), FR_A2(frame));
     return 0;
 }
 
@@ -6218,7 +6267,7 @@ static int poll_guarda(Process *self, struct pollfd *v)
             break;
         }
         case FD_STDIN:
-            if (tty_input_pronto_locked()) pronto |= POLLIN;
+            if (tty_input_pronto_locked(self->console)) pronto |= POLLIN;
             break;
 
         /* ! LE DUE ESTREMITA' DEL PTY GUARDANO BUFFER DIVERSI, e sono le

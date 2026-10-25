@@ -1098,7 +1098,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.008"
+#define SH_VERSIONE  "0.009"
 
 #define MAX_LINE    512
 
@@ -2334,6 +2334,37 @@ static void cmd_halt(void)
 }
 
 /* =============================================================================
+ * terminale_sano — the modes of the terminal back to normal before the prompt
+ *
+ * ! A PROGRAM THAT DIES IN RAW MODE LEAVES THE TERMINAL MUTE (kernel 0.279,
+ * termios): no echo, no lines, and the next command typed blind. Every Unix
+ * shell puts the modes back when it takes the terminal again; this one does
+ * it here, on the console and on a pty, and only if something is off — the
+ * kernel's copy of «stty sane». Same layout as PtyTermios (kernel/include/
+ * pty.h) and struct termios; the shell calls the syscalls directly.
+ * ============================================================================= */
+typedef struct {
+    uint32_t c_iflag, c_oflag, c_cflag, c_lflag;
+    uint8_t  c_cc[20];
+} ShTermios;
+
+static void terminale_sano(void)
+{
+    ShTermios t;
+    const uint32_t L = 0x0001 | 0x0002 | 0x0008 | 0x0010 | 0x0020;  /* ISIG ICANON ECHO ECHOE ECHOK */
+
+    if (syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5401 /* TCGETS */, (uintptr_t)&t) != 0) return;
+    if ((t.c_lflag & L) == L && (t.c_iflag & 0x0100) && (t.c_oflag & 0x0005) == 0x0005) return;
+    t.c_iflag = (t.c_iflag & ~(uint32_t)(0x0040 | 0x0080)) | 0x0100;        /* ICRNL */
+    t.c_oflag |= 0x0005;                                                   /* OPOST ONLCR */
+    t.c_lflag |= L;
+    t.c_cc[6] = 1;  t.c_cc[5] = 0;                                         /* VMIN VTIME */
+    if (!t.c_cc[0]) t.c_cc[0] = 3;
+    if (!t.c_cc[4]) t.c_cc[4] = 4;
+    syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5402 /* TCSETS */, (uintptr_t)&t);
+}
+
+/* =============================================================================
  * Prompt
  * ============================================================================= */
 static void print_prompt(void)
@@ -3399,15 +3430,19 @@ static void riga_ridisegna(const char *buf, int len, int cur,
  * se la modalita' raw non e' utilizzabile (il chiamante ripiega). */
 /* Il nostro stdin e' la console, o qualcos'altro?
  *
- * ! LA DOMANDA E' ioctl, NON UNA SYSCALL NUOVA: TIOCGWINSZ riesce solo su un
- * terminale e rende ENOTTY su tutto il resto — pipe comprese. E' la stessa
- * prova che fa isatty() nella libc, rifatta qui perche' questa shell chiama
- * le syscall dirette e non si porta dietro la libc. */
+ * ! LA DOMANDA E' ioctl, NON UNA SYSCALL NUOVA: TTY_IOCTL_GETSIZE (0x01), the
+ * console's own command, answers on the text console only and ENOTTY on
+ * everything else — pipes and pseudo-terminals.
+ * ! UNTIL 0.008 THIS ASKED TIOCGWINSZ, and from kernel 0.279 a pty answers
+ * that too (termios: isatty is true in a telnet session). The shell of a
+ * telnet session then took itself for the console and read its keys from
+ * the machine's keyboard (prova_telnet.sh: one line out of 490). «Is it a
+ * terminal» and «is it the console» are two questions. */
 static int stdin_e_console(void)
 {
     unsigned short ws[4];
 
-    return syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5413 /* TIOCGWINSZ */,
+    return syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x01 /* TTY_IOCTL_GETSIZE */,
                     (uintptr_t)ws) == 0;
 }
 
@@ -4029,6 +4064,8 @@ int shell_main(int argc, char **argv, char **envp)
          * come fa qualunque shell. E' anche il momento in cui il loro
          * slot di processo viene liberato. */
         job_raccogli();
+
+        terminale_sano();
 
         /* Prompt */
         print_prompt();

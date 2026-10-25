@@ -607,7 +607,31 @@
  * the syscall. telnetd interrupted the shell of a session whose client had
  * left; the shell was waiting for a child (gfedit, opened on a 32-bit program
  * the 64-bit kernel refused) and both stayed alive with the session's pty. */
-#define EXOS_VERSION    "0.278"
+/* 0.278 -> 0.279: termios. A pty keeps a struct termios (PtyTermios, Linux
+ * values): ICRNL/INLCR/IGNCR/ISTRIP in input, OPOST+ONLCR in output and on
+ * the echo (telnetd 0.012 no longer turns LF into CR LF itself), ICANON,
+ * ECHO, ECHOE, ECHOK, ISIG, NOFLSH, VMIN/VTIME; ioctl TCGETS/TCSETS/TCSETSW/
+ * TCSETSF/TCFLSH/TIOCGWINSZ/TIOCSWINSZ on either end of a pty, so isatty()
+ * is true in a telnet session. TIOCGWINSZ on the console gives the real
+ * size instead of 80x25. The console has its termios too, per virtual
+ * console (tty.c, VERASE ^H): TCGETS/TCSETS reach kbd.drv (KBD_MSG_SETTERM,
+ * KbdReadLineT) which then hands over bytes instead of lines (ICANON off),
+ * without echo (ECHO off), with ^C as a byte (ISIG off), Enter as CR (ICRNL
+ * off), arrows as their whole ESC [ sequence; VMIN/VTIME on the console too;
+ * poll() on stdin is true as soon as a key is there (SYS_CONSOLE_PRONTO 170,
+ * kbd.drv tells the kernel). OPOST off stops LF from returning the column
+ * (vga_lf_nudo). The shell (0.009) puts sane modes back before each prompt.
+ * Prerequisite of ncurses (voce 30 in the queue).
+ * The console also learnt what curses needs (ICH, DCH, ECH, IL, DL, CHA/HPA,
+ * VPA, CNL/CPL, DECSTBM, RI, IND, NEL, ESC 7/8, CSI s/u, SGR 7/27/22, RIS,
+ * ESC ( swallowed), its erasures redraw only the cells that change, and in
+ * byte mode kbd.drv sends F1-F12, Insert, Delete, Page Up/Down.
+ * elf.c: the log line after the TLS block read tls->p_memsz with tls NULL
+ * (a program with no __thread); the 64-bit GCC took it as proof that tls was
+ * not NULL, dropped the "tls ? : 0" above it, and tls_off/tls_filesz came
+ * from address 0: every pthread_create of such a 64-bit program failed with
+ * EIO ("non riesco a leggere l'immagine TLS per il filo"). */
+#define EXOS_VERSION    "0.279"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

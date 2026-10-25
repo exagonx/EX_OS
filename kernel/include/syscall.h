@@ -319,6 +319,9 @@ typedef struct {
  * gone. Only root asks: it is the keyboard driver's question. See
  * sched_console_ctrlc in sched.h. */
 #define SYS_CONSOLE_CTRLC  216
+/* kbd.drv tells the kernel how many bytes a read on text console ebx would
+ * find now (ecx), for poll() (kernel 0.279). Root only. */
+#define SYS_CONSOLE_PRONTO 170
 /* Chi rivendica la console della GRAFICA, e chi chiede quale sia.
  * ebx: 0 = chiedi (rende il numero, -1 se nessuna), 1 = prendi (la mia),
  *      2 = lascia. Vedi sys_console_grafica.
@@ -1767,6 +1770,7 @@ int32_t sys_rmdir(InterruptFrame *f);
 int32_t sys_unlink(InterruptFrame *f);
 int32_t sys_version(InterruptFrame *f);
 int32_t sys_uptime(InterruptFrame *f);
+int32_t sys_console_pronto(InterruptFrame *f);
 int32_t sys_meminfo(InterruptFrame *f);
 int32_t sys_cpu_info(InterruptFrame *f);
 int32_t sys_klog(InterruptFrame *f);

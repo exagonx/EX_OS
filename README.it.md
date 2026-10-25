@@ -200,7 +200,8 @@ il suo interrupt), e il driver va avviato a mano.
   (`tools/costruisci-utente64.sh`, passo 6). `tools/prova-dl/prova-js.sh`
   esegue lo stesso script con i due dentro EX-OS 64 e ottiene la stessa
   risposta. Non ancora provato nel navigatore a 64 bit.
-- **OpenSSL a 64 bit**: `EXOS_ARCH=x86_64 tools/openssl-exos/prepara-openssl.sh`.
+- **OpenSSL a 64 bit**: `tools/openssl-exos/costruisci.sh 64` (dalla 0.279
+  OpenSSL 4.1.0 con socket e fili, vedi sopra).
   Dentro EX-OS 64 `provatls www.example.com` fa una stretta di mano TLS 1.3
   sulla rete di EX-OS, verifica il certificato e legge la pagina. libcrypto,
   libssl, gli header e il magazzino delle CA sono su `dist/exos64-tools.iso` e
@@ -2399,6 +2400,152 @@ chiamate di sistema.
 > Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
 > le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
 
+### OpenSSL 4.1.0 con socket e fili, e 127.0.0.1
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_openssl.sh`, con la rete di
+QEMU): quattro fili calcolano impronte, cifrano e creano `SSL_CTX` insieme;
+un server e un client TLS nello stesso programma si parlano su `127.0.0.1`
+(`SSL_set_fd` su un socket accettato, come fa MariaDB); TLS 1.3 verso
+`www.example.com:443` su un socket vero, con il certificato verificato; il
+programma `openssl` calcola lo stesso SHA-256 di Linux, fa una chiave Ed25519
+e un certificato che `openssl verify` di Linux accetta, e `openssl s_client`
+si collega e verifica.
+
+Finora EX-OS aveva una copia del ramo di sviluppo di OpenSSL costruita con
+`no-sock no-threads`: TLS solo attraverso due BIO di memoria (`provatls`).
+MariaDB vuole i socket e i lucchetti, e la regola e' l'ultima versione
+pubblica: ora e' OpenSSL **4.1.0** (23 ottobre 2026, firma GPG verificata),
+costruito da `tools/openssl-exos/costruisci.sh` come le altre librerie, con
+i socket, i pthread e il programma `openssl`; sorgenti su entrambi i CD degli
+strumenti, gruppo `[ssl]`, quindi anche nei netinst. `provatls`, `provassl` e
+libgit2 sono ricostruiti sopra (`tools/openssl-exos/prepara-openssl.sh` non
+c'e' piu').
+
+Cosa e' servito altrove:
+
+- **ip.drv 0.013, il loopback.** Un frame per questa macchina (127.x.x.x o il
+  suo indirizzo) andava alla scheda di rete e si perdeva: nessun programma
+  poteva raggiungere un server sulla stessa macchina. Ora aspetta in una coda
+  dentro ip.drv e rientra come se fosse arrivato; niente ARP, l'indirizzo
+  sorgente e' la destinazione stessa, e 127.x.x.x dal filo si scarta.
+- **libc:** `select()` vede i socket e tutti i file (`fd_set` e' passato da
+  una parola di 32 bit a 1088 descrittori; un programma costruito con quello
+  vecchio funziona ancora con la `libc.so` nuova, perche' si toccano solo le
+  parole sotto `nfds`); `getsockname` rende l'indirizzo dato a `bind`;
+  `connect` verso `0.0.0.0` va a `127.0.0.1` come su Linux;
+  `getservbyname`/`getservbyport` (con `mysql` 3306 nella tabella); `setpgid`
+  verso il proprio gruppo.
+
+### Sette librerie come librerie vere di EX-OS: zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}
+
+**provate a 32 e 64 bit in QEMU** (`tools/prova_librerie.sh`): un programma
+(`tools/prove/libreprova.cpp`) comprime e decomprime 64 KB con ogni
+compressore, cerca con PCRE2 (anche `regcomp`/`regexec` POSIX), formatta con
+fmt; poi `xz`, `zstd`, `bzip2` e `lz4` comprimono dentro EX-OS un file che
+Linux decomprime, e decomprimono archivi fatti da Linux — confrontati byte
+per byte.
+
+Le librerie che servono a MariaDB, portate prima e per conto loro perche'
+serviranno anche ad altro (la regola: ogni dipendenza diventa una libreria
+vera prima del programma che la vuole). Ognuna e' l'ultima versione
+pubblica, con l'archivio verificato (firma GPG, o lo sha256 pubblicato) e
+conservato in `cross_build/terze-parti/`; ognuna ha il suo
+`tools/<nome>-exos/costruisci.sh` (la parte comune in
+`tools/librerie-exos/comune.sh`), si costruisce a 32 e 64 bit, va nei
+sysroot incrociati (`-lz`, `-lbz2`, `-llzma`, `-llz4`, `-lzstd`,
+`-lpcre2-8`, `-lfmt`) e su entrambi i CD degli strumenti con i sorgenti, un
+gruppo del catalogo ciascuna (`[zlib]` `[bzip2]` `[xz]` `[lz4]` `[zstd]`
+`[pcre2]` `[fmt]`), quindi anche nei netinst:
+
+| libreria | versione | programmi |
+|---|---|---|
+| zlib | 1.3.2 | |
+| bzip2 | 1.0.8 | bzip2, bzip2recover |
+| XZ Utils (liblzma) | 5.8.4 | xz, xzdec, lzmadec, lzmainfo |
+| LZ4 | 1.10.0 | lz4 |
+| Zstandard | 1.5.7 | zstd |
+| PCRE2 | 10.49 (8, 16, 32 bit, POSIX) | pcre2grep, pcre2test |
+| {fmt} | 12.2.0 (header e libfmt) | |
+
+- {fmt} 12.2.0 non si costruisce per nessun bersaglio a 32 bit (sue issue
+  #4811, #4886): si applica la correzione accettata a monte (pull request
+  #4813) finche' una versione non la porta;
+- PCRE2 per ora senza JIT (stessi risultati, interpretati);
+- la libc ha avuto `O_NOCTTY`, e `fchown` verso il proprietario che `stat`
+  gia' riporta riesce (xz diceva «Cannot set the file owner»).
+
+**E un difetto del kernel trovato dallo xz a 64 bit:** ogni `pthread_create`
+di un programma a 64 bit senza variabili `__thread` falliva (`EIO`, «non
+riesco a leggere l'immagine TLS per il filo»). Una riga di log nel
+caricatore ELF leggeva il segmento TLS anche quando non c'era; il
+compilatore l'ha presa come prova che il puntatore non fosse NULL e ha tolto
+i controlli piu' sopra, e l'immagine del filo veniva dall'indirizzo 0.
+Corretto in `kernel/loader/elf.c`.
+
+### ncurses 6.6: programmi a schermo intero sulla console e in telnet
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_curses.sh`): un programma
+curses disegna riquadri, video inverso, colori, cancella una riga, apre una
+finestra, e legge Su, F1, Canc e PagGiu' come `KEY_UP`, `KEY_F(1)`,
+`KEY_DC`, `KEY_NPAGE`; lo schermo si rilegge esatto da QEMU
+(`tools/schermo_testo.py` confronta ogni cella con i glifi della console).
+**E lo stesso programma compilato dentro EX-OS** col `gcc -lncurses` del CD
+degli strumenti fa lo stesso.
+
+La vera libreria curses, la prima delle librerie che servono a MariaDB e
+che servono anche a tutto il resto: `libncurses.a` (anche `-lcurses`),
+`libpanel`, `libmenu`, `libform`, `libncurses++`, gli header, la terminfo, e
+`tic`, `infocmp`, `toe`, `tput`, `tset`, `reset`, `clear`, `tabs`. Costruita
+dalla 6.6 ufficiale (firma verificata) da `tools/ncurses-exos/costruisci.sh`;
+nei sysroot delle toolchain incrociate, e su entrambi i CD degli strumenti
+con i sorgenti (gruppo `[curses]`), quindi anche nei netinst.
+
+- la console e' `TERM=vga`, e ha la sua voce terminfo
+  (`tools/ncurses-exos/exos.ti`): solo cio' che `vga.c` fa davvero. Per
+  questo la console ha imparato le sequenze su cui curses conta: inserire e
+  cancellare caratteri e righe, cancellare caratteri, colonna e riga, una
+  regione di scorrimento, l'indice inverso, salvare il cursore, il video
+  inverso. In modo grezzo la tastiera manda anche F1-F12, Ins, Canc, PagSu
+  e PagGiu';
+- `vga`, `linux`, `xterm`, `xterm-256color`, `vt100`, `vt220`, `ansi`,
+  `screen` e `dumb` sono dentro la libreria: curses funziona anche su un
+  sistema senza terminfo sul disco;
+- la libc ha avuto cio' che ncurses chiedeva: `getopt`, `getopt_long`
+  (`<getopt.h>`), `getpgrp`, `ttyname`, e i numeri `ioctl` del terminale in
+  `<sys/ioctl.h>`.
+
+Non ancora: `ncursesw`, la libreria a caratteri larghi, che aspetta l'UTF-8
+nella libc (oggi il suo `wchar_t` e' Latin-1); e `SIGWINCH`, quindi un
+programma che gira non si accorge di una finestra telnet ridimensionata.
+
+### Un terminale vero: termios sulla console e in telnet (0.279)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_termios.sh`: libctest e
+`tools/prove/termiosprova.c` con `tcgetattr`/`tcsetattr`/`cfmakeraw` della
+libc.a, tasti battuti sulla console in modo grezzo; di nuovo `prova_telnet`,
+`prova_ctrlc`, `prova_ssh`).
+
+Finora un terminale aveva due modi, "a righe con eco" e "grezzo", e nessuna
+`struct termios`: `tcsetattr` non faceva niente. Gli editor, `less`, `top` e
+soprattutto **ncurses** (il prossimo porting, che serve al client di MariaDB
+e a molti altri programmi) cosi' non possono funzionare. Ora entrambi i
+terminali hanno una `struct termios` come quella di Linux (stessi valori,
+stessi `ioctl`: `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF`, `TCFLSH`,
+`TIOCGWINSZ`, `TIOCSWINSZ`):
+
+- **in una sessione telnet** (pty): `ICANON`, `ECHO`, `ECHOE`, `ECHOK`,
+  `ISIG`, `ICRNL`/`INLCR`/`IGNCR`, `OPOST`+`ONLCR`, `VMIN`/`VTIME`.
+  `isatty()` e' vero, e `TIOCGWINSZ` da' la misura della finestra del client;
+- **sulla console**, una per console virtuale: senza `ICANON` il driver della
+  tastiera consegna i tasti uno per uno invece delle righe, una freccia come
+  `ESC [ A` intero, Invio come CR, `^C` come byte quando `ISIG` e' spento,
+  niente eco quando `ECHO` e' spento; `poll()` sullo stdin si sveglia appena
+  si preme un tasto. `TIOCGWINSZ` da' la misura vera (100x37 in QEMU), non
+  80x25.
+
+Un programma che lascia il terminale grezzo e muore non lascia una shell
+sorda: la shell (0.009) rimette i modi normali prima di ogni prompt.
+
 ### Una sessione telnet che non torna, e lo schermo della NVIDIA integrata (0.278)
 
 **provato a 32 e 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd ucciso e
@@ -4230,7 +4377,7 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
 | **`g++`: la stessa catena in C++, con libstdc++ ed eccezioni** | **testato** |
 | FreeBASIC: `fbc` trova i propri `.bi` da solo | testato |
 | FreeBASIC: link finale (fbc emette opzioni Linux) | da fare a mano |
-| TLS/SSL come libreria userspace (porting OpenSSL) | da fare |
+| TLS/SSL come libreria userspace (OpenSSL 4.1.0, programma `openssl`) | testato |
 
 ---
 
@@ -4341,6 +4488,7 @@ Lo script `install_crosscompiler.sh` installa automaticamente:
 ## Build e test
 
 ```bash
+make ambiente-stato  # Cosa serve per costruire, cosa manca, il comando che lo fa
 make all          # Compila tutto + crea dist/floppy.img
 make run          # Avvia con QEMU (32MB RAM)
 make iso          # CD degli strumenti (as, ld, header, doc)
@@ -4357,6 +4505,17 @@ make distclean    # Rimuove build/ e dist/
 `$(BINUTILS_NATIVI)` (default `cross_build/exos-native/build-nativi`); se non ci
 sono lo dice e fa il CD lo stesso. Come costruirli:
 `tools/binutils-exos/leggimi.md`.
+
+**Quel che manca si dice prima di partire.** `all`, `iso`, `iso-exos`,
+`iso64`, `utente64`, `kernel64`, `tools64`, `netinst`, `netinst64`, `usb` e
+`usb64` chiedono prima a `tools/ambiente.sh` cosa usano: se manca una parte
+indispensabile (il compilatore incrociato, libgcc, nasm, gcc -m32...) make si
+ferma prima della prima compilazione, con il comando che rimedia
+(`sudo apt install ...`, `tools/ricostruisci-bersaglio.sh libm`,
+`tools/gcc-exos/cross64.sh`...); se ne manca una facoltativa avvisa, e il
+bersaglio si fa piu' piccolo. `tools/ambiente.sh -per toolchain` controlla
+cosa serve per ricostruire i compilatori dai sorgenti. Una parte nuova va in
+quell'unico elenco, non nella ricetta che la usa.
 
 ### Log di boot completo via seriale
 

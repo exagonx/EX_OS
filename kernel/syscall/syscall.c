@@ -241,6 +241,7 @@ void syscall_init(void)
     syscall_table[SYS_CONSOLE_SETFG]  = sys_console_setfg;
     syscall_table[SYS_CONSOLE_GRAFICA] = sys_console_grafica;
     syscall_table[SYS_CONSOLE_CTRLC]  = sys_console_ctrlc;
+    syscall_table[SYS_CONSOLE_PRONTO] = sys_console_pronto;
 
     for (i = 0; i < SYSCALL_COUNT; i++) if (syscall_table[i]) count++;
     klog(LOG_INFO, "SYSCALL: %u syscall registrate (int 0x80)", count);

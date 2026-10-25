@@ -218,6 +218,7 @@ if [ $# -eq 0 ]; then
             "$LIBM64" "$LIBGCC64" >> "$r" 2>&1 && echo "librerie: $SOD/quickjs.so" ||
             echo "  quickjs.so NON costruita ($r)"
     else
-        echo "  quickjs.so rimandata: servono quickjs/ (tools/quickjs-exos/applica.py) e la libm di cross64.sh"
+        echo "  quickjs.so rimandata: servono quickjs/ adattato e libgcc/libm di x86_64-exos"
+        echo "    rimedio: python3 tools/quickjs-exos/applica.py quickjs; tools/gcc-exos/cross64.sh (cosa manca: tools/ambiente.sh -per utente64)"
     fi
 fi

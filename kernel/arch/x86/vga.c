@@ -92,7 +92,7 @@ static uint16_t g_barra[80];
 /* =============================================================================
  * Stato di una console
  * ============================================================================= */
-typedef enum { ANSI_NONE, ANSI_ESC, ANSI_CSI } AnsiState;
+typedef enum { ANSI_NONE, ANSI_ESC, ANSI_CSI, ANSI_SALTA } AnsiState;
 
 typedef struct {
     /* Dimensionato al MASSIMO, non alla risoluzione corrente: la memoria
@@ -114,7 +114,7 @@ typedef struct {
      * nient'altro in ring3 può raggiungere la memoria VGA (che nello
      * spazio utente non è mappata). */
     AnsiState state;
-    int       params[4];
+    int       params[8];
     uint8_t   param_count;
     uint8_t   cur_param_empty;
     uint8_t   privata;            /* '?' subito dopo il '[' */
@@ -125,6 +125,14 @@ typedef struct {
      * is written on the console (@EXTASKBAR). */
     uint16_t  alt[VGA_MAX_TOTAL];
     uint8_t   alt_row, alt_col, alt_colore, alt_on;
+    uint8_t   lf_nudo;            /* termios without OPOST+ONLCR: LF only goes down */
+
+    /* What curses needs of a terminal (0.279, the "vga" terminfo entry):
+     * reverse video (SGR 7), a scrolling region (DECSTBM, ESC[t;br; 0 in
+     * reg_basso means down to the last row), a saved cursor (ESC 7 / 8). */
+    uint8_t   inverso;
+    uint8_t   reg_alto, reg_basso;
+    uint8_t   sal_row, sal_col, sal_colore, sal_inverso;
 } Console;
 
 static Console  g_console[VGA_N_CONSOLE];
@@ -296,6 +304,15 @@ static volatile uint16_t *vga_buf = VGA_BASE;
 
 /* Specchio seriale dell'output: vedi vga_set_serial_mirror(). */
 static uint8_t serial_mirror = 1;
+
+static Console *cons(uint32_t n);
+
+/* termios (kernel 0.279): with OPOST+ONLCR off a program moves the cursor
+ * down with LF and keeps the column, as ncurses in raw mode expects. */
+void vga_lf_nudo(uint32_t n, int si)
+{
+    if (n < VGA_N_CONSOLE) g_console[n].lf_nudo = (uint8_t)(si != 0);
+}
 
 static Console *cons(uint32_t n)
 {
@@ -589,6 +606,14 @@ static void cursore_hw(int on)
     port_outb(VGA_DATA_PORT, start);
 }
 
+/* one cell, drawn only if it changed */
+static void metti_cella(Console *c, uint32_t i, uint16_t v)
+{
+    if (i >= TOTALE_C || c->cella[i] == v) return;
+    c->cella[i] = v;
+    riversa_cella(c, i);
+}
+
 /* =============================================================================
  * Cancellazioni — le celle azzerate prendono il colore CORRENTE della
  * console, non il nero: è il comportamento ANSI, e permette di dipingere
@@ -599,14 +624,73 @@ static void erase_cells(Console *c, uint32_t da, uint32_t a)
     uint16_t blank = vga_make_entry(' ', c->colore);
 
     if (a > TOTALE_C) a = TOTALE_C;
-    while (da < a) c->cella[da++] = blank;
-
-    riversa_tutto(c);
+    /* only the cells that change: a curses program erases a line at every
+     * update, and the whole screen redrawn each time is slow in graphics */
+    while (da < a) metti_cella(c, da++, blank);
 }
 
 /* =============================================================================
  * vga_scroll — Scrolla la console di una riga verso l'alto
  * ============================================================================= */
+/* the scrolling region, 0-based and inclusive, always inside the screen */
+static uint32_t reg_basso(const Console *c)
+{
+    return (c->reg_basso && c->reg_basso < RIGHE_C) ? c->reg_basso : RIGHE_C - 1;
+}
+
+static uint32_t reg_alto(const Console *c)
+{
+    return c->reg_alto < reg_basso(c) ? c->reg_alto : 0;
+}
+
+/* =============================================================================
+ * scorri — rows alto..basso move n rows up (giu=0) or down (giu=1); the
+ * rows left behind are blank. Same idea as vga_scroll below: the cells are
+ * in RAM, so only the cells that change are drawn, and the screen is never
+ * read. IL, DL, RI and a scrolling region go through here.
+ * ============================================================================= */
+static void scorri(Console *c, uint32_t alto, uint32_t basso, uint32_t n, int giu)
+{
+    uint16_t blank = vga_make_entry(' ', c->colore);
+    int      disegna = (g_fb != 0) && e_visibile(c);
+    uint32_t righe, k, r, x, i;
+
+    if (basso >= RIGHE_C || alto > basso) return;
+    righe = basso - alto + 1;
+    if (n > righe) n = righe;
+    if (n == 0) return;
+    if (disegna) disegna_cursore(c, 0);
+
+    for (k = 0; k < righe; k++) {
+        int vuota;
+        uint32_t da;
+
+        r     = giu ? basso - k : alto + k;     /* never overwrite a source */
+        vuota = giu ? (r < alto + n) : (r + n > basso);
+        da    = giu ? r - n : r + n;
+        for (x = 0; x < g_cols; x++) {
+            uint16_t v = vuota ? blank : c->cella[da * g_cols + x];
+
+            i = r * g_cols + x;
+            if (disegna && c->cella[i] != v) disegna_cella(i, v);
+            c->cella[i] = v;
+        }
+    }
+
+    if (!e_visibile(c)) return;
+    if (g_fb) { g_cur_disegnato = 0; return; }
+    for (i = alto * g_cols; i < (basso + 1) * g_cols; i++) vga_buf[i] = c->cella[i];
+}
+
+/* the cursor goes down one row: at the bottom of the region the region scrolls */
+static void scendi(Console *c)
+{
+    uint32_t b = reg_basso(c);
+
+    if (c->row == b)               scorri(c, reg_alto(c), b, 1, 0);
+    else if (c->row + 1u < RIGHE_C) c->row++;
+}
+
 static void vga_scroll(Console *c)
 {
     uint16_t blank = vga_make_entry(' ', c->colore);
@@ -675,6 +759,7 @@ static void ansi_apply_sgr(Console *c)
         /* ESC[m senza parametri equivale a ESC[0m: reset */
         fg = VGA_COLOR_WHITE;
         bg = VGA_COLOR_BLACK;
+        c->inverso = 0;
     }
 
     for (i = 0; i < c->param_count; i++) {
@@ -682,8 +767,15 @@ static void ansi_apply_sgr(Console *c)
         if (p == 0) {
             fg = VGA_COLOR_WHITE;
             bg = VGA_COLOR_BLACK;
+            c->inverso = 0;
         } else if (p == 1) {
             fg |= 0x08;
+        } else if (p == 22) {
+            fg &= 0x07;
+        } else if (p == 7) {
+            c->inverso = 1;
+        } else if (p == 27) {
+            c->inverso = 0;
         } else if (p >= 30 && p <= 37) {
             fg = ansi_to_vga[p - 30];
         } else if (p == 39) {
@@ -720,7 +812,25 @@ static int ansi_param(const Console *c, uint8_t idx, int def)
  * Coperte: CUU/CUD/CUF/CUB (movimento relativo), CUP/HVP (posizione
  * assoluta), ED (cancella schermo), EL (cancella riga), e la privata
  * DECTCEM (ESC[?25h/l, cursore visibile).
+ *
+ * From 0.279, what the Linux console has and curses uses (the "vga"
+ * terminfo entry): ICH '@', DCH 'P', ECH 'X', IL 'L', DL 'M', CHA 'G' and
+ * HPA '`', VPA 'd', CNL 'E', CPL 'F', DECSTBM 'r', save/restore 's'/'u'.
  * ============================================================================= */
+static void salva_cursore(Console *c)
+{
+    c->sal_row = c->row; c->sal_col = c->col;
+    c->sal_colore = c->colore; c->sal_inverso = c->inverso;
+}
+
+static void riprendi_cursore(Console *c)
+{
+    c->row = c->sal_row; c->col = c->sal_col;
+    c->colore = c->sal_colore; c->inverso = c->sal_inverso;
+    if (c->row >= RIGHE_C) c->row = (uint8_t)(RIGHE_C - 1);
+    if (c->col >= g_cols)  c->col = (uint8_t)(g_cols - 1);
+}
+
 static void ansi_apply_csi(Console *c, char finale)
 {
     int n;
@@ -819,6 +929,86 @@ static void ansi_apply_csi(Console *c, char finale)
             break;
         }
 
+        case '@':   /* ICH — insert blanks, the rest of the row moves right */
+        case 'P': { /* DCH — delete characters, the rest moves left */
+            uint32_t base = (uint32_t)c->row * g_cols, x;
+            uint16_t blank = vga_make_entry(' ', c->colore);
+
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)(g_cols - c->col)) n = (int)(g_cols - c->col);
+            if (finale == '@') {
+                for (x = g_cols - 1; x >= (uint32_t)c->col + (uint32_t)n; x--)
+                    metti_cella(c, base + x, c->cella[base + x - (uint32_t)n]);
+                for (x = c->col; x < (uint32_t)c->col + (uint32_t)n; x++)
+                    metti_cella(c, base + x, blank);
+            } else {
+                for (x = c->col; x + (uint32_t)n < g_cols; x++)
+                    metti_cella(c, base + x, c->cella[base + x + (uint32_t)n]);
+                for (; x < g_cols; x++) metti_cella(c, base + x, blank);
+            }
+            break;
+        }
+
+        case 'X': { /* ECH — erase characters, the cursor stays */
+            uint32_t i = (uint32_t)c->row * g_cols + c->col;
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)(g_cols - c->col)) n = (int)(g_cols - c->col);
+            erase_cells(c, i, i + (uint32_t)n);
+            break;
+        }
+
+        case 'L':   /* IL — insert lines at the cursor, inside the region */
+        case 'M': { /* DL — delete lines */
+            uint32_t a = reg_alto(c), b = reg_basso(c);
+
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (c->row >= a && c->row <= b)
+                scorri(c, c->row, b, (uint32_t)n, finale == 'L');
+            c->col = 0;
+            break;
+        }
+
+        case 'G':   /* CHA — column */
+        case '`':   /* HPA */
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)g_cols) n = (int)g_cols;
+            c->col = (uint8_t)(n - 1);
+            break;
+
+        case 'd':   /* VPA — row */
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)RIGHE_C) n = (int)RIGHE_C;
+            c->row = (uint8_t)(n - 1);
+            break;
+
+        case 'E':   /* CNL — down n rows, column 1 */
+        case 'F':   /* CPL — up n rows, column 1 */
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (finale == 'E') n += c->row;
+            else               n = c->row - n;
+            if (n < 0) n = 0;
+            if (n >= (int)RIGHE_C) n = (int)RIGHE_C - 1;
+            c->row = (uint8_t)n;
+            c->col = 0;
+            break;
+
+        case 'r': { /* DECSTBM — scrolling region, 1-based; then home */
+            int alto  = ansi_param(c, 0, 1);
+            int basso = ansi_param(c, 1, (int)RIGHE_C);
+            if (alto < 1) alto = 1;
+            if (basso < 1 || basso > (int)RIGHE_C) basso = (int)RIGHE_C;
+            if (alto < basso) {
+                c->reg_alto  = (uint8_t)(alto - 1);
+                c->reg_basso = (uint8_t)(basso == (int)RIGHE_C ? 0 : basso - 1);
+            }
+            c->row = 0;
+            c->col = 0;
+            break;
+        }
+
+        case 's': salva_cursore(c);    break;
+        case 'u': riprendi_cursore(c); break;
+
         default:
             return;     /* terminatore non gestito: sequenza scartata */
     }
@@ -848,9 +1038,36 @@ static void putchar_su(Console *c, char ch)
             c->privata         = 0;
             return;
         }
-        /* Sequenza non riconosciuta (non CSI): scarta e riprendi */
+        /* The two-byte sequences of the Linux console (0.279) */
         c->state = ANSI_NONE;
-        /* continua a processare 'ch' normalmente sotto */
+        switch (ch) {
+            case '7': salva_cursore(c);    break;           /* DECSC */
+            case '8': riprendi_cursore(c); break;           /* DECRC */
+            case 'D': scendi(c);           break;           /* IND */
+            case 'E': c->col = 0; scendi(c); break;         /* NEL */
+            case 'M':                                       /* RI */
+                if (c->row == reg_alto(c)) scorri(c, reg_alto(c), reg_basso(c), 1, 1);
+                else if (c->row > 0)       c->row--;
+                break;
+            case 'c':                                       /* RIS */
+                c->colore = vga_make_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                c->inverso = 0;
+                c->reg_alto = c->reg_basso = 0;
+                erase_cells(c, 0, TOTALE_C);
+                c->row = c->col = 0;
+                break;
+            case '(': case ')': case '#': case '%':
+                c->state = ANSI_SALTA;  /* character sets: one more byte, ignored */
+                return;
+            default:
+                /* Sequenza non riconosciuta: scarta e riprendi */
+                goto testo;
+        }
+        vga_update_cursor(c);
+        return;
+    } else if (c->state == ANSI_SALTA) {
+        c->state = ANSI_NONE;
+        return;
     } else if (c->state == ANSI_CSI) {
         /* '?' introduce le sequenze private DEC, e può stare solo in
          * testa ai parametri: ESC[?25l. */
@@ -858,8 +1075,13 @@ static void putchar_su(Console *c, char ch)
             c->privata = 1;
             return;
         }
+        /* ESC[>c, ESC[=... : other private markers, no meaning here */
+        if ((ch == '>' || ch == '=' || ch == '<') && c->param_count == 0 && c->cur_param_empty) {
+            c->privata = 2;
+            return;
+        }
         if (ch >= '0' && ch <= '9') {
-            if (c->param_count < 4) {
+            if (c->param_count < 8) {
                 c->params[c->param_count] =
                     c->params[c->param_count] * 10 + (ch - '0');
                 c->cur_param_empty = 0;
@@ -867,7 +1089,7 @@ static void putchar_su(Console *c, char ch)
             return;
         }
         if (ch == ';') {
-            if (c->param_count < 3) {
+            if (c->param_count < 7) {
                 c->param_count++;
                 c->params[c->param_count] = 0;
             }
@@ -879,10 +1101,11 @@ static void putchar_su(Console *c, char ch)
          * l'ultimo accumulatore conta come parametro se ha ricevuto
          * cifre, oppure se era preceduto da un ';' (ESC[1; ha due
          * parametri, il secondo vuoto). */
-        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) {
+        if (ch >= 0x40 && ch <= 0x7E) {     /* the final byte, ECMA-48 */
             if (!c->cur_param_empty || c->param_count > 0) {
                 c->param_count++;
             }
+            if (c->privata == 2) { c->state = ANSI_NONE; return; }
             if (ch == 'm' && !c->privata) ansi_apply_sgr(c);
             else                          ansi_apply_csi(c, ch);
             c->state = ANSI_NONE;
@@ -891,10 +1114,11 @@ static void putchar_su(Console *c, char ch)
         return;  /* Parametro malformato: continua a scartare */
     }
 
+testo:
     switch (ch) {
-        case '\n':  /* Newline */
-            c->col = 0;
-            c->row++;
+        case '\n':  /* Newline: CR LF, unless the termios says LF alone (0.279) */
+            if (!c->lf_nudo) c->col = 0;
+            scendi(c);
             break;
 
         case '\r':  /* Carriage return */
@@ -905,7 +1129,7 @@ static void putchar_su(Console *c, char ch)
             c->col = (uint8_t)((c->col + 8) & ~7);
             if (c->col >= g_cols) {
                 c->col = 0;
-                c->row++;
+                scendi(c);
             }
             break;
 
@@ -921,13 +1145,16 @@ static void putchar_su(Console *c, char ch)
 
         default: {  /* Carattere normale */
             uint32_t i = (uint32_t)c->row * g_cols + c->col;
-            c->cella[i] = vga_make_entry(ch, c->colore);
+            uint8_t  a = c->inverso
+                       ? (uint8_t)(((c->colore & 0x07) << 4) | ((c->colore >> 4) & 0x0F))
+                       : c->colore;
+            c->cella[i] = vga_make_entry(ch, a);
             riversa_cella(c, i);
             c->col++;
 
             if (c->col >= g_cols) {
                 c->col = 0;
-                c->row++;
+                scendi(c);
             }
             break;
         }
@@ -1043,6 +1270,7 @@ void vga_init_grafica(const BootInfo *info)
             c->row = 0;
             c->col = 0;
             c->alt_on = 0;          /* the saved screen had the old geometry */
+            c->reg_alto = c->reg_basso = 0;
         }
     }
 
@@ -1181,6 +1409,7 @@ void vga_ripristina_testo(void)
         c->row = 0;
         c->col = 0;
         c->alt_on = 0;
+        c->reg_alto = c->reg_basso = 0;
     }
 
     {

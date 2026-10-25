@@ -78,6 +78,15 @@ int     lchown(const char *percorso, unsigned int uid, unsigned int gid);
 int     fchown(int fd, unsigned int uid, unsigned int gid);
 int     chroot(const char *percorso);
 int     mkfifo(const char *percorso, mode_t modo);
+
+/* a terminal's name: "/dev/tty" for any (EX-OS has no /dev/tty* files) */
+char   *ttyname(int fd);
+int     ttyname_r(int fd, char *buf, size_t n);
+
+/* getopt (POSIX), libc.a only; the long options are in <getopt.h> */
+extern char *optarg;
+extern int   optind, opterr, optopt;
+int     getopt(int argc, char *const argv[], const char *optstring);
 #ifdef __cplusplus
 }
 #endif

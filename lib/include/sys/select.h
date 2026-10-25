@@ -10,8 +10,8 @@
  * =============================================================================
  *
  * <sys/select.h> — facciata su libc.h, dove stanno select(), fd_set e le macro
- * FD_* (@EXILLA-NSPR, 30 settembre 2026). ! fd_set ha 32 bit: i socket, che
- * hanno descrittori da 1024, con select non si guardano — si usa poll().
+ * FD_* (@EXILLA-NSPR, 30 settembre 2026). Dal 25 ottobre 2026 fd_set arriva a
+ * FD_SETSIZE (1088): anche i socket, che hanno descrittori da 1024.
  * ============================================================================= */
 #ifndef EXOS_SYS_SELECT_H
 #define EXOS_SYS_SELECT_H

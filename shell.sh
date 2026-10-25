@@ -241,6 +241,9 @@ PKG_PROVE="qemu-system-x86 qemu-utils gdb"
 #   libgmp-dev libmpfr-dev libmpc-dev libisl-dev   GCC non si costruisce senza
 #   texinfo           makeinfo: senza, binutils e GCC si fermano sulla doc
 #   bison flex gawk   generatori usati dai sorgenti di GCC e binutils
+#   gperf             le tabelle di parole chiave che GCC rigenera quando
+#                     si tocca il front-end C/C++ (tools/ambiente.sh -per
+#                     toolchain lo chiede: 25 ottobre 2026)
 #   perl              il Configure di OpenSSL e' uno script Perl
 #   autoconf automake libtool pkg-config   i pacchetti GNU portati
 #                     (coreutils, sed, grep, awk, make) rigenerano il configure
@@ -248,7 +251,7 @@ PKG_PROVE="qemu-system-x86 qemu-utils gdb"
 #   zip unzip         `make iso-parti` e `make iso-unisci`
 #   git curl wget ca-certificates   i sorgenti di GCC, binutils e OpenSSL
 #                     NON stanno nel repository: si scaricano
-PKG_STRUMENTI="libgmp-dev libmpfr-dev libmpc-dev libisl-dev texinfo bison flex gawk perl \
+PKG_STRUMENTI="libgmp-dev libmpfr-dev libmpc-dev libisl-dev texinfo bison flex gawk gperf perl \
 autoconf automake libtool pkg-config zlib1g-dev zip unzip git curl wget ca-certificates"
 
 # SVILUPPO — il resto della suite GCC e gli strumenti di compilazione:
@@ -465,7 +468,7 @@ fi
 if [ "$VUOLE_STRUMENTI" -eq 1 ]; then
     echo ""
     log_info "gruppo strumenti (cross-compilatore i386-exos e ISO):"
-    for c in makeinfo bison flex perl autoconf automake libtool git; do
+    for c in makeinfo bison flex gperf perl autoconf automake libtool git; do
         if command -v "$c" >/dev/null 2>&1; then
             log_ok "$c"
         else

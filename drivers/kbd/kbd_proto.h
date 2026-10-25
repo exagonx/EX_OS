@@ -95,6 +95,34 @@ typedef struct {
     unsigned int console;   /* console del processo che sta leggendo */
 } KbdReadLine;
 
+/* ! FROM KERNEL 0.279 (termios) THE REQUEST CAN BE LONGER: KbdReadLineT, the
+ * same two fields and then the modes of the console, so the kernel's termios
+ * reaches the line discipline that lives here. A request of 8 bytes is the
+ * old one: a line, with echo — as before. */
+typedef struct {
+    unsigned int max;
+    unsigned int console;
+    unsigned int modi;      /* KBD_T_* below */
+    unsigned int min;       /* VMIN: bytes to wait for, in KBD_T_BYTE mode */
+} KbdReadLineT;
+
+#define KBD_T_BYTE    0x01u /* no ICANON: keys as bytes, no line, no Backspace */
+#define KBD_T_SUBITO  0x02u /* answer now, even with nothing (VMIN=0)         */
+#define KBD_T_NOECO   0x04u /* no ECHO                                         */
+#define KBD_T_NOSIG   0x08u /* no ISIG: Ctrl+C is the byte 3, no question      */
+#define KBD_T_NOCRNL  0x10u /* no ICRNL: Enter gives CR, not LF                */
+
+/* kernel -> kbd: the modes of a console changed (tcsetattr). Payload:
+ * KbdSetTerm. The keys typed from now on follow them at once, before the
+ * program's next read arrives. */
+#define KBD_MSG_SETTERM     11u
+
+typedef struct {
+    unsigned int console;
+    unsigned int modi;      /* KBD_T_* (KBD_T_SUBITO means nothing here) */
+    unsigned int min;
+} KbdSetTerm;
+
 /* kbd -> client: riga completa, terminatore '\n' incluso.
  * Payload: i byte della riga. len = lunghezza effettiva (può essere 1,
  * cioè il solo '\n', se l'utente ha premuto Invio su riga vuota). */
