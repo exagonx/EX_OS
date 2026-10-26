@@ -30,6 +30,8 @@
 #           Un gruppo elencato qui ma assente dal CD non viene proposto:
 #           chiederlo darebbe una domanda la cui risposta non cambia niente
 #   vuole   un gruppo da cui questo dipende. Sceglierlo tira dentro l'altro
+#           Piu' righe = piu' gruppi (fino a 4; toolinst dalla 0.004,
+#           prima contava solo l'ultima)
 #   mbyte   quanto pesa, per dire lo spazio PRIMA di cominciare a copiare
 #   sempre  si -> non si puo' togliere
 #   solo    un percorso, relativo alla radice dell'albero, che appartiene
@@ -409,11 +411,42 @@ nota  = g++ prog.cpp -lfmt   (oppure -DFMT_HEADER_ONLY senza -lfmt)
 nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
 
 
+[mariadb-connector]
+nome  = Connettori MariaDB
+dice  = parlare con MariaDB/MySQL da C, C++, FreeBASIC e Rust, senza il server
+prova = lib/libmariadbclient.a
+vuole = ssl
+vuole = zlib
+vuole = zstd
+vuole = cpp
+mbyte = 12
+solo  = lib/libmariadbclient.a
+solo  = lib/libmariadb.a
+solo  = lib/libmariadbcpp.a
+solo  = lib/rust/mariadb
+solo  = bin/mariadb_config
+solo  = include/mariadb
+solo  = include/mysql
+solo  = i386-exos/include/mariadb
+solo  = i386-exos/include/mysql
+solo  = src/mariadb-connector-c
+solo  = src/mariadb-connector-cpp
+
+nota  = Connector/C 3.4.11 (<mysql.h>), Connector/C++ 1.1.9 (<conncpp.hpp>), statici:
+nota  =   gcc prog.c -I/exos/include/mariadb -lmariadbclient -lssl -lcrypto -lz -lzstd -lpthread -lm
+nota  =   g++ prog.cpp -I/exos/include/mariadb -lmariadbcpp -lmariadbclient (e le stesse)
+nota  = FreeBASIC: #include "mariadb.bi" (arriva col gruppo [fb], in include/freebasic),
+nota  =   poi  fbc prog.bas -x prog  (le librerie le chiede il .bi).
+nota  = Rust: /exos/lib/rust/mariadb, il crate "mariadb" senza dipendenze:
+nota  =   rustc -O --crate-type rlib --edition 2021 src/lib.rs  poi  --extern mariadb=...
+nota  = Il server e' a parte: netupdate -install:mariadb (porta anche questi).
+
+
 [mariadb]
 nome  = MariaDB
-dice  = MariaDB 11.8.9 LTS: il server SQL, i client, libmariadbclient e il servizio mariadb-svc
+dice  = MariaDB 11.8.9 LTS: il server SQL, i client, il servizio mariadb-svc e i connettori
 prova = mariadb/bin/mariadbd
-vuole = base
+vuole = mariadb-connector
 mbyte = 500
 solo  = mariadb
 solo  = bin/mariadb
@@ -428,13 +461,10 @@ solo  = bin/mariadb-slap
 solo  = bin/mariadb-tzinfo-to-sql
 solo  = bin/mariadb-upgrade
 solo  = bin/mariadb-svc
-solo  = lib/libmariadbclient.a
-solo  = include/mysql
-solo  = i386-exos/include/mysql
 solo  = src/mariadb
 
 nota  = Il server parte a ogni avvio, prima del login:  mariadb-svc -install
 nota  = (utente mysql, /etc/my.cnf, /var/lib/mysql, un blocco in /boot/avvio.sh).
 nota  = Solo TCP su 127.0.0.1:3306 (EX-OS non ha i socket AF_UNIX): mariadb -u root
 nota  = root@localhost non ha password all'inizio; mettila con ALTER USER.
-nota  = gcc prog.c -lmariadbclient -lssl -lcrypto -lz   (le API di <mysql/mysql.h>)
+nota  = I programmi che parlano col server: vedi le note dei connettori.

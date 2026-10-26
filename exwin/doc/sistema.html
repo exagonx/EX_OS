@@ -485,6 +485,25 @@ All'avvio il kernel lo dice, e vale la pena leggerlo: dice quanti slot da
 4 KB ha trovato, cioe' quanta memoria in piu' ha davvero.
 </p>
 
+<p>
+<b>Funziona, a 32 e a 64 bit, dal kernel 0.276</b> (24 ottobre 2026): la
+prima versione si accendeva ma sotto pressione fermava il kernel (32 bit) o
+rovinava la memoria dei programmi (64 bit). Adesso la prova che riempie la
+RAM e rilegge ogni pagina passa. <code>mem</code> mostra l'area nella riga
+<b>scambio (swap)</b>: quanto e' grande, quanto c'e' sopra adesso, quante
+pagine sono andate sul disco e tornate dall'avvio; finche' la RAM basta i
+contatori restano a zero, e non e' un guasto. Se <code>mem</code> dice
+<i>nessuna area attiva</i>, <code>dmesg SWAP</code> dice perche'.
+</p>
+
+<p class="nota">
+Sull'area vanno solo le pagine <b>private</b> dei programmi: heap, stack,
+dati. Mai il kernel, le pagine condivise fra processi, quelle che un
+dispositivo usa (DMA, schermo) ne' quelle di un programma che sta girando
+sull'altro processore. E un programma resta comunque entro i suoi 3 GB di
+indirizzi: lo scambio da' memoria alla macchina, non a un programma solo.
+</p>
+
 <h2 id="avvio">L'avvio, passo per passo</h2>
 
 <ol>

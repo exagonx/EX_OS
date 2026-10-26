@@ -738,6 +738,19 @@ for (uint32_t pi = 0; pi < npages; pi++) {
 void proc_set_ready(Process *proc)
 {
     if (proc == NULL || proc->state == PROC_READY) return;
+    /* ! A DRIVER STARTED BY A PROGRAM GETS PRIO_HIGH TOO (0.280, 26 October
+     * 2026), as those of the boot do (kernel_main.c). netdetect starts
+     * e1000.drv with spawn, and it got PRIO_NORMAL: under the MariaDB stress
+     * test it took turns with seventy server threads, and the card's receive
+     * ring overflowed (42 thousand frames lost in ten minutes). Only here,
+     * at the first start: the process is in no run queue yet, so the
+     * priority can change without moving it (runq_remove reads it). Its
+     * threads inherit it (proc_thread_crea). */
+    if (proc->state == PROC_NASCENTE && proc->is_driver && proc->priority == PRIO_NORMAL) {
+        proc->priority      = PRIO_HIGH;
+        proc->quantum       = quantum_table[PRIO_HIGH];
+        proc->quantum_total = quantum_table[PRIO_HIGH];
+    }
     proc->state = PROC_READY;
     runq_add(proc);
     klog(LOG_DEBUG, "SCHED: PID %u '%s' -> READY", proc->pid, proc->name);
@@ -969,6 +982,7 @@ void sched_fine_chiesta(void)
         proc_chiudi_fd(io);
         g_proc_count--;
     }
+    ipc_processo_finito(io);
     io->state     = PROC_ZOMBIE;
     io->exit_code = 0;
     runq_remove(io);
@@ -1785,6 +1799,7 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
         /* ! NON SI CHIUDONO I SUOI DESCRITTORI: sono quelli del gruppo, e chi
          * resta li sta ancora usando. Li chiude il capogruppo uscendo. */
         if (sched_gira_altrove(p)) { p->da_finire = 2; continue; }
+        ipc_processo_finito(p);
         p->state     = PROC_ZOMBIE;
         p->exit_code = 0;
         runq_remove(p);
@@ -1874,6 +1889,7 @@ static void proc_esci(int32_t exit_code, int fatale)
          * che il padre legge. */
         if (capo != NULL) capo->exit_code = exit_code;
     } else {
+        ipc_processo_finito(g_current);
         g_current->state = PROC_ZOMBIE;
         g_proc_count--;
         runq_remove(g_current);
@@ -1894,6 +1910,7 @@ static void proc_esci(int32_t exit_code, int fatale)
      * proc_chiudi_fd(). Con una pipe aperta, ritardarlo e' uno stallo. */
     proc_chiudi_fd(g_current);
 
+    ipc_processo_finito(g_current);
     g_current->state     = PROC_ZOMBIE;
     g_proc_count--;
 
@@ -2143,6 +2160,7 @@ void proc_kill(uint32_t pid)
                 return;
             }
             proc_chiudi_fd(&g_process_pool[i]);
+            ipc_processo_finito(&g_process_pool[i]);
             g_process_pool[i].state = PROC_ZOMBIE;
             runq_remove(&g_process_pool[i]);
             g_proc_count--;

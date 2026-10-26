@@ -1,0 +1,60 @@
+The pool of threads (threadpool_generic) on EX-OS: epoll is there since
+ip.drv 0.016 and the libc of 26 October 2026 (lib/include/sys/epoll.h).
+Only TCP sockets go in an EX-OS epoll set, so the self-pipe that wakes the
+listener at shutdown cannot: there the listener waits 100 ms at a time and
+looks at shutdown in between (without it mariadbd printed "Shutdown
+complete" and then stayed, waiting for its thread groups to go).
+
+diff -ru a/sql/threadpool_generic.cc b/sql/threadpool_generic.cc
+--- a/sql/threadpool_generic.cc
++++ b/sql/threadpool_generic.cc
+@@ -170,7 +170,7 @@
+  On Linux: epoll_wait()
+ */
+ 
+-#if defined (__linux__)
++#if defined (__linux__) || defined (__exos__)
+ #ifndef EPOLLRDHUP
+ /* Early 2.6 kernel did not have EPOLLRDHUP */
+ #define EPOLLRDHUP 0
+@@ -734,7 +734,17 @@
+     if (thread_group->shutdown)
+       break;
+ 
++#ifdef __exos__
++    /*
++      EX-OS: epoll takes TCP sockets only, so the pipe of wake_listener()
++      cannot join the set. The listener looks at shutdown every 100 ms.
++    */
++    do
++      cnt = io_poll_wait(thread_group->pollfd, ev, MAX_EVENTS, 100);
++    while (cnt == 0 && !thread_group->shutdown);
++#else
+     cnt = io_poll_wait(thread_group->pollfd, ev, MAX_EVENTS, -1);
++#endif
+     TP_INCREMENT_GROUP_COUNTER(thread_group, polls[(int)operation_origin::LISTENER]);
+     if (cnt <=0)
+     {
+@@ -1055,6 +1065,10 @@
+ */
+ static int wake_listener(thread_group_t *thread_group)
+ {
++#ifdef __exos__
++  /* the listener wakes by itself within 100 ms: see listener() */
++  return 0;
++#endif
+ #ifndef _WIN32
+   if (pipe(thread_group->shutdown_pipe))
+   {
+diff -ru a/sql/threadpool_generic.h b/sql/threadpool_generic.h
+--- a/sql/threadpool_generic.h
++++ b/sql/threadpool_generic.h
+@@ -36,7 +36,7 @@
+ #define  INVALID_HANDLE_VALUE -1
+ #endif
+ 
+-#ifdef __linux__
++#if defined (__linux__) || defined (__exos__)
+ #include <sys/epoll.h>
+ typedef struct epoll_event native_event;
+ #elif defined(HAVE_KQUEUE)

@@ -8429,6 +8429,222 @@ tools/netinst/velocita tolto da netinst.
       AF_UNIX; mariadb-svc a 64 bit su un disco installato (mkhd.sh installa
       solo il 32 bit); le ISO strumenti col gruppo da rifare e provare con
       netupdate -install:mariadb.
+      26/10 f) IL CERTIFICATO, NETINST, I CONNETTORI. mariadb-svc 0.002 fa
+      a -install un certificato EC P-256 (MariaDB 11.8 senza ssl-cert fa una
+      chiave RSA 4096 a ogni avvio: fino a 136 s in QEMU). Il gruppo e' sulla
+      ISO strumenti (DVD) e in netinst: tools/prova_mariadb_netinst.sh
+      (netupdate -install:mariadb da un repository servito in QEMU, poi
+      mariadb-svc -install per nome, riavvio) a posto a 32 bit. L'utente
+      (26/10): nel catalogo due voci, il server completo dei connettori e
+      SOLO i connettori; scelti C, C++, FreeBASIC, Rust. FATTO: gruppo
+      [mariadb-connector] (Connector/C 3.4.11, Connector/C++ 1.1.9 statico
+      sopra il Connector/C di sistema, mariadb.bi per FreeBASIC, il crate
+      Rust "mariadb" senza dipendenze), [mariadb] lo vuole e non porta piu'
+      libmariadbclient; tools/prova_mariadb.sh prova un programma per
+      linguaggio contro il server. RESTA: FreeBASIC a 64 bit (fb64 non c'e'
+      su nasi5deb: tools/freebasic-exos/prepara-fb64.sh) e rustc DENTRO
+      EX-OS (rustc-build non c'e' su nasi5deb: il gruppo [rust] manca dalle
+      ISO; tools/rust-exos/rustc-nativo/costruisci-exos.sh, ore di LLVM).
+      NOTA PER QUANDO SI PORTA APACHE2/PHP (l'utente, 26/10: «apache2 ha PDO
+      che dovrebbe includere gia' un connector e client mysql/mariadb»):
+      giusto, pdo_mysql e mysqli di PHP usano mysqlnd, il client nativo
+      scritto dentro PHP, e non hanno bisogno di Connector/C ne' di
+      [mariadb-connector]; serve solo il server (o un MariaDB altrove).
+      26/10 g) NETINST: I .tar.gz RINOMINATI SUL SERVER (l'utente, 26/10).
+      I sorgenti delle librerie sotto exos/src (ncurses-6.6.tar.gz,
+      mariadb-11.8.9.tar.gz...) erano in file/ col nome vero: Altervista li
+      serve con Content-Encoding: gzip e Cloudflare li consegna
+      decompressi, l'impronta non torna (lo stesso guaio dei pacchetti del
+      21/10). mknetinst.sh li pubblica come _gz/_tgz, elenco.txt tiene il
+      nome vero, netupdate 0.035 chiede quello col trattino basso. Un
+      netupdate piu' vecchio li cerca col nome vero (404): si aggiorna
+      prima netupdate (-check, e' essenziale). DA VEDERE: il sorgente di
+      MariaDB e' un file solo da 221 MB in file/; se lo spazio web ha un
+      tetto per file, va pubblicato a pezzi (pezzi=, come Exilla).
+      26/10 h) COMPILARE DENTRO EX-OS DOPO NETUPDATE. La prova netinst
+      compila connprova.c col gcc arrivato da [base]: tre difetti. 1)
+      -install scriveva percorsi.txt ma non il PATH di kernel.cfg, dove
+      collect2 cerca ld: "cannot find 'ld'"; netupdate 0.035 ora chiama
+      anche toolinst -c. 2) Il CD strumenti a 32 bit non aveva
+      libpthread.a, libdl.a, librt.a (il Makefile copiava solo libm.a). 3)
+      [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
+      [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
+
+  32. STRESS TEST DI MARIADB (l'utente, 26/10: «mi serve uno stress test,
+      ho bisogno che riescono a collegarsi 1024 client a mariadb e inviare
+      query di scrittura e lettura aggiornamento ecc per 8 ore consecutive
+      continuate controlla e memorizza velocita carico supportato
+      tollerabilita e leak possibile; appena finisci quello che stai
+      facendo parti con lo stress test»). DA FARE SUBITO DOPO i connettori.
+      I TETTI DI OGGI per 1024 connessioni contemporanee (26/10):
+      a. ip.drv: IP_TCP_CONNESSIONI 24 in TUTTO il sistema
+         (drivers/net/ip_proto.h);
+      b. libc: PRESE_MAX 64 socket per processo (lib/libc.c, da 1024);
+      c. kernel: MAX_PROCESSES 192 posti, e ogni filo e' un posto; MariaDB
+         fa un filo per connessione (il thread pool vuole epoll, che non
+         c'e'); ogni posto ha 128 KB di stack kernel sotto la soglia bassa;
+      d. mariadb-svc scrive max_connections = 16 in /etc/my.cnf;
+      e. MAX_FD 128 per i file (MariaDB: open_files_limit 128).
+      Da misurare: query/s per tipo, latenza, memoria di mariadbd e del
+      kernel (mem) nel tempo per i leak, errori e connessioni rifiutate.
+      SCELTE DELL'UTENTE (26/10): prima una prova breve al massimo di oggi
+      (tetto vero e primi leak), poi alzare i limiti fino a 1024 e le 8 ore;
+      i client da Linux via rete (generatore sull'host, MariaDB di EX-OS in
+      QEMU); QEMU a 64 bit.
+      26/10 FASE 1, PRIMI GIRI (tools/stress/stress_mariadb.sh, risultati in
+      tools/stress/risultati/): 2 client 369 istruzioni/s, p50 2,4 ms, 0
+      errori; a 4 client la rete si fermava dopo 10-20 s. Guardato con gdb
+      e un secondo monitor di QEMU (STRESS_QEMU_EXTRA): DUE STALLI fra la
+      casella di ip.drv (4 messaggi) e quella del driver: (1) consegna() del
+      driver dormiva fino a 10 s in ipc_send verso ip.drv pieno, poi
+      buttava frame E richiesta (g_lettore_pid=0) mentre ip.drv la credeva
+      in volo: scheda sorda per sempre, loopback vivo; (2) la NET_MSG_ESITO
+      di ogni NET_MSG_INVIA, mandata con attesa, mentre ip.drv aspettava
+      posto nella casella del driver: pause da 10 s. CORRETTO: driver senza
+      attesa verso ip.drv (frame tenuto con la richiesta, ESITO buttato se
+      non ci sta) in e1000 0.003, ne2k 0.003, rtl8169 0.003, pcnet 0.003,
+      sis900 0.019, nforce 0.014 (aveva gia' il frame dal 21/10), ar5k
+      0.003; ip.drv 0.015 riarma senza attesa e rimanda NET_MSG_RICEVI dopo
+      1 s di silenzio; un SYN a tabella piena riprende le connessioni dei
+      morti e quelle chiuse dal programma (prima solo tcp_apri lo faceva);
+      IP_MSG_TCP_TABELLA e ipcfg -tcp 0.004 (la tabella vista da fuori);
+      memlog stampa anche la tabella TCP. POI con ipcfg/memlog la tabella
+      piena a 8-12 client: le morte chiuse dal programma (ora liberate dalla
+      spazzata), le S_FIN_SUO mai accettate (accept ora le consegna) e poll
+      della libc che diceva sempre pronto un ascoltatore (mariadbd girava a
+      vuoto su ACCETTA): ora tcp_info dice quante aspettano
+      (conta_in_attesa), libc.a rifatta nelle 4 sysroot, MariaDB
+      ricollegato. Dopo le prime correzioni: 4 client stabili 5 minuti
+      (~190 istruzioni/s, 0 errori). A 8 client il server non superava 5
+      connessioni insieme (max_used_connections 5) e le nuove scadevano.
+      DA FARE PER 1024: (f) chi trova piena una casella dorme 5 ms (un tick
+      intero, 10 ms) e riprova: con piu' di 3 client tutto va a passi di
+      tick (p50 11,6 ms invece di 2,4); serve un'attesa vera sulla casella
+      (svegliare chi aspetta quando si libera un posto) o caselle piu'
+      grandi per i servizi; e i tetti a-e sopra.
+      26/10 FASE 1, GIRO FINALE (tools/stress/risultati/diag5: stadi da 180 s
+      a 4/8/12/16/24 client, poi 16 client per 600 s): tetto ~270
+      istruzioni/s QUALUNQUE sia il numero di client (271, 277, 276, 270,
+      268), p50 ~10 ms, p95 55 ms, p99 90-210 ms; a 4 client 0 riconnessioni,
+      da 8 in su le nuove connessioni scadono nella stretta di mano (9, 26,
+      50, 90 fallite per stadio, 181 nei 600 s) e MariaDB non supera 5-8
+      connessioni insieme (Max_used_connections 5); tabella TCP piena 24/24
+      da 12 client, 15-16 slot fermi in chiusura (S_FIN_SUO: il client
+      Linux ha chiuso per timeout, il filo di mariadbd non ha ancora chiuso
+      perche' e' fermo in ipc_send). Con gdb a 12 client: casella di ip.drv
+      vuota nell'istante, 8 fili di mariadbd in sched_sleep dentro ipc_send
+      (il giro dei 5 ms): chi riprova prima vince, non chi aspetta da piu'
+      tempo, e dopo 10 s EBUSY (ipcfg -tcp usciva muto per questo: ipcfg
+      0.005 ora lo dice). LEAK: memoria di EX-OS tornata sopra l'inizio
+      dopo lo spegnimento di mariadbd (nessuna perdita del kernel),
+      Memory_used di MariaDB +1,9 MB/ora (cache, da riguardare nelle 8 ore);
+      0 righe [ERROR] in mariadb.err. Conclusione: il collo di bottiglia e'
+      (f), poi i tetti a-e. FASE 2 proposta all'utente, non iniziata.
+      26/10 FASE 2. (f) FATTO nel kernel 0.280: chi trova piena una casella
+      si mette in fila e dorme, ipc_recv promette il posto al piu' vecchio
+      (Process.ipc_fila_*, ipc_processo_finito a ogni morte). Prova breve
+      (tools/stress/risultati/fila1): 4 client 357/s, 8 371/s, 16 396/s con
+      0 connessioni fallite (prima 270/s e 50 fallite), 24 client: 23
+      connessi (la tabella TCP da 24, ascoltatore compreso, e' il tetto).
+      IL MURO DEI FILI: MariaDB fa un filo per connessione, ogni filo ha 128
+      KB di pila kernel nella fascia kernel (0-64 MB, USER_SPACE_BASE): 1024
+      fili = 128 MB + 18 MB di PCB, impossibile. SCELTA DELL'UTENTE (26/10):
+      thread pool di MariaDB + epoll (libc, con ip.drv che segnala lui le
+      connessioni pronte), tabella TCP di ip.drv e socket per programma a
+      ~1100, il kernel resta a 192 processi. L'UTENTE AGGIUNGE (26/10, in
+      coda, non ancora fatto): «1024 connessioni e' la base, dovrebbe
+      essere in grado di ottemperare anche piu' di 32 mila richieste»; «bisogna
+      aumentare la velocita' di rete: con emulazione di rete a 10 Gbps non
+      supera i 100 Mbps»; «il kernel deve supportare piu' connessioni e piu'
+      veloci»; «implementando Redis guadagno qualcosa?». Per 32 mila: i
+      descrittori dei socket stanno fra 1024 e 2047 (PRESA_BASE, SHMFD_BASE
+      2048), quindi al massimo 1024 socket per programma; oltre serve
+      spostare gli spazi dei descrittori (ABI della libc) e una tabella TCP
+      con ricerca per hash. Per la velocita': misurare prima dove si ferma
+      (copia byte per byte nelle caselle IPC da 1536 byte, un frame per
+      messaggio, TCP_BUF 4 KB in trasmissione, ip.drv a un filo solo).
+      26/10 POMERIGGIO, FASE 2 FATTA IN PARTE (NON committata, interrotta
+      per il riavvio della macchina; messaggio-commit.txt da completare):
+      ip.drv 0.016 (tabella 4096 con hash, poll/epoll nello stack, perdita
+      del buffer rx da 63 KB al riuso dello slot corretta, IP_MSG_TCP_SPEGNI
+      24: shutdown lascia la connessione nell'insieme epoll e la segnala una
+      volta, la close dopo la stacca e basta; uno slot spento ancora in un
+      insieme non si libera); libc: epoll (sys/epoll.h), poll in un messaggio
+      solo, PRESE_MAX 1024, RLIMIT_NOFILE 4096, FD_SETSIZE 2048, shutdown
+      manda SPEGNI (con ip.drv vecchio CHIUDI), strerror con tutti gli errno
+      di rete (prima "errore"); e1000 RX_N 96 (era 32) e CODA_N 256 (era 64):
+      COMPILATO (iso64 rifatta) MA NON ANCORA MISURATO; MariaDB col gruppo di
+      fili (patch/server-threadpool-epoll.diff: l'ascoltatore guarda shutdown
+      ogni 100 ms, la pipe di wake_listener non entra in epoll: senza,
+      mariadbd non usciva dopo "Shutdown complete"); mariadb-svc 0.003
+      (max_connections 1024, pool-of-threads, 64 fili, bootstrap con un filo
+      solo perche' ip.drv non e' ancora acceso, avviso su my.cnf vecchio e su
+      io_poll_create); stress_mariadb.sh: opzioni in /a/my.cnf (LA RIGA DELLA
+      SHELL TIENE 512 CARATTERI, MAX_LINE: tagliata perdeva `< bootstrap.sql`
+      o --bootstrap), STRESS_QEMU_EXTRA=-enable-kvm; memlog: righe MEMRETE coi
+      contatori di ip.drv e del driver (rete.txt e riassunto.py).
+      PROVE A POSTO col sistema nuovo (prima di SPEGNI/strerror/e1000):
+      prova_epoll 27/27 a 32 e 64, prova_mariadb 32 e 64, prova_mariadb_svc
+      15/15, prova_mariadb_netinst 16/16, prova_telnet, prova_ssh,
+      prova_ctrlc, prova_openssl (32).
+      DA RIFARE dopo SPEGNI/strerror/e1000 (libc nelle 4 sysroot, iso64,
+      iso-exos e mariadbd 32/64 gia' rifatti alle 11:50): prova_epoll 32/64,
+      prova_mariadb 32/64, prova_mariadb_svc, telnet/ssh/openssl 32/64;
+      make netinst/netinst64 e ISO strumenti; iso-exos dopo e1000.
+      RISULTATI (tools/stress/risultati/, riassunto.txt in ognuna):
+      - pool3 (TCG senza KVM): 64 client 415/s 0 errori, 256 369/s, 512 332/s,
+        1024 219/s con migliaia di riconnessioni. QEMU al 100% di un core: il
+        tetto e' l'emulatore.
+      - kvm1 (KVM, nessuna pausa): 64 client 2109/s p50 23 ms 13 errori
+        (deadlock InnoDB, normali); 256 1612/s; 512 1332/s; 1024 1093/s;
+        10 min a 1024 senza pausa: collasso (riconnessioni TLS a raffica,
+        MariaDB in ritardo a chiudere, tabella 4096/4096, 15 client alla fine).
+      - kvm2-pausa1s (KVM, pausa 1 s = 1024 utenti attivi): 1023 collegati,
+        p50 5,5 ms, p95 20 ms, 870/s; MA ogni ~90 s un centinaio di
+        connessioni cade per fermate di 22 s: MEMRETE dice rete_persi_scheda
+        21678 (anello RX dell'e1000 traboccato), persi_coda 292, ip.drv zero
+        scarti. Da qui RX_N 96. Tratto lungo non valido (QEMU fermato).
+      - perdita di memoria: non dimostrata. EX-OS libera cala con le
+        connessioni (piatta in pool3 nel tratto lungo), MariaDB Memory_used
+        cresce con le riconnessioni; serve il giro lungo stabile.
+      - kvm3-pausa1s: avviato da un'altra sessione, fermato per il riavvio.
+      PROSSIMO: 1) rifare con KVM, pausa 1 s e la e1000 nuova
+      (STRESS_QEMU_EXTRA=-enable-kvm PAUSA_MS=1000 STADI="256 1024"
+      SECONDI_STADIO=300 STABILE_CLIENT=1024 STABILE_SECONDI=1800); se
+      persi_scheda resta alto: il driver aspetta il suo turno di CPU, vedere
+      priorita' dei driver nello scheduler; 2) se stabile, le 8 ore
+      (STABILE_SECONDI=28800); 3) in pool3/kvm1 allo spegnimento centinaia di
+      "did not exit" e niente "Shutdown complete" (prima di SPEGNI):
+      verificare; 4) gli altri driver (nforce, sis900, rtl8169, pcnet, ne2k)
+      hanno anelli piccoli come l'e1000; 5) README/README.it (sezione nuova
+      prima di "MariaDB 11.8 LTS runs"), manuale 4.10 e 5 e leggimi.md di
+      MariaDB gia' aggiornati in parte; 6) risposta all'utente su Redis: una
+      cache davanti aiuta le letture ripetute ma non i limiti della rete di
+      EX-OS (servizio a parte); 32 mila connessioni e 10 Gbps restano come
+      sopra. tools/stress/risultati/ non e' in .gitignore (760 MB): chiedere.
+      26/10 SERA (dopo il riavvio): FATTI 1-3. kvm3-pausa1s (KVM, 1 s di
+      pausa, e1000 RX 96): 256 client 246/s 2 errori; 1024 client 892/s 0
+      errori; 30 minuti stabili a 1024: 1023 collegati fino alla fine,
+      1.656.602 istruzioni, 917/s, 1 errore, p95 320-355 ms, "Shutdown
+      complete" senza nessun "did not exit" (SPEGNI funziona), memoria di
+      EX-OS senza perdite (alla fine piu' libera dell'inizio); MariaDB
+      Memory_used 605 -> 770 MB in 30 min (da guardare nelle 8 ore). Ma
+      persi_scheda 104 mila: i driver lanciati da un programma (netdetect ->
+      e1000.drv) avevano PRIO_NORMAL, quelli dell'avvio PRIO_HIGH. Kernel
+      0.280 (non ancora committato, stessa versione): proc_set_ready da'
+      PRIO_HIGH a un processo NASCENTE con is_driver. Dopo: gradino 1024
+      con ZERO frame persi. Prove a posto col kernel nuovo: prova_epoll
+      27/27 a 32 e 64 (! prova_epoll.sh prende la CARTELLA come $1,
+      l'architettura da EXOS_ARCH=x86_64: "prova_epoll.sh 64" provava i386
+      in ./64), prova_mariadb_svc 15/15, prova_telnet. .gitignore:
+      /tools/stress/risultati/ (chiavi TLS usa e getta: gitupdate.sh si
+      fermava); l'utente deve togliere dallo stage i 678 file gia' aggiunti
+      (git rm -r --cached -q tools/stress/risultati 32 64). LE 8 ORE
+      partite il 26/10 verso le 14:10 in tools/stress/risultati/otto-ore
+      (1024 client, pausa 1 s, KVM). Il 1024esimo client resta fuori: un
+      programma tiene 1024 socket ascoltatore compreso (PRESE_MAX). Ancora
+      da fare dopo le 8 ore: netinst/netinst64 e ISO strumenti, prova_ssh e
+      prova_openssl a 64, i numeri finali nel README, risposta all'utente.
 
   31. FILE OLTRE 2 GB NEL KERNEL (l'utente, 25/10: «prima l'ABI, poi il
       kernel»). Oggi su ENTRAMBE le architetture un file arriva a 2 GB:

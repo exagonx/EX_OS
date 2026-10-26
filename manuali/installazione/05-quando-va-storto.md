@@ -196,6 +196,65 @@ Erano tre difetti in fila, corretti nel kernel 0.278, `ip.drv` 0.012,
 
 ---
 
+## Con molti client insieme la rete si ferma, il loopback no
+
+Sintomo: un server (MariaDB, ma vale per qualunque servizio TCP) regge uno
+o due client; con quattro, dopo una manciata di secondi, le richieste
+restano ferme (10 s, 20 s), poi le connessioni cadono e le nuove non
+entrano più. Dalla macchina stessa, su `127.0.0.1`, prima «Can't connect
+(100)» e poi di nuovo tutto a posto; da fuori niente fino al riavvio.
+
+Era la casella dei messaggi di `ip.drv`, che tiene quattro messaggi: sotto
+carico la riempiono i programmi, e il driver della scheda, per consegnargli
+un frame, restava fino a 10 s ad aspettare un posto senza più servire la
+scheda, mentre `ip.drv` aspettava un posto nella casella del driver. Poi il
+frame si perdeva insieme alla richiesta di riceverne un altro, e la scheda
+restava sorda per sempre. Corretto in `ip.drv` 0.015 e nei driver di rete
+(`e1000` 0.003, `ne2k` 0.003, `rtl8169` 0.003, `pcnet` 0.003, `sis900`
+0.019, `nforce` 0.014, `ar5k` 0.003): il driver non aspetta più la casella
+di `ip.drv`, un frame che non ci sta resta in coda con la sua richiesta, e
+`ip.drv` rimanda la richiesta se per un secondo non arriva niente.
+
+Nella stessa prova sono venute fuori altre tre cose, corrette in `ip.drv`
+0.015 e nella libc:
+
+- una connessione che il client chiudeva prima che il server la
+  accettasse non veniva più né accettata né liberata, e occupava un posto
+  della tabella per sempre: ora `accept` la consegna e il server legge la
+  fine;
+- le connessioni morte e già chiuse dal programma restavano nella tabella
+  finché non serviva il posto per una connessione in uscita: ora tornano
+  libere subito, e anche una connessione in entrata, a tabella piena,
+  prende il posto di una già chiusa;
+- `poll` diceva che un socket in ascolto era sempre pronto: un server con
+  il socket in ascolto non bloccante (MariaDB) girava a vuoto fra `poll` e
+  `accept` riempiendo la casella di `ip.drv`. Ora `poll` chiede allo stack
+  se c'è davvero qualcuno da accettare. Vale per i programmi ricompilati
+  con la libc nuova.
+
+Per vedere la tabella delle connessioni TCP:
+
+```
+ipcfg -tcp
+```
+
+Una riga per connessione: stato, porta, chi c'è dall'altra parte, il
+gruppo del programma che la tiene, i byte in coda, e «chiusa dal programma»
+per quelle che il programma ha già chiuso e che aspettano l'altra parte.
+La tabella ha 4096 posti dalla versione 0.016 di `ip.drv` (erano 24):
+quando è piena, una connessione nuova (in entrata o in uscita) prende il
+posto della più vecchia già chiusa dal suo programma. Un programma tiene
+fino a 1024 socket.
+
+Se `ipcfg -tcp` dice «ip.drv non accetta la richiesta (casella piena?)»,
+`ip.drv` non ha preso il messaggio per 10 secondi: è fermo o sommerso.
+Dal kernel 0.280 chi manda un messaggio a una casella piena fa la fila nel
+kernel e passa nell'ordine in cui è arrivato; prima riprovava ogni 5 ms e
+sotto carico (gli otto fili di MariaDB) i più svelti passavano sempre e gli
+altri, come `ipcfg`, restavano fuori.
+
+---
+
 ## Il ping non risponde ma la porta risponde
 
 Se `ping` è muto **e** una connessione TCP riesce, la macchina **non è morta**:
@@ -309,4 +368,6 @@ sono 1024, e se finissero ancora il registro lo dice con una riga
 
 **Lo swap a zero non è un guasto.** `mem` mostra lo scambio inutilizzato
 finché la RAM basta: Firefox occupa qualche centinaio di MB, e su una
-macchina da 3 GB non ce n'è bisogno.
+macchina da 3 GB non ce n'è bisogno. Se invece `mem` dice «nessuna area
+attiva» l'area non si è accesa all'avvio: il perché lo dice `dmesg SWAP`,
+e cosa controllare sta in [4, l'area di scambio](04-dopo-installazione.md).

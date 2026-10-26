@@ -73,7 +73,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("toolinst", "0.003");
+EX_VERSIONE("toolinst", "0.004");
 
 #define PERC_MAX   320
 #define BLOCCO     4096
@@ -114,13 +114,15 @@ static long n_uguali = 0, n_nuovi = 0;
 #define ETICH_MAX    48
 #define DICE_MAX     96
 #define VOCE_MAX     96
+#define VUOLE_MAX    4               /* "vuole" per gruppo, come netupdate */
 
 typedef struct {
     char id[ID_MAX];                 /* "cpp", dalle quadre */
     char nome[ETICH_MAX];            /* "C++" */
     char dice[DICE_MAX];             /* la riga di descrizione */
     char prova[VOCE_MAX];            /* percorso che ne attesta la presenza */
-    char vuole[ID_MAX];              /* id del gruppo da cui dipende */
+    char vuole[VUOLE_MAX][ID_MAX];   /* id dei gruppi da cui dipende */
+    int  n_vuole;
     long mbyte;
     int  sempre;                     /* non si puo' togliere */
 
@@ -300,7 +302,7 @@ static void catalogo_di_scorta(void)
     copia_str(g->nome, "C++", ETICH_MAX);
     copia_str(g->dice, "cc1plus, libstdc++", DICE_MAX);
     copia_str(g->prova, "bin/g++", VOCE_MAX);
-    copia_str(g->vuole, "base", ID_MAX);
+    copia_str(g->vuole[g->n_vuole++], "base", ID_MAX);
     copia_str(g->solo[g->n_solo++], "bin/g++", VOCE_MAX);
     copia_str(g->solo[g->n_solo++], "include/c++", VOCE_MAX);
     copia_str(g->solo[g->n_solo++], "lib/libstdc++.a", VOCE_MAX);
@@ -311,7 +313,7 @@ static void catalogo_di_scorta(void)
     copia_str(g->nome, "FreeBASIC", ETICH_MAX);
     copia_str(g->dice, "fbc, libfb e i .bi", DICE_MAX);
     copia_str(g->prova, "bin/fbc", VOCE_MAX);
-    copia_str(g->vuole, "base", ID_MAX);
+    copia_str(g->vuole[g->n_vuole++], "base", ID_MAX);
     copia_str(g->solo[g->n_solo++], "bin/fbc", VOCE_MAX);
     copia_str(g->solo[g->n_solo++], "include/freebasic", VOCE_MAX);
     copia_str(g->solo[g->n_solo++], "lib/freebasic", VOCE_MAX);
@@ -321,7 +323,7 @@ static void catalogo_di_scorta(void)
     copia_str(g->nome, "OpenSSL", ETICH_MAX);
     copia_str(g->dice, "libcrypto e i suoi header", DICE_MAX);
     copia_str(g->prova, "lib/libcrypto.a", VOCE_MAX);
-    copia_str(g->vuole, "base", ID_MAX);
+    copia_str(g->vuole[g->n_vuole++], "base", ID_MAX);
     copia_str(g->solo[g->n_solo++], "lib/libcrypto.a", VOCE_MAX);
     copia_str(g->solo[g->n_solo++], "include/openssl", VOCE_MAX);
 }
@@ -388,7 +390,13 @@ static int leggi_catalogo(const char *albero)
         if ((v = valore_se(r, "nome"))  != NULL) { copia_str(g->nome, v, ETICH_MAX); continue; }
         if ((v = valore_se(r, "dice"))  != NULL) { copia_str(g->dice, v, DICE_MAX); continue; }
         if ((v = valore_se(r, "prova")) != NULL) { copia_str(g->prova, v, VOCE_MAX); continue; }
-        if ((v = valore_se(r, "vuole")) != NULL) { copia_str(g->vuole, v, ID_MAX); continue; }
+        /* One "vuole" line per group it needs: the MariaDB connectors want
+         * OpenSSL, zlib, zstd and C++ at once. Up to 0.003 only the last
+         * line counted. */
+        if ((v = valore_se(r, "vuole")) != NULL) {
+            if (g->n_vuole < VUOLE_MAX) copia_str(g->vuole[g->n_vuole++], v, ID_MAX);
+            continue;
+        }
         if ((v = valore_se(r, "mbyte")) != NULL) { g->mbyte = atol(v); continue; }
         if ((v = valore_se(r, "sempre")) != NULL) {
             g->sempre = (v[0] == 's' || v[0] == 'S' || v[0] == '1');
@@ -1248,27 +1256,30 @@ int main(int argc, char **argv)
 
                 for (i = 0; i < g_ngruppi; i++) {
                     Gruppo *g = &g_gruppo[i], *d;
+                    int j;
 
-                    if (!g->voluto || g->vuole[0] == '\0') continue;
-                    d = gruppo_per_id(g->vuole);
-                    if (d == NULL) {
-                        printf("  ! %s dichiara di volere '%s', che nel "
-                               "catalogo non c'e'\n", g->id, g->vuole);
-                        g->vuole[0] = '\0';
-                        continue;
-                    }
-                    if (!d->c_e) {
-                        printf("  ! %s vuole %s, che su questo CD non c'e': "
-                               "lo tolgo\n", g->nome, d->nome);
-                        g->voluto = 0;
-                        cambiato = 1;
-                        continue;
-                    }
-                    if (!d->voluto) {
-                        printf("  %s ha bisogno di %s: aggiungo anche quello\n",
-                               g->nome, d->nome);
-                        d->voluto = 1;
-                        cambiato = 1;
+                    for (j = 0; j < g->n_vuole && g->voluto; j++) {
+                        if (g->vuole[j][0] == '\0') continue;
+                        d = gruppo_per_id(g->vuole[j]);
+                        if (d == NULL) {
+                            printf("  ! %s dichiara di volere '%s', che nel "
+                                   "catalogo non c'e'\n", g->id, g->vuole[j]);
+                            g->vuole[j][0] = '\0';
+                            continue;
+                        }
+                        if (!d->c_e) {
+                            printf("  ! %s vuole %s, che su questo CD non c'e': "
+                                   "lo tolgo\n", g->nome, d->nome);
+                            g->voluto = 0;
+                            cambiato = 1;
+                            continue;
+                        }
+                        if (!d->voluto) {
+                            printf("  %s ha bisogno di %s: aggiungo anche quello\n",
+                                   g->nome, d->nome);
+                            d->voluto = 1;
+                            cambiato = 1;
+                        }
                     }
                 }
                 if (!cambiato) break;

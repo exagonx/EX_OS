@@ -2357,6 +2357,68 @@ by its thread pointer, read from `%gs`/`%fs` with no system call.
 > program's own atomic variables EX-OS's GCC has `<stdatomic.h>` and the
 > `__atomic_*` builtins, which become `lock` instructions: no libc needed.
 
+### Swap works (kernel 0.276) — tested in QEMU, still to be tested under pressure on real hardware
+
+The swap partition existed since August, but did not hold under pressure:
+at 32 bit the kernel stopped at the first eviction (it read a 4 MB directory
+entry as a table), at 64 bit program memory got corrupted (the page was
+written to disk while its owner could still write to it, the one bounce
+buffer was shared by evictions and swap-ins with no lock, the owner could die
+meanwhile) and a process was killed when the other CPU held the pages. Fixed
+in 0.276, and pages a device uses (DMA, MMIO, framebuffer) are never evicted.
+`mem` shows the area: size, what is on it, pages written out and read back
+since boot. `tools/prova_swapmem.sh` (32 and 64 bit, run again with kernel
+0.279) fills the RAM with `swaptest`, one alone and two at once, and every
+page comes back identical. On the CQ60 the 4 GB area comes up but RAM has
+always been enough. How to set it up and check it: manual,
+[4, the swap area](manuali/installazione/04-dopo-installazione.md).
+
+### 1024 connections to MariaDB: epoll, a pool of threads, a fair mailbox (kernel 0.280, ip.drv 0.016)
+
+The user asked for a stress test: 1024 clients writing, reading and updating
+for 8 hours, measuring speed, load, tolerance and leaks
+(a local script, kept out of the repository; clients from Linux over the network,
+EX-OS 64 bit in QEMU). The first run stopped at about 20 clients; what it
+took to reach 1024:
+
+- **kernel 0.280, a line in front of a full mailbox.** A mailbox holds four
+  messages; a sender that found it full retried every 5 ms, and under load
+  the fastest threads always got in while others (`ipcfg`) waited 10 s and
+  gave up. Now the senders queue in the kernel and are served in order.
+- **ip.drv 0.016:** 4096 TCP connections (they were 24) with a hash table;
+  a program holds 1024 sockets (they were 64); the 63 KB receive buffer of a
+  reused slot was lost (a leak); **epoll and poll live in the stack**, which
+  wakes the waiting program itself when a connection is ready.
+- **libc:** `<sys/epoll.h>` (`epoll_create1`, `epoll_ctl`, `epoll_wait`,
+  `epoll_pwait`, TCP sockets only), `poll` in one message to the stack,
+  `FD_SETSIZE` 2048, `RLIMIT_NOFILE` 4096, `shutdown(SHUT_RDWR)` keeps the
+  connection in its epoll set and reports the end as Linux does, `strerror`
+  knows every network error (it said only «errore»).
+- **MariaDB with its pool of threads** (`thread_handling=pool-of-threads`,
+  `patch/server-threadpool-epoll.diff`): one thread per connection would
+  want a 128 KB kernel stack each in the 64 MB kernel band, and EX-OS has 192
+  places for processes and threads. A few dozen threads now serve every
+  connection. `mariadb-svc` 0.003 writes `max_connections = 1024` and the
+  pool in `/etc/my.cnf` (manual 4.10).
+- **e1000:** the receive ring went from 32 to 96 descriptors and the queue
+  towards ip.drv from 64 to 256 frames: with a thousand connections the ring
+  overflowed and each lost frame stalled a connection for up to 22 s.
+- `ipcfg -tcp` lists the TCP connections; `memlog` (inside EX-OS) logs
+  memory, threads, the TCP table and where packets get lost.
+
+Measured (QEMU 64 bit with KVM, statements of every kind, TLS):
+
+| clients | pause | statements/s | p50 | p95 |
+|---|---|---|---|---|
+| 64 | none | 2109 | 23 ms | 93 ms |
+| 1024 | 1 s | 870 | 5.5 ms | 20 ms |
+
+Without KVM the ceiling is the emulated CPU (about 400/s whatever the
+number of clients). 1024 clients with no pause at all are more than the
+machine can serve: answers pass 30 s, the clients reconnect with a TLS
+handshake each, and the server falls behind (that is the tolerance limit,
+not a crash). The 8-hour run: voce 32 of the queue.
+
 ### MariaDB 11.8 LTS runs in EX-OS (0.279)
 
 **tested at 32 and 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
@@ -2373,9 +2435,19 @@ is static (`mariadbd` is 27 MB stripped); the server listens on TCP only,
 because EX-OS has no AF_UNIX sockets. `innodb_buffer_pool_size_max` must be
 given: by default InnoDB reserves 8 TB of addresses at 64 bit, and an EX-OS
 program has 3 GB. Group `[mariadb]` of the tools ISO and netinst: the server
-in `/exos/mariadb`, the clients and `mariadb-svc` in `/exos/bin`,
-`libmariadbclient.a` and `<mysql/*.h>`, the sources. The tools ISO is a DVD
-now (about 500 MB per architecture for MariaDB alone).
+in `/exos/mariadb`, the clients and `mariadb-svc` in `/exos/bin`, the
+sources. The tools ISO is a DVD now (about 500 MB per architecture for
+MariaDB alone).
+
+**The connectors, also on their own:** the catalogue has two entries.
+`netupdate -install:mariadb` brings the server and the connectors;
+`netupdate -install:mariadb-connector` only the connectors, for programs that
+talk to a MariaDB or MySQL server: **Connector/C 3.4.11** (`<mysql.h>`,
+`libmariadbclient.a`), **Connector/C++ 1.1.9** (`<conncpp.hpp>`,
+`libmariadbcpp.a`, built on the system Connector/C), **`mariadb.bi`** for
+FreeBASIC and the Rust crate **`mariadb`** (one file, no dependencies, because
+EX-OS has `rustc` but not `cargo`). `tools/prova_mariadb.sh` runs one program
+per language against the server inside EX-OS (FreeBASIC at 32 bit).
 
 **The service:** `mariadb-svc -install` (as root) makes the user `mysql`,
 `/etc/my.cnf`, the system tables in `/var/lib/mysql`, the server's TLS
@@ -4587,8 +4659,9 @@ the filesystem, paged from that same filesystem, would have to serve its own
 read while stopped waiting for it.
 
 A consequence worth knowing: **the executable stays open as long as the
-process lives**, and loaded pages are never thrown away (there is no
-eviction, and therefore no swap file).
+process lives**, and loaded pages are never thrown away to be read again
+from the file. When RAM runs out and there is a swap area, they go to the
+area like any other private page (since kernel 0.276: see *Swap works*).
 
 ### The thread pointer: `__thread` variables
 
@@ -7109,7 +7182,9 @@ ex-os:/> ping 8.8.8.8 -n 3
 tempi: minimo 50 ms, medio 60 ms, massimo 70 ms
 ```
 
-`ipcfg` shows the address and the **counters**, `ipcfg -r` the ARP table. The
+`ipcfg` shows the address and the **counters**, `ipcfg -r` the ARP table,
+`ipcfg -tcp` the TCP connections (state, ports, the other end, the program
+holding them; from `ip.drv` 0.015). The
 counters are half the program: when the network does not work, the question
 is not «does it work or not» but where it stops, and `IP ricevuti` at zero,
 `scartati` rising, or `somme errate` rising point at three different places.

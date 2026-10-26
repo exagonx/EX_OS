@@ -88,6 +88,16 @@
 /* --- Risposte (driver -> client) ---------------------------------------- */
 #define NET_MSG_STATO    128
 #define NET_MSG_FRAME    129   /* payload = frame grezzo ricevuto */
+
+/* A driver never waits on ip.drv's mailbox: NET_MSG_FRAME and the
+ * NET_MSG_ESITO answering NET_MSG_INVIA go with IPC_SENZA_ATTESA (one try:
+ * kernel ipc.h). A frame that does not fit stays queued with the request
+ * (see consegna() in e1000.c); an ESITO that does not fit is dropped, ip.drv
+ * only counts them. Waiting there, the driver stopped reading its own
+ * mailbox while ip.drv waited on it: 10 s stalls under load. */
+#ifndef IPC_SENZA_ATTESA
+#define IPC_SENZA_ATTESA  0x80000000u
+#endif
 #define NET_MSG_ESITO    130
 #define NET_MSG_CONTEGGI 131
 

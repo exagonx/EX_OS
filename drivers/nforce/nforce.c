@@ -56,7 +56,7 @@
 #include "net_proto.h"
 
 /* +0.001 a ogni modifica: `nforce.drv -version` la stampa. */
-EX_VERSIONE("nforce.drv", "0.013");
+EX_VERSIONE("nforce.drv", "0.014");
 
 #define NV_VENDITORE      0x10DE
 #define NV_MMIO_BYTE      0x1000u
@@ -1215,7 +1215,7 @@ static void servi(void)
             NetEsito e;
 
             e.codice = trasmetti(payload, meta.len);
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             /* Chi trasmette (un ACK) di solito aspetta una risposta: guardare
              * l'anello costa poco, e il frame non aspetta il giro. */
             svuota_rx();

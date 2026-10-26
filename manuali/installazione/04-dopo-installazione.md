@@ -91,8 +91,11 @@ netupdate -install:zlib       e bzip2, xz, lz4, zstd, pcre2, fmt: le
                               librerie (con i programmi xz, zstd...)
 netupdate -install:ssl        OpenSSL 4.1.0: libssl, libcrypto e il
                               programma openssl
-netupdate -install:mariadb    MariaDB 11.8.9: il server SQL, i client
-                              e il servizio (vedi 4.10)
+netupdate -install:mariadb    MariaDB 11.8.9: il server SQL, i client,
+                              il servizio e i connettori (vedi 4.10)
+netupdate -install:mariadb-connector
+                              solo i connettori, per i programmi che
+                              parlano con un MariaDB/MySQL (vedi 4.10)
 ```
 
 Gli strumenti stanno su un DVD, non più su un CD: con MariaDB (circa 500 MB
@@ -105,6 +108,12 @@ Se il tuo `kernel.cfg` è più vecchio, la riga è questa:
 ```
 PATH        = /bin:/dev:/exos/bin:/cdrom/exos/bin:/cdrom/bin
 ```
+
+Dal netupdate 0.035 la aggiunge da solo anche `netupdate -install:<gruppo>`
+(prima lo faceva solo `-check`), con la copia di prima in `kernel.cfg.bak`,
+e vale dal riavvio. Senza, la shell trovava `gcc` per nome ma `gcc` non
+collegava: «collect2: fatal error: cannot find 'ld'», perché `ld` si cerca
+nel PATH di `kernel.cfg`.
 
 ---
 
@@ -283,6 +292,36 @@ swap = hd0p2
 e si riavvia: l'area si accende **solo all'avvio**, e il kernel scrive
 quanti slot da 4 KB ha trovato (`dmesg SWAP`).
 
+**Funziona, a 32 e a 64 bit**, dal kernel 0.276 (24 ottobre 2026). La
+prima versione, di agosto, si accendeva ma sotto pressione no: a 32 bit il
+kernel si fermava al primo sfratto, a 64 la memoria dei programmi si
+rovinava. Dal 0.276 la prova `tools/prova_swapmem.sh` riempie la RAM con
+`swaptest` (uno da solo e due insieme), manda sul disco decine di migliaia
+di pagine, le riprende e controlla che ognuna torni **identica**: passa,
+anche col kernel 0.279. Sul portatile CQ60 l'area di 4 GB si accende
+(1048575 slot), ma finora la RAM è sempre bastata e non è mai stata usata
+davvero: la prova sotto pressione sul ferro manca ancora.
+
+Per sapere se sulla tua macchina è accesa:
+
+```
+dmesg SWAP          deve dire «SWAP: 'hd0p2' attiva: N slot da 4 KB (M MB)»
+mem                 la riga «scambio (swap)» con la dimensione
+```
+
+Se `mem` dice **«nessuna area attiva»**, `dmesg SWAP` dice perché: la
+partizione non ha la firma (manca `mkswap`), il nome in `kernel.cfg` non
+è quello giusto, o la firma dichiara più slot di quanti ne stiano nella
+partizione. Per provarla davvero, dal CD: `/cdrom/bin/swaptest` chiede il
+doppio della RAM libera e controlla ogni pagina (`swaptest 300` chiede
+300 MB); poi `mem` deve mostrare pagine andate e tornate.
+
+Cosa va sull'area: le pagine **private** dei programmi (heap, stack,
+dati). Non ci vanno mai: il kernel, le pagine condivise fra due processi
+(memoria condivisa, codice in comune), le pagine che un dispositivo usa
+(DMA, registri della scheda, schermo) e quelle di un programma che in quel
+momento gira sull'altro processore.
+
 Se e quanto viene usata lo dice `mem`, nella riga **scambio (swap)**
 sotto il totale: la dimensione, quanto c'è sopra adesso e quante pagine
 sono andate sul disco e tornate in RAM dall'avvio. Finché la RAM basta i
@@ -291,6 +330,15 @@ memoria finisce.
 
 ! **NON PIU' DI 4 GB**: il kernel conta al massimo 2^20 pagine da 4 KB.
   Una partizione più grande funziona, ma il di più resta inutilizzato.
+
+! **UN PROGRAMMA HA SEMPRE AL MASSIMO 3 GB** di indirizzi, swap o no: lo
+  scambio dà più memoria alla macchina, non a un programma solo. E una
+  richiesta singola oltre 2 GB la rifiuta la libc (`sbrk` conta in 32 bit
+  con segno), prima ancora che si arrivi allo swap.
+
+! **È LENTO, come ovunque**: una pagina che torna dal disco costa qualche
+  millisecondo. Serve a non far morire un programma quando la RAM finisce,
+  non a lavorare con metà della memoria sul disco.
 
 ! I nomi `hd0` e `hd0p2` sono quelli di esempio: il disco giusto lo dice
   `system -status` (il disco di sistema) e `disk` (le partizioni).
@@ -356,12 +404,74 @@ mariadb-svc -remove           lo toglie dall'avvio (dati e my.cnf restano)
 
 Il registro è `/var/log/mariadb/mariadb.log`; quello che `mariadbd` stampa da
 sé va in `/var/log/mariadb/mariadbd.out`. Le misure in `/etc/my.cnf` sono
-quelle di EX-OS: 16 connessioni, un buffer pool di 64 MB che può crescere
-fino a 256 (InnoDB riserva in anticipo lo spazio di indirizzi per il massimo,
-e un programma di EX-OS ne ha 3 GB).
+quelle di EX-OS: 1024 connessioni servite da un gruppo di fili
+(`thread_handling = pool-of-threads`, al massimo 64 fili), un buffer pool di
+64 MB che può crescere fino a 256 (InnoDB riserva in anticipo lo spazio di
+indirizzi per il massimo, e un programma di EX-OS ne ha 3 GB).
+
+! **NON METTERE `thread_handling = one-thread-per-connection`.** Un filo per
+  connessione vuol dire 128 KB di memoria del kernel ciascuno, e il sistema
+  ha 192 posti in tutto fra processi e fili: con quella riga il server si
+  ferma a qualche decina di connessioni. Il gruppo di fili usa `epoll`, che
+  c'è dalla versione 0.016 di `ip.drv`: un `/etc/my.cnf` scritto da
+  `mariadb-svc` 0.002 o prima ha ancora `max_connections = 16` e
+  `-install` non lo tocca (lo dice): si cambia a mano, in `[mysqld]`,
+  `max_connections = 1024` e si aggiungono `thread_handling =
+  pool-of-threads` e `thread_pool_max_threads = 64`, poi
+  `mariadb-svc -ferma` e `-avvia`.
 
 ! **UN FILE ARRIVA A 2 GB**, su tutte e due le architetture: è un limite del
   kernel di oggi. Oltre, la libc rifiuta la scrittura (EFBIG, «file troppo
   grande») invece di scrivere in un punto sbagliato del file. Tienilo
   presente per `ibdata1` e per le tabelle grandi.
+
+### I connettori: parlare con MariaDB dai propri programmi
+
+Due voci nel catalogo:
+
+```
+netupdate -install:mariadb            il server, i client, mariadb-svc
+                                      E i connettori
+netupdate -install:mariadb-connector  SOLO i connettori: per una macchina
+                                      che parla con un MariaDB o un MySQL
+                                      che sta altrove (o qui, installato poi)
+```
+
+I connettori si portano dietro da soli quello con cui si collegano:
+OpenSSL (`[ssl]`), zlib, zstd e il C++ (`[cpp]`, per Connector/C++), e
+`libpthread.a` sta in `[base]`. Se un `gcc ... -lmariadbclient` dice
+«cannot find -lssl» (o `-lz`, `-lzstd`, `-lpthread`), il disco viene da un
+netupdate o da un toolinst più vecchi: `netupdate -install:ssl`,
+`-install:zlib`, `-install:zstd`, oppure `netupdate -check`.
+
+Cosa c'è dentro, tutto statico come ogni programma di EX-OS, a 32 e a 64
+bit:
+
+| linguaggio | cosa | come si usa |
+|---|---|---|
+| C | Connector/C 3.4.11, `<mysql.h>` | `gcc prog.c -I/exos/include/mariadb -lmariadbclient -lssl -lcrypto -lz -lzstd -lpthread -lm` |
+| C++ | Connector/C++ 1.1.9, `<conncpp.hpp>` (lo stile JDBC: `sql::Driver`, `PreparedStatement`, `ResultSet`) | `g++ prog.cpp -I/exos/include/mariadb -lmariadbcpp` e le stesse del C |
+| FreeBASIC | `mariadb.bi`, l'API del C (sta in `include/freebasic` e arriva col gruppo `[fb]`, come gli altri .bi; le librerie col gruppo dei connettori) | `#include "mariadb.bi"`, poi `fbc prog.bas -x prog`: le librerie le chiede il .bi |
+| Rust | il crate `mariadb` in `/exos/lib/rust/mariadb`, senza dipendenze | `rustc -O --crate-type rlib --edition 2021 /exos/lib/rust/mariadb/src/lib.rs`, poi `rustc prog.rs --extern mariadb=libmariadb.rlib` |
+
+`mariadb_config --cflags --libs` dice le opzioni del C. Il collegamento è
+**solo TCP**: `127.0.0.1` e la porta 3306 per il server di questa macchina
+(EX-OS non ha i socket AF_UNIX, quindi niente `localhost` via socket).
+
+! **IL `mysql.bi` DI FREEBASIC NON SERVE**: è del 2003 (MySQL 4.0), ha le
+  strutture di allora e cerca una `libmysqlclient` che non c'è. Si usa
+  `mariadb.bi`.
+
+! **RUST NON HA CARGO DENTRO EX-OS**: per questo il crate è un file solo,
+  senza dipendenze, da compilare con `rustc`. I driver di crates.io
+  (`mysql`, `sqlx`) vorrebbero decine di crate. Il gruppo `[rust]` (rustc
+  dentro EX-OS) c'è solo a 64 bit, e solo quando è stato costruito; i
+  programmi Rust si possono anche compilare fuori (`tools/rust-exos`).
+
+Provati dentro EX-OS contro il server, a 32 e a 64 bit
+(`tools/prova_mariadb.sh`): un programma per linguaggio si collega, crea una
+tabella, inserisce righe (con un'istruzione preparata in C, C++ e
+FreeBASIC), le rilegge e riconosce l'errore di una tabella che non c'è.
+FreeBASIC è provato a 32 bit: il FreeBASIC a 64 bit per EX-OS va ricostruito
+(`tools/freebasic-exos/prepara-fb64.sh`), e allora `mariadb.bi` vale anche lì.
 

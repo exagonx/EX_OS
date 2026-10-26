@@ -50,7 +50,7 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 
-EX_VERSIONE("mariadb-svc", "0.002");
+EX_VERSIONE("mariadb-svc", "0.003");
 
 #define BASE        "/exos/mariadb"
 #define MARIADBD    BASE "/bin/mariadbd"
@@ -69,10 +69,17 @@ EX_VERSIONE("mariadb-svc", "0.002");
 #define CERT        DATI "/server-cert.pem"
 #define CHIAVE      DATI "/server-key.pem"
 
-/* ! THE SIZES ARE EX-OS'S, NOT MARIADB'S DEFAULTS: 24 TCP connections in the
- * whole system and 64 sockets per program (ip.drv), 128 descriptors per
- * program, and a program's address space ends at 3 GB, so InnoDB must be
- * told how far its buffer pool may grow (it reserves 8 TB at 64 bit). */
+/* ! THE SIZES ARE EX-OS'S, NOT MARIADB'S DEFAULTS: 128 files per program
+ * (table_open_cache, innodb_open_files), and a program's address space ends
+ * at 3 GB, so InnoDB must be told how far its buffer pool may grow (it
+ * reserves 8 TB at 64 bit).
+ * ! 1024 CONNECTIONS SERVED BY A POOL OF THREADS (0.003, 26 October 2026):
+ * ip.drv 0.016 holds 4096 TCP connections and a program 1024 sockets, and
+ * epoll lets MariaDB serve them with a few dozen threads. One thread per
+ * connection (until 0.002, with max_connections 16) would want a 128 KB
+ * kernel stack each in the 64 MB kernel band, and EX-OS has 192 places for
+ * processes and threads in all: thread_pool_max_threads keeps the pool,
+ * which adds threads when all of its own wait for locks, well below. */
 static const char *const g_conf =
     "# /etc/my.cnf - MariaDB on EX-OS, written by `mariadb-svc -install`.\n"
     "# Changes take effect at the next `mariadb-svc -ferma` / `-avvia`.\n"
@@ -91,7 +98,9 @@ static const char *const g_conf =
     "bind-address                = 127.0.0.1\n"
     "port                        = 3306\n"
     "skip-name-resolve\n"
-    "max_connections             = 16\n"
+    "max_connections             = 1024\n"
+    "thread_handling             = pool-of-threads\n"
+    "thread_pool_max_threads     = 64\n"
     "table_open_cache            = 64\n"
     "innodb_open_files           = 32\n"
     "innodb_buffer_pool_size     = 64M\n"
@@ -137,6 +146,19 @@ static int esiste(const char *p)
 {
     struct stat st;
     return stat(p, &st) == 0;
+}
+
+/* does the file have a line containing `testo`? */
+static int file_contiene(const char *p, const char *testo)
+{
+    char  riga[256];
+    int   trovato = 0;
+    FILE *f = fopen(p, "r");
+
+    if (!f) return 0;
+    while (!trovato && fgets(riga, sizeof riga, f)) trovato = strstr(riga, testo) != NULL;
+    fclose(f);
+    return trovato;
 }
 
 /* mkdir -p, then the owner (uid 0 = leave it to root) */
@@ -234,13 +256,21 @@ static void coda_del_registro(void)
     fclose(f);
     printf("  le ultime righe di " LOG ":\n");
     for (i = n > 8 ? n - 8 : 0; i < n; i++) printf("    %s", ultime[i % 8]);
+    /* the pool of threads wants epoll, which lives in ip.drv 0.016 */
+    for (i = n > 8 ? n - 8 : 0; i < n; i++)
+        if (strstr(ultime[i % 8], "io_poll_create")) {
+            printf("  ! il gruppo di fili vuole epoll: ip.drv 0.016 o piu' nuovo, acceso\n");
+            printf("    (`netupdate -check`), oppure in " CONF " thread_handling =\n");
+            printf("    one-thread-per-connection e max_connections = 16\n");
+            break;
+        }
 }
 
 /* mariadbd with these options; stdin from `ingresso` (NULL = none), stdout
  * and stderr appended to USCITA. Returns the pid. */
-static int lancia(const char *opz1, const char *opz2, const char *ingresso)
+static int lancia(const char *opz1, const char *opz2, const char *opz3, const char *ingresso)
 {
-    char       *argv[5];
+    char       *argv[6];
     SpawnRedir  r[3];
     int         n = 0, a = 0;
 
@@ -248,6 +278,7 @@ static int lancia(const char *opz1, const char *opz2, const char *ingresso)
     argv[a++] = (char *)"--defaults-file=" CONF;
     if (opz1) argv[a++] = (char *)opz1;
     if (opz2) argv[a++] = (char *)opz2;
+    if (opz3) argv[a++] = (char *)opz3;
     argv[a] = NULL;
     if (ingresso) { r[n].fd = 0; r[n].flags = O_RDONLY; r[n].percorso = ingresso; r[n].fd_padre = -1; n++; }
     r[n].fd = 1; r[n].flags = O_WRONLY | O_CREAT | O_APPEND; r[n].percorso = USCITA; r[n].fd_padre = -1; n++;
@@ -275,7 +306,7 @@ static int avvia(void)
         return 1;
     }
     da = fine_registro();
-    pid = lancia(NULL, NULL, NULL);
+    pid = lancia(NULL, NULL, NULL, NULL);
     if (pid < 0) { printf("mariadb-svc: non parte " MARIADBD " (%s)\n", strerror(-pid)); return 1; }
     /* InnoDB takes a few seconds; 120 for a slow disk after a crash */
     for (i = 0; i < 240; i++) {
@@ -442,12 +473,21 @@ static int installa(void)
         printf("  " CONF " scritto\n");
     } else {
         printf("  " CONF " c'e' gia': lo lascio com'e'\n");
+        /* written by 0.002 or before: 16 connections, one thread each */
+        if (!file_contiene(CONF, "thread_handling")) {
+            printf("  ! " CONF " e' di prima della 0.003: ha un filo per connessione.\n");
+            printf("    Per 1024 connessioni, in [mysqld]: max_connections = 1024,\n");
+            printf("    thread_handling = pool-of-threads, thread_pool_max_threads = 64\n");
+        }
     }
 
     /* the system tables, once: what mariadb-install-db (a shell script) does */
     if (!esiste(DATI "/mysql")) {
         printf("  le tabelle di sistema in " DATI " (un minuto o due)...\n");
-        pid = lancia("--bootstrap", "--log-warnings=0", BOOTSTRAP);
+        /* ! ONE THREAD, NOT THE POOL: the pool's epoll lives in ip.drv, which
+         * is not on yet here, and --bootstrap has no connections anyway */
+        pid = lancia("--bootstrap", "--log-warnings=0", "--thread-handling=one-thread-per-connection",
+                     BOOTSTRAP);
         if (pid < 0 || waitpid(pid, &st, 0) != pid || WEXITSTATUS(st) != 0 || !esiste(DATI "/mysql")) {
             printf("mariadb-svc: il bootstrap non e' riuscito\n");
             coda_del_registro();

@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.014");
+EX_VERSIONE("ip.drv", "0.016");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -90,6 +90,7 @@ EX_VERSIONE("ip.drv", "0.014");
  * un'attesa attiva: è il tempo massimo che passa fra il momento in cui una
  * scadenza matura e quello in cui ce ne accorgiamo. */
 #define GIRO_MS         50
+#define RIARMO_MS       1000    /* a request with no frame for this long goes again */
 
 /* =============================================================================
  * Stato
@@ -99,6 +100,7 @@ static IpStato      g_st;
 static unsigned char g_mac[6];
 static int          g_pid_rete = 0;
 static int          g_ricevi_armato = 0;
+static unsigned int g_ricevi_quando = 0;   /* uptime_ms of the last NET_MSG_RICEVI */
 static unsigned int g_id_ip = 1;        /* campo identificazione dei datagrammi */
 static unsigned int g_id_icmp;          /* identificatore delle nostre echo */
 
@@ -383,11 +385,25 @@ static void loop_svuota(void)
     }
 }
 
+/* ! WITHOUT WAITING, AND AGAIN AFTER A SECOND OF SILENCE (0.015, the MariaDB
+ * stress test, 26 October 2026). A plain ipc_send slept here up to 10 s when
+ * the driver's mailbox was full, and the whole stack with it. And a request
+ * "in flight" can be lost on the other side: up to e1000 0.002 a frame that
+ * did not fit in our mailbox was dropped together with the request, and
+ * with g_ricevi_armato still 1 nobody asked again: the card was deaf for
+ * good. A NET_MSG_RICEVI more is harmless to the driver (it only records who
+ * reads), so one with no frame for RIARMO_MS is sent again. */
 static void riarma_ricezione(void)
 {
-    if (g_ricevi_armato || g_pid_rete <= 0) return;
-    if (ipc_send(g_pid_rete, NET_MSG_RICEVI, NULL, 0) == 0)
+    unsigned int ora;
+
+    if (g_pid_rete <= 0) return;
+    ora = uptime_ms();
+    if (g_ricevi_armato && ora - g_ricevi_quando < RIARMO_MS) return;
+    if (ipc_send(g_pid_rete, NET_MSG_RICEVI | IPC_SENZA_ATTESA, NULL, 0) == 0) {
         g_ricevi_armato = 1;
+        g_ricevi_quando = ora;
+    }
 }
 
 /* =============================================================================
@@ -855,7 +871,8 @@ static unsigned int g_rx_dim = TCP_RX_MAX;
 
 /* Stati interni. Sono piu' di quelli che vede un client (IP_TCP_*) perche'
  * la chiusura ordinata di TCP ha piu' passi di quanti ne interessino a
- * chi usa la connessione. */
+ * chi usa la connessione. IP_TCPS_* in ip_proto.h repeats these numbers
+ * for `ipcfg -tcp`: a new state goes there too. */
 #define S_LIBERA     0
 #define S_SYN_INVIA  1   /* SYN mandato, aspetto SYN+ACK */
 #define S_APERTA     2
@@ -937,11 +954,142 @@ typedef struct {
      * dopo, «non riesco a connettermi (-23)». */
     unsigned int  chiusa_cliente;
     unsigned int  fin2_scade;    /* FIN_WAIT_2: quando smettere di aspettare */
+
+    /* --- 0.016: kept across reuse of the slot --- */
+    unsigned int  numero;        /* slot + 1: the id the programs see */
+    /* the hash chain of tratta_tcp (see tcp_cerca) */
+    unsigned int  in_hash, h_dopo;
+    /* epoll: the set this connection is in (IP_MSG_INS_*), 0 = none */
+    unsigned int  ins, ins_ev, ins_dati[2];
+    unsigned int  ins_armata;    /* will report (ONESHOT turns it off) */
+    unsigned int  ins_forza;     /* libc holds unread bytes: ready once */
+    unsigned int  ins_lista, ins_dopo;   /* in the set's ready list */
+    /* poll: the IP_MSG_TCP_ASPETTA waiting on it (g_ins index + 1) */
+    unsigned int  att;
 } Conn;
 
-static Conn         g_tcp[IP_TCP_CONNESSIONI];
+/* =============================================================================
+ * ! THE TABLE GROWS AS IT IS USED (0.016, 26 October 2026). Until 0.015 it was
+ * a static array of 24 slots, 8 KB each. For a thousand clients and more of
+ * the MariaDB stress test that would be 32 MB sitting in every ip.drv, also on
+ * the machines that open three connections. Now g_tcp holds pointers: the
+ * slots 0..g_tcp_n-1 are allocated (in order, the first time the table gets
+ * that far) and are reused; the others do not exist yet.
+ *
+ * ! A SEGMENT FINDS ITS CONNECTION BY HASH (tcp_cerca): looking through four
+ * thousand slots for every segment would cost more than the segment.
+ *
+ * ! A LARGE RECEIVE BUFFER IS FREED WHEN THE SLOT IS (tcp_slot_azzera).
+ * Until 0.015 a connection slot kept the 63 KB buffer it had taken - and
+ * the memset of the next connection in that slot threw the pointer away:
+ * every reuse of a slot that had received a lot lost 63 KB for good. At
+ * most RX_GRANDI_MAX are taken at once (16 MB); the others use the 4 KB
+ * that every slot has inside.
+ * ============================================================================= */
+static Conn        *g_tcp[IP_TCP_CONNESSIONI];
+static unsigned int g_tcp_n = 0;
+#define TCP_HASH       1024
+static unsigned int g_tcp_hash[TCP_HASH];      /* first slot + 1 of a chain */
+#define RX_GRANDI_MAX  256
+static unsigned int g_rx_grandi = 0;
 
 #include "tcp_rx.inc"
+
+static unsigned int tcp_chiave(const unsigned char ip[4], unsigned int porta_loc,
+                               unsigned int porta_rem)
+{
+    unsigned int h = porta_loc * 31u + porta_rem * 2654435761u;
+
+    h ^= ((unsigned int)ip[0] << 24 | (unsigned int)ip[1] << 16 |
+          (unsigned int)ip[2] << 8 | ip[3]) * 40503u;
+    return (h ^ (h >> 13)) & (TCP_HASH - 1u);
+}
+
+/* The connection now has both ports and the address: findable. */
+static void tcp_hash_metti(Conn *c)
+{
+    unsigned int k = tcp_chiave(c->ip, c->porta_loc, c->porta_rem);
+
+    if (c->in_hash) return;
+    c->h_dopo     = g_tcp_hash[k];
+    g_tcp_hash[k] = c->numero;
+    c->in_hash    = 1;
+}
+
+static void tcp_hash_togli(Conn *c)
+{
+    unsigned int  k = tcp_chiave(c->ip, c->porta_loc, c->porta_rem);
+    unsigned int *q = &g_tcp_hash[k];
+
+    if (!c->in_hash) return;
+    while (*q != 0) {
+        Conn *x = g_tcp[*q - 1u];
+
+        if (x == c) { *q = c->h_dopo; break; }
+        q = &x->h_dopo;
+    }
+    c->in_hash = 0;
+    c->h_dopo  = 0;
+}
+
+/* The live connection a segment belongs to, or NULL. */
+static Conn *tcp_cerca(const unsigned char ip[4], unsigned int porta_loc,
+                       unsigned int porta_rem)
+{
+    unsigned int n = g_tcp_hash[tcp_chiave(ip, porta_loc, porta_rem)];
+
+    while (n != 0) {
+        Conn *k = g_tcp[n - 1u];
+
+        if (k->stato != S_LIBERA && k->stato != S_MORTA &&
+            k->porta_loc == porta_loc && k->porta_rem == porta_rem &&
+            ip_uguali(k->ip, ip)) return k;
+        n = k->h_dopo;
+    }
+    return NULL;
+}
+
+static void ins_stacca(Conn *c);
+static void tcp_evento(Conn *c);
+
+static Conn *tcp_num(unsigned int numero)
+{
+    return (numero != 0 && numero <= g_tcp_n) ? g_tcp[numero - 1u] : NULL;
+}
+static int  da_accettare(const Conn *c);
+
+/* The slot goes back to S_LIBERA with nothing left of the connection: out of
+ * the hash, out of any set or poll, its large buffer freed. */
+static void tcp_slot_azzera(Conn *c)
+{
+    unsigned int numero = c->numero;
+
+    tcp_hash_togli(c);
+    ins_stacca(c);
+    if (c->rx != NULL && c->rx != c->rx_riserva) {
+        free(c->rx);
+        if (g_rx_grandi > 0) g_rx_grandi--;
+    }
+    memset(c, 0, sizeof(*c));
+    c->numero = numero;
+}
+
+/* A free slot: one already allocated, or a new one at the end. */
+static Conn *tcp_slot_nuovo(void)
+{
+    unsigned int i;
+    Conn        *c;
+
+    for (i = 0; i < g_tcp_n; i++)
+        if (g_tcp[i]->stato == S_LIBERA) return g_tcp[i];
+    if (g_tcp_n >= IP_TCP_CONNESSIONI) return NULL;
+    c = (Conn *)malloc(sizeof(Conn));
+    if (c == NULL) return NULL;
+    memset(c, 0, sizeof(*c));
+    c->numero = g_tcp_n + 1u;
+    g_tcp[g_tcp_n++] = c;
+    return c;
+}
 static unsigned int g_tcp_porta = 49152;   /* fascia effimera, come UDP */
 
 /* Vero se a precede b nello spazio circolare dei numeri di sequenza. */
@@ -1010,23 +1158,16 @@ static int tcp_reclaim_closed(void)
 {
     int i, oldest = -1;
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
-        Conn *c = &g_tcp[i];
+    for (i = 0; i < (int)g_tcp_n; i++) {
+        Conn *c = g_tcp[i];
 
         if (c->stato == S_LIBERA || !c->chiusa_cliente) continue;
-        if (oldest < 0 || (int)(c->fin2_scade - g_tcp[oldest].fin2_scade) < 0)
+        if (oldest < 0 || (int)(c->fin2_scade - g_tcp[oldest]->fin2_scade) < 0)
             oldest = i;
     }
     if (oldest < 0) return 0;
 
-    g_tcp[oldest].stato      = S_LIBERA;
-    g_tcp[oldest].rx_len     = 0;
-    g_tcp[oldest].rx_off     = 0;
-    g_tcp[oldest].fs_n       = 0;
-    g_tcp[oldest].fin_c      = 0;
-    g_tcp[oldest].tx_len     = 0;
-    g_tcp[oldest].attesa_pid = 0;
-    g_tcp[oldest].porta_loc  = 0;
+    tcp_slot_azzera(g_tcp[oldest]);
     return 1;
 }
 
@@ -1034,26 +1175,22 @@ static int tcp_reclaim_closed(void)
  * ripresi. */
 static int tcp_riprendi_orfane(void)
 {
-    int i, presi = 0;
+    int          i, presi = 0;
+    unsigned int vivo = 0;      /* the last owner found alive: a server owns
+                                   most of the table, and pid_vivo costs */
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
-        Conn *c = &g_tcp[i];
+    for (i = 0; i < (int)g_tcp_n; i++) {
+        Conn *c = g_tcp[i];
 
         if (c->stato == S_LIBERA) continue;
-        if (pid_vivo(c->proprietario)) continue;
+        if (c->proprietario == vivo) continue;
+        if (pid_vivo(c->proprietario)) { vivo = c->proprietario; continue; }
 
         /* ! NON SI MANDA UN FIN, e va detto perche' sembra scortese: il FIN
          * vorrebbe aspettare l'ACK, cioe' tenere lo slot ancora un po' —
          * proprio quel che qui manca. L'altra parte se ne accorgera' da sola
          * col suo timeout, ed e' cio' che succede a ogni cavo staccato. */
-        c->stato      = S_LIBERA;
-        c->rx_len     = 0;
-        c->rx_off     = 0;
-        c->fs_n       = 0;
-        c->fin_c = 0;
-        c->tx_len     = 0;
-        c->attesa_pid = 0;
-        c->porta_loc  = 0;
+        tcp_slot_azzera(c);
         presi++;
     }
     return presi;
@@ -1083,8 +1220,8 @@ static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
 {
     Conn *c;
 
-    if (id == 0 || id > IP_TCP_CONNESSIONI) return NULL;
-    c = &g_tcp[id - 1];
+    if (id == 0 || id > g_tcp_n) return NULL;
+    c = g_tcp[id - 1];
     if (c->stato == S_LIBERA) return NULL;
     /* ! Solo chi l'ha aperta puo' usarla: un identificativo e' un numero
      * piccolo e indovinabile, e senza questo controllo un processo
@@ -1095,7 +1232,7 @@ static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
 
 static unsigned int tcp_id(const Conn *c)
 {
-    return (unsigned int)(c - g_tcp) + 1u;
+    return c->numero;
 }
 
 /* Traduce lo stato interno in quello che il client puo' capire. */
@@ -1228,6 +1365,7 @@ static void tcp_chiudi_dura(Conn *c, int codice)
     }
     c->stato     = S_MORTA;
     c->rto_scade = 0;
+    tcp_evento(c);
 }
 
 /* Consegna al client che sta aspettando, se c'e' qualcosa da consegnare. */
@@ -1351,23 +1489,15 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
     if (off < 20u || off > len_seg) { g_st.scartati++; return; }
     n = len_seg - off;
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
-        Conn *k = &g_tcp[i];
-
-        if (k->stato == S_LIBERA || k->stato == S_MORTA) continue;
-        if (k->porta_loc != porta_loc || k->porta_rem != porta_rem) continue;
-        if (!ip_uguali(k->ip, ip + 12)) continue;
-        c = k;
-        break;
-    }
+    c = tcp_cerca(ip + 12, porta_loc, porta_rem);
 
     /* --- nessuna connessione combacia: e' qualcuno che bussa? --- */
     if (c == NULL && (flag & TCP_SYN) && !(flag & TCP_ACK)) {
         Conn *asc = NULL, *nuova = NULL;
 
-        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-            if (g_tcp[i].stato == S_ASCOLTA && g_tcp[i].porta_loc == porta_loc) {
-                asc = &g_tcp[i];
+        for (i = 0; i < g_tcp_n; i++)
+            if (g_tcp[i]->stato == S_ASCOLTA && g_tcp[i]->porta_loc == porta_loc) {
+                asc = g_tcp[i];
                 break;
             }
 
@@ -1383,8 +1513,16 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
 
         if (asc == NULL) { g_st.scartati++; return; }
 
-        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-            if (g_tcp[i].stato == S_LIBERA) { nuova = &g_tcp[i]; break; }
+        nuova = tcp_slot_nuovo();
+
+        /* Full: first the slots of dead programs and those their owner has
+         * already closed, as tcp_apri does (0.015, 26 October 2026). Without
+         * this a table filled by connections closed on our side and still
+         * waiting for the peer's FIN let no SYN in for up to TCP_FIN2_MS
+         * each: in the MariaDB stress test, after the clients that timed out
+         * had reconnected a few times, no new client got in at all. */
+        if (nuova == NULL && (tcp_riprendi_orfane() > 0 || tcp_reclaim_closed() > 0))
+            nuova = tcp_slot_nuovo();
 
         /* ! SENZA POSTO SI LASCIA CADERE IL SYN, e non si risponde niente: chi
          * bussa lo ritrasmette da se' — e' TCP che lo fa — e se nel frattempo
@@ -1392,7 +1530,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
          * vorrebbe dire dirgli «non c'e' nessuno», che e' falso. */
         if (nuova == NULL) { g_st.scartati++; return; }
 
-        memset(nuova, 0, sizeof(*nuova));
+        tcp_slot_azzera(nuova);
         memcpy(nuova->ip, ip + 12, 4);
         memcpy(nuova->mac, f + 6, 6);   /* il MAC del mittente, gia' in mano */
         nuova->porta_loc    = porta_loc;
@@ -1406,6 +1544,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         nuova->snd_nxt      = nuova->snd_una;
         nuova->finestra     = finestra;
         nuova->stato        = S_SYN_RICEV;
+        tcp_hash_metti(nuova);
 
         /* ! IL MAC SI PRENDE DAL FRAME ARRIVATO, E NON SI FA UN ARP. Chi ci ha
          * appena parlato ha per forza un MAC valido — e' il mittente del
@@ -1483,6 +1622,13 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
             tcp_manda(c, TCP_ACK, NULL, 0);
             tcp_consegna(c);
         }
+        /* a poll or an epoll on the listener: one more to accept */
+        {
+            Conn *asc = tcp_num(c->ascoltatore);
+
+            if (asc != NULL && asc->stato == S_ASCOLTA) tcp_evento(asc);
+        }
+        tcp_evento(c);
         return;
     }
 
@@ -1507,6 +1653,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
             ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
             c->attesa_pid = 0;
         }
+        tcp_evento(c);
         return;
     }
 
@@ -1566,6 +1713,422 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
 
     tcp_spingi(c);
     tcp_consegna(c);
+    tcp_evento(c);
+}
+
+/* =============================================================================
+ * WAITING WITHOUT ASKING: poll and epoll in the stack (0.016, 26 October 2026)
+ *
+ * See IP_MSG_TCP_ASPETTA and IP_MSG_INS_* in ip_proto.h. Both live in g_ins:
+ *   - an epoll set (INS_EPOLL) stays until IP_MSG_INS_CHIUDI; its
+ *     connections point at it (Conn.ins) and, when ready, queue in its ready
+ *     list (testa/coda through Conn.ins_dopo);
+ *   - a poll (INS_POLL) is one IP_MSG_TCP_ASPETTA: it lists its connections,
+ *     each of them points at it (Conn.att), and it ends with its answer.
+ * tcp_evento(c) is called wherever a connection may have become ready (a
+ * segment, a state change, an accept waiting): it is the only way in, so a
+ * new place that changes a connection calls it too.
+ *
+ * ! ONE poll PER CONNECTION IS WOKEN DIRECTLY. Two threads polling the same
+ * socket at once is rare; the second one is "orfana" and is looked at by
+ * tcp_scadenze every round (10 ms), as all of them were before.
+ * ============================================================================= */
+#define INS_MAX    256
+#define INS_EPOLL  1
+#define INS_POLL   2
+
+typedef struct {
+    unsigned int tipo;           /* 0 = free */
+    unsigned int proprietario;   /* process group */
+    unsigned int attesa_pid;     /* the thread waiting for the answer */
+    unsigned int attesa_max;
+    unsigned int attesa_scade;   /* uptime_ms, 0 = no timeout */
+    unsigned int testa, coda;    /* epoll: ready list (Conn.numero) */
+    unsigned int sveglia;        /* epoll: IP_MSG_INS_SVEGLIA with nobody waiting */
+    unsigned int orfana;         /* poll: some connection points elsewhere */
+    unsigned int n;              /* poll: its connections */
+    IpTcpVoce    voce[IP_ASPETTA_MAX];
+} Insieme;
+
+static Insieme g_ins[INS_MAX];
+
+/* Connections of a listener that wait for accept(). */
+static unsigned int tcp_in_attesa(const Conn *asc)
+{
+    unsigned int i, n = 0, id = tcp_id(asc);
+
+    for (i = 0; i < g_tcp_n; i++)
+        if (g_tcp[i]->ascoltatore == id && !g_tcp[i]->accettata &&
+            da_accettare(g_tcp[i])) n++;
+    return n;
+}
+
+/* What a program could do with c now, in IP_EV_* (as poll/epoll mean it). */
+static unsigned int tcp_pronto(const Conn *c)
+{
+    unsigned int ev = 0;
+
+    switch (c->stato) {
+    case S_ASCOLTA:
+        return tcp_in_attesa(c) ? IP_EV_IN : 0u;
+    case S_APERTA:
+        if (c->tx_len < TCP_BUF) ev |= IP_EV_OUT;
+        break;
+    case S_FIN_SUO:
+        ev |= IP_EV_IN | IP_EV_RDHUP;       /* reading gives the end */
+        if (c->tx_len < TCP_BUF) ev |= IP_EV_OUT;
+        break;
+    case S_ULTIMO_ACK:
+    case S_MORTA:
+        ev |= IP_EV_IN | IP_EV_RDHUP | IP_EV_HUP;
+        break;
+    default:                                /* opening, or our FIN sent */
+        break;
+    }
+    if (c->rx_len > 0) ev |= IP_EV_IN;
+    return ev;
+}
+
+/* --- epoll ------------------------------------------------------------------ */
+static unsigned int ins_pronto(const Conn *c)
+{
+    unsigned int ev = tcp_pronto(c) | (c->ins_forza ? IP_EV_IN : 0u);
+
+    return ev & (c->ins_ev | IP_EV_ERR | IP_EV_HUP);
+}
+
+static void ins_lista_metti(Insieme *s, Conn *c)
+{
+    if (c->ins_lista) return;
+    c->ins_lista = 1;
+    c->ins_dopo  = 0;
+    if (s->coda) tcp_num(s->coda)->ins_dopo = c->numero;
+    else         s->testa = c->numero;
+    s->coda = c->numero;
+}
+
+static void ins_lista_togli(Insieme *s, Conn *c)
+{
+    unsigned int *q = &s->testa, prima = 0;
+
+    if (!c->ins_lista) return;
+    while (*q != 0 && *q != c->numero) {
+        prima = *q;
+        q = &tcp_num(*q)->ins_dopo;
+    }
+    if (*q == c->numero) {
+        *q = c->ins_dopo;
+        if (s->coda == c->numero) s->coda = prima;
+    }
+    c->ins_lista = 0;
+    c->ins_dopo  = 0;
+}
+
+/* The answer to whoever waits on set k: the ready connections, at most
+ * attesa_max. Without any, only if `anche_vuota` (timeout, wake-up). */
+static void ins_consegna(unsigned int k, int anche_vuota)
+{
+    static IpInsEventi r;
+    Insieme     *s = &g_ins[k];
+    unsigned int giri, quanti = 0, x;
+
+    if (s->attesa_pid == 0) return;
+    for (x = s->testa; x != 0; x = tcp_num(x)->ins_dopo) quanti++;
+
+    r.n = 0;
+    for (giri = 0; giri < quanti && s->testa != 0 && r.n < s->attesa_max; giri++) {
+        Conn        *c = tcp_num(s->testa);
+        unsigned int ev;
+
+        ins_lista_togli(s, c);
+        ev = ins_pronto(c);
+        if (!c->ins_armata || ev == 0) continue;       /* not any more */
+        r.ev[r.n].eventi  = ev;
+        r.ev[r.n].dati[0] = c->ins_dati[0];
+        r.ev[r.n].dati[1] = c->ins_dati[1];
+        r.n++;
+        c->ins_forza = 0;
+        if (c->ins_ev & IP_EV_ONESHOT) c->ins_armata = 0;
+        else if (!(c->ins_ev & IP_EV_ET)) ins_lista_metti(s, c);   /* level */
+    }
+    if (r.n == 0 && !anche_vuota) return;
+    ipc_send(s->attesa_pid, IP_MSG_INS_EVENTI, &r,
+             (unsigned int)(sizeof(r.n) + r.n * sizeof(IpInsEvento)));
+    s->attesa_pid = 0;
+}
+
+/* --- poll ------------------------------------------------------------------- */
+/* Answers poll k if one of its connections is ready (or always, with
+ * `anche_vuota`), and ends it. */
+static void aspetta_rispondi(unsigned int k, int anche_vuota)
+{
+    static IpTcpAspetta r;
+    Insieme     *s = &g_ins[k];
+    unsigned int i;
+
+    r.timeout_ms = 0;
+    r.n = 0;
+    for (i = 0; i < s->n; i++) {
+        Conn        *c = tcp_num(s->voce[i].id);
+        unsigned int ev;
+
+        if (c == NULL || c->stato == S_LIBERA || c->proprietario != s->proprietario)
+            ev = IP_EV_ERR | IP_EV_HUP;     /* closed meanwhile */
+        else
+            ev = tcp_pronto(c) & (s->voce[i].eventi | IP_EV_ERR | IP_EV_HUP);
+        if (ev == 0) continue;
+        r.voce[r.n].id     = s->voce[i].id;
+        r.voce[r.n].eventi = ev;
+        r.n++;
+    }
+    if (r.n == 0 && !anche_vuota) return;
+    ipc_send(s->attesa_pid, IP_MSG_TCP_PRONTE, &r,
+             (unsigned int)(2u * sizeof(unsigned int) + r.n * sizeof(IpTcpVoce)));
+    for (i = 0; i < s->n; i++) {
+        Conn *c = tcp_num(s->voce[i].id);
+
+        if (c != NULL && c->att == k + 1u) c->att = 0;
+    }
+    memset(s, 0, sizeof(*s));
+}
+
+/* Something may have changed for c: whoever waits for it hears it now. */
+static void tcp_evento(Conn *c)
+{
+    if (c->ins != 0) {
+        Insieme *s = &g_ins[c->ins - 1u];
+
+        if (c->ins_armata && ins_pronto(c)) ins_lista_metti(s, c);
+        if (s->attesa_pid != 0 && s->testa != 0) ins_consegna(c->ins - 1u, 0);
+    }
+    if (c->att != 0) aspetta_rispondi(c->att - 1u, 0);
+}
+
+/* c leaves its epoll set and its poll: closed by its program, or its slot
+ * goes back. A poll waiting on it hears it now (the end, or nothing). */
+static void ins_stacca(Conn *c)
+{
+    if (c->ins != 0) {
+        ins_lista_togli(&g_ins[c->ins - 1u], c);
+        c->ins = 0;
+        c->ins_armata = c->ins_forza = 0;
+    }
+    if (c->att != 0) aspetta_rispondi(c->att - 1u, 1);
+}
+
+static int ins_libero(void)
+{
+    unsigned int k;
+
+    for (k = 0; k < INS_MAX; k++)
+        if (g_ins[k].tipo == 0) return (int)k;
+    return -1;
+}
+
+/* A free place in g_ins; when full, those of programs that are gone go
+ * back first (a program killed in epoll_wait never closes its set). */
+static int ins_nuovo(void)
+{
+    int          k = ins_libero();
+    unsigned int i, j;
+
+    if (k >= 0) return k;
+    for (i = 0; i < INS_MAX; i++) {
+        Insieme *s = &g_ins[i];
+
+        if (s->tipo == 0 || pid_vivo(s->proprietario)) continue;
+        for (j = 0; j < g_tcp_n; j++) {
+            if (g_tcp[j]->ins == i + 1u) {
+                ins_lista_togli(s, g_tcp[j]);
+                g_tcp[j]->ins = 0;
+            }
+            if (g_tcp[j]->att == i + 1u) g_tcp[j]->att = 0;
+        }
+        memset(s, 0, sizeof(*s));
+    }
+    return ins_libero();
+}
+
+static Insieme *ins_da_id(unsigned int id, unsigned int cliente, int *k)
+{
+    Insieme *s;
+
+    if (id == 0 || id > INS_MAX) return NULL;
+    s = &g_ins[id - 1u];
+    if (s->tipo != INS_EPOLL || s->proprietario != gruppo_di(cliente)) return NULL;
+    *k = (int)id - 1;
+    return s;
+}
+
+static unsigned int scadenza_da(unsigned int ms)
+{
+    unsigned int t;
+
+    if (ms == 0) return 0;
+    t = uptime_ms() + ms;
+    return t ? t : 1u;
+}
+
+/* IP_MSG_TCP_ASPETTA */
+static void tcp_aspetta(unsigned int cliente, const unsigned char *payload,
+                        unsigned int len)
+{
+    IpTcpAspetta a;
+    Insieme     *s;
+    unsigned int i;
+    int          k;
+
+    memset(&a, 0, sizeof(a));
+    memcpy(&a, payload, len < sizeof(a) ? len : sizeof(a));
+    if (len < 2u * sizeof(unsigned int) || a.n > IP_ASPETTA_MAX ||
+        len < 2u * sizeof(unsigned int) + a.n * sizeof(IpTcpVoce)) {
+        rispondi_esito(cliente, -EINVAL);
+        return;
+    }
+    k = ins_nuovo();
+    if (k < 0) { rispondi_esito(cliente, -EAGAIN); return; }
+    s = &g_ins[k];
+    memset(s, 0, sizeof(*s));
+    s->tipo         = INS_POLL;
+    s->proprietario = gruppo_di(cliente);
+    s->attesa_pid   = cliente;
+    s->n            = a.n;
+    memcpy(s->voce, a.voce, a.n * sizeof(IpTcpVoce));
+
+    /* ready already, or asked to answer now (aspetta_rispondi checks the
+     * owner of each connection: a foreign or closed one answers ERR|HUP) */
+    for (i = 0; i < a.n; i++) {
+        Conn *c = tcp_num(a.voce[i].id);
+
+        if (c == NULL || c->stato == S_LIBERA || c->proprietario != s->proprietario ||
+            (tcp_pronto(c) & (a.voce[i].eventi | IP_EV_ERR | IP_EV_HUP)))
+            break;
+    }
+    if (i < a.n || a.timeout_ms == IP_ASPETTA_SUBITO) {
+        aspetta_rispondi((unsigned int)k, 1);
+        return;
+    }
+    s->attesa_scade = scadenza_da(a.timeout_ms);
+    for (i = 0; i < a.n; i++) {
+        Conn *c = tcp_num(a.voce[i].id);
+
+        if (c->att == 0) c->att = (unsigned int)k + 1u;
+        else             s->orfana = 1;
+    }
+}
+
+/* IP_MSG_INS_CREA */
+static void ins_crea(unsigned int cliente)
+{
+    int k = ins_nuovo();
+
+    if (k < 0) { rispondi_esito(cliente, -EMFILE); return; }
+    memset(&g_ins[k], 0, sizeof(Insieme));
+    g_ins[k].tipo         = INS_EPOLL;
+    g_ins[k].proprietario = gruppo_di(cliente);
+    rispondi_esito(cliente, k + 1);
+}
+
+/* IP_MSG_INS_CTL */
+static void ins_ctl(unsigned int cliente, const IpInsCtl *q)
+{
+    unsigned int op = q->op & 0xFFu;
+    Insieme     *s;
+    Conn        *c;
+    int          k;
+
+    s = ins_da_id(q->ins, cliente, &k);
+    if (s == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    c = tcp_da_id(q->id, cliente);
+    if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+
+    if (op == IP_INS_DEL) {
+        if (c->ins != (unsigned int)k + 1u) { rispondi_esito(cliente, -ENOENT); return; }
+        ins_lista_togli(s, c);
+        c->ins = 0;
+        c->ins_armata = c->ins_forza = 0;
+        rispondi_esito(cliente, 0);
+        return;
+    }
+    if (op == IP_INS_ADD && c->ins != 0) { rispondi_esito(cliente, -EEXIST); return; }
+    if (op == IP_INS_MOD && c->ins != (unsigned int)k + 1u) {
+        rispondi_esito(cliente, -ENOENT);
+        return;
+    }
+    if (op != IP_INS_ADD && op != IP_INS_MOD) { rispondi_esito(cliente, -EINVAL); return; }
+
+    c->ins         = (unsigned int)k + 1u;
+    c->ins_ev      = q->eventi;
+    c->ins_dati[0] = q->dati[0];
+    c->ins_dati[1] = q->dati[1];
+    c->ins_armata  = 1;
+    c->ins_forza   = (q->op & IP_INS_FORZA) ? 1u : 0u;
+    if (!ins_pronto(c)) ins_lista_togli(s, c);
+    rispondi_esito(cliente, 0);
+    tcp_evento(c);          /* ready now: whoever waits hears it */
+}
+
+/* IP_MSG_INS_ATTENDI */
+static void ins_attendi(unsigned int cliente, const IpInsAttendi *q)
+{
+    Insieme *s;
+    int      k;
+
+    s = ins_da_id(q->ins, cliente, &k);
+    if (s == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    if (s->attesa_pid != 0) { rispondi_esito(cliente, -EBUSY); return; }
+    s->attesa_pid   = cliente;
+    s->attesa_max   = q->max == 0 ? 1u :
+                      q->max > IP_INS_EVENTI_MAX ? IP_INS_EVENTI_MAX : q->max;
+    s->attesa_scade = q->timeout_ms == IP_ASPETTA_SUBITO ? 0 : scadenza_da(q->timeout_ms);
+    if (s->sveglia || q->timeout_ms == IP_ASPETTA_SUBITO) {
+        s->sveglia = 0;
+        ins_consegna((unsigned int)k, 1);
+        return;
+    }
+    ins_consegna((unsigned int)k, 0);
+}
+
+/* IP_MSG_INS_SVEGLIA, IP_MSG_INS_CHIUDI */
+static void ins_sveglia_chiudi(unsigned int cliente, const IpInsRif *q, int chiudi)
+{
+    Insieme     *s;
+    unsigned int j;
+    int          k;
+
+    s = ins_da_id(q->ins, cliente, &k);
+    if (s == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    if (s->attesa_pid != 0) ins_consegna((unsigned int)k, 1);
+    else if (!chiudi)       s->sveglia = 1;
+    if (chiudi) {
+        for (j = 0; j < g_tcp_n; j++)
+            if (g_tcp[j]->ins == (unsigned int)k + 1u) {
+                g_tcp[j]->ins = 0;
+                g_tcp[j]->ins_lista = g_tcp[j]->ins_dopo = 0;
+                g_tcp[j]->ins_armata = g_tcp[j]->ins_forza = 0;
+            }
+        memset(s, 0, sizeof(*s));
+    }
+    rispondi_esito(cliente, 0);
+}
+
+/* Timeouts of the waits, and the polls that lost a connection to another
+ * poll: every round of tcp_scadenze. */
+static void ins_scadenze(unsigned int ora)
+{
+    unsigned int k;
+
+    for (k = 0; k < INS_MAX; k++) {
+        Insieme *s = &g_ins[k];
+
+        if (s->tipo == 0 || s->attesa_pid == 0) continue;
+        if (s->attesa_scade != 0 && (int)(ora - s->attesa_scade) >= 0) {
+            if (s->tipo == INS_POLL) aspetta_rispondi(k, 1);
+            else                     ins_consegna(k, 1);
+            continue;
+        }
+        if (s->tipo == INS_POLL && s->orfana) aspetta_rispondi(k, 0);
+    }
 }
 
 /* =============================================================================
@@ -1573,13 +2136,36 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
  * ============================================================================= */
 static void tcp_scadenze(void)
 {
+    static unsigned int ultimo = 0;
     unsigned int ora = uptime_ms();
     unsigned int i;
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
-        Conn *c = &g_tcp[i];
+    /* ! ONCE PER TICK, not once per message (0.016): with four thousand slots
+     * looking at all of them for every request would cost more than the
+     * request. */
+    if (ora - ultimo < 10u) return;
+    ultimo = ora;
+    ins_scadenze(ora);
+
+    for (i = 0; i < g_tcp_n; i++) {
+        Conn *c = g_tcp[i];
 
         if (c->stato == S_LIBERA) continue;
+
+        /* Dead and already closed by its program: nobody will ever read it
+         * again, so the slot goes back now (0.015). Until today it stayed
+         * taken until a connect happened to need it: under the MariaDB
+         * stress test, with 8 clients, a third of the table was such slots
+         * (one per `mariadb -e` of the monitoring and per reconnection),
+         * and a SYN found it full. Same for one reset before any program
+         * accepted it: it has no owner who could close it. One shut down
+         * (shutdown, IP_MSG_TCP_SPEGNI) but still in its epoll set waits for
+         * close(): freed now, its program would never hear the end. */
+        if (c->stato == S_MORTA && c->attesa_pid == 0 && c->ins == 0 &&
+            (c->chiusa_cliente || (c->ascoltatore != 0 && !c->accettata))) {
+            tcp_slot_azzera(c);
+            continue;
+        }
 
         /* FIN_WAIT_2 scaduto: l'altro non chiudera' mai, lo si da' per fatto. */
         if (c->stato == S_FIN_MIO && c->fin2_scade != 0 &&
@@ -1587,6 +2173,7 @@ static void tcp_scadenze(void)
             c->stato      = S_MORTA;
             c->fin2_scade = 0;
             c->rto_scade  = 0;
+            tcp_evento(c);
             continue;
         }
 
@@ -1599,6 +2186,7 @@ static void tcp_scadenze(void)
             ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
             c->attesa_pid = 0;
             if (c->stato == S_SYN_INVIA) { c->stato = S_MORTA; c->rto_scade = 0; }
+            tcp_evento(c);
             continue;
         }
 
@@ -1642,31 +2230,24 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
     Conn         *c = NULL;
     unsigned int  i;
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
-        /* Una connessione MORTA si riusa solo se il suo cliente ha gia'
-         * letto tutto: buttare via dati non ancora consegnati sarebbe
-         * perderli in silenzio. */
-        if (g_tcp[i].stato == S_LIBERA ||
-            (g_tcp[i].stato == S_MORTA &&
-             (g_tcp[i].rx_len == 0 || g_tcp[i].chiusa_cliente) &&
-             g_tcp[i].attesa_pid == 0)) {
-            c = &g_tcp[i];
-            break;
-        }
+    /* Una connessione MORTA si riusa solo se il suo cliente ha gia'
+     * letto tutto: buttare via dati non ancora consegnati sarebbe
+     * perderli in silenzio. (0.016: first a free or new slot.) */
+    c = tcp_slot_nuovo();
+    for (i = 0; c == NULL && i < g_tcp_n; i++) {
+        Conn *k = g_tcp[i];
+
+        if (k->stato == S_MORTA && (k->rx_len == 0 || k->chiusa_cliente) &&
+            k->attesa_pid == 0 && k->att == 0 && k->ins == 0)
+            c = k;
     }
     /* ! PIENA? PRIMA DI DIRE DI NO SI GUARDA CHI E' MORTO. Dire -ENFILE
      * mentre la tabella e' piena di slot di processi che non esistono piu' e'
      * il modo in cui «riapri il browser e non naviga piu'» diventa permanente. */
-    if (c == NULL && tcp_riprendi_orfane() > 0) {
-        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-            if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
-    }
+    if (c == NULL && tcp_riprendi_orfane() > 0) c = tcp_slot_nuovo();
     /* Still full: take back a slot its owner has already closed (see
      * tcp_reclaim_closed). */
-    if (c == NULL && tcp_reclaim_closed() > 0) {
-        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-            if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
-    }
+    if (c == NULL && tcp_reclaim_closed() > 0) c = tcp_slot_nuovo();
     if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
 
     /* this machine: no route, no ARP, our own MAC (see g_loop) */
@@ -1696,7 +2277,7 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
     }
 
 ha_mac:
-    memset(c, 0, sizeof(*c));
+    tcp_slot_azzera(c);
     memcpy(c->ip, a->ip, 4);
     memcpy(c->mac, v->mac, 6);
     c->porta_rem = a->porta;
@@ -1707,9 +2288,9 @@ ha_mac:
         unsigned int j, libera = 1;
 
         if (g_tcp_porta > 65535u) g_tcp_porta = 49152u;
-        for (j = 0; j < IP_TCP_CONNESSIONI; j++)
-            if (g_tcp[j].stato != S_LIBERA && &g_tcp[j] != c &&
-                g_tcp[j].porta_loc == p) libera = 0;
+        for (j = 0; j < g_tcp_n; j++)
+            if (g_tcp[j]->stato != S_LIBERA && g_tcp[j] != c &&
+                g_tcp[j]->porta_loc == p) { libera = 0; break; }
         if (libera) { c->porta_loc = p; break; }
     }
     if (c->porta_loc == 0) { c->stato = S_LIBERA; rispondi_esito(cliente, -ENFILE); return; }
@@ -1725,6 +2306,7 @@ ha_mac:
     c->proprietario = gruppo_di(cliente);
 
     c->stato    = S_SYN_INVIA;
+    tcp_hash_metti(c);
     tcp_manda(c, TCP_SYN, NULL, 0);
     c->snd_nxt  = c->snd_una + 1u;
 
@@ -1763,25 +2345,21 @@ static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
      * trova scorrendo la tabella, cioe' a caso. */
     /* ! BUT A DEAD OWNER DOES NOT HOLD THE PORT: a telnetd killed and run
      * again found its own old listener and went away with EADDRINUSE. */
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-        if (g_tcp[i].stato == S_ASCOLTA && g_tcp[i].porta_loc == a->porta) {
-            if (!pid_vivo(g_tcp[i].proprietario) && tcp_riprendi_orfane() > 0 &&
-                g_tcp[i].stato == S_LIBERA)
+    for (i = 0; i < g_tcp_n; i++)
+        if (g_tcp[i]->stato == S_ASCOLTA && g_tcp[i]->porta_loc == a->porta) {
+            if (!pid_vivo(g_tcp[i]->proprietario) && tcp_riprendi_orfane() > 0 &&
+                g_tcp[i]->stato == S_LIBERA)
                 continue;
             rispondi_esito(cliente, -EADDRINUSE);
             return;
         }
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-        if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
-
-    if (c == NULL && tcp_riprendi_orfane() > 0)
-        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
-            if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
+    c = tcp_slot_nuovo();
+    if (c == NULL && tcp_riprendi_orfane() > 0) c = tcp_slot_nuovo();
 
     if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
 
-    memset(c, 0, sizeof(*c));
+    tcp_slot_azzera(c);
     c->stato        = S_ASCOLTA;
     c->porta_loc    = a->porta;
     c->proprietario = gruppo_di(cliente);
@@ -1797,6 +2375,17 @@ static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
  * S_SYN_RICEV vorrebbe dire un id valido su cui la prima write finisce nel
  * vuoto — e il difetto si vedrebbe dall'altra parte, non qui.
  * --------------------------------------------------------------------------- */
+/* ! ALSO ONE THE OTHER SIDE HAS ALREADY CLOSED (0.015, 26 October 2026): a
+ * client that gave up before the program got to accept() sends its FIN, and
+ * the connection, S_FIN_SUO and never handed out, stayed in the table for
+ * good - nobody owned it to close it. In the MariaDB stress test those were
+ * 15 of the 24 slots after a few minutes at 12 clients. Handed out like on
+ * Linux, the program reads the end and closes. */
+static int da_accettare(const Conn *c)
+{
+    return c->stato == S_APERTA || c->stato == S_FIN_SUO;
+}
+
 static void tcp_accetta(unsigned int cliente, const IpTcpAccetta *a)
 {
     Conn        *asc = tcp_da_id(a->id, cliente);
@@ -1807,12 +2396,12 @@ static void tcp_accetta(unsigned int cliente, const IpTcpAccetta *a)
         return;
     }
 
-    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
-        Conn *c = &g_tcp[i];
+    for (i = 0; i < g_tcp_n; i++) {
+        Conn *c = g_tcp[i];
 
         if (c->accettata)                  continue;
         if (c->ascoltatore != a->id)       continue;
-        if (c->stato != S_APERTA)          continue;
+        if (!da_accettare(c))              continue;
 
         c->accettata = 1;
         rispondi_esito(cliente, (int)tcp_id(c));
@@ -1879,18 +2468,27 @@ static void tcp_ricevi(unsigned int cliente, const IpTcpRif *r)
     tcp_consegna(c);
 }
 
-static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
+/* close(), or shutdown(SHUT_RDWR) with `spegni` (IP_MSG_TCP_SPEGNI) */
+static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
 {
     Conn *c = tcp_da_id(r->id, cliente);
 
     if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+
+    /* ! CLOSED ALREADY BY shutdown(): the close() that follows only takes it
+     * out of its epoll set. Closing it again sent a second FIN and made a
+     * connection in S_FIN_MIO dead, cutting the orderly end short. */
+    if (c->chiusa_cliente && c->stato != S_ASCOLTA) {
+        if (!spegni) ins_stacca(c);
+        rispondi_esito(cliente, 0);
+        return;
+    }
 
     /* ! CHIUDERE UN ASCOLTATORE LO LIBERA E BASTA: non c'e' nessuno a cui
      * mandare un FIN, e lasciarlo S_MORTA come una connessione vera terrebbe
      * occupata la porta finche' qualcuno non legge dati che non esistono. Le
      * connessioni che ha generato restano vive: sono gia' loro, non sue. */
     if (c->stato == S_ASCOLTA) {
-        c->stato = S_LIBERA;
         if (c->attesa_pid != 0) {
             IpEsito e;
 
@@ -1898,6 +2496,7 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
             ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
             c->attesa_pid = 0;
         }
+        tcp_slot_azzera(c);
         rispondi_esito(cliente, 0);
         return;
     }
@@ -1918,6 +2517,10 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
 
     /* Quel che e' arrivato e non e' stato letto non lo leggera' piu' nessuno. */
     c->chiusa_cliente = 1;
+    /* a closed socket leaves its epoll set, as on Linux; a shut down one
+     * stays, ready once for reading the end (below) */
+    if (!spegni) ins_stacca(c);
+    else if (c->att != 0) aspetta_rispondi(c->att - 1u, 1);
     c->rx_len = 0;
     c->rx_off = 0;
     c->fs_n   = 0;
@@ -1939,6 +2542,10 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
         c->stato = S_MORTA;
     }
 
+    if (spegni && c->ins != 0) {
+        c->ins_forza = 1;
+        tcp_evento(c);
+    }
     rispondi_esito(cliente, 0);
 }
 
@@ -1949,7 +2556,18 @@ static void tcp_info(unsigned int cliente, const IpTcpRif *r)
 
     memset(&info, 0, sizeof(info));
     if (c == NULL) { info.stato = IP_TCP_CHIUSA; }
-    else {
+    else if (c->stato == S_ASCOLTA) {
+        /* A listener: in_coda_rx is how many connections wait for accept(),
+         * without taking one (0.015). poll() asks this; until today it said
+         * a listener was always ready, and a server with a non-blocking
+         * listener (mariadbd) went round poll/accept/EAGAIN without pause,
+         * filling this mailbox. */
+        info.id        = tcp_id(c);
+        info.stato     = IP_TCP_IN_APERTURA;
+        info.porta_loc = c->porta_loc;
+        info.conta_in_attesa = 1;
+        info.in_coda_rx = tcp_in_attesa(c);
+    } else {
         info.id         = tcp_id(c);
         info.stato      = tcp_stato_pubblico(c);
         info.in_coda_rx = c->rx_len;
@@ -1959,6 +2577,37 @@ static void tcp_info(unsigned int cliente, const IpTcpRif *r)
         info.porta_loc  = c->porta_loc;
     }
     ipc_send(cliente, IP_MSG_TCP_INFO, &info, sizeof(info));
+}
+
+/* IP_MSG_TCP_TABELLA: see ip_proto.h */
+static void tcp_tabella(unsigned int cliente, const IpTcpChiediTabella *q)
+{
+    static IpTcpTabella t;
+    unsigned int i;
+
+    memset(&t, 0, sizeof(t));
+    t.totale = IP_TCP_CONNESSIONI;
+    for (i = 0; i < g_tcp_n; i++)
+        if (g_tcp[i]->stato != S_LIBERA) t.occupati++;
+    for (i = q->da; i < g_tcp_n; i++) {
+        const Conn *c = g_tcp[i];
+        IpTcpRiga  *r;
+
+        if (c->stato == S_LIBERA) continue;
+        if (t.n == IP_TCP_RIGHE_MAX) { t.prossimo = i; break; }
+        r = &t.riga[t.n++];
+        r->id           = i + 1u;
+        r->stato        = (unsigned int)c->stato;
+        r->porta_loc    = c->porta_loc;
+        r->porta_rem    = c->porta_rem;
+        memcpy(r->ip, c->ip, 4);
+        r->proprietario = c->proprietario;
+        r->rx           = c->rx_len;
+        r->tx           = c->tx_len;
+        r->segni        = (c->chiusa_cliente ? 1u : 0u) | (c->accettata ? 2u : 0u);
+    }
+    ipc_send(cliente, IP_MSG_TCP_TABELLA_R, &t,
+             (unsigned int)(sizeof(t) - sizeof(t.riga) + t.n * sizeof(IpTcpRiga)));
 }
 
 static void tratta_ip(const unsigned char *f, unsigned int len)
@@ -2596,6 +3245,7 @@ static void servi(void)
 
                 case IP_MSG_TCP_RICEVI:
                 case IP_MSG_TCP_CHIUDI:
+                case IP_MSG_TCP_SPEGNI:
                 case IP_MSG_TCP_STATO: {
                     IpTcpRif r;
 
@@ -2605,8 +3255,47 @@ static void servi(void)
                     }
                     memcpy(&r, payload, sizeof(r));
                     if (meta.tipo == IP_MSG_TCP_RICEVI)      tcp_ricevi(meta.sender_pid, &r);
-                    else if (meta.tipo == IP_MSG_TCP_CHIUDI) tcp_chiudi(meta.sender_pid, &r);
+                    else if (meta.tipo == IP_MSG_TCP_CHIUDI) tcp_chiudi(meta.sender_pid, &r, 0);
+                    else if (meta.tipo == IP_MSG_TCP_SPEGNI) tcp_chiudi(meta.sender_pid, &r, 1);
                     else                                     tcp_info(meta.sender_pid, &r);
+                    break;
+                }
+
+                case IP_MSG_TCP_ASPETTA:
+                    tcp_aspetta(meta.sender_pid, payload, meta.len);
+                    break;
+
+                case IP_MSG_INS_CREA:
+                    ins_crea(meta.sender_pid);
+                    break;
+
+                case IP_MSG_INS_CTL:
+                case IP_MSG_INS_ATTENDI:
+                case IP_MSG_INS_SVEGLIA:
+                case IP_MSG_INS_CHIUDI: {
+                    unsigned char q[sizeof(IpInsCtl)];
+
+                    memset(q, 0, sizeof(q));
+                    memcpy(q, payload, meta.len < sizeof(q) ? meta.len : sizeof(q));
+                    if (meta.len < sizeof(IpInsRif)) {
+                        rispondi_esito(meta.sender_pid, -EINVAL);
+                    } else if (meta.tipo == IP_MSG_INS_CTL) {
+                        ins_ctl(meta.sender_pid, (const IpInsCtl *)q);
+                    } else if (meta.tipo == IP_MSG_INS_ATTENDI) {
+                        ins_attendi(meta.sender_pid, (const IpInsAttendi *)q);
+                    } else {
+                        ins_sveglia_chiudi(meta.sender_pid, (const IpInsRif *)q,
+                                           meta.tipo == IP_MSG_INS_CHIUDI);
+                    }
+                    break;
+                }
+
+                case IP_MSG_TCP_TABELLA: {
+                    IpTcpChiediTabella q;
+
+                    memset(&q, 0, sizeof(q));
+                    if (meta.len >= sizeof(q)) memcpy(&q, payload, sizeof(q));
+                    tcp_tabella(meta.sender_pid, &q);
                     break;
                 }
 

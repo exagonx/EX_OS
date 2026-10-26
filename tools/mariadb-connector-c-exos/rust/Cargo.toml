@@ -1,0 +1,10 @@
+# tools/mariadb-connector-c-exos/rust — the "mariadb" crate: Rust over the
+# C API of Connector/C (libmariadbclient.a). No dependencies, so it builds
+# with no network and with rustc alone (see src/lib.rs).
+[package]
+name = "mariadb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"

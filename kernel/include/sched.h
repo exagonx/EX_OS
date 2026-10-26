@@ -739,6 +739,20 @@ typedef struct Process {
     uint32_t        ipc_head;               /* prossimo slot da leggere */
     uint32_t        ipc_tail;               /* prossimo slot da scrivere */
     uint32_t        ipc_count;              /* messaggi attualmente in coda */
+    /* ! THE LINE IN FRONT OF A FULL MAILBOX (kernel 0.280, 26 Oct 2026).
+     * Until 0.279 a sender that found the mailbox full slept 5 ms and tried
+     * again: whoever retried first won, not whoever had waited longest, and
+     * with a dozen MariaDB threads talking to ip.drv some lost for 10 s and
+     * got EBUSY. Now the sender stands in the destination's line and the
+     * receiver, freeing a slot, promises it to the oldest one (ipc_riservati)
+     * and wakes it. See ipc_send in kernel/ipc/ipc.c. */
+    struct Process *ipc_fila_testa;         /* who waits for room here, oldest */
+    struct Process *ipc_fila_coda;          /* ... and newest */
+    uint32_t        ipc_riservati;          /* slots promised to the line */
+    struct Process *ipc_fila_su;            /* whose line I stand in, NULL = none */
+    struct Process *ipc_fila_prima;
+    struct Process *ipc_fila_dopo;
+    uint32_t        ipc_fila_concesso;      /* a slot is promised to me */
     /* I nomi dei servizi non stanno qui ma in una tabella sola del kernel
      * (kernel/ipc/ipc.c, g_nomi): un processo ne puo' tenere piu' d'uno. */
 

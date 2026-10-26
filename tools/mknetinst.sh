@@ -54,6 +54,9 @@
 # «/file», e ha l'indirizzo da cui scaricare; ci mette davanti «/» e ha il
 # posto dove scriverlo. Una tabella di conversione in mezzo sarebbe una terza
 # cosa da tenere allineata alle altre due.
+# One exception, a rule and not a table: a name ending in .gz or .tgz is
+# _gz / _tgz on the server (Altervista would send it decompressed; see the
+# renaming after elenco.txt), and netupdate 0.035 knows the same rule.
 # =============================================================================
 
 set -e
@@ -485,6 +488,20 @@ set -f                  # the patterns are for `case`, not for the shell here
     done < "$TEMP/mappa"
 } > "$ELE"
 set +f
+
+# ! A .gz OR .tgz FILE GOES ON THE SERVER AS _gz / _tgz (26 October 2026), as
+# the packages and the source archive already do (see ARC_TETTO above): the
+# sources under exos/src (ncurses-6.6.tar.gz, mariadb-11.8.9.tar.gz...) would
+# reach netupdate decompressed through Altervista and Cloudflare, with the
+# wrong hash. elenco.txt keeps the real name, the one written on the disk;
+# netupdate 0.035 asks the server for the other (nome_sul_server). Done after
+# the package archives, which hold the files under their real names.
+while IFS='	' read -r p pac; do
+    case "$p" in
+        *.gz)  mv "$FUORI/file/$p" "$FUORI/file/${p%.gz}_gz" ;;
+        *.tgz) mv "$FUORI/file/$p" "$FUORI/file/${p%.tgz}_tgz" ;;
+    esac
+done < "$TEMP/mappa"
 
 # Se nessun pacchetto ha meritato un archivio, la directory non ci va: una
 # directory vuota su un server e' una domanda a cui nessuno sa rispondere.

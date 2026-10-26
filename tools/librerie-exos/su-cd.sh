@@ -19,7 +19,8 @@
 #     prova-librerie.cpp               the example (tools/prove/libreprova.cpp)
 #
 # One group per library in tools/iso/strumenti.txt: [zlib] [bzip2] [xz]
-# [lz4] [zstd] [pcre2] [fmt], [mariadb] (tools/mariadb-exos: also exos/mariadb,
+# [lz4] [zstd] [pcre2] [fmt], [mariadb-connector] (Connector/C and C++, the
+# FreeBASIC header, the Rust crate), [mariadb] (tools/mariadb-exos: also exos/mariadb,
 # the server and its share), and [ssl] for OpenSSL (tools/openssl-exos:
 # the Makefile and mktools64.sh also build provassl and provatls with it). A library not built is said on stderr, and the
 # CD is made without it. ncurses has its own (tools/ncurses-exos/su-cd.sh):
@@ -37,16 +38,28 @@ esac
 [ -x "$STRIP" ] || STRIP=strip
 E="$CD/exos"
 fatte=""
-for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb; do
+# ! mariadb (the server) has no lib/: its client library is
+# mariadb-connector-c's (see tools/mariadb-exos/costruisci.sh)
+for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb-connector-cpp mariadb; do
     N=cross_build/$NOME-exos$BIT/exos
-    if [ ! -d "$N/lib" ]; then
+    if [ ! -d "$N/src/$NOME" ]; then
         echo "     $NOME assente: tools/$NOME-exos/costruisci.sh $BIT" >&2
         continue
     fi
     mkdir -p "$E/lib" "$E/include" "$E/src"
-    cp -p "$N"/lib/*.a "$E/lib/"
-    cp -rp "$N/include/." "$E/include/"
-    [ -d "$E/i386-exos/include" ] && cp -rp "$N/include/." "$E/i386-exos/include/"
+    if [ -d "$N/lib" ]; then
+        # cp -rp: a library's own subdirectories too (lib/rust/mariadb)
+        cp -rp "$N/lib/." "$E/lib/"
+    fi
+    if [ -d "$N/include" ]; then
+        cp -rp "$N/include/." "$E/include/"
+        # the 32-bit gcc's own include directory; FreeBASIC's .bi stay out
+        if [ -d "$E/i386-exos/include" ]; then
+            for x in "$N"/include/*; do
+                [ "$(basename "$x")" = freebasic ] || cp -rp "$x" "$E/i386-exos/include/"
+            done
+        fi
+    fi
     if [ -d "$N/bin" ]; then
         mkdir -p "$E/bin"
         for b in "$N"/bin/*; do

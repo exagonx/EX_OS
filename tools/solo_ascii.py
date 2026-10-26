@@ -40,7 +40,10 @@ SALTA = ("gcc/", "coreutils/", "rust/", "FreeBASIC", "openssl/", "quickjs/",
          # di EX-OS non passeranno mai.
          "firefox-main/", "gnu/", "gfbasic/",
          # MariaDB (25 October 2026): its sql/authors.h stopped `make all`.
-         "mariadb-server/")
+         "mariadb-server/",
+         # build-64/ is compiled output like build/: its tools tree holds
+         # third-party headers (fmt, MariaDB's authors.h, 26 October 2026).
+         "build-64/")
 
 def spoglia(testo):
     """Toglie commenti e caratteri, lascia le stringhe al loro posto."""

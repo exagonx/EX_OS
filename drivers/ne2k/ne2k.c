@@ -84,7 +84,7 @@
 
 /* +0.001 a ogni modifica: `ne2k.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ne2k.drv", "0.002");
+EX_VERSIONE("ne2k.drv", "0.003");
 
 /* =============================================================================
  * Registri DP8390. Gli offset 0x00-0x0F cambiano significato secondo la
@@ -586,13 +586,12 @@ static void consegna(void)
 {
     if (g_lettore_pid == 0 || g_coda_conta == 0) return;
 
-    if (ipc_send(g_lettore_pid, NET_MSG_FRAME,
-                 g_coda[g_coda_testa].dati, g_coda[g_coda_testa].len) < 0) {
-        /* Il lettore e' sparito: si dimentica e si tiene il frame, che
-         * potrebbe interessare a chi arriva dopo. */
-        g_lettore_pid = 0;
+    /* Without waiting, and the request stays open when the frame does not
+     * go (a full mailbox, not a reader gone): see consegna() in e1000.c. A
+     * reader that is gone is replaced by the next NET_MSG_RICEVI. */
+    if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
+                 g_coda[g_coda_testa].dati, g_coda[g_coda_testa].len) < 0)
         return;
-    }
 
     g_coda_testa = (g_coda_testa + 1) % CODA_FRAME;
     g_coda_conta--;
@@ -769,7 +768,7 @@ static void servi(void)
             NetEsito e;
 
             e.codice = trasmetti(payload, meta.len);
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             break;
         }
 

@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.034");
+EX_VERSIONE("netupdate", "0.035");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2449,6 +2449,23 @@ static int scarica_a_pezzi(Config *c, const char *coda, const char *temp,
     return 0;
 }
 
+/* The path on the server of a line of elenco.txt (netupdate 0.035, 26 October
+ * 2026): the same, except that a name ending in .gz or .tgz is published as
+ * _gz / _tgz by tools/mknetinst.sh - Altervista sends a .gz with
+ * Content-Encoding: gzip and Cloudflare hands it over decompressed, so the
+ * hash never matched (the sources under exos/src, ncurses-6.6.tar.gz...).
+ * The other way round from nome_sul_disco; the file on the disk keeps its
+ * real name. */
+static void coda_sul_server(char *coda, size_t n, const char *p)
+{
+    size_t l;
+
+    snprintf(coda, n, "file/%s", p);
+    l = strlen(coda);
+    if (l > 4 && strcmp(coda + l - 4, ".tgz") == 0) coda[l - 4] = '_';
+    else if (l > 3 && strcmp(coda + l - 3, ".gz") == 0) coda[l - 3] = '_';
+}
+
 /* Uno o tanti pezzi: lo decide la riga dell'elenco appena letta. */
 static int scarica_come_va(Config *c, const char *coda, const char *temp,
                            long atteso, const char *impronta)
@@ -2463,7 +2480,7 @@ static int scarica_e_metti(Config *c, const char *p, long byte,
 {
     char dest[PERC_MAX], temp[PERC_MAX], coda[PERC_MAX + 8];
 
-    snprintf(coda, sizeof(coda), "file/%s", p);
+    coda_sul_server(coda, sizeof(coda), p);
     unisci(dest, sizeof(dest), "/", p);
 
     if (e_avvio(p)) {
@@ -4661,7 +4678,12 @@ int main(int argc, char **argv)
         if (strcmp(coda, "sourcecode") == 0) return comando_sorgenti();
         {
             int rc = comando_install(coda);
-            if (rc == 0) percorsi_segna();
+            /* ! AND THE PATH OF kernel.cfg TOO (netupdate 0.035, 26 October
+             * 2026). percorsi.txt is the shell's: it finds gcc by name, but
+             * collect2 looks for `ld` in the environment's PATH, which comes
+             * from kernel.cfg - "collect2: fatal error: cannot find 'ld'"
+             * after -install:base, while -check already fixed it. */
+            if (rc == 0) { percorsi_segna(); strumenti_nel_path(); }
             return rc;
         }
     }

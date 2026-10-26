@@ -545,3 +545,9 @@ __pycache__/
 /gftexteditor/bin/
 # photos of the screens of real machines: kept locally, not published
 /foto/
+# the MariaDB stress test (the user, 26 October 2026): the whole of
+# tools/stress stays local, the scripts and the runs. Each run has a
+# throwaway TLS key and certificate for the server (risultati/*/lavoro/
+# albero/key.pem, cert.pem), disk images and logs; gitupdate.sh refuses any
+# private key.
+/tools/stress/

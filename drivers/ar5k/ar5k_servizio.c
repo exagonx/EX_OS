@@ -153,15 +153,20 @@ static void voci_barra(void)
 
 /* a frame from the radio to whoever waits for one - never pushed unasked
  * (net_proto.h) */
+/* Without waiting, and a frame that does not fit is kept for the next round
+ * with the request still open: see consegna() in e1000.c. */
 static void consegna(void)
 {
     static unsigned char f[1514];
-    int n;
+    static int n = 0;           /* a frame taken from the radio, not yet sent */
 
     if (!g_lettore) return;
-    n = ar5k_conn_prendi(f);
+    if (n <= 0) n = ar5k_conn_prendi(f);
     if (n <= 0) return;
-    ipc_send((unsigned int)g_lettore, NET_MSG_FRAME, f, (unsigned int)n);
+    if (ipc_send((unsigned int)g_lettore, NET_MSG_FRAME | IPC_SENZA_ATTESA,
+                 f, (unsigned int)n) < 0)
+        return;
+    n = 0;
     g_lettore = 0;
 }
 
@@ -280,7 +285,7 @@ int ar5k_servi(volatile void *registri, unsigned int sotto_id, const unsigned ch
             NetEsito e;
 
             e.codice = ar5k_conn_invia(buf, (int)meta.len);
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             break;
         }
         case NET_MSG_RICEVI:

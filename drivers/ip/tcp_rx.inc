@@ -20,7 +20,16 @@
 static unsigned int rx_cap(Conn *c)
 {
     if (c->rx == NULL) {
-        c->rx = (g_rx_dim > TCP_BUF) ? (unsigned char *)malloc(g_rx_dim) : NULL;
+        int grande = g_rx_dim > TCP_BUF;
+
+#ifdef RX_GRANDI_MAX
+        /* ip.drv: at most RX_GRANDI_MAX large buffers at once (see there) */
+        if (g_rx_grandi >= RX_GRANDI_MAX) grande = 0;
+#endif
+        c->rx = grande ? (unsigned char *)malloc(g_rx_dim) : NULL;
+#ifdef RX_GRANDI_MAX
+        if (c->rx != NULL) g_rx_grandi++;
+#endif
         c->rx_dim = c->rx ? g_rx_dim : TCP_BUF;
         if (c->rx == NULL) c->rx = c->rx_riserva;
     }

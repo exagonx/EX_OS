@@ -472,6 +472,7 @@ Il disco di sistema non si ripartiziona mentre e' montato: prima
 
 Area di scambio: primaria di tipo 82, poi `mkswap hd0p2` e in
 /boot/kernel.cfg [kernel]  swap = hd0p2 ; vale dal riavvio, max 4 GB.
+Funziona dal kernel 0.276; accesa o no lo dicono `mem` e `dmesg SWAP`.
 
 [mkfs]
 formatta una partizione

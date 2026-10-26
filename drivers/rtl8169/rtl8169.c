@@ -41,7 +41,7 @@
 #include "net_proto.h"
 
 /* +0.001 a ogni modifica: `rtl8169.drv -version` la stampa. */
-EX_VERSIONE("rtl8169.drv", "0.002");
+EX_VERSIONE("rtl8169.drv", "0.003");
 
 #define RTL_MMIO_BYTE     0x100u
 
@@ -479,12 +479,16 @@ static void servi_scheda(void)
     }
 }
 
+/* Without waiting, and a frame that does not fit keeps the request open:
+ * see consegna() in e1000.c (a lost frame used to leave ip.drv waiting for
+ * an answer to a request this driver had forgotten). */
 static void consegna(void)
 {
     if (g_lettore_pid == 0 || g_coda_conta == 0) return;
 
-    ipc_send(g_lettore_pid, NET_MSG_FRAME,
-             g_coda[g_coda_testa], g_coda_len[g_coda_testa]);
+    if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
+                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) < 0)
+        return;
     g_coda_testa = (g_coda_testa + 1) % CODA_N;
     g_coda_conta--;
     g_lettore_pid = 0;
@@ -699,7 +703,7 @@ static void servi(void)
             NetEsito e;
 
             e.codice = trasmetti(payload, meta.len);
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             break;
         }
 

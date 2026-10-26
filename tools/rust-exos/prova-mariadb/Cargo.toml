@@ -1,0 +1,17 @@
+# tools/rust-exos/prova-mariadb — the "mariadb" crate against a real server
+# inside EX-OS. Built by tools/prova_mariadb.sh with tools/rust-exos/prova-std.sh
+# (PROVA=prova-mariadb).
+[package]
+name = "prova-mariadb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mariadb = { path = "../../mariadb-connector-c-exos/rust" }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+
+[profile.dev]
+panic = "abort"

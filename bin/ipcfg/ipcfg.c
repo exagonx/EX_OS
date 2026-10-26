@@ -14,6 +14,7 @@
  *   ipcfg                                        indirizzo e contatori
  *   ipcfg -a 192.168.1.10 -m 255.255.255.0 -g 192.168.1.1
  *   ipcfg -r                                     tabella ARP
+ *   ipcfg -tcp                                   le connessioni TCP
  *
  * -----------------------------------------------------------------------------
  * PERCHE' I CONTATORI SONO LA META' DEL PROGRAMMA
@@ -42,10 +43,19 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `ipcfg -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ipcfg", "0.003");
+EX_VERSIONE("ipcfg", "0.005");
 
 static int pid_ip = 0;
 
+/* A request to ip.drv. When its mailbox stays full (many connections at
+ * once) the kernel gives up after about 10 s: say so instead of exiting
+ * without a word. */
+static int manda(unsigned int tipo, const void *dati, unsigned int len)
+{
+    if (ipc_send(pid_ip, tipo, dati, len) >= 0) return 0;
+    printf("ipcfg: ip.drv non accetta la richiesta (casella piena?).\n");
+    return -1;
+}
 
 static void stampa_ip(const unsigned char *p)
 {
@@ -73,7 +83,7 @@ static int mostra_stato(void)
     unsigned int  len;
     IpStato       s;
 
-    if (ipc_send(pid_ip, IP_MSG_STATO, NULL, 0) < 0) return 1;
+    if (manda(IP_MSG_STATO, NULL, 0) < 0) return 1;
     if (attendi(IP_MSG_STATO_R, buf, &len) != 0 || len < sizeof(s)) {
         printf("ipcfg: lo stack non risponde.\n");
         return 1;
@@ -123,7 +133,7 @@ static int mostra_arp(void)
     unsigned int  len, i;
     IpArpTabella  t;
 
-    if (ipc_send(pid_ip, IP_MSG_ARP, NULL, 0) < 0) return 1;
+    if (manda(IP_MSG_ARP, NULL, 0) < 0) return 1;
     if (attendi(IP_MSG_ARP_R, buf, &len) != 0 || len < sizeof(t)) {
         printf("ipcfg: lo stack non risponde.\n");
         return 1;
@@ -151,6 +161,51 @@ static int mostra_arp(void)
     return 0;
 }
 
+/* -tcp: every busy slot of ip.drv's TCP table (26 October 2026, the MariaDB
+ * stress test: with the table full no SYN got in, and nothing showed what
+ * was filling it). The states are ip.drv's own, more than a program sees. */
+static int mostra_tcp(void)
+{
+    static const char *nomi[] = { "libera", "syn-inv", "aperta", "fin-mio",
+                                  "fin-suo", "ult-ack", "morta", "ascolta",
+                                  "syn-ric" };
+    static unsigned char buf[IPC_MSG_MAX_DATA];
+    IpTcpChiediTabella q;
+    IpTcpTabella      *t = (IpTcpTabella *)buf;
+    unsigned int       len, i, righe = 0, occupati = 0, totale = 0;
+
+    q.da = 0;
+    do {
+        if (manda(IP_MSG_TCP_TABELLA, &q, sizeof(q)) < 0) return 1;
+        if (attendi(IP_MSG_TCP_TABELLA_R, buf, &len) != 0 ||
+            len < sizeof(*t) - sizeof(t->riga)) {
+            printf("ipcfg: lo stack non risponde (ip.drv prima della 0.015?).\n");
+            return 1;
+        }
+        if (righe == 0) {
+            totale = t->totale; occupati = t->occupati;
+            printf(" id %-8s %5s  %-21s %8s %6s %6s\n",
+                   "stato", "porta", "dall'altra parte", "gruppo", "rx", "tx");
+        }
+        for (i = 0; i < t->n; i++) {
+            const IpTcpRiga *r = &t->riga[i];
+            char altro[24];
+
+            if (r->stato == IP_TCPS_ASCOLTA) strcpy(altro, "-");
+            else sprintf(altro, "%u.%u.%u.%u:%u", r->ip[0], r->ip[1], r->ip[2],
+                         r->ip[3], r->porta_rem);
+            printf("%3u %-8s %5u  %-21s %8u %6u %6u%s\n", r->id,
+                   r->stato < sizeof(nomi) / sizeof(nomi[0]) ? nomi[r->stato] : "?",
+                   r->porta_loc, altro, r->proprietario, r->rx, r->tx,
+                   (r->segni & 1) ? "  chiusa dal programma" : "");
+            righe++;
+        }
+        q.da = t->prossimo;
+    } while (q.da != 0);
+    printf("%u slot occupati su %u.\n", occupati, totale);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     unsigned char buf[IPC_MSG_MAX_DATA];
@@ -165,13 +220,14 @@ int main(int argc, char **argv)
 
     if (argc == 1) return mostra_stato();
     if (argc == 2 && strcmp(argv[1], "-r") == 0) return mostra_arp();
+    if (argc == 2 && strcmp(argv[1], "-tcp") == 0) return mostra_tcp();
 
     /* -l: lo stack su un'altra scheda (21 ottobre 2026). Lo faceva solo
      * wifid, e solo quando la radio cade: con la WiFi agganciata il cavo non
      * si poteva piu' usare ne' provare. L'indirizzo resta quello che era: se
      * sulla nuova rete ne serve un altro, dhcp o -a. */
     if (argc == 3 && strcmp(argv[1], "-l") == 0) {
-        if (ipc_send(pid_ip, IP_MSG_LINK, argv[2], (unsigned int)strlen(argv[2]) + 1) < 0) return 1;
+        if (manda(IP_MSG_LINK, argv[2], (unsigned int)strlen(argv[2]) + 1) < 0) return 1;
         if (attendi(IP_MSG_ESITO, buf, &len) != 0 || len < sizeof(e)) {
             printf("ipcfg: lo stack non ha confermato.\n");
             return 1;
@@ -188,7 +244,7 @@ int main(int argc, char **argv)
     /* Si parte dalla configurazione ATTUALE e si cambiano solo i campi
      * indicati: `ipcfg -g 1.2.3.4` non deve azzerare l'indirizzo solo
      * perché non è stato ripetuto sulla riga di comando. */
-    if (ipc_send(pid_ip, IP_MSG_STATO, NULL, 0) < 0) return 1;
+    if (manda(IP_MSG_STATO, NULL, 0) < 0) return 1;
     if (attendi(IP_MSG_STATO_R, buf, &len) != 0 || len < sizeof(s)) {
         printf("ipcfg: lo stack non risponde.\n");
         return 1;
@@ -210,6 +266,7 @@ int main(int argc, char **argv)
             printf("uso: ipcfg                     indirizzo e contatori\n");
             printf("     ipcfg -a IND [-m MASC] [-g GW]   cambia la configurazione\n");
             printf("     ipcfg -r                  tabella ARP\n");
+            printf("     ipcfg -tcp                le connessioni TCP\n");
             printf("     ipcfg -l SCHEDA           lo stack su un'altra scheda (rete0, wifi0)\n");
             return 1;
         }
@@ -217,7 +274,7 @@ int main(int argc, char **argv)
 
     if (!cambia) return mostra_stato();
 
-    if (ipc_send(pid_ip, IP_MSG_CONFIG, &c, sizeof(c)) < 0) return 1;
+    if (manda(IP_MSG_CONFIG, &c, sizeof(c)) < 0) return 1;
     if (attendi(IP_MSG_ESITO, buf, &len) != 0 || len < sizeof(e)) {
         printf("ipcfg: lo stack non ha confermato.\n");
         return 1;

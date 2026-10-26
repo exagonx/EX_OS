@@ -409,11 +409,12 @@ struct pollfd {
 
 /* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
  * openssl program's s_client): the files (MAX_FD, 128) and the sockets, whose
- * descriptors start at 1024 (PRESA_BASE, 64 of them). Until then it was one
+ * descriptors start at 1024 (PRESA_BASE, 1024 of them since 26 October:
+ * FD_SETSIZE went from 1088 to 2048). Until then it was one
  * 32-bit word, which named neither. select() reads and writes only the words
  * below nfds, so a program built with the old one-word fd_set (nfds <= 32)
  * still works with the new libc.so. Definition repeated in lib/include/libc.h. */
-#define FD_SETSIZE  1088
+#define FD_SETSIZE  2048
 typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
 #define FD_ZERO(s)      ((void)__builtin_memset((s), 0, sizeof(fd_set)))
 #define FD_SET(f, s)    ((s)->bit[(unsigned int)(f) / 32u] |=  (1u << ((unsigned int)(f) % 32u)))
@@ -4840,12 +4841,18 @@ int open(const char *path, int flags, ...)
  * MOZ_CRASH (page fault at 0). Descriptors 2048..3071: nothing else lives
  * there. */
 #define SHMFD_MAX       1024
+/* And epoll sets from EPFD_BASE up (26 October 2026): an epoll_create gives
+ * one, ip.drv keeps the set (see epoll_create1). */
+#define EPFD_BASE       (SHMFD_BASE + SHMFD_MAX)
+#define EPFD_MAX        64
 #ifdef EXOS_LIBC_SO
 #define E_PRESA(fd)     0               /* nella libc.so i socket non ci sono */
 #define E_SHMFD(fd)     0
+#define E_EPFD(fd)      0
 #else
 #define E_PRESA(fd)     ((fd) >= PRESA_BASE && (fd) < SHMFD_BASE)
 #define E_SHMFD(fd)     ((fd) >= SHMFD_BASE && (fd) < SHMFD_BASE + SHMFD_MAX)
+#define E_EPFD(fd)      ((fd) >= EPFD_BASE && (fd) < EPFD_BASE + EPFD_MAX)
 /* ! THROUGH POINTERS THAT ONLY shm_open FILLS, and not direct calls. close,
  * fstat, mmap and munmap are in every program; naming the shm functions from
  * them made the linker pull the whole of shm into every program that closes
@@ -4863,7 +4870,9 @@ static int  g_shmfd[SHMFD_MAX];        /* vedi shm_open: zona+1, 0 = libero */
 static int     presa_chiudi(int fd);
 static int     presa_fcntl(int fd, int cmd, unsigned int arg);
 static int     presa_ioctl(int fd, unsigned int req, void *arg);
+static int     epoll_chiudi(int fd);
 #else
+#define epoll_chiudi(fd)            (-1)
 #define presa_chiudi(fd)            (-1)
 #define presa_fcntl(fd, cmd, arg)   (-1)
 #define presa_ioctl(fd, req, arg)   (-1)
@@ -4875,6 +4884,7 @@ ssize_t        recv(int fd, void *buf, size_t n, int flag);
 int close(int fd)
 {
     if (E_PRESA(fd)) return presa_chiudi(fd);
+    if (E_EPFD(fd))  return epoll_chiudi(fd);
 #ifndef EXOS_LIBC_SO
     if (E_SHMFD(fd) && g_shm_chiudi) return g_shm_chiudi(fd);
 #endif
@@ -9564,7 +9574,7 @@ int poll(struct pollfd *fds, unsigned int nfds, int timeout)
  * perduto, e la seconda si scopre mesi dopo. Nel kernel c'e' solo poll();
  * questa traduce le maschere di bit e richiama quella.
  *
- * ! THE MASKS REACH FD_SETSIZE (1088): files and sockets (poll_misto sorts
+ * ! THE MASKS REACH FD_SETSIZE (2048): files and sockets (poll_misto sorts
  * them out). The IPC mailbox (FD_IPC) cannot be named here: whoever must wait
  * for messages too uses poll(), which is also why this is the old form.
  * Only the words below nfds are read and written: see fd_set.
@@ -12030,29 +12040,82 @@ char *strerror(int err)
         case 3:   return "processo inesistente";
         case 4:   return "interrotto";
         case 5:   return "errore di I/O";
+        case 6:   return "dispositivo o indirizzo inesistente";
         case 7:   return "riga di comando troppo lunga";
+        case 8:   return "formato eseguibile non valido";
         case 9:   return "descrittore non valido";
         case 10:  return "nessun figlio";
+        case 11:  return "risorsa temporaneamente non disponibile";
         case 12:  return "memoria esaurita";
         case 13:  return "accesso negato";
         case 14:  return "indirizzo non valido";
         case 16:  return "risorsa occupata";
         case 17:  return "esiste gia'";
+        case 18:  return "collegamento fra dispositivi diversi";
         case 19:  return "dispositivo assente";
         case 20:  return "non e' una directory";
         case 21:  return "e' una directory";
         case 22:  return "argomento non valido";
+        case 23:  return "troppi file aperti nel sistema";
         case 24:  return "troppi file aperti";
         case 25:  return "non e' un terminale";
+        case 26:  return "file eseguibile in uso";
         case 27:  return "file troppo grande";
         case 28:  return "spazio esaurito";
         case 29:  return "posizionamento non consentito";
         case 30:  return "filesystem in sola lettura";
+        case 31:  return "troppi collegamenti";
         case 32:  return "pipe interrotta";
+        case 33:  return "argomento fuori dominio";
+        case 34:  return "risultato fuori intervallo";
+        case 35:  return "stallo evitato";
+        case 36:  return "nome troppo lungo";
+        case 37:  return "nessun lucchetto disponibile";
         case 38:  return "funzione non implementata";
         case 39:  return "directory non vuota";
+        case 40:  return "troppi collegamenti simbolici";
+        case 42:  return "nessun messaggio del tipo voluto";
+        case 43:  return "identificativo rimosso";
+        case 60:  return "non e' un flusso";
+        case 61:  return "nessun dato disponibile";
+        case 62:  return "tempo scaduto";
+        case 63:  return "risorse di flusso esaurite";
+        case 67:  return "collegamento interrotto";
+        case 71:  return "errore di protocollo";
+        case 72:  return "tentativo multihop";
+        case 74:  return "messaggio non valido";
+        case 75:  return "valore troppo grande per il tipo";
+        case 84:  return "sequenza di byte non valida";
+        case 88:  return "non e' un socket";
+        case 89:  return "manca l'indirizzo di destinazione";
+        case 90:  return "messaggio troppo lungo";
+        case 91:  return "protocollo sbagliato per il socket";
+        case 92:  return "protocollo non disponibile";
+        case 93:  return "protocollo non supportato";
+        case 95:  return "operazione non supportata";
+        case 96:  return "famiglia di protocolli non supportata";
+        case 97:  return "famiglia di indirizzi non supportata";
+        case 98:  return "indirizzo gia' in uso";
+        case 99:  return "indirizzo non disponibile";
+        case 100: return "rete spenta";
+        case 101: return "rete irraggiungibile";
+        case 102: return "connessione interrotta dalla rete";
+        case 103: return "connessione abbandonata";
+        case 104: return "connessione chiusa dall'altra parte";
+        case 105: return "spazio dei buffer esaurito";
+        case 106: return "socket gia' connesso";
+        case 107: return "socket non connesso";
+        case 109: return "troppi riferimenti";
         case 110: return "attesa scaduta";
+        case 111: return "connessione rifiutata";
+        case 112: return "host spento";
+        case 113: return "host irraggiungibile";
+        case 114: return "operazione gia' in corso";
+        case 115: return "operazione in corso";
         case 123: return "nessun disco nel lettore";
+        case 125: return "operazione annullata";
+        case 130: return "il proprietario e' morto";
+        case 131: return "stato non recuperabile";
         default:  return "errore";
     }
 }
@@ -12685,7 +12748,7 @@ int getrlimit(int risorsa, struct rlimit *r)
     if (!r) { errno = EFAULT; return -1; }
     switch (risorsa) {
     case 3:  r->rlim_cur = r->rlim_max = 8ul * 1024 * 1024; return 0;   /* RLIMIT_STACK: USER_STACK_MAX (0.229) */
-    case 7:  r->rlim_cur = r->rlim_max = 128ul;    return 0;   /* RLIMIT_NOFILE: MAX_FD (kernel 0.232; it said 32 until 25/10/2026) */
+    case 7:  r->rlim_cur = r->rlim_max = 4096ul;   return 0;   /* RLIMIT_NOFILE: every descriptor number there is (files below MAX_FD 128, sockets 1024-2047, shm, epoll; 26/10/2026: it said 128, and MariaDB cut max_connections to fit) */
     case 0: case 1: case 2: case 4: case 5: case 6: case 8: case 9:
         r->rlim_cur = r->rlim_max = ~0ul;                      /* RLIM_INFINITY */
         return 0;
@@ -13786,7 +13849,10 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
  * assegna le connessioni al PROGRAMMA (ip.drv 0.005), quindi un filo apre e un
  * altro legge.
  * ============================================================================= */
-#define PRESE_MAX       64
+/* ! 1024 AND NOT 64 (26 October 2026): a server with a thousand clients (the
+ * MariaDB stress test). That is all the room between PRESA_BASE and
+ * SHMFD_BASE. ~140 bytes each, in the BSS of the programs that use sockets. */
+#define PRESE_MAX       (SHMFD_BASE - PRESA_BASE)
 
 #define S_AF_INET       2
 #define S_SOCK_STREAM   1
@@ -13841,9 +13907,25 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
 #define P_IP_MSG_TCP_INVIA  10
 #define P_IP_MSG_TCP_RICEVI 11
 #define P_IP_MSG_TCP_CHIUDI 12
+#define P_IP_MSG_TCP_SPEGNI 24
 #define P_IP_MSG_TCP_STATO  13
 #define P_IP_MSG_TCP_ASCOLTA 14
 #define P_IP_MSG_TCP_ACCETTA 15
+#define P_IP_MSG_TCP_ASPETTA 18
+#define P_IP_MSG_INS_CREA   19
+#define P_IP_MSG_INS_CTL    20
+#define P_IP_MSG_INS_ATTENDI 21
+#define P_IP_MSG_INS_CHIUDI 23
+#define P_IP_MSG_TCP_PRONTE 136
+#define P_IP_MSG_INS_EVENTI 137
+#define P_EV_IN            0x001u
+#define P_EV_OUT           0x004u
+#define P_EV_ERR           0x008u
+#define P_EV_HUP           0x010u
+#define P_INS_FORZA        0x100u
+#define P_ASPETTA_MAX      64
+#define P_ASPETTA_SUBITO   0xFFFFFFFFu
+#define P_INS_EVENTI_MAX   120
 #define P_IP_MSG_ESITO     128
 #define P_IP_MSG_STATO_R   129
 #define P_IP_MSG_UDP_DATI  132
@@ -13861,7 +13943,17 @@ typedef struct {
     unsigned int  id, stato, in_coda_rx, in_coda_tx;
     unsigned char ip[4];
     unsigned int  porta, porta_loc;
+    unsigned int  conta_in_attesa;   /* ip.drv 0.015+: see IpTcpInfo */
 } PTcpInfo;
+typedef struct { unsigned int id, eventi; } PTcpVoce;
+typedef struct {
+    unsigned int timeout_ms, n;
+    PTcpVoce     voce[P_ASPETTA_MAX];
+} PTcpAspetta;
+typedef struct { unsigned int ins, op, id, eventi, dati[2]; } PInsCtl;
+typedef struct { unsigned int ins, max, timeout_ms; } PInsAttendi;
+typedef struct { unsigned int eventi, dati[2]; } PInsEvento;
+typedef struct { unsigned int n; PInsEvento ev[P_INS_EVENTI_MAX]; } PInsEventi;
 typedef struct { unsigned int porta; } PUdpApri;
 typedef struct { unsigned char ip[4]; unsigned int porta, porta_locale; } PUdpInvia;
 typedef struct { unsigned char ip[4]; unsigned int porta, porta_locale, len; } PUdpDati;
@@ -14037,6 +14129,63 @@ static int tcp_info(Presa *p, PTcpInfo *info)
 }
 
 static int presa_errore(int e) { errno = e < 0 ? -e : e; return -1; }
+
+/* ! WAITING FOR A SOCKET IS DONE BY THE STACK (ip.drv 0.016, 26 October
+ * 2026): IP_MSG_TCP_ASPETTA sleeps in ip.drv until one of the connections
+ * is ready, or `ms` passes (0 = no timeout, P_ASPETTA_SUBITO = answer now).
+ * Until then poll(), and recv/send with a timeout, asked the state of every
+ * socket every 10 ms: a thread waiting for a reply cost 100 questions per
+ * second, and it heard the reply up to 10 ms late (the MariaDB stress test:
+ * a median of 10 ms per statement). ev[i] gets the IP_EV_* of p[i], 0 if not
+ * ready. Returns how many are ready, or -errno: -EAGAIN when the stack has no
+ * room for another wait, -EINVAL from a stack before 0.016 (g_aspetta_no). */
+static int g_aspetta_no = 0;
+
+static int tcp_aspetta(Presa *const *p, const unsigned int *voluti,
+                       unsigned int *ev, unsigned int n, unsigned int ms)
+{
+    PTcpAspetta  a, r;
+    unsigned int i, j, t = 0;
+    int          k, pronti = 0;
+
+    if (g_aspetta_no) return -EINVAL;
+    if (n > P_ASPETTA_MAX) n = P_ASPETTA_MAX;
+    a.timeout_ms = ms;
+    a.n          = n;
+    for (i = 0; i < n; i++) {
+        a.voce[i].id     = p[i]->id;
+        a.voce[i].eventi = voluti[i];
+        ev[i]            = 0;
+    }
+    k = ip_chiedi(P_IP_MSG_TCP_ASPETTA, &a, 2u * sizeof(unsigned int) + n * sizeof(PTcpVoce),
+                  P_IP_MSG_TCP_PRONTE, &r, sizeof(r), &t);
+    if (k < 0) return k;
+    if (t == P_IP_MSG_ESITO) {
+        int codice = -EIO;
+
+        memcpy(&codice, &r, sizeof(codice));
+        if (codice == -EINVAL) g_aspetta_no = 1;
+        return codice < 0 ? codice : -EIO;
+    }
+    if (k < (int)(2u * sizeof(unsigned int))) return -EIO;
+    for (j = 0; j < r.n && j < P_ASPETTA_MAX; j++)
+        for (i = 0; i < n; i++)
+            if (a.voce[i].id == r.voce[j].id && ev[i] == 0) {
+                ev[i] = r.voce[j].eventi;
+                pronti++;
+                break;
+            }
+    return pronti;
+}
+
+/* One socket: the events, 0 when `ms` passed, -errno. */
+static int tcp_aspetta_una(Presa *p, unsigned int voluti, unsigned int ms)
+{
+    unsigned int ev = 0;
+    int          r = tcp_aspetta(&p, &voluti, &ev, 1, ms);
+
+    return r < 0 ? r : (int)ev;
+}
 
 /* --- creare e legare ---------------------------------------------------------- */
 int socket(int dominio, int tipo, int protocollo)
@@ -14280,7 +14429,9 @@ static ssize_t tcp_manda(Presa *p, const unsigned char *buf, size_t n, int flag)
                 return fatti ? (ssize_t)fatti : presa_errore(E_PIPE);
             if (p->snd_ms && uptime_ms() - inizio >= p->snd_ms)
                 return fatti ? (ssize_t)fatti : presa_errore(EAGAIN);
-            dormi_ms(10);
+            /* until there is room again (or the end), not 10 ms at a time */
+            if (tcp_aspetta_una(p, P_EV_OUT, p->snd_ms ? p->snd_ms - (uptime_ms() - inizio) : 0) < 0)
+                dormi_ms(10);
             continue;
         }
         fatti += (size_t)r;
@@ -14418,10 +14569,13 @@ static ssize_t tcp_prendi(Presa *p, unsigned char *buf, size_t n, int flag)
             r = tcp_info(p, &info);
             if (r < 0) return fatti ? (ssize_t)fatti : presa_errore(r);
             if (info.in_coda_rx == 0 && info.stato == P_TCP_APERTA) {
+                unsigned int passati = uptime_ms() - inizio;
+
                 if (fatti) return (ssize_t)fatti;
                 if (nb) return presa_errore(EAGAIN);
-                if (uptime_ms() - inizio >= p->rcv_ms) return presa_errore(EAGAIN);
-                dormi_ms(10);
+                if (passati >= p->rcv_ms) return presa_errore(EAGAIN);
+                /* until something comes, or the timeout (see tcp_aspetta) */
+                if (tcp_aspetta_una(p, P_EV_IN, p->rcv_ms - passati) < 0) dormi_ms(10);
                 continue;
             }
         }
@@ -14649,11 +14803,17 @@ int shutdown(int fd, int come)
     /* ! SOLO SHUT_RDWR CHIUDE NELLO STACK: la sua chiusura butta anche cio' che
      * deve ancora arrivare, e un «ho finito di scrivere» non deve perdere la
      * risposta. Vedi libc.h. */
+    /* ! SPEGNI, NOT CHIUDI (ip.drv 0.016): the connection stays in its epoll
+     * set and reports the end once, as on Linux. MariaDB's pool of threads
+     * shuts its connections down at shutdown and waits for that event; with
+     * CHIUDI they left the set and the server never finished. An older
+     * ip.drv does not know SPEGNI (-EINVAL): CHIUDI as before. */
     if (come == 2 && p->tipo == S_SOCK_STREAM && p->id) {
         PTcpRif r;
 
         r.id = p->id;
-        ip_esito(P_IP_MSG_TCP_CHIUDI, &r, sizeof(r));
+        if (ip_esito(P_IP_MSG_TCP_SPEGNI, &r, sizeof(r)) == -EINVAL)
+            ip_esito(P_IP_MSG_TCP_CHIUDI, &r, sizeof(r));
         p->fine = 1;
     }
     return 0;
@@ -14816,10 +14976,18 @@ static short presa_pronta(Presa *p, short voluti)
     }
 
     if (p->ascolta) {
-        /* Un ascoltatore e' «leggibile» quando c'e' qualcuno da accettare: lo si
-         * saprebbe solo accettando, e allora lo si dice pronto e accept(), non
-         * bloccante, rende EAGAIN se non era vero. */
-        return (short)(voluti & S_POLLIN);
+        /* Un ascoltatore e' «leggibile» quando c'e' qualcuno da accettare.
+         * ! FROM ip.drv 0.015 THE STACK SAYS HOW MANY wait, without taking
+         * one (26 October 2026). Before, a listener was always "ready" and
+         * accept(), non-blocking, said EAGAIN if it was not true: mariadbd,
+         * whose listener is non-blocking, went round poll/accept/EAGAIN
+         * without a pause, one IP_MSG_TCP_ACCETTA after another, and filled
+         * ip.drv's mailbox while its clients waited (the MariaDB stress
+         * test). With an older stack (conta_in_attesa 0) it stays as it was. */
+        if (!(voluti & S_POLLIN)) return 0;
+        if (tcp_info(p, &info) < 0) return S_POLLERR;
+        if (!info.conta_in_attesa || info.in_coda_rx > 0) return S_POLLIN;
+        return 0;
     }
     if (!p->connesso) return 0;
     if (p->a_pos < p->a_fine || p->fine) r |= S_POLLIN;
@@ -14840,24 +15008,58 @@ static short presa_pronta(Presa *p, short voluti)
  * sappia svegliare chi aspetta. */
 static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout);
 
+/* A TCP socket the stack can wait for (IP_MSG_TCP_ASPETTA). */
+static int presa_aspettabile(const Presa *p)
+{
+    return p->tipo == S_SOCK_STREAM && p->id != 0 && (p->connesso || p->ascolta);
+}
+
+static short da_eventi(unsigned int ev, short voluti)
+{
+    short r = 0;
+
+    if (ev & P_EV_IN)  r |= S_POLLIN;
+    if (ev & P_EV_OUT) r |= S_POLLOUT;
+    if (ev & P_EV_ERR) r |= S_POLLERR;
+    if (ev & P_EV_HUP) r |= S_POLLHUP;
+    return (short)(r & (voluti | S_POLLERR | S_POLLHUP));
+}
+
+/* ! 0.016 OF ip.drv: THE TCP SOCKETS ARE ASKED IN ONE QUESTION, and when
+ * there is nothing else to look at (no kernel descriptor, no UDP socket) the
+ * question is also the wait: the stack answers when one is ready. With
+ * kernel descriptors in the list it is still a round (the kernel 10 ms, then
+ * the stack), one question per round instead of one per socket. */
 static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
 {
     struct pollfd  locali[64];
     unsigned int   mappa[64];
-    unsigned int   nk = 0, i;
+    Presa         *tcp[64];
+    unsigned int   tmappa[64], voluti[64], ev[64];
+    unsigned int   nk = 0, nt = 0, nu = 0, i;
     unsigned int   inizio = uptime_ms();
 
     if (nfds > 64) { errno = EINVAL; return -1; }
-    for (i = 0; i < nfds; i++)
-        if (fds[i].fd < PRESA_BASE) { locali[nk] = fds[i]; mappa[nk] = i; nk++; }
+    for (i = 0; i < nfds; i++) {
+        Presa *p;
+
+        if (fds[i].fd < PRESA_BASE) { locali[nk] = fds[i]; mappa[nk] = i; nk++; continue; }
+        p = presa_di(fds[i].fd);
+        if (p != NULL && presa_aspettabile(p) && !g_aspetta_no) {
+            tcp[nt]    = p;
+            tmappa[nt] = i;
+            voluti[nt] = ((fds[i].events & S_POLLIN) ? P_EV_IN : 0u) |
+                         ((fds[i].events & S_POLLOUT) ? P_EV_OUT : 0u);
+            nt++;
+        } else nu++;
+    }
 
     for (;;) {
-        int pronti = 0, r;
+        int          pronti = 0, r, attesa = 0;
+        unsigned int k;
 
         for (i = 0; i < nfds; i++) fds[i].revents = 0;
         if (nk) {
-            unsigned int k;
-
             r = poll_kernel(locali, nk, 0);
             if (r < 0) return -1;
             for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
@@ -14866,16 +15068,44 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
             if (fds[i].fd >= PRESA_BASE) {
                 Presa *p = presa_di(fds[i].fd);
 
-                fds[i].revents = p ? presa_pronta(p, fds[i].events) : S_POLLNVAL;
+                if (p == NULL) fds[i].revents = S_POLLNVAL;
+                else if (!presa_aspettabile(p) || g_aspetta_no)
+                    fds[i].revents = presa_pronta(p, fds[i].events);
+                /* bytes libc already holds, or the end already seen */
+                else if ((p->a_pos < p->a_fine || p->fine) && (fds[i].events & S_POLLIN))
+                    fds[i].revents = S_POLLIN;
             }
             if (fds[i].revents) pronti++;
+        }
+        if (nt && !g_aspetta_no) {
+            unsigned int ms = P_ASPETTA_SUBITO;
+
+            /* only TCP sockets and nothing ready: the question is the wait */
+            if (nk == 0 && nu == 0 && pronti == 0 && timeout != 0) {
+                unsigned int passati = uptime_ms() - inizio;
+
+                if (timeout < 0) ms = 0;
+                else if (passati < (unsigned int)timeout) ms = (unsigned int)timeout - passati;
+                attesa = ms != P_ASPETTA_SUBITO;
+            }
+            r = tcp_aspetta(tcp, voluti, ev, nt, ms);
+            if (r >= 0) {
+                for (k = 0; k < nt; k++) {
+                    short e = da_eventi(ev[k], fds[tmappa[k]].events);
+
+                    if (e && !fds[tmappa[k]].revents) pronti++;
+                    fds[tmappa[k]].revents |= e;
+                }
+            } else {
+                attesa = 0;
+                if (g_aspetta_no) continue;    /* an older stack: as before */
+            }
         }
         if (pronti) return pronti;
         if (timeout == 0) return 0;
         if (timeout > 0 && uptime_ms() - inizio >= (unsigned int)timeout) return 0;
+        if (attesa) continue;               /* the stack waited already */
         if (nk) {
-            unsigned int k;
-
             r = poll_kernel(locali, nk, 10);
             if (r > 0) {
                 for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
@@ -14883,6 +15113,154 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
             }
         } else dormi_ms(10);
     }
+}
+
+/* =============================================================================
+ * epoll (26 October 2026): the set lives in ip.drv (IP_MSG_INS_*), the
+ * descriptor here is EPFD_BASE + the index of g_ep. Only TCP sockets go in
+ * a set: a file, a pipe or the IPC mailbox give EPERM, as a regular file does
+ * on Linux. That is what MariaDB's thread pool needs (sockets with EPOLLIN |
+ * EPOLLET | EPOLLONESHOT) and what nginx-like servers do with their sockets.
+ *
+ * ! THE BYTES LIBC ALREADY HOLDS: recv takes a whole delivery of the stack
+ * and keeps what it did not hand out (Presa.avanzo). The stack does not know
+ * about them, so an EPOLL_CTL_ADD/MOD of a socket with some says so
+ * (IP_INS_FORZA): the set reports it ready once. Without it MariaDB, which
+ * re-arms after each statement, would wait forever on bytes it already has.
+ * ============================================================================= */
+static unsigned int g_ep[EPFD_MAX];        /* the set id in ip.drv, 0 = free */
+
+static unsigned int ep_di(int epfd)
+{
+    int i = epfd - EPFD_BASE;
+
+    if (i < 0 || i >= EPFD_MAX) return 0;
+    return g_ep[i];
+}
+
+int epoll_create1(int flag)
+{
+    int r, i;
+
+    (void)flag;                             /* EPOLL_CLOEXEC: exec keeps nothing of ours */
+    r = ip_esito(P_IP_MSG_INS_CREA, NULL, 0);
+    if (r <= 0) return presa_errore(r < 0 ? (r == -EINVAL ? -ENOSYS : r) : -EIO);
+    mutex_prendi(&g_prese_m);
+    for (i = 0; i < EPFD_MAX; i++)
+        if (g_ep[i] == 0) { g_ep[i] = (unsigned int)r; break; }
+    mutex_lascia(&g_prese_m);
+    if (i == EPFD_MAX) {
+        unsigned int ins = (unsigned int)r;
+
+        ip_esito(P_IP_MSG_INS_CHIUDI, &ins, sizeof(ins));
+        return presa_errore(EMFILE);
+    }
+    return EPFD_BASE + i;
+}
+
+int epoll_create(int n)
+{
+    if (n <= 0) return presa_errore(EINVAL);
+    return epoll_create1(0);
+}
+
+int epoll_ctl(int epfd, int op, int fd, void *evento)
+{
+    unsigned int ins = ep_di(epfd);
+    Presa       *p;
+    PInsCtl      q;
+    int          r;
+
+    if (ins == 0) return presa_errore(EBADF);
+    if (fd == epfd) return presa_errore(EINVAL);
+    p = presa_di(fd);
+    if (p == NULL) {
+        if (fd >= 0 && fd < PRESA_BASE) return presa_errore(EPERM);
+        return presa_errore(EBADF);
+    }
+    if (!presa_aspettabile(p)) return presa_errore(EPERM);
+    if (op < 1 || op > 3) return presa_errore(EINVAL);
+    if (op != 2 && evento == NULL) return presa_errore(EFAULT);
+
+    memset(&q, 0, sizeof(q));
+    q.ins = ins;
+    q.op  = (unsigned int)op;               /* EPOLL_CTL_ADD 1, DEL 2, MOD 3 */
+    q.id  = p->id;
+    if (op != 2) {
+        /* struct epoll_event is packed on x86_64: 4 + 8 bytes, as on i386 */
+        memcpy(&q.eventi, evento, 4);
+        memcpy(q.dati, (const unsigned char *)evento + 4, 8);
+        if (p->a_pos < p->a_fine || p->fine) q.op |= P_INS_FORZA;
+    }
+    r = ip_esito(P_IP_MSG_INS_CTL, &q, sizeof(q));
+    if (r < 0) return presa_errore(r);
+    return 0;
+}
+
+int epoll_wait(int epfd, void *eventi, int max, int timeout)
+{
+    unsigned int ins = ep_di(epfd);
+    unsigned int inizio = uptime_ms();
+    PInsAttendi  q;
+    PInsEventi   r;
+    unsigned int t = 0, i;
+    int          n;
+
+    if (ins == 0) return presa_errore(EBADF);
+    if (max <= 0 || eventi == NULL) return presa_errore(EINVAL);
+    for (;;) {
+        q.ins = ins;
+        q.max = (unsigned int)max > P_INS_EVENTI_MAX ? P_INS_EVENTI_MAX : (unsigned int)max;
+        if (timeout < 0) q.timeout_ms = 0;
+        else if (timeout == 0) q.timeout_ms = P_ASPETTA_SUBITO;
+        else {
+            unsigned int passati = uptime_ms() - inizio;
+
+            q.timeout_ms = passati < (unsigned int)timeout ? (unsigned int)timeout - passati
+                                                           : P_ASPETTA_SUBITO;
+        }
+        n = ip_chiedi(P_IP_MSG_INS_ATTENDI, &q, sizeof(q), P_IP_MSG_INS_EVENTI,
+                      &r, sizeof(r), &t);
+        if (n < 0) return presa_errore(n);
+        if (t == P_IP_MSG_ESITO) {
+            int codice = -EIO;
+
+            memcpy(&codice, &r, sizeof(codice));
+            /* another thread waits on this set: take turns, 10 ms */
+            if (codice == -EBUSY && (timeout < 0 || uptime_ms() - inizio < (unsigned int)timeout)) {
+                dormi_ms(10);
+                continue;
+            }
+            return codice == -EBUSY ? 0 : presa_errore(codice < 0 ? codice : -EIO);
+        }
+        break;
+    }
+    if (r.n > P_INS_EVENTI_MAX) r.n = P_INS_EVENTI_MAX;
+    for (i = 0; i < r.n; i++) {
+        unsigned char *e = (unsigned char *)eventi + i * 12u;
+
+        memcpy(e, &r.ev[i].eventi, 4);
+        memcpy(e + 4, r.ev[i].dati, 8);
+    }
+    return (int)r.n;
+}
+
+int epoll_pwait(int epfd, void *eventi, int max, int timeout, const void *maschera)
+{
+    (void)maschera;
+    return epoll_wait(epfd, eventi, max, timeout);
+}
+
+static int epoll_chiudi(int fd)
+{
+    unsigned int ins = ep_di(fd);
+
+    if (ins == 0) return presa_errore(EBADF);
+    ip_esito(P_IP_MSG_INS_CHIUDI, &ins, sizeof(ins));
+    mutex_prendi(&g_prese_m);
+    g_ep[fd - EPFD_BASE] = 0;
+    mutex_lascia(&g_prese_m);
+    return 0;
 }
 
 /* --- indirizzi in testo -------------------------------------------------------------- */

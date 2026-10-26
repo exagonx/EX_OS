@@ -6716,7 +6716,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	done; \
 	if [ -n "$$R" ]; then \
 	    cp "$$R"/i386-exos/lib/crt0.o "$$R"/i386-exos/lib/libc.a $(ISO_ROOT)/exos/lib/ 2>/dev/null || true; \
-	    for f in libm.a; do \
+	    for f in libm.a libpthread.a libdl.a librt.a; do \
 	        [ -f "$$R/i386-exos/lib/$$f" ] && cp "$$R/i386-exos/lib/$$f" $(ISO_ROOT)/exos/lib/; \
 	    done; \
 	    for f in libgcc.a crti.o crtn.o crtbegin.o crtend.o; do \

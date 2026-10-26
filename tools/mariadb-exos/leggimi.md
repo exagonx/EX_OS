@@ -119,13 +119,18 @@ BSD, `poll`, `fcntl`, `flock`, `fsync`, `pread`/`pwrite` veri (kernel
    server e un client TLS nello stesso programma (`tools/prova_openssl.sh`).
    Resta: una porta chiusa non risponde RST, il client aspetta la scadenza.
 4. **I limiti, che decidono quanto server si puo' fare:**
-   - **24 connessioni TCP in tutto il sistema** (`IP_TCP_CONNESSIONI`,
-     `drivers/net/ip_proto.h`), 64 socket per processo (`PRESE_MAX`);
+   - **4096 connessioni TCP in tutto il sistema** (`IP_TCP_CONNESSIONI`,
+     `drivers/net/ip_proto.h`; erano 24 fino a ip.drv 0.015), 1024 socket
+     per processo (`PRESE_MAX`; erano 64);
    - 128 descrittori per processo (`MAX_FD`): tabelle aperte, file di
      InnoDB e connessioni li condividono (`open_files_limit`,
      `table_open_cache` piccoli);
-   - 192 processi o fili in tutto (`MAX_PROCESSES`): MariaDB ha una ventina
-     di fili suoi piu' uno per connessione;
+   - 192 processi o fili in tutto (`MAX_PROCESSES`) e 128 KB di pila del
+     kernel per ciascuno nella fascia di 64 MB del kernel: un filo per
+     connessione si ferma molto prima di 1024. **FATTO 26/10:** il gruppo di
+     fili (`thread_handling=pool-of-threads`) con `epoll` (libc e ip.drv
+     0.016, `patch/server-threadpool-epoll.diff`): poche decine di fili
+     servono tutte le connessioni;
    - lo spazio di un programma finisce a 3 GB anche a 64 bit: va bene,
      il `innodb_buffer_pool_size` si tiene sotto.
 5. **`select` con i socket. FATTO 25/10:** `fd_set` arriva a 1088
@@ -185,6 +190,31 @@ BSD, `poll`, `fcntl`, `flock`, `fsync`, `pread`/`pwrite` veri (kernel
 
 Prova: `tools/prova_mariadb_svc.sh` (32 bit, disco installato da
 `tools/mkhd.sh` senza scheda di rete).
+Da netinst, come lo prende un utente: `tools/prova_mariadb_netinst.sh`
+(`netupdate -install:mariadb`, `mariadb-svc -install` per nome, riavvio).
+
+## I connettori (26/10)
+
+La libreria client **non** sta piu' nel gruppo `[mariadb]`: la copia di
+Connector/C dentro l'albero del server e quella di
+`tools/mariadb-connector-c-exos` finirebbero tutte e due in `/exos/lib` e
+nelle sysroot, e vincerebbe l'ultima costruita. Il gruppo
+`[mariadb-connector]` (l'utente: il server completo dei connettori, oppure
+solo i connettori) porta:
+
+- `tools/mariadb-connector-c-exos`: Connector/C 3.4.11, `libmariadbclient.a`
+  (e `libmariadb.a`, che `mariadb_config` nomina), gli header in
+  `include/mariadb` e `include/mysql`, `mariadb_config`; poi `mariadb.bi`
+  per FreeBASIC e il crate Rust `mariadb` in `lib/rust/mariadb`;
+- `tools/mariadb-connector-cpp-exos`: Connector/C++ 1.1.9, `libmariadbcpp.a`
+  sopra il Connector/C di sistema (l'archivio dei sorgenti ha `libmariadb/`
+  vuota), solo la statica; due `#include` mancanti aggiunti dallo script.
+
+`[mariadb]` vuole `[mariadb-connector]`, che vuole `[ssl]`, `[zlib]`, `[zstd]` e
+`[cpp]` (quattro righe `vuole`: netupdate le legge tutte, toolinst dalla 0.004).
+Prova: `tools/prova_mariadb.sh`
+compila `tools/prove/connprova.c`, `.cpp`, `.bas` e
+`tools/rust-exos/prova-mariadb` e li fa parlare col server dentro EX-OS.
 
 ## Tappe
 

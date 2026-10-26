@@ -24,8 +24,10 @@
 #                                  the system tables and bootstrap.sql
 #                  bin/            the clients (mariadb, mariadb-admin,
 #                                  mariadb-dump...) and mariadb-svc
-#                  lib/ include/   libmariadbclient.a and <mysql/*.h>,
-#                                  also copied into the cross sysroots
+#                  (no lib/ include/: libmariadbclient.a and <mysql/*.h>
+#                                  are the [mariadb-connector] group's,
+#                                  tools/mariadb-connector-c-exos, Connector/C
+#                                  on its own; [mariadb] wants that group)
 #                  src/mariadb/    the archive, its signature, this
 #                                  directory (script, patches, mariadb-svc.c)
 #
@@ -175,9 +177,12 @@ tappa_configura() {
     # static executables, and DISABLE_SHARED leaves out libmariadb.so and the
     # other shared libraries; the client plugins of libmariadb that would be
     # .so modules go into the library (CLIENT_PLUGIN_*=STATIC). GROFF/NROFF:
-    # the dbug manual is not wanted. DISABLE_THREADPOOL: the pool of threads
-    # wants epoll on "Linux", which EX-OS does not have; one thread per
-    # connection is what is left (the default of MariaDB anyway). FEEDBACK
+    # the dbug manual is not wanted. The pool of threads (thread_handling =
+    # pool-of-threads) is built since 26 October 2026: it wants epoll, which
+    # EX-OS has since ip.drv 0.016 (patch/server-threadpool-epoll.diff makes
+    # it take the Linux branch); with it a thousand connections are served by
+    # a few dozen threads, where one thread per connection would need a
+    # thousand kernel stacks of 128 KB in the 64 MB kernel band. FEEDBACK
     # would send statistics to mariadb.org and reads /etc/*-release with glob.
     # HAVE_LINK_H empty: with <link.h> the server reads a dlopen handle as
     # glibc's struct link_map, which an EX-OS handle is not.
@@ -191,7 +196,7 @@ tappa_configura() {
         $SPENTI -DWITH_SSL=system -DWITH_ZLIB=system -DWITH_PCRE=system \
         -DWITH_LIBFMT=system -DHAVE_SYSTEM_LIBFMT_EXITCODE=0 \
         -DWITH_READLINE=ON -DSECURITY_HARDENED=OFF -DDISABLE_SHARED=ON \
-        -DDISABLE_THREADPOOL=ON -DPLUGIN_FEEDBACK=NO \
+        -DPLUGIN_FEEDBACK=NO \
         -DHAVE_LINK_H= -DHAVE_SYS_UN_H= \
         -DGROFF=GROFF-NOTFOUND -DNROFF=NROFF-NOTFOUND \
         -DCLIENT_PLUGIN_DIALOG=STATIC -DCLIENT_PLUGIN_CLIENT_ED25519=STATIC \
@@ -232,7 +237,7 @@ tappa_installa() {
         { tail -20 "$B/installa.log"; exit 1; }
     M=$I/exos/mariadb
     D=$OUT/exos
-    mkdir -p "$D/mariadb/bin" "$D/mariadb/share" "$D/bin" "$D/lib" "$D/include" "$D/src/mariadb"
+    mkdir -p "$D/mariadb/bin" "$D/mariadb/share" "$D/bin" "$D/src/mariadb"
     for p in "$M"/bin/*; do
         n=$(basename "$p")
         [ -L "$p" ] && continue                         # mysql* -> mariadb*
@@ -264,9 +269,10 @@ tappa_installa() {
         done
     } | sed -e '/@current_hostname/d' > "$D/mariadb/share/bootstrap.sql"
     cp -p "$SRC/COPYING" "$SRC/README.md" "$SRC/THIRDPARTY" "$D/mariadb/"
-    # the client library: C programs talk to the server with -lmariadbclient
-    cp -p "$M/lib/libmariadbclient.a" "$D/lib/"
-    cp -rp "$M/include/mysql" "$D/include/"
+    # ! NOT THE CLIENT LIBRARY: the server's copy of Connector/C is the one
+    # inside its tree, and two libmariadbclient.a in /exos/lib and in the
+    # sysroots (this one and tools/mariadb-connector-c-exos) would overwrite
+    # each other by build order. C programs get it from [mariadb-connector].
     # the service (libcrypto: the TLS certificate it makes at -install)
     $T-gcc $MARCH -O2 -Wall -static -o "$D/bin/mariadb-svc" "$R/tools/mariadb-exos/mariadb-svc.c" \
         -lcrypto -lpthread > "$B/mariadb-svc.log" 2>&1 || { cat "$B/mariadb-svc.log"; exit 1; }
@@ -274,11 +280,6 @@ tappa_installa() {
     # the sources: the archive and everything this directory adds to it
     cp -p "$ARCHIVIO" "$ARCHIVIO".asc "$D/src/mariadb/"
     cp -rp "$R/tools/mariadb-exos/." "$D/src/mariadb/"
-    for S in "$CROSS/$T" "$ALTRO/$T"; do
-        [ -d "$S/lib" ] || continue
-        cp -p "$D/lib/libmariadbclient.a" "$S/lib/"
-        cp -rp "$D/include/mysql" "$S/include/"
-    done
     echo "    $(du -sh "$D" | cut -f1)  $(ls "$D/bin" | tr '\n' ' ')"
 }
 

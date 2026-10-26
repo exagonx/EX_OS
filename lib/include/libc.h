@@ -3703,11 +3703,12 @@ int     poll(struct pollfd *fds, unsigned int nfds, int timeout);
 
 /* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
  * openssl program's s_client): the files (MAX_FD, 128) and the sockets, whose
- * descriptors start at 1024 (PRESA_BASE, 64 of them). Until then it was one
+ * descriptors start at 1024 (PRESA_BASE, 1024 of them since 26 October:
+ * FD_SETSIZE went from 1088 to 2048). Until then it was one
  * 32-bit word, which named neither. select() reads and writes only the words
  * below nfds, so a program built with the old one-word fd_set (nfds <= 32)
  * still works with the new libc.so. Definition repeated in lib/libc.c. */
-#define FD_SETSIZE  1088
+#define FD_SETSIZE  2048
 typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
 #define FD_ZERO(s)      ((void)__builtin_memset((s), 0, sizeof(fd_set)))
 #define FD_SET(f, s)    ((s)->bit[(unsigned int)(f) / 32u] |=  (1u << ((unsigned int)(f) % 32u)))

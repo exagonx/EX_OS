@@ -36,8 +36,8 @@
  * ============================================================================= */
 
 /* Consegna un messaggio a dest_pid. Se la mailbox del destinatario è
- * piena, blocca il chiamante finché non si libera spazio (o il
- * destinatario termina, nel qual caso ritorna errore).
+ * piena, il chiamante si mette in fila e dorme finché non gli tocca un
+ * posto (al massimo 10 s, poi EBUSY), o il destinatario termina (ESRCH).
  * Ritorna 0 su successo, <0 su errore (ESRCH se dest_pid non esiste). */
 int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
                   const void *data, uint32_t len);
@@ -67,6 +67,12 @@ int32_t ipc_lookup(const char *name);
  * nome se presente, sblocca eventuali mittenti in attesa verso di lui
  * segnalando errore). Chiamata da proc_reap_zombie(). */
 void    ipc_cleanup_process(uint32_t pid);
+
+/* A process is ending (it becomes a zombie): it leaves the line it stands
+ * in, and whoever waits in front of its own mailbox is woken and gets
+ * ESRCH. Safe to call more than once. */
+struct Process;
+void    ipc_processo_finito(struct Process *p);
 
 /* Consegna una notifica di IRQ hardware alla mailbox di dest_pid.
  * Interrupt-safe: chiamabile SOLO da dentro il dispatcher IRQ (isr.c),

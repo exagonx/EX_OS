@@ -23,8 +23,90 @@
 #include "sched.h"
 #include "syscall.h"
 
-#define IPC_SEND_RETRY_MS   5    /* intervallo di poll quando la mailbox dest è piena */
-#define IPC_SEND_MAX_RETRY  2000 /* ~10s totali prima di arrendersi (ETIMEDOUT-like) */
+/* How long a sender waits in line for room before giving up with EBUSY:
+ * the ten seconds of the old 2000 x 5 ms retries. */
+#define IPC_SEND_ATTESA_TICK  1000
+
+/* IF saved and cleared, then restored: ipc_processo_finito is called from
+ * paths that already run with interrupts off and from paths that do not. */
+static inline unsigned long if_salva(void)
+{
+    unsigned long f;
+    __asm__ volatile("pushf; pop %0; cli" : "=r"(f) : : "memory");
+    return f;
+}
+
+static inline void if_ripristina(unsigned long f)
+{
+    if (f & 0x200) __asm__ volatile("sti" : : : "memory");
+}
+
+/* =============================================================================
+ * THE LINE IN FRONT OF A FULL MAILBOX (kernel 0.280)
+ *
+ * Every helper here runs with interrupts disabled. The IRQ path
+ * (ipc_notify_irq) never touches the line: it may take a free slot that was
+ * promised to someone, and the promised sender then simply waits for the
+ * next one (fila_avanza wakes it again).
+ * ============================================================================= */
+static void fila_togli(Process *w)
+{
+    Process *d = w->ipc_fila_su;
+
+    if (d == NULL) return;
+    if (w->ipc_fila_prima) w->ipc_fila_prima->ipc_fila_dopo = w->ipc_fila_dopo;
+    else                   d->ipc_fila_testa = w->ipc_fila_dopo;
+    if (w->ipc_fila_dopo)  w->ipc_fila_dopo->ipc_fila_prima = w->ipc_fila_prima;
+    else                   d->ipc_fila_coda = w->ipc_fila_prima;
+    if (w->ipc_fila_concesso && d->ipc_riservati > 0) d->ipc_riservati--;
+    w->ipc_fila_su = w->ipc_fila_prima = w->ipc_fila_dopo = NULL;
+    w->ipc_fila_concesso = 0;
+}
+
+static void fila_metti(Process *d, Process *w)
+{
+    w->ipc_fila_su       = d;
+    w->ipc_fila_dopo     = NULL;
+    w->ipc_fila_prima    = d->ipc_fila_coda;
+    w->ipc_fila_concesso = 0;
+    if (d->ipc_fila_coda) d->ipc_fila_coda->ipc_fila_dopo = w;
+    else                  d->ipc_fila_testa = w;
+    d->ipc_fila_coda = w;
+}
+
+/* Room in d's mailbox: promise the free slots to the line, oldest first,
+ * and wake whoever holds a promise. The promised ones are always at the
+ * front, at most IPC_MAILBOX_DEPTH of them, so the walk is short. */
+static void fila_avanza(Process *d)
+{
+    Process *w;
+
+    for (w = d->ipc_fila_testa; w != NULL; w = w->ipc_fila_dopo) {
+        if (!w->ipc_fila_concesso) {
+            if (d->ipc_count + d->ipc_riservati >= IPC_MAILBOX_DEPTH) break;
+            w->ipc_fila_concesso = 1;
+            d->ipc_riservati++;
+        }
+        if (w->state == PROC_BLOCKED) sched_unblock_locked(w->pid);
+    }
+}
+
+void ipc_processo_finito(Process *p)
+{
+    unsigned long f = if_salva();
+    Process      *d = p->ipc_fila_su, *w;
+
+    if (d != NULL) {
+        fila_togli(p);
+        fila_avanza(d);     /* a slot promised to p goes to the next one */
+    }
+    while ((w = p->ipc_fila_testa) != NULL) {
+        fila_togli(w);
+        if (w->state == PROC_BLOCKED) sched_unblock_locked(w->pid);
+    }
+    p->ipc_riservati = 0;
+    if_ripristina(f);
+}
 
 /* Tipo/mittente riservati per le notifiche hardware IRQ, consegnate con
  * sender_pid = IPC_SENDER_KERNEL. Un driver distingue una notifica
@@ -91,25 +173,50 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
 {
     if (len > IPC_MSG_MAX_DATA) len = IPC_MSG_MAX_DATA;
 
-    uint32_t sender_pid = proc_get_current()->pid;
-    uint32_t attempts;
-    /* Senza attesa: un tentativo solo (vedi IPC_SENZA_ATTESA in ipc.h). */
-    uint32_t tentativi  = (tipo & IPC_SENZA_ATTESA) ? 1u : IPC_SEND_MAX_RETRY;
+    Process *self     = proc_get_current();
+    uint32_t senza    = (tipo & IPC_SENZA_ATTESA) != 0;
+    uint32_t scadenza = g_ticks + IPC_SEND_ATTESA_TICK;
 
+    if (scadenza == 0) scadenza = 1;    /* 0 means "no deadline" */
     tipo &= ~IPC_SENZA_ATTESA;
 
-    for (attempts = 0; attempts < tentativi; attempts++) {
+    for (;;) {
         Process *dest = proc_get_by_pid(dest_pid);
-        if (dest == NULL || dest->state == PROC_UNUSED ||
-            dest->state == PROC_ZOMBIE) {
-            return ERR(ESRCH);
-        }
+        int      posto;
 
         interrupts_disable();
 
-        if (dest->ipc_count < IPC_MAILBOX_DEPTH) {
+        if (dest == NULL || dest->state == PROC_UNUSED ||
+            dest->state == PROC_ZOMBIE) {
+            Process *d = self->ipc_fila_su;
+
+            fila_togli(self);
+            if (d != NULL) fila_avanza(d);
+            interrupts_enable();
+            return ERR(ESRCH);
+        }
+
+        /* Who may take a slot:
+         *   - without waiting (IPC_SENZA_ATTESA): any free slot, even one
+         *     promised to the line. These are mostly drivers answering a
+         *     request of the receiver itself (a frame for ip.drv): making
+         *     them queue behind a hundred clients would stall the receiver;
+         *   - a sender in this line: only with a slot promised to it;
+         *   - anybody else: only if nobody is waiting and the free slots are
+         *     not all promised. Otherwise it joins the end of the line. */
+        if (senza)
+            posto = dest->ipc_count < IPC_MAILBOX_DEPTH;
+        else if (self->ipc_fila_su == dest)
+            posto = self->ipc_fila_concesso && dest->ipc_count < IPC_MAILBOX_DEPTH;
+        else
+            posto = dest->ipc_fila_testa == NULL &&
+                    dest->ipc_count + dest->ipc_riservati < IPC_MAILBOX_DEPTH;
+
+        if (posto) {
             IpcMessage *slot = &dest->ipc_mailbox[dest->ipc_tail];
-            slot->sender_pid = sender_pid;
+
+            if (self->ipc_fila_su == dest) fila_togli(self);
+            slot->sender_pid = self->pid;
             slot->tipo       = tipo;
             slot->len        = len;
             if (len > 0 && data != NULL) {
@@ -134,17 +241,37 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
             return 0;
         }
 
-        interrupts_enable();
+        if (senza) {
+            interrupts_enable();
+            return ERR(EBUSY);
+        }
 
-        /* Mailbox piena: il caso comune è un driver temporaneamente
-         * indietro con l'elaborazione — riprova dopo una breve attesa
-         * invece di bloccare indefinitamente il mittente. Senza attesa,
-         * niente sonno: si rinuncia subito. */
-        if (tentativi == 1u) break;
-        sched_sleep(IPC_SEND_RETRY_MS);
+        if (g_ticks >= scadenza) {
+            Process *d = self->ipc_fila_su;
+
+            fila_togli(self);
+            if (d != NULL) fila_avanza(d);  /* a promise to me goes on */
+            interrupts_enable();
+            return ERR(EBUSY);
+        }
+
+        if (self->ipc_fila_su != dest) {
+            /* A line for another destination cannot be left over (ipc_send
+             * always leaves its line before returning), but be safe. */
+            Process *d = self->ipc_fila_su;
+
+            fila_togli(self);
+            if (d != NULL) fila_avanza(d);
+            fila_metti(dest, self);
+        }
+
+        /* Asleep until the receiver promises me a slot (fila_avanza), the
+         * receiver ends (ipc_processo_finito) or the deadline: each case is
+         * sorted out by the next turn of the loop. Interrupts stay disabled
+         * into sched_block, as in ipc_recv_timeout (the lost wakeup). */
+        self->block_until = scadenza;
+        sched_block(PROC_BLOCKED);
     }
-
-    return ERR(EBUSY);
 }
 
 /* =============================================================================
@@ -215,6 +342,7 @@ int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
             self->ipc_head = (self->ipc_head + 1) % IPC_MAILBOX_DEPTH;
             self->ipc_count--;
             self->block_until = 0;
+            if (self->ipc_fila_testa != NULL) fila_avanza(self);
 
             interrupts_enable();
             return 0;
@@ -386,6 +514,14 @@ int32_t ipc_lookup(const char *name)
  * ============================================================================= */
 void ipc_cleanup_process(uint32_t pid)
 {
+    for (uint32_t i = 0; i < MAX_PROCESSES; i++) {
+        Process *p = &g_process_pool[i];
+        if (p->pid == pid) {
+            ipc_processo_finito(p);     /* normally done already at exit */
+            break;
+        }
+    }
+
     interrupts_disable();
 
     for (uint32_t i = 0; i < MAX_PROCESSES; i++) {

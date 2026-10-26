@@ -649,7 +649,21 @@
  * before the disks are synced; the console says who did not end in time.
  * setuid/setgid change every thread of the program, not only the caller:
  * mariadbd drops to the user mysql after it has started its threads. */
-#define EXOS_VERSION    "0.279"
+/* 0.279 -> 0.280: a line in front of a full IPC mailbox (ipc.c). A sender
+ * that found the mailbox full used to sleep 5 ms and retry for up to 10 s:
+ * whoever retried first won, so under load (a dozen MariaDB threads talking
+ * to ip.drv) some senders lost every round and got EBUSY after 10 s, and
+ * everything moved in steps of a 10 ms tick. Now the sender joins the
+ * destination's line and sleeps; ipc_recv, freeing a slot, promises it to
+ * the oldest sender in line and wakes it (Process.ipc_fila_*). A sender with
+ * IPC_SENZA_ATTESA still takes any free slot at once. A process that ends
+ * leaves the line it stands in, and the senders waiting for it get ESRCH
+ * (ipc_processo_finito, at every turn into a zombie). Also: a driver
+ * started by a program (spawn, e.g. netdetect starting e1000.drv) gets
+ * PRIO_HIGH as the drivers of the boot do (proc_set_ready); with
+ * PRIO_NORMAL it took turns with the server's threads and its card's
+ * receive ring overflowed. */
+#define EXOS_VERSION    "0.280"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

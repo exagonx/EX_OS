@@ -70,7 +70,7 @@
 
 /* +0.001 a ogni modifica: `e1000.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("e1000.drv", "0.002");
+EX_VERSIONE("e1000.drv", "0.003");
 
 /* -----------------------------------------------------------------------------
  * La scheda
@@ -191,8 +191,16 @@ EX_VERSIONE("e1000.drv", "0.002");
  * dell'anello multipla di 128 byte: lo dice il costruttore, e la scheda con
  * un valore storto non protesta — smette di consegnare.
  * Un descrittore e' 16 byte, quindi 8 descrittori = 128 byte esatti.
+ *
+ * ! 96 RX, NOT 32 (26 October 2026, the MariaDB stress test under KVM): with
+ * a thousand connections a burst of more than 32 frames came in while the
+ * driver waited for its turn on the CPU, and the ring overflowed (MPC 1148
+ * in ten minutes, `persi_scheda`); each lost frame cost a TCP
+ * retransmission, and a group of connections stood still for 22 s. 96 is
+ * what the zone allows: DMA_BYTE stays under the 256 KB a process may have
+ * (DMA_PAGINE_MAX, kernel/include/syscall.h).
  * --------------------------------------------------------------------------- */
-#define RX_N              32
+#define RX_N              96
 #define TX_N              8
 #define BUF_LEN           2048        /* deve combaciare con RCTL_BSIZE_2048 */
 
@@ -245,13 +253,13 @@ EX_VERSIONE("e1000.drv", "0.002");
  * contengono. 64 ne tiene 64 KB, cioe' quattro volte la finestra piu' grande
  * che si sia provata, e lascia margine per una seconda connessione che arrivi
  * nello stesso momento. Costa 64 x 1514 = 97 KB nel driver, ed e' RAM di un
- * processo in ring 3, non del kernel.
+ * processo in ring 3, non del kernel (256 from 26 October 2026: 388 KB).
  *
  * ! CON LA FINESTRA A 4 KB NON CAMBIA NIENTE, e va detto: 0,6 s con 8 posti,
  * 0,5 con 64, cioe' la stessa cosa a meno della risoluzione dell'orologio.
  * Questo numero non serve OGGI — serve perche' il giorno che qualcuno alza
  * TCP_BUF, o apre due connessioni veloci insieme, il pavimento non ceda. */
-#define CODA_N            64
+#define CODA_N            256   /* 64 until 26 October 2026: see RX_N */
 
 /* -----------------------------------------------------------------------------
  * Stato
@@ -673,12 +681,23 @@ static void servi_scheda(void)
     svuota_rx();
 }
 
+/* ! WITHOUT WAITING, AND THE REQUEST STAYS OPEN WHEN THE FRAME DOES NOT GO
+ * (0.003, the MariaDB stress test, 26 October 2026). ip.drv's mailbox holds
+ * four messages; under load the server's threads fill it. A plain ipc_send
+ * slept there up to 10 s (2000 x 5 ms) without serving the card, while
+ * ip.drv could be asleep sending to this driver's full mailbox; then it gave
+ * up, the frame was dropped AND g_lettore_pid cleared. ip.drv still had its
+ * NET_MSG_RICEVI "in flight" (g_ricevi_armato), so nobody asked again: with
+ * four clients the card stopped receiving for good while the loopback kept
+ * working. Now a frame that does not fit stays queued with the request, and
+ * goes at the next interrupt or timed round, as in nforce.c since 0.010. */
 static void consegna(void)
 {
     if (g_lettore_pid == 0 || g_coda_conta == 0) return;
 
-    ipc_send(g_lettore_pid, NET_MSG_FRAME,
-             g_coda[g_coda_testa], g_coda_len[g_coda_testa]);
+    if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
+                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) < 0)
+        return;
     g_coda_testa = (g_coda_testa + 1) % CODA_N;
     g_coda_conta--;
     g_lettore_pid = 0;
@@ -878,7 +897,11 @@ static void servi(void)
             NetEsito e;
 
             e.codice = trasmetti(payload, meta.len);
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            /* Without waiting as well: with ip.drv's mailbox full this reply
+             * slept up to 10 s while ip.drv slept sending the next frame to
+             * our full mailbox - the two waited for each other (seen with
+             * gdb in the stress test). ip.drv only counts these answers. */
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             break;
         }
 

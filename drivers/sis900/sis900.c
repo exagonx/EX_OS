@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `sis900.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis900.drv", "0.018");
+EX_VERSIONE("sis900.drv", "0.019");
 
 #define SIS_VENDITORE   0x1039
 #define SIS_900         0x0900
@@ -1303,7 +1303,7 @@ static unsigned int pci_leggi_config(unsigned int offset)
             NetEsito e;
 
             e.codice = -EAGAIN;
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             break;
         }
         case NET_MSG_RICEVI:
@@ -2264,11 +2264,13 @@ static void servi_scheda(void)
     controlla_tx();
 }
 
+/* Without waiting: a full ip.drv mailbox made ipc_send sleep up to 10 s
+ * here without serving the card. See consegna() in e1000.c. */
 static void consegna(void)
 {
     if (g_lettore_pid == 0 || g_coda_conta == 0) return;
 
-    if (ipc_send(g_lettore_pid, NET_MSG_FRAME,
+    if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
                  g_coda[g_coda_testa], g_coda_len[g_coda_testa]) == 0) {
         g_coda_testa = (g_coda_testa + 1) % CODA_N;
         g_coda_conta--;
@@ -2571,7 +2573,7 @@ static void servi(void)
             NetEsito e;
 
             e.codice = trasmetti(payload, meta.len);
-            ipc_send(meta.sender_pid, NET_MSG_ESITO, &e, sizeof(e));
+            ipc_send(meta.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
             break;
         }
 

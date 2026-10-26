@@ -102,6 +102,146 @@
 #define IP_MSG_LINK       16
 #define IP_LINK_WIFI      "wifi0"    /* a WiFi driver: control AND link, one name */
 
+/* IP_MSG_TCP_TABELLA (ip.drv 0.015, 26 October 2026): every busy slot of the
+ * TCP table, read only, for `ipcfg -tcp` - the internal state, the ports,
+ * the other end, the owner, the bytes queued; never the data. Anyone may ask,
+ * as anyone may run netstat on Linux. Payload: IpTcpChiediTabella (the first
+ * slot wanted) -> IP_MSG_TCP_TABELLA_R, IpTcpTabella: up to
+ * IP_TCP_RIGHE_MAX rows per answer, `prossimo` is where to ask again (0 when
+ * the table is over). Born of the MariaDB stress test: the question "what is
+ * filling the table?" had no answer from outside. */
+#define IP_MSG_TCP_TABELLA 17
+
+/* the internal states as ip.c numbers them (S_* there) */
+#define IP_TCPS_LIBERA     0
+#define IP_TCPS_SYN_INVIA  1
+#define IP_TCPS_APERTA     2
+#define IP_TCPS_FIN_MIO    3
+#define IP_TCPS_FIN_SUO    4
+#define IP_TCPS_ULTIMO_ACK 5
+#define IP_TCPS_MORTA      6
+#define IP_TCPS_ASCOLTA    7
+#define IP_TCPS_SYN_RICEV  8
+
+typedef struct {
+    unsigned int da;
+} IpTcpChiediTabella;
+
+typedef struct {
+    unsigned int  id;            /* slot + 1, as in IpTcpInfo */
+    unsigned int  stato;         /* IP_TCPS_* */
+    unsigned int  porta_loc, porta_rem;
+    unsigned char ip[4];         /* the other end */
+    unsigned int  proprietario;  /* the process group that owns it */
+    unsigned int  rx, tx;        /* bytes waiting to be read / acknowledged */
+    unsigned int  segni;         /* 1 = closed by its owner, 2 = accepted */
+} IpTcpRiga;
+
+#define IP_TCP_RIGHE_MAX 40
+
+typedef struct {
+    unsigned int totale;         /* IP_TCP_CONNESSIONI */
+    unsigned int occupati;       /* busy slots in the whole table */
+    unsigned int prossimo;       /* the slot to ask from next, 0 = done */
+    unsigned int n;
+    IpTcpRiga    riga[IP_TCP_RIGHE_MAX];
+} IpTcpTabella;
+
+/* =============================================================================
+ * WAITING FOR CONNECTIONS TO BE READY, WITHOUT ASKING (ip.drv 0.016, 26
+ * October 2026)
+ *
+ * Until 0.015 poll() on a socket asked IP_MSG_TCP_STATO every 10 ms, and a
+ * server waiting on a thousand connections would have asked a thousand times
+ * per round. Now the stack wakes whoever waits:
+ *
+ *   IP_MSG_TCP_ASPETTA  IpTcpAspetta (up to IP_ASPETTA_MAX connections, each
+ *                       with the events it wants) -> IP_MSG_TCP_PRONTE as
+ *                       soon as one of them is ready, or with n = 0 when
+ *                       timeout_ms passes (0 = no timeout). What poll() does.
+ *
+ *   IP_MSG_INS_CREA     -> IP_MSG_ESITO (id of a new set, or -errno)
+ *   IP_MSG_INS_CTL      IpInsCtl: add, change or drop a connection of the set
+ *                       -> IP_MSG_ESITO. What epoll_ctl() does.
+ *   IP_MSG_INS_ATTENDI  IpInsAttendi -> IP_MSG_INS_EVENTI when something in
+ *                       the set is ready (n = 0 when timeout_ms passes, or
+ *                       when IP_MSG_INS_SVEGLIA asked). What epoll_wait() does.
+ *   IP_MSG_INS_SVEGLIA  IpInsRif -> IP_MSG_ESITO; whoever waits on the set
+ *                       gets n = 0 now (or at its next wait if none waits).
+ *   IP_MSG_INS_CHIUDI   IpInsRif -> IP_MSG_ESITO.
+ *   IP_MSG_TCP_SPEGNI   IpTcpRif -> IP_MSG_ESITO: shutdown(SHUT_RDWR). The
+ *                       connection closes as with IP_MSG_TCP_CHIUDI but stays
+ *                       in its epoll set, ready for reading once (the end):
+ *                       that is how a server polling it hears it, as on Linux.
+ *                       The IP_MSG_TCP_CHIUDI that follows (close) only takes
+ *                       it out of the set.
+ *
+ * A connection that its program closes leaves every set by itself, as on
+ * Linux. Events are the Linux EPOLL* values (IP_EV_*); IP_EV_ONESHOT and
+ * IP_EV_ET as in epoll. IP_INS_FORZA in `op` says the program already holds
+ * unread bytes of this connection (libc's buffer): ready for reading once.
+ * ============================================================================= */
+#define IP_MSG_TCP_ASPETTA 18
+#define IP_MSG_INS_CREA    19
+#define IP_MSG_INS_CTL     20
+#define IP_MSG_INS_ATTENDI 21
+#define IP_MSG_INS_SVEGLIA 22
+#define IP_MSG_INS_CHIUDI  23
+#define IP_MSG_TCP_SPEGNI  24
+
+#define IP_EV_IN       0x001u
+#define IP_EV_OUT      0x004u
+#define IP_EV_ERR      0x008u
+#define IP_EV_HUP      0x010u
+#define IP_EV_RDHUP    0x2000u
+#define IP_EV_ONESHOT  (1u << 30)
+#define IP_EV_ET       (1u << 31)
+
+#define IP_INS_ADD     1
+#define IP_INS_DEL     2
+#define IP_INS_MOD     3
+#define IP_INS_FORZA   0x100u
+
+#define IP_ASPETTA_MAX 64
+/* timeout_ms of IpTcpAspetta and IpInsAttendi: 0 waits with no timeout,
+ * this one answers at once with what is ready now (maybe nothing). */
+#define IP_ASPETTA_SUBITO 0xFFFFFFFFu
+
+typedef struct {
+    unsigned int id;             /* connection (or listener) */
+    unsigned int eventi;         /* wanted (IpTcpAspetta), happened (reply) */
+} IpTcpVoce;
+
+typedef struct {
+    unsigned int timeout_ms;
+    unsigned int n;
+    IpTcpVoce    voce[IP_ASPETTA_MAX];
+} IpTcpAspetta;                  /* also the IP_MSG_TCP_PRONTE reply: only
+                                    the ready ones, timeout_ms unused */
+
+typedef struct { unsigned int ins; } IpInsRif;
+
+typedef struct {
+    unsigned int ins, op, id, eventi;
+    unsigned int dati[2];        /* epoll_data, handed back as it came */
+} IpInsCtl;
+
+typedef struct {
+    unsigned int ins, max, timeout_ms;
+} IpInsAttendi;
+
+typedef struct {
+    unsigned int eventi;
+    unsigned int dati[2];
+} IpInsEvento;
+
+#define IP_INS_EVENTI_MAX 120
+
+typedef struct {
+    unsigned int n;
+    IpInsEvento  ev[IP_INS_EVENTI_MAX];
+} IpInsEventi;
+
 /* --- Risposte (stack -> client) ----------------------------------------- */
 #define IP_MSG_ESITO     128
 #define IP_MSG_STATO_R   129
@@ -110,6 +250,9 @@
 #define IP_MSG_UDP_DATI  132   /* IpUdpDati + dati */
 #define IP_MSG_TCP_DATI  133   /* IpTcpDati + dati */
 #define IP_MSG_TCP_INFO  134   /* IpTcpInfo */
+#define IP_MSG_TCP_TABELLA_R 135 /* IpTcpTabella */
+#define IP_MSG_TCP_PRONTE 136  /* IpTcpAspetta: the ready connections */
+#define IP_MSG_INS_EVENTI 137  /* IpInsEventi */
 
 /* Quante voci tiene la tabella ARP. Sedici bastano a una rete locale
  * piccola; oltre, si butta la più vecchia. Una tabella che cresce senza
@@ -318,7 +461,11 @@ typedef struct {
  * insieme, otto si esauriscono senza che niente sia rotto.
  * Ventiquattro per 8 KB di buffer sono 192 KB — su una macchina da 32 MB e'
  * una voce che si vede, ed e' dichiarata qui. */
-#define IP_TCP_CONNESSIONI  24
+/* ! 4096 AND NOT 24 (ip.drv 0.016, 26 October 2026): the MariaDB stress test
+ * wants a thousand clients and more. The slots are not a static table any
+ * more: one is allocated (8 KB) the first time the table grows that far and
+ * then reused, so a machine that opens a few connections pays for a few. */
+#define IP_TCP_CONNESSIONI  4096
 
 /* Stati visibili a un client. Sono meno di quelli veri della macchina a
  * stati: a chi usa la connessione interessa sapere se puo' scrivere, se
@@ -379,6 +526,11 @@ typedef struct {
     /* ! IN FONDO, dalla 0.005 di ip.drv: la porta di QUESTA parte, per
      * getsockname(). Chi legge solo i campi di prima non se ne accorge. */
     unsigned int  porta_loc;
+    /* At the end too, from ip.drv 0.015: 1 when this is a listener and
+     * in_coda_rx counts the connections waiting for accept(). An older
+     * ip.drv sends a shorter answer, the reader finds 0 here and knows that
+     * in_coda_rx of a listener means nothing (poll() in the libc). */
+    unsigned int  conta_in_attesa;
 } IpTcpInfo;
 
 /* Risposta generica.

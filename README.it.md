@@ -2400,6 +2400,70 @@ chiamate di sistema.
 > Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
 > le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
 
+### Lo swap funziona (kernel 0.276) — provato in QEMU, da provare sotto pressione sul ferro
+
+L'area di scambio su partizione c'era da agosto, ma sotto pressione non
+reggeva: a 32 bit il kernel si fermava al primo sfratto (leggeva una voce da
+4 MB della directory come se fosse una tabella), a 64 bit la memoria dei
+programmi si rovinava (la pagina si scriveva sul disco mentre il padrone
+poteva ancora scriverci, un buffer solo era conteso da sfratti e rientri
+senza lucchetto, il padrone poteva morire nel frattempo) e un processo
+veniva ucciso quando l'altro processore teneva le pagine. Dal 0.276 è
+corretto, e le pagine usate da un dispositivo (DMA, MMIO, schermo) non si
+sfrattano mai. `mem` mostra l'area: dimensione, quanto c'è sopra, pagine
+andate e tornate dall'avvio. `tools/prova_swapmem.sh` (32 e 64 bit, rifatta
+col kernel 0.279) riempie la RAM con `swaptest`, uno da solo e due insieme,
+e ogni pagina torna identica. Sul CQ60 l'area da 4 GB si accende ma la RAM
+è sempre bastata. Come prepararla e come controllarla: manuale,
+[4, l'area di scambio](manuali/installazione/04-dopo-installazione.md).
+
+### 1024 connessioni a MariaDB: epoll, un gruppo di fili, una casella giusta (kernel 0.280, ip.drv 0.016)
+
+L'utente ha chiesto uno stress test: 1024 client che scrivono, leggono e
+aggiornano per 8 ore, misurando velocita', carico, tolleranza e perdite
+(uno script locale, fuori dal repository; client da Linux attraverso la rete, EX-OS
+a 64 bit in QEMU). Il primo giro si fermava a una ventina di client; cosa e'
+servito per arrivare a 1024:
+
+- **kernel 0.280, la fila davanti a una casella piena.** Una casella tiene
+  quattro messaggi; chi la trovava piena riprovava ogni 5 ms, e sotto carico
+  i fili piu' svelti entravano sempre mentre gli altri (`ipcfg`) aspettavano
+  10 s e rinunciavano. Ora chi manda fa la fila nel kernel e passa in ordine.
+- **ip.drv 0.016:** 4096 connessioni TCP (erano 24) con una tabella hash; un
+  programma tiene 1024 socket (erano 64); il buffer di ricezione da 63 KB di
+  uno slot riusato andava perso (una perdita); **epoll e poll stanno nello
+  stack**, che sveglia da se' il programma quando una connessione e' pronta.
+- **libc:** `<sys/epoll.h>` (`epoll_create1`, `epoll_ctl`, `epoll_wait`,
+  `epoll_pwait`, solo socket TCP), `poll` in un messaggio solo allo stack,
+  `FD_SETSIZE` 2048, `RLIMIT_NOFILE` 4096, `shutdown(SHUT_RDWR)` lascia la
+  connessione nel suo insieme epoll e ne segnala la fine come Linux,
+  `strerror` conosce tutti gli errori di rete (diceva solo «errore»).
+- **MariaDB col gruppo di fili** (`thread_handling=pool-of-threads`,
+  `patch/server-threadpool-epoll.diff`): un filo per connessione vorrebbe
+  128 KB di pila del kernel ciascuno nella fascia di 64 MB del kernel, e
+  EX-OS ha 192 posti per processi e fili. Ora poche decine di fili servono
+  tutte le connessioni. `mariadb-svc` 0.003 scrive `max_connections = 1024`
+  e il gruppo in `/etc/my.cnf` (manuale 4.10).
+- **e1000:** l'anello di ricezione passa da 32 a 96 descrittori e la coda
+  verso ip.drv da 64 a 256 frame: con mille connessioni l'anello traboccava,
+  e ogni frame perso fermava una connessione fino a 22 s.
+- `ipcfg -tcp` elenca le connessioni TCP; `memlog` (dentro EX-OS) registra
+  memoria, fili, la tabella TCP e dove si perdono i pacchetti.
+
+Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS):
+
+| client | pausa | istruzioni/s | p50 | p95 |
+|---|---|---|---|---|
+| 64 | nessuna | 2109 | 23 ms | 93 ms |
+| 1024 | 1 s | 870 | 5,5 ms | 20 ms |
+
+Senza KVM il tetto e' la CPU emulata (circa 400/s qualunque sia il numero
+di client). 1024 client senza nessuna pausa sono piu' di quanto la
+macchina possa servire: le risposte passano i 30 s, i client si ricollegano
+con un handshake TLS ciascuno e il server resta indietro (e' il limite di
+tolleranza, non un crollo del sistema). Il giro di 8 ore: la voce 32 della
+coda.
+
 ### MariaDB 11.8 LTS gira in EX-OS (0.279)
 
 **provato a 32 e 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
@@ -2418,9 +2482,19 @@ zlib, bzip2, xz, lz4, zstd, PCRE2, fmt e OpenSSL 4.1.0. Tutto statico
 EX-OS non ha i socket AF_UNIX. `innodb_buffer_pool_size_max` va dato: per
 difetto InnoDB riserva 8 TB di indirizzi a 64 bit, e un programma di EX-OS ne
 ha 3 GB. Gruppo `[mariadb]` della ISO degli strumenti e di netinst: il server
-in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`,
-`libmariadbclient.a` e `<mysql/*.h>`, i sorgenti. La ISO degli strumenti ora
-e' un DVD (circa 500 MB per architettura solo per MariaDB).
+in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`, i sorgenti. La
+ISO degli strumenti ora e' un DVD (circa 500 MB per architettura solo per
+MariaDB).
+
+**I connettori, anche da soli:** nel catalogo ci sono due voci.
+`netupdate -install:mariadb` porta il server e i connettori;
+`netupdate -install:mariadb-connector` solo i connettori, per i programmi che
+parlano con un MariaDB o un MySQL: **Connector/C 3.4.11** (`<mysql.h>`,
+`libmariadbclient.a`), **Connector/C++ 1.1.9** (`<conncpp.hpp>`,
+`libmariadbcpp.a`, costruito sopra il Connector/C di sistema), **`mariadb.bi`**
+per FreeBASIC e il crate Rust **`mariadb`** (un file, senza dipendenze, perche'
+dentro EX-OS c'e' `rustc` ma non `cargo`). `tools/prova_mariadb.sh` prova un
+programma per linguaggio contro il server dentro EX-OS (FreeBASIC a 32 bit).
 
 **Il servizio:** `mariadb-svc -install` (da root) crea l'utente `mysql`,
 `/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql`, il certificato
@@ -4669,8 +4743,10 @@ serve il filesystem, paginato da quel filesystem, dovrebbe servire la
 propria lettura mentre e' fermo ad aspettarla.
 
 Conseguenza da sapere: **l'eseguibile resta aperto finche' il processo
-vive**, e le pagine caricate non vengono mai buttate via (manca lo
-sfratto, e con esso il file di scambio).
+vive**, e le pagine caricate non vengono mai buttate via per essere
+rilette dal file. Se la RAM finisce e c'e' un'area di scambio, vanno
+sull'area come le altre pagine private (dal kernel 0.276: vedi *Lo swap
+funziona*).
 
 ### Il thread pointer: variabili `__thread`
 
@@ -7193,7 +7269,9 @@ ex-os:/> ping 8.8.8.8 -n 3
 tempi: minimo 50 ms, medio 60 ms, massimo 70 ms
 ```
 
-`ipcfg` mostra indirizzo e **contatori**, `ipcfg -r` la tabella ARP.
+`ipcfg` mostra indirizzo e **contatori**, `ipcfg -r` la tabella ARP,
+`ipcfg -tcp` le connessioni TCP (stato, porte, l'altra parte, il programma
+che le tiene; da `ip.drv` 0.015).
 I contatori sono metà del programma: quando la rete non va, la domanda
 non è «va o non va» ma dove si ferma, e `IP ricevuti` a zero, `scartati`
 che salgono o `somme errate` che salgono indicano tre punti diversi.

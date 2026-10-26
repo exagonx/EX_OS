@@ -72,6 +72,13 @@ deve poterlo far ripartire.
 Oggi non c'è swap: quando la RAM finisce, finisce. Ci sarà, perché le
 applicazioni che vogliamo far girare superano la memoria disponibile.
 
+> **Aggiornamento (26 ottobre 2026): lo swap c'è.** Area su partizione
+> (`mkswap`, `swap = hdXpY` in `kernel.cfg`) da agosto 2026, affidabile a 32
+> e 64 bit dal kernel 0.276 (`tools/prova_swapmem.sh`). La direttiva resta
+> valida così com'è: si sfrattano solo le pagine con un proprietario solo e
+> senza `PG_FISSA`, quindi ogni pagina inchiodata o condivisa è una pagina
+> che lo swap non potrà mai liberare.
+
 ! **Il punto è che lo swap non si aggiunge in fondo.** Ogni pagina che un
 servizio inchioda in memoria, ogni buffer che un driver tiene per sempre, ogni
 struttura che il kernel non sa spostare, è una decisione che un pagefile
