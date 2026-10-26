@@ -2456,13 +2456,28 @@ Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS):
 |---|---|---|---|---|
 | 64 | nessuna | 2109 | 23 ms | 93 ms |
 | 1024 | 1 s | 870 | 5,5 ms | 20 ms |
+| 1022, 8 ore | 1 s | 1011 | 5,8 ms | 23 ms |
 
 Senza KVM il tetto e' la CPU emulata (circa 400/s qualunque sia il numero
 di client). 1024 client senza nessuna pausa sono piu' di quanto la
 macchina possa servire: le risposte passano i 30 s, i client si ricollegano
 con un handshake TLS ciascuno e il server resta indietro (e' il limite di
-tolleranza, non un crollo del sistema). Il giro di 8 ore: la voce 32 della
-coda.
+tolleranza, non un crollo del sistema).
+
+Il giro di 8 ore (1022 client, perche' ogni programma ha 1024 socket e
+l'ascoltatore e il monitor dello stato ne prendono due): 29,1 milioni di
+istruzioni, 5 errori (tutti deadlock di InnoDB fra transazioni concorrenti,
+che il client deve ripetere), nessuna riconnessione, nessuna connessione
+rifiutata o caduta, nessun pacchetto perso dalla scheda o da ip.drv, uno
+spegnimento pulito ("Shutdown complete"). Velocita' e p95 del primo e
+dell'ultimo quarto sono uguali (1012/s e 1013/s, 23 ms). `Memory_used` di
+MariaDB resta a 840 MB per tutto il giro; la memoria libera di EX-OS cala
+di circa 1 MB l'ora mentre le tabelle crescono e torna tutta quando
+mariadbd esce: nessuna perdita nel sistema. Un rallentamento di circa due
+minuti (p95 2,5 s, risposta peggiore 9,8 s, alla quarta ora e mezza) non
+ha lasciato tracce dal lato del server; la causa e' da trovare. Rispetto a
+Linux sullo stesso hardware questi numeri sono lenti: scoprire perche' e'
+la voce 34 della coda.
 
 ### MariaDB 11.8 LTS gira in EX-OS (0.279)
 

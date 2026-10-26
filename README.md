@@ -2412,12 +2412,27 @@ Measured (QEMU 64 bit with KVM, statements of every kind, TLS):
 |---|---|---|---|---|
 | 64 | none | 2109 | 23 ms | 93 ms |
 | 1024 | 1 s | 870 | 5.5 ms | 20 ms |
+| 1022, 8 hours | 1 s | 1011 | 5.8 ms | 23 ms |
 
 Without KVM the ceiling is the emulated CPU (about 400/s whatever the
 number of clients). 1024 clients with no pause at all are more than the
 machine can serve: answers pass 30 s, the clients reconnect with a TLS
 handshake each, and the server falls behind (that is the tolerance limit,
-not a crash). The 8-hour run: voce 32 of the queue.
+not a crash).
+
+The 8-hour run (1022 clients, because each program has 1024 sockets and
+the listener and the status monitor take two): 29.1 million statements, 5
+errors (all InnoDB deadlocks between concurrent transactions, which the
+client is meant to retry), no reconnection, no refused or dropped
+connection, no packet lost by the card or by ip.drv, a clean shutdown
+("Shutdown complete"). The speed and the p95 of the first and last quarter
+are the same (1012/s and 1013/s, 23 ms). MariaDB's `Memory_used` stays at
+840 MB for the whole run; EX-OS's free memory drops by about 1 MB per hour
+while the tables grow and comes back entirely when mariadbd exits: no
+leak in the system. One slowdown of about two minutes (p95 2.5 s, worst
+answer 9.8 s, at hour 4.3) left no trace on the server side; its cause is
+still to be found. Compared with Linux on the same hardware these numbers
+are slow: finding out why is voce 34 of the queue.
 
 ### MariaDB 11.8 LTS runs in EX-OS (0.279)
 

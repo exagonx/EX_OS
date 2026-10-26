@@ -7174,8 +7174,8 @@ librerie mancanti»)
        l'emulazione di ld secondo la CPU (oggi fissa elf_i386) e la
        cartella della runtime exos-x86_64; un fbc dell'host che conosce
        exos; libfb con x86_64-exos-gcc; fbc nativo da -gen gcc.
-    2. fork (nel kernel; EX-OS ha spawn). Da chiedere all'utente se serve
-       davvero e per che cosa prima di toccare il kernel.
+    2. fork (nel kernel; EX-OS ha spawn). L'utente ha risposto il 26/10:
+       serve per Redis e Apache2, vedi voce 33.
     3. il programma a 64 bit collegato dinamicamente (PT_INTERP, un ld.so)
        se rustc nativo lo chiedera': oggi i .so si aprono da programmi
        statici.
@@ -8470,6 +8470,63 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  34. PERCHE' MARIADB SU EX-OS E' LENTO RISPETTO A LINUX (l'utente, 26/10
+      durante le 8 ore: «troppo lento in proporzione a linux su stesso
+      hardware, salvare tutti i dati e al reset settimanale sara' necessario
+      scoprire il perche di questa lentezza»). DA FARE AL RESET SETTIMANALE.
+      Dati salvati (NON cancellare, fuori da git ma su MEGA): tutte le corse
+      in tools/stress/risultati/ (otto-ore = le 8 ore a 1022 client;
+      kvm1 = 64 client senza pausa, 2109 istruzioni/s p50 23 ms; kvm3-pausa1s;
+      otto-ore-1024-fermato; pool3; fila1; diag*). Ogni cartella ha
+      stadi.csv, stabile.csv, stato.txt (SHOW GLOBAL STATUS ogni 30 s),
+      seriale con memlog/MEMRETE, riassunto.py li legge.
+      ATTENZIONE nel leggere i numeri: a 1022 client con 1 s di pausa le
+      ~1015 istruzioni/s sono il carico CHIESTO, non il tetto; la misura
+      della lentezza sono la latenza (p50 6-7 ms, p95 ~25 ms, picchi oltre
+      200 ms) e la corsa senza pausa (kvm1: 2109/s con 64 client).
+      Passi:
+      a) LA BASE DI CONFRONTO: stessa corsa (mariadb_stress.c, stesse
+         opzioni di my.cnf, stessa MariaDB 11.8.9) contro un Linux in QEMU
+         con -enable-kvm, -cpu qemu64, 2048M, e1000, rete user e
+         hostfwd come EX-OS, una CPU sola; poi Linux con tutte le CPU. Cosi'
+         si separa il costo di EX-OS da quello di QEMU/slirp.
+      b) IPOTESI da misurare una per una: una CPU sola (EX-OS in QEMU non
+         usa SMP: cfg smp spento, la macchina ha piu' core); ogni send/recv
+         e' un giro IPC programma -> ip.drv -> driver (piu' cambi di
+         contesto di una syscall Linux), copie dei dati nei messaggi;
+         e1000 senza interrupt coalescing / un frame per messaggio;
+         epoll_wait e poll che passano da ip.drv; lo scheduler (quanti,
+         priorita', risveglio dei fili del pool); lucchetto del VFS e
+         fsync di InnoDB su ext2 (scritture sincrone); TCG vs KVM gia'
+         escluso (STRESS_QEMU_EXTRA=-enable-kvm); il rallentamento di
+         due minuti delle 8 ore (voce 32, 23:00: p95 2,5 s a 15400 s)
+         senza tracce dal lato del server.
+      c) STRUMENTI: memlog/MEMRETE, contatori di ip.drv, un profilo del
+         kernel (campionare EIP/RIP dal timer, o gdb sul monitor di QEMU con
+         STRESS_QEMU_EXTRA), tempi per syscall/IPC.
+      d) Correggere dal collo di bottiglia piu' grosso, ripetere a), con
+         l'obiettivo dei limiti dinamici e dei 32 mila client (voce 32).
+
+  33. FORK() NEL KERNEL (l'utente, 26/10: «fork() servira' per il porting
+      di redis e apache2»). Oggi fork risponde -1/ENOSYS e i processi nascono
+      con spawn_ex (lib/libc.c ~5172, lib/include/unistd.h). Per Redis serve
+      la fork vera senza exec: BGSAVE e la riscrittura dell'AOF usano la
+      copia-su-scrittura come istantanea della memoria. Per Apache2 serve
+      l'MPM prefork (anche event e worker creano i figli con fork). Lavoro:
+      a) copia-su-scrittura in kernel/mm: pagine condivise in sola lettura,
+         page fault in scrittura che copia, contatore di riferimenti per
+         ogni pagina fisica; a 32 e 64 bit;
+      b) duplicare la tabella dei descrittori con contatori di riferimenti
+         nel VFS e negli handle di ip.drv, pty, epoll e memoria condivisa
+         (la posizione di lettura e' condivisa fra padre e figlio);
+      c) semantica POSIX coi fili: nel figlio resta solo il filo chiamante,
+         pthread_atfork vero (oggi non fa niente), TLS del filo copiata;
+      d) SIGCHLD, waitpid sul figlio, getppid;
+      e) prove a 32 e 64 bit (fork+exec, fork senza exec con scritture,
+         descrittori condivisi, fork da un programma con piu' fili), poi il
+         porting di Redis (BGSAVE sotto carico) e di Apache2.
+      Collegata alla voce 32 (la domanda su Redis) e ai limiti TCP dinamici.
+
   32. STRESS TEST DI MARIADB (l'utente, 26/10: �mi serve uno stress test,
       ho bisogno che riescono a collegarsi 1024 client a mariadb e inviare
       query di scrittura e lettura aggiornamento ecc per 8 ore consecutive
@@ -8645,6 +8702,41 @@ tools/netinst/velocita tolto da netinst.
       programma tiene 1024 socket ascoltatore compreso (PRESE_MAX). Ancora
       da fare dopo le 8 ore: netinst/netinst64 e ISO strumenti, prova_ssh e
       prova_openssl a 64, i numeri finali nel README, risposta all'utente.
+      26/10 14:40 SCELTA DELL'UTENTE (da conservare): «1024 era una richiesta
+      per farti capire che potrebbero essere anche 32 mila client, e'
+      necessario un sistema che aumenti in base alle richieste
+      dinamicamente non che abbia un numero ristretto ... per tcp.drv
+      bisogna migliorarlo ulteriormente». Quindi ip.drv e la libc dei
+      socket SENZA TETTI FISSI: oggi 1024 socket per programma (PRESE_MAX,
+      descrittori 1024-2047 fino a SHMFD_BASE: spazio dei descrittori da
+      ripensare, ABI della libc), tabella TCP 4096 (IP_TCP_CONNESSIONI, gia'
+      cresce a richiesta fino li'), INS_MAX 256 insiemi, MAX_FD 128 file per
+      processo, RX_GRANDI_MAX 256 buffer grandi. Obiettivo: 32 mila client.
+      Le 8 ore fatte ripartire con 1022 client (1024 lasciava fuori il
+      monitor SHOW STATUS dall'host: il 1024esimo client e il monitor si
+      contendevano l'ultimo socket); la corsa a 1024 fermata dopo 27 min e'
+      in tools/stress/risultati/otto-ore-1024-fermato (1010/s, 0 errori, 0
+      pacchetti persi, memoria di EX-OS piatta).
+      26/10 23:00 RISULTATO DELLE 8 ORE (tools/stress/risultati/otto-ore,
+      riassunto.txt; 1022 client, pausa 1 s, KVM, 64 bit): stadio di 5 min
+      947/s p50 5,5 ms p95 81 ms (salita dei client); tratto di 28800 s
+      29.129.591 istruzioni, 1011/s, primo quarto 1012/s p95 23,4 ms,
+      ultimo quarto 1013/s p95 23,0 ms; 5 errori, TUTTI 1213 deadlock di
+      InnoDB (transazioni concorrenti, normale), 0 riconnessioni, 0
+      rifiutate, 0 connessioni fallite, aborted_clients 0; pacchetti persi:
+      ip_scartati 8, tutto il resto 0; spegnimento "Shutdown complete",
+      mariadb.err senza [ERROR]. Memoria: Memory_used di MariaDB 840 MB
+      piatto (+2 KB/ora); memoria libera di EX-OS da 1729056 KB (ora 0,7) a
+      1720812 KB (ora 8): -8 MB in 7,3 ore, circa -1,1 MB/ora mentre le
+      tabelle crescono (insert 152/s, delete 50/s), e dopo l'uscita di
+      mariadbd 2072040 KB, piu' dell'inizio: la memoria e' del processo e
+      torna tutta, nessuna perdita nel sistema. (riassunto.py stampa la
+      pendenza +1358 KB/ora perche' mette nel conto il punto dopo lo
+      spegnimento: da correggere.) ANOMALIA: fra 15360 e 15540 s p95 2,5 s,
+      max 9,8 s, 675-706/s; dal lato del server (stato.txt, memlog) niente
+      di strano, Questions cresce regolare, memoria ferma, tcp 1023 aperte.
+      Causa da trovare (l'host? un checkpoint di InnoDB? lo scheduler?):
+      va nella voce 34 con la lentezza rispetto a Linux.
 
   31. FILE OLTRE 2 GB NEL KERNEL (l'utente, 25/10: �prima l'ABI, poi il
       kernel�). Oggi su ENTRAMBE le architetture un file arriva a 2 GB:
