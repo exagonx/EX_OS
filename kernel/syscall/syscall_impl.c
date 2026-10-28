@@ -1035,6 +1035,20 @@ int32_t sys_fd_limite(InterruptFrame *frame)
     return 0;
 }
 
+/* =============================================================================
+ * SYS_FSYNC (258) - see syscall.h (0.284)
+ * ============================================================================= */
+int32_t sys_fsync(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    int      fd   = (int)FR_A1(frame);
+
+    if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED)
+        return ERR(EBADF);
+    if (FDV(proc, fd).type != FD_FILE) return ERR(EINVAL);
+    return vfs_fsync((int)FDV(proc, fd).inode);
+}
+
 int32_t sys_fcntl(InterruptFrame *frame)
 {
     Process *proc = proc_get_current();

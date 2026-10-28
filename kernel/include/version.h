@@ -691,7 +691,20 @@
  * `httpd -k stop`. dup2 counts a pty like a pipe. umount says which file
  * keeps a mount busy. A program that faults prints the addresses of its
  * segments found on its stack ("sulla pila"), with a thread's leader map. */
-#define EXOS_VERSION    "0.283"
+/* 0.283 -> 0.284: fsync is real (SYS_FSYNC, voce 34). The libc answered 0
+ * without doing anything, on the belief that every write reaches the disk:
+ * it reaches the disk's controller, whose write cache keeps it, and on a FAT
+ * volume not even that (fat.c's cache waits for fat_sync). Now fsync of a
+ * file syncs the volume it lives on and sends the disk FLUSH CACHE, as
+ * Linux does: InnoDB's commit is durable, and a comparison of MariaDB
+ * against Linux measures the same work on both. */
+/* 0.284 -> 0.285: voce 34, the first two steps. fsync on ext2 flushes the
+ * disk after giving the VFS lock back (ext2_fsync_prepara does the rest
+ * under it): every file operation of every thread used to wait for the
+ * disk's cache. The ATA waits that take the disk's time (end of a DMA run,
+ * FLUSH CACHE) yield the CPU after a few readings (ata_cedi) instead of
+ * spinning: on one CPU the spinning thread was taking the time of all. */
+#define EXOS_VERSION    "0.285"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

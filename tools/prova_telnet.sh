@@ -14,7 +14,10 @@
 # Per questo la rete si sposta con net=/host=/dhcpstart=.
 #
 # ! E LA PORTA DELL'OSPITE NON E' LA 23: e' la 2323, per non finire addosso a
-# un telnet vero.
+# un telnet vero. TN_PORTA ne sceglie un'altra. Se e' gia' occupata la prova
+# si ferma e lo dice: il 28 ottobre 2026 un BBS dell'utente ascoltava sulla
+# 2323, QEMU non ha potuto inoltrarla e il client ha parlato col BBS
+# ("ESITO: NON VA" a 32 e 64 bit, con EX-OS a posto).
 #
 # ! UNA MACCHINA SOLA PER VOLTA, come per prova_ssh.sh.
 # =============================================================================
@@ -24,9 +27,14 @@ cd "$(dirname "$0")/.." || exit 1
 # ripulisce da solo alla fine, e la propria istanza la distingue con
 # EXOS_ISTANZA.
 rm -f /tmp/exos/serialtn.txt
+TN_PORTA="${TN_PORTA:-2323}"
+if ss -Hltn "sport = :$TN_PORTA" | grep -q .; then
+    echo "NON RIUSCITO: la porta $TN_PORTA dell'host e' gia' occupata (ss -ltnp); TN_PORTA=<altra> $0" >&2
+    exit 2
+fi
 
 EXOS_ISTANZA=tn EXOS_NO_FLOPPY=1 EXOS_CDROM="${EXOS_CDROM:-dist/exos.iso}" EXOS_ATTESA_FINALE=90 \
-EXOS_QEMU_EXTRA="-netdev user,id=n1,net=10.0.0.0/24,host=10.0.0.2,dhcpstart=10.0.0.15,hostfwd=tcp::2323-:23 -device ne2k_pci,netdev=n1" \
+EXOS_QEMU_EXTRA="-netdev user,id=n1,net=10.0.0.0/24,host=10.0.0.2,dhcpstart=10.0.0.15,hostfwd=tcp::$TN_PORTA-:23 -device ne2k_pci,netdev=n1" \
 timeout 200 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" "telnetd -s -v@10" \
     > /tmp/exos/tn.log 2>&1 &
 QPID=$!
@@ -37,14 +45,14 @@ for i in $(seq 1 40); do
 done
 sleep 2
 
-timeout 60 python3 tools/telnet_client_prova.py 2323 > /tmp/exos/tnclient.log 2>&1
+timeout 60 python3 tools/telnet_client_prova.py $TN_PORTA > /tmp/exos/tnclient.log 2>&1
 
 # ! E POI I BYTE SUL CAVO, che il client vero non fa vedere: capo riga CR LF e
 # un'uscita lunga che non si tronca. Sono le due cose che il 16 settembre 2026
 # erano rotte tutt'e due — lo sfasamento a scaletta e il chilobyte che sparisce
 # — e un client telnet le nasconde tutt'e due.
 echo "=== BYTE SUL CAVO ==="
-timeout 90 python3 tools/telnet_nvt_prova.py 2323 /boot/kernel.txt boot/kernel.txt
+timeout 90 python3 tools/telnet_nvt_prova.py $TN_PORTA /boot/kernel.txt boot/kernel.txt
 
 echo "=== SERVER ==="
 grep -a "telnetd:" /tmp/exos/serialtn.txt 2>/dev/null | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g' | tail -12

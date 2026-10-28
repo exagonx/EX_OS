@@ -244,6 +244,7 @@ void syscall_init(void)
     syscall_table[SYS_CONSOLE_GRAFICA] = sys_console_grafica;
     syscall_table[SYS_FD_RISERVA]  = sys_fd_riserva;
     syscall_table[SYS_FD_LIMITE]   = sys_fd_limite;
+    syscall_table[SYS_FSYNC]       = sys_fsync;
     syscall_table[SYS_CONSOLE_CTRLC]  = sys_console_ctrlc;
     syscall_table[SYS_CONSOLE_PRONTO] = sys_console_pronto;
 

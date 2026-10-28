@@ -13143,12 +13143,21 @@ ssize_t pwrite(int fd, const void *buf, size_t n, long pos)
     return r;
 }
 
-/* I filesystem di EX-OS scrivono sul disco a ogni write: non c'e' niente in
- * sospeso da spingere. */
+/* fsync is the kernel's since 0.284 (SYS_FSYNC): the file's volume writes
+ * out what it keeps and the disk empties its write cache. Before, this
+ * answered 0 at once, believing every write was already on the disk: it was
+ * in the disk's cache, and on FAT in the kernel's. A kernel before 0.284
+ * answers ENOSYS and gets the old behaviour. */
+#define SYS_FSYNC 258
 int fsync(int fd)
 {
-    return fcntl(fd, 1 /* F_GETFD */) < 0 ? -1 : 0;
+    int32_t r = _syscall1(SYS_FSYNC, (uint32_t)fd);
+
+    if (r == -38) return fcntl(fd, 1 /* F_GETFD */) < 0 ? -1 : 0;
+    return err_posix(r);
 }
+
+int fdatasync(int fd) { return fsync(fd); }
 
 ssize_t readlink(const char *percorso, char *buf, size_t n)
 {

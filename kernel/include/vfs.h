@@ -221,5 +221,8 @@ int  vfs_truncate(const char *abs, uint32_t nuova_dim);
  * descrittore anche se nel frattempo e' stato rinominato. */
 int  vfs_ftruncate(int h, uint32_t nuova_dim);
 void vfs_sync   (void);
+/* fsync (0.284): the volume of an open file writes out what it keeps and the
+ * disk empties its write cache. 0, -EBADF, -EIO. */
+int  vfs_fsync  (int h);
 
 #endif /* VFS_H */

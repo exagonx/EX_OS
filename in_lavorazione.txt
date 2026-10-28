@@ -8619,6 +8619,47 @@ tools/netinst/velocita tolto da netinst.
       EX-OS (se non scrive davvero, confrontare anche con
       innodb_flush_log_at_trx_commit=2 su entrambi), altrimenti si misurano
       due cose diverse.
+      28/10 FATTO: fsync NON scriveva (la libc rispondeva 0, il disco non
+      riceveva mai FLUSH CACHE; sul FAT restava perfino nella cache di
+      fat.c). Kernel 0.284: SYS_FSYNC (258) sincronizza il volume del file
+      e manda FLUSH CACHE; fdatasync nuovo. Verificato con la traccia di
+      QEMU ide_bus_exec_cmd: 17927 comandi 0xEA in 30 s a 4 client.
+      CONFRONTO ALLA PARI (l'utente: 10 minuti, 512 client; senza pausa, per
+      misurare il tetto), flush a ogni commit su tutti e due, immagini sullo
+      stesso disco dell'host (/home, sda), la VM Debian spenta durante la
+      corsa di EX-OS:
+        Linux  1764 istr/s, p50 220 ms, p95 440-880 ms, 1 errore
+               (tools/stress/risultati/confronto-512-linux)
+        EX-OS   343 istr/s, p50 1,25-1,48 s, p95 3-5 s, 35 deadlock,
+               5 handshake scaduti nella salita
+               (tools/stress/risultati/confronto-512-exos)
+      Quindi EX-OS e' circa 5 volte piu' lento sullo stesso lavoro, e i
+      numeri vecchi (2109/s, le 8 ore) erano senza durata dei commit.
+      PROSSIMI PASSI, uno per volta e ripetendo il confronto:
+        1. il flush col lucchetto del VFS preso (vfs_fsync_nl -> ext2_sync
+           -> blk_flush): portare ata_flush fuori dal lucchetto;
+        2. il driver IDE aspetta BSY girando in tondo (ata_attendi_non_bsy,
+           anche dopo il DMA): dormire sull'interrupt, cosi' gli altri fili
+           lavorano durante l'attesa del disco;
+        3. quasi un flush per istruzione di scrittura: capire se il group
+           commit di InnoDB funziona su EX-OS (fili del log, futex/condvar);
+        4. 132 mila comandi di scrittura in 30 s a 4 client: la dimensione
+           delle scritture (unire i settori vicini);
+        5. a parte: ext2 contro ext4, raw contro qcow2.
+      28/10 sera, KERNEL 0.285, PASSI 1 E 2 FATTI: fsync su ext2 svuota il
+      disco DOPO aver rilasciato il lucchetto del VFS (ext2_fsync_prepara
+      fa sotto il lucchetto il chiudi del modulo: prenotazioni e giornale);
+      le attese lunghe dell'ATA (fine del DMA, FLUSH CACHE) cedono la CPU
+      dopo 64 letture del registro (ata_cedi) invece di girare a vuoto.
+      Stessa corsa (tools/stress/risultati/confronto-512-exos-0285):
+        EX-OS 0.285  1940 istr/s, p50 220 ms, p95 440-740 ms, 4 errori,
+                     5 handshake scaduti nella salita (Linux 1)
+      cioe' alla pari con Linux (1764/s, p50 220 ms). I FLUSH CACHE
+      arrivano ancora (17660 in 30 s a 4 client, come col 0.284): la
+      durata e' la stessa, il guadagno e' il group commit di InnoDB che ora
+      funziona (passo 3 risolto da 1 e 2). Restano: passo 4 (le scritture
+      da pochi settori), i 5 handshake scaduti nella salita contro 1 di
+      Linux, e la prova con 1024 client e con tutte le CPU di Linux.
 
   33. FORK() NEL KERNEL (l'utente, 26/10: «fork() servira' per il porting
       di redis e apache2»). Oggi fork risponde -1/ENOSYS e i processi nascono

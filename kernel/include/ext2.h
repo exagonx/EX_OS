@@ -145,6 +145,9 @@ int  ext2_write   (int mnt, const char *percorso, const void *buf,
                    uint32_t size, uint32_t offset);
 int  ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
 int  ext2_sync    (int mnt);
+/* fsync (0.285): ext2_sync without the disk flush; returns the block
+ * device for the caller to flush outside the VFS lock, -1 if none. */
+int  ext2_fsync_prepara(int mnt);
 /* The last descriptor of a file on this volume was closed (vfs.c): the
  * write module puts back what it kept for the next write() (0.264). */
 void ext2_chiudi  (int mnt);

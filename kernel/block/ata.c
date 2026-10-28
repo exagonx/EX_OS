@@ -402,6 +402,9 @@ static void ata_cerca_controller(void)
  * niente. Con l'attesa attiva il controller fa comunque tutto il lavoro di
  * copia: e' quello il guadagno, non il non-attendere.
  */
+static void ata_cedi(uint32_t *giri);                /* see below (0.285) */
+static int  ata_attendi_non_bsy_cedendo(int canale, uint32_t timeout_ms);
+
 static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
                           int usa48, int scrivi)
 {
@@ -409,6 +412,7 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
     uint16_t bm = g_can[canale].bm;
     uint32_t scaduto = 0;
     uint8_t  st;
+    uint32_t giri = 0;
 
     if (n == 0 || n > DMA_MAX_SETT) return -1;
 
@@ -543,6 +547,7 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
             return -1;
         }
         ata_400ns(canale);
+        ata_cedi(&giri);        /* the disk is copying: let others run */
     }
 
     port_outb(bm + BM_CMD, 0);
@@ -562,7 +567,7 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
      * accorgersene. Fidarsi di uno solo dei due vuol dire restituire dati
      * sbagliati senza errore. */
     {
-        int s = ata_attendi_non_bsy(canale, ATA_TMO_BSY_MS);
+        int s = ata_attendi_non_bsy_cedendo(canale, ATA_TMO_BSY_MS);
 
         if (s < 0 || ((uint8_t)s & (ATA_SR_ERR | ATA_SR_DF))) {
             klog(LOG_ERROR, "ATA: DMA, il disco segnala errore a lba=%u "
@@ -655,6 +660,53 @@ void ata_attesa_ms(uint32_t ms)
 
 /* Aspetta che BSY si abbassi, entro una scadenza REALE.
  * Ritorna lo stato letto, o -1 su timeout. */
+/* =============================================================================
+ * ata_cedi - the disk is still working: let the other threads run (0.285)
+ *
+ * The waits of this file read the status register in a loop (polling: see
+ * the top of the file for why not IRQ 14). On one CPU every microsecond of
+ * that loop was taken from everyone: while the disk wrote a 32 KB run or
+ * emptied its cache (a FLUSH CACHE costs the host an fdatasync), no other
+ * thread of the system ran. Measured on 28 October 2026, MariaDB with a
+ * flush at every commit: 343 statements/s against Linux's 1764 (voce 34).
+ *
+ * After ATA_GIRI_PRIMA_DI_CEDERE readings the waiting thread yields: the
+ * others run, the scheduler comes back to it, it reads the register again.
+ * The disk lock stays held, so whoever wants the disk queues on it as
+ * before; the deadlines are in ticks, not in rounds, so they do not change.
+ * ! ONLY WITH A PROCESS: at boot (no current process) there is no one to
+ * yield to, and the loop spins as it always did.
+ * ============================================================================= */
+#define ATA_GIRI_PRIMA_DI_CEDERE 64u
+
+static void ata_cedi(uint32_t *giri)
+{
+    if (++*giri < ATA_GIRI_PRIMA_DI_CEDERE) return;
+    if (proc_get_current() != NULL) sched_yield();
+}
+
+/* ata_attendi_non_bsy, yielding while it waits: for the commands that take
+ * the disk's time (end of a DMA run, FLUSH CACHE). */
+static int ata_attendi_non_bsy_cedendo(int canale, uint32_t timeout_ms)
+{
+    uint16_t io    = base_io(canale);
+    uint32_t scad  = g_ticks + (timeout_ms + 9) / 10;
+    uint32_t giri  = 0;
+    uint8_t  st;
+
+    for (;;) {
+        st = port_inb(io + ATA_REG_STATUS);
+        if (st == 0xFF) return -1;
+        if (!(st & ATA_SR_BSY)) return (int)st;
+        if (g_ticks >= scad) {
+            klog(LOG_ERROR, "ATA: timeout BSY sul canale %d (stato=0x%02x)",
+                 canale, st);
+            return -1;
+        }
+        ata_cedi(&giri);
+    }
+}
+
 int ata_attendi_non_bsy(int canale, uint32_t timeout_ms)
 {
     uint16_t io    = base_io(canale);
@@ -1516,7 +1568,7 @@ static int ata_flush_nl(int indice)
     port_outb(io + ATA_REG_COMMAND, d->lba48 ? ATA_CMD_FLUSH_EXT : ATA_CMD_FLUSH);
     ata_400ns(d->canale);
 
-    st = ata_attendi_non_bsy(d->canale, ATA_TMO_BSY_MS);
+    st = ata_attendi_non_bsy_cedendo(d->canale, ATA_TMO_BSY_MS);
     if (st < 0 || ((uint8_t)st & (ATA_SR_ERR | ATA_SR_DF))) return -1;
 
     return 0;

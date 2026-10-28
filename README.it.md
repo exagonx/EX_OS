@@ -2417,6 +2417,72 @@ e ogni pagina torna identica. Sul CQ60 l'area da 4 GB si accende ma la RAM
 è sempre bastata. Come prepararla e come controllarla: manuale,
 [4, l'area di scambio](manuali/installazione/04-dopo-installazione.md).
 
+### fsync vero, e alla pari con Linux (kernel 0.284-0.285)
+
+`fsync()` non faceva niente: la libc rispondeva 0 subito, perche' i
+filesystem di EX-OS scrivono a ogni `write` e si credeva che non restasse
+niente in sospeso. La scrittura pero' arriva alla cache del disco, non al
+supporto (e sul FAT nemmeno a quella: la cache di `fat.c` aspetta
+`fat_sync`). Un commit di InnoDB confermato al client poteva sparire con
+una mancanza di corrente.
+
+- **kernel 0.284, `SYS_FSYNC` (258):** il volume del file scrive quello che
+  tiene (la cache del FAT, i blocchi riservati e il giornale di ext2/ext3)
+  e il disco riceve FLUSH CACHE. Si svuota tutto il volume e non solo il
+  file: la cache del disco non sa cosa sia un file. C'e' anche
+  `fdatasync`, che fa lo stesso. Con un kernel piu' vecchio la libc fa come
+  prima.
+- **verificato dal di fuori:** con la traccia di QEMU (`ide_bus_exec_cmd`),
+  30 s di MariaDB con 4 client mandano al disco 17 927 FLUSH CACHE EXT;
+  prima nessuno.
+
+Il confronto (voce 34 della coda): 10 minuti, 512 client senza pausa, lo
+stesso generatore, le stesse opzioni di `my.cnf`, la stessa macchina
+virtuale (QEMU a 64 bit con KVM, una CPU, 2 GB, disco IDE, e1000 sulla rete
+user di QEMU), le immagini dei dischi sullo stesso disco dell'host; InnoDB
+scrive sul disco a ogni commit su tutti e due
+(`innodb_flush_log_at_trx_commit = 1`):
+
+| 512 client, 10 minuti | Linux (Debian 13) | EX-OS 0.284 | EX-OS 0.285 |
+|---|---|---|---|
+| istruzioni/s | 1764 | 343 | **1940** |
+| p50 | 220 ms | 1,25-1,48 s | 220 ms |
+| p95 | 440-880 ms | 3-5 s | 440-740 ms |
+| errori | 1 | 35 (deadlock di InnoDB) | 4 |
+| connessioni fallite | 1 | 5 | 5 |
+
+Le connessioni fallite sono handshake scaduti nella salita, quando 512
+client arrivano in 25 secondi; si sono ricollegate tutte.
+
+Restano diversi: ext4 contro ext2, qcow2 contro raw, MariaDB 11.8.6 di
+Debian contro 11.8.9. Nessun pacchetto perso da EX-OS.
+
+! **LE MISURE DELLE SEZIONI QUI SOTTO (2109/s, le 8 ore a 1011/s) SONO SENZA
+  FSYNC**: il disco non veniva mai svuotato.
+
+Col 0.284 EX-OS era cinque volte piu' lento di Linux sullo stesso lavoro, e
+le cause erano due, corrette nel **kernel 0.285**:
+
+- **il flush col lucchetto del VFS preso.** Mentre il disco svuotava la
+  cache, nessun altro filo poteva aprire, leggere o scrivere un file: con
+  MariaDB vuol dire tutti i fili, a ogni commit. Ora `fsync` su ext2 fa
+  sotto il lucchetto solo la parte del filesystem (i blocchi riservati, il
+  giornale) e svuota il disco dopo averlo rilasciato.
+- **il driver del disco girava a vuoto.** Aspetta la fine di un comando
+  leggendo il registro di stato (niente IRQ 14, per le ragioni scritte in
+  `ata.c`), e con una CPU sola quell'attesa era tempo tolto a tutti. Ora,
+  dopo poche letture, cede la CPU agli altri fili e riguarda dopo; il
+  lucchetto del disco resta suo, e le scadenze sono in tick come prima.
+
+Insieme bastano: i commit di molte transazioni ora si raggruppano in un
+flush solo (group commit di InnoDB), perche' gli altri fili lavorano mentre
+il disco svuota. Il disco riceve ancora i suoi FLUSH CACHE (17 660 in 30 s
+con 4 client, come col 0.284): la durata dei commit e' la stessa.
+
+Chi preferisce la velocita' e accetta di perdere al massimo l'ultimo
+secondo di transazioni mette `innodb_flush_log_at_trx_commit = 2` in
+`[mysqld]` (manuale 4.10).
+
 ### Nessun tetto fisso, e Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)
 
 La regola dell'utente: processi, fili, applicazioni e connessioni hanno
@@ -2539,7 +2605,9 @@ servito per arrivare a 1024:
 - `ipcfg -tcp` elenca le connessioni TCP; `memlog` (dentro EX-OS) registra
   memoria, fili, la tabella TCP e dove si perdono i pacchetti.
 
-Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS):
+Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS; fino al
+kernel 0.283, quando `fsync` non svuotava il disco: vedi la sezione sul
+kernel 0.284):
 
 | client | pausa | istruzioni/s | p50 | p95 |
 |---|---|---|---|---|
@@ -2564,9 +2632,9 @@ MariaDB resta a 840 MB per tutto il giro; la memoria libera di EX-OS cala
 di circa 1 MB l'ora mentre le tabelle crescono e torna tutta quando
 mariadbd esce: nessuna perdita nel sistema. Un rallentamento di circa due
 minuti (p95 2,5 s, risposta peggiore 9,8 s, alla quarta ora e mezza) non
-ha lasciato tracce dal lato del server; la causa e' da trovare. Rispetto a
-Linux sullo stesso hardware questi numeri sono lenti: scoprire perche' e'
-la voce 34 della coda.
+ha lasciato tracce dal lato del server; la causa e' da trovare. Il confronto con
+Linux sullo stesso hardware (voce 34) e' nella sezione sul kernel 0.284:
+con lo stesso lavoro sul disco EX-OS e' piu' lento.
 
 ### MariaDB 11.8 LTS gira in EX-OS (0.279)
 
@@ -7567,7 +7635,8 @@ Tre scelte, e il perché:
   poi aggiorna la copia. Così `vfs_sync` continua a voler dire quello che
   ha sempre voluto dire, e uno spegnimento brutale non perde niente che
   non fosse già perso. Il write-back sarebbe più veloce e sarebbe **un'altra
-  promessa**.
+  promessa**. Il disco ha però una cache sua: dal kernel 0.284 `fsync` gli
+  manda FLUSH CACHE.
 - **La chiave è (disco fisico, LBA assoluto)**, presa *dopo* la traduzione
   di partizione: gli LBA relativi di due partizioni dello stesso disco si
   sovrappongono, e usare quelli darebbe a una i settori dell'altra.

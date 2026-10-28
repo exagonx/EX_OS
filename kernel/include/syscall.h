@@ -185,7 +185,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   258     /* la piu' alta e' SYS_FD_LIMITE = 257 */
+#define SYSCALL_COUNT   259     /* la piu' alta e' SYS_FSYNC = 258 */
 
 /* =============================================================================
  * Codici errno
@@ -359,6 +359,19 @@ typedef struct {
  * ============================================================================= */
 #define SYS_FD_RISERVA      256
 #define SYS_FD_LIMITE       257
+
+/* =============================================================================
+ * SYS_FSYNC (258) - a file's data on the disk (kernel 0.284)
+ *
+ * ebx = fd. For a file: the volume it lives on writes out what it keeps
+ * (FAT's cache, ext2's reserved blocks and journal) and the disk gets FLUSH
+ * CACHE, so what was written survives a power cut. Returns 0, -EBADF for a
+ * descriptor not open, -EINVAL for one that is not a file (pipe, pty,
+ * socket: POSIX and Linux say the same), -EIO if the disk refuses.
+ * ! The whole volume is flushed, not only the file: the disk's cache has no
+ * notion of files. More work than asked, never less.
+ * ============================================================================= */
+#define SYS_FSYNC           258
 
 #define FD_SERV_PRESA       1   /* a socket of ip.drv */
 #define FD_SERV_EPOLL       2   /* an epoll set (ip.drv) */
@@ -1850,6 +1863,7 @@ int32_t sys_console_setfg(InterruptFrame *f);
 int32_t sys_console_grafica(InterruptFrame *f);
 int32_t sys_fd_riserva(InterruptFrame *f);
 int32_t sys_fd_limite(InterruptFrame *f);
+int32_t sys_fsync(InterruptFrame *f);
 int32_t sys_console_ctrlc(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);

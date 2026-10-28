@@ -1120,6 +1120,22 @@ int ext2_sync(int mnt)
     return blk_flush(m->blkdev);
 }
 
+/* fsync's half under the VFS lock (0.285): what the module keeps goes to the
+ * disk (blocks set aside for an append, the journal's open transaction -
+ * the module's chiudi, i.e. its sync without the flush). Returns the block
+ * device to flush, which vfs_fsync does after giving the lock back: the
+ * disk emptying its cache is the slow part, and no file operation of any
+ * other thread needs to wait for it. -1 for a mount that is not there. */
+int ext2_fsync_prepara(int mnt)
+{
+    Ext2Mount *m = prendi(mnt);
+
+    if (m == NULL) return -1;
+    if (g_ops != NULL && !m->sola_lettura && g_ops->chiudi != NULL)
+        g_ops->chiudi(mnt);
+    return m->blkdev;
+}
+
 void ext2_chiudi(int mnt)
 {
     Ext2Mount *m = prendi(mnt);

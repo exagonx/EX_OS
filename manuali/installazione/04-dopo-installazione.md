@@ -421,6 +421,16 @@ indirizzi per il massimo, e un programma di EX-OS ne ha 3 GB).
   pool-of-threads` e `thread_pool_max_threads = 64`, poi
   `mariadb-svc -ferma` e `-avvia`.
 
+! **I COMMIT SONO SUL DISCO DAL KERNEL 0.284.** Prima `fsync` non svuotava
+  la cache del disco, e una mancanza di corrente poteva perdere transazioni
+  già confermate. Ora ogni commit aspetta il disco, come su Linux
+  (`innodb_flush_log_at_trx_commit = 1`, il valore predefinito); dal kernel
+  0.285 gli altri fili lavorano mentre il disco svuota la cache, e con 512
+  client EX-OS serve quanto Linux sulla stessa macchina. Chi preferisce la velocità e accetta di perdere al massimo l'ultimo
+  secondo di transazioni aggiunge in `[mysqld]`
+  `innodb_flush_log_at_trx_commit = 2`, poi `mariadb-svc -ferma` e
+  `-avvia`.
+
 ! **UN FILE ARRIVA A 2 GB**, su tutte e due le architetture: è un limite del
   kernel di oggi. Oltre, la libc rifiuta la scrittura (EFBIG, «file troppo
   grande») invece di scrivere in un punto sbagliato del file. Tienilo

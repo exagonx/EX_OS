@@ -2579,6 +2579,48 @@ void vfs_sync(void)
     fs_prendi_n("sync"); vfs_sync_nl(); fs_rilascia();
 }
 
+/* The volume of one open file, not all of them (0.284): a database calls
+ * fsync at every commit, and the other disks have nothing to do with it.
+ * ISO and the RAM disk have nothing pending. */
+static int vfs_fsync_nl(int h)
+{
+    int im, r = 0;
+
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
+    im = g_file_(h).im;
+    switch (g_mnt[im].tipo) {
+    case VFS_FS_FAT12FD: r = fat12_sync();               break;
+    case VFS_FS_FAT:     r = fat_sync(g_mnt[im].mnt);    break;
+    case VFS_FS_EXT2:    r = ext2_sync(g_mnt[im].mnt);   break;
+    default:             break;
+    }
+    return r < 0 ? ERR(EIO) : 0;
+}
+
+/* ! ON ext2 THE DISK IS FLUSHED AFTER THE LOCK IS GIVEN BACK (0.285). The
+ * flush is what costs (the disk empties its cache: on QEMU an fdatasync of
+ * the host), and with the lock held every other thread's open, read and
+ * write waited for it - with MariaDB that is every thread, at every commit.
+ * What the volume keeps goes out under the lock (ext2_fsync_prepara); the
+ * flush then covers it and anything written meanwhile, which is more than
+ * fsync promises, never less. */
+int vfs_fsync(int h)
+{
+    int r, dev = -1;
+
+    fs_prendi_n("fsync");
+    if (VFS_H_VALIDO(h) && g_file_(h).usato &&
+        g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2) {
+        dev = ext2_fsync_prepara(g_mnt[g_file_(h).im].mnt);
+        r = dev < 0 ? ERR(EIO) : 0;
+    } else {
+        r = vfs_fsync_nl(h);
+    }
+    fs_rilascia();
+    if (dev >= 0 && blk_flush(dev) != 0) r = ERR(EIO);
+    return r;
+}
+
 /* =============================================================================
  * vfs_ext2_rivaluta — the ext2 write module has registered (kernel 0.263)
  *
