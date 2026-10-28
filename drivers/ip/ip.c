@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.018");
+EX_VERSIONE("ip.drv", "0.019");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -1734,9 +1734,21 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
             /* Chiusi entrambi i versi. Niente TIME_WAIT: aspettare due
              * minuti per un segmento in ritardo terrebbe occupata una
              * delle quattro connessioni per tutto quel tempo, e su questo
-             * sistema quel prezzo e' piu' alto del rischio. */
-            c->stato = S_MORTA;
-            c->rto_scade = 0;
+             * sistema quel prezzo e' piu' alto del rischio.
+             *
+             * ! MA SOLO SE IL NOSTRO FIN E' CONFERMATO (0.019, 28 ottobre
+             * 2026). Il suo FIN puo' arrivare prima che l'altro abbia
+             * confermato il nostro - o prima che il nostro sia partito,
+             * con dati ancora in coda dietro la sua finestra: e' CLOSING.
+             * Fino alla 0.018 si passava a MORTA e si smetteva di
+             * ritrasmettere: la coda e il FIN andavano persi. Ora resta da
+             * aspettare solo la conferma, come in S_ULTIMO_ACK. */
+            if (!seq_prima(c->snd_una, c->fin_seq + 1u)) {
+                c->stato = S_MORTA;
+                c->rto_scade = 0;
+            } else {
+                c->stato = S_ULTIMO_ACK;
+            }
         }
     }
 

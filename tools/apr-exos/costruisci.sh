@@ -30,6 +30,11 @@
 # (httpd's event MPM does). The poll() backend takes every descriptor.
 # ! WITHOUT IPv6 (--disable-ipv6): ip.drv speaks IPv4 only; the headers have
 # sockaddr_in6, so APR would believe the opposite.
+# ! ATOMICS FROM GCC'S BUILTINS (28 October 2026), as on Linux: the cache
+# answers the test configure cannot run, and --enable-nonportable-atomics
+# because for an i386 host APR forces its generic atomics anyway (a hash of
+# mutexes in the global pool, a lock at every reference count). The 32-bit
+# CPU base (pentium-mmx) has cmpxchg and cmpxchg8b, so gcc inlines them all.
 # ! RANDOM BYTES FROM arc4random_buf, not getrandom: getrandom answers EAGAIN
 # when asked often (the kernel counts its entropy), arc4random never fails.
 # =============================================================================
@@ -47,7 +52,9 @@ CACHE="ac_cv_file__dev_zero=yes ac_cv_func_setpgrp_void=yes
     apr_cv_gai_addrconfig=no apr_cv_negative_eai=yes
     ac_cv_strerror_r_rc_int=yes apr_cv_hostbyname_is_thread_safe=no
     ac_cv_func_getrandom=no ac_cv_have_decl_SYS_getrandom=no
-    apr_cv_getaddrinfo=yes ac_cv_working_getaddrinfo=yes ac_cv_working_getnameinfo=yes"
+    apr_cv_getaddrinfo=yes ac_cv_working_getaddrinfo=yes ac_cv_working_getnameinfo=yes
+    ap_cv_atomic_builtins=yes ap_cv__atomic_builtins=yes
+    ap_cv_atomic_builtins64=yes ap_cv__atomic_builtins64=yes"
 
 costruisci() {
     local f
@@ -67,7 +74,8 @@ costruisci() {
         --build="$("$SRC/build/config.guess")" --prefix=/exos \
         CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" LDFLAGS=-static \
         CC_FOR_BUILD=gcc --disable-shared --enable-static --enable-threads \
-        --without-devrandom --disable-dso --disable-ipv6 ) \
+        --without-devrandom --disable-dso --disable-ipv6 \
+        --enable-nonportable-atomics=yes ) \
         > "$B/configura.log" 2>&1 || { tail -20 "$B/configura.log"; exit 1; }
     make -C "$B/obj" -j3 > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     make -C "$B/obj" install DESTDIR="$OUT" > "$B/installa.log" 2>&1 || { tail -20 "$B/installa.log"; exit 1; }

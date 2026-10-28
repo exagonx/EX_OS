@@ -2417,6 +2417,91 @@ e ogni pagina torna identica. Sul CQ60 l'area da 4 GB si accende ma la RAM
 è sempre bastata. Come prepararla e come controllarla: manuale,
 [4, l'area di scambio](manuali/installazione/04-dopo-installazione.md).
 
+### Nessun tetto fisso, e Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)
+
+La regola dell'utente: processi, fili, applicazioni e connessioni hanno
+come limite solo la configurazione del singolo server e l'hardware, mai
+un numero scritto nel codice. Quello che e' cambiato:
+
+- **i descrittori (kernel 0.281):** la tabella di un programma non e' piu'
+  128 posti nel PCB ma blocchi di 128 aggiunti quando servono. Il tetto e'
+  `RLIMIT_NOFILE`: `fdmax` in `kernel.cfg`, oppure uno ogni 2 KB di RAM
+  (262144 con 512 MB), e `setrlimit` lo abbassa per un programma. Socket,
+  insiemi epoll e zone di memoria condivisa prendono i numeri dal kernel
+  come i file; `select` accetta descrittori fino al limite del programma.
+- **i processi e i fili (kernel 0.282):** spariscono `MAX_PROCESSES` (192
+  in tutto il sistema) e `FILO_MAX` (128 fili per programma). I PCB stanno
+  in blocchi che si aggiungono quando servono; le pile dei fili oltre le
+  127 riservate scendono verso lo heap. `procmax` in `kernel.cfg` mette un
+  tetto piu' basso per un server. **Il tetto vero oggi e' la fascia del
+  kernel:** ogni processo e ogni filo hanno 128 KB di pila del kernel nei
+  primi 64 MB, quindi circa 400-450 in tutto il sistema qualunque sia la
+  RAM (voce 35 della coda).
+- **file aperti, pipe, terminali, poll (kernel 0.282):** le tabelle del
+  sistema da 256 file aperti, 16 pipe e 4 pseudo-terminali crescono a
+  richiesta; `poll` del kernel prende piu' di 16 voci.
+- **libc:** le tabelle dei fili (128) e degli `errno` (64) diventano
+  catene di blocchi.
+- **ip.drv 0.017:** la tabella TCP cresce fino a `tcpmax` in `kernel.cfg`,
+  o una connessione ogni 32 KB di RAM; `ip.drv -t N` per una sola
+  accensione. **ip.drv 0.018:** `shutdown(SHUT_WR)` (la chiusura a meta':
+  si smette di scrivere e si continua a leggere), e il FIN parte dopo i
+  dati ancora in coda (prima un `close` subito dopo una `write` poteva
+  perdere la coda dei dati).
+
+**Apache httpd 2.4.69** (con APR 1.7.6, APR-util 1.6.5, Expat 2.9.0;
+`tools/httpd-exos/costruisci.sh 32|64`, gruppo `[apache]` della ISO degli
+strumenti e di netinst, in `/exos/apache2`): MPM worker in un processo solo
+con 256 fili (`httpd -X`), tutti i moduli statici, mod_ssl con OpenSSL 4.1,
+i CGI con `spawn_ex` (EX-OS non ha `fork`: la voce 33 della coda).
+`tools/prova_httpd.sh` lo prova in QEMU, a 32 e 64 bit: una pagina, un CGI
+con GET e con POST, un 404, `ab` dentro EX-OS e dall'host. La chiusura a meta' ha portato
+ogni richiesta da 2 s (Apache aspettava che il client chiudesse) a pochi
+millisecondi:
+
+| | prima di ip.drv 0.018 | dopo, 32 bit | dopo, 64 bit |
+|---|---|---|---|
+| `ab` dentro EX-OS, 20 alla volta | 8 richieste/s | 240/s | 216/s |
+| `ab` dall'host, 50 alla volta | 24/s | 245/s | 234/s |
+
+Per far fermare Apache in modo pulito (`httpd -k stop`, codice d'uscita 0 a
+32 e 64 bit) sono servite due patch e tre correzioni fuori da Apache:
+
+- **L'ascoltatore del worker.** Allo spegnimento Apache lo sveglia con
+  `pthread_kill`, ma su EX-OS un segnale non interrompe `accept` ne' `poll`
+  (voce 37 della coda): Apache smetteva di aspettarlo dopo 5 s e usciva con
+  l'ascoltatore ancora vivo, che poi cadeva sullo scoreboard liberato.
+  `patch/worker-ascolto.diff` fa `poll` ogni 100 ms e guarda
+  `listener_may_exit`, come l'ascoltatore di MariaDB;
+  `patch/worker-uscita.diff` distrugge `pruntime` prima di `exit` (i pool
+  riciclati venivano distrutti due volte: glibc lo perdona, la malloc di
+  EX-OS no).
+- **Kernel 0.283, una perdita a ogni CGI.** `spawn` da' al figlio i
+  descrittori 0, 1 e 2 del padre, poi ci applica sopra le redirezioni
+  chieste, e il riferimento ereditato non tornava mai: ogni CGI lasciava un
+  riferimento su `logs/error_log`, e dopo lo spegnimento il disco non si
+  smontava. Ora `umount` dice quale file tiene occupato un disco.
+- **ip.drv 0.019:** il FIN dell'altra parte arrivato prima della conferma
+  del nostro (CLOSING) faceva morire la connessione, e il nostro FIN e i
+  dati in coda non si ritrasmettevano piu'.
+- **Kernel 0.283:** un programma che va in fault stampa gli indirizzi dei
+  suoi segmenti trovati sulla pila (`PF:   sulla pila:`, per `addr2line`);
+  e' cosi' che si e' trovato l'ascoltatore.
+
+La prova dall'host passa per la rete user di QEMU, che accetta la porta
+inoltrata su un socket Linux con una coda d'ascolto minuscola: con 50
+client alla volta la coda dell'host trabocca (`ListenOverflows`, 14-16
+volte a corsa), l'host butta i SYN e il client ritenta dopo 1, 3, 7, 15 s.
+Una cattura sulla e1000 ha mostrato che le richieste da 20 s, o mai finite,
+a EX-OS non erano mai arrivate. `prova_httpd.sh` ora aspetta fino a 120 s e
+stampa i trabocchi accanto al risultato.
+
+Prove nuove: `tools/prova_fd.sh` (2000 connessioni epoll, descrittori fino
+a 4005, `select` oltre 2048), `tools/prova_moltifili.sh` (386 fili vivi
+insieme in un programma a 32 bit, 354 a 64, poi un rifiuto pulito con
+EAGAIN). Manuale
+[4.11, il server web Apache](manuali/installazione/04-dopo-installazione.md).
+
 ### 1024 connessioni a MariaDB: epoll, un gruppo di fili, una casella giusta (kernel 0.280, ip.drv 0.016)
 
 L'utente ha chiesto uno stress test: 1024 client che scrivono, leggono e
@@ -2441,8 +2526,8 @@ servito per arrivare a 1024:
 - **MariaDB col gruppo di fili** (`thread_handling=pool-of-threads`,
   `patch/server-threadpool-epoll.diff`): un filo per connessione vorrebbe
   128 KB di pila del kernel ciascuno nella fascia di 64 MB del kernel, e
-  EX-OS ha 192 posti per processi e fili. Ora poche decine di fili servono
-  tutte le connessioni. `mariadb-svc` 0.003 scrive `max_connections = 1024`
+  EX-OS aveva 192 posti per processi e fili (fino al kernel 0.281). Ora
+  poche decine di fili servono tutte le connessioni. `mariadb-svc` 0.003 scrive `max_connections = 1024`
   e il gruppo in `/etc/my.cnf` (manuale 4.10).
 - **e1000:** l'anello di ricezione passa da 32 a 96 descrittori e la coda
   verso ip.drv da 64 a 256 frame: con mille connessioni l'anello traboccava,

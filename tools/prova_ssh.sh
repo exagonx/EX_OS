@@ -16,11 +16,12 @@
 # ssh vero dell'ospite.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
-pkill -9 -f qemu-system 2>/dev/null
-sleep 2
+# no pkill here (see prova_telnet.sh): it took down the session that
+# started the script, and qemu_drive.py cleans up its own instance.
+# 64 bit: EXOS_CDROM=dist/exos64.iso EXOS_QEMU=qemu-system-x86_64
 rm -f /tmp/exos/serialpr.txt /tmp/exos/pr.pcap
 
-EXOS_ISTANZA=pr EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+EXOS_ISTANZA=pr EXOS_NO_FLOPPY=1 EXOS_CDROM="${EXOS_CDROM:-dist/exos.iso}" \
 EXOS_ATTESA_FINALE=160 \
 EXOS_QEMU_EXTRA="-netdev user,id=n1,hostfwd=tcp::2225-:22 -device ne2k_pci,netdev=n1 -object filter-dump,id=f1,netdev=n1,file=/tmp/exos/pr.pcap" \
 timeout 200 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" "sshd -s -v@15" \

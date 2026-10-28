@@ -2373,6 +2373,87 @@ page comes back identical. On the CQ60 the 4 GB area comes up but RAM has
 always been enough. How to set it up and check it: manual,
 [4, the swap area](manuali/installazione/04-dopo-installazione.md).
 
+### No fixed ceilings, and Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)
+
+The user's rule: processes, threads, applications and connections are
+limited only by the configuration of each server and by the hardware, never
+by a number written in the code. What changed:
+
+- **descriptors (kernel 0.281):** a program's table is no longer 128 slots
+  in the PCB but blocks of 128 added when needed. The ceiling is
+  `RLIMIT_NOFILE`: `fdmax` in `kernel.cfg`, or one per 2 KB of RAM (262144
+  with 512 MB), and `setrlimit` lowers it for one program. Sockets, epoll
+  sets and shared-memory zones take their numbers from the kernel like
+  files; `select` accepts descriptors up to the program's limit.
+- **processes and threads (kernel 0.282):** `MAX_PROCESSES` (192 in the
+  whole system) and `FILO_MAX` (128 threads per program) are gone. PCBs live
+  in blocks added when needed; thread stacks past the 127 reserved slots
+  move down towards the heap. `procmax` in `kernel.cfg` sets a lower ceiling
+  for a server. **Today's real ceiling is the kernel zone:** every process
+  and thread has a 128 KB kernel stack in the first 64 MB, so about 400-450
+  in the whole system whatever the RAM (item 35 of the queue).
+- **open files, pipes, terminals, poll (kernel 0.282):** the system tables
+  of 256 open files, 16 pipes and 4 pseudo-terminals grow on demand; the
+  kernel's `poll` takes more than 16 entries.
+- **libc:** the tables of threads (128) and of `errno` (64) become chains
+  of blocks.
+- **ip.drv 0.017:** the TCP table grows up to `tcpmax` in `kernel.cfg`, or
+  one connection per 32 KB of RAM; `ip.drv -t N` for one boot. **ip.drv
+  0.018:** `shutdown(SHUT_WR)` (the half close: stop writing, keep
+  reading), and the FIN leaves after the data still queued (before, a
+  `close` right after a `write` could lose the tail of the data).
+
+**Apache httpd 2.4.69** (with APR 1.7.6, APR-util 1.6.5, Expat 2.9.0;
+`tools/httpd-exos/costruisci.sh 32|64`, group `[apache]` of the tools ISO
+and of netinst, in `/exos/apache2`): worker MPM in a single process with
+256 threads (`httpd -X`), all modules static, mod_ssl with OpenSSL 4.1, CGI
+through `spawn_ex` (EX-OS has no `fork`: item 33 of the queue).
+`tools/prova_httpd.sh` tests it in QEMU, at 32 and 64 bit: a page, a CGI
+with GET and with POST, a 404, `ab` inside EX-OS and from the host. The
+half close took every request from 2 s (Apache waited for the client to
+close) to a few milliseconds:
+
+| | before ip.drv 0.018 | after, 32 bit | after, 64 bit |
+|---|---|---|---|
+| `ab` inside EX-OS, 20 at a time | 8 requests/s | 240/s | 216/s |
+| `ab` from the host, 50 at a time | 24/s | 245/s | 234/s |
+
+Making Apache stop cleanly (`httpd -k stop`, exit code 0 at 32 and 64 bit)
+took two patches and three fixes outside Apache:
+
+- **The worker listener.** Apache wakes it at shutdown with `pthread_kill`,
+  but on EX-OS a signal does not interrupt `accept` or `poll` (item 37 of
+  the queue): Apache gave up waiting after 5 s and exited with the listener
+  still alive, which then crashed on the freed scoreboard.
+  `patch/worker-ascolto.diff` polls every 100 ms and looks at
+  `listener_may_exit`, like MariaDB's listener; `patch/worker-uscita.diff`
+  destroys `pruntime` before `exit` (the recycled pools were destroyed
+  twice: glibc forgives it, the EX-OS malloc does not).
+- **Kernel 0.283, a leak of every CGI.** `spawn` gives the child the
+  parent's descriptors 0, 1 and 2, then applies the redirections asked for
+  over them, and the inherited reference was never given back: each CGI left
+  one reference on `logs/error_log`, and after the stop the disk would not
+  unmount. `umount` now says which file keeps a disk busy.
+- **ip.drv 0.019:** the other side's FIN arriving before ours was
+  acknowledged (CLOSING) killed the connection, and our FIN and the queued
+  data were no longer retransmitted.
+- **Kernel 0.283:** a program that faults prints the addresses of its
+  segments found on its stack (`PF:   sulla pila:`, for `addr2line`); that
+  is how the listener was found.
+
+The test from the host goes through QEMU's user network, which accepts the
+forwarded port on a Linux socket with a tiny backlog: with 50 clients at a
+time the host's queue overflows (`ListenOverflows`, 14-16 times per run),
+the host drops SYNs and the client retries after 1, 3, 7, 15 s. A capture at
+the e1000 showed that the requests that took 20 s, or never finished,
+never reached EX-OS. `prova_httpd.sh` now waits up to 120 s and prints the
+overflows next to the result.
+
+New tests: `tools/prova_fd.sh` (2000 epoll connections, descriptors up to
+4005, `select` past 2048), `tools/prova_moltifili.sh` (386 threads alive
+together in one program at 32 bit, 354 at 64, then a clean EAGAIN). Manual
+[4.11, the Apache web server](manuali/installazione/04-dopo-installazione.md).
+
 ### 1024 connections to MariaDB: epoll, a pool of threads, a fair mailbox (kernel 0.280, ip.drv 0.016)
 
 The user asked for a stress test: 1024 clients writing, reading and updating
@@ -2396,8 +2477,8 @@ took to reach 1024:
   knows every network error (it said only «errore»).
 - **MariaDB with its pool of threads** (`thread_handling=pool-of-threads`,
   `patch/server-threadpool-epoll.diff`): one thread per connection would
-  want a 128 KB kernel stack each in the 64 MB kernel band, and EX-OS has 192
-  places for processes and threads. A few dozen threads now serve every
+  want a 128 KB kernel stack each in the 64 MB kernel band, and EX-OS had
+  192 places for processes and threads (until kernel 0.281). A few dozen threads now serve every
   connection. `mariadb-svc` 0.003 writes `max_connections = 1024` and the
   pool in `/etc/my.cnf` (manual 4.10).
 - **e1000:** the receive ring went from 32 to 96 descriptors and the queue

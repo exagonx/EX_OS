@@ -1,0 +1,37 @@
+--- a/server/mpm/worker/worker.c	2026-10-28 08:38:53.587496581 +0100
++++ b/server/mpm/worker/worker.c	2026-10-28 08:38:53.599496585 +0100
+@@ -617,7 +617,18 @@
+             break;                    /* skip the lock release */
+         }
+ 
++#ifdef __exos__
++        /* EX-OS: a signal does not interrupt a blocking accept() or poll()
++         * (no EINTR yet), so wakeup_listener's pthread_kill never woke this
++         * thread: join_workers gave up after 5 s ("AH00276", debug level),
++         * the child exited with the listener still running, and it died on
++         * the destroyed scoreboard. Always poll, 100 ms at a time, and look
++         * at listener_may_exit in between (MariaDB's listener does the
++         * same on EX-OS). */
++        if (0) {
++#else
+         if (!my_bucket->listeners->next) {
++#endif
+             /* Only one listener, so skip the poll */
+             lr = my_bucket->listeners;
+         }
+@@ -626,7 +637,15 @@
+                 apr_int32_t numdesc;
+                 const apr_pollfd_t *pdesc;
+ 
++#ifdef __exos__
++                rv = apr_pollset_poll(worker_pollset, apr_time_from_msec(100),
++                                      &numdesc, &pdesc);
++                if (APR_STATUS_IS_TIMEUP(rv)) {
++                    continue;
++                }
++#else
+                 rv = apr_pollset_poll(worker_pollset, -1, &numdesc, &pdesc);
++#endif
+                 if (rv != APR_SUCCESS) {
+                     if (APR_STATUS_IS_EINTR(rv)) {
+                         continue;

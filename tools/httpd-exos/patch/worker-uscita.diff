@@ -1,0 +1,22 @@
+--- a/server/mpm/worker/worker.c	2026-10-28 08:25:46.971118744 +0100
++++ b/server/mpm/worker/worker.c	2026-10-28 08:25:46.987118714 +0100
+@@ -448,6 +448,19 @@
+         apr_pool_destroy(pchild);
+     }
+ 
++#ifdef __exos__
++    /* EX-OS: the recycled transaction pools (ptrans) and pruntime are both
++     * children of pconf, and pconf destroys its newest children first: at
++     * exit the ptrans pools went, then pruntime's queue_info_cleanup
++     * destroyed the recycled ones a second time (apr_pool_destroy on freed
++     * memory; glibc's malloc happens to survive it, EX-OS's does not).
++     * Destroying pruntime here, while they are alive, does it in order. */
++    if (pruntime) {
++        apr_pool_destroy(pruntime);
++        pruntime = NULL;
++    }
++#endif
++
+     if (one_process) {
+         worker_note_child_killed(/* slot */ 0, 0, 0);
+     }

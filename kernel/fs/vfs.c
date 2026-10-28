@@ -1006,7 +1006,12 @@ static int vfs_umount_nl(const char *punto)
          * ha in mano un handle che diventerebbe un riferimento a un
          * montaggio libero — cioe' letture da un volume diverso. */
         for (k = 0; k < (int)g_vfs_posti; k++) {
-            if (g_file_(k).usato && g_file_(k).im == i) return ERR(EBUSY);
+            if (g_file_(k).usato && g_file_(k).im == i) {
+                /* say which one: without a name "in use" is a riddle */
+                klog(LOG_WARN, "VFS: %s occupato, aperto %s (%u riferimenti)",
+                     punto, g_file_(k).interno, (unsigned)g_file_(k).rif);
+                return ERR(EBUSY);
+            }
         }
 
         if      (g_mnt[i].tipo == VFS_FS_ISO)  iso_umount (g_mnt[i].mnt);

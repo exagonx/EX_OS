@@ -62,8 +62,19 @@ dall_host() {
         echo "== cgi";      curl -s -m 20 "$U/cgi-bin/cgiprova?uno=1&due=2" | tr -d '\r'
         echo "== post";     curl -s -m 20 --data "ciao=mondo" "$U/cgi-bin/cgiprova" | tr -d '\r'
         echo "== 404";      curl -s -m 20 -o /dev/null -w "%{http_code}\n" "$U/manca.html"
-        echo "== ab";       ab -q -n 5000 -c 50 "$U/index.html" 2>&1
+        # QEMU's user network accepts the forwarded port on a Linux socket
+        # with a tiny backlog: with 50 at a time its queue overflows, the
+        # host drops SYNs and the client retries after 1, 3, 7... s (a
+        # capture at the e1000 showed the lost ones never reach EX-OS). So
+        # ab waits up to 120 s and the overflows of the host are printed.
+        local o1=$(trabocchi)
+        echo "== ab";       ab -q -s 120 -n 5000 -c 50 "$U/index.html" 2>&1
+        echo "== trabocchi della coda d'ascolto sull'host: $(( $(trabocchi) - o1 ))"
     } > "$D/host.txt"
+}
+# TcpExt ListenOverflows of the host, from /proc/net/netstat
+trabocchi() {
+    awk '/^TcpExt:/ { if (!h) { for (i = 1; i <= NF; i++) if ($i == "ListenOverflows") c = i; h = 1 } else print $c }' /proc/net/netstat
 }
 dall_host &
 HOSTJOB=$!
@@ -75,7 +86,7 @@ EXOS_ISTANZA=ht$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     timeout 1500 python3 tools/qemu_drive.py "ipcfg@5" "mount hd0p1 /a@5" \
     "$H -X $C &@15" "ps@5" \
     "/a/apache2/bin/ab -n 2000 -c 20 http://127.0.0.1/index.html@~300" \
-    "sleep 90@~120" \
+    "sleep 150@~180" "ipcfg -tcp@10" "ipcfg@5" \
     "$H -k stop $C@~30" "sleep 5@~10" \
     "cat /a/apache2/logs/error_log@5" "ps@5" "umount /a@5" > "$D/qemu.log" 2>&1
 kill "$HOSTJOB" 2>/dev/null; wait "$HOSTJOB" 2>/dev/null
@@ -103,9 +114,13 @@ grep -A1 "^== 404" "$D/host.txt" 2>/dev/null | grep -q "^404" && si "una pagina 
 n=$(grep "^Complete requests:" "$D/host.txt" 2>/dev/null | awk '{print $3}')
 f=$(grep "^Failed requests:" "$D/host.txt" 2>/dev/null | awk '{print $3}')
 r=$(grep "^Requests per second:" "$D/host.txt" 2>/dev/null | awk '{print $4}')
-[ "$n" = 5000 ] && [ "$f" = 0 ] && si "ab dall'host: 5000 richieste, 50 alla volta, 0 fallite, $r al secondo" \
+t=$(sed -n "s/^== trabocchi della coda d'ascolto sull'host: //p" "$D/host.txt" 2>/dev/null)
+[ "$n" = 5000 ] && [ "$f" = 0 ] && si "ab dall'host: 5000 richieste, 50 alla volta, 0 fallite, $r al secondo (coda dell'host traboccata $t volte)" \
     || no "ab dall'host: complete $n, fallite $f"
 grep -aq "terminato: /a/apache2/bin/httpd -X.*(codice 0)" "$S" && si "httpd -k stop: spento con codice 0" || no "httpd -k stop"
+# every CGI left a reference on logs/error_log until kernel 0.283
+grep -aq "^smontato /a" "$S" && si "umount /a dopo lo spegnimento (nessun file rimasto aperto)" \
+    || no "umount /a: $(grep -a 'VFS: /a occupato' "$S" | head -1)"
 if grep -aq "KERNEL PANIC\|terminato per fault" "$S"; then
     grep -a "KERNEL PANIC\|terminato per fault" "$S" | head -3 | sed 's/^/  /'; esito=1
 fi

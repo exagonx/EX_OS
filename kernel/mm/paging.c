@@ -1898,19 +1898,22 @@ void page_fault_handler(InterruptFrame *frame)
          * ===================================================================== */
         if (p != NULL) {
             uint32_t i;
+            /* ! A THREAD'S VMAs ARE ITS LEADER'S (0.282): the thread's own
+             * PCB has none, and a fault in a thread printed no map at all. */
+            Process *mappa = proc_spazio_capo(p) ? proc_spazio_capo(p) : p;
 
             klog(LOG_ERROR, "PF:   heap 0x%08x..0x%08x (tetto 0x%08x), "
                  "stack 0x%08x..0x%08x",
                  p->heap_start, proc_spazio_capo(p)->heap_end, p->heap_max,
                  p->user_stack_limit, p->user_stack_top);
 
-            for (i = 0; i < p->n_vma; i++) {
+            for (i = 0; i < mappa->n_vma; i++) {
                 klog(LOG_ERROR, "PF:   vma[%u] 0x%08x..0x%08x  file+0x%x, "
                      "byte del file fino a 0x%08x%s",
-                     i, p->vma[i].vstart, p->vma[i].vend, p->vma[i].file_off,
-                     p->vma[i].file_fine,
-                     (fault_addr >= p->vma[i].vstart &&
-                      fault_addr <  p->vma[i].vend) ? "   <-- QUI" : "");
+                     i, mappa->vma[i].vstart, mappa->vma[i].vend, mappa->vma[i].file_off,
+                     mappa->vma[i].file_fine,
+                     (fault_addr >= mappa->vma[i].vstart &&
+                      fault_addr <  mappa->vma[i].vend) ? "   <-- QUI" : "");
             }
 
             /* ! WHO CALLED (kernel 0.282, Apache's crash at -k stop): the
@@ -1934,8 +1937,8 @@ void page_fault_handler(InterruptFrame *frame)
                     {
                         uintptr_t v = *(volatile uintptr_t *)a;
 
-                        for (j = 0; j < p->n_vma; j++)
-                            if (v >= p->vma[j].vstart && v < p->vma[j].vend) {
+                        for (j = 0; j < mappa->n_vma; j++)
+                            if (v >= mappa->vma[j].vstart && v < mappa->vma[j].vend) {
                                 uint32_t x = (uint32_t)v, d;
                                 char *q = riga + n * 11;
 

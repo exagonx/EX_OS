@@ -39,6 +39,12 @@
 # patch/*.diff, applied to the unpacked tree:
 #   senza-crypt.diff  htpasswd and htdbm without crypt() (EX-OS's libc has
 #                     none): MD5 ($apr1$, the default), bcrypt and SHA1.
+#   worker-ascolto.diff the listener polls 100 ms at a time and looks at
+#                     listener_may_exit: a signal does not interrupt accept or
+#                     poll on EX-OS, and httpd -k stop left it running.
+#   worker-uscita.diff  the worker MPM destroys pruntime before exit: the
+#                     recycled request pools were destroyed twice at shutdown
+#                     (httpd -k stop died in apr_pool_destroy; see the patch).
 #
 # ! CROSS COMPILING: gen_test_char makes a header during the build, so it is
 # built for the host (CROSS_COMPILE, the way the source allows); pcre2-config

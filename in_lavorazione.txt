@@ -8470,6 +8470,25 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10
+      col porting di Apache). Il kernel lo dichiara (segnali.c: «a blocked
+      wait is not interrupted by a caught signal»): un filo fermo in
+      accept, poll, epoll_wait, read su un socket non si sveglia con
+      pthread_kill. Apache (MPM worker) sveglia cosi' il suo listener allo
+      spegnimento: senza, httpd -k stop moriva sullo scoreboard distrutto.
+      Oggi due rimedi uguali dentro i programmi: MariaDB (l'ascoltatore
+      guarda shutdown ogni 100 ms, patch/server-threadpool-epoll.diff) e
+      Apache (tools/httpd-exos/patch/worker-ascolto.diff, poll a 100 ms).
+      La cosa vera: un segnale con un gestore sveglia il filo nell'attesa
+      e la chiamata rende EINTR (o riparte con SA_RESTART). Per le attese
+      del kernel (pipe, pty, ipc_recv) c'e' gia' proc_interrotto; per i
+      socket no: la libc aspetta la RISPOSTA di ip.drv, e tornare con EINTR
+      lascerebbe una risposta in ritardo nella casella, letta dalla
+      chiamata dopo come sua. Serve un modo di annullare la richiesta in
+      ip.drv (un messaggio di ritiro con un numero di richiesta, e la libc
+      che scarta le risposte con un numero vecchio). Va fatto prima di
+      altri programmi che contano su EINTR (Redis, nginx, la voce 33).
+
   36. PIU' SCHEDE DI RETE INSIEME (l'utente, 28/10: Â«il sistema deve poter
       supportare connessioni multiple piu schede di rete dove
       l'instradamento avviene per configurazione o automaticamente in base

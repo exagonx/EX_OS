@@ -774,6 +774,29 @@ int32_t sys_open(InterruptFrame *frame)
     return free_fd;
 }
 
+/* What a descriptor holds goes back: the VFS reference of a file, one end of
+ * a pipe, one side of a pty. The slot itself is left to the caller, who is
+ * about to overwrite it (dup2, the redirections of sys_spawn).
+ *
+ * ! WITHOUT IT A CGI LEFT THE ERROR LOG OPEN FOR EVER (28 October 2026).
+ * sys_spawn first gives the child the parent's 0, 1 and 2 with a reference
+ * each, then applies the redirections the caller asked for over them; the
+ * inherited reference was never given back. Apache runs every CGI with its
+ * three std descriptors redirected while its own 2 is logs/error_log: one
+ * reference more per request, and after `httpd -k stop` the disk would not
+ * unmount ("in use"). */
+static void fd_lascia(Process *p, int fd)
+{
+    switch (FDV(p, fd).type) {
+    case FD_FILE:   vfs_close((int)FDV(p, fd).inode);             break;
+    case FD_PIPE_R: pipe_chiudi_lettore((int)FDV(p, fd).inode);   break;
+    case FD_PIPE_W: pipe_chiudi_scrittore((int)FDV(p, fd).inode); break;
+    case FD_PTY_M:  pty_chiudi((int)FDV(p, fd).inode, 1);         break;
+    case FD_PTY_S:  pty_chiudi((int)FDV(p, fd).inode, 0);         break;
+    default:        break;
+    }
+}
+
 /* =============================================================================
  * SYS_CLOSE (6) -- Chiude un file descriptor
  *
@@ -789,18 +812,11 @@ int32_t sys_close(InterruptFrame *frame)
     /* Non chiudere stdin/stdout/stderr */
     if (fd <= 2)                          return ERR(EBADF);
 
-    if (FDV(proc, fd).type == FD_FILE) {
-        vfs_close((int)FDV(proc, fd).inode);
-    }
-
     /* ! CHIUDERE UN'ESTREMITA' DI PIPE NON E' SOLO CONTABILITA': e' anche
      * cio' che sveglia chi dorme dall'altra parte. Senza, `cmd1 | cmd2`
      * con cmd1 che finisce lascia cmd2 fermo per sempre ad aspettare byte
      * che nessuno scrivera'. Vedi kernel/ipc/pipe.c. */
-    if (FDV(proc, fd).type == FD_PIPE_R) pipe_chiudi_lettore((int)FDV(proc, fd).inode);
-    if (FDV(proc, fd).type == FD_PIPE_W) pipe_chiudi_scrittore((int)FDV(proc, fd).inode);
-    if (FDV(proc, fd).type == FD_PTY_M)  pty_chiudi((int)FDV(proc, fd).inode, 1);
-    if (FDV(proc, fd).type == FD_PTY_S)  pty_chiudi((int)FDV(proc, fd).inode, 0);
+    fd_lascia(proc, fd);
 
     FDV(proc, fd).type        = FD_UNUSED;
     FDV(proc, fd).flags       = 0;
@@ -869,17 +885,17 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
         pipe_apri_lettore((int)FDV(proc, vecchio).inode);
     if (FDV(proc, vecchio).type == FD_PIPE_W)
         pipe_apri_scrittore((int)FDV(proc, vecchio).inode);
+    /* and a pty counts its descriptors too (it was missing until 0.283) */
+    if (FDV(proc, vecchio).type == FD_PTY_M)
+        pty_apri_riferimento((int)FDV(proc, vecchio).inode, 1);
+    if (FDV(proc, vecchio).type == FD_PTY_S)
+        pty_apri_riferimento((int)FDV(proc, vecchio).inode, 0);
 
     /* Qui `nuovo` puo' essere 0, 1 o 2: e' il caso della redirezione, ed e'
      * l'unico modo di farla. sys_close li rifiuta apposta, perche' un
      * programma che chiude stdout e basta resterebbe senza uscita; chi
      * arriva da dup2 una sostituzione ce l'ha gia' pronta. */
-    if (FDV(proc, nuovo).type == FD_FILE)
-        vfs_close((int)FDV(proc, nuovo).inode);
-    if (FDV(proc, nuovo).type == FD_PIPE_R)
-        pipe_chiudi_lettore((int)FDV(proc, nuovo).inode);
-    if (FDV(proc, nuovo).type == FD_PIPE_W)
-        pipe_chiudi_scrittore((int)FDV(proc, nuovo).inode);
+    fd_lascia(proc, nuovo);
 
     FDV(proc, nuovo) = FDV(proc, vecchio);
     return nuovo;
@@ -2958,6 +2974,7 @@ uint32_t usp       = res.user_stack_top;
                     pty_apri_riferimento((int)FDV(parent, pf).inode, 0);
                 }
 
+                fd_lascia(child, (int)az->fd);      /* what it inherited */
                 FDV(child, az->fd) = FDV(parent, pf);
 
                 klog(LOG_INFO, "SYSCALL spawn: fd %u del figlio = fd %d del "
@@ -2976,6 +2993,7 @@ uint32_t usp       = res.user_stack_top;
             }
 
             if (e_dev_null(abs)) {          /* `cmd > /dev/null` */
+                fd_lascia(child, (int)az->fd);
                 FDV(child, az->fd).type        = FD_NULL;
                 FDV(child, az->fd).flags       = az->flags;
                 FDV(child, az->fd).offset      = 0;
@@ -2990,6 +3008,7 @@ uint32_t usp       = res.user_stack_top;
                 goto spawn_fail;
             }
 
+            fd_lascia(child, (int)az->fd);
             FDV(child, az->fd).type        = FD_FILE;
             FDV(child, az->fd).flags       = az->flags;
             FDV(child, az->fd).offset      = 0;

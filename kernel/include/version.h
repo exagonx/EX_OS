@@ -685,7 +685,13 @@
  * 128 KB kernel stack there). `procmax` in kernel.cfg sets a lower one. The
  * wait lists of the VFS and disk locks and the shutdown list are allocated
  * for g_proc_max instead of being MAX_PROCESSES arrays. */
-#define EXOS_VERSION    "0.282"
+/* 0.282 -> 0.283: a redirection of sys_spawn gives back what the child had
+ * inherited on that descriptor (fd_lascia): every CGI of Apache left one
+ * reference on logs/error_log and the disk would not unmount after
+ * `httpd -k stop`. dup2 counts a pty like a pipe. umount says which file
+ * keeps a mount busy. A program that faults prints the addresses of its
+ * segments found on its stack ("sulla pila"), with a thread's leader map. */
+#define EXOS_VERSION    "0.283"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
