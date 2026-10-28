@@ -408,10 +408,12 @@ struct pollfd {
 #define POLL_OUT      0x0004
 
 /* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
- * openssl program's s_client): the files (MAX_FD, 128) and the sockets, whose
- * descriptors start at 1024 (PRESA_BASE, 1024 of them since 26 October:
- * FD_SETSIZE went from 1088 to 2048). Until then it was one
- * 32-bit word, which named neither. select() reads and writes only the words
+ * openssl program's s_client). Since kernel 0.281 files, pipes and sockets
+ * share one numbering, the lowest free first, so the first 2048 descriptors
+ * of a program fit whatever they are; a program with more uses poll() or
+ * epoll, which have no such ceiling (POSIX select stops at FD_SETSIZE
+ * everywhere). Until 0.280 sockets started at 1024. Until 25 October it was
+ * one 32-bit word. select() reads and writes only the words
  * below nfds, so a program built with the old one-word fd_set (nfds <= 32)
  * still works with the new libc.so. Definition repeated in lib/include/libc.h. */
 #define FD_SETSIZE  2048
@@ -4825,34 +4827,146 @@ int open(const char *path, int flags, ...)
     return err_posix(_syscall3(SYS_OPEN, (uintptr_t)path, (uint32_t)flags, 0));
 }
 
-/* ! I SOCKET HANNO DESCRITTORI DA PRESA_BASE IN SU, e le funzioni dei
- * descrittori li riconoscono qui: il kernel non ne sa niente (vedi la sezione
- * dei socket in fondo al file e in lib/include/libc.h). */
-#define PRESA_BASE      1024
-/* And shared memory from shm_open() from SHMFD_BASE up (@SHM-OPEN, 29
- * September 2026): a socket is below it, a zone above. */
-#define SHMFD_BASE      2048
-/* 128 e non 16 (2 ottobre 2026): Gecko ne tiene aperte decine insieme, e
- * con SHM_ANON non costano zone del kernel.
- * ! 1024 AND NOT 128 (24 October 2026): every decoded image and every
- * WebRender chunk of Exilla is one SHM_ANON zone, a freezable one takes two
- * descriptors, and after 36 minutes of Gmail on the CQ60 they were all taken:
- * "ShmSegmentsWriter failed to allocate chunk", a Rust panic in WebRender and
- * MOZ_CRASH (page fault at 0). Descriptors 2048..3071: nothing else lives
- * there. */
-#define SHMFD_MAX       1024
-/* And epoll sets from EPFD_BASE up (26 October 2026): an epoll_create gives
- * one, ip.drv keeps the set (see epoll_create1). */
-#define EPFD_BASE       (SHMFD_BASE + SHMFD_MAX)
-#define EPFD_MAX        64
+/* =============================================================================
+ * THE DESCRIPTORS THE LIBC SERVES: sockets, epoll sets, shm zones (0.281)
+ *
+ * The kernel does not run them - ip.drv does, or the shm code below - but
+ * since kernel 0.281 it GIVES THEIR NUMBERS (SYS_FD_RISERVA): the lowest
+ * free one, among files and pipes, as POSIX wants, and as many as the
+ * program's RLIMIT_NOFILE (the user's choice, 27 October 2026: no ceiling
+ * in the code, only in a configuration that can be changed). Until 0.280
+ * they lived in fixed ranges of the libc - sockets 1024-2047, shm
+ * 2048-3071, epoll 3072-3135 - and a server could not hold a 1025th client.
+ *
+ * Here the libc remembers WHAT each number is: a table indexed by the
+ * descriptor, in blocks that are added as numbers grow and never move (a
+ * thread reading it while another adds a block is safe; an old directory is
+ * never freed, like in the kernel's FdTabella).
+ *
+ * ! WITH A KERNEL BEFORE 0.281 (SYS_FD_RISERVA answers ENOSYS) the numbers
+ * come from the old ranges, so a program built today still runs on a
+ * system that has not been updated yet.
+ * ============================================================================= */
+#define SYS_FD_RISERVA  256
+#define SYS_FD_LIMITE   257
+#define FDL_PRESA       1               /* = FD_SERV_PRESA in the kernel */
+#define FDL_EPOLL       2               /* = FD_SERV_EPOLL */
+#define FDL_SHM         3               /* = FD_SERV_SHM */
 #ifdef EXOS_LIBC_SO
 #define E_PRESA(fd)     0               /* nella libc.so i socket non ci sono */
 #define E_SHMFD(fd)     0
 #define E_EPFD(fd)      0
 #else
-#define E_PRESA(fd)     ((fd) >= PRESA_BASE && (fd) < SHMFD_BASE)
-#define E_SHMFD(fd)     ((fd) >= SHMFD_BASE && (fd) < SHMFD_BASE + SHMFD_MAX)
-#define E_EPFD(fd)      ((fd) >= EPFD_BASE && (fd) < EPFD_BASE + EPFD_MAX)
+#define FDL_BLOCCO      256
+typedef struct { unsigned char tipo; void *ogg; } FdLibc;
+typedef struct FdlIndice {
+    struct FdlIndice *prima;            /* the directory this one replaced */
+    unsigned int      posti;
+    FdLibc           *blocco[];
+} FdlIndice;
+static FdlIndice    *g_fdl;
+static volatile int  g_fdl_m;
+static int           g_fdl_vecchio;     /* 1: kernel before 0.281, old ranges */
+
+static FdLibc *fdl_voce(int fd)
+{
+    FdlIndice   *ind = __atomic_load_n(&g_fdl, __ATOMIC_ACQUIRE);
+    unsigned int b;
+    FdLibc      *blk;
+
+    if (fd < 0 || ind == NULL) return NULL;
+    b = (unsigned int)fd / FDL_BLOCCO;
+    if (b >= ind->posti) return NULL;
+    blk = __atomic_load_n(&ind->blocco[b], __ATOMIC_ACQUIRE);
+    return blk ? &blk[(unsigned int)fd % FDL_BLOCCO] : NULL;
+}
+static int fdl_tipo(int fd)
+{
+    FdLibc *v = fdl_voce(fd);
+    return v ? __atomic_load_n(&v->tipo, __ATOMIC_ACQUIRE) : 0;
+}
+static void *fdl_ogg(int fd, int tipo)
+{
+    FdLibc *v = fdl_voce(fd);
+    return (v && __atomic_load_n(&v->tipo, __ATOMIC_ACQUIRE) == tipo) ? v->ogg : NULL;
+}
+#define E_PRESA(fd)     (fdl_tipo(fd) == FDL_PRESA)
+#define E_SHMFD(fd)     (fdl_tipo(fd) == FDL_SHM)
+#define E_EPFD(fd)      (fdl_tipo(fd) == FDL_EPOLL)
+
+/* Writes number fd as `tipo`/`ogg`; the caller holds g_fdl_m. */
+static int fdl_metti(int fd, int tipo, void *ogg)
+{
+    unsigned int b = (unsigned int)fd / FDL_BLOCCO, i;
+    FdlIndice   *ind = g_fdl;
+    FdLibc      *v;
+
+    if (ind == NULL || b >= ind->posti) {
+        unsigned int posti = ind ? ind->posti * 2u : 8u;
+        FdlIndice   *n;
+
+        while (posti <= b) posti *= 2u;
+        n = (FdlIndice *)calloc(1, sizeof(FdlIndice) + posti * sizeof(FdLibc *));
+        if (n == NULL) return -12;                          /* ENOMEM */
+        n->posti = posti;
+        for (i = 0; ind && i < ind->posti; i++) n->blocco[i] = ind->blocco[i];
+        n->prima = ind;                                     /* never freed */
+        __atomic_store_n(&g_fdl, n, __ATOMIC_RELEASE);
+        ind = n;
+    }
+    if (ind->blocco[b] == NULL) {
+        FdLibc *blk = (FdLibc *)calloc(FDL_BLOCCO, sizeof(FdLibc));
+        if (blk == NULL) return -12;
+        __atomic_store_n(&ind->blocco[b], blk, __ATOMIC_RELEASE);
+    }
+    v = &ind->blocco[b][(unsigned int)fd % FDL_BLOCCO];
+    v->ogg = ogg;
+    __atomic_store_n(&v->tipo, (unsigned char)tipo, __ATOMIC_RELEASE);
+    return 0;
+}
+
+/* A number for a new socket/epoll set/shm zone: from the kernel, or with an
+ * old kernel from the old range of its kind. -errno on failure. */
+static int fdl_prendi(int tipo, void *ogg)
+{
+    int fd = -1, r;
+
+    if (!g_fdl_vecchio) {
+        fd = (int)_syscall3(SYS_FD_RISERVA, (uint32_t)tipo, 0, 0);
+        if (fd == -38 /* ENOSYS */) g_fdl_vecchio = 1;
+        else if (fd < 0) return fd;
+    }
+    mutex_prendi(&g_fdl_m);
+    if (g_fdl_vecchio) {
+        int da = tipo == FDL_PRESA ? 1024 : tipo == FDL_SHM ? 2048 : 3072;
+        int a  = tipo == FDL_PRESA ? 2048 : tipo == FDL_SHM ? 3072 : 3136;
+
+        for (fd = da; fd < a && fdl_tipo(fd) != 0; fd++) ;
+        if (fd == a) { mutex_lascia(&g_fdl_m); return -24; }      /* EMFILE */
+    }
+    r = fdl_metti(fd, tipo, ogg);
+    mutex_lascia(&g_fdl_m);
+    if (r < 0) {
+        if (!g_fdl_vecchio) _syscall1(SYS_CLOSE, (uint32_t)fd);
+        return r;
+    }
+    return fd;
+}
+
+/* Forgets number fd and gives it back to the kernel. ! The table first: the
+ * kernel may give the number to another thread at once, and its fdl_metti
+ * must not be undone by this one. */
+static void fdl_lascia(int fd)
+{
+    FdLibc *v;
+
+    mutex_prendi(&g_fdl_m);
+    v = fdl_voce(fd);
+    if (v) { __atomic_store_n(&v->tipo, 0, __ATOMIC_RELEASE); v->ogg = NULL; }
+    mutex_lascia(&g_fdl_m);
+    if (!g_fdl_vecchio) _syscall1(SYS_CLOSE, (uint32_t)fd);
+}
+
 /* ! THROUGH POINTERS THAT ONLY shm_open FILLS, and not direct calls. close,
  * fstat, mmap and munmap are in every program; naming the shm functions from
  * them made the linker pull the whole of shm into every program that closes
@@ -4864,7 +4978,8 @@ static int  (*g_shm_fstat)(int fd, struct stat *st);
 static long (*g_shm_mmap)(size_t lung, int fd, long off);
 static int  (*g_shm_munmap)(void *addr);
 static int  (*g_shm_dup)(int fd);
-static int  g_shmfd[SHMFD_MAX];        /* vedi shm_open: zona+1, 0 = libero */
+/* shm_open's zone of number fd, +1 (0 = not a zone) */
+#define SHMFD_ZONA(fd)  ((int)(uintptr_t)fdl_ogg((fd), FDL_SHM))
 #endif
 #ifndef EXOS_LIBC_SO
 static int     presa_chiudi(int fd);
@@ -4939,7 +5054,7 @@ int fcntl(int fd, int cmd, ...)
      * di memoria condivisa — e si risponde che va bene. */
     if (E_SHMFD(fd)) {
         if (cmd == 0 /* F_DUPFD */) return dup(fd);
-        if (!g_shm_dup || g_shmfd[fd - SHMFD_BASE] == 0) { errno = EBADF; return -1; }
+        if (!g_shm_dup || SHMFD_ZONA(fd) == 0) { errno = EBADF; return -1; }
         return (cmd == 3 /* F_GETFL */) ? 2 /* O_RDWR */ : 0;
     }
 #endif
@@ -5656,7 +5771,10 @@ void semaforo_lascia(volatile int *s)
  * chiamabile anche prima che malloc sia pronta.
  * ============================================================================= */
 #define EDEADLK       35
-#define PTHREAD_FILI  128     /* = FILO_MAX del kernel (0.231) */
+/* ! NOT A CEILING SINCE 28 OCTOBER 2026 (kernel 0.282 has no FILO_MAX):
+ * the table is a chain of blocks; the first is static (pthread_self works
+ * before malloc), the others come from an anonymous mmap when it fills. */
+#define PTHREAD_FILI  128     /* descriptors per block */
 #define P_CHIAVI      128
 #define P_ITERAZIONI  4
 
@@ -5713,8 +5831,31 @@ typedef struct {
     void        *chiavi[P_CHIAVI];
 } Filo;
 
-static Filo         g_fili[PTHREAD_FILI];
+typedef struct FiliBlocco {
+    struct FiliBlocco *volatile succ;
+    Filo               f[PTHREAD_FILI];
+} FiliBlocco;
+
+static FiliBlocco   g_fili;
 static volatile int g_fili_m = 0;                  /* Mutex della tabella */
+
+/* Pages for a table that grows: straight from SYS_MMAP, without errno (the
+ * errno table itself uses it) and without malloc. Zeroed by the kernel. */
+static void *pagine_tabella(size_t byte)
+{
+    MmapParams p;
+    int32_t    r;
+
+    p.addr   = 0;
+    p.length = (uint32_t)byte;
+    p.prot   = PROT_READ | PROT_WRITE;
+    p.flags  = MAP_PRIVATE | MAP_ANONYMOUS;
+    p.fd     = -1;
+    p.offset = 0;
+    r = _syscall1(SYS_MMAP, (uintptr_t)&p);
+    if (r == 0 || (uint32_t)r >= 0xFFFFF001u) return NULL;
+    return (void *)(uintptr_t)(uint32_t)r;
+}
 static volatile int g_chiavi_usate[P_CHIAVI];
 static void       (*g_chiavi_distr[P_CHIAVI])(void *);
 
@@ -5727,16 +5868,31 @@ static unsigned int tp_mio(void)
 
 static Filo *filo_libero(void)
 {
-    int i;
+    FiliBlocco *b, *ultimo = NULL;
+    int         i;
 
     mutex_prendi(&g_fili_m);
-    for (i = 0; i < PTHREAD_FILI; i++)
-        if (!g_fili[i].usato) {
-            memset(&g_fili[i], 0, sizeof(Filo));
-            g_fili[i].usato = 1;
-            mutex_lascia(&g_fili_m);
-            return &g_fili[i];
-        }
+    for (b = &g_fili; b; ultimo = b, b = b->succ)
+        for (i = 0; i < PTHREAD_FILI; i++)
+            if (!b->f[i].usato) {
+                memset(&b->f[i], 0, sizeof(Filo));
+                b->f[i].usato = 1;
+                mutex_lascia(&g_fili_m);
+                return &b->f[i];
+            }
+    /* all taken: one more block, written before it is linked */
+    b = (FiliBlocco *)pagine_tabella(sizeof(FiliBlocco));
+    if (b) {
+        int k, j;
+
+        for (k = 0; k < P_CHIAVI; k++)      /* keys created before the block */
+            if (g_chiavi_usate[k])
+                for (j = 0; j < PTHREAD_FILI; j++) b->f[j].chiavi[k] = NULL;
+        b->f[0].usato = 1;
+        ultimo->succ = b;
+        mutex_lascia(&g_fili_m);
+        return &b->f[0];
+    }
     mutex_lascia(&g_fili_m);
     return NULL;
 }
@@ -5756,11 +5912,13 @@ pthread_t pthread_self(void)
 {
     unsigned int tp = tp_mio();
     Filo        *f;
+    FiliBlocco  *b;
     int          i;
 
-    for (i = 0; i < PTHREAD_FILI; i++)
-        if (g_fili[i].usato && (unsigned int)g_fili[i].tp == tp && tp != 0)
-            return (pthread_t)&g_fili[i];
+    for (b = &g_fili; b; b = b->succ)
+        for (i = 0; i < PTHREAD_FILI; i++)
+            if (b->f[i].usato && (unsigned int)b->f[i].tp == tp && tp != 0)
+                return (pthread_t)&b->f[i];
 
     f = filo_libero();
     if (!f) return 0;
@@ -6263,10 +6421,12 @@ int pthread_key_create(pthread_key_t *k, void (*distr)(void *))
     mutex_prendi(&g_fili_m);
     for (i = 0; i < P_CHIAVI; i++)
         if (!g_chiavi_usate[i]) {
-            int j;
+            FiliBlocco *b;
+            int         j;
             g_chiavi_usate[i] = 1;
             g_chiavi_distr[i] = distr;
-            for (j = 0; j < PTHREAD_FILI; j++) g_fili[j].chiavi[i] = NULL;
+            for (b = &g_fili; b; b = b->succ)
+                for (j = 0; j < PTHREAD_FILI; j++) b->f[j].chiavi[i] = NULL;
             mutex_lascia(&g_fili_m);
             *k = (pthread_key_t)i;
             return 0;
@@ -7393,7 +7553,10 @@ long sysconf(int nome)
 {
     switch (nome) {
         case _SC_PAGESIZE:          return 4096;
-        case _SC_OPEN_MAX:          return 128;   /* MAX_FD del kernel (0.232) */
+        case _SC_OPEN_MAX: {                      /* RLIMIT_NOFILE (0.281) */
+            unsigned int l[2];
+            return _syscall2(SYS_FD_LIMITE, 0, (uintptr_t)l) == 0 ? (long)l[0] : 128;
+        }
         case _SC_CLK_TCK:           return 100;   /* il PIT gira a 100 Hz */
         case _SC_NPROCESSORS_ONLN:  return 1;
         case 83 /* _SC_NPROCESSORS_CONF */: return 1;   /* per NSPR, 30 settembre 2026 */
@@ -9574,8 +9737,8 @@ int poll(struct pollfd *fds, unsigned int nfds, int timeout)
  * perduto, e la seconda si scopre mesi dopo. Nel kernel c'e' solo poll();
  * questa traduce le maschere di bit e richiama quella.
  *
- * ! THE MASKS REACH FD_SETSIZE (2048): files and sockets (poll_misto sorts
- * them out). The IPC mailbox (FD_IPC) cannot be named here: whoever must wait
+ * ! THE MASKS REACH FD_SETSIZE (2048), or more with a bigger array (see
+ * below): files and sockets (poll_misto sorts them out). The IPC mailbox (FD_IPC) cannot be named here: whoever must wait
  * for messages too uses poll(), which is also why this is the old form.
  * Only the words below nfds are read and written: see fd_set.
  *
@@ -9583,23 +9746,43 @@ int poll(struct pollfd *fds, unsigned int nfds, int timeout)
  * vengono RISCRITTE con cio' che e' pronto, e questo e' il difetto storico di
  * select(): dopo la chiamata non si sa piu' cosa si era chiesto.
  * ============================================================================= */
+/* the program's RLIMIT_NOFILE; an older kernel: 4096, every number there was */
+static unsigned int fd_limite_attuale(void)
+{
+    unsigned int l[2];
+
+    if (_syscall2(SYS_FD_LIMITE, 0, (uintptr_t)l) == 0) return l[0];
+    return 4096u;
+}
+
 int select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
            struct timeval *scadenza)
 {
-    struct pollfd v[64];
-    unsigned int  n = 0, parole;
+    struct pollfd v_s[64], *v = v_s;
+    unsigned int  n = 0, parole, quanti = 0;
     int           i, rc, ms;
-    int           mappa[64];
+    int           mappa_s[64], *mappa = mappa_s;
 
-    if (nfds < 0 || nfds > FD_SETSIZE) { errno = EINVAL; return -1; }
+    /* ! nfds BEYOND FD_SETSIZE IS ALLOWED (28 October 2026), as on Linux:
+     * a program with more descriptors allocates a bigger array of words and
+     * passes it as fd_set; only the program's limit holds */
+    if (nfds < 0 || (unsigned int)nfds > fd_limite_attuale()) { errno = EINVAL; return -1; }
     parole = ((unsigned int)nfds + 31u) / 32u;
+
+    /* ! ALL THE MASK, not 64 (0.281): beyond 64 the list is allocated */
+    for (i = 0; i < nfds; i++)
+        if ((leggere && FD_ISSET(i, leggere)) || (scrivere && FD_ISSET(i, scrivere))) quanti++;
+    if (quanti > 64) {
+        v = (struct pollfd *)malloc(quanti * (sizeof(struct pollfd) + sizeof(int)));
+        if (v == NULL) { errno = ENOMEM; return -1; }
+        mappa = (int *)(v + quanti);
+    }
 
     for (i = 0; i < nfds; i++) {
         short ev = 0;
         if (leggere  && FD_ISSET(i, leggere))  ev |= POLL_IN;
         if (scrivere && FD_ISSET(i, scrivere)) ev |= POLL_OUT;
         if (ev == 0) continue;
-        if (n == 64) { errno = EINVAL; return -1; }
 
         v[n].fd      = i;
         v[n].events  = ev;
@@ -9621,7 +9804,7 @@ int select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
     }
 
     rc = poll(v, n, ms);
-    if (rc < 0) return -1;                  /* errno l'ha gia' messo poll */
+    if (rc < 0) { if (v != v_s) free(v); return -1; }   /* errno l'ha gia' messo poll */
 
     for (i = 0; i < (int)parole; i++) {
         if (leggere)   leggere->bit[i] = 0u;
@@ -9635,6 +9818,7 @@ int select(int nfds, fd_set *leggere, fd_set *scrivere, fd_set *eccezioni,
             if (leggere  && (v[i].revents & POLL_IN))  { FD_SET(mappa[i], leggere);  pronti++; }
             if (scrivere && (v[i].revents & POLL_OUT)) { FD_SET(mappa[i], scrivere); pronti++; }
         }
+        if (v != v_s) free(v);
         return pronti;
     }
 }
@@ -9704,6 +9888,11 @@ typedef struct {
     unsigned int virt;
 } ShmZonaP;
 
+/* The zones this process holds (descriptors and mappings of one zone count
+ * together). ! The DESCRIPTORS are not limited here any more (0.281: their
+ * numbers come from the kernel, see fdl_prendi); this is how many different
+ * zones one process may hold at once. */
+#define SHMFD_MAX       1024
 static ShmZonaP g_shmzona[SHMFD_MAX];
 #ifndef SHM_ANON
 #define SHM_ANON  ((char *)1)       /* come in <sys/mman.h> */
@@ -9730,8 +9919,7 @@ static ShmZonaP *shmfd_zona(int fd)
 {
     int z;
 
-    if (!E_SHMFD(fd)) return NULL;
-    z = g_shmfd[fd - SHMFD_BASE];
+    z = SHMFD_ZONA(fd);
     return z ? &g_shmzona[z - 1] : NULL;
 }
 
@@ -9764,13 +9952,11 @@ static void shmfd_finite(void)
 /* Un descrittore nuovo sulla zona `zi`. */
 static int shmfd_nuovo(int zi)
 {
-    int i;
+    int fd = fdl_prendi(FDL_SHM, (void *)(uintptr_t)(zi + 1));
 
-    for (i = 0; i < SHMFD_MAX && g_shmfd[i]; i++) ;
-    if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
-    g_shmfd[i] = zi + 1;
+    if (fd < 0) { errno = -fd; return -1; }
     g_shmzona[zi].descrittori++;
-    return SHMFD_BASE + i;
+    return fd;
 }
 
 static int  shmfd_chiudi(int fd);
@@ -9884,7 +10070,7 @@ static int shmfd_chiudi(int fd)
     ShmZonaP *z = shmfd_zona(fd);
 
     if (z == NULL) { errno = EBADF; return -1; }
-    g_shmfd[fd - SHMFD_BASE] = 0;
+    fdl_lascia(fd);
     z->descrittori--;
     shmfd_forse_libera(z);
     return 0;
@@ -10672,9 +10858,19 @@ char **environ = NULL;
  * Il ramo `tp == 0` resta per i casi che quel caricatore non ha preparato — un
  * task del kernel — dove un errno condiviso e' comunque meglio di un fault.
  * ============================================================================= */
-#define ERRNO_POSTI  64          /* quanti FILO_MAX nel kernel (0.222) */
+/* ! A CHAIN OF BLOCKS SINCE 28 OCTOBER 2026 (kernel 0.282: no ceiling on
+ * threads). The first block is static; the next ones come from SYS_MMAP
+ * (pagine_tabella) when a thread finds them all taken. A block is never
+ * freed, so a reader walks the chain without a lock. */
+#define ERRNO_POSTI  64          /* places per block */
 
-static struct { volatile int tp; int valore; } g_errno_posti[ERRNO_POSTI];
+typedef struct ErrnoBlocco {
+    struct ErrnoBlocco *volatile succ;
+    struct { volatile int tp; int valore; } p[ERRNO_POSTI];
+} ErrnoBlocco;
+
+static ErrnoBlocco  g_errno_posti;
+static volatile int g_errno_m = 0;     /* only to link a new block */
 
 /* ! QUI DENTRO LA MACRO SI SPEGNE, o `&errno_condiviso` diventerebbe
  * `&(*__errno_dove())` — cioe' questa funzione che chiama se stessa. Si
@@ -10683,24 +10879,38 @@ static struct { volatile int tp; int valore; } g_errno_posti[ERRNO_POSTI];
 int *__errno_dove(void)
 {
     unsigned int tp;
+    ErrnoBlocco *b;
     int          i;
 
     TP_LEGGI(tp);
     if (tp == 0) return &errno_condiviso;        /* nessun blocco: quello di scorta */
 
-    for (i = 0; i < ERRNO_POSTI; i++)
-        if ((unsigned int)g_errno_posti[i].tp == tp) return &g_errno_posti[i].valore;
+    for (b = &g_errno_posti; b; b = b->succ)
+        for (i = 0; i < ERRNO_POSTI; i++)
+            if ((unsigned int)b->p[i].tp == tp) return &b->p[i].valore;
 
-    for (i = 0; i < ERRNO_POSTI; i++)
-        if (g_errno_posti[i].tp == 0 &&
-            mutex_xchg(&g_errno_posti[i].tp, (int)tp) == 0) {
-            g_errno_posti[i].valore = 0;
-            return &g_errno_posti[i].valore;
-        }
+    for (;;) {
+        ErrnoBlocco *ultimo = NULL, *nuovo;
 
-    /* Tabella piena: si torna a quello di scorta invece di rifiutare. Un errno
-     * condiviso e' impreciso; non averne uno e' un puntatore nullo. */
-    return &errno_condiviso;
+        for (b = &g_errno_posti; b; ultimo = b, b = b->succ)
+            for (i = 0; i < ERRNO_POSTI; i++)
+                if (b->p[i].tp == 0 &&
+                    mutex_xchg(&b->p[i].tp, (int)tp) == 0) {
+                    b->p[i].valore = 0;
+                    return &b->p[i].valore;
+                }
+        /* all taken: one more block. Whoever links it first wins; the other
+         * gives its pages back and looks again. */
+        nuovo = (ErrnoBlocco *)pagine_tabella(sizeof(ErrnoBlocco));
+        /* Tabella piena e niente memoria: si torna a quello di scorta invece
+         * di rifiutare. Un errno condiviso e' impreciso; non averne uno e'
+         * un puntatore nullo. */
+        if (nuovo == NULL) return &errno_condiviso;
+        while (mutex_xchg(&g_errno_m, 1) != 0) ;
+        if (ultimo->succ == NULL) { ultimo->succ = nuovo; nuovo = NULL; }
+        g_errno_m = 0;
+        if (nuovo) _syscall2(SYS_MUNMAP, (uintptr_t)nuovo, sizeof(ErrnoBlocco));
+    }
 }
 
 /* Un filo che finisce lascia libero il suo posto: senza, un programma che crea
@@ -10711,16 +10921,18 @@ int *__errno_dove(void)
 static void errno_posto_lascia(void)
 {
     unsigned int tp;
+    ErrnoBlocco *b;
     int          i;
 
     TP_LEGGI(tp);
     if (tp == 0) return;
-    for (i = 0; i < ERRNO_POSTI; i++)
-        if ((unsigned int)g_errno_posti[i].tp == tp) {
-            g_errno_posti[i].valore = 0;
-            g_errno_posti[i].tp     = 0;
-            return;
-        }
+    for (b = &g_errno_posti; b; b = b->succ)
+        for (i = 0; i < ERRNO_POSTI; i++)
+            if ((unsigned int)b->p[i].tp == tp) {
+                b->p[i].valore = 0;
+                b->p[i].tp     = 0;
+                return;
+            }
 }
 
 FILE  **__stdin_dove(void)   { return &stdin; }
@@ -12748,7 +12960,18 @@ int getrlimit(int risorsa, struct rlimit *r)
     if (!r) { errno = EFAULT; return -1; }
     switch (risorsa) {
     case 3:  r->rlim_cur = r->rlim_max = 8ul * 1024 * 1024; return 0;   /* RLIMIT_STACK: USER_STACK_MAX (0.229) */
-    case 7:  r->rlim_cur = r->rlim_max = 4096ul;   return 0;   /* RLIMIT_NOFILE: every descriptor number there is (files below MAX_FD 128, sockets 1024-2047, shm, epoll; 26/10/2026: it said 128, and MariaDB cut max_connections to fit) */
+    case 7: {
+        /* RLIMIT_NOFILE: the kernel's since 0.281 (SYS_FD_LIMITE: fdmax in
+         * kernel.cfg, or from the RAM). An older kernel: 4096, every number
+         * there was (files below 128, sockets 1024-2047, shm, epoll). */
+        unsigned int l[2];
+
+        if (_syscall2(SYS_FD_LIMITE, 0, (uintptr_t)l) == 0) {
+            r->rlim_cur = l[0];
+            r->rlim_max = l[1];
+        } else r->rlim_cur = r->rlim_max = 4096ul;
+        return 0;
+    }
     case 0: case 1: case 2: case 4: case 5: case 6: case 8: case 9:
         r->rlim_cur = r->rlim_max = ~0ul;                      /* RLIM_INFINITY */
         return 0;
@@ -12761,7 +12984,19 @@ int setrlimit(int risorsa, const struct rlimit *r)
     struct rlimit ora;
 
     if (getrlimit(risorsa, &ora) != 0) return -1;
-    if (!r || r->rlim_cur > ora.rlim_max || r->rlim_max > ora.rlim_max) {
+    if (!r) { errno = EFAULT; return -1; }
+    if (risorsa == 7 /* RLIMIT_NOFILE */) {
+        /* the kernel keeps it (0.281): lower freely, raise cur up to max,
+         * max only as root and up to fdmax */
+        unsigned int l[2];
+        int32_t      e;
+
+        l[0] = r->rlim_cur > 0xFFFFFFFFul ? 0xFFFFFFFFu : (unsigned int)r->rlim_cur;
+        l[1] = r->rlim_max > 0xFFFFFFFFul ? 0xFFFFFFFFu : (unsigned int)r->rlim_max;
+        e = _syscall2(SYS_FD_LIMITE, 1, (uintptr_t)l);
+        if (e != -38 /* ENOSYS: an older kernel, as below */) return (int)err_posix(e);
+    }
+    if (r->rlim_cur > ora.rlim_max || r->rlim_max > ora.rlim_max) {
         errno = 1;                                   /* EPERM: non si allarga */
         return -1;
     }
@@ -13831,8 +14066,9 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
  * I SOCKET BSD (@SOCKET-BSD, 29 settembre 2026)
  *
  * Il contratto sta in lib/include/libc.h, nella sezione omonima: qui come e'
- * fatto. Un socket e' una voce di g_prese; il suo descrittore e' PRESA_BASE +
- * indice. Dietro c'e' lo stack IP (drivers/ip/ip.c), a cui si parla col
+ * fatto. Un socket e' una Presa; its descriptor comes from the kernel like
+ * a file's (0.281, fdl_prendi) and the libc's table says which Presa it
+ * is. Dietro c'e' lo stack IP (drivers/ip/ip.c), a cui si parla col
  * protocollo di drivers/net/ip_proto.h — le strutture sono ripetute qui sotto,
  * come tutto cio' che questo file prende dagli header, e vanno tenute uguali.
  *
@@ -13849,10 +14085,11 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
  * assegna le connessioni al PROGRAMMA (ip.drv 0.005), quindi un filo apre e un
  * altro legge.
  * ============================================================================= */
-/* ! 1024 AND NOT 64 (26 October 2026): a server with a thousand clients (the
- * MariaDB stress test). That is all the room between PRESA_BASE and
- * SHMFD_BASE. ~140 bytes each, in the BSS of the programs that use sockets. */
-#define PRESE_MAX       (SHMFD_BASE - PRESA_BASE)
+/* ! NO CEILING HERE (0.281, 27 October 2026). Until 0.280 a fixed table of
+ * 1024 (then the room between descriptors 1024 and 2047): the 1024th client
+ * of the MariaDB stress test stayed out. Now a socket is allocated when it
+ * is made, and its number is the kernel's; the limit is the program's
+ * RLIMIT_NOFILE and how many connections ip.drv takes. */
 
 #define S_AF_INET       2
 #define S_SOCK_STREAM   1
@@ -13872,6 +14109,7 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
 #define S_S_IFSOCK      0140000
 #define S_FIONREAD      0x541B
 #define S_FIONBIO       0x5421
+#define S_SIOCATMARK    0x8905
 #define S_POLLIN        0x1
 #define S_POLLOUT       0x4
 #define S_POLLERR       0x8
@@ -13908,6 +14146,7 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
 #define P_IP_MSG_TCP_RICEVI 11
 #define P_IP_MSG_TCP_CHIUDI 12
 #define P_IP_MSG_TCP_SPEGNI 24
+#define P_IP_MSG_TCP_MEZZA  25
 #define P_IP_MSG_TCP_STATO  13
 #define P_IP_MSG_TCP_ASCOLTA 14
 #define P_IP_MSG_TCP_ACCETTA 15
@@ -14008,9 +14247,15 @@ typedef struct {
     int           udp_pieno;
     unsigned char udp_da_ip[4];
     unsigned int  udp_da_porta;
+    void         *libera_dopo;   /* the next closed one (g_prese_libere) */
 } Presa;
 
-static Presa        g_prese[PRESE_MAX];
+/* ! A CLOSED Presa IS NOT FREED, it goes on a list and the next socket
+ * takes it. Until 0.280 they were a static array, and a thread that still
+ * held a pointer to one (a read on a socket another thread is closing) read
+ * a dead but valid Presa; with free() it would read freed memory. A server
+ * keeps as many as it had connections at its busiest. */
+static Presa       *g_prese_libere;      /* linked by Presa.libera_dopo */
 static volatile int g_prese_m = 0;
 static int          g_pid_ip  = 0;
 
@@ -14026,27 +14271,52 @@ unsigned int   ntohl(unsigned int v)   { return scambia32(v); }
 
 static Presa *presa_di(int fd)
 {
-    int i = fd - PRESA_BASE;
+    Presa *p = (Presa *)fdl_ogg(fd, FDL_PRESA);
 
-    if (i < 0 || i >= PRESE_MAX || !g_prese[i].usata) return NULL;
-    return &g_prese[i];
+    return (p && p->usata) ? p : NULL;
 }
 
 static int presa_nuova(int tipo)
 {
-    int i;
+    Presa *p;
+    int    fd;
 
     mutex_prendi(&g_prese_m);
-    for (i = 0; i < PRESE_MAX; i++)
-        if (!g_prese[i].usata) {
-            memset(&g_prese[i], 0, sizeof(Presa));
-            g_prese[i].usata = 1;
-            g_prese[i].tipo  = tipo;
-            mutex_lascia(&g_prese_m);
-            return PRESA_BASE + i;
-        }
+    p = g_prese_libere;
+    if (p) g_prese_libere = (Presa *)p->libera_dopo;
     mutex_lascia(&g_prese_m);
-    return -E_NFILE;
+    if (p == NULL) p = (Presa *)malloc(sizeof(Presa));
+    if (p == NULL) return -12;                          /* ENOMEM */
+    memset(p, 0, sizeof(Presa));
+    p->usata = 1;
+    p->tipo  = tipo;
+    fd = fdl_prendi(FDL_PRESA, p);
+    if (fd < 0) {
+        mutex_prendi(&g_prese_m);
+        p->usata = 0;
+        p->libera_dopo = g_prese_libere;
+        g_prese_libere = p;
+        mutex_lascia(&g_prese_m);
+        return fd;
+    }
+    return fd;
+}
+
+/* Walking every socket: presa_quante() numbers to look at, presa_ennesima(i)
+ * the socket with number i or NULL. */
+static int presa_quante(void)
+{
+    FdlIndice *ind = __atomic_load_n(&g_fdl, __ATOMIC_ACQUIRE);
+    return ind ? (int)(ind->posti * FDL_BLOCCO) : 0;
+}
+static Presa *presa_ennesima(int i) { return presa_di(i); }
+
+/* The errno for a socket call on a number that is not a socket: ENOTSOCK if
+ * the number is open (a file, a pipe), EBADF if it is not. */
+static int presa_non(int fd)
+{
+    if (fd >= 0 && _syscall3(SYS_FCNTL, (uint32_t)fd, 1u /* F_GETFD */, 0) >= 0) return E_NOTSOCK;
+    return EBADF;
 }
 
 static void dormi_ms(unsigned int ms)
@@ -14259,7 +14529,7 @@ int bind(int fd, const struct sockaddr *a, unsigned int len)
     unsigned int  porta;
     int           r;
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     r = indirizzo_in(a, len, ip, &porta);
     if (r < 0) return presa_errore(r);
     if (p->porta_loc != 0 || p->udp_aperta) return presa_errore(EINVAL);
@@ -14308,7 +14578,7 @@ int connect(int fd, const struct sockaddr *a, unsigned int len)
     PTcpApri      ap;
     int           r, giri;
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     r = indirizzo_in(a, len, ip, &porta);
     if (r < 0) return presa_errore(r);
 
@@ -14595,6 +14865,7 @@ static int udp_smista(unsigned int ms)
     IpcMessage    meta;
     PUdpDati      u;
     int           r, i;
+    Presa        *p;
 
     at.pid = pid_ip(); at.tipo = P_IP_MSG_UDP_DATI;
     if (at.pid <= 0) return -E_NETDOWN;
@@ -14604,9 +14875,9 @@ static int udp_smista(unsigned int ms)
     if (r < (int)sizeof(u)) return 1;
     memcpy(&u, msg, sizeof(u));
     if (u.len > (unsigned int)r - sizeof(u)) u.len = (unsigned int)r - sizeof(u);
-    for (i = 0; i < PRESE_MAX; i++) {
-        Presa *p = &g_prese[i];
-
+    /* every socket of the program: the libc's descriptor table (0.281) */
+    for (i = 0; (p = presa_ennesima(i)) != NULL || i < presa_quante(); i++) {
+        if (p == NULL) continue;
         if (!p->usata || p->tipo != S_SOCK_DGRAM || !p->udp_aperta) continue;
         if (p->porta_loc != u.porta_locale) continue;
         p->udp_prenotata = 0;               /* la sua prenotazione e' servita */
@@ -14786,8 +15057,13 @@ static int presa_chiudi(int fd)
     }
     free(p->avanzo);
     free(p->udp_dato);
+    p->avanzo = NULL;
+    p->udp_dato = NULL;
+    fdl_lascia(fd);
     mutex_prendi(&g_prese_m);
     p->usata = 0;
+    p->libera_dopo = g_prese_libere;
+    g_prese_libere = p;
     mutex_lascia(&g_prese_m);
     return 0;
 }
@@ -14796,13 +15072,13 @@ int shutdown(int fd, int come)
 {
     Presa *p = presa_di(fd);
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     if (!p->connesso) return presa_errore(E_NOTCONN);
     if (come == 0 || come == 2) p->chiusa_rd = 1;
     if (come == 1 || come == 2) p->chiusa_wr = 1;
-    /* ! SOLO SHUT_RDWR CHIUDE NELLO STACK: la sua chiusura butta anche cio' che
-     * deve ancora arrivare, e un «ho finito di scrivere» non deve perdere la
-     * risposta. Vedi libc.h. */
+    /* ! SHUT_RDWR closes in the stack (what still has to arrive is thrown
+     * away); SHUT_WR only sends our FIN (below): a "finished writing" must
+     * not lose the answer. See libc.h. */
     /* ! SPEGNI, NOT CHIUDI (ip.drv 0.016): the connection stays in its epoll
      * set and reports the end once, as on Linux. MariaDB's pool of threads
      * shuts its connections down at shutdown and waits for that event; with
@@ -14816,6 +15092,15 @@ int shutdown(int fd, int come)
             ip_esito(P_IP_MSG_TCP_CHIUDI, &r, sizeof(r));
         p->fine = 1;
     }
+    /* SHUT_WR: the FIN leaves now and reading goes on (ip.drv 0.018,
+     * IP_MSG_TCP_MEZZA). An older ip.drv does not know it (-EINVAL): the
+     * FIN leaves at close(), as before. */
+    if (come == 1 && p->tipo == S_SOCK_STREAM && p->id) {
+        PTcpRif r;
+
+        r.id = p->id;
+        (void)ip_esito(P_IP_MSG_TCP_MEZZA, &r, sizeof(r));
+    }
     return 0;
 }
 
@@ -14825,7 +15110,7 @@ int getsockopt(int fd, int livello, int nome, void *val, unsigned int *len)
     Presa *p = presa_di(fd);
     int    v = 0;
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     if (!val || !len) return presa_errore(EFAULT);
     if (livello == S_SOL_SOCKET && (nome == 20 || nome == 21)) {
         struct timeval tv;
@@ -14858,7 +15143,7 @@ int setsockopt(int fd, int livello, int nome, const void *val, unsigned int len)
 {
     Presa *p = presa_di(fd);
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     if (livello == S_SOL_SOCKET && (nome == 20 || nome == 21)) {
         struct timeval tv;
         unsigned int   ms;
@@ -14896,7 +15181,7 @@ int getsockname(int fd, struct sockaddr *a, unsigned int *len)
     Presa        *p = presa_di(fd);
     unsigned char ip[4] = { 0, 0, 0, 0 };
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     /* connected: to 127.x the stack used that same address as the source
      * (ip.drv 0.013), elsewhere the machine's; not connected: what bind
      * was given (0.0.0.0, 127.0.0.1...) */
@@ -14911,7 +15196,7 @@ int getpeername(int fd, struct sockaddr *a, unsigned int *len)
 {
     Presa *p = presa_di(fd);
 
-    if (!p) return presa_errore(fd >= 0 && fd < PRESA_BASE ? E_NOTSOCK : EBADF);
+    if (!p) return presa_errore(presa_non(fd));
     if (!p->connesso) return presa_errore(E_NOTCONN);
     scrivi_in(a, len, p->ip_rem, p->porta_rem);
     return 0;
@@ -14952,6 +15237,13 @@ static int presa_ioctl(int fd, unsigned int req, void *arg)
             if (tcp_info(p, &info) == 0) n += (int)info.in_coda_rx;
         }
         *(int *)arg = n;
+        return 0;
+    }
+    /* SIOCATMARK (APR, 28 October 2026): never at the urgent mark, the
+     * stack has no urgent data */
+    if (req == S_SIOCATMARK) {
+        if (!arg) return presa_errore(EFAULT);
+        *(int *)arg = 0;
         return 0;
     }
     return presa_errore(ENOTTY);
@@ -15030,20 +15322,51 @@ static short da_eventi(unsigned int ev, short voluti)
  * question is also the wait: the stack answers when one is ready. With
  * kernel descriptors in the list it is still a round (the kernel 10 ms, then
  * the stack), one question per round instead of one per socket. */
+static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
+                           struct pollfd *locali, unsigned int *mappa, Presa **tcp,
+                           unsigned int *tmappa, unsigned int *voluti, unsigned int *ev);
+
+/* ! AS MANY DESCRIPTORS AS THE CALLER GIVES (0.281): up to 64 the arrays are
+ * on the stack as before, beyond that they are allocated (until 0.280 more
+ * than 64 gave EINVAL). One question to the stack holds P_ASPETTA_MAX
+ * sockets: with more, each round asks them in pieces without waiting there,
+ * and the wait is the 10 ms round. A server with thousands of sockets uses
+ * epoll, which has no such limit. */
 static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
 {
-    struct pollfd  locali[64];
-    unsigned int   mappa[64];
-    Presa         *tcp[64];
-    unsigned int   tmappa[64], voluti[64], ev[64];
+    struct pollfd  locali_s[64];
+    unsigned int   mappa_s[64], tmappa_s[64], voluti_s[64], ev_s[64];
+    Presa         *tcp_s[64];
+    unsigned char *m = NULL;
+    int            r;
+
+    if (nfds <= 64)
+        return poll_misto_giro(fds, nfds, timeout, locali_s, mappa_s, tcp_s,
+                               tmappa_s, voluti_s, ev_s);
+    m = (unsigned char *)malloc(nfds * (sizeof(struct pollfd) + 5u * sizeof(unsigned int) + sizeof(Presa *)));
+    if (m == NULL) { errno = ENOMEM; return -1; }
+    r = poll_misto_giro(fds, nfds, timeout,
+                        (struct pollfd *)m,
+                        (unsigned int *)(m + nfds * sizeof(struct pollfd)),
+                        (Presa **)(m + nfds * (sizeof(struct pollfd) + 5u * sizeof(unsigned int))),
+                        (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 1u * sizeof(unsigned int))),
+                        (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 2u * sizeof(unsigned int))),
+                        (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 3u * sizeof(unsigned int))));
+    free(m);
+    return r;
+}
+
+static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
+                           struct pollfd *locali, unsigned int *mappa, Presa **tcp,
+                           unsigned int *tmappa, unsigned int *voluti, unsigned int *ev)
+{
     unsigned int   nk = 0, nt = 0, nu = 0, i;
     unsigned int   inizio = uptime_ms();
 
-    if (nfds > 64) { errno = EINVAL; return -1; }
     for (i = 0; i < nfds; i++) {
         Presa *p;
 
-        if (fds[i].fd < PRESA_BASE) { locali[nk] = fds[i]; mappa[nk] = i; nk++; continue; }
+        if (!E_PRESA(fds[i].fd)) { locali[nk] = fds[i]; mappa[nk] = i; nk++; continue; }
         p = presa_di(fds[i].fd);
         if (p != NULL && presa_aspettabile(p) && !g_aspetta_no) {
             tcp[nt]    = p;
@@ -15065,7 +15388,7 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
             for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
         }
         for (i = 0; i < nfds; i++) {
-            if (fds[i].fd >= PRESA_BASE) {
+            if (E_PRESA(fds[i].fd)) {
                 Presa *p = presa_di(fds[i].fd);
 
                 if (p == NULL) fds[i].revents = S_POLLNVAL;
@@ -15078,28 +15401,34 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
             if (fds[i].revents) pronti++;
         }
         if (nt && !g_aspetta_no) {
-            unsigned int ms = P_ASPETTA_SUBITO;
+            unsigned int ms = P_ASPETTA_SUBITO, da;
 
-            /* only TCP sockets and nothing ready: the question is the wait */
-            if (nk == 0 && nu == 0 && pronti == 0 && timeout != 0) {
+            /* only TCP sockets and nothing ready: the question is the wait
+             * (when they fit in one question) */
+            if (nt <= P_ASPETTA_MAX && nk == 0 && nu == 0 && pronti == 0 && timeout != 0) {
                 unsigned int passati = uptime_ms() - inizio;
 
                 if (timeout < 0) ms = 0;
                 else if (passati < (unsigned int)timeout) ms = (unsigned int)timeout - passati;
                 attesa = ms != P_ASPETTA_SUBITO;
             }
-            r = tcp_aspetta(tcp, voluti, ev, nt, ms);
-            if (r >= 0) {
-                for (k = 0; k < nt; k++) {
-                    short e = da_eventi(ev[k], fds[tmappa[k]].events);
+            for (da = 0; da < nt; da += P_ASPETTA_MAX) {
+                unsigned int quanti = nt - da < P_ASPETTA_MAX ? nt - da : P_ASPETTA_MAX;
 
-                    if (e && !fds[tmappa[k]].revents) pronti++;
-                    fds[tmappa[k]].revents |= e;
+                r = tcp_aspetta(tcp + da, voluti + da, ev + da, quanti, ms);
+                if (r >= 0) {
+                    for (k = da; k < da + quanti; k++) {
+                        short e = da_eventi(ev[k], fds[tmappa[k]].events);
+
+                        if (e && !fds[tmappa[k]].revents) pronti++;
+                        fds[tmappa[k]].revents |= e;
+                    }
+                } else {
+                    attesa = 0;
+                    break;
                 }
-            } else {
-                attesa = 0;
-                if (g_aspetta_no) continue;    /* an older stack: as before */
             }
+            if (g_aspetta_no) continue;     /* an older stack: as before */
         }
         if (pronti) return pronti;
         if (timeout == 0) return 0;
@@ -15117,7 +15446,8 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
 
 /* =============================================================================
  * epoll (26 October 2026): the set lives in ip.drv (IP_MSG_INS_*), the
- * descriptor here is EPFD_BASE + the index of g_ep. Only TCP sockets go in
+ * descriptor is the kernel's (0.281, fdl_prendi), and the libc's table keeps
+ * the set id; until 0.280 it was 3072 + an index, 64 sets at most. Only TCP sockets go in
  * a set: a file, a pipe or the IPC mailbox give EPERM, as a regular file does
  * on Linux. That is what MariaDB's thread pool needs (sockets with EPOLLIN |
  * EPOLLET | EPOLLONESHOT) and what nginx-like servers do with their sockets.
@@ -15128,34 +15458,27 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
  * (IP_INS_FORZA): the set reports it ready once. Without it MariaDB, which
  * re-arms after each statement, would wait forever on bytes it already has.
  * ============================================================================= */
-static unsigned int g_ep[EPFD_MAX];        /* the set id in ip.drv, 0 = free */
-
+/* the set id in ip.drv of descriptor epfd, 0 = not an epoll set */
 static unsigned int ep_di(int epfd)
 {
-    int i = epfd - EPFD_BASE;
-
-    if (i < 0 || i >= EPFD_MAX) return 0;
-    return g_ep[i];
+    return (unsigned int)(uintptr_t)fdl_ogg(epfd, FDL_EPOLL);
 }
 
 int epoll_create1(int flag)
 {
-    int r, i;
+    int r, fd;
 
     (void)flag;                             /* EPOLL_CLOEXEC: exec keeps nothing of ours */
     r = ip_esito(P_IP_MSG_INS_CREA, NULL, 0);
     if (r <= 0) return presa_errore(r < 0 ? (r == -EINVAL ? -ENOSYS : r) : -EIO);
-    mutex_prendi(&g_prese_m);
-    for (i = 0; i < EPFD_MAX; i++)
-        if (g_ep[i] == 0) { g_ep[i] = (unsigned int)r; break; }
-    mutex_lascia(&g_prese_m);
-    if (i == EPFD_MAX) {
+    fd = fdl_prendi(FDL_EPOLL, (void *)(uintptr_t)(unsigned int)r);
+    if (fd < 0) {
         unsigned int ins = (unsigned int)r;
 
         ip_esito(P_IP_MSG_INS_CHIUDI, &ins, sizeof(ins));
-        return presa_errore(EMFILE);
+        return presa_errore(fd);
     }
-    return EPFD_BASE + i;
+    return fd;
 }
 
 int epoll_create(int n)
@@ -15175,8 +15498,9 @@ int epoll_ctl(int epfd, int op, int fd, void *evento)
     if (fd == epfd) return presa_errore(EINVAL);
     p = presa_di(fd);
     if (p == NULL) {
-        if (fd >= 0 && fd < PRESA_BASE) return presa_errore(EPERM);
-        return presa_errore(EBADF);
+        /* an open number that is not a socket (a file, a pipe): EPERM, as
+         * Linux says for a regular file; a closed one: EBADF */
+        return presa_errore(presa_non(fd) == E_NOTSOCK ? EPERM : EBADF);
     }
     if (!presa_aspettabile(p)) return presa_errore(EPERM);
     if (op < 1 || op > 3) return presa_errore(EINVAL);
@@ -15257,9 +15581,7 @@ static int epoll_chiudi(int fd)
 
     if (ins == 0) return presa_errore(EBADF);
     ip_esito(P_IP_MSG_INS_CHIUDI, &ins, sizeof(ins));
-    mutex_prendi(&g_prese_m);
-    g_ep[fd - EPFD_BASE] = 0;
-    mutex_lascia(&g_prese_m);
+    fdl_lascia(fd);
     return 0;
 }
 

@@ -105,7 +105,7 @@ int main(void)
 
     /* 2. un cliente TCP: centomila byte d'andata e di ritorno */
     fd = collega(7801);
-    ok("connect a 10.0.0.2:7801", fd >= PRESA_BASE);
+    ok("connect a 10.0.0.2:7801", fd >= 3);
     if (fd >= 0) {
         static unsigned char via[100000], torna[100000];
         struct sockaddr_in   io, lui;
@@ -226,7 +226,7 @@ int main(void)
         printf("prova-socket: IN ASCOLTO 7000\n");
         fflush(stdout);
         c = accept(s, (struct sockaddr *)&lui, &l);
-        ok("accept: arriva l'host", c >= PRESA_BASE && lui.sin_addr.s_addr != 0);
+        ok("accept: arriva l'host", c >= 3 && lui.sin_addr.s_addr != 0);
         if (c >= 0) {
             char buf[16];
             int  i;

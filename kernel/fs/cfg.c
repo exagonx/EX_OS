@@ -160,6 +160,25 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg->ahci = (value[0] >= '1' && value[0] <= '9') ? 1 : 0;
             return;
         }
+        /* tcpmax = N: the TCP connections of ip.drv, kept as text and
+         * handed to it by cfg_get_option (cfg.h) */
+        if (cfg_strcmp(key, "tcpmax") == 0) {
+            cfg_strcpy(cfg->tcp_max, value, sizeof(cfg->tcp_max));
+            return;
+        }
+        /* fdmax = N: the descriptors a program may hold (cfg.h). Only a
+         * number counts; anything else leaves the default (from the RAM). */
+        if (cfg_strcmp(key, "fdmax") == 0) {
+            if (value[0] >= '1' && value[0] <= '9')
+                cfg->fd_max = (uint32_t)cfg_atoi(value);
+            return;
+        }
+        /* procmax = N: processes and threads together (cfg.h) */
+        if (cfg_strcmp(key, "procmax") == 0) {
+            if (value[0] >= '1' && value[0] <= '9')
+                cfg->proc_max = (uint32_t)cfg_atoi(value);
+            return;
+        }
         if (cfg_strcmp(key, "smp") == 0) {
             cfg->smp = 1;
             if (value[0] >= '0' && value[0] <= '9') {
@@ -551,6 +570,9 @@ const char *cfg_get_option(const char *key)
     }
     if (cfg_strcmp(key, "lingua") == 0) {
         return cfg->lingua[0] ? cfg->lingua : NULL;
+    }
+    if (cfg_strcmp(key, "tcpmax") == 0) {
+        return cfg->tcp_max[0] ? cfg->tcp_max : NULL;
     }
     return NULL;
 }

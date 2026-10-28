@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.016");
+EX_VERSIONE("ip.drv", "0.018");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -898,6 +898,7 @@ typedef struct {
     unsigned int  snd_nxt;       /* prossimo da mandare */
     unsigned int  rcv_nxt;       /* prossimo atteso */
     unsigned int  fin_seq;       /* numero di sequenza del nostro FIN */
+    unsigned char fin_fuori;     /* our FIN is on the wire (0.018) */
     unsigned int  finestra;      /* quella annunciata dall'altro */
     unsigned int  fin_nostra;    /* l'ultima che abbiamo annunciato NOI */
 
@@ -983,14 +984,24 @@ typedef struct {
  * Until 0.015 a connection slot kept the 63 KB buffer it had taken - and
  * the memset of the next connection in that slot threw the pointer away:
  * every reuse of a slot that had received a lot lost 63 KB for good. At
- * most RX_GRANDI_MAX are taken at once (16 MB); the others use the 4 KB
+ * most RX_GRANDI_MAX are taken at once (a sixteenth of the RAM since 0.017); the others use the 4 KB
  * that every slot has inside.
  * ============================================================================= */
-static Conn        *g_tcp[IP_TCP_CONNESSIONI];
-static unsigned int g_tcp_n = 0;
-#define TCP_HASH       1024
+/* ! NO CEILING IN THE CODE (0.017, 27 October 2026, the user's choice: only
+ * the limits of a configuration that can be changed). The array of
+ * pointers grows too (realloc), up to g_tcp_max: `tcpmax` in kernel.cfg, or
+ * from the RAM - one connection per 32 KB, so a quarter of the RAM if every
+ * one held its large buffer (65536 on 2 GB). See tcp_limiti. */
+static Conn       **g_tcp = NULL;
+static unsigned int g_tcp_n = 0, g_tcp_posti = 0;
+static unsigned int g_tcp_max = IP_TCP_CONNESSIONI;
+/* 8192 chains: at the 32 thousand clients the user asked for, four per chain */
+#define TCP_HASH       8192
 static unsigned int g_tcp_hash[TCP_HASH];      /* first slot + 1 of a chain */
-#define RX_GRANDI_MAX  256
+/* how many large (63 KB) receive buffers at once: a sixteenth of the RAM
+ * (0.017; 256 = 16 MB until 0.016), never fewer than 256 - see tcp_limiti */
+static unsigned int g_rx_grandi_max = 256;
+#define RX_GRANDI_MAX  g_rx_grandi_max
 static unsigned int g_rx_grandi = 0;
 
 #include "tcp_rx.inc"
@@ -1082,7 +1093,17 @@ static Conn *tcp_slot_nuovo(void)
 
     for (i = 0; i < g_tcp_n; i++)
         if (g_tcp[i]->stato == S_LIBERA) return g_tcp[i];
-    if (g_tcp_n >= IP_TCP_CONNESSIONI) return NULL;
+    if (g_tcp_n >= g_tcp_max) return NULL;
+    if (g_tcp_n == g_tcp_posti) {
+        unsigned int posti = g_tcp_posti ? g_tcp_posti * 2u : 64u;
+        Conn       **n;
+
+        if (posti > g_tcp_max) posti = g_tcp_max;
+        n = (Conn **)realloc(g_tcp, posti * sizeof(Conn *));
+        if (n == NULL) return NULL;
+        g_tcp = n;
+        g_tcp_posti = posti;
+    }
     c = (Conn *)malloc(sizeof(Conn));
     if (c == NULL) return NULL;
     memset(c, 0, sizeof(*c));
@@ -1294,13 +1315,24 @@ static void tcp_manda(Conn *c, unsigned int flag,
 }
 
 /* Manda quello che c'e' in coda e non e' ancora partito. */
+/* ! OUR FIN GOES AFTER THE QUEUE (0.018, 28 October 2026). In S_FIN_MIO and
+ * S_ULTIMO_ACK the FIN is wanted at fin_seq, the byte after the last queued
+ * one: the data that had not left yet go first, then the FIN. Until 0.017
+ * the FIN left at once with that number while the data stayed behind (a
+ * close() with a full window lost them), and a retransmission resent the
+ * FIN alone, never the data before it. */
 static void tcp_spingi(Conn *c)
 {
     unsigned int inviati = c->snd_nxt - c->snd_una;
     unsigned int restanti;
+    int          chiude = (c->stato == S_FIN_MIO || c->stato == S_ULTIMO_ACK);
 
-    if (c->stato != S_APERTA && c->stato != S_FIN_SUO) return;
-    if (c->tx_len <= inviati) return;
+    if (c->stato != S_APERTA && c->stato != S_FIN_SUO && !chiude) return;
+    if (c->fin_fuori) return;
+    if (c->tx_len <= inviati) {
+        if (chiude && c->snd_nxt == c->fin_seq) goto fin;
+        return;
+    }
 
     restanti = c->tx_len - inviati;
 
@@ -1320,7 +1352,14 @@ static void tcp_spingi(Conn *c)
         inviati    += q;
         restanti   -= q;
     }
+    if (!(chiude && c->snd_nxt == c->fin_seq)) goto orologio;
 
+fin:
+    tcp_manda(c, TCP_ACK | TCP_FIN, NULL, 0);
+    c->snd_nxt   = c->fin_seq + 1u;
+    c->fin_fuori = 1;
+
+orologio:
     if (c->rto_scade == 0) {
         c->rto_ms    = TCP_RTO_MS;
         c->rto_scade = uptime_ms() + c->rto_ms;
@@ -1733,7 +1772,6 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
  * socket at once is rare; the second one is "orfana" and is looked at by
  * tcp_scadenze every round (10 ms), as all of them were before.
  * ============================================================================= */
-#define INS_MAX    256
 #define INS_EPOLL  1
 #define INS_POLL   2
 
@@ -1750,7 +1788,12 @@ typedef struct {
     IpTcpVoce    voce[IP_ASPETTA_MAX];
 } Insieme;
 
-static Insieme g_ins[INS_MAX];
+/* ! THEY GROW TOO (0.017): until 0.016 a static table of 256 (140 KB in
+ * every ip.drv); now pointers, one Insieme allocated the first time the
+ * table gets that far, up to as many as connections (g_tcp_max). */
+static Insieme    **g_insp = NULL;
+static unsigned int g_ins_n = 0, g_ins_posti = 0;
+#define g_ins(k)   (*g_insp[k])
 
 /* Connections of a listener that wait for accept(). */
 static unsigned int tcp_in_attesa(const Conn *asc)
@@ -1829,7 +1872,7 @@ static void ins_lista_togli(Insieme *s, Conn *c)
 static void ins_consegna(unsigned int k, int anche_vuota)
 {
     static IpInsEventi r;
-    Insieme     *s = &g_ins[k];
+    Insieme     *s = &g_ins(k);
     unsigned int giri, quanti = 0, x;
 
     if (s->attesa_pid == 0) return;
@@ -1863,7 +1906,7 @@ static void ins_consegna(unsigned int k, int anche_vuota)
 static void aspetta_rispondi(unsigned int k, int anche_vuota)
 {
     static IpTcpAspetta r;
-    Insieme     *s = &g_ins[k];
+    Insieme     *s = &g_ins(k);
     unsigned int i;
 
     r.timeout_ms = 0;
@@ -1896,7 +1939,7 @@ static void aspetta_rispondi(unsigned int k, int anche_vuota)
 static void tcp_evento(Conn *c)
 {
     if (c->ins != 0) {
-        Insieme *s = &g_ins[c->ins - 1u];
+        Insieme *s = &g_ins(c->ins - 1u);
 
         if (c->ins_armata && ins_pronto(c)) ins_lista_metti(s, c);
         if (s->attesa_pid != 0 && s->testa != 0) ins_consegna(c->ins - 1u, 0);
@@ -1909,7 +1952,7 @@ static void tcp_evento(Conn *c)
 static void ins_stacca(Conn *c)
 {
     if (c->ins != 0) {
-        ins_lista_togli(&g_ins[c->ins - 1u], c);
+        ins_lista_togli(&g_ins(c->ins - 1u), c);
         c->ins = 0;
         c->ins_armata = c->ins_forza = 0;
     }
@@ -1920,9 +1963,22 @@ static int ins_libero(void)
 {
     unsigned int k;
 
-    for (k = 0; k < INS_MAX; k++)
-        if (g_ins[k].tipo == 0) return (int)k;
-    return -1;
+    for (k = 0; k < g_ins_n; k++)
+        if (g_ins(k).tipo == 0) return (int)k;
+    /* none free: one more, while there is room */
+    if (g_ins_n >= g_tcp_max) return -1;
+    if (g_ins_n == g_ins_posti) {
+        unsigned int posti = g_ins_posti ? g_ins_posti * 2u : 16u;
+        Insieme    **n = (Insieme **)realloc(g_insp, posti * sizeof(Insieme *));
+
+        if (n == NULL) return -1;
+        g_insp = n;
+        g_ins_posti = posti;
+    }
+    g_insp[g_ins_n] = (Insieme *)malloc(sizeof(Insieme));
+    if (g_insp[g_ins_n] == NULL) return -1;
+    memset(g_insp[g_ins_n], 0, sizeof(Insieme));
+    return (int)g_ins_n++;
 }
 
 /* A free place in g_ins; when full, those of programs that are gone go
@@ -1933,8 +1989,8 @@ static int ins_nuovo(void)
     unsigned int i, j;
 
     if (k >= 0) return k;
-    for (i = 0; i < INS_MAX; i++) {
-        Insieme *s = &g_ins[i];
+    for (i = 0; i < g_ins_n; i++) {
+        Insieme *s = &g_ins(i);
 
         if (s->tipo == 0 || pid_vivo(s->proprietario)) continue;
         for (j = 0; j < g_tcp_n; j++) {
@@ -1953,8 +2009,8 @@ static Insieme *ins_da_id(unsigned int id, unsigned int cliente, int *k)
 {
     Insieme *s;
 
-    if (id == 0 || id > INS_MAX) return NULL;
-    s = &g_ins[id - 1u];
+    if (id == 0 || id > g_ins_n) return NULL;
+    s = &g_ins(id - 1u);
     if (s->tipo != INS_EPOLL || s->proprietario != gruppo_di(cliente)) return NULL;
     *k = (int)id - 1;
     return s;
@@ -1987,7 +2043,7 @@ static void tcp_aspetta(unsigned int cliente, const unsigned char *payload,
     }
     k = ins_nuovo();
     if (k < 0) { rispondi_esito(cliente, -EAGAIN); return; }
-    s = &g_ins[k];
+    s = &g_ins(k);
     memset(s, 0, sizeof(*s));
     s->tipo         = INS_POLL;
     s->proprietario = gruppo_di(cliente);
@@ -2023,9 +2079,9 @@ static void ins_crea(unsigned int cliente)
     int k = ins_nuovo();
 
     if (k < 0) { rispondi_esito(cliente, -EMFILE); return; }
-    memset(&g_ins[k], 0, sizeof(Insieme));
-    g_ins[k].tipo         = INS_EPOLL;
-    g_ins[k].proprietario = gruppo_di(cliente);
+    memset(&g_ins(k), 0, sizeof(Insieme));
+    g_ins(k).tipo         = INS_EPOLL;
+    g_ins(k).proprietario = gruppo_di(cliente);
     rispondi_esito(cliente, k + 1);
 }
 
@@ -2118,8 +2174,8 @@ static void ins_scadenze(unsigned int ora)
 {
     unsigned int k;
 
-    for (k = 0; k < INS_MAX; k++) {
-        Insieme *s = &g_ins[k];
+    for (k = 0; k < g_ins_n; k++) {
+        Insieme *s = &g_ins(k);
 
         if (s->tipo == 0 || s->attesa_pid == 0) continue;
         if (s->attesa_scade != 0 && (int)(ora - s->attesa_scade) >= 0) {
@@ -2207,14 +2263,12 @@ static void tcp_scadenze(void)
             c->snd_nxt = c->snd_una;
             tcp_manda(c, TCP_SYN, NULL, 0);
             c->snd_nxt = c->snd_una + 1u;
-        } else if (c->stato == S_FIN_MIO || c->stato == S_ULTIMO_ACK) {
-            c->snd_nxt = c->fin_seq;
-            tcp_manda(c, TCP_ACK | TCP_FIN, NULL, 0);
-            c->snd_nxt = c->fin_seq + 1u;
         } else {
             /* Si riparte dal primo non confermato: e' la ritrasmissione
-             * "go-back-N", l'unica possibile senza SACK. */
-            c->snd_nxt = c->snd_una;
+             * "go-back-N", l'unica possibile senza SACK. Closing, the FIN
+             * follows the data again (tcp_spingi). */
+            c->snd_nxt   = c->snd_una;
+            c->fin_fuori = 0;
             tcp_spingi(c);
         }
     }
@@ -2468,6 +2522,41 @@ static void tcp_ricevi(unsigned int cliente, const IpTcpRif *r)
     tcp_consegna(c);
 }
 
+/* Our FIN, after the data queued: the number that follows the last queued
+ * byte; tcp_spingi sends what is left and then the FIN. */
+static void tcp_manda_fin(Conn *c)
+{
+    c->fin_seq   = c->snd_una + c->tx_len;
+    c->fin_fuori = 0;
+    c->stato     = (c->stato == S_FIN_SUO) ? S_ULTIMO_ACK : S_FIN_MIO;
+    c->rto_scade = 0;
+    tcp_spingi(c);
+    c->rto_ms    = TCP_RTO_MS;
+    c->rto_scade = uptime_ms() + c->rto_ms;
+    c->tentativi = 0;
+}
+
+/* shutdown(SHUT_WR) (IP_MSG_TCP_MEZZA, 0.018): our FIN goes, the connection
+ * keeps receiving. A server that closes this way (Apache's lingering close:
+ * shutdown, then read until the client closes, at most 2 s) waited the 2 s
+ * every time until 0.017: no FIN left before close(), so the client waited
+ * for the end of the answer as long as the server waited for the client. */
+static void tcp_mezza(unsigned int cliente, const IpTcpRif *r)
+{
+    Conn *c = tcp_da_id(r->id, cliente);
+
+    if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    if (c->stato == S_APERTA || c->stato == S_FIN_SUO) {
+        tcp_manda_fin(c);
+        tcp_evento(c);
+    } else if (c->stato != S_FIN_MIO && c->stato != S_ULTIMO_ACK &&
+               c->stato != S_MORTA) {
+        rispondi_esito(cliente, -ENOTCONN);
+        return;
+    }
+    rispondi_esito(cliente, 0);
+}
+
 /* close(), or shutdown(SHUT_RDWR) with `spegni` (IP_MSG_TCP_SPEGNI) */
 static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
 {
@@ -2527,18 +2616,11 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
     c->fin_c = 0;
 
     if (c->stato == S_APERTA || c->stato == S_FIN_SUO) {
-        /* Il FIN va DOPO i dati in coda: il suo numero di sequenza e'
-         * quello che segue l'ultimo byte accodato, non quello attuale. */
-        c->fin_seq = c->snd_una + c->tx_len;
-        c->snd_nxt = c->fin_seq;
-        tcp_manda(c, TCP_ACK | TCP_FIN, NULL, 0);
-        c->snd_nxt = c->fin_seq + 1u;
-
-        c->stato     = (c->stato == S_FIN_SUO) ? S_ULTIMO_ACK : S_FIN_MIO;
-        c->rto_ms    = TCP_RTO_MS;
-        c->rto_scade = uptime_ms() + c->rto_ms;
-        c->tentativi = 0;
-    } else {
+        tcp_manda_fin(c);
+    } else if (c->stato != S_FIN_MIO && c->stato != S_ULTIMO_ACK) {
+        /* ! a connection shut down for writing (S_FIN_MIO, S_ULTIMO_ACK)
+         * keeps its FIN going: close() after shutdown(SHUT_WR) must not cut
+         * the orderly end short */
         c->stato = S_MORTA;
     }
 
@@ -2586,7 +2668,7 @@ static void tcp_tabella(unsigned int cliente, const IpTcpChiediTabella *q)
     unsigned int i;
 
     memset(&t, 0, sizeof(t));
-    t.totale = IP_TCP_CONNESSIONI;
+    t.totale = g_tcp_max;
     for (i = 0; i < g_tcp_n; i++)
         if (g_tcp[i]->stato != S_LIBERA) t.occupati++;
     for (i = q->da; i < g_tcp_n; i++) {
@@ -3246,6 +3328,7 @@ static void servi(void)
                 case IP_MSG_TCP_RICEVI:
                 case IP_MSG_TCP_CHIUDI:
                 case IP_MSG_TCP_SPEGNI:
+                case IP_MSG_TCP_MEZZA:
                 case IP_MSG_TCP_STATO: {
                     IpTcpRif r;
 
@@ -3257,6 +3340,7 @@ static void servi(void)
                     if (meta.tipo == IP_MSG_TCP_RICEVI)      tcp_ricevi(meta.sender_pid, &r);
                     else if (meta.tipo == IP_MSG_TCP_CHIUDI) tcp_chiudi(meta.sender_pid, &r, 0);
                     else if (meta.tipo == IP_MSG_TCP_SPEGNI) tcp_chiudi(meta.sender_pid, &r, 1);
+                    else if (meta.tipo == IP_MSG_TCP_MEZZA)  tcp_mezza(meta.sender_pid, &r);
                     else                                     tcp_info(meta.sender_pid, &r);
                     break;
                 }
@@ -3378,6 +3462,24 @@ static void stampa_config(void)
            g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
 }
 
+/* How many TCP connections (and poll/epoll sets) this stack takes: `-t N`,
+ * else `tcpmax` of kernel.cfg (SYS_GETENV hands out the kernel's options),
+ * else one per 32 KB of RAM (0.017: the user's choice, no number in the
+ * code). Never below the 4096 of 0.016. */
+static void tcp_limiti(unsigned int da_riga)
+{
+    const char *v = getenv("tcpmax");
+    long        pagine;
+
+    pagine = sysconf(_SC_PHYS_PAGES);
+    if (pagine > 0 && (unsigned long)pagine / 16ul * 4096ul / TCP_RX_MAX > 256ul)
+        g_rx_grandi_max = (unsigned int)((unsigned long)pagine / 16ul * 4096ul / TCP_RX_MAX);
+    if (da_riga != 0) { g_tcp_max = da_riga; return; }
+    if (v != NULL && v[0] >= '1' && v[0] <= '9') { g_tcp_max = (unsigned int)atoi(v); return; }
+    g_tcp_max = pagine > 0 ? (unsigned int)((unsigned long)pagine / 8ul) : IP_TCP_CONNESSIONI;
+    if (g_tcp_max < IP_TCP_CONNESSIONI) g_tcp_max = IP_TCP_CONNESSIONI;
+}
+
 static void uso(void)
 {
     printf("uso: ip.drv [-a IND] [-m MASCHERA] [-g GATEWAY]\n");
@@ -3387,7 +3489,9 @@ static void uso(void)
     printf("                      (una radio WiFi: wifi0)\n\n");
     printf("     ip.drv -q        i valori della rete 'user' di QEMU\n");
     printf("     ip.drv -w KB     la finestra di ricezione di TCP (4..63, di serie 63):\n");
-    printf("                      piu' piccola per poca memoria o una scheda lenta\n\n");
+    printf("                      piu' piccola per poca memoria o una scheda lenta\n");
+    printf("     ip.drv -t N      quante connessioni TCP al massimo (di serie tcpmax\n");
+    printf("                      di kernel.cfg, o una ogni 32 KB di RAM)\n\n");
     printf("! SENZA ARGOMENTI NON HA INDIRIZZO, ed e' apposta: glielo da'\n");
     printf("  /bin/dhcp, oppure -a. Un indirizzo predefinito che non\n");
     printf("  appartiene alla rete a cui si e' attaccati sembra una\n");
@@ -3397,6 +3501,7 @@ static void uso(void)
 int main(int argc, char **argv)
 {
     int solo_stato = 0, i, rc;
+    unsigned int tcp_riga = 0;
 
     /* ! NESSUN INDIRIZZO FINCHE' NON LO DA' QUALCUNO, e questo e' cambiato
      * l'11 settembre 2026 dopo una prova su una macchina vera.
@@ -3457,6 +3562,12 @@ int main(int argc, char **argv)
             strncpy(g_link, argv[++i], sizeof(g_link) - 1);
             continue;
         }
+        if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            int n = atoi(argv[++i]);
+
+            if (n > 0) tcp_riga = (unsigned int)n;
+            continue;
+        }
         if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
             /* la finestra di ricezione di TCP, in KB: vedi TCP_RX_MAX */
             int kb = atoi(argv[++i]);
@@ -3483,6 +3594,7 @@ int main(int argc, char **argv)
 
     g_st.cfg = g_cfg;
 
+    tcp_limiti(tcp_riga);
     if (solo_stato) { stampa_config(); return 0; }
 
     rc = ipc_register(IP_SERVIZIO);

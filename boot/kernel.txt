@@ -217,6 +217,43 @@ e' il punto dove una tabella del BIOS sbagliata puo' bloccare la macchina.
 Come per verboseboot conta solo un NUMERO: `smp = no` non spegne niente.
 Su una macchina con un processore la voce non fa differenza.
 
+-------------------------------------------------------------------------------
+fdmax = 1000000           (commentata per default)
+-------------------------------------------------------------------------------
+
+Quanti descrittori puo' tenere aperti un programma: file, pipe, socket,
+insiemi epoll, tutti contati insieme (dal kernel 0.281). Senza la voce il
+tetto viene dalla memoria: uno ogni 2 KB di RAM, almeno 1024 (262144 con
+512 MB, 524288 con 1 GB). Non e' memoria presa in anticipo: la tabella di un
+programma cresce a blocchi di 128 quando li usa davvero. Un programma vede il
+tetto con getrlimit(RLIMIT_NOFILE) e puo' abbassarselo con setrlimit; alzarlo
+oltre questo numero non puo' nessuno, nemmeno root. Conta solo un NUMERO.
+
+-------------------------------------------------------------------------------
+procmax = 300             (commentata per default)
+-------------------------------------------------------------------------------
+
+Quanti processi e fili possono esistere insieme in tutto il sistema (dal
+kernel 0.282; ogni filo di un programma conta come un processo). Senza la
+voce decide l'hardware: ognuno ha 128 KB di pila nel kernel, nei primi 64 MB
+di memoria, e quindi il tetto e' la RAM diviso 128 KB, al massimo 512. La
+tabella cresce a blocchi di 8 quando i programmi partono: un numero alto non
+costa niente finche' non si usa. Un numero piu' alto di quello dell'hardware
+vale come quello dell'hardware. Gli ultimi 8 posti restano sempre a root,
+per poter ancora fermare un programma che si moltiplica. Conta solo un
+NUMERO.
+
+-------------------------------------------------------------------------------
+tcpmax = 100000           (commentata per default)
+-------------------------------------------------------------------------------
+
+Quante connessioni TCP tiene ip.drv in tutto il sistema (da ip.drv 0.017).
+Senza la voce il tetto viene dalla memoria: una connessione ogni 32 KB di
+RAM, almeno 4096 (16384 con 512 MB, 32768 con 1 GB). Anche qui niente viene
+preso in anticipo: i posti si allocano quando arrivano le connessioni. La
+stessa cosa per una sola accensione: `ip.drv -t N`. `ipcfg -tcp` mostra
+quante sono in uso e il tetto.
+
 
 ===============================================================================
 [env] - variabili d'ambiente ereditate dai processi utente

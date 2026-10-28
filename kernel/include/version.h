@@ -663,7 +663,29 @@
  * PRIO_HIGH as the drivers of the boot do (proc_set_ready); with
  * PRIO_NORMAL it took turns with the server's threads and its card's
  * receive ring overflowed. */
-#define EXOS_VERSION    "0.280"
+/* 0.280 -> 0.281: descriptors without a fixed ceiling (the user's choice,
+ * 27 October 2026: only the limits of a configuration that can be changed).
+ * The table of a process is no longer fds[128] in the PCB but blocks of 128
+ * that are added when it fills (FdTabella in sched.h, fd_libero in sched.c);
+ * entries never move, so a thread asleep in read keeps its pointer while
+ * another opens more. The limit is RLIMIT_NOFILE: fdmax in kernel.cfg, or
+ * one descriptor per 2 KB of RAM (1048576 on 2 GB); SYS_FD_LIMITE (257)
+ * reads and sets it (setrlimit). Number 128 is never given (it is FD_IPC,
+ * the mailbox in poll). FD_SERVIZIO and SYS_FD_RISERVA (256): the libc's
+ * sockets, epoll sets and shm zones take their numbers from the kernel, the
+ * lowest free like files and pipes, instead of the ranges 1024-2047,
+ * 2048-3071 and 3072- they had in the libc. */
+/* 0.281 -> 0.282: the process table grows (the user's rule, 28 October
+ * 2026: processes, threads and connections limited only by the hardware and
+ * a server's configuration). MAX_PROCESSES (192) is gone: the PCBs live in
+ * blocks of PROC_BLOCCO (8) from the kernel zone, added by pcb_alloc when
+ * every slot is taken and never freed; PROC_POSTO(i) reaches slot i through
+ * a directory sized once for g_proc_max, the hardware ceiling (RAM / 128 KB
+ * and the 64 MB kernel zone / 128 KB, since every process and thread has a
+ * 128 KB kernel stack there). `procmax` in kernel.cfg sets a lower one. The
+ * wait lists of the VFS and disk locks and the shutdown list are allocated
+ * for g_proc_max instead of being MAX_PROCESSES arrays. */
+#define EXOS_VERSION    "0.282"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -701,14 +701,13 @@ static void sessione(int id, const Config *cfg, int con_login)
          * sistema, ed era un server che sapeva di non poter servire e non
          * l'aveva detto a nessuno.
          *
-         * ! I PSEUDO-TERMINALI SONO QUATTRO (PTY_MAX, kernel/include/pty.h), e
-         * uno resta occupato finche' TUTTI e due i capi sono chiusi: se la
-         * shell di una sessione finita lascia un figlio vivo, quel pty non
-         * torna. Il numero quattro e' anche il motivo per cui il guaio si
-         * vedeva «dopo quattro o cinque collegamenti». */
+         * ! FINO AL KERNEL 0.281 I PSEUDO-TERMINALI ERANO QUATTRO (PTY_MAX), e
+         * uno resta occupato finche' TUTTI e due i capi sono chiusi: il guaio
+         * si vedeva «dopo quattro o cinque collegamenti». Dal 0.282 la tabella
+         * cresce e un rifiuto qui vuol dire memoria del kernel finita. */
         static const char scusa[] =
             "\r\ntelnetd: non c'e' un pseudo-terminale libero"
-            " (questo sistema ne tiene quattro).\r\n"
+            " (memoria del kernel finita).\r\n"
             "         Riprova fra un minuto; se non passa, guarda i processi "
             "rimasti da una sessione finita male.\r\n";
         IpTcpRif rif;

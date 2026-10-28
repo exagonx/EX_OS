@@ -169,9 +169,9 @@ static int spazio_vivo(PDE *pd)
 {
     uint32_t i;
 
-    for (i = 0; i < MAX_PROCESSES; i++)
-        if (g_process_pool[i].state != PROC_UNUSED && g_process_pool[i].state != PROC_ZOMBIE &&
-            g_process_pool[i].page_directory == pd)
+    for (i = 0; i < g_proc_posti; i++)
+        if ((*PROC_POSTO(i)).state != PROC_UNUSED && (*PROC_POSTO(i)).state != PROC_ZOMBIE &&
+            (*PROC_POSTO(i)).page_directory == pd)
             return 1;
     return 0;
 }

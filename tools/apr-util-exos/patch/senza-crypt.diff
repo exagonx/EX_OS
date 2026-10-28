@@ -1,0 +1,15 @@
+diff -ruN a/crypto/apr_passwd.c b/crypto/apr_passwd.c
+--- a/crypto/apr_passwd.c	2026-10-28 06:40:29.259706372 +0100
++++ b/crypto/apr_passwd.c	2026-10-28 06:40:29.271706339 +0100
+@@ -178,7 +178,10 @@
+ #endif
+ #endif
+ 
+-#if defined(WIN32) || defined(BEOS) || defined(NETWARE) || defined(__ANDROID__)
++/* EX-OS: no crypt() in its libc; the $apr1$ (MD5), bcrypt and SHA1 hashes
++ * of htpasswd are all inside APR-util */
++#if defined(WIN32) || defined(BEOS) || defined(NETWARE) || defined(__ANDROID__) \
++    || defined(__exos__)
+ #define CRYPT_MISSING 1
+ #else
+ #define CRYPT_MISSING 0

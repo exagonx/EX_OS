@@ -61,6 +61,7 @@
 #include "kernel.h"
 #include "ata.h"
 #include "sched.h"      /* g_ticks */
+#include "kmalloc.h"
 #include "ahci.h"
 
 /* Le porte, gli offset dei registri e i bit di stato stanno in ata.h:
@@ -1391,7 +1392,7 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
 
 static uint32_t g_disco_detentore = 0;      /* 0 = free */
 static uint32_t g_disco_livelli   = 0;
-static uint32_t g_disco_attesa[MAX_PROCESSES];
+static uint32_t *g_disco_attesa;            /* g_proc_max entries (0.282) */
 static uint32_t g_disco_n_attesa  = 0;
 static int      g_disco_detto     = 0;
 
@@ -1400,6 +1401,12 @@ void ata_prendi(void)
     Process *p  = proc_get_current();
     uint32_t io = (p != NULL) ? p->pid : DISCO_SENZA_PROCESSO;
 
+    if (g_disco_attesa == NULL && p != NULL) {
+        uint32_t *a = (uint32_t *)kmalloc(g_proc_max * sizeof(uint32_t));
+
+        if (a != NULL && !__sync_bool_compare_and_swap(&g_disco_attesa, (uint32_t *)0, a))
+            kfree(a);
+    }
     for (;;) {
         interrupts_disable();
 
@@ -1427,7 +1434,7 @@ void ata_prendi(void)
             continue;
         }
 
-        if (g_disco_n_attesa < MAX_PROCESSES)
+        if (g_disco_attesa != NULL && g_disco_n_attesa < g_proc_max)
             g_disco_attesa[g_disco_n_attesa++] = io;
         sched_block(PROC_BLOCKED);
     }

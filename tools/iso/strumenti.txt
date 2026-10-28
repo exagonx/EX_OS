@@ -468,3 +468,57 @@ nota  = (utente mysql, /etc/my.cnf, /var/lib/mysql, un blocco in /boot/avvio.sh)
 nota  = Solo TCP su 127.0.0.1:3306 (EX-OS non ha i socket AF_UNIX): mariadb -u root
 nota  = root@localhost non ha password all'inizio; mettila con ALTER USER.
 nota  = I programmi che parlano col server: vedi le note dei connettori.
+
+
+[expat]
+nome  = Expat
+dice  = Expat 2.9.0: il parser XML in C (e xmlwf)
+prova = lib/libexpat.a
+vuole = base
+mbyte = 1
+solo  = lib/libexpat.a
+file  = expat.h
+file  = expat_external.h
+file  = expat_config.h
+solo  = bin/xmlwf
+solo  = src/expat
+
+nota  = gcc prog.c -lexpat
+
+
+[apr]
+nome  = APR
+dice  = Apache Portable Runtime 1.7.6 e APR-util 1.6.5: la base di Apache httpd
+prova = lib/libapr-1.a
+vuole = expat
+mbyte = 3
+solo  = lib/libapr-1.a
+solo  = lib/libaprutil-1.a
+solo  = include/apr-1
+solo  = i386-exos/include/apr-1
+solo  = bin/apr-1-config
+solo  = bin/apu-1-config
+solo  = src/apr
+solo  = src/apr-util
+
+nota  = gcc prog.c -I/exos/include/apr-1 -laprutil-1 -lexpat -lapr-1 -lpthread
+nota  = I processi figli nascono con spawn_ex (EX-OS non ha fork): apr_proc_create
+nota  = c'e', apr_proc_fork risponde ENOSYS.
+
+
+[apache]
+nome  = Apache httpd
+dice  = Apache HTTP Server 2.4.69: httpd con i moduli dentro, ab, htpasswd, rotatelogs
+prova = apache2/bin/httpd
+vuole = apr
+vuole = ssl
+vuole = zlib
+vuole = pcre2
+mbyte = 40
+solo  = apache2
+solo  = src/httpd
+
+nota  = Un processo solo (EX-OS non ha fork), con il MPM worker:
+nota  =   /exos/apache2/bin/httpd -X -d /exos/apache2 -f conf/httpd-exos.conf &
+nota  =   /exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
+nota  = conf/httpd-exos.conf: porta 80, htdocs, cgi-bin (mod_cgi, programmi compilati).

@@ -410,9 +410,10 @@ quelle di EX-OS: 1024 connessioni servite da un gruppo di fili
 indirizzi per il massimo, e un programma di EX-OS ne ha 3 GB).
 
 ! **NON METTERE `thread_handling = one-thread-per-connection`.** Un filo per
-  connessione vuol dire 128 KB di memoria del kernel ciascuno, e il sistema
-  ha 192 posti in tutto fra processi e fili: con quella riga il server si
-  ferma a qualche decina di connessioni. Il gruppo di fili usa `epoll`, che
+  connessione vuol dire 128 KB di memoria del kernel ciascuno, nei primi
+  64 MB: dal kernel 0.282 non c'è più un numero fisso di posti, ma quella
+  fascia ne tiene circa 400 in tutto il sistema, e con quella riga il server
+  si ferma lì. Il gruppo di fili usa `epoll`, che
   c'è dalla versione 0.016 di `ip.drv`: un `/etc/my.cnf` scritto da
   `mariadb-svc` 0.002 o prima ha ancora `max_connections = 16` e
   `-install` non lo tocca (lo dice): si cambia a mano, in `[mysqld]`,
@@ -475,3 +476,40 @@ FreeBASIC), le rilegge e riconosce l'errore di una tabella che non c'è.
 FreeBASIC è provato a 32 bit: il FreeBASIC a 64 bit per EX-OS va ricostruito
 (`tools/freebasic-exos/prepara-fb64.sh`), e allora `mariadb.bi` vale anche lì.
 
+## 4.11 Il server web Apache
+
+```
+netupdate -install:apache     (o il gruppo [apache] del DVD degli strumenti)
+/exos/apache2/bin/httpd -X -d /exos/apache2 -f conf/httpd-exos.conf &
+```
+
+Apache httpd 2.4.69 con il MPM worker, **in un processo solo** (`-X`): EX-OS
+non ha ancora `fork`, quindi non c'è il processo padre che ne fa partire
+altri; tutte le connessioni sono fili di quel processo. La configurazione è
+`/exos/apache2/conf/httpd-exos.conf`: porta 80, le pagine in
+`/exos/apache2/htdocs`, i programmi CGI in `/exos/apache2/cgi-bin`
+(programmi compilati: lo script di shell con `#!` non c'è), lo stato del
+server su `/server-status` solo da 127.0.0.1, il registro in
+`/exos/apache2/logs`. Parte da root e serve come utente 100 (`User #100`).
+
+```
+/exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
+/exos/apache2/bin/ab -n 1000 -c 20 http://127.0.0.1/     misura la velocità
+```
+
+! **QUANTI FILI: `ThreadsPerChild`, `ThreadLimit` e `MaxRequestWorkers`,
+  tutti e tre uguali** (256 nella configurazione di EX-OS). Dal kernel 0.282
+  un programma non ha un numero fisso di fili; il tetto è quello del
+  sistema, circa 400 fra processi e fili (128 KB di pila del kernel
+  ciascuno nei primi 64 MB), e `procmax` in `/boot/kernel.cfg` può
+  abbassarlo. Se Apache ne chiede più di quelli che ci sono, il registro dice
+  `AH03142: ap_thread_create: unable to create worker thread`.
+
+! **I CGI PARTONO CON `spawn_ex`**, non con `fork` ed `exec`: il programma
+  riceve la richiesta sullo standard input e le variabili CGI
+  nell'ambiente, e parte nella sua cartella, come su Linux.
+
+! **mod_ssl c'è** (OpenSSL 4.1): per HTTPS si aggiungono `Listen 443` e un
+  `<VirtualHost>` con `SSLCertificateFile` e `SSLCertificateKeyFile`.
+  `mod_http2`, `mod_md`, `mod_lua`, `mod_proxy_html`, LDAP e `cgid` non ci
+  sono.

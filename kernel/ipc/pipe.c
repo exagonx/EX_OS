@@ -72,6 +72,7 @@
 #include "pipe.h"
 #include "sched.h"
 #include "syscall.h"
+#include "kmalloc.h"
 
 typedef struct {
     int       usata;
@@ -84,7 +85,16 @@ typedef struct {
     uint8_t   buf[PIPE_DIM];
 } Pipe;
 
-static Pipe g_pipe[PIPE_MAX];
+/* THE PIPES ARE AS MANY AS ARE NEEDED (kernel 0.282). There were 16 in the
+ * whole system: a web server running CGI programs (three pipes each) had
+ * five at a time (the user's rule, 28 October 2026: no fixed ceilings). A
+ * pipe is kmalloc'd the first time every existing one is in use, and is
+ * reused afterwards, never freed: the handle stays an index, and a reader
+ * that looked it up keeps valid memory. The directory doubles when full and
+ * the old one is left in place for the same reason. */
+static Pipe   **volatile g_pipe_dir;
+static uint32_t          g_pipe_dir_posti;
+static volatile uint32_t g_pipe_n;
 
 /* Una pipe senza piu' nessuna delle due estremita' aperte non serve a
  * niente e il suo posto in tabella deve tornare disponibile: e' l'unico
@@ -101,35 +111,74 @@ static void pipe_libera_se_orfana(Pipe *p)
 
 static Pipe *pipe_da_handle(int h)
 {
-    if (h < 0 || h >= PIPE_MAX) return NULL;
-    if (!g_pipe[h].usata)       return NULL;
-    return &g_pipe[h];
+    if (h < 0 || (uint32_t)h >= g_pipe_n) return NULL;
+    if (!g_pipe_dir[h]->usata)            return NULL;
+    return g_pipe_dir[h];
 }
 
 int pipe_crea(void)
 {
     int h;
 
-    interrupts_disable();
-    for (h = 0; h < PIPE_MAX; h++) {
-        if (!g_pipe[h].usata) {
-            g_pipe[h].usata     = 1;
-            g_pipe[h].testa     = 0;
-            g_pipe[h].quanti    = 0;
-            /* Nasce con UN lettore e UNO scrittore: sono i due descrittori
-             * che sys_pipe sta per consegnare. Contarli dopo lascerebbe
-             * una finestra in cui la pipe sembra orfana. */
-            g_pipe[h].lettori   = 1;
-            g_pipe[h].scrittori = 1;
-            g_pipe[h].pid_lettore   = 0;
-            g_pipe[h].pid_scrittore = 0;
-            interrupts_enable();
-            return h;
-        }
-    }
-    interrupts_enable();
+    for (;;) {
+        Pipe  *nuova;
+        Pipe **dir = NULL, **scarto = NULL;
 
-    klog(LOG_WARN, "PIPE: tabella piena (%d pipe)", PIPE_MAX);
+        interrupts_disable();
+        for (h = 0; h < (int)g_pipe_n; h++) {
+            Pipe *p = g_pipe_dir[h];
+
+            if (!p->usata) {
+                p->usata     = 1;
+                p->testa     = 0;
+                p->quanti    = 0;
+                /* Nasce con UN lettore e UNO scrittore: sono i due descrittori
+                 * che sys_pipe sta per consegnare. Contarli dopo lascerebbe
+                 * una finestra in cui la pipe sembra orfana. */
+                p->lettori   = 1;
+                p->scrittori = 1;
+                p->pid_lettore   = 0;
+                p->pid_scrittore = 0;
+                interrupts_enable();
+                return h;
+            }
+        }
+        interrupts_enable();
+
+        /* all in use: one more, allocated with interrupts on */
+        nuova = (Pipe *)kmalloc(sizeof(Pipe));
+        if (nuova == NULL) break;
+        nuova->usata = 0;
+        if (g_pipe_n >= g_pipe_dir_posti) {
+            uint32_t posti = g_pipe_dir_posti ? g_pipe_dir_posti * 2u : 16u;
+
+            dir = (Pipe **)kmalloc(posti * sizeof(Pipe *));
+            if (dir == NULL) { kfree(nuova); break; }
+            interrupts_disable();
+            if (g_pipe_n >= g_pipe_dir_posti) {
+                uint32_t i;
+
+                for (i = 0; i < g_pipe_n; i++) dir[i] = g_pipe_dir[i];
+                g_pipe_dir       = dir;     /* the old one stays: see above */
+                g_pipe_dir_posti = posti;
+            } else {
+                scarto = dir;               /* somebody else grew it */
+            }
+        } else {
+            interrupts_disable();
+        }
+        if (g_pipe_n < g_pipe_dir_posti) {
+            g_pipe_dir[g_pipe_n] = nuova;
+            g_pipe_n++;
+            nuova = NULL;
+        }
+        interrupts_enable();
+        if (scarto) kfree(scarto);
+        if (nuova)  kfree(nuova);
+    }
+
+    klog(LOG_WARN, "PIPE: niente memoria per un'altra pipe (%u in tutto)",
+         (unsigned)g_pipe_n);
     return -ENFILE;
 }
 

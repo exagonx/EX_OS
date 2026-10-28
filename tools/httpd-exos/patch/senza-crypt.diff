@@ -1,0 +1,14 @@
+diff -ruN a/support/passwd_common.h b/support/passwd_common.h
+--- a/support/passwd_common.h	2026-10-28 06:43:52.359159505 +0100
++++ b/support/passwd_common.h	2026-10-28 06:44:03.571128988 +0100
+@@ -60,6 +60,10 @@
+ #if defined(WIN32) || defined(NETWARE)
+ #define CRYPT_ALGO_SUPPORTED 0
+ #define PLAIN_ALGO_SUPPORTED 1
++#elif defined(__exos__)
++/* EX-OS: no crypt() in its libc; MD5 ($apr1$), bcrypt and SHA1 stay */
++#define CRYPT_ALGO_SUPPORTED 0
++#define PLAIN_ALGO_SUPPORTED 0
+ #else
+ #define CRYPT_ALGO_SUPPORTED 1
+ #define PLAIN_ALGO_SUPPORTED 0

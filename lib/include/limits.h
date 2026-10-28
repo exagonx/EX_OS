@@ -30,7 +30,7 @@
 
 #define PATH_MAX        320     /* = VFS_PATH_MAX */
 #define NAME_MAX        255     /* il massimo di ext2; su FAT i nomi sono 8.3 */
-#define OPEN_MAX         128    /* = MAX_FD in kernel/include/sched.h (0.232) */
+#define OPEN_MAX         128    /* the first block of the table; since 0.281 the real limit is sysconf(_SC_OPEN_MAX) = RLIMIT_NOFILE */
 #define ARG_MAX        4096     /* argv + envp copiati sullo stack del figlio */
 #define _POSIX_ARG_MAX 4096     /* the POSIX minimum; = ARG_MAX here */
 #ifndef SSIZE_MAX

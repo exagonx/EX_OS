@@ -26,6 +26,8 @@
 #include "idt.h"
 #include "isr.h"
 #include "vfs.h"   /* vfs_close: l'eseguibile aperto per il caricamento su richiesta */
+#include "cfg.h"     /* fdmax: the descriptors a program may hold (0.281) */
+#include "syscall.h" /* FD_IPC, EMFILE, ENOMEM */
 
 /* =============================================================================
  * Variabili globali scheduler
@@ -59,7 +61,52 @@ Process        *g_init_task = NULL;   /* reaper kernel task, adotta gli orfani *
  * su un PCB. Da qui il pool sta in pagine contigue della fascia kernel, e
  * kernel.ld controlla che _kernel_end resti sotto la finestra.
  * ============================================================================= */
-Process *g_process_pool;
+/* Since kernel 0.282 the pool grows in blocks (sched.h, PROC_BLOCCO). Every
+ * block still comes from pmm_alloc_pages_kernel, for the same reason. */
+struct Process **g_proc_blocchi;
+uint32_t         g_proc_posti;
+uint32_t         g_proc_max;
+
+uint32_t proc_tetto(void)
+{
+    KernelConfig *cfg = cfg_get();
+
+    if (cfg != NULL && cfg->proc_max != 0 && cfg->proc_max < g_proc_max)
+        return cfg->proc_max;
+    return g_proc_max;
+}
+
+/* One more block of PCBs, outside pcb_alloc's critical section (with
+ * interrupts on at 32 bit, off at 64 inside a system call). ! The block is zeroed - every slot PROC_UNUSED - before it
+ * is published, and g_proc_posti grows only after the directory entry is
+ * written: a scan sees the old table or the new one, never a half block.
+ * Two callers racing for the same entry: the loser gives its pages back. */
+static int proc_blocco_in_piu(void)
+{
+    uint32_t byte   = (uint32_t)sizeof(Process) * PROC_BLOCCO;
+    uint32_t pagine = (byte + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint32_t posti  = g_proc_posti;
+    paddr_t  fis;
+    uint8_t *q;
+
+    if (posti + PROC_BLOCCO > proc_tetto()) return -1;
+    fis = pmm_alloc_pages_kernel(pagine);
+    if (fis == 0) {
+        klog(LOG_WARN, "SCHED: niente memoria nella fascia kernel per altri "
+             "%u processi (%u in tutto)", (unsigned)PROC_BLOCCO, (unsigned)posti);
+        return -1;
+    }
+    q = (uint8_t *)DA_FISICO(fis);
+    for (uint32_t n = pagine * PAGE_SIZE; n; n--) *q++ = 0;
+    if (!__sync_bool_compare_and_swap(&g_proc_blocchi[posti / PROC_BLOCCO],
+                                      (struct Process *)0, (struct Process *)DA_FISICO(fis))) {
+        pmm_free_pages(fis, pagine);
+        return 0;                    /* somebody else grew it: look again */
+    }
+    __sync_synchronize();
+    g_proc_posti = posti + PROC_BLOCCO;
+    return 0;
+}
 
 /* PID counter */
 static uint32_t g_next_pid = 1;
@@ -145,11 +192,17 @@ static Process *pcb_alloc(void)
      * anche l'avvio e sys_spawn, e uno dei due potrebbe un giorno arrivare
      * gia' dentro una sezione critica. */
     __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+riprova:
+    liberi = 0;
     interrupts_disable();
 
     if (self != NULL && self->uid != 0) {
-        for (i = 0; i < MAX_PROCESSES; i++)
-            if (g_process_pool[i].state == PROC_UNUSED) liberi++;
+        uint32_t tetto = proc_tetto();
+
+        for (i = 0; i < g_proc_posti; i++)
+            if ((*PROC_POSTO(i)).state == PROC_UNUSED) liberi++;
+        /* the slots not allocated yet count as free (kernel 0.282) */
+        if (tetto > g_proc_posti) liberi += tetto - g_proc_posti;
 
         if (liberi <= SLOT_RISERVATI_ROOT) {
             if (eflags & (1u << 9)) interrupts_enable();
@@ -159,21 +212,28 @@ static Process *pcb_alloc(void)
         }
     }
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        if (g_process_pool[i].state == PROC_UNUSED) {
+    for (i = 0; i < g_proc_posti; i++) {
+        if ((*PROC_POSTO(i)).state == PROC_UNUSED) {
             /* Azzera il PCB */
-            uint8_t *p = (uint8_t *)&g_process_pool[i];
+            uint8_t *p = (uint8_t *)PROC_POSTO(i);
             uint32_t n = sizeof(Process);
             while (n--) *p++ = 0;
 
             /* E LO PRENDE, prima di lasciare andare gli interrupt. */
-            g_process_pool[i].state = PROC_NASCENTE;
-            preso = &g_process_pool[i];
+            (*PROC_POSTO(i)).state = PROC_NASCENTE;
+            preso = PROC_POSTO(i);
             break;
         }
     }
 
     if (eflags & (1u << 9)) interrupts_enable();
+    /* every slot taken: one block more, if the ceiling and the memory allow
+     * (kernel 0.282). ! ALSO WITH INTERRUPTS OFF: at 64 bit a system call
+     * enters that way (SYSCALL masks IF), and the first version, which grew
+     * only with IF on, stopped a 64-bit program at 51 threads. The page
+     * allocator does not sleep. */
+    if (preso == NULL && proc_blocco_in_piu() == 0)
+        goto riprova;
     return preso;
 }
 
@@ -253,20 +313,143 @@ static void runq_remove(Process *proc)
  * ! E' IDEMPOTENTE (rimette FD_UNUSED), cosi' la spazzata di sicurezza
  * che resta in proc_reap_zombie() non chiude niente due volte.
  * ============================================================================= */
+/* =============================================================================
+ * THE DESCRIPTOR TABLE THAT GROWS (kernel 0.281) - see FdTabella in sched.h
+ * ============================================================================= */
+
+/* The hard limit every program starts with: fdmax in kernel.cfg, or one per
+ * 2 KB of RAM (1048576 on 2 GB, like Linux's nr_open), never below 1024. */
+uint32_t fd_limite_sistema(void)
+{
+    KernelConfig *cfg = cfg_get();
+    uint32_t      n;
+
+    if (cfg != NULL && cfg->fd_max != 0) return cfg->fd_max;
+    n = (uint32_t)(((uint64_t)pmm_get_total_pages() * PAGE_SIZE) / 2048u);
+    return n < 1024u ? 1024u : n;
+}
+
+static FdIndice *fd_indice_nuovo(uint32_t posti)
+{
+    FdIndice *ind = (FdIndice *)kmalloc(sizeof(FdIndice) + posti * sizeof(FileDescriptor *));
+    uint32_t  i;
+
+    if (ind == NULL) return NULL;
+    ind->prima = NULL;
+    ind->posti = posti;
+    for (i = 0; i < posti; i++) ind->blocco[i] = NULL;
+    return ind;
+}
+
+/* One more block at the end. ! The new block is fully written (all
+ * FD_UNUSED) BEFORE n_blocchi says it exists, and a bigger directory is
+ * complete before `ind` points to it: a thread that reads the table between
+ * two of these steps sees either the old table or the new, never half. */
+static int fd_blocco_in_piu(FdTabella *t)
+{
+    FileDescriptor *b;
+    uint32_t        i;
+
+    if (t->ind == NULL || t->n_blocchi == t->ind->posti) {
+        uint32_t  posti = t->ind ? t->ind->posti * 2u : 4u;
+        FdIndice *nuovo = fd_indice_nuovo(posti);
+
+        if (nuovo == NULL) return -ENOMEM;
+        for (i = 0; i < t->n_blocchi; i++) nuovo->blocco[i] = t->ind->blocco[i];
+        nuovo->prima = t->ind;             /* kept until the process ends */
+        t->ind = nuovo;
+    }
+    b = (FileDescriptor *)kmalloc(FD_BLOCCO * sizeof(FileDescriptor));
+    if (b == NULL) return -ENOMEM;
+    {
+        uint8_t *z = (uint8_t *)b;
+        for (i = 0; i < FD_BLOCCO * sizeof(FileDescriptor); i++) z[i] = 0;
+    }
+    t->ind->blocco[t->n_blocchi] = b;
+    t->n_blocchi++;
+    return 0;
+}
+
+int fd_tabella_crea(FdTabella *t)
+{
+    t->ind        = NULL;
+    t->n_blocchi  = 0;
+    t->libero_da  = 0;
+    t->limite_max = fd_limite_sistema();
+    t->limite     = t->limite_max;
+    return fd_blocco_in_piu(t);
+}
+
+void fd_tabella_libera(FdTabella *t)
+{
+    FdIndice *ind = t->ind, *prima;
+    uint32_t  i;
+
+    if (ind != NULL)
+        for (i = 0; i < t->n_blocchi; i++) kfree(ind->blocco[i]);
+    while (ind != NULL) {
+        prima = ind->prima;
+        kfree(ind);
+        ind = prima;
+    }
+    t->ind       = NULL;
+    t->n_blocchi = 0;
+}
+
+int fd_assicura(Process *p, int fd)
+{
+    FdTabella *t = p->fdt;
+
+    if (fd < 0 || (uint32_t)fd >= t->limite) return -EMFILE;
+    while (fd >= FD_N(p)) {
+        int r = fd_blocco_in_piu(t);
+        if (r < 0) return r;
+    }
+    return 0;
+}
+
+int fd_libero(Process *p, int da)
+{
+    FdTabella *t = p->fdt;
+    int        i;
+
+    if (da < 0) da = 0;
+    if ((uint32_t)da < t->libero_da) da = (int)t->libero_da;
+    for (i = da; ; i++) {
+        /* ! the limit holds inside the blocks already there too: a limit
+         * of 40 lowered by setrlimit is under the first block of 128 */
+        if ((uint32_t)i >= t->limite) return -EMFILE;
+        if (i == FD_IPC) continue;          /* the mailbox's number, see MAX_FD */
+        if (i >= FD_N(p)) {
+            int r = fd_assicura(p, i);
+            if (r < 0) return r;
+        }
+        if (FDV(p, i).type == FD_UNUSED) {
+            if (da == (int)t->libero_da) t->libero_da = (uint32_t)i;
+            return i;
+        }
+    }
+}
+
+void fd_rilasciato(Process *p, int fd)
+{
+    if (fd >= 0 && (uint32_t)fd < p->fdt->libero_da) p->fdt->libero_da = (uint32_t)fd;
+}
+
 static void proc_chiudi_fd(Process *p)
 {
     int fd;
 
-    for (fd = 0; fd < MAX_FD; fd++) {
-        switch (p->fdt[fd].type) {
+    for (fd = 0; fd < FD_N(p); fd++) {
+        switch (FDV(p, fd).type) {
             case FD_FILE:
-                vfs_close((int)p->fdt[fd].inode);
+                vfs_close((int)FDV(p, fd).inode);
                 break;
             case FD_PIPE_R:
-                pipe_chiudi_lettore_locked((int)p->fdt[fd].inode);
+                pipe_chiudi_lettore_locked((int)FDV(p, fd).inode);
                 break;
             case FD_PIPE_W:
-                pipe_chiudi_scrittore_locked((int)p->fdt[fd].inode);
+                pipe_chiudi_scrittore_locked((int)FDV(p, fd).inode);
                 break;
 
             /* ! I PTY MANCAVANO, ED E' LA CORREZIONE DEL 14 SETTEMBRE 2026.
@@ -287,18 +470,18 @@ static void proc_chiudi_fd(Process *p)
              * connessioni senza servirle. Da fuori sembrava che la rete si
              * fosse piantata. */
             case FD_PTY_M:
-                pty_chiudi_locked((int)p->fdt[fd].inode, 1);
+                pty_chiudi_locked((int)FDV(p, fd).inode, 1);
                 break;
             case FD_PTY_S:
-                pty_chiudi_locked((int)p->fdt[fd].inode, 0);
+                pty_chiudi_locked((int)FDV(p, fd).inode, 0);
                 break;
 
             default:
                 continue;   /* stdin/stdout/stderr e i driver: niente da fare */
         }
-        p->fdt[fd].type        = FD_UNUSED;
-        p->fdt[fd].inode       = 0;
-        p->fdt[fd].driver_data = NULL;
+        FDV(p, fd).type        = FD_UNUSED;
+        FDV(p, fd).inode       = 0;
+        FDV(p, fd).driver_data = NULL;
     }
 }
 
@@ -335,7 +518,7 @@ static void idle_task_fn(void)
  * morto o non chiamera' mai waitpid() — gli "orfani". Senza questo, ogni
  * processo terminato il cui genitore non esegue waitpid() (es. un servizio
  * in background, un driver che si schianta, o la shell che muore prima di
- * un figlio) occupa per sempre uno slot nel pool PCB (MAX_PROCESSES),
+ * un figlio) occupa per sempre uno slot nel pool PCB,
  * fino al blocco totale del sistema.
  *
  * Meccanismo:
@@ -355,9 +538,9 @@ static int padre_vivo(uint32_t pid)
 {
     uint32_t j;
 
-    for (j = 0; j < MAX_PROCESSES; j++)
-        if (g_process_pool[j].pid == pid && g_process_pool[j].state != PROC_UNUSED &&
-            g_process_pool[j].state != PROC_ZOMBIE)
+    for (j = 0; j < g_proc_posti; j++)
+        if ((*PROC_POSTO(j)).pid == pid && (*PROC_POSTO(j)).state != PROC_UNUSED &&
+            (*PROC_POSTO(j)).state != PROC_ZOMBIE)
             return 1;
     return 0;
 }
@@ -368,8 +551,8 @@ static void init_reaper_task(void)
     uint32_t giri = 0;      /* per la guardia dello heap, ogni 50 giri */
 
     for (;;) {
-        for (i = 0; i < MAX_PROCESSES; i++) {
-            Process *p = &g_process_pool[i];
+        for (i = 0; i < g_proc_posti; i++) {
+            Process *p = PROC_POSTO(i);
 
             if (p->state != PROC_ZOMBIE) continue;
 
@@ -395,7 +578,7 @@ static void init_reaper_task(void)
              * bene cosi' — e' un filo che si puo' ancora aspettare, ed e' quel
              * che fa anche Linux con un thread joinable — ma quando del gruppo
              * non resta nessun vivo, aspettare vuol dire aspettare per sempre,
-             * e sono slot del pool (MAX_PROCESSES) persi uno per volta. */
+             * e sono slot del pool persi uno per volta. */
             if (p->ppid == g_init_task->pid) {
                 klog(LOG_DEBUG, "INIT: riassorbo orfano PID %u ('%s')",
                      p->pid, p->name);
@@ -509,9 +692,18 @@ Process *proc_create(const char *name, vaddr_t entry_point,
      * a funzionare: `fdt` punta a `fds`, `tgid` vale `pid`, e le condizioni
      * «sono un filo?» sono false dappertutto senza un solo caso speciale. */
     proc->tgid       = proc->pid;
-    proc->fdt        = proc->fds;
+    proc->fdt        = &proc->fdt_mia;
     proc->cwdt       = proc->cwd;
     proc->filo_posto = 0;
+
+    /* The first block of descriptors (0.281): 0, 1 and 2 must exist before
+     * anyone writes them. */
+    if (fd_tabella_crea(&proc->fdt_mia) < 0) {
+        klog(LOG_ERROR, "SCHED: niente memoria per i descrittori del PID %u", proc->pid);
+        fd_tabella_libera(&proc->fdt_mia);
+        proc->state = PROC_UNUSED;
+        return NULL;
+    }
 
     /* Nome */
     str_copy(proc->name, name, PROCESS_NAME_LEN);
@@ -574,6 +766,7 @@ for (uint32_t pi = 0; pi < npages; pi++) {
     }
     if (kstack == 0) {
         klog(LOG_ERROR, "SCHED: impossibile allocare stack kernel per PID %u", proc->pid);
+        fd_tabella_libera(&proc->fdt_mia);
         proc->state = PROC_UNUSED;
         return NULL;
     }
@@ -590,6 +783,7 @@ for (uint32_t pi = 0; pi < npages; pi++) {
         if (proc->page_directory == NULL) {
             for (uint32_t pj = 0; pj < KERNEL_STACK_SIZE / PAGE_SIZE; pj++)
                 pmm_free_page(kstack + pj * PAGE_SIZE);
+            fd_tabella_libera(&proc->fdt_mia);
             proc->state = PROC_UNUSED;
             return NULL;
         }
@@ -687,9 +881,9 @@ for (uint32_t pi = 0; pi < npages; pi++) {
     proc->kernel_esp = IN_NUMERO(sp);
 
     /* File descriptors: 0=stdin, 1=stdout, 2=stderr vuoti per ora */
-    proc->fdt[0].type = FD_STDIN;
-    proc->fdt[1].type = FD_STDOUT;
-    proc->fdt[2].type = FD_STDERR;
+    FDV(proc, 0).type = FD_STDIN;
+    FDV(proc, 1).type = FD_STDOUT;
+    FDV(proc, 2).type = FD_STDERR;
 
     /* Timing */
     proc->created_tick = g_ticks;
@@ -1082,8 +1276,8 @@ static void sched_irq0_handler(InterruptFrame *frame)
      * ===================================================================== */
     {
         uint32_t i;
-        for (i = 0; i < MAX_PROCESSES; i++) {
-            Process *p = &g_process_pool[i];
+        for (i = 0; i < g_proc_posti; i++) {
+            Process *p = PROC_POSTO(i);
             if (p->state == PROC_SLEEPING && g_ticks >= p->sleep_until) {
                 p->state = PROC_READY;
                 runq_add(p);
@@ -1175,30 +1369,30 @@ void sched_unblock_locked(uint32_t pid)
 {
     uint32_t i;
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
+    for (i = 0; i < g_proc_posti; i++) {
         /* ! IL TESTIMONE DI UN RISVEGLIO SBAGLIATO, ed e' l'unico posto dove
          * metterlo: qui passano IPC, il VFS e i pty, tutti a svegliare PER
          * PID. Un PID appena riciclato puo' appartenere a un processo che sta
          * ancora nascendo — e farlo partire vorrebbe dire ring 3 con EIP=0 e
          * senza stack. Non si sveglia, e si dice a chi legge il log che
          * qualcuno tiene in mano un PID che non e' piu' quello di prima. */
-        if (g_process_pool[i].pid   == pid &&
-            g_process_pool[i].state == PROC_NASCENTE) {
+        if ((*PROC_POSTO(i)).pid   == pid &&
+            (*PROC_POSTO(i)).state == PROC_NASCENTE) {
             klog(LOG_WARN, "SCHED: risveglio del PID %u '%s' ignorato: sta "
                  "ancora nascendo (PID riciclato?)",
-                 pid, g_process_pool[i].name);
+                 pid, (*PROC_POSTO(i)).name);
             return;
         }
 
-        if (g_process_pool[i].pid   == pid &&
-            g_process_pool[i].state == PROC_BLOCKED) {
+        if ((*PROC_POSTO(i)).pid   == pid &&
+            (*PROC_POSTO(i)).state == PROC_BLOCKED) {
             /* L'evento è arrivato: la scadenza non serve più. Lasciarla
              * armata farebbe scattare il risveglio per timeout sulla
              * PROSSIMA attesa di questo processo, che scadrebbe subito
              * per un ritardo appartenuto a quella precedente. */
-            g_process_pool[i].block_until = 0;
-            g_process_pool[i].state = PROC_READY;
-            runq_add(&g_process_pool[i]);
+            (*PROC_POSTO(i)).block_until = 0;
+            (*PROC_POSTO(i)).state = PROC_READY;
+            runq_add(PROC_POSTO(i));
             klog(LOG_DEBUG, "SCHED: PID %u sbloccato", pid);
             break;
         }
@@ -1325,27 +1519,49 @@ int proc_gruppo_vivi(uint32_t tgid)
     uint32_t i;
     int      n = 0;
 
-    for (i = 0; i < MAX_PROCESSES; i++)
-        if (g_process_pool[i].state != PROC_UNUSED &&
-            g_process_pool[i].state != PROC_ZOMBIE &&
-            g_process_pool[i].tgid  == tgid)
+    for (i = 0; i < g_proc_posti; i++)
+        if ((*PROC_POSTO(i)).state != PROC_UNUSED &&
+            (*PROC_POSTO(i)).state != PROC_ZOMBIE &&
+            (*PROC_POSTO(i)).tgid  == tgid)
             n++;
     return n;
 }
 
-/* La prima piazzola libera, o 0 se sono tutte prese. */
+/* La prima piazzola libera. Since kernel 0.282 there is always one: the
+ * slots past the reserved band are checked by filo_banda_allarga. */
 static uint32_t filo_posto_libero(uint32_t tgid)
 {
     uint32_t posto, i;
 
-    for (posto = 1; posto < FILO_MAX; posto++) {
+    for (posto = 1; ; posto++) {
         int preso = 0;
 
-        for (i = 0; i < MAX_PROCESSES; i++)
-            if (g_process_pool[i].state != PROC_UNUSED &&
-                g_process_pool[i].tgid       == tgid &&
-                g_process_pool[i].filo_posto == posto) { preso = 1; break; }
+        for (i = 0; i < g_proc_posti; i++)
+            if ((*PROC_POSTO(i)).state != PROC_UNUSED &&
+                (*PROC_POSTO(i)).tgid       == tgid &&
+                (*PROC_POSTO(i)).filo_posto == posto) { preso = 1; break; }
         if (!preso) return posto;
+    }
+}
+
+/* The band of the thread stacks grows down to `fondo` (kernel 0.282): the
+ * heap's ceiling of the whole group becomes `fondo`. Only if the heap is
+ * still below it and nothing is mapped between `fondo` and the old ceiling
+ * (a MAP_FIXED, a shm zone: they may stand above heap_end). Called with the
+ * group's address-space lock held (sys_thread_crea), like sbrk and mmap,
+ * so the heap cannot grow meanwhile. */
+static int filo_banda_allarga(Process *capo, uint32_t fondo)
+{
+    uint32_t v, i;
+
+    if (fondo < ALIGN_UP(capo->heap_end, PAGE_SIZE) || fondo < USER_SPACE_BASE)
+        return -1;
+    for (v = fondo; v < capo->heap_max; v += PAGE_SIZE)
+        if (paging_pte_leggi(capo->page_directory, v) != 0) return -1;
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *m = PROC_POSTO(i);
+
+        if (m->state != PROC_UNUSED && m->tgid == capo->tgid) m->heap_max = fondo;
     }
     return 0;
 }
@@ -1371,8 +1587,8 @@ Process *proc_filo_dello_stack(uint32_t tgid, uint32_t indirizzo)
 {
     uint32_t i;
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *m = &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *m = PROC_POSTO(i);
 
         if (m->state == PROC_UNUSED || m->state == PROC_ZOMBIE) continue;
         if (m->tgid != tgid || m->filo_posto == 0)              continue;
@@ -1410,10 +1626,21 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     if (capo->fili_banda == 0) return ERR(ENOSYS);
 
     posto = filo_posto_libero(capo->tgid);
-    if (posto == 0) return ERR(EAGAIN);     /* piazzole finite: FILO_MAX */
+    if (posto - 1 >= capo->fili_banda / (FILO_STACK_SIZE + PAGE_SIZE))
+        return ERR(EAGAIN);                 /* past the bottom of the space */
 
     cima = capo->fili_banda - (posto - 1) * (FILO_STACK_SIZE + PAGE_SIZE);
     base = cima - FILO_STACK_SIZE;
+    if (cima < FILO_STACK_SIZE || base < USER_SPACE_BASE + 2 * PAGE_SIZE)
+        return ERR(EAGAIN);
+
+    /* past the reserved band: a guard page below the slot, then the heap */
+    if (base - 2 * PAGE_SIZE < capo->heap_max &&
+        filo_banda_allarga(capo, base - 2 * PAGE_SIZE) != 0) {
+        klog(LOG_WARN, "SCHED: PID %u: niente spazio per il filo %u (lo heap "
+             "arriva a 0x%08x)", capo->pid, posto, capo->heap_end);
+        return ERR(EAGAIN);
+    }
 
     /* Quanto grande sara' il blocco TLS: serve saperlo ADESSO perche' sta in
      * cima alla piazzola ed e' parte di cio' che si impegna subito. Il
@@ -1546,6 +1773,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
 
     filo->page_directory = capo->page_directory;
     filo->tgid           = capo->tgid;
+    fd_tabella_libera(&filo->fdt_mia);         /* its own is not used (0.281) */
     filo->fdt            = capo->fdt;          /* i descrittori sono in comune */
     filo->filo_posto     = posto;
     filo->fili_banda     = 0;                  /* la banda e' del capogruppo */
@@ -1714,8 +1942,8 @@ int proc_attesa_sveglia(uint32_t dove, int quanti)
     uint32_t i, tgid = g_current ? g_current->tgid : 0;
     int      svegliati = 0;
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
 
         if (quanti > 0 && svegliati >= quanti) break;
         if (p->state != PROC_BLOCKED) continue;
@@ -1753,8 +1981,8 @@ int proc_filo_ferma(uint32_t tid)
 
     if (self == NULL) return ERR(ESRCH);
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
 
         if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
         if (p->pid != tid) continue;
@@ -1790,8 +2018,8 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
 {
     uint32_t i;
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
 
         if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
         if (p->tgid != tgid || p->pid == risparmia_pid) continue;
@@ -1943,10 +2171,10 @@ static void proc_esci(int32_t exit_code, int fatale)
         uint32_t ppid = ppid_erede ? ppid_erede : g_current->ppid;
         int parent_alive = 0;
         uint32_t j;
-        for (j = 0; j < MAX_PROCESSES; j++) {
-            if (g_process_pool[j].pid   == ppid &&
-                g_process_pool[j].state != PROC_UNUSED &&
-                g_process_pool[j].state != PROC_ZOMBIE) {
+        for (j = 0; j < g_proc_posti; j++) {
+            if ((*PROC_POSTO(j)).pid   == ppid &&
+                (*PROC_POSTO(j)).state != PROC_UNUSED &&
+                (*PROC_POSTO(j)).state != PROC_ZOMBIE) {
                 parent_alive = 1;
                 break;
             }
@@ -2028,7 +2256,7 @@ void proc_reap_zombie(Process *p)
      * nel gruppo la sta ancora usando. Si riporta il puntatore sulla propria —
      * che e' vuota, perche' il PCB nasce azzerato — cosi' la spazzata qui
      * sotto passa a vuoto invece di chiudere i file dei fratelli. */
-    if (p->fdt != p->fds) p->fdt = p->fds;
+    if (p->fdt != &p->fdt_mia) p->fdt = &p->fdt_mia;
 
     /* ! SPAZZATA DI SICUREZZA, non la chiusura vera. I descrittori li
      * rilascia proc_chiudi_fd() nel momento in cui il processo muore
@@ -2039,6 +2267,9 @@ void proc_reap_zombie(Process *p)
      * chiamarla: proc_chiudi_fd e' idempotente, quindi non costa niente
      * e non chiude niente due volte. */
     proc_chiudi_fd(p);
+    /* and the table itself (0.281): blocks and directories go back to
+     * kmalloc. A thread's own is empty (ind NULL), nothing to give back. */
+    fd_tabella_libera(&p->fdt_mia);
 
     /* =========================================================================
      * ! LA PIAZZOLA DI UN FILO SI SMONTA QUANDO IL FILO MUORE, e non basta
@@ -2092,9 +2323,9 @@ void proc_reap_zombie(Process *p)
          *
          * Il puntatore basta a riconoscere il gruppo: una page directory ce
          * l'ha uno solo, e chi la condivide e' per definizione del gruppo. */
-        for (k = 0; k < MAX_PROCESSES; k++)
-            if (&g_process_pool[k] != p && g_process_pool[k].page_directory == pd)
-                g_process_pool[k].page_directory = NULL;
+        for (k = 0; k < g_proc_posti; k++)
+            if (PROC_POSTO(k) != p && (*PROC_POSTO(k)).page_directory == pd)
+                (*PROC_POSTO(k)).page_directory = NULL;
 
         paging_destroy_directory(pd);
     }
@@ -2146,23 +2377,23 @@ void proc_reap_zombie(Process *p)
 void proc_kill(uint32_t pid)
 {
     uint32_t i;
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        if (g_process_pool[i].pid == pid &&
-            g_process_pool[i].state != PROC_UNUSED &&
-            g_process_pool[i].state != PROC_ZOMBIE) {
+    for (i = 0; i < g_proc_posti; i++) {
+        if ((*PROC_POSTO(i)).pid == pid &&
+            (*PROC_POSTO(i)).state != PROC_UNUSED &&
+            (*PROC_POSTO(i)).state != PROC_ZOMBIE) {
 
             klog(LOG_INFO, "SCHED: kill PID %u", pid);
             /* Anche qui, e per lo stesso motivo di proc_exit(): un
              * processo ucciso da un fault non passa da sys_exit, ed e'
              * proprio quello che lascerebbe una pipe aperta per sempre. */
-            if (sched_gira_altrove(&g_process_pool[i])) {
-                g_process_pool[i].da_finire = 1;    /* vedi sched_fine_chiesta */
+            if (sched_gira_altrove(PROC_POSTO(i))) {
+                (*PROC_POSTO(i)).da_finire = 1;    /* vedi sched_fine_chiesta */
                 return;
             }
-            proc_chiudi_fd(&g_process_pool[i]);
-            ipc_processo_finito(&g_process_pool[i]);
-            g_process_pool[i].state = PROC_ZOMBIE;
-            runq_remove(&g_process_pool[i]);
+            proc_chiudi_fd(PROC_POSTO(i));
+            ipc_processo_finito(PROC_POSTO(i));
+            (*PROC_POSTO(i)).state = PROC_ZOMBIE;
+            runq_remove(PROC_POSTO(i));
             g_proc_count--;
             return;
         }
@@ -2199,10 +2430,10 @@ int proc_filo_stacca(uint32_t tid)
 Process *proc_get_by_pid(uint32_t pid)
 {
     uint32_t i;
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        if (g_process_pool[i].pid == pid &&
-            g_process_pool[i].state != PROC_UNUSED) {
-            return &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        if ((*PROC_POSTO(i)).pid == pid &&
+            (*PROC_POSTO(i)).state != PROC_UNUSED) {
+            return PROC_POSTO(i);
         }
     }
     return NULL;
@@ -2271,8 +2502,8 @@ void sched_dump(void)
     klog(LOG_INFO, "SCHED dump (tick=%u, switch=%u, procs=%u):",
          g_ticks, g_switch_count, g_proc_count);
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
         if (p->state == PROC_UNUSED) continue;
 
         const char *sname = (p->state <= PROC_SLEEPING)
@@ -2295,22 +2526,30 @@ void sched_init(void)
 klog(LOG_INFO, "SCHED: inizializzazione scheduler preemptive...");
 
     {
-        uint32_t byte   = (uint32_t)sizeof(Process) * MAX_PROCESSES;
-        uint32_t pagine = (byte + PAGE_SIZE - 1) / PAGE_SIZE;
-        uint32_t fis    = pmm_alloc_pages_kernel(pagine);
-        uint8_t *p;
+        /* the hardware ceiling (sched.h): the kernel stacks must fit both in
+         * the RAM and in the kernel zone */
+        uint64_t ram    = (uint64_t)pmm_get_total_pages() * PAGE_SIZE;
+        uint32_t da_ram = (uint32_t)(ram / KERNEL_STACK_SIZE);
+        uint32_t zona   = USER_SPACE_BASE / KERNEL_STACK_SIZE;
+        uint32_t voci;
 
-        if (fis == 0) kpanic("SCHED: niente memoria per il pool dei processi");
-        g_process_pool = (Process *)DA_FISICO(fis);
-        p = (uint8_t *)DA_FISICO(fis);
-        while (byte--) *p++ = 0;
-        klog(LOG_INFO, "SCHED: pool di %u PCB a 0x%08x (%u KB)",
-             (unsigned)MAX_PROCESSES, fis, pagine * 4);
+        g_proc_max = da_ram < zona ? da_ram : zona;
+        g_proc_max -= g_proc_max % PROC_BLOCCO;
+        voci = g_proc_max / PROC_BLOCCO;
+        g_proc_blocchi = (struct Process **)kmalloc(voci * sizeof(struct Process *));
+        if (g_proc_blocchi == NULL) kpanic("SCHED: niente memoria per la tabella dei processi");
+        for (i = 0; i < voci; i++) g_proc_blocchi[i] = NULL;
+        g_proc_posti = 0;
+        /* the first blocks now: the boot starts a few dozen tasks */
+        for (i = 0; i < 64 / PROC_BLOCCO; i++)
+            if (proc_blocco_in_piu() != 0) kpanic("SCHED: niente memoria per il pool dei processi");
+        klog(LOG_INFO, "SCHED: %u posti per processi e fili, fino a %u",
+             (unsigned)g_proc_posti, (unsigned)g_proc_max);
     }
 
     /* Azzera strutture */
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        g_process_pool[i].state = PROC_UNUSED;
+    for (i = 0; i < g_proc_posti; i++) {
+        (*PROC_POSTO(i)).state = PROC_UNUSED;
     }
     for (i = 0; i <= PRIO_MAX; i++) {
         g_run_queue[i] = NULL;

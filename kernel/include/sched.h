@@ -82,7 +82,26 @@ typedef struct IpcMessage {
  * esiste davvero, 128 KB di stack kernel sotto la soglia bassa di kernel.h. */
 /* 192 dal kernel 0.231: ogni filo e' un posto, e un Firefox ne vuole un
  * centinaio. Un posto costa circa 12,7 KB di BSS del kernel. */
-#define MAX_PROCESSES       192     /* Massimo numero processi simultanei */
+/* THE PROCESS TABLE GROWS (kernel 0.282). MAX_PROCESSES is gone: the user's
+ * rule (28 October 2026) is that processes, threads and connections are
+ * limited only by the hardware and by a server's configuration. The PCBs
+ * live in blocks of PROC_BLOCCO allocated by pcb_alloc when every slot is
+ * taken; g_proc_blocchi, the directory of the blocks, is sized once by
+ * sched_init for g_proc_max and never moves, so PROC_POSTO(i) is valid for
+ * every i < g_proc_posti without a lock. A block, once there, stays: a slot
+ * is reused, never freed (the scans of the table read it with interrupts on).
+ *
+ * g_proc_max is the hardware ceiling: every process and thread has a 128 KB
+ * kernel stack in the kernel zone below USER_SPACE_BASE (64 MB), so neither
+ * the RAM nor that zone can hold more than RAM / KERNEL_STACK_SIZE or
+ * USER_SPACE_BASE / KERNEL_STACK_SIZE. `procmax` in kernel.cfg can set a lower
+ * one for a server (proc_tetto). */
+#define PROC_BLOCCO         8       /* PCBs per block: ~100 KB, 25 pages */
+extern struct Process **g_proc_blocchi;
+extern uint32_t  g_proc_posti;      /* slots allocated so far */
+extern uint32_t  g_proc_max;        /* hardware ceiling, from sched_init */
+uint32_t         proc_tetto(void);  /* the ceiling in force: procmax or g_proc_max */
+#define PROC_POSTO(i) (&g_proc_blocchi[(uint32_t)(i) / PROC_BLOCCO][(uint32_t)(i) % PROC_BLOCCO])
 
 /* Quante zone di memoria condivisa puo' tenere aperte un processo.
  *
@@ -111,7 +130,15 @@ typedef struct IpcMessage {
  * «unable to find a usable font». Costa 96 FileDescriptor (20 byte) in piu'
  * per PCB, circa 370 KB su 192 processi. ! FD_IPC (syscall.h, libc.h) vale
  * MAX_FD e si sposta con lui: va ricompilato chi usa poll sulla mailbox. */
-#define MAX_FD              128     /* File descriptor per processo */
+/* ! NOT A LIMIT ANY MORE (kernel 0.281, 27 October 2026): the table of a
+ * process grows block by block (FdTabella below) up to its limit, which
+ * comes from kernel.cfg (fdmax) or from the RAM, and setrlimit moves it.
+ * MAX_FD is now the size of ONE block - the first one, which every process
+ * has - and the number of FD_IPC, the mailbox as a poll() source: number
+ * 128 is never given to a descriptor, so programs built with FD_IPC = 128
+ * keep working. */
+#define MAX_FD              128     /* descriptors per block of the table */
+#define FD_BLOCCO           MAX_FD
 #define KERNEL_STACK_SIZE   131072  /* 128KB stack kernel per processo — RAM estesa via PMM */
 /* =============================================================================
  * STACK UTENTE A CRESCITA SU FAULT (kernel 0.124)
@@ -173,8 +200,15 @@ typedef struct IpcMessage {
 /* ! 128 DAL 2 OTTOBRE 2026 (kernel 0.231): Firefox con una finestra vera
  * supera i 63 fili (WebRender, i glifi, i pool di Gecko) e si fermava in
  * nsThreadPool. La banda passa a 254 MB di indirizzi. */
-#define FILO_MAX            128     /* capogruppo compreso: 127 fili in piu' */
-#define FILI_BANDA          ((FILO_MAX - 1) * (FILO_STACK_SIZE + 4096))
+/* ! NOT A CEILING SINCE KERNEL 0.282 (28 October 2026, the user's rule: no
+ * fixed limit on threads). FILI_PRENOTATI slots are still reserved by
+ * elf_load, as before; a thread past them takes the next slot further down,
+ * and the heap's ceiling (heap_max) of the whole group moves down with it -
+ * if the heap has not grown that far and nothing is mapped there
+ * (filo_banda_allarga in sched.c). The real ceiling is the address space
+ * left between the heap and the band, and the process table (proc_tetto). */
+#define FILI_PRENOTATI      127     /* slots reserved at load, besides the leader */
+#define FILI_BANDA          (FILI_PRENOTATI * (FILO_STACK_SIZE + 4096))
 #define USER_STACK_INIT     8192    /* 8KB impegnati al caricamento */
 
 /* =============================================================================
@@ -308,6 +342,17 @@ typedef enum {
      * drivers' directory on the disk, so open() failed (read-only on a CD).
      * No state, nothing to count: copied to a child as it is. */
     FD_NULL     = 10,
+
+    /* ! A NUMBER THAT BELONGS TO A SERVICE, not to the kernel (0.281, 27
+     * October 2026): a socket of ip.drv, an epoll set, a shared memory zone
+     * from shm_open. The libc keeps what it is (its own tables, indexed by
+     * this number) and talks to the service; the kernel only keeps the
+     * number taken, so that files, pipes and sockets share ONE numbering
+     * with the lowest free first, as POSIX wants - until 0.280 sockets
+     * lived between 1024 and 2047 because the kernel had no room for them.
+     * `flags` says which kind (FD_SERV_*, syscall.h). Not inherited by a
+     * spawn (its state is in the libc of the process). */
+    FD_SERVIZIO = 11,
 } FDType;
 
 typedef struct {
@@ -324,6 +369,49 @@ typedef struct {
      * for their whole operation (fd_posizione_prendi). */
     volatile uint32_t posizione_di;
 } FileDescriptor;
+
+/* =============================================================================
+ * FdTabella — the descriptors of a process, as many as it needs (0.281)
+ *
+ * The user's choice (27 October 2026): connections without fixed limits,
+ * only those of a configuration that can be changed - like Linux, where the
+ * table of a process grows when it fills (expand_files) and the ceiling is
+ * RLIMIT_NOFILE. Until 0.280 it was FileDescriptor fds[128] in the PCB, and
+ * a server with a thousand clients kept its sockets in the libc between
+ * 1024 and 2047 because the kernel had no room for them.
+ *
+ * ! THE ENTRIES NEVER MOVE. The table is a directory of blocks of FD_BLOCCO
+ * descriptors; growing adds blocks, and when the directory is full a bigger
+ * one replaces it. A block stays where it is for the whole life of the
+ * process, so a thread asleep in sys_read with a pointer to its descriptor
+ * (fd_posizione_prendi) is safe while another thread opens the 10000th
+ * file. And the old directory is NOT freed until the process ends: another
+ * thread may have read the pointer just before the swap. It costs a few
+ * pointers (the directories double, so the old ones together are smaller
+ * than the new one).
+ *
+ * ! LIKE THE OLD fds, A THREAD USES ITS LEADER'S: `fdt` points to the
+ * leader's FdTabella, and so does the limit, which is the program's.
+ * ============================================================================= */
+typedef struct FdIndice {
+    struct FdIndice *prima;          /* the directory this one replaced */
+    uint32_t         posti;          /* how many block pointers it holds */
+    FileDescriptor  *blocco[];       /* posti pointers, NULL past n_blocchi */
+} FdIndice;
+
+typedef struct {
+    FdIndice  *ind;
+    uint32_t   n_blocchi;           /* blocks allocated: FD_BLOCCO each */
+    uint32_t   libero_da;           /* no free descriptor below this */
+    uint32_t   limite;              /* RLIMIT_NOFILE, soft: no fd >= limite */
+    uint32_t   limite_max;          /* RLIMIT_NOFILE, hard */
+} FdTabella;
+
+/* How many descriptor numbers the table has room for now, and one entry.
+ * ! FDV DOES NOT CHECK: the index must be below FD_N(p) (every syscall
+ * checks it first, and fd_assicura makes room). */
+#define FD_N(p)     ((int)((p)->fdt->n_blocchi * FD_BLOCCO))
+#define FDV(p, i)   ((p)->fdt->ind->blocco[(uint32_t)(i) / FD_BLOCCO][(uint32_t)(i) % FD_BLOCCO])
 
 /* =============================================================================
  * ProcVma — un segmento dell'eseguibile, mappato su richiesta
@@ -509,8 +597,8 @@ typedef struct Process {
     uint32_t        n_vma;
     int             exe_handle;
 
-    /* --- File descriptors --- */
-    FileDescriptor  fds[MAX_FD];
+    /* --- File descriptors (0.281: a growing table, see FdTabella) --- */
+    FdTabella       fdt_mia;
 
     /* =========================================================================
      * I FILI — un thread e' un task che CONDIVIDE lo spazio di indirizzamento
@@ -543,12 +631,12 @@ typedef struct Process {
     uint32_t        tls_dim;        /* la misura del blocco, gia' allineata */
 
     uint32_t        tgid;           /* pid del capogruppo (== pid se non e' un filo) */
-    FileDescriptor *fdt;            /* la tabella VERA: propria o del capogruppo */
+    FdTabella      *fdt;            /* la tabella VERA: propria o del capogruppo */
     uint32_t        filo_posto;     /* quale piazzola di stack occupa (0 = capogruppo) */
     /* ! UN FILO STACCATO NON LO ASPETTA NESSUNO (pthread_detach, 28 settembre
      * 2026): quando esce il suo PCB va al reaper di init invece di restare
      * zombie finche' muore il gruppo. Prima di questo un server che fa un filo
-     * per connessione esauriva il pool dopo FILO_MAX connessioni. */
+     * per connessione esauriva il pool dopo 128 connessioni. */
     uint32_t        staccato;
 
     /* ! DOVE STA ASPETTANDO, per l'attesa che DORME davvero (4 settembre
@@ -909,9 +997,21 @@ extern Process *g_init_task;  /* task reaper (PID 2), adotta gli orfani */
 Process *proc_get_by_pid(uint32_t pid);
 Process *proc_get_current(void);
 Process *proc_spazio_capo(Process *p);
+
+/* The descriptor table (0.281, see FdTabella). fd_tabella_crea gives a new
+ * process its first block and the limits of the system; fd_assicura makes
+ * room up to number `fd` (0, or -EMFILE past the limit, -ENOMEM); fd_libero
+ * finds the lowest free number from `da` up, growing the table, and never
+ * gives FD_IPC; fd_rilasciato is called when a descriptor becomes
+ * FD_UNUSED, so that fd_libero finds it again. */
+int      fd_tabella_crea(FdTabella *t);
+void     fd_tabella_libera(FdTabella *t);
+int      fd_assicura(Process *p, int fd);
+int      fd_libero(Process *p, int da);
+void     fd_rilasciato(Process *p, int fd);
+uint32_t fd_limite_sistema(void);
 void     proc_spazio_prendi(Process *capo);
 void     proc_spazio_lascia(Process *capo);
-extern Process *g_process_pool;  /* MAX_PROCESSES PCB, da sched_init */   /* usato da ipc.c per il registro nomi */
 
 /* Scheduler */
 void     sched_tick(void);              /* Chiamato ogni IRQ0 (100Hz) */

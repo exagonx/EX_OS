@@ -17,7 +17,7 @@
  * di un indirizzo alla volta. Qui lo stesso giro, sulle tabelle di paging64.c.
  * Il criterio e' lo stesso, riga per riga: chi cambia l'uno guardi l'altro.
  *
- * Stanno fuori da paging64.c perche' parlano di processi (g_process_pool,
+ * Stanno fuori da paging64.c perche' parlano di processi (PROC_POSTO,
  * sched_spazio_altrove), e paging64.c deve potersi collegare anche da solo.
  * ============================================================================= */
 #include "kernel.h"
@@ -46,8 +46,8 @@ int paging_vittima(PDE **out_pd, vaddr_t *out_virt, paddr_t *out_frame)
 
     if (out_pd == NULL || out_virt == NULL || out_frame == NULL) return 0;
 
-    for (tentativi = 0; tentativi < 2 * MAX_PROCESSES; tentativi++) {
-        Process *p = &g_process_pool[g_giro_proc % MAX_PROCESSES];
+    for (tentativi = 0; tentativi < 2 * g_proc_posti; tentativi++) {
+        Process *p = PROC_POSTO(g_giro_proc % g_proc_posti);
         PDE     *pd;
         vaddr_t  blocco;
 

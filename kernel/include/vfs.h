@@ -37,7 +37,7 @@
 /* 256 e non 64 (kernel 0.233): 64 file aperti in TUTTO il sistema, e Firefox
  * da solo ne tiene decine (caratteri, database, cache): SQLite rispondeva
  * «unable to open database file». Un posto costa circa 330 byte. */
-#define VFS_MAX_OPEN    256
+/* ! GONE IN KERNEL 0.282: the table grows (g_vfs_dir in vfs.c). */
 #define VFS_PUNTO_MAX   24
 #define VFS_PATH_MAX    320
 

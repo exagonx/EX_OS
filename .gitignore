@@ -504,6 +504,39 @@ __pycache__/
 /mariadb-server/
 
 # =============================================================================
+# APACHE HTTPD — the sources of Apache 2 (httpd, 27 October 2026)
+#
+# The web server for EX-OS ("apache2" is httpd 2.x): sources and binaries at
+# 32 and 64 bit go on the tools ISO and in netinst. A git clone of
+# https://github.com/apache/httpd (the official mirror of the ASF tree), on
+# the local branch exos-2.4.69 from the release tag 2.4.69; to follow a new
+# release: git fetch --tags, then a branch from the new tag. Their tree,
+# under the Apache License 2.0: out of our history like mariadb-server. What
+# WE change goes in tools/httpd-exos/, with the recipe to apply it.
+#
+# ! ANCHORED TO THE ROOT, like all the others.
+# =============================================================================
+/httpd/
+
+# =============================================================================
+# APR, APR-UTIL, EXPAT — what Apache httpd is built on (27 October 2026)
+#
+# Git clones like httpd/, each on a local exos-<version> branch from the tag
+# of the latest release, checked against the signed release archive:
+#   apr/       https://github.com/apache/apr       (tag 1.7.6)
+#   apr-util/  https://github.com/apache/apr-util  (tag 1.6.5)
+#   libexpat/  https://github.com/libexpat/libexpat (tag R_2_9_0; the
+#              library is in libexpat/expat/)
+# Apache License 2.0 (apr, apr-util) and MIT (expat). Sources and libraries
+# at 32 and 64 bit go on the tools ISO and in netinst.
+#
+# ! ANCHORED TO THE ROOT, like all the others.
+# =============================================================================
+/apr/
+/apr-util/
+/libexpat/
+
+# =============================================================================
 # cross_build/ — la toolchain incrociata e le costruzioni di terzi (27 set 2026)
 #
 # exos-cross, exos-native (binutils, make, nasm, sorgenti gcc), openssl-build-

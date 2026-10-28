@@ -44,7 +44,7 @@
 
 #include "kernel.h"
 
-#define PTY_MAX         4       /* quante coppie insieme */
+/* PTY_MAX (4 pairs) is gone since kernel 0.282: see pty.c */
 #define PTY_DIM         1024    /* buffer, per direzione */
 #define PTY_RIGA_MAX    256     /* la riga in costruzione */
 

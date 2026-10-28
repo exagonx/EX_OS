@@ -11,11 +11,14 @@
  *
  * <sys/resource.h> — i limiti di un processo (@EXILLA-JS, 30 settembre 2026).
  *
- * ! EX-OS NON HA LIMITI DA IMPOSTARE: getrlimit dice quelli che ci sono per
- * costruzione (la pila principale 8 MB, USER_STACK_MAX; i descrittori 128,
- * MAX_FD, i socket a parte; lo spazio di indirizzamento non ha un tetto da
- * chiedere), setrlimit
- * accetta solo di lasciarli come sono. getrusage sta gia' in libc.h.
+ * getrlimit dice i limiti che ci sono per costruzione (la pila principale
+ * 8 MB, USER_STACK_MAX; lo spazio di indirizzamento non ha un tetto da
+ * chiedere), and RLIMIT_NOFILE is a real one since kernel 0.281: every
+ * descriptor - files, pipes, sockets, epoll - counts, the kernel keeps it
+ * (fdmax in kernel.cfg, or from the RAM) and setrlimit moves it: lower it
+ * freely, raise the soft limit up to the hard one, the hard one only as root.
+ * The other limits setrlimit only accepts as they are. getrusage sta gia' in
+ * libc.h.
  * ============================================================================= */
 #ifndef EXOS_SYS_RESOURCE_H
 #define EXOS_SYS_RESOURCE_H

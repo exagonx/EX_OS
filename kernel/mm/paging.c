@@ -861,11 +861,11 @@ int paging_mappa_framebuffer(uint32_t phys, uint32_t byte)
      * framebuffer che cambia DOPO, con un processo in piu' per ogni console,
      * sta su voci che loro non hanno - e il kernel che scrive sulla console
      * dalla loro syscall prenderebbe un page fault. Si danno a tutti. */
-    if (g_process_pool) {
+    if (g_proc_blocchi) {
         uint32_t p, i;
 
-        for (p = 0; p < MAX_PROCESSES; p++) {
-            Process *pr = &g_process_pool[p];
+        for (p = 0; p < g_proc_posti; p++) {
+            Process *pr = PROC_POSTO(p);
 
             if (pr->state == PROC_UNUSED || pr->page_directory == NULL ||
                 pr->page_directory == kernel_page_directory) continue;
@@ -1045,8 +1045,8 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
      * bit Accessed, nel secondo si prende chi non li ha riaccesi. Piu' di
      * cosi' non serve — se dopo due passaggi risulta tutto in uso, e' tutto
      * davvero in uso, e insistere costerebbe solo tempo. */
-    for (tentativi = 0; tentativi < 2 * MAX_PROCESSES; tentativi++) {
-        Process *p = &g_process_pool[g_giro_proc % MAX_PROCESSES];
+    for (tentativi = 0; tentativi < 2 * g_proc_posti; tentativi++) {
+        Process *p = PROC_POSTO(g_giro_proc % g_proc_posti);
         uint32_t pdi;
 
         g_giro_proc++;
@@ -1911,6 +1911,44 @@ void page_fault_handler(InterruptFrame *frame)
                      p->vma[i].file_fine,
                      (fault_addr >= p->vma[i].vstart &&
                       fault_addr <  p->vma[i].vend) ? "   <-- QUI" : "");
+            }
+
+            /* ! WHO CALLED (kernel 0.282, Apache's crash at -k stop): the
+             * words on the user stack that point into the program's
+             * segments, the first 16 of 512. Most are return addresses;
+             * `addr2line -e <program>` turns them into the chain of calls
+             * even for code built without frame pointers. Only pages that
+             * are there are read: this is the faulting process's CR3. */
+            {
+                uintptr_t sp = (uintptr_t)FR_SP(frame), a;
+                uint32_t  n = 0, k, j;
+                char      riga[16 * 11 + 1];
+
+                riga[0] = 0;
+                for (k = 0; k < 512 && n < 16; k++) {
+                    a = sp + k * sizeof(uintptr_t);
+                    if ((a & (PAGE_SIZE - 1)) == 0 || k == 0) {
+                        if (a >= USER_SPACE_END ||
+                            paging_get_physical(p->page_directory, (vaddr_t)a) == 0) break;
+                    }
+                    {
+                        uintptr_t v = *(volatile uintptr_t *)a;
+
+                        for (j = 0; j < p->n_vma; j++)
+                            if (v >= p->vma[j].vstart && v < p->vma[j].vend) {
+                                uint32_t x = (uint32_t)v, d;
+                                char *q = riga + n * 11;
+
+                                q[0] = ' '; q[1] = '0'; q[2] = 'x';
+                                for (d = 0; d < 8; d++)
+                                    q[3 + d] = "0123456789abcdef"[(x >> (28 - 4 * d)) & 15];
+                                q[11] = 0;
+                                n++;
+                                break;
+                            }
+                    }
+                }
+                if (n) klog(LOG_ERROR, "PF:   sulla pila:%s", riga);
             }
 
             if (fault_addr >= p->heap_start && fault_addr < p->heap_max) {

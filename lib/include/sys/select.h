@@ -12,6 +12,10 @@
  * <sys/select.h> — facciata su libc.h, dove stanno select(), fd_set e le macro
  * FD_* (@EXILLA-NSPR, 30 settembre 2026). Dal 25 ottobre 2026 fd_set arriva a
  * FD_SETSIZE (2048): anche i socket, che hanno descrittori da 1024 a 2047.
+ * Since kernel 0.281 sockets take the lowest free number like files, and
+ * select() goes up to the program's limit (RLIMIT_NOFILE), as on Linux: a
+ * program with more descriptors passes a bigger array of words as fd_set;
+ * FD_SETSIZE only sizes the fd_set type.
  * ============================================================================= */
 #ifndef EXOS_SYS_SELECT_H
 #define EXOS_SYS_SELECT_H

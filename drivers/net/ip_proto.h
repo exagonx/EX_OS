@@ -140,7 +140,7 @@ typedef struct {
 #define IP_TCP_RIGHE_MAX 40
 
 typedef struct {
-    unsigned int totale;         /* IP_TCP_CONNESSIONI */
+    unsigned int totale;         /* how many the stack takes (tcpmax) */
     unsigned int occupati;       /* busy slots in the whole table */
     unsigned int prossimo;       /* the slot to ask from next, 0 = done */
     unsigned int n;
@@ -175,6 +175,10 @@ typedef struct {
  *                       that is how a server polling it hears it, as on Linux.
  *                       The IP_MSG_TCP_CHIUDI that follows (close) only takes
  *                       it out of the set.
+ *   IP_MSG_TCP_MEZZA    IpTcpRif -> IP_MSG_ESITO: shutdown(SHUT_WR), ip.drv
+ *                       0.018. Our FIN leaves after the data still queued;
+ *                       the connection keeps receiving until the other side
+ *                       closes too (Apache's lingering close waits for that).
  *
  * A connection that its program closes leaves every set by itself, as on
  * Linux. Events are the Linux EPOLL* values (IP_EV_*); IP_EV_ONESHOT and
@@ -188,6 +192,7 @@ typedef struct {
 #define IP_MSG_INS_SVEGLIA 22
 #define IP_MSG_INS_CHIUDI  23
 #define IP_MSG_TCP_SPEGNI  24
+#define IP_MSG_TCP_MEZZA   25
 
 #define IP_EV_IN       0x001u
 #define IP_EV_OUT      0x004u
@@ -465,6 +470,10 @@ typedef struct {
  * wants a thousand clients and more. The slots are not a static table any
  * more: one is allocated (8 KB) the first time the table grows that far and
  * then reused, so a machine that opens a few connections pays for a few. */
+/* ! NOT A CEILING ANY MORE (ip.drv 0.017, 27 October 2026): the fewest the
+ * stack takes. The real number is `tcpmax` in kernel.cfg, `ip.drv -t N`, or
+ * one connection per 32 KB of RAM (65536 on 2 GB); IpTcpTabella.totale
+ * says it. */
 #define IP_TCP_CONNESSIONI  4096
 
 /* Stati visibili a un client. Sono meno di quelli veri della macchina a

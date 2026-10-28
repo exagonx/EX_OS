@@ -93,6 +93,31 @@ typedef struct {
      * sempre. */
     uint32_t    ahci;
 
+    /* fdmax: how many descriptors a program may have open together - files,
+     * sockets, pipes, epoll sets - the hard RLIMIT_NOFILE every process
+     * starts with (kernel 0.281). 0, the default, means "from the RAM": one
+     * per 2 KB, 1048576 on a 2 GB machine, never fewer than 1024.
+     *
+     * ! THE USER'S CHOICE (27 October 2026): no ceiling written in the code,
+     * only one in a configuration that can be changed. The table grows as
+     * the program opens (sched.h, FdTabella), so a high value costs nothing
+     * to a program that opens three files; it only says where a runaway
+     * program is stopped. setrlimit can lower it for one program and raise
+     * it back up to this. */
+    uint32_t    fd_max;
+
+    /* procmax: how many processes and threads the system holds together
+     * (kernel 0.282). 0, the default, means "as many as the hardware
+     * allows" (g_proc_max in sched.h); a higher value counts as that. The
+     * table grows when programs start, so the number costs nothing until
+     * it is used. */
+    uint32_t    proc_max;
+
+    /* tcpmax: how many TCP connections ip.drv takes (ip.drv 0.017). The
+     * kernel does not use it: it keeps the text for SYS_GETENV, which hands
+     * it to ip.drv (cfg_get_option). Empty = ip.drv decides from the RAM. */
+    char        tcp_max[16];
+
     /* [boot] */
     /* Disposizione della tastiera: la legge /dev/kbd.drv all'avvio con
      * SYS_GETENV. Sta in [kernel] e non in [env] perche' e' una scelta di

@@ -69,6 +69,7 @@
 
 #include "kernel.h"
 #include "sched.h"
+#include "kmalloc.h"
 #include "paging.h"
 #include "syscall.h"
 #include "vfs.h"    /* vfs_sync: dying of a signal flushes like any exit */
@@ -103,8 +104,8 @@ static Process *chi_attende(Process *p, int sig)
     uint32_t gruppo = p->tgid ? p->tgid : p->pid;
     uint32_t i;
 
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *q = &g_process_pool[i];
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *q = PROC_POSTO(i);
 
         if (q->state == PROC_UNUSED || q->state == PROC_ZOMBIE) continue;
         if ((q->tgid ? q->tgid : q->pid) != gruppo) continue;
@@ -612,14 +613,17 @@ static int arresto_bersaglio(const Process *q, const Process *self)
 
 int segnali_arresto(uint32_t ms)
 {
-    static uint32_t pid_di[MAX_PROCESSES];      /* 0 = not signalled */
+    uint32_t       *pid_di;                     /* 0 = not signalled */
+    uint32_t        posti = g_proc_posti;       /* slots added later: born after the signal */
     Process        *self = proc_get_current();
     uint32_t        scade = g_ticks + ms / 10 + 1;
     int             i, vivi, mandati = 0;
 
     if (self == NULL) return 0;
-    for (i = 0; i < MAX_PROCESSES; i++) {
-        Process *q = &g_process_pool[i];
+    pid_di = (uint32_t *)kmalloc(posti * sizeof(uint32_t));
+    if (pid_di == NULL) return 0;
+    for (i = 0; i < (int)posti; i++) {
+        Process *q = PROC_POSTO(i);
 
         pid_di[i] = 0;
         if (!arresto_bersaglio(q, self)) continue;
@@ -627,12 +631,12 @@ int segnali_arresto(uint32_t ms)
         mandati++;
         manda(self, q, SIGTERM_);
     }
-    if (mandati == 0) return 0;
+    if (mandati == 0) { kfree(pid_di); return 0; }
     kprintf("\n  Chiudo i programmi (%d): ", mandati);
     for (;;) {
         vivi = 0;
-        for (i = 0; i < MAX_PROCESSES; i++) {
-            Process *q = &g_process_pool[i];
+        for (i = 0; i < (int)posti; i++) {
+            Process *q = PROC_POSTO(i);
 
             if (pid_di[i] == 0) continue;
             /* gone, or the slot already holds another process */
@@ -644,11 +648,12 @@ int segnali_arresto(uint32_t ms)
         if (vivi == 0 || (int32_t)(g_ticks - scade) >= 0) break;
         sched_sleep(100);
     }
-    if (vivi == 0) { kprintf("fatto.\n"); return 0; }
+    if (vivi == 0) { kprintf("fatto.\n"); kfree(pid_di); return 0; }
     kprintf("%d non si sono chiusi in %u s:", vivi, ms / 1000);
-    for (i = 0; i < MAX_PROCESSES; i++)
-        if (pid_di[i]) kprintf(" %s", g_process_pool[i].name);
+    for (i = 0; i < (int)posti; i++)
+        if (pid_di[i]) kprintf(" %s", (*PROC_POSTO(i)).name);
     kprintf("\n");
+    kfree(pid_di);
     return vivi;
 }
 

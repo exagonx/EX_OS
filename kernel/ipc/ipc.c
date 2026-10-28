@@ -514,8 +514,8 @@ int32_t ipc_lookup(const char *name)
  * ============================================================================= */
 void ipc_cleanup_process(uint32_t pid)
 {
-    for (uint32_t i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
+    for (uint32_t i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
         if (p->pid == pid) {
             ipc_processo_finito(p);     /* normally done already at exit */
             break;
@@ -524,8 +524,8 @@ void ipc_cleanup_process(uint32_t pid)
 
     interrupts_disable();
 
-    for (uint32_t i = 0; i < MAX_PROCESSES; i++) {
-        Process *p = &g_process_pool[i];
+    for (uint32_t i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
         if (p->pid == pid) {
             p->ipc_head = p->ipc_tail = p->ipc_count = 0;
             break;

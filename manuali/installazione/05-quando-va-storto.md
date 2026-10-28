@@ -241,10 +241,21 @@ ipcfg -tcp
 Una riga per connessione: stato, porta, chi c'è dall'altra parte, il
 gruppo del programma che la tiene, i byte in coda, e «chiusa dal programma»
 per quelle che il programma ha già chiuso e che aspettano l'altra parte.
-La tabella ha 4096 posti dalla versione 0.016 di `ip.drv` (erano 24):
-quando è piena, una connessione nuova (in entrata o in uscita) prende il
-posto della più vecchia già chiusa dal suo programma. Un programma tiene
-fino a 1024 socket.
+Il tetto della tabella lo dice l'ultima riga («N slot occupati su M»).
+Dalla versione 0.017 di `ip.drv` non è un numero fisso: viene dalla
+memoria, una connessione ogni 32 KB di RAM e almeno 4096 (16384 con 512 MB,
+32768 con 1 GB), e i posti si allocano solo quando servono. Si cambia con
+`tcpmax = N` nella sezione [kernel] di `/boot/kernel.cfg` (vedi
+`/boot/kernel.txt`) o, per una sola accensione, lanciando `ip.drv -t N`.
+Quando è piena, una connessione nuova (in entrata o in uscita) prende il
+posto della più vecchia già chiusa dal suo programma.
+
+Anche i descrittori di un programma (file, pipe, socket, insiemi epoll,
+contati insieme) dal kernel 0.281 non hanno più un tetto fisso: uno ogni
+2 KB di RAM, almeno 1024, oppure `fdmax = N` in [kernel]. Un programma che
+dice «Too many open files» (EMFILE) ha raggiunto quel numero o quello che
+si è dato lui con `setrlimit`. Fino al kernel 0.280 un programma teneva
+1024 socket e 128 file.
 
 Se `ipcfg -tcp` dice «ip.drv non accetta la richiesta (casella piena?)»,
 `ip.drv` non ha preso il messaggio per 10 secondi: è fermo o sommerso.

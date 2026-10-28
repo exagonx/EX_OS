@@ -8470,6 +8470,73 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  36. PIU' SCHEDE DI RETE INSIEME (l'utente, 28/10: «il sistema deve poter
+      supportare connessioni multiple piu schede di rete dove
+      l'instradamento avviene per configurazione o automaticamente in base
+      a chi fornisce la risposta per primo»). OGGI NON E' COSI': ip.drv
+      parla con UNA scheda per volta (g_pid_rete, g_link), ha UNA
+      configurazione (g_cfg: ip, maschera, gateway, dns), UNA tabella ARP
+      (g_arp), e IP_MSG_LINK sposta tutto su un'altra scheda (WiFi o cavo)
+      svuotando l'ARP. Da fare: 1) una tabella di interfacce allocata
+      quando arriva una scheda (nessun tetto fisso, voce 35): per ognuna
+      pid del driver, MAC, configurazione IP (statica o DHCP), tabella ARP,
+      la sua NET_MSG_RICEVI in volo, i contatori; 127.0.0.1 resta
+      un'interfaccia interna; 2) una tabella di instradamento: voci da
+      configurazione (/boot/kernel.cfg o un file di rete: destinazione,
+      maschera, interfaccia, gateway, metrica) e voci automatiche dalle
+      reti delle interfacce; per la destinazione senza voce, la strada
+      predefinita e' quella che RISPONDE PRIMA (SYN mandato su tutte le
+      uscite possibili, o ARP/ping del gateway, e la prima risposta fissa
+      la strada per quella destinazione con una scadenza; scelta da
+      misurare: il SYN duplicato apre due connessioni lato server);
+      3) ogni connessione TCP/UDP ricorda la sua interfaccia e il suo
+      indirizzo sorgente (oggi sorgente_per() sceglie fra 127.0.0.1 e
+      g_cfg.ip); bind() su un indirizzo sceglie l'interfaccia; 4) ipcfg
+      mostra e cambia le interfacce e la tabella; dhcp e netdetect per
+      ogni scheda; 5) i driver gia' parlano solo col loro ip.drv, quindi
+      non cambiano. DECISIONI DI ADESSO CHE NON DEVONO OSTACOLARLO: le
+      strutture nuove di ip.drv (tabella TCP dinamica 0.017, mezza
+      chiusura 0.018) non toccano g_cfg; da qui in avanti niente codice
+      nuovo che dia per scontata la scheda unica (usare sorgente_per() e
+      una funzione "uscita per questa destinazione" invece di g_pid_rete
+      sparso).
+
+  35. I TETTI FISSI CHE RESTANO DOPO IL KERNEL 0.281 (trovati il 28/10
+      facendo la voce 32; il modello scelto dall'utente vuole tetti dalla
+      configurazione, non nel codice). Ancora numeri scritti nel codice:
+      MAX_PROCESSES 192 (processi E fili insieme: un server a fili ne
+      consuma uno per filo; sched.h), FILO_MAX 128 (fili di un programma,
+      capogruppo compreso, sched.h: Apache col MPM worker ne vuole
+      ThreadsPerChild + 2, quindi al massimo 126 worker; la configurazione
+      di EX-OS ne mette 64), VFS_MAX_OPEN 256 (file aperti in
+      tutto il sistema, vfs.h: un dup() non ne prende un altro, un open()
+      si'), PIPE_MAX 16 (pipe.h, in tutto il sistema: Apache ne apre due o
+      tre per ogni CGI in corso), PTY_MAX 4 (pty.h: quattro sessioni ssh o
+      telnet insieme), UDP_PORTE 16 (ip.drv), POLL_MAX 16 (voci per
+      chiamata del poll del kernel: i file e le pipe; i socket vanno allo
+      stack e non hanno tetto), SHMFD_MAX 1024 (zone di shm_open nella
+      libc), PROC_MAX_VMA 4. Stessa strada della voce 32: allocati quando
+      servono, tetto da kernel.cfg o dalla RAM. In piu': dup()/dup2()/
+      F_DUPFD di un SOCKET rispondono EOPNOTSUPP (da prima del 0.281):
+      con la tabella FDL della libc basterebbe un contatore di riferimenti
+      sull'oggetto Presa (e la voce 33, fork, lo vuole comunque).
+      FATTO IL 28/10 (kernel 0.282): MAX_PROCESSES (PCB a blocchi di 8
+      dalla fascia kernel, tetto dall'hardware: RAM/128 KB e 64 MB/128 KB,
+      cioe' 512; procmax in kernel.cfg per uno piu' basso), FILO_MAX (le
+      piazzole oltre le 127 riservate scendono verso lo heap e abbassano
+      heap_max del gruppo se lo heap non ci e' arrivato), VFS_MAX_OPEN,
+      PIPE_MAX, PTY_MAX (tabelle che crescono da kmalloc), POLL_MAX del
+      kernel (oltre 16 voci kmalloc, tetto RLIMIT_NOFILE); nella libc le
+      tabelle dei fili (128) e degli errno (64) diventano catene di blocchi.
+      Prova nuova tools/prova_moltifili.sh. RESTANO: UDP_PORTE 16 (ip.drv),
+      SHMFD_MAX 1024 (libc), PROC_MAX_VMA 4, PID_TRACCIATI 512 di wserver
+      (pari al tetto di oggi), MAX_OPEN_FILES 64 del FAT12 del floppy, il dup
+      di un socket. E IL TETTO VERO: ogni processo e ogni filo hanno 128 KB
+      di pila kernel nei primi 64 MB (USER_SPACE_BASE), quindi circa 450
+      task in tutto qualunque sia la RAM. Toglierlo vuol dire un kernel
+      nella meta' alta (higher-half) o pile kernel fuori dalla fascia
+      identita': una scelta grossa, da fare con l'utente.
+
   34. PERCHE' MARIADB SU EX-OS E' LENTO RISPETTO A LINUX (l'utente, 26/10
       durante le 8 ore: «troppo lento in proporzione a linux su stesso
       hardware, salvare tutti i dati e al reset settimanale sara' necessario
@@ -8506,6 +8573,30 @@ tools/netinst/velocita tolto da netinst.
          STRESS_QEMU_EXTRA), tempi per syscall/IPC.
       d) Correggere dal collo di bottiglia piu' grosso, ripetere a), con
          l'obiettivo dei limiti dinamici e dei 32 mila client (voce 32).
+      27/10 LA VM DI CONFRONTO E' PRONTA (l'utente): libvirt "debian13"
+      (Debian 13.7, MariaDB 11.8.6 di Debian, disco
+      /home/VirtualMachine/QEMU_VMK/images/debian13stress.qcow2, ssh
+      graziano@192.168.0.32 col bridge; credenziali dall'utente, NON
+      scriverle). Preparata come EX-OS: /etc/mysql/mariadb.conf.d/
+      90-stress.cnf con le opzioni di stress_mariadb.sh, certificato EC
+      P-256 in /etc/mysql/stress, database stress e tabella t, interfaccia
+      ens16 dhcp in /etc/network/interfaces.d/stress-qemu. Per la parita'
+      si lancia la definizione temporanea debian13-exos (scratchpad
+      debian13-exos.xml: macchina pc, -cpu qemu64, 1 vCPU, 2048 MB, disco
+      IDE, e1000 su rete user con hostfwd 13307->3306 e 13322->22, KVM:
+      la stessa riga di QEMU di EX-OS) e tools/stress/confronto_linux.sh
+      (16/64/256 client senza pausa, poi 1022 con pausa 1 s). Per EX-OS
+      la base 0.280 e' salvata in tools/stress/risultati/base-0280 (ISO,
+      MariaDB, memlog; stress_mariadb.sh accetta STRESS_ISO,
+      STRESS_MARIADB, STRESS_MEMLOG). L'utente ha messo in PAUSA il
+      confronto: si fa a implementazioni finite (tabella dei descrittori,
+      Apache2). Primo dato parziale: Linux 16 client senza pausa 307
+      istruzioni/s, 0 errori - MOLTO sotto EX-OS (2109/s a 64 client):
+      quasi certamente fsync di InnoDB a ogni commit che su Linux arriva al
+      disco emulato. PRIMA DEL CONFRONTO: verificare cosa fa fsync su
+      EX-OS (se non scrive davvero, confrontare anche con
+      innodb_flush_log_at_trx_commit=2 su entrambi), altrimenti si misurano
+      due cose diverse.
 
   33. FORK() NEL KERNEL (l'utente, 26/10: «fork() servira' per il porting
       di redis e apache2»). Oggi fork risponde -1/ENOSYS e i processi nascono
@@ -8737,6 +8828,55 @@ tools/netinst/velocita tolto da netinst.
       di strano, Questions cresce regolare, memoria ferma, tcp 1023 aperte.
       Causa da trovare (l'host? un checkpoint di InnoDB? lo scheduler?):
       va nella voce 34 con la lentezza rispetto a Linux.
+      27/10 MODELLO SCELTO DALL'UTENTE («si aggiungi come modello scelto
+      se questo permettera' di avere connessioni senza limiti fissi ma
+      dettate dalla configurazione di sistema modificabile. al reset si
+      provvede a questo e poi si passa a apache2»): TABELLA DEI
+      DESCRITTORI UNICA E DINAMICA NEL KERNEL, come Linux (files_struct) e
+      come i microkernel (QNX, Fuchsia). Ogni processo ha UNA tabella,
+      allocata e cresciuta a pagine (niente fds[MAX_FD] fisso); ogni voce e'
+      o un file del VFS o "oggetto del servizio X, handle Y" (ip.drv con lo
+      slot TCP, epoll, pty, memoria condivisa). Numeri POSIX veri (il piu'
+      basso libero), via le fasce PRESA_BASE/SHMFD_BASE/EPFD_BASE della libc
+      e PRESA_BASE da libc.h (cambio di ABI: ricompilare, o la libc accetta
+      i numeri vecchi per un periodo). Contatore di riferimenti per ogni
+      oggetto (serve anche a fork, voce 33). Alla morte di un processo il
+      kernel avvisa il servizio di chiudere i suoi handle (ip.drv non deve
+      piu' indovinare con la spazzata). NESSUN LIMITE NEL CODICE: i tetti
+      vengono dalla configurazione di sistema modificabile, come in Linux
+      (RLIMIT_NOFILE morbido/duro con setrlimit; un massimo per processo e
+      uno di sistema in kernel.cfg, predefiniti calcolati dalla RAM; la
+      tabella TCP di ip.drv e gli insiemi epoll senza IP_TCP_CONNESSIONI e
+      INS_MAX fissi, limitati dalla memoria e da un massimo configurabile;
+      i buffer TCP con un tetto di memoria tipo tcp_mem). select resta a
+      FD_SETSIZE (POSIX): per migliaia di connessioni poll/epoll.
+      ORDINE AL RESET SETTIMANALE (scelta dell'utente): 1) questo modello
+      (kernel + libc + ip.drv, 32 e 64 bit, prove: prova_epoll, telnet,
+      ssh, openssl, mariadb, poi lo stress oltre 1024 client); 2) Apache2
+      (sorgente scaricato dall'utente; vuole fork per i figli: voce 33);
+      3) la voce 34 (confronto con Linux sulla VM che l'utente prepara) quando
+      la VM e' pronta, meglio dopo 1) per misurare il sistema nuovo.
+      27/10 SORGENTE DI APACHE2: httpd/ nella radice (clone di
+      https://github.com/apache/httpd, mirror ufficiale ASF, scelto
+      dall'utente per aggiornare in fretta), ramo locale exos-2.4.69 dal tag
+      2.4.69 (1/10/2026, l'ultima pubblicata: httpd.apache.org e
+      downloads.apache.org). Verificato contro httpd-2.4.69.tar.bz2: firma
+      GPG di Eric Covener (KEYS di downloads.apache.org) e sha512 a posto,
+      4241 file uguali al tag salvo 3 parole chiave SVN espanse ($Revision$
+      in VERSIONING, ROADMAP, support/ab.c) e 8 file generati da buildconf.
+      In .gitignore, backup.sh e solo_ascii.py come mariadb-server. Le
+      nostre modifiche andranno in tools/httpd-exos/. Sorgenti e binari 32
+      e 64 bit su ISO strumenti e netinst. PCRE2, OpenSSL, zlib ci sono
+      gia'. Clonate anche le dipendenze (l'utente: «si clonali tutti e
+      tre»), stesso schema: apr/ (github.com/apache/apr, ramo
+      exos-1.7.6 dal tag 1.7.6), apr-util/ (apache/apr-util, exos-1.6.5 dal
+      tag 1.6.5), libexpat/ (libexpat/libexpat, exos-2.9.0 dal tag R_2_9_0,
+      la libreria e' in libexpat/expat/), ultime pubblicate (apr.apache.org,
+      downloads.apache.org/apr, release di GitHub di expat del 5/10/2026).
+      Verificate contro gli archivi firmati: firma GPG (Graham Leggett per
+      apr, Eric Covener per apr-util, Sebastian Pipping per expat) e sha256
+      a posto, nessun file diverso dal tag; in piu' negli archivi solo i
+      file generati da autotools (configure, libtool, *.in).
 
   31. FILE OLTRE 2 GB NEL KERNEL (l'utente, 25/10: �prima l'ABI, poi il
       kernel�). Oggi su ENTRAMBE le architetture un file arriva a 2 GB:

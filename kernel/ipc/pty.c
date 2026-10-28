@@ -22,6 +22,7 @@
 #include "pty.h"
 #include "sched.h"
 #include "syscall.h"    /* gli errno del kernel */
+#include "kmalloc.h"
 
 /* Le quattro che ogni ambiente freestanding deve fornire; vedi
  * kernel/arch/x86/memfun.c. */
@@ -59,13 +60,57 @@ typedef struct {
     uint32_t fine_dati;
 } Pty;
 
-static Pty g_pty[PTY_MAX];
+/* AS MANY TERMINALS AS ARE NEEDED (kernel 0.282): there were 4 pairs in the
+ * whole system, so a fifth telnet or ssh session was refused (the user's
+ * rule, 28 October 2026: no fixed ceilings). Same scheme as the pipes
+ * (pipe.c): a pair is kmalloc'd when all are in use, reused, never freed;
+ * the directory doubles and the old one stays. */
+static Pty    **volatile g_pty_dir;
+static uint32_t          g_pty_dir_posti;
+static volatile uint32_t g_pty_n;
 
 static Pty *pty_da_handle(int h)
 {
-    if (h < 0 || h >= PTY_MAX) return NULL;
-    if (!g_pty[h].usata)       return NULL;
-    return &g_pty[h];
+    if (h < 0 || (uint32_t)h >= g_pty_n) return NULL;
+    if (!g_pty_dir[h]->usata)            return NULL;
+    return g_pty_dir[h];
+}
+
+/* One more pair at the end of the table; 0 or -1 (no memory). */
+static int pty_in_piu(void)
+{
+    Pty  *nuova = (Pty *)kmalloc(sizeof(Pty));
+    Pty **dir = NULL, **scarto = NULL;
+
+    if (nuova == NULL) return -1;
+    nuova->usata = 0;
+    if (g_pty_n >= g_pty_dir_posti) {
+        uint32_t posti = g_pty_dir_posti ? g_pty_dir_posti * 2u : 8u;
+
+        dir = (Pty **)kmalloc(posti * sizeof(Pty *));
+        if (dir == NULL) { kfree(nuova); return -1; }
+        interrupts_disable();
+        if (g_pty_n >= g_pty_dir_posti) {
+            uint32_t i;
+
+            for (i = 0; i < g_pty_n; i++) dir[i] = g_pty_dir[i];
+            g_pty_dir       = dir;
+            g_pty_dir_posti = posti;
+        } else {
+            scarto = dir;
+        }
+    } else {
+        interrupts_disable();
+    }
+    if (g_pty_n < g_pty_dir_posti) {
+        g_pty_dir[g_pty_n] = nuova;
+        g_pty_n++;
+        nuova = NULL;
+    }
+    interrupts_enable();
+    if (scarto) kfree(scarto);
+    if (nuova)  kfree(nuova);
+    return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -232,32 +277,37 @@ int32_t pty_apri(int *master, int *slave)
 {
     int i;
 
-    for (i = 0; i < PTY_MAX; i++) {
-        if (g_pty[i].usata) continue;
+ancora:
+    for (i = 0; i < (int)g_pty_n; i++) {
+        Pty *q = g_pty_dir[i];
 
-        memset(&g_pty[i], 0, sizeof(Pty));
-        g_pty[i].usata   = 1;
+        interrupts_disable();
+        if (q->usata) { interrupts_enable(); continue; }
+        memset(q, 0, sizeof(Pty));
+        q->usata = 1;
+        interrupts_enable();
         /* The modes of a fresh terminal on any Unix ("stty sane"). */
-        g_pty[i].t.c_iflag = T_ICRNL;
-        g_pty[i].t.c_oflag = T_OPOST | T_ONLCR;
-        g_pty[i].t.c_cflag = 0x00BF;        /* B38400 | CS8 | CREAD */
-        g_pty[i].t.c_lflag = T_ISIG | T_ICANON | T_ECHO | T_ECHOE | T_ECHOK;
-        g_pty[i].t.c_cc[T_VINTR]  = 3;
-        g_pty[i].t.c_cc[1]        = 28;     /* VQUIT */
-        g_pty[i].t.c_cc[T_VERASE] = 127;
-        g_pty[i].t.c_cc[T_VKILL]  = 21;
-        g_pty[i].t.c_cc[T_VEOF]   = 4;
-        g_pty[i].t.c_cc[T_VMIN]   = 1;
-        g_pty[i].t.c_cc[10]       = 26;     /* VSUSP */
-        g_pty[i].righe   = 25;
-        g_pty[i].colonne = 80;
-        g_pty[i].master_aperti = 1;
-        g_pty[i].slave_aperti  = 1;
+        q->t.c_iflag = T_ICRNL;
+        q->t.c_oflag = T_OPOST | T_ONLCR;
+        q->t.c_cflag = 0x00BF;        /* B38400 | CS8 | CREAD */
+        q->t.c_lflag = T_ISIG | T_ICANON | T_ECHO | T_ECHOE | T_ECHOK;
+        q->t.c_cc[T_VINTR]  = 3;
+        q->t.c_cc[1]        = 28;     /* VQUIT */
+        q->t.c_cc[T_VERASE] = 127;
+        q->t.c_cc[T_VKILL]  = 21;
+        q->t.c_cc[T_VEOF]   = 4;
+        q->t.c_cc[T_VMIN]   = 1;
+        q->t.c_cc[10]       = 26;     /* VSUSP */
+        q->righe   = 25;
+        q->colonne = 80;
+        q->master_aperti = 1;
+        q->slave_aperti  = 1;
 
         *master = i;
         *slave  = i;
         return 0;
     }
+    if (pty_in_piu() == 0) goto ancora;
     return ERR(EMFILE);
 }
 

@@ -185,7 +185,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   256     /* la piu' alta e' SYS_CONSOLE_GRAFICA = 255 */
+#define SYSCALL_COUNT   258     /* la piu' alta e' SYS_FD_LIMITE = 257 */
 
 /* =============================================================================
  * Codici errno
@@ -340,6 +340,34 @@ typedef struct {
  * Non deve stampare niente. I numeri qui dentro non sono in ordine e non sono
  * contigui: guardare «l'ultimo del gruppo» non basta. */
 #define SYS_CONSOLE_GRAFICA 255
+
+/* =============================================================================
+ * SYS_FD_RISERVA (256) / SYS_FD_LIMITE (257) - descriptors without a fixed
+ * ceiling (kernel 0.281, 27 October 2026)
+ *
+ * SYS_FD_RISERVA: ebx = kind (FD_SERV_*), ecx = the lowest number wanted
+ * (0 = any). Takes the lowest free descriptor number from there up, as a
+ * FD_SERVIZIO: the libc's sockets, epoll sets and shm zones get their
+ * numbers here, among the files and pipes. close() gives it back. Returns
+ * the number, -EMFILE past the program's limit, -EINVAL for a kind it does
+ * not know.
+ *
+ * SYS_FD_LIMITE: ebx = 0 read / 1 set, ecx = FdLimite*. RLIMIT_NOFILE of
+ * the program (all its threads): `cur` no descriptor at or above it is
+ * given, `max` how far cur may go; a program may lower both and raise cur
+ * up to max; only root raises max (up to fdmax of kernel.cfg, see cfg.h).
+ * ============================================================================= */
+#define SYS_FD_RISERVA      256
+#define SYS_FD_LIMITE       257
+
+#define FD_SERV_PRESA       1   /* a socket of ip.drv */
+#define FD_SERV_EPOLL       2   /* an epoll set (ip.drv) */
+#define FD_SERV_SHM         3   /* a shared memory zone from shm_open */
+
+typedef struct {
+    uint32_t cur;
+    uint32_t max;
+} FdLimite;
 
 /* =============================================================================
  * Accessi I/O a 16 e 32 bit — servono al bus PCI, non sono un lusso
@@ -1213,7 +1241,7 @@ typedef struct {
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
 #define FD_IPC            128   /* = MAX_FD (sched.h), dal kernel 0.232 */
-#define POLL_MAX          16    /* voci per chiamata: il kernel le copia */
+#define POLL_MAX          16    /* entries copied on the kernel stack; more go to kmalloc (0.282) */
 
 #define POLLIN        0x0001    /* c'e' qualcosa da leggere */
 #define POLLOUT       0x0004    /* si puo' scrivere senza bloccare */
@@ -1820,6 +1848,8 @@ int32_t sys_console_testo(InterruptFrame *f);
 int32_t sys_console_registro(InterruptFrame *f);
 int32_t sys_console_setfg(InterruptFrame *f);
 int32_t sys_console_grafica(InterruptFrame *f);
+int32_t sys_fd_riserva(InterruptFrame *f);
+int32_t sys_fd_limite(InterruptFrame *f);
 int32_t sys_console_ctrlc(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);

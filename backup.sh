@@ -42,8 +42,9 @@
 # cima all'archivio: cross_build/... accanto a exa_os/. Al ripristino va
 # rimessa al suo posto (~/cross_build) e il collegamento la ritrova.
 #
-# ! I SORGENTI DI TERZI ENTRANO: firefox-main/ e mariadb-server/ (25 ottobre
-# 2026, l'utente: «aggiungerlo a backup.sh cosi' che entra automaticamente»),
+# ! I SORGENTI DI TERZI ENTRANO: firefox-main/, mariadb-server/, httpd/,
+# apr/, apr-util/ e libexpat/ (25 e 27 ottobre 2026, l'utente: «aggiungerlo a backup.sh cosi' che entra
+# automaticamente»),
 # con la loro .git, che serve a tenerli al passo coi repository ufficiali.
 # Non vanno in ESCLUSI; ci vanno solo le loro compilazioni.
 #

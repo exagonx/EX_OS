@@ -85,6 +85,7 @@
 #include "blk.h"
 #include "syscall.h"
 #include "sched.h"    /* proc_get_current, sched_yield: il lucchetto del VFS */
+#include "kmalloc.h"
 
 /* Il kernel non ha una libreria di stringhe condivisa: ogni file definisce
  * i propri helper statici (vedi cfg_strcmp in fs/cfg.c, str_equal in
@@ -230,7 +231,46 @@ typedef struct {
     uint8_t  cartella;
 } VfsFile;
 
-static VfsFile g_file[VFS_MAX_OPEN];
+/* THE TABLE OF OPEN FILES GROWS (kernel 0.282). It was VfsFile[256] for the
+ * whole system, and a server with a few hundred threads serving files would
+ * have stopped there with EMFILE (the user's rule, 28 October 2026: no fixed
+ * ceilings). Blocks of VFS_BLOCCO from kmalloc, added by vfs_open when every
+ * slot is taken; the directory of the blocks doubles when it fills, and the
+ * old one is left in place (a few pointers), so a reader that already holds
+ * it never reads freed memory. Blocks are never freed: a handle is valid for
+ * as long as the system runs. The ceiling is the kernel heap. */
+#define VFS_BLOCCO 64
+static VfsFile **volatile g_vfs_dir;
+static uint32_t           g_vfs_dir_posti;   /* entries of g_vfs_dir */
+static volatile uint32_t  g_vfs_posti;       /* handles allocated so far */
+#define g_file_(i) (g_vfs_dir[(uint32_t)(i) / VFS_BLOCCO][(uint32_t)(i) % VFS_BLOCCO])
+#define VFS_H_VALIDO(h) ((h) >= 0 && (uint32_t)(h) < g_vfs_posti)
+
+/* One more block of handles; 0 or -ENOMEM. Under the VFS lock (vfs_open). */
+static int vfs_blocco_in_piu(void)
+{
+    uint32_t n = g_vfs_posti / VFS_BLOCCO;
+    VfsFile *b;
+    uint32_t i;
+
+    if (n == g_vfs_dir_posti) {
+        uint32_t  posti = g_vfs_dir_posti ? g_vfs_dir_posti * 2u : 16u;
+        VfsFile **d = (VfsFile **)kmalloc(posti * sizeof(VfsFile *));
+
+        if (d == NULL) return -ENOMEM;
+        for (i = 0; i < posti; i++) d[i] = (i < n) ? g_vfs_dir[i] : NULL;
+        __sync_synchronize();
+        g_vfs_dir       = d;             /* the old one stays: see above */
+        g_vfs_dir_posti = posti;
+    }
+    b = (VfsFile *)kmalloc(VFS_BLOCCO * sizeof(VfsFile));
+    if (b == NULL) return -ENOMEM;
+    for (i = 0; i < VFS_BLOCCO; i++) { b[i].usato = 0; b[i].rif = 0; }
+    g_vfs_dir[n] = b;
+    __sync_synchronize();
+    g_vfs_posti = (n + 1) * VFS_BLOCCO;
+    return 0;
+}
 
 /* =============================================================================
  * UN'OPERAZIONE PER VOLTA — il lucchetto del VFS
@@ -298,7 +338,9 @@ static const char *g_fs_chi = "?";
  *
  * Bloccando, chi aspetta ESCE dalla coda dei pronti: l'idle torna a essere
  * l'unico eseguibile, finisce, e sveglia tutti. */
-static uint32_t g_fs_attesa[MAX_PROCESSES];
+/* g_proc_max entries, allocated on first use (kernel 0.282: the process
+ * table grows, MAX_PROCESSES is gone) */
+static uint32_t *g_fs_attesa;
 static uint32_t g_fs_n_attesa = 0;
 
 static void fs_prendi_n(const char *chi)
@@ -306,6 +348,12 @@ static void fs_prendi_n(const char *chi)
     Process *p  = proc_get_current();
     uint32_t io = (p != NULL) ? p->pid : FS_SENZA_PROCESSO;
 
+    if (g_fs_attesa == NULL && p != NULL) {
+        uint32_t *a = (uint32_t *)kmalloc(g_proc_max * sizeof(uint32_t));
+
+        if (a != NULL && !__sync_bool_compare_and_swap(&g_fs_attesa, (uint32_t *)0, a))
+            kfree(a);
+    }
     for (;;) {
         interrupts_disable();
 
@@ -337,7 +385,7 @@ static void fs_prendi_n(const char *chi)
          * risveglio: e' la stessa precauzione contro il "lost wakeup"
          * documentata in drivers/tty/tty.c — registrarsi e bloccarsi
          * devono essere indivisibili rispetto a chi rilascia. */
-        if (g_fs_n_attesa < MAX_PROCESSES) {
+        if (g_fs_attesa != NULL && g_fs_n_attesa < g_proc_max) {
             g_fs_attesa[g_fs_n_attesa++] = io;
         }
         sched_block(PROC_BLOCKED);
@@ -508,7 +556,8 @@ void vfs_init(uint8_t boot_drive)
     int i;
 
     for (i = 0; i < VFS_MAX_MOUNT; i++) g_mnt[i].usato = 0;
-    for (i = 0; i < VFS_MAX_OPEN;  i++) g_file[i].usato = 0;
+    if (g_vfs_posti == 0 && vfs_blocco_in_piu() != 0)
+        kpanic("VFS: niente memoria per la tabella dei file aperti");
 
     v_copia(g_mnt[0].punto, "/", VFS_PUNTO_MAX);
     g_mnt[0].usato        = 1;
@@ -909,8 +958,8 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
     if (punto[1] == '\0') {
         int k;
 
-        for (k = 0; k < VFS_MAX_OPEN; k++)
-            if (g_file[k].usato && g_file[k].im == 0) g_file[k].im = g_base;
+        for (k = 0; k < (int)g_vfs_posti; k++)
+            if (g_file_(k).usato && g_file_(k).im == 0) g_file_(k).im = g_base;
         blk_rilascia(g_mnt[0].blkdev);          /* la radice-base non c'e' piu' */
         g_mnt[0]        = g_mnt[slot];
         g_ro_chiesto[0] = g_ro_chiesto[slot];
@@ -956,8 +1005,8 @@ static int vfs_umount_nl(const char *punto)
         /* Un file ancora aperto su questo montaggio significa che qualcuno
          * ha in mano un handle che diventerebbe un riferimento a un
          * montaggio libero — cioe' letture da un volume diverso. */
-        for (k = 0; k < VFS_MAX_OPEN; k++) {
-            if (g_file[k].usato && g_file[k].im == i) return ERR(EBUSY);
+        for (k = 0; k < (int)g_vfs_posti; k++) {
+            if (g_file_(k).usato && g_file_(k).im == i) return ERR(EBUSY);
         }
 
         if      (g_mnt[i].tipo == VFS_FS_ISO)  iso_umount (g_mnt[i].mnt);
@@ -1011,12 +1060,12 @@ static int e_radice_di(int im, const char *interno)
  * Esiste perche' la prenotazione avviene PRIMA di parlare con il driver
  * (vedi il commento in vfs_open) e ogni uscita anticipata da li' in poi
  * deve disfarla: uno slot prenotato e mai liberato e' un descrittore
- * perso per sempre, e dopo VFS_MAX_OPEN aperture fallite non si apre
+ * perso per sempre, e dopo 256 aperture fallite (VFS_MAX_OPEN, fino alla 0.282) non si apre
  * piu' niente. */
 static int apri_fallito(int slot, int err)
 {
-    g_file[slot].usato = 0;
-    g_file[slot].rif   = 0;
+    g_file_(slot).usato = 0;
+    g_file_(slot).rif   = 0;
     return err;
 }
 
@@ -1048,14 +1097,14 @@ static int apri_fallito(int slot, int err)
  * ============================================================================= */
 static int stesso_file(int i, int im, const char *interno)
 {
-    return g_file[i].usato && g_file[i].im == im && v_uguale(g_file[i].interno, interno);
+    return g_file_(i).usato && g_file_(i).im == im && v_uguale(g_file_(i).interno, interno);
 }
 
 static int aperti_su(int im, const char *interno)
 {
     int i, n = 0;
 
-    for (i = 0; i < VFS_MAX_OPEN; i++)
+    for (i = 0; i < (int)g_vfs_posti; i++)
         if (stesso_file(i, im, interno)) n++;
     return n;
 }
@@ -1065,10 +1114,10 @@ static void segui_rinomina(int im, const char *da, const char *a)
     uint32_t nd = v_len(da), na = v_len(a), resto;
     int      i;
 
-    for (i = 0; i < VFS_MAX_OPEN; i++) {
-        char *p = g_file[i].interno;
+    for (i = 0; i < (int)g_vfs_posti; i++) {
+        char *p = g_file_(i).interno;
 
-        if (!g_file[i].usato || g_file[i].im != im) continue;
+        if (!g_file_(i).usato || g_file_(i).im != im) continue;
         if (v_uguale(p, da)) {
             v_copia(p, a, VFS_PATH_MAX);
             continue;
@@ -1138,10 +1187,10 @@ static int nascondi_aperto(int im, const char *interno)
         r = fat_rename(g_mnt[im].mnt, interno, nascosto);
     if (r != 0) return ERR(EIO);
 
-    for (i = 0; i < VFS_MAX_OPEN; i++)
+    for (i = 0; i < (int)g_vfs_posti; i++)
         if (stesso_file(i, im, interno)) {
-            v_copia(g_file[i].interno, nascosto, VFS_PATH_MAX);
-            g_file[i].orfano = 1;
+            v_copia(g_file_(i).interno, nascosto, VFS_PATH_MAX);
+            g_file_(i).orfano = 1;
         }
     klog(LOG_INFO, "VFS: %s e' aperto: resta come %s fino all'ultima chiusura",
          interno, nascosto);
@@ -1251,7 +1300,7 @@ static int permesso_sul_padre(const char *abs, uint32_t voluto)
 static int apri_cartella(int slot, uint32_t flags)
 {
     if (flags & VFS_FLAG_SCRITTURA) return apri_fallito(slot, ERR(EISDIR));
-    g_file[slot].cartella = 1;
+    g_file_(slot).cartella = 1;
     return slot;
 }
 
@@ -1294,10 +1343,13 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
         }
     }
 
-    for (i = 0; i < VFS_MAX_OPEN; i++) {
-        if (!g_file[i].usato) { slot = i; break; }
+    for (i = 0; i < (int)g_vfs_posti; i++) {
+        if (!g_file_(i).usato) { slot = i; break; }
     }
-    if (slot < 0) return ERR(EMFILE);
+    if (slot < 0) {                       /* all taken: one more block */
+        slot = (int)g_vfs_posti;
+        if (vfs_blocco_in_piu() != 0) return ERR(EMFILE);
+    }
 
     /* ! LO SLOT SI PRENOTA QUI, non a fine funzione.
      *
@@ -1321,18 +1373,18 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
      * chi scorre la tabella (vfs_umount, che cerca file aperti su un
      * montaggio) guarda esattamente quei due campi e ha il diritto di
      * trovarli coerenti. */
-    g_file[slot].usato = 1;
-    g_file[slot].rif   = 1;
-    g_file[slot].im    = im;
-    g_file[slot].h12   = -1;
-    g_file[slot].orfano = 0;
-    g_file[slot].cartella = 0;
-    v_copia(g_file[slot].interno, interno, VFS_PATH_MAX);
+    g_file_(slot).usato = 1;
+    g_file_(slot).rif   = 1;
+    g_file_(slot).im    = im;
+    g_file_(slot).h12   = -1;
+    g_file_(slot).orfano = 0;
+    g_file_(slot).cartella = 0;
+    v_copia(g_file_(slot).interno, interno, VFS_PATH_MAX);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         int h = fat12_open(interno, flags);
         if (h < 0) return apri_fallito(slot, ERR(ENOENT));
-        g_file[slot].h12 = h;
+        g_file_(slot).h12 = h;
     } else if (g_mnt[im].tipo == VFS_FS_ISO) {
         IsoDirEntry e;
 
@@ -1392,21 +1444,21 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
 
 static int vfs_read_nl(int h, void *buf, uint32_t size, uint32_t offset)
 {
-    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
-    if (g_file[h].cartella) return ERR(EISDIR);   /* readdir reads directories */
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
+    if (g_file_(h).cartella) return ERR(EISDIR);   /* readdir reads directories */
 
-    if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
-        return fat12_read(g_file[h].h12, buf, size, offset);
+    if (g_mnt[g_file_(h).im].tipo == VFS_FS_FAT12FD)
+        return fat12_read(g_file_(h).h12, buf, size, offset);
 
-    if (g_mnt[g_file[h].im].tipo == VFS_FS_ISO)
-        return iso_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
+    if (g_mnt[g_file_(h).im].tipo == VFS_FS_ISO)
+        return iso_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
                         buf, size, offset);
 
-    if (g_mnt[g_file[h].im].tipo == VFS_FS_EXT2)
-        return ext2_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
+    if (g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2)
+        return ext2_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
                          buf, size, offset);
 
-    return fat_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
+    return fat_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
                     buf, size, offset);
 }
 
@@ -1418,9 +1470,9 @@ static int vfs_write_nl(int h, const void *buf, uint32_t size, uint32_t offset)
 {
     int im;
 
-    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
-    if (g_file[h].cartella) return ERR(EBADF);    /* opened read-only, always */
-    im = g_file[h].im;
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
+    if (g_file_(h).cartella) return ERR(EBADF);    /* opened read-only, always */
+    im = g_file_(h).im;
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
 
     /* Ridondante finche' il montaggio ISO resta in sola lettura per
@@ -1431,53 +1483,53 @@ static int vfs_write_nl(int h, const void *buf, uint32_t size, uint32_t offset)
     if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD)
-        return fat12_write(g_file[h].h12, buf, size, offset);
+        return fat12_write(g_file_(h).h12, buf, size, offset);
 
     if (g_mnt[im].tipo == VFS_FS_EXT2) {
-        int n = ext2_write(g_mnt[im].mnt, g_file[h].interno, buf, size, offset);
+        int n = ext2_write(g_mnt[im].mnt, g_file_(h).interno, buf, size, offset);
         return (n < 0) ? ERR(EIO) : n;
     }
 
     {
-        int n = fat_write(g_mnt[im].mnt, g_file[h].interno, buf, size, offset);
+        int n = fat_write(g_mnt[im].mnt, g_file_(h).interno, buf, size, offset);
         return (n < 0) ? ERR(EIO) : n;
     }
 }
 
 static int vfs_close_nl(int h)
 {
-    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
 
     /* Il file si chiude davvero quando se ne va l'ULTIMO descrittore.
      * Finche' ne resta uno, questa close() e' solo la rinuncia di chi la
      * chiama: il driver non ne sa niente e lo slot non torna libero. */
-    if (g_file[h].rif > 1) {
-        g_file[h].rif--;
+    if (g_file_(h).rif > 1) {
+        g_file_(h).rif--;
         return 0;
     }
 
-    if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
-        fat12_close(g_file[h].h12);
+    if (g_mnt[g_file_(h).im].tipo == VFS_FS_FAT12FD)
+        fat12_close(g_file_(h).h12);
 
     /* ext2 keeps blocks set aside for a file being appended to, and the
      * superblock's counters, until the file is closed (0.264). */
-    if (g_mnt[g_file[h].im].tipo == VFS_FS_EXT2)
-        ext2_chiudi(g_mnt[g_file[h].im].mnt);
+    if (g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2)
+        ext2_chiudi(g_mnt[g_file_(h).im].mnt);
 
-    g_file[h].usato = 0;
-    g_file[h].rif   = 0;
+    g_file_(h).usato = 0;
+    g_file_(h).rif   = 0;
 
     /* Cancellato mentre era aperto (nascondi_aperto): se questo era l'ultimo
      * handle sul file, adesso se ne va davvero. */
-    if (g_file[h].orfano) {
-        int im = g_file[h].im;
+    if (g_file_(h).orfano) {
+        int im = g_file_(h).im;
 
-        g_file[h].orfano = 0;
-        if (aperti_su(im, g_file[h].interno) == 0) {
+        g_file_(h).orfano = 0;
+        if (aperti_su(im, g_file_(h).interno) == 0) {
             if (g_mnt[im].tipo == VFS_FS_EXT2)
-                ext2_unlink(g_mnt[im].mnt, g_file[h].interno);
+                ext2_unlink(g_mnt[im].mnt, g_file_(h).interno);
             else
-                fat_unlink(g_mnt[im].mnt, g_file[h].interno);
+                fat_unlink(g_mnt[im].mnt, g_file_(h).interno);
         }
     }
     return 0;
@@ -1486,10 +1538,10 @@ static int vfs_close_nl(int h)
 /* Un descrittore in piu' sullo stesso file. Ritorna `h`, o EBADF. */
 static int vfs_dup_nl(int h)
 {
-    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
-    if (g_file[h].rif == 0xFFFF) return ERR(EMFILE);
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
+    if (g_file_(h).rif == 0xFFFF) return ERR(EMFILE);
 
-    g_file[h].rif++;
+    g_file_(h).rif++;
     return h;
 }
 
@@ -1670,13 +1722,13 @@ static int vfs_stat_nl(const char *abs, VfsStat *st)
 
 static int vfs_fstat_nl(int h, VfsStat *st)
 {
-    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
     if (st == NULL) return ERR(EINVAL);
 
     /* Il percorso interno e' quello con cui il file e' stato aperto, e il
      * montaggio quello su cui l'handle vive: nessuno dei due va
      * ricalcolato, o si rischierebbe di guardare un altro volume. */
-    return stat_interno(g_file[h].im, g_file[h].interno, st);
+    return stat_interno(g_file_(h).im, g_file_(h).interno, st);
 }
 
 static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
@@ -2126,15 +2178,15 @@ static int vfs_ftruncate_nl(int h, uint32_t nuova_dim)
 {
     int im;
 
-    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
-    if (g_file[h].cartella) return ERR(EISDIR);
-    im = g_file[h].im;
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
+    if (g_file_(h).cartella) return ERR(EISDIR);
+    im = g_file_(h).im;
     if (g_mnt[im].sola_lettura || g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) return ERR(ENOSYS);
     if (g_mnt[im].tipo == VFS_FS_EXT2)
-        return (ext2_truncate(g_mnt[im].mnt, g_file[h].interno, nuova_dim) != 0)
+        return (ext2_truncate(g_mnt[im].mnt, g_file_(h).interno, nuova_dim) != 0)
              ? ERR(EIO) : 0;
-    return (fat_truncate(g_mnt[im].mnt, g_file[h].interno, nuova_dim) != 0)
+    return (fat_truncate(g_mnt[im].mnt, g_file_(h).interno, nuova_dim) != 0)
          ? ERR(EIO) : 0;
 }
 
@@ -2279,9 +2331,9 @@ int vfs_punto_di_handle(int h, char *punto, uint32_t max)
     int r = -1;
 
     fs_prendi_n("punto");
-    if (h >= 0 && h < VFS_MAX_OPEN && g_file[h].usato &&
-        g_file[h].im >= 0 && g_mnt[g_file[h].im].usato) {
-        v_copia(punto, g_mnt[g_file[h].im].punto, max);
+    if (VFS_H_VALIDO(h) && g_file_(h).usato &&
+        g_file_(h).im >= 0 && g_mnt[g_file_(h).im].usato) {
+        v_copia(punto, g_mnt[g_file_(h).im].punto, max);
         r = 0;
     }
     fs_rilascia();

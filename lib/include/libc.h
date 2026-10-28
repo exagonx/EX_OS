@@ -3663,11 +3663,12 @@ int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
  *
  * Rende quante voci hanno `revents` non nullo, 0 se la scadenza e' passata
  * senza che succedesse niente, o un valore negativo (-EINVAL se le voci sono
- * piu' di POLL_MAX, -EFAULT se l'elenco non e' leggibile).
+ * piu' dei descrittori che il programma puo' avere, -EFAULT se l'elenco non
+ * e' leggibile).
  *
- * ! poll() SU AL PIU' POLL_MAX (16) VOCI, perche' il kernel se le copia. Un
- * server con piu' di sedici client dovra' dividerle in gruppi, e quando
- * servira' davvero si alzera' il numero in un posto solo.
+ * Fino al kernel 0.281 poll_kernel prendeva al piu' POLL_MAX (16) voci; dal
+ * 0.282 le prime 16 stanno sulla pila del kernel e le altre in memoria presa
+ * per la chiamata: il tetto e' RLIMIT_NOFILE, come su Linux.
  *
  * select() c'e' per i programmi che la usano gia', ed e' scritta SOPRA poll()
  * dentro la libc: nel kernel l'attesa su piu' sorgenti e' una sola, perche'
@@ -3678,7 +3679,7 @@ int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
  * lib/libc.c, che non include questo file: TRE copie, tutte identiche.
  * ============================================================================= */
 #define FD_IPC          128     /* la mailbox IPC come sorgente di poll(); = MAX_FD dal kernel 0.232 */
-#define POLL_MAX        16      /* voci per chiamata */
+#define POLL_MAX        16      /* voci copiate sulla pila del kernel; oltre, kmalloc (0.282) */
 
 #define POLLIN      0x0001      /* c'e' qualcosa da leggere */
 #define POLLPRI     0x0002      /* dati urgenti: non ce ne sono mai, il nome serve (NSPR) */
@@ -3702,10 +3703,12 @@ struct pollfd {
 int     poll(struct pollfd *fds, unsigned int nfds, int timeout);
 
 /* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
- * openssl program's s_client): the files (MAX_FD, 128) and the sockets, whose
- * descriptors start at 1024 (PRESA_BASE, 1024 of them since 26 October:
- * FD_SETSIZE went from 1088 to 2048). Until then it was one
- * 32-bit word, which named neither. select() reads and writes only the words
+ * openssl program's s_client). Since kernel 0.281 files, pipes and sockets
+ * share one numbering, the lowest free first, so the first 2048 descriptors
+ * of a program fit whatever they are; a program with more uses poll() or
+ * epoll, or passes select() a bigger array of words (accepted up to the
+ * program's limit, as on Linux). Until 0.280 sockets started at 1024. Until 25 October it was
+ * one 32-bit word. select() reads and writes only the words
  * below nfds, so a program built with the old one-word fd_set (nfds <= 32)
  * still works with the new libc.so. Definition repeated in lib/libc.c. */
 #define FD_SETSIZE  2048
@@ -3871,10 +3874,12 @@ void sha256_fine_esa(Sha256 *s, char out[65]);
  * questa sezione.
  *
  * ! SONO DELLA LIBC, NON DEL KERNEL. Lo stack IP e' un processo (ip.drv) e la
- * libc gli parla per IPC (drivers/net/ip_proto.h): un socket e' una voce di una
- * tabella della libc, e il suo descrittore parte da PRESA_BASE per non potersi
- * confondere con uno del kernel (che ne ha 32). read, write, close, fcntl,
- * ioctl, fstat e poll li riconoscono; select no, perche' fd_set ha 32 bit.
+ * libc gli parla per IPC (drivers/net/ip_proto.h). ! THE NUMBER IS THE
+ * KERNEL'S (0.281, 27 October 2026): the lowest free descriptor, among files
+ * and pipes, as many as RLIMIT_NOFILE allows (fdmax in kernel.cfg, or from the
+ * RAM; setrlimit). Until 0.280 sockets were numbered from 1024 (PRESA_BASE)
+ * and a program held 1024 at most. read, write, close, fcntl, ioctl, fstat,
+ * poll, select and epoll recognise them.
  *
  * ! I NUMERI SONO QUELLI DI LINUX (famiglie, tipi, opzioni, flag), come gli
  * errno di questa libc: il codice di terzi — e il crate libc di Rust — li
@@ -3882,8 +3887,8 @@ void sha256_fine_esa(Sha256 *s, char out[65]);
  *
  * ! COSA NON C'E', detto qui e non scoperto:
  *   - IPv6 e AF_UNIX: socket() risponde EAFNOSUPPORT;
- *   - shutdown(SHUT_WR) non manda il FIN (lo stack non sa chiudere a meta'):
- *     smette solo di scrivere; SHUT_RDWR chiude davvero;
+ *   - (until ip.drv 0.017 shutdown(SHUT_WR) did not send the FIN; since
+ *     0.018 it does, and reading goes on until the other side closes);
  *   - connect() non bloccante si completa comunque prima di tornare (POSIX lo
  *     permette: rende 0 invece di EINPROGRESS);
  *   - UDP: un datagramma che arriva mentre nessun filo del programma lo sta
@@ -3891,8 +3896,6 @@ void sha256_fine_esa(Sha256 *s, char out[65]);
  *   - dup/dup2 di un socket: EOPNOTSUPP;
  *   - i descrittori non passano ai figli.
  * ============================================================================= */
-#define PRESA_BASE      1024    /* il primo descrittore di un socket */
-
 typedef unsigned int    socklen_t;
 typedef unsigned short  sa_family_t;
 typedef unsigned short  in_port_t;
@@ -3922,6 +3925,7 @@ typedef unsigned int    in_addr_t;
 #define IPPROTO_IPV6    41
 
 #define SOL_SOCKET      1
+#define SO_DEBUG        1       /* accepted and ignored (APR names it) */
 #define SO_REUSEADDR    2
 #define SO_TYPE         3
 #define SO_ERROR        4
@@ -3976,6 +3980,7 @@ typedef unsigned int    in_addr_t;
 
 #define FIONREAD        0x541B
 #define FIONBIO         0x5421
+#define SIOCATMARK      0x8905  /* always 0: no urgent data (APR) */
 
 #define INADDR_ANY       ((in_addr_t)0x00000000)
 #define INADDR_BROADCAST ((in_addr_t)0xFFFFFFFF)

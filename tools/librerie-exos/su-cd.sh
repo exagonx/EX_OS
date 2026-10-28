@@ -21,7 +21,8 @@
 # One group per library in tools/iso/strumenti.txt: [zlib] [bzip2] [xz]
 # [lz4] [zstd] [pcre2] [fmt], [mariadb-connector] (Connector/C and C++, the
 # FreeBASIC header, the Rust crate), [mariadb] (tools/mariadb-exos: also exos/mariadb,
-# the server and its share), and [ssl] for OpenSSL (tools/openssl-exos:
+# the server and its share), [expat], [apr] (APR and APR-util), [apache]
+# (tools/httpd-exos: exos/apache2, httpd and its tree), and [ssl] for OpenSSL (tools/openssl-exos:
 # the Makefile and mktools64.sh also build provassl and provatls with it). A library not built is said on stderr, and the
 # CD is made without it. ncurses has its own (tools/ncurses-exos/su-cd.sh):
 # its terminfo and its links need more care.
@@ -40,7 +41,8 @@ E="$CD/exos"
 fatte=""
 # ! mariadb (the server) has no lib/: its client library is
 # mariadb-connector-c's (see tools/mariadb-exos/costruisci.sh)
-for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb-connector-cpp mariadb; do
+for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb-connector-cpp mariadb \
+        expat apr apr-util httpd; do
     N=cross_build/$NOME-exos$BIT/exos
     if [ ! -d "$N/src/$NOME" ]; then
         echo "     $NOME assente: tools/$NOME-exos/costruisci.sh $BIT" >&2
@@ -63,13 +65,18 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb
     if [ -d "$N/bin" ]; then
         mkdir -p "$E/bin"
         for b in "$N"/bin/*; do
-            "$STRIP" -o "$E/bin/$(basename "$b")" "$b" && chmod 755 "$E/bin/$(basename "$b")"
+            # apr-1-config and apu-1-config are scripts: as they are
+            "$STRIP" -o "$E/bin/$(basename "$b")" "$b" 2> /dev/null || cp -p "$b" "$E/bin/"
+            chmod 755 "$E/bin/$(basename "$b")"
         done
     fi
-    if [ -d "$N/mariadb" ]; then
-        rm -rf "$E/mariadb"
-        cp -rp "$N/mariadb" "$E/"
-    fi
+    # a program with its own tree: exos/mariadb, exos/apache2
+    for d in mariadb apache2; do
+        if [ -d "$N/$d" ]; then
+            rm -rf "$E/$d"
+            cp -rp "$N/$d" "$E/"
+        fi
+    done
     rm -rf "$E/src/$NOME"
     cp -rp "$N/src/$NOME" "$E/src/"
     fatte="$fatte $NOME"

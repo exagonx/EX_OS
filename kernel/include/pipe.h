@@ -58,7 +58,7 @@
 #include "kernel.h"
 
 #define PIPE_DIM        4096    /* byte nel buffer circolare */
-#define PIPE_MAX        16      /* pipe aperte contemporaneamente nel sistema */
+/* PIPE_MAX (16 in the whole system) is gone since kernel 0.282: see pipe.c */
 /* Quanto si trasferisce al massimo per chiamata. E' anche la dimensione
  * del buffer di appoggio sullo stack del kernel (128 KB per processo), che
  * serve a non toccare mai la memoria utente con gli interrupt disabilitati

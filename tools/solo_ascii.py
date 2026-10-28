@@ -41,6 +41,8 @@ SALTA = ("gcc/", "coreutils/", "rust/", "FreeBASIC", "openssl/", "quickjs/",
          "firefox-main/", "gnu/", "gfbasic/",
          # MariaDB (25 October 2026): its sql/authors.h stopped `make all`.
          "mariadb-server/",
+         # Apache httpd (27 October 2026): third-party tree like MariaDB.
+         "httpd/", "apr/", "apr-util/", "libexpat/",
          # build-64/ is compiled output like build/: its tools tree holds
          # third-party headers (fmt, MariaDB's authors.h, 26 October 2026).
          "build-64/")
