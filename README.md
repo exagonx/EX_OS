@@ -2397,6 +2397,10 @@ by a number written in the code. What changed:
   kernel's `poll` takes more than 16 entries.
 - **libc:** the tables of threads (128) and of `errno` (64) become chains
   of blocks.
+- **textline 0.003:** the file lives in allocated memory, line by line; it
+  was 512 lines of 128 characters, and `textline file -v` stopped at line
+  512 without a word (`/boot/kernel.txt` has 527: prova_telnet saw the
+  last line missing).
 - **ip.drv 0.017:** the TCP table grows up to `tcpmax` in `kernel.cfg`, or
   one connection per 32 KB of RAM; `ip.drv -t N` for one boot. **ip.drv
   0.018:** `shutdown(SHUT_WR)` (the half close: stop writing, keep

@@ -496,11 +496,15 @@ set +f
 # wrong hash. elenco.txt keeps the real name, the one written on the disk;
 # netupdate 0.035 asks the server for the other (nome_sul_server). Done after
 # the package archives, which hold the files under their real names.
+# ! AND .gz IN THE MIDDLE TOO (28 October 2026, netupdate 0.036, the user's
+# choice): openssl-4.1.0.tar.gz.asc, zstd-1.5.7.tar.gz.sha256 become
+# .tar_gz.asc, .tar_gz.sha256 - no ".gz" before a dot or at the end of a
+# name on the server. Same rule as gz_nome in netupdate and nome_server in
+# exagonx/comune.sh.
 while IFS='	' read -r p pac; do
-    case "$p" in
-        *.gz)  mv "$FUORI/file/$p" "$FUORI/file/${p%.gz}_gz" ;;
-        *.tgz) mv "$FUORI/file/$p" "$FUORI/file/${p%.tgz}_tgz" ;;
-    esac
+    b=${p##*/}
+    nb=$(printf '%s' "$b" | sed -E ':a;s/\.(t?gz)(\.|$)/_\1\2/;ta')
+    [ "$nb" = "$b" ] || mv "$FUORI/file/$p" "$FUORI/file/${p%"$b"}$nb"
 done < "$TEMP/mappa"
 
 # Se nessun pacchetto ha meritato un archivio, la directory non ci va: una

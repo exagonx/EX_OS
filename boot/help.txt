@@ -228,7 +228,8 @@ mostra e modifica un file riga per riga
   textline file.txt
 
 Lavora per numeri di riga, e si ferma a ogni pagina: Invio continua, q
-smette. Per modificare davvero un testo c'e' `gfedit`.
+smette. Nessun limite di righe ne' di lunghezza (dalla 0.003): il tetto e'
+la memoria. Per modificare davvero un testo c'e' `gfedit`.
 
 [gfedit]
 editor di testo a schermo intero

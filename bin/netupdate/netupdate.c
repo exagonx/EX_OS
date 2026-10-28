@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.035");
+EX_VERSIONE("netupdate", "0.036");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2449,21 +2449,53 @@ static int scarica_a_pezzi(Config *c, const char *coda, const char *temp,
     return 0;
 }
 
+/* ".gz" / ".tgz" <-> "_gz" / "_tgz" in the last component of a path, every
+ * time it is followed by a '.' or by the end of the name: verso 1 is the
+ * name on the server, 0 the one on the disk.
+ *
+ * ! AND NOT ONLY AT THE END (netupdate 0.036, 28 October 2026, the user's
+ * choice). Until 0.035 only a name ENDING in .gz changed, and the
+ * signatures and hashes next to an archive - openssl-4.1.0.tar.gz.asc,
+ * zstd-1.5.7.tar.gz.sha256, bzip2-1.0.8.tar.gz.sig - stayed .tar.gz on the
+ * server, which is what the user saw in the list of update-repo.sh. Now
+ * they are openssl-4.1.0.tar_gz.asc too: no ".gz." anywhere on the server.
+ * The same rule as nome_server in exagonx/comune.sh and the renaming in
+ * tools/mknetinst.sh. */
+static void gz_nome(char *p, int verso)
+{
+    const char *da1 = verso ? ".gz"  : "_gz";
+    const char *da2 = verso ? ".tgz" : "_tgz";
+    char       *b   = strrchr(p, '/');
+    size_t      n, k;
+
+    /* The follower must still be a '.' when a piece is looked at: towards
+     * the server from the left (x.gz.gz -> x_gz_gz), back to the disk from
+     * the right (x_gz_gz -> x.gz.gz). */
+    b = b ? b + 1 : p;
+    n = strlen(b);
+    for (k = 0; k < n; k++) {
+        char  *q = verso ? b + k : b + n - 1 - k;
+        size_t l;
+
+        if      (strncmp(q, da2, 4) == 0) l = 4;
+        else if (strncmp(q, da1, 3) == 0) l = 3;
+        else continue;
+        if (q[l] != '\0' && q[l] != '.') continue;
+        *q = verso ? '_' : '.';
+    }
+}
+
 /* The path on the server of a line of elenco.txt (netupdate 0.035, 26 October
- * 2026): the same, except that a name ending in .gz or .tgz is published as
- * _gz / _tgz by tools/mknetinst.sh - Altervista sends a .gz with
+ * 2026): "file/" and the same name, except that .gz and .tgz are published
+ * as _gz / _tgz by tools/mknetinst.sh - Altervista sends a .gz with
  * Content-Encoding: gzip and Cloudflare hands it over decompressed, so the
  * hash never matched (the sources under exos/src, ncurses-6.6.tar.gz...).
  * The other way round from nome_sul_disco; the file on the disk keeps its
  * real name. */
 static void coda_sul_server(char *coda, size_t n, const char *p)
 {
-    size_t l;
-
     snprintf(coda, n, "file/%s", p);
-    l = strlen(coda);
-    if (l > 4 && strcmp(coda + l - 4, ".tgz") == 0) coda[l - 4] = '_';
-    else if (l > 3 && strcmp(coda + l - 3, ".gz") == 0) coda[l - 3] = '_';
+    gz_nome(coda, 1);
 }
 
 /* Uno o tanti pezzi: lo decide la riga dell'elenco appena letta. */
@@ -3909,10 +3941,7 @@ static int prova_archivio(Config *c, Pacchetto *q, long *fatti, long *falliti)
  * chi guarda in /src deve vedere un .tar.gz. */
 static void nome_sul_disco(char *p)
 {
-    size_t l = strlen(p);
-
-    if (l > 4 && strcmp(p + l - 4, "_tgz") == 0) p[l - 4] = '.';
-    else if (l > 3 && strcmp(p + l - 3, "_gz") == 0) p[l - 3] = '.';
+    gz_nome(p, 0);
 }
 
 static int comando_sorgenti(void)

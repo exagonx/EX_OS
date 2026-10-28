@@ -2442,6 +2442,10 @@ un numero scritto nel codice. Quello che e' cambiato:
   richiesta; `poll` del kernel prende piu' di 16 voci.
 - **libc:** le tabelle dei fili (128) e degli `errno` (64) diventano
   catene di blocchi.
+- **textline 0.003:** il file sta in memoria allocata, riga per riga; erano
+  512 righe da 128 caratteri, e `textline file -v` si fermava alla riga 512
+  senza dire niente (`/boot/kernel.txt` ne ha 527: prova_telnet vedeva
+  mancare l'ultima riga).
 - **ip.drv 0.017:** la tabella TCP cresce fino a `tcpmax` in `kernel.cfg`,
   o una connessione ogni 32 KB di RAM; `ip.drv -t N` per una sola
   accensione. **ip.drv 0.018:** `shutdown(SHUT_WR)` (la chiusura a meta':

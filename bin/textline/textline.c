@@ -40,12 +40,11 @@
  * ---------------------------------------------------------------------------
  * SCELTE DI IMPLEMENTAZIONE, e perché
  *
- * 1. Righe in un array statico, non in memoria allocata.
- *    La free() della libc di EX-OS è un no-op dichiarato (allocatore a
- *    bump su sbrk, vedi lib/libc.c): ogni modifica a una riga
- *    perderebbe per sempre la memoria della versione precedente, e un
- *    editor è fatto apposta per modificare le righe molte volte. Con
- *    slot a dimensione fissa il consumo è noto e costante.
+ * 1. Lines in allocated memory (0.003). Until 0.002 they were a static
+ *    array of 512 x 128 because the libc's free() did nothing then, and
+ *    an editor changes lines many times. The libc has had a real free()
+ *    for a long time, and the fixed array cut every file past line 512:
+ *    now each line is malloc'd at its length and freed when it changes.
  *
  * 2. Lettura con read() diretta, non con gets()/getchar().
  *    Il TTY è orientato alla riga: una read() restituisce l'intera riga
@@ -73,7 +72,7 @@
  * EX-OS non usa la virgola mobile.
  * ============================================================================= */
 #define TL_NAME     "Text Line"
-#define TL_VERSION  "0.002"
+#define TL_VERSION  "0.003"
 
 /* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' TL_VERSION qui sopra:
  * `textline -version` la stampa dall'avvio della libc (vedi EX_VERSIONE in
@@ -85,20 +84,21 @@ EX_VERSIONE("textline", TL_VERSION);
 #define TL_LICENSE  "GPL 2.0"
 
 /* =============================================================================
- * Limiti del buffer di editing
+ * The editing buffer (0.003): no fixed size
  *
- * 512 righe da 128 caratteri = 64KB di BSS. Il loader ELF mappa p_memsz,
- * quindi lo spazio è allocato e azzerato al caricamento senza costare
- * nulla sul floppy (la BSS non occupa spazio nel file).
+ * It was 512 lines of 128 characters in the BSS, and a longer file was cut
+ * without a word past line 512: `textline /boot/kernel.txt -v` stopped
+ * there once kernel.txt grew to 527 lines (prova_telnet saw the last line
+ * missing). Now an array of pointers grows with realloc and every line is
+ * malloc'd at its own length: the limit is the memory.
  * ============================================================================= */
-#define MAX_LINES   512
-#define MAX_LINE    128
 #define PAGE_LINES  20      /* righe per pagina in -vp e lp */
 #define INBUF       256     /* buffer di lettura da tastiera */
 
 #define KEY_ESC     0x1B
 
-static char g_text[MAX_LINES][MAX_LINE];
+static char **g_text;                   /* g_count lines, room for g_cap */
+static int    g_cap;
 static int  g_count;                    /* righe usate */
 static int  g_cur;                      /* riga corrente, 1-based (0 = nessuna) */
 static char g_path[128];                /* file aperto */
@@ -106,7 +106,8 @@ static int  g_dirty;                    /* modifiche non salvate */
 
 /* the backslash commands: the copy buffer, and where writing inserts (new
  * lines go after line g_ins; 0 = at the top) */
-static char g_clip[MAX_LINES][MAX_LINE];
+static char **g_clip;
+static int    g_clip_cap;
 static int  g_clip_n;
 static int  g_ins;
 
@@ -191,8 +192,40 @@ static int parse_num(const char **pp)
  * Buffer di testo
  * ============================================================================= */
 
+/* A copy of the first n bytes of s, or NULL when the memory is over. */
+static char *line_dup(const char *s, size_t n)
+{
+    char *d = malloc(n + 1);
+
+    if (d == NULL) return NULL;
+    memcpy(d, s, n);
+    d[n] = '\0';
+    return d;
+}
+
+/* Room for at least `want` pointers in *v. 0, or -1 when the memory is over. */
+static int room_for(char ***v, int *cap, int want)
+{
+    char **nv;
+    int    nc = *cap ? *cap : 64;
+
+    if (want <= *cap) return 0;
+    while (nc < want) nc *= 2;
+    nv = realloc(*v, (size_t)nc * sizeof(char *));
+    if (nv == NULL) return -1;
+    *v   = nv;
+    *cap = nc;
+    return 0;
+}
+
+static void clip_clear(void)
+{
+    while (g_clip_n > 0) free(g_clip[--g_clip_n]);
+}
+
 static void buf_clear(void)
 {
+    while (g_count > 0) free(g_text[--g_count]);
     g_count = 0;
     g_cur   = 0;
     g_dirty = 0;
@@ -202,23 +235,19 @@ static void buf_clear(void)
  * pos == g_count+1 significa "in coda". Ritorna 0, -1 se pieno. */
 static int line_insert(int pos, const char *txt)
 {
-    int i;
+    char *d;
 
-    if (g_count >= MAX_LINES) {
-        printf("textline: buffer pieno (%d righe massime)\n", MAX_LINES);
+    if (room_for(&g_text, &g_cap, g_count + 1) != 0 ||
+        (d = line_dup(txt, strlen(txt))) == NULL) {
+        printf("textline: memoria finita (%d righe)\n", g_count);
         return -1;
     }
     if (pos < 1) pos = 1;
     if (pos > g_count + 1) pos = g_count + 1;
 
     /* Sposta in giù le righe da 'pos' in poi */
-    for (i = g_count; i >= pos; i--) {
-        strncpy(g_text[i], g_text[i - 1], MAX_LINE);
-        g_text[i][MAX_LINE - 1] = '\0';
-    }
-
-    strncpy(g_text[pos - 1], txt, MAX_LINE);
-    g_text[pos - 1][MAX_LINE - 1] = '\0';
+    memmove(&g_text[pos], &g_text[pos - 1], (size_t)(g_count - pos + 1) * sizeof(char *));
+    g_text[pos - 1] = d;
     g_count++;
     g_dirty = 1;
     return 0;
@@ -226,18 +255,14 @@ static int line_insert(int pos, const char *txt)
 
 static int line_delete(int pos)
 {
-    int i;
-
     if (pos < 1 || pos > g_count) {
         printf("textline: riga %d inesistente (il file ha %d righe)\n",
                pos, g_count);
         return -1;
     }
 
-    for (i = pos; i < g_count; i++) {
-        strncpy(g_text[i - 1], g_text[i], MAX_LINE);
-        g_text[i - 1][MAX_LINE - 1] = '\0';
-    }
+    free(g_text[pos - 1]);
+    memmove(&g_text[pos - 1], &g_text[pos], (size_t)(g_count - pos) * sizeof(char *));
     g_count--;
     g_dirty = 1;
 
@@ -251,11 +276,12 @@ static int line_delete(int pos)
 
 static int buf_load(const char *path)
 {
-    char rd[512];
-    char cur[MAX_LINE];
-    int  fd;
-    int  n;
-    int  cl = 0;
+    char  rd[512];
+    char *cur = NULL;               /* the line being read, grows */
+    int   cur_cap = 0;
+    int   fd;
+    int   n;
+    int   cl = 0;
 
     buf_clear();
 
@@ -275,18 +301,25 @@ static int buf_load(const char *path)
             if (c == '\r') continue;          /* tollera i fine riga CRLF */
 
             if (c == '\n') {
-                cur[cl] = '\0';
-                if (line_insert(g_count + 1, cur) != 0) { close(fd); goto fine; }
+                if (cl) cur[cl] = '\0';     /* cur is NULL until a character came */
+                if (line_insert(g_count + 1, cl ? cur : "") != 0) { close(fd); goto fine; }
                 cl = 0;
                 continue;
             }
 
-            if (cl < MAX_LINE - 1) {
-                cur[cl++] = c;
+            if (cl + 1 >= cur_cap) {
+                int   nc = cur_cap ? cur_cap * 2 : 256;
+                char *nb = realloc(cur, (size_t)nc);
+
+                if (nb == NULL) {
+                    printf("textline: memoria finita alla riga %d\n", g_count + 1);
+                    close(fd);
+                    goto fine;
+                }
+                cur = nb;
+                cur_cap = nc;
             }
-            /* Riga più lunga di MAX_LINE: i caratteri in eccesso sono
-             * scartati. Meglio troncare che corrompere il buffer — e il
-             * troncamento è visibile, l'utente lo vede sullo schermo. */
+            cur[cl++] = c;
         }
     }
 
@@ -296,8 +329,9 @@ static int buf_load(const char *path)
         line_insert(g_count + 1, cur);
     }
 
-fine:
     close(fd);
+fine:
+    free(cur);
     g_dirty = 0;
     g_cur   = (g_count > 0) ? 1 : 0;
     printf("textline: '%s' caricato, %d righe\n", path, g_count);
@@ -421,9 +455,13 @@ static int bs_command(const char *line, int writing)
             printf("textline: sintassi \\copyline A oppure \\copyline A-B\n");
             return 0;
         }
-        g_clip_n = 0;
+        clip_clear();
+        if (room_for(&g_clip, &g_clip_cap, b - a + 1) != 0) {
+            printf("textline: memoria finita\n");
+            return 0;
+        }
         for (i = a; i <= b; i++) {
-            memcpy(g_clip[g_clip_n], g_text[i - 1], MAX_LINE);
+            if ((g_clip[g_clip_n] = line_dup(g_text[i - 1], strlen(g_text[i - 1]))) == NULL) break;
             g_clip_n++;
         }
         printf("textline: %d %s (%d-%d)\n", g_clip_n, g_clip_n == 1 ? "riga copiata" : "righe copiate", a, b);
@@ -451,8 +489,12 @@ static int bs_command(const char *line, int writing)
         }
         if (c2 > len) c2 = len;
         n = c2 - c1 + 1;
-        memcpy(g_clip[0], g_text[a - 1] + c1 - 1, (size_t)n);
-        g_clip[0][n] = '\0';
+        clip_clear();
+        if (room_for(&g_clip, &g_clip_cap, 1) != 0 ||
+            (g_clip[0] = line_dup(g_text[a - 1] + c1 - 1, (size_t)n)) == NULL) {
+            printf("textline: memoria finita\n");
+            return 0;
+        }
         g_clip_n = 1;
         printf("textline: copiate le colonne %d-%d della riga %d: \"%s\"\n", c1, c2, a, g_clip[0]);
         return 0;
@@ -578,8 +620,13 @@ static void cmd_modify(int n)
     }
     if (r == -2) return;
 
-    strncpy(g_text[n - 1], buf, MAX_LINE);
-    g_text[n - 1][MAX_LINE - 1] = '\0';
+    {
+        char *d = line_dup(buf, strlen(buf));
+
+        if (d == NULL) { printf("textline: memoria finita, riga invariata\n"); return; }
+        free(g_text[n - 1]);
+        g_text[n - 1] = d;
+    }
     g_cur   = n;
     g_dirty = 1;
 }
@@ -618,7 +665,7 @@ static void cmd_new(void)
 
 static void cmd_copy(int src, int dst)
 {
-    char tmp[MAX_LINE];
+    char *tmp;
 
     if (src < 1 || src > g_count) {
         printf("textline: riga sorgente %d inesistente (il file ha %d righe)\n",
@@ -634,13 +681,14 @@ static void cmd_copy(int src, int dst)
     /* Copia in un temporaneo PRIMA di inserire: l'inserimento sposta le
      * righe successive, quindi g_text[src-1] potrebbe non essere più la
      * riga che l'utente ha chiesto di copiare. */
-    strncpy(tmp, g_text[src - 1], MAX_LINE);
-    tmp[MAX_LINE - 1] = '\0';
+    tmp = line_dup(g_text[src - 1], strlen(g_text[src - 1]));
+    if (tmp == NULL) { printf("textline: memoria finita\n"); return; }
 
     if (line_insert(dst, tmp) == 0) {
         g_cur = dst;
         printf("textline: riga %d copiata alla riga %d\n", src, dst);
     }
+    free(tmp);
 }
 
 /* =============================================================================

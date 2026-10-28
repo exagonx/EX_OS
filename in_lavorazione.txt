@@ -8550,7 +8550,10 @@ tools/netinst/velocita tolto da netinst.
       Prova nuova tools/prova_moltifili.sh. RESTANO: UDP_PORTE 16 (ip.drv),
       SHMFD_MAX 1024 (libc), PROC_MAX_VMA 4, PID_TRACCIATI 512 di wserver
       (pari al tetto di oggi), MAX_OPEN_FILES 64 del FAT12 del floppy, il dup
-      di un socket. E IL TETTO VERO: ogni processo e ogni filo hanno 128 KB
+      di un socket, gli editor gfedit e testo (512 righe, 200 colonne: un
+      file piu' lungo si apre in parte e non si salva; textline tolto il
+      28/10, 0.003, la prova di telnetd non vedeva l'ultima riga di
+      kernel.txt che ne ha 527). E IL TETTO VERO: ogni processo e ogni filo hanno 128 KB
       di pila kernel nei primi 64 MB (USER_SPACE_BASE), quindi circa 450
       task in tutto qualunque sia la RAM. Toglierlo vuol dire un kernel
       nella meta' alta (higher-half) o pile kernel fuori dalla fascia

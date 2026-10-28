@@ -59,6 +59,18 @@ elenco.txt       un file per riga: percorso, byte, impronta, pacchetto
   solo quei due. Un'impronta per pacchetto farebbe riscaricare l'intero
   sistema per due programmi.
 
+! **SUL SERVER NON C'E' NESSUN `.gz`: SI CHIAMA `_gz`.** Un file `.gz`
+  Altervista lo serve con `Content-Encoding: gzip`, e Cloudflare lo consegna
+  già decompresso: l'impronta non torna mai. Per questo `mknetinst.sh` mette
+  in `file/` ogni `.gz` e `.tgz` come `_gz` e `_tgz`, anche in mezzo al nome
+  (`openssl-4.1.0.tar.gz.asc` diventa `openssl-4.1.0.tar_gz.asc`, dal
+  netupdate 0.036), e i pacchetti in `pacchetti/` sono `.tar_gz`.
+  `elenco.txt` tiene il nome vero, quello che finisce sul disco: è
+  `netupdate` a chiedere al server l'altro. `pubblica.sh` e `verifica.sh`
+  seguono la stessa regola. Un netupdate più vecchio della 0.036 non trova
+  le firme e i riassunti dei sorgenti (`.tar_gz.asc`, `.sig`, `.sha256`):
+  va aggiornato prima.
+
 ---
 
 ## 6.4 Quanto pesa
