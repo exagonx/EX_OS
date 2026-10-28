@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.265
+**Versione:** 0.286
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -32,7 +32,7 @@ La procedura passo passo, con un capitolo per supporto, sta in
 | [Da floppy](manuali/installazione/01-da-floppy.md) | anche con il lettore sull'USB |
 | [Da CD-ROM](manuali/installazione/02-da-cdrom.md) | con `cdinstall` a schermo intero |
 | [Dalla rete](manuali/installazione/03-dalla-rete.md) | per riempire e aggiornare un sistema gia' installato |
-| [Dopo l'installazione](manuali/installazione/04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto |
+| [Dopo l'installazione](manuali/installazione/04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto, MariaDB, Apache, PHP |
 | [Quando va storto](manuali/installazione/05-quando-va-storto.md) | gli errori veri, con la causa e il rimedio |
 | [Pubblicare il repository](manuali/installazione/06-pubblicare-il-repo.md) | per chi tiene il server degli aggiornamenti |
 
@@ -110,6 +110,620 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### PHP 8.5 con PDO dentro Apache, e 2048 client per 10 minuti (kernel 0.286)
+
+PHP 8.5.12 gira in EX-OS, da riga di comando (`/exos/php/bin/php`) e
+**dentro Apache**: `mod_php` è compilato dentro `httpd`, perché i moduli non
+si caricano a programma acceso. È la versione per i fili (ZTS), quella che va
+col MPM worker; i database si aprono con **PDO** (`pdo_mysql`) o con
+`mysqli`, tutti e due su `mysqlnd`, il client scritto dentro PHP.
+
+I sorgenti vengono dal **clone di GitHub** (`php-src`, ramo `exos-8.5.12` dal
+tag della versione), come Apache e MariaDB: così ogni aggiornamento porta con
+sé anche i sorgenti. Il clone è stato confrontato con `php-8.5.12.tar.xz` di
+php.net (firma GPG del release manager): gli stessi file, l'archivio ha in più
+solo i 28 generati. Da un clone servono `bison` e `re2c`; re2c 4.6 è stato
+costruito anch'esso dal suo clone di GitHub.
+
+Cosa ha chiesto, per entrare:
+
+- **la libc**: `creat`, `scandir` e `alphasort`, `getdtablesize`; e `mkstemp`
+  ora restituisce l'errore vero di `open` (diceva sempre EEXIST: opcache
+  scriveva «lock file in /tmp: esiste già» per un `/tmp` che non c'era);
+- **due patch a PHP**: `st_rdev`, che la `struct stat` di EX-OS non ha (nessun
+  file di dispositivo), e lo spegnimento con `httpd -X`. Su Linux la chiusura
+  del figlio e quella del server girano in due processi; su EX-OS, che non ha
+  `fork`, nello stesso, e la seconda usava TSRM già distrutto: `httpd -k stop`
+  moriva in `ts_free_id`;
+- **il kernel 0.286**: FLUSH CACHE aspetta fino a 30 s (come libata di
+  Linux). Con i 5 s di un comando qualsiasi, un flush con molto da scrivere
+  scadeva, `fsync` rispondeva EIO e il bootstrap di MariaDB si fermava;
+- **`/exos/php/tmp`**: EX-OS non ha `/tmp`, e senza quella cartella opcache
+  non parte e Apache con lui.
+
+**La prova** (`tools/stress/stress_httpd.sh`, QEMU a 64 bit con KVM, 1 CPU,
+2 GB): MariaDB e Apache con PHP nello stesso EX-OS, una pagina che con PDO e
+istruzioni preparate legge (GET: una riga per chiave, 20 righe per gruppo) e
+scrive (POST: inserisce o aggiorna, cambia un valore, una transazione di tre
+istruzioni). 2048 client da Linux, ognuno con una connessione nuova a ogni
+richiesta, 60 s di salita e poi 10 minuti:
+
+| | 20 client | 2048 client |
+|---|---|---|
+| richieste buone al secondo | 145 | 150 all'inizio, 95 alla fine (118 in media) |
+| risposta mediana (p50) | 131 ms | 1,8-3 s |
+| p95 | 312 ms | 5-34 s |
+| errori | 0 su 5140 | 16.783 su 102.067 (16.757 senza risposta in 60 s) |
+
+Tutti i 2048 client sono rimasti collegati per tutto il tempo. Nessun fault,
+memoria ferma (480 MB in uso con 310 processi e fili), e alla fine Apache e
+MariaDB si sono spenti puliti, con codice 0. Quello che dice la tabella è che
+**il server serve circa 150 richieste al secondo, con 20 client come con
+2048**: con 2048 ognuno aspetta il suo turno, e quelli rimasti in coda più di
+un minuto il client li conta come errori.
+
+! **La prova ha trovato due colli di bottiglia, e nessuno dei due è PHP.**
+  Il primo è dell'host: la rete «user» di QEMU accetta la porta inoltrata con
+  una coda minuscola, e con una connessione nuova a ogni richiesta è
+  traboccata 128 mila volte. Il secondo è di EX-OS: l'anello di ricezione
+  della scheda e1000 ha **96 posti fissi**, e sotto la raffica dei 2048
+  client il driver non lo svuotava abbastanza in fretta (858 mila frame
+  persi). In coda, voce 39.
+
+### fsync vero, e alla pari con Linux (kernel 0.284-0.285)
+
+`fsync()` non faceva niente: la libc rispondeva 0 subito, perche' i
+filesystem di EX-OS scrivono a ogni `write` e si credeva che non restasse
+niente in sospeso. La scrittura pero' arriva alla cache del disco, non al
+supporto (e sul FAT nemmeno a quella: la cache di `fat.c` aspetta
+`fat_sync`). Un commit di InnoDB confermato al client poteva sparire con
+una mancanza di corrente.
+
+- **kernel 0.284, `SYS_FSYNC` (258):** il volume del file scrive quello che
+  tiene (la cache del FAT, i blocchi riservati e il giornale di ext2/ext3)
+  e il disco riceve FLUSH CACHE. Si svuota tutto il volume e non solo il
+  file: la cache del disco non sa cosa sia un file. C'e' anche
+  `fdatasync`, che fa lo stesso. Con un kernel piu' vecchio la libc fa come
+  prima.
+- **verificato dal di fuori:** con la traccia di QEMU (`ide_bus_exec_cmd`),
+  30 s di MariaDB con 4 client mandano al disco 17 927 FLUSH CACHE EXT;
+  prima nessuno.
+
+Il confronto (voce 34 della coda): 10 minuti, 512 client senza pausa, lo
+stesso generatore, le stesse opzioni di `my.cnf`, la stessa macchina
+virtuale (QEMU a 64 bit con KVM, una CPU, 2 GB, disco IDE, e1000 sulla rete
+user di QEMU), le immagini dei dischi sullo stesso disco dell'host; InnoDB
+scrive sul disco a ogni commit su tutti e due
+(`innodb_flush_log_at_trx_commit = 1`):
+
+| 512 client, 10 minuti | Linux (Debian 13) | EX-OS 0.284 | EX-OS 0.285 |
+|---|---|---|---|
+| istruzioni/s | 1764 | 343 | **1940** |
+| p50 | 220 ms | 1,25-1,48 s | 220 ms |
+| p95 | 440-880 ms | 3-5 s | 440-740 ms |
+| errori | 1 | 35 (deadlock di InnoDB) | 4 |
+| connessioni fallite | 1 | 5 | 5 |
+
+Le connessioni fallite sono handshake scaduti nella salita, quando 512
+client arrivano in 25 secondi; si sono ricollegate tutte.
+
+Restano diversi: ext4 contro ext2, qcow2 contro raw, MariaDB 11.8.6 di
+Debian contro 11.8.9. Nessun pacchetto perso da EX-OS.
+
+! **LE MISURE DELLE SEZIONI QUI SOTTO (2109/s, le 8 ore a 1011/s) SONO SENZA
+  FSYNC**: il disco non veniva mai svuotato.
+
+Col 0.284 EX-OS era cinque volte piu' lento di Linux sullo stesso lavoro, e
+le cause erano due, corrette nel **kernel 0.285**:
+
+- **il flush col lucchetto del VFS preso.** Mentre il disco svuotava la
+  cache, nessun altro filo poteva aprire, leggere o scrivere un file: con
+  MariaDB vuol dire tutti i fili, a ogni commit. Ora `fsync` su ext2 fa
+  sotto il lucchetto solo la parte del filesystem (i blocchi riservati, il
+  giornale) e svuota il disco dopo averlo rilasciato.
+- **il driver del disco girava a vuoto.** Aspetta la fine di un comando
+  leggendo il registro di stato (niente IRQ 14, per le ragioni scritte in
+  `ata.c`), e con una CPU sola quell'attesa era tempo tolto a tutti. Ora,
+  dopo poche letture, cede la CPU agli altri fili e riguarda dopo; il
+  lucchetto del disco resta suo, e le scadenze sono in tick come prima.
+
+Insieme bastano: i commit di molte transazioni ora si raggruppano in un
+flush solo (group commit di InnoDB), perche' gli altri fili lavorano mentre
+il disco svuota. Il disco riceve ancora i suoi FLUSH CACHE (17 660 in 30 s
+con 4 client, come col 0.284): la durata dei commit e' la stessa.
+
+Chi preferisce la velocita' e accetta di perdere al massimo l'ultimo
+secondo di transazioni mette `innodb_flush_log_at_trx_commit = 2` in
+`[mysqld]` (manuale 4.10).
+
+### Nessun tetto fisso, e Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)
+
+La regola dell'utente: processi, fili, applicazioni e connessioni hanno
+come limite solo la configurazione del singolo server e l'hardware, mai
+un numero scritto nel codice. Quello che e' cambiato:
+
+- **i descrittori (kernel 0.281):** la tabella di un programma non e' piu'
+  128 posti nel PCB ma blocchi di 128 aggiunti quando servono. Il tetto e'
+  `RLIMIT_NOFILE`: `fdmax` in `kernel.cfg`, oppure uno ogni 2 KB di RAM
+  (262144 con 512 MB), e `setrlimit` lo abbassa per un programma. Socket,
+  insiemi epoll e zone di memoria condivisa prendono i numeri dal kernel
+  come i file; `select` accetta descrittori fino al limite del programma.
+- **i processi e i fili (kernel 0.282):** spariscono `MAX_PROCESSES` (192
+  in tutto il sistema) e `FILO_MAX` (128 fili per programma). I PCB stanno
+  in blocchi che si aggiungono quando servono; le pile dei fili oltre le
+  127 riservate scendono verso lo heap. `procmax` in `kernel.cfg` mette un
+  tetto piu' basso per un server. **Il tetto vero oggi e' la fascia del
+  kernel:** ogni processo e ogni filo hanno 128 KB di pila del kernel nei
+  primi 64 MB, quindi circa 400-450 in tutto il sistema qualunque sia la
+  RAM (voce 35 della coda).
+- **file aperti, pipe, terminali, poll (kernel 0.282):** le tabelle del
+  sistema da 256 file aperti, 16 pipe e 4 pseudo-terminali crescono a
+  richiesta; `poll` del kernel prende piu' di 16 voci.
+- **libc:** le tabelle dei fili (128) e degli `errno` (64) diventano
+  catene di blocchi.
+- **textline 0.003:** il file sta in memoria allocata, riga per riga; erano
+  512 righe da 128 caratteri, e `textline file -v` si fermava alla riga 512
+  senza dire niente (`/boot/kernel.txt` ne ha 527: prova_telnet vedeva
+  mancare l'ultima riga).
+- **ip.drv 0.017:** la tabella TCP cresce fino a `tcpmax` in `kernel.cfg`,
+  o una connessione ogni 32 KB di RAM; `ip.drv -t N` per una sola
+  accensione. **ip.drv 0.018:** `shutdown(SHUT_WR)` (la chiusura a meta':
+  si smette di scrivere e si continua a leggere), e il FIN parte dopo i
+  dati ancora in coda (prima un `close` subito dopo una `write` poteva
+  perdere la coda dei dati).
+
+**Apache httpd 2.4.69** (con APR 1.7.6, APR-util 1.6.5, Expat 2.9.0;
+`tools/httpd-exos/costruisci.sh 32|64`, gruppo `[apache]` della ISO degli
+strumenti e di netinst, in `/exos/apache2`): MPM worker in un processo solo
+con 256 fili (`httpd -X`), tutti i moduli statici, mod_ssl con OpenSSL 4.1,
+i CGI con `spawn_ex` (EX-OS non ha `fork`: la voce 33 della coda).
+`tools/prova_httpd.sh` lo prova in QEMU, a 32 e 64 bit: una pagina, un CGI
+con GET e con POST, un 404, `ab` dentro EX-OS e dall'host. La chiusura a meta' ha portato
+ogni richiesta da 2 s (Apache aspettava che il client chiudesse) a pochi
+millisecondi:
+
+| | prima di ip.drv 0.018 | dopo, 32 bit | dopo, 64 bit |
+|---|---|---|---|
+| `ab` dentro EX-OS, 20 alla volta | 8 richieste/s | 240/s | 216/s |
+| `ab` dall'host, 50 alla volta | 24/s | 245/s | 234/s |
+
+Per far fermare Apache in modo pulito (`httpd -k stop`, codice d'uscita 0 a
+32 e 64 bit) sono servite due patch e tre correzioni fuori da Apache:
+
+- **L'ascoltatore del worker.** Allo spegnimento Apache lo sveglia con
+  `pthread_kill`, ma su EX-OS un segnale non interrompe `accept` ne' `poll`
+  (voce 37 della coda): Apache smetteva di aspettarlo dopo 5 s e usciva con
+  l'ascoltatore ancora vivo, che poi cadeva sullo scoreboard liberato.
+  `patch/worker-ascolto.diff` fa `poll` ogni 100 ms e guarda
+  `listener_may_exit`, come l'ascoltatore di MariaDB;
+  `patch/worker-uscita.diff` distrugge `pruntime` prima di `exit` (i pool
+  riciclati venivano distrutti due volte: glibc lo perdona, la malloc di
+  EX-OS no).
+- **Kernel 0.283, una perdita a ogni CGI.** `spawn` da' al figlio i
+  descrittori 0, 1 e 2 del padre, poi ci applica sopra le redirezioni
+  chieste, e il riferimento ereditato non tornava mai: ogni CGI lasciava un
+  riferimento su `logs/error_log`, e dopo lo spegnimento il disco non si
+  smontava. Ora `umount` dice quale file tiene occupato un disco.
+- **ip.drv 0.019:** il FIN dell'altra parte arrivato prima della conferma
+  del nostro (CLOSING) faceva morire la connessione, e il nostro FIN e i
+  dati in coda non si ritrasmettevano piu'.
+- **Kernel 0.283:** un programma che va in fault stampa gli indirizzi dei
+  suoi segmenti trovati sulla pila (`PF:   sulla pila:`, per `addr2line`);
+  e' cosi' che si e' trovato l'ascoltatore.
+
+La prova dall'host passa per la rete user di QEMU, che accetta la porta
+inoltrata su un socket Linux con una coda d'ascolto minuscola: con 50
+client alla volta la coda dell'host trabocca (`ListenOverflows`, 14-16
+volte a corsa), l'host butta i SYN e il client ritenta dopo 1, 3, 7, 15 s.
+Una cattura sulla e1000 ha mostrato che le richieste da 20 s, o mai finite,
+a EX-OS non erano mai arrivate. `prova_httpd.sh` ora aspetta fino a 120 s e
+stampa i trabocchi accanto al risultato.
+
+Prove nuove: `tools/prova_fd.sh` (2000 connessioni epoll, descrittori fino
+a 4005, `select` oltre 2048), `tools/prova_moltifili.sh` (386 fili vivi
+insieme in un programma a 32 bit, 354 a 64, poi un rifiuto pulito con
+EAGAIN). Manuale
+[4.11, il server web Apache](manuali/installazione/04-dopo-installazione.md).
+
+### 1024 connessioni a MariaDB: epoll, un gruppo di fili, una casella giusta (kernel 0.280, ip.drv 0.016)
+
+L'utente ha chiesto uno stress test: 1024 client che scrivono, leggono e
+aggiornano per 8 ore, misurando velocita', carico, tolleranza e perdite
+(uno script locale, fuori dal repository; client da Linux attraverso la rete, EX-OS
+a 64 bit in QEMU). Il primo giro si fermava a una ventina di client; cosa e'
+servito per arrivare a 1024:
+
+- **kernel 0.280, la fila davanti a una casella piena.** Una casella tiene
+  quattro messaggi; chi la trovava piena riprovava ogni 5 ms, e sotto carico
+  i fili piu' svelti entravano sempre mentre gli altri (`ipcfg`) aspettavano
+  10 s e rinunciavano. Ora chi manda fa la fila nel kernel e passa in ordine.
+- **ip.drv 0.016:** 4096 connessioni TCP (erano 24) con una tabella hash; un
+  programma tiene 1024 socket (erano 64); il buffer di ricezione da 63 KB di
+  uno slot riusato andava perso (una perdita); **epoll e poll stanno nello
+  stack**, che sveglia da se' il programma quando una connessione e' pronta.
+- **libc:** `<sys/epoll.h>` (`epoll_create1`, `epoll_ctl`, `epoll_wait`,
+  `epoll_pwait`, solo socket TCP), `poll` in un messaggio solo allo stack,
+  `FD_SETSIZE` 2048, `RLIMIT_NOFILE` 4096, `shutdown(SHUT_RDWR)` lascia la
+  connessione nel suo insieme epoll e ne segnala la fine come Linux,
+  `strerror` conosce tutti gli errori di rete (diceva solo «errore»).
+- **MariaDB col gruppo di fili** (`thread_handling=pool-of-threads`,
+  `patch/server-threadpool-epoll.diff`): un filo per connessione vorrebbe
+  128 KB di pila del kernel ciascuno nella fascia di 64 MB del kernel, e
+  EX-OS aveva 192 posti per processi e fili (fino al kernel 0.281). Ora
+  poche decine di fili servono tutte le connessioni. `mariadb-svc` 0.003 scrive `max_connections = 1024`
+  e il gruppo in `/etc/my.cnf` (manuale 4.10).
+- **e1000:** l'anello di ricezione passa da 32 a 96 descrittori e la coda
+  verso ip.drv da 64 a 256 frame: con mille connessioni l'anello traboccava,
+  e ogni frame perso fermava una connessione fino a 22 s.
+- `ipcfg -tcp` elenca le connessioni TCP; `memlog` (dentro EX-OS) registra
+  memoria, fili, la tabella TCP e dove si perdono i pacchetti.
+
+Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS; fino al
+kernel 0.283, quando `fsync` non svuotava il disco: vedi la sezione sul
+kernel 0.284):
+
+| client | pausa | istruzioni/s | p50 | p95 |
+|---|---|---|---|---|
+| 64 | nessuna | 2109 | 23 ms | 93 ms |
+| 1024 | 1 s | 870 | 5,5 ms | 20 ms |
+| 1022, 8 ore | 1 s | 1011 | 5,8 ms | 23 ms |
+
+Senza KVM il tetto e' la CPU emulata (circa 400/s qualunque sia il numero
+di client). 1024 client senza nessuna pausa sono piu' di quanto la
+macchina possa servire: le risposte passano i 30 s, i client si ricollegano
+con un handshake TLS ciascuno e il server resta indietro (e' il limite di
+tolleranza, non un crollo del sistema).
+
+Il giro di 8 ore (1022 client, perche' ogni programma ha 1024 socket e
+l'ascoltatore e il monitor dello stato ne prendono due): 29,1 milioni di
+istruzioni, 5 errori (tutti deadlock di InnoDB fra transazioni concorrenti,
+che il client deve ripetere), nessuna riconnessione, nessuna connessione
+rifiutata o caduta, nessun pacchetto perso dalla scheda o da ip.drv, uno
+spegnimento pulito ("Shutdown complete"). Velocita' e p95 del primo e
+dell'ultimo quarto sono uguali (1012/s e 1013/s, 23 ms). `Memory_used` di
+MariaDB resta a 840 MB per tutto il giro; la memoria libera di EX-OS cala
+di circa 1 MB l'ora mentre le tabelle crescono e torna tutta quando
+mariadbd esce: nessuna perdita nel sistema. Un rallentamento di circa due
+minuti (p95 2,5 s, risposta peggiore 9,8 s, alla quarta ora e mezza) non
+ha lasciato tracce dal lato del server; la causa e' da trovare. Il confronto con
+Linux sullo stesso hardware (voce 34) e' nella sezione sul kernel 0.284:
+con lo stesso lavoro sul disco EX-OS e' piu' lento.
+
+### MariaDB 11.8 LTS gira in EX-OS (0.279)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
+--bootstrap` crea le tabelle di sistema, il server parte e ascolta su
+`127.0.0.1:3306`, il client `mariadb` crea una tabella InnoDB, ci mette tre
+righe, annulla una cancellazione col rollback, e `mariadb-admin shutdown`
+ferma il server pulito; dopo, Linux trova sul disco `ibdata1` e il `.ibd`
+della tabella.
+
+MariaDB **11.8.9**, l'ultima versione del ramo stabile a lungo termine
+(l'archivio ufficiale, firma GPG verificata, in
+`cross_build/terze-parti/mariadb`), costruito da
+`tools/mariadb-exos/costruisci.sh` sulle librerie vere di EX-OS: ncurses,
+zlib, bzip2, xz, lz4, zstd, PCRE2, fmt e OpenSSL 4.1.0. Tutto statico
+(`mariadbd` e' 27 MB senza simboli); il server ascolta solo in TCP, perche'
+EX-OS non ha i socket AF_UNIX. `innodb_buffer_pool_size_max` va dato: per
+difetto InnoDB riserva 8 TB di indirizzi a 64 bit, e un programma di EX-OS ne
+ha 3 GB. Gruppo `[mariadb]` della ISO degli strumenti e di netinst: il server
+in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`, i sorgenti. La
+ISO degli strumenti ora e' un DVD (circa 500 MB per architettura solo per
+MariaDB).
+
+**I connettori, anche da soli:** nel catalogo ci sono due voci.
+`netupdate -install:mariadb` porta il server e i connettori;
+`netupdate -install:mariadb-connector` solo i connettori, per i programmi che
+parlano con un MariaDB o un MySQL: **Connector/C 3.4.11** (`<mysql.h>`,
+`libmariadbclient.a`), **Connector/C++ 1.1.9** (`<conncpp.hpp>`,
+`libmariadbcpp.a`, costruito sopra il Connector/C di sistema), **`mariadb.bi`**
+per FreeBASIC e il crate Rust **`mariadb`** (un file, senza dipendenze, perche'
+dentro EX-OS c'e' `rustc` ma non `cargo`). `tools/prova_mariadb.sh` prova un
+programma per linguaggio contro il server dentro EX-OS (FreeBASIC a 32 bit).
+
+**Il servizio:** `mariadb-svc -install` (da root) crea l'utente `mysql`,
+`/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql`, il certificato
+TLS del server (una volta sola: MariaDB 11.8 farebbe una chiave RSA da 4096
+bit a ogni avvio, minuti su una CPU lenta) e un blocco in
+`/boot/avvio.sh`: il server parte a ogni avvio, prima del login, e lo
+spegnimento lo chiude (manuale 4.10). I dettagli sono in
+`tools/mariadb-exos/leggimi.md`.
+
+Cosa e' servito in EX-OS:
+
+- **kernel 0.279, i segnali.** `sigwait`, `sigtimedwait`, `sigwaitinfo`
+  (`SYS_SEG_ATTENDI`) e `sigsuspend` (`SYS_SEG_SOSPENDI`). Un segnale con
+  l'azione predefinita mandato a un programma che lo blocca ora resta in
+  attesa, come dice POSIX, invece di terminare il programma: e' cosi' che un
+  server blocca SIGTERM in tutti i fili e lo aspetta in uno
+  (`tools/prova_sigwait.sh`, 32 e 64 bit, anche da un altro processo).
+- **kernel 0.279, `open` di una directory.** `open(dir, O_RDONLY)` da' un
+  descrittore invece di EISDIR: `fstat`, `fsync`, `dup` e `close` funzionano,
+  `read` rende EISDIR, chiedere di scrivere rende EISDIR. Aria e InnoDB
+  aprono la cartella dei dati per rendere durevole un file nuovo. Una
+  directory aperta con `O_TRUNC` veniva troncata prima di essere rifiutata.
+- **libc:** `setgid`, `setreuid`/`setregid`, `setgroups`/`initgroups`,
+  `execl`/`execlp`, `getpwent`, `getlogin`, `IN6_IS_ADDR_*`, `NI_NAMEREQD`,
+  `POLLRDNORM` e compagni, `<netinet/ip.h>`, `<netinet/in_systm.h>`,
+  `<sys/poll.h>`, i tipi BSD (`u_char`, `uint`...); `getrlimit` dice 128
+  descrittori (diceva ancora 32, da prima del kernel 0.232); `fscanf`
+  lasciava `feof` spento alla fine del file, perche' il suo `fseek` indietro
+  lo cancellava.
+- **libc, `_FILE_OFFSET_BITS=64` sul sistema a 32 bit.** Come con glibc, un
+  programma compilato cosi' (MariaDB lo e') ha un `off_t` a 64 bit, e
+  `lseek`, `pread`, `pwrite`, `ftruncate`, `truncate`, `fseeko`/`ftello`,
+  `mmap`, `stat`/`lstat`/`fstat` diventano le loro versioni `*64` di
+  `libc.a`; i programmi compilati senza non cambiano. Il kernel tiene ancora
+  2 GB per file su entrambe le architetture: oltre, la libc rifiuta (EFBIG,
+  EOVERFLOW, fine del file) invece di tagliare la posizione. A 64 bit
+  `lseek`, `pwrite` e `ftruncate` passavano al kernel una posizione di 3 GB
+  tagliata a 32 bit (un `ftruncate` a 3 GB cambiava il file): ora rifiutano
+  anche li' (`tools/prova_lfs.sh`, 32 e 64 bit).
+- **ip.drv 0.014, 127.0.0.1 senza scheda.** Il loopback sta dentro
+  `ip.drv`, che senza scheda di rete usciva: una macchina senza rete non
+  raggiungeva il proprio server. Ora resta acceso con il solo 127.0.0.1; una
+  scheda che arriva dopo la prende come prima.
+- **kernel 0.279, lo spegnimento.** Prima di spegnere o riavviare il kernel
+  manda SIGTERM a ogni programma che non e' un driver e aspetta fino a 30 s,
+  cosi' `mariadbd` chiude InnoDB prima che i dischi si sincronizzino;
+  `setuid` cambia tutti i fili del programma, non solo chi chiama
+  (`mariadbd` scende a `mysql` con i fili gia' partiti). `getpwnam` e
+  compagni della libc leggono `/boot/utenti`.
+
+### OpenSSL 4.1.0 con socket e fili, e 127.0.0.1
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_openssl.sh`, con la rete di
+QEMU): quattro fili calcolano impronte, cifrano e creano `SSL_CTX` insieme;
+un server e un client TLS nello stesso programma si parlano su `127.0.0.1`
+(`SSL_set_fd` su un socket accettato, come fa MariaDB); TLS 1.3 verso
+`www.example.com:443` su un socket vero, con il certificato verificato; il
+programma `openssl` calcola lo stesso SHA-256 di Linux, fa una chiave Ed25519
+e un certificato che `openssl verify` di Linux accetta, e `openssl s_client`
+si collega e verifica.
+
+Finora EX-OS aveva una copia del ramo di sviluppo di OpenSSL costruita con
+`no-sock no-threads`: TLS solo attraverso due BIO di memoria (`provatls`).
+MariaDB vuole i socket e i lucchetti, e la regola e' l'ultima versione
+pubblica: ora e' OpenSSL **4.1.0** (23 ottobre 2026, firma GPG verificata),
+costruito da `tools/openssl-exos/costruisci.sh` come le altre librerie, con
+i socket, i pthread e il programma `openssl`; sorgenti su entrambi i CD degli
+strumenti, gruppo `[ssl]`, quindi anche nei netinst. `provatls`, `provassl` e
+libgit2 sono ricostruiti sopra (`tools/openssl-exos/prepara-openssl.sh` non
+c'e' piu').
+
+Cosa e' servito altrove:
+
+- **ip.drv 0.013, il loopback.** Un frame per questa macchina (127.x.x.x o il
+  suo indirizzo) andava alla scheda di rete e si perdeva: nessun programma
+  poteva raggiungere un server sulla stessa macchina. Ora aspetta in una coda
+  dentro ip.drv e rientra come se fosse arrivato; niente ARP, l'indirizzo
+  sorgente e' la destinazione stessa, e 127.x.x.x dal filo si scarta.
+- **libc:** `select()` vede i socket e tutti i file (`fd_set` e' passato da
+  una parola di 32 bit a 1088 descrittori; un programma costruito con quello
+  vecchio funziona ancora con la `libc.so` nuova, perche' si toccano solo le
+  parole sotto `nfds`); `getsockname` rende l'indirizzo dato a `bind`;
+  `connect` verso `0.0.0.0` va a `127.0.0.1` come su Linux;
+  `getservbyname`/`getservbyport` (con `mysql` 3306 nella tabella); `setpgid`
+  verso il proprio gruppo.
+
+### Sette librerie come librerie vere di EX-OS: zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}
+
+**provate a 32 e 64 bit in QEMU** (`tools/prova_librerie.sh`): un programma
+(`tools/prove/libreprova.cpp`) comprime e decomprime 64 KB con ogni
+compressore, cerca con PCRE2 (anche `regcomp`/`regexec` POSIX), formatta con
+fmt; poi `xz`, `zstd`, `bzip2` e `lz4` comprimono dentro EX-OS un file che
+Linux decomprime, e decomprimono archivi fatti da Linux — confrontati byte
+per byte.
+
+Le librerie che servono a MariaDB, portate prima e per conto loro perche'
+serviranno anche ad altro (la regola: ogni dipendenza diventa una libreria
+vera prima del programma che la vuole). Ognuna e' l'ultima versione
+pubblica, con l'archivio verificato (firma GPG, o lo sha256 pubblicato) e
+conservato in `cross_build/terze-parti/`; ognuna ha il suo
+`tools/<nome>-exos/costruisci.sh` (la parte comune in
+`tools/librerie-exos/comune.sh`), si costruisce a 32 e 64 bit, va nei
+sysroot incrociati (`-lz`, `-lbz2`, `-llzma`, `-llz4`, `-lzstd`,
+`-lpcre2-8`, `-lfmt`) e su entrambi i CD degli strumenti con i sorgenti, un
+gruppo del catalogo ciascuna (`[zlib]` `[bzip2]` `[xz]` `[lz4]` `[zstd]`
+`[pcre2]` `[fmt]`), quindi anche nei netinst:
+
+| libreria | versione | programmi |
+|---|---|---|
+| zlib | 1.3.2 | |
+| bzip2 | 1.0.8 | bzip2, bzip2recover |
+| XZ Utils (liblzma) | 5.8.4 | xz, xzdec, lzmadec, lzmainfo |
+| LZ4 | 1.10.0 | lz4 |
+| Zstandard | 1.5.7 | zstd |
+| PCRE2 | 10.49 (8, 16, 32 bit, POSIX) | pcre2grep, pcre2test |
+| {fmt} | 12.2.0 (header e libfmt) | |
+
+- {fmt} 12.2.0 non si costruisce per nessun bersaglio a 32 bit (sue issue
+  #4811, #4886): si applica la correzione accettata a monte (pull request
+  #4813) finche' una versione non la porta;
+- PCRE2 per ora senza JIT (stessi risultati, interpretati);
+- la libc ha avuto `O_NOCTTY`, e `fchown` verso il proprietario che `stat`
+  gia' riporta riesce (xz diceva «Cannot set the file owner»).
+
+**E un difetto del kernel trovato dallo xz a 64 bit:** ogni `pthread_create`
+di un programma a 64 bit senza variabili `__thread` falliva (`EIO`, «non
+riesco a leggere l'immagine TLS per il filo»). Una riga di log nel
+caricatore ELF leggeva il segmento TLS anche quando non c'era; il
+compilatore l'ha presa come prova che il puntatore non fosse NULL e ha tolto
+i controlli piu' sopra, e l'immagine del filo veniva dall'indirizzo 0.
+Corretto in `kernel/loader/elf.c`.
+
+### ncurses 6.6: programmi a schermo intero sulla console e in telnet
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_curses.sh`): un programma
+curses disegna riquadri, video inverso, colori, cancella una riga, apre una
+finestra, e legge Su, F1, Canc e PagGiu' come `KEY_UP`, `KEY_F(1)`,
+`KEY_DC`, `KEY_NPAGE`; lo schermo si rilegge esatto da QEMU
+(`tools/schermo_testo.py` confronta ogni cella con i glifi della console).
+**E lo stesso programma compilato dentro EX-OS** col `gcc -lncurses` del CD
+degli strumenti fa lo stesso.
+
+La vera libreria curses, la prima delle librerie che servono a MariaDB e
+che servono anche a tutto il resto: `libncurses.a` (anche `-lcurses`),
+`libpanel`, `libmenu`, `libform`, `libncurses++`, gli header, la terminfo, e
+`tic`, `infocmp`, `toe`, `tput`, `tset`, `reset`, `clear`, `tabs`. Costruita
+dalla 6.6 ufficiale (firma verificata) da `tools/ncurses-exos/costruisci.sh`;
+nei sysroot delle toolchain incrociate, e su entrambi i CD degli strumenti
+con i sorgenti (gruppo `[curses]`), quindi anche nei netinst.
+
+- la console e' `TERM=vga`, e ha la sua voce terminfo
+  (`tools/ncurses-exos/exos.ti`): solo cio' che `vga.c` fa davvero. Per
+  questo la console ha imparato le sequenze su cui curses conta: inserire e
+  cancellare caratteri e righe, cancellare caratteri, colonna e riga, una
+  regione di scorrimento, l'indice inverso, salvare il cursore, il video
+  inverso. In modo grezzo la tastiera manda anche F1-F12, Ins, Canc, PagSu
+  e PagGiu';
+- `vga`, `linux`, `xterm`, `xterm-256color`, `vt100`, `vt220`, `ansi`,
+  `screen` e `dumb` sono dentro la libreria: curses funziona anche su un
+  sistema senza terminfo sul disco;
+- la libc ha avuto cio' che ncurses chiedeva: `getopt`, `getopt_long`
+  (`<getopt.h>`), `getpgrp`, `ttyname`, e i numeri `ioctl` del terminale in
+  `<sys/ioctl.h>`.
+
+Non ancora: `ncursesw`, la libreria a caratteri larghi, che aspetta l'UTF-8
+nella libc (oggi il suo `wchar_t` e' Latin-1); e `SIGWINCH`, quindi un
+programma che gira non si accorge di una finestra telnet ridimensionata.
+
+### Un terminale vero: termios sulla console e in telnet (0.279)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_termios.sh`: libctest e
+`tools/prove/termiosprova.c` con `tcgetattr`/`tcsetattr`/`cfmakeraw` della
+libc.a, tasti battuti sulla console in modo grezzo; di nuovo `prova_telnet`,
+`prova_ctrlc`, `prova_ssh`).
+
+Finora un terminale aveva due modi, "a righe con eco" e "grezzo", e nessuna
+`struct termios`: `tcsetattr` non faceva niente. Gli editor, `less`, `top` e
+soprattutto **ncurses** (il prossimo porting, che serve al client di MariaDB
+e a molti altri programmi) cosi' non possono funzionare. Ora entrambi i
+terminali hanno una `struct termios` come quella di Linux (stessi valori,
+stessi `ioctl`: `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF`, `TCFLSH`,
+`TIOCGWINSZ`, `TIOCSWINSZ`):
+
+- **in una sessione telnet** (pty): `ICANON`, `ECHO`, `ECHOE`, `ECHOK`,
+  `ISIG`, `ICRNL`/`INLCR`/`IGNCR`, `OPOST`+`ONLCR`, `VMIN`/`VTIME`.
+  `isatty()` e' vero, e `TIOCGWINSZ` da' la misura della finestra del client;
+- **sulla console**, una per console virtuale: senza `ICANON` il driver della
+  tastiera consegna i tasti uno per uno invece delle righe, una freccia come
+  `ESC [ A` intero, Invio come CR, `^C` come byte quando `ISIG` e' spento,
+  niente eco quando `ECHO` e' spento; `poll()` sullo stdin si sveglia appena
+  si preme un tasto. `TIOCGWINSZ` da' la misura vera (100x37 in QEMU), non
+  80x25.
+
+Un programma che lascia il terminale grezzo e muore non lascia una shell
+sorda: la shell (0.009) rimette i modi normali prima di ogni prompt.
+
+### Una sessione telnet che non torna, e lo schermo della NVIDIA integrata (0.278)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd ucciso e
+rilanciato, un programma dell'altra architettura, una sessione lasciata a metà
+dentro `gfedit`), e i numeri dello schermo **misurati sul CQ60**.
+
+**Sul CQ60 la porta 23 si apriva e non tornava un byte, nemmeno dopo `kill` e
+un `telnetd` nuovo.** Serviva riavviare. Tre difetti in fila:
+
+- un programma a 32 bit sul kernel a 64 è `ENOEXEC`, e la shell (0.008)
+  mandava ogni `ENOEXEC` al programma associato al file: `gfedit`. `gfedit`
+  legge la tastiera della macchina, non la sessione, e la sessione restava
+  lì. Adesso la shell dice **«e' un programma a 32 bit, questo sistema e' a
+  64»** (o il contrario) e va avanti;
+- quando il client se ne va `telnetd` interrompe la shell della sessione; ma
+  `waitpid`, svegliata, **tornava ad aspettare** il figlio, e la shell non
+  arrivava mai all'uscita che il kernel fa sulla via del ritorno dalla
+  chiamata. Adesso `waitpid` e `thread_attendi` rendono `EINTR` a un processo
+  interrotto, come facevano già pipe, IPC e pty. `telnetd` (0.011) raccoglie
+  anche la shell, che restava zombie;
+- l'ascoltatore del `telnetd` ucciso **restava sulla porta 23 in `ip.drv`**:
+  accettava ogni connessione senza nessuno dietro e respingeva il `telnetd`
+  nuovo (`EADDRINUSE`). `ip.drv` (0.012) libera la porta di un programma
+  morto, sia quando qualcuno chiede di ascoltare sia all'arrivo di un SYN.
+
+**La NVIDIA integrata scriveva lo schermo a 47 MB/s.** Sulle MCP77/79 la
+«memoria video» è RAM messa da parte dal BIOS, e attraverso la BAR1 della
+scheda ogni pixel fa CPU -> scheda -> RAM: la scrittura combinata (0.275) non
+cambiava niente. `nv50.drv` 0.008 dà al kernel l'indirizzo di quella RAM, che
+il kernel mappa a scrittura combinata come ogni framebuffer:
+
+```
+                               BAR1     RAM rubata
+CPU riempie lo schermo           47       4167   MB/s
+ombra in RAM -> schermo          47       1475
+CPU legge lo schermo              4         82
+```
+
+Un fotogramma intero della scrivania a 1366x768 passa da circa 90 ms a circa 3.
+
+### Fili che leggono lo stesso file: `pread` vero e i flussi col lucchetto (0.277)
+
+**testato a 32 e 64 bit** con `tools/prova_fili.sh`, che mette insieme sullo
+stesso file e sullo stesso `FILE` i fili di un programma solo:
+
+```
+FILI pread 0 giri 101824      8 fili, pread a caso sullo stesso descrittore, 3 s
+FILI posizione 0 letti 1048576 su 1048576, pezzi storti 0
+FILI pwrite 0                4 fili, pwrite su parole diverse
+FILI stdio 0 righe 12000 rotte 0
+FILI mutex 0                 8 fili, 20000 giri l'uno sotto pthread_mutex
+```
+
+**E la stessa prova con la libc di prima** (`PROVA_CFLAGS=-L<dir con la libc.a vecchia>`)
+sbaglia, che è quel che deve fare: `FILI pread 7 giri 84118` e `FILI stdio 1
+righe 12019 rotte 9`. Una prova che passa anche col guasto non prova niente:
+la prima versione durava meno di un quanto dello scheduler, i fili non si
+incrociavano mai e passava con tutte e due.
+
+**Il guasto l'ha mostrato Firefox sul CQ60: pagine senza testo.** Nel log
+«Unable to load glyph» e «logins.db: file is not a database», con i file dei
+caratteri giusti sul disco (sha256 uguale). La libc faceva `pread` come
+`lseek` + `read` + `lseek`, e **i fili condividono la tabella dei
+descrittori**, quindi anche la posizione: se due fili leggono lo stesso file
+insieme, uno sposta la posizione mentre l'altro legge, e si portano a casa i
+byte del posto sbagliato. Firefox mappa i caratteri leggendoli con `pread` da
+più fili.
+
+**Adesso `pread` e `pwrite` sono chiamate del kernel** (`SYS_PREAD` 8,
+`SYS_PWRITE` 9): leggono e scrivono al punto chiesto senza toccare la posizione
+del descrittore. Una libc nuova su un kernel vecchio riceve `ENOSYS` e torna al
+modo di prima, sotto un lucchetto suo. E **`read`, `write` e `lseek` su un file
+tengono la posizione mentre la spostano** (`posizione_di` nel descrittore):
+prima due `read` insieme potevano leggere lo stesso pezzo, e la posizione
+tornare indietro.
+
+**I flussi della stdio hanno il lucchetto** (`flockfile`, `funlockfile`,
+`ftrylockfile`, e le forme `_unlocked`). Prima non ce l'avevano: due fili che
+scrivono su `stderr` insieme potevano scrivere lo stesso byte del buffer o
+svuotarlo due volte. Ogni funzione lo prende da sola, una volta per chiamata;
+chi vuole una riga intera da più chiamate tiene `flockfile`. È **ricorsivo** e
+il padrone si riconosce dal thread pointer, letto da `%gs`/`%fs` senza
+chiamate di sistema.
+
+> **Che cosa c'era già, e resta com'era:** `pthread_mutex`, le condizioni, i
+> lucchetti lettori/scrittori, `pthread_once` e i semafori stanno sul lucchetto
+> a tre stati che dorme nel kernel (`SYS_ATTESA_DORMI`/`SYS_ATTESA_SVEGLIA`);
+> `malloc`, `errno` (per filo) e la tabella delle mappe avevano il loro.
+> Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
+> le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
+
+### Lo swap funziona (kernel 0.276) — provato in QEMU, da provare sotto pressione sul ferro
+
+L'area di scambio su partizione c'era da agosto, ma sotto pressione non
+reggeva: a 32 bit il kernel si fermava al primo sfratto (leggeva una voce da
+4 MB della directory come se fosse una tabella), a 64 bit la memoria dei
+programmi si rovinava (la pagina si scriveva sul disco mentre il padrone
+poteva ancora scriverci, un buffer solo era conteso da sfratti e rientri
+senza lucchetto, il padrone poteva morire nel frattempo) e un processo
+veniva ucciso quando l'altro processore teneva le pagine. Dal 0.276 è
+corretto, e le pagine usate da un dispositivo (DMA, MMIO, schermo) non si
+sfrattano mai. `mem` mostra l'area: dimensione, quanto c'è sopra, pagine
+andate e tornate dall'avvio. `tools/prova_swapmem.sh` (32 e 64 bit, rifatta
+col kernel 0.279) riempie la RAM con `swaptest`, uno da solo e due insieme,
+e ogni pagina torna identica. Sul CQ60 l'area da 4 GB si accende ma la RAM
+è sempre bastata. Come prepararla e come controllarla: manuale,
+[4, l'area di scambio](manuali/installazione/04-dopo-installazione.md).
 
 ### Le chiavette sono `/USB/USB0`, `/USB/USB1`... — provato in QEMU
 
@@ -2348,560 +2962,6 @@ una chiamata di sistema.**
 > tornata dopo **310 ms** — ha dormito; svegliata da un filo dopo 100 ms con la
 > scadenza a 2000, è tornata dopo **100 ms** — l'ha svegliata lui, non
 > l'orologio.
-
-### Fili che leggono lo stesso file: `pread` vero e i flussi col lucchetto (0.277)
-
-**testato a 32 e 64 bit** con `tools/prova_fili.sh`, che mette insieme sullo
-stesso file e sullo stesso `FILE` i fili di un programma solo:
-
-```
-FILI pread 0 giri 101824      8 fili, pread a caso sullo stesso descrittore, 3 s
-FILI posizione 0 letti 1048576 su 1048576, pezzi storti 0
-FILI pwrite 0                4 fili, pwrite su parole diverse
-FILI stdio 0 righe 12000 rotte 0
-FILI mutex 0                 8 fili, 20000 giri l'uno sotto pthread_mutex
-```
-
-**E la stessa prova con la libc di prima** (`PROVA_CFLAGS=-L<dir con la libc.a vecchia>`)
-sbaglia, che è quel che deve fare: `FILI pread 7 giri 84118` e `FILI stdio 1
-righe 12019 rotte 9`. Una prova che passa anche col guasto non prova niente:
-la prima versione durava meno di un quanto dello scheduler, i fili non si
-incrociavano mai e passava con tutte e due.
-
-**Il guasto l'ha mostrato Firefox sul CQ60: pagine senza testo.** Nel log
-«Unable to load glyph» e «logins.db: file is not a database», con i file dei
-caratteri giusti sul disco (sha256 uguale). La libc faceva `pread` come
-`lseek` + `read` + `lseek`, e **i fili condividono la tabella dei
-descrittori**, quindi anche la posizione: se due fili leggono lo stesso file
-insieme, uno sposta la posizione mentre l'altro legge, e si portano a casa i
-byte del posto sbagliato. Firefox mappa i caratteri leggendoli con `pread` da
-più fili.
-
-**Adesso `pread` e `pwrite` sono chiamate del kernel** (`SYS_PREAD` 8,
-`SYS_PWRITE` 9): leggono e scrivono al punto chiesto senza toccare la posizione
-del descrittore. Una libc nuova su un kernel vecchio riceve `ENOSYS` e torna al
-modo di prima, sotto un lucchetto suo. E **`read`, `write` e `lseek` su un file
-tengono la posizione mentre la spostano** (`posizione_di` nel descrittore):
-prima due `read` insieme potevano leggere lo stesso pezzo, e la posizione
-tornare indietro.
-
-**I flussi della stdio hanno il lucchetto** (`flockfile`, `funlockfile`,
-`ftrylockfile`, e le forme `_unlocked`). Prima non ce l'avevano: due fili che
-scrivono su `stderr` insieme potevano scrivere lo stesso byte del buffer o
-svuotarlo due volte. Ogni funzione lo prende da sola, una volta per chiamata;
-chi vuole una riga intera da più chiamate tiene `flockfile`. È **ricorsivo** e
-il padrone si riconosce dal thread pointer, letto da `%gs`/`%fs` senza
-chiamate di sistema.
-
-> **Che cosa c'era già, e resta com'era:** `pthread_mutex`, le condizioni, i
-> lucchetti lettori/scrittori, `pthread_once` e i semafori stanno sul lucchetto
-> a tre stati che dorme nel kernel (`SYS_ATTESA_DORMI`/`SYS_ATTESA_SVEGLIA`);
-> `malloc`, `errno` (per filo) e la tabella delle mappe avevano il loro.
-> Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
-> le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
-
-### Lo swap funziona (kernel 0.276) — provato in QEMU, da provare sotto pressione sul ferro
-
-L'area di scambio su partizione c'era da agosto, ma sotto pressione non
-reggeva: a 32 bit il kernel si fermava al primo sfratto (leggeva una voce da
-4 MB della directory come se fosse una tabella), a 64 bit la memoria dei
-programmi si rovinava (la pagina si scriveva sul disco mentre il padrone
-poteva ancora scriverci, un buffer solo era conteso da sfratti e rientri
-senza lucchetto, il padrone poteva morire nel frattempo) e un processo
-veniva ucciso quando l'altro processore teneva le pagine. Dal 0.276 è
-corretto, e le pagine usate da un dispositivo (DMA, MMIO, schermo) non si
-sfrattano mai. `mem` mostra l'area: dimensione, quanto c'è sopra, pagine
-andate e tornate dall'avvio. `tools/prova_swapmem.sh` (32 e 64 bit, rifatta
-col kernel 0.279) riempie la RAM con `swaptest`, uno da solo e due insieme,
-e ogni pagina torna identica. Sul CQ60 l'area da 4 GB si accende ma la RAM
-è sempre bastata. Come prepararla e come controllarla: manuale,
-[4, l'area di scambio](manuali/installazione/04-dopo-installazione.md).
-
-### fsync vero, e alla pari con Linux (kernel 0.284-0.285)
-
-`fsync()` non faceva niente: la libc rispondeva 0 subito, perche' i
-filesystem di EX-OS scrivono a ogni `write` e si credeva che non restasse
-niente in sospeso. La scrittura pero' arriva alla cache del disco, non al
-supporto (e sul FAT nemmeno a quella: la cache di `fat.c` aspetta
-`fat_sync`). Un commit di InnoDB confermato al client poteva sparire con
-una mancanza di corrente.
-
-- **kernel 0.284, `SYS_FSYNC` (258):** il volume del file scrive quello che
-  tiene (la cache del FAT, i blocchi riservati e il giornale di ext2/ext3)
-  e il disco riceve FLUSH CACHE. Si svuota tutto il volume e non solo il
-  file: la cache del disco non sa cosa sia un file. C'e' anche
-  `fdatasync`, che fa lo stesso. Con un kernel piu' vecchio la libc fa come
-  prima.
-- **verificato dal di fuori:** con la traccia di QEMU (`ide_bus_exec_cmd`),
-  30 s di MariaDB con 4 client mandano al disco 17 927 FLUSH CACHE EXT;
-  prima nessuno.
-
-Il confronto (voce 34 della coda): 10 minuti, 512 client senza pausa, lo
-stesso generatore, le stesse opzioni di `my.cnf`, la stessa macchina
-virtuale (QEMU a 64 bit con KVM, una CPU, 2 GB, disco IDE, e1000 sulla rete
-user di QEMU), le immagini dei dischi sullo stesso disco dell'host; InnoDB
-scrive sul disco a ogni commit su tutti e due
-(`innodb_flush_log_at_trx_commit = 1`):
-
-| 512 client, 10 minuti | Linux (Debian 13) | EX-OS 0.284 | EX-OS 0.285 |
-|---|---|---|---|
-| istruzioni/s | 1764 | 343 | **1940** |
-| p50 | 220 ms | 1,25-1,48 s | 220 ms |
-| p95 | 440-880 ms | 3-5 s | 440-740 ms |
-| errori | 1 | 35 (deadlock di InnoDB) | 4 |
-| connessioni fallite | 1 | 5 | 5 |
-
-Le connessioni fallite sono handshake scaduti nella salita, quando 512
-client arrivano in 25 secondi; si sono ricollegate tutte.
-
-Restano diversi: ext4 contro ext2, qcow2 contro raw, MariaDB 11.8.6 di
-Debian contro 11.8.9. Nessun pacchetto perso da EX-OS.
-
-! **LE MISURE DELLE SEZIONI QUI SOTTO (2109/s, le 8 ore a 1011/s) SONO SENZA
-  FSYNC**: il disco non veniva mai svuotato.
-
-Col 0.284 EX-OS era cinque volte piu' lento di Linux sullo stesso lavoro, e
-le cause erano due, corrette nel **kernel 0.285**:
-
-- **il flush col lucchetto del VFS preso.** Mentre il disco svuotava la
-  cache, nessun altro filo poteva aprire, leggere o scrivere un file: con
-  MariaDB vuol dire tutti i fili, a ogni commit. Ora `fsync` su ext2 fa
-  sotto il lucchetto solo la parte del filesystem (i blocchi riservati, il
-  giornale) e svuota il disco dopo averlo rilasciato.
-- **il driver del disco girava a vuoto.** Aspetta la fine di un comando
-  leggendo il registro di stato (niente IRQ 14, per le ragioni scritte in
-  `ata.c`), e con una CPU sola quell'attesa era tempo tolto a tutti. Ora,
-  dopo poche letture, cede la CPU agli altri fili e riguarda dopo; il
-  lucchetto del disco resta suo, e le scadenze sono in tick come prima.
-
-Insieme bastano: i commit di molte transazioni ora si raggruppano in un
-flush solo (group commit di InnoDB), perche' gli altri fili lavorano mentre
-il disco svuota. Il disco riceve ancora i suoi FLUSH CACHE (17 660 in 30 s
-con 4 client, come col 0.284): la durata dei commit e' la stessa.
-
-Chi preferisce la velocita' e accetta di perdere al massimo l'ultimo
-secondo di transazioni mette `innodb_flush_log_at_trx_commit = 2` in
-`[mysqld]` (manuale 4.10).
-
-### Nessun tetto fisso, e Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)
-
-La regola dell'utente: processi, fili, applicazioni e connessioni hanno
-come limite solo la configurazione del singolo server e l'hardware, mai
-un numero scritto nel codice. Quello che e' cambiato:
-
-- **i descrittori (kernel 0.281):** la tabella di un programma non e' piu'
-  128 posti nel PCB ma blocchi di 128 aggiunti quando servono. Il tetto e'
-  `RLIMIT_NOFILE`: `fdmax` in `kernel.cfg`, oppure uno ogni 2 KB di RAM
-  (262144 con 512 MB), e `setrlimit` lo abbassa per un programma. Socket,
-  insiemi epoll e zone di memoria condivisa prendono i numeri dal kernel
-  come i file; `select` accetta descrittori fino al limite del programma.
-- **i processi e i fili (kernel 0.282):** spariscono `MAX_PROCESSES` (192
-  in tutto il sistema) e `FILO_MAX` (128 fili per programma). I PCB stanno
-  in blocchi che si aggiungono quando servono; le pile dei fili oltre le
-  127 riservate scendono verso lo heap. `procmax` in `kernel.cfg` mette un
-  tetto piu' basso per un server. **Il tetto vero oggi e' la fascia del
-  kernel:** ogni processo e ogni filo hanno 128 KB di pila del kernel nei
-  primi 64 MB, quindi circa 400-450 in tutto il sistema qualunque sia la
-  RAM (voce 35 della coda).
-- **file aperti, pipe, terminali, poll (kernel 0.282):** le tabelle del
-  sistema da 256 file aperti, 16 pipe e 4 pseudo-terminali crescono a
-  richiesta; `poll` del kernel prende piu' di 16 voci.
-- **libc:** le tabelle dei fili (128) e degli `errno` (64) diventano
-  catene di blocchi.
-- **textline 0.003:** il file sta in memoria allocata, riga per riga; erano
-  512 righe da 128 caratteri, e `textline file -v` si fermava alla riga 512
-  senza dire niente (`/boot/kernel.txt` ne ha 527: prova_telnet vedeva
-  mancare l'ultima riga).
-- **ip.drv 0.017:** la tabella TCP cresce fino a `tcpmax` in `kernel.cfg`,
-  o una connessione ogni 32 KB di RAM; `ip.drv -t N` per una sola
-  accensione. **ip.drv 0.018:** `shutdown(SHUT_WR)` (la chiusura a meta':
-  si smette di scrivere e si continua a leggere), e il FIN parte dopo i
-  dati ancora in coda (prima un `close` subito dopo una `write` poteva
-  perdere la coda dei dati).
-
-**Apache httpd 2.4.69** (con APR 1.7.6, APR-util 1.6.5, Expat 2.9.0;
-`tools/httpd-exos/costruisci.sh 32|64`, gruppo `[apache]` della ISO degli
-strumenti e di netinst, in `/exos/apache2`): MPM worker in un processo solo
-con 256 fili (`httpd -X`), tutti i moduli statici, mod_ssl con OpenSSL 4.1,
-i CGI con `spawn_ex` (EX-OS non ha `fork`: la voce 33 della coda).
-`tools/prova_httpd.sh` lo prova in QEMU, a 32 e 64 bit: una pagina, un CGI
-con GET e con POST, un 404, `ab` dentro EX-OS e dall'host. La chiusura a meta' ha portato
-ogni richiesta da 2 s (Apache aspettava che il client chiudesse) a pochi
-millisecondi:
-
-| | prima di ip.drv 0.018 | dopo, 32 bit | dopo, 64 bit |
-|---|---|---|---|
-| `ab` dentro EX-OS, 20 alla volta | 8 richieste/s | 240/s | 216/s |
-| `ab` dall'host, 50 alla volta | 24/s | 245/s | 234/s |
-
-Per far fermare Apache in modo pulito (`httpd -k stop`, codice d'uscita 0 a
-32 e 64 bit) sono servite due patch e tre correzioni fuori da Apache:
-
-- **L'ascoltatore del worker.** Allo spegnimento Apache lo sveglia con
-  `pthread_kill`, ma su EX-OS un segnale non interrompe `accept` ne' `poll`
-  (voce 37 della coda): Apache smetteva di aspettarlo dopo 5 s e usciva con
-  l'ascoltatore ancora vivo, che poi cadeva sullo scoreboard liberato.
-  `patch/worker-ascolto.diff` fa `poll` ogni 100 ms e guarda
-  `listener_may_exit`, come l'ascoltatore di MariaDB;
-  `patch/worker-uscita.diff` distrugge `pruntime` prima di `exit` (i pool
-  riciclati venivano distrutti due volte: glibc lo perdona, la malloc di
-  EX-OS no).
-- **Kernel 0.283, una perdita a ogni CGI.** `spawn` da' al figlio i
-  descrittori 0, 1 e 2 del padre, poi ci applica sopra le redirezioni
-  chieste, e il riferimento ereditato non tornava mai: ogni CGI lasciava un
-  riferimento su `logs/error_log`, e dopo lo spegnimento il disco non si
-  smontava. Ora `umount` dice quale file tiene occupato un disco.
-- **ip.drv 0.019:** il FIN dell'altra parte arrivato prima della conferma
-  del nostro (CLOSING) faceva morire la connessione, e il nostro FIN e i
-  dati in coda non si ritrasmettevano piu'.
-- **Kernel 0.283:** un programma che va in fault stampa gli indirizzi dei
-  suoi segmenti trovati sulla pila (`PF:   sulla pila:`, per `addr2line`);
-  e' cosi' che si e' trovato l'ascoltatore.
-
-La prova dall'host passa per la rete user di QEMU, che accetta la porta
-inoltrata su un socket Linux con una coda d'ascolto minuscola: con 50
-client alla volta la coda dell'host trabocca (`ListenOverflows`, 14-16
-volte a corsa), l'host butta i SYN e il client ritenta dopo 1, 3, 7, 15 s.
-Una cattura sulla e1000 ha mostrato che le richieste da 20 s, o mai finite,
-a EX-OS non erano mai arrivate. `prova_httpd.sh` ora aspetta fino a 120 s e
-stampa i trabocchi accanto al risultato.
-
-Prove nuove: `tools/prova_fd.sh` (2000 connessioni epoll, descrittori fino
-a 4005, `select` oltre 2048), `tools/prova_moltifili.sh` (386 fili vivi
-insieme in un programma a 32 bit, 354 a 64, poi un rifiuto pulito con
-EAGAIN). Manuale
-[4.11, il server web Apache](manuali/installazione/04-dopo-installazione.md).
-
-### 1024 connessioni a MariaDB: epoll, un gruppo di fili, una casella giusta (kernel 0.280, ip.drv 0.016)
-
-L'utente ha chiesto uno stress test: 1024 client che scrivono, leggono e
-aggiornano per 8 ore, misurando velocita', carico, tolleranza e perdite
-(uno script locale, fuori dal repository; client da Linux attraverso la rete, EX-OS
-a 64 bit in QEMU). Il primo giro si fermava a una ventina di client; cosa e'
-servito per arrivare a 1024:
-
-- **kernel 0.280, la fila davanti a una casella piena.** Una casella tiene
-  quattro messaggi; chi la trovava piena riprovava ogni 5 ms, e sotto carico
-  i fili piu' svelti entravano sempre mentre gli altri (`ipcfg`) aspettavano
-  10 s e rinunciavano. Ora chi manda fa la fila nel kernel e passa in ordine.
-- **ip.drv 0.016:** 4096 connessioni TCP (erano 24) con una tabella hash; un
-  programma tiene 1024 socket (erano 64); il buffer di ricezione da 63 KB di
-  uno slot riusato andava perso (una perdita); **epoll e poll stanno nello
-  stack**, che sveglia da se' il programma quando una connessione e' pronta.
-- **libc:** `<sys/epoll.h>` (`epoll_create1`, `epoll_ctl`, `epoll_wait`,
-  `epoll_pwait`, solo socket TCP), `poll` in un messaggio solo allo stack,
-  `FD_SETSIZE` 2048, `RLIMIT_NOFILE` 4096, `shutdown(SHUT_RDWR)` lascia la
-  connessione nel suo insieme epoll e ne segnala la fine come Linux,
-  `strerror` conosce tutti gli errori di rete (diceva solo «errore»).
-- **MariaDB col gruppo di fili** (`thread_handling=pool-of-threads`,
-  `patch/server-threadpool-epoll.diff`): un filo per connessione vorrebbe
-  128 KB di pila del kernel ciascuno nella fascia di 64 MB del kernel, e
-  EX-OS aveva 192 posti per processi e fili (fino al kernel 0.281). Ora
-  poche decine di fili servono tutte le connessioni. `mariadb-svc` 0.003 scrive `max_connections = 1024`
-  e il gruppo in `/etc/my.cnf` (manuale 4.10).
-- **e1000:** l'anello di ricezione passa da 32 a 96 descrittori e la coda
-  verso ip.drv da 64 a 256 frame: con mille connessioni l'anello traboccava,
-  e ogni frame perso fermava una connessione fino a 22 s.
-- `ipcfg -tcp` elenca le connessioni TCP; `memlog` (dentro EX-OS) registra
-  memoria, fili, la tabella TCP e dove si perdono i pacchetti.
-
-Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS; fino al
-kernel 0.283, quando `fsync` non svuotava il disco: vedi la sezione sul
-kernel 0.284):
-
-| client | pausa | istruzioni/s | p50 | p95 |
-|---|---|---|---|---|
-| 64 | nessuna | 2109 | 23 ms | 93 ms |
-| 1024 | 1 s | 870 | 5,5 ms | 20 ms |
-| 1022, 8 ore | 1 s | 1011 | 5,8 ms | 23 ms |
-
-Senza KVM il tetto e' la CPU emulata (circa 400/s qualunque sia il numero
-di client). 1024 client senza nessuna pausa sono piu' di quanto la
-macchina possa servire: le risposte passano i 30 s, i client si ricollegano
-con un handshake TLS ciascuno e il server resta indietro (e' il limite di
-tolleranza, non un crollo del sistema).
-
-Il giro di 8 ore (1022 client, perche' ogni programma ha 1024 socket e
-l'ascoltatore e il monitor dello stato ne prendono due): 29,1 milioni di
-istruzioni, 5 errori (tutti deadlock di InnoDB fra transazioni concorrenti,
-che il client deve ripetere), nessuna riconnessione, nessuna connessione
-rifiutata o caduta, nessun pacchetto perso dalla scheda o da ip.drv, uno
-spegnimento pulito ("Shutdown complete"). Velocita' e p95 del primo e
-dell'ultimo quarto sono uguali (1012/s e 1013/s, 23 ms). `Memory_used` di
-MariaDB resta a 840 MB per tutto il giro; la memoria libera di EX-OS cala
-di circa 1 MB l'ora mentre le tabelle crescono e torna tutta quando
-mariadbd esce: nessuna perdita nel sistema. Un rallentamento di circa due
-minuti (p95 2,5 s, risposta peggiore 9,8 s, alla quarta ora e mezza) non
-ha lasciato tracce dal lato del server; la causa e' da trovare. Il confronto con
-Linux sullo stesso hardware (voce 34) e' nella sezione sul kernel 0.284:
-con lo stesso lavoro sul disco EX-OS e' piu' lento.
-
-### MariaDB 11.8 LTS gira in EX-OS (0.279)
-
-**provato a 32 e 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
---bootstrap` crea le tabelle di sistema, il server parte e ascolta su
-`127.0.0.1:3306`, il client `mariadb` crea una tabella InnoDB, ci mette tre
-righe, annulla una cancellazione col rollback, e `mariadb-admin shutdown`
-ferma il server pulito; dopo, Linux trova sul disco `ibdata1` e il `.ibd`
-della tabella.
-
-MariaDB **11.8.9**, l'ultima versione del ramo stabile a lungo termine
-(l'archivio ufficiale, firma GPG verificata, in
-`cross_build/terze-parti/mariadb`), costruito da
-`tools/mariadb-exos/costruisci.sh` sulle librerie vere di EX-OS: ncurses,
-zlib, bzip2, xz, lz4, zstd, PCRE2, fmt e OpenSSL 4.1.0. Tutto statico
-(`mariadbd` e' 27 MB senza simboli); il server ascolta solo in TCP, perche'
-EX-OS non ha i socket AF_UNIX. `innodb_buffer_pool_size_max` va dato: per
-difetto InnoDB riserva 8 TB di indirizzi a 64 bit, e un programma di EX-OS ne
-ha 3 GB. Gruppo `[mariadb]` della ISO degli strumenti e di netinst: il server
-in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`, i sorgenti. La
-ISO degli strumenti ora e' un DVD (circa 500 MB per architettura solo per
-MariaDB).
-
-**I connettori, anche da soli:** nel catalogo ci sono due voci.
-`netupdate -install:mariadb` porta il server e i connettori;
-`netupdate -install:mariadb-connector` solo i connettori, per i programmi che
-parlano con un MariaDB o un MySQL: **Connector/C 3.4.11** (`<mysql.h>`,
-`libmariadbclient.a`), **Connector/C++ 1.1.9** (`<conncpp.hpp>`,
-`libmariadbcpp.a`, costruito sopra il Connector/C di sistema), **`mariadb.bi`**
-per FreeBASIC e il crate Rust **`mariadb`** (un file, senza dipendenze, perche'
-dentro EX-OS c'e' `rustc` ma non `cargo`). `tools/prova_mariadb.sh` prova un
-programma per linguaggio contro il server dentro EX-OS (FreeBASIC a 32 bit).
-
-**Il servizio:** `mariadb-svc -install` (da root) crea l'utente `mysql`,
-`/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql`, il certificato
-TLS del server (una volta sola: MariaDB 11.8 farebbe una chiave RSA da 4096
-bit a ogni avvio, minuti su una CPU lenta) e un blocco in
-`/boot/avvio.sh`: il server parte a ogni avvio, prima del login, e lo
-spegnimento lo chiude (manuale 4.10). I dettagli sono in
-`tools/mariadb-exos/leggimi.md`.
-
-Cosa e' servito in EX-OS:
-
-- **kernel 0.279, i segnali.** `sigwait`, `sigtimedwait`, `sigwaitinfo`
-  (`SYS_SEG_ATTENDI`) e `sigsuspend` (`SYS_SEG_SOSPENDI`). Un segnale con
-  l'azione predefinita mandato a un programma che lo blocca ora resta in
-  attesa, come dice POSIX, invece di terminare il programma: e' cosi' che un
-  server blocca SIGTERM in tutti i fili e lo aspetta in uno
-  (`tools/prova_sigwait.sh`, 32 e 64 bit, anche da un altro processo).
-- **kernel 0.279, `open` di una directory.** `open(dir, O_RDONLY)` da' un
-  descrittore invece di EISDIR: `fstat`, `fsync`, `dup` e `close` funzionano,
-  `read` rende EISDIR, chiedere di scrivere rende EISDIR. Aria e InnoDB
-  aprono la cartella dei dati per rendere durevole un file nuovo. Una
-  directory aperta con `O_TRUNC` veniva troncata prima di essere rifiutata.
-- **libc:** `setgid`, `setreuid`/`setregid`, `setgroups`/`initgroups`,
-  `execl`/`execlp`, `getpwent`, `getlogin`, `IN6_IS_ADDR_*`, `NI_NAMEREQD`,
-  `POLLRDNORM` e compagni, `<netinet/ip.h>`, `<netinet/in_systm.h>`,
-  `<sys/poll.h>`, i tipi BSD (`u_char`, `uint`...); `getrlimit` dice 128
-  descrittori (diceva ancora 32, da prima del kernel 0.232); `fscanf`
-  lasciava `feof` spento alla fine del file, perche' il suo `fseek` indietro
-  lo cancellava.
-- **libc, `_FILE_OFFSET_BITS=64` sul sistema a 32 bit.** Come con glibc, un
-  programma compilato cosi' (MariaDB lo e') ha un `off_t` a 64 bit, e
-  `lseek`, `pread`, `pwrite`, `ftruncate`, `truncate`, `fseeko`/`ftello`,
-  `mmap`, `stat`/`lstat`/`fstat` diventano le loro versioni `*64` di
-  `libc.a`; i programmi compilati senza non cambiano. Il kernel tiene ancora
-  2 GB per file su entrambe le architetture: oltre, la libc rifiuta (EFBIG,
-  EOVERFLOW, fine del file) invece di tagliare la posizione. A 64 bit
-  `lseek`, `pwrite` e `ftruncate` passavano al kernel una posizione di 3 GB
-  tagliata a 32 bit (un `ftruncate` a 3 GB cambiava il file): ora rifiutano
-  anche li' (`tools/prova_lfs.sh`, 32 e 64 bit).
-- **ip.drv 0.014, 127.0.0.1 senza scheda.** Il loopback sta dentro
-  `ip.drv`, che senza scheda di rete usciva: una macchina senza rete non
-  raggiungeva il proprio server. Ora resta acceso con il solo 127.0.0.1; una
-  scheda che arriva dopo la prende come prima.
-- **kernel 0.279, lo spegnimento.** Prima di spegnere o riavviare il kernel
-  manda SIGTERM a ogni programma che non e' un driver e aspetta fino a 30 s,
-  cosi' `mariadbd` chiude InnoDB prima che i dischi si sincronizzino;
-  `setuid` cambia tutti i fili del programma, non solo chi chiama
-  (`mariadbd` scende a `mysql` con i fili gia' partiti). `getpwnam` e
-  compagni della libc leggono `/boot/utenti`.
-
-### OpenSSL 4.1.0 con socket e fili, e 127.0.0.1
-
-**provato a 32 e 64 bit in QEMU** (`tools/prova_openssl.sh`, con la rete di
-QEMU): quattro fili calcolano impronte, cifrano e creano `SSL_CTX` insieme;
-un server e un client TLS nello stesso programma si parlano su `127.0.0.1`
-(`SSL_set_fd` su un socket accettato, come fa MariaDB); TLS 1.3 verso
-`www.example.com:443` su un socket vero, con il certificato verificato; il
-programma `openssl` calcola lo stesso SHA-256 di Linux, fa una chiave Ed25519
-e un certificato che `openssl verify` di Linux accetta, e `openssl s_client`
-si collega e verifica.
-
-Finora EX-OS aveva una copia del ramo di sviluppo di OpenSSL costruita con
-`no-sock no-threads`: TLS solo attraverso due BIO di memoria (`provatls`).
-MariaDB vuole i socket e i lucchetti, e la regola e' l'ultima versione
-pubblica: ora e' OpenSSL **4.1.0** (23 ottobre 2026, firma GPG verificata),
-costruito da `tools/openssl-exos/costruisci.sh` come le altre librerie, con
-i socket, i pthread e il programma `openssl`; sorgenti su entrambi i CD degli
-strumenti, gruppo `[ssl]`, quindi anche nei netinst. `provatls`, `provassl` e
-libgit2 sono ricostruiti sopra (`tools/openssl-exos/prepara-openssl.sh` non
-c'e' piu').
-
-Cosa e' servito altrove:
-
-- **ip.drv 0.013, il loopback.** Un frame per questa macchina (127.x.x.x o il
-  suo indirizzo) andava alla scheda di rete e si perdeva: nessun programma
-  poteva raggiungere un server sulla stessa macchina. Ora aspetta in una coda
-  dentro ip.drv e rientra come se fosse arrivato; niente ARP, l'indirizzo
-  sorgente e' la destinazione stessa, e 127.x.x.x dal filo si scarta.
-- **libc:** `select()` vede i socket e tutti i file (`fd_set` e' passato da
-  una parola di 32 bit a 1088 descrittori; un programma costruito con quello
-  vecchio funziona ancora con la `libc.so` nuova, perche' si toccano solo le
-  parole sotto `nfds`); `getsockname` rende l'indirizzo dato a `bind`;
-  `connect` verso `0.0.0.0` va a `127.0.0.1` come su Linux;
-  `getservbyname`/`getservbyport` (con `mysql` 3306 nella tabella); `setpgid`
-  verso il proprio gruppo.
-
-### Sette librerie come librerie vere di EX-OS: zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}
-
-**provate a 32 e 64 bit in QEMU** (`tools/prova_librerie.sh`): un programma
-(`tools/prove/libreprova.cpp`) comprime e decomprime 64 KB con ogni
-compressore, cerca con PCRE2 (anche `regcomp`/`regexec` POSIX), formatta con
-fmt; poi `xz`, `zstd`, `bzip2` e `lz4` comprimono dentro EX-OS un file che
-Linux decomprime, e decomprimono archivi fatti da Linux — confrontati byte
-per byte.
-
-Le librerie che servono a MariaDB, portate prima e per conto loro perche'
-serviranno anche ad altro (la regola: ogni dipendenza diventa una libreria
-vera prima del programma che la vuole). Ognuna e' l'ultima versione
-pubblica, con l'archivio verificato (firma GPG, o lo sha256 pubblicato) e
-conservato in `cross_build/terze-parti/`; ognuna ha il suo
-`tools/<nome>-exos/costruisci.sh` (la parte comune in
-`tools/librerie-exos/comune.sh`), si costruisce a 32 e 64 bit, va nei
-sysroot incrociati (`-lz`, `-lbz2`, `-llzma`, `-llz4`, `-lzstd`,
-`-lpcre2-8`, `-lfmt`) e su entrambi i CD degli strumenti con i sorgenti, un
-gruppo del catalogo ciascuna (`[zlib]` `[bzip2]` `[xz]` `[lz4]` `[zstd]`
-`[pcre2]` `[fmt]`), quindi anche nei netinst:
-
-| libreria | versione | programmi |
-|---|---|---|
-| zlib | 1.3.2 | |
-| bzip2 | 1.0.8 | bzip2, bzip2recover |
-| XZ Utils (liblzma) | 5.8.4 | xz, xzdec, lzmadec, lzmainfo |
-| LZ4 | 1.10.0 | lz4 |
-| Zstandard | 1.5.7 | zstd |
-| PCRE2 | 10.49 (8, 16, 32 bit, POSIX) | pcre2grep, pcre2test |
-| {fmt} | 12.2.0 (header e libfmt) | |
-
-- {fmt} 12.2.0 non si costruisce per nessun bersaglio a 32 bit (sue issue
-  #4811, #4886): si applica la correzione accettata a monte (pull request
-  #4813) finche' una versione non la porta;
-- PCRE2 per ora senza JIT (stessi risultati, interpretati);
-- la libc ha avuto `O_NOCTTY`, e `fchown` verso il proprietario che `stat`
-  gia' riporta riesce (xz diceva «Cannot set the file owner»).
-
-**E un difetto del kernel trovato dallo xz a 64 bit:** ogni `pthread_create`
-di un programma a 64 bit senza variabili `__thread` falliva (`EIO`, «non
-riesco a leggere l'immagine TLS per il filo»). Una riga di log nel
-caricatore ELF leggeva il segmento TLS anche quando non c'era; il
-compilatore l'ha presa come prova che il puntatore non fosse NULL e ha tolto
-i controlli piu' sopra, e l'immagine del filo veniva dall'indirizzo 0.
-Corretto in `kernel/loader/elf.c`.
-
-### ncurses 6.6: programmi a schermo intero sulla console e in telnet
-
-**provato a 32 e 64 bit in QEMU** (`tools/prova_curses.sh`): un programma
-curses disegna riquadri, video inverso, colori, cancella una riga, apre una
-finestra, e legge Su, F1, Canc e PagGiu' come `KEY_UP`, `KEY_F(1)`,
-`KEY_DC`, `KEY_NPAGE`; lo schermo si rilegge esatto da QEMU
-(`tools/schermo_testo.py` confronta ogni cella con i glifi della console).
-**E lo stesso programma compilato dentro EX-OS** col `gcc -lncurses` del CD
-degli strumenti fa lo stesso.
-
-La vera libreria curses, la prima delle librerie che servono a MariaDB e
-che servono anche a tutto il resto: `libncurses.a` (anche `-lcurses`),
-`libpanel`, `libmenu`, `libform`, `libncurses++`, gli header, la terminfo, e
-`tic`, `infocmp`, `toe`, `tput`, `tset`, `reset`, `clear`, `tabs`. Costruita
-dalla 6.6 ufficiale (firma verificata) da `tools/ncurses-exos/costruisci.sh`;
-nei sysroot delle toolchain incrociate, e su entrambi i CD degli strumenti
-con i sorgenti (gruppo `[curses]`), quindi anche nei netinst.
-
-- la console e' `TERM=vga`, e ha la sua voce terminfo
-  (`tools/ncurses-exos/exos.ti`): solo cio' che `vga.c` fa davvero. Per
-  questo la console ha imparato le sequenze su cui curses conta: inserire e
-  cancellare caratteri e righe, cancellare caratteri, colonna e riga, una
-  regione di scorrimento, l'indice inverso, salvare il cursore, il video
-  inverso. In modo grezzo la tastiera manda anche F1-F12, Ins, Canc, PagSu
-  e PagGiu';
-- `vga`, `linux`, `xterm`, `xterm-256color`, `vt100`, `vt220`, `ansi`,
-  `screen` e `dumb` sono dentro la libreria: curses funziona anche su un
-  sistema senza terminfo sul disco;
-- la libc ha avuto cio' che ncurses chiedeva: `getopt`, `getopt_long`
-  (`<getopt.h>`), `getpgrp`, `ttyname`, e i numeri `ioctl` del terminale in
-  `<sys/ioctl.h>`.
-
-Non ancora: `ncursesw`, la libreria a caratteri larghi, che aspetta l'UTF-8
-nella libc (oggi il suo `wchar_t` e' Latin-1); e `SIGWINCH`, quindi un
-programma che gira non si accorge di una finestra telnet ridimensionata.
-
-### Un terminale vero: termios sulla console e in telnet (0.279)
-
-**provato a 32 e 64 bit in QEMU** (`tools/prova_termios.sh`: libctest e
-`tools/prove/termiosprova.c` con `tcgetattr`/`tcsetattr`/`cfmakeraw` della
-libc.a, tasti battuti sulla console in modo grezzo; di nuovo `prova_telnet`,
-`prova_ctrlc`, `prova_ssh`).
-
-Finora un terminale aveva due modi, "a righe con eco" e "grezzo", e nessuna
-`struct termios`: `tcsetattr` non faceva niente. Gli editor, `less`, `top` e
-soprattutto **ncurses** (il prossimo porting, che serve al client di MariaDB
-e a molti altri programmi) cosi' non possono funzionare. Ora entrambi i
-terminali hanno una `struct termios` come quella di Linux (stessi valori,
-stessi `ioctl`: `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF`, `TCFLSH`,
-`TIOCGWINSZ`, `TIOCSWINSZ`):
-
-- **in una sessione telnet** (pty): `ICANON`, `ECHO`, `ECHOE`, `ECHOK`,
-  `ISIG`, `ICRNL`/`INLCR`/`IGNCR`, `OPOST`+`ONLCR`, `VMIN`/`VTIME`.
-  `isatty()` e' vero, e `TIOCGWINSZ` da' la misura della finestra del client;
-- **sulla console**, una per console virtuale: senza `ICANON` il driver della
-  tastiera consegna i tasti uno per uno invece delle righe, una freccia come
-  `ESC [ A` intero, Invio come CR, `^C` come byte quando `ISIG` e' spento,
-  niente eco quando `ECHO` e' spento; `poll()` sullo stdin si sveglia appena
-  si preme un tasto. `TIOCGWINSZ` da' la misura vera (100x37 in QEMU), non
-  80x25.
-
-Un programma che lascia il terminale grezzo e muore non lascia una shell
-sorda: la shell (0.009) rimette i modi normali prima di ogni prompt.
-
-### Una sessione telnet che non torna, e lo schermo della NVIDIA integrata (0.278)
-
-**provato a 32 e 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd ucciso e
-rilanciato, un programma dell'altra architettura, una sessione lasciata a metà
-dentro `gfedit`), e i numeri dello schermo **misurati sul CQ60**.
-
-**Sul CQ60 la porta 23 si apriva e non tornava un byte, nemmeno dopo `kill` e
-un `telnetd` nuovo.** Serviva riavviare. Tre difetti in fila:
-
-- un programma a 32 bit sul kernel a 64 è `ENOEXEC`, e la shell (0.008)
-  mandava ogni `ENOEXEC` al programma associato al file: `gfedit`. `gfedit`
-  legge la tastiera della macchina, non la sessione, e la sessione restava
-  lì. Adesso la shell dice **«e' un programma a 32 bit, questo sistema e' a
-  64»** (o il contrario) e va avanti;
-- quando il client se ne va `telnetd` interrompe la shell della sessione; ma
-  `waitpid`, svegliata, **tornava ad aspettare** il figlio, e la shell non
-  arrivava mai all'uscita che il kernel fa sulla via del ritorno dalla
-  chiamata. Adesso `waitpid` e `thread_attendi` rendono `EINTR` a un processo
-  interrotto, come facevano già pipe, IPC e pty. `telnetd` (0.011) raccoglie
-  anche la shell, che restava zombie;
-- l'ascoltatore del `telnetd` ucciso **restava sulla porta 23 in `ip.drv`**:
-  accettava ogni connessione senza nessuno dietro e respingeva il `telnetd`
-  nuovo (`EADDRINUSE`). `ip.drv` (0.012) libera la porta di un programma
-  morto, sia quando qualcuno chiede di ascoltare sia all'arrivo di un SYN.
-
-**La NVIDIA integrata scriveva lo schermo a 47 MB/s.** Sulle MCP77/79 la
-«memoria video» è RAM messa da parte dal BIOS, e attraverso la BAR1 della
-scheda ogni pixel fa CPU -> scheda -> RAM: la scrittura combinata (0.275) non
-cambiava niente. `nv50.drv` 0.008 dà al kernel l'indirizzo di quella RAM, che
-il kernel mappa a scrittura combinata come ogni framebuffer:
-
-```
-                               BAR1     RAM rubata
-CPU riempie lo schermo           47       4167   MB/s
-ombra in RAM -> schermo          47       1475
-CPU legge lo schermo              4         82
-```
-
-Un fotogramma intero della scrivania a 1366x768 passa da circa 90 ms a circa 3.
 
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 

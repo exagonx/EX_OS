@@ -101,6 +101,15 @@
  * sbaglia, si butta via il DMA per tutta la sessione. */
 #define ATA_TMO_DMA_MS      8000    /* un trasferimento DMA, fino a       */
 #define ATA_TMO_IDENT_MS    3000
+/* ! FLUSH CACHE HAS ITS OWN, LONGER DEADLINE (kernel 0.286). The disk writes
+ * its whole write cache before it answers: on a real disk that can be tens
+ * of seconds, and under QEMU it is the host's fdatasync of the image file.
+ * With the 5 s of ATA_TMO_BSY_MS the first fsync after a 2 GB image had been
+ * written on the host timed out (status 0xC0, BSY), fsync said EIO
+ * (InnoDB: "fdatasync() returned 5", MariaDB stopped) and the next DMA was
+ * started on a disk still busy with the flush. 30 s is what Linux's libata
+ * gives a flush on its last try. */
+#define ATA_TMO_FLUSH_MS    30000
 
 /* Massimo settori per singolo comando. LBA28 usa un conteggio a 8 bit
  * (0 = 256, ma non lo usiamo), LBA48 a 16 bit. */
@@ -1568,7 +1577,7 @@ static int ata_flush_nl(int indice)
     port_outb(io + ATA_REG_COMMAND, d->lba48 ? ATA_CMD_FLUSH_EXT : ATA_CMD_FLUSH);
     ata_400ns(d->canale);
 
-    st = ata_attendi_non_bsy_cedendo(d->canale, ATA_TMO_BSY_MS);
+    st = ata_attendi_non_bsy_cedendo(d->canale, ATA_TMO_FLUSH_MS);
     if (st < 0 || ((uint8_t)st & (ATA_SR_ERR | ATA_SR_DF))) return -1;
 
     return 0;

@@ -43,6 +43,8 @@ SALTA = ("gcc/", "coreutils/", "rust/", "FreeBASIC", "openssl/", "quickjs/",
          "mariadb-server/",
          # Apache httpd (27 October 2026): third-party tree like MariaDB.
          "httpd/", "apr/", "apr-util/", "libexpat/",
+         # PHP (28 October 2026): third-party tree like httpd.
+         "php-src/",
          # build-64/ is compiled output like build/: its tools tree holds
          # third-party headers (fmt, MariaDB's authors.h, 26 October 2026).
          "build-64/")

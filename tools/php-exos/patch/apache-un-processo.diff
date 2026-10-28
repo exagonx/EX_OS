@@ -1,0 +1,23 @@
+apache-un-processo.diff - httpd in one process (-X, the only way on EX-OS,
+which has no fork): mod_php's child shutdown ran tsrm_shutdown(), then the
+server shutdown, in the same process, called sapi_shutdown() on the
+destroyed TSRM: httpd -k stop died with a page fault in ts_free_id. In one
+process the child shutdown now leaves everything to the server shutdown.
+
+diff -ru a/sapi/apache2handler/sapi_apache2.c b/sapi/apache2handler/sapi_apache2.c
+--- a/sapi/apache2handler/sapi_apache2.c	2026-10-28 21:36:17.025731341 +0100
++++ b/sapi/apache2handler/sapi_apache2.c	2026-10-28 21:36:17.037731302 +0100
+@@ -430,6 +430,13 @@
+ 
+ static apr_status_t php_apache_child_shutdown(void *tmp)
+ {
++	/* One process (httpd -X, -DONE_PROCESS): the child is the server
++	 * itself, and php_apache_server_shutdown runs after this one in the same
++	 * process, with sapi_shutdown() on the TSRM this would have destroyed.
++	 * Leave the whole shutdown to it. */
++	if (ap_exists_config_define("DEBUG") || ap_exists_config_define("ONE_PROCESS")) {
++		return APR_SUCCESS;
++	}
+ 	apache2_sapi_module.shutdown(&apache2_sapi_module);
+ #if defined(ZTS) && !defined(PHP_WIN32)
+ 	tsrm_shutdown();

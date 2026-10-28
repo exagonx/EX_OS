@@ -4827,6 +4827,11 @@ int open(const char *path, int flags, ...)
     return err_posix(_syscall3(SYS_OPEN, (uintptr_t)path, (uint32_t)flags, 0));
 }
 
+int creat(const char *path, mode_t mode)
+{
+    return open(path, O_WRONLY | O_CREAT | O_TRUNC, mode);
+}
+
 /* =============================================================================
  * THE DESCRIPTORS THE LIBC SERVES: sockets, epoll sets, shm zones (0.281)
  *
@@ -6598,6 +6603,55 @@ int closedir(DIR *d)
     return 0;
 }
 
+void qsort(void *base, size_t n, size_t dim,
+           int (*cmp)(const void *, const void *));   /* further down */
+
+int alphasort(const struct dirent **a, const struct dirent **b)
+{
+    return strcoll((*a)->d_name, (*b)->d_name);
+}
+
+/* The entries are copied as they come (readdir reuses one struct dirent per
+ * DIR); the array doubles as it fills. On any failure everything taken so
+ * far is given back and errno says why. */
+int scandir(const char *path, struct dirent ***lista,
+            int (*filtro)(const struct dirent *),
+            int (*confronta)(const struct dirent **, const struct dirent **))
+{
+    DIR *d;
+    struct dirent *e, **v = NULL, **nv;
+    size_t n = 0, cap = 0;
+
+    if (lista == NULL) { errno = EINVAL; return -1; }
+    d = opendir(path);
+    if (d == NULL) return -1;
+    while ((e = readdir(d)) != NULL) {
+        if (filtro != NULL && !filtro(e)) continue;
+        if (n == cap) {
+            cap = cap ? cap * 2 : 16;
+            nv = (struct dirent **)realloc(v, cap * sizeof(*v));
+            if (nv == NULL) goto senza_memoria;
+            v = nv;
+        }
+        v[n] = (struct dirent *)malloc(sizeof(struct dirent));
+        if (v[n] == NULL) goto senza_memoria;
+        memcpy(v[n], e, sizeof(struct dirent));
+        n++;
+    }
+    closedir(d);
+    if (confronta != NULL && n > 1)
+        qsort(v, n, sizeof(*v), (int (*)(const void *, const void *))confronta);
+    *lista = v;
+    return (int)n;
+
+senza_memoria:
+    while (n > 0) free(v[--n]);
+    free(v);
+    closedir(d);
+    errno = ENOMEM;
+    return -1;
+}
+
 /* =============================================================================
  * File temporanei
  *
@@ -6694,6 +6748,11 @@ int mkstemp(char *modello)
 
         fd = open(modello, O_RDWR | O_CREAT | O_TRUNC);
         if (fd >= 0) return fd;
+        /* open's own error (ENOENT: the directory is not there, EROFS...)
+         * is the answer: another name would fail the same way. It used to
+         * say EEXIST, and PHP's opcache reported "lock file in /tmp:
+         * exists" for a /tmp that did not exist (28 October 2026). */
+        if (errno != EEXIST) return -1;
     }
 
     errno = EEXIST;
@@ -7668,6 +7727,11 @@ int getrusage(int chi, struct rusage *uso)
 int getpagesize(void)
 {
     return 4096;
+}
+
+int getdtablesize(void)
+{
+    return (int)sysconf(_SC_OPEN_MAX);
 }
 
 /* =============================================================================

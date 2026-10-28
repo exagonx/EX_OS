@@ -297,7 +297,9 @@ programma. Le voci della barra le mandano i servizi stessi: vedi
 <tr><td><code>[kernel]</code></td>
     <td><code>loglevel</code>, <code>timer_hz</code>, <code>verboseboot</code>,
         <code>keymap</code>, <code>lingua</code>, <code>swap</code>,
-        <code>atadma</code>, <code>smp</code></td></tr>
+        <code>atadma</code>, <code>smp</code>, e i tetti
+        <code>procmax</code>, <code>fdmax</code>, <code>tcpmax</code>
+        (vedi sotto)</td></tr>
 <tr><td><code>[env]</code></td>
     <td>le variabili d'ambiente iniziali: <code>PATH</code>,
         <code>HOME</code>, <code>TERM</code></td></tr>
@@ -679,6 +681,55 @@ d'una (e' capitato), il kernel ne legge una e <code>svga.drv</code> ne
 cambiava un'altra: a ogni avvio l'avviso che kernel.cfg e stage 2 non vanno
 d'accordo. Da <code>svga.drv</code> 0.005 la riscrittura lascia una voce
 sola: basta rilanciare <code>svga.drv &lt;modo&gt;</code>.
+</p>
+
+<h2 id="tetti">Quanti processi, file e connessioni</h2>
+
+<p>
+Il sistema non ha numeri fissi per processi, fili, file aperti e connessioni
+(dal kernel 0.281 al 0.283): i tetti vengono dalla memoria della macchina, e
+in <code>[kernel]</code> si possono solo abbassare.
+</p>
+
+<table border="1">
+<tr><th>Voce</th><th>Che cosa conta</th><th>Senza la voce</th></tr>
+<tr><td><code>procmax</code></td><td>processi e fili, in tutto il sistema</td>
+    <td>RAM diviso 128 KB, al massimo 512</td></tr>
+<tr><td><code>fdmax</code></td><td>file, pipe e socket di un programma</td>
+    <td>uno ogni 2 KB di RAM, almeno 1024</td></tr>
+<tr><td><code>tcpmax</code></td><td>connessioni TCP di <code>ip.drv</code></td>
+    <td>una ogni 32 KB di RAM, almeno 4096</td></tr>
+</table>
+
+<p class="nota">
+<b>Il tetto vero di oggi sono circa 450 processi e fili.</b> Ognuno ha 128 KB
+di pila nel kernel, e quelle pile stanno nei primi 64 MB di memoria. Le
+spiegazioni complete sono in <code>/boot/kernel.txt</code>; <code>ipcfg
+-tcp</code> mostra le connessioni, <code>ps</code> i processi.
+</p>
+
+<h2 id="server">I server: MariaDB e Apache</h2>
+
+<p>
+Dalla rete (<code>netupdate</code>) o dal DVD degli strumenti arrivano due
+server, a 32 e a 64 bit:
+</p>
+
+<ul>
+<li><b>MariaDB 11.8</b> (<code>netupdate -install:mariadb</code>, poi
+<code>mariadb-svc -install</code>): parte a ogni avvio prima del login e si
+chiude da solo allo spegnimento. Ascolta su <code>127.0.0.1:3306</code>, serve
+1024 connessioni con un gruppo di fili, e ogni commit e' sul disco (dal kernel
+0.284).</li>
+<li><b>Apache 2.4</b> (<code>netupdate -install:apache</code>): un processo
+solo con il MPM worker, una connessione per filo, CGI compilati e HTTPS con
+OpenSSL 4.1.</li>
+</ul>
+
+<p>
+Come si installano, si configurano e si fermano: capitoli 4.10 e 4.11 del
+manuale di installazione (<code>manuali/installazione</code>), e
+<code>help mariadb</code>, <code>help httpd</code>.
 </p>
 
 <h2>Gli utenti</h2>

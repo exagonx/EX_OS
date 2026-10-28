@@ -523,3 +523,51 @@ server su `/server-status` solo da 127.0.0.1, il registro in
   `<VirtualHost>` con `SSLCertificateFile` e `SSLCertificateKeyFile`.
   `mod_http2`, `mod_md`, `mod_lua`, `mod_proxy_html`, LDAP e `cgid` non ci
   sono.
+
+## 4.12 PHP
+
+```
+netupdate -install:apache     porta con sé PHP (il gruppo [php])
+netupdate -install:php        solo PHP, da riga di comando
+```
+
+PHP 8.5.12, nella versione per i fili (ZTS). **Dentro Apache c'è già**:
+`mod_php` è compilato dentro `httpd`, perché su EX-OS i moduli non si
+caricano a programma acceso (niente `LoadModule`). Una pagina `.php` in
+`/exos/apache2/htdocs` la esegue lui, e `index.php` vale come pagina
+iniziale di una cartella. Da riga di comando c'è `/exos/php/bin/php`.
+
+Le impostazioni sono in `/exos/php/etc/php.ini`. Dopo una modifica si
+riavvia Apache (`httpd -k stop`, poi di nuovo `httpd -X ...`).
+
+! **I FILE TEMPORANEI VANNO IN `/exos/php/tmp`**: EX-OS non ha `/tmp`.
+  `php.ini` ci manda le sessioni, i file caricati e il file di blocco di
+  opcache. Senza quelle righe opcache cerca `/tmp`, non lo trova, e Apache
+  non parte («Unable to create opcache lock file»).
+
+! **I DATABASE SI APRONO CON PDO O CON mysqli**, tutti e due sopra
+  `mysqlnd`, il client scritto dentro PHP: non serve il Connector/C. Il
+  server della stessa macchina è `127.0.0.1` (non `localhost`: EX-OS non ha
+  i socket AF_UNIX):
+
+  ```php
+  $db = new PDO('mysql:host=127.0.0.1;dbname=prova', 'utente', 'password', [
+      PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+      PDO::ATTR_PERSISTENT => true,      // una connessione per filo di httpd
+  ]);
+  ```
+
+Le estensioni che ci sono: PDO con `pdo_mysql`, `mysqli`, `openssl`,
+`zlib`, `mbstring` (senza le espressioni regolari multibyte), `session`,
+`filter`, `ctype`, `tokenizer`, `posix`, opcache (senza JIT), e quelle che
+PHP ha sempre (`json`, `pcre`, `date`, `hash`, `spl`, `random`...).
+
+! **MANCANO quelle che vogliono librerie che EX-OS non ha ancora**: tutto
+  quello che usa libxml2 (`dom`, `simplexml`, `xml`, `xmlreader`,
+  `xmlwriter`, `soap`), `sqlite3` e `pdo_sqlite`, `curl`, `gd`, `intl`,
+  `iconv`, `sodium`, `zip`. E `sockets`, per tre costanti che la libc non ha.
+  `exec`, `system` e `proc_open` partono con `spawn_ex`, come i CGI.
+
+! **I sorgenti arrivano dal clone di GitHub** (`php-src`, ramo dal tag della
+  versione), verificati contro l'archivio firmato di php.net; sul DVD degli
+  strumenti stanno in `/exos/src/php`, con le due patch di EX-OS.

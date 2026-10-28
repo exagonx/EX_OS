@@ -32,6 +32,11 @@
 #     a forking daemon);
 #   - every module static (--enable-mods-static): there is no dlopen of
 #     modules in a static program.
+# ! PHP: when cross_build/php-exos<bit> is there (tools/php-exos/costruisci.sh,
+# which wants this httpd built once before, for its headers), mod_php goes in
+# as one more static module: --with-module=php:mod_php.c, libphp.a and the
+# libraries it needs in LIBS. LoadModule is not needed; httpd-exos.conf hands
+# .php files to it (AddHandler) when the module is there (<IfModule>).
 # ! Not built: mod_http2 and mod_proxy_http2 (nghttp2), mod_md (curl,
 # jansson), mod_brotli, mod_lua, mod_proxy_html and mod_xml2enc (libxml2),
 # mod_session_crypto (apr_crypto), the LDAP modules: libraries EX-OS has not
@@ -61,6 +66,7 @@ CACHE="ap_cv_void_ptr_lt_long=no ac_cv_func_gettid=no ap_cv_gettid=no
 
 costruisci() {
     local APR=$TC/apr-exos$1/exos APU=$TC/apr-util-exos$1/exos EXPAT=$TC/expat-exos$1/exos S f
+    local PHP=$TC/php-exos$1/exos/php PHPOPZ= PHPCFLAGS= PHPLIBS=
     [ -x "$APR/bin/apr-1-config" ] || manca "APR a $1 bit" "tools/apr-exos/costruisci.sh $1"
     [ -x "$APU/bin/apu-1-config" ] || manca "APR-util a $1 bit" "tools/apr-util-exos/costruisci.sh $1"
     lib_per "$1"
@@ -92,12 +98,23 @@ PCRE
 "$APU/bin/apu-1-config" "\$@" | sed -E "s#(^| |-I|-L)/exos/#\\1$APU/#g"
 APU
     chmod +x "$B/bin/pcre2-config" "$B/bin/apu-1-config"
+    if [ -f "$PHP/lib/libphp.a" ]; then
+        echo "    con mod_php ($PHP)"
+        PHPOPZ="--with-module=php:$PHP/lib/mod_php.c"
+        PHPCFLAGS="-I$PHP/lib -I$PHP/include/php -I$PHP/include/php/main -I$PHP/include/php/Zend -I$PHP/include/php/TSRM -I$PHP/include/php/ext -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1"
+        PHPLIBS="$PHP/lib/libphp.a $(cat "$PHP/lib/libphp.libs")"
+        # ! --with-module writes modules/php/Makefile.in in the BUILD tree,
+        # and the Makefile is made from the one in the SOURCE tree: without
+        # it the Makefile has no rules ("no rule to make target all")
+        mkdir -p "$SRC/modules/php"
+        echo 'include $(top_srcdir)/build/special.mk' > "$SRC/modules/php/Makefile.in"
+    fi
     mkdir -p "$B/obj"
     # shellcheck disable=SC2086
     ( cd "$B/obj" && env $CACHE "$SRC/configure" --host=$T --build="$("$SRC/build/config.guess")" \
-        --prefix=/exos/apache2 CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" \
+        --prefix=/exos/apache2 CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS $PHPCFLAGS" \
         LDFLAGS="-static -Wl,-u,main" \
-        LIBS="-lssl -lcrypto -lexpat -lpthread" \
+        LIBS="$PHPLIBS -lssl -lcrypto -lexpat -lpthread" $PHPOPZ \
         --with-apr="$APR/bin/apr-1-config" --with-apr-util="$B/bin/apu-1-config" \
         --with-pcre="$B/bin/pcre2-config" --with-mpm=worker --enable-mpms-shared=no \
         --enable-mods-static=most --enable-so=no --enable-cgi --disable-cgid \

@@ -43,7 +43,7 @@
 # rimessa al suo posto (~/cross_build) e il collegamento la ritrova.
 #
 # ! I SORGENTI DI TERZI ENTRANO: firefox-main/, mariadb-server/, httpd/,
-# apr/, apr-util/ e libexpat/ (25 e 27 ottobre 2026, l'utente: «aggiungerlo a backup.sh cosi' che entra
+# apr/, apr-util/, libexpat/ e php-src/ (25, 27 e 28 ottobre 2026, l'utente: «aggiungerlo a backup.sh cosi' che entra
 # automaticamente»),
 # con la loro .git, che serve a tenerli al passo coi repository ufficiali.
 # Non vanno in ESCLUSI; ci vanno solo le loro compilazioni.

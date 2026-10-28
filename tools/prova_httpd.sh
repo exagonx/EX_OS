@@ -15,6 +15,10 @@
 #      (404), ab with 5000 requests, 50 at a time;
 #   4. httpd -k stop (the pid file and SIGTERM), then error_log and
 #      access_log on the serial.
+# PHP (28 October 2026): mod_php is inside httpd when tools/php-exos was
+# built first; then cross_build/php-exosNN/exos/php goes on the disk too
+# (php.ini with its paths on /a, PHPIniDir) and a page tools/prove/prova.php
+# is asked from the host with GET and with POST.
 # Wants dist/exos.iso / dist/exos64.iso (make iso-exos / make iso64).
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
@@ -27,9 +31,11 @@ X=cross_build/nasi5deb
 PORTA=18080
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; A=cross_build/httpd-exos64/exos/apache2
+    P=cross_build/php-exos64/exos/php
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=1024M EXTRA="-cpu qemu64"
 else
     ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; A=cross_build/httpd-exos32/exos/apache2
+    P=cross_build/php-exos32/exos/php
     export EXOS_RAM=512M EXTRA=""
 fi
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
@@ -41,7 +47,19 @@ sed 's#/exos/apache2#/a/apache2#g' tools/httpd-exos/conf/httpd-exos.conf > "$T/a
 echo '<html><body><h1>EX-OS</h1><p>Apache httpd su EX-OS</p></body></html>' > "$T/apache2/htdocs/index.html"
 rm -f "$T"/apache2/cgi-bin/*
 $GCC -O2 -Wall -s tools/prove/cgiprova.c -o "$T/apache2/cgi-bin/cgiprova" || exit 1
-fakeroot sh -c "chown -R 0:0 '$T'; chmod -R a+rX '$T'; chmod 777 '$T/apache2/logs';
+CONPHP=0
+if strings "$A/bin/httpd" | grep -q "X-Powered-By: PHP/"; then
+    [ -f "$P/etc/php.ini" ] || { echo "httpd ha mod_php ma manca $P (tools/php-exos/costruisci.sh)" >&2; exit 1; }
+    CONPHP=1
+    # only what mod_php reads at run time: the build pieces (lib/libphp.a,
+    # include/, 24 MB at 64 bit) and bin/php do not fit in the 64 MB disk
+    mkdir -p "$T/php/tmp"
+    cp -a "$P/etc" "$T/php/"
+    sed -i 's#/exos/php/#/a/php/#g' "$T/php/etc/php.ini"
+    printf '\nPHPIniDir /a/php/etc\n' >> "$T/apache2/conf/httpd-exos.conf"
+    cp tools/prove/prova.php "$T/apache2/htdocs/"
+fi
+fakeroot sh -c "chown -R 0:0 '$T'; chmod -R a+rX '$T'; chmod 777 '$T/apache2/logs'; [ -d '$T/php/tmp' ] && chmod 777 '$T/php/tmp';
     $SBIN/mke2fs -q -F -t ext2 -b 1024 -m 0 -L httpd -d '$T' '$D/p1.img' 65536" \
     > "$D/mke2fs.log" 2>&1 || { cat "$D/mke2fs.log"; exit 1; }
 qemu-img create -f raw "$IMG" 70M > /dev/null
@@ -62,6 +80,8 @@ dall_host() {
         echo "== cgi";      curl -s -m 20 "$U/cgi-bin/cgiprova?uno=1&due=2" | tr -d '\r'
         echo "== post";     curl -s -m 20 --data "ciao=mondo" "$U/cgi-bin/cgiprova" | tr -d '\r'
         echo "== 404";      curl -s -m 20 -o /dev/null -w "%{http_code}\n" "$U/manca.html"
+        echo "== php get";  curl -s -m 30 "$U/prova.php?nome=exos" | tr -d '\r'
+        echo "== php post"; curl -s -m 30 --data "nome=posta" "$U/prova.php" | tr -d '\r'
         # QEMU's user network accepts the forwarded port on a Linux socket
         # with a tiny backlog: with 50 at a time its queue overflows, the
         # host drops SYNs and the client retries after 1, 3, 7... s (a
@@ -117,6 +137,12 @@ r=$(grep "^Requests per second:" "$D/host.txt" 2>/dev/null | awk '{print $4}')
 t=$(sed -n "s/^== trabocchi della coda d'ascolto sull'host: //p" "$D/host.txt" 2>/dev/null)
 [ "$n" = 5000 ] && [ "$f" = 0 ] && si "ab dall'host: 5000 richieste, 50 alla volta, 0 fallite, $r al secondo (coda dell'host traboccata $t volte)" \
     || no "ab dall'host: complete $n, fallite $f"
+if [ $CONPHP = 1 ]; then
+    grep -q "^PHP ok 8\.[0-9.]* GET nome=exos pdo_mysql mysqli opcache somma=6" "$D/host.txt" 2>/dev/null \
+        && si "PHP con un GET (mod_php dentro httpd, PDO e mysqli caricati)" || no "PHP con un GET"
+    grep -q "^PHP ok 8\.[0-9.]* POST nome=posta" "$D/host.txt" 2>/dev/null \
+        && si "PHP con un POST" || no "PHP con un POST"
+fi
 grep -aq "terminato: /a/apache2/bin/httpd -X.*(codice 0)" "$S" && si "httpd -k stop: spento con codice 0" || no "httpd -k stop"
 # every CGI left a reference on logs/error_log until kernel 0.283
 grep -aq "^smontato /a" "$S" && si "umount /a dopo lo spegnimento (nessun file rimasto aperto)" \

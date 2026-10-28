@@ -95,6 +95,9 @@
 #define SETT_MAX            (RIMBALZO_BYTE / 512u)
 
 #define TMO_CMD_MS          8000u
+/* FLUSH CACHE writes the disk's whole cache first: 30 s, as in ata.c
+ * (ATA_TMO_FLUSH_MS, kernel 0.286) and in Linux's libata. */
+#define TMO_FLUSH_MS        30000u
 
 /* Per le prove: 1 rifa' il reset del link su ogni porta, anche dove non
  * serve. In QEMU e' l'unico modo di percorrere quella strada. */
@@ -190,6 +193,7 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
     volatile uint8_t *p = d->reg;
     uint8_t  *t = d->tabella;
     uint32_t *prd = (uint32_t *)(d->tabella + 0x80);
+    uint32_t  tmo = (cmd == ATA_FLUSH || cmd == ATA_FLUSH_EXT) ? TMO_FLUSH_MS : TMO_CMD_MS;
 
     if (aspetta(p, P_TFD, 0x88u, 0, 1000) != 0) {
         klog(LOG_WARN, "AHCI: il disco resta occupato (TFD %08x)", rl(p, P_TFD));
@@ -248,9 +252,9 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
                 return -1;
             }
             if (!(rl(p, P_CI) & 1u)) break;
-            if (crono_ms(&c) > TMO_CMD_MS) {
+            if (crono_ms(&c) > tmo) {
                 klog(LOG_ERROR, "AHCI: comando %02x a lba=%u senza risposta dopo %u ms "
-                     "(CI %08x, IS %08x, TFD %08x)", cmd, (uint32_t)lba, TMO_CMD_MS,
+                     "(CI %08x, IS %08x, TFD %08x)", cmd, (uint32_t)lba, tmo,
                      rl(p, P_CI), rl(p, P_IS), rl(p, P_TFD));
                 return -1;
             }

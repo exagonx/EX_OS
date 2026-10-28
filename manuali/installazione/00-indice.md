@@ -13,7 +13,7 @@ Dopo l'installazione:
 
 | | capitolo | cosa copre |
 |---|---|---|
-| 4 | [Dopo l'installazione](04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto, il disco di sistema a macchina accesa (`system`), i driver all'avvio (`-install`) |
+| 4 | [Dopo l'installazione](04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto, il disco di sistema a macchina accesa (`system`), i driver all'avvio (`-install`), il server MariaDB, il server web Apache, PHP |
 | 5 | [Quando va storto](05-quando-va-storto.md) | gli errori veri, con la causa e il rimedio |
 | 6 | [Pubblicare il repository](06-pubblicare-il-repo.md) | per chi tiene il server degli aggiornamenti |
 

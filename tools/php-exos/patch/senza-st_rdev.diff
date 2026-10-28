@@ -1,0 +1,67 @@
+senza-st_rdev.diff - EX-OS's struct stat has no st_rdev (there are no device
+files). configure checks for it (HAVE_STRUCT_STAT_ST_RDEV) but four files use
+it anyway; without it stat() and fstat() give rdev -1, as PHP already does
+for streams that are no device.
+
+diff -ru a/ext/standard/file.c b/ext/standard/file.c
+--- a/ext/standard/file.c	2026-10-28 20:24:52.399766231 +0100
++++ b/ext/standard/file.c	2026-10-28 20:24:52.431766047 +0100
+@@ -1353,10 +1353,14 @@
+ 	ZVAL_LONG(&stat_uid, stat_ssb.sb.st_uid);
+ 	ZVAL_LONG(&stat_gid, stat_ssb.sb.st_gid);
+ #ifdef HAVE_STRUCT_STAT_ST_RDEV
++#ifdef HAVE_STRUCT_STAT_ST_RDEV
+ 	ZVAL_LONG(&stat_rdev, stat_ssb.sb.st_rdev);
+ #else
+ 	ZVAL_LONG(&stat_rdev, -1);
+ #endif
++#else
++	ZVAL_LONG(&stat_rdev, -1);
++#endif
+ 	ZVAL_LONG(&stat_size, stat_ssb.sb.st_size);
+ 	ZVAL_LONG(&stat_atime, stat_ssb.sb.st_atime);
+ 	ZVAL_LONG(&stat_mtime, stat_ssb.sb.st_mtime);
+diff -ru a/ext/standard/filestat.c b/ext/standard/filestat.c
+--- a/ext/standard/filestat.c	2026-10-28 20:24:52.395766255 +0100
++++ b/ext/standard/filestat.c	2026-10-28 20:24:52.431766047 +0100
+@@ -975,10 +975,14 @@
+ 		ZVAL_LONG(&stat_uid, stat_sb->st_uid);
+ 		ZVAL_LONG(&stat_gid, stat_sb->st_gid);
+ #ifdef HAVE_STRUCT_STAT_ST_RDEV
++#ifdef HAVE_STRUCT_STAT_ST_RDEV
+ 		ZVAL_LONG(&stat_rdev, stat_sb->st_rdev);
+ #else
+ 		ZVAL_LONG(&stat_rdev, -1);
+ #endif
++#else
++		ZVAL_LONG(&stat_rdev, -1);
++#endif
+ 		ZVAL_LONG(&stat_size, stat_sb->st_size);
+ 		ZVAL_LONG(&stat_atime, stat_sb->st_atime);
+ 		ZVAL_LONG(&stat_mtime, stat_sb->st_mtime);
+diff -ru a/ext/standard/ftp_fopen_wrapper.c b/ext/standard/ftp_fopen_wrapper.c
+--- a/ext/standard/ftp_fopen_wrapper.c	2026-10-28 20:24:52.407766185 +0100
++++ b/ext/standard/ftp_fopen_wrapper.c	2026-10-28 20:24:52.431766047 +0100
+@@ -877,7 +877,9 @@
+ 	ssb->sb.st_ctime = -1;
+ 
+ 	ssb->sb.st_nlink = 1;
++#ifdef HAVE_STRUCT_STAT_ST_RDEV
+ 	ssb->sb.st_rdev = -1;
++#endif
+ #ifdef HAVE_STRUCT_STAT_ST_BLKSIZE
+ 	ssb->sb.st_blksize = 4096;				/* Guess since FTP won't expose this information */
+ #ifdef HAVE_STRUCT_STAT_ST_BLOCKS
+diff -ru a/main/streams/memory.c b/main/streams/memory.c
+--- a/main/streams/memory.c	2026-10-28 20:24:52.411766162 +0100
++++ b/main/streams/memory.c	2026-10-28 20:24:52.431766047 +0100
+@@ -211,7 +211,9 @@
+ 	ssb->sb.st_atime = timestamp;
+ 	ssb->sb.st_ctime = timestamp;
+ 	ssb->sb.st_nlink = 1;
++#ifdef HAVE_STRUCT_STAT_ST_RDEV
+ 	ssb->sb.st_rdev = -1;
++#endif
+ 	/* this is only for APC, so use /dev/null device - no chance of conflict there! */
+ 	ssb->sb.st_dev = 0xC;
+ 	/* generate unique inode number for alias/filename, so no phars will conflict */

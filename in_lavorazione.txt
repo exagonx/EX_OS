@@ -1,5 +1,10 @@
 QUEL CHE E' APERTO â€” 15 settembre 2026
 
+!!! IL 28 OTTOBRE, URGENTE: voce 41 (@CODA-20-10) - gli anelli dei driver
+    di rete (e1000, nforce, rtl8169, pcnet, sis900, ar5k, ne2k) dinamici,
+    dalla RAM o da kernel.cfg, invece dei posti fissi: la e1000 a 96 ha
+    perso 858521 frame nella prova di Apache a 2048 client (voce 39).
+
 !!! IL 26 SETTEMBRE, TRE DA correzioni.txt: @ARCHIVI-VISTA e @EXBROWSER-1024
     (urgenti), @EXIDE-NOMI (a comodo).
 
@@ -8470,6 +8475,90 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  41. URGENTE - GLI ANELLI DEI DRIVER DI RETE DINAMICI INVECE DEI POSTI
+      FISSI (l'utente, 28/10: «aggiungi come compito urgente, quello di
+      aggiornare tutti i driver di rete come e1000 a usare il sistema
+      dinamico invece dei 94 attuali»; il numero vero della e1000 e' 96).
+      Perche': la prova di Apache e PHP a 2048 client (voce 39) ha perso
+      858521 frame nella e1000 (rete_senza_posto: l'anello di ricezione
+      pieno). Regola dell'utente (voce 35, nessun tetto fisso): le misure
+      vengono dalla configurazione del server e dall'hardware, mai da un
+      #define. OGGI, tutti fissi:
+        e1000    RX_N 96  TX_N 8   CODA_N 256
+        nforce   RX_N 96  TX_N 64  CODA_N 128
+        rtl8169  RX_N 32  TX_N 8   CODA_N 64
+        pcnet    RX_N 8   TX_N 8   CODA_N 64   (RX_LOG/TX_LOG 3)
+        sis900   RX_N 8   TX_N 8   CODA_N 64
+        ar5k     RX_N 32  TX_N 4   CODA_N 32   (WiFi)
+        ne2k     anello nella memoria della scheda (da guardare)
+      DA FARE: per ogni driver la misura degli anelli e della coda verso
+      ip.drv scelta all'avvio: dalla RAM (come tcpmax) o da una voce di
+      kernel.cfg (es. netrx/nettx) o dall'opzione del driver, entro il
+      massimo che la scheda ammette (e1000: RDLEN multiplo di 128 byte,
+      fino a 65536 descrittori; rtl8169 1024; pcnet 2^9 con RLEN; nforce e
+      sis900 da vedere nei datasheet); la zona DMA (DMA_BYTE oggi fissa)
+      allocata della misura scelta; CODA_N che cresce come le tabelle di
+      ip.drv. Poi: rifare la prova a 2048 client (stress_httpd.sh) e
+      guardare rete_persi_scheda/rete_senza_posto; regressioni di rete a
+      32 e 64 bit (prova_telnet, prova_ssh, prova_httpd, prova_mariadb,
+      prova_fd, netinst) e le schede che QEMU ha (e1000, pcnet, rtl8139 non
+      c'e', ne2k_pci); sul ferro la rete del portatile.
+
+  40. LE SCADENZE DEL DRIVER ATA (trovato il 28/10 con la prova di Apache
+      e PHP). Kernel 0.286: FLUSH CACHE aspetta fino a 30 s (era 5, come un
+      comando qualsiasi; Linux/libata da' 30 s). Restano 5 s per BSY e 8 s
+      per un DMA: in QEMU, con un'immagine da 2 GB appena scritta e ancora
+      nella cache dell'host, il disco virtuale restava fermo di piu'
+      («timeout BSY», «DMA fermo», poi fdatasync EIO nel bootstrap di
+      MariaDB); la prova ora fa `sync` dell'immagine prima di avviare.
+      Linux da' 30 s a ogni comando. DA DECIDERE CON L'UTENTE: portare
+      anche BSY e DMA a 30 s (piu' tollerante coi dischi lenti, ma un disco
+      guasto si scopre dopo 30 s invece di 8).
+
+  39. PHP CON PDO E IL TEST DI APACHE A 2048 CLIENT (l'utente, 28/10: «e
+      apache con pagina php usando pdo invio get e post con 2048 client
+      puoi farlo questo test per 10 minuti ?»; poi: «PHP PDO e ogni modulo
+      apache deve essere scaricato dai sorgenti pubblici di github cosi che
+      a ogni aggiornamento si hanno anche i sorgenti per l'aggiornamento di
+      exos clona il repository come apache e mariadb localmente e procedi
+      con il porting»). IN CORSO: php-src/ clonato (tag php-8.5.12,
+      verificato contro l'archivio firmato), re2c 4.6 per l'host da GitHub,
+      tools/php-exos/costruisci.sh (ZTS, libphp.a + apache2handler, mod_php
+      statico in httpd), tools/stress/http_stress.c.
+      FATTO (kernel 0.286): PHP 8.5.12 ZTS a 32 e 64 bit (CLI e mod_php
+      dentro httpd, PDO/pdo_mysql e mysqli su mysqlnd, opcache senza JIT),
+      patch senza-st_rdev e apache-un-processo, libc creat/scandir/
+      alphasort/getdtablesize e mkstemp con l'errore vero, FLUSH CACHE fino
+      a 30 s, /exos/php/tmp; prova_httpd prova GET e POST su una pagina PHP.
+      LA PROVA (stress_httpd.sh, QEMU 64 bit KVM, 1 CPU, 2 GB, una
+      connessione nuova a richiesta, 60 s di salita + 600 s): 20 client
+      145/s p50 131 ms 0 errori; 2048 client 85284 richieste buone in 721 s
+      (118/s: 150 all'inizio, 95 alla fine), p50 1,8-3 s, p95 5-34 s, 16757
+      senza risposta in 60 s, 22 connessioni fallite, 4 stati sbagliati;
+      nessun fault, 310 processi e fili, 480 MB, spegnimenti puliti.
+      DA FARE: 1) l'anello di ricezione della e1000 e' di 96 posti fissi
+      (RX_N): 858521 frame persi (rete_senza_posto); va reso piu' grande o
+      dinamico (dalla RAM o da kernel.cfg, voce 35) - chiedere all'utente;
+      2) la rete user di QEMU trabocca (128172 volte): per misure vere una
+      rete tap o il ferro; 3) KeepAlive con 2048 fili non si puo' finche'
+      c'e' il tetto dei ~450 processi (voce 35); 4) httpd e APR costruiti
+      dai cloni git invece che dagli archivi; 5) su un'installazione vera,
+      /exos/php/tmp scrivibile dall'utente di httpd (User #100).
+
+  38. FIREFOX: IL PROFILO SI ROVINA E GLI AVVII DOPO SI BLOCCANO; POI IL
+      BROWSER PREDEFINITO IN EXWIN (l'utente, 28/10: «ce un problema con
+      firefox, tende a danneggiare il profilo ed e' necessario implementare
+      in exwin il browser di default cosi che firefox possa diventare il
+      browser di default, ma prima di ogni cosa ce il profilo che si
+      corrome e gli avvii successivi tendono a freezzare tutto il
+      browser.»). ORDINE: prima il profilo corrotto e il blocco agli
+      avvii successivi (capire cosa si rovina: i file sqlite del profilo,
+      places.sqlite, il lock, la cache di avvio; l'fsync vero c'e' dal
+      kernel 0.284, prima no; scritture parziali alla chiusura), poi il
+      browser predefinito di exwin (un'impostazione di sistema che exwin e
+      i programmi usano per aprire un indirizzo, e Firefox che si propone
+      come predefinito). Da fare finito il lavoro su PHP (voce 39).
+
   37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10
       col porting di Apache). Il kernel lo dichiara (segnali.c: «a blocked
       wait is not interrupted by a caught signal»): un filo fermo in
@@ -8558,6 +8647,10 @@ tools/netinst/velocita tolto da netinst.
       task in tutto qualunque sia la RAM. Toglierlo vuol dire un kernel
       nella meta' alta (higher-half) o pile kernel fuori dalla fascia
       identita': una scelta grossa, da fare con l'utente.
+      ANCHE (28/10, aggiornando la guida): /boot/kernel.cfg si legge in un
+      buffer fisso di 8192 byte (CFG_BUF_SIZE in kernel/fs/cfg.c): oltre,
+      le sezioni finali (il driver di tastiera) spariscono. Stesso rimedio:
+      leggere il file a blocchi o allocare quanto e' grande.
 
   34. PERCHE' MARIADB SU EX-OS E' LENTO RISPETTO A LINUX (l'utente, 26/10
       durante le 8 ore: Â«troppo lento in proporzione a linux su stesso

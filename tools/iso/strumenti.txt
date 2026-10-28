@@ -506,11 +506,30 @@ nota  = I processi figli nascono con spawn_ex (EX-OS non ha fork): apr_proc_crea
 nota  = c'e', apr_proc_fork risponde ENOSYS.
 
 
+[php]
+nome  = PHP
+dice  = PHP 8.5.12 thread safe: php da riga di comando, php.ini; PDO e mysqli
+prova = php/bin/php
+vuole = ssl
+vuole = zlib
+vuole = pcre2
+mbyte = 30
+solo  = php
+solo  = src/php
+
+nota  = php -v ; php prova.php ; dentro Apache c'e' gia' (mod_php in httpd).
+nota  = Estensioni: PDO e pdo_mysql, mysqli (su mysqlnd, senza Connector/C),
+nota  = openssl, zlib, mbstring, session, filter, ctype, tokenizer, posix, opcache.
+nota  = Mancano quelle su libxml2, sqlite, curl, gd, intl, iconv, sodium, zip.
+nota  = Impostazioni in /exos/php/etc/php.ini; i temporanei in /exos/php/tmp.
+
+
 [apache]
 nome  = Apache httpd
-dice  = Apache HTTP Server 2.4.69: httpd con i moduli dentro, ab, htpasswd, rotatelogs
+dice  = Apache HTTP Server 2.4.69: httpd con i moduli dentro (anche PHP), ab, htpasswd
 prova = apache2/bin/httpd
 vuole = apr
+vuole = php
 vuole = ssl
 vuole = zlib
 vuole = pcre2
@@ -522,3 +541,4 @@ nota  = Un processo solo (EX-OS non ha fork), con il MPM worker:
 nota  =   /exos/apache2/bin/httpd -X -d /exos/apache2 -f conf/httpd-exos.conf &
 nota  =   /exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
 nota  = conf/httpd-exos.conf: porta 80, htdocs, cgi-bin (mod_cgi, programmi compilati).
+nota  = Le pagine .php le esegue mod_php, dentro httpd (index.php vale come indice).

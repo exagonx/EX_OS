@@ -114,7 +114,7 @@ sul vuoto.
 | 1 | **mappare il framebuffer in spazio utente** | `SYS_MMIO_MAP`, 13 agosto 2026: mappa una finestra fisica sopra la RAM, non cacheabile. `svga.drv` sceglie il modo, non disegna | il server è ring 3; la mappatura si revoca quando muore |
 | 2 | **FATTA** — memoria condivisa fra processi | `SYS_SHM_APRI`/`SYS_SHM_CHIUDI`, 13 agosto 2026: zone nominate, il conteggio dei riferimenti è **per pagina fisica** nel PMM | il conteggio c'è; il blocco temporaneo si aggiunge quando ci sarà uno swapper, vedi sotto |
 | 3 | **FATTA** — attesa su più sorgenti (`poll`/`select`) | `SYS_POLL`, 13 agosto 2026: descrittori **e** mailbox IPC nella stessa chiamata | provato che il processo dorme davvero: mentre aspetta è `BLOCKED` |
-| 4 | **thread reali** | è **l'unico** cancello verso Qt e GTK: `GMainLoop`, `GMutex` e l'affinità degli oggetti Qt stanno nel modello, ci passa anche un'applicazione a thread singolo | il `cwd` nel PCB (12 agosto) era il primo gradino |
+| 4 | **FATTA** — thread reali | kernel 0.209, settembre 2026: più fili nello stesso processo, `pthread`, variabili `__thread`, la pila che cresce su richiesta; oggi MariaDB e Apache ci girano con centinaia di fili. Era **l'unico** cancello verso Qt e GTK: `GMainLoop`, `GMutex` e l'affinità degli oggetti Qt stanno nel modello, ci passa anche un'applicazione a thread singolo | il `cwd` nel PCB (12 agosto) era il primo gradino |
 
 > **FATTA il 13 agosto 2026: `SYS_MMIO_MAP` (241).** E non è servita alla
 > grafica: è servita a una scheda di rete. Il driver per l'Intel e1000 — la
@@ -231,10 +231,10 @@ Ogni gradino è utile da solo, anche fermandosi lì.
 | | cosa | sblocca |
 |---|---|---|
 | **0** | primitive 1, 2, 3 + **rimettere il modo testo da modo protetto** | tutto il resto, e la possibilità di sopravvivere a un server grafico morto |
-| **1** | server a finestre in ring 3 + toolkit proprio + applicazioni | il sistema a finestre: spostare, ridimensionare, ridurre a icona, più applicazioni insieme |
+| **1** | **FATTO** — server a finestre in ring 3 + toolkit proprio + applicazioni (`wserver`, ExWin) | il sistema a finestre: spostare, ridimensionare, ridurre a icona, più applicazioni insieme |
 | **2** | strato **SDL 1.2** | il software di terzi, a un decimo del costo di GTK: vuole un framebuffer ed eventi, **nessun thread obbligatorio**, nessun glib |
-| **3** | **pagefile** | applicazioni più grandi della RAM. Va dopo il server perché i buffer delle finestre sono il primo carico che lo giustifica — ma i suoi vincoli valgono da adesso (direttiva 3) |
-| **4** | **thread reali nel kernel** | l'unica porta verso Qt e GTK |
+| **3** | **FATTO** (kernel 0.276, ottobre 2026: l'area di scambio) — **pagefile** | applicazioni più grandi della RAM. Va dopo il server perché i buffer delle finestre sono il primo carico che lo giustifica — ma i suoi vincoli valgono da adesso (direttiva 3) |
+| **4** | **FATTO** (kernel 0.209) — **thread reali nel kernel** | l'unica porta verso Qt e GTK |
 | **5** | server X11, poi Qt | il porting vero |
 
 ! **Sul gradino 5: il protocollo non è il costo.** Un server X perfetto da
@@ -284,5 +284,7 @@ Gradino 0, tutto fatto il 13 agosto 2026:
    resto.~~ **Fatta il 13 agosto 2026**: `SYS_MODO_TESTO` e `/bin/testo`,
    che si digita alla cieca. Vedi sopra.
 
-**Il gradino 0 è chiuso.** Il prossimo è il gradino 1: il server a finestre in
-ring 3.
+**Il gradino 0 è chiuso.** Dopo sono arrivati il gradino 1 (il server a
+finestre in ring 3, `wserver`, e la scrivania ExWin), il 4 (i fili, kernel
+0.209) e il 3 (l'area di scambio, kernel 0.276). Restano il gradino 2 (lo
+strato SDL 1.2) e il 5 (un server X11, poi Qt).

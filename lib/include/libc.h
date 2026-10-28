@@ -627,6 +627,8 @@ void    siglongjmp(sigjmp_buf env, int val) __attribute__((noreturn));
  * Sta nella firma perche' senza di lui non compila una riga come
  * open(path, O_CREAT|O_WRONLY, 0644), che e' come la scrivono tutti. */
 int     open(const char *path, int flags, ...);
+/* open(path, O_WRONLY | O_CREAT | O_TRUNC, mode), the oldest name for it. */
+int     creat(const char *path, mode_t mode);
 int     close(int fd);
 ssize_t read(int fd, void *buf, size_t n);
 ssize_t write(int fd, const void *buf, size_t n);
@@ -2373,6 +2375,15 @@ struct dirent *readdir(DIR *d);
 void           rewinddir(DIR *d);
 int            closedir(DIR *d);
 
+/* A whole directory in one call (POSIX 2008): the entries filter() keeps,
+ * sorted with compar, in an array of malloc'd copies the caller frees one
+ * by one and then as a whole. alphasort compares the names with strcoll
+ * (the C locale: strcmp). PHP's scandir() uses them (28 October 2026). */
+int            scandir(const char *path, struct dirent ***lista,
+                       int (*filtro)(const struct dirent *),
+                       int (*confronta)(const struct dirent **, const struct dirent **));
+int            alphasort(const struct dirent **a, const struct dirent **b);
+
 /* =============================================================================
  * File temporanei, interrogazioni, rinomina
  * ============================================================================= */
@@ -2715,6 +2726,10 @@ char   *strptime(const char *s, const char *fmt, struct tm *tm);
  * (_SC_PAGESIZE)` scritto piu' corto, e c'e' perche' il codice di terzi
  * usa l'uno o l'altro senza criterio — ggc-page.cc di GCC usa questo. */
 int     getpagesize(void);
+
+/* The size of the descriptor table, BSD's name for sysconf(_SC_OPEN_MAX):
+ * RLIMIT_NOFILE of the program. PHP uses it for php://fd (28 October 2026). */
+int     getdtablesize(void);
 
 /* =============================================================================
  * mmap, munmap — memoria a pagine dal kernel

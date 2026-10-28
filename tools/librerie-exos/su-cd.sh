@@ -22,7 +22,8 @@
 # [lz4] [zstd] [pcre2] [fmt], [mariadb-connector] (Connector/C and C++, the
 # FreeBASIC header, the Rust crate), [mariadb] (tools/mariadb-exos: also exos/mariadb,
 # the server and its share), [expat], [apr] (APR and APR-util), [apache]
-# (tools/httpd-exos: exos/apache2, httpd and its tree), and [ssl] for OpenSSL (tools/openssl-exos:
+# (tools/httpd-exos: exos/apache2, httpd and its tree, mod_php inside), [php]
+# (tools/php-exos: exos/php, the CLI, php.ini, libphp.a), and [ssl] for OpenSSL (tools/openssl-exos:
 # the Makefile and mktools64.sh also build provassl and provatls with it). A library not built is said on stderr, and the
 # CD is made without it. ncurses has its own (tools/ncurses-exos/su-cd.sh):
 # its terminfo and its links need more care.
@@ -42,7 +43,7 @@ fatte=""
 # ! mariadb (the server) has no lib/: its client library is
 # mariadb-connector-c's (see tools/mariadb-exos/costruisci.sh)
 for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb-connector-cpp mariadb \
-        expat apr apr-util httpd; do
+        expat apr apr-util httpd php; do
     N=cross_build/$NOME-exos$BIT/exos
     if [ ! -d "$N/src/$NOME" ]; then
         echo "     $NOME assente: tools/$NOME-exos/costruisci.sh $BIT" >&2
@@ -70,8 +71,8 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb
             chmod 755 "$E/bin/$(basename "$b")"
         done
     fi
-    # a program with its own tree: exos/mariadb, exos/apache2
-    for d in mariadb apache2; do
+    # a program with its own tree: exos/mariadb, exos/apache2, exos/php
+    for d in mariadb apache2 php; do
         if [ -d "$N/$d" ]; then
             rm -rf "$E/$d"
             cp -rp "$N/$d" "$E/"

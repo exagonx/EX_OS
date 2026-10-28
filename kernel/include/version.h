@@ -704,7 +704,11 @@
  * disk's cache. The ATA waits that take the disk's time (end of a DMA run,
  * FLUSH CACHE) yield the CPU after a few readings (ata_cedi) instead of
  * spinning: on one CPU the spinning thread was taking the time of all. */
-#define EXOS_VERSION    "0.285"
+/* 0.285 -> 0.286: FLUSH CACHE waits up to 30 s (ATA_TMO_FLUSH_MS, and
+ * TMO_FLUSH_MS in ahci.c), as Linux's libata: with the 5 s of any command a
+ * flush that had a lot to write (under QEMU, an image just written on the
+ * host) timed out and fsync said EIO (MariaDB's bootstrap stopped). */
+#define EXOS_VERSION    "0.286"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

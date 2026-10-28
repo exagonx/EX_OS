@@ -751,6 +751,8 @@ elenca le schede di rete e il driver che vogliono
 indirizzo IP e contatori dell'interfaccia
 
   ipcfg                            come sta adesso
+  ipcfg -tcp                       le connessioni TCP: quante, di chi,
+                                   in che stato, e il tetto (tcpmax)
 
 [dhcp]
 chiede un indirizzo alla rete e lo applica
@@ -913,6 +915,62 @@ Centinaia di controlli su stringhe, memoria, file, tempo e matematica.
 Stampa quante ne passano e quante no: se una riga e' rossa su un
 sistema che funziona, e' la prova a essere sbagliata, e va corretta
 subito - una suite di cui non ci si fida non serve a niente.
+
+[mariadb mariadb-svc mariadbd]
+il server di database MariaDB 11.8
+
+  netupdate -install:mariadb       il server, i client e i connettori
+  mariadb-svc -install             una volta, da root: tabelle, my.cnf,
+                                   certificato, e parte a ogni avvio
+  mariadb -u root                  il client
+  mariadb-svc -stato               gira? risponde?
+  mariadb-svc -ferma / -avvia      lo ferma (aspetta che chiuda) / lo riaccende
+  mariadb-svc -remove              lo toglie dall'avvio (i dati restano)
+
+Solo TCP, su 127.0.0.1:3306: EX-OS non ha i socket AF_UNIX. 1024
+connessioni servite da un gruppo di fili (pool-of-threads, epoll). I
+commit sono sul disco dal kernel 0.284 (fsync vero). Un file arriva a 2 GB.
+Configurazione in /etc/my.cnf, registro in /var/log/mariadb. Manuale 4.10.
+
+[httpd apache apache2]
+il server web Apache 2.4
+
+  netupdate -install:apache
+  /exos/apache2/bin/httpd -X -d /exos/apache2 -f conf/httpd-exos.conf &
+  /exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
+  /exos/apache2/bin/ab -n 1000 -c 20 http://127.0.0.1/    misura
+
+Un processo solo (-X) con il MPM worker: EX-OS non ha fork, ogni
+connessione e' un filo. ThreadsPerChild, ThreadLimit e MaxRequestWorkers
+uguali (256). Pagine in /exos/apache2/htdocs, CGI compilati in cgi-bin,
+mod_ssl con OpenSSL 4.1. Le pagine .php le esegue mod_php, che sta
+dentro httpd (vedi `help php`). Manuale 4.11.
+
+[php]
+PHP 8.5, da riga di comando e dentro Apache
+
+  netupdate -install:php           (arriva anche con -install:apache)
+  /exos/php/bin/php -v
+  /exos/php/bin/php prova.php
+
+Thread safe, con PDO (pdo_mysql) e mysqli su mysqlnd: il server di questa
+macchina e' 127.0.0.1, non localhost. Impostazioni in
+/exos/php/etc/php.ini, temporanei in /exos/php/tmp (EX-OS non ha /tmp).
+Mancano le estensioni su libxml2, sqlite, curl, gd, intl. Manuale 4.12.
+
+[limiti procmax fdmax tcpmax]
+quanti processi, file e connessioni: i tetti
+
+Nessun numero fisso nel sistema: i tetti vengono dalla memoria, e si
+abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
+
+  procmax = N     processi e fili insieme (RAM / 128 KB, al massimo 512)
+  fdmax = N       descrittori per programma (uno ogni 2 KB di RAM)
+  tcpmax = N      connessioni TCP di ip.drv (una ogni 32 KB di RAM)
+
+Spiegati in /boot/kernel.txt. `ipcfg -tcp` mostra le connessioni, `ps`
+i processi. Il tetto vero di oggi: circa 450 processi e fili in tutto,
+per le pile del kernel nei primi 64 MB.
 
 [login]
 chiede chi sei prima di dare la shell
