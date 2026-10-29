@@ -940,6 +940,11 @@ typedef struct Process {
      * the collector's ring while there is one (SYS_EXTASKBAR). */
     uint8_t  sottofondo;
 
+    /* 1 while proc_reap_zombie is taking this PCB apart (0.288): see the
+     * comment at the top of proc_reap_zombie. Taken with a compare-and-swap,
+     * given back once the slot is PROC_UNUSED. */
+    volatile uint32_t in_raccolta;
+
 } Process;
 
 /* =============================================================================

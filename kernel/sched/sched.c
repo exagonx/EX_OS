@@ -2226,6 +2226,36 @@ void proc_reap_zombie(Process *p)
     uint32_t child_pid  = p->pid;
     int32_t  child_code = p->exit_code;
 
+    /* ! ONE REAPER PER ZOMBIE, AND THE OTHERS GO AWAY (0.288). A zombie can
+     * be wanted by two reapers at once: its parent in sys_waitpid and
+     * init_reaper_task, which runs at idle priority and is preempted
+     * anywhere. init had seen PROC_ZOMBIE, lost the CPU, and meanwhile the
+     * shell collected the child: the slot came back PROC_UNUSED with pid 0,
+     * init resumed and took it for an orphan thread (tgid 9 != pid 0, no
+     * live member in group 9) and reaped it AGAIN. With pid 0,
+     * irq_unbind_process matched every free owner slot and masked IRQ 0-7:
+     * no more timer, every process asleep forever, the boot stopped after
+     * "libc.so caricata" (prova_mariadb_svc, about one start in two with
+     * the host busy; caught with a trace of the PIC writes). It also freed
+     * the same pages twice.
+     *
+     * So the reaper first takes the PCB with a compare-and-swap (there is
+     * SMP: a cli would not be enough), and only on a PCB that is still a
+     * zombie once taken. Whoever comes second finds it taken or no longer
+     * a zombie and does nothing. */
+    if (p->state != PROC_ZOMBIE ||
+        !__sync_bool_compare_and_swap(&p->in_raccolta, 0u, 1u)) {
+        klog(LOG_DEBUG, "SCHED: PCB 0x%x (PID %u) gia' raccolto da un altro",
+             (unsigned)(uintptr_t)p, child_pid);
+        return;
+    }
+    if (p->state != PROC_ZOMBIE || p->pid != child_pid) {
+        p->in_raccolta = 0;
+        klog(LOG_DEBUG, "SCHED: PCB 0x%x (PID %u) gia' raccolto da un altro",
+             (unsigned)(uintptr_t)p, child_pid);
+        return;
+    }
+
     /* L'eseguibile tenuto aperto per il caricamento su richiesta. Va
      * chiuso qui e non prima: finche' il processo esiste puo' faultare su
      * una pagina che non ha ancora toccato, e la sorgente e' quella. Un
@@ -2370,6 +2400,8 @@ void proc_reap_zombie(Process *p)
     p->user_stack_base   = 0;
     p->user_stack_limit  = 0;
     p->kernel_stack_base = 0;
+    __sync_synchronize();
+    p->in_raccolta       = 0;
 
     klog(LOG_DEBUG, "SCHED: riassorbito PID %u (code=%d)", child_pid, child_code);
 }

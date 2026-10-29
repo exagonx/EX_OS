@@ -1,8 +1,10 @@
 QUEL CHE E' APERTO — 15 settembre 2026
 
 !!! IL 28 OTTOBRE, URGENTE: voce 41 (@CODA-20-10) - la e1000 fatta la notte
-    del 28 (kernel 0.287, e1000.drv 0.004), resta da leggere la prova a 2048
-    client e da fare gli altri driver. Gli anelli dei driver
+    del 28 (kernel 0.287, e1000.drv 0.004), letta la prova a 2048 client;
+    il 29 sera il blocco intermittente di prova_mariadb_svc trovato e
+    corretto (kernel 0.288, processo raccolto due volte); restano il calo
+    a ~90/s, README e manuale, e gli altri driver. Gli anelli dei driver
     di rete (e1000, nforce, rtl8169, pcnet, sis900, ar5k, ne2k) dinamici,
     dalla RAM o da kernel.cfg, invece dei posti fissi: la e1000 a 96 ha
     perso 858521 frame nella prova di Apache a 2048 client (voce 39).
@@ -8560,6 +8562,40 @@ tools/netinst/velocita tolto da netinst.
       3,5 s, p95 14 s, 0 connessioni fallite, Apache e MariaDB spenti con
       codice 0, 7,9 GB liberi. DA FARE: il calo (8 GB come 2 GB, ~90/s),
       le regressioni di rete 32/64, README e manuale, poi gli altri driver.
+      29/10 POMERIGGIO, LE REGRESSIONI DI RETE (kernel 0.287, committato
+      dall'utente in 8d066d5f): a posto a 32 e 64 bit prova_fd, prova_epoll,
+      prova_httpd (ab 2000/0 e 5000/0, CGI, PHP, stop 0, umount),
+      prova_mariadb, prova_openssl, prova_ssh, prova_telnet (TN_PORTA=2424:
+      la 2323 dell'host e' di sbbs). ! httpd 32 e 64 NON vanno lanciate
+      insieme: stessa porta 18080 dell'host.
+      ! APERTO, INTERMITTENTE: prova_mariadb_svc (32 bit, disco installato,
+      1 GB, senza scheda, TCG) a volte non arriva al login: la seriale si
+      ferma a "automount: guardo i dispositivi", "utente:" non arriva in 90
+      s, e nelle corse ferme il messaggio del mouse PS/2 viene PRIMA dei
+      processi in sottofondo invece che dopo "Sistema pronto.". Conteggio:
+      0.287 fallita 5 volte e passata 2 (una con un altro nome d'istanza),
+      0.286 passata 1 su 1, 0.287 con pmm.c della 0.286 passata 1 su 1,
+      a mano (anche con qemu_drive e lo stesso disco) 4 su 4. Non si sa se
+      la 0.287 la rende solo piu' probabile o se c'era gia'. DA FARE: far
+      uscire i klog INFO sulla seriale (verboseboot = 1 nel kernel.cfg del
+      disco di prova) e guardare dove si ferma login/avvio.sh; poi piu'
+      corse con la 0.286 per contarle.
+      29/10 SERA, TROVATO E CORRETTO (kernel 0.288): non era la 0.287,
+      era un processo raccolto DUE VOLTE, c'era gia' prima. Nella VM ferma
+      (gdb sul gdbstub di QEMU) g_ticks fermo a 125 e il PIC con imr=0xf9:
+      IRQ0 mascherato, il timer non batte piu' e tutti dormono per sempre.
+      Con una traccia di ogni scrittura sulla maschera del PIC e di ogni
+      proc_reap_zombie: sh0 raccoglie il PID 9 con waitpid al tick 109,
+      init_reaper_task (priorita' idle, interrotto ovunque) aveva visto lo
+      stesso PCB ZOMBIE prima, riprende al tick 112 e lo raccoglie di nuovo,
+      ormai UNUSED con pid 0 (tgid 9 != pid 0 e nessun vivo nel gruppo: un
+      "filo orfano"); irq_unbind_process(0) prende per suoi tutti i posti
+      liberi e maschera gli IRQ 0-7, e le pagine si liberavano due volte.
+      Correzione: proc_reap_zombie prende il PCB con un compare-and-swap
+      (in_raccolta, c'e' l'SMP) e solo se e' ancora ZOMBIE, chi arriva per
+      secondo se ne va; irq_unbind_process ignora il pid 0. Riprodotto col
+      carico sull'host (3 giri vuoti): prima fermo al primo avvio, due volte
+      su due; con la 0.288 10 avvii su 10 arrivati al login.
 
   40. LE SCADENZE DEL DRIVER ATA (trovato il 28/10 con la prova di Apache
       e PHP). Kernel 0.286: FLUSH CACHE aspetta fino a 30 s (era 5, come un

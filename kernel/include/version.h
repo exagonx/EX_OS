@@ -719,7 +719,15 @@
  * physical address in a uint32_t: a page above 4 GB freed (or written) the
  * page with its low 32 bits, and with 8 GB MariaDB's munmaps freed 10202
  * pages of others (kbd, ip.drv, e1000.drv and the shell died). */
-#define EXOS_VERSION    "0.287"
+/* 0.287 -> 0.288: a zombie reaped twice. init_reaper_task (idle priority,
+ * preempted anywhere) saw PROC_ZOMBIE, lost the CPU while the parent's
+ * waitpid collected the child, then reaped the slot again with pid 0:
+ * irq_unbind_process(0) masked IRQ 0-7 (timer included) and the boot froze
+ * after "libc.so caricata" (prova_mariadb_svc, intermittent, more often
+ * with the host busy). proc_reap_zombie now takes the PCB with a
+ * compare-and-swap (in_raccolta) and the second reaper goes away;
+ * irq_unbind_process ignores pid 0. */
+#define EXOS_VERSION    "0.288"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

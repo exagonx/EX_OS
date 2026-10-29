@@ -305,6 +305,11 @@ int32_t irq_unbind_uno(uint8_t irq, uint32_t pid)
 /* irq_unbind_process — rilascia il claim (chiamata alla terminazione) */
 void irq_unbind_process(uint32_t pid)
 {
+    /* ! PID 0 IS NOBODY, and here it would be everybody: a free owner slot
+     * holds 0, so every line would "belong" to it and IRQ 0-7 would be
+     * masked, the timer with them (0.288, see proc_reap_zombie). */
+    if (pid == 0) return;
+
     for (int i = 0; i < 16; i++) {
         int j, trovato = 0;
 
