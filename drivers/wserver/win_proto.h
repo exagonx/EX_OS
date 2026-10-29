@@ -129,9 +129,12 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * WIN_MSG_ELENCO means «keep me informed»: the server answers at once with
  * WIN_MSG_ELENCATA and sends it again, unasked, every time the list changes
  * (a window is born or dies, is minimized or restored, changes title or
- * takes the focus). One subscriber only: the last one that asked. No
- * polling, and no synchronous wait in the toolkit, which would drop the
- * events that arrive meanwhile.
+ * takes the focus). Any number of subscribers (wserver 0.013; up to 0.012
+ * only the last one that asked, which took the list away from the taskbar).
+ * The server never waits on a subscriber's full mailbox: the list goes on
+ * from where it stopped at the next loop, or starts again with ELENCATA if
+ * it changed meanwhile. No polling, and no synchronous wait in the toolkit,
+ * which would drop the events that arrive meanwhile.
  *
  * WIN_MSG_ATTIVA: restore it if minimized, bring it to the front, give it
  * the focus. WIN_MSG_RIDUCI: minimize it, the same as the title-bar button.
@@ -199,10 +202,21 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * chi chiede «dove sono» ha una risposta vera invece di un ricordo. */
 #define WIN_MSG_POSTA       0x5784  /* WinRegione: x e y, adesso sono queste */
 #define WIN_MSG_ELENCATA    0x5785  /* WinElenco: le finestre aperte         */
-/* Ctrl+Alt+Canc was pressed (@TASTI-SISTEMA): sent to whoever follows the
- * list of windows (the taskbar), which asks what to do. A second press
+/* Ctrl+Alt+Canc was pressed (@TASTI-SISTEMA): sent to the first subscriber of
+ * the list of windows still alive (the taskbar), which asks what to do. A second press
  * within five seconds restarts from the server itself. No body. */
 #define WIN_MSG_SISTEMA     0x5786
+/* ! THE LIST GOES IN PIECES (wserver 0.013, 29 October 2026). The server has
+ * no fixed number of windows any more, but an IPC message carries at most
+ * IPC_MSG_MAX_DATA bytes: WIN_MSG_ELENCATA brings the first WIN_ELENCO_MAX
+ * entries and STARTS a new list, each WIN_MSG_ELENCO_SEGUE (same WinElenco)
+ * brings the next ones and is appended. The last piece is the one with fewer
+ * than WIN_ELENCO_MAX entries (an empty one when the list is a multiple of
+ * it): that is how the toolkit knows the list is whole. A toolkit older than
+ * this reads the
+ * first piece as it always did and ignores the rest: it sees the first
+ * sixteen windows, as before. */
+#define WIN_MSG_ELENCO_SEGUE 0x5787
 
 /* --- Gli eventi, che il toolkit gira alla procedura di finestra ---------- */
 #define WIN_EV_MOUSE_GIU    1
@@ -282,6 +296,11 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * every system: the user closes one by clicking elsewhere. */
 #define WIN_ST_COMPARSA     0x0100
 
+/* The title field of WinCrea and WinTitolo. ! IT IS THE LEAST, NOT THE MOST
+ * (wserver 0.013): both structures end with the title, and a message longer
+ * than the structure carries a longer title (up to IPC_MSG_MAX_DATA), which
+ * the server keeps whole. The list of the taskbar (WinVoce) still carries
+ * the first WIN_TITOLO_LEN - 1 bytes: a taskbar button shows less anyway. */
 #define WIN_TITOLO_LEN      48
 
 /* -----------------------------------------------------------------------------
@@ -384,7 +403,7 @@ typedef struct {
  * click. */
 #define WIN_VOCE_RIDOTTA    0x0001  /* minimized */
 #define WIN_VOCE_FUOCO      0x0002  /* has the keyboard focus */
-#define WIN_ELENCO_MAX      16      /* = FINESTRE_MAX in the server */
+#define WIN_ELENCO_MAX      16      /* entries per piece: see WIN_MSG_ELENCO_SEGUE */
 
 typedef struct {
     unsigned int id;

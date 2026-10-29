@@ -73,13 +73,13 @@
 #include "sched.h"
 
 #define SHM_NOME_LEN     16     /* come IPC_NAME_LEN: e' lo stesso genere di nome */
-/* ! LE ZONE VIVE NEL SISTEMA. Otto bastavano finche' a usarle erano due
- * programmi che si scambiavano un buffer; con la scrivania sono una per
- * finestra, e le finestre di una sessione grafica normale — scrivania, barra,
- * un file manager, un editor, un terminale — sono gia' cinque. Il costo di uno
- * slot in piu' e' una struttura di poche parole: la memoria vera la occupano le
- * pagine, che si allocano solo quando la zona esiste davvero. */
-#define SHM_MAX_ZONE     24     /* zone vive nel sistema */
+/* ! THE ZONES ALIVE IN THE SYSTEM: AS MANY AS THE MEMORY HOLDS (kernel
+ * 0.289, voce 42). Eight were enough while two programs swapped a buffer;
+ * with the desktop there is one per window, and 24 (SHM_MAX_ZONE) was a
+ * fixed number of windows for the whole machine. The table starts at
+ * SHM_ZONE_INIZIO and doubles when it is full; an index never moves, so the
+ * zona field of a process's slots stays valid. */
+#define SHM_ZONE_INIZIO  32
 /* =============================================================================
  * ! IL TETTO DI UNA ZONA LO DECIDE LO SCHERMO, NON UNA COSTANTE.
  *

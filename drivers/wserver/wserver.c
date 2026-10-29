@@ -75,9 +75,14 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.012");
+EX_VERSIONE("wserver", "0.013");
 
-#define FINESTRE_MAX    16
+/* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
+ * configuration and the hardware set limits). Up to 0.012 there were 16
+ * slots, and a toolkit like GTK opens a window for every menu, tooltip and
+ * pop-up. The table starts at FINESTRE_INIZIO and doubles when it is full
+ * (fin_cresci); a slot is reused, never given back. */
+#define FINESTRE_INIZIO 16
 #define BARRA_H         20
 
 /* =============================================================================
@@ -149,8 +154,10 @@ EX_VERSIONE("wserver", "0.012");
 
 extern const unsigned char font8x16[256 * 16];
 
-/* Quanti eventi si tengono per un client che non legge (vedi metti_evento). */
-#define CODA_EVENTI     64
+/* The queue of a client that does not read starts this big and doubles
+ * when it is full (see metti_evento): movements and wheel steps are merged,
+ * so only clicks and keys pile up, at the speed of a person. */
+#define CODA_INIZIO     16
 
 typedef struct {
     unsigned int usata;
@@ -158,7 +165,7 @@ typedef struct {
     unsigned int pid;
     unsigned int x, y, w, h;        /* l'area del CLIENT, senza cornice */
     unsigned int stile;
-    char         titolo[WIN_TITOLO_LEN];
+    char        *titolo;            /* malloc'd, any length: see WIN_TITOLO_LEN */
     unsigned int zona_virt;         /* i pixel del client, ARGB */
     unsigned int zona_byte;
     unsigned int giro;              /* quante volte ha cambiato zona */
@@ -182,12 +189,14 @@ typedef struct {
     unsigned int prima_x, prima_y, prima_w, prima_h;
     /* Gli eventi che il client non ha ancora potuto ricevere (casella piena):
      * vedi metti_evento. */
-    WinEvento    coda[CODA_EVENTI];
-    unsigned int n_coda;
+    WinEvento   *coda;              /* malloc'd, kept when the slot is reused */
+    unsigned int n_coda, coda_posti;
 } Finestra;
 
-static Finestra g_fin[FINESTRE_MAX];
-static unsigned int g_ordine[FINESTRE_MAX];     /* dal fondo alla cima */
+static Finestra     *g_fin = 0;
+static unsigned int *g_ordine = 0;      /* dal fondo alla cima */
+static unsigned int *g_ordine_tmp = 0;  /* for in_cima(): as big as g_ordine */
+static unsigned int  g_fin_posti = 0;   /* slots in g_fin, g_ordine, g_ordine_tmp */
 static unsigned int g_n_ordine = 0;
 static unsigned int g_prossimo_id = 1;
 static unsigned int g_verboso = 0;
@@ -757,11 +766,12 @@ static void riempi(unsigned int x, unsigned int y, unsigned int w,
             px(x + i, y + j, c);
 }
 
-static void scrivi(unsigned int x, unsigned int y, const char *s, unsigned int c)
+static void scrivi_n(unsigned int x, unsigned int y, const char *s,
+                     unsigned int c, unsigned int max)
 {
     unsigned int i;
 
-    for (i = 0; s[i]; i++) {
+    for (i = 0; s[i] && i < max; i++) {
         const unsigned char *g = &font8x16[(unsigned char)s[i] * 16];
         unsigned int r, b;
 
@@ -874,8 +884,19 @@ static void cornice(const Finestra *f, unsigned int attiva)
 
         riempi(f->x, ty, f->w, alta, attiva ? C_BARRA_ATT : C_BARRA_INA);
         rilievo(f->x, ty, f->w, alta);
-        scrivi(f->x + 5, ty + (alta - 16) / 2, f->titolo,
-               attiva ? C_TITOLO : C_TITOLO_INA);
+        /* ! THE TITLE STAYS INSIDE ITS BAR (wserver 0.013): since a title
+         * can be of any length, it stops before the buttons instead of
+         * running over the window next to this one. */
+        {
+            unsigned int bottoni = ((f->stile & WIN_ST_CHIUDI) ? 1u : 0u) +
+                                   (puo_ridursi(f) ? 1u : 0u) +
+                                   (puo_ingrandirsi(f) ? 1u : 0u);
+            unsigned int spazio = bottoni * BARRA_H + 5u;
+
+            if (f->w > spazio + 8u)
+                scrivi_n(f->x + 5, ty + (alta - 16) / 2, f->titolo,
+                         attiva ? C_TITOLO : C_TITOLO_INA, (f->w - spazio) / 8u);
+        }
 
         /* ! IL PULSANTE DI CHIUSURA E' UN OGGETTO, NON UN QUADRATO ROSSO.
          * Sporge come un pulsante e ha dentro un quadratino: e' cosi' che si
@@ -992,7 +1013,7 @@ static void contorno(unsigned int x, unsigned int y, unsigned int w, unsigned in
  *     so it stays background.
  *
  * ! NOTHING IS CACHED. The pieces are recomputed for every dirty rectangle:
- * with FINESTRE_MAX windows it is a few hundred comparisons, less than a
+ * with the windows of a desktop it is a few hundred comparisons, less than a
  * single row of pixels, and a cache is one more thing that can go stale.
  * ============================================================================= */
 #define PEZZI_MAX 64
@@ -1331,7 +1352,7 @@ static int suo(unsigned int padrone, unsigned int mittente)
 static int trova_id(unsigned int id)
 {
     int i;
-    for (i = 0; i < FINESTRE_MAX; i++)
+    for (i = 0; i < (int)g_fin_posti; i++)
         if (g_fin[i].usata && g_fin[i].id == id) return i;
     return -1;
 }
@@ -1465,7 +1486,7 @@ static void in_cima(int idx)
      * piu' modo di arrivare al menu. */
     {
         unsigned int q, alto = 0;
-        unsigned int tmp[FINESTRE_MAX];
+        unsigned int *tmp = g_ordine_tmp;
 
         for (q = 0; q < g_n_ordine; q++)
             if (!(g_fin[g_ordine[q]].stile & WIN_ST_SOPRA)) tmp[alto++] = g_ordine[q];
@@ -1556,10 +1577,19 @@ static void metti_evento(Finestra *f, const WinEvento *e)
             return;
         }
     }
-    if (f->n_coda >= CODA_EVENTI) {
-        if (g_eventi_persi++ == 0 || g_verboso)
-            log_seriale("wserver: coda eventi piena, un evento perso");
-        return;
+    if (f->n_coda >= f->coda_posti) {
+        unsigned int posti = f->coda_posti ? f->coda_posti * 2u : CODA_INIZIO;
+        WinEvento   *nuova = (WinEvento *)realloc(f->coda, posti * sizeof(WinEvento));
+
+        /* ! THE ONLY LIMIT IS THE MEMORY: an event is lost only if there is
+         * no room left to keep it. */
+        if (!nuova) {
+            if (g_eventi_persi++ == 0 || g_verboso)
+                log_seriale("wserver: niente memoria per la coda eventi, un evento perso");
+            return;
+        }
+        f->coda = nuova;
+        f->coda_posti = posti;
     }
     f->coda[f->n_coda++] = *e;
 }
@@ -1568,7 +1598,7 @@ static void svuota_code(void)
 {
     int i;
 
-    for (i = 0; i < FINESTRE_MAX; i++) {
+    for (i = 0; i < (int)g_fin_posti; i++) {
         Finestra    *f = &g_fin[i];
         unsigned int fatti = 0;
 
@@ -1729,7 +1759,7 @@ static void kbd_giro(void)
  * restarts from here â€” the server answers even when the taskbar does not,
  * and that is the case the key exists for. */
 static unsigned int g_cac_ultimo = 0;
-static unsigned int g_elenco_pid;       /* defined with the list, below */
+static unsigned int barra_pid(void);    /* defined with the list, below */
 
 static void ctrl_alt_canc(void)
 {
@@ -1742,7 +1772,7 @@ static void ctrl_alt_canc(void)
     }
     g_cac_ultimo = ora;
     log_seriale("wserver: Ctrl+Alt+Canc");
-    if (g_elenco_pid) ipc_send(g_elenco_pid, WIN_MSG_SISTEMA, 0, 0);
+    if (barra_pid()) ipc_send(barra_pid(), WIN_MSG_SISTEMA, 0, 0);
 }
 
 static void kbd_tasto(unsigned int k)
@@ -1762,7 +1792,7 @@ static void kbd_tasto(unsigned int k)
         ((k & KBD_MOD_CTRL) && !(k & KBD_MOD_ALT) && (k & KBD_KEY_MASK) == 27u)) {
         unsigned int quale = 1;
 
-        if (g_elenco_pid) ipc_send(g_elenco_pid, WIN_MSG_SISTEMA, &quale, sizeof(quale));
+        if (barra_pid()) ipc_send(barra_pid(), WIN_MSG_SISTEMA, &quale, sizeof(quale));
         return;
     }
 
@@ -2035,7 +2065,7 @@ static void comparse_chiudi(void)
 
     if (!(g_bottoni & ~g_bottoni_prec)) return;          /* no new press */
     sopra = sotto(g_px, g_py, &dove);
-    for (i = 0; i < FINESTRE_MAX; i++) {
+    for (i = 0; i < (int)g_fin_posti; i++) {
         if (!g_fin[i].usata || !(g_fin[i].stile & WIN_ST_COMPARSA)) continue;
         if (i == sopra || g_fin[i].chiusa_chiesta) continue;
         g_fin[i].chiusa_chiesta = 1;
@@ -2256,7 +2286,55 @@ static void mouse_agisci(void)
 /* -----------------------------------------------------------------------------
  * Le richieste dei client
  * --------------------------------------------------------------------------- */
-static void crea(unsigned int pid, const WinCrea *c)
+/* =============================================================================
+ * The table of windows grows (wserver 0.013): see FINESTRE_INIZIO.
+ *
+ * ! INDICES, NOT POINTERS, SURVIVE A GROWTH. realloc can move g_fin, so a
+ * Finestra * taken before fin_cresci() is not valid after it; everything
+ * that is kept between messages (g_fuoco, g_trascino, g_ridim...) is an
+ * index, and fin_cresci is called only from crea(), which holds none.
+ * ============================================================================= */
+static int fin_cresci(void)
+{
+    unsigned int  posti = g_fin_posti ? g_fin_posti * 2u : FINESTRE_INIZIO;
+    Finestra     *f;
+    unsigned int *o, *ot;
+
+    f = (Finestra *)realloc(g_fin, posti * sizeof(Finestra));
+    if (!f) return -1;
+    g_fin = f;
+    memset(&g_fin[g_fin_posti], 0, (posti - g_fin_posti) * sizeof(Finestra));
+
+    o = (unsigned int *)realloc(g_ordine, posti * sizeof(unsigned int));
+    if (!o) return -1;
+    g_ordine = o;
+    ot = (unsigned int *)realloc(g_ordine_tmp, posti * sizeof(unsigned int));
+    if (!ot) return -1;
+    g_ordine_tmp = ot;
+
+    g_fin_posti = posti;
+    if (g_verboso) printf("wserver: posti per %u finestre\n", posti);
+    return 0;
+}
+
+/* A title of any length: n bytes at most, it stops at the first zero. The
+ * old one stays if there is no memory for the new one. */
+static int titolo_metti(Finestra *f, const char *s, unsigned int n)
+{
+    unsigned int l = 0;
+    char *nuovo;
+
+    while (l < n && s[l]) l++;
+    nuovo = (char *)malloc(l + 1u);
+    if (!nuovo) return -1;
+    memcpy(nuovo, s, l);
+    nuovo[l] = '\0';
+    free(f->titolo);
+    f->titolo = nuovo;
+    return 0;
+}
+
+static void crea(unsigned int pid, const WinCrea *c, unsigned int len)
 {
     WinCreata r;
     ShmZona   z;
@@ -2264,8 +2342,14 @@ static void crea(unsigned int pid, const WinCrea *c)
 
     memset(&r, 0, sizeof(r));
 
-    for (i = 0; i < FINESTRE_MAX; i++) if (!g_fin[i].usata) break;
-    if (i == FINESTRE_MAX) {
+    for (i = 0; i < (int)g_fin_posti; i++) if (!g_fin[i].usata) break;
+    if (i == (int)g_fin_posti && fin_cresci() != 0) {
+        log_seriale("wserver: niente memoria per un'altra finestra");
+        (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+        return;
+    }
+    if (titolo_metti(&g_fin[i], c->titolo,
+                     len - (unsigned int)__builtin_offsetof(WinCrea, titolo)) != 0) {
         (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
         return;
     }
@@ -2332,8 +2416,6 @@ static void crea(unsigned int pid, const WinCrea *c)
     g_fin[i].stile     = c->stile;
     g_fin[i].zona_virt = z.virt;
     g_fin[i].zona_byte = z.byte;
-    memcpy(g_fin[i].titolo, c->titolo, WIN_TITOLO_LEN);
-    g_fin[i].titolo[WIN_TITOLO_LEN - 1] = '\0';
 
     /* Il client parte con un'area di un colore noto invece che con la
      * memoria che c'era: una finestra nuova piena di spazzatura sembra un
@@ -2481,7 +2563,7 @@ static unsigned int barra_in_fondo(void)
 {
     unsigned int k, alta = 0;
 
-    for (k = 0; k < FINESTRE_MAX; k++) {
+    for (k = 0; k < g_fin_posti; k++) {
         const Finestra *f = &g_fin[k];
 
         if (!f->usata || !(f->stile & WIN_ST_VISIBILE) || !(f->stile & WIN_ST_SOPRA)) continue;
@@ -2544,7 +2626,17 @@ static void distruggi(int idx)
         sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
 
     if (g_fin[idx].zona_virt) shm_chiudi((void *)g_fin[idx].zona_virt);
-    memset(&g_fin[idx], 0, sizeof(Finestra));
+    {
+        /* The queue's memory stays with the slot, for the next window; the
+         * title goes. */
+        WinEvento   *coda  = g_fin[idx].coda;
+        unsigned int posti = g_fin[idx].coda_posti;
+
+        free(g_fin[idx].titolo);
+        memset(&g_fin[idx], 0, sizeof(Finestra));
+        g_fin[idx].coda       = coda;
+        g_fin[idx].coda_posti = posti;
+    }
 
     for (k = 0; k < g_n_ordine; k++)
         if (g_ordine[k] != (unsigned int)idx) g_ordine[j++] = g_ordine[k];
@@ -2589,18 +2681,19 @@ static void distruggi(int idx)
  * cui non ci si fida, si non pulisce.
  * --------------------------------------------------------------------------- */
 #define PROC_ZOMBIE     4
-/* ! MORE THAN THE KERNEL'S PROCESS TABLE (MAX_PROCESSES, 192 today), NOT
- * 64 (24 October 2026). Every thread is a pid: Firefox starts some 150, the
- * list overflowed, and by the rule above nothing was collected - the
- * "loading" box, whose process had exited, stayed on the screen, movable
- * and focusable, for the 3-4 minutes until Firefox's threads dropped below
- * 64. */
-#define PID_TRACCIATI   512
-
+static void iscritti_togli_morti(const unsigned int *vivi, unsigned int n_vivi);
+/* ! AS MANY AS THERE ARE (wserver 0.013). Every thread is a pid: Firefox
+ * starts some 150, and on 24 October the list (64 then) overflowed and, by
+ * the rule above, nothing was collected - the "loading" box, whose process
+ * had exited, stayed on the screen for 3-4 minutes. 512 was the fix then;
+ * since the kernel has no MAX_PROCESSES any more (0.282) a fixed number is
+ * wrong again on a server with thousands of threads. The list grows by
+ * doubling and is kept between calls. */
 static void raccogli_morti(void)
 {
     ProcInfo     v[PROCINFO_MAX_BATCH];
-    static unsigned int vivi[PID_TRACCIATI];   /* 2 KB: not on the stack */
+    static unsigned int *vivi = 0;
+    static unsigned int  vivi_posti = 0;
     unsigned int n_vivi = 0, start = 0;
     int n, i, k;
 
@@ -2610,7 +2703,14 @@ static void raccogli_morti(void)
 
         for (i = 0; i < n; i++) {
             if (v[i].state == PROC_ZOMBIE) continue;
-            if (n_vivi >= PID_TRACCIATI) return;    /* elenco troncato: basta */
+            if (n_vivi >= vivi_posti) {
+                unsigned int  posti = vivi_posti ? vivi_posti * 2u : 256u;
+                unsigned int *nuovo = (unsigned int *)realloc(vivi, posti * sizeof(unsigned int));
+
+                if (!nuovo) return;     /* list incomplete: touch nothing */
+                vivi = nuovo;
+                vivi_posti = posti;
+            }
             vivi[n_vivi++] = v[i].pid;
         }
         start += (unsigned int)n;
@@ -2619,7 +2719,9 @@ static void raccogli_morti(void)
 
     if (n_vivi == 0) return;        /* non ho saputo niente: non tocco niente */
 
-    for (i = 0; i < FINESTRE_MAX; i++) {
+    iscritti_togli_morti(vivi, n_vivi);
+
+    for (i = 0; i < (int)g_fin_posti; i++) {
         int vivo = 0;
 
         if (!g_fin[i].usata) continue;
@@ -2650,16 +2752,40 @@ static void raccogli_morti(void)
  * the taskbar busy drawing â€” makes the next loop try again, instead of
  * leaving the taskbar one change behind until the following one.
  * ============================================================================= */
-static unsigned int g_elenco_pid = 0;   /* who asked; 0 = nobody */
-static WinElenco    g_elenco_detto;     /* the last one that arrived */
-static unsigned int g_elenco_nuovo = 0; /* a new subscriber: send anyway */
+/* ! EVERY SUBSCRIBER, NOT THE LAST ONE (wserver 0.013). Up to 0.012 there was
+ * one: whoever asked last. A program that followed the list for itself took
+ * it away from the taskbar, and when it exited the taskbar stayed frozen on
+ * the last list it had seen - found with finestreprova, 29 October 2026.
+ * Each subscriber has its own copy of what it was sent and its own place in
+ * the sending; dead ones go with raccogli_morti. */
+typedef struct {
+    unsigned int  pid;
+    WinVoce      *detta;        /* the list being sent, or last sent whole   */
+    unsigned int  n_detta, posti;
+    unsigned int  fatte;        /* entries of `detta` already in its mailbox */
+    unsigned int  in_corso;     /* a list started and not finished           */
+    unsigned int  nuovo;        /* just subscribed: send even if unchanged   */
+} Iscritto;
 
-static void elenco_fai(WinElenco *el)
+static Iscritto     *g_iscr = 0;
+static unsigned int  g_n_iscr = 0, g_iscr_posti = 0;
+
+/* The list as it is now, rebuilt at every loop. */
+static WinVoce     *g_voci = 0;
+static unsigned int g_n_voci = 0, g_voci_posti = 0;
+
+static unsigned int elenco_fai(void)
 {
-    unsigned int i;
+    unsigned int i, n = 0;
 
-    memset(el, 0, sizeof(*el));
-    for (i = 0; i < FINESTRE_MAX && el->n < WIN_ELENCO_MAX; i++) {
+    if (g_voci_posti < g_fin_posti) {
+        WinVoce *a = (WinVoce *)realloc(g_voci, g_fin_posti * sizeof(WinVoce));
+
+        if (!a) return g_n_voci = 0;
+        g_voci = a;
+        g_voci_posti = g_fin_posti;
+    }
+    for (i = 0; i < g_fin_posti; i++) {
         const Finestra *f = &g_fin[i];
         WinVoce *v;
 
@@ -2667,39 +2793,158 @@ static void elenco_fai(WinElenco *el)
         if (f->stile & (WIN_ST_SFONDO | WIN_ST_SOPRA | WIN_ST_MODALE)) continue;
         if (!(f->stile & WIN_ST_VISIBILE) && !f->ridotta) continue;
 
-        v = &el->v[el->n++];
+        v = &g_voci[n++];
+        memset(v, 0, sizeof(*v));
         v->id    = f->id;
         v->pid   = f->pid;
         v->stato = (f->ridotta ? WIN_VOCE_RIDOTTA : 0) |
                    ((int)i == g_fuoco ? WIN_VOCE_FUOCO : 0);
-        memcpy(v->titolo, f->titolo, WIN_TITOLO_LEN);
-        v->titolo[WIN_TITOLO_LEN - 1] = '\0';
+        strncpy(v->titolo, f->titolo ? f->titolo : "", WIN_TITOLO_LEN - 1);
     }
 
     /* Creation order: the slot index is not it (slots are reused), the id
-     * is. Sixteen entries, insertion sort. */
-    for (i = 1; i < el->n; i++) {
-        WinVoce t = el->v[i];
+     * is. Insertion sort: the list is almost always already in order. */
+    for (i = 1; i < n; i++) {
+        WinVoce t = g_voci[i];
         int j = (int)i - 1;
 
-        while (j >= 0 && el->v[j].id > t.id) { el->v[j + 1] = el->v[j]; j--; }
-        el->v[j + 1] = t;
+        while (j >= 0 && g_voci[j].id > t.id) { g_voci[j + 1] = g_voci[j]; j--; }
+        g_voci[j + 1] = t;
     }
+    return g_n_voci = n;
+}
+
+/* One piece starting at entry `da` of v[0..n): ELENCATA if it is the first,
+ * SEGUE otherwise. The LAST piece is the one with fewer than WIN_ELENCO_MAX
+ * entries - an empty one if the list is a multiple of it - so the toolkit
+ * knows when it is whole (see win_proto.h). Returns the entries it carried,
+ * or -1 if the mailbox would not take it. */
+static int elenco_pezzo(unsigned int pid, const WinVoce *v, unsigned int n,
+                        unsigned int da, unsigned int senza_attesa)
+{
+    WinElenco    el;
+    unsigned int q = n - da;
+
+    if (q > WIN_ELENCO_MAX) q = WIN_ELENCO_MAX;
+    el.n = q;
+    if (q) memcpy(el.v, &v[da], q * sizeof(WinVoce));
+    if (ipc_send(pid, (da ? WIN_MSG_ELENCO_SEGUE : WIN_MSG_ELENCATA) |
+                      (senza_attesa ? IPC_SENZA_ATTESA : 0u),
+                 &el, (unsigned int)(sizeof(el.n) + q * sizeof(WinVoce))) < 0)
+        return -1;
+    return (int)q;
+}
+
+/* The whole list at once, to whoever asked for it once (WIN_MSG_ELENCO_UNA):
+ * that one is waiting for the answer and reading it, so waiting is fine. */
+static void elenco_invia_tutto(unsigned int pid)
+{
+    unsigned int fatte = 0;
+    int          q;
+
+    do {
+        q = elenco_pezzo(pid, g_voci, g_n_voci, fatte, 0);
+        if (q < 0) return;
+        fatte += (unsigned int)q;
+    } while (q == WIN_ELENCO_MAX);
+}
+
+/* ! TO A SUBSCRIBER, NEVER WAITING, AND GOING ON WHERE IT STOPPED. The
+ * subscriber may be busy - finestreprova closing 40 windows sends 40
+ * DISTRUGGI without reading - and a send that waits for its 4-place mailbox
+ * froze the whole server ten seconds a piece, the screen with it. Without
+ * waiting, a full mailbox only means «later»; and later goes on from the
+ * piece that did not go, because starting again from the first, with 13
+ * pieces and 4 places, would never end. If the list changes meanwhile, it
+ * starts again with ELENCATA: the toolkit drops the half it had. */
+static void elenco_a(Iscritto *s)
+{
+    int q;
+
+    if (s->in_corso &&
+        (s->n_detta != g_n_voci ||
+         (g_n_voci && memcmp(s->detta, g_voci, g_n_voci * sizeof(WinVoce)) != 0)))
+        s->in_corso = 0;                        /* changed: from the start */
+
+    if (!s->in_corso) {
+        if (!s->nuovo && s->n_detta == g_n_voci &&
+            (g_n_voci == 0 || memcmp(s->detta, g_voci, g_n_voci * sizeof(WinVoce)) == 0))
+            return;                             /* nothing new */
+        if (s->posti < g_n_voci) {
+            WinVoce *d = (WinVoce *)realloc(s->detta, g_voci_posti * sizeof(WinVoce));
+
+            if (!d) return;
+            s->detta = d;
+            s->posti = g_voci_posti;
+        }
+        if (g_n_voci) memcpy(s->detta, g_voci, g_n_voci * sizeof(WinVoce));
+        s->n_detta  = g_n_voci;
+        s->fatte    = 0;
+        s->in_corso = 1;
+        s->nuovo    = 0;
+    }
+
+    do {
+        q = elenco_pezzo(s->pid, s->detta, s->n_detta, s->fatte, 1);
+        if (q < 0) return;                      /* full: the next loop */
+        s->fatte += (unsigned int)q;
+    } while (q == WIN_ELENCO_MAX);
+    s->in_corso = 0;
 }
 
 static void elenco_manda(void)
 {
-    WinElenco el;
+    unsigned int i;
 
-    if (!g_elenco_pid) return;
-    elenco_fai(&el);
-    if (!g_elenco_nuovo && memcmp(&el, &g_elenco_detto, sizeof(el)) == 0) return;
+    if (!g_n_iscr) return;
+    elenco_fai();
+    for (i = 0; i < g_n_iscr; i++) elenco_a(&g_iscr[i]);
+}
 
-    if (ipc_send(g_elenco_pid, WIN_MSG_ELENCATA, &el,
-                 (unsigned int)(sizeof(el.n) + el.n * sizeof(WinVoce))) >= 0) {
-        g_elenco_detto = el;
-        g_elenco_nuovo = 0;
+static void iscrivi(unsigned int pid)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_n_iscr; i++)
+        if (g_iscr[i].pid == pid) { g_iscr[i].nuovo = 1; g_iscr[i].in_corso = 0; return; }
+    if (g_n_iscr >= g_iscr_posti) {
+        unsigned int posti = g_iscr_posti ? g_iscr_posti * 2u : 4u;
+        Iscritto    *v = (Iscritto *)realloc(g_iscr, posti * sizeof(Iscritto));
+
+        if (!v) return;
+        g_iscr = v;
+        g_iscr_posti = posti;
     }
+    memset(&g_iscr[g_n_iscr], 0, sizeof(Iscritto));
+    g_iscr[g_n_iscr].pid   = pid;
+    g_iscr[g_n_iscr].nuovo = 1;
+    g_n_iscr++;
+}
+
+/* Called by raccogli_morti with the pids alive. The order is kept: the first
+ * subscriber is the taskbar, which gets WIN_MSG_SISTEMA. Its copy is freed
+ * (with this allocator it is not given back, but it is the right thing). */
+static void iscritti_togli_morti(const unsigned int *vivi, unsigned int n_vivi)
+{
+    unsigned int i = 0, k;
+
+    while (i < g_n_iscr) {
+        int vivo = 0;
+
+        for (k = 0; k < n_vivi; k++)
+            if (vivi[k] == g_iscr[i].pid) { vivo = 1; break; }
+        if (vivo) { i++; continue; }
+        free(g_iscr[i].detta);
+        for (k = i + 1; k < g_n_iscr; k++) g_iscr[k - 1] = g_iscr[k];
+        g_n_iscr--;
+    }
+}
+
+/* Who gets Ctrl+Alt+Canc and the Windows key: the first subscriber still
+ * there, the taskbar. 0 = nobody. */
+static unsigned int barra_pid(void)
+{
+    return g_n_iscr ? g_iscr[0].pid : 0u;
 }
 
 static int tutto_mio(const IpcMessage *meta, void *dato)
@@ -2753,7 +2998,7 @@ static int servi_messaggio(unsigned int ms)
 
     switch (meta.tipo) {
     case WIN_MSG_CREA:
-        if (meta.len >= sizeof(WinCrea)) crea(meta.sender_pid, (WinCrea *)buf);
+        if (meta.len >= sizeof(WinCrea)) crea(meta.sender_pid, (WinCrea *)buf, meta.len);
         break;
 
     /* =====================================================================
@@ -2783,7 +3028,7 @@ static int servi_messaggio(unsigned int ms)
         /* Nell'elenco del server ci sono SOLO finestre di primo livello: i
          * controlli del toolkit vivono dentro il client e non si registrano
          * qui. Quindi ognuna di queste e' un'applicazione da avvisare. */
-        for (n = 0; n < FINESTRE_MAX; n++)
+        for (n = 0; n < (int)g_fin_posti; n++)
             if (g_fin[n].usata)
                 manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
 
@@ -2793,7 +3038,7 @@ static int servi_messaggio(unsigned int ms)
             for (n = 0; n < 16 && servi_messaggio(IPC_SUBITO); n++) { }
             raccogli_morti();
 
-            for (n = 0; n < FINESTRE_MAX; n++)
+            for (n = 0; n < (int)g_fin_posti; n++)
                 if (g_fin[n].usata) vive++;
             if (vive == 0) break;
 
@@ -2877,8 +3122,8 @@ static int servi_messaggio(unsigned int ms)
         if (meta.len < sizeof(WinTitolo)) break;
         idx = trova_id(t->id);
         if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) {
-            memcpy(g_fin[idx].titolo, t->titolo, WIN_TITOLO_LEN);
-            g_fin[idx].titolo[WIN_TITOLO_LEN - 1] = '\0';
+            (void)titolo_metti(&g_fin[idx], t->titolo,
+                               meta.len - (unsigned int)__builtin_offsetof(WinTitolo, titolo));
             sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
         }
         break;
@@ -2888,7 +3133,7 @@ static int servi_messaggio(unsigned int ms)
         int n;
 
         log_seriale("wserver: chiudo le applicazioni degli altri");
-        for (n = 0; n < FINESTRE_MAX; n++) {
+        for (n = 0; n < (int)g_fin_posti; n++) {
             if (!g_fin[n].usata || suo(g_fin[n].pid, meta.sender_pid)) continue;
             if (g_fin[n].ridotta) ripristina(n);
             manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
@@ -2897,16 +3142,12 @@ static int servi_messaggio(unsigned int ms)
     }
 
     case WIN_MSG_ELENCO:
-        g_elenco_pid   = meta.sender_pid;
-        g_elenco_nuovo = 1;
+        iscrivi(meta.sender_pid);
         break;
 
     case WIN_MSG_ELENCO_UNA: {
-        WinElenco el;
-
-        elenco_fai(&el);
-        ipc_send(meta.sender_pid, WIN_MSG_ELENCATA, &el,
-                 (unsigned int)(sizeof(el.n) + el.n * sizeof(WinVoce)));
+        elenco_fai();
+        elenco_invia_tutto(meta.sender_pid);
         break;
     }
 
@@ -3342,7 +3583,7 @@ int main(int argc, char **argv)
          * ridimensiona(). */
         if (ora - detto_ms >= 200u) {
             detto_ms = ora;
-            for (n = 0; n < FINESTRE_MAX; n++) {
+            for (n = 0; n < (int)g_fin_posti; n++) {
                 if (!g_fin[n].usata || !g_fin[n].da_dire) continue;
 
                 g_fin[n].da_dire--;

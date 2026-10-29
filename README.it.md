@@ -2,7 +2,7 @@
 
 [🇬🇧 English](README.md) · **🇮🇹 Italiano**
 
-**Versione:** 0.286
+**Versione:** 0.289
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -110,6 +110,33 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### ExWin senza tetti fissi: finestre, elenco, oggetti (kernel 0.289, wserver 0.013, exwin.so 0.020) — testato in QEMU
+
+Fino a ieri ExWin aveva **16 finestre**: la diciassettesima veniva rifiutata, e
+la barra delle applicazioni ne vedeva sedici al massimo. Adesso le finestre,
+l'elenco della barra, i titoli e gli oggetti del toolkit crescono con quello
+che si chiede, fino alla memoria che c'è. Provato con 200 finestre aperte e
+chiuse di fila, a 32 e 64 bit (`tools/prova_finestre.sh <dir> 200`).
+
+- **Kernel 0.289**: le zone di memoria condivisa (una per finestra) non hanno
+  più i tetti di 20 per processo e 24 in tutto; le tabelle raddoppiano quando
+  sono piene, sotto un lucchetto (c'è l'SMP).
+- **wserver 0.013**: la tabella delle finestre e la coda degli eventi di
+  ognuna raddoppiano; i titoli hanno la lunghezza che hanno (prima 48 byte), e
+  sulla barra del titolo si tagliano prima dei pulsanti. L'elenco per la barra
+  va **a pezzi** da 16 (`WIN_MSG_ELENCATA` e poi `WIN_MSG_ELENCO_SEGUE`).
+- **L'elenco lo possono seguire più programmi**: prima solo l'ultimo che lo
+  chiedeva, e un programma che lo seguiva per sé lo toglieva alla barra, che
+  restava ferma. E il server non aspetta più la casella di chi lo segue: con
+  un programma che chiudeva 40 finestre di fila il server restava fermo dieci
+  secondi a pezzo, schermo compreso. Adesso a casella piena riprova al giro
+  dopo, dal pezzo che non era partito.
+- **exwin.so 0.020**: niente più 192 oggetti per programma, né 4 terminali,
+  4 liste, 2 aree di testo, 6 controlli a voci, 2 menu, 16 descrittori
+  guardati: ognuno parte da quei posti e raddoppia.
+- `pm` 0.025 (la barra) e `attesa` 0.006 leggono l'elenco senza un numero
+  fisso; `finestreprova` è il programma di prova.
 
 ### PHP 8.5 con PDO dentro Apache, e 2048 client per 10 minuti (kernel 0.286)
 

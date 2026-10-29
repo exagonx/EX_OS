@@ -435,6 +435,28 @@ finestra a misura fissa (il lettore audio, la calcolatrice) non lo ha: non
 saprebbe che cosa mettere nello spazio in piu'.
 </p>
 
+<h2 id="quante">Quante finestre</h2>
+
+<p>
+Quante ne servono: <b>non c'e' un numero fisso</b> (dal kernel 0.289, wserver
+0.013, exwin.so 0.020; prima erano sedici). Il limite e' la memoria: ogni
+finestra ha la sua zona di pixel, larghezza per altezza per quattro byte. Il
+titolo puo' essere lungo quanto si vuole; sulla barra del titolo si taglia
+prima dei pulsanti, e nella barra in fondo ogni pulsante ne mostra l'inizio.
+Con molte finestre aperte la barra in fondo mostra i pulsanti che ci stanno.
+</p>
+
+<p class="nota">
+<b>Per chi scrive un programma</b>: <code>ex_track_windows()</code> lo
+possono chiamare piu' programmi insieme, e ognuno riceve l'elenco intero
+(<code>EXM_WINDOW_LIST</code> arriva quando l'elenco e' completo: viaggia a
+pezzi da sedici). <code>ex_list_windows(0, 0)</code> dice quante voci ci
+sono, per allocare prima lo spazio. Ctrl+Alt+Canc e il tasto Windows vanno al
+primo di loro ancora vivo: la barra. La prova e'
+<code>tools/prova_finestre.sh</code>, con il programma
+<code>/exwin/bin/finestreprova [N] [secondi]</code>.
+</p>
+
 <h2>I tasti che valgono dappertutto</h2>
 
 <table border="1">

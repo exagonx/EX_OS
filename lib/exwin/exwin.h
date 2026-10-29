@@ -122,8 +122,8 @@ typedef long (*ExWindowProc)(ExWindow, unsigned int, unsigned int, long);
  * Only the window that called ex_track_windows() receives it. */
 #define EXM_WINDOW_LIST    0x000E
 /* Ctrl+Alt+Canc was pressed with the graphics on screen (@TASTI-SISTEMA).
- * Only the window that called ex_track_windows() receives it: the desktop,
- * which asks what to do. */
+ * Only the first program still running that called ex_track_windows()
+ * receives it: the desktop, which asks what to do. */
 #define EXM_SYSTEM     0x000F  /* wp: 0 = Ctrl+Alt+Canc, 1 = menu di avvio (Windows, Ctrl+Esc) */
 /* The mouse wheel turned over this window (28 September 2026). wp is the
  * number of notches as a SIGNED int — positive towards the user, i.e. "the
@@ -442,10 +442,15 @@ void        ex_shutdown_desktop(void);
  *
  * ex_track_windows(f): from now on the server sends the list of open
  * windows whenever it changes, and f receives EXM_WINDOW_LIST each time. The
- * first list arrives at once. One follower per desktop: the last to ask.
+ * first list arrives at once. Any number of programs can follow it (exwin.so
+ * 0.020, wserver 0.013: up to then only the last to ask, which took it away
+ * from the taskbar). The list has no fixed length: it comes in pieces, and
+ * EXM_WINDOW_LIST arrives when it is whole.
  *
  * ex_list_windows(): copies the last list received into v, at most max
- * entries, in creation order; returns how many there are.
+ * entries, in creation order; returns how many there are. With v == 0 it
+ * only says how many, to allocate the room first. The titles in the list are
+ * cut at 47 bytes; the windows themselves have titles of any length.
  *
  * ex_activate_window_id(id): restore it if minimized, bring it to the front,
  * give it the focus. ex_minimize_window_id(id): minimize it — the same as the

@@ -47,7 +47,7 @@
 #include "libc.h"
 #include "exwin.h"
 
-#define VERSIONE_APP "0.005"
+#define VERSIONE_APP "0.006"
 EX_VERSIONE("attesa", VERSIONE_APP);
 
 #define FIN_W      330
@@ -225,8 +225,14 @@ static void diario(const char *riga)
 
 static int ha_finestra(void)
 {
-    ExWindowEntry v[24];
-    int           n = ex_list_windows(v, 24), i;
+    /* All the windows, not the first 24 (attesa 0.006): with more open, the
+     * program's own could be the 25th and the box would wait for nothing. */
+    ExWindowEntry *v;
+    int            n = ex_list_windows(0, 0), i, trovata = 0;
+
+    v = (ExWindowEntry *)malloc((unsigned int)(n ? n : 1) * sizeof(ExWindowEntry));
+    if (!v) return 0;
+    n = ex_list_windows(v, n);
 
     if (n != g_ultimo_n) {
         char r[128];
@@ -235,17 +241,17 @@ static int ha_finestra(void)
         snprintf(r, sizeof(r), "[%u s] %s pid %d: %d finestre\n",
                  (uptime_ms() - g_t0) / 1000u, g_nome, g_figlio, n);
         diario(r);
-        for (i = 0; i < n && i < 24; i++) {
+        for (i = 0; i < n; i++) {
             snprintf(r, sizeof(r), "  id %u pid %u gruppo %d \"%.40s\"\n", v[i].id,
                      v[i].pid, proc_gruppo((int)v[i].pid), v[i].title);
             diario(r);
         }
     }
-    for (i = 0; i < n && i < 24; i++) {
-        if ((int)v[i].pid == g_figlio) return 1;
-        if (proc_gruppo((int)v[i].pid) == g_figlio) return 1;
-    }
-    return 0;
+    for (i = 0; i < n && !trovata; i++)
+        if ((int)v[i].pid == g_figlio || proc_gruppo((int)v[i].pid) == g_figlio)
+            trovata = 1;
+    free(v);
+    return trovata;
 }
 
 static void controlla_figlio(void)

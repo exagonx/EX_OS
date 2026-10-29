@@ -415,7 +415,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # =============================================================================
 PROGRAMMI_CD := polltest modulo wifid extaskbar prova64 sha256sum aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -3216,6 +3216,28 @@ $(FONTPROVA_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(FONTPROVA_SRC) $(FONTPROVA_LD) $
 .PHONY: fontprova
 fontprova: dirs $(FONTPROVA_BIN)
 
+# --- /exwin/bin/finestreprova: molte finestre insieme (voce 42) -------------
+# La prova di wserver 0.013 ed exwin.so 0.020: N finestre con un titolo piu'
+# lungo di 48 byte e l'elenco a pezzi. Vedi tools/prova_finestre.sh.
+FINPROVA_SRC := exwin/bin/finestreprova/finestreprova.c
+FINPROVA_BIN := $(BUILD_EXWIN_BIN)/finestreprova
+FINPROVA_LD  := exwin/bin/finestreprova/finestreprova.ld
+
+$(FINPROVA_BIN): $(FINPROVA_SRC) $(FINPROVA_LD) $(EXWIN_STUB) $(EXWIN_HDR) $(WIN_PROTO) \
+             $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/finestreprova ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(FINPROVA_SRC) -o $(BUILD_OBJ)/finprova_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/finprova_exwin.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/finprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FINPROVA_LD) \
+	    $(BUILD_OBJ)/finprova_start.o $(BUILD_OBJ)/finprova_main.o \
+	    $(BUILD_OBJ)/finprova_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] finestreprova compilato: $@"
+
+.PHONY: finestreprova
+finestreprova: dirs $(FINPROVA_BIN)
+
 # --- /exwin/bin/orologio: la data e l'ora nella barra ------------------------
 #
 # ! E' UN PROCESSO A PARTE E NON UN THREAD, perche' i thread in EX-OS non
@@ -3364,7 +3386,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
-EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
+EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) $(FINPROVA_BIN) \
              $(OROLOGIO_BIN) $(ATTESA_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
              $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(EXWIFI_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \

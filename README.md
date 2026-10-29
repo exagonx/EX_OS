@@ -2,7 +2,7 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
-**Version:** 0.286
+**Version:** 0.289
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -108,6 +108,33 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### ExWin without fixed ceilings: windows, list, objects (kernel 0.289, wserver 0.013, exwin.so 0.020) — tested in QEMU
+
+Until yesterday ExWin had **16 windows**: the seventeenth was refused, and the
+taskbar saw sixteen at most. Now the windows, the taskbar list, the titles and
+the toolkit objects grow with what is asked, up to the memory there is. Tested
+with 200 windows opened and closed in a row, at 32 and 64 bit
+(`tools/prova_finestre.sh <dir> 200`).
+
+- **Kernel 0.289**: the shared-memory zones (one per window) no longer have
+  the ceilings of 20 per process and 24 in all; the tables double when full,
+  under a lock (there is SMP).
+- **wserver 0.013**: the window table and each window's event queue double;
+  titles are as long as they are (48 bytes before), cut on the title bar
+  before the buttons. The list for the taskbar goes **in pieces** of 16
+  (`WIN_MSG_ELENCATA`, then `WIN_MSG_ELENCO_SEGUE`).
+- **Several programs can follow the list**: before, only the last one that
+  asked, and a program following it for itself took it away from the taskbar,
+  which froze. And the server no longer waits on a follower's mailbox: with a
+  program closing 40 windows in a row the server stood still ten seconds per
+  piece, screen included. Now a full mailbox means trying again at the next
+  loop, from the piece that did not go.
+- **exwin.so 0.020**: no more 192 objects per program, nor 4 terminals,
+  4 lists, 2 text areas, 6 item controls, 2 menus, 16 watched descriptors:
+  each starts from those slots and doubles.
+- `pm` 0.025 (the taskbar) and `attesa` 0.006 read the list with no fixed
+  number; `finestreprova` is the test program.
 
 ### PHP 8.5 with PDO inside Apache, and 2048 clients for 10 minutes (kernel 0.286)
 

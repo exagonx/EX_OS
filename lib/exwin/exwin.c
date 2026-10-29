@@ -23,10 +23,15 @@
 
 extern const unsigned char font8x16[256 * 16];
 
-/* 192 dal 27 settembre 2026: Calctor ha 85 controlli fra pulsanti, radio e
- * finestra della cronologia, e con 64 gli ultimi venti non nascevano — senza
- * un errore, solo un blocco di pulsanti che non c'era. */
-#define OGGETTI_MAX     192
+/* ! NO FIXED NUMBER OF OBJECTS (exwin.so 0.020, voce 42). It was 64, then 192
+ * from 27 September 2026 (Calctor has 85 controls, and with 64 the last
+ * twenty were not born - no error, a block of buttons that was not there),
+ * and with 192 a program could not open a 193rd window or control. Objects
+ * now live in blocks of OGG_BLOCCO, allocated when needed and NEVER MOVED:
+ * the toolkit keeps Oggetto pointers across calls everywhere, and a table
+ * that realloc could move would invalidate them. A handle is the slot number
+ * plus one, as before, kept in the object itself (maniglia). */
+#define OGG_BLOCCO      64
 /* ! 1024 SINCE 24 SEPTEMBER 2026, and 64 before: a text box held 63
  * characters, and the browser's address bar could not hold a real address.
  * 64 objects times 1 KB is 64 KB; the window server gets titles cut to its
@@ -35,6 +40,7 @@ extern const unsigned char font8x16[256 * 16];
 
 typedef struct {
     unsigned int usato;
+    unsigned int maniglia;      /* its own handle: slot + 1 (see OGG_BLOCCO) */
     unsigned int classe;        /* CL_* */
     unsigned int id;            /* per i controlli */
     unsigned int win_id;        /* id lato server, solo per il primo livello */
@@ -166,7 +172,7 @@ typedef struct {
  * chiedere al kernel «interrompi quel processo» una shell in finestra non si
  * interrompe. Chi la usa deve saperlo.
  * ========================================================================== */
-#define TERM_MAX        4
+#define TERM_INIZIO     4       /* terminals: the first slots, then doubling */
 
 typedef struct {
     unsigned int usato;
@@ -190,7 +196,34 @@ typedef struct {
     int          detto;
 } Terminale;
 
-static Terminale g_term[TERM_MAX];
+/* =============================================================================
+ * ! THE TABLES OF THE CONTROLS GROW (exwin.so 0.020, voce 42): terminals,
+ * lists, combos and tabs, text areas, menus. They were 4, 4, 6, 2 and 2 per
+ * program, and the next one was simply not created. Each table is now an
+ * array of POINTERS that doubles when full; the structures themselves are
+ * allocated once and never move (pointers to them are kept), and a free slot
+ * keeps its buffers for the next control, as before: free() in this system
+ * gives nothing back.
+ * ============================================================================= */
+static int ptab_cresci(void ***tab, unsigned int *posti, unsigned int inizio,
+                       unsigned int byte)
+{
+    unsigned int n = *posti ? *posti * 2u : inizio, k;
+    void       **v = (void **)realloc(*tab, n * sizeof(void *));
+
+    if (!v) return -1;
+    *tab = v;
+    for (k = *posti; k < n; k++) {
+        v[k] = calloc(1, byte);
+        if (!v[k]) break;
+    }
+    if (k == *posti) return -1;
+    *posti = k;
+    return 0;
+}
+
+static Terminale  **g_term = 0;
+static unsigned int g_term_posti = 0;
 
 /* =============================================================================
  * LA LISTA A SCORRIMENTO — CL_LISTA
@@ -210,7 +243,7 @@ static Terminale g_term[TERM_MAX];
  * perderebbe memoria per sempre. Si alloca una volta alla creazione, e si
  * riusa.
  * ============================================================================= */
-#define LISTA_MAX        4
+#define LISTA_INIZIO     4      /* lists: the first slots, then doubling */
 /* ! A LIST GROWS, since 24 September 2026: it starts with LISTA_VOCI_PRIMA
  * rows and doubles when full, up to LISTA_VOCI_MAX. It was a fixed 512, and
  * past that ex_list_add() said no — an archive of 3000 files, or a big
@@ -262,7 +295,8 @@ typedef struct {
     unsigned int  ancora;
 } Lista;
 
-static Lista g_lista[LISTA_MAX];
+static Lista      **g_lista = 0;
+static unsigned int g_lista_posti = 0;
 
 /* =============================================================================
  * LE VOCI DI UN COMBO O DI UNA BARRA DI TAB — CL_COMBO, CL_TAB
@@ -278,7 +312,7 @@ static Lista g_lista[LISTA_MAX];
  * un pannello di proprieta' i combo sono molti. Qui sono 4 KB statici in tutto,
  * senza malloc, cioe' senza niente da liberare in un allocatore che non libera.
  * ============================================================================= */
-#define VOCI_MAX         6      /* quanti controlli a voci per programma */
+#define VOCI_INIZIO      6      /* combos and tabs: the first slots, then doubling */
 #define VOCI_N_MAX      32      /* quante voci per controllo */
 #define VOCI_TESTO_MAX  32
 #define VOCI_RIGA_H     16      /* l'altezza di una riga nella tendina */
@@ -301,7 +335,8 @@ typedef struct {
 #define TAB_FRECCIA_W   16
 #define TAB_LARG_MAX   180      /* una scheda non e' piu' larga di cosi' */
 
-static Voci g_voci[VOCI_MAX];
+static Voci       **g_voci = 0;
+static unsigned int g_voci_posti = 0;
 
 /* ! UNA TENDINA APERTA PER VOLTA, IN TUTTO IL PROGRAMMA. Due tendine aperte
  * insieme non le apre nessuno apposta, e se capitasse per un difetto sarebbero
@@ -332,7 +367,7 @@ static int        g_mdi_dx = 0, g_mdi_dy = 0;
  * tasto premuto perderebbero memoria per sempre. 512 righe da 200 colonne sono
  * un blocco solo, chiesto una volta alla creazione.
  * ============================================================================= */
-#define AREA_MAX        2
+#define AREA_INIZIO     2       /* text areas: the first slots, then doubling */
 #define AREA_RIGHE_MAX  512
 #define AREA_COL_MAX    200
 #define AREA_RIGA_H     16
@@ -410,7 +445,8 @@ typedef struct {
     unsigned int   stati_validi;        /* quante righe di `stato` valgono */
 } Area;
 
-static Area g_area[AREA_MAX];
+static Area       **g_area = 0;
+static unsigned int g_area_posti = 0;
 
 /* =============================================================================
  * GLI APPUNTI — una zona condivisa, non una variabile
@@ -480,7 +516,7 @@ static Appunti *appunti(void)
  * l'applicazione non deve imparare due meccanismi per sentirla. E' la stessa
  * regola dell'Invio su una lista.
  * ============================================================================= */
-#define MENU_MAX         2      /* quante finestre possono avere un menu */
+#define MENU_INIZIO      2      /* windows with a menu: the first slots, then doubling */
 #define MENU_TITOLI_MAX  6
 /* 16 since 26 September 2026: the editor's «Modifica» reached 13 with find
  * and replace, and the thirteenth would have been dropped in silence. */
@@ -527,10 +563,31 @@ typedef struct {
     int          sub_sotto;             /* la voce evidenziata dentro */
 } Menu;
 
-static Menu g_menu[MENU_MAX];
+static Menu       **g_menu = 0;
+static unsigned int g_menu_posti = 0;
 
 
-static Oggetto g_ogg[OGGETTI_MAX];
+static Oggetto    **g_ogg_blocchi = 0;     /* blocks of OGG_BLOCCO objects */
+static unsigned int g_ogg_nblocchi = 0;
+static unsigned int g_ogg_posti = 0;       /* = g_ogg_nblocchi * OGG_BLOCCO */
+#define OGG(i) (&g_ogg_blocchi[(unsigned int)(i) / OGG_BLOCCO][(unsigned int)(i) % OGG_BLOCCO])
+
+/* One block more. The list of blocks may move (it holds only pointers); the
+ * blocks never do. 0 = done. */
+static int ogg_cresci(void)
+{
+    Oggetto **l = (Oggetto **)realloc(g_ogg_blocchi,
+                                      (g_ogg_nblocchi + 1u) * sizeof(Oggetto *));
+    Oggetto  *b;
+
+    if (!l) return -1;
+    g_ogg_blocchi = l;
+    b = (Oggetto *)calloc(OGG_BLOCCO, sizeof(Oggetto));
+    if (!b) return -1;
+    g_ogg_blocchi[g_ogg_nblocchi++] = b;
+    g_ogg_posti += OGG_BLOCCO;
+    return 0;
+}
 
 /* ! IL CONTROLLO CHE HA PRESO IL BOTTONE GIU' SE LO TIENE FINO AL SU, e non si
  * ricerca a ogni movimento. Cercandolo sotto il puntatore, chi trascina la
@@ -621,22 +678,22 @@ static int     g_codice = 0;
  * --------------------------------------------------------------------------- */
 static Oggetto *ogg(ExWindow f)
 {
-    if (f == 0 || f > OGGETTI_MAX) return 0;
-    if (!g_ogg[f - 1].usato) return 0;
-    return &g_ogg[f - 1];
+    if (f == 0 || f > g_ogg_posti) return 0;
+    if (!OGG(f - 1)->usato) return 0;
+    return OGG(f - 1);
 }
 
 /* Le tre della lista stanno QUI e non accanto alla sua tabella: usano ogg()
- * e g_ogg, che sono dichiarati poco sopra. */
+ * e la tabella degli oggetti, dichiarati poco sopra. */
 /* Le funzioni dell'area, accanto a quelle della lista e per la stessa ragione:
- * usano ogg() e g_ogg. */
+ * usano ogg() e la tabella degli oggetti. */
 static Area *area_di(const Oggetto *o)
 {
     int i;
-    ExWindow h = (ExWindow)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o->maniglia);
 
-    for (i = 0; i < AREA_MAX; i++)
-        if (g_area[i].usato && g_area[i].ogg == h) return &g_area[i];
+    for (i = 0; i < (int)g_area_posti; i++)
+        if (g_area[i]->usato && g_area[i]->ogg == h) return g_area[i];
     return 0;
 }
 
@@ -675,10 +732,10 @@ static void area_segui(Area *A)
 static Lista *lista_di(const Oggetto *o)
 {
     int i;
-    ExWindow h = (ExWindow)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o->maniglia);
 
-    for (i = 0; i < LISTA_MAX; i++)
-        if (g_lista[i].usato && g_lista[i].ogg == h) return &g_lista[i];
+    for (i = 0; i < (int)g_lista_posti; i++)
+        if (g_lista[i]->usato && g_lista[i]->ogg == h) return g_lista[i];
     return 0;
 }
 
@@ -691,10 +748,10 @@ static Lista *lista_da_h(ExWindow f)
 static Voci *voci_di(const Oggetto *o)
 {
     int i;
-    ExWindow h = (ExWindow)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o->maniglia);
 
-    for (i = 0; i < VOCI_MAX; i++)
-        if (g_voci[i].usato && g_voci[i].ogg == h) return &g_voci[i];
+    for (i = 0; i < (int)g_voci_posti; i++)
+        if (g_voci[i]->usato && g_voci[i]->ogg == h) return g_voci[i];
     return 0;
 }
 
@@ -720,9 +777,9 @@ static Menu *menu_di(const Oggetto *o)
     int j;
 
     if (!o || o->classe != CL_MENU) return 0;
-    for (j = 0; j < MENU_MAX; j++)
-        if (g_menu[j].usato && g_menu[j].ogg == (ExWindow)(o - g_ogg + 1))
-            return &g_menu[j];
+    for (j = 0; j < (int)g_menu_posti; j++)
+        if (g_menu[j]->usato && g_menu[j]->ogg == (ExWindow)(o->maniglia))
+            return g_menu[j];
     return 0;
 }
 
@@ -973,16 +1030,41 @@ void ex_shutdown_desktop(void)
  * away the clicks that arrive during the wait — see the loop in ex_create.
  * --------------------------------------------------------------------------- */
 static ExWindow   g_segui = 0;        /* who receives EXM_WINDOW_LIST */
-static WinElenco    g_el;               /* the last list received */
+/* ! THE LIST ARRIVES IN PIECES and has no fixed length (wserver 0.013):
+ * WIN_MSG_ELENCATA starts it, WIN_MSG_ELENCO_SEGUE goes on, and the piece
+ * with fewer than WIN_ELENCO_MAX entries is the last one. g_el_voci grows by
+ * doubling. elenco_prendi returns 1 when the list is complete. */
+static WinVoce     *g_el_voci = 0;      /* the last list received */
+static unsigned int g_el_n = 0, g_el_posti = 0;
 static unsigned int g_el_nuovo = 0;     /* arrived while nobody was reading */
 
-static void elenco_prendi(const unsigned char *buf, unsigned int len)
+static int elenco_prendi(unsigned int tipo, const unsigned char *buf, unsigned int len)
 {
-    memset(&g_el, 0, sizeof(g_el));
-    if (len > sizeof(g_el)) len = sizeof(g_el);
-    memcpy(&g_el, buf, len);
-    if (g_el.n > WIN_ELENCO_MAX) g_el.n = WIN_ELENCO_MAX;
+    WinElenco    el;
+    unsigned int n;
+
+    memset(&el, 0, sizeof(el));
+    if (len > sizeof(el)) len = sizeof(el);
+    memcpy(&el, buf, len);
+    n = el.n;
+    if (n > WIN_ELENCO_MAX) n = WIN_ELENCO_MAX;
+    if (tipo == WIN_MSG_ELENCATA) g_el_n = 0;
+
+    if (g_el_n + n > g_el_posti) {
+        unsigned int posti = g_el_posti ? g_el_posti : WIN_ELENCO_MAX;
+        WinVoce     *nuovo;
+
+        while (posti < g_el_n + n) posti *= 2u;
+        nuovo = (WinVoce *)realloc(g_el_voci, posti * sizeof(WinVoce));
+        if (!nuovo) n = 0;              /* no memory: the list stays shorter */
+        else { g_el_voci = nuovo; g_el_posti = posti; }
+    }
+    if (n) memcpy(&g_el_voci[g_el_n], el.v, n * sizeof(WinVoce));
+    g_el_n += n;
+
+    if (el.n >= WIN_ELENCO_MAX) return 0;   /* more pieces are coming */
     g_el_nuovo = 1;
+    return 1;
 }
 
 void ex_track_windows(ExWindow f)
@@ -1005,18 +1087,41 @@ void ex_ask_windows(ExWindow f)
 
 int ex_list_windows(ExWindowEntry *v, int max)
 {
-    int i, n = (int)g_el.n;
+    int i, n = (int)g_el_n;
 
     if (!v || max <= 0) return n;
     for (i = 0; i < n && i < max; i++) {
-        v[i].id    = g_el.v[i].id;
-        v[i].pid   = g_el.v[i].pid;
-        v[i].stato = (g_el.v[i].stato & WIN_VOCE_RIDOTTA ? EX_WE_MINIMIZED : 0) |
-                     (g_el.v[i].stato & WIN_VOCE_FUOCO   ? EX_WE_FOCUSED   : 0);
-        memcpy(v[i].titolo, g_el.v[i].titolo, sizeof(v[i].titolo));
+        v[i].id    = g_el_voci[i].id;
+        v[i].pid   = g_el_voci[i].pid;
+        v[i].stato = (g_el_voci[i].stato & WIN_VOCE_RIDOTTA ? EX_WE_MINIMIZED : 0) |
+                     (g_el_voci[i].stato & WIN_VOCE_FUOCO   ? EX_WE_FOCUSED   : 0);
+        memcpy(v[i].titolo, g_el_voci[i].titolo, sizeof(v[i].titolo));
         v[i].titolo[sizeof(v[i].titolo) - 1] = '\0';
     }
     return n;
+}
+
+/* =============================================================================
+ * ! THE TITLE GOES WHOLE (wserver 0.013). WinCrea and WinTitolo end with the
+ * title, and the server keeps as much as the message carries (see
+ * WIN_TITOLO_LEN in win_proto.h): the structure is copied into a message
+ * buffer and the title written from its field on, as long as it is, within
+ * IPC_MSG_MAX_DATA. Never shorter than the structure: a server older than
+ * 0.013 wants at least that, and reads the first WIN_TITOLO_LEN - 1 bytes.
+ * Returns the length of the message.
+ * ============================================================================= */
+static unsigned int titolo_nel_messaggio(unsigned char *buf, const void *st,
+                                         unsigned int st_byte, unsigned int campo,
+                                         const char *titolo)
+{
+    unsigned int l = (unsigned int)strlen(titolo);
+
+    if (campo + l + 1u > IPC_MSG_MAX_DATA) l = IPC_MSG_MAX_DATA - campo - 1u;
+    memcpy(buf, st, st_byte);
+    memset(buf + campo, 0, st_byte - campo);
+    memcpy(buf + campo, titolo, l);
+    buf[campo + l] = 0;
+    return (campo + l + 1u > st_byte) ? campo + l + 1u : st_byte;
 }
 
 static void finestra_chiedi(unsigned int tipo, unsigned int id)
@@ -1427,10 +1532,10 @@ static int fuoco_ce_dopo(ExWindow f)
     int i, partenza = -1;
 
     if (!r || !r->fuoco) return 0;
-    for (i = 0; i < OGGETTI_MAX; i++) {
-        if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
+    for (i = 0; i < (int)g_ogg_posti; i++) {
+        if (!(*OGG(i)).usato || (*OGG(i)).padre == 0) continue;
         if (radice((ExWindow)(i + 1)) != r) continue;
-        if (!accetta_fuoco(&g_ogg[i])) continue;
+        if (!accetta_fuoco(&(*OGG(i)))) continue;
         if (mdi_di((ExWindow)(i + 1)) != dentro) continue;
         if ((ExWindow)(i + 1) == r->fuoco) { partenza = i; continue; }
         if (partenza >= 0) return 1;
@@ -1446,10 +1551,10 @@ static void fuoco_avanti(ExWindow f)
 
     if (!r) return;
 
-    for (i = 0; i < OGGETTI_MAX; i++) {
-        if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
+    for (i = 0; i < (int)g_ogg_posti; i++) {
+        if (!(*OGG(i)).usato || (*OGG(i)).padre == 0) continue;
         if (radice((ExWindow)(i + 1)) != r) continue;
-        if (!accetta_fuoco(&g_ogg[i])) continue;
+        if (!accetta_fuoco(&(*OGG(i)))) continue;
         if (mdi_di((ExWindow)(i + 1)) != dentro) continue;
         if (primo < 0) primo = i;
         if ((ExWindow)(i + 1) == r->fuoco) { partenza = i; continue; }
@@ -1469,10 +1574,10 @@ static void fuoco_indietro(ExWindow f)
 
     if (!r) return;
 
-    for (i = 0; i < OGGETTI_MAX; i++) {
-        if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
+    for (i = 0; i < (int)g_ogg_posti; i++) {
+        if (!(*OGG(i)).usato || (*OGG(i)).padre == 0) continue;
         if (radice((ExWindow)(i + 1)) != r) continue;
-        if (!accetta_fuoco(&g_ogg[i])) continue;
+        if (!accetta_fuoco(&(*OGG(i)))) continue;
         if (mdi_di((ExWindow)(i + 1)) != dentro) continue;
         if ((ExWindow)(i + 1) == r->fuoco) trovato = 1;
         else if (!trovato) prima = i;
@@ -2747,15 +2852,15 @@ static int ridisegna_controllo(Oggetto *o)
     if (o->classe != CL_TERMINALE && o->classe != CL_AREA &&
         o->classe != CL_LISTA && o->classe != CL_ETICHETTA) return 0;
 
-    h  = (ExWindow)(o - g_ogg + 1);
+    h  = (ExWindow)(o->maniglia);
     rh = radice_h(h);
     r  = ogg(rh);
     if (!r || o->padre != rh) return 0;
 
     x0 = o->x; y0 = o->y; x1 = o->x + o->w; y1 = o->y + o->h;
 
-    for (i = (int)(o - g_ogg) + 1; i < OGGETTI_MAX; i++) {
-        const Oggetto *s = &g_ogg[i];
+    for (i = (int)o->maniglia; i < (int)g_ogg_posti; i++) {
+        const Oggetto *s = &(*OGG(i));
 
         if (!s->usato || s->padre != rh || !(s->stile & EX_VISIBLE)) continue;
         if (s->x < x1 && s->x + s->w > x0 && s->y < y1 && s->y + s->h > y0)
@@ -2796,10 +2901,10 @@ static int ridisegna_controllo(Oggetto *o)
 static Terminale *term_di(const Oggetto *o)
 {
     int i;
-    ExWindow h = (ExWindow)(o - g_ogg + 1);
+    ExWindow h = (ExWindow)(o->maniglia);
 
-    for (i = 0; i < TERM_MAX; i++)
-        if (g_term[i].usato && g_term[i].ogg == h) return &g_term[i];
+    for (i = 0; i < (int)g_term_posti; i++)
+        if (g_term[i]->usato && g_term[i]->ogg == h) return g_term[i];
     return 0;
 }
 
@@ -2921,7 +3026,7 @@ static void term_carattere(Terminale *t, char c)
  * cambiato e la finestra va ridisegnata. */
 static int term_leggi(Terminale *t)
 {
-    struct pollfd v[1 + TERM_MAX];
+    struct pollfd v[1];
     char buf[256];
     int  n, i, cambiato = 0;
 
@@ -2969,8 +3074,8 @@ static int term_uscite(void)
 {
     int j, st, uscito = 0;
 
-    for (j = 0; j < TERM_MAX; j++) {
-        Terminale *t = &g_term[j];
+    for (j = 0; j < (int)g_term_posti; j++) {
+        Terminale *t = g_term[j];
 
         if (!t->usato || t->finito || t->pid <= 0) continue;
         if (waitpid(t->pid, &st, WNOHANG) == t->pid) {
@@ -3021,10 +3126,10 @@ static Menu *menu_della_finestra(ExWindow f)
     int i;
 
     if (!r) return 0;
-    for (i = 0; i < OGGETTI_MAX; i++)
-        if (g_ogg[i].usato && g_ogg[i].classe == CL_MENU &&
+    for (i = 0; i < (int)g_ogg_posti; i++)
+        if ((*OGG(i)).usato && (*OGG(i)).classe == CL_MENU &&
             radice_h((ExWindow)(i + 1)) == radice_h(f))
-            return menu_di(&g_ogg[i]);
+            return menu_di(&(*OGG(i)));
     return 0;
 }
 
@@ -3452,12 +3557,12 @@ static ExWindow mdi_attivo(ExWindow cont)
     unsigned int zmax = 0;
     int          i;
 
-    for (i = 0; i < OGGETTI_MAX; i++)
-        if (g_ogg[i].usato && g_ogg[i].classe == CL_MDIFIGLIO &&
-            g_ogg[i].padre == cont && (g_ogg[i].stile & EX_VISIBLE) &&
-            (scelto == 0 || g_ogg[i].z >= zmax)) {
+    for (i = 0; i < (int)g_ogg_posti; i++)
+        if ((*OGG(i)).usato && (*OGG(i)).classe == CL_MDIFIGLIO &&
+            (*OGG(i)).padre == cont && ((*OGG(i)).stile & EX_VISIBLE) &&
+            (scelto == 0 || (*OGG(i)).z >= zmax)) {
             scelto = (ExWindow)(i + 1);
-            zmax   = g_ogg[i].z;
+            zmax   = (*OGG(i)).z;
         }
     return scelto;
 }
@@ -3469,8 +3574,8 @@ static ExWindow mdi_figlio_in(ExWindow cont, int x, int y)
     unsigned int zmax = 0;
     int          i, ox, oy;
 
-    for (i = 0; i < OGGETTI_MAX; i++) {
-        Oggetto *o = &g_ogg[i];
+    for (i = 0; i < (int)g_ogg_posti; i++) {
+        Oggetto *o = &(*OGG(i));
 
         if (!o->usato || o->classe != CL_MDIFIGLIO || o->padre != cont) continue;
         if (!(o->stile & EX_VISIBLE)) continue;
@@ -3495,8 +3600,8 @@ static ExWindow mdi_contenitore_in(ExWindow f, int x, int y)
 {
     int i, ox, oy;
 
-    for (i = 0; i < OGGETTI_MAX; i++) {
-        Oggetto *o = &g_ogg[i];
+    for (i = 0; i < (int)g_ogg_posti; i++) {
+        Oggetto *o = &(*OGG(i));
 
         if (!o->usato || o->classe != CL_MDI) continue;
         if (radice((ExWindow)(i + 1)) != ogg(f)) continue;
@@ -3516,7 +3621,7 @@ static ExWindow mdi_di(ExWindow c)
     Oggetto *o = ogg(c);
 
     while (o) {
-        if (o->classe == CL_MDIFIGLIO) return (ExWindow)(o - g_ogg + 1);
+        if (o->classe == CL_MDIFIGLIO) return (ExWindow)(o->maniglia);
         if (!o->padre) break;
         o = ogg(o->padre);
     }
@@ -3722,10 +3827,10 @@ static void spunta_scatta(Oggetto *o)
     {
         int i;
 
-        for (i = 0; i < OGGETTI_MAX; i++)
-            if (g_ogg[i].usato && g_ogg[i].classe == CL_RADIO &&
-                g_ogg[i].padre == o->padre)
-                g_ogg[i].valore = 0;
+        for (i = 0; i < (int)g_ogg_posti; i++)
+            if ((*OGG(i)).usato && (*OGG(i)).classe == CL_RADIO &&
+                (*OGG(i)).padre == o->padre)
+                (*OGG(i)).valore = 0;
     }
     o->valore = 1;
 }
@@ -3970,7 +4075,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
          * its caption. */
         {
             Oggetto *rd = radice(o->padre);
-            if (rd && rd->fuoco == (ExWindow)(o - g_ogg + 1) && o->w > 10 && o->h > 10)
+            if (rd && rd->fuoco == (ExWindow)(o->maniglia) && o->w > 10 && o->h > 10)
                 ex_draw_rect(o->padre, x + 4, y + 4, o->w - 8, o->h - 8, EX_BLUE);
         }
         break;
@@ -4040,7 +4145,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
             maschera[n] = '\0';
             t = maschera;
         }
-        int          fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
+        int          fuoco = (r && r->fuoco == (ExWindow)(o->maniglia));
         int          sel;
         char         buf[TESTO_LEN];
         int          ty = y + (o->h - 16) / 2;
@@ -4106,7 +4211,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
         int col_fuoco;
 
         ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
-        col_fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
+        col_fuoco = (r && r->fuoco == (ExWindow)(o->maniglia));
         ex_draw_sunken(o->padre, x, y, o->w, o->h);
         if (col_fuoco) ex_draw_rect(o->padre, x + 1, y + 1,
                                            o->w - 2, o->h - 2, EX_BLUE);
@@ -4242,7 +4347,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         /* ! IL BORDO DICE CHI HA I TASTI, come per la casella di testo: senza,
          * chi guarda non sa se le frecce muoveranno questa lista o un'altra. */
-        col_fuoco = (r && r->fuoco == (ExWindow)(o - g_ogg + 1));
+        col_fuoco = (r && r->fuoco == (ExWindow)(o->maniglia));
         ex_draw_sunken(o->padre, x, y, o->w, o->h);
         if (col_fuoco) ex_draw_rect(o->padre, x + 1, y + 1,
                                            o->w - 2, o->h - 2, EX_BLUE);
@@ -4360,7 +4465,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         ex_draw_text(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
                   (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
-        if (r && r->fuoco == (ExWindow)(o - g_ogg + 1))
+        if (r && r->fuoco == (ExWindow)(o->maniglia))
             ex_draw_rect(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
                                 larg(o->titolo) + 4, 18, EX_BLUE);
         break;
@@ -4379,7 +4484,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         ex_draw_text(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
                   (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
-        if (r && r->fuoco == (ExWindow)(o - g_ogg + 1))
+        if (r && r->fuoco == (ExWindow)(o->maniglia))
             ex_draw_rect(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
                                 larg(o->titolo) + 4, 18, EX_BLUE);
         break;
@@ -4430,7 +4535,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
         ex_draw_sunken(o->padre, x, y, o->w, o->h);
-        if (r && r->fuoco == (ExWindow)(o - g_ogg + 1))
+        if (r && r->fuoco == (ExWindow)(o->maniglia))
             ex_draw_rect(o->padre, x + 1, y + 1, o->w - 2, o->h - 2,
                                 EX_BLUE);
 
@@ -4533,7 +4638,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
      * della barra si', anche da lontano.
      * ================================================================= */
     case CL_MDIFIGLIO: {
-        ExWindow io = (ExWindow)(o - g_ogg + 1);
+        ExWindow io = (ExWindow)(o->maniglia);
         int attiva = (mdi_attivo(o->padre) == io);
         int cx, cy, cw, ch;
 
@@ -4736,8 +4841,8 @@ static void mdi_fuoco_dentro(ExWindow f, ExWindow figlio)
     if (!r) return;
     if (mdi_di(r->fuoco) == figlio) return;     /* c'e' gia' */
 
-    for (i = 0; i < OGGETTI_MAX; i++)
-        if (g_ogg[i].usato && accetta_fuoco(&g_ogg[i]) &&
+    for (i = 0; i < (int)g_ogg_posti; i++)
+        if ((*OGG(i)).usato && accetta_fuoco(&(*OGG(i))) &&
             mdi_di((ExWindow)(i + 1)) == figlio) {
             fuoco_metti(f, (ExWindow)(i + 1));
             return;
@@ -4870,8 +4975,8 @@ static void disegna_mdi(ExWindow cont)
         unsigned int zmin = 0;
         int          i;
 
-        for (i = 0; i < OGGETTI_MAX; i++) {
-            Oggetto *o = &g_ogg[i];
+        for (i = 0; i < (int)g_ogg_posti; i++) {
+            Oggetto *o = &(*OGG(i));
 
             if (!o->usato || o->classe != CL_MDIFIGLIO || o->padre != cont)
                 continue;
@@ -4883,7 +4988,7 @@ static void disegna_mdi(ExWindow cont)
         fatti |= (1u << (scelto & 31));
 
         {
-            Oggetto *o = &g_ogg[scelto];
+            Oggetto *o = &(*OGG(scelto));
             int      fx, fy, fcx, fcy, fcw, fch;
 
             origine(o, &fx, &fy);
@@ -4916,9 +5021,9 @@ static void disegna_figli(ExWindow padre)
     /* ! IN ORDINE DI CREAZIONE, e non e' indifferente: chi si sovrappone a
      * qualcosa creato prima ci finisce sopra, che e' l'unico ordine che chi
      * scrive l'applicazione puo' prevedere leggendo il proprio codice. */
-    for (i = 0; i < OGGETTI_MAX; i++)
-        if (g_ogg[i].usato && g_ogg[i].padre == padre) {
-            disegna_oggetto(&g_ogg[i]);
+    for (i = 0; i < (int)g_ogg_posti; i++)
+        if ((*OGG(i)).usato && (*OGG(i)).padre == padre) {
+            disegna_oggetto(&(*OGG(i)));
             disegna_figli((ExWindow)(i + 1));
         }
 
@@ -4975,12 +5080,13 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
 
     if (cl == 0) return 0;
 
-    for (i = 0; i < OGGETTI_MAX; i++) if (!g_ogg[i].usato) break;
-    if (i == OGGETTI_MAX) return 0;
+    for (i = 0; i < (int)g_ogg_posti; i++) if (!OGG(i)->usato) break;
+    if (i == (int)g_ogg_posti && ogg_cresci() != 0) return 0;
 
-    o = &g_ogg[i];
+    o = OGG(i);
     memset(o, 0, sizeof(*o));
-    o->usato  = 1;
+    o->usato    = 1;
+    o->maniglia = (unsigned int)i + 1u;
     o->classe = cl;
     o->id     = id;
     o->padre  = padre;
@@ -5029,17 +5135,23 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
          * quindi un buffer chiesto alla prima apertura e buttato alla chiusura
          * sarebbe memoria persa per sempre — e alla terza apertura l'area non
          * si aprirebbe piu'. Il posto si libera, il buffer resta attaccato. */
-        for (j = 0; j < AREA_MAX; j++)
-            if (!g_area[j].usato && g_area[j].testo &&
-                g_area[j].righe_max == rmax && g_area[j].col_max == cmax) {
-                A = &g_area[j];
+        for (j = 0; j < (int)g_area_posti; j++)
+            if (!g_area[j]->usato && g_area[j]->testo &&
+                g_area[j]->righe_max == rmax && g_area[j]->col_max == cmax) {
+                A = g_area[j];
                 avanzo    = A->testo;
                 st_avanzo = A->stato;
                 break;
             }
         if (!A)
-            for (j = 0; j < AREA_MAX; j++)
-                if (!g_area[j].usato && !g_area[j].testo) { A = &g_area[j]; break; }
+            for (j = 0; j < (int)g_area_posti; j++)
+                if (!g_area[j]->usato && !g_area[j]->testo) { A = g_area[j]; break; }
+        if (!A) {
+            unsigned int prima = g_area_posti;
+
+            if (ptab_cresci((void ***)&g_area, &g_area_posti, AREA_INIZIO, sizeof(Area)) == 0)
+                A = g_area[prima];
+        }
         if (!A) { o->usato = 0; return 0; }
 
         memset(A, 0, sizeof(*A));
@@ -5087,7 +5199,13 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         Voci *V = 0;
         int j;
 
-        for (j = 0; j < VOCI_MAX; j++) if (!g_voci[j].usato) { V = &g_voci[j]; break; }
+        for (j = 0; j < (int)g_voci_posti; j++) if (!g_voci[j]->usato) { V = g_voci[j]; break; }
+        if (!V) {
+            unsigned int prima = g_voci_posti;
+
+            if (ptab_cresci((void ***)&g_voci, &g_voci_posti, VOCI_INIZIO, sizeof(Voci)) == 0)
+                V = g_voci[prima];
+        }
         if (!V) { o->usato = 0; return 0; }
 
         memset(V, 0, sizeof(*V));
@@ -5100,7 +5218,13 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         Menu *M = 0;
         int j;
 
-        for (j = 0; j < MENU_MAX; j++) if (!g_menu[j].usato) { M = &g_menu[j]; break; }
+        for (j = 0; j < (int)g_menu_posti; j++) if (!g_menu[j]->usato) { M = g_menu[j]; break; }
+        if (!M) {
+            unsigned int prima = g_menu_posti;
+
+            if (ptab_cresci((void ***)&g_menu, &g_menu_posti, MENU_INIZIO, sizeof(Menu)) == 0)
+                M = g_menu[prima];
+        }
         if (!M) { o->usato = 0; return 0; }
 
         memset(M, 0, sizeof(*M));
@@ -5129,9 +5253,9 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
          * rifiutava la lista. Cioe': in ogni programma, la seconda lista creata
          * dopo averne distrutta una NON SI CREAVA — il secondo dialogo dei file
          * di Archivi non si apriva, senza un messaggio. */
-        for (j = 0; j < LISTA_MAX; j++)
-            if (!g_lista[j].usato && g_lista[j].voci) {
-                L = &g_lista[j];
+        for (j = 0; j < (int)g_lista_posti; j++)
+            if (!g_lista[j]->usato && g_lista[j]->voci) {
+                L = g_lista[j];
                 avanzo     = L->voci;
                 avanzo_ic  = L->ic;
                 avanzo_cap = L->cap;
@@ -5139,8 +5263,14 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
                 break;
             }
         if (!L)
-            for (j = 0; j < LISTA_MAX; j++)
-                if (!g_lista[j].usato && !g_lista[j].voci) { L = &g_lista[j]; break; }
+            for (j = 0; j < (int)g_lista_posti; j++)
+                if (!g_lista[j]->usato && !g_lista[j]->voci) { L = g_lista[j]; break; }
+        if (!L) {
+            unsigned int prima = g_lista_posti;
+
+            if (ptab_cresci((void ***)&g_lista, &g_lista_posti, LISTA_INIZIO, sizeof(Lista)) == 0)
+                L = g_lista[prima];
+        }
         if (!L) { o->usato = 0; return 0; }
 
         memset(L, 0, sizeof(*L));
@@ -5179,7 +5309,13 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         SpawnRedir red[3];
         char *sh_argv[2];
 
-        for (j = 0; j < TERM_MAX; j++) if (!g_term[j].usato) { t = &g_term[j]; break; }
+        for (j = 0; j < (int)g_term_posti; j++) if (!g_term[j]->usato) { t = g_term[j]; break; }
+        if (!t) {
+            unsigned int prima = g_term_posti;
+
+            if (ptab_cresci((void ***)&g_term, &g_term_posti, TERM_INIZIO, sizeof(Terminale)) == 0)
+                t = g_term[prima];
+        }
         if (!t) { o->usato = 0; return 0; }
 
         memset(t, 0, sizeof(*t));
@@ -5278,10 +5414,15 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
                 | ((stile & EX_MODAL) ? WIN_ST_MODALE : 0)
                 | ((stile & EX_RESIZABLE)  ? WIN_ST_RIDIM  : 0)
                 | ((stile & EX_POPUP) ? WIN_ST_COMPARSA : 0);
-        strncpy(c.titolo, o->titolo, WIN_TITOLO_LEN - 1);
+        {
+            unsigned char m[IPC_MSG_MAX_DATA];
+            unsigned int  l = titolo_nel_messaggio(m, &c, sizeof(c),
+                                  (unsigned int)__builtin_offsetof(WinCrea, titolo),
+                                  o->titolo);
 
-        if (ipc_send((unsigned int)g_server, WIN_MSG_CREA, &c, sizeof(c)) < 0) {
-            o->usato = 0; return 0;
+            if (ipc_send((unsigned int)g_server, WIN_MSG_CREA, m, l) < 0) {
+                o->usato = 0; return 0;
+            }
         }
 
         /* ! SI MANDA UNA VOLTA SOLA E SI ASPETTA A LUNGO, non il contrario.
@@ -5304,8 +5445,9 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
             /* ! THE TASKBAR LIST IS KEPT, NOT DROPPED: the server has
              * already counted it as delivered and will not send it again
              * until something else changes. */
-            else if (meta.tipo == WIN_MSG_ELENCATA)
-                elenco_prendi(buf, meta.len);
+            else if (meta.tipo == WIN_MSG_ELENCATA ||
+                     meta.tipo == WIN_MSG_ELENCO_SEGUE)
+                (void)elenco_prendi(meta.tipo, buf, meta.len);
         }
         if (r.id == 0) { o->usato = 0; return 0; }
 
@@ -5340,8 +5482,8 @@ void ex_destroy(ExWindow f)
     if (!o) return;
     rh = radice_h(f);           /* prima di sganciare: dopo non si trova piu' */
 
-    for (i = 0; i < OGGETTI_MAX; i++)
-        if (g_ogg[i].usato && g_ogg[i].padre == f)
+    for (i = 0; i < (int)g_ogg_posti; i++)
+        if ((*OGG(i)).usato && (*OGG(i)).padre == f)
             ex_destroy((ExWindow)(i + 1));
 
     if (o->classe == CL_FINESTRA && g_server >= 0) {
@@ -5414,11 +5556,16 @@ void ex_set_title(ExWindow f, const char *s)
     }
 
     if (o->classe == CL_FINESTRA && g_server >= 0) {
-        WinTitolo t;
+        WinTitolo     t;
+        unsigned char m[IPC_MSG_MAX_DATA];
+        unsigned int  l;
+
         memset(&t, 0, sizeof(t));
         t.id = o->win_id;
-        strncpy(t.titolo, o->titolo, WIN_TITOLO_LEN - 1);
-        (void)ipc_send((unsigned int)g_server, WIN_MSG_TITOLO, &t, sizeof(t));
+        l = titolo_nel_messaggio(m, &t, sizeof(t),
+                                 (unsigned int)__builtin_offsetof(WinTitolo, titolo),
+                                 o->titolo);
+        (void)ipc_send((unsigned int)g_server, WIN_MSG_TITOLO, m, l);
     }
 }
 
@@ -5574,9 +5721,9 @@ const char *ex_get_text(ExWindow f)
 static ExWindow da_win_id(unsigned int win_id)
 {
     int i;
-    for (i = 0; i < OGGETTI_MAX; i++)
-        if (g_ogg[i].usato && g_ogg[i].classe == CL_FINESTRA &&
-            g_ogg[i].win_id == win_id) return (ExWindow)(i + 1);
+    for (i = 0; i < (int)g_ogg_posti; i++)
+        if ((*OGG(i)).usato && (*OGG(i)).classe == CL_FINESTRA &&
+            (*OGG(i)).win_id == win_id) return (ExWindow)(i + 1);
     return 0;
 }
 
@@ -5661,10 +5808,10 @@ static int rimappa(ExWindow f, const WinCreata *r)
     {
         int j;
 
-        for (j = 0; j < OGGETTI_MAX; j++)
-            if (g_ogg[j].usato && g_ogg[j].classe == CL_MENU &&
-                g_ogg[j].padre == f)
-                g_ogg[j].w = o->w;
+        for (j = 0; j < (int)g_ogg_posti; j++)
+            if ((*OGG(j)).usato && (*OGG(j)).classe == CL_MENU &&
+                (*OGG(j)).padre == f)
+                (*OGG(j)).w = o->w;
     }
     return 1;
 }
@@ -5973,7 +6120,7 @@ static void lista_barra_trascina(Oggetto *co, int y)
  * nota per primo e si spiega per ultimo. */
 static int mdi_toccabile(Oggetto *o, ExWindow padre, int x, int y)
 {
-    ExWindow mio = mdi_di((ExWindow)(o - g_ogg + 1));
+    ExWindow mio = mdi_di((ExWindow)(o->maniglia));
     Oggetto   *f;
     int        cx, cy, cw, ch;
 
@@ -6034,7 +6181,7 @@ static int rotella_controllo(ExWindow f, int x, int y, int scatti)
         unsigned int prima = o->valore;
         scorri_muovi(o, passo);
         if (o->valore != prima)
-            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)o->valore);
+            manda_comando((ExWindow)(o->maniglia), o->id, (long)o->valore);
         return 1;
     }
     return 0;
@@ -6044,8 +6191,8 @@ static ExWindow controllo_in(ExWindow padre, int x, int y)
 {
     int i;
 
-    for (i = OGGETTI_MAX - 1; i >= 0; i--) {
-        Oggetto *o = &g_ogg[i];
+    for (i = (int)g_ogg_posti - 1; i >= 0; i--) {
+        Oggetto *o = &(*OGG(i));
         int ox, oy;
 
         if (!o->usato || o->padre == 0 || !(o->stile & EX_VISIBLE)) continue;
@@ -6522,8 +6669,8 @@ static ExWindow schede_tasto(ExWindow f, unsigned int k, unsigned int *msg,
     else if (c == 'w' || c == 'W')   dove = 2;
     else return 0;
 
-    for (i = 0; i < VOCI_MAX; i++) {
-        Voci    *V = &g_voci[i];
+    for (i = 0; i < (int)g_voci_posti; i++) {
+        Voci    *V = g_voci[i];
         Oggetto *o;
 
         if (!V->usato || !V->schede) continue;
@@ -6621,14 +6768,14 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
      * che di solito ne fa «il pulsante predefinito» della finestra. */
     if (o->classe == CL_PULSANTE) {
         if (c != ' ' || (o->stile & EX_DISABLED)) return 0;
-        manda_comando((ExWindow)(o - g_ogg + 1), o->id, 0);
+        manda_comando((ExWindow)(o->maniglia), o->id, 0);
         return 1;
     }
 
     if (o->classe == CL_SPUNTA || o->classe == CL_RADIO) {
         if (c != ' ') return 0;
         spunta_scatta(o);
-        manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)o->valore);
+        manda_comando((ExWindow)(o->maniglia), o->id, (long)o->valore);
         return 1;
     }
 
@@ -6649,7 +6796,7 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
         }
 
         if (o->valore != prima)
-            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)o->valore);
+            manda_comando((ExWindow)(o->maniglia), o->id, (long)o->valore);
         return 1;
     }
 
@@ -6665,7 +6812,7 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
 
         switch (c) {
         case ' ':
-            g_combo_aperto = (ExWindow)(o - g_ogg + 1);
+            g_combo_aperto = (ExWindow)(o->maniglia);
             return 1;
         case KBD_K_UP:   if (V->sel > 0) V->sel--;            break;
         case KBD_K_DOWN: if (V->sel + 1 < V->n) V->sel++;     break;
@@ -6675,7 +6822,7 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
         }
 
         if (V->sel != prima)
-            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)V->sel);
+            manda_comando((ExWindow)(o->maniglia), o->id, (long)V->sel);
         return 1;
     }
 
@@ -6693,7 +6840,7 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
         }
 
         if (V->sel != prima)
-            manda_comando((ExWindow)(o - g_ogg + 1), o->id, (long)V->sel);
+            manda_comando((ExWindow)(o->maniglia), o->id, (long)V->sel);
         return 1;
     }
 
@@ -6725,7 +6872,7 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
             /* L'ultimo argomento e' il bit che EX_IS_OPEN legge. I bit della
              * colonna restano a zero, ed e' cio' che fa dire -1 a EX_COLUMN: da
              * tastiera una colonna non c'e'. */
-            manda_comando((ExWindow)(o - g_ogg + 1), o->id, 1);
+            manda_comando((ExWindow)(o->maniglia), o->id, 1);
             return 1;
         }
 
@@ -6781,6 +6928,7 @@ static int filtro_finestra(const IpcMessage *m, void *dato)
 
     if (m->tipo == WIN_MSG_EVENTO || m->tipo == WIN_MSG_MISURATA ||
         m->tipo == WIN_MSG_POSTA || m->tipo == WIN_MSG_ELENCATA ||
+        m->tipo == WIN_MSG_ELENCO_SEGUE ||
         m->tipo == WIN_MSG_SISTEMA)
         return IPC_MIO;
 
@@ -6802,14 +6950,15 @@ static int filtro_finestra(const IpcMessage *m, void *dato)
  * download must go on when its window is closed. A descriptor belongs to
  * the process.
  * ============================================================================= */
-#define GUARDATI_MAX 16
+#define GUARDATI_INIZIO 16     /* watched descriptors: the first slots, then doubling */
 
-static struct {
+typedef struct {
     int        fd;
     ExWatchProc   fn;
     void      *dato;
-} g_guardati[GUARDATI_MAX];
-static int g_n_guardati = 0;
+} Guardato;
+static Guardato *g_guardati = 0;
+static int g_n_guardati = 0, g_guardati_posti = 0;
 
 int ex_watch_fd(int fd, ExWatchProc fn, void *dato)
 {
@@ -6822,7 +6971,16 @@ int ex_watch_fd(int fd, ExWatchProc fn, void *dato)
             return 0;
         }
     if (!fn) return 0;
-    if (g_n_guardati >= GUARDATI_MAX) return -1;
+    if (g_n_guardati >= g_guardati_posti) {
+        /* entries are copied by value and read by index, so moving is fine */
+        int       posti = g_guardati_posti ? g_guardati_posti * 2 : GUARDATI_INIZIO;
+        Guardato *nuovo = (Guardato *)realloc(g_guardati,
+                                              (size_t)posti * sizeof(Guardato));
+
+        if (!nuovo) return -1;
+        g_guardati = nuovo;
+        g_guardati_posti = posti;
+    }
     g_guardati[g_n_guardati].fd   = fd;
     g_guardati[g_n_guardati].fn   = fn;
     g_guardati[g_n_guardati].dato = dato;
@@ -7054,7 +7212,12 @@ static int prendi_msg(ExMsg *m, int bloccante)
 {
     IpcMessage    meta;
     unsigned char buf[IPC_MSG_MAX_DATA];
-    struct pollfd v[1 + TERM_MAX + GUARDATI_MAX];
+    /* one entry for the mailbox, one per terminal slot, one per watched
+     * descriptor: grown before every poll, never smaller than what is asked */
+    static struct pollfd *g_pv = 0;
+    static unsigned int   g_pv_posti = 0;
+    struct pollfd         solo_ipc[1], *v = solo_ipc;
+    unsigned int          v_posti = 1;
     int           giri = 0;
 
     for (;;) {
@@ -7086,8 +7249,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
             unsigned int ora = uptime_ms();
             int          j;
 
-            for (j = 0; j < OGGETTI_MAX; j++) {
-                Oggetto *o = &g_ogg[j];
+            for (j = 0; j < (int)g_ogg_posti; j++) {
+                Oggetto *o = &(*OGG(j));
 
                 if (!o->usato || o->classe != CL_FINESTRA) continue;
                 if (o->sveglia_ms == 0) continue;
@@ -7119,6 +7282,16 @@ static int prendi_msg(ExMsg *m, int bloccante)
          * l'uscita della shell che compare solo quando si preme un tasto. */
         {
             int nv = 0, j;
+            unsigned int serve = 1 + g_term_posti + (unsigned int)g_n_guardati;
+
+            if (serve > g_pv_posti) {
+                struct pollfd *nuovo = (struct pollfd *)realloc(g_pv, serve * sizeof(struct pollfd));
+
+                if (nuovo) { g_pv = nuovo; g_pv_posti = serve; }
+            }
+            /* out of memory and nothing yet: at least the mailbox is heard */
+            if (g_pv) { v = g_pv; v_posti = g_pv_posti; }
+            else      { v = solo_ipc; v_posti = 1; }
             /* ! poll() GUARDA LA CODA DEL KERNEL, NON LO SCAFFALE. Un messaggio
              * lasciato da parte mentre si scaricava una pagina non la fa
              * scattare: senza questo controllo resterebbe li' fino al prossimo
@@ -7128,9 +7301,9 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
             v[nv].fd = FD_IPC; v[nv].events = POLLIN; v[nv].revents = 0; nv++;
 
-            for (j = 0; j < TERM_MAX && nv < (int)(sizeof(v)/sizeof(v[0])); j++)
-                if (g_term[j].usato && g_term[j].fd_out >= 0) {
-                    v[nv].fd = g_term[j].fd_out;
+            for (j = 0; j < (int)g_term_posti && nv < (int)v_posti; j++)
+                if (g_term[j]->usato && g_term[j]->fd_out >= 0) {
+                    v[nv].fd = g_term[j]->fd_out;
                     v[nv].events = POLLIN;
                     v[nv].revents = 0;
                     nv++;
@@ -7139,7 +7312,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             {
                 int primo_guardato = nv, quanti = g_n_guardati, k;
 
-                for (k = 0; k < quanti && nv < (int)(sizeof(v)/sizeof(v[0])); k++) {
+                for (k = 0; k < quanti && nv < (int)v_posti; k++) {
                     v[nv].fd = g_guardati[k].fd;
                     v[nv].events = POLLIN;
                     v[nv].revents = 0;
@@ -7169,13 +7342,13 @@ static int prendi_msg(ExMsg *m, int bloccante)
             {
                 int cambiato = 0;
 
-                for (j = 0; j < TERM_MAX; j++) {
-                    if (!g_term[j].usato) continue;
+                for (j = 0; j < (int)g_term_posti; j++) {
+                    if (!g_term[j]->usato) continue;
 
-                    if (term_leggi(&g_term[j])) {
+                    if (term_leggi(g_term[j])) {
                         cambiato = 1;
-                        if (!ridisegna_controllo(ogg(g_term[j].ogg)))
-                            ex_default_proc(radice_h(g_term[j].ogg), EXM_PAINT, 0, 0);
+                        if (!ridisegna_controllo(ogg(g_term[j]->ogg)))
+                            ex_default_proc(radice_h(g_term[j]->ogg), EXM_PAINT, 0, 0);
                     }
 
                     term_uscite();          /* the program's own end: see there */
@@ -7184,9 +7357,9 @@ static int prendi_msg(ExMsg *m, int bloccante)
                      * volta sola. Si consegna come un messaggio normale, cosi'
                      * l'applicazione decide lei: chiudere la finestra, dirlo,
                      * o riaprire un'altra shell. */
-                    if (g_term[j].finito && !g_term[j].detto) {
-                        g_term[j].detto = 1;
-                        m->finestra = radice_h(g_term[j].ogg);
+                    if (g_term[j]->finito && !g_term[j]->detto) {
+                        g_term[j]->detto = 1;
+                        m->finestra = radice_h(g_term[j]->ogg);
                         m->msg      = EXM_TERM_EXITED;
                         m->wp       = 0;
                         m->lp       = 0;
@@ -7254,10 +7427,10 @@ static int prendi_msg(ExMsg *m, int bloccante)
             return 1;
         }
 
-        if (meta.tipo == WIN_MSG_ELENCATA) {
+        if (meta.tipo == WIN_MSG_ELENCATA || meta.tipo == WIN_MSG_ELENCO_SEGUE) {
             ExWindow a = g_segui ? g_segui : g_chiede;
 
-            elenco_prendi(buf, meta.len);
+            if (!elenco_prendi(meta.tipo, buf, meta.len)) continue;
             if (!a) continue;
             if (!g_segui) g_chiede = 0;
             g_el_nuovo  = 0;
@@ -7573,9 +7746,9 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                 g_premuto = 0;
 
-                for (j = 0; j < OGGETTI_MAX; j++)
-                    if (g_ogg[j].usato && g_ogg[j].premuto) {
-                        g_ogg[j].premuto = 0;
+                for (j = 0; j < (int)g_ogg_posti; j++)
+                    if ((*OGG(j)).usato && (*OGG(j)).premuto) {
+                        (*OGG(j)).premuto = 0;
                         cambiato = 1;
                     }
                 if (cambiato) ridisegna_finestra(f);
@@ -8420,12 +8593,12 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.019"   /* 0.019: la barra di scorrimento delle liste */
+#define EXWIN_VERSIONE "0.020"   /* 0.020: l'elenco delle finestre a pezzi e senza tetto, i titoli interi */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 
 /* =============================================================================
- * IL MENU — l'API. Il perche' sta accanto a #define MENU_MAX.
+ * IL MENU — l'API. Il perche' sta accanto a #define MENU_INIZIO.
  * ============================================================================= */
 ExWindow ex_menu_bar(ExWindow finestra)
 {
@@ -8442,7 +8615,7 @@ ExWindow ex_menu_bar(ExWindow finestra)
     if (M) return M->ogg;
 
     return ex_create("menu", "", EX_CHILD, 0, 0, r->w, MENU_BARRA_H,
-                   (ExWindow)(r - g_ogg + 1), 0, 0);
+                   (ExWindow)(r->maniglia), 0, 0);
 }
 
 int ex_menu_add_item(ExWindow menu, const char *titolo, const char *voce,

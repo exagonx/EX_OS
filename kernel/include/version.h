@@ -727,7 +727,14 @@
  * with the host busy). proc_reap_zombie now takes the PCB with a
  * compare-and-swap (in_raccolta) and the second reaper goes away;
  * irq_unbind_process ignores pid 0. */
-#define EXOS_VERSION    "0.288"
+/* 0.288 -> 0.289: shared memory without fixed numbers (voce 42, point 1):
+ * the zones of the system (SHM_MAX_ZONE, 24) and those a process keeps open
+ * (SHM_PER_PROC, 20) are tables that double when full, a process's on its
+ * first shm_apri; the window server opens one per window and its 17th
+ * window was refused. The table of zones has a lock of its own
+ * (shm_prendi): growing frees the old block, and a preempted syscall would
+ * have come back to it. */
+#define EXOS_VERSION    "0.289"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

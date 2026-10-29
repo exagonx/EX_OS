@@ -8479,6 +8479,97 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  42. GTK 2 E GTK 3 IN EXWIN (l'utente, 29/10: "a me serve GTK2 e 3 su
+      exwin e' fattibile ?"). Fattibile: il cancello vero (i thread) e'
+      passato con la 0.209, ci sono mmap, poll, shm, dlopen, iconv, e gia'
+      portati zlib, expat, pcre2. Il lavoro sta in due posti:
+      1. LE DIPENDENZE, come librerie vere a 32 e 64 bit, ultima versione,
+         sorgenti sulla ISO strumenti: libffi, glib (glib, gobject, gmodule,
+         gio), libpng, freetype, fontconfig, pixman, cairo (solo superficie
+         immagine), harfbuzz, fribidi, pango, gdk-pixbuf (caricatori
+         dentro, niente moduli), atk; per GTK 3 anche libepoxy (senza GL) e
+         niente at-spi/dbus (atk_bridge spento). Font TrueType veri
+         (DejaVu). Comuni ai due GTK: si fanno una volta.
+      2. COME DISEGNA GDK: nessuno dei due ha un backend per ExWin. Strade:
+         a) un backend GDK "exwin" per GTK 3 (come broadway o win32:
+            finestre, eventi, tastiera, cursori, appunti) e uno per GTK 2,
+            che ha un GDK diverso e meno modulare: due lavori;
+         b) un server X11 sopra ExWin (rootless) e le librerie X (libX11,
+            libxcb, Xext, Xrender, Xi, Xfixes, Xrandr, Xcursor...): piu'
+            grosso, ma un solo lavoro per GTK 2, GTK 3 e ogni programma X
+            (e il gradino 5 di DIREZIONE.md);
+         c) per una prima prova GTK 3 col backend broadway (gia' nei
+            sorgenti, niente X): le finestre si vedono in Exilla.
+      DA DECIDERE CON L'UTENTE: quali programmi servono (dice quale GTK e
+      quale strada), a) o b), e quando (la voce 41 e' in corso; il 10/10
+      l'utente voleva svuotare la coda prima di GTK 3 e Qt).
+      29/10, L'ANALISI DI EXWIN (chiesta dall'utente prima di GTK).
+      LA BASE E' GIUSTA: il client disegna in una zona condivisa ARGB a 32
+      bit, il server compone, il client dice quando ha finito e quale
+      rettangolo; gli eventi hanno il tempo. E' il modello di Wayland: un
+      backend GDK "exwin" si ricalca su quello Wayland di GTK 3 (cairo su
+      superficie immagine, consegna della zona).
+      COSA MANCA nel server e nel protocollo (serve a GTK, SDL, Qt e alle
+      applicazioni di EX-OS):
+        a) tetti fissi: FINESTRE_MAX 16 (e WIN_ELENCO_MAX 16 nell'elenco
+           della barra), CODA_EVENTI 64, WIN_TITOLO_LEN 48; GTK apre una
+           finestra per menu, suggerimento e comparsa;
+        b) tastiera: solo le pressioni, niente rilasci; caratteri ASCII e
+           accentate CP437, non Unicode; solo Shift, Ctrl, Alt (niente
+           AltGr, Super, stato di Bloc Maiusc e Bloc Num);
+        c) il puntatore e' una freccia sola: manca il messaggio per la forma
+           (testo, mano, frecce, attesa) e i cursori ARGB del programma;
+        d) appunti nel toolkit, 4096 byte di solo testo: servono nel server,
+           di misura libera, col tipo (testo UTF-8, immagine) e l'avviso di
+           cambio; poi il trascinamento fra programmi;
+        e) rapporti fra finestre: c'e' comparsa, modale, sopra; mancano la
+           finestra figlia (transient), misure minime e massime, gli avvisi
+           di stato (ridotta, ingrandita, tutto schermo), l'icona, gli
+           eventi di fuoco preso/perso e di puntatore entrato (c'e' solo
+           uscito);
+        f) finestre tutte opache (la trasparenza puo' venire dopo);
+        g) il protocollo non ha un numero di versione: serve una trattativa
+           all'inizio, cosi' i programmi di oggi restano buoni.
+      NEL TOOLKIT (lib/exwin/exwin.c) tetti fissi: OGGETTI_MAX 192, MENU_MAX
+      2, MENU_TITOLI_MAX 6, MENU_VOCI_MAX 16, AREA_MAX 2 (512 righe, 200
+      colonne), LISTA_MAX 4, VOCI_MAX 6 da 32 voci, TERM_MAX 4, FONT_MAX 96,
+      ICONE_MAX 32 e altri: tabelle che crescono, come nel kernel.
+      L'ORDINE, scelto dall'utente il 29/10 ("parti dal punto 1"):
+        1. via i tetti fissi da server e toolkit;
+        2. tastiera nuova: pressione e rilascio, Unicode/UTF-8 in tutta la
+           grafica, tutti i modificatori (i programmi di oggi ricevono i
+           tasti come prima);
+        3. puntatore, appunti nel server, rapporti fra finestre, eventi di
+           fuoco, versione del protocollo;
+        4. SDL come primo programma di fuori (gradino 2 di DIREZIONE.md);
+        5. GTK 3 col backend GDK exwin, poi GTK 2 (o il server X11 per
+           averli tutti e due).
+      Stato: punto 1 FATTO in buona parte il 29/10 (kernel 0.289, wserver
+      0.013, exwin.so 0.020, pm 0.025, attesa 0.006, da committare):
+        - kernel: SHM_PER_PROC 20 e SHM_MAX_ZONE 24 tolti, tabelle che
+          raddoppiano (kmalloc) sotto un lucchetto CAS;
+        - wserver: finestre, coda eventi per finestra, titoli, elenco dei
+          pid vivi, elenco della barra (a pezzi, WIN_MSG_ELENCO_SEGUE);
+        - wserver: l'elenco lo seguono PIU' programmi (prima l'ultimo che lo
+          chiedeva: finestreprova lo toglieva a pm e la barra restava
+          ferma), e si manda SENZA ATTESA riprendendo dal pezzo rimasto (con
+          una casella di 4 posti e un programma che chiude 40 finestre di
+          fila il server restava fermo 10 s a pezzo, schermo compreso);
+        - exwin.so: oggetti a blocchi da 64 (erano 192), terminali, liste,
+          aree, voci, menu a tabelle di puntatori che raddoppiano, i
+          descrittori guardati (erano 16) e l'array di poll;
+        - prova: tools/prova_finestre.sh con /exwin/bin/finestreprova, 200
+          finestre aperte e chiuse a 32 e 64 bit, TUTTO A POSTO.
+      RESTANO del punto 1 (da valutare uno per uno, sono misure dentro un
+      oggetto piu' che tetti del sistema): MENU_TITOLI_MAX 6, MENU_VOCI_MAX
+      16, MENU_SUB_MAX 4, AREA_RIGHE_MAX 512 / AREA_COL_MAX 200,
+      CODICE_RIGHE_MAX, VOCI_N_MAX 32, FONT_MAX 96, FILE_MAX 24, TROVA_MAX
+      24, RIPIEGO_MAX 8, ICONE_MAX 32, CM_MAX 16, TESTO_LEN 1024, in wserver
+      SPORCHI_MAX e PEZZI_MAX; il titolo nell'elenco della barra e' ancora
+      di 48 byte (WIN_TITOLO_LEN, basta per un pulsante); APPUNTI_BYTE 4096
+      va col punto 3; fuori dal toolkit filemgr ha VOCI_MAX 512 (una
+      cartella con piu' file si taglia).
+
   41. URGENTE - GLI ANELLI DEI DRIVER DI RETE DINAMICI INVECE DEI POSTI
       FISSI (l'utente, 28/10: «aggiungi come compito urgente, quello di
       aggiornare tutti i driver di rete come e1000 a usare il sistema

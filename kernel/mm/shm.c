@@ -20,7 +20,51 @@
 #include "syscall.h"    /* i codici di errore e la macro ERR, in un posto solo */
 #include "vga.h"        /* vga_info_fb: il tetto di una zona e' lo schermo */
 
-static ShmZonaK g_zone[SHM_MAX_ZONE];
+/* The zones, and the slots allocated (kernel 0.289): see SHM_ZONE_INIZIO. */
+static ShmZonaK *g_zone = NULL;
+static uint32_t  g_zone_posti = 0;
+
+/* =============================================================================
+ * ! ONE AT A TIME IN THE TABLE OF ZONES (kernel 0.289). The tables grow now,
+ * and growing means copying into a new block and freeing the old one: a
+ * process preempted while it walked the old table (a syscall runs with
+ * interrupts on) would come back to freed memory. With fixed tables the same
+ * gap could already give one free slot to two creators. Taken with a
+ * compare-and-swap (there is SMP); whoever finds it taken gives up the CPU.
+ * ============================================================================= */
+static volatile uint32_t g_shm_occupato = 0;
+
+static void shm_prendi(void)
+{
+    while (!__sync_bool_compare_and_swap(&g_shm_occupato, 0u, 1u)) sched_yield();
+}
+
+static void shm_lascia(void)
+{
+    __sync_synchronize();
+    g_shm_occupato = 0;
+}
+
+/* Doubles a table of `byte_voce`-byte entries: the new part zeroed, the old
+ * block freed. 0 = done. */
+static int tabella_cresci(void **tab, uint32_t *posti, uint32_t inizio,
+                          uint32_t byte_voce)
+{
+    uint32_t nuovi = *posti ? *posti * 2u : inizio;
+    uint8_t *n = (uint8_t *)kmalloc(nuovi * byte_voce);
+    uint32_t i;
+
+    if (n == NULL) return -1;
+    for (i = 0; i < nuovi * byte_voce; i++) n[i] = 0;
+    if (*tab) {
+        const uint8_t *v = (const uint8_t *)*tab;
+        for (i = 0; i < *posti * byte_voce; i++) n[i] = v[i];
+        kfree(*tab);
+    }
+    *tab   = n;
+    *posti = nuovi;
+    return 0;
+}
 
 /* -----------------------------------------------------------------------------
  * Nomi
@@ -55,7 +99,7 @@ static uint32_t nome_valido(const char *n)
 static int32_t cerca_nome(const char *nome)
 {
     uint32_t i;
-    for (i = 0; i < SHM_MAX_ZONE; i++)
+    for (i = 0; i < g_zone_posti; i++)
         if (g_zone[i].proc > 0 && nome_uguale(g_zone[i].nome, nome))
             return (int32_t)i;
     return -1;
@@ -130,9 +174,12 @@ static int32_t aggancia(Process *proc, uint32_t idx, uint32_t *out_virt)
 
     /* Uno slot nel PCB. Si prende PRIMA di mappare: fallire dopo aver mappato
      * vorrebbe dire smontare tutto per un motivo che si conosceva gia'. */
-    for (slot = 0; slot < SHM_PER_PROC; slot++)
+    for (slot = 0; slot < proc->shm_posti; slot++)
         if (proc->shm[slot].zona == 0) break;
-    if (slot == SHM_PER_PROC) return ERR(EMFILE);
+    if (slot == proc->shm_posti &&
+        tabella_cresci((void **)&proc->shm, &proc->shm_posti, SHM_PROC_INIZIO,
+                       sizeof(struct ShmAggancio)) != 0)
+        return ERR(ENOMEM);
 
     if (proc->heap_max == 0) return ERR(ENOMEM);
 
@@ -254,8 +301,8 @@ static uint32_t pagine_max(void)
     return (pagine < SHM_PAGINE_MIN) ? SHM_PAGINE_MIN : pagine;
 }
 
-int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
-                 uint32_t *out_virt, uint32_t *out_byte)
+static int32_t shm_apri_dentro(Process *proc, const char *nome, uint32_t byte,
+                               uint32_t flag, uint32_t *out_virt, uint32_t *out_byte)
 {
     int32_t  idx;
     uint32_t pagine, slot;
@@ -272,7 +319,7 @@ int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
      * una chiudi non si corrispondono piu' una a una, e chi chiude una volta
      * sola lascerebbe la zona aperta per sempre. */
     if (idx >= 0) {
-        for (slot = 0; slot < SHM_PER_PROC; slot++)
+        for (slot = 0; slot < proc->shm_posti; slot++)
             if (proc->shm[slot].zona == (uint32_t)idx + 1) return ERR(EEXIST);
     }
 
@@ -290,9 +337,12 @@ int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
             return ERR(ENOMEM);
         }
 
-        for (i = 0; i < SHM_MAX_ZONE; i++)
+        for (i = 0; i < g_zone_posti; i++)
             if (g_zone[i].proc == 0 && g_zone[i].fisico == NULL) break;
-        if (i == SHM_MAX_ZONE) return ERR(ENOSPC);
+        if (i == g_zone_posti &&
+            tabella_cresci((void **)&g_zone, &g_zone_posti, SHM_ZONE_INIZIO,
+                           sizeof(ShmZonaK)) != 0)
+            return ERR(ENOMEM);
 
         rc = zona_crea(i, nome, pagine);
         if (rc != 0) return rc;
@@ -319,38 +369,63 @@ int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
     return 0;
 }
 
+int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
+                 uint32_t *out_virt, uint32_t *out_byte)
+{
+    int32_t rc;
+
+    if (proc == NULL || out_virt == NULL || out_byte == NULL) return ERR(EINVAL);
+    shm_prendi();
+    rc = shm_apri_dentro(proc, nome, byte, flag, out_virt, out_byte);
+    shm_lascia();
+    return rc;
+}
+
 int32_t shm_chiudi(Process *proc, uint32_t virt)
 {
     uint32_t slot;
 
     if (proc == NULL) return ERR(EINVAL);
 
-    for (slot = 0; slot < SHM_PER_PROC; slot++)
+    shm_prendi();
+    for (slot = 0; slot < proc->shm_posti; slot++)
         if (proc->shm[slot].zona != 0 && proc->shm[slot].virt == virt) {
             sgancia(proc, slot, 1);
+            shm_lascia();
             return 0;
         }
+    shm_lascia();
 
     return ERR(EINVAL);
 }
 
+/* ! A PROCESS THAT NEVER OPENED A ZONE DOES NOT TAKE THE LOCK: this is called
+ * by proc_reap_zombie, also with interrupts off on the failure path of spawn,
+ * where giving up the CPU is not allowed - and such a child never had one. */
 void shm_cleanup_process(Process *proc)
 {
     uint32_t slot;
 
-    if (proc == NULL) return;
+    if (proc == NULL || proc->shm == NULL) return;
 
-    for (slot = 0; slot < SHM_PER_PROC; slot++)
+    shm_prendi();
+    for (slot = 0; slot < proc->shm_posti; slot++)
         if (proc->shm[slot].zona != 0)
             sgancia(proc, slot, 0);
+    kfree(proc->shm);
+    proc->shm       = NULL;
+    proc->shm_posti = 0;
+    shm_lascia();
 }
 
 void shm_stato(uint32_t *out_zone, uint32_t *out_pagine)
 {
     uint32_t i, n = 0, p = 0;
 
-    for (i = 0; i < SHM_MAX_ZONE; i++)
+    shm_prendi();
+    for (i = 0; i < g_zone_posti; i++)
         if (g_zone[i].proc > 0) { n++; p += g_zone[i].pagine; }
+    shm_lascia();
 
     if (out_zone)   *out_zone   = n;
     if (out_pagine) *out_pagine = p;

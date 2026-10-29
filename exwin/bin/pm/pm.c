@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.024"
+#define VERSIONE_APP "0.025"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -882,17 +882,20 @@ static void arr_esegui(void)
 /* The windows of other programs still open, their titles into `nomi`. */
 static int arr_restano(char *nomi, unsigned int max)
 {
-    ExWindowEntry    v[16];
-    int          n = ex_list_windows(v, 16), i, quante = 0;
+    ExWindowEntry   *v;
+    int          n = ex_list_windows(0, 0), i, quante = 0;
     unsigned int io = (unsigned int)getpid();
 
-    if (n > 16) n = 16;
     nomi[0] = '\0';
+    v = (ExWindowEntry *)malloc((unsigned int)(n ? n : 1) * sizeof(ExWindowEntry));
+    if (!v) return 0;
+    n = ex_list_windows(v, n);
     for (i = 0; i < n; i++) {
         if (v[i].pid == io) continue;
         if (quante++) strncat(nomi, ", ", max - strlen(nomi) - 1);
         strncat(nomi, v[i].titolo, max - strlen(nomi) - 1);
     }
+    free(v);
     return quante;
 }
 
@@ -1933,8 +1936,12 @@ typedef struct {
     int       x, w;
 } VoceBarra;
 
-static VoceBarra g_vb[16];
-static int       g_vb_n = 0;
+/* ! AS MANY BUTTONS AS WINDOWS (pm 0.025): the server and the toolkit have
+ * no fixed number of windows any more, and 16 here would be the same limit
+ * again. The array grows by doubling; those that do not fit on the bar are
+ * kept with w = 0, as before. */
+static VoceBarra *g_vb = 0;
+static int        g_vb_n = 0, g_vb_posti = 0;
 
 /* The last path component, without the directories. */
 static const char *base_di(const char *p)
@@ -1989,14 +1996,27 @@ static void vb_disponi(void)
 
 static void vb_leggi(void)
 {
-    ExWindowEntry v[16];
-    int       n = ex_list_windows(v, 16), i;
+    ExWindowEntry *v;
+    int            n = ex_list_windows(0, 0), i;
 
-    if (n > 16) n = 16;
+    if (n > g_vb_posti) {
+        int        posti = g_vb_posti ? g_vb_posti : 16;
+        VoceBarra *nuovo;
+
+        while (posti < n) posti *= 2;
+        nuovo = (VoceBarra *)realloc(g_vb, (unsigned int)posti * sizeof(VoceBarra));
+        if (!nuovo) return;             /* the bar stays as it was */
+        g_vb = nuovo;
+        g_vb_posti = posti;
+    }
+    v = (ExWindowEntry *)malloc((unsigned int)(n ? n : 1) * sizeof(ExWindowEntry));
+    if (!v) return;
+    n = ex_list_windows(v, n);
     for (i = 0; i < n; i++) {
         g_vb[i].v  = v[i];
         g_vb[i].ic = icona_del_pid(v[i].pid);
     }
+    free(v);
     g_vb_n = n;
     vb_disponi();
 }

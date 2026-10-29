@@ -103,24 +103,14 @@ extern uint32_t  g_proc_max;        /* hardware ceiling, from sched_init */
 uint32_t         proc_tetto(void);  /* the ceiling in force: procmax or g_proc_max */
 #define PROC_POSTO(i) (&g_proc_blocchi[(uint32_t)(i) / PROC_BLOCCO][(uint32_t)(i) % PROC_BLOCCO])
 
-/* Quante zone di memoria condivisa puo' tenere aperte un processo.
- *
- * ! QUATTRO ERA UN TETTO CHE IL SERVER A FINESTRE TOCCAVA CON DUE
- * APPLICAZIONI, e per giorni e' passato per un blocco della scrivania. Il
- * commento che stava qui diceva che «un client grafico ne usa una o due» e che
- * per il server il tetto vero e' SHM_MAX_ZONE: la prima meta' e' giusta, la
- * seconda era sbagliata. Il server apre una zona PER FINESTRA, e le sue
- * finestre sono anche la scrivania e la barra delle applicazioni — due prima
- * ancora che l'utente apra qualcosa. Alla terza applicazione shm_apri()
- * rendeva -EMFILE, il server non rispondeva alla richiesta di creazione, e il
- * programma diceva «il server a finestre non risponde»: un messaggio che
- * accusava la parte sana.
- *
- * ! IL NUMERO GIUSTO E' QUELLO DELLE FINESTRE DEL SERVER, non uno tondo:
- * FINESTRE_MAX vale 16 in drivers/wserver/wserver.c, piu' un margine per le
- * zone che un client apre per conto suo. Costa 12 byte per slot nel PCB —
- * 240 byte per processo, 15 KB su 64 processi. */
-#define SHM_PER_PROC        20
+/* ! HOW MANY SHARED ZONES A PROCESS MAY KEEP OPEN: AS MANY AS IT WANTS
+ * (kernel 0.289, voce 42). It was 20 (SHM_PER_PROC), 4 before that, and each
+ * time the window server hit it first: it opens a zone PER WINDOW, the
+ * desktop and the taskbar included, and with 20 the 17th window of a program
+ * was refused (tools/prova_finestre.sh). The table of a process starts at
+ * SHM_PROC_INIZIO slots on its first shm_apri and doubles when it is full
+ * (kernel/mm/shm.c); the memory of the zones is the only limit. */
+#define SHM_PROC_INIZIO     8
 /* 32 e non 16 (0.150): un compilatore tiene aperti insieme il sorgente,
  * l'uscita, gli header della catena di inclusione e uno o due file
  * temporanei, e 16 e' un tetto che si tocca senza fare niente di strano.
@@ -903,11 +893,12 @@ typedef struct Process {
      * `zona` e' l'indice nella tabella PIU' UNO: zero vuol dire slot libero,
      * cosi' un PCB azzerato nasce senza agganci e non serve inizializzare
      * niente in proc_create. */
-    struct {
+    struct ShmAggancio {
         uint32_t    zona;                   /* indice+1, 0 = slot libero */
         uint32_t    virt;                   /* dove il processo la vede */
         uint32_t    pagine;
-    }               shm[SHM_PER_PROC];
+    }              *shm;                    /* kmalloc'd on the first shm_apri */
+    uint32_t        shm_posti;              /* slots in shm (0 = none yet) */
 
     /* =========================================================================
      * spazio_occupato — IL LUCCHETTO DELLO SPAZIO DEGLI INDIRIZZI (0.230)
