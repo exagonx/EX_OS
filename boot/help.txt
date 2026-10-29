@@ -958,7 +958,7 @@ macchina e' 127.0.0.1, non localhost. Impostazioni in
 /exos/php/etc/php.ini, temporanei in /exos/php/tmp (EX-OS non ha /tmp).
 Mancano le estensioni su libxml2, sqlite, curl, gd, intl. Manuale 4.12.
 
-[limiti procmax fdmax tcpmax]
+[limiti procmax fdmax tcpmax netrx nettx]
 quanti processi, file e connessioni: i tetti
 
 Nessun numero fisso nel sistema: i tetti vengono dalla memoria, e si
@@ -967,6 +967,8 @@ abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
   procmax = N     processi e fili insieme (RAM / 128 KB, al massimo 512)
   fdmax = N       descrittori per programma (uno ogni 2 KB di RAM)
   tcpmax = N      connessioni TCP di ip.drv (una ogni 32 KB di RAM)
+  netrx = N       descrittori di ricezione della scheda (uno per MB)
+  nettx = N       descrittori di invio della scheda (un quarto di netrx)
 
 Spiegati in /boot/kernel.txt. `ipcfg -tcp` mostra le connessioni, `ps`
 i processi. Il tetto vero di oggi: circa 450 processi e fili in tutto,

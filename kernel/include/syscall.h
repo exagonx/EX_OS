@@ -573,9 +573,14 @@ typedef struct {
 } MmioZona;
 
 
-/* Quanta ne puo' avere un processo, in pagine. 64 = 256 KB: gli anelli di
- * una scheda di rete con i loro buffer stanno in molto meno. */
-#define DMA_PAGINE_MAX    64
+/* How much one call may take: no fixed number since kernel 0.287 (voce 41,
+ * the user's rule: sizes from the configuration and the hardware). Until
+ * 0.286 it was DMA_PAGINE_MAX 64 pages = 256 KB, and the e1000 could not
+ * have more than 96 receive descriptors: under 2048 clients it lost 858521
+ * frames. Now a call may take up to a sixteenth of the RAM (dma_tetto in
+ * syscall_impl.c); the pages must still be physically contiguous, so a
+ * request too big for the free memory gets ENOMEM and the driver asks for
+ * less. */
 
 typedef struct {
     uint32_t byte;      /* in:  quanti byte servono */

@@ -166,6 +166,15 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg_strcpy(cfg->tcp_max, value, sizeof(cfg->tcp_max));
             return;
         }
+        /* netrx / nettx = N: the network cards' rings (cfg.h) */
+        if (cfg_strcmp(key, "netrx") == 0) {
+            cfg_strcpy(cfg->net_rx, value, sizeof(cfg->net_rx));
+            return;
+        }
+        if (cfg_strcmp(key, "nettx") == 0) {
+            cfg_strcpy(cfg->net_tx, value, sizeof(cfg->net_tx));
+            return;
+        }
         /* fdmax = N: the descriptors a program may hold (cfg.h). Only a
          * number counts; anything else leaves the default (from the RAM). */
         if (cfg_strcmp(key, "fdmax") == 0) {
@@ -573,6 +582,12 @@ const char *cfg_get_option(const char *key)
     }
     if (cfg_strcmp(key, "tcpmax") == 0) {
         return cfg->tcp_max[0] ? cfg->tcp_max : NULL;
+    }
+    if (cfg_strcmp(key, "netrx") == 0) {
+        return cfg->net_rx[0] ? cfg->net_rx : NULL;
+    }
+    if (cfg_strcmp(key, "nettx") == 0) {
+        return cfg->net_tx[0] ? cfg->net_tx : NULL;
     }
     return NULL;
 }

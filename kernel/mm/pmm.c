@@ -521,17 +521,56 @@ paddr_t pmm_alloc_pages_kernel(uint32_t count)
 /* =============================================================================
  * pmm_alloc_pages — Alloca N pagine fisiche CONTIGUE
  *
- * Necessario per strutture che richiedono memoria contigua (es. page tables,
- * buffer DMA).
+ * Its only caller is dma_alloc: the rings and buffers of a card, which the
+ * card reaches by physical address and the driver through its own mapping.
+ *
+ * ! ABOVE THE KERNEL BAND FIRST (kernel 0.287, voce 41). Until 0.286 the
+ * search started at page 0: with dma_alloc capped at 256 KB nobody saw it,
+ * but the 5 MB of the e1000 with 2040 descriptors landed at 0xa00000,
+ * inside the band where the kernel stacks live (128 KB contiguous each),
+ * and in the Apache stress test the next program could not start
+ * ("32 pagine contigue non disponibili nella fascia kernel"). Now the band
+ * is used only when no block fits above it (a machine with little RAM),
+ * and the log says so.
+ *
+ * ! AND BELOW 4 GB: DmaZona hands the driver a 32-bit physical address, and
+ * the cards are programmed with the high half at 0 (RDBAH of the e1000).
  *
  * Algoritmo: first-fit lineare (meno efficiente ma semplice e corretto)
  *
  * Ritorna: indirizzo fisico prima pagina del blocco, 0 se fallito
  * ============================================================================= */
+#define PMM_PAGINE_4GB  0x100000u   /* first page at or above 4 GB */
+
+/* First-fit for count free pages in [da, a). Returns the first page, or
+ * a (none). */
+static uint32_t pmm_cerca_contigue(uint32_t da, uint32_t a, uint32_t count)
+{
+    uint32_t i, j, consecutive;
+
+    if (a < count || da > a - count) return a;
+    for (i = da; i <= a - count; i++) {
+        if (BITMAP_TEST(i)) continue; /* Pagina usata, skip */
+
+        /* Controlla che le successive 'count-1' siano libere */
+        consecutive = 1;
+        for (j = i + 1; j < i + count && j < a; j++) {
+            if (BITMAP_TEST(j)) break;
+            consecutive++;
+        }
+        if (consecutive == count) return i;
+
+        /* Salta avanti al primo set dopo il blocco fallito */
+        i = j;
+    }
+    return a;
+}
+
 paddr_t pmm_alloc_pages(uint32_t count)
 {
     uint32_t i, j;
-    uint32_t consecutive;
+    uint32_t fascia = pmm_limite_kernel();
+    uint32_t tetto  = g_total_pages;
 
     if (count == 0) return 0;
     if (count == 1) return pmm_alloc_page();
@@ -542,35 +581,29 @@ paddr_t pmm_alloc_pages(uint32_t count)
         return 0;
     }
 
-    /* Cerca 'count' pagine libere consecutive */
-    for (i = 0; i <= g_total_pages - count; i++) {
-        if (BITMAP_TEST(i)) continue; /* Pagina usata, skip */
+    if (tetto > PMM_PAGINE_4GB) tetto = PMM_PAGINE_4GB;
 
-        /* Controlla che le successive 'count-1' siano libere */
-        consecutive = 1;
-        for (j = i + 1; j < i + count && j < g_total_pages; j++) {
-            if (BITMAP_TEST(j)) break;
-            consecutive++;
+    i = pmm_cerca_contigue(fascia, tetto, count);
+    if (i == tetto) {
+        i = pmm_cerca_contigue(0, fascia, count);
+        if (i == fascia) {
+            klog(LOG_ERROR, "PMM: impossibile trovare %u pagine contigue", count);
+            return 0;
         }
-
-        if (consecutive == count) {
-            /* Trovato blocco contiguo: marca tutto come usato */
-            for (j = i; j < i + count; j++) {
-                BITMAP_SET(j);
-                g_free_pages--;
-                g_used_pages++;
-            }
-            klog(LOG_DEBUG, "PMM: allocate %u pagine contigue a 0x%08x",
-                 count, page_to_addr(i));
-            return page_to_addr(i);
-        }
-
-        /* Salta avanti al primo set dopo il blocco fallito */
-        i = j;
+        klog(LOG_WARN, "PMM: %u pagine contigue solo nella fascia kernel "
+             "(0x%08x): restano meno pile per i processi", count,
+             page_to_addr(i));
     }
 
-    klog(LOG_ERROR, "PMM: impossibile trovare %u pagine contigue", count);
-    return 0;
+    /* Trovato blocco contiguo: marca tutto come usato */
+    for (j = i; j < i + count; j++) {
+        BITMAP_SET(j);
+        g_free_pages--;
+        g_used_pages++;
+    }
+    klog(LOG_DEBUG, "PMM: allocate %u pagine contigue a 0x%08x",
+         count, page_to_addr(i));
+    return page_to_addr(i);
 }
 
 /* =============================================================================

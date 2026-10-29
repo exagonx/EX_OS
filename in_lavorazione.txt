@@ -1,6 +1,8 @@
 QUEL CHE E' APERTO — 15 settembre 2026
 
-!!! IL 28 OTTOBRE, URGENTE: voce 41 (@CODA-20-10) - gli anelli dei driver
+!!! IL 28 OTTOBRE, URGENTE: voce 41 (@CODA-20-10) - la e1000 fatta la notte
+    del 28 (kernel 0.287, e1000.drv 0.004), resta da leggere la prova a 2048
+    client e da fare gli altri driver. Gli anelli dei driver
     di rete (e1000, nforce, rtl8169, pcnet, sis900, ar5k, ne2k) dinamici,
     dalla RAM o da kernel.cfg, invece dei posti fissi: la e1000 a 96 ha
     perso 858521 frame nella prova di Apache a 2048 client (voce 39).
@@ -8503,6 +8505,61 @@ tools/netinst/velocita tolto da netinst.
       32 e 64 bit (prova_telnet, prova_ssh, prova_httpd, prova_mariadb,
       prova_fd, netinst) e le schede che QEMU ha (e1000, pcnet, rtl8139 non
       c'e', ne2k_pci); sul ferro la rete del portatile.
+      28/10 NOTTE, LA e1000 FATTA (non committata, messaggio-commit.txt):
+      kernel 0.287, dma_alloc senza DMA_PAGINE_MAX (64 pagine): fino a 1/16
+      della RAM per chiamata (dma_tetto); netrx/nettx in [kernel] di
+      kernel.cfg (cfg.h net_rx/net_tx, cfg_get_option); drivers/net/
+      net_anelli.h nuovo, la regola comune: -r/-t, poi netrx/nettx, poi un
+      RX per MB di RAM e TX = RX/4, entro min/max/passo della scheda, e
+      net_anelli_dimezza se dma_alloc fallisce; la coda verso ip.drv parte
+      da 64 posti e raddoppia fino a NET_CODA_PER_ANELLO (4) anelli.
+      e1000.drv 0.004: min 96/8, max 65528, passo 8. Provato a 32 bit
+      (512 MB): 504 RX, 120 TX, DMA 1287936 byte, prova_fd tutta ok.
+      ISO 32 e 64 rifatte. Documentati kernel.txt, help.txt, sistema.html.
+      LANCIATA stress_httpd.sh a 2048 client (64 bit, 2 GB: 2048 RX attesi)
+      in tools/stress/risultati/http-2048-anelli: AL MATTINO leggere
+      riassunto.txt e rete.txt (persi_scheda, senza_posto, overflow contro
+      858521 della 0.003), poi le regressioni di rete 32/64 (prova_telnet,
+      prova_ssh, prova_httpd, prova_mariadb, netinst), README/manuale
+      (sezione con i numeri), poi gli altri driver nell'ordine: nforce
+      (portatile), rtl8169, pcnet, sis900, ar5k, ne2k.
+      ESITO DELLA PROVA (finita alle 23.45, tools/stress/risultati/
+      http-2048-anelli): e1000 con 2040 RX e 504 TX, DMA 5250816 byte a
+      FISICO 0xa00000; 91617 richieste buone in 721 s (127/s contro 118),
+      p50 2,1 s, p95 7 s (peggiore 56 s), 16778 senza risposta in 60 s,
+      0 connessioni fallite, 2 stati sbagliati, 133925 trabocchi della rete
+      user di QEMU, nessun fault. MA I CONTATORI DELLA SCHEDA NON CI SONO:
+      memlog non e' partito ("exec: impossibile avviarlo") perche'
+      ! REGRESSIONE DELLA 0.287: "PMM: 32 pagine contigue non disponibili
+      nella fascia kernel (0x0-0x04000000)", "SCHED: impossibile allocare
+      stack kernel per PID 333". pmm_alloc_pages cerca dal basso e i 5 MB
+      della e1000 sono finiti nei primi 64 MB, dove stanno le pile del
+      kernel (128 KB contigui per processo, voce 35). DA FARE PER PRIMA:
+      dma_alloc deve prendere la memoria SOPRA la fascia kernel (e sotto
+      i 4 GB: RDBAH=0), e solo se non c'e' scendere; poi rifare la prova
+      con memlog per leggere persi_scheda/senza_posto contro 858521.
+      29/10 MATTINA, FATTO: pmm_alloc_pages cerca prima sopra la fascia
+      kernel e sotto i 4 GB (pmm_cerca_contigue; scende nella fascia solo
+      se sopra non c'e' posto, con un WARN). Prova a 2 GB (risultati/
+      http-2048-anelli2): DMA a 0x4089000, memlog parte, rete_persi_scheda
+      0 e senza_posto 0 (contro 858521), ma 92/s a regime contro 123 di
+      ieri (p50 3,5 s, 48 connessioni fallite): CALO DA CAPIRE, ipotesi non
+      verificate: variazione, il carico che ora arriva tutto, svuota_rx che
+      vuota 2040 frame per giro; prova proposta: netrx = 256 a 2 GB.
+      L'UTENTE (29/10): le macchine degli stress test a 8 GB (stress_httpd e
+      stress_mariadb, EXOS_RAM 8192M di serie). A 8 GB la prima corsa
+      (risultati/http-2048-8gb) e' CROLLATA: 10202 "doppia liberazione",
+      morti kbd, ip.drv, e1000.drv, mariadbd, la shell, page fault del
+      kernel. CAUSA (gia' nella 0.286, solo a 64 bit con RAM oltre i 4 GB):
+      munmap, sbrk che restringe, mmap MAP_FIXED, spawn_write_user e due
+      punti di elf.c tenevano paging_get_physical in un uint32_t: una pagina
+      a 4 GB + X liberava (o scriveva) la pagina X. Corretto (paddr_t).
+      Seconda corsa a 8 GB (risultati/http-2048-8gb-b): 8184 RX, 2040 TX,
+      DMA 21 MB a 0x4030000, nessuna doppia liberazione, nessun fault,
+      perdite della scheda 0, 59893 richieste buone (86/s a regime), p50
+      3,5 s, p95 14 s, 0 connessioni fallite, Apache e MariaDB spenti con
+      codice 0, 7,9 GB liberi. DA FARE: il calo (8 GB come 2 GB, ~90/s),
+      le regressioni di rete 32/64, README e manuale, poi gli altri driver.
 
   40. LE SCADENZE DEL DRIVER ATA (trovato il 28/10 con la prova di Apache
       e PHP). Kernel 0.286: FLUSH CACHE aspetta fino a 30 s (era 5, come un

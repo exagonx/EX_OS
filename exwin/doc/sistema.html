@@ -298,8 +298,8 @@ programma. Le voci della barra le mandano i servizi stessi: vedi
     <td><code>loglevel</code>, <code>timer_hz</code>, <code>verboseboot</code>,
         <code>keymap</code>, <code>lingua</code>, <code>swap</code>,
         <code>atadma</code>, <code>smp</code>, e i tetti
-        <code>procmax</code>, <code>fdmax</code>, <code>tcpmax</code>
-        (vedi sotto)</td></tr>
+        <code>procmax</code>, <code>fdmax</code>, <code>tcpmax</code>,
+        <code>netrx</code>, <code>nettx</code> (vedi sotto)</td></tr>
 <tr><td><code>[env]</code></td>
     <td>le variabili d'ambiente iniziali: <code>PATH</code>,
         <code>HOME</code>, <code>TERM</code></td></tr>
@@ -699,6 +699,11 @@ in <code>[kernel]</code> si possono solo abbassare.
     <td>uno ogni 2 KB di RAM, almeno 1024</td></tr>
 <tr><td><code>tcpmax</code></td><td>connessioni TCP di <code>ip.drv</code></td>
     <td>una ogni 32 KB di RAM, almeno 4096</td></tr>
+<tr><td><code>netrx</code></td><td>descrittori di ricezione della scheda di rete
+    (da <code>e1000.drv</code> 0.004)</td>
+    <td>uno per MB di RAM, entro quello che la scheda ammette</td></tr>
+<tr><td><code>nettx</code></td><td>descrittori di invio della scheda di rete</td>
+    <td>un quarto di <code>netrx</code></td></tr>
 </table>
 
 <p class="nota">

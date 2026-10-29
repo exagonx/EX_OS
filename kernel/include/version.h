@@ -708,7 +708,18 @@
  * TMO_FLUSH_MS in ahci.c), as Linux's libata: with the 5 s of any command a
  * flush that had a lot to write (under QEMU, an image just written on the
  * host) timed out and fsync said EIO (MariaDB's bootstrap stopped). */
-#define EXOS_VERSION    "0.286"
+/* 0.286 -> 0.287: dma_alloc without the 64 pages (256 KB) of
+ * DMA_PAGINE_MAX: up to a sixteenth of the RAM per call (voce 41, the
+ * network rings sized from the RAM or kernel.cfg); netrx and nettx in
+ * kernel.cfg, handed to the network drivers by SYS_GETENV; the contiguous
+ * pages of dma_alloc come from above the kernel band and below 4 GB
+ * (pmm_alloc_pages started at page 0, and 5 MB of e1000 rings there took
+ * the place of the kernel stacks); at 64 bit with RAM above 4 GB, munmap,
+ * sbrk shrinking, mmap MAP_FIXED, spawn and the ELF loader kept the page's
+ * physical address in a uint32_t: a page above 4 GB freed (or written) the
+ * page with its low 32 bits, and with 8 GB MariaDB's munmaps freed 10202
+ * pages of others (kbd, ip.drv, e1000.drv and the shell died). */
+#define EXOS_VERSION    "0.287"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

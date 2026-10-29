@@ -1714,8 +1714,8 @@ int32_t sys_mmap(InterruptFrame *frame)
     if (p->flags & MAP_FIXED) {
         for (i = 0; i < pages; i++) {
             uint32_t va = vaddr + i * PAGE_SIZE;
-            uint32_t pa = paging_get_physical(proc->page_directory, va);
-            if (pa) pmm_free_page(pa & 0xFFFFF000u);
+            paddr_t  pa = paging_get_physical(proc->page_directory, va);
+            if (pa) pmm_free_page(pa & ~(paddr_t)(PAGE_SIZE - 1));
             paging_unmap_page(proc->page_directory, va);
         }
     }
@@ -1805,7 +1805,7 @@ int32_t sys_munmap(InterruptFrame *frame)
 
     for (i = 0; i < pages; i++) {
         uint32_t va   = addr + i * PAGE_SIZE;
-        uint32_t phys = paging_get_physical(proc->page_directory, va);
+        paddr_t  phys = paging_get_physical(proc->page_directory, va);
         if (phys) pmm_free_page(phys);
         paging_unmap_page(proc->page_directory, va);
     }
@@ -2254,7 +2254,7 @@ static int spawn_write_user(PDE *pd, uint32_t user_virt,
 {
     const uint8_t *s = (const uint8_t *)src;
     while (len > 0) {
-        uint32_t phys = paging_get_physical(pd, user_virt);
+        paddr_t  phys = paging_get_physical(pd, user_virt);
         if (!phys) return -1;
         uint32_t off   = user_virt & 0xFFF;
         uint32_t avail = PAGE_SIZE - off;
@@ -3207,7 +3207,7 @@ int32_t sys_sbrk(InterruptFrame *frame)
         pages = shrink / PAGE_SIZE;
         for (i = 0; i < pages; i++) {
             uint32_t va   = new_end + i * PAGE_SIZE;
-            uint32_t phys = paging_get_physical(proc->page_directory, va);
+            paddr_t  phys = paging_get_physical(proc->page_directory, va);
             if (phys) pmm_free_page(phys);
             paging_unmap_page(proc->page_directory, va);
         }
@@ -5680,6 +5680,13 @@ int32_t sys_random(InterruptFrame *frame)
     return (int32_t)fatti;
 }
 
+/* The most one dma_alloc may take, in pages: a sixteenth of the RAM
+ * (kernel 0.287, see syscall.h). */
+static uint32_t dma_tetto(void)
+{
+    return pmm_get_total_pages() / 16u;
+}
+
 int32_t sys_dma_alloc(InterruptFrame *frame)
 {
     DmaZona  *z    = (DmaZona *)FR_A1(frame);
@@ -5692,7 +5699,7 @@ int32_t sys_dma_alloc(InterruptFrame *frame)
     if (!e_un_driver(proc, "dma_alloc")) return ERR(EPERM);
 
     pagine = ALIGN_UP(z->byte, PAGE_SIZE) / PAGE_SIZE;
-    if (pagine > DMA_PAGINE_MAX) return ERR(ENOMEM);
+    if (pagine > dma_tetto()) return ERR(ENOMEM);
 
     /* ! pmm_alloc_pages E NON pmm_alloc_page IN CICLO. Sono le uniche
      * pagine del sistema che devono essere contigue FISICAMENTE: la

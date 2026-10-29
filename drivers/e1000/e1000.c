@@ -67,10 +67,11 @@
 #include "libc.h"
 #include "pci_proto.h"
 #include "net_proto.h"
+#include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `e1000.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("e1000.drv", "0.003");
+EX_VERSIONE("e1000.drv", "0.004");
 
 /* -----------------------------------------------------------------------------
  * La scheda
@@ -197,11 +198,23 @@ EX_VERSIONE("e1000.drv", "0.003");
  * driver waited for its turn on the CPU, and the ring overflowed (MPC 1148
  * in ten minutes, `persi_scheda`); each lost frame cost a TCP
  * retransmission, and a group of connections stood still for 22 s. 96 is
- * what the zone allows: DMA_BYTE stays under the 256 KB a process may have
- * (DMA_PAGINE_MAX, kernel/include/syscall.h).
+ * what the zone allowed: DMA_BYTE stayed under the 256 KB a process could
+ * have (DMA_PAGINE_MAX, gone with kernel 0.287).
+ *
+ * ! NO FIXED SIZE SINCE 0.004 (voce 41, 28 October 2026): with 2048 clients
+ * the 96 were not enough either (858521 frames lost). The sizes come from
+ * -r/-t, netrx/nettx of kernel.cfg or the RAM (drivers/net/net_anelli.h),
+ * and here only what the card allows: RDLEN/TDLEN have bits 19:7, so at
+ * most 2^20 - 128 bytes = 65528 descriptors, in multiples of 8.
  * --------------------------------------------------------------------------- */
-#define RX_N              96
-#define TX_N              8
+#define ANELLO_MIN_RX     96          /* what 0.003 had, and worked */
+#define ANELLO_MIN_TX     8
+#define ANELLO_MAX        65528u
+#define ANELLO_PASSO      8u
+
+static unsigned int g_rx_n = 0, g_tx_n = 0;
+#define RX_N              g_rx_n
+#define TX_N              g_tx_n
 #define BUF_LEN           2048        /* deve combaciare con RCTL_BSIZE_2048 */
 
 #define DESC_BYTE         16
@@ -213,8 +226,8 @@ EX_VERSIONE("e1000.drv", "0.003");
  *
  * ! GLI ANELLI VANNO ALLINEATI A 16 BYTE. dma_alloc rende memoria allineata
  * alla pagina, quindi l'anello RX parte allineato; l'anello TX lo segue a
- * un multiplo di 16 perche' RX_ANELLO_BYTE lo e'. Se si cambiano i conteggi,
- * si ricontrolla questo. */
+ * un multiplo di 16 perche' RX_ANELLO_BYTE lo e' (RX_N multiplo di 8,
+ * ANELLO_PASSO). Se si cambiano i conteggi, si ricontrolla questo. */
 #define OFF_RX_ANELLO     0
 #define OFF_TX_ANELLO     (OFF_RX_ANELLO + RX_ANELLO_BYTE)
 #define OFF_RX_BUF        (OFF_TX_ANELLO + TX_ANELLO_BYTE)
@@ -259,7 +272,10 @@ EX_VERSIONE("e1000.drv", "0.003");
  * 0,5 con 64, cioe' la stessa cosa a meno della risoluzione dell'orologio.
  * Questo numero non serve OGGI — serve perche' il giorno che qualcuno alza
  * TCP_BUF, o apre due connessioni veloci insieme, il pavimento non ceda. */
-#define CODA_N            256   /* 64 until 26 October 2026: see RX_N */
+/* ! AND SINCE 0.004 IT GROWS (voce 41): it starts at CODA_INIZIO places and
+ * doubles when full, up to NET_CODA_PER_ANELLO rings (net_anelli.h); only
+ * then the oldest frame goes. 256 fixed from 26 October 2026, 64 before. */
+#define CODA_INIZIO       64
 
 /* -----------------------------------------------------------------------------
  * Stato
@@ -281,9 +297,11 @@ static unsigned int  g_tx_prossimo = 0;
 static NetContatori  g_cont;
 static int           g_verboso = 0;
 
-static unsigned char g_coda[CODA_N][NET_FRAME_MAX];
-static unsigned int  g_coda_len[CODA_N];
+static unsigned char *g_coda = NULL;      /* g_coda_n frames of NET_FRAME_MAX */
+static unsigned int  *g_coda_len = NULL;
+static int           g_coda_n = 0, g_coda_max = 0;
 static int           g_coda_testa = 0, g_coda_conta = 0;
+#define CODA_FRAME(i)     (g_coda + (unsigned int)(i) * NET_FRAME_MAX)
 static unsigned int  g_lettore_pid = 0;
 
 /* =============================================================================
@@ -557,6 +575,34 @@ static int inizializza_scheda(void)
 /* =============================================================================
  * Ricezione
  * ========================================================================== */
+/* Doubles the queue, keeping the frames in order from place 0. Returns 0
+ * if there was no memory (the queue stays as it was). */
+static int coda_cresci(void)
+{
+    int            n = g_coda_n * 2, i;
+    unsigned char *f;
+    unsigned int  *l;
+
+    if (n > g_coda_max) n = g_coda_max;
+    if (n <= g_coda_n) return 0;
+    f = malloc((unsigned int)n * NET_FRAME_MAX);
+    l = malloc((unsigned int)n * sizeof(unsigned int));
+    if (f == NULL || l == NULL) { free(f); free(l); return 0; }
+
+    for (i = 0; i < g_coda_conta; i++) {
+        int k = (g_coda_testa + i) % g_coda_n;
+        memcpy(f + (unsigned int)i * NET_FRAME_MAX, CODA_FRAME(k), g_coda_len[k]);
+        l[i] = g_coda_len[k];
+    }
+    free(g_coda);
+    free(g_coda_len);
+    g_coda = f;
+    g_coda_len = l;
+    g_coda_n = n;
+    g_coda_testa = 0;
+    return 1;
+}
+
 static void accoda(const unsigned char *f, unsigned int len)
 {
     int slot;
@@ -566,14 +612,14 @@ static void accoda(const unsigned char *f, unsigned int len)
     /* ! CODA PIENA: SI BUTTA IL PIU' VECCHIO, e si conta. Buttare il nuovo
      * sarebbe piu' facile e peggio: chi legge resterebbe con una coda di
      * roba stantia mentre il traffico vero passa. */
-    if (g_coda_conta == CODA_N) {
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
+    if (g_coda_conta == g_coda_n && !coda_cresci()) {
+        g_coda_testa = (g_coda_testa + 1) % g_coda_n;
         g_coda_conta--;
         g_cont.persi_coda++;
     }
 
-    slot = (g_coda_testa + g_coda_conta) % CODA_N;
-    memcpy(g_coda[slot], f, len);
+    slot = (g_coda_testa + g_coda_conta) % g_coda_n;
+    memcpy(CODA_FRAME(slot), f, len);
     g_coda_len[slot] = len;
     g_coda_conta++;
 }
@@ -696,9 +742,9 @@ static void consegna(void)
     if (g_lettore_pid == 0 || g_coda_conta == 0) return;
 
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) < 0)
+                 CODA_FRAME(g_coda_testa), g_coda_len[g_coda_testa]) < 0)
         return;
-    g_coda_testa = (g_coda_testa + 1) % CODA_N;
+    g_coda_testa = (g_coda_testa + 1) % g_coda_n;
     g_coda_conta--;
     g_lettore_pid = 0;
 }
@@ -846,7 +892,8 @@ static void stampa_stato(void)
            (st & STATUS_FD) ? "full" : "half", st);
     printf("       DMA %u byte: virt 0x%x, fisico 0x%x\n",
            DMA_BYTE, g_dma_virt, g_dma_fis);
-    printf("       anelli %d RX, %d TX da %d byte\n", RX_N, TX_N, BUF_LEN);
+    printf("       anelli %u RX, %u TX da %d byte, coda %d posti (fino a %d)\n",
+           RX_N, TX_N, BUF_LEN, g_coda_n, g_coda_max);
 }
 
 static void servi(void)
@@ -925,8 +972,10 @@ static void servi(void)
 
 static void uso(void)
 {
-    printf("uso: /dev/e1000.drv [-i] [-v]\n");
+    printf("uso: /dev/e1000.drv [-i] [-v] [-r N] [-t N]\n");
     printf("  (nessuna opzione)  si aggancia alla scheda e resta in servizio\n");
+    printf("  -r N / -t N        descrittori di ricezione / invio (di serie netrx e\n");
+    printf("                     nettx di kernel.cfg, o uno per MB di RAM e un quarto)\n");
     printf("  -i                 la sonda: dice se c'e' e basta\n");
     printf("  -v                 dice cosa vede, registro per registro\n");
 }
@@ -934,10 +983,15 @@ static void uso(void)
 int main(int argc, char **argv)
 {
     int sonda = 0, i, rc;
+    unsigned int riga_rx = 0, riga_tx = 0;
     DmaZona z;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)      sonda = 1;
+        else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc)
+            riga_rx = (unsigned int)atoi(argv[++i]);
+        else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc)
+            riga_tx = (unsigned int)atoi(argv[++i]);
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
         else { uso(); return 2; }
@@ -1019,15 +1073,32 @@ int main(int argc, char **argv)
             printf("e1000: registri vivi, STATUS = 0x%08x\n", st);
     }
 
-    z.byte = DMA_BYTE;
-    rc = dma_alloc(&z);
-    if (rc < 0) {
-        printf("e1000: dma_alloc(%u) fallita (%d)\n", DMA_BYTE, rc);
-        return 1;
+    /* The rings (net_anelli.h), and if the contiguous memory is not there
+     * the larger one halves until it is, or both are at the minimum. */
+    g_rx_n = net_anelli_rx(riga_rx, ANELLO_MIN_RX, ANELLO_MAX, ANELLO_PASSO);
+    g_tx_n = net_anelli_tx(riga_tx, g_rx_n, ANELLO_MIN_TX, ANELLO_MAX, ANELLO_PASSO);
+    for (;;) {
+        z.byte = DMA_BYTE;
+        rc = dma_alloc(&z);
+        if (rc >= 0) break;
+        printf("e1000: dma_alloc(%u) per %u RX e %u TX fallita (%d)\n",
+               DMA_BYTE, g_rx_n, g_tx_n, rc);
+        if (!net_anelli_dimezza(&g_rx_n, &g_tx_n, ANELLO_MIN_RX,
+                                ANELLO_MIN_TX, ANELLO_PASSO))
+            return 1;
     }
     g_dma_virt = z.virt;
     g_dma_fis  = z.fisico;
     memset((void *)g_dma_virt, 0, DMA_BYTE);
+
+    g_coda_max = (int)(NET_CODA_PER_ANELLO * g_rx_n);
+    g_coda_n   = CODA_INIZIO < g_coda_max ? CODA_INIZIO : g_coda_max;
+    g_coda     = malloc((unsigned int)g_coda_n * NET_FRAME_MAX);
+    g_coda_len = malloc((unsigned int)g_coda_n * sizeof(unsigned int));
+    if (g_coda == NULL || g_coda_len == NULL) {
+        printf("e1000: niente memoria per la coda (%d posti)\n", g_coda_n);
+        return 1;
+    }
 
     if (inizializza_scheda() != 0) return 1;
 

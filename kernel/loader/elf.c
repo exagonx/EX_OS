@@ -412,7 +412,7 @@ if (n <= 0) {
                 /* Traduci indirizzo virtuale → fisico e copia */
                 uint32_t written = 0;
                 while (written < (uint32_t)n) {
-                    uint32_t phys_dst = paging_get_physical(proc->page_directory,
+                    paddr_t  phys_dst = paging_get_physical(proc->page_directory,
                                                              vaddr + written);
                     if (phys_dst == 0) {
                         klog(LOG_ERROR, "ELF: indirizzo virtuale non mappato 0x%08x",
@@ -665,7 +665,7 @@ if (n <= 0) {
 
             /* Il puntatore a se stesso in testa al TCB. */
             {
-                uint32_t phys_tcb = paging_get_physical(proc->page_directory, tp);
+                paddr_t  phys_tcb = paging_get_physical(proc->page_directory, tp);
                 uint32_t off_tcb  = tp % PAGE_SIZE;
                 uint32_t *tcb;
 
