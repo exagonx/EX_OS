@@ -2,6 +2,8 @@
 
 **🇬🇧 English** · [🇮🇹 Italiano](README.it.md)
 
+**Download the ISOs:** <http://exagonx.altervista.org/exos>
+
 **Version:** 0.289
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
