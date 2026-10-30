@@ -8475,6 +8475,24 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  45. /proc NEL SISTEMA DI BASE (l'utente, 30/10: "se serve per compatibilita'
+      con altre applicazioni dovra' essere aggiunta di sistema base con gli
+      attributi necessari a far funzionare le app"). Oggi non esiste: ls
+      /proc da' errore, il VFS non ha un tipo per lei (VFS_FS_*) e i porti
+      girano attorno (la patch di Exilla xpcom_build_BinaryPath.h: "EX-OS has
+      neither /proc nor sysctl"). Non e' una cartella sul disco: e' un
+      filesystem virtuale a sola lettura, i file li genera il kernel quando
+      si leggono, quindi niente da scrivere nell'installazione.
+      Da fare: VFS_FS_PROC montato da solo all'avvio; /proc/self, /proc/<pid>
+      con stat, status, cmdline, exe, fd/ e task/<tid>/stat; /proc/stat,
+      meminfo, cpuinfo, uptime, mounts. Prima di tutto un censimento di che
+      cosa leggono davvero Firefox, PHP, MariaDB, Apache, per farne solo
+      quello che serve e nel formato di Linux, che le app analizzano.
+      Serve anche alla voce 38: task/<tid>/stat e' il contatore di CPU per
+      filo che manca per dire dove va il tempo di Firefox. Permessi: i dati
+      di un processo solo al suo utente e a root.
+      Stato: in coda.
+
   44. LO SCREENSHOT COL TASTO STAMP (l'utente, 30/10: "e' fattibile la
       creazione di un programma per catturare la schermata attiva salvandola
       in un file jpg il comando dovrebbe essere collegato al tasto stamp [...]
@@ -8508,7 +8526,19 @@ tools/netinst/velocita tolto da netinst.
       3) sulla console di testo, senza ExWin: niente, o una foto del testo.
       DECISO DALL'UTENTE (30/10): PNG; per uscire dal portatile Apache, gia'
       portato (DocumentRoot o Alias su ~/Images).
-      Stato: in coda.
+      FATTO (30/10): kbd.drv 0.008 (KBD_K_STAMP, E0 37 e 54 con Alt),
+      wserver 0.015 (WIN_MSG_FOTO, WIN_MSG_FOTATA), pm 0.026 (lancia cattura
+      col tasto, avviso se fallisce), /bin/cattura, alias /schermate di
+      Apache su /root/Images per i soli indirizzi privati; prove
+      tools/prova_cattura.sh e tools/png_confronta.py. Il punto 3: sulla
+      console di testo niente foto del testo, cattura dice che la scrivania
+      e' quella di quando e' stata lasciata.
+      RESTA: gli utenti diversi da root (l'alias e' solo su /root), e
+      la prova sul portatile col tasto vero, anche per la misura: in QEMU
+      svga = 1366x768 in kernel.cfg non ha cambiato niente, dal CD resta
+      800x600. La conf di Apache arriva con
+      il prossimo pacchetto.
+      Stato: fatto in QEMU, da provare sul ferro.
 
   43. L'ICONA RDBOOT SOLO PER ROOT, E UNA TMP IN RAM (l'utente, 29/10:
       "l'icona rdboot dovrebbe essere visibile solo agli utenti con
@@ -8973,6 +9003,33 @@ tools/netinst/velocita tolto da netinst.
       l'orologio del portatile parte da 2007-09-01 e passa al 2026 a sistema
       acceso: da qui i file datati 2007 e "Warning: Security Risk".
       Sul portatile, Firefox chiuso: rm -r /root/.exilla/profilo.
+      LENTEZZA, MISURATA SUL PORTATILE (30/10, Firefox acceso, profilo nuovo
+      delle 12:40, kernel 0.289 a 64 bit, nessuna modifica fatta):
+      a) UN PROCESSORE SOLO: smp64.c "a 64 bit un processore solo, per ora"
+         (EXOS64-DAFARE), su una CPU a 2100 MHz: tutti i fili di Firefox,
+         wserver, ip.drv e nforce.drv sullo stesso core;
+      b) NIENTE PROCESSI FIGLI: "Failed to launch socket/utility/tab
+         subprocess": pagine, rete e interfaccia nel processo principale;
+      c) LO SCHEDULER: 100 Hz, quanto PRIO_NORMAL 4 tick = 40 ms; da una
+         lettura di sched.c si cambia solo a quanto finito o quando chi
+         gira si ferma (da confermare), e i driver sono a prio 2 come
+         Firefox. Ping dall'host durante l'uso: 0,12 min, 10,8 medio, 35,8
+         max (tra 22 e 33 ms in un altro giro);
+      d) wserver "pronto" in 18 campioni su 40 (ps), Firefox principale
+         "blocc." in 35 su 40: aspetta gli altri fili, non e' il filo
+         principale a mangiare. ps non vede i fili e non da' tempi di CPU:
+         le percentuali vere mancano, serve un contatore per filo;
+      e) NON e' la RAM (453 MB su 2,8 GB, swap 0), non e' la rete persa
+         (0 somme errate, 0 fuori sequenza, TCP buffer pieno 0, ma 1295
+         scartati e timeout Region, addon, suggerimenti da capire);
+      f) IL PROFILO NUOVO SBAGLIA SUBITO: IndexedDB NotReadableError su
+         tutte le raccolte di Remote Settings, dopo AbortError ripetuti su
+         newtab-wallpapers-v2, con i .sqlite-wal a 0 byte: il profilo e' nato
+         alle 12:40, quindi non basta la cancellazione a meta'. E
+         security_state vuota (i tentativi CRLite). Causa da trovare.
+      Avvio: nato a 59,8 s, appshell 93,6, primo titolo 136,9, finestra
+      162,7: 103 s, su disco ext2.
+
 
   37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10
       col porting di Apache). Il kernel lo dichiara (segnali.c: «a blocked

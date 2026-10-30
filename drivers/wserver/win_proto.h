@@ -215,6 +215,50 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * Alt+F10) do not arrive, and neither do their releases.
  * ============================================================================= */
 #define WIN_MSG_TASTI       0x570F  /* WinRegione: id, x = 1 acceso / 0 spento */
+/* =============================================================================
+ * The picture of the screen, for /bin/cattura (wserver 0.015, 30 October 2026).
+ *
+ * In two steps: WinFoto with passo 0 answers the size of the screen, the
+ * client creates the zone win_nome_foto() of w*h*4 bytes, and WinFoto with
+ * passo 1 fills it with one unsigned int per pixel, 0xFFRRGGBB, from the
+ * top left corner, w pixels per row, whatever the depth of the screen. The
+ * answer to step 1 gives the size of the picture really taken, which with
+ * WIN_FOTO_FUOCO is smaller than the zone.
+ *
+ * ! THE PNG IS MADE BY THE CLIENT. Compressing 1366x768 takes seconds on the
+ * Acer: done here it would stop the mouse and every window for that time.
+ *
+ * ! THE ZONE'S NAME IS NOT IN THE MESSAGE. The server builds it from the pid
+ * that sent the request: with a name chosen by the client, "win5" would have
+ * the server write over somebody else's window.
+ * ============================================================================= */
+#define WIN_MSG_FOTO        0x5710  /* WinFoto -> risponde WIN_MSG_FOTATA */
+#define WIN_FOTO_FUOCO      0x0001u /* only the window with the focus */
+
+typedef struct {
+    unsigned int passo;     /* 0 = how big, 1 = take it */
+    unsigned int flag;      /* WIN_FOTO_* */
+} WinFoto;
+
+typedef struct {
+    int          esito;     /* 0, or -1: no focused window, zone not usable */
+    unsigned int w, h;
+    unsigned int nascosta;  /* 1: the text console is on screen, so this is
+                             * the desktop as it was when it was left */
+} WinFotata;
+
+/* "foto" and the pid, for both sides */
+static inline void win_nome_foto(char *out, unsigned int max, unsigned int pid)
+{
+    static const char pre[] = "foto";
+    char rov[12];
+    unsigned int i = 0, l = 0, k;
+
+    for (k = 0; pre[k] && i + 1 < max; k++) out[i++] = pre[k];
+    do { rov[l++] = (char)('0' + (pid % 10u)); pid /= 10u; } while (pid > 0);
+    for (k = 0; k < l && i + 1 < max; k++) out[i++] = rov[l - 1 - k];
+    out[i] = '\0';
+}
 
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
@@ -244,6 +288,7 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * first piece as it always did and ignores the rest: it sees the first
  * sixteen windows, as before. */
 #define WIN_MSG_ELENCO_SEGUE 0x5787
+#define WIN_MSG_FOTATA      0x5788  /* WinFotata */
 
 /* --- Gli eventi, che il toolkit gira alla procedura di finestra ---------- */
 #define WIN_EV_MOUSE_GIU    1

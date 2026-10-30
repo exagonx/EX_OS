@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.014");
+EX_VERSIONE("wserver", "0.015");
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -1298,6 +1298,89 @@ static void mostra(const Rett *r)
     }
 }
 
+static void componi(void);
+static int  fuoco_per_tasti(void);
+static unsigned int g_visibile;
+
+/* =============================================================================
+ * foto — the picture for /bin/cattura: see WIN_MSG_FOTO in win_proto.h.
+ * ! IT READS g_fb, so the pointer is in the picture, as the user sees it.
+ * ============================================================================= */
+static void foto(unsigned int pid, const WinFoto *q)
+{
+    WinFotata r;
+    Rett      a;
+    ShmZona   z;
+    char      nome[16];
+    unsigned int *d;
+    unsigned int  bpp = g_fb_bit >> 3, w, h, x, y;
+
+    r.esito = 0;
+    r.w = g_fb_w;
+    r.h = g_fb_h;
+    r.nascosta = !g_visibile;
+    if (q->passo == 0) { (void)ipc_send(pid, WIN_MSG_FOTATA, &r, sizeof(r)); return; }
+
+    /* ! WITHOUT THE SHADOW g_fb IS THE SCREEN, and with the text console up
+     * that is not ours to read. */
+    r.esito = -1;
+    if (!g_visibile && !g_ombra) goto fine;
+
+    a.x0 = 0; a.y0 = 0; a.x1 = (int)g_fb_w; a.y1 = (int)g_fb_h;
+    if (q->flag & WIN_FOTO_FUOCO) {
+        int i = fuoco_per_tasti();
+        Rett f;
+
+        if (i < 0 || !finestra_rett(&g_fin[i], &f)) goto fine;
+        if (f.x0 > a.x0) a.x0 = f.x0;
+        if (f.y0 > a.y0) a.y0 = f.y0;
+        if (f.x1 < a.x1) a.x1 = f.x1;
+        if (f.y1 < a.y1) a.y1 = f.y1;
+        if (a.x1 <= a.x0 || a.y1 <= a.y0) goto fine;
+    }
+    w = (unsigned int)(a.x1 - a.x0);
+    h = (unsigned int)(a.y1 - a.y0);
+
+    win_nome_foto(nome, sizeof(nome), pid);
+    memset(&z, 0, sizeof(z));
+    memcpy(z.nome, nome, sizeof(z.nome));
+    if (shm_apri(&z) != 0) goto fine;
+
+    /* ! THE ZONE IS THE CLIENT'S: its true size decides, not what it says */
+    if (z.byte / 4u / w >= h) {
+        if (g_sporco && g_visibile) componi();
+
+        d = (unsigned int *)(unsigned long)z.virt;
+        for (y = 0; y < h; y++) {
+            const unsigned char *p = g_fb + ((unsigned int)a.y0 + y) * g_fb_passo +
+                                     (unsigned int)a.x0 * bpp;
+
+            for (x = 0; x < w; x++, p += bpp) {
+                unsigned int c;
+
+                if (g_fb_bit == 32) {
+                    c = *(const unsigned int *)p;
+                } else if (g_fb_bit == 24) {
+                    c = (unsigned int)p[0] | ((unsigned int)p[1] << 8) |
+                        ((unsigned int)p[2] << 16);
+                } else {    /* 16 bit, 5-6-5 */
+                    unsigned int v = *(const unsigned short *)p;
+
+                    c = ((v & 0xF800u) << 8) | ((v & 0x07E0u) << 5) | ((v & 0x001Fu) << 3);
+                }
+                *d++ = c | 0xFF000000u;
+            }
+        }
+        r.esito = 0;
+        r.w = w;
+        r.h = h;
+    }
+    (void)shm_chiudi(&z);
+
+fine:
+    (void)ipc_send(pid, WIN_MSG_FOTATA, &r, sizeof(r));
+}
+
 /* Every dirty rectangle, then the list is empty again. */
 static void componi(void)
 {
@@ -1857,6 +1940,17 @@ static void kbd_tasto_ev(unsigned int k, const KbdTasto *t)
 
         inghiotti(t);
         if (barra_pid()) ipc_send(barra_pid(), WIN_MSG_SISTEMA, &quale, sizeof(quale));
+        return;
+    }
+
+    /* Stamp: the taskbar starts /bin/cattura, 2 = the screen, 3 = with Alt
+     * only the focused window. ! ONE PICTURE PER PRESS: the key repeats. */
+    if ((k & KBD_KEY_MASK) == KBD_K_STAMP) {
+        unsigned int quale = (k & KBD_MOD_ALT) ? 3u : 2u;
+
+        inghiotti(t);
+        if (!(t && (t->stato & KBD_EV_RIPETUTO)) && barra_pid())
+            ipc_send(barra_pid(), WIN_MSG_SISTEMA, &quale, sizeof(quale));
         return;
     }
 
@@ -3273,6 +3367,10 @@ static int servi_messaggio(unsigned int ms)
             g_fin[idx].passaggio = (w->x != 0);
         break;
     }
+
+    case WIN_MSG_FOTO:
+        if (meta.len >= sizeof(WinFoto)) foto(meta.sender_pid, (const WinFoto *)buf);
+        break;
 
     case WIN_MSG_TASTI: {
         WinRegione *w = (WinRegione *)buf;

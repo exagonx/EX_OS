@@ -111,6 +111,32 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Il tasto Stamp salva lo schermo in un PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — testato in QEMU
+
+**Stamp** salva quello che c'è a video in `$HOME/Images/schermata-AAAAMMGG-HHMMSS.png`
+e **Alt+Stamp** solo la finestra col fuoco. Lo stesso lavoro da una shell, telnet
+compreso: `cattura [-f] [file.png]`, che stampa il nome e la misura. Vale per
+qualunque risoluzione e profondità, e il puntatore è nella fotografia. Con una
+console di testo a video la fotografia è la scrivania come è stata lasciata, e
+`cattura` lo dice; senza ExWin dice che la grafica non è attiva.
+
+wserver copia soltanto i pixel in una zona creata dal client (messaggi
+`WIN_MSG_FOTO` e `WIN_MSG_FOTATA`): il PNG lo comprime `cattura`, così nel frattempo
+il mouse e le finestre non si fermano. Il nome della zona viene dal pid di chi
+chiede e non dal messaggio, altrimenti un client potrebbe far scrivere al server
+sopra un'altra finestra. Una pressione mentre la precedente sta ancora lavorando
+viene ignorata; una schermata non salvata apre un avviso, una salvata non dice niente.
+
+Per portare le fotografie fuori dalla macchina, Apache ha `http://indirizzo/schermate/`,
+un alias su `/root/Images` raggiungibile solo da indirizzi privati, perché una
+fotografia della scrivania mostra tutto quello che era aperto. Solo la cartella di
+root: la configurazione arriva a un Apache già installato col prossimo pacchetto.
+
+`tools/prova_cattura.sh` (32 e 64 bit, a 800x600: QEMU non è arrivato a 1366x768,
+quindi la misura del portatile è **da testare** lì): il file di Stamp identico
+pixel per pixel alla fotografia di QEMU, Alt+Stamp e `-f` più piccoli dello schermo,
+dalla console, senza grafica. `tools/png_confronta.py` decodifica un PNG senza ImageMagick.
+
 ### Anelli di rete dalla RAM su tutti i driver (e1000.drv 0.005, nforce.drv 0.015, rtl8169.drv 0.004, pcnet.drv 0.004, sis900.drv 0.020, ne2k.drv 0.004, ar5k.drv 0.004) — e1000, pcnet e ne2k testati in QEMU; nforce, rtl8169, sis900 e ar5k **da testare**
 
 Quello che la e1000 aveva dalla 0.287 vale ora per tutti: niente più posti

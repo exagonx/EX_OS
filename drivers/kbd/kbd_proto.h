@@ -263,6 +263,9 @@ typedef struct {
  * keymaps): which one is only in the long event, KbdTasto.unicode. Only
  * long readers get it; an old reader never does, like a code 0. */
 #define KBD_K_UNICODE       0x010Bu
+/* Stamp / Print Screen (E0 37), and Alt+Stamp, which the keyboard itself
+ * sends as the single scancode 54 (SysRq). */
+#define KBD_K_STAMP         0x010Cu
 
 /* F1..F12 consecutivi: KBD_K_F(1) .. KBD_K_F(12) */
 #define KBD_K_F1            0x0110u

@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.007");
+EX_VERSIONE("kbd.drv", "0.008");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1059,12 +1059,18 @@ static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
     if (esteso) {
         base = kbd_nav_key(sc);
         if (base == 0) {
-            if (sc == 0x35) base = '/';
+            /* ! NOT IN kbd_nav_key: that one also serves the plain codes,
+             * and a plain 0x37 is the keypad's asterisk. */
+            if (sc == 0x37) base = KBD_K_STAMP;
+            else if (sc == 0x35) base = '/';
             else if (sc == 0x1C) base = '\n';
         }
         tasto_giu(c, base ? (base | kbd_mods()) : 0u, fis);
         return;
     }
+
+    /* Alt+Stamp: with Alt held the key sends 54 (SysRq) instead of E0 37 */
+    if (sc == 0x54) { tasto_giu(c, KBD_K_STAMP | kbd_mods(), fis); return; }
 
     base = kbd_func_key(sc);
     if (base != 0) { tasto_giu(c, base | kbd_mods(), fis); return; }

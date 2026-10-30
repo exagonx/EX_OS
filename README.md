@@ -109,6 +109,33 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The Stamp key saves the screen to a PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — tested in QEMU
+
+**Stamp** saves what is on screen to `$HOME/Images/schermata-AAAAMMGG-HHMMSS.png`
+and **Alt+Stamp** only the window with the focus. The same work from a shell,
+telnet included: `cattura [-f] [file.png]`, which prints the name and the size.
+It works from any graphics mode and depth, and the pointer is in the picture.
+With a text console on screen the picture is the desktop as it was left, and
+`cattura` says so; without ExWin it says graphics are not running.
+
+wserver only copies the pixels into a zone created by the client (messages
+`WIN_MSG_FOTO` and `WIN_MSG_FOTATA`): the PNG is compressed by `cattura`, so the
+mouse and the windows do not stop meanwhile. The zone's name comes from the pid
+of the sender, not from the message, or a client could have the server write
+over another window. A press with the picture of the last one still in progress
+is ignored; a picture that was not saved opens a dialog, a saved one is silent.
+
+To take the pictures off the machine, Apache has `http://address/schermate/`, an
+alias on `/root/Images` reachable from private addresses only, since a picture
+of the desktop shows whatever was open. Only root's folder: the configuration
+reaches an installed Apache with the next package.
+
+`tools/prova_cattura.sh` (32 and 64 bit, at 800x600: QEMU did not reach 1366x768,
+so the size of the laptop is **to be tested** there): the Stamp file
+identical pixel by pixel to QEMU's own screen dump, Alt+Stamp and `-f` smaller
+than the screen, from the console, without graphics. `tools/png_confronta.py`
+decodes a PNG without ImageMagick.
+
 ### Network rings sized from the RAM on every driver (e1000.drv 0.005, nforce.drv 0.015, rtl8169.drv 0.004, pcnet.drv 0.004, sis900.drv 0.020, ne2k.drv 0.004, ar5k.drv 0.004) — e1000, pcnet and ne2k tested in QEMU; nforce, rtl8169, sis900 and ar5k **to be tested**
 
 What the e1000 had since 0.287 now holds for all: no fixed ring sizes. The

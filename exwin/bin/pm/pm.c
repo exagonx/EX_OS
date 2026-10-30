@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.025"
+#define VERSIONE_APP "0.026"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -2092,6 +2092,34 @@ static int vol_sotto(int x, int y)
     return g_vedi_volume && y >= 2 && y < BARRA_H - 2 && x >= VB_VOL_X && x < VB_VOL_X + VB_VOL_W;
 }
 
+/* /bin/cattura, with Stamp. A press while one is still working is ignored:
+ * with the same second in the name it would only make a copy. */
+static int g_foto_pid = -1;
+
+static void foto_apri(int fuoco)
+{
+    char *av[3];
+    int   stato = 0;
+
+    if (g_foto_pid > 0 && waitpid(g_foto_pid, &stato, WNOHANG) == 0) return;
+    av[0] = (char *)"/bin/cattura";
+    av[1] = fuoco ? (char *)"-f" : 0;
+    av[2] = 0;
+    g_foto_pid = spawn_ex(av[0], av, environ, 0, 0);
+    if (g_foto_pid < 0) ex_dlg_avviso("Scrivania", "Il programma cattura non parte.");
+}
+
+/* ! A PICTURE THAT WAS NOT SAVED MUST SAY SO: pressed Stamp and heard nothing
+ * is what success looks like too. */
+static void foto_controlla(void)
+{
+    int stato = 0;
+
+    if (g_foto_pid <= 0 || waitpid(g_foto_pid, &stato, WNOHANG) == 0) return;
+    g_foto_pid = -1;
+    if (stato != 0) ex_dlg_avviso("Scrivania", "La schermata non e' stata salvata.");
+}
+
 static void vol_apri(void)
 {
     static const char *const dove[] = { "/exwin/bin/exvolume", "/cdrom/exwin/bin/exvolume" };
@@ -2298,6 +2326,13 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
+    /* Stamp and Alt+Stamp: the picture is taken by a program of its own, so
+     * the desktop does not stop while the PNG is compressed. */
+    if (msg == EXM_SYSTEM && (wp == 2 || wp == 3)) {
+        foto_apri(wp == 3);
+        return 0;
+    }
+
     if (msg == EXM_SYSTEM) {
         /* ! SHORT CAPTIONS: four buttons share the dialog's 420 pixels, and
          * «Esci dalla sessione» pushed «Annulla» out of it. The words go in
@@ -2317,7 +2352,7 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
-    if (msg == EXM_TIMER) { wifi_controlla(f); return 0; }
+    if (msg == EXM_TIMER) { foto_controlla(); wifi_controlla(f); return 0; }
 
     if (msg == EXM_WINDOW_LIST) {
         vb_leggi();

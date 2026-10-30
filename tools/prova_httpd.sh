@@ -45,6 +45,11 @@ mkdir -p "$T"
 cp -a "$A" "$T/apache2"
 sed 's#/exos/apache2#/a/apache2#g' tools/httpd-exos/conf/httpd-exos.conf > "$T/apache2/conf/httpd-exos.conf"
 echo '<html><body><h1>EX-OS</h1><p>Apache httpd su EX-OS</p></body></html>' > "$T/apache2/htdocs/index.html"
+# the alias of the pictures (cattura): on the CD /root is read-only, so a folder
+# on the disk with the modes of the installed /root/Images, read by user 100
+sed -i 's#/root/Images#/a/schermate#g' "$T/apache2/conf/httpd-exos.conf"
+mkdir -p "$T/schermate"
+echo prova > "$T/schermate/prova.png"
 rm -f "$T"/apache2/cgi-bin/*
 $GCC -O2 -Wall -s tools/prove/cgiprova.c -o "$T/apache2/cgi-bin/cgiprova" || exit 1
 CONPHP=0
@@ -80,6 +85,8 @@ dall_host() {
         echo "== cgi";      curl -s -m 20 "$U/cgi-bin/cgiprova?uno=1&due=2" | tr -d '\r'
         echo "== post";     curl -s -m 20 --data "ciao=mondo" "$U/cgi-bin/cgiprova" | tr -d '\r'
         echo "== 404";      curl -s -m 20 -o /dev/null -w "%{http_code}\n" "$U/manca.html"
+        echo "== schermate"; curl -s -m 20 -o /dev/null -w "%{http_code} %{size_download}\n" "$U/schermate/prova.png"
+        curl -s -m 20 "$U/schermate/" | grep -c 'prova.png'
         echo "== php get";  curl -s -m 30 "$U/prova.php?nome=exos" | tr -d '\r'
         echo "== php post"; curl -s -m 30 --data "nome=posta" "$U/prova.php" | tr -d '\r'
         # QEMU's user network accepts the forwarded port on a Linux socket

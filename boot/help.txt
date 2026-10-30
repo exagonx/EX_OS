@@ -194,6 +194,23 @@ Una directory non si sposta: per quella c'e' `xcp` e poi `rm -r`.
 Il gemello per chi digita al prompt e' `rename`, che dichiara di NON
 attraversare le directory.
 
+[cattura stamp screenshot]
+cattura [-f] [file.png]
+
+Salva in un PNG quello che ExWin ha a video. Con -f solo la finestra col
+fuoco. Senza file va in $HOME/Images/schermata-AAAAMMGG-HHMMSS.png, e il
+nome si stampa.
+
+Il tasto Stamp fa lo stesso, Alt+Stamp come -f: un file salvato non dice
+niente, uno non salvato apre un avviso.
+
+Con una console di testo a video (telnet compreso, se la grafica e' su
+un'altra console) la fotografia e' la scrivania di quando e' stata lasciata,
+e cattura lo dice. Senza ExWin non c'e' niente da fotografare.
+
+Da un'altra macchina: se Apache gira, http://indirizzo/schermate/ mostra
+/root/Images, solo agli indirizzi privati.
+
 [mkdir]
 crea directory
 
