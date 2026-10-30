@@ -70,6 +70,14 @@ hai scritti &mdash; e' il motivo per cui la shell distingue maiuscole e
 minuscole e su FAT serve <code>*.O</code> invece di <code>*.o</code>.
 </p>
 
+<p>
+<code>/proc</code> non sta su nessun disco: e' un filesystem di sola lettura i cui
+file il kernel scrive nel momento in cui si leggono, nel formato di Linux, perche'
+i programmi portati analizzano quel testo. Si monta da solo e non si smonta.
+<code>/proc/&lt;pid&gt;/task/&lt;tid&gt;/stat</code> da' i tick di CPU di ogni filo;
+i dati di un processo li leggono il suo utente e root.
+</p>
+
 <h2>Le cinque console</h2>
 
 <pre>    Alt+F1 .. Alt+F4     quattro console di testo, ognuna con la sua shell

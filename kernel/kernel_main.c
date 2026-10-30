@@ -932,6 +932,7 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
 
     /* Il sistema di base, se Stage 2 l'ha caricato (@RDBOOT passo 2). */
     vfs_monta_base();
+    vfs_monta_proc();
 
     /* =========================================================================
      * PASSO 13a: il modulo che SCRIVE ext2/ext3/ext4 (kernel 0.263)

@@ -194,6 +194,26 @@ Una directory non si sposta: per quella c'e' `xcp` e poi `rm -r`.
 Il gemello per chi digita al prompt e' `rename`, che dichiara di NON
 attraversare le directory.
 
+[proc]
+/proc: il sistema visto come file, generati alla lettura
+
+  cat /proc/meminfo         la memoria
+  cat /proc/cpuinfo         il processore
+  cat /proc/uptime          secondi dall'avvio, e quelli di ozio
+  cat /proc/mounts          i montaggi
+  cat /proc/25/status       un processo; self e' chi chiede
+  ls /proc/25/task          i fili di un programma
+  cat /proc/25/task/26/stat il campo 14 sono i tick di CPU di quel filo
+  readlink /proc/25/exe     il programma
+
+Sola lettura, nel formato di Linux. I dati di un processo sono del suo
+utente e di root. Non e' sul disco e non si smonta.
+
+[readlink]
+readlink /proc/self/exe
+
+Dove punta un collegamento. Gli unici sono exe, cwd e fd/N di /proc.
+
 [grep]
 cerca righe in file, cartelle o da una pipe
 

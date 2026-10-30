@@ -81,6 +81,7 @@
 #include "fat.h"
 #include "ext2.h"
 #include "iso9660.h"
+#include "procfs.h"
 #include "vol.h"
 #include "blk.h"
 #include "syscall.h"
@@ -986,6 +987,8 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 
 static int vfs_umount_nl(const char *punto)
 {
+    if (v_uguale(punto, "/proc")) return ERR(EBUSY);
+
     int i, k;
 
     if (punto == NULL) return ERR(EINVAL);
@@ -1148,6 +1151,10 @@ static void segui_rinomina(int im, const char *da, const char *a)
 
 static int esiste_interno(int im, const char *interno)
 {
+    if (g_mnt[im].tipo == VFS_FS_PROC) {
+        VfsStat st;
+        return procfs_stat(interno, &st) == 0;
+    }
     if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
         return ext2_stat(g_mnt[im].mnt, interno, &e) == 0;
@@ -1390,6 +1397,12 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
         int h = fat12_open(interno, flags);
         if (h < 0) return apri_fallito(slot, ERR(ENOENT));
         g_file_(slot).h12 = h;
+    } else if (g_mnt[im].tipo == VFS_FS_PROC) {
+        VfsStat st;
+        int     r = procfs_stat(interno, &st);
+
+        if (r < 0) return apri_fallito(slot, r);
+        if (st.is_dir) return apri_cartella(slot, flags);
     } else if (g_mnt[im].tipo == VFS_FS_ISO) {
         IsoDirEntry e;
 
@@ -1455,6 +1468,9 @@ static int vfs_read_nl(int h, void *buf, uint32_t size, uint32_t offset)
     if (g_mnt[g_file_(h).im].tipo == VFS_FS_FAT12FD)
         return fat12_read(g_file_(h).h12, buf, size, offset);
 
+    if (g_mnt[g_file_(h).im].tipo == VFS_FS_PROC)
+        return procfs_read(g_file_(h).interno, buf, size, offset);
+
     if (g_mnt[g_file_(h).im].tipo == VFS_FS_ISO)
         return iso_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
                         buf, size, offset);
@@ -1485,7 +1501,7 @@ static int vfs_write_nl(int h, const void *buf, uint32_t size, uint32_t offset)
      * difetto arrivasse qui con sola_lettura a 0 finirebbe nel ramo FAT
      * per esclusione, cioe' scriverebbe su un volume ottico attraverso il
      * driver sbagliato. */
-    if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
+    if (g_mnt[im].tipo == VFS_FS_ISO || g_mnt[im].tipo == VFS_FS_PROC) return ERR(EROFS);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD)
         return fat12_write(g_file_(h).h12, buf, size, offset);
@@ -1653,7 +1669,9 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         return 0;
     }
 
-    if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+    if (g_mnt[im].tipo == VFS_FS_PROC) {
+        return procfs_stat(interno, st);
+    } else if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         Fat12Stat f;
         if (fat12_stat(interno, &f) != 0) return ERR(ENOENT);
         st->dimensione   = f.size;
@@ -1778,7 +1796,15 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
     {
         uint32_t s_fs = (start > k_punti) ? (start - k_punti) : 0;
 
-        if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+        if (g_mnt[im].tipo == VFS_FS_PROC) {
+            int n = procfs_readdir(interno, &out[scritti], max - scritti, s_fs);
+            uint32_t j;
+
+            if (n < 0) return n;
+            for (j = 0; j < (uint32_t)n; j++)
+                out[scritti + j].ident = VFS_IDENT(im, out[scritti + j].ident);
+            scritti += (uint32_t)n;
+        } else if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
             while (scritti < max) {
                 Fat12DirEntry tmp[8];
                 uint32_t cap = max - scritti, n = 0, j;
@@ -1896,7 +1922,7 @@ static int modifica(const char *abs, int quale)
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
-    if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);   /* vedi vfs_write */
+    if (g_mnt[im].tipo == VFS_FS_ISO || g_mnt[im].tipo == VFS_FS_PROC) return ERR(EROFS);   /* vedi vfs_write */
 
     /* La radice di un montaggio non si crea ne' si cancella. */
     if (e_radice_di(im, interno)) return ERR(EBUSY);
@@ -2073,7 +2099,7 @@ static int vfs_rename_nl(const char *da, const char *a)
     if (im_da != im_a) return ERR(ENOSYS);
 
     if (g_mnt[im_da].sola_lettura)          return ERR(EROFS);
-    if (g_mnt[im_da].tipo == VFS_FS_ISO)    return ERR(EROFS);
+    if (g_mnt[im_da].tipo == VFS_FS_ISO || g_mnt[im_da].tipo == VFS_FS_PROC)    return ERR(EROFS);
     if (e_radice_di(im_da, int_da) || e_radice_di(im_a, int_a)) return ERR(EBUSY);
 
     /* =====================================================================
@@ -2153,7 +2179,7 @@ static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
-    if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);   /* vedi vfs_write */
+    if (g_mnt[im].tipo == VFS_FS_ISO || g_mnt[im].tipo == VFS_FS_PROC) return ERR(EROFS);   /* vedi vfs_write */
     if (e_radice(interno))      return ERR(EISDIR);
 
     /* Una directory non si tronca: le sue dimensioni le decide il driver
@@ -2186,7 +2212,7 @@ static int vfs_ftruncate_nl(int h, uint32_t nuova_dim)
     if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
     if (g_file_(h).cartella) return ERR(EISDIR);
     im = g_file_(h).im;
-    if (g_mnt[im].sola_lettura || g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
+    if (g_mnt[im].sola_lettura) return ERR(EROFS);
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) return ERR(ENOSYS);
     if (g_mnt[im].tipo == VFS_FS_EXT2)
         return (ext2_truncate(g_mnt[im].mnt, g_file_(h).interno, nuova_dim) != 0)
@@ -2308,6 +2334,36 @@ void vfs_spegnimento(void)
         g_segnato[i] = 0;
     }
     fs_rilascia();
+}
+
+/* The caller holds the lock (kernel/fs/procfs.c, /proc/mounts) */
+const VfsMount *vfs_mount_nl_di(int i)
+{
+    return (i >= 0 && i < VFS_MAX_MOUNT) ? &g_mnt[i] : NULL;
+}
+
+/* ! NO DEVICE AND NOTHING TO SYNC, and vfs_umount refuses it: without /proc
+ * the programs that read it fail in ways that do not say why. */
+int vfs_monta_proc(void)
+{
+    int i;
+
+    fs_prendi_n("monta_proc");
+    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+        if (g_mnt[i].usato) continue;
+        g_mnt[i].usato        = 1;
+        g_mnt[i].tipo         = VFS_FS_PROC;
+        g_mnt[i].sola_lettura = 1;
+        g_mnt[i].mnt          = -1;
+        g_mnt[i].blkdev       = -1;
+        g_sotto[i][0]         = '\0';
+        v_copia(g_mnt[i].punto, "/proc", VFS_PUNTO_MAX);
+        v_copia(g_mnt[i].dev, "proc", BLK_NOME_MAX);
+        fs_rilascia();
+        return 0;
+    }
+    fs_rilascia();
+    return ERR(EMFILE);
 }
 
 int vfs_monta_base(void)

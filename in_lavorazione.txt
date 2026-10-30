@@ -8528,7 +8528,16 @@ tools/netinst/velocita tolto da netinst.
       Serve anche alla voce 38: task/<tid>/stat e' il contatore di CPU per
       filo che manca per dire dove va il tempo di Firefox. Permessi: i dati
       di un processo solo al suo utente e a root.
-      Stato: in coda.
+      FATTO (30/10, kernel 0.290): kernel/fs/procfs.c, VFS_FS_PROC, montato
+      da kernel_main e non smontabile; /proc/{meminfo,cpuinfo,stat,uptime,
+      mounts,version,self} e /proc/<pid>/{stat,status,cmdline,exe,cwd,limits,
+      fd/N,task/<tid>/{stat,status}}; niente buffer: si genera dall'inizio e
+      si copia la finestra chiesta. exe, cwd e fd/N sono file col bersaglio
+      (niente link su EX-OS), readlink() della libc li legge; /bin/readlink.
+      RESTA: memoria per processo (vsize, rss a 0), utente e sistema
+      separati, il file dietro a fd/N, readlink nella libc.so a 32 bit (il
+      comando e' statico), e sul portatile task/ di Firefox per la voce 38.
+      Stato: fatto in QEMU.
 
   44. LO SCREENSHOT COL TASTO STAMP (l'utente, 30/10: "e' fattibile la
       creazione di un programma per catturare la schermata attiva salvandola

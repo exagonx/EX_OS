@@ -66,6 +66,7 @@ int vfs_radice_ext2(void);
 uint32_t vfs_uid_corrente(void);
 uint32_t vfs_gid_corrente(void);
 #define VFS_FS_ISO      4   /* kernel/fs/iso9660.c — CD/DVD, SOLA LETTURA */
+#define VFS_FS_PROC     5   /* kernel/fs/procfs.c  — /proc, generato alla lettura */
 
 /* Voce di directory neutra: le syscall non devono conoscere il layout
  * 8.3 di FAT, altrimenti aggiungere un filesystem non-FAT costringerebbe
@@ -150,6 +151,9 @@ void vfs_init(uint8_t boot_drive);
  * `mount <dev> /` puts a disk on top again. 0, or a negative errno when
  * there is no base: the system goes on as before. */
 int vfs_monta_base(void);
+
+/* /proc (voce 45): in a slot of its own, on no device. */
+int vfs_monta_proc(void);
 
 /* @RDBOOT step 3: the system partition taken out from under / at boot (the
  * base becomes the root; the "sistema" task checks and remounts it), its

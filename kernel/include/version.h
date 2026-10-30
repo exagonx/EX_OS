@@ -734,7 +734,10 @@
  * window was refused. The table of zones has a lock of its own
  * (shm_prendi): growing frees the old block, and a preempted syscall would
  * have come back to it. */
-#define EXOS_VERSION    "0.289"
+/* 0.289 -> 0.290: /proc (voce 45), kernel/fs/procfs.c: a read-only filesystem
+ * written at each read, in the format of Linux, with a CPU counter for each
+ * thread in task/<tid>/stat. */
+#define EXOS_VERSION    "0.290"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

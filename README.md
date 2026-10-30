@@ -109,6 +109,27 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### /proc in the base system (kernel 0.290, /bin/readlink) — tested in QEMU
+
+`/proc` is mounted by itself at boot and cannot be unmounted. It is not a folder on
+the disk: a read-only filesystem whose files are written at each read, from the
+kernel's tables, in the format of Linux, because the programs reading them parse that
+text. There is no buffer and no limit: only the window asked for is copied.
+
+`/proc/meminfo`, `cpuinfo`, `stat`, `uptime`, `mounts`, `version`, `/proc/self` and
+`/proc/<pid>/` with `stat` (the 52 fields), `status`, `cmdline`, `exe`, `cwd`, `limits`,
+`fd/N` and `task/<tid>/stat`, the CPU counter of each thread. The list comes from what
+the ported programs really ask for: Firefox `self/exe`, `status`, `fd/N`, MariaDB
+`self/limits`, `self/cwd`, gcc `self/exe`. Data of a process is readable only by its
+user and root; the environment is deliberately not there.
+
+EX-OS has no symlinks, so `exe`, `cwd` and `fd/N` are small files holding their target
+and `readlink()` reads them. Not there yet: memory per process (`vsize`, `rss` are 0),
+the split between user and system time (all in `utime`), the file behind `fd/N`.
+
+`tools/prova_proc.sh`: all of it at 32 and 64 bit. **To be tested** on the laptop:
+`task/` with Firefox's threads.
+
 ### grep (/bin/grep) — tested
 
 `grep [-EFGivcnlLoqsHhrwxa] [-e MODEL]... [MODEL] [FILE...]`, from a file, a folder

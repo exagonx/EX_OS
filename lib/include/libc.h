@@ -631,6 +631,7 @@ int     open(const char *path, int flags, ...);
 int     creat(const char *path, mode_t mode);
 int     close(int fd);
 ssize_t read(int fd, void *buf, size_t n);
+ssize_t readlink(const char *percorso, char *buf, size_t n);
 ssize_t write(int fd, const void *buf, size_t n);
 int     getpid(void);
 int     chdir(const char *path);

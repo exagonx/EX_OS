@@ -13226,8 +13226,23 @@ int fdatasync(int fd) { return fsync(fd); }
 ssize_t readlink(const char *percorso, char *buf, size_t n)
 {
     struct stat st;
+    size_t      l = percorso ? strlen(percorso) : 0;
 
-    (void)buf; (void)n;
+    /* ! THE ONLY LINKS THERE ARE: /proc/.../exe, cwd and fd/N are files that
+     * hold their target, because the filesystems have no symlinks. Firefox,
+     * gcc and Rust's current_exe ask for /proc/self/exe. */
+    if (l > 6 && memcmp(percorso, "/proc/", 6) == 0 &&
+        ((l > 4 && strcmp(percorso + l - 4, "/exe") == 0) ||
+         (l > 4 && strcmp(percorso + l - 4, "/cwd") == 0) ||
+         strstr(percorso, "/fd/") != NULL)) {
+        int     fd = open(percorso, O_RDONLY);
+        ssize_t r;
+
+        if (fd < 0) return -1;
+        r = read(fd, buf, n);
+        close(fd);
+        return r;
+    }
     if (stat(percorso, &st) != 0) return -1;
     errno = EINVAL;                             /* esiste, e non e' un link */
     return -1;

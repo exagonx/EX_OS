@@ -111,6 +111,28 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### /proc nel sistema di base (kernel 0.290, /bin/readlink) — testato in QEMU
+
+`/proc` si monta da solo all'avvio e non si può smontare. Non è una cartella sul disco:
+è un filesystem di sola lettura i cui file si scrivono a ogni lettura, dalle tabelle del
+kernel, nel formato di Linux, perché i programmi che li leggono analizzano quel testo.
+Nessun buffer e nessun limite: si copia solo il pezzo chiesto.
+
+`/proc/meminfo`, `cpuinfo`, `stat`, `uptime`, `mounts`, `version`, `/proc/self` e
+`/proc/<pid>/` con `stat` (i 52 campi), `status`, `cmdline`, `exe`, `cwd`, `limits`,
+`fd/N` e `task/<tid>/stat`, il contatore di CPU di ogni filo. L'elenco viene da quello
+che i programmi portati chiedono davvero: Firefox `self/exe`, `status`, `fd/N`, MariaDB
+`self/limits`, `self/cwd`, gcc `self/exe`. I dati di un processo li leggono solo il suo
+utente e root; l'ambiente apposta non c'è.
+
+EX-OS non ha collegamenti simbolici, quindi `exe`, `cwd` e `fd/N` sono piccoli file che
+contengono la destinazione e `readlink()` li legge. Mancano ancora la memoria per
+processo (`vsize` e `rss` valgono 0), la divisione fra tempo utente e di sistema (tutto
+in `utime`) e il file dietro a `fd/N`.
+
+`tools/prova_proc.sh`: tutto a 32 e 64 bit. **Da testare** sul portatile: `task/` con i
+fili di Firefox.
+
 ### grep (/bin/grep) — testato
 
 `grep [-EFGivcnlLoqsHhrwxa] [-e MODELLO]... [MODELLO] [FILE...]`, da un file, da una
