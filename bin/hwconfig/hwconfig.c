@@ -1167,6 +1167,10 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
              * che tagliava il file in mezzo all'ultima riga.) */
             "echo Rete pronta: 'ipcfg' la mostra, 'ping' la prova.\n"
             "\n"
+            "# L'ora dalla rete, in silenzio: con la pila dell'orologio scarica\n"
+            "# la macchina riparte dalla data del BIOS. (Stessa riga in date.c.)\n"
+            "date -auto &\n"
+            "\n"
             "# Un'occhiata al server degli aggiornamenti: non chiede niente, non\n"
             "# installa niente e non stampa niente se non c'e' niente da dire.\n"
             "# Fa qualcosa solo se /boot/netupdate.cnf dice \"automatico = si\",\n"

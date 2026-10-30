@@ -9119,6 +9119,30 @@ tools/netinst/velocita tolto da netinst.
       file vero (voce 45), quindi si avvisa dopo e non prima.
       RESTANO: il punto 4 (blocco allo spegnimento), il 5 (orologio),
       NetworkLinkService, e il browser predefinito in ExWin.
+      FATTO (date 0.003, punto 5): date -auto & in avvio.sh dopo dhcp, in
+      boot/avvio.sh e hwconfig; date -install lo aggiunge a un sistema
+      installato (la scrittura del blocco NON provata su disco: il CD e' di
+      sola lettura). Nessun 2007 nel codice: e' la data del BIOS, pila
+      scarica da confermare. tools/prova_ora_avvio.sh a posto a 32 e 64 bit,
+      prova_ntp 8/8 a 32 e 64 bit.
+      PUNTO 4 CORRETTO (30/10 sera): il ciclo CRLite e' rumore. Il registro
+      diceva: IOUtils Blocker, SessionLogManager e Places Connection con
+      PlacesShutdownProgress 5 = CALLED_STORAGESHUTDOWN (chiusura di SQLite).
+      Non si sa se e' blocco o lentezza. Ctrl+Q in QEMU apre la domanda di
+      conferma (i bottoni senza testo, da capire): Firefox non si chiude,
+      quindi il "vivo dopo 60 s" e' FALSO, e prova-chiusura.sh va rifatta
+      passando la conferma (o la preferenza browser.warnOnQuitShortcut).
+      Sul portatile alle 18:15 l'ultima scheda chiusa, Show 0, registro
+      finito senza avvisi, e un'istanza nuova 67 s dopo.
+      IPOTESI PRINCIPALE PER IL PROFILO, NON PROVATA: EX-OS NON HA LUCCHETTI
+      SUI FILE. fcntl F_GETLK dice sempre libero, F_SETLK sempre preso (libc.c
+      fcntl, fcntl.h, flock): .parentlock non esclude nessuno e SQLite non
+      protegge un database da due processi. Un secondo Firefox lanciato
+      mentre il primo si sta chiudendo a finestra sparita lavora sugli
+      stessi file. DA FARE: lucchetti veri nel VFS, per processo e per byte,
+      liberati all'uscita del processo; poi prova con due Firefox sullo
+      stesso profilo. Solo dopo si puo' dire se era questo.
+      VISTI: pm non raccoglie i figli (exilla, filemgr, exvolume zombie).
 
 
   37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10

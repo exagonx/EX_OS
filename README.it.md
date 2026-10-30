@@ -111,6 +111,16 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### L'ora arriva dalla rete a ogni accensione (date 0.003) — provato in QEMU
+
+Una macchina con la pila dell'orologio scarica riparte dalla data del suo BIOS: sul
+portatile 2007-09-01, quindi file datati 2007 e «Warning: Security Risk» in Firefox
+finche' qualcuno non rimetteva l'ora. Ora `/boot/avvio.sh` esegue `date -auto &` dopo
+`dhcp`: fa come `date -ntp`, in silenzio e in sottofondo, cosi' senza rete l'avvio non
+si ferma. hwconfig scrive la riga nelle installazioni nuove; su un sistema gia'
+installato `date -install` la aggiunge e `date -remove` la toglie. Il fuso sta in
+`/boot/fuso.cfg` (`date -fuso:`, di serie +1 con l'ora legale europea).
+
 ### Cancellare una cartella non si ferma piu' al primo errore (filemgr 0.015) — provato in QEMU
 
 Il file manager si fermava alla prima cosa che non riusciva a togliere e lasciava tutte

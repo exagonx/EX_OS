@@ -60,6 +60,11 @@ dhcp
 
 echo Rete pronta: 'ipcfg' mostra la configurazione, 'ping' la prova.
 
+# (Same line in bin/hwconfig/hwconfig.c.) The time from the network, without a
+# word: with a dead CMOS battery the machine restarts from the BIOS date. It
+# goes in the background: no network must not hold up the boot.
+date -auto &
+
 # La shell dalla rete, SE qualcuno l'ha chiesta.
 #
 # ! QUESTA RIGA NON APRE NIENTE DA SOLA, ed e' il motivo per cui puo' stare

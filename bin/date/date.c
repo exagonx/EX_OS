@@ -18,6 +18,8 @@
  *     date -set-time:17:52:30       rimette l'ora     (serve root)
  *     date -ntp[:SERVER]            l'ora dalla rete  (serve root)
  *     date -fuso[:+1,ue]            il fuso per -ntp
+ *     date -auto                    -ntp in silenzio, da /boot/avvio.sh
+ *     date -install | -remove       la riga in /boot/avvio.sh
  *
  * -----------------------------------------------------------------------------
  * ! PERCHE' UN BINARIO SOLO E NON `date` PIU' `time`
@@ -71,7 +73,7 @@
 #include "ip_proto.h"
 
 /* +0.001 a ogni modifica: `date -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("date", "0.002");
+EX_VERSIONE("date", "0.003");
 
 /* Per -ntp e -fuso: vedi «-ntp — L'ORA DALLA RETE» piu' sotto. */
 #define FUSO_CFG     "/boot/fuso.cfg"
@@ -107,6 +109,8 @@ static void aiuto(void)
     printf("  -fuso:+1,ue           lo cambia: ore da UTC (anche +5:30), e ue\n");
     printf("                        per l'ora legale europea o no. Senza\n");
     printf("                        %s vale +1,ue (Italia).\n\n", FUSO_CFG);
+    printf("  -auto                 come -ntp, senza stampare niente: per l'avvio\n");
+    printf("  -install, -remove     a ogni accensione si' o no, in /boot/avvio.sh\n\n");
     printf("  -h                    questo aiuto (anche -help e --help)\n\n");
     printf("Le due meta' si rimettono separate: chi cambia l'ora non deve\n");
     printf("ribattere la data, e viceversa.\n\n");
@@ -640,6 +644,40 @@ static int comando_ntp(const char *server_chiesto)
     return 0;
 }
 
+/* -install / -remove: the boot block in /boot/avvio.sh (avvio_blocco, libc).
+ *
+ * ! A MACHINE WITH A DEAD CMOS BATTERY STARTS FROM THE DATE OF ITS BIOS (the
+ * laptop: 2007-09-01), and until someone sets it every file is dated that day
+ * and every certificate is "not yet valid". So the line goes after `dhcp`,
+ * with '&': no network or no answer must not hold up the boot.
+ *
+ * ! hwconfig and the CD's avvio.sh write the same line outside any block, so
+ * -install looks first: two lines would only ask the server twice. */
+static int installa(int togli)
+{
+    int rc;
+
+    if (getuid() != 0) { printf("date: -install e -remove solo da root.\n"); return 1; }
+    rc = avvio_blocco("date", NULL);
+    if (rc == 0 && !togli && !avvio_ha_riga("date -auto"))
+        rc = avvio_blocco("date",
+                          "# L'ora dalla rete a ogni accensione, in silenzio: chi ha la\n"
+                          "# pila dell'orologio scarica riparte dalla data del BIOS.\n"
+                          "# `date -remove` toglie questo blocco.\n"
+                          "date -auto &\n");
+    if (rc < 0) {
+        printf("date: non riesco a scrivere /boot/avvio.sh (errno %d).\n", errno);
+        return 1;
+    }
+    if (togli && avvio_ha_riga("date -auto"))
+        printf("date: la riga `date -auto &` in /boot/avvio.sh l'ha scritta hwconfig: "
+               "va tolta a mano.\n");
+    else
+        printf(togli ? "date: niente piu' ora dalla rete all'avvio.\n"
+                     : "date: ora dalla rete a ogni accensione (/boot/avvio.sh).\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     RtcTime     t;
@@ -659,6 +697,15 @@ int main(int argc, char **argv)
         if (strcmp(a, "-ntp") == 0 || strcmp(a, "-npt") == 0) return comando_ntp(NULL);
         if (strncmp(a, "-ntp:", 5) == 0 || strncmp(a, "-npt:", 5) == 0)
             return comando_ntp(a + 5);
+        if (strcmp(a, "-auto") == 0) {
+            /* a clock put right is not news, and a missing network is not an
+             * error at boot: this runs while the login prompt is coming up */
+            close(1);
+            close(2);
+            return comando_ntp(NULL);
+        }
+        if (strcmp(a, "-install") == 0) return installa(0);
+        if (strcmp(a, "-remove") == 0)  return installa(1);
         if (strcmp(a, "-fuso") == 0) { Fuso f; fuso_leggi(&f); fuso_mostra(&f); return 0; }
         if (strncmp(a, "-fuso:", 6) == 0) return fuso_imposta(a + 6);
         if (strcmp(a, "-d") == 0) { solo_data = 1; continue; }

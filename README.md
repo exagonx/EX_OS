@@ -109,6 +109,16 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The clock comes from the network at every boot (date 0.003) — tested in QEMU
+
+A machine with a dead CMOS battery restarts from the date of its BIOS: on the laptop
+2007-09-01, so files were dated 2007 and Firefox showed "Warning: Security Risk" until
+someone set the clock. `/boot/avvio.sh` now runs `date -auto &` after `dhcp`: the same
+as `date -ntp`, in silence and in the background, so that no network does not hold up
+the boot. hwconfig writes the line on new installations; on a system already installed
+`date -install` adds it and `date -remove` removes it. The zone is `/boot/fuso.cfg`
+(`date -fuso:`, default +1 with EU summer time).
+
 ### Deleting a folder no longer stops at the first error (filemgr 0.015) — tested in QEMU
 
 The file manager stopped at the first thing it could not remove and left every entry

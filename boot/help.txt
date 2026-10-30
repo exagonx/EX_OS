@@ -443,6 +443,10 @@ che giorno e' e che ore sono - e, da root, rimetterli
 
 Rimettere l'orologio (serve essere root, cioe' `sudo date ...`):
 
+  date -ntp                   dalla rete (serve root), si fa da solo a ogni
+                              accensione con la riga `date -auto &` di
+                              /boot/avvio.sh; `date -install` la aggiunge a
+                              un sistema gia' installato, `date -remove` la toglie
   date -set-date:2026/09/16   la data  (va bene anche 2026-09-16)
   date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
 
