@@ -754,7 +754,7 @@ typedef struct {
     unsigned int numero;   /* numero alla fdisk: 1-4 primarie, 5+ logiche */
     unsigned int inizio_lo, inizio_hi;
     unsigned int settori_lo, settori_hi;
-    unsigned int fs_tipo;          /* 0 sconosciuto, 12/16/32, 255 illeggibile */
+    unsigned int fs_tipo;          /* 0 sconosciuto, 2/3/4 ext, 12/16/32 FAT, 255 illeggibile */
     unsigned int fs_incoerente;
     unsigned int fs_sett_per_clu;
     unsigned int fs_n_cluster;
@@ -5039,18 +5039,100 @@ int dup2(int vecchio, int nuovo)
     return (int)err_posix(_syscall2(SYS_DUP2, (uint32_t)vecchio, (uint32_t)nuovo));
 }
 
+/* A lock as the kernel wants it (KFlock in kernel/include/syscall.h): the
+ * offset from the start of the file and a length that is not negative. It is
+ * done here because struct flock has two shapes at 32 bit, by the size of
+ * off_t, and fcntl and fcntl64 fill this one from theirs. */
+typedef struct {
+    int32_t tipo;
+    int32_t pid;
+    long long inizio;
+    long long lung;
+} KFlock;
+
+long lseek(int fd, long off, int da);
+
+static int luc_chiedi(int fd, int cmd, int come, KFlock *k)
+{
+    long long base = 0;
+
+    if (E_PRESA(fd)) { k->tipo = 2 /* F_UNLCK */; return 0; }
+#ifndef EXOS_LIBC_SO
+    if (E_SHMFD(fd)) { k->tipo = 2 /* F_UNLCK */; return 0; }
+#endif
+    if (come == 1 /* SEEK_CUR */) {
+        base = (long long)lseek(fd, 0, 1);
+    } else if (come == 2 /* SEEK_END */) {
+        long qui = lseek(fd, 0, 1);
+
+        base = (long long)lseek(fd, 0, 2);
+        (void)lseek(fd, qui, 0);
+    } else if (come != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    k->inizio += base;
+    /* POSIX: a negative length is the bytes before the start */
+    if (k->lung < 0) { k->inizio += k->lung; k->lung = -k->lung; }
+    if (k->inizio < 0) { errno = EINVAL; return -1; }
+    return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, (uintptr_t)k));
+}
+
+/* struct flock is in <fcntl.h>, which this file does not include */
+struct flock_exos {
+    short l_type;
+    short l_whence;
+    long  l_start;
+    long  l_len;
+    int   l_pid;
+};
+
+#ifndef __x86_64__
+/* ! AT 32 BIT THE SHAPE OF struct flock DEPENDS ON THE PROGRAM. SQLite compiles
+ * itself with _FILE_OFFSET_BITS=64 and gets here by the name fcntl64 (EXOS_LFS
+ * in libc.h). A program built before that name existed calls fcntl with the
+ * long struct: it reads l_len from the high half of l_start, 0, and locks up to
+ * the end of the file: more than it asked, never less. */
+struct flock64_exos {
+    short     l_type;
+    short     l_whence;
+    long long l_start;
+    long long l_len;
+    int       l_pid;
+};
+#endif
+
 int fcntl(int fd, int cmd, ...)
 {
     __builtin_va_list ap;
     uint32_t          arg;
+    uintptr_t         puntatore;
 
     /* Il terzo argomento c'e' solo per F_DUPFD e F_SETFD/F_SETFL. Leggerlo
      * sempre e' innocuo — cdecl mette tutto sullo stack e il kernel lo
      * ignora dove non serve — ed evita tre rami che direbbero la stessa
      * cosa. */
     __builtin_va_start(ap, cmd);
-    arg = __builtin_va_arg(ap, uint32_t);
+    puntatore = __builtin_va_arg(ap, uintptr_t);
     __builtin_va_end(ap);
+    arg = (uint32_t)puntatore;
+
+    if (cmd >= 5 && cmd <= 7) {
+        struct flock_exos *l = (struct flock_exos *)puntatore;
+        KFlock        k;
+        int           r;
+
+        k.tipo = l->l_type; k.pid = 0; k.inizio = l->l_start; k.lung = l->l_len;
+        r = luc_chiedi(fd, cmd, l->l_whence, &k);
+        if (r == 0 && cmd == 5 /* F_GETLK */) {
+            l->l_type = (short)k.tipo;
+            if (k.tipo != 2) {
+                l->l_whence = 0; l->l_start = (long)k.inizio;
+                l->l_len = (long)k.lung; l->l_pid = k.pid;
+            }
+        }
+        return r;
+    }
 
     if (E_PRESA(fd)) return presa_fcntl(fd, cmd, arg);
 #ifndef EXOS_LIBC_SO
@@ -5063,16 +5145,49 @@ int fcntl(int fd, int cmd, ...)
         return (cmd == 3 /* F_GETFL */) ? 2 /* O_RDWR */ : 0;
     }
 #endif
-    /* ! I LUCCHETTI SUI FILE (F_GETLK 5, F_SETLK 6, F_SETLKW 7) NON CI SONO:
-     * «libero» a chi chiede, «preso» a chi prende — vedi <fcntl.h>. Il
-     * descrittore pero' deve esistere. (@EXILLA-NSS, 30 settembre 2026) */
-    if (cmd >= 5 && cmd <= 7) {
-        if (_syscall3(SYS_FCNTL, (uint32_t)fd, 1u /* F_GETFD */, 0) < 0) { errno = EBADF; return -1; }
-        if (cmd == 5 && arg) *(short *)(uintptr_t)arg = 2;         /* l_type = F_UNLCK */
-        return 0;
-    }
     return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg));
 }
+
+#ifndef __x86_64__
+int fcntl64(int fd, int cmd, ...)
+{
+    __builtin_va_list ap;
+    uintptr_t         arg;
+
+    __builtin_va_start(ap, cmd);
+    arg = __builtin_va_arg(ap, uintptr_t);
+    __builtin_va_end(ap);
+
+    if (cmd >= 5 && cmd <= 7) {
+        struct flock64_exos *l = (struct flock64_exos *)arg;
+        KFlock               k;
+        int                  r;
+
+        k.tipo = l->l_type; k.pid = 0; k.inizio = l->l_start; k.lung = l->l_len;
+        r = luc_chiedi(fd, cmd, l->l_whence, &k);
+        if (r == 0 && cmd == 5 /* F_GETLK */) {
+            l->l_type = (short)k.tipo;
+            if (k.tipo != 2) {
+                l->l_whence = 0; l->l_start = k.inizio;
+                l->l_len = k.lung; l->l_pid = k.pid;
+            }
+        }
+        return r;
+    }
+    return fcntl(fd, cmd, arg);
+}
+#else
+int fcntl64(int fd, int cmd, ...)
+{
+    __builtin_va_list ap;
+    uintptr_t         arg;
+
+    __builtin_va_start(ap, cmd);
+    arg = __builtin_va_arg(ap, uintptr_t);
+    __builtin_va_end(ap);
+    return fcntl(fd, cmd, arg);
+}
+#endif
 
 ssize_t read(int fd, void *buf, size_t n)
 {
@@ -13003,13 +13118,19 @@ int msync(void *addr, size_t lung, int flag)
     return 0;
 }
 
-/* ! EX-OS NON HA I LUCCHETTI SUI FILE: flock dice di si' e non esclude
- * nessuno. Chi conta su di lui per non aprire due volte la stessa cosa (il
- * profilo di Firefox) non e' protetto, e lo si dice qui e in <sys/file.h>. */
+/* flock sits on the locks of fcntl (kernel 0.291): the whole file, per process
+ * and not per open as on Linux, so two descriptors of one program do not
+ * exclude each other. */
 int flock(int fd, int come)
 {
-    (void)come;
-    return fcntl(fd, 1 /* F_GETFD */) < 0 ? -1 : 0;
+    KFlock k;
+
+    if (come & 8 /* LOCK_UN */) k.tipo = 2;
+    else if (come & 2 /* LOCK_EX */) k.tipo = 1;
+    else if (come & 1 /* LOCK_SH */) k.tipo = 0;
+    else { errno = EINVAL; return -1; }
+    k.pid = 0; k.inizio = 0; k.lung = 0;
+    return luc_chiedi(fd, (come & 4 /* LOCK_NB */) ? 6 : 7, 0, &k);
 }
 
 int posix_madvise(void *addr, size_t lung, int consiglio)

@@ -61,7 +61,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `cdinstall -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("cdinstall", "0.001");
+EX_VERSIONE("cdinstall", "0.002");
 
 /* =============================================================================
  * ! LA MISURA DELLO SCHERMO SI CHIEDE, NON SI SCRIVE QUI.
@@ -77,6 +77,8 @@ EX_VERSIONE("cdinstall", "0.001");
  * ========================================================================== */
 #define RIGHE_MIN   25
 #define COLONNE_MAX 200
+
+static const char *g_fs = "ext2";       /* mkfs -t: lo sceglie schermata_fs */
 
 static int g_righe = 25;
 static int g_cols  = 80;
@@ -434,9 +436,9 @@ typedef struct {
 static void misure_disegna(const Misure *m, int scelto, int avanzo)
 {
     static const char *const ETICHETTA[3] = {
-        "Sistema  (ext2, avviabile)",
+        "Sistema  (avviabile)",
         "Scambio  (memoria virtuale)",
-        "Dati     (ext2)"
+        "Dati"
     };
     const unsigned int *v[3];
     int i;
@@ -616,7 +618,7 @@ static int prepara(const Disco *d, const Misure *m,
 
     printf("\n[2/4] Il filesystem su %s...\n", p_sis);
     if (!mkfs) { printf("cdinstall: mkfs non si trova.\n"); return -1; }
-    v[0] = (char *)mkfs; v[1] = "-t"; v[2] = "ext2"; v[3] = "-f";
+    v[0] = (char *)mkfs; v[1] = "-t"; v[2] = (char *)g_fs; v[3] = "-f";
     v[4] = p_sis; v[5] = 0;
     if (lancia(mkfs, v) != 0) {
         printf("cdinstall: %s non si e' formattata.\n", p_sis);
@@ -700,6 +702,31 @@ static int schermata_disco(int *scelto)
     return 1;
 }
 
+/* ext2 first and chosen by default: it is what every real machine here has
+ * been installed on. ext3 and ext4 add a journal, so a power cut costs a
+ * replay and not a long check, at the price of some 128 MB of disk. */
+static int schermata_fs(void)
+{
+    static const char *const SCELTE[3] = {
+        "  ext2   semplice, senza giornale",
+        "  ext3   ext2 con il giornale",
+        "  ext4   giornale, extent e somme di controllo"
+    };
+    static const char *const NOMI[3] = { "ext2", "ext3", "ext4" };
+    int s;
+
+    sc_testata("il filesystem");
+    sc_riquadro(4, 4, 72, 12, "Con quale filesystem");
+    sc_scrivi(6, 8, "Il sistema e i dati useranno lo stesso. Con il giornale, dopo");
+    sc_scrivi(7, 8, "una mancanza di corrente il disco torna a posto da solo.");
+    sc_barra(" Frecce muovono   Invio conferma   Esc torna indietro ");
+
+    s = menu(9, 8, 62, SCELTE, 3, 0);
+    if (s < 0) return 0;
+    g_fs = NOMI[s];
+    return 1;
+}
+
 static int schermata_riepilogo(const Disco *d, const Misure *m)
 {
     char linea[80];
@@ -711,8 +738,8 @@ static int schermata_riepilogo(const Disco *d, const Misure *m)
     sprintf(linea, "Il disco %s (%u MB) diventera':", d->nome, d->mb);
     sc_scrivi(6, 8, linea);
 
-    sprintf(linea, "  %sp%d   %5u MB   ext2, il sistema (avviabile)",
-            d->nome, i++, m->sis);
+    sprintf(linea, "  %sp%d   %5u MB   %s, il sistema (avviabile)",
+            d->nome, i++, m->sis, g_fs);
     sc_scrivi(r++, 8, linea);
     if (m->scambio) {
         sprintf(linea, "  %sp%d   %5u MB   memoria virtuale", d->nome, i++,
@@ -720,7 +747,7 @@ static int schermata_riepilogo(const Disco *d, const Misure *m)
         sc_scrivi(r++, 8, linea);
     }
     if (m->dati) {
-        sprintf(linea, "  %sp%d   %5u MB   ext2, i dati", d->nome, i++, m->dati);
+        sprintf(linea, "  %sp%d   %5u MB   %s, i dati", d->nome, i++, m->dati, g_fs);
         sc_scrivi(r++, 8, linea);
     }
 
@@ -793,6 +820,7 @@ int main(int argc, char **argv)
 
     if (!schermata_benvenuto())          goto esci;
     if (!schermata_disco(&idisco))       goto esci;
+    if (!schermata_fs())                 goto esci;
 
     d = &g_disco[idisco];
 

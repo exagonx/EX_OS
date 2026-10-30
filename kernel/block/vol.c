@@ -91,6 +91,18 @@ static void etichetta(const uint8_t *src, char *out)
     }
 }
 
+/* Which ext a volume is. The format has no such field: it is the features.
+ * ext4's are the ones that change how blocks are laid out or summed, ext3 is
+ * the journal, the same rule as e2_apri in bin/chkdsk/chkdsk.c. */
+uint32_t ext_generazione(uint32_t compat, uint32_t incompat, uint32_t ro_compat)
+{
+    if ((incompat & 0x02C0u) ||         /* EXTENTS, 64BIT, FLEX_BG */
+        (ro_compat & 0x0478u))          /* HUGE_FILE, GDT_CSUM, DIR_NLINK,
+                                         * EXTRA_ISIZE, METADATA_CSUM */
+        return 4u;
+    return (compat & 0x0004u) ? 3u : 2u;    /* HAS_JOURNAL */
+}
+
 int vol_identifica(int blkdev, VolumeInfo *out)
 {
     uint8_t  s[512];
@@ -190,6 +202,8 @@ int vol_identifica(int blkdev, VolumeInfo *out)
             uint32_t log_bs = le32(sb + 24);
 
             out->tipo         = VOL_FS_EXT2;
+            out->ext_gen      = ext_generazione(le32(sb + 92), le32(sb + 96),
+                                                le32(sb + 100));
             out->byts_per_sec = 512;
             out->sett_per_clu = (log_bs <= 6u) ? ((1024u << log_bs) / 512u) : 0;
             out->tot_settori  = (uint32_t)n_settori;

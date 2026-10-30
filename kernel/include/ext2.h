@@ -85,6 +85,7 @@ int  ext2_sola_lettura(int mnt);
 uint32_t    ext2_blocchi(int mnt);
 uint32_t    ext2_blocchi_liberi(int mnt);
 uint32_t    ext2_dim_blocco(int mnt);
+uint32_t    ext2_generazione(int mnt);      /* 2, 3 or 4 */
 const char *ext2_etichetta(int mnt);
 
 /* `percorso` e' interno al volume ("/" oppure "/bin/sh"). A differenza di

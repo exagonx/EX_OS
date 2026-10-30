@@ -1482,7 +1482,7 @@ typedef struct {
     unsigned int numero;   /* numero alla fdisk: 1-4 primarie, 5+ logiche */
     unsigned int inizio_lo, inizio_hi;
     unsigned int settori_lo, settori_hi;
-    unsigned int fs_tipo;          /* 0 sconosciuto, 12/16/32, 255 illeggibile */
+    unsigned int fs_tipo;          /* 0 sconosciuto, 2/3/4 ext, 12/16/32 FAT, 255 illeggibile */
     unsigned int fs_incoerente;
     unsigned int fs_sett_per_clu;
     unsigned int fs_n_cluster;
@@ -1728,7 +1728,7 @@ int truncate64(const char *path, off64_t size);
 
 int dup(int fd);
 int dup2(int vecchio, int nuovo);
-int fcntl(int fd, int cmd, ...);
+int fcntl(int fd, int cmd, ...) EXOS_LFS(fcntl);
 
 /* =============================================================================
  * Posizionamento e informazioni sui file

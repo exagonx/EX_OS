@@ -162,20 +162,37 @@ static uint8_t g_ro_chiesto[VFS_MAX_MOUNT];
  * ! SI SCRIVE A FILESYSTEM FERMO: prima del montaggio (o prima che il modulo
  * di scrittura lo riprenda in mano) e dopo lo smontaggio o l'ultima
  * sincronizzazione. Il modulo ext4 i contatori del superblocco li aggiorna
- * rileggendolo dal disco, quindi il campo resta com'e'. Un volume con le
- * somme dei metadati (metadata_csum) non si tocca: il superblocco ha una sua
- * somma, e cambiarne un byte lo renderebbe illeggibile a Linux.
+ * rileggendolo dal disco, quindi il campo resta com'e'.
+ *
+ * ! A VOLUME WITH metadata_csum GETS ITS SUM REWRITTEN: changing one byte
+ * without it would make the volume unreadable to Linux. It used to be left
+ * unmarked instead, and so an ext4 system disk was never checked after a
+ * crash (kernel 0.292).
  *
  * ! I VOLUMI IN RAM NO: sparire con la corrente e' il loro patto.
  * ============================================================================= */
 static uint8_t g_segnato[VFS_MAX_MOUNT];   /* questo slot l'abbiamo segnato sporco */
-static uint8_t g_e2_sett[512];
+static uint8_t g_e2_sett[1024];
+
+/* The superblock's crc32c, as kernel/moduli/ext4/somme.c: this is the only
+ * sum the core ever writes, once per mount, so no table. */
+static uint32_t e2_somma(const uint8_t *p, uint32_t n)
+{
+    uint32_t crc = ~0u, i, k;
+
+    for (i = 0; i < n; i++) {
+        crc ^= p[i];
+        for (k = 0; k < 8u; k++)
+            crc = (crc & 1u) ? (crc >> 1) ^ 0x82F63B78u : crc >> 1;
+    }
+    return crc;
+}
 
 /* 1 = pulito, 0 = sporco, -1 = non e' ext2 o non si legge. Lascia in
- * g_e2_sett il settore 2 della partizione (i byte 1024..1535). */
+ * g_e2_sett il superblocco intero (i byte 1024..2047 della partizione). */
 static int e2_stato(int blkdev)
 {
-    if (blkdev < 0 || blk_read(blkdev, 2, 1, g_e2_sett) != 0) return -1;
+    if (blkdev < 0 || blk_read(blkdev, 2, 2, g_e2_sett) != 0) return -1;
     if (g_e2_sett[56] != 0x53 || g_e2_sett[57] != 0xEF) return -1;
     return (g_e2_sett[58] & 1) ? 1 : 0;
 }
@@ -190,11 +207,18 @@ static int e2_segna(int blkdev, int pulito)
     if (b == NULL || b->tipo == BLK_TIPO_RAM || b->sola_lettura) return 0;
     st = e2_stato(blkdev);
     if (st < 0) return 0;
-    if (g_e2_sett[100 + 1] & 0x04) return 0;      /* ro_compat 0x400 */
     if (st == pulito) return 1;
     if (pulito) g_e2_sett[58] |= 1;
     else        g_e2_sett[58] &= (uint8_t)~1u;
-    if (blk_write(blkdev, 2, 1, g_e2_sett) != 0) {
+    if (g_e2_sett[100 + 1] & 0x04) {              /* ro_compat 0x400 */
+        uint32_t c = e2_somma(g_e2_sett, 0x3FCu);
+
+        g_e2_sett[0x3FC] = (uint8_t)c;
+        g_e2_sett[0x3FD] = (uint8_t)(c >> 8);
+        g_e2_sett[0x3FE] = (uint8_t)(c >> 16);
+        g_e2_sett[0x3FF] = (uint8_t)(c >> 24);
+    }
+    if (blk_write(blkdev, 2, 2, g_e2_sett) != 0) {
         klog(LOG_WARN, "VFS: %s: il segno %s non si scrive", b->nome,
              pulito ? "\"pulito\"" : "\"in uso\"");
         return 0;
@@ -1108,6 +1132,97 @@ static int stesso_file(int i, int im, const char *interno)
     return g_file_(i).usato && g_file_(i).im == im && v_uguale(g_file_(i).interno, interno);
 }
 
+/* =============================================================================
+ * File locks (kernel 0.291, voce 38)
+ *
+ * ! UNTIL 0.290 THEY DID NOT EXIST: libc answered "free" to who asked and
+ * "taken" to who took. Firefox's .parentlock and the locks of SQLite excluded
+ * nobody, so a second Firefox started while the first was still closing, with
+ * no window left to see, worked on the same databases.
+ *
+ * They are advisory and per owner, as POSIX has them: read and write do not
+ * look here, a program that does not ask is not stopped, and an owner never
+ * conflicts with itself.
+ *
+ * ! A LOCK KEEPS A HANDLE, NOT A PATH: `interno` of a handle follows renames
+ * and the silly rename, so two handles are the same file at any moment by
+ * comparing them (stesso_file). The handle stays valid because a program that
+ * closes any descriptor of the file loses its locks on it (vfs_close_di), and
+ * a slot that goes free takes along whatever still names it.
+ *
+ * The table doubles and is scanned: a file has few locks and few files have
+ * any. Everything here is under the VFS lock.
+ * ============================================================================= */
+typedef struct {
+    int         h;
+    const void *chi;
+    uint32_t    pid;
+    uint64_t    da, a;
+    int         tipo;
+} VfsLuc;
+
+static VfsLuc  *g_luc;
+static uint32_t g_luc_n, g_luc_posti;
+
+static int luc_stesso(int h, const VfsLuc *l)
+{
+    return stesso_file(l->h, g_file_(h).im, g_file_(h).interno);
+}
+
+static int luc_spazio(uint32_t quanti)
+{
+    uint32_t posti = g_luc_posti ? g_luc_posti : 16u;
+    VfsLuc  *nuova;
+    uint32_t i;
+
+    while (g_luc_n + quanti > posti) posti *= 2u;
+    if (posti == g_luc_posti) return 0;
+    nuova = (VfsLuc *)kmalloc(posti * sizeof(VfsLuc));
+    if (nuova == NULL) return ERR(ENOLCK);
+    for (i = 0; i < g_luc_n; i++) nuova[i] = g_luc[i];
+    if (g_luc != NULL) kfree(g_luc);
+    g_luc       = nuova;
+    g_luc_posti = posti;
+    return 0;
+}
+
+static void luc_metti(int h, const void *chi, uint32_t pid, int tipo, uint64_t da, uint64_t a)
+{
+    VfsLuc *l = &g_luc[g_luc_n++];
+
+    l->h = h; l->chi = chi; l->pid = pid; l->tipo = tipo; l->da = da; l->a = a;
+}
+
+/* the owner's locks on the file of h, in the bytes da..a: what stays outside
+ * them is kept, so that leaving the middle of a lock makes two */
+static void luc_togli(int h, const void *chi, uint64_t da, uint64_t a)
+{
+    uint32_t i = 0;
+
+    while (i < g_luc_n) {
+        VfsLuc v = g_luc[i];
+
+        if (v.chi != chi || v.a < da || v.da > a || !luc_stesso(h, &v)) { i++; continue; }
+        g_luc[i] = g_luc[--g_luc_n];
+        if (v.da < da) luc_metti(v.h, chi, v.pid, v.tipo, v.da, da - 1);
+        if (v.a > a)   luc_metti(v.h, chi, v.pid, v.tipo, a + 1, v.a);
+    }
+}
+
+static const VfsLuc *luc_contro(int h, const void *chi, int tipo, uint64_t da, uint64_t a)
+{
+    uint32_t i;
+
+    for (i = 0; i < g_luc_n; i++) {
+        const VfsLuc *l = &g_luc[i];
+
+        if (l->chi == chi || l->a < da || l->da > a) continue;
+        if (tipo != F_WRLCK && l->tipo != F_WRLCK) continue;
+        if (luc_stesso(h, l)) return l;
+    }
+    return NULL;
+}
+
 static int aperti_su(int im, const char *interno)
 {
     int i, n = 0;
@@ -1536,6 +1651,16 @@ static int vfs_close_nl(int h)
      * superblock's counters, until the file is closed (0.264). */
     if (g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2)
         ext2_chiudi(g_mnt[g_file_(h).im].mnt);
+
+    /* the last reference: no lock may go on naming this slot */
+    {
+        uint32_t i = 0;
+
+        while (i < g_luc_n) {
+            if (g_luc[i].h == h) g_luc[i] = g_luc[--g_luc_n];
+            else i++;
+        }
+    }
 
     g_file_(h).usato = 0;
     g_file_(h).rif   = 0;
@@ -2597,6 +2722,50 @@ int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
 int vfs_close(int h)
 {
     int r; fs_prendi_n("close"); r = vfs_close_nl(h); fs_rilascia(); return r;
+}
+
+int vfs_close_di(int h, const void *chi)
+{
+    int r;
+
+    fs_prendi_n("close");
+    if (g_luc_n != 0 && VFS_H_VALIDO(h) && g_file_(h).usato) luc_togli(h, chi, 0, ~(uint64_t)0);
+    r = vfs_close_nl(h);
+    fs_rilascia();
+    return r;
+}
+
+int vfs_lucchetto(int h, const void *chi, uint32_t pid, int tipo, uint64_t da, uint64_t a)
+{
+    int r = 0;
+
+    fs_prendi_n("lock");
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) r = ERR(EBADF);
+    else if (tipo != F_UNLCK && luc_contro(h, chi, tipo, da, a) != NULL) r = ERR(EAGAIN);
+    else {
+        /* Room first: a change of lock must not fail halfway. Each lock cut
+         * leaves at most two, and only one lock can be cut in two. */
+        r = luc_spazio(2);
+        if (r == 0) {
+            luc_togli(h, chi, da, a);
+            if (tipo != F_UNLCK) luc_metti(h, chi, pid, tipo, da, a);
+        }
+    }
+    fs_rilascia();
+    return r;
+}
+
+int vfs_luc_chi(int h, const void *chi, int *tipo, uint64_t *da, uint64_t *a, uint32_t *pid)
+{
+    const VfsLuc *l;
+    int           r = 0;
+
+    fs_prendi_n("lock");
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) r = ERR(EBADF);
+    else if ((l = luc_contro(h, chi, *tipo, *da, *a)) == NULL) *tipo = F_UNLCK;
+    else { *tipo = l->tipo; *da = l->da; *a = l->a; *pid = l->pid; }
+    fs_rilascia();
+    return r;
 }
 
 int vfs_dup(int h)

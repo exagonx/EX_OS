@@ -1328,10 +1328,27 @@ typedef struct {
  * riscrivili con FD_CLOEXEC in piu') e vuole due successi, non perche'
  * cambino qualcosa.
  * ============================================================================= */
+/* A file lock as the kernel takes it: libc turns struct flock, whose shape
+ * depends on off_t, into this. Offsets are from the start of the file;
+ * lung 0 means up to the end, whatever the end becomes. */
+typedef struct {
+    int32_t tipo;       /* F_RDLCK 0, F_WRLCK 1, F_UNLCK 2 */
+    int32_t pid;        /* F_GETLK: who holds it */
+    int64_t inizio;
+    int64_t lung;
+} KFlock;
+
 #define F_DUPFD     0   /* duplica su un numero >= arg */
 #define F_GETFD     1   /* sempre 0; serve a dire "questo fd esiste" */
 #define F_SETFD     2   /* accettata e ignorata: vedi sopra */
 #define F_GETFL     3   /* i flag passati a open() */
+#define F_RDLCK     0
+#define F_WRLCK     1
+#define F_UNLCK     2
+#define ENOLCK      37
+#define F_GETLK     5   /* chi tiene il lucchetto: arg = KFlock* */
+#define F_SETLK     6   /* prende o lascia, EAGAIN se e' di un altro */
+#define F_SETLKW    7   /* come F_SETLK, ma aspetta */
 #define F_SETFL     4   /* solo O_APPEND e O_NONBLOCK sono modificabili */
 
 #define FD_CLOEXEC  1
@@ -1566,7 +1583,7 @@ typedef struct {
     uint32_t settori_lo, settori_hi;
     /* Filesystem riconosciuto leggendo il BPB della partizione (vedi
      * kernel/block/vol.c). fs_tipo usa i valori VOL_FS_*: 0 sconosciuto,
-     * 12/16/32 la larghezza della FAT, 255 illeggibile. Il tipo NON viene
+     * 2/3/4 ext2/ext3/ext4, 12/16/32 la larghezza della FAT, 255 illeggibile. Il tipo NON viene
      * dal byte di tipo MBR, che e' solo un suggerimento: viene dal numero
      * di cluster, che e' l'unico criterio corretto. */
     uint32_t fs_tipo;

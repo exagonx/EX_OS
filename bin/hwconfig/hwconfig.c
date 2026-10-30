@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.007");
+EX_VERSIONE("hwconfig", "0.008");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -445,6 +445,8 @@ static const char *nome_fs(unsigned int t)
     case 16: return "FAT16";
     case 32: return "FAT32";
     case 2:  return "ext2";
+    case 3:  return "ext3";
+    case 4:  return "ext4";
     default: return "sconosciuto";
     }
 }

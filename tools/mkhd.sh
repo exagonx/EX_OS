@@ -50,7 +50,7 @@ MB="${1:-512}"
 # disco rigido e' uno STATO: ci sta dentro un sistema installato con i file di
 # chi lo usa, e rifarlo costa un giro completo in QEMU. Una pulizia lanciata
 # per liberare spazio dalle ISO non deve portarselo via.
-IMG=dischi/hd.img
+IMG="${EXOS_HD:-dischi/hd.img}"
 FLOPPY=dist/floppy.img
 
 mkdir -p "$(dirname "$IMG")"
@@ -165,7 +165,7 @@ fi
 
 EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
-        "mkfs -t ext2 -L exos hd0p1@4" \
+        "mkfs -t ${EXOS_FS:-ext2} -L exos hd0p1@4" \
         "si@180" \
         "mount hd0p1 /disk@10" \
         "install -t /disk@10" \

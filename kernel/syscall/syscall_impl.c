@@ -39,6 +39,7 @@ extern void vga_putchar(char c);
 #include "ahci.h"
 #include "mbr.h"
 #include "vol.h"
+#include "ext2.h"
 #include "blk.h"
 #include "blkr3.h"
 #include "fat.h"
@@ -788,7 +789,7 @@ int32_t sys_open(InterruptFrame *frame)
 static void fd_lascia(Process *p, int fd)
 {
     switch (FDV(p, fd).type) {
-    case FD_FILE:   vfs_close((int)FDV(p, fd).inode);             break;
+    case FD_FILE:   vfs_close_di((int)FDV(p, fd).inode, p->fdt);  break;
     case FD_PIPE_R: pipe_chiudi_lettore((int)FDV(p, fd).inode);   break;
     case FD_PIPE_W: pipe_chiudi_scrittore((int)FDV(p, fd).inode); break;
     case FD_PTY_M:  pty_chiudi((int)FDV(p, fd).inode, 1);         break;
@@ -1049,6 +1050,59 @@ int32_t sys_fsync(InterruptFrame *frame)
     return vfs_fsync((int)FDV(proc, fd).inode);
 }
 
+/* The file locks of fcntl: the table is in vfs.c.
+ *
+ * ! F_SETLKW POLLS, ONE TICK AT A TIME, and does not queue: whoever waits looks
+ * again after 10 ms. The lock may go away by a close, by the end of a process
+ * or by a kill, and all of them would have to wake a queue. The price is that
+ * nobody is first in line, and that two programs waiting for each other wait
+ * for ever: there is no EDEADLK. A signal gets them out (EINTR).
+ *
+ * ! SOMETHING THAT IS NOT A FILE (a pipe, the console) HAS NOTHING TO LOCK and
+ * answers yes, as it always has here. */
+static int32_t fd_lucchetto(Process *p, int fd, uint32_t cmd, KFlock *u)
+{
+    KFlock   k;
+    uint64_t da, a;
+    int      tipo, h, r;
+
+    if (!syscall_verify_ptr(u, sizeof(KFlock))) return ERR(EFAULT);
+    k = *u;
+    tipo = k.tipo;
+    if (tipo != F_RDLCK && tipo != F_WRLCK && tipo != F_UNLCK) return ERR(EINVAL);
+    if (k.inizio < 0 || k.lung < 0) return ERR(EINVAL);
+    da = (uint64_t)k.inizio;
+    a  = k.lung == 0 ? ~(uint64_t)0 : da + (uint64_t)k.lung - 1;
+
+    if (FDV(p, fd).type != FD_FILE) {
+        if (cmd == F_GETLK) u->tipo = F_UNLCK;
+        return 0;
+    }
+    h = (int)FDV(p, fd).inode;
+
+    if (cmd == F_GETLK) {
+        uint32_t pid = 0;
+
+        if (tipo == F_UNLCK) return ERR(EINVAL);
+        r = vfs_luc_chi(h, p->fdt, &tipo, &da, &a, &pid);
+        if (r < 0) return r;
+        u->tipo = tipo;
+        if (tipo != F_UNLCK) {
+            u->pid    = (int32_t)pid;
+            u->inizio = (int64_t)da;
+            u->lung   = a == ~(uint64_t)0 ? 0 : (int64_t)(a - da + 1);
+        }
+        return 0;
+    }
+
+    for (;;) {
+        r = vfs_lucchetto(h, p->fdt, p->pid, tipo, da, a);
+        if (r != ERR(EAGAIN) || cmd == F_SETLK) return r;
+        if (proc_interrotto()) return ERR(EINTR);
+        sched_sleep(10);
+    }
+}
+
 int32_t sys_fcntl(InterruptFrame *frame)
 {
     Process *proc = proc_get_current();
@@ -1058,6 +1112,9 @@ int32_t sys_fcntl(InterruptFrame *frame)
 
     if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED)
         return ERR(EBADF);
+
+    if (cmd == F_GETLK || cmd == F_SETLK || cmd == F_SETLKW)
+        return fd_lucchetto(proc, fd, cmd, (KFlock *)(uintptr_t)FR_A3(frame));
 
     switch (cmd) {
     case F_DUPFD: {
@@ -4452,7 +4509,10 @@ int32_t sys_diskinfo(InterruptFrame *frame)
                 int bd = blk_per_partizione((int)idx, tab.p[i].numero);
                 if (bd >= 0 && (vol_identifica(bd, &vi) == 0 ||
                                 vi.tipo == VOL_FS_ILLEGGIBILE)) {
-                    di.part[i].fs_tipo         = vi.tipo;
+                    /* ext3 and ext4 are the same driver and two numbers
+                     * of their own here: 3 and 4 mean nothing else. */
+                    di.part[i].fs_tipo         = (vi.tipo == VOL_FS_EXT2) ? vi.ext_gen
+                                                                          : vi.tipo;
                     di.part[i].fs_incoerente   = vi.incoerente;
                     di.part[i].fs_sett_per_clu = vi.sett_per_clu;
                     di.part[i].fs_n_cluster    = vi.n_cluster;
@@ -4637,7 +4697,7 @@ int32_t sys_mountinfo(InterruptFrame *frame)
          * tutt'altro volume — o niente. Il tipo va scelto PRIMA di
          * chiamare chiunque. */
         if      (m->tipo == VFS_FS_FAT12FD) o->fs = 12;
-        else if (m->tipo == VFS_FS_EXT2)    o->fs = 2;
+        else if (m->tipo == VFS_FS_EXT2)    o->fs = ext2_generazione(m->mnt);
         else if (m->tipo == VFS_FS_ISO)     o->fs = VOL_FS_ISO9660;
         else                                o->fs = (uint32_t)fat_tipo(m->mnt);
         o->sola_lettura = m->sola_lettura;

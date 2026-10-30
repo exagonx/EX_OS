@@ -21,7 +21,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `disk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("disk", "0.001");
+EX_VERSIONE("disk", "0.002");
 
 /* Un settore e' 512 byte: 2048 settori = 1 MB, 2097152 = 1 GB.
  * La divisione si fa sui settori e non sui byte perche' i byte di un
@@ -64,6 +64,8 @@ static const char *nome_fs(unsigned int t)
 {
     switch (t) {
         case 2:   return "ext2";
+        case 3:   return "ext3";
+        case 4:   return "ext4";
         case 9:   return "ISO 9660";
         case 12:  return "FAT12";
         case 16:  return "FAT16";
@@ -200,7 +202,7 @@ static void mostra(unsigned int idx, unsigned int n_cd, const DiskInfo *d)
             printf("        %u cluster da %u settori%s\n",
                    p->fs_n_cluster, p->fs_sett_per_clu,
                    p->fs_incoerente ? "  << CAMPI INCOERENTI col tipo dedotto >>" : "");
-        } else if (p->fs_tipo == 2) {
+        } else if (p->fs_tipo >= 2 && p->fs_tipo <= 4) {
             /* Su ext2 il conto e' di BLOCCHI, non di cluster: sono la
              * stessa idea con un altro nome, ma stampare "cluster" su un
              * ext2 farebbe cercare all'utente un campo che li' non esiste. */

@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.036");
+EX_VERSIONE("netupdate", "0.037");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2316,7 +2316,7 @@ static int scarica_su_file(Config *c, const char *coda, const char *temp,
              * fine si puo' andare a prendere; un file della lunghezza giusta
              * con l'impronta sbagliata e' un file SBAGLIATO DENTRO, e
              * riprenderlo vorrebbe dire costruirci sopra. */
-            printf("  ! l'impronta non torna, NON lo installo\n");
+            printf("  ! %s: l'impronta non torna, NON lo installo\n", temp);
             remove(temp);
             return -1;
         }

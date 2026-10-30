@@ -737,7 +737,9 @@
 /* 0.289 -> 0.290: /proc (voce 45), kernel/fs/procfs.c: a read-only filesystem
  * written at each read, in the format of Linux, with a CPU counter for each
  * thread in task/<tid>/stat. */
-#define EXOS_VERSION    "0.290"
+/* 0.290 -> 0.291: file locks (voce 38): F_GETLK, F_SETLK, F_SETLKW for real, a
+ * table in vfs.c per owner and byte range, gone with the close or the exit. */
+#define EXOS_VERSION    "0.292"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

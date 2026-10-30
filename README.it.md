@@ -113,6 +113,43 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### ext3 ed ext4 anche negli strumenti (kernel 0.292, mkfs 0.002, chkdsk 0.003) — provato in QEMU, da provare sul ferro
+
+Il kernel leggeva e scriveva gia' ext3 ed ext4; gli strumenti no. Ora:
+
+- `mkfs -t ext3` e `mkfs -t ext4`. Blocchi da 4 KB da 512 MB in su, inode da 256 byte,
+  giornale jbd2; ext4 ha extent e metadata_csum. `-L ext4` senza `-t` e' un'etichetta e non un
+  filesystem: `mkfs` adesso lo dice prima di chiedere conferma.
+- `chkdsk` controlla e ripara tutti e tre: con `-r` applica il giornale, percorre gli extent,
+  legge descrittori di ogni misura, flex_bg, gruppi non inizializzati e i file di quota e
+  degli orfani, verifica e riscrive le somme. Sola lettura, con il motivo stampato: inline
+  data, meta_bg, attributi negli inode, giornale esterno, file degli orfani non vuoto.
+  bigalloc viene rifiutato. Un blocco difettoso dentro un extent si segnala, non si sposta.
+- Tre bug vecchi di `chkdsk`, anche su ext2: una directory si fermava al dodicesimo blocco,
+  quindi con `-r` i blocchi dei file oltre potevano essere dichiarati liberi; i link
+  simbolici corti e i dispositivi venivano letti come puntatori a blocchi; i blocchi degli
+  attributi estesi non venivano contati.
+- `disk`, `mount`, `hwconfig`, `toolinst` e `/proc/mounts` nominano ext2, ext3 ed ext4;
+  `toolinst` li accetta, `fdisk` li suggerisce, `cdinstall` chiede quale usare (ext2 resta
+  la scelta predefinita).
+- Un disco di sistema ext4 ora viene segnato «in uso» come ext2 ed ext3, riscrivendo la somma
+  del superblocco: prima, dopo un crash, non veniva mai controllato.
+
+`tools/prova_extfs.sh` (formattare, scrivere, controllare, rovinare e riparare, con `e2fsck` di
+Linux come giudice) e `tools/prova_sistema.sh` con `EXOS_FS=ext3` ed `ext4` passano a 32 e 64 bit.
+
+### Lucchetti veri sui file (kernel 0.291) — provato in QEMU, Firefox ancora da ricollegare
+
+Finora i lucchetti di `fcntl` e `flock` non escludevano nessuno: `F_GETLK` diceva sempre
+«libero» e `F_SETLK` sempre «preso». Ora `F_GETLK`, `F_SETLK` e `F_SETLKW` sono veri: per
+processo e per intervallo di byte, consultivi come in POSIX, e vanno via quando il processo
+chiude un qualsiasi descrittore del file o esce. `flock` sta sopra di loro, su tutto il file
+e per processo. `EDEADLK` non c'e': due programmi che si aspettano a vicenda restano fermi
+finche' non arriva un segnale. I programmi statici ricevono i lucchetti solo ricollegandoli
+alla `libc.a` nuova. `tools/prova_lucchetti.sh` passa a 32 e 64 bit, anche con
+`_FILE_OFFSET_BITS=64`. Prima di questa modifica la stessa prova mostrava un secondo
+processo che prendeva un lucchetto gia' tenuto.
+
 ### L'ora arriva dalla rete a ogni accensione (date 0.003) — provato in QEMU
 
 Una macchina con la pila dell'orologio scarica riparte dalla data del suo BIOS: sul

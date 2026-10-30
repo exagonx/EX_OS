@@ -70,6 +70,7 @@
 #include "ext2.h"
 #include "ext2_interno.h"
 #include "blk.h"
+#include "vol.h"
 #include "rtc.h"
 
 /* =============================================================================
@@ -783,6 +784,12 @@ uint32_t ext2_dim_blocco(int mnt)
 {
     Ext2Mount *m = prendi(mnt);
     return m ? m->dim_blocco : 0;
+}
+
+uint32_t ext2_generazione(int mnt)
+{
+    Ext2Mount *m = prendi(mnt);
+    return m ? ext_generazione(m->compat, m->incompat, m->ro_compat) : 2u;
 }
 
 const char *ext2_etichetta(int mnt)

@@ -26,7 +26,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `mount -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("mount", "0.002");
+EX_VERSIONE("mount", "0.003");
 
 /* Gli stessi errno del kernel (kernel/include/syscall.h): la syscall
  * ritorna il valore negato. */
@@ -71,10 +71,11 @@ static void elenca(void)
             /* Il campo `fs` non e' piu' solo la larghezza di una FAT: 2 e'
              * ext2 e 9 e' ISO 9660. Stampare "FAT2" o "FAT9" sarebbe un
              * filesystem che non esiste. */
-            if (m[i].fs == 2 || m[i].fs == 9) {
+            if ((m[i].fs >= 2 && m[i].fs <= 4) || m[i].fs == 9) {
                 printf("%-24s %-12s %-11s %s\n",
                        m[i].punto, m[i].dev,
-                       (m[i].fs == 2) ? "ext2" : "ISO 9660",
+                       (m[i].fs == 2) ? "ext2" : (m[i].fs == 3) ? "ext3" :
+                       (m[i].fs == 4) ? "ext4" : "ISO 9660",
                        m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
             } else {
                 printf("%-24s %-12s FAT%-8u %s\n",

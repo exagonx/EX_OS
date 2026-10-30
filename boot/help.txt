@@ -542,9 +542,11 @@ formatta una partizione
 
   mkfs hd0p1                       FAT, scelto dalla dimensione
   mkfs -t ext2 -L dati hd0p1       ext2 con un'etichetta
+  mkfs -t ext3 hd0p1               ext2 con il giornale
+  mkfs -t ext4 hd0p1               giornale, extent e somme di controllo
 
-  -t   fat16, fat32 oppure ext2
-  -L   l'etichetta del volume
+  -t   il filesystem: fat16, fat32, ext2, ext3 oppure ext4
+  -L   l'etichetta del volume: un nome, NON sceglie il filesystem
 
 CHIEDE CONFERMA, e vuole `si` per esteso. Il comando che scrivi dopo,
 se non hai risposto, viene mangiato come risposta: e' il modo piu'
@@ -569,6 +571,9 @@ controlla un filesystem
 
   chkdsk hd0p1                     guarda e riferisce
   chkdsk -r hd0p1                  ripara quello che sa riparare
+
+Riconosce da solo FAT, ext2, ext3 ed ext4. Su un volume con il giornale
+-r prima lo applica, poi controlla.
 
 La riparazione vuole il volume NON montato. Per la partizione di
 sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure

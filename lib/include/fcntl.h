@@ -42,12 +42,10 @@
 #define O_EXCL      0
 #define O_SYNC      0
 
-/* ! I LUCCHETTI DI fcntl (F_GETLK, F_SETLK, F_SETLKW) ESISTONO E NON ESCLUDONO
- * NESSUNO (@EXILLA-NSS, 30 settembre 2026): EX-OS non ha lucchetti sui file.
- * F_GETLK risponde sempre «libero», F_SETLK sempre «preso». SQLite (la base
- * dei certificati di NSS) li chiede; due processi sullo stesso database non
- * sono protetti l'uno dall'altro — lo stesso limite di flock in <sys/file.h>.
- * I numeri sono quelli di Linux. */
+/* I lucchetti di fcntl (F_GETLK, F_SETLK, F_SETLKW) sono veri dal kernel 0.291
+ * (voce 38; prima non escludevano nessuno): per processo e per intervallo di
+ * byte, consultivi, e vanno via quando il processo chiude QUALSIASI descrittore
+ * del file o esce. Nessun EDEADLK. I numeri sono quelli di Linux. */
 #define F_GETLK     5
 #define F_SETLK     6
 #define F_SETLKW    7

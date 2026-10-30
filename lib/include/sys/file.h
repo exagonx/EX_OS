@@ -11,8 +11,8 @@
  *
  * <sys/file.h> — flock (@EXILLA-NSPR, 30 settembre 2026).
  *
- * ! EX-OS NON HA LUCCHETTI SUI FILE: flock risponde 0 e non esclude nessuno
- * (vedi lib/libc.c). Solo libc.a.
+ * Sta sui lucchetti di fcntl (kernel 0.291): tutto il file, per processo e non
+ * per apertura come su Linux.
  * ============================================================================= */
 #ifndef EXOS_SYS_FILE_H
 #define EXOS_SYS_FILE_H

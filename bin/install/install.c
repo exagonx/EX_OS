@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.009");
+EX_VERSIONE("install", "0.010");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -2426,7 +2426,7 @@ int main(int argc, char **argv)
             }
         }
 
-        printf("\n  = questo volume e' ext2: ha i proprietari dei file, quindi\n");
+        printf("\n  = questo volume e' ext: ha i proprietari dei file, quindi\n");
         printf("    al primo avvio l'accesso sara' OBBLIGATORIO.\n");
     }
 

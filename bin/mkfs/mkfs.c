@@ -12,6 +12,8 @@
  *   mkfs -t fat32 -L DATI hd0p1
  *   mkfs -t fat16 hd0p2
  *   mkfs -t ext2  hd0p3
+ *   mkfs -t ext3  hd0p3
+ *   mkfs -t ext4  hd0p3
  *
  * Qui c'e' il contorno — argomenti, ricognizione del dispositivo,
  * conferma, spiegazione degli errori — e il ramo FAT. Il ramo ext2 sta in
@@ -83,7 +85,7 @@
  * Stessa regola del kernel e di /bin/fdisk.
  * ============================================================================= */
 #define MKFS_NAME       "mkfs"
-#define MKFS_VERSION    "0.001"
+#define MKFS_VERSION    "0.002"
 
 
 /* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' MKFS_VERSION qui sopra:
@@ -597,7 +599,7 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
 
     if (diskinfo(disco, &d) < 0 || !d.presente) return;
 
-    if (tipo_fs == 2) {                     /* ext2 */
+    if (tipo_fs <= 4) {                     /* ext2, ext3, ext4 */
         atteso_a = 0x83; atteso_b = 0x83;
     } else if (tipo_fs == 32) {
         atteso_a = 0x0C; atteso_b = 0x0B;
@@ -612,7 +614,7 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
 
         printf("\nNOTA: nella tabella delle partizioni %s e' di tipo 0x%02X,\n",
                nome, d.part[i].tipo);
-        if (tipo_fs == 2) printf("che non corrisponde a ext2 (0x83). ");
+        if (tipo_fs <= 4) printf("che non corrisponde a ext%u (0x83). ", tipo_fs);
         else              printf("che non corrisponde a FAT%u. ", tipo_fs);
         printf("Il byte di tipo e' solo un\n");
         printf("suggerimento e non impedisce niente, ma un suggerimento\n");
@@ -628,22 +630,24 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
  * ============================================================================= */
 static void uso(void)
 {
-    printf("uso: mkfs [-t fat16|fat32|ext2] [-L ETICHETTA] [-f] <partizione>\n\n");
+    printf("uso: mkfs [-t fat16|fat32|ext2|ext3|ext4] [-L ETICHETTA] [-f] <partizione>\n\n");
     printf("  mkfs hd0p1                 sceglie dalla dimensione\n");
     printf("  mkfs -t fat32 hd0p1\n");
     printf("  mkfs -t fat16 -L DATI hd0p2\n");
-    printf("  mkfs -t ext2  -L SISTEMA hd0p3\n\n");
+    printf("  mkfs -t ext2  -L SISTEMA hd0p3\n");
+    printf("  mkfs -t ext4  -L DATI hd0p3\n\n");
+    printf("  -t  il filesystem. -L NON lo sceglie: e' solo il nome del volume.\n\n");
     printf("  -f  non chiede conferma. E' per chi la chiede gia' al posto\n");
     printf("      tuo - `install -prepara` - non per fare prima.\n\n");
     printf("SENZA -t: fino a 2 GB FAT16, oltre FAT32. Non e' una soglia\n");
     printf("arbitraria - FAT16 arriva a 65524 cluster, che con cluster da\n");
-    printf("32 KB fanno poco piu' di 2 GB. ext2 non entra mai nella scelta\n");
-    printf("automatica: e' un formato che si chiede, non uno in cui si\n");
-    printf("finisce.\n\n");
+    printf("32 KB fanno poco piu' di 2 GB. ext2, ext3 ed ext4 non entrano mai\n");
+    printf("nella scelta automatica: sono formati che si chiedono, non\n");
+    printf("formati in cui si finisce.\n\n");
     printf("La partizione NON dev'essere montata. `disk` elenca i\n");
     printf("dispositivi, `fdisk` crea le partizioni.\n\n");
-    printf("EX-OS monta FAT12, FAT16, FAT32, ext2 e ISO 9660. `chkdsk`\n");
-    printf("controlla e ripara i volumi FAT e ext2.\n");
+    printf("EX-OS monta FAT12, FAT16, FAT32, ext2, ext3, ext4 e ISO 9660.\n");
+    printf("`chkdsk` controlla e ripara i volumi FAT, ext2, ext3 ed ext4.\n");
 }
 
 /* Chiede conferma prima di distruggere. Ritorna 1 se l'utente ha
@@ -801,8 +805,8 @@ static int fai_fat(const char *dev, unsigned int tipo, unsigned int primo,
     return 0;
 }
 
-static int fai_ext2(const char *dev, unsigned int primo, unsigned int settori,
-                    const char *etichetta_utente)
+static int fai_ext(const char *dev, unsigned int gen, unsigned int primo,
+                   unsigned int settori, const char *etichetta_utente)
 {
     Ext2Geo g;
     char    et[17];
@@ -818,7 +822,7 @@ static int fai_ext2(const char *dev, unsigned int primo, unsigned int settori,
     for (; i < 16; i++) et[i] = '\0';
     et[16] = '\0';
 
-    if (ext2_piano(&g, settori) != 0) return 1;
+    if (ext2_piano(&g, settori, gen) != 0) return 1;
 
     printf("Partizione %s\n", dev);
     printf("  primo settore assoluto : %u\n", primo);
@@ -835,7 +839,7 @@ static int fai_ext2(const char *dev, unsigned int primo, unsigned int settori,
      * c'e', e fa dubitare di un `mount` che invece funziona. */
     printf("\nIl volume sara' leggibile e scrivibile da EX-OS (`mount %s <punto>`)\n",
            dev);
-    printf("e da Linux: e' un ext2 revisione 1 senza estensioni.\n");
+    printf("e da Linux.\n");
 
     if (!conferma(dev)) return 1;
 
@@ -847,8 +851,8 @@ static int fai_ext2(const char *dev, unsigned int primo, unsigned int settori,
 
     if (r < 0) { spiega_fallimento(dev, r); return 1; }
 
-    printf("\nFilesystem ext2 creato su %s.\n", dev);
-    controlla_tipo_mbr(dev, 2);
+    printf("\nFilesystem ext%u creato su %s.\n", gen, dev);
+    controlla_tipo_mbr(dev, gen);
 
     printf("\nVerificalo da Linux con:  e2fsck -fn <immagine>\n");
     return 0;
@@ -867,8 +871,10 @@ int main(int argc, char **argv)
             if      (strcmp(argv[i], "fat16") == 0) tipo = 16;
             else if (strcmp(argv[i], "fat32") == 0) tipo = 32;
             else if (strcmp(argv[i], "ext2")  == 0) tipo = 2;
+            else if (strcmp(argv[i], "ext3")  == 0) tipo = 3;
+            else if (strcmp(argv[i], "ext4")  == 0) tipo = 4;
             else {
-                printf("mkfs: tipo '%s' sconosciuto. Sono fat16, fat32 e ext2.\n",
+                printf("mkfs: tipo '%s' sconosciuto. Sono fat16, fat32, ext2, ext3 ed ext4.\n",
                        argv[i]);
                 return 1;
             }
@@ -908,19 +914,28 @@ int main(int argc, char **argv)
      *
      * ext2 non entra mai nella scelta automatica: e' un formato che si
      * chiede, non uno in cui si finisce. Chi lo vuole scrive -t ext2.
+     *
+     * ! `-L ext4` LOOKS LIKE A FILESYSTEM AND IS A LABEL. It has happened: a
+     * FAT volume called EXT4. It stays legal, a label can be any word, but
+     * the warning comes before the confirmation.
      * ===================================================================== */
+    if (tipo == 0 && (strcmp(etichetta, "ext2") == 0 || strcmp(etichetta, "ext3") == 0 ||
+                      strcmp(etichetta, "ext4") == 0 || strcmp(etichetta, "fat16") == 0 ||
+                      strcmp(etichetta, "fat32") == 0)) {
+        printf("ATTENZIONE: -L e' l'etichetta del volume, non il filesystem.\n");
+        printf("  Cosi' il volume si chiama '%s' ma il tipo lo sceglie la\n", etichetta);
+        printf("  dimensione. Per il filesystem: mkfs -t %s %s\n\n", etichetta, dev);
+    }
+
     if (tipo == 0) {
         tipo = (settori <= LIMITE_FAT16_SETTORI) ? 16u : 32u;
         printf("Nessun -t indicato: %u settori (%u MB) -> FAT%u\n",
                settori, settori / SETT_PER_MB, tipo);
         printf("  (FAT16 arriva a 65524 cluster, cioe' ~2 GB con cluster da\n");
-        printf("   32 KB: oltre non ci sta. Per ext2 serve -t ext2.)\n\n");
+        printf("   32 KB: oltre non ci sta. Per ext serve -t ext2, ext3 o ext4.)\n\n");
     }
 
-    if (tipo == 2) {
-        if (etichetta[0] == '\0') etichetta = "";
-        return fai_ext2(dev, primo, settori, etichetta);
-    }
+    if (tipo <= 4) return fai_ext(dev, tipo, primo, settori, etichetta);
 
     if (etichetta[0] == '\0') etichetta = "NO NAME";
     return fai_fat(dev, tipo, primo, settori, etichetta);

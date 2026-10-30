@@ -443,7 +443,7 @@ static void proc_chiudi_fd(Process *p)
     for (fd = 0; fd < FD_N(p); fd++) {
         switch (FDV(p, fd).type) {
             case FD_FILE:
-                vfs_close((int)FDV(p, fd).inode);
+                vfs_close_di((int)FDV(p, fd).inode, p->fdt);
                 break;
             case FD_PIPE_R:
                 pipe_chiudi_lettore_locked((int)FDV(p, fd).inode);

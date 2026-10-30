@@ -1054,7 +1054,7 @@ fdisk: dirs $(FDISK_BIN)
 # dimensione del file.
 MKFS_SRC   := bin/mkfs/mkfs.c
 MKFS_EXT2  := bin/mkfs/ext2.c
-MKFS_HDR   := bin/mkfs/ext2.h
+MKFS_HDR   := bin/mkfs/ext2.h bin/mkfs/crc32c.h
 MKFS_BIN   := $(BUILD_BIN)/mkfs
 MKFS_LD    := bin/mkfs/mkfs.ld
 
@@ -3583,7 +3583,7 @@ CHKDSK_SRC := bin/chkdsk/chkdsk.c
 CHKDSK_BIN := $(BUILD_BIN)/chkdsk
 CHKDSK_LD  := bin/chkdsk/chkdsk.ld
 
-$(CHKDSK_BIN): $(CHKDSK_SRC) $(CHKDSK_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(CHKDSK_BIN): $(CHKDSK_SRC) bin/mkfs/crc32c.h $(CHKDSK_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/chkdsk ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(CHKDSK_SRC) -o $(BUILD_OBJ)/chkdsk_main.o

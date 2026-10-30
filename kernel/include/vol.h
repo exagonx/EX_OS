@@ -26,6 +26,7 @@
 
 typedef struct {
     uint32_t tipo;          /* VOL_FS_* */
+    uint32_t ext_gen;       /* VOL_FS_EXT2: 2, 3 or 4, from its features */
     uint32_t incoerente;    /* 1 = i campi contraddicono il tipo dedotto */
 
     uint32_t byts_per_sec;
@@ -51,5 +52,6 @@ typedef struct {
  * la si passa piu' da fuori, cosi' non puo' divergere dalla finestra
  * vera. */
 int vol_identifica(int blkdev, VolumeInfo *out);
+uint32_t ext_generazione(uint32_t compat, uint32_t incompat, uint32_t ro_compat);
 
 #endif /* VOL_H */

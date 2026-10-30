@@ -53,7 +53,7 @@ same kernel inside:
 |---|---|---|
 | **floppy** 1.44MB FAT12 | the minimum needed to reach a shell and install | `make floppy` -> `dist/floppy.img` |
 | bootable **CD** | the **complete** system: graphical desktop, browser, networking, drivers, fonts, documentation | `make iso-exos` -> `dist/exos.iso` |
-| **hard disk** FAT16/32 or ext2 | whatever the installer put there, and the only one you can write to | `install` (or `cdinstall` from the CD) |
+| **hard disk** FAT16/32, ext2, ext3 or ext4 | whatever the installer put there, and the only one you can write to | `install` (or `cdinstall` from the CD) |
 
 The floppy is 1.44MB that will not grow, and the kernel grows with everything
 it learns: since 26 August 2026 the real installer lives on the CD and only the
@@ -110,6 +110,41 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### ext3 and ext4 in the tools too (kernel 0.292, mkfs 0.002, chkdsk 0.003) — tested in QEMU, to be tested on real hardware
+
+The kernel read and wrote ext3 and ext4 already; the tools did not know them. Now:
+
+- `mkfs -t ext3` and `mkfs -t ext4`. Blocks of 4 KB from 512 MB up, inodes of 256 bytes, a
+  jbd2 journal; ext4 has extents and metadata_csum. `-L ext4` without `-t` is a label and
+  not a filesystem: `mkfs` now says so before asking for confirmation.
+- `chkdsk` checks and repairs all three: it replays the journal with `-r`, walks extents,
+  reads descriptors of any size, flex_bg, groups left uninitialized and quota and orphan
+  files, verifies and rewrites the checksums. Read-only with the reason printed: inline
+  data, meta_bg, xattrs in inodes, an external journal, a non-empty orphan file. bigalloc
+  is refused. A bad block inside an extent is reported, not moved.
+- Three old `chkdsk` bugs, also on ext2: a directory stopped at its twelfth block, so with
+  `-r` the blocks of the files beyond it could be declared free; short symbolic links and
+  devices were read as block pointers; extended attribute blocks were not counted.
+- `disk`, `mount`, `hwconfig`, `toolinst` and `/proc/mounts` name ext2, ext3 and ext4;
+  `toolinst` accepts them, `fdisk` suggests them, `cdinstall` asks which one to use (ext2
+  stays the default).
+- An ext4 system disk is now marked "in use" like ext2 and ext3, with the superblock's
+  checksum rewritten: before, after a crash it was never checked.
+
+`tools/prova_extfs.sh` (make, write, check, damage and repair, Linux's `e2fsck` as judge) and
+`tools/prova_sistema.sh` with `EXOS_FS=ext3` and `ext4` pass at 32 and 64 bit.
+
+### Real file locks (kernel 0.291) — tested in QEMU, Firefox still to be relinked
+
+Until now `fcntl` locks and `flock` excluded nobody: `F_GETLK` always said "free" and
+`F_SETLK` always said "taken". Now `F_GETLK`, `F_SETLK` and `F_SETLKW` are real: per
+process and per byte range, advisory as in POSIX, and they go away when the process closes
+any descriptor of the file or ends. `flock` sits on them, for the whole file and per
+process. There is no `EDEADLK`: two programs waiting for each other wait until a signal.
+Statically linked programs get the locks only when relinked with the new `libc.a`.
+`tools/prova_lucchetti.sh` passes at 32 and 64 bit, also with `_FILE_OFFSET_BITS=64`.
+Before this change, the same test showed a second process taking a lock already held.
 
 ### The clock comes from the network at every boot (date 0.003) — tested in QEMU
 
@@ -6046,7 +6081,7 @@ leave their chain alive on the disk and unreachable.
 `fdisk` does not format. A freshly created partition contains the bytes that
 were in those sectors before: it is not empty, it is uninitialised.
 
-### /bin/mkfs — FAT16/FAT32/ext2 formatter
+### /bin/mkfs — FAT16/FAT32/ext2/ext3/ext4 formatter
 
 ```
 mkfs -t fat32 -L LABEL hd0p1

@@ -52,7 +52,7 @@ for d in bin lib dev; do $SBIN/debugfs -R "rdump /rdboot/$d $T" "$RD" > /dev/nul
 
 P="$D/p1.img"
 fakeroot sh -c "chown -R 0:0 '$T'; chmod 755 '$T'/bin/* '$T'/avvioprova;
-    $SBIN/mke2fs -q -F -t ext2 -b 1024 -m 0 -L sistema -d '$T' '$P' $((P1_SETT / 2))" \
+    $SBIN/mke2fs -q -F -t ${EXOS_FS:-ext2} -b 1024 -m 0 -L sistema -d '$T' '$P' $((P1_SETT / 2))" \
     > "$D/mke2fs.log" 2>&1 || { cat "$D/mke2fs.log"; exit 1; }
 qemu-img create -f raw "$IMG" 66M > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, size=%d, type=83, bootable\n' $P1_SETT \

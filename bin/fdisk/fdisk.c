@@ -84,7 +84,7 @@
  * non un numero — EX-OS non usa la virgola mobile.
  * ============================================================================= */
 #define FD_NAME     "fdisk"
-#define FD_VERSION  "0.004"
+#define FD_VERSION  "0.005"
 
 
 /* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' FD_VERSION qui sopra:
@@ -1461,7 +1461,8 @@ static void az_nuova(const Riga *g)
                  g_disco, slot + 1, g_disco, slot + 1);
         msg(m, m2);
     } else {
-        msg(m, "Non e' formattata: dopo Scrivi, mkfs.");
+        msg(m, (t == 0x83) ? "Non e' formattata: dopo Scrivi, mkfs -t ext4 (o ext2, ext3)."
+                           : "Non e' formattata: dopo Scrivi, mkfs.");
     }
 }
 

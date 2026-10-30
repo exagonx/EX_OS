@@ -1,5 +1,12 @@
 QUEL CHE E' APERTO — 15 settembre 2026
 
+!!! DA FARE IL 31 OTTOBRE, ALLA RIACCENSIONE: voce 51 (install non copia
+    /rdboot), voce 52 (netupdate: file non arrivati in coda, si ritenta alla
+    fine chiedendo all'utente), voce 50 (tetti ai montaggi).
+
+!!! IL 30 OTTOBRE, SERA: ext3 ed ext4 negli strumenti (kernel 0.292, mkfs
+    0.002, chkdsk 0.003): provati in QEMU, ! da provare sul ferro.
+
 !!! IL 30 OTTOBRE: voce 41 (@CODA-20-10) FATTA in QEMU per e1000, pcnet e
     ne2k; ! nforce, rtl8169, sis900 e ar5k solo compilati, QEMU non li ha:
     DA PROVARE SUL FERRO, per primo nforce sul portatile (uso normale, poi
@@ -8475,6 +8482,21 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  52. netupdate: I FILE NON ARRIVATI IN CODA (l'utente, 30/10: "su netupdate
+      bisogna implementare che i file non arrivati vengono messi in coda e
+      si ritenta alla fine chiedendo all'utente"). Un file fallito non ferma
+      il giro: va in una coda, e alla fine netupdate chiede se ritentarli.
+
+  51. install NON DEVE COPIARE /rdboot (l'utente, 30/10: "su install copia la
+      directory rdboot quella dato che viene creata dal ramdrive non deve
+      essere copiata da install"). E' il ramdrive di avvio, non roba del disco.
+
+  50. VOLUMI MONTATI SENZA TETTO FISSO (trovato il 30/10 con prova_extfs:
+      il quarto volume ext risponde "nessuno slot di montaggio libero").
+      VFS_MAX_MOUNT 6 e EXT2_MAX_MOUNT 4 sono #define, contro la regola
+      "nessun tetto fisso". Toccano tabelle in vfs.c, ext2.c, nel modulo
+      (g_gio, g_vol) e K->max_mount: da far crescere insieme.
+
   49. netupdate SCARICA UNO SCRIPT CHE VERIFICA L'AMBIENTE (l'utente, 30/10:
       "ogni aggiunta/implementazione del sistema deve essere aggiunta a
       netupdate che scaricando un file sh questo verifica che l'ambiente e'
@@ -9143,6 +9165,24 @@ tools/netinst/velocita tolto da netinst.
       liberati all'uscita del processo; poi prova con due Firefox sullo
       stesso profilo. Solo dopo si puo' dire se era questo.
       VISTI: pm non raccoglie i figli (exilla, filemgr, exvolume zombie).
+      LUCCHETTI FATTI (kernel 0.291): tabella in vfs.c per proprietario
+      (p->fdt) e byte, fcntl e fcntl64 in libc, flock sopra; prova_lucchetti
+      a 32 e 64 bit. F_SETLKW riprova ogni 10 ms, niente EDEADLK. DA FARE:
+      FIREFOX E' STATICO (4,8 GB, libc.a del cross), va ricollegato: libc.a
+      in cross_build/nasi5deb gia' aggiornata 32 e 64; poi prova con due
+      Firefox sullo stesso profilo. Firefox a 32 bit: SQLite usa off_t a 64,
+      va ricompilato il pezzo (EXOS_LFS su fcntl), non basta ricollegare; il
+      binario vecchio chiama fcntl con la struct lunga e blocca fino alla
+      fine del file: di piu', mai di meno. Apache, MariaDB, PHP idem: i
+      lucchetti arrivano al prossimo collegamento, regressioni da fare allora.
+      ! tools/ricostruisci-bersaglio.sh e cross64.sh senza PREFISSO/TC64
+      scrivono in cross_build/exos-cross*, non in cross_build/<macchina>/.
+      NETUPDATE 30/10 (foto 192727): 19 voci .gz di exos/src danno 404 sul
+      server, in locale ci sono: da caricare con pubblica.sh -lista. 12
+      "impronta non torna" senza nome: alle 19:32 le 25 voci sospette sono
+      giuste sul server; causa non trovata, netupdate 0.037 stampa il nome.
+      Il 64 bit delle 19:13 e' uscito con le mie make in corso nello stesso
+      albero: kernel pubblicato 76eb323a, non uguale alla build di adesso.
 
 
   37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10

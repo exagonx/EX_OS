@@ -43,6 +43,7 @@
 #include "smp.h"
 #include "tsc.h"
 #include "version.h"
+#include "ext2.h"
 
 /* In vfs.c: a mount slot, with the lock the caller has */
 const VfsMount *vfs_mount_nl_di(int i);
@@ -359,8 +360,13 @@ static void f_mounts(Usc *u)
         if (!m || !m->usato) continue;
         testo(u, m->dev[0] ? m->dev : "none"); metti(u, ' ');
         testo(u, m->punto); metti(u, ' ');
-        testo(u, m->tipo == VFS_FS_EXT2 ? "ext2" : m->tipo == VFS_FS_ISO ? "iso9660" :
-                 m->tipo == VFS_FS_PROC ? "proc" : "vfat");
+        if (m->tipo == VFS_FS_EXT2) {
+            testo(u, "ext");
+            metti(u, (char)('0' + ext2_generazione(m->mnt)));
+        } else {
+            testo(u, m->tipo == VFS_FS_ISO ? "iso9660" :
+                     m->tipo == VFS_FS_PROC ? "proc" : "vfat");
+        }
         testo(u, m->sola_lettura ? " ro 0 0\n" : " rw 0 0\n");
     }
 }

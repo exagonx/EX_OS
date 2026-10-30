@@ -9,7 +9,7 @@
  * See the LICENSE file in the project root for the full license text.
  * =============================================================================
  *
- * Controllo e riparazione di un volume FAT12, FAT16 o FAT32.
+ * Controllo e riparazione di un volume FAT12, FAT16, FAT32, ext2, ext3 o ext4.
  *
  *   chkdsk <partizione>          controlla e riferisce, non tocca niente
  *   chkdsk -r <partizione>       controlla e CORREGGE
@@ -62,9 +62,10 @@
  * scegliere a caso quale dei due rovinare.
  * ============================================================================= */
 #include "libc.h"
+#include "../mkfs/crc32c.h"
 
 /* +0.001 a ogni modifica: `chkdsk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("chkdsk", "0.002");
+EX_VERSIONE("chkdsk", "0.003");
 
 #define SETT            512u
 #define MAX_PROF        16      /* annidamento massimo delle directory */
@@ -1058,14 +1059,67 @@ static void controlla_riservate(void)
  *
  * ! SI RIFIUTA DI RIPARARE UN VOLUME CON `incompat` SCONOSCIUTE. Un bit
  * di incompatibilita' che non conosciamo cambia il significato di campi
- * che crediamo di saper leggere â€” con gli extent di ext4, per dirne una,
- * i_block non contiene numeri di blocco. Un controllore che "ripara" in
- * quelle condizioni scrive spazzatura con la massima convinzione. Si
- * legge, si riferisce, e si dice che non si tocca.
+ * che crediamo di saper leggere. Un controllore che "ripara" in quelle
+ * condizioni scrive spazzatura con la massima convinzione. Si legge, si
+ * riferisce, e si dice che non si tocca.
+ *
+ * ext3 AND ext4 (chkdsk 0.003). This engine reads them all, and what they
+ * add is handled here:
+ *   - the journal: with needs_recovery set the volume on disk is not the real
+ *     one. -r replays it first, as e2fsck does (e2_giornale); without -r
+ *     nothing is written, so the check says what it saw and that it is
+ *     provisional;
+ *   - extents (e2_percorri_estesi, e2_mappa);
+ *   - descriptors of s_desc_size bytes, all in memory (e2_gdt);
+ *   - flex_bg: bitmaps and tables may be anywhere, so nothing assumes a
+ *     position, every address comes from the descriptor;
+ *   - groups marked BLOCK_UNINIT / INODE_UNINIT: their bitmap on disk means
+ *     nothing, what counts is what they would hold;
+ *   - metadata_csum and gdt_csum: checked, and written again with whatever
+ *     -r rewrites. A wrong sum on an inode is reported and left alone: the
+ *     inode's content may be the part that is wrong;
+ *   - the inodes no directory names: quota, the orphan file;
+ *   - extended attributes: their block is one more block of the file, and
+ *     several files may share it.
+ * What stays read-only (the reason is printed): inline data, bigalloc,
+ * meta_bg, xattrs in inodes, an external journal, a journal with the older
+ * checksums or fast commits, a non-empty orphan file. Blocks of an extent
+ * file cannot be moved off a bad sector: it is reported, not touched.
  * ============================================================================= */
 #define E2_MAGIC        0xEF53u
 #define E2_SUPER_OFF    1024u
-#define E2_INCOMPAT_NOTI 0x0002u    /* FILETYPE: l'unico che sappiamo leggere */
+#define E2_COMPAT_JOURNAL  0x0004u
+#define E2_COMPAT_SPARSE2  0x0200u
+#define E2_INC_FILETYPE    0x0002u
+#define E2_INC_RECOVER     0x0004u
+#define E2_INC_EXTENTS     0x0040u
+#define E2_INC_64BIT       0x0080u
+#define E2_INC_MMP         0x0100u
+#define E2_INC_FLEX_BG     0x0200u
+#define E2_INC_CSUM_SEED   0x2000u
+#define E2_INC_LARGEDIR    0x4000u
+#define E2_INCOMPAT_NOTI   (E2_INC_FILETYPE | E2_INC_RECOVER | E2_INC_EXTENTS | \
+                            E2_INC_64BIT | E2_INC_MMP | E2_INC_FLEX_BG | \
+                            E2_INC_CSUM_SEED | E2_INC_LARGEDIR)
+#define E2_RO_HUGE_FILE    0x0008u
+#define E2_RO_GDT_CSUM     0x0010u
+#define E2_RO_DIR_NLINK    0x0020u
+#define E2_RO_EXTRA_ISIZE  0x0040u
+#define E2_RO_BIGALLOC     0x0200u
+#define E2_RO_METADATA     0x0400u
+#define E2_RO_ORPHAN       0x10000u
+/* every ro_compat that does not change where blocks are */
+#define E2_RO_NOTE         (0x0001u | 0x0002u | 0x0004u | E2_RO_HUGE_FILE | \
+                            E2_RO_GDT_CSUM | E2_RO_DIR_NLINK | E2_RO_EXTRA_ISIZE | \
+                            0x0100u | E2_RO_METADATA | 0x1000u | 0x2000u | 0x8000u | \
+                            E2_RO_ORPHAN)
+#define E2_FL_EXTENTS      0x00080000u
+#define E2_FL_INLINE       0x10000000u
+#define E2_BG_INODE_UNINIT 0x0001u
+#define E2_BG_BLOCK_UNINIT 0x0002u
+#define E2_ESTESI_MAGIA    0xF30Au
+#define E2_DOVE_ESTESO     0xFFFFFFFFu  /* e2_dove_cont: this block is in an extent */
+#define E2_SPECIALI        5u
 #define E2_MODE_TIPO    0xF000u
 #define E2_MODE_DIR     0x4000u
 
@@ -1075,6 +1129,14 @@ static unsigned int e2_b_per_gruppo, e2_i_per_gruppo, e2_dim_inode;
 static unsigned int e2_n_gruppi, e2_incompat, e2_primo_inode;
 static unsigned int e2_desc_blocco, e2_desc_quanti, e2_sparse;
 static unsigned int e2_gdt_riserva;     /* resize_inode: s_reserved_gdt_blocks */
+static unsigned int e2_compat, e2_ro, e2_gen, e2_dim_desc;
+static unsigned int e2_somme, e2_gdtsomma, e2_seme, e2_sparse2, e2_backup[2];
+static unsigned char e2_uuid[16];
+static unsigned char *e2_gdt;           /* every descriptor, as on disk */
+static unsigned char *e2_meta;          /* the blocks that are metadata */
+static unsigned int e2_speciale[E2_SPECIALI];   /* inodes no directory names */
+static unsigned int e2_riscrivere;      /* sums to rewrite even if the rest is fine */
+static unsigned int e2_somme_ko;        /* inodes whose sum is wrong */
 
 /* ! QUANTE VOLTE NON SI E' POTUTO SAPERE. Ogni lettura fallita, ogni
  * blocco fuori scala, ogni funzionalita' non capita lo incrementa â€” e con
@@ -1174,6 +1236,106 @@ static int e2_riconosce(void)
     return 1;
 }
 
+static unsigned char *e2_desc(unsigned int g)
+{
+    return e2_gdt + g * e2_dim_desc;
+}
+
+/* All the descriptors in memory: flex_bg and the wider ones are read through
+ * this one table, and -r writes it back whole. */
+static int e2_carica_desc(void)
+{
+    unsigned int i;
+
+    free(e2_gdt);
+    e2_gdt = (unsigned char *)calloc(e2_desc_quanti + 1u, e2_dim_blocco);
+    if (e2_gdt == NULL) {
+        printf("  ! memoria insufficiente per i descrittori di %u gruppi\n",
+               e2_n_gruppi);
+        return -1;
+    }
+    for (i = 0; i < e2_desc_quanti; i++)
+        if (e2_leggi_blocco(e2_desc_blocco + i, e2_gdt + i * e2_dim_blocco) != 0) {
+            printf("  ! i descrittori di gruppo non si leggono\n");
+            return -1;
+        }
+    return 0;
+}
+
+static void e2_p16(unsigned char *p, unsigned int v)
+{
+    p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8);
+}
+
+static void e2_p32(unsigned char *p, unsigned int v)
+{
+    p[0] = (unsigned char)v;         p[1] = (unsigned char)(v >> 8);
+    p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24);
+}
+
+static unsigned int e2_be32(const unsigned char *p)
+{
+    return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) |
+           ((unsigned int)p[2] << 8)  |  (unsigned int)p[3];
+}
+
+static void e2_pbe32(unsigned char *p, unsigned int v)
+{
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);  p[3] = (unsigned char)v;
+}
+
+/* --- the sums, as kernel/moduli/ext4/somme.c ------------------------------ */
+static unsigned int e2_crc16(unsigned int crc, const unsigned char *p, unsigned int n)
+{
+    unsigned int i, k;
+
+    for (i = 0; i < n; i++) {
+        crc ^= p[i];
+        for (k = 0; k < 8u; k++) crc = (crc & 1u) ? (crc >> 1) ^ 0xA001u : crc >> 1;
+    }
+    return crc & 0xFFFFu;
+}
+
+static unsigned int e2_somma_desc(unsigned int g)
+{
+    const unsigned char *d = e2_desc(g);
+    unsigned char gl[4];
+    unsigned int  c;
+
+    e2_p32(gl, g);
+    if (e2_somme) {
+        c = crc32c(crc32c(e2_seme, gl, 4), d, 0x1Eu);
+        c = crc32c(c, "\0\0", 2);
+        if (e2_dim_desc > 0x20u) c = crc32c(c, d + 0x20, e2_dim_desc - 0x20u);
+        return c & 0xFFFFu;
+    }
+    c = e2_crc16(0xFFFFu, e2_uuid, 16);
+    c = e2_crc16(c, gl, 4);
+    c = e2_crc16(c, d, 0x1Eu);
+    if (e2_dim_desc > 0x20u) c = e2_crc16(c, d + 0x20, e2_dim_desc - 0x20u);
+    return c;
+}
+
+/* The sum of a whole inode, seeded by its number and i_generation. */
+static unsigned int e2_somma_inode(unsigned char *ino, unsigned int num)
+{
+    unsigned char b[4];
+    unsigned int  c;
+    int alto = e2_dim_inode > 128u && le16(ino + 0x80) >= 4u;
+
+    e2_p32(b, num);
+    c = crc32c(crc32c(e2_seme, b, 4), ino + 100, 4);
+    e2_p16(ino + 0x7C, 0);
+    if (alto) e2_p16(ino + 0x82, 0);
+    c = crc32c(c, ino, e2_dim_inode);
+    e2_p16(ino + 0x7C, c & 0xFFFFu);
+    if (alto) e2_p16(ino + 0x82, c >> 16);
+    return c;
+}
+
+static int e2_giornale(void);
+
 static int e2_apri(void)
 {
     unsigned char sb[SETT * 2];
@@ -1197,9 +1359,64 @@ static int e2_apri(void)
     e2_incompat = (rev >= 1u) ? le32(sb + 96) : 0u;
     e2_dim_inode  = (rev >= 1u) ? le16(sb + 88) : 128u;
     e2_primo_inode = (rev >= 1u) ? le32(sb + 84) : 11u;
+    e2_compat   = (rev >= 1u) ? le32(sb + 92) : 0u;
+    e2_ro       = (rev >= 1u) ? le32(sb + 100) : 0u;
+
+    /* Which ext: the features say, the same rule as kernel/block/vol.c. */
+    e2_gen = 2u;
+    if (e2_compat & E2_COMPAT_JOURNAL) e2_gen = 3u;
+    if ((e2_incompat & (E2_INC_EXTENTS | E2_INC_64BIT | E2_INC_FLEX_BG)) ||
+        (e2_ro & (E2_RO_HUGE_FILE | E2_RO_GDT_CSUM | E2_RO_DIR_NLINK |
+                  E2_RO_EXTRA_ISIZE | E2_RO_METADATA)))
+        e2_gen = 4u;
+
+    if ((e2_incompat & E2_INC_64BIT) && le32(sb + 0x150) != 0) {
+        printf("  ! piu' di 2^32 blocchi: questo controllore non ci arriva\n");
+        return -1;
+    }
+
+    e2_dim_desc = 32u;
+    if ((e2_incompat & E2_INC_64BIT) && le16(sb + 254) >= 64u)
+        e2_dim_desc = le16(sb + 254);
+    if (e2_dim_desc > e2_dim_blocco || (e2_dim_desc & (e2_dim_desc - 1u))) {
+        printf("  ! descrittori di gruppo da %u byte: superblocco rotto\n",
+               e2_dim_desc);
+        return -1;
+    }
+
+    for (rev = 0; rev < 16u; rev++) e2_uuid[rev] = sb[104 + rev];
+    e2_somme     = (e2_ro & E2_RO_METADATA) != 0;
+    e2_gdtsomma  = !e2_somme && (e2_ro & E2_RO_GDT_CSUM);
+    e2_seme      = (e2_incompat & E2_INC_CSUM_SEED) ? le32(sb + 0x270)
+                                                    : crc32c(~0u, e2_uuid, 16);
+    e2_sparse2   = (e2_compat & E2_COMPAT_SPARSE2) != 0;
+    e2_backup[0] = le32(sb + 0x24C);
+    e2_backup[1] = le32(sb + 0x250);
+
+    /* The inodes no directory names: their blocks are in use all the same. */
+    e2_speciale[0] = (e2_compat & E2_COMPAT_JOURNAL) ? le32(sb + 224) : 0u;
+    e2_speciale[1] = le32(sb + 0x240);          /* quota: user */
+    e2_speciale[2] = le32(sb + 0x244);          /* quota: group */
+    e2_speciale[3] = le32(sb + 0x26C);          /* quota: project */
+    e2_speciale[4] = (e2_compat & 0x1000u) ? le32(sb + 0x280) : 0u;   /* orphan file */
+
+    if (e2_somme && le32(sb + 0x3FC) != crc32c(~0u, sb, 0x3FCu)) {
+        printf("  ! la somma del superblocco e' sbagliata\n");
+        problemi++;
+        e2_riscrivere++;
+    }
 
     if (e2_b_per_gruppo == 0 || e2_i_per_gruppo == 0) {
         printf("  ! blocchi o inode per gruppo a zero: superblocco rotto\n");
+        return -1;
+    }
+    /* ! A BITMAP IS ONE BLOCK, so a group cannot pass 8 bits per byte of it.
+     * With bigalloc it counts clusters, and a broken superblock can say
+     * anything: past this every loop on a group runs off its buffer. */
+    if (e2_b_per_gruppo > e2_dim_blocco * 8u || e2_i_per_gruppo > e2_dim_blocco * 8u) {
+        printf("  ! %u blocchi e %u inode per gruppo non stanno in una bitmap:\n",
+               e2_b_per_gruppo, e2_i_per_gruppo);
+        printf("    bigalloc, o un superblocco rotto. Non so controllarlo.\n");
         return -1;
     }
     if (e2_dim_inode < 128u || e2_dim_inode > e2_dim_blocco) {
@@ -1217,30 +1434,73 @@ static int e2_apri(void)
      * piu' grandi il superblocco sta DENTRO il blocco 0 e i descrittori
      * sono il blocco 1. Sbagliare qui fa leggere dati come descrittori. */
     e2_desc_blocco = (e2_dim_blocco == 1024u) ? 2u : 1u;
-    e2_desc_quanti = (e2_n_gruppi * 32u + e2_dim_blocco - 1u) / e2_dim_blocco;
+    e2_desc_quanti = (e2_n_gruppi * e2_dim_desc + e2_dim_blocco - 1u) / e2_dim_blocco;
 
     /* sparse_super: se c'e', le copie di riserva stanno solo in alcuni
      * gruppi invece che in tutti. Vedi gruppo_ha_backup(). */
-    e2_sparse = (rev >= 1u) ? (le32(sb + 100) & 0x0001u) : 0u;
+    e2_sparse = e2_ro & 0x0001u;
 
     /* resize_inode (compat 0x0010): dopo i descrittori, in ogni gruppo che
      * ne ha la copia, ci sono blocchi tenuti da parte per farli crescere.
      * Vedi «I BLOCCHI PER CRESCERE» dove si segnano i metadati. */
-    e2_gdt_riserva = (rev >= 1u && (le32(sb + 92) & 0x0010u)) ? le16(sb + 206) : 0u;
+    e2_gdt_riserva = (e2_compat & 0x0010u) ? le16(sb + 206) : 0u;
 
-    printf("  ext2 - %u blocchi da %u byte, %u inode, %u grupp%s\n",
-           e2_n_blocchi, e2_dim_blocco, e2_n_inode, e2_n_gruppi,
+    printf("  ext%u - %u blocchi da %u byte, %u inode, %u grupp%s\n",
+           e2_gen, e2_n_blocchi, e2_dim_blocco, e2_n_inode, e2_n_gruppi,
            (e2_n_gruppi == 1) ? "o" : "i");
 
     if (e2_incompat & ~(unsigned int)E2_INCOMPAT_NOTI) {
-        printf("  ! funzionalita' incompatibili 0x%x che non so leggere "
-               "(ext3/ext4?)\n", e2_incompat & ~(unsigned int)E2_INCOMPAT_NOTI);
+        printf("  ! funzionalita' incompatibili 0x%x che non so leggere\n",
+               e2_incompat & ~(unsigned int)E2_INCOMPAT_NOTI);
         printf("    Con quei bit attivi i campi che credo di saper leggere\n");
         printf("    vogliono dire altro: riferisco, ma NON tocco niente\n");
         printf("    nemmeno con -r.\n");
         problemi++;
         e2_incerto++;
         ripara = 0;          /* ! si disarma la riparazione, di proposito */
+        return (e2_carica_desc() == 0) ? 0 : -1;
+    }
+
+    if (e2_ro & ~(unsigned int)E2_RO_NOTE) {
+        printf("  ! funzionalita' 0x%x che cambiano dove stanno i blocchi\n",
+               e2_ro & ~(unsigned int)E2_RO_NOTE);
+        printf("    (bigalloc, per esempio): riferisco, ma NON tocco niente.\n");
+        problemi++;
+        e2_incerto++;
+        ripara = 0;
+    }
+
+    if (e2_ro & E2_RO_ORPHAN) {
+        printf("  ! il file degli orfani non e' vuoto: lo sa svuotare solo chi\n");
+        printf("    monta il volume con Linux. Riferisco, ma NON tocco niente.\n");
+        problemi++;
+        e2_incerto++;
+        ripara = 0;
+    }
+
+    if (e2_carica_desc() != 0) return -1;
+
+    /* ! THE JOURNAL COMES FIRST. With needs_recovery set the bitmaps, the
+     * inodes, even the descriptors on disk may be older than the volume: all
+     * the rest of this check must look at the volume after the replay. */
+    if (e2_incompat & E2_INC_RECOVER) {
+        if (!ripara) {
+            printf("  ! il giornale ha delle modifiche da applicare: quello che\n");
+            printf("    segue guarda il disco com'e', e con -r puo' cambiare.\n");
+            problemi++;
+            e2_incerto++;
+        } else if (e2_giornale() != 0) {
+            printf("  ! il giornale non si riesce ad applicare: non tocco niente.\n");
+            problemi++;
+            e2_incerto++;
+            ripara = 0;
+        } else {
+            if (e2_carica_desc() != 0) return -1;
+            if (blkread(dev, E2_SUPER_OFF / SETT, 2, sb) < 0) return -1;
+            e2_incompat   = le32(sb + 96);
+            e2_liberi_b   = le32(sb + 12);
+            e2_liberi_i   = le32(sb + 16);
+        }
     }
 
     return 0;
@@ -1274,10 +1534,15 @@ static int potenza_di(unsigned int g, unsigned int base)
 
 static int gruppo_ha_backup(unsigned int g)
 {
+    if (e2_sparse2) return g == 0 || g == e2_backup[0] || g == e2_backup[1];
     if (!e2_sparse) return 1;
     if (g == 0 || g == 1) return 1;
     return potenza_di(g, 3u) || potenza_di(g, 5u) || potenza_di(g, 7u);
 }
+
+/* The last inode read, whole: e2_leggi_inode hands out the first 128 bytes,
+ * the sum covers all of it. */
+static unsigned char e2_ino_pieno[4096];
 
 /* Legge l'inode `num` (1-based) nel buffer dato. */
 static int e2_leggi_inode(unsigned int num, unsigned char *dst)
@@ -1289,10 +1554,7 @@ static int e2_leggi_inode(unsigned int num, unsigned char *dst)
 
     g   = (num - 1u) / e2_i_per_gruppo;
     idx = (num - 1u) % e2_i_per_gruppo;
-
-    if (e2_leggi_blocco(e2_desc_blocco + (g * 32u) / e2_dim_blocco, d) != 0)
-        return -1;
-    tab = le32(d + ((g * 32u) % e2_dim_blocco) + 8);
+    tab = le32(e2_desc(g) + 8);
 
     off    = idx * e2_dim_inode;
     blocco = tab + off / e2_dim_blocco;
@@ -1301,6 +1563,7 @@ static int e2_leggi_inode(unsigned int num, unsigned char *dst)
     {
         unsigned int k, base = off % e2_dim_blocco;
         for (k = 0; k < 128u; k++) dst[k] = d[base + k];
+        for (k = 0; k < e2_dim_inode; k++) e2_ino_pieno[k] = d[base + k];
     }
     return 0;
 }
@@ -1310,6 +1573,18 @@ static int e2_leggi_inode(unsigned int num, unsigned char *dst)
 /* Quanti blocchi sono stati attribuiti a QUALCUNO: serve a dire quanti ne
  * dichiara l'inode 1, senza contare due volte quelli gia' visti. */
 static unsigned int e2_blocchi_contati;
+
+static void e2_usa_blocco(unsigned int b, unsigned int ino);
+
+/* The block of extended attributes: several inodes may share one, so meeting
+ * it again is no double use. */
+static void e2_usa_attributi(unsigned int b, unsigned int ino)
+{
+    if (b == 0) return;
+    if (b < e2_n_blocchi && e2_bit(e2_blocchi_usati, b)) return;
+    e2_dove_cont = E2_DOVE_ESTESO;
+    e2_usa_blocco(b, ino);
+}
 
 static void e2_usa_blocco(unsigned int b, unsigned int ino)
 {
@@ -1348,7 +1623,13 @@ static void e2_usa_blocco(unsigned int b, unsigned int ino)
             printf("  ! (gli altri file danneggiati non li elenco)\n");
         problemi++;
 
-        if (e2_da_spostare_n < SPOSTARE_MAX) {
+        /* In an extent the block cannot be swapped by changing one pointer:
+         * the extent would have to be cut. It stays in the file, and out of
+         * the bad list too, or it would have two owners. */
+        if (e2_dove_cont == E2_DOVE_ESTESO) {
+            e2_blocchi_bad[b >> 3] &= (unsigned char)~(1u << (b & 7));
+            printf("    (sta in un extent: non lo sposto, va copiato altrove)\n");
+        } else if (e2_da_spostare_n < SPOSTARE_MAX) {
             e2_da_spostare[e2_da_spostare_n].ino         = ino;
             e2_da_spostare[e2_da_spostare_n].contenitore = e2_dove_cont;
             e2_da_spostare[e2_da_spostare_n].idx         = e2_dove_idx;
@@ -1378,7 +1659,7 @@ static void e2_usa_blocco(unsigned int b, unsigned int ino)
  * ============================================================================= */
 static unsigned char e2_ind1[4096], e2_ind2[4096], e2_ind3[4096];
 
-static void e2_percorri_blocchi(const unsigned char *ino_buf, unsigned int ino)
+static void e2_percorri_puntatori(const unsigned char *ino_buf, unsigned int ino)
 {
     unsigned int i, j, k, punt = e2_dim_blocco / 4u;
 
@@ -1463,6 +1744,425 @@ static void e2_percorri_blocchi(const unsigned char *ino_buf, unsigned int ino)
     }
 }
 
+/* =============================================================================
+ * EXTENTS
+ *
+ * i_block is no longer pointers but the root of a small tree: a 12-byte
+ * header (magic, entries, max, depth) and entries of 12 bytes. At depth 0
+ * they are runs (first logical block, length, first physical block), above
+ * they point to the next level. The length of a run allocated but not yet
+ * written has 32768 added.
+ *
+ * ! ONE BUFFER PER LEVEL: the walk comes back to a level after its child. A
+ * tree is at most 5 deep, and a deeper one is refused.
+ * ============================================================================= */
+#define E2_LIVELLI 6u
+static unsigned char e2_livello[E2_LIVELLI][4096];
+
+/* Header sound? Entries within the space it lives in. */
+static int e2_testa_ok(const unsigned char *p, unsigned int spazio)
+{
+    return le16(p) == E2_ESTESI_MAGIA && le16(p + 2) <= le16(p + 4) &&
+           12u + 12u * (unsigned int)le16(p + 2) <= spazio;
+}
+
+static void e2_percorri_estesi(const unsigned char *p, unsigned int spazio,
+                               unsigned int ino, unsigned int liv)
+{
+    unsigned int i, n, prof;
+
+    if (liv >= E2_LIVELLI || !e2_testa_ok(p, spazio)) {
+        printf("  ! inode %u: albero di extent rotto\n", ino);
+        problemi++;
+        e2_incerto++;
+        return;
+    }
+    n    = le16(p + 2);
+    prof = le16(p + 6);
+
+    for (i = 0; i < n; i++) {
+        const unsigned char *e = p + 12u + i * 12u;
+
+        e2_dove_cont = E2_DOVE_ESTESO;
+        if (prof == 0) {
+            unsigned int lung = le16(e + 4), primo = le32(e + 8), k;
+
+            if (lung > 32768u) lung -= 32768u;
+            if (le16(e + 6) != 0) {
+                printf("  ! inode %u: extent oltre 2^32 blocchi\n", ino);
+                problemi++;
+                e2_incerto++;
+                continue;
+            }
+            for (k = 0; k < lung; k++) {
+                e2_dove_cont = E2_DOVE_ESTESO;
+                e2_usa_blocco(primo + k, ino);
+            }
+        } else {
+            unsigned int b = le32(e + 4);
+
+            e2_usa_blocco(b, ino);
+            if (le16(e + 8) != 0 || e2_leggi_blocco(b, e2_livello[liv]) != 0) {
+                printf("  ! inode %u: blocco di extent %u illeggibile\n", ino, b);
+                problemi++;
+                e2_incerto++;
+                continue;
+            }
+            e2_percorri_estesi(e2_livello[liv], e2_dim_blocco, ino, liv + 1u);
+        }
+    }
+}
+
+/* Every block of an inode. Only regular files, directories and long symbolic
+ * links have blocks: a device keeps its numbers in i_block, a short link its
+ * text, and reading those as pointers makes up blocks that do not exist. */
+static void e2_percorri_blocchi(const unsigned char *ib, unsigned int ino)
+{
+    unsigned int tipo  = le16(ib) & E2_MODE_TIPO;
+    unsigned int flags = le32(ib + 32);
+
+    e2_usa_attributi(le32(ib + 104), ino);
+
+    if (tipo == 0x1000u || tipo == 0x2000u || tipo == 0x6000u || tipo == 0xC000u)
+        return;
+    if (flags & E2_FL_INLINE) return;
+    if (flags & E2_FL_EXTENTS) {
+        e2_percorri_estesi(ib + 40, 60u, ino, 0u);
+        return;
+    }
+    if (tipo == 0xA000u && le32(ib + 4) < 60u) return;
+    e2_percorri_puntatori(ib, ino);
+}
+
+/* Logical block `n` of an inode: its physical block, or 0 for a hole. Used
+ * for directories and the journal. Failing is counted: whoever asks cannot
+ * then claim to have seen everything. */
+static unsigned int e2_mappa(const unsigned char *ib, unsigned int n)
+{
+    static unsigned char m[4096];
+    unsigned int punt = e2_dim_blocco / 4u;
+
+    if (le32(ib + 32) & E2_FL_EXTENTS) {
+        const unsigned char *p = ib + 40;
+        unsigned int spazio = 60u, liv;
+
+        for (liv = 0; liv < E2_LIVELLI; liv++) {
+            unsigned int i, q;
+
+            if (!e2_testa_ok(p, spazio)) break;
+            q = le16(p + 2);
+
+            if (le16(p + 6) == 0) {
+                for (i = 0; i < q; i++) {
+                    const unsigned char *e = p + 12u + i * 12u;
+                    unsigned int lb = le32(e), lung = le16(e + 4), scritto = 1u;
+
+                    if (lung > 32768u) { lung -= 32768u; scritto = 0; }
+                    if (n >= lb && n - lb < lung)
+                        return scritto ? le32(e + 8) + (n - lb) : 0u;
+                }
+                return 0;
+            }
+
+            /* the last index entry that starts at or before n */
+            {
+                const unsigned char *scelto = NULL;
+
+                for (i = 0; i < q; i++) {
+                    const unsigned char *x = p + 12u + i * 12u;
+                    if (le32(x) <= n) scelto = x;
+                }
+                if (scelto == NULL) return 0;
+                if (e2_leggi_blocco(le32(scelto + 4), m) != 0) break;
+                p = m;
+                spazio = e2_dim_blocco;
+            }
+        }
+        e2_incerto++;
+        return 0;
+    }
+
+    if (n < 12u) return le32(ib + 40 + n * 4u);
+    n -= 12u;
+
+    if (n < punt) {
+        unsigned int b = le32(ib + 40 + 12u * 4u);
+        if (b == 0) return 0;
+        if (e2_leggi_blocco(b, m) != 0) { e2_incerto++; return 0; }
+        return le32(m + n * 4u);
+    }
+    n -= punt;
+
+    if (n < punt * punt) {
+        unsigned int b = le32(ib + 40 + 13u * 4u);
+        if (b == 0) return 0;
+        if (e2_leggi_blocco(b, m) != 0) { e2_incerto++; return 0; }
+        b = le32(m + (n / punt) * 4u);
+        if (b == 0) return 0;
+        if (e2_leggi_blocco(b, m) != 0) { e2_incerto++; return 0; }
+        return le32(m + (n % punt) * 4u);
+    }
+    n -= punt * punt;
+
+    {
+        unsigned int b = le32(ib + 40 + 14u * 4u);
+        if (b == 0) return 0;
+        if (e2_leggi_blocco(b, m) != 0) { e2_incerto++; return 0; }
+        b = le32(m + (n / (punt * punt)) * 4u);
+        if (b == 0) return 0;
+        if (e2_leggi_blocco(b, m) != 0) { e2_incerto++; return 0; }
+        b = le32(m + ((n / punt) % punt) * 4u);
+        if (b == 0) return 0;
+        if (e2_leggi_blocco(b, m) != 0) { e2_incerto++; return 0; }
+        return le32(m + (n % punt) * 4u);
+    }
+}
+
+/* =============================================================================
+ * THE JOURNAL: jbd2's three passes, as kernel/moduli/ext4/giornale.c
+ *
+ *   SCAN    from s_start, as long as the sequence is the expected one: the
+ *           last committed transaction + 1 is where it ends;
+ *   REVOKE  a block revoked by transaction R is not replayed from any
+ *           transaction up to R: it was freed, and may hold other data now;
+ *   REPLAY  every block of every committed transaction, in order.
+ * Then the journal is empty and needs_recovery goes off. CSUM_V3 is verified;
+ * the older checksums and fast commits are refused, as in the module.
+ * ============================================================================= */
+#define GIO_MAGIA        0xC03B3998u
+#define GIO_DESCRITTORE  1u
+#define GIO_COMMIT       2u
+#define GIO_REVOCA       5u
+#define GIO_INC_REVOCA   0x01u
+#define GIO_INC_64BIT    0x02u
+#define GIO_INC_CSUM_V3  0x10u
+#define GIO_TAG_ESCAPE   0x01u
+#define GIO_TAG_UUID     0x02u
+#define GIO_TAG_ULTIMO   0x08u
+
+typedef struct { unsigned int blk, seq; } E2Revoca;
+
+static unsigned char e2_gio_b[4096], e2_gio_d[4096], e2_gio_ib[128];
+static unsigned int  e2_gio_max, e2_gio_primo, e2_gio_inc, e2_gio_tag, e2_gio_somme;
+static unsigned int  e2_gio_seme, e2_rev_conta, e2_rev_n, e2_gio_copie;
+static E2Revoca     *e2_rev;
+
+static int e2_gio_leggi(unsigned int log, unsigned char *dst)
+{
+    unsigned int f = e2_mappa(e2_gio_ib, log);
+
+    return (f == 0) ? -1 : e2_leggi_blocco(f, dst);
+}
+
+static unsigned int e2_gio_avanti(unsigned int log)
+{
+    return (++log >= e2_gio_max) ? e2_gio_primo : log;
+}
+
+static unsigned int e2_gio_somma(const unsigned char *b, unsigned int buco)
+{
+    unsigned int c = crc32c(e2_gio_seme, b, buco);
+
+    c = crc32c(c, "\0\0\0\0", 4);
+    return crc32c(c, b + buco + 4u, e2_dim_blocco - buco - 4u);
+}
+
+static unsigned int e2_gio_somma_commit(const unsigned char *b)
+{
+    unsigned int c = crc32c(e2_gio_seme, b, 0x0Cu);
+
+    c = crc32c(c, "\0\0", 2);
+    c = crc32c(c, b + 0x0E, 2);
+    c = crc32c(c, "\0\0\0\0", 4);
+    return crc32c(c, b + 0x14, e2_dim_blocco - 0x14u);
+}
+
+static int e2_gio_revocato(unsigned int blk, unsigned int seq)
+{
+    unsigned int i;
+
+    for (i = 0; i < e2_rev_n; i++)
+        if (e2_rev[i].blk == blk) return (int)(seq - e2_rev[i].seq) <= 0;
+    return 0;
+}
+
+static void e2_gio_revoca(unsigned int blk, unsigned int seq)
+{
+    unsigned int i;
+
+    for (i = 0; i < e2_rev_n; i++)
+        if (e2_rev[i].blk == blk) {
+            if ((int)(seq - e2_rev[i].seq) > 0) e2_rev[i].seq = seq;
+            return;
+        }
+    if (e2_rev_n < e2_rev_conta) {
+        e2_rev[e2_rev_n].blk = blk;
+        e2_rev[e2_rev_n].seq = seq;
+        e2_rev_n++;
+    }
+}
+
+/* 0 SCAN, 1 REVOKE, 2 REPLAY. `fine` is written by SCAN, read by the others. */
+static int e2_gio_passo(int quale, unsigned int inizio, unsigned int seq0,
+                        unsigned int *fine)
+{
+    unsigned int pos = inizio, seq = seq0, giri = 0;
+    unsigned int dim_rev = (e2_gio_inc & GIO_INC_64BIT) ? 8u : 4u;
+
+    for (;;) {
+        unsigned int tipo;
+
+        if (quale != 0 && seq == *fine) break;
+        if (++giri > e2_gio_max) break;
+        if (e2_gio_leggi(pos, e2_gio_b) != 0) return -1;
+        if (e2_be32(e2_gio_b) != GIO_MAGIA || e2_be32(e2_gio_b + 8) != seq) break;
+        tipo = e2_be32(e2_gio_b + 4);
+
+        if (tipo == GIO_DESCRITTORE) {
+            unsigned int off = 12u, qui = e2_gio_avanti(pos);
+            unsigned int lim = e2_dim_blocco - (e2_gio_somme ? 4u : 0u);
+
+            if (e2_gio_somme && e2_be32(e2_gio_b + e2_dim_blocco - 4u) !=
+                                e2_gio_somma(e2_gio_b, e2_dim_blocco - 4u))
+                break;
+
+            while (off + e2_gio_tag <= lim) {
+                unsigned int blk   = e2_be32(e2_gio_b + off);
+                unsigned int flags = ((unsigned int)e2_gio_b[off + 6] << 8) |
+                                     e2_gio_b[off + 7];
+
+                if ((e2_gio_inc & GIO_INC_64BIT) && e2_be32(e2_gio_b + off + 8) != 0)
+                    return -1;
+                if (quale == 2 && !e2_gio_revocato(blk, seq)) {
+                    unsigned int sett = e2_dim_blocco / SETT;
+
+                    if (e2_gio_leggi(qui, e2_gio_d) != 0) return -1;
+                    if (e2_gio_somme) {
+                        unsigned char s[4];
+                        unsigned int  c;
+
+                        e2_pbe32(s, seq);
+                        c = crc32c(crc32c(e2_gio_seme, s, 4), e2_gio_d, e2_dim_blocco);
+                        if (e2_be32(e2_gio_b + off + 12) != c) return -1;
+                    }
+                    if (flags & GIO_TAG_ESCAPE) e2_pbe32(e2_gio_d, GIO_MAGIA);
+
+                    /* ! BLOCK 0 IS LEGAL ABOVE 1 KB: it holds the superblock
+                     * and Linux journals it. Hence no e2_scrivi_blocco. */
+                    if (blk >= e2_n_blocchi || (blk == 0 && e2_dim_blocco == 1024u))
+                        return -1;
+                    if (blkwrite(dev, blk * sett, sett, e2_gio_d) != (int)sett)
+                        return -1;
+                    e2_gio_copie++;
+                }
+                qui = e2_gio_avanti(qui);
+                off += e2_gio_tag;
+                if (!(flags & GIO_TAG_UUID)) off += 16u;
+                if (flags & GIO_TAG_ULTIMO) break;
+            }
+            pos = qui;
+            continue;
+        }
+        if (tipo == GIO_COMMIT) {
+            if (e2_gio_somme && e2_be32(e2_gio_b + 0x10) != e2_gio_somma_commit(e2_gio_b))
+                break;
+            seq++;
+            pos = e2_gio_avanti(pos);
+            continue;
+        }
+        if (tipo == GIO_REVOCA) {
+            unsigned int usati = e2_be32(e2_gio_b + 12), off = 16u;
+
+            if (usati > e2_dim_blocco - (e2_gio_somme ? 4u : 0u))
+                usati = e2_dim_blocco - (e2_gio_somme ? 4u : 0u);
+            if (quale == 0 && usati > off) e2_rev_conta += (usati - off) / dim_rev;
+            if (quale == 1)
+                for (; off + dim_rev <= usati; off += dim_rev)
+                    e2_gio_revoca(e2_be32(e2_gio_b + off + dim_rev - 4u), seq);
+            pos = e2_gio_avanti(pos);
+            continue;
+        }
+        break;
+    }
+    if (quale == 0) *fine = seq;
+    return 0;
+}
+
+static int e2_giornale(void)
+{
+    unsigned char sb[SETT * 2];
+    unsigned int  ino = e2_speciale[0], tipo, inizio, seq, fine, compat_gio;
+
+    printf("\nGiornale\n");
+
+    if (ino == 0 || e2_leggi_inode(ino, e2_gio_ib) != 0 ||
+        e2_gio_leggi(0u, e2_gio_b) != 0)
+        return -1;
+
+    tipo = e2_be32(e2_gio_b + 4);
+    if (e2_be32(e2_gio_b) != GIO_MAGIA || (tipo != 3u && tipo != 4u)) return -1;
+
+    e2_gio_max   = e2_be32(e2_gio_b + 16);
+    e2_gio_primo = e2_be32(e2_gio_b + 20);
+    seq          = e2_be32(e2_gio_b + 24);
+    inizio       = e2_be32(e2_gio_b + 28);
+    compat_gio   = (tipo == 4u) ? e2_be32(e2_gio_b + 36) : 0u;
+    e2_gio_inc   = (tipo == 4u) ? e2_be32(e2_gio_b + 40) : 0u;
+
+    if (compat_gio & 0x01u) return -1;                 /* the v1 CHECKSUM */
+    if (e2_gio_inc & ~(unsigned int)(GIO_INC_REVOCA | GIO_INC_64BIT | GIO_INC_CSUM_V3)) {
+        printf("  ! formato del giornale che non conosco (0x%x)\n", e2_gio_inc);
+        return -1;
+    }
+    if (e2_gio_primo == 0 || e2_gio_max == 0) return -1;
+
+    e2_gio_somme = (e2_gio_inc & GIO_INC_CSUM_V3) != 0;
+    e2_gio_tag   = e2_gio_somme ? 16u : (e2_gio_inc & GIO_INC_64BIT) ? 12u : 8u;
+    e2_gio_seme  = crc32c(~0u, e2_gio_b + 48, 16);
+
+    if (inizio != 0) {
+        e2_rev_conta = 0;
+        fine = seq;
+        if (e2_gio_passo(0, inizio, seq, &fine) != 0) return -1;
+
+        if (fine != seq) {
+            e2_rev_n = 0;
+            e2_rev = (E2Revoca *)calloc(e2_rev_conta + 1u, sizeof(E2Revoca));
+            if (e2_rev == NULL) return -1;
+            if (e2_gio_passo(1, inizio, seq, &fine) != 0) return -1;
+            e2_gio_copie = 0;
+            if (e2_gio_passo(2, inizio, seq, &fine) != 0) return -1;
+            free(e2_rev);
+            e2_rev = NULL;
+            seq = fine;
+        }
+    }
+
+    /* the journal is empty again... */
+    if (e2_gio_leggi(0u, e2_gio_b) != 0) return -1;
+    e2_pbe32(e2_gio_b + 24, seq);
+    e2_pbe32(e2_gio_b + 28, 0u);
+    if (e2_gio_somme) {
+        unsigned int c = crc32c(~0u, e2_gio_b, 0xFCu);
+
+        c = crc32c(c, "\0\0\0\0", 4);
+        e2_pbe32(e2_gio_b + 0xFC, crc32c(c, e2_gio_b + 0x100, 1024u - 0x100u));
+    }
+    if (e2_scrivi_blocco(e2_mappa(e2_gio_ib, 0u), e2_gio_b) != 0) return -1;
+
+    /* ...and only then the volume says so. The superblock is read again: the
+     * replay may have just written it. */
+    if (blkread(dev, E2_SUPER_OFF / SETT, 2, sb) < 0) return -1;
+    e2_p32(sb + 96, le32(sb + 96) & ~(unsigned int)E2_INC_RECOVER);
+    if (e2_somme) e2_p32(sb + 0x3FC, crc32c(~0u, sb, 0x3FCu));
+    if (blkwrite(dev, E2_SUPER_OFF / SETT, 2, sb) < 0) return -1;
+
+    printf("  + giornale applicato: %u blocchi rimessi al loro posto\n", e2_gio_copie);
+    corretti++;
+    problemi++;
+    return 0;
+}
+
 static void e2_controlla_dir(unsigned int ino, unsigned int padre,
                              const char *percorso, int prof);
 
@@ -1524,6 +2224,18 @@ static void e2_voce(const unsigned char *v, unsigned int vino,
         return;
     }
 
+    if (e2_somme) {
+        unsigned int lo = le16(e2_ino_pieno + 0x7C), hi = le16(e2_ino_pieno + 0x82);
+        int alto = e2_dim_inode > 128u && le16(e2_ino_pieno + 0x80) >= 4u;
+        unsigned int c = e2_somma_inode(e2_ino_pieno, vino);
+
+        if (lo != (c & 0xFFFFu) || (alto && hi != (c >> 16))) {
+            if (e2_somme_ko < 10u)
+                printf("  ! %s: la somma dell'inode %u e' sbagliata\n", pieno, vino);
+            e2_somme_ko++;
+        }
+    }
+
     e2_nome_corrente = pieno;
     e2_percorri_blocchi(ib, vino);
     e2_nome_corrente = "";
@@ -1544,20 +2256,23 @@ static void e2_controlla_dir(unsigned int ino, unsigned int padre,
         printf("  ! %s: annidamento oltre %d livelli, non scendo oltre\n",
                percorso[0] ? percorso : "/", MAX_PROF);
         problemi++;
+        e2_incerto++;      /* what is below was not seen */
         return;
     }
 
-    if (e2_leggi_inode(ino, ib) != 0) return;
+    if (e2_leggi_inode(ino, ib) != 0) { e2_incerto++; return; }
     dim = le32(ib + 4);
 
     for (off = 0; off < dim; off += e2_dim_blocco) {
         unsigned int  idx = off / e2_dim_blocco, b, p = 0;
         unsigned char blocco[4096];         /* ! LOCALE: vedi sopra */
 
-        if (idx < 12u)      b = le32(ib + 40 + idx * 4);
-        else                break;          /* directory oltre 12 blocchi */
+        /* ! A DIRECTORY CAN BE ANY SIZE. This stopped at the twelfth block,
+         * silently: on a big directory the files beyond it were not seen, and
+         * -r then declared their blocks free. */
+        b = e2_mappa(ib, idx);
         if (b == 0) continue;
-        if (e2_leggi_blocco(b, blocco) != 0) continue;
+        if (e2_leggi_blocco(b, blocco) != 0) { e2_incerto++; continue; }
 
         while (p + 8u <= e2_dim_blocco) {
             unsigned int vino = le32(blocco + p);
@@ -1572,6 +2287,7 @@ static void e2_controlla_dir(unsigned int ino, unsigned int padre,
                 printf("  ! %s: voce di directory con rec_len %u a offset %u\n",
                        percorso[0] ? percorso : "/", rec, p);
                 problemi++;
+                e2_incerto++;  /* the entries after it were not seen */
                 break;
             }
 
@@ -1690,10 +2406,7 @@ static int e2_scrivi_inode(unsigned int num, const unsigned char *src)
 
     g   = (num - 1u) / e2_i_per_gruppo;
     idx = (num - 1u) % e2_i_per_gruppo;
-
-    if (e2_leggi_blocco(e2_desc_blocco + (g * 32u) / e2_dim_blocco, d) != 0)
-        return -1;
-    tab = le32(d + ((g * 32u) % e2_dim_blocco) + 8);
+    tab = le32(e2_desc(g) + 8);
 
     off    = idx * e2_dim_inode;
     blocco = tab + off / e2_dim_blocco;
@@ -1701,6 +2414,7 @@ static int e2_scrivi_inode(unsigned int num, const unsigned char *src)
 
     if (e2_leggi_blocco(blocco, d) != 0) return -1;
     for (k = 0; k < 128u; k++) d[base + k] = src[k];
+    if (e2_somme) e2_somma_inode(d + base, num);
     return e2_scrivi_blocco(blocco, d);
 }
 
@@ -1948,19 +2662,20 @@ static int e2_marca_difettosi(void)
 
 static int e2_ripara_bitmap(void)
 {
-    unsigned char d[4096], bm[4096], sb[SETT * 2];
+    unsigned char bm[4096], sb[SETT * 2];
     unsigned int  g, i, tot_lib_b = 0, tot_lib_i = 0, scritte = 0;
+    int           sbagliato = 0;
 
     for (g = 0; g < e2_n_gruppi; g++) {
-        unsigned int off = g * 32u;
-        unsigned int dblk = e2_desc_blocco + off / e2_dim_blocco;
-        unsigned int dpos = off % e2_dim_blocco;
+        unsigned char *d = e2_desc(g);
         unsigned int b_bm, i_bm, n_b, lib_b = 0, lib_i = 0, dirs = 0;
+        unsigned int flags = (e2_somme || e2_gdtsomma) ? le16(d + 18) : 0u;
+        unsigned int ultimo_ino = 0, salta_i;
+        unsigned int c;
 
-        if (e2_leggi_blocco(dblk, d) != 0) continue;
-        b_bm = le32(d + dpos + 0);
-        i_bm = le32(d + dpos + 4);
-        if (b_bm >= e2_n_blocchi || i_bm >= e2_n_blocchi) continue;
+        b_bm = le32(d + 0);
+        i_bm = le32(d + 4);
+        if (b_bm >= e2_n_blocchi || i_bm >= e2_n_blocchi) { sbagliato = 1; continue; }
 
         n_b = e2_b_per_gruppo;
         if (g == e2_n_gruppi - 1u) {
@@ -1982,9 +2697,16 @@ static int e2_ripara_bitmap(void)
             else                                   lib_b++;
         }
         /* ! OLTRE L'ULTIMO DEL GRUPPO I BIT VALGONO 1, in tutt'e due le
-         * bitmap: e2fsck lo chiama «padding» e lo vuole cosi'. */
+         * bitmap: e2fsck lo chiama <<padding>> e lo vuole cosi'. */
         for (i = e2_b_per_gruppo; i < e2_dim_blocco * 8u; i++) e2_segna(bm, i);
         if (e2_scrivi_blocco(b_bm, bm) == 0) scritte++;
+        else sbagliato = 1;
+        flags &= ~(unsigned int)E2_BG_BLOCK_UNINIT;     /* now it is real */
+        if (e2_somme) {
+            c = crc32c(e2_seme, bm, e2_b_per_gruppo / 8u);
+            e2_p16(d + 0x18, c & 0xFFFFu);
+            if (e2_dim_desc >= 0x3Au) e2_p16(d + 0x38, c >> 16);
+        }
 
         /* --- bitmap degli inode --- */
         for (i = 0; i < e2_dim_blocco; i++) bm[i] = 0;
@@ -1999,38 +2721,73 @@ static int e2_ripara_bitmap(void)
              * sopra il superblocco di riserva. */
             if (num < e2_primo_inode || e2_bit(e2_inode_visti, num)) {
                 e2_segna(bm, i);
+                ultimo_ino = i + 1u;
                 if (e2_bit(e2_inode_dir, num)) dirs++;
             } else {
                 lib_i++;
             }
         }
         for (i = e2_i_per_gruppo; i < e2_dim_blocco * 8u; i++) e2_segna(bm, i);
-        if (e2_scrivi_blocco(i_bm, bm) == 0) scritte++;
+
+        /* ! AN EMPTY GROUP MARKED INODE_UNINIT STAYS SO. Its inode table may
+         * never have been zeroed: making the bitmap real would hand garbage
+         * to whoever looks at it. Nothing is lost, it is all free. */
+        salta_i = (flags & E2_BG_INODE_UNINIT) && ultimo_ino == 0;
+        if (!salta_i) {
+            if (e2_scrivi_blocco(i_bm, bm) == 0) scritte++;
+            else sbagliato = 1;
+            flags &= ~(unsigned int)E2_BG_INODE_UNINIT;
+            if (e2_somme) {
+                c = crc32c(e2_seme, bm, e2_i_per_gruppo / 8u);
+                e2_p16(d + 0x1A, c & 0xFFFFu);
+                if (e2_dim_desc >= 0x3Cu) e2_p16(d + 0x3A, c >> 16);
+            }
+        }
 
         /* --- i conteggi del descrittore --- */
-        d[dpos + 12] = (unsigned char)lib_b;
-        d[dpos + 13] = (unsigned char)(lib_b >> 8);
-        d[dpos + 14] = (unsigned char)lib_i;
-        d[dpos + 15] = (unsigned char)(lib_i >> 8);
-        d[dpos + 16] = (unsigned char)dirs;
-        d[dpos + 17] = (unsigned char)(dirs >> 8);
-        e2_scrivi_blocco(dblk, d);
+        e2_p16(d + 12, lib_b & 0xFFFFu);
+        e2_p16(d + 14, lib_i & 0xFFFFu);
+        e2_p16(d + 16, dirs & 0xFFFFu);
+        if (e2_dim_desc >= 64u) {
+            e2_p16(d + 0x2C, lib_b >> 16);
+            e2_p16(d + 0x2E, lib_i >> 16);
+            e2_p16(d + 0x30, dirs >> 16);
+        }
+
+        if (e2_somme || e2_gdtsomma) {
+            /* itable_unused may only shrink: past it nothing is ever read */
+            unsigned int inus = le16(d + 28);
+
+            if (e2_dim_desc >= 64u) inus |= (unsigned int)le16(d + 0x32) << 16;
+            if (inus > e2_i_per_gruppo - ultimo_ino) inus = e2_i_per_gruppo - ultimo_ino;
+            e2_p16(d + 28, inus & 0xFFFFu);
+            if (e2_dim_desc >= 64u) e2_p16(d + 0x32, inus >> 16);
+            e2_p16(d + 18, flags);
+            e2_p16(d + 30, e2_somma_desc(g));
+        }
 
         tot_lib_b += lib_b;
         tot_lib_i += lib_i;
     }
 
+    for (i = 0; i < e2_desc_quanti; i++)
+        if (e2_scrivi_blocco(e2_desc_blocco + i, e2_gdt + i * e2_dim_blocco) != 0)
+            sbagliato = 1;
+
     /* --- i conteggi del superblocco --- */
     if (blkread(dev, E2_SUPER_OFF / SETT, 2, sb) >= 0) {
-        sb[12] = (unsigned char)tot_lib_b;
-        sb[13] = (unsigned char)(tot_lib_b >> 8);
-        sb[14] = (unsigned char)(tot_lib_b >> 16);
-        sb[15] = (unsigned char)(tot_lib_b >> 24);
-        sb[16] = (unsigned char)tot_lib_i;
-        sb[17] = (unsigned char)(tot_lib_i >> 8);
-        sb[18] = (unsigned char)(tot_lib_i >> 16);
-        sb[19] = (unsigned char)(tot_lib_i >> 24);
-        if (blkwrite(dev, E2_SUPER_OFF / SETT, 2, sb) >= 0) {
+        e2_p32(sb + 12, tot_lib_b);
+        e2_p32(sb + 16, tot_lib_i);
+
+        /* The orphan list: its inodes were freed above with everything no
+         * directory names, and a list pointing at them would be followed at
+         * the next mount. */
+        if (le32(sb + 232) != 0) {
+            printf("  + lista degli orfani svuotata\n");
+            e2_p32(sb + 232, 0u);
+        }
+        if (e2_somme) e2_p32(sb + 0x3FC, crc32c(~0u, sb, 0x3FCu));
+        if (!sbagliato && blkwrite(dev, E2_SUPER_OFF / SETT, 2, sb) >= 0) {
             printf("  + bitmap e conteggi riscritti (%u bitmap): "
                    "%u blocchi e %u inode liberi\n",
                    scritte, tot_lib_b, tot_lib_i);
@@ -2038,15 +2795,16 @@ static int e2_ripara_bitmap(void)
         }
     }
 
-    printf("  ! la riscrittura non e' riuscita: il volume e' rimasto com'era\n");
+    printf("  ! la riscrittura non e' riuscita del tutto: rilancia il controllo\n");
     return -1;
 }
 
 /* Confronta le bitmap del volume con quelle appena costruite. */
 static void e2_controlla_bitmap(void)
 {
-    unsigned char d[4096], bm[4096];
+    unsigned char bm[4096];
     unsigned int  g, i, diff_b = 0, diff_i = 0, usati_veri = 0, ino_veri = 0;
+    unsigned int  desc_ko = 0, somme_ko = 0, riempimento = 0;
     /* ! QUANTI PROBLEMI ERANO GIA' NOTI PRIMA DI QUESTO GIRO. Una sola
      * riscrittura delle bitmap ne sana PIU' DI UNO â€” le bitmap dei
      * blocchi, quelle degli inode, i conteggi dei descrittori e quelli del
@@ -2058,22 +2816,30 @@ static void e2_controlla_bitmap(void)
     printf("\nBitmap dei blocchi e degli inode\n");
 
     for (g = 0; g < e2_n_gruppi; g++) {
-        unsigned int off = g * 32u;
-        unsigned int b_bm, i_bm, n_b, n_i;
+        const unsigned char *d = e2_desc(g);
+        unsigned int b_bm, i_bm, n_b, n_i, lib_b = 0, lib_i = 0, d_b, d_i;
+        unsigned int flags = (e2_somme || e2_gdtsomma) ? le16(d + 18) : 0u;
 
-        if (e2_leggi_blocco(e2_desc_blocco + off / e2_dim_blocco, d) != 0) continue;
-        b_bm = le32(d + (off % e2_dim_blocco) + 0);
-        i_bm = le32(d + (off % e2_dim_blocco) + 4);
+        b_bm = le32(d + 0);
+        i_bm = le32(d + 4);
 
-        /* ! La bitmap di un gruppo deve stare DENTRO quel gruppo: un
-         * numero fuori intervallo non e' un dettaglio, e' il segno che il
-         * descrittore non e' un descrittore. */
+        /* ! La bitmap di un gruppo deve stare DENTRO il volume: un numero
+         * fuori intervallo non e' un dettaglio, e' il segno che il
+         * descrittore non e' un descrittore. Con flex_bg non sta per forza
+         * nel suo gruppo. */
         if (b_bm < e2_primo_dato || b_bm >= e2_n_blocchi ||
             i_bm < e2_primo_dato || i_bm >= e2_n_blocchi) {
             printf("  ! gruppo %u: bitmap a %u/%u, fuori dal volume\n",
                    g, b_bm, i_bm);
             problemi++;
+            e2_incerto++;
             continue;
+        }
+
+        if ((e2_somme || e2_gdtsomma) && le16(d + 30) != e2_somma_desc(g)) {
+            if (somme_ko < 10u)
+                printf("  ! gruppo %u: la somma del descrittore e' sbagliata\n", g);
+            somme_ko++;
         }
 
         n_b = e2_b_per_gruppo;
@@ -2084,24 +2850,60 @@ static void e2_controlla_bitmap(void)
         }
         n_i = e2_i_per_gruppo;
 
-        if (e2_leggi_blocco(b_bm, bm) == 0) {
+        /* ! A GROUP MARKED UNINIT HAS NO BITMAP ON DISK: what is there means
+         * nothing, and the bitmap it stands for holds its metadata alone. */
+        if ((flags & E2_BG_BLOCK_UNINIT) || e2_leggi_blocco(b_bm, bm) == 0) {
+            if (!(flags & E2_BG_BLOCK_UNINIT) && e2_somme) {
+                unsigned int c = crc32c(e2_seme, bm, e2_b_per_gruppo / 8u);
+                unsigned int atteso = le16(d + 0x18);
+
+                if (e2_dim_desc >= 0x3Au) atteso |= (unsigned int)le16(d + 0x38) << 16;
+                else                      c &= 0xFFFFu;
+                if (atteso != c) {
+                    if (somme_ko < 10u)
+                        printf("  ! gruppo %u: la somma della bitmap dei blocchi "
+                               "e' sbagliata\n", g);
+                    somme_ko++;
+                }
+            }
             for (i = 0; i < n_b; i++) {
                 unsigned int blocco = e2_primo_dato + g * e2_b_per_gruppo + i;
                 int nel_volume = e2_bit(e2_blocchi_usati, blocco);
-                int nella_bm   = e2_bit(bm, i);
+                int nella_bm   = (flags & E2_BG_BLOCK_UNINIT) ? e2_bit(e2_meta, blocco)
+                                                              : e2_bit(bm, i);
 
                 if (nel_volume) usati_veri++;
+                else            lib_b++;
                 if (nel_volume != nella_bm) diff_b++;
             }
+            if (!(flags & E2_BG_BLOCK_UNINIT))
+                for (i = n_b; i < e2_dim_blocco * 8u; i++)
+                    if (!e2_bit(bm, i)) { riempimento++; break; }
+        } else {
+            e2_incerto++;
         }
 
-        if (e2_leggi_blocco(i_bm, bm) == 0) {
+        if ((flags & E2_BG_INODE_UNINIT) || e2_leggi_blocco(i_bm, bm) == 0) {
+            if (!(flags & E2_BG_INODE_UNINIT) && e2_somme) {
+                unsigned int c = crc32c(e2_seme, bm, e2_i_per_gruppo / 8u);
+                unsigned int atteso = le16(d + 0x1A);
+
+                if (e2_dim_desc >= 0x3Cu) atteso |= (unsigned int)le16(d + 0x3A) << 16;
+                else                      c &= 0xFFFFu;
+                if (atteso != c) {
+                    if (somme_ko < 10u)
+                        printf("  ! gruppo %u: la somma della bitmap degli inode "
+                               "e' sbagliata\n", g);
+                    somme_ko++;
+                }
+            }
             for (i = 0; i < n_i; i++) {
                 unsigned int num = g * e2_i_per_gruppo + i + 1u;
                 int visto_qui = e2_bit(e2_inode_visti, num);
-                int nella_bm  = e2_bit(bm, i);
+                int nella_bm  = (flags & E2_BG_INODE_UNINIT) ? 0 : e2_bit(bm, i);
 
-                if (visto_qui) ino_veri++;
+                if (visto_qui || num < e2_primo_inode) ino_veri++;
+                else                                   lib_i++;
                 /* ! Gli inode riservati (1..primo_inode-1) sono occupati
                  * per definizione e non compaiono in nessuna directory:
                  * confrontarli con "visto" darebbe una differenza su ogni
@@ -2109,7 +2911,35 @@ static void e2_controlla_bitmap(void)
                 if (num < e2_primo_inode) continue;
                 if (visto_qui != nella_bm) diff_i++;
             }
+            if (!(flags & E2_BG_INODE_UNINIT))
+                for (i = n_i; i < e2_dim_blocco * 8u; i++)
+                    if (!e2_bit(bm, i)) { riempimento++; break; }
+        } else {
+            e2_incerto++;
         }
+
+        d_b = le16(d + 12);
+        d_i = le16(d + 14);
+        if (e2_dim_desc >= 64u) {
+            d_b |= (unsigned int)le16(d + 0x2C) << 16;
+            d_i |= (unsigned int)le16(d + 0x2E) << 16;
+        }
+        if (d_b != lib_b || d_i != lib_i) desc_ko++;
+    }
+
+    if (somme_ko) {
+        printf("  ! %u somme sbagliate tra descrittori e bitmap\n", somme_ko);
+        problemi++;
+    }
+    if (riempimento) {
+        printf("  ! %u bitmap: i bit oltre la fine del gruppo non sono a uno\n",
+               riempimento);
+        problemi++;
+    }
+    if (desc_ko) {
+        printf("  ! %u gruppi: il descrittore conta i liberi in modo sbagliato\n",
+               desc_ko);
+        problemi++;
     }
 
     /* --- prima si RIFERISCE tutto, poi si ripara una volta sola --------- */
@@ -2132,9 +2962,14 @@ static void e2_controlla_bitmap(void)
                    e2_liberi_b, liberi_veri);
             problemi++;
         }
+        if (e2_liberi_i != e2_n_inode - ino_veri) {
+            printf("  ! il superblocco dichiara %u inode liberi, ne conto %u\n",
+                   e2_liberi_i, e2_n_inode - ino_veri);
+            problemi++;
+        }
     }
 
-    if (problemi == prima) {
+    if (problemi == prima && e2_riscrivere == 0) {
         printf("  = le bitmap e i conteggi corrispondono a cio' che i file "
                "usano davvero\n");
         return;
@@ -2162,7 +2997,7 @@ static void e2_controlla_bitmap(void)
         return;
     }
 
-    if (e2_ripara_bitmap() == 0) corretti += (problemi - prima);
+    if (e2_ripara_bitmap() == 0) corretti += (problemi - prima) + e2_riscrivere;
 }
 
 /* I conteggi dei collegamenti trovati contro quelli dichiarati. */
@@ -2173,8 +3008,15 @@ static void e2_controlla_link(void)
 
     printf("\nConteggi dei collegamenti\n");
 
-    for (i = 1; i <= e2_n_inode; i++) {
-        unsigned int dichiarato;
+    /* ! From the first ordinary inode on: the reserved ones and the special
+     * ones are named by no directory, so "1 link, 0 found" would appear on
+     * every ext3. */
+    for (i = e2_primo_inode; i <= e2_n_inode; i++) {
+        unsigned int dichiarato, k, speciale = 0;
+
+        for (k = 0; k < E2_SPECIALI; k++)
+            if (e2_speciale[k] == i) speciale = 1;
+        if (speciale) continue;
 
         if (!e2_bit(e2_inode_visti, i)) continue;
         if (e2_leggi_inode(i, ib) != 0) continue;
@@ -2213,13 +3055,14 @@ static void e2_controlla(void)
     e2_inode_visti   = (unsigned char *)calloc(ib, 1);
     e2_inode_dir     = (unsigned char *)calloc(ib, 1);
     e2_link_conta    = (unsigned short *)calloc(e2_n_inode + 2u, 2);
+    e2_meta          = (unsigned char *)calloc(bb, 1);
     e2_blocchi_bad   = scansiona ? (unsigned char *)calloc(bb, 1) : NULL;
     e2_bad_n = e2_bad_in_uso = 0;
     e2_blocchi_contati = 0;
     e2_da_spostare_n = 0;
 
     if (e2_blocchi_usati == NULL || e2_inode_visti == NULL ||
-        e2_inode_dir == NULL || e2_link_conta == NULL ||
+        e2_inode_dir == NULL || e2_link_conta == NULL || e2_meta == NULL ||
         (scansiona && e2_blocchi_bad == NULL)) {
         printf("\n  ! memoria insufficiente per le mappe di %u blocchi e "
                "%u inode\n", e2_n_blocchi, e2_n_inode);
@@ -2234,7 +3077,6 @@ static void e2_controlla(void)
      * bitmap e tabelle degli inode. Non appartengono a nessun file, e
      * senza marcarli risulterebbero tutti "liberi ma occupati". */
     {
-        unsigned char d[4096];
         unsigned int  g, b;
 
         for (b = 0; b < e2_primo_dato + 1u && b < e2_n_blocchi; b++)
@@ -2256,7 +3098,8 @@ static void e2_controlla(void)
             e2_usa_blocco(e2_desc_blocco + e2_desc_quanti + b, 0);
 
         for (g = 0; g < e2_n_gruppi; g++) {
-            unsigned int off = g * 32u, tab, k;
+            const unsigned char *d = e2_desc(g);
+            unsigned int tab, k;
 
             /* ...e le copie di riserva, dove ci sono. */
             if (g > 0 && gruppo_ha_backup(g)) {
@@ -2265,15 +3108,25 @@ static void e2_controlla(void)
                     e2_usa_blocco(base + k, 0);
             }
 
-            if (e2_leggi_blocco(e2_desc_blocco + off / e2_dim_blocco, d) != 0)
-                continue;
-            e2_usa_blocco(le32(d + (off % e2_dim_blocco) + 0), 0);
-            e2_usa_blocco(le32(d + (off % e2_dim_blocco) + 4), 0);
-            tab = le32(d + (off % e2_dim_blocco) + 8);
+            e2_usa_blocco(le32(d + 0), 0);
+            e2_usa_blocco(le32(d + 4), 0);
+            tab = le32(d + 8);
             for (k = 0; k < (e2_i_per_gruppo * e2_dim_inode + e2_dim_blocco - 1u)
                              / e2_dim_blocco; k++)
                 e2_usa_blocco(tab + k, 0);
         }
+
+        if (e2_incompat & E2_INC_MMP) {
+            unsigned char sb[SETT * 2];
+
+            if (blkread(dev, E2_SUPER_OFF / SETT, 2, sb) >= 0)
+                e2_usa_blocco(le32(sb + 360), 0);
+            else
+                e2_incerto++;
+        }
+
+        /* What an uninitialized group's bitmap stands for. */
+        for (b = 0; b < bb; b++) e2_meta[b] = e2_blocchi_usati[b];
     }
 
     /* =====================================================================
@@ -2325,13 +3178,22 @@ static void e2_controlla(void)
      * gia' segnati sopra; resta da segnare il suo doppio indiretto. */
     {
         unsigned char ib[128];
-        unsigned int  num;
+        unsigned int  num, k;
 
         for (num = 3u; num < e2_primo_inode && num <= e2_n_inode; num++) {
             if (e2_leggi_inode(num, ib) != 0) continue;
             e2_segna(e2_inode_visti, num);
             if (num == 7u) e2_usa_blocco(le32(ib + 40 + 13 * 4), 7u);
             else           e2_percorri_blocchi(ib, num);
+        }
+
+        /* Those above the reserved range: the orphan file, the quota files. */
+        for (k = 0; k < E2_SPECIALI; k++) {
+            num = e2_speciale[k];
+            if (num < e2_primo_inode || num > e2_n_inode) continue;
+            if (e2_leggi_inode(num, ib) != 0) { e2_incerto++; continue; }
+            e2_segna(e2_inode_visti, num);
+            e2_percorri_blocchi(ib, num);
         }
     }
 
@@ -2376,9 +3238,17 @@ static void e2_controlla(void)
         }
     }
 
+    if (e2_somme_ko) {
+        printf("\n  ! %u inode con la somma sbagliata: li riferisco e non li\n",
+               e2_somme_ko);
+        printf("    tocco, puo' essere sbagliato il contenuto. Li vede e2fsck.\n");
+        problemi++;
+    }
+
     e2_controlla_bitmap();
     e2_controlla_link();
 
+    free(e2_meta); e2_meta = NULL;
     free(e2_blocchi_usati); free(e2_inode_visti);
     free(e2_inode_dir); free(e2_link_conta); free(e2_blocchi_bad);
     e2_blocchi_usati = NULL; e2_inode_visti = NULL;
@@ -2656,7 +3526,7 @@ typedef struct {
 
 static const MotoreFs g_motori[] = {
     { "FAT12/16/32", fat_riconosce, fat_apri, fat_controlla },
-    { "ext2",        e2_riconosce,  e2_apri,  e2_controlla  },
+    { "ext2/ext3/ext4", e2_riconosce, e2_apri, e2_controlla },
 };
 #define N_MOTORI (int)(sizeof(g_motori) / sizeof(g_motori[0]))
 
@@ -2682,7 +3552,7 @@ int main(int argc, char **argv)
     if (nome == NULL) {
         printf("uso: chkdsk <partizione> [-badblock] [-fix]\n\n");
         printf("Controlla un volume e riferisce cosa non torna. Riconosce da\n");
-        printf("solo il formato: FAT12/16/32 oppure ext2.\n\n");
+        printf("solo il formato: FAT12/16/32, ext2, ext3 o ext4.\n\n");
         printf("Con -r corregge; senza, non scrive un solo settore.\n\n");
         printf("La partizione dev'essere SMONTATA: sopra un volume montato\n");
         printf("c'e' una cache, e meta' delle modifiche recenti non e'\n");
@@ -2721,7 +3591,7 @@ int main(int argc, char **argv)
 
     if (m == NULL) {
         printf("  ! non riconosco il formato di %s.\n\n", dev);
-        printf("Non e' ne' FAT ne' ext2 - o le strutture che lo direbbero\n");
+        printf("Non e' ne' FAT ne' ext2/3/4 - o le strutture che lo direbbero\n");
         printf("sono danneggiate. Se il volume e' MONTATO, smontalo prima:\n");
         printf("i settori grezzi di un volume montato non si leggono.\n");
         return 1;

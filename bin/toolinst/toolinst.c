@@ -73,7 +73,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("toolinst", "0.004");
+EX_VERSIONE("toolinst", "0.005");
 
 #define PERC_MAX   320
 #define BLOCCO     4096
@@ -449,6 +449,8 @@ static const char *nome_fs(unsigned int fs)
 {
     switch (fs) {
         case 2:  return "ext2";
+        case 3:  return "ext3";
+        case 4:  return "ext4";
         case 12: return "FAT12";
         case 16: return "FAT16";
         case 32: return "FAT32";
@@ -1339,14 +1341,14 @@ int main(int argc, char **argv)
                 printf("copiare niente. Rimontalo in lettura/scrittura.\n");
                 return 1;
             }
-            if (m.fs != 2) {
+            if (m.fs < 2 || m.fs > 4) {
                 printf("\n!!  %s e' %s, e su FAT i nomi lunghi si scrivono\n",
                        m.punto, nome_fs(m.fs));
                 printf("   troncati alla forma 8.3. L'albero ne e' pieno\n");
                 printf("   (bits/stdc++.h, libstdc++.a): la copia riuscirebbe\n");
                 printf("   e il compilatore non troverebbe piu' i propri\n");
                 printf("   header, che sul disco ci sono con un altro nome.\n");
-                printf("   Serve ext2:  mkfs -t ext2 -L strumenti hd0p1\n\n");
+                printf("   Serve ext:  mkfs -t ext4 -L strumenti hd0p1\n\n");
                 if (opt_y) {
                     printf("   (-y: non insisto, ma non lo faccio.)\n");
                     return 1;

@@ -190,6 +190,17 @@ int  vfs_open_autorita(const char *abs, uint32_t flags);
 int  vfs_read   (int h, void *buf, uint32_t size, uint32_t offset);
 int  vfs_write  (int h, const void *buf, uint32_t size, uint32_t offset);
 int  vfs_close  (int h);
+
+/* File locks (kernel 0.291, voce 38). `chi` is the owner: the descriptor table,
+ * so that the threads of a program are one owner. `da` and `a` are inclusive
+ * bytes. tipo is F_RDLCK, F_WRLCK or F_UNLCK.
+ *   vfs_lucchetto  takes or leaves: 0, -EAGAIN, -ENOLCK
+ *   vfs_luc_chi    who would stand in the way: 0 and *tipo F_UNLCK if nobody
+ *   vfs_close_di   the close of a program: POSIX wants every lock it holds on
+ *                  the file gone, whichever descriptor is closed */
+int  vfs_lucchetto(int h, const void *chi, uint32_t pid, int tipo, uint64_t da, uint64_t a);
+int  vfs_luc_chi  (int h, const void *chi, int *tipo, uint64_t *da, uint64_t *a, uint32_t *pid);
+int  vfs_close_di (int h, const void *chi);
 int  vfs_stat   (const char *abs, VfsStat *st);
 
 /* Dichiara un descrittore in piu' sullo stesso file aperto: ritorna `h`
