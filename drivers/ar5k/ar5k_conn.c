@@ -45,13 +45,18 @@
 #include "wifi_proto.h"
 #include "exwifi.h"
 #include "ar5k_conn.h"
+#include "net_anelli.h"
 #include <stdarg.h>
 
-#define RX_N        32
+/* ! THE RECEIVE RING FOLLOWS THE COMMON RULE (voce 41, net_anelli.h, netrx of
+ * kernel.cfg or the RAM; 32 is what it had). TX_N stays: tx_manda sends one
+ * frame and waits for its end, so more descriptors would never be in use. */
+#define RX_MIN      32u
+#define RX_MASSIMO  65528u
+#define RX_N        k->rx_n
 #define TX_N        4
 #define BUF         2400
 #define IE_MAX      512
-#define CODA_N      32              /* Ethernet frames waiting for ip.drv */
 #define DURATA      314             /* SIFS + an ACK at 1 Mbit/s, microseconds */
 #define PERSA_MS    5000            /* nothing from the access point: gone */
 #define REGISTRO    "/root/ar5k-conn.txt"
@@ -118,9 +123,8 @@ typedef struct {
     int       michael_n;
 
     /* frames for ip.drv */
-    u8        coda[CODA_N][1514];
-    int       coda_n_byte[CODA_N];
-    int       coda_testa, coda_n;
+    NetCoda   coda;
+    int       rx_n;
 
     int       attiva;
     unsigned int byte_in, byte_out;
@@ -380,22 +384,15 @@ static int nostro_elemento(Conn *k, int rsn, u8 *out)
 /* --- the frames that arrive ---------------------------------------------------------- */
 static void accoda(Conn *k, const u8 *da, const u8 *sa, const u8 *tipo, const u8 *dati, int n)
 {
-    int i;
+    u8 *p;
 
-    if (14 + n > 1514) return;
-    if (k->coda_n == CODA_N) {                             /* full: the oldest goes */
-        k->coda_testa = (k->coda_testa + 1) % CODA_N;
-        k->coda_n--;
-        k->c.persi_coda++;
-    }
+    if (14 + n > NET_FRAME_MAX) return;
+    p = net_coda_posto(&k->coda, (unsigned)(14 + n), &k->c.persi_coda);
     k->c.accodati++;
-    i = (k->coda_testa + k->coda_n) % CODA_N;
-    memcpy(k->coda[i], da, 6);
-    memcpy(k->coda[i] + 6, sa, 6);
-    memcpy(k->coda[i] + 12, tipo, 2);
-    memcpy(k->coda[i] + 14, dati, (size_t)n);
-    k->coda_n_byte[i] = 14 + n;
-    k->coda_n++;
+    memcpy(p, da, 6);
+    memcpy(p + 6, sa, 6);
+    memcpy(p + 12, tipo, 2);
+    memcpy(p + 14, dati, (size_t)n);
     k->byte_in += (unsigned)(14 + n);
 }
 
@@ -667,18 +664,30 @@ static void chiavi_azzera(struct ath5k_hw *ah)
 
 static int chip_apri(Conn *k)
 {
+    unsigned int desc;
+
     if (!k->z_ok) {
-        k->z.byte = 4096 + (RX_N + TX_N) * BUF;
-        k->z.virt = 0; k->z.fisico = 0;
-        if (dma_alloc(&k->z) != 0) { dire("dma_alloc(%u) rifiutata\n", k->z.byte); return -ENOMEM; }
+        unsigned int rx = net_anelli_rx(0, RX_MIN, RX_MASSIMO, 1u), tx = TX_N;
+
+        for (;;) {
+            desc = ((rx + TX_N) * (unsigned)sizeof(struct ath5k_desc) + 4095u) & ~4095u;
+            k->z.byte = desc + (rx + TX_N) * BUF;
+            k->z.virt = 0; k->z.fisico = 0;
+            if (dma_alloc(&k->z) == 0) break;
+            dire("dma_alloc(%u) rifiutata\n", k->z.byte);
+            if (!net_anelli_dimezza(&rx, &tx, RX_MIN, TX_N, 1u)) return -ENOMEM;
+        }
+        if (!net_coda_inizia(&k->coda, rx)) { dire("niente memoria per la coda\n"); return -ENOMEM; }
+        k->rx_n = (int)rx;
         k->z_ok = 1;
     }
+    desc = (((unsigned)RX_N + TX_N) * (unsigned)sizeof(struct ath5k_desc) + 4095u) & ~4095u;
     k->rx         = (struct ath5k_desc *)(uintptr_t)k->z.virt;
     k->rx_fis     = k->z.fisico;
     k->tx         = k->rx + RX_N;
     k->tx_fis     = k->rx_fis + RX_N * sizeof(struct ath5k_desc);
-    k->rx_buf     = (u8 *)(uintptr_t)k->z.virt + 4096;
-    k->rx_buf_fis = k->z.fisico + 4096;
+    k->rx_buf     = (u8 *)(uintptr_t)k->z.virt + desc;
+    k->rx_buf_fis = k->z.fisico + desc;
     k->tx_buf     = k->rx_buf + RX_N * BUF;
     k->tx_buf_fis = k->rx_buf_fis + RX_N * BUF;
 
@@ -845,7 +854,7 @@ void ar5k_conn_stacca(void)
     memset(k->gtk, 0, sizeof(k->gtk));
     memset(k->gtk_ok, 0, sizeof(k->gtk_ok));
     memset(&k->wpa, 0, sizeof(k->wpa));
-    k->coda_n = 0;
+    k->coda.conta = 0;
     if (g_reg) { fclose(g_reg); g_reg = NULL; }
 }
 
@@ -1045,12 +1054,11 @@ int ar5k_conn_prendi(u8 *out)
     Conn *k = &g_k;
     int n;
 
-    if (!k->coda_n) return 0;
+    if (!k->z_ok || !k->coda.conta) return 0;
     k->c.consegnati++;
-    n = k->coda_n_byte[k->coda_testa];
-    memcpy(out, k->coda[k->coda_testa], (size_t)n);
-    k->coda_testa = (k->coda_testa + 1) % CODA_N;
-    k->coda_n--;
+    n = (int)net_coda_primo_len(&k->coda);
+    memcpy(out, net_coda_primo(&k->coda), (size_t)n);
+    net_coda_togli(&k->coda);
     return n;
 }
 

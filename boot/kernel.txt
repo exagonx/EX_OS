@@ -261,17 +261,27 @@ nettx = 512               (commentata per default)
 
 Quanti descrittori hanno gli anelli di ricezione (netrx) e di invio (nettx)
 della scheda di rete: cioe' quanti frame la scheda puo' tenere da parte
-mentre il driver aspetta il suo turno sulla CPU (dal kernel 0.287 e da
-e1000.drv 0.004; gli altri driver di rete seguiranno). Senza le voci viene
-dalla memoria: un descrittore di ricezione per ogni MB di RAM e un quarto di
-quelli per l'invio (2048 e 512 con 2 GB, cioe' 5 MB di memoria per la
-scheda), sempre entro quello che la scheda ammette (e1000: almeno 96 e 8, al
-massimo 65528, a multipli di 8). Fino all'e1000.drv 0.003 erano 96 fissi, e
-con 2048 client la scheda perdeva frame con l'anello pieno. La stessa cosa
-per una sola accensione: `e1000.drv -r N -t N`. Il driver stampa all'avvio
-la misura scelta; se la memoria contigua non basta dimezza e riprova. La
-coda fra il driver e ip.drv cresce da sola fino a quattro anelli. Conta solo
-un NUMERO.
+mentre il driver aspetta il suo turno sulla CPU (dal kernel 0.287 per tutti
+i driver di rete: e1000, nforce, rtl8169, pcnet, sis900; ar5k solo netrx,
+perche' invia un frame alla volta). Senza le voci viene dalla memoria: un
+descrittore di ricezione per ogni MB di RAM e un quarto di quelli per l'invio
+(2048 e 512 con 2 GB), sempre entro quello che la scheda ammette:
+
+    scheda     ricezione       invio        passo
+    e1000      96 - 65528      8 - 65528    multipli di 8
+    nforce     96 - 16384      64 - 16384
+    rtl8169    32 - 1024       8 - 1024
+    pcnet      8 - 512         8 - 512      potenze di due
+    sis900     8 - 65528       8 - 65528
+    ar5k       32 - 65528      4 fissi
+
+La ne2k ha l'anello nella memoria della scheda, che non cambia. Fino a questi
+driver le misure erano fisse (e1000 96), e con 2048 client la scheda perdeva
+frame con l'anello pieno. La stessa cosa per una sola accensione:
+`nforce.drv -rx N -tx N`, uguale per tutti (e1000 anche -r N -t N). Il driver
+stampa all'avvio la misura scelta; se la memoria contigua non basta dimezza e
+riprova. La coda fra il driver e ip.drv, su tutte le schede ne2k compresa,
+cresce da sola fino a quattro anelli. Conta solo un NUMERO.
 
 
 ===============================================================================

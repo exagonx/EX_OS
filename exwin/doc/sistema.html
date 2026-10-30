@@ -700,9 +700,10 @@ in <code>[kernel]</code> si possono solo abbassare.
 <tr><td><code>tcpmax</code></td><td>connessioni TCP di <code>ip.drv</code></td>
     <td>una ogni 32 KB di RAM, almeno 4096</td></tr>
 <tr><td><code>netrx</code></td><td>descrittori di ricezione della scheda di rete
-    (da <code>e1000.drv</code> 0.004)</td>
+    (tutti i driver di rete; la <code>ne2k</code> ha l'anello sulla scheda)</td>
     <td>uno per MB di RAM, entro quello che la scheda ammette</td></tr>
-<tr><td><code>nettx</code></td><td>descrittori di invio della scheda di rete</td>
+<tr><td><code>nettx</code></td><td>descrittori di invio della scheda di rete
+    (non <code>ar5k</code>, che invia un frame alla volta)</td>
     <td>un quarto di <code>netrx</code></td></tr>
 </table>
 

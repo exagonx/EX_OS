@@ -109,6 +109,24 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Network rings sized from the RAM on every driver (e1000.drv 0.005, nforce.drv 0.015, rtl8169.drv 0.004, pcnet.drv 0.004, sis900.drv 0.020, ne2k.drv 0.004, ar5k.drv 0.004) — e1000, pcnet and ne2k tested in QEMU; nforce, rtl8169, sis900 and ar5k **to be tested**
+
+What the e1000 had since 0.287 now holds for all: no fixed ring sizes. The
+order is the driver's `-rx N` / `-tx N`, then `netrx` and `nettx` of
+`kernel.cfg`, then the RAM (one receive descriptor per MB and a quarter of
+that for sending), always within what the card allows; the table is in
+`/boot/kernel.txt`. The queue towards `ip.drv` is the same for all drivers,
+ne2k included: it starts at 64 places and grows up to four rings.
+
+- **Tried:** `tools/prova_schede_rete.sh` downloads 16 MB on every card QEMU
+  emulates and checks sha256, at 32 and 64 bit. e1000 5-6 s, pcnet 5-8 s, ne2k
+  about 225 s (as before: the limit is the card's 16 KB).
+- **Not tried:** nforce, rtl8169, sis900 and ar5k are only compiled, QEMU has
+  no such cards.
+- **The drop to ~90 requests per second is gone:** with 2 GB and 2048 clients,
+  125-127 requests per second with 256 and with 2040 descriptors alike, and no
+  frames lost by the card.
+
 ### A new keyboard in ExWin: accented letters, presses and releases (kbd.drv 0.007, wserver 0.014, exwin.so 0.021) — tested in QEMU
 
 Until yesterday **text boxes and text areas took ASCII only**: an «è» typed in

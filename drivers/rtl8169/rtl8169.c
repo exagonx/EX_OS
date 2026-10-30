@@ -39,9 +39,10 @@
 #include "libc.h"
 #include "pci_proto.h"
 #include "net_proto.h"
+#include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `rtl8169.drv -version` la stampa. */
-EX_VERSIONE("rtl8169.drv", "0.003");
+EX_VERSIONE("rtl8169.drv", "0.004");
 
 #define RTL_MMIO_BYTE     0x100u
 
@@ -123,21 +124,30 @@ EX_VERSIONE("rtl8169.drv", "0.003");
 #define BMCR_RIPARTI      0x0200
 #define BMSR_LINK         0x0004
 
-#define RX_N              32
-#define TX_N              8
+/* ! NO FIXED SIZE SINCE 0.004 (voce 41): -rx/-tx, netrx/nettx of kernel.cfg or
+ * the RAM (drivers/net/net_anelli.h). The minimum is what 0.003 had, and the
+ * chip takes at most 1024 descriptors per ring. */
+#define ANELLO_MIN_RX     32u
+#define ANELLO_MIN_TX     8u
+#define ANELLO_MAX_RX     1024u
+#define ANELLO_MAX_TX     1024u
+
+static unsigned int g_rx_n = 0, g_tx_n = 0;
+#define RX_N              g_rx_n
+#define TX_N              g_tx_n
 #define BUF_LEN           2048
 #define RX_CHIEDI         1536
 
 /* ! GLI ANELLI VANNO ALLINEATI A 256 BYTE: il chip ignora gli otto bit bassi
- * dell'indirizzo. La zona DMA parte da una pagina, e 1024 e' multiplo di 256. */
+ * dell'indirizzo. La zona DMA parte da una pagina, e l'anello di invio si
+ * arrotonda al multiplo di 256 dopo quello di ricezione. */
 #define OFF_RX_ANELLO     0
-#define OFF_TX_ANELLO     1024
-#define OFF_RX_BUF        4096
+#define OFF_TX_ANELLO     ((RX_N * 16u + 255u) & ~255u)
+#define OFF_RX_BUF        ((OFF_TX_ANELLO + TX_N * 16u + 4095u) & ~4095u)
 #define OFF_TX_BUF        (OFF_RX_BUF + RX_N * BUF_LEN)
 #define DMA_BYTE          (OFF_TX_BUF + TX_N * BUF_LEN)
 
 #define PERIODO_MS        20
-#define CODA_N            64
 
 /* Le schede con questo chip. Provata c'e' solo la RTL8169SC. */
 static const struct { unsigned short ven, dev; const char *nome; } g_modelli[] = {
@@ -167,9 +177,7 @@ static unsigned int   g_battiti_link = 0;
 static NetContatori   g_cont;
 static int            g_verboso = 0;
 
-static unsigned char  g_coda[CODA_N][NET_FRAME_MAX];
-static unsigned int   g_coda_len[CODA_N];
-static int            g_coda_testa = 0, g_coda_conta = 0;
+static NetCoda        g_coda;
 static unsigned int   g_lettore_pid = 0;
 
 static volatile unsigned char *g_reg = 0;
@@ -388,18 +396,8 @@ static int inizializza_scheda(void)
  * --------------------------------------------------------------------------- */
 static void accoda(const unsigned char *f, unsigned int len)
 {
-    int slot;
-
     if (len > NET_FRAME_MAX) len = NET_FRAME_MAX;
-    if (g_coda_conta == CODA_N) {
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
-        g_coda_conta--;
-        g_cont.persi_coda++;
-    }
-    slot = (g_coda_testa + g_coda_conta) % CODA_N;
-    memcpy(g_coda[slot], f, len);
-    g_coda_len[slot] = len;
-    g_coda_conta++;
+    memcpy(net_coda_posto(&g_coda, len, &g_cont.persi_coda), f, len);
 }
 
 static void svuota_rx(void)
@@ -484,13 +482,12 @@ static void servi_scheda(void)
  * an answer to a request this driver had forgotten). */
 static void consegna(void)
 {
-    if (g_lettore_pid == 0 || g_coda_conta == 0) return;
+    if (g_lettore_pid == 0 || g_coda.conta == 0) return;
 
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) < 0)
+                 net_coda_primo(&g_coda), net_coda_primo_len(&g_coda)) < 0)
         return;
-    g_coda_testa = (g_coda_testa + 1) % CODA_N;
-    g_coda_conta--;
+    net_coda_togli(&g_coda);
     g_lettore_pid = 0;
 }
 
@@ -660,8 +657,8 @@ static void stampa_stato(void)
            g_bus, g_slot, g_funzione, g_mmio_fis, g_irq, PERIODO_MS);
     printf("         MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
            g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
-    printf("         DMA %u byte: virt 0x%x, fisico 0x%x; anelli %d RX, %d TX\n",
-           DMA_BYTE, g_dma_virt, g_dma_fis, RX_N, TX_N);
+    printf("         DMA %u byte: virt 0x%x, fisico 0x%x; anelli %u RX, %u TX, coda %d posti (fino a %d)\n",
+           DMA_BYTE, g_dma_virt, g_dma_fis, RX_N, TX_N, g_coda.n, g_coda.max);
 }
 
 /* -----------------------------------------------------------------------------
@@ -730,6 +727,8 @@ static void uso(void)
     printf("  -i                 la sonda: dice se c'e' e basta\n");
     printf("  -d                 registri, PHY e conteggi com'e' adesso: e' la\n");
     printf("                     schermata da mandare quando la rete non va\n");
+    printf("  -rx N / -tx N      descrittori di ricezione / invio (di serie netrx e\n");
+    printf("                     nettx di kernel.cfg, o uno per MB di RAM e un quarto)\n");
     printf("  -v                 racconta ogni passo dell'accensione\n");
     printf("  -l                 dice se il cavo c'e' (esce con 0) o no (1), e basta:\n");
     printf("                     lo usa netdetect per scegliere fra due schede\n");
@@ -738,6 +737,7 @@ static void uso(void)
 int main(int argc, char **argv)
 {
     int sonda = 0, registri = 0, solo_link = 0, i, rc;
+    unsigned int riga_rx = 0, riga_tx = 0;
     DmaZona z;
     MmioZona m;
 
@@ -746,6 +746,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "-d") == 0) registri = 1;
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-l") == 0) solo_link = 1;
+        else if (net_anelli_opzione(argc, argv, &i, &riga_rx, &riga_tx)) ;
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
         else { uso(); return 2; }
     }
@@ -790,15 +791,27 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    z.byte = DMA_BYTE;
-    rc = dma_alloc(&z);
-    if (rc < 0) {
-        printf("rtl8169: dma_alloc(%u) fallita (%d)\n", DMA_BYTE, rc);
-        return 1;
+    /* The rings (net_anelli.h), and if the contiguous memory is not there
+     * the larger one halves until it is, or both are at the minimum. */
+    g_rx_n = net_anelli_rx(riga_rx, ANELLO_MIN_RX, ANELLO_MAX_RX, 1u);
+    g_tx_n = net_anelli_tx(riga_tx, g_rx_n, ANELLO_MIN_TX, ANELLO_MAX_TX, 1u);
+    for (;;) {
+        z.byte = DMA_BYTE;
+        rc = dma_alloc(&z);
+        if (rc >= 0) break;
+        printf("rtl8169: dma_alloc(%u) per %u RX e %u TX fallita (%d)\n",
+               DMA_BYTE, g_rx_n, g_tx_n, rc);
+        if (!net_anelli_dimezza(&g_rx_n, &g_tx_n, ANELLO_MIN_RX, ANELLO_MIN_TX, 1u))
+            return 1;
     }
     g_dma_virt = z.virt;
     g_dma_fis  = z.fisico;
     memset((void *)g_dma_virt, 0, DMA_BYTE);
+
+    if (!net_coda_inizia(&g_coda, g_rx_n)) {
+        printf("rtl8169: niente memoria per la coda\n");
+        return 1;
+    }
 
     if (inizializza_scheda() != 0) return 1;
 

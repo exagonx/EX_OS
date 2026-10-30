@@ -971,7 +971,7 @@ abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
   procmax = N     processi e fili insieme (RAM / 128 KB, al massimo 512)
   fdmax = N       descrittori per programma (uno ogni 2 KB di RAM)
   tcpmax = N      connessioni TCP di ip.drv (una ogni 32 KB di RAM)
-  netrx = N       descrittori di ricezione della scheda (uno per MB)
+  netrx = N       descrittori di ricezione, tutte le schede (uno per MB)
   nettx = N       descrittori di invio della scheda (un quarto di netrx)
 
 Spiegati in /boot/kernel.txt. `ipcfg -tcp` mostra le connessioni, `ps`

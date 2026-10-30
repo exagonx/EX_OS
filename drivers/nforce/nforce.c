@@ -54,9 +54,10 @@
 #include "libc.h"
 #include "pci_proto.h"
 #include "net_proto.h"
+#include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `nforce.drv -version` la stampa. */
-EX_VERSIONE("nforce.drv", "0.014");
+EX_VERSIONE("nforce.drv", "0.015");
 
 #define NV_VENDITORE      0x10DE
 #define NV_MMIO_BYTE      0x1000u
@@ -212,21 +213,30 @@ EX_VERSIONE("nforce.drv", "0.014");
  * ne perdono il 6%, e il driver ne smaltisce circa 3600 al secondo. TCP con
  * la finestra da 63 KB manda raffiche da ~45 segmenti: ogni raffica perdeva
  * la coda, e lo scaricamento in LAN stava a 160 KB/s fra ritrasmissioni e
- * attese. 96 posti; i buffer da 1536 (quanto la scheda accetta) perche'
- * tutto stia nelle 64 pagine di dma_alloc (DMA_PAGINE_MAX). */
-#define RX_N              96
-#define TX_N              64
+ * attese. 96 posti; i buffer da 1536 (quanto la scheda accetta).
+ *
+ * ! NO FIXED SIZE SINCE 0.015 (voce 41): -rx/-tx, netrx/nettx of kernel.cfg or
+ * the RAM (drivers/net/net_anelli.h). 96 and 64 stay as the minimum, for the
+ * reasons above; the maximum is the one of descriptor format 3 (16384, the
+ * same limit forcedeth has), and R_MISURE takes any size in between. */
+#define ANELLO_MIN_RX     96u
+#define ANELLO_MIN_TX     64u
+#define ANELLO_MAX_RX     16384u
+#define ANELLO_MAX_TX     16384u
+
+static unsigned int g_rx_n = 0, g_tx_n = 0;
+#define RX_N              g_rx_n
+#define TX_N              g_tx_n
 #define BUF_LEN           1536
 #define RX_CHIEDI         1536        /* quanto diciamo alla scheda di accettare */
 
 #define OFF_RX_ANELLO     0
 #define OFF_TX_ANELLO     (OFF_RX_ANELLO + RX_N * DESC_BYTE)
-#define OFF_RX_BUF        4096
+#define OFF_RX_BUF        ((OFF_TX_ANELLO + TX_N * DESC_BYTE + 4095u) & ~4095u)
 #define OFF_TX_BUF        (OFF_RX_BUF + RX_N * BUF_LEN)
 #define DMA_BYTE          (OFF_TX_BUF + TX_N * BUF_LEN)
 
 #define PERIODO_MS        20
-#define CODA_N            128
 
 /* I modelli: tutti i numeri che la stessa famiglia di chipset usa per la sua
  * Ethernet. Provato (dal referto) c'e' solo 0x07DC; gli altri hanno gli
@@ -285,9 +295,7 @@ static unsigned int   g_ultimo_link = 0;    /* uptime dell'ultimo sguardo al lin
 static unsigned int   g_w_reg[IN_PIU_N], g_w_val[IN_PIU_N], g_w_n = 0;
 static unsigned int   g_y_reg[IN_PIU_N], g_y_val[IN_PIU_N], g_y_n = 0;
 
-static unsigned char  g_coda[CODA_N][NET_FRAME_MAX];
-static unsigned int   g_coda_len[CODA_N];
-static int            g_coda_testa = 0, g_coda_conta = 0;
+static NetCoda        g_coda;
 static unsigned int   g_lettore_pid = 0;
 
 static volatile unsigned char *g_reg = 0;
@@ -742,18 +750,8 @@ static int inizializza_scheda(void)
  * --------------------------------------------------------------------------- */
 static void accoda(const unsigned char *f, unsigned int len)
 {
-    int slot;
-
     if (len > NET_FRAME_MAX) len = NET_FRAME_MAX;
-    if (g_coda_conta == CODA_N) {
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
-        g_coda_conta--;
-        g_cont.persi_coda++;
-    }
-    slot = (g_coda_testa + g_coda_conta) % CODA_N;
-    memcpy(g_coda[slot], f, len);
-    g_coda_len[slot] = len;
-    g_coda_conta++;
+    memcpy(net_coda_posto(&g_coda, len, &g_cont.persi_coda), f, len);
 }
 
 static void svuota_rx(void)
@@ -857,13 +855,12 @@ static void servi_scheda(void)
  * due cassette. */
 static void consegna(void)
 {
-    if (g_lettore_pid == 0 || g_coda_conta == 0) return;
+    if (g_lettore_pid == 0 || g_coda.conta == 0) return;
 
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) < 0)
+                 net_coda_primo(&g_coda), net_coda_primo_len(&g_coda)) < 0)
         return;
-    g_coda_testa = (g_coda_testa + 1) % CODA_N;
-    g_coda_conta--;
+    net_coda_togli(&g_coda);
     g_lettore_pid = 0;
 }
 
@@ -1128,7 +1125,7 @@ static void prova_da_sola(void)
         usleep(PERIODO_MS * 1000);
         g_cont.battiti++;
         servi_scheda();
-        g_coda_conta = 0;                       /* nessuno li legge: si contano e basta */
+        g_coda.conta = 0;                       /* nessuno li legge: si contano e basta */
     }
 
     printf("nforce: inviati %u (errori %u), ricevuti %u (errori %u), di cui %u "
@@ -1161,8 +1158,8 @@ static void stampa_stato(void)
            g_bus, g_slot, g_funzione, g_mmio_fis, g_irq);
     printf("        MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
            g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
-    printf("        DMA %u byte: virt 0x%x, fisico 0x%x; anelli %d RX, %d TX\n",
-           DMA_BYTE, g_dma_virt, g_dma_fis, RX_N, TX_N);
+    printf("        DMA %u byte: virt 0x%x, fisico 0x%x; anelli %u RX, %u TX, coda %d posti (fino a %d)\n",
+           DMA_BYTE, g_dma_virt, g_dma_fis, RX_N, TX_N, g_coda.n, g_coda.max);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1251,6 +1248,8 @@ static void uso(void)
     printf("                     lo usa netdetect per scegliere fra due schede\n");
     printf("  -p                 la prova da sola: accende, trasmette e conta per\n");
     printf("                     5 secondi senza mettersi in servizio\n");
+    printf("  -rx N / -tx N      descrittori di ricezione / invio (di serie netrx e\n");
+    printf("                     nettx di kernel.cfg, o uno per MB di RAM e un quarto)\n");
     printf("  -r                 prepara il PHY Realtek RTL8211B prima di negoziare\n");
     printf("  -n                 non resetta il MAC\n");
     printf("  -m                 perche' il PHY non risponde: lo cerca senza e con\n");
@@ -1267,6 +1266,7 @@ static void uso(void)
 int main(int argc, char **argv)
 {
     int sonda = 0, registri = 0, prova = 0, solo_link = 0, i, rc;
+    unsigned int riga_rx = 0, riga_tx = 0;
     unsigned int forza_vel = 0, forza_sec = 0;
     int forza_pieno = 0;
     DmaZona z;
@@ -1278,6 +1278,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-p") == 0) prova = 1;
         else if (strcmp(argv[i], "-l") == 0) solo_link = 1;
+        else if (net_anelli_opzione(argc, argv, &i, &riga_rx, &riga_tx)) ;
         else if (strcmp(argv[i], "-r") == 0) g_phy_realtek = 1;
         else if (strcmp(argv[i], "-n") == 0) g_senza_reset = 1;
         else if (strcmp(argv[i], "-q") == 0) g_senza_irq = 1;
@@ -1392,15 +1393,27 @@ int main(int argc, char **argv)
         }
     }
 
-    z.byte = DMA_BYTE;
-    rc = dma_alloc(&z);
-    if (rc < 0) {
-        printf("nforce: dma_alloc(%u) fallita (%d)\n", DMA_BYTE, rc);
-        return 1;
+    /* The rings (net_anelli.h), and if the contiguous memory is not there
+     * the larger one halves until it is, or both are at the minimum. */
+    g_rx_n = net_anelli_rx(riga_rx, ANELLO_MIN_RX, ANELLO_MAX_RX, 1u);
+    g_tx_n = net_anelli_tx(riga_tx, g_rx_n, ANELLO_MIN_TX, ANELLO_MAX_TX, 1u);
+    for (;;) {
+        z.byte = DMA_BYTE;
+        rc = dma_alloc(&z);
+        if (rc >= 0) break;
+        printf("nforce: dma_alloc(%u) per %u RX e %u TX fallita (%d)\n",
+               DMA_BYTE, g_rx_n, g_tx_n, rc);
+        if (!net_anelli_dimezza(&g_rx_n, &g_tx_n, ANELLO_MIN_RX, ANELLO_MIN_TX, 1u))
+            return 1;
     }
     g_dma_virt = z.virt;
     g_dma_fis  = z.fisico;
     memset((void *)g_dma_virt, 0, DMA_BYTE);
+
+    if (!net_coda_inizia(&g_coda, g_rx_n)) {
+        printf("nforce: niente memoria per la coda\n");
+        return 1;
+    }
 
     {
         unsigned int t0 = uptime_ms();

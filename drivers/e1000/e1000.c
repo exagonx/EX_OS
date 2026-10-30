@@ -71,7 +71,7 @@
 
 /* +0.001 a ogni modifica: `e1000.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("e1000.drv", "0.004");
+EX_VERSIONE("e1000.drv", "0.005");
 
 /* -----------------------------------------------------------------------------
  * La scheda
@@ -272,10 +272,9 @@ static unsigned int g_rx_n = 0, g_tx_n = 0;
  * 0,5 con 64, cioe' la stessa cosa a meno della risoluzione dell'orologio.
  * Questo numero non serve OGGI — serve perche' il giorno che qualcuno alza
  * TCP_BUF, o apre due connessioni veloci insieme, il pavimento non ceda. */
-/* ! AND SINCE 0.004 IT GROWS (voce 41): it starts at CODA_INIZIO places and
- * doubles when full, up to NET_CODA_PER_ANELLO rings (net_anelli.h); only
- * then the oldest frame goes. 256 fixed from 26 October 2026, 64 before. */
-#define CODA_INIZIO       64
+/* ! AND SINCE 0.004 IT GROWS (voce 41): NetCoda in net_anelli.h starts at 64
+ * places and doubles up to four rings; only then the oldest frame goes. 256
+ * fixed from 26 October 2026, 64 before. */
 
 /* -----------------------------------------------------------------------------
  * Stato
@@ -297,11 +296,7 @@ static unsigned int  g_tx_prossimo = 0;
 static NetContatori  g_cont;
 static int           g_verboso = 0;
 
-static unsigned char *g_coda = NULL;      /* g_coda_n frames of NET_FRAME_MAX */
-static unsigned int  *g_coda_len = NULL;
-static int           g_coda_n = 0, g_coda_max = 0;
-static int           g_coda_testa = 0, g_coda_conta = 0;
-#define CODA_FRAME(i)     (g_coda + (unsigned int)(i) * NET_FRAME_MAX)
+static NetCoda        g_coda;
 static unsigned int  g_lettore_pid = 0;
 
 /* =============================================================================
@@ -575,53 +570,14 @@ static int inizializza_scheda(void)
 /* =============================================================================
  * Ricezione
  * ========================================================================== */
-/* Doubles the queue, keeping the frames in order from place 0. Returns 0
- * if there was no memory (the queue stays as it was). */
-static int coda_cresci(void)
-{
-    int            n = g_coda_n * 2, i;
-    unsigned char *f;
-    unsigned int  *l;
-
-    if (n > g_coda_max) n = g_coda_max;
-    if (n <= g_coda_n) return 0;
-    f = malloc((unsigned int)n * NET_FRAME_MAX);
-    l = malloc((unsigned int)n * sizeof(unsigned int));
-    if (f == NULL || l == NULL) { free(f); free(l); return 0; }
-
-    for (i = 0; i < g_coda_conta; i++) {
-        int k = (g_coda_testa + i) % g_coda_n;
-        memcpy(f + (unsigned int)i * NET_FRAME_MAX, CODA_FRAME(k), g_coda_len[k]);
-        l[i] = g_coda_len[k];
-    }
-    free(g_coda);
-    free(g_coda_len);
-    g_coda = f;
-    g_coda_len = l;
-    g_coda_n = n;
-    g_coda_testa = 0;
-    return 1;
-}
-
 static void accoda(const unsigned char *f, unsigned int len)
 {
-    int slot;
-
     if (len > NET_FRAME_MAX) len = NET_FRAME_MAX;
 
     /* ! CODA PIENA: SI BUTTA IL PIU' VECCHIO, e si conta. Buttare il nuovo
      * sarebbe piu' facile e peggio: chi legge resterebbe con una coda di
      * roba stantia mentre il traffico vero passa. */
-    if (g_coda_conta == g_coda_n && !coda_cresci()) {
-        g_coda_testa = (g_coda_testa + 1) % g_coda_n;
-        g_coda_conta--;
-        g_cont.persi_coda++;
-    }
-
-    slot = (g_coda_testa + g_coda_conta) % g_coda_n;
-    memcpy(CODA_FRAME(slot), f, len);
-    g_coda_len[slot] = len;
-    g_coda_conta++;
+    memcpy(net_coda_posto(&g_coda, len, &g_cont.persi_coda), f, len);
 }
 
 static void svuota_rx(void)
@@ -739,13 +695,12 @@ static void servi_scheda(void)
  * goes at the next interrupt or timed round, as in nforce.c since 0.010. */
 static void consegna(void)
 {
-    if (g_lettore_pid == 0 || g_coda_conta == 0) return;
+    if (g_lettore_pid == 0 || g_coda.conta == 0) return;
 
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 CODA_FRAME(g_coda_testa), g_coda_len[g_coda_testa]) < 0)
+                 net_coda_primo(&g_coda), net_coda_primo_len(&g_coda)) < 0)
         return;
-    g_coda_testa = (g_coda_testa + 1) % g_coda_n;
-    g_coda_conta--;
+    net_coda_togli(&g_coda);
     g_lettore_pid = 0;
 }
 
@@ -893,7 +848,7 @@ static void stampa_stato(void)
     printf("       DMA %u byte: virt 0x%x, fisico 0x%x\n",
            DMA_BYTE, g_dma_virt, g_dma_fis);
     printf("       anelli %u RX, %u TX da %d byte, coda %d posti (fino a %d)\n",
-           RX_N, TX_N, BUF_LEN, g_coda_n, g_coda_max);
+           RX_N, TX_N, BUF_LEN, g_coda.n, g_coda.max);
 }
 
 static void servi(void)
@@ -992,6 +947,7 @@ int main(int argc, char **argv)
             riga_rx = (unsigned int)atoi(argv[++i]);
         else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc)
             riga_tx = (unsigned int)atoi(argv[++i]);
+        else if (net_anelli_opzione(argc, argv, &i, &riga_rx, &riga_tx)) ;
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
         else { uso(); return 2; }
@@ -1091,12 +1047,8 @@ int main(int argc, char **argv)
     g_dma_fis  = z.fisico;
     memset((void *)g_dma_virt, 0, DMA_BYTE);
 
-    g_coda_max = (int)(NET_CODA_PER_ANELLO * g_rx_n);
-    g_coda_n   = CODA_INIZIO < g_coda_max ? CODA_INIZIO : g_coda_max;
-    g_coda     = malloc((unsigned int)g_coda_n * NET_FRAME_MAX);
-    g_coda_len = malloc((unsigned int)g_coda_n * sizeof(unsigned int));
-    if (g_coda == NULL || g_coda_len == NULL) {
-        printf("e1000: niente memoria per la coda (%d posti)\n", g_coda_n);
+    if (!net_coda_inizia(&g_coda, g_rx_n)) {
+        printf("e1000: niente memoria per la coda\n");
         return 1;
     }
 

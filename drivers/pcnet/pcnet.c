@@ -106,10 +106,11 @@
 #include "libc.h"
 #include "net_proto.h"
 #include "pci_proto.h"
+#include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `pcnet.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("pcnet.drv", "0.003");
+EX_VERSIONE("pcnet.drv", "0.004");
 
 /* =============================================================================
  * Registri
@@ -163,19 +164,29 @@ EX_VERSIONE("pcnet.drv", "0.003");
  *
  * ! POTENZE DI DUE, E NON PER ELEGANZA: la scheda riceve il LOGARITMO
  * del numero di descrittori, quindi un anello da 6 non e' esprimibile.
+ *
+ * ! NO FIXED SIZE SINCE 0.004 (voce 41): -rx/-tx, netrx/nettx of kernel.cfg or
+ * the RAM (drivers/net/net_anelli.h), rounded down to a power of two. The
+ * minimum is what 0.003 had; RLEN and TLEN stop at 2^9 = 512.
  * ============================================================================= */
-#define RX_LOG          3
-#define TX_LOG          3
-#define RX_N            (1 << RX_LOG)
-#define TX_N            (1 << TX_LOG)
+#define ANELLO_MIN      8u
+#define ANELLO_MAX_RX   512u
+#define ANELLO_MAX_TX   512u
+
+static unsigned int g_rx_n = 0, g_tx_n = 0;
+static unsigned int g_rx_log = 0, g_tx_log = 0;
+#define RX_LOG          g_rx_log
+#define TX_LOG          g_tx_log
+#define RX_N            (1u << RX_LOG)
+#define TX_N            (1u << TX_LOG)
 #define BUF_LEN         2048    /* per un frame da 1514 avanza, ed e' potenza di due */
 
 /* Disposizione dentro la zona DMA. Gli anelli vanno allineati a 16 byte;
  * partire da offset tondi lo garantisce senza doverlo calcolare. */
 #define OFF_INIT        0x0000
 #define OFF_RX_DESC     0x0100
-#define OFF_TX_DESC     0x0200
-#define OFF_BUFFER      0x1000
+#define OFF_TX_DESC     (OFF_RX_DESC + RX_N * 16)
+#define OFF_BUFFER      ((OFF_TX_DESC + TX_N * 16 + 4095u) & ~4095u)
 #define DMA_BYTE        (OFF_BUFFER + (RX_N + TX_N) * BUF_LEN)
 
 #define PERIODO_MS      250     /* il battito: vedi ne2k.c */
@@ -201,10 +212,7 @@ static NetContatori  g_cont;
  * politica del ne2k: si accumula qui, si consegna a richiesta. */
 /* 64 dal 9 ottobre 2026: con la finestra di TCP a 63 KB (ip.drv 0.009) arrivano
  * raffiche di una quarantina di frame, e una coda da 16 ne perdeva. */
-#define CODA_N          64
-static unsigned char g_coda[CODA_N][NET_FRAME_MAX];
-static unsigned int  g_coda_len[CODA_N];
-static int           g_coda_testa = 0, g_coda_conta = 0;
+static NetCoda       g_coda;
 static unsigned int  g_lettore_pid = 0;
 
 /* =============================================================================
@@ -403,30 +411,19 @@ static int inizializza_scheda(void)
  * ============================================================================= */
 static void accoda(const unsigned char *f, unsigned int len)
 {
-    int p;
-
     if (len == 0) return;
     if (len > NET_FRAME_MAX) { g_cont.troppo_grandi++; return; }
 
-    if (g_coda_conta == CODA_N) {
-        /* ! SI BUTTA IL PIU' VECCHIO. Una coda piena significa che
-         * nessuno sta leggendo; in quel caso il frame utile e' l'ultimo
-         * arrivato, non il primo — una risposta ARP di dieci secondi fa
-         * non serve piu' a nessuno. */
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
-        g_coda_conta--;
-        g_cont.persi_coda++;
-    }
-
-    p = (g_coda_testa + g_coda_conta) % CODA_N;
-    memcpy(g_coda[p], f, len);
-    g_coda_len[p] = len;
-    g_coda_conta++;
+    /* ! SI BUTTA IL PIU' VECCHIO, se la coda e' piena e non cresce piu'. Una
+     * coda piena significa che nessuno sta leggendo; in quel caso il frame
+     * utile e' l'ultimo arrivato, non il primo — una risposta ARP di dieci
+     * secondi fa non serve piu' a nessuno. */
+    memcpy(net_coda_posto(&g_coda, len, &g_cont.persi_coda), f, len);
 }
 
 static void svuota_rx(void)
 {
-    int giri;
+    unsigned int giri;
 
     for (giri = 0; giri < RX_N * 2; giri++) {
         volatile unsigned int *d = desc(OFF_RX_DESC + g_rx_prossimo * 16);
@@ -544,12 +541,11 @@ static void servi_scheda(void)
  * here without serving the card. See consegna() in e1000.c. */
 static void consegna(void)
 {
-    if (g_lettore_pid == 0 || g_coda_conta == 0) return;
+    if (g_lettore_pid == 0 || g_coda.conta == 0) return;
 
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) == 0) {
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
-        g_coda_conta--;
+                 net_coda_primo(&g_coda), net_coda_primo_len(&g_coda)) == 0) {
+        net_coda_togli(&g_coda);
         g_lettore_pid = 0;
     }
 }
@@ -654,7 +650,8 @@ static void stampa_stato(void)
     printf("       MTU    %d\n", NET_MTU);
     printf("       DMA    %u byte a 0x%08x (fisico 0x%08x)\n",
            DMA_BYTE, g_dma_virt, g_dma_fis);
-    printf("       anelli %d RX, %d TX da %d byte\n", RX_N, TX_N, BUF_LEN);
+    printf("       anelli %u RX, %u TX da %d byte, coda %d posti (fino a %d)\n",
+           RX_N, TX_N, BUF_LEN, g_coda.n, g_coda.max);
 }
 
 /* =============================================================================
@@ -754,7 +751,9 @@ static void uso(void)
     printf("            (0 = trovata). Non tocca la scheda.\n");
     printf("  -l        sinonimo di -i, il nome di prima\n");
     printf("  -p PORTA  indirizzo I/O dichiarato a mano\n");
-    printf("  -q IRQ    linea di interrupt dichiarata a mano\n\n");
+    printf("  -q IRQ    linea di interrupt dichiarata a mano\n");
+    printf("  -rx N / -tx N  descrittori di ricezione / invio, potenze di due (di\n");
+    printf("            serie netrx e nettx di kernel.cfg, o dalla RAM)\n\n");
     printf("Senza argomenti cerca la scheda sul bus PCI, si registra come\n");
     printf("servizio '%s' e resta acceso. Va lanciato con '&'.\n", NET_SERVIZIO_0);
 }
@@ -807,6 +806,7 @@ static int stato_dal_servizio(int pid)
 
 int main(int argc, char **argv)
 {
+    unsigned int riga_rx = 0, riga_tx = 0;
     DmaZona z;
     int     solo_elenco = 0, sonda = 0, i, rc;
 
@@ -824,6 +824,7 @@ int main(int argc, char **argv)
          * nel blocco qui sotto. Vedi li'. */
         if (strcmp(argv[i], "-i") == 0)      { sonda = 1; solo_elenco = 1; }
         else if (strcmp(argv[i], "-l") == 0) solo_elenco = 1;
+        else if (net_anelli_opzione(argc, argv, &i, &riga_rx, &riga_tx)) ;
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
         else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
             g_base = (unsigned int)strtoul(argv[++i], NULL, 0);
@@ -903,10 +904,23 @@ int main(int argc, char **argv)
      * contiene gli indirizzi degli anelli: senza la zona DMA non c'e'
      * niente da scrivere dentro, e una scheda inizializzata con indirizzi
      * a zero comincia a fare DMA sulla pagina zero. */
-    z.byte = DMA_BYTE;
-    rc = dma_alloc(&z);
-    if (rc < 0) {
-        printf("pcnet: dma_alloc(%u) fallita (%d)\n", DMA_BYTE, rc);
+    g_rx_n = net_anelli_rx(riga_rx, ANELLO_MIN, ANELLO_MAX_RX, 1u);
+    g_tx_n = net_anelli_tx(riga_tx, g_rx_n, ANELLO_MIN, ANELLO_MAX_TX, 1u);
+    g_rx_log = net_anelli_log2(g_rx_n);
+    g_tx_log = net_anelli_log2(g_tx_n);
+    g_rx_n = RX_N;
+    g_tx_n = TX_N;
+    for (;;) {
+        z.byte = DMA_BYTE;
+        rc = dma_alloc(&z);
+        if (rc >= 0) break;
+        printf("pcnet: dma_alloc(%u) per %u RX e %u TX fallita (%d)\n",
+               DMA_BYTE, g_rx_n, g_tx_n, rc);
+        if (net_anelli_dimezza(&g_rx_n, &g_tx_n, ANELLO_MIN, ANELLO_MIN, 1u)) {
+            g_rx_log = net_anelli_log2(g_rx_n);
+            g_tx_log = net_anelli_log2(g_tx_n);
+            continue;
+        }
         printf("       Serve memoria fisicamente contigua: e' la risorsa\n");
         printf("       piu' scarsa del sistema, e questo e' il messaggio\n");
         printf("       che dice che e' finita.\n");
@@ -914,6 +928,11 @@ int main(int argc, char **argv)
     }
     g_dma_virt = z.virt;
     g_dma_fis  = z.fisico;
+
+    if (!net_coda_inizia(&g_coda, g_rx_n)) {
+        printf("pcnet: niente memoria per la coda\n");
+        return 1;
+    }
 
     if (inizializza_scheda() != 0) return 1;
 
@@ -937,6 +956,7 @@ int main(int argc, char **argv)
            "MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
            g_modello, g_bus, g_slot, g_funzione, g_irq,
            g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
+    printf("pcnet: anelli %u RX, %u TX, DMA %u byte\n", RX_N, TX_N, DMA_BYTE);
     printf("pcnet: servizio '%s' attivo\n", NET_SERVIZIO_0);
 
     servi();

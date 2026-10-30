@@ -30,7 +30,7 @@
 #include "libc.h"
 #include "pci_proto.h"
 
-EX_VERSIONE("ar5k.drv", "0.003");
+EX_VERSIONE("ar5k.drv", "0.004");
 
 #define AR5K_VENDITORE      0x168c
 #define AR5K_MMIO_BYTE      0x10000

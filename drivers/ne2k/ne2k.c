@@ -81,10 +81,11 @@
 #include "libc.h"
 #include "pci_proto.h"
 #include "net_proto.h"
+#include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `ne2k.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ne2k.drv", "0.003");
+EX_VERSIONE("ne2k.drv", "0.004");
 
 /* =============================================================================
  * Registri DP8390. Gli offset 0x00-0x0F cambiano significato secondo la
@@ -201,13 +202,14 @@ static NetContatori  g_cont;
  * perdevano, e ogni perdita e' una ritrasmissione. La memoria della coda si
  * tocca solo se la coda si riempie: finche' resta corta, resta sulla carta. Quando e' piena si scarta il piu' VECCHIO —
  * in rete un pacchetto vecchio vale meno di uno nuovo, e la ritrasmissione
- * di chi lo aspettava e' gia' partita. */
-#define CODA_FRAME 64      /* era 8: vedi ip.drv 0.009, la finestra di TCP a 63 KB */
-static struct {
-    unsigned int  len;
-    unsigned char dati[NET_FRAME_MAX];
-} g_coda[CODA_FRAME];
-static int g_coda_testa = 0, g_coda_conta = 0;
+ * di chi lo aspettava e' gia' partita.
+ *
+ * ! NO FIXED SIZE SINCE 0.004 (voce 41): the ring lives in the card's own
+ * memory, its size is the card's, but this queue is ours. It is a NetCoda
+ * (net_anelli.h) sized as if the ring followed the rule of the other cards;
+ * it starts at 64 places, as before, and takes memory only when it grows. */
+#define ANELLO_MAX 65528u
+static NetCoda g_coda;
 
 /* Chi ha chiesto un frame e sta aspettando. 0 = nessuno. Un solo lettore:
  * lo stack di rete e' un processo solo, e due lettori che si dividono i
@@ -399,19 +401,8 @@ static int inizializza_scheda(void)
  * ============================================================================= */
 static void accoda(const unsigned char *f, unsigned int len)
 {
-    int pos;
-
-    if (g_coda_conta == CODA_FRAME) {
-        /* Piena: si butta il piu' vecchio. Vedi il commento su CODA_FRAME. */
-        g_coda_testa = (g_coda_testa + 1) % CODA_FRAME;
-        g_coda_conta--;
-        g_cont.persi_coda++;
-    }
-
-    pos = (g_coda_testa + g_coda_conta) % CODA_FRAME;
-    g_coda[pos].len = len;
-    memcpy(g_coda[pos].dati, f, len);
-    g_coda_conta++;
+    /* Piena: si butta il piu' vecchio. Vedi il commento su g_coda. */
+    memcpy(net_coda_posto(&g_coda, len, &g_cont.persi_coda), f, len);
 }
 
 /* Svuota l'anello della scheda. Ritorna 0 normalmente, -1 se l'anello e'
@@ -584,17 +575,16 @@ static void servi_scheda(void)
 /* Consegna un frame a chi lo sta aspettando, se c'e' l'uno e l'altro. */
 static void consegna(void)
 {
-    if (g_lettore_pid == 0 || g_coda_conta == 0) return;
+    if (g_lettore_pid == 0 || g_coda.conta == 0) return;
 
     /* Without waiting, and the request stays open when the frame does not
      * go (a full mailbox, not a reader gone): see consegna() in e1000.c. A
      * reader that is gone is replaced by the next NET_MSG_RICEVI. */
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 g_coda[g_coda_testa].dati, g_coda[g_coda_testa].len) < 0)
+                 net_coda_primo(&g_coda), net_coda_primo_len(&g_coda)) < 0)
         return;
 
-    g_coda_testa = (g_coda_testa + 1) % CODA_FRAME;
-    g_coda_conta--;
+    net_coda_togli(&g_coda);
     g_lettore_pid = 0;
 }
 
@@ -885,6 +875,11 @@ int main(int argc, char **argv)
 
     if (g_irq > 15) {
         printf("ne2k: IRQ %u non valido (0-15).\n", g_irq);
+        return 1;
+    }
+
+    if (!net_coda_inizia(&g_coda, net_anelli_rx(0, NET_CODA_INIZIO, ANELLO_MAX, 1u))) {
+        printf("ne2k: niente memoria per la coda\n");
         return 1;
     }
 

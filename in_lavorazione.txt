@@ -1,13 +1,9 @@
 QUEL CHE E' APERTO â€” 15 settembre 2026
 
-!!! IL 28 OTTOBRE, URGENTE: voce 41 (@CODA-20-10) - la e1000 fatta la notte
-    del 28 (kernel 0.287, e1000.drv 0.004), letta la prova a 2048 client;
-    il 29 sera il blocco intermittente di prova_mariadb_svc trovato e
-    corretto (kernel 0.288, processo raccolto due volte); restano il calo
-    a ~90/s, README e manuale, e gli altri driver. Gli anelli dei driver
-    di rete (e1000, nforce, rtl8169, pcnet, sis900, ar5k, ne2k) dinamici,
-    dalla RAM o da kernel.cfg, invece dei posti fissi: la e1000 a 96 ha
-    perso 858521 frame nella prova di Apache a 2048 client (voce 39).
+!!! IL 30 OTTOBRE: voce 41 (@CODA-20-10) FATTA in QEMU per e1000, pcnet e
+    ne2k; ! nforce, rtl8169, sis900 e ar5k solo compilati, QEMU non li ha:
+    DA PROVARE SUL FERRO, per primo nforce sul portatile (uso normale, poi
+    `ipcfg`). Voce 38: trovato perche' il profilo di Firefox resta a meta'.
 
 !!! IL 26 SETTEMBRE, TRE DA correzioni.txt: @ARCHIVI-VISTA e @EXBROWSER-1024
     (urgenti), @EXIDE-NOMI (a comodo).
@@ -8479,6 +8475,41 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  44. LO SCREENSHOT COL TASTO STAMP (l'utente, 30/10: "e' fattibile la
+      creazione di un programma per catturare la schermata attiva salvandola
+      in un file jpg il comando dovrebbe essere collegato al tasto stamp [...]
+      in modo che da telnet riesci a fare verifiche grafiche e che l'utente
+      possa salvare uno screen shot dello stato"). FATTIBILE; c'e' gia' quasi
+      tutto:
+      a) IL TASTO: Stamp e' E0 37 (con lo Shift finto E0 2A, che kbd.drv gia'
+         scarta): con kbd.drv 0.007 arriva come tasto fisico 0x137; wserver
+         se lo tiene, col suo rilascio, come Ctrl+Alt+Canc, e sulla console
+         di testo oggi non fa niente;
+      b) I PIXEL: la immagine composta la ha gia' wserver. Un messaggio
+         nuovo WIN_MSG_FOTO (schermo intero, o la finestra col fuoco con
+         Alt+Stamp) la copia in una zona condivisa; un comando /bin/cattura
+         la salva, cosi' lo stesso lavoro si lancia da telnet (`cattura
+         [file]`) e dal tasto;
+      c) IL FILE: lib/eximg ha gia' eximg_scrivi_png e _bmp (scrivi.h);
+         jpg.c sa solo LEGGERE, il codificatore JPEG baseline va scritto
+         (DCT, quantizzazione, Huffman: poche centinaia di righe);
+      d) DOVE: ~/Images/schermata-AAAAMMGG-HHMMSS.ext (Images c'e' gia' nel
+         profilo), con un avviso a video; da capire come parte col lanciarlo
+         un server che non deve restare fermo mentre si scrive il file.
+      DA DECIDERE CON L'UTENTE:
+      1) JPEG, come chiesto, o PNG (consigliato per le verifiche: senza
+         perdita, si fa subito, e tools/trova_testo.py cerca le scritte
+         pixel per pixel, cosa che il JPEG sfuma; JPEG in piu' dopo, per i
+         file piccoli);
+      2) COME ESCE DAL PORTATILE: da telnet si comanda ma non si trasferisce
+         un file binario, e `scarica` va solo in entrata. Strade: `cattura
+         -b64` che stampa il file in base64 (lento ma senza niente di nuovo),
+         un piccolo server HTTP di sola lettura su ~/Images, o httpd;
+      3) sulla console di testo, senza ExWin: niente, o una foto del testo.
+      DECISO DALL'UTENTE (30/10): PNG; per uscire dal portatile Apache, gia'
+      portato (DocumentRoot o Alias su ~/Images).
+      Stato: in coda.
+
   43. L'ICONA RDBOOT SOLO PER ROOT, E UNA TMP IN RAM (l'utente, 29/10:
       "l'icona rdboot dovrebbe essere visibile solo agli utenti con
       privilegi root a me piace il fatto che appare sul desktop e mostra i
@@ -8819,6 +8850,41 @@ tools/netinst/velocita tolto da netinst.
       secondo se ne va; irq_unbind_process ignora il pid 0. Riprodotto col
       carico sull'host (3 giri vuoti): prima fermo al primo avvio, due volte
       su due; con la 0.288 10 avvii su 10 arrivati al login.
+      30/10, GLI ALTRI DRIVER (da committare; kernel 0.289 non cambia):
+      NetCoda in net_anelli.h, la coda verso ip.drv comune (e1000 0.005 non
+      ha piu' la sua) e net_anelli_opzione (-rx N / -tx N per tutti: -r in
+      nforce e' il PHY Realtek; la e1000 tiene anche -r/-t).
+        nforce 0.015   96-16384 RX, 64-16384 TX (R_MISURE, come forcedeth)
+        rtl8169 0.004  32-1024, 8-1024; anello TX allineato a 256
+        pcnet 0.004    8-512, potenze di due (RLEN/TLEN, net_anelli_log2)
+        sis900 0.020   8-65528 (liste collegate: nessun tetto del chip);
+                       il referto stampa i primi 16 descrittori e conta tutti
+        ne2k 0.004     l'anello e' nella scheda: cambia solo la coda
+        ar5k 0.004     solo RX (32-65528); TX_N 4 resta, tx_manda ne usa uno
+                       alla volta; gli anelli di scansione (ar5k_scan,
+                       ar5k_servizio) sono di una sola passata e restano
+      I massimi di nforce e rtl8169 vengono da quel che ricordo di forcedeth
+      e del datasheet: non li ho riletti.
+      PROVA: tools/prova_schede_rete.sh nuovo, 16 MB casuali su disco e
+      sha256 su ogni scheda di QEMU, TUTTO A POSTO a 32 e 64 bit:
+        32 bit (512 MB)  e1000 504/120 6,3 s; pcnet 256/64 7,6 s; ne2k 226 s
+        64 bit (1 GB)    e1000 1016/248 5,1 s; pcnet 512/128 5,5 s; ne2k 224 s
+      ne2k: 226,1 s e 1787 fuori sequenza anche con la 0.003 rimessa apposta:
+      NON e' una regressione, sono i 16 KB dell'anello nella scheda.
+      Regressioni a 32 e 64 bit a posto: prova_fd (2000 connessioni),
+      prova_telnet (TN_PORTA=2424), prova_ssh, prova_httpd (11 ok),
+      prova_mariadb.
+      ! NON PROVATI, QEMU NON HA LE SCHEDE: nforce, rtl8169, sis900, ar5k.
+      IL CALO A ~90/s NON C'E' PIU' E NON ERA L'ANELLO. A 2 GB, 2048 client,
+      stesso kernel 0.289: netrx=256 126,8/s (p50 2,5 s) e di serie 2040 RX
+      125,0/s (p50 2,1 s), 0 persi dalla scheda, 0 senza posto, 0 connessioni
+      fallite, nessun fault; ieri 92/s col kernel 0.287. Quale modifica
+      l'abbia tolto non l'ho cercato (fra le due c'e' la 0.288).
+      risultati/http-2048-netrx256 e http-2048-netrxserie.
+      netrx su un CD di prova si mette in build/iso-exos/boot/kernel.cfg,
+      poi tools/mkiso64.sh: il kernel la vede anche se la seriale dice due
+      volte "kernel.cfg non trovato" (da capire, messaggio fuorviante).
+      Stato: FATTA in QEMU; resta la prova sul ferro.
 
   40. LE SCADENZE DEL DRIVER ATA (trovato il 28/10 con la prova di Apache
       e PHP). Kernel 0.286: FLUSH CACHE aspetta fino a 30 s (era 5, come un
@@ -8874,6 +8940,39 @@ tools/netinst/velocita tolto da netinst.
       browser predefinito di exwin (un'impostazione di sistema che exwin e
       i programmi usano per aprire un indirizzo, e Firefox che si propone
       come predefinito). Da fare finito il lavoro su PHP (voce 39).
+      30/10, GUARDATO SUL PORTATILE (via telnet, solo letture; l'utente: "ho
+      provato a cancellare il profilo ma sembra che viene corrotto
+      comunque"). NEL LOG NON C'E' NESSUN ERRORE SQLITE. Il profilo non e'
+      corrotto, E' A META': in .exilla/profilo mancano .parentlock,
+      formhistory.sqlite, compatibility.ini, startupCache, cache2,
+      cookies.sqlite, prefs.js, storage.sqlite, extensions.json, cioe'
+      ESATTAMENTE le voci prima di `storage` nell'ordine della directory (lo
+      stesso del profilo sano in /root/casa2 e di quello fatto in QEMU, che
+      e' completo; e2fsck del disco di prova pulito anche dopo lo spegnimento
+      di colpo). E in storage/permanent/chrome/idb c'e' ~EXV8015.DEL: la
+      silly rename del VFS, cioe' un file cancellato MENTRE ERA APERTO.
+      COME VA, DAL CODICE (non riprodotto col file manager, e l'utente non
+      ha ancora detto come ha cancellato): con un Firefox vivo (anche fermo
+      nello spegnimento) cancella_albero di filemgr toglie le voci in
+      ordine; il database aperto diventa ~EXV, resta nella directory, rmdir
+      di idb fallisce e `if (r < 0) return -1` risale e ferma tutto. Avviso
+      solo nella riga di stato. `rm -r` su un profilo chiuso toglie tutto
+      (provato in QEMU). Il primo Firefox puo' restare vivo dopo la chiusura
+      della finestra e, tolto .parentlock, nessuno impedisce il secondo
+      sullo stesso profilo: ipotesi, da vedere.
+      DA FARE: 1) cancella_albero non si ferma al primo errore: toglie
+      quello che puo' e dice in una finestra cosa e' rimasto e perche'; 2)
+      prima di cancellare, avvisare se dentro c'e' un file aperto (per
+      esempio il .parentlock di un Firefox vivo); 3) gli ~EXV rimasti dopo
+      un riavvio non li toglie nessuno; 4) IL BLOCCO VERO: Firefox resta
+      fermo su "IOUtils Blocker (profile-before-change)" e intanto ripete
+      RemoteSecuritySettings/CRLite con 0x8046001e
+      (NS_ERROR_ILLEGAL_DURING_SHUTDOWN), 3810 volte, log di 946 KB; in QEMU
+      60 s dopo Ctrl+Q il processo c'era ancora con 39 file aperti e i -wal
+      pieni (non so se Ctrl+Q sia arrivato alla finestra: da rivedere); 5)
+      l'orologio del portatile parte da 2007-09-01 e passa al 2026 a sistema
+      acceso: da qui i file datati 2007 e "Warning: Security Risk".
+      Sul portatile, Firefox chiuso: rm -r /root/.exilla/profilo.
 
   37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10
       col porting di Apache). Il kernel lo dichiara (segnali.c: «a blocked

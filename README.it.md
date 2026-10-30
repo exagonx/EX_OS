@@ -111,6 +111,24 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Anelli di rete dalla RAM su tutti i driver (e1000.drv 0.005, nforce.drv 0.015, rtl8169.drv 0.004, pcnet.drv 0.004, sis900.drv 0.020, ne2k.drv 0.004, ar5k.drv 0.004) — e1000, pcnet e ne2k testati in QEMU; nforce, rtl8169, sis900 e ar5k **da testare**
+
+Quello che la e1000 aveva dalla 0.287 vale ora per tutti: niente più posti
+fissi negli anelli. L'ordine è `-rx N` / `-tx N` del driver, poi `netrx` e
+`nettx` di `kernel.cfg`, poi la RAM (un descrittore di ricezione per MB e un
+quarto per l'invio), sempre entro quello che la scheda ammette; la tabella è
+in `/boot/kernel.txt`. La coda verso `ip.drv` è una sola per tutti i driver,
+ne2k compresa, parte da 64 posti e cresce fino a quattro anelli.
+
+- **Provato:** `tools/prova_schede_rete.sh` scarica 16 MB su ogni scheda che
+  QEMU emula e controlla lo sha256, a 32 e 64 bit. e1000 5-6 s, pcnet 5-8 s,
+  ne2k circa 225 s (come prima: il limite sono i 16 KB della scheda).
+- **Non provato:** nforce, rtl8169, sis900 e ar5k sono solo compilati, QEMU
+  non ha quelle schede.
+- **Il calo a ~90 richieste al secondo non c'è più:** a 2 GB e 2048 client
+  125-127 richieste al secondo sia con 256 sia con 2040 descrittori, e zero
+  frame persi dalla scheda.
+
 ### Tastiera nuova in ExWin: lettere accentate, pressioni e rilasci (kbd.drv 0.007, wserver 0.014, exwin.so 0.021) — testato in QEMU
 
 Fino a ieri le **caselle e le aree di testo prendevano solo l'ASCII**: una «è»

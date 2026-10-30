@@ -63,10 +63,11 @@
 #include "libc.h"
 #include "net_proto.h"
 #include "pci_proto.h"
+#include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `sis900.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis900.drv", "0.019");
+EX_VERSIONE("sis900.drv", "0.020");
 
 #define SIS_VENDITORE   0x1039
 #define SIS_900         0x0900
@@ -373,8 +374,17 @@ EX_VERSIONE("sis900.drv", "0.019");
 #define D_MCAST         0x01000000u
 #define D_BCAST         0x01800000u   /* 24 e 23 insieme */
 
-#define RX_N            8
-#define TX_N            8
+/* ! NO FIXED SIZE SINCE 0.020 (voce 41): -rx/-tx, netrx/nettx of kernel.cfg or
+ * the RAM (drivers/net/net_anelli.h). The minimum is what 0.019 had. The rings
+ * are lists linked by address, so the chip sets no maximum: the one here is
+ * the same as the e1000's, and dma_alloc's own limit comes first. */
+#define ANELLO_MIN      8u
+#define ANELLO_MAX_RX   65528u
+#define ANELLO_MAX_TX   65528u
+
+static unsigned int g_rx_n = 0, g_tx_n = 0;
+#define RX_N            g_rx_n
+#define TX_N            g_tx_n
 #define BUF_LEN         2048    /* quanto e' distanziato un buffer dall'altro */
 
 /* ! QUANTO SPAZIO SI DICHIARA ALLA SCHEDA NON E' QUANTO SE NE E' RISERVATO, e
@@ -413,9 +423,13 @@ EX_VERSIONE("sis900.drv", "0.019");
  * gli anelli vogliono l'allineamento a quattro byte e partire da li' lo
  * garantisce senza doverlo calcolare. */
 #define OFF_RX_DESC     0x0000
-#define OFF_TX_DESC     0x0100
-#define OFF_BUFFER      0x1000
+#define OFF_TX_DESC     (OFF_RX_DESC + RX_N * 16)
+#define OFF_BUFFER      ((OFF_TX_DESC + TX_N * 16 + 4095u) & ~4095u)
 #define DMA_BYTE        (OFF_BUFFER + (RX_N + TX_N) * BUF_LEN)
+
+/* The report writes the first descriptors, not all of them: the counts below
+ * them cover the whole ring. */
+#define REFERTO_DESC    16u
 
 #define PERIODO_MS      250     /* il battito: vedi ne2k.c */
 #define ATTESA_PCI_MS   5000
@@ -513,10 +527,7 @@ static int           g_forza_veloce = -1;
 
 /* 64 dal 9 ottobre 2026: con la finestra di TCP a 63 KB (ip.drv 0.009) arrivano
  * raffiche di una quarantina di frame, e una coda da 16 ne perdeva. */
-#define CODA_N          64
-static unsigned char g_coda[CODA_N][NET_FRAME_MAX];
-static unsigned int  g_coda_len[CODA_N];
-static int           g_coda_testa = 0, g_coda_conta = 0;
+static NetCoda       g_coda;
 static unsigned int  g_lettore_pid = 0;
 
 /* =============================================================================
@@ -1642,6 +1653,7 @@ static void ref_anelli(void)
         unsigned int st = d[1];
 
         if (st & D_OWN) pronti_rx++;
+        if (i >= REFERTO_DESC) continue;
         ref("      %2u   0x%08x 0x%08x 0x%08x  %s    %s  %u\n",
             i, d[0], st, d[2],
             (st & D_OWN) ? "SI " : "no ",
@@ -1655,6 +1667,7 @@ static void ref_anelli(void)
         unsigned int st = d[1];
 
         if (st & D_OWN) in_mano_tx++;
+        if (i >= REFERTO_DESC) continue;
         ref("      %2u   0x%08x 0x%08x 0x%08x  %s    %s  %u\n",
             i, d[0], st, d[2],
             (st & D_OWN) ? "SI " : "no ",
@@ -1662,9 +1675,9 @@ static void ref_anelli(void)
     }
     ref("      prossimo che useremo: %u\n\n", g_tx_prossimo);
 
-    ref("  %u descrittori RX su %d hanno dentro un pacchetto da leggere\n",
+    ref("  %u descrittori RX su %u hanno dentro un pacchetto da leggere\n",
         pronti_rx, RX_N);
-    ref("  %u descrittori TX su %d sono ancora in mano alla scheda\n\n",
+    ref("  %u descrittori TX su %u sono ancora in mano alla scheda\n\n",
         in_mano_tx, TX_N);
     g_tx_in_mano = in_mano_tx;
 
@@ -1731,7 +1744,7 @@ static void ref_contatori(void)
     ref("  traboccati     %u\n", g_cont.overflow);
     ref("  interrupt      %u\n", g_cont.notifiche_irq);
     ref("  battiti        %u\n", g_cont.battiti);
-    ref("  in coda adesso %d\n", g_coda_conta);
+    ref("  in coda adesso %d\n", g_coda.conta);
     ref("  chi aspetta    %u\n\n", g_lettore_pid);
 
     ref("== COSA NE SEGUE ==\n\n");
@@ -2086,28 +2099,17 @@ static void spegni_scheda(void)
  * ========================================================================== */
 static void accoda(const unsigned char *f, unsigned int len)
 {
-    int posto;
-
     if (len > NET_FRAME_MAX) { g_cont.troppo_grandi++; return; }
 
-    if (g_coda_conta >= CODA_N) {
-        /* ! SI BUTTA IL PIU' VECCHIO, NON IL PIU' NUOVO. Chi legge vuole
-         * quello che sta succedendo adesso; tenere i vecchi e scartare i nuovi
-         * fa una coda che invecchia e non si svuota mai. */
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
-        g_coda_conta--;
-        g_cont.persi_coda++;
-    }
-
-    posto = (g_coda_testa + g_coda_conta) % CODA_N;
-    memcpy(g_coda[posto], f, len);
-    g_coda_len[posto] = len;
-    g_coda_conta++;
+    /* ! SI BUTTA IL PIU' VECCHIO, NON IL PIU' NUOVO, se la coda non cresce
+     * piu'. Chi legge vuole quello che sta succedendo adesso; tenere i vecchi
+     * e scartare i nuovi fa una coda che invecchia e non si svuota mai. */
+    memcpy(net_coda_posto(&g_coda, len, &g_cont.persi_coda), f, len);
 }
 
 static void svuota_rx(void)
 {
-    int giri;
+    unsigned int giri;
 
     /* ! CI SI FERMA DOPO UN GIRO INTERO. Se un descrittore restasse con D_OWN
      * acceso per un difetto — o se la scheda riempisse l'anello piu' in fretta
@@ -2268,12 +2270,11 @@ static void servi_scheda(void)
  * here without serving the card. See consegna() in e1000.c. */
 static void consegna(void)
 {
-    if (g_lettore_pid == 0 || g_coda_conta == 0) return;
+    if (g_lettore_pid == 0 || g_coda.conta == 0) return;
 
     if (ipc_send(g_lettore_pid, NET_MSG_FRAME | IPC_SENZA_ATTESA,
-                 g_coda[g_coda_testa], g_coda_len[g_coda_testa]) == 0) {
-        g_coda_testa = (g_coda_testa + 1) % CODA_N;
-        g_coda_conta--;
+                 net_coda_primo(&g_coda), net_coda_primo_len(&g_coda)) == 0) {
+        net_coda_togli(&g_coda);
         g_lettore_pid = 0;
     }
 }
@@ -2454,7 +2455,7 @@ static void stampa_contatori(void)
     printf("        ricevuti   %u    errori RX %u\n",
            g_cont.ricevuti, g_cont.errori_rx);
     printf("        in coda    %d    persi in coda %u\n",
-           g_coda_conta, g_cont.persi_coda);
+           g_coda.conta, g_cont.persi_coda);
     printf("        interrupt  %u    battiti %u\n",
            g_cont.notifiche_irq, g_cont.battiti);
     /* ! L'ANELLO TRABOCCATO SI STAMPA, e prima non si stampava: il contatore
@@ -2518,8 +2519,9 @@ static void stampa_stato(void)
     printf("        MTU    %d\n", NET_MTU);
     printf("        DMA    %u byte a 0x%08x (fisico 0x%08x)\n",
            DMA_BYTE, g_dma_virt, g_dma_fis);
-    printf("        anelli %d RX, %d TX da %d byte (RX dichiarati %d)\n",
+    printf("        anelli %u RX, %u TX da %d byte (RX dichiarati %d)\n",
            RX_N, TX_N, BUF_LEN, RX_DICHIARATO);
+    printf("        coda %d posti (fino a %d)\n", g_coda.n, g_coda.max);
 }
 
 /* =============================================================================
@@ -2691,6 +2693,8 @@ static void uso(void)
     printf("       di gestione non risponde e il driver tira a\n");
     printf("       indovinare: se `-half` fa funzionare la rete, il\n");
     printf("       guasto era il disaccordo sul duplex.\n");
+    printf("  -rx N  -tx N  descrittori di ricezione e di invio (di serie\n");
+    printf("       netrx e nettx di kernel.cfg, o dalla RAM).\n");
     printf("  -promiscuo  accetta OGNI pacchetto, non solo i suoi.\n");
     printf("       Se cosi' la rete va e senza no, il guaio e'\n");
     printf("       nel filtro o nell'indirizzo MAC.\n\n");
@@ -2706,12 +2710,14 @@ static void uso(void)
 int main(int argc, char **argv)
 {
     int sonda = 0, solo_elenco = 0, diagnosi = 0, setaccio = 0, referto = 0;
+    unsigned int riga_rx = 0, riga_tx = 0;
     const char *percorso = REFERTO_PREDEFINITO;
     int i, rc;
     DmaZona z;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) { sonda = 1; continue; }
+        if (net_anelli_opzione(argc, argv, &i, &riga_rx, &riga_tx)) continue;
         if (strcmp(argv[i], "-l") == 0) { solo_elenco = 1; continue; }
         if (strcmp(argv[i], "-promiscuo") == 0) { g_promiscuo = 1; continue; }
         if (strcmp(argv[i], "-mac") == 0 && i + 1 < argc) {
@@ -2946,10 +2952,18 @@ int main(int argc, char **argv)
      * contengono indirizzi fisici: senza la zona DMA non c'e' niente da
      * scriverci dentro, e una scheda accesa con puntatori a zero comincia a
      * fare DMA sulla pagina zero. */
-    z.byte = DMA_BYTE;
-    rc = dma_alloc(&z);
-    if (rc < 0) {
-        printf("sis900: dma_alloc(%u) fallita (%d)\n", DMA_BYTE, rc);
+    /* The rings (net_anelli.h), and if the contiguous memory is not there
+     * the larger one halves until it is, or both are at the minimum. */
+    g_rx_n = net_anelli_rx(riga_rx, ANELLO_MIN, ANELLO_MAX_RX, 1u);
+    g_tx_n = net_anelli_tx(riga_tx, g_rx_n, ANELLO_MIN, ANELLO_MAX_TX, 1u);
+    for (;;) {
+        z.byte = DMA_BYTE;
+        rc = dma_alloc(&z);
+        if (rc >= 0) break;
+        printf("sis900: dma_alloc(%u) per %u RX e %u TX fallita (%d)\n",
+               DMA_BYTE, g_rx_n, g_tx_n, rc);
+        if (net_anelli_dimezza(&g_rx_n, &g_tx_n, ANELLO_MIN, ANELLO_MIN, 1u))
+            continue;
         printf("        Serve memoria fisicamente contigua: e' la risorsa\n");
         printf("        piu' scarsa del sistema, e questo e' il messaggio\n");
         printf("        che dice che e' finita.\n");
@@ -2957,6 +2971,11 @@ int main(int argc, char **argv)
     }
     g_dma_virt = z.virt;
     g_dma_fis  = z.fisico;
+
+    if (!net_coda_inizia(&g_coda, g_rx_n)) {
+        printf("sis900: niente memoria per la coda\n");
+        return 1;
+    }
 
     if (inizializza_scheda() != 0) return 1;
 
