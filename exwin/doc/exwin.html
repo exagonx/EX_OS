@@ -446,6 +446,13 @@ prima dei pulsanti, e nella barra in fondo ogni pulsante ne mostra l'inizio.
 Con molte finestre aperte la barra in fondo mostra i pulsanti che ci stanno.
 </p>
 
+<p>
+Lo stesso vale dentro le finestre: un'area di testo cresce con il file (righe
+e colonne), una lista con le sue righe, una casella di testo con quello che
+si scrive; i menu, i combo e le schede hanno le voci che servono. Il file
+manager mostra cartelle di qualunque misura.
+</p>
+
 <p class="nota">
 <b>Per chi scrive un programma</b>: <code>ex_track_windows()</code> lo
 possono chiamare piu' programmi insieme, e ognuno riceve l'elenco intero
@@ -475,6 +482,55 @@ primo di loro ancora vivo: la barra. La prova e'
 da una casella di un modulo nel navigatore e si incolla nell'editor. Due
 &laquo;ultimi copiati&raquo; sarebbero la cosa peggiore: nessuno saprebbe
 quale sta usando.
+</p>
+
+<h2 id="tastiera">La tastiera: lettere accentate, pressioni e rilasci</h2>
+
+<p>
+Nelle caselle di testo e nelle aree di testo (l'editor, l'ambiente di
+sviluppo, il navigatore) le <b>lettere accentate si scrivono</b> e si
+salvano in UTF-8, la codifica di Linux e del web (dal kbd.drv 0.007, wserver
+0.014, exwin.so 0.021; prima caselle e aree prendevano solo l'ASCII). Il
+Backspace, il Canc e le frecce si muovono di una lettera intera. I file
+vecchi, con le accentate nella codifica della console (CP437), si leggono
+come prima: un byte che non e' UTF-8 vale per se stesso. La console di testo
+resta in CP437, perche' e' quello che la VGA sa disegnare.
+</p>
+
+<p>
+Si scrivono anche il <b>simbolo dell'euro</b> (AltGr+E sulle tastiere
+italiana, francese, tedesca e spagnola, AltGr+4 su quella britannica) e il
+<b>paragrafo §</b> (Shift+ù sull'italiana, Shift+! sulla francese, Shift+3
+sulla tedesca), e sulla francese e la tedesca ², ³ e ¤. Le disposizioni di
+tastiera sono in Unicode (prima in CP437, che l'euro non ce l'ha e mette il §
+fra i codici di controllo); il font di sistema ha il glifo dell'euro. Nella
+console di testo l'euro non si scrive, come prima: la VGA non sa
+disegnarlo.
+</p>
+
+<p>
+Il <b>Ctrl di destra</b> funziona come quello di sinistra (prima la tastiera
+lo ignorava), e <b>Bloc Num</b> accende la sua spia e fa scrivere le cifre al
+tastierino numerico; spento, il tastierino resta frecce, Inizio, Fine e
+pagine, come prima. Tenere premuto Bloc Maiusc non lo fa piu' lampeggiare.
+</p>
+
+<p class="nota">
+<b>Per chi scrive un programma</b>: <code>ex_track_keys(f, 1)</code> chiede
+per quella finestra le pressioni e i rilasci. <code>EXM_KEY</code> resta
+com'era (ogni pressione di un tasto con un codice, le ripetizioni comprese);
+in piu' arrivano <code>EXM_KEY_DOWN</code> per i tasti senza codice (Shift,
+Ctrl, Alt, AltGr, Bloc Maiusc, Bloc Num) e <code>EXM_KEY_UP</code> per ogni
+rilascio. Durante questi tre messaggi <code>ex_key_info()</code> da' il
+carattere in Unicode, il tasto fisico (lo scancode, uguale su tutte le
+disposizioni), tutti i modificatori (anche AltGr, il tasto Windows, Bloc
+Maiusc e Bloc Num) e se e' una ripetizione. Serve ai giochi, per sapere
+quanto un tasto resta premuto, e ai port di SDL e GTK. Un programma che non
+lo chiede riceve i tasti come prima, piu' uno: un carattere che in CP437 non
+c'e' (l'euro) arriva come <code>EXM_KEY</code> col codice
+<code>KBD_K_UNICODE</code>, e quale sia lo dice <code>ex_key_info()</code>;
+caselle e aree di testo lo scrivono da sole. La prova e'
+<code>tools/prova_tasti.sh</code>, con <code>/exwin/bin/finestreprova -t</code>.
 </p>
 
 <h2>I caratteri</h2>

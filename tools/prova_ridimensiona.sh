@@ -66,8 +66,9 @@ passi_a() {
 # si apre e si fotografa, poi si chiede alla fotografia dove tirare.
 {
     echo "exwin@10"
+    echo "key:alt-f1@3"
     echo "/exwin/bin/term &@6"
-    echo "key:alt-f2@3"
+    echo "key:alt-f5@3"
     echo "foto:$D/rid_prima.ppm@2"
 } > "$D/rid_args.txt"
 
@@ -88,11 +89,14 @@ wait $QRID 2>/dev/null
 
 {
     echo "exwin@10"
+    echo "key:alt-f1@3"
     echo "/exwin/bin/term &@6"
-    echo "key:alt-f2@3"
+    echo "key:alt-f5@3"
     echo "foto:$D/rid_prima.ppm@2"
-    for i in $(seq 1 5); do echo "mon:mouse_move -600 -600@0"; done
-    passi_a $PRESA
+    # ! `vai:` and not passi_a: from the corner QEMU leaves the pointer ten
+    # pixels short, and the grip is smaller than that (30 October 2026: the
+    # drag started beside it and nothing moved). vai: looks and corrects.
+    echo "vai:${PRESA% *},${PRESA#* }@1"
     echo "mon:mouse_button 1@1"
     for i in $(seq 1 8);  do echo "mon:mouse_move -10 -10@0"; done
     for i in $(seq 1 3);  do echo "mon:mouse_move -10 0@0"; done
@@ -116,8 +120,9 @@ pkill -9 -f qemu-system 2>/dev/null
 sleep 2
 {
     echo "exwin@10"
+    echo "key:alt-f1@3"
     echo "winprova &@6"
-    echo "key:alt-f2@3"
+    echo "key:alt-f5@3"
     for i in $(seq 1 5); do echo "mon:mouse_move -600 -600@0"; done
     passi_a 200 50                     # la barra del titolo, che nasce in (80,60)
     echo "mon:mouse_button 1@1"

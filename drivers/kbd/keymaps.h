@@ -11,7 +11,7 @@
  *
  * Disposizioni di tastiera: dallo scancode al carattere.
  *
- * Ogni disposizione e' fatta di QUATTRO tabelle da 128 byte, indicizzate
+ * Ogni disposizione e' fatta di QUATTRO tabelle da 128 caratteri, indicizzate
  * dallo scancode (set 1). L'indice e' il TASTO FISICO, sempre lo stesso;
  * cambia solo cosa ci sta scritto sopra.
  *
@@ -36,25 +36,26 @@
  * Ecco perche' le tabelle sono quattro e non tre.
  *
  * -----------------------------------------------------------------------------
- * ! LE LETTERE ACCENTATE SONO BYTE DELLA CODE PAGE 437
+ * ! LE TABELLE SONO IN UNICODE (kbd.drv 0.007, 30 ottobre 2026)
  *
- * La VGA in modo testo disegna i glifi della CP437: la `à` e' il byte
- * 0x85, non `\xC3\xA0` di UTF-8. Qui si emette il byte che la VGA
- * disegna, perche' e' l'unico che si vede.
+ * Fino alla 0.006 qui c'erano i byte della CP437, quelli che la VGA in modo
+ * testo disegna: la `à` era 0x85. Il simbolo dell'euro (AltGr+E) e il §
+ * (Shift+ù) non si potevano scrivere: l'euro in CP437 non c'e', e il § sta
+ * a 0x15, in mezzo ai codici di controllo. Ora ogni casella e' il codice
+ * Unicode del carattere (unsigned short: bastano i primi 65536), e il
+ * driver lo traduce in CP437 solo dove serve un byte:
  *
- * Conseguenza dichiarata: quei byte finiscono anche nei NOMI DI FILE e
- * nel testo salvato. Chi legge quei file su Linux vede caratteri diversi,
- * perche' li' la stessa posizione vuol dire un'altra cosa. Non e' un
- * difetto di questa tabella: e' che EX-OS non ha una codifica di sistema,
- * e sceglierne una e' una decisione piu' grande di una disposizione di
- * tastiera.
+ *      la console di testo e chi legge i tasti alla vecchia maniera
+ *          ricevono il byte CP437 come prima (la `à` e' ancora 0x85);
+ *          un carattere che in CP437 non c'e' (l'euro) li' non scrive
+ *          niente, come prima;
+ *      chi legge l'evento lungo (KbdTasto, ExWin) riceve l'Unicode, e per
+ *          l'euro il codice KBD_K_UNICODE (kbd_proto.h).
  *
- * ! DOVE UN CARATTERE NON ESISTE IN CP437 SI EMETTE ZERO, cioe' il tasto
- * non fa niente. E' il caso del § italiano: in CP437 sta alla posizione
- * 0x15, che e' dentro l'intervallo dei codici di controllo. Emetterlo
- * darebbe un byte che il driver non eca (vedi eco_visibile in kbd.c) e
- * che finirebbe invisibile dentro il comando. Meglio un tasto muto di un
- * carattere fantasma.
+ * ! IL § NON SI DA' ALLA CONSOLE come byte 0x15: e' un codice di
+ * controllo (Ctrl+U), e un tasto che lo manda darebbe un carattere che il
+ * driver non eca (vedi eco_visibile in kbd.c), invisibile dentro il
+ * comando. Va solo a chi legge l'evento lungo, come l'euro.
  *
  * -----------------------------------------------------------------------------
  * ! QUANTO SONO ATTENDIBILI QUESTE TABELLE
@@ -75,42 +76,48 @@
 #ifndef KEYMAPS_H
 #define KEYMAPS_H
 
-/* Lettere accentate e segni, come li disegna la VGA (CP437). */
-#define K_agrave    0x85    /* à */
-#define K_egrave    0x8A    /* è */
-#define K_eacute    0x82    /* é */
-#define K_igrave    0x8D    /* ì */
-#define K_ograve    0x95    /* ò */
-#define K_ugrave    0x97    /* ù */
-#define K_ccedil    0x87    /* ç */
-#define K_Ccedil    0x80    /* Ç */
-#define K_gradi     0xF8    /* ° */
-#define K_sterlina  0x9C    /* £ */
-#define K_udier     0x81    /* ü */
-#define K_Udier     0x9A    /* Ü */
-#define K_odier     0x94    /* ö */
-#define K_Odier     0x99    /* Ö */
-#define K_adier     0x84    /* ä */
-#define K_Adier     0x8E    /* Ä */
-#define K_eszett    0xE1    /* ß */
-#define K_ntilde    0xA4    /* ñ */
-#define K_Ntilde    0xA5    /* Ñ */
-#define K_escl_rov  0xAD    /* ¡ */
-#define K_int_rov   0xA8    /* ¿ */
-#define K_ordm      0xA7    /* º */
-#define K_ordf      0xA6    /* ª */
-#define K_non       0xAA    /* ¬ */
-#define K_micro     0xE6    /* µ */
+/* Lettere accentate e segni, in Unicode (fino alla 0.006 erano CP437). */
+#define K_agrave    0x00E0  /* à */
+#define K_egrave    0x00E8  /* è */
+#define K_eacute    0x00E9  /* é */
+#define K_igrave    0x00EC  /* ì */
+#define K_ograve    0x00F2  /* ò */
+#define K_ugrave    0x00F9  /* ù */
+#define K_ccedil    0x00E7  /* ç */
+#define K_Ccedil    0x00C7  /* Ç */
+#define K_gradi     0x00B0  /* ° */
+#define K_sterlina  0x00A3  /* £ */
+#define K_udier     0x00FC  /* ü */
+#define K_Udier     0x00DC  /* Ü */
+#define K_odier     0x00F6  /* ö */
+#define K_Odier     0x00D6  /* Ö */
+#define K_adier     0x00E4  /* ä */
+#define K_Adier     0x00C4  /* Ä */
+#define K_eszett    0x00DF  /* ß */
+#define K_ntilde    0x00F1  /* ñ */
+#define K_Ntilde    0x00D1  /* Ñ */
+#define K_escl_rov  0x00A1  /* ¡ */
+#define K_int_rov   0x00BF  /* ¿ */
+#define K_ordm      0x00BA  /* º */
+#define K_ordf      0x00AA  /* ª */
+#define K_non       0x00AC  /* ¬ */
+#define K_micro     0x00B5  /* µ */
+/* not in CP437, or where CP437 has a control code: only the long event */
+#define K_euro      0x20AC  /* € */
+#define K_parag     0x00A7  /* § */
+#define K_sup2      0x00B2  /* ² (CP437 has it, at 0xFD) */
+#define K_sup3      0x00B3  /* ³ */
+#define K_valuta    0x00A4  /* ¤ */
 
 #define KEYMAP_N_TASTI  128
 
 typedef struct {
-    const char   *nome;         /* "it", "fr", ... */
-    const char   *descrizione;  /* per l'elenco */
-    unsigned char normale[KEYMAP_N_TASTI];
-    unsigned char shift[KEYMAP_N_TASTI];
-    unsigned char altgr[KEYMAP_N_TASTI];
-    unsigned char altgr_sh[KEYMAP_N_TASTI];
+    const char    *nome;        /* "it", "fr", ... */
+    const char    *descrizione; /* per l'elenco */
+    unsigned short normale[KEYMAP_N_TASTI];     /* Unicode, see above */
+    unsigned short shift[KEYMAP_N_TASTI];
+    unsigned short altgr[KEYMAP_N_TASTI];
+    unsigned short altgr_sh[KEYMAP_N_TASTI];
 } Keymap;
 
 /* Le righe seguono lo scancode set 1:
@@ -164,11 +171,11 @@ static const Keymap g_keymaps[] = {
     ')','=', '?','^','\b','\t','Q','W','E','R',
     'T', 'Y','U','I','O','P',K_eacute,'*','\n', 0,
     'A', 'S','D','F','G','H','J','K','L',K_ccedil,
-    K_gradi,'|', 0, 0,'Z','X','C','V','B','N',
+    K_gradi,'|', 0, K_parag,'Z','X','C','V','B','N',
     'M', ';',':','_', 0, '*', 0, ' ' },
-  /* AltGr: le parentesi quadre, la chiocciola, il cancelletto. */
+  /* AltGr: le parentesi quadre, la chiocciola, il cancelletto, l'euro. */
   {   0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-      0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,   0,  0,  0,  0,  0,  0,  0,K_euro,0,
       0,   0,  0,  0,  0,  0,'[',']',  0,  0,
       0,   0,  0,  0,  0,  0,  0,  0,  0,'@',
     '#',   0,  0,  0,  0,  0,  0,  0,  0,  0,
@@ -195,17 +202,17 @@ static const Keymap g_keymaps[] = {
     K_ccedil,K_agrave, ')','=','\b','\t','a','z','e','r',
     't', 'y','u','i','o','p','^','$','\n', 0,
     'q', 's','d','f','g','h','j','k','l','m',
-    K_ugrave,0, 0, '*','w','x','c','v','b','n',
+    K_ugrave,K_sup2, 0, '*','w','x','c','v','b','n',
     ',', ';',':','!', 0, '*', 0, ' ' },
   {   0,  27, '1','2','3','4','5','6','7','8',
     '9','0', K_gradi,'+','\b','\t','A','Z','E','R',
     'T', 'Y','U','I','O','P',0,K_sterlina,'\n', 0,
     'Q', 'S','D','F','G','H','J','K','L','M',
     '%', 0, 0, K_micro,'W','X','C','V','B','N',
-    '?', '.','/',0, 0, '*', 0, ' ' },
+    '?', '.','/',K_parag, 0, '*', 0, ' ' },
   {   0,   0,  0,'~','#','{','[','|','`','\\',
-    '^', '@', ']','}',  0,  0,  0,  0,  0,  0,
-      0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
+    '^', '@', ']','}',  0,  0,  0,  0,K_euro,0,
+      0,   0,  0,  0,  0,  0,  0,K_valuta,0, 0,
       0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
       0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
       0,   0,  0,  0,  0,  0,  0,  0 },
@@ -223,14 +230,14 @@ static const Keymap g_keymaps[] = {
     'a', 's','d','f','g','h','j','k','l',K_odier,
     K_adier,'^', 0, '#','y','x','c','v','b','n',
     'm', ',','.','-', 0, '*', 0, ' ' },
-  {   0,  27, '!','"',K_ordm,'$','%','&','/','(',
+  {   0,  27, '!','"',K_parag,'$','%','&','/','(',
     ')','=', '?','`','\b','\t','Q','W','E','R',
     'T', 'Z','U','I','O','P',K_Udier,'*','\n', 0,
     'A', 'S','D','F','G','H','J','K','L',K_Odier,
     K_Adier,K_gradi, 0, '\'','Y','X','C','V','B','N',
     'M', ';',':','_', 0, '*', 0, ' ' },
-  {   0,   0,  0,  0,  0,  0,  0,  0,'{','[',
-    ']', '}', '\\',0,  0,  0,'@',  0,  0,  0,
+  {   0,   0,  0,K_sup2,K_sup3,0,0,0,'{','[',
+    ']', '}', '\\',0,  0,  0,'@',  0,K_euro,0,
       0,   0,  0,  0,  0,  0,  0,'~',  0,  0,
       0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
       0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
@@ -255,7 +262,7 @@ static const Keymap g_keymaps[] = {
     0, K_ordf, 0, K_Ccedil,'Z','X','C','V','B','N',
     'M', ';',':','_', 0, '*', 0, ' ' },
   {   0,   0,'|','@','#','~',K_non,  0,  0,  0,
-      0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
+      0,   0,  0,  0,  0,  0,  0,  0,K_euro,0,
       0,   0,  0,  0,  0,  0,'[',']',  0,  0,
       0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
       0,   0,  0,'}',  0,  0,  0,  0,  0,  0,
@@ -285,7 +292,9 @@ static const Keymap g_keymaps[] = {
     'A', 'S','D','F','G','H','J','K','L',':',
     '@', K_non, 0, '~','Z','X','C','V','B','N',
     'M', '<','>','?', 0, '*', 0, ' ' },
-  { 0 }, { 0 }
+  /* AltGr: l'euro sul 4 */
+  {   0,   0,  0,  0,  0,K_euro },
+  { 0 }
 },
 
 };
@@ -300,14 +309,14 @@ static const Keymap g_keymaps[] = {
  * `|` su AltGr. Si tratta qui, una volta per tutte. */
 #define KEYMAP_TASTO_102    0x56
 
-static unsigned char keymap_102(const Keymap *k, int shift, int altgr)
+static unsigned short keymap_102(const Keymap *k, int shift, int altgr)
 {
     /* US e UK: su US quel tasto non esiste, su UK c'e' ma porta \ e |. */
     if (k->nome[0] == 'u' && k->nome[1] == 's') return 0;
-    if (k->nome[0] == 'u' && k->nome[1] == 'k') return (unsigned char)(shift ? '|' : '\\');
+    if (k->nome[0] == 'u' && k->nome[1] == 'k') return (unsigned short)(shift ? '|' : '\\');
 
-    if (altgr) return (unsigned char)'|';
-    return (unsigned char)(shift ? '>' : '<');
+    if (altgr) return (unsigned short)'|';
+    return (unsigned short)(shift ? '>' : '<');
 }
 
 #endif /* KEYMAPS_H */

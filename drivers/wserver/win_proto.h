@@ -189,6 +189,33 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * ============================================================================= */
 #define WIN_MSG_ELENCO_UNA  0x570E  /* nessun corpo                          */
 
+/* =============================================================================
+ * PRESSES AND RELEASES (wserver 0.014, 30 October 2026, voce 42 point 2)
+ *
+ * WinRegione: id, and x = 1 to receive, 0 to stop. From then on the keys
+ * reach that window as WIN_EV_PREMUTO and WIN_EV_RILASCIATO instead of
+ * WIN_EV_TASTO, with every field filled:
+ *
+ *   tasto    the same code WIN_EV_TASTO carries (KBD_K_* or the character,
+ *            | KBD_MOD_SHIFT/CTRL/ALT): 0 for a key that types nothing,
+ *            a modifier on its own (Shift, Ctrl, Caps Lock...)
+ *   x        the character as a Unicode code point, 0 if none (arrows,
+ *            Enter, Tab, Esc, Backspace, modifiers)
+ *   y        the physical key: scancode set 1, + KBD_FISICO_E0 (0x100) if
+ *            extended; the same on every keymap
+ *   bottoni  all the modifiers, KBD_MOD_* of kbd_proto.h (AltGr, Super,
+ *            Caps Lock and Num Lock too), and KBD_EV_RIPETUTO on the
+ *            repeat of a key held down
+ *
+ * ! ONLY TO WHO ASKS, as with WIN_MSG_PASSAGGIO: a program that knows only
+ * WIN_EV_TASTO would take a release for a second press. A window that does
+ * not ask gets exactly what it got before; and with a kbd.drv older than
+ * 0.007 even one that asked gets WIN_EV_TASTO, as before, and no releases.
+ * The keys the server keeps (Ctrl+Alt+Canc, the Windows key, Ctrl+Esc,
+ * Alt+F10) do not arrive, and neither do their releases.
+ * ============================================================================= */
+#define WIN_MSG_TASTI       0x570F  /* WinRegione: id, x = 1 acceso / 0 spento */
+
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */
@@ -241,6 +268,10 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * WIN_MSG_PASSAGGIO (or the window went under another one): whatever was
  * highlighted because the pointer was over it can go back. No coordinates. */
 #define WIN_EV_USCITO       10
+/* A key went down / up, for a window that asked with WIN_MSG_TASTI: the
+ * fields are described there. */
+#define WIN_EV_PREMUTO      11
+#define WIN_EV_RILASCIATO   12
 
 /* Stili di una finestra di primo livello */
 #define WIN_ST_TITOLO       0x0001  /* ha la barra del titolo */

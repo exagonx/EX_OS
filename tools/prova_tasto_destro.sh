@@ -49,6 +49,11 @@ passi_a() {
 casa() { for i in 1 2 3 4 5; do echo "mon:mouse_move -600 -600@0"; done; }
 va() { casa; passi_a "$1" "$2"; }                   # x y assoluti
 destro() { va "$1" "$2"; echo "mon:mouse_button 2;mouse_button 0@3"; }
+# ! BY NAME (30 October 2026): the desktop got the Documents, Images and Media
+# links and the rdboot icon, the tree rdboot and USB, and the fixed positions
+# clicked the wrong entry. `punta:` finds the caption in the pixels
+# (tools/trova_testo.py) and puts the pointer on it.
+destro_su() { echo "punta:$1@1"; echo "mon:mouse_button 2;mouse_button 0@3"; }
 giu() { local i; for ((i = 0; i < $1; i++)); do echo "key:down@0.3"; done; }
 cancella_riga() { local i; for i in $(seq 1 30); do echo "key:backspace@0"; done; }
 
@@ -63,8 +68,7 @@ qemu-img create -f raw "$IMG" 32M > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, size=63488, type=83, bootable\n' \
     | "$SFDISK" "$IMG" > /dev/null 2>&1
 
-# ! nota.txt E' LA PRIMA VOCE DELLA SCRIVANIA, in alto a sinistra: ext2 rende
-# i nomi nell'ordine in cui sono nati, e la prova clicca per posizione.
+# The desktop's entries are clicked by name (destro_su), wherever they are.
 {
     echo "mkfs -t ext2 -L prova hd0p1@4"; echo "si@40"; echo "mount hd0p1 /disk@6"
     for c in "mkdir /disk/casa" "mkdir /disk/casa/desktop" \
@@ -86,16 +90,14 @@ corri 1
     echo "exwin@14"; echo "key:alt-f5@3"
     destro 400 300; echo "foto:$D/2-menu.ppm@1"
     echo "key:ret@3"; echo "cartella1@4"                 # Nuova cartella
-    destro 46 40; giu 2; echo "key:ret@2"                # nota.txt: Copia
+    destro_su nota.txt; giu 2; echo "key:ret@2"          # nota.txt: Copia
     destro 400 300; giu 2; echo "key:ret@5"              # Incolla
     echo "foto:$D/2-incollato.ppm@1"
-    destro 46 40; giu 1; echo "key:ret@3"                # Rinomina
+    destro_su nota.txt; giu 1; echo "key:ret@3"          # Rinomina
     cancella_riga; echo "nota2.txt@4"
     echo "key:alt-f1@2"; echo "ls /disk/casa/desktop@4"; echo "key:alt-f5@3"
-    # ! DOPO LA RINOMINA IN ALTO C'E' cartella1: rename() mette il nome nuovo
-    # in fondo alla directory, e nota2.txt scende al terzo posto. Si cancella
-    # quindi la cartella, che e' anche il caso che chiede di piu'.
-    destro 46 40; giu 4; echo "key:ret@3"                # Cancella
+    # Si cancella la cartella, che e' il caso che chiede di piu'.
+    destro_su cartella1; giu 4; echo "key:ret@3"         # Cancella
     echo "foto:$D/2-conferma.ppm@1"
     # ! IL FUOCO E' SUL PULSANTE CHE NON PERDE NIENTE (ex_dlg_conferma)
     echo "key:tab@1"; echo "key:ret@4"
@@ -104,26 +106,23 @@ corri 1
 corri 2
 
 # --- 3. il file manager ------------------------------------------------------
-# Dalla fotografia di /disk/prova: alfa.txt a (270,74), beta.txt a (270,90),
-# la cartella «dest» nell'albero a (75,155).
+# A row of the list dragged onto a folder of the tree, both by name.
 #
-# ! IL PUNTATORE ARRIVA DIECI PIXEL PRIMA, in x e in y (visto nella foto del
-# primo giro: mirato a 75,155, stava a 63,145, sopra «prova»). Sulle icone
-# della scrivania, 76 pixel, non si nota; su righe di 16 si': i bersagli qui
-# sotto hanno gia' i dieci in piu'.
-trascina() {    # x0 y0 x1 y1
-    va "$1" "$2"; echo "mon:mouse_button 1@1"
-    casa; passi_a "$3" "$4"; echo "mon:mouse_button 0@3"
+# ! IL PUNTATORE ARRIVAVA DIECI PIXEL PRIMA, in x e in y (mirato a 75,155,
+# stava a 63,145, sopra «prova»): `punta:` guarda dov'e' finito e lo corregge.
+trascina() {    # row of the list, folder of the tree
+    echo "punta:$1@1"; echo "mon:mouse_button 1@1"
+    echo "punta:$2@1"; echo "mon:mouse_button 0@3"
 }
 {
     echo "mount hd0p1 /disk@6"; echo "exwin@14"; echo "key:alt-f1@3"
     echo "/exwin/bin/filemgr /disk/prova &@8"; echo "key:alt-f5@3"
     destro 400 300; giu 2; echo "key:ret@3"              # Nuovo file
     echo "nuovo.txt@4"
-    trascina 280 100 85 165; echo "foto:$D/3-domanda.ppm@1"
+    trascina beta.txt dest; echo "foto:$D/3-domanda.ppm@1"
     # ! IL FUOCO E' SU ANNULLA, l'ultimo: Shift+Tab torna indietro
     echo "key:shift-tab@1"; echo "key:shift-tab@1"; echo "key:ret@5"  # Copia
-    trascina 280 84 85 165; echo "key:shift-tab@1"; echo "key:ret@5" # Sposta
+    trascina alfa.txt dest; echo "key:shift-tab@1"; echo "key:ret@5" # Sposta
     echo "foto:$D/3-fatto.ppm@1"
     echo "key:alt-f1@2"; echo "echo DEST@1"; echo "ls /disk/dest@4"
     echo "echo PROVA@1"; echo "ls /disk/prova@4"

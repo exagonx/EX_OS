@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.006");
+EX_VERSIONE("kbd.drv", "0.007");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -166,11 +166,18 @@ static int keymap_scegli(const char *nome)
  * Ogni riga di questo file gira nell'unico thread di main().
  * ============================================================================= */
 
-/* Modificatori */
+/* Modificatori. ! Shift and Ctrl are BITS, one per side (kbd.drv 0.007): 1 the
+ * left key, 2 the right one. Releasing one Shift while the other is still
+ * held used to switch Shift off; and the right Ctrl (e0 1d) was never seen at
+ * all, it fell into the extended keys and was thrown away. Everything that
+ * only asks "is it held?" still reads them as true or false. */
 static unsigned char g_shift = 0;
 static unsigned char g_ctrl  = 0;
 static unsigned char g_alt   = 0;
 static unsigned char g_altgr = 0;   /* Alt di DESTRA: e0 38 */
+static unsigned char g_super = 0;   /* Windows keys, 1 left (e0 5b), 2 right (e0 5c) */
+static unsigned char g_num   = 0;   /* Num Lock: the keypad types digits */
+static unsigned char g_e1    = 0;   /* bytes of the Pause sequence still to skip */
 
 /* Dallo scancode al carattere, secondo la disposizione attiva.
  *
@@ -185,21 +192,21 @@ static unsigned char g_altgr = 0;   /* Alt di DESTRA: e0 38 */
  * casella vuota nella tabella specifica NON e' un tasto muto: e' «qui non
  * c'e' niente di speciale», e si ricade su quella sotto. Senza, AltGr+A
  * smetterebbe di scrivere una A. */
-static char traduci(unsigned char sc)
+static unsigned traduci(unsigned char sc)
 {
-    char a = 0;
+    unsigned a = 0;
 
     if (sc >= KEYMAP_N_TASTI) return 0;
 
-    if (g_altgr && g_shift) a = (char)g_map->altgr_sh[sc];
-    if (!a && g_altgr)      a = (char)g_map->altgr[sc];
-    if (!a && g_shift)      a = (char)g_map->shift[sc];
-    if (!a && !g_altgr)     a = (char)g_map->normale[sc];
+    if (g_altgr && g_shift) a = g_map->altgr_sh[sc];
+    if (!a && g_altgr)      a = g_map->altgr[sc];
+    if (!a && g_shift)      a = g_map->shift[sc];
+    if (!a && !g_altgr)     a = g_map->normale[sc];
 
     /* Il tasto in piu' delle tastiere a 102 tasti, che nelle tabelle non
      * c'e' perche' sta fuori dalle righe: vedi keymaps.h. */
     if (!a && sc == KEYMAP_TASTO_102)
-        a = (char)keymap_102(g_map, g_shift, g_altgr);
+        a = keymap_102(g_map, g_shift, g_altgr);
 
     return a;
 }
@@ -223,7 +230,9 @@ static unsigned char g_leds  = 0;   /* bit0=Scroll, bit1=Num, bit2=Caps */
  * tastiera è una sola.
  * ============================================================================= */
 #define KBD_RING_SIZE   512     /* type-ahead per console, in byte */
-#define KBD_KEYRING_SIZE 32     /* eventi tasto in coda, per console */
+/* ! 64 AND NOT 32 FROM kbd.drv 0.007: the ring holds releases and modifiers
+ * too now, twice the events for the same typing. */
+#define KBD_KEYRING_SIZE 64     /* eventi tasto in coda, per console */
 
 typedef struct {
     /* Riga in costruzione (line discipline "cooked") */
@@ -299,13 +308,14 @@ typedef struct {
      * READKEY e il successivo.
      * ===================================================================== */
     unsigned char raw;
-    unsigned keys[KBD_KEYRING_SIZE];
+    KbdTasto keys[KBD_KEYRING_SIZE];    /* the long event: see kbd_proto.h */
     unsigned khead, ktail, kcount;
 
     /* Client in attesa di un TASTO. Distinto da reader_pid: sono due
      * protocolli diversi e tenerli separati evita di consegnare una riga
      * a chi aveva chiesto un tasto. */
     unsigned keyreader_pid;
+    unsigned keyreader_v2;      /* it asked for KbdTasto (KBD_TASTI_V2) */
 } ConsoleIn;
 
 static ConsoleIn g_c[KBD_N_CONSOLE];
@@ -647,13 +657,135 @@ static void try_serve_reader(unsigned n)
 /* =============================================================================
  * Ring degli eventi tasto (modalità raw)
  * ============================================================================= */
-static void key_put(ConsoleIn *c, unsigned key)
+static void key_put_ev(ConsoleIn *c, const KbdTasto *t)
 {
     if (c->kcount >= KBD_KEYRING_SIZE) return;   /* raffica: si perde la coda */
 
-    c->keys[c->ktail] = key;
+    c->keys[c->ktail] = *t;
     c->ktail = (c->ktail + 1) % KBD_KEYRING_SIZE;
     c->kcount++;
+}
+
+/* CP437 bytes 0x80..0xFF as Unicode: the old code and the console take the
+ * byte the VGA draws, the keymaps and the long event the character
+ * (keymaps.h). */
+static const unsigned short g_437[128] = {
+    0x00C7,0x00FC,0x00E9,0x00E2,0x00E4,0x00E0,0x00E5,0x00E7,
+    0x00EA,0x00EB,0x00E8,0x00EF,0x00EE,0x00EC,0x00C4,0x00C5,
+    0x00C9,0x00E6,0x00C6,0x00F4,0x00F6,0x00F2,0x00FB,0x00F9,
+    0x00FF,0x00D6,0x00DC,0x00A2,0x00A3,0x00A5,0x20A7,0x0192,
+    0x00E1,0x00ED,0x00F3,0x00FA,0x00F1,0x00D1,0x00AA,0x00BA,
+    0x00BF,0x2310,0x00AC,0x00BD,0x00BC,0x00A1,0x00AB,0x00BB,
+    0x2591,0x2592,0x2593,0x2502,0x2524,0x2561,0x2562,0x2556,
+    0x2555,0x2563,0x2551,0x2557,0x255D,0x255C,0x255B,0x2510,
+    0x2514,0x2534,0x252C,0x251C,0x2500,0x253C,0x255E,0x255F,
+    0x255A,0x2554,0x2569,0x2566,0x2560,0x2550,0x256C,0x2567,
+    0x2568,0x2564,0x2565,0x2559,0x2558,0x2552,0x2553,0x256B,
+    0x256A,0x2518,0x250C,0x2588,0x2584,0x258C,0x2590,0x2580,
+    0x03B1,0x00DF,0x0393,0x03C0,0x03A3,0x03C3,0x00B5,0x03C4,
+    0x03A6,0x0398,0x03A9,0x03B4,0x221E,0x03C6,0x03B5,0x2229,
+    0x2261,0x00B1,0x2265,0x2264,0x2320,0x2321,0x00F7,0x2248,
+    0x00B0,0x2219,0x00B7,0x221A,0x207F,0x00B2,0x25A0,0x00A0
+};
+
+static unsigned kbd_unicode(unsigned codice)
+{
+    unsigned b = codice & KBD_KEY_MASK;
+
+    if (b < 0x20 || b == 0x7F || b >= 0x100) return 0;
+    return (b < 0x80) ? b : g_437[b - 0x80];
+}
+
+/* The CP437 byte of a keymap character, 0 = CP437 has none the console can
+ * take. ! THE § IS NOT 0x15: that is Ctrl+U for the console (keymaps.h). */
+static char kbd_cp437(unsigned u)
+{
+    unsigned i;
+
+    if (u < 0x80) return (char)u;
+    for (i = 0; i < 128; i++)
+        if (g_437[i] == u) return (char)(0x80 + i);
+    return 0;
+}
+
+/* All the modifiers, for the long event. */
+static unsigned kbd_stato(void)
+{
+    unsigned m = 0;
+
+    if (g_shift) m |= KBD_MOD_SHIFT;
+    if (g_ctrl)  m |= KBD_MOD_CTRL;
+    if (g_alt)   m |= KBD_MOD_ALT;
+    if (g_altgr) m |= KBD_MOD_ALTGR;
+    if (g_super) m |= KBD_MOD_SUPER;
+    if (g_caps)  m |= KBD_MOD_CAPS;
+    if (g_num)   m |= KBD_MOD_NUM;
+    return m;
+}
+
+/* =============================================================================
+ * WHAT EACH PHYSICAL KEY GAVE WHEN IT WENT DOWN (kbd.drv 0.007)
+ *
+ * ! A RELEASE SAYS THE SAME KEY AS ITS PRESS, not what the key would type
+ * now: press 'a', press Shift, release 'a' - the release is of 'a', not of
+ * 'A'. And a key that is already down and is pressed again is the typematic
+ * repeat. Indexed by fisico (scancode + KBD_FISICO_E0): 512 entries.
+ *
+ * ! A RELEASE WHOSE PRESS NOBODY RECEIVED IS NOT SENT: the Alt+Fn that
+ * switched console, the Ctrl+Alt+Canc taken by the driver, a key held while
+ * the program started. The program would see a key going up that never went
+ * down.
+ * ============================================================================= */
+static struct { unsigned codice, unicode; unsigned char giu; } g_fis[2 * KBD_FISICO_E0];
+
+static unsigned fisico_di(unsigned char sc, unsigned char esteso)
+{
+    return (unsigned)(sc & 0x7F) | (esteso ? KBD_FISICO_E0 : 0u);
+}
+
+/* A press in raw mode: the old code (0 = types nothing), the character
+ * (Unicode, 0 = none) and the key. */
+static void tasto_giu_u(ConsoleIn *c, unsigned codice, unsigned unicode,
+                        unsigned fisico)
+{
+    KbdTasto t;
+
+    t.codice  = codice;
+    t.unicode = unicode;
+    t.fisico  = fisico;
+    t.stato   = kbd_stato();
+    if (g_fis[fisico].giu) t.stato |= KBD_EV_RIPETUTO;
+    g_fis[fisico].giu     = 1;
+    g_fis[fisico].codice  = t.codice;
+    g_fis[fisico].unicode = t.unicode;
+    key_put_ev(c, &t);
+}
+
+/* The same, with the character of the old code. */
+static void tasto_giu(ConsoleIn *c, unsigned codice, unsigned fisico)
+{
+    tasto_giu_u(c, codice, kbd_unicode(codice), fisico);
+}
+
+static void tasto_su(unsigned fisico)
+{
+    KbdTasto t;
+
+    if (!g_fis[fisico].giu) return;
+    g_fis[fisico].giu = 0;
+    if (!g_c[g_attiva].raw) return;
+
+    t.codice  = g_fis[fisico].codice;
+    t.unicode = g_fis[fisico].unicode;
+    t.fisico  = fisico;
+    t.stato   = kbd_stato() | KBD_EV_RILASCIO;
+    key_put_ev(&g_c[g_attiva], &t);
+}
+
+/* A modifier or a lock went down: an event for the long readers only. */
+static void tasto_mod(unsigned char sc, unsigned char esteso)
+{
+    if (g_c[g_attiva].raw) tasto_giu(&g_c[g_attiva], 0, fisico_di(sc, esteso));
 }
 
 /* =============================================================================
@@ -669,15 +801,29 @@ static void kbd_set_mode(unsigned n, unsigned mode);
 static void try_serve_keyreader(unsigned n)
 {
     ConsoleIn *c = &g_c[n];
-    unsigned   key;
+    KbdTasto   t;
+    int        r;
 
-    if (c->keyreader_pid == 0 || c->kcount == 0) return;
+    if (c->keyreader_pid == 0) return;
 
-    key = c->keys[c->khead];
-    c->khead = (c->khead + 1) % KBD_KEYRING_SIZE;
-    c->kcount--;
+    /* ! THE OLD READER ONLY GETS PRESSES THAT MEAN A KEY, as before: the
+     * releases, the modifier-only events and KBD_K_UNICODE (a character it
+     * has no byte for) are skipped for it. */
+    for (;;) {
+        if (c->kcount == 0) return;
+        t = c->keys[c->khead];
+        c->khead = (c->khead + 1) % KBD_KEYRING_SIZE;
+        c->kcount--;
+        if (c->keyreader_v2) break;
+        if (t.codice != 0 && (t.codice & KBD_KEY_MASK) != KBD_K_UNICODE &&
+            !(t.stato & KBD_EV_RILASCIO)) break;
+    }
 
-    if (ipc_send(c->keyreader_pid, KBD_MSG_KEY, &key, sizeof(key)) < 0) {
+    if (c->keyreader_v2)
+        r = ipc_send(c->keyreader_pid, KBD_MSG_KEY, &t, sizeof(t));
+    else
+        r = ipc_send(c->keyreader_pid, KBD_MSG_KEY, &t.codice, sizeof(t.codice));
+    if (r < 0) {
         printf("kbd: consegna tasto a PID %u fallita, console %u torna cooked\n",
                c->keyreader_pid, n);
         c->keyreader_pid = 0;
@@ -862,6 +1008,28 @@ static unsigned kbd_func_key(unsigned char sc)
     return 0;
 }
 
+/* Num Lock on, and no Shift: the keypad keys are the digits printed on them
+ * (kbd.drv 0.007; before, the keypad was always the arrows, as with Num Lock
+ * off, and its LED stayed dark). 0 = not a keypad digit, or Num Lock off. */
+static char kbd_tastierino(unsigned char sc)
+{
+    if (!g_num || g_shift) return 0;
+    switch (sc) {
+        case 0x47: return '7';
+        case 0x48: return '8';
+        case 0x49: return '9';
+        case 0x4B: return '4';
+        case 0x4C: return '5';
+        case 0x4D: return '6';
+        case 0x4F: return '1';
+        case 0x50: return '2';
+        case 0x51: return '3';
+        case 0x52: return '0';
+        case 0x53: return '.';
+        default:   return 0;
+    }
+}
+
 /* Modificatori correnti in forma di maschera, da comporre con il codice base. */
 static unsigned kbd_mods(void)
 {
@@ -881,30 +1049,34 @@ static unsigned kbd_mods(void)
 static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
 {
     ConsoleIn *c = &g_c[g_attiva];
-    unsigned   base;
+    unsigned   base, u, fis = fisico_di(sc, esteso);
     char       ascii;
 
     /* Tasti estesi: solo navigazione. Il tastierino in versione estesa
      * manda anche 0x35 ('/') e 0x1C (Invio), che sono caratteri normali
-     * e cadono giù nel percorso ASCII. */
+     * e cadono giù nel percorso ASCII. ! A key that types nothing is
+     * still a key for the long readers (kbd.drv 0.007): code 0. */
     if (esteso) {
         base = kbd_nav_key(sc);
         if (base == 0) {
             if (sc == 0x35) base = '/';
             else if (sc == 0x1C) base = '\n';
-            else return;
         }
-        key_put(c, base | kbd_mods());
+        tasto_giu(c, base ? (base | kbd_mods()) : 0u, fis);
         return;
     }
 
     base = kbd_func_key(sc);
-    if (base != 0) { key_put(c, base | kbd_mods()); return; }
+    if (base != 0) { tasto_giu(c, base | kbd_mods(), fis); return; }
+
+    /* Num Lock on: the keypad types its digits (kbd.drv 0.007) */
+    ascii = kbd_tastierino(sc);
+    if (ascii) { tasto_giu(c, (unsigned)(unsigned char)ascii | kbd_mods(), fis); return; }
 
     /* Navigazione dal tastierino (NumLock spento): sc_normal ha 0 per
      * questi codici, quindi non si sta rubando nessun carattere. */
     base = kbd_nav_key(sc);
-    if (base != 0) { key_put(c, base | kbd_mods()); return; }
+    if (base != 0) { tasto_giu(c, base | kbd_mods(), fis); return; }
 
     if (sc >= 128) return;
 
@@ -920,14 +1092,17 @@ static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
         return;
     }
 
-    ascii = traduci(sc);
-    if (g_caps && ascii >= 'a' && ascii <= 'z')      ascii = (char)(ascii - 32);
-    else if (g_caps && ascii >= 'A' && ascii <= 'Z') ascii = (char)(ascii + 32);
+    u = traduci(sc);
+    if (g_caps && u >= 'a' && u <= 'z')      u -= 32;
+    else if (g_caps && u >= 'A' && u <= 'Z') u += 32;
+    ascii = kbd_cp437(u);
 
-    if (ascii == 0) return;
-
-    /* Nessuna trasformazione Ctrl: il modificatore viaggia a parte. */
-    key_put(c, (unsigned)(unsigned char)ascii | kbd_mods());
+    /* Nessuna trasformazione Ctrl: il modificatore viaggia a parte.
+     * ! A character CP437 has not (the euro) is KBD_K_UNICODE, with the
+     * character in the long event; old readers skip it. */
+    if (ascii)  tasto_giu_u(c, (unsigned)(unsigned char)ascii | kbd_mods(), u, fis);
+    else if (u) tasto_giu_u(c, KBD_K_UNICODE | kbd_mods(), u, fis);
+    else        tasto_giu(c, 0u, fis);
 }
 
 /* =============================================================================
@@ -1085,6 +1260,12 @@ static void kbd_process_scancode(unsigned char sc)
         return;
     }
 
+    /* ! PAUSE IS E1 1D 45 E1 9D C5, and it was read as a Ctrl press (1d)
+     * and a stray 45: with Num Lock on 0x45 (kbd.drv 0.007) it would switch
+     * Num Lock too. The two bytes after each E1 are skipped. */
+    if (sc == 0xE1) { g_e1 = 2; return; }
+    if (g_e1) { g_e1--; return; }
+
     /* Key release (bit 7) */
     if (sc & 0x80) {
         unsigned char key = (unsigned char)(sc & 0x7F);
@@ -1117,13 +1298,17 @@ static void kbd_process_scancode(unsigned char sc)
          * ================================================================= */
         if (era_e0 && (key == 0x2A || key == 0x36)) return;
 
-        if (key == 0x2A || key == 0x36) g_shift = 0;
-        if (key == 0x1D)                g_ctrl  = 0;
+        if (key == 0x2A) g_shift = (unsigned char)(g_shift & ~1u);
+        if (key == 0x36) g_shift = (unsigned char)(g_shift & ~2u);
+        if (key == 0x1D) g_ctrl  = (unsigned char)(g_ctrl & (era_e0 ? ~2u : ~1u));
         /* ! E0 38 E' AltGr, 38 DA SOLO E' Alt SINISTRO, e vanno tenuti
          * separati: Alt sinistro commuta le console, AltGr scrive le
          * graffe. Confonderli darebbe una tastiera su cui AltGr+Shift+e`
          * cambia schermo invece di aprire un blocco. */
         if (key == 0x38) { if (era_e0) g_altgr = 0; else g_alt = 0; }
+        if (era_e0 && key == 0x5B) g_super = (unsigned char)(g_super & ~1u);
+        if (era_e0 && key == 0x5C) g_super = (unsigned char)(g_super & ~2u);
+        tasto_su(fisico_di(key, era_e0));
         return;
     }
 
@@ -1139,7 +1324,16 @@ static void kbd_process_scancode(unsigned char sc)
      * le graffe non si scrivevano — cioe' che AltGr non esisteva — mentre
      * il codice che lo gestiva c'era ed era giusto: stava solo dopo.
      * ===================================================================== */
-    if (g_e0 && sc == 0x38) { g_altgr = 1; g_e0 = 0; return; }
+    if (g_e0 && sc == 0x38) { g_altgr = 1; g_e0 = 0; tasto_mod(sc, 1); return; }
+
+    /* The right Ctrl (kbd.drv 0.007): before, it fell into the extended keys
+     * below and was thrown away, so Ctrl+C with the right hand did nothing. */
+    if (g_e0 && sc == 0x1D) { g_ctrl |= 2u; g_e0 = 0; tasto_mod(sc, 1); return; }
+
+    /* The Windows keys are a modifier for the long event (Super) and still
+     * a key (KBD_K_WIN) for everybody: no return. */
+    if (g_e0 && sc == 0x5B) g_super |= 1u;
+    if (g_e0 && sc == 0x5C) g_super |= 2u;
 
     /* L'altra meta' dello shift finto: la pressione che la tastiera manda
      * al rilascio del tasto esteso. Si butta senza toccare g_shift — lo
@@ -1218,15 +1412,33 @@ static void kbd_process_scancode(unsigned char sc)
     }
 
     /* Modificatori */
-    if (sc == 0x2A || sc == 0x36) { g_shift = 1; return; }
-    if (sc == 0x1D)               { g_ctrl  = 1; return; }
+    if (sc == 0x2A)               { g_shift |= 1u; tasto_mod(sc, 0); return; }
+    if (sc == 0x36)               { g_shift |= 2u; tasto_mod(sc, 0); return; }
+    if (sc == 0x1D)               { g_ctrl  |= 1u; tasto_mod(sc, 0); return; }
     /* 0x38 senza prefisso e' l'Alt SINISTRO: commuta le console. Quello
      * di destra e' stato preso qui sopra. */
-    if (sc == 0x38)               { g_alt   = 1; return; }
+    if (sc == 0x38)               { g_alt   = 1; tasto_mod(sc, 0); return; }
     if (sc == 0x3A) {
-        g_caps = (unsigned char)(g_caps ^ 1);
-        g_leds = (unsigned char)((g_leds & ~0x04) | (g_caps ? 0x04 : 0));
-        kbd_set_leds(g_leds);
+        /* ! THE TYPEMATIC REPEAT OF A HELD LOCK KEY DOES NOT SWITCH IT
+         * again: holding Caps Lock used to make it blink on and off. */
+        if (!g_fis[sc].giu) {
+            g_caps = (unsigned char)(g_caps ^ 1);
+            g_leds = (unsigned char)((g_leds & ~0x04) | (g_caps ? 0x04 : 0));
+            kbd_set_leds(g_leds);
+        }
+        tasto_mod(sc, 0);
+        g_fis[sc].giu = 1;      /* also in cooked: the repeat test above */
+        return;
+    }
+    /* Num Lock (kbd.drv 0.007): see kbd_tastierino() */
+    if (sc == 0x45) {
+        if (!g_fis[sc].giu) {
+            g_num  = (unsigned char)(g_num ^ 1);
+            g_leds = (unsigned char)((g_leds & ~0x02) | (g_num ? 0x02 : 0));
+            kbd_set_leds(g_leds);
+        }
+        tasto_mod(sc, 0);
+        g_fis[sc].giu = 1;      /* also in cooked: the repeat test above */
         return;
     }
 
@@ -1248,7 +1460,8 @@ static void kbd_process_scancode(unsigned char sc)
         return;
     }
 
-    ascii = traduci(sc);
+    ascii = kbd_tastierino(sc);
+    if (!ascii) ascii = kbd_cp437(traduci(sc));     /* the euro: nothing */
 
     /* CapsLock inverte il caso delle sole lettere */
     if (g_caps && ascii >= 'a' && ascii <= 'z') ascii = (char)(ascii - 32);
@@ -2237,9 +2450,11 @@ int main(int argc, char **argv)
         }
 
         if (meta.tipo == KBD_MSG_READKEY) {
-            unsigned n = 0;
+            unsigned n = 0, v = 0;
 
             if (meta.len >= sizeof(unsigned)) memcpy(&n, payload, sizeof(unsigned));
+            if (meta.len >= sizeof(KbdLeggiTasto))
+                memcpy(&v, payload + sizeof(unsigned), sizeof(unsigned));
             if (n >= KBD_N_CONSOLE) n = 0;
 
             if (!g_c[n].raw) {
@@ -2252,6 +2467,7 @@ int main(int argc, char **argv)
             }
 
             g_c[n].keyreader_pid = meta.sender_pid;
+            g_c[n].keyreader_v2  = (v >= KBD_TASTI_V2);
 
             /* Servito solo se e' la console in primo piano. Sulle altre
              * la richiesta resta pendente e verra' onorata alla

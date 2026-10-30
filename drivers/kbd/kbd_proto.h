@@ -259,11 +259,75 @@ typedef struct {
 #define KBD_K_INS           0x0108u
 #define KBD_K_DEL           0x0109u
 #define KBD_K_WIN           0x010Au     /* il tasto Windows, sinistro o destro (9 ottobre 2026) */
+/* A character with no CP437 byte (the euro, kbd.drv 0.007 with the Unicode
+ * keymaps): which one is only in the long event, KbdTasto.unicode. Only
+ * long readers get it; an old reader never does, like a code 0. */
+#define KBD_K_UNICODE       0x010Bu
 
 /* F1..F12 consecutivi: KBD_K_F(1) .. KBD_K_F(12) */
 #define KBD_K_F1            0x0110u
 #define KBD_K_F(n)          (KBD_K_F1 + (unsigned)(n) - 1u)
 #define KBD_K_F12           KBD_K_F(12)
+
+/* =============================================================================
+ * THE LONG KEY EVENT (kbd.drv 0.007, 30 October 2026, voce 42 point 2)
+ *
+ * The uint32 above says which key was PRESSED, and nothing else: no release,
+ * no repeat, no AltGr or Windows key as modifiers, no Caps Lock or Num Lock
+ * state, and accented letters as CP437 bytes. A game wants to know how long
+ * a key is held, GTK and SDL want the physical key and the Unicode character
+ * apart. So a raw reader can ask for more:
+ *
+ *   client -> kbd: KBD_MSG_READKEY with a KbdLeggiTasto (8 bytes) and
+ *                  versione >= KBD_TASTI_V2
+ *   kbd -> client: KBD_MSG_KEY with a KbdTasto (16 bytes)
+ *
+ * ! THE OLD REQUEST GETS THE OLD ANSWER. A READKEY of 4 bytes (or with
+ * versione 0) is answered with the uint32, presses only, exactly as before:
+ * releases and modifier-only events are skipped for that reader. And the
+ * first word of a KbdTasto IS the old uint32, so a client that reads only 4
+ * bytes of the long answer still reads the right key. Who receives it tells
+ * the two apart by the length of the message.
+ * ============================================================================= */
+#define KBD_TASTI_V2        2u
+
+typedef struct {
+    unsigned int console;
+    unsigned int versione;      /* KBD_TASTI_V2 for the long event */
+} KbdLeggiTasto;
+
+typedef struct {
+    /* The old event: base code | KBD_MOD_SHIFT/CTRL/ALT. 0 when the key
+     * types nothing and has no KBD_K_* (a modifier, Caps Lock...);
+     * KBD_K_UNICODE when it types a character CP437 does not have (the
+     * euro). For a release, what the press gave. */
+    unsigned int codice;
+    /* The character the key types, as a Unicode code point (the keymaps
+     * are Unicode, keymaps.h): 0 for keys that type nothing printable
+     * (Enter, Tab, Esc, Backspace, arrows, modifiers). */
+    unsigned int unicode;
+    /* The physical key: scancode set 1 without the release bit, plus
+     * KBD_FISICO_E0 when it came after the 0xE0 prefix. It does not depend
+     * on the keymap: the same key is the same number on every layout. */
+    unsigned int fisico;
+    /* KBD_MOD_* (all of them, the ones below too) at the moment of the
+     * event, and KBD_EV_* */
+    unsigned int stato;
+} KbdTasto;
+
+#define KBD_FISICO_E0       0x0100u
+
+/* Modifiers only the long event carries (in KbdTasto.stato, never in the
+ * old uint32: an old program comparing the whole word keeps working). */
+#define KBD_MOD_ALTGR       0x00080000u     /* right Alt */
+#define KBD_MOD_SUPER       0x00100000u     /* a Windows key held */
+#define KBD_MOD_CAPS        0x00200000u     /* Caps Lock is on */
+#define KBD_MOD_NUM         0x00400000u     /* Num Lock is on */
+#define KBD_MOD_TUTTI       0x007F0000u
+
+#define KBD_EV_RILASCIO     0x01000000u     /* the key went up */
+#define KBD_EV_RIPETUTO     0x02000000u     /* a press while it was already
+                                             * down: the typematic repeat */
 
 /* =============================================================================
  * IL MOUSE PS/2, E PERCHE' STA QUI DENTRO

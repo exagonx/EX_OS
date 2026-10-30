@@ -111,6 +111,45 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Tastiera nuova in ExWin: lettere accentate, pressioni e rilasci (kbd.drv 0.007, wserver 0.014, exwin.so 0.021) — testato in QEMU
+
+Fino a ieri le **caselle e le aree di testo prendevano solo l'ASCII**: una «è»
+battuta nell'editor non ci entrava. E i programmi grafici sapevano solo quale
+tasto era stato premuto, mai quando veniva lasciato. Questo è il punto 2 della
+voce 42, il passo prima di SDL e GTK.
+
+- **Le accentate si scrivono**, in caselle e aree, e si salvano in **UTF-8**,
+  la codifica di Linux e del web. Backspace, Canc e frecce si muovono di una
+  lettera intera, anche se è di due byte. I file vecchi con le accentate della
+  console (CP437) si leggono come prima. La console di testo resta in CP437,
+  ed è quello che la VGA sa disegnare.
+- **L'euro e il § si scrivono**: AltGr+E per l'euro (italiana, francese,
+  tedesca, spagnola; AltGr+4 sulla britannica), Shift+ù per il § sulla
+  tastiera italiana. Le disposizioni di tastiera sono in Unicode (erano in
+  CP437, che l'euro non ce l'ha) e il font di sistema ha il glifo dell'euro.
+  Nella console di testo l'euro non si scrive, perché la VGA non sa
+  disegnarlo.
+- **kbd.drv 0.007**: chi lo chiede riceve un evento lungo, con la pressione o
+  il rilascio, la ripetizione, il carattere in Unicode, il tasto fisico e
+  tutti i modificatori (anche AltGr, il tasto Windows, Bloc Maiusc e Bloc
+  Num). Chi chiede come prima riceve i tasti come prima. Il **Ctrl di destra**
+  funziona (prima veniva ignorato); **Bloc Num** accende la spia e fa scrivere
+  le cifre al tastierino; il tasto Pausa non si legge più come un Ctrl; tenere
+  premuto Bloc Maiusc non lo fa più lampeggiare.
+- **wserver 0.014**: pressioni e rilasci vanno solo alle finestre che li
+  chiedono (`WIN_MSG_TASTI`); i tasti che il server tiene per sé
+  (Ctrl+Alt+Canc, il tasto Windows, Alt+F10) non arrivano ai programmi, e
+  nemmeno il loro rilascio.
+- **exwin.so 0.021**: `ex_track_keys`, i messaggi `EXM_KEY_DOWN` ed
+  `EXM_KEY_UP`, e `ex_key_info` per il carattere, il tasto fisico e i
+  modificatori. `EXM_KEY` resta com'era; l'euro arriva come `KBD_K_UNICODE`.
+- La prova è `tools/prova_tasti.sh` (con `finestreprova -t`), sulla tastiera
+  italiana: «aèù€§» nella casella, la freccia che salta la «è» nell'area, i
+  rilasci, lo Shift da solo, il Ctrl destro. Tutto a posto a 32 e 64 bit.
+- Le prove che cliccano sulla scrivania e nel file manager cercano le voci
+  **per nome** nei pixel dello schermo (`tools/trova_testo.py`, il passo
+  `punta:` di `tools/qemu_drive.py`), invece che a posizioni fisse.
+
 ### ExWin senza tetti fissi: finestre, elenco, oggetti (kernel 0.289, wserver 0.013, exwin.so 0.020) — testato in QEMU
 
 Fino a ieri ExWin aveva **16 finestre**: la diciassettesima veniva rifiutata, e
@@ -134,7 +173,24 @@ chiuse di fila, a 32 e 64 bit (`tools/prova_finestre.sh <dir> 200`).
   dopo, dal pezzo che non era partito.
 - **exwin.so 0.020**: niente più 192 oggetti per programma, né 4 terminali,
   4 liste, 2 aree di testo, 6 controlli a voci, 2 menu, 16 descrittori
-  guardati: ognuno parte da quei posti e raddoppia.
+  guardati: ognuno parte da quei posti e raddoppia. E dentro i controlli:
+  - un'area di testo non si ferma più a 512 righe da 200 colonne (3000 da
+    240 quella del codice): raddoppia le righe quando è piena e le colonne
+    quando una riga non ci sta;
+  - una lista non si ferma più a 65536 righe da 63 caratteri, e disegna solo
+    quello che ci sta nel controllo;
+  - una casella di testo tiene quanto si scrive (prima 1023 caratteri);
+  - i combo e le schede, più di 32 voci; i menu, più di 6 titoli, 16 voci
+    per tendina e 4 tendine laterali; il menu del tasto destro, più di 16
+    voci; i caratteri aperti (96), i file dei caratteri (24), le icone (32).
+- **filemgr 0.014**: una cartella con più di 512 file si vede tutta (prima
+  si vedevano le prime 512, senza avviso), gli appunti dei file non si
+  fermano a 64, e l'ordinamento è uno heapsort, perché con migliaia di file
+  quello di prima (n²) diventava lento.
+- La prova `finestreprova -c` riempie i controlli oltre i tetti di una volta:
+  combo di 100 voci, menu di 10×40 con 8 tendine laterali, 5000 righe da 600,
+  4000 da 300 nel codice, casella di 5000 caratteri, lista di 70000 righe da
+  150. Tutto a posto a 32 e 64 bit.
 - `pm` 0.025 (la barra) e `attesa` 0.006 leggono l'elenco senza un numero
   fisso; `finestreprova` è il programma di prova.
 

@@ -109,6 +109,43 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### A new keyboard in ExWin: accented letters, presses and releases (kbd.drv 0.007, wserver 0.014, exwin.so 0.021) — tested in QEMU
+
+Until yesterday **text boxes and text areas took ASCII only**: an «è» typed in
+the editor did not go in. And graphical programs only knew which key had been
+pressed, never when it was let go. This is point 2 of voce 42, the step before
+SDL and GTK.
+
+- **Accented letters can be typed** in boxes and areas, and are saved as
+  **UTF-8**, the encoding of Linux and of the web. Backspace, Delete and the
+  arrows move by a whole letter, even a two-byte one. Old files with the
+  console's accented letters (CP437) read as before. The text console stays
+  CP437, which is what the VGA can draw.
+- **The euro and § can be typed**: AltGr+E for the euro (Italian, French,
+  German, Spanish; AltGr+4 on the British layout), Shift+ù for § on the
+  Italian keyboard. The keymaps are Unicode (they were CP437, which has no
+  euro) and the system font has a euro glyph. In the text console the euro
+  types nothing, because the VGA cannot draw it.
+- **kbd.drv 0.007**: whoever asks gets a long event, with press or release,
+  repeat, the character as Unicode, the physical key and all the modifiers
+  (AltGr, the Windows key, Caps Lock and Num Lock too). Whoever asks the old
+  way gets keys as before. The **right Ctrl** works (it used to be ignored);
+  **Num Lock** lights its LED and makes the keypad type digits; Pause is no
+  longer read as a Ctrl; holding Caps Lock no longer makes it blink.
+- **wserver 0.014**: presses and releases go only to the windows that ask for
+  them (`WIN_MSG_TASTI`); the keys the server keeps for itself
+  (Ctrl+Alt+Del, the Windows key, Alt+F10) do not reach programs, and neither
+  do their releases.
+- **exwin.so 0.021**: `ex_track_keys`, the messages `EXM_KEY_DOWN` and
+  `EXM_KEY_UP`, and `ex_key_info` for the character, the physical key and the
+  modifiers. `EXM_KEY` is unchanged; the euro comes as `KBD_K_UNICODE`.
+- The test is `tools/prova_tasti.sh` (with `finestreprova -t`), on the Italian
+  keyboard: «aèù€§» in the box, the arrow jumping over the «è» in the area,
+  the releases, Shift alone, the right Ctrl. All fine at 32 and 64 bit.
+- The tests that click on the desktop and in the file manager find the
+  entries **by name** in the screen's pixels (`tools/trova_testo.py`, the
+  `punta:` step of `tools/qemu_drive.py`) instead of at fixed positions.
+
 ### ExWin without fixed ceilings: windows, list, objects (kernel 0.289, wserver 0.013, exwin.so 0.020) — tested in QEMU
 
 Until yesterday ExWin had **16 windows**: the seventeenth was refused, and the
@@ -132,7 +169,24 @@ with 200 windows opened and closed in a row, at 32 and 64 bit
   loop, from the piece that did not go.
 - **exwin.so 0.020**: no more 192 objects per program, nor 4 terminals,
   4 lists, 2 text areas, 6 item controls, 2 menus, 16 watched descriptors:
-  each starts from those slots and doubles.
+  each starts from those slots and doubles. And inside the controls:
+  - a text area no longer stops at 512 lines of 200 columns (3000 of 240
+    for code): it doubles its lines when full and its columns when a line
+    does not fit;
+  - a list no longer stops at 65536 rows of 63 characters, and draws only
+    what fits in the control;
+  - a text box holds what is typed (1023 characters before);
+  - combos and tabs, more than 32 entries; menus, more than 6 titles, 16
+    entries per drop-down and 4 side drop-downs; the right-click menu, more
+    than 16 entries; open fonts (96), font files (24), icons (32).
+- **filemgr 0.014**: a folder with more than 512 files is shown whole (the
+  first 512 before, with no warning), the file clipboard does not stop at
+  64, and sorting is a heapsort, since with thousands of files the old one
+  (n²) got slow.
+- The test `finestreprova -c` fills the controls past the old ceilings: a
+  combo of 100 entries, a menu of 10×40 with 8 side drop-downs, 5000 lines of
+  600, 4000 of 300 in code, a text box of 5000 characters, a list of 70000
+  rows of 150. All fine at 32 and 64 bit.
 - `pm` 0.025 (the taskbar) and `attesa` 0.006 read the list with no fixed
   number; `finestreprova` is the test program.
 

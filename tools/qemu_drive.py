@@ -169,6 +169,99 @@ class Monitor:
         self.drain()
 
 
+def foto_attesa(mon, percorso):
+    """A screendump, read back once QEMU has finished writing it."""
+    if os.path.exists(percorso):
+        os.unlink(percorso)
+    mon.cmd("screendump " + percorso, settle=0.8)
+    for _ in range(50):
+        if os.path.exists(percorso) and os.path.getsize(percorso) > 100:
+            n = os.path.getsize(percorso)
+            time.sleep(0.2)
+            if os.path.getsize(percorso) == n:
+                break
+        time.sleep(0.1)
+    import trova_testo
+    return trova_testo.leggi_ppm(percorso)
+
+
+def passi(dx, dy):
+    """mouse_move commands from (0,0) to (dx,dy) in steps of ten: QEMU's
+    relative moves lose the big ones (see prova_ridimensiona.sh). Diagonal
+    while it can, then straight."""
+    d = min(dx, dy) // 10
+    v = ["mouse_move 10 10"] * d
+    rx, ry = dx - d * 10, dy - d * 10
+    v += ["mouse_move 10 0"] * (rx // 10)
+    v += ["mouse_move 0 10"] * (ry // 10)
+    v.append("mouse_move %d %d" % (rx % 10, ry % 10))
+    return v
+
+
+def vai(mon, tx, ty, a=None):
+    """The pointer to (tx, ty) on the screen, and checked.
+
+    ! WHERE THE POINTER REALLY IS IS LOOKED AT, not trusted: from the corner,
+    QEMU leaves it ten pixels short in x and in y (seen in every run on 30
+    October 2026: prova_tasto_destro.sh aimed at 75,155 and hit 63,145). A
+    photo with the pointer in the corner (`a`, taken here if not given) and
+    one after the move show its tip near the target, and a small move puts
+    it right. Returns the correction, or None if the tip was not seen."""
+    foto = "/tmp/exos/punta%s.ppm" % ISTANZA
+    if a is None:
+        mon.rapidi(["mouse_move -600 -600"] * 5, passo=0.05)
+        time.sleep(0.5)
+        w, h, a = foto_attesa(mon, foto)
+    mon.rapidi(passi(tx, ty), passo=0.03)
+    time.sleep(0.5)
+    w, h, b = foto_attesa(mon, foto)
+    punta_x = punta_y = None
+    for yy in range(max(0, ty - 30), min(h, ty + 30)):
+        for xx in range(max(0, tx - 30), min(w, tx + 30)):
+            o = (yy * w + xx) * 3
+            if a[o:o + 3] != b[o:o + 3]:
+                punta_x, punta_y = xx, yy
+                break
+        if punta_x is not None:
+            break
+    if punta_x is None:
+        return None
+    # ! ONLY A SMALL CORRECTION: a first changed pixel far away is something
+    # else that changed (a control lit up under the pointer), not the tip.
+    if (punta_x, punta_y) != (tx, ty) and abs(tx - punta_x) <= 15 and abs(ty - punta_y) <= 15:
+        mon.rapidi(["mouse_move %d %d" % (tx - punta_x, ty - punta_y)], passo=0.05)
+    return (tx - punta_x, ty - punta_y)
+
+
+def punta(mon, testo, dx=0, dy=0, n=0, zona=None):
+    """`punta:<text>[|dx,dy[,n[,x0,y0,x1,y1]]]`: the pointer on the middle of
+    a string drawn on the screen (the n-th from the top, 0 = the first, only
+    inside the box x0,y0-x1,y1 if given), plus dx, dy.
+
+    ! BY NAME, NOT BY POSITION (30 October 2026): the desktop and the file
+    manager's tree got new entries, and the tests that clicked at fixed rows
+    clicked the wrong thing. tools/trova_testo.py reads the glyphs.
+    """
+    import trova_testo
+    foto = "/tmp/exos/punta%s.ppm" % ISTANZA
+    mon.rapidi(["mouse_move -600 -600"] * 5, passo=0.05)
+    time.sleep(0.5)
+    w, h, a = foto_attesa(mon, foto)
+    dove = trova_testo.trova(w, h, a, testo, tutti=n > 0, zona=zona)
+    if len(dove) <= n:
+        os.replace(foto, "/tmp/exos/punta%s-manca.ppm" % ISTANZA)
+        print("PUNTA: %r non c'e' sullo schermo (vedi /tmp/exos/punta%s-manca.ppm)"
+              % (testo, ISTANZA))
+        return False
+    x, y = dove[n]
+    tx = max(0, min(w - 1, x + len(testo) * 8 // 2 + dx))
+    ty = max(0, min(h - 1, y + 8 + dy))
+    c = vai(mon, tx, ty, a)
+    print("PUNTA: %r in (%d,%d), puntatore in (%d,%d), %s"
+          % (testo, x, y, tx, ty, "corretto di (%d,%d)" % c if c else "non lo vedo"))
+    return True
+
+
 def main():
     os.makedirs("/tmp/exos", exist_ok=True)
     for p in (MON, SER):
@@ -327,6 +420,19 @@ def main():
                     fh.write(mon.cmd("info registers", settle=0.05) + "\n====\n")
             elif cmd.startswith("foto:"):
                 mon.cmd("screendump " + cmd[5:], settle=0.8)
+            # `punta:<testo>[|dx,dy[,n[,x0,y0,x1,y1]]]`: il puntatore sopra una scritta
+            # dello schermo, cercata nei pixel (vedi punta()).
+            elif cmd.startswith("punta:"):
+                testo, _, opz = cmd[6:].partition("|")
+                v = [int(z) for z in opz.split(",")] if opz else []
+                v += [0] * (3 - len(v))
+                punta(mon, testo, v[0], v[1], v[2],
+                      tuple(v[3:7]) if len(v) >= 7 else None)
+            # `vai:x,y`: il puntatore in (x,y), controllato e corretto (vai()).
+            elif cmd.startswith("vai:"):
+                x, y = (int(z) for z in cmd[4:].split(","))
+                c = vai(mon, x, y)
+                print("VAI: (%d,%d), %s" % (x, y, "corretto di (%d,%d)" % c if c else "non lo vedo"))
             elif cmd.startswith("key:"):
                 mon.tasti(cmd[4:].split(","))
             else:

@@ -44,13 +44,6 @@ sleep 2
 ALB_X=4;  ALB_Y=24;  ALB_W=240
 RIGA_H=16; CAR_W=8
 
-# Il centro della colonna `c` della riga `r`, in coordinate di schermo.
-# punto CLIENT_X CLIENT_Y RIGA COLONNA  ->  "x y"
-punto() {
-    echo $(( $1 + ALB_X + 4 + $4 * CAR_W + CAR_W / 2 )) \
-         $(( $2 + ALB_Y + 2 + $3 * RIGA_H + RIGA_H / 2 ))
-}
-
 # Da (0,0) a (x,y) a passi di dieci: i movimenti grandi si troncano.
 #
 # ! SI VA IN DIAGONALE FINCHE' SI PUO', POI DIRITTI, e non «in diagonale per
@@ -78,8 +71,9 @@ casa() { local i; for ((i = 0; i < 5; i++)); do printf '%s\n' "mon:mouse_move -6
 # memoria si rompe la prima volta che sulla scrivania c'e' una finestra in piu'.
 {
     echo "exwin@12"
+    echo "key:alt-f1@3"
     echo "/exwin/bin/filemgr &@8"
-    echo "key:alt-f2@3"
+    echo "key:alt-f5@3"
     echo "foto:$D/dc_apert.ppm@2"
 } > "$D/dc_args.txt"
 
@@ -104,22 +98,27 @@ echo "=== l'area del client del file manager comincia in ($CX,$CY) ==="
 # bin e lib dentro, e aprirla sposta in giu' tutto il resto dell'albero: quello
 # si' che si vede.
 #
-# Riga 0 = «/», gia' aperta; poi le sue figlie in ordine. Su un CD di EX-OS:
-#   1 bin   2 boot   3 dev   4 doc   5 drivers   6 exwin   7 lib
-# Il segno di una figlia sta nella colonna 2, il nome dalla 4 in poi.
-RIGA_PROVA=6
-P_NOME=$(punto "$CX" "$CY" $RIGA_PROVA 6)
-P_SEGNO=$(punto "$CX" "$CY" $RIGA_PROVA 2)
+# ! LA RIGA DI /exwin SI CERCA PER NOME (30 ottobre 2026): era la sesta, poi
+# nell'albero sono arrivati rdboot e USB e la sesta e' diventata /boot, che
+# di figlie non ne ha. Il clic lo porta `punta:` (tools/trova_testo.py); il
+# segno sta due colonne prima del nome, cioe' 32 pixel a sinistra del centro
+# di «exwin». La riga serve solo a leggere i risultati.
+# ! SOLO NELL'ALBERO, la colonna di sinistra: «exwin» c'e' anche nell'elenco
+# di destra, piu' in alto, e il primo dall'alto era quello.
+ZONA_ALBERO="0,0,$(( CX + 200 )),600"
+Y_EXWIN=$(python3 tools/trova_testo.py -z "$ZONA_ALBERO" "$D/dc_apert.ppm" exwin | cut -d' ' -f2)
+[ -n "$Y_EXWIN" ] || { echo "NON RIUSCITO: nell'albero non c'e' «exwin» ($D/dc_apert.ppm)"; exit 1; }
+RIGA_PROVA=$(( (Y_EXWIN - CY - ALB_Y - 2 + 8) / RIGA_H ))
 
 {
     echo "exwin@12"
+    echo "key:alt-f1@3"
     echo "/exwin/bin/filemgr &@8"
-    echo "key:alt-f2@3"
+    echo "key:alt-f5@3"
     echo "foto:$D/dc_0_partenza.ppm@2"
 
     # 1. clic semplice sul NOME: sceglie e basta
-    casa
-    passi_a $P_NOME
+    echo "punta:exwin|0,0,0,$ZONA_ALBERO@1"
     echo "mon:mouse_button 1;mouse_button 0@2"
     echo "foto:$D/dc_1_clic.ppm@2"
 
@@ -130,8 +129,7 @@ P_SEGNO=$(punto "$CX" "$CY" $RIGA_PROVA 2)
     # 3. e un clic sul SEGNO la richiude, da solo: il segno adesso e' un «-»,
     #    e premerlo una volta sola deve bastare a chiudere quello che il
     #    doppio clic ha aperto.
-    casa
-    passi_a $P_SEGNO
+    echo "punta:exwin|-32,0,0,$ZONA_ALBERO@1"
     echo "mon:mouse_button 1;mouse_button 0@2"
     echo "foto:$D/dc_3_segno.ppm@2"
 } > "$D/dc_args.txt"
@@ -146,7 +144,7 @@ LX=$(( CX + ALB_X )); LY=$(( CY + ALB_Y ))
 for f in dc_0_partenza dc_1_clic dc_2_doppio dc_3_segno; do
     echo
     echo "--- $f"
-    python3 tools/righe_lista.py "$D/$f.ppm" "$LX" "$LY" "$ALB_W" 11
+    python3 tools/righe_lista.py "$D/$f.ppm" "$LX" "$LY" "$ALB_W" $(( RIGA_PROVA + 6 ))
 done
 
 echo
@@ -167,9 +165,9 @@ echo "          sola ha richiuso."
 # MEZZO allo schermo (vedi dialogo() in lib/exdlg/exdlg.c). Con 800x600 e un
 # dialogo di 420x300 l'angolo del client e' (190,150), sempre.
 #
-# ! E SI APRE COI TASTI, non col mouse: F10 apre il menu «File» sulla prima
-# voce, una freccia in giu' porta su «Apri...», Invio la sceglie. Cliccare sul
-# menu vorrebbe dire indovinare la larghezza di una scritta.
+# ! E SI APRE COI TASTI, non col mouse: Ctrl+O, la scorciatoia di «Apri...».
+# Fino al 30 ottobre 2026 era F10, giu', Invio: il menu File ha avuto
+# «Nuovo documento RTF» al secondo posto, e la prova apriva una scheda nuova.
 # =============================================================================
 DLG_X=190; DLG_Y=150
 LST_X=$(( DLG_X + 6 )); LST_Y=$(( DLG_Y + 26 )); LST_W=408
@@ -185,11 +183,10 @@ P_SU=$(echo $(( DLG_X + 28 )) $(( DLG_Y + 12 )))
 
 {
     echo "exwin@12"
+    echo "key:alt-f1@3"
     echo "/exwin/bin/exeditor &@8"
-    echo "key:alt-f2@3"
-    echo "key:f10@2"
-    echo "key:down@1"
-    echo "key:ret@4"
+    echo "key:alt-f5@3"
+    echo "key:ctrl-o@4"
     echo "foto:$D/dl_0_aperto.ppm@2"
 
     # 1. clic semplice sulla riga 1, che e' una directory: sceglie e basta

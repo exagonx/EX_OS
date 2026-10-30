@@ -184,6 +184,8 @@ static struct {
     void         (*avviso_via)(void);
     void         (*chiedi_finestre)(ExWindow);                      /* optional: 17/10/2026 */
     int          (*avvia_programma)(const char *, char *const *, const char *);
+    void         (*tasti)(ExWindow, int);                           /* optional: 30/10/2026 */
+    int          (*tasto_info)(ExKeyInfo *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -397,6 +399,8 @@ static void assicura(void)
     P.chiedi_finestre = (void (*)(ExWindow)) exlib_simbolo(t, "ex_ask_windows");
     P.avvia_programma = (int (*)(const char *, char *const *, const char *))
                         exlib_simbolo(t, "ex_spawn_program");
+    P.tasti           = (void (*)(ExWindow, int)) exlib_simbolo(t, "ex_track_keys");
+    P.tasto_info      = (int (*)(ExKeyInfo *)) exlib_simbolo(t, "ex_key_info");
 
     P.pronto = 1;
 }
@@ -717,6 +721,16 @@ int ex_spawn_program(const char *path, char *const argv[], const char *nome)
     assicura();
     if (P.avvia_programma) return P.avvia_programma(path, argv, nome);
     return spawn_ex(path, argv, *__environ_dove(), 0, 0);
+}
+
+/* Over an exwin.so older than 0.021: no presses and releases, only EXM_KEY,
+ * and no details (ex_key_info answers 0). */
+void ex_track_keys(ExWindow f, int si)
+{ assicura(); if (P.tasti) P.tasti(f, si); }
+int ex_key_info(ExKeyInfo *out)
+{
+    assicura();
+    return P.tasto_info ? P.tasto_info(out) : 0;
 }
 
 /* Over an older exwin.so: the image as it is, in the corner. */

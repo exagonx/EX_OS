@@ -8479,6 +8479,52 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  43. L'ICONA RDBOOT SOLO PER ROOT, E UNA TMP IN RAM (l'utente, 29/10:
+      "l'icona rdboot dovrebbe essere visibile solo agli utenti con
+      privilegi root a me piace il fatto che appare sul desktop e mostra i
+      file di sistema in ramdisk, inoltre se la ram e' sufficiente si
+      potrebbe implementare una seconda directory tmp per i file che non
+      devono mai essere conservati e la scrittura sul disco ne farebbe
+      rimanere traccia").
+      a) l'icona dell'unita' /rdboot sulla scrivania (pm) resta, ma solo
+         per chi ha i privilegi di root: un utente normale non la vede (e
+         va visto se deve poterci entrare comunque dalla shell);
+      b) una tmp in RAM, se la RAM basta: per i file che non devono mai
+         toccare il disco (scriverli sul disco ne lascerebbe traccia anche
+         dopo averli cancellati). Da decidere con l'utente: il nome (oggi
+         EX-OS non ha /tmp, PHP usa /exos/php/tmp), quanta RAM al massimo
+         (dalla RAM della macchina e da kernel.cfg, nessun tetto fisso), se
+         si monta da sola all'avvio e chi ci puo' scrivere;
+      c) tools/prova_desktop.sh, parte 1, dice NO «prima c'era gia'
+         qualcosa a destra (119 pixel)»: e' l'icona rdboot, che c'e' quando
+         si parte dal CD; la prova va aggiornata (con a) cambiera' ancora:
+         la vedra' root e non un utente).
+      d) tools/prova_tasto_destro.sh (30/10, dal CD) dice NO tre volte per
+         la disposizione, non per i tasti: sulla scrivania il primo e' il
+         collegamento Documents (il clic a 46,40 sceglie lui invece di
+         nota2.txt, e Cancella chiede di togliere il collegamento), e
+         nell'albero del file manager c'e' rdboot in piu' sotto «/», cosi'
+         il trascinamento verso «dest» cade su «prova» («sono gia' qui»).
+         FATTO il 30/10 (l'utente: "correggi adesso cercando le righe"):
+         tools/trova_testo.py trova una scritta del font di sistema nei
+         pixel di una fotografia, e qemu_drive.py ha i passi `punta:testo`
+         (il puntatore sulla scritta, anche solo dentro una zona) e
+         `vai:x,y`; tutti e due guardano dove e' finito il puntatore e lo
+         correggono: da un angolo QEMU lo lascia SEMPRE dieci pixel prima,
+         in x e in y. prova_tasto_destro, prova_desktop e prova_doppioclic
+         cliccano per nome (prova_desktop guarda la scritta «disk» invece
+         dei pixel bianchi a destra); doppioclic apre il dialogo con Ctrl+O.
+         Prima del rimedio, lo stesso valeva per
+         tools/prova_doppioclic.sh (30/10): nell'albero ci sono rdboot e
+         USB prima di bin, la riga 6 e' /boot (senza figlie, il doppio
+         clic non apre niente da vedere) e non /exwin; e nell'editor
+         F10, Giu', Invio apre una scheda nuova invece del dialogo Apri
+         (il menu File e' cambiato). Da quel giorno lancia il comando con
+         Alt+F1 prima (exwin passa da solo alla grafica, e il comando
+         battuto finiva sulla console 5): stessa correzione in
+         prova_ridimensiona.sh.
+      Stato: in coda.
+
   42. GTK 2 E GTK 3 IN EXWIN (l'utente, 29/10: "a me serve GTK2 e 3 su
       exwin e' fattibile ?"). Fattibile: il cancello vero (i thread) e'
       passato con la 0.209, ci sono mmap, poll, shm, dlopen, iconv, e gia'
@@ -8544,8 +8590,9 @@ tools/netinst/velocita tolto da netinst.
         4. SDL come primo programma di fuori (gradino 2 di DIREZIONE.md);
         5. GTK 3 col backend GDK exwin, poi GTK 2 (o il server X11 per
            averli tutti e due).
-      Stato: punto 1 FATTO in buona parte il 29/10 (kernel 0.289, wserver
-      0.013, exwin.so 0.020, pm 0.025, attesa 0.006, da committare):
+      Stato: punto 2 FATTO il 30/10 (sotto); punto 1 FATTO il 29/10 (kernel 0.289, wserver 0.013, exwin.so
+      0.020, pm 0.025, attesa 0.006, filemgr 0.014, da committare); il
+      prossimo era il punto 2. Fatto:
         - kernel: SHM_PER_PROC 20 e SHM_MAX_ZONE 24 tolti, tabelle che
           raddoppiano (kmalloc) sotto un lucchetto CAS;
         - wserver: finestre, coda eventi per finestra, titoli, elenco dei
@@ -8560,15 +8607,100 @@ tools/netinst/velocita tolto da netinst.
           descrittori guardati (erano 16) e l'array di poll;
         - prova: tools/prova_finestre.sh con /exwin/bin/finestreprova, 200
           finestre aperte e chiuse a 32 e 64 bit, TUTTO A POSTO.
-      RESTANO del punto 1 (da valutare uno per uno, sono misure dentro un
-      oggetto piu' che tetti del sistema): MENU_TITOLI_MAX 6, MENU_VOCI_MAX
-      16, MENU_SUB_MAX 4, AREA_RIGHE_MAX 512 / AREA_COL_MAX 200,
-      CODICE_RIGHE_MAX, VOCI_N_MAX 32, FONT_MAX 96, FILE_MAX 24, TROVA_MAX
-      24, RIPIEGO_MAX 8, ICONE_MAX 32, CM_MAX 16, TESTO_LEN 1024, in wserver
-      SPORCHI_MAX e PEZZI_MAX; il titolo nell'elenco della barra e' ancora
-      di 48 byte (WIN_TITOLO_LEN, basta per un pulsante); APPUNTI_BYTE 4096
-      va col punto 3; fuori dal toolkit filemgr ha VOCI_MAX 512 (una
-      cartella con piu' file si taglia).
+      Poi, sempre il 29/10, il resto del punto 1 (richiesta dell'utente:
+      "continua con il resto del punto 1"):
+        - exwin.so: voci dei combo e delle schede (erano 32), titoli,
+          voci e tendine laterali dei menu (6, 16, 4), righe e colonne
+          delle aree di testo (512x200 e 3000x240: ora raddoppiano),
+          righe e larghezza della lista (65536 x 63; la riga si disegna
+          solo fin dove sta nel controllo), il testo di ogni oggetto
+          (1024: buffer suo che raddoppia), menu del tasto destro (16),
+          caratteri aperti (96), file dei caratteri (24), ricerche di
+          faccia (24), ripieghi (8), icone (32);
+        - filemgr 0.014: righe della cartella (512), appunti dei file
+          (64), ordinamento heapsort al posto di quello n²;
+        - prova: finestreprova -c dentro prova_finestre.sh, TUTTO A POSTO
+          a 32 e 64 bit.
+      LASCIATI APPOSTA, con il perche':
+        - wserver SPORCHI_MAX 16 e PEZZI_MAX 64: non tolgono niente a
+          nessuno, a lista piena si unisce o si ridisegna di piu'; farli
+          crescere costerebbe piu' del ridisegno che evitano (ogni pezzo e'
+          una chiamata intera a disegna_finestra);
+        - il titolo nell'elenco della barra, 48 byte (WIN_TITOLO_LEN e
+          ExWindowEntry): sta nella struttura pubblica di exwin.h, cambiarla
+          romperebbe i programmi gia' compilati; basta per un pulsante;
+        - APPUNTI_BYTE 4096: va col punto 3 (gli appunti nel server).
+      DECISIONE DELL'UTENTE (29/10): la posizione delle finestre resta
+      visibile ai programmi, niente coordinate nascoste alla Wayland.
+      30/10 NOTTE, PUNTO 2 FATTO (richiesta dell'utente: "quando finisci la
+      regressione passa al punto 2"; da committare):
+        - kbd.drv 0.007: READKEY con KbdLeggiTasto (versione 2) risponde
+          con KbdTasto (codice vecchio, Unicode, tasto fisico, stato con
+          tutti i modificatori e KBD_EV_RILASCIO/RIPETUTO); la richiesta
+          da 4 byte resta com'era (solo pressioni). Ctrl destro (e0 1d,
+          prima buttato), Shift e Ctrl per lato, Super, Bloc Num con la
+          spia e le cifre del tastierino, Pausa (E1) non e' piu' un Ctrl,
+          Bloc Maiusc tenuto premuto non lampeggia; coda da 64 (era 32);
+        - wserver 0.014: WIN_MSG_TASTI, WIN_EV_PREMUTO e RILASCIATO solo
+          a chi li chiede; i tasti tenuti dal server (Ctrl+Alt+Canc,
+          Windows, Ctrl+Esc, Alt+F10) inghiottiti col loro rilascio;
+        - exwin.so 0.021: ex_track_keys, EXM_KEY_DOWN, EXM_KEY_UP,
+          ex_key_info (anche nello stub); caselle e aree scrivono le
+          accentate in UTF-8 (prima solo ASCII 0x20-0x7E: una e` non
+          entrava), frecce/Backspace/Canc di una lettera intera, l'area
+          disegna per colonne (cx resta un byte, left e' una colonna),
+          AREA_COL_VIDEO 256 tolto; la casella delle password resta ASCII;
+        - prova: tools/prova_tasti.sh (finestreprova -t), TUTTO A POSTO a
+          32 e 64 bit.
+      ALTRE COSE DA MIGLIORARE, viste lavorando al punto 2 (da decidere
+      con l'utente; a) e h) FATTE il 30/10, scelta dell'utente: "si passa
+      alle disposizioni unicode, correggi adesso cercando le righe, in
+      ridimensiona togli il fuoco"):
+        a) FATTO: le disposizioni sono in Unicode (unsigned short), il
+           driver traduce in CP437 solo per la console e per chi legge i
+           tasti alla vecchia maniera; l'euro (AltGr+E, AltGr+4 sulla uk)
+           arriva all'evento lungo come KBD_K_UNICODE con l'Unicode, il §
+           (Shift+u` sulla it, Shift+! sulla fr, Shift+3 sulla de, dove
+           prima c'era º) solo all'evento lungo; ², ³, ¤ su fr e de;
+           exwin.so chiede l'evento lungo per ogni finestra e lo tiene per
+           se' se il programma non ha chiamato ex_track_keys, e il font di
+           sistema ha il glifo dell'euro; larg() conta per carattere (il
+           cursore della casella andava a destra di una colonna per ogni
+           accentata). prova_tasti: «aèù», l'euro e il § nella casella
+           (61c3a8c3b9e282acc2a7) a 32 e 64 bit. Era:
+           le disposizioni di tastiera sono byte CP437 (keymaps.h): il
+           simbolo dell'euro (AltGr+E sull'italiana) e il paragrafo non si
+           possono scrivere, perche' in CP437 non ci sono o cadono fra i
+           codici di controllo. Con l'evento lungo le tabelle potrebbero
+           portare l'Unicode (unsigned short) e la console tradurlo in
+           CP437 solo per disegnare;
+        b) niente tasti morti (^ e dieresi su francese e tedesco);
+        c) ex_textarea_get_cursor da' la colonna in byte (lo vogliono le
+           ricerche con strstr): la riga di stato dell'editor conta due
+           colonne per una lettera accentata; serve una funzione per la
+           colonna vista;
+        d) il controllo terminale manda alla shell i byte CP437 della
+           tastiera, come la console: va bene finche' la console e' CP437;
+        e) la coda degli eventi di kbd.drv e' di 64: a coda piena si perde
+           anche un rilascio, e per un gioco il tasto resta premuto;
+           meglio buttare le pressioni prima dei rilasci;
+        f) in un'area un file con accentate CP437 vecchie e UTF-8 nuove
+           insieme resta misto: un comando "converti in UTF-8"
+           nell'editor;
+        g) il punto 3 (puntatore, appunti nel server, rapporti fra
+           finestre, fuoco, versione del protocollo) e' il prossimo;
+        h) FATTO: winprova 0.008 parte senza fuoco (ex_clear_focus) e
+           prova_ridimensiona.sh porta il puntatore sulla presa con `vai:`
+           (guarda dove e' finito e corregge). Era:
+           tools/prova_ridimensiona.sh, parte 2, non prova piu' niente:
+           winprova si allarga con le frecce, ma il fuoco e' nella casella
+           «Nome» e la casella le prende per il cursore (gia' alla
+           exwin.so 0.020, non per il punto 2; il commento in winprova.c
+           dice ancora che le frecce passano). Da decidere: winprova toglie
+           il fuoco alla casella, o la prova clicca prima fuori. La parte 1
+           a volte non trova la presa nella prima fotografia (letta troppo
+           presto): nell'ultima c'e' (641,441). La prova esce con 0 e va
+           letta a occhio.
 
   41. URGENTE - GLI ANELLI DEI DRIVER DI RETE DINAMICI INVECE DEI POSTI
       FISSI (l'utente, 28/10: «aggiungi come compito urgente, quello di

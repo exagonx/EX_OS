@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.013");
+EX_VERSIONE("wserver", "0.014");
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -182,6 +182,7 @@ typedef struct {
      * tells a minimized window from one its program created hidden. */
     unsigned int ridotta;
     unsigned int passaggio;         /* WIN_MSG_PASSAGGIO: wants movement without buttons */
+    unsigned int tasti;             /* WIN_MSG_TASTI: wants presses and releases */
     unsigned int chiusa_chiesta;    /* a pop-up already told to close */
     /* A tutto schermo (wserver 0.011): 1 = ingrandita, e dove stava e quanto
      * era grande prima, per tornarci. Vedi massimizza(). */
@@ -1745,8 +1746,13 @@ static void kbd_giro(void)
     nostra = g_forza_tastiera || (ci.fg == g_mio_pid);
     kbd_modo(nostra);
 
+    /* ! THE LONG EVENT IS ASKED FOR, and an old kbd.drv reads only the
+     * console out of it and answers with the uint32 as always (wserver
+     * 0.014, kbd_proto.h): the length of the answer says which one came. */
     if (g_raw && !g_key_chiesta) {
-        unsigned int c = g_console;
+        KbdLeggiTasto c;
+        c.console  = g_console;
+        c.versione = KBD_TASTI_V2;
         if (ipc_send((unsigned int)g_kbd_pid, KBD_MSG_READKEY, &c, sizeof(c)) >= 0)
             g_key_chiesta = 1;
     }
@@ -1775,12 +1781,69 @@ static void ctrl_alt_canc(void)
     if (barra_pid()) ipc_send(barra_pid(), WIN_MSG_SISTEMA, 0, 0);
 }
 
-static void kbd_tasto(unsigned int k)
-{
-    g_key_chiesta = 0;
+/* =============================================================================
+ * PRESSES AND RELEASES (wserver 0.014, voce 42 point 2)
+ *
+ * kbd.drv 0.007 sends the long event, KbdTasto: releases, repeats, modifier
+ * keys alone, the Unicode character and the physical key. A window that
+ * asked with WIN_MSG_TASTI receives WIN_EV_PREMUTO and WIN_EV_RILASCIATO;
+ * every other one keeps receiving WIN_EV_TASTO for the presses, exactly as
+ * before (win_proto.h).
+ *
+ * ! A KEY THE SERVER KEPT FOR ITSELF DOES NOT GO UP IN A WINDOW: Ctrl+Alt+
+ * Canc, the Windows key, Alt+F10. The press never reached the program, so
+ * its release is swallowed too (g_inghiottito, by physical key).
+ * ============================================================================= */
+static unsigned char g_inghiottito[2 * KBD_FISICO_E0];
 
+static void inghiotti(const KbdTasto *t)
+{
+    if (t) g_inghiottito[t->fisico & (2 * KBD_FISICO_E0 - 1)] = 1;
+}
+
+/* The window that receives the keys, with the modal rule applied: see the
+ * comment in kbd_tasto_ev. -1 = none. */
+static int fuoco_per_tasti(void)
+{
+    int md;
+
+    if (g_n_ordine == 0) return -1;
+    if (g_fuoco < 0 || !g_fin[g_fuoco].usata) fuoco_ricalcola();
+    if (g_fuoco < 0) return -1;
+
+    md = modale_di(g_fin[g_fuoco].pid);
+    /* The two title bars swap colour: say so, now that a click no
+     * longer repaints the whole screen and would hide the omission. */
+    if (md >= 0 && md != g_fuoco) {
+        sporca_barra(&g_fin[g_fuoco]);
+        g_fuoco = md;
+        sporca_barra(&g_fin[g_fuoco]);
+    }
+    return g_fin[g_fuoco].usata ? g_fuoco : -1;
+}
+
+/* To the focus, only if it asked for presses and releases. */
+static void tasto_lungo_a_fuoco(const KbdTasto *t, unsigned int tipo)
+{
+    int       i = fuoco_per_tasti();
+    WinEvento e;
+
+    if (i < 0 || !g_fin[i].tasti) return;
+    e.id      = g_fin[i].id;
+    e.tipo    = tipo;
+    e.x       = t->unicode;
+    e.y       = t->fisico;
+    e.bottoni = t->stato;
+    e.tasto   = t->codice;
+    e.tempo   = uptime_ms();
+    metti_evento(&g_fin[i], &e);
+}
+
+static void kbd_tasto_ev(unsigned int k, const KbdTasto *t)
+{
     if ((k & KBD_MOD_CTRL) && (k & KBD_MOD_ALT) &&
         (k & KBD_KEY_MASK) == KBD_K_DEL) {
+        inghiotti(t);
         ctrl_alt_canc();
         return;
     }
@@ -1792,6 +1855,7 @@ static void kbd_tasto(unsigned int k)
         ((k & KBD_MOD_CTRL) && !(k & KBD_MOD_ALT) && (k & KBD_KEY_MASK) == 27u)) {
         unsigned int quale = 1;
 
+        inghiotti(t);
         if (barra_pid()) ipc_send(barra_pid(), WIN_MSG_SISTEMA, &quale, sizeof(quale));
         return;
     }
@@ -1807,6 +1871,7 @@ static void kbd_tasto(unsigned int k)
     if ((k & KBD_MOD_ALT) && !(k & KBD_MOD_CTRL) &&
         (k & KBD_KEY_MASK) == KBD_K_F(10) && puo_ingrandirsi(&g_fin[g_fuoco]) &&
         modale_di(g_fin[g_fuoco].pid) < 0) {
+        inghiotti(t);
         massimizza(g_fuoco);
         return;
     }
@@ -1817,31 +1882,53 @@ static void kbd_tasto(unsigned int k)
      * scrivere. Qui non si buttano: si dirottano alla modale, che e' l'unica
      * che possa farci qualcosa (Invio, Esc). */
     {
-        int md = modale_di(g_fin[g_fuoco].pid);
-
-        /* The two title bars swap colour: say so, now that a click no
-         * longer repaints the whole screen and would hide the omission. */
-        if (md >= 0 && md != g_fuoco) {
-            sporca_barra(&g_fin[g_fuoco]);
-            g_fuoco = md;
-            sporca_barra(&g_fin[g_fuoco]);
-        }
-    }
-
-    {
-        Finestra *f = &g_fin[g_fuoco];
+        int       i = fuoco_per_tasti();
+        Finestra *f;
         WinEvento e;
 
-        if (!f->usata) return;
+        if (i < 0) return;
+        f = &g_fin[i];
 
         e.id      = f->id;
         e.tipo    = WIN_EV_TASTO;
         e.x = 0; e.y = 0;
         e.bottoni = 0;
         e.tasto   = k;          /* gia' tradotto: NON e' uno scancode */
+        if (t && f->tasti) {
+            e.tipo    = WIN_EV_PREMUTO;
+            e.x       = t->unicode;
+            e.y       = t->fisico;
+            e.bottoni = t->stato;
+        }
         e.tempo   = uptime_ms();
         metti_evento(f, &e);
     }
+}
+
+static void kbd_tasto(unsigned int k)
+{
+    g_key_chiesta = 0;
+    kbd_tasto_ev(k, NULL);
+}
+
+static void kbd_tasto_lungo(const KbdTasto *t)
+{
+    unsigned int f = t->fisico & (2 * KBD_FISICO_E0 - 1);
+
+    g_key_chiesta = 0;
+    if (t->stato & KBD_EV_RILASCIO) {
+        if (g_inghiottito[f]) { g_inghiottito[f] = 0; return; }
+        tasto_lungo_a_fuoco(t, WIN_EV_RILASCIATO);
+        return;
+    }
+    /* ! A CHARACTER CP437 HAS NOT (KBD_K_UNICODE, the euro) only to who
+     * asked for the long event: an old program has no byte to put in its
+     * text, as with a modifier. */
+    if (t->codice == 0 || (t->codice & KBD_KEY_MASK) == KBD_K_UNICODE) {
+        tasto_lungo_a_fuoco(t, WIN_EV_PREMUTO);
+        return;
+    }
+    kbd_tasto_ev(t->codice, t);
 }
 
 static int g_mouse_pid = -1;
@@ -2376,6 +2463,7 @@ static void crea(unsigned int pid, const WinCrea *c, unsigned int len)
 
     g_fin[i].usata     = 1;
     g_fin[i].passaggio = 0;         /* the slot may be reused: nothing asked yet */
+    g_fin[i].tasti     = 0;
     g_fin[i].chiusa_chiesta = 0;
     g_fin[i].n_coda    = 0;
     g_fin[i].id        = g_prossimo_id++;
@@ -2970,7 +3058,12 @@ static int servi_messaggio(unsigned int ms)
      * qui che si distingue, e da nessun'altra parte. */
     if (meta.tipo == KBD_MSG_KEY) {
         unsigned int k = 0;
-        if (meta.len >= sizeof(k)) { memcpy(&k, buf, sizeof(k)); kbd_tasto(k); }
+        if (meta.len >= sizeof(KbdTasto)) {
+            KbdTasto t;
+            memcpy(&t, buf, sizeof(t));
+            kbd_tasto_lungo(&t);
+        }
+        else if (meta.len >= sizeof(k)) { memcpy(&k, buf, sizeof(k)); kbd_tasto(k); }
         else g_key_chiesta = 0;
         return 1;
     }
@@ -3178,6 +3271,16 @@ static int servi_messaggio(unsigned int ms)
         idx = trova_id(w->id);
         if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid))
             g_fin[idx].passaggio = (w->x != 0);
+        break;
+    }
+
+    case WIN_MSG_TASTI: {
+        WinRegione *w = (WinRegione *)buf;
+        int idx;
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid))
+            g_fin[idx].tasti = (w->x != 0);
         break;
     }
 

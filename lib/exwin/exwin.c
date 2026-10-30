@@ -32,11 +32,15 @@ extern const unsigned char font8x16[256 * 16];
  * that realloc could move would invalidate them. A handle is the slot number
  * plus one, as before, kept in the object itself (maniglia). */
 #define OGG_BLOCCO      64
-/* ! 1024 SINCE 24 SEPTEMBER 2026, and 64 before: a text box held 63
- * characters, and the browser's address bar could not hold a real address.
- * 64 objects times 1 KB is 64 KB; the window server gets titles cut to its
- * own WIN_TITOLO_LEN, as it always did. */
-#define TESTO_LEN       1024
+/* ! AS LONG AS IT IS (exwin.so 0.020). It was 64 bytes, then 1024 from 24
+ * September 2026: a text box held 63 characters, and the browser's address
+ * bar could not hold a real address; 1023 was still a ceiling for a long
+ * one. Now each object has its own buffer, starting at TESTO_INIZIO and
+ * doubling (testo_posto); it stays with the slot when the slot is reused,
+ * since free() gives nothing back here. Every object has one, so titolo is
+ * never a null pointer. The window server gets whole titles too (wserver
+ * 0.013). */
+#define TESTO_INIZIO    64
 
 typedef struct {
     unsigned int usato;
@@ -47,7 +51,8 @@ typedef struct {
     ExWindow   padre;         /* 0 = primo livello */
     int          x, y, w, h;
     unsigned int stile;
-    char         titolo[TESTO_LEN];
+    char        *titolo;        /* titolo_posti bytes, never 0 (TESTO_INIZIO) */
+    unsigned int titolo_posti;
     ExWindowProc  proc;
 
     /* Solo per il primo livello: i pixel.
@@ -66,6 +71,9 @@ typedef struct {
     unsigned char tab_contenuto;
     /* The top level asked for EXM_CHANGED (ex_notify_changes). */
     unsigned char avvisa_cambi;
+    /* The program asked for releases and modifier keys (ex_track_keys). The
+     * toolkit asks the server for the long event anyway, for the euro. */
+    unsigned char tasti_prog;
     unsigned int  cursore;      /* posizione del cursore in una casella */
     /* A text box's selection runs from `ancora` to `cursore`, when c_sel is 1;
      * `vista` is its first character shown (the box scrolls with the caret). */
@@ -222,6 +230,51 @@ static int ptab_cresci(void ***tab, unsigned int *posti, unsigned int inizio,
     return 0;
 }
 
+/* Room for a text of `lung` bytes plus the zero in o->titolo. 0 = no memory:
+ * the text stays as it was. */
+static int testo_posto(Oggetto *o, unsigned int lung)
+{
+    unsigned int posti;
+    char        *n;
+
+    if (lung + 1 <= o->titolo_posti) return 1;
+    posti = o->titolo_posti ? o->titolo_posti : TESTO_INIZIO;
+    while (posti < lung + 1) posti *= 2u;
+    n = (char *)realloc(o->titolo, posti);
+    if (!n) return 0;
+    if (!o->titolo_posti) n[0] = '\0';
+    o->titolo = n;
+    o->titolo_posti = posti;
+    return 1;
+}
+
+/* o->titolo = s, as much of it as memory allows. */
+static void testo_metti(Oggetto *o, const char *s)
+{
+    unsigned int l = (unsigned int)strlen(s);
+
+    if (!testo_posto(o, l)) l = o->titolo_posti - 1;
+    memcpy(o->titolo, s, l);
+    o->titolo[l] = '\0';
+}
+
+/* A scratch buffer of at least `serve` bytes, kept between calls: one static
+ * pair per place that needs one, never shared between two of them. */
+static char *buf_cresci(char **b, unsigned int *posti, unsigned int serve)
+{
+    if (serve > *posti) {
+        unsigned int p = *posti ? *posti : TESTO_INIZIO;
+        char        *n;
+
+        while (p < serve) p *= 2u;
+        n = (char *)realloc(*b, p);
+        if (!n) return 0;
+        *b = n;
+        *posti = p;
+    }
+    return *b;
+}
+
 static Terminale  **g_term = 0;
 static unsigned int g_term_posti = 0;
 
@@ -245,13 +298,15 @@ static unsigned int g_term_posti = 0;
  * ============================================================================= */
 #define LISTA_INIZIO     4      /* lists: the first slots, then doubling */
 /* ! A LIST GROWS, since 24 September 2026: it starts with LISTA_VOCI_PRIMA
- * rows and doubles when full, up to LISTA_VOCI_MAX. It was a fixed 512, and
- * past that ex_list_add() said no — an archive of 3000 files, or a big
- * directory, showed its first 512 and nothing said the rest was missing on
- * the screen. */
+ * rows and doubles when full. It was a fixed 512, and past that
+ * ex_list_add() said no — an archive of 3000 files, or a big directory,
+ * showed its first 512 and nothing said the rest was missing on the screen.
+ * Then the doubling stopped at 65536 rows; since exwin.so 0.020 it stops only
+ * where memory does. And a row is as long as its text: the rows start
+ * LISTA_TESTO_INIZIO wide (it was the fixed width, and a longer name was
+ * cut), and a longer one doubles the width of all of them (lista_larg). */
 #define LISTA_VOCI_PRIMA 512
-#define LISTA_VOCI_MAX   65536
-#define LISTA_TESTO_MAX  64
+#define LISTA_TESTO_INIZIO 64
 #define LISTA_RIGA_H     16
 #define LISTA_CAR_W       8    /* il passo del carattere: vedi ex_draw_text */
 
@@ -268,8 +323,9 @@ static unsigned int g_term_posti = 0;
 typedef struct {
     unsigned int usato;
     ExWindow   ogg;
-    char        *voci;                  /* cap * LISTA_TESTO_MAX */
+    char        *voci;                  /* cap * larg */
     unsigned int cap;                   /* how many rows fit now */
+    unsigned int larg;                  /* bytes per row, the zero included */
     unsigned int n;                     /* quante ce ne sono */
     unsigned int sel;                   /* quale e' scelta */
     unsigned int primo;                 /* la prima visibile */
@@ -309,11 +365,13 @@ static unsigned int g_lista_posti = 0;
  *
  * ! E NON RIUSANO QUELLA DELLA LISTA, che tiene 512 voci da 64 caratteri
  * chieste con malloc: sono 32 KB per un elenco a discesa di cinque valori, e in
- * un pannello di proprieta' i combo sono molti. Qui sono 4 KB statici in tutto,
- * senza malloc, cioe' senza niente da liberare in un allocatore che non libera.
+ * un pannello di proprieta' i combo sono molti. Here the rows start at
+ * VOCI_N_INIZIO and double (exwin.so 0.020; they were 32, fixed): a combo of
+ * five values costs 256 bytes, and the buffer stays with the slot, so an
+ * allocator that does not free loses nothing in create-destroy rounds.
  * ============================================================================= */
 #define VOCI_INIZIO      6      /* combos and tabs: the first slots, then doubling */
-#define VOCI_N_MAX      32      /* quante voci per controllo */
+#define VOCI_N_INIZIO    8      /* entries per control: the first, then doubling (were 32) */
 #define VOCI_TESTO_MAX  32
 #define VOCI_RIGA_H     16      /* l'altezza di una riga nella tendina */
 
@@ -322,7 +380,8 @@ typedef struct {
     ExWindow   ogg;
     unsigned int n;
     unsigned int sel;
-    char         testo[VOCI_N_MAX][VOCI_TESTO_MAX];
+    char       (*testo)[VOCI_TESTO_MAX];   /* testo_posti rows, kept when the slot is reused */
+    unsigned int testo_posti;
     /* LE SCHEDE DI DOCUMENTI (29 settembre 2026, @TOOLKIT-SCHEDE): una X su
      * ogni linguetta, le frecce quando non ci stanno tutte (`primo` e' la
      * prima che si vede), Ctrl+Tab e Ctrl+W dalla finestra intera. Vedi
@@ -362,14 +421,19 @@ static int        g_mdi_dx = 0, g_mdi_dy = 0;
  * sta il cursore, come si insegue — e' identico in ogni editor mai scritto, e
  * scriverlo in ogni applicazione e' scriverlo male tre volte.
  *
- * ! I LIMITI SONO UNA CONSEGUENZA, NON UNA PIGRIZIA. L'allocatore di EX-OS e'
- * a bump su sbrk e free() non restituisce niente: righe riallocate a ogni
- * tasto premuto perderebbero memoria per sempre. 512 righe da 200 colonne sono
- * un blocco solo, chiesto una volta alla creazione.
+ * ! LA GRIGLIA E' UN BLOCCO SOLO, E RADDOPPIA (exwin.so 0.020). L'allocatore
+ * di EX-OS e' a bump su sbrk e free() non restituisce niente: righe
+ * riallocate a ogni tasto premuto perderebbero memoria per sempre. So the
+ * text is one grid of rows x columns, and it starts at 512 x 200; up to 0.019
+ * that was also the ceiling (the 513th line of a file was refused, and a
+ * key on a full line ignored). Now a full area doubles its rows, and a line
+ * that does not fit doubles the columns (area_righe_posto, area_col_posto):
+ * doubling keeps the memory lost to the old blocks below the size of the
+ * last one.
  * ============================================================================= */
 #define AREA_INIZIO     2       /* text areas: the first slots, then doubling */
-#define AREA_RIGHE_MAX  512
-#define AREA_COL_MAX    200
+#define AREA_RIGHE_INIZIO 512   /* the grid it starts with, then doubling */
+#define AREA_COL_INIZIO   200
 #define AREA_RIGA_H     16
 #define AREA_CAR_W      8
 
@@ -384,10 +448,11 @@ static int        g_mdi_dx = 0, g_mdi_dy = 0;
  * Cambiano due cose, e sono tutt'e due NUMERI dell'istanza:
  *
  *   la capienza   512x200 per un'area di testo, 3000x240 per un sorgente
+ *                 (to start with: both double, see above)
  *   il coloritore un gancio, che l'area di testo non ha e il codice si'
  *
  * ! LA CAPIENZA E' PER ISTANZA E NON PIU' UNA COSTANTE, ed e' il motivo per cui
- * si e' potuto fare cosi'. Prima area_riga() moltiplicava per AREA_COL_MAX:
+ * si e' potuto fare cosi'. Prima area_riga() moltiplicava per una costante (AREA_COL_MAX):
  * adesso moltiplica per A->col_max, e la stessa funzione serve tutt'e due.
  *
  * ! 3000 RIGHE DA 240 COLONNE SONO 720 KB, chiesti una volta alla creazione.
@@ -397,15 +462,16 @@ static int        g_mdi_dx = 0, g_mdi_dy = 0;
  * memoria per sempre. E' la stessa scelta dell'area di testo, con i numeri
  * portati alla misura di un sorgente vero.
  *
- * ! CHI SUPERA I LIMITI LO SA: ex_textarea_add_line rende 0 quando l'area e' piena,
- * e chi carica un file DEVE guardarlo — caricarne meta' e poi salvarlo
- * cancellerebbe il resto senza averlo mai mostrato.
+ * ! CHI SUPERA LA MEMORIA LO SA: ex_textarea_add_line rende 0 quando l'area
+ * non puo' crescere, e chi carica un file DEVE guardarlo — caricarne meta' e
+ * poi salvarlo cancellerebbe il resto senza averlo mai mostrato.
  * ============================================================================= */
-#define CODICE_RIGHE_MAX 3000
-#define CODICE_COL_MAX    240
+#define CODICE_RIGHE_INIZIO 3000
+#define CODICE_COL_INIZIO    240
 
-/* Il piu' largo dei due: e' la misura dei buffer di servizio sulla pila. */
-#define AREA_COL_TETTO   CODICE_COL_MAX
+/* The colours of a whole line go in ruoli_buf(), which grows with the widest
+ * area; the drawing buffers grow with the widest area shown (exwin.so 0.021:
+ * they were 256 columns on the stack). */
 
 typedef struct {
     unsigned int usato;
@@ -517,10 +583,13 @@ static Appunti *appunti(void)
  * regola dell'Invio su una lista.
  * ============================================================================= */
 #define MENU_INIZIO      2      /* windows with a menu: the first slots, then doubling */
-#define MENU_TITOLI_MAX  6
-/* 16 since 26 September 2026: the editor's «Modifica» reached 13 with find
- * and replace, and the thirteenth would have been dropped in silence. */
-#define MENU_VOCI_MAX    16
+/* Titles, entries per drop-down and side drop-downs start from these and
+ * double (exwin.so 0.020). They were 6, 16 and 4, fixed: on 26 September the
+ * editor's «Modifica» reached 13 with find and replace, and the entries went
+ * from 12 to 16 by hand, because the thirteenth would have been dropped in
+ * silence. */
+#define MENU_TITOLI_INIZIO 6
+#define MENU_VOCI_INIZIO   16
 #define MENU_TESTO_MAX   28
 #define MENU_RIGA_H      16
 #define MENU_BARRA_H     20
@@ -540,31 +609,76 @@ typedef struct {
  * laterale. Un livello solo — una tendina dentro una tendina dentro una
  * tendina e' un menu che nessuno ritrova. L'id della voce che apre e' questo:
  * non arriva mai all'applicazione. */
-#define MENU_SUB_MAX     4
+#define MENU_SUB_INIZIO  4
 #define MENU_ID_SUB      0xFFFFFFFFu
 
 typedef struct {
     char         nome[MENU_TESTO_MAX];
     int          x, w;                  /* dove sta nella barra */
     unsigned int n;
-    MenuVoce     voce[MENU_VOCI_MAX];
+    MenuVoce    *voce;                  /* posti entries, kept on reuse */
+    unsigned int posti;
 } MenuTitolo;
 
 typedef struct {
     unsigned int usato;
     ExWindow   ogg;
     unsigned int n;
-    MenuTitolo   titolo[MENU_TITOLI_MAX];
+    MenuTitolo  *titolo;                /* titoli_posti, kept on reuse */
+    unsigned int titoli_posti;
     int          aperto;                /* quale tendina, -1 = nessuna */
     int          sotto;                 /* quale voce evidenziata, -1 = nessuna */
     unsigned int nsub;
-    MenuTitolo   sub[MENU_SUB_MAX];     /* le tendine laterali */
+    MenuTitolo  *sub;                   /* le tendine laterali (sub_posti) */
+    unsigned int sub_posti;
     int          sub_aperta;            /* quale, -1 = nessuna */
     int          sub_sotto;             /* la voce evidenziata dentro */
 } Menu;
 
 static Menu       **g_menu = 0;
 static unsigned int g_menu_posti = 0;
+
+/* Room for one more entry in T: the entries double. 0 = no memory. */
+static int menu_voce_posto(MenuTitolo *T)
+{
+    unsigned int posti;
+    MenuVoce    *v;
+
+    if (T->n < T->posti) return 1;
+    posti = T->posti ? T->posti * 2u : MENU_VOCI_INIZIO;
+    v = (MenuVoce *)realloc(T->voce, (size_t)posti * sizeof(MenuVoce));
+    if (!v) return 0;
+    T->voce  = v;
+    T->posti = posti;
+    return 1;
+}
+
+/* A new, empty title at the end of tab[0..*n), growing the array. A place
+ * used before keeps its entries buffer: free() gives nothing back here. */
+static MenuTitolo *menu_titolo_nuovo(MenuTitolo **tab, unsigned int *n,
+                                     unsigned int *posti, unsigned int inizio)
+{
+    MenuTitolo  *T;
+    MenuVoce    *v;
+    unsigned int p;
+
+    if (*n >= *posti) {
+        unsigned int np = *posti ? *posti * 2u : inizio;
+        MenuTitolo  *nt = (MenuTitolo *)realloc(*tab, (size_t)np * sizeof(MenuTitolo));
+
+        if (!nt) return 0;
+        memset(nt + *posti, 0, (size_t)(np - *posti) * sizeof(MenuTitolo));
+        *tab   = nt;
+        *posti = np;
+    }
+    T = &(*tab)[(*n)++];
+    v = T->voce;
+    p = T->posti;
+    memset(T, 0, sizeof(*T));
+    T->voce  = v;
+    T->posti = p;
+    return T;
+}
 
 
 static Oggetto    **g_ogg_blocchi = 0;     /* blocks of OGG_BLOCCO objects */
@@ -708,6 +822,67 @@ static char *area_riga(Area *A, unsigned int r)
     return &A->testo[r * A->col_max];
 }
 
+/* Room for one more row: the grid doubles its rows, the end-of-line states
+ * with it (losing those only means colouring from scratch). 0 = no memory. */
+static int area_righe_posto(Area *A)
+{
+    unsigned int righe;
+    char        *nuovo;
+
+    if (A->n < A->righe_max) return 1;
+    righe = A->righe_max * 2u;
+    nuovo = (char *)realloc(A->testo, (size_t)righe * A->col_max);
+    if (!nuovo) return 0;
+    memset(nuovo + (size_t)A->righe_max * A->col_max, 0,
+           (size_t)(righe - A->righe_max) * A->col_max);
+    A->testo = nuovo;
+    if (A->stato) {
+        unsigned char *st = (unsigned char *)realloc(A->stato, righe);
+
+        A->stato = st;
+        if (!st) A->stati_validi = 0;
+    }
+    A->righe_max = righe;
+    return 1;
+}
+
+/* Room for a line of `lung` characters (plus the zero): the columns double,
+ * and every row is copied to its new place. 0 = no memory. */
+static int area_col_posto(Area *A, unsigned int lung)
+{
+    unsigned int col = A->col_max, r;
+    char        *nuovo;
+
+    if (lung + 1 <= col) return 1;
+    while (lung + 1 > col) col *= 2u;
+    nuovo = (char *)malloc((size_t)A->righe_max * col);
+    if (!nuovo) return 0;
+    memset(nuovo, 0, (size_t)A->righe_max * col);
+    for (r = 0; r < A->righe_max; r++)
+        memcpy(nuovo + (size_t)r * col, A->testo + (size_t)r * A->col_max, A->col_max);
+    free(A->testo);
+    A->testo   = nuovo;
+    A->col_max = col;
+    return 1;
+}
+
+/* The roles of one whole line, for the highlighter: as wide as the widest
+ * area asked so far. */
+static unsigned char *ruoli_buf(unsigned int col)
+{
+    static unsigned char *buf = 0;
+    static unsigned int   posti = 0;
+
+    if (col > posti) {
+        unsigned char *n = (unsigned char *)realloc(buf, col);
+
+        if (!n) return 0;
+        buf = n;
+        posti = col;
+    }
+    return buf;
+}
+
 static unsigned int area_lung(Area *A, unsigned int r)
 {
     return (unsigned int)strlen(area_riga(A, r));
@@ -721,12 +896,18 @@ static unsigned int area_lung(Area *A, unsigned int r)
 static int area_sel_ordina(Area *A, unsigned int *y1, unsigned int *x1,
                            unsigned int *y2, unsigned int *x2);
 
+/* ! cx IS A BYTE, left A COLUMN (exwin.so 0.021): with UTF-8 a character may
+ * be more bytes, and the view scrolls by what the screen shows. */
+static unsigned int area_colonna(Area *A, unsigned int y, unsigned int x);
+
 static void area_segui(Area *A)
 {
+    unsigned int col = area_colonna(A, A->cy, A->cx);
+
     if (A->cy < A->top)                A->top = A->cy;
     if (A->cy >= A->top + A->righe)    A->top = A->cy - A->righe + 1;
-    if (A->cx < A->left)               A->left = A->cx;
-    if (A->cx >= A->left + A->cols)    A->left = A->cx - A->cols + 1;
+    if (col < A->left)                 A->left = col;
+    if (col >= A->left + A->cols)      A->left = col - A->cols + 1;
 }
 
 static Lista *lista_di(const Oggetto *o)
@@ -830,7 +1011,7 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "lista")        == 0) return CL_LISTA;
     if (strcmp(c, "areatesto")    == 0) return CL_AREA;
     /* ! LA STESSA CLASSE, e la differenza e' solo la capienza: vedi ex_create e
-     * il commento sopra CODICE_RIGHE_MAX. */
+     * il commento sopra CODICE_RIGHE_INIZIO. */
     if (strcmp(c, "areacodice")   == 0) return CL_AREA;
     if (strcmp(c, "menu")         == 0) return CL_MENU;
     if (strcmp(c, "spunta")       == 0) return CL_SPUNTA;
@@ -1314,11 +1495,13 @@ int ex_open_file(const char *percorso, char *prog, unsigned int max)
  * una lista: si sceglie col clic o con Invio, le frecce si spostano, Esc e
  * la crocetta rinunciano. E' lo stesso ciclo dei dialoghi di exdlg.
  * ============================================================================= */
-#define CM_MAX 16
 static int        g_cm_scelta;
 static ExWindow g_cm_lista;
 static int        g_cm_n;
-static int        g_cm_indice[CM_MAX];     /* riga della lista -> voce */
+/* riga della lista -> voce: as many as the entries (exwin.so 0.020; the
+ * seventeenth entry was dropped before) */
+static int       *g_cm_indice = 0;
+static int        g_cm_posti = 0;
 
 static long cm_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
@@ -1386,8 +1569,15 @@ int ex_popup_menu(ExWindow f, int x, int y, const char *const *voci, int n)
     int          i, w = 60, h, sx, sy;
 
     if (!r || !voci || n < 1) return -1;
+    if (n > g_cm_posti) {
+        int *v = (int *)realloc(g_cm_indice, (size_t)n * sizeof(int));
+
+        if (!v) return -1;
+        g_cm_indice = v;
+        g_cm_posti  = n;
+    }
     g_cm_n = 0;
-    for (i = 0; i < n && g_cm_n < CM_MAX; i++) {
+    for (i = 0; i < n; i++) {
         int lw;
         if (!voci[i] || !strcmp(voci[i], "-")) continue;   /* separatori: niente */
         lw = ex_text_width(0, voci[i]) + 24;
@@ -1922,7 +2112,7 @@ void ex_draw_sunken(ExWindow f, int x, int y, int w, int h)
  * 64 (una faccia per corpo), e con la voce intera di Wikipedia i 24 che si
  * teneva finivano — il titolo usciva col carattere normale. Un posto costa
  * poco: il file e' condiviso, e i glifi si fanno solo quando servono. */
-#define FONT_MAX        96
+#define FONT_INIZIO     96      /* the first slots, then doubling (exwin.so 0.020) */
 
 /* ! E DODICI FILE ERANO «LE NOSTRE DODICI FACCE», cioe' un CONTO e non un
  * confine: lo stesso errore dell'otto qui sopra, rifatto un piano piu' in la'.
@@ -1942,7 +2132,7 @@ void ex_draw_sunken(ExWindow f, int x, int y, int w, int h)
  * riserva condivisa, contati — quindi il tetto puo' stare largo senza costare
  * niente. Chi copia un .ttf dentro /exwin/font, che fontprova.c dichiara come
  * cosa da fare, non deve tornare qui a contare. */
-#define FILE_MAX        24
+#define FILE_INIZIO     24      /* the first slots, then doubling (exwin.so 0.020) */
 
 typedef struct {
     int            usato;
@@ -1952,7 +2142,10 @@ typedef struct {
     ExTtf          ttf;         /* se e' un TrueType: sta in exfont.so */
 } FontAperto;
 
-static FontAperto g_font[FONT_MAX];
+/* Pointer tables: font_di() hands out g_font[i]->f, so an entry never
+ * moves; the table of pointers does. */
+static FontAperto  **g_font = 0;
+static unsigned int  g_font_posti = 0;
 
 /* I byte dei file, condivisi fra tutti i corpi della stessa faccia. */
 typedef struct {
@@ -1962,7 +2155,8 @@ typedef struct {
     int            quanti;      /* quante voci di g_font lo usano */
 } FontFile;
 
-static FontFile g_file[FILE_MAX];
+static FontFile    **g_file = 0;
+static unsigned int  g_file_posti = 0;
 
 static const ExFontDati g_sistema = {
     16,     /* altezza   */
@@ -1982,9 +2176,9 @@ static const ExFontDati g_sistema = {
  * e una finestra vuota non dice da dove cominciare a cercare. */
 static const ExFontDati *font_di(ExFont h)
 {
-    if (h == 0 || h > FONT_MAX) return &g_sistema;
-    if (!g_font[h - 1].usato)   return &g_sistema;
-    return &g_font[h - 1].f;
+    if (h == 0 || h > g_font_posti) return &g_sistema;
+    if (!g_font[h - 1]->usato)   return &g_sistema;
+    return &g_font[h - 1]->f;
 }
 
 /* =============================================================================
@@ -2129,14 +2323,18 @@ static int file_font(const char *percorso)
     int            i, slot = -1, n;
     unsigned char *d;
 
-    for (i = 0; i < FILE_MAX; i++) {
-        if (g_file[i].dati && strcmp(g_file[i].percorso, percorso) == 0) {
-            g_file[i].quanti++;
+    for (i = 0; i < (int)g_file_posti; i++) {
+        if (g_file[i]->dati && strcmp(g_file[i]->percorso, percorso) == 0) {
+            g_file[i]->quanti++;
             return i;
         }
-        if (!g_file[i].dati && slot < 0) slot = i;
+        if (!g_file[i]->dati && slot < 0) slot = i;
     }
-    if (slot < 0) return -1;
+    if (slot < 0) {
+        slot = (int)g_file_posti;
+        if (ptab_cresci((void ***)&g_file, &g_file_posti, FILE_INIZIO, sizeof(FontFile)) != 0)
+            return -1;
+    }
 
     d = file_intero(percorso, &n);
 
@@ -2187,23 +2385,23 @@ static int file_font(const char *percorso)
 
     if (!d || n <= 0) return -1;
 
-    strncpy(g_file[slot].percorso, percorso, sizeof(g_file[slot].percorso) - 1);
-    g_file[slot].percorso[sizeof(g_file[slot].percorso) - 1] = '\0';
-    g_file[slot].dati   = d;
-    g_file[slot].n      = n;
-    g_file[slot].quanti = 1;
+    strncpy(g_file[slot]->percorso, percorso, sizeof(g_file[slot]->percorso) - 1);
+    g_file[slot]->percorso[sizeof(g_file[slot]->percorso) - 1] = '\0';
+    g_file[slot]->dati   = d;
+    g_file[slot]->n      = n;
+    g_file[slot]->quanti = 1;
     return slot;
 }
 
 static void file_font_lascia(int i)
 {
-    if (i < 0 || i >= FILE_MAX || !g_file[i].dati) return;
-    if (--g_file[i].quanti > 0) return;
+    if (i < 0 || i >= (int)g_file_posti || !g_file[i]->dati) return;
+    if (--g_file[i]->quanti > 0) return;
 
-    free(g_file[i].dati);
-    g_file[i].dati = 0;
-    g_file[i].n    = 0;
-    g_file[i].percorso[0] = '\0';
+    free(g_file[i]->dati);
+    g_file[i]->dati = 0;
+    g_file[i]->n    = 0;
+    g_file[i]->percorso[0] = '\0';
 }
 
 ExFont ex_font_open(const char *percorso, int corpo)
@@ -2212,29 +2410,31 @@ ExFont ex_font_open(const char *percorso, int corpo)
 
     if (!percorso) return 0;
 
-    for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
-    if (slot >= FONT_MAX) return 0;
+    for (slot = 0; slot < (int)g_font_posti && g_font[slot]->usato; slot++) { }
+    if (slot >= (int)g_font_posti &&
+        ptab_cresci((void ***)&g_font, &g_font_posti, FONT_INIZIO, sizeof(FontAperto)) != 0)
+        return 0;
 
     fi = file_font(percorso);
     if (fi < 0) return 0;
 
-    if (e_truetype(g_file[fi].dati, g_file[fi].n)) {
+    if (e_truetype(g_file[fi]->dati, g_file[fi]->n)) {
         if (!exfont_pronta()) { file_font_lascia(fi); return 0; }
 
         /* Un corpo non chiesto vuol dire «quello di sistema», che e' 16: un
          * font scalabile una misura deve pur averla. */
-        g_font[slot].ttf = T.apri(g_file[fi].dati, (unsigned int)g_file[fi].n,
+        g_font[slot]->ttf = T.apri(g_file[fi]->dati, (unsigned int)g_file[fi]->n,
                                   corpo > 0 ? corpo : 16);
-        if (!g_font[slot].ttf) { file_font_lascia(fi); return 0; }
-    } else if (!exfont_apri(g_file[fi].dati, (unsigned int)g_file[fi].n,
-                            &g_font[slot].f)) {
+        if (!g_font[slot]->ttf) { file_font_lascia(fi); return 0; }
+    } else if (!exfont_apri(g_file[fi]->dati, (unsigned int)g_file[fi]->n,
+                            &g_font[slot]->f)) {
         file_font_lascia(fi);
         return 0;
     }
 
-    g_font[slot].file  = fi;
-    g_font[slot].corpo = corpo > 0 ? corpo : 16;
-    g_font[slot].usato = 1;
+    g_font[slot]->file  = fi;
+    g_font[slot]->corpo = corpo > 0 ? corpo : 16;
+    g_font[slot]->usato = 1;
     return (ExFont)(slot + 1);
 }
 
@@ -2260,13 +2460,15 @@ static const char *const FACCE[12] = {
     "/exwin/font/LiberationMono-BoldItalic.ttf"
 };
 
-#define TROVA_MAX  24
+#define TROVA_INIZIO 24         /* the first slots, then doubling (exwin.so 0.020) */
 
-static struct {
+typedef struct {
     unsigned char usato, fam, stile;
     short         corpo;
     ExFont        f;
-} g_trovati[TROVA_MAX];
+} Trovato;
+static Trovato     **g_trovati = 0;
+static unsigned int  g_trovati_posti = 0;
 
 static int indice_faccia(int famiglia, int grassetto, int corsivo)
 {
@@ -2291,12 +2493,12 @@ ExFont ex_font_find(int famiglia, int corpo, int grassetto, int corsivo)
 
     if (corpo <= 0) corpo = 16;
 
-    for (i = 0; i < TROVA_MAX; i++) {
-        if (g_trovati[i].usato && g_trovati[i].fam == (unsigned char)fam &&
-            g_trovati[i].stile == (unsigned char)st &&
-            g_trovati[i].corpo == (short)corpo)
-            return g_trovati[i].f;
-        if (!g_trovati[i].usato && slot < 0) slot = i;
+    for (i = 0; i < (int)g_trovati_posti; i++) {
+        if (g_trovati[i]->usato && g_trovati[i]->fam == (unsigned char)fam &&
+            g_trovati[i]->stile == (unsigned char)st &&
+            g_trovati[i]->corpo == (short)corpo)
+            return g_trovati[i]->f;
+        if (!g_trovati[i]->usato && slot < 0) slot = i;
     }
 
     /* ! I RIPIEGHI IN ORDINE, e ognuno e' una rinuncia dichiarata: la faccia
@@ -2306,44 +2508,50 @@ ExFont ex_font_find(int famiglia, int corpo, int grassetto, int corsivo)
     if (!f && st != 0) f = ex_font_open(FACCE[fam * 4], corpo);
     if (!f && fam != EX_FAMILY_SANS) f = ex_font_open(FACCE[EX_FAMILY_SANS * 4], corpo);
 
+    if (slot < 0) {
+        unsigned int prima = g_trovati_posti;
+
+        if (ptab_cresci((void ***)&g_trovati, &g_trovati_posti, TROVA_INIZIO, sizeof(Trovato)) == 0)
+            slot = (int)prima;
+    }
     if (slot >= 0) {
-        g_trovati[slot].usato = 1;
-        g_trovati[slot].fam   = (unsigned char)fam;
-        g_trovati[slot].stile = (unsigned char)st;
-        g_trovati[slot].corpo = (short)corpo;
-        g_trovati[slot].f     = f;
+        g_trovati[slot]->usato = 1;
+        g_trovati[slot]->fam   = (unsigned char)fam;
+        g_trovati[slot]->stile = (unsigned char)st;
+        g_trovati[slot]->corpo = (short)corpo;
+        g_trovati[slot]->f     = f;
     }
     return f;
 }
 
 void ex_font_close(ExFont h)
 {
-    if (h == 0 || h > FONT_MAX) return;
-    if (!g_font[h - 1].usato) return;
+    if (h == 0 || h > g_font_posti) return;
+    if (!g_font[h - 1]->usato) return;
 
     /* ! IL FONT SI CHIUDE PRIMA DI LIBERARE I SUOI BYTE, e l'ordine conta: la
      * cache dentro exfont.so tiene puntatori DENTRO questo buffer (vedi
      * exfont_ttf.h, «non si copia»). Liberarlo prima lascerebbe la libreria a
      * leggere memoria restituita, e il guasto comparirebbe alla prossima
      * allocazione di qualcun altro. */
-    if (g_font[h - 1].ttf && T.chiudi) T.chiudi(g_font[h - 1].ttf);
+    if (g_font[h - 1]->ttf && T.chiudi) T.chiudi(g_font[h - 1]->ttf);
 
     /* ! I BYTE SE NE VANNO SOLO QUANDO NON LI USA PIU' NESSUNO. Erano di
      * questa voce e basta; adesso la stessa faccia a corpi diversi li
      * condivide, e liberarli qui toglierebbe il file da sotto agli altri
      * corpi — che continuerebbero a disegnare da memoria restituita. */
-    file_font_lascia(g_font[h - 1].file);
-    memset(&g_font[h - 1], 0, sizeof(g_font[h - 1]));
-    g_font[h - 1].file = -1;
+    file_font_lascia(g_font[h - 1]->file);
+    memset(g_font[h - 1], 0, sizeof(FontAperto));
+    g_font[h - 1]->file = -1;
 }
 
 /* Il TrueType di quel manico, o 0 se e' un bitmap. Un posto solo per la
  * domanda: i quattro rami qui sotto la fanno tutti. */
 static ExTtf ttf_di(ExFont h)
 {
-    if (h == 0 || h > FONT_MAX) return 0;
-    if (!g_font[h - 1].usato) return 0;
-    return g_font[h - 1].ttf;
+    if (h == 0 || h > g_font_posti) return 0;
+    if (!g_font[h - 1]->usato) return 0;
+    return g_font[h - 1]->ttf;
 }
 
 /* =============================================================================
@@ -2366,10 +2574,10 @@ static ExTtf ttf_di(ExFont h)
  * che ne pesa dieci. E' un limite DICHIARATO, non una dimenticanza.
  * ========================================================================== */
 #define RIPIEGO_FILE  "/exwin/font/DejaVuSans.ttf"
-#define RIPIEGO_MAX   8
-
-static struct { int corpo; ExFont f; } g_ripiego[RIPIEGO_MAX];
-static int g_ripiego_n = 0;
+/* one per size asked, as many as there are (exwin.so 0.020; they were 8) */
+typedef struct { int corpo; ExFont f; } Ripiego;
+static Ripiego *g_ripiego = 0;
+static int g_ripiego_n = 0, g_ripiego_posti = 0;
 static int g_ripiego_no = 0;    /* il file non c'e': non si richiede piu' */
 
 /* Il ripiego a quel corpo, aperto la prima volta che serve davvero.
@@ -2386,7 +2594,14 @@ static ExTtf ripiego_ttf(int corpo)
     for (i = 0; i < g_ripiego_n; i++)
         if (g_ripiego[i].corpo == corpo) return ttf_di(g_ripiego[i].f);
 
-    if (g_ripiego_n >= RIPIEGO_MAX) return 0;
+    if (g_ripiego_n >= g_ripiego_posti) {
+        int      posti = g_ripiego_posti ? g_ripiego_posti * 2 : 8;
+        Ripiego *v = (Ripiego *)realloc(g_ripiego, (size_t)posti * sizeof(Ripiego));
+
+        if (!v) return 0;
+        g_ripiego = v;
+        g_ripiego_posti = posti;
+    }
 
     {
         ExFont f = ex_font_open(RIPIEGO_FILE, corpo);
@@ -2419,7 +2634,7 @@ static ExTtf ttf_per_codice(ExFont h, ExTtf suo, unsigned int ch)
      * disegno da nessuna parte, e cercarlo aprirebbe il ripiego per niente. */
     if (ch < 0x80) return suo;
 
-    r = ripiego_ttf(h && h <= FONT_MAX ? g_font[h - 1].corpo : 0);
+    r = ripiego_ttf(h && h <= g_font_posti ? g_font[h - 1]->corpo : 0);
     if (r && r != suo && T.ha_glifo(r, ch)) return r;
     return suo;
 }
@@ -2488,6 +2703,115 @@ static unsigned int prossimo_codice(const char **p)
     return v;
 }
 
+/* =============================================================================
+ * THE EDITING CONTROLS SPEAK UTF-8 TOO (exwin.so 0.021, voce 42 point 2)
+ *
+ * The text box and the text area typed ASCII only: an accented letter from
+ * the keyboard (a CP437 byte, see keymaps.h) went past them to the program,
+ * and the editor could not write «perche'» with its accent. Now a key above
+ * 0x7F is written as UTF-8, and the caret, Backspace and Delete move over a
+ * whole character, not over a byte.
+ *
+ * ! WHERE A CHARACTER ENDS IS DECIDED BY THE SAME DECODER THAT DRAWS:
+ * u8_dopo goes through prossimo_codice, so a lone CP437 byte of an old file
+ * is one character to the caret as it is one glyph on the screen. Looking
+ * only at the 10xxxxxx bits would glue the CP437 «a`» (0x85) to the letter
+ * before it.
+ * ============================================================================= */
+static unsigned int u8_dopo(const char *t, unsigned int i)
+{
+    const char *p = t + i;
+
+    if (!t[i]) return i;
+    (void)prossimo_codice(&p);
+    return (unsigned int)(p - t);
+}
+
+static unsigned int u8_prima(const char *t, unsigned int i)
+{
+    unsigned int k;
+
+    if (i == 0) return 0;
+    for (k = (i < 4) ? i : 4; k > 1; k--)
+        if (((unsigned char)t[i - k] & 0xC0) != 0x80 && u8_dopo(t, i - k) == i)
+            return i - k;
+    return i - 1;
+}
+
+/* How many characters the first `i` bytes of `t` are: the column. */
+static unsigned int u8_colonna(const char *t, unsigned int i)
+{
+    unsigned int j = 0, c = 0;
+
+    while (j < i && t[j]) { j = u8_dopo(t, j); c++; }
+    return c;
+}
+
+/* The byte where column `c` starts, or the end of `t`. */
+static unsigned int u8_byte(const char *t, unsigned int c)
+{
+    unsigned int j = 0;
+
+    while (c > 0 && t[j]) { j = u8_dopo(t, j); c--; }
+    return j;
+}
+
+/* A code point as UTF-8 in `out` (4 bytes at most): its length. */
+static unsigned int u8_scrivi(unsigned int u, char *out)
+{
+    if (u < 0x80)    { out[0] = (char)u; return 1; }
+    if (u < 0x800)   { out[0] = (char)(0xC0 | (u >> 6));
+                       out[1] = (char)(0x80 | (u & 0x3F)); return 2; }
+    if (u < 0x10000) { out[0] = (char)(0xE0 | (u >> 12));
+                       out[1] = (char)(0x80 | ((u >> 6) & 0x3F));
+                       out[2] = (char)(0x80 | (u & 0x3F)); return 3; }
+    out[0] = (char)(0xF0 | (u >> 18));
+    out[1] = (char)(0x80 | ((u >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((u >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (u & 0x3F));
+    return 4;
+}
+
+/* The character a key types, as UTF-8 in `out`: 0 = it types nothing a text
+ * control takes. The Unicode of ex_key_info when the key came that way,
+ * otherwise the CP437 byte of the keymap translated (the same table as
+ * kbd.drv's). */
+static unsigned int tasto_utf8(unsigned int c, char *out)
+{
+    static const unsigned short da437[128] = {
+        0x00C7,0x00FC,0x00E9,0x00E2,0x00E4,0x00E0,0x00E5,0x00E7,
+        0x00EA,0x00EB,0x00E8,0x00EF,0x00EE,0x00EC,0x00C4,0x00C5,
+        0x00C9,0x00E6,0x00C6,0x00F4,0x00F6,0x00F2,0x00FB,0x00F9,
+        0x00FF,0x00D6,0x00DC,0x00A2,0x00A3,0x00A5,0x20A7,0x0192,
+        0x00E1,0x00ED,0x00F3,0x00FA,0x00F1,0x00D1,0x00AA,0x00BA,
+        0x00BF,0x2310,0x00AC,0x00BD,0x00BC,0x00A1,0x00AB,0x00BB,
+        0x2591,0x2592,0x2593,0x2502,0x2524,0x2561,0x2562,0x2556,
+        0x2555,0x2563,0x2551,0x2557,0x255D,0x255C,0x255B,0x2510,
+        0x2514,0x2534,0x252C,0x251C,0x2500,0x253C,0x255E,0x255F,
+        0x255A,0x2554,0x2569,0x2566,0x2560,0x2550,0x256C,0x2567,
+        0x2568,0x2564,0x2565,0x2559,0x2558,0x2552,0x2553,0x256B,
+        0x256A,0x2518,0x250C,0x2588,0x2584,0x258C,0x2590,0x2580,
+        0x03B1,0x00DF,0x0393,0x03C0,0x03A3,0x03C3,0x00B5,0x03C4,
+        0x03A6,0x0398,0x03A9,0x03B4,0x221E,0x03C6,0x03B5,0x2229,
+        0x2261,0x00B1,0x2265,0x2264,0x2320,0x2321,0x00F7,0x2248,
+        0x00B0,0x2219,0x00B7,0x221A,0x207F,0x00B2,0x25A0,0x00A0
+    };
+    ExKeyInfo ki;
+
+    /* the euro and whatever else CP437 has not: only the Unicode says which */
+    if ((c & KBD_KEY_MASK) == KBD_K_UNICODE)
+        return (ex_key_info(&ki) && ki.unicode >= 0x20) ? u8_scrivi(ki.unicode, out) : 0;
+    if (c < 0x20 || c == 0x7F || c >= 0x100) return 0;
+    if (ex_key_info(&ki) && ki.unicode >= 0x20) return u8_scrivi(ki.unicode, out);
+    return u8_scrivi(c < 0x80 ? c : da437[c - 0x80], out);
+}
+
+/* The column of byte `x` in line `y` of a text area (see area_segui). */
+static unsigned int area_colonna(Area *A, unsigned int y, unsigned int x)
+{
+    return u8_colonna(area_riga(A, y), x);
+}
+
 /* Da codice Unicode al byte che il font 8x16 disegna (CP437).
  *
  * ! IL FONT DI SISTEMA HA 256 GLIFI E NON DI PIU', quindi qui si SCEGLIE cosa
@@ -2524,6 +2848,25 @@ static unsigned char codice_a_cp437(unsigned int u)
     return (u < 0x100) ? (unsigned char)u : (unsigned char)'?';
 }
 
+/* ! THE EURO IN THE SYSTEM FONT (exwin.so 0.021). font8x16 is CP437 and has
+ * no euro, and the keyboard types one since the keymaps are Unicode: here is
+ * its glyph, drawn like the capitals of the font (rows 2..11). Another
+ * bitmap font without it shows '?', as for every code it has not. */
+static const unsigned char g_euro8x16[16] = {
+    0x00, 0x00, 0x1C, 0x36, 0x60, 0xFC, 0x60, 0xF8,
+    0x60, 0x60, 0x36, 0x1C, 0x00, 0x00, 0x00, 0x00
+};
+
+/* The glyph of code point `u` in a bitmap font, and in `ch` the byte whose
+ * width it takes. */
+static const unsigned char *glifo_codice(const ExFontDati *fo, unsigned int u,
+                                         unsigned char *ch)
+{
+    *ch = codice_a_cp437(u);
+    if (u == 0x20AC && fo == &g_sistema) return g_euro8x16;
+    return exfont_glifo(fo, *ch);
+}
+
 int ex_text_width(ExFont h, const char *s)
 {
     ExTtf t = ttf_di(h);
@@ -2551,7 +2894,14 @@ int ex_text_width(ExFont h, const char *s)
  * questa. */
 static int larg(const char *s)
 {
-    return (int)exfont_larghezza(&g_sistema, s);
+    int w = 0;
+
+    /* ! BY CHARACTER, NOT BY BYTE (exwin.so 0.021), like the drawing: with
+     * UTF-8 in the text boxes an accented letter is two bytes and one glyph,
+     * and the caret went one column right for each. */
+    if (!s) return 0;
+    while (*s) w += (int)exfont_larghezza_car(&g_sistema, codice_a_cp437(prossimo_codice(&s)));
+    return w;
 }
 
 /* the text box's own helpers, further down with its keys */
@@ -2608,8 +2958,8 @@ void ex_draw_text_buffer(unsigned int *px, int w, int h, ExFont f, int x, int y,
     }
     fo = font_di(f);
     while (*s) {
-        unsigned char        ch = codice_a_cp437(prossimo_codice(&s));
-        const unsigned char *g  = exfont_glifo(fo, ch);
+        unsigned char        ch;
+        const unsigned char *g  = glifo_codice(fo, prossimo_codice(&s), &ch);
         unsigned int         cw = exfont_larghezza_car(fo, ch), rr, b;
 
         if (g)
@@ -2666,8 +3016,8 @@ void ex_draw_text_font(ExWindow f, ExFont h, int x, int y,
     fo = font_di(h);
 
     while (*s) {
-        unsigned char        ch = codice_a_cp437(prossimo_codice(&s));
-        const unsigned char *g  = exfont_glifo(fo, ch);
+        unsigned char        ch;
+        const unsigned char *g  = glifo_codice(fo, prossimo_codice(&s), &ch);
         unsigned int         w  = exfont_larghezza_car(fo, ch);
         unsigned int         rr, b;
 
@@ -3644,10 +3994,10 @@ static ExWindow mdi_di(ExWindow c)
  * ============================================================================= */
 static void area_stati(Area *A, unsigned int fino)
 {
-    unsigned char ruoli[AREA_COL_TETTO];
+    unsigned char *ruoli = ruoli_buf(A->col_max);
     unsigned int  i;
 
-    if (!A->colora || !A->stato) return;
+    if (!A->colora || !A->stato || !ruoli) return;
     if (fino >= A->n) fino = A->n ? A->n - 1 : 0;
 
     for (i = A->stati_validi; i <= fino && i < A->n; i++) {
@@ -4136,26 +4486,35 @@ static void disegna_oggetto_nudo(Oggetto *o)
         const char  *t = o->titolo;
         unsigned int n = (unsigned int)strlen(t), cur, vis, a = 0, b = 0;
         int          dentro = o->w - 6;      /* i 3 pixel di bordo, due volte */
-        char         maschera[TESTO_LEN];
+        static char        *maschera = 0, *buf = 0;
+        static unsigned int maschera_posti = 0, buf_posti = 0;
 
         /* EX_PASSWORD: everything below draws and measures asterisks, one per
          * letter, so the caret and the selection fall in the same places */
+        if (!buf_cresci(&buf, &buf_posti, n + 1)) break;
         if (o->stile & EX_PASSWORD) {
+            if (!buf_cresci(&maschera, &maschera_posti, n + 1)) break;
             memset(maschera, '*', n);
             maschera[n] = '\0';
             t = maschera;
         }
         int          fuoco = (r && r->fuoco == (ExWindow)(o->maniglia));
         int          sel;
-        char         buf[TESTO_LEN];
         int          ty = y + (o->h - 16) / 2;
 
         cur = o->cursore > n ? n : o->cursore;
         if (o->vista > cur) o->vista = cur;
-        while (o->vista < cur && larg_n(t + o->vista, cur - o->vista) > dentro) o->vista++;
+        /* whole characters: a byte at a time would cut a UTF-8 letter */
+        while (o->vista < cur && larg_n(t + o->vista, cur - o->vista) > dentro)
+            o->vista = u8_dopo(t, o->vista);
         /* how many letters from vista fit */
         vis = 0;
-        while (o->vista + vis < n && larg_n(t + o->vista, vis + 1) <= dentro) vis++;
+        while (o->vista + vis < n) {
+            unsigned int dopo = u8_dopo(t, o->vista + vis) - o->vista;
+
+            if (larg_n(t + o->vista, dopo) > dentro) break;
+            vis = dopo;
+        }
 
         ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
         /* ! IL BORDO DICE CHI HA I TASTI. Senza, chi guarda non sa dove
@@ -4225,32 +4584,66 @@ static void disegna_oggetto_nudo(Oggetto *o)
              * si guarda: vedi area_stati(). */
             area_stati(A, A->top + A->righe);
 
+            /* ! THE SCREEN SHOWS COLUMNS, THE TEXT HOLDS BYTES (exwin.so
+             * 0.021): with UTF-8 one column can be up to four bytes. For
+             * each column on screen, `vb` is where its letter starts in the
+             * line and `vo` where it starts in `vis`; the colours (ruoli) are
+             * by byte, the selection and the caret by byte, the drawing by
+             * column. The buffers grow with the widest area shown. */
+            static char         *vis = 0, *pezzo = 0;
+            static unsigned int  vis_posti = 0, pezzo_posti = 0;
+            static unsigned int *vb = 0, *vo = 0;
+            static unsigned int  v_posti = 0;
+
+            if (A->cols + 1 > v_posti) {
+                unsigned int  n2 = A->cols + 1;
+                unsigned int *b2 = (unsigned int *)realloc(vb, n2 * sizeof(unsigned int));
+                unsigned int *o2 = b2 ? (unsigned int *)realloc(vo, n2 * sizeof(unsigned int)) : 0;
+
+                if (b2) vb = b2;
+                if (o2) { vo = o2; v_posti = n2; }
+            }
+            if (A->cols + 1 > v_posti ||
+                !buf_cresci(&vis, &vis_posti, 4 * A->cols + 1) ||
+                !buf_cresci(&pezzo, &pezzo_posti, 4 * A->cols + 1)) {
+                area_barre_disegna(o, A, x, y);
+                break;
+            }
+
             for (k = 0; k < A->righe && A->top + k < A->n; k++) {
                 unsigned int riga = A->top + k;
                 const char  *src = area_riga(A, riga);
                 unsigned int l   = (unsigned int)strlen(src);
-                char          vis[AREA_COL_TETTO];
-                unsigned char ruoli[AREA_COL_TETTO];
-                unsigned int  c;
+                unsigned char *ruoli = ruoli_buf(A->col_max);
+                unsigned int  c, b, nv = 0;
                 int          ry = y + 2 + (int)k * AREA_RIGA_H;
                 int          da = -1, a = -1;   /* la parte scelta, in colonne */
 
-                for (c = 0; c < A->cols && A->left + c < l && c + 1 < sizeof(vis); c++) {
-                    char ch = src[A->left + c];
+                b = u8_byte(src, A->left);
+                for (c = 0; c < A->cols && b < l; c++) {
+                    unsigned int dopo = u8_dopo(src, b);
+
+                    vb[c] = b;
+                    vo[c] = nv;
                     /* ! IL TAB SI MOSTRA COME UNO SPAZIO E RESTA UN TAB NEL
                      * TESTO. Espanderlo vorrebbe dire che una colonna sullo
                      * schermo non e' piu' un carattere nel testo, e allora
                      * cursore, clic e lunghezza della riga direbbero tre cose
                      * diverse. */
-                    vis[c] = (ch == '\t') ? ' ' : ch;
+                    if (src[b] == '\t') vis[nv++] = ' ';
+                    else while (b < dopo) vis[nv++] = src[b++];
+                    b = dopo;
                 }
-                vis[c] = '\0';
+                vb[c] = b;
+                vo[c] = nv;
+                vis[nv] = '\0';
 
                 /* ! IL COLORITORE VEDE LA RIGA INTERA, non il pezzo visibile:
                  * una stringa aperta prima del bordo sinistro colora anche cio'
                  * che si vede, e dandogli mezza riga direbbe il falso proprio
                  * quando si scorre in orizzontale. */
-                memset(ruoli, EX_CODE_NORMAL, sizeof(ruoli));
+                if (!ruoli) continue;
+                memset(ruoli, EX_CODE_NORMAL, A->col_max);
                 if (A->colora)
                     A->colora(A->colora_dato, src, ruoli, area_stato_di(A, riga));
 
@@ -4261,8 +4654,8 @@ static void disegna_oggetto_nudo(Oggetto *o)
                  * che il ritorno a capo resti fuori, e incollando salterebbe
                  * fuori lo stesso. */
                 if (c_e_sel && riga >= sy1 && riga <= sy2) {
-                    unsigned int d = (riga == sy1) ? sx1 : 0;
-                    unsigned int e_ = (riga == sy2) ? sx2 : A->left + A->cols;
+                    unsigned int d  = (riga == sy1) ? u8_colonna(src, sx1) : 0;
+                    unsigned int e_ = (riga == sy2) ? u8_colonna(src, sx2) : A->left + A->cols;
 
                     if (d < A->left) d = A->left;
                     if (e_ > A->left + A->cols) e_ = A->left + A->cols;
@@ -4282,7 +4675,8 @@ static void disegna_oggetto_nudo(Oggetto *o)
                  * particolare di questo: senza coloritore i tratti sono
                  * esattamente quei tre. Una riga per carattere costerebbe
                  * duecento chiamate; un tratto per colore ne costa quante sono
-                 * le parole.
+                 * le parole. Each stretch starts at its own column, so a
+                 * letter of another width cannot push the next ones.
                  *
                  * ! E DENTRO LA SELEZIONE IL COLORE NON VALE: li' si scrive in
                  * bianco sul fondo blu, sempre. Un commento verde su fondo blu
@@ -4290,26 +4684,25 @@ static void disegna_oggetto_nudo(Oggetto *o)
                  * momento in cui si sta guardando proprio quel testo.
                  * ===================================================== */
                 {
-                    int lung = (int)strlen(vis);
+                    int lung = (int)c;      /* columns shown on this line */
                     int p = 0;
-                    char pezzo[AREA_COL_TETTO];
 
                     while (p < lung) {
                         int sel_p = (da >= 0 && p >= da && p < a);
                         unsigned int col = sel_p ? EX_WHITE
-                                                 : ruolo_colore(ruoli[A->left + (unsigned int)p]);
+                                                 : ruolo_colore(ruoli[vb[p]]);
                         int q = p;
 
                         while (q < lung) {
                             int sel_q = (da >= 0 && q >= da && q < a);
                             unsigned int cq = sel_q ? EX_WHITE
-                                                    : ruolo_colore(ruoli[A->left + (unsigned int)q]);
+                                                    : ruolo_colore(ruoli[vb[q]]);
                             if (cq != col || sel_q != sel_p) break;
                             q++;
                         }
 
-                        memcpy(pezzo, vis + p, (unsigned int)(q - p));
-                        pezzo[q - p] = '\0';
+                        memcpy(pezzo, vis + vo[p], vo[q] - vo[p]);
+                        pezzo[vo[q] - vo[p]] = '\0';
                         ex_draw_text(o->padre, x + 2 + p * AREA_CAR_W, ry, pezzo, col);
                         p = q;
                     }
@@ -4319,18 +4712,22 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         /* Il cursore: un blocco pieno col carattere ridisegnato sopra in
          * bianco. Una barretta di un pixel su un font 8x16 si perde. */
-        if (col_fuoco &&
-            A->cy >= A->top && A->cy < A->top + A->righe &&
-            A->cx >= A->left && A->cx < A->left + A->cols) {
-            int cx = x + 2 + (int)(A->cx - A->left) * AREA_CAR_W;
-            int cy = y + 2 + (int)(A->cy - A->top) * AREA_RIGA_H;
-            char sotto[2];
+        if (col_fuoco && A->cy >= A->top && A->cy < A->top + A->righe) {
+            const char  *rc  = area_riga(A, A->cy);
+            unsigned int col = u8_colonna(rc, A->cx);
 
-            ex_fill_rect(o->padre, cx, cy, AREA_CAR_W, AREA_RIGA_H, EX_BLUE);
-            sotto[0] = area_riga(A, A->cy)[A->cx];
-            sotto[1] = '\0';
-            if (sotto[0] == '\t') sotto[0] = ' ';
-            if (sotto[0]) ex_draw_text(o->padre, cx, cy, sotto, EX_WHITE);
+            if (col >= A->left && col < A->left + A->cols) {
+                int cx = x + 2 + (int)(col - A->left) * AREA_CAR_W;
+                int cy = y + 2 + (int)(A->cy - A->top) * AREA_RIGA_H;
+                char sotto[5];
+                unsigned int nb = u8_dopo(rc, A->cx) - A->cx;
+
+                ex_fill_rect(o->padre, cx, cy, AREA_CAR_W, AREA_RIGA_H, EX_BLUE);
+                memcpy(sotto, rc + A->cx, nb);
+                sotto[nb] = '\0';
+                if (sotto[0] == '\t') sotto[0] = ' ';
+                if (sotto[0]) ex_draw_text(o->padre, cx, cy, sotto, EX_WHITE);
+            }
         }
         area_barre_disegna(o, A, x, y);
         break;
@@ -4391,9 +4788,27 @@ static void disegna_oggetto_nudo(Oggetto *o)
                 ex_icon_draw(o->padre, L->ic[v], x + 3, ry,
                                  (unsigned int)LISTA_ICONA_LATO, fondo);
 
-            ex_draw_text(o->padre, x + 4 + gutter, ry,
-                      &L->voci[v * LISTA_TESTO_MAX],
-                      (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_WHITE : EX_BLACK);
+            /* ! ONLY WHAT FITS IN THE CONTROL (exwin.so 0.020). With rows cut
+             * at 63 bytes the text never reached the right edge; with rows as
+             * long as they are it ran out of the list onto the window. It may
+             * pass under the scroll bar, which is drawn afterwards. */
+            {
+                static char        *vis = 0;
+                static unsigned int vis_posti = 0;
+                const char  *testo = &L->voci[v * L->larg];
+                int          spazio = o->w - 4 - gutter;
+                unsigned int quanti = spazio > 0 ? (unsigned int)spazio / LISTA_CAR_W : 0;
+                unsigned int l = (unsigned int)strlen(testo);
+
+                if (l > quanti) {
+                    if (!buf_cresci(&vis, &vis_posti, quanti + 1)) continue;
+                    memcpy(vis, testo, quanti);
+                    vis[quanti] = '\0';
+                    testo = vis;
+                }
+                ex_draw_text(o->padre, x + 4 + gutter, ry, testo,
+                          (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_WHITE : EX_BLACK);
+            }
         }
         /* Dopo le righe: un testo lungo passa sotto la barra, non sopra. */
         lista_barra_disegna(o, L, x, y);
@@ -5084,7 +5499,16 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
     if (i == (int)g_ogg_posti && ogg_cresci() != 0) return 0;
 
     o = OGG(i);
-    memset(o, 0, sizeof(*o));
+    {
+        char        *tieni = o->titolo;     /* the text buffer stays with the slot */
+        unsigned int tieni_posti = o->titolo_posti;
+
+        memset(o, 0, sizeof(*o));
+        o->titolo = tieni;
+        o->titolo_posti = tieni_posti;
+    }
+    if (!testo_posto(o, 0)) return 0;
+    o->titolo[0] = '\0';
     o->usato    = 1;
     o->maniglia = (unsigned int)i + 1u;
     o->classe = cl;
@@ -5093,10 +5517,7 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
     o->x = x; o->y = y; o->w = w; o->h = h;
     o->stile  = stile | EX_VISIBLE;
     o->proc   = proc;
-    if (titolo) {
-        strncpy(o->titolo, titolo, TESTO_LEN - 1);
-        o->titolo[TESTO_LEN - 1] = '\0';
-    }
+    if (titolo) testo_metti(o, titolo);
 
     /* ! IL PRIMO CONTROLLO CHE LO ACCETTA PRENDE IL FUOCO, e senza non lo
      * prende nessuno: una finestra appena aperta ignorerebbe la tastiera
@@ -5124,8 +5545,8 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         int   codice = (strcmp(classe, "areacodice") == 0 || strcmp(classe, "codearea") == 0);
         int   j;
 
-        unsigned int rmax = codice ? CODICE_RIGHE_MAX : AREA_RIGHE_MAX;
-        unsigned int cmax = codice ? CODICE_COL_MAX   : AREA_COL_MAX;
+        unsigned int rmax = codice ? CODICE_RIGHE_INIZIO : AREA_RIGHE_INIZIO;
+        unsigned int cmax = codice ? CODICE_COL_INIZIO   : AREA_COL_INIZIO;
         char         *avanzo = 0;
         unsigned char *st_avanzo = 0;
 
@@ -5137,10 +5558,13 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
          * si aprirebbe piu'. Il posto si libera, il buffer resta attaccato. */
         for (j = 0; j < (int)g_area_posti; j++)
             if (!g_area[j]->usato && g_area[j]->testo &&
-                g_area[j]->righe_max == rmax && g_area[j]->col_max == cmax) {
+                g_area[j]->righe_max >= rmax && g_area[j]->col_max >= cmax) {
+                /* a grid that grew is at least as good: keep its size */
                 A = g_area[j];
                 avanzo    = A->testo;
                 st_avanzo = A->stato;
+                rmax      = A->righe_max;
+                cmax      = A->col_max;
                 break;
             }
         if (!A)
@@ -5208,7 +5632,14 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         }
         if (!V) { o->usato = 0; return 0; }
 
-        memset(V, 0, sizeof(*V));
+        {
+            char       (*tieni)[VOCI_TESTO_MAX] = V->testo;
+            unsigned int tieni_posti = V->testo_posti;
+
+            memset(V, 0, sizeof(*V));
+            V->testo = tieni;
+            V->testo_posti = tieni_posti;
+        }
         V->ogg   = (ExWindow)(i + 1);
         V->usato = 1;
         return (ExWindow)(i + 1);
@@ -5227,7 +5658,14 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         }
         if (!M) { o->usato = 0; return 0; }
 
-        memset(M, 0, sizeof(*M));
+        {
+            MenuTitolo  *ti = M->titolo, *su = M->sub;
+            unsigned int tp = M->titoli_posti, sp = M->sub_posti;
+
+            memset(M, 0, sizeof(*M));
+            M->titolo = ti; M->titoli_posti = tp;
+            M->sub    = su; M->sub_posti    = sp;
+        }
         M->ogg    = (ExWindow)(i + 1);
         M->aperto = -1;
         M->sotto  = -1;
@@ -5243,7 +5681,7 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         char         *avanzo = 0;
         ExIcon      *avanzo_ic = 0;
         unsigned char *avanzo_sg = 0;
-        unsigned int  avanzo_cap = 0;
+        unsigned int  avanzo_cap = 0, avanzo_larg = 0;
 
         /* Stessa regola dell'area: prima un posto col buffer gia' pronto.
          *
@@ -5260,6 +5698,7 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
                 avanzo_ic  = L->ic;
                 avanzo_cap = L->cap;
                 avanzo_sg  = L->segni;
+                avanzo_larg = L->larg;
                 break;
             }
         if (!L)
@@ -5278,6 +5717,7 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         L->ic    = avanzo_ic;
         L->cap   = avanzo_cap;
         L->segni = avanzo_sg;
+        L->larg  = avanzo_larg;
         L->ogg   = (ExWindow)(i + 1);
         L->righe = (unsigned int)(h / LISTA_RIGA_H);
 
@@ -5289,13 +5729,14 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
         /* A slot reused keeps what it had grown to: free() gives nothing
          * back here, so a smaller block would only be a second one. */
         if (!L->voci) {
-            L->voci = (char *)malloc(LISTA_VOCI_PRIMA * LISTA_TESTO_MAX);
+            L->voci = (char *)malloc(LISTA_VOCI_PRIMA * LISTA_TESTO_INIZIO);
+            L->larg = LISTA_TESTO_INIZIO;
             L->ic   = (ExIcon *)malloc(LISTA_VOCI_PRIMA * sizeof(ExIcon));
             L->cap  = LISTA_VOCI_PRIMA;
         }
         if (!L->segni) L->segni = (unsigned char *)malloc(L->cap);
         if (!L->voci || !L->ic || !L->segni) { o->usato = 0; return 0; }
-        memset(L->voci, 0, (size_t)L->cap * LISTA_TESTO_MAX);
+        memset(L->voci, 0, (size_t)L->cap * L->larg);
         memset(L->ic, 0, (size_t)L->cap * sizeof(ExIcon));
         memset(L->segni, 0, L->cap);
 
@@ -5468,6 +5909,19 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
          * saperlo: qui dentro x e y valgono ancora il -1 che si e' chiesto. */
         o->x = (int)r.x;
         o->y = (int)r.y;
+
+        /* ! THE LONG KEY EVENT FOR EVERY WINDOW (exwin.so 0.021): a key
+         * like the euro has no CP437 code and comes only that way. What the
+         * program did not ask for (releases, modifiers) stops in prendi_msg.
+         * An older server does not know the message and ignores it. */
+        {
+            WinRegione w;
+
+            memset(&w, 0, sizeof(w));
+            w.id = r.id;
+            w.x  = 1;
+            (void)ipc_send((unsigned int)g_server, WIN_MSG_TASTI, &w, sizeof(w));
+        }
     }
 
     return (ExWindow)(i + 1);
@@ -5547,8 +6001,7 @@ void ex_set_title(ExWindow f, const char *s)
     Oggetto *o = ogg(f);
 
     if (!o || !s) return;
-    strncpy(o->titolo, s, TESTO_LEN - 1);
-    o->titolo[TESTO_LEN - 1] = '\0';
+    testo_metti(o, s);
     if (o->classe == CL_TESTO) {
         o->cursore = (unsigned int)strlen(o->titolo);
         o->c_sel = 0;
@@ -5848,7 +6301,7 @@ static void area_punta(Oggetto *co, int x, int y)
 
     if (r >= A->n) r = A->n - 1;
     A->cy = r;
-    A->cx = (c > area_lung(A, r)) ? area_lung(A, r) : c;
+    A->cx = u8_byte(area_riga(A, r), c);     /* the column, as a byte */
     area_segui(A);
 }
 
@@ -6231,10 +6684,11 @@ static void area_tocca(Area *A, unsigned int prima_riga)
 
 static void area_inserisci(Area *A, char c)
 {
-    char        *r = area_riga(A, A->cy);
     unsigned int l = area_lung(A, A->cy), i;
+    char        *r;
 
-    if (l >= A->col_max - 1) return;        /* riga piena: si ignora */
+    if (!area_col_posto(A, l + 1)) return;  /* no memory: the key is ignored */
+    r = area_riga(A, A->cy);
 
     for (i = l + 1; i > A->cx; i--) r[i] = r[i - 1];
     r[A->cx] = c;
@@ -6246,7 +6700,7 @@ static void area_spezza(Area *A)
 {
     unsigned int i;
 
-    if (A->n >= A->righe_max) return;
+    if (!area_righe_posto(A)) return;
 
     for (i = A->n; i > A->cy + 1; i--)
         strcpy(area_riga(A, i), area_riga(A, i - 1));
@@ -6269,9 +6723,10 @@ static void area_indietro(Area *A)
     if (A->cx > 0) {
         char        *r = area_riga(A, A->cy);
         unsigned int l = area_lung(A, A->cy);
+        unsigned int da = u8_prima(r, A->cx), k = A->cx - da;
 
-        for (i = A->cx - 1; i < l; i++) r[i] = r[i + 1];
-        A->cx--;
+        for (i = da; i + k <= l; i++) r[i] = r[i + k];   /* the whole letter */
+        A->cx = da;
         area_tocca(A, A->cy);
         return;
     }
@@ -6280,7 +6735,7 @@ static void area_indietro(Area *A)
     {
         unsigned int sopra = area_lung(A, A->cy - 1);
 
-        if (sopra + area_lung(A, A->cy) >= A->col_max - 1) return;
+        if (!area_col_posto(A, sopra + area_lung(A, A->cy))) return;
 
         strcat(area_riga(A, A->cy - 1), area_riga(A, A->cy));
         for (i = A->cy; i + 1 < A->n; i++)
@@ -6297,9 +6752,9 @@ static void area_avanti(Area *A)
 {
     if (A->cx < area_lung(A, A->cy)) {
         char        *r = area_riga(A, A->cy);
-        unsigned int i, l = area_lung(A, A->cy);
+        unsigned int i, l = area_lung(A, A->cy), k = u8_dopo(r, A->cx) - A->cx;
 
-        for (i = A->cx; i < l; i++) r[i] = r[i + 1];
+        for (i = A->cx; i + k <= l; i++) r[i] = r[i + k];
         area_tocca(A, A->cy);
         return;
     }
@@ -6422,7 +6877,7 @@ static int area_tasto(Area *A, unsigned int k)
      * cosa che non lascia il testo in uno stato che nessuno ha chiesto. */
     if (A->sel && !muove &&
         (c == '\b' || c == KBD_K_DEL || c == '\n' || c == '\r' ||
-         c == '\t' || (c >= 0x20 && c < 0x7F))) {
+         c == '\t' || c == KBD_K_UNICODE || (c >= 0x20 && c != 0x7F && c < 0x100))) {
         area_sel_via(A);
         if (c == '\b' || c == KBD_K_DEL) { area_segui(A); return 1; }
     }
@@ -6430,24 +6885,34 @@ static int area_tasto(Area *A, unsigned int k)
     if (muove) area_ancora(A, (k & KBD_MOD_SHIFT) != 0);
     else       A->sel = 0;
 
+    /* ! UP AND DOWN KEEP THE COLUMN, not the byte: on a line with accented
+     * letters the same byte is further left, or inside a letter. */
+    if (c == KBD_K_UP || c == KBD_K_DOWN || c == KBD_K_PGUP || c == KBD_K_PGDN) {
+        unsigned int col = area_colonna(A, A->cy, A->cx);
+
+        if (c == KBD_K_UP   && A->cy > 0)        A->cy--;
+        if (c == KBD_K_DOWN && A->cy + 1 < A->n) A->cy++;
+        if (c == KBD_K_PGUP) A->cy = (A->cy > passo) ? A->cy - passo : 0;
+        if (c == KBD_K_PGDN) {
+            A->cy += passo;
+            if (A->cy >= A->n) A->cy = A->n - 1;
+        }
+        A->cx = u8_byte(area_riga(A, A->cy), col);
+        area_segui(A);
+        return 1;
+    }
+
     switch (c) {
-    case KBD_K_UP:    if (A->cy > 0) A->cy--;                          break;
-    case KBD_K_DOWN:  if (A->cy + 1 < A->n) A->cy++;                   break;
     case KBD_K_LEFT:
-        if (A->cx > 0) A->cx--;
+        if (A->cx > 0) A->cx = u8_prima(area_riga(A, A->cy), A->cx);
         else if (A->cy > 0) { A->cy--; A->cx = area_lung(A, A->cy); }
         break;
     case KBD_K_RIGHT:
-        if (A->cx < area_lung(A, A->cy)) A->cx++;
+        if (A->cx < area_lung(A, A->cy)) A->cx = u8_dopo(area_riga(A, A->cy), A->cx);
         else if (A->cy + 1 < A->n) { A->cy++; A->cx = 0; }
         break;
     case KBD_K_HOME:  A->cx = 0;                                       break;
     case KBD_K_END:   A->cx = area_lung(A, A->cy);                     break;
-    case KBD_K_PGUP:  A->cy = (A->cy > passo) ? A->cy - passo : 0;      break;
-    case KBD_K_PGDN:
-        A->cy += passo;
-        if (A->cy >= A->n) A->cy = A->n - 1;
-        break;
     case KBD_K_DEL:   area_avanti(A);                                  break;
     case '\b':        area_indietro(A);                                break;
     case '\n':
@@ -6457,8 +6922,14 @@ static int area_tasto(Area *A, unsigned int k)
          * 0x100 in su apposta per non poterli confondere con un carattere;
          * infilarne uno nel testo darebbe un file con dentro un valore che
          * nessun altro programma sa leggere. */
-        if (c == '\t' || (c >= 0x20 && c < 0x7F)) area_inserisci(A, (char)c);
-        else return 0;
+        if (c == '\t') area_inserisci(A, '\t');
+        else {
+            char         u[4];
+            unsigned int k8 = tasto_utf8(c, u), j;
+
+            if (k8 == 0) return 0;
+            for (j = 0; j < k8; j++) area_inserisci(A, u[j]);
+        }
         break;
     }
 
@@ -6521,7 +6992,7 @@ static void casella_scrivi(Oggetto *o, const char *t, unsigned int k)
     casella_via_sel(o);
     n = (unsigned int)strlen(o->titolo);
     if (o->cursore > n) o->cursore = n;
-    if (n + k > TESTO_LEN - 1) k = TESTO_LEN - 1 - n;
+    if (!testo_posto(o, n + k)) k = o->titolo_posti - 1 - n;
     memmove(o->titolo + o->cursore + k, o->titolo + o->cursore, n - o->cursore + 1);
     for (i = 0; i < k; i++) {
         char ch = t[i];
@@ -6580,7 +7051,7 @@ static int casella_tasto(Oggetto *o, unsigned int k)
             return 1;
         }
         if (l == 'v') {
-            char         buf[TESTO_LEN];
+            static char  buf[APPUNTI_BYTE];   /* the whole clipboard */
             unsigned int m = ex_clipboard_get(buf, sizeof(buf));
 
             if (m >= sizeof(buf)) m = sizeof(buf) - 1;
@@ -6593,27 +7064,33 @@ static int casella_tasto(Oggetto *o, unsigned int k)
     switch (c) {
     case KBD_K_LEFT:
         if (!shift && casella_sel(o, &a, &b)) casella_muovi(o, a, 0);
-        else casella_muovi(o, o->cursore ? o->cursore - 1 : 0, shift);
+        else casella_muovi(o, u8_prima(o->titolo, o->cursore), shift);
         return 1;
     case KBD_K_RIGHT:
         if (!shift && casella_sel(o, &a, &b)) casella_muovi(o, b, 0);
-        else casella_muovi(o, o->cursore < n ? o->cursore + 1 : n, shift);
+        else casella_muovi(o, u8_dopo(o->titolo, o->cursore), shift);
         return 1;
     case KBD_K_HOME: casella_muovi(o, 0, shift); return 1;
     case KBD_K_END:  casella_muovi(o, n, shift); return 1;
     case KBD_K_DEL:
-        if (!casella_via_sel(o) && o->cursore < n) casella_via(o, o->cursore, o->cursore + 1);
+        if (!casella_via_sel(o) && o->cursore < n)
+            casella_via(o, o->cursore, u8_dopo(o->titolo, o->cursore));
         return 1;
     case '\b':
-        if (!casella_via_sel(o) && o->cursore > 0) casella_via(o, o->cursore - 1, o->cursore);
+        if (!casella_via_sel(o) && o->cursore > 0)
+            casella_via(o, u8_prima(o->titolo, o->cursore), o->cursore);
         return 1;
     }
     if (c == '\n' || c == '\r') return 0;         /* Invio va all'applicazione */
-    if (c < 0x20 || c > 0x7E) return 0;
+    /* ! A PASSWORD BOX STAYS ASCII: it draws one asterisk per byte, and the
+     * console where the same password is typed at login has only ASCII. */
+    if ((o->stile & EX_PASSWORD) && c > 0x7E) return 0;
     {
-        char ch = (char)c;
+        char         u[4];
+        unsigned int k8 = tasto_utf8(c, u);
 
-        casella_scrivi(o, &ch, 1);
+        if (k8 == 0) return 0;
+        casella_scrivi(o, u, k8);
     }
     return 1;
 }
@@ -6621,10 +7098,12 @@ static int casella_tasto(Oggetto *o, unsigned int k)
 /* How wide the first `k` bytes of `s` are. */
 static int larg_n(const char *s, unsigned int k)
 {
-    char         buf[TESTO_LEN];
+    static char        *buf = 0;
+    static unsigned int posti = 0;
     unsigned int i;
 
-    for (i = 0; i < k && s[i] && i < TESTO_LEN - 1; i++) buf[i] = s[i];
+    if (!buf_cresci(&buf, &posti, k + 1)) return 0;
+    for (i = 0; i < k && s[i]; i++) buf[i] = s[i];
     buf[i] = '\0';
     return larg(buf);
 }
@@ -6636,12 +7115,13 @@ static void casella_clic(Oggetto *o, int mx, int x0)
     unsigned int n = (unsigned int)strlen(o->titolo), i, meglio = o->vista;
     int          dist = 1 << 30;
 
-    for (i = o->vista; i <= n; i++) {
+    for (i = o->vista; i <= n; i = u8_dopo(o->titolo, i)) {
         int d = larg_n(o->titolo + o->vista, i - o->vista) - (mx - x0);
 
         if (d < 0) d = -d;
         if (d < dist) { dist = d; meglio = i; }
         else break;
+        if (i == n) break;
     }
     o->cursore = meglio;
     o->c_sel = 0;
@@ -7174,15 +7654,16 @@ static int tasto_e_cambio(ExWindow f, unsigned int tasto, ExMsg *m)
     Oggetto     *rr = radice(f);
     ExWindow     fh = rr ? rr->fuoco : 0;
     Oggetto     *fo = ogg(fh);
-    char         prima[TESTO_LEN];
+    static char        *prima = 0;
+    static unsigned int prima_posti = 0;
     unsigned int kc = tasto & KBD_KEY_MASK;
     int          cambiato = 0;
 
+    if (!buf_cresci(&prima, &prima_posti,
+                    fo && fo->classe == CL_TESTO ? (unsigned int)strlen(fo->titolo) + 1 : 1))
+        return 0;
     prima[0] = '\0';
-    if (fo && fo->classe == CL_TESTO) {
-        strncpy(prima, fo->titolo, TESTO_LEN - 1);
-        prima[TESTO_LEN - 1] = '\0';
-    }
+    if (fo && fo->classe == CL_TESTO) strcpy(prima, fo->titolo);
 
     g_tasto_preso = tasto_al_fuoco(f, tasto);
     if (!g_tasto_preso || !rr || !rr->avvisa_cambi) return 0;
@@ -7195,8 +7676,8 @@ static int tasto_e_cambio(ExWindow f, unsigned int tasto, ExMsg *m)
         if (tasto & KBD_MOD_CTRL)
             cambiato = ((kc | 0x20) == 'v' || (kc | 0x20) == 'x');
         else
-            cambiato = (kc >= 0x20 && kc <= 0x7E) || kc == '\n' || kc == '\r' ||
-                       kc == '\b' || kc == '\t' || kc == KBD_K_DEL;
+            cambiato = (kc >= 0x20 && kc != 0x7F && kc < 0x100) || kc == '\n' || kc == '\r' ||
+                       kc == '\b' || kc == '\t' || kc == KBD_K_DEL || kc == KBD_K_UNICODE;
     }
     if (!cambiato) return 0;
 
@@ -7206,6 +7687,26 @@ static int tasto_e_cambio(ExWindow f, unsigned int tasto, ExMsg *m)
     m->wp  = fo->id;
     m->lp  = (long)fh;
     return 1;
+}
+
+/* The key message being handled, for ex_key_info (exwin.so 0.021). */
+static ExKeyInfo g_tasto_info;
+static int       g_tasto_info_ok = 0;
+
+int ex_key_info(ExKeyInfo *out)
+{
+    if (!g_tasto_info_ok) return 0;
+    if (out) *out = g_tasto_info;
+    return 1;
+}
+
+/* The server already sends this window the long event (ex_create): here the
+ * toolkit only stops holding back what the program now wants. */
+void ex_track_keys(ExWindow f, int si)
+{
+    Oggetto *r = radice(f);
+
+    if (r) r->tasti_prog = si ? 1 : 0;
 }
 
 static int prendi_msg(ExMsg *m, int bloccante)
@@ -7220,6 +7721,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
     unsigned int          v_posti = 1;
     int           giri = 0;
 
+    g_tasto_info_ok = 0;            /* it belongs to the message handed out */
     for (;;) {
         WinEvento e;
         ExWindow f;
@@ -7450,6 +7952,43 @@ static int prendi_msg(ExMsg *m, int bloccante)
         m->finestra = f;
         m->wp = 0;
         m->lp = (long)((e.x & 0xFFFF) | ((e.y & 0xFFFF) << 16));
+
+        /* =================================================================
+         * PRESSES AND RELEASES (exwin.so 0.021, ex_track_keys): the details
+         * go to ex_key_info; a release and a key with no code are messages
+         * of their own; a press with a code goes on as WIN_EV_TASTO, so the
+         * menu, the tabs and the control with the focus see it exactly as
+         * they always did.
+         * ================================================================= */
+        if (e.tipo == WIN_EV_PREMUTO || e.tipo == WIN_EV_RILASCIATO) {
+            Oggetto *rf = ogg(f);
+
+            /* ! WHAT THE PROGRAM DID NOT ASK FOR STOPS HERE: a program that
+             * never called ex_track_keys gets the keys exactly as before,
+             * plus KBD_K_UNICODE for the text controls. */
+            if (rf && !rf->tasti_prog &&
+                (e.tipo == WIN_EV_RILASCIATO || e.tasto == 0)) continue;
+            g_tasto_info.code     = e.tasto;
+            g_tasto_info.unicode  = e.x;
+            g_tasto_info.physical = e.y;
+            g_tasto_info.mods     = e.bottoni & KBD_MOD_TUTTI;
+            g_tasto_info.repeat   = (e.bottoni & KBD_EV_RIPETUTO) != 0;
+            g_tasto_info.up       = (e.tipo == WIN_EV_RILASCIATO);
+            g_tasto_info.time     = e.tempo;
+            g_tasto_info_ok       = 1;
+            m->lp = 0;
+            if (e.tipo == WIN_EV_RILASCIATO) {
+                m->msg = EXM_KEY_UP;
+                m->wp  = e.tasto;
+                return 1;
+            }
+            if (e.tasto == 0) {
+                avviso_via();
+                m->msg = EXM_KEY_DOWN;
+                return 1;
+            }
+            e.tipo = WIN_EV_TASTO;
+        }
 
         /* The pointer passing with no button (@EXWIN-PASSAGGIO): only a
          * window that asked gets these, and they go straight to it — the
@@ -8275,6 +8814,26 @@ void ex_list_clear(ExWindow f)
 }
 
 /* Rende 1 se la voce c'e' entrata, 0 se la lista e' piena. */
+/* Rows wide enough for `lung` bytes plus the zero: the width doubles and
+ * every row is copied to its new place. 0 = no memory. */
+static int lista_larg(Lista *L, unsigned int lung)
+{
+    unsigned int larg = L->larg, r;
+    char        *nuovo;
+
+    if (lung + 1 <= larg) return 1;
+    while (lung + 1 > larg) larg *= 2u;
+    nuovo = (char *)malloc((size_t)L->cap * larg);
+    if (!nuovo) return 0;
+    memset(nuovo, 0, (size_t)L->cap * larg);
+    for (r = 0; r < L->n; r++)
+        memcpy(nuovo + (size_t)r * larg, L->voci + (size_t)r * L->larg, L->larg);
+    free(L->voci);
+    L->voci = nuovo;
+    L->larg = larg;
+    return 1;
+}
+
 int ex_list_add(ExWindow f, const char *testo)
 {
     Lista *L = lista_da_h(f);
@@ -8290,8 +8849,7 @@ int ex_list_add(ExWindow f, const char *testo)
         char        *v;
         ExIcon     *ic;
 
-        if (nuovo > LISTA_VOCI_MAX) return 0;
-        v  = (char *)realloc(L->voci, (size_t)nuovo * LISTA_TESTO_MAX);
+        v  = (char *)realloc(L->voci, (size_t)nuovo * L->larg);
         if (!v) return 0;
         L->voci = v;
         ic = (ExIcon *)realloc(L->ic, (size_t)nuovo * sizeof(ExIcon));
@@ -8306,9 +8864,10 @@ int ex_list_add(ExWindow f, const char *testo)
         L->cap = nuovo;
     }
 
-    dst = &L->voci[L->n * LISTA_TESTO_MAX];
-    strncpy(dst, testo, LISTA_TESTO_MAX - 1);
-    dst[LISTA_TESTO_MAX - 1] = '\0';
+    if (!lista_larg(L, (unsigned int)strlen(testo))) return 0;
+    dst = &L->voci[L->n * L->larg];
+    strncpy(dst, testo, L->larg - 1);
+    dst[L->larg - 1] = '\0';
 
     /* ! LA RIGA NASCE SENZA ICONA, ANCHE SE QUELLA DI PRIMA NE AVEVA UNA. La
      * tabella si riusa (ex_list_clear non la ripulisce: sarebbero duemila
@@ -8350,7 +8909,7 @@ unsigned int ex_list_margin(ExWindow f)
     unsigned int i;
 
     if (!L) return 0;
-    for (i = 0; i < L->n && i < LISTA_VOCI_MAX; i++)
+    for (i = 0; i < L->n; i++)
         if (L->ic[i]) return LISTA_ICONA_CAR * LISTA_CAR_W;
     return 0;
 }
@@ -8385,7 +8944,7 @@ const char *ex_list_text(ExWindow f, unsigned int i)
     Lista *L = lista_da_h(f);
 
     if (!L || i >= L->n) return "";
-    return &L->voci[i * LISTA_TESTO_MAX];
+    return &L->voci[i * L->larg];
 }
 
 /* =============================================================================
@@ -8517,7 +9076,15 @@ int ex_item_add(ExWindow c, const char *testo)
     Voci *V = voci_da_h(c);
 
     if (!V || !testo) return 0;
-    if (V->n >= VOCI_N_MAX) return 0;       /* piena: si dice, non si tronca */
+    if (V->n >= V->testo_posti) {           /* full: double, or say so */
+        unsigned int posti = V->testo_posti ? V->testo_posti * 2u : VOCI_N_INIZIO;
+        char       (*nuovo)[VOCI_TESTO_MAX] =
+            (char (*)[VOCI_TESTO_MAX])realloc(V->testo, (size_t)posti * VOCI_TESTO_MAX);
+
+        if (!nuovo) return 0;
+        V->testo = nuovo;
+        V->testo_posti = posti;
+    }
 
     strncpy(V->testo[V->n], testo, VOCI_TESTO_MAX - 1);
     V->testo[V->n][VOCI_TESTO_MAX - 1] = '\0';
@@ -8593,7 +9160,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.020"   /* 0.020: l'elenco delle finestre a pezzi e senza tetto, i titoli interi */
+#define EXWIN_VERSIONE "0.021"   /* 0.021: pressioni e rilasci (ex_track_keys), caselle e aree in UTF-8 */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 
@@ -8649,10 +9216,13 @@ int ex_menu_add_item(ExWindow menu, const char *titolo, const char *voce,
                 if (P->voce[k].sub >= 0 &&
                     strcmp(P->voce[k].testo, barra + 1) == 0) { s = P->voce[k].sub; break; }
             if (s < 0) {
-                if (P->n >= MENU_VOCI_MAX || M->nsub >= MENU_SUB_MAX) return 0;
-                s = (int)M->nsub++;
-                memset(&M->sub[s], 0, sizeof(M->sub[s]));
-                strncpy(M->sub[s].nome, barra + 1, MENU_TESTO_MAX - 1);
+                MenuTitolo *S;
+
+                if (!menu_voce_posto(P)) return 0;
+                s = (int)M->nsub;
+                S = menu_titolo_nuovo(&M->sub, &M->nsub, &M->sub_posti, MENU_SUB_INIZIO);
+                if (!S) return 0;
+                strncpy(S->nome, barra + 1, MENU_TESTO_MAX - 1);
                 strncpy(P->voce[P->n].testo, barra + 1, MENU_TESTO_MAX - 1);
                 P->voce[P->n].testo[MENU_TESTO_MAX - 1] = '\0';
                 P->voce[P->n].id  = MENU_ID_SUB;
@@ -8662,7 +9232,7 @@ int ex_menu_add_item(ExWindow menu, const char *titolo, const char *voce,
             }
             T = &M->sub[s];
             if (!voce || !voce[0]) return 1;
-            if (T->n >= MENU_VOCI_MAX) return 0;
+            if (!menu_voce_posto(T)) return 0;
             if (voce[0] == '-' && voce[1] == '\0') {
                 T->voce[T->n].testo[0] = '\0';
                 T->voce[T->n].id = 0;
@@ -8686,9 +9256,8 @@ int ex_menu_add_item(ExWindow menu, const char *titolo, const char *voce,
         if (strcmp(M->titolo[i].nome, titolo) == 0) { T = &M->titolo[i]; break; }
 
     if (!T) {
-        if (M->n >= MENU_TITOLI_MAX) return 0;
-        T = &M->titolo[M->n++];
-        memset(T, 0, sizeof(*T));
+        T = menu_titolo_nuovo(&M->titolo, &M->n, &M->titoli_posti, MENU_TITOLI_INIZIO);
+        if (!T) return 0;
         strncpy(T->nome, titolo, MENU_TESTO_MAX - 1);
         T->nome[MENU_TESTO_MAX - 1] = '\0';
         menu_geometria(M);
@@ -8698,7 +9267,7 @@ int ex_menu_add_item(ExWindow menu, const char *titolo, const char *voce,
      * menu che si riempira' dopo. */
     if (!voce || !voce[0]) return 1;
 
-    if (T->n >= MENU_VOCI_MAX) return 0;
+    if (!menu_voce_posto(T)) return 0;
 
     /* ! UN SEPARATORE E' UNA VOCE CON id ZERO, e si scrive "-". Zero non e' un
      * id valido comunque — EXM_COMMAND con wp a zero non direbbe niente a
@@ -8755,13 +9324,15 @@ int ex_textarea_add_line(ExWindow f, const char *riga)
 
     /* La prima riga di un'area vuota c'e' gia' ed e' vuota: si riempie quella
      * invece di aggiungerne una seconda. */
+    if (!area_col_posto(A, (unsigned int)strlen(riga))) return 0;
+
     if (A->n == 1 && area_riga(A, 0)[0] == '\0') {
         strncpy(area_riga(A, 0), riga, A->col_max - 1);
         area_riga(A, 0)[A->col_max - 1] = '\0';
         return 1;
     }
 
-    if (A->n >= A->righe_max) return 0;
+    if (!area_righe_posto(A)) return 0;
 
     strncpy(area_riga(A, A->n), riga, A->col_max - 1);
     area_riga(A, A->n)[A->col_max - 1] = '\0';
@@ -8973,6 +9544,7 @@ void ex_textarea_set_line(ExWindow f, unsigned int riga, const char *testo)
     char *r;
 
     if (!A || riga >= A->n || !testo) return;
+    if (!area_col_posto(A, (unsigned int)strlen(testo))) return;
 
     r = area_riga(A, riga);
     strncpy(r, testo, A->col_max - 1);
@@ -9303,7 +9875,7 @@ static const ExLettore g_lettori[] = { leggi_bmp, leggi_eximg, 0 };
  * fatta, e finche' lato e sfondo non cambiano non si riduce piu' niente. Un
  * menu paga UNA riduzione per icona, alla prima apertura.
  * ============================================================================= */
-#define ICONE_MAX   32
+#define ICONE_INIZIO 32         /* the first slots, then doubling (exwin.so 0.020) */
 
 typedef struct {
     unsigned int  usata;
@@ -9315,7 +9887,8 @@ typedef struct {
     unsigned int  resa_sfondo;
 } Icona;
 
-static Icona g_icone[ICONE_MAX];
+static Icona      **g_icone = 0;      /* icona_di() hands out pointers */
+static unsigned int g_icone_posti = 0;
 
 /* Decodifica in un buffer NOSTRO: BMP in casa, il resto a eximg.
  *
@@ -9500,8 +10073,10 @@ ExIcon ex_icon_open(const char *percorso)
 
     if (!percorso || !percorso[0]) return 0;
 
-    for (i = 0; i < ICONE_MAX; i++) if (!g_icone[i].usata) break;
-    if (i == ICONE_MAX) return 0;       /* la tavola e' piena */
+    for (i = 0; i < (int)g_icone_posti; i++) if (!g_icone[i]->usata) break;
+    if (i == (int)g_icone_posti &&
+        ptab_cresci((void ***)&g_icone, &g_icone_posti, ICONE_INIZIO, sizeof(Icona)) != 0)
+        return 0;                       /* no memory */
 
     fd = open(percorso, O_RDONLY);
     if (fd < 0) return 0;
@@ -9518,20 +10093,20 @@ ExIcon ex_icon_open(const char *percorso)
     }
     free(d);
 
-    memset(&g_icone[i], 0, sizeof(Icona));
-    g_icone[i].usata = 1;
-    g_icone[i].px = px;
-    g_icone[i].w  = w;
-    g_icone[i].h  = h;
+    memset(g_icone[i], 0, sizeof(Icona));
+    g_icone[i]->usata = 1;
+    g_icone[i]->px = px;
+    g_icone[i]->w  = w;
+    g_icone[i]->h  = h;
 
     return (ExIcon)(i + 1);            /* 0 resta "nessuna icona" */
 }
 
 static Icona *icona_di(ExIcon ic)
 {
-    if (ic == 0 || ic > ICONE_MAX) return 0;
-    if (!g_icone[ic - 1].usata) return 0;
-    return &g_icone[ic - 1];
+    if (ic == 0 || ic > g_icone_posti) return 0;
+    if (!g_icone[ic - 1]->usata) return 0;
+    return g_icone[ic - 1];
 }
 
 unsigned int ex_icon_size(ExIcon ic)

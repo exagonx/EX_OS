@@ -68,8 +68,20 @@ int main(int argc, char **argv)
     strcpy(p, "dal padre");
     verifica(close(fd) == 0, "close del descrittore");
     verifica(strcmp(p, "dal padre") == 0, "la mappatura sopravvive a close");
-    verifica(shm_open(NOME, O_RDWR, 0) < 0 && errno == EEXIST,
-             "lo stesso nome due volte nello stesso processo: EEXIST (dichiarato)");
+    /* Since 2 October (Exilla stage 6) a name this process already holds
+     * gives a NEW descriptor on the same zone, as Gecko needs: it used to
+     * be EEXIST, and the old check left the second fd open, so the zone
+     * never went away and check 15 failed with it. */
+    {
+        int   fd2 = shm_open(NOME, O_RDWR, 0);
+        char *p2  = fd2 >= 0 ? mmap(NULL, 8192, PROT_READ | PROT_WRITE,
+                                    MAP_SHARED, fd2, 0) : MAP_FAILED;
+
+        verifica(p2 != MAP_FAILED && strcmp(p2, "dal padre") == 0,
+                 "lo stesso nome due volte nello stesso processo: la stessa zona");
+        if (p2 != MAP_FAILED) munmap(p2, 8192);
+        if (fd2 >= 0) close(fd2);
+    }
 
     {
         char *av[3];

@@ -167,6 +167,59 @@ typedef long (*ExWindowProc)(ExWindow, unsigned int, unsigned int, long);
  * ex_notify_changes. For a text area it means «a key that writes or deletes
  * was taken», which is almost always a change. */
 #define EXM_CHANGED       0x0017
+/* =============================================================================
+ * PRESSES AND RELEASES (exwin.so 0.021, wserver 0.014, kbd.drv 0.007)
+ *
+ * Only for a window that asked with ex_track_keys(f, 1); the others get
+ * EXM_KEY for the presses, as always.
+ *
+ * ! EVERY WINDOW GETS ONE KEY MORE: a character CP437 has not (the euro,
+ * AltGr+E) is EXM_KEY with wp = KBD_K_UNICODE (| the modifiers), and
+ * ex_key_info() says which character. Text boxes and areas write it by
+ * themselves; a program with its own text reads ex_key_info().unicode. The
+ * keymaps are Unicode since kbd.drv 0.007 (drivers/kbd/keymaps.h).
+ *
+ *   EXM_KEY       still every press of a key that has a code (a character
+ *                 or a KBD_K_*), repeats included, after the menu and the
+ *                 control with the focus had their look - nothing changes
+ *   EXM_KEY_DOWN  a key WITHOUT a code went down: Shift, Ctrl, Alt, AltGr,
+ *                 Caps Lock, Num Lock, a key the keymap leaves empty;
+ *                 wp = 0
+ *   EXM_KEY_UP    any key went up; wp = the code its press had (0 for a
+ *                 modifier). It goes to the window procedure, controls do
+ *                 not look at it.
+ *
+ * With all three, ex_key_info() says the rest: the Unicode character, the
+ * physical key, every modifier, whether it is a repeat. A game asks for this
+ * to know how long a key is held; a port of SDL or GTK to know the key apart
+ * from what it types. With a kbd.drv older than 0.007 there are no releases
+ * and ex_key_info() answers 0.
+ * ============================================================================= */
+#define EXM_KEY_DOWN      0x0018
+#define EXM_KEY_UP        0x0019
+
+typedef struct {
+    unsigned int code;      /* the same as EXM_KEY's wp: char or KBD_K_*,
+                             * | KBD_MOD_SHIFT/CTRL/ALT; 0 = no code */
+    unsigned int unicode;   /* the character typed, Unicode; 0 = none */
+    unsigned int physical;  /* scancode set 1, + KBD_FISICO_E0 if extended:
+                             * the same key on every keymap */
+    unsigned int mods;      /* KBD_MOD_* of kbd_proto.h, AltGr, Super, Caps
+                             * Lock and Num Lock included */
+    int          repeat;    /* 1 = the typematic repeat of a held key */
+    int          up;        /* 1 = released */
+    unsigned int time;      /* ms since boot, from the server */
+} ExKeyInfo;
+
+/* Presses and releases for this window (1), or no more (0). See
+ * EXM_KEY_DOWN. The toolkit asks the server for the long event for every
+ * window anyway (for KBD_K_UNICODE); this says what reaches the program. */
+void ex_track_keys(ExWindow f, int on);
+
+/* The details of the key message being handled (EXM_KEY, EXM_KEY_DOWN,
+ * EXM_KEY_UP). 1 = filled; 0 = that key came the old way (an older kbd.drv
+ * or wserver): only the code is known. */
+int ex_key_info(ExKeyInfo *out);
 /* EXM_MOUSE_DOWN e EXM_DOUBLE_CLICK portano in wp i modificatori (KBD_MOD_CTRL,
  * _SHIFT, _ALT) del momento del clic: dal 29 settembre 2026, con wserver
  * 0.006 e exwin.so 0.009. Prima wp era 0. */
@@ -1142,12 +1195,14 @@ const char  *ex_list_text(ExWindow lista, unsigned int i);
  * la libreria, cioe' un modo di scriverci sopra senza che il controllo se ne
  * accorga.
  *
- * ! ex_textarea_add_line() RENDE 0 QUANDO L'AREA E' PIENA, e chi carica un file
- * DEVE guardarlo: caricare mezzo file e poi salvarlo cancellerebbe il resto
- * senza averlo mai mostrato.
+ * ! ex_textarea_add_line() RENDE 0 QUANDO L'AREA NON PUO' CRESCERE (memoria
+ * finita), e chi carica un file DEVE guardarlo: caricare mezzo file e poi
+ * salvarlo cancellerebbe il resto senza averlo mai mostrato.
  *
- * Limiti: 512 righe da 200 colonne. Sono una conseguenza dell'allocatore a
- * bump, dove free() non restituisce niente.
+ * No fixed limits since exwin.so 0.020: the grid starts at 512 lines of 200
+ * columns (3000 x 240 for "codearea") and doubles its lines, or its columns,
+ * when a line or a character does not fit. A pointer from
+ * ex_textarea_line() is valid until the area changes.
  * --------------------------------------------------------------------------- */
 void         ex_textarea_clear(ExWindow area);
 int          ex_textarea_add_line(ExWindow area, const char *riga);
@@ -1157,7 +1212,10 @@ int          ex_textarea_is_modified(ExWindow area);
 void         ex_textarea_set_unmodified(ExWindow area);
 /* ! COUNTS FROM ONE (riga 1, col 1): it was written for a status line.
  * ex_textarea_set_cursor() and ex_textarea_select() count from ZERO — subtract one
- * before passing a position from here to them. */
+ * before passing a position from here to them.
+ * ! THE COLUMN IS A BYTE of the line (exwin.so 0.021, UTF-8): the same as an
+ * offset found with strstr, so a search can pass it on as it is. An accented
+ * letter typed in the area is two bytes. */
 void         ex_textarea_get_cursor(ExWindow area, unsigned int *riga, unsigned int *col);
 
 /* ! IL CURSORE SI PORTA, e non solo si legge. E' quel che serve a una colonna

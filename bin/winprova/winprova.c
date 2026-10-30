@@ -31,7 +31,7 @@
 #include "exwin.h"
 
 /* +0.001 a ogni modifica: `winprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("winprova", "0.007");
+EX_VERSIONE("winprova", "0.008");
 
 #define ID_OK       101
 #define ID_ANNULLA  102
@@ -491,9 +491,9 @@ static int finestra_mdi(void)
 static long procedura(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
-    /* ! LE FRECCE ARRIVANO QUI ANCHE CON IL FUOCO IN UNA CASELLA, ed e'
-     * voluto: una casella di testo consuma i caratteri stampabili, non i tasti
-     * speciali. Vedi tasto_al_fuoco() in exwin.c. */
+    /* ! THE ARROWS ARRIVE HERE ONLY WITHOUT A FOCUSED TEXT BOX: a text box
+     * moves its caret with them (tasto_al_fuoco() in exwin.c). That is why
+     * the window starts with no focus (see main). */
     case EXM_KEY:
         switch (wp & KBD_KEY_MASK) {
         case KBD_K_RIGHT: ex_resize(f, g_w + PASSO, g_h); return 0;
@@ -647,6 +647,12 @@ int main(int argc, char **argv)
                     g_w - 190, g_h - 42, 80, 26, f, ID_OK, 0);
     g_ann = ex_create("button", "Annulla", EX_CHILD,
                     g_w - 100, g_h - 42, 80, 26, f, ID_ANNULLA, 0);
+
+    /* ! NO FOCUS AT THE START (winprova 0.008): the arrows resize the
+     * window, and a text box with the focus takes them for its caret (it does
+     * since it moves by character). A click on a box gives it the focus, and
+     * then the arrows are the box's. tools/prova_ridimensiona.sh counts on it. */
+    ex_clear_focus(f);
 
     /* Il primo disegno: da qui in poi lo rifa' il ciclo dei messaggi. */
     ex_default_proc(f, EXM_PAINT, 0, 0);

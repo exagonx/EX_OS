@@ -80,10 +80,10 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.013"
+#define VERSIONE_APP "0.014"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
-#define VOCI_MAX    512
+#define VOCI_INIZIO 512     /* rows of a folder: the first, then doubling (0.014) */
 #define NODI_MAX    128
 #define PERC_MAX    192
 #define PROFONDITA  8       /* quanto in giu' vanno copia ricorsiva e ricerca */
@@ -234,11 +234,15 @@ static unsigned int g_nodi = 0;
  * impaginata. Rileggere la directory a ogni clic sarebbe un accesso al disco
  * per un'operazione che non cambia niente di quel che c'e' sul disco.
  * ============================================================================= */
-static unsigned char g_dir_flag[VOCI_MAX];
-static char          g_nome[VOCI_MAX][DIRENT_NAME_MAX];
-static unsigned int  g_dim[VOCI_MAX];
-static time_t        g_data[VOCI_MAX];
-static unsigned int  g_voci = 0;
+/* ! AS MANY ROWS AS THE FOLDER HAS (filemgr 0.014). Up to 0.013 there were
+ * 512, and a folder with more files showed the first 512 without saying so:
+ * the others could not be opened, copied or deleted from here. The five
+ * columns grow together (voci_posto), doubling. */
+static unsigned char  *g_dir_flag = 0;
+static char          (*g_nome)[DIRENT_NAME_MAX] = 0;
+static unsigned int   *g_dim = 0;
+static time_t         *g_data = 0;
+static unsigned int    g_voci = 0, g_voci_posti = 0;
 
 /* La colonna su cui si ordina, e in che verso. Il verso e' per COLONNA e non
  * uno solo per tutte: chi ordina per data si aspetta il piu' recente in cima,
@@ -261,7 +265,41 @@ static int g_da_ricerca = 0;
 
 /* I segni, uno per voce. Vedi la testata: e' un carattere nella riga, non un
  * controllo nuovo del toolkit. */
-static unsigned char g_segno[VOCI_MAX];
+static unsigned char *g_segno = 0;
+
+/* The selection being worked on (see set_costruisci), as many as the rows. */
+static unsigned int *g_set = 0;
+static unsigned int  g_set_n = 0;
+
+/* Room for row n (0-based): every column doubles together. 0 = no memory,
+ * and the caller stops there - and says so (g_avviso). */
+static int voci_posto(unsigned int n)
+{
+    unsigned int   posti;
+    unsigned char *df, *sg;
+    char         (*nm)[DIRENT_NAME_MAX];
+    unsigned int  *dm, *st;
+    time_t        *dt;
+
+    if (n < g_voci_posti) return 1;
+    posti = g_voci_posti ? g_voci_posti * 2u : VOCI_INIZIO;
+    while (posti <= n) posti *= 2u;
+
+    /* each realloc keeps its old block if it fails: nothing is lost, and the
+     * table size changes only when all of them succeeded */
+    df = (unsigned char *)realloc(g_dir_flag, posti);           if (df) g_dir_flag = df;
+    sg = (unsigned char *)realloc(g_segno, posti);              if (sg) g_segno = sg;
+    nm = (char (*)[DIRENT_NAME_MAX])realloc(g_nome, (size_t)posti * DIRENT_NAME_MAX);
+    if (nm) g_nome = nm;
+    dm = (unsigned int *)realloc(g_dim, posti * sizeof(unsigned int));  if (dm) g_dim = dm;
+    dt = (time_t *)realloc(g_data, posti * sizeof(time_t));            if (dt) g_data = dt;
+    st = (unsigned int *)realloc(g_set, posti * sizeof(unsigned int)); if (st) g_set = st;
+    if (!df || !sg || !nm || !dm || !dt || !st) return 0;
+
+    memset(g_segno + g_voci_posti, 0, posti - g_voci_posti);
+    g_voci_posti = posti;
+    return 1;
+}
 
 static char       g_dir[PERC_MAX] = "/";
 static ExWindow g_f, g_stato, g_albero, g_elenco, g_menu;
@@ -557,18 +595,35 @@ static int prima_di(unsigned int a, unsigned int b)
     return g_giu[g_ord] ? -r : r;
 }
 
-/* ! UNA SELEZIONE A INSERIMENTO, E VA BENISSIMO. Le voci sono al massimo
- * VOCI_MAX = 512 e l'ordinamento si rifa' solo a un clic dell'utente: il
- * quadrato di 512 e' un quarto di milione di confronti, che su questa macchina
- * sono meno di quanto costa ridisegnare la lista. Un quicksort qui sarebbe
- * codice in piu' da rileggere per un tempo che nessuno misurerebbe. */
+/* ! HEAPSORT, IN PLACE, WITH THE SAME TWO OPERATIONS (filemgr 0.014). Up to
+ * 0.013 it was a selection sort, fine for at most 512 rows (a quarter of a
+ * million comparisons); with no ceiling a folder of 20000 files would be 200
+ * million. Heapsort needs only prima_di() and scambia(), no extra memory,
+ * and n log n. It is not stable, and it does not need to be: prima_di()
+ * breaks ties by name. */
+static void giu_nel_mucchio(unsigned int i, unsigned int n)
+{
+    for (;;) {
+        unsigned int f = 2u * i + 1u, m = i;
+
+        if (f < n && prima_di(m, f) < 0) m = f;
+        if (f + 1u < n && prima_di(m, f + 1u) < 0) m = f + 1u;
+        if (m == i) return;
+        scambia(i, m);
+        i = m;
+    }
+}
+
 static void ordina(void)
 {
-    unsigned int i, j;
+    unsigned int i;
 
-    for (i = 0; i + 1 < g_voci; i++)
-        for (j = i + 1; j < g_voci; j++)
-            if (prima_di(j, i) < 0) scambia(i, j);
+    if (g_voci < 2) return;
+    for (i = g_voci / 2u; i-- > 0; ) giu_nel_mucchio(i, g_voci);
+    for (i = g_voci - 1u; i > 0; i--) {
+        scambia(0, i);
+        giu_nel_mucchio(0, i);
+    }
 }
 
 /* Dai vettori alla lista del toolkit. La chiamano leggi(), la ricerca e ogni
@@ -744,14 +799,18 @@ static void leggi(const char *percorso)
      * sostituite. Tenerli vorrebbe dire che entrando in un'altra directory
      * restano segnate le posizioni 2 e 5 — cioe' due file che nessuno ha mai
      * scelto, e su cui il prossimo comando agirebbe. */
-    memset(g_segno, 0, sizeof(g_segno));
+    if (g_voci_posti) memset(g_segno, 0, g_voci_posti);
 
     while ((n = listdir_from(percorso, v, 8, start)) > 0) {
-        for (i = 0; i < n && quante < VOCI_MAX; i++) {
+        for (i = 0; i < n; i++) {
             char        perc[PERC_MAX];
             struct stat st;
 
             if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
+            if (!voci_posto(quante)) {
+                strcpy(g_avviso, "memoria finita: la cartella e' mostrata solo in parte");
+                break;
+            }
             strncpy(g_nome[quante], v[i].name, DIRENT_NAME_MAX - 1);
             g_nome[quante][DIRENT_NAME_MAX - 1] = '\0';
             g_dim[quante]      = v[i].size;
@@ -774,6 +833,7 @@ static void leggi(const char *percorso)
 
             quante++;
         }
+        if (i < n) break;                   /* out of memory: stop reading */
         start += n;
         if (n < 8) break;
     }
@@ -1032,8 +1092,6 @@ static int copia_albero(const char *da, const char *a, int giu)
  * selezione» e «senza» — ma uno che degenera bene nell'altro: chi non preme
  * mai la barra spaziatrice trova il programma di ieri.
  * ============================================================================= */
-static unsigned int g_set[VOCI_MAX];
-static unsigned int g_set_n = 0;
 
 /* Il percorso intero della voce i. Dopo una ricerca il nome E' gia' il
  * percorso: vedi g_da_ricerca. */
@@ -1075,16 +1133,27 @@ static void set_costruisci(void)
 
     g_set_n = 0;
     for (i = 0; i < g_voci; i++)
-        if (g_segno[i] && g_set_n < VOCI_MAX) g_set[g_set_n++] = i;
+        if (g_segno[i]) g_set[g_set_n++] = i;
     if (g_set_n > 0) return;
 
     /* ! LE RIGHE SCELTE COL MOUSE (29 settembre 2026, @LISTA-MULTI): con
      * Ctrl+clic e Shift+clic se ne sceglie piu' d'una, e valgono come i segni
      * della barra. Senza nessuna delle due, la riga corrente. */
     {
-        unsigned int righe[VOCI_MAX];
-        int k, n = ex_list_get_selection(g_elenco, righe, VOCI_MAX);
+        static unsigned int *righe = 0;
+        static unsigned int  righe_posti = 0;
+        int k, n;
 
+        if (righe_posti < g_voci_posti) {
+            unsigned int *r = (unsigned int *)realloc(righe, g_voci_posti * sizeof(unsigned int));
+
+            if (!r) return;
+            righe = r;
+            righe_posti = g_voci_posti;
+        }
+        if (!righe) return;
+        n = ex_list_get_selection(g_elenco, righe, (int)righe_posti);
+        if (n > (int)righe_posti) n = (int)righe_posti;
         for (k = 0; k < n; k++) if (righe[k] < g_voci) g_set[g_set_n++] = righe[k];
     }
     (void)s;
@@ -1648,10 +1717,10 @@ static void cerca_giu(const char *dir, const char *pezzo, int giu,
     DirEntry v[8];
     int start = 0, n, i;
 
-    if (giu > PROFONDITA || *quanti >= VOCI_MAX) return;
+    if (giu > PROFONDITA) return;
 
     while ((n = listdir_from(dir, v, 8, start)) > 0) {
-        for (i = 0; i < n && *quanti < VOCI_MAX; i++) {
+        for (i = 0; i < n; i++) {
             char perc[PERC_MAX];
 
             if (v[i].name[0] == '.' &&
@@ -1663,6 +1732,10 @@ static void cerca_giu(const char *dir, const char *pezzo, int giu,
             if (strstr(v[i].name, pezzo) != 0) {
                 struct stat st;
 
+                if (!voci_posto(*quanti)) {
+                    strcpy(g_avviso, "memoria finita: non tutti i risultati");
+                    return;
+                }
                 strncpy(g_nome[*quanti], perc, DIRENT_NAME_MAX - 1);
                 g_nome[*quanti][DIRENT_NAME_MAX - 1] = '\0';
                 g_dir_flag[*quanti] = v[i].is_dir;
@@ -1695,7 +1768,7 @@ static void comando_cerca(void)
 
     /* Stessa ragione di leggi(): i segni sono delle righe che c'erano, e
      * queste sono righe nuove. */
-    memset(g_segno, 0, sizeof(g_segno));
+    if (g_voci_posti) memset(g_segno, 0, g_voci_posti);
 
     cerca_giu(g_dir, pezzo, 0, &quanti);
 
@@ -1939,10 +2012,11 @@ static void informazioni(void)
  * la stessa strada di Copia e Sposta, e quindi con i suoi controlli (dentro
  * se stesso, originale tolto solo a copia finita).
  * ============================================================================= */
-#define APPUNTI_MAX 64
-static char          g_app[APPUNTI_MAX][PERC_MAX];
-static unsigned char g_app_dir[APPUNTI_MAX];
-static int           g_app_n = 0, g_app_taglia = 0;
+/* As many paths as were chosen (0.014; they were 64, and the 65th was left
+ * out of Copy without a word). */
+static char          (*g_app)[PERC_MAX] = 0;
+static unsigned char  *g_app_dir = 0;
+static int             g_app_n = 0, g_app_taglia = 0, g_app_posti = 0;
 
 static void appunti_prendi(int taglia)
 {
@@ -1950,7 +2024,17 @@ static void appunti_prendi(int taglia)
 
     set_costruisci();
     g_app_n = 0;
-    for (i = 0; i < g_set_n && g_app_n < APPUNTI_MAX; i++) {
+    if ((int)g_set_n > g_app_posti) {
+        char         (*a)[PERC_MAX] = (char (*)[PERC_MAX])realloc(g_app, (size_t)g_set_n * PERC_MAX);
+        unsigned char *d;
+
+        if (a) g_app = a;
+        d = (unsigned char *)realloc(g_app_dir, g_set_n);
+        if (d) g_app_dir = d;
+        if (!a || !d) { strcpy(g_avviso, "memoria finita: niente negli appunti"); return; }
+        g_app_posti = (int)g_set_n;
+    }
+    for (i = 0; i < g_set_n; i++) {
         voce_percorso(g_set[i], g_app[g_app_n], PERC_MAX);
         g_app_dir[g_app_n] = g_dir_flag[g_set[i]];
         g_app_n++;

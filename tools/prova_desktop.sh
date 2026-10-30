@@ -4,10 +4,10 @@
 #
 # Prova @PM-DESKTOP e @PM-UNITA:
 #
-#   1. ExWin parte SENZA il disco: nella colonna di destra non c'e' nessuna
-#      unita'. Si torna alla shell, si monta hd0p1 su /disk, si torna alla
-#      grafica: entro un giro dell'orologio (DESK_GIRO, 2 s) l'icona «disk»
-#      compare da sola, in alto a destra;
+#   1. ExWin parte SENZA il disco: sulla scrivania non c'e' l'unita' «disk».
+#      Si torna alla shell, si monta hd0p1 su /disk, si torna alla grafica:
+#      entro un giro dell'orologio (DESK_GIRO, 2 s) l'icona «disk» compare
+#      da sola;
 #   2. con HOME=/disk/casa la cartella $HOME/desktop si vede a sinistra:
 #      «progetti» (cartella), «nota.txt» (file), «Editor» (un .lnk). Un
 #      doppio clic su Editor apre l'editor; su nota.txt l'editor col file;
@@ -18,7 +18,12 @@
 # ! IL DOPPIO CLIC VA IN UN `mon:` SOLO, come in prova_doppioclic.sh: in
 # quattro argomenti i clic arriverebbero troppo distanti per essere un doppio.
 #
-# ! IL PUNTATORE SI PILOTA A PASSI DI DIECI, come in prova_riduci.sh.
+# ! LE ICONE SI CERCANO PER NOME (30 ottobre 2026), nei pixel della
+# didascalia (tools/trova_testo.py, il passo `punta:` di qemu_drive.py): la
+# prova contava i pixel bianchi della colonna di destra e cliccava a
+# posizioni fisse, e con l'unita' rdboot (partendo dal CD) e i collegamenti
+# Documents, Images e Media la colonna non era piu' vuota e le righe erano
+# altre.
 #
 #     tools/prova_desktop.sh [directory-di-lavoro]     (default /tmp/exos-desktop)
 #
@@ -52,17 +57,6 @@ for c in "mkdir casa" "mkdir casa/desktop" "mkdir casa/desktop/progetti" \
          "write $D/editor.lnk casa/desktop/editor.lnk"; do
     "$DEBUGFS" -w -R "$c" "$OFF" > /dev/null 2>&1
 done
-
-passi_a() {
-    local dx=$1 dy=$2 i d rx ry
-    d=$(( (dx < dy ? dx : dy) / 10 ))
-    for ((i = 0; i < d; i++)); do echo "mon:mouse_move 10 10@0"; done
-    rx=$(( dx - d * 10 )); ry=$(( dy - d * 10 ))
-    for ((i = 10; i <= rx; i += 10)); do echo "mon:mouse_move 10 0@0"; done
-    for ((i = 10; i <= ry; i += 10)); do echo "mon:mouse_move 0 10@0"; done
-    echo "mon:mouse_move $(( rx % 10 )) $(( ry % 10 ))@0"
-}
-casa() { for i in 1 2 3 4 5; do echo "mon:mouse_move -600 -600@0"; done; }
 
 # Quanti pixel bianchi (le didascalie) ci sono nel rettangolo x0 y0 x1 y1.
 bianchi() {
@@ -104,30 +98,30 @@ timeout 300 python3 tools/qemu_drive.py \
     "foto:$D/1-dopo.ppm@1" > "$D/1.log" 2>&1
 
 echo "=== 1. si monta /disk con ExWin gia' acceso ==="
-P=$(bianchi "$D/1-prima.ppm" 700 40 800 70 2>/dev/null || echo -1)
-Q=$(bianchi "$D/1-dopo.ppm"  700 40 800 70 2>/dev/null || echo -1)
-if [ "$P" = 0 ]; then echo "  [OK]  prima: nessuna unita' a destra"
-else echo "  [NO]  prima c'era gia' qualcosa a destra ($P pixel)"; esito=1; fi
-if [ "$Q" -gt 20 ]; then echo "  [OK]  dopo: l'icona dell'unita' e' comparsa da sola"
+if [ ! -s "$D/1-prima.ppm" ]; then echo "  [NO]  nessuna fotografia (vedi $D/1.log)"; esito=1
+elif ! python3 tools/trova_testo.py "$D/1-prima.ppm" disk > /dev/null; then
+    echo "  [OK]  prima: nessuna unita' «disk»"
+else echo "  [NO]  prima c'era gia' l'unita' «disk» (vedi $D/1-prima.ppm)"; esito=1; fi
+if python3 tools/trova_testo.py "$D/1-dopo.ppm" disk > /dev/null 2>&1; then
+    echo "  [OK]  dopo: l'icona dell'unita' e' comparsa da sola"
 else echo "  [NO]  dopo il mount nessuna icona (vedi $D/1-dopo.ppm)"; esito=1; fi
 
 # --- 2. i doppi clic -----------------------------------------------------------
-# Le celle sono di 76 pixel: le voci a sinistra da (8,8), l'unita' a destra
-# in 800-84. Si clicca al centro dell'icona.
-giro() {    # nome x y
+# Sulla didascalia dell'icona, cercata per nome: e' dentro la sua cella.
+giro() {    # nome didascalia
     {
         echo "mount hd0p1 /disk@6"; echo "export HOME=/disk/casa@1"
         echo "exwin@12"; echo "key:alt-f5@3"
-        casa; passi_a "$2" "$3"
+        echo "punta:$2@1"
         echo "mon:mouse_button 1;mouse_button 0;mouse_button 1;mouse_button 0@8"
         echo "foto:$D/2-$1.ppm@2"
     } > "$D/2-$1.args"
     mapfile -t A < "$D/2-$1.args"
     timeout 400 python3 tools/qemu_drive.py "${A[@]}" > "$D/2-$1.log" 2>&1
 }
-giro editor 46 190
-giro nota   46 114
-giro disco  754 38
+giro editor Editor
+giro nota   nota.txt
+giro disco  disk
 
 echo "=== 2. la cartella del profilo sulla scrivania ==="
 S=$(bianchi "$D/2-editor.ppm" 0 0 1 1 2>/dev/null)   # la foto c'e'?

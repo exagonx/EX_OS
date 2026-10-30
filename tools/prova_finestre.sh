@@ -14,7 +14,9 @@
 #      alla 0.012 l'elenco a chi lo segue si mandava aspettando la sua casella
 #      di 4 posti, piena perche' il programma stava chiudendo: il server
 #      restava fermo dieci secondi a pezzo e lo schermo con lui);
-#   4. una fotografia con le finestre aperte e una dopo la chiusura, da
+#   4. «CONTROLLI fine 0» da «finestreprova -c»: combo, menu, aree di testo,
+#      casella e lista riempiti oltre i tetti di una volta (exwin.so 0.020);
+#   5. una fotografia con le finestre aperte e una dopo la chiusura, da
 #      guardare (titoli tagliati prima dei pulsanti; dopo, desktop pulito e
 #      barra delle applicazioni vuota: la barra segue ancora l'elenco anche
 #      se finestreprova l'ha chiesto per se').
@@ -46,7 +48,9 @@ no() { echo "  [NO]  $1"; esito=1; }
 timeout 600 python3 tools/qemu_drive.py \
     "exwin@15" "key:alt-f1@2" "/exwin/bin/finestreprova $N 30 &@1" \
     "key:alt-f5@40" "foto:$D/aperte.ppm@1" "key:alt-f1@40" \
-    "key:alt-f5@2" "foto:$D/chiuse.ppm@6" > "$D/qemu.log" 2>&1
+    "key:alt-f5@2" "foto:$D/chiuse.ppm@6" \
+    "key:alt-f1@2" "/exwin/bin/finestreprova -c 60 &@1" "key:alt-f5@30" \
+    "foto:$D/controlli.ppm@1" > "$D/qemu.log" 2>&1
 tr -d '\r' < "$SER" > "$D/seriale.txt" 2>/dev/null
 
 echo "=== molte finestre ($N) ==="
@@ -57,6 +61,9 @@ if grep -aq "FINESTRE fine 0" "$D/seriale.txt"; then ok "l'elenco a pezzi le ha 
 else no "l'elenco non le ha tutte"; fi
 if grep -aq "FINESTRE chiuse $N" "$D/seriale.txt"; then ok "chiuse tutte e $N di fila"
 else no "la chiusura si e' fermata"; fi
+grep -a "CONTROLLI" "$D/seriale.txt" | sed 's/^/        /'
+if grep -aq "CONTROLLI fine 0" "$D/seriale.txt"; then ok "i controlli tengono tutto"
+else no "un controllo si e' fermato (vedi le righe CONTROLLI)"; fi
 if grep -aq "coda eventi\|niente memoria" "$D/seriale.txt"; then no "il server dice di aver perso qualcosa"; fi
 if [ -s "$D/aperte.ppm" ]; then ok "fotografia: $D/aperte.ppm"
 else no "nessuna fotografia"; fi

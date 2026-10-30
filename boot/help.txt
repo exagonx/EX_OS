@@ -448,6 +448,10 @@ la disposizione della tastiera
 
 Disposizioni: us it fr de es uk.
 
+L'euro (AltGr+E, AltGr+4 sulla uk) e il paragrafo (Shift+u` sulla
+italiana) si scrivono nei programmi grafici; nella console di testo
+l'euro non c'e', perche' la VGA non sa disegnarlo.
+
 Un cambio fatto qui vale fino allo spegnimento. Per renderlo
 permanente serve la riga in /boot/kernel.cfg - o `hwconfig`, che la
 scrive da solo.
