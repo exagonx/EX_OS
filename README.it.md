@@ -111,6 +111,26 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### grep (/bin/grep) — testato
+
+`grep [-EFGivcnlLoqsHhrwxa] [-e MODELLO]... [MODELLO] [FILE...]`, da un file, da una
+cartella con `-r` o da una pipe. La libc non ha le espressioni regolari, quindi stanno
+nel programma: di base ed estese, classi, `{m,n}`, eseguite come insieme di stati, così
+un modello non può esplodere su una riga lunga. Nessun limite alla lunghezza di una riga.
+Stesso risultato del GNU grep in 1463 casi su 1472 su Linux (gli altri 9 sono `-F -E`
+insieme, che GNU rifiuta); conteggi controllati dentro EX-OS a 32 e 64 bit da
+`tools/prova_grep.sh`.
+
+### I sorgenti di terzi confrontati con quelli ufficiali (tools/aggiorna-sorgenti.sh) — testato senza una versione nuova
+
+`tools/aggiorna-sorgenti.sh` confronta le 17 librerie di `tools/sorgenti-terzi.txt`
+con i tag dei loro repository. `-scarica NOME` prende l'archivio ufficiale, non il
+tag, e lo tiene solo se la firma è buona con le chiavi che ha già accanto; `-prova
+NOME` applica le patch di EX-OS a una copia; `-applica NOME` cambia `VER=` solo dopo
+entrambi. Non compila: la prova resta la costruzione a 32 e 64 bit e le prove in
+QEMU. Provato su Apache e APR alla versione attuale, con un archivio alterato
+rifiutato. Firefox, gcc, binutils e Rust non sono coperti.
+
 ### Il tasto Stamp salva lo schermo in un PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — testato in QEMU
 
 **Stamp** salva quello che c'è a video in `$HOME/Images/schermata-AAAAMMGG-HHMMSS.png`

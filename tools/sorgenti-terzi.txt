@@ -1,0 +1,26 @@
+# tools/sorgenti-terzi.txt - where each third-party library comes from, read
+# by tools/aggiorna-sorgenti.sh. One line per tools/NAME-exos:
+#
+#   NAME | git repository | regex of a release tag | sed from tag to version | archive
+#
+# The repository only says which versions exist: the source is the OFFICIAL
+# archive, not the tag, because the tag has no generated configure and is not
+# what the project signs. @V@ is the version. An archive of - means the
+# version is only compared (the download address changes at each release).
+apr|https://github.com/apache/apr.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|https://downloads.apache.org/apr/apr-@V@.tar.bz2
+apr-util|https://github.com/apache/apr-util.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|https://downloads.apache.org/apr/apr-util-@V@.tar.bz2
+bzip2|https://sourceware.org/git/bzip2.git|^bzip2-[0-9.]+$|s/^bzip2-//|https://sourceware.org/pub/bzip2/bzip2-@V@.tar.gz
+expat|https://github.com/libexpat/libexpat.git|^R_[0-9_]+$|s/^R_//;s/_/./g|https://github.com/libexpat/libexpat/releases/download/R_@U@/expat-@V@.tar.xz
+fmt|https://github.com/fmtlib/fmt.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|https://github.com/fmtlib/fmt/releases/download/@V@/fmt-@V@.zip
+httpd|https://github.com/apache/httpd.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|https://downloads.apache.org/httpd/httpd-@V@.tar.bz2
+lz4|https://github.com/lz4/lz4.git|^v[0-9.]+$|s/^v//|https://github.com/lz4/lz4/releases/download/v@V@/lz4-@V@.tar.gz
+mariadb|https://github.com/MariaDB/server.git|^mariadb-[0-9.]+$|s/^mariadb-//|https://archive.mariadb.org/mariadb-@V@/source/mariadb-@V@.tar.gz
+mariadb-connector-c|https://github.com/mariadb-corporation/mariadb-connector-c.git|^v[0-9.]+$|s/^v//|https://archive.mariadb.org/connector-c-@V@/mariadb-connector-c-@V@-src.tar.gz
+mariadb-connector-cpp|https://github.com/mariadb-corporation/mariadb-connector-cpp.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|-
+ncurses|https://github.com/ThomasDickey/ncurses-snapshots.git|^v[0-9]+_[0-9]+$|s/^v//;s/_/./g|https://invisible-island.net/archives/ncurses/ncurses-@V@.tar.gz
+openssl|https://github.com/openssl/openssl.git|^openssl-[0-9.]+$|s/^openssl-//|https://github.com/openssl/openssl/releases/download/openssl-@V@/openssl-@V@.tar.gz
+pcre2|https://github.com/PCRE2Project/pcre2.git|^pcre2-[0-9.]+$|s/^pcre2-//|https://github.com/PCRE2Project/pcre2/releases/download/pcre2-@V@/pcre2-@V@.tar.bz2
+php|https://github.com/php/php-src.git|^php-[0-9]+\.[0-9]+\.[0-9]+$|s/^php-//|https://www.php.net/distributions/php-@V@.tar.xz
+xz|https://github.com/tukaani-project/xz.git|^v[0-9.]+$|s/^v//|https://github.com/tukaani-project/xz/releases/download/v@V@/xz-@V@.tar.gz
+zlib|https://github.com/madler/zlib.git|^v[0-9]+\.[0-9]+(\.[0-9]+)?$|s/^v//|https://github.com/madler/zlib/releases/download/v@V@/zlib-@V@.tar.xz
+zstd|https://github.com/facebook/zstd.git|^v[0-9.]+$|s/^v//|https://github.com/facebook/zstd/releases/download/v@V@/zstd-@V@.tar.gz

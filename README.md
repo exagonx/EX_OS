@@ -109,6 +109,26 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### grep (/bin/grep) — tested
+
+`grep [-EFGivcnlLoqsHhrwxa] [-e MODEL]... [MODEL] [FILE...]`, from a file, a folder
+with `-r` or a pipe. The libc has no regular expressions, so they are in the program:
+basic and extended, classes, `{m,n}`, run as a set of states, so a pattern can never
+blow up on a long line. No limit on the length of a line. Same output as GNU grep in
+1463 cases out of 1472 on Linux (the other 9 are `-F -E` together, which GNU refuses);
+counts checked inside EX-OS at 32 and 64 bit by `tools/prova_grep.sh`.
+
+### Third-party sources against the official ones (tools/aggiorna-sorgenti.sh) — tested without a new version
+
+`tools/aggiorna-sorgenti.sh` compares the 17 libraries of `tools/sorgenti-terzi.txt`
+with the tags of their repositories. `-scarica NOME` takes the official archive,
+not the tag, and keeps it only if the signature is good with the keys already
+next to it; `-prova NOME` applies the EX-OS patches to a copy; `-applica NOME`
+changes `VER=` only after both. It does not compile: the proof stays the build
+at 32 and 64 bit and the tests in QEMU. Tried on Apache and APR at their current
+version, with a corrupted archive refused. Firefox, gcc, binutils and Rust are
+not covered.
+
 ### The Stamp key saves the screen to a PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — tested in QEMU
 
 **Stamp** saves what is on screen to `$HOME/Images/schermata-AAAAMMGG-HHMMSS.png`

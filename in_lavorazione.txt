@@ -8475,6 +8475,40 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  48. RIPRODUTTORE DI FILMATI E CODEC AUDIO/VIDEO (l'utente, 30/10: "e'
+      necessario un riproduttore di filmati e il porting dei codec video e
+      audio"). Da analizzare: FFmpeg come libreria vera a 32 e 64 bit (poi
+      librerie-terze-parti: tutte le dipendenze, sorgenti su ISO strumenti e
+      netinst, in sorgenti-terzi.txt) o i soli codec (dav1d, libvpx, opus,
+      vorbis, mp3, ...); i brevetti di H.264/AAC per quello che si pubblica;
+      il programma in exwin/bin (finestra, tempo, volume, schermo intero);
+      l'audio su EX-OS; a 64 bit un core solo pesa sulla decodifica (voce 38).
+      Firefox ha gia' i suoi decodificatori: voce a parte.
+      Stato: in coda.
+
+  47. repo-update.sh CHIEDE E COSTRUISCE QUELLO CHE MANCA (l'utente, 30/10:
+      "suggerisce altri script come tools/freebasic-exos/prepara-fb64.sh,
+      sarebbe opportuno un sistema a prompt dove chiede se eseguire step
+      aggiuntivi e quando viene detto di si procede con l'esecuzione e rifa
+      la verifica per costruire le parti mancanti"). Oggi mktools64.sh,
+      mknetinst e su-cd.sh stampano "no ... : tools/.../costruisci.sh" e
+      vanno avanti, e il pacchetto esce senza quella parte. Da fare: una
+      riga uniforme "MANCA nome | comando", raccolte a fine controllo; a
+      terminale si chiede per ognuna si'/no/tutte, si esegue, si rifa' il
+      controllo finche' non resta niente o restano solo i no; senza
+      terminale (cron, -guarda) nessuna domanda, si elenca e basta. Non
+      toccare repo-update.sh mentre gira: bash lo legge mentre lo esegue.
+      Stato: in coda.
+
+  46. AGGIORNARE I SORGENTI DI TERZI (l'utente, 30/10). tools/aggiorna-sorgenti.sh
+      e tools/sorgenti-terzi.txt: elenco delle 17 librerie, -scarica con la
+      firma, -prova delle patch su una copia, -applica. Provato su httpd e
+      apr alla versione attuale. RESTA: provarlo su un aggiornamento vero;
+      MariaDB (11.8.9 contro 13.1.1 fra i tag): capire se la 13 e' stabile
+      e se conviene restare sulla serie 11.8; Firefox, gcc, binutils, Rust
+      fuori (384 patch solo Firefox); nessun modello locale usato per ora.
+      Stato: prima versione fatta.
+
   45. /proc NEL SISTEMA DI BASE (l'utente, 30/10: "se serve per compatibilita'
       con altre applicazioni dovra' essere aggiunta di sistema base con gli
       attributi necessari a far funzionare le app"). Oggi non esiste: ls
@@ -8483,6 +8517,9 @@ tools/netinst/velocita tolto da netinst.
       neither /proc nor sysctl"). Non e' una cartella sul disco: e' un
       filesystem virtuale a sola lettura, i file li genera il kernel quando
       si leggono, quindi niente da scrivere nell'installazione.
+      CENSIMENTO (30/10, stringhe dei binari a 64 bit): Firefox chiede
+      /proc/self/exe, status e fd/N; MariaDB self/limits e self/cwd; gcc
+      self/exe; httpd, PHP e make niente. PCB.ticks_total c'e' gia'.
       Da fare: VFS_FS_PROC montato da solo all'avvio; /proc/self, /proc/<pid>
       con stat, status, cmdline, exe, fd/ e task/<tid>/stat; /proc/stat,
       meminfo, cpuinfo, uptime, mounts. Prima di tutto un censimento di che
@@ -9027,6 +9064,19 @@ tools/netinst/velocita tolto da netinst.
          newtab-wallpapers-v2, con i .sqlite-wal a 0 byte: il profilo e' nato
          alle 12:40, quindi non basta la cancellazione a meta'. E
          security_state vuota (i tentativi CRLite). Causa da trovare.
+      SECONDO AVVIO (30/10, 13:56, stesso profilo delle 12:40, con
+      MOZ_LOG=sync,timestamp,mozStorage:4,QuotaManager:5,IndexedDB:3 e
+      MOZ_LOG_FILE, che scrive mozlog.txt.moz_log): NESSUN NotReadableError:
+      il profilo NON e' rimasto rotto, l'errore del primo avvio non si e'
+      ripetuto e non si sa ancora quale dei quattro sia (IndexedDBCommon.cpp:
+      file corrotto, non trovato, accesso negato, IOERR di SQLite). Per
+      riprodurlo: Firefox chiuso, export HOME=/root/prova-ff, cosi' un
+      profilo nuovo senza toccare quello dell'utente, con lo stesso log.
+      ALTRA CAUSA DI LENTEZZA: la prima sincronizzazione di Remote Settings
+      riempie il database (da 4,2 a 17,5 MB in 16 minuti, 7779 righe nei
+      primi 37 MB di log, ogni istruzione almeno un tick da 10 ms, ma col
+      log acceso costa di piu'), e Firefox chiuso prima riparte da capo.
+      Da NetworkLinkService che manca: 59 "isLinkUp undefined" nel log.
       Avvio: nato a 59,8 s, appshell 93,6, primo titolo 136,9, finestra
       162,7: 103 s, su disco ext2.
 

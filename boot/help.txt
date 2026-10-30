@@ -194,6 +194,23 @@ Una directory non si sposta: per quella c'e' `xcp` e poi `rm -r`.
 Il gemello per chi digita al prompt e' `rename`, che dichiara di NON
 attraversare le directory.
 
+[grep]
+cerca righe in file, cartelle o da una pipe
+
+  grep kernel file.txt       le righe con quella parola
+  grep -i -n errore log.txt  senza badare a maiuscole, col numero di riga
+  grep -c parola file        quante righe
+  grep -v parola file        le righe SENZA la parola
+  grep -r parola cartella    in tutta la cartella
+  grep -E '(a|b)+c' file     espressioni estese
+  grep -F 'a.b' file         testo esatto, senza espressioni
+  cat file | grep parola     da una pipe
+
+Altre opzioni: -l (i soli nomi dei file), -L (quelli senza), -o (solo il
+pezzo trovato), -w (parola intera), -x (riga intera), -q (nessuna stampa),
+-s (niente errori), -H -h (nome del file si'/no), -a (i binari come testo),
+-e MODELLO (anche piu' volte). Rende 0 trovato, 1 no, 2 errore.
+
 [cattura stamp screenshot]
 cattura [-f] [file.png]
 
