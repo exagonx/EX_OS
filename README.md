@@ -109,6 +109,17 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Deleting a folder no longer stops at the first error (filemgr 0.015) — tested in QEMU
+
+The file manager stopped at the first thing it could not remove and left every entry
+after it, with a warning only in the status bar. That is how a Firefox profile deleted
+while Firefox was alive ended up half deleted. Now it removes everything it can and a
+window says how many entries were removed, how many remain and the first one left, with
+the hint that a program may be using it. A file deleted while open stays in its folder
+as `~EXV0001.DEL` until it is closed, and is not counted as removed. Moving a folder
+across disks stops in the same way when the source cannot be removed in full.
+`tools/prova_filemgr.sh` has the new case at 32 and 64 bit.
+
 ### /proc in the base system (kernel 0.290, /bin/readlink) — tested in QEMU
 
 `/proc` is mounted by itself at boot and cannot be unmounted. It is not a folder on

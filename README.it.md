@@ -111,6 +111,18 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Cancellare una cartella non si ferma piu' al primo errore (filemgr 0.015) — provato in QEMU
+
+Il file manager si fermava alla prima cosa che non riusciva a togliere e lasciava tutte
+le voci dopo, con un avviso nella sola riga di stato. E' cosi' che un profilo di Firefox
+cancellato con Firefox acceso restava a meta'. Ora toglie tutto quello che puo' e una
+finestra dice quante voci ha cancellato, quante restano e la prima rimasta, con
+l'indicazione che forse un programma la sta usando. Un file cancellato mentre e' aperto
+resta nella sua cartella come `~EXV0001.DEL` finche' non viene chiuso, e non si conta
+tra quelli cancellati. Spostare una cartella su un altro disco si ferma allo stesso modo
+se l'origine non si toglie per intero. `tools/prova_filemgr.sh` ha il caso nuovo a 32 e
+64 bit.
+
 ### /proc nel sistema di base (kernel 0.290, /bin/readlink) — testato in QEMU
 
 `/proc` si monta da solo all'avvio e non si può smontare. Non è una cartella sul disco:

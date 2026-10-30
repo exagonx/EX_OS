@@ -8,6 +8,7 @@
 #      colonna 0 e la riga di stato dice quante ne sono segnate;
 #   2. Ctrl+C copia le righe segnate in una directory che esiste, e i file
 #      arrivano davvero — lo dice `ls`, non la finestra;
+#   5. con un file aperto dentro una cartella si toglie il resto e lo si dice;
 #   3. il tasto Canc chiede prima, dicendo quanti file e quanti byte, e
 #      cancella solo se si risponde di si'.
 #
@@ -123,6 +124,24 @@ ARGS+=("omega.txt@4" "foto:$D/4-rinominato.ppm@2"
 
 timeout 400 python3 tools/qemu_drive.py "${ARGS[@]}" > "$D/4-rinomina.log" 2>&1
 
+# --- 5. Una cartella con un file aperto: si toglie il resto (voce 38) ---------
+# ! aa viene prima di zz.txt: fino a filemgr 0.014 il primo errore fermava tutto
+# e zz.txt restava, come le voci di un profilo di Firefox cancellato acceso.
+# ! /bin/sh e non il sleep della shell: un comando interno richiude il file
+# subito, una shell figlia lo tiene aperto come stdin finche' non ha finito.
+echo "=== 5. Con un file aperto si toglie tutto il resto, e lo si dice ==="
+ARGS=("mount hd0p1 /disk@6" "mkdir /disk/albero@2" "mkdir /disk/albero/aa@2"
+      "echo sleep 120 > /disk/albero/aa/aperto.txt@2" "echo y > /disk/albero/zz.txt@2"
+      "sh < /disk/albero/aa/aperto.txt &@3"
+      "exwin@18" "key:alt-f1@3"
+      "/exwin/bin/filemgr /disk &@8" "key:alt-f5@3"
+      "punta:albero@1" "mon:mouse_button 1@1" "mon:mouse_button 0@2"
+      "key:delete@3" "key:tab@1" "key:ret@6"
+      "foto:$D/5-resta.ppm@2" "key:ret@3"
+      "key:alt-f1@2" "ls -a /disk/albero@4" "ls -a /disk/albero/aa@4")
+
+timeout 400 python3 tools/qemu_drive.py "${ARGS[@]}" > "$D/5-aperto.log" 2>&1
+
 # --- Il verdetto -------------------------------------------------------------
 echo ""
 esito=0
@@ -142,6 +161,21 @@ if grep -q "vuota" "$D/3-cancella.log"; then
 else
     echo "  [NO]  la cancellazione: in /disk/dest c'e' ancora roba"
     echo "        (guarda $D/3-domanda.ppm: che pulsante ha il fuoco?)"
+    esito=1
+fi
+
+sed -n '/invio .ls -a \/disk\/albero/,$p' "$D/5-aperto.log" > "$D/5-ls.txt"
+if grep -a -q "<DIR>.* aa" "$D/5-ls.txt" && grep -a -q "EXV" "$D/5-ls.txt" &&
+   ! grep -a -q "<FILE>.*zz.txt" "$D/5-ls.txt"; then
+    echo "  [OK]  file aperto: zz.txt tolto, aa rimasta"
+else
+    echo "  [NO]  file aperto: vedi $D/5-ls.txt"
+    esito=1
+fi
+if python3 tools/trova_testo.py "$D/5-resta.ppm" restano > /dev/null 2>&1; then
+    echo "  [OK]  file aperto: la finestra dice cosa resta"
+else
+    echo "  [NO]  file aperto: nessuna finestra (vedi $D/5-resta.ppm)"
     esito=1
 fi
 

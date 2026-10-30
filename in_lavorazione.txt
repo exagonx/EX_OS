@@ -8475,6 +8475,18 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  49. netupdate SCARICA UNO SCRIPT CHE VERIFICA L'AMBIENTE (l'utente, 30/10:
+      "ogni aggiunta/implementazione del sistema deve essere aggiunta a
+      netupdate che scaricando un file sh questo verifica che l'ambiente e'
+      idoneo o suggerira' delle cose da fare se non puo farle in autonomia").
+      Oggi netupdate 0.036 non esegue nessuno script: copia e verifica file.
+      Da fare: uno script nel repository, firmato da elenco.txt come ogni
+      file (verificato PRIMA di eseguirlo, gira come root), lanciato dopo
+      l'aggiornamento: controlla (kernel, /proc, driver, spazio) e fa cio'
+      che puo', stampa il resto come consigli; ogni novita' ci aggiunge il
+      suo controllo. Una regola per sempre, vedi anche voce 47.
+      Stato: in coda.
+
   48. RIPRODUTTORE DI FILMATI E CODEC AUDIO/VIDEO (l'utente, 30/10: "e'
       necessario un riproduttore di filmati e il porting dei codec video e
       audio"). Da analizzare: FFmpeg come libreria vera a 32 e 64 bit (poi
@@ -9088,6 +9100,25 @@ tools/netinst/velocita tolto da netinst.
       Da NetworkLinkService che manca: 59 "isLinkUp undefined" nel log.
       Avvio: nato a 59,8 s, appshell 93,6, primo titolo 136,9, finestra
       162,7: 103 s, su disco ext2.
+      PROFILO NUOVO, 30/10, SENZA TOCCARE NIENTE (HOME=/root/prova-ff, MOZ_LOG
+      mozStorage:4,IndexedDB:3, 15 minuti): database a 17,5 MB, 0
+      NotReadableError, 0 AbortError: NON RIPRODOTTO. L'errore del primo
+      giro era arrivato verso 270 s dall'avvio, mentre l'utente cliccava
+      menu e impostazioni: per riprodurlo serve l'uso vero col log acceso.
+      Firefox non scrive gli errori SQLite nel suo log, e NotReadableError
+      nasce da FILE_CORRUPTED, CORRUPTED_CONTENT, FILE_NOT_FOUND,
+      ACCESS_DENIED o STORAGE_IOERR (ClampResultCode in IndexedDBCommon.cpp).
+      FATTO (filemgr 0.015, punto 1): cancella_albero non si ferma piu' e
+      la finestra dice cosa resta; provato a 32 e 64 bit in prova_filemgr
+      sezione 5 (aa/aperto.txt tenuto aperto da una sh figlia: zz.txt via,
+      aa e ~EXV0009.DEL restano, "Cancellate 2 voci, 1 restano").
+      PUNTO 3 IN PARTE: un ~EXV rimasto dopo un riavvio ora lo toglie
+      cancellare la cartella, ma nessuno lo fa da solo. Una ~EXV ancora
+      aperta si rinomina 9 volte prima di arrendersi: il numero sale, non
+      fa danni. PUNTO 2 NON FATTO: /proc/<pid>/fd/N non dice ancora il
+      file vero (voce 45), quindi si avvisa dopo e non prima.
+      RESTANO: il punto 4 (blocco allo spegnimento), il 5 (orologio),
+      NetworkLinkService, e il browser predefinito in ExWin.
 
 
   37. UN SEGNALE NON INTERROMPE UN'ATTESA (niente EINTR; trovato il 28/10

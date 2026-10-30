@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.014"
+#define VERSIONE_APP "0.015"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_INIZIO 512     /* rows of a folder: the first, then doubling (0.014) */
@@ -1216,47 +1216,83 @@ static void conta(const char *perc, int e_dir, int giu,
     }
 }
 
+/* What the last cancella_albero could not remove: how many, and the first */
+static unsigned int g_canc_fermi;
+static char         g_canc_primo[PERC_MAX];
+
+static void canc_fermo(const char *perc)
+{
+    if (g_canc_fermi++ == 0) snprintf(g_canc_primo, sizeof(g_canc_primo), "%s", perc);
+}
+
 /* Cancella un file, o una directory con tutto quel che ha dentro. Rende
- * quante voci ha tolto, o -1.
+ * quante voci ha tolto; quelle rimaste le conta g_canc_fermi, che azzera chi
+ * comincia.
  *
- * ! SI RILEGGE SEMPRE DALL'INIZIO, e non e' spreco: `listdir_from` ha un
- * indice di partenza, e cancellare una voce fa scalare tutte quelle dopo. Un
- * ciclo che avanzasse l'indice salterebbe un file ogni due — e il sintomo
- * sarebbe una directory che non si vuota e un rmdir che fallisce, cioe' un
- * guasto che sembra del filesystem. Si rilegge finche' si fanno progressi. */
+ * ! NON SI FERMA AL PRIMO ERRORE (voce 38, 30 ottobre 2026). Un profilo di
+ * Firefox cancellato con Firefox vivo restava a meta': il database aperto non
+ * va via, rmdir della sua cartella falliva, e un `return -1` risaliva e
+ * lasciava tutte le voci dopo, con un avviso nella sola riga di stato. Si
+ * toglie tutto quello che si puo' e si dice cosa e' rimasto.
+ *
+ * ! SI RILEGGE DA salta, e non e' spreco: `listdir_from` ha un indice di
+ * partenza, e cancellare una voce fa scalare tutte quelle dopo. Quelle che
+ * restano (., .. e le voci che non vanno via) stanno in testa, quindi si
+ * riparte dopo di loro: ripartire da zero non finirebbe mai.
+ *
+ * ! ~EXV E' UN FILE CANCELLATO MENTRE ERA APERTO (la silly rename del VFS).
+ * Se e' ancora aperto, cancellarlo lo rinomina soltanto e torna in elenco:
+ * senza un tetto questo ciclo non finirebbe. Chiuso, va via al primo colpo.
+ * Per questo si contano a parte: quelle rinomine non sono voci tolte. */
 static int cancella_albero(const char *perc, int e_dir, int giu)
 {
     DirEntry v[8];
-    int n, i, tolti = 0;
+    int n, i, tolti = 0, salta = 0, exv = 0, tolti_exv = 0;
+    unsigned int entrata = g_canc_fermi;
 
-    if (!e_dir) return (unlink(perc) == 0) ? 1 : -1;
-    if (giu > PROFONDITA) return -1;
+    if (!e_dir) {
+        if (unlink(perc) == 0) return 1;
+        canc_fermo(perc);
+        return 0;
+    }
+    if (giu > PROFONDITA) { canc_fermo(perc); return 0; }
 
     for (;;) {
-        int avanzato = 0;
-
-        n = listdir_from(perc, v, 8, 0);
+        n = listdir_from(perc, v, 8, salta);
         if (n <= 0) break;
 
         for (i = 0; i < n; i++) {
-            char sotto[PERC_MAX];
-            int  r;
+            char         sotto[PERC_MAX];
+            unsigned int prima = g_canc_fermi;
 
             if (v[i].name[0] == '.' &&
                 (v[i].name[1] == '\0' ||
-                 (v[i].name[1] == '.' && v[i].name[2] == '\0'))) continue;
+                 (v[i].name[1] == '.' && v[i].name[2] == '\0'))) {
+                salta++;
+                continue;
+            }
 
             unisci(sotto, sizeof(sotto), perc, v[i].name);
-            r = cancella_albero(sotto, v[i].is_dir, giu + 1);
-            if (r < 0) return -1;
-            tolti += r;
-            avanzato = 1;
+            if (strncmp(v[i].name, "~EXV", 4) == 0 && exv++ >= 8) {
+                canc_fermo(sotto);
+                salta++;
+                continue;
+            }
+            if (strncmp(v[i].name, "~EXV", 4) == 0)
+                tolti_exv += cancella_albero(sotto, v[i].is_dir, giu + 1);
+            else
+                tolti += cancella_albero(sotto, v[i].is_dir, giu + 1);
+            /* still there: a folder with something left, a refused unlink */
+            if (g_canc_fermi != prima) salta++;
         }
-        /* Restano solo «.» e «..»: la directory e' vuota. */
-        if (!avanzato) break;
     }
 
-    if (rmdir(perc) != 0) return -1;
+    if (exv <= 8) tolti += tolti_exv;
+
+    if (rmdir(perc) != 0) {
+        if (g_canc_fermi == entrata) canc_fermo(perc);
+        return tolti;
+    }
     return tolti + 1;
 }
 
@@ -1346,7 +1382,11 @@ static int fai_uno(const char *sorg, int e_dir, const char *dest, int sposta,
     /* ! L'ORIGINALE SI TOGLIE SOLO A COPIA FINITA. Uno spostamento e' una
      * copia piu' una cancellazione, e l'ordine fra le due e' tutta la
      * differenza fra «e' andata male» e «l'ho perso». */
-    if (sposta && cancella_albero(sorg, e_dir, 0) < 0) return -3;
+    if (sposta) {
+        g_canc_fermi = 0;
+        (void)cancella_albero(sorg, e_dir, 0);
+        if (g_canc_fermi) return -3;
+    }
 
     return 1;
 }
@@ -1486,9 +1526,8 @@ static void comando_copia(int sposta)
  * ============================================================================= */
 static void comando_cancella(void)
 {
-    char perc[PERC_MAX], t[220];
+    char perc[PERC_MAX], t[220], resta[PERC_MAX + 120];
     unsigned int i, nfile = 0, nbyte = 0, tolti = 0;
-    int falliti = 0;
 
     set_costruisci();
     if (g_set_n == 0) {
@@ -1518,18 +1557,23 @@ static void comando_cancella(void)
         return;
     }
 
+    g_canc_fermi = 0;
     for (i = 0; i < g_set_n; i++) {
-        int r;
-
         voce_percorso(g_set[i], perc, sizeof(perc));
-        r = cancella_albero(perc, g_dir_flag[g_set[i]], 0);
-        if (r < 0) falliti++;
-        else       tolti += (unsigned int)r;
+        tolti += (unsigned int)cancella_albero(perc, g_dir_flag[g_set[i]], 0);
     }
 
-    if (falliti == 0) sprintf(g_avviso, "cancellate %u voci", tolti);
-    else sprintf(g_avviso, "cancellate %u voci, %d non si sono potute togliere: %s",
-                 tolti, falliti, strerror(errno));
+    if (g_canc_fermi == 0) {
+        sprintf(g_avviso, "cancellate %u voci", tolti);
+    } else {
+        /* ! IN A WINDOW: half a folder gone is what spoilt Firefox's profiles,
+         * and a line in the status bar is not read. */
+        snprintf(resta, sizeof(resta), "Cancellate %u voci, %u restano. La prima: %s. "
+                 "Forse un programma le sta usando: chiudilo e riprova.",
+                 tolti, g_canc_fermi, g_canc_primo);
+        sprintf(g_avviso, "cancellate %u voci, %u restano", tolti, g_canc_fermi);
+        ex_dlg_avviso("Cancella", resta);
+    }
 
     leggi(g_dir);
 }
