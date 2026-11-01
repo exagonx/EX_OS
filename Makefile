@@ -8126,7 +8126,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # c'era perche' un elenco lungo scritto a mano e' il posto dove le cose si
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
-BINARI_SOLO_CD := $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CATTURA_BIN) $(GREP_BIN) $(READLINK_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
+BINARI_SOLO_CD := $(GUARDIA_BIN) $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CATTURA_BIN) $(GREP_BIN) $(READLINK_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \

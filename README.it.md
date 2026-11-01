@@ -113,6 +113,10 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### reboot, halt e poweroff smontano le unita' (kernel 0.302) — provato in QEMU a 32 e 64 bit
+
+Fino alla 0.301 i tre comandi sincronizzavano e mettevano il segno "pulito", ma non smontavano: su ext3 ed ext4 il giornale restava aperto e all'avvio dopo compariva `not unmounted cleanly and its journal is not replayed`. Ora ogni volume si smonta davvero, `/` per ultimo, e lo schermo dice `Smonto / (hd0p1)... ok`. Un volume che non si puo' smontare si chiude comunque: giornale chiuso, nessuna scrittura dopo, e a schermo `ancora in uso`. Dopo i 30 secondi di SIGTERM chi non si e' chiuso riceve SIGKILL. `sleep` si interrompe: prima `kill -9` su un programma addormentato non aveva effetto fino al risveglio. Prova: `tools/prova_smonta.sh`.
+
 ### Un modulo vecchio non blocca piu' il disco; netupdate ritenta (kernel 0.293, netupdate 0.038, install 0.011, hwconfig 0.009, nv50.drv 0.009) — provato in QEMU, da provare sul ferro
 
 Un portatile installato da un CD piu' vecchio e aggiornato con netupdate si e' ritrovato con **tutto il disco in sola lettura**: `mount` lo diceva, anche per root. Non erano i permessi. La scrittura di ext2/3/4 sta in `/dev/ext4.mod`, il kernel lo carica solo se e' costruito per quello stesso kernel, e netupdate aveva sostituito tutto tranne quel file: il vecchio e il nuovo pesavano entrambi 40920 byte, e il registro veniva scritto fidandosi della dimensione. Corretto:
@@ -7297,9 +7301,9 @@ diventassero lo stesso nome sarebbero un file perso in silenzio).
 
 | Comando shell | Effetto |
 |---|---|
-| `halt` | sincronizza il filesystem, ferma il sistema, **non** spegne |
-| `poweroff` / `shutdown` | sincronizza, conta 3 secondi, spegne l'hardware |
-| `reboot` | sincronizza e riavvia (reset via 8042, fallback triple fault) |
+| `halt` | smonta le unita', ferma il sistema, **non** spegne |
+| `poweroff` / `shutdown` | smonta le unita', conta 3 secondi, spegne l'hardware |
+| `reboot` | smonta le unita' e riavvia (reset via 8042, fallback triple fault) |
 
 Lo spegnimento hardware usa le porte ACPI note di QEMU (`0x604`), Bochs
 (`0xB004`) e VirtualBox (`0x4004`). **In emulazione la macchina si spegne

@@ -8495,13 +8495,70 @@ tools/netinst/velocita tolto da netinst.
       reboot non e' stato tentato. La sh deve ripiegare su /rdboot/bin, e un
       errore di lettura deve dare errore, non pagine a zero.
 
+  65. IL PORTATILE SI E' SPENTO DA SOLO (1/11, tra le 13:25 e la chiamata
+      dell'utente, 0.301, a riposo, guardia spenta). Trovato spento, schermo non
+      visto, causa sconosciuta. All'avvio chkdsk -r automatico, codice 0.
+
+  64. reboot LASCIA IL DISCO NON SMONTATO PULITO (1/11, 0.301, portatile, ext4).
+      Dopo la reboot delle 13:13 l'avvio: "not unmounted cleanly and its journal
+      is not replayed", chkdsk -r hd2p1 da solo, circa 8 minuti, codice 0. Da
+      capire perche' reboot non smonta.
+      RISOLTA (kernel 0.302): vfs_spegnimento sincronizzava e segnava pulito ma non
+      smontava: giornale_smonta non girava e needs_recovery restava acceso.
+      Riprodotta in QEMU (tools/prova_smonta.sh: needs_recovery 1 dopo poweroff,
+      reboot, halt). Ora ogni volume si smonta, / per ultimo; se e' in uso si chiude
+      in scrittura e lo dice. Dopo i 30 s di SIGTERM arriva SIGKILL; SYS_SLEEP a
+      fette da 100 ms perche' kill -9 su chi dorme non aveva effetto; chi chiede
+      l'arresto chiude i suoi descrittori; pausa di 300 ms per il raccoglitore
+      degli zombie, che teneva aperto l'eseguibile. Sul portatile: reboot dalla
+      0.302, 76 s, nessun "not unmounted cleanly", nessun chkdsk.
+      ! poweroff e halt provati solo in QEMU: sul portatile servirebbe riaccenderlo.
+      ! NON spiegato: alle 13:13 lo stato era sporco e parti' chkdsk -r; il riavvio
+      dalla 0.301 di oggi ha lasciato solo il giornale aperto, niente chkdsk.
+
+  63. BITMAP SBAGLIATE SUL DISCO DEL PORTATILE (1/11 13:21, 0.301). chkdsk hd2p1 in
+      sola lettura, disco smontato: 6 gruppi con i liberi contati male, 10095
+      blocchi in cui bitmap e file non concordano, superblocco 24588722 liberi
+      contro 24579171 contati (9551 blocchi, 37 MB, dichiarati liberi in piu'). Albero
+      e collegamenti a posto. Visto 8 minuti dopo il chkdsk -r dell'avvio
+      finito con codice 0, senza carichi in mezzo: o -r non corregge, o la
+      scrittura ext4 sbaglia. Causa NON cercata. Se dei blocchi in uso sono
+      segnati liberi, una scrittura puo' rovinare un file. Riparazione NON
+      lanciata: decide l'utente.
+      SECONDO CONTROLLO (1/11, dopo uno spegnimento e il chkdsk -r dell'avvio,
+      codice 0): 116 blocchi invece di 10095, quindi -r corregge le bitmap; il
+      superblocco dice ancora 24588722 liberi, identico: il kernel sembra non
+      aggiornarlo sul disco (ipotesi). NUOVI 4 blocchi "usati da piu' di un
+      inode (0)": 5046273, 5046276, 5046277 (gruppo 154) e 5308929 (gruppo 162).
+      inode 0 = struttura: in chkdsk.c righe 3083-3123 descrittori, bitmap e
+      tabelle degli inode. Due strutture sullo stesso blocco: descrittori
+      incoerenti, oppure falso allarme di chkdsk, NON deciso. -r non lo ripara. Da
+      fare in sola lettura: leggere i descrittori dei gruppi coinvolti.
+      MISURE (tools/prove/gruppi.c, tools/prove/scalzacache.c, sola lettura, a
+      disco smontato): i 4 blocchi hanno un solo proprietario, bitmap inode e
+      tabelle dei gruppi 154 e 162, 0 blocchi doppi, descrittori coerenti.
+      DUE chkdsk DI FILA, stesso disco, nessuna scrittura in mezzo: il primo
+      trova 3 problemi (116, 3421, 6537, 10309 blocchi, cambia ogni volta), il
+      secondo "Nessun problema trovato", 3 volte su 3. Il superblocco dice
+      sempre 24588722. Quindi il disco pare sano e il PRIMO chkdsk dopo
+      system -unload NON E' AFFIDABILE. IPOTESI SMENTITE: scritture in ritardo
+      (60 s di attesa: uguale); cache dei settori (scalzata con 4096 letture:
+      uguale); memoria sporca (calloc azzera). Causa NON trovata. Prossima misura:
+      leggere due volte superblocco, descrittori, bitmap e tabelle e confrontarli.
+      NON usare chkdsk -r dopo system -unload finche' non e' capito: riparerebbe
+      da una lettura sbagliata. Vale anche per system -load -check. La riparazione
+      NON e' stata lanciata.
+
   62. telnetd SERVE UNA CONNESSIONE PER VOLTA (1/11): una seconda sessione resta
       muta. Per questo prova_carico_pc.py fa tutto in una sessione; dmesg-pc.py e
       guardia-pc.py non possono girare insieme.
 
   61. IL LOGIN SI RIPETE DA SOLO SULLA CONSOLE (l'utente, 1/11, foto
       20261101_100408, portatile, 0.299): "EX-OS - accesso / utente:" a catena,
-      senza tasti premuti. Da fare dopo la voce 58. Causa non cercata.
+      senza tasti premuti. Causa non cercata. L'utente, stesso giorno: non si
+      ripete piu', sembra temporaneo. La foto e' delle 10:04:08, mentre il primo
+      dmesg-pc.py inondava telnetd di risposte (10:03:46-10:05): coincidenza di
+      orario, legame NON dimostrato. In attesa: si riapre solo se ricompare.
 
   60. netupdate NON PORTA UN FILE NUOVO E RISCARICA TUTTO (1/11, 0.299, portatile
       a 64 bit, server locale). Due netupdate -check -yes di fila: /bin/guardia,
@@ -8559,6 +8616,13 @@ tools/netinst/velocita tolto da netinst.
       NON E' SPIEGATO e la sonda non ha ancora visto un blocco. Tra le due
       prove sono cambiati anche i file su disco (netupdate) e l'accensione. NON
       considerare chiusa la voce: serve carico piu' lungo; dopo chkdsk.
+      CARICO LUNGO (0.301, 1/11, 12:15-12:45): prova_carico_pc.py -due -giri=10,
+      30 minuti con smpprova 2 5 sempre in giro: 10 su 10, copia 171 s, impronte
+      uguali, nessun errore, nessun messaggio AHCI, nessun riavvio. Le 9 SONDE
+      SONO DELLO SCRIPT, NON GUASTI: 81 s tra due chiamate di guardia contro i 60
+      della sonda; corretto, ma la versione corretta non e' ancora stata
+      lanciata. Totale 0.301 a due core: 14 su 14; 0.300: 1 blocco su 1, mai
+      spiegato e mai rivisto. chkdsk: fatto via telnet, vedi voce 63.
 
   57. hwconfig CONFIGURA L'AHCI NEL RILEVAMENTO (l'utente, 31/10). Durante il
       rilevamento hardware deve riconoscere il controller che offre il disco

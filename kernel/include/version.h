@@ -760,7 +760,11 @@
  * timeout looks at CI once more, slow commands go to the log (voce 58). */
 /* 0.300 -> 0.301: sched_sonda: the countdown of guardia writes who holds the
  * locks and where each process waits, at 1/2 and 3/4 of the time (voce 58). */
-#define EXOS_VERSION    "0.301"
+/* 0.301 -> 0.302: poweroff, reboot and halt unmount the volumes (vfs_spegnimento):
+ * the journal is shut and needs_recovery goes off; what cannot be unmounted is
+ * closed for writing. segnali_arresto ends with SIGKILL, the caller's own
+ * descriptors are closed, umount flushes after the clean mark. */
+#define EXOS_VERSION    "0.302"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

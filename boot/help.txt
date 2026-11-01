@@ -427,6 +427,11 @@ cadono: partono dal disco. Restano tastiera, console e i programmi
 della base. Serve un avvio con il sistema di base: se /rdboot non
 c'e', una volta `netupdate -avvio` e un riavvio.
 
+Da una sessione telnet, che cade con -unload: uno script in /rdboot, lanciato
+con /rdboot/bin/sh SCRIPT &, con /rdboot/bin/ in ogni riga: dopo -unload
+/bin/chkdsk non si trova. Righe: system -unload -yes, chkdsk, system -load.
+Dopo -load telnetd torna da solo.
+
 [usb]
 le porte USB: cosa c'e', togliere, riprendere
 
@@ -613,6 +618,11 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+"not unmounted cleanly and its journal is not replayed" a ogni avvio, con
+  chkdsk -r automatico: fino al kernel 0.301 reboot, halt e poweroff non
+  chiudevano il giornale ext3/ext4. Dalla 0.302 smontano. Il disco non si
+  ripara a mano: lo sistema da solo il primo avvio.
+
 i guasti che si possono riparare da soli
 
 LA ISO A 64 BIT DA' SCHERMO NERO O DICE CHE IL PROCESSORE NON HA I 64 BIT.
@@ -1143,11 +1153,16 @@ programma in esecuzione sulla macchina.
 [reboot]
 riavvia il sistema
 
+Prima di fermarsi chiude i programmi (SIGTERM, dopo 30 s SIGKILL) e smonta
+tutte le unita', scrivendo a schermo `Smonto / (hd0p1)... ok`. Se un'unita'
+resta `ancora in uso`, il suo giornale si chiude e non si scrive piu', ma
+qualcosa teneva un file aperto: vedi `help problemi`.
+
 [halt]
-ferma il sistema senza spegnerlo
+ferma il sistema senza spegnerlo; smonta le unita' come reboot
 
 [poweroff shutdown]
-ferma e spegne dopo tre secondi
+ferma e spegne dopo tre secondi; smonta le unita' come reboot
 
 [exit]
 termina la shell

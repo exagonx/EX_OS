@@ -111,6 +111,10 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### reboot, halt and poweroff unmount the volumes (kernel 0.302) — tested in QEMU at 32 and 64 bit
+
+Up to 0.301 the three commands synced and set the "clean" mark, but did not unmount: on ext3 and ext4 the journal stayed open and the next start said `not unmounted cleanly and its journal is not replayed`. Now every volume is really unmounted, `/` last, and the screen says `Smonto / (hd0p1)... ok`. A volume that cannot be unmounted is closed anyway: journal shut, no writes afterwards, and `ancora in uso` on the screen. After the 30 seconds of SIGTERM, what has not ended gets SIGKILL. `sleep` can be interrupted: `kill -9` on a sleeping program used to have no effect until it woke. Test: `tools/prova_smonta.sh`.
+
 ### A stale module no longer locks the disk; netupdate retries (kernel 0.293, netupdate 0.038, install 0.011, hwconfig 0.009, nv50.drv 0.009) — tested in QEMU, to be tested on real hardware
 
 A laptop installed from an older CD and updated with netupdate came back with **the whole disk read-only**: `mount` said so, even for root. It was not the permissions. Writing ext2/3/4 lives in `/dev/ext4.mod`, the kernel loads it only if it was built for that same kernel, and netupdate had replaced everything but that file: the old and the new one were both 40920 bytes, and the register was written trusting the size. Fixed:
@@ -7216,9 +7220,9 @@ up with the same name would be a file lost in silence).
 
 | Shell command | Effect |
 |---|---|
-| `halt` | syncs the filesystem, stops the system, does **not** power off |
-| `poweroff` / `shutdown` | syncs, counts 3 seconds, powers the hardware off |
-| `reboot` | syncs and restarts (reset via the 8042, triple-fault fallback) |
+| `halt` | unmounts the volumes, stops the system, does **not** power off |
+| `poweroff` / `shutdown` | unmounts the volumes, counts 3 seconds, powers the hardware off |
+| `reboot` | unmounts the volumes and restarts (reset via the 8042, triple-fault fallback) |
 
 Hardware power-off uses the known ACPI ports of QEMU (`0x604`), Bochs
 (`0xB004`) and VirtualBox (`0x4004`). **Under emulation the machine really

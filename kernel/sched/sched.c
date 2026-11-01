@@ -2037,6 +2037,15 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
     }
 }
 
+/* The process that asked to stop the machine never returns from sys_reboot,
+ * and a file it holds (`reboot > /log`) would keep the volume busy. */
+void proc_chiudi_miei_fd(void)
+{
+    interrupts_disable();
+    proc_chiudi_fd(g_current);
+    interrupts_enable();
+}
+
 /* Il corpo di proc_exit() e di proc_esci_fatale(): la differenza e' una sola
  * domanda — questa uscita e' un GUASTO? — e sta scritta qui sotto, dov'e' la
  * riga che la usa.

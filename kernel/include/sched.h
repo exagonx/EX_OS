@@ -992,6 +992,7 @@ int      proc_filo_stacca(uint32_t tid);
 extern Process *g_init_task;  /* task reaper (PID 2), adotta gli orfani */
 Process *proc_get_by_pid(uint32_t pid);
 Process *proc_get_current(void);
+void proc_chiudi_miei_fd(void);
 Process *proc_spazio_capo(Process *p);
 
 /* The descriptor table (0.281, see FdTabella). fd_tabella_crea gives a new

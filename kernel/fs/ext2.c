@@ -768,6 +768,18 @@ int ext2_umount(int mnt)
     return 0;
 }
 
+/* Shutdown, with a file still open on the volume: as an unmount for the disk
+ * (last transaction, needs_recovery off), but the mount stays and can still
+ * be read. Nothing writes to it any more. */
+void ext2_chiudi_scrittura(int mnt)
+{
+    Ext2Mount *m = prendi(mnt);
+
+    if (m == NULL) return;
+    if (g_ops != NULL && !m->sola_lettura && g_ops->smonta != NULL) g_ops->smonta(mnt);
+    m->sola_lettura |= EXT2_RO_CHIUSO;
+}
+
 uint32_t ext2_blocchi(int mnt)
 {
     Ext2Mount *m = prendi(mnt);

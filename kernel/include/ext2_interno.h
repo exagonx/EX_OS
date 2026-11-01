@@ -121,6 +121,7 @@ static inline void p32(uint8_t *p, uint32_t v)
 #define EXT2_RO_FUNZIONI    0x01u   /* features the write module cannot handle */
 #define EXT2_RO_MODULO      0x02u   /* no write module registered yet */
 #define EXT2_RO_GIORNALE    0x04u   /* journal needs recovery, not replayed */
+#define EXT2_RO_CHIUSO      0x10u   /* closed at shutdown: journal shut, no more writes */
 #define EXT2_RO_CHIESTO     0x08u   /* mount -r: the module is never asked, and
                                        nothing - not even a journal replay -
                                        writes the disk (kernel 0.265) */

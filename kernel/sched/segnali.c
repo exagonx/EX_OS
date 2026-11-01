@@ -649,7 +649,31 @@ int segnali_arresto(uint32_t ms)
         sched_sleep(100);
     }
     if (vivi == 0) { kprintf("fatto.\n"); kfree(pid_di); return 0; }
-    kprintf("%d non si sono chiusi in %u s:", vivi, ms / 1000);
+
+    /* ! FIRST IT ASKS, THEN IT IMPOSES: a program that ignores SIGTERM would
+     * keep its files open, and its volume could not be unmounted. Three
+     * seconds: SIGKILL is not a request. */
+    kprintf("%d non si sono chiusi in %u s, li chiudo a forza:", vivi, ms / 1000);
+    for (i = 0; i < (int)posti; i++)
+        if (pid_di[i]) { kprintf(" %s", (*PROC_POSTO(i)).name); manda(self, PROC_POSTO(i), SIGKILL_); }
+    kprintf("\n");
+    scade = g_ticks + 300;
+    for (;;) {
+        vivi = 0;
+        for (i = 0; i < (int)posti; i++) {
+            Process *q = PROC_POSTO(i);
+
+            if (pid_di[i] == 0) continue;
+            if (q->pid != pid_di[i] || q->state == PROC_UNUSED || q->state == PROC_ZOMBIE)
+                pid_di[i] = 0;
+            else
+                vivi++;
+        }
+        if (vivi == 0 || (int32_t)(g_ticks - scade) >= 0) break;
+        sched_sleep(100);
+    }
+    if (vivi == 0) { kfree(pid_di); return 0; }
+    kprintf("%d ancora vivi:", vivi);
     for (i = 0; i < (int)posti; i++)
         if (pid_di[i]) kprintf(" %s", (*PROC_POSTO(i)).name);
     kprintf("\n");

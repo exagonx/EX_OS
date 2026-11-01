@@ -78,6 +78,7 @@ int  ext2_mount(int blkdev);
  * replayed - nothing writes the disk (kernel 0.265). */
 int  ext2_mount_come(int blkdev, int ro_chiesto);
 int  ext2_umount(int mnt);
+void ext2_chiudi_scrittura(int mnt);
 /* 1 when the volume uses ext3/ext4 features: readable, not writable here. */
 int  ext2_sola_lettura(int mnt);
 

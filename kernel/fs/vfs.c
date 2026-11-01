@@ -1048,7 +1048,10 @@ static int vfs_umount_nl(const char *punto)
         else                                   fat_umount (g_mnt[i].mnt);
 
         /* Smontato: il volume e' di nuovo coerente sul disco. */
-        if (g_segnato[i]) { e2_segna(g_mnt[i].blkdev, 1); g_segnato[i] = 0; }
+        if (g_segnato[i]) {
+            if (e2_segna(g_mnt[i].blkdev, 1)) blk_flush(g_mnt[i].blkdev);
+            g_segnato[i] = 0;
+        }
 
         if (g_mnt[i].blkdev >= 0) blk_rilascia(g_mnt[i].blkdev);
         g_mnt[i].usato = 0;
@@ -2444,21 +2447,48 @@ const char *vfs_sistema_dev(void)    { return g_sist_dev[0] ? g_sist_dev : NULL;
 int         vfs_sistema_sporco(void) { return g_sist_sporco; }
 
 /* =============================================================================
- * vfs_spegnimento — tutto su disco, e i volumi segnati «puliti»
+ * vfs_spegnimento - every volume unmounted before the machine stops
  *
- * Da power_sync (kernel/arch/x86/power.c), prima di fermare lo scheduler.
- * Dopo questo non scrive piu' nessuno: il segno «pulito» resta vero.
+ * From power_sync (kernel/arch/x86/power.c), before the scheduler stops, for
+ * poweroff, reboot and halt. Syncing and marking the volume clean was not
+ * enough (until 0.301): the journal stayed open, needs_recovery stayed on, and
+ * at the next start the volume "was not unmounted cleanly" (voce 64).
+ *
+ * ! THE ROOT LAST, AND IT BECOMES THE BASE SYSTEM, as with `system -unload`.
+ * /rdboot and /proc stay: the first is in RAM, the second has no device.
+ *
+ * ! WHAT CANNOT BE UNMOUNTED IS STILL CLOSED: a file left open by something
+ * that cannot be stopped (a driver), or a root with no base under it. For the
+ * disk it is the same as an unmount and nothing writes to it afterwards; the
+ * screen says which one, so that it is not a silent difference.
  * ============================================================================= */
+static void vfs_chiudi_volume(int i)
+{
+    if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_chiudi_scrittura(g_mnt[i].mnt);
+    if (g_mnt[i].tipo == VFS_FS_FAT)  fat_sync(g_mnt[i].mnt);
+    g_mnt[i].sola_lettura = 1;
+    if (g_segnato[i]) {
+        if (e2_segna(g_mnt[i].blkdev, 1)) blk_flush(g_mnt[i].blkdev);
+        g_segnato[i] = 0;
+    }
+}
+
 void vfs_spegnimento(void)
 {
-    int i;
+    int  i, r;
+    char punto[VFS_PUNTO_MAX];
 
     fs_prendi_n("spegnimento");
     vfs_sync_nl();
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (!g_mnt[i].usato || !g_segnato[i]) continue;
-        if (e2_segna(g_mnt[i].blkdev, 1)) blk_flush(g_mnt[i].blkdev);
-        g_segnato[i] = 0;
+    for (i = VFS_MAX_MOUNT - 1; i >= 0; i--) {
+        if (!g_mnt[i].usato || g_mnt[i].tipo == VFS_FS_PROC) continue;
+        if (i == g_base || (i == 0 && radice_e_base()))      continue;
+        v_copia(punto, g_mnt[i].punto, VFS_PUNTO_MAX);
+        kprintf("  Smonto %s (%s)...", punto, g_mnt[i].dev);
+        r = vfs_umount_nl(punto);
+        if (r == 0) { kprintf(" ok\n"); continue; }
+        vfs_chiudi_volume(i);
+        kprintf(" ancora in uso (%d): chiuso in scrittura\n", r);
     }
     fs_rilascia();
 }

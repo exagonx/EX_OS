@@ -3168,7 +3168,18 @@ int32_t sys_sched_yield(InterruptFrame *frame)
 int32_t sys_sleep(InterruptFrame *frame)
 {
     uint32_t ms = FR_A1(frame);
-    sched_sleep(ms);
+
+    /* ! IN SLICES (0.302): proc_interrompi wakes PROC_BLOCKED, not
+     * PROC_SLEEPING, so kill -9 on a program in sleep(100) had no effect until
+     * it woke. Waking the sleeper itself would also cut short the hardware
+     * delays of the kernel, which use the same sched_sleep. */
+    while (ms > 0) {
+        uint32_t fetta = ms < 100u ? ms : 100u;
+
+        sched_sleep(fetta);
+        ms -= fetta;
+        if (proc_interrotto()) return ERR(EINTR);
+    }
     return 0;
 }
 
@@ -5111,6 +5122,11 @@ int32_t sys_reboot(InterruptFrame *frame)
      * the disk before power_sync. Up to 30 seconds, then it goes on anyway:
      * a program that does not end must not keep the machine on. */
     segnali_arresto(30000);
+    proc_chiudi_miei_fd();
+    /* A program that just ended is a zombie holding its executable open
+     * until init_reaper_task passes, every 100 ms: three rounds, or / is
+     * busy with a file of a program that no longer exists. */
+    sched_sleep(300);
 
     switch (cmd) {
         case EXOS_RB_POWEROFF: power_off();    /* non ritorna */
