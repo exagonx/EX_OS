@@ -142,6 +142,7 @@ static int atapi_comando_nl(int indice, const uint8_t *cdb, void *buf,
 
     canale = d->canale;
     unita  = d->unita;
+    if (ata_canale_ceduto(canale)) return AT_ERRORE;
     io     = ata_base_io(canale);
 
     /* Il limite per raffica lo decidiamo NOI, e va scritto prima del

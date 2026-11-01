@@ -140,6 +140,7 @@ static void fermo(InterruptFrame *f)
 void isr_handler(InterruptFrame *frame);
 void irq_handler(InterruptFrame *frame);
 void syscall_handler(InterruptFrame *frame);
+void smp_ap_irq(InterruptFrame *frame);
 
 void isr64_gestisci(InterruptFrame *f)
 {
@@ -148,6 +149,7 @@ void isr64_gestisci(InterruptFrame *f)
     if (n < 32)                 isr_handler(f);
     else if (n < 48)            irq_handler(f);     /* il fine-interrupt lo manda lui */
     else if (n == 0x80)         syscall_handler(f);
+    else if (n == 0xF0 || n == 0xF1) smp_ap_irq(f);     /* APIC timer, messages */
 }
 
 void idt_install(void) { idt64_installa(); }

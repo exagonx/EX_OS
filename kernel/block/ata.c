@@ -63,6 +63,7 @@
 #include "sched.h"      /* g_ticks */
 #include "kmalloc.h"
 #include "ahci.h"
+#include "power.h"
 
 /* Le porte, gli offset dei registri e i bit di stato stanno in ata.h:
  * sono lo stesso bus che usa kernel/block/atapi.c, e una seconda copia
@@ -1208,6 +1209,196 @@ int ata_passa_ad_ahci(void)
     return passati;
 }
 
+/* =============================================================================
+ * ata_prova_ahci - the pass to AHCI with an HBA reset, verified (ahci -t)
+ *
+ * ! NOTHING IS WRITTEN AFTER A FAILURE (31 October 2026). The MCP77 laptop
+ * works in PIO at 5 MB/s, and its controller answers only after an HBA reset,
+ * which also takes the IDE registers away: there is no going back. So the
+ * samples are read through IDE first, then the pass, then the same sectors
+ * through AHCI. If anything differs the machine resets itself, without a
+ * sync. The whole thing runs with interrupts off (a system call that polls),
+ * so no process can reach the disk halfway through.
+ *
+ * Writing is tried on one sector only, and only if it is free: the one just
+ * before the first partition, when it is all zeros and the disk is MBR.
+ * ============================================================================= */
+static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi);
+static int ata_flush_nl(int indice);
+
+#define PROVA_CAMPIONI  8
+#define PROVA_SETTORI   128u
+
+static NORETURN void prova_fallita(const char *perche, uint64_t lba)
+{
+    kprintf("\n  ahci -t FALLITA: %s (lba %u)\n", perche, (uint32_t)lba);
+    kprintf("  Il disco non si tocca piu'. Riavvio tra 60 secondi, senza\n"
+            "  sincronizzare: fotografa questa schermata.\n");
+    klog(LOG_ERROR, "ATA: ahci -t fallita: %s (lba %u)", perche, (uint32_t)lba);
+    {
+        uint32_t i;
+
+        for (i = 0; i < 60000000u; i++) (void)port_inb(0x80);   /* ~1 us each */
+    }
+    power_reset_ora();
+}
+
+static int prova_uguali(const uint8_t *a, const uint8_t *b, uint32_t n)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+static uint64_t prova_lba(const AtaDevice *d, int c)
+{
+    uint64_t lba;
+
+    if (c == 0) return 0;
+    if (c == 1) return 2048;
+    lba = (d->settori / PROVA_CAMPIONI) * (uint64_t)(c - 1);
+    if (lba + PROVA_SETTORI > d->settori) lba = d->settori - PROVA_SETTORI;
+    return lba;
+}
+
+/* The free sector just before the first partition, or 0 if there is none. */
+static uint64_t prova_settore_libero(const uint8_t *mbr)
+{
+    uint32_t e, primo = 0;
+
+    if (mbr[510] != 0x55 || mbr[511] != 0xAA) return 0;
+    for (e = 0; e < 4; e++) {
+        const uint8_t *v = mbr + 446 + e * 16;
+        uint32_t ini = v[8] | (v[9] << 8) | (v[10] << 16) | ((uint32_t)v[11] << 24);
+
+        if (v[4] == 0xEE) return 0;             /* GPT: that gap is not free */
+        if (v[4] != 0 && ini != 0 && (primo == 0 || ini < primo)) primo = ini;
+    }
+    return primo >= 3 ? (uint64_t)primo - 1 : 0;
+}
+
+static int g_col_reset = 0;
+
+int ata_ahci_col_reset(void) { return g_col_reset; }
+
+/* ! AFTER THE RESET NOBODY TOUCHES THOSE IDE REGISTERS (31 October 2026). On the
+ * laptop the DVD reader, on the same controller, was still polled through them:
+ * "timeout BSY sul canale 2" came first, and then the disk stopped answering. */
+static uint8_t g_canale_ceduto[8];
+
+int ata_canale_ceduto(int canale)
+{
+    return canale >= 0 && canale < 8 && g_canale_ceduto[canale];
+}
+
+int ata_prova_ahci(void)
+{
+    static uint8_t settore[512], letto[512];
+    uint8_t *prima, *dopo;
+    uint64_t libero[ATA_MAX_DEVICES];
+    uint32_t tutto = PROVA_CAMPIONI * PROVA_SETTORI * 512u;
+    int idx, c, n, dischi = 0;
+
+    if (g_passati > 0) return 0;
+    if (!ahci_candidati()) return 0;
+
+    for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
+        libero[idx] = 0;
+        if (g_dev[idx].presente && g_dev[idx].tipo == ATA_TYPE_ATA) dischi++;
+    }
+    if (dischi != 1) {
+        klog(LOG_WARN, "ATA: ahci -t lavora su un disco solo, qui sono %d", dischi);
+        return -1;
+    }
+
+    prima = (uint8_t *)kmalloc(tutto);
+    dopo  = (uint8_t *)kmalloc(tutto);
+    if (prima == NULL || dopo == NULL) {
+        if (prima) kfree(prima);
+        if (dopo) kfree(dopo);
+        return -1;
+    }
+
+    /* Everything through IDE, before touching the controller. A failure here
+     * changes nothing: the system goes on as it was. */
+    for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
+        const AtaDevice *d = &g_dev[idx];
+
+        if (!d->presente || d->tipo != ATA_TYPE_ATA) continue;
+        for (c = 0; c < PROVA_CAMPIONI; c++) {
+            if (ata_rw(idx, prova_lba(d, c), PROVA_SETTORI,
+                       prima + (uint32_t)c * PROVA_SETTORI * 512u, 0) != 0) {
+                kfree(prima);
+                kfree(dopo);
+                klog(LOG_WARN, "ATA: ahci -t: lettura IDE fallita, non tocco niente");
+                return -1;
+            }
+        }
+        libero[idx] = prova_settore_libero(prima);
+        if (libero[idx] != 0) {
+            uint32_t i;
+
+            if (ata_rw(idx, libero[idx], 1, settore, 0) != 0) libero[idx] = 0;
+            for (i = 0; i < 512; i++) if (settore[i]) libero[idx] = 0;
+        }
+    }
+
+    ahci_chiedi_reset(1);
+    n = ata_passa_ad_ahci();
+    ahci_chiedi_reset(0);
+    if (n != dischi) prova_fallita("il disco non e' passato all'AHCI", 0);
+
+    for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
+        const AtaDevice *d = &g_dev[idx];
+        uint32_t i;
+
+        if (!d->presente || d->tipo != ATA_TYPE_ATA) continue;
+        for (c = 0; c < PROVA_CAMPIONI; c++) {
+            uint32_t off = (uint32_t)c * PROVA_SETTORI * 512u;
+
+            if (ata_rw(idx, prova_lba(d, c), PROVA_SETTORI, dopo + off, 0) != 0)
+                prova_fallita("lettura AHCI fallita", prova_lba(d, c));
+            if (!prova_uguali(prima + off, dopo + off, PROVA_SETTORI * 512u))
+                prova_fallita("dati diversi da IDE", prova_lba(d, c));
+        }
+        klog(LOG_INFO, "ATA: ahci -t: %d campioni da %u settori uguali a IDE",
+             PROVA_CAMPIONI, PROVA_SETTORI);
+
+        if (libero[idx] == 0) {
+            klog(LOG_WARN, "ATA: ahci -t: nessun settore libero, scrittura NON provata");
+            n = 1;
+            continue;
+        }
+        for (i = 0; i < 512; i++) settore[i] = (uint8_t)(i * 7 + 0xA5);
+        if (ata_rw(idx, libero[idx], 1, settore, 1) != 0 || ata_flush_nl(idx) != 0)
+            prova_fallita("scrittura AHCI fallita", libero[idx]);
+        if (ata_rw(idx, libero[idx], 1, letto, 0) != 0 ||
+            !prova_uguali(settore, letto, 512))
+            prova_fallita("la scrittura non si rilegge", libero[idx]);
+        for (i = 0; i < 512; i++) settore[i] = 0;
+        if (ata_rw(idx, libero[idx], 1, settore, 1) != 0 || ata_flush_nl(idx) != 0 ||
+            ata_rw(idx, libero[idx], 1, letto, 0) != 0 ||
+            !prova_uguali(settore, letto, 512))
+            prova_fallita("il settore di prova non torna a zero", libero[idx]);
+        klog(LOG_INFO, "ATA: ahci -t: scrittura provata sul settore libero %u",
+             (uint32_t)libero[idx]);
+        n = 2;
+    }
+    kfree(prima);
+    kfree(dopo);
+    g_col_reset = 1;
+    for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
+        int k = g_dev[idx].canale;
+
+        if (g_dev[idx].ahci && k >= 0 && k < 8) {
+            g_canale_ceduto[k]     = 1;
+            g_canale_ceduto[k ^ 1] = 1;     /* the pair: same controller */
+        }
+    }
+    return n;       /* 2: letture e scrittura a posto; 1: solo le letture */
+}
+
 const AtaDevice *ata_get_device(int indice)
 {
     if (indice < 0 || indice >= ATA_MAX_DEVICES) return NULL;
@@ -1525,6 +1716,11 @@ void ata_lascia(void)
     for (i = 0; i < n; i++) sched_unblock_locked(g_disco_attesa[i]);
 
     interrupts_enable();
+}
+
+void ata_stato_lucchetto(uint32_t *chi, uint32_t *livelli, uint32_t *attesa)
+{
+    *chi = g_disco_detentore; *livelli = g_disco_livelli; *attesa = g_disco_n_attesa;
 }
 
 int ata_read(int indice, uint64_t lba, uint32_t n, void *buf)

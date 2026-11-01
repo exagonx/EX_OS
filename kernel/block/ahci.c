@@ -43,6 +43,8 @@
 #include "paging.h"
 #include "tsc.h"
 #include "ahci.h"
+#include "smp.h"
+#include "sched.h"      /* g_ticks: the second clock in the log */
 
 /* Due pagine: 0x100 di registri generali piu' 0x80 per porta, fino a 32. */
 #define AHCI_VIRT           0x000DD000u
@@ -58,6 +60,7 @@
 
 #define GHC_AE              0x80000000u     /* «parlo AHCI» */
 #define GHC_IE              0x00000002u     /* interrupt accesi */
+#define GHC_HR              0x00000001u     /* HBA reset */
 
 /* --- registri di una porta (da 0x100 + n * 0x80) ------------------------- */
 #define P_CLB               0x00
@@ -126,6 +129,9 @@ static int       g_n_presi = 0;
 
 static volatile uint8_t *g_hba = 0;
 
+/* 1: controller() resets the HBA first. See ahci_chiedi_reset. */
+static int g_reset_hba = 0;
+
 void *memset(void *dst, int c, uint32_t n);
 
 static uint32_t rl(volatile uint8_t *b, uint32_t off) { return *(volatile uint32_t *)(b + off); }
@@ -155,17 +161,34 @@ static void pci32_scrivi(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t off,
  * il TSC; senza, conta letture della porta 0x80 (~1 us l'una), come le
  * attese di ata.c.
  * --------------------------------------------------------------------------- */
-typedef struct { uint64_t t0; uint32_t giri; } Cronometro;
+/* ! THREE WAYS THIS CLOCK LIED (1 November 2026, voce 58, the disk stopping on
+ * the laptop at two cores). tsc_us() stops at 2^32 cycles, so at 2 GHz every
+ * "8000 ms" ran out after 2.1 s: the log printed the constant, not the time.
+ * A thread can stop and go on later, even on another processor whose TSC is
+ * behind: the difference comes out enormous, an instant timeout. And time
+ * spent not running was counted as time the disk had to answer. Hence it adds
+ * up only the short steps between two looks: a longer one, or a negative one,
+ * is this thread having been away, and proves nothing about the disk. */
+#define CRONO_PASSO_MAX(hz) ((uint64_t)(hz) / 10u)      /* 100 ms */
+
+typedef struct { uint64_t ult; uint64_t visti; uint32_t giri; } Cronometro;
 
 static void crono_via(Cronometro *c)
 {
-    c->giri = 0;
-    c->t0   = tsc_c_e() ? tsc_leggi() : 0;
+    c->giri  = 0;
+    c->visti = 0;
+    c->ult   = tsc_c_e() ? tsc_leggi() : 0;
 }
 
 static uint32_t crono_ms(Cronometro *c)
 {
-    if (tsc_c_e()) return tsc_us(tsc_leggi() - c->t0) / 1000u;
+    if (tsc_c_e()) {
+        uint64_t ora = tsc_leggi(), passo = ora - c->ult;
+
+        if (passo < CRONO_PASSO_MAX(tsc_hz())) c->visti += passo;
+        c->ult = ora;
+        return tsc_ms(c->visti);
+    }
     (void)port_inb(0x80);
     return ++c->giri / 1000u;
 }
@@ -187,6 +210,9 @@ static int aspetta(volatile uint8_t *b, uint32_t off, uint32_t maschera,
 /* -----------------------------------------------------------------------------
  * Un comando, sullo slot 0. Rende 0, o -1.
  * --------------------------------------------------------------------------- */
+static int porta_prepara(AhciDisco *d, volatile uint8_t *p);
+static void porta_riprendi(AhciDisco *d);
+
 static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
                    uint32_t byte, int scrivi)
 {
@@ -236,6 +262,7 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
 
     {
         Cronometro c;
+        uint32_t   t0 = g_ticks, cpu0 = cpu_n(), ms;
 
         crono_via(&c);
         for (;;) {
@@ -253,13 +280,26 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
             }
             if (!(rl(p, P_CI) & 1u)) break;
             if (crono_ms(&c) > tmo) {
+                /* ! IT MAY HAVE ENDED WHILE THE CLOCK WAS BEING READ. The
+                 * laptop's log said CI 0 in this very line, and the reset that
+                 * followed is what stopped a healthy disk. */
+                if (!(rl(p, P_CI) & 1u)) break;
                 klog(LOG_ERROR, "AHCI: comando %02x a lba=%u senza risposta dopo %u ms "
-                     "(CI %08x, IS %08x, TFD %08x)", cmd, (uint32_t)lba, tmo,
-                     rl(p, P_CI), rl(p, P_IS), rl(p, P_TFD));
+                     "(tick %u, CI %08x, IS %08x, TFD %08x, SSTS %08x, SERR %08x, "
+                     "cpu %u poi %u)", cmd, (uint32_t)lba, crono_ms(&c),
+                     g_ticks - t0, rl(p, P_CI), rl(p, P_IS), rl(p, P_TFD),
+                     rl(p, P_SSTS), rl(p, P_SERR), cpu0, cpu_n());
+                porta_riprendi(d);
                 return -1;
             }
             __asm__ volatile ("pause");
         }
+        /* Voce 58: how long the disk really takes, under load, on the real
+         * machine. The tick count tells a slow disk from a busy processor. */
+        ms = crono_ms(&c);
+        if (ms >= 1000u)
+            klog(LOG_WARN, "AHCI: comando %02x a lba=%u lento: %u ms visti, tick %u, "
+                 "cpu %u poi %u", cmd, (uint32_t)lba, ms, g_ticks - t0, cpu0, cpu_n());
     }
 
     if (rl(p, P_TFD) & 0x01u) return -1;    /* ERR nello stato */
@@ -321,6 +361,32 @@ static int porta_prepara(AhciDisco *d, volatile uint8_t *p)
     wl(p, P_CMD, rl(p, P_CMD) | CMD_ST);
     d->reg = p;
     return 0;
+}
+
+/* ! A COMMAND THAT DOES NOT END LEAVES THE PORT TAKEN (31 October 2026). On the
+ * laptop one timeout became every following one: CI stayed 1, TFD d0, and the
+ * journal gave up. As Linux does: engine off, COMRESET, ready again. */
+static void porta_riprendi(AhciDisco *d)
+{
+    volatile uint8_t *p = d->reg;
+    Cronometro c;
+
+    wl(p, P_CMD, rl(p, P_CMD) & ~CMD_ST);
+    (void)aspetta(p, P_CMD, CMD_CR, 0, 500);
+    wl(p, P_CMD, rl(p, P_CMD) & ~CMD_FRE);
+    (void)aspetta(p, P_CMD, CMD_FR, 0, 500);
+
+    wl(p, P_SCTL, (rl(p, P_SCTL) & ~0x0Fu) | 1u);
+    crono_via(&c);
+    while (crono_ms(&c) < 2u) __asm__ volatile ("pause");
+    wl(p, P_SCTL, rl(p, P_SCTL) & ~0x0Fu);
+    (void)aspetta(p, P_SSTS, 0x0Fu, 3u, 5000);
+
+    if (porta_prepara(d, p) != 0)
+        klog(LOG_ERROR, "AHCI: la porta non riparte (CMD %08x, SSTS %08x, TFD %08x)",
+             rl(p, P_CMD), rl(p, P_SSTS), rl(p, P_TFD));
+    else
+        klog(LOG_WARN, "AHCI: porta ripresa dopo un comando senza risposta");
 }
 
 static int disco_identifica(AhciDisco *d)
@@ -414,6 +480,30 @@ static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
         (void)aspetta(h, H_BOHC, 1u, 0, 200);
     }
 
+    /* ! THE RESET IS ASKED FOR, NEVER IMPLIED (31 October 2026). This is
+     * what Linux does before using the MCP77 (ahci_reset_controller): HR,
+     * up to 1 s for it to clear, AE again, CAP and PI written back. The
+     * laptop's ports stayed busy (TFD 80) without it. After it the IDE
+     * registers cannot be trusted and there is no way back, so only
+     * ata_prova_ahci asks for it: that one has read the disk beforehand and
+     * resets the machine if anything differs. */
+    if (g_reset_hba) {
+        uint32_t cap = rl(h, H_CAP);
+
+        wl(h, H_GHC, rl(h, H_GHC) | GHC_HR);
+        if (aspetta(h, H_GHC, GHC_HR, 0, 1000) != 0) {
+            klog(LOG_WARN, "AHCI: il reset del controller non finisce (GHC %08x)",
+                 rl(h, H_GHC));
+            return 0;
+        }
+        wl(h, H_GHC, rl(h, H_GHC) | GHC_AE);
+        wl(h, H_CAP, cap);
+        wl(h, H_PI, pi);
+        wl(h, H_GHC, rl(h, H_GHC) & ~GHC_IE);
+        klog(LOG_INFO, "AHCI: controller resettato: CAP %08x PI %08x GHC %08x",
+             rl(h, H_CAP), rl(h, H_PI), rl(h, H_GHC));
+    }
+
     g_hba = h;
     klog(LOG_INFO, "AHCI: controller in PCI %u:%u.%u, registri a 0x%08x, versione "
          "%u.%u, porte %08x", bus, slot, fn, abar, (vs >> 16) & 0xFFFF,
@@ -497,6 +587,8 @@ static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
  * dichiarano AHCI (classe 01.06, interfaccia 01); a uno anche quelli che il
  * BIOS presenta come IDE o RAID ma hanno i registri AHCI a BAR5. Rende quanti
  * dischi ci sono in tutto dopo la ricerca. */
+void ahci_chiedi_reset(int si) { g_reset_hba = si; }
+
 int ahci_cerca(int anche_emulati)
 {
     uint32_t bus, slot, fn;
@@ -677,6 +769,7 @@ int ahci_rw(int k, uint64_t lba, uint32_t n, void *buf, int scrivi)
          * vedi crono_ms. */
         if (scrivi) for (i = 0; i < byte; i++) g_rimbalzo[i] = p[i];
         r = comando(d, cmd, lba, ora, byte, scrivi);
+        if (r != 0) r = comando(d, cmd, lba, ora, byte, scrivi);   /* once more */
         if (r == 0 && !scrivi) for (i = 0; i < byte; i++) p[i] = g_rimbalzo[i];
         if (r != 0) return -1;
 

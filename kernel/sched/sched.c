@@ -28,6 +28,7 @@
 #include "vfs.h"   /* vfs_close: l'eseguibile aperto per il caricamento su richiesta */
 #include "cfg.h"     /* fdmax: the descriptors a program may hold (0.281) */
 #include "syscall.h" /* FD_IPC, EMFILE, ENOMEM */
+#include "power.h"   /* guardia_controlla: the countdown of `guardia` */
 
 /* =============================================================================
  * Variabili globali scheduler
@@ -1225,6 +1226,7 @@ static void sched_irq0_handler(InterruptFrame *frame)
     (void)frame;    /* Non usiamo il frame direttamente */
 
     g_ticks++;
+    guardia_controlla();
 
     /* ! IL MOTORE DEL FLOPPY SI SPEGNE DA QUI, e non da dentro il driver.
      * Il driver, quando servirebbe, e' fermo in attesa o ha appena rinunciato
@@ -2715,5 +2717,54 @@ interrupts_enable();
          * ad aspettarlo (misurato: andava a un quinto). */
         bkl_ozio();
         __asm__ volatile("hlt");
+    }
+}
+
+
+/* =============================================================================
+ * sched_sonda: who holds what, written to the log by the countdown of guardia
+ * (voce 58). At two cores the laptop stops answering with no disk error, and
+ * by then no program can be loaded to ask. Reads only, without locks: it may
+ * run in the wait for the kernel lock itself. Stack words inside the kernel
+ * are candidates for where a process waits: addr2line on kernel-intero.elf.
+ * ============================================================================= */
+extern char _kernel_start[], _kernel_end[];
+extern uint32_t vfs_stato_lucchetto(void);
+extern void ata_stato_lucchetto(uint32_t *chi, uint32_t *livelli, uint32_t *attesa);
+
+void sched_sonda(void)
+{
+    uint32_t coda, turno, chi, dd, dl, da, i, c;
+
+    bkl_stato(&coda, &turno, &chi);
+    ata_stato_lucchetto(&dd, &dl, &da);
+    klog(LOG_WARN, "SONDA: tick %u cpu %u, kernel coda %u turno %u tiene %x, "
+         "disco pid %u livelli %u attesa %u, vfs pid %u", g_ticks, cpu_n(), coda,
+         turno, chi, dd, dl, da, vfs_stato_lucchetto());
+    for (c = 0; c < SMP_CPU_MAX; c++) {
+        const Process *q = g_corrente[c];
+
+        if (q != NULL)
+            klog(LOG_WARN, "SONDA: cpu %u gira pid %u %s stato %u", c, q->pid,
+                 q->name, (uint32_t)q->state);
+    }
+    for (i = 0; i < g_proc_posti; i++) {
+        const Process *p = PROC_POSTO(i);
+        uintptr_t v[6];
+        uint32_t  n = 0, k;
+
+        if (p->state == PROC_UNUSED) continue;
+        for (k = 0; k < 6; k++) v[k] = 0;
+        if (p->kernel_esp != 0 && p->state != PROC_RUNNING) {
+            const uintptr_t *s = (const uintptr_t *)p->kernel_esp;
+
+            for (k = 0; k < 128 && n < 6; k++)
+                if (s[k] >= (uintptr_t)_kernel_start && s[k] < (uintptr_t)_kernel_end)
+                    v[n++] = s[k];
+        }
+        klog(LOG_WARN, "SONDA: pid %u %s st %u cpu %u blk %u pila %x %x %x %x %x %x",
+             p->pid, p->name, (uint32_t)p->state, (uint32_t)p->cpu, p->block_until,
+             (uint32_t)v[0], (uint32_t)v[1], (uint32_t)v[2], (uint32_t)v[3],
+             (uint32_t)v[4], (uint32_t)v[5]);
     }
 }

@@ -113,6 +113,29 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Un modulo vecchio non blocca piu' il disco; netupdate ritenta (kernel 0.293, netupdate 0.038, install 0.011, hwconfig 0.009, nv50.drv 0.009) — provato in QEMU, da provare sul ferro
+
+Un portatile installato da un CD piu' vecchio e aggiornato con netupdate si e' ritrovato con **tutto il disco in sola lettura**: `mount` lo diceva, anche per root. Non erano i permessi. La scrittura di ext2/3/4 sta in `/dev/ext4.mod`, il kernel lo carica solo se e' costruito per quello stesso kernel, e netupdate aveva sostituito tutto tranne quel file: il vecchio e il nuovo pesavano entrambi 40920 byte, e il registro veniva scritto fidandosi della dimensione. Corretto:
+
+- **ISO a 64 bit su un processore senza 64 bit: ora lo dice a schermo.** Prima lo schermo restava nero e il messaggio usciva solo sulla seriale: succede in VirtualBox con una macchina di tipo a 32 bit. Rimedio: tipo Other/Unknown (64-bit) con VT-x/AMD-V attivo.
+- **`install` non copia piu' quello che trova, segue un catalogo (install 0.012).** Le directory del sistema, con i loro attributi, sono un elenco dentro `install`: /rdboot, /proc, /cdrom e qualunque altra unita' non vengono mai copiate, da nessun supporto. Niente del supporto arriva sul disco se non il contenuto dei file: alla fine `install` imposta proprietario e permessi di tutto il sistema, e /tmp nasce 1777. Il modulo `/dev/ext4.mod` si scrive per ultimo e si prende da /rdboot, quindi e' sempre quello del kernel che si sta installando: e' la sua mancata corrispondenza che manda il disco in sola lettura. Una directory nuova del sistema va aggiunta al catalogo.
+- **Il kernel** prende `/rdboot/dev/ext4.mod` quando quello del disco e' rifiutato, non solo quando manca.
+- **netupdate** scrive un'impronta nel registro solo dopo aver letto il file, e i file essenziali li controlla sempre sul disco: un registro bugiardo si ripara da solo. Il primo `-check` senza registro rilegge ogni file e puo' durare minuti.
+- **netupdate** tiene in coda i file non arrivati, alla fine li elenca e chiede se riprovare (con `-yes`, un giro da solo).
+- **install** non copia piu' `/rdboot` e `/proc`: esistono solo in memoria.
+- **`nv50.drv -i`** risponde a `hwconfig -d`, che prima non lo copiava mai, e **hwconfig** ne scrive il blocco in `/boot/avvio.sh`.
+
+**Se il tuo disco e' in sola lettura**, da root:
+
+```
+dmesg | grep MODULO                      # il motivo
+modulo carica /rdboot/dev/ext4.mod       # di nuovo scrivibile, subito
+cp /rdboot/dev/ext4.mod /dev/ext4.mod    # rimette a posto quello del disco
+netupdate -check -yes                    # allinea il resto
+```
+
+Dalla 0.293 basta l'ultima riga. Se netupdate dice che non c'e' niente da fare e un file e' vecchio: `delete /boot/netupdate.reg`, poi `netupdate -check -yes`. Tutto questo sta in `help problemi`, sulla macchina stessa.
+
 ### ext3 ed ext4 anche negli strumenti (kernel 0.292, mkfs 0.002, chkdsk 0.003) — provato in QEMU, da provare sul ferro
 
 Il kernel leggeva e scriveva gia' ext3 ed ext4; gli strumenti no. Ora:
@@ -1438,7 +1461,34 @@ disco due volte (i registri IDE e l'AHCI, come l'NVIDIA MCP73 del PC di prova,
 dove dai registri IDE funziona solo il PIO) il sistema parte come sempre e
 passa all'AHCI dopo: con `ahci = 1` in `/boot/kernel.cfg` a ogni avvio, o col
 comando `ahci` per la sola sessione in corso, che e' il modo di provarlo senza
-rischio. `ahci -m FILE` misura a quanti KB/s si legge un file. Confermato sul
+rischio. `ahci -t` e' lo stesso passaggio col reset del controller, come fa
+Linux sull'MCP77: legge dei campioni dai registri IDE, passa, li rilegge in
+AHCI e, se qualcosa non torna, riavvia dopo 60 secondi senza scrivere sul
+disco; toglie anche il lettore DVD fino al prossimo avvio. Dopo di lui
+`ahci -s` scrive `ahci = 2`, lo stesso passaggio a ogni avvio. Sul portatile
+MCP77 la lettura e' passata da 5,3 a 76 MB/s, ma sotto carico il disco una
+volta ha smesso di rispondere (`in_lavorazione.txt`, voce 58): non e' ancora
+provato sicuro.
+
+Dal kernel 0.299 `guardia SECONDI` riavvia la macchina se nessuno la richiama
+in tempo, e `guardia 0` la spegne: serve alle prove a distanza su un PC vero,
+quando un guasto lo lascerebbe fermo. Il conto sta nel kernel, quindi scatta
+anche a disco fermo o a rete caduta; il riavvio e' senza sync. Dal PC lo tiene
+vivo `tools/guardia-pc.py`, una chiamata ogni 30 secondi su 120 di margine.
+A meta' e a tre quarti del tempo il kernel scrive nel log chi tiene i lucchetti.
+`dmesg -segui` mostra avvisi ed errori man mano che arrivano e
+`tools/prova_carico_pc.py` prova il disco sotto carico a distanza, in una
+sessione sola perche' telnetd ne serve una per volta. Dal 0.300 i timeout
+dell'AHCI durano davvero quanto dichiarato: prima scadevano dopo circa 2 secondi
+ed erano falsi se il filo si fermava. netupdate 0.039 riscrive un kernel
+frammentato e non dice piu' di riavviare se la mappa di avvio non e' aggiornata.
+
+Dal kernel 0.297 anche il sistema a 64 bit sveglia i processori in piu', come
+quello a 32: `smpprova -accendi` li mette al lavoro fino al riavvio, `smp = 2`
+in `/boot/kernel.cfg` a ogni avvio. I programmi girano su tutti; nel kernel
+ce n'e' uno per volta, e due fili dello stesso programma non girano ancora
+insieme. `ahci -m FILE`
+misura a quanti KB/s si legge un file. Confermato sul
 PC vero il 9 ottobre, al terzo tentativo: il disco passa all'AHCI e i 35 MB
 di `cc1` si leggono a 59 MB/s, contro i circa 3,4 MB/s del PIO. Su quel
 controller la porta non era mai stata usata in AHCI: accendendo il modo AHCI

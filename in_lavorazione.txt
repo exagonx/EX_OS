@@ -1,8 +1,13 @@
+31/10/2026 install 0.012: catalogo fisso delle directory con i modi (CATALOGO in bin/install/install.c), non si guarda piu' la radice del supporto; applica_criteri imposta proprietario e permessi; ext4.mod per ultimo da /rdboot. Provato il 31/10 in QEMU: tools/prova_modulo_disco.sh 16 su 16 a 32 bit (A, B, C), tools/prova_modulo_vecchio.sh 5 su 5 a 32 e 64 bit. ! prova_modulo_disco non esiste a 64 bit.
+
 QUEL CHE E' APERTO â€” 15 settembre 2026
 
-!!! DA FARE IL 31 OTTOBRE, ALLA RIACCENSIONE: voce 51 (install non copia
-    /rdboot), voce 52 (netupdate: file non arrivati in coda, si ritenta alla
-    fine chiedendo all'utente), voce 50 (tetti ai montaggi).
+!!! IL 31 OTTOBRE: voci 51 e 52 FATTE. Il disco del portatile in sola lettura
+    era ext4.mod 0.280 con kernel 0.291: stessi 40920 byte, il registro si
+    fidava della dimensione (kernel 0.293, netupdate 0.038, install 0.011,
+    hwconfig 0.009, nv50.drv 0.009). Ricetta in `help problemi` e nei README.
+    ! nv50.drv -2dservizio resta fuori dal blocco, come in nv50.drv -install.
+    Resta la voce 50 (tetti ai montaggi).
 
 !!! IL 30 OTTOBRE, SERA: ext3 ed ext4 negli strumenti (kernel 0.292, mkfs
     0.002, chkdsk 0.003): provati in QEMU, ! da provare sul ferro.
@@ -8482,6 +8487,168 @@ tools/netinst/velocita tolto da netinst.
       [mariadb-connector] voleva solo [base]: ora [ssl] [zlib] [zstd]
       [cpp]; toolinst 0.004 legge piu' righe vuole (prima solo l'ultima).
 
+  59. COMANDI DA rdboot SE IL DISCO CADE (l'utente, 31/10: "i comandi di
+      reboot e altri sono in rdboot il ramdisk se il disco va in crash
+      comunque dovrebbe funzionare"). Il 31/10 col disco fermo dmesg e ahci
+      venivano caricati da /bin sul disco e cadevano in page fault (zeri al
+      posto del codice: il caricamento non si e' accorto dell'errore), e
+      reboot non e' stato tentato. La sh deve ripiegare su /rdboot/bin, e un
+      errore di lettura deve dare errore, non pagine a zero.
+
+  62. telnetd SERVE UNA CONNESSIONE PER VOLTA (1/11): una seconda sessione resta
+      muta. Per questo prova_carico_pc.py fa tutto in una sessione; dmesg-pc.py e
+      guardia-pc.py non possono girare insieme.
+
+  61. IL LOGIN SI RIPETE DA SOLO SULLA CONSOLE (l'utente, 1/11, foto
+      20261101_100408, portatile, 0.299): "EX-OS - accesso / utente:" a catena,
+      senza tasti premuti. Da fare dopo la voce 58. Causa non cercata.
+
+  60. netupdate NON PORTA UN FILE NUOVO E RISCARICA TUTTO (1/11, 0.299, portatile
+      a 64 bit, server locale). Due netupdate -check -yes di fila: /bin/guardia,
+      nuovo in elenco.txt (pacchetto sistema), non arriva, e nessuno dei due
+      log lo nomina; entrambe le volte circa 1400 file riscaricati, Exilla da
+      209 MB compresi, e il registro riscritto con "1 che non c'e'" e "5
+      diversi", anche se dice che -check lo proporra'. Per ora il file si porta a
+      mano: scarica URL /bin/guardia, chmod 755. In parte e' voluto: -yes dice
+      "quelli mai installati restano fuori", quindi un programma nuovo di un
+      pacchetto gia' installato non arriva: e' questo che va deciso. Il perche'
+      dei 1400 file riscaricati resta da cercare; 19 file di apache2/error
+      falliscono a ogni giro. FATTO in netupdate 0.039: kernel.new frammentato
+      in oltre 12 pezzi fermava la mappa, e la scritta diceva lo stesso "IL KERNEL
+      E' CAMBIATO" mentre rdboot.lz4 si spostava sotto la mappa vecchia: un
+      riavvio poteva non ripartire. Ora lo riscrive (fino a 6 volte, tenendo le
+      copie per riempire i buchi); sul portatile da oltre 12 pezzi a 2. Se
+      fallisce dice NON RIAVVIARE. Resta: rdboot.lz4 si sostituisce prima di
+      sapere se la mappa riuscira'. Il messaggio di bootinst.c dice kernel.bin
+      anche quando il file e' kernel.new.
+
+  58. DISCO FERMO IN AHCI SOTTO CARICO (31/10 22:45, 0.297, foto 225151 e
+      225839). Con smpprova -accendi, cp di 214 MB e smpprova 2 5 insieme. Log,
+      in ordine: ATA timeout BSY canale 2 (stato 0x80, il DVD, stesso
+      controller), comando 25 lba=3190392 dopo 8000 ms con CI 0 IS 1 TFD 50
+      (finito proprio alla scadenza?), poi CI 1 TFD d0 per sempre, FLUSH
+      fallito, giornale fermo, programmi non caricabili. Causa NON dimostrata:
+      in sospetto gli accessi IDE al DVD, i due core, o il TSC tra i core. La
+      0.298 lascia stare l'IDE e riprende la porta: DA PROVARE sul portatile, a
+      un fattore per volta, prima un core solo. Dopo: chkdsk del disco.
+      PROVATA (0.298, 31/10 sera): un core, copia di 214 MB con smpprova 2 5:
+      impronta uguale, nessun errore, niente timeout BSY. Due core
+      (smpprova -accendi), stessa prova: somma 0 giri, cp non finisce, ping si'
+      e sessioni telnet che muoiono; foto 235720: TFD 00000180 ripetuto, cioe'
+      dopo il COMRESET della ripresa il disco non manda la firma, come prima del
+      reset del controller: porta_riprendi non basta. QEMU, disco AHCI, 2 core,
+      KVM, copia di 20 MB: a posto. Quindi: due fallimenti su due col ferro a
+      due core, zero su uno; la causa resta NON dimostrata. A 2 core NON usare
+      il disco finche' non e' capita. I page fault a 0x08000000 sono voce 59.
+      GUARDIA (0.299, 1/11): guardia SECONDI e tools/guardia-pc.py. Provata in
+      QEMU a 32 e 64 bit e sul portatile: guardia 25 senza chiamate, a macchina
+      ferma, riavvio da solo e di nuovo in rete a 60 s, uptime da 206 a 18. Da
+      usare per la prossima prova a due core; NON ancora provata a disco fermo.
+      CRONOMETRO (0.300, 1/11): tre difetti letti nel codice. tsc_us satura a
+      2^32 cicli, quindi gli "8000 ms" scadevano dopo circa 2 s e il log
+      stampava la costante; un filo fermo o spostato su un core col TSC indietro
+      faceva scattare il timeout; il timeout non riguardava CI, e il log di
+      ieri aveva CI 0, poi il COMRESET a un disco sano. Ora: tsc_ms, si contano
+      solo i passi sotto 100 ms, CI riletto, comandi oltre 1 s nel log.
+      PROVE sul portatile con tools/prova_carico_pc.py -due (copia di 214 MB
+      con smpprova 2 5, guardia accesa): 0.300 BLOCCATA una volta su una, a 52 s
+      nessun comando risponde, nessun errore AHCI, riavvio dalla guardia. 0.301
+      a posto 4 su 4 (95 s, impronte uguali, nessun avviso, 2 core al lavoro),
+      anche con la sequenza esatta del blocco. MA LA 0.301 AGGIUNGE SOLO LA SONDA
+      (sched_sonda, a 1/2 e 3/4 del conto della guardia): IL BLOCCO DELLA 0.300
+      NON E' SPIEGATO e la sonda non ha ancora visto un blocco. Tra le due
+      prove sono cambiati anche i file su disco (netupdate) e l'accensione. NON
+      considerare chiusa la voce: serve carico piu' lungo; dopo chkdsk.
+
+  57. hwconfig CONFIGURA L'AHCI NEL RILEVAMENTO (l'utente, 31/10). Durante il
+      rilevamento hardware deve riconoscere il controller che offre il disco
+      sia IDE sia AHCI (ahci_candidati, SYS_AHCI_PASSA 2) e scrivere la riga
+      ahci giusta in kernel.cfg: 2 sull'MCP77, che vuole il reset. Vedi voci
+      55 e 56.
+
+  56. AHCI DA SOLO, SENZA CHIEDERLO (l'utente, 31/10: "ci deve essere un modo
+      per attivarlo a prescindere"). Oggi serve ahci -t o ahci = 2 in
+      kernel.cfg. Per accenderlo a ogni avvio su ogni macchina mancano, da
+      misurare sul ferro: 1) ATAPI in AHCI, senza il reset toglie il DVD e
+      un'installazione da CD si fermerebbe; 2) una strada di ritorno: se il
+      controllo fallisce oggi la macchina si riavvia e, con l'accensione
+      automatica, in ciclo. Da provare se azzerare GHC.AE ridà i registri IDE;
+      3) prima il passaggio senza reset (MCP73), poi quello col reset.
+
+  55. AHCI: CHIP DIVERSI, DRIVER ADATTO SCELTO DA hwconfig (l'utente, 31/10:
+      "i controller AHCI usano chip diversi forse e' meglio lasciare a hwconfig
+      il riconoscimento e usare il driver adatto, cosi da non avere un unico
+      driver troppo complesso da mantenere"). Da valutare, non iniziato.
+      Oggi: kernel/block/ahci.c e' unico; il disco di sistema serve prima che
+      partano i driver .drv, quindi la parte comune deve restare raggiungibile
+      all'avvio. Le differenze note: MCP77 vuole il reset del controller,
+      MCP73 no (ahci -t, kernel 0.295; ahci = 2).
+
+  54. CACHE DEL DISCO COME SMARTDRV (l'utente, 31/10: "e' possibile
+      implementare una forma di cache tipo il vecchio smartdrv di msdos").
+      Fattibile. OGGI in blk.c: cache di 1 MB, CACHE_VOCI 2048, solo richieste
+      fino a 4 KB, in pratica i metadati; i dati dei file passano da
+      blk_read_diretto con la sola finestra di lettura in avanti. Scrive
+      subito sul disco.
+      FASE 1, LETTURA (write-through, nessun dato a rischio): cache dei dati
+      in blocchi, grande una parte della RAM libera (es. 1/4), niente tetto
+      nel codice, si restringe quando i programmi chiedono memoria;
+      leggi una volta non caccia i metadati: due liste, o i file enormi
+      letti in sequenza non entrano. Ogni scrittura aggiorna o invalida la
+      cache; da verificare il DMA e rdboot.
+      FASE 2, SCRITTURA RITARDATA (write-back), solo dopo la 1: scrittura
+      in sottofondo ogni pochi secondi, fsync e sync aspettano davvero,
+      spegnimento e smontaggio svuotano tutto. Rischio: corrente staccata.
+      ext3/ext4: il giornale va rispettato, l'ordine conta. ext2 non ha
+      giornale.
+      31/10: cancellare /root/.exilla/profilo sul portatile ha preso piu' di
+      un minuto (l'utente). PROBABILE CAUSA, dal codice, non misurata:
+      giornale.c fa il commit a ogni operazione, con piu' FLUSH CACHE e il
+      checkpoint subito. Linux raccoglie le operazioni e fa il commit ogni 5
+      s; il flush vero solo su fsync. Da misurare con ext4 contro ext2.
+      31/10, L'UTENTE: velocizzare il disco e' INDISPENSABILE, soluzione
+      funzionante e sicura; il secondo avvio di Firefox dura come il primo;
+      chiede anche un indice dei file usati di continuo, magari col file di
+      paging. MODELLI: page cache, dentry e inode cache di Linux (i file usati
+      restano in RAM, i percorsi non si rifanno); Prefetch di Windows (ricorda
+      cosa legge un programma all'avvio e lo legge in anticipo). Il file di
+      paging NON serve: sta sullo stesso disco, non e' piu' veloce del file.
+      ORDINE PROPOSTO: 1 misure; 2 commit del giornale raggruppati; 3 cache
+      di percorsi e inode; 4 cache dei dati in lettura; 5 far dormire chi
+      aspetta il disco, con interrupt AHCI, invece del polling; 6 eventuale
+      prefetch; 7 scrittura ritardata solo se serve.
+      NON SOLO DISCO, log delle 20:30: a 64 bit gira UN processore solo
+      (EXOS64-DAFARE) su un Athlon QL-64 a due core, le schede stanno nel
+      processo principale (Failed to launch tab subprocess), e il JavaScript
+      di newtab arriva a "Warning: Unresponsive script".
+      MISURE SUL PORTATILE 31/10 20:45 (tools/prove/discotempi.c, ext4, Firefox
+      chiuso, Toshiba MK2555GSX): lettura 5,2 MB/s con ogni misura di
+      blocco, seconda lettura uguale; scrittura 4,9 MB/s; crea 69 ms, cancella
+      80, apri+100 byte+chiudi 93, mkdir 96, rmdir 81; stat 0,05; apri senza
+      modifiche 0,4; fsync vuoto 6,8; pwrite+fsync 18; pread sparso 9,7.
+      CAUSA 1, IL DISCO E' IN PIO: dmesg "canale nativo 3 ... in PIO (bus
+      master 0x30d8 non usato)", SATA MCP77 0:9.0 (@ATA-DMA-NFORCE, @INSTALL-
+      AHCI). install -ahci esiste ma il passaggio non e' mai riuscito su una
+      macchina vera; BIOS senza voce AHCI, BAR5 esposta. In PIO la CPU sposta
+      lei i byte. CAUSA 2, IL GIORNALE: 70-95 ms a ogni modifica, confermato.
+      CAUSA 3, NESSUNA CACHE DEI DATI: confermato. L'indice dei percorsi NON
+      serve: stat 0,05 ms.
+      CHIUSURA DI FIREFOX: AsyncShutdown aspetta "RemoteSettingsClient -
+      finish IDB access", saveAttachments, gli allegati CRLite che falliscono
+      con 0x8046001e.
+      PRIMA DI TUTTO: misurare sul portatile dove va il tempo di Firefox.
+      Una cache non cura il lucchetto unico del filesystem, l'attesa in
+      polling del comando e il FLUSH di ogni fsync. La lettura e' l'avvio;
+      SQLite aspetta soprattutto i flush. Stato: in coda.
+
+  53. netupdate NON DEVE TORNARE INDIETRO (visto il 31/10 sul portatile).
+      Installato il 0.293 da CD, netupdate delle 15:17 ha quasi certamente
+      rimesso il 0.291 che il server pubblicava ancora: kernel.bin 381164
+      byte, kernel.bin.old 381740, tutti i file alle 15:17, registro con
+      76eb323a. Deduzione: niente log di quel giro. Da fare: confrontare
+      versione.txt con la versione installata e, se il server e' piu'
+      vecchio, fermarsi e dirlo. Stato: in coda.
+
   52. netupdate: I FILE NON ARRIVATI IN CODA (l'utente, 30/10: "su netupdate
       bisogna implementare che i file non arrivati vengono messi in coda e
       si ritenta alla fine chiedendo all'utente"). Un file fallito non ferma
@@ -9177,6 +9344,58 @@ tools/netinst/velocita tolto da netinst.
       lucchetti arrivano al prossimo collegamento, regressioni da fare allora.
       ! tools/ricostruisci-bersaglio.sh e cross64.sh senza PREFISSO/TC64
       scrivono in cross_build/exos-cross*, non in cross_build/<macchina>/.
+      FOTO 31/10 16:41 (20261031_164122.jpg): page fault a 0, EIP 0x0d0c6a3d,
+      codice 48 89 10: e' il MOZ_CRASH di RunWatchdog (nsTerminator.cpp:305,
+      addr2line su gecko64/dist/bin/firefox), il crash voluto di Firefox se
+      la chiusura resta ferma. E' il blocco del punto 4, non il kernel 0.291.
+      Quale fase blocca lo dice stderr: "RunWatchdog: Shutdown hanging at
+      step ...", da catturare sul portatile.
+      31/10 SERA, KERNEL 0.293, PROFILO NUOVO (log in /root/.exilla/firefox.log,
+      il precedente in firefox.log.1): prima finestra dopo ~2 minuti.
+      a) ERRORE VERO, RIPRODOTTO: "Setting auto_vacuum to INCREMENTAL failed"
+      con "disk I/O error" su content-prefs.sqlite, che resta a 0 byte; poi
+      AbortError di IndexedDB in Normandy.init. Stessa famiglia di
+      NotReadableError. NON sono i lucchetti: la libc di questo binario (24/10)
+      risponde "libero" e "preso" senza errore a F_GETLK/F_SETLK. Quale
+      chiamata fallisce non si sa: serve il log di SQLite.
+      b) 17:48:30-17:51 telnetd muto ~2 minuti mentre ping e TCP rispondevano
+      e la CPU era libera al 66%: last_permahang.bin delle 17:50 con
+      PaintPending. Ipotesi, non provata: attese disco di Firefox contro il
+      caricamento di /bin/sh.
+      c) "RenderCompositorSWGL failed mapping default framebuffer, no dt" e
+      libfreebl3.so non caricata: da guardare. Failed to launch ...
+      subprocess e isLinkUp sono il rumore noto.
+      d) ZOMBIE: telnetd non raccoglie sh di sessioni chiuse male (49, 394),
+      init (2) non raccoglie attesa 51 e ps 67.
+      31/10 SERA, LA CAUSA DEL "disk I/O error" (tools/prova_sqlite_io.sh e
+      tools/prove/sqliteio.c, eseguiti sul PORTATILE, ext4 4 KB, Firefox
+      acceso): 1 filo pulito, 4 fili 611 righe di SQLite, close() del journal
+      con errno 9 EBADF. In QEMU uguale su ext2 ed ext4, e2fsck pulito: NON e'
+      il disco, ne' DMA, ne' cache, ne' ext4. PROBABILE (dal codice, non ancora
+      provato con la correzione): sys_open sceglie il descrittore con
+      find_free_fd PRIMA di vfs_open, che puo' dormire sul lucchetto del
+      filesystem, e occupa il posto solo dopo: due fili prendono lo stesso
+      numero, sys_pipe invece lo occupa subito. Da guardare anche dup e socket.
+      Se e' cosi', un filo puo' scrivere nel file di un altro: candidato per i
+      profili rovinati. DA FARE: occupare il posto subito, poi rifare la prova
+      sul portatile. O_EXCL definito a 0 e due mmap MAP_SHARED dello stesso
+      file separate: difetti veri, a parte (SQLite tiene una mappa per file).
+      LENTEZZA, letta nel codice e NON misurata: niente cache dei dati, ogni
+      write rifa' il percorso, un comando per volta in polling, fsync svuota
+      la cache di tutto il disco, lucchetto unico del filesystem.
+      KERNEL 0.294 (31/10 sera): sys_open occupa il descrittore prima di
+      vfs_open, che puo' dormire. PROVATO SUL PORTATILE, stesso binario
+      sqliteio, 4 fili, 30 giri: prima 611 righe con EBADF e disk I/O error,
+      dopo nessun disk I/O error, ma 1 avviso "cannot fstat db file" con errno
+      9 su db1.2, alla chiusura, in una cartella coi resti della prova
+      interrotta; rifatta in una cartella vuota: 0 righe di SQLite (restano
+      O_EXCL e le due mappe nella parte 1). L'avviso non e' spiegato. dup, pipe e socket non dormono tra scelta e presa:
+      li copre il BKL. Il portatile ha telnetd -auto con avvio = root, da =
+      192.168.0.30, e netupdate.cnf punta al server locale; l'originale e' in
+      /boot/netupdate.cnf.srv. Firefox su profilo nuovo con la 0.294 (20:15): niente disk I/O error,
+      AbortError, Normandy; finestra dopo 119 s come prima (116 s), telnetd
+      ancora muto 1-2 minuti (20:20:30-20:22:30): quindi NON dipendevano dal
+      descrittore. Chiusura da riprovare.
       NETUPDATE 30/10 (foto 192727): 19 voci .gz di exos/src danno 404 sul
       server, in locale ci sono: da caricare con pubblica.sh -lista. 12
       "impronta non torna" senza nome: alle 19:32 le 25 voci sospette sono

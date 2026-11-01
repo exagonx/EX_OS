@@ -49,4 +49,8 @@ void     tsc_init(void);
  * intervallo davvero nullo. */
 uint32_t tsc_us(uint64_t cicli);
 
+/* Milliseconds, for waits of seconds: tsc_us stops at 2^32 cycles, about two
+ * seconds on a 2 GHz processor. Saturates near 49 days of nothing useful. */
+uint32_t tsc_ms(uint64_t cicli);
+
 #endif /* TSC_H */

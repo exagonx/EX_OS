@@ -151,6 +151,7 @@ int  smp_accendi_lavoro(void);
 void bkl_entra(void);               /* entrando nel kernel (dagli stub) */
 void bkl_esci(const void *frame);   /* uscendone: lo lascia se si torna in ring 3 */
 void bkl_lascia(void);              /* lo lascia e basta: i primi ingressi in ring 3 */
+void bkl_stato(uint32_t *coda, uint32_t *turno, uint32_t *chi);
 void bkl_ozio(void);                /* lo lascia chi sta per fermarsi con hlt */
 
 /* Cio' che smp_init() ha trovato. Mai NULL. */

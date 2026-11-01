@@ -32,6 +32,8 @@
 
 [BITS 64]
 extern isr64_gestisci
+extern bkl_entra
+extern bkl_esci
 
 %macro INGRESSO 1               ; senza codice d'errore
 global isr64_%1
@@ -77,8 +79,12 @@ comune:
     push r14
     push r15
     cld                         ; il C vuole DF a zero, chi e' stato interrotto no
+    call bkl_entra              ; several processors: one in the kernel (smp.h)
     mov  rdi, rsp               ; il primo argomento: InterruptFrame *
     call isr64_gestisci
+    cli                         ; nobody may enter from here to iretq
+    mov  rdi, rsp
+    call bkl_esci               ; the kernel is left when going back to ring 3
     pop  r15
     pop  r14
     pop  r13

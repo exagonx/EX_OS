@@ -209,10 +209,42 @@ attraversare le directory.
 Sola lettura, nel formato di Linux. I dati di un processo sono del suo
 utente e di root. Non e' sul disco e non si smonta.
 
+[dmesg]
+dmesg -segui [PAROLA]
+
+Avvisi ed errori del kernel man mano che arrivano. Dopo il primo giro non
+carica piu' niente dal disco, quindi scrive anche a disco fermo. Dal PC:
+tools/dmesg-pc.py [macchina] [file].
+
 [readlink]
 readlink /proc/self/exe
 
 Dove punta un collegamento. Gli unici sono exe, cwd e fd/N di /proc.
+
+[netupdate frammentato]
+kernel.new frammentato, "NON RIAVVIARE"
+
+Il settore di avvio regge un kernel in 12 pezzi al massimo. netupdate 0.039
+riscrive da solo kernel.new; se dice ancora NON RIAVVIARE non spegnere la
+macchina: il sistema di base puo' essersi spostato sotto la mappa vecchia.
+Libera spazio e rilancia netupdate -check. Con la 0.038 la scritta IL KERNEL
+E' CAMBIATO appariva anche quando non era vero: se dmesg ERROR dice
+"spezzato in piu' di 12 intervalli", prima aggiorna netupdate.
+
+[guardia]
+guardia 120     se nessuno richiama entro 120 secondi, riavvia (solo root)
+guardia 0       spenta
+
+Per le prove a distanza, in laboratorio. Il conto alla rovescia sta nel
+kernel, non nel programma: scatta anche a disco fermo o a rete caduta. Ogni
+chiamata lo fa ripartire da capo. Non si riaccende da solo all'avvio.
+
+! Il riavvio e' brusco: niente sync, i file aperti restano a meta' e al
+  giro dopo serve chkdsk. Se il kernel si blocca a interrupt spenti fuori dal
+  lucchetto del kernel il conto non viene controllato e non scatta.
+
+Dal PC: tools/guardia-pc.py [macchina] [secondi] [ogni]. Se lo fermi con
+Ctrl+C spegne la guardia.
 
 [grep]
 cerca righe in file, cartelle o da una pipe
@@ -580,8 +612,58 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 `system -load -check`. Dopo uno spegnimento brusco lo fa da solo
 l'avvio, prima di montarla.
 
+[problemi guasti]
+i guasti che si possono riparare da soli
+
+LA ISO A 64 BIT DA' SCHERMO NERO O DICE CHE IL PROCESSORE NON HA I 64 BIT.
+In VirtualBox la macchina virtuale e' di un tipo a 32 bit: scegli Other/Unknown
+(64-bit), attiva VT-x/AMD-V e dai almeno 512 MB. La stessa macchina va bene per
+la ISO a 32 bit, che parte anche su un tipo a 32 bit.
+
+IL DISCO E' IN SOLA LETTURA. `mount` dice "sola lettura" sulla radice e
+non si scrive niente, nemmeno da root. Non sono i permessi: la scrittura
+ext2/ext3/ext4 sta nel modulo /dev/ext4.mod, e il kernel non lo carica
+se non e' costruito per la sua stessa versione. Il motivo sta in `dmesg`:
+
+  dmesg | grep MODULO
+
+Il modulo giusto viaggia col kernel, nel sistema di base. Da root:
+
+  modulo carica /rdboot/dev/ext4.mod     il disco torna scrivibile, subito
+  cp /rdboot/dev/ext4.mod /dev/ext4.mod  rimette a posto quello del disco
+  netupdate -check -yes                  allinea il resto
+
+Dal kernel 0.293 il modulo di /rdboot si prende da solo all'avvio: il disco
+resta scrivibile e in `dmesg` c'e' un avviso; basta `netupdate -check -yes`.
+Se anche quello di /rdboot e' rifiutato: avvio dal CD della stessa versione
+del kernel, poi `mount hd0p1 /disk` e cp da /dev/ext4.mod a /disk/dev/.
+
+NETUPDATE DICE CHE NON C'E' NIENTE DA FARE, E IL FILE E' VECCHIO. Il
+registro /boot/netupdate.reg dice cosa la macchina crede di avere. Si butta,
+e il -check dopo lo riscrive rileggendo ogni file (qualche minuto):
+
+  delete /boot/netupdate.reg
+  netupdate -check -yes
+
+NETUPDATE: "NON SONO ARRIVATI". I file che non arrivano restano in coda:
+alla fine vengono elencati e netupdate chiede se riprovare. Con -yes riprova
+una volta da solo. Rispondendo no, quel che e' arrivato resta, e si
+riprende ridando lo stesso comando.
+
+DOPO install C'E' UN KERNEL VECCHIO. install copia quel che c'e' sul CD: da
+un CD vecchio si ha il sistema di quel CD. Il primo comando e' netupdate
+-check -yes, poi si riavvia.
+
+LO SCHERMO DI UN PORTATILE NVIDIA RESTA A 800x600. Il pannello nativo lo da'
+nv50.drv: hwconfig -d lo copia se trova la scheda, e hwconfig gli scrive il
+blocco in /boot/avvio.sh. A mano: nv50.drv -install, poi si riavvia.
+
 [install]
 installa EX-OS su un disco, o gli strumenti dal CD
+
+  Copia solo le directory del suo catalogo (bin boot dev drivers lib exwin
+  exos doc suono) e crea USB tmp mnt cdrom: mai /rdboot, /proc o altre unita'.
+  Proprietario e permessi li imposta lui, non vengono dal supporto.
 
   install /disco                   il sistema: riscrive tutto
   install -a /disco                aggiorna solo i file cambiati

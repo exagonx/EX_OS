@@ -448,8 +448,24 @@ void modulo_avvio(void)
     int r = modulo_carica("/dev/ext4.mod", 0);
 
     /* ! E DAL SISTEMA DI BASE (@RDBOOT) se la radice non ce l'ha: avviando
-     * dal floppy sulla radice ci sono solo il kernel e la configurazione. */
-    if (r == -2) r = modulo_carica("/rdboot/dev/ext4.mod", 0);
+     * dal floppy sulla radice ci sono solo il kernel e la configurazione.
+     *
+     * ! A MODULE THE KERNEL REFUSES COUNTS AS MISSING. rdboot travels with the
+     * kernel, so its copy matches; a stale /dev/ext4.mod must not cost the
+     * disk its writes (31 October 2026: kernel 0.291 and a 0.280 module on
+     * the disk, with the right one in /rdboot/dev, unused). */
+    if (r != 0) {
+        int b = modulo_carica("/rdboot/dev/ext4.mod", 0);
+
+        if (b == 0) {
+            if (r != -2)
+                klog(LOG_WARN, "MODULO: /dev/ext4.mod refused, using "
+                               "/rdboot/dev/ext4.mod. To replace the one on the "
+                               "disk: netupdate -check -yes");
+            return;
+        }
+        if (r == -2) r = b;
+    }
     if (r == 0) return;
     if (r == -2)
         klog(LOG_ERROR, "MODULO: /dev/ext4.mod is missing: ext2/ext3/ext4 disks "
@@ -457,6 +473,5 @@ void modulo_avvio(void)
                         "netupdate -check -yesall");
     else
         klog(LOG_ERROR, "MODULO: /dev/ext4.mod not loaded (%d): ext2/ext3/ext4 "
-                        "disks are READ-ONLY. Reinstall it from the CD or with "
-                        "netupdate (the reason is above)", -r);
+                        "disks are READ-ONLY (the reason is above). See `help problemi`", -r);
 }

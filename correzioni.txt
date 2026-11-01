@@ -11,3 +11,5 @@ una volta aggiunto viene rimosso da questo file.
 Questo file solo l'utente aggiunge istruzioni.
 ############################################################################################
 
+! il sistema che controlla data e ora tramite connessione internet se non ce connessione questo blocca il sistema bisogna mette un time out di 5 secondi che ne calso non trova connessione a internet  o un dns questo smette e non ferma l'intero sistema, e comunque dovrebbe operare come processo separato non in successione dove impedisce altri processi.
+

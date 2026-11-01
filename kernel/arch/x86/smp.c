@@ -57,11 +57,16 @@
 #include "pmm.h"
 #include "sched.h"      /* g_ticks */
 #include "gdt.h"        /* gdt_installa_cpu: la tappa 3 */
+#include "power.h"      /* guardia_controlla */
 
 /* ! UGUALE A SMP_TRAMP_BASE di smp_tramp.asm. E' la pagina 0x8000-0x8FFF, che
  * pmm_init tiene fuori dal giro perche' ci ha lavorato Stage 2: qui la si
  * prende in prestito e la si rimette com'era. */
 #define TRAMP_BASE          0x8000u
+
+#ifdef __x86_64__
+#define MSR_EFER            0xC0000080u
+#endif
 
 #define APIC_ID             0x020
 #define APIC_VERSIONE       0x030
@@ -100,12 +105,16 @@ extern uint8_t  smp_tramp_inizio[], smp_tramp_fine[];
 extern uint8_t  smp_tramp_gdt[], smp_tramp_idt[];
 extern uint32_t smp_tramp_cr0, smp_tramp_cr3, smp_tramp_cr4;
 extern uint32_t smp_tramp_esp, smp_tramp_entra;
+#ifdef __x86_64__
+extern uint32_t smp_tramp_efer;
+#else
 extern void     smp_spurio(void);
 extern void     smp_isr_battito(void);
 extern void     smp_isr_messaggio(void);
+#endif
 
 static SmpInfo           g_smp;
-static volatile uint32_t g_apic;            /* indirizzo dell'APIC locale mappato */
+static volatile uintptr_t g_apic;           /* indirizzo dell'APIC locale mappato */
 static volatile uint32_t g_ap_risposto;     /* lo alza il processore svegliato */
 static SmpCpu           *g_ap_voce;         /* la voce di quello in corso d'avvio */
 static uint8_t           g_voce_di[256];    /* numero dell'APIC -> indice in g_smp.cpu */
@@ -129,7 +138,7 @@ static void fis_copia(uint32_t fis, void *dove, uint32_t n)
         uint32_t quanti    = n < in_pagina ? n : in_pagina, i;
 
         if (fis + quanti <= 0x100000u) {
-            const uint8_t *s = (const uint8_t *)fis;
+            const uint8_t *s = (const uint8_t *)(uintptr_t)fis;
             for (i = 0; i < quanti; i++) d[i] = s[i];
         } else {
             const uint8_t *s = (const uint8_t *)paging_finestra_apri(fis);
@@ -159,7 +168,7 @@ static uint8_t fis_somma(uint32_t fis, uint32_t n)
  * sembra un accesso fuori da ogni oggetto, e lo dice a ogni riga. */
 static void *bassa(uint32_t indirizzo)
 {
-    volatile uint32_t a = indirizzo;
+    volatile uintptr_t a = indirizzo;
 
     return (void *)a;
 }
@@ -185,7 +194,7 @@ static uint32_t cerca_firma(uint32_t da, uint32_t a, const char *firma, uint32_t
 
     if (da == 0 || a > 0x100000u || da >= a) return 0;
     for (p = da & ~15u; p + 16 <= a; p += 16)
-        if (uguali((const uint8_t *)p, firma, lung)) return p;
+        if (uguali((const uint8_t *)(uintptr_t)p, firma, lung)) return p;
     return 0;
 }
 
@@ -266,7 +275,7 @@ static int da_acpi(void)
     rsdp = cerca_nel_bios("RSD PTR ", 8, 0xE0000u, rsdp_valido);
     if (rsdp == 0) return 0;
 
-    rsdt = le32((const uint8_t *)rsdp + 16);
+    rsdt = le32((const uint8_t *)(uintptr_t)rsdp + 16);
     if (rsdt == 0) return 0;
     fis_copia(rsdt, t, 36);
     lung = le32(t + 4);
@@ -321,7 +330,7 @@ static int da_acpi(void)
 
 static int mp_valido(uint32_t p)
 {
-    const uint8_t *f = (const uint8_t *)p;
+    const uint8_t *f = (const uint8_t *)(uintptr_t)p;
 
     return f[8] == 1 && fis_somma(p, 16) == 0;
 }
@@ -334,7 +343,7 @@ static int da_mp(void)
 
     fp = cerca_nel_bios("_MP_", 4, 0xF0000u, mp_valido);
     if (fp == 0) return 0;
-    f = (const uint8_t *)fp;
+    f = (const uint8_t *)(uintptr_t)fp;
 
     elenco_vuoto();
 
@@ -443,6 +452,7 @@ static SmpCpu *io_sono(void)
     return &g_smp.cpu[g_voce_di[apic_leggi(APIC_ID) >> 24]];
 }
 
+#ifndef __x86_64__
 void smp_ap_battito(void)
 {
     io_sono()->battiti++;
@@ -454,6 +464,7 @@ void smp_ap_messaggio(void)
     io_sono()->messaggi++;
     apic_scrivi(APIC_FATTO, 0);
 }
+#endif
 
 /* =============================================================================
  * Il lucchetto del kernel (tappa 3): la regola sta in smp.h
@@ -480,7 +491,8 @@ static volatile uint8_t  g_bkl_tiene[SMP_CPU_MAX];
 
 void bkl_entra(void)
 {
-    uint32_t n, eflags;
+    uintptr_t eflags;
+    uint32_t n;
 
     if (!g_smp_lavora) return;
     __asm__ volatile ("pushf; pop %0; cli" : "=r"(eflags));
@@ -488,7 +500,10 @@ void bkl_entra(void)
     if (!g_bkl_tiene[n]) {
         uint32_t mio = __sync_fetch_and_add(&g_bkl_coda, 1);
 
-        while (g_bkl_turno != mio) __asm__ volatile ("pause");
+        while (g_bkl_turno != mio) {
+            __asm__ volatile ("pause");
+            guardia_controlla();    /* a kernel stuck on this lock stops the timer */
+        }
         g_bkl_tiene[n] = 1;
     }
     if (eflags & 0x200u) __asm__ volatile ("sti");
@@ -496,7 +511,8 @@ void bkl_entra(void)
 
 void bkl_lascia(void)
 {
-    uint32_t n, eflags;
+    uintptr_t eflags;
+    uint32_t n;
 
     if (!g_smp_lavora) return;
     __asm__ volatile ("pushf; pop %0; cli" : "=r"(eflags));
@@ -509,6 +525,15 @@ void bkl_lascia(void)
 }
 
 void bkl_ozio(void) { bkl_lascia(); }
+
+/* For sched_sonda: reads only, from a machine that may be stuck. */
+void bkl_stato(uint32_t *coda, uint32_t *turno, uint32_t *chi)
+{
+    uint32_t i, m = 0;
+
+    for (i = 0; i < SMP_CPU_MAX; i++) if (g_bkl_tiene[i]) m |= 1u << i;
+    *coda = g_bkl_coda; *turno = g_bkl_turno; *chi = m;
+}
 
 /* All'uscita da ogni gestore, a interrupt spenti (lo stub ha fatto cli e
  * restano spenti fino a iret). Se si torna in ring 3: prima si guarda se
@@ -527,7 +552,7 @@ void bkl_esci(const void *frame)
  * del suo ozio, per voce di g_smp.cpu. */
 static uint32_t          g_lavorano = 0;
 static volatile uint32_t g_ordine_n[SMP_CPU_MAX], g_ordine_pila[SMP_CPU_MAX];
-extern void smp_ap_salta(uint32_t pila, uint32_t funzione);
+extern void smp_ap_salta(uintptr_t pila, uintptr_t funzione);
 
 /* Timer e messaggi di un processore in piu', dagli stub di isr_stubs.asm:
  * possono arrivare mentre gira un programma, quindi col telaio intero e il
@@ -558,7 +583,7 @@ void smp_ap_irq(InterruptFrame *f)
             gdt_installa_cpu(g_ordine_n[i]);
             __asm__ volatile ("fninit");
             io->stato = SMP_CPU_LAVORA;
-            smp_ap_salta(g_ordine_pila[i], (uint32_t)sched_cpu_entra);
+            smp_ap_salta(g_ordine_pila[i], (uintptr_t)sched_cpu_entra);
         }
     }
 }
@@ -611,7 +636,7 @@ static void smp_ap_entra(void)
         __asm__ volatile ("fninit");
         g_ap_voce->stato = SMP_CPU_LAVORA;
         g_ap_risposto = 1;
-        smp_ap_salta(pila, (uint32_t)sched_cpu_entra);
+        smp_ap_salta(pila, (uintptr_t)sched_cpu_entra);
     }
     g_ap_risposto = 1;
 
@@ -671,7 +696,7 @@ static int sveglia(SmpCpu *c, uint32_t pila)
 
     g_ap_voce     = c;
     g_ap_risposto = 0;
-    *(uint32_t *)(TRAMP_BASE + ((uint8_t *)&smp_tramp_esp - smp_tramp_inizio)) =
+    *(uint32_t *)((uintptr_t)TRAMP_BASE + ((uint8_t *)&smp_tramp_esp - smp_tramp_inizio)) =
         pila + PAGE_SIZE;
 
     if (integrato) { apic_scrivi(APIC_ERRORI, 0); (void)apic_leggi(APIC_ERRORI); }
@@ -703,17 +728,27 @@ static int sveglia(SmpCpu *c, uint32_t pila)
 static void trampolino_prepara(void)
 {
     uint32_t lung = (uint32_t)(smp_tramp_fine - smp_tramp_inizio), i;
-    uint8_t *dove = (uint8_t *)TRAMP_BASE;
-#define NELLA_COPIA(x) (TRAMP_BASE + (uint32_t)((uint8_t *)(x) - smp_tramp_inizio))
+    uint8_t *dove = (uint8_t *)bassa(TRAMP_BASE);
+#define NELLA_COPIA(x) ((uintptr_t)TRAMP_BASE + (uintptr_t)((uint8_t *)(x) - smp_tramp_inizio))
 
     for (i = 0; i < lung; i++) dove[i] = smp_tramp_inizio[i];
 
     __asm__ volatile ("sgdt (%0)" : : "r"(NELLA_COPIA(smp_tramp_gdt)) : "memory");
     __asm__ volatile ("sidt (%0)" : : "r"(NELLA_COPIA(smp_tramp_idt)) : "memory");
     *(uint32_t *)NELLA_COPIA(&smp_tramp_cr0)   = read_cr0();
-    *(uint32_t *)NELLA_COPIA(&smp_tramp_cr3)   = (uint32_t)paging_get_kernel_directory();
+    *(uint32_t *)NELLA_COPIA(&smp_tramp_cr3)   = (uint32_t)(uintptr_t)paging_get_kernel_directory();
     *(uint32_t *)NELLA_COPIA(&smp_tramp_cr4)   = read_cr4();
-    *(uint32_t *)NELLA_COPIA(&smp_tramp_entra) = (uint32_t)smp_ap_entra;
+    *(uint32_t *)NELLA_COPIA(&smp_tramp_entra) = (uint32_t)(uintptr_t)smp_ap_entra;
+#ifdef __x86_64__
+    {
+        uint32_t basso, alto;
+
+        __asm__ volatile ("rdmsr" : "=a"(basso), "=d"(alto) : "c"(MSR_EFER));
+        (void)alto;
+        /* LMA is set by the processor itself: only what it can be told. */
+        *(uint32_t *)NELLA_COPIA(&smp_tramp_efer) = basso & ~(1u << 10);
+    }
+#endif
 #undef NELLA_COPIA
 }
 
@@ -851,7 +886,7 @@ void smp_init(int accendi)
      * condivide, quindi da qui in poi lo si raggiunge da qualunque processo e
      * da ogni processore. Vedi PAGING_APIC_VIRT in paging.h. */
     if (g_smp.n >= 2 && accendi && g_smp.motivo == SMP_MOTIVO_NESSUNO) {
-        g_apic = (uint32_t)paging_mappa_apic(g_smp.apic_locale);
+        g_apic = (uintptr_t)paging_mappa_apic(g_smp.apic_locale);
         mio    = apic_leggi(APIC_ID) >> 24;
     }
 
@@ -876,12 +911,14 @@ void smp_init(int accendi)
     /* L'APIC di questo processore deve essere acceso per spedire. Il vettore
      * degli interrupt spuri punta a un `iret`: non ne devono arrivare, ma se
      * ne arrivasse uno senza voce nella IDT sarebbe un doppio fault. */
+#ifndef __x86_64__
     idt_set_gate(VETTORE_SPURIO,    (uint32_t)smp_spurio,        0x08, 0x8E);
     /* Gli stub col telaio intero e il lucchetto (isr_stubs.asm): servono da
      * quando un processore in piu' puo' essere in ring 3 all'arrivo del suo
      * timer. Per uno parcheggiato fanno lo stesso lavoro di prima. */
     idt_set_gate(VETTORE_BATTITO,   (uint32_t)smp_irq_battito,   0x08, 0x8E);
     idt_set_gate(VETTORE_MESSAGGIO, (uint32_t)smp_irq_messaggio, 0x08, 0x8E);
+#endif  /* at 64 bit every vector already has its entry: idt64.c */
     apic_scrivi(APIC_SPURIO, APIC_SPURIO_ACCESO | VETTORE_SPURIO);
 
     for (i = 0; i < g_smp.n; i++) g_voce_di[g_smp.cpu[i].apic_id] = (uint8_t)i;
@@ -890,7 +927,7 @@ void smp_init(int accendi)
         klog(LOG_WARN, "SMP: il timer dell'APIC locale non conta: i processori "
                        "in piu' restano senza il loro timer");
 
-    for (i = 0; i < PAGE_SIZE; i++) salvata[i] = ((uint8_t *)TRAMP_BASE)[i];
+    for (i = 0; i < PAGE_SIZE; i++) salvata[i] = ((uint8_t *)bassa(TRAMP_BASE))[i];
     trampolino_prepara();
 
     port_outb(0x70, 0x0F); io_delay();
@@ -938,7 +975,7 @@ void smp_init(int accendi)
      * muto che partisse piu' tardi troverebbe al suo posto i dati di prima, e
      * li eseguirebbe. */
     if (g_smp.fermi + 1 == g_smp.n)
-        for (i = 0; i < PAGE_SIZE; i++) ((uint8_t *)TRAMP_BASE)[i] = salvata[i];
+        for (i = 0; i < PAGE_SIZE; i++) ((uint8_t *)bassa(TRAMP_BASE))[i] = salvata[i];
 
     /* ! IL LUCCHETTO SI ACCENDE QUI, CON IL KERNEL GIA' «PRESO» DA CHI SCRIVE:
      * questo processore e' dentro il kernel in questo momento, e lo lascera'

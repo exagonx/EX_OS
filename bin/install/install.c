@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.010");
+EX_VERSIONE("install", "0.012");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -532,36 +532,60 @@ static void copia_albero(const char *sorgente, const char *punto,
 }
 
 /* =============================================================================
- * I COMPONENTI OPZIONALI — e perche' NON sono un elenco dentro l'installatore
+ * I COMPONENTI OPZIONALI
  *
- * ! IL SISTEMA MINIMALE E' UN ELENCO CHIUSO; TUTTO IL RESTO E' OPZIONALE. Le
- * directory qui sotto sono cio' senza cui EX-OS non parte: kernel, programmi
- * di base, librerie, driver. Qualunque ALTRA directory trovata nella radice
- * del supporto di avvio e' un componente che si puo' installare o no, e
- * l'installatore la mostra e la chiede.
- *
- * E' il contrario di un elenco scritto qui dentro: aggiungere un pacchetto
- * nuovo — oggi /exwin, domani quello che sara' — vuol dire metterne la
- * directory sul supporto, e basta. CHI PREPARA UN PACCHETTO NON HA I SORGENTI
- * DELL'INSTALLATORE, ed e' la stessa ragione per cui l'elenco delle
- * applicazioni grafiche e' un file di testo e non una tabella compilata.
- *
- * ! I PUNTI DI MONTAGGIO NON SONO COMPONENTI. /cdrom non e' roba da copiare:
- * e' un altro disco visto da qui, e proporlo vorrebbe dire offrire di
- * installare il CD dentro il disco.
+ * Fino a install 0.011 componente era qualunque directory trovata nella radice
+ * del supporto, e /rdboot, che e' un'unita' e non una directory, finiva
+ * copiato sul disco. Dalla 0.012 si guarda il CATALOGO qui sotto e basta: un
+ * componente nuovo si aggiunge li'.
  * ============================================================================= */
 #define COMPONENTI_MAX  16
 
-static const char *const DIR_SISTEMA[] = {
-    "bin", "boot", "lib", "dev", "drivers"
-};
+/* -----------------------------------------------------------------------------
+ * THE CATALOGUE: every directory of an installed system, with its mode.
+ *
+ * ! install NEVER walks the root of the medium to decide what to copy. The root
+ * of a running system also holds units (/rdboot, /proc, /cdrom, the target),
+ * and they are not ours to copy. What is not in this table does not exist for
+ * install. A new top-level directory of the system goes here.
+ *
+ * ! THE MODE COMES FROM HERE, NEVER FROM THE MEDIUM: nothing read from a CD, a
+ * floppy, a USB key or the network reaches the disk but the bytes of the files.
+ *
+ *   CAT_SISTEMA    copied by the system steps, always
+ *   CAT_COMPONENTE optional: shown and asked, copied if on the medium
+ *   CAT_VUOTA      created empty on the disk, nothing copied into it
+ *
+ * CAT_ALBERO: applica_criteri() also resets what is inside. Not for /boot and
+ * the empty ones: those hold the accounts, kernel.cfg, the user's files.
+ * --------------------------------------------------------------------------- */
+#define CAT_SISTEMA     1
+#define CAT_COMPONENTE  2
+#define CAT_VUOTA       3
 
-/* ! QUESTO ELENCO E' UN AIUTO, NON LA DIFESA. I nomi qui dentro sono quelli
- * che di solito NON sono componenti; ma il punto di montaggio lo sceglie chi
- * installa, e indovinarne il nome non funziona — vedi bersaglio_da_saltare(). */
-static const char *const DIR_NON_COMPONENTI[] = {
-    "cdrom", "tmp", "mnt", "disk", "home", "lost+found"
+#define CAT_ALBERO      1
+
+static const struct {
+    const char *nome;
+    int         tipo;
+    int         albero;
+    mode_t      modo;
+} CATALOGO[] = {
+    { "bin",     CAT_SISTEMA,    CAT_ALBERO, 0755 },
+    { "boot",    CAT_SISTEMA,    0,          0755 },
+    { "dev",     CAT_SISTEMA,    CAT_ALBERO, 0755 },
+    { "drivers", CAT_SISTEMA,    CAT_ALBERO, 0755 },
+    { "lib",     CAT_SISTEMA,    CAT_ALBERO, 0755 },
+    { "exwin",   CAT_COMPONENTE, CAT_ALBERO, 0755 },
+    { "exos",    CAT_COMPONENTE, CAT_ALBERO, 0755 },
+    { "doc",     CAT_COMPONENTE, CAT_ALBERO, 0755 },
+    { "suono",   CAT_COMPONENTE, CAT_ALBERO, 0755 },
+    { "USB",     CAT_VUOTA,      0,          0755 },
+    { "tmp",     CAT_VUOTA,      0,         01777 },
+    { "mnt",     CAT_VUOTA,      0,          0755 },
+    { "cdrom",   CAT_VUOTA,      0,          0755 }
 };
+#define CATALOGO_N ((int)(sizeof CATALOGO / sizeof CATALOGO[0]))
 
 typedef struct {
     char nome[DIRENT_NAME_MAX];
@@ -570,14 +594,6 @@ typedef struct {
 
 static Componente g_comp[COMPONENTI_MAX];
 static int        g_n_comp = 0;
-
-static int in_elenco(const char *nome, const char *const *elenco, int quanti)
-{
-    int i;
-    for (i = 0; i < quanti; i++)
-        if (strcmp(nome, elenco[i]) == 0) return 1;
-    return 0;
-}
 
 /* =============================================================================
  * ! IL BERSAGLIO NON E' UN COMPONENTE DI SE STESSO
@@ -619,38 +635,25 @@ static void bersaglio_da_saltare(const char *punto, char *out, unsigned int max)
 
 static int cerca_componenti(const char *punto)
 {
-    DirEntry v[32];
-    char     salta[DIRENT_NAME_MAX];
-    int start = 0, n, i;
+    char salta[DIRENT_NAME_MAX];
+    int  i;
 
     g_n_comp = 0;
     bersaglio_da_saltare(punto, salta, sizeof(salta));
 
-    while ((n = listdir_from("/", v, 32, start)) > 0) {
-        for (i = 0; i < n && g_n_comp < COMPONENTI_MAX; i++) {
-            char nome[DIRENT_NAME_MAX];
+    for (i = 0; i < CATALOGO_N && g_n_comp < COMPONENTI_MAX; i++) {
+        char     sorgente[PERC_MAX];
+        DirEntry v[1];
 
-            if (!v[i].is_dir) continue;
-            if (v[i].name[0] == '.') continue;
+        if (CATALOGO[i].tipo != CAT_COMPONENTE) continue;
+        if (salta[0] && strcmp(CATALOGO[i].nome, salta) == 0) continue;
 
-            strncpy(nome, v[i].name, DIRENT_NAME_MAX - 1);
-            nome[DIRENT_NAME_MAX - 1] = '\0';
-            minuscolo(nome);
+        unisci(sorgente, "/", CATALOGO[i].nome);
+        if (listdir_from(sorgente, v, 1, 0) < 0) continue;   /* not on this medium */
 
-            if (in_elenco(nome, DIR_SISTEMA,
-                          (int)(sizeof DIR_SISTEMA / sizeof DIR_SISTEMA[0]))) continue;
-            if (in_elenco(nome, DIR_NON_COMPONENTI,
-                          (int)(sizeof DIR_NON_COMPONENTI / sizeof DIR_NON_COMPONENTI[0]))) continue;
-
-            /* Il punto in cui stiamo installando: vedi sopra. */
-            if (salta[0] && strcmp(nome, salta) == 0) continue;
-
-            strcpy(g_comp[g_n_comp].nome, nome);
-            g_comp[g_n_comp].installa = 0;
-            g_n_comp++;
-        }
-        start += n;
-        if (n < 32) break;
+        strcpy(g_comp[g_n_comp].nome, CATALOGO[i].nome);
+        g_comp[g_n_comp].installa = 0;
+        g_n_comp++;
     }
     return g_n_comp;
 }
@@ -1017,6 +1020,101 @@ static void copia_dir_filtrata(const char *sorgente, const char *punto,
 static void copia_dir(const char *sorgente, const char *punto, const char *dest)
 {
     copia_dir_filtrata(sorgente, punto, dest, 0);
+}
+
+/* -----------------------------------------------------------------------------
+ * applica_criteri - the disk gets the modes of the system, whatever path each
+ * file took to get there (first install, -a, driver choice, components).
+ *
+ * Owner root everywhere in the tree; 0755 on directories and on what is run,
+ * 0644 on the rest. On FAT chown says ENOSYS and chmod does nothing: no error.
+ * --------------------------------------------------------------------------- */
+static void criterio(const char *p, mode_t modo)
+{
+    /* EROFS: installing on / from itself, the entry is a mounted CD */
+    if (chmod(p, modo) != 0 && errno != ENOSYS && errno != EROFS) {
+        printf("  ! %s: %s\n", p, strerror(errno));
+        errori++;
+    }
+    if (chown(p, 0, 0) != 0 && errno != ENOSYS && errno != EROFS) {
+        printf("  ! %s: %s\n", p, strerror(errno));
+        errori++;
+    }
+}
+
+static int contiene_programmi(const char *dir)
+{
+    return finisce_con(dir, "/bin") || finisce_con(dir, "/dev") ||
+           finisce_con(dir, "/drivers");
+}
+
+static void criteri_albero(const char *dir, int livello)
+{
+    DirEntry voci[LISTDIR_MAX_BATCH];
+    unsigned int start = 0;
+    int n;
+
+    while ((n = listdir_from(dir, voci, LISTDIR_MAX_BATCH, start)) > 0) {
+        int i;
+        for (i = 0; i < n; i++) {
+            char a[PERC_MAX];
+
+            if (strcmp(voci[i].name, ".") == 0 ||
+                strcmp(voci[i].name, "..") == 0) continue;
+            unisci(a, dir, voci[i].name);
+
+            if (voci[i].is_dir) {
+                criterio(a, 0755);
+                if (livello + 1 < ALBERO_LIVELLI_MAX)
+                    criteri_albero(a, livello + 1);
+            } else {
+                criterio(a, contiene_programmi(dir) ? 0755 : 0644);
+            }
+        }
+        start += (unsigned int)n;
+        if (n < LISTDIR_MAX_BATCH) break;
+    }
+}
+
+static void applica_criteri(const char *punto)
+{
+    int i;
+
+    printf("\nDirectory e attributi del sistema\n");
+    for (i = 0; i < CATALOGO_N; i++) {
+        char p[PERC_MAX];
+
+        unisci(p, punto, CATALOGO[i].nome);
+        if (CATALOGO[i].tipo == CAT_VUOTA) crea_dir(p);
+        else if (access(p, F_OK) != 0)     continue;    /* component not chosen */
+
+        criterio(p, CATALOGO[i].modo);
+        if (CATALOGO[i].albero) criteri_albero(p, 0);
+    }
+}
+
+/* -----------------------------------------------------------------------------
+ * installa_modulo - /dev/ext4.mod of the disk is the one of THIS kernel.
+ *
+ * ! Without it the disk comes up READ-ONLY, so it is written LAST: nothing that
+ * copies /dev can bring an older one back, and /rdboot/dev/ext4.mod comes first
+ * because it was built with the kernel that is running. The kernel we are
+ * installing is this one. /dev/ext4.mod of the medium is only the fallback.
+ * --------------------------------------------------------------------------- */
+static void installa_modulo(const char *punto)
+{
+    char m[PERC_MAX];
+
+    unisci(m, punto, "dev");
+    crea_dir(m);
+    unisci(m, m, "ext4.mod");
+
+    if (copia("/rdboot/dev/ext4.mod", m) >= 0) return;
+    if (copia("/dev/ext4.mod", m) >= 0) return;
+
+    printf("\n  ! ext4.mod non c'e' su questo supporto: il disco partira' in\n");
+    printf("    SOLA LETTURA finche' non lo si copia in /dev (vedi help problemi).\n");
+    errori++;
 }
 
 /* =============================================================================
@@ -2129,24 +2227,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* ! IL MODULO VA COL KERNEL (kernel 0.263). /dev/ext4.mod e' la
-     * scrittura di ext2, costruita per QUEL kernel: un kernel nuovo con il
-     * modulo vecchio lo rifiuta, e il disco parte in sola lettura. Si copia
-     * qui, subito dopo il kernel, anche aggiornando: il resto di /dev passa
-     * dalla scelta dei driver, che un modulo non lo conosce. */
-    {
-        char m[PERC_MAX];
-
-        unisci(m, argv[1], "dev");
-        crea_dir(m);
-        unisci(m, m, "ext4.mod");
-        if (copia("/dev/ext4.mod", m) < 0) {
-            printf("\n  ! /dev/ext4.mod non c'e' su questo supporto: il disco\n");
-            printf("    partira' in SOLA LETTURA finche' non lo si copia in /dev\n");
-            printf("    (dal CD, o con netupdate -check -yesall).\n");
-        }
-    }
-
     /* kernel.cfg: se manca si installa, se c'e' si FONDE. Il perche' della
      * fusione — e perche' «lo lascio com'e'» non bastava — sta tutto sopra
      * aggiorna_kernel_cfg(). */
@@ -2230,6 +2310,10 @@ int main(int argc, char **argv)
      * a mancare dev'essere /exwin, non /bin. Un sistema senza applicazioni
      * grafiche parte; un sistema senza /bin no. */
     installa_componenti(argv[1], aggiorna);
+
+    /* Last two, in this order: see above each of them. */
+    installa_modulo(argv[1]);
+    applica_criteri(argv[1]);
 
     /* =====================================================================
      * 2b. GLI UTENTI — solo su ext2, e solo perche' solo li' hanno senso

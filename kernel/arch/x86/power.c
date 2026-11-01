@@ -57,6 +57,8 @@
 #include "fat12.h"
 #include "power.h"
 #include "acpi.h"
+#include "tsc.h"
+#include "smp.h"
 
 /* =============================================================================
  * Porte di spegnimento degli ambienti virtualizzati.
@@ -248,11 +250,57 @@ static void attesa_us(uint32_t us)
     while (us--) port_outb(0x80, 0);
 }
 
+/* ! IT ONLY COUNTS ON THE BOOT PROCESSOR: the TSCs of two cores need not agree,
+ * so the system call leaves the seconds here and that processor turns them into
+ * a deadline. It looks from the timer and from the wait for the kernel lock,
+ * because a kernel stuck on that lock stops the timer's handler too. */
+static volatile uint32_t g_guardia_chiesti = 0;     /* 1 = a new request */
+static volatile uint32_t g_guardia_s       = 0;
+static uint64_t          g_guardia_scade   = 0;     /* 0 = off */
+/* Half and three quarters of the way with no call, sched_sonda writes who
+ * holds what: two readings tell a stopped machine from a very slow one. */
+static uint64_t          g_guardia_sonda[2];
+
+int guardia_imposta(uint32_t secondi)
+{
+    if (!tsc_c_e() || tsc_hz() == 0) return -1;
+    g_guardia_s       = secondi;
+    g_guardia_chiesti = 1;
+    return 0;
+}
+
+void guardia_controlla(void)
+{
+    if (cpu_n() != 0) return;
+    if (g_guardia_chiesti) {
+        g_guardia_scade   = g_guardia_s
+                          ? tsc_leggi() + (uint64_t)tsc_hz() * g_guardia_s : 0;
+        g_guardia_sonda[0] = g_guardia_sonda[1] = 0;
+        if (g_guardia_scade) {
+            uint64_t tutto = (uint64_t)tsc_hz() * g_guardia_s;
+
+            g_guardia_sonda[0] = g_guardia_scade - (tutto >> 1);
+            g_guardia_sonda[1] = g_guardia_scade - (tutto >> 2);
+        }
+        g_guardia_chiesti = 0;
+    }
+    if (g_guardia_sonda[0] != 0 && tsc_leggi() > g_guardia_sonda[0]) {
+        g_guardia_sonda[0] = 0;
+        sched_sonda();
+    }
+    if (g_guardia_sonda[1] != 0 && tsc_leggi() > g_guardia_sonda[1]) {
+        g_guardia_sonda[1] = 0;
+        sched_sonda();
+    }
+    if (g_guardia_scade != 0 && tsc_leggi() > g_guardia_scade) {
+        g_guardia_scade = 0;
+        kprintf("\n  guardia: nessuna chiamata in tempo, riavvio\n");
+        power_reset_ora();
+    }
+}
+
 void power_reboot(void)
 {
-    uint32_t timeout;
-    int      i;
-
     interrupts_enable();
 
     vga_setcolor(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
@@ -261,6 +309,16 @@ void power_reboot(void)
 
     power_sync();
     sched_stop();
+
+    power_reset_ora();
+}
+
+/* The reset alone: no sync and no scheduler. ata_prova_ahci needs it after a
+ * failed comparison, when nothing may be written to the disk any more. */
+void power_reset_ora(void)
+{
+    uint32_t timeout;
+    int      i;
 
     interrupts_disable();
 

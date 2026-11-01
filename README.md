@@ -111,6 +111,29 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### A stale module no longer locks the disk; netupdate retries (kernel 0.293, netupdate 0.038, install 0.011, hwconfig 0.009, nv50.drv 0.009) — tested in QEMU, to be tested on real hardware
+
+A laptop installed from an older CD and updated with netupdate came back with **the whole disk read-only**: `mount` said so, even for root. It was not the permissions. Writing ext2/3/4 lives in `/dev/ext4.mod`, the kernel loads it only if it was built for that same kernel, and netupdate had replaced everything but that file: the old and the new one were both 40920 bytes, and the register was written trusting the size. Fixed:
+
+- **64-bit ISO on a CPU without long mode: it now says so on screen.** The screen used to stay black with the message on the serial port only: it happens in VirtualBox with a 32-bit VM type. Fix: type Other/Unknown (64-bit) with VT-x/AMD-V enabled.
+- **`install` no longer copies what it finds, it follows a catalogue (install 0.012).** The system directories, with their attributes, are a list inside `install`: /rdboot, /proc, /cdrom and any other unit are never copied, from any medium. Nothing from the medium reaches the disk but file contents: at the end `install` sets owner and modes of the whole system, and /tmp is created 1777. `/dev/ext4.mod` is written last and taken from /rdboot, so it always matches the kernel being installed: a mismatch is what sends the disk read-only. A new system directory must be added to the catalogue.
+- **The kernel** takes `/rdboot/dev/ext4.mod` when the disk's module is refused, not only when it is missing.
+- **netupdate** writes a hash in the register only after reading the file, and always checks the essential files on the disk; a register that lies repairs itself. The first `-check` without a register rereads every file and can take minutes.
+- **netupdate** keeps the files that did not arrive in a queue, lists them at the end and asks whether to retry (with `-yes`, one round by itself).
+- **install** no longer copies `/rdboot` and `/proc`: they exist only in memory.
+- **`nv50.drv -i`** answers `hwconfig -d`, which never copied it before, and **hwconfig** writes its block in `/boot/avvio.sh`.
+
+**If your disk is read-only**, as root:
+
+```
+dmesg | grep MODULO                      # the reason
+modulo carica /rdboot/dev/ext4.mod       # writable again, at once
+cp /rdboot/dev/ext4.mod /dev/ext4.mod    # puts the disk's copy right
+netupdate -check -yes                    # brings the rest in line
+```
+
+From 0.293 only the last line is needed. If netupdate says there is nothing to do while a file is old: `delete /boot/netupdate.reg`, then `netupdate -check -yes`. All of this is in `help problemi`, on the machine itself.
+
 ### ext3 and ext4 in the tools too (kernel 0.292, mkfs 0.002, chkdsk 0.003) — tested in QEMU, to be tested on real hardware
 
 The kernel read and wrote ext3 and ext4 already; the tools did not know them. Now:
@@ -1389,7 +1412,32 @@ disk twice (IDE registers and AHCI, like the NVIDIA MCP73 of the test PC,
 where only PIO works through the IDE registers) the system starts as always
 and moves to AHCI afterwards: with `ahci = 1` in `/boot/kernel.cfg` at every
 boot, or with the command `ahci` for the current session only, which is the
-way to try it without risk. `ahci -m FILE` measures how many KB/s a file is
+way to try it without risk. `ahci -t` is the same pass with a reset of the
+controller, as Linux does on the MCP77: it reads samples through IDE, passes,
+reads them again through AHCI and, if anything differs, reboots after 60
+seconds without writing to the disk; it also takes the DVD reader away until
+the next boot. After it `ahci -s` writes `ahci = 2`, the same pass at every
+boot. On the MCP77 laptop reads went from 5.3 to 76 MB/s, but under load the disk
+once stopped answering (see `in_lavorazione.txt`, voce 58): not proven safe yet.
+
+Since kernel 0.299 `guardia SECONDS` resets the machine unless it is called
+again in time, and `guardia 0` turns it off: it is for remote tests on a real
+PC that a fault would leave stuck. The countdown lives in the kernel, so it
+fires with the disk stopped or the network down too; the reset does no sync.
+From the PC `tools/guardia-pc.py` keeps it alive, one call every 30 seconds
+against a margin of 120. At half and three quarters of the time the kernel logs
+who holds the locks. `dmesg -segui` shows warnings and errors as they come, and
+`tools/prova_carico_pc.py` runs a remote disk load test in a single session,
+because telnetd serves one at a time. Since 0.300 AHCI timeouts last as long as
+stated: they used to run out after about 2 seconds, and fired falsely when the
+thread stopped. netupdate 0.039 rewrites a fragmented kernel and no longer says
+to reboot when the boot map was not updated.
+
+Since kernel 0.297 the 64-bit system wakes the extra processors too, as the
+32-bit one does: `smpprova -accendi` puts them to work until the next reboot,
+`smp = 2` in `/boot/kernel.cfg` at every boot. Programs run on all of them;
+inside the kernel there is one processor at a time, and two threads of the
+same program do not run together yet. `ahci -m FILE` measures how many KB/s a file is
 read at. Confirmed on the real PC on 9 October, at the third attempt: the
 disk moves to AHCI and the 35 MB of `cc1` are read at 59 MB/s, against about
 3.4 MB/s in PIO. On that controller the port had never been used in AHCI:

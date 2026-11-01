@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.037");
+EX_VERSIONE("netupdate", "0.039");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -806,6 +806,11 @@ static int comando_registro_uno(const char *id)
  * dimensione che l'elenco dichiara. Se la dimensione non combacia il file c'e'
  * ma non e' quello: si scrive «-», che vuol dire «non lo so». Un registro che
  * dicesse un'impronta non verificata mentirebbe, e `-check` gli crederebbe.
+ *
+ * ! The reason above expired with the incremental SHA-256, and the size proved
+ * not to be enough: on 30 October 2026 ext4.mod for 0.280 and for 0.291 were
+ * both 40920 bytes, the register took the new hash for the old file, -check
+ * skipped it and the kernel left the disk read-only. See file_del_pacchetto.
  * ============================================================================= */
 static void unisci(char *out, int max, const char *a, const char *b)
 {
@@ -916,6 +921,8 @@ static int esiste(const char *percorso, long *dim)
  * tenere in memoria millecinquecento righe per raggrupparle, e su EX-OS la
  * memoria non torna indietro. Un file di centoquaranta kilobyte letto otto
  * volte e' meno di un megabyte di letture. */
+static const char *registro_impronta(const char *percorso);
+
 static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
                                long *mancano, long *diversi)
 {
@@ -929,6 +936,7 @@ static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
         char *p, *sbyte, *impronta, *pac, *t;
         char  assoluto[PERC_MAX];
         long  dim = 0;
+        int   uguale;
 
         if (riga[0] == '#') continue;
 
@@ -944,7 +952,19 @@ static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
         unisci(assoluto, sizeof(assoluto), "/", p);
         if (!esiste(assoluto, &dim)) { (*mancano)++; continue; }
 
-        if (dim != atol(sbyte)) {
+        /* The register's word is taken only when it already says this hash;
+         * anything else is read from the disk. */
+        {
+            const char *mia = registro_impronta(p);
+            char        esa[72];
+
+            uguale = dim == atol(sbyte);
+            if (uguale && (mia == NULL || strcasecmp(mia, impronta) != 0))
+                uguale = impronta_locale(assoluto, esa) == 0 &&
+                         strcasecmp(esa, impronta) == 0;
+        }
+
+        if (!uguale) {
             /* C'e', ma non e' quello dell'elenco. Si registra senza impronta:
              * il file appartiene al pacchetto — va tolto da `-remove` — ma
              * `-check` non deve credere di sapere com'e' fatto. */
@@ -1658,7 +1678,21 @@ static int verdetto(const char *percorso, const char *impronta_server)
         return esiste(assoluto, NULL) ? SCONOSCIUTO : MAI_INSTALLATO;
     }
     if (mia[0] == '-' && mia[1] == '\0') return DA_VERIFICARE;
-    return strcasecmp(mia, impronta_server) == 0 ? UGUALE : CAMBIATO;
+    if (strcasecmp(mia, impronta_server) != 0) return CAMBIATO;
+
+    /* ! AN ESSENTIAL FILE IS CHECKED ON THE DISK, as the libraries are: a wrong
+     * ext4.mod leaves the disk read-only, and a register written by an older
+     * netupdate may be lying (file_del_pacchetto). They are few and small. The
+     * boot files stay out: stage2.bin carries the video mode, so it never
+     * matches the server (porta_modo_video). */
+    if (g_riga_essenziale && !e_avvio(percorso)) {
+        char esa[72];
+
+        unisci(assoluto, sizeof(assoluto), "/", percorso);
+        if (impronta_locale(assoluto, esa) != 0 ||
+            strcasecmp(esa, impronta_server) != 0) return CAMBIATO;
+    }
+    return UGUALE;
 }
 
 /* Per -install: il file va scaricato? Un file che il registro non conosce ma
@@ -1810,10 +1844,65 @@ static void porta_modo_video(void)
     if (fatti == nn) printf("  = la risoluzione scelta passa allo Stage 2 nuovo\n");
 }
 
+/* ! A FRAGMENTED kernel.new STOPS THE WHOLE UPDATE, AND THE LAPTOP HIT IT ON 1
+ * NOVEMBER 2026: over 12 pieces after 1400 files had been rewritten, so the map
+ * stayed old while rdboot.lz4 moved. The file is written again in one write,
+ * and each earlier copy stays on the disk as kernel.pN meanwhile: it fills the
+ * small gaps, so the next copy can only land in a larger one. */
+#define RICOPIE_MAX 6
+
+static void ricopie_via(int n)
+{
+    char nome[32];
+    int  i;
+
+    for (i = 0; i < n; i++) {
+        snprintf(nome, sizeof(nome), "/boot/kernel.p%d", i);
+        remove(nome);
+    }
+}
+
+static int ricopia_kernel(int giro)
+{
+    static unsigned char *buf;
+    static int            byte;
+    char tieni[32];
+    int  fd, n;
+
+    if (buf == NULL) {
+        struct stat st;
+
+        if (stat("/boot/kernel.new", &st) != 0) return -1;
+        buf = (unsigned char *)malloc((size_t)st.st_size);
+        if (buf == NULL) return -1;
+        fd = open("/boot/kernel.new", O_RDONLY);
+        if (fd < 0) return -1;
+        while (byte < (int)st.st_size) {
+            n = read(fd, buf + byte, (size_t)st.st_size - (size_t)byte);
+            if (n <= 0) break;
+            byte += n;
+        }
+        close(fd);
+        if (byte != (int)st.st_size) return -1;
+    }
+    fd = open("/boot/kernel.cop", O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) return -1;
+    n = write(fd, buf, (size_t)byte);
+    close(fd);
+    if (n != byte) { remove("/boot/kernel.cop"); return -1; }
+    snprintf(tieni, sizeof(tieni), "/boot/kernel.p%d", giro);
+    if (rename("/boot/kernel.new", tieni) != 0) return -1;
+    if (rename("/boot/kernel.cop", "/boot/kernel.new") != 0) {
+        rename(tieni, "/boot/kernel.new");
+        return -1;
+    }
+    return 0;
+}
+
 static int fase_avvio(int kernel, int stage2)
 {
     BootInstallInfo info;
-    int r;
+    int r, giro = 0;
 
     printf("\nL'avvio\n");
     if (!kernel && !stage2) printf("  = riscrivo la mappa: settore di avvio, kernel, sistema di base\n");
@@ -1822,6 +1911,14 @@ static int fase_avvio(int kernel, int stage2)
 
     r = bootverify("/", stage2 ? "stage2.new" : NULL,
                         kernel ? "kernel.new" : NULL, &info);
+    while (r == -29 && kernel && giro < RICOPIE_MAX) {
+        printf("  = kernel.new e' frammentato: lo riscrivo (%d di %d)\n",
+               giro + 1, RICOPIE_MAX);
+        if (ricopia_kernel(giro) != 0) break;
+        giro++;
+        r = bootverify("/", stage2 ? "stage2.new" : NULL, "kernel.new", &info);
+    }
+    ricopie_via(giro);
     if (r != 0) {
         printf("  ! i file nuovi non sono mappabili (errore %d).\n", r);
         printf("    NON ho toccato niente: la macchina parte ancora con\n");
@@ -2538,6 +2635,77 @@ static int scarica_e_metti(Config *c, const char *p, long byte,
 }
 
 /* =============================================================================
+ * The files that did not arrive (netupdate 0.038, voce 52): they wait here and
+ * get another try at the end, instead of a "not done" and the whole -check to
+ * run again. A list, because how many fail is not known in advance.
+ *
+ * ! THE QUESTION DEFAULTS TO YES ONLY THE FIRST TIME: without a keyboard
+ * chiedi_si() returns the default, and a yes would go round for ever.
+ * -yes has nobody to ask: one round, by itself.
+ * ============================================================================= */
+typedef struct Ritenta {
+    struct Ritenta *dopo;
+    char           *percorso;
+    char           *impronta;
+    long            byte;
+    long            pezzo;
+} Ritenta;
+
+static Ritenta *g_ritenta = NULL;
+
+/* The file that scarica_e_metti has just failed on, with the line still in
+ * g_riga_pezzo. Out of memory it is only not retried. */
+static void ritenta_metti(const char *p, long byte, const char *impronta)
+{
+    Ritenta *r = malloc(sizeof(*r));
+
+    if (r == NULL) return;
+    r->percorso = strdup(p);
+    r->impronta = strdup(impronta);
+    if (r->percorso == NULL || r->impronta == NULL) return;
+    r->byte  = byte;
+    r->pezzo = g_riga_pezzo;
+    r->dopo  = g_ritenta;
+    g_ritenta = r;
+}
+
+/* Rende quanti ne sono arrivati, da togliere ai falliti del chiamante. */
+static long ritenta(Config *c, int chiedi, long *fatti, long *saltati,
+                    int *kernel, int *stage2)
+{
+    long arrivati = 0;
+    int  giro = 0;
+
+    while (g_ritenta != NULL) {
+        Ritenta *r, **pp;
+
+        printf("\nNon sono arrivati:\n");
+        for (r = g_ritenta; r != NULL; r = r->dopo)
+            printf("  ! %s\n", r->percorso);
+        if (chiedi) {
+            if (!chiedi_si("Riprovo adesso?", giro == 0)) break;
+        } else if (giro > 0) {
+            break;
+        }
+        giro++;
+
+        pp = &g_ritenta;
+        while ((r = *pp) != NULL) {
+            int esito;
+
+            g_riga_pezzo = r->pezzo;
+            esito = scarica_e_metti(c, r->percorso, r->byte, r->impronta, kernel, stage2);
+            if (esito < 0) { pp = &r->dopo; continue; }
+            if (esito == 0)      (*fatti)++;
+            else if (esito == 1) (*saltati)++;
+            arrivati++;
+            *pp = r->dopo;
+        }
+    }
+    return arrivati;
+}
+
+/* =============================================================================
  * LA VOCE NEL MENU DI AVVIO — chiave `menu` del catalogo (9 ottobre 2026)
  *
  * ! UN'APPLICAZIONE INSTALLATA CHE NON SI TROVA NEL MENU NON E' INSTALLATA,
@@ -2936,7 +3104,8 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
             if (g_zitto) return 1;
             printf("\nQui il registro non c'e' ancora: lo scrivo adesso, dal\n");
             printf("manifesto appena scaricato. E' quel che serve per sapere\n");
-            printf("cosa confrontare - e da adesso in poi c'e'.\n\n");
+            printf("cosa confrontare - e da adesso in poi c'e'. Rileggo ogni\n");
+            printf("file del disco: puo' volerci qualche minuto.\n\n");
             if (comando_registro_crea(TMPDIR) != 0) return 1;
             printf("\n");
         } else if (n > 0 && !g_zitto) {
@@ -3229,7 +3398,7 @@ static int comando_check(int senza_chiedere)
     FILE  *f;
     long   fatti = 0, falliti = 0, saltati = 0;
     int    giro;
-    int    kernel_nuovo = 0, stage2_nuovo = 0;
+    int    kernel_nuovo = 0, stage2_nuovo = 0, avvio_guasto = 0;
     int    fai_cambiati, fai_nuovi;
 
     if (guarda(&c, ver, cat, ele, versione, data, &k) != 0) return 1;
@@ -3343,7 +3512,7 @@ static int comando_check(int senza_chiedere)
                 case 0:  fatti++;   break;
                 case 1:  saltati++; break;
                 case 2:             break;
-                default: falliti++; break;
+                default: falliti++; ritenta_metti(p, byte, impronta); break;
                 }
                 continue;
             }
@@ -3360,7 +3529,7 @@ static int comando_check(int senza_chiedere)
             case 0:  fatti++;   break;
             case 1:  saltati++; break;
             case 2:             break;    /* messo da parte: e' dell'avvio */
-            default: falliti++; break;
+            default: falliti++; ritenta_metti(p, byte, impronta); break;
             }
         }
         fclose(f);
@@ -3375,6 +3544,9 @@ static int comando_check(int senza_chiedere)
          * macchina non avrebbe piu' un comando per rimediare. Fermarsi adesso
          * invece la lascia esattamente com'era: vecchia e viva.
          * ================================================================= */
+        if (giro == 0 && falliti > falliti_prima)
+            falliti -= ritenta(&c, !senza_chiedere, &fatti, &saltati,
+                               &kernel_nuovo, &stage2_nuovo);
         if (giro == 0 && falliti > falliti_prima) {
             printf("\n! UNA LIBRERIA DI SISTEMA NON E' ARRIVATA, e mi fermo qui.\n\n");
             printf("  Non ho toccato nessun programma: la macchina resta com'era,\n");
@@ -3386,13 +3558,20 @@ static int comando_check(int senza_chiedere)
         }
     }
 
+    falliti -= ritenta(&c, !senza_chiedere, &fatti, &saltati,
+                       &kernel_nuovo, &stage2_nuovo);
+
     /* --- 6. l'avvio, per ultimo ------------------------------------------- */
     if (kernel_nuovo || stage2_nuovo) {
         if (fase_avvio(kernel_nuovo, stage2_nuovo) == 0) fatti += kernel_nuovo + stage2_nuovo;
-        else falliti += kernel_nuovo + stage2_nuovo;
+        else {
+            falliti += kernel_nuovo + stage2_nuovo;
+            kernel_nuovo = stage2_nuovo = 0;
+            avvio_guasto = 1;
+        }
     } else if (g_rdboot_nuovo) {
         /* rdboot.lz4 e' gia' contato tra i fatti: qui solo la mappa. */
-        if (fase_avvio(0, 0) != 0) falliti++;
+        if (fase_avvio(0, 0) != 0) { falliti++; avvio_guasto = 1; }
     }
 
     /* --- 7. il registro dice la verita' di adesso ------------------------- */
@@ -3407,7 +3586,12 @@ static int comando_check(int senza_chiedere)
     }
     menu_allinea(cat);
 
-    if (kernel_nuovo || stage2_nuovo)
+    /* ! THIS LINE SAID "IL KERNEL E' CAMBIATO" EVEN WHEN THE MAP HAD FAILED, and
+     * after that a reboot may not start at all. */
+    if (avvio_guasto)
+        printf("\n! L'AVVIO NON E' STATO AGGIORNATO: NON RIAVVIARE ancora. Il sistema di\n"
+               "  base puo' essere cambiato sotto la mappa vecchia: rilancia netupdate.\n");
+    else if (kernel_nuovo || stage2_nuovo)
         printf("\n! IL KERNEL E' CAMBIATO: riavvia. Quello di prima e' in\n"
                "  /boot/kernel.bin.old, e il settore di avvio punta al nuovo.\n");
     else if (g_rdboot_nuovo)
@@ -4276,11 +4460,13 @@ static int comando_install(const char *id)
             case 0:  fatti++;   break;
             case 1:  saltati++; break;
             case 2:             break;
-            default: falliti++; break;
+            default: falliti++; ritenta_metti(fp, fb, impronta); break;
             }
         }
         fclose(f);
     }
+
+    falliti -= ritenta(&c, 1, &fatti, &saltati, &kernel_nuovo, &stage2_nuovo);
 
     if (kernel_nuovo || stage2_nuovo || g_rdboot_nuovo) fase_avvio(kernel_nuovo, stage2_nuovo);
 

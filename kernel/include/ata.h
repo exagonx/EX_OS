@@ -87,6 +87,9 @@ typedef struct {
  * passano all'AHCI: lo chiede `ahci = 1` in kernel.cfg, dopo che il kernel
  * l'ha letto. Rende quanti dischi sono passati. Vedi ata.c. */
 int  ata_passa_ad_ahci(void);
+int  ata_canale_ceduto(int canale);   /* 1: the controller went to AHCI */
+int  ata_ahci_col_reset(void);  /* 1 if ata_prova_ahci made the pass */
+int  ata_prova_ahci(void);      /* HBA reset, then compared with IDE: ahci -t */
 int  ata_ahci_stato(void);      /* 0 niente, 1 si potrebbe, 2 gia' passato */
 
 /* Rileva le unita' sui due canali. Va chiamata dopo l'abilitazione degli
@@ -204,5 +207,7 @@ int  ata_attendi_drq_muto(int canale, uint32_t timeout_ms, uint8_t *stato_out);
 /* Attesa in millisecondi ancorata al PIT (g_ticks), non a un conteggio di
  * cicli: e' la lezione gia' pagata tre volte in questo progetto. */
 void ata_attesa_ms(uint32_t ms);
+
+void ata_stato_lucchetto(uint32_t *chi, uint32_t *livelli, uint32_t *attesa);
 
 #endif /* ATA_H */

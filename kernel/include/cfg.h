@@ -90,7 +90,8 @@ typedef struct {
      * kernel/block/ata.c). 0, il predefinito, li lascia dove sono: e' una
      * scelta di chi ha quella macchina, finche' non e' provata su piu' di una.
      * I controller che si dichiarano AHCI non c'entrano: quelli si usano
-     * sempre. */
+     * sempre. 2 = the same with an HBA reset, compared with IDE first: the
+     * MCP77 wants it (ata_prova_ahci); ahci -s writes it after ahci -t. */
     uint32_t    ahci;
 
     /* fdmax: how many descriptors a program may have open together - files,

@@ -1,3 +1,5 @@
+# stage2 of the 64-bit build refuses a CPU without long mode, on screen
+STAGE2_64 = $(if $(filter x86_64,$(ARCH)),-DRICHIEDE64)
 # =============================================================================
 # Makefile
 # EX-OS — Extensible Operating System
@@ -180,7 +182,7 @@ USB_AVVIO = build-64/avvio
 define usb_caricatori
 	@mkdir -p $(USB_AVVIO)
 	$(AS) -f bin -DDISCHETTO=288 -DGEOMETRIA_BIOS bootloader/stage1/boot.asm -o $(USB_AVVIO)/stage1-288.bin
-	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=1 -DDISCHETTO=288 -DGEOMETRIA_BIOS $(STAGE2_ASM_SRC) -o $(USB_AVVIO)/stage2-rd1-288.bin
+	$(AS) -f bin $(STAGE2_64) -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=1 -DDISCHETTO=288 -DGEOMETRIA_BIOS $(STAGE2_ASM_SRC) -o $(USB_AVVIO)/stage2-rd1-288.bin
 	@chmod +x $(TOOLS_DIR)/mkchiave.sh $(TOOLS_DIR)/mkusb.sh
 endef
 
@@ -299,7 +301,7 @@ K64_SONDA := /tmp/exos-sondaggio64
 # per iscritto - le tabelle dei segmenti e degli interrupt, la paginazione a
 # due livelli, l'avvio degli altri processori. La versione a 64 bit avra' i
 # suoi in kernel/arch/x86_64, dietro le stesse interfacce (paging.h, idt.h...).
-K64_RISCRIVERE := kernel/arch/x86/gdt.c kernel/arch/x86/idt.c kernel/arch/x86/smp.c
+K64_RISCRIVERE := kernel/arch/x86/gdt.c kernel/arch/x86/idt.c
 .PHONY: kernel64-sondaggio
 kernel64-sondaggio:
 	@mkdir -p $(K64_SONDA)
@@ -413,7 +415,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
@@ -3854,6 +3856,24 @@ $(XCP_BIN): $(XCP_SRC) $(XCP_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC
 .PHONY: xcp
 xcp: dirs $(XCP_BIN)
 
+# --- /bin/guardia (solo CD e supporto): riavvio se nessuno richiama in tempo --
+GUARDIA_SRC := bin/guardia/guardia.c
+GUARDIA_BIN := $(BUILD_BIN_CD)/guardia
+GUARDIA_LD  := bin/guardia/guardia.ld
+
+$(GUARDIA_BIN): $(GUARDIA_SRC) $(GUARDIA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
+	@echo "=== Compilazione /bin/guardia ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(GUARDIA_SRC) -o $(BUILD_OBJ)/guardia_main.o
+	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/guardia_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(GUARDIA_LD) \
+	    $(BUILD_OBJ)/guardia_start.o $(BUILD_OBJ)/guardia_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] guardia compilato: $@"
+
+.PHONY: guardia
+guardia: dirs $(GUARDIA_BIN)
+
 # --- /bin/ahci (solo CD e supporto): i dischi all'AHCI, e una misura --------
 AHCI_CMD_SRC := bin/ahci/ahci.c
 AHCI_CMD_BIN := $(BUILD_BIN_CD)/ahci
@@ -5628,7 +5648,7 @@ $(STAGE2_BIN): $(STAGE2_ASM_SRC) $(STAGE2_SVGA_SEGNO) $(STAGE2_RD_SEGNO) $(SEGNO
 	    echo "         (niente = console di testo 80x25, il predefinito)."; \
 	    exit 1; \
 	fi
-	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=$(RAMDISCO) $(STAGE2_ASM_SRC) -o $@
+	$(AS) -f bin $(STAGE2_64) -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=$(RAMDISCO) $(STAGE2_ASM_SRC) -o $@
 	@if [ "$(SVGA_MODO)" != "0" ]; then \
 	    echo "     risoluzione all'avvio: $(SVGA) (modo $(SVGA_MODO))"; \
 	fi
@@ -5851,8 +5871,8 @@ $(BUILD_KERNEL)/tty.o: drivers/tty/tty.c
 K64I_OUT   := $(K64_OUT)/kernel
 K64I_INC   := -Ikernel/include -Ilib/include -Idrivers/tty -Idrivers/kbd
 K64I_C     := $(filter-out $(K64_RISCRIVERE),$(KERNEL_C_SRC))
-K64I_ARCH  := gdt64 idt64 paging64 pagine64 cpu64 smp64 avvio64
-K64I_ASM   := entry isr64 cambio64
+K64I_ARCH  := gdt64 idt64 paging64 pagine64 cpu64 avvio64
+K64I_ASM   := entry isr64 cambio64 tramp64
 K64I_OBJ   := $(patsubst %,$(K64I_OUT)/arch64/%.o,$(K64I_ASM) $(K64I_ARCH)) \
               $(patsubst $(KERNEL_DIR)/%.c,$(K64I_OUT)/%.o,$(K64I_C)) \
               $(K64I_OUT)/tty.o $(K64I_OUT)/mbr_bin.o $(K64I_OUT)/boothd_bin.o
@@ -5900,7 +5920,7 @@ kernel64:
 	@# lascia con RAMDISCO=1, e un CD avviato cosi' monta come radice la sua
 	@# immagine di avvio, dove /bin non c'e'. Successo il 10 ottobre 2026).
 	@mkdir -p build-64/avvio
-	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=0 $(STAGE2_ASM_SRC) -o build-64/avvio/stage2-cd.bin
+	$(AS) -f bin $(STAGE2_64) -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=0 -DRICHIEDE64 $(STAGE2_ASM_SRC) -o build-64/avvio/stage2-cd.bin
 	@# Il sistema di base a 64 bit (@RDBOOT): i comandi di build-64/bin.
 	@chmod +x $(TOOLS_DIR)/mkrdboot.sh
 	@$(TOOLS_DIR)/mkrdboot.sh x86_64 build-64/rdboot.img

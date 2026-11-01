@@ -368,6 +368,8 @@ static const char *g_fs_chi = "?";
 static uint32_t *g_fs_attesa;
 static uint32_t g_fs_n_attesa = 0;
 
+uint32_t vfs_stato_lucchetto(void) { return g_fs_detentore; }
+
 static void fs_prendi_n(const char *chi)
 {
     Process *p  = proc_get_current();

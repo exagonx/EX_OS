@@ -29,7 +29,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `ahci -version` la stampa. */
-EX_VERSIONE("ahci", "0.003");
+EX_VERSIONE("ahci", "0.005");
 
 static char g_buf[65536];
 
@@ -50,14 +50,17 @@ static int misura(const char *nome)
 }
 
 /* Scrive `ahci = 1` nella sezione [kernel] di /boot/kernel.cfg, subito dopo
- * la sua intestazione. Non tocca nient'altro. 0 fatto, 1 c'era gia', -1 errore. */
-static int rendi_stabile(void)
+ * la sua intestazione. Non tocca nient'altro. 0 fatto, 1 c'era gia', -1 errore.
+ * `ahci = 2` if the session's pass needed the controller reset (ahci -t): on
+ * that controller a plain 1 would not work at the next boot. */
+static int rendi_stabile(int col_reset)
 {
     static char testo[16384], nuovo[16384 + 64];
-    static const char riga[] = "ahci        = 1\n";
+    static char riga[] = "ahci        = 1\n";
     int fd = open("/boot/kernel.cfg", O_RDONLY), n = 0, k, dove;
     char *p, *q;
 
+    if (col_reset) riga[14] = '2';
     if (fd < 0) return -1;
     while (n < (int)sizeof(testo) - 1 &&
            (k = (int)read(fd, testo + n, (unsigned int)(sizeof(testo) - 1 - n))) > 0) n += k;
@@ -90,7 +93,7 @@ static int rendi_stabile(void)
 
 int main(int argc, char **argv)
 {
-    int r;
+    int r, k;
 
     if (argc == 3 && strcmp(argv[1], "-m") == 0) return misura(argv[2]);
 
@@ -132,17 +135,30 @@ int main(int argc, char **argv)
                    "      niente. Prima  ahci  e, se riesce,  ahci -s\n");
             return 1;
         }
-        r = rendi_stabile();
+        k = ahci_col_reset() > 0;
+        r = rendi_stabile(k);
         if (r == 1) printf("ahci: /boot/kernel.cfg ha gia' la sua riga  ahci\n");
-        else if (r == 0) printf("ahci: scritto  ahci = 1  in /boot/kernel.cfg: vale a ogni avvio\n");
+        else if (r == 0) printf("ahci: scritto  ahci = %d  in /boot/kernel.cfg: vale a ogni avvio\n", k ? 2 : 1);
         else { printf("ahci: non riesco a scrivere /boot/kernel.cfg\n"); return 1; }
         return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "-t") == 0) {
+        printf("ahci: reset del controller e confronto con IDE. Se qualcosa non\n"
+               "      torna la macchina si riavvia da sola, senza scrivere.\n");
+        r = ahci_prova();
+        if (r == 2) printf("ahci: letture uguali a IDE, scrittura provata: il disco e' in AHCI\n");
+        else if (r == 1) printf("ahci: letture uguali a IDE, scrittura NON provata (nessun settore "
+                                "libero): il disco e' in AHCI\n");
+        else if (r == 0) printf("ahci: niente da passare, o gia' passato\n");
+        else { printf("ahci: non provata (%d), controller non toccato:  dmesg ATA\n", r); return 1; }
+        return r > 0 ? 0 : 1;
     }
     if (argc != 1) {
         printf("uso: ahci            passa i dischi all'AHCI, per questa sessione\n");
         printf("     ahci -s         lo rende stabile (ahci = 1 in /boot/kernel.cfg)\n");
         printf("     ahci -d         i registri del controller, SENZA TOCCARE NIENTE:\n");
         printf("                     si guarda prima di provare\n");
+        printf("     ahci -t         col reset del controller, confrontando con IDE\n");
         printf("     ahci -m FILE    legge FILE e dice a quanti KB/s\n");
         return 2;
     }

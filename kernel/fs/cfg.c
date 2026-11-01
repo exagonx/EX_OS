@@ -157,7 +157,7 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
         }
         /* Come atadma: solo uno zero scritto per bene spegne. */
         if (cfg_strcmp(key, "ahci") == 0) {
-            cfg->ahci = (value[0] >= '1' && value[0] <= '9') ? 1 : 0;
+            cfg->ahci = value[0] == '1' ? 1 : (value[0] >= '2' && value[0] <= '9') ? 2 : 0;
             return;
         }
         /* tcpmax = N: the TCP connections of ip.drv, kept as text and

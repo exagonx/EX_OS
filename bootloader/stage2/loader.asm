@@ -128,6 +128,27 @@ _start:
     mov  dx, 0x3F8
     mov  al, 83
     out  dx, al
+
+%ifdef RICHIEDE64
+    ; A 64-bit kernel on a CPU without long mode: say it HERE, in text mode.
+    ; Later the screen is already graphic and entry.asm can only reach COM1,
+    ; so a VirtualBox VM of a 32-bit type showed a black screen and nothing else.
+    mov  eax, 0x80000000
+    cpuid
+    cmp  eax, 0x80000001
+    jb   .no64
+    mov  eax, 0x80000001
+    cpuid
+    test edx, 1 << 29
+    jnz  .si64
+.no64:
+    mov  si, msg_no64
+    call print
+.fermo64:
+    hlt
+    jmp  .fermo64
+.si64:
+%endif
 %ifdef GEOMETRIA_BIOS
     call geometria
 %endif
@@ -2241,6 +2262,11 @@ msg_vnolfb  db 'quella risoluzione c e ma solo a banchi.', 13, 10, 0
 msg_vnobpp  db 'c e ma non a 16, 24 o 32 bit.', 13, 10, 0
 rddst     dd 0
 
+%ifdef RICHIEDE64
+msg_no64  db 13, 10, 'EX-OS a 64 bit: questo processore non ha i 64 bit.', 13, 10
+          db 'Macchina virtuale: scegli un tipo a 64 bit (VirtualBox: Other/Unknown', 13, 10
+          db '64-bit) con VT-x/AMD-V attivo. Altrimenti usa la ISO a 32 bit.', 13, 10, 0
+%endif
 msg_rd    db 'Carico il volume in RAM...', 13, 10, 0
 msg_rdok  db 'Volume in RAM: la radice non dipende piu dal lettore.', 13, 10, 0
 msg_rderr db 'Lettura fallita: niente disco in RAM.', 13, 10, 0

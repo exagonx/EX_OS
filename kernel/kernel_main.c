@@ -963,7 +963,8 @@ KernelConfig *cfg = cfg_load();
 
     /* `ahci = 1`: il disco gia' visto dai registri IDE passa all'AHCI. Qui e
      * non prima, per la stessa ragione di atadma: kernel.cfg sta sul disco. */
-    if (cfg->ahci) (void)ata_passa_ad_ahci();
+    if (cfg->ahci == 2) (void)ata_prova_ahci();
+    else if (cfg->ahci) (void)ata_passa_ad_ahci();
 
     /* ! I PROCESSORI IN PIU' SI CERCANO QUI: dopo kernel.cfg, perche' e' li'
      * che sta scritto se svegliarli (smp = 0 li conta e basta), a interrupt

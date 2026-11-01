@@ -1373,6 +1373,15 @@ int klog_leggi(char *buf, unsigned int byte, int quale);
  * di li' (kernel 0.245, solo amministratore). Rende quanti, o un -errno. */
 int ahci_passa(void);
 
+/* The machine resets itself in `secondi` unless called again; 0 = off (root). */
+int guardia_imposta(unsigned int secondi);
+
+/* The pass with an HBA reset, verified against IDE (kernel 0.295, root only).
+ * 2 = reads and a write are fine, 1 = reads fine and no free sector to write
+ * on, 0 = nothing to pass. A failed comparison resets the machine. */
+int ahci_prova(void);
+int ahci_col_reset(void);    /* 1 if this session's pass was ahci_prova */
+
 /* Scrive nel log del kernel i registri dei controller che potrebbero essere
  * AHCI, in sola lettura (si leggono con `dmesg AHCI`). Quanti, o un -errno. */
 int ahci_guarda(void);

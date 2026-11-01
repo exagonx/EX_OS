@@ -751,10 +751,27 @@ int32_t sys_open(InterruptFrame *frame)
     free_fd = find_free_fd(proc);
     if (free_fd < 0) return ERR(EMFILE);
 
+    /* ! THE NUMBER IS TAKEN NOW, BEFORE vfs_open (kernel 0.294). vfs_open can
+     * sleep on the filesystem lock, the descriptor table belongs to the whole
+     * process, and a slot still FD_UNUSED was handed to a second thread. Two
+     * threads then shared one number: the first close gave the other EBADF,
+     * and SQLite said "disk I/O error" (Firefox on the CQ60,
+     * tools/prova_sqlite_io.sh with 4 threads). FD_SERVIZIO: taken, not
+     * usable, and read and write answer EBADF until it is a file. */
+    FDV(proc, free_fd).type        = FD_SERVIZIO;
+    FDV(proc, free_fd).flags       = 0;
+    FDV(proc, free_fd).offset      = 0;
+    FDV(proc, free_fd).inode       = 0;
+    FDV(proc, free_fd).driver_data = NULL;
+
     /* Risolvi eventuali percorsi relativi contro la directory corrente */
     {
         char abs[PERCORSO_MAX];
-        if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+        if (resolve_path(path, abs, sizeof(abs)) != 0) {
+            FDV(proc, free_fd).type = FD_UNUSED;
+            fd_rilasciato(proc, free_fd);
+            return ERR(EINVAL);
+        }
         if (e_dev_null(abs)) {
             FDV(proc, free_fd).type   = FD_NULL;
             FDV(proc, free_fd).flags  = flags;
@@ -764,7 +781,11 @@ int32_t sys_open(InterruptFrame *frame)
         }
         inode = vfs_open(abs, (uint32_t)flags);
     }
-    if (inode < 0) return (int32_t)inode;  /* Propaga errore */
+    if (inode < 0) {                       /* Propaga errore */
+        FDV(proc, free_fd).type = FD_UNUSED;
+        fd_rilasciato(proc, free_fd);
+        return (int32_t)inode;
+    }
 
     FDV(proc, free_fd).type   = FD_FILE;
     FDV(proc, free_fd).flags  = flags;
@@ -3949,6 +3970,14 @@ int32_t sys_smp_lavora(InterruptFrame *frame)
     return (int32_t)smp_accendi_lavoro();
 }
 
+int32_t sys_guardia(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+
+    if (self == NULL || self->uid != 0) return ERR(EPERM);
+    return (int32_t)guardia_imposta((uint32_t)FR_A1(frame));
+}
+
 int32_t sys_ahci_passa(InterruptFrame *frame)
 {
     Process *self = proc_get_current();
@@ -3958,6 +3987,10 @@ int32_t sys_ahci_passa(InterruptFrame *frame)
     if (FR_A1(frame) == 1) return (int32_t)ahci_guarda();
     /* ebx = 2: solo la domanda «si puo'? e' gia' fatto?» (sola lettura). */
     if (FR_A1(frame) == 2) return (int32_t)ata_ahci_stato();
+    /* ebx = 3: with an HBA reset, compared with what IDE read. */
+    if (FR_A1(frame) == 3) return (int32_t)ata_prova_ahci();
+    /* ebx = 4: did the pass need that reset? (read only) */
+    if (FR_A1(frame) == 4) return (int32_t)ata_ahci_col_reset();
     return (int32_t)ata_passa_ad_ahci();
 }
 

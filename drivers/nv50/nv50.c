@@ -48,7 +48,7 @@
 #include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.008");
+EX_VERSIONE("nv50.drv", "0.009");
 
 #define NV_VENDITORE   0x10DE
 
@@ -1462,6 +1462,14 @@ int main(int argc, char **argv)
     PciDispositivo d;
     int tutto, prova_si;
 
+    /* hwconfig -d probes the catalogue with -i: 0 = copy me. Without it this
+     * driver was never chosen, on the very machines that need it. */
+    if (argc >= 2 && strcmp(argv[1], "-i") == 0) {
+        PciDispositivo s;
+
+        g_zitto = 1;
+        return trova_scheda(&s) == 0 ? 0 : 1;
+    }
     if (argc >= 2 && strcmp(argv[1], "-install") == 0) return installa(0);
     if (argc >= 2 && strcmp(argv[1], "-remove") == 0)  return installa(1);
     if (argc >= 2 && strcmp(argv[1], "-avvio") == 0) { g_zitto = 1; argv[1] = "-nativo"; }

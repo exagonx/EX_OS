@@ -23,6 +23,7 @@
  * che si dichiarano AHCI; 1: anche quelli presentati come IDE o RAID che hanno
  * i registri AHCI a BAR5. Rende quanti dischi ci sono in tutto. */
 int             ahci_cerca(int anche_emulati);
+void            ahci_chiedi_reset(int si);  /* 1: the next search resets the HBA */
 int             ahci_controller_preso(uint32_t bus, uint32_t slot, uint32_t fn);
 int             ahci_candidati(void);       /* c'e' un disco che potrebbe passare? (sola lettura) */
 int             ahci_guarda(void);          /* i registri nel log, senza scrivere niente */

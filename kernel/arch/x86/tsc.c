@@ -159,6 +159,20 @@ void tsc_init(void)
          g_hz / 1000000u, (g_hz / 1000u) % 1000u, delta);
 }
 
+/* ! THE 1024 IS THERE SO THAT NO 64-BIT DIVISION IS NEEDED: the 32-bit kernel
+ * has no __udivdi3. Cycles / 1024 fit 32 bits up to 2^42 cycles, 25 minutes at
+ * 3 GHz, and the waits measured here last seconds. */
+uint32_t tsc_ms(uint64_t cicli)
+{
+    uint32_t per_ms;
+
+    if (!g_c_e) return 0;
+    if (cicli >> 42) return 0xFFFFFFFFu;
+    per_ms = (g_hz / 1000u) >> 10;
+    if (per_ms == 0) per_ms = 1;
+    return (uint32_t)(cicli >> 10) / per_ms;
+}
+
 uint32_t tsc_us(uint64_t cicli)
 {
     uint32_t c;

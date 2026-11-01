@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.008");
+EX_VERSIONE("hwconfig", "0.009");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -1090,6 +1090,24 @@ static void chiudi_avvio(char *out, unsigned int max, const char *radice)
         free(b);
     }
     if (fd >= 0) close(fd);
+
+    /* nv50.drv takes the panel to its native size, and only `nv50.drv -install`
+     * used to write this: the same block, so -remove finds it. Where the card
+     * is another one the driver exits in silence, and hwconfig -d does not
+     * copy it at all. */
+    unisci(p, radice[0] ? radice : "", "dev");
+    unisci(p, p, "nv50.drv");
+    if (access(p, F_OK) == 0 && strstr(out, "# -install nv50.drv") == NULL) {
+        strncat(out,
+            "\n# -install nv50.drv\n"
+            "# Il pannello alla risoluzione nativa, prima del prompt e della\n"
+            "# scrivania. Esce zitto dove la scheda non e' una NVIDIA G80 con\n"
+            "# questo pannello. `nv50.drv -remove` toglie questo blocco.\n",
+            max - 1 - strlen(out));
+        if (strstr(out, "\npci.drv") == NULL && strstr(out, "\n/dev/pci.drv") == NULL)
+            strncat(out, "pci.drv &\n", max - 1 - strlen(out));
+        strncat(out, "nv50.drv -avvio\n", max - 1 - strlen(out));
+    }
     strncat(out, "\n@echo Sistema pronto.\n", max - 1 - strlen(out));
 }
 

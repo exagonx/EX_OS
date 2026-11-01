@@ -289,6 +289,7 @@ typedef struct {
 #define SYS_CPU_INFO    181
 #define SYS_KLOG         86
 #define SYS_AHCI_PASSA   85
+#define SYS_GUARDIA      259
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -8281,10 +8282,30 @@ int cpu_lavora(void)
     return _syscall1(SYS_SMP_LAVORA, 0);
 }
 
+/* Seconds to a reset unless called again, 0 = off. See bin/guardia. */
+int guardia_imposta(unsigned int secondi)
+{
+    return _syscall1(SYS_GUARDIA, (int)secondi);
+}
+
 /* I dischi all'AHCI, per questa sessione. Quanti, o un -errno. */
 int ahci_passa(void)
 {
     return _syscall1(SYS_AHCI_PASSA, 0);
+}
+
+/* With an HBA reset, compared with what IDE read: 2 reads and write fine, 1 reads
+ * fine and write not tried, 0 nothing to do, or negative. A failure resets the
+ * machine and never comes back here. */
+int ahci_prova(void)
+{
+    return _syscall1(SYS_AHCI_PASSA, 3);
+}
+
+/* 1 if this session's pass went through ahci_prova. */
+int ahci_col_reset(void)
+{
+    return _syscall1(SYS_AHCI_PASSA, 4);
 }
 
 /* I registri dei controller AHCI nel log del kernel, senza scrivere niente. */

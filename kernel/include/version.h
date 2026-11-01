@@ -739,7 +739,28 @@
  * thread in task/<tid>/stat. */
 /* 0.290 -> 0.291: file locks (voce 38): F_GETLK, F_SETLK, F_SETLKW for real, a
  * table in vfs.c per owner and byte range, gone with the close or the exit. */
-#define EXOS_VERSION    "0.292"
+/* 0.291 -> 0.292: ext3 and ext4 in the tools (fs_tipo 2/3/4, /proc/mounts).
+ * 0.292 -> 0.293: a /dev/ext4.mod the kernel refuses no longer leaves the disk
+ * read-only: the copy in /rdboot/dev is tried, as when it is missing.
+ * 0.293 -> 0.294: sys_open takes the descriptor before vfs_open, which can
+ * sleep: two threads got one number, and SQLite "disk I/O error" (voce 38). */
+/* 0.294 -> 0.295: ahci -t, the pass to AHCI with an HBA reset as Linux does
+ * on the MCP77, compared sample by sample with what IDE read; a failure resets
+ * the machine without a sync (power_reset_ora). The normal boot is unchanged. */
+/* 0.295 -> 0.296: ahci = 2 in kernel.cfg makes the ahci -t pass at every boot;
+ * ahci -s writes it when the session's pass needed the reset. */
+/* 0.296 -> 0.297: extra processors at 64 bit: kernel/arch/x86/smp.c now serves
+ * both, tramp64.asm reaches long mode, one GDT and TSS per processor, the
+ * kernel lock in isr64.asm. */
+/* 0.297 -> 0.298: after ahci -t the DVD's IDE registers are left alone; a
+ * command without an answer resets the port and is tried once more. */
+/* 0.298 -> 0.299: guardia: a countdown in the kernel that resets the machine
+ * unless called again, from the timer and from the kernel lock's wait. */
+/* 0.299 -> 0.300: tsc_ms; the AHCI clock counts only the time it watched, a
+ * timeout looks at CI once more, slow commands go to the log (voce 58). */
+/* 0.300 -> 0.301: sched_sonda: the countdown of guardia writes who holds the
+ * locks and where each process waits, at 1/2 and 3/4 of the time (voce 58). */
+#define EXOS_VERSION    "0.301"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
