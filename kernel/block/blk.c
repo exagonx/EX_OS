@@ -19,6 +19,9 @@
 #include "fat12.h"
 #include "pmm.h"
 #include "syscall.h"    /* ERR() e i codici errno, per blk_rescan */
+#include "tsc.h"        /* i tempi dei contatori */
+#include "cfg.h"        /* cachedisco */
+#include "paging.h"     /* la finestra sulle pagine della cache */
 
 /* g_n e' il MASSIMO INDICE MAI USATO, non il numero di dispositivi vivi.
  * Da quando esiste blk_rescan() l'array puo' avere buchi: uno slot
@@ -38,6 +41,7 @@ static int    g_n = 0;
  * stanno prima della cache. L'implementazione, e il perche' esista, sono
  * piu' avanti, sopra blk_read(). */
 static void cache_svuota(int disco);
+static void pc_init(void);
 
 /* Copia un nome corto senza dipendere da una libreria di stringhe. */
 static void nome_copia(char *dst, const char *src)
@@ -625,6 +629,67 @@ static void avanti_scarta(int disco, uint64_t lba, uint32_t n)
     g_av_disco = -1;
 }
 
+/* =============================================================================
+ * THE COUNTERS (see blk.h). One thing to know: FLUSH is counted outside the
+ * disk lock, as it runs, so two at once can lose a count on another processor.
+ * ============================================================================= */
+static BlkConti g_conti[ATA_MAX_DEVICES];
+
+int blk_conti(int disco, BlkConti *c)
+{
+    if (disco < 0 || disco >= ATA_MAX_DEVICES) return -1;
+    *c = g_conti[disco];
+    return 0;
+}
+
+static void conta_tempo(uint64_t *totale, uint32_t *massimo, uint64_t da)
+{
+    uint32_t ms = tsc_ms(tsc_leggi() - da);
+
+    *totale += ms;
+    if (ms > *massimo) *massimo = ms;
+}
+
+static int disco_leggi(int disco, uint64_t abs, uint32_t n, void *buf)
+{
+    uint64_t da = tsc_leggi();
+    int      r  = ata_read(disco, abs, n, buf);
+
+    if (disco >= 0 && disco < ATA_MAX_DEVICES) {
+        BlkConti *c = &g_conti[disco];
+
+        c->letture++;
+        c->sett_letti += n;
+        conta_tempo(&c->ms_letture, &c->max_lettura, da);
+    }
+    return r;
+}
+
+static int disco_scrivi(int disco, uint64_t abs, uint32_t n, const void *buf)
+{
+    uint64_t da = tsc_leggi();
+    int      r  = ata_write(disco, abs, n, buf);
+
+    if (disco >= 0 && disco < ATA_MAX_DEVICES) {
+        BlkConti *c = &g_conti[disco];
+
+        c->scritture++;
+        c->sett_scritti += n;
+        conta_tempo(&c->ms_scritture, &c->max_scrittura, da);
+    }
+    return r;
+}
+
+/* ata_prendi, with the wait measured */
+static void disco_prendi(int disco)
+{
+    uint64_t da = tsc_leggi();
+
+    ata_prendi();
+    if (disco >= 0 && disco < ATA_MAX_DEVICES)
+        conta_tempo(&g_conti[disco].ms_attesa, &g_conti[disco].max_attesa, da);
+}
+
 static uint32_t secchio(int disco, uint64_t lba)
 {
     return ((uint32_t)lba ^ ((uint32_t)(lba >> 32) * 31u) ^ ((uint32_t)disco << 9)) &
@@ -646,6 +711,7 @@ static void cache_init(void)
     g_cache = (VoceCache *)(uintptr_t)fis;
     for (k = 0; k < CACHE_VOCI; k++) { g_cache[k].disco = -1; g_cache[k].dopo = -1; }
     klog(LOG_INFO, "BLK: cache di %u settori a 0x%08x", (unsigned)CACHE_VOCI, fis);
+    pc_init();
 
     fis = pmm_alloc_pages_kernel((AVANTI_SETT * 512u) / 4096u);
     if (fis != 0) g_av = (uint8_t *)(uintptr_t)fis;
@@ -705,6 +771,280 @@ static void cache_metti(int disco, uint64_t lba, const uint8_t *dati)
     v->uso = ++g_cache_orologio;
 }
 
+/* =============================================================================
+ * THE PAGE CACHE (kernel 0.304, 1 November 2026)
+ *
+ * The cache above keeps 1 MB of metadata; everything else went to the disk
+ * every time. This one keeps whole pages of 4 KB, keyed by (disk, absolute
+ * sector, a multiple of 8), for file data and for what falls out of the 1 MB.
+ *
+ *   - WRITE-THROUGH like the other: a sector read from here is the one on the
+ *     disk, so nothing is lost at any stop, and blk_flush means what it meant.
+ *     A write updates the pages that hold it; it does not add any: the journal
+ *     would fill the cache with blocks nobody reads.
+ *   - THE PAGES ARE ORDINARY FREE RAM, taken as they are needed, up to
+ *     cachedisco MB (kernel.cfg; RAM / 8 if not said, 0 = off). The table is
+ *     in the kernel's band. When free RAM falls under 1/8 the cache stops
+ *     growing, and whoever finds no page gets some back (blk_cache_cedi) before
+ *     the swap is touched.
+ *   - EVICTION IS A CLOCK: a hit sets `rif`, the hand clears it and takes the
+ *     first page without it. A file read once in sequence goes through without
+ *     pushing out what is read all the time.
+ *   - UNDER THE DISK LOCK, like the rest of this file, and never holding an
+ *     entry across anything that can sleep.
+ *
+ * ! THE PAGES ARE REACHED THROUGH THE WINDOW OF paging.c, WHICH MAY NOT FAULT:
+ * interrupts are off while it is open, and it panics if opened twice. The
+ * caller's buffer can be a program's, and touching it can fault, reach the swap
+ * and come back here. So the window only ever talks to a bounce page, and the
+ * bounce page to the buffer with g_pc_liv raised: the nested call takes the
+ * next bounce page. PC_LIVELLI of them, past those a read goes to the disk
+ * and a write drops the page.
+ * ============================================================================= */
+#define PC_SETT     8u
+#define PC_LIVELLI  4u
+#define PC_TABELLA_MAX  (4u * 1024u * 1024u)    /* table, by default */
+
+typedef struct {
+    int      disco;             /* -1 = free */
+    int      dopo;              /* next in the bucket, or in the free list */
+    uint64_t lba;
+    paddr_t  fis;
+    uint32_t rif;
+} VocePag;
+
+static VocePag  *g_pc        = NULL;
+static int      *g_pc_secchi = NULL;
+static uint8_t  *g_pc_rimbalzo = NULL;
+static uint32_t  g_pc_n = 0, g_pc_maschera = 0, g_pc_lancetta = 0, g_pc_usate = 0;
+static int       g_pc_libera = -1;
+static uint32_t  g_pc_liv = 0;
+
+static void pc_init(void)
+{
+    const char *s = cfg_get_option("cachedisco");
+    uint32_t    pagine = pmm_get_total_pages() / 8u, secchi = 1, byte, k;
+    paddr_t     f;
+
+    if (s != NULL) {
+        pagine = 0;
+        while (*s >= '0' && *s <= '9') pagine = pagine * 10u + (uint32_t)(*s++ - '0');
+        pagine *= 256u;
+    } else if (pagine > PC_TABELLA_MAX / sizeof(VocePag)) {
+        pagine = PC_TABELLA_MAX / sizeof(VocePag);
+    }
+    if (pagine == 0) { klog(LOG_INFO, "BLK: cache delle pagine spenta"); return; }
+
+    f = pmm_alloc_pages_kernel(PC_LIVELLI);
+    if (f == 0) return;
+    g_pc_rimbalzo = (uint8_t *)DA_FISICO(f);
+
+    while (secchi < pagine) secchi <<= 1;
+    secchi >>= 1;
+    if (secchi == 0) secchi = 1;
+    for (;; pagine /= 2u, secchi = secchi > 1u ? secchi / 2u : 1u) {
+        if (pagine < 16u) { g_pc_rimbalzo = NULL; return; }
+        byte = pagine * (uint32_t)sizeof(VocePag) + secchi * (uint32_t)sizeof(int);
+        f = pmm_alloc_pages_kernel((byte + 4095u) / 4096u);
+        if (f != 0) break;
+    }
+    g_pc          = (VocePag *)DA_FISICO(f);
+    g_pc_secchi   = (int *)(g_pc + pagine);
+    g_pc_n        = pagine;
+    g_pc_maschera = secchi - 1u;
+    for (k = 0; k < secchi; k++) g_pc_secchi[k] = -1;
+    for (k = 0; k < pagine; k++) {
+        g_pc[k].disco = -1;
+        g_pc[k].dopo  = (k + 1u < pagine) ? (int)(k + 1u) : -1;
+    }
+    g_pc_libera = 0;
+    klog(LOG_INFO, "BLK: cache delle pagine fino a %u MB", pagine / 256u);
+}
+
+static uint32_t pc_secchio(int disco, uint64_t pag)
+{
+    uint64_t x = (pag >> 3) ^ (pag >> 17) ^ ((uint64_t)(uint32_t)disco << 24);
+
+    return ((uint32_t)x * 2654435761u >> 7) & g_pc_maschera;
+}
+
+static int pc_cerca(int disco, uint64_t pag)
+{
+    int k;
+
+    if (g_pc == NULL) return -1;
+    for (k = g_pc_secchi[pc_secchio(disco, pag)]; k >= 0; k = g_pc[k].dopo)
+        if (g_pc[k].disco == disco && g_pc[k].lba == pag) return k;
+    return -1;
+}
+
+/* Out of its bucket; the page stays with the entry. */
+static void pc_sgancia(int k)
+{
+    int *p = &g_pc_secchi[pc_secchio(g_pc[k].disco, g_pc[k].lba)];
+
+    while (*p >= 0 && *p != k) p = &g_pc[*p].dopo;
+    if (*p == k) *p = g_pc[k].dopo;
+    g_pc[k].disco = -1;
+}
+
+static void pc_libera(int k)
+{
+    pc_sgancia(k);
+    pmm_free_page(g_pc[k].fis);
+    g_pc[k].dopo = g_pc_libera;
+    g_pc_libera  = k;
+    g_pc_usate--;
+}
+
+/* An entry with a page and out of every bucket, or -1. */
+static int pc_nuova(void)
+{
+    uint32_t passi;
+
+    if (g_pc_libera >= 0 && pmm_get_free_pages() > pmm_get_total_pages() / 8u) {
+        paddr_t f = pmm_alloc_page_utente();
+
+        if (f != 0) {
+            int k = g_pc_libera;
+
+            g_pc_libera  = g_pc[k].dopo;
+            g_pc[k].fis  = f;
+            g_pc_usate++;
+            return k;
+        }
+    }
+    if (g_pc_usate == 0) return -1;
+    for (passi = 0; passi < 8192u; passi++) {
+        uint32_t k = g_pc_lancetta;
+
+        g_pc_lancetta = (k + 1u < g_pc_n) ? k + 1u : 0;
+        if (g_pc[k].disco < 0) continue;
+        if (g_pc[k].rif) { g_pc[k].rif = 0; continue; }
+        pc_sgancia((int)k);
+        return (int)k;
+    }
+    return -1;
+}
+
+/* One page from a bounce page, which cannot fault. */
+static void pc_metti_rimbalzo(int disco, uint64_t pag, const uint8_t *t)
+{
+    int   k = pc_cerca(disco, pag);
+    void *v;
+
+    if (k < 0) {
+        uint32_t s;
+
+        k = pc_nuova();
+        if (k < 0) return;
+        g_pc[k].disco = disco;
+        g_pc[k].lba   = pag;
+        s = pc_secchio(disco, pag);
+        g_pc[k].dopo  = g_pc_secchi[s];
+        g_pc_secchi[s] = k;
+    }
+    g_pc[k].rif = 0;
+    v = paging_finestra_apri(g_pc[k].fis);
+    copia((uint8_t *)v, t, 4096u);
+    paging_finestra_chiudi();
+}
+
+/* A page from a buffer that may be a program's. */
+static void pc_metti(int disco, uint64_t pag, const uint8_t *src)
+{
+    uint8_t *t;
+
+    if (g_pc == NULL || g_pc_liv >= PC_LIVELLI) return;
+    t = g_pc_rimbalzo + g_pc_liv * 4096u;
+    g_pc_liv++;
+    copia(t, src, 4096u);
+    g_pc_liv--;
+    pc_metti_rimbalzo(disco, pag, t);
+}
+
+/* `q` sectors from sector `off` of a page, if it is there. */
+static int pc_copia(int disco, uint64_t pag, uint32_t off, uint32_t q, uint8_t *dst)
+{
+    int      k = pc_cerca(disco, pag);
+    uint8_t *t;
+    void    *v;
+
+    if (k < 0 || g_pc_liv >= PC_LIVELLI) return 0;
+    g_pc[k].rif = 1;
+    t = g_pc_rimbalzo + g_pc_liv * 4096u;
+    v = paging_finestra_apri(g_pc[k].fis);
+    copia(t, (const uint8_t *)v + off * 512u, q * 512u);
+    paging_finestra_chiudi();
+    g_pc_liv++;
+    copia(dst, t, q * 512u);
+    g_pc_liv--;
+    if (disco < ATA_MAX_DEVICES) g_conti[disco].sett_cache += q;
+    return 1;
+}
+
+/* What a write must do: the pages holding those sectors follow the disk. */
+static void pc_aggiorna(int disco, uint64_t abs, uint32_t n, const uint8_t *src)
+{
+    while (n > 0 && g_pc != NULL) {
+        uint64_t pag = abs & ~(uint64_t)(PC_SETT - 1u);
+        uint32_t off = (uint32_t)(abs - pag);
+        uint32_t q   = PC_SETT - off;
+        int      k;
+
+        if (q > n) q = n;
+        k = pc_cerca(disco, pag);
+        if (k >= 0) {
+            if (g_pc_liv >= PC_LIVELLI) {
+                pc_libera(k);
+            } else {
+                uint8_t *t = g_pc_rimbalzo + g_pc_liv * 4096u;
+                void    *v;
+
+                g_pc_liv++;
+                copia(t, src, q * 512u);
+                g_pc_liv--;
+                k = pc_cerca(disco, pag);       /* the copy may have slept */
+                if (k >= 0) {
+                    v = paging_finestra_apri(g_pc[k].fis);
+                    copia((uint8_t *)v + off * 512u, t, q * 512u);
+                    paging_finestra_chiudi();
+                }
+            }
+        }
+        abs += q; n -= q; src += q * 512u;
+    }
+}
+
+static void pc_scarta(int disco, uint64_t abs, uint32_t n)
+{
+    uint64_t pag = abs & ~(uint64_t)(PC_SETT - 1u);
+
+    for (; pag < abs + n; pag += PC_SETT) {
+        int k = pc_cerca(disco, pag);
+
+        if (k >= 0) pc_libera(k);
+    }
+}
+
+uint32_t blk_cache_cedi(uint32_t pagine)
+{
+    uint32_t dati = 0, k;
+
+    if (g_pc == NULL || g_pc_usate == 0) return 0;
+    ata_prendi();
+    for (k = 0; k < g_pc_n && dati < pagine && g_pc_usate > 0; k++) {
+        uint32_t i = g_pc_lancetta;
+
+        g_pc_lancetta = (i + 1u < g_pc_n) ? i + 1u : 0;
+        if (g_pc[i].disco < 0) continue;
+        pc_libera((int)i);
+        dati++;
+    }
+    ata_lascia();
+    return dati;
+}
+
 /* ! VA CHIAMATA QUANDO IL CONTENUTO DEL DISCO CAMBIA SOTTO I PIEDI: una
  * ripartizionatura, una formattazione, un disco estratto e rimesso. Senza,
  * si continuerebbe a servire i settori di prima — e il difetto si vedrebbe
@@ -719,6 +1059,13 @@ static void cache_svuota(int disco)
         for (k = 0; k < CACHE_VOCI; k++)
             if (g_cache[k].disco >= 0 && (disco < 0 || g_cache[k].disco == disco))
                 cache_stacca(k);
+    if (g_pc != NULL) {
+        uint32_t i;
+
+        for (i = 0; i < g_pc_n; i++)
+            if (g_pc[i].disco >= 0 && (disco < 0 || g_pc[i].disco == disco))
+                pc_libera((int)i);
+    }
     ata_lascia();
 }
 
@@ -735,20 +1082,72 @@ static int leggi_avanti(int disco, uint64_t abs, uint32_t n, uint8_t *buf,
 
     if (g_av_disco == disco && abs >= g_av_lba && abs + n <= g_av_lba + g_av_n) {
         copia(buf, g_av + (uint32_t)(abs - g_av_lba) * 512u, n * 512u);
+        if (disco < ATA_MAX_DEVICES) g_conti[disco].sett_finestra += n;
         return 0;
     }
     if (g_av == NULL || !seguito || n > AVANTI_SETT / 2u)
-        return ata_read(disco, abs, n, buf);
+        return disco_leggi(disco, abs, n, buf);
 
     quanti = AVANTI_SETT;
     if (abs + quanti > fine) quanti = (uint32_t)(fine - abs);
     g_av_disco = -1;
-    if (quanti < n || ata_read(disco, abs, quanti, g_av) != 0)
-        return ata_read(disco, abs, n, buf);      /* the plain read says what failed */
+    if (quanti < n || disco_leggi(disco, abs, quanti, g_av) != 0)
+        return disco_leggi(disco, abs, n, buf);      /* the plain read says what failed */
     g_av_disco = disco;
     g_av_lba   = abs;
     g_av_n     = quanti;
     copia(buf, g_av, n * 512u);
+    return 0;
+}
+
+/* The disk, through the window for file data, plain for the rest. */
+static int pc_fonte(const BlkDev *b, uint64_t abs, uint32_t n, uint8_t *p, int avanti)
+{
+    if (avanti) return leggi_avanti(b->disco, abs, n, p, b->primo + b->settori);
+    return disco_leggi(b->disco, abs, n, p);
+}
+
+/* A read through the page cache. Consecutive whole pages that are missing go
+ * in one command into the caller's buffer; a piece of a page, as a filesystem
+ * with 1 KB blocks asks, reads its whole page into a bounce page, unless that
+ * page leaves the partition. Under the disk lock. */
+static int pc_leggi(const BlkDev *b, uint64_t abs, uint32_t n, uint8_t *p, int avanti)
+{
+    uint64_t fine = b->primo + b->settori;
+
+    if (g_pc == NULL) return pc_fonte(b, abs, n, p, avanti);
+
+    while (n > 0) {
+        uint64_t pag = abs & ~(uint64_t)(PC_SETT - 1u);
+        uint32_t off = (uint32_t)(abs - pag);
+        uint32_t q   = PC_SETT - off;
+
+        if (q > n) q = n;
+        if (pc_copia(b->disco, pag, off, q, p)) {
+            /* the window of the read-ahead must not think the sequence broke */
+            if (avanti) { g_av_ult_disco = b->disco; g_av_ult_fine = abs + q; }
+        } else if (q == PC_SETT) {
+            uint32_t pagine = 1, k;
+
+            while ((pagine + 1u) * PC_SETT <= n &&
+                   pc_cerca(b->disco, pag + pagine * PC_SETT) < 0) pagine++;
+            q = pagine * PC_SETT;
+            if (pc_fonte(b, abs, q, p, avanti) != 0) return -1;
+            for (k = 0; k < pagine; k++)
+                pc_metti(b->disco, pag + k * PC_SETT, p + k * 4096u);
+        } else if (pag < b->primo || pag + PC_SETT > fine || g_pc_liv >= PC_LIVELLI) {
+            if (pc_fonte(b, abs, q, p, avanti) != 0) return -1;
+        } else {
+            uint8_t *t = g_pc_rimbalzo + g_pc_liv * 4096u;
+
+            if (pc_fonte(b, pag, PC_SETT, t, avanti) != 0) return -1;
+            pc_metti_rimbalzo(b->disco, pag, t);
+            g_pc_liv++;
+            copia(p, t + off * 512u, q * 512u);
+            g_pc_liv--;
+        }
+        abs += q; n -= q; p += q * 512u;
+    }
     return 0;
 }
 
@@ -771,18 +1170,20 @@ static int leggi_ata(const BlkDev *b, uint64_t abs, uint32_t n, void *buf,
             copia(p + k * 512u, v->dati, 512u);
             v->uso = ++g_cache_orologio;
         }
-        if (tutti) return 0;
+        if (tutti) {
+            if (b->disco < ATA_MAX_DEVICES) g_conti[b->disco].sett_cache += n;
+            return 0;
+        }
 
         /* Anche un solo settore mancante costa comunque un comando: tanto
          * vale rileggere tutta la corsa in una volta e riempire la cache
          * con tutto quello che passa. */
-        if (ata_read(b->disco, abs, n, buf) != 0) return -1;
+        if (pc_leggi(b, abs, n, p, 0) != 0) return -1;
         for (k = 0; k < n; k++) cache_metti(b->disco, abs + k, p + k * 512u);
         return 0;
     }
 
-    if (!usa_cache) return leggi_avanti(b->disco, abs, n, (uint8_t *)buf, b->primo + b->settori);
-    return ata_read(b->disco, abs, n, buf);
+    return pc_leggi(b, abs, n, (uint8_t *)buf, !usa_cache);
 }
 
 static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
@@ -849,7 +1250,7 @@ static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
     {
         int r;
 
-        ata_prendi();
+        disco_prendi(b->disco);
         r = leggi_ata(b, abs, n, buf, usa_cache);
         ata_lascia();
         return r;
@@ -1108,14 +1509,15 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
      * between the two would put the old sectors back in the cache. A failed
      * write drops what the cache and the window hold of those sectors: the
      * disk may have taken part of it, and no copy is known to be right. */
-    ata_prendi();
+    disco_prendi(b->disco);
     avanti_scarta(b->disco, abs, n);
-    if (ata_write(b->disco, abs, n, buf) != 0) {
+    if (disco_scrivi(b->disco, abs, n, buf) != 0) {
         if (g_cache)
             for (k = 0; k < n; k++) {
                 VoceCache *v = cache_trova(b->disco, abs + k);
                 if (v != NULL) cache_stacca((int)(v - g_cache));
             }
+        pc_scarta(b->disco, abs, n);
         ata_lascia();
         return -1;
     }
@@ -1137,6 +1539,7 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
             }
         }
     }
+    pc_aggiorna(b->disco, abs, n, (const uint8_t *)buf);
     ata_lascia();
     return 0;
 }
@@ -1156,5 +1559,16 @@ int blk_flush(int i)
      * Mandargli un FLUSH CACHE ATA sarebbe un comando che non conosce. */
     if (b->tipo == BLK_TIPO_CDROM) return 0;
 
-    return ata_flush(b->disco);
+    {
+        uint64_t da = tsc_leggi();
+        int      r  = ata_flush(b->disco);
+
+        if (b->disco >= 0 && b->disco < ATA_MAX_DEVICES) {
+            BlkConti *c = &g_conti[b->disco];
+
+            c->flush++;
+            conta_tempo(&c->ms_flush, &c->max_flush, da);
+        }
+        return r;
+    }
 }

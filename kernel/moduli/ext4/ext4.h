@@ -74,7 +74,7 @@ void prenotazione_chiudi(void);
  * read-only; the others answer 0 at once for a volume with no journal. */
 int  giornale_monta  (int mnt);
 void giornale_smonta (int mnt);
-int  giornale_commit (int mnt);
+int  giornale_commit (int mnt, int perche);   /* perche: 1 = sync, 0 = close */
 int  giornale_inizio (int mnt);
 int  giornale_fine   (int mnt, int subito);
 void giornale_leggi  (Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst);

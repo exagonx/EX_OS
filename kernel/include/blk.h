@@ -120,7 +120,29 @@ int  blk_read (int i, uint64_t lba, uint32_t n, void *buf);
 int  blk_write(int i, uint64_t lba, uint32_t n, const void *buf);
 /* Come blk_read, ma senza passare dalla cache: per i dati dei file. */
 int  blk_read_diretto(int i, uint64_t lba, uint32_t n, void *buf);
+
+/* The page cache gives memory back (blk.c): up to `pagine` pages, returns how
+ * many. For whoever finds no free page, before the swap. */
+uint32_t blk_cache_cedi(uint32_t pagine);
 int  blk_flush(int i);
+
+/* =============================================================================
+ * THE COUNTERS OF A DISK (0.303, voce 54 bis): what the disk was really asked,
+ * since the start. Every read, write and FLUSH of blk.c passes here; served
+ * from memory counts as sectors only, and costs no command. The times come
+ * from the TSC, and `attesa` is the time spent waiting for the disk lock.
+ * ============================================================================= */
+typedef struct {
+    uint64_t letture,   sett_letti,   ms_letture;
+    uint64_t scritture, sett_scritti, ms_scritture;
+    uint64_t flush,     ms_flush;
+    uint64_t sett_cache, sett_finestra;     /* sectors that needed no command */
+    uint64_t ms_attesa;
+    uint32_t max_lettura, max_scrittura, max_flush, max_attesa;     /* ms */
+} BlkConti;
+
+/* 0 and a copy of the counters of ATA disk `disco`, -1 if there is no such. */
+int  blk_conti(int disco, BlkConti *c);
 
 /* Indice del dispositivo che rappresenta la partizione `numero` del disco
  * ATA `disco`. Ritorna -1 se non registrata (per esempio perche' era

@@ -21,7 +21,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `disk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("disk", "0.002");
+EX_VERSIONE("disk", "0.003");
 
 /* Un settore e' 512 byte: 2048 settori = 1 MB, 2097152 = 1 GB.
  * La divisione si fa sui settori e non sui byte perche' i byte di un
@@ -218,6 +218,85 @@ static void mostra(unsigned int idx, unsigned int n_cd, const DiskInfo *d)
     printf("  dal byte di tipo MBR, che e' solo un suggerimento e puo' mentire.\n");
 }
 
+/* =============================================================================
+ * disk -stat: the counters of /proc/disco
+ *
+ * ! OCCUPATO IS THE COMMAND TIME OVER THE ELAPSED TIME: it can pass 100 when
+ * more than one thing waits, and it is the number that says whether the disk
+ * is the bottleneck. With SECONDI each line is the difference from the last.
+ * ============================================================================= */
+#define CONTI_N   15u           /* the numbers of a line of /proc/disco */
+#define DISCHI_N  8u
+
+typedef struct {
+    char               nome[8];
+    unsigned long long v[CONTI_N];
+} Conti;
+
+static unsigned int conti_leggi(Conti *c, unsigned int max)
+{
+    static char  buf[2048];
+    int          fd = open("/proc/disco", O_RDONLY), n;
+    char        *p = buf;
+    unsigned int k = 0, i;
+
+    if (fd < 0) return 0;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+    while (*p && k < max) {
+        for (i = 0; *p && *p != ' ' && i + 1 < sizeof(c[k].nome); i++) c[k].nome[i] = *p++;
+        c[k].nome[i] = '\0';
+        for (i = 0; i < CONTI_N; i++) {
+            c[k].v[i] = 0;
+            while (*p == ' ') p++;
+            while (*p >= '0' && *p <= '9') c[k].v[i] = c[k].v[i] * 10 + (unsigned)(*p++ - '0');
+        }
+        while (*p && *p != '\n') p++;
+        if (*p) p++;
+        k++;
+    }
+    return k;
+}
+
+static void conti_stampa(const Conti *c, const Conti *prima, unsigned int ms)
+{
+    unsigned long long d[CONTI_N];
+    unsigned long long occ;
+    unsigned int       i;
+
+    for (i = 0; i < CONTI_N; i++) d[i] = c->v[i] - (prima ? prima->v[i] : 0);
+    occ = d[2] + d[6] + d[9];
+    printf("%s  letture %llu (%llu KB, %llu ms, max %llu)  scritture %llu (%llu KB, "
+           "%llu ms, max %llu)\n",
+           c->nome, d[0], d[1] / 2, d[2], c->v[3], d[4], d[5] / 2, d[6], c->v[7]);
+    printf("     flush %llu (%llu ms, max %llu)  da memoria %llu KB  attesa %llu ms, "
+           "max %llu", d[8], d[9], c->v[10], (d[11] + d[12]) / 2, d[13], c->v[14]);
+    if (ms) printf("  occupato %u%%", (unsigned int)occ / (ms / 100u ? ms / 100u : 1u));
+    printf("\n");
+}
+
+static int stat_dischi(unsigned int secondi)
+{
+    static Conti a[DISCHI_N], b[DISCHI_N];
+    unsigned int n = conti_leggi(a, DISCHI_N), i, k;
+
+    if (n == 0) { printf("disk: nessun contatore in /proc/disco\n"); return 1; }
+    if (secondi == 0) {
+        for (i = 0; i < n; i++) conti_stampa(&a[i], NULL, 0);
+        printf("(i massimi sono dall'avvio; tempi in ms)\n");
+        return 0;
+    }
+    for (;;) {
+        sleep(secondi);
+        k = conti_leggi(b, DISCHI_N);
+        for (i = 0; i < k && i < n; i++) conti_stampa(&b[i], &a[i], secondi * 1000u);
+        printf("\n");
+        memcpy(a, b, sizeof(a));
+    }
+}
+
 int main(int argc, char **argv)
 {
     DiskInfo     d;
@@ -225,7 +304,14 @@ int main(int argc, char **argv)
     unsigned int n_cd = 0;
     int          trovati = 0;
 
-    (void)argc; (void)argv;
+    if (argc > 1 && strcmp(argv[1], "-stat") == 0)
+        return stat_dischi(argc > 2 ? (unsigned int)atoi(argv[2]) : 0);
+    if (argc > 1) {
+        printf("uso: disk                 i dischi e le partizioni\n"
+               "     disk -stat           cosa ha fatto ogni disco dall'avvio\n"
+               "     disk -stat SECONDI   lo stesso, ogni SECONDI, per differenza\n");
+        return 1;
+    }
 
     for (i = 0; i < 4; i++) {
         if (diskinfo(i, &d) < 0) {

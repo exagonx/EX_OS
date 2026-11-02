@@ -559,6 +559,13 @@ sovrappongono, catene di logiche rotte. Le anomalie sono la parte
 importante - un disco che sembra a posto e non lo e' e' il modo
 classico di perdere dei dati.
 
+  disk -stat           cosa ha fatto ogni disco dall'avvio
+  disk -stat 5         lo stesso ogni 5 secondi, per differenza
+
+Dice comandi, KB, tempi, FLUSH, quanto e' arrivato dalla memoria senza
+toccare il disco, e quanto si e' aspettato il lucchetto del disco.
+"Occupato" vicino a 100 vuol dire che il collo di bottiglia e' il disco.
+
 [fdisk]
 crea e cancella partizioni
 
@@ -934,6 +941,10 @@ apre una sessione su un host
   telnet 10.0.2.2
   telnet host 2323                 su una porta diversa
 
+Se la macchina dall'altra parte si riavvia o il server muore, ip.drv dalla
+0.020 chiude la connessione da solo e il client esce. Con una macchina vecchia
+(ip.drv 0.019 o prima) il client resta fermo sul prompt: Ctrl+] e poi quit.
+
 [ftp]
 trasferisce file
 
@@ -1126,6 +1137,8 @@ abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
   procmax = N     processi e fili insieme (RAM / 128 KB, al massimo 512)
   fdmax = N       descrittori per programma (uno ogni 2 KB di RAM)
   tcpmax = N      connessioni TCP di ip.drv (una ogni 32 KB di RAM)
+  cachedisco = N  MB della cache di lettura dei dischi (di serie 1/8 della RAM,
+                  0 la spegne); la memoria torna ai programmi quando serve
   netrx = N       descrittori di ricezione, tutte le schede (uno per MB)
   nettx = N       descrittori di invio della scheda (un quarto di netrx)
 

@@ -216,6 +216,8 @@ static int leggi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst)
     return 0;
 }
 
+static uint32_t g_ris_gen = 0;      /* see risolvi: any change of metadata */
+
 static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
 {
     if (n == 0 || n >= m->n_blocchi) {
@@ -229,6 +231,8 @@ static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
      * legge un blocco indiretto vecchio subito dopo averlo riscritto, e
      * il file finisce a puntare ai blocchi che aveva prima. */
     if (g_ind_num == n && !g_ind_sporco) g_ind_mnt = -1;
+
+    g_ris_gen++;        /* see risolvi */
 
     /* ext3: a metadata block goes into the open transaction, and reaches
      * its place on the disk only after the commit (see Ext2Ops). */
@@ -270,6 +274,7 @@ static int ind_riversa(Ext2Mount *m)
 {
     if (!g_ind_sporco) return 0;
     g_ind_sporco = 0;
+    g_ris_gen++;
     if (g_ind_mnt < 0) return -1;       /* non deve succedere: lo sporco e' sempre in cache */
     if (g_ops != NULL && g_ops->giornale_scrivi != NULL) {
         int r = g_ops->giornale_scrivi(m, g_ind_num, b_ind);
@@ -353,6 +358,8 @@ static int leggi_inode(Ext2Mount *m, uint32_t numero, uint8_t *dst)
  * a read to a random place of the disk. A physical block above 4 G blocks
  * is refused the same way: this driver counts blocks in 32 bits.
  * ============================================================================= */
+static uint32_t g_ext_resto = 0;    /* blocks of the extent from n on, n included */
+
 static uint32_t extent_map(Ext2Mount *m, const uint8_t *inode, uint32_t n)
 {
     const uint8_t *nodo = inode + 40u;          /* the root, inside i_block */
@@ -387,6 +394,7 @@ static uint32_t extent_map(Ext2Mount *m, const uint8_t *inode, uint32_t n)
                 if (lung > 32768u) return 0;    /* uninitialized: zeros */
                 if (n - primo >= lung) return 0;
                 if (alto != 0) return 0;        /* beyond 32-bit block numbers */
+                g_ext_resto = lung - (n - primo);
                 return basso + (n - primo);
             } else {
                 uint32_t foglia = le32(e + 4);
@@ -511,8 +519,8 @@ static uint32_t cerca_voce(Ext2Mount *m, int mnt, const uint8_t *inode_dir,
 
 /* Risolve un percorso assoluto interno al volume. Ritorna il numero di
  * inode e lascia l'inode in `out` (128 byte). 0 se non esiste. */
-static uint32_t risolvi(Ext2Mount *m, int mnt, const char *percorso,
-                        uint8_t *out)
+static uint32_t risolvi_dal_disco(Ext2Mount *m, int mnt, const char *percorso,
+                                  uint8_t *out)
 {
     uint32_t ino = INODE_RADICE;
     uint32_t i = 0;
@@ -541,6 +549,66 @@ static uint32_t risolvi(Ext2Mount *m, int mnt, const char *percorso,
         if (percorso[i] == '/') i++;
     }
 
+    return ino;
+}
+
+/* =============================================================================
+ * ! A read() OF 4 KB WALKED THE WHOLE PATH (kernel 0.305, 2 November 2026).
+ * The VFS names a file by its path, so each read started from the root: for
+ * every directory the group descriptor, the inode table, the directory blocks.
+ * On the laptop reading a 215 MB file 4 KB at a time copied 26 GB of metadata
+ * out of the sector cache, 512 KB for each 4 KB of file, and came to 9 MB/s
+ * with not one command to the disk.
+ *
+ * So the last paths found are kept with their inode, and any change of
+ * metadata on any volume forgets them all: every such change goes through
+ * scrivi_blocco or ind_riversa, and a mount through ext2_mount_come
+ * (g_ris_gen). Failures are not kept. Under the VFS lock, like b_desc and the
+ * other buffers of this file.
+ * ============================================================================= */
+#define RIS_VOCI  16u
+#define RIS_NOME  116u
+
+typedef struct {
+    int      mnt;
+    uint32_t gen, ino;
+    uint8_t  inode[128];
+    char     nome[RIS_NOME];
+} VoceRisolvi;
+
+static VoceRisolvi g_ris[RIS_VOCI];
+static uint32_t    g_ris_prossima = 0;
+
+static uint32_t risolvi(Ext2Mount *m, int mnt, const char *percorso, uint8_t *out)
+{
+    uint32_t i, k, ino, lung = 0;
+
+    if (percorso != NULL)
+        while (percorso[lung] != 0 && lung < RIS_NOME) lung++;
+    if (percorso == NULL || lung >= RIS_NOME)
+        return risolvi_dal_disco(m, mnt, percorso, out);
+
+    for (i = 0; i < RIS_VOCI; i++) {
+        VoceRisolvi *v = &g_ris[i];
+
+        if (v->ino == 0 || v->gen != g_ris_gen || v->mnt != mnt) continue;
+        for (k = 0; k <= lung && v->nome[k] == percorso[k]; k++) {}
+        if (k <= lung) continue;
+        for (k = 0; k < 128u; k++) out[k] = v->inode[k];
+        return v->ino;
+    }
+
+    ino = risolvi_dal_disco(m, mnt, percorso, out);
+    if (ino != 0) {
+        VoceRisolvi *v = &g_ris[g_ris_prossima];
+
+        g_ris_prossima = (g_ris_prossima + 1u) % RIS_VOCI;
+        v->mnt = mnt;
+        v->gen = g_ris_gen;
+        v->ino = ino;
+        for (k = 0; k < 128u; k++) v->inode[k] = out[k];
+        for (k = 0; k <= lung; k++) v->nome[k] = percorso[k];
+    }
     return ino;
 }
 
@@ -627,6 +695,8 @@ int ext2_mount(int blkdev)
 
 int ext2_mount_come(int blkdev, int ro_chiesto)
 {
+    g_ris_gen++;        /* a mount number is used again: see risolvi */
+
     Ext2Mount *m = NULL;
     uint8_t    sb[1024];
     uint32_t   log_bs, incompat, rev, i;
@@ -1019,6 +1089,10 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
             uint32_t n = 1, max = (size - letti) / m->dim_blocco;
 
             if (max > CORSA_MAX) max = CORSA_MAX;
+            /* inside one extent the run is known: mapping block by block
+             * read the node of the tree again for each of them */
+            if (le32(inode + 32u) & INODE_FL_EXTENTS)
+                n = g_ext_resto < max ? g_ext_resto : max;
             while (n < max && mappa_blocco(m, mnt, inode, log + n) == blk + n) n++;
             if (leggi_corsa(m, blk, n, dst + letti) != 0) break;
             letti += n * m->dim_blocco;

@@ -314,8 +314,7 @@ def main():
         "-display", "none",
         "-serial", "file:%s" % SER,
         "-monitor", "unix:%s,server,nowait" % MON,
-        "-no-reboot",
-    ] + rete + (["-cdrom", cdrom] if cdrom else [])
+    ] + ([] if os.environ.get("EXOS_RIAVVIO") else ["-no-reboot"]) + rete + (["-cdrom", cdrom] if cdrom else [])
       + (os.environ.get("EXOS_QEMU_EXTRA", "").split() if os.environ.get("EXOS_QEMU_EXTRA") else []), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     try:

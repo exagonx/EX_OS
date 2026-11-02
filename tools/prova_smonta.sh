@@ -20,17 +20,19 @@ rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"; DATI="$D/dati.img"
 SBIN=/usr/sbin
 X=cross_build/nasi5deb
-P1_SETT=262144                                 # 128 MB
+P1_SETT=524288                                 # 256 MB, ExWin included
 
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc
     KERNEL=build-64/kernel-intero.bin; STAGE2=build-64/avvio/stage2-cd.bin
     RD=build-64/rdboot.img; RDZ=build-64/rdboot.lz4
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"
+    ALBERO=build-64/iso-exos
 else
     ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc
     KERNEL=build/kernel.bin; STAGE2=build/stage2.bin; RD=build/rdboot.img; RDZ=build/rdboot.lz4
     export EXOS_RAM=128M EXTRA=""
+    ALBERO=build/iso-exos
 fi
 for f in "$ISO" "$KERNEL" "$STAGE2" "$RD" "$RDZ"; do [ -f "$f" ] || { echo "manca $f" >&2; exit 1; }; done
 
@@ -43,12 +45,14 @@ cp "$KERNEL" "$T/da/kernel.bin"
 cp "$RDZ"    "$T/da/rdboot.lz4"
 grep -v '^login *=' boot/kernel.cfg > "$T/boot/kernel.cfg"
 for d in bin lib dev; do $SBIN/debugfs -R "rdump /rdboot/$d $T" "$RD" > /dev/null 2>&1; done
+# The desktop is not in the base system: it comes from the tree of the CD.
+for d in bin lib dev exwin; do [ -d "$ALBERO/$d" ] && cp -r "$ALBERO/$d" "$T/"; done
 
 P="$D/p1.img"
 fakeroot sh -c "chown -R 0:0 '$T'; chmod 755 '$T'/bin/* '$T'/avvioprova '$T'/ignoraterm;
     $SBIN/mke2fs -q -F -t ext4 -b 1024 -m 0 -L sistema -d '$T' '$P' $((P1_SETT / 2))" \
     > "$D/mke2fs.log" 2>&1 || { cat "$D/mke2fs.log"; exit 1; }
-qemu-img create -f raw "$IMG" 130M > /dev/null
+qemu-img create -f raw "$IMG" 260M > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, size=%d, type=83, bootable\n' $P1_SETT \
     | $SBIN/sfdisk "$IMG" > /dev/null 2>&1
 dd if="$P" of="$IMG" bs=512 seek=2048 conv=notrunc status=none
@@ -90,17 +94,26 @@ EXOS_ISTANZA=sm0$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     "umount /a@3" > "$D/qemu0.log" 2>&1
 grep -aq "^AVVIO installa 0" "$D/qemu0.log" || { echo "  [NO] l'installazione dell'avvio"; exit 1; }
 
-for cmd in poweroff reboot halt; do
+# From the desktop too: the menu of the Program Manager, and the second
+# Ctrl+Alt+Canc, which reboots from the window server.
+# ! THE LAST ENTRIES OF THE MENU are Riavvia and Spegni: Up from the first wraps.
+for cmd in poweroff reboot halt pmspegni pmriavvia canc; do
     echo "--- $cmd ---"
     # reboot: a program that ignores SIGTERM, 30 s and then SIGKILL
     prog=/bin/sleep\ 3000\ \<; att=25
     [ $cmd = reboot ] && { prog=/ignoraterm; att=50; }
+    azione=("$cmd@$att")
+    case $cmd in
+        pmspegni)  azione=("exwin@20" "key:alt-f5@3" "key:ctrl-esc@3" "key:up@2" "foto:$D/$cmd.ppm@1" "key:ret@70") ;;
+        pmriavvia) azione=("exwin@20" "key:alt-f5@3" "key:ctrl-esc@3" "key:up@1" "key:up@2" "foto:$D/$cmd.ppm@1" "key:ret@70") ;;
+        canc)      azione=("exwin@20" "key:alt-f5@3" "key:ctrl-alt-delete@2" "key:ctrl-alt-delete@60") ;;
+    esac
     EXOS_ISTANZA=sm$cmd$ARCH EXOS_NO_FLOPPY=1 \
         EXOS_QEMU_EXTRA="$EXTRA -no-reboot -drive file=$IMG,format=raw,if=ide -drive file=$DATI,format=raw,if=ide" \
-        timeout ${EXOS_TEMPO:-120} python3 tools/qemu_drive.py \
+        timeout ${EXOS_TEMPO:-240} python3 tools/qemu_drive.py \
         "mount hd1 /dati@3" \
         "echo su$cmd > /su$cmd@2" "echo da$cmd > /dati/da$cmd@2" \
-        "$prog /dati/da$cmd &@2" "sync@3" "echo tardi$cmd > /tardi$cmd@1" "$cmd@$att" \
+        "$prog /dati/da$cmd &@2" "sync@3" "echo tardi$cmd > /tardi$cmd@1" "${azione[@]}" \
         > "$D/qemu-$cmd.log" 2>&1
     cp "/tmp/exos/serialsm$cmd$ARCH.txt" "$D/seriale-$cmd.txt" 2>/dev/null
     grep -a "Smonto\|li chiudo a forza\|occupato\|non e' stato smontato\|not unmounted\|SISTEMA:" "$D/seriale-$cmd.txt" | sed 's/^/    /'

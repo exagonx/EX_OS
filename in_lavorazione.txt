@@ -8495,6 +8495,50 @@ tools/netinst/velocita tolto da netinst.
       reboot non e' stato tentato. La sh deve ripiegare su /rdboot/bin, e un
       errore di lettura deve dare errore, non pagine a zero.
 
+  69. LOGIN FERMO DOPO IL RIAVVIO SUL PORTATILE (l'utente, 1/11 notte, 0.303): la
+      tastiera non ha effetto, telnet funziona. NON riprodotto: in QEMU, ext4 con
+      login, reboot vero, tools/prova_login_riavvio.sh entra a 32 e 64 bit.
+      Pista da controllare, NON dimostrata: login esegue /boot/avvio.sh in primo
+      piano e chiede l'accesso solo dopo; una riga ferma dopo telnetd darebbe
+      proprio questo. Sul portatile: la scritta sullo schermo, Alt+F2, ps, e
+      cat /boot/avvio.sh.
+
+  68. CLIENT TELNET FERMO DOPO reboot. RISOLTA (ip.drv 0.020): FIN per le
+      connessioni dei programmi morti (tcp_fin_orfane, ogni 500 ms) e RST ai
+      segmenti senza connessione (tcp_rst_ignoto). tools/prova_telnet_fine.sh:
+      a 32 e 64 bit il tasto dopo il riavvio improvviso chiude in 0,0 s, reboot
+      in 0,2-0,3 s. Con la vecchia ISO a 32 bit: caso A mai, caso B 98 s.
+      ! Sul portatile non ancora provato. L'exit bloccato segnalato
+      dall'utente non e' stato riprodotto.
+
+  67. NETUPDATE: NUMERO DI VERSIONE DEI FILE (l'utente, 1/11 sera). Ogni file
+      aggiornato ha un numero di versione. Se un file ha la stessa versione del
+      server ma impronta diversa: avvisa e chiede se sostituirlo; con -yes e -yesall
+      la sostituzione e' automatica.
+
+  66. FIREFOX NON APRE LE PAGINE SUL PORTATILE (1/11 sera, 0.302, Firefox fermo a
+      "Nightly"). Misurato con MOZ_LOG nsHttp, nsSocketTransport, pipnss, tre avvii:
+      - NON E' IL PROFILO: uguale con HOME=/root/prova-ff (cartella di prova rimasta
+        sul portatile, profilo normale non cancellato).
+      - NON E' LA RETE ne' il DNS: scarica https://www.google.it 1,1 s; dentro Firefox
+        arrivano risposte HTTP/2 200. Gli "unknown host" sono solo le ricerche AAAA.
+      - NON E' L'MTU: dal PC passano 1500 byte verso Google senza perdite.
+      - ClientHello di Firefox intero in rete locale: 1869 su 1869 byte.
+      - IL SEGNO: A OGNI AVVIO TUTTI I FILI DEL LOG TACCIONO CIRCA 90 s, durata quasi
+        costante: 18:35:14-18:36:44, 18:46:0x-18:47:3x, 19:00:41-19:02:12. In quei
+        momenti anche la sessione telnet non risponde. Prima del vuoto le strette di
+        mano TLS restano a meta', dopo si completano e arrivano i 200.
+      - www.google.it: TCP aperto, ClientHello, poi socket outFlags=32 (HUP) dopo
+        6-14 s, prima del vuoto, e la transazione non finisce. PERCHE' arrivi la
+        chiusura NON e' dimostrato.
+      - dmesg non dice niente: nessun AHCI lento. Chi tiene ferma la macchina, NON si
+        sa. Il portatile non ha piu' dato il problema del disco sporco per reboot,
+        ma all'avvio di stasera hd2p1 era sporco (arresto non passato da reboot?).
+      PROSSIMA MISURA: tools/guardia-pc.py con guardia 150, la sonda scrive lucchetti e
+      pile a 75 s dentro il vuoto; ping dal PC durante il vuoto.
+      freebl failed to load libfreebl3.so, subprocess, gNetworkLinkService: gia' visti
+      quando le pagine si aprivano, non sono la causa.
+
   65. IL PORTATILE SI E' SPENTO DA SOLO (1/11, tra le 13:25 e la chiamata
       dell'utente, 0.301, a riposo, guardia spenta). Trovato spento, schermo non
       visto, causa sconosciuta. All'avvio chkdsk -r automatico, codice 0.
@@ -8513,6 +8557,13 @@ tools/netinst/velocita tolto da netinst.
       degli zombie, che teneva aperto l'eseguibile. Sul portatile: reboot dalla
       0.302, 76 s, nessun "not unmounted cleanly", nessun chkdsk.
       ! poweroff e halt provati solo in QEMU: sul portatile servirebbe riaccenderlo.
+      DALLA SCRIVANIA (1/11 sera): Riavvia e Spegni del Program Manager, scelta di
+      Ctrl+Alt+Canc e Ctrl+Alt+Canc doppio passano tutti da sys_reboot. Provati in
+      tools/prova_smonta.sh: "/" restava occupato dall'eseguibile di chi chiede
+      l'arresto (/exwin/bin/pm, /exwin/bin/wserver); proc_chiudi_miei_fd ora chiude
+      anche quello. Sei uscite a posto a 32 e 64 bit. ! Ctrl+Alt+Canc dal driver
+      della tastiera non rifatto in questa prova. ! Questa correzione NON e' ancora
+      sul portatile.
       ! NON spiegato: alle 13:13 lo stato era sporco e parti' chkdsk -r; il riavvio
       dalla 0.301 di oggi ha lasciato solo il giornale aperto, niente chkdsk.
 
@@ -8647,6 +8698,32 @@ tools/netinst/velocita tolto da netinst.
       partano i driver .drv, quindi la parte comune deve restare raggiungibile
       all'avvio. Le differenze note: MCP77 vuole il reset del controller,
       MCP73 no (ahci -t, kernel 0.295; ahci = 2).
+
+  54 BIS. CACHE, DECISIONE DELL'UTENTE (1/11 sera): cache di sistema e disco in lettura
+      e scrittura, ora che l'arresto smonta. VINCOLI TROVATI: il kernel raggiunge
+      direttamente solo la fascia sotto USER_SPACE_BASE (64 MB) e l'heap e' di 4 MB,
+      quindi una cache grande sta in pagine alte e passa da una finestra; la memoria
+      non si puo' tenere fissa senza una via per restituirla ai programmi; mbr.c
+      scrive con ata_write senza passare da blk_write. ORDINE: 1 contatori del disco
+      (comandi, settori, FLUSH, oggi non esistono); 2 commit del giornale raggruppati;
+      3 cache dei dati in lettura; 4 scrittura ritardata, per ultima: voci 63 e 65
+      aperte, e il portatile si e' gia' spento da solo.
+      MISURA 1/11 19:41-20:13, primo avvio Firefox: circa 30 MB in mezz'ora (Remote
+      Settings 17 MB, crlite 6 MB, data.safe.bin 3,4 MB, Safe Browsing, registri
+      sqlite). DA GUARDARE: mem 436 MB usati a Firefox ucciso, 34 MB alle 18:24.
+      MISURA 0.303, 1/11 22:19-22:44, primo avvio Firefox, profilo nuovo, /proc/disco
+      ogni 10 s: 1090 MB scritti in 262489 comandi (4 KB l'uno), 40701 FLUSH per 891 s
+      su circa 1400; letti 665 MB in 68911 comandi; scrittura vera 4,6 s: IL TEMPO
+      E' TUTTO NEI FLUSH (22 ms l'uno). Regime 52-60 MB al minuto, circa 40 FLUSH/s,
+      finisce quando rsegmnoittet-es.sqlite (17 MB, ultima scrittura 22:42) e' finito,
+      poi le scritture vanno a zero. Rapporto circa 65 volte il file. Dal codice un
+      commit fa 3 FLUSH in giornale.c piu' 1 in sincronizza. PROSSIMO: meno FLUSH per
+      commit, poi raggruppare.
+      FERMO DI 88 s (t=148-236): cat di /proc/disco ha impiegato 87,6 s, ma il disco
+      lavorava: 4677 FLUSH nel periodo, nessun comando oltre 358 ms, attesa del lucchetto
+      del disco 0. Quindi il fermo NON e' il disco bloccato. Ipotesi, non provata: una
+      sola operazione tiene il lucchetto del VFS mentre fa commit. Altri fermi 26 s
+      (t=356). letti dalla cache dei settori 26 GB: metadati riletti di continuo.
 
   54. CACHE DEL DISCO COME SMARTDRV (l'utente, 31/10: "e' possibile
       implementare una forma di cache tipo il vecchio smartdrv di msdos").

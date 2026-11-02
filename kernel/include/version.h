@@ -764,7 +764,12 @@
  * the journal is shut and needs_recovery goes off; what cannot be unmounted is
  * closed for writing. segnali_arresto ends with SIGKILL, the caller's own
  * descriptors are closed, umount flushes after the clean mark. */
-#define EXOS_VERSION    "0.302"
+/* 0.302 -> 0.303: the counters of the disks (BlkConti, /proc/disco, disk -stat). */
+/* 0.303 -> 0.304: the page cache of the disks (blk.c, cachedisco in kernel.cfg);
+ * the journal counts why it commits, in the log at unmount. */
+/* 0.304 -> 0.305: ext2_read no longer walks the path at every read (risolvi),
+ * nor the extent tree at every block of a run. */
+#define EXOS_VERSION    "0.305"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

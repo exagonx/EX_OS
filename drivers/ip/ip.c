@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.019");
+EX_VERSIONE("ip.drv", "0.020");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -1062,6 +1062,7 @@ static Conn *tcp_cerca(const unsigned char ip[4], unsigned int porta_loc,
 
 static void ins_stacca(Conn *c);
 static void tcp_evento(Conn *c);
+static void tcp_manda_fin(Conn *c);
 
 static Conn *tcp_num(unsigned int numero)
 {
@@ -1211,6 +1212,9 @@ static int tcp_riprendi_orfane(void)
          * vorrebbe aspettare l'ACK, cioe' tenere lo slot ancora un po' —
          * proprio quel che qui manca. L'altra parte se ne accorgera' da sola
          * col suo timeout, ed e' cio' che succede a ogni cavo staccato. */
+        /* Since 0.020 tcp_fin_orfane has normally said goodbye already, and a
+         * segment for the freed slot gets an RST (tcp_rst_ignoto): this is
+         * the path for a table in need of room. */
         tcp_slot_azzera(c);
         presi++;
     }
@@ -1311,6 +1315,50 @@ static void tcp_manda(Conn *c, unsigned int flag,
     if (len == 0) return;
 
     manda_frame(f, len);
+    g_st.ip_inviati++;
+}
+
+/* ! AN RST NEEDS NO CONNECTION (0.020, 1 November 2026). Answers a segment for
+ * a connection we do not have, with the addresses of the frame that arrived,
+ * as RFC 793 asks: the sequence number is the ACK it carried, or, if it carried
+ * none, zero with an ACK of what it occupied. Until 0.019 such a segment was
+ * dropped in silence: after a restart the peer kept a connection that existed
+ * only on its side, retransmitted for minutes and never heard the end. Never
+ * in answer to an RST (two machines would go on for ever), never to anything
+ * sent to a broadcast. */
+static void tcp_rst_ignoto(const unsigned char *f, unsigned int porta_loc,
+                           unsigned int porta_rem, unsigned int flag,
+                           unsigned int seq, unsigned int ack, unsigned int n)
+{
+    const unsigned char *ip = f + 14;
+    unsigned char seg[20];
+    unsigned char r[NET_FRAME_MAX];
+    unsigned int  len;
+
+    if ((flag & TCP_RST) || e_broadcast(ip + 16)) return;
+
+    if (flag & TCP_ACK) {
+        metti32(seg + 4, ack);
+        metti32(seg + 8, 0);
+        seg[13] = TCP_RST;
+    } else {
+        metti32(seg + 4, 0);
+        metti32(seg + 8, seq + n + ((flag & TCP_SYN) ? 1u : 0u) +
+                         ((flag & TCP_FIN) ? 1u : 0u));
+        seg[13] = TCP_RST | TCP_ACK;
+    }
+    metti16(seg,     porta_loc);
+    metti16(seg + 2, porta_rem);
+    seg[12] = 5 << 4;
+    metti16(seg + 14, 0);
+    metti16(seg + 16, 0);
+    metti16(seg + 18, 0);
+    metti16(seg + 16, pseudo_somma(sorgente_per(ip + 12), ip + 12, IP_PROTO_TCP,
+                                   seg, 20));
+
+    len = componi_ip(r, f + 6, ip + 12, IP_PROTO_TCP, seg, 20);
+    if (len == 0) return;
+    manda_frame(r, len);
     g_st.ip_inviati++;
 }
 
@@ -1595,12 +1643,12 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         return;
     }
 
-    /* Segmento per una connessione che non esiste. Non si risponde con un
-     * RST: sarebbe la cosa giusta su un vero stack, ma qui significherebbe
-     * comporre un segmento senza avere una connessione da cui prendere gli
-     * indirizzi, e il caso che conta — un ritardatario di una connessione
-     * appena chiusa — non merita quel codice. */
-    if (c == NULL) { g_st.scartati++; return; }
+    /* A segment for a connection that does not exist: see tcp_rst_ignoto. */
+    if (c == NULL) {
+        g_st.scartati++;
+        tcp_rst_ignoto(f, porta_loc, porta_rem, flag, seq, ack, n);
+        return;
+    }
 
     if (flag & TCP_RST) { tcp_chiudi_dura(c, -ECONNRESET); return; }
 
@@ -2180,6 +2228,41 @@ static void ins_sveglia_chiudi(unsigned int cliente, const IpInsRif *q, int chiu
     rispondi_esito(cliente, 0);
 }
 
+/* ! A PROGRAM THAT DIES CLOSES ITS CONNECTIONS (0.020, 1 November 2026). Killed
+ * by a signal, by a fault or by the shutdown, it never sent IP_MSG_TCP_CHIUDI,
+ * and the peer stayed connected to nobody: a telnet client went on showing the
+ * prompt of a machine that had rebooted, until someone killed it. The FIN is
+ * the one a close would have sent: what is still queued leaves first, and a
+ * program that closed and exited is left alone, its FIN is already on the way.
+ *
+ * pid_vivo walks the process list, so at most TCP_ORFANE_GIRO distinct owners
+ * per round, resuming from the slot where the last round stopped. */
+#define TCP_ORFANE_MS   500u
+#define TCP_ORFANE_GIRO 32
+
+static void tcp_fin_orfane(unsigned int ora)
+{
+    static unsigned int ultimo = 0, da = 0;
+    unsigned int vivo = 0, i;
+    int          budget = TCP_ORFANE_GIRO;
+
+    if (ora - ultimo < TCP_ORFANE_MS || g_tcp_n == 0) return;
+    ultimo = ora;
+
+    for (i = 0; i < g_tcp_n && budget > 0; i++) {
+        Conn *c = g_tcp[(da + i) % g_tcp_n];
+
+        if ((c->stato != S_APERTA && c->stato != S_FIN_SUO) ||
+            c->chiusa_cliente || c->proprietario == vivo)
+            continue;
+        budget--;
+        if (pid_vivo(c->proprietario)) { vivo = c->proprietario; continue; }
+        c->chiusa_cliente = 1;      /* nobody left to close it */
+        tcp_manda_fin(c);
+    }
+    da = (da + i) % g_tcp_n;
+}
+
 /* Timeouts of the waits, and the polls that lost a connection to another
  * poll: every round of tcp_scadenze. */
 static void ins_scadenze(unsigned int ora)
@@ -2214,6 +2297,7 @@ static void tcp_scadenze(void)
     if (ora - ultimo < 10u) return;
     ultimo = ora;
     ins_scadenze(ora);
+    tcp_fin_orfane(ora);
 
     for (i = 0; i < g_tcp_n; i++) {
         Conn *c = g_tcp[i];

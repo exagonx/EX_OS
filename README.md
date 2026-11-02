@@ -111,6 +111,18 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Disk read cache (kernel 0.304)
+
+The disks' read cache keeps pages of 4 KB of file data and metadata in RAM, up
+to `cachedisco` MB in `kernel.cfg` (by default 1/8 of the RAM, 0 turns it off).
+It always writes to the disk too, so a hard stop loses nothing more than before.
+Under 1/8 of free RAM it stops growing, and whoever runs out of pages takes them
+back before the swap is touched. Test: `tools/prova_cache.sh`.
+
+### Disk counters (kernel 0.303, disk 0.003, /proc/disco)
+
+`disk -stat` says what each disk has done since the start: commands, KB, times, FLUSH, what came from memory and how long the disk lock was waited for. `disk -stat 5` repeats it every 5 seconds, as differences, with the busy percentage. They exist to measure the cache before it is written.
+
 ### reboot, halt and poweroff unmount the volumes (kernel 0.302) — tested in QEMU at 32 and 64 bit
 
 Up to 0.301 the three commands synced and set the "clean" mark, but did not unmount: on ext3 and ext4 the journal stayed open and the next start said `not unmounted cleanly and its journal is not replayed`. Now every volume is really unmounted, `/` last, and the screen says `Smonto / (hd0p1)... ok`. A volume that cannot be unmounted is closed anyway: journal shut, no writes afterwards, and `ancora in uso` on the screen. After the 30 seconds of SIGTERM, what has not ended gets SIGKILL. `sleep` can be interrupted: `kill -9` on a sleeping program used to have no effect until it woke. Test: `tools/prova_smonta.sh`.
@@ -8200,6 +8212,13 @@ dashes: an invented 1980 would look like a real date. The format covers
 with a wrong year.
 
 ### TCP
+
+A program that dies without closing (signal, fault, shutdown) still closes its
+connections: every half second ip.drv 0.020 checks the owners and sends the FIN
+for them. A segment for a connection that does not exist gets an RST: after a
+sudden restart the client finds out at the next key. Before, a telnet client
+stayed on the prompt of a machine that had already restarted. Test:
+`tools/prova_telnet_fine.sh 32` and `64`.
 
 ```
 ex-os:/> tcptest example.com 80

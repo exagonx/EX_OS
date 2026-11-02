@@ -84,7 +84,7 @@ static int sincronizza(int mnt)
 {
     if (mnt < 0 || (uint32_t)mnt >= K->max_mount) return -1;
     prenotazione_chiudi();
-    if (giornale_commit(mnt) != 0) return -1;
+    if (giornale_commit(mnt, 1) != 0) return -1;
     return blk_flush(K->mnt[mnt].blkdev);
 }
 
@@ -97,7 +97,7 @@ static void smonta(int mnt)
 static void chiudi(int mnt)
 {
     prenotazione_chiudi();
-    giornale_commit(mnt);
+    giornale_commit(mnt, 0);
 }
 
 /* Every operation but write() starts by giving back the blocks set aside

@@ -112,7 +112,13 @@ typedef struct {
     uint8_t  *buf;                      /* a descriptor, a commit, a copy */
     uint32_t  aperto;                   /* when the open transaction began */
     int       guasto;                   /* a commit failed: no more writes */
+    uint32_t  conti[4];                 /* commits: see CONTO_* */
+    uint32_t  blocchi;                  /* metadata blocks committed */
 } Giornale;
+
+/* Why a transaction was committed, said in the log at unmount: the first
+ * thing to look at before changing when commits happen. */
+enum { CONTO_OPERAZIONE, CONTO_PIENA, CONTO_CHIUSURA, CONTO_SYNC };
 
 static Giornale *g_gio[EXT2_MAX_MOUNT];
 
@@ -621,6 +627,7 @@ static int commit(Ext2Mount *m, Giornale *g)
 
     if (g->n_slot == 0) return 0;
     if (g->guasto) return -1;
+    g->blocchi += g->n_slot;
 
     /* 1. the journal superblock points at this transaction */
     pbe32(g->jsb + 0x18, S);
@@ -711,11 +718,13 @@ guasto:
     return -1;
 }
 
-int giornale_commit(int mnt)
+int giornale_commit(int mnt, int perche)
 {
     Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
 
-    return g ? commit(&K->mnt[mnt], g) : 0;
+    if (g == NULL) return 0;
+    if (g->n_slot != 0) g->conti[perche ? CONTO_SYNC : CONTO_CHIUSURA]++;
+    return commit(&K->mnt[mnt], g);
 }
 
 /* Before an operation: room for what it may change. */
@@ -725,7 +734,10 @@ int giornale_inizio(int mnt)
 
     if (g == NULL) return 0;
     if (g->guasto) return -1;
-    if (g->max_slot - g->n_slot < GIO_RISERVA) return commit(&K->mnt[mnt], g);
+    if (g->max_slot - g->n_slot < GIO_RISERVA) {
+        g->conti[CONTO_PIENA]++;
+        return commit(&K->mnt[mnt], g);
+    }
     return 0;
 }
 
@@ -736,8 +748,10 @@ int giornale_fine(int mnt, int subito)
 
     if (g == NULL || g->n_slot == 0) return 0;
     if (subito || g->n_slot * 2u >= g->max_slot ||
-        unix_ora_corrente() - g->aperto >= GIO_SECONDI)
+        unix_ora_corrente() - g->aperto >= GIO_SECONDI) {
+        g->conti[subito ? CONTO_OPERAZIONE : CONTO_PIENA]++;
         return commit(&K->mnt[mnt], g);
+    }
     return 0;
 }
 
@@ -747,6 +761,10 @@ void giornale_smonta(int mnt)
     Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
 
     if (g == NULL) return;
+    klog(LOG_INFO, "ext3: '%s': commit %u per operazione, %u giornale pieno o "
+                   "5 s, %u chiusura/fsync, %u sync; %u blocchi",
+         K->mnt[mnt].etichetta, g->conti[CONTO_OPERAZIONE], g->conti[CONTO_PIENA],
+         g->conti[CONTO_CHIUSURA], g->conti[CONTO_SYNC], g->blocchi);
     if (commit(&K->mnt[mnt], g) == 0 && blk_flush(K->mnt[mnt].blkdev) == 0)
         segna_recover(&K->mnt[mnt], 0);
     g_gio[mnt] = NULL;

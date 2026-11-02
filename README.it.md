@@ -113,6 +113,16 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### I contatori dei dischi (kernel 0.303, disk 0.003, /proc/disco)
+
+La cache di lettura dei dischi (kernel 0.304): tiene in RAM pagine da 4 KB dei
+file e dei metadati, fino a `cachedisco` MB in `kernel.cfg` (di serie 1/8 della
+RAM, 0 la spegne). Scrive sempre anche sul disco, quindi uno spegnimento brutale
+non perde niente in piu'. Sotto 1/8 di RAM libera smette di crescere, e chi resta
+senza pagine se le riprende prima di toccare lo swap. Prova: `tools/prova_cache.sh`.
+
+`disk -stat` dice cosa ha fatto ogni disco dall'avvio: comandi, KB, tempi, FLUSH, quanto e' arrivato dalla memoria e quanto si e' aspettato il lucchetto del disco. `disk -stat 5` lo ripete ogni 5 secondi, per differenza, con la percentuale di occupazione. Servono a misurare la cache prima di farla.
+
 ### reboot, halt e poweroff smontano le unita' (kernel 0.302) — provato in QEMU a 32 e 64 bit
 
 Fino alla 0.301 i tre comandi sincronizzavano e mettevano il segno "pulito", ma non smontavano: su ext3 ed ext4 il giornale restava aperto e all'avvio dopo compariva `not unmounted cleanly and its journal is not replayed`. Ora ogni volume si smonta davvero, `/` per ultimo, e lo schermo dice `Smonto / (hd0p1)... ok`. Un volume che non si puo' smontare si chiude comunque: giornale chiuso, nessuna scrittura dopo, e a schermo `ancora in uso`. Dopo i 30 secondi di SIGTERM chi non si e' chiuso riceve SIGKILL. `sleep` si interrompe: prima `kill -9` su un programma addormentato non aveva effetto fino al risveglio. Prova: `tools/prova_smonta.sh`.
@@ -8284,6 +8294,13 @@ formato copre 1980-2107 — un file ext2 datato prima del 1980 esce senza
 data invece che con un anno sbagliato.
 
 ### TCP
+
+Un programma che muore senza chiudere (segnale, guasto, spegnimento) chiude lo
+stesso le sue connessioni: ip.drv 0.020 controlla ogni mezzo secondo i
+proprietari e manda il FIN al posto loro. Un segmento per una connessione che
+non esiste riceve un RST: dopo un riavvio improvviso il client lo scopre al primo
+tasto. Prima un client telnet restava fermo sul prompt di una macchina gia'
+riavviata. Prova: `tools/prova_telnet_fine.sh 32` e `64`.
 
 ```
 ex-os:/> tcptest example.com 80

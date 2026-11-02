@@ -44,6 +44,7 @@
 #include "tsc.h"
 #include "version.h"
 #include "ext2.h"
+#include "blk.h"
 
 /* In vfs.c: a mount slot, with the lock the caller has */
 const VfsMount *vfs_mount_nl_di(int i);
@@ -96,7 +97,7 @@ static void voce(Usc *u, const char *a, uint64_t v, const char *b)
 
 /* --- the path ------------------------------------------------------------ */
 enum {
-    Q_RADICE, Q_MEMINFO, Q_CPUINFO, Q_STAT, Q_UPTIME, Q_MOUNTS, Q_VERSION,
+    Q_RADICE, Q_MEMINFO, Q_CPUINFO, Q_STAT, Q_UPTIME, Q_MOUNTS, Q_VERSION, Q_DISCO,
     Q_PID, Q_P_STAT, Q_P_STATUS, Q_P_CMDLINE, Q_P_EXE, Q_P_CWD, Q_P_LIMITS,
     Q_P_FD, Q_P_FD_N, Q_P_TASK, Q_T, Q_T_STAT, Q_T_STATUS
 };
@@ -111,6 +112,7 @@ typedef struct {
 static const struct { const char *nome; int cosa; } g_cima[] = {
     { "meminfo", Q_MEMINFO }, { "cpuinfo", Q_CPUINFO }, { "stat", Q_STAT },
     { "uptime", Q_UPTIME }, { "mounts", Q_MOUNTS }, { "version", Q_VERSION },
+    { "disco", Q_DISCO },
 };
 #define N_CIMA  (sizeof(g_cima) / sizeof(g_cima[0]))
 
@@ -339,6 +341,27 @@ static void f_stat(Usc *u)
     voce(u, "procs_running ", n, "\n");
 }
 
+/* /proc/disco, one line per disk that has done something (0.303): the name
+ * and the fields of BlkConti in order. Read by `disk -stat`. */
+static void f_disco(Usc *u)
+{
+    int      d;
+    BlkConti c;
+
+    for (d = 0; blk_conti(d, &c) == 0; d++) {
+        if (c.letture == 0 && c.scritture == 0 && c.flush == 0) continue;
+        voce(u, "hd", (uint64_t)d, " ");
+        voce(u, "", c.letture, " ");     voce(u, "", c.sett_letti, " ");
+        voce(u, "", c.ms_letture, " ");  voce(u, "", c.max_lettura, " ");
+        voce(u, "", c.scritture, " ");   voce(u, "", c.sett_scritti, " ");
+        voce(u, "", c.ms_scritture, " "); voce(u, "", c.max_scrittura, " ");
+        voce(u, "", c.flush, " ");       voce(u, "", c.ms_flush, " ");
+        voce(u, "", c.max_flush, " ");   voce(u, "", c.sett_cache, " ");
+        voce(u, "", c.sett_finestra, " "); voce(u, "", c.ms_attesa, " ");
+        voce(u, "", c.max_attesa, "\n");
+    }
+}
+
 static void f_uptime(Usc *u)
 {
     uint32_t r;
@@ -505,7 +528,7 @@ int procfs_stat(const char *interno, VfsStat *st)
     case Q_P_TASK:
     case Q_T:       st->is_dir = 1; st->modo = 0500; break;
     case Q_MEMINFO: case Q_CPUINFO: case Q_STAT: case Q_UPTIME:
-    case Q_MOUNTS:  case Q_VERSION: st->is_dir = 0; st->modo = 0444; break;
+    case Q_MOUNTS:  case Q_VERSION: case Q_DISCO: st->is_dir = 0; st->modo = 0444; break;
     default:        st->is_dir = 0; st->modo = 0400; break;
     }
     if (d.p) { st->uid = (uint16_t)d.p->uid; st->gid = (uint16_t)d.p->gid; }
@@ -526,6 +549,7 @@ int procfs_read(const char *interno, void *buf, uint32_t size, uint32_t offset)
     case Q_STAT:      f_stat(&u); break;
     case Q_UPTIME:    f_uptime(&u); break;
     case Q_MOUNTS:    f_mounts(&u); break;
+    case Q_DISCO:     f_disco(&u); break;
     case Q_VERSION:   testo(&u, "EX-OS version " EXOS_VERSION "\n"); break;
     case Q_P_STAT:    f_p_stat(&u, d.p, 1); break;
     case Q_P_STATUS:  f_p_status(&u, d.p); break;

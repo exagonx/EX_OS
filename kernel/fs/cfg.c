@@ -166,6 +166,10 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg_strcpy(cfg->tcp_max, value, sizeof(cfg->tcp_max));
             return;
         }
+        if (cfg_strcmp(key, "cachedisco") == 0) {
+            cfg_strcpy(cfg->cache_disco, value, sizeof(cfg->cache_disco));
+            return;
+        }
         /* netrx / nettx = N: the network cards' rings (cfg.h) */
         if (cfg_strcmp(key, "netrx") == 0) {
             cfg_strcpy(cfg->net_rx, value, sizeof(cfg->net_rx));
@@ -582,6 +586,9 @@ const char *cfg_get_option(const char *key)
     }
     if (cfg_strcmp(key, "tcpmax") == 0) {
         return cfg->tcp_max[0] ? cfg->tcp_max : NULL;
+    }
+    if (cfg_strcmp(key, "cachedisco") == 0) {
+        return cfg->cache_disco[0] ? cfg->cache_disco : NULL;
     }
     if (cfg_strcmp(key, "netrx") == 0) {
         return cfg->net_rx[0] ? cfg->net_rx : NULL;

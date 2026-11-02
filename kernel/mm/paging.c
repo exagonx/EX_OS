@@ -18,6 +18,7 @@
 #include "paging.h"
 #include "idt.h"
 #include "sched.h"
+#include "blk.h"        /* blk_cache_cedi */
 #include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
 #include "syscall.h" /* PROT_* and the errno values of paging_proteggi */
 
@@ -312,7 +313,7 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
             int giri;
 
             for (giri = 0; giri < 64 && pt_phys == 0; giri++) {
-                if (!swap_sfratta()) break;
+                if (blk_cache_cedi(64) == 0 && !swap_sfratta()) break;
                 pt_phys = pmm_alloc_page_kernel();
             }
         }
@@ -1226,6 +1227,9 @@ static paddr_t pagina_utente(void)
     uint32_t giri;
 
     for (giri = 0; f == 0 && giri < 100; giri++) {
+        /* what the disk can read again goes before what it would have to
+         * store */
+        if (blk_cache_cedi(64) != 0) { f = pmm_alloc_page_utente(); continue; }
         if (swap_sfratta()) { f = pmm_alloc_page(); continue; }
         if (!swap_attivo()) break;
         sched_sleep(10);

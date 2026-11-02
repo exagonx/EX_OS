@@ -124,6 +124,10 @@ typedef struct {
      * tcp_max; empty = each driver decides from the RAM, within what its
      * card allows. */
     char        net_rx[16];
+
+    /* cachedisco = MB: the disk's page cache (blk.c). Empty = RAM / 8,
+     * 0 = off. */
+    char        cache_disco[16];
     char        net_tx[16];
 
     /* [boot] */

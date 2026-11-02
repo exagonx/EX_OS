@@ -2041,9 +2041,22 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
  * and a file it holds (`reboot > /log`) would keep the volume busy. */
 void proc_chiudi_miei_fd(void)
 {
+    Process *capo = proc_get_by_pid(g_current->tgid);
+
     interrupts_disable();
     proc_chiudi_fd(g_current);
     interrupts_enable();
+
+    /* ! AND ITS PROGRAM: pm and wserver live on the system disk, and it is
+     * always one of them that stops the machine from the desktop (0.302,
+     * tools/prova_smonta.sh: "/ occupato, aperto /exwin/bin/pm"). This process
+     * never goes back to ring 3, so it will not fault on a page of that file;
+     * a thread of it that does has no VMA left and ends. */
+    if (capo != NULL && capo->exe_handle >= 0) {
+        vfs_close(capo->exe_handle);
+        capo->exe_handle = -1;
+        capo->n_vma = 0;
+    }
 }
 
 /* Il corpo di proc_exit() e di proc_esci_fatale(): la differenza e' una sola
