@@ -74,6 +74,23 @@ case "${1:-}" in
         exit 2 ;;
 esac
 
+# La versione del kernel in cima ai due README si prende da version.h: scritta
+# a mano restava indietro (il 2 novembre 2026 diceva 0.289 col kernel a 0.305).
+# LC_ALL=C perche' sed non deve guardare la codifica dei file.
+VERSIONE=$(sed -n 's/^#define EXOS_VERSION *"\(.*\)"$/\1/p' kernel/include/version.h)
+if [ -n "$VERSIONE" ]; then
+    for coppia in "README.md:Version" "README.it.md:Versione"; do
+        f=${coppia%%:*}; etichetta=${coppia#*:}
+        if LC_ALL=C grep -q "^\*\*$etichetta:\*\* " "$f"; then
+            LC_ALL=C sed -i "s/^\*\*$etichetta:\*\* .*/**$etichetta:** $VERSIONE/" "$f"
+        else
+            echo "! In $f non trovo la riga **$etichetta:**: versione non aggiornata."
+        fi
+    done
+else
+    echo "! Non trovo EXOS_VERSION in kernel/include/version.h: README non aggiornati."
+fi
+
 git add .
 
 if git diff --cached --quiet; then

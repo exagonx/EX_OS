@@ -195,6 +195,10 @@ typedef struct {
      * module keeps between write()s - blocks set aside for a file being
      * appended to, the superblock's counters - goes to the disk here. */
     void (*chiudi)  (int mnt);
+    /* The last descriptor of a file went: what is kept between write()s goes,
+     * the journal may wait. tempo: every second, from the kernel. */
+    void (*file_chiuso)(int mnt);
+    void (*tempo)   (int mnt);
 
     /* THE JOURNAL HOOKS (kernel 0.265, ext3). The kernel's block functions
      * call them for every volume; the module answers at once for a volume

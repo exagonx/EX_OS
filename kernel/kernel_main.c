@@ -625,6 +625,16 @@ static void scrivi_console0(const char *m)
     while (*m) vga_putchar_su(0, *m++);
 }
 
+/* Every second the volumes may close what they keep open: see OGNI OPERAZIONE
+ * in kernel/moduli/ext4/giornale.c. */
+static void compito_giornale(void)
+{
+    for (;;) {
+        sched_sleep(1000);
+        vfs_ogni_secondo();
+    }
+}
+
 static void compito_sistema(void)
 {
     KernelConfig *cfg = g_cfg_sistema;
@@ -1206,6 +1216,13 @@ KernelConfig *cfg = cfg_load();
         }
     } else {
         avvia_shell(cfg);
+    }
+
+    {
+        Process *t = proc_create("giornale", IN_NUMERO(compito_giornale), PRIO_NORMAL, 1);
+
+        if (t == NULL) klog(LOG_ERROR, "il compito \"giornale\" non si crea");
+        else if (g_init_task != NULL) t->ppid = g_init_task->pid;
     }
 
     /* Il pipeline proc_create+elf_load+proc_set_entry+proc_set_ready è

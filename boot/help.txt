@@ -630,6 +630,10 @@ l'avvio, prima di montarla.
   chiudevano il giornale ext3/ext4. Dalla 0.302 smontano. Il disco non si
   ripara a mano: lo sistema da solo il primo avvio.
 
+La tastiera non scrive e il mouse si':  con kbd.drv 0.009 non dovrebbe piu'
+capitare. Se capita:  da telnet  cat /proc/interrupts  prima e dopo un tasto,
+e scrivi se la riga 1 si muove. Si esce riavviando.
+
 i guasti che si possono riparare da soli
 
 LA ISO A 64 BIT DA' SCHERMO NERO O DICE CHE IL PROCESSORE NON HA I 64 BIT.

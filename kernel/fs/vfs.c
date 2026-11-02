@@ -2836,6 +2836,17 @@ void vfs_sync(void)
     fs_prendi_n("sync"); vfs_sync_nl(); fs_rilascia();
 }
 
+void vfs_ogni_secondo(void)
+{
+    int i;
+
+    fs_prendi_n("giornale");
+    for (i = 0; i < VFS_MAX_MOUNT; i++)
+        if (g_mnt[i].usato && g_mnt[i].tipo == VFS_FS_EXT2)
+            ext2_ogni_secondo(g_mnt[i].mnt);
+    fs_rilascia();
+}
+
 /* The volume of one open file, not all of them (0.284): a database calls
  * fsync at every commit, and the other disks have nothing to do with it.
  * ISO and the RAM disk have nothing pending. */

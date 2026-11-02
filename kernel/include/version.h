@@ -769,7 +769,11 @@
  * the journal counts why it commits, in the log at unmount. */
 /* 0.304 -> 0.305: ext2_read no longer walks the path at every read (risolvi),
  * nor the extent tree at every block of a run. */
-#define EXOS_VERSION    "0.305"
+/* 0.305 -> 0.306: /proc/interrupts; the journal says why it commits every 1000
+ * commits, not only at unmount. */
+/* 0.306 -> 0.307: the journal commits at fsync, after 5 s, when half full and when
+ * blocks were freed, not at every operation (compito_giornale). */
+#define EXOS_VERSION    "0.307"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

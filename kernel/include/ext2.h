@@ -153,6 +153,7 @@ int  ext2_fsync_prepara(int mnt);
 /* The last descriptor of a file on this volume was closed (vfs.c): the
  * write module puts back what it kept for the next write() (0.264). */
 void ext2_chiudi  (int mnt);
+void ext2_ogni_secondo(int mnt);
 
 /* =============================================================================
  * La mappa dei settori di un file, per chi non sa leggere un filesystem

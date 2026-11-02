@@ -573,6 +573,7 @@ int libera_blocco(Ext2Mount *m, uint32_t n)
 
     if (n < m->primo_dato || n >= m->n_blocchi) return -1;
     est_dimentica_blocco(n);
+    giornale_liberato(m);
 
     g = (n - m->primo_dato) / m->blocchi_per_gruppo;
     i = (n - m->primo_dato) % m->blocchi_per_gruppo;

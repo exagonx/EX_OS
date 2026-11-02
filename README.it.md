@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.289
+**Versione:** 0.307
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -113,13 +113,25 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
-### I contatori dei dischi (kernel 0.303, disk 0.003, /proc/disco)
+### Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)
 
-La cache di lettura dei dischi (kernel 0.304): tiene in RAM pagine da 4 KB dei
+ext3 ed ext4 chiudono la transazione a `fsync`, `sync` e smontaggio, a giornale
+pieno a meta', dopo 5 secondi, e subito solo se l'operazione ha liberato blocchi.
+Prima ogni operazione costava tre FLUSH: Firefox al primo avvio sul portatile
+passa da 6605 a 1866 FLUSH. Un'interruzione brutale perde fino a 5 secondi di
+operazioni senza `fsync`, come su Linux; il volume resta coerente. Prova:
+`tools/prova_giornale_tempo.sh`. `/proc/interrupts` dice quante volte ogni linea ha
+raggiunto il suo driver.
+
+### La cache di lettura dei dischi (kernel 0.304)
+
+Tiene in RAM pagine da 4 KB dei
 file e dei metadati, fino a `cachedisco` MB in `kernel.cfg` (di serie 1/8 della
 RAM, 0 la spegne). Scrive sempre anche sul disco, quindi uno spegnimento brutale
 non perde niente in piu'. Sotto 1/8 di RAM libera smette di crescere, e chi resta
 senza pagine se le riprende prima di toccare lo swap. Prova: `tools/prova_cache.sh`.
+
+### I contatori dei dischi (kernel 0.303, disk 0.003, /proc/disco)
 
 `disk -stat` dice cosa ha fatto ogni disco dall'avvio: comandi, KB, tempi, FLUSH, quanto e' arrivato dalla memoria e quanto si e' aspettato il lucchetto del disco. `disk -stat 5` lo ripete ogni 5 secondi, per differenza, con la percentuale di occupazione. Servono a misurare la cache prima di farla.
 

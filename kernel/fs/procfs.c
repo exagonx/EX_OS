@@ -45,6 +45,7 @@
 #include "version.h"
 #include "ext2.h"
 #include "blk.h"
+#include "isr.h"
 
 /* In vfs.c: a mount slot, with the lock the caller has */
 const VfsMount *vfs_mount_nl_di(int i);
@@ -98,6 +99,7 @@ static void voce(Usc *u, const char *a, uint64_t v, const char *b)
 /* --- the path ------------------------------------------------------------ */
 enum {
     Q_RADICE, Q_MEMINFO, Q_CPUINFO, Q_STAT, Q_UPTIME, Q_MOUNTS, Q_VERSION, Q_DISCO,
+    Q_INTERRUPTS,
     Q_PID, Q_P_STAT, Q_P_STATUS, Q_P_CMDLINE, Q_P_EXE, Q_P_CWD, Q_P_LIMITS,
     Q_P_FD, Q_P_FD_N, Q_P_TASK, Q_T, Q_T_STAT, Q_T_STATUS
 };
@@ -113,6 +115,7 @@ static const struct { const char *nome; int cosa; } g_cima[] = {
     { "meminfo", Q_MEMINFO }, { "cpuinfo", Q_CPUINFO }, { "stat", Q_STAT },
     { "uptime", Q_UPTIME }, { "mounts", Q_MOUNTS }, { "version", Q_VERSION },
     { "disco", Q_DISCO },
+    { "interrupts", Q_INTERRUPTS },
 };
 #define N_CIMA  (sizeof(g_cima) / sizeof(g_cima[0]))
 
@@ -343,6 +346,21 @@ static void f_stat(Usc *u)
 
 /* /proc/disco, one line per disk that has done something (0.303): the name
  * and the fields of BlkConti in order. Read by `disk -stat`. */
+/* How many times each line reached its driver: a key that moves line 1
+ * reached the kernel, one that does not never left the keyboard. */
+static void f_interrupts(Usc *u)
+{
+    uint32_t i;
+
+    for (i = 0; i < 16u; i++) {
+        uint32_t n = irq_notifiche_di((uint8_t)i);
+
+        if (n == 0) continue;
+        voce(u, "", i, ": ");
+        voce(u, "", n, "\n");
+    }
+}
+
 static void f_disco(Usc *u)
 {
     int      d;
@@ -528,6 +546,7 @@ int procfs_stat(const char *interno, VfsStat *st)
     case Q_P_TASK:
     case Q_T:       st->is_dir = 1; st->modo = 0500; break;
     case Q_MEMINFO: case Q_CPUINFO: case Q_STAT: case Q_UPTIME:
+    case Q_INTERRUPTS:
     case Q_MOUNTS:  case Q_VERSION: case Q_DISCO: st->is_dir = 0; st->modo = 0444; break;
     default:        st->is_dir = 0; st->modo = 0400; break;
     }
@@ -550,6 +569,7 @@ int procfs_read(const char *interno, void *buf, uint32_t size, uint32_t offset)
     case Q_UPTIME:    f_uptime(&u); break;
     case Q_MOUNTS:    f_mounts(&u); break;
     case Q_DISCO:     f_disco(&u); break;
+    case Q_INTERRUPTS: f_interrupts(&u); break;
     case Q_VERSION:   testo(&u, "EX-OS version " EXOS_VERSION "\n"); break;
     case Q_P_STAT:    f_p_stat(&u, d.p, 1); break;
     case Q_P_STATUS:  f_p_status(&u, d.p); break;

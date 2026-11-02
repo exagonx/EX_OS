@@ -8495,13 +8495,67 @@ tools/netinst/velocita tolto da netinst.
       reboot non e' stato tentato. La sh deve ripiegare su /rdboot/bin, e un
       errore di lettura deve dare errore, non pagine a zero.
 
-  69. LOGIN FERMO DOPO IL RIAVVIO SUL PORTATILE (l'utente, 1/11 notte, 0.303): la
+  73. FIREFOX: IL PRIMO TAB NON USA LA BARRA DELL'URL (l'utente, 2/11, 0.307). Appena
+      avviato, quello che si scrive nella barra del primo tab non viene eseguito;
+      in un tab nuovo tutto funziona. Si puo' aggirare, l'utente: si risolve piu'
+      avanti. Causa non cercata. Stesso giorno: quindi la tastiera sulla scrivania
+      risponde con kbd.drv 0.009.
+
+  72. PORTING DI OPENSSH sshd (l'utente, 2/11). Server per terminali ssh da GitHub,
+      come Apache, MariaDB e gli altri: negli strumenti, clona il repository in
+      locale e ne crea il porting. Prima le dipendenze come librerie vere 32/64,
+      ultima versione pubblica, sorgenti su ISO strumenti e netinst. Non iniziato.
+
+  71. PIANO CACHE, A CHE PUNTO E' (2/11, portatile 0.305).
+      FATTO: contatori (0.303); cache di lettura a pagine (0.304, blk.c, cachedisco
+      in kernel.cfg, 1/8 della RAM, 351 MB sul portatile); ext2_read non rifa' il
+      percorso a ogni read (0.305, risolvi in ext2.c, 16 percorsi, dimenticati a ogni
+      cambio di metadati) ne' l'albero degli extent a ogni blocco di una corsa.
+      Portatile, tools/prove/leggitempi.c: 53 MB a 64 KB per read 69 MB/s la prima
+      volta, 883 MB/s dalla cache; a 4 KB 662 MB/s (0.304 con cat: 9 MB/s, ma cat
+      legge 512 byte alla volta e questo pesa ancora: 16 MB/s con cat in 0.305).
+      Prima: 26 GB di metadati ricopiati per leggere 215 MB.
+      2/11, PASSO 2 FATTO (0.307): cause misurate con Firefox, 2000 commit di cui 1469
+      per singola operazione e 531 per chiusure e fsync. Ora il commit si fa a fsync,
+      sync, smontaggio, giornale pieno a meta', dopo 5 s (compito_giornale, ogni
+      secondo) e subito solo se l'operazione ha liberato blocchi. Portatile, Firefox,
+      profilo nuovo: 0.306 a circa 5 minuti 6605 FLUSH, 155 s, 190 MB; 0.307 a circa
+      4 minuti 1866 FLUSH, 54 s, 305 MB. tools/prova_giornale_tempo.sh a posto a 32 e
+      64 bit. ! Un crash perde fino a 5 s di operazioni senza fsync, come Linux.
+      PRIMA, PASSO 2: MENO FLUSH. Firefox, profilo nuovo, 180 s: 6272 FLUSH, 150 s
+      di attesa; riapertura col profilo gia' fatto, circa 200 s: 5802 FLUSH, 146 s,
+      170 MB scritti. Ogni operazione che non e' write() chiude una transazione
+      da 3 FLUSH. Il contatore delle cause e' nel log allo smontaggio, ma non e'
+      stato letto su Firefox: prima di cambiare si guarda quello.
+      ! VINCOLO: un blocco liberato non si riusa per dati prima del commit, o dopo un
+      crash un vecchio file torna con i dati di un altro (vedi giornale.c, testa).
+      ! Il commit a tempo non esiste senza una nuova operazione: serve un compito
+      del kernel ogni 5 s prima di ritardare i commit.
+      WRITE-BACK DEI DATI: non fatto, viene dopo e va provato sul ferro.
+
+  70. tools/exilla/prova-riapertura.sh NON E' ANCORA UNA PROVA: su ext4 da 4 KB in
+      QEMU Firefox si ferma su "Profile Missing", anche con i file di root. Causa
+      non trovata. Sul portatile lo stesso Firefox parte.
+
+  69. TASTIERA MORTA OGNI TANTO DOPO IL RIAVVIO. L'utente, 2/11: non e' il login, la
+      tastiera e' morta e il mouse funziona; non accade sempre. kbd_set_leds mandava
+      0xED e il valore senza aspettare l'ACK: dopo 0xED una tastiera vera smette di
+      leggere i tasti finche' non arriva il valore. Corretto in kbd.drv 0.009
+      (kbd_manda, kbd_comando). ! CAUSA PROBABILE, NON DIMOSTRATA: il guasto non si
+      riproduce a comando. Se ricompare: cat /proc/interrupts prima e dopo un tasto.
+      La riga 1 ferma vuol dire che il byte non esce dal controller. Sul portatile
+      IRQ12 non c'e': il mouse non e' PS/2.
+      Prima: LOGIN FERMO DOPO IL RIAVVIO SUL PORTATILE (l'utente, 1/11 notte, 0.303): la
       tastiera non ha effetto, telnet funziona. NON riprodotto: in QEMU, ext4 con
       login, reboot vero, tools/prova_login_riavvio.sh entra a 32 e 64 bit.
       Pista da controllare, NON dimostrata: login esegue /boot/avvio.sh in primo
       piano e chiede l'accesso solo dopo; una riga ferma dopo telnetd darebbe
       proprio questo. Sul portatile: la scritta sullo schermo, Alt+F2, ps, e
       cat /boot/avvio.sh.
+      2/11: dopo tre riavvii (0.303 -> 0.305) ps non mostra righe ferme dello script,
+      automount e i driver ci sono, ma avvio.sh finisce con nv50.drv -avvio in primo
+      piano e nessun nv50.drv resta in ps. Dall'utente manca ancora cosa si vede a
+      schermo e se Alt+F2 cambia console.
 
   68. CLIENT TELNET FERMO DOPO reboot. RISOLTA (ip.drv 0.020): FIN per le
       connessioni dei programmi morti (tcp_fin_orfane, ogni 500 ms) e RST ai

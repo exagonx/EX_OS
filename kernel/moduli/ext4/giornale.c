@@ -35,12 +35,26 @@
  *     here the transaction exists: a crash means replay;
  *   - checkpoint: every copy to its place, flush, and the journal is marked
  *     empty again (s_start = 0).
- * A transaction is committed at the end of every operation that is not a
- * write(), at a file's close, at sync and unmount, when it is half full,
- * and after 5 seconds. A write() of many megabytes is cut by ext4.c into
+ * A transaction is committed at fsync, sync and unmount, when it is half full,
+ * after 5 seconds (the kernel asks every second: giornale_tempo), and at the
+ * end of any operation that freed blocks. See OGNI OPERAZIONE below. A write() of many megabytes is cut by ext4.c into
  * pieces of 256 KB, each one whole inside a transaction (0.004): it can no
  * longer commit half of its changes. The superblock, too, is journaled
  * (0.004, super_scrivi): its counters change with the bitmaps they count.
+ *
+ * ! NOT EVERY OPERATION (0.307, 2 November 2026). Until 0.306 each create,
+ * rename, chmod and close was a transaction of its own, with three FLUSH of 22
+ * ms each on the laptop. Firefox at its first start: 2000 commits in 4 minutes,
+ * 1469 for single operations and 531 for closes and fsyncs, and 150 s out of
+ * 180 spent waiting for FLUSH. Nothing asks for that: only fsync promises the
+ * disk. A crash now loses up to 5 seconds of operations nobody fsynced, as on
+ * Linux, and the volume stays consistent.
+ *
+ * ! EXCEPT WHAT FREES BLOCKS, which still commits at once (g->liberati, set by
+ * libera_blocco). File data go straight to the disk: a block freed in a
+ * transaction still open could take a new file's data, and after a crash the
+ * old file would be back, unlinked by nobody, with the new file's data inside.
+ * Blocks given back from a reservation held no data and do not count.
  *
  * ! EVERY TRANSACTION STARTS AT s_first. The journal is emptied at every
  * checkpoint, so only the LAST committed transaction can ever be replayed
@@ -114,6 +128,8 @@ typedef struct {
     int       guasto;                   /* a commit failed: no more writes */
     uint32_t  conti[4];                 /* commits: see CONTO_* */
     uint32_t  blocchi;                  /* metadata blocks committed */
+    uint32_t  commit_fatti;
+    int       liberati;                 /* the open transaction freed blocks */
 } Giornale;
 
 /* Why a transaction was committed, said in the log at unmount: the first
@@ -628,6 +644,11 @@ static int commit(Ext2Mount *m, Giornale *g)
     if (g->n_slot == 0) return 0;
     if (g->guasto) return -1;
     g->blocchi += g->n_slot;
+    if (++g->commit_fatti % 1000u == 0)
+        klog(LOG_INFO, "ext3: '%s': %u commit: %u operazione, %u piena o 5 s, "
+                       "%u chiusura/fsync, %u sync; %u blocchi", m->etichetta,
+             g->commit_fatti, g->conti[CONTO_OPERAZIONE], g->conti[CONTO_PIENA],
+             g->conti[CONTO_CHIUSURA], g->conti[CONTO_SYNC], g->blocchi);
 
     /* 1. the journal superblock points at this transaction */
     pbe32(g->jsb + 0x18, S);
@@ -701,6 +722,7 @@ static int commit(Ext2Mount *m, Giornale *g)
     if (blk_flush(m->blkdev) != 0) goto guasto;
 
     /* 6. the journal is empty again (carried to the disk by the next flush) */
+    g->liberati = 0;
     g->seq = S + 1u;
     pbe32(g->jsb + 0x18, g->seq);
     pbe32(g->jsb + 0x1C, 0);
@@ -741,18 +763,39 @@ int giornale_inizio(int mnt)
     return 0;
 }
 
-/* After an operation: `subito` for everything but write(). */
+/* After an operation: `subito` for everything but write(), which commits at
+ * once only if the operation freed blocks. */
 int giornale_fine(int mnt, int subito)
 {
     Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
 
     if (g == NULL || g->n_slot == 0) return 0;
-    if (subito || g->n_slot * 2u >= g->max_slot ||
+    (void)subito;
+    if (g->liberati) {
+        g->conti[CONTO_OPERAZIONE]++;
+        return commit(&K->mnt[mnt], g);
+    }
+    if (g->n_slot * 2u >= g->max_slot ||
         unix_ora_corrente() - g->aperto >= GIO_SECONDI) {
-        g->conti[subito ? CONTO_OPERAZIONE : CONTO_PIENA]++;
+        g->conti[CONTO_PIENA]++;
         return commit(&K->mnt[mnt], g);
     }
     return 0;
+}
+
+/* Every second, from the kernel: without this a transaction stayed open until
+ * the next operation, however long that took. */
+void giornale_tempo(int mnt)
+{
+    giornale_fine(mnt, 0);
+}
+
+/* Blocks were freed: see OGNI OPERAZIONE at the head of the file. */
+void giornale_liberato(Ext2Mount *m)
+{
+    Giornale *g = di(m);
+
+    if (g != NULL) g->liberati = 1;
 }
 
 /* Unmount: the last transaction, then needs_recovery off. */

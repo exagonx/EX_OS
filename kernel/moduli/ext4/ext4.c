@@ -94,6 +94,14 @@ static void smonta(int mnt)
     giornale_smonta(mnt);
 }
 
+/* A file was closed: only what is kept between write()s. The journal waits,
+ * see OGNI OPERAZIONE in giornale.c. */
+static void file_chiuso(int mnt)
+{
+    (void)mnt;
+    prenotazione_chiudi();
+}
+
 static void chiudi(int mnt)
 {
     prenotazione_chiudi();
@@ -194,6 +202,8 @@ static const Ext2Ops g_ops = {
     op_truncate,
     sincronizza,
     chiudi,
+    file_chiuso,
+    giornale_tempo,
     giornale_leggi,
     giornale_scrivi,
     giornale_dati,

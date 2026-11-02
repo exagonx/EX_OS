@@ -1233,8 +1233,16 @@ void ext2_chiudi(int mnt)
 {
     Ext2Mount *m = prendi(mnt);
 
-    if (m != NULL && g_ops != NULL && !m->sola_lettura && g_ops->chiudi != NULL)
-        g_ops->chiudi(mnt);
+    if (m != NULL && g_ops != NULL && !m->sola_lettura && g_ops->file_chiuso != NULL)
+        g_ops->file_chiuso(mnt);
+}
+
+void ext2_ogni_secondo(int mnt)
+{
+    Ext2Mount *m = prendi(mnt);
+
+    if (m != NULL && g_ops != NULL && !m->sola_lettura && g_ops->tempo != NULL)
+        g_ops->tempo(mnt);
 }
 
 /* =============================================================================

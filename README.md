@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.289
+**Version:** 0.307
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,16 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Fewer FLUSH: the journal does not commit at every operation (kernel 0.307)
+
+ext3 and ext4 commit at `fsync`, `sync` and unmount, when the journal is half
+full, after 5 seconds, and at once only if the operation freed blocks. Each
+operation used to cost three FLUSH: Firefox at its first start on the laptop goes
+from 6605 to 1866 FLUSH. A hard stop loses up to 5 seconds of operations without
+`fsync`, as on Linux; the volume stays consistent. Test:
+`tools/prova_giornale_tempo.sh`. `/proc/interrupts` says how many times each line
+reached its driver.
 
 ### Disk read cache (kernel 0.304)
 

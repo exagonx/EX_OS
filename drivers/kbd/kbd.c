@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.008");
+EX_VERSIONE("kbd.drv", "0.009");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1239,13 +1239,62 @@ static int kbc_wait_read_ms(unsigned timeout_ms)
 /* =============================================================================
  * LED tastiera
  * ============================================================================= */
+/* ! ONE BYTE TO THE KEYBOARD, AND ITS ANSWER WAITED FOR (0.009, 2 November
+ * 2026). After 0xED a real keyboard STOPS SCANNING until the byte of the LEDs
+ * arrives. This function wrote the two bytes one after the other without waiting
+ * for the ACK of the first: a second byte lost in between leaves a keyboard that
+ * no longer sends a key, with the driver alive and the mouse working on its
+ * own port. QEMU always takes both, and it could not be seen there.
+ *
+ * Mouse bytes met while waiting go to the mouse; a key is dropped, the keyboard
+ * was about to stop anyway. Returns 0xFA, 0xFE, or -1 after KBC_TMO_ACK ms. */
+static void mouse_byte(unsigned char b);
+
+static int kbd_manda(unsigned char byte)
+{
+    unsigned inizio;
+
+    kbc_wait_write();
+    ioport_out(KBC_DATA, byte);
+    inizio = uptime_ms();
+    for (;;) {
+        int st = ioport_in(KBC_STATUS);
+
+        if (st >= 0 && (st & KBC_OBF)) {
+            int d = ioport_in(KBC_DATA);
+
+            if (d < 0) return -1;
+            if (st & KBC_AUX) { mouse_byte((unsigned char)d); continue; }
+            if (d == 0xFA || d == 0xFE) return d;
+            continue;
+        }
+        if (uptime_ms() - inizio >= KBC_TMO_ACK) return -1;
+    }
+}
+
+/* 0xFE asks to send again: three tries. */
+static int kbd_comando(unsigned char byte)
+{
+    int i;
+
+    /* Silence is not asked again: on a machine with no keyboard each try costs
+     * KBC_TMO_ACK of boot. */
+    for (i = 0; i < 3; i++) {
+        int r = kbd_manda(byte);
+
+        if (r == 0xFA) return 0;
+        if (r < 0) return -1;
+    }
+    return -1;
+}
+
 static void kbd_set_leds(unsigned char leds)
 {
-    kbc_wait_write();
-    ioport_out(KBC_DATA, KBC_CMD_SET_LEDS);
-    kbc_wait_write();
-    ioport_out(KBC_DATA, leds & 0x07);
     g_leds = leds;
+    if (kbd_comando(KBC_CMD_SET_LEDS) != 0 || kbd_comando(leds & 0x07) != 0) {
+        /* whatever it was waiting for, F4 is a command and ends the wait */
+        kbd_comando(0xF4);
+    }
 }
 
 /* =============================================================================
@@ -1567,8 +1616,6 @@ static void kbd_process_scancode(unsigned char sc)
  * quel byte resterebbe in 0x60 per sempre: con OBF alto il KBC non
  * genera più fronti su IRQ1 e la tastiera si bloccherebbe del tutto.
  * ============================================================================= */
-static void mouse_byte(unsigned char b);   /* definita piu' sotto */
-
 static void kbd_drain(void)
 {
     int guard;
