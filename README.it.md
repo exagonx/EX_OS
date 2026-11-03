@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.307
+**Versione:** 0.310
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,36 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### I driver finiti non scrivono piu' nei programmi degli altri (kernel 0.309 e 0.310, chkdsk 0.004)
+
+**Provato** sul portatile col kernel 0.310: dopo `system -unload`, 0 byte estranei su 512 MB
+(`memsporca`) e quattro `chkdsk` di fila senza problemi. In QEMU a 32 e 64 bit
+(`tools/prova_dma_morto.sh`, `tools/prova_zona_rossa.sh`); col codice di prima falliscono.
+
+- **0.310.** Dopo `system -unload` il controller USB continuava a scrivere il numero di frame,
+  1000 volte al secondo, nelle pagine liberate da `ohci.drv` ormai finito, e quelle pagine
+  andavano al programma dopo. Per questo `chkdsk` non concordava con se stesso su un disco sano.
+  Le pagine DMA di un driver finito restano fuori uso fino al riavvio; `dmesg` dice quante.
+- **0.309, 64 bit.** Il kernel faceva crescere la pila senza contare i 128 byte della zona
+  rossa, e un programma poteva cadere su codice valido. Era un crash di Firefox dentro NSS.
+- **`chkdsk -dettagli`** nomina i blocchi e gli inode diversi.
+
+Se dopo netupdate gira ancora il kernel vecchio e il disco e' in sola lettura: `help problemi`.
+
+### Un errore del disco e' un errore (kernel 0.308, date 0.004, netupdate 0.040)
+
+**Testato** in QEMU a 32 e 64 bit con settori resi guasti (`tools/prova_lettura_errata.sh`);
+la stessa prova fallisce sul codice di prima. **Da testare** sul portatile.
+
+Un blocco illeggibile faceva rendere a `ext2_read` zero byte, cioe' fine del file; col
+guasto in un blocco indiretto i dati arrivavano pieni di zeri senza nessun errore; una
+pagina di un programma si riempiva di zeri al posto del codice. Ora la lettura fallisce
+e il programma si ferma con una riga `PF:` in `dmesg`.
+
+`date -ntp` si arrende dopo 5 secondi, nome del server compreso. `/bin/sync` nuovo.
+`netupdate` si ferma se il server ha un sistema piu' vecchio di quello che gira e lo
+dice; per tornare indietro apposta si aggiunge `-indietro`.
 
 ### Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)
 

@@ -65,7 +65,23 @@
 #include "../mkfs/crc32c.h"
 
 /* +0.001 a ogni modifica: `chkdsk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("chkdsk", "0.003");
+EX_VERSIONE("chkdsk", "0.004");
+
+/* -dettagli: names what differs, and checks that fresh memory is zero (voce 63:
+ * two runs with no write in between do not agree). */
+static int g_dettagli = 0;
+static unsigned int g_mostrati = 0;
+
+static void memoria_azzerata(const char *cosa, const unsigned char *p, unsigned int n)
+{
+    unsigned int i, sporchi = 0, primo = 0;
+
+    if (!g_dettagli || p == NULL) return;
+    for (i = 0; i < n; i++)
+        if (p[i]) { if (!sporchi) primo = i; sporchi++; }
+    printf("  memoria %s: %u byte, %u non a zero (primo a %u)\n", cosa, n, sporchi, primo);
+}
+
 
 #define SETT            512u
 #define MAX_PROF        16      /* annidamento massimo delle directory */
@@ -2874,7 +2890,12 @@ static void e2_controlla_bitmap(void)
 
                 if (nel_volume) usati_veri++;
                 else            lib_b++;
-                if (nel_volume != nella_bm) diff_b++;
+                if (nel_volume != nella_bm) {
+                    diff_b++;
+                    if (g_dettagli && g_mostrati++ < 60)
+                        printf("  blocco %u gruppo %u: visto %d, bitmap %d\n", blocco, g,
+                               nel_volume, nella_bm);
+                }
             }
             if (!(flags & E2_BG_BLOCK_UNINIT))
                 for (i = n_b; i < e2_dim_blocco * 8u; i++)
@@ -2909,7 +2930,12 @@ static void e2_controlla_bitmap(void)
                  * confrontarli con "visto" darebbe una differenza su ogni
                  * volume sano. */
                 if (num < e2_primo_inode) continue;
-                if (visto_qui != nella_bm) diff_i++;
+                if (visto_qui != nella_bm) {
+                    diff_i++;
+                    if (g_dettagli && g_mostrati++ < 60)
+                        printf("  inode %u gruppo %u: visto %d, bitmap %d\n", num, g,
+                               visto_qui, nella_bm);
+                }
             }
             if (!(flags & E2_BG_INODE_UNINIT))
                 for (i = n_i; i < e2_dim_blocco * 8u; i++)
@@ -3057,6 +3083,10 @@ static void e2_controlla(void)
     e2_link_conta    = (unsigned short *)calloc(e2_n_inode + 2u, 2);
     e2_meta          = (unsigned char *)calloc(bb, 1);
     e2_blocchi_bad   = scansiona ? (unsigned char *)calloc(bb, 1) : NULL;
+    memoria_azzerata("blocchi", e2_blocchi_usati, bb);
+    memoria_azzerata("inode", e2_inode_visti, ib);
+    memoria_azzerata("dir", e2_inode_dir, ib);
+    memoria_azzerata("meta", e2_meta, bb);
     e2_bad_n = e2_bad_in_uso = 0;
     e2_blocchi_contati = 0;
     e2_da_spostare_n = 0;
@@ -3546,6 +3576,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "-badblock") == 0 ||
                  strcmp(argv[i], "-bad") == 0)
             scansiona = 1;
+        else if (strcmp(argv[i], "-dettagli") == 0) g_dettagli = 1;
         else nome = argv[i];
     }
 

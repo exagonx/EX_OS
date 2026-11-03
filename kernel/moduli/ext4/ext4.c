@@ -27,7 +27,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.004"
+#define EXT4MOD_VERSIONE "0.005"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;

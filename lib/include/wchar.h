@@ -61,6 +61,7 @@ size_t    wcrtomb(char *dst, wchar_t c, mbstate_t *stato);
  * in libc.h, come ogni altra cosa: la fonte e' una sola. */
 
 size_t    wcslen(const wchar_t *s);
+int       wcwidth(wchar_t c);
 wchar_t  *wcschr(const wchar_t *s, wchar_t c);
 wchar_t  *wcsrchr(const wchar_t *s, wchar_t c);
 int       wcscmp(const wchar_t *a, const wchar_t *b);

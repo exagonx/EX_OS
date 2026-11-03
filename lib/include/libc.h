@@ -428,6 +428,7 @@ long long atoll(const char *s);
 #define RAND_MAX 32767
 int     rand(void);
 void    srand(unsigned int seme);
+int     rand_r(unsigned int *seme);
 
 /* Esegue `comando` con `/bin/sh -c` e ritorna il SUO codice di uscita;
  * 127 vuol dire «comando non trovato», come in ogni shell. system(NULL)
@@ -2707,6 +2708,7 @@ struct lconv *localeconv(void);
 #define _SC_OPEN_MAX            4
 #define _SC_PAGESIZE            30
 #define _SC_CLK_TCK             2
+#define _SC_IOV_MAX             60
 #define _SC_NPROCESSORS_ONLN    84
 /* La RAM, in pagine (i numeri di Linux): la chiede llama.cpp di Firefox per
  * decidere quanto modello caricare. Vengono da meminfo(). */
@@ -3838,6 +3840,7 @@ int     getconf(const char *key, char *buf, size_t size);
  * variabile globale del kernel (g_os_version). Ritorna la lunghezza, <0
  * se il buffer è troppo piccolo (nessuna copia parziale). */
 int     osversion(char *buf, size_t size);
+void    sync(void);
 
 /* Comodità: 1 se il boot verboso è attivo, 0 se il sistema deve restare
  * silenzioso. In caso di errore di lettura ritorna 1 — un programma muto
@@ -3939,6 +3942,7 @@ typedef unsigned int    in_addr_t;
 #define SOCK_STREAM     1
 #define SOCK_DGRAM      2
 #define SOCK_RAW        3
+#define SOCK_RDM        4
 #define SOCK_SEQPACKET  5
 #define SOCK_NONBLOCK   04000
 #define SOCK_CLOEXEC    02000000

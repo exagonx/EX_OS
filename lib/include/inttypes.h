@@ -90,12 +90,15 @@
 #define PRIdFAST8   "d"
 #define PRIuFAST8   "u"
 #define PRIxFAST8   "x"
+#define PRIXFAST8   "X"
 #define PRIdFAST16  "d"
 #define PRIuFAST16  "u"
 #define PRIxFAST16  "x"
+#define PRIXFAST16  "X"
 #define PRIdFAST32  "d"
 #define PRIuFAST32  "u"
 #define PRIxFAST32  "x"
+#define PRIXFAST32  "X"
 #define PRIdFAST64  PRId64
 #define PRIuFAST64  PRIu64
 #define PRIxFAST64  PRIx64
@@ -161,6 +164,14 @@
 #define SCNdMAX     "lld"
 #define SCNuMAX     "llu"
 #define SCNxMAX     "llx"
+#endif
+#define SCNi8       "hhi"
+#define SCNi16      "hi"
+#define SCNi32      "i"
+#ifdef __LP64__
+#define SCNi64      "li"
+#else
+#define SCNi64      "lli"
 #endif
 
 /* =============================================================================

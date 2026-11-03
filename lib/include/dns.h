@@ -63,6 +63,10 @@ int dns_risolvi(const char *nome, unsigned char *ip);
  * cioè agli strumenti di diagnosi, non ai programmi normali. */
 int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da);
 
+/* The same, with the whole search over within ms (0 = no limit of its own). */
+int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
+                      unsigned int ms);
+
 /* Converte "10.0.2.2" in quattro byte. Ritorna 1 se la stringa è un
  * indirizzo IPv4 ben formato, 0 altrimenti.
  *

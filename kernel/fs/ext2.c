@@ -360,6 +360,11 @@ static int leggi_inode(Ext2Mount *m, uint32_t numero, uint8_t *dst)
  * ============================================================================= */
 static uint32_t g_ext_resto = 0;    /* blocks of the extent from n on, n included */
 
+/* ! 0 FROM THE MAP MEANS A HOLE, and a hole reads as zeros. A map that could not
+ * read its own tree says so here, or a disk error becomes zeros handed over as
+ * good data (voce 59). Under the lock of the filesystem, like g_ext_resto. */
+static int g_mappa_errore = 0;
+
 static uint32_t extent_map(Ext2Mount *m, const uint8_t *inode, uint32_t n)
 {
     const uint8_t *nodo = inode + 40u;          /* the root, inside i_block */
@@ -369,7 +374,7 @@ static uint32_t extent_map(Ext2Mount *m, const uint8_t *inode, uint32_t n)
     for (;;) {
         uint32_t voci, prof, i, scelta;
 
-        if (le16(nodo) != EXTENT_MAGIC) return 0;
+        if (le16(nodo) != EXTENT_MAGIC) { g_mappa_errore = 1; return 0; }
         voci = le16(nodo + 2);
         prof = le16(nodo + 6);
         if (voci == 0 || 12u + voci * 12u > spazio) return 0;
@@ -402,7 +407,7 @@ static uint32_t extent_map(Ext2Mount *m, const uint8_t *inode, uint32_t n)
 
                 if (alto != 0 || foglia == 0) return 0;
                 if (++livelli > 5u) return 0;   /* ext4 trees are at most 5 deep */
-                if (leggi_blocco(m, foglia, b_ext) != 0) return 0;
+                if (leggi_blocco(m, foglia, b_ext) != 0) { g_mappa_errore = 1; return 0; }
                 nodo   = b_ext;
                 spazio = m->dim_blocco;
             }
@@ -426,7 +431,7 @@ static uint32_t mappa_blocco(Ext2Mount *m, int mnt, const uint8_t *inode,
     if (n < ppb) {
         p = le32(inode + 40u + 12u * 4u);
         if (p == 0) return 0;
-        if (leggi_indiretto(m, mnt, p) != 0) return 0;
+        if (leggi_indiretto(m, mnt, p) != 0) { g_mappa_errore = 1; return 0; }
         return le32(b_ind + n * 4u);
     }
     n -= ppb;
@@ -435,10 +440,10 @@ static uint32_t mappa_blocco(Ext2Mount *m, int mnt, const uint8_t *inode,
     if (n < ppb * ppb) {
         p = le32(inode + 40u + 13u * 4u);
         if (p == 0) return 0;
-        if (leggi_indiretto(m, mnt, p) != 0) return 0;
+        if (leggi_indiretto(m, mnt, p) != 0) { g_mappa_errore = 1; return 0; }
         p = le32(b_ind + (n / ppb) * 4u);
         if (p == 0) return 0;
-        if (leggi_indiretto(m, mnt, p) != 0) return 0;
+        if (leggi_indiretto(m, mnt, p) != 0) { g_mappa_errore = 1; return 0; }
         return le32(b_ind + (n % ppb) * 4u);
     }
     n -= ppb * ppb;
@@ -450,13 +455,13 @@ static uint32_t mappa_blocco(Ext2Mount *m, int mnt, const uint8_t *inode,
      * darebbe zeri, che e' il modo peggiore di fallire. */
     p = le32(inode + 40u + 14u * 4u);
     if (p == 0) return 0;
-    if (leggi_indiretto(m, mnt, p) != 0) return 0;
+    if (leggi_indiretto(m, mnt, p) != 0) { g_mappa_errore = 1; return 0; }
     p = le32(b_ind + (n / (ppb * ppb)) * 4u);
     if (p == 0) return 0;
-    if (leggi_indiretto(m, mnt, p) != 0) return 0;
+    if (leggi_indiretto(m, mnt, p) != 0) { g_mappa_errore = 1; return 0; }
     p = le32(b_ind + ((n / ppb) % ppb) * 4u);
     if (p == 0) return 0;
-    if (leggi_indiretto(m, mnt, p) != 0) return 0;
+    if (leggi_indiretto(m, mnt, p) != 0) { g_mappa_errore = 1; return 0; }
     return le32(b_ind + (n % ppb) * 4u);
 }
 
@@ -1051,6 +1056,7 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
     uint8_t    inode[128];
     uint8_t   *dst = (uint8_t *)buf;
     uint32_t   ino, dim, letti = 0;
+    int        errore = 0;
 
     if (m == NULL || buf == NULL) return -1;
 
@@ -1068,6 +1074,7 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
     if (offset >= dim) return 0;
     if (size > dim - offset) size = dim - offset;
 
+    g_mappa_errore = 0;
     while (letti < size) {
         uint32_t log  = (offset + letti) / m->dim_blocco;
         uint32_t in   = (offset + letti) % m->dim_blocco;
@@ -1077,6 +1084,7 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
         if (q > size - letti) q = size - letti;
 
         blk = mappa_blocco(m, mnt, inode, log);
+        if (g_mappa_errore) { errore = 1; break; }
 
         if (blk == 0) {
             /* File SPARSO: il blocco non e' allocato e significa zeri.
@@ -1094,17 +1102,19 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
             if (le32(inode + 32u) & INODE_FL_EXTENTS)
                 n = g_ext_resto < max ? g_ext_resto : max;
             while (n < max && mappa_blocco(m, mnt, inode, log + n) == blk + n) n++;
-            if (leggi_corsa(m, blk, n, dst + letti) != 0) break;
+            if (leggi_corsa(m, blk, n, dst + letti) != 0) { errore = 1; break; }
             letti += n * m->dim_blocco;
             continue;
         } else {
-            if (leggi_blocco(m, blk, b_dati) != 0) break;
+            if (leggi_blocco(m, blk, b_dati) != 0) { errore = 1; break; }
             for (k = 0; k < q; k++) dst[letti + k] = b_dati[in + k];
         }
 
         letti += q;
     }
 
+    /* ! 0 HERE WOULD SAY END OF FILE, and a loader would take it for one. */
+    if (errore && letti == 0) return -1;
     return (int)letti;
 }
 

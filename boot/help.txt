@@ -231,6 +231,11 @@ Libera spazio e rilancia netupdate -check. Con la 0.038 la scritta IL KERNEL
 E' CAMBIATO appariva anche quando non era vero: se dmesg ERROR dice
 "spezzato in piu' di 12 intervalli", prima aggiorna netupdate.
 
+[sync]
+tutto quel che e' stato scritto va sui dischi, giornali compresi
+
+  sync                  aspetta che abbiano finito
+
 [guardia]
 guardia 120     se nessuno richiama entro 120 secondi, riavvia (solo root)
 guardia 0       spenta
@@ -487,6 +492,9 @@ Rimettere l'orologio (serve essere root, cioe' `sudo date ...`):
   date -set-date:2026/09/16   la data  (va bene anche 2026-09-16)
   date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
 
+`date -ntp` si arrende dopo 5 secondi, nome del server compreso: senza
+rete non ferma niente.
+
 Le due meta' si rimettono separate: chi cambia l'ora non deve ribattere
 la data, e viceversa. I campi che non si toccano vengono riletti
 dall'orologio.
@@ -658,6 +666,16 @@ Dal kernel 0.293 il modulo di /rdboot si prende da solo all'avvio: il disco
 resta scrivibile e in `dmesg` c'e' un avviso; basta `netupdate -check -yes`.
 Se anche quello di /rdboot e' rifiutato: avvio dal CD della stessa versione
 del kernel, poi `mount hd0p1 /disk` e cp da /dev/ext4.mod a /disk/dev/.
+
+DOPO netupdate E IL RIAVVIO GIRA ANCORA IL KERNEL DI PRIMA, E IL DISCO E' IN
+SOLA LETTURA. `cat /proc/version` dice la versione vecchia e `dmesg` dice che
+ext4.mod e' per quella nuova: anche il modulo di /rdboot e' nuovo, e
+`netupdate -avvio` rifiuta con errore -30. netupdate tiene il modulo di prima:
+
+  modulo carica /dev/ext4.mod.old        il disco torna scrivibile, subito
+  netupdate -avvio                       riscrive la mappa dell'avvio
+  reboot
+  cat /proc/version                      deve dire la versione nuova
 
 NETUPDATE DICE CHE NON C'E' NIENTE DA FARE, E IL FILE E' VECCHIO. Il
 registro /boot/netupdate.reg dice cosa la macchina crede di avere. Si butta,

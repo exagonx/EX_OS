@@ -19,7 +19,7 @@
 #     prova-librerie.cpp               the example (tools/prove/libreprova.cpp)
 #
 # One group per library in tools/iso/strumenti.txt: [zlib] [bzip2] [xz]
-# [lz4] [zstd] [pcre2] [fmt], [mariadb-connector] (Connector/C and C++, the
+# [lz4] [zstd] [pcre2] [fmt], [ogg] [vorbis] [opus] [flac] [libvpx] [dav1d] [ffmpeg], [mariadb-connector] (Connector/C and C++, the
 # FreeBASIC header, the Rust crate), [mariadb] (tools/mariadb-exos: also exos/mariadb,
 # the server and its share), [expat], [apr] (APR and APR-util), [apache]
 # (tools/httpd-exos: exos/apache2, httpd and its tree, mod_php inside), [php]
@@ -43,7 +43,7 @@ fatte=""
 # ! mariadb (the server) has no lib/: its client library is
 # mariadb-connector-c's (see tools/mariadb-exos/costruisci.sh)
 for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb-connector-cpp mariadb \
-        expat apr apr-util httpd php; do
+        expat apr apr-util httpd php ogg vorbis opus flac libvpx dav1d ffmpeg; do
     N=cross_build/$NOME-exos$BIT/exos
     if [ ! -d "$N/src/$NOME" ]; then
         echo "     $NOME assente: tools/$NOME-exos/costruisci.sh $BIT" >&2

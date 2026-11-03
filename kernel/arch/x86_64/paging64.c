@@ -554,7 +554,7 @@ PDE *paging_create_directory(void)
 
 void paging_destroy_directory(PDE *pml4)
 {
-    uint32_t i4, i3, i2, i1;
+    uint32_t i4, i3, i2, i1, dma_tenute = 0;
 
     if (pml4 == NULL || pml4 == k_pml4) return;
 
@@ -591,6 +591,9 @@ void paging_destroy_directory(PDE *pml4)
                         /* fuori dalla RAM e' un dispositivo (MMIO), non
                          * una pagina da rendere; la RAM oltre i 4 GB lo e' */
                         if (!pmm_e_ram(frame)) continue;
+                        /* ! DMA MEMORY OF A DEAD DRIVER STAYS OUT OF USE: see
+                         * paging.h, PG_FISSA */
+                        if (pt[i1] & PG_FISSA) { dma_tenute++; continue; }
                         pmm_free_page(frame);
                     }
                 }
@@ -600,6 +603,10 @@ void paging_destroy_directory(PDE *pml4)
         }
         pmm_free_page(PG_ADDR(pml4[i4]));
     }
+    if (dma_tenute)
+        klog(LOG_WARN, "PAGING: %u pagine DMA di un driver finito restano fuori "
+             "uso fino al riavvio", dma_tenute);
+
     pmm_free_page(IN_NUMERO(pml4));
 
     klog(LOG_DEBUG, "PAGING: spazio di processo 0x%08x distrutto (dati utente inclusi)",

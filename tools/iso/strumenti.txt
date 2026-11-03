@@ -374,6 +374,114 @@ nota  = gcc prog.c -lzstd
 nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
 
 
+[ogg]
+nome  = Ogg
+dice  = libogg 1.3.6: il contenitore Ogg
+prova = lib/libogg.a
+vuole = base
+mbyte = 1
+solo  = lib/libogg.a
+solo  = include/ogg
+solo  = src/ogg
+
+nota  = gcc prog.c -logg
+
+
+[vorbis]
+nome  = Vorbis
+dice  = libvorbis 1.3.7: audio Vorbis
+prova = lib/libvorbis.a
+vuole = ogg
+mbyte = 2
+solo  = lib/libvorbis.a
+solo  = lib/libvorbisenc.a
+solo  = lib/libvorbisfile.a
+solo  = include/vorbis
+solo  = src/vorbis
+
+nota  = gcc prog.c -lvorbisfile -lvorbis -logg -lm
+
+
+[opus]
+nome  = Opus
+dice  = libopus 1.6.1: audio Opus
+prova = lib/libopus.a
+vuole = base
+mbyte = 2
+solo  = lib/libopus.a
+solo  = include/opus
+solo  = src/opus
+
+nota  = gcc prog.c -lopus -lm
+
+
+[flac]
+nome  = FLAC
+dice  = libFLAC 1.5.0: audio senza perdita
+prova = lib/libFLAC.a
+vuole = base
+mbyte = 2
+solo  = lib/libFLAC.a
+solo  = include/FLAC
+solo  = src/flac
+
+nota  = gcc prog.c -lFLAC -lm
+
+
+[libvpx]
+nome  = libvpx
+dice  = libvpx 1.17.0: video VP8 e VP9
+prova = lib/libvpx.a
+vuole = base
+mbyte = 6
+solo  = lib/libvpx.a
+solo  = include/vpx
+solo  = src/libvpx
+
+nota  = gcc prog.c -lvpx -lm -lpthread
+
+
+[dav1d]
+nome  = dav1d
+dice  = dav1d 1.5.4: video AV1
+prova = lib/libdav1d.a
+vuole = base
+mbyte = 3
+solo  = lib/libdav1d.a
+solo  = include/dav1d
+solo  = src/dav1d
+
+nota  = gcc prog.c -ldav1d -lpthread -lm
+
+
+[ffmpeg]
+nome  = FFmpeg
+dice  = FFmpeg 9.0.2: librerie e programmi ffmpeg e ffprobe
+prova = lib/libavcodec.a
+vuole = vorbis
+vuole = opus
+vuole = libvpx
+vuole = dav1d
+mbyte = 200
+solo  = lib/libavcodec.a
+solo  = lib/libavformat.a
+solo  = lib/libavutil.a
+solo  = lib/libswresample.a
+solo  = lib/libswscale.a
+solo  = lib/libavfilter.a
+solo  = bin/ffmpeg
+solo  = bin/ffprobe
+solo  = include/libavcodec
+solo  = include/libavformat
+solo  = include/libavutil
+solo  = include/libswresample
+solo  = include/libswscale
+solo  = include/libavfilter
+solo  = src/ffmpeg
+
+nota  = gcc prog.c -lavformat -lavcodec -lswresample -lavutil
+
+
 [pcre2]
 nome  = PCRE2
 dice  = PCRE2 10.49: espressioni regolari di Perl, pcre2grep, pcre2test

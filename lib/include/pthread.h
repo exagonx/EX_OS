@@ -193,4 +193,12 @@ int   pthread_setspecific(pthread_key_t k, const void *valore);
 }
 #endif
 
+/* pthread_cleanup_push/pop: EX-OS has no pthread_cancel, so a handler can only
+ * run through pop(1) - or never. A pair opens and closes one block, as POSIX
+ * allows the macros to do. */
+#define pthread_cleanup_push(fn, arg) \
+    { void (*exos_pulizia_fn)(void *) = (fn); void *exos_pulizia_arg = (arg);
+#define pthread_cleanup_pop(esegui) \
+      if (esegui) exos_pulizia_fn(exos_pulizia_arg); }
+
 #endif /* EXOS_PTHREAD_H */

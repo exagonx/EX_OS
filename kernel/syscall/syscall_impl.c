@@ -1071,6 +1071,13 @@ int32_t sys_fsync(InterruptFrame *frame)
     return vfs_fsync((int)FDV(proc, fd).inode);
 }
 
+int32_t sys_sync(InterruptFrame *frame)
+{
+    (void)frame;
+    vfs_sync();
+    return 0;
+}
+
 /* The file locks of fcntl: the table is in vfs.c.
  *
  * ! F_SETLKW POLLS, ONE TICK AT A TIME, and does not queue: whoever waits looks

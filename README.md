@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.307
+**Version:** 0.310
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,36 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Dead drivers no longer write into other programs (kernel 0.309 and 0.310, chkdsk 0.004)
+
+**Tested** on the laptop with kernel 0.310: after `system -unload`, 0 stray bytes in 512 MB
+(`memsporca`) and four `chkdsk` in a row with no problem found. In QEMU at 32 and 64 bit
+(`tools/prova_dma_morto.sh`, `tools/prova_zona_rossa.sh`); both fail on the code before.
+
+- **0.310.** After `system -unload` the USB controller kept writing its frame counter, 1000
+  times a second, into pages freed by the dead `ohci.drv`, and those pages went to the next
+  program. That was why `chkdsk` disagreed with itself on a sane disk. DMA pages of a finished
+  driver now stay out of use until the next boot; `dmesg` says how many.
+- **0.309, 64 bit.** The kernel grew the stack without counting the 128 bytes of red zone, so
+  a program could crash on valid code. It was a Firefox crash in NSS.
+- **`chkdsk -dettagli`** names the differing blocks and inodes.
+
+If the old kernel still runs after netupdate and the disk is read-only, see `help problemi`.
+
+### A disk error is an error (kernel 0.308, date 0.004, netupdate 0.040)
+
+**Tested** in QEMU at 32 and 64 bit with failing sectors (`tools/prova_lettura_errata.sh`);
+the same test fails on the code before. **To be tested** on the laptop.
+
+An unreadable block made `ext2_read` return zero bytes, the end of the file; with the
+fault in an indirect block the data came full of zeros and no error; a page of a program
+filled with zeros in place of code. Now the read fails and the program stops with a
+`PF:` line in `dmesg`.
+
+`date -ntp` gives up after 5 seconds, server name included. New `/bin/sync`. `netupdate`
+stops and says so if the server has an older system than the one running; to go back
+on purpose add `-indietro`.
 
 ### Fewer FLUSH: the journal does not commit at every operation (kernel 0.307)
 

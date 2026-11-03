@@ -217,7 +217,14 @@ uint32_t         proc_tetto(void);  /* the ceiling in force: procmax or g_proc_m
  * ============================================================================= */
 #define TLS_TCB_SIZE        8
 #define TLS_MAX             65536
+/* How far below the stack pointer a legal first touch may land. ! THE 64-BIT ABI
+ * GIVES EVERY LEAF FUNCTION 128 BYTES BELOW RSP (the red zone): with 32 here
+ * Firefox died in bn_mul of NSS, at rsp-0x40, on a stack with room to grow. */
+#ifdef __x86_64__
+#define USER_STACK_SLACK    160     /* red zone + the old 32 */
+#else
 #define USER_STACK_SLACK    32      /* margine sotto ESP: caso peggiore pusha */
+#endif
 #define PROCESS_NAME_LEN    32      /* Lunghezza massima nome processo */
 #define MAX_ENV_VARS        32      /* Variabili d'ambiente per processo */
 #define ENV_VAR_LEN         128     /* Lunghezza max chiave=valore */

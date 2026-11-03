@@ -290,6 +290,7 @@ typedef struct {
 #define SYS_KLOG         86
 #define SYS_AHCI_PASSA   85
 #define SYS_GUARDIA      259
+#define SYS_SYNC         260
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -665,6 +666,7 @@ void longjmp(jmp_parola *env, int val) __attribute__((noreturn));
 #define _SC_ARG_MAX             0
 #define _SC_OPEN_MAX            4
 #define _SC_PAGESIZE           30
+#define _SC_IOV_MAX            60
 /* pathconf: duplicati da lib/include/libc.h come tutto il resto. */
 #define _PC_LINK_MAX            0
 #define _PC_NAME_MAX            3
@@ -7732,6 +7734,7 @@ long sysconf(int nome)
             unsigned int l[2];
             return _syscall2(SYS_FD_LIMITE, 0, (uintptr_t)l) == 0 ? (long)l[0] : 128;
         }
+        case _SC_IOV_MAX:           return 1024;
         case _SC_CLK_TCK:           return 100;   /* il PIT gira a 100 Hz */
         case _SC_NPROCESSORS_ONLN:  return 1;
         case 83 /* _SC_NPROCESSORS_CONF */: return 1;   /* per NSPR, 30 settembre 2026 */
@@ -8280,6 +8283,12 @@ int cpu_info(CpuInfo *ci)
 int cpu_lavora(void)
 {
     return _syscall1(SYS_SMP_LAVORA, 0);
+}
+
+/* Everything written so far to the disks. */
+void sync(void)
+{
+    (void)_syscall1(SYS_SYNC, 0);
 }
 
 /* Seconds to a reset unless called again, 0 = off. See bin/guardia. */
@@ -11979,6 +11988,13 @@ static unsigned long rand_seme = 1;
 
 void srand(unsigned int seme) { rand_seme = seme; }
 
+/* POSIX: the same generator kind as rand(), with the state in the caller's hands. */
+int rand_r(unsigned int *seme)
+{
+    *seme = *seme * 1103515245u + 12345u;
+    return (int)((*seme >> 16) & 0x7FFF);
+}
+
 int rand(void)
 {
     rand_seme = rand_seme * 1103515245ul + 12345ul;
@@ -13487,6 +13503,17 @@ int utimes(const char *percorso, const struct timeval tempi[2])
 
 static char g_syslog_nome[32] = "";
 
+/* setlogmask: 0 only asks. All on by default, as POSIX says. */
+static int g_syslog_maschera = 0xFF;
+
+int setlogmask(int maschera)
+{
+    int prima = g_syslog_maschera;
+
+    if (maschera != 0) g_syslog_maschera = maschera;
+    return prima;
+}
+
 void openlog(const char *nome, int opzioni, int servizio)
 {
     (void)opzioni; (void)servizio;
@@ -13498,7 +13525,7 @@ void vsyslog(int priorita, const char *fmt, __builtin_va_list ap)
     char riga[200];
     int  n = 0;
 
-    (void)priorita;
+    if (!(g_syslog_maschera & (1 << (priorita & 7)))) return;
     if (g_syslog_nome[0]) n = snprintf(riga, sizeof(riga), "%s: ", g_syslog_nome);
     vsnprintf(riga + n, sizeof(riga) - (size_t)n, fmt, ap);
     log_seriale(riga);
@@ -13514,6 +13541,24 @@ void syslog(int priorita, const char *fmt, ...)
 }
 
 void closelog(void) { g_syslog_nome[0] = '\0'; }
+
+/* Columns of a character: enough for terminals; combining marks 0, the wide
+ * East Asian blocks 2, control characters -1. */
+int wcwidth(wchar_t c)
+{
+    unsigned long u = (unsigned long)c;
+
+    if (u == 0) return 0;
+    if (u < 32 || (u >= 0x7F && u < 0xA0)) return -1;
+    if ((u >= 0x300 && u <= 0x36F) || (u >= 0x200B && u <= 0x200F) ||
+        (u >= 0xFE00 && u <= 0xFE0F)) return 0;
+    if ((u >= 0x1100 && u <= 0x115F) || (u >= 0x2E80 && u <= 0xA4CF) ||
+        (u >= 0xAC00 && u <= 0xD7A3) || (u >= 0xF900 && u <= 0xFAFF) ||
+        (u >= 0xFE30 && u <= 0xFE6F) || (u >= 0xFF00 && u <= 0xFF60) ||
+        (u >= 0xFFE0 && u <= 0xFFE6) || (u >= 0x1F300 && u <= 0x1FAFF) ||
+        (u >= 0x20000 && u <= 0x3FFFD)) return 2;
+    return 1;
+}
 
 /* =============================================================================
  * termios — the modes of a terminal, from kernel 0.279 (see <termios.h>)

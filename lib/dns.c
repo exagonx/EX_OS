@@ -208,7 +208,10 @@ static int attendi_da(int pid_ip, unsigned int tipo, unsigned char *buf,
     return 0;
 }
 
-int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)
+/* ms = 0: the usual TENTATIVI attempts of ATTESA_MS each. Otherwise the whole
+ * search ends within ms: `date -auto` at boot has 5 seconds, not 15. */
+int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
+                      unsigned int ms)
 {
     unsigned char  buf[IPC_MSG_MAX_DATA];
     unsigned char  msg[sizeof(IpUdpInvia) + MSG_MAX];
@@ -217,6 +220,7 @@ int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)
     IpUdpApri      apri;
     IpStato        st;
     unsigned int   len, n, id, porta;
+    unsigned int   fine_tutto = uptime_ms() + ms;
     int            pid_ip, tentativo, rc;
 
     if (nome == NULL || ip == NULL) return -EINVAL;
@@ -256,7 +260,13 @@ int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)
     rc = -ETIMEDOUT;
 
     for (tentativo = 0; tentativo < TENTATIVI; tentativo++) {
-        unsigned int o;
+        unsigned int o, attesa = ATTESA_MS;
+
+        if (ms) {
+            int resta = (int)(fine_tutto - uptime_ms());
+            if (resta <= 0) break;
+            if ((unsigned int)resta < attesa) attesa = (unsigned int)resta;
+        }
 
         /* --- composizione --- */
         dom[0] = (unsigned char)(id >> 8); dom[1] = (unsigned char)id;
@@ -288,16 +298,19 @@ int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)
 
         /* --- attesa: esito e dato possono arrivare in qualunque ordine --- */
         {
-            unsigned int scadenza = uptime_ms() + ATTESA_MS;
+            unsigned int scadenza = uptime_ms() + attesa;
             IpcMessage   meta;
 
             while ((int)(uptime_ms() - scadenza) < 0) {
                 IpUdpDati            d;
                 const unsigned char *r;
                 unsigned int         p, ancount, k;
+                int                  resta = (int)(scadenza - uptime_ms());
 
+                /* ! 0 would mean "wait for ever" to ipc_scegli. */
+                if (resta <= 0) break;
                 if (ipc_scegli(filtro_stack, &pid_ip, &meta, buf, sizeof(buf),
-                               ATTESA_MS) < 0)
+                               (unsigned int)resta) < 0)
                     break;
 
                 if (meta.tipo == IP_MSG_ESITO) {
@@ -390,7 +403,12 @@ fine:
     return rc;
 }
 
+int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)
+{
+    return dns_risolvi_entro(nome, ip, da, 0);
+}
+
 int dns_risolvi(const char *nome, unsigned char *ip)
 {
-    return dns_risolvi_da(nome, ip, NULL);
+    return dns_risolvi_entro(nome, ip, NULL, 0);
 }

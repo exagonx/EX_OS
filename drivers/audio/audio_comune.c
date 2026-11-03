@@ -63,7 +63,20 @@ static unsigned int   g_dma_byte = 0;
 static unsigned int   g_meta     = 0;   /* g_dma_byte / 2 */
 
 static unsigned int   g_stato   = AUDIO_ST_CHIUSO;
-static unsigned int   g_client  = 0;    /* chi ha aperto l'anello */
+static unsigned int   g_client  = 0;    /* chi ha aperto l'anello: il PROGRAMMA */
+
+/* ! IL CLIENT E' UN PROGRAMMA, NON UN FILO. Un messaggio porta il pid del filo
+ * che l'ha mandato, e un lettore vero apre l'anello da un filo e lo avvia da
+ * un altro: Firefox chiede APRI dal filo che crea il flusso e VIA da quello
+ * che lo riempie, VLC lo stesso. Confrontando i pid dei fili, VIA, FERMA e
+ * CHIUDI di quegli altri fili si buttavano senza una parola: la scheda non
+ * partiva, l'anello si riempiva e il lettore restava fermo per sempre
+ * (3 novembre 2026). */
+static unsigned int programma_di(unsigned int pid)
+{
+    int g = proc_gruppo((int)pid);
+    return g > 0 ? (unsigned int)g : pid;
+}
 static unsigned int   g_irq_n   = 0;    /* interrupt contati da via() */
 static unsigned int   g_via_ms  = 0;
 static unsigned int   g_volume  = 80;
@@ -981,7 +994,7 @@ int main(int argc, char **argv)
              * Mescolare due flussi vorrebbe dire un mixer software: e' un
              * lavoro vero, non una riga, e va fatto quando serve — non
              * inventato di nascosto dentro il driver della scheda. */
-            if (g_client != 0 && g_client != meta.sender_pid &&
+            if (g_client != 0 && g_client != programma_di(meta.sender_pid) &&
                 g_stato != AUDIO_ST_CHIUSO) {
                 memset(&e, 0, sizeof(e));
                 e.esito = -EBUSY;
@@ -990,21 +1003,21 @@ int main(int argc, char **argv)
             }
 
             fai_apri(&f, &e);
-            if (e.esito == 0) g_client = meta.sender_pid;
+            if (e.esito == 0) g_client = programma_di(meta.sender_pid);
             ipc_send(meta.sender_pid, AUDIO_MSG_ESITO, &e, sizeof(e));
             break;
         }
 
         case AUDIO_MSG_VIA:
-            if (meta.sender_pid == g_client) fai_via();
+            if (programma_di(meta.sender_pid) == g_client) fai_via();
             break;
 
         case AUDIO_MSG_FERMA:
-            if (meta.sender_pid == g_client) fai_ferma();
+            if (programma_di(meta.sender_pid) == g_client) fai_ferma();
             break;
 
         case AUDIO_MSG_CHIUDI:
-            if (meta.sender_pid == g_client) { fai_chiudi(); zona_chiudi(); }
+            if (programma_di(meta.sender_pid) == g_client) { fai_chiudi(); zona_chiudi(); }
             break;
 
         case AUDIO_MSG_VOLUME: {

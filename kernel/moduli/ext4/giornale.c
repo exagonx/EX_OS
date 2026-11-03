@@ -226,6 +226,13 @@ static int al_suo_posto(Ext2Mount *m, uint32_t n, const void *src)
              n, m->n_blocchi);
         return -1;
     }
+    /* ! THE FIRST 1024 BYTES OF BLOCK 0 ARE NOT THE VOLUME'S: they are the boot
+     * sector, bootinstall writes them outside any transaction, and an image
+     * of block 0 taken before it must not put the old map back (voce 75). */
+    if (n == 0)
+        return blk_write(m->blkdev, SUPER_OFFSET / 512u,
+                         m->sett_per_blocco - SUPER_OFFSET / 512u,
+                         (const uint8_t *)src + SUPER_OFFSET);
     return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco, m->sett_per_blocco, src);
 }
 
@@ -912,7 +919,7 @@ int super_scrivi(Ext2Mount *m, const uint8_t *sb)
     memcpy(b_super + (n ? 0u : SUPER_OFFSET), sb, 1024);
     r = giornale_scrivi(m, n, b_super);
     if (r != 1) return r;
-    return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco, m->sett_per_blocco, b_super);
+    return al_suo_posto(m, n, b_super);
 }
 
 int giornale_attivo(int mnt)

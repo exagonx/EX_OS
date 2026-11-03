@@ -26,6 +26,153 @@ manca» apre quello.
 
 ---
 
+# 2 novembre 2026 — voci chiuse tolte dalla coda (@CODA-20-10)
+
+Copiate com'erano da in_lavorazione.txt.
+
+  2. @DISCO-VELOCE: misure del diario 4,5 MB/s (PIO) e 6,3 MB/s (DMA)
+     contro 80-150 di un disco vero. Prima misurare quanti settori chiede il
+     driver ATA per volta, poi letture a blocchi grandi. Si puo' fare
+     insieme a ext3/ext4 (@EXT4-RIFARE-0.263), che tocca lo stesso codice.
+
+  7. Sorgenti del sistema di base (@NETINST-SORGENTI). L'utente (21/10):
+     una terza directory sul server, netinst_src, accanto a netinst e
+     netinst_64; `netupdate -install:sourcecode` li scarica; tar.gz, tre
+     archivi (solo 32, solo 64, in comune) - "se credi ci sia un'alternativa
+     migliore suggerisci".
+     Misurato sulla HEAD 55f228c0: 1710 file tracciati, 34 MB, un solo
+     `git archive` tar.gz = 12,7 MB. I file solo di un'architettura sono ~40
+     (kernel/arch/x86_64, *64.ld, mkiso64.sh...: ~390 KB, l'1%); la
+     differenza vera sta DENTRO i file comuni (#if, ARCH= nel Makefile) e
+     ogni architettura si costruisce dall'albero intero. Il nome non basta a
+     classificare (exwin/icon/*_64.ico sono icone da 64 pixel).
+     PROPOSTO all'utente: UN archivio per versione
+     (netinst_src/sorgenti-<versione>.tar.gz = git archive del commit, cioe'
+     esattamente GitHub) + un file con versione, commit e sha256; lo stesso
+     per netupdate a 32 e a 64 bit. L'utente: «procedi con un archivio
+     unico». FATTO 21/10, vedi @NETINST-SORGENTI-FATTO in fondo.
+
+  10. @HTACCESS-GZ: l'utente deve lanciare exagonx/repo-update.sh -src
+      -ritenta (carica il .htaccess con RemoveEncoding .gz) e verificare
+      che l'archivio torni di 12740505 byte; se Altervista ignora la regola,
+      rinominare in .tgz.bin. Poi controllare pacchetti/nasm.tar.gz a 32 bit.
+      (21/10 sera: RemoveEncoding ignorato da Altervista; risolto con i nomi
+      .tar_gz sul server, netupdate 0.033 li rinomina .tar.gz in locale.)
+
+  30. FATTO 25/10 (kernel 0.279, tools/prova_termios.sh a 32 e 64 bit,
+      prova_telnet/ctrlc/ssh di nuovo a posto): termios Linux sul pty e
+      sulla console (kbd.drv a byte, SYS_CONSOLE_PRONTO per poll), la shell
+      rimette i modi prima del prompt. Il testo sotto e' com'era.
+      TERMIOS (25/10, prerequisito di ncurses e della readline): oggi
+      tcgetattr/tcsetattr rendono ENOTTY. Pty (kernel/ipc/pty.c): ha gia'
+      PTY_CANONICO/PTY_ECO e la misura; mancano ISIG, ICRNL, VMIN/VTIME,
+      TCGETS/TCSETS e TIOCGWINSZ/TIOCSWINSZ nell'ioctl (oggi solo FD_STDIN,
+      e fisso 80x25). Console: la disciplina sta in kbd.drv (READLINE a
+      righe, raw = codici KBD_K_* via IPC): serve un modo a byte con
+      eco/ISIG/ICRNL scelti dal termios. DIFETTO TROVATO: poll() su stdin
+      della console guarda g_input_buf del tty interno, vuoto quando c'e'
+      kbd.drv -> non dice mai pronto. Prove: QEMU 32 e 64, console e telnet.
+
+  51. install NON DEVE COPIARE /rdboot (l'utente, 30/10: "su install copia la
+      directory rdboot quella dato che viene creata dal ramdrive non deve
+      essere copiata da install"). E' il ramdrive di avvio, non roba del disco.
+
+  52. netupdate: I FILE NON ARRIVATI IN CODA (l'utente, 30/10: "su netupdate
+      bisogna implementare che i file non arrivati vengono messi in coda e
+      si ritenta alla fine chiedendo all'utente"). Un file fallito non ferma
+      il giro: va in una coda, e alla fine netupdate chiede se ritentarli.
+
+  54. CACHE DEL DISCO COME SMARTDRV (l'utente, 31/10: "e' possibile
+      implementare una forma di cache tipo il vecchio smartdrv di msdos").
+      Fattibile. OGGI in blk.c: cache di 1 MB, CACHE_VOCI 2048, solo richieste
+      fino a 4 KB, in pratica i metadati; i dati dei file passano da
+      blk_read_diretto con la sola finestra di lettura in avanti. Scrive
+      subito sul disco.
+      FASE 1, LETTURA (write-through, nessun dato a rischio): cache dei dati
+      in blocchi, grande una parte della RAM libera (es. 1/4), niente tetto
+      nel codice, si restringe quando i programmi chiedono memoria;
+      leggi una volta non caccia i metadati: due liste, o i file enormi
+      letti in sequenza non entrano. Ogni scrittura aggiorna o invalida la
+      cache; da verificare il DMA e rdboot.
+      FASE 2, SCRITTURA RITARDATA (write-back), solo dopo la 1: scrittura
+      in sottofondo ogni pochi secondi, fsync e sync aspettano davvero,
+      spegnimento e smontaggio svuotano tutto. Rischio: corrente staccata.
+      ext3/ext4: il giornale va rispettato, l'ordine conta. ext2 non ha
+      giornale.
+      31/10: cancellare /root/.exilla/profilo sul portatile ha preso piu' di
+      un minuto (l'utente). PROBABILE CAUSA, dal codice, non misurata:
+      giornale.c fa il commit a ogni operazione, con piu' FLUSH CACHE e il
+      checkpoint subito. Linux raccoglie le operazioni e fa il commit ogni 5
+      s; il flush vero solo su fsync. Da misurare con ext4 contro ext2.
+      31/10, L'UTENTE: velocizzare il disco e' INDISPENSABILE, soluzione
+      funzionante e sicura; il secondo avvio di Firefox dura come il primo;
+      chiede anche un indice dei file usati di continuo, magari col file di
+      paging. MODELLI: page cache, dentry e inode cache di Linux (i file usati
+      restano in RAM, i percorsi non si rifanno); Prefetch di Windows (ricorda
+      cosa legge un programma all'avvio e lo legge in anticipo). Il file di
+      paging NON serve: sta sullo stesso disco, non e' piu' veloce del file.
+      ORDINE PROPOSTO: 1 misure; 2 commit del giornale raggruppati; 3 cache
+      di percorsi e inode; 4 cache dei dati in lettura; 5 far dormire chi
+      aspetta il disco, con interrupt AHCI, invece del polling; 6 eventuale
+      prefetch; 7 scrittura ritardata solo se serve.
+      NON SOLO DISCO, log delle 20:30: a 64 bit gira UN processore solo
+      (EXOS64-DAFARE) su un Athlon QL-64 a due core, le schede stanno nel
+      processo principale (Failed to launch tab subprocess), e il JavaScript
+      di newtab arriva a "Warning: Unresponsive script".
+      MISURE SUL PORTATILE 31/10 20:45 (tools/prove/discotempi.c, ext4, Firefox
+      chiuso, Toshiba MK2555GSX): lettura 5,2 MB/s con ogni misura di
+      blocco, seconda lettura uguale; scrittura 4,9 MB/s; crea 69 ms, cancella
+      80, apri+100 byte+chiudi 93, mkdir 96, rmdir 81; stat 0,05; apri senza
+      modifiche 0,4; fsync vuoto 6,8; pwrite+fsync 18; pread sparso 9,7.
+      CAUSA 1, IL DISCO E' IN PIO: dmesg "canale nativo 3 ... in PIO (bus
+      master 0x30d8 non usato)", SATA MCP77 0:9.0 (@ATA-DMA-NFORCE, @INSTALL-
+      AHCI). install -ahci esiste ma il passaggio non e' mai riuscito su una
+      macchina vera; BIOS senza voce AHCI, BAR5 esposta. In PIO la CPU sposta
+      lei i byte. CAUSA 2, IL GIORNALE: 70-95 ms a ogni modifica, confermato.
+      CAUSA 3, NESSUNA CACHE DEI DATI: confermato. L'indice dei percorsi NON
+      serve: stat 0,05 ms.
+      CHIUSURA DI FIREFOX: AsyncShutdown aspetta "RemoteSettingsClient -
+      finish IDB access", saveAttachments, gli allegati CRLite che falliscono
+      con 0x8046001e.
+      PRIMA DI TUTTO: misurare sul portatile dove va il tempo di Firefox.
+      Una cache non cura il lucchetto unico del filesystem, l'attesa in
+      polling del comando e il FLUSH di ogni fsync. La lettura e' l'avvio;
+      SQLite aspetta soprattutto i flush. Stato: in coda.
+
+  64. reboot LASCIA IL DISCO NON SMONTATO PULITO (1/11, 0.301, portatile, ext4).
+      Dopo la reboot delle 13:13 l'avvio: "not unmounted cleanly and its journal
+      is not replayed", chkdsk -r hd2p1 da solo, circa 8 minuti, codice 0. Da
+      capire perche' reboot non smonta.
+      RISOLTA (kernel 0.302): vfs_spegnimento sincronizzava e segnava pulito ma non
+      smontava: giornale_smonta non girava e needs_recovery restava acceso.
+      Riprodotta in QEMU (tools/prova_smonta.sh: needs_recovery 1 dopo poweroff,
+      reboot, halt). Ora ogni volume si smonta, / per ultimo; se e' in uso si chiude
+      in scrittura e lo dice. Dopo i 30 s di SIGTERM arriva SIGKILL; SYS_SLEEP a
+      fette da 100 ms perche' kill -9 su chi dorme non aveva effetto; chi chiede
+      l'arresto chiude i suoi descrittori; pausa di 300 ms per il raccoglitore
+      degli zombie, che teneva aperto l'eseguibile. Sul portatile: reboot dalla
+      0.302, 76 s, nessun "not unmounted cleanly", nessun chkdsk.
+      ! poweroff e halt provati solo in QEMU: sul portatile servirebbe riaccenderlo.
+      DALLA SCRIVANIA (1/11 sera): Riavvia e Spegni del Program Manager, scelta di
+      Ctrl+Alt+Canc e Ctrl+Alt+Canc doppio passano tutti da sys_reboot. Provati in
+      tools/prova_smonta.sh: "/" restava occupato dall'eseguibile di chi chiede
+      l'arresto (/exwin/bin/pm, /exwin/bin/wserver); proc_chiudi_miei_fd ora chiude
+      anche quello. Sei uscite a posto a 32 e 64 bit. ! Ctrl+Alt+Canc dal driver
+      della tastiera non rifatto in questa prova. ! Questa correzione NON e' ancora
+      sul portatile.
+      ! NON spiegato: alle 13:13 lo stato era sporco e parti' chkdsk -r; il riavvio
+      dalla 0.301 di oggi ha lasciato solo il giornale aperto, niente chkdsk.
+
+  68. CLIENT TELNET FERMO DOPO reboot. RISOLTA (ip.drv 0.020): FIN per le
+      connessioni dei programmi morti (tcp_fin_orfane, ogni 500 ms) e RST ai
+      segmenti senza connessione (tcp_rst_ignoto). tools/prova_telnet_fine.sh:
+      a 32 e 64 bit il tasto dopo il riavvio improvviso chiude in 0,0 s, reboot
+      in 0,2-0,3 s. Con la vecchia ISO a 32 bit: caso A mai, caso B 98 s.
+      ! Sul portatile non ancora provato. L'exit bloccato segnalato
+      dall'utente non e' stato riprodotto.
+
+---
+
 # 28 settembre 2026 — Pennello, e una cartella condivisa da due PC
 
 **La cartella del progetto adesso la usano due PC** attraverso MEGA: qui

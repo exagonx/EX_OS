@@ -415,7 +415,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
 
@@ -3855,6 +3855,24 @@ $(XCP_BIN): $(XCP_SRC) $(XCP_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC
 
 .PHONY: xcp
 xcp: dirs $(XCP_BIN)
+
+# --- /bin/sync (solo CD e supporto): tutto sui dischi, giornali compresi ------
+SYNC_SRC := bin/sync/sync.c
+SYNC_BIN := $(BUILD_BIN_CD)/sync
+SYNC_LD  := bin/sync/sync.ld
+
+$(SYNC_BIN): $(SYNC_SRC) $(SYNC_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
+	@echo "=== Compilazione /bin/sync ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(SYNC_SRC) -o $(BUILD_OBJ)/sync_main.o
+	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/sync_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SYNC_LD) \
+	    $(BUILD_OBJ)/sync_start.o $(BUILD_OBJ)/sync_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] sync compilato: $@"
+
+.PHONY: sync_prog
+sync_prog: dirs $(SYNC_BIN)
 
 # --- /bin/guardia (solo CD e supporto): riavvio se nessuno richiama in tempo --
 GUARDIA_SRC := bin/guardia/guardia.c
@@ -8126,7 +8144,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # c'era perche' un elenco lungo scritto a mano e' il posto dove le cose si
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
-BINARI_SOLO_CD := $(GUARDIA_BIN) $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CATTURA_BIN) $(GREP_BIN) $(READLINK_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
+BINARI_SOLO_CD := $(SYNC_BIN) $(GUARDIA_BIN) $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CATTURA_BIN) $(GREP_BIN) $(READLINK_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \

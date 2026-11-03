@@ -69,6 +69,11 @@ cat > "$S/prova.html" <<'EOF'
   <script>
     document.getElementById("js").textContent =
       "JavaScript: 6 x 7 = " + (6 * 7) + ", " + navigator.userAgent;
+    // WebAudio's FFT: static Firefox used to die here (FFVPXRuntimeLinker).
+    var c = new OfflineAudioContext(1, 2048, 44100), an = c.createAnalyser();
+    var d = new Float32Array(an.frequencyBinCount);
+    an.getFloatFrequencyData(d);
+    document.getElementById("js").textContent += " - FFT " + d.length;
   </script>
 </body></html>
 EOF
@@ -111,7 +116,7 @@ rm -f "$SER"
 # AMBIENTE="VAR=valore ..." aggiunge variabili (EXOS_MALLOC_CONTROLLA=1, ...).
 ESPORTA=()
 for v in $AMBIENTE; do ESPORTA+=("export $v@1"); done
-timeout "${ATTESA:-1800}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "${ESPORTA[@]}" \
+timeout "${ATTESA:-1800}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "echo attendo la fine dei lavori di avvio@30" "${ESPORTA[@]}" \
     "export MOZ_FORCE_DISABLE_E10S=1@1" "export MOZ_HEADLESS=1@1" \
     "export HOME=/disk/casa@1" "export LANG=it_IT.UTF-8@1" "export EXILLA_FONTS=/disk/font@1" \
     "/disk/firefox/firefox --headless -no-remote -profile /disk/profilo --window-size 800,600 --screenshot /disk/schermata.png file:///disk/prova.html@~${SECONDI:-900}" \

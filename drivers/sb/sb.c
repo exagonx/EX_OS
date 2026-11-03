@@ -95,7 +95,7 @@
 #include "audio_dorso.h"
 
 /* +0.001 a ogni modifica: `sb.drv -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("sb.drv", "0.001");
+EX_VERSIONE("sb.drv", "0.002");
 
 /* =============================================================================
  * I registri della scheda, come spiazzamenti dalla base

@@ -76,6 +76,7 @@
 #define SYS_MEMINFO     187    /* stato della memoria per fascia (vedi MemInfo) */
 #define SYS_CPU_INFO    181    /* i processori trovati all'avvio (vedi SmpInfo in smp.h) */
 #define SYS_GUARDIA      259   /* ebx = seconds to the reset, 0 = off (root) */
+#define SYS_SYNC         260   /* every volume to the disk (vfs_sync) */
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
 #define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
@@ -186,7 +187,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   260     /* la piu' alta e' SYS_GUARDIA = 259 */
+#define SYSCALL_COUNT   261     /* la piu' alta e' SYS_SYNC = 260 */
 
 /* =============================================================================
  * Codici errno
@@ -1854,6 +1855,7 @@ int32_t sys_cpu_info(InterruptFrame *f);
 int32_t sys_klog(InterruptFrame *f);
 int32_t sys_ahci_passa(InterruptFrame *f);
 int32_t sys_guardia(InterruptFrame *f);
+int32_t sys_sync(InterruptFrame *f);
 int32_t sys_smp_lavora(InterruptFrame *f);
 int32_t sys_procinfo(InterruptFrame *f);
 int32_t sys_proc_uso(InterruptFrame *f);

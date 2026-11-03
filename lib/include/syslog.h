@@ -71,6 +71,7 @@
 extern "C" {
 #endif
 void openlog(const char *nome, int opzioni, int servizio);
+int  setlogmask(int maschera);
 void syslog(int priorita, const char *fmt, ...);
 void vsyslog(int priorita, const char *fmt, va_list ap);
 void closelog(void);

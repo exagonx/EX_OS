@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.039");
+EX_VERSIONE("netupdate", "0.040");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -3079,6 +3079,46 @@ typedef struct {
     char conf_manca[8];
 } Conti;
 
+static int g_indietro = 0;   /* -indietro: the user wants the older system */
+
+/* "0.307" -> 307. The last dotted number in s; -1 if there is none. */
+static long numero_versione(const char *s)
+{
+    const char *p = NULL;
+    long        a, b = 0;
+
+    for (; *s; s++)
+        if (*s >= '0' && *s <= '9' && s[1] == '.' && s[2] >= '0' && s[2] <= '9')
+            p = s;
+    if (p == NULL) return -1;
+    while (p[-1] >= '0' && p[-1] <= '9') p--;
+    a = atol(p);
+    p = strchr(p, '.') + 1;
+    while (*p >= '0' && *p <= '9') b = b * 10 + (*p++ - '0');
+    return a * 1000 + b;
+}
+
+/* 1 if the repository is older than the kernel running here (voce 53). On
+ * 31/10 a server still at 0.291 took a machine installed at 0.293 back, and
+ * every file looked "changed": nothing said it was going backwards. */
+static int server_piu_vecchio(const char *versione)
+{
+    char buf[64];
+    long qui, la;
+
+    if (g_indietro) return 0;
+    if (osversion(buf, sizeof(buf)) != 0) return 0;
+    qui = numero_versione(buf);
+    la  = numero_versione(versione);
+    if (qui < 0 || la < 0 || la >= qui) return 0;
+    if (!g_zitto) {
+        printf("\nnetupdate: il server ha il sistema %s, qui gira %s.\n", versione, buf);
+        printf("  Aggiornare vorrebbe dire TORNARE INDIETRO: mi fermo, non tocco niente.\n");
+        printf("  Se e' proprio quel che vuoi: aggiungi -indietro al comando.\n");
+    }
+    return 1;
+}
+
 static int guarda(Config *c, char *ver, char *cat, char *ele,
                   char *versione, char *data, Conti *k)
 {
@@ -3089,6 +3129,7 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
     memset(k, 0, sizeof(*k));
 
     if (manifesto(c, ver, cat, ele, versione, data) != 0) return 1;
+    if (server_piu_vecchio(versione)) return 1;
 
     /* --- il registro di questa macchina ----------------------------------- */
     {
@@ -4814,6 +4855,15 @@ static void strumenti_nel_path(void)
 
 int main(int argc, char **argv)
 {
+    int i, j;
+
+    /* Anywhere on the line, so that it goes with -check, -yes and -yesall. */
+    for (i = j = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-indietro") == 0) g_indietro = 1;
+        else argv[j++] = argv[i];
+    }
+    argc = j;
+
     if (argc < 2) { uso(); return 1; }
 
     if (strcmp(argv[1], "-set") == 0)  return comando_set();

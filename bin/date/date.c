@@ -73,7 +73,13 @@
 #include "ip_proto.h"
 
 /* +0.001 a ogni modifica: `date -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("date", "0.003");
+EX_VERSIONE("date", "0.004");
+
+/* The whole exchange, name included: without a network the machine has better
+ * things to do. The name gets at most NTP_DNS_MS of it. */
+#define NTP_TOTALE_MS 5000
+#define NTP_DNS_MS    3000
+#define NTP_PROVA_MS  1600
 
 /* Per -ntp e -fuso: vedi «-ntp — L'ORA DALLA RETE» piu' sotto. */
 #define FUSO_CFG     "/boot/fuso.cfg"
@@ -471,8 +477,9 @@ static int ntp_chiedi(const char *server, unsigned int porta, time_t *sec,
     unsigned int   t0 = 0, t1 = 0, frazione;
     unsigned long  s;
     int            pid_ip, e, prova, preso = 0;
+    unsigned int   fine = uptime_ms() + NTP_TOTALE_MS;
 
-    e = dns_risolvi(server, ip);
+    e = dns_risolvi_entro(server, ip, NULL, NTP_DNS_MS);
     if (e != 0) {
         printf("date: non trovo %s: %s.\n", server,
                e == -ENODEV   ? "la rete non e' accesa (manca /dev/ip.drv)" :
@@ -486,7 +493,7 @@ static int ntp_chiedi(const char *server, unsigned int porta, time_t *sec,
 
     apri.porta = 0;
     if (ipc_send(pid_ip, IP_MSG_UDP_APRI, &apri, sizeof(apri)) < 0 ||
-        (e = attendi_esito(pid_ip, 2000)) <= 0) {
+        (e = attendi_esito(pid_ip, 1000)) <= 0) {
         printf("date: lo stack non apre una porta UDP.\n");
         return -1;
     }
@@ -494,7 +501,9 @@ static int ntp_chiedi(const char *server, unsigned int porta, time_t *sec,
 
     for (prova = 0; prova < 3 && !preso; prova++) {
         unsigned int scadenza;
+        int          resta = (int)(fine - uptime_ms());
 
+        if (resta <= 0) break;
         if (ipc_send(pid_ip, IP_MSG_UDP_RICEVI, &apri, sizeof(apri)) < 0) break;
         memset(q, 0, 48);
         q[0] = 0x23;                         /* nessun avviso, versione 4, cliente */
@@ -507,12 +516,16 @@ static int ntp_chiedi(const char *server, unsigned int porta, time_t *sec,
         memcpy(msg, &inv, sizeof(inv));
         if (ipc_send(pid_ip, IP_MSG_UDP_INVIA, msg, sizeof(msg)) < 0) break;
 
-        scadenza = uptime_ms() + 3000;
+        scadenza = uptime_ms() + (resta < NTP_PROVA_MS ? (unsigned int)resta : NTP_PROVA_MS);
         while (!preso && (int)(uptime_ms() - scadenza) < 0) {
             IpUdpDati d;
+            int       ms = (int)(scadenza - uptime_ms());
 
+            /* ! 0 means "wait for ever" to ipc_scegli, and a negative number
+             * a very long time: the clock moves between the two readings. */
+            if (ms <= 0) break;
             if (ipc_scegli(filtro_stack, &pid_ip, &meta, buf, sizeof(buf),
-                           scadenza - uptime_ms()) < 0) break;
+                           (unsigned int)ms) < 0) break;
             if (meta.tipo == IP_MSG_ESITO) continue;     /* quello dell'invio */
             if (meta.tipo != IP_MSG_UDP_DATI || meta.len < sizeof(d)) continue;
             memcpy(&d, buf, sizeof(d));
@@ -532,7 +545,7 @@ static int ntp_chiedi(const char *server, unsigned int porta, time_t *sec,
     attendi_esito(pid_ip, 500);   /* consumata: vedi la fine di lib/dns.c */
 
     if (!preso) {
-        printf("date: %s non risponde (porta %u UDP, tre tentativi).\n", server, porta);
+        printf("date: %s non risponde (porta %u UDP, 5 secondi).\n", server, porta);
         return -1;
     }
     if (r[1] == 0 || (r[0] & 0xC0) == 0xC0) {

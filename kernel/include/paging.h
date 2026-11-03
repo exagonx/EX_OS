@@ -83,6 +83,12 @@ typedef uint32_t PTE;
  * card went on writing into a frame the PMM had already given to someone
  * else. The ownership count cannot tell the two apart; this bit can.
  * ========================================================================== */
+/* ! AND A DEVICE DOES NOT STOP WHEN ITS DRIVER DIES. On 2 November the OHCI
+ * controller of the laptop, after `system -unload`, went on writing its frame
+ * number every millisecond into the page of its dead driver, by then inside
+ * chkdsk: "wrong bitmaps" on a sound disk (voce 63). So the RAM of these pages
+ * is not given back at the exit of the process: a little memory until the next
+ * reboot is the price, and paging_destroy_directory says how much. */
 #define PG_FISSA        (1u << 9)
 
 /* =============================================================================

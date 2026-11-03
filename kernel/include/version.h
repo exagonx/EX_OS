@@ -773,7 +773,12 @@
  * commits, not only at unmount. */
 /* 0.306 -> 0.307: the journal commits at fsync, after 5 s, when half full and when
  * blocks were freed, not at every operation (compito_giornale). */
-#define EXOS_VERSION    "0.307"
+/* 0.307 -> 0.308: SYS_SYNC (260), for /bin/sync; a disk error in ext2_read is
+ * an error, not zeros or the end of the file, and a short read of a page of the
+ * executable fails instead of filling up with zeros. */
+/* 0.308 -> 0.309: USER_STACK_SLACK at 64 bit covers the red zone. */
+/* 0.309 -> 0.310: the DMA pages of a dead driver are not given back. */
+#define EXOS_VERSION    "0.310"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

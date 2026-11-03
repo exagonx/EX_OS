@@ -45,6 +45,8 @@ timeout 600 python3 tools/qemu_drive.py "date -fuso@3" \
     "date -set-time:07:07:07@3" "echo R5@1" "date -ntp:$S@8" "date -t@2" \
     "echo R6@1" "date -ntp:10.0.2.2:$((PORTA + 1))@20" "date -t@2" \
     "echo R7@1" "date -ntp@15" "date -t@2" \
+    "ipcfg -a 10.0.2.15 -m 255.255.255.252 -g 10.0.2.13@3" \
+    "echo R8@1" "date -t ; date -ntp ; date -ntp:203.0.113.1 ; date -t@25" "echo R9@1" \
     > "$D/exos.log" 2>&1
 ORA_HOST=$(TZ=Europe/Rome date +%H:%M:%S)
 tr -d '\r' < "$D/exos.log" > "$D/pulito.log"
@@ -64,9 +66,9 @@ blocco 4 | grep -qE "orologio rimesso: domenica 25 ottobre 2026, 02:00:0[01]$" \
 blocco 5 | grep -q "risponde ma non da' l'ora (ci chiede di smettere)" \
     && blocco 5 | grep -q "^07:07:" \
     && si "Kiss-o'-Death rifiutato, l'orologio non si tocca" || no "Kiss-o'-Death"
-blocco 6 | grep -q "non risponde (porta $((PORTA + 1)) UDP, tre tentativi)" \
+blocco 6 | grep -q "non risponde (porta $((PORTA + 1)) UDP, 5 secondi)" \
     && blocco 6 | grep -q "^07:07:" \
-    && si "un server muto: tre tentativi, l'orologio non si tocca" || no "server muto"
+    && si "un server muto: 5 secondi, l'orologio non si tocca" || no "server muto"
 if blocco 7 | grep -q "orologio rimesso"; then
     G=$(blocco 7 | grep -E "^[0-9]{2}:[0-9]{2}:[0-9]{2}$" | tail -1)
     D_S=$(python3 -c "
@@ -75,11 +77,20 @@ a=[int(x) for x in '$G'.split(':')]; b=[int(x) for x in '$ORA_HOST'.split(':')]
 print((b[0]*3600+b[1]*60+b[2])-(a[0]*3600+a[1]*60+a[2]))")
     # ! L'ora di qui si legge DOPO che QEMU si e' spento: e' piu' avanti di
     # quella dell'ultimo `date -t` di qualche secondo, mai indietro.
-    [ "$D_S" -ge 0 ] && [ "$D_S" -le 20 ] \
+    [ "$D_S" -ge 0 ] && [ "$D_S" -le 60 ] \
         && si "pool.ntp.org: EX-OS $G all'ultimo date -t, qui $ORA_HOST a QEMU spento (Europe/Rome)" \
         || no "pool.ntp.org: EX-OS $G contro $ORA_HOST"
 else
     no "pool.ntp.org non ha rimesso l'orologio (rete esterna? vedi $D/pulito.log)"
+fi
+# Router dead: name and server unreachable; both commands together within 11 s.
+ORE=$(blocco 8 | grep -E "^[0-9]{2}:[0-9]{2}:[0-9]{2}$")
+A=$(echo "$ORE" | head -1); B=$(echo "$ORE" | tail -1)
+if [ -n "$A" ] && [ "$A" != "$B" ] || [ -n "$A" ]; then
+    S=$(( $(date -u -d "1970-01-01 $B" +%s) - $(date -u -d "1970-01-01 $A" +%s) ))
+    [ "$S" -ge 0 ] && [ "$S" -le 11 ] && si "router morto: nome e server in $S s, massimo 5 s l'uno" || no "router morto: $S s"
+else
+    no "router morto: il comando non e' tornato (vedi $D/pulito.log)"
 fi
 echo "=== $ok riusciti, $no no ==="
 [ "$no" -eq 0 ]

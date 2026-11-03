@@ -936,7 +936,7 @@ PDE *paging_create_directory(void)
  * ============================================================================= */
 void paging_destroy_directory(PDE *pd)
 {
-    uint32_t i, j;
+    uint32_t i, j, dma_tenute = 0;
 
     if (pd == NULL || pd == kernel_page_directory) return;
 
@@ -988,6 +988,10 @@ void paging_destroy_directory(PDE *pd)
                      * lasciava passare il framebuffer di VirtualBox. */
                     if (PMM_OLTRE_RAM(frame)) continue;
 
+                    /* ! DMA MEMORY OF A DEAD DRIVER STAYS OUT OF USE: see
+                     * dma_tenuta in paging.h. */
+                    if (pt[j] & PG_FISSA) { dma_tenute++; continue; }
+
                     pmm_free_page(frame);
                 }
             }
@@ -996,6 +1000,10 @@ void paging_destroy_directory(PDE *pd)
             pmm_free_page(PG_ADDR(pd[i]));
         }
     }
+
+    if (dma_tenute)
+        klog(LOG_WARN, "PAGING: %u pagine DMA di un driver finito restano fuori "
+             "uso fino al riavvio", dma_tenute);
 
     /* Libera la PD stessa */
     pmm_free_page((uint32_t)pd);
@@ -1501,9 +1509,13 @@ static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
         n = vfs_read(p->exe_handle, buf, da_leggere, off_file);
         if (!(eflags & (1u << 9))) __asm__ volatile ("cli");
 
-        if (n < 0) {
+        /* ! A SHORT READ IS A FAILURE TOO: the rest of the page would be zeros
+         * where code should be, and the program would die somewhere else, of
+         * something that says nothing (voce 59). */
+        if (n < 0 || (uint32_t)n < da_leggere) {
             klog(LOG_ERROR, "PF: PID %u, lettura della pagina 0x%08x "
-                 "dall'eseguibile fallita (%d)", p->pid, pagina, n);
+                 "dall'eseguibile fallita (%d di %u byte)", p->pid, pagina, n,
+                 da_leggere);
             return 0;
         }
         letti = (uint32_t)n;

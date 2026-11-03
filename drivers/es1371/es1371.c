@@ -70,7 +70,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `es1371.drv -version` la stampa. */
-EX_VERSIONE("es1371.drv", "0.001");
+EX_VERSIONE("es1371.drv", "0.002");
 
 /* =============================================================================
  * I registri, come spiazzamenti dalla base I/O (BAR0, 64 byte)

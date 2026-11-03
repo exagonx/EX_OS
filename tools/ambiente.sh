@@ -162,7 +162,7 @@ voce "$T" fac "iso" "FreeBASIC per EX-OS (fbc)" \
     "[ -x $(dentro fb-build-110)/fbc ]" "tools/freebasic-exos/prepara-fb.sh"
 voce "$T" fac "iso" "ncurses per i386-exos (libncurses.a, terminfo, tic)" \
     "[ -f cross_build/ncurses-exos32/exos/lib/libncurses.a ]" "tools/ncurses-exos/costruisci.sh 32"
-for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre2-8 fmt:libfmt; do
+for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre2-8 fmt:libfmt ogg:libogg vorbis:libvorbis opus:libopus flac:libFLAC libvpx:libvpx dav1d:libdav1d ffmpeg:libavcodec; do
     voce "$T" fac "iso" "${l%%:*} per i386-exos" \
         "[ -f cross_build/${l%%:*}-exos32/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 32"
 done
@@ -181,7 +181,7 @@ voce "$Q" fac "tools64" "libgit2 per x86_64-exos" \
     "[ -f cross_build/libgit2-exos64/lib/libgit2.a ]" "tools/libgit2-exos/costruisci.sh"
 voce "$Q" fac "tools64" "ncurses per x86_64-exos (libncurses.a, terminfo, tic)" \
     "[ -f cross_build/ncurses-exos64/exos/lib/libncurses.a ]" "tools/ncurses-exos/costruisci.sh 64"
-for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre2-8 fmt:libfmt; do
+for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre2-8 fmt:libfmt ogg:libogg vorbis:libvorbis opus:libopus flac:libFLAC libvpx:libvpx dav1d:libdav1d ffmpeg:libavcodec; do
     voce "$Q" fac "tools64" "${l%%:*} per x86_64-exos" \
         "[ -f cross_build/${l%%:*}-exos64/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 64"
 done

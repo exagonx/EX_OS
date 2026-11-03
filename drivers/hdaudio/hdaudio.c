@@ -65,7 +65,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `hdaudio.drv -version` la stampa. */
-EX_VERSIONE("hdaudio.drv", "0.005");
+EX_VERSIONE("hdaudio.drv", "0.006");
 
 /* =============================================================================
  * I registri del controller (MMIO, BAR0)

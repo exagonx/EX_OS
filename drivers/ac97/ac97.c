@@ -66,7 +66,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `ac97.drv -version` la stampa. */
-EX_VERSIONE("ac97.drv", "0.002");
+EX_VERSIONE("ac97.drv", "0.003");
 
 /* =============================================================================
  * BAR0 — i registri del codec (spiazzamenti standard AC'97)
@@ -490,15 +490,26 @@ static int ac_apri(AudioFormato *f, unsigned char **buf, unsigned int *byte)
     bus_w8(B_PCM_OUT + B_CR, CR_RR);
     { int g; for (g = 0; g < 1000; g++) { if (!(bus_r8(B_PCM_OUT + B_CR) & CR_RR)) break; usleep(100); } }
 
-    /* --- la lista: DUE voci, le due meta', tutte e due con «avvisami» --- */
+    /* --- la lista: TUTTE E 32 LE VOCI, a turno sulle due meta' ---
+     *
+     * ! IL CONTROLLER CONTA CIV DA 0 A 31, NON DA 0 A 1. Con due voci sole,
+     * finita la voce 1 passava alla 2, alla 3 e cosi' via fino alla 31, voci
+     * mai scritte, e il numero letto nell'interrupt aveva una parita' a caso:
+     * quando veniva dispari si riempiva la meta' che stava suonando. Si
+     * perdeva cosi' la terza meta' di ogni riproduzione, 85 ms a 48000 Hz,
+     * e i lettori che contano il tempo dal driver (VLC, Firefox) vedevano un
+     * orologio che salta (3 novembre 2026, con un file in cui ogni campione
+     * porta il proprio numero). Ora la voce i e' la meta' i % 2, e la
+     * parita' di CIV dice sempre la verita'. */
     meta_camp = g_meta / 2;             /* campioni da 16 bit */
-    g_bdl[0] = g_buf_fis;
-    g_bdl[1] = BDL_IOC | (meta_camp & 0xFFFF);
-    g_bdl[2] = g_buf_fis + g_meta;
-    g_bdl[3] = BDL_IOC | (meta_camp & 0xFFFF);
+    { unsigned int v;
+      for (v = 0; v < BDL_VOCI; v++) {
+          g_bdl[2 * v]     = g_buf_fis + (v & 1u) * g_meta;
+          g_bdl[2 * v + 1] = BDL_IOC | (meta_camp & 0xFFFF);
+      } }
 
     bus_w32(B_PCM_OUT + B_BDBAR, g_bdl_fis);
-    bus_w8 (B_PCM_OUT + B_LVI, 1);
+    bus_w8 (B_PCM_OUT + B_LVI, BDL_VOCI - 1);
     bus_w16(B_PCM_OUT + B_SR, SR_LVBCI | SR_BCIS | SR_FIFOE);
 
     return 0;
@@ -506,7 +517,7 @@ static int ac_apri(AudioFormato *f, unsigned char **buf, unsigned int *byte)
 
 static void ac_via(void)
 {
-    bus_w8(B_PCM_OUT + B_LVI, 1);
+    bus_w8(B_PCM_OUT + B_LVI, BDL_VOCI - 1);
     bus_w8(B_PCM_OUT + B_CR, CR_RPBM | CR_IOCE | CR_FEIE | CR_LVBIE);
     g_suona = 1;
 }
@@ -538,15 +549,15 @@ static int ac_irq(void)
 
     civ = bus_r8(B_PCM_OUT + B_CIV);
     if (civ < 0) return -1;
+    civ &= BDL_VOCI - 1;                /* cinque bit */
 
     /* ! LVI SI RIMETTE A OGNI GIRO, e non e' burocrazia: il controller si
-     * ferma quando raggiunge l'«ultima voce valida», e con due voci che
-     * girano quella soglia va spostata avanti in continuazione. Lasciarla
-     * indietro da' un suono che si interrompe dopo due meta' con tutti i
-     * registri all'aria giusta. */
-    bus_w8(B_PCM_OUT + B_LVI, (unsigned int)((civ + 1) & 1));
+     * ferma quando raggiunge l'«ultima voce valida». Va tenuta una voce
+     * DIETRO quella in corso, cioe' il piu' lontano possibile: cosi' il giro
+     * delle 32 voci non arriva mai a fermarsi. */
+    bus_w8(B_PCM_OUT + B_LVI, (unsigned int)((civ + BDL_VOCI - 1) % BDL_VOCI));
 
-    /* La voce in corso e' civ%2; l'altra e' libera. */
+    /* La voce in corso e' la meta' civ%2; l'altra e' libera. */
     return (int)(1 - (civ & 1));
 }
 
