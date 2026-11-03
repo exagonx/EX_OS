@@ -110,6 +110,9 @@ typedef struct DlModulo {
     int              tls_id;              /* 0 = no PT_TLS */
     uintptr_t        tls_imm;             /* the initial image */
     size_t           tls_file, tls_mem, tls_alli;
+    void           (*init)(void);         /* DT_INIT, DT_INIT_ARRAY */
+    void           (**init_v)(void);
+    size_t           init_n;
 } DlModulo;
 
 static DlModulo *g_dlm[DL_MODULI];
@@ -117,6 +120,14 @@ static volatile int g_dl_lucchetto;      /* one dlopen at a time (the libc's mut
 static volatile int g_dl_tls_lucchetto;  /* the TLS table: a constructor run by
                                           * dlopen may touch a __thread */
 static int       g_dl_non_dyn;            /* the last candidate was an ELF but not ET_DYN */
+/* while a program linked to shared objects starts (dl_avvio_programma), the
+ * constructors of its libraries wait for the program's own relocations, as
+ * ld.so does: a COPY relocation must have put a variable in the program
+ * before a constructor writes to it. They are run in the order the modules
+ * were finished, dependencies first. */
+static int       g_dl_rinvia;
+static DlModulo *g_dl_da_avviare[DL_MODULI];
+static int       g_dl_n_da_avviare;
 
 static void dl_dici(const char *cosa, const char *chi)
 {
@@ -269,6 +280,17 @@ static int dl_leggi_a(int fd, uintptr_t dove, size_t n, long off)
     return 0;
 }
 
+static void dl_avvia_modulo(DlModulo *m)
+{
+    size_t i;
+
+    if (m->init) m->init();
+    for (i = 0; i < m->init_n; i++) {
+        void (*fn)(void) = m->init_v[i];
+        if (fn && fn != (void (*)(void))-1) fn();
+    }
+}
+
 static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
 {
     size_t i;
@@ -283,6 +305,18 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
 #else
         intptr_t     A = (intptr_t)*p;           /* REL: the addend is in place */
 #endif
+        if (tipo == 5 && si) {                   /* COPY (5 at 32 and 64 bit): only in a program */
+            const DlSim *ds = &m->sim[si], *dove = 0;
+            const char  *nome = m->str + ds->st_name;
+            void        *da = 0;
+            int          k;
+
+            for (k = 0; k < DL_MODULI && !da; k++)  /* the definition, not the copy itself */
+                if (g_dlm[k] && g_dlm[k] != m) da = dl_nel_modulo(g_dlm[k], nome, &dove);
+            if (!da) { dl_dici("undefined symbol (COPY)", nome); return -1; }
+            memcpy(p, da, ds->st_size < dove->st_size ? ds->st_size : dove->st_size);
+            continue;
+        }
         if (si) {
             const DlSim *ds = &m->sim[si];
             const char  *nome = m->str + ds->st_name;
@@ -458,11 +492,11 @@ static DlModulo *dl_da_file(const char *percorso)
         return (DlModulo *)-1;
     }
     m->conta = 1;
-    if (initf) ((void (*)(void))initf)();
-    for (i = 0; i < (int)ian; i++) {
-        void (*fn)(void) = ((void (**)(void))ia)[i];
-        if (fn && fn != (void (*)(void))-1) fn();
-    }
+    m->init = (void (*)(void))initf;
+    m->init_v = (void (**)(void))ia;
+    m->init_n = ian;
+    if (g_dl_rinvia && g_dl_n_da_avviare < DL_MODULI) g_dl_da_avviare[g_dl_n_da_avviare++] = m;
+    else dl_avvia_modulo(m);
     return m;
 }
 
@@ -521,6 +555,96 @@ static DlModulo *dl_carica(const char *nome, const char *runpath, const char *or
     if (m == (DlModulo *)-1) return 0;
     if (!m && !g_dl_errore) dl_dici("cannot open shared object file: not found", nome);
     return m;
+}
+
+/* --- a program linked to shared objects (3 November 2026) --------------------------
+ *
+ * `gcc prog.c -lavcodec` with libavcodec.so in the sysroot makes an ordinary
+ * dynamic ET_EXEC: PT_INTERP, PT_DYNAMIC, DT_NEEDED, a GOT and a PLT. The
+ * kernel loads only the PT_LOAD segments and ignores PT_INTERP, so the
+ * program starts at _start as any other, with the libc inside it (the
+ * sysroot has only libc.a). Before the constructors and main, _libc_start
+ * calls this when _DYNAMIC is there, and it does the work of ld.so:
+ *
+ *   1. the program becomes module 0 of the global scope (load bias 0): a
+ *      library that uses a variable the program has copied (COPY) finds the
+ *      copy, as on Linux;
+ *   2. DT_NEEDED, each with its own DT_NEEDED, through dl_carica (the same
+ *      search as dlopen: LD_LIBRARY_PATH, DT_RUNPATH with $ORIGIN, /lib,
+ *      /exos/lib, /exwin/lib and the same on the CD);
+ *   3. the program's relocations: GLOB_DAT, JUMP_SLOT, 64/32, COPY;
+ *   4. the constructors of the libraries, dependencies first.
+ *
+ * The libraries find malloc and printf in the libc's table, as with dlopen.
+ * ! Only in the libc of the sysroot (EXOS_LIBC_PORTATI): the system's own
+ * programs are linked with --gc-sections and must not keep the loader.
+ * ! A library that cannot be found stops the program before main, with the
+ * reason on stderr and exit code 127, as ld.so does.
+ * ! The address of a library function taken in the program is the library's
+ * address, not the program's PLT slot: no canonical PLT. Comparing such a
+ * pointer from both sides is the only thing that differs from Linux. */
+extern const DlDin _DYNAMIC[] __attribute__((weak));
+static DlModulo g_dl_prog_collegato;
+
+static void dl_muori(const char *argv0)
+{
+    const char *e = g_dl_errore ? g_dl_errore : "shared object not loaded";
+
+    write(2, argv0, strlen(argv0));
+    write(2, ": ", 2);
+    write(2, e, strlen(e));
+    write(2, "\n", 1);
+    _exit(127);
+}
+
+void __exos_dl_avvio_programma(const char *argv0)
+{
+    DlModulo     *m = &g_dl_prog_collegato;
+    const DlDin  *d;
+    const char   *runpath = 0;
+    uintptr_t     rel = 0, jmp = 0;
+    size_t        reln = 0, jmpn = 0;
+    char          origine[200];
+    int           i;
+
+    if (!_DYNAMIC) return;                       /* a static program: nothing to do */
+    if (!argv0) argv0 = "?";
+    strncpy(m->percorso, argv0, sizeof(m->percorso) - 1);
+    m->base = 0;                                 /* ET_EXEC: addresses are absolute */
+    m->din = _DYNAMIC;
+    m->conta = 1 << 30;                          /* never closed */
+    for (d = m->din; d->d_tag; d++) {
+        switch (d->d_tag) {
+        case 5:  m->str = (const char *)d->d_val; break;
+        case 6:  m->sim = (const DlSim *)d->d_val; break;
+        case DL_DT_REL:   rel = d->d_val; break;
+        case DL_DT_RELSZ: reln = d->d_val / sizeof(DlRel); break;
+        case 23: jmp = d->d_val; break;
+        case 2:  jmpn = d->d_val / sizeof(DlRel); break;
+        }
+    }
+    for (d = m->din; d->d_tag; d++)
+        if ((d->d_tag == 29 || d->d_tag == 15) && m->str) runpath = m->str + d->d_val;
+    m->nsim = dl_conta_sim(m->din, 0);
+    if (!m->sim || !m->str) { dl_dici("no dynamic symbol table", argv0); dl_muori(argv0); }
+    g_dlm[0] = m;
+
+    strncpy(origine, argv0, sizeof(origine) - 1); origine[sizeof(origine) - 1] = 0;
+    { char *b = strrchr(origine, '/'); if (b) *b = 0; else strcpy(origine, "."); }
+    g_dl_rinvia = 1;
+    for (d = m->din; d->d_tag; d++) {
+        DlModulo *dm;
+        if (d->d_tag != 1) continue;             /* DT_NEEDED */
+        dm = dl_carica(m->str + d->d_val, runpath, origine);
+        if (!dm) dl_muori(argv0);
+        if (m->ndip < DL_DIP) m->dip[m->ndip++] = dm;
+    }
+    if ((rel && dl_riloca(m, (const DlRel *)rel, reln) != 0) ||
+        (jmp && dl_riloca(m, (const DlRel *)jmp, jmpn) != 0))
+        dl_muori(argv0);
+    g_dl_rinvia = 0;
+    for (i = 0; i < g_dl_n_da_avviare; i++) dl_avvia_modulo(g_dl_da_avviare[i]);
+    g_dl_n_da_avviare = 0;
 }
 
 static void dl_chiudi(DlModulo *m)

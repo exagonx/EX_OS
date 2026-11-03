@@ -40,6 +40,10 @@ costruisci() {
     make -C "$B/obj" -j3 > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     make -C "$B/obj" install DESTDIR="$OUT" > "$B/installa.log" 2>&1 || { tail -20 "$B/installa.log"; exit 1; }
     rm -rf "$DEST/share" "$DEST/lib/pkgconfig" "$DEST"/lib/*.la "$DEST/bin/pcre2-config"
+    lib_condivisa pcre2-8 0
+    lib_condivisa pcre2-16 0
+    lib_condivisa pcre2-32 0
+    lib_condivisa pcre2-posix 3 "-lpcre2-8"
     lib_fine
 }
 lib_tutte "$1"

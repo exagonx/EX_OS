@@ -71,6 +71,8 @@ costruisci() {
     mkdir -p "$OB"
     cp -p "$DEST"/lib/*.a "$OB/"
     cp -rp "$DEST/include" "$OB/"
+    lib_condivisa crypto 4
+    lib_condivisa ssl 4 "-lcrypto"
     lib_fine "$R/tools/openssl-exos/50-exos.conf"
 }
 lib_tutte "$1"

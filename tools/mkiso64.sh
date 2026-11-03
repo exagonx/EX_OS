@@ -112,6 +112,13 @@ if [ "$QUALE" = "intero" ]; then
         cp build-64/exwin/bin/* "$RADICE/exwin/bin/" 2>/dev/null || true
         [ -f build-64/drivers/wserver.drv ] && cp build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
     fi
+    # libm.so.4 (openlibm, 3 November 2026): programs linked to shared
+    # objects and the libraries they load take their math from it
+    # (lib/libc_dl.c). Only the file DT_NEEDED names: no symbolic links here.
+    if [ -f cross_build/libm-exos64/exos/lib/libm.so.4 ]; then
+        mkdir -p "$RADICE/lib"
+        cp cross_build/libm-exos64/exos/lib/libm.so.4 "$RADICE/lib/"
+    fi
     # the shared objects (exjs.so, quickjs.so): ELF libraries for dlopen
     if ls build-64/exwin/lib/*.so > /dev/null 2>&1; then
         mkdir -p "$RADICE/exwin/lib"

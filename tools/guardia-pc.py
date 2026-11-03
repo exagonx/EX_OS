@@ -4,7 +4,7 @@
 #
 #     tools/guardia-pc.py [host] [secondi] [ogni]
 #
-# Default 192.168.0.183, 120, 30. Every `ogni` seconds it opens a telnet
+# Default 192.168.0.177, 120, 30. Every `ogni` seconds it opens a telnet
 # session and runs `guardia <secondi>`: if the disk stops, the network falls or
 # the machine freezes, the call does not arrive and the kernel resets it.
 #
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 TELNET = Path(__file__).with_name("telnet-comandi.py")
-host = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.183"
+host = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.177"
 secondi = int(sys.argv[2]) if len(sys.argv) > 2 else 120
 ogni = int(sys.argv[3]) if len(sys.argv) > 3 else 30
 

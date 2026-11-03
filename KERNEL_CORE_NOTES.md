@@ -1564,6 +1564,13 @@ con textline. Dietro un solo sintomo c'erano **sei difetti**, dettagli in
 
 ### ! Link dinamico ring3 — fattibilità verificata, non implementato
 
+**Aggiornamento 2026-11-03:** fatto per il software portato. La libc del sysroot
+(`EXOS_LIBC_PORTATI`) chiama `__exos_dl_avvio_programma` (`lib/libc_dl.c`) da
+`_libc_start` quando il programma ha `_DYNAMIC`: carica i DT_NEEDED, applica le
+rilocazioni del programma (anche COPY) e solo dopo i costruttori delle librerie.
+Il kernel continua a ignorare PT_INTERP. I comandi di `/bin` restano statici.
+Prova: `tools/prova-dl/prova-avvio.sh [32|64]`.
+
 Requisito esplicito dell'utente ("le librerie devono essere tutte dinamiche"),
 non ancora soddisfatto: i programmi di `/bin` restano statici. Verificato però
 sperimentalmente che la strada è percorribile — il toolchain produce già un

@@ -16,7 +16,14 @@
 #                    crtbeginS.o first and crtendS.o last, built here from
 #                    tools/gcc-exos/crtstuff-condivise.c: they register the
 #                    library's unwind tables (16 October 2026, see there);
-#   without          exactly the built-in spec.
+#   without          the built-in spec, but -static only when asked for
+#                    (3 November 2026): `gcc prog.c -lz` links libz.so if the
+#                    sysroot has it, and the program loads it at start
+#                    (lib/libc_dl.c, __exos_dl_avvio_programma). With no .so
+#                    in the link ld still makes a static program, as before.
+#                    PT_INTERP says /lib/ld-exos.so: the kernel ignores it,
+#                    the loader is the libc inside the program. Programs that
+#                    must not depend on /lib (the boot) pass -static.
 #
 # ! COMPILE THE LIBRARY WITH -fPIC. Without it the objects carry absolute
 # relocations (R_X86_64_32) that a shared object cannot have.
@@ -41,6 +48,9 @@ def sezione(nome, fn):
 def link(v):
     v = re.sub(r"\s*%\{shared:%e[^}]*\}", "", v)
     emu = re.match(r"(-m \S+)", v).group(1)
+    # a program: static only with -static; otherwise ld links the .so it
+    # finds, and with none it still makes a static program
+    v = v.replace("-static", "%{static:-static} %{!static:-dynamic-linker /lib/ld-exos.so}")
     return "%{shared:" + emu + " -shared} %{!shared:" + v.strip() + "}"
 sezione("link", link)
 sezione("startfile", lambda v: "%{shared:crtbeginS.o%s} %{!shared:" + v + "}")

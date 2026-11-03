@@ -13,6 +13,7 @@
 # A line is [OK] when time went forward with no error, to at least one second
 # or to 90% of a shorter file, and, for a video, frames were decoded.
 #     FILE="av1.mp4" ATTESA_FILE=30 ...   only some files, seconds for each
+#     MOZ_LOG=FFmpegVideo:4,MediaDecoder:4 ...   Firefox's logs, on the serial line
 # Run after tools/exilla/prova-gecko.sh, which makes the package.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
@@ -27,6 +28,15 @@ rm -rf "${S:?}"; mkdir -p "$S/profilo" "$S/casa" "$S/font" "$S/m"
 cp -a "$P" "$S/firefox"; cp exwin/font/*.ttf "$S/font/"
 FILE="${FILE:-sound.ogg small-shot.flac small-shot.mp3 small-shot.m4a bipbop_short_vp8.webm vp9cake.webm av1.mp4 gizmo.mp4}"
 for f in $FILE; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
+# the system's FFmpeg (tools/ffmpeg-exos, shared since 3 November 2026):
+# Firefox opens libavcodec.so.63 with dlopen for H.264 and AAC. Only the
+# files named by their soname (no symbolic links on EX-OS).
+BITS=32; [ "$EXOS_ARCH" = x86_64 ] && BITS=64
+mkdir -p "$S/lib"
+for l in ffmpeg libvpx dav1d opus vorbis ogg zlib; do
+    cp cross_build/$l-exos$BITS/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
+done
+echo "  librerie per Firefox: $(ls "$S/lib" | tr '\n' ' ')"
 cat > "$S/profilo/user.js" <<'EOF'
 user_pref("browser.dom.window.dump.enabled", true);
 user_pref("media.autoplay.default", 0);
@@ -79,7 +89,7 @@ export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide -audiodev w
 SER=/tmp/exos/serialmedia$SUFF.txt; rm -f "$SER" "$D/media-uscita.wav"
 timeout "${ATTESA:-1500}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "echo attendo@25" "audio -i@40" "audio@5" \
     "export MOZ_FORCE_DISABLE_E10S=1@1" "export MOZ_HEADLESS=1@1" \
-    "export HOME=/disk/casa@1" "export LANG=it_IT.UTF-8@1" "export EXILLA_FONTS=/disk/font@1" \
+    "export HOME=/disk/casa@1" "export LD_LIBRARY_PATH=/disk/lib@1" "export MOZ_LOG=${MOZ_LOG:-}@1" "export LANG=it_IT.UTF-8@1" "export EXILLA_FONTS=/disk/font@1" \
     "/disk/firefox/firefox --headless -no-remote -profile /disk/profilo --window-size 800,600 file:///disk/media.html &@${SECONDI:-600}" \
     "echo FINE-MEDIA@2" > "$D/media-1.log" 2>&1
 tr -d '\r' < "$SER" | sed 's/\x1b\[[0-9;]*m//g' > "$D/media-seriale.txt"

@@ -30,6 +30,7 @@ costruisci() {
     cp -p "$SRC/libbz2.a" "$DEST/lib/"
     cp -p "$SRC/bzlib.h" "$DEST/include/"
     cp -p "$SRC/bzip2" "$SRC/bzip2recover" "$DEST/bin/"
+    lib_condivisa bz2 1.0
     lib_fine
 }
 lib_tutte "$1"

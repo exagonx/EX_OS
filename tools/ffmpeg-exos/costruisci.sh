@@ -12,6 +12,12 @@
 # The archive: ffmpeg-9.0.2.tar.xz with .asc from https://ffmpeg.org/releases/
 # (FFmpeg release signing key FCF986EA15E6E293A5644F10B4322F04D67658D8).
 #
+# ! SHARED BY FFMPEG ITSELF (--enable-shared, 3 November 2026): its libraries
+# share hidden tables (ff_lcevc_resolution_type...) that its own shared build
+# puts in each library; lib_condivisa_sua then names the files as their
+# soname and checks them. The programs (ffmpeg, ffprobe) stay static
+# (--extra-ldexeflags=-static), the libraries are shared: Firefox opens
+# libavcodec.so.63 with dlopen.
 # LGPL build: no --enable-gpl and no x264 or x265. Decoders of its own for
 # H.264, HEVC, VP8, VP9, AAC, MP3, Vorbis, Opus, FLAC; dav1d for AV1; libvpx,
 # libvorbis and libopus for encoding WebM. The tools/<lib>-exos/costruisci.sh
@@ -48,8 +54,8 @@ costruisci() {
     ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc" "$SRC/configure" --enable-cross-compile \
         --cross-prefix=$T- --arch=$ARCH --target-os=linux $CPU --prefix=/exos \
         --pkg-config=pkg-config --pkg-config-flags=--static \
-        --extra-cflags="$MARCH -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" --extra-ldflags=-static \
-        --enable-static --disable-shared --disable-autodetect --disable-doc --disable-debug \
+        --extra-cflags="$MARCH -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" --extra-ldexeflags=-static \
+        --extra-ldsoflags="$NONSHARED" --enable-pic --enable-static --enable-shared --disable-autodetect --disable-doc --disable-debug \
         --disable-ffplay --disable-network --disable-devices \
         --enable-pthreads --enable-zlib --enable-libdav1d --enable-libvpx \
         --enable-libvorbis --enable-libopus ) > "$B/configura.log" 2>&1 \
@@ -57,6 +63,13 @@ costruisci() {
     make -C "$B/obj" -j8 > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     make -C "$B/obj" install DESTDIR="$OUT" > "$B/installa.log" 2>&1 || { tail -20 "$B/installa.log"; exit 1; }
     rm -rf "$DEST/share" "$DEST/lib/pkgconfig"
+    lib_condivisa_sua avutil 61 "-lm"
+    lib_condivisa_sua swresample 7 "-lavutil -lm"
+    lib_condivisa_sua swscale 10 "-lavutil -lm"
+    lib_condivisa_sua avcodec 63 "-lswresample -lavutil -lvpx -ldav1d -lopus -lvorbisenc -lvorbis -logg -lz -lm"
+    lib_condivisa_sua avformat 63 "-lavcodec -lswresample -lavutil -lz -lm"
+    lib_condivisa_sua avfilter 12 "-lswscale -lavformat -lavcodec -lswresample -lavutil -lm"
+    lib_condivisa_sua avdevice 63 "-lavfilter -lavformat -lavcodec -lavutil -lm"
     lib_fine
 }
 lib_tutte "$1"

@@ -939,9 +939,12 @@ Driver dal 3 novembre 2026: ac97 0.003, hdaudio 0.006, sb 0.002,
 es1371 0.002 (`ac97.drv -version`). Con un driver piu' vecchio VLC e
 Firefox restano muti e fermi.
 
-Firefox (Exilla) suona Vorbis, FLAC, MP3, VP8, VP9 e AV1 nelle pagine
-(provati a 64 bit); H.264 e AAC non ancora ("Failed to open media"): per quelli
-c'e' VLC.
+Firefox (Exilla) suona Vorbis, FLAC, MP3, VP8, VP9, AV1 e AAC nelle
+pagine (provati a 64 bit). AAC e H.264 li prende da FFmpeg, cioe' da
+libavcodec.so.63 in /exos/lib (gruppo FFmpeg di `install -tools`):
+senza, quei file dicono "Failed to open media". ! H.264 si decodifica ma
+in QEMU si ferma dopo meno di un secondo (Firefox va in attesa dei dati);
+sul ferro non ancora provato. Per H.264 c'e' comunque VLC.
 
 [vlc]
 il lettore audio e video VLC 3.0.24 (CD strumenti, gruppo VLC)
@@ -1062,6 +1065,34 @@ Dal CD senza installarli il comando e' /cdrom/exos/bin/gcc.
 i propri percorsi da dove sta il suo binario: da /bin cercherebbe
 /libexec/gcc/... e risponderebbe "cannot execute cc1", oppure che non
 trova stdio.h. Va lanciato da dove sta, o messo nel PATH con la sua bin.
+
+[librerie .so ld_library_path]
+le librerie condivise dei programmi portati
+
+Dal 3 novembre 2026 le librerie di terzi (zlib, OpenSSL, FFmpeg, Opus,
+Vorbis, FLAC, libvpx, dav1d, APR, expat, pcre2, xz, zstd, lz4, bzip2,
+Connector/C) sono file .so, in /exos/lib dal CD degli strumenti, e un
+programma collegato a loro (VLC, Firefox per H.264 e AAC) le carica
+all'avvio, prima di main. La matematica sta in /lib/libm.so.4, nel
+sistema di base.
+
+  LD_LIBRARY_PATH=/mia/lib prog    cerca prima li'
+  prog -version                    parte solo se trova le sue librerie
+
+Dove le cerca, in ordine: LD_LIBRARY_PATH, il percorso scritto nel
+programma, /lib, /exos/lib, /exwin/lib, e le stesse sotto /cdrom.
+
+Se ne manca una il programma non parte e lo dice, per esempio:
+
+  vlc: libavcodec.so.63: cannot open shared object file: not found
+
+La riparazione e' installare il gruppo che la porta (`install -tools`,
+gruppo FFmpeg per libavcodec) o mettere la cartella in LD_LIBRARY_PATH.
+
+I comandi del sistema restano statici: devono partire anche senza /lib.
+Il gcc di EX-OS (quello del CD) collega ancora tutto statico; le .so le
+usa il compilatore incrociato, sul PC. Fmt e Connector/C++ sono solo
+statiche: sono C++, e la libstdc++ condivisa non c'e'.
 
 [make]
 costruisce un programma da un makefile

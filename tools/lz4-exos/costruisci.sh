@@ -33,6 +33,7 @@ costruisci() {
     cp -p "$SRC/lib/liblz4.a" "$DEST/lib/"
     cp -p "$SRC/lib/lz4.h" "$SRC/lib/lz4hc.h" "$SRC/lib/lz4frame.h" "$DEST/include/"
     cp -p "$SRC/programs/lz4" "$DEST/bin/"
+    lib_condivisa lz4 1
     lib_fine
 }
 lib_tutte "$1"

@@ -26,14 +26,19 @@ costruisci() {
     lib_sorgente
     lib_config_sub
     mkdir -p "$B/obj"
+    # ! XML_ENABLE_VISIBILITY=1: expat compiles with -fvisibility=hidden and
+    # marks its functions public only when it builds its own .so; this .so is
+    # made by lib_condivisa from the archive, and without it exported nothing
     ( cd "$B/obj" && "$SRC/configure" --host=$T --build="$("$SRC/conftools/config.guess")" \
         --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" LDFLAGS=-static \
+        CPPFLAGS=-DXML_ENABLE_VISIBILITY=1 \
         --disable-shared --enable-static --without-docbook --without-examples \
         --without-tests ) \
         > "$B/configura.log" 2>&1 || { tail -20 "$B/configura.log"; exit 1; }
     make -C "$B/obj" -j3 > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     make -C "$B/obj" install DESTDIR="$OUT" > "$B/installa.log" 2>&1 || { tail -20 "$B/installa.log"; exit 1; }
     rm -rf "$DEST/share" "$DEST/lib/pkgconfig" "$DEST/lib/cmake" "$DEST"/lib/*.la
+    lib_condivisa expat 1
     lib_fine
 }
 lib_tutte "$1"

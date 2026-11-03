@@ -304,6 +304,17 @@ void _libc_start(int argc, char **argv, char **envp)
     /* The program's own name, for dladdr (libc.c, dl_addr_programma). */
     __exos_argv0 = argc > 0 ? argv[0] : 0;
 
+#ifdef EXOS_LIBC_PORTATI
+    /* A program linked to shared objects (3 November 2026): its libraries,
+     * loaded and bound before its constructors, see lib/libc_dl.c. After
+     * environ, because LD_LIBRARY_PATH is in it. A static program returns at
+     * once. Only in the sysroot's libc: see the comment there. */
+    {
+        extern void __exos_dl_avvio_programma(const char *argv0);
+        __exos_dl_avvio_programma(__exos_argv0);
+    }
+#endif
+
     /* ! DOPO environ E PRIMA DI main. Un costruttore globale puo'
      * chiamare getenv(); farlo girare prima che environ sia impostato
      * gli darebbe un ambiente vuoto invece di quello vero. */

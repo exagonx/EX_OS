@@ -8279,6 +8279,11 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) $(RDBOOT_LZ4) $(MOD_EXT4_OUT) boot/autoexec.
 	@# Programmi che esistono solo sul CD, vedi BUILD_BIN_CD in testa.
 	@cp $(BUILD_BIN_CD)/* $(ISOX_ROOT)/bin/ 2>/dev/null || true
 	@cp $(BUILD_LIB)/* $(ISOX_ROOT)/lib/ 2>/dev/null || true
+	@# libm.so.4 (openlibm, 3 November 2026): programs linked to shared objects
+	@# and the libraries they load take their math from it (lib/libc_dl.c,
+	@# tools/librerie-exos/comune.sh). Only the file named by DT_NEEDED: EX-OS
+	@# has no symbolic links, libm.so is for the linker in the sysroot.
+	@cp cross_build/libm-exos32/exos/lib/libm.so.4 $(ISOX_ROOT)/lib/ 2>/dev/null || true
 	@cp $(BUILD_DRIVERS)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
 	@# il modulo che scrive ext2/3/4: senza, la radice di un disco installato
 	@# da qui partirebbe in sola lettura (kernel 0.263)

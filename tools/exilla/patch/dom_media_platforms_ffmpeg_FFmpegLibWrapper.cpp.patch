@@ -1,6 +1,6 @@
 --- a/dom/media/platforms/ffmpeg/FFmpegLibWrapper.cpp
 +++ b/dom/media/platforms/ffmpeg/FFmpegLibWrapper.cpp
-@@ -11,12 +11,32 @@
+@@ -11,12 +11,39 @@
  #endif
  #include "PlatformDecoderModule.h"
  #include "prlink.h"
@@ -12,8 +12,12 @@
  #endif
  
 +#ifdef XP_EXOS
-+// EX-OS (Exilla): no dlopen, ffvpx is linked in. Weak, so that what is not
-+// built reads NULL, exactly what PR_FindSymbol says for a missing symbol.
++// EX-OS (Exilla): ffvpx is linked in, and FFVPXRuntimeLinker hands this
++// wrapper the handle (PRLibrary*)1: its symbols are the program's own. Weak,
++// so that what is not built reads NULL, exactly what PR_FindSymbol says for a
++// missing symbol. Any other handle is a real library opened by
++// FFmpegRuntimeLinker with dlopen (lib/libc_dl.c, 3 November 2026: the
++// system's FFmpeg, libavcodec.so.63, for H.264 and AAC), and goes to NSPR.
 +extern "C" {
 +#  define X(n) extern char exos_ff_##n __asm__(#n) __attribute__((weak));
 +#  include "ffvpx/ffvpx_simboli_exos.inc"
@@ -26,8 +30,11 @@
 +#  undef X
 +  return nullptr;
 +}
-+#  define PR_FindSymbol(aLib, aNome) ExosSimbolo(aNome)
-+#  define PR_UnloadLibrary(aLib) ((void)(aLib))
++#  define EXOS_FFVPX_DENTRO(aLib) ((aLib) == reinterpret_cast<PRLibrary*>(1))
++#  define PR_FindSymbol(aLib, aNome) \
++    (EXOS_FFVPX_DENTRO(aLib) ? ExosSimbolo(aNome) : PR_FindSymbol(aLib, aNome))
++#  define PR_UnloadLibrary(aLib) \
++    (EXOS_FFVPX_DENTRO(aLib) ? PR_SUCCESS : PR_UnloadLibrary(aLib))
 +#endif
 +
  #define AV_LOG_QUIET -8

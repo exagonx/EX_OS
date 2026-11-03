@@ -73,6 +73,7 @@ costruisci() {
     # CD and netinst carry files)
     rm -f "$DEST/lib/libmariadb.a"
     cp -p "$DEST/lib/libmariadbclient.a" "$DEST/lib/libmariadb.a"
+    lib_condivisa mariadb 3 "-lssl -lcrypto -lzstd -lz -lm"
     lib_fine "$PATCH"
     # after lib_fine, which copies include/ into the gcc sysroots: the
     # FreeBASIC header (fbc looks in /exos/include/freebasic) and the Rust

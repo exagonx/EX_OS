@@ -8874,7 +8874,25 @@ tools/netinst/velocita tolto da netinst.
       di Firefox per prova (circa 100 minuti a 64 bit).
       RESTA anche: Firefox a 32 bit da ricostruire e provare; Firefox sul
       portatile.
-      Stato: VLC fatto in QEMU, Firefox in parte.
+      DECISO (l'utente, 3/11): "tutte le librerie devono essere dinamiche o
+      condivise", statiche solo se indispensabile (libc dei comandi di boot)
+      o se la dinamica da' problemi. FATTO (3/11): la libc del software
+      portato carica i DT_NEEDED prima di main (lib/libc_dl.c,
+      __exos_dl_avvio_programma, COPY, costruttori rinviati), gcc statico
+      solo con -static (specs-condivise.sh), tutte le librerie C condivise a
+      32 e 64 bit col soname di upstream (comune.sh: lib_condivisa,
+      lib_controlla, script INPUT() al posto dei collegamenti), FFmpeg
+      --enable-shared, /lib/libm.so.4 nelle due ISO, VLC dinamico (15 MB
+      invece di 47), Firefox apre libavcodec.so.63 con dlopen: AAC suona
+      (small-shot.m4a, bipbop aac fino alla fine). tools/prova-dl/
+      prova-avvio.sh a posto a 32 e 64; VLC dinamico: prova.sh a 32 e 64 a posto.
+      ! H.264 in Firefox: fotogrammi decodificati (9,5 ms l'uno), poi dopo
+      0,6-1 s "Enter buffering due to buffering heuristics" e resta in
+      BUFFERING; causa non dimostrata; da provare sul portatile.
+      ! "libmozsqlite3.so.so: cannot open shared object file" (QuickSuggest)
+      non guardato. RESTA: gcc nativo ancora statico; ncurses statica;
+      httpd, php, mariadb non ricollegati dinamici.
+      Stato: VLC fatto in QEMU, Firefox in parte (manca H.264).
 
   47. repo-update.sh CHIEDE E COSTRUISCE QUELLO CHE MANCA (l'utente, 30/10:
       "suggerisce altri script come tools/freebasic-exos/prepara-fb64.sh,

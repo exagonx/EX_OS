@@ -113,6 +113,34 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le librerie di terzi sono condivise, e i programmi le caricano all'avvio
+
+La regola era "tutte le librerie dinamiche" (30 luglio) e le librerie di terzi erano uscite
+tutte come archivi statici. Ora:
+
+- **Partono i programmi collegati a delle .so.** `gcc prog.c -lz` col compilatore incrociato
+  fa un ELF dinamico normale; il kernel ignora PT_INTERP, e prima di `main` la libc dentro il
+  programma carica i suoi DT_NEEDED col caricatore di dlopen (`lib/libc_dl.c`,
+  `__exos_dl_avvio_programma`): rilocazioni COPY, costruttori delle librerie trattenuti finche'
+  il programma non e' collegato, gli stessi percorsi di dlopen. Se manca una libreria il
+  programma si ferma col suo nome e codice 127. Solo nella libc del software portato: i
+  comandi del sistema restano statici. `tools/prova-dl/prova-avvio.sh` **provato a 32 e 64
+  bit** (costruttori, una variabile copiata, malloc da una libreria, `__thread` in due fili,
+  una libreria mancante); `tools/prova-dl/prova-dl.sh` resta a posto.
+- **Il compilatore** (`tools/gcc-exos/specs-condivise.sh`): statico solo con `-static`.
+- **Ogni libreria C e' condivisa** a 32 e 64 bit, col soname di upstream: zlib, bzip2, xz, lz4,
+  zstd, pcre2, expat, OpenSSL (`libcrypto.so.4`), APR, APR-util, Connector/C, Ogg, Vorbis, Opus,
+  FLAC, libvpx, dav1d, FFmpeg (`libavcodec.so.63`...). `comune.sh` compila tutto `-fPIC`, fa la
+  .so, e rifiuta quella che non esporta niente o usa un simbolo che nessuna dipendenza da'.
+  Niente collegamenti simbolici (EX-OS non ne ha): `libz.so` e' uno script `INPUT(libz.so.1)`,
+  come fa glibc. fmt e Connector/C++ restano statiche (C++, la libstdc++ condivisa non c'e').
+- **`/lib/libm.so.4`** (openlibm) nel sistema di base a 32 e 64 bit.
+- **VLC** ora e' collegato a loro: 15 MB invece di 47 a 64 bit.
+- **Firefox** apre l'FFmpeg di sistema con dlopen: **AAC suona**; H.264 si decodifica ma in
+  QEMU la riproduzione si ferma prima di un secondo (Firefox va in BUFFERING), non ancora
+  provato sul ferro.
+- Non ancora: il gcc nativo di EX-OS collega ancora statico; Firefox a 32 bit non ricostruito.
+
 ### Audio e video: i codec, VLC, e tre guasti che tenevano muto ogni lettore (ac97.drv 0.003, hdaudio.drv 0.006, sb.drv 0.002, es1371.drv 0.002)
 
 **Provato** in QEMU a 32 e 64 bit (`tools/vlc-exos/prova.sh 32` e `64`): VLC suona Vorbis, FLAC

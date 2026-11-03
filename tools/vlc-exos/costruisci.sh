@@ -100,7 +100,11 @@ costruisci() {
         echo '    0 };'
     } > "$B/moduli.c"
     $CC $CFLAGS -c "$B/moduli.c" -o "$B/moduli.o"
-    $CXX -static -o "$B/vlc" "$B/obj/bin/vlc-vlc.o" "$B/obj/bin/vlc-override.o" "$B/moduli.o" $propri \
+    # ! NOT -static (3 November 2026): FFmpeg, libvpx, dav1d, FLAC, Opus,
+    # Vorbis, Ogg and zlib are shared libraries, found at start in /exos/lib
+    # (lib/libc_dl.c); VLC's own plugins stay inside, there is no dlopen of
+    # VLC modules
+    $CXX -o "$B/vlc" "$B/obj/bin/vlc-vlc.o" "$B/obj/bin/vlc-override.o" "$B/moduli.o" $propri \
         -Wl,--start-group "$P"/lib*_plugin.a $(ls "$B"/obj/modules/.libs/lib*.a | grep -v _plugin.a) \
         "$B/obj/lib/.libs/libvlc.a" "$B/obj/src/.libs/libvlccore.a" \
         $(ls "$B"/obj/compat/.libs/libcompat.a 2>/dev/null) \

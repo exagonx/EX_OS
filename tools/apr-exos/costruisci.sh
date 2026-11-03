@@ -82,6 +82,7 @@ costruisci() {
     rm -rf "$DEST/lib/pkgconfig" "$DEST"/lib/*.la "$DEST/lib/apr.exp"
     mkdir -p "$DEST/src/apr/patch"
     cp -p "$R"/tools/apr-exos/patch/*.diff "$DEST/src/apr/patch/"
+    lib_condivisa apr-1 0
     lib_fine
 }
 lib_tutte "$1"

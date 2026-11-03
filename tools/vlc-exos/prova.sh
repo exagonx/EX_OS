@@ -26,6 +26,12 @@ D="$TC/$MACCHINA/prova-vlc$BIT"
 S="$D/disco"
 rm -rf "${D:?}"; mkdir -p "$S/m" "$S/casa" "$D/foto"
 cp "$V" "$S/vlc"
+# VLC is linked to the shared libraries (3 November 2026): the ones it names
+# go to /disk/lib, found through LD_LIBRARY_PATH (on a system, /exos/lib)
+mkdir -p "$S/lib"
+for l in ffmpeg libvpx dav1d opus vorbis ogg flac zlib; do
+    cp "$TC"/$l-exos$BIT/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
+done
 AUDIO="sound.ogg small-shot.flac small-shot.mp3"
 VIDEO="gizmo.mp4 vp9cake.webm av1.mp4"
 for f in $AUDIO $VIDEO; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
@@ -59,6 +65,7 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
     echo "echo attendo la fine dei lavori di avvio@25"
     echo "audio -i@40"
     echo "export HOME=/disk/casa@1"
+    echo "export LD_LIBRARY_PATH=/disk/lib@1"
     for f in $AUDIO; do
         echo "echo VLC-AUDIO $f@1"
         echo "/disk/vlc -I dummy --aout exos --no-video --play-and-exit /disk/m/$f@${PAUSA_AUDIO:-20}"

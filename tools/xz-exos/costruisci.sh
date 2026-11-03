@@ -38,6 +38,7 @@ costruisci() {
     # unxz, xzcat, lzma... are links to xz: no links on a CD, and `xz -d`,
     # `xz -c` say the same
     find "$DEST/bin" -type l -delete
+    lib_condivisa lzma 5
     lib_fine
 }
 lib_tutte "$1"

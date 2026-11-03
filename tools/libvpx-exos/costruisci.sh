@@ -33,6 +33,7 @@ costruisci() {
     make -C "$B/obj" -j6 > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     make -C "$B/obj" install DESTDIR="$OUT" > "$B/installa.log" 2>&1 || { tail -20 "$B/installa.log"; exit 1; }
     rm -rf "$DEST/lib/pkgconfig"
+    lib_condivisa vpx 12 "-lm"
     lib_fine
 }
 lib_tutte "$1"

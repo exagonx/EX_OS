@@ -8,10 +8,15 @@
 # lz4, zstd, pcre2, fmt. The rule (the user, 25 October 2026): before a
 # program is ported, every library it needs becomes a real EX-OS library, 32
 # and 64 bit, the latest public release, with its sources on the tools CD
-# and in netinst. So each library ends the same way:
+# and in netinst. And SHARED (the user, 30 July and 3 November 2026: "tutte
+# le librerie devono essere dinamiche"; static only where a program needs it
+# and the shared one would cause problems): lib_condivisa makes lib<x>.so.N
+# from the archive, everything is compiled -fPIC for it, and programs built
+# against the sysroot link the .so (lib/libc_dl.c loads them at start). The
+# .a stays next to it for -static. So each library ends the same way:
 #
 #     cross_build/<name>-exos32/exos/      laid out as /exos on EX-OS:
-#     cross_build/<name>-exos64/exos/        lib/*.a  include/  bin/
+#     cross_build/<name>-exos64/exos/        lib/*.so* lib/*.a  include/  bin/
 #                                            src/<name>/ (archive, signature,
 #                                            the EX-OS build script)
 #
@@ -48,6 +53,15 @@ lib_per() {
     [ -x "$CROSS/bin/$T-gcc" ] || manca "$T-gcc ($CROSS)" "tools/exilla/leggimi.md (la toolchain con i fili)"
     [ -f "$ARCHIVIO" ] || manca "$ARCHIVIO" "lo scarica chi aggiorna la libreria: vedi il commento in testa a $0"
     export PATH="$CROSS/bin:$PATH"
+    # the compiler must know -shared and link programs to .so files: the
+    # specs file of tools/gcc-exos/specs-condivise.sh, lost when a toolchain
+    # is rebuilt (cross64.sh writes it, the 32-bit one does not)
+    local sp
+    for sp in "$CROSS/bin/$T-gcc" "$ALTRO/bin/$T-gcc"; do
+        [ -x "$sp" ] || continue
+        grep -q ld-exos.so "$("$sp" -print-libgcc-file-name | xargs dirname)/specs" 2>/dev/null ||
+            "$R/tools/gcc-exos/specs-condivise.sh" "$sp" > /dev/null || exit 1
+    done
     CC=$T-gcc; CXX=$T-g++; AR=$T-ar; RANLIB=$T-ranlib; STRIP=$T-strip
     CFLAGS="-O2 $MARCH"
     B=$TC/costruzione-$NOME/exos$BIT
@@ -55,7 +69,131 @@ lib_per() {
     DEST=$OUT/exos
     rm -rf "$B" "$OUT"
     mkdir -p "$B" "$DEST/lib" "$DEST/include" "$DEST/bin"
+    # ! EVERYTHING -fPIC (3 November 2026): the libraries become shared
+    # objects (lib_condivisa), and a .so is made of position-independent
+    # code. Whatever build system the library has, it calls $T-gcc: a
+    # wrapper of that name first in PATH adds the flag.
+    mkdir -p "$B/pic"
+    local c
+    for c in gcc g++ cc c++; do
+        [ -x "$CROSS/bin/$T-$c" ] || continue
+        printf '#!/bin/sh\nexec "%s" -fPIC "$@"\n' "$CROSS/bin/$T-$c" > "$B/pic/$T-$c"
+        chmod +x "$B/pic/$T-$c"
+    done
+    export PATH="$B/pic:$PATH"
+    # ! AT 32 BIT, -fPIC with the stack protector calls __stack_chk_fail_local,
+    # a hidden function each shared object must carry (glibc keeps it in
+    # libc_nonshared.a): $NONSHARED calls the libc's __stack_chk_fail, and
+    # goes into every 32-bit .so (lib_condivisa; FFmpeg's --extra-ldsoflags)
+    NONSHARED=""
+    if [ "$BIT" = 32 ]; then
+        printf 'extern void __stack_chk_fail(void);\n__attribute__((visibility("hidden"))) void __stack_chk_fail_local(void) { __stack_chk_fail(); }\n' > "$B/nonshared.c"
+        "$CROSS/bin/$T-gcc" -O2 -fPIC -fno-stack-protector -c "$B/nonshared.c" -o "$B/nonshared.o" || exit 1
+        NONSHARED="$B/nonshared.o"
+    fi
+    lib_libm
     echo "=== $NOME $VER per $T ==="
+}
+
+# libm.so (openlibm, from the sysroot's libm.a, whose objects are already
+# PIC): a library that needs sin or pow names it, and a program that opens
+# that library with dlopen has no math of its own to lend it. Made once per
+# architecture, in cross_build/libm-exos<bit>/exos/lib (the tools CD takes it
+# from there as any other library) and in both sysroots.
+lib_libm() {
+    local L=$TC/libm-exos$BIT/exos/lib S
+    if [ ! -f "$L/libm.so.4" ] || [ "$CROSS/$T/lib/libm.a" -nt "$L/libm.so.4" ]; then
+        mkdir -p "$L"
+        "$CROSS/bin/$T-gcc" -shared -Wl,-soname,libm.so.4 -o "$L/libm.so.4" \
+            -Wl,--whole-archive "$CROSS/$T/lib/libm.a" -Wl,--no-whole-archive || { echo "libm.so.4 non si collega"; exit 1; }
+    fi
+    lib_per_ld "$L" m libm.so.4
+    # ! --remove-destination: where a libm.so was a symbolic link, plain cp
+    # would write through it, onto libm.so.4
+    for S in "$CROSS/$T" "$ALTRO/$T"; do
+        [ -d "$S/lib" ] && cp -p --remove-destination "$L"/libm.so* "$S/lib/"
+    done
+}
+
+# lib_per_ld DIR NAME FILE: DIR/libNAME.so for the linker, as a two-line ld
+# script, INPUT(FILE), the way glibc makes its libc.so. ! NOT A SYMBOLIC LINK:
+# EX-OS has none, and the tools CD carries this directory for the native gcc.
+lib_per_ld() {
+    rm -f "$1/lib$2.so"
+    printf '/* GNU ld script: -l%s is %s (tools/librerie-exos/comune.sh) */\nINPUT(%s)\n' "$2" "$3" "$3" > "$1/lib$2.so"
+}
+
+# lib_condivisa NAME MAJOR "DEPENDENCIES": lib/libNAME.so.MAJOR from the
+# archive lib/libNAME.a, with that soname and DT_NEEDED for each -lDEP
+# (found in the sysroot as .so: those libraries come first). MAJOR is the
+# upstream one (libavcodec.so.63, libz.so.1...): a program that looks for a
+# library by name - Firefox does, for FFmpeg - finds it. The libc is not
+# named: a library takes it from the program (lib/libc_esportati.h).
+lib_condivisa() {
+    local a=$DEST/lib/lib$1.a so=lib$1.so.$2
+    [ -f "$a" ] || { echo "lib_condivisa: manca $a"; exit 1; }
+    "$CROSS/bin/$T-gcc" -shared -Wl,-soname,$so -o "$DEST/lib/$so" \
+        -Wl,--whole-archive "$a" -Wl,--no-whole-archive $NONSHARED -L"$DEST/lib" -L"$CROSS/$T/lib" $3 \
+        > "$B/condivisa-$1.log" 2>&1 || { cat "$B/condivisa-$1.log"; echo "lib_condivisa: $so non si collega"; exit 1; }
+    lib_controlla "$1" "$2" "$3"
+}
+
+# lib_condivisa_sua NAME MAJOR "DEPENDENCIES": for a library whose own build
+# makes the shared object (FFmpeg: its libraries share hidden tables that only
+# its own shared build handles). The real file becomes lib/libNAME.so.MAJOR,
+# the name its soname gives, the symbolic links go (EX-OS has none), then the
+# same checks as lib_condivisa.
+lib_condivisa_sua() {
+    local so=lib$1.so.$2 f vero=""
+    for f in "$DEST/lib/lib$1.so"*; do
+        [ -L "$f" ] && { rm -f "$f"; continue; }
+        [ -f "$f" ] && vero=$f
+    done
+    [ -n "$vero" ] || { echo "lib_condivisa_sua: nessun lib$1.so in $DEST/lib"; exit 1; }
+    [ "$vero" = "$DEST/lib/$so" ] || mv "$vero" "$DEST/lib/$so"
+    "$CROSS/bin/$T-readelf" -d "$DEST/lib/$so" | grep -q "Library soname: \[$so\]" \
+        || { echo "lib_condivisa_sua: il soname di $so non e' $so"; exit 1; }
+    lib_controlla "$1" "$2" "$3"
+}
+
+# the checks of a shared object, and its ld script
+lib_controlla() {
+    local so=lib$1.so.$2
+    # ! A .so THAT EXPORTS NOTHING: built with -fvisibility=hidden and the
+    # export marks of its static build (expat, 3 November 2026)
+    if [ "$("$CROSS/bin/$T-nm" -D --defined-only "$DEST/lib/$so" | wc -l)" -lt 2 ]; then
+        echo "lib_condivisa: $so non esporta niente (visibility hidden?)"; exit 1
+    fi
+    if "$CROSS/bin/$T-readelf" -d "$DEST/lib/$so" | grep -q TEXTREL; then
+        echo "lib_condivisa: $so ha rilocazioni nel codice (oggetti senza -fPIC)"; exit 1
+    fi
+    # ! EVERY UNDEFINED SYMBOL MUST HAVE AN OWNER: the libc's table (what a
+    # program offers, lib/libc_esportati.h), libm.so, or a DEPENDENCY named
+    # here. A dependency left out would only show at run time, as "undefined
+    # symbol" from whoever loads the library first. Symbol versions
+    # (av_free@LIBAVUTIL_61) are left out: lib/libc_dl.c binds by name.
+    local d f mancano
+    mancano=$( {
+        python3 - "$R/lib/libc_esportati.h" "$BIT" <<'PY'
+import re, sys
+t = open(sys.argv[1]).read()
+inizio = "#elif defined(__x86_64__) && defined(EXOS_LIBC_PORTATI)" if sys.argv[2] == "64" else "#elif defined(EXOS_LIBC_PORTATI)"
+s = t.split(inizio, 1)[1].split("#elif", 1)[0]
+for n in re.findall(r'\.asciz \\"([^\\"]+)\\"', s): print(n)
+PY
+        "$CROSS/bin/$T-nm" -D --defined-only "$TC/libm-exos$BIT/exos/lib/libm.so.4" | awk '{print $3}'
+        for d in $3; do
+            case $d in -l*) ;; *) continue ;; esac
+            f=$(ls "$DEST/lib/lib${d#-l}.so".[0-9]* "$CROSS/$T/lib/lib${d#-l}.so".[0-9]* 2>/dev/null | head -1)
+            [ -n "$f" ] && "$CROSS/bin/$T-nm" -D --defined-only "$f" | awk '{print $3}'
+        done
+    } | sed 's/@.*//' | sort -u | comm -13 - <("$CROSS/bin/$T-nm" -D --undefined-only "$DEST/lib/$so" \
+          | awk '$1 == "U" {print $2}' | sed 's/@.*//' | sort -u) )
+    if [ -n "$mancano" ]; then
+        echo "lib_condivisa: $so usa simboli che nessuno gli da':"; echo "$mancano" | head -20 | sed 's/^/        /'
+        exit 1
+    fi
+    lib_per_ld "$DEST/lib" "$1" "$so"
 }
 
 # a fresh copy for each architecture: zlib, bzip2, lz4 and zstd build in
@@ -117,10 +255,13 @@ lib_fine() {
     for S in "$CROSS/$T" "$ALTRO/$T"; do
         [ -d "$S/lib" ] || continue
         ls "$DEST"/lib/*.a > /dev/null 2>&1 && cp -p "$DEST"/lib/*.a "$S/lib/"
+        # the .so and their ld scripts: `-lname` then finds the shared one,
+        # and -static still the archive
+        ls "$DEST"/lib/*.so* > /dev/null 2>&1 && cp -p --remove-destination "$DEST"/lib/*.so* "$S/lib/"
         cp -rp "$DEST/include/." "$S/include/"
     done
     rmdir "$DEST/bin" 2>/dev/null || true
-    echo "    $(cd "$DEST" && ls lib/*.a bin/* 2>/dev/null | tr '\n' ' ')"
+    echo "    $(cd "$DEST" && ls lib/*.so.* lib/*.a bin/* 2>/dev/null | tr '\n' ' ')"
 }
 
 # lib_tutte: "costruisci.sh [32|64]", both by default

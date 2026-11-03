@@ -30,6 +30,7 @@ costruisci() {
     make -C "$SRC" -j3 libz.a > "$B/costruisci.log" 2>&1 || { tail -30 "$B/costruisci.log"; exit 1; }
     cp -p "$SRC/libz.a" "$DEST/lib/"
     cp -p "$SRC/zlib.h" "$SRC/zconf.h" "$DEST/include/"
+    lib_condivisa z 1
     lib_fine
 }
 lib_tutte "$1"

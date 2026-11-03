@@ -35,6 +35,7 @@ costruisci() {
     cp -p "$SRC/lib/libzstd.a" "$DEST/lib/"
     cp -p "$SRC/lib/zstd.h" "$SRC/lib/zdict.h" "$SRC/lib/zstd_errors.h" "$DEST/include/"
     cp -p "$SRC/programs/zstd" "$DEST/bin/"
+    lib_condivisa zstd 1
     lib_fine
 }
 lib_tutte "$1"

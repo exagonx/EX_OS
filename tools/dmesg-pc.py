@@ -4,7 +4,7 @@
 #
 #     tools/dmesg-pc.py [host] [file]
 #
-# Default 192.168.0.183 and /tmp/exos-dmesg.log. Opens one telnet session and
+# Default 192.168.0.177 and /tmp/exos-dmesg.log. Opens one telnet session and
 # leaves `dmesg -segui` running on it: the session and the program are already
 # in memory, so the log keeps coming when the disk has stopped and nothing can
 # be loaded. Ctrl+C ends it. Reconnects after a reset of the machine.
@@ -15,7 +15,7 @@ import sys
 import time
 
 IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
-host = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.183"
+host = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.177"
 dove = sys.argv[2] if len(sys.argv) > 2 else "/tmp/exos-dmesg.log"
 
 

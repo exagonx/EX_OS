@@ -23,7 +23,7 @@ arg = sys.argv[1:]
 due = "-due" in arg
 giri = next((int(a[6:]) for a in arg if a.startswith("-giri=")), 1)
 arg = [a for a in arg if a != "-due" and not a.startswith("-giri=")]
-host = arg[0] if len(arg) > 0 else "192.168.0.183"
+host = arg[0] if len(arg) > 0 else "192.168.0.177"
 src = arg[1] if len(arg) > 1 else "/exwin/app/exilla/firefox"
 log = open(arg[2] if len(arg) > 2 else "/tmp/exos-carico.log", "a", encoding="utf-8")
 LIMITE = 600

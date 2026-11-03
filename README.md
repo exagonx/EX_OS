@@ -111,6 +111,33 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Third-party libraries are shared objects, and programs load them at start
+
+The rule was "every library dynamic" (30 July) and the third-party libraries had all come
+out as static archives. Now:
+
+- **Programs linked to .so files start.** `gcc prog.c -lz` with the cross compiler makes an
+  ordinary dynamic ELF; the kernel ignores PT_INTERP, and before `main` the libc inside the
+  program loads its DT_NEEDED with the dlopen loader (`lib/libc_dl.c`,
+  `__exos_dl_avvio_programma`): COPY relocations, library constructors held until the
+  program is bound, the same search path as dlopen. A missing library stops the program with
+  its name and exit code 127. Only in the libc of ported software: the system's own commands
+  stay static. `tools/prova-dl/prova-avvio.sh` **tested at 32 and 64 bit** (constructors, a
+  copied variable, malloc from a library, `__thread` in two threads, a missing library);
+  `tools/prova-dl/prova-dl.sh` still passes.
+- **The compiler** (`tools/gcc-exos/specs-condivise.sh`): static only with `-static`.
+- **Every C library is shared** at 32 and 64 bit, with its upstream soname: zlib, bzip2, xz,
+  lz4, zstd, pcre2, expat, OpenSSL (`libcrypto.so.4`), APR, APR-util, Connector/C, Ogg,
+  Vorbis, Opus, FLAC, libvpx, dav1d, FFmpeg (`libavcodec.so.63`...). `comune.sh` compiles
+  everything `-fPIC`, makes the .so, and refuses one that exports nothing or uses a symbol no
+  dependency gives. No symbolic links (EX-OS has none): `libz.so` is an `INPUT(libz.so.1)`
+  script, as glibc does. fmt and Connector/C++ stay static (C++, no shared libstdc++).
+- **`/lib/libm.so.4`** (openlibm) in the base system at 32 and 64 bit.
+- **VLC** is now linked to them: 15 MB instead of 47 at 64 bit.
+- **Firefox** opens the system's FFmpeg with dlopen: **AAC plays**; H.264 decodes but in QEMU
+  playback stops under a second (Firefox goes to BUFFERING), not yet tried on hardware.
+- Not yet: the native gcc on EX-OS still links static; Firefox 32 bit not rebuilt.
+
 ### Audio and video: the codecs, VLC, and three faults that kept every player silent (ac97.drv 0.003, hdaudio.drv 0.006, sb.drv 0.002, es1371.drv 0.002)
 
 **Tested** in QEMU at 32 and 64 bit (`tools/vlc-exos/prova.sh 32` and `64`): VLC plays Vorbis,
