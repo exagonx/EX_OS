@@ -111,6 +111,8 @@ costruisci() {
     mkdir -p "$DEST/bin"
     cp "$B/vlc" "$DEST/bin/vlc"
     echo "    $(echo $nomi | wc -w) moduli dentro bin/vlc"
-    lib_fine
+    # our own sources go with the archive: the thread calls, the proxy, and
+    # the two outputs of EX-OS
+    lib_fine "$R"/tools/vlc-exos/src/*.c
 }
 lib_tutte "$1"

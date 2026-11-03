@@ -214,16 +214,6 @@ static void Play(audio_output_t *aout, block_t *block)
             libero = 0;
         if (libero < sys->byte_frame)
         {
-            {
-                static mtime_t ultimo;
-                mtime_t ora = mdate();
-                if (ora - ultimo > CLOCK_FREQ / 2)
-                {
-                    msg_Dbg(aout, "clock %"PRId64" ms: played %u bytes (%u Hz x %u)",
-                            ora / 1000, a->suonato, sys->rate, sys->byte_frame);
-                    ultimo = ora;
-                }
-            }
             if (!sys->pieno_detto)
                 msg_Dbg(aout, "ring full: written %u, played %u, %s",
                         a->scritto, a->suonato, sys->partito ? "playing" : "not started");

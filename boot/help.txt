@@ -932,6 +932,38 @@ contatore del DMA e' avanzato. Se non suona, in kernel.cfg non ci va.
 
 Un driver audio alla volta. Le schede PCI vogliono anche /dev/pci.drv.
 
+Un programma alla volta suona: il secondo riceve "occupato". Il driver
+riconosce chi suona dal PROGRAMMA, non dal filo: un lettore che apre il
+suono da un filo e lo avvia da un altro (VLC, Firefox) e' servito.
+Driver dal 3 novembre 2026: ac97 0.003, hdaudio 0.006, sb 0.002,
+es1371 0.002 (`ac97.drv -version`). Con un driver piu' vecchio VLC e
+Firefox restano muti e fermi.
+
+Firefox (Exilla) suona Vorbis, FLAC, MP3, VP8, VP9 e AV1 nelle pagine
+(provati a 64 bit); H.264 e AAC non ancora ("Failed to open media"): per quelli
+c'e' VLC.
+
+[vlc]
+il lettore audio e video VLC 3.0.24 (CD strumenti, gruppo VLC)
+
+  vlc film.mp4                     dentro ExWin: una finestra col video
+  vlc -I dummy --no-video b.ogg    dalla console: solo il suono
+  vlc -I dummy --play-and-exit f   esce alla fine del file
+  vlc --input-repeat=3 f           lo suona quattro volte
+
+Legge da FFmpeg 9.0.2: H.264, VP8, VP9, AV1, Vorbis, Opus, FLAC, MP3,
+AAC e gli altri formati di FFmpeg. Il suono va al servizio "audio"
+(prima `audio -i`), il video in una finestra di ExWin, ridotta se il
+video e' piu' grande dello schermo. I tasti della finestra vanno a VLC
+come nel VLC di sempre: lo spazio mette in pausa e riprende (provato),
+frecce ed Esc non ancora provati; la croce della finestra lo chiude.
+Senza -I dummy la console resta all'interfaccia a righe di VLC
+("help" la spiega, "quit" esce).
+
+Non ci sono l'interfaccia grafica Qt, i sottotitoli con i caratteri
+(freetype), la rete in streaming cifrata e i DVD. Gli avvisi
+"globalhotkeys" e "XML reader not found" all'avvio non sono errori.
+
 [netdetect]
 elenca le schede di rete e il driver che vogliono
 

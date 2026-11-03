@@ -1,6 +1,6 @@
 --- a/widget/exos/nsAppShell.cpp
 +++ b/widget/exos/nsAppShell.cpp
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,76 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,6 +14,7 @@
 +#include "ExosPosta.h"
 +#include "HeadlessScreenHelper.h"
 +#include "gfxPlatform.h"
++#include "mozilla/Hal.h"
 +#include "mozilla/widget/Screen.h"
 +#include "mozilla/widget/ScreenManager.h"
 +
@@ -48,6 +49,9 @@
 +            (int)getpid(), (unsigned)exos::Nato(), (unsigned)exos::Ora());
 +  }
 +  exos::PrendiSveglia();
++  // ! As every other widget's app shell: without it the wake-lock table does
++  // not exist, and the first <video> that plays dereferences it.
++  mozilla::hal::Init();
 +  ScreenManager& screenManager = ScreenManager::GetSingleton();
 +  if (gfxPlatform::IsHeadless()) {
 +    screenManager.SetHelper(MakeUnique<HeadlessScreenHelper>());
@@ -56,6 +60,8 @@
 +  }
 +  return nsBaseAppShell::Init();
 +}
++
++nsAppShell::~nsAppShell() { mozilla::hal::Shutdown(); }
 +
 +void nsAppShell::ScheduleNativeEventCallback() { exos::Sveglia(); }
 +

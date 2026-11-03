@@ -166,6 +166,8 @@ for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre
     voce "$T" fac "iso" "${l%%:*} per i386-exos" \
         "[ -f cross_build/${l%%:*}-exos32/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 32"
 done
+voce "$T" fac "iso" "VLC per i386-exos (bin/vlc)" \
+    "[ -x cross_build/vlc-exos32/exos/bin/vlc ]" "tools/vlc-exos/costruisci.sh 32"
 
 # --- 4. the 64-bit toolchain ------------------------------------------------------
 Q="toolchain x86_64-exos (64 bit)"
@@ -185,6 +187,8 @@ for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre
     voce "$Q" fac "tools64" "${l%%:*} per x86_64-exos" \
         "[ -f cross_build/${l%%:*}-exos64/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 64"
 done
+voce "$Q" fac "tools64" "VLC per x86_64-exos (bin/vlc)" \
+    "[ -x cross_build/vlc-exos64/exos/bin/vlc ]" "tools/vlc-exos/costruisci.sh 64"
 voce "$Q" fac "tools64" "FreeBASIC per EX-OS a 64 bit" \
     "[ -x cross_build/fb64/fb-build-exos64/fbc ]" "tools/freebasic-exos/prepara-fb64.sh"
 

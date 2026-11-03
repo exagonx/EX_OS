@@ -1,0 +1,47 @@
+--- a/dom/media/platforms/ffmpeg/ffvpx/FFVPXRuntimeLinker.cpp
++++ b/dom/media/platforms/ffmpeg/ffvpx/FFVPXRuntimeLinker.cpp
+@@ -89,6 +89,19 @@
+ 
+   sLinkStatus = LinkStatus_FAILED;
+ 
++#ifdef XP_EXOS
++  // Linked in: any non-null handle will do, Link() finds the symbols itself.
++  sFFVPXLib.mAVUtilLib = reinterpret_cast<PRLibrary*>(1);
++  sFFVPXLib.mAVCodecLib = sFFVPXLib.mAVUtilLib;
++  if (sFFVPXLib.Link() == FFmpegLibWrapper::LinkResult::Success) {
++    sLinkStatus = LinkStatus_SUCCEEDED;
++    FFmpegDecoderModule<FFVPX_VERSION>::Init(&sFFVPXLib);
++    FFmpegEncoderModule<FFVPX_VERSION>::Init(&sFFVPXLib);
++    return true;
++  }
++  return false;
++#endif
++
+ #ifdef XP_WIN
+   PathString path =
+       GetLibraryFilePathname(LXUL_DLL, (PRFuncPtr)&FFVPXRuntimeLinker::Init);
+@@ -167,8 +180,24 @@
+   return FFmpegEncoderModule<FFVPX_VERSION>::Create(&sFFVPXLib);
+ }
+ 
++#ifdef XP_EXOS
++// tx.h has no extern "C" of its own: these are the C symbols of libmozavutil.
++extern "C" {
++decltype(::av_tx_init) exos_av_tx_init __asm__("av_tx_init");
++decltype(::av_tx_uninit) exos_av_tx_uninit __asm__("av_tx_uninit");
++}
++#endif
++
+ /* static */
+ void FFVPXRuntimeLinker::GetFFTFuncs(FFmpegFFTFuncs* aOutFuncs) {
++#ifdef XP_EXOS
++  // EX-OS (Exilla): there is no dlopen, Init() cannot load libmozavutil and
++  // the assertions below would kill Firefox on any AudioContext. WebAudio only
++  // needs these two, and mozavutil is linked into the program.
++  aOutFuncs->init = exos_av_tx_init;
++  aOutFuncs->uninit = exos_av_tx_uninit;
++  return;
++#endif
+   []() MOZ_NO_THREAD_SAFETY_ANALYSIS {
+     MOZ_ASSERT(sLinkStatus != LinkStatus_INIT);
+     MOZ_RELEASE_ASSERT(sLinkStatus == LinkStatus_SUCCEEDED,

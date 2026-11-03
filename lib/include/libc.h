@@ -3840,7 +3840,14 @@ int     getconf(const char *key, char *buf, size_t size);
  * variabile globale del kernel (g_os_version). Ritorna la lunghezza, <0
  * se il buffer è troppo piccolo (nessuna copia parziale). */
 int     osversion(char *buf, size_t size);
+/* ! sync() IS DECLARED HERE ONLY FOR EX-OS'S OWN PROGRAMS: libc.h is included
+ * by every header, and third-party code has its own functions with that name
+ * (libaom and libvpx have a static sync() in their thread pools, and Firefox
+ * did not build on 3 November 2026). As with glibc, sync comes from
+ * <unistd.h>. */
+#ifndef EXOS_SOLO_POSIX
 void    sync(void);
+#endif
 
 /* Comodità: 1 se il boot verboso è attivo, 0 se il sistema deve restare
  * silenzioso. In caso di errore di lettura ritorna 1 — un programma muto

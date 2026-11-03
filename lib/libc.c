@@ -5941,6 +5941,13 @@ int  raise(int sig);
 int  nanosleep(const struct timespec *req, struct timespec *rem);
 int sched_yield(void);
 
+/* Come in lib/include/pthread.h: i due DEVONO COINCIDERE. */
+struct exos_pulizia {
+    void (*fn)(void *);
+    void *arg;
+    struct exos_pulizia *prec;
+};
+
 typedef struct {
     volatile int usato;
     volatile int tp;            /* il thread pointer del filo: la chiave */
@@ -5952,6 +5959,7 @@ typedef struct {
     volatile int staccato;
     char         nome[16];
     void        *chiavi[P_CHIAVI];
+    struct exos_pulizia *pulizie;   /* pthread_cleanup_push, l'ultima in cima */
 } Filo;
 
 typedef struct FiliBlocco {
@@ -6072,11 +6080,36 @@ static void chiavi_distruggi(Filo *f)
     }
 }
 
+void exos_pulizia_metti(struct exos_pulizia *p)
+{
+    Filo *f = (Filo *)pthread_self();
+
+    if (!f || !p) return;
+    p->prec    = f->pulizie;
+    f->pulizie = p;
+}
+
+void exos_pulizia_togli(struct exos_pulizia *p, int esegui)
+{
+    Filo *f = (Filo *)pthread_self();
+
+    if (!p) return;
+    if (f && f->pulizie == p) f->pulizie = p->prec;
+    if (esegui && p->fn) p->fn(p->arg);
+}
+
 void pthread_exit(void *ris)
 {
     Filo *f = (Filo *)pthread_self();
 
     if (f) {
+        /* POSIX: prima i gestori di pthread_cleanup_push, dall'ultimo, poi i
+         * distruttori delle chiavi. */
+        while (f->pulizie) {
+            struct exos_pulizia *p = f->pulizie;
+            f->pulizie = p->prec;
+            if (p->fn) p->fn(p->arg);
+        }
         chiavi_distruggi(f);
         f->ris    = ris;
         f->finito = 1;

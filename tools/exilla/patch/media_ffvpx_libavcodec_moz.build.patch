@@ -1,0 +1,32 @@
+--- a/media/ffvpx/libavcodec/moz.build
++++ b/media/ffvpx/libavcodec/moz.build
+@@ -52,7 +52,6 @@
+     'libopusenc.c',
+     'libvorbisdec.c',
+     'libvorbisenc.c',
+-    'log2_tab.c',
+     'mpeg4audio.c',
+     'mpeg4audio_sample_rates.c',
+     'mpegaudio.c',
+@@ -74,7 +73,6 @@
+     'pthread.c',
+     'pthread_frame.c',
+     'pthread_slice.c',
+-    'reverse.c',
+     'simple_idct.c',
+     'threadprogress.c',
+     'tiff_common.c',
+@@ -195,6 +193,13 @@
+   CXXFLAGS += CONFIG["MOZ_LIBVPX_CFLAGS"]
+   OS_LIBS += CONFIG["MOZ_LIBVPX_LIBS"]
+ 
++# EX-OS (Exilla): static, in one program with libavutil, which has these two.
++if CONFIG['OS_TARGET'] != 'EXOS':
++    SOURCES += [
++        'log2_tab.c',
++        'reverse.c',
++    ]
++
+ SYMBOLS_FILE = 'avcodec.symbols'
+ NoVisibilityFlags()
+ 

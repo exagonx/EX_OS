@@ -482,6 +482,18 @@ solo  = src/ffmpeg
 nota  = gcc prog.c -lavformat -lavcodec -lswresample -lavutil
 
 
+[vlc]
+nome  = VLC
+dice  = VLC 3.0.24: lettore audio e video, suono e finestra di EX-OS
+prova = bin/vlc
+vuole = ffmpeg
+mbyte = 60
+solo  = bin/vlc
+solo  = src/vlc
+
+nota  = vlc film.mp4  (vlc -I dummy --no-video brano.ogg senza ExWin)
+
+
 [pcre2]
 nome  = PCRE2
 dice  = PCRE2 10.49: espressioni regolari di Perl, pcre2grep, pcre2test

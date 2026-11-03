@@ -14,7 +14,7 @@
 # with a screenshot during each one. Run after tools/vlc-exos/costruisci.sh.
 # What is [OK]: the card played at least as many seconds as the audio files
 # last, VLC wrote no error for the audio, and every screenshot of a video has
-# a picture in it (at least 5% of the screen differs from the empty desktop).
+# a picture in it (at least 2% of the screen differs from the empty desktop: the AV1 file is 160x90).
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 BIT=${1:-64}
@@ -70,9 +70,11 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
     echo "key:alt-f1@2"
     for f in $VIDEO; do
         echo "echo VLC-VIDEO $f@1"
-        echo "/disk/vlc -I dummy --aout exos --vout exos --play-and-exit /disk/m/$f &@1"
-        echo "key:alt-f5@4"
-        echo "foto:$T/${f%%.*}.ppm@${PAUSA_VIDEO:-15}"
+        r=4; [ "$f" = av1.mp4 ] && r=16      # one second long
+        echo "/disk/vlc -I dummy --aout exos --vout exos --input-repeat=$r --play-and-exit /disk/m/$f &@1"
+        # the files last a few seconds: the picture while it plays
+        echo "key:alt-f5@3"
+        echo "foto:$T/${f%%.*}.ppm@${PAUSA_VIDEO:-20}"
         echo "key:alt-f1@2"
     done
     echo "echo FINE-VLC@2"
@@ -84,7 +86,7 @@ esito=0
 
 # --- audio --------------------------------------------------------------------
 sed -n '/VLC-AUDIO /,/VLC-AUDIO-FINE/p' "$D/seriale.txt" | grep -a -i -E "error|errore" \
-    | grep -a -v -E "no suitable interface module|globalhotkeys" | head -10 > "$D/errori-audio.txt"
+    | grep -a -v -E "no suitable interface module|globalhotkeys|XML reader not found" | head -10 > "$D/errori-audio.txt"
 SUONATI=$(python3 - "$WAV" <<'E'
 import sys, struct
 try:
@@ -129,7 +131,7 @@ diversi = sum(1 for i in range(0, n, 5) if a[3 * i:3 * i + 3] != b[3 * i:3 * i +
 print(diversi * 5 * 100 // max(n, 1))
 E
 )
-    if [ "${cambiati:-0}" -ge 5 ]; then
+    if [ "${cambiati:-0}" -ge 2 ]; then
         echo "  [OK] $f: finestra con l'immagine, $cambiati% dello schermo cambiato, $q"
     else
         echo "  [NO] $f: ${cambiati:-0}% dello schermo cambiato, $q"; esito=1

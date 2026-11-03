@@ -111,6 +111,40 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Audio and video: the codecs, VLC, and three faults that kept every player silent (ac97.drv 0.003, hdaudio.drv 0.006, sb.drv 0.002, es1371.drv 0.002)
+
+**Tested** in QEMU at 32 and 64 bit (`tools/vlc-exos/prova.sh 32` and `64`): VLC plays Vorbis,
+FLAC and MP3 on the AC'97 card, and H.264, VP9 and AV1 in an ExWin window, then quits by
+itself. On the laptop (HD Audio, codec 14f1:5051) VLC plays the sound of an H.264/AAC file
+through `hdaudio.drv` 0.006 and quits; **whether it sounds right has still to be heard**.
+
+- **The codecs as real libraries**, 32 and 64 bit, latest public versions, sources on the
+  tools CD: libogg 1.3.6, libvorbis 1.3.7, Opus 1.6.1, FLAC 1.5.0, libvpx 1.17.0, dav1d 1.5.4
+  and FFmpeg 9.0.2 (`ffmpeg`, `ffprobe` and the libav libraries, LGPL build), each with its
+  `tools/<name>-exos/costruisci.sh`. `tools/prova_codec.sh` decodes Firefox's test files inside
+  EX-OS and compares with FFmpeg on Linux: the video is identical frame by frame.
+- **VLC 3.0.24** (`tools/vlc-exos/costruisci.sh`, group VLC of the tools CD). EX-OS has no
+  dlopen, so its 234 plugins are linked into one program. Two outputs are new and ours: sound
+  on the `audio` service (`aout_exos`) and pictures in an ExWin window (`vout_exos`). See
+  `help vlc`.
+- **Audio drivers.** They recognised the player by the thread that had opened the sound: a
+  player that opens from one thread and starts from another (VLC, Firefox) had its start
+  thrown away without a word, so nothing played and the player waited forever. The program
+  now counts, not the thread.
+- **AC'97.** The descriptor list had 2 entries while the controller counts 32: the third half
+  of every playback was lost, 85 ms, and the clock of whoever was playing jumped. Found with a
+  file in which every sample carries its own number.
+- **Firefox** (`tools/exilla/prova-media.sh`, QEMU, 64 bit): Ogg Vorbis, FLAC, MP3, VP8, VP9
+  and AV1 play to the end, with sound on the `audio` service and frames decoded. Before,
+  the first video crashed Firefox: the HAL (wake locks) was never started, now the AppShell
+  starts it. cubeb now adapts to the card: mono/stereo and the rate are converted when the
+  driver grants something else than what was asked. **Not yet**: H.264 and AAC (`gizmo.mp4`,
+  `.m4a` say "Failed to open media": on Linux Firefox takes them from the system FFmpeg with
+  dlopen, which EX-OS has not); Firefox at 32 bit not rebuilt; not tried on the laptop.
+- **libc.** `pthread_exit` now runs the `pthread_cleanup_push` handlers. Before, a thread ended
+  that way kept its mutex locked, and VLC never quit at the end of a file. `sync()` is no longer
+  declared to third-party code outside `<unistd.h>`: libaom and libvpx have their own.
+
 ### Dead drivers no longer write into other programs (kernel 0.309 and 0.310, chkdsk 0.004)
 
 **Tested** on the laptop with kernel 0.310: after `system -unload`, 0 stray bytes in 512 MB

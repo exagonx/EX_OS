@@ -1,0 +1,35 @@
+--- a/dom/media/platforms/ffmpeg/FFmpegLibWrapper.cpp
++++ b/dom/media/platforms/ffmpeg/FFmpegLibWrapper.cpp
+@@ -11,12 +11,32 @@
+ #endif
+ #include "PlatformDecoderModule.h"
+ #include "prlink.h"
++#include <string.h>
+ #ifdef MOZ_WIDGET_GTK
+ #  include "VALibWrapper.h"
+ #  include "mozilla/gfx/gfxVars.h"
+ #  include "mozilla/widget/DMABufDevice.h"
+ #endif
+ 
++#ifdef XP_EXOS
++// EX-OS (Exilla): no dlopen, ffvpx is linked in. Weak, so that what is not
++// built reads NULL, exactly what PR_FindSymbol says for a missing symbol.
++extern "C" {
++#  define X(n) extern char exos_ff_##n __asm__(#n) __attribute__((weak));
++#  include "ffvpx/ffvpx_simboli_exos.inc"
++#  undef X
++}
++static void* ExosSimbolo(const char* aNome) {
++#  define X(n) \
++    if (!strcmp(aNome, #n)) return (void*)&exos_ff_##n;
++#  include "ffvpx/ffvpx_simboli_exos.inc"
++#  undef X
++  return nullptr;
++}
++#  define PR_FindSymbol(aLib, aNome) ExosSimbolo(aNome)
++#  define PR_UnloadLibrary(aLib) ((void)(aLib))
++#endif
++
+ #define AV_LOG_QUIET -8
+ #define AV_LOG_PANIC 0
+ #define AV_LOG_FATAL 8

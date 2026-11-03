@@ -1,0 +1,15 @@
+--- a/media/libcubeb/src/moz.build
++++ b/media/libcubeb/src/moz.build
+@@ -56,6 +56,12 @@
+     ]
+     DEFINES['USE_OSS'] = True
+ 
++if CONFIG['OS_TARGET'] == 'EXOS':
++    SOURCES += [
++        'cubeb_exos.c',
++    ]
++    DEFINES['USE_EXOS'] = True
++
+ if CONFIG['MOZ_SNDIO']:
+     SOURCES += [
+         'cubeb_sndio.c',

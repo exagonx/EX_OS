@@ -9,8 +9,10 @@
 # one after the other (the driver serves one client at a time), Firefox's own
 # test files: Ogg Vorbis, FLAC, MP3, AAC, and video in VP8, VP9, AV1 and
 # H.264. For each one the page writes to the serial line, with dump(), where
-# the playback got to, the decoded frames and any error. A line is [OK] when
-# time went forward with no error and, for a video, frames were decoded.
+# the playback got to, the file's length, the decoded frames and any error.
+# A line is [OK] when time went forward with no error, to at least one second
+# or to 90% of a shorter file, and, for a video, frames were decoded.
+#     FILE="av1.mp4" ATTESA_FILE=30 ...   only some files, seconds for each
 # Run after tools/exilla/prova-gecko.sh, which makes the package.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
@@ -23,7 +25,7 @@ P="$O/dist/firefox"
 S="$D/media-disco"
 rm -rf "${S:?}"; mkdir -p "$S/profilo" "$S/casa" "$S/font" "$S/m"
 cp -a "$P" "$S/firefox"; cp exwin/font/*.ttf "$S/font/"
-FILE="sound.ogg small-shot.flac small-shot.mp3 small-shot.m4a bipbop_short_vp8.webm vp9cake.webm av1.mp4 gizmo.mp4"
+FILE="${FILE:-sound.ogg small-shot.flac small-shot.mp3 small-shot.m4a bipbop_short_vp8.webm vp9cake.webm av1.mp4 gizmo.mp4}"
 for f in $FILE; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
 cat > "$S/profilo/user.js" <<'EOF'
 user_pref("browser.dom.window.dump.enabled", true);
@@ -33,6 +35,7 @@ EOF
 {
 cat <<'EOF'
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>media</title></head><body><script>
+var ATTESA_MS = __ATTESA_MS__;
 var file = [
 EOF
 for f in $FILE; do echo "  \"$f\","; done
@@ -49,17 +52,18 @@ function prova(i) {
   e.play().catch(function (x) { err = err || ("play: " + x.name); });
   setTimeout(function () {
     var q = v && e.getVideoPlaybackQuality ? e.getVideoPlaybackQuality().totalVideoFrames : -1;
-    dump("MEDIA " + f + " tempo=" + e.currentTime.toFixed(2) + " pronto=" + e.readyState +
+    dump("MEDIA " + f + " tempo=" + e.currentTime.toFixed(2) + " durata=" + (e.duration || 0).toFixed(2) +
+         " finito=" + (e.ended ? 1 : 0) + " pronto=" + e.readyState +
          " fotogrammi=" + q + " " + (err || "ok") + "\n");
     e.pause(); e.removeAttribute("src"); e.load(); e.remove();
     setTimeout(function () { prova(i + 1); }, 1500);
-  }, 8000);
+  }, ATTESA_MS);
 }
 dump("MEDIA-INIZIO\n");
 prova(0);
 </script></body></html>
 EOF
-} > "$S/media.html"
+} | sed "s/__ATTESA_MS__/${ATTESA_FILE:-8}000/" > "$S/media.html"
 MB=$(( $(du -sm "$S" | cut -f1) * 13 / 10 + 128 ))
 IMG="$D/media-hd.img"; PART="$D/media-part.img"
 rm -f "$IMG" "$PART"
@@ -84,7 +88,10 @@ esito=0
 for f in $FILE; do
     r=$(grep -a "^MEDIA $f " "$D/media-seriale.txt" | tail -1)
     t=$(echo "$r" | sed -n 's/.*tempo=\([0-9.]*\).*/\1/p'); q=$(echo "$r" | sed -n 's/.*fotogrammi=\(-\?[0-9]*\).*/\1/p')
-    if [ -n "$r" ] && echo "$r" | grep -q " ok$" && [ "${t%%.*}" -ge 1 ] && [ "${q:-0}" != 0 ]; then
+    d=$(echo "$r" | sed -n 's/.*durata=\([0-9.]*\).*/\1/p')
+    # time went forward: to the end of the file, or at least one second
+    avanti=$(python3 -c "import sys; t, d = float('${t:-0}'), float('${d:-0}'); print(1 if t > 0 and (t >= 1 or t >= 0.9 * d) else 0)")
+    if [ -n "$r" ] && echo "$r" | grep -q " ok$" && [ "$avanti" = 1 ] && [ "${q:-0}" != 0 ]; then
         echo "  [OK] $r"
     else
         echo "  [NO] ${r:-MEDIA $f: nessuna riga}"; esito=1

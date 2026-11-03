@@ -113,6 +113,40 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Audio e video: i codec, VLC, e tre guasti che tenevano muto ogni lettore (ac97.drv 0.003, hdaudio.drv 0.006, sb.drv 0.002, es1371.drv 0.002)
+
+**Provato** in QEMU a 32 e 64 bit (`tools/vlc-exos/prova.sh 32` e `64`): VLC suona Vorbis, FLAC
+e MP3 sulla scheda AC'97, e H.264, VP9 e AV1 in una finestra di ExWin, poi esce da solo. Sul
+portatile (HD Audio, codec 14f1:5051) VLC suona l'audio di un file H.264/AAC con `hdaudio.drv`
+0.006 ed esce; **resta da ascoltare se si sente bene**.
+
+- **I codec come librerie vere**, a 32 e 64 bit, ultime versioni pubbliche, sorgenti sul CD
+  degli strumenti: libogg 1.3.6, libvorbis 1.3.7, Opus 1.6.1, FLAC 1.5.0, libvpx 1.17.0, dav1d
+  1.5.4 e FFmpeg 9.0.2 (`ffmpeg`, `ffprobe` e le librerie libav, versione LGPL), ognuno col suo
+  `tools/<nome>-exos/costruisci.sh`. `tools/prova_codec.sh` decodifica dentro EX-OS i file di
+  prova di Firefox e confronta con FFmpeg su Linux: il video e' identico fotogramma per
+  fotogramma.
+- **VLC 3.0.24** (`tools/vlc-exos/costruisci.sh`, gruppo VLC del CD strumenti). EX-OS non ha
+  dlopen, quindi i suoi 234 moduli stanno in un programma solo. Due uscite sono nuove e nostre:
+  il suono sul servizio `audio` (`aout_exos`) e le immagini in una finestra di ExWin
+  (`vout_exos`). Vedi `help vlc`.
+- **Driver audio.** Riconoscevano il lettore dal filo che aveva aperto il suono: un lettore che
+  apre da un filo e avvia da un altro (VLC, Firefox) si vedeva buttare l'avvio senza una parola,
+  non suonava niente e il lettore aspettava per sempre. Ora conta il programma, non il filo.
+- **AC'97.** La lista dei descrittori aveva 2 voci, il controller ne conta 32: si perdeva la terza
+  meta' di ogni riproduzione, 85 ms, e l'orologio di chi suonava saltava. Trovato con un file in
+  cui ogni campione porta il proprio numero.
+- **Firefox** (`tools/exilla/prova-media.sh`, QEMU, 64 bit): Ogg Vorbis, FLAC, MP3, VP8, VP9 e
+  AV1 arrivano alla fine, col suono sul servizio `audio` e i fotogrammi decodificati. Prima il
+  primo video faceva cadere Firefox: la HAL (i wake lock) non veniva mai avviata, ora la avvia
+  l'AppShell. cubeb ora si adatta alla scheda: mono/stereo e frequenza si convertono quando il
+  driver concede altro da quello chiesto. **Non ancora**: H.264 e AAC (`gizmo.mp4`, `.m4a`
+  dicono "Failed to open media": su Linux Firefox li prende dall'FFmpeg di sistema con dlopen,
+  che EX-OS non ha); Firefox a 32 bit non ricostruito; non provato sul portatile.
+- **libc.** `pthread_exit` ora esegue i gestori di `pthread_cleanup_push`. Prima un filo finito
+  cosi' teneva preso il suo lucchetto, e VLC non usciva mai a fine file. `sync()` non e' piu'
+  dichiarata al codice di terzi fuori da `<unistd.h>`: libaom e libvpx ne hanno una loro.
+
 ### I driver finiti non scrivono piu' nei programmi degli altri (kernel 0.309 e 0.310, chkdsk 0.004)
 
 **Provato** sul portatile col kernel 0.310: dopo `system -unload`, 0 byte estranei su 512 MB

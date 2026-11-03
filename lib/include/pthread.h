@@ -193,12 +193,30 @@ int   pthread_setspecific(pthread_key_t k, const void *valore);
 }
 #endif
 
-/* pthread_cleanup_push/pop: EX-OS has no pthread_cancel, so a handler can only
- * run through pop(1) - or never. A pair opens and closes one block, as POSIX
- * allows the macros to do. */
+/* pthread_cleanup_push/pop: a stack of handlers per thread, kept by the libc,
+ * that pthread_exit runs, the last pushed first. EX-OS has no pthread_cancel,
+ * but a library that cancels by itself does: VLC's Android threads end a
+ * cancelled thread with pthread_exit, and the handler it pushed is the one
+ * that unlocks its mutex. Run by pop(1) only, as before 3 November 2026, the
+ * thread died holding the lock and VLC never quit at the end of a file. A
+ * pair opens and closes one block, as POSIX allows the macros to do. */
+struct exos_pulizia {
+    void (*fn)(void *);
+    void *arg;
+    struct exos_pulizia *prec;
+};
+#ifdef __cplusplus
+extern "C" {
+#endif
+void exos_pulizia_metti(struct exos_pulizia *p);
+void exos_pulizia_togli(struct exos_pulizia *p, int esegui);
+#ifdef __cplusplus
+}
+#endif
 #define pthread_cleanup_push(fn, arg) \
-    { void (*exos_pulizia_fn)(void *) = (fn); void *exos_pulizia_arg = (arg);
+    { struct exos_pulizia exos_pulizia_v = { (fn), (arg), 0 }; \
+      exos_pulizia_metti(&exos_pulizia_v);
 #define pthread_cleanup_pop(esegui) \
-      if (esegui) exos_pulizia_fn(exos_pulizia_arg); }
+      exos_pulizia_togli(&exos_pulizia_v, (esegui)); }
 
 #endif /* EXOS_PTHREAD_H */

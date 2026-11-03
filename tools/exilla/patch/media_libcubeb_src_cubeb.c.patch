@@ -1,0 +1,44 @@
+--- a/media/libcubeb/src/cubeb.c
++++ b/media/libcubeb/src/cubeb.c
+@@ -60,6 +60,10 @@
+ int
+ wasapi_init(cubeb ** context, char const * context_name);
+ #endif
++#if defined(USE_EXOS)
++int
++exos_init(cubeb ** context, char const * context_name);
++#endif
+ #if defined(USE_SNDIO)
+ int
+ sndio_init(cubeb ** context, char const * context_name);
+@@ -187,6 +191,10 @@
+ #if defined(USE_WINMM)
+       init_oneshot = winmm_init;
+ #endif
++    } else if (!strcmp(backend_name, "exos")) {
++#if defined(USE_EXOS)
++      init_oneshot = exos_init;
++#endif
+     } else if (!strcmp(backend_name, "sndio")) {
+ #if defined(USE_SNDIO)
+       init_oneshot = sndio_init;
+@@ -235,6 +243,9 @@
+ #if defined(USE_JACK)
+       jack_init,
+ #endif
++#if defined(USE_EXOS)
++      exos_init,
++#endif
+ #if defined(USE_SNDIO)
+       sndio_init,
+ #endif
+@@ -333,6 +344,9 @@
+ #if defined(USE_WINMM)
+       "winmm",
+ #endif
++#if defined(USE_EXOS)
++      "exos",
++#endif
+ #if defined(USE_SNDIO)
+       "sndio",
+ #endif

@@ -1,6 +1,17 @@
 --- a/build/gecko_templates.mozbuild
 +++ b/build/gecko_templates.mozbuild
-@@ -41,7 +41,12 @@
+@@ -26,6 +26,10 @@
+             "nspr",
+             "xul-real",
+         ]
++        # EX-OS (Exilla): static, the FFT of WebAudio comes from here
++        # (FFVPXRuntimeLinker). On a static library USE_LIBS would not arrive.
++        if CONFIG["OS_TARGET"] == "EXOS":
++            USE_LIBS += ["mozavcodec", "mozavutil"]
+     elif linkage == "standalone":
+         DEFINES["XPCOM_GLUE"] = True
+ 
+@@ -41,7 +45,12 @@
              if CONFIG["MOZ_ASAN"] or CONFIG["MOZ_UBSAN"] or CONFIG["MOZ_TSAN"]:
                  USE_LIBS += ["sanitizer-options"]
              DEFINES["MOZ_HAS_MOZGLUE"] = True

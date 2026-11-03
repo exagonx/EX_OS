@@ -21,7 +21,7 @@
 +  nsresult Init();
 +
 + protected:
-+  virtual ~nsAppShell() = default;
++  virtual ~nsAppShell();
 +
 +  void ScheduleNativeEventCallback() override;
 +  bool ProcessNextNativeEvent(bool aMayWait) override;
