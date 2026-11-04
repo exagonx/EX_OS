@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `mouseser.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("mouseser.drv", "0.001");
+EX_VERSIONE("mouseser.drv", "0.002");
 
 /* --- UART 16550, spiazzamenti dalla base --------------------------------- */
 #define U_DATI      0   /* RBR/THR (e DLL quando DLAB e' acceso) */
@@ -146,6 +146,7 @@ static void byte_arrivato(unsigned char b)
         if (g_pkt[0] & 0x20) g_bottoni |= MOUSE_BTN_SIN;
         if (g_pkt[0] & 0x10) g_bottoni |= MOUSE_BTN_DES;
         g_novita = 1;
+        attivita_tocca();   /* the screen stays on (kernel 0.312, dpms.drv) */
     }
 }
 

@@ -66,6 +66,9 @@ const AudioScheda *audio_riconosci(unsigned short venditore,
                                    unsigned short dispositivo);
 const AudioScheda *audio_scheda(int i);
 int                audio_schede_note(void);
+/* Il driver per una scheda che non e' in tabella, dalla classe PCI:
+ * 04/01 ac97.drv, 04/03 hdaudio.drv, altrimenti NULL. */
+const AudioScheda *audio_per_classe(unsigned char classe, unsigned char sottoclasse);
 
 /* =============================================================================
  * I driver da PROVARE quando il bus non dice niente

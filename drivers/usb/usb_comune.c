@@ -392,12 +392,18 @@ int usb_hub_porta_pronta(UsbControllo ctl, unsigned int dev, unsigned int p,
 int usb_mouse_rapporto(const unsigned char *r, unsigned int n,
                        int *dx, int *dy, unsigned int *bottoni)
 {
+    unsigned int b = 0;
+
     if (n < 3) return 0;
 
-    *bottoni = 0;
-    if (r[0] & 0x01) *bottoni |= MOUSE_BTN_SIN;
-    if (r[0] & 0x02) *bottoni |= MOUSE_BTN_DES;
-    if (r[0] & 0x04) *bottoni |= MOUSE_BTN_CEN;
+    if (r[0] & 0x01) b |= MOUSE_BTN_SIN;
+    if (r[0] & 0x02) b |= MOUSE_BTN_DES;
+    if (r[0] & 0x04) b |= MOUSE_BTN_CEN;
+    /* Somebody is using the machine (kernel 0.312, /dev/dpms.drv, voce 78 b).
+     * ! ONLY A REPORT THAT SAYS SOMETHING: a mouse may repeat the same report
+     * with nothing moved, and that must not keep the screen on all night. */
+    if (b != *bottoni || r[1] || r[2] || (n >= 4 && r[3])) attivita_tocca();
+    *bottoni = b;
 
     /* ! SI SOMMA, NON SI SOSTITUISCE. La mailbox IPC e' profonda quattro
      * messaggi: un mouse che mandasse un evento per movimento la riempirebbe

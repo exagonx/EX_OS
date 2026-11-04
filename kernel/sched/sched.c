@@ -23,6 +23,7 @@
 #include "kmalloc.h"
 #include "gdt.h"
 #include "smp.h"   /* cpu_n, il lucchetto del kernel: la tappa 3 */
+#include "cpufreq.h" /* cpufreq_battito: the frequency follows the load (0.311) */
 #include "idt.h"
 #include "isr.h"
 #include "vfs.h"   /* vfs_close: l'eseguibile aperto per il caricamento su richiesta */
@@ -1149,6 +1150,7 @@ void sched_battito_cpu(void)
     if (g_sched_stopped || !g_smp_lavora || g_current == NULL) return;
 
     g_current->ticks_total++;
+    cpufreq_battito(cpu_n(), g_current == g_idle_task);
     if (g_current->quantum > 0) g_current->quantum--;
     sched_battito_comune();
 }
@@ -1305,6 +1307,7 @@ static void sched_irq0_handler(InterruptFrame *frame)
 
     /* Aggiorna contatori processo corrente */
     g_current->ticks_total++;
+    cpufreq_battito(cpu_n(), g_current == g_idle_task);
 
     /* Decrementa quantum */
     if (g_current->quantum > 0) {

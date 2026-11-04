@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("uhci.drv", "0.004");
+EX_VERSIONE("uhci.drv", "0.005");
 
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */

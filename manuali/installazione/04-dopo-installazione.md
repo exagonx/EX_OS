@@ -356,11 +356,43 @@ nv50.drv -remove             lo toglie
 ```
 
 Il blocco comincia con `# -install <driver>` e finisce alla prima riga
-vuota; `hwconfig`, che riscrive `avvio.sh`, lo riporta avanti. Oggi lo ha
-`nv50.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
+vuota; `hwconfig`, che riscrive `avvio.sh`, lo riporta avanti. Oggi lo hanno
+`nv50.drv` e `cpufreq.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
 vecchio modo: la riga in `avvio.sh` (che `hwconfig` riscrive) o la voce in
 `[modules]` di `kernel.cfg` per ciò che deve esserci prima di tutto, come la
 tastiera.
+
+### La frequenza del processore: `cpufreq.drv`
+
+Dal kernel 0.311 il processore può andare più piano, e con meno tensione,
+quando c'è poco da fare. Lo fa il kernel a ogni battito di ogni processore;
+`cpufreq.drv` dice cosa c'è e sceglie il modo:
+
+```
+cpufreq.drv                  cosa ha il processore e dove sta adesso
+cpufreq.drv -auto            la frequenza segue il carico (root)
+cpufreq.drv -max / -min      sempre la più alta / la più bassa
+cpufreq.drv -fisso:N         sempre lo stato N (0 = il più veloce)
+cpufreq.drv -spento          il kernel lascia stare: torna lo stato trovato
+cpufreq.drv -guarda 10       frequenza e carico ogni secondo, dieci volte
+cpufreq.drv -install         -auto a ogni avvio; -remove lo toglie
+```
+
+In `-auto` sopra l'80% di carico il processore va subito al massimo, sotto
+il 30% scende di uno stato ogni 100 ms: un programma che parte non aspetta,
+e una pausa breve non basta a rallentare.
+
+! **Su quali processori.** AMD dalla famiglia 10h (gli Athlon e Turion X2
+  dei portatili dal 2008, come l'Athlon QL-64 del Compaq CQ60) e Intel da
+  Sandy Bridge (Core di seconda generazione) in poi. Gli AMD K8 e gli Intel
+  più vecchi (Pentium M, Core 2) restano come li lascia il BIOS: `cpufreq.drv`
+  lo dice. Senza le tabelle ACPI `_PSS`, che EX-OS non legge ancora, gli stati
+  si chiedono al processore stesso.
+
+! **Quando non tocca niente, e lo dice.** In una macchina virtuale (gli MSR
+  della frequenza non sono veri), con il TSC non invariante (il kernel misura
+  le scadenze con il TSC: cambierebbero con la frequenza), con SpeedStep spento
+  dal BIOS o con HWP acceso (lì decide il processore da solo).
 
 ---
 

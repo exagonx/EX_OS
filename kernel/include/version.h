@@ -778,7 +778,13 @@
  * executable fails instead of filling up with zeros. */
 /* 0.308 -> 0.309: USER_STACK_SLACK at 64 bit covers the red zone. */
 /* 0.309 -> 0.310: the DMA pages of a dead driver are not given back. */
-#define EXOS_VERSION    "0.310"
+/* 0.310 -> 0.311: the CPU frequency (voce 78): cpufreq.c finds the P-states of
+ * AMD family 10h+ and Intel Sandy Bridge+, a governor at each processor's tick
+ * follows the load, SYS_CPUFREQ (261) for /dev/cpufreq.drv. */
+/* 0.311 -> 0.312: SYS_ATTIVITA (262), the time of the last key or mouse
+ * movement, for /dev/dpms.drv (voce 78 b): the input drivers touch it, the
+ * screen driver reads it. */
+#define EXOS_VERSION    "0.312"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

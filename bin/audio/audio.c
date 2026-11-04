@@ -55,7 +55,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `audio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("audio", "0.004");
+EX_VERSIONE("audio", "0.005");
 
 #define ATTESA_MS       2000
 
@@ -278,7 +278,8 @@ static int cerca_candidati(char driver[4][64], char modello[4][64])
     pid_pci = ipc_lookup("pci");
     if (pid_pci > 0) {
         /* Classe 0x04 = multimedia. La sottoclasse distingue AC'97 (0x01) da
-         * HD Audio (0x03), ma il driver lo dice gia' la tabella. */
+         * HD Audio (0x03): il driver lo dice la tabella, e per una scheda che
+         * non c'e' lo dice la sottoclasse (audio_per_classe). */
         for (ord = 0; ord < 8 && n < 4; ord++) {
             PciDispositivo d;
             const AudioScheda *s;
@@ -286,9 +287,10 @@ static int cerca_candidati(char driver[4][64], char modello[4][64])
             if (pci_chiedi(pid_pci, (unsigned int)ord, 0x04, &d) != 1) break;
 
             s = audio_riconosci(d.venditore, d.dispositivo);
+            if (!s) s = audio_per_classe(d.classe, d.sottoclasse);
             if (!s) {
-                printf("  %04x:%04x  scheda audio non riconosciuta\n",
-                       d.venditore, d.dispositivo);
+                printf("  %04x:%04x  scheda audio non riconosciuta (sottoclasse %02x)\n",
+                       d.venditore, d.dispositivo, d.sottoclasse);
                 continue;
             }
             if (!s->driver) {
@@ -1133,6 +1135,8 @@ static void tabella(void)
         printf("  %04x:%04x  %-41s  %s\n", s->venditore, s->dispositivo,
                s->modello, s->driver ? s->driver : "(da scrivere)");
     }
+    printf("\nUna scheda che non e' qui si riconosce dalla classe PCI:\n");
+    printf("  04/03 HD Audio  /dev/hdaudio.drv     04/01 AC'97  /dev/ac97.drv\n");
 
     printf("\nSchede ISA: non si enumerano, si provano -\n\n");
     for (i = 0; i < audio_isa_quanti(); i++) {

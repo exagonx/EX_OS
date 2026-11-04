@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.310
+**Version:** 0.312
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,67 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### The CPU frequency follows the load (kernel 0.311, cpufreq.drv 0.001)
+
+- **The kernel lowers the clock, and with it the voltage, when there is little to do**
+  (`kernel/arch/x86/cpufreq.c`). Until 0.310 the only saving was the `hlt` of the idle task, always
+  at full clock. At the tick of every working processor the kernel counts the idle ticks of the last
+  100 ms: at 80% load or more it goes to the fastest state at once, below 30% it steps down one state.
+  Each processor writes its own MSR: no messages between processors.
+- **Which processors:** AMD family 10h and later with hardware P-states (the Athlon QL-64 of the
+  laptop is family 11h) and Intel Sandy Bridge and later with SpeedStep. Without an ACPI interpreter
+  the table comes from the processor itself (AMD MSR C001_0064+, Intel MSR_PLATFORM_INFO). Nothing is
+  touched in a virtual machine, with a TSC that is not invariant (the kernel's timeouts are measured
+  with the TSC), with SpeedStep off in the BIOS or with Intel HWP on: `cpufreq.drv` says why.
+- **`/dev/cpufreq.drv`**: shows the states and where each processor is; `-auto`, `-max`, `-min`,
+  `-fisso:N`, `-spento`, `-guarda`; `-install` writes `cpufreq.drv -auto` in `/boot/avvio.sh`. At boot
+  the mode is `spento`: nothing changes until it is asked. `help cpufreq`, manual 4.9.
+- `tools/prova_cpufreq.sh`: in QEMU at 32 and 64 bit, with and without the hypervisor bit (nothing
+  breaks, the reasons are right, -install and -remove), 16 out of 16.
+- **Tested on the laptop** (Athlon QL-64, 4 November): the kernel finds 2 states, 2100 and 1050 MHz;
+  `-min` goes to 1050, `-max` to 2100; with `-auto` it stays at 1050 when idle, goes to 2100 at 100%
+  load for the whole of a 9-second `sha256sum` and comes back to 1050 the second after.
+- ! **Only the first processor**: the laptop's second core is started but does not run tasks yet
+  (`SMP: ... 0 dei quali lavorano`), so it has no tick and its P-state stays where the BIOS left it.
+
+### The laptop's sound starts by itself, and ls lists every name (audio 0.005, ls 0.003)
+
+- **`audio -i` did not try the laptop's card.** The NVIDIA MCP78 HD Audio (`10de:0774`, Conexant
+  codec `14f1:5051`) was not in the table of `lib/audio.c`, so `audio -i` said "scheda audio non
+  riconosciuta" and tried only the Sound Blaster, while `hdaudio.drv` started by hand played. No new
+  driver was needed: HD Audio and AC'97 are standard interfaces. The MCP78 is now in the table, and a
+  card that is not there is recognised by its PCI class (`audio_per_classe`: 04/03 `hdaudio.drv`,
+  04/01 `ac97.drv`). **Tested on the laptop:** `audio -i` installs `hdaudio.drv` in
+  `/boot/kernel.cfg`, after `reboot` the sound is on with no command and `audio -c` passes. In QEMU at
+  32 bit with an ICH9 HD Audio: the same. The class fallback alone is **to be tested** on a card that
+  is not in the table.
+- **`ls` with several names showed only the first** and dropped the others without a word
+  (`ls -l /exos/lib/libavcodec*` showed one file out of three). From 0.003 every name is listed in
+  order; a directory among several names gets its name above it, the header is printed once, a name
+  that does not exist is an error but the others are still listed. **Tested** on the laptop (64 bit)
+  and in QEMU (32 bit).
+- **Firefox and VLC on the laptop** (4 November): Firefox plays Vorbis, FLAC, MP3, AAC, VP8, VP9, AV1
+  and H.264 (`gizmo.mp4` to the end, 166 frames): the H.264 stall of voce 77 is QEMU's only. VLC
+  plays `gizmo.mp4` with sound through the EX-OS output. ! The **first** file Firefox plays after it
+  starts stays at 0 seconds, whatever it is; the following ones play. Not found yet.
+
+### The boot sector no longer goes back to the old kernel after an update (netupdate 0.043, voce 75)
+
+- **Cause found** on the laptop, which twice after `netupdate` (2 and 4 November) started the kernel of
+  before with the disk read-only. With the partition unmounted (`system -unload`, from `/rdboot`)
+  `tools/prove/mappa.c` read the boot sector: it held the map of 2 November, while netupdate had
+  printed the new one. On ext4 with 4 KB blocks block 0 holds both the boot sector and the
+  superblock; the `ext4.mod` loaded in memory was the one from before the update (the new one was
+  only in `/dev`), which up to 2 November wrote block 0 whole at the journal checkpoint, with the
+  boot sector as it was before bootinstall. Since kernel 0.307 that checkpoint comes up to 5 seconds
+  later. The module has been fixed since 0.310 (`al_suo_posto`, `tools/prova_mappa_giornale.sh`).
+- **netupdate 0.043 calls `sync()` right before rewriting the boot sector**, and once more after: the
+  journal is emptied first, so a module of before can no longer put the old map back.
+- Repaired on the laptop with the recipe of `help problemi` (`modulo carica /dev/ext4.mod.old`,
+  `netupdate -avvio`): the boot sector read again from outside held the 0.311 map, the sectors equal
+  byte by byte to `/boot/kernel.bin`; after `reboot`, 0.311 with the disk read-write. **Tested** the
+  repair; netupdate 0.043 **to be tested** on the next kernel update of the laptop.
 
 ### netupdate brings the new files of installed packages, and VLC finds its libraries (netupdate 0.042)
 

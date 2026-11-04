@@ -44,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.042");
+EX_VERSIONE("netupdate", "0.043");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2082,6 +2082,19 @@ static int fase_avvio(int kernel, int stage2)
     if (stage2 && sostituisci("/boot/stage2.bin", "/boot/stage2.new") != 0) return -1;
     if (kernel && sostituisci("/boot/kernel.bin", "/boot/kernel.new") != 0) return -1;
 
+    /* ! SYNC BEFORE THE BOOT SECTOR (0.043, voce 75). The ext4.mod running
+     * here may be the one loaded at boot, before this update replaced it in
+     * /dev, and up to 0.310 of 2 November it wrote block 0 WHOLE at the
+     * journal checkpoint: the superblock with, in front of it, the 1024 bytes
+     * of the boot sector as they were when the superblock changed. Since
+     * 0.307 the commit comes up to 5 seconds later, so the renames above
+     * left a copy with the OLD map in the open transaction, and it went back
+     * on the disk after bootinstall: the laptop started the old kernel, twice
+     * (2 and 4 November, measured with tools/prove/mappa.c). sync() commits
+     * and checkpoints now, and a superblock changed after bootinstall is
+     * read again from the disk, new map included. An old kernel without
+     * SYS_SYNC says ENOSYS and nothing changes. */
+    sync();
     r = bootinstall("/", &info);
     if (r != 0) {
         printf("  ! il settore di avvio NON e' stato riscritto (errore %d).\n", r);
@@ -2094,6 +2107,7 @@ static int fase_avvio(int kernel, int stage2)
     }
     printf("  = settore di avvio riscritto: kernel a LBA %u, %u settori\n",
            info.k_lba, info.k_cnt);
+    sync();     /* and the map is committed before anyone reboots */
     if (kernel) printf("  = il kernel di prima resta in /boot/kernel.bin.old\n");
     return 0;
 }

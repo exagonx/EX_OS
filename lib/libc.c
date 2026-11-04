@@ -291,6 +291,8 @@ typedef struct {
 #define SYS_AHCI_PASSA   85
 #define SYS_GUARDIA      259
 #define SYS_SYNC         260
+#define SYS_CPUFREQ      261
+#define SYS_ATTIVITA     262
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -8322,6 +8324,88 @@ int cpu_lavora(void)
 void sync(void)
 {
     (void)_syscall1(SYS_SYNC, 0);
+}
+
+/* The CPU frequency (kernel 0.311): see cpufreq_info in libc.h.
+ * ! libc.c does not include libc.h, so the structure is here a third time,
+ * the same as libc.h and kernel/include/cpufreq.h: change all three. */
+#define CPUFREQ_OP_INFO     0
+#define CPUFREQ_OP_MODO     1
+typedef struct {
+    unsigned int versione;
+    unsigned int tipo, perche;
+    unsigned int famiglia, modello;
+    unsigned int n;
+    unsigned int mhz[16];
+    unsigned int primo, ultimo;
+    unsigned int modo, fisso;
+    unsigned int su, giu;
+    unsigned int ncpu;
+    unsigned int cpu_stato[16];
+    unsigned int cpu_carico[16];
+    unsigned int cpu_cambi[16];
+} CpuFreqInfo;
+
+int cpufreq_info(CpuFreqInfo *i)
+{
+    int r = _syscall3(SYS_CPUFREQ, CPUFREQ_OP_INFO, (uintptr_t)i, (uintptr_t)sizeof(*i));
+
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+int cpufreq_modo(unsigned int modo, unsigned int fisso)
+{
+    int r = _syscall3(SYS_CPUFREQ, CPUFREQ_OP_MODO, (uintptr_t)modo, (uintptr_t)fisso);
+
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+/* The last input event (kernel 0.312, SYS_ATTIVITA): see libc.h. */
+/* ! ON A KERNEL OLDER THAN 0.312 THE CALL IS NOT MADE AT ALL: an unknown
+ * syscall is a WARN line in the log, and an input driver calls this at every
+ * key - a new kbd.drv on an old kernel would write on the console at each
+ * press. The version is asked once ("Versione: 0.NNN" in SYS_VERSION). */
+static int g_attivita_c;    /* 0 = not asked yet, 1 = the kernel has it, 2 = no */
+
+static int attivita_c(void)
+{
+    if (g_attivita_c == 0) {
+        char b[256];
+        const char *p;
+        int n = (int)_syscall2(SYS_VERSION, (uintptr_t)b, sizeof(b)), v = 0;
+
+        g_attivita_c = 2;
+        if (n > 0) {
+            b[n < (int)sizeof(b) ? n : (int)sizeof(b) - 1] = '\0';
+            for (p = b; *p; p++)
+                if (p[0] == ':' && p[1] == ' ' && p[2] >= '0' && p[2] <= '9' && p[3] == '.') {
+                    int maj = p[2] - '0';
+                    const char *q = p + 4;
+                    while (*q >= '0' && *q <= '9') v = v * 10 + (*q++ - '0');
+                    if (maj > 0 || v >= 312) g_attivita_c = 1;
+                    break;
+                }
+        }
+    }
+    return g_attivita_c;
+}
+
+void attivita_tocca(void)
+{
+    if (attivita_c() == 1) (void)_syscall1(SYS_ATTIVITA, 0);
+}
+
+int attivita_da(void)
+{
+    int r;
+
+    if (attivita_c() != 1) { errno = ENOSYS; return -1; }
+    r = _syscall1(SYS_ATTIVITA, 1);
+
+    if (r < 0) { errno = -r; return -1; }
+    return r;
 }
 
 /* Seconds to a reset unless called again, 0 = off. See bin/guardia. */

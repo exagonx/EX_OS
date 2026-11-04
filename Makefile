@@ -427,10 +427,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exht
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv nv50_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv nv50_drv cpufreq_drv dpms_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv nv50.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
+DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv nv50.drv cpufreq.drv dpms.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -5465,6 +5465,53 @@ $(NV50_DRV_OUT): $(NV50_DRV_SRC) $(PCI_DRV_PROTO) drivers/accel/accel_proto.h $(
 .PHONY: nv50_drv
 nv50_drv: dirs $(NV50_DRV_OUT)
 
+# --- cpufreq.drv: the CPU frequency (voce 78, kernel 0.311, solo CD) ----------
+# The governor is in the kernel (kernel/arch/x86/cpufreq.c); this program shows
+# and sets the mode with SYS_CPUFREQ and has -install/-remove.
+CPUFREQ_DRV_SRC := drivers/cpufreq/cpufreq.c
+CPUFREQ_DRV_OUT := $(BUILD_DRIVERS_CD)/cpufreq.drv
+CPUFREQ_DRV_LD  := drivers/cpufreq/cpufreq.ld
+
+$(CPUFREQ_DRV_OUT): $(CPUFREQ_DRV_SRC) $(CPUFREQ_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 cpufreq.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(CPUFREQ_DRV_SRC) -o $(BUILD_DRIVERS_CD)/cpufreq_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/cpufreq_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/cpufreq_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CPUFREQ_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/cpufreq_start.o \
+	    $(BUILD_DRIVERS_CD)/cpufreq_main.o  \
+	    $(BUILD_DRIVERS_CD)/cpufreq_libc.o  \
+	    -o $@
+	@echo "[OK] cpufreq.drv compilato: $@"
+
+.PHONY: cpufreq_drv
+cpufreq_drv: dirs $(CPUFREQ_DRV_OUT)
+
+# --- dpms.drv: the screen switches off when nobody uses it (voce 78 b) --------
+# The time of the last key or movement comes from the kernel (0.312,
+# SYS_ATTIVITA); the panel goes off through the SOR on NVIDIA G80+, through
+# SR01 on every other card.
+DPMS_DRV_SRC := drivers/dpms/dpms.c
+DPMS_DRV_OUT := $(BUILD_DRIVERS_CD)/dpms.drv
+DPMS_DRV_LD  := drivers/dpms/dpms.ld
+
+$(DPMS_DRV_OUT): $(DPMS_DRV_SRC) $(PCI_DRV_PROTO) $(DPMS_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 dpms.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(DPMS_DRV_SRC) -o $(BUILD_DRIVERS_CD)/dpms_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/dpms_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/dpms_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DPMS_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/dpms_start.o \
+	    $(BUILD_DRIVERS_CD)/dpms_main.o  \
+	    $(BUILD_DRIVERS_CD)/dpms_libc.o  \
+	    -o $@
+	@echo "[OK] dpms.drv compilato: $@"
+
+.PHONY: dpms_drv
+dpms_drv: dirs $(DPMS_DRV_OUT)
+
 # --- ar5k.drv: the Atheros AR5xxx WiFi chips (AR5212 family), @WIFI W7 --------
 # First stage (15 October 2026): `ar5k.drv -i` wakes the chip, reads radio and
 # EEPROM and puts it back as found. Sequences from Linux's ath5k (ISC), see
@@ -5847,6 +5894,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/loader/modulo.c \
                   $(KERNEL_DIR)/arch/x86/power.c \
                   $(KERNEL_DIR)/arch/x86/acpi.c \
+                  $(KERNEL_DIR)/arch/x86/cpufreq.c \
                   $(KERNEL_DIR)/version.c \
                   $(KERNEL_DIR)/kernel_main.c
 
@@ -8202,7 +8250,7 @@ BINARI_SOLO_CD := $(SYNC_BIN) $(GUARDIA_BIN) $(WIFID_BIN) $(EXTASKBAR_BIN) $(PRO
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(AR5K_DRV_OUT) $(WIFISIM_OUT) $(FETTA_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
-                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(NV50_DRV_OUT) $(RTL8169_DRV_OUT) \
+                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(NV50_DRV_OUT) $(CPUFREQ_DRV_OUT) $(DPMS_DRV_OUT) $(RTL8169_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
                       $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \

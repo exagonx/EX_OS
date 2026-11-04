@@ -41,6 +41,7 @@
 #include "tty.h"
 #include "kbd_proto.h"
 #include "version.h"
+#include "cpufreq.h"
 
 /* Simboli dal linker script */
 extern uint32_t _kernel_start;
@@ -986,6 +987,10 @@ KernelConfig *cfg = cfg_load();
     /* The ACPI tables for shutdown and reboot: read now, with interrupts
      * on, and logged - `dmesg` says what shutdown will do on this machine. */
     acpi_init();
+
+    /* The P-states, after smp_init (voce 78): found and logged, nothing is
+     * written until /dev/cpufreq.drv asks. See cpufreq.c. */
+    cpufreq_init();
 
     /* =====================================================================
      * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.

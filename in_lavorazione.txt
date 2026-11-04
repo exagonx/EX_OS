@@ -77,7 +77,9 @@ Il testo: cercare "  NN. " in questo file. Ordine: gruppi da 2 a 10.
 
 GRUPPO  VOCI             COSA
 ------  ---------------  ----------------------------------------------------
-  1     78               driver del risparmio energetico (l'utente 4/11: PROSSIMO)
+  1     78               risparmio energetico: frequenza CPU (in corso), poi schermo
+  1     79 80 81          (4/11) VLC nel program manager; menu Strumenti/Multimedia e
+                         lettore video; ExEditor: barra strumenti, righello, pagina
   2     74               FATTO 2/11 in QEMU; blocco duro non riprodotto
   3     75 5 65          dati sicuri: mappa d'avvio, spento da solo (59 e 63 fatte)
   4     50 62            tetti montaggi; telnetd (serve il passaggio in ip.drv). 53 e 9 fatte
@@ -8639,6 +8641,25 @@ tools/netinst/velocita tolto da netinst.
       QEMU da 0.307 con kernel.bin frammentato.
       ! Possibile aiuto: all'avvio provare anche /dev/ext4.mod.old se gli altri due
       sono rifiutati.
+      4/11, RICAPITATO da 0.310 a 0.311 (11:49, "kernel a LBA 2492904, 797
+      settori", al riavvio la 0.310). CAUSA TROVATA, misurata: a partizione
+      smontata (script in /rdboot: system -unload -yes, tools/prove/mappa.c,
+      system -load) il settore di avvio aveva ANCORA la mappa del 2/11 (LBA
+      3302248, 6 intervalli), uguale byte per byte a /boot/kernel.bin.old.
+      Il modulo ext4.mod in /dev dalle 07:46 era quello con la correzione del
+      3/11 (sha256 e8c04937... = costruito da HEAD), ma il portatile non era
+      stato riavviato fra le 07:46 e le 11:49: IN MEMORIA c'era quello di
+      prima, che al checkpoint scriveva il blocco 0 intero (superblocco con
+      davanti il settore di avvio preso prima di bootinstall); dal 0.307 il
+      checkpoint arriva fino a 5 s dopo. ! Che quello in memoria fosse il
+      modulo senza correzione e' dedotto dall'ora, non letto.
+      Riparato: modulo carica /dev/ext4.mod.old, netupdate -avvio, sync;
+      mappa a partizione smontata = 0.311 uguale a /boot/kernel.bin; reboot:
+      0.311, disco scrivibile.
+      Rimedio per chi aggiorna con un modulo vecchio in memoria: netupdate
+      0.043, sync() subito prima di bootinstall e dopo. ! Da provare al
+      prossimo aggiornamento del kernel del portatile.
+      Stato: causa trovata; da chiudere dopo quella prova.
 
   76. orologio IN FAULT ALL'AVVIO DELLA SCRIVANIA, A 64 BIT (3/11, QEMU, una
       volta su tre giri di tools/prova_expackage.sh, kernel 0.310): "[FAULT]
@@ -8652,6 +8673,69 @@ tools/netinst/velocita tolto da netinst.
       sul disco installato e' intero.
       Stato: in coda.
 
+  79. VLC INSTALLATO DA ExPackage NON COMPARE NEL PROGRAM MANAGER (l'utente,
+      4/11). Causa trovata: netupdate scrive la voce in
+      /exwin/lib/applicazioni.txt solo dalla chiave `menu` del catalogo
+      (menu_metti), e oggi la chiave ce l'ha solo exilla (la scrive
+      tools/mknetinst.sh). [vlc] in tools/iso/strumenti.txt non ha `menu`.
+      Da fare: `menu = Multimedia/VLC | /exos/bin/vlc | <icona>` (controllare
+      che mknetinst la copi da strumenti.txt nel catalogo), un'icona per VLC,
+      e sul portatile (VLC gia' installato) la voce va aggiunta: -install:vlc
+      di nuovo, o netupdate -check che rimetta i menu dei pacchetti presenti.
+      Guardare anche gli altri pacchetti con un programma grafico.
+      Stato: in coda.
+
+  80. PROGRAM MANAGER ORDINATO, E UN LETTORE VIDEO (l'utente, 4/11):
+      - Strumenti: File manager, Calctor, Archivi, Pennello, Immagini (oggi
+        in cima, fuori dalle cartelle; ExEditor, Terminale, EX-IDE, Prova
+        font, ExPackage ci sono gia').
+      - Multimedia (cartella nuova): Volume, Lettore audio, VLC (voce 79) e
+        una NUOVA APPLICAZIONE "Lettore video" di ExWin.
+      exwin/lib/applicazioni.txt; ! sulle macchine gia' installate il file
+      e' gia' stato riscritto da netupdate (menu_metti): l'aggiornamento
+      deve riordinare senza perdere le voci dei pacchetti.
+      Il lettore video: DECISO dall'utente il 4/11: sopra l'FFmpeg di
+      sistema (libavformat/libavcodec/libswscale/libswresample .so in
+      /exos/lib), come VLC; non sopra libvlc.
+      Stato: in coda.
+
+  82. FIREFOX: IL PRIMO FILE MULTIMEDIALE NON PARTE (portatile, 4/11).
+      Con media.html (8 file, 8 s ciascuno) e media2.html (mp3, ogg, ogg):
+      il PRIMO file suonato dopo l'avvio di Firefox resta a tempo=0.00,
+      readyState 4, qualunque sia; tutti i successivi vanno, anche lo stesso
+      formato. Pista: la prima apertura dell'uscita audio (cubeb -> servizio
+      audio, hdaudio.drv 0.006). Da provare: in QEMU con intel-hda se capita
+      uguale; un file muto (solo video) per primo.
+      Stato: aperta, causa non cercata.
+
+  83. audio -i NON RICONOSCEVA L'HD AUDIO DEL PORTATILE (4/11). nVidia MCP78
+      10de:0774 non in lib/audio.c: "scheda audio non riconosciuta", provata
+      solo sb.drv, mentre hdaudio.drv avviato a mano suonava (l'utente l'ha
+      sentito). L'utente: "serve il driver audio nvidia, crealo se
+      indispensabile altrimenti usa hdaudio ac97": NON indispensabile.
+      audio 0.005: la MCP78 in tabella, e audio_per_classe() per le schede
+      non in tabella (04/03 hdaudio.drv, 04/01 ac97.drv); audio -t lo dice.
+      Provato sul portatile: audio -i -> kernel.cfg audio = /dev/hdaudio.drv,
+      reboot, suono acceso senza comandi, audio -c tutto ok. QEMU 32 bit con
+      ich9-intel-hda: audio -i ok. ! Il ramo per classe da solo non provato
+      (serve una scheda fuori tabella).
+      Stato: fatta; resta la prova del ramo per classe.
+
+  84. ls MOSTRAVA SOLO IL PRIMO NOME (4/11). `ls -l /exos/lib/libavcodec*`
+      sul portatile: 1 file su 3, gli altri scartati in silenzio. ls 0.003:
+      tutti i nomi in ordine, directory col titolo, intestazione una volta,
+      un nome che manca e' un errore ma gli altri si elencano. Anche -mc su
+      un file non dice piu' "impossibile leggere". Provato sul portatile
+      (64) e in QEMU (32).
+      Stato: fatta.
+
+  81. ExEditor: QUEL CHE MANCA (l'utente, 4/11):
+      a) la barra degli strumenti: in Visualizza risulta attivabile, ma non
+         c'e';
+      b) il righello, per le tabulazioni e l'orientamento del testo;
+      c) la vista della pagina: un'anteprima sul foglio prima di stampare.
+      Stato: in coda.
+
   78. DRIVER DEL RISPARMIO ENERGETICO (l'utente, 4/11: "bisogna implementare
       il driver per il risparmio energetico", messo come PROSSIMA cosa dopo
       la 77 d). Oggi c'e' solo: l'`hlt` nell'ozio di sched.c, e in
@@ -8661,7 +8745,25 @@ tools/netinst/velocita tolto da netinst.
       niente batteria/rete elettrica, niente sospensione (S3).
       Da chiedere all'utente prima di cominciare: quali di queste, e in che
       ordine. Come ogni driver: .drv con -install/-remove, 32 e 64 bit.
-      Stato: in coda, primo.
+      L'utente, 4/11: "prima la frequenza della CPU, poi lo schermo".
+      a) FREQUENZA: kernel 0.311 (kernel/arch/x86/cpufreq.c, SYS_CPUFREQ 261)
+         e /dev/cpufreq.drv 0.001. QEMU: tools/prova_cpufreq.sh 16 su 16.
+         SUL PORTATILE (4/11, 0.311): 2 stati, 2100 e 1050 MHz; -min 1050,
+         -max 2100; -auto 1050 a riposo, 2100 al 100% per 9 s di sha256sum,
+         1050 il secondo dopo. -install sul portatile (4/11 pom.): dopo
+         reboot il modo e' auto, 1050 a riposo; -remove e -install
+         ripetuto provati. LASCIATO INSTALLATO (cpufreq.drv -remove per
+         toglierlo).
+         ! Il secondo core e' acceso ma non lavora (SMP: 0 dei quali
+         lavorano): niente battito, il suo P-state resta quello del BIOS.
+         Da fare quando gli AP faranno girare i programmi, o un battito
+         anche per loro.
+         ! Riga di dmesg: stampa sempre 4 MHz anche con 2 stati ("2100 1050
+         0 0"); da sistemare al prossimo cambio del kernel.
+         Da decidere: hwconfig che scrive da solo il blocco -auto quando
+         `cpufreq.drv -i` dice si'.
+      b) SCHERMO (DPMS): da fare.
+      Stato: a) fatto e provato; b) in coda, prossimo.
 
   77. DA FARE DOPO IL 3-4/11 (librerie condivise, VLC, ExPackage), messo in
       coda dall'utente il 4/11 ("metti in coda le cose da fare"):
@@ -8670,10 +8772,15 @@ tools/netinst/velocita tolto da netinst.
          BUFFERING (QEMU, 64 bit); causa non dimostrata. Provarlo sul
          portatile: servono il Firefox nuovo, /lib/libm.so.4 e le .so di
          FFmpeg in /exos/lib (cioe' il repository a 64 bit pubblicato).
+         4/11 SUL PORTATILE (headless, MOZ_HEADLESS=1): gizmo.mp4 H.264 va
+         fino in fondo (5,59 s su 5,59, 166 fotogrammi); vanno anche ogg,
+         flac, mp3, m4a (AAC), VP8, VP9, AV1. Lo stallo e' SOLO di QEMU.
+         CHIUSA sul ferro. Resta la voce 82 (il primo file non parte).
       b) Firefox a 32 bit da ricostruire col link dinamico e da provare
          (tools/exilla/prova-media.sh 32).
       c) "libmozsqlite3.so.so: cannot open shared object file" (QuickSuggest,
          Rust) e "Failed to launch utility subprocess": non guardati.
+         4/11: libmozsqlite3.so.so c'e' ancora anche sul portatile.
       d) Repository a 64 bit rifatto il 4/11 coi codec e VLC (34
          pacchetti), NON pubblicato: pubblicarlo (prima sul server locale
          ~/ftp/www/netinst_64 per il portatile) e provare netupdate
@@ -8693,6 +8800,9 @@ tools/netinst/velocita tolto da netinst.
          sul portatile solo netupdate 0.041 da /tmp (-tab, -p).
       f) VLC: frecce ed Esc non provati; sul portatile l'audio di gizmo.mp4
          con hdaudio.drv 0.006 va ascoltato, il video non visto.
+         4/11: vlc -I dummy --vout=dummy --play-and-exit gizmo.mp4 sul
+         portatile usa aout_exos e avcodec, consuma l'anello fino in fondo.
+         Che si SENTA lo deve dire l'utente; il video in ExWin non visto.
       g) Ancora statici: il gcc nativo di EX-OS (le sue specs non sono
          quelle di tools/gcc-exos/specs-condivise.sh), ncurses (script a
          parte, non passa da comune.sh), httpd, php e mariadb da ricollegare

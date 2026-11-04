@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.009");
+EX_VERSIONE("kbd.drv", "0.010");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1309,6 +1309,11 @@ static void kbd_process_scancode(unsigned char sc)
     ConsoleIn *c = &g_c[g_attiva];
     char       ascii;
 
+    /* Somebody is using the machine: /dev/dpms.drv keeps the screen on, or
+     * switches it back on (kernel 0.312, voce 78 b). Every byte, the USB
+     * keyboard's too: they all come through here. */
+    attivita_tocca();
+
     /* Prefisso tasto esteso */
     if (sc == 0xE0) {
         g_e0 = 1;
@@ -1690,6 +1695,7 @@ static void mouse_byte(unsigned char b)
         g_m_dy -= dy;
         g_m_bottoni = (unsigned int)(g_mp[0] & 0x07);
         g_m_novita  = 1;
+        attivita_tocca();           /* see kbd_process_scancode */
 
         /* Il quarto byte e' la rotella, con segno: positivo quando gira
          * verso chi la usa (la pagina scende). */

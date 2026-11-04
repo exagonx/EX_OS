@@ -1377,6 +1377,58 @@ int ahci_passa(void);
 /* The machine resets itself in `secondi` unless called again; 0 = off (root). */
 int guardia_imposta(unsigned int secondi);
 
+/* cpufreq_info / cpufreq_modo - the CPU frequency (kernel 0.311, SYS_CPUFREQ
+ * 261, voce 78). The SAME structure as kernel/include/cpufreq.h, field by
+ * field: change both. mhz[0] is the fastest state; mhz 0 = the formula for
+ * this family is not known. cpufreq_modo is for root; 0, or -1 with errno
+ * (EPERM, EINVAL, ENODEV when this CPU has no control). See /dev/cpufreq.drv. */
+#define CPUFREQ_STATI_MAX   16
+#define CPUFREQ_CPU_MAX     16
+#define CPUFREQ_NESSUNO     0
+#define CPUFREQ_AMD_PSTATE  1
+#define CPUFREQ_INTEL_EIST  2
+#define CPUFREQ_NO_CPUID        1
+#define CPUFREQ_NO_SUPPORTO     2
+#define CPUFREQ_NO_VIRTUALE     3
+#define CPUFREQ_NO_TSC          4
+#define CPUFREQ_NO_BIOS         5
+#define CPUFREQ_NO_HWP          6
+#define CPUFREQ_NO_STATI        7
+#define CPUFREQ_SPENTO      0
+#define CPUFREQ_AUTO        1
+#define CPUFREQ_MAX         2
+#define CPUFREQ_MIN         3
+#define CPUFREQ_FISSO       4
+#define CPUFREQ_IGNOTO      0xFFFFFFFFu
+#define CPUFREQ_OP_INFO     0
+#define CPUFREQ_OP_MODO     1
+typedef struct {
+    unsigned int versione;
+    unsigned int tipo, perche;
+    unsigned int famiglia, modello;
+    unsigned int n;
+    unsigned int mhz[CPUFREQ_STATI_MAX];
+    unsigned int primo, ultimo;
+    unsigned int modo, fisso;
+    unsigned int su, giu;
+    unsigned int ncpu;
+    unsigned int cpu_stato[CPUFREQ_CPU_MAX];
+    unsigned int cpu_carico[CPUFREQ_CPU_MAX];
+    unsigned int cpu_cambi[CPUFREQ_CPU_MAX];
+} CpuFreqInfo;
+int cpufreq_info(CpuFreqInfo *i);
+int cpufreq_modo(unsigned int modo, unsigned int fisso);
+
+/* attivita_tocca / attivita_da - when the machine was last used (kernel
+ * 0.312, SYS_ATTIVITA 262, voce 78 b). The input drivers call attivita_tocca
+ * at every key, click and mouse movement; /dev/dpms.drv calls attivita_da,
+ * the milliseconds since then (since boot if nobody touched), to switch the
+ * screen off. -1 with errno ENOSYS on a kernel older than 0.312: tocca is
+ * then a no-op, which is what an input driver wants. A player showing a
+ * video may call attivita_tocca too, to keep the screen on. */
+void attivita_tocca(void);
+int  attivita_da(void);
+
 /* The pass with an HBA reset, verified against IDE (kernel 0.295, root only).
  * 2 = reads and a write are fine, 1 = reads fine and no free sector to write
  * on, 0 = nothing to pass. A failed comparison resets the machine. */

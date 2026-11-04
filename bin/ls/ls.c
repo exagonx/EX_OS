@@ -74,7 +74,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `ls -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ls", "0.002");
+EX_VERSIONE("ls", "0.003");
 
 /* Il blocco per chiamata e' LISTDIR_MAX_BATCH e non un numero scelto qui:
  * il kernel non ne consegna di piu' comunque, e chiederne 32 per poi
@@ -501,20 +501,17 @@ static int percorri(const char *dir, Riepilogo *r, int solo_conta, int larghezza
 /* =============================================================================
  * main
  * ============================================================================= */
+static int elenca(const char *bersaglio, int titolo);
+
 int main(int argc, char **argv)
 {
     char        cwd[256];
-    const char *bersaglio = NULL;
-    Riepilogo   r;
-    int         i, larghezza = 0;
+    int         i, operandi = 0, guasti = 0, primo = 1;
 
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
 
-        if (a[0] != '-' || a[1] == '\0') {
-            if (bersaglio == NULL) bersaglio = a;
-            continue;
-        }
+        if (a[0] != '-' || a[1] == '\0') { operandi++; continue; }
 
         if (strcmp(a, "-h") == 0 || strcmp(a, "-help") == 0 ||
             strcmp(a, "--help") == 0 || strcmp(a, "-?") == 0) {
@@ -538,35 +535,60 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (bersaglio == NULL) {
-        if (!getcwd(cwd, sizeof(cwd))) { cwd[0] = '/'; cwd[1] = '\0'; }
-        bersaglio = cwd;
-    }
-
     misura_del_terminale();
-    memset(&r, 0, sizeof(r));
-
-    /* Prima passata: serve solo alle colonne. Vedi il commento sopra. */
-    if (g_modo == MODO_COLONNE) {
-        if (percorri(bersaglio, &r, 1, 0) != 0) {
-            printf("ls: impossibile leggere '%s'\n", bersaglio);
-            return 1;
-        }
-        larghezza = (int)r.max_nome + 2;
-        if (larghezza > COLONNE_SCHERMO) larghezza = COLONNE_SCHERMO;
-        memset(&r, 0, sizeof(r));
-    }
 
     /* ! L'INTESTAZIONE ADESSO C'E' ANCHE SENZA `-md`, perche' senza `-md` e'
      * il modo normale — cioe' quello che vede chi batte `ls` e basta. Le
      * colonne sono quattro e una di loro e' una data: senza una riga che le
-     * nomina, «2026-09-16  17:52» e' due numeri che si devono indovinare. */
+     * nomina, «2026-09-16  17:52» e' due numeri che si devono indovinare.
+     * Una volta sola, anche con piu' nomi. */
     if (g_modo == MODO_DIR) {
         printf("data        ora    attr   tipo    dimensione  nome\n");
         if (g_pagine) g_righe++;    /* l'intestazione occupa una riga */
     } else if (g_modo == MODO_DETTAGLI) {
         printf("data        ora    tipo    dimensione  nome\n");
         if (g_pagine) g_righe++;
+    }
+
+    if (operandi == 0) {
+        if (!getcwd(cwd, sizeof(cwd))) { cwd[0] = '/'; cwd[1] = '\0'; }
+        return elenca(cwd, 0) != 0;
+    }
+
+    /* ! TUTTI I NOMI, NON SOLO IL PRIMO. Fino alla 0.002 `ls` teneva il
+     * primo e scartava gli altri senza dirlo: `ls -l /exos/lib/libavcodec*`
+     * sul portatile (4/11/2026) mostrava un file su tre, e sembrava che gli
+     * altri due mancassero. La shell espandeva bene; era ls a buttarli. */
+    for (i = 1; i < argc; i++) {
+        const char *a = argv[i];
+
+        if (a[0] == '-' && a[1] != '\0') continue;
+        if (g_interrotto) break;
+        if (elenca(a, operandi > 1 ? (primo ? 1 : 2) : 0) != 0) guasti++;
+        primo = 0;
+    }
+    return guasti != 0;
+}
+
+/* Un nome solo. `titolo`: 0 nessuno, 1 il nome di una directory prima del
+ * suo contenuto, 2 lo stesso preceduto da una riga vuota (dal secondo nome
+ * in poi). I file non hanno titolo: sono gia' una riga col loro nome. */
+static int elenca(const char *bersaglio, int titolo)
+{
+    Riepilogo   r;
+    int         larghezza = 0;
+    struct stat sd;
+
+    memset(&r, 0, sizeof(r));
+    if (titolo && stat(bersaglio, &sd) == 0 && S_ISDIR(sd.st_mode))
+        printf("%s%s:\n", titolo == 2 ? "\n" : "", bersaglio);
+
+    /* Prima passata: serve solo alle colonne. Vedi il commento sopra. */
+    /* Se fallisce e' un file, o non c'e': lo dice la passata vera qui sotto. */
+    if (g_modo == MODO_COLONNE && percorri(bersaglio, &r, 1, 0) == 0) {
+        larghezza = (int)r.max_nome + 2;
+        if (larghezza > COLONNE_SCHERMO) larghezza = COLONNE_SCHERMO;
+        memset(&r, 0, sizeof(r));
     }
 
     if (percorri(bersaglio, &r, 0, larghezza) != 0) {
@@ -606,8 +628,8 @@ int main(int argc, char **argv)
                     dir[k] = '\0';
                 }
 
-                /* L'intestazione l'ha gia' stampata il chiamante prima di
-                 * percorri(): rifarla qui la mostrerebbe due volte. */
+                /* L'intestazione l'ha gia' stampata main(): rifarla qui
+                 * la mostrerebbe due volte. */
                 switch (g_modo) {
                 case MODO_COLONNE:  printf("%s\n", uno.name);              break;
                 case MODO_DETTAGLI: stampa_dettagli(dir, &uno, 0);         break;

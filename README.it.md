@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.310
+**Versione:** 0.312
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,72 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### La frequenza del processore segue il carico (kernel 0.311, cpufreq.drv 0.001)
+
+- **Il kernel abbassa la frequenza, e con lei la tensione, quando c'e' poco da fare**
+  (`kernel/arch/x86/cpufreq.c`). Fino alla 0.310 l'unico risparmio era l'`hlt` dell'ozio, sempre a
+  frequenza piena. A ogni battito di ogni processore che lavora il kernel conta i tick d'ozio degli
+  ultimi 100 ms: dall'80% di carico in su va subito allo stato piu' veloce, sotto il 30% scende di
+  uno stato. Ogni processore scrive il proprio MSR: nessun messaggio fra processori.
+- **Su quali processori:** AMD dalla famiglia 10h con i P-state hardware (l'Athlon QL-64 del
+  portatile e' famiglia 11h) e Intel da Sandy Bridge con SpeedStep. Senza un interprete ACPI la
+  tabella la da' il processore stesso (AMD MSR C001_0064+, Intel MSR_PLATFORM_INFO). Non si tocca
+  niente in una macchina virtuale, con un TSC non invariante (il kernel misura le scadenze col TSC),
+  con SpeedStep spento dal BIOS o con HWP acceso: `cpufreq.drv` dice perche'.
+- **`/dev/cpufreq.drv`**: mostra gli stati e dove sta ogni processore; `-auto`, `-max`, `-min`,
+  `-fisso:N`, `-spento`, `-guarda`; `-install` scrive `cpufreq.drv -auto` in `/boot/avvio.sh`.
+  All'avvio il modo e' `spento`: non cambia niente finche' non lo si chiede. `help cpufreq`, manuale
+  4.9.
+- `tools/prova_cpufreq.sh`: in QEMU a 32 e 64 bit, con e senza il bit hypervisor (non si rompe
+  niente, i motivi sono giusti, -install e -remove), 16 su 16.
+- **Testato sul portatile** (Athlon QL-64, 4 novembre): il kernel trova 2 stati, 2100 e 1050 MHz;
+  `-min` va a 1050, `-max` a 2100; con `-auto` resta a 1050 a riposo, va a 2100 al 100% di carico per
+  tutti i 9 secondi di un `sha256sum` e torna a 1050 il secondo dopo.
+- ! **Solo il primo processore**: il secondo core del portatile e' acceso ma non fa ancora girare
+  programmi (`SMP: ... 0 dei quali lavorano`), quindi non ha battito e il suo P-state resta quello
+  lasciato dal BIOS.
+
+### Il suono del portatile parte da solo, e ls elenca tutti i nomi (audio 0.005, ls 0.003)
+
+- **`audio -i` non provava la scheda del portatile.** L'HD Audio NVIDIA MCP78 (`10de:0774`, codec
+  Conexant `14f1:5051`) non era nella tabella di `lib/audio.c`: `audio -i` diceva "scheda audio non
+  riconosciuta" e provava solo la Sound Blaster, mentre `hdaudio.drv` avviato a mano suonava. Non
+  serviva un driver nuovo: HD Audio e AC'97 sono interfacce standard. Ora la MCP78 e' in tabella, e
+  una scheda che non c'e' si riconosce dalla classe PCI (`audio_per_classe`: 04/03 `hdaudio.drv`,
+  04/01 `ac97.drv`). **Provato sul portatile:** `audio -i` installa `hdaudio.drv` in
+  `/boot/kernel.cfg`, dopo `reboot` il suono e' acceso senza comandi e `audio -c` passa. In QEMU a 32
+  bit con un HD Audio ICH9: lo stesso. Il riconoscimento per classe da solo e' **da provare** su una
+  scheda che non e' in tabella.
+- **`ls` con piu' nomi mostrava solo il primo** e scartava gli altri senza dirlo
+  (`ls -l /exos/lib/libavcodec*` mostrava un file su tre). Dalla 0.003 elenca tutti i nomi in ordine;
+  una directory fra piu' nomi ha il suo nome sopra, l'intestazione si stampa una volta, un nome che
+  non c'e' e' un errore ma gli altri si elencano lo stesso. **Provato** sul portatile (64 bit) e in
+  QEMU (32 bit).
+- **Firefox e VLC sul portatile** (4 novembre): Firefox suona Vorbis, FLAC, MP3, AAC, VP8, VP9, AV1 e
+  H.264 (`gizmo.mp4` fino in fondo, 166 fotogrammi): lo stallo di H.264 della voce 77 e' solo di
+  QEMU. VLC suona `gizmo.mp4` col suono attraverso l'uscita di EX-OS. ! Il **primo** file che Firefox
+  suona dopo l'avvio resta fermo a 0 secondi, qualunque sia; i successivi vanno. Ancora da trovare.
+
+### Il settore di avvio non torna piu' al kernel vecchio dopo un aggiornamento (netupdate 0.043, voce 75)
+
+- **Causa trovata** sul portatile, che per due volte dopo `netupdate` (2 e 4 novembre) e' ripartito
+  col kernel di prima e il disco in sola lettura. A partizione smontata (`system -unload`, da
+  `/rdboot`) `tools/prove/mappa.c` ha letto il settore di avvio: c'era la mappa del 2 novembre, mentre
+  netupdate aveva stampato quella nuova. Su ext4 con blocchi da 4 KB il blocco 0 contiene sia il
+  settore di avvio sia il superblocco; l'`ext4.mod` caricato in memoria era quello di prima
+  dell'aggiornamento (il nuovo era solo in `/dev`), che fino al 2 novembre scriveva il blocco 0 intero
+  al checkpoint del giornale, col settore di avvio com'era prima di bootinstall. Dal kernel 0.307 quel
+  checkpoint arriva fino a 5 secondi dopo. Il modulo e' corretto dalla 0.310 (`al_suo_posto`,
+  `tools/prova_mappa_giornale.sh`).
+- **netupdate 0.043 chiama `sync()` subito prima di riscrivere il settore di avvio**, e un'altra volta
+  dopo: il giornale si svuota prima, cosi' un modulo di prima non puo' piu' rimettere la mappa
+  vecchia.
+- Riparato sul portatile con la ricetta di `help problemi` (`modulo carica /dev/ext4.mod.old`,
+  `netupdate -avvio`): il settore di avvio riletto da fuori aveva la mappa della 0.311, coi settori
+  uguali byte per byte a `/boot/kernel.bin`; dopo `reboot`, la 0.311 col disco scrivibile.
+  **Testata** la riparazione; netupdate 0.043 **da testare** al prossimo aggiornamento del kernel del
+  portatile.
 
 ### netupdate porta i file nuovi dei pacchetti installati, e VLC trova le sue librerie (netupdate 0.042)
 

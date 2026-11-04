@@ -172,6 +172,8 @@ void syscall_init(void)
     syscall_table[SYS_AHCI_PASSA]  = sys_ahci_passa;
     syscall_table[SYS_GUARDIA]     = sys_guardia;
     syscall_table[SYS_SYNC]        = sys_sync;
+    syscall_table[SYS_CPUFREQ]     = sys_cpufreq;
+    syscall_table[SYS_ATTIVITA]    = sys_attivita;
     syscall_table[SYS_SMP_LAVORA]  = sys_smp_lavora;
     syscall_table[SYS_PROCINFO]    = sys_procinfo;
     syscall_table[SYS_PROC_USO]    = sys_proc_uso;

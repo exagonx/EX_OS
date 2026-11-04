@@ -104,6 +104,12 @@ elenca i file
 
   ls                       la directory corrente
   ls /boot                 una qualunque
+  ls -l /bin/ls /bin/sh    piu' nomi: file e directory, ognuno a suo turno
+  ls /exos/lib/libav*      i jolly li espande la shell
+
+Fino a ls 0.002 si vedeva solo il PRIMO nome e gli altri sparivano
+senza dirlo (`ls /exos/lib/libav*` mostrava un file su tre). Dalla 0.003 li
+elenca tutti; una directory fra piu' nomi ha il suo nome sopra.
 
 Modi di visualizzazione - l'ultimo indicato vince:
 
@@ -487,6 +493,25 @@ Non sostituisce svga.drv: parte dal modo VESA che svga.drv sceglie
 e porta il pannello al nativo. Su un'altra macchina esce zitto.
 Il motore 2D vuole prima -nativo. In prova: non e' ancora in -install.
 
+[cpufreq.drv cpufreq frequenza risparmio]
+la frequenza del processore: piu' bassa quando c'e' poco da fare
+
+  cpufreq.drv           cosa ha il processore e dove sta adesso
+  cpufreq.drv -auto     la frequenza segue il carico (root)
+  cpufreq.drv -max      sempre la piu' alta; -min la piu' bassa
+  cpufreq.drv -fisso:N  sempre lo stato N (0 = il piu' veloce)
+  cpufreq.drv -spento   il kernel lascia stare: torna lo stato trovato
+  cpufreq.drv -guarda 10   frequenza e carico ogni secondo, 10 volte
+  cpufreq.drv -install  -auto a ogni avvio (blocco in /boot/avvio.sh)
+  cpufreq.drv -remove   toglie il blocco
+
+Il lavoro lo fa il kernel (dalla 0.311), a ogni battito di ogni
+processore: sopra l'80% di carico va subito al massimo, sotto il 30%
+scende di uno stato ogni 100 ms. Senza -auto non tocca niente.
+Funziona sugli AMD dalla famiglia 10h (Athlon/Turion X2 dei portatili
+del 2008 in poi) e sugli Intel da Sandy Bridge. Non nelle macchine
+virtuali, e non se il TSC non e' invariante: `cpufreq.drv` dice perche'.
+
 [driver -install]
 far partire un driver a ogni avvio
 
@@ -495,7 +520,8 @@ far partire un driver a ogni avvio
 
 Il blocco comincia con "# -install <driver>" e finisce alla prima
 riga vuota. hwconfig, che riscrive avvio.sh per intero, lo riporta
-avanti. Oggi lo ha nv50.drv; gli altri driver si aggiungono man mano.
+avanti. Oggi lo hanno nv50.drv e cpufreq.drv; gli altri driver si
+aggiungono man mano.
 
 [mem]
 quanta memoria c'e' e quanta se ne usa
@@ -705,6 +731,14 @@ ext4.mod e' per quella nuova: anche il modulo di /rdboot e' nuovo, e
   reboot
   cat /proc/version                      deve dire la versione nuova
 
+Perche' capitava (voce 75, 4/11/2026): il modulo caricato in memoria era
+quello di prima dell'aggiornamento, e fino al 2/11 rimetteva sul disco il
+settore di avvio vecchio insieme al superblocco (ext4 a blocchi da 4 KB).
+Da netupdate 0.043 il giornale si svuota prima di riscrivere l'avvio. Per
+vedere cosa carica davvero l'avvio serve la partizione smontata: uno
+script in /rdboot con system -unload -yes, tools/prove/mappa.c (mappa hd0p1
+FILE...) e system -load (vedi `help system`).
+
 NETUPDATE DICE CHE NON C'E' NIENTE DA FARE, E IL FILE E' VECCHIO. Il
 registro /boot/netupdate.reg dice cosa la macchina crede di avere. Si butta,
 e il -check dopo lo riscrive rileggendo ogni file (qualche minuto):
@@ -740,6 +774,14 @@ un CD vecchio si ha il sistema di quel CD. Il primo comando e' netupdate
 LO SCHERMO DI UN PORTATILE NVIDIA RESTA A 800x600. Il pannello nativo lo da'
 nv50.drv: hwconfig -d lo copia se trova la scheda, e hwconfig gli scrive il
 blocco in /boot/avvio.sh. A mano: nv50.drv -install, poi si riavvia.
+
+AUDIO -i DICE "SCHEDA AUDIO NON RICONOSCIUTA" E PROVA SOLO LA SOUND BLASTER.
+Con audio 0.004 una scheda che non era nella tabella (`audio -t`) non si
+provava affatto, anche se e' un HD Audio o un AC'97 qualunque: e' capitato
+sul portatile con la nVidia MCP78 (10de:0774). Da audio 0.005 la scheda si
+riconosce anche dalla classe PCI (04/03 hdaudio.drv, 04/01 ac97.drv).
+Con un audio vecchio:  /dev/hdaudio.drv &  poi  audio -c  per sentirla;
+per averla a ogni avvio serve audio 0.005 (netupdate) e poi  audio -i.
 
 [install]
 installa EX-OS su un disco, o gli strumenti dal CD
@@ -986,9 +1028,14 @@ Firefox restano muti e fermi.
 Firefox (Exilla) suona Vorbis, FLAC, MP3, VP8, VP9, AV1 e AAC nelle
 pagine (provati a 64 bit). AAC e H.264 li prende da FFmpeg, cioe' da
 libavcodec.so.63 in /exos/lib (gruppo FFmpeg di `install -tools`):
-senza, quei file dicono "Failed to open media". ! H.264 si decodifica ma
-in QEMU si ferma dopo meno di un secondo (Firefox va in attesa dei dati);
-sul ferro non ancora provato. Per H.264 c'e' comunque VLC.
+senza, quei file dicono "Failed to open media". H.264 in QEMU si ferma
+dopo meno di un secondo (Firefox va in attesa dei dati); sul portatile
+(4/11/2026) va fino in fondo, come tutti gli altri formati. ! Sul
+portatile il PRIMO file che Firefox suona resta fermo a 0 secondi,
+qualunque sia; dal secondo in poi vanno. Ancora da capire.
+
+Le schede che `audio -t` non elenca si riconoscono dalla classe PCI:
+un HD Audio va con hdaudio.drv, un AC'97 con ac97.drv (audio 0.005).
 
 [vlc]
 il lettore audio e video VLC 3.0.24 (CD strumenti, gruppo VLC)

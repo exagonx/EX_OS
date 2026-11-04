@@ -50,6 +50,7 @@ extern void vga_putchar(char c);
 #include "vga.h"       /* VGA_N_CONSOLE e le console virtuali */
 #include "tty.h"       /* TTY_IOCTL_*: comandi nativi del terminale (sys_ioctl) */
 #include "smp.h"       /* SmpInfo: i processori trovati all'avvio (SYS_CPU_INFO) */
+#include "cpufreq.h"   /* SYS_CPUFREQ (0.311) */
 
 /* =============================================================================
  * ! LE SYSCALL CHE SCAVALCANO IL FILESYSTEM DEVONO CHIEDERE CHI SEI
@@ -3986,6 +3987,52 @@ int32_t sys_smp_lavora(InterruptFrame *frame)
     (void)frame;
     if (self == NULL || self->uid != 0) return ERR(EPERM);
     return (int32_t)smp_accendi_lavoro();
+}
+
+/* SYS_CPUFREQ (261, kernel 0.311): the CPU frequency, see cpufreq.c.
+ * ebx = CPUFREQ_OP_INFO: ecx = CpuFreqInfo*, edx = its size; anyone.
+ * ebx = CPUFREQ_OP_MODO: ecx = modo, edx = fisso; root only. */
+int32_t sys_cpufreq(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+    uint32_t op = (uint32_t)FR_A1(frame);
+
+    if (op == CPUFREQ_OP_INFO) {
+        CpuFreqInfo *dst  = (CpuFreqInfo *)FR_A2(frame);
+        uint32_t     size = (uint32_t)FR_A3(frame);
+
+        if (size != sizeof(CpuFreqInfo))   return ERR(EINVAL);
+        if (!syscall_verify_ptr(dst, size)) return ERR(EFAULT);
+        return (int32_t)cpufreq_info(dst);
+    }
+    if (op == CPUFREQ_OP_MODO) {
+        int r;
+
+        if (self == NULL || self->uid != 0) return ERR(EPERM);
+        r = cpufreq_modo((uint32_t)FR_A2(frame), (uint32_t)FR_A3(frame));
+        return r < 0 ? ERR(-r) : 0;
+    }
+    return ERR(EINVAL);
+}
+
+/* SYS_ATTIVITA (262, kernel 0.312): the tick of the last input event.
+ * ! THE TICKS, NOT THE MILLISECONDS: uptime in ms wraps after 24.8 days in 32
+ * bits, ticks after 497 days, and the difference below is unsigned, so it
+ * crosses the wrap too. One store, no lock: a torn read can only make one
+ * answer 10 ms wrong. */
+static volatile uint32_t g_attivita_tick;
+
+int32_t sys_attivita(InterruptFrame *frame)
+{
+    uint32_t op = (uint32_t)FR_A1(frame), d;
+
+    if (op == ATTIVITA_TOCCA) { g_attivita_tick = g_ticks; return 0; }
+    if (op == ATTIVITA_DA) {
+        d = g_ticks - g_attivita_tick;
+        if (d > 0x7FFFFFFFu / 10u) return 0x7FFFFFFF;
+        return (int32_t)(d * 10u);
+    }
+    return ERR(EINVAL);
 }
 
 int32_t sys_guardia(InterruptFrame *frame)

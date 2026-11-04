@@ -65,6 +65,8 @@ static const AudioScheda g_schede[] = {
     { 0x10DE, 0x0371, "nVidia MCP55 HD Audio",                  "/dev/hdaudio.drv" },
     /* Provata sul PC vero (8 ottobre 2026): codec Realtek ALC888. */
     { 0x10DE, 0x07FC, "nVidia MCP73 HD Audio",                  "/dev/hdaudio.drv" },
+    /* Provata sul portatile (4 novembre 2026): codec Conexant 14f1:5051. */
+    { 0x10DE, 0x0774, "nVidia MCP78 HD Audio",                  "/dev/hdaudio.drv" },
 };
 
 #define SCHEDE_N ((int)(sizeof(g_schede) / sizeof(g_schede[0])))
@@ -88,6 +90,27 @@ const AudioScheda *audio_scheda(int i)
 }
 
 int audio_schede_note(void) { return SCHEDE_N; }
+
+/* ! UNA SCHEDA CHE NON E' IN TABELLA NON E' UNA SCHEDA SCONOSCIUTA, se la
+ * classe PCI dice cos'e'. HD Audio (04/03) e AC'97 (04/01) sono interfacce
+ * standard: il controller si programma allo stesso modo chiunque l'abbia
+ * fatto, ed e' cosi' che hdaudio.drv e ac97.drv li cercano. La tabella serve
+ * a dare un nome al modello; senza nome si prova lo stesso il driver giusto
+ * (il portatile con la nVidia MCP78, 4/11/2026: suonava con hdaudio.drv
+ * avviato a mano, ma audio -i diceva «non riconosciuta» e provava solo la
+ * Sound Blaster). */
+static const AudioScheda g_generiche[] = {
+    { 0, 0, "controller AC'97 (dalla classe PCI)",  "/dev/ac97.drv" },
+    { 0, 0, "controller HD Audio (dalla classe PCI)", "/dev/hdaudio.drv" },
+};
+
+const AudioScheda *audio_per_classe(unsigned char classe, unsigned char sottoclasse)
+{
+    if (classe != 0x04) return 0;
+    if (sottoclasse == 0x01) return &g_generiche[0];
+    if (sottoclasse == 0x03) return &g_generiche[1];
+    return 0;
+}
 
 /* =============================================================================
  * L'elenco ISA: quello che si prova, non quello che si chiede

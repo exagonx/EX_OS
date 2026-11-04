@@ -9,10 +9,26 @@ Per chi tiene il server da cui le macchine si aggiornano.
 ## 6.1 Un comando solo
 
 ```
-./exagonx/repo-update.sh              il sistema
+./exagonx/repo-update.sh              il sistema (repository a 32 bit)
+./exagonx/repo-update.sh -64          il repository a 64 bit
+./exagonx/repo-update.sh -src         i sorgenti
+./exagonx/repo-update.sh -tutti       i tre: 32 bit, 64 bit e sorgenti
 ./exagonx/repo-update.sh -strumenti   anche i compilatori (ore, non minuti)
-./exagonx/repo-update.sh -tutto       ricarica tutto, non solo i cambiati
+./exagonx/repo-update.sh -ricrea      ricarica ogni file, non solo i cambiati
+./exagonx/repo-update.sh -verifynew   verifica solo i file appena caricati
 ./exagonx/repo-update.sh -guarda      dice cosa farebbe e si ferma
+```
+
+! **`-tutti` E `-ricrea` SONO DUE COSE DIVERSE.** `-tutti` dice *quali*
+  repository (tutti e tre); `-ricrea` dice *come* caricarli (ogni file, anche
+  quelli gia' uguali sul server). Si combinano. Fino al 4 novembre 2026
+  `-ricrea` si chiamava `-tutto`, e `-tutto -verifynew` sembrava voler dire
+  "tutti i repository" mentre ricaricava il solo 32 bit: adesso `-tutto` si
+  rifiuta e spiega la differenza. Per aggiornare i tre repository con gli
+  strumenti nuovi (compilatori, librerie, codec, VLC):
+
+```
+./exagonx/repo-update.sh -tutti -strumenti -verifynew
 ```
 
 Fa quattro passi in fila:

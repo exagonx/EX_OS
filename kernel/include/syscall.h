@@ -77,6 +77,16 @@
 #define SYS_CPU_INFO    181    /* i processori trovati all'avvio (vedi SmpInfo in smp.h) */
 #define SYS_GUARDIA      259   /* ebx = seconds to the reset, 0 = off (root) */
 #define SYS_SYNC         260   /* every volume to the disk (vfs_sync) */
+#define SYS_CPUFREQ      261   /* ebx = CPUFREQ_OP_*, see cpufreq.h (kernel 0.311) */
+/* SYS_ATTIVITA (262, kernel 0.312, voce 78 b): when somebody last used the
+ * machine. ebx = ATTIVITA_TOCCA: "a key, a click, a movement now" - the input
+ * drivers (kbd.drv, the USB and serial mice) call it at every event; anyone
+ * may, since the worst it can do is keep the screen on. ebx = ATTIVITA_DA:
+ * milliseconds since the last touch (since boot if none), at most 0x7FFFFFFF.
+ * /dev/dpms.drv reads it to switch the screen off and back on. */
+#define SYS_ATTIVITA     262
+#define ATTIVITA_TOCCA   0
+#define ATTIVITA_DA      1
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
 #define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
@@ -187,7 +197,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   261     /* la piu' alta e' SYS_SYNC = 260 */
+#define SYSCALL_COUNT   263     /* la piu' alta e' SYS_ATTIVITA = 262 */
 
 /* =============================================================================
  * Codici errno
@@ -1855,6 +1865,8 @@ int32_t sys_cpu_info(InterruptFrame *f);
 int32_t sys_klog(InterruptFrame *f);
 int32_t sys_ahci_passa(InterruptFrame *f);
 int32_t sys_guardia(InterruptFrame *f);
+int32_t sys_cpufreq(InterruptFrame *f);
+int32_t sys_attivita(InterruptFrame *f);
 int32_t sys_sync(InterruptFrame *f);
 int32_t sys_smp_lavora(InterruptFrame *f);
 int32_t sys_procinfo(InterruptFrame *f);
