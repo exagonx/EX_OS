@@ -14,6 +14,7 @@
  *     netupdate -set              scrive /boot/netupdate.cnf, chiedendo
  *     netupdate -check            guarda cosa e' cambiato sul server
  *     netupdate -install:list tes le app il cui nome contiene «tes»
+ *     netupdate -install:list -p  lo stesso, una pagina per volta
  *     netupdate -install:nome     l'app, con tutto cio' che le serve
  *     netupdate -remove:nome      l'app, e le librerie che non servono ad altri
  *
@@ -43,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.040");
+EX_VERSIONE("netupdate", "0.041");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -281,6 +282,12 @@ static int boot_si_scrive(void)
 /* =============================================================================
  * -set
  * ============================================================================= */
+static void copia_cnf(char *d, const char *s, size_t max)
+{
+    strncpy(d, s, max - 1);
+    d[max - 1] = '\0';
+}
+
 static int comando_set(void)
 {
     Config c;
@@ -394,6 +401,45 @@ static int comando_set(void)
     return 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * -set:<TIPO> <indirizzo> — the same file without the questions (3 November
+ * 2026, netupdate 0.041). For expackage, the graphical face of -install and
+ * -remove: its "Repository" window writes the configuration through here, so
+ * that netupdate.cnf has one writer. `automatico` keeps the value it had.
+ * The address is cleaned as -set cleans it: no scheme, no trailing slash.
+ * --------------------------------------------------------------------------- */
+static int comando_set_diretto(const char *tipo, const char *indirizzo)
+{
+    Config      c;
+    const char *p;
+    int         i, ok = 0;
+
+    for (i = 0; TRASPORTI[i]; i++)
+        if (strcasecmp(tipo, TRASPORTI[i]) == 0) { ok = 1; tipo = TRASPORTI[i]; }
+    if (!ok) {
+        printf("netupdate: \"%s\" non e' un trasporto: HTTP, FTP, HTTPS o FTPS.\n", tipo);
+        return 2;
+    }
+    p = strstr(indirizzo, "://");
+    if (p != NULL) indirizzo = p + 3;
+    if (indirizzo[0] == '\0') {
+        printf("netupdate: senza indirizzo non c'e' niente da controllare.\n");
+        return 2;
+    }
+    if (!boot_si_scrive()) {
+        printf("netupdate: non posso scrivere %s (%s).\n", CNF, strerror(errno));
+        return 1;
+    }
+    config_leggi(&c);
+    copia_cnf(c.tipo, tipo, sizeof(c.tipo));
+    copia_cnf(c.url, indirizzo, sizeof(c.url));
+    i = (int)strlen(c.url);
+    while (i > 0 && c.url[i - 1] == '/') c.url[--i] = '\0';
+    if (config_scrivi(&c) != 0) return 1;
+    printf("%s scritto: tipo %s, url %s\n", CNF, c.tipo, c.url);
+    return 0;
+}
+
 /* =============================================================================
  * IL CATALOGO E IL REGISTRO
  *
@@ -431,8 +477,13 @@ static int comando_set(void)
 #define REG      "/boot/netupdate.reg"
 #define REG_NEW  "/boot/netupdate.new"
 
-#define PACCHETTI_MAX  32
-#define VUOLE_MAX       4
+/* ! NO CEILING ON PACKAGES OR ON `vuole` (3 November 2026, netupdate 0.041).
+ * They were 32 and 4: the catalogue reached 34 packages with the shared
+ * libraries, and blocchi_leggi stopped at the 32nd - apache and exilla were
+ * no longer in the catalogue for this program, and apache's fifth `vuole`
+ * was dropped. The arrays are now as long as the file: blocchi_leggi
+ * allocates them, and the work lists of -install and -remove are sized on
+ * the number of packages read. */
 #define ID_MAX         24
 #define ETICH_MAX      48
 #define DICE_MAX       96
@@ -456,8 +507,9 @@ typedef struct {
     long arcbyte;
     char arcimpronta[IMPR_MAX];
     long arcsrotolato;
-    char vuole[VUOLE_MAX][ID_MAX];
+    char (*vuole)[ID_MAX];      /* n_vuole of them, allocated by blocchi_leggi */
     int  n_vuole;
+    int  cap_vuole;
     long mbyte;
     int  sempre;
 
@@ -525,15 +577,39 @@ static char *valore_se(char *riga, const char *chiave)
     return ripulisci(p);
 }
 
-static int blocchi_leggi(const char *percorso, Pacchetto *v, int max)
+/* *pv gets an array of n + 1 packages (the last one zeroed), the old one is
+ * freed first: callers start from NULL and may read again into the same
+ * pointer. -1 if the file is not there (and *pv is then NULL). */
+static void blocchi_libera(Pacchetto *v)
+{
+    int i;
+
+    if (v == NULL) return;
+    for (i = 0; v[i].id[0]; i++) free(v[i].vuole);
+    free(v);
+}
+
+static int blocchi_leggi(const char *percorso, Pacchetto **pv)
 {
     FILE      *f;
     char       riga[RIGA_MAX];
-    Pacchetto *p = NULL;
-    int        n = 0;
+    Pacchetto *p = NULL, *v;
+    int        n = 0, max = 0;
 
+    blocchi_libera(*pv);
+    *pv = NULL;
     f = fopen(percorso, "r");
     if (f == NULL) return -1;
+    while (fgets(riga, sizeof(riga), f) != NULL)
+        if (ripulisci(riga)[0] == '[') max++;
+    v = (Pacchetto *)calloc((size_t)max + 1, sizeof(Pacchetto));
+    if (v == NULL) {
+        fclose(f);
+        printf("  ! non c'e' memoria per %d pacchetti\n", max);
+        return -1;
+    }
+    *pv = v;
+    rewind(f);
 
     while (fgets(riga, sizeof(riga), f) != NULL) {
         char *r = ripulisci(riga), *val;
@@ -547,12 +623,8 @@ static int blocchi_leggi(const char *percorso, Pacchetto *v, int max)
             if (*fine != ']') continue;
             *fine = '\0';
 
-            if (n >= max) {
-                printf("  ! piu' di %d pacchetti: ignoro il resto\n", max);
-                break;
-            }
+            if (n >= max) break;        /* the file grew between the two reads */
             p = &v[n++];
-            memset(p, 0, sizeof(*p));
             copia_str(p->id, ripulisci(r + 1), ID_MAX);
             copia_str(p->nome, p->id, ETICH_MAX);   /* senza `nome`, l'id */
             continue;
@@ -578,7 +650,15 @@ static int blocchi_leggi(const char *percorso, Pacchetto *v, int max)
             continue;
         }
         if ((val = valore_se(r, "vuole")) != NULL) {
-            if (p->n_vuole < VUOLE_MAX) copia_str(p->vuole[p->n_vuole++], val, ID_MAX);
+            if (p->n_vuole >= p->cap_vuole) {
+                int   cap = p->cap_vuole ? p->cap_vuole * 2 : 4;
+                void *nuovo = realloc(p->vuole, (size_t)cap * ID_MAX);
+
+                if (nuovo == NULL) continue;
+                p->vuole = (char (*)[ID_MAX])nuovo;
+                p->cap_vuole = cap;
+            }
+            copia_str(p->vuole[p->n_vuole++], val, ID_MAX);
             continue;
         }
         if ((val = valore_se(r, "file")) != NULL) {
@@ -664,12 +744,12 @@ static int niente_registro(void)
  * --------------------------------------------------------------------------- */
 static int comando_registro(void)
 {
-    Pacchetto v[PACCHETTI_MAX];
+    Pacchetto *v = NULL;
     char      usato[256];
     int       n, i;
     long      tot = 0, ign = 0;
 
-    n = blocchi_leggi(REG, v, PACCHETTI_MAX);
+    n = blocchi_leggi(REG, &v);
     if (n < 0) return niente_registro();
     if (n == 0) {
         printf("%s c'e' ma non nomina nessun pacchetto.\n", REG);
@@ -714,14 +794,14 @@ static int comando_registro(void)
  * --------------------------------------------------------------------------- */
 static int comando_registro_uno(const char *id)
 {
-    Pacchetto  v[PACCHETTI_MAX];
+    Pacchetto  *v = NULL;
     char       usato[256];
     FILE      *f;
     char       riga[RIGA_MAX];
     int        n, i, dentro = 0;
     Pacchetto *p;
 
-    n = blocchi_leggi(REG, v, PACCHETTI_MAX);
+    n = blocchi_leggi(REG, &v);
     if (n < 0) return niente_registro();
 
     p = cerca(v, n, id);
@@ -981,7 +1061,7 @@ static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
 
 static int comando_registro_crea(const char *albero)
 {
-    Pacchetto v[PACCHETTI_MAX];
+    Pacchetto *v = NULL;
     char      cat[PERC_MAX], ele[PERC_MAX], ver[PERC_MAX];
     char      versione[16], data[32], assoluto[PERC_MAX];
     FILE     *out;
@@ -1009,7 +1089,7 @@ static int comando_registro_crea(const char *albero)
         copia_str(data, "?", sizeof(data));
     if (arch_giusta(ver) != 0) return 1;
 
-    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    n = blocchi_leggi(cat, &v);
     if (n <= 0) {
         fprintf(stderr, "netupdate: %s non c'e' o non nomina nessun pacchetto.\n", cat);
         return 1;
@@ -1994,11 +2074,11 @@ static int nel_registro(const char *id)
 
 static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
 {
-    static Pacchetto v[PACCHETTI_MAX];
+    static Pacchetto *v = NULL;
     char   assoluto[PERC_MAX], suo[PERC_MAX];
     int    n, i;
 
-    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    n = blocchi_leggi(cat, &v);
     for (i = 0; i < n; i++) {
         FILE *in, *out;
         char  riga[RIGA_MAX];
@@ -2816,7 +2896,7 @@ static void menu_togli(const char *riga)
  * quello che il server pubblica? Non scrive niente: lavora sulla copia. */
 static int menu_e_quello(const char *impronta_server)
 {
-    static Pacchetto v[PACCHETTI_MAX];
+    static Pacchetto *v = NULL;
     static int       n = -1;
     char  cat[PERC_MAX], suo[PERC_MAX], voce[PERC_MAX];
     char *r, *w;
@@ -2824,7 +2904,7 @@ static int menu_e_quello(const char *impronta_server)
 
     if (n < 0) {
         snprintf(cat, sizeof(cat), "%s/catalogo.txt", TMPDIR);
-        n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+        n = blocchi_leggi(cat, &v);
         if (n < 0) n = 0;
     }
     if (menu_leggi() < 0) return 0;
@@ -2848,9 +2928,9 @@ static int menu_e_quello(const char *impronta_server)
 /* Le voci di tutti i pacchetti del catalogo che su questa macchina ci sono. */
 static void menu_allinea(const char *cat)
 {
-    static Pacchetto v[PACCHETTI_MAX];
+    static Pacchetto *v = NULL;
     char   assoluto[PERC_MAX];
-    int    n = blocchi_leggi(cat, v, PACCHETTI_MAX), i;
+    int    n = blocchi_leggi(cat, &v), i;
 
     for (i = 0; i < n; i++) {
         if (v[i].menu[0] == '\0' || v[i].prova[0] == '\0') continue;
@@ -3080,6 +3160,10 @@ typedef struct {
 } Conti;
 
 static int g_indietro = 0;   /* -indietro: the user wants the older system */
+/* -yes after -install:<app> or -remove:<app>: no "Procedo?" (netupdate
+ * 0.041). expackage runs them with no keyboard; anyone else still gets the
+ * question. Only that question: "Riprovo adesso?" keeps its own default. */
+static int g_si = 0;
 
 /* "0.307" -> 307. The last dotted number in s; -1 if there is none. */
 static long numero_versione(const char *s)
@@ -3133,8 +3217,8 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
 
     /* --- il registro di questa macchina ----------------------------------- */
     {
-        Pacchetto v[PACCHETTI_MAX];
-        int       n = blocchi_leggi(REG, v, PACCHETTI_MAX);
+        Pacchetto *v = NULL;
+        int       n = blocchi_leggi(REG, &v);
 
         if (n < 0) {
             /* ! IL REGISTRO NON SI SCRIVE DI NASCOSTO. Quando parla, `-check`
@@ -3989,7 +4073,7 @@ static int catena_vuole(Pacchetto *v, int n, const char *id,
      * corta (una manciata di pacchetti) e cosi' non serve la ricorsione, che
      * su un catalogo scritto male sarebbe infinita. Un ciclo fra due `vuole`
      * qui non e' un guaio: si fermano tutt'e due dentro l'elenco. */
-    for (giro = 0; giro < PACCHETTI_MAX; giro++) {
+    for (giro = 0; giro <= n; giro++) {
         int aggiunti = 0;
 
         for (i = 0; i < quanti; i++) {
@@ -4033,34 +4117,99 @@ static int fra(char elenco[][ID_MAX], int n, const char *id)
 /* -----------------------------------------------------------------------------
  * -install:list — cosa c'e' sul server, e cosa c'e' gia' qui
  * --------------------------------------------------------------------------- */
-static int comando_install_list(const char *pezzo)
+/* ! -p, UNA PAGINA PER VOLTA (3 November 2026, netupdate 0.041). The list
+ * has grown past one screen and ran off the top. The same pause as `ls -p`:
+ * a line read, not a key (see bin/ls/ls.c), the pause BEFORE a line so that
+ * the last page does not ask to continue with nothing, the height of the
+ * terminal from the pty (80x25 outside one). */
+static int g_pag_si, g_pag_righe, g_pag_alt = 25, g_pag_basta;
+
+static void pagina_inizia(int si)
+{
+    int m = pty_ctl(0, PTY_CTL_LEGGI_MISURA, 0);
+
+    g_pag_si = si;
+    g_pag_righe = 0;
+    g_pag_basta = 0;
+    if (m > 0 && (m >> 16) >= 4) g_pag_alt = (int)((unsigned)m >> 16);
+}
+
+/* Before printing a line: 0 = print it, 1 = the user said q. */
+static int pagina_riga(void)
+{
+    char r[16];
+    int  n;
+
+    if (!g_pag_si || g_pag_basta) return g_pag_basta;
+    if (g_pag_righe < g_pag_alt - 2) { g_pag_righe++; return 0; }
+    printf("-- Invio per continuare, q per smettere --");
+    fflush(stdout);
+    n = (int)read(0, r, sizeof(r) - 1);
+    if (n < 0) n = 0;
+    r[n] = '\0';
+    if (r[0] == 'q' || r[0] == 'Q') { g_pag_basta = 1; return 1; }
+    g_pag_righe = 1;
+    return 0;
+}
+
+/* -tab: one line per package, fields separated by a TAB, for expackage:
+ *
+ *     PKG <id> <0|1 installed> <MB> <0|1 sempre> <vuole,vuole|-> <nome> <dice|->
+ *
+ * Only the lines that begin with "PKG\t" are the list: what manifesto()
+ * prints before them (the server, the version) is ignored by whoever reads.
+ * The last line is "FINE\t<n>" so that a list cut short is not taken for a
+ * short list. */
+static void riga_tab(const Pacchetto *p, int c_e)
+{
+    int k;
+
+    printf("PKG\t%s\t%d\t%ld\t%d\t", p->id, c_e, p->mbyte, p->sempre);
+    if (p->n_vuole == 0) printf("-");
+    for (k = 0; k < p->n_vuole; k++) printf("%s%s", k ? "," : "", p->vuole[k]);
+    printf("\t%s\t%s\n", p->nome, p->dice[0] ? p->dice : "-");
+}
+
+static int comando_install_list(const char *pezzo, int pagine, int tab)
 {
     Config    c;
-    Pacchetto v[PACCHETTI_MAX], r[PACCHETTI_MAX];
+    Pacchetto *v = NULL, *r = NULL;
     char      ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
     char      versione[16], data[40];
     int       n, nr, i, mostrati = 0;
 
     if (manifesto(&c, ver, cat, ele, versione, data) != 0) return 1;
 
-    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    n = blocchi_leggi(cat, &v);
     if (n <= 0) {
         printf("  ! il catalogo non nomina nessun pacchetto.\n");
         return 1;
     }
-    nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+    nr = blocchi_leggi(REG, &r);
     if (nr < 0) nr = 0;
 
-    printf("\n  %-12s %-11s %5s  %s\n", "PACCHETTO", "STATO", "MB", "COS'E'");
+    if (tab) {
+        for (i = 0; i < n; i++) riga_tab(&v[i], cerca(r, nr, v[i].id) != NULL);
+        printf("FINE\t%d\n", n);
+        return 0;
+    }
+
+    pagina_inizia(pagine);
+    pagina_riga();
+    printf("\n");
+    pagina_riga();
+    printf("  %-12s %-11s %5s  %s\n", "PACCHETTO", "STATO", "MB", "COS'E'");
     for (i = 0; i < n; i++) {
         if (pezzo != NULL && pezzo[0] != '\0' &&
             strstr(v[i].id, pezzo) == NULL && strstr(v[i].nome, pezzo) == NULL)
             continue;
+        mostrati++;
+        if (pagina_riga()) continue;
         printf("  %-12s %-11s %5ld  %s\n", v[i].id,
                cerca(r, nr, v[i].id) ? "installato" : "no",
                v[i].mbyte, v[i].nome);
-        if (v[i].dice[0]) printf("  %-12s %-11s %5s  %s\n", "", "", "", v[i].dice);
-        mostrati++;
+        if (v[i].dice[0] && !pagina_riga())
+            printf("  %-12s %-11s %5s  %s\n", "", "", "", v[i].dice);
     }
 
     if (mostrati == 0) {
@@ -4068,9 +4217,11 @@ static int comando_install_list(const char *pezzo)
                pezzo ? pezzo : "");
         return 1;
     }
+    if (g_pag_basta) return 0;
     printf("\n  %d pacchett%s. Per installarne uno:  netupdate -install:<nome>\n",
            mostrati, mostrati == 1 ? "o" : "i");
     printf("  E i sorgenti del sistema:            netupdate -install:sourcecode\n");
+    if (!pagine) printf("  Una pagina per volta:                netupdate -install:list -p\n");
     return 0;
 }
 
@@ -4284,7 +4435,7 @@ static int comando_sorgenti(void)
            (byte + 1023) / 1024, (aperto + 1048575) / 1048576, dest);
     printf("  Per aprirlo, tar lo tiene in memoria: circa %ld MB.\n",
            (byte + aperto + 1048575) / 1048576);
-    if (!chiedi_si("Procedo?", 1)) {
+    if (!g_si && !chiedi_si("Procedo?", 1)) {
         printf("\nNon ho toccato niente.\n");
         return 0;
     }
@@ -4352,11 +4503,11 @@ static int comando_sorgenti(void)
 static int comando_install(const char *id)
 {
     Config     c;
-    Pacchetto  v[PACCHETTI_MAX], r[PACCHETTI_MAX];
+    Pacchetto *v = NULL, *r = NULL;
     Pacchetto *p;
     char       ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
     char       versione[16], data[40], riga[RIGA_MAX];
-    char       scelti[PACCHETTI_MAX][ID_MAX], da_fare[PACCHETTI_MAX][ID_MAX];
+    char     (*scelti)[ID_MAX], (*da_fare)[ID_MAX];
     FILE      *f;
     int        n, nr, i, nscelti, nda = 0, gia = 0;
     long       n_file = 0, byte = 0, troppo_grossi = 0;
@@ -4367,7 +4518,7 @@ static int comando_install(const char *id)
     copia_str(g_anche, id, ID_MAX);
     if (manifesto(&c, ver, cat, ele, versione, data) != 0) return 1;
 
-    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    n = blocchi_leggi(cat, &v);
     if (n <= 0) { printf("  ! il catalogo non nomina nessun pacchetto.\n"); return 1; }
 
     p = cerca(v, n, id);
@@ -4377,17 +4528,26 @@ static int comando_install(const char *id)
         return 1;
     }
 
-    nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+    nr = blocchi_leggi(REG, &r);
     if (nr < 0) {
         printf("\n  Il registro non c'e': lo scrivo adesso, o non saprei cosa\n");
         printf("  hai gia'.\n\n");
         if (comando_registro_crea(TMPDIR) != 0) return 1;
-        nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+        nr = blocchi_leggi(REG, &r);
         if (nr < 0) return 1;
     }
 
     /* --- la catena, e chi di quella catena c'e' gia' ---------------------- */
-    nscelti = catena_vuole(v, n, id, scelti, PACCHETTI_MAX);
+    /* a chain holds each package once, plus `vuole` naming nothing */
+    {
+        int quanti = 1;
+
+        for (i = 0; i < n; i++) quanti += 1 + v[i].n_vuole;
+        scelti  = calloc((size_t)quanti, ID_MAX);
+        da_fare = calloc((size_t)quanti, ID_MAX);
+        if (scelti == NULL || da_fare == NULL) { printf("netupdate: memoria finita\n"); return 1; }
+        nscelti = catena_vuole(v, n, id, scelti, quanti);
+    }
     for (i = 0; i < nscelti; i++) {
         if (cerca(r, nr, scelti[i]) != NULL) { gia++; continue; }
         copia_str(da_fare[nda++], scelti[i], ID_MAX);
@@ -4470,7 +4630,7 @@ static int comando_install(const char *id)
         printf("    non secondi. Se e' scomodo, `toolinst` li prende dal CD.\n");
     }
 
-    if (!chiedi_si("Procedo?", 1)) {
+    if (!g_si && !chiedi_si("Procedo?", 1)) {
         printf("\nNon ho toccato niente.\n");
         return 0;
     }
@@ -4621,14 +4781,16 @@ static long cancella_file(char via[][ID_MAX], int nvia, long *non_tolti)
  * --------------------------------------------------------------------------- */
 static int comando_remove(const char *id)
 {
-    Pacchetto  r[PACCHETTI_MAX];
+    Pacchetto *r = NULL;
     Pacchetto *p;
-    char       via[PACCHETTI_MAX][ID_MAX], usato[256];
+    char     (*via)[ID_MAX], usato[256];
     int        nr, nvia = 0, i, k, giro;
     long       n_file = 0, tolti, non_tolti = 0;
 
-    nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+    nr = blocchi_leggi(REG, &r);
     if (nr < 0) return niente_registro();
+    via = calloc((size_t)nr + 1, ID_MAX);
+    if (via == NULL) { printf("netupdate: memoria finita\n"); return 1; }
 
     p = cerca(r, nr, id);
     if (p == NULL) {
@@ -4657,7 +4819,7 @@ static int comando_remove(const char *id)
     /* Gli orfani: le sue `vuole` che, tolto lui, non le usa piu' nessuno. Si
      * ripassa finche' non se ne aggiungono altri — togliere una libreria puo'
      * rendere orfana quella sotto. */
-    for (giro = 0; giro < PACCHETTI_MAX; giro++) {
+    for (giro = 0; giro <= nr; giro++) {
         int aggiunti = 0;
 
         for (i = 0; i < nvia; i++) {
@@ -4671,7 +4833,7 @@ static int comando_remove(const char *id)
                 if (fra(via, nvia, dip->id)) continue;
                 if (chi_usa_salvo(r, nr, dip->id, via, nvia, usato, sizeof(usato)))
                     continue;                      /* serve ancora a qualcuno */
-                if (nvia >= PACCHETTI_MAX) break;
+                if (nvia > nr) break;
                 copia_str(via[nvia++], dip->id, ID_MAX);
                 aggiunti++;
             }
@@ -4698,7 +4860,9 @@ static int comando_remove(const char *id)
      * quindi non diceva NIENTE di base — che e' voluta da build, cioe' dal
      * pacchetto che se ne andava insieme. Proprio la riga che serviva. */
     {
-        int detti[PACCHETTI_MAX], ndetti = 0, w;
+        int *detti = calloc((size_t)nr + 1, sizeof(int)), ndetti = 0, w;
+
+        if (detti == NULL) { printf("netupdate: memoria finita\n"); return 1; }
 
         for (i = 0; i < nvia; i++) {
             Pacchetto *q = cerca(r, nr, via[i]);
@@ -4711,7 +4875,7 @@ static int comando_remove(const char *id)
                 for (w = 0; w < ndetti; w++)
                     if (detti[w] == (int)(dip - r)) gia_detto = 1;
                 if (gia_detto) continue;
-                if (ndetti < PACCHETTI_MAX) detti[ndetti++] = (int)(dip - r);
+                if (ndetti <= nr) detti[ndetti++] = (int)(dip - r);
 
                 chi_usa_salvo(r, nr, dip->id, via, nvia, usato, sizeof(usato));
                 printf("  %s RESTA: %s\n", dip->id,
@@ -4721,7 +4885,7 @@ static int comando_remove(const char *id)
     }
 
     printf("\n  %ld file da cancellare.\n", n_file);
-    if (!chiedi_si("Procedo?", 0)) {
+    if (!g_si && !chiedi_si("Procedo?", 0)) {
         printf("\nNon ho toccato niente.\n");
         return 0;
     }
@@ -4779,8 +4943,12 @@ static void uso(void)
     printf("     netupdate -registro:<pacchetto>    uno solo, coi suoi file\n");
     printf("     netupdate -registro:crea <albero>  il registro da una copia locale\n");
     printf("     netupdate -install:list <pezzo>    le app il cui nome lo contiene\n");
+    printf("     netupdate -install:list -p         una pagina per volta\n");
+    printf("     netupdate -install:list -tab       una riga per app, per i programmi\n");
     printf("     netupdate -install:<app>           l'app e cio' che le serve\n");
     printf("     netupdate -remove:<app>            l'app e le librerie di nessun altro\n");
+    printf("     netupdate -install:<app> -yes      senza chiedere (anche -remove)\n");
+    printf("     netupdate -set:<TIPO> <indirizzo>  -set senza domande\n");
     printf("     netupdate -install:sourcecode      i sorgenti del sistema, in\n");
     printf("                                        %s/exos-<versione>/\n", SRC_DIR);
     printf("\n");
@@ -4860,6 +5028,9 @@ int main(int argc, char **argv)
     /* Anywhere on the line, so that it goes with -check, -yes and -yesall. */
     for (i = j = 1; i < argc; i++) {
         if (strcmp(argv[i], "-indietro") == 0) g_indietro = 1;
+        else if (i > 1 && strcmp(argv[i], "-yes") == 0 &&
+                 (strncmp(argv[1], "-install:", 9) == 0 || strncmp(argv[1], "-remove:", 8) == 0))
+            g_si = 1;
         else argv[j++] = argv[i];
     }
     argc = j;
@@ -4867,6 +5038,10 @@ int main(int argc, char **argv)
     if (argc < 2) { uso(); return 1; }
 
     if (strcmp(argv[1], "-set") == 0)  return comando_set();
+    if (strncmp(argv[1], "-set:", 5) == 0) {
+        if (argc < 3) { printf("uso: netupdate -set:<HTTP|FTP|HTTPS|FTPS> <indirizzo>\n"); return 2; }
+        return comando_set_diretto(argv[1] + 5, argv[2]);
+    }
 
     if (strcmp(argv[1], "-registro") == 0) return comando_registro();
 
@@ -4937,8 +5112,17 @@ int main(int argc, char **argv)
          * -registro. Sta scritto qui perche' chi un giorno pubblichera' un
          * pacchetto che si chiama «list» sappia dove sbatte. E dal 21
          * ottobre 2026 anche «sourcecode»: i sorgenti, da .../netinst_src. */
-        if (strcmp(coda, "list") == 0)
-            return comando_install_list(argc > 2 ? argv[2] : "");
+        if (strcmp(coda, "list") == 0) {
+            const char *pezzo = "";
+            int         pagine = 0, tab = 0;
+
+            for (i = 2; i < argc; i++) {
+                if (strcmp(argv[i], "-p") == 0)        pagine = 1;
+                else if (strcmp(argv[i], "-tab") == 0) tab = 1;
+                else pezzo = argv[i];
+            }
+            return comando_install_list(pezzo, pagine, tab);
+        }
         if (coda[0] == '\0') { uso(); return 1; }
         if (strcmp(coda, "sourcecode") == 0) return comando_sorgenti();
         {

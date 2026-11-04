@@ -113,6 +113,27 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### ExPackage, e netupdate legge tutto il catalogo (netupdate 0.041, expackage 0.001)
+
+- **ExPackage** (`/exwin/bin/expackage`, menu Strumenti > ExPackage): le applicazioni del
+  repository in una finestra. `[ ]` non installata, `[x]` installata, `[+]` da installare, `[-]` da
+  togliere, `[d]` serve a una `[+]`; Invio o doppio clic cambiano il segno, e un'applicazione che
+  un'altra usa non si puo' segnare da togliere. **Applica** fa lavorare netupdate in disparte
+  (`-remove:<app> -yes`, poi `-install:<app> -yes`), l'ultima riga che scrive sta in fondo alla
+  finestra e Visualizza > Registro di netupdate la mostra tutta. **Repository > Imposta e
+  verifica**: modalita' (HTTP, FTP, HTTPS, FTPS) e indirizzo, scritti con `netupdate -set:` e
+  controllati: se non c'e' l'elenco delle applicazioni torna il repository di prima. Per cambiare
+  qualcosa serve root.
+- **`netupdate -install:list -p`** una pagina per volta (Invio, q); `-install:list -tab` una riga
+  per pacchetto per i programmi; `-yes` dopo `-install:<app>` o `-remove:<app>`; `-set:<TIPO>
+  <indirizzo>`.
+- **Guasto trovato:** netupdate leggeva solo i primi 32 pacchetti del catalogo e 4 `vuole` l'uno.
+  Con le librerie condivise il catalogo ne ha 34: apache ed exilla non si potevano installare
+  ("piu' di 32 pacchetti: ignoro il resto") e apache perdeva la quinta dipendenza. Ora i vettori
+  sono lunghi quanto il file.
+- `tools/prova_expackage.sh`: 12 su 12 a 32 e 64 bit in QEMU. Sul portatile solo la netupdate nuova
+  da /tmp (`-tab`, `-p`); expackage li' non provato.
+
 ### Le librerie di terzi sono condivise, e i programmi le caricano all'avvio
 
 La regola era "tutte le librerie dinamiche" (30 luglio) e le librerie di terzi erano uscite

@@ -231,6 +231,34 @@ Libera spazio e rilancia netupdate -check. Con la 0.038 la scritta IL KERNEL
 E' CAMBIATO appariva anche quando non era vero: se dmesg ERROR dice
 "spezzato in piu' di 12 intervalli", prima aggiorna netupdate.
 
+[netupdate expackage pacchetti]
+Installare e togliere le applicazioni del repository
+
+  netupdate -install:list            l'elenco, con cosa c'e' gia' qui
+  netupdate -install:list -p         una pagina per volta: Invio avanza,
+                                     q smette
+  netupdate -install:list tes        solo quelle col nome che contiene tes
+  netupdate -install:<app>           l'app e quelle che vuole, in catena
+  netupdate -remove:<app>            l'app e le librerie di nessun altro
+  netupdate -install:<app> -yes      senza chiedere Procedo? (anche -remove)
+  netupdate -set                     il repository, con le domande
+  netupdate -set:HTTP esempio.org/exos   lo stesso, senza domande
+
+Con la scrivania: menu Strumenti > ExPackage (/exwin/bin/expackage). Mostra
+le applicazioni del repository: [ ] non installata, [x] installata, [+] da
+installare, [-] da togliere, [d] da installare perche' serve a una [+].
+Invio o doppio clic cambiano il segno; Applica toglie le [-] e installa le
+[+] con le loro dipendenze. Repository > Imposta e verifica sceglie modalita'
+(HTTP, FTP, HTTPS, FTPS) e indirizzo, e controlla che ci sia l'elenco delle
+applicazioni: se non c'e' rimette il repository di prima. Lavora netupdate:
+Visualizza > Registro di netupdate mostra quel che ha scritto. Per cambiare
+qualcosa serve root.
+
+! Fino a netupdate 0.040 si leggevano solo i primi 32 pacchetti del catalogo
+e 4 dipendenze per pacchetto: con 34 pacchetti apache ed exilla non si
+potevano installare ("piu' di 32 pacchetti: ignoro il resto"). Dalla 0.041
+non c'e' piu' un tetto: netupdate -check -yes porta quella nuova.
+
 [sync]
 tutto quel che e' stato scritto va sui dischi, giornali compresi
 

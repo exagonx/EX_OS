@@ -87,7 +87,7 @@ GRUPPO  VOCI             COSA
   9     33 37 35 31      fork, EINTR, tetti, file oltre 2 GB
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
  --     40 21            decise il 2/11: BSY e DMA a 30 s; telnetd chiude i discendenti
- --     61               solo se ricompare
+ --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -8637,6 +8637,18 @@ tools/netinst/velocita tolto da netinst.
       ! Possibile aiuto: all'avvio provare anche /dev/ext4.mod.old se gli altri due
       sono rifiutati.
 
+  76. orologio IN FAULT ALL'AVVIO DELLA SCRIVANIA, A 64 BIT (3/11, QEMU, una
+      volta su tre giri di tools/prova_expackage.sh, kernel 0.310): "[FAULT]
+      PID 31 '/exwin/bin/orologio': page fault a 0x08014f60 (pagina assente,
+      lettura, EIP=0x08014f60)", "la pagina di rip non e' mappata", pte 0,
+      heap 0x0801f000..0x08033000. L'EIP sta nel testo del programma: una
+      pagina di codice che non arriva su richiesta. orologio non e' cambiato;
+      build-64 era stato appena ricostruito. Seriale in
+      /tmp/exos/serialxpx86_64b.txt (finche' non si rilancia). Causa non
+      cercata. Da guardare: se ricapita, quale pagina del file e se il file
+      sul disco installato e' intero.
+      Stato: in coda.
+
   63. RISOLTA 2/11 con kernel 0.310, confermata sul portatile: era il DMA di ohci.drv
       finito (frame number nelle pagine liberate), non il disco. Dopo system -unload
       memsporca 0 byte su 512 MB, 4 chkdsk -dettagli su 4 senza problemi. chkdsk -r dopo
@@ -8823,6 +8835,10 @@ tools/netinst/velocita tolto da netinst.
       l'aggiornamento: controlla (kernel, /proc, driver, spazio) e fa cio'
       che puo', stampa il resto come consigli; ogni novita' ci aggiunge il
       suo controllo. Una regola per sempre, vedi anche voce 47.
+      Controlli gia' da mettere quando ci sara' lo script: netupdate 0.041
+      o piu' (catalogo senza tetto: con la 0.040 apache ed exilla non si
+      installano), /exwin/bin/expackage e la riga ExPackage in
+      /exwin/lib/applicazioni.txt (3/11).
       Stato: in coda.
 
   48. RIPRODUTTORE DI FILMATI E CODEC AUDIO/VIDEO (l'utente, 30/10: "e'

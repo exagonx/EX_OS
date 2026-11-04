@@ -50,10 +50,12 @@ tar -xzf "$D/srv-a/netinst_src/file/src/$NOME.tar_gz" -C "$D/atteso"
 # --- the disk ------------------------------------------------------------------
 echo "=== 1. disco installato dal CD ($ARCH) ==="
 IMG="$D/hd.img"
-sed "s|^IMG=dischi/hd.img|IMG=$IMG|; s|^MB=\"\${1:-512}\"|MB=\"\${1:-256}\"|; \
-     s|dist/exos.iso|$ISO|g; s|/tmp/exos-mkhd.log|$D/mkhd.log|g" tools/mkhd.sh > "$D/mkhd.sh"
+# ! THE DISK GOES IN $D THROUGH EXOS_HD (tools/mkhd.sh reads it since 30
+# October 2026); the old `IMG=` substitution no longer matched, and the
+# install landed on dischi/hd.img (seen on 3 November 2026).
+sed "s|dist/exos.iso|$ISO|g; s|/tmp/exos-mkhd.log|$D/mkhd.log|g" tools/mkhd.sh > "$D/mkhd.sh"
 env -u EXOS_MARCA -u EXOS_NO_FLOPPY -u EXOS_QEMU_EXTRA -u EXOS_RAM \
-    EXOS_QEMU=$Q EXOS_ISTANZA=src$ARCH EXOS_SUPPORTO=cd bash "$D/mkhd.sh" > "$D/install.log" 2>&1 || {
+    EXOS_QEMU=$Q EXOS_ISTANZA=src$ARCH EXOS_SUPPORTO=cd EXOS_HD="$IMG" bash "$D/mkhd.sh" 256 > "$D/install.log" 2>&1 || {
     no "l'installazione dal CD non e' riuscita (vedi $D/install.log)"
     echo "=== $ok riusciti, $no no ==="; exit 1; }
 

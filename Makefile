@@ -417,7 +417,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # =============================================================================
 PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi exilla
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -3058,6 +3058,33 @@ $(EXWIFI_BIN): $(EXWIFI_SRC) lib/programma.ld $(WIFI_PROTO) $(WIFI_LIB) \
 .PHONY: exwifi
 exwifi: dirs $(EXWIFI_BIN)
 
+# --- /exwin/bin/expackage: applications from the repository (3 November 2026) --
+# The graphical face of netupdate -install / -remove: it runs /bin/netupdate,
+# so nothing of the catalogue is compiled in. exinfo inside, exwin and exdlg
+# through their stubs.
+EXPACKAGE_SRC := exwin/bin/expackage/expackage.c
+EXPACKAGE_BIN := $(BUILD_EXWIN_BIN)/expackage
+EXPACKAGE_LD  := exwin/bin/expackage/expackage.ld
+
+$(EXPACKAGE_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EXPACKAGE_SRC) $(EXPACKAGE_LD) \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/expackage ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(EXPACKAGE_SRC) -o $(BUILD_OBJ)/expackage_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/expackage_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/expackage_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/expackage_exdlg.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/expackage_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXPACKAGE_LD) \
+	    $(BUILD_OBJ)/expackage_start.o $(BUILD_OBJ)/expackage_main.o \
+	    $(BUILD_OBJ)/expackage_exwin.o $(BUILD_OBJ)/expackage_exdlg.o $(BUILD_OBJ)/expackage_info.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] expackage compilato: $@"
+
+.PHONY: expackage
+expackage: dirs $(EXPACKAGE_BIN)
+
 # --- exilla: il lanciatore di Exilla, Firefox per EX-OS -----------------------
 #
 # ! NON VA IN /exwin/bin E NON VA SUL CD. Exilla e' un pacchetto del
@@ -3411,7 +3438,7 @@ exbrowser browser: dirs $(BROWSER_BIN)
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) $(FINPROVA_BIN) \
              $(OROLOGIO_BIN) $(ATTESA_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) $(CALCTOR_BIN) \
-             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(EXWIFI_BIN) $(GIOCHI_BIN) \
+             $(PENNELLO_BIN) $(IMMAGINI_BIN) $(EXPLAYER_BIN) $(EXVOLUME_BIN) $(EXWIFI_BIN) $(EXPACKAGE_BIN) $(GIOCHI_BIN) \
              $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) $(EXSUONO_SO) \
              $(EXTTF_SO) \

@@ -111,6 +111,25 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### ExPackage, and netupdate reads the whole catalogue (netupdate 0.041, expackage 0.001)
+
+- **ExPackage** (`/exwin/bin/expackage`, menu Strumenti > ExPackage): the applications of the
+  repository in a window. `[ ]` not installed, `[x]` installed, `[+]` to install, `[-]` to remove,
+  `[d]` needed by a `[+]`; Enter or a double click changes the mark, and an application another one
+  uses cannot be marked for removal. **Applica** runs netupdate in the background (`-remove:<app>
+  -yes`, then `-install:<app> -yes`), the last line it writes is on the status line and
+  Visualizza > Registro di netupdate shows all of it. **Repository > Imposta e verifica**: mode
+  (HTTP, FTP, HTTPS, FTPS) and address, written with `netupdate -set:` and checked to hold a list
+  of applications; if not, the old repository goes back. Changing anything needs root.
+- **`netupdate -install:list -p`** one page at a time (Enter, q); `-install:list -tab` one line
+  per package for programs; `-yes` after `-install:<app>` or `-remove:<app>`; `-set:<TIPO> <address>`.
+- **Fault found:** netupdate read only the first 32 packages of the catalogue and 4 `vuole` each.
+  With the shared libraries the catalogue has 34: apache and exilla could not be installed
+  ("piu' di 32 pacchetti: ignoro il resto") and apache lost its fifth dependency. Now the arrays
+  are as long as the file.
+- `tools/prova_expackage.sh`: 12 out of 12 at 32 and 64 bit in QEMU. On the laptop only the new
+  netupdate from /tmp (`-tab`, `-p`); expackage not tried there.
+
 ### Third-party libraries are shared objects, and programs load them at start
 
 The rule was "every library dynamic" (30 July) and the third-party libraries had all come

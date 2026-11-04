@@ -30,3 +30,715 @@
   finito /file/boot/stage2.bin: 4494 byte
 /file/dev/ext4.mod
   finito /file/dev/ext4.mod: 40332 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/pacchetti/nasm.tar_gz
+  finito /netinst/pacchetti/nasm.tar_gz: 561337 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/pacchetti/nasm.tar_gz
+  finito /netinst/pacchetti/nasm.tar_gz: 561337 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/pacchetti/nasm.tar_gz
+  finito /netinst_64/pacchetti/nasm.tar_gz: 436262 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/pacchetti/nasm.tar_gz
+  finito /netinst_64/pacchetti/nasm.tar_gz: 436262 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/pacchetti/nasm.tar_gz
+  finito /netinst_64/pacchetti/nasm.tar_gz: 436262 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/file/exos/bin/as
+  finito /netinst_64/file/exos/bin/as: 1873888 byte
+/netinst_64/file/exos/bin/cpp
+  finito /netinst_64/file/exos/bin/cpp: 2508136 byte
+/netinst_64/file/exos/bin/gcc
+  finito /netinst_64/file/exos/bin/gcc: 2506632 byte
+/netinst_64/file/exos/bin/ld
+  finito /netinst_64/file/exos/bin/ld: 2791808 byte
+/netinst_64/file/exos/include/alloca.h
+  finito /netinst_64/file/exos/include/alloca.h: 923 byte
+/netinst_64/file/exos/include/arpa/inet.h
+  finito /netinst_64/file/exos/include/arpa/inet.h: 865 byte
+/netinst_64/file/exos/include/assert.h
+  finito /netinst_64/file/exos/include/assert.h: 2744 byte
+/netinst_64/file/exos/include/audio.h
+  finito /netinst_64/file/exos/include/audio.h: 4662 byte
+/netinst_64/file/exos/include/ctype.h
+  finito /netinst_64/file/exos/include/ctype.h: 1606 byte
+/netinst_64/file/exos/include/dirent.h
+  finito /netinst_64/file/exos/include/dirent.h: 854 byte
+/netinst_64/file/exos/include/dlfcn.h
+  finito /netinst_64/file/exos/include/dlfcn.h: 714 byte
+/netinst_64/file/exos/include/dns.h
+  finito /netinst_64/file/exos/include/dns.h: 3580 byte
+/netinst_64/file/exos/include/elf.h
+  finito /netinst_64/file/exos/include/elf.h: 2752 byte
+/netinst_64/file/exos/include/endian.h
+  finito /netinst_64/file/exos/include/endian.h: 1520 byte
+/netinst_64/file/exos/include/errno.h
+  finito /netinst_64/file/exos/include/errno.h: 1602 byte
+/netinst_64/file/exos/include/exlib.h
+  finito /netinst_64/file/exos/include/exlib.h: 5150 byte
+/netinst_64/file/exos/include/exos/kbd_proto.h
+  finito /netinst_64/file/exos/include/exos/kbd_proto.h: 18917 byte
+/netinst_64/file/exos/include/exos/win_proto.h
+  finito /netinst_64/file/exos/include/exos/win_proto.h: 22832 byte
+/netinst_64/file/exos/include/exos_stat.h
+  finito /netinst_64/file/exos/include/exos_stat.h: 2083 byte
+/netinst_64/file/exos/include/extaskbar.h
+  finito /netinst_64/file/exos/include/extaskbar.h: 2571 byte
+/netinst_64/file/exos/include/extaskbar_abi.h
+  finito /netinst_64/file/exos/include/extaskbar_abi.h: 4307 byte
+/netinst_64/file/exos/include/fcntl.h
+  finito /netinst_64/file/exos/include/fcntl.h: 2556 byte
+/netinst_64/file/exos/include/fenv.h
+  finito /netinst_64/file/exos/include/fenv.h: 2223 byte
+/netinst_64/file/exos/include/getopt.h
+  finito /netinst_64/file/exos/include/getopt.h: 1430 byte
+/netinst_64/file/exos/include/gmp.h
+  finito /netinst_64/file/exos/include/gmp.h: 84318 byte
+/netinst_64/file/exos/include/grp.h
+  finito /netinst_64/file/exos/include/grp.h: 1063 byte
+/netinst_64/file/exos/include/iconv.h
+  finito /netinst_64/file/exos/include/iconv.h: 1436 byte
+/netinst_64/file/exos/include/inttypes.h
+  finito /netinst_64/file/exos/include/inttypes.h: 6401 byte
+/netinst_64/file/exos/include/libc.h
+  finito /netinst_64/file/exos/include/libc.h: 194332 byte
+/netinst_64/file/exos/include/libgen.h
+  finito /netinst_64/file/exos/include/libgen.h: 1065 byte
+/netinst_64/file/exos/include/limits.h
+  finito /netinst_64/file/exos/include/limits.h: 2657 byte
+/netinst_64/file/exos/include/link.h
+  finito /netinst_64/file/exos/include/link.h: 1274 byte
+/netinst_64/file/exos/include/locale.h
+  finito /netinst_64/file/exos/include/locale.h: 851 byte
+/netinst_64/file/exos/include/machine/endian.h
+  finito /netinst_64/file/exos/include/machine/endian.h: 650 byte
+/netinst_64/file/exos/include/malloc.h
+  finito /netinst_64/file/exos/include/malloc.h: 1785 byte
+/netinst_64/file/exos/include/math.h
+  finito /netinst_64/file/exos/include/math.h: 12392 byte
+/netinst_64/file/exos/include/memory.h
+  finito /netinst_64/file/exos/include/memory.h: 1024 byte
+/netinst_64/file/exos/include/mpc.h
+  finito /netinst_64/file/exos/include/mpc.h: 16949 byte
+/netinst_64/file/exos/include/mpf2mpfr.h
+  finito /netinst_64/file/exos/include/mpf2mpfr.h: 6645 byte
+/netinst_64/file/exos/include/mpfr.h
+  finito /netinst_64/file/exos/include/mpfr.h: 57443 byte
+/netinst_64/file/exos/include/net/if.h
+  finito /netinst_64/file/exos/include/net/if.h: 1323 byte
+/netinst_64/file/exos/include/netdb.h
+  finito /netinst_64/file/exos/include/netdb.h: 2419 byte
+/netinst_64/file/exos/include/netinet/in.h
+  finito /netinst_64/file/exos/include/netinet/in.h: 870 byte
+/netinst_64/file/exos/include/netinet/in_systm.h
+  finito /netinst_64/file/exos/include/netinet/in_systm.h: 1047 byte
+/netinst_64/file/exos/include/netinet/ip.h
+  finito /netinst_64/file/exos/include/netinet/ip.h: 2140 byte
+/netinst_64/file/exos/include/netinet/tcp.h
+  finito /netinst_64/file/exos/include/netinet/tcp.h: 875 byte
+/netinst_64/file/exos/include/poll.h
+  finito /netinst_64/file/exos/include/poll.h: 837 byte
+/netinst_64/file/exos/include/pthread.h
+  finito /netinst_64/file/exos/include/pthread.h: 9327 byte
+/netinst_64/file/exos/include/pwd.h
+  finito /netinst_64/file/exos/include/pwd.h: 1745 byte
+/netinst_64/file/exos/include/rete.h
+  finito /netinst_64/file/exos/include/rete.h: 4729 byte
+/netinst_64/file/exos/include/sched.h
+  finito /netinst_64/file/exos/include/sched.h: 1202 byte
+/netinst_64/file/exos/include/semaphore.h
+  finito /netinst_64/file/exos/include/semaphore.h: 1306 byte
+/netinst_64/file/exos/include/setjmp.h
+  finito /netinst_64/file/exos/include/setjmp.h: 1599 byte
+/netinst_64/file/exos/include/signal.h
+  finito /netinst_64/file/exos/include/signal.h: 874 byte
+/netinst_64/file/exos/include/spawn_abi.h
+  finito /netinst_64/file/exos/include/spawn_abi.h: 10736 byte
+/netinst_64/file/exos/include/stdint.h
+  finito /netinst_64/file/exos/include/stdint.h: 8108 byte
+/netinst_64/file/exos/include/stdio.h
+  finito /netinst_64/file/exos/include/stdio.h: 2813 byte
+/netinst_64/file/exos/include/stdlib.h
+  finito /netinst_64/file/exos/include/stdlib.h: 1860 byte
+/netinst_64/file/exos/include/string.h
+  finito /netinst_64/file/exos/include/string.h: 1820 byte
+/netinst_64/file/exos/include/strings.h
+  finito /netinst_64/file/exos/include/strings.h: 1109 byte
+/netinst_64/file/exos/include/sys/epoll.h
+  finito /netinst_64/file/exos/include/sys/epoll.h: 2711 byte
+/netinst_64/file/exos/include/sys/errno.h
+  finito /netinst_64/file/exos/include/sys/errno.h: 607 byte
+/netinst_64/file/exos/include/sys/file.h
+  finito /netinst_64/file/exos/include/sys/file.h: 1014 byte
+/netinst_64/file/exos/include/sys/ioctl.h
+  finito /netinst_64/file/exos/include/sys/ioctl.h: 1476 byte
+/netinst_64/file/exos/include/sys/mman.h
+  finito /netinst_64/file/exos/include/sys/mman.h: 2278 byte
+/netinst_64/file/exos/include/sys/param.h
+  finito /netinst_64/file/exos/include/sys/param.h: 2333 byte
+/netinst_64/file/exos/include/sys/poll.h
+  finito /netinst_64/file/exos/include/sys/poll.h: 806 byte
+/netinst_64/file/exos/include/sys/random.h
+  finito /netinst_64/file/exos/include/sys/random.h: 1142 byte
+/netinst_64/file/exos/include/sys/resource.h
+  finito /netinst_64/file/exos/include/sys/resource.h: 1929 byte
+/netinst_64/file/exos/include/sys/select.h
+  finito /netinst_64/file/exos/include/sys/select.h: 1175 byte
+/netinst_64/file/exos/include/sys/socket.h
+  finito /netinst_64/file/exos/include/sys/socket.h: 870 byte
+/netinst_64/file/exos/include/sys/stat.h
+  finito /netinst_64/file/exos/include/sys/stat.h: 2727 byte
+/netinst_64/file/exos/include/sys/statvfs.h
+  finito /netinst_64/file/exos/include/sys/statvfs.h: 1692 byte
+/netinst_64/file/exos/include/sys/syscall.h
+  finito /netinst_64/file/exos/include/sys/syscall.h: 1241 byte
+/netinst_64/file/exos/include/sys/time.h
+  finito /netinst_64/file/exos/include/sys/time.h: 2782 byte
+/netinst_64/file/exos/include/sys/times.h
+  finito /netinst_64/file/exos/include/sys/times.h: 853 byte
+/netinst_64/file/exos/include/sys/types.h
+  finito /netinst_64/file/exos/include/sys/types.h: 2051 byte
+/netinst_64/file/exos/include/sys/ucontext.h
+  finito /netinst_64/file/exos/include/sys/ucontext.h: 762 byte
+/netinst_64/file/exos/include/sys/uio.h
+  finito /netinst_64/file/exos/include/sys/uio.h: 855 byte
+/netinst_64/file/exos/include/sys/un.h
+  finito /netinst_64/file/exos/include/sys/un.h: 696 byte
+/netinst_64/file/exos/include/sys/utsname.h
+  finito /netinst_64/file/exos/include/sys/utsname.h: 1270 byte
+/netinst_64/file/exos/include/sys/wait.h
+  finito /netinst_64/file/exos/include/sys/wait.h: 842 byte
+/netinst_64/file/exos/include/syscall.h
+  finito /netinst_64/file/exos/include/syscall.h: 667 byte
+/netinst_64/file/exos/include/sysexits.h
+  finito /netinst_64/file/exos/include/sysexits.h: 1010 byte
+/netinst_64/file/exos/include/syslog.h
+  finito /netinst_64/file/exos/include/syslog.h: 2526 byte
+/netinst_64/file/exos/include/termios.h
+  finito /netinst_64/file/exos/include/termios.h: 4783 byte
+/netinst_64/file/exos/include/time.h
+  finito /netinst_64/file/exos/include/time.h: 1890 byte
+/netinst_64/file/exos/include/ucontext.h
+  finito /netinst_64/file/exos/include/ucontext.h: 739 byte
+/netinst_64/file/exos/include/unistd.h
+  finito /netinst_64/file/exos/include/unistd.h: 4478 byte
+/netinst_64/file/exos/include/utime.h
+  finito /netinst_64/file/exos/include/utime.h: 1356 byte
+/netinst_64/file/exos/include/wchar.h
+  finito /netinst_64/file/exos/include/wchar.h: 6749 byte
+/netinst_64/file/exos/include/wctype.h
+  finito /netinst_64/file/exos/include/wctype.h: 2571 byte
+/netinst_64/file/exos/lib/crt0.o
+  finito /netinst_64/file/exos/lib/crt0.o: 856 byte
+/netinst_64/file/exos/lib/crtbegin.o
+  finito /netinst_64/file/exos/lib/crtbegin.o: 2776 byte
+/netinst_64/file/exos/lib/crtend.o
+  finito /netinst_64/file/exos/lib/crtend.o: 1056 byte
+/netinst_64/file/exos/lib/crti.o
+  finito /netinst_64/file/exos/lib/crti.o: 872 byte
+/netinst_64/file/exos/lib/crtn.o
+  finito /netinst_64/file/exos/lib/crtn.o: 648 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crtbegin.o
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crtbegin.o: 2776 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crtend.o
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crtend.o: 1056 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crti.o
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crti.o: 872 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crtn.o
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/crtn.o: 648 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include-fixed/README
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include-fixed/README: 750 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include-fixed/assert.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include-fixed/assert.h: 3252 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include-fixed/stdio.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include-fixed/stdio.h: 3328 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/adxintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/adxintrin.h: 2832 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/ammintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/ammintrin.h: 3216 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxavx512intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxavx512intrin.h: 5953 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxbf16intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxbf16intrin.h: 1877 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxcomplexintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxcomplexintrin.h: 2370 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxfp16intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxfp16intrin.h: 1731 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxfp8intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxfp8intrin.h: 2767 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxint8intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxint8intrin.h: 2160 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxmovrsintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxmovrsintrin.h: 2278 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxtileintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/amxtileintrin.h: 3224 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2bf16intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2bf16intrin.h: 57858 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2convertintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2convertintrin.h: 46574 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2copyintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2copyintrin.h: 1612 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2mediaintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2mediaintrin.h: 37210 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2minmaxintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2minmaxintrin.h: 43593 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2satcvtintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx10_2satcvtintrin.h: 88095 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx2intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx2intrin.h: 70021 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bf16intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bf16intrin.h: 5044 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bf16vlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bf16vlintrin.h: 9181 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bitalgintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bitalgintrin.h: 3650 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bitalgvlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bitalgvlintrin.h: 5811 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bmmintrin.h: 2938 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bmmvlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bmmvlintrin.h: 3875 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bwintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512bwintrin.h: 103681 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512cdintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512cdintrin.h: 5822 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512dqintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512dqintrin.h: 93248 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512fintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512fintrin.h: 529582 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512fp16intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512fp16intrin.h: 215780 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512fp16vlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512fp16vlintrin.h: 97767 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512ifmaintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512ifmaintrin.h: 3437 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512ifmavlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512ifmavlintrin.h: 4762 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmi2intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmi2intrin.h: 19489 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmi2vlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmi2vlintrin.h: 37000 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmiintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmiintrin.h: 4928 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmivlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vbmivlintrin.h: 8420 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vlbwintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vlbwintrin.h: 164528 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vldqintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vldqintrin.h: 62185 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vlintrin.h: 434714 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vnniintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vnniintrin.h: 4969 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vnnivlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vnnivlintrin.h: 7404 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vp2intersectintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vp2intersectintrin.h: 2105 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vp2intersectvlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vp2intersectvlintrin.h: 2638 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vpopcntdqintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vpopcntdqintrin.h: 3117 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vpopcntdqvlintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avx512vpopcntdqvlintrin.h: 4695 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxifmaintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxifmaintrin.h: 2551 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxintrin.h: 51427 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxneconvertintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxneconvertintrin.h: 4424 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxvnniint16intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxvnniint16intrin.h: 4578 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxvnniint8intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxvnniint8intrin.h: 4521 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxvnniintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/avxvnniintrin.h: 3604 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/bmi2intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/bmi2intrin.h: 3355 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/bmiintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/bmiintrin.h: 6149 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/bmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/bmmintrin.h: 1154 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cet.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cet.h: 2665 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cetintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cetintrin.h: 3334 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cldemoteintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cldemoteintrin.h: 1615 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/clflushoptintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/clflushoptintrin.h: 1664 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/clwbintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/clwbintrin.h: 1586 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/clzerointrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/clzerointrin.h: 1491 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cmpccxaddintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cmpccxaddintrin.h: 2885 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cpuid.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cpuid.h: 10752 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cross-stdarg.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/cross-stdarg.h: 2558 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/emmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/emmintrin.h: 53273 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/enqcmdintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/enqcmdintrin.h: 1817 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/f16cintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/f16cintrin.h: 3410 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/float.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/float.h: 21430 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/fma4intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/fma4intrin.h: 9132 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/fmaintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/fmaintrin.h: 10116 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/fxsrintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/fxsrintrin.h: 2057 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/gcov.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/gcov.h: 2940 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/gfniintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/gfniintrin.h: 15408 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/hresetintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/hresetintrin.h: 1627 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/ia32intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/ia32intrin.h: 7865 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/immintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/immintrin.h: 3137 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/iso646.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/iso646.h: 1272 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/keylockerintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/keylockerintrin.h: 4440 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/limits.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/limits.h: 6551 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/lwpintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/lwpintrin.h: 3406 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/lzcntintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/lzcntintrin.h: 2365 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mm3dnow.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mm3dnow.h: 7076 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mm_malloc.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mm_malloc.h: 2314 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mmintrin.h: 31892 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/movdirintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/movdirintrin.h: 2348 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/movrsintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/movrsintrin.h: 13329 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mwaitintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mwaitintrin.h: 1710 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mwaitxintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/mwaitxintrin.h: 1747 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/nmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/nmmintrin.h: 1288 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/pconfigintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/pconfigintrin.h: 2355 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/pkuintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/pkuintrin.h: 1742 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/pmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/pmmintrin.h: 4016 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/popcntintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/popcntintrin.h: 1750 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/prfchiintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/prfchiintrin.h: 2009 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/prfchwintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/prfchwintrin.h: 1477 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/raointintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/raointintrin.h: 2941 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/rdseedintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/rdseedintrin.h: 2018 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/rtmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/rtmintrin.h: 2739 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/serializeintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/serializeintrin.h: 1624 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sgxintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sgxintrin.h: 7091 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sha512intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sha512intrin.h: 2162 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/shaintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/shaintrin.h: 3204 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sm3intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sm3intrin.h: 2382 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sm4intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/sm4intrin.h: 3023 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/smmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/smmintrin.h: 28191 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdalign.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdalign.h: 1338 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdarg.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdarg.h: 4378 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdatomic.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdatomic.h: 9715 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdbool.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdbool.h: 1490 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdckdint.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdckdint.h: 1509 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdcountof.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdcountof.h: 1104 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stddef.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stddef.h: 14134 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdfix.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdfix.h: 6000 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdnoreturn.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/stdnoreturn.h: 1136 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/syslimits.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/syslimits.h: 445 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tbmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tbmintrin.h: 5248 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tgmath.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tgmath.h: 5461 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tmmintrin.h: 8343 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tsxldtrkintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/tsxldtrkintrin.h: 1777 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/uintrintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/uintrintrin.h: 2307 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/unwind.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/unwind.h: 10938 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/usermsrintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/usermsrintrin.h: 1920 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/vaesintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/vaesintrin.h: 3448 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/varargs.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/varargs.h: 139 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/vpclmulqdqintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/vpclmulqdqintrin.h: 2702 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/waitpkgintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/waitpkgintrin.h: 2000 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/wbnoinvdintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/wbnoinvdintrin.h: 1627 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/wmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/wmmintrin.h: 4197 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/x86gprintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/x86gprintrin.h: 6193 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/x86intrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/x86intrin.h: 1302 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xmmintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xmmintrin.h: 46103 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xopintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xopintrin.h: 28783 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsavecintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsavecintrin.h: 1822 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsaveintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsaveintrin.h: 2473 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsaveoptintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsaveoptintrin.h: 1852 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsavesintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xsavesintrin.h: 2158 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xtestintrin.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/include/xtestintrin.h: 1693 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/libgcc.a
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/libgcc.a: 1839284 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/libgcov.a
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/libgcov.a: 128224 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/specs
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/specs: 6120 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/testsuite/auto-host.h
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/testsuite/auto-host.h: 62616 byte
+/netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/testsuite/et-static.exp
+  finito /netinst_64/file/exos/lib/gcc/x86_64-exos/17.0.0/testsuite/et-static.exp: 1690 byte
+/netinst_64/file/exos/lib/libc.a
+  finito /netinst_64/file/exos/lib/libc.a: 554974 byte
+/netinst_64/file/exos/lib/libdl.a
+  finito /netinst_64/file/exos/lib/libdl.a: 8 byte
+/netinst_64/file/exos/lib/libgcc.a
+  finito /netinst_64/file/exos/lib/libgcc.a: 1839284 byte
+/netinst_64/file/exos/lib/libm.a
+  finito /netinst_64/file/exos/lib/libm.a: 663044 byte
+/netinst_64/file/exos/lib/libpthread.a
+  finito /netinst_64/file/exos/lib/libpthread.a: 8 byte
+/netinst_64/file/exos/lib/librt.a
+  finito /netinst_64/file/exos/lib/librt.a: 8 byte
+/netinst_64/file/exos/lib/libsupc++.a
+  finito /netinst_64/file/exos/lib/libsupc++.a: 1542294 byte
+/netinst_64/file/exos/libexec/gcc/x86_64-exos/17.0.0/cc1
+  finito /netinst_64/file/exos/libexec/gcc/x86_64-exos/17.0.0/cc1: 42759856 byte
+/netinst_64/file/exos/libexec/gcc/x86_64-exos/17.0.0/collect2
+  finito /netinst_64/file/exos/libexec/gcc/x86_64-exos/17.0.0/collect2: 1481768 byte
+/netinst_64/file/exos/strumenti.txt
+  finito /netinst_64/file/exos/strumenti.txt: 17389 byte
+/netinst_64/file/exos/x86_64-exos/bin/as
+  finito /netinst_64/file/exos/x86_64-exos/bin/as: 1873888 byte
+/netinst_64/file/exos/x86_64-exos/bin/ld
+  finito /netinst_64/file/exos/x86_64-exos/bin/ld: 2791808 byte
+/netinst_64/pacchetti/fb.tar_gz
+  finito /netinst_64/pacchetti/fb.tar_gz: 1960 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/pacchetti/nasm.tar_gz
+  finito /netinst_64/pacchetti/nasm.tar_gz: 436262 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst_64/pacchetti/nasm.tar_gz
+  finito /netinst_64/pacchetti/nasm.tar_gz: 436262 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 316 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 18700 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 386888 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/pacchetti/nasm.tar_gz
+  finito /netinst/pacchetti/nasm.tar_gz: 561337 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
+/netinst/pacchetti/nasm.tar_gz
+  finito /netinst/pacchetti/nasm.tar_gz: 561337 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 314 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 23536 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 427658 byte
