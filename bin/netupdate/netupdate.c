@@ -44,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.041");
+EX_VERSIONE("netupdate", "0.042");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -979,8 +979,12 @@ static int impronta_locale(const char *perc, char esa[65])
 static int e_libreria(const char *p)
 {
     unsigned int n = (unsigned int)strlen(p);
+    const char  *nome = strrchr(p, '/');
 
-    return n > 3 && strcmp(p + n - 3, ".so") == 0;
+    /* libz.so and libz.so.1 alike: since 3 November 2026 the programs load
+     * the versioned name, and it must arrive before them (4 November 2026) */
+    nome = nome ? nome + 1 : p;
+    return (n > 3 && strcmp(p + n - 3, ".so") == 0) || strstr(nome, ".so.") != NULL;
 }
 
 /* Rende 1 se il percorso ASSOLUTO esiste, e ne mette la dimensione in *dim. */
@@ -1315,14 +1319,21 @@ static int respiro(void *dato)
 }
 
 /* Il registro caricato per il confronto. Un'arena e un indice invece di
- * millecinquecento malloc: su EX-OS la memoria non torna indietro. */
-#define VOCI_MAX   2048
-#define ARENA_MAX  (192u * 1024)
-static char  g_arena[ARENA_MAX];
-static int   g_arena_uso;
+ * millecinquecento malloc: su EX-OS la memoria non torna indietro.
+ *
+ * ! NO FIXED CEILING (4 November 2026). Up to 0.041 the arena was 192 KB and
+ * the index 2048 entries: the laptop's register, 3298 files after codecs and
+ * VLC, did not fit ("il registro non ci sta in memoria: confronto parziale")
+ * and -check counted 1418 installed files as unknown. Now a first pass over
+ * the file counts the lines and the bytes, and both are allocated once, as
+ * large as this register needs. */
+static char  *g_arena;
+static int    g_arena_uso, g_arena_max;
 typedef struct { char *percorso; char *impronta; } Voce;
-static Voce  g_voce[VOCI_MAX];
-static int   g_nvoci;
+static Voce  *g_voce;
+static int    g_nvoci, g_voci_max;
+static char **g_pac;                    /* the [id] of the register */
+static int    g_npac;
 
 /* Il verdetto su un file dell'elenco. */
 enum { UGUALE = 0, CAMBIATO, DA_VERIFICARE, MAI_INSTALLATO, SCONOSCIUTO };
@@ -1332,7 +1343,7 @@ static char *arena_metti(const char *s)
     int   n = (int)strlen(s) + 1;
     char *p;
 
-    if (g_arena_uso + n > (int)ARENA_MAX) return NULL;
+    if (g_arena_uso + n > g_arena_max) return NULL;
     p = &g_arena[g_arena_uso];
     memcpy(p, s, (size_t)n);
     g_arena_uso += n;
@@ -1343,14 +1354,52 @@ static int registro_carica(void)
 {
     FILE *f = fopen(REG, "r");
     char  riga[RIGA_MAX];
+    long  righe = 0, byte = 0;
 
     g_nvoci = 0;
+    g_npac = 0;
     g_arena_uso = 0;
     if (f == NULL) return -1;
+
+    /* first pass: every line could be a "file" line; its bytes bound the
+     * arena (impronta and percorso together are shorter than the line) */
+    while (fgets(riga, sizeof(riga), f) != NULL) {
+        righe++;
+        byte += (long)strlen(riga) + 2;
+    }
+    if (righe + 1 > g_voci_max || byte + 1 > g_arena_max) {
+        free(g_voce);
+        free(g_arena);
+        free(g_pac);
+        g_voce  = (Voce *)malloc((size_t)(righe + 1) * sizeof(Voce));
+        g_arena = (char *)malloc((size_t)byte + 1);
+        g_pac   = (char **)malloc((size_t)(righe + 1) * sizeof(char *));
+        g_voci_max  = (int)righe + 1;
+        g_arena_max = (int)byte + 1;
+        if (g_voce == NULL || g_arena == NULL || g_pac == NULL) {
+            free(g_voce);  g_voce = NULL;
+            free(g_arena); g_arena = NULL;
+            free(g_pac);   g_pac = NULL;
+            g_voci_max = g_arena_max = 0;
+            fclose(f);
+            printf("  ! il registro (%ld righe, %ld KB) non ci sta in memoria\n",
+                   righe, byte / 1024);
+            return -1;
+        }
+    }
+    rewind(f);
 
     while (fgets(riga, sizeof(riga), f) != NULL) {
         char *r = ripulisci(riga), *val, *sp;
 
+        if (r[0] == '[') {                         /* an installed package */
+            char *fine = strchr(r, ']');
+
+            if (fine == NULL || g_npac + g_nvoci >= g_voci_max) continue;
+            *fine = '\0';
+            if ((g_pac[g_npac] = arena_metti(r + 1)) != NULL) g_npac++;
+            continue;
+        }
         if ((val = valore_se(r, "file")) == NULL) continue;
 
         sp = val;
@@ -1359,21 +1408,41 @@ static int registro_carica(void)
         *sp++ = '\0';
         while (*sp == ' ' || *sp == '\t') sp++;
 
-        if (g_nvoci >= VOCI_MAX) {
-            printf("  ! piu' di %d file nel registro: il confronto si ferma qui\n",
-                   VOCI_MAX);
-            break;
-        }
+        if (g_nvoci + g_npac >= g_voci_max) break; /* the file grew meanwhile */
         g_voce[g_nvoci].impronta = arena_metti(val);
         g_voce[g_nvoci].percorso = arena_metti(sp);
         if (!g_voce[g_nvoci].impronta || !g_voce[g_nvoci].percorso) {
-            printf("  ! il registro non ci sta in memoria: confronto parziale\n");
+            printf("  ! il registro e' cambiato mentre lo leggevo: confronto parziale\n");
             break;
         }
         g_nvoci++;
     }
     fclose(f);
     return g_nvoci;
+}
+
+/* Is the package `id` installed here? (registro_carica first.) */
+static int pacchetto_installato(const char *id)
+{
+    int i;
+
+    for (i = 0; i < g_npac; i++)
+        if (strcmp(g_pac[i], id) == 0) return 1;
+    return 0;
+}
+
+/* ! A FILE THAT IS NOT HERE, OF A PACKAGE THAT IS, IS PART OF THE UPDATE
+ * (4 November 2026). Up to 0.042 a missing file was "never installed" unless
+ * essential, and -check -yes left it out: the laptop got xmlwf linked to
+ * /lib/libm.so.4 and not libm.so.4 ("cannot open shared object file"), and
+ * none of the libz.so.1, libssl.so.4, liblzma.so.5 that came with the
+ * packages it has. "Never installed" is for the files of packages this
+ * machine does not have. */
+static int g_riga_essenziale;            /* set by riga_elenco, below */
+
+static int file_dovuto(const char *pac)
+{
+    return g_riga_essenziale || pacchetto_installato(pac);
 }
 
 static const char *registro_impronta(const char *percorso)
@@ -3272,7 +3341,7 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
             k->config++;
             continue;
         }
-        if (v == MAI_INSTALLATO && !g_riga_essenziale) {
+        if (v == MAI_INSTALLATO && !file_dovuto(pac)) {
             k->nuovi++; k->byte_nuovi += byte; continue;
         }
 
@@ -3285,7 +3354,8 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
         if (g_zitto) continue;
         if (mostrati < 12) {
             printf("    %s%s (%ld byte)\n", p,
-                   v == MAI_INSTALLATO ? " [manca: e' essenziale]" :
+                   v == MAI_INSTALLATO ? (g_riga_essenziale ? " [manca: e' essenziale]"
+                                                            : " [manca: e' nuovo nel suo pacchetto]") :
                    v == DA_VERIFICARE ? " [da verificare]" :
                    v == SCONOSCIUTO   ? " [il registro non lo conosce]" : "",
                    byte);
@@ -3303,7 +3373,7 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
     if (k->verif) printf(",\n  di cui %ld da verificare (impronta sconosciuta)", k->verif);
     if (k->scon)  printf(",\n  e %ld che il registro non conosce", k->scon);
     if (k->essenziali)
-        printf(",\n  e %ld componenti di sistema che qui MANCANO", k->essenziali);
+        printf(",\n  e %ld file dei pacchetti installati che qui MANCANO", k->essenziali);
     printf(".\n");
     if (k->nuovi)
         printf("  E %ld file che qui non ci sono MAI STATI (%ld KB).\n",
@@ -3626,6 +3696,12 @@ static int comando_check(int senza_chiedere)
 
                 unisci(assoluto, sizeof(assoluto), "/", p);
 
+                /* a library of a package this machine does not have stays out,
+                 * like the package (until 0.042 the ld scripts libFLAC.so,
+                 * libavcodec.so... arrived alone, without their .so.N) */
+                if (!esiste(assoluto, NULL) && !file_dovuto(pac) && !fai_nuovi)
+                    continue;
+
                 if (impronta_locale(assoluto, esa) == 0 &&
                     strcasecmp(esa, impronta) == 0)
                     continue;                 /* quella sul disco e' gia' giusta */
@@ -3646,8 +3722,8 @@ static int comando_check(int senza_chiedere)
 
             if (v == UGUALE) continue;
             if (e_configurazione(p)) continue;      /* e' di questa macchina */
-            if (v == MAI_INSTALLATO && !g_riga_essenziale && !fai_nuovi) continue;
-            if ((v != MAI_INSTALLATO || g_riga_essenziale) && !fai_cambiati) continue;
+            if (v == MAI_INSTALLATO && !file_dovuto(pac) && !fai_nuovi) continue;
+            if ((v != MAI_INSTALLATO || file_dovuto(pac)) && !fai_cambiati) continue;
 
             switch (scarica_e_metti(&c, p, byte, impronta,
                                     &kernel_nuovo, &stage2_nuovo)) {

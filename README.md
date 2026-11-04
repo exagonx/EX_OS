@@ -111,6 +111,26 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### netupdate brings the new files of installed packages, and VLC finds its libraries (netupdate 0.042)
+
+- **Fault found on the laptop:** up to netupdate 0.041, a file that was not on the disk counted as
+  "never installed" unless it was essential, even when its package was installed. `-check -yes` left
+  out the shared libraries that came with the packages already there (`/lib/libm.so.4`,
+  `libz.so.1`, `libssl.so.4`, `liblzma.so.5` and more): `xmlwf` was updated and then said
+  "libm.so.4: cannot open shared object file". Now a missing file of an installed package is part
+  of the update, and the versioned libraries (`.so.N`) arrive before the programs. The `.so` link
+  scripts of packages the machine does not have no longer arrive by themselves. **Tested** on the
+  laptop: 24 files arrived, `xmlwf` starts.
+- **Fault found on the laptop:** the register loaded for the comparison had fixed limits (2048
+  files, 192 KB). With 3298 files, 0.041 compared only half of them ("il registro non ci sta in
+  memoria: confronto parziale"): 1418 files unknown and 1655 to update instead of 255. Now the
+  register is measured and allocated as large as it is. **Tested** on the laptop.
+- **Catalogue:** `vlc` also needs `flac`, `ffmpeg` needs `zlib`, `flac` needs `ogg`. Without them
+  `netupdate -install:vlc` installed VLC at 64 bit and it said "libFLAC.so.14: cannot open shared
+  object file". All the dependencies of the 64-bit repository were checked against what each
+  program and library loads (`readelf -d`).
+- If a program says "cannot open shared object file" after an update: `help problemi`.
+
 ### ExPackage, and netupdate reads the whole catalogue (netupdate 0.041, expackage 0.001)
 
 - **ExPackage** (`/exwin/bin/expackage`, menu Strumenti > ExPackage): the applications of the

@@ -77,6 +77,7 @@ Il testo: cercare "  NN. " in questo file. Ordine: gruppi da 2 a 10.
 
 GRUPPO  VOCI             COSA
 ------  ---------------  ----------------------------------------------------
+  1     78               driver del risparmio energetico (l'utente 4/11: PROSSIMO)
   2     74               FATTO 2/11 in QEMU; blocco duro non riprodotto
   3     75 5 65          dati sicuri: mappa d'avvio, spento da solo (59 e 63 fatte)
   4     50 62            tetti montaggi; telnetd (serve il passaggio in ip.drv). 53 e 9 fatte
@@ -88,6 +89,8 @@ GRUPPO  VOCI             COSA
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
  --     40 21            decise il 2/11: BSY e DMA a 30 s; telnetd chiude i discendenti
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
+ --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
+                         pubblicare, ExPackage sul portatile, statici rimasti
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -8649,6 +8652,62 @@ tools/netinst/velocita tolto da netinst.
       sul disco installato e' intero.
       Stato: in coda.
 
+  78. DRIVER DEL RISPARMIO ENERGETICO (l'utente, 4/11: "bisogna implementare
+      il driver per il risparmio energetico", messo come PROSSIMA cosa dopo
+      la 77 d). Oggi c'e' solo: l'`hlt` nell'ozio di sched.c, e in
+      kernel/arch/x86/acpi.c le tabelle per spegnere (S5) e riavviare.
+      Niente frequenza della CPU (P-state, SpeedStep/PowerNow), niente
+      C-state oltre C1, niente schermo spento (DPMS), niente disco fermo,
+      niente batteria/rete elettrica, niente sospensione (S3).
+      Da chiedere all'utente prima di cominciare: quali di queste, e in che
+      ordine. Come ogni driver: .drv con -install/-remove, 32 e 64 bit.
+      Stato: in coda, primo.
+
+  77. DA FARE DOPO IL 3-4/11 (librerie condivise, VLC, ExPackage), messo in
+      coda dall'utente il 4/11 ("metti in coda le cose da fare"):
+      a) H.264 in Firefox: si decodifica (9,5 ms a fotogramma) ma dopo
+         0,6-1 s "Enter buffering due to buffering heuristics" e resta in
+         BUFFERING (QEMU, 64 bit); causa non dimostrata. Provarlo sul
+         portatile: servono il Firefox nuovo, /lib/libm.so.4 e le .so di
+         FFmpeg in /exos/lib (cioe' il repository a 64 bit pubblicato).
+      b) Firefox a 32 bit da ricostruire col link dinamico e da provare
+         (tools/exilla/prova-media.sh 32).
+      c) "libmozsqlite3.so.so: cannot open shared object file" (QuickSuggest,
+         Rust) e "Failed to launch utility subprocess": non guardati.
+      d) Repository a 64 bit rifatto il 4/11 coi codec e VLC (34
+         pacchetti), NON pubblicato: pubblicarlo (prima sul server locale
+         ~/ftp/www/netinst_64 per il portatile) e provare netupdate
+         -install:vlc a 64 bit su un disco piu' grande di 256 MB (VLC con
+         FFmpeg e i codec supera i 260 MB).
+         4/11: PUBBLICATO SUL SERVER LOCALE (rsync da dist/netinst_64,
+         3584 file, 1,2 GB, data 2026-11-04T06:16:46Z; catalogo ed elenco
+         via HTTP con lo SHA-256 di versione.txt). Pubblico NON aggiornato.
+         4/11, SUL PORTATILE: -check -yes e -install:vlc con netupdate 0.042
+         da /tmp. Trovati e corretti: i file nuovi dei pacchetti installati
+         non arrivavano (xmlwf senza libm.so.4), il registro con tetti (h),
+         VLC senza flac nel catalogo (anche ffmpeg->zlib, flac->ogg), e sul
+         server locale 1253 file a 600 (403 da Apache: rsync --chmod=a+rX).
+         Da fare: rifare i repository con la 0.042 e il catalogo, poi sul
+         portatile -check -yes, -install:flac (o vlc di nuovo) e vlc.
+      e) ExPackage sul portatile: provato solo in QEMU (12 su 12 a 32 e 64);
+         sul portatile solo netupdate 0.041 da /tmp (-tab, -p).
+      f) VLC: frecce ed Esc non provati; sul portatile l'audio di gizmo.mp4
+         con hdaudio.drv 0.006 va ascoltato, il video non visto.
+      g) Ancora statici: il gcc nativo di EX-OS (le sue specs non sono
+         quelle di tools/gcc-exos/specs-condivise.sh), ncurses (script a
+         parte, non passa da comune.sh), httpd, php e mariadb da ricollegare
+         alle .so; fmt e Connector/C++ restano statiche apposta (C++, niente
+         libstdc++ condivisa).
+      h) netupdate: VOCI_MAX 2048 e ARENA_MAX 192 KB nel registro caricato
+         sono ancora tetti fissi (visti il 3/11 togliendo PACCHETTI_MAX).
+         4/11: TOLTI in netupdate 0.042 (si conta il registro e si alloca).
+         Sul portatile, registro di 3298 file: la 0.041 confrontava a meta'
+         (1418 sconosciuti, 1655 da aggiornare), la 0.042 tutto (1 e 255).
+         ! Il repository ha ancora la 0.041: va rifatto con la 0.042.
+      i) dischi/hd.img riscritto il 3/11 alle 22.25 da una prova sbagliata
+         (corretta): se serviva quello di prima, va rifatto (tools/mkhd.sh).
+      Stato: in coda.
+
   63. RISOLTA 2/11 con kernel 0.310, confermata sul portatile: era il DMA di ohci.drv
       finito (frame number nelle pagine liberate), non il disco. Dopo system -unload
       memsporca 0 byte su 512 MB, 4 chkdsk -dettagli su 4 senza problemi. chkdsk -r dopo
@@ -9232,6 +9291,22 @@ tools/netinst/velocita tolto da netinst.
            a volte non trova la presa nella prima fotografia (letta troppo
            presto): nell'ultima c'e' (641,441). La prova esce con 0 e va
            letta a occhio.
+
+      4/11, L'UTENTE: "serve il porting di gtk3 cosa manca ?". Stato
+      misurato oggi: punti 1 e 2 fatti; il link dinamico c'e' (3/11: i
+      programmi partono con le loro .so, le librerie di terzi sono
+      condivise), pcre2, zlib, expat e libm ci sono gia' a 32 e 64.
+      MANCANO: il punto 3 (in win_proto.h non ci sono forma del puntatore,
+      appunti nel server, finestra figlia, misure minime e massime, stato
+      ridotta/ingrandita, fuoco preso/perso, versione del protocollo); il
+      punto 4 (SDL); delle librerie nessuna e' portata: libffi, glib
+      (glib, gobject, gmodule, gio), libpng, freetype, fontconfig, pixman,
+      cairo, harfbuzz, fribidi, pango, gdk-pixbuf, atk, libepoxy, e per la
+      costruzione meson e ninja con un file incrociato per EX-OS; da
+      provare se la libc ha quel che glib chiede (gettext o un libintl
+      finto, i locali, eventfd o il ripiego con le pipe, getpwuid); il
+      backend GDK "exwin" (punto 5), il pezzo piu' grosso.
+      Stato: in coda, aspetta la scelta dell'utente (da dove partire).
 
   41. URGENTE - GLI ANELLI DEI DRIVER DI RETE DINAMICI INVECE DEI POSTI
       FISSI (l'utente, 28/10: «aggiungi come compito urgente, quello di

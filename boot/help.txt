@@ -712,6 +712,22 @@ e il -check dopo lo riscrive rileggendo ogni file (qualche minuto):
   delete /boot/netupdate.reg
   netupdate -check -yes
 
+DOPO netupdate UN PROGRAMMA DICE "cannot open shared object file". Per
+esempio xmlwf: "libm.so.4: cannot open shared object file". Fino a netupdate
+0.041 i file NUOVI di un pacchetto gia' installato (le librerie .so.N, come
+/lib/libm.so.4 o /exos/lib/libz.so.1) non arrivavano con -check -yes, e con
+piu' di 2000 file nel registro il confronto si fermava a meta' ("il registro
+non ci sta in memoria: confronto parziale"). Serve netupdate 0.042:
+
+  netupdate -version                     se dice 0.042 o piu', basta:
+  netupdate -check -yes
+
+Se dice meno, la 0.042 si prende a parte e si usa quella (da root):
+
+  scarica http://<repository>/file/bin/netupdate /tmp/nu
+  chmod 755 /tmp/nu
+  /tmp/nu -check -yes                    porta i file mancanti e se stessa
+
 NETUPDATE: "NON SONO ARRIVATI". I file che non arrivano restano in coda:
 alla fine vengono elencati e netupdate chiede se riprovare. Con -yes riprova
 una volta da solo. Rispondendo no, quel che e' arrivato resta, e si

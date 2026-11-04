@@ -113,6 +113,26 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### netupdate porta i file nuovi dei pacchetti installati, e VLC trova le sue librerie (netupdate 0.042)
+
+- **Guasto trovato sul portatile:** fino a netupdate 0.041 un file assente dal disco contava come
+  "mai installato" se non era essenziale, anche quando il suo pacchetto era installato. `-check -yes`
+  lasciava fuori le librerie condivise arrivate coi pacchetti gia' presenti (`/lib/libm.so.4`,
+  `libz.so.1`, `libssl.so.4`, `liblzma.so.5` e altre): `xmlwf` veniva aggiornato e poi diceva
+  "libm.so.4: cannot open shared object file". Ora un file mancante di un pacchetto installato fa
+  parte dell'aggiornamento, e le librerie con la versione (`.so.N`) arrivano prima dei programmi.
+  Gli script `.so` dei pacchetti che la macchina non ha non arrivano piu' da soli. **Testato** sul
+  portatile: arrivati 24 file, `xmlwf` parte.
+- **Guasto trovato sul portatile:** il registro caricato per il confronto aveva tetti fissi (2048
+  file, 192 KB). Con 3298 file la 0.041 ne confrontava meta' ("il registro non ci sta in memoria:
+  confronto parziale"): 1418 sconosciuti e 1655 da aggiornare invece di 255. Ora il registro si
+  misura e si alloca grande quanto e'. **Testato** sul portatile.
+- **Catalogo:** `vlc` vuole anche `flac`, `ffmpeg` vuole `zlib`, `flac` vuole `ogg`. Senza,
+  `netupdate -install:vlc` installava VLC a 64 bit e lui diceva "libFLAC.so.14: cannot open shared
+  object file". Tutte le dipendenze del repository a 64 bit sono state controllate contro quel che
+  ogni programma e libreria carica (`readelf -d`).
+- Se dopo un aggiornamento un programma dice "cannot open shared object file": `help problemi`.
+
 ### ExPackage, e netupdate legge tutto il catalogo (netupdate 0.041, expackage 0.001)
 
 - **ExPackage** (`/exwin/bin/expackage`, menu Strumenti > ExPackage): le applicazioni del
