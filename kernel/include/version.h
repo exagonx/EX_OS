@@ -784,7 +784,14 @@
 /* 0.311 -> 0.312: SYS_ATTIVITA (262), the time of the last key or mouse
  * movement, for /dev/dpms.drv (voce 78 b): the input drivers touch it, the
  * screen driver reads it. */
-#define EXOS_VERSION    "0.312"
+/* 0.312 -> 0.313: fork (voce 33). SYS_FORK (263): a copy of the process,
+ * copy-on-write (PG_COW; CR0.WP on, the old kernel writes into read-only
+ * pages let through); PG_CONDIVISA for shm and MAP_SHARED anonymous memory,
+ * now given at once; page owners without a ceiling (g_oltre) and counted
+ * above 4 GB too; mprotect makes a shared page copy-on-write instead of
+ * EACCES; waitpid collects the children of the whole process, 0 and < -1
+ * mean any child; SIGCHLD to the parent. */
+#define EXOS_VERSION    "0.313"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

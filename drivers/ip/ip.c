@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.020");
+EX_VERSIONE("ip.drv", "0.021");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -120,9 +120,100 @@ static VoceArp g_arp[IP_ARP_VOCI];
 #define UDP_PORTE      16      /* 4 fino alla 0.004: con i socket BSD ogni programma ne apre */
 #define UDP_CARICO_MAX 1472     /* 1500 di MTU - 20 di IP - 8 di UDP */
 
+/* =============================================================================
+ * ! MORE THAN ONE OWNER (0.021, 5 November 2026: fork, kernel 0.313, voce 33)
+ *
+ * Until 0.020 a connection, a UDP port and an epoll set had ONE owner, the
+ * process group that opened it, and every request from anyone else was
+ * refused. After fork() parent and child hold the same sockets: a prefork
+ * server listens in the parent and accepts in the children, a daemon opens
+ * its port and leaves it to the child it forks. So `proprietario` stays the
+ * first owner (the usual case: one, and no memory taken) and `altri` holds
+ * the others, as many as there are (an array that doubles). The parent adds
+ * them (IP_MSG_EREDITA, see ip_proto.h).
+ *
+ * ! IT IS ALIVE WHILE ONE OF ITS OWNERS IS (padroni_vivi): the first owner
+ * dead, a living one of the others takes its place. Only when all are gone
+ * is it an orphan (tcp_fin_orfane, tcp_riprendi_orfane...).
+ * ! A CONNECTION THAT NOBODY HAS ACCEPTED YET belongs to its listener's
+ * owners (conn_viva): the parent that listened may be dead while a child
+ * accepts.
+ * ============================================================================= */
+typedef struct { unsigned int *v; unsigned int n, posti; } Altri;
+
+static int          pid_vivo(unsigned int pid);
+static unsigned int gruppo_di(unsigned int pid);
+
+static int padrone_di(unsigned int primo, const Altri *a, unsigned int g)
+{
+    unsigned int i;
+
+    if (g == 0) return 0;
+    if (primo == g) return 1;
+    for (i = 0; i < a->n; i++) if (a->v[i] == g) return 1;
+    return 0;
+}
+
+/* 0, or -ENOMEM */
+static int altri_metti(Altri *a, unsigned int g)
+{
+    if (a->n == a->posti) {
+        unsigned int  posti = a->posti ? a->posti * 2u : 4u;
+        unsigned int *v = (unsigned int *)realloc(a->v, posti * sizeof(unsigned int));
+
+        if (v == NULL) return -ENOMEM;
+        a->v = v;
+        a->posti = posti;
+    }
+    a->v[a->n++] = g;
+    return 0;
+}
+
+static void altri_libera(Altri *a)
+{
+    free(a->v);
+    a->v = NULL;
+    a->n = a->posti = 0;
+}
+
+/* One more owner, if it is not one already. 0 or -ENOMEM. */
+static int padrone_aggiungi(unsigned int primo, Altri *a, unsigned int g)
+{
+    if (padrone_di(primo, a, g)) return 0;
+    return altri_metti(a, g);
+}
+
+/* `g` is no longer an owner; the first one leaving gives its place to
+ * another (call it only while there are others: a->n > 0). */
+static void padrone_lascia(unsigned int *primo, Altri *a, unsigned int g)
+{
+    unsigned int i;
+
+    if (*primo == g) {
+        if (a->n > 0) *primo = a->v[--a->n];
+        return;
+    }
+    for (i = 0; i < a->n; i++)
+        if (a->v[i] == g) { a->v[i] = a->v[--a->n]; return; }
+}
+
+/* An owner still alive (it becomes the first), or 0: all are gone. The dead
+ * ones met on the way are forgotten. */
+static unsigned int padroni_vivi(unsigned int *primo, Altri *a)
+{
+    if (pid_vivo(*primo)) return *primo;
+    while (a->n > 0) {
+        unsigned int g = a->v[--a->n];
+
+        if (pid_vivo(g)) { *primo = g; return g; }
+    }
+    return 0;
+}
+
 static struct {
     unsigned int porta;
     unsigned int proprietario;   /* chi l'ha aperta */
+    Altri        altri;          /* the other owners (fork, 0.021) */
     unsigned int lettore;        /* chi aspetta un datagramma, 0 = nessuno */
     int          usata;
 } g_udp[UDP_PORTE];
@@ -934,6 +1025,12 @@ typedef struct {
     unsigned int  tentativi;
 
     unsigned int  proprietario;  /* chi l'ha aperta */
+    Altri         altri;         /* the other owners (fork, 0.021) */
+    /* A listener: the accept() calls waiting after the first one (that is
+     * attesa_pid), in order. Until 0.020 a second one took the first one's
+     * place and the first never got an answer (0.021). */
+    struct AttesaAcc *acc;
+    unsigned int  acc_n, acc_posti;
 
     /* ! LA CONNESSIONE NATA DA UN SYN RICORDA CHI ASCOLTAVA, e non il
      * contrario: una coda dentro l'ascoltatore vorrebbe dire un vettore con
@@ -1070,6 +1167,120 @@ static Conn *tcp_num(unsigned int numero)
 }
 static int  da_accettare(const Conn *c);
 
+/* The listener of a connection that came from a SYN, if it is still there. */
+static Conn *tcp_suo_ascoltatore(const Conn *c)
+{
+    Conn *a = tcp_num(c->ascoltatore);
+
+    if (a == NULL || a == c || a->stato != S_ASCOLTA || a->porta_loc != c->porta_loc)
+        return NULL;
+    return a;
+}
+
+/* An owner of c still alive, or 0 (see «MORE THAN ONE OWNER») */
+static unsigned int conn_viva(Conn *c)
+{
+    if (c->ascoltatore != 0 && !c->accettata) {
+        Conn *a = tcp_suo_ascoltatore(c);
+
+        if (a != NULL) return padroni_vivi(&a->proprietario, &a->altri);
+    }
+    return padroni_vivi(&c->proprietario, &c->altri);
+}
+
+/* --- accept() waiting on a listener (0.021) ------------------------------- */
+struct AttesaAcc { unsigned int pid, scade; };
+
+/* The next one in the queue becomes the one waiting (attesa_pid). */
+static void acc_avanza(Conn *asc)
+{
+    if (asc->attesa_pid != 0 || asc->acc_n == 0) return;
+    asc->attesa_pid   = asc->acc[0].pid;
+    asc->attesa_scade = asc->acc[0].scade;
+    asc->attesa_tipo  = IP_MSG_TCP_ACCETTA;
+    memmove(asc->acc, asc->acc + 1, (asc->acc_n - 1u) * sizeof(struct AttesaAcc));
+    asc->acc_n--;
+}
+
+/* 0, or -ENOMEM */
+static int acc_accoda(Conn *asc, unsigned int pid, unsigned int scade)
+{
+    unsigned int i;
+
+    for (i = 0; i < asc->acc_n; i++)
+        if (asc->acc[i].pid == pid) { asc->acc[i].scade = scade; return 0; }
+    if (asc->acc_n == asc->acc_posti) {
+        unsigned int      posti = asc->acc_posti ? asc->acc_posti * 2u : 8u;
+        struct AttesaAcc *v = (struct AttesaAcc *)realloc(asc->acc, posti * sizeof(*v));
+
+        if (v == NULL) return -ENOMEM;
+        asc->acc = v;
+        asc->acc_posti = posti;
+    }
+    asc->acc[asc->acc_n].pid   = pid;
+    asc->acc[asc->acc_n].scade = scade;
+    asc->acc_n++;
+    return 0;
+}
+
+/* Every one in the queue gets `codice` (a listener closed: -ECONNABORTED). */
+static void acc_annulla(Conn *asc, int codice)
+{
+    unsigned int i;
+    IpEsito      e;
+
+    e.codice = codice;
+    for (i = 0; i < asc->acc_n; i++)
+        ipc_send(asc->acc[i].pid, IP_MSG_ESITO, &e, sizeof(e));
+    asc->acc_n = 0;
+}
+
+/* The ones in the queue whose time is over get -ETIMEDOUT. */
+static void acc_scadenze(Conn *asc, unsigned int ora)
+{
+    unsigned int i, j = 0;
+    IpEsito      e;
+
+    e.codice = -ETIMEDOUT;
+    for (i = 0; i < asc->acc_n; i++) {
+        if (asc->acc[i].scade != 0 && (int)(ora - asc->acc[i].scade) >= 0)
+            ipc_send(asc->acc[i].pid, IP_MSG_ESITO, &e, sizeof(e));
+        else
+            asc->acc[j++] = asc->acc[i];
+    }
+    asc->acc_n = j;
+}
+
+/* Accepted: from now on the connection is only its acceptor's. */
+static void tcp_dai_a(Conn *c, unsigned int chi)
+{
+    c->accettata    = 1;
+    c->proprietario = gruppo_di(chi);
+    c->altri.n      = 0;
+}
+
+static unsigned int tcp_id(const Conn *c);
+
+/* c can be accepted: the first accept() waiting on asc gets it. One that is
+ * gone (ipc_send fails) leaves it to the next. 1 if it was given. */
+static int acc_consegna(Conn *asc, Conn *c)
+{
+    while (asc->attesa_pid != 0 && asc->attesa_tipo == IP_MSG_TCP_ACCETTA) {
+        IpEsito      e;
+        unsigned int chi = asc->attesa_pid;
+
+        asc->attesa_pid = 0;
+        e.codice = (int)tcp_id(c);
+        if (ipc_send(chi, IP_MSG_ESITO, &e, sizeof(e)) >= 0) {
+            tcp_dai_a(c, chi);
+            acc_avanza(asc);
+            return 1;
+        }
+        acc_avanza(asc);
+    }
+    return 0;
+}
+
 /* The slot goes back to S_LIBERA with nothing left of the connection: out of
  * the hash, out of any set or poll, its large buffer freed. */
 static void tcp_slot_azzera(Conn *c)
@@ -1082,6 +1293,9 @@ static void tcp_slot_azzera(Conn *c)
         free(c->rx);
         if (g_rx_grandi > 0) g_rx_grandi--;
     }
+    acc_annulla(c, -ECONNABORTED);
+    free(c->acc);
+    altri_libera(&c->altri);
     memset(c, 0, sizeof(*c));
     c->numero = numero;
 }
@@ -1200,13 +1414,14 @@ static int tcp_riprendi_orfane(void)
     int          i, presi = 0;
     unsigned int vivo = 0;      /* the last owner found alive: a server owns
                                    most of the table, and pid_vivo costs */
+    unsigned int chi;
 
     for (i = 0; i < (int)g_tcp_n; i++) {
         Conn *c = g_tcp[i];
 
         if (c->stato == S_LIBERA) continue;
         if (c->proprietario == vivo) continue;
-        if (pid_vivo(c->proprietario)) { vivo = c->proprietario; continue; }
+        if ((chi = conn_viva(c)) != 0) { vivo = chi; continue; }
 
         /* ! NON SI MANDA UN FIN, e va detto perche' sembra scortese: il FIN
          * vorrebbe aspettare l'ACK, cioe' tenere lo slot ancora un po' —
@@ -1251,7 +1466,7 @@ static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
     /* ! Solo chi l'ha aperta puo' usarla: un identificativo e' un numero
      * piccolo e indovinabile, e senza questo controllo un processo
      * qualunque potrebbe leggere i dati di un altro. */
-    if (c->proprietario != gruppo_di(cliente)) return NULL;
+    if (!padrone_di(c->proprietario, &c->altri, gruppo_di(cliente))) return NULL;
     return c;
 }
 
@@ -1593,7 +1808,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
          * got a connection that no one would ever accept, the client saw the
          * port open and not one byte, and the new telnetd could not listen.
          * A SYN is rare enough to ask who is alive. */
-        if (asc != NULL && !pid_vivo(asc->proprietario)) {
+        if (asc != NULL && !padroni_vivi(&asc->proprietario, &asc->altri)) {
             tcp_riprendi_orfane();
             asc = NULL;
         }
@@ -1679,18 +1894,12 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         /* ! CHI ASPETTAVA IN ACCETTA VA SVEGLIATO SUBITO. L'attesa e' registrata
          * sull'ASCOLTATORE, non su questa connessione: quando il cliente ha
          * chiesto accetta, questa non esisteva ancora. */
+        /* (0.021) the first of those waiting, and the connection is its
+         * own: see acc_consegna */
         {
-            Conn *asc = tcp_da_id(c->ascoltatore, c->proprietario);
+            Conn *asc = tcp_suo_ascoltatore(c);
 
-            if (asc != NULL && asc->attesa_pid != 0 &&
-                asc->attesa_tipo == IP_MSG_TCP_ACCETTA) {
-                IpEsito e;
-
-                e.codice     = (int)tcp_id(c);
-                c->accettata = 1;
-                ipc_send(asc->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
-                asc->attesa_pid = 0;
-            }
+            if (asc != NULL) acc_consegna(asc, c);
         }
 
         /* Se il segmento portava gia' dei dati (succede: un cliente che
@@ -1838,6 +2047,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
 typedef struct {
     unsigned int tipo;           /* 0 = free */
     unsigned int proprietario;   /* process group */
+    Altri        altri;          /* epoll: the other owners (fork, 0.021) */
     unsigned int attesa_pid;     /* the thread waiting for the answer */
     unsigned int attesa_max;
     unsigned int attesa_scade;   /* uptime_ms, 0 = no timeout */
@@ -1975,7 +2185,8 @@ static void aspetta_rispondi(unsigned int k, int anche_vuota)
         Conn        *c = tcp_num(s->voce[i].id);
         unsigned int ev;
 
-        if (c == NULL || c->stato == S_LIBERA || c->proprietario != s->proprietario)
+        if (c == NULL || c->stato == S_LIBERA ||
+            !padrone_di(c->proprietario, &c->altri, s->proprietario))
             ev = IP_EV_ERR | IP_EV_HUP;     /* closed meanwhile */
         else
             ev = tcp_pronto(c) & (s->voce[i].eventi | IP_EV_ERR | IP_EV_HUP);
@@ -2052,7 +2263,7 @@ static int ins_nuovo(void)
     for (i = 0; i < g_ins_n; i++) {
         Insieme *s = &g_ins(i);
 
-        if (s->tipo == 0 || pid_vivo(s->proprietario)) continue;
+        if (s->tipo == 0 || padroni_vivi(&s->proprietario, &s->altri)) continue;
         for (j = 0; j < g_tcp_n; j++) {
             if (g_tcp[j]->ins == i + 1u) {
                 ins_lista_togli(s, g_tcp[j]);
@@ -2060,6 +2271,7 @@ static int ins_nuovo(void)
             }
             if (g_tcp[j]->att == i + 1u) g_tcp[j]->att = 0;
         }
+        altri_libera(&s->altri);
         memset(s, 0, sizeof(*s));
     }
     return ins_libero();
@@ -2071,7 +2283,8 @@ static Insieme *ins_da_id(unsigned int id, unsigned int cliente, int *k)
 
     if (id == 0 || id > g_ins_n) return NULL;
     s = &g_ins(id - 1u);
-    if (s->tipo != INS_EPOLL || s->proprietario != gruppo_di(cliente)) return NULL;
+    if (s->tipo != INS_EPOLL || !padrone_di(s->proprietario, &s->altri, gruppo_di(cliente)))
+        return NULL;
     *k = (int)id - 1;
     return s;
 }
@@ -2116,7 +2329,8 @@ static void tcp_aspetta(unsigned int cliente, const unsigned char *payload,
     for (i = 0; i < a.n; i++) {
         Conn *c = tcp_num(a.voce[i].id);
 
-        if (c == NULL || c->stato == S_LIBERA || c->proprietario != s->proprietario ||
+        if (c == NULL || c->stato == S_LIBERA ||
+            !padrone_di(c->proprietario, &c->altri, s->proprietario) ||
             (tcp_pronto(c) & (a.voce[i].eventi | IP_EV_ERR | IP_EV_HUP)))
             break;
     }
@@ -2214,9 +2428,22 @@ static void ins_sveglia_chiudi(unsigned int cliente, const IpInsRif *q, int chiu
 
     s = ins_da_id(q->ins, cliente, &k);
     if (s == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    /* (0.021) shared after fork: one owner closing only lets go of it */
+    if (chiudi && s->altri.n > 0) {
+        unsigned int g = gruppo_di(cliente);
+
+        padrone_lascia(&s->proprietario, &s->altri, g);
+        if (padroni_vivi(&s->proprietario, &s->altri)) {
+            if (s->attesa_pid != 0 && gruppo_di(s->attesa_pid) == g)
+                ins_consegna((unsigned int)k, 1);
+            rispondi_esito(cliente, 0);
+            return;
+        }
+    }
     if (s->attesa_pid != 0) ins_consegna((unsigned int)k, 1);
     else if (!chiudi)       s->sveglia = 1;
     if (chiudi) {
+        altri_libera(&s->altri);
         for (j = 0; j < g_tcp_n; j++)
             if (g_tcp[j]->ins == (unsigned int)k + 1u) {
                 g_tcp[j]->ins = 0;
@@ -2243,7 +2470,7 @@ static void ins_sveglia_chiudi(unsigned int cliente, const IpInsRif *q, int chiu
 static void tcp_fin_orfane(unsigned int ora)
 {
     static unsigned int ultimo = 0, da = 0;
-    unsigned int vivo = 0, i;
+    unsigned int vivo = 0, i, chi;
     int          budget = TCP_ORFANE_GIRO;
 
     if (ora - ultimo < TCP_ORFANE_MS || g_tcp_n == 0) return;
@@ -2256,7 +2483,7 @@ static void tcp_fin_orfane(unsigned int ora)
             c->chiusa_cliente || c->proprietario == vivo)
             continue;
         budget--;
-        if (pid_vivo(c->proprietario)) { vivo = c->proprietario; continue; }
+        if ((chi = conn_viva(c)) != 0) { vivo = chi; continue; }
         c->chiusa_cliente = 1;      /* nobody left to close it */
         tcp_manda_fin(c);
     }
@@ -2329,6 +2556,9 @@ static void tcp_scadenze(void)
             continue;
         }
 
+        /* the accept() queued on a listener (0.021) */
+        if (c->stato == S_ASCOLTA && c->acc_n != 0) acc_scadenze(c, ora);
+
         /* Attesa del client scaduta (apertura che non si completa). */
         if (c->attesa_pid != 0 && c->attesa_scade != 0 &&
             (int)(ora - c->attesa_scade) >= 0) {
@@ -2337,6 +2567,7 @@ static void tcp_scadenze(void)
             e.codice = -ETIMEDOUT;
             ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
             c->attesa_pid = 0;
+            if (c->stato == S_ASCOLTA) acc_avanza(c);
             if (c->stato == S_SYN_INVIA) { c->stato = S_MORTA; c->rto_scade = 0; }
             tcp_evento(c);
             continue;
@@ -2497,7 +2728,7 @@ static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
      * again found its own old listener and went away with EADDRINUSE. */
     for (i = 0; i < g_tcp_n; i++)
         if (g_tcp[i]->stato == S_ASCOLTA && g_tcp[i]->porta_loc == a->porta) {
-            if (!pid_vivo(g_tcp[i]->proprietario) && tcp_riprendi_orfane() > 0 &&
+            if (!conn_viva(g_tcp[i]) && tcp_riprendi_orfane() > 0 &&
                 g_tcp[i]->stato == S_LIBERA)
                 continue;
             rispondi_esito(cliente, -EADDRINUSE);
@@ -2553,7 +2784,7 @@ static void tcp_accetta(unsigned int cliente, const IpTcpAccetta *a)
         if (c->ascoltatore != a->id)       continue;
         if (!da_accettare(c))              continue;
 
-        c->accettata = 1;
+        tcp_dai_a(c, cliente);
         rispondi_esito(cliente, (int)tcp_id(c));
         return;
     }
@@ -2564,6 +2795,16 @@ static void tcp_accetta(unsigned int cliente, const IpTcpAccetta *a)
     /* ! L'ATTESA STA SULL'ASCOLTATORE, non su una connessione: quella che
      * arrivera' non esiste ancora, e quando nascera' sara' lei a cercare qui
      * chi la stava aspettando. */
+    /* ! (0.021) SOMEONE ELSE IS WAITING ALREADY - the children of a prefork
+     * server all sit in accept() on the parent's listener: this one waits
+     * after it, in order (acc_consegna). */
+    if (asc->attesa_pid != 0 && asc->attesa_pid != cliente &&
+        asc->attesa_tipo == IP_MSG_TCP_ACCETTA) {
+        int r = acc_accoda(asc, cliente, uptime_ms() + a->timeout_ms);
+
+        if (r < 0) rispondi_esito(cliente, r);
+        return;
+    }
     asc->attesa_pid   = cliente;
     asc->attesa_tipo  = IP_MSG_TCP_ACCETTA;
     asc->attesa_scade = uptime_ms() + a->timeout_ms;
@@ -2660,6 +2901,37 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
 
     if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
 
+    /* ! ONE OWNER OF SEVERAL LETS GO, AND THAT IS ALL (0.021, fork): the child
+     * of a prefork server closes the listener it inherited, the parent closes
+     * a connection its child serves. What that owner was waiting for ends,
+     * its epoll set lets the connection go; the others keep using it. Only
+     * the last owner still alive closes it for real (below). shutdown() is
+     * for the connection, whoever asks: it goes on as before. */
+    if (!spegni && c->altri.n > 0) {
+        unsigned int g = gruppo_di(cliente);
+
+        padrone_lascia(&c->proprietario, &c->altri, g);
+        if (padroni_vivi(&c->proprietario, &c->altri)) {
+            if (c->attesa_pid != 0 && gruppo_di(c->attesa_pid) == g) {
+                if (c->attesa_tipo == IP_MSG_TCP_RICEVI) {
+                    IpTcpDati fine;
+
+                    fine.id  = tcp_id(c);
+                    fine.len = 0;
+                    ipc_send(c->attesa_pid, IP_MSG_TCP_DATI, &fine, sizeof(fine));
+                } else {
+                    rispondi_esito(c->attesa_pid, -ECONNABORTED);
+                }
+                c->attesa_pid = 0;
+                if (c->stato == S_ASCOLTA) acc_avanza(c);
+            }
+            if (c->ins != 0 && g_ins(c->ins - 1u).proprietario == g) ins_stacca(c);
+            rispondi_esito(cliente, 0);
+            return;
+        }
+        c->proprietario = g;        /* the others are gone: a real close */
+    }
+
     /* ! CLOSED ALREADY BY shutdown(): the close() that follows only takes it
      * out of its epoll set. Closing it again sent a second FIN and made a
      * connection in S_FIN_MIO dead, cutting the orderly end short. */
@@ -2681,7 +2953,7 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
             ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
             c->attesa_pid = 0;
         }
-        tcp_slot_azzera(c);
+        tcp_slot_azzera(c);         /* and the queued accept() (acc_annulla) */
         rispondi_esito(cliente, 0);
         return;
     }
@@ -3054,7 +3326,10 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
          * `dhcp` never closed port 68, and a second `dhcp` after the boot
          * one always failed with EADDRINUSE - found while wifid had to get
          * an address on the WiFi (2026-10-14). */
-        if (pid_vivo(g_udp[i].proprietario)) { rispondi_esito(client, -EADDRINUSE); return; }
+        if (padroni_vivi(&g_udp[i].proprietario, &g_udp[i].altri)) {
+            rispondi_esito(client, -EADDRINUSE);
+            return;
+        }
         g_udp[i].usata = 0;
     }
 
@@ -3065,9 +3340,10 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
      * e l'indice poteva cadere su una porta UDP ancora in uso. */
     if (libero < 0)
         for (i = 0; i < UDP_PORTE; i++)
-            if (!pid_vivo(g_udp[i].proprietario)) { libero = i; break; }
+            if (!padroni_vivi(&g_udp[i].proprietario, &g_udp[i].altri)) { libero = i; break; }
     if (libero < 0) { rispondi_esito(client, -ENFILE); return; }
 
+    altri_libera(&g_udp[libero].altri);
     g_udp[libero].porta        = porta;
     g_udp[libero].proprietario = gruppo_di(client);
     g_udp[libero].lettore      = 0;
@@ -3083,9 +3359,25 @@ static void udp_chiudi(unsigned int client, const IpUdpApri *a)
     int i = udp_cerca(a->porta);
 
     if (i < 0) { rispondi_esito(client, -ENOENT); return; }
-    if (g_udp[i].proprietario != gruppo_di(client)) { rispondi_esito(client, -EPERM); return; }
+    if (!padrone_di(g_udp[i].proprietario, &g_udp[i].altri, gruppo_di(client))) {
+        rispondi_esito(client, -EPERM);
+        return;
+    }
+    /* (0.021) shared after fork: only this owner lets go */
+    if (g_udp[i].altri.n > 0) {
+        unsigned int g = gruppo_di(client);
+
+        padrone_lascia(&g_udp[i].proprietario, &g_udp[i].altri, g);
+        if (padroni_vivi(&g_udp[i].proprietario, &g_udp[i].altri)) {
+            if (g_udp[i].lettore != 0 && gruppo_di(g_udp[i].lettore) == g)
+                g_udp[i].lettore = 0;
+            rispondi_esito(client, 0);
+            return;
+        }
+    }
 
     g_udp[i].usata = 0;
+    altri_libera(&g_udp[i].altri);
     rispondi_esito(client, 0);
 }
 
@@ -3105,7 +3397,7 @@ static void udp_invia(unsigned int client, const unsigned char *payload,
     if (n > UDP_CARICO_MAX) { rispondi_esito(client, -EMSGSIZE); return; }
 
     i = udp_cerca(inv.porta_locale);
-    if (i < 0 || g_udp[i].proprietario != gruppo_di(client)) {
+    if (i < 0 || !padrone_di(g_udp[i].proprietario, &g_udp[i].altri, gruppo_di(client))) {
         rispondi_esito(client, -EPERM);
         return;
     }
@@ -3173,7 +3465,7 @@ static void udp_ricevi(unsigned int client, const IpUdpApri *a)
 {
     int i = udp_cerca(a->porta);
 
-    if (i < 0 || g_udp[i].proprietario != gruppo_di(client)) {
+    if (i < 0 || !padrone_di(g_udp[i].proprietario, &g_udp[i].altri, gruppo_di(client))) {
         rispondi_esito(client, -EPERM);
         return;
     }
@@ -3182,6 +3474,33 @@ static void udp_ricevi(unsigned int client, const IpUdpApri *a)
      * quando arriva un datagramma. Vedi ip_proto.h sul perche' lo stack
      * non spinge mai niente di sua iniziativa. */
     g_udp[i].lettore = client;
+}
+
+/* IP_MSG_EREDITA (0.021): see ip_proto.h and «MORE THAN ONE OWNER» */
+static void eredita(unsigned int cliente, const IpEredita *q)
+{
+    unsigned int g = gruppo_di(q->pid);
+    int          r = -EINVAL;
+
+    if (q->pid == 0) { rispondi_esito(cliente, -EINVAL); return; }
+    if (q->tipo == IP_EREDITA_TCP) {
+        Conn *c = tcp_da_id(q->id, cliente);
+
+        r = c ? padrone_aggiungi(c->proprietario, &c->altri, g) : -EBADF;
+    } else if (q->tipo == IP_EREDITA_UDP) {
+        int i = udp_cerca(q->id);
+
+        if (i < 0 || !padrone_di(g_udp[i].proprietario, &g_udp[i].altri, gruppo_di(cliente)))
+            r = -EBADF;
+        else
+            r = padrone_aggiungi(g_udp[i].proprietario, &g_udp[i].altri, g);
+    } else if (q->tipo == IP_EREDITA_INS) {
+        int      k;
+        Insieme *s = ins_da_id(q->id, cliente, &k);
+
+        r = s ? padrone_aggiungi(s->proprietario, &s->altri, g) : -EBADF;
+    }
+    rispondi_esito(cliente, r);
 }
 
 static void manda_tabella_arp(unsigned int client)
@@ -3476,6 +3795,16 @@ static void servi(void)
                     memset(&q, 0, sizeof(q));
                     if (meta.len >= sizeof(q)) memcpy(&q, payload, sizeof(q));
                     tcp_tabella(meta.sender_pid, &q);
+                    break;
+                }
+
+                case IP_MSG_EREDITA: {
+                    IpEredita q;
+
+                    if (meta.len >= sizeof(q)) {
+                        memcpy(&q, payload, sizeof(q));
+                        eredita(meta.sender_pid, &q);
+                    } else rispondi_esito(meta.sender_pid, -EINVAL);
                     break;
                 }
 

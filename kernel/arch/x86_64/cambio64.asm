@@ -120,6 +120,47 @@ proc_entry_stub_user:
 ; La pila si mette come dopo una «call» (16 byte meno 8): e' quello che il C
 ; si aspetta entrando in una funzione. In fondo un ritorno a zero: un filo
 ; del kernel non torna, e se lo facesse l'errore di pagina a 0 lo direbbe.
+;
+; proc_entry_stub_fork - the child of fork leaves the kernel (0.313, voce 33)
+;
+; context_switch "returns" here with RAX = the copy of the parent's
+; InterruptFrame at the top of the child's kernel stack (proc_prepara_fork in
+; sched.c, RAX 0 inside). Like proc_entry_stub_user: interrupts off, the kernel
+; lock let go; then the way out of "comune" in isr64.asm. FS base (the TLS) is
+; the process's, set by the switch.
+;
+global proc_entry_stub_fork
+proc_entry_stub_fork:
+    cli
+    push rax
+    push rcx
+    push rdi
+    call bkl_lascia
+    pop  rdi
+    pop  rcx
+    pop  rax
+    mov  rsp, rax
+    mov  dx, SEL_U_DATI
+    mov  ds, dx
+    mov  es, dx
+    pop  r15
+    pop  r14
+    pop  r13
+    pop  r12
+    pop  r11
+    pop  r10
+    pop  r9
+    pop  r8
+    pop  rdi
+    pop  rsi
+    pop  rbp
+    pop  rbx
+    pop  rdx
+    pop  rcx
+    pop  rax                ; 0: fork() in the child
+    add  rsp, 16            ; vector and error code
+    iretq
+
 global proc_entry_stub_kernel
 proc_entry_stub_kernel:
     and  rsp, -16

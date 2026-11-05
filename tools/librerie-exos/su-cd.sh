@@ -82,6 +82,20 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb
     cp -rp "$N/src/$NOME" "$E/src/"
     fatte="$fatte $NOME"
 done
+# VLC from the desktop (voce 79): the launcher the menu entry starts, and the
+# icons (tools/vlc-exos/icone, from VLC's own share/icons/256x256/vlc.png).
+# Group [vlc] of the catalogue: solo = bin/vlcapri, solo = share/vlc.
+if [ -x cross_build/vlc-exos$BIT/exos/bin/vlc ]; then
+    if [ "$BIT" = 64 ]; then L=build-64/exwin/bin/vlcapri; else L=build/vlcapri/vlcapri; fi
+    if [ -f "$L" ]; then
+        "$STRIP" -o "$E/bin/vlcapri" "$L" 2> /dev/null || cp -p "$L" "$E/bin/vlcapri"
+        chmod 755 "$E/bin/vlcapri"
+    else
+        echo "     vlcapri assente ($L): VLC senza voce di menu che funzioni" >&2
+    fi
+    mkdir -p "$E/share/vlc"
+    cp tools/vlc-exos/icone/vlc_64.ico tools/vlc-exos/icone/vlc_128.ico "$E/share/vlc/"
+fi
 [ -n "$fatte" ] && cp tools/prove/libreprova.cpp "$CD/prova-librerie.cpp"
 [ -n "$fatte" ] && echo "     librerie:$fatte (con i sorgenti)"
 exit 0

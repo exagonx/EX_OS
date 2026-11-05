@@ -1221,8 +1221,18 @@ int32_t sys_waitpid(InterruptFrame *frame)
              * con nient'altro. */
             if (p->tgid  != p->pid)       continue;
 
-            if (p->ppid  != current->pid) continue;
-            if (pid_wait != -1 && (int32_t)p->pid != pid_wait) continue;
+            /* ! A CHILD OF THE PROCESS, NOT ONLY OF THIS THREAD (0.313).
+             * spawn names the thread that called it as the parent, fork the
+             * process (getppid must say the pid of the process); POSIX lets
+             * any thread wait for any child. */
+            if (p->ppid != current->pid && p->ppid != current->tgid) {
+                Process *pa = proc_get_by_pid(p->ppid);
+
+                if (pa == NULL || pa->tgid != current->tgid) continue;
+            }
+            /* 0 and < -1 are process groups: EX-OS has none, every child
+             * is in the caller's */
+            if (pid_wait > 0 && (int32_t)p->pid != pid_wait) continue;
 
             if (p->state != PROC_ZOMBIE) { figli_vivi++; continue; }
 
@@ -1254,7 +1264,9 @@ int32_t sys_waitpid(InterruptFrame *frame)
         if (figli_vivi == 0)        return ERR(ECHILD);
         if (options & WNOHANG)      return 0;
 
+        current->aspetta_figli = 1;         /* see sveglia_chi_aspetta_figli */
         sched_block(PROC_BLOCKED);
+        current->aspetta_figli = 0;
         /* ! INTERRUPTED, IT DOES NOT GO BACK TO WAIT (25 October 2026), as in
          * pipe_leggi: the exit happens on the way out of the syscall, and a
          * waitpid that blocked again never got there. telnetd interrupted the
@@ -1274,6 +1286,146 @@ int32_t sys_waitpid(InterruptFrame *frame)
  * del mio gruppo?» — perche' un filo lo puo' aspettare qualunque altro filo,
  * non solo chi l'ha creato.
  * ============================================================================= */
+/* =============================================================================
+ * SYS_FORK (263, kernel 0.313, voce 33) -- a copy of the calling process
+ *
+ * No arguments. Returns the pid of the child to the parent, 0 to the child,
+ * -errno to the parent if there is no child.
+ *
+ * The child is a new process (its own pid, tgid = pid, ppid = the pid of
+ * the parent PROCESS, not of the thread that called) with:
+ *   memory       the parent's, copy-on-write (paging_copia_spazio): the same
+ *                frames read-only, the first write copies. shm zones and
+ *                MAP_SHARED memory stay the same memory (PG_CONDIVISA).
+ *   one thread   the caller's: its registers (the int 0x80 frame, 0 in
+ *                EAX/RAX), its stack and TLS slot, its signal mask and
+ *                alternate stack, its FPU state. POSIX: the other threads do
+ *                not exist in the child; their stacks are there, unused.
+ *   descriptors  every one, with one reference more on what it holds: a file
+ *                (vfs_dup), each end of a pipe, each side of a pty. Close in
+ *                one, the other still has it.
+ *   the rest     name, uid/gid, console, background flag, priority, current
+ *                directory, environment, signal handlers, heap bounds, the
+ *                executable (its own handle, for the pages still to load),
+ *                the TLS image. Not: pending signals, the IPC mailbox and
+ *                its services, I/O ports, IRQs (a driver does not fork).
+ *
+ * ! THE LOCK OF THE SPACE IS HELD DURING THE COPY (proc_spazio_prendi): no
+ * mmap, munmap or sbrk of another thread of the parent in the middle.
+ *
+ * ! NO OTHER PROCESSOR IS RUNNING THIS SPACE: sched_puo_qui never runs two
+ * threads of one directory at the same time, and this one is running here.
+ * So the parent's TLB that still says "writable" is only this processor's,
+ * and paging_copia_spazio reloads CR3 at the end.
+ * ============================================================================= */
+int32_t sys_fork(InterruptFrame *frame)
+{
+    Process *io   = proc_get_current();
+    Process *capo = proc_spazio_capo(io);
+    Process *figlio;
+    int32_t  r;
+    int      fd, n;
+    uint32_t k;
+
+    if (io == NULL || capo == NULL) return ERR(ESRCH);
+    if (capo->is_driver) {
+        /* ports, IRQs and DMA buffers have ONE owner: a copy of a driver
+         * would drive the same card at the same time */
+        klog(LOG_WARN, "SYSCALL fork: PID %u e' un driver, fork rifiutata", capo->pid);
+        return ERR(EPERM);
+    }
+
+    figlio = proc_create(capo->name, 0, io->priority, 0);
+    if (figlio == NULL) return ERR(EAGAIN);         /* no PCB, no memory */
+
+    /* --- who it is ------------------------------------------------------ */
+    figlio->ppid       = capo->pid;
+    figlio->uid        = capo->uid;
+    figlio->gid        = capo->gid;
+    figlio->console    = io->console;
+    figlio->sottofondo = io->sottofondo;
+    kstrcpy(figlio->cwd, capo->cwdt ? capo->cwdt : capo->cwd, sizeof(figlio->cwd));
+    figlio->env_count  = capo->env_count;
+    for (k = 0; k < MAX_ENV_VARS; k++)
+        kstrcpy(figlio->env[k], capo->env[k], ENV_VAR_LEN);
+
+    /* --- the memory around the copy ------------------------------------- */
+    figlio->heap_start       = capo->heap_start;
+    figlio->heap_end         = capo->heap_end;
+    figlio->heap_max         = capo->heap_max;
+    figlio->user_stack_base  = io->user_stack_base;
+    figlio->user_stack_top   = io->user_stack_top;
+    figlio->user_stack_limit = io->user_stack_limit;
+    figlio->filo_posto       = io->filo_posto;     /* its stack is in that slot */
+    figlio->fili_banda       = capo->fili_banda;
+    figlio->tls_tp           = io->tls_tp;
+    figlio->tls_base         = io->tls_base;
+    figlio->tls_off          = capo->tls_off;
+    figlio->tls_filesz       = capo->tls_filesz;
+    figlio->tls_dim          = capo->tls_dim;
+    figlio->n_vma            = capo->n_vma;
+    for (k = 0; k < capo->n_vma && k < PROC_MAX_VMA; k++) figlio->vma[k] = capo->vma[k];
+    if (capo->exe_handle >= 0) {
+        if (vfs_dup(capo->exe_handle) >= 0) figlio->exe_handle = capo->exe_handle;
+        else figlio->n_vma = 0;                     /* nothing left to load */
+    }
+
+    /* --- signals: the handlers of the process, the mask of the thread --- */
+    figlio->seg_ingresso = capo->seg_ingresso;
+    for (k = 0; k < 32; k++) {
+        figlio->seg_flag[k]        = capo->seg_flag[k];
+        figlio->seg_maschera_az[k] = capo->seg_maschera_az[k];
+    }
+    figlio->seg_bloccati  = io->seg_bloccati;
+    figlio->seg_pila_base = io->seg_pila_base;
+    figlio->seg_pila_dim  = io->seg_pila_dim;
+    figlio->seg_pendenti  = 0;
+
+    /* --- the FPU: FNSAVE empties it, so it is put back at once --------- */
+    fpu_save(figlio->fpu_state);
+    fpu_restore(figlio->fpu_state);
+
+    /* --- the descriptors -------------------------------------------------- */
+    n = FD_N(io);
+    figlio->fdt_mia.limite     = io->fdt->limite;
+    figlio->fdt_mia.limite_max = io->fdt->limite_max;
+    if (n > 0 && fd_assicura(figlio, n - 1) < 0) { r = ERR(ENOMEM); goto via; }
+    for (fd = 0; fd < n; fd++) {
+        FileDescriptor d = FDV(io, fd);
+
+        if (d.type == FD_UNUSED) continue;
+        if (d.type == FD_FILE && vfs_dup((int)d.inode) < 0) continue;   /* lost: closed */
+        if (d.type == FD_PIPE_R) pipe_apri_lettore((int)d.inode);
+        if (d.type == FD_PIPE_W) pipe_apri_scrittore((int)d.inode);
+        if (d.type == FD_PTY_M)  pty_apri_riferimento((int)d.inode, 1);
+        if (d.type == FD_PTY_S)  pty_apri_riferimento((int)d.inode, 0);
+        d.posizione_di = 0;
+        FDV(figlio, fd) = d;
+    }
+    figlio->fdt_mia.libero_da = 0;
+
+    /* --- the address space ------------------------------------------------ */
+    proc_spazio_prendi(capo);
+    r = paging_copia_spazio(capo, figlio->page_directory);
+    if (r == 0) r = shm_fork(capo, figlio);
+    proc_spazio_lascia(capo);
+    if (r != 0) goto via;
+
+    /* --- and it runs: from the same int 0x80, with 0 ---------------------- */
+    proc_prepara_fork(figlio, frame);
+    proc_set_ready(figlio);
+
+    klog(LOG_INFO, "SYSCALL fork: PID %u (filo %u) -> figlio PID %u",
+         capo->pid, io->pid, figlio->pid);
+    return (int32_t)figlio->pid;
+
+via:
+    klog(LOG_ERROR, "SYSCALL fork: PID %u, figlio non creato (%d)", capo->pid, r);
+    proc_kill(figlio->pid);
+    proc_reap_zombie(figlio);
+    return r;
+}
+
 int32_t sys_thread_crea(InterruptFrame *frame)
 {
     uint32_t entry = FR_A1(frame);
@@ -1821,6 +1973,41 @@ int32_t sys_mmap(InterruptFrame *frame)
         if (vaddr + pages * PAGE_SIZE > proc->heap_end)
             proc->heap_end = vaddr + pages * PAGE_SIZE;
         klog(LOG_DEBUG, "SYSCALL mmap: %u pagine RISERVATE a 0x%08x", pages, vaddr);
+        return (int32_t)vaddr;
+    }
+
+    /* =====================================================================
+     * ! MAP_SHARED | MAP_ANONYMOUS IS MEMORY THAT A fork KEEPS IN COMMON
+     * (0.313, voce 33). Before fork there was nobody to share it with and it
+     * was private memory like the rest. Now the parent and its children must
+     * see each other's writes in it (the scoreboard of Apache prefork, the
+     * counters of a preforked server): the pages are given NOW and marked
+     * PG_CONDIVISA - a promise (PG_PIGRA) would give parent and child two
+     * different zero pages at their first touch.
+     * ===================================================================== */
+    if (p->flags & MAP_SHARED) {
+        for (i = 0; i < pages; i++) {
+            uint32_t va = vaddr + i * PAGE_SIZE;
+            paddr_t  f  = pmm_alloc_page_utente();
+
+            if (f != 0) paging_azzera_fisica(f);
+            if (f == 0 || paging_map_page(proc->page_directory, va, f,
+                                          pg_flags | PG_CONDIVISA) != 0) {
+                uint32_t j;
+
+                if (f != 0) pmm_free_page(f);
+                for (j = 0; j < i; j++) {
+                    paddr_t g = paging_get_physical(proc->page_directory, vaddr + j * PAGE_SIZE);
+
+                    paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
+                    if (g) pmm_free_page(g & ~(paddr_t)(PAGE_SIZE - 1));
+                }
+                return ERR(ENOMEM);
+            }
+        }
+        if (vaddr + pages * PAGE_SIZE > proc->heap_end)
+            proc->heap_end = vaddr + pages * PAGE_SIZE;
+        klog(LOG_DEBUG, "SYSCALL mmap: %u pagine CONDIVISE a 0x%08x", pages, vaddr);
         return (int32_t)vaddr;
     }
 

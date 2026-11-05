@@ -24,6 +24,10 @@
 #                    PT_INTERP says /lib/ld-exos.so: the kernel ignores it,
 #                    the loader is the libc inside the program. Programs that
 #                    must not depend on /lib (the boot) pass -static.
+#   libgcc           if the sysroot has libgcc_s.so (4 November 2026, made by
+#                    tools/librerie-exos/cxx-condivise.sh): a link that is not
+#                    -static takes the exception unwinder from libgcc_s.so.1,
+#                    --as-needed, so every C++ library shares one unwinder.
 #
 # ! COMPILE THE LIBRARY WITH -fPIC. Without it the objects carry absolute
 # relocations (R_X86_64_32) that a shared object cannot have.
@@ -32,6 +36,10 @@ GCC="${1:?usage: $0 <gcc>}"
 DIR=$("$GCC" -print-libgcc-file-name | xargs dirname)
 [ -d "$DIR" ] || { echo "specs-condivise: no library directory for $GCC" >&2; exit 1; }
 rm -f "$DIR/specs"
+# libgcc_s.so in the sysroot (4 November 2026, voce 85): see the libgcc spec below
+GCC_S=no
+[ -f "$("$GCC" -print-sysroot 2>/dev/null)/lib/libgcc_s.so" ] && GCC_S=si
+[ -f "$DIR/../../../../$("$GCC" -dumpmachine)/lib/libgcc_s.so" ] && GCC_S=si
 # crtbeginS.o / crtendS.o: compiled by this very gcc (its -m and ABI), PIC.
 SORG="$(cd "$(dirname "$0")" && pwd)/crtstuff-condivise.c"
 "$GCC" -O2 -fPIC -fno-asynchronous-unwind-tables -DINIZIO -c "$SORG" -o "$DIR/crtbeginS.o" &&
@@ -56,6 +64,12 @@ sezione("link", link)
 sezione("startfile", lambda v: "%{shared:crtbeginS.o%s} %{!shared:" + v + "}")
 sezione("endfile", lambda v: "%{shared:crtendS.o%s} %{!shared:" + v + "}")
 sezione("lib", lambda v: "%{!shared:" + v + "}")
+# the shared unwinder (tools/librerie-exos/cxx-condivise.sh), where the
+# sysroot has it: not with -static or -static-libgcc; --as-needed, so a
+# program or library that throws nothing gets no DT_NEEDED
+if sys.argv[1] == "si":
+    sezione("libgcc", lambda v: "%{static|static-libgcc:" + v + "} %{!static:%{!static-libgcc:"
+            "--push-state --as-needed -lgcc_s --pop-state " + v + "}}")
 sys.stdout.write(t)
-' > "$DIR/specs" || exit 1
+' "$GCC_S" > "$DIR/specs" || exit 1
 echo "specs-condivise: $DIR/specs (-shared allowed)"

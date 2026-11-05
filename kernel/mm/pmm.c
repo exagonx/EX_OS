@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "pmm.h"
+#include "kmalloc.h"  /* g_oltre: references past 256 owners */
 #include "paging.h"   /* PAGING_FINESTRA_FISICA: la pagina da non allocare mai */
 
 /* =============================================================================
@@ -57,6 +58,123 @@ static uint32_t pmm_limite_kernel(void);
 #define BITMAP_SET(page)    (g_bitmap[(page) / 8] |=  (uint8_t)(1 << ((page) % 8)))
 #define BITMAP_CLR(page)    (g_bitmap[(page) / 8] &= (uint8_t)~(1 << ((page) % 8)))
 #define BITMAP_TEST(page)   (g_bitmap[(page) / 8] &   (uint8_t)(1 << ((page) % 8)))
+
+/* =============================================================================
+ * REFERENCES PAST THE BYTE (5 November 2026, fork, voce 33)
+ *
+ * The byte per page counts up to RIF_MAX owners beyond the first; what goes
+ * past it is kept here, page -> how many more, in a table that doubles when
+ * half full (open addressing, linear probing, removal by shifting back so no
+ * tombstones pile up). It holds only pages shared by more than 256 owners:
+ * a prefork server with hundreds of children, a library page mapped by every
+ * program. Empty slot = page 0, which is never counted.
+ *
+ * ! THE ORDER IS THE CONTRACT: a reference is added to the byte while there
+ * is room, then here; it is taken from here first, then from the byte. So an
+ * entry exists only while the byte is full, and pmm_ref_count is 1 + byte +
+ * entry.
+ *
+ * ! kmalloc ONLY WHEN THE TABLE GROWS, in pmm_ref_inc: freeing never
+ * allocates (pmm_free_page is called from everywhere, the death of a process
+ * included). Everything here runs under the kernel lock, like the bitmap.
+ * ============================================================================= */
+typedef struct { paddr_t pagina; uint32_t in_piu; } RifOltre;
+static RifOltre *g_oltre       = NULL;
+static uint32_t  g_oltre_posti = 0;     /* a power of 2, 0 = none yet */
+static uint32_t  g_oltre_usati = 0;
+
+static uint32_t oltre_casa(paddr_t a)
+{
+    return (uint32_t)(((uint64_t)(a >> 12) * 2654435761u) & (g_oltre_posti - 1));
+}
+
+static RifOltre *oltre_trova(paddr_t a)
+{
+    uint32_t i;
+
+    if (g_oltre_posti == 0) return NULL;
+    for (i = oltre_casa(a); g_oltre[i].pagina != 0; i = (i + 1) & (g_oltre_posti - 1))
+        if (g_oltre[i].pagina == a) return &g_oltre[i];
+    return NULL;
+}
+
+static int oltre_cresci(void)
+{
+    uint32_t  posti = g_oltre_posti ? g_oltre_posti * 2 : 64, i;
+    RifOltre *vecchia = g_oltre, *nuova;
+    uint32_t  vecchi = g_oltre_posti;
+
+    nuova = (RifOltre *)kmalloc(posti * sizeof(RifOltre));
+    if (nuova == NULL) return -1;
+    for (i = 0; i < posti; i++) { nuova[i].pagina = 0; nuova[i].in_piu = 0; }
+    g_oltre = nuova;
+    g_oltre_posti = posti;
+    for (i = 0; i < vecchi; i++) {
+        if (vecchia[i].pagina != 0) {
+            uint32_t j = oltre_casa(vecchia[i].pagina);
+
+            while (g_oltre[j].pagina != 0) j = (j + 1) & (posti - 1);
+            g_oltre[j] = vecchia[i];
+        }
+    }
+    if (vecchia) kfree(vecchia);
+    return 0;
+}
+
+/* One more reference for `a`, past the byte. 0, or -1 without memory. */
+static int oltre_aggiungi(paddr_t a)
+{
+    RifOltre *r = oltre_trova(a);
+    uint32_t  i;
+
+    if (r != NULL) {
+        if (r->in_piu == 0xFFFFFFFFu) return -1;
+        r->in_piu++;
+        return 0;
+    }
+    if ((g_oltre_usati + 1) * 2 > g_oltre_posti && oltre_cresci() != 0) {
+        klog(LOG_ERROR, "PMM: niente memoria per contare i proprietari della pagina 0x%x%08x",
+             (uint32_t)((uint64_t)a >> 32), (uint32_t)a);
+        return -1;
+    }
+    for (i = oltre_casa(a); g_oltre[i].pagina != 0; i = (i + 1) & (g_oltre_posti - 1)) {}
+    g_oltre[i].pagina = a;
+    g_oltre[i].in_piu = 1;
+    g_oltre_usati++;
+    return 0;
+}
+
+/* One reference less for `a` from the table: 1 if it had one, 0 if not. */
+static int oltre_togli(paddr_t a)
+{
+    RifOltre *r = oltre_trova(a);
+    uint32_t  i, j, m;
+
+    if (r == NULL) return 0;
+    if (--r->in_piu != 0) return 1;
+    /* the entry goes: the ones after it that would no longer be found
+     * move back into the hole */
+    m = g_oltre_posti - 1;
+    i = (uint32_t)(r - g_oltre);
+    g_oltre[i].pagina = 0;
+    g_oltre_usati--;
+    for (j = (i + 1) & m; g_oltre[j].pagina != 0; j = (j + 1) & m) {
+        uint32_t k = oltre_casa(g_oltre[j].pagina);
+
+        /* k is where j's entry wants to be: it may stay unless the hole i
+         * lies on its way from k to j */
+        if ((i <= j) ? (k <= i || k > j) : (k <= i && k > j)) {
+            g_oltre[i] = g_oltre[j];
+            g_oltre[j].pagina = 0;
+            g_oltre[j].in_piu = 0;
+            i = j;
+        }
+    }
+    return 1;
+}
+
+/* How many references past the byte (pmm_dump, the tests). */
+uint32_t pmm_rif_oltre(void) { return g_oltre_usati; }
 
 /* =============================================================================
  * Funzioni helper
@@ -625,16 +743,24 @@ paddr_t pmm_alloc_pages(uint32_t count)
  * through the window. Even a 4 GB machine has some RAM above 4 GB: the BIOS
  * moves there what the PCI hole covers.
  *
- * One bit per page (1 = in use), in pages taken from the fascia. No
- * reference counts: these pages are never shared (libraries and shm use the
- * low pool), so pmm_ref_count says 1 and pmm_ref_inc refuses. The pages are
- * not chosen for swapping either (paging_vittima looks below 4 GB): when the
+ * One bit per page (1 = in use), in pages taken from the fascia. The pages
+ * are not chosen for swapping (paging_vittima looks below 4 GB): when the
  * high pool is empty programs fall back to the low one, which swaps.
+ *
+ * ! AND ONE BYTE PER PAGE OF REFERENCES (5 November 2026, fork): until fork
+ * these pages were never shared (libraries and shm use the low pool) and
+ * pmm_ref_inc refused them. fork shares every page of the parent with the
+ * child, copy-on-write, and most of a program's pages are up here: copying
+ * them all at once would make fork cost the whole size of the parent. Same
+ * rule as below 4 GB: the byte says how many beyond the first, past 255 the
+ * table g_oltre. 1 MB per 4 GB of high RAM; without it (the fascia full)
+ * pmm_ref_inc refuses, and fork copies those pages instead.
  * At most ALTA_MAX_GB above 4 GB are used (a bitmap of 1 MB per 32 GB).
  * ============================================================================= */
 #define GB4_          0x100000000ull
 #define ALTA_MAX_GB   60u
 static uint8_t  *g_alta;                /* the bitmap, in the fascia */
+static uint8_t  *g_alta_rif;            /* references beyond the first, 1 per page */
 static uint32_t  g_alta_pagine;         /* pages from 4 GB up the bitmap covers */
 static uint32_t  g_alta_libere, g_alta_ram;
 static uint32_t  g_alta_cursore;
@@ -697,6 +823,20 @@ static void alta_init(BootInfo *info)
     g_alta_ram = g_alta_libere;
     klog(LOG_INFO, "PMM: RAM oltre i 4 GB: %u MB in %u pagine (bitmap %u KB)",
          g_alta_ram / 256, g_alta_ram, pagine_bitmap * 4);
+
+    /* the references (see above): zero = one owner */
+    {
+        uint32_t pr = (g_alta_pagine + PAGE_SIZE - 1) / PAGE_SIZE;
+        paddr_t  fr = pmm_alloc_pages_kernel(pr);
+
+        if (fr == 0) {
+            klog(LOG_WARN, "PMM: niente posto per i riferimenti della RAM alta (%u pagine): "
+                 "fork le copiera'", pr);
+        } else {
+            g_alta_rif = (uint8_t *)DA_FISICO(fr);
+            for (a = 0; a < (uint64_t)pr * PAGE_SIZE; a++) g_alta_rif[a] = 0;
+        }
+    }
 }
 
 static int alta_dentro(paddr_t a)
@@ -735,6 +875,21 @@ static void alta_libera(paddr_t a)
     g_alta_libere++;
 }
 
+static int alta_usata(paddr_t a)
+{
+    uint32_t k = (uint32_t)((a - GB4_) / PAGE_SIZE);
+
+    return (g_alta[k / 8] & (1u << (k % 8))) != 0;
+}
+
+/* The reference byte of a high page in use, NULL if there is none. */
+static uint8_t *rif_alto(paddr_t a)
+{
+    if (g_alta_rif == NULL || !alta_dentro(a) || (a & (PAGE_SIZE - 1)) || !alta_usata(a))
+        return NULL;
+    return &g_alta_rif[(a - GB4_) / PAGE_SIZE];
+}
+
 int pmm_e_ram(paddr_t a)
 {
     if (a < GB4_) return a < (paddr_t)g_total_pages * PAGE_SIZE;
@@ -751,7 +906,16 @@ void pmm_free_page(paddr_t addr)
 
 #if defined(__x86_64__)
     if (addr >= GB4_) {
-        if (alta_dentro(addr)) alta_libera(addr);
+        if (alta_dentro(addr)) {
+            uint8_t *b = rif_alto(addr);
+
+            /* shared (fork): one owner less, as below 4 GB */
+            if (b != NULL && *b > 0) {
+                if (!oltre_togli(addr)) (*b)--;
+                return;
+            }
+            alta_libera(addr);
+        }
         else klog(LOG_ERROR, "PMM: liberata una pagina oltre la RAM: 0x%x%08x",
                   (uint32_t)(addr >> 32), (uint32_t)addr);
         return;
@@ -787,7 +951,7 @@ void pmm_free_page(paddr_t addr)
      * E' il punto in cui si spende il conteggio, e per questo il conteggio sta
      * nel PMM: una sola riga da scrivere bene invece di dieci da ricordare. */
     if (g_rif != NULL && g_rif[page] > 0) {
-        g_rif[page]--;
+        if (!oltre_togli(addr)) g_rif[page]--;   /* the table first: see g_oltre */
         return;
     }
 
@@ -808,8 +972,16 @@ int pmm_ref_inc(paddr_t addr)
 
 #if defined(__x86_64__)
     if (addr >= GB4_) {
-        klog(LOG_ERROR, "PMM: ref_inc su una pagina alta: quelle non si condividono");
-        return -1;
+        uint8_t *b = rif_alto(addr);
+
+        if (b == NULL) {
+            if (g_alta_rif != NULL)
+                klog(LOG_ERROR, "PMM: ref_inc su una pagina alta libera o fuori RAM: 0x%x%08x",
+                     (uint32_t)(addr >> 32), (uint32_t)addr);
+            return -1;
+        }
+        if (*b < RIF_MAX) { (*b)++; return 0; }
+        return oltre_aggiungi(addr);
     }
 #endif
     if (g_rif == NULL) return -1;
@@ -835,18 +1007,17 @@ int pmm_ref_inc(paddr_t addr)
         return -1;
     }
 
-    /* ! IL TETTO E' UN RIFIUTO, NON UNA SATURAZIONE. Un conteggio che si ferma
-     * a 255 e poi non sale piu' fa liberare la pagina al 255esimo che se ne
-     * va, mentre gli altri ce l'hanno ancora mappata: si perde la memoria di
-     * quanti sono, ed e' il guasto peggiore che questo file possa produrre. */
-    if (g_rif[page] >= RIF_MAX) {
-        klog(LOG_ERROR, "PMM: pagina 0x%08x gia' condivisa da %u, tetto raggiunto",
-             addr, RIF_MAX + 1u);
-        return -1;
+    /* ! UN CONTEGGIO NON SI SATURA MAI. Un conteggio che si ferma a 255 e poi
+     * non sale piu' fa liberare la pagina al 255esimo che se ne va, mentre
+     * gli altri ce l'hanno ancora mappata: si perde la memoria di quanti
+     * sono, ed e' il guasto peggiore che questo file possa produrre. Fino
+     * alla fork era un rifiuto; adesso oltre il byte c'e' g_oltre, e il
+     * rifiuto resta solo se manca la memoria per contare. */
+    if (g_rif[page] < RIF_MAX) {
+        g_rif[page]++;
+        return 0;
     }
-
-    g_rif[page]++;
-    return 0;
+    return oltre_aggiungi(addr);
 }
 
 uint32_t pmm_ref_count(paddr_t addr)
@@ -854,14 +1025,25 @@ uint32_t pmm_ref_count(paddr_t addr)
     uint32_t page;
 
 #if defined(__x86_64__)
-    if (addr >= GB4_) return alta_dentro(addr) ? 1u : 0u;   /* never shared */
+    if (addr >= GB4_) {
+        uint8_t  *b = rif_alto(addr);
+        RifOltre *r;
+
+        if (b == NULL) return alta_dentro(addr) && alta_usata(addr) ? 1u : 0u;
+        r = (*b == RIF_MAX) ? oltre_trova(addr) : NULL;
+        return 1u + (uint32_t)*b + (r ? r->in_piu : 0u);
+    }
 #endif
     if (g_rif == NULL) return 0;
     page = addr_to_page(addr);
     if (page >= g_total_pages)   return 0;
     if (!BITMAP_TEST(page))      return 0;
 
-    return 1u + (uint32_t)g_rif[page];
+    {
+        RifOltre *r = (g_rif[page] == RIF_MAX) ? oltre_trova(addr) : NULL;
+
+        return 1u + (uint32_t)g_rif[page] + (r ? r->in_piu : 0u);
+    }
 }
 
 /* =============================================================================

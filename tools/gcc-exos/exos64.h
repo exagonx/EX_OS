@@ -48,7 +48,11 @@ along with GCC; see the file COPYING3.  If not see
    built by the system Makefile can be compared instruction by
    instruction.  */
 #undef  LINK_SPEC
-#define LINK_SPEC "-m elf_x86_64 -static -e _start -Ttext-segment=0x08000000 %{shared:%eEX-OS does not support shared libraries for programs}"
+#define LINK_SPEC "-m elf_x86_64 -static -e _start -Ttext-segment=0x08000000 %{rdynamic:-export-dynamic} %{shared:%eEX-OS does not support shared libraries for programs}"
+
+/* -pthread (tools/gcc-exos/exos.opt): _REENTRANT, as on Linux.  */
+#undef  CPP_SPEC
+#define CPP_SPEC "%{pthread:-D_REENTRANT}"
 
 /* lib/start.S of EX-OS, installed as crt0.o, then crtbegin.o; crtend.o at
    the end.  ! THE crtbegin/crtend PAIR IS NOT OPTIONAL HERE: they register
@@ -64,7 +68,7 @@ along with GCC; see the file COPYING3.  If not see
 #define ENDFILE_SPEC "crtend%O%s"
 
 #undef  LIB_SPEC
-#define LIB_SPEC "-lc"
+#define LIB_SPEC "%{pthread:-lpthread} -lc"
 
 /* Programs are not position independent unless asked: the loader puts
    them at their link address.  */

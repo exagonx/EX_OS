@@ -87,6 +87,10 @@
 #define SYS_ATTIVITA     262
 #define ATTIVITA_TOCCA   0
 #define ATTIVITA_DA      1
+/* SYS_FORK (263, kernel 0.313, voce 33): a copy of the calling process,
+ * copy-on-write. No arguments; the pid of the child to the parent, 0 to the
+ * child, -errno. See sys_fork in syscall_impl.c. */
+#define SYS_FORK         263
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
 #define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
@@ -197,7 +201,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   263     /* la piu' alta e' SYS_ATTIVITA = 262 */
+#define SYSCALL_COUNT   264     /* la piu' alta e' SYS_FORK = 263 */
 
 /* =============================================================================
  * Codici errno
@@ -1793,6 +1797,7 @@ void    syscall_handler(InterruptFrame *frame);
 
 /* Implementazioni singole syscall (definite in syscall_impl.c) */
 int32_t sys_exit(InterruptFrame *f);
+int32_t sys_fork(InterruptFrame *f);
 int32_t sys_spawn(InterruptFrame *f);
 /* A program started by the kernel itself, with arguments (@RDBOOT step 3):
  * ready to run, child of the caller, on `console`. NULL if it does not load.
@@ -1838,6 +1843,7 @@ void    segnali_consegna(InterruptFrame *f);
 /* SIGTERM to every program but drivers and init before the machine goes off,
  * then up to `ms` for them to end; how many did not (sys_reboot, 0.279). */
 int     segnali_arresto(uint32_t ms);
+void    segnali_figlio_finito(uint32_t ppid);   /* SIGCHLD (0.313), interrupts off */
 int32_t sys_munmap(InterruptFrame *f);
 int32_t sys_ioctl(InterruptFrame *f);
 int32_t sys_exec(InterruptFrame *f);

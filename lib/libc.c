@@ -293,6 +293,7 @@ typedef struct {
 #define SYS_SYNC         260
 #define SYS_CPUFREQ      261
 #define SYS_ATTIVITA     262
+#define SYS_FORK         263     /* kernel 0.313: see fork() */
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -4991,6 +4992,14 @@ static int  (*g_shm_dup)(int fd);
 /* shm_open's zone of number fd, +1 (0 = not a zone) */
 #define SHMFD_ZONA(fd)  ((int)(uintptr_t)fdl_ogg((fd), FDL_SHM))
 #endif
+
+/* The sockets and epoll sets across fork (kernel 0.313): set by the first
+ * socket() or epoll_create; fork calls g_prese_padre in the parent (with the
+ * child's pid) and g_prese_figlio in the child. Pointers, as the shm ones
+ * above: a program that forks and has no sockets does not pull the socket
+ * code in. See prese_al_figlio. */
+static void (*g_prese_figlio)(void);
+static void (*g_prese_padre)(int figlio);
 #ifndef EXOS_LIBC_SO
 static int     presa_chiudi(int fd);
 static int     presa_fcntl(int fd, int cmd, unsigned int arg);
@@ -6181,15 +6190,7 @@ int pthread_join(pthread_t t, void **ris)
     return 0;
 }
 
-/* EX-OS non ha fork(): non c'e' niente da preparare, i gestori non
- * serviranno mai. Solo in libc.a. */
-#ifndef EXOS_LIBC_SO
-int pthread_atfork(void (*prima)(void), void (*genitore)(void), void (*figlio)(void))
-{
-    (void)prima; (void)genitore; (void)figlio;
-    return 0;
-}
-#endif
+/* pthread_atfork: see fork(), near the end of the file (kernel 0.313). */
 
 int pthread_detach(pthread_t t)
 {
@@ -13793,12 +13794,156 @@ char *ttyname(int fd)
     return nome;
 }
 
-/* fork: EX-OS non ce l'ha (vedi <unistd.h>). */
+/* =============================================================================
+ * fork, vfork, pthread_atfork (kernel 0.313, voce 33)
+ *
+ * SYS_FORK copies the process copy-on-write; what the kernel cannot know is
+ * the libc's own state, and that is done here:
+ *
+ *   the locks      malloc's, the stream list's, the thread table's, the
+ *                  loader's (dlopen, its TLS table) are TAKEN before the call
+ *                  and let go after it, on both sides. The child has only the
+ *                  thread that called fork: a lock another thread held at
+ *                  that moment would stay held for ever in the child, and its
+ *                  first malloc would wait for nobody.
+ *   the threads    in the child the table keeps only the caller; the others
+ *                  do not exist there (their stacks do, unused). The caller's
+ *                  entry gets its new tid. Their errno places go too.
+ *   getpid()       remembered after the first call: forgotten in the child.
+ *   the handlers   pthread_atfork: `prima` newest first before, `genitore`
+ *                  and `figlio` oldest first after (POSIX). A growing table.
+ *
+ * ! THE ORDER OF THE LOCKS IS ALWAYS THIS ONE (atfork, loader, its TLS,
+ * streams, threads, heap): a fork that took them in another order than a
+ * thread that holds one and waits for the next would wait for ever.
+ * ============================================================================= */
+typedef struct {
+    void (*prima)(void);
+    void (*genitore)(void);
+    void (*figlio)(void);
+} AtFork;
+static AtFork      *g_atfork       = NULL;
+static int          g_atfork_n     = 0;
+static int          g_atfork_posti = 0;
+static volatile int g_atfork_m     = 0;
+
+int pthread_atfork(void (*prima)(void), void (*genitore)(void), void (*figlio)(void))
+{
+    mutex_prendi(&g_atfork_m);
+    if (g_atfork_n == g_atfork_posti) {
+        int     posti = g_atfork_posti ? g_atfork_posti * 2 : 8;
+        AtFork *n     = (AtFork *)realloc(g_atfork, (size_t)posti * sizeof(AtFork));
+
+        if (n == NULL) { mutex_lascia(&g_atfork_m); return ENOMEM; }
+        g_atfork       = n;
+        g_atfork_posti = posti;
+    }
+    g_atfork[g_atfork_n].prima    = prima;
+    g_atfork[g_atfork_n].genitore = genitore;
+    g_atfork[g_atfork_n].figlio   = figlio;
+    g_atfork_n++;
+    mutex_lascia(&g_atfork_m);
+    return 0;
+}
+
+/* The child: only this thread exists (see above). */
+static void fork_nel_figlio(void)
+{
+    unsigned int tp = tp_mio();
+    FiliBlocco  *b;
+    ErrnoBlocco *e;
+    int          i;
+
+    g_mio_pid = 0;
+    for (b = &g_fili; b; b = b->succ)
+        for (i = 0; i < PTHREAD_FILI; i++) {
+            if (!b->f[i].usato) continue;
+            if (tp != 0 && (unsigned int)b->f[i].tp == tp) {
+                b->f[i].tid = filo_id();
+                continue;
+            }
+            b->f[i].usato = 0;
+            b->f[i].tp    = 0;
+        }
+    for (e = &g_errno_posti; e; e = e->succ)
+        for (i = 0; i < ERRNO_POSTI; i++)
+            if (e->p[i].tp != 0 && (unsigned int)e->p[i].tp != tp) {
+                e->p[i].tp     = 0;
+                e->p[i].valore = 0;
+            }
+    if (g_prese_figlio) g_prese_figlio();   /* the sockets: prese_nel_figlio */
+}
+
 int fork(void)
 {
-    errno = ENOSYS;
-    return -1;
+    int r, i;
+    int attesa[2] = { -1, -1 };     /* the sockets: see prese_al_figlio */
+
+    if (g_prese_padre != NULL && pipe(attesa) != 0) attesa[0] = attesa[1] = -1;
+    mutex_prendi(&g_atfork_m);
+    for (i = g_atfork_n - 1; i >= 0; i--)
+        if (g_atfork[i].prima) g_atfork[i].prima();
+#ifndef EXOS_LIBC_SO
+    mutex_prendi(&g_dl_lucchetto);
+    mutex_prendi(&g_dl_tls_lucchetto);
+#endif
+    mutex_prendi(&g_flussi_m);
+    mutex_prendi(&g_fili_m);
+    mutex_prendi(&g_heap_lucchetto);
+
+    r = _syscall1(SYS_FORK, 0);
+
+    if (r == 0) {
+        /* nobody else is in this process to wait on them: just free */
+        g_heap_lucchetto = 0;
+        g_fili_m         = 0;
+        g_flussi_m       = 0;
+#ifndef EXOS_LIBC_SO
+        g_dl_tls_lucchetto = 0;
+        g_dl_lucchetto     = 0;
+#endif
+        fork_nel_figlio();
+        if (attesa[0] >= 0) {
+            char c;
+
+            close(attesa[1]);
+            while (read(attesa[0], &c, 1) < 0 && errno == EINTR) { }
+            close(attesa[0]);
+        }
+        g_atfork_m = 0;
+        for (i = 0; i < g_atfork_n; i++)
+            if (g_atfork[i].figlio) g_atfork[i].figlio();
+        return 0;
+    }
+
+    mutex_lascia(&g_heap_lucchetto);
+    mutex_lascia(&g_fili_m);
+    mutex_lascia(&g_flussi_m);
+#ifndef EXOS_LIBC_SO
+    mutex_lascia(&g_dl_tls_lucchetto);
+    mutex_lascia(&g_dl_lucchetto);
+#endif
+    if (attesa[0] >= 0) {
+        if (r > 0) {
+            g_prese_padre(r);
+            (void)write(attesa[1], "", 1);
+        }
+        close(attesa[0]);
+        close(attesa[1]);
+    }
+    for (i = 0; i < g_atfork_n; i++)
+        if (g_atfork[i].genitore) g_atfork[i].genitore();
+    mutex_lascia(&g_atfork_m);
+
+    if (r < 0) {
+        /* a kernel before 0.313: the syscall does not exist (-ENOSYS) */
+        errno = -r;
+        return -1;
+    }
+    return r;
 }
+
+pid_t vfork(void) { return fork(); }
 
 /* syscall() alla Linux: solo gettid, che su EX-OS e' il pid del filo. */
 long syscall(long numero, ...)
@@ -14668,6 +14813,95 @@ static Presa *presa_di(int fd)
     return (p && p->usata) ? p : NULL;
 }
 
+/* =============================================================================
+ * prese_al_figlio — the sockets of the child of fork (kernel 0.313, voce 33)
+ *
+ * The child has a copy of every Presa, and of every descriptor number, but in
+ * ip.drv the connections, listeners, UDP ports and epoll sets belong to the
+ * PARENT's process: a request of the child would be refused (EBADF), and a
+ * close by the child must not close them for the parent. So the PARENT, which
+ * owns them, tells ip.drv that the child is one more owner of each
+ * (IP_MSG_EREDITA, ip.drv 0.021), before fork() returns to it. From then on
+ * both use them, and a close by one leaves them to the other; the last close
+ * closes. That is a prefork server: the parent listens, the children accept
+ * (each accepted connection is its acceptor's).
+ *
+ * ! THE CHILD WAITS FOR IT (fork, «attesa»): until the parent has done, a
+ * request of the child would be refused. A pipe made before fork carries one
+ * byte from the parent when it is done; if the parent dies first the child
+ * reads the end and goes on with what it got.
+ * ! THE PARENT DOES IT, NOT THE CHILD, and that is on purpose: the parent is
+ * an owner and alive, so ip.drv only has to check that the asker owns it. A
+ * child asking for itself would have to prove it is the child of an owner
+ * that may have exited meanwhile (the daemon that forks and leaves), and
+ * ip.drv may have closed the orphan already.
+ * ! A UDP_RICEVI IN FLIGHT IS THE PARENT'S: its answer goes to the parent's
+ * mailbox, so the child's copy forgets it was waiting.
+ * ! WITH AN ip.drv BEFORE 0.021 (-EINVAL) the child's sockets stay the
+ * parent's, as before fork existed: the child cannot use them.
+ * ============================================================================= */
+#define P_IP_MSG_EREDITA    26
+#define P_EREDITA_TCP       1
+#define P_EREDITA_UDP       2
+#define P_EREDITA_INS       3
+typedef struct { unsigned int tipo, id, pid; } PEredita;
+
+static int ip_esito(unsigned int tipo, const void *dati, unsigned int len);
+
+/* In the parent, `figlio` just born: it becomes an owner of every socket. */
+static void prese_al_figlio(int figlio)
+{
+    FdlIndice   *ind = g_fdl;
+    unsigned int b, i;
+
+    if (ind == NULL || figlio <= 0) return;
+    for (b = 0; b < ind->posti; b++) {
+        FdLibc *blk = ind->blocco[b];
+
+        if (blk == NULL) continue;
+        for (i = 0; i < FDL_BLOCCO; i++) {
+            PEredita e;
+
+            e.pid = (unsigned int)figlio;
+            e.id  = 0;
+            if (blk[i].tipo == FDL_EPOLL) {
+                e.tipo = P_EREDITA_INS;
+                e.id   = (unsigned int)(uintptr_t)blk[i].ogg;
+            } else if (blk[i].tipo == FDL_PRESA && blk[i].ogg != NULL) {
+                Presa *p = (Presa *)blk[i].ogg;
+
+                if (!p->usata) continue;
+                if (p->tipo == S_SOCK_STREAM && p->id != 0) {
+                    e.tipo = P_EREDITA_TCP;
+                    e.id   = p->id;
+                } else if (p->tipo == S_SOCK_DGRAM && p->udp_aperta) {
+                    e.tipo = P_EREDITA_UDP;
+                    e.id   = p->porta_loc;
+                }
+            }
+            if (e.id) (void)ip_esito(P_IP_MSG_EREDITA, &e, sizeof(e));
+        }
+    }
+}
+
+/* In the child: what of the parent's state is not true here. */
+static void prese_nel_figlio(void)
+{
+    FdlIndice   *ind = g_fdl;
+    unsigned int b, i;
+
+    g_prese_m = 0;              /* another thread of the parent may have held it */
+    if (ind == NULL) return;
+    for (b = 0; b < ind->posti; b++) {
+        FdLibc *blk = ind->blocco[b];
+
+        if (blk == NULL) continue;
+        for (i = 0; i < FDL_BLOCCO; i++)
+            if (blk[i].tipo == FDL_PRESA && blk[i].ogg != NULL)
+                ((Presa *)blk[i].ogg)->udp_prenotata = 0;
+    }
+}
+
 static int presa_nuova(int tipo)
 {
     Presa *p;
@@ -14682,6 +14916,8 @@ static int presa_nuova(int tipo)
     memset(p, 0, sizeof(Presa));
     p->usata = 1;
     p->tipo  = tipo;
+    g_prese_figlio = prese_nel_figlio;  /* fork: see there */
+    g_prese_padre  = prese_al_figlio;
     fd = fdl_prendi(FDL_PRESA, p);
     if (fd < 0) {
         mutex_prendi(&g_prese_m);
@@ -15863,6 +16099,8 @@ int epoll_create1(int flag)
     (void)flag;                             /* EPOLL_CLOEXEC: exec keeps nothing of ours */
     r = ip_esito(P_IP_MSG_INS_CREA, NULL, 0);
     if (r <= 0) return presa_errore(r < 0 ? (r == -EINVAL ? -ENOSYS : r) : -EIO);
+    g_prese_figlio = prese_nel_figlio;      /* fork: see there */
+    g_prese_padre  = prese_al_figlio;
     fd = fdl_prendi(FDL_EPOLL, (void *)(uintptr_t)(unsigned int)r);
     if (fd < 0) {
         unsigned int ins = (unsigned int)r;

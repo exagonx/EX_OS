@@ -92,6 +92,42 @@ typedef uint32_t PTE;
 #define PG_FISSA        (1u << 9)
 
 /* =============================================================================
+ * PG_COW, PG_CONDIVISA — what a PRESENT page means after fork (5 November
+ * 2026, kernel 0.313, voce 33)
+ *
+ * Bits 10 and 11 of a present PTE: on a missing one they are PG_RISERVA and
+ * PG_PIGRA, which count only with Present at zero (PTE_E_RISERVA,
+ * PTE_E_PIGRA), so the two meanings never meet.
+ *
+ * PG_COW      the page is writable for the program but mapped READ-ONLY,
+ *             because fork gave the same frame to parent and child. The first
+ *             write faults, and page_fault_handler (pf_copia_su_scrittura)
+ *             gives the writer its own copy - or, when it is the last owner
+ *             left, simply makes the page writable again.
+ * PG_CONDIVISA a page that must stay the SAME memory for everybody who maps
+ *             it: shm zones, mmap(MAP_SHARED | MAP_ANONYMOUS). fork maps the
+ *             frame in the child as it is, writable, and mprotect never turns
+ *             it into copy-on-write.
+ *
+ * ! THE KERNEL WRITES USER MEMORY TOO (read() into a buffer, the signal
+ * frame...), so CR0.WP is on from 0.313 (paging_wp_accendi): without it a
+ * write from ring 0 ignores read-only and would go straight into the frame
+ * the other process still uses. See pf_copia_su_scrittura for what happens
+ * when the kernel writes a read-only page that is not copy-on-write.
+ * ========================================================================== */
+#define PG_COW          (1u << 10)
+#define PG_CONDIVISA    (1u << 11)
+/* CR0.WP on (kernel_main, after sched_init), and back on where a kernel write
+ * into a read-only page turned it off (bkl_esci, sched_switch_to): see
+ * paging.c. paging_copia_spazio: fork's copy of the user half (0 or -ENOMEM). */
+void paging_wp_accendi(void);
+void paging_wp_rimetti(void);
+struct Process;
+int  paging_copia_spazio(struct Process *dal, PDE *al);
+#define PTE_E_COW(pte)  (((pte) & (PG_PRESENT | PG_COW)) == (PG_PRESENT | PG_COW))
+#define PTE_E_CONDIVISA(pte) (((pte) & (PG_PRESENT | PG_CONDIVISA)) == (PG_PRESENT | PG_CONDIVISA))
+
+/* =============================================================================
  * FINESTRA DI RIMAPPATURA FISICA
  *
  * Una pagina virtuale sola, dentro la fascia mappata in OGNI page

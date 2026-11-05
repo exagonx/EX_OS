@@ -75,7 +75,11 @@ along with GCC; see the file COPYING3.  If not see
    indirizzi diversi, il che rende inconfrontabili due disassemblati dello
    stesso programma.  Le specs devono dire cio' che fanno.  */
 #undef  LINK_SPEC
-#define LINK_SPEC "-m elf_i386 -static -e _start -Ttext-segment=0x08000000 %{shared:%eEX-OS non supporta le librerie condivise per i programmi}"
+#define LINK_SPEC "-m elf_i386 -static -e _start -Ttext-segment=0x08000000 %{rdynamic:-export-dynamic} %{shared:%eEX-OS non supporta le librerie condivise per i programmi}"
+
+/* -pthread (tools/gcc-exos/exos.opt): _REENTRANT, come su Linux.  */
+#undef  CPP_SPEC
+#define CPP_SPEC "%{pthread:-D_REENTRANT}"
 
 /* Il file di avvio: chiama main() con argc e argv e poi exit().  E' il
    lib/start.S di EX-OS, installato come crt0.o.  */
@@ -89,7 +93,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* La libc di EX-OS.  -lc di suo, piu' libgcc che ci mette il compilatore.  */
 #undef  LIB_SPEC
-#define LIB_SPEC "-lc"
+#define LIB_SPEC "%{pthread:-lpthread} -lc"
 
 /* I programmi utente sono statici e non rilocabili: vedi la nota in testa
    al file.  */

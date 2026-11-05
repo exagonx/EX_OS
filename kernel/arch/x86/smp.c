@@ -542,6 +542,7 @@ void bkl_esci(const void *frame)
 {
     const InterruptFrame *f = (const InterruptFrame *)frame;
 
+    paging_wp_rimetti();            /* CR0.WP back, if a fault turned it off (0.313) */
     if (!g_smp_lavora || (f->cs & 3) != 3) return;
     sched_fine_chiesta();           /* se c'e' da finire, non torna */
     bkl_lascia();

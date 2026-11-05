@@ -41,6 +41,11 @@
 #           quindi non si puo' scrivere per intero
 #   nota    un avvertimento da stampare a chi sceglie questo gruppo. Piu'
 #           righe = piu' righe di avvertimento
+#   menu    la riga che netupdate scrive in /exwin/lib/applicazioni.txt
+#           quando il gruppo e' installato (e toglie con -remove), nella
+#           forma di quel file: Categoria/Nome | eseguibile | icona. I
+#           percorsi sono quelli sul disco (/exos/...). toolinst (dal CD)
+#           ancora non la legge (voce 79)
 #
 # Le righe che non cominciano con una chiave nota vengono ignorate: un
 # catalogo scritto per un toolinst piu' nuovo non deve rompere quello vecchio.
@@ -537,9 +542,13 @@ vuole = ffmpeg
 vuole = flac
 mbyte = 60
 solo  = bin/vlc
+solo  = bin/vlcapri
+solo  = share/vlc
 solo  = src/vlc
+menu  = Multimedia/VLC | /exos/bin/vlcapri | /exos/share/vlc/vlc_64.ico
 
 nota  = vlc film.mp4  (vlc -I dummy --no-video brano.ogg senza ExWin)
+nota  = Dalla scrivania: Avvio > Multimedia > VLC sceglie il file (vlcapri)
 
 
 [pcre2]

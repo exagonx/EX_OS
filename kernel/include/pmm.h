@@ -50,8 +50,15 @@ void     pmm_free_pages(paddr_t addr, uint32_t count);
  * niente e l'array nasce azzerato con il significato giusto.
  *
  * pmm_ref_inc  aggiunge un proprietario. Rende 0, o <0 se la pagina non e' RAM
- *              (una finestra MMIO non si conta: non e' nostra) o se si
- *              sfonderebbe il tetto di 255 proprietari.
+ *              (una finestra MMIO non si conta: non e' nostra) o se manca la
+ *              memoria del kernel per contare oltre i 256.
+ *
+ * ! NESSUN TETTO DI PROPRIETARI (5 November 2026, fork, voce 33). Up to 256
+ * the count is one byte per page, as before; past that the extra references
+ * go into a table that grows (pmm.c, «g_oltre»). Apache prefork has a parent
+ * and up to 256 children sharing the pages of the parent: the old ceiling of
+ * 256 refused the 256th fork. The pages above 4 GB (64 bit) have their own
+ * byte per page now (g_alta_rif), so they can be shared by fork as well.
  * pmm_ref_count rende quanti sono, 1 per una pagina normale. Per la
  *              diagnostica e per le prove.
  *
@@ -60,6 +67,7 @@ void     pmm_free_pages(paddr_t addr, uint32_t count);
  * ============================================================================= */
 int      pmm_ref_inc(paddr_t addr);
 uint32_t pmm_ref_count(paddr_t addr);
+uint32_t pmm_rif_oltre(void);     /* pages with more than 256 owners (g_oltre) */
 
 uint32_t pmm_get_free_pages(void);
 uint32_t pmm_get_used_pages(void);

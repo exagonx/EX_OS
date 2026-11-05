@@ -49,7 +49,7 @@
 #include "libc.h"
 #include "pci_proto.h"
 
-EX_VERSIONE("dpms.drv", "0.001");
+EX_VERSIONE("dpms.drv", "0.002");
 
 #define SERVIZIO        "dpms"
 #define MSG_STATO       0xD901u     /* -> DpmsStato */
@@ -315,6 +315,9 @@ static int chiedi(unsigned int tipo, const void *dato, unsigned int len, DpmsSta
     return -1;
 }
 
+/* "1 minuto", "10 minuti". */
+static const char *min_(unsigned int m) { return m == 1 ? "minuto" : "minuti"; }
+
 static void durata(unsigned int ms, char *b, int n)
 {
     unsigned int s = ms / 1000u;
@@ -344,7 +347,7 @@ static int stato(void)
     }
     printf("schermo:    %s\n", s.spento ? "spento" : "acceso");
     printf("metodo:     %s\n", s.metodo);
-    if (s.minuti) printf("si spegne:  dopo %u minuti senza tasti ne' mouse\n", s.minuti);
+    if (s.minuti) printf("si spegne:  dopo %u %s senza tasti ne' mouse\n", s.minuti, min_(s.minuti));
     else          printf("si spegne:  mai (solo con  dpms.drv -spegni)\n");
     durata(s.da_ms, b, sizeof(b));
     printf("ultimo tasto o movimento: %s fa\n", b);
@@ -368,7 +371,7 @@ static int dopo(const char *argv0, unsigned int minuti)
     DpmsStato s;
 
     if (chiedi(MSG_DOPO, &minuti, sizeof(minuti), &s) == 0) {
-        if (minuti) printf("dpms: lo schermo si spegne dopo %u minuti\n", minuti);
+        if (minuti) printf("dpms: lo schermo si spegne dopo %u %s\n", minuti, min_(minuti));
         else        printf("dpms: lo schermo non si spegne piu' da solo\n");
         return 0;
     }
@@ -392,7 +395,7 @@ static int dopo(const char *argv0, unsigned int minuti)
     }
     if (chiedi(MSG_STATO, 0, 0, &s) != 0) { printf("dpms: il servizio non risponde\n"); return 1; }
     printf("dpms: servizio acceso, metodo %s\n", s.metodo);
-    if (minuti) printf("      lo schermo si spegne dopo %u minuti senza tasti ne' mouse\n", minuti);
+    if (minuti) printf("      lo schermo si spegne dopo %u %s senza tasti ne' mouse\n", minuti, min_(minuti));
     else        printf("      lo schermo si spegne solo con  dpms.drv -spegni\n");
     return 0;
 }
@@ -406,15 +409,15 @@ static int installa(int togli, unsigned int minuti)
     rc = avvio_blocco("dpms.drv", NULL);
     if (rc >= 0 && !togli) {
         snprintf(righe, sizeof(righe),
-                 "# Lo schermo si spegne dopo %u minuti senza tasti ne' mouse,\n"
+                 "# Lo schermo si spegne dopo %u %s senza tasti ne' mouse,\n"
                  "# e si riaccende al primo tasto o movimento.\n"
                  "# `dpms.drv -remove` toglie questo blocco.\n"
-                 "dpms.drv -dopo:%u\n", minuti, minuti);
+                 "dpms.drv -dopo:%u\n", minuti, min_(minuti), minuti);
         rc = avvio_blocco("dpms.drv", righe);
     }
     if (rc < 0) { printf("dpms: non riesco a scrivere /boot/avvio.sh (errno %d)\n", errno); return 1; }
     if (togli) printf("dpms: tolto da /boot/avvio.sh; adesso: `dpms.drv -ferma`\n");
-    else       printf("dpms: in /boot/avvio.sh, dal prossimo avvio lo schermo si spegne dopo %u minuti\n", minuti);
+    else       printf("dpms: in /boot/avvio.sh, dal prossimo avvio lo schermo si spegne dopo %u %s\n", minuti, min_(minuti));
     return 0;
 }
 

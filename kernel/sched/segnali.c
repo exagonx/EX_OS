@@ -768,3 +768,35 @@ int32_t sys_seg_sospendi(InterruptFrame *frame)
     interrupts_enable();
     return ERR(EINTR);
 }
+
+/* =============================================================================
+ * segnali_figlio_finito — SIGCHLD to the parent of a process that ended
+ * (0.313, voce 33)
+ *
+ * Called by proc_esci with interrupts OFF (so not manda(), which turns them
+ * on): only the pending bit and the wake-ups manda would do. Ignored by
+ * default (predefinito_ignora), so nobody who never asked for it notices;
+ * a server that forks its workers installs a handler and collects them
+ * there with waitpid(WNOHANG). A thread asleep in sigwait for it gets it
+ * first, as in manda.
+ * ============================================================================= */
+void segnali_figlio_finito(uint32_t ppid)
+{
+    Process *p = proc_get_by_pid(ppid), *capo, *q;
+    uint32_t tipo;
+
+    if (p == NULL || p->state == PROC_ZOMBIE || p->state == PROC_UNUSED) return;
+    q = chi_attende(p, SIGCHLD_);
+    if (q != NULL) {
+        q->seg_pendenti |= BIT(SIGCHLD_);
+        q->seg_attesi = 0;
+        if (q->state == PROC_BLOCKED) sched_unblock_locked(q->pid);
+        return;
+    }
+    capo = capo_di(p);
+    tipo = capo ? (capo->seg_flag[SIGCHLD_] & SEG_TIPO) : SEG_PREDEFINITO;
+    if (tipo != SEG_PRESO) return;              /* ignored, or the default: ignored */
+    p->seg_pendenti |= BIT(SIGCHLD_);
+    if (p->seg_sospeso && !(p->seg_bloccati & BIT(SIGCHLD_)) && p->state == PROC_BLOCKED)
+        sched_unblock_locked(p->pid);
+}

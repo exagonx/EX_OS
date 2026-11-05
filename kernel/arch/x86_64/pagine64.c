@@ -76,6 +76,7 @@ int paging_vittima(PDE **out_pd, vaddr_t *out_virt, paddr_t *out_frame)
                 if (!(pte & PG_PRESENT)) continue;
                 if (!(pte & PG_USER))    continue;
                 if (pte & PG_FISSA)      continue;         /* un dispositivo la usa */
+                if (pte & PG_CONDIVISA)  continue;         /* shm, MAP_SHARED: tornerebbe privata */
 
                 frame = PG_ADDR(pte);
                 if (frame >= ram) continue;                 /* un dispositivo, non RAM */
@@ -104,7 +105,8 @@ void paging_marca_swap(PDE *pd, vaddr_t virt, uint32_t slot)
     PTE *pte = paging64_pte(pd, virt);
 
     if (pte == NULL) return;
-    *pte = SWAP_PTE(slot, *pte);
+    /* a copy-on-write page goes out writable: see paging.c (0.313) */
+    *pte = SWAP_PTE(slot, (*pte & PG_COW) ? (*pte | PG_WRITABLE) : *pte);
 
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd) tlb_via(virt);
 }

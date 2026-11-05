@@ -417,7 +417,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # =============================================================================
 PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla vlcapri
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -3111,6 +3111,33 @@ $(EXILLA_BIN): $(EXILLA_SRC) $(EXILLA_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR
 
 .PHONY: exilla
 exilla: dirs $(EXILLA_BIN)
+
+# --- vlcapri: VLC dalla scrivania (voce 79) -----------------------------------
+#
+# ! COME exilla, NON VA SUL CD DEL SISTEMA: e' del pacchetto vlc. La voce del
+# menu (Multimedia/VLC) avvia questo, che fa scegliere il file e lancia
+# vlc -I dummy --play-and-exit. tools/librerie-exos/su-cd.sh lo mette in
+# /exos/bin del CD degli strumenti quando VLC e' costruito.
+VLCAPRI_SRC := exwin/bin/vlcapri/vlcapri.c
+VLCAPRI_BIN := $(BUILD_DIR)/vlcapri/vlcapri
+VLCAPRI_LD  := exwin/bin/vlcapri/vlcapri.ld
+
+$(VLCAPRI_BIN): $(VLCAPRI_SRC) $(VLCAPRI_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(EXDLG_STUB) $(EXDLG_HDR) $(WIN_PROTO) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione vlcapri (lanciatore, per il pacchetto vlc) ==="
+	@mkdir -p $(dir $(VLCAPRI_BIN)) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(VLCAPRI_SRC) -o $(BUILD_OBJ)/vlcapri_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/vlcapri_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/vlcapri_exdlg.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/vlcapri_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(VLCAPRI_LD) \
+	    $(BUILD_OBJ)/vlcapri_start.o $(BUILD_OBJ)/vlcapri_main.o \
+	    $(BUILD_OBJ)/vlcapri_exwin.o $(BUILD_OBJ)/vlcapri_exdlg.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] vlcapri compilato: $@"
+
+.PHONY: vlcapri
+vlcapri: dirs $(VLCAPRI_BIN)
 
 # --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
 #
@@ -6803,7 +6830,7 @@ ESOS_STUB := lib/exwin/exwin_stub.c \
              lib/exdom/exdom_stub.c   lib/exdom/exdom.h \
              lib/eximg/eximg.h
 
-$(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
+$(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) $(VLCAPRI_BIN) \
             lib/programma.ld \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
             $(EXWIN_HDR) $(EXWIN_SRC) $(WIN_PROTO) \
@@ -8359,6 +8386,9 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) $(RDBOOT_LZ4) $(MOD_EXT4_OUT) boot/autoexec.
 	@# tools/librerie-exos/comune.sh). Only the file named by DT_NEEDED: EX-OS
 	@# has no symbolic links, libm.so is for the linker in the sysroot.
 	@cp cross_build/libm-exos32/exos/lib/libm.so.4 $(ISOX_ROOT)/lib/ 2>/dev/null || true
+	@# libstdc++.so.6, libgcc_s.so.1: the C++ runtime of what is not -static
+	@# (voce 85, tools/librerie-exos/cxx-condivise.sh), in /lib like libm.
+	@cp cross_build/cxx-exos32/exos/lib/libstdc++.so.6 cross_build/cxx-exos32/exos/lib/libgcc_s.so.1 $(ISOX_ROOT)/lib/ 2>/dev/null || true
 	@cp $(BUILD_DRIVERS)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
 	@# il modulo che scrive ext2/3/4: senza, la radice di un disco installato
 	@# da qui partirebbe in sola lettura (kernel 0.263)

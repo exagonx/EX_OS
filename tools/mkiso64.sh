@@ -110,6 +110,11 @@ if [ "$QUALE" = "intero" ]; then
     if [ -d build-64/exwin/bin ]; then
         mkdir -p "$RADICE/exwin/bin"
         cp build-64/exwin/bin/* "$RADICE/exwin/bin/" 2>/dev/null || true
+        # ! THE LAUNCHERS OF THE PACKAGES ARE NOT THE SYSTEM'S (voce 79):
+        # costruisci-utente64.sh builds every exwin/bin/*, but exilla belongs
+        # to the exilla package (/exwin/app/exilla) and vlcapri to vlc
+        # (/exos/bin). On the 32-bit CD the Makefile builds them aside.
+        rm -f "$RADICE/exwin/bin/exilla" "$RADICE/exwin/bin/vlcapri"
         [ -f build-64/drivers/wserver.drv ] && cp build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
     fi
     # libm.so.4 (openlibm, 3 November 2026): programs linked to shared
@@ -119,6 +124,16 @@ if [ "$QUALE" = "intero" ]; then
         mkdir -p "$RADICE/lib"
         cp cross_build/libm-exos64/exos/lib/libm.so.4 "$RADICE/lib/"
     fi
+    # libstdc++.so.6 and libgcc_s.so.1 (4 November 2026, voce 85): the C++
+    # runtime of programs and libraries that are not -static (Qt), from
+    # tools/librerie-exos/cxx-condivise.sh. In /lib like libm: a C++ program
+    # rebuilt with the threaded toolchain asks for them at start.
+    for f in libstdc++.so.6 libgcc_s.so.1; do
+        if [ -f cross_build/cxx-exos64/exos/lib/$f ]; then
+            mkdir -p "$RADICE/lib"
+            cp cross_build/cxx-exos64/exos/lib/$f "$RADICE/lib/"
+        fi
+    done
     # the shared objects (exjs.so, quickjs.so): ELF libraries for dlopen
     if ls build-64/exwin/lib/*.so > /dev/null 2>&1; then
         mkdir -p "$RADICE/exwin/lib"

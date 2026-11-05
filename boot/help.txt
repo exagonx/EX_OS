@@ -512,6 +512,29 @@ Funziona sugli AMD dalla famiglia 10h (Athlon/Turion X2 dei portatili
 del 2008 in poi) e sugli Intel da Sandy Bridge. Non nelle macchine
 virtuali, e non se il TSC non e' invariante: `cpufreq.drv` dice perche'.
 
+[dpms.drv dpms schermo spento salvaschermo]
+lo schermo si spegne quando nessuno lo usa, e si riaccende al primo tasto
+
+  dpms.drv              acceso o spento, dopo quanto, l'ultimo tasto
+  dpms.drv -dopo:10     si spegne dopo 10 minuti senza tasti ne' mouse
+                        (accende il servizio; -dopo:0 = mai da solo)
+  dpms.drv -spegni      spento adesso (fra un secondo)
+  dpms.drv -accendi     acceso adesso
+  dpms.drv -ferma       il servizio finisce, lo schermo resta acceso
+  dpms.drv -install     -dopo:10 a ogni avvio; -install 5 per 5 minuti
+  dpms.drv -remove      toglie il blocco
+
+Si riaccende al primo tasto, clic, movimento del mouse o del touchpad
+(PS/2, USB e seriale). Chi ha toccato la macchina l'ultima volta lo sa
+il kernel (dalla 0.312): i comandi dati da telnet non contano.
+
+Sulle NVIDIA dalla G80 (il portatile con la GeForce 8200M) si spegne il
+pannello, retroilluminazione compresa. Sulle altre schede l'immagine va
+nera (registri VGA SR01 e AR): un monitor a tubo resta acceso.
+
+! Se il servizio muore con lo schermo spento, lo schermo resta spento:
+  da telnet, o scrivendo alla cieca,  dpms.drv -accendi
+
 [driver -install]
 far partire un driver a ogni avvio
 
@@ -520,8 +543,8 @@ far partire un driver a ogni avvio
 
 Il blocco comincia con "# -install <driver>" e finisce alla prima
 riga vuota. hwconfig, che riscrive avvio.sh per intero, lo riporta
-avanti. Oggi lo hanno nv50.drv e cpufreq.drv; gli altri driver si
-aggiungono man mano.
+avanti. Oggi lo hanno nv50.drv, cpufreq.drv e dpms.drv; gli altri
+driver si aggiungono man mano.
 
 [mem]
 quanta memoria c'e' e quanta se ne usa
@@ -1040,6 +1063,7 @@ un HD Audio va con hdaudio.drv, un AC'97 con ac97.drv (audio 0.005).
 [vlc]
 il lettore audio e video VLC 3.0.24 (CD strumenti, gruppo VLC)
 
+  Avvio > Multimedia > VLC         sceglie il file e lo suona (vlcapri)
   vlc film.mp4                     dentro ExWin: una finestra col video
   vlc -I dummy --no-video b.ogg    dalla console: solo il suono
   vlc -I dummy --play-and-exit f   esce alla fine del file
@@ -1050,10 +1074,13 @@ AAC e gli altri formati di FFmpeg. Il suono va al servizio "audio"
 (prima `audio -i`), il video in una finestra di ExWin, ridotta se il
 video e' piu' grande dello schermo. I tasti della finestra vanno a VLC
 come nel VLC di sempre: lo spazio mette in pausa e riprende (provato),
-frecce ed Esc non ancora provati; la croce della finestra lo chiude.
+frecce ed Esc non ancora provati. La croce rossa della finestra chiude
+VLC (prima non faceva niente: vout_exos ora chiama libvlc_Quit).
 Senza -I dummy la console resta all'interfaccia a righe di VLC
 ("help" la spiega, "quit" esce).
 
+La finestra non ha ancora menu ne' controlli (barra, volume, playlist):
+sono l'interfaccia Qt di VLC, che vuole Qt 5, in porting (coda voce 85).
 Non ci sono l'interfaccia grafica Qt, i sottotitoli con i caratteri
 (freetype), la rete in streaming cifrata e i DVD. Gli avvisi
 "globalhotkeys" e "XML reader not found" all'avvio non sono errori.
@@ -1165,7 +1192,9 @@ Vorbis, FLAC, libvpx, dav1d, APR, expat, pcre2, xz, zstd, lz4, bzip2,
 Connector/C) sono file .so, in /exos/lib dal CD degli strumenti, e un
 programma collegato a loro (VLC, Firefox per H.264 e AAC) le carica
 all'avvio, prima di main. La matematica sta in /lib/libm.so.4, nel
-sistema di base.
+sistema di base. Dal 4 novembre anche il C++: /lib/libstdc++.so.6 e
+/lib/libgcc_s.so.1 (le eccezioni, una copia sola per tutte le librerie):
+le vogliono Qt e i programmi C++ collegati non statici.
 
   LD_LIBRARY_PATH=/mia/lib prog    cerca prima li'
   prog -version                    parte solo se trova le sue librerie
@@ -1182,8 +1211,12 @@ gruppo FFmpeg per libavcodec) o mettere la cartella in LD_LIBRARY_PATH.
 
 I comandi del sistema restano statici: devono partire anche senza /lib.
 Il gcc di EX-OS (quello del CD) collega ancora tutto statico; le .so le
-usa il compilatore incrociato, sul PC. Fmt e Connector/C++ sono solo
-statiche: sono C++, e la libstdc++ condivisa non c'e'.
+usa il compilatore incrociato, sul PC. Fmt e Connector/C++ sono ancora
+solo statiche (costruite prima della libstdc++ condivisa).
+
+Un programma puo' caricare quante librerie vuole: il tetto di 32 (e di
+16 per libreria) non c'e' piu'. Se dice "libstdc++.so.6: cannot open
+shared object file", il sistema e' di prima: `netupdate -check -yes`.
 
 [make]
 costruisce un programma da un makefile
@@ -1286,11 +1319,28 @@ il server web Apache 2.4
   /exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
   /exos/apache2/bin/ab -n 1000 -c 20 http://127.0.0.1/    misura
 
-Un processo solo (-X) con il MPM worker: EX-OS non ha fork, ogni
-connessione e' un filo. ThreadsPerChild, ThreadLimit e MaxRequestWorkers
+Un processo solo (-X) con il MPM worker, ogni connessione e' un filo
+(fork c'e' dal kernel 0.313, vedi `help fork`; il prefork e' da provare). ThreadsPerChild, ThreadLimit e MaxRequestWorkers
 uguali (256). Pagine in /exos/apache2/htdocs, CGI compilati in cgi-bin,
 mod_ssl con OpenSSL 4.1. Le pagine .php le esegue mod_php, che sta
 dentro httpd (vedi `help php`). Manuale 4.11.
+
+[fork]
+fork: un processo che si sdoppia (kernel 0.313)
+
+Dal kernel 0.313 fork() e' vera, a 32 e 64 bit: il figlio ha una copia
+della memoria del padre, fatta solo quando uno dei due scrive (copia su
+scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
+
+  - nel figlio resta solo il filo che ha chiamato fork;
+  - file, pipe e terminali si ereditano come su Unix;
+  - i socket si condividono (ip.drv 0.021): chiudere nel figlio non chiude
+    per il padre; piu' figli possono stare in accept sullo stesso socket;
+  - getppid, waitpid(-1), WNOHANG, SIGCHLD, pthread_atfork.
+
+Se un programma dice ENOSYS su fork, il kernel e' piu' vecchio della
+0.313: aggiornare con `netupdate`. Se i figli di un server non vedono i
+socket del padre (EBADF), ip.drv e' piu' vecchio della 0.021: lo stesso.
 
 [php]
 PHP 8.5, da riga di comando e dentro Apache

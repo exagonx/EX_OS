@@ -943,6 +943,11 @@ typedef struct Process {
      * given back once the slot is PROC_UNUSED. */
     volatile uint32_t in_raccolta;
 
+    /* 1 while this thread sleeps in waitpid (0.313, fork): the end of a child
+     * wakes it even when it is not the thread the child names as parent (a
+     * child of fork names the process, see sys_fork). In fondo, as above. */
+    volatile uint8_t aspetta_figli;
+
 } Process;
 
 /* =============================================================================
@@ -965,6 +970,8 @@ int      sched_spazio_altrove(const void *pd);
 Process *proc_create(const char *name, vaddr_t entry_point,
                      uint32_t priority, int is_kernel_task);
 void     proc_set_entry(Process *proc, vaddr_t entry_point, vaddr_t user_stack_top);
+/* fork (0.313): the child returns from the parent's syscall frame, with 0 */
+void     proc_prepara_fork(Process *figlio, const InterruptFrame *f);
 void     proc_exit(int32_t exit_code);
 
 /* Come proc_exit, ma per un GUASTO: porta via tutto il gruppo anche se a

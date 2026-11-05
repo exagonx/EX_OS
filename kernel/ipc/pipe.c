@@ -74,14 +74,107 @@
 #include "syscall.h"
 #include "kmalloc.h"
 
+void *memset(void *dst, int c, uint32_t n);
+
+/* =============================================================================
+ * ! EVERY WAITER IS REMEMBERED (kernel 0.313, fork, voce 33)
+ *
+ * Until 0.312 a pipe remembered ONE reader and ONE writer waiting: the last
+ * one to block took the place of the one before, who was never woken again.
+ * Without fork two processes on the same end of a pipe were rare (the threads
+ * of one program); with fork they are the normal case - the 300 children of
+ * tools/prova-fork waiting on one pipe stayed blocked for ever, as would the
+ * children of a prefork server reading its "pipe of death". Now the first
+ * waiter is kept inline (the usual case costs nothing) and the others in an
+ * array that doubles when full: no ceiling. A change wakes ALL the waiters of
+ * that side; each one looks again at the pipe (they all loop) and the ones
+ * that find nothing go back to sleep.
+ *
+ * ! THE ARRAY GROWS WITH INTERRUPTS ON (attese_cresci): a reader that finds no
+ * room enables interrupts, allocates, and goes round the loop again - so the
+ * condition is checked once more with interrupts off before it blocks.
+ * ============================================================================= */
+typedef struct {
+    uint32_t  uno;          /* the first waiter, 0 = none */
+    uint32_t *altri;        /* the others (kmalloc), kept across reuse */
+    uint32_t  n, posti;
+} Attese;
+
+static int attese_c_e(const Attese *a, uint32_t pid)
+{
+    uint32_t i;
+
+    if (a->uno == pid) return 1;
+    for (i = 0; i < a->n; i++) if (a->altri[i] == pid) return 1;
+    return 0;
+}
+
+/* 1 = registered (or already there), 0 = no room: attese_cresci, then again */
+static int attese_metti(Attese *a, uint32_t pid)
+{
+    if (attese_c_e(a, pid)) return 1;
+    if (a->uno == 0) { a->uno = pid; return 1; }
+    if (a->n >= a->posti) return 0;
+    a->altri[a->n++] = pid;
+    return 1;
+}
+
+static void attese_togli(Attese *a, uint32_t pid)
+{
+    uint32_t i;
+
+    if (a->uno == pid) {
+        a->uno = a->n ? a->altri[--a->n] : 0;
+        return;
+    }
+    for (i = 0; i < a->n; i++)
+        if (a->altri[i] == pid) { a->altri[i] = a->altri[--a->n]; return; }
+}
+
+/* Interrupts off. Everyone waiting on that side is woken and forgotten. */
+static void attese_sveglia_locked(Attese *a)
+{
+    uint32_t i;
+
+    if (a->uno) sched_unblock_locked(a->uno);
+    for (i = 0; i < a->n; i++) sched_unblock_locked(a->altri[i]);
+    a->uno = 0;
+    a->n   = 0;
+}
+
+/* Interrupts ON. Doubles the array of `a` (the pipe is never freed, so `a`
+ * stays valid). Returns 0 out of memory. */
+static int attese_cresci(Attese *a)
+{
+    uint32_t  posti, i, *nuovo, *vecchio = NULL;
+
+    interrupts_disable();
+    posti = a->posti ? a->posti * 2u : 8u;
+    interrupts_enable();
+    nuovo = (uint32_t *)kmalloc(posti * sizeof(uint32_t));
+    if (nuovo == NULL) return 0;
+    interrupts_disable();
+    if (a->posti < posti) {
+        for (i = 0; i < a->n; i++) nuovo[i] = a->altri[i];
+        vecchio  = a->altri;
+        a->altri = nuovo;
+        a->posti = posti;
+        nuovo    = NULL;
+    }
+    interrupts_enable();
+    if (nuovo)   kfree(nuovo);          /* somebody else grew it meanwhile */
+    if (vecchio) kfree(vecchio);
+    return 1;
+}
+
 typedef struct {
     int       usata;
     uint32_t  testa;        /* prossimo byte da LEGGERE */
     uint32_t  quanti;       /* byte presenti nel buffer */
     uint32_t  lettori;      /* estremita' di lettura aperte */
     uint32_t  scrittori;    /* estremita' di scrittura aperte */
-    uint32_t  pid_lettore;  /* chi aspetta dati (0 = nessuno) */
-    uint32_t  pid_scrittore;/* chi aspetta spazio (0 = nessuno) */
+    Attese    att_lettori;  /* chi aspetta dati */
+    Attese    att_scrittori;/* chi aspetta spazio */
     uint8_t   buf[PIPE_DIM];
 } Pipe;
 
@@ -105,7 +198,8 @@ static void pipe_libera_se_orfana(Pipe *p)
         p->usata  = 0;
         p->testa  = 0;
         p->quanti = 0;
-        p->pid_lettore = p->pid_scrittore = 0;
+        p->att_lettori.uno = p->att_scrittori.uno = 0;
+        p->att_lettori.n   = p->att_scrittori.n   = 0;
     }
 }
 
@@ -137,8 +231,8 @@ int pipe_crea(void)
                  * una finestra in cui la pipe sembra orfana. */
                 p->lettori   = 1;
                 p->scrittori = 1;
-                p->pid_lettore   = 0;
-                p->pid_scrittore = 0;
+                p->att_lettori.uno = p->att_scrittori.uno = 0;
+                p->att_lettori.n   = p->att_scrittori.n   = 0;
                 interrupts_enable();
                 return h;
             }
@@ -148,6 +242,7 @@ int pipe_crea(void)
         /* all in use: one more, allocated with interrupts on */
         nuova = (Pipe *)kmalloc(sizeof(Pipe));
         if (nuova == NULL) break;
+        memset(nuova, 0, sizeof(Pipe) - PIPE_DIM);   /* no waiters, no arrays */
         nuova->usata = 0;
         if (g_pipe_n >= g_pipe_dir_posti) {
             uint32_t posti = g_pipe_dir_posti ? g_pipe_dir_posti * 2u : 16u;
@@ -212,11 +307,8 @@ void pipe_chiudi_lettore_locked(int h)
     if (p == NULL) return;
 
     if (p->lettori > 0) p->lettori--;
-    if (p->lettori == 0 && p->pid_scrittore != 0) {
-        uint32_t s = p->pid_scrittore;
-        p->pid_scrittore = 0;
-        sched_unblock_locked(s);          /* si svegliera' e prendera' EPIPE */
-    }
+    if (p->lettori == 0)
+        attese_sveglia_locked(&p->att_scrittori);   /* si sveglieranno e prenderanno EPIPE */
     pipe_libera_se_orfana(p);
 }
 
@@ -227,11 +319,8 @@ void pipe_chiudi_scrittore_locked(int h)
     if (p == NULL) return;
 
     if (p->scrittori > 0) p->scrittori--;
-    if (p->scrittori == 0 && p->pid_lettore != 0) {
-        uint32_t s = p->pid_lettore;
-        p->pid_lettore = 0;
-        sched_unblock_locked(s);          /* si svegliera' e vedra' la fine */
-    }
+    if (p->scrittori == 0)
+        attese_sveglia_locked(&p->att_lettori);     /* si sveglieranno e vedranno la fine */
     pipe_libera_se_orfana(p);
 }
 
@@ -278,30 +367,24 @@ int32_t pipe_stato_locked(int h, uint32_t *quanti, uint32_t *spazio,
     return 0;
 }
 
+/* poll(): interrupts are off here, so the array cannot grow. Without room
+ * (more than 1 + posti pollers on one end at once) it says 0 and poll falls
+ * back to looking again every tick, as when the place was taken until 0.312;
+ * the next blocking read/write on that end makes the room. */
 int pipe_attesa_registra_locked(int h, int per_lettura, uint32_t pid)
 {
-    Pipe     *p = pipe_da_handle(h);
-    uint32_t *slot;
+    Pipe *p = pipe_da_handle(h);
 
     if (p == NULL) return 0;
-
-    slot = per_lettura ? &p->pid_lettore : &p->pid_scrittore;
-
-    /* Libero, o gia' nostro da un giro precedente di poll: va bene. */
-    if (*slot == 0 || *slot == pid) { *slot = pid; return 1; }
-
-    return 0;                   /* occupato da un altro: chi chiama ripiega */
+    return attese_metti(per_lettura ? &p->att_lettori : &p->att_scrittori, pid);
 }
 
 void pipe_attesa_togli_locked(int h, int per_lettura, uint32_t pid)
 {
-    Pipe     *p = pipe_da_handle(h);
-    uint32_t *slot;
+    Pipe *p = pipe_da_handle(h);
 
     if (p == NULL) return;
-
-    slot = per_lettura ? &p->pid_lettore : &p->pid_scrittore;
-    if (*slot == pid) *slot = 0;
+    attese_togli(per_lettura ? &p->att_lettori : &p->att_scrittori, pid);
 }
 
 int32_t pipe_leggi(int h, void *buf, uint32_t n)
@@ -310,7 +393,6 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
     uint8_t  *dst = (uint8_t *)buf;
     uint8_t   appoggio[PIPE_TRANCHE];
     uint32_t  presi = 0, i;
-    uint32_t  sveglia = 0;
 
     if (n == 0) return 0;
     if (n > PIPE_TRANCHE) n = PIPE_TRANCHE;
@@ -331,7 +413,13 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
         cur = proc_get_current();
         if (cur == NULL) { interrupts_enable(); return -EAGAIN; }
 
-        p->pid_lettore = cur->pid;
+        if (!attese_metti(&p->att_lettori, cur->pid)) {
+            Attese *a = &p->att_lettori;
+
+            interrupts_enable();
+            if (!attese_cresci(a)) return -ENOMEM;
+            continue;                           /* and check again, IF off */
+        }
         sched_block(PROC_BLOCKED);              /* riabilita IF al risveglio */
 
         /* ! CHI E' STATO INTERROTTO NON TORNA AD ASPETTARE. Senza questo, il
@@ -351,15 +439,13 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
     p->testa   = (p->testa + presi) % PIPE_DIM;
     p->quanti -= presi;
 
-    sveglia = p->pid_scrittore;                 /* si e' liberato spazio */
-    p->pid_scrittore = 0;
+    attese_sveglia_locked(&p->att_scrittori);   /* si e' liberato spazio */
     interrupts_enable();
 
     /* La memoria UTENTE si tocca solo qui, a interrupt abilitati: puo'
      * essere su una pagina non ancora presente. */
     for (i = 0; i < presi; i++) dst[i] = appoggio[i];
 
-    if (sveglia) sched_unblock(sveglia);
     return (int32_t)presi;
 }
 
@@ -369,7 +455,6 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
     const uint8_t *src = (const uint8_t *)buf;
     uint8_t        appoggio[PIPE_TRANCHE];
     uint32_t       messi = 0, i, inizio, spazio;
-    uint32_t       sveglia = 0;
 
     if (n == 0) return 0;
     if (n > PIPE_TRANCHE) n = PIPE_TRANCHE;
@@ -396,7 +481,13 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
         cur = proc_get_current();
         if (cur == NULL) { interrupts_enable(); return -EAGAIN; }
 
-        p->pid_scrittore = cur->pid;
+        if (!attese_metti(&p->att_scrittori, cur->pid)) {
+            Attese *a = &p->att_scrittori;
+
+            interrupts_enable();
+            if (!attese_cresci(a)) return -ENOMEM;
+            continue;
+        }
         sched_block(PROC_BLOCKED);
         if (proc_interrotto()) return ERR(EINTR);   /* vedi pipe_leggi */
     }
@@ -418,10 +509,8 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
     }
     p->quanti += messi;
 
-    sveglia = p->pid_lettore;                   /* sono arrivati dati */
-    p->pid_lettore = 0;
+    attese_sveglia_locked(&p->att_lettori);     /* sono arrivati dati */
     interrupts_enable();
 
-    if (sveglia) sched_unblock(sveglia);
     return (int32_t)messi;
 }

@@ -357,7 +357,7 @@ nv50.drv -remove             lo toglie
 
 Il blocco comincia con `# -install <driver>` e finisce alla prima riga
 vuota; `hwconfig`, che riscrive `avvio.sh`, lo riporta avanti. Oggi lo hanno
-`nv50.drv` e `cpufreq.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
+`nv50.drv`, `cpufreq.drv` e `dpms.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
 vecchio modo: la riga in `avvio.sh` (che `hwconfig` riscrive) o la voce in
 `[modules]` di `kernel.cfg` per ciò che deve esserci prima di tutto, come la
 tastiera.
@@ -393,6 +393,38 @@ e una pausa breve non basta a rallentare.
   della frequenza non sono veri), con il TSC non invariante (il kernel misura
   le scadenze con il TSC: cambierebbero con la frequenza), con SpeedStep spento
   dal BIOS o con HWP acceso (lì decide il processore da solo).
+
+### Lo schermo spento: `dpms.drv`
+
+Dal kernel 0.312 lo schermo si spegne dopo un tempo senza tasti né mouse, e
+si riaccende al primo tasto, clic o movimento (tastiera e touchpad PS/2, mouse
+USB e seriale):
+
+```
+dpms.drv                     acceso o spento, dopo quanto, l'ultimo tasto
+dpms.drv -dopo:10            si spegne dopo 10 minuti (accende il servizio;
+                             -dopo:0 = mai da solo)
+dpms.drv -spegni             spento adesso (fra un secondo)
+dpms.drv -accendi            acceso adesso
+dpms.drv -ferma              il servizio finisce, lo schermo resta acceso
+dpms.drv -install [M]        -dopo:M a ogni avvio (10); -remove lo toglie
+```
+
+Quando qualcuno ha usato la macchina l'ultima volta lo sa il kernel: i driver
+della tastiera e dei mouse glielo dicono a ogni evento (`SYS_ATTIVITA`). I
+comandi dati da telnet non contano: `dpms.drv -spegni` da telnet lascia lo
+schermo spento finché qualcuno non tocca il portatile.
+
+! **Come si spegne.** Sulle NVIDIA dalla G80 in poi (la GeForce 8200M del
+  Compaq CQ60) si spegne il SOR che pilota il pannello, e con lui la
+  retroilluminazione: provato sul portatile il 4 novembre. Sulle altre schede
+  l'immagine diventa nera con i registri VGA (SR01 e il bit PAS del
+  controller degli attributi): il segnale resta, quindi un monitor a tubo non
+  va in risparmio.
+
+! **Se il servizio muore con lo schermo spento** lo schermo resta spento: lo
+  stato lo tiene il servizio. Da telnet, o scrivendo alla cieca,
+  `dpms.drv -accendi` lo riaccende anche senza servizio.
 
 ---
 
@@ -525,9 +557,12 @@ netupdate -install:apache     (o il gruppo [apache] del DVD degli strumenti)
 /exos/apache2/bin/httpd -X -d /exos/apache2 -f conf/httpd-exos.conf &
 ```
 
-Apache httpd 2.4.69 con il MPM worker, **in un processo solo** (`-X`): EX-OS
-non ha ancora `fork`, quindi non c'è il processo padre che ne fa partire
-altri; tutte le connessioni sono fili di quel processo. La configurazione è
+Apache httpd 2.4.69 con il MPM worker, **in un processo solo** (`-X`): è
+stato costruito quando EX-OS non aveva ancora `fork`, quindi non c'è il
+processo padre che ne fa partire altri; tutte le connessioni sono fili di
+quel processo. Dal kernel 0.313 `fork` c'è (con ip.drv 0.021 i socket si
+condividono fra padre e figli, vedi `help fork`): il MPM prefork è il passo
+seguente, ancora da provare. La configurazione è
 `/exos/apache2/conf/httpd-exos.conf`: porta 80, le pagine in
 `/exos/apache2/htdocs`, i programmi CGI in `/exos/apache2/cgi-bin`
 (programmi compilati: lo script di shell con `#!` non c'è), lo stato del

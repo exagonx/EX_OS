@@ -817,6 +817,13 @@ kmalloc_stats();
     klog(LOG_INFO, "[PASSO 10] Inizializzazione scheduler preemptive...");
     sched_init();
 
+    /* CR0.WP (0.313, fork): from here a write from ring 0 respects
+     * read-only, so copy-on-write holds for the kernel's writes too. After
+     * the #PF handler and the scheduler (the fault asks for the current
+     * process), before smp_init: the other processors copy this CR0. See
+     * paging_wp_accendi in kernel/mm/paging.c. */
+    paging_wp_accendi();
+
 klog(LOG_INFO, "[PASSO 10] Scheduler OK (100Hz, round-robin, %d livelli priorita')",
          PRIO_MAX + 1);
 

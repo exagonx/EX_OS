@@ -30,6 +30,7 @@
 #include <vlc_vout_display.h>
 #include <vlc_picture_pool.h>
 #include <vlc_actions.h>
+#include <vlc_interface.h>     /* libvlc_Quit */
 
 #define ATTESA_MS 15000
 
@@ -143,7 +144,14 @@ static void Posta(vout_display_t *vd)
             switch (e->tipo)
             {
                 case WIN_EV_CHIUDI:
-                    vout_display_SendEventClose(vd);
+                    /* ! THE CROSS ENDS VLC (voce 79, 4 November 2026: "cliccando
+                     * sul quadrato rosso non si chiude"). In VLC 3 the close
+                     * event of a video output does nothing at all
+                     * (src/video_output/event.h: "FIXME: implement video close
+                     * event"): the window stayed, and with -I dummy VLC kept
+                     * running with nobody able to stop it. Here the window IS
+                     * the player, as for whoever clicks on it. */
+                    libvlc_Quit(vd->obj.libvlc);
                     break;
                 case WIN_EV_TASTO:
                 {

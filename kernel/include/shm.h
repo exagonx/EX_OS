@@ -137,6 +137,7 @@ int32_t shm_chiudi(Process *proc, uint32_t virt);
  * dal PMM; qui si cala il conteggio dei processi e, se era l'ultimo, muore
  * il nome. */
 void shm_cleanup_process(Process *proc);
+int32_t shm_fork(Process *padre, Process *figlio);     /* fork: the same zones (0.313) */
 
 /* Per la diagnostica: quante zone vive e quante pagine in tutto. */
 void shm_stato(uint32_t *out_zone, uint32_t *out_pagine);

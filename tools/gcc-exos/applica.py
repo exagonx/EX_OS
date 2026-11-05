@@ -78,6 +78,7 @@ MODIFICHE = [
         '\t# conservativa che compili, non un innalzamento dei requisiti.\n'
         '\twith_arch=${with_arch:-i486}\n'
         '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/exos.h"\n'
+        '\textra_options="${extra_options} i386/exos.opt"     # -pthread, -rdynamic\n'
         '\t;;',
     ),
     # --- x86_64-exos (added 2026-10-14, @EXOS-64) ----------------------------
@@ -94,6 +95,7 @@ MODIFICHE = [
         'x86_64-*-exos*)\n'
         '\t# EX-OS, 64-bit: plain ELF with its own libc, see i386/exos64.h.\n'
         '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h i386/exos64.h"\n'
+        '\textra_options="${extra_options} i386/exos.opt"     # -pthread, -rdynamic\n'
         '\t;;',
     ),
     (
@@ -372,6 +374,23 @@ MODIFICHE = [
     ),
 ]
 
+# Trees patched before a change of MODIFICHE: (file, the old text of ours,
+# the new one), applied before MODIFICHE and only where the old text is
+# there. ! WITHOUT THIS an edited patch is applied a second time: its new
+# text is not in the tree, the text it starts from still is (4 November
+# 2026: config.gcc got two i[34567]86-*-exos* cases).
+AGGIORNAMENTI = [
+    ("gcc/config.gcc",
+     '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/exos.h"\n\t;;',
+     '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/exos.h"\n'
+     '\textra_options="${extra_options} i386/exos.opt"     # -pthread, -rdynamic\n\t;;'),
+    ("gcc/config.gcc",
+     '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h i386/exos64.h"\n\t;;',
+     '\ttm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h i386/exos64.h"\n'
+     '\textra_options="${extra_options} i386/exos.opt"     # -pthread, -rdynamic\n\t;;'),
+]
+
+
 # File nuovi: (sorgente in questa directory, destinazione nell'albero GCC)
 #
 # pex-exos.c non sta qui ma in tools/binutils-exos/: e' nato per binutils,
@@ -381,6 +400,8 @@ MODIFICHE = [
 NUOVI = [
     ("exos.h", "gcc/config/i386/exos.h"),
     ("exos64.h", "gcc/config/i386/exos64.h"),
+    ("exos.opt", "gcc/config/i386/exos.opt"),
+    ("exos.opt.urls", "gcc/config/i386/exos.opt.urls"),
     ("../binutils-exos/pex-exos.c", "libiberty/pex-exos.c"),
 ]
 
@@ -430,6 +451,15 @@ def marca_modifica(percorso):
 
 def applica(albero):
     problemi = 0
+
+    for rel, vecchio, nuovo in AGGIORNAMENTI:
+        percorso = os.path.join(albero, rel)
+        if not os.path.isfile(percorso):
+            continue
+        testo = open(percorso, encoding="utf-8", errors="surrogateescape").read()
+        if vecchio in testo and nuovo not in testo:
+            open(percorso, "w", encoding="utf-8", errors="surrogateescape").write(testo.replace(vecchio, nuovo))
+            print("  [aggiornata] %s" % rel)
 
     for rel, vecchio, nuovo in MODIFICHE:
         percorso = os.path.join(albero, rel)

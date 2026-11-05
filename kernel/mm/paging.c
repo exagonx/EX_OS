@@ -18,6 +18,7 @@
 #include "paging.h"
 #include "idt.h"
 #include "sched.h"
+#include "smp.h"        /* cpu_n: CR0.WP is per processor */
 #include "blk.h"        /* blk_cache_cedi */
 #include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
 #include "syscall.h" /* PROT_* and the errno values of paging_proteggi */
@@ -1084,6 +1085,8 @@ int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
                 if (!(pte & PG_PRESENT)) continue;
                 if (!(pte & PG_USER))    continue;
                 if (pte & PG_FISSA)      continue;
+                /* shm, MAP_SHARED: the swap would bring it back private */
+                if (pte & PG_CONDIVISA)  continue;
 
                 frame = PG_ADDR(pte);
 
@@ -1124,7 +1127,10 @@ void paging_marca_swap(PDE *pd, uint32_t virt, uint32_t slot)
     if (pd == NULL || !(pd[pdi] & PG_PRESENT)) return;
     pt = (PTE *)PG_ADDR(pd[pdi]);
 
-    pt[pti] = SWAP_PTE(slot, pt[pti]);
+    /* ! A COPY-ON-WRITE PAGE GOES OUT WRITABLE (0.313): the swap keeps only
+     * W and U, and it picks a page only when it is the last owner of it
+     * (paging_vittima), so writable is what it is. */
+    pt[pti] = SWAP_PTE(slot, (pt[pti] & PG_COW) ? (pt[pti] | PG_WRITABLE) : pt[pti]);
 
     /* ! IL TLB TIENE ANCORA LA TRADUZIONE VECCHIA, e senza questa riga la CPU
      * continuerebbe a scrivere nella pagina fisica che stiamo per restituire
@@ -1748,6 +1754,295 @@ static int pf_torna_da_swap(Process *p, vaddr_t addr)
     return 1;
 }
 
+/* =============================================================================
+ * COPY-ON-WRITE (5 November 2026, kernel 0.313, voce 33: fork)
+ *
+ * fork gives the child the SAME frames as the parent, read-only and marked
+ * PG_COW in both (paging_copia_spazio, below); the first write from either
+ * side faults here, and the writer gets its own copy. When the writer is the
+ * last owner left (the other one has written already, or died) there is
+ * nothing to copy: the page is simply made writable again.
+ *
+ * ! THE COPY GOES THROUGH A BUFFER AND THE WINDOW, NOT THROUGH THE ADDRESS
+ * OF THE PROGRAM: paging_utente_pronta resolves a copy-on-write page of a
+ * process that is not running (the signal frame), whose addresses are not the
+ * ones of this CR3. Both copies with interrupts off, so nobody points the
+ * window elsewhere in between (the buffer is one, like the window).
+ *
+ * ! THE PTE IS READ AGAIN AFTER pagina_utente, which may sleep (it makes room
+ * on the swap): another thread of the same program may have written the
+ * page meanwhile, and copying over its copy would lose what it wrote.
+ * ============================================================================= */
+static uint8_t g_cow_buf[PAGE_SIZE] ALIGNED(16);
+
+static void cow_copia_fisica(paddr_t da, paddr_t a)
+{
+    uint32_t fl = read_eflags();
+    uint8_t *w;
+    uint32_t i;
+
+    interrupts_disable();
+    w = (uint8_t *)paging_finestra_apri(da);
+    for (i = 0; i < PAGE_SIZE; i++) g_cow_buf[i] = w[i];
+    paging_finestra_chiudi();
+    w = (uint8_t *)paging_finestra_apri(a);
+    for (i = 0; i < PAGE_SIZE; i++) w[i] = g_cow_buf[i];
+    paging_finestra_chiudi();
+    if (fl & 0x200u) interrupts_enable();
+}
+
+static void cow_tlb(PDE *pd, vaddr_t pagina)
+{
+    Process *io = proc_get_current();
+
+    if (io != NULL && io->page_directory == pd)
+        __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
+}
+
+/* 1 = the page is writable now, 0 = it is not a copy-on-write page,
+ * -1 = no memory for the copy. */
+static int cow_risolvi(PDE *pd, vaddr_t pagina)
+{
+    PTE      *pt, pte;
+    uint32_t  pti;
+    paddr_t   vecchio, nuovo;
+
+    if (pd == NULL || pagina < USER_SPACE_BASE || pagina >= USER_SPACE_END) return 0;
+    if (!TAB_C_E(pd, pagina) || TAB_GRANDE(pd, pagina)) return 0;
+    pt  = TAB_DI(pd, pagina);
+    pti = NELLA_TAB(pagina);
+    pte = pt[pti];
+    if (!PTE_E_COW(pte)) return 0;
+
+    vecchio = PG_ADDR(pte);
+    if (pmm_ref_count(vecchio) <= 1) {          /* the last owner: just write */
+        pt[pti] = (pte & ~(PTE)PG_COW) | PG_WRITABLE;
+        cow_tlb(pd, pagina);
+        return 1;
+    }
+
+    nuovo = pagina_utente();
+    if (nuovo == 0) return -1;
+    if (pt[pti] != pte) {                       /* somebody got here first */
+        pmm_free_page(nuovo);
+        return PTE_E_COW(pt[pti]) ? cow_risolvi(pd, pagina) : 1;
+    }
+    cow_copia_fisica(vecchio, nuovo);
+    /* the flags as they were (U, A, D, the high bits at 64), without COW,
+     * with W, on the new frame: pte ^ PG_ADDR(pte) is just the flags */
+    pt[pti] = ((pte ^ PG_ADDR(pte)) & ~(PTE)PG_COW) | PG_WRITABLE | PG_ADDR(nuovo);
+    cow_tlb(pd, pagina);
+    pmm_free_page(vecchio);                     /* one owner less */
+    return 1;
+}
+
+/* =============================================================================
+ * CR0.WP — the kernel respects read-only too (0.313)
+ *
+ * Until 0.313 CR0.WP was off: a write from ring 0 ignored read-only, and the
+ * kernel wrote user memory (read() into a buffer, sys_pipe's two numbers, the
+ * signal frame) without asking. With copy-on-write that write would land in
+ * the frame the OTHER process still has, so WP is on (paging_wp_accendi, from
+ * paging_init; the other processors copy CR0 from this one).
+ *
+ * ! A KERNEL WRITE INTO A READ-ONLY PAGE THAT IS NOT COPY-ON-WRITE WENT
+ * THROUGH BEFORE, AND STILL DOES. A read() into a buffer the program made
+ * PROT_READ, a page the kernel itself maps read-only and writes: none of
+ * them was an error for 18 versions, and a ring-0 fault is a panic. So the
+ * fault turns WP off on this processor and the instruction runs again, as it
+ * always did; WP comes back at the next exit from the kernel (bkl_esci) or
+ * process switch (sched_switch_to). The first few are logged, with where:
+ * each one is a path that writes what it should not.
+ * ============================================================================= */
+#define CR0_WP (1u << 16)
+static volatile uint8_t g_wp_spento[SMP_CPU_MAX];
+static uint32_t         g_wp_detti = 0;
+
+void paging_wp_accendi(void)
+{
+    write_cr0(read_cr0() | CR0_WP);
+    klog(LOG_INFO, "PAGING: CR0.WP acceso (copia su scrittura)");
+}
+
+void paging_wp_rimetti(void)
+{
+    uint32_t c = cpu_n();
+
+    if (g_wp_spento[c]) {
+        g_wp_spento[c] = 0;
+        write_cr0(read_cr0() | CR0_WP);
+    }
+}
+
+/* =============================================================================
+ * pf_copia_su_scrittura — a write into a present read-only page
+ *
+ * 1 = done, the instruction runs again; 0 = a real error (the program
+ * wrote where it may not: SIGSEGV as before).
+ * ============================================================================= */
+static int pf_copia_su_scrittura(Process *p, vaddr_t addr, uintptr_t ip, int from_user)
+{
+    int r = (p != NULL) ? cow_risolvi(p->page_directory, PAGINA_DI(addr)) : 0;
+
+    if (r == 1) return 1;
+    if (r < 0) {
+        klog(LOG_ERROR, "PF: PID %u '%s': RAM esaurita copiando la pagina 0x%08x "
+             "(copia su scrittura)", p->pid, p->name, (uint32_t)PAGINA_DI(addr));
+        if (!from_user) proc_esci_fatale(-12);  /* a panic would take everybody */
+        return 0;
+    }
+    if (from_user) return 0;
+
+    /* ring 0, not copy-on-write: as before WP (see above) */
+    if (g_wp_detti < 8) {
+        g_wp_detti++;
+        klog(LOG_WARN, "PF: il kernel scrive una pagina di sola lettura a 0x%08x "
+             "(EIP 0x%08x, PID %u): lasciato fare, come prima della 0.313",
+             (uint32_t)addr, (uint32_t)ip, p ? p->pid : 0);
+    }
+    g_wp_spento[cpu_n()] = 1;
+    write_cr0(read_cr0() & ~CR0_WP);
+    return 1;
+}
+
+/* =============================================================================
+ * paging_copia_spazio — the user half of `dal` into `al`, for fork
+ *
+ * `al` is a directory just made by paging_create_directory (kernel half
+ * only). Every page of `dal` above USER_SPACE_BASE goes into `al`:
+ *
+ *   private, present   same frame, one owner more; if writable (or already
+ *                      copy-on-write) read-only + PG_COW in BOTH. A page the
+ *                      PMM cannot count (high RAM without its byte, no
+ *                      memory for g_oltre) is copied at once instead.
+ *   PG_CONDIVISA       same frame, one owner more, as it is: shm, MAP_SHARED
+ *   not RAM            as it is, nobody counts it (framebuffer, MMIO)
+ *   PG_FISSA           as it is (a device buffer: freed by nobody, see
+ *                      paging_destroy_directory)
+ *   promised/reserved  the same promise (PG_PIGRA, PG_RISERVA): each one
+ *                      gets its own zero page at the first touch
+ *   on the swap        brought back first (pass 1): a slot has one owner
+ *
+ * ! THE TABLES OF THE FRAMEBUFFER ARE THE KERNEL'S (32 bit: copied by
+ * paging_create_directory above USER_SPACE_BASE): a table that `al` already
+ * has and that is the same as `dal`'s is skipped.
+ *
+ * ! THE CALLER HOLDS THE LOCK OF THE SPACE (proc_spazio_prendi): no mmap,
+ * munmap or sbrk of another thread runs meanwhile. Faults of other threads
+ * can, between one table and the next: each table is done with interrupts
+ * off, and what they change afterwards is copy-on-write already.
+ *
+ * Returns 0, or -ENOMEM (then `al` holds what was done: destroying it gives
+ * back exactly those references; the pages of `dal` left PG_COW with one
+ * owner become writable at their next write).
+ * ============================================================================= */
+#if defined(__x86_64__)
+#define TAB_VOCI 512u
+#else
+#define TAB_VOCI 1024u
+#endif
+
+int paging_copia_spazio(Process *dal, PDE *al)
+{
+    PDE     *pd = dal->page_directory;
+    vaddr_t  blocco;
+    uint32_t i, giro, copiate = 0, condivise = 0;
+
+    /* 1. the swap gives back what it holds (it sleeps on the disk: before
+     *    the tables are touched). Two rounds: a fault of another thread may
+     *    send something out meanwhile, and what is still out after that is
+     *    brought back in pass 2, one page at a time. */
+    for (giro = 0; giro < 2; giro++) {
+        for (blocco = USER_SPACE_BASE; blocco < USER_SPACE_END && blocco >= USER_SPACE_BASE;
+             blocco += TAB_VOCI * PAGE_SIZE) {
+            PTE *pt;
+
+            if (!TAB_C_E(pd, blocco) || TAB_GRANDE(pd, blocco)) continue;
+            pt = TAB_DI(pd, blocco);
+            for (i = 0; i < TAB_VOCI; i++)
+                if (SWAP_PTE_E_SWAP(pt[i]) &&
+                    !pf_torna_da_swap(dal, blocco + (vaddr_t)i * PAGE_SIZE)) return -ENOMEM;
+        }
+    }
+
+    /* 2. the tables */
+    for (blocco = USER_SPACE_BASE; blocco < USER_SPACE_END && blocco >= USER_SPACE_BASE;
+         blocco += TAB_VOCI * PAGE_SIZE) {
+        PTE     *pt;
+        uint32_t fl;
+
+        if (!TAB_C_E(pd, blocco)) continue;
+        if (TAB_GRANDE(pd, blocco) && TAB_SPEZZA(pd, blocco) != 0) return -ENOMEM;
+        if (TAB_C_E(al, blocco) && !TAB_GRANDE(al, blocco) &&
+            TAB_DI(al, blocco) == TAB_DI(pd, blocco)) continue;     /* the kernel's */
+
+        fl = read_eflags();
+        interrupts_disable();
+        pt = TAB_DI(pd, blocco);
+        for (i = 0; i < TAB_VOCI; i++) {
+            vaddr_t va  = blocco + (vaddr_t)i * PAGE_SIZE;
+            PTE     pte = pt[i], figlio;
+            paddr_t frame;
+
+            if (pte == 0) continue;
+            if (SWAP_PTE_E_SWAP(pte)) {
+                /* sent out after pass 1: back now, with interrupts on */
+                if (fl & 0x200u) interrupts_enable();
+                if (!pf_torna_da_swap(dal, va)) return -ENOMEM;
+                interrupts_disable();
+                pt  = TAB_DI(pd, blocco);
+                pte = pt[i];
+                if (pte == 0) continue;
+                if (SWAP_PTE_E_SWAP(pte)) { if (fl & 0x200u) interrupts_enable(); return -ENOMEM; }
+            }
+            figlio = pte;
+            if (pte & PG_PRESENT) {
+                frame = PG_ADDR(pte);
+                if (PMM_OLTRE_RAM(frame) || (pte & PG_FISSA)) {
+                    /* as it is */
+                } else if (PTE_E_CONDIVISA(pte)) {
+                    if (pmm_ref_inc(frame) != 0) { if (fl & 0x200u) interrupts_enable(); return -ENOMEM; }
+                    condivise++;
+                } else if (pmm_ref_inc(frame) == 0) {
+                    if (pte & (PG_WRITABLE | PG_COW)) {
+                        figlio = (pte & ~(PTE)PG_WRITABLE) | PG_COW;
+                        pt[i]  = figlio;
+                    }
+                    condivise++;
+                } else {
+                    /* the PMM cannot count it: the child gets a copy now */
+                    paddr_t nuovo = pmm_alloc_page_utente();
+
+                    if (nuovo == 0) { if (fl & 0x200u) interrupts_enable(); return -ENOMEM; }
+                    cow_copia_fisica(frame, nuovo);
+                    figlio = ((pte ^ PG_ADDR(pte)) & ~(PTE)PG_COW) | PG_ADDR(nuovo) |
+                             ((pte & PG_COW) ? PG_WRITABLE : 0);
+                    copiate++;
+                }
+            }
+            /* the table of the child: made by mapping, then the entry as
+             * it must be (as paging_pigra does) */
+            if (paging_map_page(al, va, 0, 0) != 0) {
+                if ((figlio & PG_PRESENT) && figlio != pte && !(figlio & PG_COW))
+                    pmm_free_page(PG_ADDR(figlio));         /* the copy just made */
+                else if ((figlio & PG_PRESENT) && !PMM_OLTRE_RAM(PG_ADDR(figlio)) &&
+                         !(figlio & PG_FISSA))
+                    pmm_free_page(PG_ADDR(figlio));         /* the reference just taken */
+                if (fl & 0x200u) interrupts_enable();
+                return -ENOMEM;
+            }
+            paging_pte_scrivi(al, va, figlio);
+        }
+        if (fl & 0x200u) interrupts_enable();
+    }
+
+    /* the parent's own TLB still has the writable translations */
+    write_cr3(read_cr3());
+    klog(LOG_DEBUG, "PAGING: fork di PID %u: %u pagine in comune, %u copiate",
+         dal->pid, condivise, copiate);
+    return 0;
+}
+
 void page_fault_handler(InterruptFrame *frame)
 {
     vaddr_t  fault_addr = read_cr2();
@@ -1770,6 +2065,13 @@ void page_fault_handler(InterruptFrame *frame)
      * pf_cresci_stack, che ritorna 0 in ogni caso dubbio. */
     {
         Process *p = proc_get_current();
+
+        /* a write into a present page that is read-only: copy-on-write
+         * after fork, or a kernel write as before CR0.WP (0.313) */
+        if ((err & 0x3) == 0x3 &&
+            pf_copia_su_scrittura(p, fault_addr, (uintptr_t)FR_IP(frame), from_user)) {
+            return;
+        }
 
         if (pf_cresci_stack(p, frame, fault_addr, err, from_user)) {
             return;   /* l'iret rieseguira' l'istruzione che ha faultato */
@@ -2060,20 +2362,24 @@ int paging_riserva(PDE *pd, uint32_t virt)
  * freed on exit like any other, and paging_vittima never picks it for swap
  * (it skips !PG_USER), so it is never lost either.
  *
- * ! THE KERNEL STILL READS AND WRITES THESE PAGES, because CR0.WP is off and
- * supervisor accesses ignore both bits. A read() into a PROT_READ buffer
- * succeeds instead of failing with EFAULT: POSIX allows either, and nothing
- * in the kernel faults on user memory it has been handed.
+ * ! THE KERNEL STILL READS AND WRITES THESE PAGES. Until 0.313 because
+ * CR0.WP was off and supervisor accesses ignored both bits; since 0.313 WP
+ * is on (copy-on-write needs it), and a kernel write into a read-only page
+ * that is not copy-on-write is let through as before by
+ * pf_copia_su_scrittura. A read() into a PROT_READ buffer succeeds instead of
+ * failing with EFAULT: POSIX allows either.
  *
  * ! EXEC IS READ. Without NX there is no way to refuse execution, so a JIT
  * that writes code and then asks for PROT_READ|PROT_EXEC gets exactly what it
  * needs, and one that forgets to ask still runs.
  *
- * ! A SHARED FRAME NEVER BECOMES WRITABLE. Library code is the same frame in
- * every process (pmm_ref_count > 1): making it writable here would let this
- * process write into everybody else's copy. Linux would copy it first; we
- * refuse with EACCES, which is what POSIX says for "not allowed on this
- * mapping". Taking write AWAY from a shared page is fine: it is ours to lose.
+ * ! A SHARED FRAME NEVER BECOMES WRITABLE AS IT IS. Library code is the same
+ * frame in every process, and after fork so is almost everything
+ * (pmm_ref_count > 1): making it writable here would let this process write
+ * into everybody else's copy. Until 0.313 that was EACCES; now it becomes
+ * PG_COW, and the first write copies it, as Linux does. PG_CONDIVISA pages
+ * (shm, MAP_SHARED) are the exception: they are meant to be written by all.
+ * Taking write AWAY from a shared page is fine: it is ours to lose.
  *
  * Pages that exist but are not in RAM (on swap, or still in the executable)
  * are brought in first, so the new bits have a PTE to land on. A page that
@@ -2138,13 +2444,7 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
         pte = pt[NELLA_TAB(va)];
         if (PTE_E_RISERVA(pte) || PTE_E_PIGRA(pte)) continue;   /* senza pagina: niente da controllare */
         if (!(pte & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
-
-        frame = PG_ADDR(pte);
-        if ((nuovi & PG_WRITABLE) && !(pte & PG_WRITABLE) &&
-            PMM_E_RAM_SOTTO(frame, ram) && pmm_ref_count(frame) != 1) {
-            interrupts_enable();
-            return -EACCES;
-        }
+        (void)frame;
     }
 
     /* 3. Apply. */
@@ -2157,9 +2457,24 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
             /* Senza pagina: PROT_NONE e' una riserva, il resto una promessa
              * coi permessi nuovi. */
             pt[NELLA_TAB(va)] = (nuovi & PG_USER) ? (PG_PIGRA | nuovi) : PG_RISERVA;
-        } else
-        pt[NELLA_TAB(va)] = (pt[NELLA_TAB(va)] & ~(PTE)(PG_USER | PG_WRITABLE))
-                           | nuovi;
+        } else {
+            /* ! A FRAME SOMEBODY ELSE HAS TOO IS NOT MADE WRITABLE: IT BECOMES
+             * COPY-ON-WRITE (0.313, fork). Until fork this was EACCES - a
+             * shared page was a library page, and writing it would have
+             * written every program that maps it. After fork most pages are
+             * shared, and a JIT or a loader that makes one writable again
+             * must get it: the first write copies (pf_copia_su_scrittura).
+             * Only PG_CONDIVISA pages (shm, MAP_SHARED) become writable
+             * as they are: being the same memory is their point. */
+            PTE      pte   = pt[NELLA_TAB(va)];
+            paddr_t  frame = PG_ADDR(pte);
+            uint32_t n     = nuovi;
+
+            if ((n & PG_WRITABLE) && !PTE_E_CONDIVISA(pte) && PMM_E_RAM_SOTTO(frame, ram) &&
+                ((pte & PG_COW) || pmm_ref_count(frame) > 1))
+                n = (n & ~(uint32_t)PG_WRITABLE) | PG_COW;
+            pt[NELLA_TAB(va)] = (pte & ~(PTE)(PG_USER | PG_WRITABLE | PG_COW)) | n;
+        }
         /* Threads share the directory, so "current" is enough: every thread
          * of this program runs on this same CR3. */
         if (proc_get_current() != NULL &&
@@ -2215,6 +2530,12 @@ int paging_utente_pronta(Process *p, vaddr_t va, uint32_t len)
             if (!TAB_C_E(pd, pagina)) return 0;
             pt  = TAB_DI(pd, pagina);
             pte = pt[NELLA_TAB(pagina)];
+        }
+
+        /* copy-on-write (fork, 0.313): the copy now, as a write would */
+        if (PTE_E_COW(pte) && (pte & PG_USER)) {
+            if (cow_risolvi(pd, pagina) != 1) return 0;
+            pte = TAB_DI(pd, pagina)[NELLA_TAB(pagina)];
         }
 
         if ((pte & (PG_PRESENT | PG_USER | PG_WRITABLE)) !=

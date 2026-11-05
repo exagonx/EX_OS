@@ -194,6 +194,34 @@ typedef struct {
 #define IP_MSG_TCP_SPEGNI  24
 #define IP_MSG_TCP_MEZZA   25
 
+/* =============================================================================
+ * IP_MSG_EREDITA (ip.drv 0.021, kernel 0.313: fork, voce 33)
+ *
+ *   IpEredita -> IP_MSG_ESITO (0, or -errno)
+ *
+ * After fork() the PARENT, which owns the connection, listener, UDP port or
+ * epoll set `id`, makes the process `pid` (its child) one more owner. libc
+ * does it for every socket before fork() returns in the parent; the child
+ * waits for that before it goes on (lib/libc.c, prese_al_figlio). From then on
+ * both may use it: a close by one owner only lets that one go, the last owner
+ * still alive really closes. A connection accepted from a shared listener is
+ * only its acceptor's. Several processes may wait in accept() on the same
+ * listener: they are served in the order they came.
+ *
+ *   tipo IP_EREDITA_TCP  id = the connection or listener
+ *        IP_EREDITA_UDP  id = the local port
+ *        IP_EREDITA_INS  id = the epoll set
+ *
+ * ! ONLY AN OWNER CAN GIVE IT (-EBADF otherwise): what an owner may do with
+ * it, passing it on included, is its own business, as with a descriptor
+ * passed over a socket on Unix.
+ * ============================================================================= */
+#define IP_MSG_EREDITA     26
+#define IP_EREDITA_TCP     1
+#define IP_EREDITA_UDP     2
+#define IP_EREDITA_INS     3
+typedef struct { unsigned int tipo, id, pid; } IpEredita;
+
 #define IP_EV_IN       0x001u
 #define IP_EV_OUT      0x004u
 #define IP_EV_ERR      0x008u

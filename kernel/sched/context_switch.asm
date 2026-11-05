@@ -125,6 +125,32 @@ proc_entry_stub_user:
 ; l'entry point va semplicemente raggiunto in ring0. EAX contiene l'entry
 ; point (stessa convenzione dello stub utente).
 ; ============================================================================= */
+;
+; proc_entry_stub_fork - the child of fork leaves the kernel (0.313, voce 33)
+;
+; context_switch "returns" here with EAX = the copy of the parent's
+; InterruptFrame at the top of the child's kernel stack (proc_prepara_fork in
+; sched.c, with 0 in its EAX). Like proc_entry_stub_user: interrupts off, the
+; kernel lock let go; then the same way out as syscall_stub in isr_stubs.asm.
+; GS is the TLS descriptor, as the other stub sets it: the frame has no GS.
+;
+global proc_entry_stub_fork
+proc_entry_stub_fork:
+    cli
+    push eax
+    call bkl_lascia
+    pop eax
+    mov esp, eax
+    mov ax, 0x33
+    mov gs, ax
+    pop eax                  ; DS of the frame
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    popad                    ; EAX = 0: fork() in the child
+    add esp, 8               ; int_no, err_code
+    iret
+
 global proc_entry_stub_kernel
 proc_entry_stub_kernel:
     jmp eax                  ; Salta direttamente all'entry point, ring0

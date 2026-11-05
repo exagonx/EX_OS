@@ -243,6 +243,49 @@ set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
 FINE
 }
 
+# a Meson cross file for EX-OS in $B/exos.meson (4 November 2026, HarfBuzz).
+# ! system = 'linux', for the same reason as CMake above: Meson knows nothing
+# of EX-OS and picks the POSIX ways for "linux"; every function is still
+# checked at configure time. The compilers are the -fPIC wrappers in PATH.
+# lib_meson_cross [PCDIR]: with PCDIR, pkg-config reads only the .pc files
+# there (written by the caller for libraries of the sysroot), never the host's.
+lib_meson_cross() {
+    local pc=${1:-}
+    local cpu=${T%-exos} fam=x86_64
+    [ "$cpu" = i386 ] && fam=x86
+    local f=""
+    for x in $MARCH -D__unix__ -DEXOS_SOLO_POSIX; do f="$f'$x', "; done
+    cat > "$B/exos.meson" <<FINE
+[binaries]
+c = '$B/pic/$CC'
+cpp = '$B/pic/$CXX'
+ar = '$CROSS/bin/$AR'
+strip = '$CROSS/bin/$STRIP'
+pkg-config = '$( [ -n "$pc" ] && echo pkg-config || echo false )'
+
+[properties]
+pkg_config_libdir = '${pc:-/nessuno}'
+
+[built-in options]
+c_args = [${f%, }]
+cpp_args = [${f%, }]
+
+[host_machine]
+system = 'linux'
+cpu_family = '$fam'
+cpu = '$cpu'
+endian = 'little'
+FINE
+}
+
+# lib_pc DIR NAME VERSION "CFLAGS" "LIBS": a .pc of a library of the sysroot,
+# for a configure that only finds its dependencies through pkg-config
+lib_pc() {
+    mkdir -p "$1"
+    printf 'Name: %s\nDescription: %s (EX-OS sysroot)\nVersion: %s\nCflags: %s\nLibs: %s\n' \
+        "$2" "$2" "$3" "$4" "$5" > "$1/$2.pc"
+}
+
 # lib_fine [extra file for src/]: the sources next to the binaries, the
 # sysroots, a line of summary
 lib_fine() {

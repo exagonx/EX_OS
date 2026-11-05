@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.312
+**Versione:** 0.313
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -138,6 +138,86 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
   programmi (`SMP: ... 0 dei quali lavorano`), quindi non ha battito e il suo P-state resta quello
   lasciato dal BIOS.
 
+### Il C++ come librerie condivise, e un caricatore senza un numero fisso di librerie (voce 85, la strada per Qt 5)
+
+- **`libstdc++.so.6` e `libgcc_s.so.1`** (`tools/librerie-exos/cxx-condivise.sh`, nuovo): Qt e' un insieme
+  di librerie condivise C++, e vogliono sotto di se' anche il runtime del C++ condiviso. La
+  `libstdc++.a` della toolchain non e' PIC, quindi si ricostruisce con `-fPIC` accanto a lei (la `.a`
+  resta per i programmi `-static`). **L'unwinder delle eccezioni e' uno per tutti**: la libgcc statica
+  lo costruisce nascosto, ogni `.so` ne avrebbe avuto una copia sua che conosce solo le proprie
+  tabelle, e un'eccezione che attraversa due librerie finiva in `terminate()`. I suoi quattro file si
+  ricompilano senza i flag nascosti in `libgcc_s.so.1`, e le specs (`tools/gcc-exos/specs-condivise.sh`)
+  prendono `-lgcc_s --as-needed` dove il sysroot lo ha. Tutt'e due vanno in `/lib` dei CD, come
+  `libm.so.4`. Un programma C esce ancora statico.
+- **Il caricatore non ha piu' tetti fissi** (`lib/libc_dl.c`): via i 32 moduli per programma, i 16
+  `DT_NEEDED` per libreria, i 32 moduli TLS, i 256 blocchi dei fili, i 24 program header e i percorsi di
+  200 byte; le tabelle crescono (quelle lette senza lucchetto non si liberano quando crescono, cosi' chi
+  legge la copia vecchia legge memoria valida). VLC con l'interfaccia Qt carica piu' di 32 librerie.
+  Corretto anche: la prima variabile `__thread` esportata da una libreria (offset 0) era "undefined
+  symbol".
+- **Provato in QEMU a 64 bit**: `tools/prova-dl/prova-cxx.sh` (nuovo): eccezione della libreria presa nel
+  programma, eccezione del programma lanciata attraverso un frame della libreria, `std::bad_alloc` da
+  `libstdc++.so`, `std::thread`, `std::mutex`, una statica con lucchetto: 8 su 8.
+  `tools/prova-dl/prova-tante.sh` (nuovo): 40 e 100 librerie, 8 fili, ogni `__thread` giusto, poi il
+  `dlopen` di una in piu': OK.
+  ! A 32 bit la toolchain della macchina di costruzione non aveva i fili (Thread model: single), e Qt
+  li vuole: prima la rifa' `tools/exilla/gcc-fili.sh`.
+
+### VLC e' nel menu di avvio (vlcapri 0.001, voce 79)
+
+- **VLC installato da ExPackage non compariva nel Program Manager**: netupdate scrive una voce di
+  menu solo dalla chiave `menu` del catalogo, e il gruppo `[vlc]` di `tools/iso/strumenti.txt` non
+  l'aveva. Ora c'e' `menu = Multimedia/VLC | /exos/bin/vlcapri | /exos/share/vlc/vlc_64.ico` (la
+  chiave `menu` e' spiegata in testa a quel file).
+- **La voce avvia `vlcapri`, non `vlc`**: il Program Manager lancia una voce senza argomenti, e VLC
+  senza un file e senza la sua interfaccia Qt aprirebbe l'interfaccia a righe su una console che non
+  c'e', acceso e invisibile. `vlcapri` (`exwin/bin/vlcapri`, del pacchetto vlc come il lanciatore di
+  exilla) mostra la finestra "Apri", avvisa se il suono e' spento, e avvia
+  `vlc -I dummy --play-and-exit <file>`. `tools/librerie-exos/su-cd.sh` lo mette in `/exos/bin`, e
+  le icone in `/exos/share/vlc`, quando VLC e' costruito.
+- **L'icona** e' quella di VLC, `share/icons/256x256/vlc.png`, convertita da `tools/png2ico.py`
+  (nuovo, Python puro) nell'ICO di ExWin a 64 e 128 pixel (`tools/vlc-exos/icone`).
+- Il sistema a 64 bit non porta piu' `/exwin/bin/exilla` e `/exwin/bin/vlcapri`:
+  `costruisci-utente64.sh` costruisce ogni `exwin/bin/*`, e `tools/mkiso64.sh` adesso lascia fuori i
+  lanciatori dei pacchetti.
+- **Provato sul portatile**: `netupdate -check -yes` ha portato `vlcapri` e le icone al VLC gia'
+  installato e ha scritto la voce; dalla scrivania, Avvio > Multimedia > VLC, l'icona del cono,
+  `gizmo.mp4` scelto nella finestra: video in una finestra e suono, la finestra si chiude alla fine.
+- **La croce rossa non chiudeva VLC**: in VLC 3 l'evento di chiusura di un'uscita video non fa
+  niente (il FIXME in `src/video_output/event.h`). `tools/vlc-exos/src/vout_exos.c` adesso chiama
+  `libvlc_Quit()` su `WIN_EV_CHIUDI`, come chiudere la finestra principale nel VLC degli altri
+  sistemi. Provato sul portatile: la croce lo chiude. `tools/vlc-exos/costruisci.sh` ha
+  `VLC_SOLO_COLLEGA=1`, per ricollegare soltanto (un paio di minuti) dopo aver cambiato un nostro
+  modulo.
+- **La finestra non ha menu ne' controlli**: sono l'interfaccia Qt di VLC, e Qt su EX-OS non c'e'
+  ancora. Il porting di Qt 5 (libstdc++ condivisa, FreeType, HarfBuzz, libpng, Qt 5.15 con un plugin
+  QPA per ExWin, poi VLC con `--enable-qt`) e' la voce 85 della coda.
+  ! `toolinst` (l'installazione dal CD degli strumenti) non legge ancora la chiave `menu`.
+
+### Lo schermo si spegne quando nessuno lo usa (kernel 0.312, dpms.drv 0.002, voce 78 b)
+
+- **Il kernel sa quando la macchina e' stata usata l'ultima volta** (`SYS_ATTIVITA` 262): `kbd.drv`
+  0.010 a ogni tasto e a ogni pacchetto del mouse o del touchpad PS/2, i mouse USB (`usb_comune.c`:
+  `ohci.drv` 0.009, `uhci.drv` 0.005, `xhci.drv` 0.004) e `mouseser.drv` 0.002 chiamano
+  `attivita_tocca()`. Una scrittura nel kernel, nessun messaggio per evento. Un rapporto del mouse USB
+  che non dice niente di nuovo non conta. Su un kernel prima della 0.312 la chiamata non si fa
+  proprio (la libc chiede la versione una volta), quindi i driver nuovi non scrivono niente nel log di
+  un kernel vecchio.
+- **`/dev/dpms.drv`** (`-dopo:M`, `-spegni`, `-accendi`, `-ferma`, `-install [M]`, `-remove`): un
+  piccolo servizio che spegne lo schermo dopo M minuti senza tasti ne' mouse e lo riaccende al primo
+  tasto, clic o movimento. Sulle NVIDIA dalla G80 spegne il SOR che pilota il pannello, come
+  xf86-video-nv; su ogni altra scheda fa nera l'immagine coi registri VGA (SR01 e il bit PAS del
+  controller degli attributi: QEMU in un modo VBE rispetta solo il secondo). `help dpms`, manuale 4.9.
+- `tools/prova_dpms.sh`: in QEMU a 32 e 64 bit, guardando con le foto dello schermo (che non sono
+  tasti): spento a comando, riacceso con un tasto, spento da solo dopo un minuto, riacceso col mouse;
+  26 su 26.
+- **Provato sul portatile** (GeForce 8200M, 4 novembre): `-spegni` da telnet spegne il pannello,
+  retroilluminazione compresa; un tasto lo riaccende subito con l'immagine di prima; con `-dopo:1` si
+  e' spento da solo e il touchpad l'ha riacceso. Lasciato installato li' a 10 minuti.
+- **netupdate 0.043 provato** nello stesso aggiornamento (voce 75): il settore di avvio riletto da
+  fuori dopo `-check -yes` aveva la mappa della 0.312, uguale byte per byte a `/boot/kernel.bin`; dopo
+  `reboot`, 0.312 col disco scrivibile.
+
 ### Il suono del portatile parte da solo, e ls elenca tutti i nomi (audio 0.005, ls 0.003)
 
 - **`audio -i` non provava la scheda del portatile.** L'HD Audio NVIDIA MCP78 (`10de:0774`, codec
@@ -176,8 +256,8 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
 - Riparato sul portatile con la ricetta di `help problemi` (`modulo carica /dev/ext4.mod.old`,
   `netupdate -avvio`): il settore di avvio riletto da fuori aveva la mappa della 0.311, coi settori
   uguali byte per byte a `/boot/kernel.bin`; dopo `reboot`, la 0.311 col disco scrivibile.
-  **Testata** la riparazione; netupdate 0.043 **da testare** al prossimo aggiornamento del kernel del
-  portatile.
+  **Testata** la riparazione; netupdate 0.043 **testato** sul portatile col kernel 0.312
+  (4 novembre).
 
 ### netupdate porta i file nuovi dei pacchetti installati, e VLC trova le sue librerie (netupdate 0.042)
 
@@ -6733,9 +6813,9 @@ l'orologio CMOS — senza fuso orario, perché il sistema non sa in quale si tro
 ### Processi: spawn con ambiente e redirezioni
 
 `spawn()` lancia un programma e ritorna il PID; `waitpid()` ne raccoglie
-l'esito. Non c'è `fork()`, ed è una scelta: duplicare uno spazio di
-indirizzamento per buttarlo via alla `exec` successiva, su un sistema senza
-copy-on-write, sarebbe la cosa più costosa che si possa fare.
+l'esito. `spawn` resta il modo economico di lanciare un altro programma; dal
+kernel 0.313 c'è anche una `fork()` vera, con la copia su scrittura
+(sezione seguente).
 
 ```c
 SpawnRedir r = { 1, O_WRONLY | O_CREAT | O_TRUNC, "/uscita.txt" };
@@ -6753,6 +6833,40 @@ L'ambiente si eredita per copia (`environ`, `putenv`, `setenv`,
 `unsetenv`). `getenv()` ripiega sulla sezione `[env]` di `kernel.cfg` per
 le chiavi che non trova: senza quel ripiego il primo processo — che un
 padre non ce l'ha — resterebbe senza `PATH`.
+
+### Processi: `fork()` con la copia su scrittura (kernel 0.313)
+
+Redis (BGSAVE), il MPM prefork di Apache e `QProcess` di Qt vogliono una
+`fork()` vera, e EX-OS ora ce l'ha (`SYS_FORK` 263, `fork`, `vfork`,
+`pthread_atfork`):
+
+- **Copia su scrittura, a 32 e 64 bit.** Il figlio riceve le tabelle delle
+  pagine del padre; ogni pagina privata scrivibile diventa di sola lettura in
+  tutti e due, segnata `PG_COW` (bit 10 della PTE), e la pagina fisica ha un
+  proprietario in più nel PMM. La prima scrittura la copia (o, se è rimasto
+  un solo proprietario, la rende di nuovo scrivibile). `CR0.WP` ora è acceso,
+  quindi copia anche una scrittura del kernel stesso — una `read()` in un
+  buffer del figlio. Le pagine `MAP_SHARED` e la memoria condivisa sono
+  segnate `PG_CONDIVISA` (bit 11) e restano condivise.
+- **Nessun tetto di proprietari.** Un byte per pagina conta fino a 256; oltre,
+  una tabella hash che cresce tiene il resto. Le pagine sopra i 4 GB hanno i
+  loro contatori.
+- **I descrittori** si copiano con i riferimenti (file, pipe, pty), come su
+  Unix; i **socket** diventano condivisi in ip.drv (0.021): il padre fa del
+  figlio un proprietario in più di ognuno prima che `fork()` gli ritorni, una
+  chiusura di un proprietario lascia andare solo quello, più processi possono
+  aspettare in `accept()` sullo stesso ascoltatore, e una connessione
+  accettata è di chi l'ha accettata.
+- **Fili POSIX**: nel figlio resta solo il filo che chiama; i lucchetti della
+  libc si prendono attorno alla chiamata e nel figlio si liberano; i gestori
+  `atfork` girano nell'ordine di POSIX.
+- **Figli**: `getppid`, `waitpid` su un figlio qualunque (`-1`, `0`,
+  `WNOHANG`), `SIGCHLD` a un gestore.
+- **Le pipe ricordano chi aspetta, tutti** (kernel 0.313): fino alla 0.312 una
+  pipe svegliava solo l'ultimo processo fermo su di lei; con fork molti
+  processi leggono la stessa pipe.
+
+Prova: `tools/prova-fork/prova-fork.sh` (64 bit) e `... 32`, in QEMU.
 
 ### Intestazioni con i nomi standard
 

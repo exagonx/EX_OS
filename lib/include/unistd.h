@@ -52,14 +52,17 @@
 
 #define _SC_NPROCESSORS_CONF 83      /* i processori: uno (vedi sysconf) */
 
-/* ! EX-OS NON HA fork(): i processi nascono con spawn (vedi spawn_ex in
- * libc.h). fork esiste perche' il codice portabile la nomina, e risponde -1
- * con ENOSYS: chi la chiama la tratta gia' come un fallimento. Solo libc.a. */
+/* fork (kernel 0.313, voce 33): a copy of the process, copy-on-write; 0 in
+ * the child, the child's pid in the parent. Only the calling thread goes on
+ * in the child (POSIX); pthread_atfork's handlers run around it. On a kernel
+ * before 0.313 it answers -1 with ENOSYS, as it always did. vfork is fork:
+ * the copy costs only the tables, so there is nothing to save by sharing. */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 pid_t   fork(void);
+pid_t   vfork(void);
 
 /* POSIX che EX-OS ha a meta' o non ha (@EXILLA-JS): pread/pwrite passano da
  * lseek e rimettono la posizione; fsync rende 0 (i filesystem scrivono gia'

@@ -672,6 +672,45 @@ void proc_set_entry(Process *proc, vaddr_t entry_point, vaddr_t user_stack_top)
      * contesto salvato qui sopra e non ha bisogno di un secondo posto. */
 }
 
+/* =============================================================================
+ * proc_prepara_fork — the kernel stack of a child of fork (0.313, voce 33)
+ *
+ * The child does not start at an entry point: it comes back from the same
+ * int 0x80 as its parent, with the same registers, and 0 in EAX/RAX. So the
+ * top of its kernel stack is a copy of the parent's InterruptFrame, and
+ * under it the frame context_switch wants (the same shape proc_create builds:
+ * see there), whose return address is proc_entry_stub_fork and whose EAX is
+ * the address of that copy. The stub lets go of the kernel lock, as the
+ * other stub does, and leaves through the copy as the syscall would have.
+ * ============================================================================= */
+void proc_prepara_fork(Process *figlio, const InterruptFrame *f)
+{
+    extern void proc_entry_stub_fork(void);
+    uintptr_t      *sp;
+    InterruptFrame *copia;
+
+    copia  = (InterruptFrame *)(uintptr_t)(figlio->kernel_stack_top - sizeof(InterruptFrame));
+    *copia = *f;
+    FR_RET(copia) = 0;                      /* fork() is 0 in the child */
+
+    sp = (uintptr_t *)copia;
+    *(--sp) = IN_NUMERO(proc_entry_stub_fork);  /* ret of context_switch */
+    *(--sp) = 0x00000002;                   /* EFLAGS: IF off, the stub irets */
+    *(--sp) = IN_NUMERO(copia);             /* EAX: where the stub finds the frame */
+    *(--sp) = 0;                            /* ECX */
+    *(--sp) = 0;                            /* EDX */
+    *(--sp) = 0;                            /* EBX */
+    *(--sp) = 0;                            /* ESP (popad skips it) */
+    *(--sp) = 0;                            /* EBP */
+    *(--sp) = 0;                            /* ESI */
+    *(--sp) = 0;                            /* EDI */
+    *(--sp) = GDT_KERNEL_DATA_SEL;          /* DS */
+    *(--sp) = GDT_KERNEL_DATA_SEL;          /* ES */
+    *(--sp) = 0;                            /* FS */
+    *(--sp) = 0;                            /* GS */
+    figlio->kernel_esp = IN_NUMERO(sp);
+}
+
 Process *proc_create(const char *name, vaddr_t entry_point,
                      uint32_t priority, int is_kernel_task)
 {
@@ -1052,6 +1091,10 @@ static void sched_switch_to(Process *next)
     Process *prev = g_current;
 
     if (next == prev) return;   /* Stesso processo, nessun switch */
+
+    /* CR0.WP goes with no process (0.313): a kernel write that turned it off
+     * for the one leaving must not cover the writes of the one coming */
+    paging_wp_rimetti();
 
     /* Aggiorna stato */
     if (prev->state == PROC_RUNNING) {
@@ -2076,6 +2119,25 @@ void proc_chiudi_miei_fd(void)
  * cui la cancellazione qui e' cooperativa e non si puo' fare altrimenti. Su
  * Linux un segnale fatale porta via tutto il thread group, per la stessa
  * ragione. */
+/* The threads of the process of `ppid` asleep in waitpid (0.313): a child of
+ * fork names the process as parent, and the thread that waits may be another
+ * one. Interrupts off, as in proc_esci. */
+static void sveglia_chi_aspetta_figli(uint32_t ppid)
+{
+    Process *pa = proc_get_by_pid(ppid);
+    uint32_t i, g;
+
+    if (pa == NULL) return;
+    g = pa->tgid ? pa->tgid : pa->pid;
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *q = PROC_POSTO(i);
+
+        if (q->state == PROC_BLOCKED && q->aspetta_figli && q->pid != ppid &&
+            (q->tgid ? q->tgid : q->pid) == g)
+            sched_unblock_locked(q->pid);
+    }
+}
+
 static void proc_esci(int32_t exit_code, int fatale)
 {
     uint32_t ppid_erede = 0;    /* chi aspetta il gruppo, se a morire e' un filo */
@@ -2213,6 +2275,8 @@ static void proc_esci(int32_t exit_code, int fatale)
             /* Niente unblock: init scansiona periodicamente, non serve svegliarlo */
         } else {
             sched_unblock_locked(ppid);
+            sveglia_chi_aspetta_figli(ppid);
+            segnali_figlio_finito(ppid);         /* SIGCHLD, 0.313: the process ended */
         }
     }
 

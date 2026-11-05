@@ -1,0 +1,21 @@
+; tools/gcc-exos/exos.opt - the driver options of the EX-OS targets
+; (i386-exos and x86_64-exos), copied by tools/gcc-exos/applica.py to
+; gcc/config/i386/exos.opt and named in config.gcc (extra_options).
+;
+; Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+; SPDX-License-Identifier: GPL-3.0-or-later
+;
+; ! WHY (4 November 2026, voce 85). Every build system passes -pthread to a
+; program or library that uses threads (Meson for HarfBuzz, CMake, qmake for
+; Qt), and -rdynamic to executables (CMake on "Linux"). The EX-OS driver
+; refused both: "unrecognized command-line option '-pthread'". As on Linux
+; (gcc/config/gnu-user.opt), they are driver options, and exos.h/exos64.h
+; say what they do: -pthread defines _REENTRANT and links -lpthread (an
+; empty archive: the threads are in the libc), -rdynamic exports the
+; program's symbols to the libraries it loads (--export-dynamic).
+
+pthread
+Driver
+
+rdynamic
+Driver

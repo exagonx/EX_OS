@@ -1,0 +1,10 @@
+; The documentation links of tools/gcc-exos/exos.opt, in the format of
+; regenerate-opt-urls.py (GCC 17 wants one .opt.urls next to every .opt).
+; Copied by tools/gcc-exos/applica.py to gcc/config/i386/exos.opt.urls.
+
+; skipping UrlSuffix for 'pthread' due to multiple URLs:
+;   duplicate: 'gcc/Link-Options.html#index-pthread-1'
+;   duplicate: 'gcc/Preprocessor-Options.html#index-pthread'
+
+rdynamic
+UrlSuffix(gcc/Link-Options.html#index-rdynamic)

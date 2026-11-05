@@ -114,9 +114,9 @@ int       pthread_create(pthread_t *t, const pthread_attr_t *a,
                          void *(*fn)(void *), void *arg);
 int       pthread_join(pthread_t t, void **ris);
 int       pthread_detach(pthread_t t);
-/* EX-OS non ha fork(): i gestori si accettano e non si chiamano mai. C'e'
- * perche' il codice di terzi la chiama per proteggersi da una fork (il crate
- * rand di Firefox). Solo in libc.a. */
+/* The handlers of fork (kernel 0.313): `prima` before it, newest first;
+ * `genitore` and `figlio` after it, in the parent and in the child, oldest
+ * first. No limit on how many. */
 int       pthread_atfork(void (*prima)(void), void (*genitore)(void), void (*figlio)(void));
 void      pthread_exit(void *ris) __attribute__((noreturn));
 pthread_t pthread_self(void);

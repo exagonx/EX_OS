@@ -70,7 +70,7 @@ giro() {    # $1 = 32|64
         "dpms.drv@3" > "$log" 2>&1
     L=$(tr -d '\r' < "$log")
     echo "$L" | grep -aq "EX-OS .* 0.312" && si "$bit: kernel 0.312" || no "$bit: il kernel non e' 0.312 (vedi $log)"
-    echo "$L" | grep -aq "dpms.drv 0.001" && si "$bit: dpms.drv 0.001" || no "$bit: -version"
+    echo "$L" | grep -aq "dpms.drv 0.002" && si "$bit: dpms.drv 0.002" || no "$bit: -version"
     echo "$L" | grep -aq "servizio:   spento" && si "$bit: senza servizio lo dice" || no "$bit: lo stato senza servizio"
     echo "$L" | grep -aq "servizio acceso, metodo vga" && si "$bit: -dopo:1 accende il servizio, metodo vga" \
         || no "$bit: il servizio non e' partito col metodo vga"

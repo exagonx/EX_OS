@@ -197,7 +197,9 @@ static int32_t aggancia(Process *proc, uint32_t idx, uint32_t *out_virt)
             paging_map_page(proc->page_directory,
                             vaddr + i * PAGE_SIZE,
                             z->fisico[i],
-                            PG_PRESENT | PG_USER | PG_WRITABLE) != 0) {
+                            /* PG_CONDIVISA (0.313): fork keeps it the
+                             * same memory, mprotect never makes it COW */
+                            PG_PRESENT | PG_USER | PG_WRITABLE | PG_CONDIVISA) != 0) {
             uint32_t j;
             for (j = 0; j < i; j++) {
                 paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
@@ -397,6 +399,36 @@ int32_t shm_chiudi(Process *proc, uint32_t virt)
     shm_lascia();
 
     return ERR(EINVAL);
+}
+
+/* =============================================================================
+ * shm_fork — the child of fork has the zones of its parent (0.313, voce 33)
+ *
+ * The pages are already in the child: paging_copia_spazio maps every
+ * PG_CONDIVISA page as it is, with one owner more. Here the bookkeeping: the
+ * same attachments (same addresses), and one process more on each zone, so
+ * that the zone outlives the parent while the child still has it open.
+ * 0, or -ENOMEM (the child then has none: shm_cleanup_process has nothing to
+ * do, and its pages go with its directory).
+ * ============================================================================= */
+int32_t shm_fork(Process *padre, Process *figlio)
+{
+    uint32_t slot;
+
+    figlio->shm       = NULL;
+    figlio->shm_posti = 0;
+    if (padre == NULL || padre->shm == NULL || padre->shm_posti == 0) return 0;
+
+    shm_prendi();
+    figlio->shm = (struct ShmAggancio *)kmalloc(padre->shm_posti * sizeof(struct ShmAggancio));
+    if (figlio->shm == NULL) { shm_lascia(); return ERR(ENOMEM); }
+    figlio->shm_posti = padre->shm_posti;
+    for (slot = 0; slot < padre->shm_posti; slot++) {
+        figlio->shm[slot] = padre->shm[slot];
+        if (padre->shm[slot].zona != 0) g_zone[padre->shm[slot].zona - 1].proc++;
+    }
+    shm_lascia();
+    return 0;
 }
 
 /* ! A PROCESS THAT NEVER OPENED A ZONE DOES NOT TAKE THE LOCK: this is called

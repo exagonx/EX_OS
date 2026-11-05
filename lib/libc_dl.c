@@ -87,13 +87,21 @@ typedef struct { const char *nome; void *indirizzo; } DlEsportato;
 extern const DlEsportato __exos_esportati[] __attribute__((weak));
 extern const unsigned long __exos_esportati_n __attribute__((weak));
 
-#define DL_MODULI      32
-#define DL_DIP         16
+/* ! NO FIXED NUMBER OF LIBRARIES (4 November 2026, voce 85). Until then 32
+ * modules, 16 DT_NEEDED each, 32 TLS modules, 256 thread blocks and 24
+ * program headers: VLC with its Qt interface loads more than 32 libraries
+ * (Qt, FreeType, HarfBuzz, FFmpeg and its codecs, libstdc++...). Now every
+ * table grows. The tables read WITHOUT the lock (dlsym, dladdr,
+ * __tls_get_addr: a library constructor run inside dlopen may call dlsym,
+ * and the lock is not recursive) are never freed when they grow: a reader
+ * still walking the old copy reads valid memory, and the old copies add up
+ * to less than the last one (each is half the next). */
+typedef struct DlTab { int n; void *v[]; } DlTab;
 #define DL_MOD_MAGIA   0x464C4544u        /* "DELF": tells our handle from an ExLibTesta */
 
 typedef struct DlModulo {
     unsigned int     magia;
-    char             percorso[200];
+    char            *percorso;            /* malloc'd: no length limit */
     uintptr_t        base;                /* load bias: address = base + p_vaddr */
     void            *mappa;
     size_t           misura;
@@ -104,8 +112,8 @@ typedef struct DlModulo {
     void           (**fini_v)(void);
     size_t           fini_n;
     void           (*fini)(void);
-    struct DlModulo *dip[DL_DIP];
-    int              ndip;
+    struct DlModulo **dip;                /* DT_NEEDED, grows (dl_dip_metti) */
+    int              ndip, dip_posti;
     int              conta;               /* dlopen calls and dependents */
     int              tls_id;              /* 0 = no PT_TLS */
     uintptr_t        tls_imm;             /* the initial image */
@@ -115,7 +123,7 @@ typedef struct DlModulo {
     size_t           init_n;
 } DlModulo;
 
-static DlModulo *g_dlm[DL_MODULI];
+static DlTab *volatile g_dlm_tab;          /* every module loaded; 0 = free slot */
 static volatile int g_dl_lucchetto;      /* one dlopen at a time (the libc's mutex) */
 static volatile int g_dl_tls_lucchetto;  /* the TLS table: a constructor run by
                                           * dlopen may touch a __thread */
@@ -126,13 +134,62 @@ static int       g_dl_non_dyn;            /* the last candidate was an ELF but n
  * before a constructor writes to it. They are run in the order the modules
  * were finished, dependencies first. */
 static int       g_dl_rinvia;
-static DlModulo *g_dl_da_avviare[DL_MODULI];
-static int       g_dl_n_da_avviare;
+static DlModulo **g_dl_da_avviare;        /* only while the program starts: one thread */
+static int        g_dl_n_da_avviare, g_dl_posti_da_avviare;
 
 static void dl_dici(const char *cosa, const char *chi)
 {
     snprintf(g_dl_testo, sizeof(g_dl_testo), "%s: %s", chi ? chi : "?", cosa);
     g_dl_errore = g_dl_testo;
+}
+
+/* a table with room for at least `minimo` entries, the old ones copied in;
+ * the old table stays allocated (see DlTab above) */
+static DlTab *dl_tab_cresci(DlTab *vecchia, int minimo)
+{
+    int    n = vecchia ? vecchia->n : 0, nuovo = n ? n * 2 : 32;
+    DlTab *t;
+
+    while (nuovo < minimo) nuovo *= 2;
+    t = (DlTab *)calloc(1, sizeof(DlTab) + (size_t)nuovo * sizeof(void *));
+    if (!t) return 0;
+    t->n = nuovo;
+    if (vecchia) memcpy(t->v, vecchia->v, (size_t)n * sizeof(void *));
+    return t;
+}
+
+static DlTab *dl_tab_leggi(DlTab *volatile *dove)
+{
+    return __atomic_load_n(dove, __ATOMIC_ACQUIRE);
+}
+
+/* puts p in the first free slot from `primo` on, growing the table; the
+ * index, or -1 without memory. Called with the dlopen lock held. */
+static int dl_tab_metti(DlTab *volatile *dove, int primo, void *p)
+{
+    DlTab *t = dl_tab_leggi(dove), *nuova;
+    int    i;
+
+    for (i = primo; t && i < t->n; i++)
+        if (!t->v[i]) { __atomic_store_n(&t->v[i], p, __ATOMIC_RELEASE); return i; }
+    nuova = dl_tab_cresci(t, primo + 1);
+    if (!nuova) return -1;
+    i = t && t->n > primo ? t->n : primo;
+    nuova->v[i] = p;
+    __atomic_store_n(dove, nuova, __ATOMIC_RELEASE);
+    return i;
+}
+
+static int dl_dip_metti(DlModulo *m, DlModulo *dm)
+{
+    if (m->ndip == m->dip_posti) {
+        int        posti = m->dip_posti ? m->dip_posti * 2 : 8;
+        DlModulo **v = (DlModulo **)realloc(m->dip, (size_t)posti * sizeof(DlModulo *));
+        if (!v) return -1;
+        m->dip = v; m->dip_posti = posti;
+    }
+    m->dip[m->ndip++] = dm;
+    return 0;
 }
 
 /* --- the symbols ----------------------------------------------------------------- */
@@ -197,24 +254,40 @@ static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_
 /* the global scope: the program's table, the libc's, then every library */
 static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out)
 {
-    void *p;
-    int   i;
+    void  *p;
+    DlTab *t = dl_tab_leggi(&g_dlm_tab);
+    int    i;
 
     *chi = 0;
     if (__exos_esportati && &__exos_esportati_n &&
         (p = dl_tabella(__exos_esportati, __exos_esportati_n, nome)) != 0) return p;
     if ((p = dl_tabella(g_dl_libc, g_dl_libc_n, nome)) != 0) return p;
-    for (i = 0; i < DL_MODULI; i++)
-        if (g_dlm[i] && (p = dl_nel_modulo(g_dlm[i], nome, s_out)) != 0) { *chi = g_dlm[i]; return p; }
+    /* ! FOUND IS "THE MODULE DEFINES IT", NOT "THE VALUE IS NOT 0": the first
+     * __thread variable of a library is at offset 0 of its block, and was
+     * "undefined symbol" (4 November 2026, tools/prova-dl/prova-tante.sh) */
+    for (i = 0; t && i < t->n; i++) {
+        DlModulo    *m = (DlModulo *)t->v[i];
+        const DlSim *s = 0;
+        if (!m) continue;
+        p = dl_nel_modulo(m, nome, &s);
+        if (p || s) { *chi = m; if (s_out) *s_out = s; return p; }
+    }
     return 0;
 }
 
 /* --- thread-local storage --------------------------------------------------------- */
 typedef struct { uintptr_t modulo, offset; } DlTlsIndice;
 
-#define DL_TLS_POSTI 256
-static struct { volatile uintptr_t tp; int id; void *blocco; } g_dl_tls[DL_TLS_POSTI];
-static DlModulo *g_dl_tls_mod[DL_MODULI + 1];   /* id -> module */
+/* the block of each (thread, module) pair: a list of pieces that never move
+ * nor go away, so __tls_get_addr walks it without the lock; a new piece is
+ * added when every slot is taken */
+#define DL_TLS_PEZZO 64
+typedef struct DlTlsPezzo {
+    struct DlTlsPezzo *volatile succ;
+    struct { volatile uintptr_t tp; int id; void *blocco; } p[DL_TLS_PEZZO];
+} DlTlsPezzo;
+static DlTlsPezzo     g_dl_tls_primo;
+static DlTab *volatile g_dl_tls_tab;            /* id -> module (v[0] unused) */
 
 static uintptr_t dl_tp(void)
 {
@@ -229,35 +302,49 @@ static uintptr_t dl_tp(void)
 
 void *__tls_get_addr(DlTlsIndice *ti)
 {
-    uintptr_t tp = dl_tp();
-    int       i, id = (int)ti->modulo;
-    DlModulo *m;
-    void     *b = 0;
+    uintptr_t   tp = dl_tp();
+    int         i, id = (int)ti->modulo;
+    DlModulo   *m;
+    DlTab      *mt;
+    DlTlsPezzo *z, *ultimo = 0;
+    void       *b = 0;
 
-    for (i = 0; i < DL_TLS_POSTI; i++)
-        if (g_dl_tls[i].tp == tp && g_dl_tls[i].id == id) return (char *)g_dl_tls[i].blocco + ti->offset;
-    m = (id > 0 && id <= DL_MODULI) ? g_dl_tls_mod[id] : 0;
+    for (z = &g_dl_tls_primo; z; z = __atomic_load_n(&z->succ, __ATOMIC_ACQUIRE))
+        for (i = 0; i < DL_TLS_PEZZO; i++)
+            if (z->p[i].tp == tp && z->p[i].id == id) return (char *)z->p[i].blocco + ti->offset;
+    mt = dl_tab_leggi(&g_dl_tls_tab);
+    m = (mt && id > 0 && id < mt->n) ? (DlModulo *)mt->v[id] : 0;
     if (!m) return 0;
     if (posix_memalign(&b, m->tls_alli < sizeof(void *) ? sizeof(void *) : m->tls_alli, m->tls_mem) != 0)
         return 0;
     memcpy(b, (const void *)m->tls_imm, m->tls_file);
     memset((char *)b + m->tls_file, 0, m->tls_mem - m->tls_file);
     mutex_prendi(&g_dl_tls_lucchetto);
-    for (i = 0; i < DL_TLS_POSTI; i++)
-        if (g_dl_tls[i].tp == 0) { g_dl_tls[i].id = id; g_dl_tls[i].blocco = b; g_dl_tls[i].tp = tp; break; }
+    for (z = &g_dl_tls_primo; z; ultimo = z, z = z->succ)
+        for (i = 0; i < DL_TLS_PEZZO; i++)
+            if (z->p[i].tp == 0) goto posto;
+    z = (DlTlsPezzo *)calloc(1, sizeof(DlTlsPezzo));
+    if (!z) { mutex_lascia(&g_dl_tls_lucchetto); free(b); return 0; }
+    i = 0;
+    __atomic_store_n(&ultimo->succ, z, __ATOMIC_RELEASE);
+posto:
+    z->p[i].id = id; z->p[i].blocco = b;
+    __atomic_store_n(&z->p[i].tp, tp, __ATOMIC_RELEASE);
     mutex_lascia(&g_dl_tls_lucchetto);
-    if (i == DL_TLS_POSTI) { free(b); return 0; }
     return (char *)b + ti->offset;
 }
 
 /* a thread that ends gives its blocks back (thread_esci calls it) */
 void dl_tls_lascia(void)
 {
-    uintptr_t tp = dl_tp();
-    int       i;
+    uintptr_t   tp = dl_tp();
+    DlTlsPezzo *z;
+    int         i;
 
-    for (i = 0; i < DL_TLS_POSTI; i++)
-        if (g_dl_tls[i].tp == tp && tp) { free(g_dl_tls[i].blocco); g_dl_tls[i].blocco = 0; g_dl_tls[i].tp = 0; }
+    if (!tp) return;
+    for (z = &g_dl_tls_primo; z; z = __atomic_load_n(&z->succ, __ATOMIC_ACQUIRE))
+        for (i = 0; i < DL_TLS_PEZZO; i++)
+            if (z->p[i].tp == tp) { free(z->p[i].blocco); z->p[i].blocco = 0; z->p[i].tp = 0; }
 }
 
 #if !defined(__x86_64__)
@@ -309,10 +396,13 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
             const DlSim *ds = &m->sim[si], *dove = 0;
             const char  *nome = m->str + ds->st_name;
             void        *da = 0;
+            DlTab       *mt = dl_tab_leggi(&g_dlm_tab);
             int          k;
 
-            for (k = 0; k < DL_MODULI && !da; k++)  /* the definition, not the copy itself */
-                if (g_dlm[k] && g_dlm[k] != m) da = dl_nel_modulo(g_dlm[k], nome, &dove);
+            for (k = 0; mt && k < mt->n && !da; k++) {  /* the definition, not the copy itself */
+                DlModulo *x = (DlModulo *)mt->v[k];
+                if (x && x != m) da = dl_nel_modulo(x, nome, &dove);
+            }
             if (!da) { dl_dici("undefined symbol (COPY)", nome); return -1; }
             memcpy(p, da, ds->st_size < dove->st_size ? ds->st_size : dove->st_size);
             continue;
@@ -371,19 +461,22 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
 
 static void dl_libera(DlModulo *m)
 {
-    int i;
+    DlTab *t = dl_tab_leggi(&g_dlm_tab), *mt = dl_tab_leggi(&g_dl_tls_tab);
+    int    i;
 
-    for (i = 0; i < DL_MODULI; i++) if (g_dlm[i] == m) g_dlm[i] = 0;
-    if (m->tls_id) g_dl_tls_mod[m->tls_id] = 0;
+    for (i = 0; t && i < t->n; i++) if (t->v[i] == m) t->v[i] = 0;
+    if (m->tls_id && mt && m->tls_id < mt->n) mt->v[m->tls_id] = 0;
     if (m->mappa) munmap(m->mappa, m->misura);
     m->magia = 0;
+    free(m->dip);
+    free(m->percorso);
     free(m);
 }
 
 static DlModulo *dl_da_file(const char *percorso)
 {
     DlTestaElf    t;
-    DlFase        f[24];
+    DlFase       *f;
     DlModulo     *m;
     int           fd, i, n;
     uintptr_t     lo = ~(uintptr_t)0, hi = 0;
@@ -392,7 +485,7 @@ static DlModulo *dl_da_file(const char *percorso)
     const char   *runpath = 0;
     uintptr_t     rel = 0, jmp = 0, ia = 0, initf = 0;
     size_t        reln = 0, jmpn = 0, ian = 0;
-    char          origine[200];
+    char         *origine;
 
     fd = open(percorso, O_RDONLY);
     if (fd < 0) return 0;
@@ -403,33 +496,35 @@ static DlModulo *dl_da_file(const char *percorso)
         close(fd); g_dl_non_dyn = 1; return 0;     /* ET_EXEC: an EX-OS library, see dlopen */
     }
     if (t.e_ident[4] != DL_CLASSE || t.e_machine != DL_MACCHINA || t.e_type != 3 ||
-        t.e_phnum == 0 || t.e_phnum > 24 || t.e_phentsize != sizeof(DlFase)) {
+        t.e_phnum == 0 || t.e_phentsize != sizeof(DlFase)) {
         close(fd); dl_dici("not a shared object for this machine (ET_DYN, same class)", percorso);
         return (DlModulo *)-1;
     }
     n = t.e_phnum;
+    f = (DlFase *)malloc((size_t)n * sizeof(DlFase));
+    if (!f) { close(fd); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
     if (dl_leggi_a(fd, (uintptr_t)f, n * sizeof(DlFase), (long)t.e_phoff) != 0) {
-        close(fd); dl_dici("cannot read the program headers", percorso); return (DlModulo *)-1;
+        free(f); close(fd); dl_dici("cannot read the program headers", percorso); return (DlModulo *)-1;
     }
     for (i = 0; i < n; i++) if (f[i].p_type == 1) {                                 /* PT_LOAD */
         if (f[i].p_vaddr < lo) lo = f[i].p_vaddr;
         if (f[i].p_vaddr + f[i].p_memsz > hi) hi = f[i].p_vaddr + f[i].p_memsz;
     }
-    if (hi <= lo) { close(fd); dl_dici("no loadable segment", percorso); return (DlModulo *)-1; }
+    if (hi <= lo) { free(f); close(fd); dl_dici("no loadable segment", percorso); return (DlModulo *)-1; }
     lo &= ~(uintptr_t)4095; hi = (hi + 4095) & ~(uintptr_t)4095;
 
     m = (DlModulo *)calloc(1, sizeof(DlModulo));
-    if (!m) { close(fd); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
+    if (m) m->percorso = strdup(percorso);
+    if (!m || !m->percorso) { free(m); free(f); close(fd); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
     m->magia = DL_MOD_MAGIA;
-    strncpy(m->percorso, percorso, sizeof(m->percorso) - 1);
     m->misura = hi - lo;
     m->mappa = mmap(0, m->misura, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (m->mappa == MAP_FAILED) { m->mappa = 0; close(fd); free(m); dl_dici("out of memory (mmap)", percorso); return (DlModulo *)-1; }
+    if (m->mappa == MAP_FAILED) { m->mappa = 0; free(f); close(fd); dl_libera(m); dl_dici("out of memory (mmap)", percorso); return (DlModulo *)-1; }
     m->base = (uintptr_t)m->mappa - lo;
     for (i = 0; i < n; i++) {
         if (f[i].p_type == 1 && f[i].p_filesz &&
             dl_leggi_a(fd, m->base + f[i].p_vaddr, f[i].p_filesz, (long)f[i].p_offset) != 0) {
-            close(fd); dl_libera(m); dl_dici("short read", percorso); return (DlModulo *)-1;
+            free(f); close(fd); dl_libera(m); dl_dici("short read", percorso); return (DlModulo *)-1;
         }
         if (f[i].p_type == 2) din = m->base + f[i].p_vaddr;                         /* PT_DYNAMIC */
         if (f[i].p_type == 7) {                                                     /* PT_TLS */
@@ -437,6 +532,7 @@ static DlModulo *dl_da_file(const char *percorso)
             m->tls_mem = f[i].p_memsz; m->tls_alli = f[i].p_align ? f[i].p_align : 1;
         }
     }
+    free(f);
     close(fd);
     if (!din) { dl_libera(m); dl_dici("no PT_DYNAMIC", percorso); return (DlModulo *)-1; }
     m->din = (const DlDin *)din;
@@ -464,27 +560,25 @@ static DlModulo *dl_da_file(const char *percorso)
 
     /* the module is in the global scope before its own relocations: it may
      * refer to its own exported symbols through the GOT */
-    for (i = 0; i < DL_MODULI && g_dlm[i]; i++) { }
-    if (i == DL_MODULI) { dl_libera(m); dl_dici("too many libraries open", percorso); return (DlModulo *)-1; }
-    g_dlm[i] = m;
+    if (dl_tab_metti(&g_dlm_tab, 0, m) < 0) { dl_libera(m); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
     if (m->tls_mem) {
-        int k;
-        for (k = 1; k <= DL_MODULI && g_dl_tls_mod[k]; k++) { }
-        if (k > DL_MODULI) { dl_libera(m); dl_dici("too many TLS modules", percorso); return (DlModulo *)-1; }
-        g_dl_tls_mod[k] = m; m->tls_id = k;
+        int k = dl_tab_metti(&g_dl_tls_tab, 1, m);                                 /* ids from 1 */
+        if (k < 0) { dl_libera(m); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
+        m->tls_id = k;
     }
 
     /* the dependencies first */
-    strncpy(origine, percorso, sizeof(origine) - 1); origine[sizeof(origine) - 1] = 0;
+    origine = strdup(percorso);
+    if (!origine) { dl_libera(m); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
     { char *b = strrchr(origine, '/'); if (b) *b = 0; else strcpy(origine, "."); }
     for (d = m->din; d->d_tag; d++) {
         DlModulo *dm;
         if (d->d_tag != 1) continue;                                               /* DT_NEEDED */
-        if (m->ndip == DL_DIP) { dl_libera(m); dl_dici("too many DT_NEEDED", percorso); return (DlModulo *)-1; }
         dm = dl_carica(m->str + d->d_val, runpath, origine);
-        if (!dm) { dl_libera(m); return (DlModulo *)-1; }                            /* dlerror says it */
-        m->dip[m->ndip++] = dm;
+        if (!dm) { free(origine); dl_libera(m); return (DlModulo *)-1; }             /* dlerror says it */
+        if (dl_dip_metti(m, dm) != 0) { free(origine); dl_libera(m); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
     }
+    free(origine);
 
     if ((rel && dl_riloca(m, (const DlRel *)rel, reln) != 0) ||
         (jmp && dl_riloca(m, (const DlRel *)jmp, jmpn) != 0)) {
@@ -495,7 +589,12 @@ static DlModulo *dl_da_file(const char *percorso)
     m->init = (void (*)(void))initf;
     m->init_v = (void (**)(void))ia;
     m->init_n = ian;
-    if (g_dl_rinvia && g_dl_n_da_avviare < DL_MODULI) g_dl_da_avviare[g_dl_n_da_avviare++] = m;
+    if (g_dl_rinvia && g_dl_n_da_avviare == g_dl_posti_da_avviare) {
+        int        posti = g_dl_posti_da_avviare ? g_dl_posti_da_avviare * 2 : 32;
+        DlModulo **v = (DlModulo **)realloc(g_dl_da_avviare, (size_t)posti * sizeof(DlModulo *));
+        if (v) { g_dl_da_avviare = v; g_dl_posti_da_avviare = posti; }
+    }
+    if (g_dl_rinvia && g_dl_n_da_avviare < g_dl_posti_da_avviare) g_dl_da_avviare[g_dl_n_da_avviare++] = m;
     else dl_avvia_modulo(m);
     return m;
 }
@@ -503,18 +602,23 @@ static DlModulo *dl_da_file(const char *percorso)
 /* one path from a search list, with $ORIGIN */
 static DlModulo *dl_prova_dir(const char *dir, size_t dn, const char *nome, const char *origine)
 {
-    char p[256];
-    size_t k = 0;
+    const char *o = origine ? origine : ".";
+    char       *p;
+    size_t      k = 0;
+    DlModulo   *m;
 
+    p = (char *)malloc(strlen(o) + dn + strlen(nome) + 2);      /* no length limit */
+    if (!p) return 0;
     if (dn >= 7 && strncmp(dir, "$ORIGIN", 7) == 0) {
-        k = (size_t)snprintf(p, sizeof(p), "%s", origine ? origine : ".");
+        k = strlen(o); memcpy(p, o, k);
         dir += 7; dn -= 7;
     }
-    if (k + dn + strlen(nome) + 2 >= sizeof(p)) return 0;
     memcpy(p + k, dir, dn); k += dn;
     if (k && p[k - 1] != '/') p[k++] = '/';
     strcpy(p + k, nome);
-    return dl_da_file(p);
+    m = dl_da_file(p);
+    free(p);
+    return m;
 }
 
 static DlModulo *dl_lista(const char *lista, const char *nome, const char *origine)
@@ -536,14 +640,16 @@ static DlModulo *dl_carica(const char *nome, const char *runpath, const char *or
     static const char *const dove = "/lib:/exos/lib:/exwin/lib:/cdrom/lib:/cdrom/exos/lib:/cdrom/exwin/lib";
     const char *base = strrchr(nome, '/');
     DlModulo   *m;
+    DlTab      *t = dl_tab_leggi(&g_dlm_tab);
     int         i;
 
-    for (i = 0; i < DL_MODULI; i++) {
+    for (i = 0; t && i < t->n; i++) {
+        DlModulo   *x = (DlModulo *)t->v[i];
         const char *b;
-        if (!g_dlm[i]) continue;
-        b = strrchr(g_dlm[i]->percorso, '/');
-        if (strcmp(g_dlm[i]->percorso, nome) == 0 ||
-            (!base && b && strcmp(b + 1, nome) == 0)) { g_dlm[i]->conta++; return g_dlm[i]; }
+        if (!x) continue;
+        b = strrchr(x->percorso, '/');
+        if (strcmp(x->percorso, nome) == 0 ||
+            (!base && b && strcmp(b + 1, nome) == 0)) { x->conta++; return x; }
     }
     g_dl_errore = 0;
     if (base) m = dl_da_file(nome);
@@ -604,12 +710,14 @@ void __exos_dl_avvio_programma(const char *argv0)
     const char   *runpath = 0;
     uintptr_t     rel = 0, jmp = 0;
     size_t        reln = 0, jmpn = 0;
-    char          origine[200];
+    char         *origine;
     int           i;
 
     if (!_DYNAMIC) return;                       /* a static program: nothing to do */
     if (!argv0) argv0 = "?";
-    strncpy(m->percorso, argv0, sizeof(m->percorso) - 1);
+    m->percorso = strdup(argv0);
+    origine = strdup(argv0);
+    if (!m->percorso || !origine) { dl_dici("out of memory", argv0); dl_muori(argv0); }
     m->base = 0;                                 /* ET_EXEC: addresses are absolute */
     m->din = _DYNAMIC;
     m->conta = 1 << 30;                          /* never closed */
@@ -627,9 +735,8 @@ void __exos_dl_avvio_programma(const char *argv0)
         if ((d->d_tag == 29 || d->d_tag == 15) && m->str) runpath = m->str + d->d_val;
     m->nsim = dl_conta_sim(m->din, 0);
     if (!m->sim || !m->str) { dl_dici("no dynamic symbol table", argv0); dl_muori(argv0); }
-    g_dlm[0] = m;
+    if (dl_tab_metti(&g_dlm_tab, 0, m) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
 
-    strncpy(origine, argv0, sizeof(origine) - 1); origine[sizeof(origine) - 1] = 0;
     { char *b = strrchr(origine, '/'); if (b) *b = 0; else strcpy(origine, "."); }
     g_dl_rinvia = 1;
     for (d = m->din; d->d_tag; d++) {
@@ -637,8 +744,9 @@ void __exos_dl_avvio_programma(const char *argv0)
         if (d->d_tag != 1) continue;             /* DT_NEEDED */
         dm = dl_carica(m->str + d->d_val, runpath, origine);
         if (!dm) dl_muori(argv0);
-        if (m->ndip < DL_DIP) m->dip[m->ndip++] = dm;
+        if (dl_dip_metti(m, dm) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
     }
+    free(origine);
     if ((rel && dl_riloca(m, (const DlRel *)rel, reln) != 0) ||
         (jmp && dl_riloca(m, (const DlRel *)jmp, jmpn) != 0))
         dl_muori(argv0);
@@ -662,29 +770,39 @@ static void dl_chiudi(DlModulo *m)
 /* a symbol in module m or in what it depends on, breadth first */
 static void *dl_nel_grafo(DlModulo *m, const char *nome)
 {
-    DlModulo *coda[DL_MODULI];
-    int       a = 0, z = 0, i, j;
+    DlModulo **coda, **v;
+    void      *p = 0;
+    int        a = 0, z = 0, posti = 32, i, j;
 
+    coda = (DlModulo **)malloc((size_t)posti * sizeof(DlModulo *));
+    if (!coda) return dl_nel_modulo(m, nome, 0);
     coda[z++] = m;
-    while (a < z) {
+    while (a < z && !p) {
         DlModulo *x = coda[a++];
-        void     *p = dl_nel_modulo(x, nome, 0);
-        if (p) return p;
-        for (i = 0; i < x->ndip && z < DL_MODULI; i++) {
+        if ((p = dl_nel_modulo(x, nome, 0)) != 0) break;
+        for (i = 0; i < x->ndip; i++) {
             for (j = 0; j < z && coda[j] != x->dip[i]; j++) { }
-            if (j == z) coda[z++] = x->dip[i];
+            if (j < z) continue;
+            if (z == posti) {
+                v = (DlModulo **)realloc(coda, (size_t)posti * 2 * sizeof(DlModulo *));
+                if (!v) break;
+                coda = v; posti *= 2;
+            }
+            coda[z++] = x->dip[i];
         }
     }
-    return 0;
+    free(coda);
+    return p;
 }
 
 static int dl_addr_elf(const void *a, DlInfo *info)
 {
     uintptr_t x = (uintptr_t)a;
+    DlTab    *t = dl_tab_leggi(&g_dlm_tab);
     int       i;
 
-    for (i = 0; i < DL_MODULI; i++) {
-        DlModulo    *m = g_dlm[i];
+    for (i = 0; t && i < t->n; i++) {
+        DlModulo    *m = (DlModulo *)t->v[i];
         const DlSim *meglio = 0;
         unsigned int k;
 

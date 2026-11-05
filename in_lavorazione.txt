@@ -8659,7 +8659,10 @@ tools/netinst/velocita tolto da netinst.
       Rimedio per chi aggiorna con un modulo vecchio in memoria: netupdate
       0.043, sync() subito prima di bootinstall e dopo. ! Da provare al
       prossimo aggiornamento del kernel del portatile.
-      Stato: causa trovata; da chiudere dopo quella prova.
+      4/11 SERA, PROVATA: netupdate 0.043 da /root, -check -yes alla 0.312;
+      settore riletto a partizione smontata = /boot/kernel.bin byte per
+      byte; reboot, 0.312 col disco scrivibile.
+      Stato: CHIUSA.
 
   76. orologio IN FAULT ALL'AVVIO DELLA SCRIVANIA, A 64 BIT (3/11, QEMU, una
       volta su tre giri di tools/prova_expackage.sh, kernel 0.310): "[FAULT]
@@ -8683,7 +8686,117 @@ tools/netinst/velocita tolto da netinst.
       e sul portatile (VLC gia' installato) la voce va aggiunta: -install:vlc
       di nuovo, o netupdate -check che rimetta i menu dei pacchetti presenti.
       Guardare anche gli altri pacchetti con un programma grafico.
-      Stato: in coda.
+      FATTA il 4/11 sera. menu = Multimedia/VLC | /exos/bin/vlcapri |
+      /exos/share/vlc/vlc_64.ico. La voce avvia vlcapri 0.001 (nuovo,
+      exwin/bin/vlcapri, del pacchetto vlc come exilla): finestra Apri,
+      avviso se il suono e' spento, vlc -I dummy --play-and-exit <file>
+      (vlc da solo dal menu aprirebbe l'interfaccia a righe senza console).
+      Icona da share/icons/256x256/vlc.png con tools/png2ico.py (nuovo).
+      su-cd.sh mette vlcapri e icone sul CD strumenti; mkiso64.sh toglie
+      exilla e vlcapri da /exwin/bin del sistema a 64 bit. Sul portatile:
+      -check -yes ha portato i file e scritto la voce; l'utente ha
+      provato Avvio > Multimedia > VLC con gizmo.mp4: video e suono ok.
+      Altri pacchetti grafici: nessuno (solo exilla, che la voce ce l'ha).
+      ! Resta: toolinst (dal CD) non legge `menu`; a 32 bit il lanciatore
+      e' costruito, il repository a 32 non e' stato rifatto.
+      DOPO (l'utente, 4/11 notte): "vlc manca il menu e tutti i controlli
+      inoltre cliccando sul quadrato rosso in alto a destra non si chiude".
+      La croce: in VLC 3 l'evento di chiusura del vout non fa niente
+      (FIXME a monte); vout_exos.c ora chiama libvlc_Quit. Provato sul
+      portatile (64): si chiude. VLC ricollegato a 32 e 64
+      (costruisci.sh VLC_SOLO_COLLEGA=1); il repository locale a 64 non ha
+      ancora il vlc nuovo. Menu e controlli: interfaccia Qt -> voce 85.
+      Stato: fatta.
+
+  85. Qt 5 SU EX-OS, PER L'INTERFACCIA DI VLC (l'utente, 4/11 notte: "forse
+      richiede toolkit non ancora presenti fai un elenco e implementali";
+      scelto "Qt 5 completo"). VLC 3 vuole Qt5Core >= 5.5, Qt5Widgets,
+      Qt5Gui, Qt5Svg (configure.ac); skins2 vuole X11 o Win32. In ordine:
+      1) libstdc++.so condivisa: la libstdc++.a del cross gcc NON e' -fPIC
+         (R_X86_64_32, "recompile with -fPIC"): va ricostruita dal gcc
+         con -fPIC (tools/gcc-exos), 32 e 64;
+      2) FreeType, HarfBuzz, libpng condivise, ultima versione, sorgenti
+         sul CD strumenti;
+      3) caratteri TTF (DejaVu) se quelli di ExWin non li legge FreeType;
+      4) Qt 5.15.x (ultima open source): QtCore, QtGui, QtWidgets, QtSvg;
+      5) il plugin QPA "exwin": finestre nella zona shm di wserver,
+         tastiera, mouse e rotella, cursore, appunti;
+      6) VLC con --enable-qt, provato sul portatile.
+      Tutto a 32 e 64 bit, librerie .so (regola delle librerie di terzi).
+      L'utente, 4/11 notte: "con la presenza di QT, e con il porting di GTK3
+      si risolve il problema del porting delle altre app che richiedono
+      ambiente grafico". Si': Qt 5 + GTK 3 (voce 42) coprono quasi tutte le
+      applicazioni grafiche; per ognuna resta il suo backend (QPA "exwin",
+      GDK "exwin"), e le librerie sotto GTK (GLib, Pango, Cairo, ATK,
+      gdk-pixbuf, fontconfig) che Qt non chiede. Le parti in comune
+      (libstdc++.so, FreeType, HarfBuzz, libpng, fontconfig, i caratteri) si
+      fanno una volta per tutt'e due.
+      E (l'utente, 4/11 notte): "se un applicazione o ambiente o libreria
+      necessita di una syscall, variabile ambiente, o anche di una
+      directory va implementata a prescindere". Quindi PRIMA di Qt:
+      l'elenco di quel che QtCore chiede al sistema, ognuna implementata in
+      EX-OS e non aggirata nel porting: /proc/self/exe (applicationFilePath),
+      le directory XDG e le variabili (HOME, XDG_RUNTIME_DIR, XDG_CONFIG_HOME,
+      XDG_DATA_DIRS, TMPDIR), QFileSystemWatcher (inotify o il suo
+      sostituto), QSharedMemory/QSystemSemaphore (shm_open, sem_open,
+      ftok/SysV), QLocalSocket (AF_UNIX), QProcess (fork/exec, pipe,
+      waitpid, SIGCHLD), eventfd o pipe per il ciclo degli eventi,
+      clock_gettime MONOTONIC, getrlimit, mmap dei file, iconv, dlopen dei
+      plugin (il QPA e' un plugin).
+      FATTO, 4/11 notte:
+      1) a 64 bit: tools/librerie-exos/cxx-condivise.sh (nuovo) fa
+         libgcc_s.so.1 (l'unwinder delle eccezioni, UNO per tutti: quello
+         della libgcc statica e' nascosto, ogni .so ne avrebbe avuto una
+         copia sua e un'eccezione che attraversa due librerie finiva in
+         terminate) e libstdc++.so.6 (ricostruita -fPIC accanto alla
+         toolchain: la libstdc++.a non e' PIC). Le specs
+         (tools/gcc-exos/specs-condivise.sh) prendono -lgcc_s --as-needed
+         dove il sysroot lo ha. In /lib dei CD come libm.so.4.
+         tools/prova-dl/prova-cxx.sh (nuovo) in QEMU: eccezione dalla
+         libreria presa nel programma, eccezione del programma attraverso
+         un frame della libreria, bad_alloc da libstdc++.so, std::thread,
+         std::mutex, statica con lucchetto: 8 su 8. Un programma C resta
+         statico; prova-avvio e prova-dl passano.
+         A 32 bit: la toolchain di questa macchina e' senza fili ("Thread
+         model: single"): tools/exilla/gcc-fili.sh la rifa', poi lo stesso.
+      0) lib/libc_dl.c senza tetti: 32 moduli, 16 DT_NEEDED, 32 moduli TLS,
+         256 blocchi TLS, 24 program header, percorsi di 200/256 byte.
+         Ora le tabelle crescono (quelle lette senza lucchetto non si
+         liberano quando crescono). Trovato e corretto anche: la prima
+         variabile __thread esportata da una libreria (offset 0) era
+         "undefined symbol". tools/prova-dl/prova-tante.sh (nuovo): 40 e
+         100 librerie, 8 fili, 800 blocchi TLS, dlopen della 101a: ok.
+         Libc nuova nei sysroot a 64 bit.
+      4/11 notte, seguito:
+      - punto 1 anche a 32 bit (SJLJ: _Unwind_SjLj_*, un libgcc_s solo);
+        la toolchain 32 di questa macchina rifatta coi fili; prove 32 ok.
+      - punto 2: libpng 1.6.59, FreeType 2.15.0 (firma di Werner Lemberg),
+        HarfBuzz 15.0.0 (meson; sha256 della release) scaricati in
+        cross_build/terze-parti; tools/libpng-exos, tools/freetype-exos,
+        tools/harfbuzz-exos (nuovi). libpng e FreeType fatte 32/64;
+        HarfBuzz fermo su "-pthread" che il gcc di EX-OS rifiutava:
+        aggiunto al compilatore (tools/gcc-exos/exos.opt e .opt.urls,
+        -pthread = _REENTRANT + -lpthread, -rdynamic = --export-dynamic;
+        applica.py con AGGIORNAMENTI per gli alberi vecchi). Toolchain coi
+        fili in ricostruzione. DejaVu 2.37 scaricato.
+      - Qt 5.15.19 (l'ultima pubblica) qtbase e qtsvg in
+        cross_build/terze-parti/qt, sha256 uguale a quello di Qt.
+        tools/qt5-exos/applica.py (Q_OS_EXOS) e la mkspec exos-g++.
+      - COSA QT CHIEDE A EX-OS (primo elenco, da completare col configure):
+        header mancanti: langinfo.h, ifaddrs.h; funzioni: nl_langinfo,
+        getifaddrs/freeifaddrs (e nomi veri alle interfacce: lo, eth0),
+        dup3, ppoll, asprintf/vasprintf, get_current_dir_name, sendfile,
+        setmntent/getmntent/getmntent_r/endmntent, sem_open/sem_close/
+        sem_unlink (semafori con nome fra processi), SysV o POSIX IPC per
+        QSharedMemory; file: /etc/machine-id, /proc/sys/kernel/random/
+        boot_id, /etc/os-release, /etc/localtime e /usr/share/zoneinfo
+        (tzdata), /etc/xdg; variabili: XDG_RUNTIME_DIR e le altre XDG.
+        QStorageInfo su un Unix sconosciuto non elenca niente: con
+        /proc/self/mountinfo EX-OS puo' usare il ramo di Linux.
+        ! fork(): QProcess di Qt 5 avvia i programmi solo con fork+exec, e
+        EX-OS non ha fork (voce 33). L'utente, 4/11 notte: "Prima fork, poi
+        Qt": si fa la voce 33 adesso, poi si riprende da qui.
+      Stato: in pausa per la voce 33 (fork), poi punto 2 e l'elenco qui sopra.
 
   80. PROGRAM MANAGER ORDINATO, E UN LETTORE VIDEO (l'utente, 4/11):
       - Strumenti: File manager, Calctor, Archivi, Pennello, Immagini (oggi
@@ -8762,8 +8875,23 @@ tools/netinst/velocita tolto da netinst.
          0 0"); da sistemare al prossimo cambio del kernel.
          Da decidere: hwconfig che scrive da solo il blocco -auto quando
          `cpufreq.drv -i` dice si'.
-      b) SCHERMO (DPMS): da fare.
-      Stato: a) fatto e provato; b) in coda, prossimo.
+      b) SCHERMO (DPMS): FATTO il 4/11 sera. Kernel 0.312, SYS_ATTIVITA 262
+         (attivita_tocca da kbd.drv 0.010, usb_comune.c -> ohci 0.009,
+         uhci 0.005, xhci 0.004, mouseser 0.002; la libc non chiama su un
+         kernel < 0.312). /dev/dpms.drv 0.002: servizio "dpms", -dopo:M,
+         -spegni, -accendi, -ferma, -install [M], -remove, -i. Metodi: nv50
+         (SOR 0x61C004, G80SorDPMSSet) e vga (SR01 + bit PAS dell'AR: QEMU
+         in VBE rispetta solo il PAS). tools/prova_dpms.sh 26 su 26 (32 e
+         64). SUL PORTATILE: -spegni spegne pannello e retroilluminazione
+         (l'utente l'ha visto), un tasto riaccende subito, -dopo:1 si
+         spegne da solo e il touchpad riaccende. Installato a 10 minuti.
+         ! Restano: un monitor a tubo con "vga" non va in risparmio (solo
+         nero: CRTC 17 non si tocca per il cursore del kernel); un
+         lettore video dovrebbe chiamare attivita_tocca (VLC, Firefox a
+         tutto schermo); hwconfig non lo installa da solo (come cpufreq,
+         da decidere); il pannello Impostazioni (@IMPOSTAZIONI-SCHEDE) non
+         ha ancora la scelta del tempo.
+      Stato: a) e b) fatti e provati sul portatile.
 
   77. DA FARE DOPO IL 3-4/11 (librerie condivise, VLC, ExPackage), messo in
       coda dall'utente il 4/11 ("metti in coda le cose da fare"):
@@ -10026,6 +10154,31 @@ tools/netinst/velocita tolto da netinst.
          descrittori condivisi, fork da un programma con piu' fili), poi il
          porting di Redis (BGSAVE sotto carico) e di Apache2.
       Collegata alla voce 32 (la domanda su Redis) e ai limiti TCP dinamici.
+      L'utente, 4/11 notte: "Prima fork, poi Qt" (QProcess di Qt 5 la
+      vuole, voce 85). FATTA IN QEMU il 5/11 notte, DA PROVARE SUL PORTATILE.
+      5/11 FATTO: kernel 0.313 (SYS_FORK 263, PG_COW bit 10, PG_CONDIVISA
+      bit 11, CR0.WP acceso, conteggi del PMM senza tetto: g_oltre oltre i
+      256, g_alta_rif sopra i 4 GB; proc_prepara_fork, shm_fork, waitpid
+      su ogni figlio, SIGCHLD); libc fork/vfork/pthread_atfork veri; le
+      PIPE ricordano TUTTI quelli che aspettano (fino alla 0.312 solo
+      l'ultimo: 300 figli su una pipe restavano fermi per sempre);
+      ip.drv 0.021: socket con piu' proprietari (IP_MSG_EREDITA 26, lo
+      manda il PADRE per il figlio, il figlio aspetta su una pipe), close
+      di uno lascia solo quello, accept in coda su un ascoltatore, la
+      connessione accettata e' di chi accetta. Prova:
+      tools/prova-fork/prova-fork.sh [32]: 16 su 16 a 64 bit (e a 32, vedi
+      sotto), in QEMU con 512 MB.
+      ANCORA APERTO:
+      f) TETTO DEI PROCESSI: ogni processo ha 128 KB di pila del kernel,
+         32 pagine CONTIGUE nei primi 64 MB: circa 400 processi in tutto
+         anche con 8 GB (con 32 MB di QEMU: 109 figli). Per Apache prefork
+         con 256 figli e i 32 mila client e' il prossimo tetto da togliere.
+      g) una connessione sta in UN solo insieme epoll (Conn.ins): due
+         figli che la mettono ciascuno nel proprio epoll -> EEXIST al
+         secondo (nginx lo fa; Apache usa poll, apr_cv_epoll=no).
+      h) UDP: un solo lettore per porta (g_udp.lettore) e UDP_PORTE 16
+         fisso; pty: un solo processo in attesa per lato.
+      i) Apache col MPM prefork e Redis (BGSAVE) da costruire e provare.
 
   32. STRESS TEST DI MARIADB (l'utente, 26/10: «mi serve uno stress test,
       ho bisogno che riescono a collegarsi 1024 client a mariadb e inviare
