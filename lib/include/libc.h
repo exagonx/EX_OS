@@ -711,6 +711,14 @@ char   *getcwd(char *buf, size_t size);
  * '/', e il file deve ESISTERE. ! Non segue collegamenti simbolici
  * perche' EX-OS non ne ha. Con `resolved` NULL alloca con malloc. */
 char   *realpath(const char *path, char *resolved);
+/* <stdlib.h>, the pseudo-terminals by name (kernel 0.318): the master from
+ * /dev/ptmx, the slave /dev/pts/N once unlocked. See lib/libc.c. */
+int     posix_openpt(int flag);
+int     grantpt(int fd);
+int     unlockpt(int fd);
+char   *ptsname(int fd);
+int     ptsname_r(int fd, char *buf, size_t dim);
+int     getpt(void);
 
 /* argv[0] del programma, come l'ha ricevuto main (lo mette l'avvio,
  * lib/libc_avvio.c). Il nome e' quello di glibc. */

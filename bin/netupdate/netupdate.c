@@ -42,9 +42,10 @@
 #include "libc.h"
 #include "exhttp.h"
 #include "inflate.h"
+#include <sys/utsname.h>
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.043");
+EX_VERSIONE("netupdate", "0.044");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -3597,6 +3598,151 @@ static int comando_repo(const char *indirizzo)
  * non aggiunge niente; 2 = -yesall, aggiunge anche quelli mai installati.
  * Serve a chi guida la macchina da lontano o da uno script, dove alla
  * domanda non risponde nessuno. */
+/* =============================================================================
+ * LE VERIFICHE (netupdate 0.044, 5 November 2026)
+ *
+ * ! WHAT ARRIVES IS NOT ALWAYS ENOUGH. A new kernel wants a reboot; Valkey
+ * 9.1.3 wants a kernel with non-blocking pipes; the PATH of kernel.cfg is
+ * this machine's and netupdate never rewrites it. The user's rule (30
+ * October 2026): every novelty reaches the installed machines through
+ * netupdate, which downloads an sh that checks that the environment is
+ * fit, or says what to do when it cannot do it itself.
+ *
+ * ON THE SERVER (tools/mknetinst.sh, from tools/netinst/verifiche/):
+ *     verifiche.txt        one line per script: <package> TAB <file> TAB
+ *                          <sha256>; "sistema" is every machine's
+ *     verifiche/<file>     the scripts
+ *     versione.txt         verifiche = <sha256 of verifiche.txt>
+ * ! THE SAME CHAIN OF TRUST AS THE FILES: versione.txt names verifiche.txt
+ * by its fingerprint, verifiche.txt names each script by its own. A script
+ * that is not the one listed is not run.
+ *
+ * WHICH ONES RUN: after -check (also when nothing changed), "sistema" and
+ * every package installed here; after -install:X, X and what came with it;
+ * `-verifica` alone runs them without updating, `-verifica:X` only X's.
+ * `-noverifica` anywhere on the line skips them.
+ *
+ * HOW: /bin/sh <script> (sh 0.010: variables, if, test), with the console
+ * of netupdate, and in the environment
+ *     NETUPDATE_PACCHETTO  the package the script is for
+ *     NETUPDATE_SISTEMA    the system version on the server (0.318...)
+ *     NETUPDATE_KERNEL     the kernel running now (uname -r)
+ *     NETUPDATE_RIAVVIO    1 if this run changed the kernel: what runs now
+ *                          is the old one until the reboot
+ *     NETUPDATE_ARCH       i386 or x86_64
+ *     NETUPDATE_SERVER     the address it updates from
+ * The exit status:  0 all is well,  1 something to do BY HAND (the script
+ * said what),  2 it fixed something itself,  other: the check went wrong.
+ * ! A CHECK NEVER ASKS: it runs under -yes, from telnet, at night. It says,
+ * and the summary repeats it. Every run goes in /boot/netupdate.ver.
+ * ============================================================================= */
+#define VERIFICHE_LOG  "/boot/netupdate.ver"
+static int g_noverifica = 0;
+
+static int verifica_scelta(const char *pac, const char *solo[], int nsolo)
+{
+    int i;
+
+    if (nsolo == 0)
+        return strcmp(pac, "sistema") == 0 || pacchetto_installato(pac);
+    for (i = 0; i < nsolo; i++) if (strcmp(pac, solo[i]) == 0) return 1;
+    return 0;
+}
+
+/* 0 = ran (or nothing to run), 1 = something to do by hand, -1 = the server
+ * or a script could not be trusted or started */
+static int verifiche_esegui(const Config *c, const char *ver,
+                            const char *solo[], int nsolo, int riavvio)
+{
+    char   h_ver[72], lista[PERC_MAX], riga[RIGA_MAX], kernel[64] = "?";
+    char   sistema[16] = "?", arch[16] = "?";
+    char   esiti[2048];
+    FILE  *f, *log;
+    int    fatte = 0, a_mano = 0, guaste = 0;
+    struct utsname u;
+
+    if (g_noverifica) return 0;
+    if (chiave_da_file(ver, "verifiche", h_ver, sizeof(h_ver)) != 0) return 0;  /* an older server */
+
+    snprintf(lista, sizeof(lista), "%s/verifiche.txt", TMPDIR);
+    if (prendi_verifica_scrivi(c, "verifiche.txt", h_ver, lista) != 0) {
+        printf("\n! Le verifiche non sono arrivate intere: non ne eseguo nessuna.\n");
+        return -1;
+    }
+    chiave_da_file(ver, "versione", sistema, sizeof(sistema));
+    chiave_da_file(ver, "arch", arch, sizeof(arch));
+    if (uname(&u) == 0) copia_str(kernel, u.release, sizeof(kernel));
+
+    f = fopen(lista, "r");
+    if (f == NULL) return -1;
+    mkdir(TMPDIR "/verifiche", 0755);
+    esiti[0] = 0;
+    log = fopen(VERIFICHE_LOG, "a");
+
+    while (fgets(riga, sizeof(riga), f) != NULL) {
+        char *pac = riga, *nome, *impronta, *e;
+        char  coda[PERC_MAX], dove[PERC_MAX], *av[3];
+        int   pid, stato = 0, x;
+
+        if (riga[0] == '#' || riga[0] == '\n') continue;
+        nome = strchr(pac, '\t');
+        if (!nome) continue;
+        *nome++ = 0;
+        impronta = strchr(nome, '\t');
+        if (!impronta) continue;
+        *impronta++ = 0;
+        for (e = impronta; *e && *e != '\n' && *e != '\r'; e++) ;
+        *e = 0;
+        /* ! A NAME WITH A SLASH IS NOT A SCRIPT OF verifiche/: it would put
+         * a file anywhere above TMPDIR */
+        if (strchr(nome, '/') || nome[0] == '.' || !verifica_scelta(pac, solo, nsolo)) continue;
+
+        snprintf(coda, sizeof(coda), "verifiche/%s", nome);
+        snprintf(dove, sizeof(dove), "%s/verifiche/%s", TMPDIR, nome);
+        if (fatte == 0 && guaste == 0) printf("\nVerifiche\n");
+        if (prendi_verifica_scrivi(c, coda, impronta, dove) != 0) {
+            printf("  ! %s (%s): non arrivata intera, non la eseguo\n", nome, pac);
+            guaste++;
+            continue;
+        }
+        setenv("NETUPDATE_PACCHETTO", pac, 1);
+        setenv("NETUPDATE_SISTEMA", sistema, 1);
+        setenv("NETUPDATE_KERNEL", kernel, 1);
+        setenv("NETUPDATE_RIAVVIO", riavvio ? "1" : "0", 1);
+        setenv("NETUPDATE_ARCH", arch, 1);
+        setenv("NETUPDATE_SERVER", c->url, 1);
+        printf("  -- %s (%s)\n", nome, pac);
+        av[0] = (char *)"/bin/sh";
+        av[1] = dove;
+        av[2] = 0;
+        pid = spawn(av[0], av);
+        if (pid < 0) { printf("  ! /bin/sh non parte\n"); guaste++; continue; }
+        waitpid(pid, &stato, 0);
+        x = WIFEXITED(stato) ? WEXITSTATUS(stato) : -1;
+        fatte++;
+        {
+            char r[160];
+            const char *d = x == 0 ? "a posto" : x == 1 ? "C'E' DA FARE A MANO (vedi sopra)"
+                          : x == 2 ? "ha sistemato da sola" : "non e' andata";
+
+            if (x == 1) a_mano++;
+            else if (x != 0 && x != 2) guaste++;
+            if (x < 0 || x > 2) snprintf(r, sizeof(r), "  %-12s %s (uscita %d)\n", pac, d, x);
+            else                snprintf(r, sizeof(r), "  %-12s %s\n", pac, d);
+            if (strlen(esiti) + strlen(r) < sizeof(esiti)) strcat(esiti, r);
+            if (log) fprintf(log, "%ld\t%s\t%s\t%s\t%d\n", (long)time(NULL), sistema, pac, nome, x);
+        }
+    }
+    fclose(f);
+    if (log) fclose(log);
+    if (fatte > 0) {
+        printf("\nEsito delle verifiche:\n%s", esiti);
+        if (a_mano) printf("\n! %d verific%s chied%s qualcosa a te: leggi sopra cosa.\n",
+                           a_mano, a_mano == 1 ? "a" : "he", a_mano == 1 ? "e" : "ono");
+    }
+    return guaste ? -1 : (a_mano ? 1 : 0);
+}
+
 static int comando_check(int senza_chiedere)
 {
     Config c;
@@ -3616,6 +3762,7 @@ static int comando_check(int senza_chiedere)
         printf("\nNiente da fare");
         if (k.config) printf(" (a parte la configurazione, che e' tua)");
         printf(".\n");
+        verifiche_esegui(&c, ver, NULL, 0, 0);
         return 0;
     }
 
@@ -3644,6 +3791,7 @@ static int comando_check(int senza_chiedere)
     }
     if (!fai_cambiati && !fai_nuovi) {
         printf("\nNon ho toccato niente.\n");
+        verifiche_esegui(&c, ver, NULL, 0, 0);
         return 0;
     }
 
@@ -3801,6 +3949,11 @@ static int comando_check(int senza_chiedere)
     }
     menu_allinea(cat);
 
+    /* (0.044) the checks after the files, before the last word: what they
+     * say about a reboot belongs with "IL KERNEL E' CAMBIATO" below */
+    if (fatti > 0) registro_carica();
+    verifiche_esegui(&c, ver, NULL, 0, kernel_nuovo || stage2_nuovo);
+
     /* ! THIS LINE SAID "IL KERNEL E' CAMBIATO" EVEN WHEN THE MAP HAD FAILED, and
      * after that a reboot may not start at all. */
     if (avvio_guasto)
@@ -3819,6 +3972,29 @@ static int comando_check(int senza_chiedere)
 }
 
 
+
+/* -verifica, -verifica:<pacchetto> (0.044): the checks alone, nothing
+ * updated. See verifiche_esegui. */
+static int comando_verifica(const char *solo)
+{
+    Config c;
+    char   ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
+    char   versione[16], data[40], h[72];
+    const char *quali[1];
+    int    r;
+
+    if (manifesto(&c, ver, cat, ele, versione, data) != 0) return 1;
+    if (registro_carica() < 0) printf("  (nessun registro: solo la verifica di sistema)\n");
+    if (chiave_da_file(ver, "verifiche", h, sizeof(h)) != 0) {
+        printf("\nIl server non pubblica verifiche (versione.txt non dice\n"
+               "\"verifiche\"): e' fatto da un mknetinst piu' vecchio.\n");
+        return 0;
+    }
+    quali[0] = solo;
+    r = verifiche_esegui(&c, ver, quali, solo ? 1 : 0, 0);
+    if (r == 0) printf("\nTutto a posto.\n");
+    return r == 0 ? 0 : 1;
+}
 
 /* -----------------------------------------------------------------------------
  * -check:guarda — dimmi cosa cambierebbe, e non toccare niente
@@ -4771,6 +4947,15 @@ static int comando_install(const char *id)
         comando_registro_crea(TMPDIR);
     }
     menu_allinea(cat);
+    if (!falliti) {                     /* (0.044) the checks of what arrived */
+        const char *quali[64];
+        int         nq = 0, k;
+
+        quali[nq++] = id;
+        for (k = 0; k < nda && nq < 64; k++)
+            if (strcmp(da_fare[k], id) != 0) quali[nq++] = da_fare[k];
+        verifiche_esegui(&c, ver, quali, nq, kernel_nuovo || stage2_nuovo);
+    }
     if (falliti)
         printf("\n! NON E' FINITO. Ridai lo stesso comando: quel che e' arrivato\n"
                "  resta, e si riprende da li'.\n");
@@ -5039,6 +5224,9 @@ static void uso(void)
     printf("     netupdate -remove:<app>            l'app e le librerie di nessun altro\n");
     printf("     netupdate -install:<app> -yes      senza chiedere (anche -remove)\n");
     printf("     netupdate -set:<TIPO> <indirizzo>  -set senza domande\n");
+    printf("     netupdate -verifica                le verifiche del server, senza\n");
+    printf("                                        aggiornare (-verifica:<app>)\n");
+    printf("     ... -noverifica                    con -check e -install: senza\n");
     printf("     netupdate -install:sourcecode      i sorgenti del sistema, in\n");
     printf("                                        %s/exos-<versione>/\n", SRC_DIR);
     printf("\n");
@@ -5118,6 +5306,7 @@ int main(int argc, char **argv)
     /* Anywhere on the line, so that it goes with -check, -yes and -yesall. */
     for (i = j = 1; i < argc; i++) {
         if (strcmp(argv[i], "-indietro") == 0) g_indietro = 1;
+        else if (strcmp(argv[i], "-noverifica") == 0) g_noverifica = 1;
         else if (i > 1 && strcmp(argv[i], "-yes") == 0 &&
                  (strncmp(argv[1], "-install:", 9) == 0 || strncmp(argv[1], "-remove:", 8) == 0))
             g_si = 1;
@@ -5181,6 +5370,10 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-check:guarda") == 0) return comando_check_guarda();
 
     if (strcmp(argv[1], "-auto") == 0) return comando_auto();
+
+    if (strcmp(argv[1], "-verifica") == 0) return comando_verifica(NULL);
+    if (strncmp(argv[1], "-verifica:", 10) == 0 && argv[1][10])
+        return comando_verifica(argv[1] + 10);
 
     /* ! IL GIRO DOPO, SENZA RETE. L'aggiornamento al 0.269 lo fa netupdate
      * mentre gira il kernel di prima, il cui bootinstall non conosce

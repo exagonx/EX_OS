@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.317
+**Version:** 0.318
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -6825,14 +6825,29 @@ Redis (BGSAVE), Apache's prefork MPM and Qt's `QProcess` want a real
   `<libutil.h>`): on top of `pty_apri`, which gives both ends at once.
   `forkpty` makes the slave the child's standard input, output and error
   and tells the pty that Ctrl+C on the master interrupts the child
-  (`PTY_CTL_FG`: EX-OS has no process groups). The slave has no name in the
-  file system, so `name` gets `/dev/tty`, as `ttyname` says; for that reason
-  `posix_openpt`/`ptsname`, which open the slave by name, are not there yet.
+  (`PTY_CTL_FG`: EX-OS has no process groups).
+- **Pseudo-terminals with names** (kernel 0.318): `open("/dev/ptmx")` makes
+  a new pair and gives its master; the slave of pair N is `/dev/pts/N`,
+  locked until `unlockpt`, as on Linux. Until the slave is first opened the
+  master waits instead of reading the end of the data. `posix_openpt`,
+  `grantpt`, `unlockpt`, `ptsname`, `ptsname_r` and `getpt` are in
+  `<stdlib.h>`; `ttyname` says `/dev/pts/N` for a slave and `/dev/ptmx` for
+  a master (`/dev/tty` stays the console's name); `openpty` gives the
+  slave's name. `stat` and `fstat` say "character device" (`S_ISCHR`) for
+  `/dev/null`, `/dev/ptmx`, `/dev/pts/N` and for a pty's descriptors; the
+  name of a pair goes away with its master. The names exist for `open` and
+  `stat`, not for `ls /dev/pts`, and `struct stat` has no `st_rdev`: the
+  device's identity is in `st_ino`.
 
 Test: `tools/prova-fork/prova-fork.sh` (64 bit) and `... 32`, in QEMU;
 `--figli=N` sets how many children live at once (300 by default).
 Checks 17 to 19 cover UDP, the pty and the alarm; 20 `openpty`/`forkpty`,
-21 the pipes with `O_NONBLOCK`.
+21 the pipes with `O_NONBLOCK`, 22 the pty names (`posix_openpt`, the lock,
+`/dev/pts/N` both ways, `ttyname`, `stat`).
+
+**Fault: a terminal or `script`-like program says "posix_openpt: No such
+file" or cannot open `/dev/pts/N`**: the kernel is older than 0.318, where
+a pty had no name. Fix: `netupdate`, then reboot.
 
 **Fault: a program waits for ever although it set `alarm()`** (timeout
 around a read, a watchdog): the kernel is older than 0.317, where `alarm`

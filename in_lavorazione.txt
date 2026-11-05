@@ -10286,9 +10286,15 @@ tools/netinst/velocita tolto da netinst.
          chiusa (voce 33 g): il 5/11 sera in QEMU a 32 bit, demone, da
          solo sulla macchina, 1 volta su 2, a 64 bit 0 su 2; netupdate
          non ha ancora lo script di verifica scaricato (domanda per
-         l'utente); posix_openpt/grantpt/unlockpt/ptsname vogliono lo
-         slave apribile per nome (/dev/pts/N nel kernel: domanda per
          l'utente).
+         FATTO 5/11 notte (l'utente: "si aggiungi nel kernel adesso lo
+         slave dei pty che si possono aprire per nome"): kernel 0.318,
+         /dev/ptmx e /dev/pts/N, TIOCGPTN, TIOCSPTLCK, stat/fstat come
+         dispositivo a caratteri; libc posix_openpt, grantpt, unlockpt,
+         ptsname(_r), getpt, ttyname /dev/pts/N. prova-fork 22a-g, 0 NO a
+         32 e 64 bit. Restano fuori: ls /dev/pts (la directory non si
+         elenca), st_rdev (struct stat non lo ha; cambiarla tocca chi e'
+         gia' compilato).
 
   32. STRESS TEST DI MARIADB (l'utente, 26/10: «mi serve uno stress test,
       ho bisogno che riescono a collegarsi 1024 client a mariadb e inviare

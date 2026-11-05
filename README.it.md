@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.317
+**Versione:** 0.318
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -6915,14 +6915,29 @@ Redis (BGSAVE), il MPM prefork di Apache e `QProcess` di Qt vogliono una
   `<libutil.h>` di BSD): sopra `pty_apri`, che dà i due capi insieme.
   `forkpty` fa dello slave l'ingresso, l'uscita e gli errori del figlio e
   dice al pty che Ctrl+C sul master interrompe il figlio (`PTY_CTL_FG`: EX-OS
-  non ha i gruppi di processi). Lo slave non ha un nome nel file system,
-  quindi `name` riceve `/dev/tty`, come dice `ttyname`; per questo
-  `posix_openpt`/`ptsname`, che aprono lo slave per nome, non ci sono ancora.
+  non ha i gruppi di processi).
+- **I pseudo-terminali hanno un nome** (kernel 0.318): `open("/dev/ptmx")`
+  crea una coppia nuova e ne dà il master; lo slave della coppia N è
+  `/dev/pts/N`, bloccato fino a `unlockpt`, come su Linux. Finché nessuno ha
+  aperto lo slave il master aspetta, invece di leggere la fine dei dati.
+  `posix_openpt`, `grantpt`, `unlockpt`, `ptsname`, `ptsname_r` e `getpt`
+  sono in `<stdlib.h>`; `ttyname` dice `/dev/pts/N` per uno slave e
+  `/dev/ptmx` per un master (`/dev/tty` resta il nome della console);
+  `openpty` dà il nome dello slave. `stat` e `fstat` dicono "dispositivo a
+  caratteri" (`S_ISCHR`) per `/dev/null`, `/dev/ptmx`, `/dev/pts/N` e per i
+  descrittori di un pty; il nome di una coppia sparisce col suo master. I
+  nomi esistono per `open` e `stat`, non per `ls /dev/pts`, e `struct stat`
+  non ha `st_rdev`: l'identità del dispositivo sta in `st_ino`.
 
 Prova: `tools/prova-fork/prova-fork.sh` (64 bit) e `... 32`, in QEMU;
 `--figli=N` per quanti figli vivi insieme (300 se manca).
 Le prove dalla 17 alla 19 coprono UDP, il pty e l'allarme; la 20
-`openpty`/`forkpty`, la 21 le pipe con `O_NONBLOCK`.
+`openpty`/`forkpty`, la 21 le pipe con `O_NONBLOCK`, la 22 i nomi dei pty
+(`posix_openpt`, il blocco, `/dev/pts/N` nei due sensi, `ttyname`, `stat`).
+
+**Guasto: un terminale o un programma come `script` dice "posix_openpt: No
+such file" o non apre `/dev/pts/N`**: il kernel è più vecchio della 0.318,
+dove un pty non aveva nome. Rimedio: `netupdate`, poi riavviare.
 
 **Guasto: un programma aspetta per sempre anche se ha messo `alarm()`**
 (una scadenza attorno a una lettura, un cane da guardia): il kernel è più

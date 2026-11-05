@@ -818,7 +818,14 @@
  * kill -9 and Ctrl+C ended a wait. A pipe with O_NONBLOCK gives EAGAIN
  * instead of a wait (fcntl kept the flag, read and write ignored it: Valkey
  * hung after BGSAVE). */
-#define EXOS_VERSION    "0.317"
+/* 0.317 -> 0.318: the pseudo-terminals have names. /dev/ptmx opens a new
+ * pair and gives its master, the slave locked; /dev/pts/N opens the slave of
+ * pair N once unlocked (TIOCGPTN, TIOCSPTLCK, as on Linux), and the master
+ * waits for it instead of reading the end of the data. stat and fstat say
+ * "character device" for /dev/null, /dev/ptmx, /dev/pts/N and for a pty's
+ * descriptors; PTY_EXOS_QUALE (0x54E0) tells ttyname which pair and end.
+ * Up to 0.317 a pty had no name and posix_openpt/ptsname could not exist. */
+#define EXOS_VERSION    "0.318"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

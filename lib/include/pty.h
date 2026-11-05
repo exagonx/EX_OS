@@ -12,8 +12,8 @@
  * <pty.h> -- openpty, forkpty, login_tty (5 November 2026). glibc's name;
  * BSD's are <util.h> and <libutil.h>, which include this one. The code is in
  * lib/libc.c, on top of SYS_PTY_APRI (both ends at once, no /dev/ptmx).
- * ! The slave has no name in the file system: openpty's `name` gets
- * "/dev/tty", as ttyname says. posix_openpt/ptsname are not here.
+ * `name` gets the slave's name, /dev/pts/N (kernel 0.318). posix_openpt,
+ * grantpt, unlockpt and ptsname are in <stdlib.h>.
  * ============================================================================= */
 #ifndef EXOS_PTY_H
 #define EXOS_PTY_H

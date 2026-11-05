@@ -343,6 +343,27 @@ static int e_dev_null(const char *p)
     return p[i] == '\0';
 }
 
+/* (kernel 0.318) "/dev/ptmx" -> -1, "/dev/pts/N" -> N, anything else -> -2.
+ * The names of the pseudo-terminals: see pty_apri_ptmx in kernel/ipc/pty.c.
+ * ! N IS DIGITS ONLY, no sign, no leading zeros beyond "0": "/dev/pts/07"
+ * would otherwise be a second name for /dev/pts/7. */
+static int32_t dev_pty_nome(const char *p)
+{
+    static const char mx[] = "/dev/ptmx", pts[] = "/dev/pts/";
+    uint32_t n = 0;
+    int i, k;
+
+    for (i = 0; mx[i] && p[i] == mx[i]; i++) ;
+    if (mx[i] == '\0' && p[i] == '\0') return -1;
+    for (i = 0; pts[i]; i++) if (p[i] != pts[i]) return -2;
+    if (p[i] < '0' || p[i] > '9' || (p[i] == '0' && p[i + 1] != '\0')) return -2;
+    for (k = 0; p[i] >= '0' && p[i] <= '9'; i++, k++) {
+        if (k >= 9) return -2;                  /* no overflow */
+        n = n * 10u + (uint32_t)(p[i] - '0');
+    }
+    return p[i] == '\0' ? (int32_t)n : -2;
+}
+
 /* =============================================================================
  * THE POSITION OF A FILE, ONE THREAD AT A TIME (24 October 2026)
  *
@@ -781,6 +802,29 @@ int32_t sys_open(InterruptFrame *frame)
             FDV(proc, free_fd).offset = 0;
             FDV(proc, free_fd).inode  = 0;
             return free_fd;
+        }
+        /* (0.318) /dev/ptmx: a new pair, its master; /dev/pts/N: the slave
+         * of pair N, once unlocked. See dev_pty_nome. */
+        {
+            int32_t n = dev_pty_nome(abs);
+            int     h;
+            int32_t r;
+
+            if (n != -2) {
+                if (n == -1) r = pty_apri_ptmx(&h);
+                else { r = pty_apri_slave((uint32_t)n); h = (int)n; }
+                if (r < 0) {
+                    FDV(proc, free_fd).type = FD_UNUSED;
+                    fd_rilasciato(proc, free_fd);
+                    return r;
+                }
+                FDV(proc, free_fd).type        = (n == -1) ? FD_PTY_M : FD_PTY_S;
+                FDV(proc, free_fd).flags       = (flags & ~(uint32_t)0x3u) | O_RDWR;  /* both ways, whatever was asked */
+                FDV(proc, free_fd).offset      = 0;
+                FDV(proc, free_fd).inode       = (uint32_t)h;
+                FDV(proc, free_fd).driver_data = NULL;
+                return free_fd;
+            }
         }
         inode = vfs_open(abs, (uint32_t)flags);
     }
@@ -2144,6 +2188,13 @@ int32_t sys_ioctl(InterruptFrame *frame)
                 dim = sizeof(PtyTermios); break;
             case PTY_TIOCGWINSZ: case PTY_TIOCSWINSZ:
                 dim = 8; break;
+            case PTY_TIOCGPTN: case PTY_TIOCSPTLCK:
+                /* only on the master, as on Linux: the slave says ENOTTY */
+                if (FDV(proc, fd).type != FD_PTY_M) return ERR(ENOTTY);
+                dim = 4; break;
+            case PTY_EXOS_QUALE:
+                return (int32_t)((FDV(proc, fd).inode << 1) |
+                                 (FDV(proc, fd).type == FD_PTY_M ? 1u : 0u));
         }
         if (dim && !syscall_verify_ptr((void *)arg, dim)) return ERR(EFAULT);
         return pty_ioctl((int)FDV(proc, fd).inode, request, arg);
@@ -3611,6 +3662,20 @@ int32_t sys_chdir(InterruptFrame *frame)
 
 static void stat_da_vfs(const VfsStat *vs, Stat *st);
 
+/* (0.318) A character device in Stat: attribute 0x40 (FAT's "device" bit,
+ * never set on a disk), the identity in st_ident: 0 /dev/null, 1 /dev/ptmx,
+ * 0x100 + (N << 1) the slave of pair N, 0x101 + (N << 1) its master. The
+ * libc makes it S_IFCHR, with st_rdev = st_ino = that identity. */
+#define STAT_ATTR_DISPOSITIVO  0x40
+static void stat_dispositivo(Stat *st, uint32_t ident)
+{
+    st->st_size  = 0;
+    st->st_ident = 0xFFF00000u | ident;
+    st->st_attr  = STAT_ATTR_DISPOSITIVO;
+    st->st_date  = 0;
+    st->st_time  = 0;
+}
+
 /* =============================================================================
  * SYS_STAT (106) -- Informazioni su un file
  *
@@ -3629,6 +3694,21 @@ int32_t sys_stat(InterruptFrame *frame)
     if (!syscall_verify_ptr(st, sizeof(Stat)))   return ERR(EFAULT);
 
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+
+    /* (0.318) the devices with a name: /dev/null, /dev/ptmx, /dev/pts/N
+     * exist for stat too, as character devices (stat_dispositivo) - glibc's
+     * ptsname and many terminals check the name before opening it */
+    {
+        int32_t n = dev_pty_nome(abs);
+
+        if (e_dev_null(abs)) { stat_dispositivo(st, 0); return 0; }
+        if (n == -1) { stat_dispositivo(st, 1); return 0; }
+        if (n >= 0) {
+            if (!pty_esiste((uint32_t)n)) return ERR(ENOENT);
+            stat_dispositivo(st, 0x100u + ((uint32_t)n << 1));
+            return 0;
+        }
+    }
 
     r = vfs_stat(abs, &vs);
     if (r != 0) return r;
@@ -3694,6 +3774,13 @@ int32_t sys_fstat(InterruptFrame *frame)
     if (!syscall_verify_ptr(st, sizeof(Stat)))  return ERR(EFAULT);
     if (fd < 0 || fd >= FD_N(proc))             return ERR(EBADF);
     if (FDV(proc, fd).type == FD_UNUSED)        return ERR(EBADF);
+    /* (0.318) a pty and /dev/null are character devices, as for stat */
+    if (FDV(proc, fd).type == FD_PTY_S || FDV(proc, fd).type == FD_PTY_M) {
+        stat_dispositivo(st, 0x100u + (FDV(proc, fd).inode << 1) +
+                             (FDV(proc, fd).type == FD_PTY_M ? 1u : 0u));
+        return 0;
+    }
+    if (FDV(proc, fd).type == FD_NULL) { stat_dispositivo(st, 0); return 0; }
     if (FDV(proc, fd).type != FD_FILE)          return ERR(ENOSYS);
 
     r = vfs_fstat((int)FDV(proc, fd).inode, &vs);

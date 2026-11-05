@@ -70,6 +70,7 @@
 #include <sys/time.h>
 #include <fcntl.h>
 #include <pty.h>
+#include <sys/stat.h>
 
 static int g_no = 0;
 static void esito(int ok, const char *cosa)
@@ -772,7 +773,7 @@ static void prova_forkpty(void)
     if (k == 0) ioctl(sl, TIOCGWINSZ, &l);
     snprintf(r, sizeof r, "20a openpty: %d, la misura %dx%d (voluta 33x99), nome '%s'",
              k, l.ws_row, l.ws_col, nome);
-    esito(k == 0 && l.ws_row == 33 && l.ws_col == 99 && nome[0] == '/', r);
+    esito(k == 0 && l.ws_row == 33 && l.ws_col == 99 && strncmp(nome, "/dev/pts/", 9) == 0, r);
     if (k == 0) { close(m); close(sl); }
 
     pid = forkpty(&m, NULL, NULL, NULL);
@@ -820,6 +821,103 @@ static void prova_pipe_nonblocc(void)
     close(pp[0]); close(pp[1]);
 }
 
+/* 22: the pseudo-terminals by name (kernel 0.318): posix_openpt, the
+ * slave locked until unlockpt, ptsname, the slave opened by name both ways,
+ * ttyname, stat as a character device, a name that is not there, and the
+ * master that waits for a slave not yet opened (a child opens it later) */
+static void prova_pty_nomi(void)
+{
+    char        nome[32] = "", r[200], c = 0, buf[16];
+    int         m, s = -1, e1, k, figlio, st = -1, n;
+    struct stat sb;
+
+    m = posix_openpt(O_RDWR | O_NOCTTY);
+    if (m < 0) { snprintf(r, sizeof r, "22a posix_openpt: errno %d", errno); esito(0, r); return; }
+    if (ptsname(m)) snprintf(nome, sizeof nome, "%s", ptsname(m));
+    s = open(nome, O_RDWR); e1 = errno;
+    snprintf(r, sizeof r, "22a posix_openpt, ptsname '%s', lo slave bloccato prima di unlockpt: %d errno %d (EIO 5)",
+             nome, s, s < 0 ? e1 : 0);
+    esito(strncmp(nome, "/dev/pts/", 9) == 0 && s < 0 && e1 == EIO, r);
+    if (s >= 0) close(s);
+
+    k = grantpt(m) == 0 && unlockpt(m) == 0;
+    s = open(nome, O_RDWR);
+    snprintf(r, sizeof r, "22b grantpt, unlockpt, open('%s'): %d, ttyname '%s', isatty %d",
+             nome, s, s >= 0 && ttyname(s) ? ttyname(s) : "-", s >= 0 ? isatty(s) : -1);
+    esito(k && s >= 0 && ttyname(s) && strcmp(ttyname(s), nome) == 0 && isatty(s), r);
+
+    if (s >= 0) {               /* ! ECHO OFF: a new terminal echoes "x" back to the master */
+        struct termios t;
+
+        tcgetattr(s, &t);
+        t.c_lflag &= ~(tcflag_t)ECHO;
+        tcsetattr(s, TCSANOW, &t);
+    }
+    alarm(4);
+    k = (int)write(m, "x\n", 2);
+    n = s >= 0 ? (int)read(s, buf, sizeof buf) : -1;
+    c = 0;
+    if (s >= 0) write(s, "y", 1);
+    if (read(m, &c, 1) != 1) c = '?';
+    alarm(0);
+    snprintf(r, sizeof r, "22c master -> slave %d byte ('%c'), slave -> master '%c'",
+             n, n > 0 ? buf[0] : '-', c ? c : '-');
+    esito(k == 2 && n >= 1 && buf[0] == 'x' && c == 'y', r);
+
+    k = stat(nome, &sb);
+    e1 = fstat(m, &sb) == 0 && S_ISCHR(sb.st_mode);
+    snprintf(r, sizeof r, "22d stat('%s'): %d, S_ISCHR %d; fstat del master S_ISCHR %d; ttyname del master '%s'",
+             nome, k, k == 0 && S_ISCHR(sb.st_mode), e1, ttyname(m) ? ttyname(m) : "-");
+    {
+        struct stat sn;
+        int ok = k == 0 && stat(nome, &sn) == 0 && S_ISCHR(sn.st_mode) && e1 &&
+                 ttyname(m) && strcmp(ttyname(m), "/dev/ptmx") == 0;
+        esito(ok, r);
+    }
+    close(s);
+    close(m);
+    k = stat(nome, &sb); e1 = errno;
+    s = open("/dev/pts/987654", O_RDWR);
+    snprintf(r, sizeof r, "22e chiuso il master il nome sparisce: stat %d errno %d; /dev/pts/987654: %d errno %d (ENOENT 2)",
+             k, e1, s, s < 0 ? errno : 0);
+    esito(k < 0 && e1 == ENOENT && s < 0 && errno == ENOENT, r);
+
+    /* f: the master reads before anyone opened the slave - it waits */
+    m = posix_openpt(O_RDWR);
+    unlockpt(m);
+    snprintf(nome, sizeof nome, "%s", ptsname(m));
+    figlio = fork();
+    if (figlio == 0) {
+        int t;
+        usleep(300000);
+        t = open(nome, O_RDWR);
+        write(t, "dopo", 4);
+        _exit(t >= 0 ? 0 : 1);
+    }
+    alarm(4);
+    n = 0;
+    memset(buf, 0, sizeof buf);
+    while (n < 4) {
+        k = (int)read(m, buf + n, sizeof buf - 1 - (size_t)n);
+        if (k <= 0) break;
+        n += k;
+    }
+    alarm(0);
+    waitpid(figlio, &st, 0);
+    close(m);
+    snprintf(r, sizeof r, "22f il master aspetta lo slave non ancora aperto: letto '%s' (%d), il figlio %d",
+             buf, n, WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+    esito(n == 4 && memcmp(buf, "dopo", 4) == 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0, r);
+
+    /* g: openpty gives the slave's real name */
+    nome[0] = 0;
+    k = openpty(&m, &s, nome, NULL, NULL);
+    snprintf(r, sizeof r, "22g openpty: nome '%s', ttyname dello slave '%s'", nome,
+             k == 0 && ttyname(s) ? ttyname(s) : "-");
+    esito(k == 0 && strncmp(nome, "/dev/pts/", 9) == 0 && ttyname(s) && strcmp(ttyname(s), nome) == 0, r);
+    if (k == 0) { close(m); close(s); }
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--figlio-exec") == 0) return 33;
@@ -852,6 +950,7 @@ int main(int argc, char **argv)
     }
     prova_forkpty();
     prova_pipe_nonblocc();
+    prova_pty_nomi();
     signal(SIGALRM, SIG_DFL);
     printf("prova-fork: %d NO\n", g_no);
     return g_no ? 1 : 0;

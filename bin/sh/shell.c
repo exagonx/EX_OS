@@ -1098,7 +1098,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.009"
+#define SH_VERSIONE  "0.010"
 
 #define MAX_LINE    512
 
@@ -2472,6 +2472,117 @@ static int esegui_script_nominato(const char *nome)
  *
  * Ritorna 0 normalmente, -1 se il comando era `exit`.
  * ============================================================================= */
+/* =============================================================================
+ * test and [ (sh 0.010): 0 true, 1 false, 2 a mistake (said on stderr)
+ *
+ *   -e F  exists          -f F  a file         -d F  a directory
+ *   -s F  more than 0 B   -x F  executable (a file with an x bit, or on a
+ *                               volume without permissions any file)
+ *   -n S  not empty       -z S  empty          S     not empty
+ *   S1 = S2   S1 != S2    N1 -eq -ne -lt -le -gt -ge N2 (whole numbers)
+ *   ! EXPR                the opposite
+ * Not there: -a, -o, parentheses (POSIX marks them obsolescent), -r -w
+ * (there are no users to ask about: root can do both).
+ * ============================================================================= */
+static int nome_var_car(char c, int primo);     /* with the variables, further down */
+typedef struct { uint32_t dim, ident; uint16_t attr, data, ora; } ShStat;
+typedef struct { uint16_t modo, uid, gid; } ShStatPerm;
+#define SYS_STATPERM_SH 253
+
+static int test_numero(const char *s, int32_t *v)
+{
+    int32_t n = 0, segno = 1;
+
+    if (*s == '-') { segno = -1; s++; }
+    if (!*s) return 0;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9') return 0;
+        n = n * 10 + (*s - '0');
+    }
+    *v = n * segno;
+    return 1;
+}
+
+static int test_errore(const char *cosa, const char *chi)
+{
+    print("test: ");
+    print(cosa);
+    printerr(chi);
+    return 2;
+}
+
+/* argv without the command name (and without the `]`) */
+static int test_valuta(int n, char **a)
+{
+    if (n == 0) return 1;
+    if (a[0][0] == '!' && a[0][1] == 0) {
+        int r = test_valuta(n - 1, a + 1);
+        return r == 2 ? 2 : !r;
+    }
+    if (n == 1) return a[0][0] ? 0 : 1;
+    if (n == 2) {
+        const char *op = a[0], *x = a[1];
+        ShStat st;
+        int r;
+
+        if (sh_strcmp(op, "-n") == 0) return x[0] ? 0 : 1;
+        if (sh_strcmp(op, "-z") == 0) return x[0] ? 1 : 0;
+        r = syscall2(SYS_STAT, (uintptr_t)x, (uintptr_t)&st);
+        if (sh_strcmp(op, "-e") == 0) return r == 0 ? 0 : 1;
+        if (sh_strcmp(op, "-f") == 0) return (r == 0 && !(st.attr & 0x50)) ? 0 : 1;
+        if (sh_strcmp(op, "-d") == 0) return (r == 0 && (st.attr & 0x10)) ? 0 : 1;
+        if (sh_strcmp(op, "-s") == 0) return (r == 0 && st.dim > 0) ? 0 : 1;
+        if (sh_strcmp(op, "-x") == 0) {
+            ShStatPerm sp;
+
+            if (r != 0 || (st.attr & 0x50)) return 1;
+            if (syscall3(SYS_STATPERM_SH, (uintptr_t)x, (uintptr_t)&sp, sizeof(sp)) != 0) return 1;
+            return (sp.modo == 0 || (sp.modo & 0111)) ? 0 : 1;
+        }
+        return test_errore("operatore sconosciuto: ", op);
+    }
+    if (n == 3) {
+        const char *op = a[1];
+        int32_t x, y;
+
+        if (sh_strcmp(op, "=") == 0 || sh_strcmp(op, "==") == 0)
+            return sh_strcmp(a[0], a[2]) == 0 ? 0 : 1;
+        if (sh_strcmp(op, "!=") == 0) return sh_strcmp(a[0], a[2]) != 0 ? 0 : 1;
+        if (op[0] == '-') {
+            if (!test_numero(a[0], &x)) return test_errore("non e' un numero intero: ", a[0]);
+            if (!test_numero(a[2], &y)) return test_errore("non e' un numero intero: ", a[2]);
+            if (sh_strcmp(op, "-eq") == 0) return x == y ? 0 : 1;
+            if (sh_strcmp(op, "-ne") == 0) return x != y ? 0 : 1;
+            if (sh_strcmp(op, "-lt") == 0) return x <  y ? 0 : 1;
+            if (sh_strcmp(op, "-le") == 0) return x <= y ? 0 : 1;
+            if (sh_strcmp(op, "-gt") == 0) return x >  y ? 0 : 1;
+            if (sh_strcmp(op, "-ge") == 0) return x >= y ? 0 : 1;
+        }
+        return test_errore("operatore sconosciuto: ", op);
+    }
+    return test_errore("troppi argomenti (-a, -o e le parentesi non ci sono): ", a[0]);
+}
+
+static int cmd_test(int argc, char **argv)
+{
+    if (argv[0][0] == '[') {
+        if (argc < 2 || sh_strcmp(argv[argc - 1], "]") != 0)
+            return test_errore("manca la ] di chiusura", "");
+        argc--;
+    }
+    return test_valuta(argc - 1, argv + 1);
+}
+
+/* NOME=valore: a name of letters, digits and _, not starting with a digit */
+static int e_assegnamento(const char *s)
+{
+    int i;
+
+    if (!nome_var_car(s[0], 1)) return 0;
+    for (i = 1; s[i] && s[i] != '='; i++) if (!nome_var_car(s[i], 0)) return 0;
+    return s[i] == '=';
+}
+
 static int esegui_builtin(int argc, char **argv, int background,
                           const char *cmdline)
 {
@@ -2557,8 +2668,18 @@ static int esegui_builtin(int argc, char **argv, int background,
     if (sh_strcmp(cmd, "shutdown") == 0) { cmd_poweroff();    return 0; }
 
     if (sh_strcmp(cmd, "exit")  == 0) {
-        int code = (argc >= 2) ? (int)(*argv[1] - '0') : 0;
-        sh_exit(code);
+        /* (0.010) the whole number, not its first digit: `exit 12` was 1 */
+        int code = 0;
+        const char *c = (argc >= 2) ? argv[1] : "0";
+
+        while (*c >= '0' && *c <= '9') code = code * 10 + (*c++ - '0');
+        sh_exit(code & 0xFF);
+    }
+    if (sh_strcmp(cmd, "true")  == 0) { g_ultimo_stato = 0; return 0; }
+    if (sh_strcmp(cmd, "false") == 0) { g_ultimo_stato = 1; return 0; }
+    if (sh_strcmp(cmd, "test")  == 0 || sh_strcmp(cmd, "[") == 0) {
+        g_ultimo_stato = cmd_test(argc, argv);
+        return 0;
     }
 
     /* Ci si arriva solo se e_builtin() ha detto di si' su un nome che il
@@ -2589,7 +2710,7 @@ static int e_builtin(const char *cmd)
         "source", "helpconfig", "help", "echo", "cls", "clear", "pwd", "cd",
         "env", "export", "ver", "version", "pid", "jobs", "fg",
         "sleep", "cat", "exec", "reboot", "halt", "poweroff", "shutdown",
-        "exit", NULL
+        "exit", "true", "false", "test", "[", NULL
     };
     int i;
 
@@ -2962,10 +3083,27 @@ static int esegui_comando(int argc, char **argv, int background,
 
     if (argc <= 0) return 0;
 
+    /* (0.010) NOME=valore alone: the variable, not a program */
+    if (argc == 1 && e_assegnamento(argv[0])) {
+        char *eq = argv[0];
+
+        while (*eq != '=') eq++;
+        *eq = '\0';
+        env_set(argv[0], eq + 1);
+        *eq = '=';
+        g_ultimo_stato = 0;
+        return 0;
+    }
+
     if (!e_builtin(argv[0])) {
         run_program(argv[0], argc, argv, background, cmdline, extra, NULL);
         return 0;
     }
+
+    /* (0.010) a built-in that says nothing went well: until 0.009 `echo`
+     * left the status of the command before it, and `false; echo x && y`
+     * did not run y */
+    g_ultimo_stato = 0;
 
     for (i = 0; i < 3; i++) {
         salvato[i] = -1;
@@ -3210,6 +3348,282 @@ static char *trova_separatore(char *s, int *tipo, int *salto)
     return NULL;
 }
 
+/* =============================================================================
+ * THE VARIABLES, `if` AND `!` (sh 0.010, 5 November 2026)
+ *
+ * ! WHY NOW: netupdate's check scripts (bin/netupdate, "le verifiche") must
+ * look at the machine and decide what to say, and until 0.009 a script was
+ * a list of commands run one after the other: `$` was never read, and there
+ * was no `if`. The user chose to teach it to this shell rather than to bring
+ * in a second one.
+ *
+ * WHAT IS THERE:
+ *   $NOME ${NOME} ${NOME:-altro} $? $$   expanded in every segment, also
+ *                                        inside "..."; never inside '...';
+ *                                        \$ is a dollar
+ *   NOME=valore                          alone on a line: sets the variable
+ *                                        (in the environment, so programs
+ *                                        started later see it too)
+ *   if / then / elif / else / fi         on separate lines or with `;`,
+ *                                        nested; in scripts, at the prompt,
+ *                                        in sh -c
+ *   ! comando                            inverts the status
+ *   test, [ ... ], true, false, exit N   (cmd_test, further down)
+ * NOT THERE (yet): while/for/case, functions, $(...), $1..$9.
+ *
+ * ! THE EXPANSION COMES AFTER `;` `&&` `||` HAVE SPLIT THE LINE, and before
+ * the pipe and the words: a value with a `;` inside does not become a second
+ * command. The characters that would still be operators (| < > & ; and the
+ * quotes and the backslash) enter with a backslash in front, so they stay
+ * characters; spaces do split, as in every Unix shell (quote "$X" to keep
+ * one word). Inside "..." a `"` of the value closes, enters escaped and
+ * reopens: the word stays one.
+ * ============================================================================= */
+static char g_espanso[MAX_CMDLINE];
+
+static int nome_var_car(char c, int primo)
+{
+    if (c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) return 1;
+    return !primo && c >= '0' && c <= '9';
+}
+
+/* Puts `v` at out[*w], escaped as said above; 0, or -1 if it does not fit. */
+static int metti_valore(char *out, uint32_t dim, uint32_t *w, const char *v,
+                        char virg)
+{
+    for (; *v; v++) {
+        char c = *v;
+
+        if (virg == '"') {
+            if (c == '"') {                         /* "  ->  "\""  */
+                if (*w + 4 >= dim) return -1;
+                out[(*w)++] = '"'; out[(*w)++] = '\\';
+                out[(*w)++] = '"'; out[(*w)++] = '"';
+                continue;
+            }
+        } else if (c == '"' || c == '\'' || c == '\\' || c == '|' || c == '<' ||
+                   c == '>' || c == '&' || c == ';') {
+            if (*w + 2 >= dim) return -1;
+            out[(*w)++] = '\\';
+        }
+        if (*w + 1 >= dim) return -1;
+        out[(*w)++] = c;
+    }
+    return 0;
+}
+
+static int espandi_variabili(const char *in, char *out, uint32_t dim)
+{
+    uint32_t w = 0;
+    char     virg = 0;
+    char     num[16];
+
+    while (*in) {
+        char c = *in;
+
+        if (virg == '\'') {                       /* '...': as it is */
+            if (c == '\'') virg = 0;
+        } else if (c == '\\' && in[1] && virg == '"') {
+            /* ! INSIDE "..." THE BACKSLASH PROTECTS ONLY $ " \ (POSIX), and
+             * parse_line copies a quoted backslash as it is: so it is
+             * resolved here. "\$X" is $X, "\"" a quote (closed, escaped,
+             * reopened), "\n" stays \n. */
+            char d = in[1];
+
+            if (d == '$' || d == '\\') {
+                if (w + 1 >= dim) goto lunga;
+                out[w++] = d;
+            } else if (d == '"') {
+                if (w + 4 >= dim) goto lunga;
+                out[w++] = '"'; out[w++] = '\\'; out[w++] = '"'; out[w++] = '"';
+            } else {
+                if (w + 2 >= dim) goto lunga;
+                out[w++] = c; out[w++] = d;
+            }
+            in += 2;
+            continue;
+        } else if (c == '\\' && in[1]) {         /* \x stays for parse_line */
+            if (w + 2 >= dim) goto lunga;
+            out[w++] = c; out[w++] = in[1]; in += 2;
+            continue;
+        } else if (c == '\'' && !virg) {
+            virg = '\'';
+        } else if (c == '"') {
+            virg = virg ? 0 : '"';
+        } else if (c == '$') {
+            const char *v = 0, *altro = 0;
+            char nome[64];
+            uint32_t n = 0, na = 0;
+
+            if (in[1] == '?') {
+                if (g_ultimo_stato < 0) { num[0] = '-'; sh_itoa((uint32_t)(-g_ultimo_stato), num + 1, 10); }
+                else sh_itoa((uint32_t)g_ultimo_stato, num, 10);
+                v = num; in += 2;
+            } else if (in[1] == '$') {
+                sh_itoa((uint32_t)sh_getpid(), num, 10);
+                v = num; in += 2;
+            } else if (in[1] == '{') {
+                const char *p = in + 2;
+
+                while (nome_var_car(*p, n == 0) && n < sizeof(nome) - 1) nome[n++] = *p++;
+                nome[n] = 0;
+                if (n > 0 && p[0] == ':' && p[1] == '-') {
+                    altro = p + 2;
+                    while (altro[na] && altro[na] != '}') na++;
+                    p = altro + na;
+                }
+                if (n == 0 || *p != '}') {
+                    printerr("sh: ${...} non chiusa o senza un nome");
+                    return -1;
+                }
+                v = env_get(nome);
+                in = p + 1;
+            } else if (nome_var_car(in[1], 1)) {
+                const char *p = in + 1;
+
+                while (nome_var_car(*p, n == 0) && n < sizeof(nome) - 1) nome[n++] = *p++;
+                nome[n] = 0;
+                v = env_get(nome);
+                in = p;
+            } else {                                /* a dollar alone */
+                if (w + 1 >= dim) goto lunga;
+                out[w++] = c; in++;
+                continue;
+            }
+            if ((v == 0 || *v == 0) && altro) {     /* ${NOME:-altro} */
+                uint32_t k;
+                for (k = 0; k < na; k++) {
+                    if (w + 1 >= dim) goto lunga;
+                    out[w++] = altro[k];
+                }
+            } else if (v && metti_valore(out, dim, &w, v, virg) != 0) {
+                goto lunga;
+            }
+            continue;
+        }
+        if (w + 1 >= dim) goto lunga;
+        out[w++] = c; in++;
+    }
+    out[w] = 0;
+    return 0;
+
+lunga:
+    printerr("sh: riga troppo lunga dopo l'espansione delle variabili");
+    return -1;
+}
+
+/* The `if` stack. One frame per open `if`, nested to any depth the memory
+ * allows... and that is a fixed number here, like the script nesting: a
+ * shell with no libc has no heap. 64 nested ifs are more than any script. */
+#define SE_MAX  64
+#define SE_COND 0       /* between if/elif and then: the condition runs */
+#define SE_RAMO 1       /* inside a branch */
+typedef struct {
+    char sopra;         /* the frame below runs commands */
+    char preso;         /* a branch was already taken */
+    char fase;
+    char corre;         /* commands run now */
+} SeQuadro;
+static SeQuadro g_se[SE_MAX];
+static int      g_se_n = 0;
+
+static int se_corre(void)
+{
+    return g_se_n == 0 || g_se[g_se_n - 1].corre;
+}
+
+/* The first word of `s`, if it is exactly `k` (followed by a space, a tab
+ * or the end): the rest, or NULL. */
+static char *parola_chiave(char *s, const char *k)
+{
+    uint32_t i;
+
+    for (i = 0; k[i]; i++) if (s[i] != k[i]) return 0;
+    if (s[i] != 0 && s[i] != ' ' && s[i] != '\t') return 0;
+    while (s[i] == ' ' || s[i] == '\t') i++;
+    return s + i;
+}
+
+/* A segment: the keywords of `if`, then the command. `consenti` says
+ * whether && / || allow it. */
+static void esegui_segmento(char *p, int background, int consenti)
+{
+    char *resto;
+    int   nega = 0;
+
+    while (*p == ' ' || *p == '\t') p++;
+    if (!*p) return;
+
+    if ((resto = parola_chiave(p, "if")) != 0) {
+        SeQuadro q;
+
+        if (g_se_n >= SE_MAX) { printerr("sh: troppi if annidati"); g_ultimo_stato = 2; return; }
+        q.sopra = (char)(se_corre() && consenti);
+        q.preso = 0;
+        q.fase  = SE_COND;
+        q.corre = q.sopra;
+        g_se[g_se_n++] = q;
+        p = resto;
+        if (!*p) return;
+        consenti = 1;
+    } else if ((resto = parola_chiave(p, "then")) != 0) {
+        SeQuadro *q;
+
+        if (g_se_n == 0 || g_se[g_se_n - 1].fase != SE_COND) {
+            printerr("sh: then senza if"); g_ultimo_stato = 2; return;
+        }
+        q = &g_se[g_se_n - 1];
+        q->fase  = SE_RAMO;
+        q->corre = (char)(q->sopra && !q->preso && q->corre && g_ultimo_stato == 0);
+        if (q->corre) q->preso = 1;
+        p = resto;
+        if (!*p) return;
+        consenti = 1;
+    } else if ((resto = parola_chiave(p, "elif")) != 0) {
+        SeQuadro *q;
+
+        if (g_se_n == 0 || g_se[g_se_n - 1].fase != SE_RAMO) {
+            printerr("sh: elif senza if"); g_ultimo_stato = 2; return;
+        }
+        q = &g_se[g_se_n - 1];
+        q->fase  = SE_COND;
+        q->corre = (char)(q->sopra && !q->preso);
+        p = resto;
+        if (!*p) return;
+        consenti = 1;
+    } else if ((resto = parola_chiave(p, "else")) != 0) {
+        SeQuadro *q;
+
+        if (g_se_n == 0 || g_se[g_se_n - 1].fase != SE_RAMO) {
+            printerr("sh: else senza if"); g_ultimo_stato = 2; return;
+        }
+        q = &g_se[g_se_n - 1];
+        q->corre = (char)(q->sopra && !q->preso);
+        q->preso = 1;
+        p = resto;
+        if (!*p) return;
+        consenti = 1;
+    } else if ((resto = parola_chiave(p, "fi")) != 0) {
+        if (g_se_n == 0) { printerr("sh: fi senza if"); g_ultimo_stato = 2; return; }
+        /* POSIX: no branch taken = status 0 */
+        if (g_se[g_se_n - 1].sopra && !g_se[g_se_n - 1].preso) g_ultimo_stato = 0;
+        g_se_n--;
+        if (*resto) printerr("sh: dopo fi ci vuole ; o un a capo");
+        return;
+    }
+
+    if (!se_corre() || !consenti) return;
+
+    if ((resto = parola_chiave(p, "!")) != 0) { nega = 1; p = resto; if (!*p) return; }
+
+    if (espandi_variabili(p, g_espanso, sizeof(g_espanso)) != 0) {
+        g_ultimo_stato = 2;
+        return;
+    }
+    esegui_pipeline(g_espanso, background);
+    if (nega) g_ultimo_stato = (g_ultimo_stato == 0) ? 1 : 0;
+}
+
 static void esegui_lista(char *line)
 {
     char *p        = line;
@@ -3245,13 +3659,12 @@ static void esegui_lista(char *line)
                  (prec_tipo == SEP_E && g_ultimo_stato == 0) ||
                  (prec_tipo == SEP_O && g_ultimo_stato != 0);
 
-        if (esegui) {
-            /* Salta gli spazi in testa: un segmento fatto di soli spazi —
-             * `a ; ; b`, oppure la coda di una riga che finisce con `;` —
-             * non e' un errore, e' semplicemente niente da fare. */
-            while (*p == ' ' || *p == '\t') p++;
-            if (*p) esegui_pipeline(p, background);
-        }
+        /* (0.010) the keywords of `if` are seen even where && / || would
+         * skip the command: `a && if ...` must still open its frame, or the
+         * `fi` after it would close somebody else's. Hence `esegui` goes in
+         * as an argument. A segment of spaces only - `a ; ; b`, the tail of
+         * a line ending with `;` - is nothing to do, not an error. */
+        esegui_segmento(p, background, esegui);
 
         if (!sep) break;
         prec_tipo = tipo;
@@ -3738,6 +4151,7 @@ static int esegui_script(const char *nome, const char *etichetta,
     int         pieno = 0;          /* byte validi in buf */
     int         fine  = 0;          /* il file e' finito */
     int         scarta = 0;         /* riga piu' lunga del buffer: si butta */
+    int         se_inizio;
 
     if (g_script_livello >= SCRIPT_ANNIDAMENTO_MAX) {
         printerr("sh: script annidati troppo in profondita'");
@@ -3761,6 +4175,7 @@ static int esegui_script(const char *nome, const char *etichetta,
 
     sh_strcpy(etic, (etichetta == 0) ? nome : etichetta, sizeof(etic));
     g_script_livello++;
+    se_inizio = g_se_n;     /* (0.010) an `if` left open stays in this script */
 
     for (;;) {
         int n = 0, zitto = 0, i, consumati;
@@ -3843,6 +4258,13 @@ static int esegui_script(const char *nome, const char *etichetta,
 
     syscall1(SYS_CLOSE, (uint32_t)fd);
     g_script_livello--;
+    if (g_se_n > se_inizio) {
+        print("sh: ");
+        print(etic);
+        printerr(": manca fi alla fine dello script");
+        g_se_n = se_inizio;
+        g_ultimo_stato = 2;
+    }
     return (r < 0) ? -1 : 0;
 }
 

@@ -1035,6 +1035,7 @@ struct lconv {
 #define S_IFMT      0170000
 #define S_IFDIR     0040000
 #define S_IFREG     0100000
+#define S_IFCHR     0020000
 
 /* Le due macro standard, che qui dentro mancavano: c'erano solo i nomi
  * dei tipi. Vedi il commento sulle due omonime tolte in testa al file. */
@@ -11678,7 +11679,10 @@ static void stat_da_grezzo(const Stat *g, struct stat *st)
     st->st_blksize = 512;
     st->st_blocks  = (blkcnt_t)((g->st_size + 511u) / 512u);
 
-    if (EXOS_ATTR_DIR(g->st_attr))          st->st_mode = S_IFDIR | 0755u;
+    /* (kernel 0.318) attribute 0x40: a character device - /dev/null,
+     * /dev/ptmx, /dev/pts/N (stat_dispositivo in syscall_impl.c) */
+    if (g->st_attr & 0x40)                  st->st_mode = S_IFCHR | 0620u;
+    else if (EXOS_ATTR_DIR(g->st_attr))     st->st_mode = S_IFDIR | 0755u;
     else if (EXOS_ATTR_RDONLY(g->st_attr))  st->st_mode = S_IFREG | 0555u;
     else                                    st->st_mode = S_IFREG | 0644u;
 
@@ -13925,20 +13929,82 @@ int tcgetpgrp(int fd) { return isatty(fd) ? getpid() : -1; }
 int tcsetpgrp(int fd, int pgrp) { (void)pgrp; return isatty(fd) ? 0 : -1; }
 int tcgetsid(int fd)  { return isatty(fd) ? getpid() : -1; }
 
-/* ! NO /dev/tty* FILES ON EX-OS: a terminal has no name in the file system.
- * ttyname says "/dev/tty" (POSIX's name for "my terminal") for any terminal
- * and ENOTTY otherwise: tset and reset only ask whether fd is a real one. */
+/* The name of a terminal. (kernel 0.318) A pseudo-terminal has one: the
+ * slave of pair N is /dev/pts/N, a master /dev/ptmx (as Linux says), which
+ * the kernel tells with PTY_EXOS_QUALE (0x54E0, (N << 1) | master). The
+ * console has none in the file system: "/dev/tty", POSIX's name for "my
+ * terminal". ENOTTY for what is not a terminal. */
 int ttyname_r(int fd, char *buf, size_t n)
 {
+    char nome[24];
+    int  q;
+    size_t l;
+
     if (!isatty(fd)) return ENOTTY;
-    if (n < 9) return ERANGE;
-    memcpy(buf, "/dev/tty", 9);
+    q = ioctl(fd, 0x54E0 /* PTY_EXOS_QUALE */, (void *)0);
+    if (q >= 0 && (q & 1))  strcpy(nome, "/dev/ptmx");
+    else if (q >= 0)        snprintf(nome, sizeof nome, "/dev/pts/%d", q >> 1);
+    else                    strcpy(nome, "/dev/tty");
+    l = strlen(nome) + 1;
+    if (n < l) return ERANGE;
+    memcpy(buf, nome, l);
     return 0;
 }
 char *ttyname(int fd)
 {
-    static char nome[16];
+    static char nome[24];
     int e = ttyname_r(fd, nome, sizeof nome);
+
+    if (e) { errno = e; return NULL; }
+    return nome;
+}
+
+/* posix_openpt, grantpt, unlockpt, ptsname (kernel 0.318): the master
+ * from /dev/ptmx, the slave by its name /dev/pts/N (TIOCGPTN), locked until
+ * unlockpt (TIOCSPTLCK), as on Linux. grantpt has nothing to do: there are
+ * no owners of terminals here. */
+int posix_openpt(int flag)
+{
+    return open("/dev/ptmx", flag);
+}
+int getpt(void) { return posix_openpt(0x0002 /* O_RDWR */); }
+
+int grantpt(int fd)
+{
+    unsigned int n;
+
+    /* only a master: EINVAL otherwise, as POSIX says */
+    if (ioctl(fd, 0x80045430u /* TIOCGPTN */, &n) < 0) { errno = EINVAL; return -1; }
+    return 0;
+}
+
+int unlockpt(int fd)
+{
+    int zero = 0;
+
+    if (ioctl(fd, 0x40045431u /* TIOCSPTLCK */, &zero) < 0) { errno = EINVAL; return -1; }
+    return 0;
+}
+
+int ptsname_r(int fd, char *buf, size_t dim)
+{
+    unsigned int n;
+    char nome[24];
+    size_t l;
+
+    if (!buf) return EINVAL;
+    if (ioctl(fd, 0x80045430u /* TIOCGPTN */, &n) < 0) return ENOTTY;
+    snprintf(nome, sizeof nome, "/dev/pts/%u", n);
+    l = strlen(nome) + 1;
+    if (dim < l) return ERANGE;
+    memcpy(buf, nome, l);
+    return 0;
+}
+
+char *ptsname(int fd)
+{
+    static char nome[24];
+    int e = ptsname_r(fd, nome, sizeof nome);
 
     if (e) { errno = e; return NULL; }
     return nome;
@@ -13947,10 +14013,8 @@ char *ttyname(int fd)
 /* <pty.h> (glibc), <util.h> and <libutil.h> (BSD): openpty, login_tty,
  * forkpty, for terminals and for whoever drives a program through a pty
  * (script, expect, a terminal window, Qt's KPty). On top of SYS_PTY_APRI,
- * which gives both ends at once - so openpty needs no /dev/ptmx.
- * ! THE SLAVE HAS NO NAME in the file system (see ttyname): `nome` gets
- * "/dev/tty", as ttyname says for any terminal. posix_openpt/ptsname, which
- * open the slave BY NAME, are not here: see in_lavorazione voce 33 i. */
+ * which gives both ends at once; `nome` gets the slave's name, /dev/pts/N
+ * (kernel 0.318; before it "/dev/tty"). */
 struct termios;
 struct winsize;
 int fork(void);
@@ -13964,7 +14028,9 @@ int openpty(int *master, int *slave, char *nome, const struct termios *t,
     if (err_posix(pty_apri(fd)) < 0) return -1;
     if (t && tcsetattr(fd[1], 0 /* TCSANOW */, t) < 0) goto male;
     if (w && ioctl(fd[1], 0x5414 /* TIOCSWINSZ */, (void *)w) < 0) goto male;
-    if (nome) memcpy(nome, "/dev/tty", 9);
+    /* ! NO SIZE IS GIVEN FOR `nome`: BSD's interface; 24 bytes is what a
+     * /dev/pts/N name can take, and every caller has at least 16 */
+    if (nome && ttyname_r(fd[1], nome, 24) != 0) memcpy(nome, "/dev/tty", 9);
     *master = fd[0];
     *slave  = fd[1];
     return 0;

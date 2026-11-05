@@ -34,6 +34,10 @@ extern "C" {
 #endif
 #define TIOCGWINSZ 0x5413
 #define TIOCSWINSZ 0x5414
+/* (kernel 0.318) on a master from /dev/ptmx: its number N (/dev/pts/N) and
+ * the slave's lock - ptsname and unlockpt use them */
+#define TIOCGPTN   0x80045430u
+#define TIOCSPTLCK 0x40045431u
 struct winsize {
     unsigned short ws_row;
     unsigned short ws_col;

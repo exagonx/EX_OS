@@ -50,6 +50,11 @@ typedef struct {
     uint32_t righe, colonne;
 
     uint32_t master_aperti, slave_aperti;
+    /* (0.318) a pair opened through /dev/ptmx: the slave is LOCKED until
+     * unlockpt (TIOCSPTLCK 0), as on Linux, and until it is first opened the
+     * master WAITS instead of reading the end of the data - nobody has been
+     * there yet, nobody has left. */
+    uint32_t bloccato, slave_atteso;
     /* (0.317) every waiter, see attese.h */
     Attese   att_in;            /* chi dorme aspettando di leggere lo slave  */
     Attese   att_out;           /* chi dorme aspettando di leggere il master */
@@ -333,6 +338,55 @@ ancora:
     }
     if (pty_in_piu() == 0) goto ancora;
     return ERR(EMFILE);
+}
+
+/* -----------------------------------------------------------------------------
+ * THE SLAVE BY NAME (kernel 0.318): /dev/ptmx and /dev/pts/N
+ *
+ * ! UNTIL 0.317 A PTY HAD NO NAME: SYS_PTY_APRI gives both ends at once, and
+ * that is all openpty needs. posix_openpt/grantpt/unlockpt/ptsname - what
+ * Python's os.openpty falls back to, what xterm, screen, tmux and Qt's KPty
+ * use - open the master alone and then the slave BY ITS NAME, /dev/pts/N,
+ * N being the index of the pair here. sys_open sends both names here.
+ * --------------------------------------------------------------------------- */
+int32_t pty_apri_ptmx(int *h)
+{
+    int s;
+    int32_t r = pty_apri(h, &s);
+    Pty *p;
+
+    if (r < 0) return r;
+    interrupts_disable();
+    p = pty_da_handle(*h);
+    p->slave_aperti = 0;
+    p->slave_atteso = 1;
+    p->bloccato     = 1;
+    interrupts_enable();
+    return 0;
+}
+
+/* /dev/pts/N: 0, or -ENOENT (no such pair, or its master is gone: on Linux
+ * the name disappears with the master), -EIO (still locked). */
+int32_t pty_apri_slave(uint32_t n)
+{
+    Pty *p;
+
+    interrupts_disable();
+    p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;
+    if (!p || p->master_aperti == 0) { interrupts_enable(); return ERR(ENOENT); }
+    if (p->bloccato)                 { interrupts_enable(); return ERR(EIO); }
+    p->slave_aperti++;
+    p->slave_atteso = 0;
+    interrupts_enable();
+    return 0;
+}
+
+/* Whether pair n exists with its master open: stat("/dev/pts/N"). */
+int pty_esiste(uint32_t n)
+{
+    Pty *p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;
+
+    return p != NULL && p->master_aperti > 0;
 }
 
 void pty_apri_riferimento(int h, int master)
@@ -627,7 +681,7 @@ int32_t pty_leggi_master(int h, void *buf, uint32_t n)
 
         if (p->out_quanti > 0) break;
 
-        if (p->slave_aperti == 0) { interrupts_enable(); return 0; }
+        if (p->slave_aperti == 0 && !p->slave_atteso) { interrupts_enable(); return 0; }
 
         cur = proc_get_current();
         if (!cur) { interrupts_enable(); return ERR(EAGAIN); }
@@ -747,6 +801,17 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
         break;
     }
 
+    /* (0.318) the number of the pair - the N of /dev/pts/N - and the lock
+     * of a pair opened through /dev/ptmx. sys_ioctl lets them through only
+     * on the master, as Linux does. */
+    case PTY_TIOCGPTN:
+        *(uint32_t *)arg = (uint32_t)h;
+        break;
+
+    case PTY_TIOCSPTLCK:
+        p->bloccato = (*(const int32_t *)arg) != 0;
+        break;
+
     default:
         r = ERR(ENOTTY);
     }
@@ -800,5 +865,5 @@ int pty_pronto_master(int h)
     Pty *p = pty_da_handle(h);
 
     if (!p) return 1;
-    return (p->out_quanti > 0 || p->slave_aperti == 0);
+    return (p->out_quanti > 0 || (p->slave_aperti == 0 && !p->slave_atteso));
 }

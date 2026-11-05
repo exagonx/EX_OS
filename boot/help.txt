@@ -1357,8 +1357,11 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
   - Apache come demone (httpd senza -X): il padre va sullo sfondo e il
     MPM worker fa i figli con la fork; httpd -k stop li spegne tutti;
   - openpty, forkpty, login_tty (<pty.h>): il figlio di forkpty ha il pty
-    come terminale. Lo slave non ha nome (ttyname dice /dev/tty), percio'
-    posix_openpt e ptsname non ci sono ancora.
+    come terminale;
+  - i pty hanno un nome (kernel 0.318): /dev/ptmx da' il master di una
+    coppia nuova, /dev/pts/N e' lo slave della coppia N dopo unlockpt;
+    posix_openpt, grantpt, unlockpt, ptsname; ttyname dice /dev/pts/N.
+    Se un terminale non apre /dev/pts/N il kernel e' piu' vecchio: netupdate.
 
 Valkey (il Redis BSD), 9.1.3, in /exos/valkey:
 

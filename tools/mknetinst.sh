@@ -519,6 +519,33 @@ N_FILE=$(grep -vc '^#' "$ELE" || true)
 # installasse scaricherebbe zero file credendo di averlo installato.
 CONTI=$(cat "$ELE" "$FUORI"/pacchetti/*.txt 2>/dev/null | grep -v '^#' | cut -f4 | LC_ALL=C sort | uniq -c | sort -rn)
 
+# --- le verifiche (netupdate 0.044) -----------------------------------------
+#
+# tools/netinst/verifiche/*.sh: the scripts netupdate downloads and runs with
+# /bin/sh after an update, to check that the machine is fit for what arrived
+# or to say what to do by hand (see LE VERIFICHE in bin/netupdate/netupdate.c).
+# Each one names its package on a line `# pacchetto = <id>` ("sistema" for
+# every machine). verifiche.txt lists them with their fingerprint, and
+# versione.txt names verifiche.txt by its own: the same chain as the files.
+# ! A SCRIPT WITHOUT ITS PACKAGE LINE STOPS THE BUILD: published, it would
+# never run, and nobody would see why.
+rm -rf "$FUORI/verifiche" "$FUORI/verifiche.txt"
+VER_SHA=""
+if ls tools/netinst/verifiche/*.sh > /dev/null 2>&1; then
+    mkdir -p "$FUORI/verifiche"
+    {
+        echo "# verifiche.txt - <pacchetto> TAB <file> TAB <sha256>; vedi netupdate -verifica"
+        for v in tools/netinst/verifiche/*.sh; do
+            pv=$(sed -n 's/^# *pacchetto *= *\([a-z0-9_-]*\).*/\1/p' "$v" | head -1)
+            [ -n "$pv" ] || { echo "mknetinst: $v non dice '# pacchetto = ...'" >&2; exit 1; }
+            LC_ALL=C grep -q '[^[:print:][:space:]]' "$v" && { echo "mknetinst: $v non e' ASCII" >&2; exit 1; }
+            cp "$v" "$FUORI/verifiche/"
+            printf '%s\t%s\t%s\n' "$pv" "${v##*/}" "$(sha256sum "$v" | cut -d' ' -f1)"
+        done
+    } > "$FUORI/verifiche.txt" || exit 1
+    VER_SHA=$(sha256sum "$FUORI/verifiche.txt" | cut -d' ' -f1)
+fi
+
 # --- il file di versione ----------------------------------------------------
 #
 # ! E' IL PRIMO E IL PIU' PICCOLO, ed e' voluto: netupdate lo scarica a ogni
@@ -534,6 +561,7 @@ CONTI=$(cat "$ELE" "$FUORI"/pacchetti/*.txt 2>/dev/null | grep -v '^#' | cut -f4
     echo "byte      = $(grep -v "^#" "$ELE" | awk -F"\t" "{ s += \$2 } END { printf \"%d\", s }")"
     echo "catalogo  = $(sha256sum "$CAT" | cut -d' ' -f1)"
     echo "elenco    = $(sha256sum "$ELE" | cut -d' ' -f1)"
+    [ -z "$VER_SHA" ] || echo "verifiche = $VER_SHA"
 } > "$FUORI/versione.txt"
 
 echo ""

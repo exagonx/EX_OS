@@ -86,6 +86,12 @@ typedef struct {
 #define PTY_TCFLSH      0x540B
 #define PTY_TIOCGWINSZ  0x5413
 #define PTY_TIOCSWINSZ  0x5414
+/* (0.318) Linux's numbers: the pair's number, the slave's lock */
+#define PTY_TIOCGPTN    0x80045430u
+#define PTY_TIOCSPTLCK  0x40045431u
+/* (0.318) EX-OS's own: which pair and which end - (N << 1) | 1 for the
+ * master, (N << 1) for the slave. ttyname answers /dev/pts/N with it. */
+#define PTY_EXOS_QUALE  0x54E0u
 
 #define T_ISTRIP  0x0020
 #define T_INLCR   0x0040
@@ -111,6 +117,13 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg);
 
 /* Crea una coppia. Rende 0 e riempie i due handle, o un errno negativo. */
 int32_t pty_apri(int *master, int *slave);
+
+/* (0.318) /dev/ptmx: a pair with only its master open, the slave locked;
+ * /dev/pts/N: one more reference to the slave of pair N (-ENOENT, -EIO);
+ * pty_esiste: pair N is there with its master. See pty.c. */
+int32_t pty_apri_ptmx(int *h);
+int32_t pty_apri_slave(uint32_t n);
+int     pty_esiste(uint32_t n);
 
 /* Le quattro strade. `h` e' l'handle reso da pty_apri. */
 int32_t pty_leggi_master(int h, void *buf, uint32_t n);
