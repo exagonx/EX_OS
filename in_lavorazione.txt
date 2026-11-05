@@ -8798,6 +8798,29 @@ tools/netinst/velocita tolto da netinst.
         Qt": si fa la voce 33 adesso, poi si riprende da qui.
       Stato: in pausa per la voce 33 (fork), poi punto 2 e l'elenco qui sopra.
 
+  86. CONSOLIDARE IL SISTEMA SUL FERRO (l'utente, 5/11: "restano da
+      consolidare la gestione ACPI, il Plug and Play, il parallelismo SMP
+      effettivo, la gestione degli errori hardware e soprattutto la
+      stabilita' dimostrata con test prolungati su macchine fisiche").
+      Da mettere in coda, non adesso. Cinque parti:
+      a) ACPI: tabelle (MADT, FADT, DSDT/SSDT con AML), spegnimento e
+         sospensione, eventi (pulsante, coperchio, batteria, termico);
+      b) Plug and Play: dispositivi che arrivano e se ne vanno a sistema
+         acceso (USB c'e' in parte, PCI hotplug, ExpressCard/PCMCIA,
+         schermo esterno), driver caricati e scaricati da soli;
+      c) SMP effettivo: oggi un grande lucchetto del kernel; lucchetti per
+         sottosistema, invalidazione TLB fra processori (manca anche per la
+         finestra delle pile, kernel 0.315: con smp = 2 le pile liberate
+         tengono le pagine), scheduler per processore, interrupt distribuiti;
+      d) errori hardware: MCE/MCA (machine check), errori PCI/AER, ECC,
+         dischi che rispondono male (riprova, timeout, settori), e dirlo
+         all'utente in modo chiaro (help problemi);
+      e) STABILITA' DIMOSTRATA: prove prolungate (giorni) su macchine
+         fisiche - il portatile CQ60 e le altre - con carico misto (rete,
+         disco, grafica, fork, Apache/MariaDB), con un registro dei guasti
+         e dei tempi; la priorita' dell'utente ("soprattutto").
+      Stato: in coda.
+
   80. PROGRAM MANAGER ORDINATO, E UN LETTORE VIDEO (l'utente, 4/11):
       - Strumenti: File manager, Calctor, Archivi, Pennello, Immagini (oggi
         in cima, fuori dalle cartelle; ExEditor, Terminale, EX-IDE, Prova
@@ -10184,7 +10207,15 @@ tools/netinst/velocita tolto da netinst.
          tabelle delle pagine, kmalloc (descrittori 8 KB, PCB) stanno nei
          primi 64 MB. L'utente sceglie "Mappa diretta 64 bit": tutta la
          RAM vista dal kernel in una zona alta condivisa, DA_FISICO passa
-         di li', tabelle e heap del kernel da tutta la RAM. IN CORSO.
+         di li', tabelle e heap del kernel da tutta la RAM.
+         FATTO 5/11, kernel 0.316: mappa diretta in PML4 voce 3; tabelle,
+         kmalloc e PCB da tutta la RAM. Trovati e corretti: CR3 troncato
+         (read_cr3/write_cr3 a 32 bit) e l'handle dell'eseguibile chiuso
+         due volte (PROC_EXE_PRENDI). QEMU 4 GB: 9000 figli; portatile:
+         prova-fork 16 su 16 e 5000 figli. A 64 bit la voce f e' CHIUSA.
+         Resta a 32 bit: le pile fra 3 e 4 GB (il framebuffer) e la fascia
+         per tabelle e heap (a 32 bit non c'e' posto per mappare tutta la
+         RAM: servirebbe la memoria alta alla Linux).
       g) una connessione sta in UN solo insieme epoll (Conn.ins): due
          figli che la mettono ciascuno nel proprio epoll -> EEXIST al
          secondo (nginx lo fa; Apache usa poll, apr_cv_epoll=no).

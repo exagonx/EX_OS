@@ -6784,9 +6784,13 @@ Redis (BGSAVE), Apache's prefork MPM and Qt's `QProcess` want a real
   page by page from all of RAM, with an unmapped page under each one: an
   overflow is a fault, not a corrupted neighbour. `/proc/pile` (0.314) shows
   how much each process uses and the deepest seen: 9272 bytes on the laptop
-  under load. The next ceiling, past a thousand processes, is kernel memory
-  in the first 64 MB (page tables, descriptors): the direct map removes it,
-  work in progress.
+  under load.
+- **All of RAM for the kernel** (kernel 0.316, 64 bit): the fourth PML4
+  entry maps all of RAM, shared by every address space, so page tables,
+  kmalloc's heap and the process table come from all of memory instead of
+  the first 64 MB. The ceiling of processes is the RAM: 9000 children at once
+  in QEMU with 4 GB, 5000 on the laptop (2.8 GB); up to 0.315, 1222 with
+  1 GB and 3045 with 4 GB.
 - **A closed port refuses** (ip.drv 0.022): a SYN where nobody listens gets
   an RST, and `connect` says `ECONNREFUSED` at once instead of waiting.
 

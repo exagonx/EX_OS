@@ -6873,9 +6873,13 @@ Redis (BGSAVE), il MPM prefork di Apache e `QProcess` di Qt vogliono una
   processo, pagina per pagina da tutta la RAM, con una pagina non mappata
   sotto ognuna: un trabocco è un errore, non la pila accanto rovinata.
   `/proc/pile` (0.314) dice quanta ne usa ogni processo e il massimo visto:
-  9272 byte sul portatile sotto carico. Il tetto successivo, oltre il
-  migliaio di processi, è la memoria del kernel nei primi 64 MB (tabelle
-  delle pagine, descrittori): la toglie la mappa diretta, in lavorazione.
+  9272 byte sul portatile sotto carico.
+- **Tutta la RAM per il kernel** (kernel 0.316, 64 bit): la quarta voce della
+  PML4 mappa tutta la RAM, condivisa da ogni spazio di processo, e tabelle
+  delle pagine, heap di kmalloc e tabella dei processi vengono da tutta la
+  memoria invece che dai primi 64 MB. Il tetto dei processi è la RAM: 9000
+  figli insieme in QEMU con 4 GB, 5000 sul portatile (2,8 GB); fino alla
+  0.315, 1222 con 1 GB e 3045 con 4 GB.
 - **Una porta chiusa rifiuta** (ip.drv 0.022): un SYN dove nessuno ascolta
   riceve un RST, e `connect` dice `ECONNREFUSED` subito invece di aspettare.
 

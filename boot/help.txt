@@ -1350,8 +1350,10 @@ socket del padre (EBADF), ip.drv e' piu' vecchio della 0.021: lo stesso.
 Quanti processi: a 64 bit dal kernel 0.315 le pile del kernel vengono da
 tutta la RAM (prima erano nei primi 64 MB: circa 300 processi). Quanta
 pila usa ognuno: `cat /proc/pile` (il massimo visto, poi un processo per
-riga). Il prossimo tetto, oltre il migliaio di processi, e' la memoria
-del kernel nei primi 64 MB: nel log "KMALLOC: OOM" (in lavorazione).
+riga). Dal kernel 0.316 anche le tabelle delle pagine e la memoria del
+kernel vengono da tutta la RAM (la mappa diretta, `dmesg mappa`): il tetto
+dei processi e' la RAM (5000 figli sul portatile da 2,8 GB). Su un kernel
+piu' vecchio, oltre il migliaio di processi, nel log "KMALLOC: OOM".
 
 [php]
 PHP 8.5, da riga di comando e dentro Apache
