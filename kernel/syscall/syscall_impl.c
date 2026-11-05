@@ -4393,8 +4393,8 @@ int32_t sys_procinfo(InterruptFrame *frame)
         o->ustack_top   = p->user_stack_top;
         o->ustack_base  = p->user_stack_base;
         o->ustack_limit = p->user_stack_limit;
-        o->kstack_base  = p->kernel_stack_base;
-        o->kstack_top   = p->kernel_stack_top;
+        o->kstack_base  = (uint32_t)p->kernel_stack_base;   /* low 32 bits (0.315) */
+        o->kstack_top   = (uint32_t)p->kernel_stack_top;
 
         scritti++;
     }

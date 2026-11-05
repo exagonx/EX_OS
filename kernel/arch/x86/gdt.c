@@ -253,7 +253,7 @@ void gdt_install(void)
  * Chiamata dallo scheduler ad ogni context switch verso ring3
  * per impostare lo stack kernel del task corrente.
  * ============================================================================= */
-void gdt_set_kernel_stack(uint32_t stack_top)
+void gdt_set_kernel_stack(vaddr_t stack_top)
 {
     gdt_tss[gdt_cpu_n()].esp0 = stack_top;
 }

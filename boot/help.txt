@@ -1325,6 +1325,11 @@ uguali (256). Pagine in /exos/apache2/htdocs, CGI compilati in cgi-bin,
 mod_ssl con OpenSSL 4.1. Le pagine .php le esegue mod_php, che sta
 dentro httpd (vedi `help php`). Manuale 4.11.
 
+Se httpd dice "AH02291: Cannot access directory '/exos/apache2/logs/'":
+la cartella logs manca (netupdate prima del 5/11 portava solo i file).
+Rimedio: `mkdir /exos/apache2/logs`, oppure `netupdate` (ora arriva
+logs/.tieni e la cartella con lui).
+
 [fork]
 fork: un processo che si sdoppia (kernel 0.313)
 
@@ -1341,6 +1346,12 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
 Se un programma dice ENOSYS su fork, il kernel e' piu' vecchio della
 0.313: aggiornare con `netupdate`. Se i figli di un server non vedono i
 socket del padre (EBADF), ip.drv e' piu' vecchio della 0.021: lo stesso.
+
+Quanti processi: a 64 bit dal kernel 0.315 le pile del kernel vengono da
+tutta la RAM (prima erano nei primi 64 MB: circa 300 processi). Quanta
+pila usa ognuno: `cat /proc/pile` (il massimo visto, poi un processo per
+riga). Il prossimo tetto, oltre il migliaio di processi, e' la memoria
+del kernel nei primi 64 MB: nel log "KMALLOC: OOM" (in lavorazione).
 
 [php]
 PHP 8.5, da riga di comando e dentro Apache

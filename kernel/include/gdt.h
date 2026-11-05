@@ -15,7 +15,7 @@
 #include "kernel.h"
 
 void gdt_install(void);
-void gdt_set_kernel_stack(uint32_t stack_top);
+void gdt_set_kernel_stack(vaddr_t stack_top);   /* 0.315: above 4 GB at 64 bit */
 
 /* Sposta il descrittore TLS (selettore GDT_TLS_SEL) sul thread pointer del
  * processo che sta per girare. Zero per chi non ha variabili __thread. */

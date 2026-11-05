@@ -49,8 +49,9 @@ extern bkl_lascia
 
 section .text
 
-; void context_switch(vaddr_t *old_sp, vaddr_t new_sp, uint32_t new_cr3)
-;                     rdi              rsi             edx
+; void context_switch(vaddr_t *old_sp, vaddr_t new_sp, uintptr_t new_cr3)
+;                     rdi              rsi             rdx
+; (since 0.316 a page table may be above 4 GB: CR3 arrives whole)
 global context_switch
 context_switch:
     pushfq
@@ -69,7 +70,6 @@ context_switch:
 
     mov  [rdi], rsp         ; la pila di chi esce
 
-    mov  edx, edx           ; CR3 arriva in 32 bit: la meta' alta a zero
     mov  rax, cr3
     cmp  rax, rdx
     je   .stesso_spazio     ; stesso spazio: non si butta via il TLB

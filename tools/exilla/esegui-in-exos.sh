@@ -13,6 +13,8 @@
 # ALTRI="f1 f2" mette altri file accanto al programma; EXOS_RAM la memoria;
 # DISCO_MB la misura del disco di prova (32 se non detta).
 # AMBIENTE="VAR=valore ..." esporta quelle variabili prima di lanciarlo.
+# DOPO="cmd@secondi ..." altri comandi dopo il programma, uno per parola
+# (per esempio DOPO="cat:/proc/pile@3": i ':' diventano spazi).
 #
 # EXOS_ARCH=x86_64 runs it in the 64-bit system (dist/exos64.iso,
 # qemu-system-x86_64): the binary must be an x86_64-exos one.
@@ -57,7 +59,9 @@ SER=/tmp/exos/serialexilla.txt
 rm -f "$SER"
 ESPORTA=()
 for v in $AMBIENTE; do ESPORTA+=("export $v@1"); done
+DOPOV=()
+for v in $DOPO; do DOPOV+=("${v//:/ }"); done
 timeout "${ATTESA:-300}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "${ESPORTA[@]}" \
-    "/disk/$NOME $*@${SECONDI:-8}" "echo FINE-ESEGUI@2" > "$D/esegui-1.log" 2>&1
+    "/disk/$NOME $*@${SECONDI:-8}" "${DOPOV[@]}" "echo FINE-ESEGUI@2" > "$D/esegui-1.log" 2>&1
 tr -d '\r' < "$SER" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | \
     sed -n "\#/disk/$NOME#,/FINE-ESEGUI/p" | sed '1d;$d' | grep -v "^ex-os:"

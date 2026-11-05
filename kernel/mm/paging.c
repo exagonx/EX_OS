@@ -840,6 +840,18 @@ void paging_init(void)
  * il framebuffer sta molto piu' in alto (PDE 1012 per 0xFD000000), fuori da
  * quell'intervallo. Si annota qui quali entry aggiungere alla copia.
  * ============================================================================= */
+/* The kernel stacks' window (paging.h): not yet at 32 bit. The 3-4 GB of the
+ * kernel holds the framebuffer at its physical address, which a video driver
+ * may move at any time; the window needs a place no framebuffer can take.
+ * Until then the stacks stay in the kernel zone, as before 0.315. */
+#if !defined(__x86_64__)
+int      paging_pile_init(void)                      { return 0; }
+vaddr_t  paging_pile_base(void)                      { return 0; }
+uint32_t paging_pile_posti(void)                     { return 0; }
+int      paging_pila_mappa(vaddr_t v, paddr_t p)     { (void)v; (void)p; return -1; }
+paddr_t  paging_pila_smappa(vaddr_t v)               { (void)v; return 0; }
+#endif
+
 static uint32_t g_fb_pde_da = 0;
 static uint32_t g_fb_pde_a  = 0;   /* estremo escluso; 0 = nessun framebuffer */
 
@@ -2164,7 +2176,7 @@ void page_fault_handler(InterruptFrame *frame)
                          : ~0ull;
             klog(LOG_ERROR, "PF:   pde 0x%08x%08x pte 0x%08x%08x rsp 0x%08x cr3 0x%08x",
                  (uint32_t)(pde >> 32), (uint32_t)pde, (uint32_t)(pte >> 32), (uint32_t)pte,
-                 (uint32_t)FR_SP(frame), read_cr3());
+                 (uint32_t)FR_SP(frame), (uint32_t)read_cr3());
             /* Gli indirizzi INTERI (le righe sopra ne stampano 32 bit), il
              * codice d'errore, e i byte dell'istruzione che ha fallito, letti
              * dalla pagina fisica: dicono se il codice in memoria e' quello
@@ -2194,7 +2206,7 @@ void page_fault_handler(InterruptFrame *frame)
             uint32_t pte = ((pde & PG_PRESENT) && !(pde & PG_HUGE))
                          ? ((PTE *)PG_ADDR(pde))[PT_INDEX(fault_addr)] : 0xFFFFFFFFu;
             klog(LOG_ERROR, "PF:   pde 0x%08x pte 0x%08x esp 0x%08x cr3 0x%08x pd 0x%08x",
-                 pde, pte, frame->user_esp, read_cr3(), (uint32_t)p->page_directory);
+                 pde, pte, frame->user_esp, (uint32_t)read_cr3(), (uint32_t)p->page_directory);
 #endif
         }
 

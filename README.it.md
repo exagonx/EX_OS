@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.313
+**Versione:** 0.316
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -6866,7 +6866,27 @@ Redis (BGSAVE), il MPM prefork di Apache e `QProcess` di Qt vogliono una
   pipe svegliava solo l'ultimo processo fermo su di lei; con fork molti
   processi leggono la stessa pipe.
 
-Prova: `tools/prova-fork/prova-fork.sh` (64 bit) e `... 32`, in QEMU.
+- **Le pile del kernel da tutta la RAM** (kernel 0.315, 64 bit): ogni processo
+  ha 128 KB di pila nel kernel; fino alla 0.314 erano 32 pagine contigue nei
+  primi 64 MB, e il portatile si fermava a 291 figli. Ora stanno in una
+  finestra del kernel (la terza voce della PML4) condivisa da ogni spazio di
+  processo, pagina per pagina da tutta la RAM, con una pagina non mappata
+  sotto ognuna: un trabocco è un errore, non la pila accanto rovinata.
+  `/proc/pile` (0.314) dice quanta ne usa ogni processo e il massimo visto:
+  9272 byte sul portatile sotto carico. Il tetto successivo, oltre il
+  migliaio di processi, è la memoria del kernel nei primi 64 MB (tabelle
+  delle pagine, descrittori): la toglie la mappa diretta, in lavorazione.
+- **Una porta chiusa rifiuta** (ip.drv 0.022): un SYN dove nessuno ascolta
+  riceve un RST, e `connect` dice `ECONNREFUSED` subito invece di aspettare.
+
+Prova: `tools/prova-fork/prova-fork.sh` (64 bit) e `... 32`, in QEMU;
+`--figli=N` per quanti figli vivi insieme (300 se manca).
+
+**Guasto: Apache installato con netupdate non parte** ("AH02291: Cannot
+access directory '/exos/apache2/logs/'"). Il repository porta file, non
+cartelle, e `logs/` era vuota. Rimedio: `mkdir /exos/apache2/logs`, o
+`netupdate`: ora ogni cartella vuota di apache2, mariadb e php ha un file
+`.tieni` che la porta con sé.
 
 ### Intestazioni con i nomi standard
 

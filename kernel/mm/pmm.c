@@ -897,6 +897,12 @@ int pmm_e_ram(paddr_t a)
 }
 
 uint32_t pmm_alta_libere(void) { return g_alta_libere; }
+/* where the RAM above 4 GB ends (0 if there is none): the direct map covers
+ * up to here (paging64.c, 0.316) */
+uint64_t pmm_alta_fine(void)
+{
+    return g_alta_pagine ? GB4_ + (uint64_t)g_alta_pagine * PAGE_SIZE : 0;
+}
 uint32_t pmm_alta_totali(void) { return g_alta_ram; }
 #endif
 

@@ -790,8 +790,25 @@
  * now given at once; page owners without a ceiling (g_oltre) and counted
  * above 4 GB too; mprotect makes a shared page copy-on-write instead of
  * EACCES; waitpid collects the children of the whole process, 0 and < -1
- * mean any child; SIGCHLD to the parent. */
-#define EXOS_VERSION    "0.313"
+ * mean any child; SIGCHLD to the parent. A pipe remembers every process
+ * waiting on it (many read one pipe after fork). */
+/* 0.313 -> 0.314: the kernel stacks are measured (/proc/pile): each new one
+ * is filled with a pattern, and how much of it was ever overwritten is the
+ * depth it reached - the measure before the stacks move out of the first
+ * 64 MB (voce 33 f). */
+/* 0.314 -> 0.315: the kernel stacks leave the first 64 MB at 64 bit: a
+ * window of the kernel (the third PML4 entry), shared by every process, with
+ * pages from all the RAM; the ceiling of processes and threads is the RAM
+ * (voce 33 f). 32 bit as before. */
+/* 0.315 -> 0.316: the direct map at 64 bit (kernel.h, paging64.c): all of
+ * RAM in PML4 slot 3, shared by every process space; DA_FISICO goes through
+ * it above 64 MB, VERSO_FISICO comes back. Page tables, kmalloc's heap and
+ * the PCB blocks come from all of RAM; CR3 travels whole (context_switch,
+ * read_cr3/write_cr3: truncated, a table above 4 GB hung the machine). The
+ * kernel windows are supervisor-only at every level. The executable's handle
+ * is taken atomically before it is closed (PROC_EXE_PRENDI): a double close
+ * took the parent's reference after thousands of forked children. */
+#define EXOS_VERSION    "0.316"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -10173,6 +10173,18 @@ tools/netinst/velocita tolto da netinst.
          32 pagine CONTIGUE nei primi 64 MB: circa 400 processi in tutto
          anche con 8 GB (con 32 MB di QEMU: 109 figli). Per Apache prefork
          con 256 figli e i 32 mila client e' il prossimo tetto da togliere.
+         5/11 sul portatile: 0.313 15 su 16 (291 figli). L'utente: "misura,
+         poi zona alta". Kernel 0.314: /proc/pile, la pila piu' profonda
+         9272 byte su 131072. Kernel 0.315 (64 bit): pile in una finestra
+         del kernel (PML4 voce 2), pagine da tutta la RAM, pagina di guardia
+         sotto ognuna: 22512 posti sul portatile; prova-fork 16 su 16 e
+         --figli=1000 sul portatile. A 32 bit ancora come prima (il posto
+         fra 3 e 4 GB lo prende il framebuffer).
+         PROSSIMO TETTO: con 1 GB in QEMU --figli=2000 si ferma a 1222:
+         tabelle delle pagine, kmalloc (descrittori 8 KB, PCB) stanno nei
+         primi 64 MB. L'utente sceglie "Mappa diretta 64 bit": tutta la
+         RAM vista dal kernel in una zona alta condivisa, DA_FISICO passa
+         di li', tabelle e heap del kernel da tutta la RAM. IN CORSO.
       g) una connessione sta in UN solo insieme epoll (Conn.ins): due
          figli che la mettono ciascuno nel proprio epoll -> EEXIST al
          secondo (nginx lo fa; Apache usa poll, apr_cv_epoll=no).

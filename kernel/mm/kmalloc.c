@@ -108,7 +108,9 @@ typedef struct KHeapBlock {
  * ============================================================================= */
 typedef struct KHeapRegion {
     struct KHeapRegion *next;   /* la regione successiva, in ordine di nascita */
-    uint32_t            fine;   /* primo indirizzo FUORI dalla regione */
+    uintptr_t           fine;   /* primo indirizzo FUORI dalla regione (the
+                                   kernel's address: through the direct map
+                                   at 64 bit, 0.316) */
 } KHeapRegion;
 
 #define REGION_HEADER_SIZE  sizeof(KHeapRegion)
@@ -277,20 +279,34 @@ static inline int dentro_regione(KHeapRegion *r, KHeapBlock *b)
  * ============================================================================= */
 static KHeapBlock *heap_expand(uint32_t pages)
 {
-    uint32_t     phys;
+    paddr_t      phys;
+    uintptr_t    virt;
     uint32_t     size_bytes;
     KHeapBlock  *new_block;
 
     /* Fascia kernel: i blocchi dello heap si usano al loro indirizzo
      * fisico (new_block qui sotto), quindi devono restare raggiungibili
-     * anche quando gira un processo con la propria page directory. */
+     * anche quando gira un processo con la propria page directory.
+     *
+     * ! AT 64 BIT WITH THE DIRECT MAP (0.316) FROM ALL OF RAM: the kernel
+     * reaches the heap through the map from any process space, and the
+     * first 64 MB stay for what must be there (the kernel tasks' stacks,
+     * drivers, boot structures). pmm_alloc_pages looks above the band first
+     * and below 4 GB; the band only if nothing else fits. Nothing in the
+     * kernel hands a kmalloc pointer to a device: the DMA buffers of the
+     * kernel are static, those of the drivers come from dma_alloc. */
+#if defined(__x86_64__)
+    phys = g_mappa_diretta ? pmm_alloc_pages(pages) : pmm_alloc_pages_kernel(pages);
+#else
     phys = pmm_alloc_pages_kernel(pages);
+#endif
     if (phys == 0) {
         klog(LOG_ERROR, "KMALLOC: PMM OOM durante espansione heap (%u pagine)", pages);
         return NULL;
     }
 
     size_bytes = pages * PAGE_SIZE;
+    virt       = IN_NUMERO(DA_FISICO(phys));
 
     /* Il tratto nuovo attacca esattamente dove ne finisce uno gia' noto?
      * Allora non e' una regione nuova: e' quella che si allunga.
@@ -305,9 +321,9 @@ static KHeapBlock *heap_expand(uint32_t pages)
         KHeapRegion *r;
 
         for (r = g_regioni; r != NULL; r = r->next) {
-            if (r->fine == phys) {
-                r->fine    = phys + size_bytes;
-                new_block  = (KHeapBlock *)DA_FISICO(phys);
+            if (r->fine == virt) {
+                r->fine    = virt + size_bytes;
+                new_block  = (KHeapBlock *)virt;
                 new_block->size  = size_bytes - BLOCK_HEADER_SIZE;
                 new_block->magic = HEAP_MAGIC;
                 new_block->flags = BLOCK_FREE;
@@ -318,7 +334,7 @@ static KHeapBlock *heap_expand(uint32_t pages)
                 g_heap_end   = new_block;
 
                 klog(LOG_DEBUG, "KMALLOC: regione allungata a 0x%08x "
-                     "(+%u pagine, fine 0x%08x)", (uint32_t)IN_NUMERO(r), pages, r->fine);
+                     "(+%u pagine, fine 0x%08x)", (uint32_t)IN_NUMERO(r), pages, (uint32_t)r->fine);
                 return new_block;
             }
         }
@@ -329,9 +345,9 @@ static KHeapBlock *heap_expand(uint32_t pages)
      * multiplo di HEAP_ALIGN: l'allineamento dei blocchi resta quello che
      * sarebbe stato senza. */
     {
-        KHeapRegion *r = (KHeapRegion *)DA_FISICO(phys);
+        KHeapRegion *r = (KHeapRegion *)virt;
 
-        r->fine   = phys + size_bytes;
+        r->fine   = virt + size_bytes;
         r->next   = g_regioni;
         g_regioni = r;
         if (g_prima_regione == NULL) g_prima_regione = r;
@@ -349,7 +365,7 @@ static KHeapBlock *heap_expand(uint32_t pages)
     g_heap_end   = new_block;
 
     klog(LOG_DEBUG, "KMALLOC: heap espanso di %u pagine a 0x%08x (tot: %u KB)",
-         pages, phys, g_heap_size / 1024);
+         pages, (uint32_t)phys, g_heap_size / 1024);
 
     return new_block;
 }
@@ -574,7 +590,7 @@ void kfree(void *ptr)
         if (IN_NUMERO(next_phys) > regione->fine) {
             klog(LOG_ERROR, "KFREE: 0x%08x dice di essere lungo %u byte, ma la "
                  "sua regione 0x%08x-0x%08x finisce prima: intestazione rotta",
-                 (uint32_t)IN_NUMERO(ptr), block->size, (uint32_t)IN_NUMERO(regione), regione->fine);
+                 (uint32_t)IN_NUMERO(ptr), block->size, (uint32_t)IN_NUMERO(regione), (uint32_t)regione->fine);
             g_intestazioni_rotte++;
         }
         g_stop_avanti++;
@@ -630,7 +646,7 @@ void kfree(void *ptr)
                 klog(LOG_ERROR, "KMALLOC: firma rotta a 0x%08x nella regione "
                      "0x%08x-0x%08x (libero 0x%08x): niente coalescenza "
                      "all'indietro", (uint32_t)IN_NUMERO(scan), (uint32_t)IN_NUMERO(regione),
-                     regione->fine, (uint32_t)IN_NUMERO(ptr));
+                     (uint32_t)regione->fine, (uint32_t)IN_NUMERO(ptr));
                 break;
             }
 
@@ -698,7 +714,7 @@ uint32_t kmalloc_verifica(void)
             if (!block_valid(b)) {
                 klog(LOG_ERROR, "KHEAP: a 0x%08x, dentro la regione che "
                      "finisce a 0x%08x, non c'e' nessuna firma: la catena "
-                     "dei blocchi si e' rotta qui", (uint32_t)IN_NUMERO(b), r->fine);
+                     "dei blocchi si e' rotta qui", (uint32_t)IN_NUMERO(b), (uint32_t)r->fine);
                 guai++;
                 break;      /* da qui in poi non si sa piu' dove sono */
             }
@@ -708,7 +724,7 @@ uint32_t kmalloc_verifica(void)
             if (IN_NUMERO(b) + BLOCK_HEADER_SIZE + b->size > r->fine) {
                 klog(LOG_ERROR, "KHEAP: il blocco 0x%08x dice di essere lungo "
                      "%u byte, ma la sua regione finisce a 0x%08x: "
-                     "intestazione rotta", (uint32_t)IN_NUMERO(b), b->size, r->fine);
+                     "intestazione rotta", (uint32_t)IN_NUMERO(b), b->size, (uint32_t)r->fine);
                 guai++;
                 break;
             }

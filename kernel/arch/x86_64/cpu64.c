@@ -110,15 +110,15 @@ vaddr_t read_cr2(void)
     return v;
 }
 
-uint32_t read_cr3(void)
+uintptr_t read_cr3(void)
 {
     uint64_t v;
 
     __asm__ volatile("mov %%cr3, %0" : "=r"(v));
-    return (uint32_t)v;
+    return v;
 }
 
-void write_cr3(uint32_t val)
+void write_cr3(uintptr_t val)
 {
     uint64_t v = val;
 

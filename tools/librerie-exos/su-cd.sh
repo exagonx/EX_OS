@@ -76,6 +76,13 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb
         if [ -d "$N/$d" ]; then
             rm -rf "$E/$d"
             cp -rp "$N/$d" "$E/"
+            # ! AN EMPTY DIRECTORY GETS A FILE (5 November 2026): the network
+            # repository carries files, not directories, so apache2/logs - empty
+            # until httpd runs - never reached a machine installed with
+            # netupdate, and httpd stopped at once: "AH02291: Cannot access
+            # directory '/exos/apache2/logs/'" (seen on the CQ60). `.tieni` is
+            # an ordinary file every netupdate already knows how to bring.
+            find "$E/$d" -type d -empty -exec sh -c 'echo "EX-OS: this directory must exist (netupdate brings files only)" > "$1/.tieni"' _ {} \;
         fi
     done
     rm -rf "$E/src/$NOME"

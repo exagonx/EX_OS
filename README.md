@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.313
+**Version:** 0.316
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -6777,7 +6777,27 @@ Redis (BGSAVE), Apache's prefork MPM and Qt's `QProcess` want a real
   only the last process that blocked on it; with fork, many processes read
   the same pipe.
 
-Test: `tools/prova-fork/prova-fork.sh` (64 bit) and `... 32`, in QEMU.
+- **Kernel stacks from all of RAM** (kernel 0.315, 64 bit): every process
+  has a 128 KB kernel stack; up to 0.314 those were 32 contiguous pages in
+  the first 64 MB, and the laptop stopped at 291 children. Now they live in
+  a kernel window (the third PML4 entry) shared by every address space,
+  page by page from all of RAM, with an unmapped page under each one: an
+  overflow is a fault, not a corrupted neighbour. `/proc/pile` (0.314) shows
+  how much each process uses and the deepest seen: 9272 bytes on the laptop
+  under load. The next ceiling, past a thousand processes, is kernel memory
+  in the first 64 MB (page tables, descriptors): the direct map removes it,
+  work in progress.
+- **A closed port refuses** (ip.drv 0.022): a SYN where nobody listens gets
+  an RST, and `connect` says `ECONNREFUSED` at once instead of waiting.
+
+Test: `tools/prova-fork/prova-fork.sh` (64 bit) and `... 32`, in QEMU;
+`--figli=N` sets how many children live at once (300 by default).
+
+**Fault: Apache installed with netupdate does not start** ("AH02291: Cannot
+access directory '/exos/apache2/logs/'"). The repository carries files, not
+directories, and `logs/` was empty. Fix: `mkdir /exos/apache2/logs`, or
+`netupdate`: every empty directory of apache2, mariadb and php now holds a
+`.tieni` file that brings it along.
 
 ### Headers with the standard names
 

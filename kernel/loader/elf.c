@@ -194,9 +194,10 @@ static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
 
     /* exec sostituisce l'immagine: l'eseguibile di prima non serve piu' e
      * il suo handle non deve restare aperto per sempre. */
-    if (proc != NULL && proc->exe_handle >= 0) {
-        vfs_close(proc->exe_handle);
-        proc->exe_handle = -1;
+    if (proc != NULL) {
+        int h = PROC_EXE_PRENDI(proc);
+
+        if (h >= 0) vfs_close(h);
     }
     if (proc != NULL) proc->n_vma = 0;
 

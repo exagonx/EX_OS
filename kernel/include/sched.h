@@ -493,7 +493,7 @@ typedef struct Process {
     uint8_t         fpu_state[FPU_STATE_SIZE] ALIGNED(16);
 
     /* --- Stack --- */
-    uint32_t        kernel_stack_base;      /* Indirizzo base stack kernel */
+    vaddr_t         kernel_stack_base;      /* Indirizzo base stack kernel (0.315: in the window above 4 GB at 64 bit) */
     vaddr_t         kernel_stack_top;       /* Top stack kernel */
     /* base = pagina piu' bassa ATTUALMENTE mappata; scende man mano che
      * lo stack cresce. limit = confine invalicabile della riserva: sotto
@@ -972,6 +972,32 @@ Process *proc_create(const char *name, vaddr_t entry_point,
 void     proc_set_entry(Process *proc, vaddr_t entry_point, vaddr_t user_stack_top);
 /* fork (0.313): the child returns from the parent's syscall frame, with 0 */
 void     proc_prepara_fork(Process *figlio, const InterruptFrame *f);
+
+/* =============================================================================
+ * THE KERNEL STACKS ARE MEASURED (kernel 0.314, voce 33 f)
+ *
+ * Every kernel stack is born filled with PILA_SEGNO; proc_pila_usata says how
+ * many bytes from the top have ever been overwritten, i.e. the deepest the
+ * kernel went on that stack (a buffer reserved and never written is not
+ * seen: the measure can only be short by what was never touched). When a
+ * process ends its depth goes into the maximum of the machine, with its pid
+ * and name (proc_pila_massimo). /proc/pile shows that and every live stack.
+ * It is the measure asked for before the 128 KB stacks leave the first
+ * 64 MB: how big they must be, on the real machine, under load.
+ * ============================================================================= */
+#define PILA_SEGNO  0x5AC3A55Au
+
+/* THE EXECUTABLE'S HANDLE IS TAKEN, THEN CLOSED (kernel 0.316). Up to 0.315
+ * every site did `if (p->exe_handle >= 0) { vfs_close(..); p->exe_handle =
+ * -1; }`, and vfs_close can sleep on the VFS lock: meanwhile the zombie sweep
+ * (sched.c) found the same handle still there and closed it again. Each
+ * double close took one reference from the parent, whose program shares the
+ * handle with every forked child: with 4000 children the parent's own
+ * reference went, and its next page from the file failed with EBADF
+ * (tools/prova-fork --figli=4000). Whoever swaps -1 in owns the close. */
+#define PROC_EXE_PRENDI(p)  __atomic_exchange_n(&(p)->exe_handle, -1, __ATOMIC_SEQ_CST)
+uint32_t proc_pila_usata(const Process *p);
+uint32_t proc_pila_massimo(uint32_t *pid, const char **nome);
 void     proc_exit(int32_t exit_code);
 
 /* Come proc_exit, ma per un GUASTO: porta via tutto il gruppo anche se a
@@ -1079,7 +1105,7 @@ void     sched_dump(void);
 
 /* Funzione ASM context switch */
 extern void context_switch(vaddr_t *old_esp, vaddr_t new_esp,
-                            uint32_t new_cr3);
+                            uintptr_t new_cr3);
 extern void sched_enter_usermode(vaddr_t entry, vaddr_t user_esp);
 extern void pit_configure(uint32_t frequency_hz);
 

@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.021");
+EX_VERSIONE("ip.drv", "0.022");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -1813,7 +1813,17 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
             asc = NULL;
         }
 
-        if (asc == NULL) { g_st.scartati++; return; }
+        /* ! NOBODY LISTENS: AN RST, "connection refused" (0.022, 5 November
+         * 2026). Until 0.021 the SYN was dropped in silence and the client
+         * retried until its own timeout: on the CQ60 `scarica` to a closed
+         * port of 127.0.0.1 waited and said -110 (ETIMEDOUT), and Apache's
+         * `ab` with no httpd stayed blocked. RFC 793: a SYN for a port in the
+         * CLOSED state gets RST|ACK, as on every other system. */
+        if (asc == NULL) {
+            g_st.scartati++;
+            tcp_rst_ignoto(f, porta_loc, porta_rem, flag, seq, ack, n);
+            return;
+        }
 
         nuova = tcp_slot_nuovo();
 
@@ -1865,7 +1875,11 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         return;
     }
 
-    if (flag & TCP_RST) { tcp_chiudi_dura(c, -ECONNRESET); return; }
+    /* an RST to our SYN: nobody listens there, connect() says ECONNREFUSED */
+    if (flag & TCP_RST) {
+        tcp_chiudi_dura(c, c->stato == S_SYN_INVIA ? -ECONNREFUSED : -ECONNRESET);
+        return;
+    }
 
     c->finestra = finestra;
 

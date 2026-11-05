@@ -21,7 +21,7 @@
  *      are seen by the parent
  *   7  mprotect in the child: read-only, then writable again (copy-on-write
  *      through mprotect), the parent's page unchanged
- *   8  300 children alive at the same time (more than 256 owners of the
+ *   8  300 children alive at the same time (--figli=N: another number) (more than 256 owners of the
  *      same pages), all collected with their codes
  *   9  waitpid(WNOHANG) is 0 while the child lives, waitpid(-1) collects
  *  10  SIGCHLD reaches a handler
@@ -254,11 +254,11 @@ static void prova_mprotect(void)
 }
 
 /* 8 */
-#define TANTI 300
+static int g_tanti = 300;            /* --figli=N */
 static void prova_tanti(void)
 {
-    static int pid[TANTI];
-    int p[2], i, nati = 0, bene = 1;
+    int *pid = malloc((size_t)g_tanti * sizeof(int));
+    int p[2], i, nati = 0, bene = 1, TANTI = g_tanti;
     char c;
 
     if (pipe(p) != 0) { esito(0, "8 pipe"); return; }
@@ -282,6 +282,7 @@ static void prova_tanti(void)
         snprintf(r, sizeof r, "8 %d figli vivi insieme (oltre 256 proprietari), tutti raccolti", nati);
         esito(bene && nati == TANTI, r);
     }
+    free(pid);
 }
 
 /* 9 */
@@ -521,6 +522,7 @@ static void prova_prese(void)
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--figlio-exec") == 0) return 33;
+    if (argc > 1 && strncmp(argv[1], "--figli=", 8) == 0) g_tanti = atoi(argv[1] + 8);
 
     setvbuf(stdout, NULL, _IONBF, 0);
     prova_base();

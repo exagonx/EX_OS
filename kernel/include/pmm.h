@@ -82,6 +82,7 @@ paddr_t  pmm_alloc_page_utente(void);
 int      pmm_e_ram(paddr_t a);
 uint32_t pmm_alta_libere(void);
 uint32_t pmm_alta_totali(void);
+uint64_t pmm_alta_fine(void);
 #define  PMM_OLTRE_RAM(a)       (!pmm_e_ram(a))
 #define  PMM_E_RAM_SOTTO(a, r)  pmm_e_ram(a)
 #else

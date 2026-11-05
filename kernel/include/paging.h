@@ -201,6 +201,33 @@ void    *paging_framebuffer_virt(paddr_t phys);
 #define  paging_framebuffer_virt(phys)  ((void *)(uintptr_t)(phys))
 #endif
 
+/* =============================================================================
+ * THE KERNEL STACKS OUT OF THE FIRST 64 MB (kernel 0.315, voce 33 f)
+ *
+ * Until 0.314 a kernel stack was 32 contiguous pages in the kernel zone, at
+ * its physical address: at most 512 processes and threads on any machine
+ * (USER_SPACE_BASE / KERNEL_STACK_SIZE, fewer with the heap and the tables
+ * there too) - 291 children of tools/prova-fork on the CQ60 with 2.8 GB.
+ * Now, where the architecture has it, the stacks live in a WINDOW of the
+ * kernel's address space that every process shares by pointer: its pages
+ * come from all the RAM, one at a time, and the ceiling is the RAM.
+ *
+ *   paging_pile_init()     at the start of sched_init, before any process
+ *   paging_pile_base()     the window, 0 = none (32 bit for now: the stacks
+ *                          stay in the kernel zone, as before)
+ *   paging_pile_posti()    how many stacks the window holds
+ *   paging_pila_mappa()    a page of the window gets `phys`, for everybody
+ *   paging_pila_smappa()   the page is taken away; returns its frame
+ *
+ * The slots (which stack where, a free page below each one as a guard) are
+ * sched.c's business: see «pila_nuova».
+ * ============================================================================= */
+int      paging_pile_init(void);
+vaddr_t  paging_pile_base(void);
+uint32_t paging_pile_posti(void);
+int      paging_pila_mappa(vaddr_t virt, paddr_t phys);
+paddr_t  paging_pila_smappa(vaddr_t virt);
+
 /* kernel/arch/x86/mtrr.c: dichiara combinabile in scrittura la memoria video.
  * 0 se da adesso lo e', -1 se ha rinunciato (e il log dice perche'). */
 int mtrr_framebuffer_wc(uint32_t base, uint32_t byte);

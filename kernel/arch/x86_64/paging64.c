@@ -56,6 +56,7 @@
 #include "swap.h"
 #include "paging.h"
 #include "k64.h"
+#include "sched.h"   /* KERNEL_STACK_SIZE: the slots of the stacks' window */
 
 #define PG_HUGE         (1 << 7)                    /* nella PD: pagina da 2 MB */
 #define PG_ADDR(v)      ((v) & 0x000FFFFFFFFFF000ull)
@@ -99,6 +100,26 @@ static PDE *g_corrente = NULL;
 #define FB_SLOT         1u
 #define FB_ALIAS        ((uint64_t)FB_SLOT << 39)
 static int g_fb_alias;
+
+/* The kernel stacks (paging.h, «THE KERNEL STACKS OUT OF THE FIRST 64 MB"):
+ * the third PML4 entry, 1 TB up, kernel-only, its tables shared by pointer
+ * by every process space exactly as FB_SLOT's. 512 GB of window: the RAM
+ * runs out long before the slots do. */
+#define PILE_SLOT       2u
+#define PILE_BASE       ((uint64_t)PILE_SLOT << 39)
+
+/* The direct map (0.316, see kernel.h): slot 3, all of RAM with 2 MB pages,
+ * kernel only. Its tables are the kernel's, built once in paging_init and
+ * shared by pointer by every process space, like PILE_SLOT's. */
+#define DM_SLOT         3u
+uint64_t g_mappa_diretta = 0;
+
+/* A program's address: above the fascia and inside PML4 slot 0. The kernel's
+ * windows above (framebuffer alias, stacks, direct map) are kernel only at
+ * every level: until 0.315 mapping a kernel stack set PG_USER on the upper
+ * entries of the window (the PTE without it kept programs out). */
+#define E_UTENTE(v)     ((v) >= USER_SPACE_BASE && (uint64_t)(v) < ((uint64_t)1 << 39))
+#define PILE_BYTE       ((uint64_t)1 << 39)
 
 static inline uint64_t cr3_leggi(void)
 {
@@ -196,18 +217,27 @@ void paging_azzera_fisica(paddr_t phys)
  * Scendere per le tabelle
  * --------------------------------------------------------------------------- */
 
-/* Una tabella nuova, azzerata, nella fascia. 0 se la memoria e' finita anche
- * dopo aver mandato via qualche pagina. */
+/* Una tabella nuova, azzerata. 0 se la memoria e' finita anche dopo aver
+ * mandato via qualche pagina.
+ *
+ * ! FROM ALL OF RAM SINCE 0.316: through the direct map the kernel writes a
+ * table wherever it is, from any process space. Before the direct map
+ * exists (paging_init itself) a table must be in the first 64 MB. */
+static paddr_t tabella_prendi(void)
+{
+    return g_mappa_diretta ? pmm_alloc_page_utente() : pmm_alloc_page_kernel();
+}
+
 static paddr_t tabella_nuova(void)
 {
-    paddr_t   t = pmm_alloc_page_kernel();
+    paddr_t   t = tabella_prendi();
     uint64_t *p;
     uint32_t  n;
     int       giri;
 
     for (giri = 0; giri < 64 && t == 0; giri++) {
         if (!swap_sfratta()) break;
-        t = pmm_alloc_page_kernel();
+        t = tabella_prendi();
     }
     if (t == 0) return 0;
 
@@ -252,7 +282,7 @@ static int tabella_sotto(uint64_t *voce, uint64_t utente)
 static uint64_t *voce_pd(PDE *pml4, vaddr_t virt, int crea)
 {
     uint64_t *v4 = &pml4[I4(virt)], *v3;
-    uint64_t  utente = (virt >= USER_SPACE_BASE) ? PG_USER : 0;
+    uint64_t  utente = E_UTENTE(virt) ? PG_USER : 0;
 
     if (crea) { if (tabella_sotto(v4, utente) != 0) return NULL; }
     else if (!(*v4 & PG_PRESENT)) return NULL;
@@ -270,7 +300,7 @@ static int spezza_2mb(uint64_t *v2)
 {
     uint64_t  base = PG_ADDR_2MB(*v2);
     uint64_t  flag = (*v2 & 0xFFFu) & ~(uint64_t)PG_HUGE;
-    paddr_t   t    = pmm_alloc_page_kernel();
+    paddr_t   t    = tabella_prendi();
     uint64_t *pt;
     uint32_t  i;
 
@@ -337,7 +367,7 @@ int paging_map_page(PDE *pd, vaddr_t virt, paddr_t phys, uint32_t flags)
     /* sopra la fascia la voce e' di un programma, e a dire chi puo' toccare
      * la pagina e' la PTE; nella fascia e' del kernel, a meno che la tabella
      * nasca adesso per chi la chiede sua (come a 32 bit) */
-    if (tabella_sotto(v2, (virt >= USER_SPACE_BASE ||
+    if (tabella_sotto(v2, (E_UTENTE(virt) ||
                            (!(*v2 & PG_PRESENT) && (flags & PG_USER))) ? PG_USER : 0) != 0) {
         klog(LOG_ERROR, "PAGING: OOM durante map_page virt=0x%08x%08x",
              (uint32_t)((uint64_t)virt >> 32), (uint32_t)virt);
@@ -444,6 +474,83 @@ static void prova_spezzamento(vaddr_t base)
          (uint32_t)base);
 }
 
+/* The direct map: [0, fine_bassa) and the RAM above 4 GB, 2 MB pages, in
+ * slot 3 of the kernel's PML4. Its PDPT and PDs come from the first 64 MB
+ * (the map does not exist yet to reach anything else): one page per GB. If
+ * a table is missing the map stays off and the kernel works as before. */
+static void mappa_diretta_crea(uint64_t fine_bassa)
+{
+    uint64_t  fine_alta = pmm_alta_fine();
+    uint64_t  top = fine_alta ? fine_alta : fine_bassa, a;
+    uint64_t *pdpt, *pd = NULL;
+    paddr_t   t;
+    uint32_t  gb = 0, blocchi = 0;
+
+    if (top > MAPPA_DIRETTA_BYTE) top = MAPPA_DIRETTA_BYTE;
+    t = pmm_alloc_page_kernel();
+    if (t == 0) { klog(LOG_ERROR, "PAGING: mappa diretta: niente PDPT"); return; }
+    pdpt = (uint64_t *)DA_FISICO(t);
+    for (a = 0; a < VOCI; a++) pdpt[a] = 0;
+
+    for (a = 0; a < top; a += MB2) {
+        if (a >= fine_bassa && a < GB4) { a = GB4 - MB2; continue; }   /* the hole */
+        if (!(pdpt[a >> 30] & PG_PRESENT)) {
+            paddr_t p = pmm_alloc_page_kernel();
+            uint32_t k;
+
+            if (p == 0) {
+                klog(LOG_ERROR, "PAGING: mappa diretta: niente PD per il GB %u, "
+                     "resta spenta", (uint32_t)(a >> 30));
+                return;     /* the pages taken stay used: a few, at boot */
+            }
+            pd = (uint64_t *)DA_FISICO(p);
+            for (k = 0; k < VOCI; k++) pd[k] = 0;
+            pdpt[a >> 30] = p | PG_PRESENT | PG_WRITABLE;
+            gb++;
+        }
+        pd = TAB(pdpt[a >> 30]);
+        pd[(a >> 21) & 511] = a | PG_PRESENT | PG_WRITABLE | PG_HUGE;
+        blocchi++;
+    }
+    k_pml4[DM_SLOT] = t | PG_PRESENT | PG_WRITABLE;
+    tlb_tutto();
+    g_mappa_diretta = MAPPA_DIRETTA_BASE;
+
+    /* the proof: a page above the first 64 MB, written through the map and
+     * read through the kernel's identity (both are the kernel's tables) */
+    {
+        paddr_t g = pmm_alloc_page_utente();
+        int     bene = 0;
+
+        if (g >= USER_SPACE_BASE && g < GB4 && g < fine_bassa) {
+            volatile uint32_t *v = (volatile uint32_t *)DA_FISICO(g);
+            volatile uint32_t *i = (volatile uint32_t *)(uintptr_t)g;
+
+            v[5] = 0x0D1E770Au;
+            bene = (i[5] == 0x0D1E770Au) && (VERSO_FISICO(v) == g);
+            v[5] = 0;
+        } else if (g != 0) {
+            volatile uint32_t *v = (volatile uint32_t *)DA_FISICO(g);
+
+            v[5] = 0x0D1E770Au;
+            bene = (v[5] == 0x0D1E770Au) && (VERSO_FISICO(v) == g);
+            v[5] = 0;
+        }
+        if (g) pmm_free_page(g);
+        if (!bene) {
+            k_pml4[DM_SLOT] = 0;
+            g_mappa_diretta = 0;
+            tlb_tutto();
+            klog(LOG_ERROR, "PAGING: mappa diretta SBAGLIATA alla prova, spenta");
+            return;
+        }
+    }
+    klog(LOG_INFO, "PAGING: mappa diretta a 0x%x%08x: %u MB di RAM in %u blocchi da 2 MB "
+         "(%u PD); tabelle delle pagine da tutta la RAM",
+         (uint32_t)(MAPPA_DIRETTA_BASE >> 32), (uint32_t)MAPPA_DIRETTA_BASE,
+         (uint32_t)(blocchi * 2), blocchi, gb);
+}
+
 void paging_init(void)
 {
     uint64_t ram = (uint64_t)pmm_get_total_pages() * PAGE_SIZE;
@@ -486,6 +593,8 @@ void paging_init(void)
     klog(LOG_INFO, "PAGING: CR3 = 0x%08x, tabelle del kernel in uso", (uint32_t)IN_NUMERO(k_pml4));
 
     if (blocchi) prova_spezzamento((vaddr_t)(fine - MB2));
+
+    mappa_diretta_crea(fine);
 }
 
 int paging_mappa_framebuffer(paddr_t phys, uint32_t byte)
@@ -509,6 +618,43 @@ int paging_mappa_framebuffer(paddr_t phys, uint32_t byte)
     }
     g_fb_alias = 1;
     return 0;
+}
+
+int paging_pile_init(void)
+{
+    paddr_t t;
+
+    if (k_pml4[PILE_SLOT] & PG_PRESENT) return 0;
+    t = tabella_nuova();
+    if (t == 0) return -1;
+    k_pml4[PILE_SLOT] = t | PG_PRESENT | PG_WRITABLE;
+    return 0;
+}
+
+vaddr_t paging_pile_base(void)
+{
+    return (k_pml4[PILE_SLOT] & PG_PRESENT) ? (vaddr_t)PILE_BASE : 0;
+}
+
+uint32_t paging_pile_posti(void)
+{
+    uint64_t n = PILE_BYTE / (KERNEL_STACK_SIZE + PAGE_SIZE);
+
+    return n > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)n;
+}
+
+/* In the kernel's own tables, which every space shares under PILE_SLOT. */
+int paging_pila_mappa(vaddr_t virt, paddr_t phys)
+{
+    return paging_map_page(k_pml4, virt, phys, PG_PRESENT | PG_WRITABLE);
+}
+
+paddr_t paging_pila_smappa(vaddr_t virt)
+{
+    paddr_t f = paging_get_physical(k_pml4, virt);
+
+    paging_unmap_page(k_pml4, virt);
+    return f & ~(paddr_t)0xFFF;
 }
 
 void *paging_framebuffer_virt(paddr_t phys)
@@ -547,6 +693,10 @@ PDE *paging_create_directory(void)
     /* the framebuffer's alias, if there is one: the kernel's own tables,
      * shared by pointer (paging_destroy_directory leaves them alone) */
     if (g_fb_alias && (k_pml4[FB_SLOT] & PG_PRESENT)) pml4[FB_SLOT] = k_pml4[FB_SLOT];
+    /* the kernel stacks, the same way (0.315) */
+    if (k_pml4[PILE_SLOT] & PG_PRESENT) pml4[PILE_SLOT] = k_pml4[PILE_SLOT];
+    /* and the direct map (0.316) */
+    if (k_pml4[DM_SLOT] & PG_PRESENT) pml4[DM_SLOT] = k_pml4[DM_SLOT];
 
     klog(LOG_DEBUG, "PAGING: nuovo spazio di processo, PML4 a 0x%08x", (uint32_t)f4);
     return pml4;
@@ -563,6 +713,8 @@ void paging_destroy_directory(PDE *pml4)
 
         if (!(pml4[i4] & PG_PRESENT)) continue;
         if (i4 == FB_SLOT && g_fb_alias) continue;      /* the kernel's, shared */
+        if (i4 == PILE_SLOT) continue;                  /* the kernel stacks, shared */
+        if (i4 == DM_SLOT) continue;                    /* the direct map, shared */
         pdpt = TAB(pml4[i4]);
 
         for (i3 = 0; i3 < VOCI; i3++) {
@@ -607,17 +759,17 @@ void paging_destroy_directory(PDE *pml4)
         klog(LOG_WARN, "PAGING: %u pagine DMA di un driver finito restano fuori "
              "uso fino al riavvio", dma_tenute);
 
-    pmm_free_page(IN_NUMERO(pml4));
+    pmm_free_page(VERSO_FISICO(pml4));
 
     klog(LOG_DEBUG, "PAGING: spazio di processo 0x%08x distrutto (dati utente inclusi)",
-         (uint32_t)IN_NUMERO(pml4));
+         (uint32_t)VERSO_FISICO(pml4));
 }
 
 void paging_switch(PDE *pd)
 {
     if (pd == g_corrente) return;
     g_corrente = pd;
-    cr3_scrivi(IN_NUMERO(pd));
+    cr3_scrivi(VERSO_FISICO(pd));
 }
 
 PDE *paging_get_kernel_directory(void)  { return k_pml4; }

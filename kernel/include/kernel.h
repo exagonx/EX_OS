@@ -66,8 +66,47 @@ typedef uint32_t            paddr_t;
  * invisibile; DA_FISICO(fis) si cerca con grep, e il giorno che la RAM oltre
  * i 4 GB non sara' mappata su se stessa sono esattamente questi i punti da
  * rivedere. IN_NUMERO fa il viaggio contrario: un puntatore come numero. */
-#define DA_FISICO(p)        ((void *)(uintptr_t)(p))
 #define IN_NUMERO(p)        ((uintptr_t)(p))
+
+/* THE DIRECT MAP (kernel 0.316, 64 bit). The fourth PML4 entry (slot 3,
+ * 0x18000000000) maps ALL of RAM, below and above 4 GB, kernel only, and
+ * every process space shares its tables by pointer: from any CR3 the kernel
+ * reaches any physical page. Before it, a process space showed the kernel only
+ * the first 64 MB, so page tables, kmalloc's heap and everything the kernel
+ * wrote through a physical address had to live there (about 1200 processes
+ * in QEMU with 1 GB, whatever the RAM). g_mappa_diretta is 0 until
+ * paging_init builds it (the boot tables map low memory on itself), then
+ * MAPPA_DIRETTA_BASE.
+ *   DA_FISICO(p)     a physical address as a kernel pointer: below
+ *                    USER_SPACE_BASE the identity, as always (pointers into
+ *                    the first 64 MB keep their value: DMA, the trampoline,
+ *                    the boot structures); above it, through the direct map.
+ *   VERSO_FISICO(v)  the way back: a kernel pointer that DA_FISICO made, or
+ *                    any pointer into the first 64 MB, as a physical address.
+ *                    Where a pointer becomes an address for the hardware
+ *                    (CR3, DMA, pmm_free_page) it is VERSO_FISICO, never
+ *                    IN_NUMERO.
+ * At 32 bit both are the identity. */
+#if defined(__x86_64__)
+#define MAPPA_DIRETTA_BASE  0x18000000000ull
+#define MAPPA_DIRETTA_BYTE  0x8000000000ull     /* 512 GB: one PML4 entry */
+extern uint64_t g_mappa_diretta;
+static inline void *da_fisico_(uint64_t p)
+{
+    return (void *)(uintptr_t)(p >= 0x04000000ull ? p + g_mappa_diretta : p);
+}
+static inline uint64_t verso_fisico_(uint64_t v)
+{
+    if (g_mappa_diretta && v >= g_mappa_diretta && v < g_mappa_diretta + MAPPA_DIRETTA_BYTE)
+        return v - g_mappa_diretta;
+    return v;
+}
+#define DA_FISICO(p)        da_fisico_((uint64_t)(uintptr_t)(p))
+#define VERSO_FISICO(v)     verso_fisico_((uint64_t)(uintptr_t)(v))
+#else
+#define DA_FISICO(p)        ((void *)(uintptr_t)(p))
+#define VERSO_FISICO(v)     ((uintptr_t)(v))
+#endif
 
 #define NULL                ((void*)0)
 #define TRUE                1
@@ -338,8 +377,10 @@ uint32_t    cpuid_edx1(void);
 uint32_t    cpuid_ecx1(void);
 void        write_cr4(uint32_t val);
 vaddr_t     read_cr2(void);     /* un indirizzo qualunque: a 64 bit non sta in 32 */
-uint32_t    read_cr3(void);
-void        write_cr3(uint32_t val);
+/* CR3 is as wide as a pointer: at 64 bit a page table may be above 4 GB
+ * (0.316), and a truncated CR3 jumps to somebody else's tables */
+uintptr_t   read_cr3(void);
+void        write_cr3(uintptr_t val);
 void        interrupts_enable(void);
 void        interrupts_disable(void);
 uint32_t    read_eflags(void);

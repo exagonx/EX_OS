@@ -109,7 +109,7 @@ void gdt_install(void) { gdt64_installa(); }
 
 /* Dove atterra il processore arrivando da ring 3. Le pile del kernel stanno
  * nella fascia (sotto i 64 MB): 32 bit bastano, e il prototipo e' comune. */
-void gdt_set_kernel_stack(uint32_t stack_top) { g_tss[cpu_n()].rsp0 = stack_top; }
+void gdt_set_kernel_stack(vaddr_t stack_top) { g_tss[cpu_n()].rsp0 = stack_top; }
 
 /* The GDT and TSS of processor `n`, loaded on whoever calls. Every extra
  * processor calls it before it starts working. */

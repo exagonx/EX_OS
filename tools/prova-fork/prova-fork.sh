@@ -7,6 +7,7 @@
 #
 #     tools/prova-fork/prova-fork.sh         64 bit (dist/exos64.iso)
 #     tools/prova-fork/prova-fork.sh 32      32 bit (dist/exos.iso)
+#     tools/prova-fork/prova-fork.sh 64 --figli=2000   more children in check 8
 #
 # Builds prova-fork.c and runs it in EX-OS under QEMU. The checks
 # are listed at the top of prova-fork.c. Must print "prova-fork: 0 NO".
@@ -28,7 +29,7 @@ D="$RADICE/cross_build/$MACCHINA/costruzione-prova-fork-$T"
 CD="${CD_FORZATO:-$RADICE/dist/exos.iso}"; [ -n "$ARCH" ] && CD="${CD_FORZATO:-$RADICE/dist/exos64.iso}"
 mkdir -p "$D"
 $T-gcc -O2 -o "$D/prova-fork" tools/prova-fork/prova-fork.c -lpthread || exit 1
-uscita=$(EXOS_ARCH=$ARCH EXOS_RAM=${EXOS_RAM:-512M} CD_FORZATO="$CD" SECONDI=${SECONDI:-60} tools/exilla/esegui-in-exos.sh "$D/prova-fork")
+uscita=$(EXOS_ARCH=$ARCH EXOS_RAM=${EXOS_RAM:-512M} CD_FORZATO="$CD" SECONDI=${SECONDI:-60} tools/exilla/esegui-in-exos.sh "$D/prova-fork" "${@:2}")
 echo "$uscita" | grep -a -E "\[OK\]|\[NO\]|prova-fork|FAULT|panic|PANIC|WP"
 esito=1
 echo "$uscita" | grep -aq "prova-fork: 0 NO" && esito=0

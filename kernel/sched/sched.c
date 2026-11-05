@@ -69,6 +69,132 @@ struct Process **g_proc_blocchi;
 uint32_t         g_proc_posti;
 uint32_t         g_proc_max;
 
+/* the deepest kernel stack of the processes that ended (sched.h) */
+static uint32_t g_pila_max, g_pila_max_pid;
+static char     g_pila_max_nome[PROCESS_NAME_LEN];
+
+/* =============================================================================
+ * THE STACKS IN THE WINDOW (kernel 0.315, voce 33 f; paging.h)
+ *
+ * The window is cut into slots of KERNEL_STACK_SIZE plus one page left
+ * unmapped below, so an overflow faults instead of writing over the stack
+ * next door. A slot is taken in order the first time; a freed one goes to a
+ * list (g_pile_libere, which doubles) and is the next to be given.
+ *
+ * ! WITH MORE THAN ONE PROCESSOR AT WORK THE PAGES STAY (PILA_TIENI). Another
+ * processor may still hold the translation of a dead stack in its TLB, and
+ * EX-OS has no way yet to make it forget (no TLB shootdown): if the pages went
+ * back to the PMM and became somebody's data, a stale translation would write
+ * there. So under smp = 2 a freed stack keeps its pages, mapped, ready for the
+ * next process - the memory of the largest number of processes alive at once
+ * stays with the stacks. With one processor (the default) the pages go back
+ * at once: invlpg on this processor is all it takes.
+ * ============================================================================= */
+#define PILA_TIENI      0x80000000u     /* in g_pile_libere: the pages are there */
+#define PILA_PASSO      ((vaddr_t)KERNEL_STACK_SIZE + PAGE_SIZE)
+static uint32_t  g_pile_prossimo;       /* slots taken so far, in order */
+static uint32_t *g_pile_libere;
+static uint32_t  g_pile_libere_n, g_pile_libere_posti;
+
+static vaddr_t pila_virt(uint32_t slot)
+{
+    return paging_pile_base() + (vaddr_t)slot * PILA_PASSO + PAGE_SIZE;
+}
+
+/* The stack's pages from slot's first page on, `n` of them, go back. */
+static void pila_smappa(uint32_t slot, uint32_t n)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++) {
+        paddr_t f = paging_pila_smappa(pila_virt(slot) + (vaddr_t)i * PAGE_SIZE);
+
+        if (f) pmm_free_page(f);
+    }
+}
+
+/* A slot back in the list; 0, or -1 if the list could not grow (the slot is
+ * then lost, its pages already gone or kept). */
+static int pila_in_lista(uint32_t voce)
+{
+    if (g_pile_libere_n == g_pile_libere_posti) {
+        uint32_t  posti = g_pile_libere_posti ? g_pile_libere_posti * 2u : 64u;
+        uint32_t *v = (uint32_t *)kmalloc(posti * sizeof(uint32_t)), i;
+
+        if (v == NULL) return -1;
+        for (i = 0; i < g_pile_libere_n; i++) v[i] = g_pile_libere[i];
+        if (g_pile_libere) kfree(g_pile_libere);
+        g_pile_libere = v;
+        g_pile_libere_posti = posti;
+    }
+    g_pile_libere[g_pile_libere_n++] = voce;
+    return 0;
+}
+
+static vaddr_t pila_nuova(void)
+{
+    uint32_t slot, i, n = KERNEL_STACK_SIZE / PAGE_SIZE;
+
+    if (g_pile_libere_n > 0) {
+        uint32_t voce = g_pile_libere[--g_pile_libere_n];
+
+        slot = voce & ~PILA_TIENI;
+        if (voce & PILA_TIENI) return pila_virt(slot);
+    } else {
+        if (g_pile_prossimo >= paging_pile_posti()) return 0;
+        slot = g_pile_prossimo++;
+    }
+    for (i = 0; i < n; i++) {
+        paddr_t f = pmm_alloc_page_utente();
+
+        if (f == 0 || paging_pila_mappa(pila_virt(slot) + (vaddr_t)i * PAGE_SIZE, f) != 0) {
+            if (f) pmm_free_page(f);
+            pila_smappa(slot, i);
+            (void)pila_in_lista(slot);
+            return 0;
+        }
+    }
+    return pila_virt(slot);
+}
+
+static void pila_libera(vaddr_t base)
+{
+    uint32_t slot;
+
+    if (base == 0) return;
+    if (paging_pile_base() == 0 || base < paging_pile_base()) {   /* the kernel zone */
+        for (uint32_t pj = 0; pj < KERNEL_STACK_SIZE / PAGE_SIZE; pj++)
+            pmm_free_page((paddr_t)(base + (vaddr_t)pj * PAGE_SIZE));
+        return;
+    }
+    slot = (uint32_t)((base - paging_pile_base() - PAGE_SIZE) / PILA_PASSO);
+    if (g_smp_lavora) {
+        if (pila_in_lista(slot | PILA_TIENI) != 0)
+            klog(LOG_WARN, "SCHED: una pila del kernel persa (niente memoria per l'elenco)");
+        return;
+    }
+    pila_smappa(slot, KERNEL_STACK_SIZE / PAGE_SIZE);
+    (void)pila_in_lista(slot);
+}
+
+uint32_t proc_pila_usata(const Process *p)
+{
+    const uint32_t *w;
+    uint32_t        i = 0, n = KERNEL_STACK_SIZE / 4u;
+
+    if (p == NULL || p->kernel_stack_base == 0) return 0;
+    w = (const uint32_t *)(uintptr_t)p->kernel_stack_base;
+    while (i < n && w[i] == PILA_SEGNO) i++;
+    return KERNEL_STACK_SIZE - i * 4u;
+}
+
+uint32_t proc_pila_massimo(uint32_t *pid, const char **nome)
+{
+    if (pid)  *pid  = g_pila_max_pid;
+    if (nome) *nome = g_pila_max_nome;
+    return g_pila_max;
+}
+
 uint32_t proc_tetto(void)
 {
     KernelConfig *cfg = cfg_get();
@@ -92,7 +218,13 @@ static int proc_blocco_in_piu(void)
     uint8_t *q;
 
     if (posti + PROC_BLOCCO > proc_tetto()) return -1;
+#if defined(__x86_64__)
+    /* with the direct map (0.316) from all of RAM, the band only if nothing
+     * else fits (pmm_alloc_pages) */
+    fis = g_mappa_diretta ? pmm_alloc_pages(pagine) : pmm_alloc_pages_kernel(pagine);
+#else
     fis = pmm_alloc_pages_kernel(pagine);
+#endif
     if (fis == 0) {
         klog(LOG_WARN, "SCHED: niente memoria nella fascia kernel per altri "
              "%u processi (%u in tutto)", (unsigned)PROC_BLOCCO, (unsigned)posti);
@@ -568,9 +700,10 @@ static void init_reaper_task(void)
              * again; once no thread of its group is alive either, the file
              * goes now. proc_reap_zombie finds exe_handle = -1 and skips it. */
             if (p->exe_handle >= 0 && p->tgid == p->pid && proc_gruppo_vivi(p->tgid) == 0) {
-                vfs_close(p->exe_handle);
-                p->exe_handle = -1;
+                int h = PROC_EXE_PRENDI(p);
+
                 p->n_vma = 0;
+                if (h >= 0) vfs_close(h);
             }
 
             /* ! E ANCHE I FILI DI UN GRUPPO CHE NON C'E' PIU'. Un filo non e'
@@ -715,7 +848,7 @@ Process *proc_create(const char *name, vaddr_t entry_point,
                      uint32_t priority, int is_kernel_task)
 {
     Process  *proc;
-    uint32_t  kstack;
+    vaddr_t   kstack;
 
     /* Alloca PCB */
     proc = pcb_alloc();
@@ -786,7 +919,13 @@ Process *proc_create(const char *name, vaddr_t entry_point,
      * pmm_alloc_pages_kernel fa in un colpo la ricerca di pagine contigue
      * che prima si faceva a mano allocando e ributtando. */
 
-{
+    /* 0.315: programs and their threads in the window (see «THE STACKS IN
+     * THE WINDOW»); the kernel's own tasks - a dozen - stay in the kernel
+     * zone: the idle task of another processor gets its stack top through
+     * the 32-bit start-up (sched_cpu_prepara), before long mode */
+    if (paging_pile_base() != 0 && !is_kernel_task) {
+        kstack = pila_nuova();
+    } else {
         uint32_t npages = KERNEL_STACK_SIZE / PAGE_SIZE;
 
         kstack = pmm_alloc_pages_kernel(npages);
@@ -813,6 +952,11 @@ for (uint32_t pi = 0; pi < npages; pi++) {
     }
     proc->kernel_stack_base = kstack;
     proc->kernel_stack_top  = kstack + KERNEL_STACK_SIZE;
+    {   /* the measure (sched.h, «THE KERNEL STACKS ARE MEASURED») */
+        uint32_t *w = (uint32_t *)(uintptr_t)kstack, i;
+
+        for (i = 0; i < KERNEL_STACK_SIZE / 4u; i++) w[i] = PILA_SEGNO;
+    }
 
     /* Page Directory */
     if (is_kernel_task) {
@@ -822,8 +966,7 @@ for (uint32_t pi = 0; pi < npages; pi++) {
         /* I processi utente hanno la loro PD (con kernel mappato) */
         proc->page_directory = paging_create_directory();
         if (proc->page_directory == NULL) {
-            for (uint32_t pj = 0; pj < KERNEL_STACK_SIZE / PAGE_SIZE; pj++)
-                pmm_free_page(kstack + pj * PAGE_SIZE);
+            pila_libera(kstack);
             fd_tabella_libera(&proc->fdt_mia);
             proc->state = PROC_UNUSED;
             return NULL;
@@ -1139,7 +1282,7 @@ static void sched_switch_to(Process *next)
     /* Context switch ASM: salva ESP di prev, carica ESP di next */
     context_switch(&prev->kernel_esp,
                     next->kernel_esp,
-                    (uint32_t)IN_NUMERO(next->page_directory));
+                    (uintptr_t)VERSO_FISICO(next->page_directory));
 }
 
 /* =============================================================================
@@ -2099,9 +2242,10 @@ void proc_chiudi_miei_fd(void)
      * never goes back to ring 3, so it will not fault on a page of that file;
      * a thread of it that does has no VMA left and ends. */
     if (capo != NULL && capo->exe_handle >= 0) {
-        vfs_close(capo->exe_handle);
-        capo->exe_handle = -1;
+        int h = PROC_EXE_PRENDI(capo);
+
         capo->n_vma = 0;
+        if (h >= 0) vfs_close(h);
     }
 }
 
@@ -2352,11 +2496,12 @@ void proc_reap_zombie(Process *p)
      * una pagina che non ha ancora toccato, e la sorgente e' quella. Un
      * handle non chiuso e' uno slot del VFS perso per sempre — dopo
      * VFS_MAX_OPEN processi terminati non si aprirebbe piu' niente. */
-    if (p->exe_handle >= 0) {
-        vfs_close(p->exe_handle);
-        p->exe_handle = -1;
+    {
+        int h = PROC_EXE_PRENDI(p);
+
+        p->n_vma = 0;
+        if (h >= 0) vfs_close(h);
     }
-    p->n_vma = 0;
 
     /* E i file che il processo aveva ancora aperti.
      *
@@ -2452,8 +2597,18 @@ void proc_reap_zombie(Process *p)
     }
     p->page_directory = NULL;
     if (p->kernel_stack_base) {
-        for (uint32_t pj = 0; pj < KERNEL_STACK_SIZE / PAGE_SIZE; pj++)
-            pmm_free_page(p->kernel_stack_base + pj * PAGE_SIZE);
+        uint32_t usata = proc_pila_usata(p);
+
+        if (usata > g_pila_max) {
+            uint32_t i;
+
+            g_pila_max     = usata;
+            g_pila_max_pid = p->pid;
+            for (i = 0; i + 1u < PROCESS_NAME_LEN && p->name[i]; i++)
+                g_pila_max_nome[i] = p->name[i];
+            g_pila_max_nome[i] = 0;
+        }
+        pila_libera(p->kernel_stack_base);
     }
 
     /* Deregistra eventuale nome servizio e scarta la mailbox: senza
@@ -2655,6 +2810,16 @@ klog(LOG_INFO, "SCHED: inizializzazione scheduler preemptive...");
         uint32_t da_ram = (uint32_t)(ram / KERNEL_STACK_SIZE);
         uint32_t zona   = USER_SPACE_BASE / KERNEL_STACK_SIZE;
         uint32_t voci;
+
+        /* 0.315: with the stacks' window (paging.h) the kernel zone no
+         * longer bounds them - only the RAM, and the window's slots */
+        if (paging_pile_init() != 0)
+            klog(LOG_WARN, "SCHED: niente finestra per le pile, restano nei primi 64 MB");
+        if (paging_pile_base() != 0) {
+            zona = paging_pile_posti();
+            klog(LOG_INFO, "SCHED: pile del kernel nella finestra 0x%08x%08x, da tutta la RAM",
+                 (uint32_t)((uint64_t)paging_pile_base() >> 32), (uint32_t)paging_pile_base());
+        }
 
         g_proc_max = da_ram < zona ? da_ram : zona;
         g_proc_max -= g_proc_max % PROC_BLOCCO;

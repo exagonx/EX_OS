@@ -599,6 +599,12 @@ if [ "$STRUM_CI_SONO" != si ]; then
     echo "       Il sistema di base e' pubblicato e si aggiorna; per i"
     echo "       compilatori serve prima 'make iso'."
 fi
+# ! EVERYTHING READABLE BY THE WEB SERVER (5 November 2026). The files copied
+# from the working tree keep its modes, and on a tree synchronised by MEGA
+# that is -rw-------: the local server answered 403 to unistd.h, pthread.h
+# and audio.h, and netupdate on the CQ60 said "3 non riusciti". Directories
+# get x, files r, for everybody; nothing gets w.
+chmod -R a+rX "$FUORI"
 echo ""
 echo "Da pubblicare cosi' com'e': la radice del server e' $FUORI,"
 echo "e netupdate cerchera' versione.txt, catalogo.txt, elenco.txt e file/."
