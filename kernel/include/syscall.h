@@ -91,6 +91,10 @@
  * copy-on-write. No arguments; the pid of the child to the parent, 0 to the
  * child, -errno. See sys_fork in syscall_impl.c. */
 #define SYS_FORK         263
+/* SYS_ALLARME (264, kernel 0.317): alarm and setitimer(ITIMER_REAL).
+ * ebx = ms to the first SIGALRM (0 = off), ecx = interval ms (0 = once),
+ * edx = uint32_t[2] or 0 for what was left and the old interval. */
+#define SYS_ALLARME      264
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
 #define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
@@ -201,7 +205,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   264     /* la piu' alta e' SYS_FORK = 263 */
+#define SYSCALL_COUNT   265     /* la piu' alta e' SYS_ALLARME = 264 */
 
 /* =============================================================================
  * Codici errno

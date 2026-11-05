@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.316
+**Version:** 0.317
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -6791,17 +6791,104 @@ Redis (BGSAVE), Apache's prefork MPM and Qt's `QProcess` want a real
   the first 64 MB. The ceiling of processes is the RAM: 9000 children at once
   in QEMU with 4 GB, 5000 on the laptop (2.8 GB); up to 0.315, 1222 with
   1 GB and 3045 with 4 GB.
+- **One socket in several epoll sets** (ip.drv 0.023): after fork each
+  process may put the same connection in its own epoll set, as on Linux;
+  `EEXIST` only for the same set twice.
+- **Many readers on one UDP socket** (ip.drv 0.023): a parent thread and a
+  forked child both in `recvfrom` get one datagram each; up to 0.022 the
+  second reader replaced the first, which waited for ever. The table of UDP
+  ports grows with the requests (16 at first, then doubling).
+- **Many waiters on one pty** (kernel 0.317): every reader and writer of
+  each side is remembered (the same lists as the pipes); up to 0.316 the
+  second replaced the first.
+- **`alarm` rings, and a caught signal ends a wait** (kernel 0.317):
+  `alarm`, `setitimer`/`getitimer` (`ITIMER_REAL`; the other two say
+  `EINVAL`) send SIGALRM at 10 ms resolution, and `pause` waits for a
+  signal; up to 0.316 `alarm` did nothing. A caught signal cuts short
+  `read`, `write`, `waitpid`, `poll`, `sleep`, `nanosleep` (with the time
+  left) and `F_SETLKW` with `EINTR`; with `SA_RESTART` (`signal()` sets it,
+  as on Linux) the handler runs and `read`/`write`/`waitpid`/`fcntl` start
+  again by themselves; `poll` and `sleep` always say `EINTR`, as POSIX
+  wants. Up to 0.316 only `kill -9` and Ctrl+C ended a wait.
 - **A closed port refuses** (ip.drv 0.022): a SYN where nobody listens gets
   an RST, and `connect` says `ECONNREFUSED` at once instead of waiting.
+- **A pipe with `O_NONBLOCK` does not wait** (kernel 0.317): an empty pipe
+  that still has writers, or a full one, gives `EAGAIN`. Up to 0.316
+  `fcntl(F_SETFL, O_NONBLOCK)` (and `pipe2`) kept the flag and `read`/`write`
+  ignored it.
+- **Apache as a Unix daemon**: APR's `apr_proc_detach` forks for real (the
+  EX-OS patch used to skip it), so `httpd` without `-X` goes into the
+  background, the worker MPM forks its children (4 processes, the `fcntl`
+  accept mutex, the scoreboard in `MAP_ANON` memory) and `httpd -k stop`
+  ends them all. Test: `DEMONE=1 tools/prova_httpd.sh`.
+- **`openpty`, `forkpty`, `login_tty`** (`<pty.h>`, and BSD's `<util.h>`,
+  `<libutil.h>`): on top of `pty_apri`, which gives both ends at once.
+  `forkpty` makes the slave the child's standard input, output and error
+  and tells the pty that Ctrl+C on the master interrupts the child
+  (`PTY_CTL_FG`: EX-OS has no process groups). The slave has no name in the
+  file system, so `name` gets `/dev/tty`, as `ttyname` says; for that reason
+  `posix_openpt`/`ptsname`, which open the slave by name, are not there yet.
 
 Test: `tools/prova-fork/prova-fork.sh` (64 bit) and `... 32`, in QEMU;
 `--figli=N` sets how many children live at once (300 by default).
+Checks 17 to 19 cover UDP, the pty and the alarm; 20 `openpty`/`forkpty`,
+21 the pipes with `O_NONBLOCK`.
+
+**Fault: a program waits for ever although it set `alarm()`** (timeout
+around a read, a watchdog): the kernel is older than 0.317, where `alarm`
+did nothing. Fix: `netupdate`, then rebuild the program against the new
+libc (static programs carry the old `alarm`).
 
 **Fault: Apache installed with netupdate does not start** ("AH02291: Cannot
 access directory '/exos/apache2/logs/'"). The repository carries files, not
 directories, and `logs/` was empty. Fix: `mkdir /exos/apache2/logs`, or
 `netupdate`: every empty directory of apache2, mariadb and php now holds a
 `.tieni` file that brings it along.
+
+### Valkey 9.1.3: BGSAVE and BGREWRITEAOF, fork under load (voce 33 i)
+
+Valkey is the BSD line of Redis 7.2 (Redis 8 is AGPL/RSAL/SSPL): the same
+protocol, the same RDB and AOF files; `redis-cli` and every Redis client
+work with it. `tools/valkey-exos/costruisci.sh [32|64]` builds it into
+`/exos/valkey`: `bin/valkey-server`, `valkey-cli`, `valkey-benchmark`, and
+`valkey-check-rdb`, `valkey-check-aof`, `valkey-sentinel` as **copies** of
+the server (Valkey picks its role from the name it was started with, and
+EX-OS has no symbolic links); `etc/valkey.conf` (IPv4 bind, data and pid
+file in `/exos/valkey/dati`). It is built with the libc's malloc (no
+jemalloc), the `select` event loop, without TLS.
+
+    /exos/valkey/bin/valkey-server /exos/valkey/etc/valkey.conf &
+    /exos/valkey/bin/valkey-cli ping
+
+`tools/valkey-exos/prova.sh [32|64]` in QEMU: PING, SET/GET, 200000 keys,
+BGSAVE while `valkey-benchmark` loads the parent (about 1200 SET and GET a
+second), `valkey-check-rdb` on the snapshot, a restart that loads the keys
+back, BGREWRITEAOF. 12 out of 12 at 32 and 64 bit.
+
+What the port needed from EX-OS:
+- **the libc**: `pthread_cancel` (deferred; cancellation points are
+  `pthread_testcancel`, `pthread_cond_wait`/`timedwait`, `pthread_join`),
+  `glob`/`fnmatch` (`<glob.h>`, `<fnmatch.h>`), POSIX regular expressions
+  (`<regex.h>`: `regcomp`/`regexec`/`regerror`/`regfree`, basic and
+  extended), `strndup`, `asprintf`/`vasprintf`, `bzero`, `ctime_r`/
+  `asctime_r`, `IOV_MAX` in `<limits.h>`, `BYTE_ORDER` from `<sys/types.h>`,
+  `ESOCKTNOSUPPORT`; `printf` learns `%jd` and `%td`;
+- **the loader**: a library is relocated only when the whole tree is loaded
+  (libapr calls `modf` without naming libm, and the symbol arrived after
+  it); initial-exec TLS (`R_X86_64_TPOFF64`, i386 `TPOFF`/`TPOFF32`) on the
+  program's own variables is resolved;
+- **the kernel**: pipes with `O_NONBLOCK` (above).
+
+**Fault: Valkey stops answering after BGSAVE** (the child is a zombie, the
+server `blocc.` in `ps`): kernel older than 0.317, where a non-blocking pipe
+waited. Fix: `netupdate`.
+
+**Fault: Valkey dies of signal 11 on `INFO`** ("Accessing address" near
+the current time in seconds), **and its log dates read "-73188 Jan
+1970"**: Valkey was linked with a libc without `%jd` and whose
+`gettimeofday` did not fill the time zone. Fix: rebuild it against the
+new libc (`tools/valkey-exos/costruisci.sh`); the same goes for any program
+printing `intmax_t` with `%jd`.
 
 ### Headers with the standard names
 

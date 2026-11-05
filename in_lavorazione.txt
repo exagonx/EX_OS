@@ -10219,9 +10219,76 @@ tools/netinst/velocita tolto da netinst.
       g) una connessione sta in UN solo insieme epoll (Conn.ins): due
          figli che la mettono ciascuno nel proprio epoll -> EEXIST al
          secondo (nginx lo fa; Apache usa poll, apr_cv_epoll=no).
+         FATTO 5/11, ip.drv 0.023: appartenenze (Membro) per coppia
+         connessione-insieme, epollprova 7 controlli nuovi, 34 ok a 32 e 64
+         bit e sul portatile. ! Aperto: a 64 bit ab dall'host in QEMU
+         (5000, 50 alla volta) una volta su tre resta fermo al timeout
+         (anche il 5/11 notte con 0.021, "reset by peer" a 4997): da
+         misurare con tcpdump sull'host e lo stato delle connessioni.
+         Visto anche a 32 bit il 5/11 pomeriggio: "apr_socket_recv:
+         Connection reset by peer" 2 volte su 6 con kernel 0.317; 0 su 9
+         con 0.316, 0.316 + ip.drv 0.023, 0.317 con la libc vecchia (httpd
+         e ab sono statici: la libc nuova non c'entra). Non dimostrata una
+         regressione, resta da misurare come sopra.
       h) UDP: un solo lettore per porta (g_udp.lettore) e UDP_PORTE 16
          fisso; pty: un solo processo in attesa per lato.
+         FATTO 5/11: ip.drv 0.023, la tabella UDP cresce (16, poi doppia)
+         e i lettori stanno in fila (uno per datagramma); kernel 0.317, il
+         pty ricorda ogni attesa (kernel/include/attese.h, lo stesso delle
+         pipe). Provando il pty si e' visto che alarm() nella libc non
+         faceva niente e che un segnale catturato non interrompeva
+         un'attesa: kernel 0.317 SYS_ALLARME (264) manda SIGALRM, libc
+         alarm/setitimer/getitimer/pause veri, EINTR su read, write,
+         waitpid, poll, sleep, F_SETLKW e riavvio con SA_RESTART
+         (segnali_riavvia: l'IP torna su int 0x80). prova-fork 17, 18 e
+         19a-f: 25 su 25 a 32 e 64 bit in QEMU; epoll 34 ok, httpd ok a 32
+         e 64 bit. Restano fuori l'attesa di un messaggio IPC (una EINTR
+         fra domanda e risposta lascerebbe la risposta nella casella) e la
+         join dei fili. Mancano ancora nella libc posix_openpt, openpty,
+         forkpty (per Qt/QProcess e i terminali).
       i) Apache col MPM prefork e Redis (BGSAVE) da costruire e provare.
+         FATTO 5/11 (Redis -> Valkey 9.1.3, licenza BSD, scelta
+         dell'utente: Redis 8 e' AGPL/RSAL/SSPL). tools/valkey-exos/
+         costruisci.sh e prova.sh: PING, SET/GET, 200000 chiavi, BGSAVE
+         con valkey-benchmark sul padre (circa 1200 SET e GET al secondo),
+         valkey-check-rdb, riavvio che ricarica le chiavi, BGREWRITEAOF:
+         12 su 12 a 32 e 64 bit in QEMU. Guasti trovati e riparati:
+         - kernel 0.317: le pipe ignoravano O_NONBLOCK (fcntl lo teneva,
+           read/write aspettavano): dopo BGSAVE il padre leggeva la pipe
+           delle notizie del figlio tenendo lui stesso la scrittura, e
+           restava fermo per sempre;
+         - libc: gettimeofday(NULL, &tz) dava -1 senza riempire il fuso
+           (date del log "-73188 Jan 1970"); printf non sapeva %jd e %td
+           (INFO persistence moriva di SIGSEGV con l'ora letta come
+           puntatore);
+         - libc per il porting: pthread_cancel (differita), glob, fnmatch,
+           regex.h (motore POSIX intero), strndup, asprintf, vasprintf,
+           bzero, ctime_r, asctime_r, IOV_MAX, BYTE_ORDER da sys/types.h,
+           ESOCKTNOSUPPORT;
+         - il caricatore: rilocazioni rimandate a quando tutto l'albero e'
+           caricato (libapr chiede modf senza nominare libm), TPOFF64/TPOFF
+           sul TLS del programma stesso.
+         Apache: apr_proc_detach fa la fork vera (patch proc-spawn.diff),
+         httpd senza -X e' un demone col MPM worker (4 processi, mutex di
+         accept con fcntl, scoreboard MAP_ANON, -k stop li spegne tutti):
+         DEMONE=1 tools/prova_httpd.sh. Il prefork non serve: il worker fa
+         gia' i figli con la fork. Valkey e' nel catalogo (gruppo
+         [valkey], sorgenti in exos/src/valkey).
+         libc: openpty, forkpty, login_tty (<pty.h>, <util.h>,
+         <libutil.h>) sopra pty_apri; prova-fork 20 e 21.
+         PORTATILE 5/11 sera (netupdate, kernel 0.317 nuovo, riavvio):
+         prova-fork 0 NO (anche 20 e 21); netupdate -install:valkey,
+         200000 chiavi, BGSAVE ok, riavvio con 200001 chiavi dal disco,
+         BGREWRITEAOF ok, valkey-benchmark 16800 SET e 17900 GET al
+         secondo; Apache come demone (padre e un figlio dalla fork), ab
+         2000 richieste, 0 fallite, 778 al secondo, -k stop spegne tutto.
+         DA FARE: l'"ab dall'host" che a volte trova la connessione
+         chiusa (voce 33 g): il 5/11 sera in QEMU a 32 bit, demone, da
+         solo sulla macchina, 1 volta su 2, a 64 bit 0 su 2; netupdate
+         non ha ancora lo script di verifica scaricato (domanda per
+         l'utente); posix_openpt/grantpt/unlockpt/ptsname vogliono lo
+         slave apribile per nome (/dev/pts/N nel kernel: domanda per
+         l'utente).
 
   32. STRESS TEST DI MARIADB (l'utente, 26/10: «mi serve uno stress test,
       ho bisogno che riescono a collegarsi 1024 client a mariadb e inviare

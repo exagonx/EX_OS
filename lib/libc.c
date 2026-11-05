@@ -294,6 +294,7 @@ typedef struct {
 #define SYS_CPUFREQ      261
 #define SYS_ATTIVITA     262
 #define SYS_FORK         263     /* kernel 0.313: see fork() */
+#define SYS_ALLARME      264     /* kernel 0.317: see alarm() */
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -2977,6 +2978,13 @@ static int formatta(Uscita *u, const char *fmt, __builtin_va_list args)
             if      (*fmt == 'l') { lungo++;  fmt++; }
             else if (*fmt == 'h') { fmt++; }        /* h/hh: promossi a int */
             else if (*fmt == 'z') { lungo = 1; fmt++; }
+            /* ! 'j' (intmax_t, long long) AND 't' (ptrdiff_t, long): without
+             * them "%jd" printed nothing for the number and took it as the
+             * argument of the next %s -- Valkey's INFO persistence
+             * ("rdb_last_save_time:%jd") died of SIGSEGV on the clock read
+             * as a pointer. */
+            else if (*fmt == 'j') { lungo = 2; fmt++; }
+            else if (*fmt == 't') { lungo = 1; fmt++; }
             /* 'L' vale solo per la virgola mobile: dice `long double`.
              * Si usa lo stesso contatore perche' i due insiemi di
              * conversioni non si sovrappongono — %Ld non esiste. */
@@ -5952,6 +5960,13 @@ int  raise(int sig);
 int  nanosleep(const struct timespec *req, struct timespec *rem);
 int sched_yield(void);
 
+/* Come in lib/include/pthread.h: DEVONO COINCIDERE. */
+#define PTHREAD_CANCELED            ((void *)-1)
+#define PTHREAD_CANCEL_ENABLE       0
+#define PTHREAD_CANCEL_DISABLE      1
+#define PTHREAD_CANCEL_DEFERRED     0
+#define PTHREAD_CANCEL_ASYNCHRONOUS 1
+
 /* Come in lib/include/pthread.h: i due DEVONO COINCIDERE. */
 struct exos_pulizia {
     void (*fn)(void *);
@@ -5971,6 +5986,8 @@ typedef struct {
     char         nome[16];
     void        *chiavi[P_CHIAVI];
     struct exos_pulizia *pulizie;   /* pthread_cleanup_push, l'ultima in cima */
+    int          annulla_no;        /* pthread_setcancelstate: 1 = DISABLE */
+    int          annulla_tipo;      /* pthread_setcanceltype (vedi pthread_cancel) */
 } Filo;
 
 typedef struct FiliBlocco {
@@ -6177,9 +6194,73 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a,
     return 0;
 }
 
+/* =============================================================================
+ * pthread_cancel (5 November 2026, Valkey): deferred cancellation over the
+ * kernel's request to stop (SYS_THREAD_FERMA, sched.h: `ferma` stays,
+ * `scuoti` wakes a thread asleep on a lock or a condition).
+ *
+ * The cancellation points: pthread_testcancel, pthread_cond_wait and
+ * pthread_cond_timedwait (woken by the request, the mutex taken again, as
+ * POSIX wants: the cleanup handler is the one that unlocks it) and
+ * pthread_join. The thread ends with pthread_exit(PTHREAD_CANCELED): the
+ * handlers of pthread_cleanup_push run, then the destructors of the keys.
+ *
+ * ! PTHREAD_CANCEL_ASYNCHRONOUS IS ACCEPTED AND ACTS AS DEFERRED: stopping a
+ * thread at any instruction needs the kernel to send it somewhere on its way
+ * back to ring 3, and the one user seen so far (Valkey's crash report, which
+ * cancels the main thread before a memory test) only needs it to stop at the
+ * next point. A blocking read or poll is not a point here: the request does
+ * not cut short a wait in the kernel (only a lock, a condition).
+ * ============================================================================= */
+static void annulla_se_chiesto(void)
+{
+    Filo *f;
+
+    if (!thread_devo_fermarmi()) return;
+    f = (Filo *)pthread_self();
+    if (!f || f->annulla_no) return;
+    f->annulla_no = 1;                  /* once: the handlers may wait too */
+    pthread_exit(PTHREAD_CANCELED);
+}
+
+int pthread_cancel(pthread_t t)
+{
+    Filo *f = (Filo *)t;
+
+    if (!f || !f->usato || f->finito) return ESRCH;
+    if (thread_ferma(f->tid) != 0) return errno ? errno : ESRCH;
+    return 0;
+}
+
+void pthread_testcancel(void) { annulla_se_chiesto(); }
+
+int pthread_setcancelstate(int stato, int *prima)
+{
+    Filo *f = (Filo *)pthread_self();
+
+    if (stato != PTHREAD_CANCEL_ENABLE && stato != PTHREAD_CANCEL_DISABLE) return EINVAL;
+    if (!f) return ENOMEM;
+    if (prima) *prima = f->annulla_no ? PTHREAD_CANCEL_DISABLE : PTHREAD_CANCEL_ENABLE;
+    f->annulla_no = stato == PTHREAD_CANCEL_DISABLE;
+    return 0;
+}
+
+int pthread_setcanceltype(int tipo, int *prima)
+{
+    Filo *f = (Filo *)pthread_self();
+
+    if (tipo != PTHREAD_CANCEL_DEFERRED && tipo != PTHREAD_CANCEL_ASYNCHRONOUS) return EINVAL;
+    if (!f) return ENOMEM;
+    if (prima) *prima = f->annulla_tipo;
+    f->annulla_tipo = tipo;
+    return 0;
+}
+
 int pthread_join(pthread_t t, void **ris)
 {
     Filo *f = (Filo *)t;
+
+    annulla_se_chiesto();
 
     if (!f || !f->usato) return ESRCH;
     if (f->staccato) return EINVAL;
@@ -6445,8 +6526,12 @@ static int cond_aspetta(pthread_cond_t *c, pthread_mutex_t *m, int con_scadenza,
 
 int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m)
 {
+    int r;
+
     if (!c || !m) return EINVAL;
-    return cond_aspetta(c, m, 0, 0);
+    r = cond_aspetta(c, m, 0, 0);
+    annulla_se_chiesto();               /* a cancellation point (pthread_cancel) */
+    return r;
 }
 
 int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
@@ -6458,6 +6543,7 @@ int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
     ms = ms_a(quando, c->orologio);
     if (ms == 0) return ETIMEDOUT;
     cond_aspetta(c, m, 1, ms);
+    annulla_se_chiesto();               /* a cancellation point (pthread_cancel) */
     /* condizione_aspetta_ms non dice se e' scaduta: lo dice l'orologio. */
     return ms_a(quando, c->orologio) == 0 ? ETIMEDOUT : 0;
 }
@@ -8086,7 +8172,11 @@ int usleep(unsigned int us)
     /* Converti microsecondi in millisecondi (arrotondando) */
     uint32_t ms = (us + 999) / 1000;
     if (ms == 0) ms = 1;
-    _syscall1(SYS_SLEEP, ms);
+    {
+        int32_t r = _syscall1(SYS_SLEEP, ms);
+
+        if (r < 0) { errno = -r; return -1; }   /* EINTR: a caught signal */
+    }
     return 0;
 }
 
@@ -8285,19 +8375,53 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
 
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
 
-    while (ms > 0) {
-        unsigned int fetta = (ms > 1000000ULL) ? 1000000u : (unsigned int)ms;
+    /* A caught signal (0.317) ends the sleep with EINTR, and rem says how
+     * much was left, measured on the uptime clock: the request minus what
+     * went by. ! NO 64-BIT DIVISION here either (see above): the slices are
+     * 1000000 ms, exactly 1000 s each, so what went by is k * 1000 s plus
+     * the part of this slice, which is 32 bits. */
+    {
+        unsigned int fette = 0;
 
-        _syscall1(SYS_SLEEP, fetta);
-        ms -= fetta;
+        while (ms > 0) {
+            unsigned int fetta = (ms > 1000000ULL) ? 1000000u : (unsigned int)ms;
+            unsigned int t0 = uptime_ms();
+            int32_t r = _syscall1(SYS_SLEEP, fetta);
+
+            if (r < 0) {
+                unsigned int fatto = uptime_ms() - t0;
+
+                if (fatto > fetta) fatto = fetta;
+                if (rem) {
+                    long long s = (long long)req->tv_sec -
+                                  (long long)fette * 1000LL - (long long)(fatto / 1000u);
+                    long ns = req->tv_nsec - (long)((fatto % 1000u) * 1000000u);
+
+                    if (ns < 0) { ns += 1000000000L; s--; }
+                    if (s < 0) { s = 0; ns = 0; }
+                    rem->tv_sec  = (time_t)s;
+                    rem->tv_nsec = ns;
+                }
+                errno = -r;
+                return -1;
+            }
+            ms -= fetta;
+            fette++;
+        }
     }
     return 0;
 }
 
 unsigned int sleep(unsigned int sec)
 {
-    _syscall1(SYS_SLEEP, sec * 1000);
-    return 0;
+    unsigned int t0 = uptime_ms();
+    unsigned int ms = sec > 4294967u ? 4294967000u : sec * 1000u;
+    unsigned int fatto;
+
+    if (_syscall1(SYS_SLEEP, ms) >= 0) return 0;
+    /* interrupted by a caught signal: the seconds left, rounded up */
+    fatto = uptime_ms() - t0;
+    return fatto >= ms ? 0 : (ms - fatto + 999u) / 1000u;
 }
 
 /* Millisecondi dall'avvio. Avanza a scatti di 10 (PIT a 100Hz) e torna a
@@ -9346,6 +9470,23 @@ char *ctime(const time_t *t)
     return (tm == NULL) ? NULL : asctime(tm);
 }
 
+/* asctime_r, ctime_r (POSIX, 5 November 2026, Valkey's sentinel): the same
+ * 26 characters in the caller's buffer, which must hold 26 as POSIX says. */
+char *asctime_r(const struct tm *tm, char *buf)
+{
+    if (tm == NULL || buf == NULL) return NULL;
+    strftime(buf, 26, "%c\n", tm);
+    return buf;
+}
+
+char *ctime_r(const time_t *t, char *buf)
+{
+    struct tm tm;
+
+    if (localtime_r(t, &tm) == NULL) return NULL;
+    return asctime_r(&tm, buf);
+}
+
 /* ! utime NON CAMBIA NIENTE, come chmod e umask: nessun filesystem di
  * EX-OS ha una syscall per riscrivere le date di un file. Ritorna 0 se il
  * file c'e', perche' chi la chiama — `objcopy` e `strip`, per conservare
@@ -9598,8 +9739,11 @@ int gettimeofday(struct timeval *tv, void *fuso)
     long         sec;
     unsigned int ms;
 
-    (void)fuso;         /* obsoleto anche su POSIX */
-    if (tv == NULL) return -1;
+    /* ! THE ZONE IS FILLED (UTC, both fields 0) AND tv MAY BE NULL: Valkey
+     * asks gettimeofday(NULL, &tz) for the zone only; up to now it got -1
+     * and an untouched struct, and its log dates read "-73188 Jan 1970". */
+    if (fuso) { ((int *)fuso)[0] = 0; ((int *)fuso)[1] = 0; }
+    if (tv == NULL) return 0;
     if (tod_adesso(&sec, &ms) < 0) return -1;
 
     tv->tv_sec  = sec;
@@ -10555,7 +10699,13 @@ void *dlopen(const char *nome, int flag)
         mutex_prendi(&g_dl_lucchetto);
         g_dl_non_dyn = 0;
         g_dl_errore = 0;
-        m = dl_carica(nome, 0, 0);
+        {
+            int da = g_dl_n_da_avviare;     /* 0, unless dlopen from a constructor */
+
+            m = dl_carica(nome, 0, 0);
+            if (!m) dl_lascia_coda(da);
+            else if (dl_finisci(da, 0, 0, 0, 0, 0) != 0) m = 0;
+        }
         mutex_lascia(&g_dl_lucchetto);
         if (m) return (void *)m;
         if (!g_dl_non_dyn && g_dl_errore && !strstr(g_dl_errore, "not found")) return 0;
@@ -13794,6 +13944,77 @@ char *ttyname(int fd)
     return nome;
 }
 
+/* <pty.h> (glibc), <util.h> and <libutil.h> (BSD): openpty, login_tty,
+ * forkpty, for terminals and for whoever drives a program through a pty
+ * (script, expect, a terminal window, Qt's KPty). On top of SYS_PTY_APRI,
+ * which gives both ends at once - so openpty needs no /dev/ptmx.
+ * ! THE SLAVE HAS NO NAME in the file system (see ttyname): `nome` gets
+ * "/dev/tty", as ttyname says for any terminal. posix_openpt/ptsname, which
+ * open the slave BY NAME, are not here: see in_lavorazione voce 33 i. */
+struct termios;
+struct winsize;
+int fork(void);
+int setsid(void);
+int openpty(int *master, int *slave, char *nome, const struct termios *t,
+            const struct winsize *w)
+{
+    int fd[2];
+
+    if (!master || !slave) { errno = EINVAL; return -1; }
+    if (err_posix(pty_apri(fd)) < 0) return -1;
+    if (t && tcsetattr(fd[1], 0 /* TCSANOW */, t) < 0) goto male;
+    if (w && ioctl(fd[1], 0x5414 /* TIOCSWINSZ */, (void *)w) < 0) goto male;
+    if (nome) memcpy(nome, "/dev/tty", 9);
+    *master = fd[0];
+    *slave  = fd[1];
+    return 0;
+male:
+    {
+        int e = errno;
+        close(fd[0]);
+        close(fd[1]);
+        errno = e;
+    }
+    return -1;
+}
+
+/* The slave becomes the standard input, output and error of this process,
+ * which leads its own session (setsid: on EX-OS every process does). */
+int login_tty(int fd)
+{
+    setsid();
+    if (dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0) return -1;
+    if (fd > 2) close(fd);
+    return 0;
+}
+
+int forkpty(int *master, char *nome, const struct termios *t,
+            const struct winsize *w)
+{
+    int m, sl, pid;
+
+    if (openpty(&m, &sl, nome, t, w) < 0) return -1;
+    pid = fork();
+    if (pid < 0) {
+        int e = errno;
+        close(m);
+        close(sl);
+        errno = e;
+        return -1;
+    }
+    if (pid == 0) {                     /* the child: its terminal is the slave */
+        close(m);
+        if (login_tty(sl) < 0) _exit(1);
+        return 0;
+    }
+    /* ! THE PARENT TELLS THE PTY WHO Ctrl+C INTERRUPTS: EX-OS has no process
+     * groups, PTY_CTL_FG is how a ^C written on the master reaches the child */
+    pty_ctl(m, 1 /* PTY_CTL_FG */, (unsigned int)pid);
+    close(sl);
+    *master = m;
+    return pid;
+}
+
 /* =============================================================================
  * fork, vfork, pthread_atfork (kernel 0.313, voce 33)
  *
@@ -14254,7 +14475,87 @@ long random(void)
     return (long)(x & 0x7FFFFFFFu);
 }
 
-unsigned int alarm(unsigned int secondi) { (void)secondi; return 0; }
+/* =============================================================================
+ * alarm, setitimer, getitimer -- SIGALRM from the kernel (0.317)
+ *
+ * Up to 0.316 alarm() did nothing. SYS_ALLARME takes milliseconds: the first
+ * signal and the interval; it gives back what was left of the old alarm.
+ * Resolution 10 ms, the PIT tick. One alarm per process, as POSIX wants:
+ * alarm and setitimer(ITIMER_REAL) are the same timer.
+ *
+ * ! ONLY ITIMER_REAL. ITIMER_VIRTUAL and ITIMER_PROF count CPU time, which
+ * the kernel does not split per process at that grain: EINVAL, not a timer
+ * that would measure something else.
+ * ============================================================================= */
+/* ! DUPLICATED FROM lib/include/libc.h, as everything here: keep identical. */
+#define ITIMER_REAL     0
+struct itimerval {
+    struct timeval it_interval;
+    struct timeval it_value;
+};
+
+static unsigned int tv_in_ms(const struct timeval *t)
+{
+    unsigned long long ms;
+
+    if (t->tv_sec < 0 || t->tv_usec < 0) return 0;
+    ms = (unsigned long long)t->tv_sec * 1000ULL +
+         ((unsigned int)t->tv_usec + 999u) / 1000u;
+    if (ms == 0 && t->tv_usec > 0) ms = 1;
+    return ms > 0xFFFFFFF0ULL ? 0xFFFFFFF0u : (unsigned int)ms;
+}
+
+static void ms_in_tv(unsigned int ms, struct timeval *t)
+{
+    t->tv_sec  = (time_t)(ms / 1000u);
+    t->tv_usec = (long)((ms % 1000u) * 1000u);
+}
+
+unsigned int alarm(unsigned int secondi)
+{
+    unsigned int prima[2] = { 0, 0 };
+    unsigned int ms = secondi > 4294967u ? 4294967000u : secondi * 1000u;
+
+    _syscall3(SYS_ALLARME, ms, 0, (uintptr_t)prima);
+    /* rounded up, as Linux: an alarm still pending never reads as 0 */
+    return (prima[0] + 999u) / 1000u;
+}
+
+int setitimer(int quale, const struct itimerval *nuovo, struct itimerval *vecchio)
+{
+    unsigned int prima[2] = { 0, 0 };
+    int32_t r;
+
+    if (quale != ITIMER_REAL || nuovo == NULL ||
+        nuovo->it_value.tv_usec < 0 || nuovo->it_value.tv_usec >= 1000000 ||
+        nuovo->it_interval.tv_usec < 0 || nuovo->it_interval.tv_usec >= 1000000) {
+        errno = EINVAL;
+        return -1;
+    }
+    r = _syscall3(SYS_ALLARME, tv_in_ms(&nuovo->it_value),
+                  tv_in_ms(&nuovo->it_interval), (uintptr_t)prima);
+    if (r < 0) { errno = -r; return -1; }
+    if (vecchio) {
+        ms_in_tv(prima[0], &vecchio->it_value);
+        ms_in_tv(prima[1], &vecchio->it_interval);
+    }
+    return 0;
+}
+
+int getitimer(int quale, struct itimerval *ora)
+{
+    unsigned int prima[2] = { 0, 0 };
+    int32_t r;
+
+    if (quale != ITIMER_REAL || ora == NULL) { errno = EINVAL; return -1; }
+    /* the kernel has no "read only": read by stopping, then re-arm */
+    r = _syscall3(SYS_ALLARME, 0, 0, (uintptr_t)prima);
+    if (r < 0) { errno = -r; return -1; }
+    if (prima[0] != 0) _syscall3(SYS_ALLARME, prima[0], prima[1], 0);
+    ms_in_tv(prima[0], &ora->it_value);
+    ms_in_tv(prima[1], &ora->it_interval);
+    return 0;
+}
 
 static const char *const nomi_mesi[12] = {
     "january", "february", "march", "april", "may", "june", "july",
@@ -16665,6 +16966,16 @@ int sigsuspend(const sigset_t *maschera)
     return -1;
 }
 
+/* pause (0.317): sleep until a signal is delivered -- sigsuspend with the mask
+ * the thread already has. Always -1 with EINTR, as POSIX. */
+int pause(void)
+{
+    sigset_t ora;
+
+    if (sigprocmask(SIG_BLOCK, NULL, &ora) < 0) return -1;
+    return sigsuspend(&ora);
+}
+
 static int statvfs_riempi(struct statvfs *v)
 {
     memset(v, 0, sizeof(*v));
@@ -16803,5 +17114,52 @@ int fstat64(int fd, struct stat64 *st)
 
 #include "libc_getopt.c"     /* getopt, getopt_long: static libc only */
 #include "libc_iconv.c"      /* iconv: for ported software, static libc only */
+#include "libc_glob.c"       /* fnmatch, glob: for ported software, static libc only */
+#include "libc_regex.c"      /* regcomp, regexec: for ported software, static libc only */
+
+/* strndup, asprintf, vasprintf, bzero (5 November 2026, Valkey): POSIX 2008
+ * and the BSD/GNU names every Unix has; for ported software. */
+char *strndup(const char *s, size_t n)
+{
+    size_t l = 0;
+    char  *d;
+
+    while (l < n && s[l]) l++;
+    d = (char *)malloc(l + 1);
+    if (!d) return NULL;
+    memcpy(d, s, l);
+    d[l] = '\0';
+    return d;
+}
+
+int vasprintf(char **out, const char *fmt, __builtin_va_list ap)
+{
+    __builtin_va_list a2;
+    int  n;
+    char *b;
+
+    __builtin_va_copy(a2, ap);
+    n = vsnprintf(NULL, 0, fmt, a2);
+    __builtin_va_end(a2);
+    if (n < 0) { *out = NULL; return -1; }
+    b = (char *)malloc((size_t)n + 1);
+    if (!b) { *out = NULL; return -1; }
+    vsnprintf(b, (size_t)n + 1, fmt, ap);
+    *out = b;
+    return n;
+}
+
+int asprintf(char **out, const char *fmt, ...)
+{
+    __builtin_va_list ap;
+    int n;
+
+    __builtin_va_start(ap, fmt);
+    n = vasprintf(out, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+void bzero(void *p, size_t n) { memset(p, 0, n); }
 #include "libc_avvio.c"
 #endif

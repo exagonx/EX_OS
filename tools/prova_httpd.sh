@@ -4,6 +4,14 @@
 #
 #     tools/prova_httpd.sh [dir]                     32 bit
 #     EXOS_ARCH=x86_64 tools/prova_httpd.sh [dir]    64 bit
+#     DEMONE=1 tools/prova_httpd.sh [dir]            as a Unix daemon
+#
+# DEMONE=1 (kernel 0.317, voce 33 i): httpd without -X, as on Unix: the
+# parent detaches (fork), forks its children (worker MPM: StartServers
+# processes, each with its threads), and they share the listener, the
+# scoreboard (MAP_SHARED) and the accept mutex (fcntl locks). The checks add
+# the parent's "resuming normal operations", more than one httpd in ps, and
+# "caught SIGTERM, shutting down" from -k stop with no httpd left.
 #
 # cross_build/httpd-exosNN/exos/apache2 (tools/httpd-exos/costruisci.sh) on
 # an ext2 disk next to the CD, with conf/httpd-exos.conf on /a/apache2 and a
@@ -30,11 +38,11 @@ SBIN=/usr/sbin
 X=cross_build/nasi5deb
 PORTA=18080
 if [ "$ARCH" = x86_64 ]; then
-    ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; A=cross_build/httpd-exos64/exos/apache2
+    BITS=64; ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; A=cross_build/httpd-exos64/exos/apache2
     P=cross_build/php-exos64/exos/php
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=1024M EXTRA="-cpu qemu64"
 else
-    ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; A=cross_build/httpd-exos32/exos/apache2
+    BITS=32; ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; A=cross_build/httpd-exos32/exos/apache2
     P=cross_build/php-exos32/exos/php
     export EXOS_RAM=512M EXTRA=""
 fi
@@ -50,6 +58,17 @@ echo '<html><body><h1>EX-OS</h1><p>Apache httpd su EX-OS</p></body></html>' > "$
 sed -i 's#/root/Images#/a/schermate#g' "$T/apache2/conf/httpd-exos.conf"
 mkdir -p "$T/schermate"
 echo prova > "$T/schermate/prova.png"
+# ! httpd and its tools are linked to the shared libraries (5 November 2026,
+# rebuilt against the sysroot's .so): the ones they name go to /a/lib, found
+# through LD_LIBRARY_PATH (on a system they are in /exos/lib). Each name is
+# looked up in the libraries built here, cross_build/*-exos<bit>/exos/lib.
+mkdir -p "$T/lib"
+for l in $(for f in "$T"/apache2/bin/*; do readelf -d "$f" 2>/dev/null; done |
+           sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u); do
+    f=$(ls cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
+    [ -n "$f" ] || { echo "manca $l (per httpd a $BITS bit)" >&2; exit 1; }
+    cp "$f" "$T/lib/"
+done
 rm -f "$T"/apache2/cgi-bin/*
 $GCC -O2 -Wall -s tools/prove/cgiprova.c -o "$T/apache2/cgi-bin/cgiprova" || exit 1
 CONPHP=0
@@ -106,12 +125,18 @@ trabocchi() {
 dall_host &
 HOSTJOB=$!
 
-echo "=== $ARCH ==="
+echo "=== $ARCH ===${DEMONE:+ (demone)}"
+if [ "${DEMONE:-0}" = 1 ]; then
+    AVVIO="/a/apache2/bin/httpd -d /a/apache2 -f conf/httpd-exos.conf"
+else
+    AVVIO="/a/apache2/bin/httpd -X -d /a/apache2 -f conf/httpd-exos.conf &"
+fi
 H=/a/apache2/bin/httpd
 C="-d /a/apache2 -f conf/httpd-exos.conf"
 EXOS_ISTANZA=ht$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     timeout 1500 python3 tools/qemu_drive.py "ipcfg@5" "mount hd0p1 /a@5" \
-    "$H -X $C &@15" "ps@5" \
+    "export LD_LIBRARY_PATH=/a/lib@1" \
+    "$AVVIO@15" "ps@5" \
     "/a/apache2/bin/ab -n 2000 -c 20 http://127.0.0.1/index.html@~300" \
     "sleep 150@~180" "ipcfg -tcp@10" "ipcfg@5" \
     "$H -k stop $C@~30" "sleep 5@~10" \
@@ -150,7 +175,19 @@ if [ $CONPHP = 1 ]; then
     grep -q "^PHP ok 8\.[0-9.]* POST nome=posta" "$D/host.txt" 2>/dev/null \
         && si "PHP con un POST" || no "PHP con un POST"
 fi
-grep -aq "terminato: /a/apache2/bin/httpd -X.*(codice 0)" "$S" && si "httpd -k stop: spento con codice 0" || no "httpd -k stop"
+if [ "${DEMONE:-0}" = 1 ]; then
+    grep -aq "resuming normal operations" "$S" && si "demone: il padre e' partito (resuming normal operations)" \
+        || no "demone: manca resuming normal operations"
+    # the first ps, right after the start: the parent and its children
+    k=$(awk '/> ps$/ {n++} n == 1 && /\/a\/apache2\/bin\/httpd/ {c++} END {print c + 0}' "$S")
+    [ "$k" -ge 2 ] && si "demone: $k processi httpd (il padre e i figli nati da fork)" \
+        || no "demone: $k processi httpd in ps"
+    grep -aq "caught SIGTERM, shutting down" "$S" && si "httpd -k stop: il padre ha preso SIGTERM" || no "httpd -k stop"
+    k=$(awk '/> ps$/ {n++; c = 0} /\/a\/apache2\/bin\/httpd/ {c++} END {print c + 0}' "$S")
+    [ "$k" = 0 ] && si "demone: nessun httpd rimasto dopo lo stop" || no "demone: $k httpd ancora in ps dopo lo stop"
+else
+    grep -aq "terminato: /a/apache2/bin/httpd -X.*(codice 0)" "$S" && si "httpd -k stop: spento con codice 0" || no "httpd -k stop"
+fi
 # every CGI left a reference on logs/error_log until kernel 0.283
 grep -aq "^smontato /a" "$S" && si "umount /a dopo lo spegnimento (nessun file rimasto aperto)" \
     || no "umount /a: $(grep -a 'VFS: /a occupato' "$S" | head -1)"

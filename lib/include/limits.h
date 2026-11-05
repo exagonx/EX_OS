@@ -41,6 +41,11 @@
 #define SYMLINK_MAX       0     /* nessun collegamento simbolico */
 #define HOST_NAME_MAX    64
 #define _POSIX_PATH_MAX 256     /* the POSIX minimum, not PATH_MAX (MariaDB) */
+/* IOV_MAX (5 November 2026, Valkey): how many pieces one readv/writev takes.
+ * The libc's writev has no ceiling (a write per piece), so this is the size
+ * programs batch by: Linux's value, well above POSIX's minimum of 16. */
+#define IOV_MAX         1024
+#define _XOPEN_IOV_MAX    16
 
 /* GCC's own <limits.h> gives the long long limits only to C99 and C++11 with
  * __STDC_VERSION__/__cplusplus checks that an older -std leaves out; MariaDB's

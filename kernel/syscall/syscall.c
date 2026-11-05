@@ -101,8 +101,10 @@ void syscall_handler(InterruptFrame *frame)
         Process *p = proc_get_current();
 
         if (p != NULL && (frame->cs & 3) == 3 &&
-            (p->seg_pendenti & ~p->seg_bloccati) != 0)
+            (p->seg_pendenti & ~p->seg_bloccati) != 0) {
+            if (ret == ERR(EINTR)) segnali_riavvia(frame, num);  /* SA_RESTART */
             segnali_consegna(frame);
+        }
     }
 }
 
@@ -175,6 +177,7 @@ void syscall_init(void)
     syscall_table[SYS_CPUFREQ]     = sys_cpufreq;
     syscall_table[SYS_ATTIVITA]    = sys_attivita;
     syscall_table[SYS_FORK]        = sys_fork;
+    syscall_table[SYS_ALLARME]     = sys_allarme;
     syscall_table[SYS_SMP_LAVORA]  = sys_smp_lavora;
     syscall_table[SYS_PROCINFO]    = sys_procinfo;
     syscall_table[SYS_PROC_USO]    = sys_proc_uso;

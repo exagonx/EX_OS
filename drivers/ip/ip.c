@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.022");
+EX_VERSIONE("ip.drv", "0.023");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -117,7 +117,8 @@ static VoceArp g_arp[IP_ARP_VOCI];
 /* --- Porte UDP aperte ------------------------------------------------------ */
 /* Vedi ip_proto.h: non sono prese, sono porte. Quattro bastano a un client
  * DHCP e a un risolutore DNS, che e' cio' che serve adesso. */
-#define UDP_PORTE      16      /* 4 fino alla 0.004: con i socket BSD ogni programma ne apre */
+/* (0.023) no fixed number of ports any more: the table doubles as programs
+ * open them (16 up to 0.022, 4 up to 0.004). */
 #define UDP_CARICO_MAX 1472     /* 1500 di MTU - 20 di IP - 8 di UDP */
 
 /* =============================================================================
@@ -140,6 +141,24 @@ static VoceArp g_arp[IP_ARP_VOCI];
  * accepts.
  * ============================================================================= */
 typedef struct { unsigned int *v; unsigned int n, posti; } Altri;
+
+/* ! ONE CONNECTION, MANY epoll SETS (0.023, voce 33 g). Up to 0.022 a
+ * connection held one membership (Conn.ins): a second epoll_ctl(ADD) from
+ * another set answered EEXIST. After fork two processes each put the same
+ * socket in their own set (nginx workers, a parent watching what its
+ * children serve), and on Linux that works. Now a membership is one Membro:
+ * the first lives inside the connection (the usual case costs nothing more),
+ * the others in an array that doubles. A set's ready list links memberships
+ * by (connection number, membership index): the array may move when it
+ * grows, the numbers do not. */
+typedef struct {
+    unsigned int ins;            /* the set (g_ins index + 1), 0 = free */
+    unsigned int ev, dati[2];
+    unsigned int armata;         /* will report (ONESHOT turns it off) */
+    unsigned int forza;          /* libc holds unread bytes: ready once */
+    unsigned int lista;          /* in the set's ready list */
+    unsigned int dopo, dopo_j;   /* the next one there */
+} Membro;
 
 static int          pid_vivo(unsigned int pid);
 static unsigned int gruppo_di(unsigned int pid);
@@ -210,13 +229,23 @@ static unsigned int padroni_vivi(unsigned int *primo, Altri *a)
     return 0;
 }
 
-static struct {
+/* ! MORE THAN ONE READER PER PORT (0.023, voce 33 h). Up to 0.022 a port
+ * remembered one thread waiting for a datagram (lettore): with two threads in
+ * recvfrom on one socket, or a parent and its forked children, the second
+ * replaced the first, which then waited forever. Now they queue: each
+ * datagram goes to the first one (one datagram, one reader, as on Linux), and
+ * one that is gone is skipped. The queue keeps the first reader inline and the
+ * others in an array that doubles. */
+typedef struct {
     unsigned int porta;
     unsigned int proprietario;   /* chi l'ha aperta */
     Altri        altri;          /* the other owners (fork, 0.021) */
-    unsigned int lettore;        /* chi aspetta un datagramma, 0 = nessuno */
+    Altri        lettori;        /* who waits for a datagram, first first */
     int          usata;
-} g_udp[UDP_PORTE];
+} UdpPorta;
+
+static UdpPorta    *g_udp = NULL;
+static unsigned int g_udp_n = 0;     /* slots that exist (used or free) */
 
 /* Prossima porta effimera da assegnare a chi chiede la porta 0. L'intervallo
  * 49152-65535 e' quello che IANA riserva proprio a questo. */
@@ -700,9 +729,33 @@ static int udp_cerca(unsigned int porta)
 {
     int i;
 
-    for (i = 0; i < UDP_PORTE; i++)
+    for (i = 0; i < (int)g_udp_n; i++)
         if (g_udp[i].usata && g_udp[i].porta == porta) return i;
     return -1;
+}
+
+/* the first reader of port i, taken off the queue (0 = none) */
+static unsigned int udp_lettore_prendi(int i)
+{
+    Altri       *l = &g_udp[i].lettori;
+    unsigned int p;
+
+    if (l->n == 0) return 0;
+    p = l->v[0];
+    memmove(l->v, l->v + 1, (l->n - 1u) * sizeof(unsigned int));
+    l->n--;
+    return p;
+}
+
+/* the readers of group g leave the queue of port i (its close) */
+static void udp_lettori_togli_gruppo(int i, unsigned int g)
+{
+    Altri       *l = &g_udp[i].lettori;
+    unsigned int a, b = 0;
+
+    for (a = 0; a < l->n; a++)
+        if (gruppo_di(l->v[a]) != g) l->v[b++] = l->v[a];
+    l->n = b;
 }
 
 /* =============================================================================
@@ -838,7 +891,7 @@ static void tratta_udp(const unsigned char *f, unsigned int ihl, unsigned int to
 
     /* Nessuno sta aspettando: si scarta. Vedi ip_proto.h — una coda che
      * cresce mentre nessuno legge e' un modo lento di finire la memoria. */
-    if (g_udp[i].lettore == 0) return;
+    if (g_udp[i].lettori.n == 0) return;
 
     {
         static unsigned char msg[sizeof(IpUdpDati) + UDP_CARICO_MAX];
@@ -854,8 +907,13 @@ static void tratta_udp(const unsigned char *f, unsigned int ihl, unsigned int to
         memcpy(msg, &d, sizeof(d));
         if (n) memcpy(msg + sizeof(d), udp + 8, n);
 
-        ipc_send(g_udp[i].lettore, IP_MSG_UDP_DATI, msg, sizeof(d) + n);
-        g_udp[i].lettore = 0;
+        /* the first reader that is still there takes it */
+        {
+            unsigned int chi;
+
+            while ((chi = udp_lettore_prendi(i)) != 0)
+                if (ipc_send(chi, IP_MSG_UDP_DATI, msg, sizeof(d) + n) >= 0) break;
+        }
     }
 }
 
@@ -1057,11 +1115,11 @@ typedef struct {
     unsigned int  numero;        /* slot + 1: the id the programs see */
     /* the hash chain of tratta_tcp (see tcp_cerca) */
     unsigned int  in_hash, h_dopo;
-    /* epoll: the set this connection is in (IP_MSG_INS_*), 0 = none */
-    unsigned int  ins, ins_ev, ins_dati[2];
-    unsigned int  ins_armata;    /* will report (ONESHOT turns it off) */
-    unsigned int  ins_forza;     /* libc holds unread bytes: ready once */
-    unsigned int  ins_lista, ins_dopo;   /* in the set's ready list */
+    /* epoll: the sets this connection is in (IP_MSG_INS_*, 0.023): m0,
+     * then mx[0..mx_n-1] */
+    Membro        m0;
+    Membro       *mx;
+    unsigned int  mx_n;
     /* poll: the IP_MSG_TCP_ASPETTA waiting on it (g_ins index + 1) */
     unsigned int  att;
 } Conn;
@@ -1295,6 +1353,7 @@ static void tcp_slot_azzera(Conn *c)
     }
     acc_annulla(c, -ECONNABORTED);
     free(c->acc);
+    free(c->mx);
     altri_libera(&c->altri);
     memset(c, 0, sizeof(*c));
     c->numero = numero;
@@ -2044,7 +2103,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
  * See IP_MSG_TCP_ASPETTA and IP_MSG_INS_* in ip_proto.h. Both live in g_ins:
  *   - an epoll set (INS_EPOLL) stays until IP_MSG_INS_CHIUDI; its
  *     connections point at it (Conn.ins) and, when ready, queue in its ready
- *     list (testa/coda through Conn.ins_dopo);
+ *     list (testa/coda through Membro.dopo, 0.023);
  *   - a poll (INS_POLL) is one IP_MSG_TCP_ASPETTA: it lists its connections,
  *     each of them points at it (Conn.att), and it ends with its answer.
  * tcp_evento(c) is called wherever a connection may have become ready (a
@@ -2066,6 +2125,7 @@ typedef struct {
     unsigned int attesa_max;
     unsigned int attesa_scade;   /* uptime_ms, 0 = no timeout */
     unsigned int testa, coda;    /* epoll: ready list (Conn.numero) */
+    unsigned int testa_j, coda_j;    /* ... and the membership (0.023) */
     unsigned int sveglia;        /* epoll: IP_MSG_INS_SVEGLIA with nobody waiting */
     unsigned int orfana;         /* poll: some connection points elsewhere */
     unsigned int n;              /* poll: its connections */
@@ -2117,38 +2177,112 @@ static unsigned int tcp_pronto(const Conn *c)
 }
 
 /* --- epoll ------------------------------------------------------------------ */
-static unsigned int ins_pronto(const Conn *c)
+static Membro *membro(Conn *c, unsigned int j)
 {
-    unsigned int ev = tcp_pronto(c) | (c->ins_forza ? IP_EV_IN : 0u);
-
-    return ev & (c->ins_ev | IP_EV_ERR | IP_EV_HUP);
+    return j == 0 ? &c->m0 : &c->mx[j - 1u];
 }
 
-static void ins_lista_metti(Insieme *s, Conn *c)
+/* the membership of c in set k1 (index + 1), or -1 */
+static int membro_di(Conn *c, unsigned int k1)
 {
-    if (c->ins_lista) return;
-    c->ins_lista = 1;
-    c->ins_dopo  = 0;
-    if (s->coda) tcp_num(s->coda)->ins_dopo = c->numero;
-    else         s->testa = c->numero;
-    s->coda = c->numero;
+    unsigned int j;
+
+    for (j = 0; j <= c->mx_n; j++)
+        if (membro(c, j)->ins == k1) return (int)j;
+    return -1;
 }
 
-static void ins_lista_togli(Insieme *s, Conn *c)
+/* is c in any epoll set? */
+static int ha_membri(Conn *c)
 {
-    unsigned int *q = &s->testa, prima = 0;
+    unsigned int j;
 
-    if (!c->ins_lista) return;
-    while (*q != 0 && *q != c->numero) {
-        prima = *q;
-        q = &tcp_num(*q)->ins_dopo;
+    for (j = 0; j <= c->mx_n; j++)
+        if (membro(c, j)->ins != 0) return 1;
+    return 0;
+}
+
+/* a free membership of c, growing the array; -1 without memory */
+static int membro_nuovo(Conn *c)
+{
+    unsigned int j, n;
+    Membro      *v;
+
+    for (j = 0; j <= c->mx_n; j++)
+        if (membro(c, j)->ins == 0) return (int)j;
+    n = c->mx_n ? c->mx_n * 2u : 2u;
+    v = (Membro *)realloc(c->mx, n * sizeof(Membro));
+    if (v == NULL) return -1;
+    memset(v + c->mx_n, 0, (n - c->mx_n) * sizeof(Membro));
+    c->mx = v;
+    j = c->mx_n + 1u;
+    c->mx_n = n;
+    return (int)j;
+}
+
+static unsigned int ins_pronto(const Conn *c, const Membro *m)
+{
+    unsigned int ev = tcp_pronto(c) | (m->forza ? IP_EV_IN : 0u);
+
+    return ev & (m->ev | IP_EV_ERR | IP_EV_HUP);
+}
+
+static void ins_lista_metti(Insieme *s, Conn *c, unsigned int j)
+{
+    Membro *m = membro(c, j);
+
+    if (m->lista) return;
+    m->lista  = 1;
+    m->dopo   = 0;
+    m->dopo_j = 0;
+    if (s->coda) {
+        Membro *t = membro(tcp_num(s->coda), s->coda_j);
+
+        t->dopo   = c->numero;
+        t->dopo_j = j;
+    } else {
+        s->testa   = c->numero;
+        s->testa_j = j;
     }
-    if (*q == c->numero) {
-        *q = c->ins_dopo;
-        if (s->coda == c->numero) s->coda = prima;
+    s->coda   = c->numero;
+    s->coda_j = j;
+}
+
+static void ins_lista_togli(Insieme *s, Conn *c, unsigned int j)
+{
+    Membro       *m = membro(c, j);
+    unsigned int *qn = &s->testa, *qj = &s->testa_j, prima = 0, prima_j = 0;
+
+    if (!m->lista) return;
+    while (*qn != 0 && !(*qn == c->numero && *qj == j)) {
+        Membro *x = membro(tcp_num(*qn), *qj);
+
+        prima   = *qn;
+        prima_j = *qj;
+        qn = &x->dopo;
+        qj = &x->dopo_j;
     }
-    c->ins_lista = 0;
-    c->ins_dopo  = 0;
+    if (*qn == c->numero && *qj == j) {
+        *qn = m->dopo;
+        *qj = m->dopo_j;
+        if (s->coda == c->numero && s->coda_j == j) {
+            s->coda   = prima;
+            s->coda_j = prima_j;
+        }
+    }
+    m->lista  = 0;
+    m->dopo   = 0;
+    m->dopo_j = 0;
+}
+
+/* membership j of c leaves its set */
+static void membro_stacca(Conn *c, unsigned int j)
+{
+    Membro *m = membro(c, j);
+
+    if (m->ins == 0) return;
+    ins_lista_togli(&g_ins(m->ins - 1u), c, j);
+    memset(m, 0, sizeof(*m));
 }
 
 /* The answer to whoever waits on set k: the ready connections, at most
@@ -2157,26 +2291,33 @@ static void ins_consegna(unsigned int k, int anche_vuota)
 {
     static IpInsEventi r;
     Insieme     *s = &g_ins(k);
-    unsigned int giri, quanti = 0, x;
+    unsigned int giri, quanti = 0, x, xj;
 
     if (s->attesa_pid == 0) return;
-    for (x = s->testa; x != 0; x = tcp_num(x)->ins_dopo) quanti++;
+    for (x = s->testa, xj = s->testa_j; x != 0; ) {
+        Membro *m = membro(tcp_num(x), xj);
+
+        quanti++;
+        x  = m->dopo;
+        xj = m->dopo_j;
+    }
 
     r.n = 0;
     for (giri = 0; giri < quanti && s->testa != 0 && r.n < s->attesa_max; giri++) {
         Conn        *c = tcp_num(s->testa);
-        unsigned int ev;
+        unsigned int j = s->testa_j, ev;
+        Membro      *m = membro(c, j);
 
-        ins_lista_togli(s, c);
-        ev = ins_pronto(c);
-        if (!c->ins_armata || ev == 0) continue;       /* not any more */
+        ins_lista_togli(s, c, j);
+        ev = ins_pronto(c, m);
+        if (!m->armata || ev == 0) continue;           /* not any more */
         r.ev[r.n].eventi  = ev;
-        r.ev[r.n].dati[0] = c->ins_dati[0];
-        r.ev[r.n].dati[1] = c->ins_dati[1];
+        r.ev[r.n].dati[0] = m->dati[0];
+        r.ev[r.n].dati[1] = m->dati[1];
         r.n++;
-        c->ins_forza = 0;
-        if (c->ins_ev & IP_EV_ONESHOT) c->ins_armata = 0;
-        else if (!(c->ins_ev & IP_EV_ET)) ins_lista_metti(s, c);   /* level */
+        m->forza = 0;
+        if (m->ev & IP_EV_ONESHOT) m->armata = 0;
+        else if (!(m->ev & IP_EV_ET)) ins_lista_metti(s, c, j);    /* level */
     }
     if (r.n == 0 && !anche_vuota) return;
     ipc_send(s->attesa_pid, IP_MSG_INS_EVENTI, &r,
@@ -2223,11 +2364,17 @@ static void aspetta_rispondi(unsigned int k, int anche_vuota)
 /* Something may have changed for c: whoever waits for it hears it now. */
 static void tcp_evento(Conn *c)
 {
-    if (c->ins != 0) {
-        Insieme *s = &g_ins(c->ins - 1u);
+    unsigned int j;
 
-        if (c->ins_armata && ins_pronto(c)) ins_lista_metti(s, c);
-        if (s->attesa_pid != 0 && s->testa != 0) ins_consegna(c->ins - 1u, 0);
+    for (j = 0; j <= c->mx_n; j++) {
+        Membro      *m = membro(c, j);
+        unsigned int k1 = m->ins;
+        Insieme     *s;
+
+        if (k1 == 0) continue;
+        s = &g_ins(k1 - 1u);
+        if (m->armata && ins_pronto(c, m)) ins_lista_metti(s, c, j);
+        if (s->attesa_pid != 0 && s->testa != 0) ins_consegna(k1 - 1u, 0);
     }
     if (c->att != 0) aspetta_rispondi(c->att - 1u, 0);
 }
@@ -2236,12 +2383,23 @@ static void tcp_evento(Conn *c)
  * goes back. A poll waiting on it hears it now (the end, or nothing). */
 static void ins_stacca(Conn *c)
 {
-    if (c->ins != 0) {
-        ins_lista_togli(&g_ins(c->ins - 1u), c);
-        c->ins = 0;
-        c->ins_armata = c->ins_forza = 0;
-    }
+    unsigned int j;
+
+    for (j = 0; j <= c->mx_n; j++) membro_stacca(c, j);
     if (c->att != 0) aspetta_rispondi(c->att - 1u, 1);
+}
+
+/* (0.021) a process group lets go of a shared connection: it leaves the
+ * sets of that group, not the others' */
+static void ins_stacca_gruppo(Conn *c, unsigned int g)
+{
+    unsigned int j;
+
+    for (j = 0; j <= c->mx_n; j++) {
+        Membro *m = membro(c, j);
+
+        if (m->ins != 0 && g_ins(m->ins - 1u).proprietario == g) membro_stacca(c, j);
+    }
 }
 
 static int ins_libero(void)
@@ -2279,10 +2437,9 @@ static int ins_nuovo(void)
 
         if (s->tipo == 0 || padroni_vivi(&s->proprietario, &s->altri)) continue;
         for (j = 0; j < g_tcp_n; j++) {
-            if (g_tcp[j]->ins == i + 1u) {
-                ins_lista_togli(s, g_tcp[j]);
-                g_tcp[j]->ins = 0;
-            }
+            int q = membro_di(g_tcp[j], i + 1u);
+
+            if (q >= 0) membro_stacca(g_tcp[j], (unsigned int)q);
             if (g_tcp[j]->att == i + 1u) g_tcp[j]->att = 0;
         }
         altri_libera(&s->altri);
@@ -2379,35 +2536,38 @@ static void ins_ctl(unsigned int cliente, const IpInsCtl *q)
     unsigned int op = q->op & 0xFFu;
     Insieme     *s;
     Conn        *c;
-    int          k;
+    Membro      *m;
+    int          k, j;
 
     s = ins_da_id(q->ins, cliente, &k);
     if (s == NULL) { rispondi_esito(cliente, -EBADF); return; }
     c = tcp_da_id(q->id, cliente);
     if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    j = membro_di(c, (unsigned int)k + 1u);
 
     if (op == IP_INS_DEL) {
-        if (c->ins != (unsigned int)k + 1u) { rispondi_esito(cliente, -ENOENT); return; }
-        ins_lista_togli(s, c);
-        c->ins = 0;
-        c->ins_armata = c->ins_forza = 0;
+        if (j < 0) { rispondi_esito(cliente, -ENOENT); return; }
+        membro_stacca(c, (unsigned int)j);
         rispondi_esito(cliente, 0);
         return;
     }
-    if (op == IP_INS_ADD && c->ins != 0) { rispondi_esito(cliente, -EEXIST); return; }
-    if (op == IP_INS_MOD && c->ins != (unsigned int)k + 1u) {
-        rispondi_esito(cliente, -ENOENT);
-        return;
-    }
+    /* EEXIST only for the SAME set: other sets may hold it too (0.023) */
+    if (op == IP_INS_ADD && j >= 0) { rispondi_esito(cliente, -EEXIST); return; }
+    if (op == IP_INS_MOD && j < 0)  { rispondi_esito(cliente, -ENOENT); return; }
     if (op != IP_INS_ADD && op != IP_INS_MOD) { rispondi_esito(cliente, -EINVAL); return; }
+    if (j < 0) {
+        j = membro_nuovo(c);
+        if (j < 0) { rispondi_esito(cliente, -ENOMEM); return; }
+    }
 
-    c->ins         = (unsigned int)k + 1u;
-    c->ins_ev      = q->eventi;
-    c->ins_dati[0] = q->dati[0];
-    c->ins_dati[1] = q->dati[1];
-    c->ins_armata  = 1;
-    c->ins_forza   = (q->op & IP_INS_FORZA) ? 1u : 0u;
-    if (!ins_pronto(c)) ins_lista_togli(s, c);
+    m = membro(c, (unsigned int)j);
+    m->ins     = (unsigned int)k + 1u;
+    m->ev      = q->eventi;
+    m->dati[0] = q->dati[0];
+    m->dati[1] = q->dati[1];
+    m->armata  = 1;
+    m->forza   = (q->op & IP_INS_FORZA) ? 1u : 0u;
+    if (!ins_pronto(c, m)) ins_lista_togli(s, c, (unsigned int)j);
     rispondi_esito(cliente, 0);
     tcp_evento(c);          /* ready now: whoever waits hears it */
 }
@@ -2458,12 +2618,12 @@ static void ins_sveglia_chiudi(unsigned int cliente, const IpInsRif *q, int chiu
     else if (!chiudi)       s->sveglia = 1;
     if (chiudi) {
         altri_libera(&s->altri);
-        for (j = 0; j < g_tcp_n; j++)
-            if (g_tcp[j]->ins == (unsigned int)k + 1u) {
-                g_tcp[j]->ins = 0;
-                g_tcp[j]->ins_lista = g_tcp[j]->ins_dopo = 0;
-                g_tcp[j]->ins_armata = g_tcp[j]->ins_forza = 0;
-            }
+        for (j = 0; j < g_tcp_n; j++) {
+            int q2 = membro_di(g_tcp[j], (unsigned int)k + 1u);
+
+            /* the whole set goes: no list to keep in order */
+            if (q2 >= 0) memset(membro(g_tcp[j], (unsigned int)q2), 0, sizeof(Membro));
+        }
         memset(s, 0, sizeof(*s));
     }
     rispondi_esito(cliente, 0);
@@ -2554,7 +2714,7 @@ static void tcp_scadenze(void)
          * accepted it: it has no owner who could close it. One shut down
          * (shutdown, IP_MSG_TCP_SPEGNI) but still in its epoll set waits for
          * close(): freed now, its program would never hear the end. */
-        if (c->stato == S_MORTA && c->attesa_pid == 0 && c->ins == 0 &&
+        if (c->stato == S_MORTA && c->attesa_pid == 0 && !ha_membri(c) &&
             (c->chiusa_cliente || (c->ascoltatore != 0 && !c->accettata))) {
             tcp_slot_azzera(c);
             continue;
@@ -2633,7 +2793,7 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
         Conn *k = g_tcp[i];
 
         if (k->stato == S_MORTA && (k->rx_len == 0 || k->chiusa_cliente) &&
-            k->attesa_pid == 0 && k->att == 0 && k->ins == 0)
+            k->attesa_pid == 0 && k->att == 0 && !ha_membri(k))
             c = k;
     }
     /* ! PIENA? PRIMA DI DIRE DI NO SI GUARDA CHI E' MORTO. Dire -ENFILE
@@ -2939,7 +3099,7 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
                 c->attesa_pid = 0;
                 if (c->stato == S_ASCOLTA) acc_avanza(c);
             }
-            if (c->ins != 0 && g_ins(c->ins - 1u).proprietario == g) ins_stacca(c);
+            ins_stacca_gruppo(c, g);
             rispondi_esito(cliente, 0);
             return;
         }
@@ -3006,8 +3166,11 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r, int spegni)
         c->stato = S_MORTA;
     }
 
-    if (spegni && c->ins != 0) {
-        c->ins_forza = 1;
+    if (spegni && ha_membri(c)) {
+        unsigned int j;
+
+        for (j = 0; j <= c->mx_n; j++)
+            if (membro(c, j)->ins != 0) membro(c, j)->forza = 1;
         tcp_evento(c);
     }
     rispondi_esito(cliente, 0);
@@ -3347,20 +3510,30 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
         g_udp[i].usata = 0;
     }
 
-    for (i = 0; i < UDP_PORTE; i++) if (!g_udp[i].usata) { libero = i; break; }
+    for (i = 0; i < (int)g_udp_n; i++) if (!g_udp[i].usata) { libero = i; break; }
     /* ! LE PORTE UDP ORFANE SI RIPRENDONO DALLA TABELLA UDP. Fino alla 0.004
      * qui si riprendevano le connessioni TCP orfane e si usava come indice UDP
      * il primo slot TCP libero: una porta di un programma morto non tornava mai,
      * e l'indice poteva cadere su una porta UDP ancora in uso. */
     if (libero < 0)
-        for (i = 0; i < UDP_PORTE; i++)
+        for (i = 0; i < (int)g_udp_n; i++)
             if (!padroni_vivi(&g_udp[i].proprietario, &g_udp[i].altri)) { libero = i; break; }
-    if (libero < 0) { rispondi_esito(client, -ENFILE); return; }
+    /* (0.023) none free: the table doubles */
+    if (libero < 0) {
+        unsigned int n = g_udp_n ? g_udp_n * 2u : 16u;
+        UdpPorta    *v = (UdpPorta *)realloc(g_udp, n * sizeof(UdpPorta));
+
+        if (v == NULL) { rispondi_esito(client, -ENFILE); return; }
+        memset(v + g_udp_n, 0, (n - g_udp_n) * sizeof(UdpPorta));
+        libero  = (int)g_udp_n;
+        g_udp   = v;
+        g_udp_n = n;
+    }
 
     altri_libera(&g_udp[libero].altri);
+    g_udp[libero].lettori.n    = 0;
     g_udp[libero].porta        = porta;
     g_udp[libero].proprietario = gruppo_di(client);
-    g_udp[libero].lettore      = 0;
     g_udp[libero].usata        = 1;
 
     /* Si risponde con il NUMERO di porta assegnato, non con uno zero: chi
@@ -3383,8 +3556,7 @@ static void udp_chiudi(unsigned int client, const IpUdpApri *a)
 
         padrone_lascia(&g_udp[i].proprietario, &g_udp[i].altri, g);
         if (padroni_vivi(&g_udp[i].proprietario, &g_udp[i].altri)) {
-            if (g_udp[i].lettore != 0 && gruppo_di(g_udp[i].lettore) == g)
-                g_udp[i].lettore = 0;
+            udp_lettori_togli_gruppo(i, g);
             rispondi_esito(client, 0);
             return;
         }
@@ -3392,6 +3564,7 @@ static void udp_chiudi(unsigned int client, const IpUdpApri *a)
 
     g_udp[i].usata = 0;
     altri_libera(&g_udp[i].altri);
+    g_udp[i].lettori.n = 0;
     rispondi_esito(client, 0);
 }
 
@@ -3487,7 +3660,13 @@ static void udp_ricevi(unsigned int client, const IpUdpApri *a)
     /* Non si risponde adesso: si ricorda chi aspetta, e gli si scrive
      * quando arriva un datagramma. Vedi ip_proto.h sul perche' lo stack
      * non spinge mai niente di sua iniziativa. */
-    g_udp[i].lettore = client;
+    {
+        Altri       *l = &g_udp[i].lettori;
+        unsigned int a;
+
+        for (a = 0; a < l->n; a++) if (l->v[a] == client) return;    /* already */
+        if (altri_metti(l, client) != 0) rispondi_esito(client, -ENOMEM);
+    }
 }
 
 /* IP_MSG_EREDITA (0.021): see ip_proto.h and «MORE THAN ONE OWNER» */

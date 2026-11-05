@@ -18,10 +18,12 @@
 # buildconf, that is autoconf and the libtool program).
 #
 # patch/*.diff, applied to the unpacked tree:
-#   proc-spawn.diff   apr_proc_create with spawn_ex (EX-OS has no fork: see
-#                     the comment in the patch); apr_proc_detach does not fork
-#                     (an EX-OS daemon is spawned apart already);
-#                     apr_proc_fork stays as it is and answers ENOSYS.
+#   proc-spawn.diff   apr_proc_create with spawn_ex (see the comment in the
+#                     patch: born when EX-OS had no fork, kept because it is
+#                     cheaper than fork + exec of a big server). Since kernel
+#                     0.313 fork() is real: apr_proc_fork and apr_proc_detach
+#                     are APR's own (until then detach did not fork and
+#                     apr_proc_fork answered ENOSYS).
 #
 # ! CROSS COMPILING: configure cannot run its test programs, so the answers
 # are given (the CACHE list below), each one what EX-OS really does.

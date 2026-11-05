@@ -32,6 +32,11 @@
  * possono contraddirlo. */
 #include <stdint.h>
 
+/* BYTE_ORDER, LITTLE_ENDIAN, BIG_ENDIAN and the htobe/le conversions, which
+ * glibc gives here too (<endian.h> through __USE_MISC): Valkey's config.h
+ * tests BYTE_ORDER with only <sys/types.h> (5 November 2026). */
+#include "../endian.h"
+
 /* The BSD names, which glibc gives here too (__USE_MISC): MariaDB's
  * safe_process and mariadb_rpl.c write uint and u_char with nothing else. */
 typedef unsigned char       u_char;

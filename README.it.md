@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.316
+**Versione:** 0.317
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -6880,17 +6880,106 @@ Redis (BGSAVE), il MPM prefork di Apache e `QProcess` di Qt vogliono una
   memoria invece che dai primi 64 MB. Il tetto dei processi è la RAM: 9000
   figli insieme in QEMU con 4 GB, 5000 sul portatile (2,8 GB); fino alla
   0.315, 1222 con 1 GB e 3045 con 4 GB.
+- **Un socket in più insiemi epoll** (ip.drv 0.023): dopo fork ogni processo
+  può mettere la stessa connessione nel proprio insieme epoll, come su Linux;
+  `EEXIST` solo per lo stesso insieme due volte.
+- **Più lettori su un socket UDP** (ip.drv 0.023): un filo del padre e un
+  figlio nati da fork, entrambi in `recvfrom`, ricevono un datagramma a testa;
+  fino alla 0.022 il secondo lettore prendeva il posto del primo, che
+  aspettava per sempre. La tabella delle porte UDP cresce con le richieste
+  (16 all'inizio, poi raddoppia).
+- **Più attese su un pty** (kernel 0.317): ogni lettore e scrittore di
+  ciascun lato viene ricordato (le stesse liste delle pipe); fino alla 0.316
+  il secondo prendeva il posto del primo.
+- **`alarm` suona, e un segnale catturato interrompe un'attesa** (kernel
+  0.317): `alarm`, `setitimer`/`getitimer` (`ITIMER_REAL`; gli altri due
+  dicono `EINVAL`) mandano SIGALRM con risoluzione di 10 ms, e `pause` aspetta
+  un segnale; fino alla 0.316 `alarm` non faceva niente. Un segnale catturato
+  interrompe `read`, `write`, `waitpid`, `poll`, `sleep`, `nanosleep` (col
+  tempo che resta) e `F_SETLKW` con `EINTR`; con `SA_RESTART` (`signal()` lo
+  mette, come su Linux) il gestore gira e `read`/`write`/`waitpid`/`fcntl`
+  ripartono da sole; `poll` e `sleep` dicono sempre `EINTR`, come vuole
+  POSIX. Fino alla 0.316 solo `kill -9` e Ctrl+C chiudevano un'attesa.
 - **Una porta chiusa rifiuta** (ip.drv 0.022): un SYN dove nessuno ascolta
   riceve un RST, e `connect` dice `ECONNREFUSED` subito invece di aspettare.
+- **Una pipe con `O_NONBLOCK` non aspetta** (kernel 0.317): una pipe vuota
+  con ancora scrittori, o una piena, dà `EAGAIN`. Fino alla 0.316
+  `fcntl(F_SETFL, O_NONBLOCK)` (e `pipe2`) ricordava il flag e `read`/`write`
+  lo ignoravano.
+- **Apache come demone Unix**: `apr_proc_detach` di APR fa la fork davvero
+  (la patch di EX-OS la saltava), quindi `httpd` senza `-X` va sullo sfondo,
+  il MPM worker fa i figli con la fork (4 processi, il mutex di accept con
+  `fcntl`, lo scoreboard in memoria `MAP_ANON`) e `httpd -k stop` li spegne
+  tutti. Prova: `DEMONE=1 tools/prova_httpd.sh`.
+- **`openpty`, `forkpty`, `login_tty`** (`<pty.h>`, e `<util.h>`,
+  `<libutil.h>` di BSD): sopra `pty_apri`, che dà i due capi insieme.
+  `forkpty` fa dello slave l'ingresso, l'uscita e gli errori del figlio e
+  dice al pty che Ctrl+C sul master interrompe il figlio (`PTY_CTL_FG`: EX-OS
+  non ha i gruppi di processi). Lo slave non ha un nome nel file system,
+  quindi `name` riceve `/dev/tty`, come dice `ttyname`; per questo
+  `posix_openpt`/`ptsname`, che aprono lo slave per nome, non ci sono ancora.
 
 Prova: `tools/prova-fork/prova-fork.sh` (64 bit) e `... 32`, in QEMU;
 `--figli=N` per quanti figli vivi insieme (300 se manca).
+Le prove dalla 17 alla 19 coprono UDP, il pty e l'allarme; la 20
+`openpty`/`forkpty`, la 21 le pipe con `O_NONBLOCK`.
+
+**Guasto: un programma aspetta per sempre anche se ha messo `alarm()`**
+(una scadenza attorno a una lettura, un cane da guardia): il kernel è più
+vecchio della 0.317, dove `alarm` non faceva niente. Rimedio: `netupdate`,
+poi ricompilare il programma con la libc nuova (i programmi statici si
+portano dietro la `alarm` vecchia).
 
 **Guasto: Apache installato con netupdate non parte** ("AH02291: Cannot
 access directory '/exos/apache2/logs/'"). Il repository porta file, non
 cartelle, e `logs/` era vuota. Rimedio: `mkdir /exos/apache2/logs`, o
 `netupdate`: ora ogni cartella vuota di apache2, mariadb e php ha un file
 `.tieni` che la porta con sé.
+
+### Valkey 9.1.3: BGSAVE e BGREWRITEAOF, la fork sotto carico (voce 33 i)
+
+Valkey è la linea BSD di Redis 7.2 (Redis 8 è AGPL/RSAL/SSPL): lo stesso
+protocollo, gli stessi file RDB e AOF; `redis-cli` e ogni client di Redis
+funzionano. `tools/valkey-exos/costruisci.sh [32|64]` lo costruisce in
+`/exos/valkey`: `bin/valkey-server`, `valkey-cli`, `valkey-benchmark`, e
+`valkey-check-rdb`, `valkey-check-aof`, `valkey-sentinel` come **copie** del
+server (Valkey sceglie cosa fare dal nome con cui parte, ed EX-OS non ha
+collegamenti simbolici); `etc/valkey.conf` (bind IPv4, dati e file del pid in
+`/exos/valkey/dati`). Usa il malloc della libc (niente jemalloc), il ciclo
+degli eventi con `select`, niente TLS.
+
+    /exos/valkey/bin/valkey-server /exos/valkey/etc/valkey.conf &
+    /exos/valkey/bin/valkey-cli ping
+
+`tools/valkey-exos/prova.sh [32|64]` in QEMU: PING, SET/GET, 200000 chiavi,
+BGSAVE mentre `valkey-benchmark` carica il padre (circa 1200 SET e GET al
+secondo), `valkey-check-rdb` sulla fotografia, un riavvio che ricarica le
+chiavi, BGREWRITEAOF. 12 su 12 a 32 e 64 bit.
+
+Cosa ha chiesto il porting a EX-OS:
+- **la libc**: `pthread_cancel` (differita; i punti di annullamento sono
+  `pthread_testcancel`, `pthread_cond_wait`/`timedwait`, `pthread_join`),
+  `glob`/`fnmatch` (`<glob.h>`, `<fnmatch.h>`), le espressioni regolari
+  POSIX (`<regex.h>`: `regcomp`/`regexec`/`regerror`/`regfree`, di base ed
+  estese), `strndup`, `asprintf`/`vasprintf`, `bzero`, `ctime_r`/
+  `asctime_r`, `IOV_MAX` in `<limits.h>`, `BYTE_ORDER` da `<sys/types.h>`,
+  `ESOCKTNOSUPPORT`; `printf` impara `%jd` e `%td`;
+- **il caricatore**: una libreria si riloca solo quando tutto l'albero è
+  caricato (libapr chiama `modf` senza nominare libm, e il simbolo arrivava
+  dopo); il TLS initial-exec (`R_X86_64_TPOFF64`, i386 `TPOFF`/`TPOFF32`)
+  sulle variabili del programma stesso si risolve;
+- **il kernel**: le pipe con `O_NONBLOCK` (sopra).
+
+**Guasto: Valkey non risponde più dopo BGSAVE** (il figlio è uno zombi, il
+server `blocc.` in `ps`): kernel più vecchio della 0.317, dove una pipe non
+bloccante aspettava. Rimedio: `netupdate`.
+
+**Guasto: Valkey muore col segnale 11 su `INFO`** ("Accessing address"
+vicino all'ora attuale in secondi), **e le date del suo log dicono "-73188
+Jan 1970"**: Valkey è stato collegato con una libc senza `%jd` e la cui
+`gettimeofday` non riempiva il fuso orario. Rimedio: ricostruirlo con la
+libc nuova (`tools/valkey-exos/costruisci.sh`); lo stesso vale per ogni
+programma che stampa un `intmax_t` con `%jd`.
 
 ### Intestazioni con i nomi standard
 

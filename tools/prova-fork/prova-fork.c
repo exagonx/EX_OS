@@ -38,6 +38,21 @@
  *  16  a connection the parent accepted, inherited by a child: the parent
  *      closes its copy, the child still writes on it; the peer sees the end
  *      only when the child closes too
+ *  17  UDP (ip.drv 0.023): a parent thread and a forked child both in
+ *      recvfrom on one socket; two datagrams, one each (up to 0.022 the
+ *      second reader replaced the first, which waited forever)
+ *  18  pty (kernel 0.317): parent and child both reading the master of one
+ *      pty; two writes on the slave, one byte each (up to 0.316 one waiter
+ *      per side: the first reader slept for ever)
+ *  19  SIGALRM and interrupted calls (kernel 0.317; up to 0.316 alarm() did
+ *      nothing and a caught signal did not cut a wait short):
+ *        a  alarm(1) without SA_RESTART: read on an empty pipe gives EINTR
+ *        b  setitimer 200 ms with SA_RESTART: the handler runs, the read
+ *           starts again and gets the data written later
+ *        c  poll with no timeout: EINTR, also with SA_RESTART
+ *        d  sleep(3) cut by alarm(1): returns the seconds left
+ *        e  getitimer and alarm(0) give back what was left
+ *        f  waitpid with a SIGCHLD handler returns the child, not EINTR
  * ============================================================================= */
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +65,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <poll.h>
+#include <sys/time.h>
+#include <fcntl.h>
+#include <pty.h>
 
 static int g_no = 0;
 static void esito(int ok, const char *cosa)
@@ -519,6 +539,287 @@ static void prova_prese(void)
     close(asc);
 }
 
+/* 17 */
+static int g_udp_s = -1;
+static char g_udp_preso = 0;
+
+static void *udp_filo(void *x)
+{
+    char c = 0;
+
+    (void)x;
+    if (recvfrom(g_udp_s, &c, 1, 0, NULL, NULL) == 1) g_udp_preso = c;
+    return NULL;
+}
+
+static void prova_udp(void)
+{
+    struct sockaddr_in a;
+    struct timeval     tv;
+    pthread_t          t;
+    int                pp[2], figlio, st = -1, tx;
+    char               dal_figlio = 0, r[128];
+
+    g_udp_s = socket(AF_INET, SOCK_DGRAM, 0);
+    memset(&a, 0, sizeof(a));
+    a.sin_family      = AF_INET;
+    a.sin_port        = htons(5051);
+    a.sin_addr.s_addr = htonl(0x7F000001);
+    if (g_udp_s < 0 || bind(g_udp_s, (struct sockaddr *)&a, sizeof(a)) != 0 || pipe(pp) != 0) {
+        esito(0, "17 UDP: socket, bind o pipe");
+        return;
+    }
+    tv.tv_sec = 4; tv.tv_usec = 0;
+    setsockopt(g_udp_s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    figlio = fork();
+    if (figlio == 0) {
+        char c = 0;
+
+        write(pp[1], "r", 1);
+        if (recvfrom(g_udp_s, &c, 1, 0, NULL, NULL) != 1) c = '?';
+        write(pp[1], &c, 1);
+        _exit(0);
+    }
+    read(pp[0], &dal_figlio, 1);                /* the child is about to wait */
+    pthread_create(&t, NULL, udp_filo, NULL);
+    usleep(400000);                             /* both readers queued */
+    tx = socket(AF_INET, SOCK_DGRAM, 0);
+    sendto(tx, "A", 1, 0, (struct sockaddr *)&a, sizeof(a));
+    usleep(50000);
+    sendto(tx, "B", 1, 0, (struct sockaddr *)&a, sizeof(a));
+    pthread_join(t, NULL);
+    dal_figlio = 0;
+    read(pp[0], &dal_figlio, 1);
+    waitpid(figlio, &st, 0);
+    snprintf(r, sizeof r, "17 UDP: padre (%c) e figlio (%c) in recvfrom sullo stesso socket, "
+             "un datagramma a testa", g_udp_preso ? g_udp_preso : '-', dal_figlio ? dal_figlio : '-');
+    esito(((g_udp_preso == 'A' && dal_figlio == 'B') || (g_udp_preso == 'B' && dal_figlio == 'A')), r);
+    close(tx); close(g_udp_s); close(pp[0]); close(pp[1]);
+}
+
+/* 18 */
+int pty_apri(int fd[2]);
+static int g_pty_s = -1;
+
+static void sveglia_vuota(int n) { (void)n; }
+
+static void *pty_scrittore(void *x)
+{
+    (void)x;
+    usleep(400000);
+    write(g_pty_s, "A", 1);
+    usleep(150000);
+    write(g_pty_s, "B", 1);
+    return NULL;
+}
+
+static void prova_pty(void)
+{
+    int       fd[2], pp[2], figlio, st = -1;
+    char      mio = 0, suo = 0, r[128];
+    pthread_t t;
+
+    if (pty_apri(fd) != 0 || pipe(pp) != 0) { esito(0, "18 pty: pty_apri o pipe"); return; }
+    g_pty_s = fd[1];
+    /* ! WITHOUT SA_RESTART: the alarm is the safety net of a read that
+     * would wait for ever, and must end it (signal() would restart it). */
+    {
+        struct sigaction sa;
+
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = sveglia_vuota;
+        sigaction(SIGALRM, &sa, NULL);
+    }
+    figlio = fork();
+    if (figlio == 0) {
+        char c = 0;
+
+        alarm(4);
+        write(pp[1], "r", 1);
+        if (read(fd[0], &c, 1) != 1) c = '?';
+        write(pp[1], &c, 1);
+        _exit(0);
+    }
+    read(pp[0], &suo, 1);
+    usleep(100000);                         /* the child is in read */
+    pthread_create(&t, NULL, pty_scrittore, NULL);
+    alarm(4);
+    if (read(fd[0], &mio, 1) != 1) mio = '?';
+    alarm(0);
+    pthread_join(t, NULL);
+    suo = 0;
+    read(pp[0], &suo, 1);
+    waitpid(figlio, &st, 0);
+    snprintf(r, sizeof r, "18 pty: padre (%c) e figlio (%c) leggono lo stesso master, un byte a testa",
+             mio ? mio : '-', suo ? suo : '-');
+    esito((mio == 'A' && suo == 'B') || (mio == 'B' && suo == 'A'), r);
+    signal(SIGALRM, SIG_DFL);
+    close(fd[0]); close(fd[1]); close(pp[0]); close(pp[1]);
+}
+
+/* 19 */
+static volatile int g_allarmi = 0;
+static void su_allarme(int n) { (void)n; g_allarmi++; }
+static int g_al_scrivi = -1;
+
+static void allarme_azione(int riavvia)
+{
+    struct sigaction sa;
+
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = su_allarme;
+    sa.sa_flags   = riavvia ? SA_RESTART : 0;
+    sigaction(SIGALRM, &sa, NULL);
+}
+
+static void *al_scrittore(void *x)
+{
+    (void)x;
+    usleep(700000);
+    write(g_al_scrivi, "Z", 1);
+    return NULL;
+}
+
+static void prova_allarme(void)
+{
+    int pp[2], r, e, figlio, st = -1;
+    unsigned int resta;
+    char c = 0, msg[160];
+    unsigned int t0;
+    struct itimerval it, prima;
+    struct pollfd pf;
+    pthread_t t;
+
+    if (pipe(pp) != 0) { esito(0, "19 allarme: pipe"); return; }
+
+    /* a */
+    allarme_azione(0);
+    g_allarmi = 0;
+    t0 = uptime_ms();
+    alarm(1);
+    r = read(pp[0], &c, 1); e = errno;
+    snprintf(msg, sizeof msg, "19a alarm(1) interrompe una read senza SA_RESTART: %d, errno %d, %u ms, gestore %d",
+             r, e, uptime_ms() - t0, g_allarmi);
+    esito(r == -1 && e == EINTR && g_allarmi == 1, msg);
+
+    /* b */
+    allarme_azione(1);
+    g_allarmi = 0;
+    g_al_scrivi = pp[1];
+    memset(&it, 0, sizeof it);
+    it.it_value.tv_usec = 200000;
+    setitimer(ITIMER_REAL, &it, NULL);
+    pthread_create(&t, NULL, al_scrittore, NULL);
+    c = 0;
+    r = read(pp[0], &c, 1);
+    pthread_join(t, NULL);
+    snprintf(msg, sizeof msg, "19b SA_RESTART: il gestore gira (%d), la read riparte e prende '%c' (%d)",
+             g_allarmi, c ? c : '-', r);
+    esito(r == 1 && c == 'Z' && g_allarmi == 1, msg);
+
+    /* c */
+    g_allarmi = 0;
+    pf.fd = pp[0]; pf.events = POLLIN; pf.revents = 0;
+    it.it_value.tv_usec = 300000;
+    setitimer(ITIMER_REAL, &it, NULL);
+    r = poll(&pf, 1, -1); e = errno;
+    snprintf(msg, sizeof msg, "19c poll senza scadenza: %d, errno %d (EINTR anche con SA_RESTART)", r, e);
+    esito(r == -1 && e == EINTR && g_allarmi == 1, msg);
+
+    /* d */
+    g_allarmi = 0;
+    alarm(1);
+    resta = sleep(3);
+    snprintf(msg, sizeof msg, "19d sleep(3) interrotta da alarm(1) rende %u secondi", resta);
+    esito(resta == 2 && g_allarmi == 1, msg);
+
+    /* e */
+    alarm(5);
+    memset(&prima, 0, sizeof prima);
+    getitimer(ITIMER_REAL, &prima);
+    resta = alarm(0);
+    snprintf(msg, sizeof msg, "19e getitimer %ld s %ld us, alarm(0) rende %u",
+             (long)prima.it_value.tv_sec, (long)prima.it_value.tv_usec, resta);
+    esito(prima.it_value.tv_sec >= 4 && prima.it_value.tv_sec <= 5 && resta == 5, msg);
+    e = setitimer(ITIMER_PROF, &it, NULL) == -1 && errno == EINVAL;
+    esito(e, "19e ITIMER_PROF: EINVAL, non un contatore che misura altro");
+
+    /* f */
+    signal(SIGCHLD, su_sigchld);
+    figlio = fork();
+    if (figlio == 0) { usleep(300000); _exit(7); }
+    r = waitpid(figlio, &st, 0); e = errno;
+    snprintf(msg, sizeof msg, "19f waitpid con un gestore di SIGCHLD: %d (figlio %d), codice %d, errno %d",
+             r, figlio, WIFEXITED(st) ? WEXITSTATUS(st) : -1, r < 0 ? e : 0);
+    esito(r == figlio && WIFEXITED(st) && WEXITSTATUS(st) == 7, msg);
+    signal(SIGCHLD, SIG_DFL);
+    signal(SIGALRM, SIG_DFL);
+    close(pp[0]); close(pp[1]);
+}
+
+/* 20: openpty with a size, forkpty (the child writes on its terminal, the
+ * parent reads it from the master) */
+static void prova_forkpty(void)
+{
+    struct winsize w, l;
+    char           nome[32] = "", r[160], buf[64];
+    int            m = -1, sl = -1, pid, n = 0, k, st = -1;
+
+    memset(&w, 0, sizeof w);
+    w.ws_row = 33; w.ws_col = 99;
+    memset(&l, 0, sizeof l);
+    k = openpty(&m, &sl, nome, NULL, &w);
+    if (k == 0) ioctl(sl, TIOCGWINSZ, &l);
+    snprintf(r, sizeof r, "20a openpty: %d, la misura %dx%d (voluta 33x99), nome '%s'",
+             k, l.ws_row, l.ws_col, nome);
+    esito(k == 0 && l.ws_row == 33 && l.ws_col == 99 && nome[0] == '/', r);
+    if (k == 0) { close(m); close(sl); }
+
+    pid = forkpty(&m, NULL, NULL, NULL);
+    if (pid == 0) {
+        write(1, "dal-figlio", 10);
+        _exit(isatty(0) && isatty(2) ? 5 : 6);
+    }
+    if (pid > 0) {
+        alarm(4);
+        while (n < 10) {
+            k = (int)read(m, buf + n, sizeof buf - 1 - (size_t)n);
+            if (k <= 0) break;
+            n += k;
+        }
+        alarm(0);
+        waitpid(pid, &st, 0);
+        close(m);
+    }
+    buf[n > 0 ? n : 0] = 0;
+    snprintf(r, sizeof r, "20b forkpty: figlio %d, il master legge '%s', codice %d (5 = 0 e 2 sono il terminale)",
+             pid, buf, WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+    esito(pid > 0 && strncmp(buf, "dal-figlio", 10) == 0 && WIFEXITED(st) && WEXITSTATUS(st) == 5, r);
+}
+
+/* 21: a pipe with O_NONBLOCK says EAGAIN, empty with a writer and full
+ * (kernel 0.317; Valkey after BGSAVE waited for ever) */
+static void prova_pipe_nonblocc(void)
+{
+    int  pp[2], r, e, scritti = 0, k;
+    char c, msg[128];
+
+    if (pipe(pp) != 0) { esito(0, "21 pipe"); return; }
+    fcntl(pp[0], F_SETFL, O_NONBLOCK);
+    fcntl(pp[1], F_SETFL, O_NONBLOCK);
+    alarm(4);
+    r = (int)read(pp[0], &c, 1); e = errno;
+    snprintf(msg, sizeof msg, "21a pipe vuota con O_NONBLOCK: %d, errno %d (EAGAIN %d)", r, e, EAGAIN);
+    esito(r == -1 && e == EAGAIN, msg);
+    memset(g_buf, 'x', sizeof g_buf);
+    while ((k = (int)write(pp[1], g_buf, sizeof g_buf)) > 0 && scritti < (1 << 24)) scritti += k;
+    e = errno;
+    alarm(0);
+    snprintf(msg, sizeof msg, "21b pipe piena con O_NONBLOCK: %d byte, poi %d, errno %d", scritti, k, e);
+    esito(scritti > 0 && k == -1 && e == EAGAIN, msg);
+    close(pp[0]); close(pp[1]);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--figlio-exec") == 0) return 33;
@@ -539,6 +840,19 @@ int main(int argc, char **argv)
     prova_exec(argv[0]);
     prova_atfork();
     prova_prese();
+    prova_udp();
+    prova_pty();
+    prova_allarme();
+    {   /* 20 and 21: the alarm only as a safety net, WITHOUT SA_RESTART */
+        struct sigaction sa;
+
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = sveglia_vuota;
+        sigaction(SIGALRM, &sa, NULL);
+    }
+    prova_forkpty();
+    prova_pipe_nonblocc();
+    signal(SIGALRM, SIG_DFL);
     printf("prova-fork: %d NO\n", g_no);
     return g_no ? 1 : 0;
 }

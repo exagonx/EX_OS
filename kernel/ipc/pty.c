@@ -23,6 +23,7 @@
 #include "sched.h"
 #include "syscall.h"    /* gli errno del kernel */
 #include "kmalloc.h"
+#include "attese.h"
 
 /* Le quattro che ogni ambiente freestanding deve fornire; vedi
  * kernel/arch/x86/memfun.c. */
@@ -49,9 +50,10 @@ typedef struct {
     uint32_t righe, colonne;
 
     uint32_t master_aperti, slave_aperti;
-    uint32_t pid_att_in;        /* chi dorme aspettando di leggere lo slave  */
-    uint32_t pid_att_out;       /* chi dorme aspettando di leggere il master */
-    uint32_t pid_att_spazio;    /* chi dorme aspettando POSTO nel tubo verso
+    /* (0.317) every waiter, see attese.h */
+    Attese   att_in;            /* chi dorme aspettando di leggere lo slave  */
+    Attese   att_out;           /* chi dorme aspettando di leggere il master */
+    Attese   att_spazio;        /* chi dorme aspettando POSTO nel tubo verso
                                    il master: vedi pty_scrivi_slave          */
 
     /* ! FINE DEI DATI E' UNO STATO, NON UN BYTE. Ctrl+D non si mette nel
@@ -76,6 +78,28 @@ static Pty *pty_da_handle(int h)
     return g_pty_dir[h];
 }
 
+/* A pair back to zero, keeping the arrays of its waiters (attese.h). */
+static void pty_azzera(Pty *p)
+{
+    Attese a, b, c;
+
+    ATTESE_TIENI(&p->att_in, a);
+    ATTESE_TIENI(&p->att_out, b);
+    ATTESE_TIENI(&p->att_spazio, c);
+    memset(p, 0, sizeof(Pty));
+    attese_rimetti(&p->att_in, &a);
+    attese_rimetti(&p->att_out, &b);
+    attese_rimetti(&p->att_spazio, &c);
+}
+
+/* Interrupts OFF: everyone on all three sides wakes (a close) */
+static void pty_sveglia_tutti_locked(Pty *p)
+{
+    attese_sveglia_locked(&p->att_in);
+    attese_sveglia_locked(&p->att_out);
+    attese_sveglia_locked(&p->att_spazio);
+}
+
 /* One more pair at the end of the table; 0 or -1 (no memory). */
 static int pty_in_piu(void)
 {
@@ -83,7 +107,7 @@ static int pty_in_piu(void)
     Pty **dir = NULL, **scarto = NULL;
 
     if (nuova == NULL) return -1;
-    nuova->usata = 0;
+    memset(nuova, 0, sizeof(Pty));      /* no waiters, no arrays */
     if (g_pty_n >= g_pty_dir_posti) {
         uint32_t posti = g_pty_dir_posti ? g_pty_dir_posti * 2u : 8u;
 
@@ -225,7 +249,7 @@ static void disciplina(Pty *p, uint8_t c)
     if (cc[T_VEOF] && c == cc[T_VEOF]) {
         if (p->riga_n == 0) {
             p->fine_dati = 1;
-            if (p->pid_att_in) { sched_unblock_locked(p->pid_att_in); p->pid_att_in = 0; }
+            attese_sveglia_locked(&p->att_in);
         }
         return;
     }
@@ -283,7 +307,7 @@ ancora:
 
         interrupts_disable();
         if (q->usata) { interrupts_enable(); continue; }
-        memset(q, 0, sizeof(Pty));
+        pty_azzera(q);
         q->usata = 1;
         interrupts_enable();
         /* The modes of a fresh terminal on any Unix ("stty sane"). */
@@ -338,25 +362,17 @@ static void pty_chiudi_comune(int h, int master, int in_sezione_critica)
     if (master) { if (p->master_aperti) p->master_aperti--; }
     else        { if (p->slave_aperti)  p->slave_aperti--;  }
 
-    if (p->pid_att_in) {
-        if (in_sezione_critica) sched_unblock_locked(p->pid_att_in);
-        else                    sched_unblock(p->pid_att_in);
-        p->pid_att_in = 0;
-    }
-    if (p->pid_att_out) {
-        if (in_sezione_critica) sched_unblock_locked(p->pid_att_out);
-        else                    sched_unblock(p->pid_att_out);
-        p->pid_att_out = 0;
-    }
-    /* ! E CHI ASPETTA POSTO, che senza l'altro capo non arrivera' mai. */
-    if (p->pid_att_spazio) {
-        if (in_sezione_critica) sched_unblock_locked(p->pid_att_spazio);
-        else                    sched_unblock(p->pid_att_spazio);
-        p->pid_att_spazio = 0;
+    /* ! E CHI ASPETTA POSTO, che senza l'altro capo non arrivera' mai:
+     * tutti e tre i lati */
+    if (in_sezione_critica) pty_sveglia_tutti_locked(p);
+    else {
+        interrupts_disable();
+        pty_sveglia_tutti_locked(p);
+        interrupts_enable();
     }
 
     if (p->master_aperti == 0 && p->slave_aperti == 0)
-        memset(p, 0, sizeof(Pty));
+        pty_azzera(p);
 }
 
 void pty_chiudi_locked(int h, int master)
@@ -376,13 +392,12 @@ void pty_chiudi(int h, int master)
     /* ! CHI RESTA DALL'ALTRA PARTE VA SVEGLIATO, non lasciato ad aspettare
      * qualcuno che non c'e' piu'. E' la regola 2 delle pipe: vuoto e senza
      * l'altro capo vuol dire fine dei dati, ma se dorme non lo scopre. */
-    if (p->pid_att_in)  { sched_unblock(p->pid_att_in);  p->pid_att_in = 0; }
-    if (p->pid_att_out) { sched_unblock(p->pid_att_out); p->pid_att_out = 0; }
-    if (p->pid_att_spazio) { sched_unblock(p->pid_att_spazio);
-                             p->pid_att_spazio = 0; }
+    interrupts_disable();
+    pty_sveglia_tutti_locked(p);
+    interrupts_enable();
 
     if (p->master_aperti == 0 && p->slave_aperti == 0) {
-        memset(p, 0, sizeof(Pty));
+        pty_azzera(p);
     }
 }
 
@@ -403,14 +418,8 @@ int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
 
     /* Chi aspettava una riga puo' averla adesso; e l'eco ha messo roba anche
      * nel tubo di ritorno. */
-    if (p->in_quanti && p->pid_att_in) {
-        sched_unblock_locked(p->pid_att_in);
-        p->pid_att_in = 0;
-    }
-    if (p->out_quanti && p->pid_att_out) {
-        sched_unblock_locked(p->pid_att_out);
-        p->pid_att_out = 0;
-    }
+    if (p->in_quanti)  attese_sveglia_locked(&p->att_in);
+    if (p->out_quanti) attese_sveglia_locked(&p->att_out);
 
     interrupts_enable();
     return (int32_t)n;
@@ -479,25 +488,25 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
 
         /* ! SI SVEGLIA IL LETTORE PRIMA DI ANDARE A DORMIRE, sempre: e' lui
          * che fara' il posto che stiamo per aspettare. */
-        if (p->pid_att_out) {
-            sched_unblock_locked(p->pid_att_out);
-            p->pid_att_out = 0;
-        }
+        attese_sveglia_locked(&p->att_out);
 
         if (scritti == n) { interrupts_enable(); return (int32_t)scritti; }
 
         cur = proc_get_current();
         if (!cur) { interrupts_enable(); return (int32_t)scritti; }
 
-        if (p->pid_att_spazio && p->pid_att_spazio != cur->pid) {
-            interrupts_enable();
-            return (int32_t)scritti;      /* c'e' gia' qualcuno in attesa */
-        }
+        /* (0.317) more writers may wait for room: until 0.316 the second
+         * one returned at once with what it had written */
+        if (!attese_metti(&p->att_spazio, cur->pid)) {
+            Attese *a = &p->att_spazio;
 
-        p->pid_att_spazio = cur->pid;
+            interrupts_enable();
+            if (!attese_cresci(a)) return scritti ? (int32_t)scritti : ERR(ENOMEM);
+            continue;                           /* and check again, IF off */
+        }
         sched_block(PROC_BLOCKED);
 
-        if (proc_interrotto()) return (int32_t)scritti;
+        if (proc_da_interrompere()) return (int32_t)scritti;
     }
 }
 
@@ -510,7 +519,7 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
  *   VMIN>0 VTIME>0   the first byte without limit, then VTIME between bytes
  *
  * ! THE TIMED WAITS LOOK EVERY 10 MS instead of arming a timer: the pty has
- * one waiter field per direction, and a sleeping reader that a writer also
+ * waiting list per direction, and a sleeping reader that a writer also
  * wakes would need both. Ten milliseconds is one tick; an ESC alone and the
  * start of an arrow key are told apart by tens of them (ncurses: ESCDELAY).
  * ========================================================================== */
@@ -578,12 +587,18 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
             interrupts_enable();
             sched_sleep(10);
         } else {
-            p->pid_att_in = cur->pid;
+            if (!attese_metti(&p->att_in, cur->pid)) {
+                Attese *a = &p->att_in;
+
+                interrupts_enable();
+                if (!attese_cresci(a)) return ERR(ENOMEM);
+                continue;                       /* and check again, IF off */
+            }
             sched_block(PROC_BLOCKED);
         }
 
         /* Vedi pipe_leggi: chi e' stato interrotto non torna ad aspettare. */
-        if (proc_interrotto()) return ERR(EINTR);
+        if (proc_da_interrompere()) return ERR(EINTR);
     }
 
     presi = prendi(p->in, &p->in_testa, &p->in_quanti, appoggio, n);
@@ -617,20 +632,23 @@ int32_t pty_leggi_master(int h, void *buf, uint32_t n)
         cur = proc_get_current();
         if (!cur) { interrupts_enable(); return ERR(EAGAIN); }
 
-        p->pid_att_out = cur->pid;
+        if (!attese_metti(&p->att_out, cur->pid)) {
+            Attese *a = &p->att_out;
+
+            interrupts_enable();
+            if (!attese_cresci(a)) return ERR(ENOMEM);
+            continue;                           /* and check again, IF off */
+        }
         sched_block(PROC_BLOCKED);
 
-        if (proc_interrotto()) return ERR(EINTR);
+        if (proc_da_interrompere()) return ERR(EINTR);
     }
 
     presi = prendi(p->out, &p->out_testa, &p->out_quanti, appoggio, n);
 
     /* ! ADESSO C'E' POSTO, E CHI ASPETTAVA VA SVEGLIATO. Senza questa riga
      * pty_scrivi_slave dormirebbe per sempre: il posto si libera solo qui. */
-    if (p->pid_att_spazio) {
-        sched_unblock_locked(p->pid_att_spazio);
-        p->pid_att_spazio = 0;
-    }
+    attese_sveglia_locked(&p->att_spazio);
 
     interrupts_enable();
 
@@ -706,10 +724,7 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
          * as PTY_CTL_MODO does: POSIX keeps it, and a readline that switches
          * mode between two keys would otherwise lose what was typed ahead. */
         if (era && !(p->t.c_lflag & T_ICANON)) consegna_riga(p);
-        if (p->in_quanti && p->pid_att_in) {
-            sched_unblock_locked(p->pid_att_in);
-            p->pid_att_in = 0;
-        }
+        if (p->in_quanti) attese_sveglia_locked(&p->att_in);
         break;
     }
 
@@ -742,21 +757,18 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
 /* -----------------------------------------------------------------------------
  * L'attesa di poll()
  *
- * ! SI USA LO STESSO CAMPO DI CHI DORME IN read(), e il limite che ne segue va
- * detto: un pty ha UN attendente per direzione. Nel suo uso — un master da una
- * parte, una shell dall'altra — non ce ne sono due; se un giorno due processi
- * aspettassero la stessa estremita', il secondo scalzerebbe il primo e quello
- * resterebbe a dormire finche' non arriva altro. Le pipe hanno una lista
- * proprio per questo, e il giorno che serve si copia da li'.
+ * ! SI USA LA STESSA LISTA DI CHI DORME IN read() (0.317, attese.h): fino alla
+ * 0.316 un pty aveva UN attendente per direzione e il secondo scalzava il
+ * primo, che restava a dormire; con fork due processi sulla stessa estremita'
+ * sono normali. 0 = non c'e' posto nella lista: come per le pipe, chi chiama
+ * guarda di nuovo a intervalli.
  * --------------------------------------------------------------------------- */
 int pty_attesa_registra_locked(int h, int master, uint32_t pid)
 {
     Pty *p = pty_da_handle(h);
 
     if (!p) return 0;
-    if (master) p->pid_att_out = pid;
-    else        p->pid_att_in  = pid;
-    return 1;
+    return attese_metti(master ? &p->att_out : &p->att_in, pid);
 }
 
 void pty_attesa_togli_locked(int h, int master, uint32_t pid)
@@ -764,8 +776,7 @@ void pty_attesa_togli_locked(int h, int master, uint32_t pid)
     Pty *p = pty_da_handle(h);
 
     if (!p) return;
-    if (master) { if (p->pid_att_out == pid) p->pid_att_out = 0; }
-    else        { if (p->pid_att_in  == pid) p->pid_att_in  = 0; }
+    attese_togli(master ? &p->att_out : &p->att_in, pid);
 }
 
 int pty_pronto_slave(int h)

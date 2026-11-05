@@ -842,7 +842,7 @@ static int tty_read_ipc(char *dst, uint32_t n)
         if (r > 0) { avuti += (uint32_t)r; inizio = g_ticks; continue; }
         if (g_ticks - inizio >= decimi * 10u) break;
         sched_sleep(10);
-        if (proc_interrotto()) return avuti ? (int)avuti : -EINTR;
+        if (proc_da_interrompere()) return avuti ? (int)avuti : -EINTR;
     }
     return (int)avuti;
 }
@@ -902,7 +902,7 @@ static int tty_read_internal(char *dst, uint32_t n)
              * riga, l'interruzione lo sveglierebbe, lui troverebbe il buffer
              * vuoto e tornerebbe a dormire — e l'unico modo di vederlo morire
              * sarebbe battere qualcos'altro. */
-            if (proc_interrotto()) return -EINTR;
+            if (proc_da_interrompere()) return i ? (int)i : -EINTR;
         }
 
         char c = ring_buf_get();

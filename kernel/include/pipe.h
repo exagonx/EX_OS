@@ -92,9 +92,11 @@ void pipe_chiudi_lettore_locked(int h);
 void pipe_chiudi_scrittore_locked(int h);
 
 /* Ritornano i byte trasferiti, 0 per fine dei dati (solo in lettura), o un
- * errno negativo. Bloccano il chiamante quando serve. */
-int32_t pipe_leggi(int h, void *buf, uint32_t n);
-int32_t pipe_scrivi(int h, const void *buf, uint32_t n);
+ * errno negativo. Bloccano il chiamante quando serve -- unless `nonblocca`
+ * (the descriptor has O_NONBLOCK): then an empty pipe (with writers) or a
+ * full one gives -EAGAIN instead of a wait (kernel 0.317). */
+int32_t pipe_leggi(int h, void *buf, uint32_t n, int nonblocca);
+int32_t pipe_scrivi(int h, const void *buf, uint32_t n, int nonblocca);
 
 /* Quanti byte si possono leggere subito: serve a ioctl(FIONREAD) e alle
  * diagnostiche. */

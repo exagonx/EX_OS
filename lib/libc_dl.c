@@ -121,6 +121,8 @@ typedef struct DlModulo {
     void           (*init)(void);         /* DT_INIT, DT_INIT_ARRAY */
     void           (**init_v)(void);
     size_t           init_n;
+    const void      *rel_v, *jmp_v;       /* relocations, done by dl_finisci */
+    size_t           rel_n, jmp_n;
 } DlModulo;
 
 static DlTab *volatile g_dlm_tab;          /* every module loaded; 0 = free slot */
@@ -132,8 +134,16 @@ static int       g_dl_non_dyn;            /* the last candidate was an ELF but n
  * constructors of its libraries wait for the program's own relocations, as
  * ld.so does: a COPY relocation must have put a variable in the program
  * before a constructor writes to it. They are run in the order the modules
- * were finished, dependencies first. */
-static int       g_dl_rinvia;
+ * were finished, dependencies first.
+ * ! AND THE RELOCATIONS WAIT FOR THE WHOLE TREE (5 November 2026), for the
+ * program and for dlopen: a library may use a symbol it does not take from
+ * its own DT_NEEDED but from a library loaded after it. libapr calls modf
+ * and names no libm - on Linux libm comes with the program, which names it
+ * after libapr - and relocated as soon as its own dependencies were in,
+ * libapr found no modf and httpd stopped before main ("modf: undefined
+ * symbol"). Now every module of one load is mapped first, then all are
+ * relocated in the same order (dependencies first), then the constructors
+ * run: dl_finisci. */
 static DlModulo **g_dl_da_avviare;        /* only while the program starts: one thread */
 static int        g_dl_n_da_avviare, g_dl_posti_da_avviare;
 
@@ -378,6 +388,36 @@ static void dl_avvia_modulo(DlModulo *m)
     }
 }
 
+/* ! THE PROGRAM'S OWN TLS IN THE STATIC BLOCK (5 November 2026, Valkey): a
+ * program linked with -rdynamic keeps a TPOFF relocation for its own
+ * __thread variables (thread_shared_qb in valkey-server). Their block is the
+ * one the kernel built under the thread pointer (kernel/loader/elf.c):
+ * tp = block + ALIGN_UP(p_memsz, max(p_align, 4)), so a variable at offset
+ * st_value is at tp - that size + st_value. The size is read from the
+ * program's PT_TLS, found from __ehdr_start (the ELF header, loaded with the
+ * first segment). 0 = no PT_TLS. A TLS variable of a library opened later
+ * has no place in the static block: that stays an error. */
+extern const DlTestaElf __ehdr_start __attribute__((weak));
+static DlModulo g_dl_prog_collegato;
+
+static uintptr_t dl_tls_programma(void)
+{
+    static uintptr_t dim = (uintptr_t)-1;
+    const DlFase    *f;
+    int              i;
+
+    if (dim != (uintptr_t)-1) return dim;
+    dim = 0;
+    if (!&__ehdr_start) return 0;
+    f = (const DlFase *)((const char *)&__ehdr_start + __ehdr_start.e_phoff);
+    for (i = 0; i < __ehdr_start.e_phnum; i++)
+        if (f[i].p_type == 7 && f[i].p_memsz) {                                     /* PT_TLS */
+            uintptr_t a = f[i].p_align < 4 ? 4 : (uintptr_t)f[i].p_align;
+            dim = ((uintptr_t)f[i].p_memsz + a - 1) & ~(a - 1);
+        }
+    return dim;
+}
+
 static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
 {
     size_t i;
@@ -432,10 +472,17 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
         case 16: *p = si ? (uintptr_t)chi->tls_id : (uintptr_t)m->tls_id; break;      /* DTPMOD64 */
         case 17: *p = S + (uintptr_t)A; break;                           /* DTPOFF64 */
         case 37: *p = ((uintptr_t (*)(void))(m->base + (uintptr_t)A))(); break;        /* IRELATIVE */
-        case 18:
-            dl_dici("initial-exec TLS (R_X86_64_TPOFF64) is not supported: build it -fPIC "
-                    "with the general-dynamic model", m->percorso);
-            return -1;
+        case 18: {                                                       /* TPOFF64 */
+            uintptr_t dim = dl_tls_programma();
+
+            if (chi != &g_dl_prog_collegato || dim == 0) {
+                dl_dici("initial-exec TLS (R_X86_64_TPOFF64) of a library is not supported: "
+                        "build it -fPIC with the general-dynamic model", m->percorso);
+                return -1;
+            }
+            *p = S + (uintptr_t)A - dim;
+            break;
+        }
 #else
         switch (tipo) {
         case 0:  break;
@@ -446,6 +493,17 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
         case 35: *p = si ? (uintptr_t)chi->tls_id : (uintptr_t)m->tls_id; break;      /* DTPMOD32 */
         case 36: *p = S + (uintptr_t)A; break;                           /* DTPOFF32 */
         case 42: *p = ((uintptr_t (*)(void))(m->base + (uintptr_t)A))(); break;        /* IRELATIVE */
+        case 14: case 37: {                                              /* TLS_TPOFF, TLS_TPOFF32 */
+            uintptr_t dim = dl_tls_programma();
+
+            if (chi != &g_dl_prog_collegato || dim == 0) {
+                dl_dici("initial-exec TLS (R_386_TLS_TPOFF) of a library is not supported: "
+                        "build it -fPIC with the general-dynamic model", m->percorso);
+                return -1;
+            }
+            *p = tipo == 14 ? S + (uintptr_t)A - dim : (uintptr_t)A + dim - S;
+            break;
+        }
 #endif
         default: {
             char t[48];
@@ -580,23 +638,67 @@ static DlModulo *dl_da_file(const char *percorso)
     }
     free(origine);
 
-    if ((rel && dl_riloca(m, (const DlRel *)rel, reln) != 0) ||
-        (jmp && dl_riloca(m, (const DlRel *)jmp, jmpn) != 0)) {
-        dl_libera(m);
-        return (DlModulo *)-1;
-    }
+    m->rel_v = (const void *)rel; m->rel_n = rel ? reln : 0;
+    m->jmp_v = (const void *)jmp; m->jmp_n = jmp ? jmpn : 0;
     m->conta = 1;
     m->init = (void (*)(void))initf;
     m->init_v = (void (**)(void))ia;
     m->init_n = ian;
-    if (g_dl_rinvia && g_dl_n_da_avviare == g_dl_posti_da_avviare) {
+    /* relocated and started later, with the whole tree in (dl_finisci) */
+    if (g_dl_n_da_avviare == g_dl_posti_da_avviare) {
         int        posti = g_dl_posti_da_avviare ? g_dl_posti_da_avviare * 2 : 32;
         DlModulo **v = (DlModulo **)realloc(g_dl_da_avviare, (size_t)posti * sizeof(DlModulo *));
-        if (v) { g_dl_da_avviare = v; g_dl_posti_da_avviare = posti; }
+        if (!v) { dl_libera(m); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
+        g_dl_da_avviare = v; g_dl_posti_da_avviare = posti;
     }
-    if (g_dl_rinvia && g_dl_n_da_avviare < g_dl_posti_da_avviare) g_dl_da_avviare[g_dl_n_da_avviare++] = m;
-    else dl_avvia_modulo(m);
+    g_dl_da_avviare[g_dl_n_da_avviare++] = m;
     return m;
+}
+
+/* The modules queued from `da` on: relocated, in the order they were
+ * finished (dependencies first), then `dopo` (the program, whose COPY
+ * relocations read the libraries' data), then their constructors. -1 when a
+ * relocation fails (dlerror says which symbol): the new modules are freed,
+ * none of them has run any code. The queue is taken out first, so a
+ * constructor that calls dlopen starts a queue of its own. */
+/* a load that failed half way: what it had queued goes, none of it has run */
+static void dl_lascia_coda(int da)
+{
+    int i;
+
+    for (i = g_dl_n_da_avviare - 1; i >= da; i--) dl_libera(g_dl_da_avviare[i]);
+    g_dl_n_da_avviare = da;
+}
+
+static int dl_finisci(int da, DlModulo *dopo, const DlRel *drel, size_t dreln,
+                      const DlRel *djmp, size_t djmpn)
+{
+    int        n = g_dl_n_da_avviare - da, i;
+    DlModulo **v = 0;
+
+    if (n > 0) {
+        v = (DlModulo **)malloc((size_t)n * sizeof(DlModulo *));
+        if (!v) { dl_dici("out of memory", "dl_finisci"); return -1; }
+        memcpy(v, g_dl_da_avviare + da, (size_t)n * sizeof(DlModulo *));
+    }
+    g_dl_n_da_avviare = da;
+    for (i = 0; i < n; i++) {
+        DlModulo *m = v[i];
+        if ((m->rel_n && dl_riloca(m, (const DlRel *)m->rel_v, m->rel_n) != 0) ||
+            (m->jmp_n && dl_riloca(m, (const DlRel *)m->jmp_v, m->jmp_n) != 0)) {
+            for (i = n - 1; i >= 0; i--) dl_libera(v[i]);
+            free(v);
+            return -1;
+        }
+    }
+    if (dopo && ((drel && dl_riloca(dopo, drel, dreln) != 0) ||
+                 (djmp && dl_riloca(dopo, djmp, djmpn) != 0))) {
+        free(v);
+        return -1;
+    }
+    for (i = 0; i < n; i++) dl_avvia_modulo(v[i]);
+    free(v);
+    return 0;
 }
 
 /* one path from a search list, with $ORIGIN */
@@ -690,7 +792,6 @@ static DlModulo *dl_carica(const char *nome, const char *runpath, const char *or
  * address, not the program's PLT slot: no canonical PLT. Comparing such a
  * pointer from both sides is the only thing that differs from Linux. */
 extern const DlDin _DYNAMIC[] __attribute__((weak));
-static DlModulo g_dl_prog_collegato;
 
 static void dl_muori(const char *argv0)
 {
@@ -711,7 +812,6 @@ void __exos_dl_avvio_programma(const char *argv0)
     uintptr_t     rel = 0, jmp = 0;
     size_t        reln = 0, jmpn = 0;
     char         *origine;
-    int           i;
 
     if (!_DYNAMIC) return;                       /* a static program: nothing to do */
     if (!argv0) argv0 = "?";
@@ -738,7 +838,6 @@ void __exos_dl_avvio_programma(const char *argv0)
     if (dl_tab_metti(&g_dlm_tab, 0, m) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
 
     { char *b = strrchr(origine, '/'); if (b) *b = 0; else strcpy(origine, "."); }
-    g_dl_rinvia = 1;
     for (d = m->din; d->d_tag; d++) {
         DlModulo *dm;
         if (d->d_tag != 1) continue;             /* DT_NEEDED */
@@ -747,12 +846,9 @@ void __exos_dl_avvio_programma(const char *argv0)
         if (dl_dip_metti(m, dm) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
     }
     free(origine);
-    if ((rel && dl_riloca(m, (const DlRel *)rel, reln) != 0) ||
-        (jmp && dl_riloca(m, (const DlRel *)jmp, jmpn) != 0))
+    if (dl_finisci(0, m, (const DlRel *)rel, rel ? reln : 0,
+                   (const DlRel *)jmp, jmp ? jmpn : 0) != 0)
         dl_muori(argv0);
-    g_dl_rinvia = 0;
-    for (i = 0; i < g_dl_n_da_avviare; i++) dl_avvia_modulo(g_dl_da_avviare[i]);
-    g_dl_n_da_avviare = 0;
 }
 
 static void dl_chiudi(DlModulo *m)

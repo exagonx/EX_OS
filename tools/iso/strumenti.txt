@@ -717,6 +717,22 @@ nota  = Mancano quelle su libxml2, sqlite, curl, gd, intl, iconv, sodium, zip.
 nota  = Impostazioni in /exos/php/etc/php.ini; i temporanei in /exos/php/tmp.
 
 
+[valkey]
+nome  = Valkey
+dice  = Valkey 9.1.3 (il Redis BSD): valkey-server, valkey-cli, valkey-benchmark
+prova = valkey/bin/valkey-server
+mbyte = 30
+solo  = valkey
+solo  = src/valkey
+
+nota  = Il database in memoria che parla il protocollo di Redis (redis-cli va bene):
+nota  =   /exos/valkey/bin/valkey-server /exos/valkey/etc/valkey.conf &
+nota  =   /exos/valkey/bin/valkey-cli ping
+nota  = I dati in /exos/valkey/dati: BGSAVE (dump.rdb) e l'AOF con la fork.
+nota  = valkey-check-rdb, valkey-check-aof, valkey-sentinel sono copie del server.
+nota  = Vuole il kernel 0.317 o piu' nuovo (le pipe non bloccanti).
+
+
 [apache]
 nome  = Apache httpd
 dice  = Apache HTTP Server 2.4.69: httpd con i moduli dentro (anche PHP), ab, htpasswd
@@ -730,8 +746,9 @@ mbyte = 40
 solo  = apache2
 solo  = src/httpd
 
-nota  = Un processo solo (EX-OS non ha fork), con il MPM worker:
-nota  =   /exos/apache2/bin/httpd -X -d /exos/apache2 -f conf/httpd-exos.conf &
+nota  = Il MPM worker. Come demone (il padre e i figli con la fork, kernel 0.317):
+nota  =   /exos/apache2/bin/httpd -d /exos/apache2 -f conf/httpd-exos.conf
+nota  = o in un processo solo, in primo piano: aggiungere -X (e & per lo sfondo).
 nota  =   /exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
 nota  = conf/httpd-exos.conf: porta 80, htdocs, cgi-bin (mod_cgi, programmi compilati).
 nota  = Le pagine .php le esegue mod_php, dentro httpd (index.php vale come indice).

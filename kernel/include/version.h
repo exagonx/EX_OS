@@ -808,7 +808,17 @@
  * kernel windows are supervisor-only at every level. The executable's handle
  * is taken atomically before it is closed (PROC_EXE_PRENDI): a double close
  * took the parent's reference after thousands of forked children. */
-#define EXOS_VERSION    "0.316"
+/* 0.316 -> 0.317: a pty remembers every waiter on each side (attese.h,
+ * shared with the pipes): up to 0.316 the second reader or writer replaced
+ * the first, which slept until something else came (voce 33 h). The alarm:
+ * SYS_ALLARME (264) sends SIGALRM (alarm, setitimer ITIMER_REAL; alarm() in
+ * the libc did nothing), and a caught signal cuts short read, write,
+ * waitpid, poll, sleep and F_SETLKW with EINTR -- or restarts the call after
+ * the handler when it has SA_RESTART (segnali_riavvia). Up to 0.316 only
+ * kill -9 and Ctrl+C ended a wait. A pipe with O_NONBLOCK gives EAGAIN
+ * instead of a wait (fcntl kept the flag, read and write ignored it: Valkey
+ * hung after BGSAVE). */
+#define EXOS_VERSION    "0.317"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

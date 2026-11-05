@@ -1415,6 +1415,7 @@ static void sched_irq0_handler(InterruptFrame *frame)
 
     g_ticks++;
     guardia_controlla();
+    segnali_allarmi_tick();             /* SIGALRM (0.317): one comparison if none due */
 
     /* ! IL MOTORE DEL FLOPPY SI SPEGNE DA QUI, e non da dentro il driver.
      * Il driver, quando servirebbe, e' fermo in attesa o ha appena rinunciato
@@ -1666,6 +1667,13 @@ int proc_interrotto(void)
     Process *p = proc_get_current();
 
     return (p && p->interrotto) ? 1 : 0;
+}
+
+int proc_da_interrompere(void)
+{
+    Process *p = proc_get_current();
+
+    return (p && (p->interrotto || segnali_interrompono(p))) ? 1 : 0;
 }
 
 void sched_sleep(uint32_t ms)

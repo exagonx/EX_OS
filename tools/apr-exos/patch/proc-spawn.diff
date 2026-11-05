@@ -1,7 +1,7 @@
 diff -ruN a/threadproc/unix/proc.c b/threadproc/unix/proc.c
 --- a/threadproc/unix/proc.c	2014-05-14 21:55:17.000000000 +0200
 +++ b/threadproc/unix/proc.c	2026-10-28 06:34:39.344609716 +0100
-@@ -341,6 +341,132 @@
+@@ -341,6 +341,135 @@
      return rv;
  }
  
@@ -20,7 +20,10 @@ diff -ruN a/threadproc/unix/proc.c b/threadproc/unix/proc.c
 + * Not done: another user or group for the child (refused with APR_ENOTIMPL,
 + * a child must not run as root by mistake), the resource limits of
 + * apr_procattr_limit_set and the perms_set callbacks (ignored), detach (an
-+ * EX-OS child is already apart from the parent's console). */
++ * EX-OS child is already apart from the parent's console).
++ * Since kernel 0.313 EX-OS has fork() too: apr_proc_fork and
++ * apr_proc_detach are APR's own. spawn_ex stays here because a fork of a
++ * 30 MB httpd only to exec a CGI costs page tables for nothing. */
 +extern char **environ;
 +
 +static apr_status_t exos_proc_spawn(apr_proc_t *new, const char *progname,
@@ -134,7 +137,7 @@ diff -ruN a/threadproc/unix/proc.c b/threadproc/unix/proc.c
  APR_DECLARE(apr_status_t) apr_proc_create(apr_proc_t *new,
                                            const char *progname,
                                            const char * const *args,
-@@ -388,10 +514,21 @@
+@@ -388,10 +517,21 @@
          }
      }
  
@@ -156,20 +159,3 @@ diff -ruN a/threadproc/unix/proc.c b/threadproc/unix/proc.c
          /* child process */
  
          /*
-diff -ruN a/threadproc/unix/procsup.c b/threadproc/unix/procsup.c
---- a/threadproc/unix/procsup.c	2011-10-15 23:26:14.000000000 +0200
-+++ b/threadproc/unix/procsup.c	2026-10-28 06:34:39.344609716 +0100
-@@ -22,8 +22,11 @@
-         return errno;
-     }
- 
--#if !defined(MPE) && !defined(OS2) && !defined(TPF) && !defined(BEOS)
--    /* Don't detach for MPE because child processes can't survive the death of
-+#if !defined(MPE) && !defined(OS2) && !defined(TPF) && !defined(BEOS) && !defined(__exos__)
-+    /* EX-OS has no fork(): a daemon there is a program spawned apart (by a
-+     * service, or "cmd &" in the shell), so it only leaves the session and
-+     * the standard descriptors below.
-+     * Don't detach for MPE because child processes can't survive the death of
-      * the parent. */
-     if (daemonize) {
-         int x;

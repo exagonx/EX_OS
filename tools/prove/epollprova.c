@@ -37,6 +37,7 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -338,6 +339,63 @@ int main(int argc, char **argv)
                  g_n, g_eco_collegati, accettate, g_eco_giusti, ms_ora() - inizio, giri);
         verifica(g_eco_collegati == g_n && g_eco_giusti == g_n, riga);
         free(servite);
+    }
+
+    /* ip.drv 0.023: one connection in two sets, and after fork in the
+     * child's own set too (until 0.022 the second ADD said EEXIST) */
+    {
+        struct epoll_event e2[4];
+        int ep1 = epoll_create1(0), ep2 = epoll_create1(0), cl = collega(), sv = accept(asc, NULL, NULL);
+        int pp[2], figlio, st = -1;
+
+        ev.events = EPOLLIN; ev.data.u32 = 1;
+        verifica(epoll_ctl(ep1, EPOLL_CTL_ADD, sv, &ev) == 0, "due insiemi: il primo ADD");
+        ev.data.u32 = 2;
+        verifica(epoll_ctl(ep2, EPOLL_CTL_ADD, sv, &ev) == 0, "due insiemi: il secondo ADD (non EEXIST)");
+        verifica(epoll_ctl(ep2, EPOLL_CTL_ADD, sv, &ev) < 0 && errno == EEXIST,
+                 "due insiemi: lo stesso insieme due volte resta EEXIST");
+        send(cl, "z", 1, 0);
+        n = epoll_wait(ep1, fuori, 16, 2000);
+        c = epoll_wait(ep2, e2, 4, 2000);
+        snprintf(riga, sizeof(riga), "due insiemi: tutti e due sentono i dati, ognuno coi suoi "
+                 "(%d %u, %d %u)", n, n > 0 ? fuori[0].data.u32 : 0u, c, c > 0 ? e2[0].data.u32 : 0u);
+        verifica(n == 1 && fuori[0].data.u32 == 1 && c == 1 && e2[0].data.u32 == 2, riga);
+        recv(sv, b, sizeof(b), 0);
+        verifica(epoll_ctl(ep2, EPOLL_CTL_DEL, sv, &ev) == 0, "due insiemi: DEL dal secondo");
+        send(cl, "y", 1, 0);
+        n = epoll_wait(ep1, fuori, 16, 2000);
+        c = epoll_wait(ep2, e2, 4, 200);
+        snprintf(riga, sizeof(riga), "due insiemi: il primo sente ancora, il secondo no (%d, %d)", n, c);
+        verifica(n == 1 && fuori[0].data.u32 == 1 && c == 0, riga);
+        recv(sv, b, sizeof(b), 0);
+
+        /* fork: the child puts the same socket in a set of its own */
+        pipe(pp);
+        figlio = fork();
+        if (figlio == 0) {
+            int ep3 = epoll_create1(0), r;
+            char x;
+
+            ev.events = EPOLLIN; ev.data.u32 = 3;
+            r = epoll_ctl(ep3, EPOLL_CTL_ADD, sv, &ev);
+            write(pp[1], "p", 1);
+            if (r != 0) _exit(10);
+            r = epoll_wait(ep3, e2, 4, 3000);
+            if (r != 1 || e2[0].data.u32 != 3) _exit(11);
+            if (recv(sv, &x, 1, 0) != 1 || x != 'w') _exit(12);
+            _exit(0);
+        }
+        read(pp[0], b, 1);
+        send(cl, "w", 1, 0);
+        waitpid(figlio, &st, 0);
+        snprintf(riga, sizeof(riga), "fork: il figlio mette la connessione in un suo insieme e la sente (codice %d)",
+                 WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+        verifica(figlio > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0, riga);
+        /* the parent's set: drain what the child's data woke */
+        epoll_wait(ep1, fuori, 16, 100);
+        epoll_ctl(ep1, EPOLL_CTL_DEL, sv, &ev);
+        close(pp[0]); close(pp[1]);
+        close(sv); close(cl); close(ep2); close(ep1);
     }
 
     verifica(close(ep) == 0, "close dell'insieme");

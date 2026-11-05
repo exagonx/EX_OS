@@ -435,7 +435,8 @@ int32_t sys_read(InterruptFrame *frame)
      * quando non c'e' piu' nessuno che possa scrivere. Vedi
      * kernel/ipc/pipe.c. */
     if (FDV(proc, fd).type == FD_PIPE_R) {
-        return pipe_leggi((int)FDV(proc, fd).inode, buf, count);
+        return pipe_leggi((int)FDV(proc, fd).inode, buf, count,
+                          (FDV(proc, fd).flags & O_NONBLOCK) != 0);
     }
 
     /* ! Leggere dall'estremita' SBAGLIATA e' un errore, non un'attesa. */
@@ -668,7 +669,8 @@ int32_t sys_write(InterruptFrame *frame)
      * scrittura puo' essere PARZIALE: il chiamante deve guardare il
      * valore di ritorno e richiamare. Vedi kernel/ipc/pipe.c. */
     if (FDV(proc, fd).type == FD_PIPE_W) {
-        return pipe_scrivi((int)FDV(proc, fd).inode, buf, count);
+        return pipe_scrivi((int)FDV(proc, fd).inode, buf, count,
+                           (FDV(proc, fd).flags & O_NONBLOCK) != 0);
     }
 
     /* ! Scrivere sull'estremita' SBAGLIATA e' un errore. */
@@ -1127,7 +1129,7 @@ static int32_t fd_lucchetto(Process *p, int fd, uint32_t cmd, KFlock *u)
     for (;;) {
         r = vfs_lucchetto(h, p->fdt, p->pid, tipo, da, a);
         if (r != ERR(EAGAIN) || cmd == F_SETLK) return r;
-        if (proc_interrotto()) return ERR(EINTR);
+        if (proc_da_interrompere()) return ERR(EINTR);
         sched_sleep(10);
     }
 }
@@ -1263,6 +1265,10 @@ int32_t sys_waitpid(InterruptFrame *frame)
          * ================================================================= */
         if (figli_vivi == 0)        return ERR(ECHILD);
         if (options & WNOHANG)      return 0;
+        /* After the scan, not before: the SIGCHLD that woke a program with a
+         * handler comes with the child it announces, and that child is
+         * returned above, not lost behind an EINTR. */
+        if (proc_da_interrompere()) return ERR(EINTR);
 
         current->aspetta_figli = 1;         /* see sveglia_chi_aspetta_figli */
         sched_block(PROC_BLOCKED);
@@ -1273,7 +1279,8 @@ int32_t sys_waitpid(InterruptFrame *frame)
          * shell of a session whose client had left, the shell was waiting for
          * gfedit, and both stayed alive holding a pty. */
         if (proc_interrotto()) return ERR(EINTR);
-        /* Svegliato da proc_exit di un figlio → riprova */
+        /* Svegliato da proc_exit di un figlio (o da un segnale preso, che
+         * esce in cima dopo il giro) → riprova */
     }
 }
 
@@ -3373,7 +3380,7 @@ int32_t sys_sleep(InterruptFrame *frame)
 
         sched_sleep(fetta);
         ms -= fetta;
-        if (proc_interrotto()) return ERR(EINTR);
+        if (proc_da_interrompere()) return ERR(EINTR);
     }
     return 0;
 }
@@ -6929,6 +6936,13 @@ int32_t sys_poll(InterruptFrame *frame)
         poll_disregistra(self, k, n);
         self->block_until = 0;
         interrupts_enable();
+
+        /* A caught signal (an alarm, SIGCHLD, SIGINT with a handler): poll
+         * returns EINTR so the handler runs now, never restarted (POSIX). */
+        if (proc_da_interrompere()) {
+            if (k != k_corti) kfree(k);
+            return ERR(EINTR);
+        }
     }
 
     /* I revents tornano all'utente FUORI dalla sezione critica, per la stessa

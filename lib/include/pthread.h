@@ -119,6 +119,18 @@ int       pthread_detach(pthread_t t);
  * first. No limit on how many. */
 int       pthread_atfork(void (*prima)(void), void (*genitore)(void), void (*figlio)(void));
 void      pthread_exit(void *ris) __attribute__((noreturn));
+/* Cancellation (5 November 2026): deferred, at pthread_testcancel,
+ * pthread_cond_wait/timedwait and pthread_join; ASYNCHRONOUS is accepted and
+ * acts as DEFERRED; a blocking read or poll is not a point. See lib/libc.c. */
+#define PTHREAD_CANCELED            ((void *)-1)
+#define PTHREAD_CANCEL_ENABLE       0
+#define PTHREAD_CANCEL_DISABLE      1
+#define PTHREAD_CANCEL_DEFERRED     0
+#define PTHREAD_CANCEL_ASYNCHRONOUS 1
+int       pthread_cancel(pthread_t t);
+void      pthread_testcancel(void);
+int       pthread_setcancelstate(int stato, int *prima);
+int       pthread_setcanceltype(int tipo, int *prima);
 pthread_t pthread_self(void);
 int       pthread_equal(pthread_t a, pthread_t b);
 int       pthread_yield(void);
@@ -194,8 +206,8 @@ int   pthread_setspecific(pthread_key_t k, const void *valore);
 #endif
 
 /* pthread_cleanup_push/pop: a stack of handlers per thread, kept by the libc,
- * that pthread_exit runs, the last pushed first. EX-OS has no pthread_cancel,
- * but a library that cancels by itself does: VLC's Android threads end a
+ * that pthread_exit runs, the last pushed first (pthread_cancel too, since
+ * 5 November 2026). Before that a library that cancels by itself did: VLC's Android threads end a
  * cancelled thread with pthread_exit, and the handler it pushed is the one
  * that unlocks its mutex. Run by pop(1) only, as before 3 November 2026, the
  * thread died holding the lock and VLC never quit at the end of a file. A

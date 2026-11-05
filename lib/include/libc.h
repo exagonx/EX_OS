@@ -190,6 +190,9 @@ int     mblen(const char *s, size_t n);
 int     mbtowc(wchar_t *dst, const char *src, size_t n);
 int     wctomb(char *dst, wchar_t c);
 char   *strdup(const char *s);
+/* strndup, bzero (5 November 2026): ported software, static libc only. */
+char   *strndup(const char *s, size_t n);
+void    bzero(void *p, size_t n);
 char   *strtok(char *s, const char *sep);
 char   *strtok_r(char *s, const char *sep, char **stato);
 size_t  strspn(const char *s, const char *accetta);
@@ -391,6 +394,10 @@ int     vprintf(const char *fmt, __builtin_va_list args);
 int     vfprintf(FILE *f, const char *fmt, __builtin_va_list args);
 int     vsprintf(char *buf, const char *fmt, __builtin_va_list args);
 int     vsnprintf(char *buf, size_t dim, const char *fmt, __builtin_va_list args);
+/* asprintf, vasprintf (5 November 2026): the text in a buffer from malloc,
+ * -1 without memory. Ported software, static libc only. */
+int     asprintf(char **out, const char *fmt, ...);
+int     vasprintf(char **out, const char *fmt, __builtin_va_list ap);
 
 /* Stdlib */
 int     atoi(const char *s);
@@ -1163,6 +1170,9 @@ size_t     strftime(char *buf, size_t max, const char *fmt, const struct tm *tm)
  * dopo — come gmtime e localtime. */
 char      *asctime(const struct tm *tm);
 char      *ctime(const time_t *t);
+/* The same in the caller's buffer, at least 26 bytes (POSIX). */
+char      *asctime_r(const struct tm *tm, char *buf);
+char      *ctime_r(const time_t *t, char *buf);
 
 /* ! utime NON CAMBIA NIENTE: nessun filesystem di EX-OS sa riscrivere le
  * date di un file. Ritorna 0 se il file c'e'. Vedi lib/libc.c. */
@@ -2180,6 +2190,7 @@ int     listdir(const char *path, DirEntry *buf, int max);
  * rustix, il crate Rust dell'HTTP/3 di Firefox (tappa 6). */
 #define EMULTIHOP        72
 #define EPFNOSUPPORT     96
+#define ESOCKTNOSUPPORT  94   /* the socket type is not supported (Linux's number) */
 #define ETOOMANYREFS    109
 #define EHOSTUNREACH    113
 #define EALREADY        114
@@ -2776,10 +2787,25 @@ long    sysconf(int nome);
 void    srandom(unsigned int seme);
 long    random(void);
 
-/* ! alarm NON SVEGLIA: EX-OS non ha ancora una sveglia per processo che
- * mandi SIGALRM. Rende 0 («nessun allarme prima») e non programma niente;
- * chi la usa come rete di sicurezza (abseil) resta senza. Solo in libc.a. */
+/* alarm, setitimer, getitimer (kernel 0.317): SIGALRM from the kernel, at
+ * 10 ms resolution. One alarm per process: alarm and ITIMER_REAL are the same
+ * timer. ITIMER_VIRTUAL and ITIMER_PROF give EINVAL. A caught signal cuts
+ * short read, write, waitpid, poll, sleep: EINTR, or the call starts again
+ * after the handler if it has SA_RESTART (signal() sets it). */
 unsigned int alarm(unsigned int secondi);
+#ifndef ITIMER_REAL
+#define ITIMER_REAL     0
+#define ITIMER_VIRTUAL  1
+#define ITIMER_PROF     2
+struct itimerval {
+    struct timeval it_interval;   /* 0 = once */
+    struct timeval it_value;      /* 0 = off */
+};
+#endif
+int setitimer(int quale, const struct itimerval *nuovo, struct itimerval *vecchio);
+int getitimer(int quale, struct itimerval *ora);
+/* pause: waits for a signal; -1 with EINTR (0.317). */
+int pause(void);
 
 /* strptime: le conversioni della localita' C (%Y %m %d %H %M %S %y %j %e
  * %b %B %h %a %A %p %n %t %T %D %R %%). Solo in libc.a. */

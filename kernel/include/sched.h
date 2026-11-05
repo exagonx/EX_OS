@@ -752,6 +752,11 @@ typedef struct Process {
     uint32_t        seg_attesi;             /* asleep in sigwait for these, 0 = not */
     uint32_t        seg_sospeso;            /* in sigsuspend: seg_salvata comes back */
     uint32_t        seg_salvata;            /*   after the handler (see segnali.c) */
+    /* SIGALRM (kernel 0.317): alarm/setitimer(ITIMER_REAL), on the leader.
+     * allarme_tick = the g_ticks it fires at, 0 = off; allarme_passo = the
+     * interval in ticks, 0 = once. fork does not copy it (POSIX). */
+    uint32_t        allarme_tick;
+    uint32_t        allarme_passo;
 
 /* =============================================================================
  * La directory corrente — UNA PER PROCESSO
@@ -995,6 +1000,20 @@ void     proc_prepara_fork(Process *figlio, const InterruptFrame *f);
  * handle with every forked child: with 4000 children the parent's own
  * reference went, and its next page from the file failed with EBADF
  * (tools/prova-fork --figli=4000). Whoever swaps -1 in owns the close. */
+/* (0.317) a wait loop asks this, not proc_interrotto(): true also when a
+ * caught signal without SA_RESTART is pending and not blocked, so the call
+ * returns EINTR and the handler runs on the way out (POSIX). With SA_RESTART
+ * the call is not interrupted and the handler runs after it. proc_interrotto
+ * stays "this process must end" (syscall.c ends it there). */
+int  proc_da_interrompere(void);
+int  segnali_interrompono(const Process *p);
+/* a signal raised by the kernel itself (the alarm), interrupts OFF */
+void segnali_manda_locked(Process *p, int sig);
+/* the alarms that are due (the tick, interrupts OFF) */
+void segnali_allarmi_tick(void);
+void segnali_riavvia(InterruptFrame *f, uint32_t num);
+/* SYS_ALLARME */
+int32_t sys_allarme(InterruptFrame *frame);
 #define PROC_EXE_PRENDI(p)  __atomic_exchange_n(&(p)->exe_handle, -1, __ATOMIC_SEQ_CST)
 uint32_t proc_pila_usata(const Process *p);
 uint32_t proc_pila_massimo(uint32_t *pid, const char **nome);

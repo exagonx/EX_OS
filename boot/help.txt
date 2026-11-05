@@ -1319,8 +1319,9 @@ il server web Apache 2.4
   /exos/apache2/bin/httpd -k stop -d /exos/apache2 -f conf/httpd-exos.conf
   /exos/apache2/bin/ab -n 1000 -c 20 http://127.0.0.1/    misura
 
-Un processo solo (-X) con il MPM worker, ogni connessione e' un filo
-(fork c'e' dal kernel 0.313, vedi `help fork`; il prefork e' da provare). ThreadsPerChild, ThreadLimit e MaxRequestWorkers
+Il MPM worker, ogni connessione e' un filo: con -X un processo solo, senza
+-X un demone col padre e i figli fatti con la fork (kernel 0.317, vedi
+`help fork`). ThreadsPerChild, ThreadLimit e MaxRequestWorkers
 uguali (256). Pagine in /exos/apache2/htdocs, CGI compilati in cgi-bin,
 mod_ssl con OpenSSL 4.1. Le pagine .php le esegue mod_php, che sta
 dentro httpd (vedi `help php`). Manuale 4.11.
@@ -1341,7 +1342,38 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
   - file, pipe e terminali si ereditano come su Unix;
   - i socket si condividono (ip.drv 0.021): chiudere nel figlio non chiude
     per il padre; piu' figli possono stare in accept sullo stesso socket;
-  - getppid, waitpid(-1), WNOHANG, SIGCHLD, pthread_atfork.
+  - lo stesso socket puo' stare negli insiemi epoll di piu' processi
+    (ip.drv 0.023; prima il secondo epoll_ctl diceva EEXIST);
+  - getppid, waitpid(-1), WNOHANG, SIGCHLD, pthread_atfork;
+  - piu' lettori sullo stesso socket UDP (ip.drv 0.023) e sullo stesso
+    pty (kernel 0.317): un dato a testa, prima il secondo prendeva il
+    posto del primo, che aspettava per sempre;
+  - alarm, setitimer, pause (kernel 0.317): SIGALRM arriva. Un segnale
+    catturato interrompe read, write, waitpid, poll, sleep con EINTR; con
+    SA_RESTART (lo mette signal()) read/write/waitpid ripartono dopo il
+    gestore. Prima solo kill -9 e Ctrl+C chiudevano un'attesa;
+  - una pipe con O_NONBLOCK dice EAGAIN invece di aspettare (kernel
+    0.317; prima il flag restava ignorato e Valkey si fermava dopo BGSAVE);
+  - Apache come demone (httpd senza -X): il padre va sullo sfondo e il
+    MPM worker fa i figli con la fork; httpd -k stop li spegne tutti;
+  - openpty, forkpty, login_tty (<pty.h>): il figlio di forkpty ha il pty
+    come terminale. Lo slave non ha nome (ttyname dice /dev/tty), percio'
+    posix_openpt e ptsname non ci sono ancora.
+
+Valkey (il Redis BSD), 9.1.3, in /exos/valkey:
+
+  /exos/valkey/bin/valkey-server /exos/valkey/etc/valkey.conf &
+  /exos/valkey/bin/valkey-cli ping
+  /exos/valkey/bin/valkey-cli bgsave
+
+I dati in /exos/valkey/dati (dump.rdb, l'AOF). valkey-check-rdb e gli
+altri nomi sono copie del server: Valkey sceglie cosa fare dal nome.
+Se muore col segnale 11 su INFO, o le date del log dicono 1970, e' stato
+collegato con una libc vecchia (senza %jd): ricostruirlo.
+
+Se un programma aspetta per sempre anche se ha messo alarm(), il kernel
+e' piu' vecchio della 0.317: `netupdate`, poi ricompilare il programma
+(uno statico porta con se' la alarm vecchia, che non faceva niente).
 
 Se un programma dice ENOSYS su fork, il kernel e' piu' vecchio della
 0.313: aggiornare con `netupdate`. Se i figli di un server non vedono i

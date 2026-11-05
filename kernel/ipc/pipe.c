@@ -73,6 +73,7 @@
 #include "sched.h"
 #include "syscall.h"
 #include "kmalloc.h"
+#include "attese.h"
 
 void *memset(void *dst, int c, uint32_t n);
 
@@ -94,79 +95,6 @@ void *memset(void *dst, int c, uint32_t n);
  * room enables interrupts, allocates, and goes round the loop again - so the
  * condition is checked once more with interrupts off before it blocks.
  * ============================================================================= */
-typedef struct {
-    uint32_t  uno;          /* the first waiter, 0 = none */
-    uint32_t *altri;        /* the others (kmalloc), kept across reuse */
-    uint32_t  n, posti;
-} Attese;
-
-static int attese_c_e(const Attese *a, uint32_t pid)
-{
-    uint32_t i;
-
-    if (a->uno == pid) return 1;
-    for (i = 0; i < a->n; i++) if (a->altri[i] == pid) return 1;
-    return 0;
-}
-
-/* 1 = registered (or already there), 0 = no room: attese_cresci, then again */
-static int attese_metti(Attese *a, uint32_t pid)
-{
-    if (attese_c_e(a, pid)) return 1;
-    if (a->uno == 0) { a->uno = pid; return 1; }
-    if (a->n >= a->posti) return 0;
-    a->altri[a->n++] = pid;
-    return 1;
-}
-
-static void attese_togli(Attese *a, uint32_t pid)
-{
-    uint32_t i;
-
-    if (a->uno == pid) {
-        a->uno = a->n ? a->altri[--a->n] : 0;
-        return;
-    }
-    for (i = 0; i < a->n; i++)
-        if (a->altri[i] == pid) { a->altri[i] = a->altri[--a->n]; return; }
-}
-
-/* Interrupts off. Everyone waiting on that side is woken and forgotten. */
-static void attese_sveglia_locked(Attese *a)
-{
-    uint32_t i;
-
-    if (a->uno) sched_unblock_locked(a->uno);
-    for (i = 0; i < a->n; i++) sched_unblock_locked(a->altri[i]);
-    a->uno = 0;
-    a->n   = 0;
-}
-
-/* Interrupts ON. Doubles the array of `a` (the pipe is never freed, so `a`
- * stays valid). Returns 0 out of memory. */
-static int attese_cresci(Attese *a)
-{
-    uint32_t  posti, i, *nuovo, *vecchio = NULL;
-
-    interrupts_disable();
-    posti = a->posti ? a->posti * 2u : 8u;
-    interrupts_enable();
-    nuovo = (uint32_t *)kmalloc(posti * sizeof(uint32_t));
-    if (nuovo == NULL) return 0;
-    interrupts_disable();
-    if (a->posti < posti) {
-        for (i = 0; i < a->n; i++) nuovo[i] = a->altri[i];
-        vecchio  = a->altri;
-        a->altri = nuovo;
-        a->posti = posti;
-        nuovo    = NULL;
-    }
-    interrupts_enable();
-    if (nuovo)   kfree(nuovo);          /* somebody else grew it meanwhile */
-    if (vecchio) kfree(vecchio);
-    return 1;
-}
-
 typedef struct {
     int       usata;
     uint32_t  testa;        /* prossimo byte da LEGGERE */
@@ -387,7 +315,7 @@ void pipe_attesa_togli_locked(int h, int per_lettura, uint32_t pid)
     attese_togli(per_lettura ? &p->att_lettori : &p->att_scrittori, pid);
 }
 
-int32_t pipe_leggi(int h, void *buf, uint32_t n)
+int32_t pipe_leggi(int h, void *buf, uint32_t n, int nonblocca)
 {
     Pipe     *p;
     uint8_t  *dst = (uint8_t *)buf;
@@ -410,6 +338,12 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
          * si aspetta. E' la distinzione su cui si regge tutto. */
         if (p->scrittori == 0) { interrupts_enable(); return 0; }
 
+        /* ! O_NONBLOCK: EAGAIN, not a wait. Up to 0.316 the flag was kept by
+         * fcntl and ignored here: Valkey reads its child-info pipe that way
+         * while it still holds the write end itself, and after BGSAVE the
+         * server slept for ever (voce 33 i). */
+        if (nonblocca) { interrupts_enable(); return -EAGAIN; }
+
         cur = proc_get_current();
         if (cur == NULL) { interrupts_enable(); return -EAGAIN; }
 
@@ -426,7 +360,7 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
          * risveglio di SYS_INTERROMPI farebbe un giro del ciclo, troverebbe la
          * pipe ancora vuota e si riaddormenterebbe: il processo non tornerebbe
          * mai in ring 3, cioe' non passerebbe mai dal punto in cui si muore. */
-        if (proc_interrotto()) return ERR(EINTR);
+        if (proc_da_interrompere()) return ERR(EINTR);
     }
 
     /* Qui: interrupt disabilitati, p valido, p->quanti > 0.
@@ -449,7 +383,7 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
     return (int32_t)presi;
 }
 
-int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
+int32_t pipe_scrivi(int h, const void *buf, uint32_t n, int nonblocca)
 {
     Pipe          *p;
     const uint8_t *src = (const uint8_t *)buf;
@@ -478,6 +412,8 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
 
         if (p->quanti < PIPE_DIM) break;        /* c'e' spazio: si esce col cli */
 
+        if (nonblocca) { interrupts_enable(); return -EAGAIN; }  /* vedi pipe_leggi */
+
         cur = proc_get_current();
         if (cur == NULL) { interrupts_enable(); return -EAGAIN; }
 
@@ -489,7 +425,7 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
             continue;
         }
         sched_block(PROC_BLOCKED);
-        if (proc_interrotto()) return ERR(EINTR);   /* vedi pipe_leggi */
+        if (proc_da_interrompere()) return ERR(EINTR);   /* vedi pipe_leggi */
     }
 
     /* Qui: interrupt disabilitati, p valido, c'e' spazio.

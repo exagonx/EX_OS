@@ -25,6 +25,11 @@
 
 #include "../libc.h"
 
+/* BYTE_ORDER, LITTLE_ENDIAN, BIG_ENDIAN and the htobe/le conversions, which
+ * glibc gives here too (<endian.h> through __USE_MISC): Valkey's config.h
+ * tests BYTE_ORDER with only <sys/types.h> (5 November 2026). */
+#include "../endian.h"
+
 #ifndef MIN
 #define MIN(a, b)   (((a) < (b)) ? (a) : (b))
 #endif

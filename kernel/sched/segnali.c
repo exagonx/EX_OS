@@ -76,6 +76,7 @@
 
 #define BIT(s)      (1u << (s))
 #define SIGKILL_    9
+#define SIGALRM_    14
 #define SIGTERM_    15
 #define SIGSTOP_    19
 #define SIGCHLD_    17
@@ -513,6 +514,207 @@ int32_t sys_seg_pila(InterruptFrame *frame)
 
 static int32_t manda(Process *self, Process *p, int sig);
 
+/* ! A CAUGHT SIGNAL INTERRUPTS A BLOCKING CALL (0.317). Up to 0.316 only
+ * sigsuspend woke: a thread in read() with a handler for the signal stayed
+ * asleep, and the handler ran whenever the read ended - alarm(5) around a
+ * read never cut it short. Now: asleep, the signal not blocked, and the
+ * handler without SA_RESTART (signal() sets it, as glibc does) - it wakes,
+ * the wait loop sees proc_da_interrompere() and returns EINTR. Interrupts
+ * OFF. */
+static void sveglia_per(Process *p, int sig)
+{
+    Process *capo = capo_di(p);
+    uint32_t f    = capo ? capo->seg_flag[sig] : 0;
+
+    if (p->seg_bloccati & BIT(sig)) return;
+    if (p->state != PROC_BLOCKED) return;
+    if (p->seg_sospeso || (f & SEG_TIPO) == SEG_PRESO)
+        sched_unblock_locked(p->pid);
+}
+
+int segnali_interrompono(const Process *p)
+{
+    Process *capo;
+    uint32_t pend, sig;
+
+    if (p == NULL) return 0;
+    pend = p->seg_pendenti & ~p->seg_bloccati;
+    if (pend == 0) return 0;
+    capo = capo_di((Process *)p);
+    if (capo == NULL) return 0;
+    for (sig = 1; sig < 32; sig++)
+        if ((pend & BIT(sig)) && (capo->seg_flag[sig] & SEG_TIPO) == SEG_PRESO)
+            return 1;
+    return 0;
+}
+
+/* =============================================================================
+ * segnali_riavvia -- SA_RESTART: the call starts again after the handler
+ *
+ * A wait cut short by a caught signal returns EINTR (proc_da_interrompere),
+ * whatever the handler's flags: the handler must run NOW, not when the read
+ * ends -- an alarm around a read exists for exactly that. With SA_RESTART
+ * (signal() in the libc sets it, as on Linux and BSD) the program must not
+ * see the EINTR: here, before segnali_consegna builds the handler's frame,
+ * the user IP goes back over `int 0x80` (CD 80, 2 bytes at 32 and 64 bit) and
+ * the syscall number back in its register. The frame saves those registers,
+ * sigreturn restores them, and the call runs again with the same arguments.
+ *
+ * ! ONLY CALLS THAT HAD DONE NOTHING YET: read, write, waitpid, fcntl
+ * (F_SETLKW). The waits that return EINTR have moved no data (a partial
+ * transfer returns its count instead). poll, sleep, sigsuspend and sigwait
+ * are never restarted, as POSIX wants. Same choice of signal as
+ * segnali_consegna: the first pending, not blocked, not ignored.
+ * ============================================================================= */
+void segnali_riavvia(InterruptFrame *f, uint32_t num)
+{
+    Process *p = proc_get_current();
+    Process *capo;
+    uint32_t pronti, tipo;
+    const uint8_t *ip;
+    int sig;
+
+    if (p == NULL) return;
+    if (num != SYS_READ && num != SYS_WRITE && num != SYS_WAITPID &&
+        num != SYS_FCNTL)
+        return;
+    capo = capo_di(p);
+    if (capo == NULL) return;
+    pronti = p->seg_pendenti & ~p->seg_bloccati;
+    for (sig = 1; sig < 32; sig++) {
+        if (!(pronti & BIT(sig))) continue;
+        if (sig == SIGKILL_) return;
+        tipo = capo->seg_flag[sig] & SEG_TIPO;
+        if (tipo == SEG_IGNORA) continue;
+        if (tipo == SEG_PREDEFINITO && predefinito_ignora(sig)) continue;
+        if (tipo != SEG_PRESO || !(capo->seg_flag[sig] & SA_RESTART)) return;
+        break;
+    }
+    if (sig >= 32) return;
+    if (FR_IP(f) < USER_SPACE_BASE + 2) return;
+    ip = (const uint8_t *)(uintptr_t)(FR_IP(f) - 2);
+    if (!syscall_verify_ptr(ip, 2) || ip[0] != 0xCD || ip[1] != 0x80) return;
+    FR_IP(f)  -= 2;
+    FR_NUM(f)  = num;
+}
+
+/* A signal from the kernel itself (the alarm): what manda does, with
+ * interrupts already off and no sender to check. Default action of SIGALRM:
+ * the end of the program. */
+void segnali_manda_locked(Process *p, int sig)
+{
+    Process *capo, *q;
+    uint32_t tipo;
+
+    if (p == NULL || p->state == PROC_ZOMBIE || p->state == PROC_UNUSED) return;
+    q = chi_attende(p, sig);
+    if (q != NULL) {
+        q->seg_pendenti |= BIT(sig);
+        q->seg_attesi = 0;
+        if (q->state == PROC_BLOCKED) sched_unblock_locked(q->pid);
+        return;
+    }
+    capo = capo_di(p);
+    tipo = capo ? (capo->seg_flag[sig] & SEG_TIPO) : SEG_PREDEFINITO;
+    if (tipo == SEG_IGNORA) return;
+    if (tipo == SEG_PREDEFINITO && predefinito_ignora(sig)) return;
+    if (tipo == SEG_PREDEFINITO && !(p->seg_bloccati & BIT(sig))) {
+        proc_interrompi_locked(p->pid);
+        return;
+    }
+    p->seg_pendenti |= BIT(sig);
+    sveglia_per(p, sig);
+}
+
+/* =============================================================================
+ * THE ALARM: alarm(), setitimer(ITIMER_REAL) (kernel 0.317)
+ *
+ * Up to 0.316 alarm() in the libc did nothing and returned 0: Redis's
+ * watchdog, `timeout`, and every "alarm(N) around a read" waited for ever.
+ * Each leader keeps when its alarm fires (allarme_tick) and the interval
+ * (allarme_passo). The tick looks only when the nearest one is due
+ * (g_allarme_prossimo): with no alarm it costs one comparison, and a scan of
+ * the process table happens once per alarm that fires. Ticks are 10 ms, as
+ * sched_sleep counts them.
+ * ============================================================================= */
+static volatile uint32_t g_allarmi_armati = 0;
+static volatile uint32_t g_allarme_prossimo = 0;
+
+static uint32_t ms_in_tick(uint32_t ms)
+{
+    uint32_t t = (ms + 9u) / 10u;
+
+    return t ? t : 1u;
+}
+
+void segnali_allarmi_tick(void)
+{
+    uint32_t k, prossimo = 0, armati = 0, ora = g_ticks;
+
+    if (g_allarmi_armati == 0 || (int32_t)(ora - g_allarme_prossimo) < 0) return;
+    for (k = 0; k < g_proc_posti; k++) {
+        Process *p = PROC_POSTO(k);
+
+        if (p->allarme_tick == 0) continue;
+        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) { p->allarme_tick = 0; continue; }
+        if ((int32_t)(ora - p->allarme_tick) >= 0) {
+            if (p->allarme_passo) {
+                p->allarme_tick += p->allarme_passo;
+                if ((int32_t)(ora - p->allarme_tick) >= 0) p->allarme_tick = ora + p->allarme_passo;
+                if (p->allarme_tick == 0) p->allarme_tick = 1;
+            } else {
+                p->allarme_tick = 0;
+            }
+            segnali_manda_locked(p, SIGALRM_);
+        }
+        if (p->allarme_tick != 0) {
+            armati++;
+            if (prossimo == 0 || (int32_t)(p->allarme_tick - prossimo) < 0) prossimo = p->allarme_tick;
+        }
+    }
+    g_allarme_prossimo = prossimo;
+    g_allarmi_armati   = armati;
+}
+
+/* SYS_ALLARME (264): ebx = ms to the first signal (0 = off), ecx = the
+ * interval in ms (0 = once), edx = uint32_t[2] or 0: the ms that were left
+ * and the old interval. On the leader: one alarm per process (POSIX). */
+int32_t sys_allarme(InterruptFrame *frame)
+{
+    uint32_t  ms    = FR_A1(frame);
+    uint32_t  passo = FR_A2(frame);
+    uint32_t *prima = (uint32_t *)FR_A3(frame);
+    Process  *self  = proc_get_current();
+    Process  *capo  = self ? capo_di(self) : NULL;
+    uint32_t  vecchio[2] = { 0, 0 };
+
+    if (capo == NULL) return ERR(ESRCH);
+    if (prima != NULL && !syscall_verify_ptr(prima, sizeof(vecchio))) return ERR(EFAULT);
+
+    interrupts_disable();
+    if (capo->allarme_tick != 0) {
+        int32_t resta = (int32_t)(capo->allarme_tick - g_ticks);
+
+        vecchio[0] = resta > 0 ? (uint32_t)resta * 10u : 1u;
+        vecchio[1] = capo->allarme_passo * 10u;
+    }
+    if (ms == 0) {
+        capo->allarme_tick  = 0;
+        capo->allarme_passo = 0;
+    } else {
+        capo->allarme_tick  = g_ticks + ms_in_tick(ms);
+        if (capo->allarme_tick == 0) capo->allarme_tick = 1;
+        capo->allarme_passo = passo ? ms_in_tick(passo) : 0;
+        if (g_allarmi_armati == 0 || (int32_t)(capo->allarme_tick - g_allarme_prossimo) < 0)
+            g_allarme_prossimo = capo->allarme_tick;
+        g_allarmi_armati++;      /* an upper bound: the scan counts them again */
+    }
+    interrupts_enable();
+
+    if (prima != NULL) { prima[0] = vecchio[0]; prima[1] = vecchio[1]; }
+    return 0;
+}
+
 int32_t sys_seg_manda(InterruptFrame *frame)
 {
     uint32_t pid  = FR_A1(frame);
@@ -579,9 +781,7 @@ static int32_t manda(Process *self, Process *p, int sig)
 
     interrupts_disable();
     p->seg_pendenti |= BIT(sig);
-    /* asleep in sigsuspend with this signal let through: it wakes */
-    if (p->seg_sospeso && !(p->seg_bloccati & BIT(sig)) && p->state == PROC_BLOCKED)
-        sched_unblock_locked(p->pid);
+    sveglia_per(p, sig);
     interrupts_enable();
     return 0;
 }
