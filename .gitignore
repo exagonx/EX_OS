@@ -602,3 +602,18 @@ __pycache__/
 # albero/key.pem, cert.pem), disk images and logs; gitupdate.sh refuses any
 # private key.
 /tools/stress/
+
+# =============================================================================
+# MESA — OpenGL, EGL and GLES for EX-OS (mesa, 6 November 2026, voce 88)
+#
+# A git clone of https://gitlab.freedesktop.org/mesa/mesa (--filter=blob:none:
+# every tag and commit, file contents only when checked out), on the local
+# branch exos-26.2.6 from the tag mesa-26.2.6, checked against the archive
+# signed by Eric Engestrom (cross_build/terze-parti/mesa). To follow a new
+# release: tools/aggiorna-sorgenti.sh -scarica mesa, then -clone mesa. Their
+# tree, under MIT and others: out of our history like httpd/. What WE change
+# goes in tools/mesa-exos/, with the recipe to apply it.
+#
+# ! ANCHORED TO THE ROOT, like all the others.
+# =============================================================================
+/mesa/

@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.026"
+#define VERSIONE_APP "0.027"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -2120,6 +2120,29 @@ static void foto_controlla(void)
     if (stato != 0) ex_dlg_avviso("Scrivania", "La schermata non e' stata salvata.");
 }
 
+/* ! EVERY CHILD THAT ENDS IS COLLECTED HERE (pm 0.027, 6/11/2026). The
+ * programs started from the menu and the desktop (ex_spawn_program, exilla's
+ * launcher, exvolume) were never waited for: on the laptop `ps` showed
+ * /exwin/app/exilla/exilla and exvolume as zombies under pm long after they
+ * ended, one more for every launch, for the whole session. Every 2 s, from
+ * the bar's timer. cattura is the one whose exit code matters: it gets it
+ * here. exvolume and exwifi need nothing: once collected, their own
+ * waitpid(WNOHANG) says -1, which they already read as "closed". */
+static void raccogli_figli(void)
+{
+    int pid, stato;
+
+    for (;;) {
+        stato = 0;
+        pid = waitpid(-1, &stato, WNOHANG);
+        if (pid <= 0) break;
+        if (pid == g_foto_pid) {
+            g_foto_pid = -1;
+            if (stato != 0) ex_dlg_avviso("Scrivania", "La schermata non e' stata salvata.");
+        }
+    }
+}
+
 static void vol_apri(void)
 {
     static const char *const dove[] = { "/exwin/bin/exvolume", "/cdrom/exwin/bin/exvolume" };
@@ -2352,7 +2375,7 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
-    if (msg == EXM_TIMER) { foto_controlla(); wifi_controlla(f); return 0; }
+    if (msg == EXM_TIMER) { foto_controlla(); raccogli_figli(); wifi_controlla(f); return 0; }
 
     if (msg == EXM_WINDOW_LIST) {
         vb_leggi();

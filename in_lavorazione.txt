@@ -11,11 +11,28 @@ QUEL CHE E' APERTO — 15 settembre 2026
 
 !!! IL 30 OTTOBRE, SERA: ext3 ed ext4 negli strumenti (kernel 0.292, mkfs
     0.002, chkdsk 0.003): provati in QEMU, ! da provare sul ferro.
+    ! 6/11: PROVATI SUL PORTATILE (kernel 0.318) su hd2p3, una partizione di
+      2 GB creata apposta nello spazio libero (fdisk -t hd2 da /rdboot dopo
+      system -unload, risposte date da un programmino che scrive una riga
+      ogni 2 s: fdisk legge con read(0), da un file prenderebbe tutto
+      insieme). mkfs -t ext3 e -t ext4, file da 2,9 e 11 MB scritti e
+      confrontati con cmp, rm, chkdsk e chkdsk -r: "Nessun problema
+      trovato"; dopo il rimontaggio i dati ci sono. hd2p3 resta sul
+      portatile, ext4 'prova4', con dentro i file di prova.
+    ! 6/11 anche l'audio del portatile (hdaudio, codec 14f1:5051): l'utente
+      ha sentito /suono/prova.wav (22050 Hz mono, la scheda dichiara solo
+      44100-48000) e un La di 3 s a 44100 stereo, tutti e due bene.
 
 !!! IL 30 OTTOBRE: voce 41 (@CODA-20-10) FATTA in QEMU per e1000, pcnet e
     ne2k; ! nforce, rtl8169, sis900 e ar5k solo compilati, QEMU non li ha:
     DA PROVARE SUL FERRO, per primo nforce sul portatile (uso normale, poi
-    `ipcfg`). Voce 38: trovato perche' il profilo di Firefox resta a meta'.
+    `ipcfg`).
+    ! 6/11: nforce PROVATO SUL PORTATILE (kernel 0.318, 64 bit): telnet e due
+      netupdate -check dal server locale, ipcfg 15473 IP ricevuti, somme
+      errate 0, TCP fuori sequenza 0. Restano rtl8169, sis900, ar5k.
+      Lo stesso giorno sul portatile: sh 0.010 22 su 22 (tools/prova-sh,
+      controlli.sh in /tmp/psh), prova-fork 0 NO (36 OK, pty con nome 22a-g
+      compresi), netupdate 0.045 -verifica tutto a posto. Voce 38: trovato perche' il profilo di Firefox resta a meta'.
 
 !!! IL 26 SETTEMBRE, TRE DA correzioni.txt: @ARCHIVI-VISTA e @EXBROWSER-1024
     (urgenti), @EXIDE-NOMI (a comodo).
@@ -95,6 +112,8 @@ GRUPPO  VOCI             COSA
                          pubblicare, ExPackage sul portatile, statici rimasti
  --     87               (6/11) ExWin all'avvio: -autostart, F1-F4 shell, F5 grafica,
                          login grafico poi program manager nella home dell'utente
+ --     88               (6/11) OpenGL: Mesa software (softpipe, poi llvmpipe), EGL per
+                         EX-OS ed ExWin, WebGL in Firefox; nouveau a parte
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -8845,6 +8864,94 @@ tools/netinst/velocita tolto da netinst.
       d) dopo il logout si torna al login grafico, non alla shell;
       e) da provare in QEMU (1366x768, come il portatile) e poi sul
          portatile; documentare in help exwin, help problemi e README.
+      Stato: in coda.
+
+  88. OPENGL SU EX-OS (l'utente, 6/11, con Firefox sul portatile: "bisogna
+      fare il porting di opengl da mettere in coda e analizzare cosa
+      serve"). Visto quel giorno nel log di Firefox: "Exhausted GL driver
+      options (FEATURE_FAILURE_WEBGL_EXHAUSTED_DRIVERS)" e "Failed to
+      create WebGL context" sulle pagine di Google; il compositore e' SWGL
+      (software) e va. Da mettere in coda, non adesso.
+      ANALISI (6/11, da verificare quando si comincia):
+      a) MESA, l'ultima versione pubblica, CONDIVISA a 32 e 64 bit
+         ([[librerie-terze-parti]]): libGL/libEGL/libGLESv2 e il driver in
+         software. Prima softpipe (nessuna dipendenza da LLVM), poi
+         llvmpipe (molto piu' veloce, vuole LLVM condiviso per EX-OS: c'e'
+         solo l'LLVM X86 per Linux fatto per rustc). Si costruisce con
+         meson: serve un file di cross per i386-exos e x86_64-exos; sulla
+         macchina di costruzione manca python3-mako (meson e ninja ci sono).
+         Dipendenze: expat e zlib (ci sono), pthread, dlopen, mmap.
+      b) PRIMA DI COMPILARE: l'elenco di cio' che Mesa chiede al sistema
+         (syscall, futex o equivalente, TLS, sysconf, /proc, variabili
+         d'ambiente) e implementarlo davvero ([[implementa-cio-che-serve]]),
+         come per QtCore nella voce 85.
+         FATTO L'ELENCO (6/11 sera): Mesa 26.2.6 costruita sul PC (meson,
+         softpipe, EGL, GLES2, senza LLVM/GLX/GBM) e i suoi simboli mancanti
+         (nm -D --undefined-only di libEGL, libGLESv2, libgallium) confrontati
+         con tutte le librerie di build-64/iso/exos/lib. Chiede libc, libm,
+         libstdc++, libgcc_s, zlib: tutte le hanno gia'.
+         LIBC, DA IMPLEMENTARE (obbligatorie, senza ripiego in Mesa):
+           - open_memstream (util/memstream.c, per i messaggi e gli shader);
+           - pthread_barrier_init/wait/destroy (u_thread.h le usa se c'e'
+             HAVE_PTHREAD; i fili di softpipe/llvmpipe si aspettano li');
+           - newlocale/freelocale/uselocale e strtod_l/strtof_l (gli shader
+             leggono i numeri col punto qualunque sia la lingua);
+           - stpcpy, qsort_r (GNU o BSD: meson le cerca entrambe);
+           - program_invocation_name (u_process.c: il nome del programma,
+             per le regole per programma).
+         LIBC, CERCATE DA MESON (con ripiego, ma da fare per non aggirarle):
+           secure_getenv, reallocarray, sched_getaffinity, sched_getcpu,
+           CPU_COUNT, pthread_getaffinity_np/setaffinity_np (fili sui core),
+           pthread_getcpuclockid, setpriority, fegetexcept, memfd_create
+           (la cache degli shader e le immagini condivise), getline.
+         GIA' PRESENTI: dlopen/dlsym/dladdr/dl_iterate_phdr, __tls_get_addr
+           (il dispatch GL sta in un TLS: _mesa_glapi_tls_Dispatch, va
+           provato in una .so caricata con dlopen), mmap/mprotect,
+           posix_memalign/aligned_alloc, getrandom, sysconf,
+           clock_gettime, pthread_once/key/cond_timedwait/setname_np,
+           sem_init, mkstemps, ftruncate.
+         NON SERVONO: shmget/shmat (solo il winsys xlib e dri),
+           libdrm (solo con DRM/KMS), futex (util/futex.h ha solo Linux,
+           FreeBSD, OpenBSD, Windows: altrove simple_mtx usa mtx_t, cioe'
+           pthread_mutex; il futex vero in EX-OS sarebbe solo velocita').
+         KERNEL: nessuna syscall nuova obbligatoria per softpipe. Serve
+           che funzionino davvero sotto carico: fili (un filo per core per
+           llvmpipe), TLS nelle .so, mmap anonime grandi (texture),
+           mprotect a PROT_EXEC per llvmpipe (codice generato da LLVM).
+           memfd_create (nuova) solo se si vuole la cache degli shader.
+         ! LA SCOPERTA PIU' IMPORTANTE: in Mesa 26 EGL si costruisce SOLO con
+           DRI (che vuole DRM/KMS e libdrm), Haiku, Windows o Android
+           (meson.build: "EGL requires DRI, Haiku, Windows or Android").
+           Haiku e' il modello giusto per EX-OS: src/egl/drivers/haiku/
+           egl_haiku.cpp (523 righe) piu' il winsys software
+           src/gallium/winsys/sw/hgl. Per EX-OS: una piattaforma "exos" nel
+           meson.build, src/egl/drivers/exos/egl_exos.c e
+           src/gallium/winsys/sw/exwin (disegna nella zona condivisa della
+           finestra ExWin, o in memoria per i pbuffer). E' una patch nostra
+           su Mesa: sta sul ramo exos-26.2.6 del clone ./mesa.
+         Il sistema "exos" in meson: un file di cross per i386-exos e
+           x86_64-exos (system = 'exos'), gia' provato che meson lo accetta.
+         Per la prova sul PC: ~/cross_build/costruzione-mesa/host (Linux,
+           libdrm dal subproject), python mako e simili in
+           ~/cross_build/costruzione-mesa/pymod (PYTHONPATH).
+      c) EGL PER EX-OS: prima la piattaforma surfaceless/pbuffer (si disegna
+         in memoria, chi usa legge i pixel), poi una piattaforma "exwin":
+         una superficie EGL che e' la zona condivisa di una finestra ExWin
+         ([[exwin-posizioni-visibili]]), come il QPA exwin per Qt.
+      d) FIREFOX: il toolkit cairo-exos oggi non ha un GLContextProvider.
+         GLContextProviderEGL.cpp e' gia' compilato e GLLibraryEGL carica
+         libEGL con dlopen: va collegato a cairo-exos, poi WebGL in pbuffer
+         letto dal compositore SWGL. Dopo, se conviene, WebRender su GL.
+      e) ACCELERAZIONE VERA, dopo e a parte: per la GeForce del portatile
+         (nv50, 10de:0845) Mesa ha nouveau, che vuole dal kernel
+         un'interfaccia tipo DRM (memoria della scheda, code dei comandi,
+         sincronizzazione): un lavoro grande, nella linea di
+         [[driver-dedicato-sfruttato-intero]].
+      f) CHI NE GODE: Firefox (WebGL, Maps, molte pagine), Qt 5 (voce 85:
+         QtQuick vuole OpenGL), VLC (uscita video GL), i giochi.
+      g) PROVE: eglinfo e una demo a 32 e 64 bit in QEMU (1366x768), una
+         pagina WebGL in Firefox, poi sul portatile; sorgenti sulla ISO
+         strumenti e in netinst; documentare in help, problemi e README.
       Stato: in coda.
 
   80. PROGRAM MANAGER ORDINATO, E UN LETTORE VIDEO (l'utente, 4/11):

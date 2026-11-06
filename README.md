@@ -386,6 +386,10 @@ anyway, a user cannot. Apache's check found it on the laptop. From netupdate 0.0
 `/exos/<package>/bin` and `sbin` is a program directory; on a machine already installed:
 `netupdate -check -yes`, then `netupdate -permessi` (see `help problemi`).
 
+The program manager collects the programs it starts (pm 0.027): up to 0.026 every program
+launched from the menu or the desktop stayed a zombie under `pm` once closed, for the whole
+session (seen on the laptop: `exilla` and `exvolume`). Now `pm` collects them every 2 seconds.
+
 ### Fewer FLUSH: the journal does not commit at every operation (kernel 0.307)
 
 ext3 and ext4 commit at `fsync`, `sync` and unmount, when the journal is half

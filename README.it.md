@@ -401,6 +401,10 @@ esegue lo stesso, un utente no. L'ha trovato la verifica di Apache sul portatile
 0.045 ogni `/exos/<pacchetto>/bin` e `sbin` e' una directory di programmi; su una macchina
 gia' installata: `netupdate -check -yes`, poi `netupdate -permessi` (vedi `help problemi`).
 
+Il program manager raccoglie i programmi che lancia (pm 0.027): fino alla 0.026 ogni
+programma partito dal menu o dalla scrivania, chiuso, restava zombie sotto `pm` per tutta la
+sessione (visto sul portatile: `exilla` ed `exvolume`). Adesso `pm` li raccoglie ogni 2 secondi.
+
 ### Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)
 
 ext3 ed ext4 chiudono la transazione a `fsync`, `sync` e smontaggio, a giornale

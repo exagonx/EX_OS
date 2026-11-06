@@ -6,6 +6,7 @@
 #     tools/aggiorna-sorgenti.sh -scarica NOME   the new archive, signature checked
 #     tools/aggiorna-sorgenti.sh -prova NOME     the EX-OS patches on a copy of it
 #     tools/aggiorna-sorgenti.sh -applica NOME   VER= in tools/NOME-exos/costruisci.sh
+#     tools/aggiorna-sorgenti.sh -clone NOME     its git clone at the root, on exos-VER
 #
 # The list is tools/sorgenti-terzi.txt. Each step stops at what it can prove:
 # -scarica writes only in cross_build/terze-parti/NOME and removes nothing,
@@ -28,10 +29,11 @@ LAVORO=cross_build/aggiorna
 
 riga_di() { grep -v '^#' "$LISTA" | grep "^$1|"; }
 
-campi() {   # NOME: NOME GIT REGEX SED ARCH
+campi() {   # NOME: NOME GIT REGEX SED ARCH CLONE
     local r
     r=$(riga_di "$1") || { echo "! $1 non e' in $LISTA" >&2; exit 2; }
-    IFS='|' read -r NOME GIT REGEX SEDV ARCH <<< "$r"
+    CLONE=
+    IFS='|' read -r NOME GIT REGEX SEDV ARCH CLONE <<< "$r"
 }
 
 ver_nostra() {
@@ -115,6 +117,71 @@ scarica() {
     echo "$v $file" > "$dir/.verificata"
 }
 
+# =============================================================================
+# -clone NOME: the git clone at the project root, like httpd/ and
+# mariadb-server/ (6 November 2026)
+#
+# Made if missing (--filter=blob:none: every tag and every commit, the file
+# contents only when a checkout asks for them, so it stays updatable at a
+# fraction of the size), otherwise `git fetch --tags`. Then the local branch
+# exos-<version> from the release tag of the version that -scarica verified.
+#
+# ! THE TAG IS CHECKED AGAINST THE SIGNED ARCHIVE. A tag can be moved, the
+# archive is what the project signs: every file the two have in common must
+# be equal. Files only in the archive are fine (configure and the other
+# generated files are not in git); a file that DIFFERS stops here.
+#
+# ! IT NEVER THROWS AWAY WORK: an existing branch exos-<version> is left as
+# it is, and a tree with uncommitted changes is not touched.
+# =============================================================================
+clona() {
+    local v file dir d tag t diversi solo
+    campi "$1"
+    [ -n "$CLONE" ] || { echo "! $1: in $LISTA non ha la colonna del clone"; exit 1; }
+    dir=$TP/$1
+    [ -f "$dir/.verificata" ] || { echo "! prima: $0 -scarica $1 (con la firma buona)"; exit 1; }
+    read -r v file < "$dir/.verificata"
+    d=$CLONE
+    if [ ! -d "$d/.git" ]; then
+        [ -e "$d" ] && { echo "! $d c'e' ma non e' un clone git: non lo tocco"; exit 1; }
+        echo "$1: clono $GIT in $d"
+        git clone --filter=blob:none --no-checkout "$GIT" "$d" || exit 1
+    else
+        if [ -n "$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+            echo "! $d ha modifiche non salvate: non lo tocco (git -C $d status)"; exit 1
+        fi
+        echo "$1: git fetch --tags in $d"
+        git -C "$d" fetch --tags --quiet origin || exit 1
+    fi
+    tag=$(git -C "$d" tag -l | grep -E "$REGEX" | while read -r t; do
+              [ "$(echo "$t" | sed -E "$SEDV")" = "$v" ] && echo "$t"; done | head -1)
+    [ -n "$tag" ] || { echo "! $1: nessun tag per la versione $v"; exit 1; }
+    if git -C "$d" rev-parse --verify --quiet "exos-$v" > /dev/null; then
+        git -C "$d" checkout --quiet "exos-$v" || exit 1
+        echo "$d: il ramo exos-$v c'era gia', resta com'e'"
+    else
+        git -C "$d" checkout --quiet -b "exos-$v" "$tag" || exit 1
+        echo "$d: ramo exos-$v dal tag $tag"
+    fi
+    t=$(mktemp -d "$LAVORO/clone.XXXXXX")
+    case "$file" in
+        *.zip) unzip -q "$dir/$file" -d "$t" ;;
+        *)     tar -xf "$dir/$file" -C "$t" ;;
+    esac || { rm -rf "$t"; exit 1; }
+    # ! THE SVN KEYWORDS ARE NOT A DIFFERENCE: the ASF archives (httpd, apr)
+    # come out of Subversion with $Revision: 1934973 $ where git has
+    # $Revision$. A hunk made only of such lines is ignored (diff -I).
+    diversi=$(diff -rq -I '\$\(Date\|Revision\|Rev\|LastChangedDate\|LastChangedRevision\|LastChangedBy\|Id\|Author\|HeadURL\)' \
+                  "$(ls -d "$t"/*/ | head -1)" "$d" -x .git 2>/dev/null | grep -c ' differ$\| sono diversi$')
+    solo=$(diff -rq "$(ls -d "$t"/*/ | head -1)" "$d" -x .git 2>/dev/null | grep -c '^Only in \|^Solo in ')
+    rm -rf "$t"
+    if [ "$diversi" -gt 0 ]; then
+        echo "! $d: $diversi file diversi dall'archivio firmato $file (git -C $d diff $tag)"
+        exit 1
+    fi
+    echo "$d: uguale all'archivio firmato $file ($solo file solo da una parte: i generati)"
+}
+
 prova() {
     local v file dir c f bene=0 male=0
     campi "$1"
@@ -162,5 +229,6 @@ case "${1:-}" in
     -scarica)  scarica "${2:?NOME}" ;;
     -prova)    prova "${2:?NOME}" ;;
     -applica)  applica "${2:?NOME}" ;;
-    *)         sed -n 2,12p "$0" | cut -c3-; exit 2 ;;
+    -clone)    clona "${2:?NOME}" ;;
+    *)         sed -n 2,13p "$0" | cut -c3-; exit 2 ;;
 esac
