@@ -390,7 +390,16 @@ e il programma si ferma con una riga `PF:` in `dmesg`.
 
 `date -ntp` si arrende dopo 5 secondi, nome del server compreso. `/bin/sync` nuovo.
 `netupdate` si ferma se il server ha un sistema piu' vecchio di quello che gira e lo
-dice; per tornare indietro apposta si aggiunge `-indietro`.
+dice; per tornare indietro apposta si aggiunge `-indietro`. ! Prima di netupdate 0.045 (6/11/2026) questo
+controllo non e' mai scattato: leggeva la versione del kernel in 64 byte, e `osversion()`
+da' un blocco di circa 130 e ne restituisce la lunghezza, non 0. Adesso legge solo il
+numero dopo `Versione:`.
+
+I programmi dei pacchetti con un albero loro (`/exos/apache2/bin`, `/exos/mariadb/bin`,
+`/exos/valkey/bin`, `/exos/php/bin`) arrivavano da netupdate 0644 fino alla 0.044: root li
+esegue lo stesso, un utente no. L'ha trovato la verifica di Apache sul portatile. Dalla
+0.045 ogni `/exos/<pacchetto>/bin` e `sbin` e' una directory di programmi; su una macchina
+gia' installata: `netupdate -check -yes`, poi `netupdate -permessi` (vedi `help problemi`).
 
 ### Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)
 

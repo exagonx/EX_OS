@@ -806,6 +806,14 @@ riconosce anche dalla classe PCI (04/03 hdaudio.drv, 04/01 ac97.drv).
 Con un audio vecchio:  /dev/hdaudio.drv &  poi  audio -c  per sentirla;
 per averla a ogni avvio serve audio 0.005 (netupdate) e poi  audio -i.
 
+APACHE, MARIADB O VALKEY PORTATI DA netupdate: I PROGRAMMI NON SONO
+ESEGUIBILI. Fino a netupdate 0.044 i file di /exos/apache2/bin,
+/exos/mariadb/bin, /exos/valkey/bin e /exos/php/bin arrivavano 0644
+(ls -a -l dice -rw-r--r--): da root partono lo stesso, da un utente no.
+Se ne accorge la verifica di Apache. Riparazione, da root:
+  netupdate -check -yes                  porta netupdate 0.045 o piu'
+  netupdate -permessi                    rimette il bit a quei programmi
+
 [install]
 installa EX-OS su un disco, o gli strumenti dal CD
 

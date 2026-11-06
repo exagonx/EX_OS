@@ -822,3 +822,419 @@
   finito /netinst/catalogo.txt: 23574 byte
 /netinst/elenco.txt
   finito /netinst/elenco.txt: 427757 byte
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 1215 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/file/exos/src/valkey/comune.sh
+  finito /netinst_64/file/exos/src/valkey/comune.sh: 14664 byte
+/netinst_64/file/exos/src/valkey/costruisci.sh
+  finito /netinst_64/file/exos/src/valkey/costruisci.sh: 4138 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst_64/file/exos/valkey/COPYING
+  finito /netinst_64/file/exos/valkey/COPYING: 3091 byte
+/netinst_64/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst_64/file/exos/valkey/bin/valkey-benchmark: 629760 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-aof: 2969760 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-rdb: 2969760 byte
+/netinst_64/file/exos/valkey/bin/valkey-cli
+  finito /netinst_64/file/exos/valkey/bin/valkey-cli: 829912 byte
+/netinst_64/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst_64/file/exos/valkey/bin/valkey-sentinel: 2969760 byte
+/netinst_64/file/exos/valkey/bin/valkey-server
+  finito /netinst_64/file/exos/valkey/bin/valkey-server: 2969760 byte
+/netinst_64/file/exos/valkey/dati/.tieni
+  finito /netinst_64/file/exos/valkey/dati/.tieni: 0 byte
+/netinst_64/file/exos/valkey/etc/sentinel.conf
+  finito /netinst_64/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst_64/file/exos/valkey/etc/valkey.conf
+  finito /netinst_64/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 1215 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 1242 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 436843 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1215 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 436843 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 436843 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 436843 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 436843 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1215 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 436843 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1242 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1215 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/file/exos/src/valkey/comune.sh
+  finito /netinst/file/exos/src/valkey/comune.sh: 14664 byte
+/netinst/file/exos/src/valkey/costruisci.sh
+  finito /netinst/file/exos/src/valkey/costruisci.sh: 4138 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst/file/exos/valkey/COPYING
+  finito /netinst/file/exos/valkey/COPYING: 3091 byte
+/netinst/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst/file/exos/valkey/bin/valkey-benchmark: 559008 byte
+/netinst/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst/file/exos/valkey/bin/valkey-check-aof: 2625536 byte
+/netinst/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst/file/exos/valkey/bin/valkey-check-rdb: 2625536 byte
+/netinst/file/exos/valkey/bin/valkey-cli
+  finito /netinst/file/exos/valkey/bin/valkey-cli: 695284 byte
+/netinst/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst/file/exos/valkey/bin/valkey-sentinel: 2625536 byte
+/netinst/file/exos/valkey/bin/valkey-server
+  finito /netinst/file/exos/valkey/bin/valkey-server: 2625536 byte
+/netinst/file/exos/valkey/dati/.tieni
+  finito /netinst/file/exos/valkey/dati/.tieni: 0 byte
+/netinst/file/exos/valkey/etc/sentinel.conf
+  finito /netinst/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst/file/exos/valkey/etc/valkey.conf
+  finito /netinst/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1215 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1242 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 1215 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/file/exos/src/valkey/comune.sh
+  finito /netinst_64/file/exos/src/valkey/comune.sh: 14664 byte
+/netinst_64/file/exos/src/valkey/costruisci.sh
+  finito /netinst_64/file/exos/src/valkey/costruisci.sh: 4138 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst_64/file/exos/valkey/COPYING
+  finito /netinst_64/file/exos/valkey/COPYING: 3091 byte
+/netinst_64/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst_64/file/exos/valkey/bin/valkey-benchmark: 629760 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-aof: 2969760 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-rdb: 2969760 byte
+/netinst_64/file/exos/valkey/bin/valkey-cli
+  finito /netinst_64/file/exos/valkey/bin/valkey-cli: 829912 byte
+/netinst_64/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst_64/file/exos/valkey/bin/valkey-sentinel: 2969760 byte
+/netinst_64/file/exos/valkey/bin/valkey-server
+  finito /netinst_64/file/exos/valkey/bin/valkey-server: 2969760 byte
+/netinst_64/file/exos/valkey/dati/.tieni
+  finito /netinst_64/file/exos/valkey/dati/.tieni: 0 byte
+/netinst_64/file/exos/valkey/etc/sentinel.conf
+  finito /netinst_64/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst_64/file/exos/valkey/etc/valkey.conf
+  finito /netinst_64/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 1215 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 24184 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 433098 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 328 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 1242 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1215 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/file/exos/src/valkey/comune.sh
+  finito /netinst/file/exos/src/valkey/comune.sh: 14664 byte
+/netinst/file/exos/src/valkey/costruisci.sh
+  finito /netinst/file/exos/src/valkey/costruisci.sh: 4138 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst/file/exos/valkey/COPYING
+  finito /netinst/file/exos/valkey/COPYING: 3091 byte
+/netinst/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst/file/exos/valkey/bin/valkey-benchmark: 559008 byte
+/netinst/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst/file/exos/valkey/bin/valkey-check-aof: 2625536 byte
+/netinst/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst/file/exos/valkey/bin/valkey-check-rdb: 2625536 byte
+/netinst/file/exos/valkey/bin/valkey-cli
+  finito /netinst/file/exos/valkey/bin/valkey-cli: 695284 byte
+/netinst/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst/file/exos/valkey/bin/valkey-sentinel: 2625536 byte
+/netinst/file/exos/valkey/bin/valkey-server
+  finito /netinst/file/exos/valkey/bin/valkey-server: 2625536 byte
+/netinst/file/exos/valkey/dati/.tieni
+  finito /netinst/file/exos/valkey/dati/.tieni: 0 byte
+/netinst/file/exos/valkey/etc/sentinel.conf
+  finito /netinst/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst/file/exos/valkey/etc/valkey.conf
+  finito /netinst/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1215 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 24189 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 438481 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 328 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 1242 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte

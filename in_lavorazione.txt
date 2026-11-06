@@ -93,6 +93,8 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     87               (6/11) ExWin all'avvio: -autostart, F1-F4 shell, F5 grafica,
+                         login grafico poi program manager nella home dell'utente
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -8819,6 +8821,30 @@ tools/netinst/velocita tolto da netinst.
          fisiche - il portatile CQ60 e le altre - con carico misto (rete,
          disco, grafica, fork, Apache/MariaDB), con un registro dei guasti
          e dei tempi; la priorita' dell'utente ("soprattutto").
+      Stato: in coda.
+
+  87. EXWIN CHE PARTE ALL'AVVIO, CON IL LOGIN GRAFICO (l'utente, 6/11:
+      "Attualmente exwin e' un server grafico che viene lanciato dopo il
+      login, sarebbe utile implementare le opzioni seguenti: -autostart dove
+      si installa in kernel.cfg e parte automaticamente all'avvio e prima del
+      program manager, operando in un area shell come sh da F1 a F4 e exwin
+      prende F5; se parte in automatico all'avvio non trovando una
+      autenticazione invece del program manager avviera' il login grafico e
+      successivamente il program manager che si spostera' all'interno della
+      home o root in base all'utente").
+      Da mettere in coda, non adesso. Le parti:
+      a) exwin -autostart (e il suo -remove, come i driver: vedi
+         [[driver-hanno-install]]): scrive l'avvio in kernel.cfg (o nel file
+         giusto, avvio_blocco della libc) e ExWin parte da solo all'avvio;
+      b) le console: F1-F4 restano shell testuali come sh, ExWin prende F5;
+         passare dall'una all'altra senza fermare la grafica;
+      c) avviato cosi', senza un utente autenticato, ExWin non lancia il
+         program manager ma un LOGIN GRAFICO; dopo il login parte il
+         program manager con l'utente giusto, nella sua home (/root per
+         root);
+      d) dopo il logout si torna al login grafico, non alla shell;
+      e) da provare in QEMU (1366x768, come il portatile) e poi sul
+         portatile; documentare in help exwin, help problemi e README.
       Stato: in coda.
 
   80. PROGRAM MANAGER ORDINATO, E UN LETTORE VIDEO (l'utente, 4/11):

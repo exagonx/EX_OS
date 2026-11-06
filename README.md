@@ -376,7 +376,15 @@ filled with zeros in place of code. Now the read fails and the program stops wit
 
 `date -ntp` gives up after 5 seconds, server name included. New `/bin/sync`. `netupdate`
 stops and says so if the server has an older system than the one running; to go back
-on purpose add `-indietro`.
+on purpose add `-indietro`. ! Before netupdate 0.045 (6/11/2026) this check never fired: it read the
+kernel version into 64 bytes, and `osversion()` gives a block of about 130 and returns its
+length, not 0. Now it reads only the `Versione:` number.
+
+The programs of the packages with a tree of their own (`/exos/apache2/bin`, `/exos/mariadb/bin`,
+`/exos/valkey/bin`, `/exos/php/bin`) arrived from netupdate 0644 up to 0.044: root runs them
+anyway, a user cannot. Apache's check found it on the laptop. From netupdate 0.045 every
+`/exos/<package>/bin` and `sbin` is a program directory; on a machine already installed:
+`netupdate -check -yes`, then `netupdate -permessi` (see `help problemi`).
 
 ### Fewer FLUSH: the journal does not commit at every operation (kernel 0.307)
 

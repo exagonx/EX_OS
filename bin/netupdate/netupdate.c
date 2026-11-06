@@ -42,10 +42,9 @@
 #include "libc.h"
 #include "exhttp.h"
 #include "inflate.h"
-#include <sys/utsname.h>
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.044");
+EX_VERSIONE("netupdate", "0.045");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -1559,6 +1558,18 @@ static long prendi(const char *url)
  * e i loro amici arrivano SOLO dalla rete, e sono la meta' del motivo per cui
  * questo difetto fa male.
  * ========================================================================== */
+/* 1 if rel (no leading slash) is under exos/<name>/bin/ or exos/<name>/sbin/. */
+static int dir_di_pacchetto(const char *rel)
+{
+    const char *p;
+
+    if (strncmp(rel, "exos/", 5) != 0) return 0;
+    p = strchr(rel + 5, '/');
+    if (p == NULL || p == rel + 5) return 0;
+    p++;
+    return strncmp(p, "bin/", 4) == 0 || strncmp(p, "sbin/", 5) == 0;
+}
+
 static int e_programma(const char *rel)
 {
     static const char *dirs[] = {
@@ -1572,6 +1583,14 @@ static int e_programma(const char *rel)
 
     for (i = 0; dirs[i]; i++)
         if (strncmp(rel, dirs[i], strlen(dirs[i])) == 0) return 1;
+
+    /* ! THE PACKAGES WITH A TREE OF THEIR OWN (6/11/2026): exos/apache2/bin,
+     * exos/mariadb/bin, exos/valkey/bin, exos/php/bin. They were not in the
+     * list above, so everything there arrived 0644: on the laptop
+     * `ls -l /exos/apache2/bin` said -rw-r--r-- for httpd, and apache.sh (the
+     * check of netupdate 0.044) was the first to notice. exos/<name>/bin/ and
+     * exos/<name>/sbin/, one level down, whatever the name. */
+    if (dir_di_pacchetto(rel)) return 1;
 
     /* ! E LE LIBRERIE CONDIVISE, DOVUNQUE SIANO. Una .so si carica, non si
      * esegue, ma il caricatore la apre come un eseguibile e su un sistema
@@ -3174,7 +3193,8 @@ static int comando_permessi(void)
 {
     /* ! LO STESSO ELENCO DI e_programma(), con la barra davanti: li' sono
      * percorsi dell'albero del server, qui sono directory di questa macchina.
-     * Chi ne aggiunge una la aggiunge in tutt'e due i posti. */
+     * Chi ne aggiunge una la aggiunge in tutt'e due i posti.
+     * The package trees (/exos/<name>/bin, sbin) are walked below. */
     static const char *DOVE[] = {
         "/bin", "/dev", "/drivers", "/exwin/bin",
         "/exos/bin", "/exos/libexec", "/exos/i386-exos/bin",
@@ -3193,6 +3213,23 @@ static int comando_permessi(void)
 
     for (i = 0; DOVE[i]; i++)
         permessi_dir(DOVE[i], 0, &visti, &corretti, &falliti, &mostrati);
+    /* And /exos/<package>/bin and sbin: see dir_di_pacchetto(). */
+    {
+        DIR           *d = opendir("/exos");
+        struct dirent *v;
+        char           b[PERC_MAX];
+
+        while (d != NULL && (v = readdir(d)) != NULL) {
+            if (v->d_name[0] == '.') continue;
+            /* already in DOVE: walking it twice would count it twice */
+            if (strcmp(v->d_name, "i386-exos") == 0) continue;
+            snprintf(b, sizeof(b), "/exos/%s/bin", v->d_name);
+            permessi_dir(b, 0, &visti, &corretti, &falliti, &mostrati);
+            snprintf(b, sizeof(b), "/exos/%s/sbin", v->d_name);
+            permessi_dir(b, 0, &visti, &corretti, &falliti, &mostrati);
+        }
+        if (d != NULL) closedir(d);
+    }
     for (i = 0; LIB[i]; i++)
         permessi_dir(LIB[i], 1, &visti, &corretti, &falliti, &mostrati);
 
@@ -3266,6 +3303,29 @@ static long numero_versione(const char *s)
     return a * 1000 + b;
 }
 
+/* The version of the kernel running here, "0.318", into out; -1 if unknown.
+ * ! osversion() GIVES THE WHOLE IDENTITY BLOCK (name, copyright, licence,
+ * "Versione: 0.318 (i386)"), about 130 bytes, and returns its LENGTH: until
+ * 6/11/2026 server_piu_vecchio() passed 64 bytes and tested "!= 0", so the
+ * call always failed and voce 53 never stopped a step backwards. */
+static int kernel_qui(char *out, size_t n)
+{
+    char        buf[512];
+    const char *p;
+    size_t      i = 0;
+
+    if (n == 0) return -1;
+    out[0] = 0;
+    if (osversion(buf, sizeof(buf)) < 0) return -1;
+    buf[sizeof(buf) - 1] = 0;
+    p = strstr(buf, "Versione: ");
+    if (p == NULL) return -1;
+    p += 10;
+    while (p[i] && p[i] != ' ' && p[i] != '\n' && i + 1 < n) { out[i] = p[i]; i++; }
+    out[i] = 0;
+    return i ? 0 : -1;
+}
+
 /* 1 if the repository is older than the kernel running here (voce 53). On
  * 31/10 a server still at 0.291 took a machine installed at 0.293 back, and
  * every file looked "changed": nothing said it was going backwards. */
@@ -3275,7 +3335,7 @@ static int server_piu_vecchio(const char *versione)
     long qui, la;
 
     if (g_indietro) return 0;
-    if (osversion(buf, sizeof(buf)) != 0) return 0;
+    if (kernel_qui(buf, sizeof(buf)) != 0) return 0;
     qui = numero_versione(buf);
     la  = numero_versione(versione);
     if (qui < 0 || la < 0 || la >= qui) return 0;
@@ -3626,7 +3686,7 @@ static int comando_repo(const char *indirizzo)
  * of netupdate, and in the environment
  *     NETUPDATE_PACCHETTO  the package the script is for
  *     NETUPDATE_SISTEMA    the system version on the server (0.318...)
- *     NETUPDATE_KERNEL     the kernel running now (uname -r)
+ *     NETUPDATE_KERNEL     the kernel running now (kernel_qui(), "0.318")
  *     NETUPDATE_RIAVVIO    1 if this run changed the kernel: what runs now
  *                          is the old one until the reboot
  *     NETUPDATE_ARCH       i386 or x86_64
@@ -3659,7 +3719,6 @@ static int verifiche_esegui(const Config *c, const char *ver,
     char   esiti[2048];
     FILE  *f, *log;
     int    fatte = 0, a_mano = 0, guaste = 0;
-    struct utsname u;
 
     if (g_noverifica) return 0;
     if (chiave_da_file(ver, "verifiche", h_ver, sizeof(h_ver)) != 0) return 0;  /* an older server */
@@ -3671,7 +3730,10 @@ static int verifiche_esegui(const Config *c, const char *ver,
     }
     chiave_da_file(ver, "versione", sistema, sizeof(sistema));
     chiave_da_file(ver, "arch", arch, sizeof(arch));
-    if (uname(&u) == 0) copia_str(kernel, u.release, sizeof(kernel));
+    /* ! kernel_qui(), NOT uname(): at 32 bits uname lives only in libc.a, and
+     * netupdate links the shared libc (undefined reference on 6/11/2026). It
+     * is also the real kernel version, not the OSVER variable. */
+    if (kernel_qui(kernel, sizeof(kernel)) != 0) copia_str(kernel, "?", sizeof(kernel));
 
     f = fopen(lista, "r");
     if (f == NULL) return -1;
