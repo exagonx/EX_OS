@@ -405,6 +405,59 @@ Il program manager raccoglie i programmi che lancia (pm 0.027): fino alla 0.026 
 programma partito dal menu o dalla scrivania, chiuso, restava zombie sotto `pm` per tutta la
 sessione (visto sul portatile: `exilla` ed `exvolume`). Adesso `pm` li raccoglie ogni 2 secondi.
 
+A 64 bit uno sfondo JPG o PNG non si leggeva, e nemmeno le immagini di Immagini, Pennello ed
+EXBrowser o i font TrueType: restavano solo il BMP e il carattere di sistema 8x16. Il toolkit
+apre `/exwin/lib/eximg.so` e `/exwin/lib/exfont.so` quando servono, ma a 64 bit quei due file
+non si costruivano, e il caricatore (`lib/exlib/exlib.c`) faceva ancora la chiamata dei 32 bit.
+Adesso sono librerie ELF condivise come `exjs.so`, e il caricatore le apre con `dlopen`.
+Provato in QEMU a 64 bit: uno sfondo JPG da `pm.cfg`, JPG e PNG in Immagini, i font TrueType
+in Prova font. Su una macchina gia' installata: `netupdate -check -yes` porta le due librerie e
+i programmi (vedi `help problemi`).
+
+Cio' che Mesa chiede alla libc (voce 88, la strada verso OpenGL e WebGL), in `lib/libc_gnu.c`,
+solo nella libc statica, quella con cui si collega il software portato su EX-OS:
+`open_memstream`, `getline`, `getdelim`; `pthread_barrier_*`; gli oggetti locale `newlocale`,
+`uselocale`, `duplocale`, `freelocale` con `strtod_l`, `strtof_l`, `strtold_l`; `stpcpy`,
+`stpncpy`, `qsort_r` (l'ordine GNU), `reallocarray`, `secure_getenv`; `sched_getaffinity`,
+`sched_setaffinity`, `sched_getcpu` e le macro di `cpu_set_t`, `pthread_getaffinity_np`,
+`pthread_setaffinity_np`, `pthread_getcpuclockid`; `getpriority`, `setpriority`;
+`fegetexcept`; `program_invocation_short_name`. Dicono com'e' EX-OS: una locale ("C"; ogni altro
+nome fallisce con ENOENT), i programmi sul processore 0 (un insieme che non lo contiene
+fallisce con EINVAL), una priorita' (0; un'altra fallisce con EACCES). Per strada: la libc
+teneva nel suo elenco al massimo 16 flussi aperti, e `exit()` non svuotava dal diciassettesimo
+in poi: un programma che scriveva un file senza `fclose` ne perdeva la fine. Adesso l'elenco
+non ha tetto.
+
+`struct stat` ha `st_rdev` (POSIX; Mesa ci fa l'impronta dei descrittori): per un dispositivo a
+caratteri (`/dev/null`, `/dev/ptmx`, `/dev/pts/N`) e' l'identita' del dispositivo, uguale a
+`st_ino`; 0 per ogni altro file. Il campo sta in fondo, e la struttura e' cresciuta: il codice
+compilato prima (libstdc++, openssl, ffmpeg e le altre librerie gia' nei sysroot) passa la
+struttura vecchia, piu' corta. Percio', come fa la glibc, `stat`, `lstat`, `fstat` e le loro
+`*64` hanno due simboli: gli header mandano il codice nuovo a `__exos_stat2` e alle altre, che
+riempiono tutta la struttura; i nomi vecchi restano e riempiono solo fino a `st_ctime`. Non c'e'
+niente da ricostruire, e una libreria ricostruita dopo passa da sola ai nomi nuovi.
+`tools/abi-bersaglio.c` ha il campo nuovo. `tools/prova-gnu/prova-gnu.sh` (18 controlli, gli
+ultimi due su `st_rdev` e sul simbolo vecchio) passa a 32 e 64 bit in QEMU.
+
+Mesa 26.2.6 per EX-OS (voce 88): `tools/mesa-exos/costruisci.sh [32|64]` costruisce
+`libEGL.so.1` e `libGLESv2.so.2` col driver softpipe, dall'archivio firmato piu'
+`tools/mesa-exos/exos-26.2.6.patch`, la piattaforma "exos": system `exos` in meson, un driver
+EGL con le superfici in memoria (pbuffer e surfaceless; le finestre ExWin vengono dopo), un
+winsys per loro, il frontend hgl di Haiku reso portabile. `tools/mesa-exos/prova-egl.sh [32|64]`
+collega un programma alle due librerie, lo porta in EX-OS sotto QEMU con le .so che chiede il
+suo DT_NEEDED, e disegna un triangolo con shader GLSL ES: 8/8 a 32 e 64 bit, "softpipe | OpenGL
+ES 3.1 Mesa 26.2.6". Le librerie sono nei sysroot, non ancora sul CD.
+
+Due guasti dei cross trovati per strada, tutti e due in `tools/gcc-exos/specs-condivise.sh`
+(da rilanciare su un cross costruito prima del 7 novembre 2026): ld cercava il DT_NEEDED di una
+.so nel suo SEARCH_DIR, che e' la directory dove il cross e' stato costruito (su un'altra
+macchina): "libz.so.1 ... not found" e tutti i suoi simboli indefiniti. E a 32 bit, senza
+sysroot, ld prendeva `/lib32/libstdc++.so.6` dell'host (quella della glibc) attraverso
+`/etc/ld.so.conf` dell'host: "undefined reference to `_Unwind_Resume@GCC_3.0`". Adesso le specs
+danno a ld `-rpath-link` e `--sysroot` sulla directory del bersaglio del cross stesso. E in
+`tools/librerie-exos/comune.sh` la `__stack_chk_fail_local` a 32 bit per le .so e' weak: meson la
+passa a ogni collegamento, anche degli eseguibili, dove libc.a ce l'ha gia'.
+
 ### Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)
 
 ext3 ed ext4 chiudono la transazione a `fsync`, `sync` e smontaggio, a giornale

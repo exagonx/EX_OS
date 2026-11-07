@@ -78,6 +78,8 @@ int main(int argc, char **argv, char **envp);
  * non c'e' altro modo di saperlo. Sta qui, e non in libc.c, perche' e' l'avvio
  * a conoscere argv. */
 char *program_invocation_name = "";
+/* and the name without the directory (7 November 2026, Mesa): glibc has both */
+char *program_invocation_short_name = "";
 
 /* La versione dello strumento: la dichiara EX_VERSIONE() in libc.h. Deboli
  * apposta — vedi il blocco su `-v` piu' sotto. */
@@ -361,6 +363,11 @@ void _libc_start(int argc, char **argv, char **envp)
     }
 
     program_invocation_name = argc > 0 && argv[0] ? argv[0] : "";
+    {
+        char *b = program_invocation_name, *p;
+        for (p = b; *p; p++) if (*p == '/') b = p + 1;
+        program_invocation_short_name = b;
+    }
     exit(main(argc, argv, envp));
     for (;;);
 }

@@ -114,6 +114,8 @@ GRUPPO  VOCI             COSA
                          login grafico poi program manager nella home dell'utente
  --     88               (6/11) OpenGL: Mesa software (softpipe, poi llvmpipe), EGL per
                          EX-OS ed ExWin, WebGL in Firefox; nouveau a parte
+ --     89               (7/11) moduli per CPU: mmx/sse/sse2/avx.mod scelti con CPUID
+                         all'avvio, a 32 e 64 bit; da discutere prima di cominciare
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -8866,6 +8868,36 @@ tools/netinst/velocita tolto da netinst.
          portatile; documentare in help exwin, help problemi e README.
       Stato: in coda.
 
+  89. MODULI PER LE ISTRUZIONI DELLA CPU (l'utente, 7/11): "i processori che
+      precedono il Pentium III usano 3DNow per AMD e MMX per Pentium e
+      Pentium II ... e' possibile metterle in moduli separati dal kernel
+      dove vengono caricate solo se presenti? ... mmx.mod ... sse.mod,
+      sse2.mod, sse3.mod ... nelle CPU a 64 bit ci sono istruzioni AMD64 e
+      EM64 che non hanno tutte le CPU a 64: anche queste in moduli caricati
+      in base al modello della CPU".
+      COSA C'E' OGGI (7/11): base Pentium MMX (CPU_BASE -march=pentium-mmx,
+      `make verifica-cpu` ferma la costruzione se un binario va oltre).
+      Le scelte alla CPU si fanno gia' a tempo di esecuzione con CPUID:
+      kernel/arch/x86/fpu.c (fxsave/SSE se c'e', se no fnsave), la libc
+      (memcpy/memset con MMX se c'e', lib/libc.c mem_ha_mmx).
+      PRECISAZIONI DATE ALL'UTENTE: MMX non e' sparito, tutte le CPU x86
+      fino a oggi (anche a 64 bit) lo eseguono; e' sparito 3DNow! (AMD
+      dal 2011 circa; Intel non l'ha mai avuto). AMD64 ed EM64T/Intel 64
+      sono lo stesso insieme di istruzioni; cio' che cambia fra le CPU a
+      64 bit sono le estensioni (SSE3, SSSE3, SSE4.1/4.2, POPCNT, AVX,
+      AVX2, BMI, AVX-512: i livelli x86-64-v1..v4).
+      LA VIA PROPOSTA (da decidere con l'utente): nel kernel, un modulo per
+      livello (mmx.mod, sse2.mod, avx2.mod...) che registra le versioni
+      veloci di poche funzioni (copia e azzeramento di pagine, copie verso
+      lo schermo, somme di controllo della rete) in una tabella di
+      puntatori; l'avvio legge CPUID e carica il modulo piu' alto
+      disponibile, come oggi carica ext4.mod. ! Usare MMX/SSE nel kernel
+      vuol dire salvare lo stato FPU del processo prima (fpu.c): conviene
+      solo per blocchi grandi. Per i PROGRAMMI i moduli del kernel non
+      servono: o la scelta in libc come oggi (MMX), o librerie per livello
+      (/lib/x86-64-v3/... come glibc-hwcaps) scelte dal caricatore.
+      Stato: in coda, da discutere.
+
   88. OPENGL SU EX-OS (l'utente, 6/11, con Firefox sul portatile: "bisogna
       fare il porting di opengl da mettere in coda e analizzare cosa
       serve"). Visto quel giorno nel log di Firefox: "Exhausted GL driver
@@ -8934,6 +8966,93 @@ tools/netinst/velocita tolto da netinst.
          Per la prova sul PC: ~/cross_build/costruzione-mesa/host (Linux,
            libdrm dal subproject), python mako e simili in
            ~/cross_build/costruzione-mesa/pymod (PYTHONPATH).
+         LIBC FATTA (7/11): lib/libc_gnu.c, solo libc.a (incluso da libc.c
+           prima di libc_avvio.c): open_memstream (un FILE con fd -1 che
+           scarica in un buffer: campi mem_* in struct _FILE), getline,
+           getdelim, pthread_barrier_*, newlocale/duplocale/freelocale/
+           uselocale e strtod_l/strtof_l/strtold_l (solo "C", altro nome
+           ENOENT), stpcpy, stpncpy, qsort_r (GNU), reallocarray,
+           secure_getenv, sched_get/setaffinity e cpu_set_t (CPU_* in
+           sched.h, __sched_cpucount), sched_getcpu, pthread_get/
+           setaffinity_np, pthread_getcpuclockid (solo il filo che chiede),
+           getpriority/setpriority (solo 0, altro EACCES), fegetexcept
+           (inline in fenv.h, dalla parola di controllo x87),
+           program_invocation_short_name (libc_avvio.c). Per strada: l'elenco
+           dei flussi aveva 16 posti (MAX_FLUSSI) e exit non svuotava dal
+           17esimo in poi: ora cresce. libc_esportati.h rigenerata, i 4
+           sysroot aggiornati. tools/prova-gnu/prova-gnu.sh 16/16 a 32 e 64.
+           ! __builtin_popcount diventa __popcountdi2 di libgcc: i programmi
+           di sistema a 64 bit non la collegano (pm & c. non si collegavano).
+         RESTA PER MESA, NEL KERNEL (da fare prima di llvmpipe):
+           - memfd_create: un file anonimo in memoria (cache degli shader,
+             immagini condivise con ExWin): una syscall nuova;
+           - il tempo di CPU per filo: oggi CLOCK_THREAD_CPUTIME_ID e'
+             l'orologio monotono;
+           - priorita' dei fili (setpriority) e piu' processori per i
+             programmi (affinita' vere): con lo SMP che fa lavorare gli AP;
+         GIA' A POSTO: il TLS dentro una .so aperta con dlopen (il dispatch
+           GL di Mesa) lo prova tools/prova-dl (__thread in libuno, piu'
+           fili). Mesa usa initial-exec solo con la glibc (u_thread.h); su
+           EX-OS e' general-dynamic, che lib/libc_dl.c sa rilocare.
+         PROSSIMO: il file di cross di meson per i386-exos e x86_64-exos, poi
+           la piattaforma "exos" (driver EGL + winsys software) e softpipe.
+         DECISO DALL'UTENTE (7/11): prima solo superfici in memoria (pbuffer e
+           surfaceless, cio' che serve a WebGL in Firefox); poi la finestra
+           EGL = una finestra ExWin, con libEGL che parla direttamente al
+           server grafico (drivers/wserver/win_proto.h), come Mesa con X11:
+           a 64 bit il toolkit e' statico nei programmi e libEGL.so non puo'
+           chiamarlo.
+         PIATTAFORMA "exos" DI MESA, FATTA E PROVATA SUL PC (7/11): sul ramo
+           exos-26.2.6 di ./mesa, salvata in tools/mesa-exos/exos-26.2.6.patch
+           (si applica su Mesa 26.2.6 pulita: git apply --check).
+           - meson.build/meson.options: system 'exos' -> piattaforma 'exos',
+             softpipe/llvmpipe, niente GLX/DRI/libdrm, -D_GNU_SOURCE;
+           - src/egl/drivers/exos/egl_exos.c: il driver di Haiku in C, solo
+             pbuffer e surfaceless (finestra: EGL_BAD_NATIVE_WINDOW per
+             ora), due config RGBA8 (con e senza depth 24/stencil 8);
+           - src/gallium/winsys/sw/exos: i display target in memoria, e un
+             gancio exos_sw_presenta per le finestre di domani;
+           - frontends/hgl riusato: int64_t e unsigned long al posto dei tipi
+             di Haiku, e hgl_create_context_api: il contesto dell'API chiesta
+             (Haiku crea sempre GL compat: col contesto ES2 gli shader GLSL ES
+             non compilavano);
+           - libEGL porta Mesa e la glapi condivisa (egl-exos.sym esporta le
+             7 _mesa_glapi_*), libGLESv2 si collega a libEGL e si costruisce
+             dopo src/egl (src/meson.build).
+           Prova: tools/mesa-exos/prova-egl.c (8 controlli: eglInitialize,
+           pbuffer 64x64, contesto ES2, glClear, shader, triangolo letto con
+           glReadPixels, distruzione). Sul PC, con gcc dell'host e system
+           'exos' (~/cross_build/costruzione-mesa/sonda): 8/8, "softpipe |
+           OpenGL ES 3.1 Mesa 26.2.6".
+         COSTRUITA PER EX-OS E PROVATA IN QEMU (7/11): tools/mesa-exos/
+           costruisci.sh [32|64] mette libEGL.so.1 e libGLESv2.so.2 in
+           cross_build/mesa-exos<bit>/exos e nei quattro sysroot;
+           tools/mesa-exos/prova-egl.sh [32|64]: 8/8 a 32 e a 64 bit, "Mesa |
+           softpipe | OpenGL ES 3.1 Mesa 26.2.6", EGL 1.4. Il programma e'
+           collegato alle .so (niente dlopen): libEGL, libGLESv2, libz,
+           libstdc++, libm, libgcc_s portate in /disk dal suo DT_NEEDED.
+           Trovati per strada:
+           - nella patch: detect_os.h (DETECT_OS_EXOS, POSIX), os_misc.c
+             (unistd.h, la memoria libera da /proc/meminfo come Linux),
+             include/EGL/eglplatform.h (ramo __EXOS__);
+           - struct stat senza st_rdev (u_hash_table.c): AGGIUNTO, in fondo,
+             con due simboli come la glibc (l'utente ha scelto): __exos_stat2
+             & c. per il codice nuovo, stat & c. per quello compilato prima
+             (riempiono fino a st_ctime). Niente da ricostruire;
+             prova-gnu 17 e 18;
+           - meson con --no-undefined: le .so di EX-OS lasciano la libc
+             indefinita, -Db_lundef=false (lib_controlla controlla dopo);
+           - a 32 bit nonshared.o (comune.sh) in c_link_args faceva fallire
+             ogni prova di meson che collega un eseguibile ("multiple
+             definition of __stack_chk_fail_local", letto come "serve
+             -latomic"): ora e' weak;
+           - i cross non trovavano il DT_NEEDED di una .so (SEARCH_DIR di
+             un'altra macchina) e a 32 bit prendevano /lib32/libstdc++.so.6
+             dell'host: specs-condivise.sh mette -rpath-link e --sysroot di
+             ld sul sysroot. prova-avvio, prova-dl, prova-cxx a 32 e 64 bit
+             come prima.
+         PROSSIMO: portare libEGL e libGLESv2 sul CD e in netupdate (con lo
+           script di verifica), poi le finestre ExWin (c), poi Firefox (d).
       c) EGL PER EX-OS: prima la piattaforma surfaceless/pbuffer (si disegna
          in memoria, chi usa legge i pixel), poi una piattaforma "exwin":
          una superficie EGL che e' la zona condivisa di una finestra ExWin

@@ -40,6 +40,26 @@ rm -f "$DIR/specs"
 GCC_S=no
 [ -f "$("$GCC" -print-sysroot 2>/dev/null)/lib/libgcc_s.so" ] && GCC_S=si
 [ -f "$DIR/../../../../$("$GCC" -dumpmachine)/lib/libgcc_s.so" ] && GCC_S=si
+# ! WHERE ld LOOKS FOR THE DT_NEEDED OF A .so (7 November 2026, Mesa): a
+# program linked to libEGL.so.1 makes ld read libz.so.1, libstdc++.so.6 and
+# libm.so.4 that libEGL names, and ld searches them in -rpath-link and in its
+# own SEARCH_DIR, not in -L. The SEARCH_DIR is where the cross was BUILT
+# (another machine, another home): "libz.so.1 ... not found", and every
+# symbol of those libraries undefined. So the sysroot's lib, as it is here,
+# goes into the specs as -rpath-link: only for the link, nothing is written
+# in the binary.
+# ! AND --sysroot FOR ld ALONE, the target's directory: without it this ld
+# has no sysroot, so its "=/lib" and "=/usr/lib" and the HOST's
+# /etc/ld.so.conf are Linux's directories. At 32 bit ld throws away, on its
+# first pass, any DT_NEEDED candidate that has DT_NEEDED of its own (seen
+# with a test library that only needs libpippo.so.3), and the host's
+# /lib32/libstdc++.so.6 came first: a glibc libstdc++ in an EX-OS link,
+# "undefined reference to _Unwind_Resume@GCC_3.0". With the sysroot the
+# second pass takes the right one, and nothing of the host can be reached.
+# The sysroot's ld scripts (libgcc_s.so, libz.so...) name relative files, so
+# they mean the same. Not for gcc: its headers and -L stay as they are.
+LIBSYS=$(readlink -f "$DIR/../../../../$("$GCC" -dumpmachine)/lib" 2>/dev/null)
+[ -d "$LIBSYS" ] || LIBSYS=""
 # crtbeginS.o / crtendS.o: compiled by this very gcc (its -m and ABI), PIC.
 SORG="$(cd "$(dirname "$0")" && pwd)/crtstuff-condivise.c"
 "$GCC" -O2 -fPIC -fno-asynchronous-unwind-tables -DINIZIO -c "$SORG" -o "$DIR/crtbeginS.o" &&
@@ -59,7 +79,8 @@ def link(v):
     # a program: static only with -static; otherwise ld links the .so it
     # finds, and with none it still makes a static program
     v = v.replace("-static", "%{static:-static} %{!static:-dynamic-linker /lib/ld-exos.so}")
-    return "%{shared:" + emu + " -shared} %{!shared:" + v.strip() + "}"
+    rl = (" -rpath-link " + sys.argv[2] + " --sysroot=" + sys.argv[2].rsplit("/", 1)[0]) if sys.argv[2] else ""
+    return "%{shared:" + emu + " -shared" + rl + "} %{!shared:" + v.strip() + rl + "}"
 sezione("link", link)
 sezione("startfile", lambda v: "%{shared:crtbeginS.o%s} %{!shared:" + v + "}")
 sezione("endfile", lambda v: "%{shared:crtendS.o%s} %{!shared:" + v + "}")
@@ -71,5 +92,5 @@ if sys.argv[1] == "si":
     sezione("libgcc", lambda v: "%{static|static-libgcc:" + v + "} %{!static:%{!static-libgcc:"
             "--push-state --as-needed -lgcc_s --pop-state " + v + "}}")
 sys.stdout.write(t)
-' "$GCC_S" > "$DIR/specs" || exit 1
+' "$GCC_S" "$LIBSYS" > "$DIR/specs" || exit 1
 echo "specs-condivise: $DIR/specs (-shared allowed)"

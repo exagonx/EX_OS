@@ -67,6 +67,14 @@ int fesetenv(const fenv_t *envp);
 int feupdateenv(const fenv_t *envp);
 int feenableexcept(int excepts);
 int fedisableexcept(int excepts);
+/* fegetexcept (7 November 2026, Mesa): the exceptions that trap, read from
+ * the x87 control word (a set mask bit = masked = does not trap). */
+static __inline int fegetexcept(void)
+{
+    unsigned short cw;
+    __asm__ __volatile__ ("fnstcw %0" : "=m"(cw));
+    return (~cw) & FE_ALL_EXCEPT;
+}
 
 #ifdef __cplusplus
 }

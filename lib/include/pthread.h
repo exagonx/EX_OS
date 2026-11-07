@@ -212,6 +212,37 @@ int   pthread_setspecific(pthread_key_t k, const void *valore);
  * that unlocks its mutex. Run by pop(1) only, as before 3 November 2026, the
  * thread died holding the lock and VLC never quit at the end of a file. A
  * pair opens and closes one block, as POSIX allows the macros to do. */
+/* --- barriers (7 November 2026, Mesa): see lib/libc_gnu.c ------------------------ */
+typedef struct {
+    pthread_mutex_t m;
+    pthread_cond_t  c;
+    unsigned int    quanti, arrivati, giro;
+} pthread_barrier_t;
+typedef struct { int condiviso; } pthread_barrierattr_t;
+#define PTHREAD_BARRIER_SERIAL_THREAD  (-1)
+#ifndef PTHREAD_PROCESS_PRIVATE
+#define PTHREAD_PROCESS_PRIVATE 0
+#define PTHREAD_PROCESS_SHARED  1
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
+int pthread_barrierattr_init(pthread_barrierattr_t *a);
+int pthread_barrierattr_destroy(pthread_barrierattr_t *a);
+int pthread_barrierattr_getpshared(const pthread_barrierattr_t *a, int *v);
+int pthread_barrierattr_setpshared(pthread_barrierattr_t *a, int v);
+int pthread_barrier_init(pthread_barrier_t *b, const pthread_barrierattr_t *a, unsigned int quanti);
+int pthread_barrier_destroy(pthread_barrier_t *b);
+int pthread_barrier_wait(pthread_barrier_t *b);
+/* processors and the thread's CPU clock: processor 0 only, see <sched.h> */
+#include "sched.h"
+int pthread_getaffinity_np(pthread_t t, size_t dim, cpu_set_t *s);
+int pthread_setaffinity_np(pthread_t t, size_t dim, const cpu_set_t *s);
+int pthread_getcpuclockid(pthread_t t, int *orologio);
+#ifdef __cplusplus
+}
+#endif
+
 struct exos_pulizia {
     void (*fn)(void *);
     void *arg;

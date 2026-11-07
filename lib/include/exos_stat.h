@@ -28,6 +28,9 @@ struct stat {
     time_t          st_atime;   /* = st_mtime: non si tiene l'ultimo accesso */
     time_t          st_mtime;
     time_t          st_ctime;   /* = st_mtime */
+    /* (7/11/2026, Mesa) at the end, so the fields before keep their place:
+     * the identity of a character device (st_ino), 0 for every other file */
+    dev_t           st_rdev;
 };
 
 /* The same with a 64-bit st_size: stat64() and the others fill it; with
@@ -46,6 +49,7 @@ struct stat64 {
     time_t          st_atime;
     time_t          st_mtime;
     time_t          st_ctime;
+    dev_t           st_rdev;
 };
 
 #endif /* EXOS_STAT_H */

@@ -85,9 +85,14 @@ lib_per() {
     # a hidden function each shared object must carry (glibc keeps it in
     # libc_nonshared.a): $NONSHARED calls the libc's __stack_chk_fail, and
     # goes into every 32-bit .so (lib_condivisa; FFmpeg's --extra-ldsoflags)
+    # ! WEAK (7 November 2026, Mesa): meson can only pass it in c_link_args,
+    # which also link the executables of its tests against libc.a, where
+    # __stack_chk_fail_local exists too: "multiple definition", and every
+    # check that links failed (Mesa read it as "atomics need -latomic").
+    # Weak, the libc's wins in a program and this one stays in a .so.
     NONSHARED=""
     if [ "$BIT" = 32 ]; then
-        printf 'extern void __stack_chk_fail(void);\n__attribute__((visibility("hidden"))) void __stack_chk_fail_local(void) { __stack_chk_fail(); }\n' > "$B/nonshared.c"
+        printf 'extern void __stack_chk_fail(void);\n__attribute__((weak, visibility("hidden"))) void __stack_chk_fail_local(void) { __stack_chk_fail(); }\n' > "$B/nonshared.c"
         "$CROSS/bin/$T-gcc" -O2 -fPIC -fno-stack-protector -c "$B/nonshared.c" -o "$B/nonshared.o" || exit 1
         NONSHARED="$B/nonshared.o"
     fi

@@ -24,6 +24,45 @@
 
 #include "exlib.h"
 
+#if defined(__x86_64__)
+/* ! AT 64 BIT THE LIBRARIES ARE ORDINARY ELF SHARED OBJECTS (6 November
+ * 2026), opened by the libc's dlopen (lib/libc_dl.c) like exjs.so and
+ * quickjs.so (lib/exjs/exjs_stub.c). Until then this file made the 32-bit
+ * SYS_LIB_APRI call with a truncated pointer, it always failed, and every
+ * program lost what lives in eximg.so and exfont.so: a JPG or PNG wallpaper,
+ * the images in Immagini, Pennello and EXBrowser, the TrueType fonts. The
+ * handle stands in for the ExLibTesta pointer: callers only pass it back to
+ * exlib_simbolo. A .so has no __lib_avvio to call: it takes the libc from the
+ * program that opens it (lib/libc_esportati.h). */
+void *dlopen(const char *nome, int flag);
+void *dlsym(void *h, const char *nome);
+#define EXLIB_RTLD_NOW 2
+
+const ExLibTesta *exlib_apri(const char *percorso)
+{
+    if (percorso == 0 || percorso[0] == '\0') return 0;
+    return (const ExLibTesta *)dlopen(percorso, EXLIB_RTLD_NOW);
+}
+
+const ExLibTesta *exlib_apri_fra(const char *const *percorsi, int quanti)
+{
+    int i;
+
+    for (i = 0; i < quanti; i++) {
+        const ExLibTesta *t = exlib_apri(percorsi[i]);
+        if (t) return t;
+    }
+    return 0;
+}
+
+void *exlib_simbolo(const ExLibTesta *t, const char *nome)
+{
+    if (t == 0 || nome == 0) return 0;
+    return dlsym((void *)t, nome);
+}
+
+#else /* 32 bit: EX-OS libraries, mapped by the kernel */
+
 #define SYS_LIB_APRI    248
 
 static inline int syscall1(int n, unsigned int a)
@@ -109,3 +148,5 @@ void *exlib_simbolo(const ExLibTesta *t, const char *nome)
 
     return 0;
 }
+
+#endif /* __x86_64__ */

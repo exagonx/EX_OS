@@ -98,6 +98,7 @@ CAMPO(stat_blocks,      struct stat, st_blocks)
 CAMPO(stat_atime,       struct stat, st_atime)
 CAMPO(stat_mtime,       struct stat, st_mtime)
 CAMPO(stat_ctime,       struct stat, st_ctime)
+CAMPO(stat_rdev,        struct stat, st_rdev)
 
 DIM(timeval,            struct timeval)
 CAMPO(timeval_sec,      struct timeval, tv_sec)

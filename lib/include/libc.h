@@ -78,6 +78,17 @@ typedef long long           off_t;
 #define EXOS_LFS(nome)
 typedef long                off_t;
 #endif
+/* ! stat, lstat, fstat AND THEIR *64 HAVE A SECOND SYMBOL since 7 November
+ * 2026: struct stat grew st_rdev at the end (exos_stat.h), and code compiled
+ * before passes the shorter struct to the old names, which keep filling only
+ * that. New code is sent here to __exos_stat2, __exos_stat64_2 & c. (with
+ * _FILE_OFFSET_BITS=64 at 32 bit, to the *64 ones). See the end of
+ * lib/libc.c. */
+#if defined(EXOS_OFF64)
+#define EXOS_STAT2(nome)    __asm__("__exos_" #nome "64_2")
+#else
+#define EXOS_STAT2(nome)    __asm__("__exos_" #nome "2")
+#endif
 typedef long long           off64_t;
 typedef unsigned int        mode_t;
 typedef unsigned int        dev_t;
@@ -193,6 +204,9 @@ char   *strdup(const char *s);
 /* strndup, bzero (5 November 2026): ported software, static libc only. */
 char   *strndup(const char *s, size_t n);
 void    bzero(void *p, size_t n);
+/* stpcpy, stpncpy (7 November 2026, Mesa): POSIX 2008, static libc only. */
+char   *stpcpy(char *d, const char *s);
+char   *stpncpy(char *d, const char *s, size_t n);
 char   *strtok(char *s, const char *sep);
 char   *strtok_r(char *s, const char *sep, char **stato);
 size_t  strspn(const char *s, const char *accetta);
@@ -398,6 +412,16 @@ int     vsnprintf(char *buf, size_t dim, const char *fmt, __builtin_va_list args
  * -1 without memory. Ported software, static libc only. */
 int     asprintf(char **out, const char *fmt, ...);
 int     vasprintf(char **out, const char *fmt, __builtin_va_list ap);
+/* open_memstream, getline, getdelim (7 November 2026, Mesa): POSIX 2008,
+ * static libc only. See lib/libc_gnu.c. */
+FILE   *open_memstream(char **dove, size_t *quanti);
+ssize_t getline(char **riga, size_t *dim, FILE *f);
+ssize_t getdelim(char **riga, size_t *dim, int delim, FILE *f);
+/* qsort_r (GNU order: the context last), reallocarray, secure_getenv */
+void    qsort_r(void *base, size_t n, size_t dim,
+                int (*cmp)(const void *, const void *, void *), void *ctx);
+void   *reallocarray(void *p, size_t n, size_t dim);
+char   *secure_getenv(const char *nome);
 
 /* Stdlib */
 int     atoi(const char *s);
@@ -723,6 +747,7 @@ int     getpt(void);
 /* argv[0] del programma, come l'ha ricevuto main (lo mette l'avvio,
  * lib/libc_avvio.c). Il nome e' quello di glibc. */
 extern char *program_invocation_name;
+extern char *program_invocation_short_name;   /* without the directory */
 int     sched_yield(void);
 
 /* =============================================================================
@@ -2037,10 +2062,10 @@ int     chmod(const char *path, mode_t modo);
 int     fchmod(int fd, mode_t modo);
 mode_t  umask(mode_t maschera);
 
-int     stat(const char *path, struct stat *st) EXOS_LFS(stat);
+int     stat(const char *path, struct stat *st) EXOS_STAT2(stat);
 /* Identica a stat: EX-OS non ha collegamenti simbolici, quindi non c'e'
  * niente da non seguire. C'e' perche' il codice di terzi la nomina. */
-int     lstat(const char *path, struct stat *st) EXOS_LFS(lstat);
+int     lstat(const char *path, struct stat *st) EXOS_STAT2(lstat);
 int     statraw(const char *path, Stat *st);
 
 /* fstat() lavora su un file APERTO. Per un file la risposta e' quella di
@@ -2048,13 +2073,13 @@ int     statraw(const char *path, Stat *st);
  * dal kernel (SYS_FSTAT, dal 0.228). Per console e pipe, e su un kernel
  * piu' vecchio, c'e' solo la dimensione: st_mode dice "file regolare",
  * st_ino e i tempi valgono zero. */
-int     fstat(int fd, struct stat *st) EXOS_LFS(fstat);
+int     fstat(int fd, struct stat *st) EXOS_STAT2(fstat);
 /* the same with a 64-bit st_size (struct stat64, exos_stat.h): what stat,
  * lstat, fstat are with _FILE_OFFSET_BITS=64 on the 32-bit system */
 struct stat64;
-int     stat64(const char *path, struct stat64 *st);
-int     lstat64(const char *path, struct stat64 *st);
-int     fstat64(int fd, struct stat64 *st);
+int     stat64(const char *path, struct stat64 *st) __asm__("__exos_stat64_2");
+int     lstat64(const char *path, struct stat64 *st) __asm__("__exos_lstat64_2");
+int     fstat64(int fd, struct stat64 *st) __asm__("__exos_fstat64_2");
 /* Dimensione di un file APERTO, lasciando la posizione dov'era.
  * Non c'e' una syscall fstat: si compone di due lseek. */
 long    fsize(int fd);
@@ -2733,6 +2758,26 @@ int     sigismember(const sigset_t *s, int sig);
 
 char   *setlocale(int categoria, const char *nome);
 
+/* Locale objects (7 November 2026, Mesa): there is one locale, "C", so one
+ * object; newlocale refuses any other name with ENOENT. Static libc only. */
+#define LC_CTYPE_MASK     (1 << LC_CTYPE)
+#define LC_NUMERIC_MASK   (1 << LC_NUMERIC)
+#define LC_TIME_MASK      (1 << LC_TIME)
+#define LC_COLLATE_MASK   (1 << LC_COLLATE)
+#define LC_MONETARY_MASK  (1 << LC_MONETARY)
+#define LC_MESSAGES_MASK  (1 << LC_MESSAGES)
+#define LC_ALL_MASK       (LC_CTYPE_MASK | LC_NUMERIC_MASK | LC_TIME_MASK | \
+                           LC_COLLATE_MASK | LC_MONETARY_MASK | LC_MESSAGES_MASK)
+typedef struct __exos_locale *locale_t;
+#define LC_GLOBAL_LOCALE  ((locale_t)-1L)
+locale_t    newlocale(int maschera, const char *nome, locale_t base);
+locale_t    duplocale(locale_t l);
+void        freelocale(locale_t l);
+locale_t    uselocale(locale_t l);
+double      strtod_l(const char *s, char **fine, locale_t l);
+float       strtof_l(const char *s, char **fine, locale_t l);
+long double strtold_l(const char *s, char **fine, locale_t l);
+
 /* =============================================================================
  * struct lconv, localeconv — le convenzioni numeriche della locale
  *
@@ -2935,6 +2980,14 @@ struct rusage {
 };
 
 int getrusage(int chi, struct rusage *uso);
+
+/* getpriority, setpriority (7 November 2026, Mesa): EX-OS has one priority,
+ * 0. setpriority to anything else fails with EACCES. Static libc only. */
+#define PRIO_PROCESS 0
+#define PRIO_PGRP    1
+#define PRIO_USER    2
+int getpriority(int quale, unsigned int chi);
+int setpriority(int quale, unsigned int chi, int prio);
 
 /* wait4: waitpid with the child's resource use - EX-OS keeps none, so *uso
  * comes back zeroed (16 October 2026, LLVM's Program.inc). */

@@ -193,6 +193,21 @@ if [ $# -eq 0 ]; then
     mkdir -p "$SOD"
     CFPIC=$(echo "$CF" | sed 's/-fno-pic -fno-pie/-fPIC/; s/-fstack-protector-strong -mstack-protector-guard=global/-fno-stack-protector/')
     LDSO="ld -m elf_x86_64 -shared --gc-sections -z max-page-size=4096 -z noexecstack"
+    # eximg.so (PNG, JPG, GIF, ICO, WebP) and exfont.so (TrueType), 6 November
+    # 2026: the same sources as the 32-bit Makefile, without the *_esporta.c
+    # table. The toolkit opens them through lib/exlib/exlib.c, which at 64 bit
+    # is dlopen; before they existed a JPG wallpaper was not read.
+    for l in "eximg:lib/eximg/eximg.c lib/eximg/png.c lib/eximg/ico.c lib/eximg/jpg.c lib/eximg/gif.c lib/eximg/bmp.c lib/eximg/inflate.c lib/eximg/webp.c lib/eximg/vp8.c" \
+             "exfont:lib/exfont/exfont_ttf.c lib/exfont/ttf.c lib/exfont/raster.c"; do
+        n=${l%%:*}; ogg=""; ok=1; r="$REG/$n.so.log"; : > "$r"
+        for s in ${l#*:}; do
+            o="$OGG/so_${n}_$(basename "$s" .c).o"
+            gcc $CFPIC -Ilib/include -Ilib/$n -c "$s" -o "$o" >> "$r" 2>&1 || { ok=0; break; }
+            ogg="$ogg $o"
+        done
+        [ $ok -eq 1 ] && $LDSO -soname $n.so -o "$SOD/$n.so" $ogg >> "$r" 2>&1 && echo "librerie: $SOD/$n.so" ||
+            echo "  $n.so NON costruita ($r)"
+    done
     ogg=""; ok=1; r="$REG/exjs.so.log"; : > "$r"
     for s in lib/exjs/*.c; do
         case "$s" in *_stub.c|*_fisso.c|*_esporta.c) continue ;; esac

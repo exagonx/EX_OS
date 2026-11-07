@@ -390,6 +390,58 @@ The program manager collects the programs it starts (pm 0.027): up to 0.026 ever
 launched from the menu or the desktop stayed a zombie under `pm` once closed, for the whole
 session (seen on the laptop: `exilla` and `exvolume`). Now `pm` collects them every 2 seconds.
 
+At 64 bit a JPG or PNG wallpaper was not read, and neither were the images in Immagini,
+Pennello and EXBrowser or the TrueType fonts: only BMP and the 8x16 system font were left.
+The toolkit opens `/exwin/lib/eximg.so` and `/exwin/lib/exfont.so` when it needs them, but at
+64 bit those two files were never built, and the loader (`lib/exlib/exlib.c`) still made the
+32-bit call. Now they are ordinary ELF shared objects, built like `exjs.so`, and the loader
+opens them with `dlopen`. Tried in QEMU at 64 bit: a JPG wallpaper from `pm.cfg`, JPG and PNG
+in Immagini, the TrueType fonts in Prova font. On a machine already installed:
+`netupdate -check -yes` brings the two libraries and the programs (see `help problemi`).
+
+What Mesa asks of the libc (voce 88, the way to OpenGL and WebGL), in `lib/libc_gnu.c`, static
+libc only, as the software ported to EX-OS links it: `open_memstream`, `getline`,
+`getdelim`; `pthread_barrier_*`; the locale objects `newlocale`, `uselocale`, `duplocale`,
+`freelocale` with `strtod_l`, `strtof_l`, `strtold_l`; `stpcpy`, `stpncpy`, `qsort_r` (the
+GNU order), `reallocarray`, `secure_getenv`; `sched_getaffinity`, `sched_setaffinity`,
+`sched_getcpu` and the `cpu_set_t` macros, `pthread_getaffinity_np`,
+`pthread_setaffinity_np`, `pthread_getcpuclockid`; `getpriority`, `setpriority`; `fegetexcept`;
+`program_invocation_short_name`. They say what EX-OS is: one locale ("C"; any other name
+fails with ENOENT), programs on processor 0 (a set without it fails with EINVAL), one priority
+(0; another fails with EACCES). On the way: the libc kept at most 16 open streams in its list,
+and `exit()` did not flush the 17th and later ones: a program that wrote a file without
+`fclose` lost its end. Now the list has no ceiling.
+
+`struct stat` has `st_rdev` (POSIX; Mesa hashes descriptors with it): for a character device
+(`/dev/null`, `/dev/ptmx`, `/dev/pts/N`) it is the device's identity, the same as `st_ino`; 0
+for every other file. The field is at the end, and the struct grew: code compiled before
+(libstdc++, openssl, ffmpeg and the other libraries already in the sysroots) passes the old,
+shorter struct. So, as glibc does, `stat`, `lstat`, `fstat` and their `*64` have two symbols:
+the headers send new code to `__exos_stat2` and the others, which fill the whole struct; the
+old names stay and fill only up to `st_ctime`. Nothing has to be rebuilt, and a library rebuilt
+later moves to the new names by itself. `tools/abi-bersaglio.c` has the new field.
+`tools/prova-gnu/prova-gnu.sh` (18 checks, the last two on `st_rdev` and the old symbol)
+passes at 32 and 64 bit in QEMU.
+
+Mesa 26.2.6 for EX-OS (voce 88): `tools/mesa-exos/costruisci.sh [32|64]` builds `libEGL.so.1`
+and `libGLESv2.so.2` with the softpipe driver, from the signed archive plus
+`tools/mesa-exos/exos-26.2.6.patch`, the "exos" platform: system `exos` in meson, an EGL
+driver with surfaces in memory (pbuffer and surfaceless; ExWin windows come later), a winsys
+for them, Haiku's hgl frontend made portable. `tools/mesa-exos/prova-egl.sh [32|64]` links a
+program to the two libraries, puts it in EX-OS under QEMU with the shared objects its
+DT_NEEDED asks for, and draws a triangle with GLSL ES shaders: 8/8 at 32 and 64 bit,
+"softpipe | OpenGL ES 3.1 Mesa 26.2.6". The libraries are in the sysroots, not yet on the CD.
+
+Two faults of the cross toolchain found on the way, both in `tools/gcc-exos/specs-condivise.sh`
+(run it again on a toolchain built before 7 November 2026): ld looked for the DT_NEEDED of a
+shared object in its own SEARCH_DIR, which is the directory where the toolchain was built (on
+another machine): "libz.so.1 ... not found" and every symbol of it undefined. And at 32 bit,
+with no sysroot, ld took the host's `/lib32/libstdc++.so.6` (glibc's) through the host's
+`/etc/ld.so.conf`: "undefined reference to `_Unwind_Resume@GCC_3.0`". The specs now give ld
+`-rpath-link` and `--sysroot` on the toolchain's own target directory. And in
+`tools/librerie-exos/comune.sh` the 32-bit `__stack_chk_fail_local` for shared objects is weak:
+meson passes it to every link, executables too, where libc.a has it already.
+
 ### Fewer FLUSH: the journal does not commit at every operation (kernel 0.307)
 
 ext3 and ext4 commit at `fsync`, `sync` and unmount, when the journal is half

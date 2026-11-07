@@ -814,6 +814,12 @@ Se ne accorge la verifica di Apache. Riparazione, da root:
   netupdate -check -yes                  porta netupdate 0.045 o piu'
   netupdate -permessi                    rimette il bit a quei programmi
 
+A 64 BIT LO SFONDO JPG O PNG NON SI VEDE, Immagini dice che il file non
+si legge, i font TrueType non ci sono. Mancavano /exwin/lib/eximg.so ed
+/exwin/lib/exfont.so a 64 bit (ls /exwin/lib). Riparazione, da root:
+  netupdate -check -yes                  porta le due librerie e i programmi
+Poi si esce da exwin e si rientra. Il BMP si e' sempre letto.
+
 [install]
 installa EX-OS su un disco, o gli strumenti dal CD
 

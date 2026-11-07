@@ -124,6 +124,7 @@ typedef struct _FILE FILE;
  * avviso: e' un errore (vedi KERNEL_CORE_NOTES.md). */
 void   *malloc(size_t size);
 void    free(void *ptr);
+void   *realloc(void *ptr, size_t size);
 size_t  strlen(const char *s);
 void   *memcpy(void *dst, const void *src, size_t n);
 void   *memset(void *dst, int c, size_t n);
@@ -570,6 +571,21 @@ typedef struct __dir DIR;
 /* Dichiarazioni anticipate: queste funzioni sono definite piu' in basso
  * ma servono qui sopra (mkstemp usa access, rename usa unlink, raise usa
  * strsignal). In un file solo l'ordine non puo' accontentare tutti. */
+/* ! THE stat FUNCTIONS HAVE TWO NAMES SINCE 7 NOVEMBER 2026 (st_rdev, for
+ * Mesa). struct stat grew one field at the end; code compiled before (the
+ * libraries in the sysroots: libstdc++, openssl, ffmpeg...) passes the old,
+ * shorter struct to `stat`, and must keep getting only that. So, as glibc
+ * does with its versioned symbols: the headers send new code to
+ * __exos_stat2 & c. (EXOS_STAT2 in lib/include/libc.h), which fill the whole
+ * struct; the old names stay, at the end of this file, and copy only the
+ * fields that were there before. Inside the libc every call and definition
+ * below goes to the new names through these macros. */
+#define stat(p, s)      __exos_stat2(p, s)
+#define lstat(p, s)     __exos_lstat2(p, s)
+#define fstat(f, s)     __exos_fstat2(f, s)
+#define stat64(p, s)    __exos_stat64_2(p, s)
+#define lstat64(p, s)   __exos_lstat64_2(p, s)
+#define fstat64(f, s)   __exos_fstat64_2(f, s)
 extern char **environ;
 struct stat;
 int         stat(const char *path, struct stat *st);
@@ -1058,6 +1074,7 @@ struct stat {
     time_t          st_atime;
     time_t          st_mtime;
     time_t          st_ctime;
+    dev_t           st_rdev;    /* (7/11/2026) lib/include/exos_stat.h */
 };
 
 /* struct stat with a 64-bit st_size: stat64 & c. (lib/include/exos_stat.h) */
@@ -1074,6 +1091,7 @@ struct stat64 {
     time_t          st_atime;
     time_t          st_mtime;
     time_t          st_ctime;
+    dev_t           st_rdev;    /* (7/11/2026) lib/include/exos_stat.h */
 };
 
 /* Console virtuali — deve restare identica a kernel/include/syscall.h
@@ -1814,6 +1832,12 @@ struct _FILE {
     volatile int    lucch;      /* the three-state futex, 0 = free     */
     unsigned int    padrone;    /* thread holding it, 0 = nobody       */
     int             conta;      /* how many times it holds it          */
+    /* open_memstream (7 November 2026, lib/libc_gnu.c): when mem_dove is
+     * set the stream writes into mem instead of a descriptor. */
+    char          **mem_dove;   /* the caller's pointer to the bytes   */
+    size_t         *mem_quanti; /* the caller's count                  */
+    char           *mem;        /* the bytes, always '\0'-terminated   */
+    size_t          mem_cap, mem_fine, mem_pos;
 };
 
 #define STDIN_BUF_SIZE  512     /* quanto una riga del driver kbd */
@@ -1835,9 +1859,13 @@ FILE *stderr = &f_stderr;
  * scrive un file e poi chiama exit() senza fclose() deve trovare il file
  * scritto: e' la trappola classica dei buffer, e la si chiude qui invece
  * di chiederlo a ogni chiamante. */
-#define MAX_FLUSSI  16
-static FILE *flussi[MAX_FLUSSI];
-static int   n_flussi = 0;
+/* ! NO CEILING ON OPEN STREAMS (7 November 2026). The list had 16 places,
+ * and the 17th stream opened was not in it: exit() did not flush it, and a
+ * program that wrote a file without fclose lost the end of it. Now it grows
+ * with the streams; if malloc fails the stream works, unlisted, as before. */
+static FILE **flussi = 0;
+static int    n_flussi = 0;
+static int    cap_flussi = 0;
 
 /* =============================================================================
  * ! EVERY STREAM HAS ITS LOCK (24 October 2026, kernel 0.277).
@@ -1907,7 +1935,12 @@ void funlockfile(FILE *f)
 static void registra_flusso(FILE *f)
 {
     mutex_prendi(&g_flussi_m);
-    if (n_flussi < MAX_FLUSSI) flussi[n_flussi++] = f;
+    if (n_flussi == cap_flussi) {
+        int    nuova = cap_flussi ? cap_flussi * 2 : 16;
+        FILE **n = (FILE **)realloc(flussi, (size_t)nuova * sizeof(FILE *));
+        if (n) { flussi = n; cap_flussi = nuova; }
+    }
+    if (n_flussi < cap_flussi) flussi[n_flussi++] = f;
     mutex_lascia(&g_flussi_m);
 }
 
@@ -1926,10 +1959,19 @@ static void dimentica_flusso(FILE *f)
 }
 
 /* Scrive sul descrittore tutto cio' che il buffer ha accumulato. */
+#ifndef EXOS_LIBC_SO
+static int  memstream_scarica(FILE *f);              /* lib/libc_gnu.c */
+static long memstream_dove(FILE *f);
+static int  memstream_vai(FILE *f, long off, int da);
+#endif
+
 static int scarica(FILE *f)
 {
     size_t scritti = 0;
 
+#ifndef EXOS_LIBC_SO
+    if (f->mem_dove) return (f->flag & _F_INSCRIT) ? memstream_scarica(f) : (f->pos = 0, 0);
+#endif
     if (!(f->flag & _F_INSCRIT) || f->pos == 0) { f->pos = 0; return 0; }
 
     while (scritti < f->pos) {
@@ -2227,6 +2269,10 @@ FILE *fdopen(int fd, const char *modo)
     f->lucch   = 0;         /* malloc does not clear it */
     f->padrone = 0;
     f->conta   = 0;
+    f->mem_dove = 0;
+    f->mem_quanti = 0;
+    f->mem = 0;
+    f->mem_cap = f->mem_fine = f->mem_pos = 0;
 
     if (modo[0] == 'r') f->flag |= _F_LETT  | (modo[1] == '+' ? _F_SCRIT : 0);
     if (modo[0] == 'w') f->flag |= _F_SCRIT | (modo[1] == '+' ? _F_LETT  : 0);
@@ -2374,6 +2420,9 @@ long ftell(FILE *f)
     if (f == NULL) return -1;
 
     flockfile(f);
+#ifndef EXOS_LIBC_SO
+    if (f->mem_dove) { dove = memstream_dove(f); funlockfile(f); return dove; }
+#endif
     k = _syscall3(SYS_LSEEK, (uint32_t)f->fd, 0, 1);   /* SEEK_CUR */
     if (k < 0) { funlockfile(f); errno = -k; return -1; }
 
@@ -2395,6 +2444,9 @@ int fseek(FILE *f, long off, int whence)
     if (f == NULL) return -1;
 
     flockfile(f);
+#ifndef EXOS_LIBC_SO
+    if (f->mem_dove) { r = memstream_vai(f, off, whence); funlockfile(f); return r; }
+#endif
     if (f->flag & _F_INSCRIT) {
         if (scarica(f) != 0) { funlockfile(f); return -1; }
         f->flag &= ~(unsigned)_F_INSCRIT;
@@ -11698,6 +11750,7 @@ static void stat_da_grezzo(const Stat *g, struct stat *st)
     }
     st->st_atime = st->st_mtime;
     st->st_ctime = st->st_mtime;
+    st->st_rdev  = (g->st_attr & 0x40) ? (dev_t)g->st_ident : 0;
 }
 
 int stat(const char *path, struct stat *st)
@@ -11791,6 +11844,7 @@ int fstat(int fd, struct stat *st)
     st->st_atime = 0;
     st->st_mtime = 0;
     st->st_ctime = 0;
+    st->st_rdev  = 0;
     return 0;
 }
 
@@ -17155,6 +17209,7 @@ static void stat_a_64(const struct stat *s, struct stat64 *d)
     d->st_atime   = s->st_atime;
     d->st_mtime   = s->st_mtime;
     d->st_ctime   = s->st_ctime;
+    d->st_rdev    = s->st_rdev;
 }
 
 int stat64(const char *path, struct stat64 *st)
@@ -17227,5 +17282,61 @@ int asprintf(char **out, const char *fmt, ...)
 }
 
 void bzero(void *p, size_t n) { memset(p, 0, n); }
+#include "libc_gnu.c"        /* what Mesa asks (voce 88): static libc only */
 #include "libc_avvio.c"
+#endif
+
+/* The old names of the stat functions, for code compiled before st_rdev:
+ * the struct it passes ends at st_ctime (see the macros at the top). */
+#undef stat
+#undef lstat
+#undef fstat
+#undef stat64
+#undef lstat64
+#undef fstat64
+#define STAT_VECCHIA    __builtin_offsetof(struct stat, st_rdev)
+#define STAT64_VECCHIA  __builtin_offsetof(struct stat64, st_rdev)
+int stat(const char *path, struct stat *st)
+{
+    struct stat n;
+    int r = __exos_stat2(path, &n);
+    if (r == 0) memcpy(st, &n, STAT_VECCHIA);
+    return r;
+}
+int lstat(const char *path, struct stat *st)
+{
+    struct stat n;
+    int r = __exos_lstat2(path, &n);
+    if (r == 0) memcpy(st, &n, STAT_VECCHIA);
+    return r;
+}
+int fstat(int fd, struct stat *st)
+{
+    struct stat n;
+    int r = __exos_fstat2(fd, &n);
+    if (r == 0) memcpy(st, &n, STAT_VECCHIA);
+    return r;
+}
+#ifndef EXOS_LIBC_SO     /* the *64 are in libc.a only, as above */
+int stat64(const char *path, struct stat64 *st)
+{
+    struct stat64 n;
+    int r = __exos_stat64_2(path, &n);
+    if (r == 0) memcpy(st, &n, STAT64_VECCHIA);
+    return r;
+}
+int lstat64(const char *path, struct stat64 *st)
+{
+    struct stat64 n;
+    int r = __exos_lstat64_2(path, &n);
+    if (r == 0) memcpy(st, &n, STAT64_VECCHIA);
+    return r;
+}
+int fstat64(int fd, struct stat64 *st)
+{
+    struct stat64 n;
+    int r = __exos_fstat64_2(fd, &n);
+    if (r == 0) memcpy(st, &n, STAT64_VECCHIA);
+    return r;
+}
 #endif

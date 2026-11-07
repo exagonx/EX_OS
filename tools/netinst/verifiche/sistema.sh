@@ -13,6 +13,23 @@
 # the boot sector still pointed there (voce 75, 4 November 2026).
 # =============================================================================
 !silenced
+# ! THE IMAGE AND FONT LIBRARIES (6 November 2026): until then the 64-bit
+# system had no /exwin/lib/eximg.so and exfont.so, and a JPG or PNG
+# wallpaper, the images in Immagini and the TrueType fonts were not read.
+# netupdate brings them; if they are still missing after it, it says so.
+# (the EX-OS sh has if, not for: one block per library)
+if [ -f /exwin/bin/pm ]; then
+    if [ ! -f /exwin/lib/eximg.so ]; then
+        echo "  ! Manca /exwin/lib/eximg.so: la scrivania non legge JPG e PNG."
+        echo "    netupdate -check -yes, poi esci da exwin e rientra."
+        exit 1
+    fi
+    if [ ! -f /exwin/lib/exfont.so ]; then
+        echo "  ! Manca /exwin/lib/exfont.so: niente font TrueType."
+        echo "    netupdate -check -yes, poi esci da exwin e rientra."
+        exit 1
+    fi
+fi
 if [ "$NETUPDATE_RIAVVIO" = 1 ]; then
     exit 0
 fi

@@ -1,0 +1,945 @@
+diff --git a/include/EGL/eglplatform.h b/include/EGL/eglplatform.h
+index 6786afd90b6..0f7703d3ca1 100644
+--- a/include/EGL/eglplatform.h
++++ b/include/EGL/eglplatform.h
+@@ -119,6 +119,14 @@ typedef Display *EGLNativeDisplayType;
+ typedef Pixmap   EGLNativePixmapType;
+ typedef Window   EGLNativeWindowType;
+ 
++#elif defined(__EXOS__)
++
++/* EX-OS: Mesa's "exos" platform. Only pbuffer and surfaceless for now; the
++ * window will be an ExWin window, passed as a pointer-sized value. */
++typedef void             *EGLNativeDisplayType;
++typedef khronos_uintptr_t EGLNativePixmapType;
++typedef khronos_uintptr_t EGLNativeWindowType;
++
+ #elif defined(__unix__)
+ 
+ typedef void             *EGLNativeDisplayType;
+diff --git a/meson.build b/meson.build
+index 37f2fd47925..59ad57a42c9 100644
+--- a/meson.build
++++ b/meson.build
+@@ -197,7 +197,7 @@ if gallium_drivers.contains('auto')
+     endif
+   elif ['windows'].contains(host_machine.system())
+     gallium_drivers = ['llvmpipe', 'softpipe', 'zink', 'd3d12']
+-  elif ['darwin', 'cygwin', 'haiku'].contains(host_machine.system())
++  elif ['darwin', 'cygwin', 'haiku', 'exos'].contains(host_machine.system())
+     gallium_drivers = ['llvmpipe', 'softpipe']
+   else
+     error('Unknown OS @0@. Please pass -Dgallium-drivers to set driver options. Patches gladly accepted to fix this.'.format(
+@@ -285,7 +285,7 @@ if _vulkan_drivers.contains('auto')
+       error('Unknown architecture @0@. Please pass -Dvulkan-drivers to set driver options. Patches gladly accepted to fix this.'.format(
+             host_machine.cpu_family()))
+     endif
+-  elif ['darwin', 'windows', 'cygwin', 'haiku'].contains(host_machine.system())
++  elif ['darwin', 'windows', 'cygwin', 'haiku', 'exos'].contains(host_machine.system())
+     # No vulkan driver supports windows or macOS currently
+     _vulkan_drivers = []
+   else
+@@ -471,6 +471,10 @@ if _platforms.contains('auto')
+     _platforms = ['x11']
+   elif host_machine.system() == 'haiku'
+     _platforms = ['haiku']
++  elif host_machine.system() == 'exos'
++    # EX-OS (exos.altervista.org): EGL over a software Gallium driver,
++    # surfaces in memory first, ExWin windows later (voce 88).
++    _platforms = ['exos']
+   elif host_machine.system() == 'windows'
+     _platforms = ['windows']
+   elif host_machine.system() == 'darwin'
+@@ -485,6 +489,7 @@ with_platform_android = _platforms.contains('android')
+ with_platform_x11 = _platforms.contains('x11')
+ with_platform_wayland = _platforms.contains('wayland')
+ with_platform_haiku = _platforms.contains('haiku')
++with_platform_exos = _platforms.contains('exos')
+ with_platform_windows = _platforms.contains('windows')
+ with_platform_macos = _platforms.contains('macos')
+ 
+@@ -517,7 +522,7 @@ if with_glx == 'auto'
+     with_glx = 'disabled'
+   elif with_dri
+     with_glx = 'dri'
+-  elif with_platform_haiku
++  elif with_platform_haiku or with_platform_exos
+     with_glx = 'disabled'
+   elif host_machine.system() == 'windows'
+     with_glx = 'disabled'
+@@ -559,7 +564,7 @@ with_xlib_lease = get_option('xlib-lease') \
+   .allowed()
+ 
+ with_egl = get_option('egl') \
+-  .require(with_platform_windows or with_platform_haiku or with_dri or with_platform_android, error_message : 'EGL requires DRI, Haiku, Windows or Android') \
++  .require(with_platform_windows or with_platform_haiku or with_platform_exos or with_dri or with_platform_android, error_message : 'EGL requires DRI, Haiku, EX-OS, Windows or Android') \
+   .require(with_glx != 'xlib', error_message :'EGL requires DRI, but GLX is being built with xlib support') \
+   .disable_auto_if(with_platform_haiku) \
+   .allowed()
+@@ -1249,7 +1254,7 @@ if cc.has_function('fmemopen')
+ endif
+ 
+ # TODO: this is very incomplete
+-if ['linux', 'cygwin', 'gnu', 'freebsd', 'gnu/kfreebsd', 'haiku', 'android', 'managarm'].contains(host_machine.system())
++if ['linux', 'cygwin', 'gnu', 'freebsd', 'gnu/kfreebsd', 'haiku', 'android', 'managarm', 'exos'].contains(host_machine.system())
+   pre_args += '-D_GNU_SOURCE'
+ elif host_machine.system() == 'sunos'
+   pre_args += '-D__EXTENSIONS__'
+diff --git a/meson.options b/meson.options
+index 93a60e3047b..ae99d434906 100644
+--- a/meson.options
++++ b/meson.options
+@@ -12,7 +12,7 @@ option(
+   type : 'array',
+   value : ['auto'],
+   choices : [
+-    'auto', 'x11', 'wayland', 'haiku', 'android', 'windows', 'macos',
++    'auto', 'x11', 'wayland', 'haiku', 'android', 'windows', 'macos', 'exos',
+   ],
+   description : 'window systems to support. If this is set to `auto`, all ' +
+                 'platforms applicable will be enabled.'
+diff --git a/src/egl/meson.build b/src/egl/meson.build
+index 4e62ee41e4e..e6ce4af7ab6 100644
+--- a/src/egl/meson.build
++++ b/src/egl/meson.build
+@@ -149,6 +149,20 @@ elif with_platform_haiku
+ 
+   link_for_egl += [libmesa, libgallium, libswhgl, libsthgl, libglapi]
+   deps_for_egl += [cpp.find_library('be'), driver_swrast]
++elif with_platform_exos
++  # EX-OS: the Haiku arrangement in C (drivers/exos/egl_exos.c), the generic
++  # hgl glue of frontends/hgl and a software winsys with buffers in memory.
++  c_args_for_egl += [
++    '-D_EGL_BUILT_IN_DRIVER_EXOS',
++  ]
++  files_egl += files('drivers/exos/egl_exos.c')
++
++  incs_for_egl += [inc_gallium, inc_gallium_aux, inc_gallium_drivers, inc_gallium_winsys, inc_gallium_winsys_sw]
++  incs_for_egl += [inc_mesa]
++  incs_for_egl += [include_directories('../gallium/frontends/hgl')]
++
++  link_for_egl += [libmesa, libgallium, libswexos, libsthgl, libglapi]
++  deps_for_egl += [driver_swrast]
+ elif with_platform_windows
+   c_args_for_egl += [
+     '-DEGLAPI=', '-DPUBLIC='
+@@ -185,6 +199,11 @@ if with_ld_version_script
+       '-Wl,--version-script', join_paths(meson.current_source_dir(), 'egl-glvnd.sym')
+     ]
+     link_deps_for_egl += files('egl-glvnd.sym')
++  elif with_platform_exos
++    link_args_for_egl += [
++      '-Wl,--version-script', join_paths(meson.current_source_dir(), 'egl-exos.sym')
++    ]
++    link_deps_for_egl += files('egl-exos.sym')
+   else
+     link_args_for_egl += [
+       '-Wl,--version-script', join_paths(meson.current_source_dir(), 'egl.sym')
+@@ -224,6 +243,10 @@ libegl = shared_library(
+   vs_module_defs : egl_def
+ )
+ 
++if with_platform_exos
++  shared_glapi_lib = libegl   # libGLESv2 dispatches through it
++endif
++
+ if with_glvnd
+   configure_file(
+     configuration: {'library_path' : 'libEGL_@0@.so.0'.format(glvnd_vendor_name)},
+diff --git a/src/gallium/frontends/hgl/hgl.c b/src/gallium/frontends/hgl/hgl.c
+index 308b245d0b8..42f96decb11 100644
+--- a/src/gallium/frontends/hgl/hgl.c
++++ b/src/gallium/frontends/hgl/hgl.c
+@@ -263,6 +263,16 @@ hgl_destroy_st_framebuffer(struct hgl_buffer *buffer)
+ 
+ struct hgl_context*
+ hgl_create_context(struct hgl_display *display, struct st_visual* visual, struct st_context* shared)
++{
++	return hgl_create_context_api(display, visual, shared, API_OPENGL_COMPAT, 1, 0);
++}
++
++
++/* The API and version EGL was asked for (EX-OS): OpenGL ES 2/3 for WebGL,
++ * not only the compatibility profile Haiku always creates. */
++struct hgl_context*
++hgl_create_context_api(struct hgl_display *display, struct st_visual* visual,
++	struct st_context* shared, int profile, int major, int minor)
+ {
+ 	struct hgl_context* context = CALLOC_STRUCT(hgl_context);
+ 	assert(context);
+@@ -271,10 +281,10 @@ hgl_create_context(struct hgl_display *display, struct st_visual* visual, struct
+ 	struct st_context_attribs attribs;
+ 	memset(&attribs, 0, sizeof(attribs));
+ 	attribs.options.force_glsl_extensions_warn = false;
+-	attribs.profile = API_OPENGL_COMPAT;
++	attribs.profile = (gl_api)profile;
+ 	attribs.visual = *visual;
+-	attribs.major = 1;
+-	attribs.minor = 0;
++	attribs.major = major;
++	attribs.minor = minor;
+ 
+ 	enum st_context_error result;
+ 	context->st = st_api_create_context(display->fscreen, &attribs, &result, shared);
+@@ -305,7 +315,7 @@ hgl_destroy_context(struct hgl_context* context)
+ 
+ 
+ void
+-hgl_get_st_visual(struct st_visual* visual, ulong options)
++hgl_get_st_visual(struct st_visual* visual, unsigned long options)
+ {
+ 	CALLED();
+ 
+diff --git a/src/gallium/frontends/hgl/hgl_context.h b/src/gallium/frontends/hgl/hgl_context.h
+index 711e63eaff6..20e885ad7ce 100644
+--- a/src/gallium/frontends/hgl/hgl_context.h
++++ b/src/gallium/frontends/hgl/hgl_context.h
+@@ -38,7 +38,7 @@ extern "C" {
+ 
+ #define CONTEXT_MAX 32
+ 
+-typedef int64 context_id;
++typedef int64_t context_id;   /* int64 is a Haiku type; int64_t everywhere (EX-OS) */
+ 
+ 
+ struct hgl_buffer
+@@ -79,10 +79,12 @@ struct hgl_buffer* hgl_create_st_framebuffer(struct hgl_display *display, struct
+ void hgl_destroy_st_framebuffer(struct hgl_buffer *buffer);
+ 
+ struct hgl_context* hgl_create_context(struct hgl_display *display, struct st_visual* visual, struct st_context* shared);
++/* profile is a gl_api (API_OPENGL_COMPAT, API_OPENGLES2...) */
++struct hgl_context* hgl_create_context_api(struct hgl_display *display, struct st_visual* visual, struct st_context* shared, int profile, int major, int minor);
+ void hgl_destroy_context(struct hgl_context* context);
+ 
+ // hgl visual
+-void hgl_get_st_visual(struct st_visual* visual, ulong options);
++void hgl_get_st_visual(struct st_visual* visual, unsigned long options);
+ 
+ // hgl display
+ struct hgl_display* hgl_create_display(struct pipe_screen* screen);
+diff --git a/src/gallium/meson.build b/src/gallium/meson.build
+index 67011f56b9f..49d3dce7f47 100644
+--- a/src/gallium/meson.build
++++ b/src/gallium/meson.build
+@@ -48,6 +48,9 @@ subdir('winsys/sw/wrapper')
+ if with_platform_haiku
+   subdir('winsys/sw/hgl')
+ endif
++if with_platform_exos
++  subdir('winsys/sw/exos')
++endif
+ if with_gallium_softpipe
+   subdir('drivers/softpipe')
+ else
+@@ -232,7 +235,7 @@ if with_dri
+   subdir('frontends/dri')
+   subdir('targets/dri')
+ endif
+-if with_platform_haiku
++if with_platform_haiku or with_platform_exos
+   subdir('frontends/hgl')
+ endif
+ if with_gallium_st_d3d10umd
+diff --git a/src/meson.build b/src/meson.build
+index c36f44b1397..044fb408b94 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -131,7 +131,8 @@ if with_gallium_or_lvp
+   subdir('gallium')
+ endif
+ # These require libgallium (shared_glapi_lib)
+-if with_gallium and (with_glx != 'disabled' or with_egl)
++# (on EX-OS shared_glapi_lib is libEGL: they come after src/egl, below)
++if with_gallium and (with_glx != 'disabled' or with_egl) and not with_platform_exos
+   if with_gles1 and not with_glvnd
+     subdir('mesa/glapi/es1api')
+   endif
+@@ -160,6 +161,14 @@ endif
+ if with_egl
+   subdir('egl')
+ endif
++if with_platform_exos and with_egl
++  if with_gles1 and not with_glvnd
++    subdir('mesa/glapi/es1api')
++  endif
++  if with_gles2 and not with_glvnd
++    subdir('mesa/glapi/es2api')
++  endif
++endif
+ if with_gallium
+   if with_glx == 'dri' or with_platform_x11
+     subdir('gallium/targets/dril')
+diff --git a/src/util/detect_os.h b/src/util/detect_os.h
+index 74037240c74..64f0bdd84fb 100644
+--- a/src/util/detect_os.h
++++ b/src/util/detect_os.h
+@@ -91,6 +91,12 @@
+ #define DETECT_OS_POSIX 1
+ #endif
+ 
++/* EX-OS: a POSIX system of its own (voce 88) */
++#if defined(__EXOS__)
++#define DETECT_OS_EXOS 1
++#define DETECT_OS_POSIX 1
++#endif
++
+ 
+ /*
+  * Make sure DETECT_OS_* are always defined, so that they can be used with #if
+@@ -116,6 +122,9 @@
+ #ifndef DETECT_OS_HAIKU
+ #define DETECT_OS_HAIKU 0
+ #endif
++#ifndef DETECT_OS_EXOS
++#define DETECT_OS_EXOS 0
++#endif
+ #ifndef DETECT_OS_FUCHSIA
+ #define DETECT_OS_FUCHSIA 0
+ #endif
+diff --git a/src/util/os_misc.c b/src/util/os_misc.c
+index 16dd51bfb08..ffde82cd573 100644
+--- a/src/util/os_misc.c
++++ b/src/util/os_misc.c
+@@ -60,7 +60,7 @@
+ #  include <unistd.h>
+ #  include <android/log.h>
+ #  include <sys/system_properties.h>
+-#elif DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM
++#elif DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS || DETECT_OS_HURD || DETECT_OS_MANAGARM || DETECT_OS_EXOS
+ #  include <unistd.h>
+ #elif DETECT_OS_OPENBSD || DETECT_OS_FREEBSD
+ #  include <sys/resource.h>
+@@ -416,7 +416,7 @@ os_get_total_physical_memory(uint64_t *size)
+ bool
+ os_get_available_system_memory(uint64_t *size)
+ {
+-#if DETECT_OS_LINUX
++#if DETECT_OS_LINUX || DETECT_OS_EXOS   /* EX-OS has /proc/meminfo with MemAvailable */
+    char *meminfo = os_read_file("/proc/meminfo", NULL);
+    if (!meminfo)
+       return false;
+diff --git a/src/egl/drivers/exos/egl_exos.c b/src/egl/drivers/exos/egl_exos.c
+new file mode 100644
+index 00000000000..5c2ab08f725
+--- /dev/null
++++ b/src/egl/drivers/exos/egl_exos.c
+@@ -0,0 +1,393 @@
++/*
++ * Copyright (C) 2026 Graziano Falcone
++ * SPDX-License-Identifier: MIT
++ *
++ * The EGL driver of EX-OS (voce 88), written after the Haiku one
++ * (drivers/haiku/egl_haiku.cpp) in C: a software Gallium screen (softpipe,
++ * later llvmpipe) over the EX-OS winsys (winsys/sw/exos), with the generic
++ * glue of frontends/hgl.
++ *
++ * ! SURFACES IN MEMORY FIRST (the user's choice, 7 November 2026): pbuffers
++ * and surfaceless contexts, which is what WebGL in Firefox needs. A window
++ * surface will be an ExWin window, reached through the window server's
++ * protocol: until then eglCreateWindowSurface fails with
++ * EGL_BAD_NATIVE_WINDOW and says why, instead of drawing nowhere.
++ */
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++#include "eglconfig.h"
++#include "eglcontext.h"
++#include "eglcurrent.h"
++#include "egldevice.h"
++#include "egldisplay.h"
++#include "egldriver.h"
++#include "eglimage.h"
++#include "egllog.h"
++#include "eglsurface.h"
++#include "egltypedefs.h"
++
++#include "pipe/p_context.h"
++#include "pipe/p_defines.h"
++#include "state_tracker/st_context.h"
++#include "util/u_atomic.h"
++#include "mesa/glapi/glapi/glapi.h"
++#include "main/glthread.h"
++
++#include "exos/exos_sw_winsys.h"
++#include "hgl_context.h"
++
++#include "target-helpers/inline_sw_helper.h"
++
++_EGL_DRIVER_STANDARD_TYPECASTS(exos_egl)
++
++struct exos_egl_display {
++   int ref_count;
++   struct hgl_display *disp;
++};
++
++struct exos_egl_config {
++   _EGLConfig base;
++};
++
++struct exos_egl_context {
++   _EGLContext base;
++   struct hgl_context *ctx;
++};
++
++struct exos_egl_surface {
++   _EGLSurface base;
++   struct hgl_buffer *fb;
++   struct pipe_fence_handle *throttle_fence;
++};
++
++/* --- surfaces ------------------------------------------------------------ */
++
++static _EGLSurface *
++exos_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                           void *native_window, const EGLint *attrib_list)
++{
++   _eglError(EGL_BAD_NATIVE_WINDOW,
++             "EX-OS: EGL windows (ExWin) are not there yet; use a pbuffer");
++   return NULL;
++}
++
++static _EGLSurface *
++exos_create_pixmap_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                           void *native_pixmap, const EGLint *attrib_list)
++{
++   _eglError(EGL_BAD_NATIVE_PIXMAP, "EX-OS: no native pixmaps");
++   return NULL;
++}
++
++static _EGLSurface *
++exos_create_pbuffer_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                            const EGLint *attrib_list)
++{
++   struct exos_egl_display *edpy = exos_egl_display(disp);
++   struct exos_egl_surface *surf = calloc(1, sizeof(*surf));
++   struct st_visual visual;
++
++   if (!surf) {
++      _eglError(EGL_BAD_ALLOC, "eglCreatePbufferSurface");
++      return NULL;
++   }
++   if (!_eglInitSurface(&surf->base, disp, EGL_PBUFFER_BIT, conf,
++                        attrib_list, NULL)) {
++      free(surf);
++      return NULL;
++   }
++
++   hgl_get_st_visual(&visual, HGL_DOUBLE | HGL_DEPTH | HGL_STENCIL);
++   surf->fb = hgl_create_st_framebuffer(edpy->disp, &visual, NULL);
++   if (!surf->fb) {
++      free(surf);
++      _eglError(EGL_BAD_ALLOC, "eglCreatePbufferSurface");
++      return NULL;
++   }
++   surf->fb->newWidth = surf->base.Width;
++   surf->fb->newHeight = surf->base.Height;
++   p_atomic_inc(&surf->fb->base.stamp);
++   return &surf->base;
++}
++
++static EGLBoolean
++exos_destroy_surface(_EGLDisplay *disp, _EGLSurface *s)
++{
++   struct exos_egl_display *edpy = exos_egl_display(disp);
++
++   if (_eglPutSurface(s)) {
++      struct exos_egl_surface *surf = exos_egl_surface(s);
++      struct pipe_screen *screen = edpy->disp->fscreen->screen;
++      screen->fence_reference(screen, &surf->throttle_fence, NULL);
++      hgl_destroy_st_framebuffer(surf->fb);
++      free(surf);
++   }
++   return EGL_TRUE;
++}
++
++/* A pbuffer has no front to show: eglSwapBuffers on it flushes the
++ * rendering, so that glReadPixels and the other context see it, and
++ * returns. (EGL 1.5: "has no effect" on a pbuffer, which is what the core
++ * does before calling here for anything but a window.) */
++static EGLBoolean
++exos_swap_buffers(_EGLDisplay *disp, _EGLSurface *s)
++{
++   struct exos_egl_display *edpy = exos_egl_display(disp);
++   struct exos_egl_surface *surf = exos_egl_surface(s);
++   struct exos_egl_context *ectx = exos_egl_context(s->CurrentContext);
++   struct pipe_fence_handle *new_fence = NULL;
++   struct pipe_screen *screen;
++   struct st_context *st;
++
++   if (ectx == NULL)
++      return EGL_FALSE;
++   st = ectx->ctx->st;
++   screen = edpy->disp->fscreen->screen;
++
++   _mesa_glthread_finish(st->ctx);
++   st_context_flush(st, ST_FLUSH_FRONT, &new_fence, NULL, NULL);
++   if (surf->throttle_fence) {
++      screen->fence_finish(screen, NULL, surf->throttle_fence, OS_TIMEOUT_INFINITE);
++      screen->fence_reference(screen, &surf->throttle_fence, NULL);
++   }
++   surf->throttle_fence = new_fence;
++   st_context_invalidate_state(st, ST_INVALIDATE_FB_STATE);
++   return EGL_TRUE;
++}
++
++/* --- display ------------------------------------------------------------- */
++
++/* Two configs: RGBA8 with depth 24 and stencil 8, and the same without
++ * depth and stencil (what a 2D canvas or a video frame asks for). */
++static void
++exos_add_config(_EGLDisplay *disp, int id, int depth, int stencil)
++{
++   struct exos_egl_config *conf = calloc(1, sizeof(*conf));
++   if (!conf)
++      return;
++
++   _eglInitConfig(&conf->base, disp, id);
++   conf->base.RedSize = 8;
++   conf->base.GreenSize = 8;
++   conf->base.BlueSize = 8;
++   conf->base.AlphaSize = 8;
++   conf->base.BufferSize = 32;
++   conf->base.ColorBufferType = EGL_RGB_BUFFER;
++   conf->base.ConfigCaveat = EGL_NONE;
++   conf->base.ConfigID = id;
++   conf->base.DepthSize = depth;
++   conf->base.StencilSize = stencil;
++   conf->base.TransparentType = EGL_NONE;
++   conf->base.NativeRenderable = EGL_FALSE;
++   conf->base.NativeVisualType = EGL_NONE;
++   conf->base.RenderableType = EGL_OPENGL_BIT | EGL_OPENGL_ES_BIT |
++                               EGL_OPENGL_ES2_BIT | EGL_OPENGL_ES3_BIT_KHR;
++   conf->base.Conformant = conf->base.RenderableType;
++   conf->base.MaxPbufferWidth = _EGL_MAX_PBUFFER_WIDTH;
++   conf->base.MaxPbufferHeight = _EGL_MAX_PBUFFER_HEIGHT;
++   conf->base.SurfaceType = EGL_PBUFFER_BIT;
++
++   if (!_eglValidateConfig(&conf->base, EGL_FALSE)) {
++      _eglLog(_EGL_WARNING, "EX-OS: config %d does not validate", id);
++      free(conf);
++      return;
++   }
++   _eglLinkConfig(&conf->base);
++}
++
++static void
++exos_display_destroy(_EGLDisplay *disp)
++{
++   struct exos_egl_display *edpy;
++   struct pipe_screen *screen;
++
++   if (!disp || !disp->DriverData)
++      return;
++   edpy = exos_egl_display(disp);
++   if (!p_atomic_dec_zero(&edpy->ref_count))
++      return;
++
++   screen = edpy->disp->fscreen->screen;
++   hgl_destroy_display(edpy->disp);
++   screen->destroy(screen);
++   free(edpy);
++   disp->DriverData = NULL;
++}
++
++static EGLBoolean
++exos_initialize_impl(_EGLDisplay *disp)
++{
++   struct exos_egl_display *edpy = calloc(1, sizeof(*edpy));
++   struct sw_winsys *winsys;
++   struct pipe_screen *screen;
++
++   if (!edpy)
++      return _eglError(EGL_BAD_ALLOC, "eglInitialize");
++
++   winsys = exos_create_sw_winsys();
++   screen = winsys ? sw_screen_create(winsys) : NULL;
++   if (!screen) {
++      if (winsys)
++         winsys->destroy(winsys);
++      free(edpy);
++      return _eglError(EGL_NOT_INITIALIZED, "EX-OS: no software Gallium screen");
++   }
++   edpy->ref_count = 1;
++   edpy->disp = hgl_create_display(screen);
++   disp->DriverData = edpy;
++
++   disp->ClientAPIs = 0;
++   if (_eglIsApiValid(EGL_OPENGL_API))
++      disp->ClientAPIs |= EGL_OPENGL_BIT;
++   if (_eglIsApiValid(EGL_OPENGL_ES_API))
++      disp->ClientAPIs |= EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT |
++                          EGL_OPENGL_ES3_BIT_KHR;
++
++   disp->Extensions.KHR_no_config_context = EGL_TRUE;
++   disp->Extensions.KHR_surfaceless_context = EGL_TRUE;
++   disp->Extensions.MESA_query_driver = EGL_TRUE;
++   disp->Extensions.KHR_create_context = EGL_TRUE;
++   disp->Extensions.KHR_reusable_sync = EGL_TRUE;
++   disp->Extensions.EXT_pixel_format_float = EGL_TRUE;
++   if (screen->is_format_supported(screen, PIPE_FORMAT_B8G8R8A8_SRGB,
++                                   PIPE_TEXTURE_2D, 0, 0,
++                                   PIPE_BIND_RENDER_TARGET))
++      disp->Extensions.KHR_gl_colorspace = EGL_TRUE;
++
++   exos_add_config(disp, 1, 24, 8);
++   exos_add_config(disp, 2, 0, 0);
++   if (!_eglGetArraySize(disp->Configs)) {
++      exos_display_destroy(disp);
++      return _eglError(EGL_NOT_INITIALIZED, "EX-OS: no EGL config");
++   }
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++exos_initialize(_EGLDisplay *disp)
++{
++   struct exos_egl_display *edpy = exos_egl_display(disp);
++
++   if (edpy) {
++      edpy->ref_count++;
++      return EGL_TRUE;
++   }
++   switch (disp->Platform) {
++   case _EGL_PLATFORM_SURFACELESS:
++   case _EGL_PLATFORM_DEVICE:
++      return exos_initialize_impl(disp);
++   default:
++      return _eglError(EGL_NOT_INITIALIZED,
++                       "EX-OS: only the surfaceless and device platforms");
++   }
++}
++
++static EGLBoolean
++exos_terminate(_EGLDisplay *disp)
++{
++   exos_display_destroy(disp);
++   return EGL_TRUE;
++}
++
++/* --- contexts ------------------------------------------------------------ */
++
++static _EGLContext *
++exos_create_context(_EGLDisplay *disp, _EGLConfig *conf,
++                    _EGLContext *share_list, const EGLint *attrib_list)
++{
++   struct exos_egl_display *edpy = exos_egl_display(disp);
++   struct exos_egl_context *ctx = calloc(1, sizeof(*ctx));
++   struct st_visual visual;
++
++   if (!ctx) {
++      _eglError(EGL_BAD_ALLOC, "eglCreateContext");
++      return NULL;
++   }
++   if (!_eglInitContext(&ctx->base, disp, conf, share_list, attrib_list)) {
++      free(ctx);
++      return NULL;
++   }
++   hgl_get_st_visual(&visual, HGL_DOUBLE | HGL_DEPTH | HGL_STENCIL);
++   {
++      /* the API eglBindAPI chose and the version of the attributes */
++      int api;
++      if (ctx->base.ClientAPI == EGL_OPENGL_ES_API)
++         api = ctx->base.ClientMajorVersion <= 1 ? API_OPENGLES : API_OPENGLES2;
++      else if (ctx->base.Profile == EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR &&
++               (ctx->base.ClientMajorVersion > 3 ||
++                (ctx->base.ClientMajorVersion == 3 && ctx->base.ClientMinorVersion >= 2)))
++         api = API_OPENGL_CORE;
++      else
++         api = API_OPENGL_COMPAT;
++      ctx->ctx = hgl_create_context_api(edpy->disp, &visual,
++                                        share_list ? exos_egl_context(share_list)->ctx->st : NULL,
++                                        api, ctx->base.ClientMajorVersion,
++                                        ctx->base.ClientMinorVersion);
++   }
++   if (!ctx->ctx) {
++      free(ctx);
++      _eglError(EGL_BAD_ALLOC, "eglCreateContext");
++      return NULL;
++   }
++   return &ctx->base;
++}
++
++static EGLBoolean
++exos_destroy_context(_EGLDisplay *disp, _EGLContext *c)
++{
++   if (_eglPutContext(c)) {
++      hgl_destroy_context(exos_egl_context(c)->ctx);
++      free(c);
++   }
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++exos_make_current(_EGLDisplay *disp, _EGLSurface *dsurf, _EGLSurface *rsurf,
++                  _EGLContext *c)
++{
++   struct exos_egl_context *ctx = exos_egl_context(c);
++   struct exos_egl_surface *ds = exos_egl_surface(dsurf);
++   struct exos_egl_surface *rs = exos_egl_surface(rsurf);
++   _EGLContext *old_ctx;
++   _EGLSurface *old_dsurf, *old_rsurf;
++
++   if (!_eglBindContext(c, dsurf, rsurf, &old_ctx, &old_dsurf, &old_rsurf))
++      return EGL_FALSE;
++
++   if (old_ctx == c && old_dsurf == dsurf && old_rsurf == rsurf) {
++      _eglPutSurface(old_dsurf);
++      _eglPutSurface(old_rsurf);
++      _eglPutContext(old_ctx);
++      return EGL_TRUE;
++   }
++
++   if (c == NULL)
++      st_api_make_current(NULL, NULL, NULL);
++   else
++      st_api_make_current(ctx->ctx->st, ds ? &ds->fb->base : NULL,
++                          rs ? &rs->fb->base : NULL);
++
++   if (old_dsurf != NULL)
++      exos_destroy_surface(disp, old_dsurf);
++   if (old_rsurf != NULL)
++      exos_destroy_surface(disp, old_rsurf);
++   if (old_ctx != NULL)
++      exos_destroy_context(disp, old_ctx);
++   return EGL_TRUE;
++}
++
++const _EGLDriver _eglDriver = {
++   .Initialize = exos_initialize,
++   .Terminate = exos_terminate,
++   .CreateContext = exos_create_context,
++   .DestroyContext = exos_destroy_context,
++   .MakeCurrent = exos_make_current,
++   .CreateWindowSurface = exos_create_window_surface,
++   .CreatePixmapSurface = exos_create_pixmap_surface,
++   .CreatePbufferSurface = exos_create_pbuffer_surface,
++   .DestroySurface = exos_destroy_surface,
++   .SwapBuffers = exos_swap_buffers,
++};
+diff --git a/src/egl/egl-exos.sym b/src/egl/egl-exos.sym
+new file mode 100644
+index 00000000000..3bba79a8906
+--- /dev/null
++++ b/src/egl/egl-exos.sym
+@@ -0,0 +1,16 @@
++{
++	global:
++		egl*;
++		MesaGLInteropEGL*;
++		# EX-OS: libEGL carries Mesa and the shared glapi, as libgallium
++		# does on Linux, and libGLESv2 links to it (src/meson.build).
++		_mesa_glapi_get_dispatch_table_size;
++		_mesa_glapi_get_proc_address;
++		_mesa_glapi_get_proc_offset;
++		_mesa_glapi_set_context;
++		_mesa_glapi_set_dispatch;
++		_mesa_glapi_tls_Context;
++		_mesa_glapi_tls_Dispatch;
++	local:
++		*;
++};
+diff --git a/src/gallium/winsys/sw/exos/exos_sw_winsys.c b/src/gallium/winsys/sw/exos/exos_sw_winsys.c
+new file mode 100644
+index 00000000000..86e02861ffe
+--- /dev/null
++++ b/src/gallium/winsys/sw/exos/exos_sw_winsys.c
+@@ -0,0 +1,141 @@
++/*
++ * Copyright (C) 2026 Graziano Falcone
++ * SPDX-License-Identifier: MIT
++ *
++ * The software winsys of EX-OS (voce 88), after the Haiku one
++ * (winsys/sw/hgl): the same hooks, with every display target in memory
++ * from align_malloc instead of a BBitmap.
++ */
++#include <stdio.h>
++
++#include "util/compiler.h"
++#include "pipe/p_defines.h"
++#include "util/format/u_formats.h"
++#include "util/format/u_format.h"
++#include "util/u_math.h"
++#include "util/u_memory.h"
++#include "frontend/sw_winsys.h"
++
++#include "exos_sw_winsys.h"
++
++struct exos_displaytarget {
++   enum pipe_format format;
++   unsigned width, height, stride, size;
++   void *data;
++};
++
++static inline struct exos_displaytarget *
++exos_dt(struct sw_displaytarget *dt)
++{
++   return (struct exos_displaytarget *)dt;
++}
++
++static void
++exos_winsys_destroy(struct sw_winsys *winsys)
++{
++   FREE(winsys);
++}
++
++static bool
++exos_is_displaytarget_format_supported(struct sw_winsys *winsys,
++                                       unsigned usage, enum pipe_format format)
++{
++   /* memory holds any format; what ExWin shows is converted at display */
++   return true;
++}
++
++static struct sw_displaytarget *
++exos_displaytarget_create(struct sw_winsys *winsys, unsigned usage,
++                          enum pipe_format format, unsigned width,
++                          unsigned height, unsigned alignment,
++                          const void *front_private, unsigned *stride)
++{
++   struct exos_displaytarget *dt = CALLOC_STRUCT(exos_displaytarget);
++   if (!dt)
++      return NULL;
++
++   dt->format = format;
++   dt->width = width;
++   dt->height = height;
++   dt->stride = align(util_format_get_stride(format, width), alignment);
++   dt->size = dt->stride * util_format_get_nblocksy(format, height);
++   dt->data = align_malloc(dt->size, alignment);
++   if (!dt->data) {
++      FREE(dt);
++      return NULL;
++   }
++   *stride = dt->stride;
++   return (struct sw_displaytarget *)dt;
++}
++
++static void
++exos_displaytarget_destroy(struct sw_winsys *winsys,
++                           struct sw_displaytarget *d)
++{
++   struct exos_displaytarget *dt = exos_dt(d);
++   if (!dt)
++      return;
++   align_free(dt->data);
++   FREE(dt);
++}
++
++static struct sw_displaytarget *
++exos_displaytarget_from_handle(struct sw_winsys *winsys,
++                               const struct pipe_resource *templat,
++                               struct winsys_handle *whandle, unsigned *stride)
++{
++   return NULL;   /* no buffers shared between processes yet */
++}
++
++static bool
++exos_displaytarget_get_handle(struct sw_winsys *winsys,
++                              struct sw_displaytarget *d,
++                              struct winsys_handle *whandle)
++{
++   return false;
++}
++
++static void *
++exos_displaytarget_map(struct sw_winsys *winsys, struct sw_displaytarget *d,
++                       unsigned flags)
++{
++   return exos_dt(d)->data;
++}
++
++static void
++exos_displaytarget_unmap(struct sw_winsys *winsys, struct sw_displaytarget *d)
++{
++}
++
++/* A finished frame: a window surface passes its hook as context_private; a
++ * pbuffer passes nothing, and its pixels stay where glReadPixels reads them. */
++static void
++exos_displaytarget_display(struct sw_winsys *winsys, struct sw_displaytarget *d,
++                           void *context_private, unsigned nboxes,
++                           struct pipe_box *box)
++{
++   struct exos_displaytarget *dt = exos_dt(d);
++   struct exos_sw_presenta *p = (struct exos_sw_presenta *)context_private;
++
++   if (p && p->mostra)
++      p->mostra(p, dt->data, dt->width, dt->height, dt->stride);
++}
++
++struct sw_winsys *
++exos_create_sw_winsys(void)
++{
++   struct sw_winsys *winsys = CALLOC_STRUCT(sw_winsys);
++   if (!winsys)
++      return NULL;
++
++   winsys->destroy = exos_winsys_destroy;
++   winsys->is_displaytarget_format_supported = exos_is_displaytarget_format_supported;
++   winsys->displaytarget_create = exos_displaytarget_create;
++   winsys->displaytarget_from_handle = exos_displaytarget_from_handle;
++   winsys->displaytarget_get_handle = exos_displaytarget_get_handle;
++   winsys->displaytarget_map = exos_displaytarget_map;
++   winsys->displaytarget_unmap = exos_displaytarget_unmap;
++   winsys->displaytarget_display = exos_displaytarget_display;
++   winsys->displaytarget_destroy = exos_displaytarget_destroy;
++   return winsys;
++}
+diff --git a/src/gallium/winsys/sw/exos/exos_sw_winsys.h b/src/gallium/winsys/sw/exos/exos_sw_winsys.h
+new file mode 100644
+index 00000000000..dcec27e8cbe
+--- /dev/null
++++ b/src/gallium/winsys/sw/exos/exos_sw_winsys.h
+@@ -0,0 +1,32 @@
++/*
++ * Copyright (C) 2026 Graziano Falcone
++ * SPDX-License-Identifier: MIT
++ *
++ * The software winsys of EX-OS (voce 88): every display target is a block
++ * of ordinary memory. A pbuffer is read back with glReadPixels; when EGL
++ * windows come (an ExWin window, through the window server's protocol) the
++ * presentation goes through the hook passed as context_private.
++ */
++#ifndef EXOS_SW_WINSYS_H
++#define EXOS_SW_WINSYS_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct sw_winsys;
++
++/* What a window surface gives the winsys to show a finished frame: called
++ * by displaytarget_display with the pixels (B8G8R8A8, top row first). */
++struct exos_sw_presenta {
++   void (*mostra)(struct exos_sw_presenta *p, const void *pixel,
++                  unsigned larghezza, unsigned altezza, unsigned passo);
++};
++
++struct sw_winsys *exos_create_sw_winsys(void);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/src/gallium/winsys/sw/exos/meson.build b/src/gallium/winsys/sw/exos/meson.build
+new file mode 100644
+index 00000000000..0cb0619821a
+--- /dev/null
++++ b/src/gallium/winsys/sw/exos/meson.build
+@@ -0,0 +1,13 @@
++# Copyright (C) 2026 Graziano Falcone
++# SPDX-License-Identifier: MIT
++#
++# The software winsys of EX-OS: display targets in ordinary memory.
++
++libswexos = static_library(
++  'swexos',
++  files('exos_sw_winsys.c'),
++  gnu_symbol_visibility : 'hidden',
++  include_directories : [inc_gallium, inc_include, inc_src, inc_gallium_aux],
++  dependencies: idep_mesautil,
++  build_by_default : false,
++)
