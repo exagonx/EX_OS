@@ -97,6 +97,8 @@ GRUPPO  VOCI             COSA
   1     78               risparmio energetico: frequenza CPU (in corso), poi schermo
   1     79 80 81          (4/11) VLC nel program manager; menu Strumenti/Multimedia e
                          lettore video; ExEditor: barra strumenti, righello, pagina
+                         80 cambiata il 7/11: gruppo Applicazioni, Multimedia, netupdate
+                         riordina, Applicazioni... in Impostazioni > Sistema
   2     74               FATTO 2/11 in QEMU; blocco duro non riprodotto
   3     75 5 65          dati sicuri: mappa d'avvio, spento da solo (59 e 63 fatte)
   4     50 62            tetti montaggi; telnetd (serve il passaggio in ip.drv). 53 e 9 fatte
@@ -114,8 +116,16 @@ GRUPPO  VOCI             COSA
                          login grafico poi program manager nella home dell'utente
  --     88               (6/11) OpenGL: Mesa software (softpipe, poi llvmpipe), EGL per
                          EX-OS ed ExWin, WebGL in Firefox; nouveau a parte
- --     89               (7/11) moduli per CPU: mmx/sse/sse2/avx.mod scelti con CPUID
+ --     89               (7/11) moduli per CPU: mmx/sse/sse2/avx.mod scelti con CPUID; SSE-SSE4 usati davvero (l'utente: prove su Athlon64 X2, che arriva a SSE3)
                          all'avvio, a 32 e 64 bit; da discutere prima di cominciare
+ --     90               (7/11) cestino: "Sposta nel cestino" ed "Elimina definitivamente"
+                         nel program manager (e nel file manager), ripristino
+ --     91               (7/11) YouTube sul portatile a scatti: 2-3 s di buffer, audio storpiato;
+                         misurato via telnet (un solo core, Firefox in un processo); da decidere
+ --     92               (7/11) TUTTI I CORE: riconosciuti e accesi tutti per difetto, processi
+                         fissati o riservati a un core, i fili di un programma su tutti gli altri
+                         FATTO a c d e in QEMU (kernel 0.319, smp = 2 predefinito, comando cpu);
+                         b (fili insieme, tappa 4) da fare; portatile a 0.319 coi due core (1,97)
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -8897,6 +8907,220 @@ tools/netinst/velocita tolto da netinst.
       servono: o la scelta in libc come oggi (MMX), o librerie per livello
       (/lib/x86-64-v3/... come glibc-hwcaps) scelte dal caricatore.
       Stato: in coda, da discutere.
+      AGGIUNTA DELL'UTENTE (7/11, pomeriggio): "attualmente il kernel ex-os
+      usa MMX ma dai processori Athlon e Pentium III si usa SSE SSE2 SSE3
+      SSE4 sarebbe buono implementarli specie perche attualmente i test
+      vengono fatti su un Athlon64 X2". Quindi: SSE, SSE2, SSE3 (e SSE4
+      dove c'e') davvero usati, non solo MMX. ! L'Athlon64 X2 del portatile
+      ha SSE, SSE2, SSE3 ma NON SSSE3 ne' SSE4.1/4.2 (le K8 si fermano a
+      SSE3): e' il livello x86-64-v1 piu' SSE3, quindi un modulo "sse3"
+      gira li', uno "sse4" no e va scelto da CPUID, mai dato per scontato.
+      Da vedere quando si comincia: dove il kernel e la libc oggi usano
+      MMX (mem_ha_mmx in lib/libc.c, le copie verso lo schermo dei
+      driver video, le copie di pagina) e cosa guadagna SSE2 li' (registri
+      da 128 bit, movntdq per scrivere senza sporcare la cache).
+
+  92. TUTTI I CORE (l'utente, 7/11 sera): "da chiarire se smp = 2
+      significa che e' abilitato il secondo core oppure il multi core,
+      perche il kernel deve riconoscere il numero di core e attivarli
+      tutti, inoltre deve essere in grado di destinare determinati processi
+      a un core specifico e i software multithread devono usare tutti i
+      core disponibili tranne quelli che sono stati destinati o riservati a
+      un determinato processo".
+      OGGI (letto nel codice, kernel 0.318):
+      - smp in kernel.cfg e' un MODO, non un numero: 0 = conta i processori,
+        1 = li sveglia e li parcheggia (predefinito), 2 = mette al lavoro
+        TUTTI quelli trovati (MADT dell'ACPI, o tabella MP). Pero' fino a
+        SMP_CPU_MAX = 16 (smp.h): un tetto fisso, contro la regola;
+      - un processo fissato a un core: nel kernel c'e' cpu_fissa
+        (sched.h), ma lo usa solo l'ozio di ogni processore; nessuna
+        chiamata di sistema, nessun comando;
+      - riservare un core: non esiste;
+      - i fili di un programma: mai due insieme su due core (tappa 3,
+        sched_puo_qui), e nel kernel solo il core 0 (lucchetto unico);
+      - la libc mente per prudenza: sysconf(_SC_NPROCESSORS_ONLN/CONF) = 1,
+        sched_setaffinity rifiuta tutto tranne il processore 0,
+        sched_getcpu = 0. Firefox, Mesa, FFmpeg dimensionano i fili su
+        quel numero.
+      DA FARE:
+      a) tutti i core accesi e al lavoro per difetto; smp = 0/1 resta
+         solo per escluderli su una scheda che si ferma; il numero dalla
+         MADT, senza tetto (strutture allocate per quanti ce ne sono);
+      b) fili dello stesso programma su core diversi (tappa 4): TLB
+         shootdown via IPI quando cambia la tabella delle pagine di uno
+         spazio in uso altrove; lucchetti per struttura al posto di quello
+         unico, a passi (scheduler, memoria, VFS, rete), con prova di
+         carico dopo ogni passo;
+      c) affinita' vera: sched_setaffinity/pthread_setaffinity_np/
+         sched_getcpu dal kernel (una maschera per filo al posto di
+         cpu_fissa), sysconf col numero vero; un comando per fissare un
+         processo (es. `cpu PID n`), e la riga in kernel.cfg o
+         /boot/avvio.sh per i servizi;
+      d) core RISERVATI: un core dato a un processo non prende nessun
+         altro lavoro; lo scheduler mette tutti gli altri fili sui core
+         rimasti. Riserva da kernel.cfg (es. riserva = 1) e da comando;
+      e) /proc/stat con una riga per core, ps con la colonna del core,
+         hwinfo col testo giusto;
+      f) prove: QEMU con -smp 2, 4, 8 a 32 e 64 bit (prova-fork, prova
+         dei fili, Firefox), poi il portatile con la guardia (voce 58);
+         documentare in kernel.txt, help, README.
+      FATTO (7/11 notte, kernel 0.319, l'utente: "procedi e l'opzione smp di
+      default deve essere 2 non 1"):
+      a) smp = 2 il predefinito (cfg.c, kernel.cfg, kernel.txt); tolto
+         SMP_CPU_MAX: l'elenco dei processori cresce raddoppiando, e GDT,
+         TSS, corrente, ozio, riserva, lucchetto, CR0.WP e cpufreq sono
+         tabelle allocate in smp_init (posti_cresci) per quanti ce ne sono.
+         Resta il limite dell'hardware: ID xAPIC a 8 bit (255); l'x2APIC
+         non e' pilotato. I numeri dei processori sono quelli del kernel
+         (0 d'avvio, gli altri nell'ordine in cui cominciano), SmpCpu.numero.
+         ABI: SYS_CPU_INFO copia testa + quante voci ci stanno (i vecchi
+         binari passano testa + 16), CpuFreqInfo resta a 16 e
+         CPUFREQ_OP_CPU (2) le da' tutte;
+      c) affinita' per filo (Process.aff, NULL = ovunque), ereditata dal
+         padre e intera dai fili; SYS_CPU_AFFINITA 265 (leggi, scrivi,
+         riserva, libera, riserve, qui); sched_setaffinity/getaffinity,
+         pthread_*affinity_np, sched_getcpu veri; sysconf col numero vero;
+         comando nuovo `cpu` (bin/cpu): elenco, -p PID [LISTA], -x LISTA
+         COMANDO;
+      d) riserva: `cpu -r PID N`, `cpu -R N COMANDO`, `cpu -l N`; il
+         processore 0 non si riserva; la riserva se ne va col processo.
+         `cpu -R 2 /bin/servizio &` in /boot/avvio.sh al posto della riga
+         riserva = in kernel.cfg (che nomina un processore ma non un
+         processo: NON fatta);
+      e) /proc/stat col tempo vero di ogni processore (dall'ozio di
+         ciascuno), /proc/PID/stat campo 39 = processore, /proc/PID/status
+         con Cpus_allowed_list; hwinfo 0.002 dice quanti eseguono processi;
+         smpprova 0.003 senza il tetto di 8. La colonna del core in ps NON
+         fatta.
+      GUASTO TROVATO PER STRADA (sched_battito_comune): finito il quanto
+      (4 tick) senza nessun altro pronto, sched_pick_next dava l'ozio e il
+      processo perdeva un tick su cinque: il 20% di qualunque programma che
+      calcola da solo. Visto perche' due programmi fissati su un
+      processore facevano 1,25 volte uno solo. Ora resta lui. Un programma
+      da solo va il 20-26% piu' svelto (misurato con smpprova). Puo'
+      entrare nella voce 91 (YouTube): da misurare sul portatile.
+      PROVE (QEMU, 32 e 64 bit): tools/prova_tutti_core.sh 22/22 (1, 2, 4
+      processori con KVM: 2 = 2,00/1,99, 4 = 3,81/3,80 volte uno; 20
+      processori trovati, al lavoro, sysconf 20, /proc/cpuinfo 20, emulati;
+      con 20 virtuali su 4 veri smpprova non si giudica: il lucchetto unico
+      fa la coda quando l'ospite sospende chi lo tiene); tools/
+      prova_affinita.sh 9/9 (fissati su 1: 1,00; su 1-2: 2,00; tre accanto
+      a uno riservato: 2,93; riserva che se ne va col processo; il 0
+      rifiutato).
+      NON FATTO: b) (tappa 4, fili dello stesso programma insieme: Firefox
+      resta su un core per volta, ma gli altri processi vanno sugli altri);
+      la riga riserva = in kernel.cfg; la colonna in ps; NON PROVATO sul
+      portatile (la 0.319 ci accenderebbe i due core per difetto: rischio
+      della voce 58, provare con la guardia e col permesso dell'utente).
+      SUL PORTATILE (7/11 sera, 20:16): netupdate -check -yes dal server
+      locale (87 file, kernel 0.319, bin/cpu nuovo; kernel.cfg non toccato e
+      senza riga smp, quindi 2), riavvio: uname 0.319, hwinfo "Eseguono
+      processi 2 processori su 2 (smp = 2, il predefinito)", cpu elenca 0 e
+      1, /proc/stat cpu0 374 e cpu1 478 tick di lavoro, netupdate -verifica
+      tutto a posto, smpprova 2 3: 1,97 volte uno (il piu' lento 0,97).
+      GUASTO SUL PORTATILE (7/11 sera, l'utente: "lo shutdown tramite exwin
+      si blocca e anche da shell"): fermo a "Spegnimento fra 3...", rete
+      muta. Riprodotto in QEMU con 2 processori: `cpu -x 1 shutdown` si
+      ferma li', `cpu -x 0 shutdown` spegne. Causa: power_countdown aspetta
+      g_ticks con hlt dentro SYS_REBOOT, cioe' col lucchetto del kernel in
+      mano; g_ticks sale solo nell'interrupt del PIT sul processore 0, che
+      per entrare aspetta il lucchetto. RIPARATO nella 0.320:
+      sched_sul_primo() all'inizio di SYS_REBOOT (il processo va sul
+      processore 0 e ci resta), e bkl_fai_passare() nelle attese
+      sull'orologio di power.c, ata.c (ata_attesa_ms, i lettori CD) e
+      fat12.c (il floppy). Provato in QEMU 2 processori, 32 e 64 bit:
+      shutdown da cpu 0 e da cpu 1 arrivano a "Spegnimento hardware" e la
+      macchina si spegne. ! LA REGOLA, per il kernel col lucchetto unico:
+      nessuna attesa sull'orologio o su un interrupt delle periferiche
+      tenendo il lucchetto fuori dal processore 0 (le periferiche sono sul
+      PIC, verso il processore 0); chi aspetta cosi' chiama
+      bkl_fai_passare() o va sul processore 0.
+      Stato: a, c, d, e fatti e provati in QEMU e sul portatile; b da fare;
+      da osservare il portatile nell'uso coi due core (voce 58).
+
+  91. YOUTUBE A SCATTI SUL PORTATILE (l'utente, 7/11 sera): "I video su
+      youtube non bufferizzano abbastanza 2 / 3 secondi al massimo e poi ci
+      sono segnali di video intermittente e audio storpiato di nuovo video
+      normale fluido e poi di nuovo audio e video storpiato a scatti".
+      Misurato via telnet mentre l'utente guardava (kernel 0.318, Exilla
+      del repository locale, /proc/stat a 100 tick al secondo):
+      - un solo core acceso (cpu0; l'Athlon QL-64 ne ha due, SSE2 e SSE3
+        senza SSSE3); RAM 2,8 GB, liberi 1,77 GB con Firefox aperto;
+      - Firefox e' UN processo con 56-70 fili: niente processi dei
+        contenuti, la pagina di YouTube, il suo JavaScript, il disegno e
+        il video stanno tutti nello stesso processo;
+      - CPU occupata a finestre: 99% fra 459 e 594 s dall'avvio (2186 tick
+        su 2212 in 22 s), 37% fra 698 e 766 s. Gli scatti si alternano al
+        video fluido come la CPU si alterna fra piena e mezza;
+      - fra 698 e 766 s il filo principale (42) ha preso 12,9 s su 68,
+        il secondo (43) 1,7 s, gli altri poco; da avvio: 42 = 159 s,
+        43 = 47 s. I fili hanno tutti il nome "firefox": non si sa quale
+        sia il decodificatore e quale l'audio;
+      - pm ha 7,85 s di CPU in 8 minuti: da guardare (un menu fermo non
+        dovrebbe lavorare).
+      Ipotesi da verificare, NON certezze: quando la CPU e' piena il filo
+        audio (cubeb) non arriva in tempo -> audio storpiato; il buffer
+        corto e' la scelta di YouTube su una macchina lenta (MSE), oppure
+        la rete (nforce) non tiene. Da misurare prima di toccare:
+      a) che codec manda YouTube (about:support, sezione Media, o
+         media.mediasource.webm / media.av1.enabled): AV1 a software e'
+         il piu' pesante su questa CPU;
+      b) i nomi dei fili (prctl/pthread_setname_np -> /proc/N/task/T/
+         comm) per sapere chi consuma;
+      c) la priorita' del filo audio nello scheduler;
+      d) il secondo core (voce 58: 14/14 col carico lungo a due core, ma
+         acceso solo a mano con smpprova -accendi);
+      e) quanto scarica la rete mentre il video va.
+      Visto per strada: `cat a b` sul portatile stampa solo il primo file
+      (cat /proc/42/task/42/stat /proc/42/task/43/stat -> una riga sola).
+      L'UTENTE (7/11): "il fatto che usa un solo core e' un grosso
+      problema, deve usare tutti i core esistenti se disponibili, il
+      multicore e' stato implementato ... e sembra che ancora non funziona
+      perche' ?". PERCHE', letto sul portatile e nel codice:
+      1. il kernel.cfg del portatile non ha la riga smp: vale 1, il
+         secondo core si sveglia e resta PARCHEGGIATO (hwinfo: "cpu 1
+         IN ATTESA"; smpprova: "lavora un processore solo", 1.02 volte).
+         smp = 2 non e' il predefinito per scelta (smp.h, 0.246): "finche'
+         non e' provato su piu' macchine vere"; e la voce 58 ha un blocco
+         della 0.300 a due core mai spiegato (0.301: 14 su 14);
+      2. ANCHE CON smp = 2 FIREFOX NON USEREBBE DUE CORE: la tappa 3 ha un
+         lucchetto unico sul kernel, e sched_puo_qui (sched.c) non mette
+         mai due fili dello stesso spazio di indirizzi su due core insieme,
+         e chi e' nel kernel gira solo sul core 0. Firefox e' un processo:
+         i suoi 60 fili restano su un core alla volta. Con smp = 2 si
+         guadagna solo che wserver, pm e gli altri programmi vanno
+         sull'altro core;
+      3. hwinfo dice ancora "Eseguire processi su piu' processori e' la
+         tappa 3 dell'SMP": testo vecchio, la tappa 3 c'e' dalla 0.246.
+      Per usare tutti i core: smp = 2 come predefinito (dopo la voce 58)
+      e la tappa 4: fili dello stesso programma su core diversi (TLB
+      shootdown via IPI quando cambia la tabella delle pagine, lucchetti
+      per struttura invece di quello unico).
+      Stato: misurato, aspetta la decisione dell'utente su cosa fare
+      prima.
+
+  90. IL CESTINO (l'utente, 7/11): "altra cosa da implementare e' il
+      cestino dove il program manager offre due voci una sposta nel
+      cestino e la seconda eliminazione totale".
+      Oggi: sulla scrivania il menu di una voce ha solo "Cancella"
+      (exwin/bin/pm/pm.c, desk_cancella_voce -> desk_cancella), che
+      cancella subito e per sempre, con una conferma.
+      Da fare:
+      a) due voci nel menu: "Sposta nel cestino" (la prima, quella di
+         tutti i giorni, senza conferma o con una leggera) ed "Elimina
+         definitivamente" (con la conferma di oggi);
+      b) dov'e' il cestino: uno per utente nella sua home (come
+         ~/.local/share/Trash della specifica freedesktop: files/ con i
+         file, info/ con percorso d'origine e data per rimetterli dove
+         erano); su un'altra unita' (chiavetta, altra partizione) spostare
+         vuol dire copiare: un cestino per unita' o la domanda all'utente;
+      c) l'icona Cestino sulla scrivania: aprirla mostra il contenuto, con
+         "Ripristina", "Elimina definitivamente" e "Svuota cestino";
+         l'icona piena/vuota;
+      d) lo stesso nel file manager (cartella Cestino, stesse due voci);
+      e) da provare in QEMU (1366x768) e sul portatile; help exwin, help
+         problemi, README.
+      Stato: in coda.
 
   88. OPENGL SU EX-OS (l'utente, 6/11, con Firefox sul portatile: "bisogna
       fare il porting di opengl da mettere in coda e analizzare cosa
@@ -9051,8 +9275,90 @@ tools/netinst/velocita tolto da netinst.
              dell'host: specs-condivise.sh mette -rpath-link e --sysroot di
              ld sul sysroot. prova-avvio, prova-dl, prova-cxx a 32 e 64 bit
              come prima.
-         PROSSIMO: portare libEGL e libGLESv2 sul CD e in netupdate (con lo
-           script di verifica), poi le finestre ExWin (c), poi Firefox (d).
+         SUL CD E IN NETUPDATE (7/11): gruppo [mesa] di tools/iso/strumenti.txt
+           (vuole zlib), tools/librerie-exos/su-cd.sh, /exos/bin/provaegl
+           (prova-egl.c collegato alle librerie, costruito da costruisci.sh);
+           verifica tools/netinst/verifiche/mesa.sh: le librerie che servono,
+           poi lancia provaegl. tools/mesa-exos/prova-netupdate.sh (disco
+           installato dal CD, netupdate -install:mesa -yes): 3/3 a 32 e 64
+           bit. help problemi: MESA. Non ancora sul portatile ne' sul server
+           pubblico (serve il repo-update dell'utente).
+         FINESTRE ExWin, FATTE E PROVATE IN QEMU (7/11, punto c):
+           eglCreateWindowSurface prende una struct exos_egl_finestra
+           (drivers/wserver/egl_exwin.h, nei sysroot come <exos/
+           egl_exwin.h>): versione, misura() e mostra() date dal
+           PROPRIETARIO della finestra, come wl_egl_window di Wayland. Ad
+           ogni eglSwapBuffers mostra() riceve il fotogramma (0xAARRGGBB,
+           riga in alto per prima) e il proprietario lo mette nella zona e
+           manda WIN_MSG_AGGIORNA; misura() dopo ogni swap: una finestra
+           ridimensionata da' il fotogramma dopo della misura nuova.
+           ! DIVERSO DA COME ERA STATO DECISO (libEGL che parla da sola al
+           server): la posta del server (WIN_MSG_MISURATA dopo un
+           ridimensionamento, gli eventi) arriva alla casella del PROCESSO
+           e la legge il suo ciclo (ex_get_message, nsAppShell di Firefox);
+           una libreria che la leggesse ruberebbe i messaggi, una che non
+           la leggesse disegnerebbe in una zona che non c'e' piu'.
+           CONFERMATO DALL'UTENTE (7/11): "si rispetta lo schema di
+           Wayland".
+           ! LA PIATTAFORMA NATIVA ERA "surfaceless": meson sceglie la
+           piattaforma di EGL_DEFAULT_DISPLAY fra quelle "non rilevabili"
+           ('exos' non c'era) e il nucleo di EGL rifiuta OGNI finestra su un
+           display surfaceless (EGL_BAD_NATIVE_WINDOW, come vuole
+           EGL_MESA_platform_surfaceless). Ora c'e' _EGL_PLATFORM_EXOS
+           (egldisplay.h/.c, meson.build, meson.options): "Native platform:
+           exos"; le config hanno EGL_WINDOW_BIT solo li', surfaceless e
+           device restano per pbuffer e contesti senza superficie.
+           Nella patch (17 file): egl_exos.c (superficie finestra, swap che
+           passa per flush_frontbuffer -> winsys -> mostra(), visual BGRA
+           con alpha), eglplatform.h (EGLNativeWindowType = struct
+           exos_egl_finestra *), egldisplay.h/.c, meson.
+           Prova: tools/mesa-exos/prova-finestra.sh [32] (prova-finestra.c,
+           client del protocollo come il widget di Firefox, 8 controlli:
+           finestra e zona, superficie e contesto ES2, EGL_WIDTH/HEIGHT, 60
+           swap arrivati a mostra, rosso in alto e blu in basso nella zona,
+           misura cambiata -> fotogramma 200x150, versione 99 ->
+           EGL_BAD_NATIVE_WINDOW, distruzione) e la foto dello schermo con
+           ExWin acceso (pixel rossi e blu contati): 8/8 e foto [OK] a 32 e
+           64 bit; prova-egl.sh 8/8 a 32 e 64 come prima.
+           Strumenti nuovi: tools/mesa-exos/librerie-prova.sh (le .so dal
+           DT_NEEDED, anche per prova-egl.sh); esegui-in-exos.sh: PRIMA,
+           SFONDO, QEMU_PIU (foto:/key:/mon: restano interi).
+           DA DECIDERE: un aiuto nel toolkit (ex_egl_finestra) per i
+           programmi ExWin nativi, che riempia la struttura da una ExWindow.
+         WEBGL IN FIREFOX, PROVATO IN QEMU A 64 BIT (7/11, punto d): nessuna
+           riga di Firefox cambiata. Su EX-OS il fornitore GL e' gia'
+           GLContextProviderEGL (GLContextProvider.h, quando nessun toolkit
+           ne sceglie un altro), GLLibraryEGL apre libEGL.so/libEGL.so.1 e
+           libGLESv2.so con dlopen, GfxInfo di widget/exos non blocca
+           (FEATURE_STATUS_OK), webgl.allow-in-parent e' vero fuori da
+           Windows/Mac/Android (niente processo GPU). Serviva solo:
+           ! RICOLLEGARE FIREFOX: e' statico, e alle librerie che apre da'
+           solo le funzioni della libc nella sua tabella (lib/
+           libc_esportati.h, g_dl_libc). Quello del 3/11 non aveva
+           open_memstream, pthread_barrier, newlocale... che Mesa chiede.
+           touch nsBrowserApp.cpp + gecko-costruisci.sh build binaries
+           (tools/exilla/leggimi.md); a 64 bit ha rifatto molto (~98 min).
+           Prova: tools/exilla/prova-webgl.sh (EXOS_ARCH=x86_64): Mesa e le
+           sue .so dal sysroot in /disk/lib, una pagina con un canvas WebGL
+           (triangolo rosso su blu, readPixels del centro e dell'angolo,
+           dump() sulla seriale), Firefox nella finestra ExWin e la foto.
+           64 bit: contesto webgl2 ("Generic Renderer", WebGL 2.0, GLSL ES
+           3.00: Firefox nasconde alle pagine il nome vero), centro
+           255,0,0, angolo 0,0,255, glGetError 0, foto con 55296 pixel rossi
+           e 117444 blu [OK]. Senza finestre (--headless) NO: "errore di
+           creazione: !CanvasManagerChild::Get()", Gecko headless qui non fa
+           il gestore dei canvas; non e' la strada di chi usa Firefox, la
+           prova lo dice senza giudicarlo. Da capire se serve.
+           Visto per strada, non di Mesa: "libmozsqlite3.so.so: cannot open
+           shared object file" (QuickSuggest di Firefox, Rust): un nome con
+           .so due volte; non cercato.
+           32 bit (7/11, Firefox 32 ricollegato, ~107 min): uguale, webgl2,
+           centro 255,0,0, angolo 0,0,255, glGetError 0, 55296 pixel rossi
+           e 117444 blu [OK]; senza finestre lo stesso NO.
+           DA FARE: sul portatile (serve netupdate -install:mesa e la
+           Exilla nuova), solo col via dell'utente.
+         PROSSIMO: portatile; poi llvmpipe al posto di softpipe
+           (piu' veloce, vuole LLVM per EX-OS).
       c) EGL PER EX-OS: prima la piattaforma surfaceless/pbuffer (si disegna
          in memoria, chi usa legge i pixel), poi una piattaforma "exwin":
          una superficie EGL che e' la zona condivisa di una finestra ExWin
@@ -9085,7 +9391,76 @@ tools/netinst/velocita tolto da netinst.
       Il lettore video: DECISO dall'utente il 4/11: sopra l'FFmpeg di
       sistema (libavformat/libavcodec/libswscale/libswresample .so in
       /exos/lib), come VLC; non sopra libvlc.
-      Stato: in coda.
+      CAMBIATO DALL'UTENTE (7/11): "netupdate dovrebbe aggiustare l'elenco
+      dei programmi in program manager, un nuovo gruppo serve oltre a
+      internet strumenti e giochi, Applicazioni e li dentro ci vanno i
+      programmi File Manager, Archivi Calctor Pennello Immagini, mentre
+      Lettore audio e volume vanno su Multimedia, l'applicazione
+      Applicazioni che gestisce le applicazioni del menu sara una voce di
+      Impostazioni lanciabile da li da un pulsante nel tab Sistema".
+      Quindi, al posto del primo punto qui sopra:
+      a) gruppi: Applicazioni (NUOVO: File manager, Archivi, Calctor,
+         Pennello, Immagini), Internet, Strumenti (ExEditor, Terminale,
+         EX-IDE, Prova font, ExPackage, come oggi), Multimedia (NUOVO:
+         Lettore audio, Volume; poi VLC e il Lettore video), Giochi.
+         Oggi in exwin/lib/applicazioni.txt File manager, Archivi,
+         Calctor, Pennello, Immagini, Lettore audio e Volume stanno in
+         cima fuori dai gruppi;
+      b) NETUPDATE RIORDINA le macchine gia' installate: le voci note
+         (riconosciute dal percorso dell'eseguibile, non dal nome) passano
+         nel loro gruppo; quelle aggiunte dall'utente o dai pacchetti
+         (menu_metti) restano come sono. Con la sua verifica in
+         tools/netinst/verifiche ([[netupdate-script-verifica]]);
+      c) "Applicazioni..." (l'editor delle voci del menu, oggi una voce
+         fissa del menu di avvio, pm.c crea_voce) esce dal menu e diventa
+         un PULSANTE nella scheda Sistema di Impostazioni (pm.c,
+         g_impost), che lo lancia da li';
+      d) prova in QEMU (1366x768) e sul portatile; help exwin, README.
+      FATTO IN CODICE (7/11, da provare): a) exwin/lib/applicazioni.txt coi
+      gruppi; b) netupdate 0.046, menu_ricupera: quando -check sostituisce
+      il menu rimette in fondo dal .old le voci il cui programma non e' nel
+      menu nuovo ed esiste ancora, e @avvio se il nuovo non ne ha; le voci
+      del sistema prendono il loro gruppo (riconosciute dal percorso);
+      verifica in tools/netinst/verifiche/sistema.sh (la riga vecchia
+      "File manager |" fuori dai gruppi); c) pm 0.028: "Applicazioni..."
+      tolta dal menu (6 voci fisse), pulsante "Applicazioni del menu..."
+      nella scheda Sistema di Impostazioni. Compilati a 32 bit senza
+      avvisi; 64 bit con make iso64/netinst64.
+      AGGIUNTE DELL'UTENTE (7/11, sera): "il program manager non mostra
+      piu le icone siccome in un certo contesto va bene su impostazioni nel
+      tab scrivania metti la flagbox dove all'installazione per default e'
+      attiva quella di mostrare le icone dei programmi della lista delle app
+      in program manager se invece e deflag o non selezionata il program
+      manager non mostrera le icone delle app come e' attualmente, altra
+      cosa il menu Avvio si deve poter chiudere appena viene cliccato una
+      app o il desktop".
+      e) una casella nella scheda Scrivania di Impostazioni, ATTIVA per
+         difetto dopo l'installazione: mostra le icone delle applicazioni;
+         spenta, il program manager fa come oggi (senza icone). Da capire
+         quali icone (quelle accanto alle voci del menu, o le icone delle
+         applicazioni sulla scrivania): l'utente ha risposto "accanto alle
+         voci del menu";
+      f) il menu Avvio si chiude al clic su un'applicazione e al clic sulla
+         scrivania. Nel codice un clic su una voce chiude gia' il menu
+         (menu_proc -> menu_chiudi prima di avviare); un clic sulla
+         scrivania no, nessuna riga lo fa. Da provare cosa succede davvero
+         col clic su una voce di un gruppo (il sottomenu).
+      FATTO (7/11): e) pm 0.028, casella "Icone accanto alle voci del
+         menu" nella scheda Scrivania, chiave icone_menu = si|no in
+         $HOME/.exwin/config/pm.cfg (se manca: si); f) il clic sulla
+         scrivania (sinistro, doppio, destro) chiude il menu aperto; una
+         voce di un gruppo lo chiudeva gia'.
+      PROVE: tools/prova_menu_avvio.sh (dal CD, 800x600): menu, gruppo
+         Applicazioni, Calctor scelto -> menu chiuso, clic sulla scrivania
+         -> menu chiuso, Impostazioni, scheda Sistema col pulsante, scheda
+         Scrivania, casella tolta -> menu senza icone: 3/3 a 32 e 64 bit
+         (a 32 bit i verdetti contati sulle foto del giro, il terzo
+         verdetto e' arrivato dopo). tools/prova_menu_netupdate.sh (il menu
+         vecchio con voci dell'utente, poi un -check con un menu nuovo
+         pubblicato): 5/5 a 32 e 64 bit.
+      NON PROVATO: sul portatile (1366x768); che la casella resti spenta
+         dopo un riavvio (pm.cfg si scrive con lo sfondo, letto all'avvio).
+      Stato: fatto in QEMU; manca il portatile.
 
   82. FIREFOX: IL PRIMO FILE MULTIMEDIALE NON PARTE (portatile, 4/11).
       Con media.html (8 file, 8 s ciascuno) e media2.html (mp3, ogg, ogg):

@@ -4232,21 +4232,32 @@ int32_t sys_uptime(InterruptFrame *frame)
 /* =============================================================================
  * SYS_CPU_INFO (181) — i processori che smp_init() ha trovato
  *
- * ebx = SmpInfo*, ecx = sizeof(SmpInfo) di chi chiama. Come per MemInfo la
- * dimensione viaggia con la chiamata: se le due copie della struttura non
- * coincidono si rifiuta, invece di scrivere oltre la fine di quella piccola.
+ * ebx = buffer, ecx = its size: the header (SMP_TESTA_BYTE), then room for
+ * as many SmpCpu as the caller wants. The header goes out, then the first
+ * processors that fit; `n` in the header says how many there are, so a
+ * caller with less room knows to ask again with more (0.319: no ceiling).
+ * A program built up to 0.318 passes header + 16 entries and gets exactly
+ * what it got then. A size that is not header + whole entries is refused.
  * ========================================================================== */
 int32_t sys_cpu_info(InterruptFrame *frame)
 {
-    SmpInfo       *dst  = (SmpInfo *)FR_A1(frame);
+    uint8_t       *dst  = (uint8_t *)FR_A1(frame);
     uint32_t       size = FR_A2(frame);
-    const uint8_t *src  = (const uint8_t *)smp_info();
-    uint32_t       i;
+    const SmpInfo *si   = smp_info();
+    const uint8_t *src;
+    uint32_t       i, voci, dentro;
 
-    if (size != sizeof(SmpInfo))        return ERR(EINVAL);
+    if (size < SMP_TESTA_BYTE || (size - SMP_TESTA_BYTE) % sizeof(SmpCpu) != 0)
+        return ERR(EINVAL);
     if (!syscall_verify_ptr(dst, size)) return ERR(EFAULT);
 
-    for (i = 0; i < size; i++) ((uint8_t *)dst)[i] = src[i];
+    voci   = (size - SMP_TESTA_BYTE) / sizeof(SmpCpu);
+    dentro = voci < si->n ? voci : si->n;
+    src    = (const uint8_t *)si;
+    for (i = 0; i < SMP_TESTA_BYTE; i++) dst[i] = src[i];
+    src = (const uint8_t *)si->cpu;
+    for (i = 0; i < dentro * sizeof(SmpCpu); i++) dst[SMP_TESTA_BYTE + i] = src[i];
+    for (; i < voci * sizeof(SmpCpu); i++) dst[SMP_TESTA_BYTE + i] = 0;
 
     /* ! OGNI LETTURA MANDA UN MESSAGGIO AI PROCESSORI IN ATTESA, dopo aver
      * copiato: chi rilegge poco dopo trova `messaggi` cresciuto di uno su
@@ -4293,7 +4304,52 @@ int32_t sys_cpufreq(InterruptFrame *frame)
         r = cpufreq_modo((uint32_t)FR_A2(frame), (uint32_t)FR_A3(frame));
         return r < 0 ? ERR(-r) : 0;
     }
+    if (op == CPUFREQ_OP_CPU) {
+        CpuFreqCpu *dst    = (CpuFreqCpu *)FR_A2(frame);
+        uint32_t    quanti = (uint32_t)FR_A3(frame);
+
+        if (quanti > 0x10000u) return ERR(EINVAL);
+        if (quanti > 0 && !syscall_verify_ptr(dst, quanti * sizeof(CpuFreqCpu)))
+            return ERR(EFAULT);
+        return (int32_t)cpufreq_cpu(dst, quanti);
+    }
     return ERR(EINVAL);
+}
+
+/* SYS_CPU_AFFINITA (265, kernel 0.319, voce 92): see syscall.h and
+ * «AFFINITY AND RESERVATIONS» in sched.c. The sets are copied through a
+ * kernel buffer: the user's pointer is checked once, then only read or
+ * written whole. */
+int32_t sys_cpu_affinita(InterruptFrame *frame)
+{
+    uint32_t  op = (uint32_t)FR_A1(frame), pid = (uint32_t)FR_A2(frame);
+    uint32_t  a3 = (uint32_t)FR_A3(frame), n = (uint32_t)FR_A4(frame), i;
+    uint32_t *u  = (uint32_t *)(uintptr_t)FR_A3(frame), *k;
+    int32_t   r;
+
+    switch (op) {
+    case AFF_QUI:     return (int32_t)sched_cpu_qui();
+    case AFF_RISERVA: return sched_riserva(pid, a3);
+    case AFF_LIBERA:  return sched_libera(a3);
+    case AFF_LEGGI:
+    case AFF_SCRIVI:
+    case AFF_RISERVE:
+        if (n == 0 || n > 0x10000u) return ERR(EINVAL);
+        if (!syscall_verify_ptr(u, n * sizeof(uint32_t))) return ERR(EFAULT);
+        k = (uint32_t *)kmalloc(n * sizeof(uint32_t));
+        if (k == NULL) return ERR(ENOMEM);
+        if (op == AFF_SCRIVI) {
+            for (i = 0; i < n; i++) k[i] = u[i];
+            r = sched_aff_scrivi(pid, k, n);
+        } else {
+            r = op == AFF_LEGGI ? sched_aff_leggi(pid, k, n) : (int32_t)sched_riserve(k, n);
+            if (r >= 0) for (i = 0; i < n; i++) u[i] = k[i];
+        }
+        kfree(k);
+        return r;
+    default:
+        return ERR(EINVAL);
+    }
 }
 
 /* SYS_ATTIVITA (262, kernel 0.312): the tick of the last input event.
@@ -5451,6 +5507,11 @@ int32_t sys_reboot(InterruptFrame *frame)
          cmd, self ? self->pid : 0, self ? self->name : "?");
     if (cmd != EXOS_RB_POWEROFF && cmd != EXOS_RB_RESTART && cmd != EXOS_RB_HALT)
         return ERR(EINVAL);
+
+    /* ! ON PROCESSOR 0, BEFORE ANYTHING ELSE (0.320): the countdown and the
+     * disks wait for the clock, which runs there (see sched_sul_primo). From
+     * processor 1 the laptop stopped at "Spegnimento fra 3..." for good. */
+    sched_sul_primo();
 
     /* ! THE PROGRAMS FIRST, THEN THE DISKS (0.279): a service such as MariaDB
      * writes its buffers when it gets SIGTERM, and those writes must be on

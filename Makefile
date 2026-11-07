@@ -415,7 +415,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
+PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova cpu ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla vlcapri
 
@@ -4000,6 +4000,24 @@ $(SMPPROVA_BIN): $(SMPPROVA_SRC) $(SMPPROVA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(
 .PHONY: smpprova
 smpprova: dirs $(SMPPROVA_BIN)
 
+# --- /bin/cpu (CD): i processori, e quale processo gira dove (kernel 0.319) --
+CPU_SRC := bin/cpu/cpu.c
+CPU_BIN := $(BUILD_BIN_CD)/cpu
+CPU_LD  := bin/cpu/cpu.ld
+
+$(CPU_BIN): $(CPU_SRC) $(CPU_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/cpu ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(CPU_SRC) -o $(BUILD_OBJ)/cpu_main.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/cpu_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CPU_LD) \
+	    $(BUILD_OBJ)/cpu_start.o $(BUILD_OBJ)/cpu_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] cpu compilato: $@"
+
+.PHONY: cpu
+cpu: dirs $(CPU_BIN)
+
 # --- /bin/aggiungi (solo CD e supporto): copia driver e programmi dal --------
 # supporto fatto con `make support` al sistema installato. Vedi bin/aggiungi.
 AGGIUNGI_SRC := bin/aggiungi/aggiungi.c
@@ -6532,7 +6550,7 @@ SUPPORT_DIR := $(DIST_DIR)/support
 SUPPORT_ISO := $(DIST_DIR)/support.iso
 # ! `=` e non `:=`: DRIVER_SOLO_CD_OUT e' definita piu' in basso.
 SUPPORT_DRIVER     = $(DRIVER_SOLO_CD_OUT) $(UHCI_OUT) $(XHCI_OUT)
-SUPPORT_PROGRAMMI  = $(SHELL_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(AUTOMOUNT_BIN) $(BLKSCAN_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) $(PING_BIN) $(DHCP_BIN) \
+SUPPORT_PROGRAMMI  = $(SHELL_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(CPU_BIN) $(AHCI_CMD_BIN) $(AUTOMOUNT_BIN) $(BLKSCAN_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) $(PING_BIN) $(DHCP_BIN) \
                      $(HOST_BIN) $(SCARICA_BIN) $(NETUPDATE_BIN) $(HWINFO_BIN)
 
 .PHONY: support
@@ -8249,7 +8267,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 BINARI_SOLO_CD := $(SYNC_BIN) $(GUARDIA_BIN) $(WIFID_BIN) $(EXTASKBAR_BIN) $(PROVA64_BIN) $(SHA256SUM_BIN) $(CATTURA_BIN) $(GREP_BIN) $(READLINK_BIN) $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
-                  $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
+                  $(TELNET_BIN) $(XCP_BIN) $(AGGIUNGI_BIN) $(DMESG_BIN) $(SMPPROVA_BIN) $(CPU_BIN) $(AHCI_CMD_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) $(SENDERROR_BIN) $(NETSPEED_BIN) $(POLLTEST_BIN) $(MODULO_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \

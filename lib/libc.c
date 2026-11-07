@@ -296,6 +296,7 @@ typedef struct {
 #define SYS_ATTIVITA     262
 #define SYS_FORK         263     /* kernel 0.313: see fork() */
 #define SYS_ALLARME      264     /* kernel 0.317: see alarm() */
+#define SYS_CPU_AFFINITA 265     /* kernel 0.319: see cpu_aff_leggi() */
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -719,7 +720,7 @@ typedef struct {
 /* I processori: copia di CpuInfo in lib/include/libc.h, che e' la copia di
  * SmpInfo in kernel/include/smp.h. Le tre si cambiano insieme. */
 typedef struct {
-    unsigned char apic_id, stato, apic_ver, riservato;
+    unsigned char apic_id, stato, apic_ver, numero;
     unsigned int  firma, capacita, battiti, messaggi;
 } CpuVoce;
 typedef struct {
@@ -7900,6 +7901,7 @@ struct lconv *localeconv(void)
  * Interrogazioni sul sistema
  * ============================================================================= */
 int meminfo(MemInfo *mi);          /* piu' avanti in questo file */
+static long processori(int tutti);  /* piu' avanti, accanto a cpu_info */
 
 long sysconf(int nome)
 {
@@ -7911,8 +7913,10 @@ long sysconf(int nome)
         }
         case _SC_IOV_MAX:           return 1024;
         case _SC_CLK_TCK:           return 100;   /* il PIT gira a 100 Hz */
-        case _SC_NPROCESSORS_ONLN:  return 1;
-        case 83 /* _SC_NPROCESSORS_CONF */: return 1;   /* per NSPR, 30 settembre 2026 */
+        /* the true numbers since kernel 0.319 (voce 92): programs size
+         * their threads on these; up to then always 1 */
+        case _SC_NPROCESSORS_ONLN:  return processori(0);
+        case 83 /* _SC_NPROCESSORS_CONF */: return processori(1);   /* per NSPR, 30 settembre 2026 */
         case 75 /* _SC_THREAD_STACK_MIN */: return 16384;
         case _SC_GETPW_R_SIZE_MAX:  return 64 + 256;   /* getpwuid_r, vedi <pwd.h> */
         case _SC_PHYS_PAGES:
@@ -8489,6 +8493,71 @@ unsigned int uptime_ms(void)
 int cpu_info(CpuInfo *ci)
 {
     return _syscall2(SYS_CPU_INFO, (uintptr_t)ci, (uint32_t)sizeof(CpuInfo));
+}
+
+/* Every processor, no ceiling (kernel 0.319): a CpuInfo from malloc with
+ * room for all ci->n of them; cpu[] goes past its declared 16 (the kernel
+ * takes the header, then as many entries as the size says). free() it. On
+ * a kernel up to 0.318, which knew 16 at most, the first call is enough. */
+CpuInfo *cpu_info_tutti(void)
+{
+    unsigned int quanti = 16;
+
+    for (;;) {
+        size_t   byte = offsetof(CpuInfo, cpu) + (size_t)quanti * sizeof(CpuVoce);
+        CpuInfo *ci   = (CpuInfo *)malloc(byte < sizeof(CpuInfo) ? sizeof(CpuInfo) : byte);
+
+        if (ci == NULL) return NULL;
+        if (_syscall2(SYS_CPU_INFO, (uintptr_t)ci, (uint32_t)byte) != 0) { free(ci); return NULL; }
+        if (ci->n <= quanti) return ci;
+        quanti = ci->n;
+        free(ci);
+    }
+}
+
+/* Where threads may run, and processors reserved to a process (kernel
+ * 0.319, voce 92): SYS_CPU_AFFINITA, see kernel/include/syscall.h. Sets are
+ * arrays of 32-bit words, bit n = processor n (the kernel's numbers, hwinfo
+ * shows them). pid 0 = the calling thread. They return what the kernel
+ * says: >= 0, or -errno. */
+int cpu_aff_leggi(int pid, unsigned int *set, unsigned int parole)
+{
+    return _syscall4(SYS_CPU_AFFINITA, 0, (uint32_t)pid, (uintptr_t)set, parole);
+}
+int cpu_aff_scrivi(int pid, const unsigned int *set, unsigned int parole)
+{
+    return _syscall4(SYS_CPU_AFFINITA, 1, (uint32_t)pid, (uintptr_t)set, parole);
+}
+int cpu_riserva(int pid, unsigned int cpu)
+{
+    return _syscall4(SYS_CPU_AFFINITA, 2, (uint32_t)pid, cpu, 0);
+}
+int cpu_libera(unsigned int cpu)
+{
+    return _syscall4(SYS_CPU_AFFINITA, 3, 0, cpu, 0);
+}
+int cpu_riserve(unsigned int *chi, unsigned int quanti)
+{
+    return _syscall4(SYS_CPU_AFFINITA, 4, 0, (uintptr_t)chi, quanti);
+}
+int cpu_qui(void)
+{
+    return _syscall4(SYS_CPU_AFFINITA, 5, 0, 0, 0);
+}
+
+/* How many processors: listed (tutti = 1) or running programs now (0): the
+ * boot one and those in state 5, LAVORA. At least 1. */
+static long processori(int tutti)
+{
+    CpuInfo     *ci = cpu_info_tutti();
+    unsigned int i;
+    long         n = 0;
+
+    if (ci == NULL) return 1;
+    for (i = 0; i < ci->n; i++)
+        if (tutti || ci->cpu[i].stato == 1 || ci->cpu[i].stato == 5) n++;
+    free(ci);
+    return n > 0 ? n : 1;
 }
 
 /* I processori in piu', parcheggiati, cominciano a eseguire programmi (solo

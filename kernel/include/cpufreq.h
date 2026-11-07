@@ -25,7 +25,11 @@
 #include "kernel.h"
 
 #define CPUFREQ_STATI_MAX   16      /* P-states kept (AMD has 8, Intel ratios are sampled) */
-#define CPUFREQ_CPU_MAX     16      /* = SMP_CPU_MAX */
+/* The per-processor arrays of CpuFreqInfo hold the first 16 processors:
+ * the structure is the one programs built up to 0.318 pass. The kernel keeps
+ * one entry per processor found (0.319, no ceiling), and CPUFREQ_OP_CPU
+ * reads them all. */
+#define CPUFREQ_INFO_CPU    16
 
 /* tipo: how this CPU changes frequency */
 #define CPUFREQ_NESSUNO     0
@@ -59,19 +63,27 @@ typedef struct {
     uint32_t primo, ultimo;                 /* the allowed range, now (AMD: CurPstateLimit, PstateMaxVal) */
     uint32_t modo, fisso;
     uint32_t su, giu;                       /* AUTO: load % to go to the top / to step down */
-    uint32_t ncpu;                          /* processors in cpu_* below */
-    uint32_t cpu_stato[CPUFREQ_CPU_MAX];    /* the state each one is in, or CPUFREQ_IGNOTO */
-    uint32_t cpu_carico[CPUFREQ_CPU_MAX];   /* load % of the last 100 ms */
-    uint32_t cpu_cambi[CPUFREQ_CPU_MAX];    /* changes of state since boot */
+    uint32_t ncpu;                          /* processors in cpu_* below (at most 16) */
+    uint32_t cpu_stato[CPUFREQ_INFO_CPU];   /* the state each one is in, or CPUFREQ_IGNOTO */
+    uint32_t cpu_carico[CPUFREQ_INFO_CPU];  /* load % of the last 100 ms */
+    uint32_t cpu_cambi[CPUFREQ_INFO_CPU];   /* changes of state since boot */
 } CpuFreqInfo;
+
+/* One processor, for CPUFREQ_OP_CPU (0.319). */
+typedef struct {
+    uint32_t stato, carico, cambi;
+} CpuFreqCpu;
 
 /* SYS_CPUFREQ: ebx = operation */
 #define CPUFREQ_OP_INFO     0       /* ecx = CpuFreqInfo*, edx = sizeof */
 #define CPUFREQ_OP_MODO     1       /* ecx = modo, edx = fisso (root) */
+#define CPUFREQ_OP_CPU      2       /* ecx = CpuFreqCpu*, edx = how many fit: returns
+                                     * how many processors have had a tick (0.319) */
 
 void cpufreq_init(void);                        /* after smp_init: finds what the CPU has */
 void cpufreq_battito(uint32_t cpu, int ozio);   /* every tick, on each processor */
 int  cpufreq_info(CpuFreqInfo *dst);
 int  cpufreq_modo(uint32_t modo, uint32_t fisso);
+int  cpufreq_cpu(CpuFreqCpu *dst, uint32_t quanti);
 
 #endif /* CPUFREQ_H */

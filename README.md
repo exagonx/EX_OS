@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.318
+**Version:** 0.320
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -426,11 +426,33 @@ passes at 32 and 64 bit in QEMU.
 Mesa 26.2.6 for EX-OS (voce 88): `tools/mesa-exos/costruisci.sh [32|64]` builds `libEGL.so.1`
 and `libGLESv2.so.2` with the softpipe driver, from the signed archive plus
 `tools/mesa-exos/exos-26.2.6.patch`, the "exos" platform: system `exos` in meson, an EGL
-driver with surfaces in memory (pbuffer and surfaceless; ExWin windows come later), a winsys
+driver with surfaces in memory (pbuffer and surfaceless) and in ExWin windows, a winsys
 for them, Haiku's hgl frontend made portable. `tools/mesa-exos/prova-egl.sh [32|64]` links a
 program to the two libraries, puts it in EX-OS under QEMU with the shared objects its
 DT_NEEDED asks for, and draws a triangle with GLSL ES shaders: 8/8 at 32 and 64 bit,
-"softpipe | OpenGL ES 3.1 Mesa 26.2.6". The libraries are in the sysroots, not yet on the CD.
+"softpipe | OpenGL ES 3.1 Mesa 26.2.6".
+
+On the tools CD and in netupdate as the group `mesa` (`netupdate -install:mesa`, it brings
+zlib too): `/exos/lib/libEGL.so.1`, `/exos/lib/libGLESv2.so.2`, the headers (`EGL`, `GLES2`,
+`GLES3`, `KHR`), the sources, and `/exos/bin/provaegl`, which draws the triangle and says which
+of its eight checks fails. The netupdate check `tools/netinst/verifiche/mesa.sh` looks for the
+libraries Mesa needs (libz in /exos/lib; libstdc++, libgcc_s and libm in /lib) and then starts
+`provaegl`: "a posto" means that OpenGL works on that machine, not only that the files arrived.
+A program: `gcc prog.c -lEGL -lGLESv2`. `tools/mesa-exos/prova-netupdate.sh` does it as a user
+would, in QEMU, on a disk installed from the CD (see `help problemi`, MESA).
+
+OpenGL ES in an ExWin window: `EGL_DEFAULT_DISPLAY` is the platform `exos` (Mesa's
+`_EGL_PLATFORM_EXOS`, in the patch), and `eglCreateWindowSurface` takes a
+`struct exos_egl_finestra` (`#include <exos/egl_exwin.h>`, from `drivers/wserver/egl_exwin.h`):
+a version and two functions given by the window's owner. `misura` says how big the drawing area
+is; `mostra` gets each finished frame at `eglSwapBuffers` (0xAARRGGBB, top row first), and the
+owner copies it into the window's zone and tells the server. The owner, not libEGL, talks to
+the server because the server's news (a resize, the events) reach the process's mailbox, which
+the program's own loop reads; a library reading it would steal them. The shape of Wayland's
+`wl_egl_window`. A window resized between two frames gives the next frame its new size.
+`tools/mesa-exos/prova-finestra.sh [32]` opens a window with the protocol (as Firefox's widget
+does), draws 60 frames, changes the size, and photographs the screen with ExWin on: 8/8 and
+the triangle in the window.
 
 Two faults of the cross toolchain found on the way, both in `tools/gcc-exos/specs-condivise.sh`
 (run it again on a toolchain built before 7 November 2026): ld looked for the DT_NEEDED of a
@@ -1789,6 +1811,38 @@ because telnetd serves one at a time. Since 0.300 AHCI timeouts last as long as
 stated: they used to run out after about 2 seconds, and fired falsely when the
 thread stopped. netupdate 0.039 rewrites a fragmented kernel and no longer says
 to reboot when the boot map was not updated.
+
+**Since kernel 0.319 every processor works by default** (voce 92). `smp = 2`
+is the default in `/boot/kernel.cfg`; it is a mode, not a number: 2 means
+every processor the ACPI MADT or the MP table lists runs programs (1 parks the
+extra ones, 0 only counts them, for a board that does not boot with them).
+There is no ceiling of 16 any more: the list of processors and every
+per-processor table (GDT, TSS, current and idle process, kernel lock, CR0.WP,
+frequency) are as long as what the machine has; the limit left is the xAPIC's
+8-bit numbering (x2APIC is not driven yet). `sysconf(_SC_NPROCESSORS_ONLN)`
+gives the true number (it said 1), so Firefox, FFmpeg and Mesa size their
+threads on it; `/proc/stat` has the real time of each processor (it split the
+total evenly) and `/proc/PID/status` a `Cpus_allowed_list` line.
+**Affinity and reserved processors**: `sched_setaffinity`,
+`pthread_setaffinity_np` and `sched_getcpu` are real (`SYS_CPU_AFFINITA`
+265), and the new `cpu` command lists the processors, sends a process's
+threads to given ones (`cpu -p PID 1,3-5`), starts a command already there
+(`cpu -x 2-3 CMD`), and reserves a processor to one process (`cpu -r PID 2`,
+`cpu -R 2 CMD`): its threads go there and nobody else runs on it, until it
+ends or `cpu -l 2`. Processor 0 cannot be reserved. **A scheduler fault fixed
+on the way**: a process working alone handed the processor to the idle task for
+one tick at the end of every quantum (1 in 5, 20% of any program that
+computes); found because two programs on one processor did 1.25 times the
+work of one alone. Tested in QEMU at 32 and 64 bit: `tools/prova_tutti_core.sh`
+(1, 2, 4 processors under KVM: 2.00 and 3.8 times the work of one; 20
+processors found and at work, emulated) 22/22, `tools/prova_affinita.sh` 9/9
+(two programs pinned to one processor 1.00, to two 2.00, three beside a
+reserved one 2.93). Two threads of the same program still do not run together
+(voce 92 b). **Kernel 0.320**: shutdown, reboot and halt move to processor 0
+first; asked from a program on processor 1 the 0.319 stopped at
+"Spegnimento fra 3..." (the countdown waited for the clock, which rises on
+processor 0, while holding the kernel's lock); the clock waits of the CD
+drives and the floppy let the lock go by.
 
 Since kernel 0.297 the 64-bit system wakes the extra processors too, as the
 32-bit one does: `smpprova -accendi` puts them to work until the next reboot,
@@ -6062,7 +6116,19 @@ Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
 list **to the side**, with their icons. They are declared nowhere else — they
 exist as long as an entry names them.
 
-The **Applicazioni...** item of that same menu adds and removes lines from that
+Since 7 November 2026 (voce 80, pm 0.028) the published menu has five groups:
+**Applicazioni** (File manager, Archivi, Calctor, Pennello, Immagini),
+**Internet**, **Strumenti**, **Multimedia** (Lettore audio, Volume, VLC) and
+**Giochi**. On a machine already installed netupdate (0.046) brings the new
+menu and puts back at the end the entries the user had added: an entry is known
+by the program it starts, so the system's entries take their new group and the
+others stay (`menu_ricupera`). The Start menu closes when a program is chosen
+or the desktop is clicked; the icons beside its entries can be turned off
+(Impostazioni, Scrivania tab, "Icone accanto alle voci del menu", on by
+default).
+
+The button **Applicazioni del menu...** in the Sistema tab of Impostazioni (until
+pm 0.027 the item "Applicazioni..." of the menu) adds and removes lines from that
 file (putting back the category and icon of what it does not show), and the
 `@avvio <path>` directive says which program starts by itself with the desktop
 (that is how the clock is already there).

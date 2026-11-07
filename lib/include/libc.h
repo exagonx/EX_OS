@@ -1355,9 +1355,12 @@ int meminfo(MemInfo *mi);
  * STRUTTURA DUPLICATA A MANO da kernel/include/smp.h (SmpInfo, SmpCpu): deve
  * restare identica, e cpu_info() fallisce con -EINVAL se divergono.
  *
- * ! EX-OS LAVORA CON UN PROCESSORE SOLO (tappa 1 dell'SMP, ottobre 2026): gli
- * altri sono accesi e fermi. `n` dice quanti ce ne sono, non quanti lavorano.
+ * `n` dice quanti ce ne sono; quanti lavorano lo dice lo stato di ognuno
+ * (CPU_STATO_LAVORA, piu' quello d'avvio). Dal kernel 0.319 lavorano tutti
+ * per difetto (smp = 2).
  * ============================================================================= */
+/* cpu_info() fills the first 16 (the structure of programs built up to
+ * kernel 0.318); cpu_info_tutti() gives all of them. */
 #define CPU_INFO_MAX        16
 
 #define CPU_FONTE_NESSUNA   0   /* nessuna tabella: un processore */
@@ -1381,7 +1384,9 @@ typedef struct {
     unsigned char apic_id;
     unsigned char stato;        /* CPU_STATO_* */
     unsigned char apic_ver;
-    unsigned char riservato;
+    unsigned char numero;       /* kernel 0.319: its number when it works (0 the boot
+                                 * one, as cpu, sched_getcpu and /proc/stat count),
+                                 * 255 otherwise; up to 0.318 always 0 */
     unsigned int  firma;        /* CPUID.1 EAX; 0 se il processore non ha risposto */
     unsigned int  capacita;     /* CPUID.1 EDX */
     unsigned int  battiti;      /* interrupt del suo timer ricevuti (100 al secondo) */
@@ -1396,7 +1401,7 @@ typedef struct {
     unsigned int apic_locale;   /* indirizzo fisico, 0 se non c'e' */
     unsigned int n_ioapic;
     unsigned int ioapic;        /* indirizzo fisico del primo */
-    unsigned int troppi;        /* elencati oltre CPU_INFO_MAX, ignorati */
+    unsigned int troppi;        /* elencati e non tenuti dal kernel: memoria finita */
     unsigned int timer_per_tick;/* conteggi del timer dell'APIC in 10 ms; 0 = non misurato */
     unsigned int tick;          /* tick del sistema (100 al secondo) alla chiamata */
     CpuVoce      cpu[CPU_INFO_MAX];
@@ -1406,6 +1411,29 @@ typedef struct {
  * ! Ogni chiamata manda anche un messaggio a ogni processore in attesa: chi
  * richiama poco dopo vede `messaggi` cresciuto di uno su ciascuno. */
 int cpu_info(CpuInfo *ci);
+/* Every processor, no ceiling (kernel 0.319): malloc'd, room for ci->n
+ * entries (cpu[] goes past CPU_INFO_MAX); free() it. NULL on error. */
+CpuInfo *cpu_info_tutti(void);
+
+/* Where threads may run, and processors reserved to a process (kernel
+ * 0.319). A set is an array of 32-bit words, bit n = processor n (the
+ * numbers hwinfo shows; 0 = the boot processor). pid 0 = the calling
+ * thread. Each returns >= 0, or -errno.
+ *   cpu_aff_leggi   fills the set; returns the words a full set needs
+ *   cpu_aff_scrivi  sets it (own processes, or root); -EINVAL if it would
+ *                   leave no usable processor
+ *   cpu_riserva     processor `cpu` only for the process `pid`, whose
+ *                   threads go there (root; never processor 0)
+ *   cpu_libera      processor `cpu` back to everybody (root)
+ *   cpu_riserve     the owner (pid of the process, 0 = nobody) of each
+ *                   processor at work; returns how many work
+ *   cpu_qui         the processor the caller is running on */
+int cpu_aff_leggi(int pid, unsigned int *set, unsigned int parole);
+int cpu_aff_scrivi(int pid, const unsigned int *set, unsigned int parole);
+int cpu_riserva(int pid, unsigned int cpu);
+int cpu_libera(unsigned int cpu);
+int cpu_riserve(unsigned int *chi, unsigned int quanti);
+int cpu_qui(void);
 int cpu_lavora(void);       /* mette al lavoro i processori parcheggiati (root) */
 
 /* Il registro dei messaggi del kernel (kernel 0.242): quel che ha detto

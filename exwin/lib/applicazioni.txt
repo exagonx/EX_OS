@@ -6,9 +6,10 @@
 # installa un programma non ha i sorgenti.
 #
 # ! E DAL 19 AGOSTO 2026 NON SERVE NEMMENO UN EDITORE DI TESTO: il menu di
-# avvio ha la voce «Applicazioni...», che aggiunge, toglie e riscrive questo
-# file. Resta leggibile e modificabile a mano apposta — un file di
-# configurazione che solo un programma sa scrivere e' un file che non si puo'
+# avvio aveva la voce «Applicazioni...», che aggiunge, toglie e riscrive questo
+# file; dal 7 novembre 2026 e' il pulsante «Applicazioni del menu...» nella
+# scheda Sistema di Impostazioni. Resta leggibile e modificabile a mano
+# apposta — un file di configurazione che solo un programma sa scrivere e' un file che non si puo'
 # riparare quando quel programma non parte.
 #
 # Una riga per applicazione:   nome mostrato | percorso dell'eseguibile
@@ -50,12 +51,17 @@
 # da se' a 16 (vedi ex_icona_disegna in lib/exwin/exwin.h), quindi non serve
 # una copia per ogni misura.
 
-File manager           | /exwin/bin/filemgr   | /exwin/icon/baseapp/filemgr_64.ico
-Archivi                | /exwin/bin/archivi   | /exwin/icon/baseapp/archivi_64.ico
-Calctor                | /exwin/bin/calctor   | /exwin/icon/baseapp/calctor_64.ico
-Pennello               | /exwin/bin/pennello  | /exwin/icon/baseapp/pennello_64.ico
-Immagini               | /exwin/bin/immagini
-Lettore audio          | /exwin/bin/explayer  | /exwin/icon/baseapp/explayer_64.ico
+# ! I GRUPPI DAL 7 NOVEMBRE 2026 (voce 80, l'utente): Applicazioni,
+# Internet, Strumenti, Multimedia, Giochi, in quest'ordine - le categorie
+# compaiono nell'ordine in cui si incontrano qui. Prima i programmi di tutti
+# i giorni stavano in cima fuori dai gruppi. Sulle macchine gia' installate
+# il riordino lo porta netupdate (0.046): sostituisce questo file e rimette
+# in fondo le voci che ci aveva aggiunto l'utente (menu_ricupera).
+Applicazioni/File manager | /exwin/bin/filemgr   | /exwin/icon/baseapp/filemgr_64.ico
+Applicazioni/Archivi      | /exwin/bin/archivi   | /exwin/icon/baseapp/archivi_64.ico
+Applicazioni/Calctor      | /exwin/bin/calctor   | /exwin/icon/baseapp/calctor_64.ico
+Applicazioni/Pennello     | /exwin/bin/pennello  | /exwin/icon/baseapp/pennello_64.ico
+Applicazioni/Immagini     | /exwin/bin/immagini
 # ! INTERNET E' UNA CATEGORIA DAL 9 OTTOBRE 2026, e ci stanno i navigatori:
 # EXBrowser, che e' del sistema, ed Exilla (Firefox), che e' un pacchetto a
 # parte - la sua riga non e' scritta qui: la aggiunge `netupdate
@@ -66,8 +72,11 @@ Strumenti/Terminale    | /exwin/bin/term      | /exwin/icon/baseapp/term_64.ico
 Strumenti/EX-IDE       | /exwin/bin/exide     | /exwin/icon/baseapp/exide_64.ico
 Strumenti/Prova font   | /exwin/bin/fontprova
 Strumenti/ExPackage    | /exwin/bin/expackage | /exwin/icon/baseapp/archivi_64.ico
+# Multimedia: anche VLC, che e' un pacchetto (riga `menu` del suo gruppo in
+# tools/iso/strumenti.txt, come Exilla).
+Multimedia/Lettore audio | /exwin/bin/explayer | /exwin/icon/baseapp/explayer_64.ico
+Multimedia/Volume        | /exwin/bin/exvolume | /exwin/icon/baseapp/explayer_64.ico
 Giochi/EXKlondike      | /exwin/bin/exklondike | /exwin/icon/baseapp/exklondike_64.ico
 Giochi/EXSpider        | /exwin/bin/exspider   | /exwin/icon/baseapp/exspider_64.ico
 Giochi/EXMajong        | /exwin/bin/exmajong   | /exwin/icon/baseapp/exmajong_64.ico
 Giochi/EXGO            | /exwin/bin/exgo       | /exwin/icon/baseapp/exgo_64.ico
-Volume                 | /exwin/bin/exvolume   | /exwin/icon/baseapp/explayer_64.ico

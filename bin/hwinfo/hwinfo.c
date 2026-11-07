@@ -80,7 +80,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `hwinfo -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwinfo", "0.001");
+EX_VERSIONE("hwinfo", "0.002");
 
 #define RAPPORTO_PREDEFINITO  "/hwinfo.txt"
 #define ATTESA_MS             2000
@@ -321,7 +321,7 @@ static void sezione_processori(void)
         "nessuna tabella (un processore solo)", "ACPI, tabella MADT",
         "tabella MultiProcessor 1.4", "MultiProcessor, configurazione predefinita"
     };
-    CpuInfo ci, dopo;
+    CpuInfo *ci, *dopo = NULL;
     unsigned int i;
     int riletto = 0;
 
@@ -330,26 +330,29 @@ static void sezione_processori(void)
     rap(" PROCESSORI\n");
     rap("=============================================================\n");
 
-    if (cpu_info(&ci) != 0) {
+    /* all of them (0.002): cpu_info() stops at 16 */
+    ci = cpu_info_tutti();
+    if (ci == NULL) {
         rap("  non leggibile: cpu_info() ha rifiutato (kernel prima della 0.237?)\n");
         return;
     }
 
-    if (ci.fermi > 0) {
+    if (ci->fermi > 0) {
         usleep(500 * 1000);
-        riletto = (cpu_info(&dopo) == 0);
+        dopo    = cpu_info_tutti();
+        riletto = (dopo != NULL && dopo->n == ci->n);
     }
 
-    rap("  trovati          %u\n", ci.n);
-    rap("  elenco da        %s\n", ci.fonte < 4 ? fonte[ci.fonte] : "?");
-    if (ci.apic_locale) rap("  APIC locale      0x%08x\n", ci.apic_locale);
-    if (ci.n_ioapic)    rap("  I/O APIC         %u, il primo a 0x%08x\n", ci.n_ioapic, ci.ioapic);
-    if (ci.troppi)      rap("  ! altri %u elencati e ignorati: il kernel ne tiene %u\n",
-                            ci.troppi, (unsigned int)CPU_INFO_MAX);
+    rap("  trovati          %u\n", ci->n);
+    rap("  elenco da        %s\n", ci->fonte < 4 ? fonte[ci->fonte] : "?");
+    if (ci->apic_locale) rap("  APIC locale      0x%08x\n", ci->apic_locale);
+    if (ci->n_ioapic)    rap("  I/O APIC         %u, il primo a 0x%08x\n", ci->n_ioapic, ci->ioapic);
+    if (ci->troppi)     rap("  ! altri %u elencati e non tenuti: il kernel non ha avuto memoria\n",
+                            ci->troppi);
     rap("\n");
 
-    for (i = 0; i < ci.n && i < CPU_INFO_MAX; i++) {
-        const CpuVoce *c = &ci.cpu[i];
+    for (i = 0; i < ci->n; i++) {
+        const CpuVoce *c = &ci->cpu[i];
         const char    *st;
 
         switch (c->stato) {
@@ -366,23 +369,23 @@ static void sezione_processori(void)
                 ((c->firma >> 4) & 0xF) | (((c->firma >> 16) & 0xF) << 4),
                 c->firma & 0xF);
         if (c->stato == CPU_STATO_FERMO && riletto) {
-            unsigned int b = dopo.cpu[i].battiti - c->battiti;
-            unsigned int t = dopo.tick - ci.tick;
+            unsigned int b = dopo->cpu[i].battiti - c->battiti;
+            unsigned int t = dopo->tick - ci->tick;
 
-            if (ci.timer_per_tick == 0)
+            if (ci->timer_per_tick == 0)
                 rap("                   timer     non avviato: il kernel non e' riuscito a misurarlo\n");
             else
                 rap("                   timer     %u battiti in %u centesimi di secondo: %s\n",
                     b, t, (b + 5 >= t && b <= t + 5) ? "CAMMINA" : "NON VA COME DOVREBBE");
             rap("                   messaggi  %s (ricevuti finora: %u)\n",
-                dopo.cpu[i].messaggi > c->messaggi ? "RICEVE" : "NON RICEVE",
-                dopo.cpu[i].messaggi);
+                dopo->cpu[i].messaggi > c->messaggi ? "RICEVE" : "NON RICEVE",
+                dopo->cpu[i].messaggi);
         }
     }
 
-    if (ci.n > 1) {
+    if (ci->n > 1) {
         rap("\n");
-        switch (ci.motivo) {
+        switch (ci->motivo) {
         case CPU_MOTIVO_CFG:
             rap("  Non svegliati perche' /boot/kernel.cfg dice  smp = 0.\n"); break;
         case CPU_MOTIVO_X2APIC:
@@ -393,9 +396,26 @@ static void sezione_processori(void)
             rap("  Non svegliati (tutti): mancava memoria nella fascia del kernel.\n"); break;
         default: break;
         }
-        rap("  ! EX-OS lavora con UN processore: gli altri, se accesi, aspettano.\n");
-        rap("    Eseguire processi su piu' processori e' la tappa 3 dell'SMP.\n");
+        {
+            /* what the kernel does with them, read from the states above
+             * (0.002: the old text said the extra ones always wait) */
+            unsigned int k, lavorano = 0, fermi = 0;
+
+            for (k = 0; k < ci->n; k++) {
+                if (ci->cpu[k].stato == CPU_STATO_LAVORA) lavorano++;
+                else if (ci->cpu[k].stato == CPU_STATO_FERMO) fermi++;
+            }
+            if (lavorano > 0)
+                rap("  Eseguono processi %u processori su %u (smp = 2, il predefinito).\n",
+                    lavorano + 1, ci->n);
+            if (fermi > 0)
+                rap("  ! %u accesi ma IN ATTESA: /boot/kernel.cfg dice  smp = 1.\n"
+                    "    Per metterli al lavoro: smp = 2 (o la riga tolta), poi riavvio;\n"
+                    "    fino al riavvio:  smpprova -accendi\n", fermi);
+        }
     }
+    free(ci);
+    if (dopo) free(dopo);
 }
 
 /* =============================================================================

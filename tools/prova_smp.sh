@@ -8,11 +8,13 @@
 #
 #   1. `hwinfo` dice quanti ne ha trovati il kernel: tanti quanti ne ha dati
 #      QEMU;
-#   2. quelli in piu' sono «IN ATTESA», tutti, e nessuno «MUTO»; il timer di
-#      ognuno cammina e ognuno riceve i messaggi (tappa 2, kernel 0.238);
-#   3. QEMU stesso conferma: i processori in piu' sono fermi (halted) e in
-#      modo protetto con le pagine accese (CR0 = 8xxxxxxx), cioe' sono
-#      arrivati in fondo al trampolino;
+#   2. quelli in piu' LAVORANO, tutti, e nessuno «MUTO» (dalla 0.319 smp = 2
+#      e' il predefinito; fino alla 0.318 qui si guardava «IN ATTESA», il
+#      timer e i messaggi di ognuno: quelle righe hwinfo le scrive solo per
+#      un processore parcheggiato, con smp = 1);
+#   3. QEMU stesso conferma: tutti i processori sono in modo protetto con le
+#      pagine accese (CR0 = 8xxxxxxx), cioe' sono arrivati in fondo al
+#      trampolino;
 #   4. con un processore solo non cambia niente: «trovati 1»;
 #      e senza ACPI (-machine acpi=off) l'elenco viene dalla tabella MP;
 #   5. il sistema dopo lavora: la shell risponde, nessun [FAULT].
@@ -50,23 +52,13 @@ giro() {        # giro <processori> <opzioni di QEMU in piu'> <nome>
     tr -d '\r' < "$SER" | sed 's/\x1b\[[0-9;]*m//g' > "$L"
 
     trovati=$(sed -n 's/^ *trovati  *\([0-9][0-9]*\).*/\1/p' "$L" | head -1)
-    fermi=$(grep -c "IN ATTESA - acceso" "$L")
+    fermi=$(grep -c "LAVORA   - esegue processi" "$L")
     muti=$(grep -c "MUTO  *- svegliato" "$L")
     [ "$trovati" = "$n" ] && ok "hwinfo: trovati $n" \
                           || no "hwinfo dice «trovati ${trovati:-niente}», QEMU ne ha $n"
     [ "$fermi" = $((n - 1)) ] && [ "$muti" = 0 ] \
-        && ok "$((n - 1)) in piu' accesi e in attesa, nessuno muto" \
-        || no "in attesa $fermi (attesi $((n - 1))), muti $muti"
-    # Tappa 2: ogni processore in attesa ha il suo timer che cammina e riceve
-    # i messaggi mandati da dentro una chiamata di sistema.
-    if [ "$n" -gt 1 ]; then
-        [ "$(grep -c "timer .*: CAMMINA" "$L")" = $((n - 1)) ] \
-            && ok "il timer di ognuno cammina (100 battiti al secondo)" \
-            || no "timer: $(grep -c 'timer .*: CAMMINA' "$L") su $((n - 1)) camminano: $(grep -m1 'timer  ' "$L")"
-        [ "$(grep -c "messaggi  *RICEVE " "$L")" = $((n - 1)) ] \
-            && ok "ognuno riceve i messaggi (IPI) mandati da una chiamata di sistema" \
-            || no "messaggi: $(grep -c 'messaggi  *RICEVE ' "$L") su $((n - 1)) li ricevono"
-    fi
+        && ok "$((n - 1)) in piu' al lavoro, nessuno muto" \
+        || no "al lavoro $fermi (attesi $((n - 1))), muti $muti"
     grep -q "IN USO  *- e' quello su cui gira EX-OS" "$L" \
         && ok "il processore d'avvio e' riconosciuto" || no "nessuna voce «IN USO»"
 
@@ -81,9 +73,9 @@ giro() {        # giro <processori> <opzioni di QEMU in piu'> <nome>
         [ "$pagine" = "$n" ] \
             && ok "QEMU: tutti e $n i processori hanno le pagine accese (CR0)" \
             || no "QEMU: $pagine processori su $n con le pagine accese"
-        [ "$fermi_qemu" -ge $((n - 1)) ] \
-            && ok "QEMU: $fermi_qemu processori in hlt" \
-            || no "QEMU vede $fermi_qemu processori fermi, attesi almeno $((n - 1))"
+        # (in hlt quanti non hanno niente da fare in quell'istante: con tutti
+        # al lavoro non e' piu' un numero fisso, si scrive e basta)
+        echo "        QEMU: $fermi_qemu processori in hlt in quell'istante"
     fi
     grep -q "^FINE-SMP" "$L" \
         && ok "dopo, il sistema lavora (la shell risponde)" \

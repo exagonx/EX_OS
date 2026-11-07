@@ -192,28 +192,27 @@ registri del controller senza toccare niente. I controller che si dichiarano
 AHCI non hanno bisogno di questa voce: si usano sempre.
 
 -------------------------------------------------------------------------------
-smp = 1                   (commentata per default)
+smp = 2                   (commentata per default)
 -------------------------------------------------------------------------------
 
 Riguarda solo le macchine con piu' di un processore, o con un processore a
-piu' nuclei. 1 (predefinito): all'avvio il kernel cerca i processori nelle
+piu' nuclei. E' un MODO, non un numero di processori:
+
+2 (predefinito dal kernel 0.319): all'avvio il kernel cerca i processori nelle
 tabelle del BIOS (ACPI, oppure la tabella MultiProcessor delle schede a due
-processori), sveglia quelli in piu' e da' a ciascuno il suo timer. 0: li
-conta soltanto, senza scrivere in nessun registro.
+processori), li sveglia TUTTI e tutti ESEGUONO PROGRAMMI. Due programmi
+diversi girano su due processori insieme.
+1: quelli in piu' si svegliano, hanno il loro timer e restano in attesa: la
+macchina va come con un processore. `smpprova -accendi` li mette al lavoro
+fino al riavvio.
+0: li conta soltanto, senza scrivere in nessun registro.
 
-2 (dal kernel 0.246): i processori in piu' ESEGUONO PROGRAMMI. Due programmi
-diversi girano su due processori insieme; il kernel resta di un processore
-per volta, e i fili di uno stesso programma si alternano su uno solo. Con 1
-gli altri sono accesi e in attesa, e la macchina va come con un processore.
-Che cosa c'e' e in che stato lo dice `hwinfo`, nella sezione PROCESSORI.
+Che cosa c'e' e in che stato lo dice `hwinfo`, nella sezione PROCESSORI;
+quanto lavoro fanno due programmi insieme rispetto a uno lo misura `smpprova`.
 
-PRIMA DI SCRIVERE 2 QUI SI PROVA CON  smpprova -accendi : mette al lavoro i
-processori in attesa da quel momento e fino al riavvio. Se la macchina si
-ferma, riavviandola torna com'era; se va, `smpprova` da solo dice quanto
-lavoro fanno due programmi insieme rispetto a uno. Solo allora smp = 2.
-
-SI METTE A 0 SE L'AVVIO SI FERMA su una scheda con piu' processori: svegliarli
-e' il punto dove una tabella del BIOS sbagliata puo' bloccare la macchina.
+SI METTE A 1 O A 0 SE L'AVVIO SI FERMA su una scheda con piu' processori:
+svegliarli e' il punto dove una tabella del BIOS sbagliata puo' bloccare la
+macchina. Il dischetto o il CD di soccorso hanno il loro kernel.cfg.
 Come per verboseboot conta solo un NUMERO: `smp = no` non spegne niente.
 Su una macchina con un processore la voce non fa differenza.
 

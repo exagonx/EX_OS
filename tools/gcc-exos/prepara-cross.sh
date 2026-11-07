@@ -189,7 +189,7 @@ ln -sfn include "$PREFISSO/i386-exos/sys-include"
 # definizioni del server, non una copia che divergerebbe. In <exos/>, con
 # la data originale come il resto.
 mkdir -p "$PREFISSO/i386-exos/include/exos"
-cp -p drivers/wserver/win_proto.h drivers/kbd/kbd_proto.h "$PREFISSO/i386-exos/include/exos/"
+cp -p drivers/wserver/win_proto.h drivers/wserver/egl_exwin.h drivers/kbd/kbd_proto.h "$PREFISSO/i386-exos/include/exos/"
 
 echo "[OK] crt0.o, libc.a e $(ls lib/include/*.h | wc -l) header installati"
 echo ""

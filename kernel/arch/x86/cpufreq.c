@@ -57,6 +57,8 @@
 #include "kernel.h"
 #include "cpufreq.h"
 #include "syscall.h"      /* EINVAL, ENODEV */
+#include "kmalloc.h"
+#include "smp.h"          /* smp_posti: one entry per processor (0.319) */
 
 /* -----------------------------------------------------------------------------
  * MSR and CPUID
@@ -121,8 +123,10 @@ static struct {
     uint32_t codice[CPUFREQ_STATI_MAX];     /* AMD: P-state number; Intel: ratio */
     uint32_t primo, ultimo;
     volatile uint32_t modo, fisso;
-    CpuStato cpu[CPUFREQ_CPU_MAX];
+    CpuStato *cpu;                          /* `posti` entries, see cpufreq_init */
+    uint32_t  posti;
 } g_cf;
+static CpuStato g_cf_cpu_1[1];
 
 /* -----------------------------------------------------------------------------
  * AMD
@@ -314,7 +318,13 @@ void cpufreq_init(void)
 
     g_cf.tipo = CPUFREQ_NESSUNO;
     g_cf.modo = CPUFREQ_SPENTO;
-    for (i = 0; i < CPUFREQ_CPU_MAX; i++) {
+    /* after smp_init: as many entries as processor slots (no ceiling) */
+    g_cf.posti = smp_posti();
+    g_cf.cpu   = g_cf.posti > 1 ? (CpuStato *)kmalloc(g_cf.posti * sizeof(CpuStato)) : NULL;
+    if (g_cf.cpu == NULL) { g_cf.cpu = g_cf_cpu_1; g_cf.posti = 1; }
+    for (i = 0; i < g_cf.posti; i++) {
+        g_cf.cpu[i].tick = g_cf.cpu[i].ozio = g_cf.cpu[i].carico = 0;
+        g_cf.cpu[i].cambi = g_cf.cpu[i].visto = 0;
         g_cf.cpu[i].stato    = CPUFREQ_IGNOTO;
         g_cf.cpu[i].iniziale = CPUFREQ_IGNOTO;
     }
@@ -372,7 +382,7 @@ void cpufreq_battito(uint32_t cpu, int ozio)
     CpuStato *c;
     uint32_t  modo, voluto;
 
-    if (g_cf.tipo == CPUFREQ_NESSUNO || cpu >= CPUFREQ_CPU_MAX) return;
+    if (g_cf.tipo == CPUFREQ_NESSUNO || cpu >= g_cf.posti) return;
     c = &g_cf.cpu[cpu];
     if (!c->visto) {                        /* first tick here: what did the BIOS leave? */
         c->iniziale = c->stato = stato_ora();
@@ -426,7 +436,7 @@ int cpufreq_info(CpuFreqInfo *dst)
     dst->fisso  = g_cf.fisso;
     dst->su     = SOGLIA_SU;
     dst->giu    = SOGLIA_GIU;
-    for (i = 0; i < CPUFREQ_CPU_MAX; i++) {
+    for (i = 0; i < g_cf.posti && i < CPUFREQ_INFO_CPU; i++) {
         if (!g_cf.cpu[i].visto) continue;
         dst->ncpu = i + 1;
         dst->cpu_stato[i]  = g_cf.cpu[i].stato;
@@ -445,4 +455,22 @@ int cpufreq_modo(uint32_t modo, uint32_t fisso)
     g_cf.modo  = modo;
     klog(LOG_INFO, "CPUFREQ: modo %u%s", modo, modo == CPUFREQ_FISSO ? " (stato fisso)" : "");
     return 0;
+}
+
+/* CPUFREQ_OP_CPU (0.319): every processor, not only the first 16 of
+ * CpuFreqInfo. Fills up to `quanti`; returns how many there are. */
+int cpufreq_cpu(CpuFreqCpu *dst, uint32_t quanti)
+{
+    uint32_t i, n = 0;
+
+    for (i = 0; i < g_cf.posti; i++) {
+        if (!g_cf.cpu[i].visto) continue;
+        n = i + 1;
+    }
+    for (i = 0; i < n && i < quanti; i++) {
+        dst[i].stato  = g_cf.cpu[i].visto ? g_cf.cpu[i].stato : CPUFREQ_IGNOTO;
+        dst[i].carico = g_cf.cpu[i].carico;
+        dst[i].cambi  = g_cf.cpu[i].cambi;
+    }
+    return (int)n;
 }

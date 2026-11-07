@@ -1,24 +1,25 @@
 diff --git a/include/EGL/eglplatform.h b/include/EGL/eglplatform.h
-index 6786afd90b6..0f7703d3ca1 100644
+index 6786afd90b6..af369842fb1 100644
 --- a/include/EGL/eglplatform.h
 +++ b/include/EGL/eglplatform.h
-@@ -119,6 +119,14 @@ typedef Display *EGLNativeDisplayType;
+@@ -119,6 +119,15 @@ typedef Display *EGLNativeDisplayType;
  typedef Pixmap   EGLNativePixmapType;
  typedef Window   EGLNativeWindowType;
  
 +#elif defined(__EXOS__)
 +
-+/* EX-OS: Mesa's "exos" platform. Only pbuffer and surfaceless for now; the
-+ * window will be an ExWin window, passed as a pointer-sized value. */
-+typedef void             *EGLNativeDisplayType;
-+typedef khronos_uintptr_t EGLNativePixmapType;
-+typedef khronos_uintptr_t EGLNativeWindowType;
++/* EX-OS: Mesa's "exos" platform. A window is an ExWin window described by
++ * its owner: struct exos_egl_finestra, in <exos/egl_exwin.h>. */
++struct exos_egl_finestra;
++typedef void                     *EGLNativeDisplayType;
++typedef khronos_uintptr_t         EGLNativePixmapType;
++typedef struct exos_egl_finestra *EGLNativeWindowType;
 +
  #elif defined(__unix__)
  
  typedef void             *EGLNativeDisplayType;
 diff --git a/meson.build b/meson.build
-index 37f2fd47925..59ad57a42c9 100644
+index 37f2fd47925..ceb704defd3 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -197,7 +197,7 @@ if gallium_drivers.contains('auto')
@@ -45,7 +46,7 @@ index 37f2fd47925..59ad57a42c9 100644
      _platforms = ['haiku']
 +  elif host_machine.system() == 'exos'
 +    # EX-OS (exos.altervista.org): EGL over a software Gallium driver,
-+    # surfaces in memory first, ExWin windows later (voce 88).
++    # surfaces in memory and ExWin windows (voce 88).
 +    _platforms = ['exos']
    elif host_machine.system() == 'windows'
      _platforms = ['windows']
@@ -76,7 +77,17 @@ index 37f2fd47925..59ad57a42c9 100644
    .require(with_glx != 'xlib', error_message :'EGL requires DRI, but GLX is being built with xlib support') \
    .disable_auto_if(with_platform_haiku) \
    .allowed()
-@@ -1249,7 +1254,7 @@ if cc.has_function('fmemopen')
+@@ -575,7 +580,8 @@ if with_egl
+   endif
+ 
+   # All the other platforms can be detected and cannot reach the native platform code
+-  _undetectable_platforms = ['x11', 'haiku', 'android', 'surfaceless']
++  # exos: nothing tells an ExWin window from another pointer, as on Haiku
++  _undetectable_platforms = ['x11', 'haiku', 'android', 'exos', 'surfaceless']
+ 
+   # Don't enforce the native platform if none of the undetectable platforms are enabled
+   _undetectable_platforms_enabled = []
+@@ -1249,7 +1255,7 @@ if cc.has_function('fmemopen')
  endif
  
  # TODO: this is very incomplete
@@ -86,7 +97,7 @@ index 37f2fd47925..59ad57a42c9 100644
  elif host_machine.system() == 'sunos'
    pre_args += '-D__EXTENSIONS__'
 diff --git a/meson.options b/meson.options
-index 93a60e3047b..ae99d434906 100644
+index 93a60e3047b..32a376dfbd0 100644
 --- a/meson.options
 +++ b/meson.options
 @@ -12,7 +12,7 @@ option(
@@ -98,6 +109,39 @@ index 93a60e3047b..ae99d434906 100644
    ],
    description : 'window systems to support. If this is set to `auto`, all ' +
                  'platforms applicable will be enabled.'
+@@ -23,7 +23,7 @@ option(
+   type : 'combo',
+   value : 'auto',
+   choices : [
+-    'auto', 'x11', 'haiku', 'android', 'surfaceless',
++    'auto', 'x11', 'haiku', 'android', 'exos', 'surfaceless',
+   ],
+   description : 'the window system EGL assumes for EGL_DEFAULT_DISPLAY',
+ )
+diff --git a/src/egl/main/egldisplay.c b/src/egl/main/egldisplay.c
+index ef653aa1d8b..fbba1d79cbc 100644
+--- a/src/egl/main/egldisplay.c
++++ b/src/egl/main/egldisplay.c
+@@ -84,6 +84,7 @@ static const struct {
+    {_EGL_PLATFORM_SURFACELESS, "surfaceless"},
+    {_EGL_PLATFORM_DEVICE, "device"},
+    {_EGL_PLATFORM_WINDOWS, "windows"},
++   {_EGL_PLATFORM_EXOS, "exos"},
+ };
+ 
+ /**
+diff --git a/src/egl/main/egldisplay.h b/src/egl/main/egldisplay.h
+index 6178140e7e7..7c4b94b4141 100644
+--- a/src/egl/main/egldisplay.h
++++ b/src/egl/main/egldisplay.h
+@@ -55,6 +55,7 @@ enum _egl_platform_type {
+    _EGL_PLATFORM_SURFACELESS,
+    _EGL_PLATFORM_DEVICE,
+    _EGL_PLATFORM_WINDOWS,
++   _EGL_PLATFORM_EXOS,      /* an ExWin window: <exos/egl_exwin.h> */
+ 
+    _EGL_NUM_PLATFORMS,
+    _EGL_INVALID_PLATFORM = -1
 diff --git a/src/egl/meson.build b/src/egl/meson.build
 index 4e62ee41e4e..e6ce4af7ab6 100644
 --- a/src/egl/meson.build
@@ -320,10 +364,10 @@ index 16dd51bfb08..ffde82cd573 100644
        return false;
 diff --git a/src/egl/drivers/exos/egl_exos.c b/src/egl/drivers/exos/egl_exos.c
 new file mode 100644
-index 00000000000..5c2ab08f725
+index 00000000000..7d746b3b5c7
 --- /dev/null
 +++ b/src/egl/drivers/exos/egl_exos.c
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,500 @@
 +/*
 + * Copyright (C) 2026 Graziano Falcone
 + * SPDX-License-Identifier: MIT
@@ -334,11 +378,17 @@ index 00000000000..5c2ab08f725
 + * glue of frontends/hgl.
 + *
 + * ! SURFACES IN MEMORY FIRST (the user's choice, 7 November 2026): pbuffers
-+ * and surfaceless contexts, which is what WebGL in Firefox needs. A window
-+ * surface will be an ExWin window, reached through the window server's
-+ * protocol: until then eglCreateWindowSurface fails with
-+ * EGL_BAD_NATIVE_WINDOW and says why, instead of drawing nowhere.
++ * and surfaceless contexts, which is what WebGL in Firefox needs.
++ *
++ * WINDOWS (voce 88 c, 7 November 2026): EGLNativeWindowType is a
++ * struct exos_egl_finestra * (<exos/egl_exwin.h>): the owner of the ExWin
++ * window says how big it is (misura) and takes each finished frame
++ * (mostra). The frame reaches it through the winsys: hgl passes the
++ * surface's exos_sw_presenta as context_private to flush_frontbuffer, and
++ * winsys/sw/exos calls it. Why the owner and not the server's protocol from
++ * here: see egl_exwin.h.
 + */
++#include <stddef.h>
 +#include <stdint.h>
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -362,6 +412,7 @@ index 00000000000..5c2ab08f725
 +#include "main/glthread.h"
 +
 +#include "exos/exos_sw_winsys.h"
++#include <exos/egl_exwin.h>
 +#include "hgl_context.h"
 +
 +#include "target-helpers/inline_sw_helper.h"
@@ -386,17 +437,85 @@ index 00000000000..5c2ab08f725
 +   _EGLSurface base;
 +   struct hgl_buffer *fb;
 +   struct pipe_fence_handle *throttle_fence;
++   /* a window: the owner's description, and the hook the winsys calls */
++   struct exos_egl_finestra *finestra;
++   struct exos_sw_presenta presenta;
 +};
 +
 +/* --- surfaces ------------------------------------------------------------ */
++
++/* The winsys hands a finished frame here (displaytarget_display): BGRA
++ * bytes in memory are the 0xAARRGGBB words the owner asked for. */
++static void
++exos_window_present(struct exos_sw_presenta *p, const void *pixel,
++                    unsigned larghezza, unsigned altezza, unsigned passo)
++{
++   struct exos_egl_surface *surf =
++      (struct exos_egl_surface *)((char *)p - offsetof(struct exos_egl_surface, presenta));
++   surf->finestra->mostra(surf->finestra, (const unsigned int *)pixel,
++                          larghezza, altezza, passo);
++}
++
++/* The owner's size, now. A size that changed reaches Gallium through the
++ * stamp: the next frame is drawn at the new size (hgl_st_framebuffer_validate). */
++static void
++exos_window_update_size(struct exos_egl_surface *surf)
++{
++   unsigned int w = 0, h = 0;
++
++   surf->finestra->misura(surf->finestra, &w, &h);
++   if (w < 1) w = 1;
++   if (h < 1) h = 1;
++   if (w != surf->fb->newWidth || h != surf->fb->newHeight) {
++      surf->fb->newWidth = w;
++      surf->fb->newHeight = h;
++      surf->base.Width = (EGLint)w;
++      surf->base.Height = (EGLint)h;
++      p_atomic_inc(&surf->fb->base.stamp);
++   }
++}
 +
 +static _EGLSurface *
 +exos_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
 +                           void *native_window, const EGLint *attrib_list)
 +{
-+   _eglError(EGL_BAD_NATIVE_WINDOW,
-+             "EX-OS: EGL windows (ExWin) are not there yet; use a pbuffer");
-+   return NULL;
++   struct exos_egl_display *edpy = exos_egl_display(disp);
++   struct exos_egl_finestra *f = (struct exos_egl_finestra *)native_window;
++   struct exos_egl_surface *surf;
++   struct st_visual visual;
++
++   /* ! THE VERSION FIRST: a program built for a later form of the
++    * structure must get an error here, not a call through a field this
++    * libEGL does not know (egl_exwin.h). */
++   if (!f || f->versione != EXOS_EGL_FINESTRA_VERSIONE || !f->misura || !f->mostra) {
++      _eglError(EGL_BAD_NATIVE_WINDOW,
++                "EX-OS: the native window is a struct exos_egl_finestra * "
++                "(<exos/egl_exwin.h>) with versione, misura and mostra");
++      return NULL;
++   }
++   surf = calloc(1, sizeof(*surf));
++   if (!surf) {
++      _eglError(EGL_BAD_ALLOC, "eglCreateWindowSurface");
++      return NULL;
++   }
++   if (!_eglInitSurface(&surf->base, disp, EGL_WINDOW_BIT, conf,
++                        attrib_list, native_window)) {
++      free(surf);
++      return NULL;
++   }
++   surf->finestra = f;
++   surf->presenta.mostra = exos_window_present;
++
++   /* BGRA, not BGRX: the fourth byte is then GL's alpha, never garbage */
++   hgl_get_st_visual(&visual, HGL_DOUBLE | HGL_ALPHA | HGL_DEPTH | HGL_STENCIL);
++   surf->fb = hgl_create_st_framebuffer(edpy->disp, &visual, &surf->presenta);
++   if (!surf->fb) {
++      free(surf);
++      _eglError(EGL_BAD_ALLOC, "eglCreateWindowSurface");
++      return NULL;
++   }
++   exos_window_update_size(surf);
++   return &surf->base;
 +}
 +
 +static _EGLSurface *
@@ -472,6 +591,8 @@ index 00000000000..5c2ab08f725
 +   st = ectx->ctx->st;
 +   screen = edpy->disp->fscreen->screen;
 +
++   if (surf->finestra && surf->fb->textures[ST_ATTACHMENT_BACK_LEFT])
++      st->pipe->flush_resource(st->pipe, surf->fb->textures[ST_ATTACHMENT_BACK_LEFT]);
 +   _mesa_glthread_finish(st->ctx);
 +   st_context_flush(st, ST_FLUSH_FRONT, &new_fence, NULL, NULL);
 +   if (surf->throttle_fence) {
@@ -479,6 +600,24 @@ index 00000000000..5c2ab08f725
 +      screen->fence_reference(screen, &surf->throttle_fence, NULL);
 +   }
 +   surf->throttle_fence = new_fence;
++
++   /* a window: the back buffer goes to the owner (flush_frontbuffer ->
++    * winsys display -> exos_window_present), then front and back swap, as
++    * in the Haiku driver; then the owner's size, for the next frame */
++   if (surf->finestra) {
++      struct hgl_buffer *buffer = surf->fb;
++      struct pipe_resource **front = &buffer->textures[ST_ATTACHMENT_FRONT_LEFT];
++      struct pipe_resource **back = &buffer->textures[ST_ATTACHMENT_BACK_LEFT];
++
++      if (*back) {
++         struct pipe_resource *t;
++         screen->flush_frontbuffer(screen, st->pipe, *back, 0, 0,
++                                   buffer->winsysContext, 0, NULL);
++         t = *front; *front = *back; *back = t;
++         p_atomic_inc(&buffer->base.stamp);
++      }
++      exos_window_update_size(surf);
++   }
 +   st_context_invalidate_state(st, ST_INVALIDATE_FB_STATE);
 +   return EGL_TRUE;
 +}
@@ -513,7 +652,15 @@ index 00000000000..5c2ab08f725
 +   conf->base.Conformant = conf->base.RenderableType;
 +   conf->base.MaxPbufferWidth = _EGL_MAX_PBUFFER_WIDTH;
 +   conf->base.MaxPbufferHeight = _EGL_MAX_PBUFFER_HEIGHT;
++   /* ! WINDOWS ONLY ON THE EXOS PLATFORM (7 November 2026). The core refuses
++    * any window on a surfaceless or device display (EGL_BAD_NATIVE_WINDOW,
++    * eglapi.c, as the EGL_MESA_platform_surfaceless spec says), so a config
++    * offering one there would promise what eglCreateWindowSurface denies.
++    * Until the exos platform existed EGL_DEFAULT_DISPLAY was surfaceless
++    * and every ExWin window failed that way. */
 +   conf->base.SurfaceType = EGL_PBUFFER_BIT;
++   if (disp->Platform == _EGL_PLATFORM_EXOS)
++      conf->base.SurfaceType |= EGL_WINDOW_BIT;
 +
 +   if (!_eglValidateConfig(&conf->base, EGL_FALSE)) {
 +      _eglLog(_EGL_WARNING, "EX-OS: config %d does not validate", id);
@@ -600,13 +747,17 @@ index 00000000000..5c2ab08f725
 +      edpy->ref_count++;
 +      return EGL_TRUE;
 +   }
++   /* exos: EGL_DEFAULT_DISPLAY (the native platform), ExWin windows and
++    * pbuffers; surfaceless and device (EGL_MESA_platform_surfaceless,
++    * EGL_EXT_device_*): pbuffers and surfaceless contexts only */
 +   switch (disp->Platform) {
++   case _EGL_PLATFORM_EXOS:
 +   case _EGL_PLATFORM_SURFACELESS:
 +   case _EGL_PLATFORM_DEVICE:
 +      return exos_initialize_impl(disp);
 +   default:
 +      return _eglError(EGL_NOT_INITIALIZED,
-+                       "EX-OS: only the surfaceless and device platforms");
++                       "EX-OS: only the exos, surfaceless and device platforms");
 +   }
 +}
 +

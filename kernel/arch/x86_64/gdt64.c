@@ -35,6 +35,7 @@
  * ============================================================================= */
 #include "k64.h"
 #include "smp.h"
+#include "kmalloc.h"     /* the tables of the extra processors (0.319) */
 
 typedef struct PACKED {
     uint32_t riservato0;
@@ -48,25 +49,60 @@ typedef struct PACKED {
 
 /* One of each per processor: see gdt_installa_cpu. Slot 7 (selector 0x38)
  * holds the processor's number in its limit, for cpu_n() in smp.h. */
-static Tss64    g_tss[SMP_CPU_MAX];
-static uint64_t g_gdt[SMP_CPU_MAX][8];
-static uint8_t  g_pila_doppio[SMP_CPU_MAX][8192] __attribute__((aligned(16)));
+/* ! AS MANY AS THERE ARE PROCESSORS (0.319, voce 92): up to 0.318 sixteen
+ * static copies. The boot processor's block is static (loaded before the
+ * heap exists), the others come from gdt_posti once smp_init has counted. */
+typedef struct {
+    uint64_t gdt[8];
+    Tss64    tss;
+    uint8_t  pila_doppio[8192] __attribute__((aligned(16)));   /* double fault */
+} Gdt64Cpu;
+
+static Gdt64Cpu   g_avvio __attribute__((aligned(16)));
+static Gdt64Cpu  *g_cpu_1[1] = { &g_avvio };
+static Gdt64Cpu **g_cpu = g_cpu_1;
+static uint32_t   g_quanti = 1;
+#define g_tss_di(n) (g_cpu[n]->tss)
+
+int gdt_posti(uint32_t posti)
+{
+    Gdt64Cpu **nuovi;
+    uint32_t   i;
+
+    if (posti <= g_quanti) return 0;
+    nuovi = (Gdt64Cpu **)kmalloc(posti * sizeof(Gdt64Cpu *));
+    if (nuovi == NULL) return -1;
+    nuovi[0] = &g_avvio;
+    for (i = 1; i < posti; i++) {
+        nuovi[i] = (Gdt64Cpu *)kmalloc_aligned(sizeof(Gdt64Cpu), 64);
+        if (nuovi[i] == NULL) {
+            while (--i >= 1) kfree_aligned(nuovi[i]);
+            kfree(nuovi);
+            return -1;
+        }
+        __builtin_memset(nuovi[i], 0, sizeof(Gdt64Cpu));
+    }
+    g_cpu    = nuovi;
+    g_quanti = posti;
+    return 0;
+}
 
 volatile uint32_t g_smp_lavora = 0;     /* 1 = several processors run programs */
 
 typedef struct PACKED { uint16_t limite; uint64_t base; } Punt64;
 
-void gdt64_pila_kernel(uint64_t rsp0) { g_tss[cpu_n()].rsp0 = rsp0; }
+void gdt64_pila_kernel(uint64_t rsp0) { g_tss_di(cpu_n()).rsp0 = rsp0; }
 
 static void gdt64_carica(uint32_t n)
 {
     Punt64    p;
-    Tss64    *tss = &g_tss[n];
-    uint64_t *gdt = g_gdt[n];
+    Gdt64Cpu *c   = g_cpu[n];
+    Tss64    *tss = &c->tss;
+    uint64_t *gdt = c->gdt;
     uint64_t  base = (uint64_t)tss, lim = sizeof(*tss) - 1;
 
     __builtin_memset(tss, 0, sizeof(*tss));
-    tss->ist[0]   = (uint64_t)(g_pila_doppio[n] + sizeof(g_pila_doppio[n]));
+    tss->ist[0]   = (uint64_t)(c->pila_doppio + sizeof(c->pila_doppio));
     tss->mappa_io = sizeof(*tss);
 
     gdt[0] = 0;
@@ -81,7 +117,7 @@ static void gdt64_carica(uint32_t n)
 
     gdt[7] = 0x0000920000000000ull | (uint64_t)n;     /* who am I: cpu_n() */
 
-    p.limite = sizeof(g_gdt[n]) - 1;
+    p.limite = sizeof(c->gdt) - 1;
     p.base   = (uint64_t)gdt;
     __asm__ volatile("lgdt %0" : : "m"(p));
 
@@ -109,13 +145,13 @@ void gdt_install(void) { gdt64_installa(); }
 
 /* Dove atterra il processore arrivando da ring 3. Le pile del kernel stanno
  * nella fascia (sotto i 64 MB): 32 bit bastano, e il prototipo e' comune. */
-void gdt_set_kernel_stack(vaddr_t stack_top) { g_tss[cpu_n()].rsp0 = stack_top; }
+void gdt_set_kernel_stack(vaddr_t stack_top) { g_tss_di(cpu_n()).rsp0 = stack_top; }
 
 /* The GDT and TSS of processor `n`, loaded on whoever calls. Every extra
  * processor calls it before it starts working. */
 void gdt_installa_cpu(uint32_t n)
 {
-    if (n != 0 && n < SMP_CPU_MAX) gdt64_carica(n);
+    if (n != 0 && n < g_quanti) gdt64_carica(n);
 }
 
 /* La base della memoria locale del filo. A 32 bit e' un descrittore della GDT

@@ -75,9 +75,11 @@ typedef struct {
      * l'opzione sul dischetto di soccorso, che la radice ce l'ha in RAM. */
     uint32_t    ata_dma;
 
-    /* smp: 1 = i processori in piu' si svegliano e si parcheggiano
-     * (predefinito), 0 = si contano e basta, 2 = eseguono processi (tappa 3,
-     * dalla 0.246: da accendere apposta). Vedi kernel/include/smp.h.
+    /* smp: 2 = EVERY processor found (ACPI MADT or MP table) runs
+     * processes (default since 0.319, voce 92: the user, 7/11/2026, "the
+     * default must be 2"); 1 = the extra ones are woken and parked;
+     * 0 = only counted. It is a mode, not a number of processors: 2 is not
+     * "the second core", it is all of them. See kernel/include/smp.h.
      *
      * ! ESISTE PER LA SCHEDA CHE NON SI AVVIA: svegliare un processore vuol
      * dire scrivere nell'APIC locale e mandare un INIT, e su una macchina con

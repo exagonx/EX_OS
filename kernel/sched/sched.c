@@ -46,8 +46,15 @@ volatile uint32_t g_ticks = 0;
  * solo cpu_n() rende 0 senza toccare niente (un confronto), e non cambia
  * nulla: e' la condizione che sta scritta in smp.h.
  * ========================================================================== */
-static Process *g_corrente[SMP_CPU_MAX];
-static Process *g_ozio[SMP_CPU_MAX];
+/* As many as there are processors (0.319): one slot until smp_init has
+ * counted them, then sched_posti makes the tables as long as needed. */
+static Process  *g_corrente_1[1], *g_ozio_1[1];
+static Process **g_corrente = g_corrente_1;
+static Process **g_ozio     = g_ozio_1;
+static uint32_t  g_cpu_posti = 1;
+/* the tgid each processor is reserved to, 0 = nobody (0.319, voce 92) */
+static uint32_t  g_riserva_1[1];
+static uint32_t *g_riserva   = g_riserva_1;
 #define g_current    (g_corrente[cpu_n()])
 #define g_idle_task  (g_ozio[cpu_n()])
 Process        *g_init_task = NULL;   /* reaper kernel task, adotta gli orfani */
@@ -1080,6 +1087,9 @@ for (uint32_t pi = 0; pi < npages; pi++) {
      *   driver FDC e per i delay basati su g_ticks) senza rischiare che lo
      *   scheduler salti al processo prima che entry point e stack siano pronti.
      * - processo utente con entry!=0 (es. sys_spawn dopo elf_load): READY subito. */
+    /* where it may run: the creator's set (0.319, voce 92) */
+    if (!is_kernel_task) sched_aff_eredita(proc, g_current, 0);
+
     if (is_kernel_task || entry_point != 0) {
         proc->state = PROC_READY;
         runq_add(proc);
@@ -1160,6 +1170,226 @@ void proc_set_ready(Process *proc)
  *     tappa 4. Fin li' un programma a piu' fili usa un processore per volta,
  *     e due programmi diversi ne usano due.
  * ========================================================================== */
+/* =============================================================================
+ * AFFINITY AND RESERVATIONS (0.319, voce 92: the user, 7/11/2026: the kernel
+ * "must be able to send given processes to a given core, and multithreaded
+ * software must use all the cores available except those given or reserved
+ * to a given process")
+ *
+ *   affinity     per thread, Process.aff: the processor numbers it may run
+ *                on (NULL = all). sched_setaffinity, pthread_setaffinity_np,
+ *                the `cpu` command.
+ *   reservation  per processor, g_riserva: the tgid it belongs to. Nobody
+ *                else runs there, and the owner's threads are sent there
+ *                (their affinity becomes its reserved processors). Root
+ *                only. Processor 0 cannot be reserved: it is the one that
+ *                runs the kernel's own tasks and the devices' interrupts.
+ *
+ * Numbers are cpu_n()'s: 0 the boot processor, then in the order they began
+ * to work (hwinfo shows each one's). Everything below runs inside the
+ * kernel, with its lock: the scheduler of another processor reads these
+ * tables only holding it too.
+ * ========================================================================== */
+static int sched_riservata_a(uint32_t tgid);
+
+static int aff_ha(const Process *p, uint32_t c)
+{
+    if (p->aff == NULL) return 1;
+    if (c / 32u >= p->aff_parole) return 0;
+    return (int)((p->aff[c / 32u] >> (c % 32u)) & 1u);
+}
+
+/* A processor this thread could use: at work, and not reserved to another
+ * group. */
+static int aff_utile(uint32_t tgid, uint32_t c)
+{
+    return c < smp_al_lavoro() && (c >= g_cpu_posti || g_riserva[c] == 0 || g_riserva[c] == tgid);
+}
+
+static void aff_togli(Process *p)
+{
+    if (p->aff) kfree(p->aff);
+    p->aff = NULL;
+    p->aff_parole = 0;
+}
+
+/* Sets p's affinity to `src` (parole words), keeping only the usable
+ * processors. 0 = done; -EINVAL if none would be left (as Linux does), the
+ * old affinity untouched; -ENOMEM. A set covering every usable processor
+ * becomes NULL. */
+static int32_t aff_metti(Process *p, const uint32_t *src, uint32_t parole)
+{
+    uint32_t  n = smp_al_lavoro(), w = (n + 31u) / 32u, c, usate = 0, tutte = 1;
+    uint32_t *nuova;
+
+    nuova = (uint32_t *)kmalloc(w * sizeof(uint32_t));
+    if (nuova == NULL) return -ENOMEM;
+    for (c = 0; c < w; c++) nuova[c] = 0;
+    for (c = 0; c < n; c++) {
+        int vuole = c / 32u < parole && ((src[c / 32u] >> (c % 32u)) & 1u);
+
+        if (!aff_utile(p->tgid, c)) continue;
+        if (vuole) { nuova[c / 32u] |= 1u << (c % 32u); usate++; }
+        else tutte = 0;
+    }
+    if (usate == 0) { kfree(nuova); return -EINVAL; }
+    aff_togli(p);
+    if (tutte && !sched_riservata_a(p->tgid)) { kfree(nuova); return 0; }
+    p->aff = nuova;
+    p->aff_parole = w;
+    return 0;
+}
+
+/* Does this group own a reserved processor? */
+static int sched_riservata_a(uint32_t tgid)
+{
+    uint32_t c;
+
+    for (c = 0; c < g_cpu_posti; c++) if (g_riserva[c] == tgid) return 1;
+    return 0;
+}
+
+/* Called by proc_create for every new process (`intera` = 0: the creator's
+ * set less the processors reserved to someone else; none left = anywhere)
+ * and by the thread code once the thread has its tgid (`intera` = 1: the
+ * creating thread's set, whole). */
+void sched_aff_eredita(Process *figlio, const Process *da, int intera)
+{
+    aff_togli(figlio);
+    if (da == NULL || da->aff == NULL) return;
+    if (intera) {
+        uint32_t *c = (uint32_t *)kmalloc(da->aff_parole * sizeof(uint32_t)), i;
+
+        if (c == NULL) return;
+        for (i = 0; i < da->aff_parole; i++) c[i] = da->aff[i];
+        figlio->aff = c;
+        figlio->aff_parole = da->aff_parole;
+        return;
+    }
+    (void)aff_metti(figlio, da->aff, da->aff_parole);  /* -EINVAL: stays anywhere */
+}
+
+/* The process to act on: 0 = the caller; another only if the same user
+ * or root. NULL with *err set otherwise. */
+static Process *aff_bersaglio(uint32_t pid, int32_t *err)
+{
+    Process *io = g_current, *p = pid ? proc_get_by_pid(pid) : io;
+
+    if (p == NULL || p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) { *err = -ESRCH; return NULL; }
+    if (io && io->uid != 0 && p->uid != io->uid) { *err = -EPERM; return NULL; }
+    return p;
+}
+
+/* sched_getaffinity: fills dst (parole words) with where pid may run (the
+ * usable processors when it has no set). Returns the words a full answer
+ * needs, or -errno. */
+int32_t sched_aff_leggi(uint32_t pid, uint32_t *dst, uint32_t parole)
+{
+    int32_t  err = 0;
+    Process *p = aff_bersaglio(pid, &err);
+    uint32_t n = smp_al_lavoro(), c;
+
+    if (p == NULL) return err;
+    for (c = 0; c < parole; c++) dst[c] = 0;
+    for (c = 0; c < n && c / 32u < parole; c++)
+        if (aff_utile(p->tgid, c) && aff_ha(p, c)) dst[c / 32u] |= 1u << (c % 32u);
+    return (int32_t)((n + 31u) / 32u);
+}
+
+int32_t sched_aff_scrivi(uint32_t pid, const uint32_t *src, uint32_t parole)
+{
+    int32_t  err = 0;
+    Process *p = aff_bersaglio(pid, &err);
+
+    if (p == NULL) return err;
+    return aff_metti(p, src, parole);
+}
+
+/* Every thread of group `tgid` to the processors reserved to it (or, with
+ * none left, anywhere). */
+static void riserva_applica(uint32_t tgid)
+{
+    uint32_t n = smp_al_lavoro(), w = (n + 31u) / 32u, c, i;
+    uint32_t *m = (uint32_t *)kmalloc(w * sizeof(uint32_t));
+    int       qualcuna = 0;
+
+    if (m == NULL) return;
+    for (c = 0; c < w; c++) m[c] = 0;
+    for (c = 0; c < n && c < g_cpu_posti; c++)
+        if (g_riserva[c] == tgid) { m[c / 32u] |= 1u << (c % 32u); qualcuna = 1; }
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
+
+        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE || p->tgid != tgid) continue;
+        if (qualcuna) (void)aff_metti(p, m, w);
+        else aff_togli(p);
+    }
+    kfree(m);
+}
+
+/* Reserves processor `cpu` to the group of `pid` (root). */
+int32_t sched_riserva(uint32_t pid, uint32_t cpu)
+{
+    Process *io = g_current, *p;
+
+    if (io && io->uid != 0) return -EPERM;
+    if (cpu == 0 || cpu >= smp_al_lavoro() || cpu >= g_cpu_posti) return -EINVAL;
+    p = pid ? proc_get_by_pid(pid) : io;
+    if (p == NULL || p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) return -ESRCH;
+    if (p->nel_kernel) return -EINVAL;
+    if (g_riserva[cpu] != 0 && g_riserva[cpu] != p->tgid) return -EBUSY;
+    g_riserva[cpu] = p->tgid;
+    riserva_applica(p->tgid);
+    klog(LOG_INFO, "SCHED: processore %u riservato a PID %u (%s)", cpu, p->tgid, p->name);
+    return 0;
+}
+
+/* Gives processor `cpu` back to everybody (root). Its owner's threads go
+ * back to its other reserved processors, or anywhere. */
+int32_t sched_libera(uint32_t cpu)
+{
+    Process *io = g_current;
+    uint32_t chi;
+
+    if (io && io->uid != 0) return -EPERM;
+    if (cpu >= g_cpu_posti) return -EINVAL;
+    chi = g_riserva[cpu];
+    if (chi == 0) return 0;
+    g_riserva[cpu] = 0;
+    riserva_applica(chi);
+    klog(LOG_INFO, "SCHED: processore %u di nuovo di tutti (era di PID %u)", cpu, chi);
+    return 0;
+}
+
+/* The owner of each working processor, 0 = nobody: up to `quanti`.
+ * Returns how many processors work. */
+uint32_t sched_riserve(uint32_t *dst, uint32_t quanti)
+{
+    uint32_t n = smp_al_lavoro(), c;
+
+    for (c = 0; c < quanti; c++) dst[c] = (c < n && c < g_cpu_posti) ? g_riserva[c] : 0;
+    return n;
+}
+
+uint32_t sched_cpu_qui(void) { return cpu_n(); }
+
+int sched_puo_su(const Process *p, uint32_t c)
+{
+    return aff_utile(p->tgid, c) && aff_ha(p, c);
+}
+
+/* A group that ends gives its processors back (proc_reap_zombie). */
+static void riserve_del_gruppo_finito(uint32_t tgid)
+{
+    uint32_t c;
+
+    for (c = 0; c < g_cpu_posti; c++)
+        if (g_riserva[c] == tgid) {
+            g_riserva[c] = 0;
+            klog(LOG_INFO, "SCHED: processore %u di nuovo di tutti (PID %u finito)", c, tgid);
+        }
+}
+
 /* Sta eseguendo, adesso, su un processore che non e' questo? */
 static int sched_gira_altrove(const Process *p)
 {
@@ -1175,7 +1405,11 @@ static int sched_puo_qui(const Process *p)
     me = cpu_n();
     if (p->cpu_fissa) return (uint32_t)(p->cpu_fissa - 1) == me;
     if (p->nel_kernel) return me == 0;
-    for (c = 0; c < SMP_CPU_MAX; c++) {
+    /* 0.319, voce 92: a processor reserved to a process runs only its
+     * threads; a thread runs only where its affinity says */
+    if (g_riserva[me] != 0 && g_riserva[me] != p->tgid) return 0;
+    if (!aff_ha(p, me)) return 0;
+    for (c = 0; c < g_cpu_posti; c++) {
         const Process *q = g_corrente[c];
 
         if (c == me || q == NULL || q == p) continue;
@@ -1193,7 +1427,7 @@ int sched_spazio_altrove(const void *pd)
 
     if (!g_smp_lavora) return 0;
     me = cpu_n();
-    for (c = 0; c < SMP_CPU_MAX; c++) {
+    for (c = 0; c < g_cpu_posti; c++) {
         const Process *q = g_corrente[c];
 
         if (c != me && q != NULL && q->state == PROC_RUNNING &&
@@ -1314,6 +1548,17 @@ static void sched_battito_comune(void)
         }
     } else if (g_current->quantum == 0) {
         Process *next = sched_pick_next();
+        /* ! NOBODY ELSE READY: THE ONE RUNNING GOES ON (0.319). sched_pick_next
+         * looks only at READY processes, so with nobody else waiting it
+         * answered the idle task, and a process working alone handed the
+         * processor to idle for one tick at the end of every quantum: 1 tick
+         * in 5 lost (QUANTUM_NORMAL 4), 20% of any program that computes.
+         * Found measuring voce 92: two programs sharing one processor did
+         * 1.25 times the work of one alone, each exactly 0.63. It keeps
+         * running only if it may still run here (affinity, reservation). */
+        if (next == g_idle_task && g_current->state == PROC_RUNNING &&
+            sched_puo_qui(g_current))
+            next = g_current;
         if (next != g_current) {
             sched_switch_to(next);
         } else {
@@ -1381,11 +1626,43 @@ void sched_fine_chiesta(void)
  * la cima della pila. Poi quel processore, gia' su quella pila e con la sua
  * GDT, chiama sched_cpu_entra(): da li' e' lui «l'ozio n», e non torna.
  * ========================================================================== */
+/* The two tables to `posti` slots (smp.h): called by smp_init with one
+ * processor running, so slot 0 moves without a lock. */
+int sched_posti(uint32_t posti)
+{
+    Process **cor, **ozi;
+    uint32_t *ris;
+    uint32_t  i;
+    uintptr_t flag;
+
+    if (posti <= g_cpu_posti) return 0;
+    cor = (Process **)kmalloc(posti * sizeof(Process *));
+    ozi = (Process **)kmalloc(posti * sizeof(Process *));
+    ris = (uint32_t *)kmalloc(posti * sizeof(uint32_t));
+    if (cor == NULL || ozi == NULL || ris == NULL) {
+        if (cor) kfree(cor);
+        if (ozi) kfree(ozi);
+        if (ris) kfree(ris);
+        return -1;
+    }
+    for (i = 0; i < posti; i++) { cor[i] = ozi[i] = NULL; ris[i] = 0; }
+    flag = read_eflags();
+    interrupts_disable();
+    cor[0] = g_corrente[0];
+    ozi[0] = g_ozio[0];
+    g_corrente  = cor;
+    g_ozio      = ozi;
+    g_riserva   = ris;
+    g_cpu_posti = posti;
+    if (flag & 0x200u) interrupts_enable();
+    return 0;
+}
+
 uint32_t sched_cpu_prepara(uint32_t n)
 {
     Process *o;
 
-    if (n == 0 || n >= SMP_CPU_MAX) return 0;
+    if (n == 0 || n >= g_cpu_posti) return 0;
     o = proc_create("ozio", IN_NUMERO(idle_task_fn), PRIO_IDLE, 1);
     if (o == NULL) return 0;
     interrupts_disable();
@@ -1530,6 +1807,29 @@ void sched_yield(void)
         bkl_entra();
     }
     interrupts_enable();
+}
+
+/* =============================================================================
+ * sched_sul_primo - the calling process goes to processor 0, and stays there
+ * (0.320)
+ *
+ * ! THE CLOCK AND THE DEVICES ARE ON PROCESSOR 0. g_ticks rises in the PIT's
+ * interrupt, which the PIC sends to the boot processor only, and its handler
+ * takes the kernel's lock like any other. Kernel code that waits for the
+ * clock while holding that lock - the shutdown's "Spegnimento fra 3...",
+ * which counts g_ticks with hlt - waits forever on any other processor:
+ * processor 0 waits for the lock, and the lock waits for processor 0. Seen on
+ * the laptop with kernel 0.319 (smp = 2 the default): shutdown from ExWin and
+ * from the shell stopped at "Spegnimento fra 3..." whenever the program
+ * asking for it was on processor 1; in QEMU with two processors `cpu -x 1
+ * shutdown` stopped there, `cpu -x 0 shutdown` turned the machine off.
+ * Who must end on processor 0 (SYS_REBOOT) calls this first.
+ * ============================================================================= */
+void sched_sul_primo(void)
+{
+    if (!g_smp_lavora || g_current == NULL) return;
+    g_current->cpu_fissa = 1;           /* processor 0 only (0 = anywhere) */
+    while (cpu_n() != 0) sched_yield(); /* another processor takes it from the queue */
 }
 
 void sched_block(ProcState reason)
@@ -1972,6 +2272,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
 
     filo->page_directory = capo->page_directory;
     filo->tgid           = capo->tgid;
+    sched_aff_eredita(filo, g_current, 1);     /* the creating thread's set, whole (0.319) */
     fd_tabella_libera(&filo->fdt_mia);         /* its own is not used (0.281) */
     filo->fdt            = capo->fdt;          /* i descrittori sono in comune */
     filo->filo_posto     = posto;
@@ -2647,6 +2948,10 @@ void proc_reap_zombie(Process *p)
      * mascherato o instradato a un PID ormai riciclato. */
     irq_unbind_process(child_pid);
 
+    /* its affinity, and the processors reserved to its group (0.319) */
+    aff_togli(p);
+    if (p->pid == p->tgid) riserve_del_gruppo_finito(p->tgid);
+
     p->state             = PROC_UNUSED;
     p->pid               = 0;
     p->ppid              = 0;
@@ -3000,10 +3305,10 @@ void sched_sonda(void)
 
     bkl_stato(&coda, &turno, &chi);
     ata_stato_lucchetto(&dd, &dl, &da);
-    klog(LOG_WARN, "SONDA: tick %u cpu %u, kernel coda %u turno %u tiene %x, "
+    klog(LOG_WARN, "SONDA: tick %u cpu %u, kernel coda %u turno %u tiene cpu+1 %u, "
          "disco pid %u livelli %u attesa %u, vfs pid %u", g_ticks, cpu_n(), coda,
          turno, chi, dd, dl, da, vfs_stato_lucchetto());
-    for (c = 0; c < SMP_CPU_MAX; c++) {
+    for (c = 0; c < g_cpu_posti; c++) {
         const Process *q = g_corrente[c];
 
         if (q != NULL)

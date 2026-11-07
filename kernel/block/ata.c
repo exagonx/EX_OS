@@ -64,6 +64,7 @@
 #include "kmalloc.h"
 #include "ahci.h"
 #include "power.h"
+#include "smp.h"      /* bkl_fai_passare: clock waits on processor 1 (0.320) */
 
 /* Le porte, gli offset dei registri e i bit di stato stanno in ata.h:
  * sono lo stesso bus che usa kernel/block/atapi.c, e una seconda copia
@@ -665,7 +666,7 @@ void ata_ritardo(int canale)
 void ata_attesa_ms(uint32_t ms)
 {
     uint32_t fine = g_ticks + (ms + 9) / 10;
-    while (g_ticks < fine) { /* il PIT avanza sotto interrupt */ }
+    while (g_ticks < fine) bkl_fai_passare(); /* il PIT avanza sotto interrupt, sul processore 0 */
 }
 
 /* Aspetta che BSY si abbassi, entro una scadenza REALE.

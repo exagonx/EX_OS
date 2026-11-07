@@ -719,6 +719,25 @@ La tastiera non scrive e il mouse si':  con kbd.drv 0.009 non dovrebbe piu'
 capitare. Se capita:  da telnet  cat /proc/interrupts  prima e dopo un tasto,
 e scrivi se la riga 1 si muove. Si esce riavviando.
 
+LA MACCHINA SI FERMA ALL'AVVIO DOPO L'AGGIORNAMENTO AL KERNEL 0.319, e prima
+partiva. Dalla 0.319 tutti i processori lavorano per difetto: su una scheda
+con tabelle del BIOS sbagliate svegliarli puo' bloccare l'avvio. Riparti dal
+CD di EX-OS (o dal dischetto di soccorso), monta il disco e scrivi nella
+sezione [kernel] di /boot/kernel.cfg la riga  smp = 1  (accesi ma fermi) o
+smp = 0  (solo contati). Poi `hwinfo` dice cosa ha trovato: scrivilo a chi
+sviluppa EX-OS.
+
+LO SPEGNIMENTO SI FERMA A "Spegnimento fra 3..." (da ExWin o dalla shell),
+col kernel 0.319 e due o piu' processori: il programma che lo chiedeva girava
+sul processore 1, e il conto aspettava l'orologio, che batte sul processore 0.
+Dalla 0.320 lo spegnimento passa prima al processore 0. Si ripara con
+netupdate -check -yes. Se la macchina e' ferma li': tieni premuto il tasto
+d'accensione; il disco era gia' stato sincronizzato prima del conto.
+
+UN PROGRAMMA LANCIATO CON `cpu -x` O `cpu -R` VA PIU' PIANO DEL SOLITO: e'
+fissato ai processori che gli hai dato, e quelli riservati ad altri non li
+usa. `cpu` dice chi ha cosa, `cpu -p PID tutti` lo rimette dappertutto.
+
 i guasti che si possono riparare da soli
 
 LA ISO A 64 BIT DA' SCHERMO NERO O DICE CHE IL PROCESSORE NON HA I 64 BIT.
@@ -815,10 +834,33 @@ Se ne accorge la verifica di Apache. Riparazione, da root:
   netupdate -permessi                    rimette il bit a quei programmi
 
 A 64 BIT LO SFONDO JPG O PNG NON SI VEDE, Immagini dice che il file non
-si legge, i font TrueType non ci sono. Mancavano /exwin/lib/eximg.so ed
+si legge, i font TrueType non ci sono, il menu di avvio non ha icone (le
+.ico passano dalla stessa libreria). Mancavano /exwin/lib/eximg.so ed
 /exwin/lib/exfont.so a 64 bit (ls /exwin/lib). Riparazione, da root:
   netupdate -check -yes                  porta le due librerie e i programmi
-Poi si esce da exwin e si rientra. Il BMP si e' sempre letto.
+Poi si riavvia se netupdate lo dice, si esce da exwin e si rientra. Il BMP
+si e' sempre letto. Se le librerie ci sono e il menu e' senza icone:
+Impostazioni, scheda Scrivania, "Icone accanto alle voci del menu".
+
+IL MENU DI AVVIO E' CAMBIATO DOPO netupdate: dal 7/11/2026 i programmi
+stanno in gruppi (Applicazioni, Internet, Strumenti, Multimedia, Giochi).
+Le voci aggiunte a mano restano, in fondo (netupdate 0.046). Una voce
+aggiunta a mano a un programma che non c'e' piu' sul disco non torna.
+Per aggiungere e togliere voci: Impostazioni, scheda Sistema,
+"Applicazioni del menu..." (prima era la voce "Applicazioni..." del menu).
+
+MESA (OpenGL ES, netupdate -install:mesa): la verifica dice che provaegl
+non disegna. /exos/bin/provaegl stampa otto controlli: il primo [NO] dice
+dove si ferma. Se si ferma prima di main con "cannot open shared object
+file", manca la libreria che nomina: libz.so.1 e' del gruppo zlib
+(netupdate -install:zlib), libstdc++.so.6, libgcc_s.so.1 e libm.so.4 sono
+del sistema in /lib (netupdate -check -yesall). Un programma che apre
+una finestra ExWin con OpenGL e riceve EGL_BAD_NATIVE_WINDOW da
+eglCreateWindowSurface: la struttura exos_egl_finestra ha una versione
+che questa libEGL non conosce (libEGL piu' vecchia del programma:
+netupdate -install:mesa), oppure misura o mostra mancano. Se lo da'
+anche con una struttura giusta, la libEGL e' di prima del 7/11/2026
+(display "surfaceless", che non ha finestre): netupdate -install:mesa.
 
 [install]
 installa EX-OS su un disco, o gli strumenti dal CD
@@ -906,6 +948,39 @@ sta usando in quel momento.
 
 Dal CD la radice e' in sola lettura: `hwinfo /disk/hw.txt` su un disco
 montato, oppure `hwinfo -n`.
+
+[cpu core processori smp]
+i processori, e quale programma gira dove (kernel 0.319)
+
+  cpu                       i processori al lavoro, e chi ne ha uno riservato
+  cpu -p PID                dove possono girare i fili del processo PID
+  cpu -p PID 1,3-5          i fili di PID solo sui processori 1, 3, 4 e 5
+  cpu -p PID tutti          di nuovo dappertutto
+  cpu -x 2-3 COMANDO ...    lancia COMANDO gia' fissato sui processori 2 e 3
+  cpu -R 2 COMANDO ...      lancia COMANDO col processore 2 riservato (root)
+  cpu -r PID 2              riserva il processore 2 al processo PID (root)
+  cpu -l 2                  il processore 2 torna di tutti (root)
+
+Dalla 0.319 il kernel accende TUTTI i processori che trova e li mette al
+lavoro (smp = 2 in /boot/kernel.cfg e' il predefinito; e' un modo, non un
+numero: vuol dire tutti). I programmi a piu' fili vedono quanti sono
+(sysconf) e usano quelli che non sono riservati.
+
+Fissato vuol dire "solo li'"; riservato vuol dire "solo li', e nessun altro
+li'". Un processore riservato torna di tutti quando il suo processo finisce.
+Il processore 0 non si riserva: fa girare il kernel e le periferiche.
+I numeri sono quelli del kernel: 0 e' quello d'avvio, `hwinfo` dice l'APIC
+di ognuno. Per dare un processore a un servizio a ogni avvio, in
+/boot/avvio.sh:   cpu -R 2 /bin/servizio &
+
+Quanto lavoro fanno davvero lo misura `smpprova N`: N programmi insieme,
+confrontati con uno solo.
+
+Oggi due fili dello STESSO programma non girano insieme su due processori
+(il kernel lo impedisce finche' non sa avvisare gli altri processori quando
+cambia la memoria di un programma): un programma a piu' fili usa un
+processore alla volta, programmi diversi ne usano tanti. Vedi in_lavorazione,
+voce 92 b.
 
 [toolinst]
 installa gli strumenti di sviluppo dal CD

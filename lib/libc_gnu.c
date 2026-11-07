@@ -30,10 +30,10 @@
  *     program_invocation_short_name              (libc_avvio.c)
  *
  * ! THEY SAY WHAT THE SYSTEM IS, NOT WHAT A PROGRAM WOULD LIKE. EX-OS has one
- * locale ("C"), runs programs on one processor (sysconf says 1) and has one
- * priority (sched_get_priority_min/max say 0). So a locale object other than
- * "C" is refused with ENOENT, an affinity without processor 0 with EINVAL, a
- * priority other than 0 with EACCES. When the kernel learns more, these
+ * locale ("C") and one priority (sched_get_priority_min/max say 0). So a
+ * locale object other than "C" is refused with ENOENT, a priority other than
+ * 0 with EACCES. Processors: since kernel 0.319 the affinity calls are real
+ * (SYS_CPU_AFFINITA) and sysconf gives the true count. When the kernel learns more, these
  * learn it with it; a yes here would be a lie the program builds upon.
  *
  * Included by lib/libc.c inside its static-only part: ported software links
@@ -351,7 +351,7 @@ char *secure_getenv(const char *nome)
  * Processors. A set as glibc has it (1024 bits): the macros CPU_ZERO,
  * CPU_SET, CPU_ISSET, CPU_COUNT are in <sched.h>; CPU_COUNT calls
  * __sched_cpucount, the name glibc gives it, since programs built
- * elsewhere call that. EX-OS runs programs on processor 0 only.
+ * elsewhere call that.
  * --------------------------------------------------------------------------- */
 typedef struct { unsigned long bit[1024 / (8 * sizeof(unsigned long))]; } cpu_set_t;
 
@@ -369,35 +369,59 @@ int __sched_cpucount(size_t dim, const cpu_set_t *s)
     return n;
 }
 
-static int affinita_dai(size_t dim, cpu_set_t *s)
+/* The sets go to the kernel as 32-bit words: on a little-endian machine
+ * the bytes of a set of unsigned long are the same bytes (kernel 0.319, voce
+ * 92; up to then the answer was always {0}). A size that is not whole words
+ * goes through a copy. pid 0 = the calling thread, as on Linux. */
+static int affinita_dai(int pid, size_t dim, cpu_set_t *s)
 {
+    unsigned int parole = (unsigned int)((dim + 3) / 4), *w;
+    int r;
+
     if (s == NULL || dim == 0) { errno = EINVAL; return -1; }
-    memset(s, 0, dim);
-    ((unsigned char *)s)[0] = 1;    /* processor 0 */
+    w = (unsigned int *)calloc(parole, 4);
+    if (w == NULL) { errno = ENOMEM; return -1; }
+    r = cpu_aff_leggi(pid, w, parole);
+    if (r >= 0) memcpy(s, w, dim);
+    free(w);
+    if (r < 0) { errno = -r; return -1; }
     return 0;
 }
 
-/* a set is acceptable when it holds processor 0: there the program runs */
-static int affinita_va(size_t dim, const cpu_set_t *s)
+static int affinita_va(int pid, size_t dim, const cpu_set_t *s)
 {
-    if (s == NULL || dim == 0 || !(((const unsigned char *)s)[0] & 1)) { errno = EINVAL; return -1; }
+    unsigned int parole = (unsigned int)((dim + 3) / 4), *w;
+    int r;
+
+    if (s == NULL || dim == 0) { errno = EINVAL; return -1; }
+    w = (unsigned int *)calloc(parole, 4);
+    if (w == NULL) { errno = ENOMEM; return -1; }
+    memcpy(w, s, dim);
+    r = cpu_aff_scrivi(pid, w, parole);
+    free(w);
+    if (r < 0) { errno = -r; return -1; }
     return 0;
 }
 
-int sched_getaffinity(int pid, size_t dim, cpu_set_t *s)       { (void)pid; return affinita_dai(dim, s); }
-int sched_setaffinity(int pid, size_t dim, const cpu_set_t *s) { (void)pid; return affinita_va(dim, s); }
-int sched_getcpu(void) { return 0; }
+int sched_getaffinity(int pid, size_t dim, cpu_set_t *s)       { return affinita_dai(pid, dim, s); }
+int sched_setaffinity(int pid, size_t dim, const cpu_set_t *s) { return affinita_va(pid, dim, s); }
+int sched_getcpu(void)
+{
+    int r = cpu_qui();
 
-/* the _np versions return the error instead of setting errno */
+    if (r < 0) { errno = -r; return -1; }
+    return r;
+}
+
+/* the _np versions return the error instead of setting errno; a thread is
+ * named by its kernel id (Filo.tid) */
 int pthread_getaffinity_np(pthread_t t, size_t dim, cpu_set_t *s)
 {
-    (void)t;
-    return affinita_dai(dim, s) ? EINVAL : 0;
+    return affinita_dai(((Filo *)t)->tid, dim, s) ? errno : 0;
 }
 int pthread_setaffinity_np(pthread_t t, size_t dim, const cpu_set_t *s)
 {
-    (void)t;
-    return affinita_va(dim, s) ? EINVAL : 0;
+    return affinita_va(((Filo *)t)->tid, dim, s) ? errno : 0;
 }
 
 /* A thread's CPU clock. clock_gettime answers CLOCK_THREAD_CPUTIME_ID with

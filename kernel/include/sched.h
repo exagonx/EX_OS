@@ -953,7 +953,25 @@ typedef struct Process {
      * child of fork names the process, see sys_fork). In fondo, as above. */
     volatile uint8_t aspetta_figli;
 
+    /* WHERE IT MAY RUN (0.319, voce 92): a bitmap of processor numbers (the
+     * cpu_n() ones), aff_parole words of 32 bits; NULL = anywhere. kmalloc'd,
+     * given back when the PCB is (proc_reap_zombie). A new process inherits
+     * its creator's, less the processors reserved to someone else; a thread
+     * inherits it whole. See sched_puo_qui and sys_cpu_affinita. */
+    uint32_t *aff;
+    uint32_t  aff_parole;
+
 } Process;
+
+/* Processor affinity and reservations (0.319, voce 92): sched.c. */
+void     sched_aff_eredita(Process *figlio, const Process *da, int intera);
+int32_t  sched_aff_leggi(uint32_t pid, uint32_t *dst, uint32_t parole);
+int32_t  sched_aff_scrivi(uint32_t pid, const uint32_t *src, uint32_t parole);
+int32_t  sched_riserva(uint32_t pid, uint32_t cpu);
+int32_t  sched_libera(uint32_t cpu);
+uint32_t sched_riserve(uint32_t *dst, uint32_t quanti);
+uint32_t sched_cpu_qui(void);
+int      sched_puo_su(const Process *p, uint32_t cpu);  /* /proc: may p run there? */
 
 /* =============================================================================
  * Interfaccia scheduler
@@ -970,6 +988,7 @@ void     sched_fine_chiesta(void);          /* «da_finire», all'uscita dal ker
 uint32_t sched_cpu_prepara(uint32_t n);     /* l'ozio del processore n: rende la sua pila */
 void     sched_cpu_entra(void);             /* il processore n comincia a lavorare */
 int      sched_spazio_altrove(const void *pd);
+void     sched_sul_primo(void);        /* the caller to processor 0, for good (0.320) */
 
 /* Gestione processi */
 Process *proc_create(const char *name, vaddr_t entry_point,

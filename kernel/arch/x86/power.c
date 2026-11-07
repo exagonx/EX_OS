@@ -135,6 +135,7 @@ static void power_countdown(uint32_t secondi)
 
         while (g_ticks < target) {
             __asm__ volatile ("hlt");
+            bkl_fai_passare();      /* SYS_REBOOT moved us to 0: belt and braces */
         }
     }
 }

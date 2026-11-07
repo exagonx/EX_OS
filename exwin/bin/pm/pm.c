@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.027"
+#define VERSIONE_APP "0.028"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -77,6 +77,7 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_SUONO_AVVIO   116     /* la spunta «Suono all'avvio» */
 #define ID_VEDI_OROLOGIO 117     /* @AVVIO-SCRIVANIA: l'orologio nella barra */
 #define ID_VEDI_VOLUME   118     /* e l'icona del volume */
+#define ID_VEDI_ICONE    119     /* the icons beside the menu's entries (voce 80) */
 /* @PANNELLO-VIDEO (17 October 2026): the panel's tabs, and the Video tab */
 #define ID_IMP_SCHEDE    130
 #define ID_V_LISTA       131
@@ -346,8 +347,8 @@ static const char INTESTAZIONE[] =
     "# Le direttive cominciano con @ e non hanno la barra verticale:\n"
     "#   @avvio <percorso>   l'applicazione che parte da sola con la scrivania\n"
     "#\n"
-    "# Lo riscrive il menu di avvio, voce Applicazioni..., e resta\n"
-    "# modificabile a mano.\n"
+    "# Lo riscrive Impostazioni, scheda Sistema, \"Applicazioni del menu...\",\n"
+    "# e resta modificabile a mano.\n"
     "\n";
 
 static int scrivi_tutto(int fd, const char *s)
@@ -1013,6 +1014,13 @@ static void categorie_raccogli(void)
  * ! SI APRE UNA VOLTA SOLA ANCHE SE NON C'E'. Un percorso sbagliato rende 0, e
  * senza questa memoria il menu riproverebbe ad aprire quel file a ogni
  * disegno: una lettura fallita per voce, ogni volta. */
+/* ! THE MENU'S ICONS ARE A CHOICE (pm 0.028, voce 80, the user, 7 November
+ * 2026): «in a certain context» the plain list is right, so a checkbox in
+ * Impostazioni > Scrivania turns them off; ON by default, a fresh install
+ * shows them. Saved in pm.cfg as `icone_menu`. Off, the entries are drawn
+ * with no icon at all - not a blank square where the icon would be. */
+static int g_vedi_icone = 1;
+
 static ExIcon icona_di(App *a)
 {
     if (a->ic == 0 && a->icona[0]) {
@@ -1119,7 +1127,7 @@ static void sotto_apri(unsigned int c, int y_voce)
         b = crea_voce(g_app[i].nome,
                     4, 4 + (int)n * VOCE_H, MENU_W - 8, VOCE_H - 2,
                     g_sotto, ID_VOCE + i);
-        ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
+        if (g_vedi_icone) ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
         n++;
     }
 
@@ -1142,9 +1150,11 @@ static void menu_apri(void)
      * quando non c'e' niente da avviare. */
     /* Quattro voci fisse adesso — «Applicazioni...», «Informazioni su»,
      * «Esci», «Spegni». */
-    /* Sette voci sotto la riga: Applicazioni, Informazioni, Impostazioni,
-     * Registro, Esci, Riavvia, Spegni. Il numero sta qui e non sparso nelle
-     * posizioni. */
+    /* Sei voci sotto la riga: Informazioni, Impostazioni, Registro, Esci,
+     * Riavvia, Spegni. Il numero sta qui e non sparso nelle posizioni.
+     * ! «Applicazioni...» non c'e' piu' (pm 0.028, voce 80, l'utente): e'
+     * diventato un pulsante della scheda Sistema di Impostazioni, e nel menu
+     * «Applicazioni...» e' ora il GRUPPO dei programmi di tutti i giorni. */
     /* Quante righe in cima: una per categoria, piu' le voci che non ne hanno
      * nessuna. Le altre stanno nei sottomenu e non occupano posto qui. */
     {
@@ -1153,7 +1163,7 @@ static void menu_apri(void)
         for (i = 0; i < g_app_n; i++)
             if (!g_app[i].categoria[0]) fuori++;
 
-        h = (int)((g_cat_n + fuori) * VOCE_H) + 8 + 7 * VOCE_H + 6;
+        h = (int)((g_cat_n + fuori) * VOCE_H) + 8 + 6 * VOCE_H + 6;
     }
 
     g_menu_y = (int)g_sh - BARRA_H - h - 2;
@@ -1174,7 +1184,7 @@ static void menu_apri(void)
         b = crea_voce(t,
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
                     g_menu, ID_CAT + i);
-        ex_set_icon(b, icona_categoria(i), ICONA_LATO);
+        if (g_vedi_icone) ex_set_icon(b, icona_categoria(i), ICONA_LATO);
         riga++;
     }
 
@@ -1186,7 +1196,7 @@ static void menu_apri(void)
         b = crea_voce(g_app[i].nome,
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
                     g_menu, ID_VOCE + i);
-        ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
+        if (g_vedi_icone) ex_set_icon(b, icona_di(&g_app[i]), ICONA_LATO);
         riga++;
     }
 
@@ -1196,30 +1206,23 @@ static void menu_apri(void)
     ex_create("separator", "", EX_CHILD,
             6, 6 + (int)riga * VOCE_H, MENU_W - 12, 2, g_menu, 0, 0);
 
-    /* ! «APPLICAZIONI...» STA SOTTO LA RIGA, con «Esci» e «Spegni», e non fra
-     * le applicazioni: non e' un programma da avviare, e' una cosa che la
-     * scrivania sa fare. Metterla in mezzo alle voci vorrebbe anche dire che
-     * si sposta ogni volta che se ne aggiunge una. */
-    crea_voce("Applicazioni...",
-            4, 10 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
-            g_menu, ID_GESTISCI);
     /* ! «INFORMAZIONI SU» STA CON LE COSE CHE SA FARE LA SCRIVANIA, sotto la
      * riga, e non fra le applicazioni: la scrivania non ha una barra dei menu
      * dove metterla — la sua barra e' quella delle finestre aperte — e questo
      * e' l'unico menu che ha. */
     crea_voce("Informazioni su",
-            4, 10 + (int)(riga + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_INFO);
     crea_voce("Impostazioni...",
-            4, 10 + (int)(riga + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_IMPOST);
     /* The desktop's log (@EXWIN-LOG): with the things the desktop knows how
      * to do, before the ones that stop it. */
     crea_voce("Registro di sistema",
-            4, 10 + (int)(riga + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_REGISTRO);
     crea_voce("Esci",
-            4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI);
     /* ! «RIAVVIA» STA FRA «ESCI» E «SPEGNI», ed e' il posto giusto per due
      * ragioni. La prima e' l'ordine di gravita': si esce dalla scrivania, si
@@ -1234,10 +1237,10 @@ static void menu_apri(void)
      * comando deve stare nel menu invece che in una console di testo che chi
      * e' nella grafica non sta guardando. */
     crea_voce("Riavvia",
-            4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_RIAVVIA);
     crea_voce("Spegni",
-            4, 10 + (int)(riga + 6) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI);
 
     ex_default_proc(g_menu, EXM_PAINT, 0, 0);
@@ -1287,7 +1290,7 @@ static ExWindow g_impost_suono = 0;
  * l'orologio e' un processo a parte e vale dal prossimo avvio della
  * scrivania - e lo dice la finestra. */
 static int      g_vedi_orologio = 1, g_vedi_volume = 1;
-static ExWindow g_impost_orologio = 0, g_impost_volume = 0;
+static ExWindow g_impost_orologio = 0, g_impost_volume = 0, g_impost_icone = 0;
 static ExWindow g_barra_f = 0;      /* la barra, per ridisegnarla da qui */
 
 /* =============================================================================
@@ -1524,6 +1527,7 @@ static long impost_proc(ExWindow f, unsigned int msg,
     if (msg == EXM_CLOSE) {
         ex_destroy(f);
         g_impost = g_impost_sfondo = g_impost_suono = g_impost_orologio = g_impost_volume = 0;
+        g_impost_icone = 0;
         return 0;
     }
 
@@ -1544,6 +1548,13 @@ static long impost_proc(ExWindow f, unsigned int msg,
         return 0;
     }
 
+    /* the menu's icons: from the next opening of the menu, saved at once */
+    if (msg == EXM_COMMAND && wp == ID_VEDI_ICONE) {
+        g_vedi_icone = ex_is_checked(g_impost_icone);
+        if (!sfondo_salva()) log_seriale("pm: non riesco a salvare la scelta delle icone del menu");
+        return 0;
+    }
+
     if (msg == EXM_COMMAND && wp == ID_SFONDO_SCEGLI) { sfondo_scegli(); return 0; }
     if (msg == EXM_COMMAND && wp == ID_SFONDO_NIENTE) { sfondo_niente(); return 0; }
     if (msg == EXM_COMMAND && wp >= ID_SFONDO_MODO && wp < ID_SFONDO_MODO + 4) {
@@ -1552,6 +1563,7 @@ static long impost_proc(ExWindow f, unsigned int msg,
     }
 
     if (msg == EXM_COMMAND && wp == ID_IMP_SCHEDE) { scheda_mostra((int)lp); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_GESTISCI) { gest_apri(); return 0; }
     if (msg == EXM_COMMAND && (wp == ID_V_PROVA || wp == ID_V_APPLICA)) {
         video_scegli(wp == ID_V_PROVA);
         return 0;
@@ -1666,6 +1678,10 @@ static void impostazioni_apri(void)
     for (i = 0; i < 4; i++)
         metti(1, ex_create("button", DISPOSIZIONI_T[i], EX_CHILD, 12 + i * 79, 110, 74, 28,
                            g_impost, (unsigned int)(ID_SFONDO_MODO + i), 0));
+    g_impost_icone = ex_create("checkbox", "Icone accanto alle voci del menu", EX_CHILD,
+                               12, 156, IMP_W - 24, 20, g_impost, ID_VEDI_ICONE, 0);
+    metti(1, g_impost_icone);
+    ex_set_checked(g_impost_icone, g_vedi_icone);
 
     /* --- Sistema: the start-up sound and what starts with the desktop -------- */
     g_impost_suono = ex_create("checkbox", "Suono all'avvio della scrivania", EX_CHILD,
@@ -1682,6 +1698,14 @@ static void impostazioni_apri(void)
     ex_set_checked(g_impost_volume, g_vedi_volume);
     metti(2, ex_create("label", "L'orologio: dal prossimo avvio della scrivania.", EX_CHILD,
                        12, 118, IMP_W - 24, 16, g_impost, 0, 0));
+    /* ! THE MENU'S EDITOR LIVES HERE (pm 0.028, voce 80, the user, 7 November
+     * 2026): it was «Applicazioni...» in the start menu, among the things
+     * the desktop does; there «Applicazioni...» is now the GROUP of the
+     * everyday programs, and choosing what the menu holds is a setting. */
+    metti(2, ex_create("button", "Applicazioni del menu...", EX_CHILD, 12, 148, 220, 28,
+                       g_impost, ID_GESTISCI, 0));
+    metti(2, ex_create("label", "Aggiungi e togli le voci del menu di avvio.", EX_CHILD,
+                       12, 180, IMP_W - 24, 16, g_impost, 0, 0));
 
     scheda_mostra(0);
     ex_default_proc(g_impost, EXM_PAINT, 0, 0);
@@ -1867,7 +1891,6 @@ static long menu_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
          * comando. */
         if (wp == ID_SPEGNI) { arresta(EXOS_RB_POWEROFF); return 0; }
 
-        if (wp == ID_GESTISCI) { gest_apri(); return 0; }
         if (wp == ID_REGISTRO) { registro_apri(); return 0; }
 
         if (wp == ID_IMPOST) {
@@ -3164,6 +3187,11 @@ static long scr_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
      * every DESK_GIRO ms even when nothing changed. desk_controlla draws by
      * itself when something did. */
     if (msg == EXM_TIMER) { desk_controlla(0); return EX_NO_REDRAW; }
+    /* ! A CLICK ON THE DESKTOP CLOSES THE START MENU (pm 0.028, voce 80, the
+     * user): the menu is a window of its own, TOPMOST, and stayed open over
+     * a desktop that was being used. Then the click does what it does. */
+    if ((msg == EXM_MOUSE_DOWN || msg == EXM_DOUBLE_CLICK || msg == EXM_RIGHT_CLICK) && g_menu)
+        menu_chiudi();
     if (msg == EXM_MOUSE_DOWN || msg == EXM_DOUBLE_CLICK) {
         int i = desk_sotto(EX_X(lp), EX_Y(lp));
 
@@ -3248,6 +3276,11 @@ static void sfondo_leggi_cfg(void)
         for (p++; *p == ' ' || *p == '\t'; p++) ;
         g_vedi_volume = !(p[0] == 'n' && p[1] == 'o');
     }
+    /* missing (a pm.cfg written before 0.028) = on, as on a fresh install */
+    if ((p = strstr(buf, "icone_menu")) && (p = strchr(p, '='))) {
+        for (p++; *p == ' ' || *p == '\t'; p++) ;
+        g_vedi_icone = !(p[0] == 'n' && p[1] == 'o');
+    }
     p = strstr(buf, "sfondo");
     if (!p || !(p = strchr(p, '='))) return;
     p++;
@@ -3273,10 +3306,10 @@ static int sfondo_salva(void)
     if (fd < 0) return 0;
     n = snprintf(t, sizeof(t), "# pm: la scrivania. Lo riscrive Impostazioni.\n"
                                "sfondo = %s\ndisposizione = %s\nsuono_avvio = %s\n"
-                               "orologio = %s\nicona_volume = %s\n",
+                               "orologio = %s\nicona_volume = %s\nicone_menu = %s\n",
                  g_sfondo ? g_sfondo : "", DISPOSIZIONI[g_sfondo_modo],
                  g_suono_avvio ? "si" : "no", g_vedi_orologio ? "si" : "no",
-                 g_vedi_volume ? "si" : "no");
+                 g_vedi_volume ? "si" : "no", g_vedi_icone ? "si" : "no");
     if (write(fd, t, (unsigned int)n) != n) { close(fd); return 0; }
     close(fd);
     return 1;

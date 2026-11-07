@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.318
+**Versione:** 0.320
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -442,11 +442,34 @@ ultimi due su `st_rdev` e sul simbolo vecchio) passa a 32 e 64 bit in QEMU.
 Mesa 26.2.6 per EX-OS (voce 88): `tools/mesa-exos/costruisci.sh [32|64]` costruisce
 `libEGL.so.1` e `libGLESv2.so.2` col driver softpipe, dall'archivio firmato piu'
 `tools/mesa-exos/exos-26.2.6.patch`, la piattaforma "exos": system `exos` in meson, un driver
-EGL con le superfici in memoria (pbuffer e surfaceless; le finestre ExWin vengono dopo), un
+EGL con le superfici in memoria (pbuffer e surfaceless) e nelle finestre ExWin, un
 winsys per loro, il frontend hgl di Haiku reso portabile. `tools/mesa-exos/prova-egl.sh [32|64]`
 collega un programma alle due librerie, lo porta in EX-OS sotto QEMU con le .so che chiede il
 suo DT_NEEDED, e disegna un triangolo con shader GLSL ES: 8/8 a 32 e 64 bit, "softpipe | OpenGL
-ES 3.1 Mesa 26.2.6". Le librerie sono nei sysroot, non ancora sul CD.
+ES 3.1 Mesa 26.2.6".
+
+Sul CD degli strumenti e in netupdate come gruppo `mesa` (`netupdate -install:mesa`, porta anche
+zlib): `/exos/lib/libEGL.so.1`, `/exos/lib/libGLESv2.so.2`, gli header (`EGL`, `GLES2`, `GLES3`,
+`KHR`), i sorgenti, e `/exos/bin/provaegl`, che disegna il triangolo e dice quale dei suoi otto
+controlli fallisce. La verifica di netupdate `tools/netinst/verifiche/mesa.sh` cerca le librerie
+che servono a Mesa (libz in /exos/lib; libstdc++, libgcc_s e libm in /lib) e poi lancia
+`provaegl`: "a posto" vuol dire che OpenGL funziona su quella macchina, non solo che i file sono
+arrivati. Un programma: `gcc prog.c -lEGL -lGLESv2`. `tools/mesa-exos/prova-netupdate.sh` lo fa
+come lo farebbe un utente, in QEMU, su un disco installato dal CD (vedi `help problemi`, MESA).
+
+OpenGL ES in una finestra ExWin: `EGL_DEFAULT_DISPLAY` e' la piattaforma `exos`
+(`_EGL_PLATFORM_EXOS` di Mesa, nella patch), ed `eglCreateWindowSurface` prende una
+`struct exos_egl_finestra` (`#include <exos/egl_exwin.h>`, da `drivers/wserver/egl_exwin.h`):
+una versione e due funzioni date dal proprietario della finestra. `misura` dice quanto e' grande
+l'area di disegno; `mostra` riceve ogni fotogramma finito a `eglSwapBuffers` (0xAARRGGBB, prima
+la riga in alto), e il proprietario lo copia nella zona della finestra e lo dice al server. Col
+server parla il proprietario e non libEGL perche' le notizie del server (un ridimensionamento,
+gli eventi) arrivano alla casella del processo, che legge il ciclo del programma; una libreria
+che la leggesse gliele ruberebbe. E' la forma di `wl_egl_window` di Wayland. Una finestra
+ridimensionata fra due fotogrammi da' al fotogramma dopo la misura nuova.
+`tools/mesa-exos/prova-finestra.sh [32]` apre una finestra col protocollo (come il widget di
+Firefox), disegna 60 fotogrammi, cambia misura e fotografa lo schermo con ExWin acceso: 8/8 e
+il triangolo nella finestra.
 
 Due guasti dei cross trovati per strada, tutti e due in `tools/gcc-exos/specs-condivise.sh`
 (da rilanciare su un cross costruito prima del 7 novembre 2026): ld cercava il DT_NEEDED di una
@@ -1853,6 +1876,39 @@ sessione sola perche' telnetd ne serve una per volta. Dal 0.300 i timeout
 dell'AHCI durano davvero quanto dichiarato: prima scadevano dopo circa 2 secondi
 ed erano falsi se il filo si fermava. netupdate 0.039 riscrive un kernel
 frammentato e non dice piu' di riavviare se la mappa di avvio non e' aggiornata.
+
+**Dal kernel 0.319 tutti i processori lavorano per difetto** (voce 92).
+`smp = 2` e' il predefinito in `/boot/kernel.cfg`; e' un modo, non un numero:
+2 vuol dire che tutti i processori elencati dalla MADT dell'ACPI o dalla
+tabella MP eseguono programmi (1 parcheggia quelli in piu', 0 li conta
+soltanto, per una scheda che con loro non si avvia). Non c'e' piu' il tetto di
+16: l'elenco dei processori e ogni tabella per processore (GDT, TSS, processo
+corrente e ozio, lucchetto del kernel, CR0.WP, frequenza) sono lunghi quanto
+la macchina; resta il limite della numerazione a 8 bit dell'xAPIC (l'x2APIC
+non e' ancora pilotato). `sysconf(_SC_NPROCESSORS_ONLN)` dice il numero vero
+(diceva 1), quindi Firefox, FFmpeg e Mesa dimensionano i fili su quello;
+`/proc/stat` ha il tempo vero di ogni processore (divideva il totale in parti
+uguali) e `/proc/PID/status` la riga `Cpus_allowed_list`. **Affinita' e
+processori riservati**: `sched_setaffinity`, `pthread_setaffinity_np` e
+`sched_getcpu` sono veri (`SYS_CPU_AFFINITA` 265), e il comando nuovo `cpu`
+elenca i processori, manda i fili di un processo su quelli dati (`cpu -p PID
+1,3-5`), lancia un comando gia' fissato (`cpu -x 2-3 COMANDO`) e riserva un
+processore a un processo (`cpu -r PID 2`, `cpu -R 2 COMANDO`): i suoi fili ci
+vanno e nessun altro ci gira, finche' non finisce o `cpu -l 2`. Il processore 0
+non si riserva. **Un guasto dello scheduler trovato per strada**: un processo
+che lavorava da solo cedeva il processore all'ozio per un tick alla fine di
+ogni quanto (1 su 5, il 20% di qualunque programma che calcola); trovato perche'
+due programmi su un processore facevano 1,25 volte il lavoro di uno solo.
+Provato in QEMU a 32 e 64 bit: `tools/prova_tutti_core.sh` (1, 2, 4
+processori con KVM: 2,00 e 3,8 volte il lavoro di uno; 20 processori trovati
+e al lavoro, emulati) 22/22, `tools/prova_affinita.sh` 9/9 (due programmi
+fissati su un processore 1,00, su due 2,00, tre accanto a uno riservato 2,93).
+Due fili dello stesso programma non girano ancora insieme (voce 92 b).
+**Kernel 0.320**: spegnimento, riavvio e arresto passano prima al processore
+0; chiesti da un programma sul processore 1 la 0.319 si fermava a
+"Spegnimento fra 3..." (il conto aspettava l'orologio, che sale sul
+processore 0, tenendo il lucchetto del kernel); le attese sull'orologio dei
+lettori CD e del floppy lasciano passare il lucchetto.
 
 Dal kernel 0.297 anche il sistema a 64 bit sveglia i processori in piu', come
 quello a 32: `smpprova -accendi` li mette al lavoro fino al riavvio, `smp = 2`
@@ -6155,7 +6211,19 @@ Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
 elenco **di fianco**, con le loro icone. Non si dichiarano da nessun'altra
 parte — esistono finché c'è una voce che le nomina.
 
-La voce **Applicazioni...** dello stesso menu aggiunge e toglie righe da quel
+Dal 7 novembre 2026 (voce 80, pm 0.028) il menu pubblicato ha cinque gruppi:
+**Applicazioni** (File manager, Archivi, Calctor, Pennello, Immagini),
+**Internet**, **Strumenti**, **Multimedia** (Lettore audio, Volume, VLC) e
+**Giochi**. Su una macchina già installata netupdate (0.046) porta il menu nuovo e
+rimette in fondo le voci che l'utente aveva aggiunto: una voce si riconosce dal
+programma che avvia, quindi quelle del sistema prendono il loro gruppo nuovo e
+le altre restano (`menu_ricupera`). Il menu Avvio si chiude quando si sceglie un
+programma o si fa clic sulla scrivania; le icone accanto alle voci si possono
+spegnere (Impostazioni, scheda Scrivania, «Icone accanto alle voci del menu»,
+accesa per difetto).
+
+Il pulsante **Applicazioni del menu...** nella scheda Sistema di Impostazioni
+(fino a pm 0.027 la voce «Applicazioni...» del menu) aggiunge e toglie righe da quel
 file (e rimette al loro posto categoria e icona di ciò che non mostra), e la
 direttiva `@avvio <percorso>` dice quale programma parte da solo con la
 scrivania (è così che l'orologio si trova già lì).

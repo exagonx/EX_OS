@@ -551,6 +551,28 @@ nota  = vlc film.mp4  (vlc -I dummy --no-video brano.ogg senza ExWin)
 nota  = Dalla scrivania: Avvio > Multimedia > VLC sceglie il file (vlcapri)
 
 
+[mesa]
+nome  = Mesa
+dice  = Mesa 26.2.6: OpenGL ES 2 e 3 con EGL (softpipe, superfici in memoria)
+prova = lib/libEGL.so.1
+vuole = zlib
+mbyte = 90
+solo  = lib/libEGL.so
+solo  = lib/libEGL.so.1
+solo  = lib/libGLESv2.so
+solo  = lib/libGLESv2.so.2
+solo  = bin/provaegl
+solo  = include/EGL
+solo  = include/GLES2
+solo  = include/GLES3
+solo  = include/KHR
+solo  = include/GL
+solo  = src/mesa
+
+nota  = gcc prog.c -lEGL -lGLESv2 (provaegl disegna un triangolo e dice se va)
+nota  = Solo pbuffer e surfaceless per ora: le finestre ExWin vengono dopo
+
+
 [pcre2]
 nome  = PCRE2
 dice  = PCRE2 10.49: espressioni regolari di Perl, pcre2grep, pcre2test

@@ -12,7 +12,8 @@
  * smpprova — i processori in piu' lavorano davvero? (tappa 3 dell'SMP)
  *
  *     smpprova            un giro da solo, poi due insieme, e il confronto
- *     smpprova N          N programmi insieme (da 1 a 8)
+ *     smpprova N          N programmi insieme (da 1 in su: 0.003 toglie il
+ *                         tetto di 8, una macchina ha i processori che ha)
  *     smpprova N SECONDI  quanto dura ogni giro (3)
  *     smpprova -accendi   mette al lavoro i processori in attesa, da adesso e
  *                         fino al riavvio (root): per provare senza toccare
@@ -32,7 +33,7 @@
 
 #include "libc.h"
 
-EX_VERSIONE("smpprova", "0.002");
+EX_VERSIONE("smpprova", "0.003");
 
 /* Il lavoro: aritmetica in un ciclo, con l'orologio guardato di rado (ogni
  * chiamata di sistema e' tempo passato nel kernel, che e' di tutti). */
@@ -63,18 +64,25 @@ static unsigned int lavora(unsigned int ms)
  * bit di Unix (vedi <sys/wait.h> in libc.h). */
 static unsigned int giro(const char *io, int n, unsigned int ms, unsigned int *minimo)
 {
-    int      pid[8], k;
+    int     *pid, k;
     unsigned int somma = 0;
     char     t_ms[16];
 
     *minimo = 0xFFFFFFFFu;
+    pid = (int *)malloc((size_t)n * sizeof(int));
+    if (pid == NULL) { printf("smpprova: niente memoria per %d figli\n", n); return 0; }
     snprintf(t_ms, sizeof(t_ms), "%u", ms);
     for (k = 0; k < n; k++) {
         char *av[4];
 
         av[0] = (char *)io; av[1] = (char *)"-figlio"; av[2] = t_ms; av[3] = 0;
         pid[k] = spawn(io, av);
-        if (pid[k] < 0) { printf("smpprova: non riesco a lanciare %s\n", io); return 0; }
+        if (pid[k] < 0) {
+            printf("smpprova: non riesco a lanciare %s\n", io);
+            while (--k >= 0) waitpid(pid[k], NULL, 0);
+            free(pid);
+            return 0;
+        }
     }
     for (k = 0; k < n; k++) {
         int stato = 0;
@@ -84,6 +92,7 @@ static unsigned int giro(const char *io, int n, unsigned int ms, unsigned int *m
         somma += (unsigned int)stato;
         if ((unsigned int)stato < *minimo) *minimo = (unsigned int)stato;
     }
+    free(pid);
     return somma;
 }
 
@@ -117,8 +126,12 @@ int main(int argc, char **argv)
     if (argc >= 2) n = atoi(argv[1]);
     if (argc >= 3) ms = (unsigned int)atoi(argv[2]) * 1000u;
     if (n < 1) n = 1;
-    if (n > 8) n = 8;
     if (ms < 1000u) ms = 1000u;
+
+    /* what the libc tells programs, the number they size their threads on
+     * (0.003; always 1 up to kernel 0.318) */
+    printf("smpprova: sysconf dice %ld processori al lavoro, %ld in tutto\n",
+           sysconf(_SC_NPROCESSORS_ONLN), sysconf(83 /* _SC_NPROCESSORS_CONF */));
 
     printf("smpprova: un programma da solo, %u secondi...\n", ms / 1000u);
     uno = giro(argv[0], 1, ms, &min1);

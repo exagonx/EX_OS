@@ -14,7 +14,14 @@
 # DISCO_MB la misura del disco di prova (32 se non detta).
 # AMBIENTE="VAR=valore ..." esporta quelle variabili prima di lanciarlo.
 # DOPO="cmd@secondi ..." altri comandi dopo il programma, uno per parola
-# (per esempio DOPO="cat:/proc/pile@3": i ':' diventano spazi).
+# (per esempio DOPO="cat:/proc/pile@3": i ':' diventano spazi; non in quelli
+# di qemu_drive.py, foto:, key:, mon:, regs:, che restano come sono).
+# PRIMA="cmd@secondi ..." comandi prima del programma, allo stesso modo (per
+# esempio PRIMA="exwin@14 key:alt-f1@2": ExWin acceso, e di nuovo la shell).
+# QEMU_PIU="..." altre opzioni per QEMU (lo schermo del portatile:
+# "-vga none -device VGA,edid=on,xres=1366,yres=768").
+# SFONDO=1 lancia il programma con & e passa subito ai DOPO: le foto si fanno
+# mentre il programma gira (tools/mesa-exos/prova-finestra.sh).
 #
 # EXOS_ARCH=x86_64 runs it in the 64-bit system (dist/exos64.iso,
 # qemu-system-x86_64): the binary must be an x86_64-exos one.
@@ -45,7 +52,7 @@ printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_ISTANZA=exilla EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD"
-export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide"
+export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide${QEMU_PIU:+ $QEMU_PIU}"
 timeout 300 python3 tools/qemu_drive.py "mkfs -t ext2 -L prova hd0p1@4" "si@30" > "$D/esegui-0.log" 2>&1
 "$(command -v debugfs || echo /sbin/debugfs)" -w -R "write $BIN $NOME" \
     "$IMG?offset=1048576" > /dev/null 2>&1
@@ -59,9 +66,14 @@ SER=/tmp/exos/serialexilla.txt
 rm -f "$SER"
 ESPORTA=()
 for v in $AMBIENTE; do ESPORTA+=("export $v@1"); done
+parola() {
+    case "$1" in foto:*|key:*|mon:*|regs:*) echo "$1" ;; *) echo "${1//:/ }" ;; esac
+}
+PRIMAV=()
+for v in $PRIMA; do PRIMAV+=("$(parola "$v")"); done
 DOPOV=()
-for v in $DOPO; do DOPOV+=("${v//:/ }"); done
-timeout "${ATTESA:-300}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "${ESPORTA[@]}" \
-    "/disk/$NOME $*@${SECONDI:-8}" "${DOPOV[@]}" "echo FINE-ESEGUI@2" > "$D/esegui-1.log" 2>&1
+for v in $DOPO; do DOPOV+=("$(parola "$v")"); done
+timeout "${ATTESA:-300}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "${ESPORTA[@]}" "${PRIMAV[@]}" \
+    "/disk/$NOME $*${SFONDO:+ &}@${SECONDI:-8}" "${DOPOV[@]}" "echo FINE-ESEGUI@2" > "$D/esegui-1.log" 2>&1
 tr -d '\r' < "$SER" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | \
     sed -n "\#/disk/$NOME#,/FINE-ESEGUI/p" | sed '1d;$d' | grep -v "^ex-os:"

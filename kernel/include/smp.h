@@ -46,7 +46,14 @@
 
 #include "kernel.h"
 
-#define SMP_CPU_MAX         16
+/* ! NO CEILING ON THE NUMBER OF PROCESSORS (0.319, voce 92). Up to 0.318
+ * SMP_CPU_MAX = 16 sized every per-processor table, and a machine with more
+ * used 16. Now the list of processors and every per-processor table (GDT, TSS,
+ * current process, idle task, kernel lock, CR0.WP, frequency) are as long as
+ * what the ACPI or MP table lists: smp_init counts, then asks each owner to
+ * grow (smp_posti). The one limit left is the hardware's: an xAPIC numbers
+ * processors with 8 bits (255 ids, 0xFF is "everybody"); x2APIC, which has
+ * 32, is not driven yet (SMP_MOTIVO_X2APIC). */
 
 /* Da dove viene l'elenco dei processori. */
 #define SMP_FONTE_NESSUNA   0   /* nessuna tabella: un processore solo */
@@ -62,6 +69,8 @@
 #define SMP_CPU_LASCIATO    4   /* elencato ma non svegliato (vedi `motivo`) */
 #define SMP_CPU_LAVORA      5   /* esegue processi (tappa 3: smp = 2 in kernel.cfg) */
 
+#define SMP_SENZA_NUMERO    0xFFu
+
 /* Perche' i processori in piu' non sono stati svegliati (0 = lo sono stati,
  * o non ce ne sono). */
 #define SMP_MOTIVO_NESSUNO  0
@@ -74,7 +83,9 @@ typedef struct {
     uint8_t  apic_id;
     uint8_t  stato;         /* SMP_CPU_* */
     uint8_t  apic_ver;      /* versione dell'APIC locale, 0 se non nota */
-    uint8_t  riservato;
+    uint8_t  numero;        /* 0.319: its cpu_n() number when it works (0 the boot
+                             * one), SMP_SENZA_NUMERO otherwise. Up to 0.318
+                             * "riservato", always 0 */
     uint32_t firma;         /* CPUID.1 EAX: famiglia, modello, stepping */
     uint32_t capacita;      /* CPUID.1 EDX */
     uint32_t battiti;       /* interrupt del proprio timer ricevuti (100 al secondo) */
@@ -92,11 +103,25 @@ typedef struct {
     uint32_t apic_locale;   /* indirizzo fisico dell'APIC locale, 0 se non c'e' */
     uint32_t n_ioapic;      /* I/O APIC elencati */
     uint32_t ioapic;        /* indirizzo fisico del primo, 0 se nessuno */
-    uint32_t troppi;        /* processori elencati oltre SMP_CPU_MAX, ignorati */
+    uint32_t troppi;        /* processori elencati e non tenuti: memoria finita */
     uint32_t timer_per_tick;/* conteggi del timer dell'APIC in 10 ms; 0 = non misurato */
     uint32_t tick;          /* g_ticks al momento della chiamata, per confrontare */
-    SmpCpu   cpu[SMP_CPU_MAX];
+    /* ! FROM HERE ON NOT IN THE COPY THAT LEAVES THE KERNEL AS IS: the
+     * header above (SMP_TESTA_BYTE) goes out, then as many SmpCpu as the
+     * caller has room for (sys_cpu_info). Up to 0.318 the array was inside
+     * the structure, 16 long: a program built then passes exactly header +
+     * 16 entries, and still gets them. */
+    SmpCpu  *cpu;           /* n entries (kmalloc; one static before smp_init) */
 } SmpInfo;
+
+#define SMP_TESTA_BYTE  (10u * sizeof(uint32_t))
+
+/* How many per-processor slots the tables have: the processors listed, at
+ * least 1. Fixed once smp_init has counted them. */
+uint32_t smp_posti(void);
+
+/* How many processors run programs now: numbers 0 .. smp_al_lavoro()-1. */
+uint32_t smp_al_lavoro(void);
 
 /* Cerca i processori. `accendi`: 0 = li conta e basta; 1 = sveglia e
  * parcheggia quelli in piu'; 2 = li sveglia e li mette a LAVORARE (tappa 3).
@@ -126,9 +151,9 @@ void           smp_init(int accendi);
  * programma insieme (vedi sched_puo_qui in sched.c). Un programma che passa
  * il tempo nel kernel - a leggere il disco - non va piu' veloce.
  *
- * ! SI ACCENDE CON  smp = 2  IN kernel.cfg, E SOLO COSI'. Il predefinito
- * resta 1 (svegliati e fermi) finche' non e' provato su piu' macchine vere:
- * un errore qui non e' un programma che cade, e' una macchina che si ferma.
+ * ! E' IL PREDEFINITO DALLA 0.319 (voce 92): smp = 2 in kernel.cfg, o la
+ * riga assente. smp = 1 li parcheggia, smp = 0 li conta soltanto: la strada
+ * per la scheda che con piu' processori non si avvia.
  * ========================================================================== */
 extern volatile uint32_t g_smp_lavora;      /* definito in gdt.c */
 
@@ -141,8 +166,15 @@ static inline uint32_t cpu_n(void)
 
     if (!g_smp_lavora) return 0;
     __asm__ volatile ("lsl %1, %0" : "+r"(n) : "r"((uint32_t)0x38));
-    return n & (SMP_CPU_MAX - 1);
+    return n;
 }
+
+/* The per-processor tables of the other files, grown to `posti` slots by
+ * smp_init before any extra processor is woken (one processor running,
+ * interrupts off). Slot 0 keeps what it had. 0 = done, -1 = no memory. */
+int gdt_posti(uint32_t posti);
+int sched_posti(uint32_t posti);
+int paging_posti(uint32_t posti);
 
 /* Mette al lavoro, a macchina avviata, i processori parcheggiati. Rende
  * quanti lavorano dopo. Vedi smp.c: e' il modo di provare senza `smp = 2`. */
@@ -153,6 +185,15 @@ void bkl_esci(const void *frame);   /* uscendone: lo lascia se si torna in ring 
 void bkl_lascia(void);              /* lo lascia e basta: i primi ingressi in ring 3 */
 void bkl_stato(uint32_t *coda, uint32_t *turno, uint32_t *chi);
 void bkl_ozio(void);                /* lo lascia chi sta per fermarsi con hlt */
+
+/* ! A WAIT FOR THE CLOCK, ON A PROCESSOR THAT IS NOT 0, LETS THE LOCK GO BY
+ * (0.320). g_ticks rises on processor 0, in a handler that takes the kernel's
+ * lock: waiting for it while holding the lock is waiting for ever. Called in
+ * every turn of such a loop; on processor 0, or with one processor, nothing. */
+static inline void bkl_fai_passare(void)
+{
+    if (g_smp_lavora && cpu_n() != 0) { bkl_lascia(); __asm__ volatile ("pause"); bkl_entra(); }
+}
 
 /* Cio' che smp_init() ha trovato. Mai NULL. */
 const SmpInfo *smp_info(void);

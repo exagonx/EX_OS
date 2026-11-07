@@ -193,7 +193,7 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             return;
         }
         if (cfg_strcmp(key, "smp") == 0) {
-            cfg->smp = 1;
+            cfg->smp = 2;
             if (value[0] >= '0' && value[0] <= '9') {
                 /* 0 = contati e basta, 1 = svegliati e fermi, 2 = lavorano. */
                 cfg->smp = (uint32_t)cfg_atoi(value);
@@ -363,7 +363,7 @@ KernelConfig *cfg_load(void)
     g_config.timer_hz     = 100;
     g_config.verbose_boot = 0;   /* default: avvio silenzioso. Vedi cfg.h */
     g_config.ata_dma      = 1;   /* default: il DMA si usa. Vedi cfg.h */
-    g_config.smp          = 1;   /* default: i processori in piu' si svegliano */
+    g_config.smp          = 2;   /* default: every processor works (voce 92) */
     g_config.ahci         = 0;   /* default: i dischi restano dove sono. Vedi cfg.h */
     g_config.keymap[0]    = '\0'; /* nessuna: il driver tiene la sua */
     cfg_strcpy(g_config.shell_path, "/bin/sh", sizeof(g_config.shell_path));

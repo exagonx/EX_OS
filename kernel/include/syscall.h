@@ -95,6 +95,26 @@
  * ebx = ms to the first SIGALRM (0 = off), ecx = interval ms (0 = once),
  * edx = uint32_t[2] or 0 for what was left and the old interval. */
 #define SYS_ALLARME      264
+/* SYS_CPU_AFFINITA (265, kernel 0.319, voce 92): where threads may run, and
+ * processors reserved to a process. ebx = operation:
+ *   AFF_LEGGI    ecx = pid (0 = me), edx = uint32_t*, esi = words: the set,
+ *                returns the words a full set needs
+ *   AFF_SCRIVI   same arguments: sets it (own processes, or root); -EINVAL
+ *                if no usable processor would be left
+ *   AFF_RISERVA  ecx = pid, edx = processor: only that process runs there,
+ *                and its threads go there (root; never processor 0)
+ *   AFF_LIBERA   edx = processor: back to everybody (root)
+ *   AFF_RISERVE  edx = uint32_t*, esi = how many: the owner of each working
+ *                processor (tgid, 0 = nobody); returns how many work
+ *   AFF_QUI      returns the processor the caller runs on (sched_getcpu)
+ * Processor numbers are the kernel's (0 = boot, see hwinfo). */
+#define SYS_CPU_AFFINITA 265
+#define AFF_LEGGI        0
+#define AFF_SCRIVI       1
+#define AFF_RISERVA      2
+#define AFF_LIBERA       3
+#define AFF_RISERVE      4
+#define AFF_QUI          5
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
 #define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
@@ -205,7 +225,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   265     /* la piu' alta e' SYS_ALLARME = 264 */
+#define SYSCALL_COUNT   266     /* la piu' alta e' SYS_CPU_AFFINITA = 265 */
 
 /* =============================================================================
  * Codici errno
@@ -1876,6 +1896,7 @@ int32_t sys_klog(InterruptFrame *f);
 int32_t sys_ahci_passa(InterruptFrame *f);
 int32_t sys_guardia(InterruptFrame *f);
 int32_t sys_cpufreq(InterruptFrame *f);
+int32_t sys_cpu_affinita(InterruptFrame *f);
 int32_t sys_attivita(InterruptFrame *f);
 int32_t sys_sync(InterruptFrame *f);
 int32_t sys_smp_lavora(InterruptFrame *f);

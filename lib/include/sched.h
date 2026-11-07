@@ -34,9 +34,10 @@ struct sched_param { int sched_priority; };
 int sched_get_priority_min(int politica);
 int sched_get_priority_max(int politica);
 
-/* Processor sets (7 November 2026, Mesa), as glibc has them: 1024 bits.
- * EX-OS runs programs on processor 0 only, and says so: getaffinity gives
- * {0}, setaffinity accepts a set that holds 0, sched_getcpu is 0. */
+/* Processor sets (7 November 2026, Mesa), as glibc has them: 1024 bits in
+ * cpu_set_t; the calls take any size (dim), so a bigger set made by hand
+ * reaches every processor. Since kernel 0.319 they are real: where a thread
+ * may run, set and read (pid 0 = the calling thread), and sched_getcpu. */
 #define CPU_SETSIZE 1024
 typedef struct { unsigned long __bit[CPU_SETSIZE / (8 * sizeof(unsigned long))]; } cpu_set_t;
 #define __CPU_PAROLA(n)  ((n) / (8 * sizeof(unsigned long)))

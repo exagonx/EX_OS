@@ -31,6 +31,11 @@
 #
 # ! ONLY THE SURFACES IN MEMORY for now (the user, 7 November 2026): pbuffer
 # and surfaceless; EGL windows on ExWin come later. Test: prova-egl.sh.
+#
+# On the tools CD (tools/librerie-exos/su-cd.sh, group [mesa] of
+# tools/iso/strumenti.txt): exos/lib/libEGL.so.1 and libGLESv2.so.2, the
+# headers, exos/bin/provaegl, the sources. netupdate brings the same group
+# and runs tools/netinst/verifiche/mesa.sh, which starts provaegl.
 # =============================================================================
 NOME=mesa
 VER=26.2.6
@@ -95,6 +100,14 @@ FINE
     # between them): the real file under its soname, no symbolic links
     lib_condivisa_sua EGL 1 "-lstdc++ -lgcc_s -lz -lm"
     lib_condivisa_sua GLESv2 2 "-lEGL -lstdc++ -lgcc_s -lm"
-    lib_fine "$PATCH" "$R/tools/mesa-exos/prova-egl.c"
+    # provaegl: prova-egl.c LINKED to the two libraries, for the tools CD
+    # (/exos/bin) and for the netupdate check (tools/netinst/verifiche/
+    # mesa.sh runs it on the machine). Stripped by su-cd.sh.
+    mkdir -p "$DEST/bin"
+    "$CROSS/bin/$T-gcc" -O2 -I"$DEST/include" -o "$DEST/bin/provaegl" "$R/tools/mesa-exos/prova-egl.c" \
+        -L"$DEST/lib" -lEGL -lGLESv2 -lpthread > "$B/provaegl.log" 2>&1 || { cat "$B/provaegl.log"; exit 1; }
+    "$CROSS/bin/$T-readelf" -d "$DEST/bin/provaegl" | grep -q "NEEDED.*libEGL.so.1" ||
+        { echo "provaegl non e' collegato a libEGL.so.1"; exit 1; }
+    lib_fine "$PATCH" "$R/tools/mesa-exos/prova-egl.c" "$TP/mesa/mesa-keys.asc"
 }
 lib_tutte "$1"

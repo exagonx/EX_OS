@@ -58,6 +58,7 @@
 #include "sched.h"      /* g_ticks */
 #include "gdt.h"        /* gdt_installa_cpu: la tappa 3 */
 #include "power.h"      /* guardia_controlla */
+#include "kmalloc.h"    /* the list and the per-processor tables, as long as needed (0.319) */
 
 /* ! UGUALE A SMP_TRAMP_BASE di smp_tramp.asm. E' la pagina 0x8000-0x8FFF, che
  * pmm_init tiene fuori dal giro perche' ci ha lavorato Stage 2: qui la si
@@ -113,7 +114,12 @@ extern void     smp_isr_battito(void);
 extern void     smp_isr_messaggio(void);
 #endif
 
-static SmpInfo           g_smp;
+/* The list starts with one entry, the processor we boot on, in static
+ * memory: there is always one, and smp_info() is read before smp_init. */
+static SmpCpu            g_cpu_avvio[1];
+static SmpInfo           g_smp = { .cpu = g_cpu_avvio };
+static uint32_t          g_cpu_spazio = 1;  /* entries g_smp.cpu has room for */
+static uint32_t          g_posti = 1;       /* per-processor slots (smp_posti) */
 static volatile uintptr_t g_apic;           /* indirizzo dell'APIC locale mappato */
 static volatile uint32_t g_ap_risposto;     /* lo alza il processore svegliato */
 static SmpCpu           *g_ap_voce;         /* la voce di quello in corso d'avvio */
@@ -121,6 +127,9 @@ static uint8_t           g_voce_di[256];    /* numero dell'APIC -> indice in g_s
 static uint32_t          g_mp_avvio = 0xFFFFFFFFu;  /* APIC del processore d'avvio secondo la tabella MP */
 
 const SmpInfo *smp_info(void) { g_smp.tick = g_ticks; return &g_smp; }
+uint32_t smp_posti(void) { return g_posti; }
+static uint32_t g_lavorano;     /* below, with the lock */
+uint32_t smp_al_lavoro(void) { return g_smp_lavora ? 1u + g_lavorano : 1u; }
 
 /* -----------------------------------------------------------------------------
  * Leggere la memoria fisica
@@ -238,9 +247,24 @@ static void aggiungi_cpu(uint8_t apic_id, uint8_t ver, uint32_t firma, uint32_t 
 
     for (i = 0; i < g_smp.n; i++)
         if (g_smp.cpu[i].apic_id == apic_id) return;    /* elencato due volte */
-    if (g_smp.n >= SMP_CPU_MAX) { g_smp.troppi++; return; }
+    if (g_smp.n >= g_cpu_spazio) {
+        /* the list grows: twice as long, copied, the old one given back
+         * (unless it is the static one of the boot processor) */
+        uint32_t spazio = g_cpu_spazio * 2;
+        SmpCpu  *nuova  = (SmpCpu *)kmalloc(spazio * sizeof(SmpCpu));
+        uint8_t *b;
+
+        if (nuova == NULL) { g_smp.troppi++; return; }
+        b = (uint8_t *)nuova;
+        for (i = 0; i < spazio * sizeof(SmpCpu); i++) b[i] = 0;
+        for (i = 0; i < g_smp.n; i++) nuova[i] = g_smp.cpu[i];
+        if (g_smp.cpu != g_cpu_avvio) kfree(g_smp.cpu);
+        g_smp.cpu    = nuova;
+        g_cpu_spazio = spazio;
+    }
 
     g_smp.cpu[g_smp.n].apic_id  = apic_id;
+    g_smp.cpu[g_smp.n].numero   = SMP_SENZA_NUMERO;
     g_smp.cpu[g_smp.n].stato    = SMP_CPU_LASCIATO;
     g_smp.cpu[g_smp.n].apic_ver = ver;
     g_smp.cpu[g_smp.n].firma    = firma;
@@ -487,7 +511,8 @@ void smp_ap_messaggio(void)
  * rientra va in coda dietro chi stava aspettando. */
 static volatile uint32_t g_bkl_coda  = 0;   /* il prossimo numero da dare */
 static volatile uint32_t g_bkl_turno = 0;   /* il numero che si sta servendo */
-static volatile uint8_t  g_bkl_tiene[SMP_CPU_MAX];
+static volatile uint8_t  g_bkl_tiene_1[1];
+static volatile uint8_t *g_bkl_tiene = g_bkl_tiene_1;  /* one per slot (smp_posti) */
 
 void bkl_entra(void)
 {
@@ -526,12 +551,14 @@ void bkl_lascia(void)
 
 void bkl_ozio(void) { bkl_lascia(); }
 
-/* For sched_sonda: reads only, from a machine that may be stuck. */
+/* For sched_sonda: reads only, from a machine that may be stuck. `chi` is
+ * the number of the processor that holds the lock plus one, 0 = nobody (up
+ * to 0.318 a mask of 16 bits: with no ceiling it would not fit). */
 void bkl_stato(uint32_t *coda, uint32_t *turno, uint32_t *chi)
 {
     uint32_t i, m = 0;
 
-    for (i = 0; i < SMP_CPU_MAX; i++) if (g_bkl_tiene[i]) m |= 1u << i;
+    for (i = 0; i < g_posti; i++) if (g_bkl_tiene[i]) { m = i + 1; break; }
     *coda = g_bkl_coda; *turno = g_bkl_turno; *chi = m;
 }
 
@@ -552,7 +579,8 @@ void bkl_esci(const void *frame)
  * a uno che era parcheggiato (smp_accendi_lavoro): il suo numero e la pila
  * del suo ozio, per voce di g_smp.cpu. */
 static uint32_t          g_lavorano = 0;
-static volatile uint32_t g_ordine_n[SMP_CPU_MAX], g_ordine_pila[SMP_CPU_MAX];
+static volatile uint32_t g_ordine_1[2];
+static volatile uint32_t *g_ordine_n = &g_ordine_1[0], *g_ordine_pila = &g_ordine_1[1];
 extern void smp_ap_salta(uintptr_t pila, uintptr_t funzione);
 
 /* Timer e messaggi di un processore in piu', dagli stub di isr_stubs.asm:
@@ -583,7 +611,8 @@ void smp_ap_irq(InterruptFrame *f)
         if (g_ordine_n[i] != 0 && io->stato == SMP_CPU_FERMO) {
             gdt_installa_cpu(g_ordine_n[i]);
             __asm__ volatile ("fninit");
-            io->stato = SMP_CPU_LAVORA;
+            io->numero = (uint8_t)g_ordine_n[i];
+            io->stato  = SMP_CPU_LAVORA;
             smp_ap_salta(g_ordine_pila[i], (uintptr_t)sched_cpu_entra);
         }
     }
@@ -635,7 +664,8 @@ static void smp_ap_entra(void)
 
         gdt_installa_cpu(n);
         __asm__ volatile ("fninit");
-        g_ap_voce->stato = SMP_CPU_LAVORA;
+        g_ap_voce->numero = (uint8_t)n;
+        g_ap_voce->stato  = SMP_CPU_LAVORA;
         g_ap_risposto = 1;
         smp_ap_salta(pila, (uintptr_t)sched_cpu_entra);
     }
@@ -763,9 +793,40 @@ static const char *nome_fonte(uint32_t f)
     }
 }
 
-/* =============================================================================
- * smp_init
- * ============================================================================= */
+/* Every per-processor table to `posti` slots: this file's, then the other
+ * files' (smp.h). Called once, by smp_init, with only this processor
+ * running. 0 = done. */
+static int posti_cresci(uint32_t posti)
+{
+    volatile uint8_t  *tiene;
+    volatile uint32_t *ordine;
+    uint32_t           i;
+    uintptr_t          flag;
+
+    if (posti <= g_posti) return 0;
+    tiene  = (volatile uint8_t *)kmalloc(posti);
+    ordine = (volatile uint32_t *)kmalloc(2u * posti * sizeof(uint32_t));
+    if (tiene == NULL || ordine == NULL) {
+        if (tiene)  kfree((void *)tiene);
+        if (ordine) kfree((void *)ordine);
+        return -1;
+    }
+    for (i = 0; i < posti; i++) tiene[i] = 0;
+    for (i = 0; i < 2u * posti; i++) ordine[i] = 0;
+    if (gdt_posti(posti) != 0 || sched_posti(posti) != 0 || paging_posti(posti) != 0)
+        return -1;
+
+    flag = read_eflags();
+    interrupts_disable();
+    tiene[0]      = g_bkl_tiene[0];
+    g_bkl_tiene   = tiene;
+    g_ordine_n    = ordine;
+    g_ordine_pila = ordine + posti;
+    g_posti       = posti;
+    if (flag & 0x200u) interrupts_enable();
+    return 0;
+}
+
 /* =============================================================================
  * smp_accendi_lavoro — i processori parcheggiati cominciano a lavorare, ADESSO
  *
@@ -786,11 +847,11 @@ int smp_accendi_lavoro(void)
     if (g_smp_lavora) return (int)g_lavorano;
     if (g_apic == 0 || g_smp.timer_per_tick == 0) return 0;
 
-    for (i = 0; i < g_smp.n && i < SMP_CPU_MAX; i++) {
+    for (i = 0; i < g_smp.n; i++) {
         uint32_t pila;
 
         if (g_smp.cpu[i].stato != SMP_CPU_FERMO || g_ordine_n[i] != 0) continue;
-        if (g_lavorano + 1 >= SMP_CPU_MAX) break;
+        if (g_lavorano + 1 >= g_posti) break;
         pila = sched_cpu_prepara(g_lavorano + 1);
         if (pila == 0) break;
         g_ordine_pila[i] = pila;
@@ -804,7 +865,7 @@ int smp_accendi_lavoro(void)
     for (da = g_ticks; g_ticks - da < 100; ) {          /* un secondo al piu' */
         uint32_t pronti = 0;
 
-        for (i = 0; i < g_smp.n && i < SMP_CPU_MAX; i++)
+        for (i = 0; i < g_smp.n; i++)
             if (g_ordine_n[i] != 0 && g_smp.cpu[i].stato == SMP_CPU_LAVORA) pronti++;
         if (pronti >= nuovi) break;
         __asm__ volatile ("pause");
@@ -831,7 +892,8 @@ void smp_init(int accendi)
 
     /* Il processore su cui siamo: c'e' sempre, anche senza tabelle. */
     g_smp.n = 1;
-    g_smp.cpu[0].stato = SMP_CPU_AVVIO;
+    g_smp.cpu[0].stato  = SMP_CPU_AVVIO;
+    g_smp.cpu[0].numero = 0;
 
     /* Senza CPUID (386, 486 dei primi) o senza APIC locale non c'e' modo di
      * parlare a un altro processore, e nessuna scheda del genere ne ha due. */
@@ -894,6 +956,7 @@ void smp_init(int accendi)
     for (i = 0; i < g_smp.n; i++) {
         if (g_smp.cpu[i].apic_id == mio) {
             g_smp.cpu[i].stato    = SMP_CPU_AVVIO;
+            g_smp.cpu[i].numero   = 0;
             g_smp.cpu[i].firma    = a;
             g_smp.cpu[i].capacita = d;
             if (g_apic) g_smp.cpu[i].apic_ver = (uint8_t)apic_leggi(APIC_VERSIONE);
@@ -923,6 +986,15 @@ void smp_init(int accendi)
     apic_scrivi(APIC_SPURIO, APIC_SPURIO_ACCESO | VETTORE_SPURIO);
 
     for (i = 0; i < g_smp.n; i++) g_voce_di[g_smp.cpu[i].apic_id] = (uint8_t)i;
+
+    /* ! THE PER-PROCESSOR TABLES GROW HERE, BEFORE ANYONE ELSE RUNS: one
+     * processor, so slot 0 can move to the longer table without a lock. */
+    if (posti_cresci(g_smp.n) != 0) {
+        g_smp.motivo = SMP_MOTIVO_MEMORIA;
+        klog(LOG_WARN, "SMP: niente memoria per le tabelle di %u processori: "
+             "lavora quello d'avvio", g_smp.n);
+        return;
+    }
     g_smp.timer_per_tick = misura_timer();
     if (g_smp.timer_per_tick == 0)
         klog(LOG_WARN, "SMP: il timer dell'APIC locale non conta: i processori "
@@ -949,7 +1021,7 @@ void smp_init(int accendi)
         /* Tappa 3: gli si prepara l'ozio. Se il timer dell'APIC non conta
          * resta parcheggiato: senza battito non avrebbe uno scheduler. */
         g_ap_lavora_n = 0;
-        if (accendi >= 2 && g_smp.timer_per_tick != 0 && g_lavorano + 1 < SMP_CPU_MAX) {
+        if (accendi >= 2 && g_smp.timer_per_tick != 0 && g_lavorano + 1 < g_posti) {
             g_ap_lavora_pila = sched_cpu_prepara(g_lavorano + 1);
             if (g_ap_lavora_pila != 0) g_ap_lavora_n = g_lavorano + 1;
         }

@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "gdt.h"
+#include "kmalloc.h"     /* the tables of the extra processors (0.319) */
 
 /* =============================================================================
  * Struttura di un descrittore GDT (8 byte — formato hardware x86)
@@ -97,14 +98,24 @@ typedef struct PACKED {
  * Su una macchina con un processore non la legge nessuno.
  * ========================================================================== */
 #define GDT_ENTRIES 8
-#define GDT_CPU_MAX 16          /* come SMP_CPU_MAX in smp.h */
 
-static GDTDescriptor    gdt_tabelle[GDT_CPU_MAX][GDT_ENTRIES] ALIGNED(8);
-static GDTRegister      gdt_registri[GDT_CPU_MAX];
-static TSS              gdt_tss[GDT_CPU_MAX] ALIGNED(4);
-#define gdt_table       (gdt_tabelle[0])
-#define gdt_reg         (gdt_registri[0])
-#define kernel_tss      (gdt_tss[0])
+/* ! AS MANY AS THERE ARE PROCESSORS (0.319, voce 92): up to 0.318 sixteen
+ * static copies. The boot processor's is static (it is loaded before the
+ * heap exists); the others are allocated by gdt_posti when smp_init has
+ * counted the processors, one block each. */
+typedef struct {
+    GDTDescriptor tabella[GDT_ENTRIES] ALIGNED(8);
+    GDTRegister   registro;
+    TSS           tss ALIGNED(4);
+} GdtCpu;
+
+static GdtCpu   gdt_avvio;
+static GdtCpu  *gdt_cpu_1[1] = { &gdt_avvio };
+static GdtCpu **gdt_cpu = gdt_cpu_1;
+static uint32_t gdt_quanti = 1;
+#define gdt_table       (gdt_avvio.tabella)
+#define gdt_reg         (gdt_avvio.registro)
+#define kernel_tss      (gdt_avvio.tss)
 
 volatile uint32_t g_smp_lavora = 0;     /* 1 = piu' processori eseguono processi */
 
@@ -114,7 +125,33 @@ static inline uint32_t gdt_cpu_n(void)
 
     if (!g_smp_lavora) return 0;
     __asm__ volatile ("lsl %1, %0" : "+r"(n) : "r"((uint32_t)0x38));
-    return n & (GDT_CPU_MAX - 1);
+    return n;
+}
+
+/* One block per processor, for `posti` of them (see smp.h). */
+int gdt_posti(uint32_t posti)
+{
+    GdtCpu  **nuovi;
+    uint32_t  i, j;
+
+    if (posti <= gdt_quanti) return 0;
+    nuovi = (GdtCpu **)kmalloc(posti * sizeof(GdtCpu *));
+    if (nuovi == NULL) return -1;
+    nuovi[0] = &gdt_avvio;
+    for (i = 1; i < posti; i++) {
+        uint8_t *b = (uint8_t *)kmalloc_aligned(sizeof(GdtCpu), 64);
+
+        if (b == NULL) {
+            while (--i >= 1) kfree_aligned(nuovi[i]);
+            kfree(nuovi);
+            return -1;
+        }
+        for (j = 0; j < sizeof(GdtCpu); j++) b[j] = 0;
+        nuovi[i] = (GdtCpu *)b;
+    }
+    gdt_cpu    = nuovi;
+    gdt_quanti = posti;
+    return 0;
 }
 
 /* =============================================================================
@@ -255,7 +292,7 @@ void gdt_install(void)
  * ============================================================================= */
 void gdt_set_kernel_stack(vaddr_t stack_top)
 {
-    gdt_tss[gdt_cpu_n()].esp0 = stack_top;
+    gdt_cpu[gdt_cpu_n()]->tss.esp0 = stack_top;
 }
 
 /* La GDT e il TSS del processore numero `n` (da 1 in su): una copia di quella
@@ -264,19 +301,21 @@ void gdt_set_kernel_stack(vaddr_t stack_top)
 void gdt_installa_cpu(uint32_t n)
 {
     GDTDescriptor *t;
+    GdtCpu   *c;
     uint8_t  *b;
     uint32_t  i, base;
 
-    if (n == 0 || n >= GDT_CPU_MAX) return;
-    t = gdt_tabelle[n];
-    for (i = 0; i < GDT_ENTRIES; i++) t[i] = gdt_tabelle[0][i];
+    if (n == 0 || n >= gdt_quanti) return;
+    c = gdt_cpu[n];
+    t = c->tabella;
+    for (i = 0; i < GDT_ENTRIES; i++) t[i] = gdt_avvio.tabella[i];
 
-    b = (uint8_t *)&gdt_tss[n];
+    b = (uint8_t *)&c->tss;
     for (i = 0; i < sizeof(TSS); i++) b[i] = 0;
-    gdt_tss[n].ss0        = GDT_KERNEL_DATA_SEL;
-    gdt_tss[n].iomap_base = sizeof(TSS);
+    c->tss.ss0        = GDT_KERNEL_DATA_SEL;
+    c->tss.iomap_base = sizeof(TSS);
 
-    base = (uint32_t)&gdt_tss[n];
+    base = (uint32_t)&c->tss;
     t[5].base_low    = (uint16_t)(base & 0xFFFF);
     t[5].base_mid    = (uint8_t)((base >> 16) & 0xFF);
     t[5].base_high   = (uint8_t)((base >> 24) & 0xFF);
@@ -284,9 +323,9 @@ void gdt_installa_cpu(uint32_t n)
 
     t[7].limit_low   = (uint16_t)n;             /* chi sono */
 
-    gdt_registri[n].limit = (uint16_t)(sizeof(gdt_tabelle[n]) - 1);
-    gdt_registri[n].base  = (uint32_t)t;
-    gdt_flush((uint32_t)&gdt_registri[n]);
+    c->registro.limit = (uint16_t)(sizeof(c->tabella) - 1);
+    c->registro.base  = (uint32_t)t;
+    gdt_flush((uint32_t)&c->registro);
     tss_flush(GDT_TSS_SEL);
 }
 
@@ -309,7 +348,7 @@ void gdt_set_tls_base(uint32_t base)
 {
     /* Riscrive solo i tre pezzi della base, lasciando access e granularita'
      * come li ha messi gdt_install. */
-    GDTDescriptor *t = gdt_tabelle[gdt_cpu_n()];
+    GDTDescriptor *t = gdt_cpu[gdt_cpu_n()]->tabella;
 
     t[6].base_low    = (uint16_t)(base & 0xFFFF);
     t[6].base_mid    = (uint8_t)((base >> 16) & 0xFF);

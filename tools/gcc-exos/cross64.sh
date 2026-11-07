@@ -111,7 +111,7 @@ sysroot)
     for l in pthread dl rt; do rm -f "$S/lib/lib$l.a"; ar rcs "$S/lib/lib$l.a"; done
     cp -rp lib/include/. "$S/include/"
     ln -sfn include "$S/sys-include"
-    cp -p drivers/wserver/win_proto.h drivers/kbd/kbd_proto.h "$S/include/exos/"
+    cp -p drivers/wserver/win_proto.h drivers/wserver/egl_exwin.h drivers/kbd/kbd_proto.h "$S/include/exos/"
     echo "[OK] crt0.o, libc.a, $(ls lib/include/*.h | wc -l) headers in $S"
     ;;
 

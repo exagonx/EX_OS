@@ -11,9 +11,8 @@
 # Builds prova-egl.c with the cross compiler, LINKED to libEGL.so.1 and
 # libGLESv2.so.2 of the sysroot (tools/mesa-exos/costruisci.sh puts them
 # there), and runs it in EX-OS under QEMU with the shared objects it needs
-# in /disk and LD_LIBRARY_PATH=/disk. The shared objects are found by
-# following DT_NEEDED from the program in the sysroot and in libm-exos: no
-# list written here, so a new dependency of Mesa comes along by itself.
+# in /disk and LD_LIBRARY_PATH=/disk (tools/mesa-exos/librerie-prova.sh
+# follows DT_NEEDED: no list written here).
 # The checks are listed at the top of prova-egl.c. Must print
 # "prova-egl: 0 NO".
 # =============================================================================
@@ -32,21 +31,8 @@ mkdir -p "$D"
 $T-gcc -O2 -o "$D/prova-egl" tools/mesa-exos/prova-egl.c -lEGL -lGLESv2 -lpthread || exit 1
 $T-readelf -d "$D/prova-egl" | grep -q "NEEDED.*libEGL" || { echo "=== [NO] prova-egl non e' collegato a libEGL ==="; exit 1; }
 
-# the DT_NEEDED closure, searched where the build found them
-cerca="$X/$T/lib $RADICE/cross_build/libm-exos$BIT/exos/lib"
-altri=""; fatti=" "; coda="$D/prova-egl"
-while [ -n "$coda" ]; do
-    f=${coda%% *}; [ "$coda" = "$f" ] && coda="" || coda=${coda#* }
-    for n in $($T-readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
-        case "$fatti" in *" $n "*) continue ;; esac
-        fatti="$fatti$n "
-        p=""; for c in $cerca; do [ -f "$c/$n" ] && { p="$c/$n"; break; }; done
-        [ -n "$p" ] || { echo "=== [NO] $n (chiesta da $(basename "$f")) non c'e' in $cerca ==="; exit 1; }
-        p=$(readlink -f "$p"); cp "$p" "$D/$n"
-        altri="$altri $D/$n"; coda="${coda:+$coda }$D/$n"
-    done
-done
-echo "librerie:$fatti"
+. tools/mesa-exos/librerie-prova.sh
+altri=$(librerie_prova "$D/prova-egl" $T "$X" $BIT "$D") || exit 1
 
 # libEGL and libstdc++ keep their debug info: 45 MB, more than the 32 MB disk
 # of esegui-in-exos.sh

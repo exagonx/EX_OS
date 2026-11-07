@@ -30,6 +30,42 @@ if [ -f /exwin/bin/pm ]; then
         exit 1
     fi
 fi
+# ! THE START MENU IN GROUPS (voce 80, 7 November 2026, netupdate 0.046):
+# Applicazioni, Internet, Strumenti, Multimedia, Giochi. The old menu had
+# the everyday programs at the top, outside the groups ("File manager |"
+# at the start of a line); netupdate replaces the file and keeps what the
+# user added (menu_ricupera), so that line cannot come back after it.
+if [ -f /exwin/lib/applicazioni.txt ]; then
+    if [ -f /bin/grep ]; then
+        grep "^File manager  *|" /exwin/lib/applicazioni.txt > /dev/null
+        if [ $? = 0 ]; then
+            echo "  ! Il menu di avvio e' ancora quello senza il gruppo Applicazioni."
+            echo "    netupdate -check -yes, poi riapri il menu (le tue voci restano)."
+            exit 1
+        fi
+    fi
+fi
+# ! EVERY PROCESSOR AT WORK (voce 92, kernel 0.319, 7 November 2026): smp
+# = 2 is the default and the cpu command places processes on processors.
+# A machine updated without it has the kernel but not the command; a
+# kernel.cfg with smp = 1 or 0 keeps the extra cores parked, which is right
+# only on a board that hangs with them: said, not judged.
+if [ -f /bin/hwinfo ]; then
+    if [ ! -f /bin/cpu ]; then
+        echo "  ! Manca /bin/cpu (i processi sui processori, kernel 0.319)."
+        echo "    netupdate -check -yes."
+        exit 1
+    fi
+fi
+if [ -f /boot/kernel.cfg ]; then
+    if [ -f /bin/grep ]; then
+        grep "^ *smp *= *[01]" /boot/kernel.cfg > /dev/null
+        if [ $? = 0 ]; then
+            echo "  - /boot/kernel.cfg tiene fermi i core in piu' (smp = 0 o 1). Se la"
+            echo "    scheda non si blocca, togli la riga: dal kernel 0.319 lavorano tutti."
+        fi
+    fi
+fi
 if [ "$NETUPDATE_RIAVVIO" = 1 ]; then
     exit 0
 fi

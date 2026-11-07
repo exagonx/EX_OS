@@ -257,13 +257,16 @@ static void f_meminfo(Usc *u)
     voce(u, "SwapFree:       ", (uint64_t)(st - su) * (PAGE_SIZE / 1024u), " kB\n");
 }
 
+/* The processors running programs: the boot one and those at work (0.319;
+ * up to 0.318 the ones that answered, parked or not, and 1 at 64 bit). */
 static uint32_t n_cpu(void)
 {
-#if defined(__x86_64__)
-    return 1;       /* smp64.c: one processor for now */
-#else
-    return 1u + smp_info()->fermi;      /* the ones that answered */
-#endif
+    const SmpInfo *si = smp_info();
+    uint32_t       i, n = 0;
+
+    for (i = 0; i < si->n; i++)
+        if (si->cpu[i].stato == SMP_CPU_AVVIO || si->cpu[i].stato == SMP_CPU_LAVORA) n++;
+    return n ? n : 1u;
 }
 
 static void f_cpuinfo(Usc *u)
@@ -328,6 +331,24 @@ static uint64_t ozio(void)
     return t;
 }
 
+/* The idle time of processor k: its idle task (the one pinned there; for 0
+ * the boot one and the other idle-priority kernel tasks). 0.319: up to 0.318
+ * /proc/stat split the total evenly, so a processor at 100% next to an idle
+ * one read 50% both. */
+static uint64_t ozio_di(uint32_t k)
+{
+    uint64_t t = 0;
+    uint32_t i;
+
+    for (i = 0; i < g_proc_posti; i++) {
+        const Process *p = PROC_POSTO(i);
+
+        if (p->state == PROC_UNUSED || p->priority != PRIO_IDLE) continue;
+        if ((p->cpu_fissa ? (uint32_t)(p->cpu_fissa - 1) : 0u) == k) t += p->ticks_total;
+    }
+    return t;
+}
+
 static void f_stat(Usc *u)
 {
     uint64_t tot = (uint64_t)g_ticks * n_cpu(), id = ozio(), n = 0, usati;
@@ -337,9 +358,11 @@ static void f_stat(Usc *u)
     voce(u, "cpu  ", usati, " 0 0 ");
     voce(u, "", id, " 0 0 0 0 0 0\n");
     for (i = 0; i < n_cpu(); i++) {
+        uint64_t idk = ozio_di(i), uk = (uint64_t)g_ticks > idk ? (uint64_t)g_ticks - idk : 0;
+
         voce(u, "cpu", i, " ");
-        voce(u, "", dividi(usati, n_cpu(), 0), " 0 0 ");
-        voce(u, "", dividi(id, n_cpu(), 0), " 0 0 0 0 0 0\n");
+        voce(u, "", uk, " 0 0 ");
+        voce(u, "", idk, " 0 0 0 0 0 0\n");
     }
     for (i = 0; i < g_proc_posti; i++) if (PROC_POSTO(i)->state != PROC_UNUSED) n++;
     voce(u, "procs_running ", n, "\n");
@@ -506,7 +529,9 @@ static void f_p_stat(Usc *u, const Process *p, int gruppo)
     voce(u, "", p->priority, " 0 ");                /* priority nice */
     voce(u, "", n_fili(p->tgid), " 0 ");            /* num_threads itrealvalue */
     voce(u, "", p->created_tick, " 0 0");           /* starttime vsize rss */
-    for (k = 25; k <= 52; k++) testo(u, " 0");
+    for (k = 25; k <= 38; k++) testo(u, " 0");
+    voce(u, " ", p->cpu, "");                       /* processor (0.319) */
+    for (k = 40; k <= 52; k++) testo(u, " 0");
     metti(u, '\n');
 }
 
@@ -523,6 +548,22 @@ static void f_p_status(Usc *u, const Process *p)
     voce(u, "", p->gid, "\t"); voce(u, "", p->gid, "\n");
     voce(u, "FDSize:\t", p->fdt ? (uint32_t)FD_N(p) : 0u, "\n");
     voce(u, "Threads:\t", n_fili(p->tgid), "\n");
+    {   /* where it may run (0.319, voce 92), as Linux writes it: 0-2,5 */
+        uint32_t n = smp_al_lavoro(), c, primo = 1;
+
+        testo(u, "Cpus_allowed_list:\t");
+        for (c = 0; c < n; c++) {
+            uint32_t f = c;
+
+            if (!sched_puo_su(p, c)) continue;
+            while (f + 1 < n && sched_puo_su(p, f + 1)) f++;
+            voce(u, primo ? "" : ",", c, "");
+            if (f > c) voce(u, "-", f, "");
+            primo = 0;
+            c = f;
+        }
+        metti(u, '\n');
+    }
 }
 
 static void riga_limite(Usc *u, const char *nome, const char *cifre, const char *unita)

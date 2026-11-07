@@ -825,7 +825,21 @@
  * "character device" for /dev/null, /dev/ptmx, /dev/pts/N and for a pty's
  * descriptors; PTY_EXOS_QUALE (0x54E0) tells ttyname which pair and end.
  * Up to 0.317 a pty had no name and posix_openpt/ptsname could not exist. */
-#define EXOS_VERSION    "0.318"
+/* 0.318 -> 0.319: every processor works by default (voce 92). smp = 2 is the
+ * default in kernel.cfg (it is a mode: ALL the processors found run
+ * programs; 1 parks them, 0 only counts). No ceiling on how many: the list
+ * and every per-processor table (GDT, TSS, current and idle process, kernel
+ * lock, CR0.WP, frequency) are as long as what the MADT or MP table lists,
+ * where up to 0.318 SMP_CPU_MAX = 16 sized them. SYS_CPU_INFO gives the
+ * header then as many entries as the caller has room for; CPUFREQ_OP_CPU
+ * reads every processor; /proc/cpuinfo counts the ones at work. */
+/* 0.319 -> 0.320: shutdown, reboot and halt move to processor 0 first
+ * (sched_sul_primo): from processor 1 the countdown waited for g_ticks while
+ * holding the kernel's lock, and processor 0 - where the clock rises - waited
+ * for the lock. The laptop stopped at "Spegnimento fra 3...". The clock waits
+ * of ata.c and fat12.c let the lock go by on other processors
+ * (bkl_fai_passare). */
+#define EXOS_VERSION    "0.320"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

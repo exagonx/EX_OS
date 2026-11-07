@@ -15,6 +15,7 @@
 #include "kmalloc.h"
 #include "sched.h"
 #include "isr.h"    /* irq_register_handler: sincronizzazione su IRQ6 */
+#include "smp.h"      /* bkl_fai_passare: clock waits on processor 1 (0.320) */
 
 /* =============================================================================
  * Costanti FAT12 1.44MB
@@ -268,6 +269,7 @@ static void fdc_delay_ms(uint32_t ms)
 
     while (g_ticks < target) {
         __asm__ volatile ("hlt");
+        bkl_fai_passare();          /* g_ticks rises on processor 0 (0.320) */
     }
 
     if (need_sti) __asm__ volatile ("cli");

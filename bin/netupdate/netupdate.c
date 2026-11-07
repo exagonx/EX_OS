@@ -44,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.045");
+EX_VERSIONE("netupdate", "0.046");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -1924,6 +1924,10 @@ static int e_programma_app(const char *dest)
     return n == 4 && m[0] == 0x7F && m[1] == 'E' && m[2] == 'L' && m[3] == 'F';
 }
 
+/* set by sostituisci when it has just put a new start menu in place: the
+ * user's entries come back from its .old (menu_ricupera) */
+static int g_menu_sostituito;
+
 static int sostituisci(const char *dest, const char *temp)
 {
     char vecchio[PERC_MAX];
@@ -1938,6 +1942,7 @@ static int sostituisci(const char *dest, const char *temp)
         if (c_era) rename(vecchio, dest);  /* rimettiamo com'era */
         return -1;
     }
+    if (c_era && strcmp(dest, "/exwin/lib/applicazioni.txt") == 0) g_menu_sostituito = 1;
 
     /* ! IL BIT DI ESECUZIONE SI METTE QUI, ED E' L'UNICO POSTO GIUSTO. Tutti i
      * file che arrivano dalla rete passano da questa riga â€” quelli presi uno
@@ -2965,26 +2970,96 @@ static int menu_voci(const char *percorso, int togli)
     return trovate;
 }
 
-static void menu_metti(const char *riga)
+/* the menu as it is in g_menu (menu_leggi), with `riga` at the end */
+static int menu_accoda(const char *riga)
 {
-    char percorso[PERC_MAX];
-    int  n, fd;
+    int n = (int)strlen(g_menu), fd;
 
-    if (!menu_percorso(riga, percorso, sizeof(percorso))) return;
-    if (menu_voci(percorso, 0) != 0) return;        /* c'e' gia', o non c'e' il file */
-
-    n  = (int)strlen(g_menu);
     fd = open(MENU_FILE, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
         printf("  ! non riesco a scrivere %s: la voce nel menu manca\n", MENU_FILE);
-        return;
+        return -1;
     }
     write(fd, g_menu, (unsigned int)n);
     if (n > 0 && g_menu[n - 1] != '\n') write(fd, "\n", 1);
     write(fd, riga, (unsigned int)strlen(riga));
     write(fd, "\n", 1);
     close(fd);
-    printf("  nel menu di avvio: %s\n", riga);
+    return 0;
+}
+
+static void menu_metti(const char *riga)
+{
+    char percorso[PERC_MAX];
+
+    if (!menu_percorso(riga, percorso, sizeof(percorso))) return;
+    if (menu_voci(percorso, 0) != 0) return;        /* c'e' gia', o non c'e' il file */
+    if (menu_accoda(riga) == 0) printf("  nel menu di avvio: %s\n", riga);
+}
+
+/* =============================================================================
+ * menu_ricupera - THE USER'S ENTRIES SURVIVE A NEW MENU (0.046, 7 November 2026)
+ *
+ * ! UNTIL 0.045 A NEW PUBLISHED MENU TOOK AWAY WHAT THE USER HAD ADDED. -check
+ * replaces applicazioni.txt like any system file and menu_allinea puts back
+ * the entries of the packages; the ones written with «Applicazioni...» (a
+ * program of one's own, another starting program) stayed only in the .old.
+ * It mattered the day the system's menu was reordered into groups (voce 80:
+ * Applicazioni, Internet, Strumenti, Multimedia, Giochi), which is exactly
+ * when every machine gets the new file.
+ *
+ * ! THE SYSTEM'S ENTRIES TAKE THEIR NEW PLACE, THE OTHERS STAY. An entry is
+ * known by the PROGRAM it starts, not by its name: an old line whose program
+ * is in the new menu gives way (that is how «File manager» moves into
+ * «Applicazioni/»); a line whose program is not there comes back at the end,
+ * if that program is still on the disk - one that is gone would be a dead
+ * entry. @avvio (what starts with the desktop) is the user's choice: it
+ * comes back when the new menu does not name one.
+ * ========================================================================== */
+static void menu_ricupera(void)
+{
+    static char vecchio[sizeof(g_menu)];
+    char        riga[PERC_MAX * 3], percorso[PERC_MAX];
+    const char *r;
+    int         fd, n = 0, k, avvio_nuovo = 0;
+
+    if (!g_menu_sostituito) return;
+    g_menu_sostituito = 0;
+    fd = open(MENU_FILE ".old", O_RDONLY);
+    if (fd < 0) return;
+    while (n < (int)sizeof(vecchio) - 1 &&
+           (k = (int)read(fd, vecchio + n, sizeof(vecchio) - 1 - (unsigned int)n)) > 0) n += k;
+    close(fd);
+    vecchio[n] = '\0';
+
+    if (menu_leggi() < 0) return;
+    for (r = g_menu; *r; r = strchr(r, '\n') ? strchr(r, '\n') + 1 : r + strlen(r))
+        if (strncmp(r, "@avvio", 6) == 0) avvio_nuovo = 1;
+
+    for (r = vecchio; *r; ) {
+        const char *fine = strchr(r, '\n');
+        int         lunga = fine ? (int)(fine - r) : (int)strlen(r);
+
+        if (lunga >= (int)sizeof(riga)) lunga = (int)sizeof(riga) - 1;
+        memcpy(riga, r, (size_t)lunga);
+        riga[lunga] = '\0';
+        while (lunga > 0 && (riga[lunga - 1] == '\r' || riga[lunga - 1] == ' ')) riga[--lunga] = '\0';
+        r = fine ? fine + 1 : r + strlen(r);
+
+        if (riga[0] == '\0' || riga[0] == '#') continue;
+        if (riga[0] == '@') {
+            if (strncmp(riga, "@avvio", 6) == 0 && !avvio_nuovo && menu_leggi() >= 0 &&
+                menu_accoda(riga) == 0) {
+                avvio_nuovo = 1;
+                printf("  nel menu di avvio, come prima: %s\n", riga);
+            }
+            continue;
+        }
+        if (!menu_percorso(riga, percorso, sizeof(percorso))) continue;
+        if (!esiste(percorso, NULL)) continue;
+        if (menu_voci(percorso, 0) != 0) continue;  /* in the new menu: its place wins */
+        if (menu_accoda(riga) == 0) printf("  nel menu di avvio, come prima: %s\n", riga);
+    }
 }
 
 static void menu_togli(const char *riga)
@@ -4009,6 +4084,7 @@ static int comando_check(int senza_chiedere)
         printf("\nRiscrivo il registro, che adesso deve dire un'altra cosa.\n\n");
         comando_registro_crea(TMPDIR);
     }
+    menu_ricupera();
     menu_allinea(cat);
 
     /* (0.044) the checks after the files, before the last word: what they
@@ -5008,6 +5084,7 @@ static int comando_install(const char *id)
         printf("\nRiscrivo il registro.\n\n");
         comando_registro_crea(TMPDIR);
     }
+    menu_ricupera();
     menu_allinea(cat);
     if (!falliti) {                     /* (0.044) the checks of what arrived */
         const char *quali[64];

@@ -19,6 +19,7 @@
 #include "idt.h"
 #include "sched.h"
 #include "smp.h"        /* cpu_n: CR0.WP is per processor */
+#include "kmalloc.h"    /* g_wp_spento, one per processor (0.319) */
 #include "blk.h"        /* blk_cache_cedi */
 #include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
 #include "syscall.h" /* PROT_* and the errno values of paging_proteggi */
@@ -1867,7 +1868,25 @@ static int cow_risolvi(PDE *pd, vaddr_t pagina)
  * each one is a path that writes what it should not.
  * ============================================================================= */
 #define CR0_WP (1u << 16)
-static volatile uint8_t g_wp_spento[SMP_CPU_MAX];
+/* one per processor slot (0.319: as many as smp_init found, see smp.h) */
+static volatile uint8_t  g_wp_spento_1[1];
+static volatile uint8_t *g_wp_spento = g_wp_spento_1;
+static uint32_t          g_wp_posti  = 1;
+
+int paging_posti(uint32_t posti)
+{
+    volatile uint8_t *n;
+    uint32_t i;
+
+    if (posti <= g_wp_posti) return 0;
+    n = (volatile uint8_t *)kmalloc(posti);
+    if (n == NULL) return -1;
+    for (i = 0; i < posti; i++) n[i] = 0;
+    n[0] = g_wp_spento[0];
+    g_wp_spento = n;
+    g_wp_posti  = posti;
+    return 0;
+}
 static uint32_t         g_wp_detti = 0;
 
 void paging_wp_accendi(void)
