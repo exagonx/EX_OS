@@ -126,7 +126,7 @@ GRUPPO  VOCI             COSA
                          fissati o riservati a un core, i fili di un programma su tutti gli altri
                          FATTO a c d e in QEMU (kernel 0.319, smp = 2 predefinito, comando cpu);
                          b FATTO in QEMU (kernel 0.321, TLB shootdown, fili insieme: 1,97 con 2);
-                         portatile a 0.320; b sul portatile e Firefox ricollegato da fare
+                         Firefox ricollegato (vede 2 core); portatile a 0.320, b li' da fare
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -9086,8 +9086,14 @@ tools/netinst/velocita tolto da netinst.
       prova-media.sh: fino a oggi le prove di Firefox giravano con UN
       processore): prova-gecko a 32 e 64 disegna la pagina, nessun FAULT;
       prova-webgl a 64 finestra ESITO OK, triangolo nella foto.
-      Stato: a, b, c, d, e fatti in QEMU; b da provare sul portatile (con la
-      guardia e il permesso dell'utente) e con Firefox ricollegato; da
+      FIREFOX RICOLLEGATO (8/11, touch nsBrowserApp.cpp + gecko-costruisci.sh
+      build binaries + package; 64 bit 96 min, 32 bit 99 min, ha ricompilato
+      molto): navigator.hardwareConcurrency (da sysconf) dice 2 con -smp 2 a
+      32 e 64 bit (la pagina di prova-gecko.sh ora lo scrive: "processori N").
+      prova-gecko e prova-webgl a 32 e 64 col Firefox nuovo: OK, nessun
+      FAULT. Il pacchetto nuovo NON e' ancora nel repository (netinst).
+      Stato: a, b, c, d, e fatti in QEMU, Firefox ricollegato; b da provare
+      sul portatile (con la guardia e il permesso dell'utente); da
       osservare il portatile nell'uso coi due core (voce 58). La riga
       riserva = in kernel.cfg e la colonna in ps restano da fare.
 
