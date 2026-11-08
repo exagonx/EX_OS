@@ -270,6 +270,35 @@ void     paging_marca_swap(PDE *pd, vaddr_t virt, uint32_t slot);
 uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt);
 void     paging_pte_scrivi(PDE *pd, vaddr_t virt, uintptr_t valore);
 void     paging_switch(PDE *pd);
+
+/* =============================================================================
+ * THE OTHER PROCESSORS' TLB (0.321, voce 92 b)
+ *
+ * paging_tlb_altrove(pd): a translation of `pd` that was there has just
+ * changed (taken away, made read-only, moved); the processor doing it has
+ * done its invlpg, this tells every other processor running `pd`
+ * (smp_tlb_spazio). The functions of this file and of paging64.c/pagine64.c
+ * call it themselves: map over a present page, unmap, marca_swap, pte_scrivi,
+ * copy-on-write, fork, mprotect.
+ *
+ * A BATCH, for the loops that free many pages of one space (munmap, sbrk
+ * going down, a thread's stack): between paging_lotto_apri(pd) and
+ * paging_lotto_chiudi(t) the rounds for `pd` become ONE, at the end, and the
+ * frames given to paging_lotto_libera go back to the PMM only after it.
+ *
+ * ! UNMAP FIRST, THEN paging_lotto_libera. A full batch sends its round and
+ * frees what it holds right then: a frame handed over while still mapped
+ * would be free while another processor can still write it.
+ * ! NOTHING THAT SLEEPS INSIDE A BATCH: the batch is one, of the holder of
+ * the kernel's lock. paging_lotto_apri returns 0 when the batch is taken
+ * (or with one processor): then every call does its work at once, as if
+ * there were no batch, and paging_lotto_chiudi(0) does nothing.
+ * ========================================================================== */
+void     paging_tlb_altrove(PDE *pd);
+int      paging_lotto_apri(PDE *pd);
+void     paging_lotto_libera(paddr_t frame);
+void     paging_lotto_chiudi(int t);
+
 PDE     *paging_get_kernel_directory(void);
 PDE     *paging_get_current_directory(void);
 void     page_fault_handler(InterruptFrame *frame);

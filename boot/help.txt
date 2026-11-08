@@ -974,13 +974,13 @@ di ognuno. Per dare un processore a un servizio a ogni avvio, in
 /boot/avvio.sh:   cpu -R 2 /bin/servizio &
 
 Quanto lavoro fanno davvero lo misura `smpprova N`: N programmi insieme,
-confrontati con uno solo.
+confrontati con uno solo. `smpprova -fili N`: N fili di un programma solo.
 
-Oggi due fili dello STESSO programma non girano insieme su due processori
-(il kernel lo impedisce finche' non sa avvisare gli altri processori quando
-cambia la memoria di un programma): un programma a piu' fili usa un
-processore alla volta, programmi diversi ne usano tanti. Vedi in_lavorazione,
-voce 92 b.
+Dalla 0.321 anche i fili dello STESSO programma girano insieme su piu'
+processori (Firefox, FFmpeg, Mesa): quando il kernel cambia la memoria di un
+programma avvisa gli altri processori che lo stanno eseguendo, e aspetta che
+abbiano dimenticato la pagina vecchia. Fino alla 0.320 un programma a piu'
+fili usava un processore alla volta.
 
 [toolinst]
 installa gli strumenti di sviluppo dal CD

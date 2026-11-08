@@ -125,7 +125,8 @@ GRUPPO  VOCI             COSA
  --     92               (7/11) TUTTI I CORE: riconosciuti e accesi tutti per difetto, processi
                          fissati o riservati a un core, i fili di un programma su tutti gli altri
                          FATTO a c d e in QEMU (kernel 0.319, smp = 2 predefinito, comando cpu);
-                         b (fili insieme, tappa 4) da fare; portatile a 0.319 coi due core (1,97)
+                         b FATTO in QEMU (kernel 0.321, TLB shootdown, fili insieme: 1,97 con 2);
+                         portatile a 0.320; b sul portatile e Firefox ricollegato da fare
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -9030,13 +9031,65 @@ tools/netinst/velocita tolto da netinst.
       sull'orologio di power.c, ata.c (ata_attesa_ms, i lettori CD) e
       fat12.c (il floppy). Provato in QEMU 2 processori, 32 e 64 bit:
       shutdown da cpu 0 e da cpu 1 arrivano a "Spegnimento hardware" e la
-      macchina si spegne. ! LA REGOLA, per il kernel col lucchetto unico:
+      macchina si spegne; tools/prova_spegnimento.sh 6/6 a 32 e 64 bit
+      (anche -r, -h, col carico sullo 0, 4 processori). Sul portatile a
+      0.320: `cpu -x 1 shutdown -r` riavvia. Lo spegnimento vero sul
+      portatile: lo prova l'utente. ! LA REGOLA, per il kernel col lucchetto unico:
       nessuna attesa sull'orologio o su un interrupt delle periferiche
       tenendo il lucchetto fuori dal processore 0 (le periferiche sono sul
       PIC, verso il processore 0); chi aspetta cosi' chiama
       bkl_fai_passare() o va sul processore 0.
-      Stato: a, c, d, e fatti e provati in QEMU e sul portatile; b da fare;
-      da osservare il portatile nell'uso coi due core (voce 58).
+      FATTO b (8/11 mattina, kernel 0.321, tappa 4): i fili di un programma
+      girano su piu' processori insieme.
+      - TLB shootdown (smp.c, smp_tlb_spazio): chi cambia una traduzione di
+        uno spazio (unmap, mappa sopra una presente, marca_swap, pte_scrivi,
+        copia su scrittura, fork, mprotect) manda il vettore 0xF2 a ogni
+        altro processore il cui processo corrente ha quella directory
+        (sched_spazio_su), e aspetta. L'ingresso del 0xF2 (smp_irq_tlb a 32,
+        isr64_tlb a 64) NON prende il lucchetto: chi manda lo tiene e
+        aspetta. Chi aspetta il lucchetto a interrupt spenti risponde dal
+        giro di bkl_entra. Ricarica intera di CR3 sul ricevente.
+      - lotto (paging_lotto_apri/libera/chiudi): munmap, sbrk che scende e la
+        pila di un filo che finisce mandano UN giro per chiamata, e le
+        pagine tornano al PMM dopo il giro (prima si smappa, poi si libera).
+      - sched_puo_qui non tiene piu' separati i fili di uno spazio.
+      - pf_gia_a_posto: un fault su una pagina che intanto un altro filo ha
+        portato (stessa pagina pigra toccata da due processori) torna
+        indietro; con un controllo contro il giro infinito (16 volte).
+        SENZA questo la prova perde 20 fili su 80 (misurato).
+      - exec da un filo: i fratelli finiscono (proc_gruppo_termina) e lo
+        spazio vecchio resta finche' qualcuno lo usa (proc_spazio_vivi, la
+        raccolta distrugge lo spazio quando non ha piu' utenti vivi, non
+        quando il gruppo e' vuoto; proc_spazio_scorda). Fino alla 0.320
+        exec da un filo distruggeva lo spazio sotto i fratelli. LIMITE: un
+        exec da un filo che non e' il capogruppo lascia il capogruppo
+        zombie, e il padre lo vede finito (Linux da' al filo il pid del
+        capo): non fatto.
+      - le 4 sysroot (exos-cross, exos-cross64, e le copie in nasi5deb)
+        avevano la libc del 7/11 mattina: sysconf diceva 1 e l'affinita'
+        rifiutava. Rifatte (prepara-cross.sh, cross64.sh sysroot). ! FIREFOX
+        E' COLLEGATO STATICO con la libc vecchia: i suoi fili ora girano
+        insieme comunque, ma sysconf gli dice 1 processore. Va ricollegato.
+      - smpprova 0.004: -fili N [SECONDI].
+      PROVE (QEMU, KVM): tools/prova-fili-core/prova-fili-core.sh nuovo, 8/8
+      a 32 e 64 bit con 2 processori, 8/8 a 64 con 4 (2 fili 1,96-1,97
+      volte uno, 4 fili 3,16); CON LA CERTEZZA CHE VEDE IL GUASTO: un kernel
+      costruito senza shootdown da' NO ai casi 3, 4 e 6 (l'altro filo fa
+      139 milioni di scritture su una pagina gia' di sola lettura; il figlio
+      della fork vede la pagina cambiare), uno senza pf_gia_a_posto da' NO
+      al 7. Il caso 5 (munmap di 2 MB) passa anche senza shootdown: il TLB
+      non tiene 512 voci, prova solo il lotto.
+      REGRESSIONI col kernel 0.321 (QEMU, KVM): prova_tutti_core 22/22 a 32
+      e 64 (32 bit: 2 = 1,97, 4 = 3,76), prova_affinita 9/9 a 32 e 64,
+      prova_spegnimento 6/6 a 32 e 64, prova-fork 0 NO a 32 e 64. FIREFOX
+      con -smp 2 (QEMU_PIU nuovo in prova-gecko.sh, prova-webgl.sh,
+      prova-media.sh: fino a oggi le prove di Firefox giravano con UN
+      processore): prova-gecko a 32 e 64 disegna la pagina, nessun FAULT;
+      prova-webgl a 64 finestra ESITO OK, triangolo nella foto.
+      Stato: a, b, c, d, e fatti in QEMU; b da provare sul portatile (con la
+      guardia e il permesso dell'utente) e con Firefox ricollegato; da
+      osservare il portatile nell'uso coi due core (voce 58). La riga
+      riserva = in kernel.cfg e la colonna in ps restano da fare.
 
   91. YOUTUBE A SCATTI SUL PORTATILE (l'utente, 7/11 sera): "I video su
       youtube non bufferizzano abbastanza 2 / 3 secondi al massimo e poi ci

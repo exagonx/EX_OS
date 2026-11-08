@@ -109,6 +109,7 @@ void paging_marca_swap(PDE *pd, vaddr_t virt, uint32_t slot)
     *pte = SWAP_PTE(slot, (*pte & PG_COW) ? (*pte | PG_WRITABLE) : *pte);
 
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd) tlb_via(virt);
+    paging_tlb_altrove(pd);     /* and on every other processor (0.321) */
 }
 
 uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt)
@@ -121,8 +122,11 @@ uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt)
 void paging_pte_scrivi(PDE *pd, vaddr_t virt, uintptr_t valore)
 {
     PTE *pte = paging64_pte(pd, virt);
+    PTE  prima;
 
     if (pte == NULL) return;
+    prima = *pte;
     *pte = valore;
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd) tlb_via(virt);
+    if ((prima & PG_PRESENT) && prima != (PTE)valore) paging_tlb_altrove(pd);   /* 0.321 */
 }

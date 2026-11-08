@@ -21,6 +21,8 @@
 #
 # ! LA PARTIZIONE SI FA SULL'HOST, GIA' PIENA (mke2fs -d): debugfs scrive un
 # file alla volta e non crea le cartelle di un pacchetto di centinaia di file.
+# QEMU_PIU="-smp 2" adds QEMU options: 2 processors, as on the laptop (the
+# threads of Firefox run together from kernel 0.321).
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
@@ -74,6 +76,10 @@ cat > "$S/prova.html" <<'EOF'
     var d = new Float32Array(an.frequencyBinCount);
     an.getFloatFrequencyData(d);
     document.getElementById("js").textContent += " - FFT " + d.length;
+    // how many processors Gecko sees (sysconf in its static libc: 1 up to
+    // the libc of 8/11/2026, the true number after relinking)
+    document.getElementById("js").textContent +=
+      " - processori " + navigator.hardwareConcurrency;
   </script>
 </body></html>
 EOF
@@ -110,7 +116,7 @@ if [ "$EXOS_ARCH" = x86_64 ]; then
     export EXOS_QEMU=qemu-system-x86_64
 fi
 export EXOS_ISTANZA=gecko$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
-export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide"
+export EXOS_QEMU_EXTRA="$KVM $CPU${QEMU_PIU:+ $QEMU_PIU} -drive file=$IMG,format=raw,if=ide"
 SER=/tmp/exos/serialgecko$SUFF.txt
 rm -f "$SER"
 # AMBIENTE="VAR=valore ..." aggiunge variabili (EXOS_MALLOC_CONTROLLA=1, ...).

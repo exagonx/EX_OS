@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.320
+**Version:** 0.321
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -1837,18 +1837,37 @@ work of one alone. Tested in QEMU at 32 and 64 bit: `tools/prova_tutti_core.sh`
 (1, 2, 4 processors under KVM: 2.00 and 3.8 times the work of one; 20
 processors found and at work, emulated) 22/22, `tools/prova_affinita.sh` 9/9
 (two programs pinned to one processor 1.00, to two 2.00, three beside a
-reserved one 2.93). Two threads of the same program still do not run together
-(voce 92 b). **Kernel 0.320**: shutdown, reboot and halt move to processor 0
+reserved one 2.93). **Kernel 0.320**: shutdown, reboot and halt move to processor 0
 first; asked from a program on processor 1 the 0.319 stopped at
 "Spegnimento fra 3..." (the countdown waited for the clock, which rises on
 processor 0, while holding the kernel's lock); the clock waits of the CD
-drives and the floppy let the lock go by.
+drives and the floppy let the lock go by. **Kernel 0.321: the threads of one
+program run on several processors at once** (voce 92 b, SMP stage 4; up to
+0.320 they took turns on one processor, so Firefox, with its 60-70 threads,
+used one core at a time). When the kernel takes a page away from a program
+(munmap, the swap), makes it read-only (mprotect, fork's copy-on-write) or
+moves it (copy-on-write), every other processor running that program is told
+to drop its TLB, and the kernel waits for all of them (TLB shootdown: a
+message on vector 0xF2 that does not take the kernel's lock). munmap, sbrk and
+a thread's stack send one message per call, not one per page. A fault on a
+page another thread has just brought in goes back at once instead of killing
+the thread; `exec` from a thread ends its brothers and frees the old memory
+when the last one has left it. The C programs built with the cross gcc need
+the sysroots' libc of 8 November or later to see the true number of
+processors (`sysconf` said 1 in the older one): programs linked statically
+before, Firefox among them, must be linked again. `smpprova -fili N`
+measures N threads of one program. Tested in QEMU:
+`tools/prova-fili-core/prova-fili-core.sh` 8/8 at 32 and 64 bit (2 threads
+1.97 times the work of one, 4 on 4 processors 3.16; the other thread stops on
+its fault as soon as munmap or mprotect returns; a child forked while a
+thread writes sees the page as it was) - and with a kernel built without the
+shootdown the same test says NO three times.
 
 Since kernel 0.297 the 64-bit system wakes the extra processors too, as the
 32-bit one does: `smpprova -accendi` puts them to work until the next reboot,
 `smp = 2` in `/boot/kernel.cfg` at every boot. Programs run on all of them;
-inside the kernel there is one processor at a time, and two threads of the
-same program do not run together yet. `ahci -m FILE` measures how many KB/s a file is
+inside the kernel there is one processor at a time; since 0.321 the threads
+of one program run together too. `ahci -m FILE` measures how many KB/s a file is
 read at. Confirmed on the real PC on 9 October, at the third attempt: the
 disk moves to AHCI and the 35 MB of `cc1` are read at 59 MB/s, against about
 3.4 MB/s in PIO. On that controller the port had never been used in AHCI:

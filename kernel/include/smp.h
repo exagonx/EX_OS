@@ -147,9 +147,12 @@ void           smp_init(int accendi);
  * (bkl_ozio). I programmi, che sono il lavoro vero, girano in ring 3 senza
  * lucchetto: due programmi, due processori.
  *
- * Che cosa NON da': due chiamate di sistema insieme, e due fili dello stesso
- * programma insieme (vedi sched_puo_qui in sched.c). Un programma che passa
+ * Che cosa NON da': due chiamate di sistema insieme. Un programma che passa
  * il tempo nel kernel - a leggere il disco - non va piu' veloce.
+ *
+ * ! TWO THREADS OF ONE PROGRAM DO RUN TOGETHER since 0.321 (voce 92 b): a
+ * change to the tables of a space reaches the TLB of every processor running
+ * it (smp_tlb_spazio below). Up to 0.320 sched_puo_qui kept them apart.
  *
  * ! E' IL PREDEFINITO DALLA 0.319 (voce 92): smp = 2 in kernel.cfg, o la
  * riga assente. smp = 1 li parcheggia, smp = 0 li conta soltanto: la strada
@@ -194,6 +197,16 @@ static inline void bkl_fai_passare(void)
 {
     if (g_smp_lavora && cpu_n() != 0) { bkl_lascia(); __asm__ volatile ("pause"); bkl_entra(); }
 }
+
+/* TLB SHOOTDOWN (0.321, voce 92 b; smp.c says how and why). The caller holds
+ * the kernel's lock and has just changed a translation of space `pd` that
+ * other processors may hold: a page taken away, made read-only, moved to
+ * another frame. Every OTHER processor running `pd` now drops its TLB, and
+ * this returns when all have. Its own TLB is the caller's business (invlpg).
+ * Nothing to do with one processor, or a space nobody else runs. */
+void smp_tlb_spazio(const void *pd);
+void smp_tlb_ricevi(void);          /* the receiver's side, from its entry */
+void smp_tlb_conti(uint32_t *mandati, uint32_t *ricevuti, uint32_t *tardi);
 
 /* Cio' che smp_init() ha trovato. Mai NULL. */
 const SmpInfo *smp_info(void);

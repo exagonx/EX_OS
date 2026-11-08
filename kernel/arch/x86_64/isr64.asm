@@ -103,12 +103,46 @@ comune:
     add  rsp, 16                ; via il vettore e il codice d'errore
     iretq
 
+; isr64_tlb - "drop your TLB" from the holder of the kernel's lock (0.321).
+; ! NO bkl_entra: the sender holds the lock and waits for this answer (see
+; smp_irq_tlb in kernel/arch/x86/isr_stubs.asm). Only the registers the C
+; code may change; 5 values from the CPU + 9 here = 112 bytes, so the stack
+; is aligned to 16 at the call as the C wants.
+extern smp_tlb_ricevi
+isr64_tlb:
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    cld
+    call smp_tlb_ricevi
+    pop  r11
+    pop  r10
+    pop  r9
+    pop  r8
+    pop  rdi
+    pop  rsi
+    pop  rdx
+    pop  rcx
+    pop  rax
+    iretq
+
 ; La tavola degli ingressi, per idt64.c: 256 indirizzi.
+; ! 0xF2 (VETTORE_TLB in smp.c) has its own entry, without the lock.
 section .rodata
 global isr64_tavola
 isr64_tavola:
 %assign v 0
 %rep 256
+  %if v == 0xF2
+    dq isr64_tlb
+  %else
     dq isr64_ %+ v
+  %endif
   %assign v v + 1
 %endrep

@@ -374,8 +374,14 @@ int paging_map_page(PDE *pd, vaddr_t virt, paddr_t phys, uint32_t flags)
         return -1;
     }
 
-    TAB(*v2)[I1(virt)] = PG_ADDR(phys) | (flags & 0xFFF) | PG_PRESENT;
-    tlb_via(virt & ~(vaddr_t)0xFFF);
+    {
+        uint64_t prima = TAB(*v2)[I1(virt)];
+
+        TAB(*v2)[I1(virt)] = PG_ADDR(phys) | (flags & 0xFFF) | PG_PRESENT;
+        tlb_via(virt & ~(vaddr_t)0xFFF);
+        /* over a page that was there: the other processors too (0.321) */
+        if (prima & PG_PRESENT) paging_tlb_altrove(pd);
+    }
     return 0;
 }
 
@@ -387,8 +393,13 @@ void paging_unmap_page(PDE *pd, vaddr_t virt)
     if (*v2 & PG_HUGE) {
         if (spezza_2mb(v2) != 0) return;
     }
-    TAB(*v2)[I1(virt)] = 0;
-    tlb_via(virt & ~(vaddr_t)0xFFF);
+    {
+        uint64_t prima = TAB(*v2)[I1(virt)];
+
+        TAB(*v2)[I1(virt)] = 0;
+        tlb_via(virt & ~(vaddr_t)0xFFF);
+        if (prima & PG_PRESENT) paging_tlb_altrove(pd);   /* 0.321 */
+    }
 }
 
 paddr_t paging_get_physical(PDE *pd, vaddr_t virt)

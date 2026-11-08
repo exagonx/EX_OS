@@ -15,6 +15,8 @@
 #     FILE="av1.mp4" ATTESA_FILE=30 ...   only some files, seconds for each
 #     MOZ_LOG=FFmpegVideo:4,MediaDecoder:4 ...   Firefox's logs, on the serial line
 # Run after tools/exilla/prova-gecko.sh, which makes the package.
+# QEMU_PIU="-smp 2" adds QEMU options: 2 processors, as on the laptop (the
+# threads of Firefox run together from kernel 0.321).
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
@@ -85,7 +87,7 @@ KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$PWD/dist/exos.iso"; CPU=""
 if [ "$EXOS_ARCH" = x86_64 ]; then CD="$PWD/dist/exos64.iso"; CPU="-cpu qemu64"; export EXOS_QEMU=qemu-system-x86_64; fi
 export EXOS_ISTANZA=media$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
-export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide -audiodev wav,id=a0,path=$D/media-uscita.wav -device AC97,audiodev=a0"
+export EXOS_QEMU_EXTRA="$KVM $CPU${QEMU_PIU:+ $QEMU_PIU} -drive file=$IMG,format=raw,if=ide -audiodev wav,id=a0,path=$D/media-uscita.wav -device AC97,audiodev=a0"
 SER=/tmp/exos/serialmedia$SUFF.txt; rm -f "$SER" "$D/media-uscita.wav"
 timeout "${ATTESA:-1500}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "echo attendo@25" "audio -i@40" "audio@5" \
     "export MOZ_FORCE_DISABLE_E10S=1@1" "export MOZ_HEADLESS=1@1" \

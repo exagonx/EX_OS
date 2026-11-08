@@ -1162,13 +1162,12 @@ void proc_set_ready(Process *proc)
  *   - i compiti del kernel girano solo sul processore d'avvio. Non escono mai
  *     verso un programma, quindi terrebbero il lucchetto del kernel per tutto
  *     il loro tempo: su un secondo processore non darebbero niente;
- *   - ! DUE FILI DELLO STESSO SPAZIO DI INDIRIZZAMENTO NON GIRANO INSIEME.
- *     Se uno toglie una pagina (munmap, mprotect, lo scambio) l'altro
- *     processore ne ha ancora la traduzione nel TLB e continuerebbe a
- *     scrivere in una pagina che non e' piu' sua. La cura giusta e' dire
- *     all'altro processore di buttarla (un messaggio, e aspettare): e' la
- *     tappa 4. Fin li' un programma a piu' fili usa un processore per volta,
- *     e due programmi diversi ne usano due.
+ *   - two threads of the same address space run together since 0.321
+ *     (voce 92 b, stage 4): whoever takes away or changes a page (munmap,
+ *     mprotect, copy-on-write, the swap) sends a message to every processor
+ *     running that space, which drops its TLB, and waits until all of them
+ *     have (smp_tlb_spazio in smp.c). Up to 0.320 a program with several
+ *     threads used one processor at a time.
  * ========================================================================== */
 /* =============================================================================
  * AFFINITY AND RESERVATIONS (0.319, voce 92: the user, 7/11/2026: the kernel
@@ -1399,7 +1398,7 @@ static int sched_gira_altrove(const Process *p)
 
 static int sched_puo_qui(const Process *p)
 {
-    uint32_t me, c;
+    uint32_t me;
 
     if (!g_smp_lavora) return 1;
     me = cpu_n();
@@ -1409,14 +1408,22 @@ static int sched_puo_qui(const Process *p)
      * threads; a thread runs only where its affinity says */
     if (g_riserva[me] != 0 && g_riserva[me] != p->tgid) return 0;
     if (!aff_ha(p, me)) return 0;
-    for (c = 0; c < g_cpu_posti; c++) {
-        const Process *q = g_corrente[c];
-
-        if (c == me || q == NULL || q == p) continue;
-        if (q->state == PROC_RUNNING && !q->nel_kernel &&
-            q->page_directory == p->page_directory) return 0;
-    }
+    /* ! TWO THREADS OF ONE SPACE MAY RUN TOGETHER (0.321, voce 92 b). Up to
+     * 0.320 a thread did not start here while another thread of its
+     * directory ran elsewhere: a page taken away on one processor stayed in
+     * the other's TLB. Now whoever changes a translation of a space tells
+     * every processor running it to drop its TLB, and waits (smp_tlb_spazio,
+     * called by paging.c, paging64.c and pagine64.c). */
     return 1;
+}
+
+int sched_spazio_su(uint32_t c, const void *pd)
+{
+    const Process *q;
+
+    if (c >= g_cpu_posti) return 0;
+    q = g_corrente[c];
+    return q != NULL && (const void *)q->page_directory == pd;
 }
 
 /* Lo spazio di indirizzamento `pd` e' in uso, adesso, su un ALTRO processore?
@@ -2013,6 +2020,36 @@ void sched_sleep(uint32_t ms)
  * ============================================================================= */
 
 /* Quanti membri vivi (non zombie, non liberi) ha il gruppo. */
+/* How many processes alive (not zombie) run space `pd`, `tranne` apart.
+ * ! THE SPACE GOES WITH ITS LAST USER, NOT WITH ITS GROUP (0.321): after an
+ * exec from a thread the thread has a new space and the same tgid, while its
+ * brothers are still finishing on the old one (sys_exec). */
+int proc_spazio_vivi(const void *pd, const Process *tranne)
+{
+    uint32_t i;
+    int      n = 0;
+
+    for (i = 0; i < g_proc_posti; i++) {
+        const Process *q = PROC_POSTO(i);
+
+        if (q != tranne && q->state != PROC_UNUSED && q->state != PROC_ZOMBIE &&
+            (const void *)q->page_directory == pd)
+            n++;
+    }
+    return n;
+}
+
+/* Every PCB that still points at `pd` forgets it: the space is about to be
+ * destroyed, and a zombie reaped later must not destroy it again. */
+void proc_spazio_scorda(const void *pd)
+{
+    uint32_t i;
+
+    for (i = 0; i < g_proc_posti; i++)
+        if ((const void *)(*PROC_POSTO(i)).page_directory == pd)
+            (*PROC_POSTO(i)).page_directory = NULL;
+}
+
 int proc_gruppo_vivi(uint32_t tgid)
 {
     uint32_t i;
@@ -2865,6 +2902,9 @@ void proc_reap_zombie(Process *p)
     if (p->filo_posto != 0 && p->page_directory != NULL &&
         p->user_stack_limit != 0) {
         uint32_t v;
+        /* its brothers may be running on other processors: one TLB round,
+         * the frames after it (0.321, paging.h) */
+        int lotto = paging_lotto_apri(p->page_directory);
 
         for (v = p->user_stack_limit;
              v < p->user_stack_limit + FILO_STACK_SIZE; v += PAGE_SIZE) {
@@ -2872,8 +2912,9 @@ void proc_reap_zombie(Process *p)
 
             if (f == 0) continue;
             paging_unmap_page(p->page_directory, v);
-            pmm_free_page(f);
+            paging_lotto_libera(f);
         }
+        paging_lotto_chiudi(lotto);
     }
 
     /* ! LO SPAZIO DI INDIRIZZAMENTO E' DEL GRUPPO, non del PCB, e si libera
@@ -2883,7 +2924,7 @@ void proc_reap_zombie(Process *p)
      * siano stati raccolti. Contare i vivi e' l'unico modo di sapere se questa
      * page directory serve ancora a qualcuno. */
     if (p->page_directory && p->page_directory != paging_get_kernel_directory() &&
-        proc_gruppo_vivi(p->tgid) == 0) {
+        proc_spazio_vivi(p->page_directory, p) == 0) {
         PDE     *pd = p->page_directory;
         uint32_t k;
 

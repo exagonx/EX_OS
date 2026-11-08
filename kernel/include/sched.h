@@ -988,6 +988,10 @@ void     sched_fine_chiesta(void);          /* «da_finire», all'uscita dal ker
 uint32_t sched_cpu_prepara(uint32_t n);     /* l'ozio del processore n: rende la sua pila */
 void     sched_cpu_entra(void);             /* il processore n comincia a lavorare */
 int      sched_spazio_altrove(const void *pd);
+/* Is processor `cpu` running space `pd` now (its current task's directory)?
+ * For the TLB shootdown (smp_tlb_spazio, 0.321): asked by the holder of the
+ * kernel's lock, so no other processor is switching meanwhile. */
+int      sched_spazio_su(uint32_t cpu, const void *pd);
 void     sched_sul_primo(void);        /* the caller to processor 0, for good (0.320) */
 
 /* Gestione processi */
@@ -1062,6 +1066,8 @@ int      proc_gruppo_vivi(uint32_t tgid);
 Process *proc_filo_dello_stack(uint32_t tgid, uint32_t indirizzo);
 /* Termina tutti gli altri membri del gruppo: lo chiama chi esce dal processo. */
 void     proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid);
+int      proc_spazio_vivi(const void *pd, const Process *tranne);  /* 0.321 */
+void     proc_spazio_scorda(const void *pd);                       /* 0.321 */
 /* CHIEDE a un filo del proprio gruppo di fermarsi: 0, oppure -ESRCH.
  * Va chiamata a interruzioni spente, come proc_attesa_sveglia. */
 int      proc_filo_ferma(uint32_t tid);

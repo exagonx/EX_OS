@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.320
+**Versione:** 0.321
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -1903,17 +1903,37 @@ Provato in QEMU a 32 e 64 bit: `tools/prova_tutti_core.sh` (1, 2, 4
 processori con KVM: 2,00 e 3,8 volte il lavoro di uno; 20 processori trovati
 e al lavoro, emulati) 22/22, `tools/prova_affinita.sh` 9/9 (due programmi
 fissati su un processore 1,00, su due 2,00, tre accanto a uno riservato 2,93).
-Due fili dello stesso programma non girano ancora insieme (voce 92 b).
 **Kernel 0.320**: spegnimento, riavvio e arresto passano prima al processore
 0; chiesti da un programma sul processore 1 la 0.319 si fermava a
 "Spegnimento fra 3..." (il conto aspettava l'orologio, che sale sul
 processore 0, tenendo il lucchetto del kernel); le attese sull'orologio dei
-lettori CD e del floppy lasciano passare il lucchetto.
+lettori CD e del floppy lasciano passare il lucchetto. **Kernel 0.321: i fili
+di un programma girano su piu' processori insieme** (voce 92 b, tappa 4
+dell'SMP; fino alla 0.320 si davano il turno su un processore, e Firefox coi
+suoi 60-70 fili usava un core per volta). Quando il kernel toglie una pagina
+a un programma (munmap, lo scambio), la rende di sola lettura (mprotect, la
+copia su scrittura della fork) o la sposta (copia su scrittura), ogni altro
+processore che esegue quel programma riceve l'ordine di buttare il suo TLB, e
+il kernel aspetta che l'abbiano fatto tutti (TLB shootdown: un messaggio sul
+vettore 0xF2 che non prende il lucchetto del kernel). munmap, sbrk e la pila
+di un filo mandano un messaggio per chiamata, non uno per pagina. Un fault su
+una pagina che un altro filo ha appena portato torna subito indietro invece
+di uccidere il filo; `exec` da un filo fa finire i fratelli e libera la
+memoria vecchia quando l'ultimo l'ha lasciata. I programmi C compilati col
+gcc incrociato vogliono la libc delle sysroot dell'8 novembre o piu' nuova per
+vedere il numero vero dei processori (`sysconf` in quella vecchia diceva 1): i
+programmi collegati staticamente prima, Firefox compreso, vanno ricollegati.
+`smpprova -fili N` misura N fili di un programma solo. Provato in QEMU:
+`tools/prova-fili-core/prova-fili-core.sh` 8/8 a 32 e 64 bit (2 fili 1,97
+volte il lavoro di uno, 4 su 4 processori 3,16; l'altro filo si ferma sul suo
+fault appena munmap o mprotect tornano; un figlio nato con fork mentre un filo
+scrive vede la pagina com'era) - e con un kernel costruito senza lo shootdown
+la stessa prova dice NO tre volte.
 
 Dal kernel 0.297 anche il sistema a 64 bit sveglia i processori in piu', come
 quello a 32: `smpprova -accendi` li mette al lavoro fino al riavvio, `smp = 2`
 in `/boot/kernel.cfg` a ogni avvio. I programmi girano su tutti; nel kernel
-ce n'e' uno per volta, e due fili dello stesso programma non girano ancora
+ce n'e' uno per volta; dalla 0.321 anche i fili di uno stesso programma girano
 insieme. `ahci -m FILE`
 misura a quanti KB/s si legge un file. Confermato sul
 PC vero il 9 ottobre, al terzo tentativo: il disco passa all'AHCI e i 35 MB

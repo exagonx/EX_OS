@@ -29,6 +29,8 @@
 # machine where netupdate -install:mesa put them in /exos/lib.
 #     FOTO_OGNI=s FOTO_N=n   photographs of the window, one every s seconds
 # The package is made here when the build is newer than it.
+# QEMU_PIU="-smp 2" adds QEMU options: 2 processors, as on the laptop (the
+# threads of Firefox run together from kernel 0.321).
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 RADICE="$PWD"
@@ -154,7 +156,7 @@ KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 CD="$PWD/dist/exos.iso"; CPU=""
 if [ "$EXOS_ARCH" = x86_64 ]; then CD="$PWD/dist/exos64.iso"; CPU="-cpu qemu64"; export EXOS_QEMU=qemu-system-x86_64; fi
 export EXOS_ISTANZA=webgl$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
-export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide"
+export EXOS_QEMU_EXTRA="$KVM $CPU${QEMU_PIU:+ $QEMU_PIU} -drive file=$IMG,format=raw,if=ide"
 SER=/tmp/exos/serialwebgl$SUFF.txt; rm -f "$SER"
 # ! THE PHOTOGRAPHS GO THROUGH /tmp/exos: the project's path has the user's
 # «@», which qemu_drive.py would take for the wait («cmd@seconds»).

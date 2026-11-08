@@ -201,7 +201,8 @@ piu' nuclei. E' un MODO, non un numero di processori:
 2 (predefinito dal kernel 0.319): all'avvio il kernel cerca i processori nelle
 tabelle del BIOS (ACPI, oppure la tabella MultiProcessor delle schede a due
 processori), li sveglia TUTTI e tutti ESEGUONO PROGRAMMI. Due programmi
-diversi girano su due processori insieme.
+diversi girano su due processori insieme, e dal kernel 0.321 anche due fili
+dello stesso programma.
 1: quelli in piu' si svegliano, hanno il loro timer e restano in attesa: la
 macchina va come con un processore. `smpprova -accendi` li mette al lavoro
 fino al riavvio.

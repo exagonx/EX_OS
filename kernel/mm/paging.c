@@ -384,11 +384,17 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
     }
 
     /* Scrivi l'entry nella Page Table */
-    pt[pt_idx] = phys_addr | (flags & 0xFFF) | PG_PRESENT;
+    {
+        PTE prima = pt[pt_idx];
 
-    /* Invalida TLB per questo indirizzo virtuale */
-    if (g_paging_enabled) {
-        __asm__ volatile ("invlpg (%0)" :: "r"(virt_addr) : "memory");
+        pt[pt_idx] = phys_addr | (flags & 0xFFF) | PG_PRESENT;
+
+        /* Invalida TLB per questo indirizzo virtuale */
+        if (g_paging_enabled) {
+            __asm__ volatile ("invlpg (%0)" :: "r"(virt_addr) : "memory");
+        }
+        /* over a page that was there: the other processors too (0.321) */
+        if (prima & PG_PRESENT) paging_tlb_altrove(pd);
     }
 
     return 0;
@@ -595,10 +601,15 @@ void paging_unmap_page(PDE *pd, uint32_t virt_addr)
     }
 
     pt = (PTE *)PG_ADDR(pd[pd_idx]);
-    pt[pt_idx] = 0;    /* Rimuovi entry */
+    {
+        PTE prima = pt[pt_idx];
 
-    if (g_paging_enabled) {
-        __asm__ volatile ("invlpg (%0)" :: "r"(virt_addr) : "memory");
+        pt[pt_idx] = 0;    /* Rimuovi entry */
+
+        if (g_paging_enabled) {
+            __asm__ volatile ("invlpg (%0)" :: "r"(virt_addr) : "memory");
+        }
+        if (prima & PG_PRESENT) paging_tlb_altrove(pd);   /* 0.321 */
     }
 }
 
@@ -1150,6 +1161,7 @@ void paging_marca_swap(PDE *pd, uint32_t virt, uint32_t slot)
      * al PMM — cioe' dentro la memoria del prossimo che la ricevera'. */
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd)
         __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    paging_tlb_altrove(pd);     /* and on every other processor (0.321) */
 }
 
 uintptr_t paging_pte_leggi(PDE *pd, vaddr_t virt)
@@ -1164,10 +1176,14 @@ void paging_pte_scrivi(PDE *pd, vaddr_t virt, uintptr_t valore)
 {
     uint32_t pdi = PD_INDEX(virt);
 
+    PTE  prima;
+
     if (pd == NULL || !(pd[pdi] & PG_PRESENT) || (pd[pdi] & PG_HUGE)) return;
+    prima = ((PTE *)PG_ADDR(pd[pdi]))[PT_INDEX(virt)];
     ((PTE *)PG_ADDR(pd[pdi]))[PT_INDEX(virt)] = (PTE)valore;
     if (proc_get_current() != NULL && proc_get_current()->page_directory == pd)
         __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    if ((prima & PG_PRESENT) && prima != (PTE)valore) paging_tlb_altrove(pd);
 }
 
 /* =============================================================================
@@ -1237,6 +1253,117 @@ int      paging64_spezza(PDE *pd, vaddr_t virt);
 #endif
 /* l'indirizzo della pagina che contiene v */
 #define PAGINA_DI(v)            ((v) & ~(vaddr_t)0xFFF)
+
+/* =============================================================================
+ * THE OTHER PROCESSORS' TLB and the batch (0.321): see paging.h
+ *
+ * ! THE BATCH HAS A FIXED SIZE AND IT IS NOT A CEILING: LOTTO_PAGINE frames
+ * wait at most, then the round goes and the batch starts again. It only
+ * decides how many pages share one message.
+ * ========================================================================== */
+#define LOTTO_PAGINE    128u
+
+static struct {
+    PDE     *pd;            /* NULL = no batch open */
+    uint32_t chi;           /* the processor that opened it */
+    int      sporco;        /* a round for pd is owed */
+    uint32_t n;
+    paddr_t  frame[LOTTO_PAGINE];
+} g_lotto;
+
+static int lotto_mio(void)
+{
+    return g_lotto.pd != NULL && g_lotto.chi == cpu_n();
+}
+
+static void lotto_svuota(void)
+{
+    if (g_lotto.sporco) { g_lotto.sporco = 0; smp_tlb_spazio(g_lotto.pd); }
+    while (g_lotto.n) pmm_free_page(g_lotto.frame[--g_lotto.n]);
+}
+
+void paging_tlb_altrove(PDE *pd)
+{
+    if (!g_smp_lavora || pd == NULL) return;
+    if (lotto_mio() && g_lotto.pd == pd) { g_lotto.sporco = 1; return; }
+    smp_tlb_spazio(pd);
+}
+
+int paging_lotto_apri(PDE *pd)
+{
+    uint32_t fl;
+
+    if (!g_smp_lavora || pd == NULL) return 0;
+    fl = read_eflags();
+    interrupts_disable();
+    if (g_lotto.pd != NULL) { if (fl & 0x200u) interrupts_enable(); return 0; }
+    g_lotto.pd = pd; g_lotto.chi = cpu_n(); g_lotto.sporco = 0; g_lotto.n = 0;
+    if (fl & 0x200u) interrupts_enable();
+    return 1;
+}
+
+void paging_lotto_libera(paddr_t frame)
+{
+    if (frame == 0) return;
+    if (!lotto_mio()) { pmm_free_page(frame); return; }
+    if (g_lotto.n == LOTTO_PAGINE) lotto_svuota();
+    g_lotto.frame[g_lotto.n++] = frame;
+}
+
+void paging_lotto_chiudi(int t)
+{
+    if (!t || !lotto_mio()) return;
+    lotto_svuota();
+    g_lotto.pd = NULL;
+}
+
+/* =============================================================================
+ * pf_gia_a_posto — the fault of a page that is already as the access wants
+ *
+ * ! WITH TWO THREADS ON TWO PROCESSORS THIS IS NORMAL (0.321). Both touch
+ * the same promised page: the first takes the kernel's lock and maps it, the
+ * second waits for the lock with its fault in hand, and when it gets in the
+ * page is there. Up to 0.320 the second could not be running. Here it just
+ * goes back and retries; the CPU forgot the translation that faulted.
+ *
+ * ! A GUARD AGAINST A LOOP: if the same address of the same process comes
+ * back here GIA_VOLTE times in a row, something else is wrong (a table above
+ * the PTE that does not allow it), and the fault goes on to the normal path
+ * and its diagnostics instead of spinning for ever.
+ * ========================================================================== */
+#define GIA_VOLTE   16u
+static vaddr_t  g_gia_addr;
+static uint32_t g_gia_pid, g_gia_volte;
+
+static int pf_gia_a_posto(Process *p, vaddr_t addr, uint32_t err)
+{
+    PDE      *pd;
+    uintptr_t voce;
+    PTE       pte;
+    vaddr_t   pagina = PAGINA_DI(addr);
+
+    if (p == NULL || (pd = p->page_directory) == NULL) return 0;
+    if (pagina < USER_SPACE_BASE || pagina >= USER_SPACE_END) return 0;
+    if (err & 0x8) return 0;                    /* reserved bit: never "fine" */
+    if (!TAB_C_E(pd, pagina) || TAB_GRANDE(pd, pagina)) return 0;
+#if defined(__x86_64__)
+    voce = (uintptr_t)paging64_voce_pd(pd, pagina);
+#else
+    voce = pd[PD_INDEX(pagina)];
+#endif
+    pte = TAB_DI(pd, pagina)[NELLA_TAB(pagina)];
+    if (!(pte & PG_PRESENT)) return 0;
+    if ((err & 0x4) && (!(pte & PG_USER) || !(voce & PG_USER))) return 0;
+    if ((err & 0x2) && (!(pte & PG_WRITABLE) || !(voce & PG_WRITABLE))) return 0;
+
+    if (pagina == g_gia_addr && p->pid == g_gia_pid) {
+        if (++g_gia_volte >= GIA_VOLTE) { g_gia_volte = 0; return 0; }
+    } else {
+        g_gia_addr = pagina; g_gia_pid = p->pid; g_gia_volte = 1;
+    }
+    __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
+    return 1;
+}
 
 /* =============================================================================
  * pagina_utente — a page for a program's fault, making room if need be
@@ -1810,6 +1937,9 @@ static void cow_tlb(PDE *pd, vaddr_t pagina)
 
     if (io != NULL && io->page_directory == pd)
         __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
+    /* ! AND THE OTHER THREADS' PROCESSORS (0.321): one still reading the old
+     * shared frame would not see what this thread writes in its copy */
+    paging_tlb_altrove(pd);
 }
 
 /* 1 = the page is writable now, 0 = it is not a copy-on-write page,
@@ -2067,8 +2197,11 @@ int paging_copia_spazio(Process *dal, PDE *al)
         if (fl & 0x200u) interrupts_enable();
     }
 
-    /* the parent's own TLB still has the writable translations */
+    /* the parent's own TLB still has the writable translations, and so do
+     * the processors running its other threads (0.321): from here they
+     * fault on their first write too */
     write_cr3(read_cr3());
+    paging_tlb_altrove(dal->page_directory);
     klog(LOG_DEBUG, "PAGING: fork di PID %u: %u pagine in comune, %u copiate",
          dal->pid, condivise, copiate);
     return 0;
@@ -2096,6 +2229,11 @@ void page_fault_handler(InterruptFrame *frame)
      * pf_cresci_stack, che ritorna 0 in ogni caso dubbio. */
     {
         Process *p = proc_get_current();
+
+        /* another thread got here first, on another processor (0.321) */
+        if (pf_gia_a_posto(p, fault_addr, err)) {
+            return;
+        }
 
         /* a write into a present page that is read-only: copy-on-write
          * after fork, or a kernel write as before CR0.WP (0.313) */
@@ -2506,12 +2644,15 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
                 n = (n & ~(uint32_t)PG_WRITABLE) | PG_COW;
             pt[NELLA_TAB(va)] = (pte & ~(PTE)(PG_USER | PG_WRITABLE | PG_COW)) | n;
         }
-        /* Threads share the directory, so "current" is enough: every thread
-         * of this program runs on this same CR3. */
         if (proc_get_current() != NULL &&
             proc_get_current()->page_directory == pd)
             __asm__ volatile ("invlpg (%0)" : : "r"(va) : "memory");
     }
+    /* ! AND ONCE FOR THE WHOLE RANGE ON THE OTHER PROCESSORS (0.321): up to
+     * 0.320 "current" was enough, every thread of a program ran on this
+     * CR3 one at a time; now another thread may be running elsewhere. No
+     * frame was freed, so one round at the end is as good as one a page. */
+    paging_tlb_altrove(pd);
 
     interrupts_enable();
     return 0;

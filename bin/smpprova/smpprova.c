@@ -18,6 +18,11 @@
  *     smpprova -accendi   mette al lavoro i processori in attesa, da adesso e
  *                         fino al riavvio (root): per provare senza toccare
  *                         kernel.cfg
+ *     smpprova -fili N [SECONDI]
+ *                         0.004: the same, with N THREADS of this one program
+ *                         instead of N programs (kernel 0.321, voce 92 b: up
+ *                         to 0.320 the threads of a program used one
+ *                         processor at a time)
  *
  * Lancia N copie di se stesso che per qualche secondo fanno solo conti, senza
  * chiamare il kernel, e contano quanti ne hanno fatti. Con UN processore due
@@ -33,7 +38,7 @@
 
 #include "libc.h"
 
-EX_VERSIONE("smpprova", "0.003");
+EX_VERSIONE("smpprova", "0.004");
 
 /* Il lavoro: aritmetica in un ciclo, con l'orologio guardato di rado (ogni
  * chiamata di sistema e' tempo passato nel kernel, che e' di tutti). */
@@ -96,10 +101,48 @@ static unsigned int giro(const char *io, int n, unsigned int ms, unsigned int *m
     return somma;
 }
 
+/* =============================================================================
+ * -fili: N threads of this program instead of N programs (0.004)
+ * ========================================================================== */
+static unsigned int g_fili_ms;
+static unsigned int g_fili_giri[256];
+
+static void filo_lavora(void *arg)
+{
+    int k = (int)(long)arg;
+
+    g_fili_giri[k] = lavora(g_fili_ms);
+    thread_esci(0);
+}
+
+/* the sum of what n threads did; the slowest in *minimo */
+static unsigned int giro_fili(int n, unsigned int ms, unsigned int *minimo)
+{
+    int tid[256], k, partiti = 0;
+    unsigned int somma = 0;
+
+    *minimo = 0xFFFFFFFFu;
+    g_fili_ms = ms;
+    for (k = 0; k < n; k++) {
+        g_fili_giri[k] = 0;
+        tid[k] = thread_crea(filo_lavora, (void *)(long)k);
+        if (tid[k] < 0) { printf("smpprova: thread_crea: errno %d\n", errno); break; }
+        partiti++;
+    }
+    for (k = 0; k < partiti; k++) {
+        int codice = 0;
+
+        thread_attendi(tid[k], &codice);
+        somma += g_fili_giri[k];
+        if (g_fili_giri[k] < *minimo) *minimo = g_fili_giri[k];
+    }
+    return partiti == n ? somma : 0;
+}
+
 int main(int argc, char **argv)
 {
     unsigned int ms = 3000, uno, min1, tanti, min_n;
-    int n = 2;
+    int n = 2, fili = 0;
 
     if (argc >= 3 && strcmp(argv[1], "-figlio") == 0)
         return (int)lavora((unsigned int)atoi(argv[2]));
@@ -114,8 +157,14 @@ int main(int argc, char **argv)
                                 r, r == 1 ? "e" : "i", r == 1 ? "" : "no");
         return r > 0 ? 0 : 1;
     }
+    if (argc >= 2 && strcmp(argv[1], "-fili") == 0) {
+        fili = 1;
+        argv++; argc--;
+    }
     if (argc >= 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
         printf("uso: smpprova [N [SECONDI]]\n");
+        printf("     smpprova -fili N [SECONDI]   N fili di un programma solo\n");
+
         printf("     smpprova -accendi   i processori in attesa cominciano a lavorare,\n");
         printf("                         fino al riavvio (root)\n");
         printf("  N programmi insieme (2), ognuno fa conti per SECONDI (3).\n");
@@ -126,6 +175,7 @@ int main(int argc, char **argv)
     if (argc >= 2) n = atoi(argv[1]);
     if (argc >= 3) ms = (unsigned int)atoi(argv[2]) * 1000u;
     if (n < 1) n = 1;
+    if (fili && n > 256) n = 256;
     if (ms < 1000u) ms = 1000u;
 
     /* what the libc tells programs, the number they size their threads on
@@ -133,13 +183,14 @@ int main(int argc, char **argv)
     printf("smpprova: sysconf dice %ld processori al lavoro, %ld in tutto\n",
            sysconf(_SC_NPROCESSORS_ONLN), sysconf(83 /* _SC_NPROCESSORS_CONF */));
 
-    printf("smpprova: un programma da solo, %u secondi...\n", ms / 1000u);
-    uno = giro(argv[0], 1, ms, &min1);
+    printf("smpprova: %s da solo, %u secondi...\n", fili ? "un filo" : "un programma", ms / 1000u);
+    uno = fili ? giro_fili(1, ms, &min1) : giro(argv[0], 1, ms, &min1);
     if (uno == 0) { printf("smpprova: il giro di riferimento non ha contato niente\n"); return 1; }
     printf("  da solo        %u giri\n", uno);
 
-    printf("smpprova: %d programmi insieme, %u secondi...\n", n, ms / 1000u);
-    tanti = giro(argv[0], n, ms, &min_n);
+    printf("smpprova: %d %s insieme, %u secondi...\n", n, fili ? "fili di un programma" : "programmi",
+           ms / 1000u);
+    tanti = fili ? giro_fili(n, ms, &min_n) : giro(argv[0], n, ms, &min_n);
     printf("  in %d, somma    %u giri   (il piu' lento: %u)\n", n, tanti, min_n);
 
     {

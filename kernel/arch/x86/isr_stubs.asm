@@ -313,6 +313,33 @@ smp_irq_comune:
     add esp, 8
     iret
 
+; =============================================================================
+; smp_irq_tlb - "drop your TLB" from the holder of the kernel's lock (0.321)
+;
+; ! NO bkl_entra HERE. The sender holds the lock and waits for the answer: a
+; receiver that queued for the lock would wait for the sender for ever. The
+; C side (smp_tlb_ricevi in smp.c) reloads CR3, clears its flag and sends
+; the EOI, touching nothing shared. From ring 3 or from the kernel alike.
+; =============================================================================
+extern smp_tlb_ricevi
+global smp_irq_tlb
+smp_irq_tlb:
+    pushad
+    mov ax, ds
+    push eax
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    cld
+    call smp_tlb_ricevi
+    pop eax
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    popad
+    iret
+
 ; smp_ap_salta(pila, funzione): il processore in piu' lascia la pila del
 ; trampolino per quella del suo compito d'ozio e ci chiama `funzione`, che non
 ; torna.

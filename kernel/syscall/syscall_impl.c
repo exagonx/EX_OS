@@ -1364,10 +1364,11 @@ int32_t sys_waitpid(InterruptFrame *frame)
  * ! THE LOCK OF THE SPACE IS HELD DURING THE COPY (proc_spazio_prendi): no
  * mmap, munmap or sbrk of another thread of the parent in the middle.
  *
- * ! NO OTHER PROCESSOR IS RUNNING THIS SPACE: sched_puo_qui never runs two
- * threads of one directory at the same time, and this one is running here.
- * So the parent's TLB that still says "writable" is only this processor's,
- * and paging_copia_spazio reloads CR3 at the end.
+ * ! OTHER THREADS OF THE PARENT MAY BE RUNNING ON OTHER PROCESSORS (0.321:
+ * up to 0.320 sched_puo_qui never ran two threads of one directory at the
+ * same time). Their TLB still says "writable" for the pages just made
+ * copy-on-write: paging_copia_spazio reloads CR3 here and sends one TLB
+ * round to them at the end (paging_tlb_altrove).
  * ============================================================================= */
 int32_t sys_fork(InterruptFrame *frame)
 {
@@ -2127,11 +2128,19 @@ int32_t sys_munmap(InterruptFrame *frame)
     if (addr < USER_SPACE_BASE || addr >= USER_SPACE_END) return ERR(EINVAL);
     if (length == 0) return ERR(EINVAL);
 
-    for (i = 0; i < pages; i++) {
-        uint32_t va   = addr + i * PAGE_SIZE;
-        paddr_t  phys = paging_get_physical(proc->page_directory, va);
-        if (phys) pmm_free_page(phys);
-        paging_unmap_page(proc->page_directory, va);
+    /* ! ONE TLB ROUND FOR THE WHOLE RANGE, AND THE FRAMES FREED AFTER IT
+     * (0.321): another thread may be running this space on another
+     * processor. Unmap first, then hand the frame over (paging.h). */
+    {
+        int lotto = paging_lotto_apri(proc->page_directory);
+
+        for (i = 0; i < pages; i++) {
+            uint32_t va   = addr + i * PAGE_SIZE;
+            paddr_t  phys = paging_get_physical(proc->page_directory, va);
+            paging_unmap_page(proc->page_directory, va);
+            if (phys) paging_lotto_libera(phys);
+        }
+        paging_lotto_chiudi(lotto);
     }
 
     /* ! SE LA ZONA ERA IN CIMA, IL CONFINE TORNA GIU' (kernel 0.158).
@@ -2690,7 +2699,25 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
         if (rc_elf == ERR(EACCES)) return ERR(EACCES);
         return ERR(ENOEXEC);
     }
-    if (old_pd != paging_get_kernel_directory()) paging_destroy_directory(old_pd);
+    /* ! THE OTHER THREADS OF THE PROGRAM END, AND THE OLD SPACE STAYS UNTIL
+     * THEY HAVE (0.321). exec replaces the whole program: its other threads
+     * go (as on Linux), but one of them may be running on another processor
+     * right now, on the old tables - destroying them here would leave it
+     * running on freed pages. It finishes at its next entry into the kernel
+     * (da_finire), and the last one out frees the space (proc_reap_zombie,
+     * proc_spazio_vivi). Up to 0.320 an exec from a thread destroyed the
+     * space under its brothers even with one processor. */
+    if (old_pd != paging_get_kernel_directory()) {
+        if (proc_spazio_vivi(old_pd, proc) > 0) {
+            klog(LOG_INFO, "SYSCALL exec: PID %u, gli altri fili del gruppo %u finiscono",
+                 proc->pid, proc->tgid);
+            proc_gruppo_termina(proc->tgid, proc->pid);
+        }
+        if (proc_spazio_vivi(old_pd, proc) == 0) {
+            proc_spazio_scorda(old_pd);     /* zombies of the group not reaped yet */
+            paging_destroy_directory(old_pd);
+        }
+    }
     shm_cleanup_process(proc);
 
 #define PAROLA  sizeof(uintptr_t)
@@ -3547,11 +3574,17 @@ int32_t sys_sbrk(InterruptFrame *frame)
         new_end = proc->heap_end - shrink;
 
         pages = shrink / PAGE_SIZE;
-        for (i = 0; i < pages; i++) {
-            uint32_t va   = new_end + i * PAGE_SIZE;
-            paddr_t  phys = paging_get_physical(proc->page_directory, va);
-            if (phys) pmm_free_page(phys);
-            paging_unmap_page(proc->page_directory, va);
+        {
+            /* one TLB round, frames after it: see sys_munmap (0.321) */
+            int lotto = paging_lotto_apri(proc->page_directory);
+
+            for (i = 0; i < pages; i++) {
+                uint32_t va   = new_end + i * PAGE_SIZE;
+                paddr_t  phys = paging_get_physical(proc->page_directory, va);
+                paging_unmap_page(proc->page_directory, va);
+                if (phys) paging_lotto_libera(phys);
+            }
+            paging_lotto_chiudi(lotto);
         }
         proc->heap_end = new_end;
 

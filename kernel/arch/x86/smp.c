@@ -85,6 +85,7 @@
 #define VETTORE_SPURIO      0xFFu
 #define VETTORE_BATTITO     0xF0u   /* il timer dell'APIC, sui processori in piu' */
 #define VETTORE_MESSAGGIO   0xF1u   /* un messaggio da un altro processore */
+#define VETTORE_TLB         0xF2u   /* drop your TLB (0.321): smp_tlb_spazio */
 
 #define LVT_MASCHERATO      0x00010000u
 #define LVT_PERIODICO       0x00020000u
@@ -112,6 +113,7 @@ extern uint32_t smp_tramp_efer;
 extern void     smp_spurio(void);
 extern void     smp_isr_battito(void);
 extern void     smp_isr_messaggio(void);
+extern void     smp_irq_tlb(void);
 #endif
 
 /* The list starts with one entry, the processor we boot on, in static
@@ -514,6 +516,13 @@ static volatile uint32_t g_bkl_turno = 0;   /* il numero che si sta servendo */
 static volatile uint8_t  g_bkl_tiene_1[1];
 static volatile uint8_t *g_bkl_tiene = g_bkl_tiene_1;  /* one per slot (smp_posti) */
 
+/* A request to drop the TLB, one per slot (smp_tlb_spazio, below): 1 = the
+ * holder of the lock is waiting for this processor to do it. */
+static volatile uint8_t  g_tlb_chiesto_1[1];
+static volatile uint8_t *g_tlb_chiesto = g_tlb_chiesto_1;
+
+static inline void tlb_butta_qui(void) { write_cr3(read_cr3()); }
+
 void bkl_entra(void)
 {
     uintptr_t eflags;
@@ -526,6 +535,13 @@ void bkl_entra(void)
         uint32_t mio = __sync_fetch_and_add(&g_bkl_coda, 1);
 
         while (g_bkl_turno != mio) {
+            /* ! THE ONE HOLDING THE LOCK MAY BE WAITING FOR US (0.321): it
+             * changed a page of the space we run and asked every processor
+             * running it to drop its TLB. Interrupts are off here, so its
+             * message waits in the APIC: the request is answered from this
+             * loop, or the two would wait for each other for ever. The
+             * message arrives later anyway and drops the TLB once more. */
+            if (g_tlb_chiesto[n]) { tlb_butta_qui(); g_tlb_chiesto[n] = 0; }
             __asm__ volatile ("pause");
             guardia_controlla();    /* a kernel stuck on this lock stops the timer */
         }
@@ -573,6 +589,137 @@ void bkl_esci(const void *frame)
     if (!g_smp_lavora || (f->cs & 3) != 3) return;
     sched_fine_chiesta();           /* se c'e' da finire, non torna */
     bkl_lascia();
+}
+
+/* =============================================================================
+ * TLB SHOOTDOWN (0.321, voce 92 b: two threads of one program on two
+ * processors at the same time)
+ *
+ * A processor keeps the translations it has used in its TLB, and does not
+ * look at the tables again until it is told to. When the kernel takes a
+ * page away from a space (munmap, the swap), makes it read-only (mprotect,
+ * fork's copy-on-write) or moves it to another frame (copy-on-write), the
+ * processor doing it forgets its own copy with invlpg - and every OTHER
+ * processor running that space must forget its copy too, or it goes on
+ * reading and writing a frame that by now may be someone else's.
+ *
+ * So: for every other processor whose current task runs `pd`
+ * (sched_spazio_su), a flag in g_tlb_chiesto and a message on VETTORE_TLB;
+ * the receiver reloads CR3 (the whole TLB but the kernel's global pages)
+ * and clears its flag; the sender waits until every flag is clear.
+ *
+ * ! THE RECEIVER DOES NOT TAKE THE KERNEL'S LOCK. The sender holds it (it is
+ * in the kernel changing tables) and waits: a receiver queueing for the lock
+ * would wait for the sender, the sender for it. Its entry (smp_irq_tlb in
+ * isr_stubs.asm, isr64_tlb in isr64.asm) saves the registers and calls
+ * smp_tlb_ricevi, nothing else: it touches only its own flag and its own
+ * APIC.
+ *
+ * ! WHO CAN BE TARGET, AND WHY THE WAIT ENDS. Only the holder of the lock
+ * sends, so every other processor is in ring 3 (the message arrives at
+ * once), idle in hlt with interrupts on (it wakes), queueing for the lock
+ * with interrupts off (bkl_entra answers the flag from its loop), or in the
+ * few instructions of an entry or exit (the message waits for the iret, or
+ * the entry reaches bkl_entra). A processor that switches space meanwhile
+ * cannot exist: switching happens in the kernel, under the lock.
+ *
+ * ! ONLY THE PROCESSORS RUNNING `pd` NOW. One that ran it before and moved
+ * to another space reloaded CR3 then (context_switch: under smp = 2 at 32
+ * bit always, at 64 bit whenever the space changes), and its TLB has nothing
+ * left of `pd`. A program with one thread never sends anything.
+ * ========================================================================== */
+static volatile uint32_t g_tlb_mandati  = 0;    /* messages sent */
+static volatile uint32_t g_tlb_ricevuti = 0;    /* requests answered */
+static volatile uint32_t g_tlb_tardi    = 0;    /* waits given up */
+
+/* The APIC of the processor numbered `c` (cpu_n), -1 if none works with
+ * that number. */
+static int apic_del_numero(uint32_t c)
+{
+    uint32_t i;
+
+    for (i = 0; i < g_smp.n; i++) {
+        const SmpCpu *k = &g_smp.cpu[i];
+
+        if (c == 0 ? k->stato == SMP_CPU_AVVIO
+                   : (k->stato == SMP_CPU_LAVORA && k->numero == c))
+            return k->apic_id;
+    }
+    return -1;
+}
+
+/* From the entry of VETTORE_TLB, interrupts off, WITHOUT the lock. */
+void smp_tlb_ricevi(void)
+{
+    uint32_t n = cpu_n();
+
+    tlb_butta_qui();                        /* mov to CR3 serializes */
+    if (n < g_posti && g_tlb_chiesto[n]) {
+        g_tlb_chiesto[n] = 0;
+        __sync_fetch_and_add(&g_tlb_ricevuti, 1);
+    }
+    apic_scrivi(APIC_FATTO, 0);
+}
+
+void smp_tlb_spazio(const void *pd)
+{
+    uint32_t  me, c, chiesti = 0;
+    uintptr_t flag;
+
+    if (!g_smp_lavora || pd == NULL || g_apic == 0) return;
+
+    /* ! INTERRUPTS OFF FOR THE WHOLE ROUND: an interrupt here would enter
+     * the kernel again on this processor (the lock is already ours) and
+     * could change a table and send its own round over this one. */
+    flag = read_eflags();
+    interrupts_disable();
+    me = cpu_n();
+    for (c = 0; c < g_posti; c++) {
+        int      apic;
+        uint32_t giri = 100000;
+
+        if (c == me || !sched_spazio_su(c, pd)) continue;
+        apic = apic_del_numero(c);
+        if (apic < 0) continue;
+        g_tlb_chiesto[c] = 1;
+        __sync_synchronize();
+        apic_scrivi(APIC_ICR_ALTO, (uint32_t)apic << 24);
+        apic_scrivi(APIC_ICR_BASSO, VETTORE_TLB);
+        while ((apic_leggi(APIC_ICR_BASSO) & ICR_IN_VOLO) && --giri)
+            __asm__ volatile ("pause");
+        chiesti++;
+    }
+    if (chiesti != 0) {
+        g_tlb_mandati += chiesti;
+        for (c = 0; c < g_posti; c++) {
+            /* a few seconds of pause on any machine: far beyond any real
+             * answer (microseconds), short of a hang */
+            uint32_t giri = 0;
+
+            while (g_tlb_chiesto[c]) {
+                __asm__ volatile ("pause");
+                guardia_controlla();
+                if (++giri == 200000000u) {
+                    /* ! SAID, NOT HIDDEN: a processor that does not answer
+                     * keeps a stale TLB. Going on is better than a machine
+                     * stopped for ever; the line says where to look. */
+                    g_tlb_tardi++;
+                    klog(LOG_ERROR, "SMP: il processore %u non risponde alla richiesta "
+                         "di svuotare il TLB (spazio 0x%08x): si prosegue",
+                         c, (uint32_t)(uintptr_t)pd);
+                    break;
+                }
+            }
+        }
+    }
+    if (flag & 0x200u) interrupts_enable();
+}
+
+void smp_tlb_conti(uint32_t *mandati, uint32_t *ricevuti, uint32_t *tardi)
+{
+    if (mandati)  *mandati  = g_tlb_mandati;
+    if (ricevuti) *ricevuti = g_tlb_ricevuti;
+    if (tardi)    *tardi    = g_tlb_tardi;
 }
 
 /* Quanti processori in piu' eseguono processi, e l'ordine di cominciare dato
@@ -798,7 +945,7 @@ static const char *nome_fonte(uint32_t f)
  * running. 0 = done. */
 static int posti_cresci(uint32_t posti)
 {
-    volatile uint8_t  *tiene;
+    volatile uint8_t  *tiene, *tlb;
     volatile uint32_t *ordine;
     uint32_t           i;
     uintptr_t          flag;
@@ -806,12 +953,14 @@ static int posti_cresci(uint32_t posti)
     if (posti <= g_posti) return 0;
     tiene  = (volatile uint8_t *)kmalloc(posti);
     ordine = (volatile uint32_t *)kmalloc(2u * posti * sizeof(uint32_t));
-    if (tiene == NULL || ordine == NULL) {
+    tlb    = (volatile uint8_t *)kmalloc(posti);
+    if (tiene == NULL || ordine == NULL || tlb == NULL) {
         if (tiene)  kfree((void *)tiene);
         if (ordine) kfree((void *)ordine);
+        if (tlb)    kfree((void *)tlb);
         return -1;
     }
-    for (i = 0; i < posti; i++) tiene[i] = 0;
+    for (i = 0; i < posti; i++) { tiene[i] = 0; tlb[i] = 0; }
     for (i = 0; i < 2u * posti; i++) ordine[i] = 0;
     if (gdt_posti(posti) != 0 || sched_posti(posti) != 0 || paging_posti(posti) != 0)
         return -1;
@@ -820,6 +969,7 @@ static int posti_cresci(uint32_t posti)
     interrupts_disable();
     tiene[0]      = g_bkl_tiene[0];
     g_bkl_tiene   = tiene;
+    g_tlb_chiesto = tlb;
     g_ordine_n    = ordine;
     g_ordine_pila = ordine + posti;
     g_posti       = posti;
@@ -982,6 +1132,8 @@ void smp_init(int accendi)
      * timer. Per uno parcheggiato fanno lo stesso lavoro di prima. */
     idt_set_gate(VETTORE_BATTITO,   (uint32_t)smp_irq_battito,   0x08, 0x8E);
     idt_set_gate(VETTORE_MESSAGGIO, (uint32_t)smp_irq_messaggio, 0x08, 0x8E);
+    /* without the lock: see TLB SHOOTDOWN above */
+    idt_set_gate(VETTORE_TLB,       (uint32_t)smp_irq_tlb,       0x08, 0x8E);
 #endif  /* at 64 bit every vector already has its entry: idt64.c */
     apic_scrivi(APIC_SPURIO, APIC_SPURIO_ACCESO | VETTORE_SPURIO);
 

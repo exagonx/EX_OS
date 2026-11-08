@@ -839,7 +839,18 @@
  * for the lock. The laptop stopped at "Spegnimento fra 3...". The clock waits
  * of ata.c and fat12.c let the lock go by on other processors
  * (bkl_fai_passare). */
-#define EXOS_VERSION    "0.320"
+/* 0.320 -> 0.321: the threads of one program run on several processors at
+ * once (voce 92 b, stage 4). A change to the tables of a space - unmap,
+ * mprotect, copy-on-write, fork, the swap, a map over a present page -
+ * reaches the TLB of every other processor running that space: a message on
+ * vector 0xF2 whose entry does not take the kernel's lock, a full CR3 reload
+ * there, and the sender waits for all (smp_tlb_spazio). munmap, sbrk and a
+ * thread's stack send one round per call, freeing the frames after it
+ * (paging_lotto_*). sched_puo_qui no longer keeps two threads of one space
+ * apart. A fault on a page another thread has just brought in goes back at
+ * once (pf_gia_a_posto). exec from a thread ends its brothers and keeps the
+ * old space until the last one has left it. */
+#define EXOS_VERSION    "0.321"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
