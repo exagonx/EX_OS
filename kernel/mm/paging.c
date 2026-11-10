@@ -1265,15 +1265,20 @@ int      paging64_spezza(PDE *pd, vaddr_t virt);
 
 static struct {
     PDE     *pd;            /* NULL = no batch open */
-    uint32_t chi;           /* the processor that opened it */
+    const void *chi;        /* the process that opened it (0.322) */
     int      sporco;        /* a round for pd is owed */
     uint32_t n;
     paddr_t  frame[LOTTO_PAGINE];
 } g_lotto;
 
+/* ! THE OWNER IS THE PROCESS, NOT THE PROCESSOR (kernel 0.322). Kernel code
+ * can be switched away by a tick and come back on the other processor: with
+ * the processor as owner, a munmap moved halfway freed its frames at once
+ * (no round for the other TLBs) and left the batch open, and whoever ran next
+ * on the first processor took it as its own. */
 static int lotto_mio(void)
 {
-    return g_lotto.pd != NULL && g_lotto.chi == cpu_n();
+    return g_lotto.pd != NULL && g_lotto.chi == (const void *)proc_get_current();
 }
 
 static void lotto_svuota(void)
@@ -1297,7 +1302,7 @@ int paging_lotto_apri(PDE *pd)
     fl = read_eflags();
     interrupts_disable();
     if (g_lotto.pd != NULL) { if (fl & 0x200u) interrupts_enable(); return 0; }
-    g_lotto.pd = pd; g_lotto.chi = cpu_n(); g_lotto.sporco = 0; g_lotto.n = 0;
+    g_lotto.pd = pd; g_lotto.chi = (const void *)proc_get_current(); g_lotto.sporco = 0; g_lotto.n = 0;
     if (fl & 0x200u) interrupts_enable();
     return 1;
 }

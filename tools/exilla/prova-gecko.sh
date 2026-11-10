@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# tools/exilla/prova-gecko.sh — Gecko senza finestre dentro EX-OS (tappa 6)
+# tools/exilla/prova-gecko.sh &#x2014; Gecko senza finestre dentro EX-OS (tappa 6)
 #
 # Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
@@ -53,6 +53,15 @@ rm -rf "${S:?}"; mkdir -p "$S/profilo" "$S/casa" "$S/font"
 cp -a "$P" "$S/firefox"
 # I caratteri di ExWin stanno sulla sua ISO, non sul CD di base: qui sul disco.
 cp exwin/font/*.ttf "$S/font/"
+# The CJK fonts of the [font-cjk] package (tools/font-cjk/prepara.sh), when
+# they are there: the page has a line in Chinese, Japanese and Korean, which
+# without them comes out as boxes. FONT_CJK=no leaves them out (a disk 93 MB
+# smaller, and the boxes).
+CJK=cross_build/terze-parti/noto-cjk/scelti
+if [ "${FONT_CJK:-si}" != no ] && [ -d "$CJK" ]; then
+    cp "$CJK"/*.ttc "$S/font/"
+    cp tools/font-cjk/exos-cjk.js "$S/firefox/defaults/pref/"
+fi
 cat > "$S/prova.html" <<'EOF'
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Exilla</title>
@@ -67,6 +76,9 @@ cat > "$S/prova.html" <<'EOF'
   <div class="riquadro" style="background:#c0392b"></div>
   <div class="riquadro" style="background:#27ae60"></div>
   <div class="riquadro" style="background:#2980b9"></div>
+  <p lang="zh-CN">&#x4E2D;&#x6587;&#xFF1A;&#x4F60;&#x597D;&#xFF0C;&#x4E16;&#x754C; <b>&#x7C97;&#x4F53;</b></p>
+  <p lang="ja">&#x65E5;&#x672C;&#x8A9E;&#xFF1A;&#x3053;&#x3093;&#x306B;&#x3061;&#x306F;&#x4E16;&#x754C; <span style="font-family:serif">&#x660E;&#x671D;&#x4F53;</span></p>
+  <p lang="ko">&#xD55C;&#xAD6D;&#xC5B4;: &#xC548;&#xB155;&#xD558;&#xC138;&#xC694; &#xC138;&#xACC4;</p>
   <p id="js">JavaScript non e' partito.</p>
   <script>
     document.getElementById("js").textContent =

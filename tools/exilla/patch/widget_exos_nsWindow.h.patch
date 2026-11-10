@@ -1,6 +1,14 @@
 --- a/widget/exos/nsWindow.h
 +++ b/widget/exos/nsWindow.h
-@@ -85,6 +85,9 @@
+@@ -21,6 +21,7 @@
+ #include "mozilla/Mutex.h"
+ #include "mozilla/RefPtr.h"
+ #include "mozilla/TextEventDispatcherListener.h"
++#include "mozilla/UniquePtr.h"
+ #include "nsIWidget.h"
+ 
+ namespace mozilla::widget {
+@@ -85,6 +86,9 @@
    void OnServerResized(const void* aCreata);
    void OnServerMoved(int32_t aX, int32_t aY);
  
@@ -10,3 +18,16 @@
    bool Destroyed() const { return mDestroyed; }
  
   private:
+@@ -137,6 +141,12 @@
+   uint32_t mZonaId = 0;  // mId as the renderer sees it
+   int32_t mZonaW = 0;
+   int32_t mZonaH = 0;
++  // The back buffer (voce 95): Gecko draws here, EndRemoteDrawingInRegion
++  // copies the finished rectangles into the zone. Under mZonaLock as well.
++  mozilla::UniquePtr<uint8_t[]> mRetro;
++  int32_t mRetroW = 0;
++  int32_t mRetroH = 0;
++  bool mZonaNuova = false;  // a zone just attached: give it the whole buffer
+ 
+   // The double click: the last press.
+   uint32_t mUltimoGiuTempo = 0;

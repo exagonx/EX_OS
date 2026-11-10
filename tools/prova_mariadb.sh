@@ -84,6 +84,17 @@ if [ "$BIT" = 32 ] && [ -f "$FB/libfb.a" ]; then
 else
     echo "  (FreeBASIC: libfb per EX-OS solo a 32 bit su questa macchina)"
 fi
+# ! THE CONNECTORS ARE LINKED TO SHARED LIBRARIES since 3 November 2026
+# (third-party libraries as .so): the system CD has libm, libstdc++ and
+# libgcc_s in /lib, not OpenSSL, zlib and zstd, which come from the tools CD.
+# Up to 8 November this test ran them without, and all three stopped at
+# "libssl.so.4: cannot open shared object file". They go in /a/lib, and the
+# connectors run with LD_LIBRARY_PATH=/a/lib.
+LIBSO=build/iso/exos/lib; [ "$BIT" = 64 ] && LIBSO=build-64/iso/exos/lib
+mkdir -p "$T/lib"
+for l in libssl.so.4 libcrypto.so.4 libz.so.1 libzstd.so.1; do
+    cp -L "$LIBSO/$l" "$T/lib/$l" || { echo "  manca $LIBSO/$l: make iso / make ARCH=x86_64 tools64"; exit 1; }
+done
 cat > "$T/prova.sql" <<'EOF'
 select concat('MARIADB versione ', version()) as r;
 create database prova;
@@ -116,6 +127,7 @@ EXOS_ISTANZA=md$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     "echo BOOTSTRAP-FINITO@2" \
     "/a/bin/mariadbd $OPZ --bind-address=127.0.0.1 --port=3306 --skip-name-resolve --ssl-cert=/a/cert.pem --ssl-key=/a/key.pem &@60" \
     "$CLI -N < /a/prova.sql@~120" \
+    "export LD_LIBRARY_PATH=/a/lib@2" \
     "/a/bin/connprova 127.0.0.1 3306@~60" "/a/bin/connprovapp 127.0.0.1 3306@~60" \
     "/a/bin/connprovars 127.0.0.1 3306@~60" "/a/bin/connprovafb 127.0.0.1 3306@~60" \
     "/a/bin/mariadb-admin --no-defaults -h 127.0.0.1 -u root shutdown@~120" \

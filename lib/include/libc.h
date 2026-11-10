@@ -3281,6 +3281,41 @@ int     irq_done(unsigned int irq);
 int     irq_unbind(unsigned int irq);
 
 /* =============================================================================
+ * Edges with their instant (kernel 0.323, voce 98)
+ *
+ * For a driver that measures the TIME between the edges of an interrupt line:
+ * the ACK pin of the parallel port, where a Commodore datasette sends waves of
+ * 180-500 microseconds, or a prototype board. The kernel notes the finest
+ * clock at the entry of each interrupt, keeps the instants in a ring of
+ * `quanti`, and sends ONE notification (IPC_TYPE_IRQ_NOTIFY) until they are
+ * read; the line is not masked between edges, so irq_done is not needed.
+ *
+ * ! ONLY THE SOLE OWNER OF AN EDGE LINE: irq_bind first; -EBUSY if another
+ * driver shares it (a shared PCI line is level-triggered and would never stop
+ * interrupting without its driver clearing the card).
+ *   irq_fronti_accendi  0, or -errno
+ *   irq_fronti_leggi    how many instants it wrote (the oldest first)
+ *   irq_fronti_stato    the clock's hz (TSC, or 1193182 without RDTSC) and
+ *                       the clock now, for anybody; for the owner also the
+ *                       edges lost to a full ring
+ * ============================================================================= */
+typedef struct {
+    unsigned int       hz;
+    unsigned int       cap;
+    unsigned int       in_coda;
+    unsigned int       persi;
+    unsigned int       fronti;
+    unsigned int       tsc;         /* 1 = hz is the TSC's, RDTSC reads it */
+    unsigned int       spuri;       /* edges taken from a "spurious" IRQ 7/15 */
+    unsigned int       riservato;
+    unsigned long long adesso;
+} IrqFrontiStato;
+int     irq_fronti_accendi(unsigned int irq, unsigned int quanti);
+int     irq_fronti_spegni(unsigned int irq);
+int     irq_fronti_leggi(unsigned int irq, unsigned long long *istanti, unsigned int max);
+int     irq_fronti_stato(unsigned int irq, IrqFrontiStato *s);
+
+/* =============================================================================
  * fdprova — la prova passo passo del drive floppy
  *
  * Rende quanti passi hanno dato problemi (0 = nessuno), oppure -EPERM se non

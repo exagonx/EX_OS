@@ -1,0 +1,248 @@
+ex-os:/root> ps
+PID   PADRE UTENTE    STATO   FILE DA       NOME
+1     0     root      pronto  0    (RAM)    idle
+2     0     root      pronto  0    (RAM)    init
+3     2     root      blocc.  0    (RAM)    kbd
+17    11    root      blocc.  0    /        /dev/rtl8169.drv
+5     2     root      dorme   0    (RAM)    giornale
+6     4     root      blocc.  0    /rdboot  sh0
+7     4     root      blocc.  0    /rdboot  sh1
+8     4     root      blocc.  0    /rdboot  sh2
+9     4     root      blocc.  0    /rdboot  sh3
+10    4     root      blocc.  0    /rdboot  sh4
+27    6     root      blocc.  0    /rdboot  /rdboot/bin/sh
+29    27    root      pronto  0    /        /bin/telnetd
+14    11    root      blocc.  0    /        /dev/pci.drv
+35    29    root      blocc.  0    /        /bin/sh
+38    35    root      esecuz  0    /        /bin/ps
+18    11    root      blocc.  0    /        /dev/ip.drv
+22    11    root      blocc.  0    /        /dev/ehci.drv
+23    11    root      blocc.  0    /        /dev/ohci.drv
+24    11    root      dorme   0    /        /bin/automount
+ex-os:/root> disk
+
+hd0  canale primario, master
+  Dispositivo non riconosciuto.
+
+hd1  canale primario, slave
+  Dispositivo non riconosciuto.
+
+hd2  canale secondario, master
+  Modello       : Hitachi HTS543225L9A300
+  Seriale       : 081001FB0D00LJC28GEA
+  Firmware      : FBEOC40C
+  Indirizzamento: LBA48, supporta HPA
+  Capacita'     : 488397168 settori (238475 MB)
+  Di fabbrica   : coincide, nessuno spazio nascosto
+  Schema        : MBR
+  Anomalie      : nessuna
+
+  n.  tipo MBR      avv      inizio       MB  filesys.  etichetta   
+  --------------------------------------------------------------------
+  1   Linux         si         2048   201001  ext4      SYSTEM      
+        51456256 blocchi da 8 settori
+  2   swap Linux          411652096     4096  -                     
+  'L' = partizione logica. Il numero e' quello di fdisk: 1-4 sono
+  gli SLOT delle primarie, le logiche partono da 5. Il dispositivo
+  a blocchi si chiama hd<disco>p<numero>.
+  Il filesystem e' dedotto dal NUMERO DI CLUSTER (regola FAT), non
+  dal byte di tipo MBR, che e' solo un suggerimento e puo' mentire.
+
+cd0  (slot ATA 3)  canale secondario, master
+  Lettore ottico ATAPI (CD/DVD)
+  Modello       : ATAPI   DVD A  DH16A6S
+  Firmware      : YA16
+  Si monta come dispositivo a blocchi 'cd0' (ISO 9660,
+  sola lettura): mount cd0 /cdrom
+
+Dispositivi a blocchi
+  nome    tipo           primo LBA     settori        MB
+  ----------------------------------------------------------
+  fd0     floppy                 0        2880         1
+  cd0     CD/DVD                 0           0         0  (sola lettura)
+  hd2     disco                  0   488397168    238475
+  hd2p1   partizione          2048   411650048    201001
+  hd2p2   partizione     411652096     8388608      4096
+  rdb0    in RAM                 0        8192         4
+  Un cd0 con zero settori non e' un lettore rotto: e' un lettore
+  che nessuno ha ancora sondato, o con il vassoio vuoto. La sua
+  lunghezza appartiene al disco inserito, non al dispositivo.
+  Ogni accesso e' relativo al dispositivo e viene RIFIUTATO se
+  esce dalla sua finestra: e' cio' che impedisce a un filesystem
+  di toccare un'altra partizione o la tabella delle partizioni.
+
+Sola lettura: questo programma non modifica nulla.
+I dati vengono dal disco (IDENTIFY DEVICE), non dal BIOS.
+
+ex-os:/root> mount
+Punto                    Dispositivo  Filesystem  Accesso
+------------------------ ------------ ----------- -------------
+/                        hd2p1        ext4        lettura/scrittura
+/rdboot                  rdb0         ext2        lettura/scrittura
+/proc                    proc         FAT4294967295 sola lettura
+ex-os:/root> cat /boot/avvio.sh
+# =============================================================================
+# avvio.sh - i comandi del SISTEMA, non di chi entra
+#
+# Lo esegue `login` prima dell'accesso e con i privilegi di root, sulla
+# sola console 0, e aspetta che finisca. E' il posto delle cose che
+# vogliono un ORDINE - accendere la rete e' la prima.
+#
+# Se una riga qui dentro si blocca: Alt+F2 da' una shell pulita, e
+# cancellare questo file lo salta del tutto.
+# =============================================================================
+
+!silenced
+
+# La barra di stato, SE root l'ha chiesta (`extaskbar -boot:on`). Da sola
+# questa riga non fa niente: extaskbar -auto legge /root/.config/extaskbar.cfg
+# e parte solo se `avvio = si`, altrimenti esce in silenzio. Sta PRIMA di
+# tutto il resto: cosi' anche i primi messaggi dei servizi lanciati qui sotto
+# con '&' vanno nei suoi log invece che sullo schermo.
+extaskbar -auto
+
+# A video mode on trial (Impostazioni, Video, Prova): if nobody confirms it
+# within two minutes - the screen may be black - svga.drv puts the old mode
+# back and reboots. Without a trial it exits at once.
+svga.drv -guardia &
+
+# Il bus PCI: lo chiedono sia le schede di rete sia i controller USB.
+pci.drv &
+
+
+# La shell dalla rete, SE qualcuno l'ha chiesta. Da sola questa
+# riga non apre niente: telnetd -auto legge /boot/telnetd.cfg e
+# parte solo se la chiave `avvio` dice "login" oppure "root".
+# Il predefinito e' "no", e in quel caso esce in silenzio.
+#
+# ! STA PRIMA DI netupdate APPOSTA: quello gira in primo piano e
+# avvio.sh lo aspetta. Se si ferma - server lento, una domanda
+# senza risposta - tutto cio' che sta sotto non parte mai, e una
+# macchina in un'altra stanza diventa irraggiungibile proprio
+# quando la si vorrebbe guardare. Cio' che serve a RIPARARE si
+# accende prima di cio' che puo' ROMPERE.
+telnetd -auto &
+
+# The WiFi, IF root asked for it (`wifi -boot:on`, @WIFI). On its own this
+# line does nothing: wifid -auto reads /cfg/wifi/root.cfg and stays only if
+# the key `avvio` says "si"; otherwise it exits without a word. It waits
+# for the WiFi driver by itself, so the order with the lines above is free.
+wifid -auto &
+echo Accendo la rete...
+
+# L'ordine non e' modificabile: ogni passo serve al successivo, e
+# ognuno aspetta che il precedente abbia registrato il proprio
+# servizio. Il PCI e' gia' partito qui sopra.
+rtl8169.drv &
+ip.drv &
+
+# Un indirizzo dal DHCP, se c'e' un server. Senza, l'indirizzo si
+# mette a mano:  ipcfg -a 192.168.1.10 -m 255.255.255.0 -g ...
+dhcp
+
+echo Rete pronta: 'ipcfg' la mostra, 'ping' la prova.
+
+# L'ora dalla rete, in silenzio: con la pila dell'orologio scarica
+# la macchina riparte dalla data del BIOS. (Stessa riga in date.c.)
+date -auto &
+
+# Un'occhiata al server degli aggiornamenti: non chiede niente, non
+# installa niente e non stampa niente se non c'e' niente da dire.
+# Fa qualcosa solo se /boot/netupdate.cnf dice "automatico = si",
+# e molla dopo cinque secondi se il server non risponde.
+netupdate -auto
+
+# Le chiavette USB: i controller, e poi chi le monta.
+# EHCI e' USB 2.0, OHCI e' USB 1.1 su tutto cio' che non e' Intel.
+# Con -avvio quello che non trova il suo controller esce in silenzio,
+# e restano a guardare le porte: all'accensione la chiavetta non c'e'
+# quasi mai - si accende la macchina e POI si infila.
+ehci.drv -avvio &
+ohci.drv -avvio &
+
+# L'UHCI non sta qui: quel driver ha due mestieri, e senza argomenti
+# serve il MOUSE. Chi ha una macchina Intel con solo USB 1.1 e vuole
+# le chiavette aggiunga a mano:  /dev/uhci.drv -avvio &
+
+# Guarda i dispositivi a blocchi, non l'USB, e monta quel che compare:
+# la prima chiavetta in /USB/USB0, la seconda in /USB/USB1, e cosi' via;
+# un'altra partizione della stessa in /USB/USB0p2.
+automount &
+
+# L'acceleratore 2D della scheda grafica, se ce l'ha. Esce da solo e in
+# silenzio su ogni macchina che non sia una SiS: niente scheda, niente
+# servizio, nessuna riga. Se non parte non si rompe niente - wserver lo
+# cerca una volta all'avvio, non lo trova, e riempie da se' con MMX.
+# Quello e' il ramo normale: su VESA e sul framebuffer generico e'
+# l'unico che esiste.
+# Va qui e non dentro exwin perche' /dev e' di root: un utente normale
+# non puo' eseguire /dev/sis.drv. Il servizio lo accende il SISTEMA.
+sis.drv -2dservizio &
+
+# -install nv50.drv
+# Il pannello alla risoluzione nativa, prima del prompt e della
+# scrivania. Esce zitto dove la scheda non e' una NVIDIA G80 con
+# questo pannello. `nv50.drv -remove` toglie questo blocco.
+nv50.drv -avvio
+
+@echo Sistema pronto.
+ex-os:/root> cat /boot/kernel.cfg
+# =============================================================================
+# kernel.cfg - scritto da `hwconfig`
+#
+# Cosa vuol dire ogni voce sta in /boot/kernel.txt: qui ci sono solo
+# le impostazioni, perche' questo file ha un tetto di 8191 byte e
+# oltre quello le sezioni finali vengono ignorate.
+#
+# Il file precedente e' in kernel.cfg.bak. Per tornare indietro:
+#     delete /boot/kernel.cfg
+#     rename /boot/kernel.cfg.bak /boot/kernel.cfg
+# =============================================================================
+
+[kernel]
+swap = hd2p2
+loglevel    = 3
+timer_hz    = 100
+# 0 = avvio silenzioso, 1 = mostra il log di avvio.
+# Errori e avvisi restano visibili in entrambi i casi.
+verboseboot = 0
+
+# Disposizione della tastiera: us it fr de es uk.
+# Si cambia a caldo con `keymap`; `keymap -p` ristampa questa riga.
+keymap      = it
+
+# La lingua dei programmi: la scrive l'installatore.
+lingua      = it
+
+[boot]
+shell       = /bin/sh
+
+# Chi si apre su ogni console al posto della shell: chiede
+# nome e password, e `exit` torna qui invece di lasciare la
+# console morta. Senza questa riga NON si autentica nessuno.
+login       = /bin/login
+modules     = kbd
+
+[env]
+PATH        = /bin:/dev:/exos/bin
+HOME        = /
+TERM        = vga
+# Dove finiscono i file temporanei: deve essere scrivibile.
+TMPDIR      = /
+
+# Caricati all'avvio come processi ring3, in quest'ordine.
+[modules]
+kbd         = /dev/kbd.drv
+
+# La rete: Realtek RTL8169/8110 Gigabit - si accende da /boot/avvio.sh, che
+# `login` esegue prima dell'accesso e da root. Li' l'ordine
+# e' garantito; qui non lo sarebbe.
+
+# Montaggi automatici. La forma e'  punto = dispositivo, e il punto
+# NON deve esistere gia': lo crea il VFS.
+[mount]
+# Un lettore vuoto o assente non e' un errore: il montaggio
+# viene saltato e l'avvio prosegue.
+/cdrom      = cd0
+
+

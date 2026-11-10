@@ -99,7 +99,7 @@ GRUPPO  VOCI             COSA
                          lettore video; ExEditor: barra strumenti, righello, pagina
                          80 cambiata il 7/11: gruppo Applicazioni, Multimedia, netupdate
                          riordina, Applicazioni... in Impostazioni > Sistema
-  2     74               FATTO 2/11 in QEMU; blocco duro non riprodotto
+  2     74               CHIUSA 8/11: a cavo staccato il portatile arriva al login
   3     75 5 65          dati sicuri: mappa d'avvio, spento da solo (59 e 63 fatte)
   4     50 62            tetti montaggi; telnetd (serve il passaggio in ip.drv). 53 e 9 fatte
   5     66 27 38 70 73   Firefox: si rimisura prima (54 bis e 71 per la cache)
@@ -126,7 +126,23 @@ GRUPPO  VOCI             COSA
                          fissati o riservati a un core, i fili di un programma su tutti gli altri
                          FATTO a c d e in QEMU (kernel 0.319, smp = 2 predefinito, comando cpu);
                          b FATTO in QEMU (kernel 0.321, TLB shootdown, fili insieme: 1,97 con 2);
-                         Firefox ricollegato (vede 2 core); portatile a 0.320, b li' da fare
+                         Firefox ricollegato (vede 2 core); portatile a 0.321: b 8/8 anche li' (8/11)
+ --     93               (8/11) mount: /proc mostrato come "FAT4294967295"
+ --     94               (9/11) stdout di uno script e del suo figlio in sottofondo si
+                         sovrascrivono nello stesso file: da verificare
+ --     95               (9/11) flash bianchi nei video di Firefox con due core: zona di
+                         ExWin senza doppio buffer; nsWindow col buffer suo FATTO, ma
+                         in QEMU i lampi non si riproducono: misura sul portatile
+ --     99               (9/11) il PC MCP73 + Q9650 (192.168.0.247) analizzato: driver
+                         mancanti video NV4x, DMA/AHCI del disco, FireWire, SMBus
+ --     98               (9/11) un driver unico della porta parallela: FATTO lpt.drv
+                         0.001 e kernel 0.323 (fronti con l'istante), provato in QEMU;
+                         IN PAUSA (l'utente, 9/11): fronti persi con 2 processori e
+                         ritardo dell'onda da decidere, poi porta vera e voce 96
+ --     97               (9/11) exwin lanciato mentre girano i lavori d'avvio torna al
+                         prompt senza wserver e senza dire niente (prova-lampi 4/4)
+ --     96               (9/11) datasette sulla porta parallela: un'app a finestre di
+                         testo da mtap/ptap (3p_app_source/c64tap), TAP e backup PC
 
 # FINE INDICE/p' in_lavorazione.txt
         l'indice, e basta questo per scegliere
@@ -5132,6 +5148,8 @@ Le prove che contano, e come si lanciano:
     dieci. Le strade sono due, e nessuna e' gratis: un font CJK ridotto ai soli
     caratteri comuni, oppure dichiararlo a schermo invece che lasciare un
     collegamento vuoto che sembra rotto.
+    9/11/2026: i font ci sono (pacchetto font-cjk, /exwin/font/Noto*CJK*.ttc,
+    per Exilla); a EXBrowser manca il lettore delle raccolte .ttc.
 
  2. @NAV-UNITA LE UNITA' RELATIVE: FATTE IL 28 SETTEMBRE 2026 (exbrowser 0.010;
     cssprova 128/128, prova_bordi.sh 7/7). @media era gia' fatta stamattina.
@@ -8567,6 +8585,9 @@ tools/netinst/velocita tolto da netinst.
       ! IL BLOCCO DEL SISTEMA NON E' RIPRODOTTO: QEMU, server muto, DNS irraggiungibile,
       niente DHCP: date torna sempre. In avvio.sh netupdate -auto e dhcp stanno in
       primo piano: se ricompare, guardare quelli. Non provato col cavo staccato.
+      8/11, PORTATILE A CAVO STACCATO (kernel 0.321, prova dell'utente): arriva
+      al login come sempre, nessuna riga ferma. Stato: CHIUSA; si riapre solo
+      se il blocco ricompare.
 
   73. FIREFOX: IL PRIMO TAB NON USA LA BARRA DELL'URL (l'utente, 2/11, 0.307). Appena
       avviato, quello che si scrive nella barra del primo tab non viene eseguito;
@@ -8921,6 +8942,213 @@ tools/netinst/velocita tolto da netinst.
       driver video, le copie di pagina) e cosa guadagna SSE2 li' (registri
       da 128 bit, movntdq per scrivere senza sporcare la cache).
 
+  99. IL PC ACER MCP73 + CORE 2 QUAD Q9650 (l'utente, 9/11 sera: "su ip
+      192.168.0.247 telnetd ascolta su nuovo hardware puoi fare una analisi
+      dell'Hardware e salvare le informazioni cosi che si possa procedere
+      alla creazione dei driver mancanti ?").
+      FATTO (9/11 sera, tutto in sola lettura da telnet): i referti in
+      sonda/acer-mcp73-q9650/ (hwinfo, SONDA1, dmesg, disk, ps, avvio.sh,
+      kernel.cfg, hdaudio -i, ahci -d, nv50 -stato) e l'analisi in
+      sonda/acer-mcp73-q9650/LEGGIMI.md. E' la scheda di sonda/mb_oem_000
+      (1025:0137, 31/12/2025) con in piu' una RTL8169 su PCI e il disco
+      Hitachi; gira EX-OS 0.318 a 64 bit, i 3 processori in piu' fermi
+      (prima della 0.319).
+      DRIVER MANCANTI, in ordine:
+      a) video NVIDIA C73 10de:07e5 (GeForce 7100, NV4x, PMC_BOOT_0
+         0x063000a2): modi nativi + 2D per wserver, riferimento MIT
+         xf86-video-nv (nv_hw.c, nv_xaa.c). nv50.drv non c'entra (G80).
+      b) il disco in DMA: SATA MCP73 oggi in PIO; AHCI c'e' (CAP a3229f03,
+         GHC 0, disco porta 0, DVD porta 1): provare ahci -t / ahci -m QUI,
+         con l'utente presente (e' il disco di sistema).
+      c) FireWire VIA VT6306 1106:3044 (OHCI 1394), se serve.
+      d) SMBus MCP73 10de:07d8 (SPD, sensori).
+      e) 10de:07da classe 0b.40: non serve driver, hwinfo lo segni "non serve".
+      DIFETTI VISTI: svga.drv -lista da' "0x0 0 bit"; sonda.drv -rom fallisce
+      (mmio_map 0xC0000 a 64 bit); la parte VGA di sonda.drv e' da SiS;
+      memoria 3839 MB in hwinfo ma "RAM massima 3071 MB" nel registro.
+      DA CHIEDERE ALL'UTENTE: da quale driver si comincia; se la macchina
+      si puo' aggiornare alla 0.322/0.323 (netupdate) per avere i 4
+      processori e prendere i referti con gli strumenti nuovi.
+      L'UTENTE (9/11 notte): "salva tutto si chiude per adesso ma al reset
+      prima faccio l'aggiornamento del sistema poi fai, la ram e' condivisa
+      con la gpu se riesco a trovare un'altra scheda di memoria provvedo a
+      fare un'espansione". Quindi: ALLA RIPRESA l'utente aggiorna prima il
+      sistema (anche la macchina .247), POI si riprende da qui: rifare i
+      referti con la versione nuova e scegliere il driver con lui.
+      ! LA RAM E' CONDIVISA CON LA GPU (memoria video presa dalla RAM): e'
+        probabilmente la differenza fra i 3839 MB di hwinfo e i 3071 del
+        registro; da verificare con la versione nuova. L'utente forse
+        aggiunge un modulo di RAM.
+
+  98. UN DRIVER UNICO PER LA PORTA PARALLELA (l'utente, 9/11): "dato che il
+      driver per la porta parallela dovra' servire anche per la stampa su
+      stampanti parallele, comunicazione iomegazip, lettura di scanner lpt, e
+      gestione degli interrupt singolarmente per controllare schede di
+      prototipo si puo creare un unico driver in grado di operare in tutte
+      queste maniere ?" Viene PRIMA della voce 96 (il datasette e' un suo
+      cliente).
+      PROPOSTA (risposta del 9/11, da confermare):
+      - lpt.drv in ring 3 (SYS_IOPORT_BIND, SYS_IRQ_BIND) possiede la porta:
+        trova le porte (0x378/0x278/0x3BC, BIOS 0x408, PCI), riconosce i
+        modi SPP, PS/2 bidirezionale, EPP, ECP, negozia IEEE 1284 (nibble,
+        byte, EPP, ECP, Device ID della stampante), e decide CHI la usa
+        (un cliente alla volta, come parport di Linux: prendi/lascia).
+      - I clienti parlano con lui per IPC: la stampa (coda verso la
+        stampante, /dev/lp0), lo ZIP (i protocolli ppa e imm di Linux -> un
+        disco a blocchi come blkr3), lo scanner (byte grezzi IEEE 1284), il
+        datasette (voce 96: misura degli impulsi), le schede prototipo
+        (accesso grezzo ai pin).
+      - IL TEMPO CRITICO STA DENTRO IL DRIVER: una syscall per byte
+        (SYS_IOPORT_IN/OUT) costa troppo per lo ZIP (trasferimenti a blocchi
+        EPP) e trema troppo per il datasette (impulsi da ~180 us misurati al
+        microsecondo). Il driver fa i giri stretti lui (blocco EPP, cattura di
+        N impulsi col TSC) e consegna il risultato; da vedere se serve la
+        bitmap I/O del TSS per in/out diretti in ring 3.
+      - GLI INTERRUPT: la porta ha UNA linea (IRQ 7 o 5) sul fronte di ACK
+        (pin 10). "Singolarmente" si puo' fare cosi': ogni fronte arriva al
+        cliente come messaggio con l'ora (TSC); gli altri ingressi (BUSY,
+        PAPER-OUT, SELECT, ERROR) si leggono a richiesta o a campionamento
+        veloce dentro il driver, che manda un messaggio quando cambiano. Piu'
+        linee di interrupt vere vogliono una scheda in piu' o ECP.
+      DOMANDE ALL'UTENTE: quali schede prototipo (cosa devono fare gli
+      interrupt), quale ZIP (100 parallelo: ppa o imm?), quali scanner e
+      stampanti ha per provare; su quale macchina con la porta parallela si
+      prova (QEMU ha -parallel, ma non simula ZIP, scanner ne' datasette).
+      L'UTENTE (9/11): "bene inizia con la creazione del driver, per quanto
+      riguarda mtap e ptap servono solo come riferimento per avere i
+      parametri su come comunicare con il datasette, non voglio replicare il
+      software ma usarli come documentazione".
+      FATTO (9/11 sera), non committato:
+      - kernel 0.323, SYS_IRQ_FRONTI (266): irq_istante() nelle entrate
+        degli interrupt (isr_stubs.asm, isr64.asm vettori 32-47) PRIMA di
+        bkl_entra; orologio_fine() = TSC, o PIT canale 0 + g_ticks sul 486;
+        IrqFronti per linea (anello kmalloc della misura chiesta, avvisa una
+        volta finche' non si legge, la linea non si maschera); solo per
+        l'unico proprietario (-EBUSY se condivisa); IRQF_STATO da' l'orologio
+        a tutti (serve all'onda). Un IRQ 7/15 spurio su una linea in questo
+        modo conta come fronte (campo spuri). irq_posti da posti_cresci.
+      - drivers/lpt/lpt.c + lpt_proto.h: sonda SPP/PS2/EPP/ECP, un servizio
+        per porta (lpt0..), prendi/lascia (chi muore la libera), stampa con
+        Busy/nStrobe, piedini grezzi, Device ID IEEE 1284 nibble, fronti di
+        nACK (anello che cresce nel driver), onda su linee dati col TSC su
+        un processore riservato (cpu_riserva) con ritardo misurato.
+        -install/-remove. A 32 bit nel Makefile, a 64 da solo.
+      - tools/prova_lpt.sh: 12/12 a 32 e 64 bit con un processore.
+      ! CON DUE PROCESSORI SI PERDONO FRONTI: 300/300 a 32 bit, 297/300 a 64
+        (294 a 32 prima di contare gli spuri). Il kernel ha visto 297
+        interrupt, nessuno spurio: due fronti fusi nel PIC mentre il
+        processore 0 aspetta il lucchetto a interrupt spenti (bkl_entra fa
+        cli e gira finche' non e' il suo turno). Il datasette fa un fronte
+        ogni 180-500 us: un'attesa piu' lunga ne perde. Rimedi possibili, da
+        decidere con l'utente: aspettare il lucchetto a interrupt accesi
+        (attenzione al rientro: un interrupt dentro l'attesa prenderebbe un
+        altro numero e aspetterebbe se stesso), o portare gli IRQ sull'IO
+        APIC verso un processore che non aspetta, o un lucchetto piu' fine.
+      ! L'onda: ritardo peggiore 0,26-1,3 ms in QEMU (ogni fronte e' una
+        syscall ioport_out che prende il lucchetto). Per il nastro basta?
+        Da misurare sul ferro; se no la bitmap I/O del TSS (in/out diretti).
+      IN PAUSA dal 9/11 sera (l'utente: "metti in pausa il driver lpt"):
+      si riprende dalle due domande qui sopra (fronti persi, onda).
+      DA FARE: provarlo su una porta vera con una stampante e col datasette;
+      ZIP e scanner quando l'utente dice quali; poi la voce 96.
+
+  97. exwin SUBITO DOPO L'AVVIO NON PARTE (visto il 9/11 con
+      tools/exilla/prova-lampi.sh, kernel 0.322, -smp 1 e -smp 2): `mount
+      hd0p1 /disk`, quattro export, `exwin` mentre ehci.drv -avvio, ohci.drv
+      -avvio e sis.drv -2dservizio giravano ancora: nessuna riga di exwin
+      (ogni sua uscita ne stampa una, quindi era fermo prima), wserver mai
+      partito, poi il prompt. 4 volte su 4; due volte anche "ATA: timeout BSY
+      sul canale 0 (stato=0xc0)" e "DMA fermo a lba=2056 dopo 8000 ms", con
+      due QEMU e la compilazione di Firefox insieme (carico dell'host). Con 30
+      s di attesa dopo il montaggio exwin parte (prova-gecko aspetta gia'
+      cosi'). Da capire dove si ferma exwin (video_info? console_info? il
+      caricamento da CD?) con la sonda della guardia; sul portatile l'utente
+      lancia exwin a sistema pronto, quindi non lo vede.
+
+  96. IL DATASETTE SULLA PORTA PARALLELA (l'utente, 9/11): "nella directory
+      3p_app_source/c64tap/ ci sono i sorgenti di mtap e ptap due
+      applicazioni per DOS che permettono la lettura e scrittura di dati
+      usando il datasette collegato alla porta parallela sei in grado di usare
+      i sorgenti per creare un applicazione che tramite interfaccia grafica
+      testuale permette la lettura e scrittura di file tap nel datasette con
+      i vari settaggi configurabili nell'apposita area e magari implementare
+      la possibilita' di fare un backup di file piu grossi come archivi zip ma
+      per uso pc una sorta di backup su nastri normali usando i vecchi
+      datasette, ovviamente devono operare dentro ex-os anche se i sorgenti
+      sono per DOS".
+      COSA C'E' (letto il 9/11): mtap 0.36 (MTAP.C 774 righe: legge il nastro
+      in un .TAP) e ptap 0.37 (PTAP.C 576 righe: scrive un .TAP sul nastro),
+      Markus Brenner, DJGPP per DOS: porta parallela con inportb/outportb e
+      disable() durante la misura degli impulsi (cavo C64S/X1531 diretto, o
+      X1541/XE1541/XA1541 con un C64 che fa da tramite con TAPSERV.PRG). La
+      licenza non e' scritta nei sorgenti: da chiarire prima di pubblicare.
+      PER EX-OS SERVONO: l'accesso alla porta parallela da un programma (o un
+      driver lpt/datasette che misura gli impulsi lui, a interrupt spenti e
+      con un orologio fine: TSC o PIT), le opzioni di mtap/ptap in un'area
+      impostazioni, un'interfaccia a finestre di testo; poi un formato di
+      backup PC (file qualsiasi -> impulsi su nastro, con controllo e
+      ripetizione, velocita' da misurare).
+
+  95. FLASH BIANCHI NEI VIDEO DI FIREFOX CON DUE CORE (l'utente, 9/11): "i
+      video riprodotti su firefox adesso in 2 core sono piu fluidi ma ci sono
+      dei flash bianchi che sembrano refresh dell'area video".
+      CAUSA PROBABILE (letta nel codice, NON ancora misurata): Firefox disegna
+      DIRETTAMENTE nella zona condivisa con wserver (widget/exos/nsWindow.cpp,
+      StartRemoteDrawingInRegion: un DrawTarget Skia sopra mZona, nessun
+      secondo buffer), e wserver copia da quella zona ogni volta che compone
+      un rettangolo che la tocca (componi_rett: il puntatore, un'altra
+      finestra, l'orologio, l'AGGIORNA di Firefox). Con un core i due non
+      giravano mai insieme; con due wserver puo' copiare a meta' fotogramma,
+      quando l'area e' appena stata pulita e il video non c'e' ancora.
+      VERIFICA: in QEMU con -smp 2 un video in Firefox e una cattura dello
+      schermo a raffica (o wserver -conta), poi -smp 1; e sul portatile con
+      `cpu -x 0` su wserver e Firefox insieme: se i flash spariscono e' lei.
+      CORREZIONE PROPOSTA: il doppio buffer in nsWindow - Firefox disegna in
+      un buffer suo e EndRemoteDrawingInRegion copia nella zona solo il
+      rettangolo finito, poi AGGIORNA. Al peggio wserver vede mezzo
+      fotogramma nuovo e mezzo vecchio, mai un fotogramma bianco. Costo: una
+      copia dell'area cambiata per fotogramma (640x360: 0,9 MB). Da guardare
+      anche VLC (tools/vlc-exos/src/vout_exos.c) e lib/exwin, che disegnano
+      nella zona allo stesso modo. Ricollegare Firefox dopo.
+      9/11 POMERIGGIO (l'utente: "risolviamo il problema della voce 95 dato
+      che si verificava anche con 1 core solo ma era piu marcato, speravo che
+      con due core si risolveva invece ha risolto solo gli scatti e il
+      buffering"):
+      - FATTO il doppio buffer: widget/exos/nsWindow.cpp, mRetro. Gecko
+        disegna li', EndRemoteDrawingInRegion copia nella zona solo i
+        rettangoli finiti; il buffer tiene il contenuto fra un fotogramma e
+        l'altro (Gecko ridisegna solo l'invalido), una zona nuova riceve
+        tutto. Firefox ricompilato a 32 e 64 bit.
+      - VLC (vout_exos.c) copia un fotogramma gia' finito, senza pulire: al
+        piu' mezzo vecchio e mezzo nuovo, mai bianco. Non toccato.
+      - MISURA: tools/exilla/prova-lampi.sh (nuova) e `raffica:` in
+        qemu_drive.py (screendump uno ogni 0,2 s). In QEMU con -smp 2, 150
+        foto: canvas animata su pagina nera 0 lampi col Firefox VECCHIO e 0 col
+        nuovo; video VP9 a tutta finestra su pagina magenta 0 e 0 (149 foto
+        diverse su 150: l'animazione si vedeva). Senza KVM (LENTO=1) il video
+        resta fermo e la misura non vale. QUINDI IN QEMU IL GUASTO NON SI
+        RIPRODUCE e la causa letta nel codice NON E' PROVATA: il doppio buffer
+        toglie la corsa con wserver, ma i lampi potrebbero venire d'altro
+        (fotogrammi in ritardo su un processore lento, H.264 via FFmpeg, YouTube
+        con MSE, 1366x768).
+      - PROSSIMO: sul portatile, con l'utente che fa partire un video: cattura
+        a raffica da telnet (cattura chiede a wserver i pixel composti) col
+        Firefox di adesso, poi col nuovo; contare i fotogrammi col bianco
+        nell'area del video.
+
+  94. STDOUT DI UNO SCRIPT E DI UN PROGRAMMA IN SOTTOFONDO NELLO STESSO FILE
+      (visto il 9/11 sul portatile, voce 12): `sh /r12.sh > /r12.txt &` con
+      dentro `/dev/nforce.drv &`: le righe dello script e del driver si
+      sono sovrascritte a vicenda, come se i due non dividessero la
+      posizione nel file (POSIX: dopo fork padre e figlio hanno la stessa
+      descrizione di file aperto, e scrivono uno dopo l'altro). Da
+      verificare con una prova piccola in QEMU prima di toccare niente.
+
+  93. mount MOSTRA /proc COME "FAT4294967295" (visto il 8/11 nella prova
+      ext4 di prova-letture): il tipo del filesystem proc non ha un nome e
+      si stampa come un FAT col numero -1. Piccolo, da correggere in bin/mount
+      o dove il VFS da' il nome del tipo.
+
   92. TUTTI I CORE (l'utente, 7/11 sera): "da chiarire se smp = 2
       significa che e' abilitato il secondo core oppure il multi core,
       perche il kernel deve riconoscere il numero di core e attivarli
@@ -9092,9 +9320,14 @@ tools/netinst/velocita tolto da netinst.
       32 e 64 bit (la pagina di prova-gecko.sh ora lo scrive: "processori N").
       prova-gecko e prova-webgl a 32 e 64 col Firefox nuovo: OK, nessun
       FAULT. Il pacchetto nuovo NON e' ancora nel repository (netinst).
-      Stato: a, b, c, d, e fatti in QEMU, Firefox ricollegato; b da provare
-      sul portatile (con la guardia e il permesso dell'utente); da
-      osservare il portatile nell'uso coi due core (voce 58). La riga
+      SUL PORTATILE (8/11 pomeriggio, permesso dell'utente): make ARCH=x86_64
+      netinst64 (0.321 e il Firefox ricollegato, strip) pubblicato sul server
+      locale; netupdate -check -yes: 9 file, kernel e firefox compresi,
+      kernel.cfg del portatile NON toccato (ahci = 2 resta). Riavvio: 0.321,
+      2 processori. prova-fili-core 8/8 (2 fili 2,03 volte uno), prova-fork
+      0 NO. Firefox nell'uso non ancora guardato (serve ExWin, l'utente).
+      Stato: a, b, c, d, e fatti, b anche sul portatile; da osservare il
+      portatile nell'uso coi due core (voce 58) e Firefox li'. La riga
       riserva = in kernel.cfg e la colonna in ps restano da fare.
 
   91. YOUTUBE A SCATTI SUL PORTATILE (l'utente, 7/11 sera): "I video su
@@ -11296,6 +11529,29 @@ tools/netinst/velocita tolto da netinst.
        40-50 ms aggiunti (tc netem richiede root: altrimenti un proxy in
        python che ritarda) + netspeed + scarica -i; prima e dopo, prova in
        tools/prova_*.sh.
+     8/11: a. FATTA (ip.drv 0.024, ipcfg 0.006, libc): coda d'invio da 4 KB
+       che diventa 63 KB la prima volta che si riempie (-W KB; al massimo
+       un sedicesimo della RAM in code grandi), byte da tx_off (niente
+       memmove a ogni ACK), e IL CONTROLLO DELLA CONGESTIONE che non c'era:
+       partenza lenta da 10 segmenti, AIMD, ritrasmissione al terzo ACK
+       doppio con recupero NewReno, a tempo scaduto cwnd = 1 segmento.
+       Trovati e corretti per strada, con la traccia del rele':
+       - dopo il go-back-N un ACK oltre snd_nxt lasciava snd_nxt indietro:
+         la connessione taceva fino al tempo scaduto dopo (c'era gia');
+       - tcp_rx.inc teneva al massimo 8 SEGMENTI fuori ordine, non 8 tratti:
+         i contigui non si univano (c'era gia'); tcprxprova 0 NO su 36;
+       - ogni write() partiva come 1400 + 120 byte (i messaggi IPC sono da
+         1520): la libc ora mette in d.len quanto resta della scrittura e
+         ip.drv aspetta il resto prima del segmento corto. Compatibile coi
+         due versi (Firefox statico con la libc vecchia: come prima).
+       PROVA NUOVA tools/prova-invio/prova-invio.sh [32]: due EX-OS (e1000)
+       uniti da tools/prova-invio/rele.py (25 ms per verso, 20 Mbit/s, coda
+       del router, perdite; --traccia), 2 MB controllati byte per byte.
+       64 bit: 853 KB/s pulita, 464 KB/s con l'1% perso (26 rimandati
+       subito per 26 persi, 0 a tempo scaduto), 57 KB/s con -W 4. Prima
+       delle correzioni: 675 e 46. qemu_drive.py: EXOS_NIC sceglie la
+       scheda della LAN a socket. Da fare: b (window scaling, serve per
+       oltre 1,3 MB/s a 47 ms), la misura sul portatile verso Internet.
   3. pubblica.sh: fermarsi con un messaggio chiaro se $ALBERO_LOCALE/file
      e' vuota o mancano i file che elenco.txt dichiara. Il 20/10 dist/netinst
      aveva file/ vuota e il contenuto un livello piu' su (alle 08:09, causa
@@ -11303,24 +11559,86 @@ tools/netinst/velocita tolto da netinst.
      verifica.sh li rimetteva in lista, -ritenta girava all'infinito.
      Rimedio di quel giorno: ./exagonx/repo-update.sh -32 -tutto (make
      netinst rifa' l'albero da zero).
+     8/11: FATTO. exagonx/pubblica.sh, prima di caricare qualunque cosa,
+     controlla che ogni file di elenco.txt e di pacchetti/*.txt sia in
+     file/ (anche col nome del server, nome_server, e in pezzi .p000): se
+     file/ e' vuota o ne manca anche uno si ferma, dice quanti e il primo,
+     e suggerisce make netinst / make ARCH=x86_64 netinst64 e di rilanciare
+     repo-update.sh. Provato senza rete: dist/netinst, netinst_64 e
+     netinst_src passano; una copia senza bin/ls o senza firefox.p000 si
+     ferma. ! exagonx/ e' ignorata da git: la modifica non va nel commit.
   4. repo-update.sh -svuota: elencare i file del server che non sono nel
      nuovo elenco e cancellarli dopo conferma (oggi lo script non cancella
      mai niente; per sostituire tutto si svuota a mano via FTP).
+     9/11 FATTO, senza conferma (l'utente: «procedi con la rimozione
+     automatica dei componenti non piu' presenti»): pubblica.sh confronta i
+     nomi che le liste pubblicate dichiaravano (elenco.txt coi pezzi contati
+     dalla riga, pacchetti/*.txt e gli archivi del catalogo, verifiche.txt)
+     con quelli dell'albero nuovo, e dopo versione.txt cancella la
+     differenza con -Q "*DELE" (percorsi come gli URL). Mai quel che nessuna
+     lista dichiara (repo.txt, .htaccess, report/). Piu' della meta': non
+     cancella e chiede -cancella-molti. -tieni per non cancellare; -guarda
+     mostra. Provato con un curl finto (server = una directory): con 8 voci
+     vecchie (un file, uno a 3 pezzi, un pacchetto con lista, archivio e
+     verifica) cancella quelle 8 e basta, dopo versione.txt; 7496 su 11283
+     si ferma. ! NON ANCORA PROVATO COL SERVER VERO: il primo repo-update
+     dice "da cancellare: N" in -guarda, da guardare prima. exagonx/ e'
+     ignorata da git: fuori dal commit.
   5. Lettura sbagliata 1 volta su 15 (@EXILLA-SU-NASI5DEB): programma di
      prova a piu' fili che scrive file nuovi mentre rilegge e confronta file
      noti, a 32 e 64 bit.
+     8-9/11: FATTA la prova, tools/prova-letture/prova-letture.sh [32]: 12
+     file noti riletti con read, lseek+read, pread e mmap da 3 fili, mentre
+     2 fili scrivono, allungano, riscrivono e cancellano file nuovi; 2
+     processi, 2 processori; RAM 512 MB, RAM 96 MB, ext4. La lettura
+     sbagliata non si e' vista (0 NO in tutti i casi). Si e' visto invece un
+     BLOCCO CON DUE PROCESSORI, una volta su due o tre a 64 bit: il
+     lucchetto del disco tenuto da e1000.drv, che il disco non lo usa, e
+     tutto il VFS dietro. Causa (provata con una traccia nuova nella sonda e
+     un avviso in ata_lascia): g_current = g_corrente[cpu_n()] letto a
+     interrupt accesi; il codice del kernel e' sospendibile da un battito e
+     riparte sull'altro processore, e fra cpu_n() e la tabella prendeva il
+     processo dell'altro processore. Il filo 33 prendeva il disco sul
+     processore 1 e lo "lasciava" come pid 15: rifiutato, preso per sempre.
+     Kernel 0.322: letto a interrupt spenti; il lotto di paging_lotto_* e'
+     del processo e non del processore. Dopo: 6 giri su 6 senza blocco.
+     Le regressioni hanno trovato anche errno sbagliato con piu' fili
+     insieme (prova_moltifili 377 su 382): i lucchetti della libc mettevano
+     EAGAIN in errno (attesa_dormi -> err_posix); ora futex_dormi e
+     futex_sveglia non lo toccano, e il posto di errno si prende con
+     cmpxchg. 9/11 SUL PORTATILE (0.322, 2 core): prova-letture 60 s, 3+2 fili
+     per processo, 2 processi: 0 NO, nessun blocco.
   6. Un font CJK per Exilla (oggi quadratini al posto di cinese, giapponese
      e coreano).
+     9/11 FATTO (l'utente: "aggiungi tutti i font completi necessari"):
+     pacchetto [font-cjk] di netupdate, Noto Sans CJK 2.004 e Noto Serif
+     CJK 2.003 Regular e Bold (.ttc con JP, KR, SC, TC, HK; 90 MB) in
+     /exwin/font, licenza OFL accanto. Exilla lo vuole (vuole = font-cjk).
+     tools/font-cjk/prepara.sh (impronte nostre in IMPRONTE: GitHub non ne
+     da'), mknetinst.sh (elenco_a_parte, pezzi da 16 MB), exos-cjk.js in
+     defaults/pref di Exilla (serif/sans/mono per ja, ko, zh-CN/TW/HK).
+     netupdate 0.047: l'elenco a parte si scarica anche per le dipendenze
+     di chi si installa (prima font-cjk sarebbe arrivato senza file).
+     verifiche/exilla.sh ricorda -install:font-cjk a chi ha gia' Exilla.
+     Scelti 2 pesi su 7: 93 MB invece di 330, Gecko fa gli altri.
+     ExWin non li apre (carica la sua lista, non la directory); EXBrowser
+     non legge i .ttc: @NAV-CJK resta per lui.
+     PROVATO in QEMU 32/64 (-smp 2): prova-gecko disegna i tre alfabeti e il
+     serif giapponese; tools/prova_font_cjk.sh 4/4. Resta: il portatile.
   8. [rust] e [git] sul CD strumenti a 64 bit: i sorgenti
      (cross_build/terze-parti/rust-src, libgit2) erano solo su i5svrdeb;
      vanno riscaricati e rifatti qui (costruisci-exos.sh, libgit2-exos).
      (21/10: i sorgenti sono di nuovo qui, vedi @MEGA-IGNORE; resta da
      ricostruire.)
+     8/11: FATTO in un giro di prima, non segnato qui: [rust] e [git] sono nel
+     catalogo di dist/netinst e dist/netinst_64, e build-64/iso ha
+     exos/lib/rust, exos/lib/libgit2.a ed exos/bin/git2.
   STATO AL 21/10 POMERIGGIO: 7 FATTO (@NETINST-SORGENTI-FATTO); fatto
   anche date -ntp (@DATE-NTP). Aggiunti:
   9. /bin/sync non esiste (visto in @DATE-NTP): le prove lo mandano e
      ricevono «comando non trovato». Un sync vero (SYS_SYNC? il VFS ha gia'
      il sync dei filesystem e il giornale di ext3/ext4).
+     8/11: bin/sync c'e' (FATTO in un giro di prima, non segnato qui).
   11. MESSAGGI DI ASSENZA ALL'AVVIO (l'utente, 21/10): «massa: il supporto
       non diventa pronto» (drivers/usb/usb_massa.c:243) e «ehci: aspetto una
       chiavetta.» (drivers/ehci/ehci.c:940) coprono la schermata di login.
@@ -11346,6 +11664,19 @@ tools/netinst/velocita tolto da netinst.
       no; servirebbe a far ripartire un driver (nforce, ar5k) senza
       riavviare la macchina. Attenzione al bus master: fermare la scheda
       prima (PCI_MSG_DISABILITA), poi ipcfg -l rete0 per ricollegare ip.drv.
+      9/11 (confermata dall'utente): la ripartenza FUNZIONA gia'. Il kernel
+      tiene le pagine DMA di un driver morto fuori uso fino al riavvio
+      (PG_FISSA, paging.c), quindi la scheda rimasta bus master non scrive
+      nella memoria di altri; il driver nuovo resetta la scheda. QEMU:
+      tools/prova-invio caso 4 (kill e1000.drv, /dev/e1000.drv &, ipcfg -l
+      rete0, 2 MB giusti) a 32 e 64 bit. PORTATILE (nforce, uno script
+      lanciato con sh & e la guardia a 180 s): 5 riusciti su 6. Il primo
+      giro non ha riportato la rete (riavvio della guardia) e il perche'
+      non si e' visto: il file d'uscita era uno solo per lo script e per il
+      driver in sottofondo, e si sono sovrascritti (vedi voce 94). Il
+      vecchio driver resta zombie (genitore 2) per 10 s e oltre anche nei
+      giri riusciti: non tiene il nome (voce_viva in ipc.c lo salta).
+      Documentato in help kill. Resta: capire il giro fallito se ricapita.
   COMMESSO in 9d873db1: netupdate 0.032, tar 0.004, archivi 0.008, extar,
   date 0.002, mknetinstsrc.sh, prova_sorgenti.sh, prova_ntp.sh/.py,
   Makefile, README, installa.html.
@@ -11365,6 +11696,16 @@ tools/netinst/velocita tolto da netinst.
       portatile. c. RTT ~10 ms in LAN = un battito dello scheduler fra
       frame e ACK. d. correzione automatica (scendere a 100h/10h se gli
       errori rx salgono a 100 full): proposta, non fatta.
+      9/11, b e c RIMISURATI sul portatile col kernel 0.322 e ip.drv 0.024
+      (confermato dall'utente): tools/prova-invio (prova-invio.c, compilato
+      anche per Linux) fra il PC 192.168.0.30 e il portatile, 16 MB, 3 giri
+      per verso. PC -> portatile 8,3-8,5 MB/s, 0 ritrasmissioni del PC su
+      ~31 mila segmenti (nstat), 0 fuori sequenza nel portatile; portatile
+      -> PC 11,2-11,5 MB/s (la linea a 100 Mbit piena), 0 rimandati. Ping
+      dal PC 1,9-5,7 ms (medio 3,9, era ~10). Il ~20% di ritrasmissioni non
+      c'e' piu' (b CHIUSA). La causa non e' stata isolata: le correzioni di
+      ip.drv 0.024 (gli 8 segmenti fuori ordine di tcp_rx.inc, snd_nxt) e
+      del kernel sono arrivate insieme. RESTANO a (il PHY) e d.
   14. SCHEDA GRAFICA: e' la prossima cosa (l'utente, 21/10 notte). Sul
       portatile: risoluzione piu' alta e modi 16:9. Primo passo:
       svga.drv -lista sul portatile (i modi VBE che il BIOS NVIDIA offre).
@@ -11416,6 +11757,7 @@ tools/netinst/velocita tolto da netinst.
       che arrivano sulla console dopo che login ha disegnato la richiesta:
       vanno nel registro (dmesg) e non sullo schermo, o almeno non mentre
       login aspetta.
+      9/11: CHIUSA (l'utente: «gia' risolta»), coperta dalla voce 11 (0.271).
   20. UN PROGRAMMA AGGIORNATO MENTRE GIRA LEGGE IL FILE NUOVO (22/10,
       netupdate 0.033 verso kernel 0.267 sul portatile a 64 bit): nella
       fase «L'avvio» netupdate ha stampato frasi che non esistono nel
@@ -11679,6 +12021,9 @@ tools/netinst/velocita tolto da netinst.
       verificata (nsWindow crea la finestra dal filo principale, in teoria):
       per questo attesa scrive in /tmp/attesa.txt cosa vede (finestre, pid,
       gruppo, titolo) e quando si chiude. Leggerlo dopo la prima prova.
+      LETTO il 24/10 (voce 26, RISPOSTA): l'attesa si chiude quando compare
+      la finestra di Firefox; la clessidra che resta e' l'immagine vecchia.
+      Stato: CHIUSA (8/11).
   18. FTPS VERSO vsftpd DI CASA (l'utente, 22/10: «fai B direttamente il
       server vero non rilascia certificati in https»). 192.168.0.30: AUTH TLS
       obbligatorio, TLS 1.3, certificato autofirmato CN=myserver,

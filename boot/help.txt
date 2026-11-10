@@ -265,6 +265,12 @@ e 4 dipendenze per pacchetto: con 34 pacchetti apache ed exilla non si
 potevano installare ("piu' di 32 pacchetti: ignoro il resto"). Dalla 0.041
 non c'e' piu' un tetto: netupdate -check -yes porta quella nuova.
 
+! Exilla vuole font-cjk (i caratteri cinesi, giapponesi e coreani, 90 MB in
+/exwin/font): -install:exilla li porta insieme. Fino a netupdate 0.046
+font-cjk arrivava SENZA FILE, perche' l'elenco a parte si scaricava solo per
+il pacchetto chiesto: prima netupdate -check -yes, poi -install:font-cjk.
+Chi aveva gia' Exilla li chiede da se': netupdate -install:font-cjk.
+
 [sync]
 tutto quel che e' stato scritto va sui dischi, giornali compresi
 
@@ -449,6 +455,20 @@ chiude un processo
 
 Un utente chiude solo i propri processi, root tutti.
 
+Far ripartire il driver della scheda di rete senza riavviare (root):
+`ps` dice il pid del driver, poi
+
+  kill PID                  il driver si ferma
+  /dev/nforce.drv &         ne parte uno nuovo (con le opzioni di
+                            /boot/avvio.sh, se ne ha)
+  ipcfg -l rete0            lo stack si aggancia al nuovo
+
+La memoria che la scheda usava resta fuori uso fino al riavvio (il kernel
+lo dice: "pagine DMA di un driver finito"): la scheda puo' ancora
+scriverci, e nessun altro la riceve. Da una sessione telnet la rete cade
+appena il driver si ferma: le tre righe vanno in uno script lanciato con
+sh SCRIPT &, con  sleep 3  dopo il kill e  sleep 8  prima di ipcfg.
+
 [system]
 togliere e rimettere il disco di sistema a macchina accesa
 
@@ -535,6 +555,35 @@ nera (registri VGA SR01 e AR): un monitor a tubo resta acceso.
 ! Se il servizio muore con lo schermo spento, lo schermo resta spento:
   da telnet, o scrivendo alla cieca,  dpms.drv -accendi
 
+[lpt.drv lpt parallela stampante datasette zip scanner]
+la porta parallela: stampanti, ZIP, scanner, datasette, schede di prova
+
+  lpt.drv                   le porte, cosa sanno fare, chi le usa
+  lpt.drv -avvia            cerca le porte (0x378, 0x278, 0x3BC) e
+                            accende un servizio per ognuna: lpt0, lpt1
+                            (-porta:0x378 solo quella, -irq:N la linea)
+  lpt.drv -ferma            spegne i servizi
+  lpt.drv -stampa FILE      FILE alla stampante
+  lpt.drv -id               il Device ID IEEE 1284 della periferica
+  lpt.drv -pin              i tre registri, piedino per piedino
+  lpt.drv -dati:V           le linee dei dati a V (0x.. o decimale)
+  lpt.drv -controllo:V      il registro di controllo a V
+  lpt.drv -fronti:S         per S secondi i fronti su nACK (piedino 10):
+                            quanti, e il tempo fra uno e l'altro
+  lpt.drv -prova-onda:N:US  N mezze onde di US microsecondi su D1
+  lpt.drv -install          -avvia a ogni avvio; -remove lo toglie
+  -n:N                      la porta dei comandi (0 = lpt0)
+
+Un programma alla volta tiene la porta: gli altri aspettano che la
+lasci (o che finisca). I fronti di nACK arrivano col loro istante,
+preso dal kernel (dalla 0.323) all'entrata dell'interrupt: e' cosi'
+che si legge un datasette (READ su nACK, SENSE su Paper End, WRITE
+su D1, come nell'adattatore C64S).
+
+! Con due processori un fronte puo' andare perso se ne arriva un
+  altro mentre il processore 0 aspetta il kernel: `-fronti` dice
+  quanti ne ha visti. In QEMU 3 su 300 a 64 bit.
+
 [driver -install]
 far partire un driver a ogni avvio
 
@@ -543,7 +592,7 @@ far partire un driver a ogni avvio
 
 Il blocco comincia con "# -install <driver>" e finisce alla prima
 riga vuota. hwconfig, che riscrive avvio.sh per intero, lo riporta
-avanti. Oggi lo hanno nv50.drv, cpufreq.drv e dpms.drv; gli altri
+avanti. Oggi lo hanno nv50.drv, cpufreq.drv, dpms.drv e lpt.drv; gli altri
 driver si aggiungono man mano.
 
 [mem]
@@ -733,6 +782,14 @@ sul processore 1, e il conto aspettava l'orologio, che batte sul processore 0.
 Dalla 0.320 lo spegnimento passa prima al processore 0. Si ripara con
 netupdate -check -yes. Se la macchina e' ferma li': tieni premuto il tasto
 d'accensione; il disco era gia' stato sincronizzato prima del conto.
+
+CON DUE O PIU' PROCESSORI TUTTO SI FERMA MENTRE UN PROGRAMMA LEGGE E SCRIVE
+FILE (kernel 0.319 - 0.321): i programmi gia' aperti girano, ma nessuno apre,
+salva o carica piu' niente, e la shell non lancia comandi. Un filo aveva preso
+il disco e il kernel lo restituiva a nome di un altro processo. Dalla 0.322 non
+capita piu': netupdate -check -yes. Se la macchina e' ferma: riavvia col tasto
+d'accensione, e prima di aggiornare puoi mettere  smp = 1  nella sezione
+[kernel] di /boot/kernel.cfg (un processore solo al lavoro).
 
 UN PROGRAMMA LANCIATO CON `cpu -x` O `cpu -R` VA PIU' PIANO DEL SOLITO: e'
 fissato ai processori che gli hai dato, e quelli riservati ad altri non li

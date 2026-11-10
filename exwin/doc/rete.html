@@ -96,7 +96,19 @@ rimandare.
 
 <pre>    scarica -i &lt;indirizzo&gt;        dice quanti byte in quanto tempo
     ipcfg                          i contatori: fuori sequenza, buffer pieno
-    /dev/ip.drv -w 16 &amp;            una finestra piu' piccola (da 4 a 63 KB)</pre>
+    /dev/ip.drv -w 16 &amp;            una finestra piu' piccola (da 4 a 63 KB)
+    /dev/ip.drv -W 16 &amp;            una coda d'invio piu' piccola (da 4 a 63 KB)</pre>
+
+<p>
+<b>E in uscita</b> (dalla 0.024): fino alla 0.023 si potevano avere in volo al
+massimo 4 KB, cioe' gli stessi 80 KB al secondo verso un server lontano. Ora
+la coda d'invio di una connessione cresce fino a 63 KB quando serve, e TCP
+controlla la congestione: parte piano, accelera finche' la linea regge, e
+quando un pacchetto si perde lo rimanda subito al terzo ACK doppio senza
+aspettare il timer. In <code>ipcfg</code> le righe <i>TCP rimandati</i> e
+<i>TCP code grandi</i> dicono quante ritrasmissioni ci sono state e quante
+code grandi sono in uso.
+</p>
 
 <p>
 <code>-w</code> serve a una macchina con poca memoria (ogni connessione aperta

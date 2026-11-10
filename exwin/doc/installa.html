@@ -745,6 +745,18 @@ installata, <code>-check</code> la aggiorna con il resto;
 </p>
 
 <p class="nota">
+<b>Con Exilla arrivano i caratteri cinesi, giapponesi e coreani</b>
+(netupdate 0.047): il pacchetto <code>font-cjk</code>, Noto Sans CJK e Noto
+Serif CJK in normale e grassetto, 90 MB in <code>/exwin/font</code> (licenza
+SIL OFL, <code>NotoCJK-LICENSE.txt</code> accanto). Senza, Exilla scrive
+quelle pagine a quadratini. Chi aveva gia' Exilla li chiede da se':
+<code>netupdate -install:font-cjk</code> - e la verifica di Exilla, alla fine
+di <code>-check</code>, lo ricorda. Il netupdate di prima della 0.047
+installava <code>font-cjk</code> insieme a Exilla ma senza file: aggiornarlo
+prima (<code>netupdate -check -yes</code>).
+</p>
+
+<p class="nota">
 <b>I sorgenti di EX-OS si chiedono per nome anche loro:</b>
 <code>netupdate -install:sourcecode</code> (dalla 0.032). Stanno in un terzo
 repository accanto agli altri due, <code>.../netinst_src</code>, uguale per

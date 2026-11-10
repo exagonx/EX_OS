@@ -380,6 +380,18 @@ typedef struct {
      * ognuno. Vedi @DIF-TCPBUF. */
     unsigned int  tcp_fuori_seq;
     unsigned int  tcp_pieno;
+
+    /* ! SENDING (ip.drv 0.024, congestion control). Only at the end: an older
+     * client reads the struct it knows and the length check still holds.
+     *
+     *   tcp_rit_veloci  segments sent again before the timer: three
+     *                   duplicate ACKs, or a partial ACK in fast recovery
+     *   tcp_scadenze    retransmission timers that expired: there the
+     *                   congestion window falls back to one segment
+     *   tcp_code_grandi send queues larger than 4 KB in use right now */
+    unsigned int  tcp_rit_veloci;
+    unsigned int  tcp_scadenze;
+    unsigned int  tcp_code_grandi;
 } IpStato;
 
 /* Una voce della tabella ARP, come la vede un client */

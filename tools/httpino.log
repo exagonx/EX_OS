@@ -3866,3 +3866,473 @@
   finito /netinst/verifiche/sistema.sh: 3701 byte
 /netinst/verifiche/valkey.sh
   finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25189 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 436362 byte
+/netinst_64/file/boot/help.txt
+  finito /netinst_64/file/boot/help.txt: 67580 byte
+/netinst_64/file/boot/kernel.txt
+  finito /netinst_64/file/boot/kernel.txt: 26742 byte
+/netinst_64/file/boot/minimale.txt
+  finito /netinst_64/file/boot/minimale.txt: 576 byte
+/netinst_64/file/boot/rdboot.lz4
+  finito /netinst_64/file/boot/rdboot.lz4: 662542 byte
+/netinst_64/file/dev/ac97.drv
+  finito /netinst_64/file/dev/ac97.drv: 44128 byte
+/netinst_64/file/dev/ar5k.drv
+  finito /netinst_64/file/dev/ar5k.drv: 189992 byte
+/netinst_64/file/dev/cardbus.drv
+  finito /netinst_64/file/dev/cardbus.drv: 33648 byte
+/netinst_64/file/dev/cpufreq.drv
+  finito /netinst_64/file/dev/cpufreq.drv: 46576 byte
+/netinst_64/file/dev/es1371.drv
+  finito /netinst_64/file/dev/es1371.drv: 44016 byte
+/netinst_64/file/dev/fetta.drv
+  finito /netinst_64/file/dev/fetta.drv: 28992 byte
+/netinst_64/file/dev/hdaudio.drv
+  finito /netinst_64/file/dev/hdaudio.drv: 53272 byte
+/netinst_64/file/dev/mappa.drv
+  finito /netinst_64/file/dev/mappa.drv: 46792 byte
+/netinst_64/file/dev/nv50.drv
+  finito /netinst_64/file/dev/nv50.drv: 68864 byte
+/netinst_64/file/dev/ramdisk.drv
+  finito /netinst_64/file/dev/ramdisk.drv: 29088 byte
+/netinst_64/file/dev/sb.drv
+  finito /netinst_64/file/dev/sb.drv: 48752 byte
+/netinst_64/file/dev/sis.drv
+  finito /netinst_64/file/dev/sis.drv: 89736 byte
+/netinst_64/file/dev/sonda.drv
+  finito /netinst_64/file/dev/sonda.drv: 60288 byte
+/netinst_64/file/dev/vgaprova.drv
+  finito /netinst_64/file/dev/vgaprova.drv: 24496 byte
+/netinst_64/file/dev/wifisim.drv
+  finito /netinst_64/file/dev/wifisim.drv: 38112 byte
+/netinst_64/file/drivers/ac97.drv
+  finito /netinst_64/file/drivers/ac97.drv: 44128 byte
+/netinst_64/file/drivers/ar5k.drv
+  finito /netinst_64/file/drivers/ar5k.drv: 189992 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 33648 byte
+/netinst_64/file/drivers/cpufreq.drv
+  finito /netinst_64/file/drivers/cpufreq.drv: 46576 byte
+/netinst_64/file/drivers/dpms.drv
+  finito /netinst_64/file/drivers/dpms.drv: 51592 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 38296 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 43744 byte
+/netinst_64/file/drivers/es1371.drv
+  finito /netinst_64/file/drivers/es1371.drv: 44016 byte
+/netinst_64/file/drivers/fetta.drv
+  finito /netinst_64/file/drivers/fetta.drv: 28992 byte
+/netinst_64/file/drivers/hdaudio.drv
+  finito /netinst_64/file/drivers/hdaudio.drv: 53272 byte
+/netinst_64/file/drivers/ip.drv
+  finito /netinst_64/file/drivers/ip.drv: 65560 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 56592 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 46792 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 29504 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 38200 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 52072 byte
+/netinst_64/file/drivers/nv50.drv
+  finito /netinst_64/file/drivers/nv50.drv: 68864 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 52624 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 33368 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 42704 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 29088 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 42784 byte
+/netinst_64/file/drivers/sb.drv
+  finito /netinst_64/file/drivers/sb.drv: 48752 byte
+/netinst_64/file/drivers/sis.drv
+  finito /netinst_64/file/drivers/sis.drv: 89736 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 81296 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 60288 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 60360 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 48720 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 24496 byte
+/netinst_64/file/drivers/wifisim.drv
+  finito /netinst_64/file/drivers/wifisim.drv: 38112 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 74792 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 53168 byte
+/netinst_64/file/exwin/font/AUTHORS
+  finito /netinst_64/file/exwin/font/AUTHORS: 379 byte
+/netinst_64/file/exwin/font/LICENSE
+  finito /netinst_64/file/exwin/font/LICENSE: 4414 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25189 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 436362 byte
+/netinst_64/pacchetti/exilla.txt
+  finito /netinst_64/pacchetti/exilla.txt: 1547 byte
+/netinst_64/pacchetti/font-cjk.txt
+  finito /netinst_64/pacchetti/font-cjk.txt: 712 byte
+/netinst_64/file/exwin/font/NotoCJK-LICENSE.txt
+  finito /netinst_64/file/exwin/font/NotoCJK-LICENSE.txt: 4301 byte
+/netinst_64/file/exwin/font/NotoSansCJK-Bold.ttc.p000
+  finito /netinst_64/file/exwin/font/NotoSansCJK-Bold.ttc.p000: 16777216 byte
+/netinst_64/file/exwin/font/NotoSansCJK-Bold.ttc.p001
+  finito /netinst_64/file/exwin/font/NotoSansCJK-Bold.ttc.p001: 3273544 byte
+/netinst_64/file/exwin/font/NotoSansCJK-Regular.ttc.p000
+  finito /netinst_64/file/exwin/font/NotoSansCJK-Regular.ttc.p000: 16777216 byte
+/netinst_64/file/exwin/font/NotoSansCJK-Regular.ttc.p001
+  finito /netinst_64/file/exwin/font/NotoSansCJK-Regular.ttc.p001: 2707568 byte
+/netinst_64/file/exwin/font/NotoSerifCJK-Bold.ttc.p000
+  finito /netinst_64/file/exwin/font/NotoSerifCJK-Bold.ttc.p000: 16777216 byte
+/netinst_64/file/exwin/font/NotoSerifCJK-Bold.ttc.p001
+  finito /netinst_64/file/exwin/font/NotoSerifCJK-Bold.ttc.p001: 10619836 byte
+/netinst_64/file/exwin/font/NotoSerifCJK-Regular.ttc.p000
+  finito /netinst_64/file/exwin/font/NotoSerifCJK-Regular.ttc.p000: 16777216 byte
+/netinst_64/file/exwin/font/NotoSerifCJK-Regular.ttc.p001
+  finito /netinst_64/file/exwin/font/NotoSerifCJK-Regular.ttc.p001: 9634144 byte
+/netinst_64/file/exwin/app/exilla/application.ini
+  finito /netinst_64/file/exwin/app/exilla/application.ini: 448 byte
+/netinst_64/file/exwin/app/exilla/browser/omni.ja.p000
+  finito /netinst_64/file/exwin/app/exilla/browser/omni.ja.p000: 16777216 byte
+/netinst_64/file/exwin/app/exilla/browser/omni.ja.p001
+  finito /netinst_64/file/exwin/app/exilla/browser/omni.ja.p001: 16777216 byte
+/netinst_64/file/exwin/app/exilla/browser/omni.ja.p002
+  finito /netinst_64/file/exwin/app/exilla/browser/omni.ja.p002: 16777216 byte
+/netinst_64/file/exwin/app/exilla/browser/omni.ja.p003
+  finito /netinst_64/file/exwin/app/exilla/browser/omni.ja.p003: 5496158 byte
+/netinst_64/file/exwin/app/exilla/defaults/pref/channel-prefs.js
+  finito /netinst_64/file/exwin/app/exilla/defaults/pref/channel-prefs.js: 429 byte
+/netinst_64/file/exwin/app/exilla/defaults/pref/exos-cjk.js
+  finito /netinst_64/file/exwin/app/exilla/defaults/pref/exos-cjk.js: 1411 byte
+/netinst_64/file/exwin/app/exilla/dependentlibs.list
+  finito /netinst_64/file/exwin/app/exilla/dependentlibs.list: 0 byte
+/netinst_64/file/exwin/app/exilla/exilla
+  finito /netinst_64/file/exwin/app/exilla/exilla: 360264 byte
+/netinst_64/file/exwin/app/exilla/exilla_128.ico
+  finito /netinst_64/file/exwin/app/exilla/exilla_128.ico: 65598 byte
+/netinst_64/file/exwin/app/exilla/exilla_64.ico
+  finito /netinst_64/file/exwin/app/exilla/exilla_64.ico: 16446 byte
+/netinst_64/file/exwin/app/exilla/firefox.p000
+  finito /netinst_64/file/exwin/app/exilla/firefox.p000: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p001
+  finito /netinst_64/file/exwin/app/exilla/firefox.p001: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p002
+  finito /netinst_64/file/exwin/app/exilla/firefox.p002: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p003
+  finito /netinst_64/file/exwin/app/exilla/firefox.p003: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p004
+  finito /netinst_64/file/exwin/app/exilla/firefox.p004: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p005
+  finito /netinst_64/file/exwin/app/exilla/firefox.p005: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p006
+  finito /netinst_64/file/exwin/app/exilla/firefox.p006: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p007
+  finito /netinst_64/file/exwin/app/exilla/firefox.p007: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p008
+  finito /netinst_64/file/exwin/app/exilla/firefox.p008: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p009
+  finito /netinst_64/file/exwin/app/exilla/firefox.p009: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p010
+  finito /netinst_64/file/exwin/app/exilla/firefox.p010: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p011
+  finito /netinst_64/file/exwin/app/exilla/firefox.p011: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p012
+  finito /netinst_64/file/exwin/app/exilla/firefox.p012: 16777216 byte
+/netinst_64/file/exwin/app/exilla/firefox.p013
+  finito /netinst_64/file/exwin/app/exilla/firefox.p013: 3765256 byte
+/netinst_64/file/exwin/app/exilla/omni.ja.p000
+  finito /netinst_64/file/exwin/app/exilla/omni.ja.p000: 16777216 byte
+/netinst_64/file/exwin/app/exilla/omni.ja.p001
+  finito /netinst_64/file/exwin/app/exilla/omni.ja.p001: 16777216 byte
+/netinst_64/file/exwin/app/exilla/omni.ja.p002
+  finito /netinst_64/file/exwin/app/exilla/omni.ja.p002: 16777216 byte
+/netinst_64/file/exwin/app/exilla/omni.ja.p003
+  finito /netinst_64/file/exwin/app/exilla/omni.ja.p003: 261875 byte
+/netinst_64/file/exwin/app/exilla/platform.ini
+  finito /netinst_64/file/exwin/app/exilla/platform.ini: 49 byte
+/netinst_64/file/exwin/app/exilla/precomplete
+  finito /netinst_64/file/exwin/app/exilla/precomplete: 277 byte
+/netinst_64/file/exwin/app/exilla/removed-files
+  finito /netinst_64/file/exwin/app/exilla/removed-files: 16 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/exilla.sh
+  finito /netinst_64/verifiche/exilla.sh: 1303 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25189 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 436362 byte
+/netinst_64/pacchetti/exilla.txt
+  finito /netinst_64/pacchetti/exilla.txt: 1547 byte
+/netinst_64/pacchetti/font-cjk.txt
+  finito /netinst_64/pacchetti/font-cjk.txt: 712 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/exilla.sh
+  finito /netinst_64/verifiche/exilla.sh: 1303 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25189 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 436362 byte
+/netinst_64/pacchetti/exilla.txt
+  finito /netinst_64/pacchetti/exilla.txt: 1547 byte
+/netinst_64/pacchetti/font-cjk.txt
+  finito /netinst_64/pacchetti/font-cjk.txt: 712 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/exilla.sh
+  finito /netinst_64/verifiche/exilla.sh: 1303 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 25194 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 443476 byte
+/netinst/file/boot/help.txt
+  finito /netinst/file/boot/help.txt: 67580 byte
+/netinst/file/boot/kernel.txt
+  finito /netinst/file/boot/kernel.txt: 26742 byte
+/netinst/file/boot/minimale.txt
+  finito /netinst/file/boot/minimale.txt: 588 byte
+/netinst/file/boot/rdboot.lz4
+  finito /netinst/file/boot/rdboot.lz4: 561916 byte
+/netinst/file/dev/ac97.drv
+  finito /netinst/file/dev/ac97.drv: 37916 byte
+/netinst/file/dev/ar5k.drv
+  finito /netinst/file/dev/ar5k.drv: 173416 byte
+/netinst/file/dev/cardbus.drv
+  finito /netinst/file/dev/cardbus.drv: 32096 byte
+/netinst/file/dev/cpufreq.drv
+  finito /netinst/file/dev/cpufreq.drv: 40752 byte
+/netinst/file/dev/es1371.drv
+  finito /netinst/file/dev/es1371.drv: 37836 byte
+/netinst/file/dev/fetta.drv
+  finito /netinst/file/dev/fetta.drv: 27528 byte
+/netinst/file/dev/floppy.drv
+  finito /netinst/file/dev/floppy.drv: 14284 byte
+/netinst/file/dev/hdaudio.drv
+  finito /netinst/file/dev/hdaudio.drv: 50920 byte
+/netinst/file/dev/mappa.drv
+  finito /netinst/file/dev/mappa.drv: 45024 byte
+/netinst/file/dev/nv50.drv
+  finito /netinst/file/dev/nv50.drv: 62572 byte
+/netinst/file/dev/ramdisk.drv
+  finito /netinst/file/dev/ramdisk.drv: 27604 byte
+/netinst/file/dev/sb.drv
+  finito /netinst/file/dev/sb.drv: 42392 byte
+/netinst/file/dev/sis.drv
+  finito /netinst/file/dev/sis.drv: 83388 byte
+/netinst/file/dev/sonda.drv
+  finito /netinst/file/dev/sonda.drv: 54144 byte
+/netinst/file/dev/vgaprova.drv
+  finito /netinst/file/dev/vgaprova.drv: 23152 byte
+/netinst/file/dev/wifisim.drv
+  finito /netinst/file/dev/wifisim.drv: 32336 byte
+/netinst/file/drivers/ac97.drv
+  finito /netinst/file/drivers/ac97.drv: 37916 byte
+/netinst/file/drivers/ar5k.drv
+  finito /netinst/file/drivers/ar5k.drv: 173416 byte
+/netinst/file/drivers/cardbus.drv
+  finito /netinst/file/drivers/cardbus.drv: 32096 byte
+/netinst/file/drivers/cpufreq.drv
+  finito /netinst/file/drivers/cpufreq.drv: 40752 byte
+/netinst/file/drivers/dpms.drv
+  finito /netinst/file/drivers/dpms.drv: 45544 byte
+/netinst/file/drivers/e1000.drv
+  finito /netinst/file/drivers/e1000.drv: 32512 byte
+/netinst/file/drivers/ehci.drv
+  finito /netinst/file/drivers/ehci.drv: 41744 byte
+/netinst/file/drivers/es1371.drv
+  finito /netinst/file/drivers/es1371.drv: 37836 byte
+/netinst/file/drivers/fetta.drv
+  finito /netinst/file/drivers/fetta.drv: 27528 byte
+/netinst/file/drivers/floppy.drv
+  finito /netinst/file/drivers/floppy.drv: 14284 byte
+/netinst/file/drivers/hdaudio.drv
+  finito /netinst/file/drivers/hdaudio.drv: 50920 byte
+/netinst/file/drivers/ip.drv
+  finito /netinst/file/drivers/ip.drv: 63276 byte
+/netinst/file/drivers/kbd.drv
+  finito /netinst/file/drivers/kbd.drv: 50384 byte
+/netinst/file/drivers/mappa.drv
+  finito /netinst/file/drivers/mappa.drv: 45024 byte
+/netinst/file/drivers/mouseser.drv
+  finito /netinst/file/drivers/mouseser.drv: 23852 byte
+/netinst/file/drivers/ne2k.drv
+  finito /netinst/file/drivers/ne2k.drv: 32404 byte
+/netinst/file/drivers/nforce.drv
+  finito /netinst/file/drivers/nforce.drv: 45944 byte
+/netinst/file/drivers/nv50.drv
+  finito /netinst/file/drivers/nv50.drv: 62572 byte
+/netinst/file/drivers/ohci.drv
+  finito /netinst/file/drivers/ohci.drv: 46364 byte
+/netinst/file/drivers/pci.drv
+  finito /netinst/file/drivers/pci.drv: 27760 byte
+/netinst/file/drivers/pcnet.drv
+  finito /netinst/file/drivers/pcnet.drv: 36852 byte
+/netinst/file/drivers/ramdisk.drv
+  finito /netinst/file/drivers/ramdisk.drv: 27604 byte
+/netinst/file/drivers/rtl8169.drv
+  finito /netinst/file/drivers/rtl8169.drv: 36924 byte
+/netinst/file/drivers/sb.drv
+  finito /netinst/file/drivers/sb.drv: 42392 byte
+/netinst/file/drivers/sis.drv
+  finito /netinst/file/drivers/sis.drv: 83388 byte
+/netinst/file/drivers/sis900.drv
+  finito /netinst/file/drivers/sis900.drv: 75028 byte
+/netinst/file/drivers/sonda.drv
+  finito /netinst/file/drivers/sonda.drv: 54144 byte
+/netinst/file/drivers/svga.drv
+  finito /netinst/file/drivers/svga.drv: 54220 byte
+/netinst/file/drivers/uhci.drv
+  finito /netinst/file/drivers/uhci.drv: 42452 byte
+/netinst/file/drivers/vgaprova.drv
+  finito /netinst/file/drivers/vgaprova.drv: 23152 byte
+/netinst/file/drivers/wifisim.drv
+  finito /netinst/file/drivers/wifisim.drv: 32336 byte
+/netinst/file/drivers/xhci.drv
+  finito /netinst/file/drivers/xhci.drv: 50888 byte
+/netinst/file/exwin/font/AUTHORS
+  finito /netinst/file/exwin/font/AUTHORS: 379 byte
+/netinst/file/exwin/font/LICENSE
+  finito /netinst/file/exwin/font/LICENSE: 4414 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 25194 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 443476 byte
+/netinst/pacchetti/exilla.txt
+  finito /netinst/pacchetti/exilla.txt: 1546 byte
+/netinst/pacchetti/font-cjk.txt
+  finito /netinst/pacchetti/font-cjk.txt: 712 byte
+/netinst/file/exwin/font/NotoCJK-LICENSE.txt
+  finito /netinst/file/exwin/font/NotoCJK-LICENSE.txt: 4301 byte
+/netinst/file/exwin/font/NotoSansCJK-Bold.ttc.p000
+  finito /netinst/file/exwin/font/NotoSansCJK-Bold.ttc.p000: 16777216 byte
+/netinst/file/exwin/font/NotoSansCJK-Bold.ttc.p001
+  finito /netinst/file/exwin/font/NotoSansCJK-Bold.ttc.p001: 3273544 byte
+/netinst/file/exwin/font/NotoSansCJK-Regular.ttc.p000
+  finito /netinst/file/exwin/font/NotoSansCJK-Regular.ttc.p000: 16777216 byte
+/netinst/file/exwin/font/NotoSansCJK-Regular.ttc.p001
+  finito /netinst/file/exwin/font/NotoSansCJK-Regular.ttc.p001: 2707568 byte
+/netinst/file/exwin/font/NotoSerifCJK-Bold.ttc.p000
+  finito /netinst/file/exwin/font/NotoSerifCJK-Bold.ttc.p000: 16777216 byte
+/netinst/file/exwin/font/NotoSerifCJK-Bold.ttc.p001
+  finito /netinst/file/exwin/font/NotoSerifCJK-Bold.ttc.p001: 10619836 byte
+/netinst/file/exwin/font/NotoSerifCJK-Regular.ttc.p000
+  finito /netinst/file/exwin/font/NotoSerifCJK-Regular.ttc.p000: 16777216 byte
+/netinst/file/exwin/font/NotoSerifCJK-Regular.ttc.p001
+  finito /netinst/file/exwin/font/NotoSerifCJK-Regular.ttc.p001: 9634144 byte
+/netinst/file/exwin/app/exilla/application.ini
+  finito /netinst/file/exwin/app/exilla/application.ini: 448 byte
+/netinst/file/exwin/app/exilla/browser/omni.ja.p000
+  finito /netinst/file/exwin/app/exilla/browser/omni.ja.p000: 16777216 byte
+/netinst/file/exwin/app/exilla/browser/omni.ja.p001
+  finito /netinst/file/exwin/app/exilla/browser/omni.ja.p001: 16777216 byte
+/netinst/file/exwin/app/exilla/browser/omni.ja.p002
+  finito /netinst/file/exwin/app/exilla/browser/omni.ja.p002: 16777216 byte
+/netinst/file/exwin/app/exilla/browser/omni.ja.p003
+  finito /netinst/file/exwin/app/exilla/browser/omni.ja.p003: 5496158 byte
+/netinst/file/exwin/app/exilla/defaults/pref/channel-prefs.js
+  finito /netinst/file/exwin/app/exilla/defaults/pref/channel-prefs.js: 429 byte
+/netinst/file/exwin/app/exilla/defaults/pref/exos-cjk.js
+  finito /netinst/file/exwin/app/exilla/defaults/pref/exos-cjk.js: 1411 byte
+/netinst/file/exwin/app/exilla/dependentlibs.list
+  finito /netinst/file/exwin/app/exilla/dependentlibs.list: 0 byte
+/netinst/file/exwin/app/exilla/exilla
+  finito /netinst/file/exwin/app/exilla/exilla: 23748 byte
+/netinst/file/exwin/app/exilla/exilla_128.ico
+  finito /netinst/file/exwin/app/exilla/exilla_128.ico: 65598 byte
+/netinst/file/exwin/app/exilla/exilla_64.ico
+  finito /netinst/file/exwin/app/exilla/exilla_64.ico: 16446 byte
+/netinst/file/exwin/app/exilla/firefox.p000
+  finito /netinst/file/exwin/app/exilla/firefox.p000: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p001
+  finito /netinst/file/exwin/app/exilla/firefox.p001: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p002
+  finito /netinst/file/exwin/app/exilla/firefox.p002: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p003
+  finito /netinst/file/exwin/app/exilla/firefox.p003: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p004
+  finito /netinst/file/exwin/app/exilla/firefox.p004: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p005
+  finito /netinst/file/exwin/app/exilla/firefox.p005: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p006
+  finito /netinst/file/exwin/app/exilla/firefox.p006: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p007
+  finito /netinst/file/exwin/app/exilla/firefox.p007: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p008
+  finito /netinst/file/exwin/app/exilla/firefox.p008: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p009
+  finito /netinst/file/exwin/app/exilla/firefox.p009: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p010
+  finito /netinst/file/exwin/app/exilla/firefox.p010: 16777216 byte
+/netinst/file/exwin/app/exilla/firefox.p011
+  finito /netinst/file/exwin/app/exilla/firefox.p011: 7876704 byte
+/netinst/file/exwin/app/exilla/omni.ja.p000
+  finito /netinst/file/exwin/app/exilla/omni.ja.p000: 16777216 byte
+/netinst/file/exwin/app/exilla/omni.ja.p001
+  finito /netinst/file/exwin/app/exilla/omni.ja.p001: 16777216 byte
+/netinst/file/exwin/app/exilla/omni.ja.p002
+  finito /netinst/file/exwin/app/exilla/omni.ja.p002: 16777216 byte
+/netinst/file/exwin/app/exilla/omni.ja.p003
+  finito /netinst/file/exwin/app/exilla/omni.ja.p003: 261881 byte
+/netinst/file/exwin/app/exilla/platform.ini
+  finito /netinst/file/exwin/app/exilla/platform.ini: 49 byte
+/netinst/file/exwin/app/exilla/precomplete
+  finito /netinst/file/exwin/app/exilla/precomplete: 277 byte
+/netinst/file/exwin/app/exilla/removed-files
+  finito /netinst/file/exwin/app/exilla/removed-files: 16 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 488 byte
+/netinst/verifiche/exilla.sh
+  finito /netinst/verifiche/exilla.sh: 1303 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 25194 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 443476 byte
+/netinst/pacchetti/exilla.txt
+  finito /netinst/pacchetti/exilla.txt: 1546 byte
+/netinst/pacchetti/font-cjk.txt
+  finito /netinst/pacchetti/font-cjk.txt: 712 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 488 byte
+/netinst/verifiche/exilla.sh
+  finito /netinst/verifiche/exilla.sh: 1303 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 392 byte
+/netinst/catalogo.txt
+  finito /netinst/catalogo.txt: 25194 byte
+/netinst/elenco.txt
+  finito /netinst/elenco.txt: 443476 byte
+/netinst/pacchetti/exilla.txt
+  finito /netinst/pacchetti/exilla.txt: 1546 byte
+/netinst/pacchetti/font-cjk.txt
+  finito /netinst/pacchetti/font-cjk.txt: 712 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 488 byte
+/netinst/verifiche/exilla.sh
+  finito /netinst/verifiche/exilla.sh: 1303 byte

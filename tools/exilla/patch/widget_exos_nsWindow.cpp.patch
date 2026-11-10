@@ -1,6 +1,6 @@
 --- a/widget/exos/nsWindow.cpp
 +++ b/widget/exos/nsWindow.cpp
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,879 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -28,6 +28,7 @@
 +#include "mozilla/TextEvents.h"
 +#include "mozilla/WidgetUtils.h"
 +#include "mozilla/WritingModes.h"
++#include "mozilla/fallible.h"
 +#include "mozilla/dom/WheelEventBinding.h"
 +#include "mozilla/gfx/2D.h"
 +#include "nsIRollupListener.h"
@@ -185,6 +186,7 @@
 +    mZonaW = aLarghezza;
 +    mZonaH = aAltezza;
 +    mZonaId = aId;
++    mZonaNuova = true;
 +  }
 +  if (vecchia) {
 +    shm_chiudi(vecchia);
@@ -493,6 +495,23 @@
 +  return true;
 +}
 +
++// ! GECKO DOES NOT DRAW INTO THE ZONE, BUT INTO ITS OWN COPY (voce 95, 9
++// November 2026). The zone is shared with wserver, which copies it to the
++// screen whenever it recomposes that rectangle: at our WIN_MSG_AGGIORNA - read
++// when we may already be drawing the next frame - at every move of the mouse,
++// at every tick of the clock. Gecko's renderer clears an area before painting
++// it, so a copy taken in between put WHITE on the screen: the flashes over a
++// playing video, with one processor and more with two. Now the renderer draws
++// into mRetro and EndRemoteDrawingInRegion copies only finished rectangles:
++// what wserver can catch is the previous frame or the next one, never the
++// cleared area. The price is one copy of the changed pixels (a 640x360 video
++// is 0.9 MB a frame) and a buffer as large as the window.
++//
++// ! THE BACK BUFFER IS WHAT GECKO REMEMBERS. It repaints only what is
++// invalid, and expects the rest to be still there: the buffer keeps its
++// content across frames, and when it changes size the common part is kept.
++// A new zone (resize, or a new giro) gets the whole buffer at the next end of
++// drawing, because it starts empty.
 +already_AddRefed<gfx::DrawTarget> nsWindow::StartRemoteDrawingInRegion(
 +    const LayoutDeviceIntRegion& aInvalidRegion) {
 +  static int sPrime = 0;
@@ -505,8 +524,30 @@
 +    mZonaLock.Unlock();
 +    return nullptr;
 +  }
++  if (!mRetro || mRetroW != mZonaW || mRetroH != mZonaH) {
++    size_t byte = (size_t)mZonaW * (size_t)mZonaH * 4;
++    UniquePtr<uint8_t[]> nuovo(new (fallible) uint8_t[byte]);
++    if (!nuovo) {
++      mZonaLock.Unlock();
++      return nullptr;
++    }
++    memset(nuovo.get(), 0xFF, byte);
++    if (mRetro) {
++      int32_t w = std::min(mRetroW, mZonaW), h = std::min(mRetroH, mZonaH);
++      for (int32_t y = 0; y < h; y++) {
++        memcpy(nuovo.get() + (size_t)y * mZonaW * 4,
++               mRetro.get() + (size_t)y * mRetroW * 4, (size_t)w * 4);
++      }
++    } else {
++      // The first time: what the zone has, so nothing changes on screen.
++      memcpy(nuovo.get(), mZona, byte);
++    }
++    mRetro = std::move(nuovo);
++    mRetroW = mZonaW;
++    mRetroH = mZonaH;
++  }
 +  RefPtr<gfx::DrawTarget> dt = gfx::Factory::CreateDrawTargetForData(
-+      gfx::BackendType::SKIA, (uint8_t*)mZona, gfx::IntSize(mZonaW, mZonaH),
++      gfx::BackendType::SKIA, mRetro.get(), gfx::IntSize(mZonaW, mZonaH),
 +      mZonaW * 4, gfx::SurfaceFormat::B8G8R8A8);
 +  if (!dt) {
 +    mZonaLock.Unlock();
@@ -518,8 +559,29 @@
 +void nsWindow::EndRemoteDrawingInRegion(
 +    gfx::DrawTarget* aDrawTarget, const LayoutDeviceIntRegion& aInvalidRegion) {
 +  uint32_t id = mZonaId;
-+  LayoutDeviceIntRect r = aInvalidRegion.GetBounds().Intersect(
-+      LayoutDeviceIntRect(0, 0, mZonaW, mZonaH));
++  LayoutDeviceIntRect tutta(0, 0, mZonaW, mZonaH);
++  LayoutDeviceIntRect r = aInvalidRegion.GetBounds().Intersect(tutta);
++
++  if (mZona && mRetro && mRetroW == mZonaW && mRetroH == mZonaH) {
++    LayoutDeviceIntRegion copia;
++    if (mZonaNuova) {
++      copia = tutta;
++      r = tutta;
++      mZonaNuova = false;
++    } else {
++      copia = aInvalidRegion;
++      copia.AndWith(tutta);
++    }
++    const size_t passo = (size_t)mZonaW * 4;
++    uint8_t* zona = (uint8_t*)mZona;
++    for (auto it = copia.RectIter(); !it.Done(); it.Next()) {
++      const LayoutDeviceIntRect& q = it.Get();
++      for (int32_t y = q.Y(); y < q.YMost(); y++) {
++        size_t off = (size_t)y * passo + (size_t)q.X() * 4;
++        memcpy(zona + off, mRetro.get() + off, (size_t)q.Width() * 4);
++      }
++    }
++  }
 +  mZonaLock.Unlock();
 +
 +  if (id && !r.IsEmpty()) {

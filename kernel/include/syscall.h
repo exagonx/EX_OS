@@ -115,6 +115,39 @@
 #define AFF_LIBERA       3
 #define AFF_RISERVE      4
 #define AFF_QUI          5
+/* SYS_IRQ_FRONTI (266, kernel 0.323, voce 98): every edge of a line with the
+ * instant it came, for drivers that measure TIME between edges (the
+ * datasette on the parallel port, prototype boards). The stub notes the
+ * finest clock before the kernel's lock, a ring keeps the instants, the
+ * owner is notified once until it reads, and the line is NOT masked between
+ * edges (see isr.c). Only for the SOLE owner of a line (irq_bind first).
+ *   IRQF_SPEGNI   ecx = irq: back to normal notifications
+ *   IRQF_ACCENDI  ecx = irq, edx = instants the ring holds (>= 2)
+ *                 -EBUSY if somebody else owns the line too
+ *   IRQF_LEGGI    ecx = irq, edx = uint64_t*, esi = max: the oldest instants,
+ *                 returns how many; the next edge notifies again
+ *   IRQF_STATO    ecx = irq, edx = IrqFrontiStato*: the clock for anybody,
+ *                 the ring's numbers for its owner
+ * The instants are in ticks of IrqFrontiStato.hz: the TSC, or the PIT's
+ * 1193182 Hz on a processor without RDTSC. */
+#define SYS_IRQ_FRONTI   266
+#define IRQF_SPEGNI      0
+#define IRQF_ACCENDI     1
+#define IRQF_LEGGI       2
+#define IRQF_STATO       3
+typedef struct {
+    uint32_t hz;            /* ticks of the clock per second */
+    uint32_t cap;           /* instants the ring holds */
+    uint32_t in_coda;       /* waiting to be read */
+    uint32_t persi;         /* edges that found the ring full */
+    uint32_t fronti;        /* edges since IRQF_ACCENDI */
+    uint32_t tsc;           /* 1 = the clock is the TSC, which RDTSC reads in
+                             * ring 3 too; 0 = the PIT (only through here) */
+    uint32_t spuri;         /* edges that came as a "spurious" IRQ 7 or 15:
+                             * the line went down before it was taken */
+    uint32_t riservato;
+    uint64_t adesso;        /* the clock now, to compare with the instants */
+} IrqFrontiStato;
 #define SYS_AHCI_PASSA   85    /* i dischi all'AHCI per questa sessione (solo root): vedi ata.c */
 #define SYS_SMP_LAVORA   87    /* i processori parcheggiati cominciano a lavorare (solo root): smp.c */
 #define SYS_KLOG         86    /* il registro dei messaggi del kernel: ebx = buf, ecx = byte,
@@ -225,7 +258,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   266     /* la piu' alta e' SYS_CPU_AFFINITA = 265 */
+#define SYSCALL_COUNT   267     /* la piu' alta e' SYS_IRQ_FRONTI = 266 */
 
 /* =============================================================================
  * Codici errno
@@ -1897,6 +1930,7 @@ int32_t sys_ahci_passa(InterruptFrame *f);
 int32_t sys_guardia(InterruptFrame *f);
 int32_t sys_cpufreq(InterruptFrame *f);
 int32_t sys_cpu_affinita(InterruptFrame *f);
+int32_t sys_irq_fronti(InterruptFrame *f);
 int32_t sys_attivita(InterruptFrame *f);
 int32_t sys_sync(InterruptFrame *f);
 int32_t sys_smp_lavora(InterruptFrame *f);

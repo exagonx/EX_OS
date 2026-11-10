@@ -962,7 +962,8 @@ static int posti_cresci(uint32_t posti)
     }
     for (i = 0; i < posti; i++) { tiene[i] = 0; tlb[i] = 0; }
     for (i = 0; i < 2u * posti; i++) ordine[i] = 0;
-    if (gdt_posti(posti) != 0 || sched_posti(posti) != 0 || paging_posti(posti) != 0)
+    if (gdt_posti(posti) != 0 || sched_posti(posti) != 0 || paging_posti(posti) != 0 ||
+        irq_posti(posti) != 0)
         return -1;
 
     flag = read_eflags();

@@ -4349,6 +4349,17 @@ int32_t sys_cpufreq(InterruptFrame *frame)
     return ERR(EINVAL);
 }
 
+/* SYS_IRQ_FRONTI (266, kernel 0.323, voce 98): see syscall.h and isr.c. */
+int32_t sys_irq_fronti(InterruptFrame *frame)
+{
+    /* no check of its own: only the owner of the line gets through, and
+     * irq_bind already asked who may own it */
+    Process *p = proc_get_current();
+
+    return irq_fronti((uint32_t)FR_A1(frame), (uint8_t)FR_A2(frame),
+                      (uintptr_t)FR_A3(frame), (uint32_t)FR_A4(frame), p->pid);
+}
+
 /* SYS_CPU_AFFINITA (265, kernel 0.319, voce 92): see syscall.h and
  * «AFFINITY AND RESERVATIONS» in sched.c. The sets are copied through a
  * kernel buffer: the user's pointer is checked once, then only read or

@@ -51,4 +51,11 @@ isr_handler_fn irq_handler_get(uint8_t irq);
 uint32_t irq_notifiche_di(uint8_t irq);
 void    irq_unbind_process(uint32_t pid);
 
+/* Edges with their instant (0.323): see isr.c and SYS_IRQ_FRONTI. */
+int32_t  irq_fronti(uint32_t op, uint8_t irq, uintptr_t a, uint32_t b, uint32_t pid);
+int      irq_posti(uint32_t posti);
+void     irq_istante(void);
+uint64_t orologio_fine(void);
+uint32_t orologio_fine_hz(void);
+
 #endif /* ISR_H */

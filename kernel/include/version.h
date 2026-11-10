@@ -850,7 +850,26 @@
  * apart. A fault on a page another thread has just brought in goes back at
  * once (pf_gia_a_posto). exec from a thread ends its brothers and keeps the
  * old space until the last one has left it. */
-#define EXOS_VERSION    "0.321"
+/* 0.321 -> 0.322: sched_sonda reads a waiting process's stack only up to its
+ * kernel_stack_top. It read 128 words from kernel_esp whatever was there, and
+ * at 64 bit the first dump asked of it (tools/prova-letture, 8 November 2026)
+ * read the unmapped page past a stack and ended in a kernel page fault.
+ * And the hang of voce 5 at two processors: the current process (g_current,
+ * proc_get_current) is read with interrupts off. Kernel code can be switched
+ * away by a tick and come back on the other processor; between cpu_n() and
+ * g_corrente[n] it got the process of the processor just left, so the disk
+ * lock taken by one thread was "given back" in the name of e1000.drv and
+ * stayed taken, and every file waited behind it. The batch of freed pages
+ * (paging_lotto_*) belongs to the process, not to the processor. sched_sonda
+ * says where the disk lock was taken; ata_lascia says once if it is given
+ * back by someone who does not hold it. */
+/* 0.323 (voce 98): IRQ edges with their instant, for the parallel port driver
+ * (drivers/lpt). SYS_IRQ_FRONTI (266): the stubs note the finest clock (TSC,
+ * or the PIT on a 486) at the entry of a hardware interrupt, before the
+ * kernel's lock; a line in this mode keeps every edge with its instant in a
+ * ring the driver reads, notifies once until read, and is not masked between
+ * edges. Only for the sole owner of an edge-triggered line (ISA). */
+#define EXOS_VERSION    "0.323"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

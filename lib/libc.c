@@ -297,6 +297,7 @@ typedef struct {
 #define SYS_FORK         263     /* kernel 0.313: see fork() */
 #define SYS_ALLARME      264     /* kernel 0.317: see alarm() */
 #define SYS_CPU_AFFINITA 265     /* kernel 0.319: see cpu_aff_leggi() */
+#define SYS_IRQ_FRONTI   266     /* kernel 0.323: see irq_fronti_accendi() */
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -343,6 +344,13 @@ typedef struct {
     int          esito;
     unsigned int a, b;
 } FdPasso;
+
+/* ! MUST STAY IDENTICAL to IrqFrontiStato in kernel/include/syscall.h and in
+ * lib/include/libc.h (kernel 0.323): the kernel writes it whole. */
+typedef struct {
+    uint32_t hz, cap, in_coda, persi, fronti, tsc, spuri, riservato;
+    uint64_t adesso;
+} IrqFrontiStato;
 #define SYS_IRQ_UNBIND    219
 #define SYS_IRQ_DONE      237
 #define SYS_DMA_ALLOC     239
@@ -5776,6 +5784,25 @@ int attesa_sveglia(volatile int *dove, int quanti)
                                (uint32_t)quanti));
 }
 
+/* ! THE LOCKS DO NOT TOUCH errno (8 November 2026). attesa_dormi answers
+ * EAGAIN when the word changed before the sleep, and through err_posix that
+ * went into errno: pthread_mutex_lock, pthread_cond_wait and sem_wait
+ * changed the caller's errno while succeeding. With one processor it almost
+ * never happened; with two threads really at once (kernel 0.321) it is the
+ * rule - tools/prova_moltifili.sh found 377 errno of 382 changed. glibc does
+ * not touch it, and programs count on it: they keep errno after a failed
+ * call and print it under a lock. The public attesa_dormi/attesa_sveglia
+ * keep setting errno as before; the libc's own waits use these. */
+static void futex_dormi(volatile int *dove, int atteso, unsigned int ms)
+{
+    (void)_syscall3(SYS_ATTESA_DORMI, (uintptr_t)dove, (uint32_t)atteso, ms);
+}
+
+static void futex_sveglia(volatile int *dove, int quanti)
+{
+    (void)_syscall2(SYS_ATTESA_SVEGLIA, (uintptr_t)dove, (uint32_t)quanti);
+}
+
 int mutex_prova(volatile int *m)
 {
     return mutex_cmpxchg(m, 0, 1) == 0;
@@ -5807,14 +5834,14 @@ void mutex_prendi(volatile int *m)
 
     if (v != 2) v = mutex_xchg(m, 2);
     while (v != 0) {
-        attesa_dormi(m, 2, 0);
+        futex_dormi(m, 2, 0);
         v = mutex_xchg(m, 2);
     }
 }
 
 void mutex_lascia(volatile int *m)
 {
-    if (mutex_xchg(m, 0) == 2) attesa_sveglia(m, 1);
+    if (mutex_xchg(m, 0) == 2) futex_sveglia(m, 1);
 }
 
 /* ! IL PREFISSO `lock` SERVE ANCHE PER UN INCREMENTO, e non solo il giorno che
@@ -5859,7 +5886,7 @@ void condizione_aspetta_ms(volatile int *c, volatile int *m, unsigned int ms)
     int visto = *c;             /* PRIMA di lasciare: e' tutta qui la corsa */
 
     mutex_lascia(m);
-    attesa_dormi(c, visto, ms);
+    futex_dormi(c, visto, ms);
     mutex_prendi(m);
 }
 
@@ -5871,13 +5898,13 @@ void condizione_aspetta(volatile int *c, volatile int *m)
 void condizione_segnala(volatile int *c)
 {
     atomico_piu_uno(c);
-    attesa_sveglia(c, 1);
+    futex_sveglia(c, 1);
 }
 
 void condizione_segnala_tutti(volatile int *c)
 {
     atomico_piu_uno(c);
-    attesa_sveglia(c, 0);
+    futex_sveglia(c, 0);
 }
 
 /* -----------------------------------------------------------------------------
@@ -5920,7 +5947,7 @@ void semaforo_prendi(volatile int *s)
 {
     for (;;) {
         if (semaforo_prova(s)) return;
-        attesa_dormi(s, 0, 0);
+        futex_dormi(s, 0, 0);
     }
 }
 
@@ -5938,14 +5965,14 @@ int semaforo_prendi_ms(volatile int *s, unsigned int ms)
          * direbbe il contrario di quel che e'. */
         ora = uptime_ms();
         if ((int)(ora - fine) >= 0) { errno = ETIMEDOUT; return -1; }
-        attesa_dormi(s, 0, fine - ora);
+        futex_dormi(s, 0, fine - ora);
     }
 }
 
 void semaforo_lascia(volatile int *s)
 {
     atomico_piu_uno(s);
-    attesa_sveglia(s, 1);
+    futex_sveglia(s, 1);
 }
 
 /* =============================================================================
@@ -10085,6 +10112,24 @@ int irq_unbind(unsigned int irq)
     return (int)_syscall1(SYS_IRQ_UNBIND, irq);
 }
 
+/* Edges with their instant (kernel 0.323, voce 98): see libc.h. */
+int irq_fronti_accendi(unsigned int irq, unsigned int quanti)
+{
+    return _syscall4(SYS_IRQ_FRONTI, 1, irq, quanti, 0);
+}
+int irq_fronti_spegni(unsigned int irq)
+{
+    return _syscall4(SYS_IRQ_FRONTI, 0, irq, 0, 0);
+}
+int irq_fronti_leggi(unsigned int irq, unsigned long long *istanti, unsigned int max)
+{
+    return _syscall4(SYS_IRQ_FRONTI, 2, irq, (uintptr_t)istanti, max);
+}
+int irq_fronti_stato(unsigned int irq, IrqFrontiStato *s)
+{
+    return _syscall4(SYS_IRQ_FRONTI, 3, irq, (uintptr_t)s, 0);
+}
+
 int fdprova(FdPasso *passi, unsigned int max)
 {
     return (int)_syscall3(SYS_FDPROVA, (uintptr_t)passi, max, 0);
@@ -11493,8 +11538,15 @@ int *__errno_dove(void)
 
         for (b = &g_errno_posti; b; ultimo = b, b = b->succ)
             for (i = 0; i < ERRNO_POSTI; i++)
+                /* ! COMPARE AND SWAP, NOT xchg (8 November 2026): xchg
+                 * writes whatever was there. Two threads on two processors
+                 * (kernel 0.321) saw the same empty place, the second
+                 * overwrote the first one's tp, and that thread found no
+                 * place of its own any more and took a new one at 0: its
+                 * errno lost. (The errno that tools/prova_moltifili.sh
+                 * found changed came from the locks: see futex_dormi.) */
                 if (b->p[i].tp == 0 &&
-                    mutex_xchg(&b->p[i].tp, (int)tp) == 0) {
+                    mutex_cmpxchg(&b->p[i].tp, 0, (int)tp) == 0) {
                     b->p[i].valore = 0;
                     return &b->p[i].valore;
                 }
@@ -15798,7 +15850,10 @@ static ssize_t tcp_manda(Presa *p, const unsigned char *buf, size_t n, int flag)
         int          r;
 
         if (q > P_TCP_DATI_MAX) q = P_TCP_DATI_MAX;
-        d.id = p->id; d.len = q;
+        /* d.len = what is left of the write, not of this message (ip.drv
+         * 0.024): the stack takes the bytes the message holds, and knows that
+         * more follow - it does not cut a short segment between the two */
+        d.id = p->id; d.len = (unsigned int)(n - fatti > 0x7FFFFFFFu ? 0x7FFFFFFFu : n - fatti);
         memcpy(msg, &d, sizeof(d));
         memcpy(msg + sizeof(d), buf + fatti, q);
         r = ip_esito(P_IP_MSG_TCP_INVIA, msg, (unsigned int)sizeof(d) + q);

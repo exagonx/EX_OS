@@ -268,6 +268,36 @@ for id in $(cut -f2 "$TEMP/mappa" | LC_ALL=C sort -u); do
         >> "$TEMP/archivi"
 done
 
+# elenco_a_parte ID PEZZO DOVE: pacchetti/ID.txt, l'elenco di un pacchetto
+# che non sta in elenco.txt (vedi Exilla, sotto). DOVE e' una directory sotto
+# file/ o un file con un percorso per riga; i file piu' grossi di PEZZO byte
+# restano sul server solo a pezzi (.p000, .p001, ...).
+elenco_a_parte() {
+    local id=$1 pezzo=$2 dove=$3 p b h
+    {
+        echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto[<TAB>pezzi=<byte per pezzo>]"
+        if [ -f "$dove" ]; then LC_ALL=C sort "$dove"
+        else ( cd "$FUORI/file" && find "$dove" -type f -printf '%p\n' | LC_ALL=C sort ); fi \
+        | while IFS= read -r p; do
+            b=$(stat -c %s "$FUORI/file/$p")
+            h=$(sha256sum "$FUORI/file/$p" | cut -d' ' -f1)
+            if [ "$b" -gt "$pezzo" ]; then
+                # split numera da 000 e non lascia l'intero: sul server ci
+                # vanno solo i pezzi.
+                split -b "$pezzo" -d -a 3 "$FUORI/file/$p" "$FUORI/file/$p.p"
+                rm -f "$FUORI/file/$p"
+                printf '%s\t%s\t%s\t%s\tpezzi=%s\n' "$p" "$b" "$h" "$id" "$pezzo"
+            else
+                printf '%s\t%s\t%s\t%s\n' "$p" "$b" "$h" "$id"
+            fi
+        done
+    } > "$FUORI/pacchetti/$id.txt"
+}
+mb_di() {
+    awk -F'\t' '!/^#/ { s += $2 } END { printf "%d", (s + 1048575) / 1048576 }' \
+        "$FUORI/pacchetti/$1.txt"
+}
+
 # --- Exilla: un pacchetto con l'ELENCO SUO e i file grossi A PEZZI -----------
 #
 # ! EXILLA (Firefox per EX-OS) E' UN PACCHETTO COME GLI ALTRI PER CHI LO
@@ -327,26 +357,38 @@ if [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
     strip -o "$E/firefox" "$EXILLA_DIST/firefox"
     cp "$EXILLA_LANCIA" "$E/exilla"
     cp "$EXILLA_ICONE"/exilla_64.ico "$EXILLA_ICONE"/exilla_128.ico "$E/"
+    # Which CJK font for each language (serif, sans-serif, monospace): the
+    # names of the faces of [font-cjk], read by Gecko from defaults/pref.
+    mkdir -p "$E/defaults/pref"
+    cp tools/font-cjk/exos-cjk.js "$E/defaults/pref/"
 
-    {
-        echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto[<TAB>pezzi=<byte per pezzo>]"
-        ( cd "$FUORI/file" && find "$EXILLA_DOVE" -type f -printf '%p\n' | LC_ALL=C sort ) \
-        | while IFS= read -r p; do
-            b=$(stat -c %s "$FUORI/file/$p")
-            h=$(sha256sum "$FUORI/file/$p" | cut -d' ' -f1)
-            if [ "$b" -gt "$EXILLA_PEZZO" ]; then
-                # split numera da 000 e non lascia l'intero: sul server ci
-                # vanno solo i pezzi.
-                split -b "$EXILLA_PEZZO" -d -a 3 "$FUORI/file/$p" "$FUORI/file/$p.p"
-                rm -f "$FUORI/file/$p"
-                printf '%s\t%s\t%s\texilla\tpezzi=%s\n' "$p" "$b" "$h" "$EXILLA_PEZZO"
-            else
-                printf '%s\t%s\t%s\texilla\n' "$p" "$b" "$h"
-            fi
-        done
-    } > "$FUORI/pacchetti/exilla.txt"
-    EXILLA_MB=$(awk -F'\t' '!/^#/ { s += $2 } END { printf "%d", (s + 1048575) / 1048576 }' \
-                "$FUORI/pacchetti/exilla.txt")
+    elenco_a_parte exilla "$EXILLA_PEZZO" "$EXILLA_DOVE"
+    EXILLA_MB=$(mb_di exilla)
+fi
+
+# --- i caratteri cinesi, giapponesi e coreani: [font-cjk], voluto da Exilla ---
+#
+# ! NOVANTATRE MEGABYTE DI CARATTERI NON VANNO SU OGNI MACCHINA: come Exilla,
+# hanno l'elenco loro (pacchetti/font-cjk.txt) e i file a pezzi da 16 MB, e li
+# porta solo `netupdate -install:font-cjk` - o -install:exilla, che li vuole.
+# Senza, Exilla scrive le pagine cinesi, giapponesi e coreane a quadratini.
+#
+# ! STANNO IN /exwin/font, ACCANTO AGLI ALTRI, perche' e' li' che Gecko cerca
+# (gfxExosPlatform: /exwin/font, poi /cdrom/exwin/font). ExWin non li apre:
+# lib/exwin/exwin.c carica la sua lista di nomi, non la directory.
+#
+# Da dove: tools/font-cjk/prepara.sh (Noto Sans CJK e Noto Serif CJK, Regular
+# e Bold, con la licenza OFL).
+FONT_CJK_DIST="${FONT_CJK_DIST:-cross_build/terze-parti/noto-cjk/scelti}"
+FONT_CJK_CI_E=no
+FONT_CJK_MB=0
+if [ -f "$FONT_CJK_DIST/NotoSansCJK-Regular.ttc" ] && [ "$EXILLA_CI_E" = si ]; then
+    FONT_CJK_CI_E=si
+    mkdir -p "$FUORI/file/exwin/font"
+    cp "$FONT_CJK_DIST"/*.ttc "$FONT_CJK_DIST/NotoCJK-LICENSE.txt" "$FUORI/file/exwin/font/"
+    ( cd "$FONT_CJK_DIST" && ls *.ttc NotoCJK-LICENSE.txt | sed 's|^|exwin/font/|' ) > "$TEMP/cjk"
+    elenco_a_parte font-cjk "$EXILLA_PEZZO" "$TEMP/cjk"
+    FONT_CJK_MB=$(mb_di font-cjk)
 fi
 
 # --- il catalogo ------------------------------------------------------------
@@ -455,6 +497,18 @@ CAT="$FUORI/catalogo.txt"
         echo "elenco = pacchetti/exilla.txt"
         echo "elimpronta = $(sha256sum "$FUORI/pacchetti/exilla.txt" | cut -d' ' -f1)"
         echo "menu   = Internet/Exilla (Firefox) | /$EXILLA_DOVE/exilla | /$EXILLA_DOVE/exilla_64.ico | ram=2048"
+        [ "$FONT_CJK_CI_E" = si ] && echo "vuole  = font-cjk"
+    fi
+    if [ "$FONT_CJK_CI_E" = si ]; then
+        echo ""
+        echo "# --- i caratteri CJK di Exilla: anche loro con l'elenco a parte ---"
+        echo "[font-cjk]"
+        echo "nome   = Caratteri cinesi, giapponesi e coreani"
+        echo "dice   = Noto Sans CJK e Noto Serif CJK per le pagine di Exilla (licenza OFL)"
+        echo "prova  = exwin/font/NotoSansCJK-Regular.ttc"
+        echo "mbyte  = $FONT_CJK_MB"
+        echo "elenco = pacchetti/font-cjk.txt"
+        echo "elimpronta = $(sha256sum "$FUORI/pacchetti/font-cjk.txt" | cut -d' ' -f1)"
     fi
 } > "$CAT"
 
@@ -619,6 +673,12 @@ if [ "$EXILLA_CI_E" = si ]; then
     echo "  Exilla: $EXILLA_MB MB, $(grep -vc '^#' "$FUORI/pacchetti/exilla.txt") file" \
          "($(find "$FUORI/file/$EXILLA_DOVE" -name '*.p[0-9][0-9][0-9]' | wc -l) pezzi da $((EXILLA_PEZZO / 1048576)) MB)."
     echo "    Si installa con:  netupdate -install:exilla"
+    if [ "$FONT_CJK_CI_E" = si ]; then
+        echo "  Caratteri CJK: $FONT_CJK_MB MB, $(grep -vc '^#' "$FUORI/pacchetti/font-cjk.txt") file:" \
+             "netupdate -install:font-cjk (o con Exilla)."
+    else
+        echo "     ! SENZA CARATTERI CJK: manca $FONT_CJK_DIST (tools/font-cjk/prepara.sh)."
+    fi
 else
     echo "     ! SENZA EXILLA: manca $EXILLA_DIST/firefox o $EXILLA_LANCIA."
 fi

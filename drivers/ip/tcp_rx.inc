@@ -72,16 +72,32 @@ static void rx_tieni(Conn *c, unsigned int seq, unsigned int d,
 {
     unsigned int cap = rx_cap(c), i;
 
+    unsigned int da = seq, a = seq + n, uniti = 0;
+
     rx_compatta(c);
     if (c->rx_len + d + n > cap) return;            /* oltre la finestra: lo rimandera' */
-    for (i = 0; i < c->fs_n; i++)
-        if (c->fs[i].da == seq && c->fs[i].a == seq + n) break;
-    if (i == c->fs_n) {
-        if (c->fs_n >= TCP_FS) return;
-        c->fs[c->fs_n].da = seq;
-        c->fs[c->fs_n].a  = seq + n;
-        c->fs_n++;
+    /* ! A PIECE THAT TOUCHES A TRACT WIDENS IT (8 November 2026). Up to then
+     * only the very same tract was recognised, and every segment after a
+     * hole took a tract of its own: with TCP_FS = 8 the ninth segment after
+     * a loss was thrown away, and the sender had to send them again one per
+     * round trip (tools/prova-invio, 1% lost: the ACK jumped to the eighth
+     * segment and no further). Now the segments that follow one another make
+     * one tract, and eight tracts are eight holes. */
+    for (i = 0; i < c->fs_n; ) {
+        if ((int)(c->fs[i].da - a) <= 0 && (int)(c->fs[i].a - da) >= 0) {
+            if ((int)(c->fs[i].da - da) < 0) da = c->fs[i].da;
+            if ((int)(c->fs[i].a - a) > 0)   a  = c->fs[i].a;
+            c->fs[i] = c->fs[--c->fs_n];
+            uniti++;
+            i = 0;                  /* the wider one may touch another */
+            continue;
+        }
+        i++;
     }
+    if (uniti == 0 && c->fs_n >= TCP_FS) return;
+    c->fs[c->fs_n].da = da;
+    c->fs[c->fs_n].a  = a;
+    c->fs_n++;
     memcpy(c->rx + c->rx_len + d, dati, n);
 }
 

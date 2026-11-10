@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.321
+**Version:** 0.323
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,106 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### One driver for the parallel port (kernel 0.323, lpt.drv 0.001, voce 98)
+
+- **`/dev/lpt.drv`**: one driver for everything on the parallel port (printers, the Iomega ZIP,
+  scanners, the Commodore datasette through a C64S-style adapter, prototype boards). `-avvia` finds
+  the ports (0x378, 0x278, 0x3BC) and what they can do (SPP, PS/2, EPP, ECP) and starts a service
+  per port (`lpt0`...); one client at a time holds it. It gives the basic operations: printing with
+  the Busy/nStrobe handshake (`-stampa FILE`), the raw registers (`-pin`, `-dati:V`,
+  `-controllo:V`), the IEEE 1284 Device ID in nibble mode (`-id`), the edges of nACK with their
+  instant (`-fronti:S`), a wave on the data lines with given half-wave times (`-prova-onda:N:US`).
+  `-install`/`-remove`. Protocol in `drivers/lpt/lpt_proto.h`. `help lpt`, manual 4.9.
+- **Kernel 0.323, IRQ edges with their instant** (`SYS_IRQ_FRONTI` 266, `irq_fronti_*` in libc):
+  the stubs note the fine clock (TSC, or PIT on a 486) before waiting for the kernel's lock; a line
+  in this mode keeps every edge in a ring the driver reads, notifies once until read, and is not
+  masked between edges. Only for the sole owner of an edge line. A "spurious" IRQ 7 or 15 on such a
+  line is counted as an edge (the request went down before it was taken).
+- The datasette's wires and timings come from the mtap and ptap programs, read only as
+  documentation: nothing of their code is in EX-OS. The datasette program is voce 96.
+- `tools/prova_lpt.sh`: in QEMU with `-parallel file:`, 12 out of 12 at 32 and at 64 bit with one
+  processor: `/boot/help.txt` printed byte for byte, 300 edges out of 300, the wave played.
+  ! With `-smp 2`: 300 out of 300 at 32 bit, 297 out of 300 at 64 (294 at 32 before spurious IRQ 7 counted as edges): processor 0
+  waits for the kernel's lock with interrupts off, and two edges in that wait become one interrupt
+  in the PIC. The wave was at most 0.26-1.3 ms late. Not tested on real hardware yet.
+
+### Exilla writes Chinese, Japanese and Korean (package font-cjk, netupdate 0.047)
+
+- **The fonts.** The new netupdate package `font-cjk` brings Noto Sans CJK 2.004 and Noto Serif CJK
+  2.003, regular and bold, into `/exwin/font` (90 MB, SIL OFL 1.1). Each file is a collection with
+  Japanese, Korean, Simplified, Traditional and Hong Kong Chinese (and the Sans one also the
+  monospace faces): four files cover all of it, and Gecko makes the other weights. Before, Exilla
+  drew those pages as boxes.
+- **It comes with Exilla**: `netupdate -install:exilla` wants it (`vuole = font-cjk` in the
+  catalogue); alone, `netupdate -install:font-cjk`. Like Exilla it has its own list and 16 MB pieces,
+  so `-check -yesall` does not bring it to machines without Exilla. Who had Exilla already asks for
+  it: the new check `verifiche/exilla.sh`, at the end of `-check`, says so.
+- **netupdate 0.047**: a separate list was downloaded only for the package asked for, not for the
+  ones it wants; with 0.046 `font-cjk` would have been installed without its files.
+- **Which font for each language**: `defaults/pref/exos-cjk.js` in the Exilla package tells Gecko that
+  Japanese `serif` is Noto Serif CJK JP, `sans-serif` Noto Sans CJK JP, and so on for Korean and
+  Chinese; without it a page asking for serif got the Sans.
+- **Where from**: `tools/font-cjk/prepara.sh` downloads the two archives from the notofonts/noto-cjk
+  releases, checks the digests (`tools/font-cjk/IMPRONTE`: GitHub gives none) and takes the four
+  files; `tools/mknetinst.sh` publishes them.
+- **Tested** in QEMU at 32 and 64 bit with two processors: Exilla draws Chinese, Japanese (serif
+  too) and Korean (`tools/exilla/prova-gecko.sh`); `tools/prova_font_cjk.sh` 4 out of 4: from a disk
+  installed from the CD `-install:exilla` brings the 5 files with the right digests, the register
+  has `[font-cjk]`, the check says fine and, with a font removed, says `-install:font-cjk`. **To
+  test** on the laptop.
+
+### Two processors no longer stop the disk for good (kernel 0.322)
+
+- **The fault.** With two processors at work (the default since 0.319) a program with several
+  threads reading and writing files could stop the whole system: every file waited for the disk,
+  and the disk was held by `e1000.drv`, which never touches it. Kernel code can be switched away by
+  a tick and come back on the other processor; the kernel read "who is running" as the processor's
+  number and then that processor's entry, and between the two it could move, getting the process
+  of the processor it had just left. So a thread that had taken the disk lock gave it back in
+  someone else's name, the give-back was refused, and the lock stayed taken.
+- **The fix.** The running process is read with interrupts off, so it cannot move in between. The
+  batch of pages freed by `munmap` had the same weak point (it belonged to the processor) and now
+  belongs to the process.
+- **Found with a new test**, `tools/prova-letture/prova-letture.sh [32]`: known files read back with
+  `read`, `pread` and `mmap` while other threads and processes write, grow, rewrite and delete new
+  ones, with plenty of RAM, with little RAM, and on ext4. Before the fix it stopped one time in two or
+  three at 64 bit; after it, six runs in a row ended with no error. The guard's probe now also says
+  where the disk lock was taken, and the kernel says once if someone gives it back without holding it.
+- **The libc's locks no longer change `errno`.** `pthread_mutex_lock`, `pthread_cond_wait` and
+  `sem_wait` wrote EAGAIN into `errno` when the lock changed just before going to sleep; with two
+  threads really at once (0.321) that happened almost every time, and `tools/prova_moltifili.sh`
+  found 377 threads of 382 with their `errno` changed. Now the waits inside the libc leave it alone,
+  as glibc does. And a thread taking its `errno` place for the first time uses compare-and-swap, so
+  two threads starting together on two processors can no longer take the same one.
+- **Tested** in QEMU at 32 and 64 bit with two processors, and **on the laptop** (two cores): the
+  same test for 60 s, no error and no hang.
+
+### Sending is no longer held to 4 KB, and TCP has congestion control (ip.drv 0.024, ipcfg 0.006)
+
+- **The send queue grows.** Up to 0.023 a connection had at most 4 KB in flight on the way out:
+  towards a server 50 ms away that meant about 80 KB/s, whatever the line. A connection now starts
+  with the 4 KB it has inside and takes a 63 KB queue only the first time that one is full, so a
+  request or a short answer costs nothing more. At most a sixteenth of the RAM goes to large
+  queues; past that a connection keeps working with 4 KB. `ip.drv -W KB` (4 to 63) chooses the size.
+- **Congestion control (RFC 5681, 6582, 6928).** Slow start from ten segments, one segment more per
+  round trip after the threshold, a retransmission at the third duplicate ACK (fast recovery, with
+  NewReno's partial ACKs), and on a timeout one segment and slow start again.
+- **Two old faults found on the way.** After a timeout, an ACK that jumped past what was being sent
+  again left the connection silent until the next timeout. And the receiver kept at most 8 segments
+  out of order, even when they followed one another: after a loss the ninth was thrown away. Now the
+  segments that follow one another make one tract (`drivers/ip/tcp_rx.inc`).
+- **No more 120-byte segments.** A `write()` reaches the stack 1520 bytes per message, and each
+  message left as a full segment plus a 120-byte one. The libc now says how much of the write is
+  left, and the stack waits for it before cutting a short segment. A write that ends goes at once.
+- `ipcfg` shows `TCP rimandati` (sent again at once / when the timer expired) and `TCP code grandi`.
+- **Tested in QEMU** with `tools/prova-invio/prova-invio.sh` (64 and 32 bit): two EX-OS machines
+  joined by `rele.py`, a cable with 25 ms each way, 20 Mbit/s and a router queue. 2 MB, every byte
+  checked: 853 KB/s on a clean line (57 KB/s with `-W 4`, as up to 0.023), and 464 KB/s with 1% of
+  the frames lost (46 KB/s before the two fixes). **Tested on the laptop** (nForce, 100 Mbit, kernel 0.322) against a PC on the LAN, 16 MB three
+  times each way: PC to laptop 8.3-8.5 MB/s with no retransmission from the PC (it used to resend
+  about 20% of the segments), laptop to PC 11.2-11.5 MB/s, the line full. **To be tested** over the
+  Internet.
 
 ### The CPU frequency follows the load (kernel 0.311, cpufreq.drv 0.001)
 

@@ -16,6 +16,10 @@
 #include "entropia.h"
 #include "ipc.h"
 #include "syscall.h"
+#include "tsc.h"
+#include "smp.h"
+#include "kmalloc.h"
+#include "sched.h"
 
 /* =============================================================================
  * Nomi delle eccezioni CPU (per messaggi di errore)
@@ -153,6 +157,22 @@ uint32_t irq_proprietario(uint8_t irq)
 /* Quanti proprietari VIVI ha questa linea, e intanto ripulisce gli slot di
  * chi è morto: un processo terminato non deve tenere chiusa una linea per
  * sempre, e nessuno chiamerà irq_done() per lui. */
+/* The lines in edge mode (0.323): see IRQ EDGES WITH THEIR INSTANT below. */
+typedef struct {
+    uint32_t  pid;          /* 0 = the mode is off */
+    uint64_t *anello;       /* cap instants (kmalloc) */
+    uint32_t  cap;
+    uint32_t  testa;        /* next to write */
+    uint32_t  coda;         /* next to read */
+    uint32_t  persi;        /* edges that found the ring full */
+    uint32_t  avvisato;     /* a notification is on its way */
+    uint32_t  fronti;       /* edges seen since the mode was turned on */
+    uint32_t  spuri;        /* of which taken from a "spurious" IRQ 7 or 15 */
+} IrqFronti;
+
+static IrqFronti g_fronti[16];
+static void fronti_spegni(uint8_t irq);
+
 static uint32_t irq_ripulisci(uint8_t irq)
 {
     uint32_t vivi = 0;
@@ -292,6 +312,7 @@ int32_t irq_unbind_uno(uint8_t irq, uint32_t pid)
 
     irq_owner_pid[irq][mio] = 0;
     irq_pendenti[irq] &= ~(1u << mio);
+    if (g_fronti[irq].pid == pid) fronti_spegni(irq);
 
     /* ! LA LINEA SI CHIUDE SOLO SE NON LA VUOLE PIU' NESSUNO. Chiuderla
      * sempre — com'era quando i proprietari erano uno solo — vorrebbe dire
@@ -300,6 +321,218 @@ int32_t irq_unbind_uno(uint8_t irq, uint32_t pid)
     if (irq_ripulisci(irq) == 0) pic_mask_irq(irq);
     else if (irq_pendenti[irq] == 0) pic_unmask_irq(irq);
     return 0;
+}
+
+
+/* =============================================================================
+ * IRQ EDGES WITH THEIR INSTANT (kernel 0.323, voce 98)
+ *
+ * ! WHEN AN EDGE CAME IS KNOWN ONLY HERE. A ring 3 driver hears of its
+ * interrupt when it is scheduled: a millisecond later, or ten, never the same.
+ * For a printer that is nothing. For the parallel port it is the whole job: a
+ * Commodore datasette sends a square wave on ACK whose PERIOD is the data
+ * (about 180 to 500 microseconds a wave, mtap/ptap as documentation), and a
+ * prototype board on the same pin wants to know when each of its signals
+ * arrived. So the stub notes the fine clock at the entry, BEFORE waiting for
+ * the kernel's lock (with two processors the other may hold it for a while),
+ * and irq_handler stores it in a ring that the driver reads when it can.
+ *
+ * ! AND THE LINE IS NOT MASKED IN THIS MODE. The masking below exists for
+ * level-triggered lines that stay high until the driver clears its card; the
+ * ACK interrupt of a parallel port is an EDGE and has nothing to clear.
+ * Masked until irq_done, every wave after the first would be lost while the
+ * driver waits to be scheduled. That is why the mode is only for a line with
+ * ONE owner: a shared PCI line is level-triggered by nature.
+ * ============================================================================= */
+
+/* The fine clock at the entry of the last interrupt, one slot per processor
+ * (grown by irq_posti from posti_cresci, like the other per-processor tables). */
+static uint64_t  g_istante_1[1];
+static uint64_t *g_istante = g_istante_1;
+static uint32_t  g_istante_posti = 1;
+
+int irq_posti(uint32_t posti)
+{
+    uint64_t *nuovo;
+    uint32_t  i;
+    uintptr_t flag;
+
+    if (posti <= g_istante_posti) return 0;
+    nuovo = (uint64_t *)kmalloc(posti * sizeof(uint64_t));
+    if (nuovo == NULL) return -1;
+    for (i = 0; i < posti; i++) nuovo[i] = 0;
+    flag = read_eflags();
+    interrupts_disable();
+    nuovo[0]         = g_istante[0];
+    g_istante        = nuovo;
+    g_istante_posti  = posti;
+    if (flag & 0x200u) interrupts_enable();
+    return 0;
+}
+
+/* The finest clock this machine has: the TSC, or on a 486 (no RDTSC) the
+ * ticks and what channel 0 of the PIT has counted down since the last one
+ * (divisor 11931, 100 Hz, set in entry.asm). */
+#define PIT_DIV_TICK 11931u
+
+uint64_t orologio_fine(void)
+{
+    uint32_t conta, t;
+
+    if (tsc_c_e()) return tsc_leggi();
+    port_outb(0x43, 0x00);                  /* latch channel 0 */
+    conta  = port_inb(0x40);
+    conta |= (uint32_t)port_inb(0x40) << 8;
+    t = g_ticks;
+    if (conta > PIT_DIV_TICK) conta = PIT_DIV_TICK;
+    return (uint64_t)t * PIT_DIV_TICK + (PIT_DIV_TICK - conta);
+}
+
+uint32_t orologio_fine_hz(void)
+{
+    return tsc_c_e() ? tsc_hz() : 1193182u;
+}
+
+/* Called by the stubs before bkl_entra, interrupts off: nothing shared. */
+void irq_istante(void)
+{
+    uint32_t n = cpu_n();
+
+    if (n < g_istante_posti) g_istante[n] = orologio_fine();
+}
+
+
+static void fronti_spegni(uint8_t irq)
+{
+    uint64_t *a = g_fronti[irq].anello;
+    uintptr_t flag = read_eflags();
+
+    interrupts_disable();
+    g_fronti[irq].pid = 0;
+    g_fronti[irq].anello = NULL;
+    g_fronti[irq].cap = 0;
+    if (flag & 0x200u) interrupts_enable();
+    if (a) kfree(a);
+}
+
+/* From irq_handler: 1 if the edge was taken here (and nothing else to do). */
+static int fronti_prendi(uint8_t irq, uint64_t quando)
+{
+    IrqFronti *f = &g_fronti[irq];
+    uint32_t   dopo;
+
+    if (f->pid == 0) return 0;
+    f->fronti++;
+    dopo = f->testa + 1;
+    if (dopo == f->cap) dopo = 0;
+    if (dopo == f->coda) f->persi++;
+    else { f->anello[f->testa] = quando; f->testa = dopo; }
+    if (!f->avvisato && ipc_notify_irq(f->pid, irq)) f->avvisato = 1;
+    return 1;
+}
+
+/* ! A "SPURIOUS" IRQ 7 ON A LINE IN EDGE MODE IS AN EDGE. The 8259 gives
+ * IRQ 7 (15 on the slave) with nothing in service when the request went
+ * down before the processor took it: the line DID go up. With two
+ * processors the one the PIC talks to may be waiting for the kernel's lock
+ * with interrupts off, and a parallel port keeps its line up only while nACK
+ * is low: half a wave of a datasette, or less. In QEMU, at 32 bit with two
+ * processors, 6 edges of 300 were lost so (9 November 2026). Counted apart
+ * in `spuri`, so a driver knows. */
+static void spurio_fronte(uint8_t irq)
+{
+    if (g_fronti[irq].pid == 0) return;
+    g_fronti[irq].spuri++;
+    fronti_prendi(irq, g_istante[cpu_n() < g_istante_posti ? cpu_n() : 0]);
+}
+
+static int irq_mio(uint8_t irq, uint32_t pid, int *altri)
+{
+    int i, mio = 0;
+
+    *altri = 0;
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++) {
+        if (irq_owner_pid[irq][i] == pid) mio = 1;
+        else if (irq_owner_pid[irq][i] != 0) (*altri)++;
+    }
+    return mio;
+}
+
+/* SYS_IRQ_FRONTI (266): see kernel/include/syscall.h. */
+int32_t irq_fronti(uint32_t op, uint8_t irq, uintptr_t a, uint32_t b, uint32_t pid)
+{
+    IrqFronti *f;
+    int        altri;
+
+    if (irq >= 16) return ERR(EINVAL);
+    f = &g_fronti[irq];
+    if (op == IRQF_STATO) {
+        /* ! FOR EVERYBODY: the clock is what a driver needs to make a wave
+         * at given instants too, without owning a line. The ring's numbers
+         * only to its owner. */
+        IrqFrontiStato *s = (IrqFrontiStato *)a;
+        int mio = (f->pid == pid);
+
+        if (!syscall_verify_ptr(s, sizeof(*s))) return ERR(EFAULT);
+        s->hz      = orologio_fine_hz();
+        s->tsc     = tsc_c_e() ? 1u : 0u;
+        s->cap     = mio ? f->cap : 0;
+        s->persi   = mio ? f->persi : 0;
+        s->fronti  = mio ? f->fronti : 0;
+        s->spuri   = mio ? f->spuri : 0;
+        s->in_coda = mio ? (f->testa + f->cap - f->coda) % f->cap : 0;
+        s->adesso  = orologio_fine();
+        return 0;
+    }
+    irq_ripulisci(irq);
+    if (!irq_mio(irq, pid, &altri)) return ERR(EPERM);
+
+    if (op == IRQF_SPEGNI) {
+        if (f->pid == pid) fronti_spegni(irq);
+        return 0;
+    }
+    if (op == IRQF_ACCENDI) {
+        uint64_t *anello;
+        uintptr_t flag;
+        uint32_t  cap = (uint32_t)a;
+
+        /* ! ONLY ALONE ON THE LINE: see the head of this part. */
+        if (altri) return ERR(EBUSY);
+        /* the size is the driver's; the bound only keeps cap * 8 in 32 bits */
+        if (cap < 2 || cap > (1u << 26)) return ERR(EINVAL);
+        anello = (uint64_t *)kmalloc(cap * sizeof(uint64_t));
+        if (anello == NULL) return ERR(ENOMEM);
+        if (f->pid) fronti_spegni(irq);
+        flag = read_eflags();
+        interrupts_disable();
+        f->anello = anello; f->cap = cap;
+        f->testa = f->coda = 0; f->persi = 0; f->avvisato = 0; f->fronti = 0; f->spuri = 0;
+        f->pid = pid;
+        if (flag & 0x200u) interrupts_enable();
+        pic_unmask_irq(irq);
+        return 0;
+    }
+    if (f->pid != pid) return ERR(EINVAL);
+
+    if (op == IRQF_LEGGI) {
+        uint64_t *fuori = (uint64_t *)a;
+        uint32_t  n = 0;
+        uintptr_t flag;
+
+        if (b == 0) return 0;
+        if (!syscall_verify_ptr(fuori, b * sizeof(uint64_t))) return ERR(EFAULT);
+        flag = read_eflags();
+        interrupts_disable();
+        while (n < b && f->coda != f->testa) {
+            fuori[n++] = f->anello[f->coda];
+            if (++f->coda == f->cap) f->coda = 0;
+        }
+        /* a later edge notifies again */
+        f->avvisato = 0;
+        if (flag & 0x200u) interrupts_enable();
+        return (int32_t)n;
+    }
+    return ERR(EINVAL);
 }
 
 /* irq_unbind_process — rilascia il claim (chiamata alla terminazione) */
@@ -313,6 +546,7 @@ void irq_unbind_process(uint32_t pid)
     for (int i = 0; i < 16; i++) {
         int j, trovato = 0;
 
+        if (g_fronti[i].pid == pid) fronti_spegni((uint8_t)i);
         for (j = 0; j < IRQ_PROPRIETARI_MAX; j++) {
             if (irq_owner_pid[i][j] != pid) continue;
             irq_owner_pid[i][j] = 0;
@@ -560,6 +794,7 @@ void irq_handler(InterruptFrame *frame)
         uint8_t isr = port_inb(0x20);   /* Leggi In-Service Register */
         if (!(isr & 0x80)) {
             /* IRQ7 spurio: ignora (non mandare EOI) */
+            spurio_fronte(7);
             return;
         }
     }
@@ -571,6 +806,7 @@ void irq_handler(InterruptFrame *frame)
         if (!(isr & 0x80)) {
             /* IRQ15 spurio: manda EOI solo al master */
             port_outb(0x20, 0x20);
+            spurio_fronte(15);
             return;
         }
     }
@@ -599,6 +835,11 @@ void irq_handler(InterruptFrame *frame)
      * tutta la durata dell'handler, vedi irq_common_stub), quindi non è
      * possibile un rientro dello stesso IRQ prima dell'iret finale. */
     pic_send_eoi(irq);
+
+    /* An edge with its instant (0.323): taken, notified, the line stays open. */
+    if (irq < 16 && irq_handlers[irq] == NULL &&
+        fronti_prendi(irq, g_istante[cpu_n() < g_istante_posti ? cpu_n() : 0]))
+        return;
 
     /* Chiama handler registrato se presente, altrimenti notifica il
      * driver ring3 che ha rivendicato questo IRQ (se esiste) */

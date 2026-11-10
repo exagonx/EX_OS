@@ -33,6 +33,7 @@
 [BITS 64]
 extern isr64_gestisci
 extern bkl_entra
+extern irq_istante              ; 0.323, isr.c
 extern bkl_esci
 
 %macro INGRESSO 1               ; senza codice d'errore
@@ -79,6 +80,16 @@ comune:
     push r14
     push r15
     cld                         ; il C vuole DF a zero, chi e' stato interrotto no
+    ; The instant of a hardware interrupt (vectors 32-47, the PIC's) BEFORE
+    ; the lock, which may make it wait for the other processor (0.323, see
+    ; IRQ EDGES WITH THEIR INSTANT in isr.c). The vector is above the 15
+    ; registers. The stack is aligned as for bkl_entra.
+    mov  rax, [rsp + 15*8]
+    sub  rax, 32
+    cmp  rax, 16
+    jae  .non_irq
+    call irq_istante
+.non_irq:
     call bkl_entra              ; several processors: one in the kernel (smp.h)
     mov  rdi, rsp               ; il primo argomento: InterruptFrame *
     call isr64_gestisci

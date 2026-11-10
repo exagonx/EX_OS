@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.023");
+EX_VERSIONE("ip.drv", "0.024");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -1006,6 +1006,35 @@ static int  prossimo_salto(const unsigned char *dest, unsigned char *hop);
  * mancava, i tratti contigui diventano buoni senza copiare niente.
  * ============================================================================= */
 #define TCP_RX_MAX     64512u  /* 63 KB: sotto i 65535 che il campo sa dire */
+
+/* =============================================================================
+ * ! THE SEND QUEUE GROWS TOO (0.024, 8 November 2026, voce 1a of @CODA-20-10).
+ * Up to 0.023 a connection could have at most TCP_BUF (4 KB) in flight on the
+ * way OUT, whatever the line: 85 KB/s towards a server 47 ms away. That is the
+ * asymmetry netspeed shows. Now a connection starts with the 4 KB it has
+ * inside (tx_riserva) and takes a large queue (g_tx_dim, 63 KB by default,
+ * `-W <KB>`) only the first time the small one is full - an HTTP request or
+ * a short answer never costs more than before. At most g_tx_grandi_max large
+ * queues at once (a sixteenth of the RAM, as for receiving); past that the
+ * connection keeps working with its 4 KB.
+ *
+ * ! AND A LARGE QUEUE NEEDS CONGESTION CONTROL. With 4 KB in flight a burst
+ * was three segments; with 63 KB it would be forty-five, at once, into a
+ * router that may hold fewer. So 0.024 has the minimum of RFC 5681: slow
+ * start from ten segments (RFC 6928), congestion avoidance (one segment per
+ * round trip), fast retransmit on the third duplicate ACK with fast recovery,
+ * and on a timeout one segment and slow start again. On a LAN with the
+ * window open nothing changes: cwnd grows past the window in a few ACKs.
+ *
+ * ! THE BYTES START AT tx_off, as rx_off does for receiving: an ACK only
+ * moves the offset. With a memmove per ACK (up to 0.023) a 63 KB queue would
+ * copy itself forty-five times per window.
+ * ============================================================================= */
+#define TCP_TX_MAX     64512u
+static unsigned int g_tx_dim = TCP_TX_MAX;
+static unsigned int g_tx_grandi_max = 256;
+static unsigned int g_tx_grandi = 0;
+#define TCP_CWND_INIZIO (10u * TCP_MSS)
 #define TCP_FS         8       /* tratti fuori ordine tenuti da parte */
 static unsigned int g_rx_dim = TCP_RX_MAX;
 #define TCP_MSS        1400    /* sotto i 1460 tipici: lascia margine, e
@@ -1051,8 +1080,19 @@ typedef struct {
     unsigned int  finestra;      /* quella annunciata dall'altro */
     unsigned int  fin_nostra;    /* l'ultima che abbiamo annunciato NOI */
 
-    unsigned char tx[TCP_BUF];
+    unsigned char *tx;           /* the large queue (0.024), or NULL: tx_riserva */
+    unsigned int  tx_dim;        /* its size; 0 while tx is NULL */
+    unsigned int  tx_off;        /* where the unconfirmed bytes start */
     unsigned int  tx_len;        /* byte in coda, confermati compresi */
+    unsigned char tx_riserva[TCP_BUF];
+    /* congestion control (0.024, RFC 5681): cwnd 0 = not started yet */
+    unsigned int  cwnd, ssthresh;
+    unsigned int  ack_doppi;     /* duplicate ACKs in a row */
+    unsigned int  recupero;      /* in fast recovery until recupero_fino is acked */
+    unsigned int  recupero_fino; /* "recover" of RFC 6582: snd_max at the last loss */
+    unsigned int  snd_max;       /* the highest sequence ever sent (0.024) */
+    unsigned int  in_arrivo;     /* the client's write goes on in the next
+                                    message: hold back a short last segment */
     unsigned char *rx;           /* vedi rx_cap(): grande, o la riserva */
     unsigned int  rx_dim;
     unsigned char rx_riserva[TCP_BUF];
@@ -1160,6 +1200,76 @@ static unsigned int g_rx_grandi_max = 256;
 static unsigned int g_rx_grandi = 0;
 
 #include "tcp_rx.inc"
+
+/* The send queue of c (0.024): the large one if it has it, else the 4 KB
+ * inside. The unconfirmed bytes are tx_dati(c)[0 .. tx_len). */
+static unsigned char *tx_base(Conn *c)
+{
+    return c->tx != NULL ? c->tx : c->tx_riserva;
+}
+
+static unsigned int tx_cap(const Conn *c)
+{
+    return c->tx != NULL ? c->tx_dim : TCP_BUF;
+}
+
+static unsigned char *tx_dati(Conn *c)
+{
+    return tx_base(c) + c->tx_off;
+}
+
+/* Room for `voluti` more bytes at the end of the queue: first the bytes go
+ * back to the start (only when the end is reached, so once per queue-full,
+ * not once per ACK), then, if 4 KB are not enough, the large queue. Returns
+ * how many bytes fit. */
+static unsigned int tx_fai_posto(Conn *c, unsigned int voluti)
+{
+    unsigned int cap = tx_cap(c);
+
+    if (c->tx == NULL && c->tx_len + voluti > TCP_BUF && g_tx_dim > TCP_BUF &&
+        g_tx_grandi < g_tx_grandi_max) {
+        unsigned char *g = (unsigned char *)malloc(g_tx_dim);
+
+        if (g != NULL) {
+            if (c->tx_len > 0) memcpy(g, c->tx_riserva + c->tx_off, c->tx_len);
+            c->tx     = g;
+            c->tx_dim = g_tx_dim;
+            c->tx_off = 0;
+            g_tx_grandi++;
+            cap = g_tx_dim;
+        }
+    }
+    if (c->tx_off > 0 && c->tx_off + c->tx_len + voluti > cap) {
+        memmove(tx_base(c), tx_base(c) + c->tx_off, c->tx_len);
+        c->tx_off = 0;
+    }
+    return cap - c->tx_off - c->tx_len < voluti ? cap - c->tx_off - c->tx_len : voluti;
+}
+
+/* Bytes in flight now: sent and not yet confirmed. */
+static unsigned int tcp_in_volo(const Conn *c)
+{
+    return c->snd_nxt - c->snd_una;
+}
+
+/* cwnd and ssthresh the first time they are needed (RFC 6928: ten segments). */
+static void tcp_cwnd_parti(Conn *c)
+{
+    if (c->cwnd == 0) {
+        c->cwnd          = TCP_CWND_INIZIO;
+        c->ssthresh      = 0xFFFFFFFFu;
+        c->snd_max       = c->snd_nxt;
+        c->recupero_fino = c->snd_una - 1u;
+    }
+}
+
+/* Half of what is in flight, never under two segments (RFC 5681, eq. 4). */
+static unsigned int tcp_meta_volo(const Conn *c)
+{
+    unsigned int m = tcp_in_volo(c) / 2u;
+
+    return m < 2u * TCP_MSS ? 2u * TCP_MSS : m;
+}
 
 static unsigned int tcp_chiave(const unsigned char ip[4], unsigned int porta_loc,
                                unsigned int porta_rem)
@@ -1350,6 +1460,10 @@ static void tcp_slot_azzera(Conn *c)
     if (c->rx != NULL && c->rx != c->rx_riserva) {
         free(c->rx);
         if (g_rx_grandi > 0) g_rx_grandi--;
+    }
+    if (c->tx != NULL) {
+        free(c->tx);
+        if (g_tx_grandi > 0) g_tx_grandi--;
     }
     acc_annulla(c, -ECONNABORTED);
     free(c->acc);
@@ -1660,26 +1774,42 @@ static void tcp_spingi(Conn *c)
 
     /* ! NON SI SUPERA LA FINESTRA DELL'ALTRO. Mandare oltre significa
      * mandare dati che il destinatario dichiara di non poter accettare:
-     * li butta, noi li ritrasmettiamo, e la connessione si trascina. */
-    if (restanti > c->finestra - inviati) {
-        if (c->finestra <= inviati) return;
-        restanti = c->finestra - inviati;
+     * li butta, noi li ritrasmettiamo, e la connessione si trascina.
+     * ! NOR THE CONGESTION WINDOW (0.024): what the network between can
+     * take, learnt from the ACKs - see TCP_TX_MAX. */
+    tcp_cwnd_parti(c);
+    {
+        unsigned int lim = c->finestra < c->cwnd ? c->finestra : c->cwnd;
+
+        if (restanti > lim - inviati) {
+            if (lim <= inviati) return;
+            restanti = lim - inviati;
+        }
     }
 
     while (restanti > 0) {
         unsigned int q = (restanti > TCP_MSS) ? TCP_MSS : restanti;
 
-        tcp_manda(c, TCP_ACK | TCP_PSH, c->tx + inviati, q);
+        /* ! A SHORT SEGMENT WAITS WHEN THE REST OF ITS WRITE IS ON ITS WAY
+         * (0.024). A write() reaches us 1520 bytes per IPC message: sent as
+         * it came, every message was a full segment and a 120-byte one, two
+         * frames for one (tools/prova-invio, the trace). The libc says in
+         * d.len how much of the write is left; while more is coming, the
+         * tail waits for it. Not Nagle: a write that ends goes at once. */
+        if (q < TCP_MSS && c->in_arrivo && !chiude) break;
+        tcp_manda(c, TCP_ACK | TCP_PSH, tx_dati(c) + inviati, q);
         c->snd_nxt += q;
         inviati    += q;
         restanti   -= q;
     }
+    if (seq_prima(c->snd_max, c->snd_nxt)) c->snd_max = c->snd_nxt;
     if (!(chiude && c->snd_nxt == c->fin_seq)) goto orologio;
 
 fin:
     tcp_manda(c, TCP_ACK | TCP_FIN, NULL, 0);
     c->snd_nxt   = c->fin_seq + 1u;
     c->fin_fuori = 1;
+    if (seq_prima(c->snd_max, c->snd_nxt)) c->snd_max = c->snd_nxt;
 
 orologio:
     if (c->rto_scade == 0) {
@@ -1699,10 +1829,51 @@ static void tcp_conferma(Conn *c, unsigned int ack)
     quanti = ack - c->snd_una;
     if (quanti > c->tx_len) quanti = c->tx_len;
 
-    if (quanti > 0 && c->tx_len > quanti)
-        memmove(c->tx, c->tx + quanti, c->tx_len - quanti);
+    /* 0.024: the offset moves, the bytes stay where they are */
+    c->tx_off += quanti;
     c->tx_len -= quanti;
+    if (c->tx_len == 0) c->tx_off = 0;
+
+    /* ! THE CONGESTION WINDOW GROWS WITH WHAT IS CONFIRMED (RFC 5681): by
+     * up to one segment per ACK in slow start, by one segment per round trip
+     * after ssthresh. Out of fast recovery it goes back to ssthresh. */
+    tcp_cwnd_parti(c);
+    c->ack_doppi = 0;
+    if (c->recupero) {
+        if (!seq_prima(ack, c->recupero_fino)) {
+            c->recupero = 0;
+            c->cwnd     = c->ssthresh;
+        } else {
+            /* NewReno partial ACK (RFC 6582): the next hole goes at once */
+            c->snd_una = ack;
+            if (c->tx_len > 0) {
+                unsigned int salva = c->snd_nxt;
+
+                c->snd_nxt = c->snd_una;
+                tcp_manda(c, TCP_ACK | TCP_PSH, tx_dati(c),
+                          c->tx_len < TCP_MSS ? c->tx_len : TCP_MSS);
+                c->snd_nxt = salva;
+                g_st.tcp_rit_veloci++;
+            }
+        }
+    } else if (c->cwnd < c->ssthresh) {
+        c->cwnd += quanti < TCP_MSS ? quanti : TCP_MSS;
+    } else {
+        unsigned int piu = TCP_MSS * TCP_MSS / c->cwnd;
+
+        c->cwnd += piu > 0 ? piu : 1u;
+    }
+    /* never more than the queue can hold: cwnd past it means nothing */
+    if (c->cwnd > TCP_TX_MAX + TCP_MSS) c->cwnd = TCP_TX_MAX + TCP_MSS;
     c->snd_una = ack;
+    /* ! AN ACK PAST snd_nxt IS RIGHT AFTER A GO-BACK-N (0.024). The timer
+     * sent everything again from snd_una, but the receiver had kept the
+     * segments after the hole: the first one sent again fills it, and the
+     * ACK jumps over what we were about to repeat. Up to 0.023 snd_nxt
+     * stayed behind snd_una, tcp_spingi saw a huge "in flight" and sent
+     * nothing until the next timer - with 4 KB in flight it was seldom
+     * seen, with 63 KB every loss cost a timeout. */
+    if (seq_prima(c->snd_nxt, c->snd_una)) c->snd_nxt = c->snd_una;
 
     /* Tutto confermato: niente piu' da ritrasmettere. */
     if (c->snd_una == c->snd_nxt) {
@@ -1825,7 +1996,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
     const unsigned char *seg = f + 14 + ihl;
     unsigned int len_seg = tot - ihl;
     unsigned int porta_loc, porta_rem, off, flag, n, i;
-    unsigned int seq, ack, finestra;
+    unsigned int seq, ack, finestra, fin_prima;
     Conn        *c = NULL;
 
     if (len_seg < 20) { g_st.scartati++; return; }
@@ -1940,6 +2111,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         return;
     }
 
+    fin_prima   = c->finestra;
     c->finestra = finestra;
 
     /* --- apertura passiva: aspettavamo l'ACK del nostro SYN+ACK --- */
@@ -2026,6 +2198,39 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         return;
     }
 
+    /* ! THE THIRD DUPLICATE ACK (RFC 5681, 0.024): the same ACK, no data, no
+     * SYN or FIN, the same window, while something is in flight, means a
+     * segment went missing and the ones after it arrive. The missing one
+     * goes now, without waiting for the timer, and the window halves. */
+    if ((flag & TCP_ACK) && ack == c->snd_una && n == 0 &&
+        !(flag & (TCP_SYN | TCP_FIN)) && finestra == fin_prima &&
+        c->snd_nxt != c->snd_una && c->tx_len > 0 &&
+        (c->stato == S_APERTA || c->stato == S_FIN_SUO ||
+         c->stato == S_FIN_MIO || c->stato == S_ULTIMO_ACK)) {
+        tcp_cwnd_parti(c);
+        /* ! ONLY PAST "recover" (RFC 6582, 4.1): after a timeout the
+         * segments sent again arrive twice, every one gives a duplicate ACK,
+         * and without this check each three of them would be taken for a
+         * new loss - 895 retransmissions for 35 lost frames in the first
+         * run of tools/prova-invio. */
+        if (++c->ack_doppi == 3u && !c->recupero &&
+            seq_prima(c->recupero_fino, ack)) {
+            unsigned int salva = c->snd_nxt;
+
+            c->ssthresh      = tcp_meta_volo(c);
+            c->cwnd          = c->ssthresh + 3u * TCP_MSS;
+            c->recupero      = 1;
+            c->recupero_fino = c->snd_max;
+            c->snd_nxt       = c->snd_una;
+            tcp_manda(c, TCP_ACK | TCP_PSH, tx_dati(c),
+                      c->tx_len < TCP_MSS ? c->tx_len : TCP_MSS);
+            c->snd_nxt       = salva;
+            c->rto_scade     = uptime_ms() + c->rto_ms;
+            g_st.tcp_rit_veloci++;
+        } else if (c->ack_doppi > 3u && c->recupero) {
+            c->cwnd += TCP_MSS;          /* one more has left the network */
+        }
+    }
     if (flag & TCP_ACK) tcp_conferma(c, ack);
 
     /* --- dati --- */
@@ -2159,11 +2364,11 @@ static unsigned int tcp_pronto(const Conn *c)
     case S_ASCOLTA:
         return tcp_in_attesa(c) ? IP_EV_IN : 0u;
     case S_APERTA:
-        if (c->tx_len < TCP_BUF) ev |= IP_EV_OUT;
+        if (c->tx_len < tx_cap(c)) ev |= IP_EV_OUT;
         break;
     case S_FIN_SUO:
         ev |= IP_EV_IN | IP_EV_RDHUP;       /* reading gives the end */
-        if (c->tx_len < TCP_BUF) ev |= IP_EV_OUT;
+        if (c->tx_len < tx_cap(c)) ev |= IP_EV_OUT;
         break;
     case S_ULTIMO_ACK:
     case S_MORTA:
@@ -2758,6 +2963,7 @@ static void tcp_scadenze(void)
          * ritmo su una rete che non risponde significa aggiungere
          * traffico a una rete gia' in difficolta'. */
         c->rto_ms   *= 2u;
+        g_st.tcp_scadenze++;
         c->rto_scade = ora + c->rto_ms;
 
         if (c->stato == S_SYN_INVIA) {
@@ -2768,6 +2974,16 @@ static void tcp_scadenze(void)
             /* Si riparte dal primo non confermato: e' la ritrasmissione
              * "go-back-N", l'unica possibile senza SACK. Closing, the FIN
              * follows the data again (tcp_spingi). */
+            /* ! A TIMEOUT SAYS THE NETWORK IS FULL (RFC 5681, 0.024): half
+             * of what was in flight becomes ssthresh, and one segment goes
+             * before slow start again. */
+            tcp_cwnd_parti(c);
+            c->ssthresh  = tcp_meta_volo(c);
+            c->cwnd      = TCP_MSS;
+            c->ack_doppi = 0;
+            c->recupero  = 0;
+            c->recupero_fino = c->snd_max;
+            c->in_arrivo = 0;
             c->snd_nxt   = c->snd_una;
             c->fin_fuori = 0;
             tcp_spingi(c);
@@ -3009,12 +3225,18 @@ static void tcp_invia(unsigned int cliente, const unsigned char *payload,
      * ritentare l'intero blocco; accettarlo tutto vorrebbe dire scrivere
      * oltre il buffer. Il numero restituito e' quanti byte sono davvero
      * entrati, ed e' compito di chi scrive guardarlo. */
-    spazio = TCP_BUF - c->tx_len;
+    spazio = tx_fai_posto(c, n);
+    /* d.len past the bytes in this message: the write goes on (0.024; an
+     * older libc gives exactly the bytes, and nothing waits) */
+    c->in_arrivo = (d.len > n && spazio >= n) ? 1u : 0u;
     if (n > spazio) n = spazio;
 
     if (n > 0) {
-        memcpy(c->tx + c->tx_len, payload + sizeof(d), n);
+        memcpy(tx_dati(c) + c->tx_len, payload + sizeof(d), n);
         c->tx_len += n;
+        tcp_spingi(c);
+    } else {
+        c->in_arrivo = 0;
         tcp_spingi(c);
     }
 
@@ -3037,6 +3259,7 @@ static void tcp_ricevi(unsigned int cliente, const IpTcpRif *r)
  * byte; tcp_spingi sends what is left and then the FIN. */
 static void tcp_manda_fin(Conn *c)
 {
+    c->in_arrivo = 0;
     c->fin_seq   = c->snd_una + c->tx_len;
     c->fin_fuori = 0;
     c->stato     = (c->stato == S_FIN_SUO) ? S_ULTIMO_ACK : S_FIN_MIO;
@@ -3858,6 +4081,7 @@ static void servi(void)
 
                 case IP_MSG_STATO:
                     g_st.cfg = g_cfg;
+                    g_st.tcp_code_grandi = g_tx_grandi;
                     ipc_send(meta.sender_pid, IP_MSG_STATO_R, &g_st, sizeof(g_st));
                     break;
 
@@ -4092,6 +4316,9 @@ static void tcp_limiti(unsigned int da_riga)
     pagine = sysconf(_SC_PHYS_PAGES);
     if (pagine > 0 && (unsigned long)pagine / 16ul * 4096ul / TCP_RX_MAX > 256ul)
         g_rx_grandi_max = (unsigned int)((unsigned long)pagine / 16ul * 4096ul / TCP_RX_MAX);
+    /* the large send queues (0.024): the same sixteenth, on their own count */
+    if (pagine > 0 && (unsigned long)pagine / 16ul * 4096ul / TCP_TX_MAX > 256ul)
+        g_tx_grandi_max = (unsigned int)((unsigned long)pagine / 16ul * 4096ul / TCP_TX_MAX);
     if (da_riga != 0) { g_tcp_max = da_riga; return; }
     if (v != NULL && v[0] >= '1' && v[0] <= '9') { g_tcp_max = (unsigned int)atoi(v); return; }
     g_tcp_max = pagine > 0 ? (unsigned int)((unsigned long)pagine / 8ul) : IP_TCP_CONNESSIONI;
@@ -4108,6 +4335,8 @@ static void uso(void)
     printf("     ip.drv -q        i valori della rete 'user' di QEMU\n");
     printf("     ip.drv -w KB     la finestra di ricezione di TCP (4..63, di serie 63):\n");
     printf("                      piu' piccola per poca memoria o una scheda lenta\n");
+    printf("     ip.drv -W KB     la coda d'invio di TCP (4..63, di serie 63; 4 =\n");
+    printf("                      come fino alla 0.023)\n");
     printf("     ip.drv -t N      quante connessioni TCP al massimo (di serie tcpmax\n");
     printf("                      di kernel.cfg, o una ogni 32 KB di RAM)\n\n");
     printf("! SENZA ARGOMENTI NON HA INDIRIZZO, ed e' apposta: glielo da'\n");
@@ -4193,6 +4422,14 @@ int main(int argc, char **argv)
             if (kb < 4) kb = 4;
             g_rx_dim = (unsigned int)kb * 1024u;
             if (g_rx_dim > TCP_RX_MAX) g_rx_dim = TCP_RX_MAX;
+        } else if (strcmp(argv[i], "-W") == 0 && i + 1 < argc) {
+            /* the send queue of TCP, in KB (0.024): see TCP_TX_MAX; 4 = as
+             * up to 0.023, never a large one */
+            int kb = atoi(argv[++i]);
+
+            if (kb < 4) kb = 4;
+            g_tx_dim = (unsigned int)kb * 1024u;
+            if (g_tx_dim > TCP_TX_MAX) g_tx_dim = TCP_TX_MAX;
         } else if (strcmp(argv[i], "-s") == 0) solo_stato = 1;
         else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
             if (!leggi_ip(argv[++i], g_cfg.ip)) { uso(); return 1; }

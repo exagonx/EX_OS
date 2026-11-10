@@ -1,0 +1,123 @@
+ex-os:/root> hdaudio.drv -i
+hdaudio: nVidia, coerenza della memoria: 0x4C era 000f0101, ora 000f0101
+hdaudio: 6 prese d'uscita accese, 5 convertitori, 3 ingressi
+hdaudio: HD Audio 10de:07fc, codec 0, flusso 4, Realtek ALC888
+hdaudio: Realtek ALC888 (PCI) IRQ7
+ex-os:/root> ahci -d
+AHCI: PCI 0:14.0 10de:07f8 classe 010485 comando 0007 BAR5 fea7c000
+AHCI:   CAP a3229f03 GHC 00000000 IS 00000000 PI 0000000f VS 00010100 CAP2 00000000 BOHC 00000000
+AHCI:   porta 0: CMD 00040006 SSTS 00000123 SIG ffffffff TFD 00000080 IS 00400040 SERR 05950000 CLB 00000000 FB 00000000
+AHCI:   porta 1: CMD 00040006 SSTS 00000113 SIG ffffffff TFD 00000080 IS 00400040 SERR 05950000 CLB 00000000 FB 00000000
+AHCI:   porta 2: CMD 00040006 SSTS 00000000 SIG ffffffff TFD 0000007f IS 00000000 SERR 00000000 CLB 00000000 FB 00000000
+AHCI:   porta 3: CMD 00040006 SSTS 00000000 SIG ffffffff TFD 0000007f IS 00000000 SERR 00000000 CLB 00000000 FB 00000000
+ex-os:/root> svga.drv -lista
+I modi che la scheda offre (VBE, framebuffer lineare):
+
+     0x0      0 bit  (16 milioni)      
+
+Si sceglie con `/dev/svga.drv LARGHEZZAxALTEZZA` (con -16 per i 16 bit),
+e vale dal prossimo avvio.
+ex-os:/root> sonda.drv -auto
+sonda: scrivo /SONDA1.TXT ...
+sonda: fatto. /SONDA1.TXT e' pronto: ora si puo' spegnere.
+ex-os:/root> hdaudio.drv -h
+uso: /dev/hdaudio.drv [-i] [opzioni della scheda]
+     -i   sonda e basta: dice cosa ha trovato ed esce
+ex-os:/root> ahci -h
+uso: ahci            passa i dischi all'AHCI, per questa sessione
+     ahci -s         lo rende stabile (ahci = 1 in /boot/kernel.cfg)
+     ahci -d         i registri del controller, SENZA TOCCARE NIENTE:
+                     si guarda prima di provare
+     ahci -t         col reset del controller, confrontando con IDE
+     ahci -m FILE    legge FILE e dice a quanti KB/s
+ex-os:/root> nv50.drv -h
+uso: nv50.drv -stato      il display com'e' adesso: teste, pannello,
+                          framebuffer, scala (sola lettura)
+     nv50.drv -tutto      come -stato, con tutti i metodi delle teste
+     nv50.drv -prova      prende il display e accende il pannello a
+                          1366x768 con un motivo di prova. Lo schermo di
+                          prima torna solo riavviando.
+     nv50.drv -nativo     come -prova, ma la console del kernel passa al
+                          pannello nativo (prima della scrivania)
+     nv50.drv -install    -nativo a ogni accensione: scrive il blocco in
+                          /boot/avvio.sh (-remove lo toglie)
+     nv50.drv -avvio      -nativo zitto, quello di /boot/avvio.sh: su una
+                          macchina senza questa scheda esce e basta
+     nv50.drv -2dprova    accende il motore 2D, disegna, rilegge e dice
+                          se e' giusto (dopo -nativo)
+     nv50.drv -2dmisura   CPU contro motore: scrivere, leggere, copiare
+     nv50.drv -2dservizio il motore offerto a wserver ('accel2d'): resta
+                          acceso, va lanciato con &
+ex-os:/root> svga.drv -h
+uso: /dev/svga.drv [-n] [-16] [modo]
+     /dev/svga.drv -lista
+     /dev/svga.drv -prova modo [-16] | -conferma | -annulla | -guardia [s]
+
+Sceglie la risoluzione della console. Senza argomenti dice
+com'e' configurata adesso.
+
+  testo      console di testo 80x25
+  640x480    80x30 caratteri
+  800x600    100x37 caratteri
+  1024x768   128x48 caratteri
+  LxA        un altro modo della scheda: `-lista` li dice
+
+  -lista     i modi che la scheda offre (letti all'avvio)
+  -n         dice cosa farebbe, senza scrivere niente
+  -16        16 bit per pixel invece di 32: meta' dei byte
+             da spostare a ogni scorrimento, e una console
+             molto piu' svelta su una macchina lenta. Si
+             perdono le sfumature (5-6-5).
+
+  -prova     come sopra, ma IN PROVA: al riavvio la scrivania chiede
+             conferma per 30 secondi; senza risposta (anche con lo
+             schermo nero) torna il modo di prima e riavvia da sola.
+  -conferma  tiene il modo in prova     -annulla  rimette quello di prima
+  -guardia   all'avvio (avvio.sh): se la prova non viene confermata
+             entro s secondi (120), rimette il modo di prima e riavvia
+
+Scrive la voce in /boot/kernel.cfg e ritocca il byte marcato
+'SVGAMODE' dentro l'immagine di Stage 2: e' da li' che la
+risoluzione viene impostata, prima del modo protetto, perche'
+dopo il BIOS non e' piu' raggiungibile.
+
+SERVE UN RIAVVIO perche' abbia effetto. Se la scheda non offre
+la risoluzione chiesta, Stage 2 ripiega sul testo invece di
+lasciare uno schermo nero.
+
+
+ex-os:/root> nv50.drv -stato
+Scheda: 10de:07e5 in 00:10.0, registri a 0xfd000000, memoria video a 0xd0000000
+Chip: PMC_BOOT_0 = 0x063000a2 (architettura 0x63)
+Display:
+  0x610024 interruzioni/supervisore  0x00000000
+  0x610050 teste attive              0x00000000
+  0x610200 canale principale         0x00000000
+  0x610300 comandi per registri      0x00000000
+  0x610304 dato del comando          0x00000000
+  SOR0 0x61C004 0x00000000  0x61C030 0x00000000
+  SOR1 0x61C804 0x00000000  0x61C830 0x00000000
+  PLL testa 0: 0x00000000 0x00000000 0x00000000
+  PLL testa 1: 0x00000000 0x00000000 0x00000000
+Nessuna testa sull'LVDS (0x610050 = 0x00000000).
+
+Testa 0:
+  pannello (uscita)      0x0
+  framebuffer            0x0
+  pitch                  0 byte, a blocchi
+  formato                sconosciuto (0x00000000)
+  vista letta            0x0
+  scala                  0x00000000 (spenta)
+  orologio               0 kHz
+  framebuffer offset     0x00000000
+
+Testa 1:
+  pannello (uscita)      0x0
+  framebuffer            0x0
+  pitch                  0 byte, a blocchi
+  formato                sconosciuto (0x00000000)
+  vista letta            0x0
+  scala                  0x00000000 (spenta)
+  orologio               0 kHz
+  framebuffer offset     0x00000000
+

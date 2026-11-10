@@ -44,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.046");
+EX_VERSIONE("netupdate", "0.047");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2166,6 +2166,9 @@ static int fase_avvio(int kernel, int stage2)
  * --------------------------------------------------------------------------- */
 static char g_anche[ID_MAX] = "";
 
+static int catena_vuole(Pacchetto *v, int n, const char *id,
+                        char fuori[][ID_MAX], int max);
+
 static int nel_registro(const char *id)
 {
     FILE *f = fopen(REG, "r");
@@ -2186,7 +2189,19 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
     char   assoluto[PERC_MAX], suo[PERC_MAX];
     int    n, i;
 
+    char (*catena)[ID_MAX] = NULL;
+    int    ncatena = 0;
+
     n = blocchi_leggi(cat, &v);
+
+    /* ! E ANCHE DI CIO' CHE VUOLE CHI SI STA INSTALLANDO (netupdate 0.047,
+     * 9 November 2026). Exilla vuole [font-cjk], che ha l'elenco suo come
+     * lei: guardando solo g_anche, -install:exilla installava font-cjk SENZA
+     * FILE, perche' il suo elenco non arrivava mai. */
+    if (g_anche[0] && n > 0) {
+        catena = calloc((size_t)n + 1, ID_MAX);
+        if (catena != NULL) ncatena = catena_vuole(v, n, g_anche, catena, n + 1);
+    }
     for (i = 0; i < n; i++) {
         FILE *in, *out;
         char  riga[RIGA_MAX];
@@ -2197,7 +2212,8 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
             unisci(assoluto, sizeof(assoluto), "/", v[i].prova);
             c_e = esiste(assoluto, NULL);
         }
-        if (!c_e && strcmp(v[i].id, g_anche) != 0 && !nel_registro(v[i].id)) continue;
+        if (!c_e && strcmp(v[i].id, g_anche) != 0 && !fra(catena, ncatena, v[i].id)
+            && !nel_registro(v[i].id)) continue;
 
         snprintf(suo, sizeof(suo), "%s/elenco-%s.txt", TMPDIR, v[i].id);
         if (prendi_verifica_scrivi(c, v[i].elenco,
@@ -2205,6 +2221,7 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
                                    suo) != 0) {
             if (!g_zitto)
                 printf("  ! l'elenco di %s (%s) non e' arrivato.\n", v[i].id, v[i].elenco);
+            free(catena);
             return -1;
         }
         in  = fopen(suo, "r");
@@ -2212,6 +2229,7 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
         if (in == NULL || out == NULL) {
             if (in)  fclose(in);
             if (out) fclose(out);
+            free(catena);
             return -1;
         }
         fputs("\n", out);
@@ -2219,6 +2237,7 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
         fclose(in);
         fclose(out);
     }
+    free(catena);
     return 0;
 }
 

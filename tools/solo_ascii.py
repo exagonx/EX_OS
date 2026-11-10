@@ -45,6 +45,10 @@ SALTA = ("gcc/", "coreutils/", "rust/", "FreeBASIC", "openssl/", "quickjs/",
          "httpd/", "apr/", "apr-util/", "libexpat/",
          # PHP (28 October 2026): third-party tree like httpd.
          "php-src/",
+         # Mesa (7 November 2026): third-party tree like php-src, out of
+         # git (.gitignore /mesa/). Its 15 strings with "No" sign and the
+         # like stopped `make -j2` at this target from that day on.
+         "mesa/",
          # build-64/ is compiled output like build/: its tools tree holds
          # third-party headers (fmt, MariaDB's authors.h, 26 October 2026).
          "build-64/")

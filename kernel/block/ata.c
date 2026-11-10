@@ -1649,6 +1649,37 @@ static uint32_t *g_disco_attesa;            /* g_proc_max entries (0.282) */
 static uint32_t g_disco_n_attesa  = 0;
 static int      g_disco_detto     = 0;
 
+/* For sched_sonda (0.322): where the lock was taken the first time, the
+ * processor and the kernel addresses found on the stack of whoever took it
+ * (addr2line on kernel-intero.elf). Written only by the holder. */
+extern char _kernel_start[], _kernel_end[];
+static uint32_t  g_disco_preso_cpu;
+static uintptr_t g_disco_preso_da[6];
+
+static void disco_ricorda(const Process *p)
+{
+    uintptr_t base = (uintptr_t)__builtin_frame_address(0);
+    const uintptr_t *s = (const uintptr_t *)base;
+    uint32_t k, n = 0;
+
+    g_disco_preso_cpu = cpu_n();
+    for (k = 0; k < 6; k++) g_disco_preso_da[k] = 0;
+    for (k = 0; k < 96 && n < 6; k++) {
+        if (p != NULL && p->kernel_stack_top != 0 &&
+            (uintptr_t)&s[k] + sizeof(uintptr_t) > (uintptr_t)p->kernel_stack_top) break;
+        if (s[k] >= (uintptr_t)_kernel_start && s[k] < (uintptr_t)_kernel_end)
+            g_disco_preso_da[n++] = s[k];
+    }
+}
+
+void ata_sonda_lucchetto(void)
+{
+    klog(LOG_WARN, "SONDA: disco preso su cpu %u da %x %x %x %x %x %x",
+         g_disco_preso_cpu, (uint32_t)g_disco_preso_da[0], (uint32_t)g_disco_preso_da[1],
+         (uint32_t)g_disco_preso_da[2], (uint32_t)g_disco_preso_da[3],
+         (uint32_t)g_disco_preso_da[4], (uint32_t)g_disco_preso_da[5]);
+}
+
 void ata_prendi(void)
 {
     Process *p  = proc_get_current();
@@ -1665,7 +1696,7 @@ void ata_prendi(void)
 
         if (g_disco_detentore == 0 || g_disco_detentore == io) {
             g_disco_detentore = io;
-            g_disco_livelli++;
+            if (g_disco_livelli++ == 0) disco_ricorda(p);
             interrupts_enable();
             /* three is normal since 24 October 2026: a page coming back
              * from the swap holds it around blk_read, which takes it around
@@ -1703,6 +1734,14 @@ void ata_lascia(void)
 
     /* The boot's unlocked path above took nothing: nothing to give back. */
     if (g_disco_detentore != io || g_disco_livelli == 0) {
+        static int detto_altri = 0;
+
+        if (g_disco_livelli != 0 && io != DISCO_SENZA_PROCESSO && !detto_altri) {
+            detto_altri = 1;
+            klog(LOG_WARN, "ATA: disk lock given back by pid %u on cpu %u, but pid %u "
+                           "holds it (%u levels)", io, cpu_n(), g_disco_detentore,
+                 g_disco_livelli);
+        }
         interrupts_enable();
         return;
     }

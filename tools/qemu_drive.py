@@ -295,7 +295,9 @@ def main():
         # sulla stessa LAN fanno passare un test ARP che non prova niente:
         # qualunque risposta sembra quella giusta. EXOS_MAC lo distingue.
         mac = os.environ.get("EXOS_MAC")
-        dev = "ne2k_pci,netdev=n0" + (",mac=" + mac if mac else "")
+        # EXOS_NIC chooses the card (8 November 2026): e1000 for the TCP
+        # tests (tools/prova-invio), whose 16 KB ne2k ring would be the limit
+        dev = os.environ.get("EXOS_NIC", "ne2k_pci") + ",netdev=n0" + (",mac=" + mac if mac else "")
         rete = ["-netdev", "socket,id=n0,%s=:%s" % (
                     "listen" if modo == "listen" else "connect", porta),
                 "-device", dev]
@@ -419,6 +421,18 @@ def main():
                     fh.write(mon.cmd("info registers", settle=0.05) + "\n====\n")
             elif cmd.startswith("foto:"):
                 mon.cmd("screendump " + cmd[5:], settle=0.8)
+            # `raffica:/percorso|n|passo`: n screendumps one every `passo`
+            # seconds (/percorso000.ppm, 001, ...), without draining the
+            # monitor in between (drain() costs its 2 s timeout): what is on
+            # the screen for a moment - the white flashes of voce 95 - is
+            # caught only by many pictures close together.
+            elif cmd.startswith("raffica:"):
+                dove, n, passo = (cmd[8:].split("|") + ["100", "0.2"])[:3]
+                for i in range(int(n)):
+                    mon.sock.sendall(("screendump %s%03d.ppm\n" % (dove, i)).encode())
+                    time.sleep(float(passo))
+                time.sleep(1.0)
+                mon.drain()
             # `punta:<testo>[|dx,dy[,n[,x0,y0,x1,y1]]]`: il puntatore sopra una scritta
             # dello schermo, cercata nei pixel (vedi punta()).
             elif cmd.startswith("punta:"):

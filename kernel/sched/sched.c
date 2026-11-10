@@ -55,8 +55,28 @@ static uint32_t  g_cpu_posti = 1;
 /* the tgid each processor is reserved to, 0 = nobody (0.319, voce 92) */
 static uint32_t  g_riserva_1[1];
 static uint32_t *g_riserva   = g_riserva_1;
-#define g_current    (g_corrente[cpu_n()])
-#define g_idle_task  (g_ozio[cpu_n()])
+/* ! THE PROCESSOR NUMBER AND THE SLOT ARE READ WITH INTERRUPTS OFF (kernel
+ * 0.322, voce 5). Kernel code runs with interrupts on (a system call enters
+ * through a trap gate), a tick can switch to another process in the middle
+ * of it, and the process can come back on the OTHER processor. Between
+ * cpu_n() and g_corrente[n] that gave the process running on the processor
+ * just left: ata_lascia, called by pid 33 that had taken the disk lock on
+ * processor 1, read pid 15 (e1000.drv) and gave nothing back; the lock stayed
+ * taken for ever and every file of the system waited behind it. Seen with
+ * tools/prova-letture at 2 processors, 8 November 2026. Once read, the
+ * pointer is the process itself, wherever it goes on running. */
+static inline Process *per_cpu_leggi(Process *const *tab)
+{
+    uintptr_t fl;
+    Process  *p;
+
+    __asm__ volatile ("pushf; pop %0; cli" : "=r"(fl) :: "memory");
+    p = tab[cpu_n()];
+    if (fl & 0x200u) __asm__ volatile ("sti" ::: "memory");
+    return p;
+}
+#define g_current    (per_cpu_leggi(g_corrente))
+#define g_idle_task  (per_cpu_leggi(g_ozio))
 Process        *g_init_task = NULL;   /* reaper kernel task, adotta gli orfani */
 
 /* =============================================================================
@@ -1488,7 +1508,7 @@ static void sched_switch_to(Process *next)
     next->quantum = next->quantum_total;    /* Ricarica quantum */
     next->cpu     = (uint8_t)cpu_n();
 
-    g_current = next;
+    g_corrente[cpu_n()] = next;     /* interrupts off here */
     g_switch_count++;
 
     /* Aggiorna ESP0 nel TSS (stack kernel per ring3→ring0 transition) */
@@ -3214,7 +3234,7 @@ g_ticks        = 0;
      * Crea il task idle (PID 0, priorità minima)
      * Eseguito quando nessun altro processo è READY.
      * ------------------------------------------------------------------------- */
-    g_idle_task = proc_create("idle", IN_NUMERO(idle_task_fn), PRIO_IDLE, 1);
+    g_ozio[cpu_n()] = proc_create("idle", IN_NUMERO(idle_task_fn), PRIO_IDLE, 1);
 
 if (g_idle_task == NULL) {
         kpanic("SCHED: impossibile creare idle task!");
@@ -3247,7 +3267,7 @@ if (g_init_task == NULL) {
      * non chiama sched_start() che fa il salto al primo processo.
      * ------------------------------------------------------------------------- */
     g_idle_task->state = PROC_RUNNING;
-    g_current          = g_idle_task;
+    g_corrente[cpu_n()] = g_idle_task;
 
     /* Sblocca IRQ0 a livello PIC ORA (g_current è valido, safe per il primo
      * tick). Il CPU IF resta 0 finché kernel_main non chiama
@@ -3339,6 +3359,7 @@ interrupts_enable();
 extern char _kernel_start[], _kernel_end[];
 extern uint32_t vfs_stato_lucchetto(void);
 extern void ata_stato_lucchetto(uint32_t *chi, uint32_t *livelli, uint32_t *attesa);
+extern void ata_sonda_lucchetto(void);
 
 void sched_sonda(void)
 {
@@ -3349,6 +3370,7 @@ void sched_sonda(void)
     klog(LOG_WARN, "SONDA: tick %u cpu %u, kernel coda %u turno %u tiene cpu+1 %u, "
          "disco pid %u livelli %u attesa %u, vfs pid %u", g_ticks, cpu_n(), coda,
          turno, chi, dd, dl, da, vfs_stato_lucchetto());
+    if (dd != 0) ata_sonda_lucchetto();
     for (c = 0; c < g_cpu_posti; c++) {
         const Process *q = g_corrente[c];
 
@@ -3366,9 +3388,16 @@ void sched_sonda(void)
         if (p->kernel_esp != 0 && p->state != PROC_RUNNING) {
             const uintptr_t *s = (const uintptr_t *)p->kernel_esp;
 
-            for (k = 0; k < 128 && n < 6; k++)
+            /* ! NOT PAST THE TOP OF ITS STACK (kernel 0.322): 128 words from
+             * a kernel_esp near the top read the unmapped page after it, and
+             * the probe itself ended in a kernel page fault - at 64 bit, on
+             * the first dump asked of it in QEMU (8 November 2026) */
+            for (k = 0; k < 128 && n < 6; k++) {
+                if (p->kernel_stack_top != 0 &&
+                    (uintptr_t)&s[k] + sizeof(uintptr_t) > (uintptr_t)p->kernel_stack_top) break;
                 if (s[k] >= (uintptr_t)_kernel_start && s[k] < (uintptr_t)_kernel_end)
                     v[n++] = s[k];
+            }
         }
         klog(LOG_WARN, "SONDA: pid %u %s st %u cpu %u blk %u pila %x %x %x %x %x %x",
              p->pid, p->name, (uint32_t)p->state, (uint32_t)p->cpu, p->block_until,

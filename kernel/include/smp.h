@@ -178,6 +178,7 @@ static inline uint32_t cpu_n(void)
 int gdt_posti(uint32_t posti);
 int sched_posti(uint32_t posti);
 int paging_posti(uint32_t posti);
+int irq_posti(uint32_t posti);      /* isr.c: the instants of the edges (0.323) */
 
 /* Mette al lavoro, a macchina avviata, i processori parcheggiati. Rende
  * quanti lavorano dopo. Vedi smp.c: e' il modo di provare senza `smp = 2`. */

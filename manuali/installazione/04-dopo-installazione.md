@@ -426,6 +426,48 @@ schermo spento finché qualcuno non tocca il portatile.
   stato lo tiene il servizio. Da telnet, o scrivendo alla cieca,
   `dpms.drv -accendi` lo riaccende anche senza servizio.
 
+### La porta parallela: `lpt.drv`
+
+Dal kernel 0.323 un driver solo tiene la porta parallela per tutto ciò che
+ci si collega: stampanti, l'Iomega ZIP, gli scanner, il datasette del
+Commodore (con un adattatore tipo C64S), le schede di prova.
+
+```
+lpt.drv -avvia               cerca le porte e accende lpt0, lpt1...
+lpt.drv                      le porte, i modi (SPP, PS/2, EPP, ECP), chi le usa
+lpt.drv -stampa FILE         FILE alla stampante
+lpt.drv -id                  il Device ID IEEE 1284 di cio' che e' collegato
+lpt.drv -pin                 i registri piedino per piedino
+lpt.drv -dati:V              le linee dei dati; -controllo:V il controllo
+lpt.drv -fronti:S            per S secondi i fronti sul piedino 10 (nACK)
+lpt.drv -install             -avvia a ogni avvio; -remove lo toglie
+lpt.drv -ferma               spegne i servizi
+```
+
+Un programma alla volta tiene la porta: la stampa, lo ZIP e il datasette
+usano gli stessi fili in modi diversi. I protocolli dei singoli apparecchi
+(il formato TAP del datasette, lo ZIP) stanno nei loro programmi, che
+chiedono al driver le cose di base: la stampa con l'handshake, i piedini, il
+Device ID, i fronti di nACK e un'onda sulle linee dei dati.
+
+! **I fronti arrivano col loro istante.** Il kernel annota l'orologio fine
+  (il TSC, o il PIT su un 486) all'entrata dell'interrupt, prima di
+  aspettare il lucchetto del kernel, e li tiene in un anello che il driver
+  legge quando può (`SYS_IRQ_FRONTI`). Il datasette manda un'onda quadra su
+  nACK dove il dato è la durata di ogni onda (fra 180 e 500 microsecondi
+  circa).
+
+! **Con due processori un fronte può andare perso**: il processore 0 aspetta
+  il lucchetto del kernel a interrupt spenti, e due fronti arrivati in
+  quell'attesa diventano un interrupt solo. In QEMU, 3 su 300 a 64 bit con
+  due processori, nessuno con uno. `lpt.drv -fronti` dice quanti ne ha visti.
+
+! **L'onda sulle linee dei dati** (la scrittura sul nastro) la fa il driver
+  aspettando sull'orologio fine, su un processore riservato quando ce ne sono
+  due: ogni fronte esce in ritardo del costo di una syscall, di più se l'altro
+  processore tiene il kernel. `lpt.drv -prova-onda:N:US` dice il ritardo
+  peggiore.
+
 ---
 
 ## 4.10 Il server MariaDB

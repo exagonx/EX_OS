@@ -43,7 +43,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `ipcfg -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ipcfg", "0.005");
+EX_VERSIONE("ipcfg", "0.006");
 
 static int pid_ip = 0;
 
@@ -124,6 +124,10 @@ static int mostra_stato(void)
     printf("TCP finestra a 0   %u\n", s.tcp_fin_zero);
     printf("TCP fuori sequenza %u\n", s.tcp_fuori_seq);
     printf("TCP buffer pieno   %u\n", s.tcp_pieno);
+    /* sending (ip.drv 0.024): see IpStato */
+    printf("TCP rimandati      %u subito, %u a tempo scaduto\n",
+           s.tcp_rit_veloci, s.tcp_scadenze);
+    printf("TCP code grandi    %u\n", s.tcp_code_grandi);
     return 0;
 }
 

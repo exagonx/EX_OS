@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.321
+**Versione:** 0.323
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,114 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Un driver solo per la porta parallela (kernel 0.323, lpt.drv 0.001, voce 98)
+
+- **`/dev/lpt.drv`**: un driver per tutto cio' che si collega alla porta parallela (stampanti, lo
+  ZIP Iomega, gli scanner, il datasette del Commodore con un adattatore tipo C64S, le schede di
+  prova). `-avvia` trova le porte (0x378, 0x278, 0x3BC) e cosa sanno fare (SPP, PS/2, EPP, ECP) e
+  accende un servizio per porta (`lpt0`...); un cliente alla volta la tiene. Da' le operazioni di
+  base: la stampa con l'handshake Busy/nStrobe (`-stampa FILE`), i registri grezzi (`-pin`,
+  `-dati:V`, `-controllo:V`), il Device ID IEEE 1284 in modo nibble (`-id`), i fronti di nACK col
+  loro istante (`-fronti:S`), un'onda sulle linee dei dati con le durate date
+  (`-prova-onda:N:US`). `-install`/`-remove`. Il protocollo in `drivers/lpt/lpt_proto.h`.
+  `help lpt`, manuale 4.9.
+- **Kernel 0.323, i fronti degli IRQ col loro istante** (`SYS_IRQ_FRONTI` 266, `irq_fronti_*`
+  nella libc): le entrate degli interrupt annotano l'orologio fine (TSC, o il PIT su un 486) prima
+  di aspettare il lucchetto del kernel; una linea in questo modo tiene ogni fronte in un anello che
+  il driver legge, avvisa una volta finche' non legge, e non si maschera fra un fronte e l'altro.
+  Solo per l'unico proprietario di una linea a fronte. Un IRQ 7 o 15 "spurio" su una linea cosi'
+  conta come fronte (la richiesta e' scesa prima di essere presa).
+- I fili e i tempi del datasette vengono dai programmi mtap e ptap, letti solo come
+  documentazione: in EX-OS non c'e' niente del loro codice. Il programma del datasette e' la
+  voce 96.
+- `tools/prova_lpt.sh`: in QEMU con `-parallel file:`, 12 su 12 a 32 e a 64 bit con un
+  processore: `/boot/help.txt` stampato identico byte per byte, 300 fronti su 300, l'onda suonata.
+  ! Con `-smp 2`: 300 su 300 a 32 bit, 297 su 300 a 64 (294 a 32 prima di contare gli IRQ 7 spuri come fronti): il processore 0
+  aspetta il lucchetto del kernel a interrupt spenti, e due fronti arrivati in quell'attesa
+  diventano un interrupt solo nel PIC. L'onda e' uscita in ritardo al massimo di 0,26-1,3 ms. Non
+  ancora provato su una porta vera.
+
+### Exilla scrive il cinese, il giapponese e il coreano (pacchetto font-cjk, netupdate 0.047)
+
+- **I caratteri.** Il pacchetto nuovo `font-cjk` di netupdate porta Noto Sans CJK 2.004 e Noto Serif
+  CJK 2.003, normale e grassetto, in `/exwin/font` (90 MB, licenza SIL OFL 1.1). Ogni file e' una
+  raccolta con giapponese, coreano, cinese semplificato, tradizionale e di Hong Kong (e il Sans anche
+  i monospazio): quattro file coprono tutto. Gecko fa da se' gli altri pesi. Prima Exilla scriveva
+  quelle pagine a quadratini.
+- **Arriva con Exilla**: `netupdate -install:exilla` lo vuole (`vuole = font-cjk` nel catalogo); da
+  solo `netupdate -install:font-cjk`. Come Exilla ha l'elenco suo e i file a pezzi da 16 MB, quindi
+  `-check -yesall` non lo porta a chi non ha Exilla. Chi aveva gia' Exilla lo chiede a mano: la
+  verifica nuova `verifiche/exilla.sh`, alla fine di `-check`, lo ricorda.
+- **netupdate 0.047**: l'elenco a parte si scaricava solo per il pacchetto chiesto, non per quelli che
+  lui vuole; con la 0.046 `font-cjk` si sarebbe installato senza file.
+- **Quale carattere per ogni lingua**: `defaults/pref/exos-cjk.js` nel pacchetto di Exilla dice a Gecko
+  che il `serif` giapponese e' Noto Serif CJK JP, il `sans-serif` Noto Sans CJK JP, e cosi' per
+  coreano e cinese; senza, una pagina che chiede il serif riceveva il Sans.
+- **Da dove**: `tools/font-cjk/prepara.sh` scarica i due archivi dalle release di notofonts/noto-cjk,
+  controlla le impronte (`tools/font-cjk/IMPRONTE`: GitHub non ne da') e prende i quattro file;
+  `tools/mknetinst.sh` li pubblica.
+- **Testato** in QEMU a 32 e 64 bit con due processori: Exilla disegna cinese, giapponese (anche col
+  serif) e coreano (`tools/exilla/prova-gecko.sh`); `tools/prova_font_cjk.sh` 4 su 4: da un disco
+  installato dal CD `-install:exilla` porta i 5 file con le impronte giuste, il registro ha
+  `[font-cjk]`, la verifica dice a posto e, tolto un font, dice `-install:font-cjk`. **Da testare**
+  sul portatile.
+
+### Con due processori il disco non si ferma piu' per sempre (kernel 0.322)
+
+- **Il guasto.** Con due processori al lavoro (il default dalla 0.319) un programma a piu' fili che
+  legge e scrive file poteva fermare tutto il sistema: ogni file aspettava il disco, e il disco era
+  tenuto da `e1000.drv`, che non lo usa mai. Il codice del kernel puo' essere sospeso da un battito
+  e ripartire sull'altro processore; il kernel leggeva "chi sta girando" come numero del processore
+  e poi la voce di quel processore, e fra le due letture poteva spostarsi, prendendo il processo
+  del processore appena lasciato. Cosi' un filo che aveva preso il lucchetto del disco lo
+  restituiva a nome di un altro, la restituzione veniva rifiutata e il lucchetto restava preso.
+- **La correzione.** Il processo che gira si legge a interrupt spenti, cosi' non puo' spostarsi in
+  mezzo. Il lotto delle pagine liberate da `munmap` aveva lo stesso punto debole (era del
+  processore) e ora e' del processo.
+- **Trovato con una prova nuova**, `tools/prova-letture/prova-letture.sh [32]`: file noti riletti con
+  `read`, `pread` e `mmap` mentre altri fili e processi scrivono, allungano, riscrivono e cancellano
+  file nuovi, con molta RAM, con poca RAM e su ext4. Prima della correzione a 64 bit si fermava una
+  volta su due o tre; dopo, sei giri di fila finiti senza errori. La sonda della guardia ora dice
+  anche dove e' stato preso il lucchetto del disco, e il kernel avvisa una volta se qualcuno lo
+  restituisce senza tenerlo.
+- **I lucchetti della libc non cambiano piu' `errno`.** `pthread_mutex_lock`, `pthread_cond_wait` e
+  `sem_wait` scrivevano EAGAIN in `errno` quando il lucchetto cambiava appena prima di dormire; con
+  due fili davvero insieme (0.321) capitava quasi sempre, e `tools/prova_moltifili.sh` ha trovato
+  377 fili su 382 col loro `errno` cambiato. Ora le attese dentro la libc lo lasciano stare, come fa
+  glibc. E un filo che prende il suo posto di `errno` la prima volta usa il confronto e scambio,
+  cosi' due fili che partono insieme su due processori non possono piu' prendere lo stesso.
+- **Testato** in QEMU a 32 e 64 bit con due processori, e **sul portatile** (due core): la stessa
+  prova per 60 s, nessun errore e nessun blocco.
+
+### L'invio non e' piu' fermo a 4 KB, e TCP controlla la congestione (ip.drv 0.024, ipcfg 0.006)
+
+- **La coda d'invio cresce.** Fino alla 0.023 una connessione aveva al massimo 4 KB in volo in
+  uscita: verso un server a 50 ms voleva dire circa 80 KB/s, qualunque fosse la linea. Ora una
+  connessione parte coi 4 KB che ha dentro e prende una coda da 63 KB solo la prima volta che quella
+  si riempie: una richiesta o una risposta corta non costano niente di piu'. Alle code grandi va al
+  massimo un sedicesimo della RAM; oltre, la connessione lavora coi suoi 4 KB. `ip.drv -W KB` (da 4
+  a 63) sceglie la misura.
+- **Il controllo della congestione (RFC 5681, 6582, 6928).** Partenza lenta da dieci segmenti, un
+  segmento in piu' per andata e ritorno dopo la soglia, ritrasmissione al terzo ACK doppio (recupero
+  veloce, con gli ACK parziali di NewReno), e a tempo scaduto un segmento solo e di nuovo la
+  partenza lenta.
+- **Due guasti vecchi trovati per strada.** Dopo un tempo scaduto, un ACK che saltava oltre quel che
+  si stava rimandando lasciava la connessione zitta fino al tempo scaduto dopo. E chi riceve teneva
+  da parte al massimo 8 segmenti fuori ordine, anche quando erano uno dopo l'altro: dopo una perdita
+  il nono si buttava. Ora i segmenti contigui fanno un tratto solo (`drivers/ip/tcp_rx.inc`).
+- **Niente piu' segmenti da 120 byte.** Una `write()` arriva allo stack 1520 byte per messaggio, e
+  ogni messaggio partiva come un segmento pieno piu' uno da 120. Ora la libc dice quanto resta della
+  scrittura, e lo stack lo aspetta prima di tagliare un segmento corto. Una scrittura finita parte
+  subito.
+- `ipcfg` mostra `TCP rimandati` (subito / a tempo scaduto) e `TCP code grandi`.
+- **Testato in QEMU** con `tools/prova-invio/prova-invio.sh` (64 e 32 bit): due EX-OS uniti da
+  `rele.py`, un cavo con 25 ms per verso, 20 Mbit/s e la coda di un router. 2 MB, ogni byte
+  controllato: 853 KB/s su una linea pulita (57 KB/s con `-W 4`, come fino alla 0.023), e 464 KB/s
+  con l'1% dei frame persi (46 KB/s prima delle due correzioni). **Testato sul portatile** (nForce, 100 Mbit, kernel 0.322) verso un PC della LAN, 16 MB tre
+  volte per verso: dal PC al portatile 8,3-8,5 MB/s senza ritrasmissioni del PC (prima rimandava
+  circa il 20% dei segmenti), dal portatile al PC 11,2-11,5 MB/s, la linea piena. **Da testare**
+  verso Internet.
 
 ### La frequenza del processore segue il carico (kernel 0.311, cpufreq.drv 0.001)
 
